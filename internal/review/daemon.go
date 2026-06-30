@@ -98,6 +98,8 @@ type Daemon struct {
 	MaxContainersSet     bool
 	Agent                string
 	Model                string
+	Parallel             int
+	ParallelSet          bool
 	controlSocket        *daemon.ControlSocket
 	busy                 chan struct{}
 	promptOnce           sync.Once
@@ -115,9 +117,17 @@ type Daemon struct {
 // the on-disk batches index (issue #1480 slice A). A missing or
 // unreadable index yields an empty cache; the rename-loser trade-off
 // from ADR-0034 §3 means a stale skip is acceptable.
-func New(baseDir string, gh GitHubClient, prompts Renderer, runner BatchRunner, cfg *config.Config, broadcaster io.Writer) *Daemon {
+//
+// parallel and parallelSet thread the CLI --parallel override through to
+// the slot-pool sizing: when parallelSet is true and parallel > 0, the
+// slot pool is sized to parallel regardless of cfg.DefaultReviewParallel.
+// When parallelSet is false, the slot pool falls back to
+// cfg.EffectiveReviewParallel() (the historical behavior).
+func New(baseDir string, gh GitHubClient, prompts Renderer, runner BatchRunner, cfg *config.Config, broadcaster io.Writer, parallel int, parallelSet bool) *Daemon {
 	parallelReviews := 1
-	if cfg != nil {
+	if parallelSet && parallel > 0 {
+		parallelReviews = parallel
+	} else if cfg != nil {
 		parallelReviews = cfg.EffectiveReviewParallel()
 		if parallelReviews < 1 {
 			parallelReviews = 1
@@ -133,6 +143,8 @@ func New(baseDir string, gh GitHubClient, prompts Renderer, runner BatchRunner, 
 		Clock:          time.Now,
 		Trigger:        nil,
 		PollInterval:   PollingInterval,
+		Parallel:       parallel,
+		ParallelSet:    parallelSet,
 		busy:           make(chan struct{}, 1),
 		seenCache:      map[int]map[string]bool{},
 		slotTable:      map[int]struct{}{},
@@ -330,6 +342,20 @@ func (d *Daemon) effectiveModel() string {
 		return ""
 	}
 	return d.Config.EffectiveReviewModel()
+}
+
+// effectiveParallel returns the parallel value to use for this run.
+// Precedence: the CLI override (Daemon.Parallel when ParallelSet is
+// true and Parallel > 0) wins; otherwise d.Config.EffectiveReviewParallel().
+// Mirrors the field-passing pattern used by effectiveAgent / effectiveModel.
+func (d *Daemon) effectiveParallel() int {
+	if d.ParallelSet && d.Parallel > 0 {
+		return d.Parallel
+	}
+	if d.Config == nil {
+		return 1
+	}
+	return d.Config.EffectiveReviewParallel()
 }
 
 // PromptTemplatePath returns the absolute path of the shared review
@@ -867,6 +893,7 @@ func (d *Daemon) launchReview(ctx context.Context, prNumber int, focus, commentI
 		Model:                modelName,
 		Mode:                 map[int]batch.IssueMode{0: batch.ModeOverride},
 		Sandbox:              sandboxMode,
+		Parallel:             d.effectiveParallel(),
 		ContainerCapacity:    d.ContainerCapacity,
 		ContainerCapacitySet: d.ContainerCapacitySet,
 		MaxContainers:        d.MaxContainers,

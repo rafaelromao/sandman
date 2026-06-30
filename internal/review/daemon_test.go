@@ -172,7 +172,7 @@ func newDaemonForTest(t *testing.T, gh GitHubClient, runner BatchRunner, cfg *co
 	dir := t.TempDir()
 	t.Chdir(dir)
 	buf := &lockedBuffer{}
-	d := New(dir, gh, &prompt.Engine{}, runner, cfg, buf)
+	d := New(dir, gh, &prompt.Engine{}, runner, cfg, buf, 0, false)
 	d.PollInterval = 0
 	return d, buf, dir
 }
@@ -428,6 +428,125 @@ func TestDaemon_TickLaunchesReviewsInParallel(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("tick did not finish after releasing parallel reviews")
+	}
+}
+
+func TestDaemon_ParallelOverrideCapsSlotPool(t *testing.T) {
+	now := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
+	after := now.Add(1 * time.Minute)
+	gh := &fakeGH{
+		prs: []github.PR{
+			{Number: 1, State: "open"},
+			{Number: 2, State: "open"},
+			{Number: 3, State: "open"},
+		},
+		comments: map[int][]github.PRComment{
+			1: {{ID: "100", Body: "/sandman review", CreatedAt: now}, {ID: "101", Body: "## Summary\nLGTM", CreatedAt: after}},
+			2: {{ID: "200", Body: "/sandman review", CreatedAt: now}, {ID: "201", Body: "## Summary\nLGTM", CreatedAt: after}},
+			3: {{ID: "300", Body: "/sandman review", CreatedAt: now}, {ID: "301", Body: "## Summary\nLGTM", CreatedAt: after}},
+		},
+		prFetch: map[int]*github.PR{
+			1: {Number: 1, Title: "PR 1", Body: "Body 1"},
+			2: {Number: 2, Title: "PR 2", Body: "Body 2"},
+			3: {Number: 3, Title: "PR 3", Body: "Body 3"},
+		},
+	}
+	started := make(chan int, 3)
+	release := make(chan struct{})
+	runner := batchFunc(func(ctx context.Context, req batch.Request) (*batch.Result, error) {
+		started <- req.PRNumber
+		<-release
+		return &batch.Result{}, nil
+	})
+	dir := t.TempDir()
+	t.Chdir(dir)
+	d := New(dir, gh, &prompt.Engine{}, runner, &config.Config{
+		DefaultReviewAgent:    "opencode",
+		DefaultReviewModel:    "opencode/foo",
+		DefaultReviewParallel: 1,
+	}, &lockedBuffer{}, 2, true)
+	d.Clock = func() time.Time { return now }
+
+	done := make(chan error, 1)
+	go func() { done <- d.tick(context.Background()) }()
+
+	seen := map[int]struct{}{}
+	for len(seen) < 2 {
+		select {
+		case prNumber := <-started:
+			seen[prNumber] = struct{}{}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("expected exactly 2 reviews to start in parallel (parallel=2), got %d so far", len(seen))
+		}
+	}
+
+	select {
+	case prNumber := <-started:
+		t.Fatalf("expected third PR to wait for slot (slot pool cap = 2), but PR %d started", prNumber)
+	case <-time.After(200 * time.Millisecond):
+	}
+
+	close(release)
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("tick: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("tick did not finish after releasing parallel reviews")
+	}
+}
+
+func TestDaemon_EffectiveParallelPrefersOverride(t *testing.T) {
+	now := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
+	gh := &fakeGH{
+		prs: []github.PR{{Number: 1, State: "open"}},
+		comments: map[int][]github.PRComment{
+			1: {{ID: "100", Body: "/sandman review", CreatedAt: now}, {ID: "101", Body: "## Summary\nLGTM", CreatedAt: now.Add(1 * time.Minute)}},
+		},
+		prFetch: map[int]*github.PR{1: {Number: 1, Title: "PR 1", Body: "Body 1"}},
+	}
+	runner := &capturedRequest{}
+	d, _, _ := newDaemonForTest(t, gh, runner, &config.Config{
+		DefaultReviewAgent:    "opencode",
+		DefaultReviewModel:    "opencode/foo",
+		DefaultReviewParallel: 7,
+	})
+	d.Parallel = 4
+	d.ParallelSet = true
+
+	if err := d.tick(context.Background()); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+
+	if runner.last.Parallel != 4 {
+		t.Errorf("expected effectiveParallel() to prefer d.Parallel (4) over cfg (7), got %d", runner.last.Parallel)
+	}
+}
+
+func TestDaemon_EffectiveParallelFallsBackToConfig(t *testing.T) {
+	now := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
+	gh := &fakeGH{
+		prs: []github.PR{{Number: 1, State: "open"}},
+		comments: map[int][]github.PRComment{
+			1: {{ID: "100", Body: "/sandman review", CreatedAt: now}, {ID: "101", Body: "## Summary\nLGTM", CreatedAt: now.Add(1 * time.Minute)}},
+		},
+		prFetch: map[int]*github.PR{1: {Number: 1, Title: "PR 1", Body: "Body 1"}},
+	}
+	runner := &capturedRequest{}
+	d, _, _ := newDaemonForTest(t, gh, runner, &config.Config{
+		DefaultReviewAgent:    "opencode",
+		DefaultReviewModel:    "opencode/foo",
+		DefaultReviewParallel: 7,
+	})
+	// d.Parallel and d.ParallelSet left at zero values; cfg fallback should win.
+
+	if err := d.tick(context.Background()); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+
+	if runner.last.Parallel != 7 {
+		t.Errorf("expected effectiveParallel() to fall back to cfg.EffectiveReviewParallel() (7), got %d", runner.last.Parallel)
 	}
 }
 
