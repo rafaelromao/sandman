@@ -2788,6 +2788,20 @@ const source = fs.readFileSync(helperPath, 'utf8');
 	sandbox.globalThis = sandbox;
 	sandbox.document = documentRef;
 	sandbox.HTMLElement = function() {};
+	// Wire the production renderRunMeta from portal.html into the sandbox so
+	// tests that pass helpers into SandmanPortalDiff.insertRunRow /
+	// diffRuns actually exercise the live function instead of the
+	// sharedMockHelpers() mock.
+	const portalHtmlPath = helperPath.replace(/portal_diff\.js$/, 'portal.html');
+	const portalHtmlSrc = fs.readFileSync(portalHtmlPath, 'utf8');
+	const renderRunMetaMatch = portalHtmlSrc.match(/function renderRunMeta\(run\) \{[\s\S]*?^\s{4}\}/m);
+	if (renderRunMetaMatch) {
+		const fnCtx = vm.createContext(Object.assign({}, sandbox, { sandbox: sandbox }));
+		vm.runInContext(renderRunMetaMatch[0] + '\n; sandbox.renderRunMeta = renderRunMeta;', fnCtx, { filename: portalHtmlPath });
+		if (typeof sandbox.renderRunMeta === 'function') {
+			helpers.renderRunMeta = sandbox.renderRunMeta;
+		}
+	}
 	vm.runInNewContext(source, sandbox, { filename: helperPath });
 	const SandmanPortalDiff = sandbox.SandmanPortalDiff;
 	if (!SandmanPortalDiff) throw new Error('SandmanPortalDiff missing');
@@ -3332,6 +3346,21 @@ sandbox.requestAnimationFrame = function () {};
 sandbox.window.requestAnimationFrame = sandbox.requestAnimationFrame;
 sandbox.Intl = Intl;
 sandbox.window.Intl = Intl;
+// Wire the production renderRunMeta from portal.html into the test sandbox
+// so tests that call helpers.renderRunMeta actually exercise the live
+// function instead of the sharedMockHelpers() mock. The scriptBody for
+// portal.html cannot be evaluated directly (it touches the DOM at top
+// level), so we extract just the renderRunMeta function source and eval
+// it into the sandbox before patching helpers.
+const portalHtmlSrc = fs.readFileSync(htmlPath, 'utf8');
+const renderRunMetaMatch = portalHtmlSrc.match(/function renderRunMeta\(run\) \{[\s\S]*?^\s{4}\}/m);
+if (renderRunMetaMatch) {
+  const fnCtx = vm.createContext(Object.assign({}, sandbox, { sandbox: sandbox }));
+  vm.runInContext(renderRunMetaMatch[0] + '\n; sandbox.renderRunMeta = renderRunMeta;', fnCtx, { filename: htmlPath });
+  if (typeof sandbox.renderRunMeta === 'function') {
+    helpers.renderRunMeta = sandbox.renderRunMeta;
+  }
+}
 vm.runInNewContext(scriptBody + '\n' + ` + "`" + js + "`" + `, Object.assign({}, sandbox, { helpers: sandbox.helpers }), { filename: htmlPath });
 `
 	cmd := exec.Command("node", "-e", prefix)
