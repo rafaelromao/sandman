@@ -21,7 +21,7 @@ func TestReviewStateStore_StartsEmpty(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "review-state.json")
 
-	store, err := NewReviewStateStore(path, 42)
+	store, err := NewReviewStateStore(path, 42, nil)
 	if err != nil {
 		t.Fatalf("NewReviewStateStore: %v", err)
 	}
@@ -63,7 +63,7 @@ func TestReviewStateStore_LoadsExistingClaims(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	store, err := NewReviewStateStore(path, 42)
+	store, err := NewReviewStateStore(path, 42, nil)
 	if err != nil {
 		t.Fatalf("NewReviewStateStore: %v", err)
 	}
@@ -84,7 +84,7 @@ func TestReviewStateStore_LoadsExistingClaims(t *testing.T) {
 func TestReviewStateStore_MarkSeenPersists(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "review-state.json")
-	store, err := NewReviewStateStore(path, 42)
+	store, err := NewReviewStateStore(path, 42, nil)
 	if err != nil {
 		t.Fatalf("NewReviewStateStore: %v", err)
 	}
@@ -123,7 +123,7 @@ func TestReviewStateStore_MarkSeenPersists(t *testing.T) {
 func TestReviewStateStore_MarkSeenIdempotent(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "review-state.json")
-	store, err := NewReviewStateStore(path, 42)
+	store, err := NewReviewStateStore(path, 42, nil)
 	if err != nil {
 		t.Fatalf("NewReviewStateStore: %v", err)
 	}
@@ -153,7 +153,7 @@ func TestReviewStateStore_MarkSeenIdempotent(t *testing.T) {
 func TestReviewStateStore_RejectsEmptyKey(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "review-state.json")
-	store, err := NewReviewStateStore(path, 42)
+	store, err := NewReviewStateStore(path, 42, nil)
 	if err != nil {
 		t.Fatalf("NewReviewStateStore: %v", err)
 	}
@@ -172,7 +172,7 @@ func TestReviewStateStore_RejectsEmptyKey(t *testing.T) {
 func TestReviewStateStore_TryClaimReturnsTrueForNewKey(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "review-state.json")
-	store, err := NewReviewStateStore(path, 42)
+	store, err := NewReviewStateStore(path, 42, nil)
 	if err != nil {
 		t.Fatalf("NewReviewStateStore: %v", err)
 	}
@@ -188,7 +188,7 @@ func TestReviewStateStore_TryClaimReturnsTrueForNewKey(t *testing.T) {
 func TestReviewStateStore_TryClaimReturnsFalseForClaimedKey(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "review-state.json")
-	store, err := NewReviewStateStore(path, 42)
+	store, err := NewReviewStateStore(path, 42, nil)
 	if err != nil {
 		t.Fatalf("NewReviewStateStore: %v", err)
 	}
@@ -207,7 +207,7 @@ func TestReviewStateStore_TryClaimReturnsFalseForClaimedKey(t *testing.T) {
 func TestReviewStateStore_TryClaimMakesIsClaimedReturnTrue(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "review-state.json")
-	store, err := NewReviewStateStore(path, 42)
+	store, err := NewReviewStateStore(path, 42, nil)
 	if err != nil {
 		t.Fatalf("NewReviewStateStore: %v", err)
 	}
@@ -226,7 +226,7 @@ func TestReviewStateStore_TryClaimMakesIsClaimedReturnTrue(t *testing.T) {
 func TestReviewStateStore_TryClaimThenMarkSeenIsIdempotent(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "review-state.json")
-	store, err := NewReviewStateStore(path, 42)
+	store, err := NewReviewStateStore(path, 42, nil)
 	if err != nil {
 		t.Fatalf("NewReviewStateStore: %v", err)
 	}
@@ -263,7 +263,7 @@ func TestReviewStateStore_TryClaimThenMarkSeenIsIdempotent(t *testing.T) {
 func TestReviewStateStore_ReleaseAllowsRetry(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "review-state.json")
-	store, err := NewReviewStateStore(path, 42)
+	store, err := NewReviewStateStore(path, 42, nil)
 	if err != nil {
 		t.Fatalf("NewReviewStateStore: %v", err)
 	}
@@ -287,7 +287,7 @@ func TestReviewStateStore_ReleaseAllowsRetry(t *testing.T) {
 func TestReviewStateStore_TryClaimIsConcurrencySafe(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "review-state.json")
-	store, err := NewReviewStateStore(path, 42)
+	store, err := NewReviewStateStore(path, 42, nil)
 	if err != nil {
 		t.Fatalf("NewReviewStateStore: %v", err)
 	}
@@ -332,7 +332,7 @@ func TestReviewStateStore_TryClaimAgainstLoadedIDs(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	store, err := NewReviewStateStore(path, 42)
+	store, err := NewReviewStateStore(path, 42, nil)
 	if err != nil {
 		t.Fatalf("NewReviewStateStore: %v", err)
 	}
@@ -359,7 +359,7 @@ func TestReviewStateStore_AtomicRenameLeavesPreviousIntact(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	store, err := NewReviewStateStore(path, 42)
+	store, err := NewReviewStateStore(path, 42, nil)
 	if err != nil {
 		t.Fatalf("NewReviewStateStore: %v", err)
 	}
@@ -383,7 +383,7 @@ func TestReviewStateStore_AtomicRenameLeavesPreviousIntact(t *testing.T) {
 func TestReviewStateStore_NoClaimsSubdirectoryOnDisk(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "review-state.json")
-	store, err := NewReviewStateStore(path, 42)
+	store, err := NewReviewStateStore(path, 42, nil)
 	if err != nil {
 		t.Fatalf("NewReviewStateStore: %v", err)
 	}
@@ -434,7 +434,7 @@ func TestReviewStateStore_NoTimeBasedPurge(t *testing.T) {
 		}
 	}
 
-	store, err := NewReviewStateStore(path, 42)
+	store, err := NewReviewStateStore(path, 42, nil)
 	if err != nil {
 		t.Fatalf("NewReviewStateStore: %v", err)
 	}
@@ -448,7 +448,7 @@ func TestReviewStateStore_NoTimeBasedPurge(t *testing.T) {
 func TestReviewStateStore_ReleaseClearsClaim(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "review-state.json")
-	store, err := NewReviewStateStore(path, 42)
+	store, err := NewReviewStateStore(path, 42, nil)
 	if err != nil {
 		t.Fatalf("NewReviewStateStore: %v", err)
 	}
@@ -472,7 +472,7 @@ func TestReviewStateStore_ReleaseClearsClaim(t *testing.T) {
 func TestReviewStateStore_ReleaseIdempotent(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "review-state.json")
-	store, err := NewReviewStateStore(path, 42)
+	store, err := NewReviewStateStore(path, 42, nil)
 	if err != nil {
 		t.Fatalf("NewReviewStateStore: %v", err)
 	}
@@ -491,7 +491,7 @@ func TestReviewStateStore_ReleaseIdempotent(t *testing.T) {
 func TestReviewStateStore_CommentIDWithSpecialChars(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "review-state.json")
-	store, err := NewReviewStateStore(path, 42)
+	store, err := NewReviewStateStore(path, 42, nil)
 	if err != nil {
 		t.Fatalf("NewReviewStateStore: %v", err)
 	}
@@ -512,7 +512,7 @@ func TestReviewStateStore_RestartReadsPersistedClaims(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "review-state.json")
 
-	cs1, err := NewReviewStateStore(path, 42)
+	cs1, err := NewReviewStateStore(path, 42, nil)
 	if err != nil {
 		t.Fatalf("NewReviewStateStore 1: %v", err)
 	}
@@ -523,7 +523,7 @@ func TestReviewStateStore_RestartReadsPersistedClaims(t *testing.T) {
 		t.Fatalf("cs1.Save: %v", err)
 	}
 
-	cs2, err := NewReviewStateStore(path, 42)
+	cs2, err := NewReviewStateStore(path, 42, nil)
 	if err != nil {
 		t.Fatalf("NewReviewStateStore 2: %v", err)
 	}
@@ -536,7 +536,7 @@ func TestReviewStateStore_RestartReadsPersistedClaims(t *testing.T) {
 		t.Fatalf("cs1.Save: %v", err)
 	}
 
-	cs3, err := NewReviewStateStore(path, 42)
+	cs3, err := NewReviewStateStore(path, 42, nil)
 	if err != nil {
 		t.Fatalf("NewReviewStateStore 3: %v", err)
 	}

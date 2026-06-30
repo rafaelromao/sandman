@@ -507,7 +507,7 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int, canLaunch bool) er
 	}
 
 	// Mark the trigger as seen in the new run's review-state.json.
-	state, stateErr := NewReviewStateStore(d.ReviewStatePath(runDir), prNumber)
+	state, stateErr := NewReviewStateStore(d.ReviewStatePath(runDir), prNumber, d)
 	if stateErr != nil {
 		d.logf("open review state for run %s: %v", runDir, stateErr)
 		return nil

@@ -2,6 +2,7 @@ package review
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync/atomic"
@@ -251,3 +252,198 @@ func itoa(_ int, i int) string {
 
 // ensure batch package is referenced for go-import pruning.
 var _ = struct{}{}
+
+// fakeInvalidator is a no-op test double for SeenCacheInvalidator.
+type fakeInvalidator struct {
+	onMark    func(prNumber int, commentID string)
+	onForget  func(prNumber int, commentID string)
+}
+
+func (f fakeInvalidator) MarkTerminalSeen(prNumber int, commentID string) {
+	if f.onMark != nil {
+		f.onMark(prNumber, commentID)
+	}
+}
+
+func (f fakeInvalidator) Forget(prNumber int, commentID string) {
+	if f.onForget != nil {
+		f.onForget(prNumber, commentID)
+	}
+}
+
+// TestDaemon_ReleaseForgetsCacheEntry pins that the daemon's Forget
+// drops the (prNumber, commentID) entry from the seen cache so a
+// later processPR call considers the comment as fresh again. This is
+// exercised on the production Daemon rather than ReviewStateStore
+// because Forget is a contract on the SeenCacheInvalidator seam and
+// needs to round-trip through the daemon's seenCacheMutex.
+func TestDaemon_ReleaseForgetsCacheEntry(t *testing.T) {
+	d, _, _ := newDaemonForTest(t, &fakeGH{}, &capturedRequest{}, &config.Config{
+		DefaultReviewAgent: "opencode",
+		DefaultReviewModel: "opencode/foo",
+	})
+	d.MarkTerminalSeen(7, "to-forget")
+	if !d.IsTerminalSeen(7, "to-forget") {
+		t.Fatal("cache should have (PR 7, to-forget) after MarkTerminalSeen")
+	}
+	d.Forget(7, "to-forget")
+	if d.IsTerminalSeen(7, "to-forget") {
+		t.Fatal("cache should NOT have (PR 7, to-forget) after Forget")
+	}
+}
+
+// TestDaemon_ReviewStateStore_MarkSeenInvalidatesCacheMidProcess pins
+// criterion #6: a comment marked success via ReviewStateStore.MarkSeen
+// mid-process is honored by a subsequent processPR call without
+// requiring a daemon restart. The second tick must skip the
+// already-marked trigger WITHOUT re-reading the batches index or any
+// review-state.json (which proves the cache, not the on-disk re-scan,
+// is what honored it).
+func TestDaemon_ReviewStateStore_MarkSeenInvalidatesCacheMidProcess(t *testing.T) {
+	const (
+		prNumber  = 33
+		triggerID = "trigger-mid"
+	)
+	gh := &fakeGH{
+		prs: []github.PR{{Number: prNumber, State: "open"}},
+		comments: map[int][]github.PRComment{
+			prNumber: {
+				{ID: triggerID, Body: "/sandman review", CreatedAt: time.Now()},
+				{ID: "review-reply", Body: "## Summary\nLGTM", CreatedAt: time.Now().Add(1 * time.Minute)},
+			},
+		},
+		prFetch: map[int]*github.PR{prNumber: {Number: prNumber, Title: "T", Body: "B"}},
+	}
+	runner := &capturedRequest{}
+	d, _, _ := newDaemonForTest(t, gh, runner, &config.Config{
+		DefaultReviewAgent: "opencode",
+		DefaultReviewModel: "opencode/foo",
+	})
+	d.Clock = func() time.Time { return time.Now().Add(-1 * time.Minute) }
+
+	counter := &sliceASeenLoader{}
+	counter.Install(t)
+
+	// First tick: cache is empty, so processPR should launch a batch.
+	if err := d.tick(context.Background()); err != nil {
+		t.Fatalf("first tick: %v", err)
+	}
+	if runner.calls != 1 {
+		t.Fatalf("first tick should launch exactly one batch, got %d", runner.calls)
+	}
+
+	// The first tick must have hydrated the cache for the next tick to
+	// short-circuit. processPR writes (prNumber, triggerID) to the new
+	// run's review-state.json via MarkSeen("success"); with the cache
+	// hook wired, the in-memory cache should reflect the same key.
+	if !d.IsTerminalSeen(prNumber, triggerID) {
+		t.Fatalf("after first tick the cache should have (%d, %s), got %v", prNumber, triggerID, d.seenCache)
+	}
+
+	// Reset the counters so the assertion below measures the second tick only.
+	counter.batchesIndexLoadCalls.Store(0)
+	counter.reviewStateReadCalls.Store(0)
+
+	// Second tick: the cache should short-circuit the trigger comment.
+	// runner.calls must not advance and the disk I/O counters must stay
+	// at zero on the cache-covered PR.
+	if err := d.tick(context.Background()); err != nil {
+		t.Fatalf("second tick: %v", err)
+	}
+	if runner.calls != 1 {
+		t.Errorf("second tick must not launch a new batch for the cached trigger, got %d total calls", runner.calls)
+	}
+	if got := counter.batchesIndexLoadCalls.Load(); got != 0 {
+		t.Errorf("second tick should not re-Load batches index, got %d loads (cache failed to short-circuit)", got)
+	}
+	if got := counter.reviewStateReadCalls.Load(); got != 0 {
+		t.Errorf("second tick should not re-Read any review-state.json, got %d reads", got)
+	}
+}
+
+// TestReviewStateStore_MarkSeenFiresCacheHook pins the contract on the
+// SeenCacheInvalidator seam. MarkSeen only fires MarkTerminalSeen when
+// shouldSkipDedupStatus(status) is true (success/superseded). A
+// "failure" save must NOT cache — preserving the rename-loser
+// retry semantics from ADR-0034 §3.
+func TestReviewStateStore_MarkSeenFiresCacheHook(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	called := map[string]int{}
+	hook := fakeInvalidator{
+		onMark:   func(pr int, id string) { called[fmt.Sprintf("m:%d:%s", pr, id)]++ },
+		onForget: func(pr int, id string) { called[fmt.Sprintf("f:%d:%s", pr, id)]++ },
+	}
+
+	store, err := NewReviewStateStore(filepath.Join(dir, "review-state.json"), 42, &hook)
+	if err != nil {
+		t.Fatalf("NewReviewStateStore: %v", err)
+	}
+
+	for _, status := range []string{"failure", "aborted"} {
+		if err := store.MarkSeen("c-noncache", status); err != nil {
+			t.Fatalf("MarkSeen(%q): %v", status, err)
+		}
+		if v := called["m:42:c-noncache"]; v != 0 {
+			t.Errorf("MarkSeen(%q) should NOT fire the cache hook, fired %d times", status, v)
+		}
+	}
+
+	for _, status := range []string{"success", "superseded"} {
+		if err := store.MarkSeen("c-cache-"+status, status); err != nil {
+			t.Fatalf("MarkSeen(%q): %v", status, err)
+		}
+	}
+	if v := called["m:42:c-cache-success"]; v != 1 {
+		t.Errorf("MarkSeen(success) should fire MarkTerminalSeen exactly once, got %d", v)
+	}
+	if v := called["m:42:c-cache-superseded"]; v != 1 {
+		t.Errorf("MarkSeen(superseded) should fire MarkTerminalSeen exactly once, got %d", v)
+	}
+
+	// Release must fire Forget.
+	store2, err := NewReviewStateStore(filepath.Join(dir, "review-state2.json"), 42, &hook)
+	if err != nil {
+		t.Fatalf("NewReviewStateStore 2: %v", err)
+	}
+	if !store2.TryClaim("c-release") {
+		t.Fatal("TryClaim should succeed for fresh commentID")
+	}
+	store2.Release("c-release")
+	if v := called["f:42:c-release"]; v != 1 {
+		t.Errorf("Release should fire Forget exactly once, got %d", v)
+	}
+}
+
+// TestReviewStateStore_MarkSeenSaveErrorLeavesCacheUntouched pins the
+// advisory invariant: if the on-disk Save errors, the cache hook must
+// not fire. The cache only short-circuits what is also persisted.
+// The test injects a Save error via the reviewStateSave test seam
+// because forcing the atomic-rename to fail reliably across runtimes
+// is brittle (MkdirAll is permissive on root, /tmp permissions vary).
+func TestReviewStateStore_MarkSeenSaveErrorLeavesCacheUntouched(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	prev := reviewStateSave
+	t.Cleanup(func() { reviewStateSave = prev })
+
+	reviewStateSave = func(_ *ReviewStateStore) error {
+		return fmt.Errorf("synthetic save failure")
+	}
+
+	hook := fakeInvalidator{
+		onMark: func(pr int, id string) {
+			t.Errorf("MarkTerminalSeen fired unexpectedly for (%d, %s) on Save error", pr, id)
+		},
+	}
+
+	store, err := NewReviewStateStore(filepath.Join(dir, "review-state.json"), 42, &hook)
+	if err != nil {
+		t.Fatalf("NewReviewStateStore: %v", err)
+	}
+	if err := store.MarkSeen("c1", "success"); err == nil {
+		t.Fatalf("expected MarkSeen to error on Save failure; got nil")
+	}
+}
