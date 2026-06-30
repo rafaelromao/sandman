@@ -14,95 +14,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/daemon"
 	"github.com/rafaelromao/sandman/internal/github"
 	"github.com/rafaelromao/sandman/internal/prompt"
-	"github.com/rafaelromao/sandman/internal/runid"
 )
-
-// seedPriorCanonicalReview seeds the canonical per-row review folder
-// shape on disk for a prior review batch so hydration tests can
-// exercise the loadSeenCache path against the layout introduced by
-// issue #1551 / ADR-0030. The folder shape is
-// `<batch>/runs/<rowID>/{run.json,review-state.json}` where
-// `<rowID>` matches what `reviewRunIDFor` would mint for the same
-// (prNumber, linkedIssue) pair.
-//
-// When `rowIDOverride` is non-empty the helper uses that directory
-// name verbatim; otherwise it derives the rowID from the batch ID by
-// parsing out the `<sid>-<ts>-` prefix and using
-// `reviewRunIDFor(prNumber, 0, ts, sid)` so the test's folder shape
-// matches what a launched review would actually produce.
-func seedPriorCanonicalReview(t *testing.T, baseDir, batchID string, prNumber int, commentID string) {
-	t.Helper()
-	rowID := runid.NewRunID(runid.KindReview, "PR"+itoa(0, prNumber), parseTSFromBatchID(batchID), parseSIDFromBatchID(batchID))
-	if rowID == "" {
-		t.Fatalf("could not derive rowID from batchID %q", batchID)
-	}
-	seedPriorCanonicalReviewWith(t, baseDir, batchID, rowID, prNumber, commentID)
-}
-
-func seedPriorCanonicalReviewWith(t *testing.T, baseDir, batchID, rowID string, prNumber int, commentID string) {
-	t.Helper()
-	batchesDir := filepath.Join(baseDir, "batches")
-	batchPath := filepath.Join(batchesDir, batchID)
-	runDir := filepath.Join(batchPath, "runs", rowID)
-	if err := os.MkdirAll(runDir, 0o755); err != nil {
-		t.Fatalf("create canonical run dir: %v", err)
-	}
-	state := batchindex.ReviewState{
-		PR: prNumber,
-		SeenComments: []batchindex.SeenComment{
-			{CommentID: commentID, Status: "success", Timestamp: time.Now()},
-		},
-	}
-	if err := batchindex.WriteReviewState(runDir, state); err != nil {
-		t.Fatalf("write review state: %v", err)
-	}
-	manifest := batchindex.RunManifest{
-		RunID:     rowID,
-		BatchID:   batchID,
-		PR:        prNumber,
-		Kind:      batchindex.KindReview,
-		CreatedAt: time.Now(),
-		Status:    batchindex.RunManifestStatusActive,
-	}
-	if err := batchindex.WriteManifest(runDir, manifest); err != nil {
-		t.Fatalf("write run manifest: %v", err)
-	}
-	idxPath := daemon.BatchesIndexPath(baseDir)
-	idx, err := batchindex.Load(idxPath)
-	if err != nil && !os.IsNotExist(err) {
-		t.Fatalf("load batches index: %v", err)
-	}
-	if idx == nil {
-		idx = &batchindex.Index{Version: batchindex.IndexVersion}
-	}
-	idx.Add(batchindex.Entry{
-		ID:        batchID,
-		Path:      batchPath,
-		Kind:      batchindex.KindReview,
-		Status:    batchindex.StatusActive,
-		CreatedAt: time.Now(),
-		PR:        prNumber,
-	})
-	if err := idx.Save(idxPath); err != nil {
-		t.Fatalf("save batches index: %v", err)
-	}
-}
-
-func parseSIDFromBatchID(batchID string) string {
-	parts := strings.SplitN(batchID, "-", 3)
-	if len(parts) < 2 {
-		return ""
-	}
-	return parts[0]
-}
-
-func parseTSFromBatchID(batchID string) string {
-	parts := strings.SplitN(batchID, "-", 3)
-	if len(parts) < 2 {
-		return ""
-	}
-	return parts[1]
-}
 
 // TestDaemon_ReviewRunIDAndFolder_AreCanonical pins the headline
 // behavior of issue #1551 and ADR-0030: the review daemon's launch
@@ -193,12 +105,24 @@ func TestDaemon_ReviewRunIDAndFolder_AreCanonical(t *testing.T) {
 	}
 
 	// Acceptance #4: no runs/review folder was written by the daemon.
-	batchRoot := filepath.Dir(strings.TrimSuffix(runner.last.RunDir, "/runs"))
-	legacyDir := filepath.Join(batchRoot, "runs", "review")
+	batchDir := filepath.Dir(filepath.Dir(runner.last.RunDir))
+	legacyDir := filepath.Join(batchDir, "runs", "review")
 	if _, err := os.Stat(legacyDir); err == nil {
 		t.Errorf("daemon must not write the legacy alias folder %s, but it exists on disk", legacyDir)
 	} else if !os.IsNotExist(err) {
 		t.Errorf("unexpected stat error on legacy alias folder: %v", err)
+	}
+
+	// AC #3 (run.log, run.sock end up under the canonical folder):
+	// the orchestrator derives the run folder for run.log / run.sock
+	// from `req.RunID` via `daemon.RunFolder(batchDir, runID)` (see
+	// internal/batch/orchestrator.go and internal/batch/agent_run.go).
+	// Pin the captured RunID against that derivation explicitly so a
+	// future refactor that introduces a separate run-folder path for
+	// review runs cannot silently regress acceptance criterion #3.
+	wantRunDir := filepath.Join(batchDir, "runs", rowID)
+	if runner.last.RunDir != wantRunDir {
+		t.Errorf("req.RunDir = %q, want %q (orchestrator-derived via daemon.RunFolder)", runner.last.RunDir, wantRunDir)
 	}
 }
 
