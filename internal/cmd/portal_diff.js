@@ -41,6 +41,23 @@
   function getDetailData(detailRow) { return detailData.get(detailRow); }
   function clearDetailData(detailRow) { detailData.delete(detailRow); }
 
+  // isRowExpandable gates the toggle-row affordance on the row's status.
+  // Queued and blocked rows are wait-state placeholders: clicking them
+  // would open a detail panel that has no real logs and, worse, has been
+  // observed to surface sibling review runs' logs because the synthetic
+  // detail-row id collides with whatever happens to be cached. Removing
+  // the expand affordance here cuts off that path and lets the existing
+  // portal.html click/keydown selectors (which key off
+  // tr[data-action="toggle-run"]) skip the row entirely. All other
+  // statuses, including terminal ones, remain expandable so the user can
+  // still inspect finished runs.
+  function isRowExpandable(run) {
+    if (!run) return true;
+    const s = String(run.status || '').toLowerCase();
+    if (s === 'queued' || s === 'blocked') return false;
+    return true;
+  }
+
   function snapshotCellState(run, opts) {
     const h = opts.helpers;
     const snap = {
@@ -58,7 +75,7 @@
       issueTitleText: h.formatIssueTitle(run),
       canAbort: opts.abortSupported !== false && h.isRunAbortable(run, opts.abortReservations),
       canArchive: opts.archiveSupported !== false && h.isRunArchivable(run),
-      ariaExpanded: String(matchesExpandedSubject(run, opts.expandedKey, opts)),
+      ariaExpanded: String(matchesExpandedSubject(run, opts.expandedKey, opts) && isRowExpandable(run)),
     };
     const stale = stalenessOf(run);
     snap.staleText = stale ? stale.text : '';
@@ -325,13 +342,19 @@
     if (run.kind) tr.classList.add(run.kind);
     if (run.archived) tr.classList.add('row-archived');
     if (run.unavailable) tr.classList.add('row-unavailable');
-    tr.setAttribute('data-action', 'toggle-run');
+    const expandable = isRowExpandable(run);
+    if (!expandable) {
+      tr.classList.add('row-non-expandable');
+    }
     tr.setAttribute('data-run-key', run.key);
     tr.setAttribute('id', rowIDForKey(run.key));
-    tr.setAttribute('role', 'button');
-    tr.setAttribute('tabindex', '0');
-    tr.setAttribute('aria-controls', detailIDForKey(run.key));
-    tr.setAttribute('aria-expanded', String(matchesExpandedSubject(run, opts.expandedKey, opts)));
+    if (expandable) {
+      tr.setAttribute('data-action', 'toggle-run');
+      tr.setAttribute('role', 'button');
+      tr.setAttribute('tabindex', '0');
+      tr.setAttribute('aria-controls', detailIDForKey(run.key));
+    }
+    tr.setAttribute('aria-expanded', String(matchesExpandedSubject(run, opts.expandedKey, opts) && expandable));
 
     const titleCell = makeRowCell('title', tr);
     buildTitleCell(titleCell, run, opts.helpers);
@@ -1160,7 +1183,7 @@
     const built = buildDataRow(body, run, opts);
     setRowData(built.row, run);
     let detailTr = null;
-    if (matchesExpandedSubject(run, opts.expandedKey, opts)) {
+    if (isRowExpandable(run) && matchesExpandedSubject(run, opts.expandedKey, opts)) {
       detailTr = buildDetailRow(body, run, opts);
       setDetailData(detailTr, run);
     }
@@ -1189,6 +1212,35 @@
     if (current !== String(value)) {
       node.setAttribute(name, String(value));
       mutationCount += 1;
+    }
+  }
+
+  function removeAttr(node, name) {
+    if (node.getAttribute(name) !== null) {
+      node.removeAttribute(name);
+      mutationCount += 1;
+    }
+  }
+
+  // reconcileExpandabilityAttr adds or removes the row's toggle attrs so
+  // they reflect whether the row is currently expandable. queued and
+  // blocked rows lose data-action/role/tabindex/aria-controls and gain
+  // the row-non-expandable class; all other statuses gain the attrs back
+  // and lose the class. aria-expanded is reconciled separately by
+  // snapshotCellState + the existing aria-expanded branch.
+  function reconcileExpandabilityAttr(row, run) {
+    const expandable = isRowExpandable(run);
+    setClass(row, 'row-non-expandable', !expandable);
+    if (expandable) {
+      setAttr(row, 'data-action', 'toggle-run');
+      setAttr(row, 'role', 'button');
+      setAttr(row, 'tabindex', '0');
+      setAttr(row, 'aria-controls', detailIDForKey(run.key));
+    } else {
+      removeAttr(row, 'data-action');
+      removeAttr(row, 'role');
+      removeAttr(row, 'tabindex');
+      removeAttr(row, 'aria-controls');
     }
   }
 
@@ -1286,6 +1338,7 @@
     if (currentAria !== desiredAria) {
       setAttr(row, 'aria-expanded', desiredAria);
     }
+    reconcileExpandabilityAttr(row, newRun);
 
     const titleCell = cellOf(row, 'title');
     if (titleCell) updateTitleCell(titleCell, oldSnap, newSnap, newRun);
@@ -1421,7 +1474,7 @@
       const r = updateRunRowCells(dataRow, oldRun, newRun, opts);
       if (r.mutated) updated += 1;
 
-      const wantDetail = matchesExpandedSubject(newRun, opts.expandedKey, opts);
+      const wantDetail = isRowExpandable(newRun) && matchesExpandedSubject(newRun, opts.expandedKey, opts);
       const detail = detailRowOf(body, key);
       if (wantDetail && !detail) {
         const newDetail = buildDetailRow(body, newRun, opts);
