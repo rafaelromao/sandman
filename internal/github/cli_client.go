@@ -14,9 +14,9 @@ import (
 	"time"
 )
 
-var blockedByPattern = regexp.MustCompile(`(?i)\b(?:blocked by|depends on|blocked-by)[:\s]+#(\d+)\b`)
+var blockedByPattern = regexp.MustCompile(`(?i)\b(?:blocked by|depends on|blocked-by)[:\s]+(?:\[#(\d+)\](?:\([^)]+\))?|#(\d+)\b)`)
 var blockedByHeadingPattern = regexp.MustCompile(`(?im)^\s*##\s+(?:blocked by|depends on|blocked-by)\s*$`)
-var bulletIssuePattern = regexp.MustCompile(`(?m)^\s*-\s*#(\d+)`)
+var bulletIssuePattern = regexp.MustCompile(`(?m)^\s*-\s*(?:\[#(\d+)\]|#(\d+))`)
 var nextHeadingPattern = regexp.MustCompile(`(?m)^\s*##\s`)
 
 // execRunner abstracts os/exec for testability.
@@ -434,8 +434,8 @@ func parseBlockedBy(body string) []int {
 	seen := make(map[int]struct{})
 
 	for _, match := range inline {
-		number, err := strconv.Atoi(match[1])
-		if err != nil {
+		number, ok := issueNumberFromMatch(match[1], match[2])
+		if !ok {
 			continue
 		}
 		if _, ok := seen[number]; ok {
@@ -477,8 +477,8 @@ func parseBlockedByHeading(body string) []int {
 	blockedBy := make([]int, 0, len(matches))
 	seen := make(map[int]struct{}, len(matches))
 	for _, match := range matches {
-		number, err := strconv.Atoi(match[1])
-		if err != nil {
+		number, ok := issueNumberFromMatch(match[1], match[2])
+		if !ok {
 			continue
 		}
 		if _, ok := seen[number]; ok {
@@ -492,6 +492,20 @@ func parseBlockedByHeading(body string) []int {
 		return nil
 	}
 	return blockedBy
+}
+
+func issueNumberFromMatch(groups ...string) (int, bool) {
+	for _, group := range groups {
+		if group == "" {
+			continue
+		}
+		number, err := strconv.Atoi(group)
+		if err != nil {
+			return 0, false
+		}
+		return number, true
+	}
+	return 0, false
 }
 
 func parseDependencyIssueNumbers(raw json.RawMessage) []int {
