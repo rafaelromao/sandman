@@ -73,10 +73,8 @@ func NewReviewCmd(deps Dependencies) *cobra.Command {
 			if len(args) > 0 {
 				return runReviewOneShotMulti(cmd, deps, cfg, args, parallelFlag)
 			}
-			if parallelFlag > 0 {
-				cfg.DefaultReviewParallel = parallelFlag
-			}
-			return reviewDaemonRunner(cmd.Context(), deps, cfg, sandboxFlag, ccFlag, ccSet, mcFlag, mcSet, agentFlag, modelFlag)
+			parallelSet := cmd.Flags().Changed("parallel")
+			return reviewDaemonRunner(cmd.Context(), deps, cfg, sandboxFlag, ccFlag, ccSet, mcFlag, mcSet, agentFlag, modelFlag, parallelFlag, parallelSet)
 		},
 	}
 
@@ -272,7 +270,7 @@ func runReviewOneShotMulti(cmd *cobra.Command, deps Dependencies, cfg *config.Co
 // runReviewDaemon wires and runs the review daemon. The cmd layer owns
 // the SIGINT/SIGTERM signal handling; the daemon handles the polling
 // loop and the in-flight batch cancellation.
-func runReviewDaemon(parent context.Context, deps Dependencies, cfg *config.Config, sandbox string, cc int, ccSet bool, mc int, mcSet bool, agentFlag string, modelFlag string) error {
+func runReviewDaemon(parent context.Context, deps Dependencies, cfg *config.Config, sandbox string, cc int, ccSet bool, mc int, mcSet bool, agentFlag string, modelFlag string, parallel int, parallelSet bool) error {
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	defer signal.Stop(sigCh)
@@ -299,7 +297,7 @@ func runReviewDaemon(parent context.Context, deps Dependencies, cfg *config.Conf
 	socketDir := filepath.Join(sandmanDir, "reviews")
 	broadcaster := daemon.NewBroadcaster()
 	ctlSocket := daemon.NewControlSocketWithName(socketDir, "review.sock", broadcaster)
-	d := review.New(sandmanDir, deps.GitHubClient, deps.Renderer, deps.BatchRunner, cfg, broadcaster)
+	d := review.New(sandmanDir, deps.GitHubClient, deps.Renderer, deps.BatchRunner, cfg, broadcaster, parallel, parallelSet)
 	d.Sandbox = sandbox
 	d.ContainerCapacity = cc
 	d.ContainerCapacitySet = ccSet

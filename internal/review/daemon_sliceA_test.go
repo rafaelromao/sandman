@@ -112,7 +112,7 @@ func TestDaemon_SeenCacheHydratedAtConstruction(t *testing.T) {
 	d := New(dir, gh, &prompt.Engine{}, runner, &config.Config{
 		DefaultReviewAgent: "opencode",
 		DefaultReviewModel: "opencode/foo",
-	}, &lockedBuffer{})
+	}, &lockedBuffer{}, 0, false)
 
 	counter := &sliceASeenLoader{}
 	counter.Install(t)
