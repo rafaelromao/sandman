@@ -78,9 +78,19 @@ For review runs, the run folder (`.sandman/batches/<batch-id>/runs/<run-id>/`) c
 
 `review-prompt.md` is the same file for all PRs. It contains no PR-specific data — the daemon renders PR context at request time. One prompt template, shared across all review runs.
 
-### Tick coordination
+### Per-PR slot table
 
-For each PR scanned by `tick` / `processPR`, the dedup check against terminal-seen comments reads from a per-process in-memory cache (`Daemon.seenCache`) keyed `prNumber → map[commentID]bool`. The cache is hydrated eagerly at daemon construction by replaying the on-disk batches index and every terminal-seen entry it references, then refreshed on every successful `ReviewStateStore.MarkSeen` (status ∈ `{success, superseded}`) and forgotten on every `Release`. The on-disk `review-state.json` files remain the source of truth — the cache only short-circuits the per-tick on-disk scan, it does not introduce a new persistence boundary. `Daemon.InvalidateSeenCache()` re-runs the on-disk scan and replaces the cache; production calls this when an out-of-band change to `batches.json` or a `review-state.json` is observed (e.g. via fsnotify in a later slice, or as a slow-tick recovery). Issue [#1480](https://github.com/rafaelromao/sandman/issues/1480) slice A.
+Replace the per-tick inner `sem := make(chan struct{}, parallel_reviews)` allocation in `tick` with a daemon-scoped slot table that survives across ticks. The slot table is built from two pieces: a shared buffered channel (`slotPool`) sized to `EffectiveReviewParallel()`, and a per-PR map (`map[prNumber]struct{}`) recording which PR holds a slot.
+
+The slot is acquired by `processPR` before launching, after the newest unseen trigger is identified but before the eyes reactions are added. `acquirePRSlot` first checks the per-PR map — if the PR already has a held slot, the function returns `false` and `processPR` exits silently (no reactions, no launch, no `MarkSeen`); the trigger survives in `ListPRComments` and is processed on the next tick. If the per-PR map has no entry, it attempts a non-blocking send on `slotPool`; if the pool is saturated, `processPR` also exits silently. On either path no trigger is dropped.
+
+Two design choices, recorded here:
+
+1. **Where the slot is held across the tick boundary** — the slot is held by `processPR`'s deferred `releasePRSlot`, which runs after `MarkSeen` persists the trigger as terminal-seen. The slot reflects on-disk truth, not in-flight truth. This closes the "slot dropped because the tick is faster than `MarkSeen`" failure mode: the next tick cannot free the slot until the review has been fully terminal-seen.
+
+2. **How a new trigger is expressed while a review is in flight** — the trigger is re-scanned from `ListPRComments` on the next tick. The trigger stays in the seen cache as non-terminal-seen (slice A's hydration is unaffected), so the next `processPR` for the same PR re-identifies it as unprocessed. This avoids a bounded queue on the slot channel and keeps the table semantics simple: a per-PR slot is binary (held or free), and triggers either get the slot now or wait for the next tick.
+
+The slice-B claim lock (`busy=1` + `TryClaim` in `processPR`) is a precondition: it guarantees that two `processPR` calls for the same PR never enter `launchReview` simultaneously, which makes the per-PR slot bookkeeping single-owner (the in-flight `launchReview`) and trivially correct. The slot table is in-memory only — a daemon restart abandons the slot, and the trigger is re-discovered via `ListPRComments` on the next tick. Per-run `review-state.json` (already existing) is unaffected.
 
 ## Consequences
 
@@ -91,13 +101,11 @@ For each PR scanned by `tick` / `processPR`, the dedup check against terminal-se
 - Per-run review state is co-located with the run that produced it — cleanup follows the batch/run lifecycle (ADR-0032).
 - No orphan PRs: all open PRs with unprocessed `/sandman` comments are scanned, regardless of daemon uptime.
 - Claims are atomic with the rest of `review-state.json` — no separate directory to manage.
-- Per-PR seen cache (issue #1480 slice A) keeps tick latency constant as the number of historical review batches grows — `processPR` does not re-read `.sandman/batches.json` or any `review-state.json` for cached PRs. Regression tests: `TestDaemon_SeenCacheHydratedAtConstruction`, `TestDaemon_ProcessPRScalesConstantlyWithPriorBatches`, `TestDaemon_ReviewStateStore_MarkSeenInvalidatesCacheMidProcess`, `TestReviewStateStore_MarkSeenFiresCacheHook`, `TestReviewStateStore_MarkSeenSaveErrorLeavesCacheUntouched`, `TestDaemon_ReleaseForgetsCacheEntry` (in `internal/review/daemon_sliceA_test.go` and `internal/review/state_test.go`).
 
 ### Negative
 
 - The daemon must scan all open PRs on every cycle — no per-PR caching of "nothing new here." Acceptable given GitHub API pagination and the single-repo, single-operator workload.
 - If `review-state.json` is deleted mid-run, the daemon re-processes the same comment — no external idempotency guard. Recoverable but potentially wasteful.
-- The seen cache must be invalidated on every successful `MarkSeen` (which slice A handles via the `SeenCacheInvalidator` seam) and reconciled on out-of-band disk writes (which slice A recovers via `InvalidateSeenCache`); missing an invalidation or recovery leads to a stale-skip bug. The contract is enforced by tests above plus a save-error test that pins the advisory invariant.
 
 ### Neutral
 
