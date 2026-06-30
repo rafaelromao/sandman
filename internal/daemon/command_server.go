@@ -66,9 +66,10 @@ func CommandSocketPath(dir string) string {
 // cmd.sock file: a fresh Start removes any stale socket, and Stop removes
 // the socket file again.
 type CommandServer struct {
-	dir       string
-	commander IssueCommander
-	listener  net.Listener
+	dir        string
+	commander  IssueCommander
+	listener   net.Listener
+	isAbstract bool
 }
 
 // NewCommandServer wires a CommandServer to the given run directory and
@@ -90,6 +91,9 @@ func (s *CommandServer) Start() error {
 	_ = os.Remove(sockPath)
 	listener, err := net.Listen("unix", sockPath)
 	if err != nil {
+		if isPathTooLong(err) {
+			return s.startWithShortSockName()
+		}
 		return fmt.Errorf("create command socket: %w", err)
 	}
 	if err := os.Chmod(sockPath, 0o600); err != nil {
@@ -101,6 +105,19 @@ func (s *CommandServer) Start() error {
 	return nil
 }
 
+func (s *CommandServer) startWithShortSockName() error {
+	serverName := filepath.Base(s.dir)
+	abstractName := "@sandman-" + fmt.Sprintf("%x", hashString(serverName))
+	listener, err := net.Listen("unix", abstractName)
+	if err != nil {
+		return fmt.Errorf("create abstract command socket: %w", err)
+	}
+	s.listener = listener
+	s.isAbstract = true
+	go s.acceptLoop()
+	return nil
+}
+
 // Stop closes the listener and removes the socket file. It is safe to
 // call Stop multiple times.
 func (s *CommandServer) Stop() error {
@@ -108,8 +125,10 @@ func (s *CommandServer) Stop() error {
 	if s.listener != nil {
 		err = s.listener.Close()
 	}
-	if rmErr := os.Remove(CommandSocketPath(s.dir)); rmErr != nil && !os.IsNotExist(rmErr) && err == nil {
-		err = rmErr
+	if !s.isAbstract {
+		if rmErr := os.Remove(CommandSocketPath(s.dir)); rmErr != nil && !os.IsNotExist(rmErr) && err == nil {
+			err = rmErr
+		}
 	}
 	return err
 }
