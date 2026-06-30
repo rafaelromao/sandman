@@ -17,6 +17,28 @@ console.log('PASS');
 	runNodeScript(t, js)
 }
 
+// TestPortalPerf_LRUEvictionPreservesCorrectness verifies that after cache eviction,
+// re-requesting an entry still produces correct output (cache miss → recompute).
+func TestPortalPerf_LRUEvictionPreservesCorrectness(t *testing.T) {
+	js := `function bigLog(seed, n) { var L = []; for (var i = 0; i < n; i++) L.push(seed + ' step ' + i + ' import return function foo() bar baz'); return L.join('\n'); }
+// Fill cache with 9 distinct entries (limit = 8, so oldest is evicted)
+for (var k = 0; k < 9; k++) sandbox.SandmanPortalDiff.highlightTerminalLog(bigLog('seed' + k, 500));
+// Original first entry (seed0) should still produce identical output after eviction
+const a = bigLog('seed0', 500);
+const ha = sandbox.SandmanPortalDiff.highlightTerminalLog(a);
+if (typeof ha === 'string') {
+  if (ha.indexOf('seed0') === -1) throw new Error('seed0 content missing after eviction');
+  console.log('PASS');
+} else {
+  ha.then(function(html) {
+    if (html.indexOf('seed0') === -1) throw new Error('seed0 content missing after eviction');
+    console.log('PASS');
+  });
+}
+`
+	runNodeScript(t, js)
+}
+
 // TestPortalPerf_AsyncLargeReviewLogRoundTrip verifies that a large saved
 // review log (the "currently being reviewed" parent-issued run, run.log > 32KB
 // async threshold) loads via the async chunked path the same way a normal
