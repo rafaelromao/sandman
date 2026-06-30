@@ -137,6 +137,9 @@
     const meta = global.document.createElement('span');
     meta.classList.add('meta-line', 'mono');
     meta.textContent = helpers.renderRunMeta(run);
+    if (run.lastRetryReason) {
+      meta.title = 'Last retry: ' + run.lastRetryReason;
+    }
     wrap.appendChild(meta);
     td.appendChild(wrap);
   }
