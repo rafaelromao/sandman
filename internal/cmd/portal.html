@@ -2291,26 +2291,25 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
 
     function renderRunMeta(run) {
       const lines = [];
-      const summary = [];
+      const counterParts = [];
       if (run.batchKey) {
-        summary.push('Batch: ' + run.batchKey);
+        lines.push('Batch: ' + run.batchKey);
       }
       if (Number(run.retriesDone || 0) > 0) {
         const count = Number(run.retriesDone || 0);
-        summary.push(count + ' retr' + (count === 1 ? 'y' : 'ies'));
+        counterParts.push(count + ' retr' + (count === 1 ? 'y' : 'ies'));
       }
       if (Number(run.reviewCount || 0) > 0) {
         const count = Number(run.reviewCount || 0);
-        summary.push(count + ' review' + (count === 1 ? '' : 's'));
-        if (run.reviewVerdict) summary.push(run.reviewVerdict);
+        const reviewPart = count + ' review' + (count === 1 ? '' : 's');
+        if (run.reviewVerdict) {
+          counterParts.push(reviewPart + ' - ' + run.reviewVerdict);
+        } else {
+          counterParts.push(reviewPart);
+        }
       }
-      if (run.batchKey) {
-        if (summary.length) lines.push(summary.join(' - '));
-        if (run.runId) lines.push('Run: ' + run.runId);
-      } else {
-        if (run.runId) lines.push('Run: ' + run.runId);
-        if (summary.length) lines.push(summary.join(' - '));
-      }
+      if (run.runId) lines.push('Run: ' + run.runId);
+      if (counterParts.length) lines.push(counterParts.join(' - '));
       return lines.length ? lines.join('\n') : 'Run';
     }
 
