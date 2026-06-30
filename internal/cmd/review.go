@@ -57,6 +57,8 @@ func NewReviewCmd(deps Dependencies) *cobra.Command {
 			ccSet := cmd.Flags().Changed("container-capacity")
 			mcFlag, _ := cmd.Flags().GetInt("max-containers")
 			mcSet := cmd.Flags().Changed("max-containers")
+			agentFlag, _ := cmd.Flags().GetString("agent")
+			modelFlag, _ := cmd.Flags().GetString("model")
 
 			if parallelFlag < 0 {
 				return MarkUsage(fmt.Errorf("parallel must be 0 or greater"))
@@ -74,7 +76,7 @@ func NewReviewCmd(deps Dependencies) *cobra.Command {
 			if parallelFlag > 0 {
 				cfg.DefaultReviewParallel = parallelFlag
 			}
-			return reviewDaemonRunner(cmd.Context(), deps, cfg, sandboxFlag, ccFlag, ccSet, mcFlag, mcSet)
+			return reviewDaemonRunner(cmd.Context(), deps, cfg, sandboxFlag, ccFlag, ccSet, mcFlag, mcSet, agentFlag, modelFlag)
 		},
 	}
 
@@ -270,7 +272,7 @@ func runReviewOneShotMulti(cmd *cobra.Command, deps Dependencies, cfg *config.Co
 // runReviewDaemon wires and runs the review daemon. The cmd layer owns
 // the SIGINT/SIGTERM signal handling; the daemon handles the polling
 // loop and the in-flight batch cancellation.
-func runReviewDaemon(parent context.Context, deps Dependencies, cfg *config.Config, sandbox string, cc int, ccSet bool, mc int, mcSet bool) error {
+func runReviewDaemon(parent context.Context, deps Dependencies, cfg *config.Config, sandbox string, cc int, ccSet bool, mc int, mcSet bool, agentFlag string, modelFlag string) error {
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	defer signal.Stop(sigCh)
@@ -303,6 +305,8 @@ func runReviewDaemon(parent context.Context, deps Dependencies, cfg *config.Conf
 	d.ContainerCapacitySet = ccSet
 	d.MaxContainers = mc
 	d.MaxContainersSet = mcSet
+	d.Agent = strings.TrimSpace(agentFlag)
+	d.Model = strings.TrimSpace(modelFlag)
 	d.SetSocket(ctlSocket)
 	return d.Run(ctx)
 }

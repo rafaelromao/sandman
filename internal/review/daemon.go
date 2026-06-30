@@ -96,6 +96,8 @@ type Daemon struct {
 	ContainerCapacitySet bool
 	MaxContainers        int
 	MaxContainersSet     bool
+	Agent                string
+	Model                string
 	controlSocket        *daemon.ControlSocket
 	busy                 chan struct{}
 	promptOnce           sync.Once
@@ -302,6 +304,34 @@ func (d *Daemon) SocketPath() string {
 	return filepath.Join(d.BaseDir, "reviews", "review.sock")
 }
 
+// effectiveAgent returns the review agent name to use for this run.
+// Precedence: the CLI override (Daemon.Agent, when non-empty after
+// trimming) wins; otherwise d.Config.EffectiveReviewAgent(). Returns
+// the empty string when both sources are unset.
+func (d *Daemon) effectiveAgent() string {
+	if v := strings.TrimSpace(d.Agent); v != "" {
+		return v
+	}
+	if d.Config == nil {
+		return ""
+	}
+	return d.Config.EffectiveReviewAgent()
+}
+
+// effectiveModel returns the review model name to use for this run.
+// Precedence matches effectiveAgent: the CLI override (Daemon.Model)
+// wins, otherwise d.Config.EffectiveReviewModel(). Returns the empty
+// string when both sources are unset.
+func (d *Daemon) effectiveModel() string {
+	if v := strings.TrimSpace(d.Model); v != "" {
+		return v
+	}
+	if d.Config == nil {
+		return ""
+	}
+	return d.Config.EffectiveReviewModel()
+}
+
 // PromptTemplatePath returns the absolute path of the shared review
 // prompt template. The file is a static, PR-agnostic copy of the
 // built-in template; PR context flows only through the per-run
@@ -393,11 +423,12 @@ func (d *Daemon) Run(ctx context.Context) error {
 	defer d.Stop()
 
 	if d.Config != nil {
-		if _, err := d.Config.ResolveAgentProvider(d.Config.EffectiveReviewAgent()); err != nil {
+		effectiveAgent := d.effectiveAgent()
+		if _, err := d.Config.ResolveAgentProvider(effectiveAgent); err != nil {
 			d.logf("review agent validation failed: %v", err)
 			return err
 		}
-		if strings.TrimSpace(d.Config.EffectiveReviewModel()) == "" {
+		if strings.TrimSpace(d.effectiveModel()) == "" {
 			return fmt.Errorf("review model is not set; configure review_model or model in sandman config")
 		}
 	}
@@ -783,8 +814,8 @@ func (d *Daemon) launchReview(ctx context.Context, prNumber int, focus, commentI
 		sandboxMode = config.DefaultSandbox
 	}
 	if d.Config != nil {
-		agentName = d.Config.EffectiveReviewAgent()
-		modelName = d.Config.EffectiveReviewModel()
+		agentName = d.effectiveAgent()
+		modelName = d.effectiveModel()
 	}
 	if agentName == "" {
 		return fmt.Errorf("review agent is not set; configure review_agent or agent in sandman config")
