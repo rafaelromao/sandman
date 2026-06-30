@@ -1852,6 +1852,7 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
       const key = state.expandedRunKey;
       if (!key) { stopAllRunStreams(); return; }
       const run = findRunByIdentity(key);
+      if (isWaitStateRun(run)) { stopAllRunStreams(); return; }
       const runKey = run ? run.key : key;
       const subjectKey = isWaitStateRun(run) ? '' : (subjectRunIdentity(run) || key);
       const tab = state.tabs[subjectKey] || state.tabs[key] || 'log';
