@@ -18,9 +18,9 @@ type RunState struct {
 	// LastRetryReason) and any future consumer (e.g. the active-row
 	// chip) read it directly so both code paths agree. The slice is
 	// append-only — run.started and run.continued reset Finished but
-	// never reset Retries — because the orchestrator's emit ordering
-	// guarantees a run.retry only appears after the matching
-	// run.started (see ADR-0035).
+	// never reset Retries — because the orchestrator emits a
+	// run.retry only after the matching run.started (see ADR-0035
+	// for the projection rule).
 	Retries []Event
 }
 
