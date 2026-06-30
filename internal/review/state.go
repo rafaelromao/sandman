@@ -13,6 +13,22 @@ import (
 	"github.com/rafaelromao/sandman/internal/batchindex"
 )
 
+// SeenCacheInvalidator is the seam between ReviewStateStore and the
+// daemon's per-process seen cache. It keeps the store independent of
+// daemon internals — production wires *Daemon, tests inject fakes.
+// Issue #1480 slice A.
+type SeenCacheInvalidator interface {
+	MarkTerminalSeen(prNumber int, commentID string)
+	Forget(prNumber int, commentID string)
+}
+
+// noopInvalidator is the default invalidator used when no daemon is
+// wired (e.g. tests that do not care about cache side effects).
+type noopInvalidator struct{}
+
+func (noopInvalidator) MarkTerminalSeen(int, string) {}
+func (noopInvalidator) Forget(int, string)           {}
+
 // ReviewStateStore manages the (prNumber, commentID) dedup state for a
 // single review run. The store is bound to one on-disk file — the
 // `review-state.json` inside a run folder — and one PR number. It
@@ -35,20 +51,30 @@ import (
 // shape with the atomic-rename writer and the in-memory dedup set so
 // callers don't need to know the file format.
 type ReviewStateStore struct {
-	prNumber int
-	path     string
-	mu       sync.Mutex
-	state    batchindex.ReviewState
+	prNumber    int
+	path        string
+	mu          sync.Mutex
+	state       batchindex.ReviewState
+	invalidator SeenCacheInvalidator
 }
 
 // NewReviewStateStore loads the state for the given PR number from
 // path. A missing file is not an error: the store starts empty with the
 // PR number pre-set. Any I/O or parse error other than ENOENT is
 // returned to the caller.
-func NewReviewStateStore(path string, prNumber int) (*ReviewStateStore, error) {
+//
+// An optional SeenCacheInvalidator receives MarkTerminalSeen / Forget
+// notifications so the daemon's per-process seen cache stays in sync
+// with on-disk writes. Pass nil to disable the hook (the store falls
+// back to a no-op invalidator).
+func NewReviewStateStore(path string, prNumber int, invalidator SeenCacheInvalidator) (*ReviewStateStore, error) {
+	if invalidator == nil {
+		invalidator = noopInvalidator{}
+	}
 	s := &ReviewStateStore{
-		prNumber: prNumber,
-		path:     path,
+		prNumber:    prNumber,
+		path:        path,
+		invalidator: invalidator,
 		state: batchindex.ReviewState{
 			PR:           prNumber,
 			SeenComments: nil,
@@ -130,7 +156,9 @@ func (s *ReviewStateStore) TryClaim(commentID string) bool {
 
 // Release drops a claim on commentID without marking it seen. Useful
 // when a worker fails before reaching a terminal state and the comment
-// should be retried on the next tick.
+// should be retried on the next tick. If a SeenCacheInvalidator is
+// wired, Forget is fired so the daemon's per-process seen cache drops
+// the comment.
 func (s *ReviewStateStore) Release(commentID string) {
 	commentID = strings.TrimSpace(commentID)
 	if commentID == "" {
@@ -139,6 +167,7 @@ func (s *ReviewStateStore) Release(commentID string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.state.Claims, commentID)
+	s.invalidator.Forget(s.prNumber, commentID)
 }
 
 // MarkSeen records a terminal status for commentID and persists the
@@ -148,6 +177,14 @@ func (s *ReviewStateStore) Release(commentID string) {
 // The comment is recorded in SeenComments with the timestamp; the
 // Claims map is removed for that comment so a later worker does not
 // see it as merely claimed.
+//
+// Cache side-effect: the SeenCacheInvalidator hook (slice A) fires
+// MarkTerminalSeen only when shouldSkipDedupStatus(status) is true
+// (success / superseded). A "failure" or "aborted" save does NOT
+// cache, preserving the rename-loser retry semantics from
+// ADR-0034 §3. If the on-disk Save fails, the hook is NOT fired —
+// the cache is advisory and only short-circuits what is also
+// persisted.
 func (s *ReviewStateStore) MarkSeen(commentID, status string) error {
 	commentID = strings.TrimSpace(commentID)
 	if commentID == "" {
@@ -174,6 +211,19 @@ func (s *ReviewStateStore) MarkSeen(commentID, status string) error {
 		}
 	}
 	delete(s.state.Claims, commentID)
+	if err := reviewStateSave(s); err != nil {
+		return err
+	}
+	if shouldSkipDedupStatus(status) {
+		s.invalidator.MarkTerminalSeen(s.prNumber, commentID)
+	}
+	return nil
+}
+
+// reviewStateSave is an internal seam so tests can intercept the
+// atomic-rename write and confirm the cache hook does not fire on
+// Save errors. Production wires it to (*ReviewStateStore).saveLocked.
+var reviewStateSave = func(s *ReviewStateStore) error {
 	return s.saveLocked()
 }
 

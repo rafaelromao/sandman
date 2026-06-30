@@ -84,12 +84,17 @@ type Daemon struct {
 	controlSocket        *daemon.ControlSocket
 	busy                 chan struct{}
 	promptOnce           sync.Once
+	seenCache            map[int]map[string]bool
+	seenCacheMu          sync.RWMutex
 }
 
 // New returns a Daemon configured with the project defaults for the
-// polling interval and clock.
+// polling interval and clock. The seen cache is hydrated eagerly from
+// the on-disk batches index (issue #1480 slice A). A missing or
+// unreadable index yields an empty cache; the rename-loser trade-off
+// from ADR-0034 §3 means a stale skip is acceptable.
 func New(baseDir string, gh GitHubClient, prompts Renderer, runner BatchRunner, cfg *config.Config, broadcaster io.Writer) *Daemon {
-	return &Daemon{
+	d := &Daemon{
 		BaseDir:      baseDir,
 		GitHub:       gh,
 		Prompts:      prompts,
@@ -100,7 +105,102 @@ func New(baseDir string, gh GitHubClient, prompts Renderer, runner BatchRunner, 
 		Trigger:      nil,
 		PollInterval: PollingInterval,
 		busy:         make(chan struct{}, 1),
+		seenCache:    map[int]map[string]bool{},
 	}
+	if err := d.loadSeenCache(); err != nil {
+		d.logf("load seen cache: %v", err)
+	}
+	return d
+}
+
+// IsTerminalSeen reports whether the daemon's seen cache currently
+// records (prNumber, commentID) as terminal-seen. It is exposed for
+// tests and for callers that need to check membership outside the
+// per-tick short-circuit.
+func (d *Daemon) IsTerminalSeen(prNumber int, commentID string) bool {
+	d.seenCacheMu.RLock()
+	defer d.seenCacheMu.RUnlock()
+	if seen, ok := d.seenCache[prNumber]; ok {
+		return seen[commentID]
+	}
+	return false
+}
+
+// MarkTerminalSeen records (prNumber, commentID) as terminal-seen in
+// the daemon's seen cache. It is invoked by ReviewStateStore via the
+// SeenCacheInvalidator seam after a successful MarkSeen whose status
+// passes shouldSkipDedupStatus.
+func (d *Daemon) MarkTerminalSeen(prNumber int, commentID string) {
+	d.seenCacheMu.Lock()
+	defer d.seenCacheMu.Unlock()
+	if d.seenCache == nil {
+		d.seenCache = map[int]map[string]bool{}
+	}
+	if _, ok := d.seenCache[prNumber]; !ok {
+		d.seenCache[prNumber] = map[string]bool{}
+	}
+	d.seenCache[prNumber][commentID] = true
+}
+
+// Forget removes (prNumber, commentID) from the daemon's seen cache.
+// It is invoked by ReviewStateStore via the SeenCacheInvalidator seam
+// when a claim is released, so a previously cached comment is
+// reprocessed on the next tick.
+func (d *Daemon) Forget(prNumber int, commentID string) {
+	d.seenCacheMu.Lock()
+	defer d.seenCacheMu.Unlock()
+	if seen, ok := d.seenCache[prNumber]; ok {
+		delete(seen, commentID)
+	}
+}
+
+// loadSeenCache rebuilds the seen cache from scratch by scanning the
+// on-disk batches index and every review-state.json. Existing entries
+// are replaced.
+func (d *Daemon) loadSeenCache() error {
+	d.seenCacheMu.Lock()
+	defer d.seenCacheMu.Unlock()
+	d.seenCache = map[int]map[string]bool{}
+
+	idx, err := seenCacheLoader(d.BaseDir)
+	if err != nil {
+		return fmt.Errorf("load batches index: %w", err)
+	}
+	if idx == nil {
+		return nil
+	}
+	for _, entry := range idx.Entries {
+		if entry.Kind != batchindex.KindReview {
+			continue
+		}
+		runDir := filepath.Join(entry.Path, "runs", "review")
+		state, err := seenStateReader(runDir)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			d.logf("read review state %s: %v", runDir, err)
+			continue
+		}
+		for _, sc := range state.SeenComments {
+			if !shouldSkipDedupStatus(sc.Status) {
+				continue
+			}
+			if _, ok := d.seenCache[entry.PR]; !ok {
+				d.seenCache[entry.PR] = map[string]bool{}
+			}
+			d.seenCache[entry.PR][sc.CommentID] = true
+		}
+	}
+	return nil
+}
+
+// InvalidateSeenCache forces a rebuild of the seen cache by re-running
+// the on-disk scan. Callers use this when an out-of-band change to
+// .sandman/batches.json or a review-state.json is observed (e.g. via
+// fsnotify) or as a slow-tick recovery path.
+func (d *Daemon) InvalidateSeenCache() error {
+	return d.loadSeenCache()
 }
 
 // SocketPath returns the absolute path of the daemon's control socket.
@@ -337,24 +437,24 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int, canLaunch bool) er
 		return nil
 	}
 
-	// Cross-run dedup: load any prior review-state.json files for this
-	// PR from the batches index. A (pr, commentID) pair that is
-	// terminal-seen in any prior run is skipped. ADR-0034 §3 accepts
-	// the rename-loser trade-off; this scan only catches what is
-	// already persisted on disk when the scan starts.
-	globalSeen, err := d.loadGlobalSeenForPR(prNumber)
-	if err != nil {
-		d.logf("load global seen for PR %d: %v", prNumber, err)
-	}
-
+	// Cross-run dedup: read terminal-seen membership from the
+	// per-process in-memory cache populated at construction
+	// (issue #1480 slice A). ADR-0034 §3 accepts the rename-loser
+	// trade-off; the cache only short-circuits what is already
+	// persisted on disk. The read lock must be held across the
+	// per-trigger lookup because the inner map is shared with
+	// MarkTerminalSeen / Forget on sibling PRs in the same tick
+	// (slice-A PR review, race-detector finding).
+	d.seenCacheMu.RLock()
 	var unprocessed []unseenTrigger
 	for _, t := range triggers {
-		if globalSeen[t.comment.ID] {
+		if d.seenCache[prNumber][t.comment.ID] {
 			d.logf("comment %s already terminal-seen, skipping", t.comment.ID)
 			continue
 		}
 		unprocessed = append(unprocessed, t)
 	}
+	d.seenCacheMu.RUnlock()
 	if len(unprocessed) == 0 {
 		return nil
 	}
@@ -430,51 +530,10 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int, canLaunch bool) er
 	return nil
 }
 
-// loadGlobalSeenForPR scans every review-state.json on disk and returns
-// the set of (prNumber, commentID) pairs that are terminal-seen for the
-// given PR. It is the slice-4 wiring: cross-run dedup via the batches
-// index. On a missing index (ENOENT), batchindex.Load returns an empty
-// index and dedup gracefully degrades to "nothing seen." On a corrupt or
-// unreadable index, the error is logged and the caller continues with an
-// empty set — this is acceptable per ADR-0034 §3 (rename-loser
-// re-processes).
-//
-// Terminal-status deviation from PRD 1218: PRD 1218 lists only
-// success/failure/aborted as terminal statuses. The global-dedup skip
-// rule only treats "success" as terminal (failed triggers are retried on
-// the next tick). "superseded" is also treated as terminal since an
-// obsolete trigger should not be re-processed even though its run did not
-// succeed. This deviation is intentional.
-func (d *Daemon) loadGlobalSeenForPR(prNumber int) (map[string]bool, error) {
-	seen := map[string]bool{}
-	indexPath := daemon.BatchesIndexPath(d.BaseDir)
-	idx, err := batchindex.Load(indexPath)
-	if err != nil {
-		return nil, fmt.Errorf("load batches index: %w", err)
-	}
-
-	for _, entry := range idx.Entries {
-		if entry.Kind != batchindex.KindReview || entry.PR != prNumber {
-			continue
-		}
-		// Look for a review-state.json at <entry.Path>/runs/review/review-state.json.
-		statePath := filepath.Join(entry.Path, "runs", "review", "review-state.json")
-		state, err := batchindex.ReadReviewState(filepath.Join(entry.Path, "runs", "review"))
-		if err != nil {
-			if os.IsNotExist(err) {
-				continue
-			}
-			d.logf("read review state %s: %v", statePath, err)
-			continue
-		}
-		for _, sc := range state.SeenComments {
-			if shouldSkipDedupStatus(sc.Status) {
-				seen[sc.CommentID] = true
-			}
-		}
-	}
-	return seen, nil
-}
+// loadGlobalSeenForPR was removed in issue #1480 slice A: cross-run
+// dedup now reads from the daemon's seenCache (hydrated at
+// construction), so the per-tick on-disk scan no longer exists. The
+// on-disk source-of-truth construction lives in loadSeenCache.
 
 // shouldSkipDedupStatus reports whether a recorded comment status means
 // the comment should be skipped during global dedup.
@@ -532,7 +591,7 @@ func (d *Daemon) prepareReviewRun(prNumber int, commentID string) (string, strin
 		return "", "", nil, nil, fmt.Errorf("write run manifest: %w", err)
 	}
 
-	state, err := NewReviewStateStore(d.ReviewStatePath(reviewRunFolder), prNumber)
+	state, err := NewReviewStateStore(d.ReviewStatePath(reviewRunFolder), prNumber, d)
 	if err != nil {
 		_ = rs.Close()
 		return "", "", nil, nil, fmt.Errorf("open review state: %w", err)

@@ -69,7 +69,7 @@ One folder under `.sandman/batches/<batch-id>/runs/<run-id>/` containing `run.js
 _Avoid_: run folder, run directory.
 
 **Review daemon state**:
-Flat files under `.sandman/reviews/` for daemon-level state: `review.sock` (daemon command socket) and `review-prompt.md` (shared prompt template). No per-PR subdirectories. Per-run review state (`review-state.json` with seen comments and claim locks) lives inside the batch run folder at `.sandman/batches/<batch-id>/runs/<run-id>/review-state.json`. Dedup key is `(prNumber, commentID)`. References ADR-0034.
+Flat files under `.sandman/reviews/` for daemon-level state: `review.sock` (daemon command socket) and `review-prompt.md` (shared prompt template). No per-PR subdirectories. Per-run review state (`review-state.json` with seen comments and claim locks) lives inside the batch run folder at `.sandman/batches/<batch-id>/runs/<run-id>/review-state.json`. Dedup key is `(prNumber, commentID)`. The daemon additionally maintains a per-process in-memory `seenCache` (`prNumber → map[commentID]bool`) hydrated at construction from the on-disk batches index and refreshed on every successful `ReviewStateStore.MarkSeen` (status ∈ `{success, superseded}`); the cache is advisory and must be invalidated on every `MarkSeen` so the per-tick scan can short-circuit without re-reading `.sandman/batches.json` or any `review-state.json`. References ADR-0034 and issue #1480 (slice A).
 _Avoid_: review state, PR state.
 
 **Review daemon tick**:
