@@ -82,6 +82,26 @@ For review runs, the run folder (`.sandman/batches/<batch-id>/runs/<run-id>/`) c
 
 For each PR scanned by `tick` / `processPR`, the dedup check against terminal-seen comments reads from a per-process in-memory cache (`Daemon.seenCache`) keyed `prNumber → map[commentID]bool`. The cache is hydrated eagerly at daemon construction by replaying the on-disk batches index and every terminal-seen entry it references, then refreshed on every successful `ReviewStateStore.MarkSeen` (status ∈ `{success, superseded}`) and forgotten on every `Release`. The on-disk `review-state.json` files remain the source of truth — the cache only short-circuits the per-tick on-disk scan, it does not introduce a new persistence boundary. `Daemon.InvalidateSeenCache()` re-runs the on-disk scan and replaces the cache; production calls this when an out-of-band change to `batches.json` or a `review-state.json` is observed (e.g. via fsnotify in a later slice, or as a slow-tick recovery). Issue [#1480](https://github.com/rafaelromao/sandman/issues/1480) slice A.
 
+### Verify off the critical path (slice D)
+
+The original implementation of `launchReview` ran `verifyReviewPosted` synchronously after `RunBatch` returned: three `ListPRComments` polls at 5-second backoff (up to ~15s wall) to wait for the agent's review comment to appear on GitHub. Combined with agent startup and `RunBatch` execution, this routinely overrun the 30s `PollingInterval` and triggered "previous tick still running, skipping" — which dropped incoming `/sandman review` comments. Issue [#1482](https://github.com/rafaelromao/sandman/issues/1482) (slice D) moves the verify step off the critical path.
+
+**Chosen option:** Option 1 (lazy verify).
+
+**Critical-path latency budget:** `launchReview` returns within `RunBatch_completion + small_constant`. The `~15s` retry chain is removed. Slice B's `busy=1` semantic still bounds the outer critical path; under lazy verify the daemon's `busy` semaphore is held for a bounded, predictable window.
+
+**Promotion step:** every `tick` first runs `promotePendingReviews` (after acquiring `busy`, before `ListOpenPRs`). For each in-memory pending entry the daemon calls `ListPRComments` once. Three outcomes:
+
+- A non-trigger comment is observed at-or-after the launch timestamp → `MarkSeen("success")` on the per-run store; the cache hook fires; the entry is dropped.
+- No review comment yet → the entry's cycle counter increments. After `pendingMaxCycles = 3` cycles (~90s at default `PollingInterval`) the entry is promoted to `MarkSeen("failure")`; the daemon also calls `MarkTerminalSeen` on the seen cache hook so the next tick skips the trigger without re-launching. This is a slice-D-only path; `MarkSeen("failure")` invoked from processPR's RunBatch-error branch does NOT fire `MarkTerminalSeen` (failure remains retryable per slice A's contract).
+- `ListPRComments` errors are logged and the entry is kept — a temporary GitHub outage does not silently promote an in-flight review to failure.
+
+**New status — `pending`:** `review-state.json` can now carry `pending` in `seenComments`. `pending` is NOT in `shouldSkipDedupStatus` (it remains retryable from the per-run store's perspective); the in-process `pendingReviews` map and the per-tick pending-set filter in `processPR` are what guard against double-launching while pending.
+
+**Dedup consequence for `(prNumber, commentID)`:** the seen cache continues to short-circuit only `success`/`superseded` entries; pending comments are still subject to in-memory dedup via the daemon's `pendingReviews` map keyed by PR number plus a per-PR-set filter in `processPR`. A follow-up tick that processes the same PR sees pending filters drop the trigger from `unprocessed`, and `promotePendingReviews` resolves the entry toward `success`/`failure`. There is no observable window in which a trigger is double-launched.
+
+**Restart semantics:** `pendingReviews` is in-process only. A daemon restart drops the pending window — a `pending` `review-state.json` from a prior run will be picked up on a future tick by `loadSeenCache` only if it has reached `success`/`failure`/`superseded`. Operators who want guaranteed lossless recovery across restarts during the pending window should re-post `/sandman review` on the PR after the daemon restarts. This trade-off is bounded (a 90s window at default `PollingInterval`) and acceptable for slice D.
+
 ## Consequences
 
 ### Positive
@@ -92,6 +112,7 @@ For each PR scanned by `tick` / `processPR`, the dedup check against terminal-se
 - No orphan PRs: all open PRs with unprocessed `/sandman` comments are scanned, regardless of daemon uptime.
 - Claims are atomic with the rest of `review-state.json` — no separate directory to manage.
 - Per-PR seen cache (issue #1480 slice A) keeps tick latency constant as the number of historical review batches grows — `processPR` does not re-read `.sandman/batches.json` or any `review-state.json` for cached PRs. Regression tests: `TestDaemon_SeenCacheHydratedAtConstruction`, `TestDaemon_ProcessPRScalesConstantlyWithPriorBatches`, `TestDaemon_ReviewStateStore_MarkSeenInvalidatesCacheMidProcess`, `TestReviewStateStore_MarkSeenFiresCacheHook`, `TestReviewStateStore_MarkSeenSaveErrorLeavesCacheUntouched`, `TestDaemon_ReleaseForgetsCacheEntry` (in `internal/review/daemon_sliceA_test.go` and `internal/review/state_test.go`).
+- Lazy verify (issue #1482 slice D) keeps `launchReview`'s critical path proportional to `RunBatch` and removes the ~15s inline retry window. Regression tests: `TestDaemon_PromotePendingComment_ReturnsSuccessWhenReviewFound`, `TestDaemon_PromotePendingComment_ReturnsErrorWhenMissing`, `TestDaemon_PromotePendingComment_IgnoresTriggerComment`, `TestDaemon_LaunchReviewReturnsFastAndRecordsPending`, `TestDaemon_NextTickPromotesPendingCommentToSuccess`, `TestDaemon_NextTickRejectsPendingCommentToFailureAfterBound`, `TestDaemon_NextTickRejectsPendingCommentTwiceNoOp`, `TestDaemon_PendingNotTerminalInSeenCache`, `TestDaemon_LaunchReviewReturnsFastOnRunBatchError` (in `internal/review/daemon_sliceD_test.go`).
 
 ### Negative
 

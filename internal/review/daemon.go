@@ -26,12 +26,14 @@ import (
 // reference the same constant.
 const PollingInterval = 30 * time.Second
 
-// verifyRetryMax is the maximum number of attempts for review comment
-// verification, accounting for GitHub API eventual consistency.
-const verifyRetryMax = 3
-
-// verifyRetryBackoff is the delay between verification retry attempts.
-const verifyRetryBackoff = 5 * time.Second
+// pendingMaxCycles is the upper bound on consecutive `tick` cycles a
+// pending review may stay in `pending` status before the daemon
+// promotes it to `failure`. Three cycles is ~90s at the default
+// 30s PollingInterval — large enough to tolerate GitHub API eventual
+// consistency and the agent's startup latency, small enough that the
+// daemon does not silently retry indefinitely when the agent never
+// posts a review comment.
+const pendingMaxCycles = 3
 
 // Clock returns the current time. Inject a custom clock in tests to avoid
 // time-based dependencies.
@@ -64,6 +66,19 @@ type Renderer interface {
 	RenderReview(cfg prompt.RenderConfig, data prompt.PRData) (string, error)
 }
 
+// pendingReviewEntry is the in-memory record the daemon keeps for a
+// review that has been launched but whose agent-posted review comment
+// has not yet been observed. The lazy-verify contract (issue #1482
+// slice D) holds these in memory so a subsequent tick can resolve
+// them without keeping `launchReview` on the critical path.
+type pendingReviewEntry struct {
+	commentID   string
+	since       time.Time
+	reviewState string // path to <runDir>/review-state.json for the launched run
+	storeRef    *ReviewStateStore
+	cycles      int
+}
+
 // Daemon polls the repo for /sandman review comments and launches review
 // agents serially.
 type Daemon struct {
@@ -86,6 +101,8 @@ type Daemon struct {
 	promptOnce           sync.Once
 	seenCache            map[int]map[string]bool
 	seenCacheMu          sync.RWMutex
+	pendingMu            sync.Mutex
+	pendingReviews       map[int][]pendingReviewEntry
 }
 
 // New returns a Daemon configured with the project defaults for the
@@ -95,17 +112,18 @@ type Daemon struct {
 // from ADR-0034 §3 means a stale skip is acceptable.
 func New(baseDir string, gh GitHubClient, prompts Renderer, runner BatchRunner, cfg *config.Config, broadcaster io.Writer) *Daemon {
 	d := &Daemon{
-		BaseDir:      baseDir,
-		GitHub:       gh,
-		Prompts:      prompts,
-		Runner:       runner,
-		Config:       cfg,
-		Broadcaster:  broadcaster,
-		Clock:        time.Now,
-		Trigger:      nil,
-		PollInterval: PollingInterval,
-		busy:         make(chan struct{}, 1),
-		seenCache:    map[int]map[string]bool{},
+		BaseDir:        baseDir,
+		GitHub:         gh,
+		Prompts:        prompts,
+		Runner:         runner,
+		Config:         cfg,
+		Broadcaster:    broadcaster,
+		Clock:          time.Now,
+		Trigger:        nil,
+		PollInterval:   PollingInterval,
+		busy:           make(chan struct{}, 1),
+		seenCache:      map[int]map[string]bool{},
+		pendingReviews: map[int][]pendingReviewEntry{},
 	}
 	if err := d.loadSeenCache(); err != nil {
 		d.logf("load seen cache: %v", err)
@@ -356,6 +374,15 @@ func (d *Daemon) tick(ctx context.Context) error {
 		return nil
 	}
 
+	// Lazy verify (issue #1482 slice D): before scanning open PRs for
+	// new triggers, the daemon promotes or rejects any pending
+	// verification carried over from previous launches. This keeps
+	// launchReview on the critical path (RunBatch only) while still
+	// detecting agent-posted review comments on the next tick.
+	if err := d.promotePendingReviews(ctx); err != nil {
+		d.logf("promote pending reviews: %v", err)
+	}
+
 	prs, err := d.GitHub.ListOpenPRs()
 	if err != nil {
 		return fmt.Errorf("list open PRs: %w", err)
@@ -459,6 +486,31 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int, canLaunch bool) er
 		return nil
 	}
 
+	// Lazy verify (issue #1482 slice D): drop triggers that are
+	// already registered as pending in this daemon. The next tick's
+	// promotePendingReviews step will observe the agent's review
+	// comment and promote them to success/failure; launching a second
+	// review for the same trigger would double-process the comment.
+	d.pendingMu.Lock()
+	pendingSet := map[string]bool{}
+	for _, e := range d.pendingReviews[prNumber] {
+		pendingSet[e.commentID] = true
+	}
+	d.pendingMu.Unlock()
+	if len(pendingSet) > 0 {
+		var filtered []unseenTrigger
+		for _, t := range unprocessed {
+			if pendingSet[t.comment.ID] {
+				continue
+			}
+			filtered = append(filtered, t)
+		}
+		if len(filtered) == 0 {
+			return nil
+		}
+		unprocessed = filtered
+	}
+
 	newest := unprocessed[0]
 	for i := 1; i < len(unprocessed); i++ {
 		if unprocessed[i].comment.CreatedAt.After(newest.comment.CreatedAt) {
@@ -516,9 +568,14 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int, canLaunch bool) er
 		}
 	}
 	if launchErr == nil {
-		if err := state.MarkSeen(comment.ID, "success"); err != nil {
-			d.logf("mark comment %s seen: %v", comment.ID, err)
+		// Lazy verify (issue #1482 slice D): record the trigger as
+		// pending so the next tick can promote it to success/failure.
+		// The state handle here is the same one used above for the
+		// superseded writes, so all writes land in the same file.
+		if err := state.MarkSeen(comment.ID, "pending"); err != nil {
+			d.logf("mark comment %s pending: %v", comment.ID, err)
 		}
+		d.registerPendingReview(prNumber, comment.ID, d.now(), statePath, state)
 	} else {
 		if persisted == nil {
 			state.Release(comment.ID)
@@ -545,6 +602,12 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int, canLaunch bool) er
 //     review, so the trigger should be retried)
 //   - superseded is treated as terminal (obsolete trigger, not in PRD set)
 //   - success is terminal (the review comment was published)
+//   - pending is retryable (issue #1482 slice D): the lazy-verify
+//     promotion step walks pending comments on every tick and either
+//     promotes them to success (review comment observed) or to
+//     failure (bounded retry escape). The seen-cache must therefore
+//     NOT short-circuit pending entries, otherwise a follow-up tick
+//     would never see them and the promotion step would never run.
 func shouldSkipDedupStatus(status string) bool {
 	return status == "success" || status == "superseded"
 }
@@ -611,6 +674,13 @@ func (d *Daemon) prepareReviewRun(prNumber int, commentID string) (string, strin
 // function's defer before returning. An error means the review was not
 // launched but the run folder may have been created and must be cleaned
 // up by the portal's stale recovery (issue #1024).
+//
+// On success this function records the trigger comment as `pending` in
+// the per-run review-state.json and registers the entry in the
+// daemon's pending set (issue #1482 slice D). The next tick's
+// promotePendingReviews step will then promote the comment to success
+// when the agent's review comment arrives, or to failure after
+// pendingMaxCycles ticks.
 func (d *Daemon) launchReview(ctx context.Context, prNumber int, focus, commentID, commentReactionID, prReactionID, reviewRunFolder, perRowRunID string, rs *daemon.RunSession) error {
 	defer func() {
 		if rs != nil {
@@ -694,12 +764,8 @@ func (d *Daemon) launchReview(ctx context.Context, prNumber int, focus, commentI
 		RunID:        perRowRunID,
 		RunDir:       reviewRunFolder,
 	}
-	verifyStart := d.now()
 	if _, err := d.Runner.RunBatch(ctx, req); err != nil {
 		return fmt.Errorf("run batch: %w", err)
-	}
-	if err := d.verifyReviewPosted(ctx, prNumber, verifyStart, commentID); err != nil {
-		return fmt.Errorf("review verification: %w", err)
 	}
 	return nil
 }
@@ -712,42 +778,140 @@ func (d *Daemon) now() time.Time {
 	return time.Now()
 }
 
-// verifyReviewPosted checks whether a new PR comment was posted after the
-// given timestamp, excluding the trigger comment. It retries up to 3
-// times with 5-second backoff to handle GitHub API eventual consistency.
-func (d *Daemon) verifyReviewPosted(ctx context.Context, prNumber int, since time.Time, excludeCommentID string) error {
-	var lastErr error
-	for attempt := 0; attempt < verifyRetryMax; attempt++ {
-		if attempt > 0 {
-			d.logf("PR #%d: review verification attempt %d/%d, retrying in %v", prNumber, attempt+1, verifyRetryMax, verifyRetryBackoff)
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			case <-time.After(verifyRetryBackoff):
-			}
-		}
-
-		comments, err := d.GitHub.ListPRComments(prNumber)
-		if err != nil {
-			lastErr = fmt.Errorf("list PR comments: %w", err)
-			d.logf("PR #%d: review verification: %v", prNumber, lastErr)
+// promotePendingComment resolves a single pending review: the daemon
+// has launched an agent for a trigger comment and recorded the trigger
+// as `pending`. The next tick calls this method for the entry; it
+// asks GitHub for the PR comments and returns the new status to
+// apply:
+//
+//   - "success" when a non-trigger comment has been posted at or after
+//     `since` (the agent posted a review comment).
+//   - ("pending", error) when no review comment has been observed
+//     yet. The error lets the caller decide whether to increment the
+//     cycle counter or promote to failure after pendingMaxCycles.
+//
+// The caller is responsible for writing the new status back into the
+// per-run ReviewStateStore and updating the in-memory pending entry.
+// Issue #1482 slice D.
+func (d *Daemon) promotePendingComment(ctx context.Context, prNumber int, excludeCommentID string, since time.Time) (string, error) {
+	comments, err := d.GitHub.ListPRComments(prNumber)
+	if err != nil {
+		return "", fmt.Errorf("list PR comments: %w", err)
+	}
+	for _, c := range comments {
+		if c.ID == excludeCommentID {
 			continue
 		}
-
-		for _, c := range comments {
-			if c.ID == excludeCommentID {
+		if c.CreatedAt.After(since) || c.CreatedAt.Equal(since) {
+			if c.Body == "" {
 				continue
 			}
-			if c.CreatedAt.After(since) && c.Body != "" {
-				d.logf("PR #%d: review comment verified (ID %s, posted at %v)", prNumber, c.ID, c.CreatedAt)
-				return nil
-			}
+			d.logf("PR #%d: review comment verified (ID %s, posted at %v)", prNumber, c.ID, c.CreatedAt)
+			return "success", nil
 		}
-		lastErr = fmt.Errorf("no review comment found on PR #%d after %v", prNumber, since)
+	}
+	return "pending", fmt.Errorf("no review comment found on PR #%d after %v", prNumber, since)
+}
+
+// promotePendingReviews is the tick-level walker that runs at the
+// start of every tick (after busy is acquired and before ListOpenPRs)
+// to advance any pending lazy-verify entries toward a terminal status.
+// For each pending entry:
+//
+//   - Call promotePendingComment against GitHub.
+//   - If success: MarkSeen("success") on the per-run store and drop
+//     the entry. The MarkSeen fires the seen-cache hook on success
+//     per slice A, so the next tick skips the comment via the seen
+//     cache.
+//   - If pending: increment the cycle counter; once it reaches
+//     pendingMaxCycles the daemon calls MarkSeen("failure") on the
+//     per-run store and drops the entry. Bounded-retry failure is
+//     added to the seen cache directly via MarkTerminalSeen so the
+//     next tick does NOT re-launch the review (the failure escape has
+//     already fired); this is a slice-D-only path and does not affect
+//     the slice-A "RunBatch-error failure is retryable" contract
+//     because that path lives in processPR, not here.
+//
+// Errors from ListPRComments are logged and the entry is kept — the
+// next tick will retry. This is conservative: a temporary GitHub
+// outage does not silently promote an in-flight review to failure.
+// Issue #1482 slice D.
+func (d *Daemon) promotePendingReviews(ctx context.Context) error {
+	d.pendingMu.Lock()
+	defer d.pendingMu.Unlock()
+	if len(d.pendingReviews) == 0 {
+		return nil
 	}
 
-	d.logf("PR #%d: review verification failed after %d attempts: %v", prNumber, verifyRetryMax, lastErr)
-	return lastErr
+	for prNumber, entries := range d.pendingReviews {
+		if len(entries) == 0 {
+			delete(d.pendingReviews, prNumber)
+			continue
+		}
+		kept := make([]pendingReviewEntry, 0, len(entries))
+		for _, e := range entries {
+			// Open the per-run store lazily if we did not cache it.
+			store := e.storeRef
+			if store == nil {
+				s, err := NewReviewStateStore(e.reviewState, prNumber, d)
+				if err != nil {
+					d.logf("PR #%d: reopen review-state for pending %s: %v", prNumber, e.commentID, err)
+					kept = append(kept, e)
+					continue
+				}
+				store = s
+			}
+
+			status, err := d.promotePendingComment(ctx, prNumber, e.commentID, e.since)
+			if err == nil && status == "success" {
+				if markErr := store.MarkSeen(e.commentID, "success"); markErr != nil {
+					d.logf("PR #%d: promote pending %s to success: %v", prNumber, e.commentID, markErr)
+				}
+				continue
+			}
+			// err != nil covers both "no review comment yet" (the
+			// usual path) and a transient ListPRComments failure
+			// (kept by the next tick). The status field is always
+			// "pending" in this branch — promotePendingComment only
+			// returns (success, nil) or (pending, err) — so we can
+			// safely increment the cycle counter and bail on the
+			// bounded-retry escape.
+			e.cycles++
+			if e.cycles >= pendingMaxCycles {
+				if markErr := store.MarkSeen(e.commentID, "failure"); markErr != nil {
+					d.logf("PR #%d: promote pending %s to failure: %v", prNumber, e.commentID, markErr)
+				}
+				// Bounded-retry escape: cache the pair so the
+				// next tick's processPR skips the trigger. This
+				// is a slice-D-only path (processPR's RunBatch-
+				// error failure path does NOT fire this).
+				d.MarkTerminalSeen(prNumber, e.commentID)
+				continue
+			}
+			e.storeRef = store
+			kept = append(kept, e)
+		}
+		if len(kept) > 0 {
+			d.pendingReviews[prNumber] = kept
+		} else {
+			delete(d.pendingReviews, prNumber)
+		}
+	}
+	return nil
+}
+
+// registerPendingReview records a new pending review entry after
+// launchReview returned successfully. processPR calls this once the
+// per-run ReviewStateStore has been written with status=pending.
+func (d *Daemon) registerPendingReview(prNumber int, commentID string, since time.Time, statePath string, store *ReviewStateStore) {
+	d.pendingMu.Lock()
+	defer d.pendingMu.Unlock()
+	d.pendingReviews[prNumber] = append(d.pendingReviews[prNumber], pendingReviewEntry{
+		commentID:   commentID,
+		since:       since,
+		reviewState: statePath,
+		storeRef:    store,
+	})
 }
 
 // logf writes a line to the broadcaster (or stderr when none is wired).
