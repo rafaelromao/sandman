@@ -113,24 +113,26 @@ const optsCollapsed = { helpers, stopGroups, expandedKey: null, tabs: { a: 'log'
 sandbox.SandmanPortalDiff.diffRuns(body, [run], optsLog);
 const detailRow = body.children[1];
 const originalContent = detailRow && detailRow.querySelector('.detail-content');
-const originalPre = originalContent && originalContent.querySelector('pre[data-scroll-key]');
-if (!originalPre) throw new Error('expected initial log pre');
-const originalFirstChild = originalPre.firstChild;
-sandbox.SandmanPortalDiff.diffRuns(body, [run], optsCollapsed);
-sandbox.SandmanPortalDiff.resetCounters();
-sandbox.SandmanPortalDiff.diffRuns(body, [run], optsLog);
-const detailAfter = body.children[1];
-const restoredContent = detailAfter && detailAfter.querySelector('.detail-content');
-const restoredPre = restoredContent && restoredContent.querySelector('pre[data-scroll-key]');
-const counters = sandbox.SandmanPortalDiff.getCounters();
-// Cache hit means: no innerHTML rewrites (no re-tokenization), and the
-// cached pane is reused by node identity.
-const paneIdentity = restoredPre === originalPre;
-const childIdentity = restoredPre && restoredPre.firstChild === originalFirstChild;
-if (counters.innerHTMLAssignments !== 0 || !paneIdentity || !childIdentity) {
-  throw new Error('re-expand should reuse cached pane; innerHTML=' + counters.innerHTMLAssignments + ' paneIdentity=' + paneIdentity + ' childIdentity=' + childIdentity);
-}
-console.log('PASS');
+  const originalPre = originalContent && originalContent.querySelector('pre[data-scroll-key]');
+  if (!originalPre) throw new Error('expected initial log pre');
+  const originalFirstChild = originalPre.firstChild;
+  sandbox.SandmanPortalDiff.diffRuns(body, [run], optsCollapsed);
+  sandbox.SandmanPortalDiff.resetCounters();
+  sandbox.SandmanPortalDiff.diffRuns(body, [run], optsLog);
+  const detailAfter = body.children[1];
+  const restoredContent = detailAfter && detailAfter.querySelector('.detail-content');
+  const restoredPre = restoredContent && restoredContent.querySelector('pre[data-scroll-key]');
+  const counters = sandbox.SandmanPortalDiff.getCounters();
+  // Cache hit means: no innerHTML rewrites (no re-tokenization), and the
+  // cached pane is reused by node identity.
+  const paneIdentity = restoredPre === originalPre;
+  const childIdentity = restoredPre && restoredPre.firstChild === originalFirstChild;
+  const forceBottom = restoredPre && restoredPre.getAttribute('data-scroll-force-bottom');
+  if (counters.innerHTMLAssignments !== 0 || !paneIdentity || !childIdentity) {
+    throw new Error('re-expand should reuse cached pane; innerHTML=' + counters.innerHTMLAssignments + ' paneIdentity=' + paneIdentity + ' childIdentity=' + childIdentity);
+  }
+  if (forceBottom !== '1') throw new Error('re-expand should mark cached log pane for bottom restore, got ' + forceBottom);
+  console.log('PASS');
 `
 	runNodeScript(t, js)
 }

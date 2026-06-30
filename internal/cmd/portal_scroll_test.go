@@ -109,12 +109,29 @@ if (api.isSticky('clean-b') !== false) throw new Error('setSticky with null shou
   if (el.scrollTop !== 1000) throw new Error('restore without state should default to sticky (snap to max scroll 1000), got ' + el.scrollTop);
 }
 
+  {
+    const key = 'restore-fresh-sticky-off-' + Math.random();
+    api.setSticky(key, false);
+    const el = { scrollHeight: 1200, clientHeight: 200, scrollTop: 0, getAttribute: (k) => k === 'data-scroll-key' ? key : null, addEventListener: () => {} };
+    api.restore([el], {});
+    if (el.scrollTop !== 0) throw new Error('restore with sticky=false and no state should keep scrollTop 0, got ' + el.scrollTop);
+  }
+
 {
-  const key = 'restore-fresh-sticky-off-' + Math.random();
+  const key = 'restore-force-bottom-' + Math.random();
   api.setSticky(key, false);
-  const el = { scrollHeight: 1200, clientHeight: 200, scrollTop: 0, getAttribute: (k) => k === 'data-scroll-key' ? key : null, addEventListener: () => {} };
+  let removed = false;
+  const el = {
+    scrollHeight: 1200,
+    clientHeight: 200,
+    scrollTop: 0,
+    getAttribute: (k) => k === 'data-scroll-key' ? key : (k === 'data-scroll-force-bottom' ? '1' : null),
+    removeAttribute: (name) => { if (name === 'data-scroll-force-bottom') removed = true; },
+    addEventListener: () => {},
+  };
   api.restore([el], {});
-  if (el.scrollTop !== 0) throw new Error('restore with sticky=false and no state should keep scrollTop 0, got ' + el.scrollTop);
+  if (el.scrollTop !== 1000) throw new Error('force-bottom restore should snap to max scroll 1000, got ' + el.scrollTop);
+  if (!removed) throw new Error('force-bottom restore should clear marker after use');
 }
 
 {

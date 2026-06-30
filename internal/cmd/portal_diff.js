@@ -26,6 +26,13 @@
     logPaneCache.set(subjectValue, pane);
   }
 
+  function markCachedLogPaneForBottom(pane) {
+    if (!pane || !pane.querySelector) return;
+    const pre = pane.querySelector('pre[data-scroll-key]');
+    if (!pre) return;
+    pre.setAttribute('data-scroll-force-bottom', '1');
+  }
+
   function resetCounters() {
     mutationCount = 0;
     innerHTMLAssignmentCount = 0;
@@ -1002,6 +1009,7 @@
       const cached = takeCachedLogPane(subjectValue);
       if (cached) {
         content.appendChild(cached);
+        markCachedLogPaneForBottom(cached);
       } else {
         buildLogContent(content, subjectRun, helpers);
       }
@@ -1104,6 +1112,7 @@
         if (cached) {
           content.appendChild(cached);
           pre = cached.querySelector('pre[data-scroll-key]');
+          markCachedLogPaneForBottom(cached);
           mutationCount += 1;
         } else {
           buildLogContent(content, subjectRun, opts.helpers);
@@ -1123,6 +1132,7 @@
         if (cached) {
           content.appendChild(cached);
           pre = cached.querySelector('pre[data-scroll-key]');
+          markCachedLogPaneForBottom(cached);
           mutationCount += 1;
         }
       }
