@@ -445,6 +445,19 @@ if (norm6.state.expandedRunKey !== null) {
   throw new Error('expected blocked RunID abc4-blocked-42 to be nulled, got ' + JSON.stringify(norm6.state.expandedRunKey));
 }
 
+storage.set(api.storageKey, JSON.stringify({ expandedRunKey: 'abc3-queued-42', tabs: { 'abc3-queued-42': 'events', 'abc4-blocked-42': 'details', 'abc1-issue-42': 'log' } }));
+const loaded7 = api.load();
+const norm7 = api.normalize(loaded7, rawRuns, rawRuns);
+if (Object.prototype.hasOwnProperty.call(norm7.state.tabs, 'abc3-queued-42')) {
+  throw new Error('expected queued RunID tab to be removed, got ' + JSON.stringify(norm7.state.tabs));
+}
+if (Object.prototype.hasOwnProperty.call(norm7.state.tabs, 'abc4-blocked-42')) {
+  throw new Error('expected blocked RunID tab to be removed, got ' + JSON.stringify(norm7.state.tabs));
+}
+if (norm7.state.tabs['abc1-issue-42'] !== 'log') {
+  throw new Error('expected active RunID tab to remain, got ' + JSON.stringify(norm7.state.tabs));
+}
+
 console.log('PASS');
 `
 	cmd := exec.Command("node", "-e", script, portalStatePath)

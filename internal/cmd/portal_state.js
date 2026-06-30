@@ -32,6 +32,7 @@
 
   function runIdentity(run) {
     if (!run || typeof run !== 'object') return null;
+    if (isWaitStateRun(run)) return null;
     return cleanKey(run.runId || run.key);
   }
 
@@ -101,6 +102,17 @@
       }
     }
     let changed = false;
+
+    if (Array.isArray(allRunList)) {
+      for (const run of allRunList) {
+        if (!isWaitStateRun(run)) continue;
+        const legacyKey = runKey(run);
+        if (legacyKey && Object.prototype.hasOwnProperty.call(current.tabs, legacyKey)) {
+          delete current.tabs[legacyKey];
+          changed = true;
+        }
+      }
+    }
 
     if (current.expandedRunKey && keyToSubject.has(current.expandedRunKey)) {
       current.expandedRunKey = keyToSubject.get(current.expandedRunKey);
