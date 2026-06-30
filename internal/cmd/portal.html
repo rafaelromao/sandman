@@ -2484,7 +2484,9 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
             next.log = existing.log;
           }
           if (existing && existing.events && !next.events) {
-            next.events = existing.events;
+            if (existing.kind !== 'active') {
+              next.events = existing.events;
+            }
           }
         }
         if (state.expandedRunKey) {
@@ -2531,7 +2533,7 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
       const currentTab = String((state.tabs && (state.tabs[tabKey] || state.tabs[run.key])) || 'log').trim();
       const hasLog = run.log && String(run.log).trim();
       const hasEvents = Object.prototype.hasOwnProperty.call(run, 'events');
-      if (currentTab === 'events' && hasEvents) return;
+      if (currentTab === 'events' && hasEvents && run.kind !== 'active') return;
       if (currentTab !== 'events' && hasLog) return;
       try {
         const res = await fetch(apiPath + '?runKey=' + encodeURIComponent(run.backendKey || run.key));

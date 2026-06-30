@@ -58,10 +58,14 @@
       const key = keyOf(el);
       if (!key) continue;
       trackScroll(el, key);
+      const forceBottom = el.getAttribute('data-scroll-force-bottom') === '1';
+      if (forceBottom) {
+        el.removeAttribute('data-scroll-force-bottom');
+      }
       const state = states ? states[key] : null;
       const sticky = state ? state.sticky : isSticky(key);
       const maxScroll = Math.max(0, el.scrollHeight - el.clientHeight);
-      if (sticky) {
+      if (sticky || forceBottom) {
         el.scrollTop = maxScroll;
         continue;
       }
