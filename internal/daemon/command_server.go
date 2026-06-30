@@ -62,9 +62,9 @@ func CommandSocketPath(dir string) string {
 }
 
 // CommandServer accepts one-shot JSON command requests on a unix socket
-// and dispatches them to an IssueCommander. It owns the lifetime of the
-// cmd.sock file: a fresh Start removes any stale socket, and Stop removes
-// the socket file again.
+// and dispatches them to an IssueCommander. It owns the listener
+// lifecycle and removes the filesystem socket path when the listener is
+// path-based.
 type CommandServer struct {
 	dir        string
 	commander  IssueCommander
@@ -91,8 +91,15 @@ func (s *CommandServer) Start() error {
 	_ = os.Remove(sockPath)
 	listener, err := net.Listen("unix", sockPath)
 	if err != nil {
-		if isPathTooLong(err) {
-			return s.startWithShortSockName()
+		if shouldFallbackToAbstractSocket(sockPath, err) {
+			listener, err = net.Listen("unix", abstractSocketName(s.dir))
+			if err != nil {
+				return fmt.Errorf("create abstract command socket: %w", err)
+			}
+			s.listener = listener
+			s.isAbstract = true
+			go s.acceptLoop()
+			return nil
 		}
 		return fmt.Errorf("create command socket: %w", err)
 	}

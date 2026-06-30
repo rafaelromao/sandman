@@ -737,6 +737,102 @@ func TestPortalRefresh_IgnoresEmptyExpandedStateBeforeDetailFetch(t *testing.T) 
 	}
 }
 
+func TestPortalRefresh_ActiveEventsTabHydratesDetail(t *testing.T) {
+	runID := "abcd-260618113825-issue-42"
+	summaryRun := map[string]any{
+		"key":         runID,
+		"runId":       runID,
+		"kind":        "active",
+		"status":      "running",
+		"issueLabel":  "#42",
+		"issueNumber": 42,
+		"batchKey":    "abcd-260618113825",
+		"log":         "live log line 1\nlive log line 2",
+	}
+	detailRun := map[string]any{
+		"key":         runID,
+		"runId":       runID,
+		"kind":        "active",
+		"status":      "running",
+		"issueLabel":  "#42",
+		"issueNumber": 42,
+		"batchKey":    "abcd-260618113825",
+		"log":         "live log line 1\nlive log line 2",
+		"events": []map[string]any{
+			{"type": "run.started", "timestamp": "2026-06-30T14:02:18Z", "payload": map[string]any{"branch": "sandman/review-42"}},
+			{"type": "run.retry", "timestamp": "2026-06-30T14:03:18Z", "payload": map[string]any{"attempt": 2, "reason": "agent-stalled"}},
+		},
+	}
+	runsJSON, err := json.Marshal([]map[string]any{summaryRun})
+	if err != nil {
+		t.Fatalf("marshal runs: %v", err)
+	}
+	detailRunJSON, err := json.Marshal(detailRun)
+	if err != nil {
+		t.Fatalf("marshal detail run: %v", err)
+	}
+	stateJSON := `{"expandedRunKey":"` + runID + `","tabs":{"` + runID + `":"log"},"commandFormCollapsed":false,"showArchived":false,"activeBatches":false,"sortBy":"started","sortDir":"desc"}`
+
+	page := buildPortalReproPage(t, stateJSON, runsJSON, `
+    window.setInterval = function () { return 1; };
+    window.__portalFetchCalls = 0;
+    window.__portalDetailFetchCalls = 0;
+    window.fetch = async function (input) {
+      window.__portalFetchCalls += 1;
+      var url = String(input || '');
+      if (url.indexOf('?runKey=') >= 0) window.__portalDetailFetchCalls += 1;
+      var payload = { runs: `+string(runsJSON)+` };
+      if (url.indexOf('?runKey=`+runID+`') >= 0) {
+        payload = { run: `+string(detailRunJSON)+` };
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async function () { return payload; },
+        text: async function () { return ''; },
+      };
+    };
+    setTimeout(function () {
+      var detail = document.querySelector('tr.detail-row[data-detail-for="`+runID+`"]');
+      var button = detail && detail.querySelector('button[data-action="set-tab"][data-tab="events"]');
+      if (!button) throw new Error('missing Events tab button');
+      button.click();
+    }, 120);
+    setTimeout(function () {
+      var detail = document.querySelector('tr.detail-row[data-detail-for="`+runID+`"]');
+      var pre = detail && detail.querySelector('pre[data-rendered-json]');
+      var marker = document.createElement('pre');
+      marker.id = 'portal-active-events-hydrates';
+      marker.textContent = JSON.stringify({
+        detailText: pre && pre.innerText,
+        fetchCalls: window.__portalFetchCalls || 0,
+        detailFetchCalls: window.__portalDetailFetchCalls || 0,
+      });
+      document.body.appendChild(marker);
+    }, 700);
+  `)
+
+	dom, _ := runPortalChromium(t, page)
+	payload := extractPortalMarker(t, dom, "portal-active-events-hydrates")
+	var result struct {
+		DetailText       string `json:"detailText"`
+		FetchCalls       int    `json:"fetchCalls"`
+		DetailFetchCalls int    `json:"detailFetchCalls"`
+	}
+	if err := json.Unmarshal([]byte(payload), &result); err != nil {
+		t.Fatalf("parse active events hydrate payload: %v\nraw=%s", err, payload)
+	}
+	if !strings.Contains(result.DetailText, "run.started") || !strings.Contains(result.DetailText, "agent-stalled") {
+		t.Fatalf("expected active run events to hydrate, got %#v", result)
+	}
+	if strings.TrimSpace(result.DetailText) == "[]" {
+		t.Fatalf("expected non-empty events JSON, got %#v", result)
+	}
+	if result.DetailFetchCalls < 1 {
+		t.Fatalf("expected active-run detail fetch on Events tab click, got %#v", result)
+	}
+}
+
 func TestPortalRowClick_IgnoresForcedToggleAttrsOnQueuedRun(t *testing.T) {
 	queued := map[string]any{
 		"key":         "queued-2",

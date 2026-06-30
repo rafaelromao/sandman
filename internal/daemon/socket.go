@@ -44,7 +44,7 @@ func (s *ControlSocket) Start() error {
 	os.Remove(sockPath)
 	listener, err := net.Listen("unix", sockPath)
 	if err != nil {
-		if isPathTooLong(err) {
+		if shouldFallbackToAbstractSocket(sockPath, err) {
 			return s.startWithShortSockName()
 		}
 		return fmt.Errorf("create control socket: %w", err)
@@ -77,9 +77,12 @@ func isPathTooLong(err error) bool {
 	return false
 }
 
+func shouldFallbackToAbstractSocket(sockPath string, err error) bool {
+	return len(sockPath) > 107 && isPathTooLong(err)
+}
+
 func (s *ControlSocket) startWithShortSockName() error {
-	batchName := filepath.Base(s.dir)
-	abstractName := "@sandman-" + fmt.Sprintf("%x", hashString(batchName))
+	abstractName := abstractSocketName(s.dir)
 	listener, err := net.Listen("unix", abstractName)
 	if err != nil {
 		return fmt.Errorf("create abstract control socket: %w", err)
@@ -98,6 +101,10 @@ func (s *ControlSocket) startWithShortSockName() error {
 	}()
 
 	return nil
+}
+
+func abstractSocketName(dir string) string {
+	return "@sandman-" + fmt.Sprintf("%x", hashString(filepath.Base(dir)))
 }
 
 func hashString(s string) uint64 {
