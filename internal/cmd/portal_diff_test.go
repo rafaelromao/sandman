@@ -1775,6 +1775,38 @@ console.log('PASS');
 	runNodeScript(t, js)
 }
 
+// TestPortalDiffUpdateDetailDetails_SkipsRebuildWithNewFieldsUnchanged
+// (issue #1506) locks AC #4 from the stability side: when the new
+// fields are present on the run object but unchanged between polls,
+// the fingerprint comparison sees them, the rendered JSON matches
+// byte-for-byte (full-string comparison, not substring), and the
+// details pane stays untouched (0 mutations, same <pre> element).
+// The new-field assertions guarantee this isn't a degenerate pass
+// where the change accidentally dropped the fields from detailsData.
+func TestPortalDiffUpdateDetailDetails_SkipsRebuildWithNewFieldsUnchanged(t *testing.T) {
+	js := `const body = makeMockBody();
+const run = { key: 'a', kind: 'completed', status: 'success', issueLabel: 'A', runId: 'r1', startedAt: 1000, finishedAt: 2000, duration: 1, branch: 'main', logPath: '/tmp/run.log', issueNumber: 42, issueTitle: 'Fix the frobnicator' };
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: 'a', tabs: { a: 'details' } };
+SandmanPortalDiff.diffRuns(body, [run], opts);
+const detailRow = body.children[1];
+const pre1 = detailRow.querySelector('pre[data-rendered-json]');
+const raw1 = pre1.getAttribute('data-rendered-json');
+if (!raw1.includes('"issueNumber": 42')) throw new Error('expected issueNumber in initial fingerprint, got ' + raw1);
+if (!raw1.includes('"issueTitle": "Fix the frobnicator"')) throw new Error('expected issueTitle in initial fingerprint, got ' + raw1);
+SandmanPortalDiff.resetCounters();
+SandmanPortalDiff.diffRuns(body, [run], opts);
+const counters = SandmanPortalDiff.getCounters();
+if (counters.mutations !== 0) throw new Error('unchanged details (incl. new fields) should not mutate, got ' + counters.mutations);
+const pre2 = detailRow.querySelector('pre[data-rendered-json]');
+if (pre2 !== pre1) throw new Error('details pre should not be replaced');
+const raw2 = pre2.getAttribute('data-rendered-json');
+if (raw2 !== raw1) throw new Error('details json fingerprint should be byte-identical across polls, got ' + raw2);
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
 func TestPortalDiffUpdateDetailEvents_RebuildsWhenEventsChange(t *testing.T) {
 	js := `const body = makeMockBody();
 const run1 = { key: 'a', kind: 'active', status: 'running', issueLabel: 'A', runId: 'r1', events: [{ type: 'start', timestamp: 1, payload: { ok: true } }] };
