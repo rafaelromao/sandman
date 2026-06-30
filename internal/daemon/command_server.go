@@ -62,13 +62,14 @@ func CommandSocketPath(dir string) string {
 }
 
 // CommandServer accepts one-shot JSON command requests on a unix socket
-// and dispatches them to an IssueCommander. It owns the lifetime of the
-// cmd.sock file: a fresh Start removes any stale socket, and Stop removes
-// the socket file again.
+// and dispatches them to an IssueCommander. It owns the listener
+// lifecycle and removes the filesystem socket path when the listener is
+// path-based.
 type CommandServer struct {
-	dir       string
-	commander IssueCommander
-	listener  net.Listener
+	dir        string
+	commander  IssueCommander
+	listener   net.Listener
+	isAbstract bool
 }
 
 // NewCommandServer wires a CommandServer to the given run directory and
@@ -90,6 +91,16 @@ func (s *CommandServer) Start() error {
 	_ = os.Remove(sockPath)
 	listener, err := net.Listen("unix", sockPath)
 	if err != nil {
+		if shouldFallbackToAbstractSocket(sockPath, err) {
+			listener, err = net.Listen("unix", abstractSocketName(s.dir))
+			if err != nil {
+				return fmt.Errorf("create abstract command socket: %w", err)
+			}
+			s.listener = listener
+			s.isAbstract = true
+			go s.acceptLoop()
+			return nil
+		}
 		return fmt.Errorf("create command socket: %w", err)
 	}
 	if err := os.Chmod(sockPath, 0o600); err != nil {
@@ -108,8 +119,10 @@ func (s *CommandServer) Stop() error {
 	if s.listener != nil {
 		err = s.listener.Close()
 	}
-	if rmErr := os.Remove(CommandSocketPath(s.dir)); rmErr != nil && !os.IsNotExist(rmErr) && err == nil {
-		err = rmErr
+	if !s.isAbstract {
+		if rmErr := os.Remove(CommandSocketPath(s.dir)); rmErr != nil && !os.IsNotExist(rmErr) && err == nil {
+			err = rmErr
+		}
 	}
 	return err
 }
