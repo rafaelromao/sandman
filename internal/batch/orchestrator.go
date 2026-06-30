@@ -1328,6 +1328,30 @@ func (o *Orchestrator) logAborted(issueNum int, runID string, abortedBy []int) {
 	})
 }
 
+// mapRetryReason picks the closed-vocabulary reason for a run.retry emit
+// from the previous attempt's status, the heartbeat-trips signal, and the
+// parent context. The vocabulary (agent-stalled, agent-failed,
+// sandbox-timeout, kill-timeout, manual) is locked in ADR-0035 (slice 5
+// of #1498) and must not be silently extended. If a future code path
+// surfaces a status that does not map to a known arm, the function
+// panics so the new condition is added to the ADR and the mapping
+// explicitly, rather than collapsing to an empty string that violates
+// the slice-3 contract "never null, never empty" (#1501 acceptance #3).
+func mapRetryReason(previousStatus string, abortedByHeartbeat bool, parentCtx context.Context) string {
+	switch previousStatus {
+	case "failure":
+		return "agent-failed"
+	case "aborted":
+		if abortedByHeartbeat {
+			return "agent-stalled"
+		}
+		if parentCtx != nil && parentCtx.Err() != nil {
+			return "kill-timeout"
+		}
+	}
+	panic(fmt.Sprintf("mapRetryReason: unmapped previous_status=%q abortedByHeartbeat=%v; add a vocabulary arm via ADR-0035", previousStatus, abortedByHeartbeat))
+}
+
 // logRetry writes a run.retry event at the top of a retry iteration. It is
 // called from runOnce for both the issue-driven and prompt-only loops, with
 // attempt (1-indexed, the about-to-start attempt), maxAttempts, and the
@@ -1782,17 +1806,7 @@ func (s *runSession) runOnce(
 		}
 
 		if attempt > 0 {
-			reason := ""
-			switch result.Status {
-			case "failure":
-				reason = "agent-failed"
-			case "aborted":
-				if abortedByHeartbeat {
-					reason = "agent-stalled"
-				} else if s.parentCtx != nil && s.parentCtx.Err() != nil {
-					reason = "kill-timeout"
-				}
-			}
+			reason := mapRetryReason(result.Status, abortedByHeartbeat, s.parentCtx)
 			o.logRetry(runID, branch, attempt+1, attempts, result.Status, reason, logPath, s.issueNumber)
 		}
 

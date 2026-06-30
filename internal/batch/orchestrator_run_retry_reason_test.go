@@ -313,6 +313,71 @@ func TestRunSingle_EmitsRunRetryWithKillTimeoutReasonOnParentCtxCancel(t *testin
 	}
 }
 
+// TestMapRetryReason_PanicsOnUnmappedStatus pins the slice-3 contract
+// from #1501 acceptance #3: "Every existing emit site that constructs
+// a run.retry event carries a reason: <vocabulary value> payload field
+// — never null, never empty." The plan locks the vocabulary in
+// ADR-0035 and forbids silent schema bumps; if a future code path
+// surfaces a status that does not map to a known arm, mapRetryReason
+// must panic so the new condition is added to the ADR explicitly.
+func TestMapRetryReason_PanicsOnUnmappedStatus(t *testing.T) {
+	cases := []struct {
+		name           string
+		status         string
+		abortedByHeart bool
+		cancelParent   bool
+	}{
+		{name: "unknown status", status: "weird", abortedByHeart: false, cancelParent: false},
+		{name: "aborted without heartbeat and without parent cancel", status: "aborted", abortedByHeart: false, cancelParent: false},
+		{name: "empty status", status: "", abortedByHeart: false, cancelParent: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			if tc.cancelParent {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithCancel(ctx)
+				cancel()
+			}
+			defer func() {
+				if r := recover(); r == nil {
+					t.Fatalf("mapRetryReason(%q, %v, ...) did not panic; expected sentinel for unmapped status", tc.status, tc.abortedByHeart)
+				}
+			}()
+			_ = mapRetryReason(tc.status, tc.abortedByHeart, ctx)
+		})
+	}
+}
+
+// TestMapRetryReason_MapsKnownArms is a direct unit test for the
+// mapping table. It avoids the orchestrator plumbing (heartbeat,
+// runOnce, factory fakes) so the vocabulary → trigger table is
+// pinned in one place.
+func TestMapRetryReason_MapsKnownArms(t *testing.T) {
+	parent, cancel := context.WithCancel(context.Background())
+	cancel()
+	cases := []struct {
+		name           string
+		status         string
+		abortedByHeart bool
+		ctx            context.Context
+		want           string
+	}{
+		{name: "agent-failed on failure", status: "failure", abortedByHeart: false, ctx: context.Background(), want: "agent-failed"},
+		{name: "agent-stalled on heartbeat-killed", status: "aborted", abortedByHeart: true, ctx: context.Background(), want: "agent-stalled"},
+		{name: "kill-timeout on parent cancel", status: "aborted", abortedByHeart: false, ctx: parent, want: "kill-timeout"},
+		{name: "heartbeat wins over parent cancel", status: "aborted", abortedByHeart: true, ctx: parent, want: "agent-stalled"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := mapRetryReason(tc.status, tc.abortedByHeart, tc.ctx)
+			if got != tc.want {
+				t.Errorf("mapRetryReason(%q, %v, _) = %q, want %q", tc.status, tc.abortedByHeart, got, tc.want)
+			}
+		})
+	}
+}
+
 // --- fakes used only by the reason-vocabulary tests ---
 
 // ctxCancelRunnable blocks until the context is cancelled, then
