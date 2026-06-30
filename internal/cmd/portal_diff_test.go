@@ -3778,6 +3778,21 @@ console.log('PASS');
 	runPortalHTMLScript(t, js)
 }
 
+// TestPortalRunsView_VisibleRunsForTable_OrphanReviewRowCarriesReviewOnlyLabel
+// covers behaviour #3 of issue #1526 at the table-projection level:
+// visibleRunsForTable must surface the orphan review's issueLabel as
+// "Review of #N", so the table renders the explicit review-only label.
+func TestPortalRunsView_VisibleRunsForTable_OrphanReviewRowCarriesReviewOnlyLabel(t *testing.T) {
+	js := `const review = { key: 'PR1508', kind: 'active', status: 'reviewing', review: true, issueLabel: 'PR1508', runId: 'PR1508', issueNumber: 1472, prNumber: 1508, startedAt: '2026-06-30T12:00:00Z' };
+const visible = visibleRunsForTable([review]);
+if (visible.length !== 1) throw new Error('expected exactly one visible row, got ' + JSON.stringify(visible.length));
+if (visible[0].key !== 'PR1508') throw new Error('expected visible row key to match source runId, got ' + JSON.stringify(visible[0].key));
+if (visible[0].issueLabel !== 'Review of #1472') throw new Error('expected visible row label to be explicit review-only, got ' + JSON.stringify(visible[0].issueLabel));
+console.log('PASS');
+`
+	runPortalHTMLScript(t, js)
+}
+
 func TestPortalRunsView_VisibleRunForIssueGroup_TerminalReviewWinsOverActiveKind(t *testing.T) {
 	js := `const review = { key: 'a0c19-260622193226-1227', kind: 'active', status: 'success', review: true, issueLabel: '#1223', runId: 'a0c19-260622193226-1227', issueNumber: 1223, prNumber: 5 };
 const stub = visibleRunForIssueGroup(1223, [review]);

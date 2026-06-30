@@ -474,3 +474,44 @@ func TestPortal_DeadBatchSynthesisIgnoresReviewRuns(t *testing.T) {
 		t.Fatal("expected synthesized aborted row for dead batch issue 43")
 	}
 }
+
+// TestPortal_Compute_ReviewOnlyRunRemainsInComputedSet is the regression
+// guard for behaviour #6 of issue #1526: a review-only run (one with no
+// implementation run anywhere in the same batch) must appear in the
+// portalRunsView computed set with Review=true and PRNumber set, so the
+// frontend can render the explicit review-only orphan row instead of
+// filtering it out as a stray review.
+func TestPortal_Compute_ReviewOnlyRunRemainsInComputedSet(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	startedAt := time.Now().Add(-10 * time.Minute)
+	logPath := filepath.Join(repoRoot, ".sandman", "events.jsonl")
+	writePortalLog(t, logPath, []events.Event{
+		{Type: "run.started", Timestamp: startedAt, RunID: "review-1472", Issue: 1472, Payload: map[string]any{"review": true, "branch": "sandman/1472-fix", "pr_number": 1508}},
+		{Type: "run.finished", Timestamp: startedAt.Add(2 * time.Minute), RunID: "review-1472", Issue: 1472, Payload: map[string]any{"review": true, "status": "success", "branch": "sandman/1472-fix", "pr_number": 1508}},
+	})
+
+	runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: logPath})
+	if err != nil {
+		t.Fatalf("load portal runs: %v", err)
+	}
+	if len(runs) != 1 {
+		t.Fatalf("expected exactly one computed run for review-only issue, got %d: %#v", len(runs), runs)
+	}
+	run := runs[0]
+	if !run.Review {
+		t.Fatalf("expected computed run to be marked Review, got %#v", run)
+	}
+	if run.PRNumber != 1508 {
+		t.Fatalf("expected computed run to carry PRNumber=1508, got %#v", run)
+	}
+	if run.RunID != "review-1472" {
+		t.Fatalf("expected computed run to preserve RunID review-1472, got %#v", run)
+	}
+	if run.IssueNumber != 1472 {
+		t.Fatalf("expected computed run to carry IssueNumber=1472, got %#v", run)
+	}
+}
