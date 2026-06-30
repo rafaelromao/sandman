@@ -3739,6 +3739,45 @@ console.log('PASS');
 	runPortalHTMLScript(t, js)
 }
 
+// TestPortalRunsView_VisibleRunForIssueGroup_ReviewOnlyLabelsIssueWithPrefix
+// is the tracer bullet for issue #1526: a review-only issue group must
+// produce a visible row whose issueLabel explicitly signals review-only
+// (e.g. "Review of #1472") rather than reusing the source PR label or
+// fabricating a bare issue label.
+func TestPortalRunsView_VisibleRunForIssueGroup_ReviewOnlyLabelsIssueWithPrefix(t *testing.T) {
+	js := `const review = { key: 'PR1508', kind: 'active', status: 'reviewing', review: true, issueLabel: 'PR1508', runId: 'PR1508', issueNumber: 1472, prNumber: 1508 };
+const stub = visibleRunForIssueGroup(1472, [review]);
+if (!stub) throw new Error('expected visible row for review-only issue group');
+const label = String(stub.issueLabel || '');
+if (label === 'PR1508') throw new Error('expected review-only label to differ from source PR label, got bare PR label ' + JSON.stringify(label));
+if (label === '#1472') throw new Error('expected review-only label to differ from bare issue label, got bare issue label ' + JSON.stringify(label));
+if (label.indexOf('Review') < 0) throw new Error('expected review-only label to mention Review, got ' + JSON.stringify(label));
+if (label.indexOf('#1472') < 0) throw new Error('expected review-only label to reference the issue number, got ' + JSON.stringify(label));
+console.log('PASS');
+`
+	runPortalHTMLScript(t, js)
+}
+
+// TestPortalRunsView_VisibleRunForIssueGroup_ReviewOnlyIdentityMatchesSourceRun
+// covers behaviour #2 of issue #1526: the visible row's identity fields
+// must come from the review run, not be fabricated from missing
+// implementation-run metadata. batchKey on a non-review source must NOT
+// leak into the review-only visible row.
+func TestPortalRunsView_VisibleRunForIssueGroup_ReviewOnlyIdentityMatchesSourceRun(t *testing.T) {
+	js := `const review = { key: 'PR1508', kind: 'active', status: 'reviewing', review: true, issueLabel: 'PR1508', runId: 'PR1508', issueNumber: 1472, prNumber: 1508, startedAt: '2026-06-30T12:00:00Z' };
+const stub = visibleRunForIssueGroup(1472, [review]);
+if (!stub) throw new Error('expected visible row for review-only issue group');
+if (stub.key !== 'PR1508') throw new Error('expected visible row key to match source runId, got ' + JSON.stringify(stub.key));
+if (stub.runId !== 'PR1508') throw new Error('expected visible row runId to match source runId, got ' + JSON.stringify(stub.runId));
+if (stub.issueNumber !== 1472) throw new Error('expected visible row issueNumber to match source issueNumber, got ' + JSON.stringify(stub.issueNumber));
+if (stub.prNumber !== 1508) throw new Error('expected visible row prNumber to match source prNumber, got ' + JSON.stringify(stub.prNumber));
+if (stub.startedAt !== '2026-06-30T12:00:00Z') throw new Error('expected visible row startedAt to match source, got ' + JSON.stringify(stub.startedAt));
+if ('batchKey' in stub && stub.batchKey) throw new Error('expected review-only visible row not to carry a batchKey, got ' + JSON.stringify(stub.batchKey));
+console.log('PASS');
+`
+	runPortalHTMLScript(t, js)
+}
+
 func TestPortalRunsView_VisibleRunForIssueGroup_TerminalReviewWinsOverActiveKind(t *testing.T) {
 	js := `const review = { key: 'a0c19-260622193226-1227', kind: 'active', status: 'success', review: true, issueLabel: '#1223', runId: 'a0c19-260622193226-1227', issueNumber: 1223, prNumber: 5 };
 const stub = visibleRunForIssueGroup(1223, [review]);
