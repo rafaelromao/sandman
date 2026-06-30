@@ -1853,7 +1853,7 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
       if (!key) { stopAllRunStreams(); return; }
       const run = findRunByIdentity(key);
       const runKey = run ? run.key : key;
-      const subjectKey = subjectRunIdentity(run) || key;
+      const subjectKey = isWaitStateRun(run) ? '' : (subjectRunIdentity(run) || key);
       const tab = state.tabs[subjectKey] || state.tabs[key] || 'log';
       const wantStream = run && tab === 'log' && run.kind === 'active' && run.socketPath;
       for (const openKey of Object.keys(streamSources)) {
@@ -1949,6 +1949,7 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
     }
 
     function subjectRunIdentity(run) {
+      if (isWaitStateRun(run)) return '';
       return run ? (run.runId || run.key || '') : '';
     }
 
@@ -1966,6 +1967,7 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
 
     function subjectTabKey(runIdentity) {
       const run = findRunByIdentity(runIdentity);
+      if (isWaitStateRun(run)) return '';
       return subjectRunIdentity(run) || runIdentity || '';
     }
 
