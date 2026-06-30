@@ -78,6 +78,16 @@ For review runs, the run folder (`.sandman/batches/<batch-id>/runs/<run-id>/`) c
 
 `review-prompt.md` is the same file for all PRs. It contains no PR-specific data — the daemon renders PR context at request time. One prompt template, shared across all review runs.
 
+### Cross-tick claim lock
+
+The daemon uses two complementary mechanisms to prevent double-launching a review for the same `(prNumber, commentID)`:
+
+**In-process serialization (`busy=1`):** The `busy` channel in `Daemon` is sized to buffer 1, not `EffectiveReviewParallel()`. This means at most one `tick` can run at a time, regardless of the parallel review limit. Concurrent trigger signals are dropped while a scan runs — the tick logs "previous tick still running, skipping". The inner `sem` channel (sized to `EffectiveReviewParallel()`) remains inside `tick` so that a single tick can still launch reviews for multiple PRs concurrently.
+
+**In-memory claim lock (`TryClaim`):** Before adding eyes reactions and calling `launchReview`, `processPR` calls `ReviewStateStore.TryClaim(commentID)` against a freshly-loaded store for the new run folder. If the claim fails (another tick has the same comment claimed or terminal-seen), `processPR` returns immediately without calling `launchReview` or mutating GitHub. If `launchReview` returns an error and the run folder's `review-state.json` was not written (claim not yet persisted), `processPR` calls `state.Release(commentID)` so the next tick retries. The `TryClaim` reservation is in-memory only; it is not persisted to disk until `MarkSeen` is called on success or failure. A crash between `TryClaim` and `MarkSeen` means the claim is lost and the comment may be reprocessed on restart — this is acceptable per the rename-loser trade-off.
+
+The `busy=1` outer serialization makes the structural race (two ticks in `processPR` for the same PR) impossible. The `TryClaim` in-memory lock is defense-in-depth: it handles the edge case where two ticks enter `processPR` for the same PR through the trigger channel used in tests.
+
 ## Consequences
 
 ### Positive
@@ -91,7 +101,7 @@ For review runs, the run folder (`.sandman/batches/<batch-id>/runs/<run-id>/`) c
 ### Negative
 
 - The daemon must scan all open PRs on every cycle — no per-PR caching of "nothing new here." Acceptable given GitHub API pagination and the single-repo, single-operator workload.
-- If `review-state.json` is deleted mid-run, the daemon re-processes the same comment — no external idempotency guard. Recoverable but potentially wasteful.
+- If `review-state.json` is deleted mid-run, the daemon re-processes the same comment — no external idempotency guard. Recoverable but potentially wasteful. The `busy=1` serialization and `TryClaim` in-memory lock reduce the claim window significantly but do not eliminate the rename-loser race entirely: a crash after `launchReview` starts but before `review-state.json` is written still results in re-processing on restart. The re-process is safe (the review comment will be re-posted) but potentially wasteful.
 
 ### Neutral
 

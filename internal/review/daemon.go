@@ -99,7 +99,7 @@ func New(baseDir string, gh GitHubClient, prompts Renderer, runner BatchRunner, 
 		Clock:        time.Now,
 		Trigger:      nil,
 		PollInterval: PollingInterval,
-		busy:         make(chan struct{}, cfg.EffectiveReviewParallel()),
+		busy:         make(chan struct{}, 1),
 	}
 }
 
@@ -374,6 +374,18 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int, canLaunch bool) er
 		return nil
 	}
 
+	reviewRunFolder, perRowRunID, rs, state, prepErr := d.prepareReviewRun(prNumber, comment.ID)
+	if prepErr != nil {
+		d.logf("prepare review run for PR #%d comment %s: %v", prNumber, comment.ID, prepErr)
+		return nil
+	}
+
+	if !state.TryClaim(comment.ID) {
+		d.logf("comment %s already claimed or terminal-seen, skipping", comment.ID)
+		_ = rs.Close()
+		return nil
+	}
+
 	commentReactionID, commentErr := d.GitHub.AddCommentReaction(comment.ID, "eyes")
 	if commentErr != nil {
 		d.logf("add reaction to comment %s: %v", comment.ID, commentErr)
@@ -383,23 +395,13 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int, canLaunch bool) er
 		d.logf("add reaction to PR #%d: %v", prNumber, prErr)
 	}
 
-	runDir, launchErr := d.launchReview(ctx, prNumber, focus, comment.ID, commentReactionID, prReactionID)
+	launchErr := d.launchReview(ctx, prNumber, focus, comment.ID, commentReactionID, prReactionID, reviewRunFolder, perRowRunID, rs)
 	if launchErr != nil {
 		d.logf("launch review for PR #%d comment %s: %v", prNumber, comment.ID, launchErr)
-		// If launchReview failed before creating a run folder, there
-		// is nowhere to record review-state.json. The trigger will be
-		// retried on the next tick.
-		if runDir == "" {
-			return nil
-		}
 	}
 
-	// Mark the trigger as seen in the new run's review-state.json.
-	state, stateErr := NewReviewStateStore(d.ReviewStatePath(runDir), prNumber)
-	if stateErr != nil {
-		d.logf("open review state for run %s: %v", runDir, stateErr)
-		return nil
-	}
+	statePath := d.ReviewStatePath(reviewRunFolder)
+	persisted, _ := os.Stat(statePath)
 	for _, t := range unprocessed {
 		if t.comment.ID == comment.ID {
 			continue
@@ -413,16 +415,14 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int, canLaunch bool) er
 			d.logf("skipping stale trigger comment %s (newer %s exists)", t.comment.ID, comment.ID)
 		}
 	}
-	// Gate on the launch error, not the state-store error. The shadowing
-	// of the launch error by NewReviewStateStore is what caused the
-	// regression: a failed launch was recorded as "success" because the
-	// state-store nil-error satisfied the guard. Per PRD 1218 only
-	// success/failure/aborted are terminal; superseded is intentional.
 	if launchErr == nil {
 		if err := state.MarkSeen(comment.ID, "success"); err != nil {
 			d.logf("mark comment %s seen: %v", comment.ID, err)
 		}
 	} else {
+		if persisted == nil {
+			state.Release(comment.ID)
+		}
 		if err := state.MarkSeen(comment.ID, "failure"); err != nil {
 			d.logf("mark comment %s failure: %v", comment.ID, err)
 		}
@@ -490,17 +490,73 @@ func shouldSkipDedupStatus(status string) bool {
 	return status == "success" || status == "superseded"
 }
 
+// prepareReviewRun creates the run folder and state store for a new review
+// run. It is called by processPR before TryClaim so that the run folder,
+// run session, and state store exist before TryClaim is called. The returned
+// *daemon.RunSession must be passed to launchReview; processPR does not
+// close it.
+func (d *Daemon) prepareReviewRun(prNumber int, commentID string) (string, string, *daemon.RunSession, *ReviewStateStore, error) {
+	ts, shortid, err := runid.NewBatch()
+	if err != nil {
+		return "", "", nil, nil, fmt.Errorf("generate batch ID: %w", err)
+	}
+	batchDirName := runid.NewBatchID(runid.KindReview, 1, fmt.Sprintf("%d", prNumber), ts, shortid)
+
+	subject := fmt.Sprintf("PR%d", prNumber)
+	perRowRunID := runid.NewRunID(runid.KindReview, subject, ts, shortid)
+
+	rs := daemon.NewRunSession(d.BaseDir, batchDirName)
+	manifest := daemon.BatchManifest{BatchId: batchDirName, CreatedAt: time.Now(), RunKind: "review", Issues: []int{}, PR: &prNumber}
+	if err := rs.Prepare(manifest); err != nil {
+		_ = rs.Close()
+		return "", "", nil, nil, fmt.Errorf("prepare review run session: %w", err)
+	}
+
+	runDir := rs.RunDir()
+	reviewRunFolder := reviewRunDir(runDir)
+	if err := os.MkdirAll(reviewRunFolder, 0755); err != nil {
+		_ = rs.Close()
+		return "", "", nil, nil, fmt.Errorf("create review run folder: %w", err)
+	}
+
+	runManifest := batchindex.RunManifest{
+		RunID:     "review",
+		BatchID:   batchDirName,
+		PR:        prNumber,
+		Kind:      batchindex.KindReview,
+		CreatedAt: time.Now(),
+		Status:    batchindex.RunManifestStatusActive,
+	}
+	if err := daemon.WriteRunManifest(runDir, "review", runManifest); err != nil {
+		_ = rs.Close()
+		return "", "", nil, nil, fmt.Errorf("write run manifest: %w", err)
+	}
+
+	state, err := NewReviewStateStore(d.ReviewStatePath(reviewRunFolder), prNumber)
+	if err != nil {
+		_ = rs.Close()
+		return "", "", nil, nil, fmt.Errorf("open review state: %w", err)
+	}
+
+	return reviewRunFolder, perRowRunID, rs, state, nil
+}
+
 // launchReview renders the review prompt and runs the batch. The PR
 // metadata is re-fetched via the GitHub client so the prompt reflects
 // the current title and body. The rendered prompt is passed to the
 // agent through the per-run batch request; the shared
 // .sandman/reviews/review-prompt.md file stays a static, PR-agnostic
-// template. The run folder is created here via RunSession.Prepare. The
-// returned runDir is the new run folder; an error means the review was
-// not launched but the run folder may have been created and must be
-// cleaned up by the portal's stale recovery (issue #1024).
-func (d *Daemon) launchReview(ctx context.Context, prNumber int, focus, commentID, commentReactionID, prReactionID string) (string, error) {
+// template. The run folder is pre-created by prepareReviewRun; this
+// function skips folder creation and uses the provided reviewRunFolder
+// and perRowRunID. The provided *daemon.RunSession is closed by this
+// function's defer before returning. An error means the review was not
+// launched but the run folder may have been created and must be cleaned
+// up by the portal's stale recovery (issue #1024).
+func (d *Daemon) launchReview(ctx context.Context, prNumber int, focus, commentID, commentReactionID, prReactionID, reviewRunFolder, perRowRunID string, rs *daemon.RunSession) error {
 	defer func() {
+		if rs != nil {
+			_ = rs.Close()
+		}
 		if commentReactionID != "" {
 			if err := d.GitHub.RemoveCommentReaction(commentID, commentReactionID); err != nil {
 				d.logf("remove reaction from comment %s: %v", commentID, err)
@@ -508,14 +564,14 @@ func (d *Daemon) launchReview(ctx context.Context, prNumber int, focus, commentI
 		}
 		if prReactionID != "" {
 			if err := d.GitHub.RemoveIssueReaction(prNumber, prReactionID); err != nil {
-				d.logf("remove reaction from PR #%d: %v", prNumber, prReactionID)
+				d.logf("remove reaction from PR #%d: %v", prNumber, err)
 			}
 		}
 	}()
 
 	pr, err := d.GitHub.FetchPR(prNumber)
 	if err != nil {
-		return "", fmt.Errorf("fetch PR: %w", err)
+		return fmt.Errorf("fetch PR: %w", err)
 	}
 
 	rendered, err := d.Prompts.RenderReview(prompt.RenderConfig{}, prompt.PRData{
@@ -525,14 +581,11 @@ func (d *Daemon) launchReview(ctx context.Context, prNumber int, focus, commentI
 		ReviewFocus: focus,
 	})
 	if err != nil {
-		return "", fmt.Errorf("render prompt: %w", err)
+		return fmt.Errorf("render prompt: %w", err)
 	}
 
-	// Ensure the shared prompt template exists as a static,
-	// PR-agnostic file. PR-specific content reaches the agent only
-	// through Request.PromptConfig.PromptFlag below.
 	if err := d.initPromptTemplate(); err != nil {
-		return "", fmt.Errorf("init review prompt template: %w", err)
+		return fmt.Errorf("init review prompt template: %w", err)
 	}
 
 	agentName := ""
@@ -549,78 +602,17 @@ func (d *Daemon) launchReview(ctx context.Context, prNumber int, focus, commentI
 		modelName = d.Config.EffectiveReviewModel()
 	}
 	if agentName == "" {
-		return "", fmt.Errorf("review agent is not set; configure review_agent or agent in sandman config")
+		return fmt.Errorf("review agent is not set; configure review_agent or agent in sandman config")
 	}
 	if modelName == "" {
-		return "", fmt.Errorf("review model is not set; configure review_model or model in sandman config")
+		return fmt.Errorf("review model is not set; configure review_model or model in sandman config")
 	}
 
 	repoName, err := d.GitHub.RepoName()
 	if err != nil {
-		return "", fmt.Errorf("get repo name: %w", err)
+		return fmt.Errorf("get repo name: %w", err)
 	}
 	d.logf("repo=%s agent=%s model=%s pr=%d", repoName, agentName, modelName, prNumber)
-
-	var reviewIssueNumber int
-	if pr, err := d.GitHub.FetchPR(prNumber); err == nil {
-		reviewIssueNumber = pr.LinkedIssueNumber()
-	} else {
-		d.logf("fetch PR %d: %v (issue_number will not be set)", prNumber, err)
-	}
-
-	ts, shortid, err := runid.NewBatch()
-	if err != nil {
-		return "", fmt.Errorf("generate batch ID: %w", err)
-	}
-	batchDirName := runid.NewBatchID(runid.KindReview, 1, fmt.Sprintf("%d", prNumber), ts, shortid)
-
-	var subject string
-	if reviewIssueNumber > 0 {
-		subject = fmt.Sprintf("%d-PR%d", reviewIssueNumber, prNumber)
-	} else {
-		subject = fmt.Sprintf("PR%d", prNumber)
-	}
-	perRowRunID := runid.NewRunID(runid.KindReview, subject, ts, shortid)
-
-	// Boot the run session. The review daemon path does not start a
-	// cmd.sock (the per-issue abort is a CLI-only seam), so the
-	// commander is nil and Prepare cleanly skips the CommandServer
-	// step. The run dir, batch.json, and batch.sock are created
-	// before run.started is emitted by the orchestrator, so a daemon
-	// killed between run.started and the agent's first output still
-	// leaves enough on disk for the portal's stale-recovery sweep
-	// (issue #1024).
-	rs := daemon.NewRunSession(d.BaseDir, batchDirName)
-	manifest := daemon.BatchManifest{BatchId: batchDirName, CreatedAt: time.Now(), RunKind: "review", Issues: []int{}, PR: &prNumber}
-	if err := rs.Prepare(manifest); err != nil {
-		_ = rs.Close()
-		return "", fmt.Errorf("prepare review run session: %w", err)
-	}
-	defer rs.Close()
-
-	runDir := rs.RunDir()
-
-	// The review run owns a single per-run folder at
-	// <batchDir>/runs/review/. This is where review-state.json lives
-	// (acceptance criterion #3) and where the agent's run.log will be
-	// written by the orchestrator in slice 3.
-	reviewRunFolder := reviewRunDir(runDir)
-	if err := os.MkdirAll(reviewRunFolder, 0755); err != nil {
-		return runDir, fmt.Errorf("create review run folder: %w", err)
-	}
-
-	runManifest := batchindex.RunManifest{
-		RunID:     "review",
-		BatchID:   batchDirName,
-		PR:        prNumber,
-		Kind:      batchindex.KindReview,
-		CreatedAt: time.Now(),
-		Status:    batchindex.RunManifestStatusActive,
-	}
-
-	if err := daemon.WriteRunManifest(runDir, "review", runManifest); err != nil {
-		return runDir, fmt.Errorf("write run manifest: %w", err)
-	}
 
 	req := batch.Request{
 		Agent:                agentName,
@@ -638,22 +630,21 @@ func (d *Daemon) launchReview(ctx context.Context, prNumber int, focus, commentI
 		OutputWriter: rs.Broadcaster(),
 		Review:       true,
 		PRNumber:     prNumber,
-		IssueNumber:  reviewIssueNumber,
+		IssueNumber:  0,
 		ReviewFocus:  focus,
 		RunID:        perRowRunID,
 		RunDir:       reviewRunFolder,
 	}
 	verifyStart := d.now()
 	if _, err := d.Runner.RunBatch(ctx, req); err != nil {
-		return reviewRunFolder, fmt.Errorf("run batch: %w", err)
+		return fmt.Errorf("run batch: %w", err)
 	}
 	if err := d.verifyReviewPosted(ctx, prNumber, verifyStart, commentID); err != nil {
-		return reviewRunFolder, fmt.Errorf("review verification: %w", err)
+		return fmt.Errorf("review verification: %w", err)
 	}
-	return reviewRunFolder, nil
+	return nil
 }
 
-// now returns the current time. It uses the daemon's Clock if set,
 // otherwise falls back to time.Now. Tests inject a custom clock.
 func (d *Daemon) now() time.Time {
 	if d.Clock != nil {
