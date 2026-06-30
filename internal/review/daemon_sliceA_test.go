@@ -339,12 +339,14 @@ func TestDaemon_ReleaseForgetsCacheEntry(t *testing.T) {
 }
 
 // TestDaemon_ReviewStateStore_MarkSeenInvalidatesCacheMidProcess pins
-// criterion #6: a comment marked success via ReviewStateStore.MarkSeen
+// criterion #6: a comment marked via ReviewStateStore.MarkSeen
 // mid-process is honored by a subsequent processPR call without
-// requiring a daemon restart. The second tick must skip the
-// already-marked trigger WITHOUT re-reading the batches index or any
-// review-state.json (which proves the cache, not the on-disk re-scan,
-// is what honored it).
+// requiring a daemon restart. Under the lazy-verify contract (issue
+// #1482 slice D) the first tick records the comment as pending and
+// the second tick's promotePendingReviews step promotes it to
+// success; the cache hook fires on success via MarkSeen, hydrating
+// the in-memory cache so a third tick short-circuits on cache hits
+// without re-reading the batches index or any review-state.json.
 func TestDaemon_ReviewStateStore_MarkSeenInvalidatesCacheMidProcess(t *testing.T) {
 	const (
 		prNumber  = 33
@@ -370,40 +372,49 @@ func TestDaemon_ReviewStateStore_MarkSeenInvalidatesCacheMidProcess(t *testing.T
 	counter := &sliceASeenLoader{}
 	counter.Install(t)
 
-	// First tick: cache is empty, so processPR should launch a batch.
+	// First tick: cache is empty, so processPR should launch a batch
+	// and record the trigger as pending (slice D lazy verify).
 	if err := d.tick(context.Background()); err != nil {
 		t.Fatalf("first tick: %v", err)
 	}
 	if runner.calls != 1 {
 		t.Fatalf("first tick should launch exactly one batch, got %d", runner.calls)
 	}
-
-	// The first tick must have hydrated the cache for the next tick to
-	// short-circuit. processPR writes (prNumber, triggerID) to the new
-	// run's review-state.json via MarkSeen("success"); with the cache
-	// hook wired, the in-memory cache should reflect the same key.
-	if !d.IsTerminalSeen(prNumber, triggerID) {
-		t.Fatalf("after first tick the cache should have (%d, %s), got %v", prNumber, triggerID, d.seenCache)
+	if d.IsTerminalSeen(prNumber, triggerID) {
+		t.Fatalf("after first tick pending mark must NOT hydrate the seen cache (shouldSkipDedupStatus=pending is false), got cache %v", d.seenCache)
 	}
 
-	// Reset the counters so the assertion below measures the second tick only.
-	counter.batchesIndexLoadCalls.Store(0)
-	counter.reviewStateReadCalls.Store(0)
-
-	// Second tick: the cache should short-circuit the trigger comment.
-	// runner.calls must not advance and the disk I/O counters must stay
-	// at zero on the cache-covered PR.
+	// Second tick: promotePendingReviews observes the agent's review
+	// comment and promotes the pending entry to success, firing the
+	// MarkTerminalSeen hook. The cache should now contain the pair.
 	if err := d.tick(context.Background()); err != nil {
 		t.Fatalf("second tick: %v", err)
 	}
 	if runner.calls != 1 {
-		t.Errorf("second tick must not launch a new batch for the cached trigger, got %d total calls", runner.calls)
+		t.Errorf("second tick must not re-launch the review (now promoted via lazy verify), got %d total calls", runner.calls)
+	}
+	if !d.IsTerminalSeen(prNumber, triggerID) {
+		t.Fatalf("after second tick the cache should have (%d, %s) from promotion to success, got %v", prNumber, triggerID, d.seenCache)
+	}
+
+	// Reset the counters so the assertion below measures the third tick only.
+	counter.batchesIndexLoadCalls.Store(0)
+	counter.reviewStateReadCalls.Store(0)
+
+	// Third tick: the cache should short-circuit the trigger comment.
+	// runner.calls must not advance and the disk I/O counters must stay
+	// at zero on the cache-covered PR.
+	if err := d.tick(context.Background()); err != nil {
+		t.Fatalf("third tick: %v", err)
+	}
+	if runner.calls != 1 {
+		t.Errorf("third tick must not launch a new batch for the cached trigger, got %d total calls", runner.calls)
 	}
 	if got := counter.batchesIndexLoadCalls.Load(); got != 0 {
-		t.Errorf("second tick should not re-Load batches index, got %d loads (cache failed to short-circuit)", got)
+		t.Errorf("third tick should not re-Load batches index, got %d loads (cache failed to short-circuit)", got)
 	}
 	if got := counter.reviewStateReadCalls.Load(); got != 0 {
-		t.Errorf("second tick should not re-Read any review-state.json, got %d reads", got)
+		t.Errorf("third tick should not re-Read any review-state.json, got %d reads", got)
 	}
 }
 
