@@ -53,7 +53,7 @@ The `run.sock` accepts JSON command requests. The first supported command is:
 {"action": "abort", "issue": <issue-number>}
 ```
 
-Each `CommandServer` (one per AgentRun, bound at `<batch>/runs/<runID>/run.sock`) dispatches this to the `IssueCommander` interface on the orchestrator, which cancels the context for that specific `AgentRun` without affecting siblings.
+Each `CommandServer` (one per AgentRun, bound at `<batch>/runs/<runID>/run.sock`) dispatches this to the `IssueCommander` interface on the orchestrator, which cancels the context for that specific `AgentRun` without affecting siblings. If the filesystem socket path exceeds the Unix `sun_path` limit, the implementation falls back to an abstract Unix socket with the same `@sandman-<hex-hash>` naming scheme used by the control socket.
 
 ### Schema changes
 

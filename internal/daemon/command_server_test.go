@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -31,6 +32,80 @@ func (s *fakeCommander) calls() []int {
 	out := make([]int, len(s.abortCalls))
 	copy(out, s.abortCalls)
 	return out
+}
+
+func longCommandSocketDir(t *testing.T) string {
+	t.Helper()
+
+	dir := t.TempDir()
+	for len(CommandSocketPath(dir)) <= 108 {
+		dir = filepath.Join(dir, strings.Repeat("long-path-segment", 4))
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatalf("mkdir long dir: %v", err)
+	}
+	return dir
+}
+
+func TestCommandServer_StartFallsBackToAbstractSocketForLongPaths(t *testing.T) {
+	dir := longCommandSocketDir(t)
+	stub := &fakeCommander{}
+	server := NewCommandServer(dir, stub)
+	if err := server.Start(); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer server.Stop()
+
+	if _, err := os.Stat(CommandSocketPath(dir)); !os.IsNotExist(err) {
+		t.Fatalf("expected no filesystem socket at %q, got err=%v", CommandSocketPath(dir), err)
+	}
+
+	conn, err := net.Dial("unix", server.listener.Addr().String())
+	if err != nil {
+		t.Fatalf("dial abstract socket: %v", err)
+	}
+	defer conn.Close()
+
+	req := CommandRequest{Action: "abort", Issue: 42}
+	if err := json.NewEncoder(conn).Encode(req); err != nil {
+		t.Fatalf("encode request: %v", err)
+	}
+
+	var resp CommandResponse
+	if err := json.NewDecoder(conn).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.Status != "ok" {
+		t.Fatalf("expected status=ok via abstract socket, got %+v", resp)
+	}
+	if len(stub.calls()) != 1 || stub.calls()[0] != 42 {
+		t.Fatalf("expected stub to receive abort(42), got %v", stub.calls())
+	}
+}
+
+func TestCommandServer_StopLeavesFilesystemAloneForAbstractSocket(t *testing.T) {
+	dir := longCommandSocketDir(t)
+	server := NewCommandServer(dir, &fakeCommander{})
+	if err := server.Start(); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+
+	sockPath := CommandSocketPath(dir)
+	if err := os.WriteFile(sockPath, []byte("marker"), 0o600); err != nil {
+		t.Fatalf("write marker file: %v", err)
+	}
+
+	if err := server.Stop(); err != nil {
+		t.Fatalf("Stop failed: %v", err)
+	}
+
+	data, err := os.ReadFile(sockPath)
+	if err != nil {
+		t.Fatalf("expected marker file to remain after Stop: %v", err)
+	}
+	if string(data) != "marker" {
+		t.Fatalf("marker file was modified or removed, got %q", string(data))
+	}
 }
 
 func TestCommandServer_AbortFailureReturnsStableCode(t *testing.T) {

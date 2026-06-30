@@ -211,7 +211,7 @@ The persisted twin of the live attach stream, written to `.sandman/batches/<batc
 _Avoid_: Log file, run log.
 
 **Command Server**:
-A Unix domain socket at `<batch>/runs/<runID>/run.sock` that accepts one-shot JSON command requests from outside the daemon process. First supported command is `{"action":"abort","issue":<n>}`, dispatched to the orchestrator's per-issue cancel API. Created per-AgentRun when the orchestrator's per-row execution path starts, removed when the run completes. Distinct from the **Control Socket**, which streams daemon output to **Attach** clients.
+ A Unix domain socket at `<batch>/runs/<runID>/run.sock` that accepts one-shot JSON command requests from outside the daemon process. First supported command is `{"action":"abort","issue":<n>}`, dispatched to the orchestrator's per-issue cancel API. Created per-AgentRun when the orchestrator's per-row execution path starts, removed when the run completes. When the filesystem socket path exceeds the Unix `sun_path` limit, it falls back to an abstract socket named `@sandman-<hex-hash>` so long paths still work. Distinct from the **Control Socket**, which streams daemon output to **Attach** clients.
 _Avoid_: management socket, IPC socket.
 
 **Issue Commander**:
