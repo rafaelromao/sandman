@@ -67,29 +67,14 @@ The glossary entry `Run retry` in `CONTEXT.md` is the user-facing entry point. I
 
 - The portal's new active-row `attempts N retries` chip (slice 4, #1503) can render the chip without re-deriving the cause — the slice-1 helper hands back a string from the closed vocabulary.
 - Slice-1's `LastRetryReason()` and the underlying `run.retry.payload.reason` key are stable contracts; tests can match the vocabulary without regex wrangling.
-- Operator forensics on `.sandman/events.jsonl` gain a one-token discriminator for retry cause. The same field makes the `run.idle_timeout` event's `reason: "run_idle_timeout"` expressible in retry-loop vocabulary.
+- Operator forensics on `.sandman/events.jsonl` gain a one-token discriminator for retry cause.
 - The schema and the vocabulary land together in a single document, so a doc reader sees the closed set and the field semantics side-by-side.
 
 ### Negative
 
 - Adding a new retry cause requires an ADR amendment, not just a code change. This is intentional but adds ceremony; the alternative (open string) was rejected because it would silently let the portal chip render arbitrary text.
-- Historical `run.retry` events emitted before slice 3 carry `reason` absent; consumers must tolerate the empty case in their zero-value handling. The slice-3 issue already documents this and pins it with a test.
-- The vocabulary currently has no entry for "transient infrastructure failure unrelated to the agent or sandbox" (e.g. a `gh api` rate-limit hiccup). If that surfaces during slice-3 implementation, it is a vocabulary amendment, not a free-form addition.
 
 ### Neutral
 
 - `internal/events/run_state.go::RetriesTotal()` / `RetriesDone()` continue to read from `Finished.Payload`; they are not affected by the active-run rule above.
 - `docs/usage/monitoring.md`'s `run.retry` block will gain a `reason` row once slice 3 lands the orchestrator change. The doc update is a follow-up and not in scope for slice 5.
-- `run.idle_timeout` events keep their own `reason: "run_idle_timeout"` value — that vocabulary is for the diagnostic event, not the retry-loop event. The two vocabularies are intentionally separate to keep the diagnostic signal distinct from the action it triggered.
-
-## Blocked by
-
-None — this ADR records a contract for slices 1, 3, and 4. Slice 5 (this ADR's PR) lands first so the docs surface is in place when the code lands.
-
-## Runtime Context
-
-- You are inside a Sandman-created worktree.
-- Current branch: `sandman/1505-slice-5-document-runretry-payload-schema-reason-vocabulary-and-attempt-aggregation-in-contextmd`
-- Source branch: `sandman/1505-slice-5-document-runretry-payload-schema-reason-vocabulary-and-attempt-aggregation-in-contextmd`
-- Base branch: `main`
-- Review command: `/sandman review`
