@@ -8,6 +8,8 @@ description: Non-discoverable. Load manually with /skill sandman-index when you 
 
 Symbol index for fast, scoped code discovery. Keeps large codebases navigable without flooding context with line-by-line file reads.
 
+This skill is the **reference layer** — loaded on demand for command syntax, query refinement, and read discipline. The policy layer (session init + precondition) lives in `docs/agents/codeindex-strategy.md`. They complement, not duplicate.
+
 ## Hard rule
 
 **Run `codeindex` before any broad exploration, grep, or file open for code discovery.** Not a suggestion — a rule. Violation wastes tokens and risks wrong file selection.
