@@ -3848,6 +3848,178 @@ console.log('PASS');
 	runPortalHTMLScript(t, js)
 }
 
+// TestPortalRunsView_VisibleRunForIssueGroup_CanonicalParentIdentityStaysPut
+// is the regression test for issue #1525: when an issue group contains a
+// canonical implementation row AND one or more review child rows, the
+// visible row's batchKey/runId/issueTitle/startedAt must come from the
+// canonical parent row, never from a review child. The visible row's key
+// must equal the parent's key.
+func TestPortalRunsView_VisibleRunForIssueGroup_CanonicalParentIdentityStaysPut(t *testing.T) {
+	js := `const parent = {
+  key: 'issue-1', kind: 'completed', status: 'success', review: false,
+  issueLabel: '#1', runId: 'issue-1', issueNumber: 1,
+  batchKey: 'parent-batch', issueTitle: 'Fix login bug',
+  startedAt: '2025-01-01T00:00:00Z',
+};
+const review = {
+  key: 'PR42', kind: 'active', status: 'reviewing', review: true,
+  issueLabel: 'PR42', runId: 'PR42', issueNumber: 1, prNumber: 42,
+  batchKey: 'review-batch', issueTitle: 'Review PR42',
+  startedAt: '2025-02-01T00:00:00Z',
+};
+const result = visibleRunForIssueGroup(1, [parent, review]);
+if (!result) throw new Error('expected visible row');
+if (result.key !== 'issue-1') throw new Error('expected canonical parent key issue-1, got ' + JSON.stringify(result.key));
+if (result.runId !== 'issue-1') throw new Error('expected canonical parent runId, got ' + JSON.stringify(result.runId));
+if (result.batchKey !== 'parent-batch') throw new Error('expected canonical parent batchKey parent-batch, got ' + JSON.stringify(result.batchKey));
+if (result.issueTitle !== 'Fix login bug') throw new Error('expected canonical parent issueTitle, got ' + JSON.stringify(result.issueTitle));
+if (result.startedAt !== '2025-01-01T00:00:00Z') throw new Error('expected canonical parent startedAt, got ' + JSON.stringify(result.startedAt));
+if (result.review) throw new Error('expected review=false on canonical parent row, got ' + JSON.stringify(result.review));
+console.log('PASS');
+`
+	runPortalHTMLScript(t, js)
+}
+
+// TestPortalRunsView_VisibleRunsForTable_KeepsParentIssueVisible covers the
+// end-to-end visibleRunsForTable path for issue #1525: even when the
+// underlying group contains a review child with later startedAt than the
+// canonical parent, the visible row for the group must remain the parent.
+func TestPortalRunsView_VisibleRunsForTable_KeepsParentIssueVisible(t *testing.T) {
+	js := `const parent = {
+  key: 'issue-1', kind: 'completed', status: 'success', review: false,
+  issueLabel: '#1', runId: 'issue-1', issueNumber: 1,
+  batchKey: 'parent-batch', issueTitle: 'Fix login bug',
+  startedAt: '2025-01-01T00:00:00Z',
+};
+const review = {
+  key: 'PR42', kind: 'active', status: 'reviewing', review: true,
+  issueLabel: 'PR42', runId: 'PR42', issueNumber: 1, prNumber: 42,
+  batchKey: 'review-batch', issueTitle: 'Review PR42',
+  startedAt: '2026-06-30T10:00:00Z',
+};
+const visible = visibleRunsForTable([parent, review]);
+if (visible.length !== 1) throw new Error('expected one visible row, got ' + visible.length);
+if (visible[0].key !== 'issue-1') throw new Error('expected visible row key issue-1, got ' + JSON.stringify(visible[0].key));
+if (visible[0].batchKey !== 'parent-batch') throw new Error('expected visible row batchKey from parent, got ' + JSON.stringify(visible[0].batchKey));
+if (visible[0].issueTitle !== 'Fix login bug') throw new Error('expected visible row issueTitle from parent, got ' + JSON.stringify(visible[0].issueTitle));
+console.log('PASS');
+`
+	runPortalHTMLScript(t, js)
+}
+
+// TestPortalDiff_SubjectRunsFor_KeepsCanonicalParentFirst pins the subject
+// picker contract from issue #1525 AC3: when a row group has a canonical
+// parent and review children, the related subject list must lead with the
+// canonical parent so users can return to the implementation row by
+// selecting the parent option.
+func TestPortalDiff_SubjectRunsFor_KeepsCanonicalParentFirst(t *testing.T) {
+	js := `const opts = { helpers, runs: [
+  { key: 'issue-1', runId: 'issue-1', kind: 'completed', status: 'success', review: false, issueNumber: 1, issueLabel: '#1' },
+  { key: 'PR42', runId: 'PR42', kind: 'active', status: 'reviewing', review: true, issueNumber: 1, issueLabel: 'PR42', prNumber: 42 },
+] };
+const rowRun = opts.runs[0];
+const related = SandmanPortalDiff.subjectRunsFor(rowRun, opts);
+if (!Array.isArray(related) || related.length < 2) throw new Error('expected at least 2 related subjects, got ' + JSON.stringify(related.length));
+if (related[0].review) throw new Error('expected first related subject to be the canonical parent, got review row first');
+if (related[0].runId !== 'issue-1') throw new Error('expected first related subject runId issue-1, got ' + JSON.stringify(related[0].runId));
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+// TestPortalRunsView_VisibleRunForIssueGroup_LiveActiveParentKeepsIdentity
+// is slice 2 for issue #1525: a live, active canonical parent row must
+// remain the visible row even when a later-started review child exists in
+// the same group, and the parent's identity fields must not be blended
+// with any review metadata.
+func TestPortalRunsView_VisibleRunForIssueGroup_LiveActiveParentKeepsIdentity(t *testing.T) {
+	js := `const liveParent = {
+  key: 'issue-1', kind: 'active', status: 'running', review: false,
+  issueLabel: '#1', runId: 'issue-1', issueNumber: 1,
+  batchKey: 'parent-batch', issueTitle: 'Fix login bug',
+  startedAt: '2025-01-15T00:00:00Z',
+};
+const review = {
+  key: 'PR42', kind: 'active', status: 'reviewing', review: true,
+  issueLabel: 'PR42', runId: 'PR42', issueNumber: 1, prNumber: 42,
+  batchKey: 'review-batch', issueTitle: 'Review PR42',
+  startedAt: '2025-02-01T00:00:00Z',
+};
+const result = visibleRunForIssueGroup(1, [liveParent, review]);
+if (!result) throw new Error('expected visible row');
+if (result.key !== 'issue-1') throw new Error('expected live parent as visible row, got ' + JSON.stringify(result.key));
+if (result.kind !== 'active') throw new Error('expected active kind, got ' + JSON.stringify(result.kind));
+if (result.status !== 'running') throw new Error('expected running status, got ' + JSON.stringify(result.status));
+if (result.batchKey !== 'parent-batch') throw new Error('expected parent batchKey, got ' + JSON.stringify(result.batchKey));
+if (result.issueTitle !== 'Fix login bug') throw new Error('expected parent issueTitle, got ' + JSON.stringify(result.issueTitle));
+if (result.startedAt !== '2025-01-15T00:00:00Z') throw new Error('expected parent startedAt, got ' + JSON.stringify(result.startedAt));
+console.log('PASS');
+`
+	runPortalHTMLScript(t, js)
+}
+
+// TestPortalRunsView_VisibleRunForIssueGroup_ArchivedParentKeepsIdentity
+// is slice 3 for issue #1525: an archived canonical parent row must
+// remain the visible row when an active review child exists, and the
+// archived parent's identity fields must not be blended with the review
+// child's identity.
+func TestPortalRunsView_VisibleRunForIssueGroup_ArchivedParentKeepsIdentity(t *testing.T) {
+	js := `const archivedParent = {
+  key: 'issue-1', kind: 'completed', status: 'success', review: false,
+  issueLabel: '#1', runId: 'issue-1', issueNumber: 1,
+  batchKey: 'parent-batch', issueTitle: 'Fix login bug',
+  startedAt: '2024-12-01T00:00:00Z', archived: true,
+};
+const review = {
+  key: 'PR42', kind: 'active', status: 'reviewing', review: true,
+  issueLabel: 'PR42', runId: 'PR42', issueNumber: 1, prNumber: 42,
+  batchKey: 'review-batch', issueTitle: 'Review PR42',
+  startedAt: '2025-02-01T00:00:00Z',
+};
+const result = visibleRunForIssueGroup(1, [archivedParent, review]);
+if (!result) throw new Error('expected visible row');
+if (result.key !== 'issue-1') throw new Error('expected archived parent as visible row, got ' + JSON.stringify(result.key));
+if (result.batchKey !== 'parent-batch') throw new Error('expected parent batchKey, got ' + JSON.stringify(result.batchKey));
+if (result.issueTitle !== 'Fix login bug') throw new Error('expected parent issueTitle, got ' + JSON.stringify(result.issueTitle));
+if (result.startedAt !== '2024-12-01T00:00:00Z') throw new Error('expected parent startedAt, got ' + JSON.stringify(result.startedAt));
+if (!result.archived) throw new Error('expected archived flag preserved, got ' + JSON.stringify(result.archived));
+console.log('PASS');
+`
+	runPortalHTMLScript(t, js)
+}
+
+// TestPortalRunsView_VisibleRunForIssueGroup_CompletedParentWithVerdict
+// is slice 4 for issue #1525: a completed canonical parent row with a
+// review verdict must remain the visible row when a review child exists,
+// and the parent's identity fields must not be blended with the review
+// child's identity. The parent's reviewVerdict is preserved as a
+// summary, not as a substitution for the parent's own data.
+func TestPortalRunsView_VisibleRunForIssueGroup_CompletedParentWithVerdict(t *testing.T) {
+	js := `const parent = {
+  key: 'issue-1', kind: 'completed', status: 'success', review: false,
+  issueLabel: '#1', runId: 'issue-1', issueNumber: 1,
+  batchKey: 'parent-batch', issueTitle: 'Fix login bug',
+  startedAt: '2025-01-01T00:00:00Z',
+  reviewCount: 2, reviewVerdict: 'Approved',
+};
+const review = {
+  key: 'PR42', kind: 'completed', status: 'success', review: true,
+  issueLabel: 'PR42', runId: 'PR42', issueNumber: 1, prNumber: 42,
+  batchKey: 'review-batch', issueTitle: 'Review PR42',
+  startedAt: '2025-01-15T00:00:00Z',
+};
+const result = visibleRunForIssueGroup(1, [parent, review]);
+if (!result) throw new Error('expected visible row');
+if (result.key !== 'issue-1') throw new Error('expected completed parent as visible row, got ' + JSON.stringify(result.key));
+if (result.batchKey !== 'parent-batch') throw new Error('expected parent batchKey, got ' + JSON.stringify(result.batchKey));
+if (result.issueTitle !== 'Fix login bug') throw new Error('expected parent issueTitle, got ' + JSON.stringify(result.issueTitle));
+if (result.runId !== 'issue-1') throw new Error('expected parent runId, got ' + JSON.stringify(result.runId));
+if (result.startedAt !== '2025-01-01T00:00:00Z') throw new Error('expected parent startedAt, got ' + JSON.stringify(result.startedAt));
+console.log('PASS');
+`
+	runPortalHTMLScript(t, js)
+}
+
 func TestRenderRunMeta_BatchAboveRunID(t *testing.T) {
 	js := `const runWithBatch = { key: 'a', runId: 'r1', batchKey: 'batch-42', kind: 'active', status: 'running' };
 const metaWithBatch = helpers.renderRunMeta(runWithBatch);
