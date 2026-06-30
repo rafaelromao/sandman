@@ -39,11 +39,11 @@ const badgeE2EPlacementSection = "## Instructions"
 // opencode binary.
 func badgeE2EConfig() *config.Config {
 	return &config.Config{
-		Agent:         "test-agent",
-		DefaultAgent:  "test-agent",
-		Sandbox:       "worktree",
-		WorktreeDir:   ".sandman/worktrees",
-		Git:           config.GitConfig{BaseBranch: "main"},
+		Agent:        "test-agent",
+		DefaultAgent: "test-agent",
+		Sandbox:      "worktree",
+		WorktreeDir:  ".sandman/worktrees",
+		Git:          config.GitConfig{BaseBranch: "main"},
 		AgentProviders: map[string]config.Agent{
 			"test-agent": {Name: "test-agent", Command: "true"},
 		},
@@ -75,14 +75,14 @@ func (badgeE2EIssueGitHubClient) ListPRComments(_ int) ([]github.PRComment, erro
 func (badgeE2EIssueGitHubClient) ListIssueComments(_ int) ([]github.IssueComment, error) {
 	return nil, nil
 }
-func (badgeE2EIssueGitHubClient) RepoName() (string, error)                          { return "owner/repo", nil }
-func (badgeE2EIssueGitHubClient) EditComment(_, _ string) error                      { return nil }
-func (badgeE2EIssueGitHubClient) EditPRBody(_ int, _ string) error                   { return nil }
-func (badgeE2EIssueGitHubClient) AddCommentReaction(_, _ string) (string, error)    { return "", nil }
-func (badgeE2EIssueGitHubClient) AddIssueReaction(_ int, _ string) (string, error)  { return "", nil }
-func (badgeE2EIssueGitHubClient) RemoveCommentReaction(_, _ string) error           { return nil }
-func (badgeE2EIssueGitHubClient) RemoveIssueReaction(_ int, _ string) error         { return nil }
-func (badgeE2EIssueGitHubClient) CloseIssue(_ int, _ string) error                  { return nil }
+func (badgeE2EIssueGitHubClient) RepoName() (string, error)                        { return "owner/repo", nil }
+func (badgeE2EIssueGitHubClient) EditComment(_, _ string) error                    { return nil }
+func (badgeE2EIssueGitHubClient) EditPRBody(_ int, _ string) error                 { return nil }
+func (badgeE2EIssueGitHubClient) AddCommentReaction(_, _ string) (string, error)   { return "", nil }
+func (badgeE2EIssueGitHubClient) AddIssueReaction(_ int, _ string) (string, error) { return "", nil }
+func (badgeE2EIssueGitHubClient) RemoveCommentReaction(_, _ string) error          { return nil }
+func (badgeE2EIssueGitHubClient) RemoveIssueReaction(_ int, _ string) error        { return nil }
+func (badgeE2EIssueGitHubClient) CloseIssue(_ int, _ string) error                 { return nil }
 
 // badgeE2ENoopRenderer is a renderer that hands back the empty
 // prompt. It satisfies prompt.IssueRenderer so the orchestrator can
