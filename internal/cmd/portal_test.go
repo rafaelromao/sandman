@@ -734,6 +734,181 @@ func TestPortal_RunFromState_LeavesRetriesZeroWhenActive(t *testing.T) {
 	}
 }
 
+func TestPortal_PortalRunJSONOmitsAttemptsAndLastRetryReasonWhenZero(t *testing.T) {
+	run := portalRun{
+		Key:         "abcd-260618113825-1-1",
+		RunID:       "abcd-260618113825-1-1",
+		Kind:        "completed",
+		Status:      "success",
+		IssueLabel:  "#42",
+		IssueNumber: 42,
+		StartedAt:   time.Now().Add(-2 * time.Minute),
+	}
+
+	data, err := json.Marshal(run)
+	if err != nil {
+		t.Fatalf("marshal portalRun: %v", err)
+	}
+
+	if strings.Contains(string(data), `"attempts"`) {
+		t.Fatalf("expected attempts to be omitted when zero, got %s", data)
+	}
+	if strings.Contains(string(data), `"lastRetryReason"`) {
+		t.Fatalf("expected lastRetryReason to be omitted when empty, got %s", data)
+	}
+}
+
+func TestPortal_RunFromState_ActiveRunPopulatesAttemptsAndLastRetryReason(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(repoRoot, ".sandman", "logs"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
+	runState := events.ProjectRunStates([]events.Event{
+		{Type: "run.started", Timestamp: startedAt, RunID: "abcd-260618113825-active-retry", Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
+		{Type: "run.retry", Timestamp: startedAt.Add(2 * time.Minute), RunID: "abcd-260618113825-active-retry", Issue: 42, Payload: map[string]any{
+			"attempt":         2,
+			"max_attempts":    3,
+			"previous_status": "failure",
+			"reason":          "agent-stalled",
+			"branch":          "sandman/42-fix",
+		}},
+	})[0]
+
+	run := (&portalRunsView{}).runFromState(repoRoot, runState, nil, nil, nil)
+
+	if run.Attempts != 2 {
+		t.Fatalf("expected Attempts=2 for active retried run, got %d", run.Attempts)
+	}
+	if run.LastRetryReason != "agent-stalled" {
+		t.Fatalf("expected LastRetryReason=agent-stalled, got %q", run.LastRetryReason)
+	}
+}
+
+func TestPortal_RunFromState_FinishedRunUsesRetriesDoneForAttempts(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
+	finishedAt := startedAt.Add(10 * time.Minute)
+	runState := events.ProjectRunStates([]events.Event{
+		{Type: "run.started", Timestamp: startedAt, RunID: "abcd-260618113825-finished-retry", Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
+		{Type: "run.retry", Timestamp: startedAt.Add(2 * time.Minute), RunID: "abcd-260618113825-finished-retry", Issue: 42, Payload: map[string]any{
+			"attempt":         2,
+			"max_attempts":    3,
+			"previous_status": "failure",
+			"reason":          "agent-stalled",
+			"branch":          "sandman/42-fix",
+		}},
+		{Type: "run.finished", Timestamp: finishedAt, RunID: "abcd-260618113825-finished-retry", Issue: 42, Payload: map[string]any{
+			"status":        "success",
+			"branch":        "sandman/42-fix",
+			"retries_total": 3,
+			"retries_done":  2,
+		}},
+	})[0]
+
+	run := (&portalRunsView{}).runFromState(repoRoot, runState, nil, nil, nil)
+
+	if run.Attempts != 2 {
+		t.Fatalf("expected Attempts=2 (from retries_done) for finished run, got %d", run.Attempts)
+	}
+	if run.LastRetryReason != "agent-stalled" {
+		t.Fatalf("expected LastRetryReason=agent-stalled, got %q", run.LastRetryReason)
+	}
+}
+
+func TestPortal_RunFromState_ActiveCleanRunOmitsBoth(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(repoRoot, ".sandman", "logs"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	runState := events.ProjectRunStates([]events.Event{
+		{Type: "run.started", Timestamp: time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC), RunID: "abcd-260618113825-clean", Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
+	})[0]
+
+	run := (&portalRunsView{}).runFromState(repoRoot, runState, nil, nil, nil)
+
+	if run.Attempts != 0 {
+		t.Fatalf("expected Attempts=0 for clean active run, got %d", run.Attempts)
+	}
+	if run.LastRetryReason != "" {
+		t.Fatalf("expected LastRetryReason=empty for clean active run, got %q", run.LastRetryReason)
+	}
+	data, err := json.Marshal(run)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if strings.Contains(string(data), `"attempts"`) {
+		t.Fatalf("expected attempts to be omitted from JSON for clean active run, got %s", data)
+	}
+	if strings.Contains(string(data), `"lastRetryReason"`) {
+		t.Fatalf("expected lastRetryReason to be omitted from JSON for clean active run, got %s", data)
+	}
+}
+
+func TestPortal_RunFromActiveMatch_StateAbsentPopulatesAttemptsAndLastRetryReason(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(repoRoot, ".sandman", "logs"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	sockDir := filepath.Join(repoRoot, "sock")
+	if err := os.MkdirAll(sockDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	sockPath := filepath.Join(sockDir, "batch.sock")
+	ln, err := net.Listen("unix", sockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+
+	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
+	match := portalRunMatch{
+		instance: portalActiveRun{
+			Key:         "abcd-260618113825-prompt-retry",
+			SocketPath:  sockPath,
+			IssueNumber: 0,
+			ModTime:     startedAt,
+		},
+	}
+	eventsByRun := map[string][]portalEvent{
+		"abcd-260618113825-prompt-retry": {
+			{Type: "run.started", Timestamp: startedAt, Payload: map[string]any{"branch": "sandman/42-fix"}},
+			{Type: "run.retry", Timestamp: startedAt.Add(2 * time.Minute), Payload: map[string]any{
+				"attempt":         2,
+				"max_attempts":    3,
+				"previous_status": "failure",
+				"reason":          "agent-stalled",
+				"branch":          "sandman/42-fix",
+			}},
+		},
+	}
+
+	run := (&portalRunsView{}).runFromActiveMatch(repoRoot, match, eventsByRun, nil)
+
+	if run.Attempts != 2 {
+		t.Fatalf("expected Attempts=2 from raw event list, got %d", run.Attempts)
+	}
+	if run.LastRetryReason != "agent-stalled" {
+		t.Fatalf("expected LastRetryReason=agent-stalled from raw event list, got %q", run.LastRetryReason)
+	}
+}
+
 func TestPortal_RunFromState_EmptyRunIDWithIssueNumberUsesCompoundKey(t *testing.T) {
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
