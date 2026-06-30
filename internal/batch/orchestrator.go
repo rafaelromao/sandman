@@ -2412,10 +2412,8 @@ func (s *runSession) executePromptOnly(ctx context.Context) (AgentRunResult, boo
 		payload := map[string]any{"branch": branch, "base_branch": s.baseBranch, "prompt_source_type": "prompt", "parallel": s.parallel, "start_delay": int(s.startDelay / time.Second), "retries": s.retries, "sandbox": s.sandboxMode, "container_capacity": s.containerCapacity, "container_capacity_set": s.containerCapacitySet, "max_containers": s.maxContainers, "max_containers_set": s.maxContainersSet}
 		if s.renderCfg.PromptFlag != "" {
 			promptSourceType = "prompt"
-			payload["prompt_source_value"] = s.renderCfg.PromptFlag
 		} else if s.renderCfg.TemplateFlag != "" {
 			promptSourceType = "template"
-			payload["prompt_source_value"] = s.renderCfg.TemplateFlag
 		}
 		payload["prompt_source_type"] = promptSourceType
 		if s.mode == ModeContinue {
