@@ -2316,12 +2316,11 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
       if (run.batchKey) {
         lines.push('Batch: ' + run.batchKey);
       }
-      if (Number(run.retriesDone || 0) > 0) {
-        const count = Number(run.retriesDone || 0);
-        counterParts.push(count + ' retr' + (count === 1 ? 'y' : 'ies'));
-      } else if (Number(run.attempts || 0) > 0) {
-        const count = Number(run.attempts || 0);
-        counterParts.push(count + ' retr' + (count === 1 ? 'y' : 'ies'));
+      const retryCount = Number(run.retriesDone || 0) > 0
+        ? Number(run.retriesDone || 0)
+        : Number(run.attempts || 0);
+      if (retryCount > 0) {
+        counterParts.push(retryCount + ' retr' + (retryCount === 1 ? 'y' : 'ies'));
       }
       if (Number(run.reviewCount || 0) > 0) {
         const count = Number(run.reviewCount || 0);
