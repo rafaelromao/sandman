@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net"
 	"os"
@@ -1196,6 +1197,115 @@ func TestPortal_RunFromActiveBatchIssue_MixedBatchCarriesBatchIssues(t *testing.
 	}
 	if run.BatchKey != active.Key {
 		t.Fatalf("expected BatchKey %q, got %q", active.Key, run.BatchKey)
+	}
+}
+
+func TestPortal_RunFromActiveBatchIssue_LiveMixedBatchFiltersSiblingLogs(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	sockDir := filepath.Join(repoRoot, "sock")
+	if err := os.MkdirAll(sockDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	sockPath := filepath.Join(sockDir, "batch.sock")
+	ln, err := net.Listen("unix", sockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+
+	startedAt := time.Now().Add(-2 * time.Minute)
+	active := portalActiveRun{
+		Key:          "abcd-260618113825-860-123",
+		Dir:          sockDir,
+		SocketPath:   sockPath,
+		IssueNumbers: []int{860, 854},
+		StartedAt:    startedAt,
+	}
+	liveOutput := "[abcd-260618113825-860-123-860] 18:51:00 working on PR\n[abcd-260618113825-860-123-854] 18:51:04 sibling work\n"
+
+	for _, issue := range []int{860, 854} {
+		issue := issue
+		runID := fmt.Sprintf("abcd-260618113825-860-123-%d", issue)
+		state := &events.RunState{
+			RunID: runID,
+			Started: events.Event{
+				Type:      "run.started",
+				Timestamp: startedAt,
+				RunID:     runID,
+				Issue:     issue,
+			},
+		}
+		run := (&portalRunsView{}).runFromActiveBatchIssue(repoRoot, active, issue, state, nil, nil, liveOutput, nil, nil)
+
+		ownTimestamp := fmt.Sprintf("18:51:0%d", issue%10)
+		if !strings.Contains(run.Log, ownTimestamp) {
+			t.Fatalf("issue %d: expected own timestamp %q in log, got:\n%s", issue, ownTimestamp, run.Log)
+		}
+		for _, other := range []int{860, 854} {
+			if other == issue {
+				continue
+			}
+			otherTimestamp := fmt.Sprintf("18:51:0%d", other%10)
+			if strings.Contains(run.Log, otherTimestamp) {
+				t.Fatalf("issue %d: log leaked sibling timestamp %q:\n%s", issue, otherTimestamp, run.Log)
+			}
+		}
+		if strings.Contains(run.Log, "[") {
+			t.Fatalf("issue %d: log should not contain any '[label]' prefixes, got:\n%s", issue, run.Log)
+		}
+	}
+}
+
+func TestPortal_RunFromActiveBatchIssue_SingleIssueLiveRowKeepsFullOutput(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	sockDir := filepath.Join(repoRoot, "sock")
+	if err := os.MkdirAll(sockDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	sockPath := filepath.Join(sockDir, "batch.sock")
+	ln, err := net.Listen("unix", sockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+
+	startedAt := time.Now().Add(-1 * time.Minute)
+	runID := "single-run-42"
+	active := portalActiveRun{
+		Key:          "single-batch-42",
+		Dir:          sockDir,
+		SocketPath:   sockPath,
+		IssueNumbers: []int{42},
+		StartedAt:    startedAt,
+	}
+	liveOutput := "[single-run-42] 09:00:00 only me here\n[single-run-42] 09:00:01 still me\n"
+	state := &events.RunState{
+		RunID: runID,
+		Started: events.Event{
+			Type:      "run.started",
+			Timestamp: startedAt,
+			RunID:     runID,
+			Issue:     42,
+		},
+	}
+
+	run := (&portalRunsView{}).runFromActiveBatchIssue(repoRoot, active, 42, state, nil, nil, liveOutput, nil, nil)
+
+	for _, want := range []string{"09:00:00 only me here", "09:00:01 still me"} {
+		if !strings.Contains(run.Log, want) {
+			t.Fatalf("expected single-issue live row to keep %q in log, got:\n%s", want, run.Log)
+		}
+	}
+	if strings.Contains(run.Log, "[") {
+		t.Fatalf("single-issue live row log should not contain any '[label]' prefixes, got:\n%s", run.Log)
 	}
 }
 
