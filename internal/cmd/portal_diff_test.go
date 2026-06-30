@@ -3739,6 +3739,119 @@ console.log('PASS');
 	runPortalHTMLScript(t, js)
 }
 
+// TestPortalRunsView_VisibleRunForIssueGroup_ReviewOnlyLabelsIssueWithPrefix
+// is the tracer bullet for issue #1526: a review-only issue group must
+// produce a visible row whose issueLabel explicitly signals review-only
+// (e.g. "Review of #1472") rather than reusing the source PR label or
+// fabricating a bare issue label.
+func TestPortalRunsView_VisibleRunForIssueGroup_ReviewOnlyLabelsIssueWithPrefix(t *testing.T) {
+	js := `const review = { key: 'PR1508', kind: 'active', status: 'reviewing', review: true, issueLabel: 'PR1508', runId: 'PR1508', issueNumber: 1472, prNumber: 1508 };
+const stub = visibleRunForIssueGroup(1472, [review]);
+if (!stub) throw new Error('expected visible row for review-only issue group');
+const label = String(stub.issueLabel || '');
+if (label === 'PR1508') throw new Error('expected review-only label to differ from source PR label, got bare PR label ' + JSON.stringify(label));
+if (label === '#1472') throw new Error('expected review-only label to differ from bare issue label, got bare issue label ' + JSON.stringify(label));
+if (label.indexOf('Review') < 0) throw new Error('expected review-only label to mention Review, got ' + JSON.stringify(label));
+if (label.indexOf('#1472') < 0) throw new Error('expected review-only label to reference the issue number, got ' + JSON.stringify(label));
+console.log('PASS');
+`
+	runPortalHTMLScript(t, js)
+}
+
+// TestPortalRunsView_VisibleRunForIssueGroup_ReviewOnlyIdentityMatchesSourceRun
+// covers behaviour #2 of issue #1526: the visible row's identity fields
+// must come from the review run, not be fabricated from missing
+// implementation-run metadata. batchKey on a non-review source must NOT
+// leak into the review-only visible row.
+func TestPortalRunsView_VisibleRunForIssueGroup_ReviewOnlyIdentityMatchesSourceRun(t *testing.T) {
+	js := `const review = { key: 'PR1508', kind: 'active', status: 'reviewing', review: true, issueLabel: 'PR1508', runId: 'PR1508', issueNumber: 1472, prNumber: 1508, startedAt: '2026-06-30T12:00:00Z' };
+const stub = visibleRunForIssueGroup(1472, [review]);
+if (!stub) throw new Error('expected visible row for review-only issue group');
+if (stub.key !== 'PR1508') throw new Error('expected visible row key to match source runId, got ' + JSON.stringify(stub.key));
+if (stub.runId !== 'PR1508') throw new Error('expected visible row runId to match source runId, got ' + JSON.stringify(stub.runId));
+if (stub.issueNumber !== 1472) throw new Error('expected visible row issueNumber to match source issueNumber, got ' + JSON.stringify(stub.issueNumber));
+if (stub.prNumber !== 1508) throw new Error('expected visible row prNumber to match source prNumber, got ' + JSON.stringify(stub.prNumber));
+if (stub.startedAt !== '2026-06-30T12:00:00Z') throw new Error('expected visible row startedAt to match source, got ' + JSON.stringify(stub.startedAt));
+if ('batchKey' in stub && stub.batchKey) throw new Error('expected review-only visible row not to carry a batchKey, got ' + JSON.stringify(stub.batchKey));
+console.log('PASS');
+`
+	runPortalHTMLScript(t, js)
+}
+
+// TestPortalRunsView_VisibleRunsForTable_OrphanReviewRowCarriesReviewOnlyLabel
+// covers behaviour #3 of issue #1526 at the table-projection level:
+// visibleRunsForTable must surface the orphan review's issueLabel as
+// "Review of #N", so the table renders the explicit review-only label.
+func TestPortalRunsView_VisibleRunsForTable_OrphanReviewRowCarriesReviewOnlyLabel(t *testing.T) {
+	js := `const review = { key: 'PR1508', kind: 'active', status: 'reviewing', review: true, issueLabel: 'PR1508', runId: 'PR1508', issueNumber: 1472, prNumber: 1508, startedAt: '2026-06-30T12:00:00Z' };
+const visible = visibleRunsForTable([review]);
+if (visible.length !== 1) throw new Error('expected exactly one visible row, got ' + JSON.stringify(visible.length));
+if (visible[0].key !== 'PR1508') throw new Error('expected visible row key to match source runId, got ' + JSON.stringify(visible[0].key));
+if (visible[0].issueLabel !== 'Review of #1472') throw new Error('expected visible row label to be explicit review-only, got ' + JSON.stringify(visible[0].issueLabel));
+console.log('PASS');
+`
+	runPortalHTMLScript(t, js)
+}
+
+// TestPortalDiffDiffRuns_OrphanReviewWithReviewOnlyLabelExpandsToDetailPanel
+// covers behaviour #4 of issue #1526 at the DOM level: the review-only
+// orphan row must expand to a detail panel keyed by its own runId, and
+// the panel must surface the review run's content (subject picker with
+// the review run as the sole option). The visible row here mirrors what
+// visibleRunForIssueGroup produces: identity fields from the review run
+// with an explicit "Review of #N" issueLabel.
+func TestPortalDiffDiffRuns_OrphanReviewWithReviewOnlyLabelExpandsToDetailPanel(t *testing.T) {
+	js := `const body = makeMockBody();
+const orphanRow = { key: 'PR1508', runId: 'PR1508', review: true, groupedReview: false, issueLabel: 'Review of #1472', issueNumber: 1472, prNumber: 1508, kind: 'active', status: 'reviewing', startedAt: '2026-06-30T12:00:00Z' };
+const review = { key: 'PR1508', runId: 'PR1508', review: true, issueLabel: 'PR1508', issueNumber: 1472, prNumber: 1508, kind: 'active', status: 'reviewing', startedAt: '2026-06-30T12:00:00Z' };
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: 'PR1508', runs: [review], visibleRuns: [orphanRow] };
+const result = SandmanPortalDiff.diffRuns(body, [orphanRow], opts);
+if (result.inserted < 1) throw new Error('expected rows to be inserted, got ' + JSON.stringify(result));
+const visibleRow = body.querySelector('tr[data-run-key="PR1508"]');
+if (!visibleRow) throw new Error('expected orphan review visible under its real RunID');
+const aria = visibleRow.getAttribute('aria-expanded');
+if (aria !== 'true') throw new Error('expected review-only orphan row to be expanded, got aria-expanded=' + aria);
+const detailRow = body.querySelector('tr.detail-row[data-detail-for="PR1508"]');
+if (!detailRow) throw new Error('expected detail row keyed by the orphan review RunID');
+const subjectSelect = detailRow.querySelector('select[data-action="set-subject"]');
+if (!subjectSelect) throw new Error('expected subject selector on review-only orphan detail row');
+if (subjectSelect.children.length !== 1) throw new Error('expected exactly one subject option for single review-only orphan, got ' + subjectSelect.children.length);
+if (subjectSelect.children[0].getAttribute('value') !== 'PR1508') throw new Error('expected subject option to use review RunID, got ' + subjectSelect.children[0].getAttribute('value'));
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+// TestPortalDiffDiffRuns_OrphanReviewSubjectSwitchPreservesRowIdentity
+// covers behaviour #5 of issue #1526 at the DOM level: when the subject
+// picker on a review-only orphan row is rebuilt with multiple review
+// runs for the same issue, the data row identity (data-run-key) must
+// stay anchored to the visible review's runId, and the picker must list
+// every real review run as an option (no fake parent option).
+func TestPortalDiffDiffRuns_OrphanReviewSubjectSwitchPreservesRowIdentity(t *testing.T) {
+	js := `const body = makeMockBody();
+const terminal = { key: 'PR1507', kind: 'completed', status: 'success', review: true, issueLabel: 'PR1507', runId: 'PR1507', issueNumber: 1472, prNumber: 1507, startedAt: '2026-06-29T10:00:00Z' };
+const live = { key: 'PR1508', kind: 'active', status: 'reviewing', review: true, issueLabel: 'PR1508', runId: 'PR1508', issueNumber: 1472, prNumber: 1508, startedAt: '2026-06-30T10:00:00Z' };
+const orphanRow = { key: 'PR1508', runId: 'PR1508', review: true, groupedReview: false, issueLabel: 'Review of #1472', issueNumber: 1472, prNumber: 1508, kind: 'active', status: 'reviewing', startedAt: '2026-06-30T12:00:00Z' };
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: 'PR1508', runs: [terminal, live], visibleRuns: [orphanRow] };
+SandmanPortalDiff.diffRuns(body, [orphanRow], opts);
+const visibleRow = body.querySelector('tr[data-run-key="PR1508"]');
+if (!visibleRow) throw new Error('expected visible orphan review row under its real RunID');
+const detailRow = body.querySelector('tr.detail-row[data-detail-for="PR1508"]');
+if (!detailRow) throw new Error('expected detail row keyed by the visible orphan review RunID');
+const subjectSelect = detailRow.querySelector('select[data-action="set-subject"]');
+if (!subjectSelect) throw new Error('expected subject selector on review-only orphan detail row');
+if (subjectSelect.children.length !== 2) throw new Error('expected one option per real review run, got ' + subjectSelect.children.length);
+const values = Array.from(subjectSelect.children).map((opt) => opt.getAttribute('value'));
+if (values.indexOf('PR1507') < 0 || values.indexOf('PR1508') < 0) throw new Error('expected both review RunIDs as picker options, got ' + JSON.stringify(values));
+if (subjectSelect.value !== 'PR1508') throw new Error('expected picker to default to the visible review RunID, got ' + subjectSelect.value);
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
 func TestPortalRunsView_VisibleRunForIssueGroup_TerminalReviewWinsOverActiveKind(t *testing.T) {
 	js := `const review = { key: 'a0c19-260622193226-1227', kind: 'active', status: 'success', review: true, issueLabel: '#1223', runId: 'a0c19-260622193226-1227', issueNumber: 1223, prNumber: 5 };
 const stub = visibleRunForIssueGroup(1223, [review]);

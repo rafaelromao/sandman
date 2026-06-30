@@ -230,6 +230,10 @@ _Avoid_: dashboard, monitor, control panel.
 The in-flight portal status for an active review run (a run whose `run.started` event carried `payload.review = true`). Displayed in the status badge as `● reviewing`. The `Status` field is set to `"reviewing"` by `statusOrDefault` when `active && isReview` is true. Terminal review runs use `success`, `failure`, or `aborted` like any other run.
 _Avoid_: reviewing status, review-in-progress. No secondary-row review chip.
 
+**Review-only (orphan)**:
+A portal issue group that contains only review child rows and no canonical implementation row. The portal renders the visible row with the explicit label `Review of #<issueNumber>` (e.g. `Review of #1472`), uses the review run's own `run_id` as the row identity (`data-run-key`), and does not fabricate implementation-run metadata such as `batchKey` or `issueTitle`. The row is expandable; the subject selector lists the real review runs so the user can inspect each one's log/events/details tabs. References issue #1526 and ADR-0029 §Review-only orphan label.
+_Avoid_: fake parent row, synthesized issue row, fake implementation-like row.
+
 **Auto-selecting**:
 The in-flight portal status for an active auto-select run (a run whose `run.started` event carried `payload.run_kind = "auto-select"`). Displayed in the status badge as `● auto-selecting`. The `Status` field is set to `"auto-selecting"` by `statusOrDefault` when `active && isAutoSelect` is true. Terminal auto-select runs use `success`, `failure`, or `aborted` like any other run.
 _Avoid_: selecting, auto-select status.

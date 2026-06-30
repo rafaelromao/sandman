@@ -2267,16 +2267,24 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
       const summary = summarizeReviewGroup(group.filter((run) => run.review));
       const source = summary.source || group[0];
       if (!source) return null;
-      const issueLabel = String(source.issueLabel || '').trim();
+      const issueLabel = 'Review of #' + String(issueNumber);
       return {
-        ...source,
+        key: source.key,
+        runId: source.runId,
         review: true,
         groupedReview: false,
         reviewCount: summary.count,
         reviewVerdict: summary.verdict,
         status: summary.status || (summary.live ? 'reviewing' : String(source.status || '').trim()),
         kind: summary.kind,
-        issueLabel: issueLabel || ('#' + String(issueNumber)),
+        issueNumber: issueNumber,
+        prNumber: source.prNumber,
+        startedAt: source.startedAt,
+        duration: source.duration,
+        archived: !!source.archived,
+        unavailable: !!source.unavailable,
+        reason: source.reason,
+        issueLabel: issueLabel,
       };
     }
 

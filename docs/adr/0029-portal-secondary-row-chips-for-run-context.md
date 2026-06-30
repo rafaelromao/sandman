@@ -24,6 +24,10 @@ The `portalRun` struct gains a `Candidates []int` field (`json:"candidates,omite
 
 The `run.started` event for review runs gains an `issue_number` field in the payload (in addition to the existing `pr_number`). The review daemon resolves the issue from the PR before emitting the event. The portal reads `issue_number` from the payload and populates `portalRun.IssueNumber` and `portalRun.IssueLabel` (as `#N`) for review runs, replacing the current behavior of setting `IssueLabel` to the literal `PR42` and `IssueNumber` to 0.
 
+### Review-only orphan label
+
+When only review child rows exist for an issue (no canonical implementation row), the portal `visibleRunForIssueGroup` orphan fallback renders an explicit `Review of #<issueNumber>` label in the row's name cell. The row uses the review run's own `run_id` as the visible row identity (`data-run-key`), does not fabricate implementation-run metadata such as `batchKey` or `issueTitle`, and remains expandable via the subject selector. This replaces the earlier behavior of synthesizing a parent-shaped issue row from the newest review source (issue #1489) with a row whose `issueLabel` mirrored the source PR or fell back to a bare `#N`. The new label preserves the `#N` shape from the prior paragraph (it is embedded inside the prefix) and adds a `Review` prefix so the row cannot be mistaken for a canonical implementation row. References issue #1526.
+
 The inline `.badge.kind-chip` chip in the title cell (introduced by #973 / PR #1047) is removed entirely.
 
 ## Consequences
