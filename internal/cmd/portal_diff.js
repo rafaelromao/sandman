@@ -532,7 +532,7 @@
     return pre;
   }
 
-  const ASYNC_CHUNK_THRESHOLD = 32 * 1024;
+  const ASYNC_CHUNK_THRESHOLD = 16 * 1024;
   const CHUNK_SIZE_LINES = 100;
 
   function fillTerminalPre(pre, text, helpers) {
