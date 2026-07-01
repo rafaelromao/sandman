@@ -84,6 +84,19 @@
     return added;
   }
 
+  // runPrewarmIfIdle is the integration point between
+  // requestIdleCallback and prewarmLogPaneCache. Issue #1564 spec:
+  // when the idle callback fires with didTimeout: true (or no
+  // timeRemaining), the work is skipped — we never want prewarm to
+  // block the main thread. The idle arg is the deadline object the
+  // browser hands to the requestIdleCallback callback; tests can
+  // construct one directly to drive the skip / proceed paths.
+  function runPrewarmIfIdle(runs, helpers, opts, idle) {
+    if (!idle || idle.didTimeout) return 0;
+    if (typeof idle.timeRemaining === 'function' && idle.timeRemaining() <= 0) return 0;
+    return prewarmLogPaneCache(runs, helpers, opts);
+  }
+
   function markCachedLogPaneForBottom(pane) {
     if (!pane || !pane.querySelector) return;
     const pre = pane.querySelector('pre[data-scroll-key]');
@@ -1707,6 +1720,7 @@
     cheapDetailsFingerprint,
     tokenizeForCache,
     prewarmLogPaneCache,
+    runPrewarmIfIdle,
     getLogPaneCacheSize: () => logPaneCache.size,
     hasLogPaneCached: (subjectValue) => logPaneCache.has(subjectValue),
   };

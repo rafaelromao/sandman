@@ -196,3 +196,32 @@ console.log('PASS');
 `
 	runNodeScript(t, js)
 }
+
+// TestPortalPerf_PrewarmLogPaneCache_IdleTimeoutSkipsWork verifies
+// that an idle-callback invocation with didTimeout: true (or
+// timeRemaining() === 0) skips prewarm entirely (issue #1564: "If
+// requestIdleCallback says no time, skip"). The integration seam
+// runPrewarmIfIdle is the public boundary.
+func TestPortalPerf_PrewarmLogPaneCache_IdleTimeoutSkipsWork(t *testing.T) {
+	js := `const runs = [
+  { key: 'a1', runId: 'a1', kind: 'active', status: 'running', issueLabel: '#1', log: 'one' },
+  { key: 'a2', runId: 'a2', kind: 'active', status: 'running', issueLabel: '#2', log: 'two' },
+];
+// Simulate the requestIdleCallback shim firing with didTimeout: true.
+const timeoutIdle = { didTimeout: true, timeRemaining: function() { return 0; } };
+const n1 = sandbox.SandmanPortalDiff.runPrewarmIfIdle(runs, helpers, { topN: 2 }, timeoutIdle);
+if (n1 !== 0) throw new Error('expected didTimeout:true to skip work, got ' + n1);
+if (sandbox.SandmanPortalDiff.getLogPaneCacheSize() !== 0) throw new Error('expected empty cache after timeout skip, got ' + sandbox.SandmanPortalDiff.getLogPaneCacheSize());
+// timeRemaining() === 0 with didTimeout:false is also a skip.
+const zeroTimeIdle = { didTimeout: false, timeRemaining: function() { return 0; } };
+const n2 = sandbox.SandmanPortalDiff.runPrewarmIfIdle(runs, helpers, { topN: 2 }, zeroTimeIdle);
+if (n2 !== 0) throw new Error('expected timeRemaining:0 to skip work, got ' + n2);
+// Positive timeRemaining proceeds with the prewarm.
+const goIdle = { didTimeout: false, timeRemaining: function() { return 50; } };
+const n3 = sandbox.SandmanPortalDiff.runPrewarmIfIdle(runs, helpers, { topN: 2 }, goIdle);
+if (n3 !== 2) throw new Error('expected positive timeRemaining to cache 2, got ' + n3);
+if (sandbox.SandmanPortalDiff.getLogPaneCacheSize() !== 2) throw new Error('expected cache size 2 after proceed, got ' + sandbox.SandmanPortalDiff.getLogPaneCacheSize());
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
