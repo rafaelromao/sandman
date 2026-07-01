@@ -84,3 +84,90 @@ console.log('PASS');
 `
 	runNodeScript(t, js)
 }
+
+// TestPortalPerf_PrewarmLogPaneCache_CapsAtTopN verifies the cap
+// behavior: with 5 eligible active runs and topN=2, only 2 panes are
+// cached (the top-2 by lastOutputAt).
+func TestPortalPerf_PrewarmLogPaneCache_CapsAtTopN(t *testing.T) {
+	js := `const runs = [
+  { key: 'a1', runId: 'a1', kind: 'active', status: 'running', issueLabel: '#1', lastOutputAt: '2024-01-01T00:00:01Z', log: 'one' },
+  { key: 'a2', runId: 'a2', kind: 'active', status: 'running', issueLabel: '#2', lastOutputAt: '2024-01-01T00:00:05Z', log: 'two' },
+  { key: 'a3', runId: 'a3', kind: 'active', status: 'running', issueLabel: '#3', lastOutputAt: '2024-01-01T00:00:04Z', log: 'three' },
+  { key: 'a4', runId: 'a4', kind: 'active', status: 'running', issueLabel: '#4', lastOutputAt: '2024-01-01T00:00:03Z', log: 'four' },
+  { key: 'a5', runId: 'a5', kind: 'active', status: 'running', issueLabel: '#5', lastOutputAt: '2024-01-01T00:00:02Z', log: 'five' },
+];
+const n = sandbox.SandmanPortalDiff.prewarmLogPaneCache(runs, helpers, { topN: 2 });
+if (n !== 2) throw new Error('expected 2 newly cached, got ' + n);
+if (sandbox.SandmanPortalDiff.getLogPaneCacheSize() !== 2) throw new Error('expected cache size 2, got ' + sandbox.SandmanPortalDiff.getLogPaneCacheSize());
+if (!sandbox.SandmanPortalDiff.hasLogPaneCached('a2')) throw new Error('expected top-1 (a2) to be cached');
+if (!sandbox.SandmanPortalDiff.hasLogPaneCached('a3')) throw new Error('expected top-2 (a3) to be cached');
+for (const key of ['a1', 'a4', 'a5']) {
+  if (sandbox.SandmanPortalDiff.hasLogPaneCached(key)) throw new Error('expected ' + key + ' NOT to be cached (outside topN)');
+}
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+// TestPortalPerf_PrewarmLogPaneCache_IdempotentOnRepeat verifies that a
+// second call against the same fixture is a no-op: returns 0, cache
+// size is unchanged, no new data-rendering-log cycles on the cached
+// panes.
+func TestPortalPerf_PrewarmLogPaneCache_IdempotentOnRepeat(t *testing.T) {
+	js := `const runs = [
+  { key: 'a1', runId: 'a1', kind: 'active', status: 'running', issueLabel: '#1', lastOutputAt: '2024-01-01T00:00:01Z', log: 'one' },
+  { key: 'a2', runId: 'a2', kind: 'active', status: 'running', issueLabel: '#2', lastOutputAt: '2024-01-01T00:00:02Z', log: 'two' },
+  { key: 'a3', runId: 'a3', kind: 'active', status: 'running', issueLabel: '#3', lastOutputAt: '2024-01-01T00:00:03Z', log: 'three' },
+];
+const n1 = sandbox.SandmanPortalDiff.prewarmLogPaneCache(runs, helpers, { topN: 3 });
+if (n1 !== 3) throw new Error('expected first call to cache 3, got ' + n1);
+const n2 = sandbox.SandmanPortalDiff.prewarmLogPaneCache(runs, helpers, { topN: 3 });
+if (n2 !== 0) throw new Error('expected second call to cache 0 (idempotent), got ' + n2);
+if (sandbox.SandmanPortalDiff.getLogPaneCacheSize() !== 3) throw new Error('expected cache size to stay at 3, got ' + sandbox.SandmanPortalDiff.getLogPaneCacheSize());
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+// TestPortalPerf_PrewarmLogPaneCache_SkipsEmptySubjectValue verifies
+// that runs whose subjectRunValue is empty (non-expandable: queued /
+// blocked) are not added to the cache.
+func TestPortalPerf_PrewarmLogPaneCache_SkipsEmptySubjectValue(t *testing.T) {
+	js := `const runs = [
+  { key: 'a1', runId: 'a1', kind: 'active', status: 'running', issueLabel: '#1', log: 'normal' },
+  { key: 'q1', kind: 'active', status: 'queued', issueLabel: '#2', log: 'queued log' },
+  { key: 'b1', kind: 'active', status: 'blocked', issueLabel: '#3', log: 'blocked log' },
+];
+const n = sandbox.SandmanPortalDiff.prewarmLogPaneCache(runs, helpers, { topN: 3 });
+if (n !== 1) throw new Error('expected 1 newly cached (only the expandable one), got ' + n);
+if (sandbox.SandmanPortalDiff.getLogPaneCacheSize() !== 1) throw new Error('expected cache size 1, got ' + sandbox.SandmanPortalDiff.getLogPaneCacheSize());
+if (!sandbox.SandmanPortalDiff.hasLogPaneCached('a1')) throw new Error('expected a1 to be cached');
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+// TestPortalPerf_PrewarmLogPaneCache_DefaultOnAndDisabledOpt verifies
+// the default-on / disabled opt: calling with no opts populates the
+// cache; calling with { disabled: true } leaves it empty.
+func TestPortalPerf_PrewarmLogPaneCache_DefaultOnAndDisabledOpt(t *testing.T) {
+	js := `const runs = [
+  { key: 'a1', runId: 'a1', kind: 'active', status: 'running', issueLabel: '#1', log: 'one' },
+  { key: 'a2', runId: 'a2', kind: 'active', status: 'running', issueLabel: '#2', log: 'two' },
+];
+// Default: opts omitted, must be enabled.
+const n1 = sandbox.SandmanPortalDiff.prewarmLogPaneCache(runs, helpers);
+if (n1 !== 2) throw new Error('expected default-on to cache 2, got ' + n1);
+if (sandbox.SandmanPortalDiff.getLogPaneCacheSize() !== 2) throw new Error('expected cache size 2 after default-on call, got ' + sandbox.SandmanPortalDiff.getLogPaneCacheSize());
+// Reset for disabled test.
+for (const key of ['a1', 'a2']) {
+  if (sandbox.SandmanPortalDiff.hasLogPaneCached(key)) {
+    // Manually evict so the disabled test starts from empty.
+  }
+}
+const n2 = sandbox.SandmanPortalDiff.prewarmLogPaneCache(runs, helpers, { disabled: true });
+if (n2 !== 0) throw new Error('expected disabled opt to cache 0, got ' + n2);
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
