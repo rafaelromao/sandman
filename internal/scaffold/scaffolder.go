@@ -1009,6 +1009,30 @@ var rubyResolver = versionResolver{
 
 		return fmt.Sprintf("%d.%d", major, minor), nil
 	},
+	passThroughValid: func(selector string) bool {
+		selector = strings.TrimSpace(selector)
+		if selector == "" || strings.EqualFold(selector, "latest") || strings.EqualFold(selector, "lts") {
+			return false
+		}
+		if len(selector) > 1 && strings.HasPrefix(strings.ToLower(selector), "v") && selector[1] >= '0' && selector[1] <= '9' {
+			selector = selector[1:]
+		}
+		parts := strings.Split(selector, ".")
+		if len(parts) < 2 || len(parts) > 3 {
+			return false
+		}
+		for _, part := range parts {
+			if part == "" {
+				return false
+			}
+			for _, r := range part {
+				if r < '0' || r > '9' {
+					return false
+				}
+			}
+		}
+		return true
+	},
 }
 
 // resolveVersion resolves a version for a single tool, reading the repo hint,
