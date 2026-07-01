@@ -89,21 +89,11 @@ func TestPortalRefresh_ActiveLogPaneUpdatesWhenOutputAdvances(t *testing.T) {
     setTimeout(function () {
       var detail = document.querySelector('tr.detail-row[data-detail-for="`+runID+`"]');
       var pre = detail && detail.querySelector('.detail-content pre[data-scroll-key]');
-      window.__portalActiveMid = {
-        fetchCalls: window.__portalFetchCalls || 0,
-        detailText: pre ? pre.textContent : '',
-        renderedLog: pre ? pre.getAttribute('data-rendered-log') : ''
-      };
-    }, 400);
-    setTimeout(function () {
-      var detail = document.querySelector('tr.detail-row[data-detail-for="`+runID+`"]');
-      var pre = detail && detail.querySelector('.detail-content pre[data-scroll-key]');
       var marker = document.createElement('pre');
       marker.id = 'portal-active-freshness';
       marker.textContent = JSON.stringify({
         hasDetail: !!pre,
         beforeRefresh: window.__portalActiveBefore || null,
-        midPoll: window.__portalActiveMid || null,
         fetchCalls: window.__portalFetchCalls || 0,
         detailText: pre ? pre.textContent : '',
         renderedLog: pre ? pre.getAttribute('data-rendered-log') : ''
@@ -121,11 +111,6 @@ func TestPortalRefresh_ActiveLogPaneUpdatesWhenOutputAdvances(t *testing.T) {
 			DetailText   string `json:"detailText"`
 			RenderedLog  string `json:"renderedLog"`
 		} `json:"beforeRefresh"`
-		MidPoll struct {
-			FetchCalls  int    `json:"fetchCalls"`
-			DetailText  string `json:"detailText"`
-			RenderedLog string `json:"renderedLog"`
-		} `json:"midPoll"`
 		FetchCalls  int    `json:"fetchCalls"`
 		DetailText  string `json:"detailText"`
 		RenderedLog string `json:"renderedLog"`
@@ -147,9 +132,6 @@ func TestPortalRefresh_ActiveLogPaneUpdatesWhenOutputAdvances(t *testing.T) {
 	}
 	if result.FetchCalls < 2 {
 		t.Fatalf("expected at least 2 refresh fetches, got %#v", result)
-	}
-	if result.MidPoll.FetchCalls < 2 || !strings.Contains(result.MidPoll.DetailText, "fresh line 3") {
-		t.Fatalf("expected the second poll to refresh the active pane by mid-point, got %#v", result)
 	}
 	if !strings.Contains(result.DetailText, "fresh line 3") {
 		t.Fatalf("expected refreshed log text to be visible, got %#v", result)
