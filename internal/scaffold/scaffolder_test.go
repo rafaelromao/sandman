@@ -1822,6 +1822,13 @@ func TestScaffold_HasElixirRepoHint(t *testing.T) {
 			want: true,
 		},
 		{
+			name: ".tool-versions without elixir",
+			setupFn: func(dir string) {
+				os.WriteFile(filepath.Join(dir, ".tool-versions"), []byte("go 1.24\nnode 20.0.0\n"), 0644)
+			},
+			want: false,
+		},
+		{
 			name: "empty dir",
 			setupFn: func(dir string) {
 				_ = dir
@@ -1977,10 +1984,11 @@ func TestScaffold_DeriveErlangOTPFromElixirVersion(t *testing.T) {
 		version string
 		want    string
 	}{
-		{"with otp suffix", "1.18.4-otp-28", "28"},
-		{"with otp suffix and patch", "1.20.2-otp-29", "29"},
-		{"bare version falls back to catalog", "1.18", "28"},
-		{"empty falls back to catalog default", "", "29"},
+		{name: "with otp suffix", version: "1.18.4-otp-28", want: "28"},
+		{name: "with otp suffix and patch", version: "1.20.2-otp-29", want: "29"},
+		{name: "bare version falls back to catalog", version: "1.18", want: "28"},
+		{name: "selector falls back to catalog", version: "~> 1.18", want: "28"},
+		{name: "empty falls back to catalog default", version: "", want: "29"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -2145,16 +2153,23 @@ func TestReadElixirVersionHint(t *testing.T) {
 		{
 			name:     "mix.exs with elixir under project",
 			filename: "mix.exs",
-			content: "defmodule Demo.MixProject do\n  use Mix.Project\n\n  def project do\n    [\n      app: :demo,\n      version: \"0.1.0\",\n      elixir: \"~> 1.18\",\n      elixirc_paths: elixirc_paths(Mix.env())\n    ]\n  end\n\n  defp deps do\n    [\n      {:plug, \"~> 1.11\"}\n    ]\n  end\nend\n",
-			want:   "~> 1.18",
-			wantOK: true,
+			content:  "defmodule Demo.MixProject do\n  use Mix.Project\n\n  def project do\n    [\n      app: :demo,\n      version: \"0.1.0\",\n      elixir: \"~> 1.18\",\n      elixirc_paths: elixirc_paths(Mix.env())\n    ]\n  end\n\n  defp deps do\n    [\n      {:plug, \"~> 1.11\"}\n    ]\n  end\nend\n",
+			want:     "~> 1.18",
+			wantOK:   true,
+		},
+		{
+			name:     "mix.exs compact project form",
+			filename: "mix.exs",
+			content:  "defmodule Demo.MixProject do\n  use Mix.Project\n\n  def project, do: [app: :demo, version: \"0.1.0\", elixir: \"~> 1.18\"]\nend\n",
+			want:     "~> 1.18",
+			wantOK:   true,
 		},
 		{
 			name:     "mix.exs with elixir dep ignored",
 			filename: "mix.exs",
-			content: "defmodule Demo.MixProject do\n  use Mix.Project\n\n  def project do\n    [\n      app: :demo,\n      version: \"0.1.0\"\n    ]\n  end\n\n  defp deps do\n    [\n      {:elixir, \"~> 1.18\"},\n      {:plug, \"~> 1.11\"}\n    ]\n  end\nend\n",
-			want:   "",
-			wantOK: false,
+			content:  "defmodule Demo.MixProject do\n  use Mix.Project\n\n  def project do\n    [\n      app: :demo,\n      version: \"0.1.0\"\n    ]\n  end\n\n  defp deps do\n    [\n      {:elixir, \"~> 1.18\"},\n      {:plug, \"~> 1.11\"}\n    ]\n  end\nend\n",
+			want:     "",
+			wantOK:   false,
 		},
 		{
 			name:     "mix.exs with no elixir line",

@@ -226,6 +226,8 @@ const bundledElixirDefaultOTP = "29"
 
 var nodeVersionSelectorPattern = regexp.MustCompile(`\d+(?:\.\d+){0,2}`)
 
+var elixirVersionPattern = regexp.MustCompile(`(\d+)\.(\d+)`)
+
 // Scaffolder creates the .sandman/ directory and its files.
 type Scaffolder struct{}
 
@@ -508,10 +510,13 @@ func hasPythonRepoHint(repoRoot string) bool {
 }
 
 func hasElixirRepoHint(repoRoot string) bool {
-	for _, rel := range []string{"mix.exs", ".formatter.exs", ".elixir_version", ".tool-versions"} {
+	for _, rel := range []string{"mix.exs", ".formatter.exs", ".elixir_version"} {
 		if _, err := os.Stat(filepath.Join(repoRoot, rel)); err == nil {
 			return true
 		}
+	}
+	if _, found, err := readElixirVersionHint(repoRoot); err == nil && found {
+		return true
 	}
 	return false
 }
@@ -567,6 +572,11 @@ func parseElixirVersionHint(name string, data []byte) (string, bool) {
 				if strings.HasPrefix(line, "def project") {
 					inProject = true
 					depth = strings.Count(line, "[") - strings.Count(line, "]")
+					if strings.Contains(line, "elixir:") || strings.Contains(line, "elixir :") {
+						if value := elixirMixProjectValue(line); value != "" {
+							return value, true
+						}
+					}
 					if depth <= 0 {
 						continue
 					}
@@ -597,7 +607,7 @@ func elixirMixProjectValue(line string) string {
 			continue
 		}
 		rest := strings.TrimSpace(line[idx+len(sep):])
-		rest = strings.Trim(rest, ",")
+		rest = strings.TrimRight(rest, ",]")
 		rest = strings.TrimSpace(rest)
 		rest = strings.Trim(rest, "\"'")
 		if rest == "" {
@@ -1345,9 +1355,8 @@ func deriveErlangOTPFromElixir(version string) (string, error) {
 			}
 		}
 	}
-	parts := strings.Split(version, ".")
-	if len(parts) >= 2 {
-		key := parts[0] + "." + parts[1]
+	if match := elixirVersionPattern.FindStringSubmatch(version); len(match) == 3 {
+		key := match[1] + "." + match[2]
 		if otp, ok := bundledElixirOTPMap[key]; ok {
 			return otp, nil
 		}
