@@ -3801,11 +3801,6 @@ func runStreamCoalescerScript(t *testing.T, js string) {
 		t.Fatal("locate test file")
 	}
 	htmlPath := filepath.Join(filepath.Dir(currentFile), "portal.html")
-	escapedJS := strings.NewReplacer(
-		`\`, `\\`,
-		"`", "\\`",
-		`${`, `\${`,
-	).Replace(js)
 	prefix := sharedMockHelpers() + sharedMockBody() + `
 const fs = require('fs');
 const vm = require('vm');
@@ -3825,8 +3820,7 @@ if (typeof createStreamCoalescer !== 'function') {
 }
 globalThis.createStreamCoalescer = createStreamCoalescer;
 `
-	prefix += "`" + escapedJS + "`"
-	cmd := exec.Command("node", "-e", prefix)
+	cmd := exec.Command("node", "-e", prefix+js)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("script failed: %v\n%s", err, out)

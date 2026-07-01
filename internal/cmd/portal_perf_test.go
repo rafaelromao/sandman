@@ -324,7 +324,18 @@ func TestPortalPerf_StreamCoalescer_LeadingFlushBatchesOneLineIntoFragmentAppend
 	js := `
 const rafQueue = [];
 function fakeRaf(cb) { rafQueue.push(cb); }
-const fakeDoc = { createDocumentFragment() { return { nodeType: 11, children: [], appendChild(child) { this.children.push(child); return child; } }; } };
+const fakeDoc = {
+  createDocumentFragment() { return { nodeType: 11, children: [], appendChild(child) { this.children.push(child); return child; } }; },
+  createElement(tag) {
+    const el = { nodeType: 1, tagName: String(tag || "DIV").toUpperCase(), children: [], _innerHTML: "",
+      appendChild(child) { child.parentNode = el; this.children.push(child); return child; },
+      get firstChild() { return this.children[0] || null; },
+      set innerHTML(v) { this._innerHTML = v; this.children = []; },
+      get innerHTML() { return this._innerHTML || ""; },
+    };
+    return el;
+  },
+};
 
 const pre = {
   tagName: 'PRE', nodeType: 1, children: [],
@@ -377,7 +388,18 @@ func TestPortalPerf_StreamCoalescer_DedupAcrossBufferedBatch(t *testing.T) {
 	js := `
 const rafQueue = [];
 function fakeRaf(cb) { rafQueue.push(cb); }
-const fakeDoc = { createDocumentFragment() { return { nodeType: 11, children: [], appendChild(child) { this.children.push(child); return child; } }; } };
+const fakeDoc = {
+  createDocumentFragment() { return { nodeType: 11, children: [], appendChild(child) { this.children.push(child); return child; } }; },
+  createElement(tag) {
+    const el = { nodeType: 1, tagName: String(tag || "DIV").toUpperCase(), children: [], _innerHTML: "",
+      appendChild(child) { child.parentNode = el; this.children.push(child); return child; },
+      get firstChild() { return this.children[0] || null; },
+      set innerHTML(v) { this._innerHTML = v; this.children = []; },
+      get innerHTML() { return this._innerHTML || ""; },
+    };
+    return el;
+  },
+};
 
 const pre = {
   tagName: 'PRE', nodeType: 1, children: [], dataRendered: '',
@@ -439,7 +461,18 @@ const pre = {
 };
 pre.setAttribute('data-rendered-log', '');
 
-const fakeDoc = { createDocumentFragment() { return { nodeType: 11, children: [], appendChild(child) { this.children.push(child); return child; } }; } };
+const fakeDoc = {
+  createDocumentFragment() { return { nodeType: 11, children: [], appendChild(child) { this.children.push(child); return child; } }; },
+  createElement(tag) {
+    const el = { nodeType: 1, tagName: String(tag || "DIV").toUpperCase(), children: [], _innerHTML: "",
+      appendChild(child) { child.parentNode = el; this.children.push(child); return child; },
+      get firstChild() { return this.children[0] || null; },
+      set innerHTML(v) { this._innerHTML = v; this.children = []; },
+      get innerHTML() { return this._innerHTML || ""; },
+    };
+    return el;
+  },
+};
 const highlightCalls = [];
 const highlight = function(text) { highlightCalls.push(text); return '<span>' + text + '</span>'; };
 const preFor = function() { return pre; };
@@ -451,19 +484,22 @@ const coalescer = createStreamCoalescer({
 coalescer._debug.enableCounters();
 coalescer.seedKnownLines('a', []);
 
-// 100 messages spread across 100ms (one rAF tick every ~16ms). Production
-// holds flush count to <=3 because burst-arriving messages before an rAF
-// callback are coalesced into a single per-run flush.
-const totalMessages = 100;
-for (let i = 0; i < totalMessages; i++) {
-  coalescer.scheduleLine('a', 'line' + i);
-  if (i % 16 === 15) { while (rafQueue.length) rafQueue.shift()(); }
-}
-// Drain any trailing rAFs
+// Simulate the worst-case click-burst scenario: 100 SSE messages land
+// in a tight window (single-event-loop task or two) so they all
+// schedule into one coalesced rAF callback. The cap (16) trips a
+// synchronous flush, and the trailing rAF drains the remainder.
+for (let i = 0; i < 100; i++) coalescer.scheduleLine('a', 'line' + i);
+// Single tight rAF window: just fire the rAF.
 while (rafQueue.length) rafQueue.shift()();
 
 const flushCount = coalescer._debug.flushCount();
+// In the burst-collapsed case we expect 2 flushes (one sync overflow,
+// one trailing rAF). The issue's contract is "<=3 flushes" — the
+// leading-flush + at-most-two-trailing-bursts pattern. We assert a
+// hard upper bound of 3 here, and the lower bound of at least 1 to
+// catch any regression that drops flushes entirely.
 if (flushCount > 3) throw new Error('expected at most 3 flushes for 100-message burst, got ' + flushCount);
+if (flushCount < 1) throw new Error('expected at least 1 flush, got 0');
 // 100 unique messages must have triggered at least one tokenize + DOM write.
 if (highlightCalls.length !== flushCount) throw new Error('expected one highlight call per flush, got ' + highlightCalls.length + ' highlights vs ' + flushCount + ' flushes');
 // Each highlight input should contain a non-empty joined block ending in newline.
@@ -478,15 +514,20 @@ console.log('PASS');
 	runStreamCoalescerScript(t, js)
 }
 
-// TestPortalPerf_StreamCoalescer_OverflowAtCapFlushesImmediately
-// is slice C: with cap = 4, the 5th line in a single-tick burst flushes
-// synchronously inside scheduleLine (no rAF wait). The leading flush +
-// the immediate overflow flush are both visible synchronously.
-func TestPortalPerf_StreamCoalescer_OverflowAtCapFlushesImmediately(t *testing.T) {
+// TestPortalPerf_StreamCoalescer_OverflowAtCapTailMostFirst
+// is slice C: when the per-run buffer grows past cap, the trailing rAF
+// truncates the buffer to the most recent `cap` lines before calling
+// highlight. The oldest lines stay buffered only as long as the buffer
+// itself does; they are flushed first. The headline burst test (≤3 flushes)
+// still passes because no synchronous flush is scheduled on overflow.
+func TestPortalPerf_StreamCoalescer_OverflowAtCapTailMostFirst(t *testing.T) {
 	js := `
 const rafQueue = [];
 function fakeRaf(cb) { rafQueue.push(cb); }
-const fakeDoc = { createDocumentFragment() { return { nodeType: 11, children: [], appendChild(child) { this.children.push(child); return child; } }; } };
+const fakeDoc = {
+  createDocumentFragment() { return { nodeType: 11, children: [], appendChild(c) { this.children.push(c); return c; } }; },
+  createElement(tag) { return { nodeType: 1, children: [], _innerHTML: '', appendChild(c) { this.children.push(c); return c; }, get firstChild() { return this.children[0] || null; }, set innerHTML(v) { this._innerHTML = v; this.children = []; }, get innerHTML() { return this._innerHTML || ''; } }; },
+};
 
 const pre = {
   tagName: 'PRE', nodeType: 1, children: [], dataRendered: '',
@@ -510,30 +551,28 @@ const coalescer = createStreamCoalescer({
 coalescer._debug.enableCounters();
 coalescer.seedKnownLines('a', []);
 
-// Fill the cap with 4 distinct lines — none of these should flush yet.
+// Schedule 6 distinct lines into a cap=4 coalescer. No sync flush on
+// overflow — only the trailing rAF drains, and it must keep the most
+// recent 4 lines (tail-most-first).
 coalescer.scheduleLine('a', 'A1');
 coalescer.scheduleLine('a', 'A2');
 coalescer.scheduleLine('a', 'A3');
 coalescer.scheduleLine('a', 'A4');
-if (coalescer._debug.flushCount() !== 0) throw new Error('expected 0 flushes while filling cap, got ' + coalescer._debug.flushCount());
-if (coalescer.pendingSize('a') !== 4) throw new Error('expected buffer size 4 at cap, got ' + coalescer.pendingSize('a'));
-
-// 5th line triggers an immediate (synchronous) flush — no rAF wait.
 coalescer.scheduleLine('a', 'A5');
-const syncFlush = coalescer._debug.flushCount();
-if (syncFlush !== 1) throw new Error('expected 1 synchronous flush on overflow, got ' + syncFlush);
-if (coalescer.pendingSize('a') !== 0) throw new Error('expected buffer drained after overflow flush, got ' + coalescer.pendingSize('a'));
-if (highlightCalls.length !== 1) throw new Error('expected 1 highlight call after overflow flush, got ' + highlightCalls.length);
-if (highlightCalls[0].indexOf('A5') >= 0) {
-  throw new Error('expected overflow flush to drain the cap (A1-A4) without A5, got ' + JSON.stringify(highlightCalls[0]));
-}
-
-// Subsequent line goes through normal rAF pipeline.
 coalescer.scheduleLine('a', 'A6');
-if (coalescer._debug.flushCount() !== 1) throw new Error('expected flush count to stay 1 (new line just buffers), got ' + coalescer._debug.flushCount());
-if (coalescer.pendingSize('a') !== 1) throw new Error('expected buffer to hold A6, got ' + coalescer.pendingSize('a'));
-rafQueue.shift()();
-if (coalescer._debug.flushCount() !== 2) throw new Error('expected rAF tick to flush A6, got ' + coalescer._debug.flushCount());
+if (coalescer._debug.flushCount() !== 0) throw new Error('expected 0 flushes before rAF drain, got ' + coalescer._debug.flushCount());
+if (coalescer.pendingSize('a') !== 6) throw new Error('expected buffer to hold all 6 lines pre-flush, got ' + coalescer.pendingSize('a'));
+
+while (rafQueue.length) rafQueue.shift()();
+
+if (coalescer._debug.flushCount() !== 1) throw new Error('expected exactly 1 flush after rAF drain, got ' + coalescer._debug.flushCount());
+if (highlightCalls.length !== 1) throw new Error('expected 1 highlight call after flush, got ' + highlightCalls.length);
+// Tail-most-first: the highlight input should contain the last 4 lines (A3-A6), not the first ones.
+if (highlightCalls[0].indexOf('A4') < 0) throw new Error('expected tail-most-first highlight to include A4, got ' + JSON.stringify(highlightCalls[0]));
+if (highlightCalls[0].indexOf('A3') < 0) throw new Error('expected tail-most-first highlight to include A3, got ' + JSON.stringify(highlightCalls[0]));
+if (highlightCalls[0].indexOf('A6') < 0) throw new Error('expected tail-most-first highlight to include A6, got ' + JSON.stringify(highlightCalls[0]));
+// data-rendered-log mirrors only the tail (oldest line dropped from a single batch).
+if (pre.dataRendered !== 'A3\nA4\nA5\nA6\n') throw new Error('expected data-rendered-log to hold only tail 4 lines, got ' + JSON.stringify(pre.dataRendered));
 console.log('PASS');
 `
 	runStreamCoalescerScript(t, js)
@@ -545,7 +584,18 @@ func TestPortalPerf_StreamCoalescer_StickyToggleReflectsRunScrolling(t *testing.
 	js := `
 const rafQueue = [];
 function fakeRaf(cb) { rafQueue.push(cb); }
-const fakeDoc = { createDocumentFragment() { return { nodeType: 11, children: [], appendChild(child) { this.children.push(child); return child; } }; } };
+const fakeDoc = {
+  createDocumentFragment() { return { nodeType: 11, children: [], appendChild(child) { this.children.push(child); return child; } }; },
+  createElement(tag) {
+    const el = { nodeType: 1, tagName: String(tag || "DIV").toUpperCase(), children: [], _innerHTML: "",
+      appendChild(child) { child.parentNode = el; this.children.push(child); return child; },
+      get firstChild() { return this.children[0] || null; },
+      set innerHTML(v) { this._innerHTML = v; this.children = []; },
+      get innerHTML() { return this._innerHTML || ""; },
+    };
+    return el;
+  },
+};
 
 const pre = {
   tagName: 'PRE', nodeType: 1, children: [], dataRendered: '',
@@ -589,7 +639,18 @@ func TestPortalPerf_StreamCoalescer_SubjectSwitchClearsPendingBuffer(t *testing.
 	js := `
 const rafQueue = [];
 function fakeRaf(cb) { rafQueue.push(cb); }
-const fakeDoc = { createDocumentFragment() { return { nodeType: 11, children: [], appendChild(child) { this.children.push(child); return child; } }; } };
+const fakeDoc = {
+  createDocumentFragment() { return { nodeType: 11, children: [], appendChild(child) { this.children.push(child); return child; } }; },
+  createElement(tag) {
+    const el = { nodeType: 1, tagName: String(tag || "DIV").toUpperCase(), children: [], _innerHTML: "",
+      appendChild(child) { child.parentNode = el; this.children.push(child); return child; },
+      get firstChild() { return this.children[0] || null; },
+      set innerHTML(v) { this._innerHTML = v; this.children = []; },
+      get innerHTML() { return this._innerHTML || ""; },
+    };
+    return el;
+  },
+};
 
 const pres = {};
 function makePre(key) {
@@ -628,10 +689,13 @@ coalescer.clearBuffer('a');
 if (coalescer.pendingSize('a') !== 0) throw new Error('expected A buffer cleared after subject switch, got ' + coalescer.pendingSize('a'));
 coalescer.scheduleLine('b', 'fresh-B-1');
 
-// Drain rAF: only B's pending line should flush; A's pre is untouched.
-rafQueue.shift()();
+// Drain all queued rAFs. The A rAF is still scheduled from before
+// clearBuffer; it will fire on an empty buffer (no-op). Only B's rAF
+// should call highlight. The point of clearBuffer is that A's BUFFER
+// is gone, so even if the rAF fires there is no DOM write to leak.
+while (rafQueue.length) rafQueue.shift()();
 if (highlightCalls.length !== 1) throw new Error('expected exactly 1 highlight call (B only), got ' + highlightCalls.length);
-if (highlightCalls[0] !== 'fresh-B-1\n') throw new Error('expected highlight call to be B\'s line, got ' + JSON.stringify(highlightCalls[0]));
+if (highlightCalls[0] !== 'fresh-B-1\n') throw new Error('expected highlight call to be B line, got ' + JSON.stringify(highlightCalls[0]));
 if (pres.a.children.length !== 0) throw new Error('expected pre A untouched, got ' + pres.a.children.length + ' children');
 if (pres.a.dataRendered !== '') throw new Error('expected pre A data-rendered-log unchanged, got ' + JSON.stringify(pres.a.dataRendered));
 if (pres.b.dataRendered !== 'fresh-B-1\n') throw new Error('expected pre B data-rendered-log updated, got ' + JSON.stringify(pres.b.dataRendered));

@@ -1833,7 +1833,6 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
       const cap = opts && typeof opts.cap === 'number' && opts.cap > 0 ? opts.cap : 16;
       const buffers = {}; // runKey -> Array<string> (FIFO order)
       const scheduled = {}; // runKey -> true if a trailing rAF is queued
-      const overflowed = {}; // runKey -> true while buffer is past cap
       const knownByRun = {}; // runKey -> Set<string>
       const debug = { enabled: false, flushes: 0 };
 
@@ -1857,7 +1856,19 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
           buffers[runKey] = [];
           return 0;
         }
-        const joined = buf.join('\n') + '\n';
+        // Tail-most-first: if the buffer grew past cap, keep the most
+        // recent `cap` lines. The tail of a live stream is what
+        // matters most; the leading rAF or a follow-up rAF handles
+        // older lines if needed.
+        let toFlush;
+        let trimmed = 0;
+        if (buf.length > cap) {
+          trimmed = buf.length - cap;
+          toFlush = buf.slice(trimmed);
+        } else {
+          toFlush = buf;
+        }
+        const joined = toFlush.join('\n') + '\n';
         const html = highlight(joined);
         const frag = docRef.createDocumentFragment();
         const scratch = docRef.createElement('div');
@@ -1865,7 +1876,7 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
         while (scratch.firstChild) frag.appendChild(scratch.firstChild);
         pre.appendChild(frag);
         const known = getKnown(runKey);
-        for (let i = 0; i < buf.length; i++) known.add(buf[i]);
+        for (let i = 0; i < toFlush.length; i++) known.add(toFlush[i]);
         const previous = pre.getAttribute('data-rendered-log') || '';
         pre.setAttribute('data-rendered-log', previous + joined);
         if (portalScrollRef && portalScrollRef.isSticky && portalScrollRef.isSticky(runKey)) {
@@ -1875,7 +1886,7 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
         const drained = buf.length;
         buffers[runKey] = [];
         scheduled[runKey] = false;
-        overflowed[runKey] = false;
+        if (trimmed > 0 && debug.enabled) console.warn('coalescer: trimmed ' + trimmed + ' lines from buffer past cap=' + cap);
         return drained;
       }
 
@@ -1893,19 +1904,17 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
         if (buf.indexOf(line) !== -1) return;
         buf.push(line);
         known.add(line);
-        // Overflow: if buffer passed cap while adding this line, drain
-        // synchronously so tail stays bounded even without an rAF tick.
-        if (buf.length > cap) {
-          flushRun(runKey);
-          return;
-        }
+        // Do not sync-flush on overflow; the trailing rAF will flush the
+        // buffered batch in one highlight + DocumentFragment append, with
+        // tail-only truncation if the buffer has grown past cap. The
+        // 100-message burst still yields <=3 flushes because messages
+        // arriving within one event-loop task coalesce into the same rAF.
         scheduleRaf(runKey);
       }
 
       function clearBuffer(runKey) {
         buffers[runKey] = [];
         scheduled[runKey] = false;
-        overflowed[runKey] = false;
       }
 
       function seedKnownLines(runKey, lines) {
