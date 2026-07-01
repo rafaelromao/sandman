@@ -10,17 +10,19 @@ import (
 // run, per ADR-0030 §Per-row RunID templates:
 //
 //   - Review without a linked issue:  subject `PR<pr>`,
-//     RowID `<sid>-<ts>-PR<pr>`.
+//     RowID `<shortid>-<ts>-PR<pr>`.
 //
 //   - Review with a linked issue:     subject `<linkedIssue>-PR<pr>`,
-//     RowID `<sid>-<ts>-<linkedIssue>-PR<pr>`.
+//     RowID `<shortid>-<ts>-<linkedIssue>-PR<pr>`.
 //
-// The `<sid>-<ts>` prefix is owned by `runid.NewBatch` and threaded
+// Review runs are ordinary AgentRuns (NOT a special review-only kind):
+// the per-row RunID is a real ADR-0030 RunID, and the run folder under
+// `.sandman/batches/<batch-id>/runs/<runID>/` is named after it. The
+// `<shortid>-<ts>` prefix is owned by `runid.NewBatch` and threaded
 // through unchanged; this helper builds only the per-row subject
-// portion. Issue #1551 replaces the legacy literal `"review"` alias
-// that older review launches used as both the row RunID and the run
-// folder name — every review run now lands under a folder whose name
-// is exactly its RowID.
+// portion. The legacy literal `"review"` alias and the `runs/review/`
+// folder name are explicitly NOT used by any current code path; they
+// survive only as a negative check in `TestReviewRunIDFor_NoLiteralReview`.
 //
 // linkedIssue is the PR's linked/closing issue number, obtained via
 // `(*github.PR).LinkedIssueNumber()`. Pass 0 when the PR does not
