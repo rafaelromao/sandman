@@ -1561,6 +1561,7 @@
 
   function setEmpty(body, html, colspan) {
     const placeholder = global.document.createElement('tr');
+    placeholder.className = 'empty-row';
     const td = global.document.createElement('td');
     td.setAttribute('colspan', String(colspan || 6));
     td.innerHTML = html;
