@@ -41,10 +41,13 @@ scan_md() {
 line_no=0
 while IFS= read -r -d '' md; do
   case "$md" in
-    "$ROOT"/docs/adr/*|*"docs/adr/"*) continue ;;
+    "$ROOT"/docs/adr/*|*"docs/adr/"*)
+      ;;
+    *)
+      line_no=0
+      scan_md "$md"
+      ;;
   esac
-  line_no=0
-  scan_md "$md"
 done < <(find "$ROOT/docs" -type f -name '*.md' -print0 2>/dev/null)
 
 line_no=0

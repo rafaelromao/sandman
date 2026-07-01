@@ -10,6 +10,42 @@ import (
 	"testing"
 )
 
+// TestDocGuard_ReviewRunPositivePhrasing is the positive side of the
+// docguard: it asserts that key canonical phrasing exists in
+// CONTEXT.md, docs/usage/portal.md, and the in-package reviewRunIDFor
+// doc comment. A future drift that removes these phrases will fail
+// the build even if no forbidden wording has been added.
+func TestDocGuard_ReviewRunPositivePhrasing(t *testing.T) {
+	root, err := repoRoot()
+	if err != nil {
+		t.Fatalf("locate repo root: %v", err)
+	}
+
+	checks := []struct {
+		path   string
+		needle string
+	}{
+		{filepath.Join(root, "CONTEXT.md"), "ADR-0030"},
+		{filepath.Join(root, "CONTEXT.md"), "<shortid>-<ts>-PR<pr>"},
+		{filepath.Join(root, "CONTEXT.md"), "<shortid>-<ts>-<linkedIssue>-PR<pr>"},
+		{filepath.Join(root, "docs/usage/portal.md"), "ADR-0030"},
+		{filepath.Join(root, "internal/review", "runid.go"), "ADR-0030"},
+		{filepath.Join(root, "internal/review", "runid.go"), "reviewRunIDFor"},
+	}
+
+	for _, c := range checks {
+		body, err := os.ReadFile(c.path)
+		if err != nil {
+			t.Errorf("read %s: %v", c.path, err)
+			continue
+		}
+		if !strings.Contains(string(body), c.needle) {
+			rel, _ := filepath.Rel(root, c.path)
+			t.Errorf("%s must contain %q per issue #1552", rel, c.needle)
+		}
+	}
+}
+
 // TestDocGuard_ReviewRunIdentity is the CI guard that pins the
 // review-run-identity invariants from issue #1552:
 //
@@ -87,11 +123,17 @@ func checkFile(t *testing.T, root, path string, forbidden []forbiddenPhrase) err
 	if strings.HasPrefix(rel, "docs/adr/") {
 		return nil
 	}
-	if strings.HasSuffix(rel, "_test.go") {
-		if rel != "internal/review/runid_test.go" {
-			return nil
-		}
+	// The docguard test file and its shell mirror must reference the
+	// forbidden phrases to assert on them; exempt both from the scan.
+	if rel == "internal/review/docguard_test.go" || rel == "scripts/check-review-docs.sh" {
+		return nil
 	}
+	// Test files may contain forbidden phrases only as part of an
+	// explicit negative-check (e.g. TestReviewRunIDFor_NoLiteralReview).
+	// The allow-list below covers the legitimate phrasings ("negative
+	// check", "must never", "never return", "never writes"); any other
+	// forbidden phrase on a _test.go line is still flagged.
+	isTest := strings.HasSuffix(rel, "_test.go")
 	f, err := os.Open(path)
 	if err != nil {
 		return err
@@ -101,6 +143,7 @@ func checkFile(t *testing.T, root, path string, forbidden []forbiddenPhrase) err
 	scanner := bufio.NewScanner(f)
 	lineNo := 0
 	for scanner.Scan() {
+		_ = isTest
 		lineNo++
 		line := scanner.Text()
 		if !strings.Contains(line, "// docguard:legacy-allowed") &&

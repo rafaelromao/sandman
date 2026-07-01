@@ -263,11 +263,10 @@ func (d *Daemon) Forget(prNumber int, commentID string) {
 // loadSeenCache rebuilds the seen cache from scratch by scanning the
 // on-disk batches index and the canonical run folders for every
 // review batch. Per ADR-0030 §Per-row RunID templates (issue #1551)
-// review runs are first-class rows with the canonical per-row RunID
-// shape `<shortid>-<ts>-<linkedIssue?>-PR<pr>`, so each batch's
-// run.json lives under `<batch>/runs/<runID>/run.json` and its
-// review-state.json lives one folder up next to it. Existing entries
-// are replaced.
+// review runs are first-class rows, so each batch's run.json lives
+// under `<batch>/runs/<runID>/run.json` (see reviewRunIDFor for the
+// exact per-row shape) and its review-state.json lives one folder up
+// next to it. Existing entries are replaced.
 func (d *Daemon) loadSeenCache() error {
 	d.seenCacheMu.Lock()
 	defer d.seenCacheMu.Unlock()
@@ -324,7 +323,7 @@ func (d *Daemon) loadSeenCache() error {
 // batches always launch a single row, so there is exactly one
 // run.json — and returns its `RunID` field. The folder name matches
 // the canonical per-row RunID from ADR-0030 §Per-row RunID templates
-// (`<shortid>-<ts>-<linkedIssue?>-PR<pr>`). The legacy
+// (see reviewRunIDFor for the exact shape). The legacy
 // `runs/review/run.json` is intentionally NOT consulted: the daemon
 // must not read the literal "review" alias as a run folder name.
 func readReviewRowID(runsDir string) (string, error) {
@@ -449,11 +448,11 @@ func (d *Daemon) initPromptTemplate() error {
 // file for a given run folder.
 //
 // Per ADR-0030 §Per-row RunID templates (issue #1551) review runs are
-// first-class rows like every other run kind, so the review-state file
-// lives next to its row's run.json under the canonical per-row folder:
-// `<batch>/runs/<runID>/review-state.json`, where `<runID>` is the
-// canonical per-row RunID (NOT the legacy `runs/review` alias).
-// Callers pass that path in; this helper joins the state filename.
+// first-class rows, so the review-state file lives next to its row's
+// run.json under the canonical per-row folder:
+// `<batch>/runs/<runID>/review-state.json` (see reviewRunIDFor). The
+// folder name is NOT the legacy `runs/review` alias. Callers pass the
+// run folder path in; this helper joins the state filename.
 func (d *Daemon) ReviewStatePath(runDir string) string {
 	return filepath.Join(runDir, "review-state.json")
 }
@@ -783,14 +782,12 @@ func shouldSkipDedupStatus(status string) bool {
 // close it.
 //
 // The PR is fetched once (via the GitHub client) so the linked issue number
-// can fold into the per-row RunID. The per-row RunID follows ADR-0030
-// §Per-row RunID templates — review-with-linked-issue
-// `<shortid>-<ts>-<linkedIssue>-PR<pr>` or review-without-linked-issue
-// `<shortid>-<ts>-PR<pr>` — and is minted by reviewRunIDFor below. This
-// replaces the legacy literal `RunID: "review"` alias; issue #1551 makes
-// the review run a first-class row like every other run kind, and the
-// run folder is named after that per-row RunID (not the legacy
-// `runs/review` alias).
+// can fold into the per-row RunID. The per-row RunID is minted by
+// reviewRunIDFor below per ADR-0030 §Per-row RunID templates; the run
+// folder is named after that per-row RunID (not the legacy `runs/review`
+// alias). This replaces the legacy literal `RunID: "review"` alias —
+// issue #1551 makes the review run a first-class row like every other
+// run kind.
 func (d *Daemon) prepareReviewRun(prNumber int, commentID string) (string, string, *daemon.RunSession, *ReviewStateStore, error) {
 	ts, shortid, err := runid.NewBatch()
 	if err != nil {
