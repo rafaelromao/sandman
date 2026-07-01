@@ -26,6 +26,26 @@
     logPaneCache.set(subjectValue, pane);
   }
 
+  // tokenizeForCache builds the rendered log pane (section + pre) for a
+  // single run and stashes it in the same logPaneCache Map the live pane-
+  // swap path reads from. Issue #1564: pre-warm during idle periods so
+  // the next click on this run hits the cache instead of the cold path.
+  // No-op when the subject is already cached (idempotent across repeat
+  // calls) and when the run's log is empty.
+  function tokenizeForCache(run, helpers) {
+    const subjectValue = subjectRunValue(run);
+    if (!subjectValue) return null;
+    if (logPaneCache.has(subjectValue)) return logPaneCache.get(subjectValue) || null;
+    const log = run && run.log && String(run.log).trim() ? run.log : '';
+    if (!log) return null;
+    const content = global.document.createElement('div');
+    buildLogContent(content, run, helpers);
+    const pane = content.firstChild;
+    if (!pane) return null;
+    storeCachedLogPane(subjectValue, pane);
+    return pane;
+  }
+
   function markCachedLogPaneForBottom(pane) {
     if (!pane || !pane.querySelector) return;
     const pre = pane.querySelector('pre[data-scroll-key]');
@@ -1647,5 +1667,8 @@
     highlightTerminalLog,
     cheapEventsFingerprint,
     cheapDetailsFingerprint,
+    tokenizeForCache,
+    getLogPaneCacheSize: () => logPaneCache.size,
+    hasLogPaneCached: (subjectValue) => logPaneCache.has(subjectValue),
   };
 })(typeof window !== 'undefined' ? window : globalThis);
