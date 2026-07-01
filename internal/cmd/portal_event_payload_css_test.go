@@ -220,11 +220,9 @@ func TestPortal_DrawerShellCSS_IsFlatSurfaceAndKeepsBorderDivider(t *testing.T) 
 // the add/remove highlight contract for issue #1548.
 func TestPortal_RowAddedCSS_HasTintedBackground(t *testing.T) {
 	html := readPortalHTML(t)
-	idx := strings.Index(html, "tbody tr.run-row.row-added td")
-	if idx < 0 {
-		t.Fatalf("could not find 'tbody tr.run-row.row-added td' selector in portal.html (issue #1548: added rows must be highlighted via the row-added class)")
-	}
-	body := extractCSSRuleBody(t, html, "tbody tr.run-row.row-added")
+	// extractCSSRuleBody fails the test if the selector is missing, so
+	// the missing-selector case is already covered.
+	body := extractCSSRuleBody(t, html, "tbody tr.run-row.row-added td")
 
 	if !strings.Contains(body, "background:") {
 		t.Errorf("tbody tr.run-row.row-added rule missing 'background:' (issue #1548: added rows must be visually distinct)")
@@ -242,11 +240,9 @@ func TestPortal_RowAddedCSS_HasTintedBackground(t *testing.T) {
 // to keep the row's border and surrounding context-row intact.
 func TestPortal_RowRemovedCSS_HasDistinctTintedBackground(t *testing.T) {
 	html := readPortalHTML(t)
-	idx := strings.Index(html, "tbody tr.run-row.row-removed td")
-	if idx < 0 {
-		t.Fatalf("could not find 'tbody tr.run-row.row-removed td' selector in portal.html (issue #1548: removed rows must be highlighted via the row-removed class)")
-	}
-	body := extractCSSRuleBody(t, html, "tbody tr.run-row.row-removed")
+	// extractCSSRuleBody fails the test if the selector is missing, so
+	// the missing-selector case is already covered.
+	body := extractCSSRuleBody(t, html, "tbody tr.run-row.row-removed td")
 
 	if !strings.Contains(body, "background:") {
 		t.Errorf("tbody tr.run-row.row-removed rule missing 'background:' (issue #1548: removed rows must be visually distinct)")

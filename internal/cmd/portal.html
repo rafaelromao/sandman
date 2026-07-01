@@ -796,12 +796,12 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
     tbody tr.run-row.row-unavailable td { color: color-mix(in oklch, var(--muted) 78%, var(--text)); }
     tbody tr.run-row.row-unavailable .run-title .name { color: color-mix(in oklch, var(--warning) 60%, var(--text)); }
     /* Diff highlights (issue #1548): rows that diffRuns just inserted
-       get a success-tinted background, rows that diffRuns is about to
-       detach get a danger-tinted background. The selector specificity
-       (tr.run-row.row-added / tr.run-row.row-removed) beats the
-       existing tr.run-row.active / tr.run-row:hover rules so the
-       highlight wins. Scoped to `td` to keep the row's border and the
-       surrounding context-row unchanged. */
+       get a success-tinted background so the user can see what changed
+       at a glance. Rows that diffRuns is about to detach get a
+       danger-tinted background for the same reason. Scoped to `td` to
+       keep the row's border and the surrounding context-row
+       unchanged. The success/danger palette variables already exist in
+       the theme blocks above (line 45-46 and 64-65). */
     tbody tr.run-row.row-added td { background: color-mix(in oklch, var(--success) 14%, var(--surface)); }
     tbody tr.run-row.row-removed td { background: color-mix(in oklch, var(--danger) 14%, var(--surface)); }
     .cell-duration .cell-duration-stack {

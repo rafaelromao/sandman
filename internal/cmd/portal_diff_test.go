@@ -803,6 +803,41 @@ console.log('PASS');
 	runNodeScript(t, js)
 }
 
+// TestPortalDiffDiffRuns_InsertedAndRemovedRowsCarryHighlightClasses is the
+// end-to-end coverage of the diff render path (issue #1548): when diffRuns
+// inserts a new run, the new row carries row-added; when diffRuns removes
+// a run via its inline removal branch, the detached row carried row-removed
+// at the moment of removal (asserted via the returned dataRow, which still
+// has its class list set even though the node is detached from body).
+func TestPortalDiffDiffRuns_InsertedAndRemovedRowsCarryHighlightClasses(t *testing.T) {
+	js := `const body = makeMockBody();
+const runA = { key: 'a', kind: 'active', status: 'running', issueLabel: 'A', runId: 'r1' };
+const runB = { key: 'b', kind: 'active', status: 'running', issueLabel: 'B', runId: 'r2' };
+const stopGroups = new Set();
+const opts1 = { helpers, stopGroups, expandedKey: null };
+SandmanPortalDiff.diffRuns(body, [runA], opts1);
+const aRow = body.querySelector('tr[data-run-key="a"]');
+if (!aRow) throw new Error('expected row a after first diff');
+if (!aRow.classList.contains('row-added')) throw new Error('expected row-added on first-inserted row a');
+// Now diff with a + b. Row a should still carry row-added (kept on the
+// existing row, not re-added), and row b should be inserted with row-added.
+const opts2 = { helpers, stopGroups, expandedKey: null };
+SandmanPortalDiff.diffRuns(body, [runA, runB], opts2);
+const bRow = body.querySelector('tr[data-run-key="b"]');
+if (!bRow) throw new Error('expected row b after second diff');
+if (!bRow.classList.contains('row-added')) throw new Error('expected row-added on newly-inserted row b');
+// Now diff with only b. Row a is removed via the inline branch; assert
+// it carried row-removed at the moment of removal (the dataRow reference
+// is still readable after detach).
+const opts3 = { helpers, stopGroups, expandedKey: null };
+SandmanPortalDiff.diffRuns(body, [runB], opts3);
+if (!aRow.classList.contains('row-removed')) throw new Error('expected row-removed on detached row a, got ' + JSON.stringify(Array.from(aRow.classList)));
+if (body.querySelector('tr[data-run-key="a"]')) throw new Error('expected row a detached from body');
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
 func TestPortalDiffDiffRuns_MatchesExistingRow(t *testing.T) {
 	js := `const body = makeMockBody();
 const run = { key: 'a', kind: 'active', status: 'running', issueLabel: 'Issue 1', runId: 'r1', branch: 'main' };
