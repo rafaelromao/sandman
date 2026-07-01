@@ -826,6 +826,34 @@ var elixirResolver = versionResolver{
 		return selector
 	},
 	catalog: bundledElixirVersionCatalog,
+	passThroughValid: func(selector string) bool {
+		selector = strings.TrimSpace(selector)
+		if selector == "" || strings.EqualFold(selector, "latest") || strings.EqualFold(selector, "lts") {
+			return false
+		}
+		if strings.HasPrefix(selector, "~>") {
+			return false
+		}
+		if len(selector) > 1 && strings.HasPrefix(strings.ToLower(selector), "v") && selector[1] >= '0' && selector[1] <= '9' {
+			selector = selector[1:]
+		}
+		parts := strings.Split(selector, "-")
+		versionParts := strings.Split(parts[0], ".")
+		if len(versionParts) != 3 {
+			return false
+		}
+		for _, part := range versionParts {
+			if part == "" {
+				return false
+			}
+			for _, r := range part {
+				if r < '0' || r > '9' {
+					return false
+				}
+			}
+		}
+		return true
+	},
 }
 
 // resolveVersion resolves a version for a single tool, reading the repo hint,
