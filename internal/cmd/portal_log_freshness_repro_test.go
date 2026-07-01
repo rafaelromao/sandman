@@ -60,10 +60,19 @@ func TestPortalRefresh_ActiveLogPaneUpdatesWhenOutputAdvances(t *testing.T) {
     setTimeout(function () {
       var detail = document.querySelector('tr.detail-row[data-detail-for="`+runID+`"]');
       var pre = detail && detail.querySelector('.detail-content pre[data-scroll-key]');
+      window.__portalActiveBefore = {
+        refreshCalls: window.__portalRefreshCalls || 0,
+        detailText: pre ? pre.textContent : ''
+      };
+    }, 40);
+    setTimeout(function () {
+      var detail = document.querySelector('tr.detail-row[data-detail-for="`+runID+`"]');
+      var pre = detail && detail.querySelector('.detail-content pre[data-scroll-key]');
       var marker = document.createElement('pre');
       marker.id = 'portal-active-freshness';
       marker.textContent = JSON.stringify({
         hasDetail: !!pre,
+        beforeRefresh: window.__portalActiveBefore || null,
         fetchCalls: window.__portalFetchCalls || 0,
         detailText: pre ? pre.textContent : ''
       });
@@ -74,7 +83,11 @@ func TestPortalRefresh_ActiveLogPaneUpdatesWhenOutputAdvances(t *testing.T) {
 	dom, _ := runPortalChromium(t, page)
 	payload := extractPortalMarker(t, dom, "portal-active-freshness")
 	var result struct {
-		HasDetail  bool   `json:"hasDetail"`
+		HasDetail     bool `json:"hasDetail"`
+		BeforeRefresh struct {
+			RefreshCalls int    `json:"refreshCalls"`
+			DetailText   string `json:"detailText"`
+		} `json:"beforeRefresh"`
 		FetchCalls int    `json:"fetchCalls"`
 		DetailText string `json:"detailText"`
 	}
@@ -83,6 +96,12 @@ func TestPortalRefresh_ActiveLogPaneUpdatesWhenOutputAdvances(t *testing.T) {
 	}
 	if !result.HasDetail {
 		t.Fatalf("expected an expanded detail row, got %#v", result)
+	}
+	if result.BeforeRefresh.RefreshCalls != 0 {
+		t.Fatalf("expected the pre-refresh snapshot to run before poll refresh, got %#v", result)
+	}
+	if strings.Contains(result.BeforeRefresh.DetailText, "fresh line 3") {
+		t.Fatalf("expected pre-refresh text to remain stale, got %#v", result)
 	}
 	if result.FetchCalls < 2 {
 		t.Fatalf("expected at least 2 refresh fetches, got %#v", result)
@@ -169,9 +188,19 @@ func TestPortalRefresh_StreamedLogPaneIsNotOverwrittenByPollRefreshes(t *testing
     setTimeout(function () {
       var detail = document.querySelector('tr.detail-row[data-detail-for="`+runID+`"]');
       var pre = detail && detail.querySelector('.detail-content pre[data-scroll-key]');
+      window.__portalStreamBefore = {
+        refreshCalls: window.__portalFetchCalls || 0,
+        detailText: pre ? pre.textContent : '',
+        renderedLog: pre ? pre.getAttribute('data-rendered-log') : ''
+      };
+    }, 40);
+    setTimeout(function () {
+      var detail = document.querySelector('tr.detail-row[data-detail-for="`+runID+`"]');
+      var pre = detail && detail.querySelector('.detail-content pre[data-scroll-key]');
       var marker = document.createElement('pre');
       marker.id = 'portal-stream-freshness';
       marker.textContent = JSON.stringify({
+        beforePoll: window.__portalStreamBefore || null,
         hasStream: window.__portalStreams.length > 0,
         fetchCalls: window.__portalFetchCalls || 0,
         detailText: pre ? pre.textContent : '',
@@ -184,6 +213,11 @@ func TestPortalRefresh_StreamedLogPaneIsNotOverwrittenByPollRefreshes(t *testing
 	dom, _ := runPortalChromium(t, page)
 	payload := extractPortalMarker(t, dom, "portal-stream-freshness")
 	var result struct {
+		BeforePoll struct {
+			RefreshCalls int    `json:"refreshCalls"`
+			DetailText   string `json:"detailText"`
+			RenderedLog  string `json:"renderedLog"`
+		} `json:"beforePoll"`
 		HasStream   bool   `json:"hasStream"`
 		FetchCalls  int    `json:"fetchCalls"`
 		DetailText  string `json:"detailText"`
@@ -194,6 +228,12 @@ func TestPortalRefresh_StreamedLogPaneIsNotOverwrittenByPollRefreshes(t *testing
 	}
 	if !result.HasStream {
 		t.Fatalf("expected a live stream to be established, got %#v", result)
+	}
+	if result.BeforePoll.RefreshCalls != 0 {
+		t.Fatalf("expected pre-poll stream snapshot to be taken before refresh, got %#v", result)
+	}
+	if !strings.Contains(result.BeforePoll.DetailText, "streamed line 2") {
+		t.Fatalf("expected streamed line to be present before poll refresh, got %#v", result)
 	}
 	if result.FetchCalls < 2 {
 		t.Fatalf("expected at least 2 refresh fetches, got %#v", result)
