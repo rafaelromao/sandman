@@ -736,7 +736,7 @@ SandmanPortalDiff.insertRunRow(body, run, opts);
 if (body.children.length !== 2) throw new Error('expected 2 children before remove');
 SandmanPortalDiff.resetCounters();
 const removed = SandmanPortalDiff.removeRunRow(body, 'a');
-if (removed !== 2) throw new Error('expected 2 rows removed, got ' + removed);
+if (removed.count !== 2) throw new Error('expected 2 rows removed, got ' + removed.count);
 if (body.children.length !== 0) throw new Error('expected body empty after remove, got ' + body.children.length);
 console.log('PASS');
 `
@@ -751,8 +751,53 @@ const opts = { helpers, stopGroups, expandedKey: null };
 SandmanPortalDiff.insertRunRow(body, run, opts);
 if (body.children.length !== 1) throw new Error('expected 1 child before remove');
 const removed = SandmanPortalDiff.removeRunRow(body, 'a');
-if (removed !== 1) throw new Error('expected 1 row removed, got ' + removed);
+if (removed.count !== 1) throw new Error('expected 1 row removed, got ' + removed.count);
 if (body.children.length !== 0) throw new Error('expected body empty after remove');
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+func TestPortalDiffInsertRunRow_AddsRowAddedClass(t *testing.T) {
+	js := `const body = makeMockBody();
+const run = { key: 'a', kind: 'active', status: 'running', issueLabel: 'Issue 1', runId: 'r1' };
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: null };
+const created = SandmanPortalDiff.insertRunRow(body, run, opts);
+if (!created.row) throw new Error('expected data row');
+if (!created.row.classList.contains('row-added')) throw new Error('expected row-added class on inserted row, got ' + JSON.stringify(Array.from(created.row.classList)));
+const cellTags = created.row.children.filter((c) => c.tagName === 'TD' || c.tagName === 'TH');
+if (cellTags.length !== 6) throw new Error('expected 6 cells in inserted row, got ' + cellTags.length);
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+func TestPortalDiffRemoveRunRow_AddsRowRemovedClassBeforeDetach(t *testing.T) {
+	js := `const body = makeMockBody();
+const run = { key: 'a', kind: 'active', status: 'running', issueLabel: 'Issue 1', runId: 'r1' };
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: 'a' };
+SandmanPortalDiff.insertRunRow(body, run, opts);
+const result = SandmanPortalDiff.removeRunRow(body, 'a');
+if (result.count !== 2) throw new Error('expected 2 rows removed, got ' + result.count);
+if (!Array.isArray(result.rows) || result.rows.length !== 2) throw new Error('expected 2 detached rows in result.rows, got ' + (result.rows && result.rows.length));
+const dataRow = result.rows.find((r) => r.getAttribute && r.getAttribute('data-run-key') === 'a');
+if (!dataRow) throw new Error('expected detached data row in result.rows');
+if (!dataRow.classList.contains('row-removed')) throw new Error('expected row-removed class on detached row, got ' + JSON.stringify(Array.from(dataRow.classList)));
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+func TestPortalDiffInsertRunRow_ActiveKindKeepsBothClasses(t *testing.T) {
+	js := `const body = makeMockBody();
+const run = { key: 'a', kind: 'active', status: 'running', issueLabel: 'Issue 1', runId: 'r1' };
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: null };
+const created = SandmanPortalDiff.insertRunRow(body, run, opts);
+if (!created.row.classList.contains('active')) throw new Error('expected active class on inserted active row');
+if (!created.row.classList.contains('row-added')) throw new Error('expected row-added class on inserted active row');
 console.log('PASS');
 `
 	runNodeScript(t, js)
