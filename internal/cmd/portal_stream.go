@@ -95,7 +95,7 @@ func servePortalRunStream(w http.ResponseWriter, r *http.Request, repoRoot strin
 	for {
 		_ = conn.SetReadDeadline(time.Now().Add(portalStreamReadTimeout))
 		line, readErr := br.ReadString('\n')
-		if line != "" {
+		if line != "" && lineBelongsToRun(line, run.RunID) {
 			cleaned := cleanPortalStreamLine(line)
 			if _, werr := fmt.Fprintf(w, "data: %s\n\n", cleaned); werr != nil {
 				return
@@ -111,6 +111,35 @@ func servePortalRunStream(w http.ResponseWriter, r *http.Request, repoRoot strin
 			return
 		}
 	}
+}
+
+// lineBelongsToRun reports whether a raw socket line was produced by the
+// requested run. Lines written by a daemon in a mixed batch are tagged
+// with a `[<runID>] ` prefix; lines without that prefix cannot be
+// attributed to any run and must not leak into the per-run stream. The
+// check strips ANSI escapes from the head of the line first so a label
+// wrapped in colour codes (e.g. `\x1b[32m[<runID>]\x1b[0m ...`) still
+// matches; without that, an ANSI wrapper would let sibling output slip
+// past the filter.
+func lineBelongsToRun(line, runID string) bool {
+	if runID == "" {
+		return false
+	}
+	stripped := portalANSISequence.ReplaceAllString(line, "")
+	prefix := "[" + runID + "]"
+	if !strings.HasPrefix(stripped, prefix) {
+		return false
+	}
+	// Reject lines that match only because a longer runID happens to
+	// share the row's runID as a prefix (e.g. row "run-1" would
+	// otherwise claim "[run-12] ..." lines). The character after the
+	// closing bracket must be the canonical `[<runID>] ` space
+	// delimiter defined in CONTEXT.md.
+	rest := stripped[len(prefix):]
+	if rest == "" {
+		return false
+	}
+	return rest[0] == ' '
 }
 
 // cleanPortalStreamLine strips ANSI escapes and the trailing newline and
