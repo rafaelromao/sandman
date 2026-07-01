@@ -1115,7 +1115,7 @@
           return;
         }
         fold('{');
-        const keys = Object.keys(item).sort();
+        const keys = Object.keys(item);
         for (let i = 0; i < keys.length; i += 1) {
           if (i > 0) fold(',');
           const key = keys[i];
