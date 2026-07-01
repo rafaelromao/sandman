@@ -47,6 +47,26 @@ func TestPortalRefresh_ActiveLogPaneUpdatesWhenOutputAdvances(t *testing.T) {
       { runs: `+string(runsJSON)+` },
       { runs: `+string(refreshedRunsJSON)+` }
     ];
+    window.EventSource = function (url) {
+      this.url = url;
+      this._onmessage = null;
+      this._onerror = null;
+      Object.defineProperty(this, 'onmessage', {
+        configurable: true,
+        get: function () { return this._onmessage; },
+        set: function (fn) { this._onmessage = fn; }
+      });
+      Object.defineProperty(this, 'onerror', {
+        configurable: true,
+        get: function () { return this._onerror; },
+        set: function (fn) {
+          this._onerror = fn;
+          if (typeof fn !== 'function') return;
+          setTimeout(function () { if (fn) fn(new Event('error')); }, 0);
+        }
+      });
+      this.close = function () { this.closed = true; };
+    };
     window.fetch = async function () {
       window.__portalFetchCalls += 1;
       var next = window.__portalFetchPayloads.length ? window.__portalFetchPayloads.shift() : { runs: `+string(refreshedRunsJSON)+` };
