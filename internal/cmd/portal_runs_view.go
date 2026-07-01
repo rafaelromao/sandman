@@ -248,6 +248,12 @@ func (v *portalRunsView) computeWithActiveRuns(repoRoot string, eventList []even
 	var err error
 
 	idx := v.loadBatchesIndex(repoRoot)
+	for i := range activeInstances {
+		if activeInstances[i].SocketPath == "" {
+			continue
+		}
+		activeInstances[i].LiveOutput = v.readPortalSocketOutput(activeInstances[i].SocketPath)
+	}
 
 	runs := make([]portalRun, 0, len(runStates)+len(activeInstances))
 	consumedRunIDs := make(map[string]struct{})
@@ -1024,7 +1030,11 @@ func (v *portalRunsView) runFromActiveBatchIssue(repoRoot string, active portalA
 			run.BatchIssues = append([]int(nil), active.IssueNumbers...)
 		}
 		if state.Finished == nil {
-			run.Log = v.filterPortalLogByRunID(liveOutput, state.RunID)
+			if live := strings.TrimSpace(stripLogLabels(liveOutput)); live != "" {
+				run.Log = v.filterPortalLogByRunID(liveOutput, state.RunID)
+			} else {
+				run.Log = v.readPortalTextFile(run.LogPath)
+			}
 			return run
 		}
 		switch state.Status() {
@@ -1264,7 +1274,9 @@ func (v *portalRunsView) runFromState(repoRoot string, runState events.RunState,
 	logPath := v.portalLogPathForRun(repoRoot, locator)
 	logContent := v.readPortalTextFile(logPath)
 	if active != nil {
-		logContent = stripLogLabels(active.LiveOutput)
+		if live := strings.TrimSpace(stripLogLabels(active.LiveOutput)); live != "" {
+			logContent = live
+		}
 	}
 
 	batchKey := ""
