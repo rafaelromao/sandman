@@ -1794,30 +1794,160 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
     // instead of re-reading a 64KB snapshot every poll.
     const streamingKeys = new Set();
     const streamSources = {};
+    const streamCoalescer = createStreamCoalescer({
+      rAF: function (cb) { return window.requestAnimationFrame(cb); },
+      preFor: function (runKey) { return streamPreFor(runKey); },
+      portalScroll: portalScroll,
+      doc: document,
+      cap: 16,
+    });
 
     function streamPreFor(runKey) {
       const detail = runsBody.querySelector('tr.detail-row[data-detail-for="' + CSS.escape(runKey) + '"]');
       return detail ? detail.querySelector('pre[data-scroll-key]') : null;
     }
 
+    // createStreamCoalescer buffers SSE lines per run, deduplicates against
+    // the run's known-lines set, and flushes in a single rAF callback.
+    // Each flush tokenizes the joined batch through `highlight` once and
+    // appends the highlighted result to the run's <pre> via a single
+    // DocumentFragment. The factory is the only path that mutates the
+    // streaming <pre> from SSE traffic (replacing the per-line
+    // appendStreamLine scratch-and-walk pattern, which used to run on the
+    // main thread on every SSE message and could land between a user
+    // click and its rAF render, adding long-task latency).
+    //
+    // opts:
+    //   rAF         — injected scheduler (production: window.requestAnimationFrame)
+    //   highlight   — tokenize function (production: joined => SandmanPortalDiff.highlightTerminalLog(joined))
+    //   preFor      — resolver to the run's <pre> (production: streamPreFor)
+    //   portalScroll— sticky-bottom helper (production: window.SandmanPortalScroll)
+    //   doc         — document injection for createDocumentFragment (production: document)
+    //   cap         — buffer cap (default 16); overflow trips a synchronous flush
+    function createStreamCoalescer(opts) {
+      const rAF = opts && opts.rAF ? opts.rAF : function (cb) { return (window.requestAnimationFrame || function (c) { setTimeout(c, 16); })(cb); };
+      const highlight = opts && opts.highlight ? opts.highlight : function (joined) { return SandmanPortalDiff.highlightTerminalLog(joined); };
+      const preFor = opts && opts.preFor ? opts.preFor : function (runKey) { return streamPreFor(runKey); };
+      const portalScrollRef = opts && opts.portalScroll ? opts.portalScroll : portalScroll;
+      const docRef = opts && opts.doc ? opts.doc : document;
+      const cap = opts && typeof opts.cap === 'number' && opts.cap > 0 ? opts.cap : 16;
+      const buffers = {}; // runKey -> Array<string> (FIFO order)
+      const scheduled = {}; // runKey -> true if a trailing rAF is queued
+      const knownByRun = {}; // runKey -> Set<string>
+      const debug = { enabled: false, flushes: 0 };
+
+      function getKnown(runKey) {
+        if (!knownByRun[runKey]) knownByRun[runKey] = new Set();
+        return knownByRun[runKey];
+      }
+
+      function getBuffer(runKey) {
+        if (!buffers[runKey]) buffers[runKey] = [];
+        return buffers[runKey];
+      }
+
+      function flushRun(runKey) {
+        const buf = buffers[runKey];
+        if (!buf || buf.length === 0) return 0;
+        const pre = preFor(runKey);
+        if (!pre) {
+          // No pre attached (e.g. detail row torn down); drop the buffer
+          // to avoid unbounded growth until a pre materialises.
+          buffers[runKey] = [];
+          return 0;
+        }
+        // Tail-most-first: if the buffer grew past cap, keep the most
+        // recent `cap` lines. The tail of a live stream is what
+        // matters most; the leading rAF or a follow-up rAF handles
+        // older lines if needed.
+        let toFlush;
+        let trimmed = 0;
+        if (buf.length > cap) {
+          trimmed = buf.length - cap;
+          toFlush = buf.slice(trimmed);
+        } else {
+          toFlush = buf;
+        }
+        const joined = toFlush.join('\n') + '\n';
+        const html = highlight(joined);
+        const frag = docRef.createDocumentFragment();
+        const scratch = docRef.createElement('div');
+        scratch.innerHTML = html;
+        while (scratch.firstChild) frag.appendChild(scratch.firstChild);
+        pre.appendChild(frag);
+        const known = getKnown(runKey);
+        for (let i = 0; i < toFlush.length; i++) known.add(toFlush[i]);
+        const previous = pre.getAttribute('data-rendered-log') || '';
+        pre.setAttribute('data-rendered-log', previous + joined);
+        if (portalScrollRef && portalScrollRef.isSticky && portalScrollRef.isSticky(runKey)) {
+          pre.scrollTop = pre.scrollHeight;
+        }
+        if (debug.enabled) debug.flushes += 1;
+        const drained = buf.length;
+        buffers[runKey] = [];
+        scheduled[runKey] = false;
+        if (trimmed > 0 && debug.enabled) console.warn('coalescer: trimmed ' + trimmed + ' lines from buffer past cap=' + cap);
+        return drained;
+      }
+
+      function scheduleRaf(runKey) {
+        if (scheduled[runKey]) return;
+        scheduled[runKey] = true;
+        rAF(function () { flushRun(runKey); });
+      }
+
+      function scheduleLine(runKey, line) {
+        const known = getKnown(runKey);
+        if (known.has(line)) return;
+        // Dedup within the same buffered batch.
+        const buf = getBuffer(runKey);
+        if (buf.indexOf(line) !== -1) return;
+        buf.push(line);
+        known.add(line);
+        // Do not sync-flush on overflow; the trailing rAF will flush the
+        // buffered batch in one highlight + DocumentFragment append, with
+        // tail-only truncation if the buffer has grown past cap. The
+        // 100-message burst still yields <=3 flushes because messages
+        // arriving within one event-loop task coalesce into the same rAF.
+        scheduleRaf(runKey);
+      }
+
+      function clearBuffer(runKey) {
+        buffers[runKey] = [];
+        scheduled[runKey] = false;
+      }
+
+      function seedKnownLines(runKey, lines) {
+        const known = getKnown(runKey);
+        known.clear();
+        for (let i = 0; i < (lines || []).length; i++) known.add(lines[i]);
+      }
+
+      function pendingSize(runKey) {
+        const buf = buffers[runKey];
+        return buf ? buf.length : 0;
+      }
+
+      return {
+        scheduleLine: scheduleLine,
+        flushPending: function (runKey) { return flushRun(runKey); },
+        clearBuffer: clearBuffer,
+        seedKnownLines: seedKnownLines,
+        pendingSize: pendingSize,
+        _debug: {
+          enableCounters: function () { debug.enabled = true; },
+          flushCount: function () { return debug.flushes; },
+          resetCounters: function () { debug.flushes = 0; },
+        },
+      };
+    }
+
     function appendStreamLine(runKey, line) {
-      const pre = streamPreFor(runKey);
-      if (!pre) return;
-      const renderedLog = pre.getAttribute('data-rendered-log') || '';
-      const knownLines = pre._streamKnownLines || new Set(renderedLog.split('\n').filter(Boolean));
-      if (knownLines.has(line)) {
-        return;
-      }
-      knownLines.add(line);
-      pre._streamKnownLines = knownLines;
-      const html = SandmanPortalDiff.highlightTerminalLog(line + '\n');
-      const scratch = document.createElement('div');
-      scratch.innerHTML = html;
-      while (scratch.firstChild) pre.appendChild(scratch.firstChild);
-      pre.setAttribute('data-rendered-log', renderedLog + line + '\n');
-      if (portalScroll && portalScroll.isSticky(runKey)) {
-        pre.scrollTop = pre.scrollHeight;
-      }
+      // Coalescer is the only path that mutates the streaming <pre>.
+      // appendStreamLine is kept as a thin shim for any pre-existing
+      // callers (e.g. tests or inline hot-reload hooks) so they still
+      // route into the rAF-coalesced flush path.
+      streamCoalescer.scheduleLine(runKey, line);
     }
 
     function startRunStream(run) {
@@ -1825,16 +1955,18 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
       if (streamSources[run.key]) return;
       const backendKey = run.backendKey || run.key;
       const pre = streamPreFor(run.key);
+      let cachedLog = '';
       if (pre) {
-        const cachedLog = pre.getAttribute('data-rendered-log') || '';
+        cachedLog = pre.getAttribute('data-rendered-log') || '';
         if (!cachedLog) {
           while (pre.firstChild) pre.removeChild(pre.firstChild);
           pre.setAttribute('data-rendered-log', '');
         }
-        pre._streamKnownLines = new Set(cachedLog.split('\n').filter(Boolean));
       }
+      streamCoalescer.seedKnownLines(run.key, cachedLog.split('\n').filter(Boolean));
+      streamCoalescer.clearBuffer(run.key);
       const src = new EventSource(streamPath + '?runKey=' + encodeURIComponent(backendKey));
-      src.onmessage = function (ev) { appendStreamLine(run.key, ev.data); };
+      src.onmessage = function (ev) { streamCoalescer.scheduleLine(run.key, ev.data); };
       src.onerror = function () {
         stopRunStream(run.key);
       };
@@ -1872,7 +2004,12 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
       const tab = state.tabs[subjectKey] || state.tabs[key] || 'log';
       const wantStream = run && tab === 'log' && run.kind === 'active' && run.socketPath;
       for (const openKey of Object.keys(streamSources)) {
-        if (openKey !== runKey) stopRunStream(openKey);
+        if (openKey !== runKey) {
+          // Subject switch: any buffered (not-yet-flushed) lines for the
+          // previous run must not leak onto the new run's <pre>.
+          streamCoalescer.clearBuffer(openKey);
+          stopRunStream(openKey);
+        }
       }
       if (wantStream) {
         startRunStream(run);

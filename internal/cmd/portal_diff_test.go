@@ -2522,7 +2522,17 @@ func TestPortalHTMLAppendStreamLine_RendersHighlightedHTML(t *testing.T) {
 		t.Fatalf("read %s: %v", htmlPath, err)
 	}
 	content := string(data)
-	for _, want := range []string{"function appendStreamLine(runKey, line)", "SandmanPortalDiff.highlightTerminalLog(line + '\\n')"} {
+	// Per #1563 the SSE path now coalesces pending lines and feeds the
+	// joined batch into highlightTerminalLog once per rAF, instead of
+	// tokenizing line-by-line. The old per-line marker
+	// `SandmanPortalDiff.highlightTerminalLog(line + '\n')` is no longer
+	// the source-of-truth for SSE rendering — the coalescer's flush is.
+	wantMarkers := []string{
+		"function appendStreamLine(runKey, line)",
+		"SandmanPortalDiff.highlightTerminalLog(joined)",
+		"createStreamCoalescer(",
+	}
+	for _, want := range wantMarkers {
 		if !strings.Contains(content, want) {
 			t.Fatalf("page missing SSE highlight marker %q\n%s", want, content[:min(1200, len(content))])
 		}
@@ -3759,6 +3769,59 @@ if (renderRunMetaMatch) {
 vm.runInNewContext(scriptBody + '\n' + ` + "`" + js + "`" + `, Object.assign({}, sandbox, { helpers: sandbox.helpers }), { filename: htmlPath });
 `
 	cmd := exec.Command("node", "-e", prefix)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("script failed: %v\n%s", err, out)
+	}
+	if !strings.Contains(string(out), "PASS") {
+		t.Logf("script output: %s", out)
+	}
+}
+
+// runStreamCoalescerScript extracts the production
+// `function createStreamCoalescer(opts) { ... }` body from
+// `internal/cmd/portal.html` and runs the supplied JS test fragment in a
+// vm sandbox where the production function is bound to `createStreamCoalescer`.
+// This keeps the streaming-coalescer tests anchored to the real production
+// coalescer (mirroring how `runPortalHTMLScript` extracts `renderRunMeta`)
+// instead of duplicating the production logic into the test source. The
+// sandbox wires a controllable `requestAnimationFrame` and stubs
+// `SandmanPortalDiff.highlightTerminalLog` so tests can drive flushes
+// deterministically. The `_debug.flushCount` counter on the coalescer is
+// what tests assert against for coalescing behavior.
+//
+// The user-supplied `js` is concatenated directly to the prefix
+// (matching the established `runNodeScript` pattern) without
+// template-literal wrapping or escaping. Tests must avoid writing a
+// stray backtick in their source — the established convention across
+// the rest of this file.
+func runStreamCoalescerScript(t *testing.T, js string) {
+	t.Helper()
+	_, currentFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("locate test file")
+	}
+	htmlPath := filepath.Join(filepath.Dir(currentFile), "portal.html")
+	prefix := sharedMockHelpers() + sharedMockBody() + `
+const fs = require('fs');
+const vm = require('vm');
+const htmlPath = ` + "`" + htmlPath + "`" + `;
+const src = fs.readFileSync(htmlPath, 'utf8');
+const factoryMatch = src.match(/function createStreamCoalescer\(opts\) \{[\s\S]*?^\s{4}\}/m);
+if (!factoryMatch) {
+  process.stderr.write('createStreamCoalescer body not found in portal.html\\n');
+  process.exit(2);
+}
+const factoryCtx = vm.createContext({});
+vm.runInContext(factoryMatch[0] + '\nthis.createStreamCoalescer = createStreamCoalescer;', factoryCtx, { filename: htmlPath });
+const createStreamCoalescer = factoryCtx.createStreamCoalescer;
+if (typeof createStreamCoalescer !== 'function') {
+  process.stderr.write('createStreamCoalescer not a function after vm.runInContext\\n');
+  process.exit(2);
+}
+globalThis.createStreamCoalescer = createStreamCoalescer;
+`
+	cmd := exec.Command("node", "-e", prefix+js)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("script failed: %v\n%s", err, out)
