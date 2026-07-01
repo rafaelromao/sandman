@@ -884,6 +884,16 @@ func (v *portalRunsView) discoverActiveRuns(repoRoot string, eventsByRun map[str
 			}
 		}
 		if reviewIssueNumber == 0 {
+			// The review identity (resolved runID, batchID, or the
+			// batches-index instance name) encodes the issue as a
+			// `<token>-<ts>-<issue>-PR<n>` tail. When the per-run
+			// folder is absent or not parseable, recover the issue
+			// number from one of these identities so the review row
+			// groups under the canonical issue row instead of escaping
+			// as a standalone passthrough row.
+			reviewIssueNumber = reviewIssueNumberFromIdentity(runID, batchID, instance.Name)
+		}
+		if reviewIssueNumber == 0 {
 			reviewIssueNumber = v.reviewIssueNumberForBatch(eventsByRun, batchID, instance.Name, runID)
 		}
 		issueNumbers := []int(nil)
@@ -995,6 +1005,19 @@ func reviewIssueNumberFromRunID(runID string) int {
 		return 0
 	}
 	return issueNumber
+}
+
+// reviewIssueNumberFromIdentity returns the first parseable review issue number
+// from the given candidate identity strings (resolved runID, batchID, instance
+// name), in priority order. It reuses the strict `<token>-<ts>-<issue>-PR<n>`
+// parser so it cannot misfire on non-review (issue-only) identities.
+func reviewIssueNumberFromIdentity(candidates ...string) int {
+	for _, candidate := range candidates {
+		if issueNumber := reviewIssueNumberFromRunID(candidate); issueNumber > 0 {
+			return issueNumber
+		}
+	}
+	return 0
 }
 
 func (v *portalRunsView) runsFromActiveBatch(repoRoot string, active portalActiveRun, runStates []events.RunState, eventList []events.Event, eventsByRun map[string][]portalEvent, deadBatches []daemon.DeadBatch) ([]portalRun, map[string]struct{}) {

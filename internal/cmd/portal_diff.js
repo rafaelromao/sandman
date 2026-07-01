@@ -549,7 +549,12 @@
 
   function subjectRunsFor(run, opts) {
     const visible = Array.isArray(opts && opts.runs) ? opts.runs : [];
-    if (!run || run.issueNumber <= 0) return [];
+    // Strict positive-integer guard: a missing/undefined/non-integer
+    // issueNumber must never be treated as a valid group key. The previous
+    // loose `<= 0` check let undefined through (undefined <= 0 is false),
+    // which grouped unrelated no-issue rows together by undefined and
+    // produced a giant spurious subject selector.
+    if (!run || !Number.isInteger(run.issueNumber) || run.issueNumber <= 0) return [];
     const seen = new Set();
     const parents = [];
     const reviews = [];
@@ -584,7 +589,12 @@
 
   function createSubjectSelector(rowRun, subjectRun, opts) {
     const related = subjectRunsFor(rowRun, opts);
-    if (!related.length) return;
+    // The selector exists to switch between subjects. With fewer than two
+    // subjects (e.g. a review-only orphan row that is always alone, or an
+    // issue row before any review child appears) there is nothing to switch
+    // between, so render no picker — the detail panel shows the single
+    // subject's content directly.
+    if (!related || related.length < 2) return;
     const row = global.document.createElement('div');
     row.classList.add('detail-subject-picker');
     const select = global.document.createElement('select');
@@ -1309,18 +1319,28 @@
     const tabName = tabNameFor(subjectRun, opts);
     const subjectValue = subjectRunValue(subjectRun);
     const subjectPicker = detailRow.querySelector('.detail-subject-picker');
+    const desiredValues = subjectRunsFor(run, opts).map((candidate) => subjectRunValue(candidate));
+    const pickerPanel = detailRow.querySelector('.detail-panel');
     if (subjectPicker) {
-      const panel = detailRow.querySelector('.detail-panel');
       const currentValues = Array.from(subjectPicker.querySelectorAll('option')).map((option) => String(option.getAttribute('value') || ''));
-      const desiredValues = subjectRunsFor(run, opts).map((candidate) => subjectRunValue(candidate));
       const selectorChanged = currentValues.length !== desiredValues.length || currentValues.some((value, index) => value !== desiredValues[index]);
-      if (selectorChanged && panel) {
+      if (selectorChanged && pickerPanel) {
         const nextPicker = createSubjectSelector(run, subjectRun, opts);
         if (nextPicker) {
-          panel.insertBefore(nextPicker, subjectPicker);
-          panel.removeChild(subjectPicker);
-          mutationCount += 1;
+          pickerPanel.insertBefore(nextPicker, subjectPicker);
         }
+        // If nextPicker is null the selector vanished (fewer than two
+        // subjects now); either way the old picker no longer applies.
+        pickerPanel.removeChild(subjectPicker);
+        mutationCount += 1;
+      }
+    } else if (desiredValues.length >= 2 && pickerPanel) {
+      // A second subject appeared (e.g. a review child just showed up) but
+      // no picker existed yet. Mount one at the top of the detail panel.
+      const nextPicker = createSubjectSelector(run, subjectRun, opts);
+      if (nextPicker) {
+        pickerPanel.insertBefore(nextPicker, pickerPanel.firstChild);
+        mutationCount += 1;
       }
     }
     const tabButtons = detailRow.querySelectorAll('button[data-tab]');
