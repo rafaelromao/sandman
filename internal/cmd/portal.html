@@ -1531,6 +1531,23 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
       td[data-cell="issue-title"] {
         display: none;
       }
+      .empty-row {
+        display: flex;
+        width: 100%;
+        min-height: 240px;
+      }
+      .empty-row td {
+        display: flex;
+        width: 100%;
+        padding: 0;
+        border: 0;
+      }
+      .empty-row .empty-state {
+        width: 100%;
+        display: grid;
+        place-items: center;
+        min-height: 240px;
+      }
     }
     @media (prefers-reduced-motion: reduce) {
       .settings-panel {
@@ -1654,7 +1671,7 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
           </tr>
         </thead>
         <tbody id="runs-body">
-          <tr><td colspan="7"><div class="empty-state">Loading runs.</div></td></tr>
+          <tr class="empty-row"><td colspan="7"><div class="empty-state">Loading runs.</div></td></tr>
         </tbody>
       </table>
     </section>
