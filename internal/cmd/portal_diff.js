@@ -1069,9 +1069,9 @@
 
   function detailPaneFingerprint(tabName, run, helpers) {
     if (tabName === 'events') {
-      return 'events|' + cheapEventsFingerprint(run);
+      return 'events|' + eventsFingerprint(run);
     }
-    return 'details|' + cheapDetailsFingerprint(run, helpers);
+    return 'details|' + detailsFingerprint(run, helpers);
   }
 
   function buildLogContent(content, run, helpers) {
@@ -1131,13 +1131,13 @@
       }
     } else if (tabName === 'events') {
       buildEventsContent(content, subjectRun, helpers);
-      // Payload-only fingerprint. Subject-picker and tab control-state
+      // Rendered-payload fingerprint. Subject-picker and tab control-state
       // churn can update the surrounding panel without forcing a pane
       // rebuild when the rendered JSON is unchanged.
       content.setAttribute('data-rendered-fingerprint', detailPaneFingerprint(tabName, subjectRun, helpers));
     } else {
       buildDetailsContent(content, subjectRun, helpers);
-      // Payload-only fingerprint. Subject-picker and tab control-state
+      // Rendered-payload fingerprint. Subject-picker and tab control-state
       // churn can update the surrounding panel without forcing a pane
       // rebuild when the rendered JSON is unchanged.
       content.setAttribute('data-rendered-fingerprint', detailPaneFingerprint(tabName, subjectRun, helpers));
@@ -1293,11 +1293,11 @@
     }
     let fingerprint = tabName + '|' + subjectFp;
     if (tabName === 'events') {
-      // Payload-only fingerprint. Control-state changes update the panel
+      // Rendered-payload fingerprint. Control-state changes update the panel
       // chrome, but only a rendered JSON change should rebuild the pane.
       fingerprint = detailPaneFingerprint(tabName, subjectRun, opts.helpers);
     } else {
-      // Payload-only fingerprint. Control-state changes update the panel
+      // Rendered-payload fingerprint. Control-state changes update the panel
       // chrome, but only a rendered JSON change should rebuild the pane.
       fingerprint = detailPaneFingerprint(tabName, subjectRun, opts.helpers);
     }
