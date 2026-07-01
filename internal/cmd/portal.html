@@ -1786,7 +1786,7 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
       renderTerminalContent: renderTerminalContent,
       isRunAbortable: isRunAbortable,
       isRunArchivable: isRunArchivable,
-      highlightJSON: portalDiff.highlightJSON,
+      highlightJSON: portalDiff && portalDiff.highlightJSON ? portalDiff.highlightJSON : null,
     };
     function scheduleLogPanePrewarm() {
       if (prewarmScheduled) return;
