@@ -542,6 +542,150 @@ func TestInit_DefaultsToDotnetPresetForDotnetRepo(t *testing.T) {
 	}
 }
 
+func TestInit_RubyBuildToolsScaffoldsPinnedDockerfile(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	var out bytes.Buffer
+	cmd := NewInitCmd()
+	cmd.SetOut(&out)
+	cmd.SetIn(strings.NewReader(""))
+	cmd.SetArgs([]string{"--build-tools", "ruby"})
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	configData, err := os.ReadFile(filepath.Join(dir, ".sandman", "config.yaml"))
+	if err != nil {
+		t.Fatalf("read config.yaml: %v", err)
+	}
+	if !strings.Contains(string(configData), "build_tools: ruby") {
+		t.Fatalf("config missing ruby build_tools preset, got:\n%s", configData)
+	}
+
+	dockerfileData, err := os.ReadFile(filepath.Join(dir, ".sandman", "Dockerfile"))
+	if err != nil {
+		t.Fatalf("read Dockerfile: %v", err)
+	}
+	dockerfile := string(dockerfileData)
+	if !strings.Contains(dockerfile, "# sandman build-tools: ruby") {
+		t.Fatalf("Dockerfile missing build-tools metadata, got:\n%s", dockerfile)
+	}
+	if !strings.Contains(dockerfile, "# sandman ruby-version:") {
+		t.Fatalf("Dockerfile missing ruby-version metadata, got:\n%s", dockerfile)
+	}
+	if !strings.Contains(dockerfile, "RUN mise use -g --pin ruby@") {
+		t.Fatalf("Dockerfile missing pinned ruby install, got:\n%s", dockerfile)
+	}
+	if !strings.Contains(dockerfile, "RUN gem install bundler") {
+		t.Fatalf("Dockerfile missing bundler install, got:\n%s", dockerfile)
+	}
+	if !strings.Contains(dockerfile, "FROM debian:bookworm-slim") {
+		t.Fatalf("Dockerfile missing Debian base image, got:\n%s", dockerfile)
+	}
+	if !strings.Contains(dockerfile, "RUN MISE_VERSION="+scaffold.DefaultMISEVersion+" curl https://mise.run | MISE_INSTALL_PATH=/usr/local/bin/mise sh") {
+		t.Fatalf("Dockerfile missing pinned mise install, got:\n%s", dockerfile)
+	}
+	if !strings.Contains(dockerfile, " gh ") {
+		t.Fatalf("Dockerfile missing gh shared package, got:\n%s", dockerfile)
+	}
+
+	promptData, err := os.ReadFile(filepath.Join(dir, ".sandman", "prompt.md"))
+	if err != nil {
+		t.Fatalf("read prompt.md: %v", err)
+	}
+	promptText := string(promptData)
+	if want := prompt.DefaultPrompt(); promptText != want {
+		t.Fatalf("prompt.md mismatch\nwant:\n%s\ngot:\n%s", want, promptText)
+	}
+}
+
+func TestInit_DefaultsToRubyPresetForRubyRepo(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	if err := os.WriteFile(filepath.Join(dir, "Gemfile"), []byte("source 'https://rubygems.org'\ngem 'rails'\n"), 0644); err != nil {
+		t.Fatalf("write Gemfile: %v", err)
+	}
+
+	var out bytes.Buffer
+	cmd := NewInitCmd()
+	cmd.SetOut(&out)
+	cmd.SetIn(strings.NewReader(""))
+	cmd.SetArgs([]string{})
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	configData, err := os.ReadFile(filepath.Join(dir, ".sandman", "config.yaml"))
+	if err != nil {
+		t.Fatalf("read config.yaml: %v", err)
+	}
+	if !strings.Contains(string(configData), "build_tools: ruby") {
+		t.Fatalf("config missing ruby build_tools preset, got:\n%s", configData)
+	}
+
+	dockerfileData, err := os.ReadFile(filepath.Join(dir, ".sandman", "Dockerfile"))
+	if err != nil {
+		t.Fatalf("read Dockerfile: %v", err)
+	}
+	dockerfile := string(dockerfileData)
+	if !strings.Contains(dockerfile, "# sandman build-tools: ruby") {
+		t.Fatalf("Dockerfile missing ruby build-tools metadata, got:\n%s", dockerfile)
+	}
+	if !strings.Contains(dockerfile, "# sandman ruby-version:") {
+		t.Fatalf("Dockerfile missing ruby-version metadata, got:\n%s", dockerfile)
+	}
+	if !strings.Contains(dockerfile, "RUN mise use -g --pin ruby@") {
+		t.Fatalf("Dockerfile missing pinned ruby install, got:\n%s", dockerfile)
+	}
+	if !strings.Contains(dockerfile, "RUN gem install bundler") {
+		t.Fatalf("Dockerfile missing bundler install, got:\n%s", dockerfile)
+	}
+}
+
+func TestInit_ExplicitGenericOverridesRubyRepoHint(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	if err := os.WriteFile(filepath.Join(dir, "Gemfile"), []byte("source 'https://rubygems.org'\ngem 'rails'\n"), 0644); err != nil {
+		t.Fatalf("write Gemfile: %v", err)
+	}
+
+	var out bytes.Buffer
+	cmd := NewInitCmd()
+	cmd.SetOut(&out)
+	cmd.SetIn(strings.NewReader(""))
+	cmd.SetArgs([]string{"--build-tools", "generic"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	configData, err := os.ReadFile(filepath.Join(dir, ".sandman", "config.yaml"))
+	if err != nil {
+		t.Fatalf("read config.yaml: %v", err)
+	}
+	if !strings.Contains(string(configData), "build_tools: generic") {
+		t.Fatalf("config missing generic build_tools preset, got:\n%s", configData)
+	}
+}
+
+func TestInit_RubyBuildToolsFlagHelpTextMentionsRuby(t *testing.T) {
+	cmd := NewInitCmd()
+	flag := cmd.Flags().Lookup("build-tools")
+	if flag == nil {
+		t.Fatalf("--build-tools flag missing")
+	}
+	if !strings.Contains(flag.Usage, "ruby") {
+		t.Fatalf("--build-tools help text missing ruby, got: %q", flag.Usage)
+	}
+}
+
 func TestInit_PrioritySelectionPromptNotOverwrittenOnSecondRun(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
