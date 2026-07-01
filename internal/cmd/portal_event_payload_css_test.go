@@ -210,3 +210,59 @@ func TestPortal_DrawerShellCSS_IsFlatSurfaceAndKeepsBorderDivider(t *testing.T) 
 		}
 	}
 }
+
+// TestPortal_RowAddedCSS_HasTintedBackground asserts the
+// `tbody tr.run-row.row-added` rule in portal.html paints a
+// success-tinted background (sourced from --success) so a row that
+// diffRuns just inserted is visually distinct from a normal row. The
+// rule is scoped to `td` so the row's border, padding, and the
+// surrounding context-row are unaffected. This is the visual half of
+// the add/remove highlight contract for issue #1548.
+func TestPortal_RowAddedCSS_HasTintedBackground(t *testing.T) {
+	html := readPortalHTML(t)
+	// extractCSSRuleBody fails the test if the selector is missing, so
+	// the missing-selector case is already covered.
+	body := extractCSSRuleBody(t, html, "tbody tr.run-row.row-added td")
+
+	if !strings.Contains(body, "background:") {
+		t.Errorf("tbody tr.run-row.row-added rule missing 'background:' (issue #1548: added rows must be visually distinct)")
+	}
+	if !strings.Contains(body, "var(--success)") {
+		t.Errorf("tbody tr.run-row.row-added rule missing 'var(--success)' (issue #1548: added rows should use the success palette)")
+	}
+}
+
+// TestPortal_RowRemovedCSS_HasDistinctTintedBackground asserts the
+// `tbody tr.run-row.row-removed` rule in portal.html paints a
+// danger-tinted background (sourced from --danger) so a row that
+// diffRuns is about to detach is visually distinct from both a normal
+// row and a row-added row. Like row-added, the rule is scoped to `td`
+// to keep the row's border and surrounding context-row intact.
+func TestPortal_RowRemovedCSS_HasDistinctTintedBackground(t *testing.T) {
+	html := readPortalHTML(t)
+	// extractCSSRuleBody fails the test if the selector is missing, so
+	// the missing-selector case is already covered.
+	body := extractCSSRuleBody(t, html, "tbody tr.run-row.row-removed td")
+
+	if !strings.Contains(body, "background:") {
+		t.Errorf("tbody tr.run-row.row-removed rule missing 'background:' (issue #1548: removed rows must be visually distinct)")
+	}
+	if !strings.Contains(body, "var(--danger)") {
+		t.Errorf("tbody tr.run-row.row-removed rule missing 'var(--danger)' (issue #1548: removed rows should use the danger palette)")
+	}
+}
+
+// TestPortal_RowAddedRemovedCSS_AreMutuallyDistinct asserts the two
+// new highlight rules are not byte-equal — the actual user-visible
+// promise: an added row must look different from a removed row.
+// Reading both rule bodies via extractCSSRuleBody pins that the two
+// CSS rules differ at the source-of-truth (portal.html) so a refactor
+// that copies one into the other is caught.
+func TestPortal_RowAddedRemovedCSS_AreMutuallyDistinct(t *testing.T) {
+	html := readPortalHTML(t)
+	added := extractCSSRuleBody(t, html, "tbody tr.run-row.row-added")
+	removed := extractCSSRuleBody(t, html, "tbody tr.run-row.row-removed")
+	if added == removed {
+		t.Errorf("tbody tr.run-row.row-added and tbody tr.run-row.row-removed have identical rule bodies; the two highlights must be visually distinct (issue #1548)")
+	}
+}

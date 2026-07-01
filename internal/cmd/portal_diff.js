@@ -349,6 +349,7 @@
   function buildDataRow(body, run, opts) {
     const tr = body.insertRow();
     tr.classList.add('run-row');
+    tr.classList.add('row-added');
     if (run.kind) tr.classList.add(run.kind);
     if (run.archived) tr.classList.add('row-archived');
     if (run.unavailable) tr.classList.add('row-unavailable');
@@ -1413,23 +1414,26 @@
     const dataRow = dataRowOf(body, key);
     const detail = detailRowOf(body, key);
     const ctx = contextRowOf(body, key);
-    let removed = 0;
+    const rows = [];
     if (dataRow) {
+      dataRow.classList.add('row-removed');
+      rows.push(dataRow);
       body.removeChild(dataRow);
       clearRowData(dataRow);
-      removed += 1;
     }
     if (ctx) {
+      ctx.classList.add('row-removed');
+      rows.push(ctx);
       body.removeChild(ctx);
-      removed += 1;
     }
     if (detail) {
+      detail.classList.add('row-removed');
+      rows.push(detail);
       cacheLogPaneBeforeRemove(detail);
       body.removeChild(detail);
       clearDetailData(detail);
-      removed += 1;
     }
-    return removed;
+    return { count: rows.length, rows };
   }
 
   function setEmpty(body, html, colspan) {
@@ -1474,15 +1478,18 @@
       if (!newRun) {
         const detail = detailRowOf(body, key);
         if (detail) {
+          detail.classList.add('row-removed');
           body.removeChild(detail);
           clearDetailData(detail);
           removed += 1;
         }
         const ctx = contextRowOf(body, key);
         if (ctx) {
+          ctx.classList.add('row-removed');
           body.removeChild(ctx);
           removed += 1;
         }
+        dataRow.classList.add('row-removed');
         body.removeChild(dataRow);
         clearRowData(dataRow);
         removed += 1;
@@ -1502,6 +1509,7 @@
         // Capture the rendered log pane before removing the detail row so a
         // subsequent re-expand can reuse it. Caching on collapse is what
         // makes open → close → open ~O(1) instead of re-tokenizing the log.
+        detail.classList.add('row-removed');
         cacheLogPaneBeforeRemove(detail);
         body.removeChild(detail);
         clearDetailData(detail);
