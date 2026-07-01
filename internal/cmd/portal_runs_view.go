@@ -861,11 +861,13 @@ func (v *portalRunsView) discoverActiveRuns(repoRoot string, eventsByRun map[str
 		prNumber := 0
 		batchID := instance.Name
 		runID := filepath.Base(runDir)
-		reviewIssueNumber, reviewPRNumber := v.reviewRunIdentityForBatch(eventsByRun, batchID)
+		reviewIssueNumber := v.reviewIssueNumberForBatch(eventsByRun, batchID)
 		if manifestErr == nil && manifest.BatchId != "" {
 			batchID = manifest.BatchId
 			if manifest.RunKind == "review" {
-				prNumber = reviewPRNumber
+				if manifest.PR != nil {
+					prNumber = *manifest.PR
+				}
 			} else {
 				prNumber = v.prNumberFromEvent(eventsByRun[runID])
 			}
@@ -905,22 +907,31 @@ func (v *portalRunsView) discoverActiveRuns(repoRoot string, eventsByRun map[str
 	return active, nil
 }
 
-func (v *portalRunsView) reviewRunIdentityForBatch(eventsByRun map[string][]portalEvent, batchID string) (int, int) {
+func (v *portalRunsView) reviewIssueNumberForBatch(eventsByRun map[string][]portalEvent, batchID string) int {
+	var best *portalEvent
 	for _, events := range eventsByRun {
-		started := v.startedPayload(events)
-		if started == nil {
-			continue
+		for i := range events {
+			event := events[i]
+			if event.Type != "run.started" {
+				continue
+			}
+			review, ok := event.Payload["review"].(bool)
+			if !ok || !review {
+				continue
+			}
+			if payloadBatchID, _ := event.Payload["batch_id"].(string); payloadBatchID != "" && payloadBatchID != batchID {
+				continue
+			}
+			if best == nil || event.Timestamp.After(best.Timestamp) {
+				copy := event
+				best = &copy
+			}
 		}
-		review, ok := started["review"].(bool)
-		if !ok || !review {
-			continue
-		}
-		if payloadBatchID, _ := started["batch_id"].(string); payloadBatchID != "" && payloadBatchID != batchID {
-			continue
-		}
-		return v.reviewIssueNumber(started), v.reviewPRNumber(started)
 	}
-	return 0, 0
+	if best == nil {
+		return 0
+	}
+	return v.reviewIssueNumber(best.Payload)
 }
 
 func (v *portalRunsView) runsFromActiveBatch(repoRoot string, active portalActiveRun, runStates []events.RunState, eventList []events.Event, eventsByRun map[string][]portalEvent, deadBatches []daemon.DeadBatch) ([]portalRun, map[string]struct{}) {
