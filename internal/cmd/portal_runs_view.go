@@ -861,9 +861,14 @@ func (v *portalRunsView) discoverActiveRuns(repoRoot string, eventsByRun map[str
 		prNumber := 0
 		batchID := instance.Name
 		runID := filepath.Base(runDir)
+		reviewIssueNumber, reviewPRNumber := v.reviewRunIdentityForBatch(eventsByRun, batchID)
 		if manifestErr == nil && manifest.BatchId != "" {
 			batchID = manifest.BatchId
-			prNumber = v.prNumberFromEvent(eventsByRun[runID])
+			if manifest.RunKind == "review" {
+				prNumber = reviewPRNumber
+			} else {
+				prNumber = v.prNumberFromEvent(eventsByRun[runID])
+			}
 		}
 		issueNumbers := []int(nil)
 		issueNumber := 0
@@ -877,6 +882,9 @@ func (v *portalRunsView) discoverActiveRuns(repoRoot string, eventsByRun map[str
 			if !manifest.CreatedAt.IsZero() {
 				startedAt = manifest.CreatedAt
 			}
+		}
+		if len(issueNumbers) == 0 && reviewIssueNumber > 0 {
+			issueNumbers = []int{reviewIssueNumber}
 		}
 		if len(issueNumbers) > 0 {
 			issueNumber = issueNumbers[0]
@@ -895,6 +903,24 @@ func (v *portalRunsView) discoverActiveRuns(repoRoot string, eventsByRun map[str
 		})
 	}
 	return active, nil
+}
+
+func (v *portalRunsView) reviewRunIdentityForBatch(eventsByRun map[string][]portalEvent, batchID string) (int, int) {
+	for _, events := range eventsByRun {
+		started := v.startedPayload(events)
+		if started == nil {
+			continue
+		}
+		review, ok := started["review"].(bool)
+		if !ok || !review {
+			continue
+		}
+		if payloadBatchID, _ := started["batch_id"].(string); payloadBatchID != "" && payloadBatchID != batchID {
+			continue
+		}
+		return v.reviewIssueNumber(started), v.reviewPRNumber(started)
+	}
+	return 0, 0
 }
 
 func (v *portalRunsView) runsFromActiveBatch(repoRoot string, active portalActiveRun, runStates []events.RunState, eventList []events.Event, eventsByRun map[string][]portalEvent, deadBatches []daemon.DeadBatch) ([]portalRun, map[string]struct{}) {

@@ -386,6 +386,118 @@ func TestPortal_ReviewAggregation_HonorsCanonicalRowID(t *testing.T) {
 	}
 }
 
+// TestPortal_ReviewAggregation_LiveReviewSocketPreservesIssueIdentity
+// pins the issue #1597 regression: when a live review socket is discovered
+// without batch-manifest issue membership, the portal must recover the review
+// row's issue_number before grouping so the canonical implementation row stays
+// visible and the review row stays reachable by its real RunID.
+func TestPortal_ReviewAggregation_LiveReviewSocketPreservesIssueIdentity(t *testing.T) {
+	repoRoot, err := os.MkdirTemp("/tmp", "pri")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(repoRoot) })
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	const issueNumber = 139
+	const batchID = "sid-2606181138-PR42"
+	const canonicalReviewRowID = "sid-2606181138-139-PR42"
+
+	batchDir := filepath.Join(repoRoot, ".sandman", "batches", batchID)
+	if err := os.MkdirAll(batchDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	createUnixRunSocket(t, filepath.Join(batchDir, "batch.sock"))
+
+	startedAt := time.Now().Add(-4 * time.Minute)
+	if err := daemon.WriteManifest(batchDir, daemon.BatchManifest{
+		BatchId:   batchID,
+		RunKind:   "review",
+		PR:        intPtr(42),
+		Issues:    []int{},
+		CreatedAt: startedAt,
+	}); err != nil {
+		t.Fatalf("write batch manifest: %v", err)
+	}
+
+	layout := paths.NewLayout(nil, repoRoot)
+	batchesIdx := &batchindex.Index{
+		Version: batchindex.IndexVersion,
+		Entries: []batchindex.Entry{{
+			ID:        batchID,
+			Path:      batchDir,
+			Kind:      batchindex.KindReview,
+			Status:    batchindex.StatusActive,
+			CreatedAt: startedAt,
+			PR:        42,
+		}},
+	}
+	if err := batchesIdx.Save(layout.BatchesIndexPath); err != nil {
+		t.Fatal(err)
+	}
+
+	parentStarted := startedAt.Add(-6 * time.Minute)
+	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
+		{Type: "run.started", Timestamp: parentStarted, RunID: "impl-139", Issue: issueNumber, Payload: map[string]any{"branch": "sandman/139-fix", "issue_number": issueNumber, "issue_title": "Fix issue 139", "batch_id": "impl-139"}},
+		{Type: "run.finished", Timestamp: parentStarted.Add(5 * time.Minute), RunID: "impl-139", Issue: issueNumber, Payload: map[string]any{"status": "success", "branch": "sandman/139-fix", "issue_number": issueNumber, "issue_title": "Fix issue 139", "batch_id": "impl-139"}},
+		{Type: "run.started", Timestamp: startedAt, RunID: canonicalReviewRowID, Issue: issueNumber, Payload: map[string]any{"branch": "sandman/review-PR42", "review": true, "pr_number": 42, "issue_number": issueNumber, "batch_id": batchID}},
+	})
+
+	runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")})
+	if err != nil {
+		t.Fatalf("compute: %v", err)
+	}
+
+	var parent *portalRun
+	var review *portalRun
+	for i := range runs {
+		switch {
+		case runs[i].IssueNumber == issueNumber && !runs[i].Review:
+			parent = &runs[i]
+		case runs[i].RunID == canonicalReviewRowID:
+			review = &runs[i]
+		}
+	}
+	if parent == nil {
+		t.Fatalf("expected canonical parent row for issue %d, got %#v", issueNumber, runs)
+	}
+	if review == nil {
+		t.Fatalf("expected live review row with RunID %q, got %#v", canonicalReviewRowID, runs)
+	}
+	if parent.Key != "impl-139" || parent.RunID != "impl-139" {
+		t.Fatalf("expected canonical parent identity to stay anchored on impl-139, got %#v", parent)
+	}
+	if parent.BatchKey != "impl-139" {
+		t.Fatalf("expected canonical parent BatchKey impl-139, got %q", parent.BatchKey)
+	}
+	if parent.IssueTitle != "Fix issue 139" {
+		t.Fatalf("expected canonical parent title to stay intact, got %q", parent.IssueTitle)
+	}
+	if !parent.StartedAt.Equal(parentStarted) {
+		t.Fatalf("expected canonical parent StartedAt %s, got %s", parentStarted, parent.StartedAt)
+	}
+	if parent.Status != "success" {
+		t.Fatalf("expected canonical parent status to stay anchored on its own result, got %q", parent.Status)
+	}
+	if parent.ReviewCount != 1 {
+		t.Fatalf("expected canonical parent ReviewCount 1, got %d", parent.ReviewCount)
+	}
+	if review.IssueNumber != issueNumber {
+		t.Fatalf("expected live review IssueNumber %d, got %d", issueNumber, review.IssueNumber)
+	}
+	if !review.Review {
+		t.Fatalf("expected live review row to remain review=true, got %#v", review)
+	}
+	if !review.GroupedReview {
+		t.Fatalf("expected live review row to be grouped, got %#v", review)
+	}
+	if review.Kind != "active" || review.Status != "reviewing" {
+		t.Fatalf("expected live review row to remain active/reviewing, got %#v", review)
+	}
+}
+
 // TestPortal_BadgeFlipSurvivesEventLogReplay pins slice #1527 acceptance
 // criterion 6: refreshing the portal page or replaying the run index from
 // events.jsonl only must produce the same badge behavior. Two issues back
