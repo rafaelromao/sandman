@@ -33,7 +33,13 @@ The long workflow now lives in the shared Sandman skill. This page describes the
     - [ ] PR-Review (sandman-pr-review)
     - [ ] PR-Merge (sandman-pr-merge)
     
-    After completing each item, update `.sandman/task.md` in place by checking that item off.
+    Before moving on, check which checklist items are already complete in `.sandman/task.md`. If an item is already checked, treat it as complete and skip it instead of repeating the work.
+
+    After checking off an item, update `.sandman/task.md` in place and rewrite the registered `## Next Step` so it points at the next unchecked checklist item.
+
+    ## Next Step
+
+    The registered next step is the first unchecked item in the Execution Checklist.
 
     ## Already Resolved
 
@@ -145,6 +151,7 @@ The long workflow now lives in the shared Sandman skill. This page describes the
 - `Task` names the work and injects the issue number/title.
 - `Issue Context` passes the raw issue body through unchanged.
 - `Runtime Context` passes branch, base, and review metadata into the shared workflow.
+- `Execution Checklist` now tells the agent to skip already-complete items and keep the registered `## Next Step` aligned with the next unchecked item.
 - `Mandatory Execution Contract` forces the agent to load and obey the Sandman skill chain.
 - `AFK Rule — Absolute` replaces human approval with subagent consensus for plan approval, and bans subagent use for PR review (must use `sandman-pr-review` skill). Self-review uses `sandman-self-review` skill.
 - `Search Scope Restriction` keeps recursive search (grep, rg, find) bounded to the working directory and explicitly named sub-paths, so agent context is not flooded by scans of system folders. It also requires `codeindex` first for symbol lookup, dependency lookup, and blast-radius discovery when `codeindex.json` exists. The rule propagates: the agent must forward it to every subagent it spawns or hands work off to, including subagents launched by Sandman or other loaded skills.
