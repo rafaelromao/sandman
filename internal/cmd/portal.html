@@ -2885,9 +2885,11 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
       }
       persistPortalViewState();
       const opening = state.expandedRunKey && state.expandedRunKey !== prevExpandedRunKey;
+      if (opening) {
+        loadRunDetail(state.expandedRunKey);
+      }
       scheduleRender(() => {
         if (opening) {
-          loadRunDetail(state.expandedRunKey);
           const row = findRunRowByIdentity(state.expandedRunKey);
           if (row) {
             row.scrollIntoView({ behavior: 'instant', block: 'nearest' });
