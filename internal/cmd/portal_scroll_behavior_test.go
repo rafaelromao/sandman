@@ -113,27 +113,21 @@ process.stdout.write(JSON.stringify(captured));
 	if err != nil {
 		t.Fatalf("portal scroll behavior harness failed: %v\n%s", err, out)
 	}
-	var got struct {
-		ExpandedAfter string          `json:"expandedAfter"`
-		ScrollCount   int             `json:"scrollCount"`
-		LastOptions   json.RawMessage `json:"lastOptions"`
-		Behavior      interface{}     `json:"behavior"`
-		Block         interface{}     `json:"block"`
-	}
+	var got map[string]any
 	if err := json.Unmarshal(out, &got); err != nil {
 		t.Fatalf("parse harness output %q: %v", strings.TrimSpace(string(out)), err)
 	}
-	if got.ExpandedAfter != "r1" {
-		t.Fatalf("toggleRun did not open row r1: expandedAfter=%q", got.ExpandedAfter)
+	if expanded, _ := got["expandedAfter"].(string); expanded != "r1" {
+		t.Fatalf("toggleRun did not open row r1: expandedAfter=%v", got["expandedAfter"])
 	}
-	if got.ScrollCount != 1 {
-		t.Fatalf("expected exactly 1 scrollIntoView call on the row, got %d", got.ScrollCount)
+	if count, _ := got["scrollCount"].(float64); count != 1 {
+		t.Fatalf("expected exactly 1 scrollIntoView call on the row, got %v", got["scrollCount"])
 	}
-	if got.Behavior != "instant" {
-		t.Fatalf("expected behavior == \"instant\", got %v (last options: %s)", got.Behavior, string(got.LastOptions))
+	if b, _ := got["behavior"].(string); b != "instant" {
+		t.Fatalf("expected behavior == \"instant\", got %v (last options: %s)", b, string(out))
 	}
-	if got.Block != "nearest" {
-		t.Fatalf("expected block == \"nearest\", got %v (last options: %s)", got.Block, string(got.LastOptions))
+	if b, _ := got["block"].(string); b != "nearest" {
+		t.Fatalf("expected block == \"nearest\", got %v (last options: %s)", b, string(out))
 	}
 }
 
@@ -197,46 +191,22 @@ func assertNoSmoothScroll(t *testing.T, file, src string) {
 	}
 }
 
-// TestPortal_SwitchRows_InstantScrollDropsLongTasks covers acceptance
-// criterion #5 as a regression guard: the Slice 0 rapid-row-switch
-// scenario must not regress versus the pinned slice-0 baseline after
-// the smooth→instant+nearest fix.
-//
-// The slice-0 perf harness TestPortalPerf_LongTaskProfile_SwitchRows
-// REWRITES portal_perf_switch_rows_baseline.json on every run, which
-// would defeat this delta check. We assert against the pinned copy at
-// portal_perf_switch_rows_baseline_slice0.json instead, which was
-// committed in the chore commit before the fix landed.
-//
-// Alphabetical ordering ensures this test runs before
-// TestPortalPerf_LongTaskProfile_SwitchRows so the rewriting never
-// poisons our read.
-//
-// NOTE on AC #5 verifiability: the slice-0 perf harness is a Node-vm
-// proxy (see the long preamble in portal_perf_long_task_test.go). The
-// { behavior: 'smooth' } scrollIntoView option dispatches a compositor
-// animation in a real browser, but vm-based stubs have no compositor,
-// so the post-fix and pre-fix harness runs report the same long-task
-// count. The PR Review Agent that accepted #1559 narrowed scope: "AC #3
-// (live localhost:5000) and AC #5 (headless, no manual Chrome) are
-// mutually exclusive in this CI environment; treat the Before column
-// as relative targets for Slices 1–5, not absolute ground truth."
-// This test asserts no regression (count + 1, endToEnd + 25 ms) to
-// keep the fix honest in this environment; the real-browser long-task
-// delta must be re-measured out of band by the maintainer before
-// marking AC #5 fully closed in the parent #1558 PRD.
+// TestPortal_SwitchRows_InstantScrollDropsLongTasks is a regression
+// guard for AC #5: the Slice 0 rapid-row-switch scenario must not
+// regress versus the pinned slice-0 baseline after the
+// smooth→instant+nearest fix. It asserts against the pinned copy at
+// portal_perf_switch_rows_baseline_slice0.json, not the live baseline
+// that TestPortalPerf_LongTaskProfile_SwitchRows rewrites on every run.
+// The Node-vm perf harness has no compositor, so smooth→instant does
+// not surface as a long-task delta here — see the preamble in
+// portal_perf_long_task_test.go for the AC #3/#5 scope narrowing
+// accepted for #1559.
 func TestPortal_SwitchRows_InstantScrollDropsLongTasks(t *testing.T) {
 	if _, err := exec.LookPath("node"); err != nil {
 		t.Skip("node is required for portal scroll behavior test")
 	}
 
-	_, currentFile, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("locate test file")
-	}
-	helperDir := filepath.Dir(currentFile)
-
-	pinnedBaseline, err := loadPinnedSwitchRowsBaseline(t, helperDir)
+	pinnedBaseline, err := loadPinnedSwitchRowsBaseline(t, perfBaselineDir(t))
 	if err != nil {
 		t.Fatalf("load pinned slice-0 baseline: %v", err)
 	}
@@ -275,15 +245,9 @@ type pinnedSwitchRowsBaseline struct {
 	EndToEndMs    float64 `json:"endToEndMs"`
 }
 
-func loadPinnedSwitchRowsBaseline(t *testing.T, _ string) (*pinnedSwitchRowsBaseline, error) {
+func loadPinnedSwitchRowsBaseline(t *testing.T, baselineDir string) (*pinnedSwitchRowsBaseline, error) {
 	t.Helper()
-	repoRootCmd := exec.Command("git", "rev-parse", "--show-toplevel")
-	repoRootOut, err := repoRootCmd.CombinedOutput()
-	if err != nil {
-		return nil, err
-	}
-	repoRoot := strings.TrimSpace(string(repoRootOut))
-	pinnedPath := filepath.Join(repoRoot, "testdata", "portal_perf_baseline", "portal_perf_switch_rows_baseline_slice0.json")
+	pinnedPath := filepath.Join(baselineDir, "portal_perf_switch_rows_baseline_slice0.json")
 	data, err := os.ReadFile(pinnedPath)
 	if err != nil {
 		return nil, err
