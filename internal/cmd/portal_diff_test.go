@@ -2525,9 +2525,12 @@ func TestPortalDiffHighlightTerminalLog_PromptAndToolMarkersStillHighlight(t *te
 	js := `const prompt = SandmanPortalDiff.highlightTerminalLog('$ git status');
 if (prompt.indexOf('term-prompt') === -1) throw new Error('expected term-prompt span');
 if (prompt.indexOf('term-command') === -1) throw new Error('expected term-command span');
-const tool = SandmanPortalDiff.highlightTerminalLog('→ Bash install');
-if (tool.indexOf('term-action') === -1) throw new Error('expected term-action span');
-if (tool.indexOf('Bash') === -1) throw new Error('expected action label preserved');
+const bashTool = SandmanPortalDiff.highlightTerminalLog('→ Bash install');
+if (bashTool.indexOf('term-action') === -1) throw new Error('expected term-action span for Bash');
+if (bashTool.indexOf('Bash') === -1) throw new Error('expected Bash label preserved');
+const readTool = SandmanPortalDiff.highlightTerminalLog('→ Read file.go');
+if (readTool.indexOf('term-action') === -1) throw new Error('expected term-action span for Read');
+if (readTool.indexOf('Read') === -1) throw new Error('expected Read label preserved');
 console.log('PASS');
 `
 	runNodeScript(t, js)
