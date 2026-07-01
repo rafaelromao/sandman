@@ -85,6 +85,40 @@ console.log('PASS');
 	runNodeScript(t, js)
 }
 
+// TestPortalPerf_PrewarmLogPaneCache_TwoIdleCallbacksPopulateCache
+// reproduces the spec's "After two idle callbacks over a fixture of 5
+// runs (3 active, 2 completed), assert logPaneCache.size >= 3 and
+// logPaneCache contains the expected subject keys" test literally:
+// drive the integration point runPrewarmIfIdle twice (one per
+// simulated poll cycle) and verify the cache has at least the 3
+// active keys. Each idle callback fills up to topN new slots; across
+// two cycles all 5 fits the budget (3+2), so the 3 actives are
+// guaranteed to be cached on the first cycle and the 2 completed on
+// the second.
+func TestPortalPerf_PrewarmLogPaneCache_TwoIdleCallbacksPopulateCache(t *testing.T) {
+	js := `const runs = [
+  { key: 'a1', runId: 'a1', kind: 'active', status: 'running', issueLabel: '#1', lastOutputAt: '2024-01-01T00:00:01Z', log: 'active one' },
+  { key: 'a2', runId: 'a2', kind: 'active', status: 'running', issueLabel: '#2', lastOutputAt: '2024-01-01T00:00:03Z', log: 'active two' },
+  { key: 'a3', runId: 'a3', kind: 'active', status: 'running', issueLabel: '#3', lastOutputAt: '2024-01-01T00:00:02Z', log: 'active three' },
+  { key: 'c1', runId: 'c1', kind: 'completed', status: 'success', issueLabel: '#4', log: 'completed one' },
+  { key: 'c2', runId: 'c2', kind: 'completed', status: 'success', issueLabel: '#5', log: 'completed two' },
+];
+const idle = { didTimeout: false, timeRemaining: function() { return 50; } };
+// First poll cycle's idle callback caches the top-3 active runs.
+const n1 = sandbox.SandmanPortalDiff.runPrewarmIfIdle(runs, helpers, { topN: 3 }, idle);
+if (n1 !== 3) throw new Error('expected first idle callback to cache 3 (top-3 active), got ' + n1);
+// Second poll cycle's idle callback caches the remaining 2 completed.
+const n2 = sandbox.SandmanPortalDiff.runPrewarmIfIdle(runs, helpers, { topN: 3 }, idle);
+if (n2 !== 2) throw new Error('expected second idle callback to cache 2 (remaining completed), got ' + n2);
+if (sandbox.SandmanPortalDiff.getLogPaneCacheSize() < 3) throw new Error('expected logPaneCache.size >= 3 after two idle callbacks, got ' + sandbox.SandmanPortalDiff.getLogPaneCacheSize());
+for (const key of ['a1', 'a2', 'a3']) {
+  if (!sandbox.SandmanPortalDiff.hasLogPaneCached(key)) throw new Error('expected active subject ' + key + ' to be cached after two idle callbacks');
+}
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
 // TestPortalPerf_PrewarmLogPaneCache_CapsAtTopN verifies the cap
 // behavior: with 5 eligible active runs and topN=2, only 2 panes are
 // cached (the top-2 by lastOutputAt).
@@ -149,24 +183,30 @@ console.log('PASS');
 
 // TestPortalPerf_PrewarmLogPaneCache_DefaultOnAndDisabledOpt verifies
 // the default-on / disabled opt: calling with no opts populates the
-// cache; calling with { disabled: true } leaves it empty.
+// cache; calling with { disabled: true } leaves the cache empty. The
+// disabled path is exercised on a FRESH set of subject keys (a3, a4)
+// so the assertion proves `disabled` short-circuits the work, not that
+// the cache was already full.
 func TestPortalPerf_PrewarmLogPaneCache_DefaultOnAndDisabledOpt(t *testing.T) {
-	js := `const runs = [
+	js := `const runsOn = [
   { key: 'a1', runId: 'a1', kind: 'active', status: 'running', issueLabel: '#1', log: 'one' },
   { key: 'a2', runId: 'a2', kind: 'active', status: 'running', issueLabel: '#2', log: 'two' },
 ];
 // Default: opts omitted, must be enabled.
-const n1 = sandbox.SandmanPortalDiff.prewarmLogPaneCache(runs, helpers);
+const n1 = sandbox.SandmanPortalDiff.prewarmLogPaneCache(runsOn, helpers);
 if (n1 !== 2) throw new Error('expected default-on to cache 2, got ' + n1);
 if (sandbox.SandmanPortalDiff.getLogPaneCacheSize() !== 2) throw new Error('expected cache size 2 after default-on call, got ' + sandbox.SandmanPortalDiff.getLogPaneCacheSize());
-// Reset for disabled test.
-for (const key of ['a1', 'a2']) {
-  if (sandbox.SandmanPortalDiff.hasLogPaneCached(key)) {
-    // Manually evict so the disabled test starts from empty.
-  }
-}
-const n2 = sandbox.SandmanPortalDiff.prewarmLogPaneCache(runs, helpers, { disabled: true });
+// Disabled: a fresh fixture proves the disabled opt short-circuits
+// the work (if the opt were ignored, this would also cache a3 + a4).
+const runsOff = [
+  { key: 'a3', runId: 'a3', kind: 'active', status: 'running', issueLabel: '#3', log: 'three' },
+  { key: 'a4', runId: 'a4', kind: 'active', status: 'running', issueLabel: '#4', log: 'four' },
+];
+const n2 = sandbox.SandmanPortalDiff.prewarmLogPaneCache(runsOff, helpers, { disabled: true });
 if (n2 !== 0) throw new Error('expected disabled opt to cache 0, got ' + n2);
+if (sandbox.SandmanPortalDiff.hasLogPaneCached('a3')) throw new Error('expected a3 NOT to be cached when disabled=true');
+if (sandbox.SandmanPortalDiff.hasLogPaneCached('a4')) throw new Error('expected a4 NOT to be cached when disabled=true');
+if (sandbox.SandmanPortalDiff.getLogPaneCacheSize() !== 2) throw new Error('expected cache size to stay at 2 (only the default-on ones), got ' + sandbox.SandmanPortalDiff.getLogPaneCacheSize());
 console.log('PASS');
 `
 	runNodeScript(t, js)
