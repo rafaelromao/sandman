@@ -1895,7 +1895,9 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
     const loadingDetailKeys = new Set();
 
     function syncDetailLoadingState(runKey) {
-      const detail = runsBody.querySelector('tr.detail-row[data-detail-for="' + runKey + '"]');
+      const run = findRunByIdentity(runKey);
+      const detailKey = run && run.key ? run.key : runKey;
+      const detail = runsBody.querySelector('tr.detail-row[data-detail-for="' + CSS.escape(detailKey) + '"]');
       if (!detail) return;
       const panel = detail.querySelector('.detail-panel');
       if (!panel) return;
