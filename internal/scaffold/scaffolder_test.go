@@ -1978,7 +1978,7 @@ func TestScaffold_ElixirPresetResolveVersion_ExplicitSelector(t *testing.T) {
 	}
 }
 
-func TestScaffold_ElixirPresetRejectsRangeSelectorFallback(t *testing.T) {
+func TestScaffold_ElixirPresetResolvesRangeSelectorToCatalogPin(t *testing.T) {
 	dir := t.TempDir()
 	fakeMise := filepath.Join(dir, "mise")
 	if err := os.WriteFile(fakeMise, []byte("#!/bin/sh\nexit 0\n"), 0755); err != nil {
@@ -1987,8 +1987,12 @@ func TestScaffold_ElixirPresetRejectsRangeSelectorFallback(t *testing.T) {
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	s := &Scaffolder{}
-	if _, err := s.resolveElixirVersion(dir, "~> 1.18", &fakePrompter{confirm: true}); err == nil {
-		t.Fatal("expected range selector fallback to fail when mise and catalog miss")
+	got, err := s.resolveElixirVersion(dir, "~> 1.18", &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("resolveElixirVersion: %v", err)
+	}
+	if got != "1.18.4-otp-28" {
+		t.Fatalf("expected range selector to resolve to catalog pin %q, got %q", "1.18.4-otp-28", got)
 	}
 }
 

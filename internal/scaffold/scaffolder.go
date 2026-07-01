@@ -807,16 +807,19 @@ var pythonResolver = versionResolver{
 }
 
 // elixirResolver is the versionResolver configuration for Elixir. The
-// normalize hook accepts mise-style selectors ("1.18", "v1.18") and the
-// bare Elixir version form ("1.18.4"). We deliberately do not pass range
-// selectors through when the bundled catalog misses: scaffolded Dockerfiles
-// must pin an exact version or fail.
+// normalize hook accepts mise-style selectors ("1.18", "v1.18", "~> 1.18")
+// and the bare Elixir version form ("1.18.4"). We deliberately do not pass
+// range selectors through when the bundled catalog misses: scaffolded
+// Dockerfiles must pin an exact version or fail.
 var elixirResolver = versionResolver{
 	label:      "Elixir",
 	miseTool:   "elixir",
 	hintReader: readElixirVersionHint,
 	normalize: func(selector string) string {
 		selector = strings.TrimSpace(selector)
+		if strings.HasPrefix(selector, "~>") {
+			selector = strings.TrimSpace(strings.TrimPrefix(selector, "~>"))
+		}
 		if len(selector) > 6 && strings.HasPrefix(strings.ToLower(selector), "elixir") && selector[6] >= '0' && selector[6] <= '9' {
 			return selector[6:]
 		}
