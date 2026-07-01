@@ -1971,6 +1971,44 @@ func TestScaffold_ElixirPresetResolveVersion_ExplicitSelector(t *testing.T) {
 	}
 }
 
+func TestScaffold_DeriveErlangOTPFromElixirVersion(t *testing.T) {
+	tests := []struct {
+		name    string
+		version string
+		want    string
+	}{
+		{"with otp suffix", "1.18.4-otp-28", "28"},
+		{"with otp suffix and patch", "1.20.2-otp-29", "29"},
+		{"bare version falls back to catalog", "1.18", "28"},
+		{"empty falls back to catalog default", "", "29"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := deriveErlangOTPFromElixir(tt.version)
+			if err != nil {
+				t.Fatalf("deriveErlangOTPFromElixir(%q): %v", tt.version, err)
+			}
+			if got != tt.want {
+				t.Errorf("deriveErlangOTPFromElixir(%q) = %q, want %q", tt.version, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestScaffold_RenderElixirInstallCommand(t *testing.T) {
+	got := renderElixirInstallCommand("1.18.4-otp-28", "28")
+	for _, want := range []string{
+		"RUN mise use -g --pin erlang@28",
+		"RUN mise use -g --pin elixir@1.18.4-otp-28",
+		"mix local.rebar --force",
+		"mix local.hex --force",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("renderElixirInstallCommand missing %q, got:\n%s", want, got)
+		}
+	}
+}
+
 func TestReadElixirVersionHint(t *testing.T) {
 	tests := []struct {
 		name     string

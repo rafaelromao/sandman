@@ -208,6 +208,22 @@ var bundledElixirVersionCatalog = map[string]string{
 	"1.15":   "1.15.8-otp-26",
 }
 
+// bundledElixirOTPMap pairs each cataloged Elixir major.minor with the
+// Erlang/OTP release that ships with it. deriveErlangOTPFromElixir uses
+// it as the offline fallback when the resolved Elixir version lacks the
+// `-otp-<NN>` suffix (e.g. user-supplied `~> 1.18` or older non-tagged
+// versions).
+var bundledElixirOTPMap = map[string]string{
+	"1.20": "29",
+	"1.19": "28",
+	"1.18": "28",
+	"1.17": "27",
+	"1.16": "26",
+	"1.15": "26",
+}
+
+const bundledElixirDefaultOTP = "29"
+
 var nodeVersionSelectorPattern = regexp.MustCompile(`\d+(?:\.\d+){0,2}`)
 
 // Scaffolder creates the .sandman/ directory and its files.
@@ -1287,6 +1303,50 @@ func renderPythonInstallCommand(version string) string {
 	var out strings.Builder
 	out.WriteString(fmt.Sprintf("RUN mise use -g --pin python@%s\n", version))
 	out.WriteString("RUN pip3 install uv\n")
+	return out.String()
+}
+
+// deriveErlangOTPFromElixir returns the matching Erlang/OTP major release
+// for the given Elixir version. When the version string includes the
+// `-otp-<NN>` suffix (mise's canonical Elixir version form), the OTP is
+// extracted from there. Otherwise the bundled Elixir-OTP table is
+// consulted by major.minor prefix, falling back to the catalog default.
+func deriveErlangOTPFromElixir(version string) (string, error) {
+	version = strings.TrimSpace(version)
+	if version == "" {
+		return bundledElixirDefaultOTP, nil
+	}
+	if idx := strings.Index(version, "-otp-"); idx >= 0 {
+		otp := strings.TrimSpace(version[idx+len("-otp-"):])
+		if otp != "" {
+			otp = strings.TrimFunc(otp, func(r rune) bool {
+				return r < '0' || r > '9'
+			})
+			if otp != "" {
+				return otp, nil
+			}
+		}
+	}
+	parts := strings.Split(version, ".")
+	if len(parts) >= 2 {
+		key := parts[0] + "." + parts[1]
+		if otp, ok := bundledElixirOTPMap[key]; ok {
+			return otp, nil
+		}
+	}
+	return bundledElixirDefaultOTP, nil
+}
+
+// renderElixirInstallCommand returns the Dockerfile RUN lines for pinning
+// erlang + elixir via mise and installing the mainstream companion
+// tooling (hex, rebar3). The elixir line uses the full pinned string
+// (which keeps the `-otp-<NN>` suffix so the mise shim is unambiguous).
+func renderElixirInstallCommand(elixirVersion, otpVersion string) string {
+	var out strings.Builder
+	fmt.Fprintf(&out, "RUN mise use -g --pin erlang@%s\n", otpVersion)
+	fmt.Fprintf(&out, "RUN mise use -g --pin elixir@%s\n", elixirVersion)
+	out.WriteString("RUN mix local.hex --force\n")
+	out.WriteString("RUN mix local.rebar --force\n")
 	return out.String()
 }
 
