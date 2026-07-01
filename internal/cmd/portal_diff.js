@@ -1066,20 +1066,52 @@
     ].join(':');
   }
 
-  function fingerprintHash(text) {
-    let hash = 5381;
+  function fingerprintEncode(text) {
     const value = String(text);
-    for (let i = 0; i < value.length; i += 1) {
-      hash = ((hash << 5) + hash + value.charCodeAt(i)) | 0;
+    if (typeof TextEncoder !== 'undefined') {
+      const bytes = new TextEncoder().encode(value);
+      let out = '';
+      for (let i = 0; i < bytes.length; i += 1) {
+        out += bytes[i].toString(16).padStart(2, '0');
+      }
+      return out;
     }
-    return (hash >>> 0).toString(36);
+    let out = '';
+    for (let i = 0; i < value.length; i += 1) {
+      const code = value.charCodeAt(i);
+      if (code < 0x80) {
+        out += code.toString(16).padStart(2, '0');
+        continue;
+      }
+      if (code < 0x800) {
+        out += (0xc0 | (code >> 6)).toString(16).padStart(2, '0');
+        out += (0x80 | (code & 0x3f)).toString(16).padStart(2, '0');
+        continue;
+      }
+      if (code >= 0xd800 && code <= 0xdbff && i + 1 < value.length) {
+        const next = value.charCodeAt(i + 1);
+        if (next >= 0xdc00 && next <= 0xdfff) {
+          const cp = 0x10000 + ((code - 0xd800) << 10) + (next - 0xdc00);
+          out += (0xf0 | (cp >> 18)).toString(16).padStart(2, '0');
+          out += (0x80 | ((cp >> 12) & 0x3f)).toString(16).padStart(2, '0');
+          out += (0x80 | ((cp >> 6) & 0x3f)).toString(16).padStart(2, '0');
+          out += (0x80 | (cp & 0x3f)).toString(16).padStart(2, '0');
+          i += 1;
+          continue;
+        }
+      }
+      out += (0xe0 | (code >> 12)).toString(16).padStart(2, '0');
+      out += (0x80 | ((code >> 6) & 0x3f)).toString(16).padStart(2, '0');
+      out += (0x80 | (code & 0x3f)).toString(16).padStart(2, '0');
+    }
+    return out;
   }
 
   function detailPaneFingerprint(tabName, run, helpers) {
     if (tabName === 'events') {
-      return 'events|' + cheapEventsFingerprint(run) + '|h' + fingerprintHash(renderedJSONText(eventsJSONData(run)));
+      return 'events|' + cheapEventsFingerprint(run) + '|x' + fingerprintEncode(renderedJSONText(eventsJSONData(run)));
     }
-    return 'details|' + cheapDetailsFingerprint(run, helpers) + '|h' + fingerprintHash(renderedJSONText(detailsData(run, helpers)));
+    return 'details|' + cheapDetailsFingerprint(run, helpers) + '|x' + fingerprintEncode(renderedJSONText(detailsData(run, helpers)));
   }
 
   function renderedJSONText(value) {
