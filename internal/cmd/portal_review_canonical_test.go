@@ -498,6 +498,86 @@ func TestPortal_ReviewAggregation_LiveReviewSocketPreservesIssueIdentity(t *test
 	}
 }
 
+// TestPortal_DiscoverActiveRuns_ReviewRunFolderPreservesIssueIdentity pins the
+// active-socket side of the #1597 regression: the portal must recover a live
+// review's issue number from the review run folder before any event-log
+// grouping happens, so the batch can still attach to the canonical issue row
+// even if the review event stream has not yet been replayed.
+func TestPortal_DiscoverActiveRuns_ReviewRunFolderPreservesIssueIdentity(t *testing.T) {
+	repoRoot, err := os.MkdirTemp("/tmp", "pri")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(repoRoot) })
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	const issueNumber = 139
+	const batchID = "sid-2606181138-PR42"
+	const canonicalReviewRowID = "sid-2606181138-139-PR42"
+
+	batchDir := filepath.Join(repoRoot, ".sandman", "batches", batchID)
+	if err := os.MkdirAll(batchDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	createUnixRunSocket(t, filepath.Join(batchDir, "batch.sock"))
+
+	startedAt := time.Now().Add(-4 * time.Minute)
+	if err := daemon.WriteManifest(batchDir, daemon.BatchManifest{
+		BatchId:   batchID,
+		RunKind:   "review",
+		PR:        intPtr(42),
+		Issues:    []int{},
+		CreatedAt: startedAt,
+	}); err != nil {
+		t.Fatalf("write batch manifest: %v", err)
+	}
+	if err := daemon.WriteRunManifest(batchDir, canonicalReviewRowID, batchindex.RunManifest{
+		RunID:     canonicalReviewRowID,
+		BatchID:   batchID,
+		PR:        42,
+		Kind:      batchindex.KindReview,
+		CreatedAt: startedAt,
+		Status:    batchindex.RunManifestStatusActive,
+	}); err != nil {
+		t.Fatalf("write run manifest: %v", err)
+	}
+
+	layout := paths.NewLayout(nil, repoRoot)
+	batchesIdx := &batchindex.Index{
+		Version: batchindex.IndexVersion,
+		Entries: []batchindex.Entry{{
+			ID:        batchID,
+			Path:      batchDir,
+			Kind:      batchindex.KindReview,
+			Status:    batchindex.StatusActive,
+			CreatedAt: startedAt,
+			PR:        42,
+		}},
+	}
+	if err := batchesIdx.Save(layout.BatchesIndexPath); err != nil {
+		t.Fatal(err)
+	}
+
+	active, err := (&portalRunsView{}).discoverActiveRuns(repoRoot, map[string][]portalEvent{})
+	if err != nil {
+		t.Fatalf("discoverActiveRuns: %v", err)
+	}
+	if len(active) != 1 {
+		t.Fatalf("expected 1 active instance, got %d: %#v", len(active), active)
+	}
+	if got := active[0].IssueNumber; got != issueNumber {
+		t.Fatalf("expected active IssueNumber %d, got %d", issueNumber, got)
+	}
+	if got := active[0].RunID; got != canonicalReviewRowID {
+		t.Fatalf("expected active RunID %q, got %q", canonicalReviewRowID, got)
+	}
+	if got := active[0].IssueNumbers; len(got) != 1 || got[0] != issueNumber {
+		t.Fatalf("expected active IssueNumbers [%d], got %#v", issueNumber, got)
+	}
+}
+
 // TestPortal_BadgeFlipSurvivesEventLogReplay pins slice #1527 acceptance
 // criterion 6: refreshing the portal page or replaying the run index from
 // events.jsonl only must produce the same badge behavior. Two issues back
