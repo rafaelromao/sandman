@@ -62,7 +62,8 @@ func TestPortalRefresh_ActiveLogPaneUpdatesWhenOutputAdvances(t *testing.T) {
       var pre = detail && detail.querySelector('.detail-content pre[data-scroll-key]');
       window.__portalActiveBefore = {
         refreshCalls: window.__portalRefreshCalls || 0,
-        detailText: pre ? pre.textContent : ''
+        detailText: pre ? pre.textContent : '',
+        renderedLog: pre ? pre.getAttribute('data-rendered-log') : ''
       };
     }, 40);
     setTimeout(function () {
@@ -74,7 +75,8 @@ func TestPortalRefresh_ActiveLogPaneUpdatesWhenOutputAdvances(t *testing.T) {
         hasDetail: !!pre,
         beforeRefresh: window.__portalActiveBefore || null,
         fetchCalls: window.__portalFetchCalls || 0,
-        detailText: pre ? pre.textContent : ''
+        detailText: pre ? pre.textContent : '',
+        renderedLog: pre ? pre.getAttribute('data-rendered-log') : ''
       });
       document.body.appendChild(marker);
     }, 2500);
@@ -87,9 +89,11 @@ func TestPortalRefresh_ActiveLogPaneUpdatesWhenOutputAdvances(t *testing.T) {
 		BeforeRefresh struct {
 			RefreshCalls int    `json:"refreshCalls"`
 			DetailText   string `json:"detailText"`
+			RenderedLog  string `json:"renderedLog"`
 		} `json:"beforeRefresh"`
-		FetchCalls int    `json:"fetchCalls"`
-		DetailText string `json:"detailText"`
+		FetchCalls  int    `json:"fetchCalls"`
+		DetailText  string `json:"detailText"`
+		RenderedLog string `json:"renderedLog"`
 	}
 	if err := json.Unmarshal([]byte(payload), &result); err != nil {
 		t.Fatalf("parse active freshness payload: %v\nraw=%s", err, payload)
@@ -103,11 +107,17 @@ func TestPortalRefresh_ActiveLogPaneUpdatesWhenOutputAdvances(t *testing.T) {
 	if strings.Contains(result.BeforeRefresh.DetailText, "fresh line 3") {
 		t.Fatalf("expected pre-refresh text to remain stale, got %#v", result)
 	}
+	if strings.Contains(result.BeforeRefresh.RenderedLog, "fresh line 3") {
+		t.Fatalf("expected pre-refresh rendered-log cache to remain stale, got %#v", result)
+	}
 	if result.FetchCalls < 2 {
 		t.Fatalf("expected at least 2 refresh fetches, got %#v", result)
 	}
 	if !strings.Contains(result.DetailText, "fresh line 3") {
 		t.Fatalf("expected refreshed log text to be visible, got %#v", result)
+	}
+	if !strings.Contains(result.RenderedLog, "fresh line 3") {
+		t.Fatalf("expected refreshed log cache to include the new line, got %#v", result)
 	}
 }
 
