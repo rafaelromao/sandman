@@ -34,6 +34,7 @@ var smokePrewarmVariants = []smokePrewarmVariant{
 	{provider: "opencode", buildTools: "generic"},
 	{provider: "opencode", buildTools: "go"},
 	{provider: "opencode", buildTools: "python"},
+	{provider: "opencode", buildTools: "elixir"},
 }
 
 type smokePrewarmVariant struct {
