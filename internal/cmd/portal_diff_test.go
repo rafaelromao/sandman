@@ -2538,6 +2538,56 @@ console.log('PASS');
 	runNodeScript(t, js)
 }
 
+func TestPortalDiffHighlightTerminalLog_BareCommandWordsStayPlain(t *testing.T) {
+	js := `const cases = [
+  'git command not found',
+  'npm install failed',
+  'make: *** [build] Error 1',
+  'error: cannot find gh CLI'
+];
+for (const line of cases) {
+  const result = SandmanPortalDiff.highlightTerminalLog(line);
+  if (result.indexOf('term-command') !== -1) throw new Error('unexpected term-command span for ' + line + ': ' + result);
+  const plain = result.replace(/<[^>]+>/g, '');
+  if (plain.indexOf(line) === -1) throw new Error('expected plain text preserved for ' + line + ': ' + plain);
+}
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+func TestPortalDiffHighlightTerminalLog_FallbackNoLongerHighlightsBareCommands(t *testing.T) {
+	_, currentFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("locate test file")
+	}
+	jsPath := filepath.Join(filepath.Dir(currentFile), "portal_diff.js")
+	data, err := os.ReadFile(jsPath)
+	if err != nil {
+		t.Fatalf("read %s: %v", jsPath, err)
+	}
+	content := string(data)
+	forbidden := "regex: /^(?:gh|git|go|npm|yarn|node|npx|ls|echo|cat|make|mkdir|rm|cp|mv|find|grep|sed|awk|curl|wget|pwd|cd|printf|tar|unzip|jq|chmod|ln|whoami|sort|head|tail|less|more|touch|ssh|scp)\\b/, render: (m) => wrapToken('term-command', m[0])"
+	if strings.Contains(content, forbidden) {
+		t.Fatalf("portal_diff.js still contains bare-command fallback rule")
+	}
+}
+
+func TestPortalDiffHighlightTerminalLog_PromptAndToolMarkersStillHighlight(t *testing.T) {
+	js := `const prompt = SandmanPortalDiff.highlightTerminalLog('$ git status');
+if (prompt.indexOf('term-prompt') === -1) throw new Error('expected term-prompt span');
+if (prompt.indexOf('term-command') === -1) throw new Error('expected term-command span');
+const bashTool = SandmanPortalDiff.highlightTerminalLog('→ Bash install');
+if (bashTool.indexOf('term-action') === -1) throw new Error('expected term-action span for Bash');
+if (bashTool.indexOf('Bash') === -1) throw new Error('expected Bash label preserved');
+const readTool = SandmanPortalDiff.highlightTerminalLog('→ Read file.go');
+if (readTool.indexOf('term-action') === -1) throw new Error('expected term-action span for Read');
+if (readTool.indexOf('Read') === -1) throw new Error('expected Read label preserved');
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
 func TestPortalDiffHighlightTerminalLog_FencedLanguageLabelHighlightsFence(t *testing.T) {
 	js := "const result = SandmanPortalDiff.highlightTerminalLog('```go\\nconst msg = \"hello\" // note\\n```');\nif (result.indexOf('term-heading') === -1) throw new Error('expected fenced language label span');\nif (result.indexOf('const msg') === -1) throw new Error('expected fenced code text preserved');\nconsole.log('PASS');\n"
 	runNodeScript(t, js)
