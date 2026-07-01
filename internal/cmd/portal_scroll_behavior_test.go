@@ -191,17 +191,18 @@ func assertNoSmoothScroll(t *testing.T, file, src string) {
 	}
 }
 
-// TestPortal_SwitchRows_InstantScrollDropsLongTasks is a regression
-// guard for AC #5: the Slice 0 rapid-row-switch scenario must not
-// regress versus the pinned slice-0 baseline after the
-// smooth→instant+nearest fix. It asserts against the pinned copy at
+// TestPortal_SwitchRows_InstantScrollDoesNotRegress is a regression
+// guard after the smooth→instant+nearest fix: the Slice 0 rapid-row-
+// switch scenario must not regress versus the pinned slice-0 baseline.
+// It asserts against the pinned copy at
 // portal_perf_switch_rows_baseline_slice0.json, not the live baseline
 // that TestPortalPerf_LongTaskProfile_SwitchRows rewrites on every run.
 // The Node-vm perf harness has no compositor, so smooth→instant does
-// not surface as a long-task delta here — see the preamble in
-// portal_perf_long_task_test.go for the AC #3/#5 scope narrowing
-// accepted for #1559.
-func TestPortal_SwitchRows_InstantScrollDropsLongTasks(t *testing.T) {
+// not surface as a long-task delta here — see the buildPerfBaselineComment
+// helper at internal/cmd/portal_perf_long_task_test.go for the AC #3/#5
+// scope narrowing accepted for #1559. Observing the AC #5 long-task
+// drop literally requires a real-browser capture, which CI cannot do.
+func TestPortal_SwitchRows_InstantScrollDoesNotRegress(t *testing.T) {
 	if _, err := exec.LookPath("node"); err != nil {
 		t.Skip("node is required for portal scroll behavior test")
 	}
