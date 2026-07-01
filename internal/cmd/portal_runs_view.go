@@ -176,15 +176,6 @@ func batchIDFromRunID(runID string) string {
 	return runID
 }
 
-// batchKeyForActive returns the stable batch identity used to populate
-// BatchKey for rows produced from a live (active) instance. The portal
-// dedups rows by (IssueNumber, BatchKey); a current-batch row that
-// reaches dedup with an empty BatchKey collapses with historical rows
-// (BatchKey="") and silently hides the active work (issue #1541). The
-// fallback chain prefers the live instance's index ID, then the
-// manifest-declared batch ID, then the run directory basename, then a
-// synthetic sentinel anchored on the run ID so a malformed instance
-// still cannot produce an empty BatchKey.
 func batchKeyForActive(active portalActiveRun) string {
 	if active.Key != "" {
 		return active.Key
@@ -1278,7 +1269,7 @@ func (v *portalRunsView) runFromState(repoRoot string, runState events.RunState,
 
 	batchKey := ""
 	if active != nil {
-		batchKey = active.Key
+		batchKey = batchKeyForActive(*active)
 	} else if bid := runState.BatchID(); bid != "" {
 		// Fall back to the batch id projected from the event payload
 		// when no active instance is matched. Without this, ghost

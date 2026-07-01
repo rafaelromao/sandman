@@ -2487,14 +2487,46 @@ func TestPortalRuns_ReviewAndImplRowsSeparateForSameIssue(t *testing.T) {
 	}
 }
 
+// TestPortal_RunFromState_ActiveEmptyKeyUsesHelperFallback pins issue
+// #1541 for the runFromState active branch: an active instance whose
+// Key, BatchID, and Dir are all empty (a degraded index entry) must
+// still produce a non-empty BatchKey via the synthetic RunID sentinel.
+func TestPortal_RunFromState_ActiveEmptyKeyUsesHelperFallback(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	startedAt := time.Now().Add(-1 * time.Minute)
+	active := &portalActiveRun{
+		Key:         "",
+		BatchID:     "",
+		Dir:         "",
+		RunID:       "ghost-active-issue-42",
+		IssueNumber: 42,
+		StartedAt:   startedAt,
+	}
+	state := events.RunState{
+		RunID: "ghost-active-issue-42",
+		Started: events.Event{
+			Timestamp: startedAt,
+			Payload:   map[string]any{"issue": float64(42)},
+		},
+	}
+
+	run := (&portalRunsView{}).runFromState(repoRoot, state, active, nil, nil)
+
+	if run.BatchKey == "" {
+		t.Fatalf("expected non-empty BatchKey from helper fallback, got empty")
+	}
+	if run.BatchKey != "active-ghost-active-issue-42" {
+		t.Fatalf("expected BatchKey %q (sentinel), got %q", "active-ghost-active-issue-42", run.BatchKey)
+	}
+}
+
 // TestPortal_RunFromActiveBatchIssue_EmptyKeyStillHasBatchIdentity
-// pins issue #1541's first acceptance criterion across the waiting
-// statuses produced by runFromActiveBatchIssue. A live instance whose
-// Key is empty (so the batches index entry has no ID) must still
-// produce a non-empty BatchKey regardless of the row's status —
-// queued, blocked, or the implicit default active state. Without the
-// normalization, the row reaches dedup with an empty BatchKey and
-// collapses with historical rows.
+// pins issue #1541: a live instance whose Key is empty must still
+// produce a non-empty BatchKey across queued and blocked statuses.
 func TestPortal_RunFromActiveBatchIssue_EmptyKeyStillHasBatchIdentity(t *testing.T) {
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
@@ -2551,12 +2583,9 @@ func TestPortal_RunFromActiveBatchIssue_EmptyKeyStillHasBatchIdentity(t *testing
 	}
 }
 
-// TestPortal_RunFromActiveMatch_NormalizesBatchIdentity pins the
-// state-absent branch of runFromActiveMatch (the prompt-only /
-// auto-select path) for issue #1541. An active instance whose Key is
-// empty (i.e., the batches index entry has no ID) must still reach
-// dedup with a non-empty BatchKey, so it cannot collapse with historical
-// rows whose BatchKey is empty.
+// TestPortal_RunFromActiveMatch_NormalizesBatchIdentity pins issue
+// #1541 for the prompt-only / auto-select path: an active instance
+// whose Key is empty must still reach dedup with a non-empty BatchKey.
 func TestPortal_RunFromActiveMatch_NormalizesBatchIdentity(t *testing.T) {
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
@@ -2598,12 +2627,8 @@ func TestPortal_RunFromActiveMatch_NormalizesBatchIdentity(t *testing.T) {
 }
 
 // TestPortal_DedupRuns_DifferentBatchesRemainSeparate pins issue
-// #1541's second acceptance criterion: two rows for the same issue
-// number from different batches (one historical row with BatchKey="",
-// one current-batch row with a derived identity) survive dedupRuns as
-// two separate rows. Before the batch-identity normalization, a
-// current-batch row with an empty Key reached dedup with BatchKey=""
-// and collapsed with the historical row, hiding live work.
+// #1541's second acceptance criterion: rows from different batches
+// for the same issue number survive dedupRuns as two separate rows.
 func TestPortal_DedupRuns_DifferentBatchesRemainSeparate(t *testing.T) {
 	v := &portalRunsView{}
 	base := time.Now().Add(-5 * time.Minute)
@@ -2631,10 +2656,7 @@ func TestPortal_DedupRuns_DifferentBatchesRemainSeparate(t *testing.T) {
 
 // TestPortal_DedupRuns_SameBatchRowsStillCollapse is the regression
 // guard for issue #1541's third acceptance criterion: same-batch
-// duplicate rows for the same issue number continue to collapse through
-// dedupRuns, exactly as they did before the batch-identity normalization
-// change. Two active rows for issue 42 that share BatchKey="active-1"
-// must reduce to one row.
+// duplicate rows continue to collapse through dedupRuns.
 func TestPortal_DedupRuns_SameBatchRowsStillCollapse(t *testing.T) {
 	v := &portalRunsView{}
 	base := time.Now().Add(-5 * time.Minute)
@@ -2654,13 +2676,8 @@ func TestPortal_DedupRuns_SameBatchRowsStillCollapse(t *testing.T) {
 }
 
 // TestPortal_BatchKeyForActive_FallbackChain pins the contract for
-// batchKeyForActive: the helper must always return a non-empty string so
-// every active row reaches dedupRuns with a stable batch identity (issue
-// #1541). The fallback chain is Key → BatchID → filepath.Base(Dir) →
-// synthetic sentinel; when the first non-empty source is found, it is
-// returned as-is. Empty inputs and pathological inputs ("." dir) must
-// still resolve to something that does not collide with historical
-// BatchKey="" rows.
+// batchKeyForActive: every fallback level must return a non-empty
+// string so active rows never reach dedupRuns with an empty BatchKey.
 func TestPortal_BatchKeyForActive_FallbackChain(t *testing.T) {
 	cases := []struct {
 		name   string
