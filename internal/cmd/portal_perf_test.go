@@ -238,7 +238,7 @@ func TestPortalPerf_AsyncMidBandAndSyncSmallAt16KBThreshold(t *testing.T) {
 	}
 
 	// --- Assertion 1: ~20 KB mid-band log takes the async chunked path. ---
-	const midbandLog = bigLog('midband', 373); // 20031 bytes > 16 KB threshold
+	const midbandLog = bigLog('midband', 373); // 21523 bytes > 16 KB threshold
 	const midbandRun = { key: 'midband', kind: 'completed', status: 'success', issueLabel: 'M', runId: 'r-mid', log: midbandLog, startedAt: 1000, finishedAt: 2000, duration: 1, branch: 'main', logPath: '/tmp/mid.log' };
 	const midBody = makeMockBody();
 	const midOpts = { helpers, stopGroups: new Set(), expandedKey: 'midband', tabs: { midband: 'log' } };
