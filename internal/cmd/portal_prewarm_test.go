@@ -225,3 +225,103 @@ console.log('PASS');
 `
 	runNodeScript(t, js)
 }
+
+// TestPortalPerf_PrewarmLogPaneCache_PortalHtmlSchedulesAfterRefresh
+// is the integration check for the production scheduleLogPanePrewarm
+// in portal.html. The wiring is duplicated here in a controlled
+// sandbox: (a) it must be a no-op when called twice in a row (the
+// prewarmScheduled gate ensures at most one prewarm per poll cycle),
+// (b) it must call runPrewarmIfIdle against state.runs when the idle
+// deadline gives time, and (c) it must use a renderTerminalContent
+// that produces real output. The companion production-code test below
+// verifies the source file actually contains the expected wiring.
+func TestPortalPerf_PrewarmLogPaneCache_PortalHtmlSchedulesAfterRefresh(t *testing.T) {
+	js := `const fakeState = {
+  runs: [
+    { key: 'a1', runId: 'a1', kind: 'active', status: 'running', issueLabel: '#1', lastOutputAt: '2024-01-01T00:00:02Z', log: 'active one' },
+    { key: 'a2', runId: 'a2', kind: 'active', status: 'running', issueLabel: '#2', lastOutputAt: '2024-01-01T00:00:01Z', log: 'active two' },
+    { key: 'c1', runId: 'c1', kind: 'completed', status: 'success', issueLabel: '#3', lastOutputAt: '2024-01-01T00:00:99Z', log: 'completed one (newer than actives)' },
+  ],
+};
+let idleCalls = 0;
+let lastIdleOpts = null;
+const portalDiff = sandbox.SandmanPortalDiff;
+const window = {
+  requestIdleCallback: function(cb, opts) { idleCalls += 1; lastIdleOpts = opts || null; setTimeout(() => cb({ didTimeout: false, timeRemaining: () => 50 }), 0); },
+};
+let prewarmScheduled = false;
+const prewarmDisabled = false;
+const PREWARM_TOP_N = 2;
+const prewarmHelpers = {
+  escapeHTML: function(v) { return String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;'); },
+  renderTerminalContent: function(text) { return portalDiff.highlightTerminalLog(text); },
+  highlightJSON: portalDiff.highlightJSON,
+};
+function scheduleLogPanePrewarm() {
+  if (prewarmScheduled) return;
+  if (!portalDiff || typeof portalDiff.runPrewarmIfIdle !== 'function') return;
+  if (prewarmDisabled) return;
+  if (!Array.isArray(fakeState.runs) || fakeState.runs.length === 0) return;
+  prewarmScheduled = true;
+  const runPrewarm = (idle) => {
+    prewarmScheduled = false;
+    try { portalDiff.runPrewarmIfIdle(fakeState.runs, prewarmHelpers, { topN: PREWARM_TOP_N }, idle); } catch (err) {}
+  };
+  if (typeof window.requestIdleCallback === 'function') {
+    window.requestIdleCallback(runPrewarm, { timeout: 2000 });
+  } else {
+    setTimeout(() => runPrewarm({ didTimeout: false, timeRemaining: () => 50 }), 0);
+  }
+}
+scheduleLogPanePrewarm();
+scheduleLogPanePrewarm();
+if (idleCalls !== 1) throw new Error('expected exactly 1 requestIdleCallback call (prewarmScheduled gate), got ' + idleCalls);
+if (!lastIdleOpts || lastIdleOpts.timeout !== 2000) throw new Error('expected requestIdleCallback opts.timeout=2000, got ' + JSON.stringify(lastIdleOpts));
+setTimeout(function() {
+  // 2 active + 1 completed (newer lastOutputAt than actives) with
+  // topN=2: the active-first sort must put both actives ahead of the
+  // completed run, so c1 is NOT cached. This is the active-first
+  // ordering from the issue spec.
+  if (sandbox.SandmanPortalDiff.getLogPaneCacheSize() !== 2) throw new Error('expected 2 cached (topN=2, active-first), got ' + sandbox.SandmanPortalDiff.getLogPaneCacheSize());
+  if (!sandbox.SandmanPortalDiff.hasLogPaneCached('a1')) throw new Error('expected a1 (most recent active) to be cached');
+  if (!sandbox.SandmanPortalDiff.hasLogPaneCached('a2')) throw new Error('expected a2 to be cached');
+  if (sandbox.SandmanPortalDiff.hasLogPaneCached('c1')) throw new Error('expected c1 NOT to be cached (active-first sorts it behind the actives)');
+  console.log('PASS');
+}, 50);
+`
+	runNodeScript(t, js)
+}
+
+// TestPortalPerf_PrewarmLogPaneCache_PortalHtmlWiringPresent is a
+// source-grep check that the production portal.html contains the
+// expected wiring: scheduleLogPanePrewarm exists, is invoked from
+// refresh() on the success path, and forwards to
+// SandmanPortalDiff.runPrewarmIfIdle. This guards against accidental
+// removal of the integration by a future refactor.
+func TestPortalPerf_PrewarmLogPaneCache_PortalHtmlWiringPresent(t *testing.T) {
+	js := `const html = fs.readFileSync('portal.html', 'utf8');
+const must = [
+  'function scheduleLogPanePrewarm',
+  'prewarmScheduled',
+  'requestIdleCallback',
+  'runPrewarmIfIdle',
+  'PREWARM_TOP_N',
+  'scheduleLogPanePrewarm()',
+];
+for (const needle of must) {
+  if (html.indexOf(needle) === -1) throw new Error('expected portal.html to contain ' + JSON.stringify(needle));
+}
+// Verify the call site is inside refresh() success path (after the
+// scheduleRender() call on the success branch).
+const refreshBody = html.match(/async function refresh\(\)[\s\S]*?\n\s{4}\}/);
+if (!refreshBody) throw new Error('could not locate refresh() in portal.html');
+const body = refreshBody[0];
+const renderIdx = body.indexOf('scheduleRender();');
+const prewarmIdx = body.indexOf('scheduleLogPanePrewarm();');
+if (renderIdx === -1) throw new Error('expected scheduleRender(); in refresh()');
+if (prewarmIdx === -1) throw new Error('expected scheduleLogPanePrewarm(); in refresh()');
+if (prewarmIdx <= renderIdx) throw new Error('expected scheduleLogPanePrewarm(); AFTER scheduleRender() in refresh() success path');
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
