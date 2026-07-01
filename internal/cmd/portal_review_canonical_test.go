@@ -3,6 +3,7 @@ package cmd
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -391,7 +392,10 @@ func TestPortal_ReviewAggregation_HonorsCanonicalRowID(t *testing.T) {
 // to back, each with a canonical parent impl row and a live or completed
 // review child, must surface as portalRow with the right pair of (Kind,
 // Status) so visibleRunForIssueGroup's flip/no-flip branch makes the same
-// decision deterministically across recomputes.
+// decision deterministically across recomputes. After the second compute,
+// the rows are marshaled into the portal.html script so the visible-run
+// helper itself picks the right badge for each issue group — the determinism
+// check is on the badge output, not only on the intermediate row state.
 func TestPortal_BadgeFlipSurvivesEventLogReplay(t *testing.T) {
 	repoRoot, err := os.MkdirTemp("/tmp", "pbf")
 	if err != nil {
@@ -488,4 +492,52 @@ func TestPortal_BadgeFlipSurvivesEventLogReplay(t *testing.T) {
 			t.Fatalf("issue %d parent ReviewCount=0, want >=1", issue)
 		}
 	}
+
+	// Drive the visible-run helper against the second-compute row set so
+	// the determinism check lands on the actual badge output, not just
+	// the intermediate row state. Each issue's parent and review rows are
+	// marshaled into JS as plain objects with the canonical event-log
+	// shape (Kind, Status, IssueNumber, Review, RunID, BatchKey).
+	marshal := func(r portalRun) string {
+		return "{ key: " + strconv.Quote(r.Key) +
+			", kind: " + strconv.Quote(r.Kind) +
+			", status: " + strconv.Quote(r.Status) +
+			", issueNumber: " + strconv.Itoa(r.IssueNumber) +
+			", review: " + strconv.FormatBool(r.Review) +
+			", runId: " + strconv.Quote(r.RunID) +
+			", batchKey: " + strconv.Quote(r.BatchKey) +
+			" }"
+	}
+
+	for _, issue := range []int{liveIssue, doneIssue} {
+		var jsRows []string
+		for _, run := range secondRuns {
+			if run.IssueNumber == issue {
+				jsRows = append(jsRows, marshal(run))
+			}
+		}
+		if len(jsRows) == 0 {
+			t.Fatalf("issue %d missing from second compute", issue)
+		}
+		js := `const runs = [` + strings.Join(jsRows, ",") + `];
+const visible = visibleRunForIssueGroup(` + strconv.Itoa(issue) + `, runs);
+if (!visible) throw new Error('expected visible row for issue ` + strconv.Itoa(issue) + `');
+if (visible.key !== 'impl-` + strconv.Itoa(issue) + `') throw new Error('expected canonical parent key impl-` + strconv.Itoa(issue) + `, got ' + JSON.stringify(visible.key));
+if (visible.runId !== 'impl-` + strconv.Itoa(issue) + `') throw new Error('expected canonical parent runId, got ' + JSON.stringify(visible.runId));
+if (visible.review) throw new Error('expected review=false on canonical visible parent, got ' + JSON.stringify(visible.review));
+if (visible.batchKey !== 'impl-` + strconv.Itoa(issue) + `') throw new Error('expected canonical parent batchKey, got ' + JSON.stringify(visible.batchKey));
+` + badgeAssertion(issue)
+		runPortalHTMLScript(t, js)
+	}
+}
+
+func badgeAssertion(issue int) string {
+	if issue == 1001 {
+		return `if (visible.status !== 'reviewing') throw new Error('issue 1001 visible badge must flip to reviewing (live review in group, AC1), got ' + JSON.stringify(visible.status));
+if (visible.liveReview !== true) throw new Error('issue 1001 expected liveReview=true flag, got ' + JSON.stringify(visible.liveReview));
+`
+	}
+	return `if (visible.status !== 'success') throw new Error('issue ` + strconv.Itoa(issue) + ` visible badge must revert to parent status (no live review, AC3), got ' + JSON.stringify(visible.status));
+if (visible.liveReview) throw new Error('issue ` + strconv.Itoa(issue) + ` expected liveReview=false flag, got ' + JSON.stringify(visible.liveReview));
+`
 }
