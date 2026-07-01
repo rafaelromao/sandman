@@ -3789,6 +3789,11 @@ vm.runInNewContext(scriptBody + '\n' + ` + "`" + js + "`" + `, Object.assign({},
 // `SandmanPortalDiff.highlightTerminalLog` so tests can drive flushes
 // deterministically. The `_debug.flushCount` counter on the coalescer is
 // what tests assert against for coalescing behavior.
+//
+// User-supplied `js` is escaped for backtick template-literal embedding
+// (the same NewReplacer chain as runPortalHTMLScript) so a test that
+// contains a backtick or `${` does not break or interpolate the
+// surrounding script.
 func runStreamCoalescerScript(t *testing.T, js string) {
 	t.Helper()
 	_, currentFile, _, ok := runtime.Caller(0)
@@ -3796,6 +3801,11 @@ func runStreamCoalescerScript(t *testing.T, js string) {
 		t.Fatal("locate test file")
 	}
 	htmlPath := filepath.Join(filepath.Dir(currentFile), "portal.html")
+	escapedJS := strings.NewReplacer(
+		`\`, `\\`,
+		"`", "\\`",
+		`${`, `\${`,
+	).Replace(js)
 	prefix := sharedMockHelpers() + sharedMockBody() + `
 const fs = require('fs');
 const vm = require('vm');
@@ -3815,7 +3825,7 @@ if (typeof createStreamCoalescer !== 'function') {
 }
 globalThis.createStreamCoalescer = createStreamCoalescer;
 `
-	prefix += "`" + js + "`"
+	prefix += "`" + escapedJS + "`"
 	cmd := exec.Command("node", "-e", prefix)
 	out, err := cmd.CombinedOutput()
 	if err != nil {

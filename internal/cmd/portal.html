@@ -1953,7 +1953,6 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
           while (pre.firstChild) pre.removeChild(pre.firstChild);
           pre.setAttribute('data-rendered-log', '');
         }
-        pre._streamKnownLines = new Set(cachedLog.split('\n').filter(Boolean));
       }
       streamCoalescer.seedKnownLines(run.key, cachedLog.split('\n').filter(Boolean));
       streamCoalescer.clearBuffer(run.key);
