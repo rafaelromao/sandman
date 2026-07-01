@@ -26,6 +26,77 @@
     logPaneCache.set(subjectValue, pane);
   }
 
+  // tokenizeForCache builds the rendered log pane (section + pre) for a
+  // single run and stashes it in the same logPaneCache Map the live pane-
+  // swap path reads from. Issue #1564: pre-warm during idle periods so
+  // the next click on this run hits the cache instead of the cold path.
+  // No-op when the subject is already cached (idempotent across repeat
+  // calls) and when the run's log is empty.
+  function tokenizeForCache(run, helpers) {
+    const subjectValue = subjectRunValue(run);
+    if (!subjectValue) return null;
+    if (logPaneCache.has(subjectValue)) return logPaneCache.get(subjectValue) || null;
+    const log = run && run.log && String(run.log).trim() ? run.log : '';
+    if (!log) return null;
+    const content = global.document.createElement('div');
+    buildLogContent(content, run, helpers);
+    const pane = content.firstChild;
+    if (!pane) return null;
+    storeCachedLogPane(subjectValue, pane);
+    return pane;
+  }
+
+  // prewarmLogPaneCache selects the top-N most-likely-to-be-clicked runs
+  // and feeds each through tokenizeForCache. Selection order (issue
+  // #1564 spec): active runs first, then completed; within each group,
+  // most-recently-chatted first (lastOutputAt desc, falling back to
+  // startedAt, then 0). Capped at opts.topN (default 3). Returns the
+  // number of runs newly cached; idempotent across repeat calls because
+  // tokenizeForCache is a no-op when the subject is already cached.
+  // opts.disabled = true short-circuits the work entirely (issue #1564
+  // open question: power-user opt-out for small screens).
+  const PREWARM_DEFAULT_TOP_N = 3;
+  function prewarmLogPaneCache(runs, helpers, opts) {
+    const options = opts || {};
+    if (options.disabled) return 0;
+    const topN = Number.isFinite(options.topN) && options.topN >= 0 ? options.topN : PREWARM_DEFAULT_TOP_N;
+    if (!Array.isArray(runs) || topN === 0) return 0;
+    const candidates = [];
+    for (const run of runs) {
+      if (!run) continue;
+      const subjectValue = subjectRunValue(run);
+      if (!subjectValue) continue;
+      const log = run.log && String(run.log).trim();
+      if (!log) continue;
+      const ts = Date.parse(run.lastOutputAt || run.startedAt || '') || 0;
+      candidates.push({ run, subjectValue, kind: run.kind === 'active' ? 0 : 1, ts });
+    }
+    candidates.sort((a, b) => {
+      if (a.kind !== b.kind) return a.kind - b.kind;
+      return b.ts - a.ts;
+    });
+    let added = 0;
+    for (let i = 0; i < candidates.length && added < topN; i += 1) {
+      if (logPaneCache.has(candidates[i].subjectValue)) continue;
+      const pane = tokenizeForCache(candidates[i].run, helpers);
+      if (pane) added += 1;
+    }
+    return added;
+  }
+
+  // runPrewarmIfIdle is the integration point between
+  // requestIdleCallback and prewarmLogPaneCache. Issue #1564 spec:
+  // when the idle callback fires with didTimeout: true (or no
+  // timeRemaining), the work is skipped — we never want prewarm to
+  // block the main thread. The idle arg is the deadline object the
+  // browser hands to the requestIdleCallback callback; tests can
+  // construct one directly to drive the skip / proceed paths.
+  function runPrewarmIfIdle(runs, helpers, opts, idle) {
+    if (!idle || idle.didTimeout) return 0;
+    if (typeof idle.timeRemaining === 'function' && idle.timeRemaining() <= 0) return 0;
+    return prewarmLogPaneCache(runs, helpers, opts);
+  }
+
   function markCachedLogPaneForBottom(pane) {
     if (!pane || !pane.querySelector) return;
     const pre = pane.querySelector('pre[data-scroll-key]');
@@ -1647,5 +1718,10 @@
     highlightTerminalLog,
     cheapEventsFingerprint,
     cheapDetailsFingerprint,
+    tokenizeForCache,
+    prewarmLogPaneCache,
+    runPrewarmIfIdle,
+    getLogPaneCacheSize: () => logPaneCache.size,
+    hasLogPaneCached: (subjectValue) => logPaneCache.has(subjectValue),
   };
 })(typeof window !== 'undefined' ? window : globalThis);

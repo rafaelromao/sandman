@@ -1765,6 +1765,51 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
       refreshTimer = setInterval(refresh, pollInterval);
     }
 
+    // Idle-prewarm of top-N log panes (issue #1564). After every
+    // successful refresh, schedule a requestIdleCallback that warms the
+    // top-N most-likely-to-be-clicked runs into logPaneCache so the next
+    // click hits the cache instead of the cold path. At most one
+    // prewarm is in flight per poll cycle (prewarmScheduled gate). The
+    // setTimeout(0) fallback keeps environments without
+    // requestIdleCallback (some test sandboxes) working.
+    const PREWARM_TOP_N = 3;
+    const prewarmDisabled = false;
+    let prewarmScheduled = false;
+    const prewarmHelpers = {
+      escapeHTML: escapeHTML,
+      formatTime: formatTime,
+      formatDuration: formatDuration,
+      formatIssueTitle: formatIssueTitle,
+      formatSource: formatSource,
+      statusClass: statusClass,
+      renderRunMeta: renderRunMeta,
+      renderTerminalContent: renderTerminalContent,
+      isRunAbortable: isRunAbortable,
+      isRunArchivable: isRunArchivable,
+      highlightJSON: portalDiff && portalDiff.highlightJSON ? portalDiff.highlightJSON : null,
+    };
+    function scheduleLogPanePrewarm() {
+      if (prewarmScheduled) return;
+      if (!portalDiff || typeof portalDiff.runPrewarmIfIdle !== 'function') return;
+      if (prewarmDisabled) return;
+      if (!Array.isArray(state.runs) || state.runs.length === 0) return;
+      prewarmScheduled = true;
+      const runPrewarm = (idle) => {
+        prewarmScheduled = false;
+        try {
+          portalDiff.runPrewarmIfIdle(state.runs, prewarmHelpers, { topN: PREWARM_TOP_N }, idle);
+        } catch (err) {
+          // Prewarm is best-effort: any error must not break the live
+          // page. The next refresh cycle will schedule another attempt.
+        }
+      };
+      if (typeof window.requestIdleCallback === 'function') {
+        window.requestIdleCallback(runPrewarm, { timeout: 2000 });
+      } else {
+        setTimeout(() => runPrewarm({ didTimeout: false, timeRemaining: () => 50 }), 0);
+      }
+    }
+
     if (pollIntervalInput) {
       pollIntervalInput.addEventListener('change', () => {
         const next = Number.parseInt(pollIntervalInput.value, 10);
@@ -2688,6 +2733,7 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
 	        loadRunDetail(state.expandedRunKey);
 	      }
 	      scheduleRender();
+	      scheduleLogPanePrewarm();
 	    } catch (err) {
         state.loading = false;
         errorBanner.textContent = 'Refresh failed: ' + err.message;

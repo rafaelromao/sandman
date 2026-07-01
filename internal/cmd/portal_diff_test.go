@@ -3186,7 +3186,14 @@ const fs = require('fs');
 const vm = require('vm');
 const helperPath = ` + "`" + helperPath + "`" + `;
 const source = fs.readFileSync(helperPath, 'utf8');
-	const sandbox = { window: {}, globalThis: {}, Set, Map, WeakMap, JSON, console, setTimeout: setTimeout, requestIdleCallback: function(cb) { var start = Date.now(); setTimeout(function() { cb({ didTimeout: false, timeRemaining: function() { return Math.max(0, 50 - (Date.now() - start)); } }); }, 0); } };
+	const sandbox = { window: {}, globalThis: {}, Set, Map, WeakMap, JSON, console, setTimeout: setTimeout, requestIdleCallback: function(cb) { var impl = sandbox.requestIdleCallbackImpl || sandbox.__requestIdleCallbackDefault; return impl.call(sandbox, cb); } };
+	// Tests can replace sandbox.requestIdleCallbackImpl before any code
+	// pulls window.requestIdleCallback (portal.html's prewarm path uses
+	// the browser API directly). The shim above consults the override on
+	// every call so per-test stubs (e.g. { didTimeout: true } for the
+	// prewarm skip-work test) take effect without rebuilding the
+	// sandbox.
+	sandbox.__requestIdleCallbackDefault = function(cb) { var start = Date.now(); setTimeout(function() { cb({ didTimeout: false, timeRemaining: function() { return Math.max(0, 50 - (Date.now() - start)); } }); }, 0); };
 	sandbox.window = sandbox;
 	sandbox.globalThis = sandbox;
 	sandbox.document = documentRef;
