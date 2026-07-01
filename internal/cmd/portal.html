@@ -2964,7 +2964,8 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
 	      }
 	      state.expandedRunKey = nextRunKey;
 	      persistPortalViewState();
-	      scheduleRender(() => loadRunDetail(nextRunKey));
+	      loadRunDetail(nextRunKey);
+	      scheduleRender();
 	    });
 
     runsBody.addEventListener('keydown', (event) => {

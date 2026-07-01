@@ -101,7 +101,7 @@ func TestScaffold_ParallelReviewsDefault(t *testing.T) {
 }
 
 func TestScaffold_SharedPackagesIncludeOpensshClient(t *testing.T) {
-	for _, preset := range []string{"generic", "go", "dotnet", "node", "python"} {
+	for _, preset := range []string{"generic", "go", "dotnet", "node", "python", "elixir"} {
 		t.Run(preset, func(t *testing.T) {
 			dir := t.TempDir()
 			s := &Scaffolder{}
@@ -124,7 +124,7 @@ func TestScaffold_SharedPackagesIncludeOpensshClient(t *testing.T) {
 }
 
 func TestScaffold_SharedPackagesIncludeRipgrepAndYq(t *testing.T) {
-	for _, preset := range []string{"generic", "go", "dotnet", "node", "python"} {
+	for _, preset := range []string{"generic", "go", "dotnet", "node", "python", "elixir"} {
 		t.Run(preset, func(t *testing.T) {
 			dir := t.TempDir()
 			s := &Scaffolder{}
@@ -150,7 +150,7 @@ func TestScaffold_SharedPackagesIncludeRipgrepAndYq(t *testing.T) {
 }
 
 func TestScaffold_AllPresetsIncludeRTK(t *testing.T) {
-	for _, preset := range []string{"generic", "go", "dotnet", "node", "python"} {
+	for _, preset := range []string{"generic", "go", "dotnet", "node", "python", "elixir"} {
 		t.Run(preset, func(t *testing.T) {
 			dir := t.TempDir()
 			s := &Scaffolder{}
@@ -1784,6 +1784,453 @@ func TestScaffold_GoPresetTakesPriorityOverPython(t *testing.T) {
 	}
 	if preset.Name != "go" {
 		t.Errorf("expected Go preset to take priority over Python, got %q", preset.Name)
+	}
+}
+
+func TestScaffold_HasElixirRepoHint(t *testing.T) {
+	tests := []struct {
+		name    string
+		setupFn func(dir string)
+		want    bool
+	}{
+		{
+			name: "mix.exs",
+			setupFn: func(dir string) {
+				os.WriteFile(filepath.Join(dir, "mix.exs"), []byte("defmodule Demo.MixProject do\n  use Mix.Project\n\n  def project do\n    [\n      app: :demo,\n      version: \"0.1.0\",\n      elixir: \"~> 1.18\",\n      elixirc_paths: elixirc_paths(Mix.env())\n    ]\n  end\nend\n"), 0644)
+			},
+			want: true,
+		},
+		{
+			name: ".formatter.exs",
+			setupFn: func(dir string) {
+				os.WriteFile(filepath.Join(dir, ".formatter.exs"), []byte("[\n  inputs: [\"{mix,.formatter}.exs\", \"{config,lib,test}/**/*.{ex,exs}\"]\n]\n"), 0644)
+			},
+			want: true,
+		},
+		{
+			name: ".elixir_version",
+			setupFn: func(dir string) {
+				os.WriteFile(filepath.Join(dir, ".elixir_version"), []byte("1.18.4\n"), 0644)
+			},
+			want: true,
+		},
+		{
+			name: ".tool-versions with elixir",
+			setupFn: func(dir string) {
+				os.WriteFile(filepath.Join(dir, ".tool-versions"), []byte("elixir 1.18.4\nerlang 28.5\n"), 0644)
+			},
+			want: true,
+		},
+		{
+			name: ".tool-versions without elixir",
+			setupFn: func(dir string) {
+				os.WriteFile(filepath.Join(dir, ".tool-versions"), []byte("go 1.24\nnode 20.0.0\n"), 0644)
+			},
+			want: false,
+		},
+		{
+			name: "empty dir",
+			setupFn: func(dir string) {
+				_ = dir
+			},
+			want: false,
+		},
+		{
+			name: "non-elixir repo",
+			setupFn: func(dir string) {
+				os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/demo\n\ngo 1.24\n"), 0644)
+			},
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			tt.setupFn(dir)
+
+			if got := hasElixirRepoHint(dir); got != tt.want {
+				t.Errorf("hasElixirRepoHint(%q) = %v, want %v", dir, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestScaffold_ElixirPresetIsRegistered(t *testing.T) {
+	preset, ok := builtInBuildToolsPresets[elixirBuildToolsPreset]
+	if !ok {
+		t.Fatalf("elixir preset not registered in builtInBuildToolsPresets")
+	}
+	if preset.Name != elixirBuildToolsPreset {
+		t.Errorf("preset.Name = %q, want %q", preset.Name, elixirBuildToolsPreset)
+	}
+	if preset.BaseImage != "debian:bookworm-slim" {
+		t.Errorf("preset.BaseImage = %q, want %q", preset.BaseImage, "debian:bookworm-slim")
+	}
+	if preset.MiseVersion != DefaultMISEVersion {
+		t.Errorf("preset.MiseVersion = %q, want %q", preset.MiseVersion, DefaultMISEVersion)
+	}
+	if len(preset.SharedPackages) != len(sharedPackages) {
+		t.Errorf("preset.SharedPackages length = %d, want %d", len(preset.SharedPackages), len(sharedPackages))
+	}
+	if !containsString(KnownBuildToolsPresets, elixirBuildToolsPreset) {
+		t.Errorf("KnownBuildToolsPresets missing %q, got %v", elixirBuildToolsPreset, KnownBuildToolsPresets)
+	}
+}
+
+func TestScaffold_ElixirRepoAutoDetect(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "mix.exs"), []byte("defmodule Demo.MixProject do\n  use Mix.Project\n\n  def project do\n    [app: :demo, version: \"0.1.0\", elixir: \"~> 1.18\"]\n  end\nend\n"), 0644); err != nil {
+		t.Fatalf("write mix.exs: %v", err)
+	}
+
+	s := &Scaffolder{}
+	preset, err := s.resolveBuildToolsPreset(dir, Options{}, &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("resolve build tools preset: %v", err)
+	}
+	if preset.Name != elixirBuildToolsPreset {
+		t.Errorf("expected elixir preset, got %q", preset.Name)
+	}
+}
+
+func TestScaffold_GenericBuildToolsOverridesElixirRepoHint(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "mix.exs"), []byte("defmodule Demo.MixProject do\n  use Mix.Project\n  def project do\n    [app: :demo, version: \"0.1.0\", elixir: \"~> 1.18\"]\n  end\nend\n"), 0644); err != nil {
+		t.Fatalf("write mix.exs: %v", err)
+	}
+
+	s := &Scaffolder{}
+	preset, err := s.resolveBuildToolsPreset(dir, Options{BuildTools: "generic"}, &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("resolve build tools preset: %v", err)
+	}
+	if preset.Name != "generic" {
+		t.Fatalf("expected explicit generic preset, got %q", preset.Name)
+	}
+}
+
+func TestScaffold_NodePresetTakesPriorityOverElixir(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"name":"demo","engines":{"node":"20"}}`), 0644)
+	os.WriteFile(filepath.Join(dir, "mix.exs"), []byte("defmodule Demo.MixProject do\n  use Mix.Project\n  def project do\n    [app: :demo, version: \"0.1.0\", elixir: \"~> 1.18\"]\n  end\nend\n"), 0644)
+
+	s := &Scaffolder{}
+	preset, err := s.resolveBuildToolsPreset(dir, Options{}, &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("resolve build tools preset: %v", err)
+	}
+	if preset.Name != "node" {
+		t.Errorf("expected Node preset to take priority over Elixir, got %q", preset.Name)
+	}
+}
+
+func containsString(haystack []string, needle string) bool {
+	for _, item := range haystack {
+		if item == needle {
+			return true
+		}
+	}
+	return false
+}
+
+func TestScaffold_ElixirPresetResolveVersion_UsesRepoHint(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, ".elixir_version"), []byte("1.18.4\n"), 0644); err != nil {
+		t.Fatalf("write .elixir_version: %v", err)
+	}
+
+	s := &Scaffolder{}
+	got, err := s.resolveElixirVersion(dir, "repo", &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("resolveElixirVersion: %v", err)
+	}
+	if got != "1.18.4" {
+		t.Errorf("expected elixir version %q, got %q", "1.18.4", got)
+	}
+}
+
+func TestScaffold_ElixirPresetResolveVersion_NoHintFallsBackToLatest(t *testing.T) {
+	dir := t.TempDir()
+
+	s := &Scaffolder{}
+	got, err := s.resolveElixirVersion(dir, "", &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("resolveElixirVersion: %v", err)
+	}
+	if got == "" {
+		t.Fatalf("expected non-empty elixir version")
+	}
+	if !strings.Contains(got, ".") {
+		t.Errorf("expected elixir version with dots, got %q", got)
+	}
+}
+
+func TestScaffold_ElixirPresetResolveVersion_ExplicitSelector(t *testing.T) {
+	dir := t.TempDir()
+	s := &Scaffolder{}
+	got, err := s.resolveElixirVersion(dir, "1.18", &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("resolveElixirVersion: %v", err)
+	}
+	if !strings.HasPrefix(got, "1.18") {
+		t.Errorf("expected elixir version starting with 1.18, got %q", got)
+	}
+}
+
+func TestScaffold_ElixirPresetResolvesRangeSelectorToCatalogPin(t *testing.T) {
+	dir := t.TempDir()
+	fakeMise := filepath.Join(dir, "mise")
+	if err := os.WriteFile(fakeMise, []byte("#!/bin/sh\nexit 0\n"), 0755); err != nil {
+		t.Fatalf("write fake mise: %v", err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	s := &Scaffolder{}
+	got, err := s.resolveElixirVersion(dir, "~> 1.18", &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("resolveElixirVersion: %v", err)
+	}
+	if got != "1.18.4-otp-28" {
+		t.Fatalf("expected range selector to resolve to catalog pin %q, got %q", "1.18.4-otp-28", got)
+	}
+}
+
+func TestScaffold_DeriveErlangOTPFromElixirVersion(t *testing.T) {
+	tests := []struct {
+		name    string
+		version string
+		want    string
+	}{
+		{name: "with otp suffix", version: "1.18.4-otp-28", want: "28"},
+		{name: "with otp suffix and patch", version: "1.20.2-otp-29", want: "29"},
+		{name: "bare version falls back to catalog", version: "1.18", want: "28"},
+		{name: "selector falls back to catalog", version: "~> 1.18", want: "28"},
+		{name: "empty falls back to catalog default", version: "", want: "29"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := deriveErlangOTPFromElixir(tt.version)
+			if err != nil {
+				t.Fatalf("deriveErlangOTPFromElixir(%q): %v", tt.version, err)
+			}
+			if got != tt.want {
+				t.Errorf("deriveErlangOTPFromElixir(%q) = %q, want %q", tt.version, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestScaffold_RenderElixirInstallCommand(t *testing.T) {
+	got := renderElixirInstallCommand("1.18.4-otp-28", "28")
+	for _, want := range []string{
+		"RUN mise use -g --pin erlang@28",
+		"RUN mise use -g --pin elixir@1.18.4-otp-28",
+		"mix local.rebar --force",
+		"mix local.hex --force",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("renderElixirInstallCommand missing %q, got:\n%s", want, got)
+		}
+	}
+}
+
+func TestScaffold_ElixirPresetWritesPinnedDockerfile(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, ".elixir_version"), []byte("1.18.4\n"), 0644); err != nil {
+		t.Fatalf("write .elixir_version: %v", err)
+	}
+
+	s := &Scaffolder{}
+	wantElixirVersion, err := s.resolveElixirVersion(dir, "", &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("resolve elixir version: %v", err)
+	}
+	wantOTP, err := deriveErlangOTPFromElixir(wantElixirVersion)
+	if err != nil {
+		t.Fatalf("derive OTP: %v", err)
+	}
+
+	if err := s.Scaffold(dir, Options{BuildTools: "elixir"}, &fakePrompter{confirm: true}); err != nil {
+		t.Fatalf("scaffold: %v", err)
+	}
+
+	dockerfilePath := filepath.Join(dir, ".sandman", "Dockerfile")
+	data, err := os.ReadFile(dockerfilePath)
+	if err != nil {
+		t.Fatalf("read Dockerfile: %v", err)
+	}
+	content := string(data)
+	for _, want := range []string{
+		"# sandman build-tools: elixir",
+		"# sandman default-agent: opencode",
+		"# sandman elixir-version: " + wantElixirVersion,
+		"# sandman erlang-version: " + wantOTP,
+		"# sandman installed-agents: opencode",
+		"FROM debian:bookworm-slim",
+		"RUN mise use -g --pin erlang@" + wantOTP,
+		"RUN mise use -g --pin elixir@" + wantElixirVersion,
+		"RUN mix local.hex --force",
+		"RUN mix local.rebar --force",
+		"RUN MISE_VERSION=" + DefaultMISEVersion + " curl https://mise.run | MISE_INSTALL_PATH=/usr/local/bin/mise sh",
+		"RUN npm install -g opencode-ai@" + DefaultBuiltInAgentVersion("opencode"),
+	} {
+		if !strings.Contains(content, want) {
+			t.Errorf("Dockerfile missing %q, got:\n%s", want, content)
+		}
+	}
+
+	promptPath := filepath.Join(dir, ".sandman", "prompt.md")
+	promptData, err := os.ReadFile(promptPath)
+	if err != nil {
+		t.Fatalf("read prompt.md: %v", err)
+	}
+	if got, want := string(promptData), prompt.DefaultPrompt(); got != want {
+		t.Fatalf("prompt.md mismatch\nwant:\n%s\ngot:\n%s", want, got)
+	}
+}
+
+func TestScaffold_ElixirPresetAllAgentsGenerateFiles(t *testing.T) {
+	for agent := range config.BuiltInAgentPresets {
+		t.Run(agent, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "mix.exs"), []byte("defmodule Demo.MixProject do\n  use Mix.Project\n  def project do\n    [app: :demo, version: \"0.1.0\", elixir: \"1.18.4\"]\n  end\nend\n"), 0644); err != nil {
+				t.Fatalf("write mix.exs: %v", err)
+			}
+
+			s := &Scaffolder{}
+			wantElixirVersion, err := s.resolveElixirVersion(dir, "", &fakePrompter{confirm: true})
+			if err != nil {
+				t.Fatalf("resolve elixir version: %v", err)
+			}
+			wantOTP, err := deriveErlangOTPFromElixir(wantElixirVersion)
+			if err != nil {
+				t.Fatalf("derive OTP: %v", err)
+			}
+
+			if err := s.Scaffold(dir, Options{BuildTools: "elixir", Agent: agent}, &fakePrompter{confirm: true}); err != nil {
+				t.Fatalf("scaffold: %v", err)
+			}
+
+			configPath := filepath.Join(dir, ".sandman", "config.yaml")
+			cfg, err := config.Load(configPath)
+			if err != nil {
+				t.Fatalf("load config: %v", err)
+			}
+			if cfg.BuildTools != "elixir" {
+				t.Errorf("expected build tools %q, got %q", "elixir", cfg.BuildTools)
+			}
+
+			dockerfileData, err := os.ReadFile(filepath.Join(dir, ".sandman", "Dockerfile"))
+			if err != nil {
+				t.Fatalf("read Dockerfile: %v", err)
+			}
+			content := string(dockerfileData)
+			if !strings.Contains(content, "# sandman build-tools: elixir") {
+				t.Errorf("Dockerfile missing elixir build-tools metadata, got:\n%s", content)
+			}
+			if !strings.Contains(content, "RUN mise use -g --pin erlang@"+wantOTP) {
+				t.Errorf("Dockerfile missing pinned erlang install %q, got:\n%s", wantOTP, content)
+			}
+			if !strings.Contains(content, "RUN mise use -g --pin elixir@"+wantElixirVersion) {
+				t.Errorf("Dockerfile missing pinned elixir install %q, got:\n%s", wantElixirVersion, content)
+			}
+		})
+	}
+}
+
+func TestReadElixirVersionHint(t *testing.T) {
+	tests := []struct {
+		name     string
+		filename string
+		content  string
+		want     string
+		wantOK   bool
+	}{
+		{
+			name:     ".elixir_version with version",
+			filename: ".elixir_version",
+			content:  "1.18.4\n",
+			want:     "1.18.4",
+			wantOK:   true,
+		},
+		{
+			name:     ".tool-versions with elixir line",
+			filename: ".tool-versions",
+			content:  "elixir 1.18.4\nerlang 28.5\n",
+			want:     "1.18.4",
+			wantOK:   true,
+		},
+		{
+			name:     ".tool-versions with elixir at minor",
+			filename: ".tool-versions",
+			content:  "elixir 1.18\nerlang 28\n",
+			want:     "1.18",
+			wantOK:   true,
+		},
+		{
+			name:     "mix.exs with elixir under project",
+			filename: "mix.exs",
+			content:  "defmodule Demo.MixProject do\n  use Mix.Project\n\n  def project do\n    [\n      app: :demo,\n      version: \"0.1.0\",\n      elixir: \"~> 1.18\",\n      elixirc_paths: elixirc_paths(Mix.env())\n    ]\n  end\n\n  defp deps do\n    [\n      {:plug, \"~> 1.11\"}\n    ]\n  end\nend\n",
+			want:     "~> 1.18",
+			wantOK:   true,
+		},
+		{
+			name:     "mix.exs compact project form",
+			filename: "mix.exs",
+			content:  "defmodule Demo.MixProject do\n  use Mix.Project\n\n  def project, do: [app: :demo, version: \"0.1.0\", elixir: \"~> 1.18\"]\nend\n",
+			want:     "~> 1.18",
+			wantOK:   true,
+		},
+		{
+			name:     "mix.exs with elixir dep ignored",
+			filename: "mix.exs",
+			content:  "defmodule Demo.MixProject do\n  use Mix.Project\n\n  def project do\n    [\n      app: :demo,\n      version: \"0.1.0\"\n    ]\n  end\n\n  defp deps do\n    [\n      {:elixir, \"~> 1.18\"},\n      {:plug, \"~> 1.11\"}\n    ]\n  end\nend\n",
+			want:     "",
+			wantOK:   false,
+		},
+		{
+			name:     "mix.exs with no elixir line",
+			filename: "mix.exs",
+			content:  "defmodule Demo.MixProject do\n  use Mix.Project\n  def project, do: [app: :demo, version: \"0.1.0\"]\nend\n",
+			want:     "",
+			wantOK:   false,
+		},
+		{
+			name:     ".elixir_version with comment",
+			filename: ".elixir_version",
+			content:  "# pinned by ops\n1.18.4\n",
+			want:     "1.18.4",
+			wantOK:   true,
+		},
+		{
+			name:     "empty file",
+			filename: ".elixir_version",
+			content:  "",
+			want:     "",
+			wantOK:   false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, tt.filename)
+			if err := os.WriteFile(path, []byte(tt.content), 0644); err != nil {
+				t.Fatalf("write %s: %v", tt.filename, err)
+			}
+
+			got, ok, err := readElixirVersionHint(dir)
+			if err != nil {
+				t.Fatalf("readElixirVersionHint: %v", err)
+			}
+			if ok != tt.wantOK {
+				t.Errorf("ok = %v, want %v (got version %q)", ok, tt.wantOK, got)
+			}
+			if got != tt.want {
+				t.Errorf("version = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }
 
