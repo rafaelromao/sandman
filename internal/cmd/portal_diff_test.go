@@ -4626,17 +4626,35 @@ try {
 } finally {
   JSON.stringify = originalStringify;
 }
-if (stringifyCalls > 1) {
-  throw new Error('expected <= 1 JSON.stringify call(s) across 100 stable polls (cheap triplet), got ' + stringifyCalls);
-}
-const run2 = Object.assign({}, run, { events: events.concat([{ type: 'finish', timestamp: 1700000205000, payload: {} }]) });
-SandmanPortalDiff.diffRuns(body, [run2], opts);
-const pre = detailRow.querySelector('pre[data-rendered-json]');
-if (!pre) throw new Error('expected events pre after rebuild');
-if ((pre.getAttribute('data-rendered-json') || '').indexOf('finish') === -1) {
-  throw new Error('rebuilt content should include the new finish event');
-}
-console.log('PASS');
+	if (stringifyCalls !== 0) {
+		throw new Error('expected 0 JSON.stringify calls across 100 stable polls, got ' + stringifyCalls);
+	}
+	// Rebuild branch must still call the real JSON.stringify via
+	// buildEventsContent → eventsJSON, and the rebuilt <pre> content
+	// must remain byte-identical to a direct JSON.stringify of the
+	// event list. This locks AC #2 ("rebuilt content is byte-identical
+	// to today") — the rebuilt JSON is the same JSON.stringify(run2)
+	// the old code would have produced on a rebuild.
+	const run2 = Object.assign({}, run, { events: events.concat([{ type: 'finish', timestamp: 1700000205000, payload: {} }]) });
+	SandmanPortalDiff.diffRuns(body, [run2], opts);
+	const pre = detailRow.querySelector('pre[data-rendered-json]');
+	if (!pre) throw new Error('expected events pre after rebuild');
+	const rendered = pre.getAttribute('data-rendered-json') || '';
+	if (rendered.indexOf('finish') === -1) {
+		throw new Error('rebuilt content should include the new finish event');
+	}
+	// Byte-equality against the canonical eventsJSON serialization
+	// (defines "today's content" precisely, without coupling to
+	// formatting choices elsewhere in the codebase).
+	const expected = JSON.stringify(run2.events.map((event) => ({
+		type: event && event.type ? event.type : 'event',
+		timestamp: event && event.timestamp ? event.timestamp : null,
+		payload: event && event.payload ? event.payload : {},
+	})), null, 2);
+	if (rendered !== expected) {
+		throw new Error('rebuilt content must match JSON.stringify(events, null, 2) byte-for-byte (AC #2).\nGot: ' + rendered.slice(0, 200) + '\nExpected: ' + expected.slice(0, 200));
+	}
+	console.log('PASS');
 `
 	runNodeScript(t, js)
 }
