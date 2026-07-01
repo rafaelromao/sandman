@@ -1067,11 +1067,91 @@
     ].join(':');
   }
 
+  function fingerprintHash(value) {
+    let hash = 5381;
+    function fold(text) {
+      const value = String(text);
+      for (let i = 0; i < value.length; i += 1) {
+        hash = ((hash << 5) + hash + value.charCodeAt(i)) | 0;
+      }
+    }
+    function visit(item) {
+      if (item === null) {
+        fold('null');
+        return;
+      }
+      const kind = typeof item;
+      if (kind === 'undefined') {
+        fold('undefined');
+        return;
+      }
+      if (kind === 'string') {
+        fold('s:');
+        fold(item);
+        return;
+      }
+      if (kind === 'number') {
+        fold('n:');
+        fold(Number.isNaN(item) ? 'NaN' : String(item));
+        return;
+      }
+      if (kind === 'boolean') {
+        fold(item ? 'true' : 'false');
+        return;
+      }
+      if (kind === 'bigint') {
+        fold('i:');
+        fold(String(item));
+        return;
+      }
+      if (kind === 'object') {
+        if (Array.isArray(item)) {
+          fold('[');
+          for (let i = 0; i < item.length; i += 1) {
+            if (i > 0) fold(',');
+            visit(item[i]);
+          }
+          fold(']');
+          return;
+        }
+        fold('{');
+        const keys = Object.keys(item).sort();
+        for (let i = 0; i < keys.length; i += 1) {
+          if (i > 0) fold(',');
+          const key = keys[i];
+          fold(key);
+          fold(':');
+          visit(item[key]);
+        }
+        fold('}');
+        return;
+      }
+      fold(kind + ':');
+      fold(String(item));
+    }
+    visit(value);
+    return (hash >>> 0).toString(36);
+  }
+
   function detailPaneFingerprint(tabName, run, helpers) {
     if (tabName === 'events') {
-      return 'events|' + eventsFingerprint(run);
+      return 'events|' + cheapEventsFingerprint(run) + '|h' + fingerprintHash(eventsJSONData(run));
     }
-    return 'details|' + detailsFingerprint(run, helpers);
+    return 'details|' + cheapDetailsFingerprint(run, helpers) + '|h' + fingerprintHash(detailsData(run, helpers));
+  }
+
+  function eventsJSONData(run) {
+    const events = Array.isArray(run && run.events) ? run.events : [];
+    const items = new Array(events.length);
+    for (let i = 0; i < events.length; i += 1) {
+      const event = events[i] || {};
+      items[i] = {
+        type: event && event.type ? event.type : 'event',
+        timestamp: event && event.timestamp ? event.timestamp : null,
+        payload: event && event.payload ? event.payload : {},
+      };
+    }
+    return items;
   }
 
   function buildLogContent(content, run, helpers) {
