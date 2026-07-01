@@ -2363,14 +2363,11 @@ func TestPortal_DedupKeepsActiveBatchAndHistoricalRows(t *testing.T) {
 	}
 }
 
-// TestPortal_Compute_CrossBatchRowsLockIn is the issue #1542
-// acceptance-criterion #3 regression path: rows for the same issue
-// rendered from two distinct batches (one historical via the event
-// log, one active via a live batch directory) must survive dedup as
-// two separate portal rows. Pre-#1541 the active row reached
-// dedupRuns with empty BatchKey and silently collapsed into the
-// historical row, hiding the current batch. The post-#1541 contract
-// pins two surviving rows with distinct BatchKey values.
+// TestPortal_Compute_CrossBatchRowsLockIn locks in the #1542
+// acceptance criterion 3 contract: rows for the same issue rendered
+// from two distinct batches (one historical via the event log, one
+// active via a live batch directory) must survive dedupRuns as two
+// separate portal rows with distinct BatchKey values.
 func TestPortal_Compute_CrossBatchRowsLockIn(t *testing.T) {
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {

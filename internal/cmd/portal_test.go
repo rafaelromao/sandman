@@ -2626,11 +2626,9 @@ func TestPortal_RunFromActiveMatch_NormalizesBatchIdentity(t *testing.T) {
 	}
 }
 
-// TestPortal_DedupRuns_DifferentBatchesRemainSeparate is the issue
-// #1542 acceptance-criterion #1 regression path: rows from different
-// batches for the same issue number survive dedupRuns as two separate
-// rows. Originally introduced as part of the #1541 fix (PR #1570);
-// retained here as the dedicated AC#1 lock-in for #1542.
+// TestPortal_DedupRuns_DifferentBatchesRemainSeparate locks in the
+// #1542 acceptance criterion 1 contract: rows from different batches
+// for the same issue number survive dedupRuns as two separate rows.
 func TestPortal_DedupRuns_DifferentBatchesRemainSeparate(t *testing.T) {
 	v := &portalRunsView{}
 	base := time.Now().Add(-5 * time.Minute)
@@ -2656,11 +2654,9 @@ func TestPortal_DedupRuns_DifferentBatchesRemainSeparate(t *testing.T) {
 	}
 }
 
-// TestPortal_DedupRuns_SameBatchRowsStillCollapse is the issue
-// #1542 acceptance-criterion #2 regression path: same-batch duplicate
-// rows continue to collapse through dedupRuns. Originally introduced
-// as part of the #1541 fix (PR #1570); retained here as the dedicated
-// AC#2 lock-in for #1542.
+// TestPortal_DedupRuns_SameBatchRowsStillCollapse locks in the #1542
+// acceptance criterion 2 contract: same-batch duplicate rows continue
+// to collapse through dedupRuns.
 func TestPortal_DedupRuns_SameBatchRowsStillCollapse(t *testing.T) {
 	v := &portalRunsView{}
 	base := time.Now().Add(-5 * time.Minute)
