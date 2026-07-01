@@ -266,3 +266,20 @@ func TestPortal_RowAddedRemovedCSS_AreMutuallyDistinct(t *testing.T) {
 		t.Errorf("tbody tr.run-row.row-added and tbody tr.run-row.row-removed have identical rule bodies; the two highlights must be visually distinct (issue #1548)")
 	}
 }
+
+// TestPortal_ActiveRowCSS_ReassertsAfterDiffHighlights ensures the live
+// active-row highlight still has a dedicated rule after the sticky
+// row-added diff highlight, so active rows stay visually distinct on
+// desktop and mobile.
+func TestPortal_ActiveRowCSS_ReassertsAfterDiffHighlights(t *testing.T) {
+	html := readPortalHTML(t)
+	for _, selector := range []string{
+		`tbody tr.run-row.active.row-added td`,
+		`tbody tr.run-row.active.row-added`,
+	} {
+		body := extractCSSRuleBody(t, html, selector)
+		if !strings.Contains(body, "background:") {
+			t.Errorf("%s rule missing background", selector)
+		}
+	}
+}
