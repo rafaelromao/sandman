@@ -3,6 +3,7 @@ package cmd
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -383,4 +384,160 @@ func TestPortal_ReviewAggregation_HonorsCanonicalRowID(t *testing.T) {
 	if parent.ReviewVerdict == "" {
 		t.Fatalf("parent ReviewVerdict=%q, want non-empty (Approved or Changes requested)", parent.ReviewVerdict)
 	}
+}
+
+// TestPortal_BadgeFlipSurvivesEventLogReplay pins slice #1527 acceptance
+// criterion 6: refreshing the portal page or replaying the run index from
+// events.jsonl only must produce the same badge behavior. Two issues back
+// to back, each with a canonical parent impl row and a live or completed
+// review child, must surface as portalRow with the right pair of (Kind,
+// Status) so visibleRunForIssueGroup's flip/no-flip branch makes the same
+// decision deterministically across recomputes. After the second compute,
+// the rows are marshaled into the portal.html script so the visible-run
+// helper itself picks the right badge for each issue group — the determinism
+// check is on the badge output, not only on the intermediate row state.
+func TestPortal_BadgeFlipSurvivesEventLogReplay(t *testing.T) {
+	repoRoot, err := os.MkdirTemp("/tmp", "pbf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(repoRoot) })
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	const liveIssue = 1001
+	const doneIssue = 1002
+	const canonicalReviewRowID = "sid-2606181138-1001-PR42"
+
+	startedAt := time.Now().Add(-15 * time.Minute)
+
+	// Issue 1001: parent completed + review child still live (active, reviewing).
+	// Issue 1002: parent completed + review child completed (success).
+	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
+		// Parent issue 1001 finished before review started.
+		{Type: "run.started", Timestamp: startedAt, RunID: "impl-1001", Issue: liveIssue, Payload: map[string]any{"branch": "sandman/1001-fix", "issue_number": liveIssue, "batch_id": "impl-1001"}},
+		{Type: "run.finished", Timestamp: startedAt.Add(5 * time.Minute), RunID: "impl-1001", Issue: liveIssue, Payload: map[string]any{"status": "success", "branch": "sandman/1001-fix", "issue_number": liveIssue, "batch_id": "impl-1001"}},
+		// Review for #1001 — started, never finished in this window.
+		{Type: "run.started", Timestamp: startedAt.Add(2 * time.Minute), RunID: canonicalReviewRowID, Payload: map[string]any{"branch": "sandman/review-PR42", "review": true, "pr_number": 42, "issue_number": liveIssue, "batch_id": "sid-2606181138-PR42"}},
+
+		// Parent issue 1002 finished before review started.
+		{Type: "run.started", Timestamp: startedAt.Add(8 * time.Minute), RunID: "impl-1002", Issue: doneIssue, Payload: map[string]any{"branch": "sandman/1002-fix", "issue_number": doneIssue, "batch_id": "impl-1002"}},
+		{Type: "run.finished", Timestamp: startedAt.Add(12 * time.Minute), RunID: "impl-1002", Issue: doneIssue, Payload: map[string]any{"status": "success", "branch": "sandman/1002-fix", "issue_number": doneIssue, "batch_id": "impl-1002"}},
+		// Review for #1002 — fully completed (terminal verdict).
+		{Type: "run.started", Timestamp: startedAt.Add(9 * time.Minute), RunID: "sid-2606181138-1002-PR43", Payload: map[string]any{"branch": "sandman/review-PR43", "review": true, "pr_number": 43, "issue_number": doneIssue, "batch_id": "sid-2606181138-PR43"}},
+		{Type: "run.finished", Timestamp: startedAt.Add(13 * time.Minute), RunID: "sid-2606181138-1002-PR43", Payload: map[string]any{"status": "success", "branch": "sandman/review-PR43", "review": true, "issue_number": doneIssue, "batch_id": "sid-2606181138-PR43"}},
+	})
+
+	logger := &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")}
+
+	// Run compute twice to simulate a page refresh / replay. The output
+	// must be identical (acceptance criterion 6: deterministic replay).
+	firstRuns, err := (&portalRunsView{}).compute(repoRoot, logger)
+	if err != nil {
+		t.Fatalf("first compute: %v", err)
+	}
+	secondRuns, err := (&portalRunsView{}).compute(repoRoot, logger)
+	if err != nil {
+		t.Fatalf("second compute: %v", err)
+	}
+	if len(firstRuns) != len(secondRuns) {
+		t.Fatalf("replay length mismatch: first=%d second=%d", len(firstRuns), len(secondRuns))
+	}
+
+	byIssue := func(issue int, review bool) *portalRun {
+		for i := range firstRuns {
+			if firstRuns[i].IssueNumber == issue && firstRuns[i].Review == review {
+				return &firstRuns[i]
+			}
+		}
+		return nil
+	}
+
+	// Issue 1001 review child must be live (Kind=active, Status=reviewing)
+	// so visibleRunForIssueGroup will flip the parent badge.
+	liveReview := byIssue(liveIssue, true)
+	if liveReview == nil {
+		t.Fatalf("expected live review child for issue %d, got %#v", liveIssue, firstRuns)
+	}
+	if liveReview.Kind != "active" {
+		t.Fatalf("live review Kind=%q, want active", liveReview.Kind)
+	}
+	if liveReview.Status != "reviewing" {
+		t.Fatalf("live review Status=%q, want reviewing", liveReview.Status)
+	}
+
+	// Issue 1002 review child must be terminal (Kind=completed, Status=success)
+	// so visibleRunForIssueGroup keeps the parent badge as the parent's own status.
+	doneReview := byIssue(doneIssue, true)
+	if doneReview == nil {
+		t.Fatalf("expected completed review child for issue %d, got %#v", doneIssue, firstRuns)
+	}
+	if doneReview.Kind != "completed" {
+		t.Fatalf("completed review Kind=%q, want completed", doneReview.Kind)
+	}
+	if doneReview.Status != "success" {
+		t.Fatalf("completed review Status=%q, want success", doneReview.Status)
+	}
+
+	// Parent rows must carry reviewCount/reviewVerdict metadata
+	// (the aggregation logic from slice #1525) so the visible run is the
+	// canonical parent even when the review is live.
+	for _, issue := range []int{liveIssue, doneIssue} {
+		parent := byIssue(issue, false)
+		if parent == nil {
+			t.Fatalf("expected parent row for issue %d", issue)
+		}
+		if parent.ReviewCount == 0 {
+			t.Fatalf("issue %d parent ReviewCount=0, want >=1", issue)
+		}
+	}
+
+	// Drive the visible-run helper against the second-compute row set so
+	// the determinism check lands on the actual badge output, not just
+	// the intermediate row state. Each issue's parent and review rows are
+	// marshaled into JS as plain objects with the canonical event-log
+	// shape (Kind, Status, IssueNumber, Review, RunID, BatchKey).
+	marshal := func(r portalRun) string {
+		return "{ key: " + strconv.Quote(r.Key) +
+			", kind: " + strconv.Quote(r.Kind) +
+			", status: " + strconv.Quote(r.Status) +
+			", issueNumber: " + strconv.Itoa(r.IssueNumber) +
+			", review: " + strconv.FormatBool(r.Review) +
+			", runId: " + strconv.Quote(r.RunID) +
+			", batchKey: " + strconv.Quote(r.BatchKey) +
+			" }"
+	}
+
+	for _, issue := range []int{liveIssue, doneIssue} {
+		var jsRows []string
+		for _, run := range secondRuns {
+			if run.IssueNumber == issue {
+				jsRows = append(jsRows, marshal(run))
+			}
+		}
+		if len(jsRows) == 0 {
+			t.Fatalf("issue %d missing from second compute", issue)
+		}
+		js := `const runs = [` + strings.Join(jsRows, ",") + `];
+const visible = visibleRunForIssueGroup(` + strconv.Itoa(issue) + `, runs);
+if (!visible) throw new Error('expected visible row for issue ` + strconv.Itoa(issue) + `');
+if (visible.key !== 'impl-` + strconv.Itoa(issue) + `') throw new Error('expected canonical parent key impl-` + strconv.Itoa(issue) + `, got ' + JSON.stringify(visible.key));
+if (visible.runId !== 'impl-` + strconv.Itoa(issue) + `') throw new Error('expected canonical parent runId, got ' + JSON.stringify(visible.runId));
+if (visible.review) throw new Error('expected review=false on canonical visible parent, got ' + JSON.stringify(visible.review));
+if (visible.batchKey !== 'impl-` + strconv.Itoa(issue) + `') throw new Error('expected canonical parent batchKey, got ' + JSON.stringify(visible.batchKey));
+` + badgeAssertion(issue)
+		runPortalHTMLScript(t, js)
+	}
+}
+
+func badgeAssertion(issue int) string {
+	if issue == 1001 {
+		return `if (visible.status !== 'reviewing') throw new Error('issue 1001 visible badge must flip to reviewing (live review in group, AC1), got ' + JSON.stringify(visible.status));
+if (visible.liveReview !== true) throw new Error('issue 1001 expected liveReview=true flag, got ' + JSON.stringify(visible.liveReview));
+`
+	}
+	return `if (visible.status !== 'success') throw new Error('issue ` + strconv.Itoa(issue) + ` visible badge must revert to parent status (no live review, AC3), got ' + JSON.stringify(visible.status));
+if (visible.liveReview) throw new Error('issue ` + strconv.Itoa(issue) + ` expected liveReview=false flag, got ' + JSON.stringify(visible.liveReview));
+`
 }
