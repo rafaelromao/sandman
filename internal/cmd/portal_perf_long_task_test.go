@@ -200,6 +200,39 @@ func TestPortalPerf_LongTaskProfile_OpenWarm(t *testing.T) {
 	writeLongTaskBaseline(t, "open_warm", count, maxMs, sumMs, endToEndMs, 0, 0)
 }
 
+func TestPortalPerf_LongTaskProfile_SwitchRows(t *testing.T) {
+	outStr := runPortalDiffLongTaskScenario(t, scenarioSwitchRowsJS)
+	var got map[string]any
+	if err := json.Unmarshal([]byte(outStr), &got); err != nil {
+		t.Fatalf("parse output: %v", err)
+	}
+	count := int(got["count"].(float64))
+	maxMs := got["maxMs"].(float64)
+	sumMs := got["sumMs"].(float64)
+	endToEndMs := got["endToEndMs"].(float64)
+	perClickMaxMs := got["perClickMaxMs"].(float64)
+	perClickAvgMs := got["perClickAvgMs"].(float64)
+	if endToEndMs > 5000 {
+		t.Fatalf("switch-rows burst should fit in 5s, got %.2fms", endToEndMs)
+	}
+	if count < 1 {
+		t.Fatalf("expected switch-rows to capture at least 1 long task over 5 clicks, got %d", count)
+	}
+	if maxMs < 50 {
+		t.Fatalf("expected switch-rows maxMs >= 50, got %.2f", maxMs)
+	}
+	if sumMs < 50 {
+		t.Fatalf("expected switch-rows sumMs >= 50, got %.2f", sumMs)
+	}
+	if perClickMaxMs < 50 {
+		t.Fatalf("expected perClickMaxMs >= 50, got %.2f", perClickMaxMs)
+	}
+	if perClickAvgMs < 0 {
+		t.Fatalf("expected perClickAvgMs >= 0, got %.2f", perClickAvgMs)
+	}
+	writeLongTaskBaseline(t, "switch_rows", count, maxMs, sumMs, endToEndMs, perClickMaxMs, perClickAvgMs)
+}
+
 func runRecorderScenario(t *testing.T, js string) string {
 	t.Helper()
 	cmd := exec.Command("node", "-e", longTaskRecorderSource+js)
@@ -375,5 +408,36 @@ SandmanPortalDiff.diffRuns(body, runs, { helpers, stopGroups: new Set(), expande
 recorder.stop();
 const totalEnd = performance.now();
 perfEmitMetrics('open_warm', totalStart, totalEnd, recorder);
+`
+
+const scenarioSwitchRowsJS = `
+const recorder = longTaskRecorder({ thresholdMs: 50 });
+const body = makeMockBody();
+const runs = perfBuildRuns(5, 12 * 1024);
+for (const run of runs) run.log = bigLog(run.key, 200);
+const keys = ['k0', 'k1', 'k2', 'k3', 'k4'];
+for (let i = 0; i < keys.length; i++) {
+  SandmanPortalDiff.diffRuns(body, runs, { helpers, stopGroups: new Set(), expandedKey: keys[i], tabs: { [keys[i]]: 'log' } });
+}
+const totalStart = performance.now();
+recorder.start();
+for (let i = 0; i < keys.length; i++) {
+  SandmanPortalDiff.diffRuns(body, runs, { helpers, stopGroups: new Set(), expandedKey: keys[i], tabs: { [keys[i]]: 'log' } });
+  perfHeavySyncWork(runs[i].log, 200);
+}
+recorder.stop();
+const totalEnd = performance.now();
+const stats = recorder.stats();
+const perClickMaxMs = stats.count > 0 ? stats.maxMs / 1 : 0;
+const perClickAvgMs = stats.count > 0 ? stats.sumMs / stats.count : 0;
+process.stdout.write(JSON.stringify({
+  scenario: 'switch_rows',
+  count: stats.count,
+  maxMs: Math.round(stats.maxMs * 100) / 100,
+  sumMs: Math.round(stats.sumMs * 100) / 100,
+  endToEndMs: Math.round((totalEnd - totalStart) * 100) / 100,
+  perClickMaxMs: Math.round(perClickMaxMs * 100) / 100,
+  perClickAvgMs: Math.round(perClickAvgMs * 100) / 100,
+}));
 `
 
