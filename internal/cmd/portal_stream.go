@@ -133,14 +133,13 @@ func lineBelongsToRun(line, runID string) bool {
 	// Reject lines that match only because a longer runID happens to
 	// share the row's runID as a prefix (e.g. row "run-1" would
 	// otherwise claim "[run-12] ..." lines). The character after the
-	// closing bracket must be the run-end delimiter (a space or tab
-	// for the canonical `[<runID>] ` label).
+	// closing bracket must be the canonical `[<runID>] ` space
+	// delimiter defined in CONTEXT.md.
 	rest := stripped[len(prefix):]
 	if rest == "" {
 		return false
 	}
-	c := rest[0]
-	return c == ' ' || c == '\t'
+	return rest[0] == ' '
 }
 
 // cleanPortalStreamLine strips ANSI escapes and the trailing newline and

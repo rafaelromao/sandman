@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -245,15 +246,20 @@ func TestPortal_RunStream_FiltersCrossRunBleed(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Live-tail fixture: a fake daemon writes four lines in order —
-	// the A line, the B (sibling) line, a second A line, and an
-	// unlabeled banner. The A lines and the banner are interleaved so
-	// any naive "first match wins" or buffering implementation would
-	// be caught by the ordering assertion below.
+	// Live-tail fixture: a fake daemon writes five lines in order —
+	// an ANSI-coloured A line, the B (sibling) line, a plain A line,
+	// a second B line, and an unlabeled banner. The A lines bracket
+	// the sibling output so any naive "first match wins" or buffering
+	// implementation would be caught by the ordering assertion below.
+	// The ANSI line also exercises the path where the `[<runID>]`
+	// label is wrapped in colour codes — the filter must still
+	// recognise it, and cleanPortalStreamLine must strip the codes
+	// from the emitted event.
 	lines := []string{
-		fmt.Sprintf("[%s] 18:51:00 working on PR\n", runIDA),
+		"\x1b[32m[" + runIDA + "]\x1b[0m 18:51:00 working on PR\n",
 		fmt.Sprintf("[%s] 18:51:04 sibling work\n", runIDB),
 		fmt.Sprintf("[%s] 18:51:05 still on it\n", runIDA),
+		fmt.Sprintf("[%s] 18:51:06 another sibling line\n", runIDB),
 		"unprefixed banner line that must be dropped\n",
 	}
 	startFakeRunDaemon(t, batchSock, lines, 200*time.Millisecond)
@@ -312,20 +318,12 @@ func TestPortal_RunStream_FiltersCrossRunBleed(t *testing.T) {
 		"18:51:00 working on PR",
 		"18:51:05 still on it",
 	}
-	if len(got) < len(want) {
-		t.Fatalf("expected at least %d events, got %d: %v", len(want), len(got), got)
-	}
-	for i, w := range want {
-		if got[i] != w {
-			t.Fatalf("event %d: got %q, want %q", i, got[i], w)
-		}
-	}
-	for _, ev := range got {
-		if strings.Contains(ev, "sibling work") {
-			t.Fatalf("SSE stream leaked sibling line: %q", ev)
-		}
-		if strings.Contains(ev, "unprefixed banner") {
-			t.Fatalf("SSE stream leaked unlabeled banner: %q", ev)
-		}
+	// Assert exact equality — no extra events, no reordering. This
+	// pins live-tailing, ordering, and ANSI stripping simultaneously:
+	// a future "buffer then emit" refactor that reorders tail output
+	// would fail this check, as would any leak from sibling or
+	// unprefixed lines.
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("SSE events mismatch:\n got:  %q\n want: %q", got, want)
 	}
 }
