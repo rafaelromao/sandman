@@ -922,6 +922,10 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
       min-height: clamp(420px, 68vh, 780px);
       max-height: clamp(420px, 68vh, 780px);
     }
+    .detail-panel.is-loading,
+    .detail-panel.is-loading * {
+      cursor: wait;
+    }
     .detail-subject-picker {
       display: flex;
       align-items: center;
@@ -1887,6 +1891,24 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
       doc: document,
       cap: 16,
     });
+    const detailLoadingCounts = new Map();
+    const loadingDetailKeys = new Set();
+
+    function setDetailLoading(runKey, loading) {
+      const subjectKey = subjectTabKey(runKey);
+      if (!subjectKey) return false;
+      const current = detailLoadingCounts.get(subjectKey) || 0;
+      const next = loading ? current + 1 : Math.max(0, current - 1);
+      const changed = current !== next;
+      if (next > 0) {
+        detailLoadingCounts.set(subjectKey, next);
+        loadingDetailKeys.add(subjectKey);
+      } else {
+        detailLoadingCounts.delete(subjectKey);
+        loadingDetailKeys.delete(subjectKey);
+      }
+      return changed;
+    }
 
     function streamPreFor(runKey) {
       const detail = runsBody.querySelector('tr.detail-row[data-detail-for="' + CSS.escape(runKey) + '"]');
@@ -2653,6 +2675,7 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
         runs: state.runs,
         visibleRuns: filtered,
         streamingKeys: streamingKeys,
+        loadingDetailKeys: loadingDetailKeys,
       };
       if (!state.runs.length) {
         portalDiff.setEmpty(runsBody, '<div class="empty-state">' + escapeHTML(state.loading ? 'Loading runs.' : 'No Sandman runs found.') + '</div>', 6);
@@ -2794,6 +2817,8 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
       const hasEvents = Object.prototype.hasOwnProperty.call(run, 'events');
       if (currentTab === 'events' && hasEvents && run.kind !== 'active') return;
       if (currentTab !== 'events' && hasLog) return;
+      setDetailLoading(runKey, true);
+      scheduleRender();
       try {
         const res = await fetch(apiPath + '?runKey=' + encodeURIComponent(run.backendKey || run.key));
         if (!res.ok) return;
@@ -2813,6 +2838,8 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
         }
       } catch (err) {
         // detail fetch failures are non-fatal; user can retry by toggling again
+      } finally {
+        if (setDetailLoading(runKey, false)) scheduleRender();
       }
     }
 
