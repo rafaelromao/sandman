@@ -101,7 +101,7 @@ func TestScaffold_ParallelReviewsDefault(t *testing.T) {
 }
 
 func TestScaffold_SharedPackagesIncludeOpensshClient(t *testing.T) {
-	for _, preset := range []string{"generic", "go", "dotnet", "node", "python"} {
+	for _, preset := range []string{"generic", "go", "dotnet", "node", "python", "elixir"} {
 		t.Run(preset, func(t *testing.T) {
 			dir := t.TempDir()
 			s := &Scaffolder{}
@@ -124,7 +124,7 @@ func TestScaffold_SharedPackagesIncludeOpensshClient(t *testing.T) {
 }
 
 func TestScaffold_SharedPackagesIncludeRipgrepAndYq(t *testing.T) {
-	for _, preset := range []string{"generic", "go", "dotnet", "node", "python"} {
+	for _, preset := range []string{"generic", "go", "dotnet", "node", "python", "elixir"} {
 		t.Run(preset, func(t *testing.T) {
 			dir := t.TempDir()
 			s := &Scaffolder{}
@@ -150,7 +150,7 @@ func TestScaffold_SharedPackagesIncludeRipgrepAndYq(t *testing.T) {
 }
 
 func TestScaffold_AllPresetsIncludeRTK(t *testing.T) {
-	for _, preset := range []string{"generic", "go", "dotnet", "node", "python"} {
+	for _, preset := range []string{"generic", "go", "dotnet", "node", "python", "elixir"} {
 		t.Run(preset, func(t *testing.T) {
 			dir := t.TempDir()
 			s := &Scaffolder{}
@@ -2006,6 +2006,110 @@ func TestScaffold_RenderElixirInstallCommand(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Errorf("renderElixirInstallCommand missing %q, got:\n%s", want, got)
 		}
+	}
+}
+
+func TestScaffold_ElixirPresetWritesPinnedDockerfile(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, ".elixir_version"), []byte("1.18.4\n"), 0644); err != nil {
+		t.Fatalf("write .elixir_version: %v", err)
+	}
+
+	s := &Scaffolder{}
+	wantElixirVersion, err := s.resolveElixirVersion(dir, "", &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("resolve elixir version: %v", err)
+	}
+	wantOTP, err := deriveErlangOTPFromElixir(wantElixirVersion)
+	if err != nil {
+		t.Fatalf("derive OTP: %v", err)
+	}
+
+	if err := s.Scaffold(dir, Options{BuildTools: "elixir"}, &fakePrompter{confirm: true}); err != nil {
+		t.Fatalf("scaffold: %v", err)
+	}
+
+	dockerfilePath := filepath.Join(dir, ".sandman", "Dockerfile")
+	data, err := os.ReadFile(dockerfilePath)
+	if err != nil {
+		t.Fatalf("read Dockerfile: %v", err)
+	}
+	content := string(data)
+	for _, want := range []string{
+		"# sandman build-tools: elixir",
+		"# sandman default-agent: opencode",
+		"# sandman elixir-version: " + wantElixirVersion,
+		"# sandman erlang-version: " + wantOTP,
+		"# sandman installed-agents: opencode",
+		"FROM debian:bookworm-slim",
+		"RUN mise use -g --pin erlang@" + wantOTP,
+		"RUN mise use -g --pin elixir@" + wantElixirVersion,
+		"RUN mix local.hex --force",
+		"RUN mix local.rebar --force",
+		"RUN MISE_VERSION=" + DefaultMISEVersion + " curl https://mise.run | MISE_INSTALL_PATH=/usr/local/bin/mise sh",
+		"RUN npm install -g opencode-ai@" + DefaultBuiltInAgentVersion("opencode"),
+	} {
+		if !strings.Contains(content, want) {
+			t.Errorf("Dockerfile missing %q, got:\n%s", want, content)
+		}
+	}
+
+	promptPath := filepath.Join(dir, ".sandman", "prompt.md")
+	promptData, err := os.ReadFile(promptPath)
+	if err != nil {
+		t.Fatalf("read prompt.md: %v", err)
+	}
+	if got, want := string(promptData), prompt.DefaultPrompt(); got != want {
+		t.Fatalf("prompt.md mismatch\nwant:\n%s\ngot:\n%s", want, got)
+	}
+}
+
+func TestScaffold_ElixirPresetAllAgentsGenerateFiles(t *testing.T) {
+	for agent := range config.BuiltInAgentPresets {
+		t.Run(agent, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "mix.exs"), []byte("defmodule Demo.MixProject do\n  use Mix.Project\n  def project do\n    [app: :demo, version: \"0.1.0\", elixir: \"~> 1.18\"]\n  end\nend\n"), 0644); err != nil {
+				t.Fatalf("write mix.exs: %v", err)
+			}
+
+			s := &Scaffolder{}
+			wantElixirVersion, err := s.resolveElixirVersion(dir, "", &fakePrompter{confirm: true})
+			if err != nil {
+				t.Fatalf("resolve elixir version: %v", err)
+			}
+			wantOTP, err := deriveErlangOTPFromElixir(wantElixirVersion)
+			if err != nil {
+				t.Fatalf("derive OTP: %v", err)
+			}
+
+			if err := s.Scaffold(dir, Options{BuildTools: "elixir", Agent: agent}, &fakePrompter{confirm: true}); err != nil {
+				t.Fatalf("scaffold: %v", err)
+			}
+
+			configPath := filepath.Join(dir, ".sandman", "config.yaml")
+			cfg, err := config.Load(configPath)
+			if err != nil {
+				t.Fatalf("load config: %v", err)
+			}
+			if cfg.BuildTools != "elixir" {
+				t.Errorf("expected build tools %q, got %q", "elixir", cfg.BuildTools)
+			}
+
+			dockerfileData, err := os.ReadFile(filepath.Join(dir, ".sandman", "Dockerfile"))
+			if err != nil {
+				t.Fatalf("read Dockerfile: %v", err)
+			}
+			content := string(dockerfileData)
+			if !strings.Contains(content, "# sandman build-tools: elixir") {
+				t.Errorf("Dockerfile missing elixir build-tools metadata, got:\n%s", content)
+			}
+			if !strings.Contains(content, "RUN mise use -g --pin erlang@"+wantOTP) {
+				t.Errorf("Dockerfile missing pinned erlang install %q, got:\n%s", wantOTP, content)
+			}
+			if !strings.Contains(content, "RUN mise use -g --pin elixir@"+wantElixirVersion) {
+				t.Errorf("Dockerfile missing pinned elixir install %q, got:\n%s", wantElixirVersion, content)
+			}
+		})
 	}
 }
 

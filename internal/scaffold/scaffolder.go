@@ -263,6 +263,8 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 	dotnetVersion := ""
 	nodeVersion := ""
 	pythonVersion := ""
+	elixirVersion := ""
+	erlangVersion := ""
 	if preset.Name == goBuildToolsPreset {
 		goVersion, err = s.resolveGoVersion(repoRoot, opts.ToolVersion, p)
 		if err != nil {
@@ -280,6 +282,15 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 		}
 	} else if preset.Name == pythonBuildToolsPreset {
 		pythonVersion, err = s.resolvePythonVersion(repoRoot, opts.ToolVersion, p)
+		if err != nil {
+			return err
+		}
+	} else if preset.Name == elixirBuildToolsPreset {
+		elixirVersion, err = s.resolveElixirVersion(repoRoot, opts.ToolVersion, p)
+		if err != nil {
+			return err
+		}
+		erlangVersion, err = deriveErlangOTPFromElixir(elixirVersion)
 		if err != nil {
 			return err
 		}
@@ -332,7 +343,7 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 		return fmt.Errorf("save config: %w", err)
 	}
 
-	dockerfile := s.renderBuildToolsDockerfile(preset, defaultAgent, goVersion, dotnetVersion, nodeVersion, pythonVersion)
+	dockerfile := s.renderBuildToolsDockerfile(preset, defaultAgent, goVersion, dotnetVersion, nodeVersion, pythonVersion, elixirVersion, erlangVersion)
 	dockerfilePath := filepath.Join(sandmanDir, "Dockerfile")
 	if err := os.WriteFile(dockerfilePath, []byte(dockerfile), 0644); err != nil {
 		return fmt.Errorf("write Dockerfile: %w", err)
@@ -1068,7 +1079,7 @@ func resolveVersionChoice(choice string, versions []string) (string, error) {
 	return "", fmt.Errorf("no version matching %q", choice)
 }
 
-func (s *Scaffolder) renderBuildToolsDockerfile(preset BuildToolsPreset, defaultAgent, goVersion, dotnetVersion, nodeVersion, pythonVersion string) string {
+func (s *Scaffolder) renderBuildToolsDockerfile(preset BuildToolsPreset, defaultAgent, goVersion, dotnetVersion, nodeVersion, pythonVersion, elixirVersion, erlangVersion string) string {
 	var out strings.Builder
 	fmt.Fprintf(&out, "# sandman build-tools: %s\n", preset.Name)
 	fmt.Fprintf(&out, "# sandman default-agent: %s\n", defaultAgent)
@@ -1084,6 +1095,10 @@ func (s *Scaffolder) renderBuildToolsDockerfile(preset BuildToolsPreset, default
 	}
 	if preset.Name == pythonBuildToolsPreset {
 		fmt.Fprintf(&out, "# sandman python-version: %s\n", pythonVersion)
+	}
+	if preset.Name == elixirBuildToolsPreset {
+		fmt.Fprintf(&out, "# sandman elixir-version: %s\n", elixirVersion)
+		fmt.Fprintf(&out, "# sandman erlang-version: %s\n", erlangVersion)
 	}
 	fmt.Fprintf(&out, "# sandman mise-version: %s\n", preset.MiseVersion)
 	fmt.Fprintf(&out, "# sandman rtk-version: %s\n", DefaultRTKVersion)
@@ -1110,6 +1125,9 @@ func (s *Scaffolder) renderBuildToolsDockerfile(preset BuildToolsPreset, default
 	}
 	if preset.Name == pythonBuildToolsPreset {
 		out.WriteString(renderPythonInstallCommand(pythonVersion))
+	}
+	if preset.Name == elixirBuildToolsPreset {
+		out.WriteString(renderElixirInstallCommand(elixirVersion, erlangVersion))
 	}
 	out.WriteString(renderCodeindexInstallCommand())
 	out.WriteString(renderAgentInstallCommand("opencode", DefaultBuiltInAgentVersion("opencode")))
@@ -1406,6 +1424,8 @@ type dockerfileMetadata struct {
 	GoVersion        string
 	NodeVersion      string
 	PythonVersion    string
+	ElixirVersion    string
+	ErlangVersion    string
 	ToolVersion      string
 	MiseVersion      string
 	RtkVersion       string
@@ -1471,6 +1491,10 @@ func readDockerfileMetadata(path string) (dockerfileMetadata, bool, error) {
 			meta.NodeVersion = strings.TrimSpace(value)
 		case "python-version":
 			meta.PythonVersion = strings.TrimSpace(value)
+		case "elixir-version":
+			meta.ElixirVersion = strings.TrimSpace(value)
+		case "erlang-version":
+			meta.ErlangVersion = strings.TrimSpace(value)
 		case "mise-version":
 			meta.MiseVersion = strings.TrimSpace(value)
 		case "rtk-version":
