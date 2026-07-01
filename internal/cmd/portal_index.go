@@ -132,7 +132,6 @@ func (idx *portalRunsIndex) discoverActiveRuns(eventsByRun map[string][]portalEv
 		prNumber := 0
 		batchID := instance.Name
 		runID := instance.Name
-		key := instance.Name
 		if manifestErr == nil && manifest.BatchId != "" {
 			batchID = manifest.BatchId
 			prNumber = idx.view.prNumberFromEvent(eventsByRun[runID])
@@ -146,7 +145,6 @@ func (idx *portalRunsIndex) discoverActiveRuns(eventsByRun map[string][]portalEv
 			// rather than from the batches-index Entry.ID.
 			if canonical, ok := canonicalReviewRunID(runDir); ok {
 				runID = canonical
-				key = canonical
 				prNumber = idx.view.prNumberFromEvent(eventsByRun[canonical])
 			}
 		}
@@ -163,7 +161,7 @@ func (idx *portalRunsIndex) discoverActiveRuns(eventsByRun map[string][]portalEv
 			issueNumber = issueNumbers[0]
 		}
 		active = append(active, portalActiveRun{
-			Key:          key,
+			Key:          runID,
 			Dir:          runDir,
 			SocketPath:   instance.SocketPath,
 			IssueNumber:  issueNumber,
@@ -198,13 +196,10 @@ func canonicalReviewRunID(batchDir string) (string, bool) {
 			continue
 		}
 		manifest, err := daemon.ReadRunManifest(batchDir, e.Name())
-		if err != nil {
-			logPortalViewDegrade("review-row-manifest:"+batchDir, "read review row manifest %s/%s: %v", batchDir, e.Name(), err)
+		if err != nil || manifest.RunID == "" {
 			continue
 		}
-		if manifest.RunID != "" {
-			return manifest.RunID, true
-		}
+		return manifest.RunID, true
 	}
 	return "", false
 }

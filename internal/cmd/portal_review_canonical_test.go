@@ -292,9 +292,12 @@ func TestPortal_NoRunsReviewLiteralInPortalCode(t *testing.T) {
 	}
 	forbidden := []string{
 		`filepath.Join(..., "runs", "review"`,
+		`path.Join(..., "runs", "review"`,
 		`"runs/review"`,
 		`'runs/review'`,
 		`"runs" + "/review"`,
+		`"runs/" + "review"`,
+		`'runs/' + "review"`,
 	}
 	for _, file := range portalFiles {
 		data, err := os.ReadFile(file)
