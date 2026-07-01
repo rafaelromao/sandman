@@ -1927,6 +1927,94 @@ func containsString(haystack []string, needle string) bool {
 	return false
 }
 
+func TestReadElixirVersionHint(t *testing.T) {
+	tests := []struct {
+		name     string
+		filename string
+		content  string
+		want     string
+		wantOK   bool
+	}{
+		{
+			name:     ".elixir_version with version",
+			filename: ".elixir_version",
+			content:  "1.18.4\n",
+			want:     "1.18.4",
+			wantOK:   true,
+		},
+		{
+			name:     ".tool-versions with elixir line",
+			filename: ".tool-versions",
+			content:  "elixir 1.18.4\nerlang 28.5\n",
+			want:     "1.18.4",
+			wantOK:   true,
+		},
+		{
+			name:     ".tool-versions with elixir at minor",
+			filename: ".tool-versions",
+			content:  "elixir 1.18\nerlang 28\n",
+			want:     "1.18",
+			wantOK:   true,
+		},
+		{
+			name:     "mix.exs with elixir under project",
+			filename: "mix.exs",
+			content: "defmodule Demo.MixProject do\n  use Mix.Project\n\n  def project do\n    [\n      app: :demo,\n      version: \"0.1.0\",\n      elixir: \"~> 1.18\",\n      elixirc_paths: elixirc_paths(Mix.env())\n    ]\n  end\n\n  defp deps do\n    [\n      {:plug, \"~> 1.11\"}\n    ]\n  end\nend\n",
+			want:   "~> 1.18",
+			wantOK: true,
+		},
+		{
+			name:     "mix.exs with elixir dep ignored",
+			filename: "mix.exs",
+			content: "defmodule Demo.MixProject do\n  use Mix.Project\n\n  def project do\n    [\n      app: :demo,\n      version: \"0.1.0\"\n    ]\n  end\n\n  defp deps do\n    [\n      {:elixir, \"~> 1.18\"},\n      {:plug, \"~> 1.11\"}\n    ]\n  end\nend\n",
+			want:   "",
+			wantOK: false,
+		},
+		{
+			name:     "mix.exs with no elixir line",
+			filename: "mix.exs",
+			content:  "defmodule Demo.MixProject do\n  use Mix.Project\n  def project, do: [app: :demo, version: \"0.1.0\"]\nend\n",
+			want:     "",
+			wantOK:   false,
+		},
+		{
+			name:     ".elixir_version with comment",
+			filename: ".elixir_version",
+			content:  "# pinned by ops\n1.18.4\n",
+			want:     "1.18.4",
+			wantOK:   true,
+		},
+		{
+			name:     "empty file",
+			filename: ".elixir_version",
+			content:  "",
+			want:     "",
+			wantOK:   false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, tt.filename)
+			if err := os.WriteFile(path, []byte(tt.content), 0644); err != nil {
+				t.Fatalf("write %s: %v", tt.filename, err)
+			}
+
+			got, ok, err := readElixirVersionHint(dir)
+			if err != nil {
+				t.Fatalf("readElixirVersionHint: %v", err)
+			}
+			if ok != tt.wantOK {
+				t.Errorf("ok = %v, want %v (got version %q)", ok, tt.wantOK, got)
+			}
+			if got != tt.want {
+				t.Errorf("version = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestValidateDockerfileMetadata_AllowsGoPreset(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(dir, ".sandman"), 0755); err != nil {

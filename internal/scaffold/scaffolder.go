@@ -478,6 +478,101 @@ func hasElixirRepoHint(repoRoot string) bool {
 	return false
 }
 
+func readElixirVersionHint(repoRoot string) (string, bool, error) {
+	for _, rel := range []string{".elixir_version", ".tool-versions", "mix.exs"} {
+		path := filepath.Join(repoRoot, rel)
+		data, err := os.ReadFile(path)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return "", false, fmt.Errorf("read Elixir version hint from %s: %w", rel, err)
+		}
+		if version, ok := parseElixirVersionHint(rel, data); ok {
+			return version, true, nil
+		}
+	}
+	return "", false, nil
+}
+
+func parseElixirVersionHint(name string, data []byte) (string, bool) {
+	scanner := bufio.NewScanner(bytes.NewReader(data))
+	switch name {
+	case ".elixir_version":
+		for scanner.Scan() {
+			line := strings.TrimSpace(scanner.Text())
+			if line == "" || strings.HasPrefix(line, "#") {
+				continue
+			}
+			return line, true
+		}
+	case ".tool-versions":
+		for scanner.Scan() {
+			line := strings.TrimSpace(scanner.Text())
+			if line == "" || strings.HasPrefix(line, "#") {
+				continue
+			}
+			fields := strings.Fields(line)
+			if len(fields) >= 2 && fields[0] == "elixir" {
+				return fields[1], true
+			}
+		}
+	case "mix.exs":
+		inProject := false
+		depth := 0
+		for scanner.Scan() {
+			line := strings.TrimSpace(scanner.Text())
+			if line == "" || strings.HasPrefix(line, "#") {
+				continue
+			}
+			if !inProject {
+				if strings.HasPrefix(line, "def project") {
+					inProject = true
+					depth = strings.Count(line, "[") - strings.Count(line, "]")
+					if depth <= 0 {
+						continue
+					}
+				} else {
+					continue
+				}
+			}
+			if strings.Contains(line, "elixir:") || strings.Contains(line, "elixir :") {
+				value := elixirMixProjectValue(line)
+				if value != "" {
+					return value, true
+				}
+			}
+			depth += strings.Count(line, "[") - strings.Count(line, "]")
+			if depth <= 0 {
+				inProject = false
+				depth = 0
+			}
+		}
+	}
+	return "", false
+}
+
+func elixirMixProjectValue(line string) string {
+	for _, sep := range []string{"elixir:", "elixir :"} {
+		idx := strings.Index(line, sep)
+		if idx < 0 {
+			continue
+		}
+		rest := strings.TrimSpace(line[idx+len(sep):])
+		rest = strings.Trim(rest, ",")
+		rest = strings.TrimSpace(rest)
+		rest = strings.Trim(rest, "\"'")
+		if rest == "" {
+			return ""
+		}
+		if c := rest[0]; c == '"' || c == '\'' {
+			return ""
+		}
+		return rest
+	}
+	return ""
+}
+
 func (s *Scaffolder) resolveGoVersion(repoRoot, selector string, p Prompter) (string, error) {
 	return resolveVersion(goResolver, repoRoot, selector, p)
 }
