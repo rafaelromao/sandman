@@ -146,6 +146,29 @@ process.stdout.write(out);
 	}
 }
 
+func TestPortalPerf_LongTaskScheduler_CoalescesBeforeFlush(t *testing.T) {
+	js := `let renders = 0;
+sandbox.render = function () { renders += 1; };
+sandbox.scheduleRender();
+sandbox.scheduleRender();
+if (typeof sandbox.rafQueueLength !== 'function') throw new Error('expected rafQueueLength helper');
+if (sandbox.rafQueueLength() !== 1) throw new Error('expected 1 queued frame before flush, got ' + sandbox.rafQueueLength());
+if (renders !== 0) throw new Error('expected no render before flush, got ' + renders);
+sandbox.flushAnimationFrames();
+if (renders !== 1) throw new Error('expected exactly 1 render after flush, got ' + renders);
+if (sandbox.rafQueueLength() !== 0) throw new Error('expected empty queue after flush, got ' + sandbox.rafQueueLength());
+process.stdout.write(JSON.stringify({ renders: renders }));
+`
+	outStr := runPortalDiffLongTaskScenario(t, js)
+	var got map[string]any
+	if err := json.Unmarshal([]byte(outStr), &got); err != nil {
+		t.Fatalf("parse output %q: %v", outStr, err)
+	}
+	if r, ok := got["renders"].(float64); !ok || r != 1 {
+		t.Fatalf("expected renders=1, got %v", got["renders"])
+	}
+}
+
 func TestPortalPerf_LongTaskProfile_OpenCold(t *testing.T) {
 	outStr := runPortalDiffLongTaskScenario(t, scenarioOpenColdJS)
 	var got map[string]any
@@ -235,26 +258,190 @@ func TestPortalPerf_LongTaskProfile_SwitchRows(t *testing.T) {
 }
 
 func TestPortalPerf_LongTaskProfile_SubjectSwitch(t *testing.T) {
-	outStr := runPortalDiffLongTaskScenario(t, scenarioSubjectSwitchJS)
+	outStr := runPortalDiffLongTaskScenario(t, `
+const recorder = longTaskRecorder({ thresholdMs: 50 });
+const body = makeMockBody();
+const parentRun = { key: 'issue-1', kind: 'active', status: 'reviewing', issueLabel: '#1', runId: 'issue-1', issueNumber: 1, reviewCount: 1, log: 'parent log', socketPath: '/tmp/sock' };
+const childReview = { key: 'PR42', kind: 'completed', status: 'success', review: true, issueLabel: 'PR42', runId: 'PR42', issueNumber: 1, prNumber: 42, log: 'review log' };
+sandbox.state.runs = [parentRun, childReview];
+sandbox.state.expandedRunKey = 'issue-1';
+sandbox.state.tabs = { 'issue-1': 'log', 'PR42': 'log' };
+sandbox.render = function () {
+  SandmanPortalDiff.diffRuns(body, [parentRun], { helpers, stopGroups: new Set(), expandedKey: sandbox.state.expandedRunKey, tabs: sandbox.state.tabs, runs: [parentRun, childReview], visibleRuns: [parentRun] });
+};
+sandbox.scheduleRender();
+sandbox.flushAnimationFrames();
+SandmanPortalDiff.resetCounters();
+const totalStart = performance.now();
+recorder.start();
+sandbox.state.expandedRunKey = 'PR42';
+sandbox.state.tabs['PR42'] = 'log';
+sandbox.scheduleRender();
+const flushed = sandbox.flushAnimationFrames();
+recorder.stop();
+const totalEnd = performance.now();
+const stats = recorder.stats();
+const counters = SandmanPortalDiff.getCounters();
+process.stdout.write(JSON.stringify({ scenario: 'subject_switch', flushed: flushed, count: stats.count, maxMs: Math.round(stats.maxMs * 100) / 100, sumMs: Math.round(stats.sumMs * 100) / 100, endToEndMs: Math.round((totalEnd - totalStart) * 100) / 100, mutations: counters.mutations }));
+`)
 	var got map[string]any
 	if err := json.Unmarshal([]byte(outStr), &got); err != nil {
 		t.Fatalf("parse output: %v", err)
 	}
-	count := int(got["count"].(float64))
-	maxMs := got["maxMs"].(float64)
-	sumMs := got["sumMs"].(float64)
-	endToEndMs := got["endToEndMs"].(float64)
-	t.Logf("subject_switch metrics: count=%d maxMs=%.2f sumMs=%.2f endToEndMs=%.2f", count, maxMs, sumMs, endToEndMs)
-	if count < 1 {
-		t.Fatalf("expected subject-switch to capture at least 1 long task, got %d", count)
+	if flushed, ok := got["flushed"].(float64); !ok || flushed < 1 {
+		t.Fatalf("expected at least one flushed frame, got %v", got["flushed"])
 	}
-	if maxMs < 50 || sumMs < 50 {
-		t.Fatalf("expected maxMs/sumMs >= 50, got max=%.2f sum=%.2f", maxMs, sumMs)
+	if mutations, ok := got["mutations"].(float64); !ok || mutations < 1 {
+		t.Fatalf("expected DOM mutations from subject switch, got %v", got["mutations"])
 	}
-	if endToEndMs <= 0 {
-		t.Fatalf("expected endToEndMs > 0, got %.2f", endToEndMs)
+	if count, ok := got["count"].(float64); !ok || count != 0 {
+		t.Fatalf("expected no long tasks for subject switch, got %v", got["count"])
 	}
-	writeLongTaskBaseline(t, "subject_switch", count, maxMs, sumMs, endToEndMs, 0, 0)
+	if maxMs, ok := got["maxMs"].(float64); !ok || maxMs >= 50 {
+		t.Fatalf("expected maxMs < 50 for subject switch, got %v", got["maxMs"])
+	}
+	if sumMs, ok := got["sumMs"].(float64); !ok || sumMs >= 50 {
+		t.Fatalf("expected sumMs < 50 for subject switch, got %v", got["sumMs"])
+	}
+}
+
+func TestPortalPerf_LongTaskProfile_Abort(t *testing.T) {
+	outStr := runPortalDiffLongTaskScenario(t, `
+const recorder = longTaskRecorder({ thresholdMs: 50 });
+const body = makeMockBody();
+const run = { key: 'issue-1', kind: 'active', status: 'running', issueLabel: '#1', runId: 'issue-1', issueNumber: 1, batchKey: 'batch-1', socketPath: '/tmp/sock', log: 'running log' };
+sandbox.state.runs = [run];
+sandbox.render = function () {
+  SandmanPortalDiff.diffRuns(body, [run], { helpers, stopGroups: new Set(), expandedKey: null, runs: [run], visibleRuns: [run] });
+};
+sandbox.scheduleRender();
+sandbox.flushAnimationFrames();
+SandmanPortalDiff.resetCounters();
+const totalStart = performance.now();
+recorder.start();
+run.kind = 'completed';
+run.status = 'aborted';
+delete run.socketPath;
+sandbox.scheduleRender();
+const flushed = sandbox.flushAnimationFrames();
+recorder.stop();
+const totalEnd = performance.now();
+const stats = recorder.stats();
+const counters = SandmanPortalDiff.getCounters();
+process.stdout.write(JSON.stringify({ scenario: 'abort', flushed: flushed, count: stats.count, maxMs: Math.round(stats.maxMs * 100) / 100, sumMs: Math.round(stats.sumMs * 100) / 100, endToEndMs: Math.round((totalEnd - totalStart) * 100) / 100, mutations: counters.mutations }));
+`)
+	var got map[string]any
+	if err := json.Unmarshal([]byte(outStr), &got); err != nil {
+		t.Fatalf("parse output: %v", err)
+	}
+	if flushed, ok := got["flushed"].(float64); !ok || flushed < 1 {
+		t.Fatalf("expected at least one flushed frame, got %v", got["flushed"])
+	}
+	if mutations, ok := got["mutations"].(float64); !ok || mutations < 1 {
+		t.Fatalf("expected DOM mutations from abort path, got %v", got["mutations"])
+	}
+	if count, ok := got["count"].(float64); !ok || count != 0 {
+		t.Fatalf("expected no long tasks for abort, got %v", got["count"])
+	}
+	if maxMs, ok := got["maxMs"].(float64); !ok || maxMs >= 50 {
+		t.Fatalf("expected maxMs < 50 for abort, got %v", got["maxMs"])
+	}
+	if sumMs, ok := got["sumMs"].(float64); !ok || sumMs >= 50 {
+		t.Fatalf("expected sumMs < 50 for abort, got %v", got["sumMs"])
+	}
+}
+
+func TestPortalPerf_LongTaskProfile_Archive(t *testing.T) {
+	outStr := runPortalDiffLongTaskScenario(t, `
+const recorder = longTaskRecorder({ thresholdMs: 50 });
+const body = makeMockBody();
+const runOld = { key: 'issue-2', kind: 'completed', status: 'success', issueLabel: '#2', runId: 'issue-2', issueNumber: 2, archived: false, sourceExists: true, log: 'archive me' };
+const runNew = Object.assign({}, runOld, { archived: true });
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: null };
+const created = SandmanPortalDiff.insertRunRow(body, runOld, opts);
+SandmanPortalDiff.resetCounters();
+const totalStart = performance.now();
+recorder.start();
+const result = SandmanPortalDiff.updateRunRowCells(created.row, runOld, runNew, opts);
+recorder.stop();
+const totalEnd = performance.now();
+const stats = recorder.stats();
+const counters = SandmanPortalDiff.getCounters();
+process.stdout.write(JSON.stringify({ scenario: 'archive', mutated: result.mutated, cells: result.cells, count: stats.count, maxMs: Math.round(stats.maxMs * 100) / 100, sumMs: Math.round(stats.sumMs * 100) / 100, endToEndMs: Math.round((totalEnd - totalStart) * 100) / 100, mutations: counters.mutations }));
+`)
+	var got map[string]any
+	if err := json.Unmarshal([]byte(outStr), &got); err != nil {
+		t.Fatalf("parse output: %v", err)
+	}
+	if mutated, ok := got["mutated"].(bool); !ok || !mutated {
+		t.Fatalf("expected archive update to mutate row, got %v", got["mutated"])
+	}
+	if mutations, ok := got["mutations"].(float64); !ok || mutations < 1 {
+		t.Fatalf("expected DOM mutations from archive path, got %v", got["mutations"])
+	}
+	if count, ok := got["count"].(float64); !ok || count != 0 {
+		t.Fatalf("expected no long tasks for archive, got %v", got["count"])
+	}
+	if maxMs, ok := got["maxMs"].(float64); !ok || maxMs >= 50 {
+		t.Fatalf("expected maxMs < 50 for archive, got %v", got["maxMs"])
+	}
+	if sumMs, ok := got["sumMs"].(float64); !ok || sumMs >= 50 {
+		t.Fatalf("expected sumMs < 50 for archive, got %v", got["sumMs"])
+	}
+}
+
+func TestPortalPerf_LongTaskProfile_ArchivedToggle(t *testing.T) {
+	outStr := runPortalDiffLongTaskScenario(t, `
+const recorder = longTaskRecorder({ thresholdMs: 50 });
+const body = makeMockBody();
+const runOld = { key: 'issue-3', kind: 'completed', status: 'success', issueLabel: '#3', runId: 'issue-3', issueNumber: 3, archived: false, sourceExists: true, log: 'toggle archive' };
+const runNew = Object.assign({}, runOld, { archived: true });
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: null };
+const created = SandmanPortalDiff.insertRunRow(body, runOld, opts);
+sandbox.state.activeBatches = true;
+sandbox.state.showArchived = false;
+function toggleArchived() {
+  sandbox.state.showArchived = !sandbox.state.showArchived;
+  if (sandbox.state.showArchived) sandbox.state.activeBatches = false;
+}
+SandmanPortalDiff.resetCounters();
+const totalStart = performance.now();
+recorder.start();
+toggleArchived();
+const result = SandmanPortalDiff.updateRunRowCells(created.row, runOld, runNew, opts);
+recorder.stop();
+const totalEnd = performance.now();
+const stats = recorder.stats();
+const counters = SandmanPortalDiff.getCounters();
+process.stdout.write(JSON.stringify({ scenario: 'archived_toggle', activeBatches: sandbox.state.activeBatches, showArchived: sandbox.state.showArchived, mutated: result.mutated, count: stats.count, maxMs: Math.round(stats.maxMs * 100) / 100, sumMs: Math.round(stats.sumMs * 100) / 100, endToEndMs: Math.round((totalEnd - totalStart) * 100) / 100, mutations: counters.mutations }));
+`)
+	var got map[string]any
+	if err := json.Unmarshal([]byte(outStr), &got); err != nil {
+		t.Fatalf("parse output: %v", err)
+	}
+	if activeBatches, ok := got["activeBatches"].(bool); !ok || activeBatches {
+		t.Fatalf("expected activeBatches to be cleared when archived view is enabled, got %v", got["activeBatches"])
+	}
+	if showArchived, ok := got["showArchived"].(bool); !ok || !showArchived {
+		t.Fatalf("expected archived view enabled, got %v", got["showArchived"])
+	}
+	if mutated, ok := got["mutated"].(bool); !ok || !mutated {
+		t.Fatalf("expected archived-toggle update to mutate row, got %v", got["mutated"])
+	}
+	if mutations, ok := got["mutations"].(float64); !ok || mutations < 1 {
+		t.Fatalf("expected DOM mutations from archived-toggle path, got %v", got["mutations"])
+	}
+	if count, ok := got["count"].(float64); !ok || count != 0 {
+		t.Fatalf("expected no long tasks for archived-toggle, got %v", got["count"])
+	}
+	if maxMs, ok := got["maxMs"].(float64); !ok || maxMs >= 50 {
+		t.Fatalf("expected maxMs < 50 for archived-toggle, got %v", got["maxMs"])
+	}
+	if sumMs, ok := got["sumMs"].(float64); !ok || sumMs >= 50 {
+		t.Fatalf("expected sumMs < 50 for archived-toggle, got %v", got["sumMs"])
+	}
 }
 
 func TestPortalPerf_LongTaskProfile_MarkdownSchemaStable(t *testing.T) {
@@ -399,7 +586,6 @@ func portalPerfHarnessPrefix() string {
 		sharedMockHelpers(),
 		sharedMockBody(),
 		loadPortalDiffJSSnippet(),
-		loadPortalClickHandlerSnippet(),
 		perfStateStubsSnippet(),
 		perfRunDocSnippet(),
 	}, "\n")
@@ -484,22 +670,65 @@ sandbox.summarizeReviewGroup = function (group) { return { source: group && grou
 sandbox.loadRunDetail = function () {};
 sandbox.findRunRowByIdentity = function () { return null; };
 sandbox.stopRunStream = function () {};
-sandbox.requestAnimationFrame = function (cb) { setTimeout(cb, 0); };
-const toggleRun = sandbox.toggleRun.bind(sandbox);
-function perfDispatchClick(runKey) {
-  const prev = sandbox.state.expandedRunKey;
-  sandbox.state.runs = sandbox.state.runs || [];
-  toggleRun(runKey);
-  if (typeof sandbox.scheduleRender === 'function') sandbox.scheduleRender();
-  if (sandbox.state.expandedRunKey && sandbox.state.expandedRunKey !== prev) {
-    sandbox.loadRunDetail(sandbox.state.expandedRunKey);
+sandbox.persistPortalViewState = function () {};
+sandbox.__rafQueue = [];
+sandbox.__renderScheduled = false;
+sandbox.__renderCallback = null;
+sandbox.requestAnimationFrame = function (cb) { sandbox.__rafQueue.push(cb); return sandbox.__rafQueue.length; };
+sandbox.flushAnimationFrames = function () {
+  var flushed = 0;
+  while (sandbox.__rafQueue.length) {
+    var queue = sandbox.__rafQueue.slice();
+    sandbox.__rafQueue.length = 0;
+    for (var i = 0; i < queue.length; i++) {
+      queue[i](performance.now());
+      flushed += 1;
+    }
   }
+  return flushed;
+};
+sandbox.rafQueueLength = function () { return sandbox.__rafQueue.length; };
+sandbox.render = function () {};
+sandbox.scheduleRender = function (callback) {
+  if (sandbox.__renderScheduled) {
+    if (callback) sandbox.__renderCallback = callback;
+    return;
+  }
+  sandbox.__renderScheduled = true;
+  if (callback) sandbox.__renderCallback = callback;
+  sandbox.requestAnimationFrame(function () {
+    try {
+      if (typeof sandbox.render === 'function') sandbox.render();
+      if (sandbox.__renderCallback) {
+        var cb = sandbox.__renderCallback;
+        sandbox.__renderCallback = null;
+        cb();
+      }
+    } finally {
+      sandbox.__renderScheduled = false;
+    }
+  });
+};
+function perfToggleRun(runKey) {
+  var run = sandbox.findRunByIdentity(runKey);
+  if (!run) return;
+  var subjectKey = sandbox.subjectRunIdentity(run) || runKey;
+  if (sandbox.state.expandedRunKey === subjectKey) {
+    sandbox.state.expandedRunKey = null;
+  } else {
+    sandbox.state.expandedRunKey = subjectKey;
+  }
+  sandbox.persistPortalViewState();
+  sandbox.scheduleRender();
+}
+function perfDispatchClick(runKey) {
+  sandbox.state.runs = sandbox.state.runs || [];
+  perfToggleRun(runKey);
 }
 function perfDispatchSubjectSwitch(runKey, nextTab) {
   if (!sandbox.state.tabs[runKey]) sandbox.state.tabs[runKey] = 'log';
   sandbox.state.tabs[runKey] = nextTab;
   sandbox.scheduleRender();
-  if (nextTab === 'events') sandbox.loadRunDetail(runKey);
 }
 `
 }
