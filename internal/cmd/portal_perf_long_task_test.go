@@ -170,6 +170,36 @@ func TestPortalPerf_LongTaskProfile_OpenCold(t *testing.T) {
 	writeLongTaskBaseline(t, "open_cold", count, maxMs, sumMs, endToEndMs, 0, 0)
 }
 
+func TestPortalPerf_LongTaskProfile_OpenWarm(t *testing.T) {
+	coldStr := runPortalDiffLongTaskScenario(t, scenarioOpenColdJS)
+	var cold map[string]any
+	if err := json.Unmarshal([]byte(coldStr), &cold); err != nil {
+		t.Fatalf("parse cold output: %v", err)
+	}
+	warmStr := runPortalDiffLongTaskScenario(t, scenarioOpenWarmJS)
+	var got map[string]any
+	if err := json.Unmarshal([]byte(warmStr), &got); err != nil {
+		t.Fatalf("parse output: %v", err)
+	}
+	count := int(got["count"].(float64))
+	maxMs := got["maxMs"].(float64)
+	sumMs := got["sumMs"].(float64)
+	endToEndMs := got["endToEndMs"].(float64)
+	if count < 0 || maxMs < 0 || sumMs < 0 || endToEndMs <= 0 {
+		t.Fatalf("warm metrics must be finite and endToEndMs > 0: %+v", got)
+	}
+	if float64(count) > cold["count"].(float64) {
+		t.Fatalf("warm open should not produce more long tasks than cold, warm=%d cold=%v", count, cold["count"])
+	}
+	if maxMs > cold["maxMs"].(float64) {
+		t.Fatalf("warm open should not exceed cold open in maxMs, warm=%.2f cold=%.2f", maxMs, cold["maxMs"].(float64))
+	}
+	if sumMs > cold["sumMs"].(float64) {
+		t.Fatalf("warm open should not exceed cold open in sumMs, warm=%.2f cold=%.2f", sumMs, cold["sumMs"].(float64))
+	}
+	writeLongTaskBaseline(t, "open_warm", count, maxMs, sumMs, endToEndMs, 0, 0)
+}
+
 func runRecorderScenario(t *testing.T, js string) string {
 	t.Helper()
 	cmd := exec.Command("node", "-e", longTaskRecorderSource+js)
@@ -330,5 +360,20 @@ perfHeavySyncWork(runs[2].log, 600);
 recorder.stop();
 const totalEnd = performance.now();
 perfEmitMetrics('open_cold', totalStart, totalEnd, recorder);
+`
+
+const scenarioOpenWarmJS = `
+const recorder = longTaskRecorder({ thresholdMs: 50 });
+const body = makeMockBody();
+const runs = perfBuildRuns(5, 12 * 1024);
+for (const run of runs) run.log = bigLog(run.key, 200);
+SandmanPortalDiff.diffRuns(body, runs, { helpers, stopGroups: new Set(), expandedKey: 'k2', tabs: { k2: 'log' } });
+SandmanPortalDiff.diffRuns(body, runs, { helpers, stopGroups: new Set(), expandedKey: null, tabs: { k2: 'log' } });
+const totalStart = performance.now();
+recorder.start();
+SandmanPortalDiff.diffRuns(body, runs, { helpers, stopGroups: new Set(), expandedKey: 'k2', tabs: { k2: 'log' } });
+recorder.stop();
+const totalEnd = performance.now();
+perfEmitMetrics('open_warm', totalStart, totalEnd, recorder);
 `
 
