@@ -283,3 +283,26 @@ func TestPortal_ActiveRowCSS_ReassertsAfterDiffHighlights(t *testing.T) {
 		}
 	}
 }
+
+// TestPortal_ActiveRowMobileCSS_PaintsCells ensures the mobile card layout
+// still paints the active row on the cells themselves, not only on the row
+// wrapper. That avoids a clipped / patchy highlight when the table switches
+// to display:grid at narrower widths.
+func TestPortal_ActiveRowMobileCSS_PaintsCells(t *testing.T) {
+	html := readPortalHTML(t)
+	start := strings.Index(html, `@media (max-width: 960px)`)
+	if start < 0 {
+		t.Fatal("mobile media query not found")
+	}
+	block := html[start:]
+	if end := strings.Index(block, `@media (max-width: 760px)`); end >= 0 {
+		block = block[:end]
+	}
+	body := extractCSSRuleBody(t, block, "tbody tr.run-row.active.row-added td")
+	if !strings.Contains(body, "background: color-mix(") {
+		t.Fatalf("mobile active-row cell rule missing painted background: %s", body)
+	}
+	if strings.Contains(body, "transparent") {
+		t.Fatalf("mobile active-row cell rule still transparent: %s", body)
+	}
+}
