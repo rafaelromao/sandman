@@ -1894,6 +1894,17 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
     const detailLoadingCounts = new Map();
     const loadingDetailKeys = new Set();
 
+    function setDetailLoadingState(panel, loading) {
+      if (!panel) return;
+      if (loading) {
+        if (!panel.classList.contains('is-loading')) panel.classList.add('is-loading');
+        if (panel.getAttribute('aria-busy') !== 'true') panel.setAttribute('aria-busy', 'true');
+      } else {
+        if (panel.classList.contains('is-loading')) panel.classList.remove('is-loading');
+        if (panel.getAttribute('aria-busy') !== null) panel.removeAttribute('aria-busy');
+      }
+    }
+
     function syncDetailLoadingState(runKey) {
       const run = findRunByIdentity(runKey);
       const detailKey = run && run.key ? run.key : runKey;

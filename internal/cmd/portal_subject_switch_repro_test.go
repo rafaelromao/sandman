@@ -1286,7 +1286,7 @@ func TestPortalRefresh_LogTabSwitchShowsLoadingCursorForMismatchedRunIdentity(t 
           text: async function () { return ''; },
         };
       }
-      if (url.indexOf('?runKey=`+runID+`') >= 0) {
+      if (url.indexOf('?runKey=') >= 0) {
         window.__portalDetailFetchCalls += 1;
         return {
           ok: true,
@@ -1310,13 +1310,13 @@ func TestPortalRefresh_LogTabSwitchShowsLoadingCursorForMismatchedRunIdentity(t 
         state.runs[0].log = '';
       }
       if (typeof scheduleRender === 'function') scheduleRender();
-      var detail = document.querySelector('tr.detail-row[data-detail-for="`+runKey+`"]');
+      var detail = document.querySelector('tr.detail-row[data-detail-for="`+runID+`"]');
       var button = detail && detail.querySelector('button[data-tab="log"]');
       if (!button) throw new Error('missing Log tab button');
       button.click();
     }, 150);
     setTimeout(function () {
-      var detail = document.querySelector('tr.detail-row[data-detail-for="`+runKey+`"]');
+      var detail = document.querySelector('tr.detail-row[data-detail-for="`+runID+`"]');
       var panel = detail && detail.querySelector('.detail-panel');
       var marker = document.createElement('pre');
       marker.id = 'portal-log-tab-mismatch-loading-before';
@@ -1332,7 +1332,7 @@ func TestPortalRefresh_LogTabSwitchShowsLoadingCursorForMismatchedRunIdentity(t 
       }
     }, 250);
     setTimeout(function () {
-      var detail = document.querySelector('tr.detail-row[data-detail-for="`+runKey+`"]');
+      var detail = document.querySelector('tr.detail-row[data-detail-for="`+runID+`"]');
       var panel = detail && detail.querySelector('.detail-panel');
       var marker = document.createElement('pre');
       marker.id = 'portal-log-tab-mismatch-loading-after';
@@ -1474,6 +1474,9 @@ func TestPortalReviewSubjectSwitch_ReusesCachedParentPaneAcrossRoundTrip(t *test
 
 	page := buildPortalReproPage(t, stateJSON, runsJSON, `
     window.__hlCalls = 0;
+    if (typeof window.requestIdleCallback === 'function') {
+      window.requestIdleCallback = function () { return 0; };
+    }
     var __origHL = SandmanPortalDiff.highlightTerminalLog;
     SandmanPortalDiff.highlightTerminalLog = function () {
       window.__hlCalls += 1;
