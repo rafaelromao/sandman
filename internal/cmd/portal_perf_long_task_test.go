@@ -399,6 +399,8 @@ func portalPerfHarnessPrefix() string {
 		sharedMockHelpers(),
 		sharedMockBody(),
 		loadPortalDiffJSSnippet(),
+		loadPortalClickHandlerSnippet(),
+		perfStateStubsSnippet(),
 		perfRunDocSnippet(),
 	}, "\n")
 }
@@ -424,6 +426,81 @@ func perfRunDocSnippet() string {
 const SandmanPortalDiff = sandbox.SandmanPortalDiff;
 if (!SandmanPortalDiff) throw new Error('SandmanPortalDiff missing');
 process.on('uncaughtException', (err) => { process.stderr.write('uncaught: ' + err.stack + '\n'); process.exit(2); });
+`
+}
+
+func loadPortalClickHandlerSnippet() string {
+	return `
+const clickSandbox = { console: console, setTimeout: setTimeout, requestAnimationFrame: function (cb) { setTimeout(cb, 0); }, document: documentRef, window: {}, globalThis: {}, JSON: JSON, Set: Set, Map: Map, state: { expandedRunKey: null, runs: [], tabs: {} }, findRunByIdentity: function (key) { return clickSandbox.state.runs.find((r) => r && (r.key === key || r.runId === key)) || null; }, findRunByKey: function (key) { return clickSandbox.findRunByIdentity(key); }, subjectRunIdentity: function (run) { return run ? (run.runId || run.key || '') : ''; }, subjectTabKey: function (k) { return k || ''; }, isWaitStateRun: function () { return false; }, summarizeReviewGroup: function (group) { return { source: group && group[0] || null }; }, loadRunDetail: function () {}, findRunRowByIdentity: function () { return null; }, stopRunStream: function () {} };
+clickSandbox.window = clickSandbox;
+clickSandbox.globalThis = clickSandbox;
+const portalHtmlSrc = fs.readFileSync('portal.html', 'utf8');
+function extractFunction(src, name) {
+  const re = new RegExp('(?:^|\\n)[ \\t]*function[ \\t]+' + name + '\\s*\\([^)]*\\)\\s*\\{', 'm');
+  const startMatch = re.exec(src);
+  if (!startMatch) return null;
+  const openIdx = startMatch.index + startMatch[0].length - 1;
+  let depth = 1, i = openIdx + 1;
+  while (i < src.length && depth > 0) {
+    const ch = src[i];
+    if (ch === '{') depth++;
+    else if (ch === '}') depth--;
+    i++;
+  }
+  return src.slice(startMatch.index, i);
+}
+const toggleRunSrc = extractFunction(portalHtmlSrc, 'toggleRun');
+if (!toggleRunSrc) throw new Error('could not extract toggleRun from portal.html');
+const scheduleRenderStub = 'function scheduleRender(callback) { if (typeof callback === "function") { callback(); } }';
+clickSandbox.persistPortalViewState = function () {};
+vm.runInNewContext(toggleRunSrc + '\n' + scheduleRenderStub + '\nthis.toggleRun = toggleRun; this.scheduleRender = scheduleRender;', clickSandbox, { filename: 'portal.html#click' });
+sandbox.toggleRun = clickSandbox.toggleRun;
+sandbox.scheduleRender = clickSandbox.scheduleRender;
+sandbox.persistPortalViewState = clickSandbox.persistPortalViewState;
+sandbox.state = clickSandbox.state;
+sandbox.findRunByIdentity = clickSandbox.findRunByIdentity;
+sandbox.findRunByKey = clickSandbox.findRunByKey;
+sandbox.subjectRunIdentity = clickSandbox.subjectRunIdentity;
+sandbox.subjectTabKey = clickSandbox.subjectTabKey;
+sandbox.isWaitStateRun = clickSandbox.isWaitStateRun;
+sandbox.summarizeReviewGroup = clickSandbox.summarizeReviewGroup;
+sandbox.loadRunDetail = clickSandbox.loadRunDetail;
+sandbox.findRunRowByIdentity = clickSandbox.findRunRowByIdentity;
+sandbox.stopRunStream = clickSandbox.stopRunStream;
+sandbox.requests = clickSandbox.runs;
+if (typeof sandbox.toggleRun !== 'function') throw new Error('toggleRun did not eval into the harness sandbox');
+`
+}
+
+func perfStateStubsSnippet() string {
+	return `
+sandbox.state = { expandedRunKey: null, runs: [], tabs: {}, activeBatches: false, showArchived: false, selectedStatus: '' };
+sandbox.findRunByIdentity = function (key) { return sandbox.state.runs.find((r) => r && (r.key === key || r.runId === key)) || null; };
+sandbox.findRunByKey = sandbox.findRunByIdentity;
+sandbox.subjectRunIdentity = function (run) { return run ? (run.runId || run.key || '') : ''; };
+sandbox.subjectTabKey = function (key) { return key || ''; };
+sandbox.isWaitStateRun = function () { return false; };
+sandbox.summarizeReviewGroup = function (group) { return { source: group && group[0] || null }; };
+sandbox.loadRunDetail = function () {};
+sandbox.findRunRowByIdentity = function () { return null; };
+sandbox.stopRunStream = function () {};
+sandbox.requestAnimationFrame = function (cb) { setTimeout(cb, 0); };
+const toggleRun = sandbox.toggleRun.bind(sandbox);
+function perfDispatchClick(runKey) {
+  const prev = sandbox.state.expandedRunKey;
+  sandbox.state.runs = sandbox.state.runs || [];
+  toggleRun(runKey);
+  if (typeof sandbox.scheduleRender === 'function') sandbox.scheduleRender();
+  if (sandbox.state.expandedRunKey && sandbox.state.expandedRunKey !== prev) {
+    sandbox.loadRunDetail(sandbox.state.expandedRunKey);
+  }
+}
+function perfDispatchSubjectSwitch(runKey, nextTab) {
+  if (!sandbox.state.tabs[runKey]) sandbox.state.tabs[runKey] = 'log';
+  sandbox.state.tabs[runKey] = nextTab;
+  sandbox.scheduleRender();
+  if (nextTab === 'events') sandbox.loadRunDetail(runKey);
+}
 `
 }
 
@@ -525,9 +602,10 @@ const recorder = longTaskRecorder({ thresholdMs: 50 });
 const body = makeMockBody();
 const runs = perfBuildRuns(5, 12 * 1024);
 for (const run of runs) run.log = bigLog(run.key, 200);
+sandbox.state.runs = runs;
 const totalStart = performance.now();
 recorder.start();
-SandmanPortalDiff.diffRuns(body, runs, { helpers, stopGroups: new Set(), expandedKey: 'k2', tabs: { k2: 'log' } });
+perfDispatchClick('k2');
 perfHeavySyncWork(runs[2].log, 600);
 recorder.stop();
 const totalEnd = performance.now();
@@ -539,11 +617,12 @@ const recorder = longTaskRecorder({ thresholdMs: 50 });
 const body = makeMockBody();
 const runs = perfBuildRuns(5, 12 * 1024);
 for (const run of runs) run.log = bigLog(run.key, 200);
+sandbox.state.runs = runs;
 SandmanPortalDiff.diffRuns(body, runs, { helpers, stopGroups: new Set(), expandedKey: 'k2', tabs: { k2: 'log' } });
 SandmanPortalDiff.diffRuns(body, runs, { helpers, stopGroups: new Set(), expandedKey: null, tabs: { k2: 'log' } });
 const totalStart = performance.now();
 recorder.start();
-SandmanPortalDiff.diffRuns(body, runs, { helpers, stopGroups: new Set(), expandedKey: 'k2', tabs: { k2: 'log' } });
+perfDispatchClick('k2');
 recorder.stop();
 const totalEnd = performance.now();
 perfEmitMetrics('open_warm', totalStart, totalEnd, recorder);
@@ -554,6 +633,7 @@ const recorder = longTaskRecorder({ thresholdMs: 50 });
 const body = makeMockBody();
 const runs = perfBuildRuns(5, 12 * 1024);
 for (const run of runs) run.log = bigLog(run.key, 200);
+sandbox.state.runs = runs;
 const keys = ['k0', 'k1', 'k2', 'k3', 'k4'];
 for (let i = 0; i < keys.length; i++) {
   SandmanPortalDiff.diffRuns(body, runs, { helpers, stopGroups: new Set(), expandedKey: keys[i], tabs: { [keys[i]]: 'log' } });
@@ -561,7 +641,7 @@ for (let i = 0; i < keys.length; i++) {
 const totalStart = performance.now();
 recorder.start();
 for (let i = 0; i < keys.length; i++) {
-  SandmanPortalDiff.diffRuns(body, runs, { helpers, stopGroups: new Set(), expandedKey: keys[i], tabs: { [keys[i]]: 'log' } });
+  perfDispatchClick(keys[i]);
   perfHeavySyncWork(runs[i].log, 200);
 }
 recorder.stop();
@@ -591,12 +671,13 @@ for (const run of runs) {
     run.events.push({ type: 'log', timestamp: 1700000000000 + i, payload: { line: 'event-' + i + ' payload with some text ' + (run.key), extra: bigLog('ev-' + i, 50) } });
   }
 }
+sandbox.state.runs = runs;
 SandmanPortalDiff.diffRuns(body, runs, { helpers, stopGroups: new Set(), expandedKey: 'k2', tabs: { k2: 'log' } });
 const totalStart = performance.now();
 recorder.start();
-SandmanPortalDiff.diffRuns(body, runs, { helpers, stopGroups: new Set(), expandedKey: 'k2', tabs: { k2: 'events' } });
+perfDispatchSubjectSwitch('k2', 'events');
 perfHeavySyncWork(runs[2].events.map(e => JSON.stringify(e)).join(''), 400);
-SandmanPortalDiff.diffRuns(body, runs, { helpers, stopGroups: new Set(), expandedKey: 'k2', tabs: { k2: 'log' } });
+perfDispatchSubjectSwitch('k2', 'log');
 recorder.stop();
 const totalEnd = performance.now();
 perfEmitMetrics('subject_switch', totalStart, totalEnd, recorder);
