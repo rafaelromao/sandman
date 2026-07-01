@@ -1066,6 +1066,124 @@
     ].join(':');
   }
 
+  function fingerprintEncode(text) {
+    const value = String(text);
+    if (typeof TextEncoder !== 'undefined') {
+      const bytes = new TextEncoder().encode(value);
+      let out = '';
+      for (let i = 0; i < bytes.length; i += 1) {
+        out += bytes[i].toString(16).padStart(2, '0');
+      }
+      return out;
+    }
+    let out = '';
+    for (let i = 0; i < value.length; i += 1) {
+      const code = value.charCodeAt(i);
+      if (code < 0x80) {
+        out += code.toString(16).padStart(2, '0');
+        continue;
+      }
+      if (code < 0x800) {
+        out += (0xc0 | (code >> 6)).toString(16).padStart(2, '0');
+        out += (0x80 | (code & 0x3f)).toString(16).padStart(2, '0');
+        continue;
+      }
+      if (code >= 0xd800 && code <= 0xdbff && i + 1 < value.length) {
+        const next = value.charCodeAt(i + 1);
+        if (next >= 0xdc00 && next <= 0xdfff) {
+          const cp = 0x10000 + ((code - 0xd800) << 10) + (next - 0xdc00);
+          out += (0xf0 | (cp >> 18)).toString(16).padStart(2, '0');
+          out += (0x80 | ((cp >> 12) & 0x3f)).toString(16).padStart(2, '0');
+          out += (0x80 | ((cp >> 6) & 0x3f)).toString(16).padStart(2, '0');
+          out += (0x80 | (cp & 0x3f)).toString(16).padStart(2, '0');
+          i += 1;
+          continue;
+        }
+      }
+      out += (0xe0 | (code >> 12)).toString(16).padStart(2, '0');
+      out += (0x80 | ((code >> 6) & 0x3f)).toString(16).padStart(2, '0');
+      out += (0x80 | (code & 0x3f)).toString(16).padStart(2, '0');
+    }
+    return out;
+  }
+
+  function detailPaneFingerprint(tabName, run, helpers) {
+    if (tabName === 'events') {
+      return 'events|' + cheapEventsFingerprint(run) + '|x' + fingerprintEncode(renderedJSONText(eventsJSONData(run)));
+    }
+    return 'details|' + cheapDetailsFingerprint(run, helpers) + '|x' + fingerprintEncode(renderedJSONText(detailsData(run, helpers)));
+  }
+
+  function renderedJSONText(value) {
+    return renderedJSONValue(value, 0);
+  }
+
+  function renderedJSONValue(value, depth) {
+    if (value === null) return 'null';
+    if (Array.isArray(value)) {
+      if (!value.length) return '[]';
+      const nextDepth = depth + 1;
+      const pad = '  '.repeat(nextDepth);
+      const closing = '  '.repeat(depth);
+      const parts = new Array(value.length);
+      for (let i = 0; i < value.length; i += 1) {
+        parts[i] = pad + renderedJSONValue(value[i], nextDepth);
+      }
+      return '[\n' + parts.join(',\n') + '\n' + closing + ']';
+    }
+    const kind = typeof value;
+    if (kind === 'string') return '"' + escapeJSONString(value) + '"';
+    if (kind === 'number') return Number.isFinite(value) ? String(value) : 'null';
+    if (kind === 'boolean') return value ? 'true' : 'false';
+    if (kind !== 'object') return 'null';
+    const keys = Object.keys(value);
+    if (!keys.length) return '{}';
+    const nextDepth = depth + 1;
+    const pad = '  '.repeat(nextDepth);
+    const closing = '  '.repeat(depth);
+    const parts = new Array(keys.length);
+    for (let i = 0; i < keys.length; i += 1) {
+      const key = keys[i];
+      parts[i] = pad + '"' + escapeJSONString(key) + '": ' + renderedJSONValue(value[key], nextDepth);
+    }
+    return '{\n' + parts.join(',\n') + '\n' + closing + '}';
+  }
+
+  function escapeJSONString(text) {
+    let out = '';
+    const value = String(text);
+    for (let i = 0; i < value.length; i += 1) {
+      const ch = value.charCodeAt(i);
+      if (ch === 0x22) { out += '\\"'; continue; }
+      if (ch === 0x5c) { out += '\\\\'; continue; }
+      if (ch === 0x08) { out += '\\b'; continue; }
+      if (ch === 0x0c) { out += '\\f'; continue; }
+      if (ch === 0x0a) { out += '\\n'; continue; }
+      if (ch === 0x0d) { out += '\\r'; continue; }
+      if (ch === 0x09) { out += '\\t'; continue; }
+      if (ch < 0x20) {
+        out += '\\u' + ch.toString(16).padStart(4, '0');
+        continue;
+      }
+      out += value.charAt(i);
+    }
+    return out;
+  }
+
+  function eventsJSONData(run) {
+    const events = Array.isArray(run && run.events) ? run.events : [];
+    const items = new Array(events.length);
+    for (let i = 0; i < events.length; i += 1) {
+      const event = events[i] || {};
+      items[i] = {
+        type: event && event.type ? event.type : 'event',
+        timestamp: event && event.timestamp ? event.timestamp : null,
+        payload: event && event.payload ? event.payload : {},
+      };
+    }
+    return items;
+  }
+
   function buildLogContent(content, run, helpers) {
     const section = global.document.createElement('section');
     section.classList.add('detail-box', 'tab-pane', 'fill');
@@ -1123,16 +1241,16 @@
       }
     } else if (tabName === 'events') {
       buildEventsContent(content, subjectRun, helpers);
-      // Cheap triplet (issue #1562). Matches the poll-path write in
-      // updateDetailContent so the first poll sees an unchanged attr
-      // and skips the rebuild branch.
-      content.setAttribute('data-rendered-fingerprint', 'events|' + cheapEventsFingerprint(subjectRun) + '|subjects:' + subjectFp);
+      // Rendered-payload fingerprint. Subject-picker and tab control-state
+      // churn can update the surrounding panel without forcing a pane
+      // rebuild when the rendered JSON is unchanged.
+      content.setAttribute('data-rendered-fingerprint', detailPaneFingerprint(tabName, subjectRun, helpers));
     } else {
       buildDetailsContent(content, subjectRun, helpers);
-      // Cheap scalar+peers string (issue #1562). Matches the poll-path
-      // write in updateDetailContent so the first poll sees an
-      // unchanged attr and skips the rebuild branch.
-      content.setAttribute('data-rendered-fingerprint', 'details|' + cheapDetailsFingerprint(subjectRun, helpers) + '|subjects:' + subjectFp);
+      // Rendered-payload fingerprint. Subject-picker and tab control-state
+      // churn can update the surrounding panel without forcing a pane
+      // rebuild when the rendered JSON is unchanged.
+      content.setAttribute('data-rendered-fingerprint', detailPaneFingerprint(tabName, subjectRun, helpers));
     }
   }
 
@@ -1285,20 +1403,14 @@
     }
     let fingerprint = tabName + '|' + subjectFp;
     if (tabName === 'events') {
-      // Cheap triplet (issue #1562). The poll no longer re-stringifies
-      // event payloads. The rebuild branch below still calls
-      // buildEventsContent, which re-runs eventsJSON so the rendered
-      // <pre data-rendered-json> content stays byte-identical to today.
-      fingerprint = 'events|' + cheapEventsFingerprint(subjectRun);
+      // Rendered-payload fingerprint. Control-state changes update the panel
+      // chrome, but only a rendered JSON change should rebuild the pane.
+      fingerprint = detailPaneFingerprint(tabName, subjectRun, opts.helpers);
     } else {
-      // Cheap scalar+peers string (issue #1562). The poll no longer
-      // re-stringifies the details object. The rebuild branch below
-      // still calls buildDetailsContent, which re-runs detailsJSON so
-      // the rendered <pre data-rendered-json> content stays
-      // byte-identical to today.
-      fingerprint = 'details|' + cheapDetailsFingerprint(subjectRun, opts.helpers);
+      // Rendered-payload fingerprint. Control-state changes update the panel
+      // chrome, but only a rendered JSON change should rebuild the pane.
+      fingerprint = detailPaneFingerprint(tabName, subjectRun, opts.helpers);
     }
-    fingerprint += '|subjects:' + subjectFp;
     if (content.getAttribute('data-rendered-fingerprint') === fingerprint && content.firstChild) {
       return;
     }

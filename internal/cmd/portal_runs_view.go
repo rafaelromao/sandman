@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -248,6 +249,12 @@ func (v *portalRunsView) computeWithActiveRuns(repoRoot string, eventList []even
 	var err error
 
 	idx := v.loadBatchesIndex(repoRoot)
+	for i := range activeInstances {
+		if activeInstances[i].SocketPath == "" {
+			continue
+		}
+		activeInstances[i].LiveOutput = v.readPortalSocketOutput(activeInstances[i].SocketPath)
+	}
 
 	runs := make([]portalRun, 0, len(runStates)+len(activeInstances))
 	consumedRunIDs := make(map[string]struct{})
@@ -861,9 +868,23 @@ func (v *portalRunsView) discoverActiveRuns(repoRoot string, eventsByRun map[str
 		prNumber := 0
 		batchID := instance.Name
 		runID := filepath.Base(runDir)
+		reviewIssueNumber := 0
 		if manifestErr == nil && manifest.BatchId != "" {
 			batchID = manifest.BatchId
-			prNumber = v.prNumberFromEvent(eventsByRun[runID])
+			if manifest.RunKind == "review" {
+				if manifest.PR != nil {
+					prNumber = *manifest.PR
+				}
+				runID, reviewIssueNumber = v.reviewRunIdentityForBatchDir(runDir)
+				if runID == "" {
+					runID = filepath.Base(runDir)
+				}
+			} else {
+				prNumber = v.prNumberFromEvent(eventsByRun[runID])
+			}
+		}
+		if reviewIssueNumber == 0 {
+			reviewIssueNumber = v.reviewIssueNumberForBatch(eventsByRun, batchID, instance.Name, runID)
 		}
 		issueNumbers := []int(nil)
 		issueNumber := 0
@@ -873,9 +894,16 @@ func (v *portalRunsView) discoverActiveRuns(repoRoot string, eventsByRun map[str
 		// mixed batch can no longer be mistaken for a private
 		// single-issue run by reading the sibling issue's dir name.
 		if manifestErr == nil {
-			issueNumbers = append(issueNumbers, manifest.Issues...)
 			if !manifest.CreatedAt.IsZero() {
 				startedAt = manifest.CreatedAt
+			}
+			if manifest.RunKind == "review" && reviewIssueNumber > 0 {
+				issueNumbers = []int{reviewIssueNumber}
+			} else {
+				issueNumbers = append(issueNumbers, manifest.Issues...)
+				if len(issueNumbers) == 0 && reviewIssueNumber > 0 {
+					issueNumbers = []int{reviewIssueNumber}
+				}
 			}
 		}
 		if len(issueNumbers) > 0 {
@@ -895,6 +923,78 @@ func (v *portalRunsView) discoverActiveRuns(repoRoot string, eventsByRun map[str
 		})
 	}
 	return active, nil
+}
+
+func (v *portalRunsView) reviewIssueNumberForBatch(eventsByRun map[string][]portalEvent, batchIDs ...string) int {
+	var best *portalEvent
+	bestRunID := ""
+	for runID, events := range eventsByRun {
+		for i := range events {
+			event := events[i]
+			if event.Type != "run.started" {
+				continue
+			}
+			review, ok := event.Payload["review"].(bool)
+			if !ok || !review {
+				continue
+			}
+			payloadBatchID, _ := event.Payload["batch_id"].(string)
+			if payloadBatchID == "" {
+				continue
+			}
+			matched := false
+			for _, batchID := range batchIDs {
+				if batchID != "" && payloadBatchID == batchID {
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				continue
+			}
+			if best == nil || event.Timestamp.After(best.Timestamp) || (event.Timestamp.Equal(best.Timestamp) && runID < bestRunID) {
+				copy := event
+				best = &copy
+				bestRunID = runID
+			}
+		}
+	}
+	if best == nil {
+		return 0
+	}
+	return v.reviewIssueNumber(best.Payload)
+}
+
+func (v *portalRunsView) reviewRunIdentityForBatchDir(batchDir string) (string, int) {
+	runsDir := filepath.Join(batchDir, "runs")
+	entries, err := os.ReadDir(runsDir)
+	if err != nil {
+		return "", 0
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		if issueNumber := reviewIssueNumberFromRunID(entry.Name()); issueNumber > 0 {
+			return entry.Name(), issueNumber
+		}
+	}
+	return "", 0
+}
+
+func reviewIssueNumberFromRunID(runID string) int {
+	parts := strings.Split(runID, "-")
+	if len(parts) < 4 {
+		return 0
+	}
+	if !strings.HasPrefix(parts[len(parts)-1], "PR") {
+		return 0
+	}
+	issueNumber, err := strconv.Atoi(parts[len(parts)-2])
+	if err != nil || issueNumber <= 0 {
+		return 0
+	}
+	return issueNumber
 }
 
 func (v *portalRunsView) runsFromActiveBatch(repoRoot string, active portalActiveRun, runStates []events.RunState, eventList []events.Event, eventsByRun map[string][]portalEvent, deadBatches []daemon.DeadBatch) ([]portalRun, map[string]struct{}) {
@@ -1015,6 +1115,9 @@ func (v *portalRunsView) runFromActiveBatchIssue(repoRoot string, active portalA
 	if len(active.IssueNumbers) > 1 {
 		run.BatchIssues = append([]int(nil), active.IssueNumbers...)
 	}
+	if active.PRNumber > 0 && active.RunID != "" && active.RunID != active.BatchID {
+		run.RunID = active.RunID
+	}
 	if state != nil {
 		activeWithOutput := active
 		activeWithOutput.LiveOutput = liveOutput
@@ -1024,7 +1127,11 @@ func (v *portalRunsView) runFromActiveBatchIssue(repoRoot string, active portalA
 			run.BatchIssues = append([]int(nil), active.IssueNumbers...)
 		}
 		if state.Finished == nil {
-			run.Log = v.filterPortalLogByRunID(liveOutput, state.RunID)
+			if live := strings.TrimSpace(stripLogLabels(liveOutput)); live != "" {
+				run.Log = v.filterPortalLogByRunID(liveOutput, state.RunID)
+			} else {
+				run.Log = v.readPortalTextFile(run.LogPath)
+			}
 			return run
 		}
 		switch state.Status() {
@@ -1264,7 +1371,9 @@ func (v *portalRunsView) runFromState(repoRoot string, runState events.RunState,
 	logPath := v.portalLogPathForRun(repoRoot, locator)
 	logContent := v.readPortalTextFile(logPath)
 	if active != nil {
-		logContent = stripLogLabels(active.LiveOutput)
+		if live := strings.TrimSpace(stripLogLabels(active.LiveOutput)); live != "" {
+			logContent = live
+		}
 	}
 
 	batchKey := ""

@@ -20,6 +20,33 @@ type buildPrompter struct{}
 func (buildPrompter) Confirm(string) (bool, error)            { return true, nil }
 func (buildPrompter) Select(string, []string) (string, error) { return "", nil }
 
+func TestInit_ElixirPresetBuildsForEveryBuiltInAgentProvider(t *testing.T) {
+	runtime, err := sandbox.ResolveRuntime("podman")
+	if err != nil {
+		t.Skipf("container runtime unavailable: %v", err)
+	}
+
+	for agent := range config.BuiltInAgentPresets {
+		t.Run(agent, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "mix.exs"), []byte("defmodule Demo.MixProject do\n  use Mix.Project\n\n  def project do\n    [\n      app: :demo,\n      version: \"0.1.0\",\n      elixir: \"~> 1.18\",\n      elixirc_paths: elixirc_paths(Mix.env())\n    ]\n  end\n\n  defp deps do\n    [{:plug, \"~> 1.11\"}]\n  end\nend\n"), 0644); err != nil {
+				t.Fatalf("write mix.exs: %v", err)
+			}
+
+			s := &scaffold.Scaffolder{}
+			if err := s.Scaffold(dir, scaffold.Options{Agent: agent}, buildPrompter{}); err != nil {
+				t.Fatalf("scaffold: %v", err)
+			}
+
+			tag := fmt.Sprintf("sandman-elixir-preset-%s-%d:latest", agent, time.Now().UnixNano())
+			buildPresetImage(t, runtime, tag, filepath.Join(dir, ".sandman", "Dockerfile"), dir)
+			t.Cleanup(func() {
+				_ = exec.Command(runtime, "rmi", "-f", tag).Run()
+			})
+		})
+	}
+}
+
 func TestInit_PythonPresetBuildsForEveryBuiltInAgentProvider(t *testing.T) {
 	runtime, err := sandbox.ResolveRuntime("podman")
 	if err != nil {

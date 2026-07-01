@@ -11,6 +11,7 @@ import (
 	"reflect"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -1161,6 +1162,103 @@ func TestPortal_RunFromActiveBatchIssue_ActiveReviewPrefersLiveOutput(t *testing
 	}
 	if !strings.Contains(run.Log, "live review line") {
 		t.Fatalf("expected live review output to win, got %q", run.Log)
+	}
+}
+
+func TestPortal_Compute_ActiveRunRefreshesLiveSocketLog(t *testing.T) {
+	repoRoot, err := os.MkdirTemp("/tmp", "p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(repoRoot) })
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	const batchID = "PR42"
+	runDir := filepath.Join(repoRoot, ".sandman", "batches", batchID)
+	runLogDir := paths.NewLayout(nil, repoRoot).RunFolder(batchID, batchID)
+	sockPath := filepath.Join(runDir, "batch.sock")
+	if err := os.MkdirAll(runLogDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(runDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	ln, err := net.Listen("unix", sockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+
+	var liveMu sync.Mutex
+	liveOutput := "[PR42] first live line\n"
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				defer c.Close()
+				liveMu.Lock()
+				output := liveOutput
+				liveMu.Unlock()
+				_, _ = c.Write([]byte(output))
+			}(conn)
+		}
+	}()
+
+	startedAt := time.Now().Add(-5 * time.Minute)
+	if err := daemon.WriteManifest(runDir, daemon.BatchManifest{Issues: []int{42}, BatchId: batchID, CreatedAt: startedAt}); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+	addBatchToIndex(t, repoRoot, batchID, runDir, []int{42})
+	if err := os.WriteFile(filepath.Join(runLogDir, "run.log"), []byte("[PR42] stale file line\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
+		{Type: "run.started", Timestamp: startedAt, RunID: batchID, Issue: 42, Payload: map[string]any{"batch_id": batchID}},
+	})
+
+	firstRuns, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")})
+	if err != nil {
+		t.Fatalf("first compute: %v", err)
+	}
+	if len(firstRuns) != 1 {
+		t.Fatalf("expected 1 row, got %d: %#v", len(firstRuns), firstRuns)
+	}
+	first := firstRuns[0]
+	if first.Kind != "active" || first.Status != "running" {
+		t.Fatalf("expected active running row, got %#v", first)
+	}
+	if !strings.Contains(first.Log, "first live line") {
+		t.Fatalf("expected live socket output on first poll, got %q", first.Log)
+	}
+	if strings.Contains(first.Log, "stale file line") {
+		t.Fatalf("expected stale saved log to stay hidden, got %q", first.Log)
+	}
+
+	liveMu.Lock()
+	liveOutput = "[PR42] second live line\n"
+	liveMu.Unlock()
+
+	secondRuns, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")})
+	if err != nil {
+		t.Fatalf("second compute: %v", err)
+	}
+	if len(secondRuns) != 1 {
+		t.Fatalf("expected 1 row on second poll, got %d: %#v", len(secondRuns), secondRuns)
+	}
+	second := secondRuns[0]
+	if second.Kind != first.Kind || second.Status != first.Status || second.IssueLabel != first.IssueLabel {
+		t.Fatalf("expected non-log state to stay stable, first=%#v second=%#v", first, second)
+	}
+	if !strings.Contains(second.Log, "second live line") {
+		t.Fatalf("expected refreshed live socket output on second poll, got %q", second.Log)
+	}
+	if second.Log == first.Log {
+		t.Fatalf("expected live log to change between polls, got %q", second.Log)
 	}
 }
 
