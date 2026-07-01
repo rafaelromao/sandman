@@ -1067,6 +1067,13 @@
     ].join(':');
   }
 
+  function detailPaneFingerprint(tabName, run, helpers) {
+    if (tabName === 'events') {
+      return 'events|' + cheapEventsFingerprint(run);
+    }
+    return 'details|' + cheapDetailsFingerprint(run, helpers);
+  }
+
   function buildLogContent(content, run, helpers) {
     const section = global.document.createElement('section');
     section.classList.add('detail-box', 'tab-pane', 'fill');
@@ -1124,16 +1131,16 @@
       }
     } else if (tabName === 'events') {
       buildEventsContent(content, subjectRun, helpers);
-      // Cheap triplet (issue #1562). Matches the poll-path write in
-      // updateDetailContent so the first poll sees an unchanged attr
-      // and skips the rebuild branch.
-      content.setAttribute('data-rendered-fingerprint', 'events|' + cheapEventsFingerprint(subjectRun) + '|subjects:' + subjectFp);
+      // Payload-only fingerprint. Subject-picker and tab control-state
+      // churn can update the surrounding panel without forcing a pane
+      // rebuild when the rendered JSON is unchanged.
+      content.setAttribute('data-rendered-fingerprint', detailPaneFingerprint(tabName, subjectRun, helpers));
     } else {
       buildDetailsContent(content, subjectRun, helpers);
-      // Cheap scalar+peers string (issue #1562). Matches the poll-path
-      // write in updateDetailContent so the first poll sees an
-      // unchanged attr and skips the rebuild branch.
-      content.setAttribute('data-rendered-fingerprint', 'details|' + cheapDetailsFingerprint(subjectRun, helpers) + '|subjects:' + subjectFp);
+      // Payload-only fingerprint. Subject-picker and tab control-state
+      // churn can update the surrounding panel without forcing a pane
+      // rebuild when the rendered JSON is unchanged.
+      content.setAttribute('data-rendered-fingerprint', detailPaneFingerprint(tabName, subjectRun, helpers));
     }
   }
 
@@ -1286,20 +1293,14 @@
     }
     let fingerprint = tabName + '|' + subjectFp;
     if (tabName === 'events') {
-      // Cheap triplet (issue #1562). The poll no longer re-stringifies
-      // event payloads. The rebuild branch below still calls
-      // buildEventsContent, which re-runs eventsJSON so the rendered
-      // <pre data-rendered-json> content stays byte-identical to today.
-      fingerprint = 'events|' + cheapEventsFingerprint(subjectRun);
+      // Payload-only fingerprint. Control-state changes update the panel
+      // chrome, but only a rendered JSON change should rebuild the pane.
+      fingerprint = detailPaneFingerprint(tabName, subjectRun, opts.helpers);
     } else {
-      // Cheap scalar+peers string (issue #1562). The poll no longer
-      // re-stringifies the details object. The rebuild branch below
-      // still calls buildDetailsContent, which re-runs detailsJSON so
-      // the rendered <pre data-rendered-json> content stays
-      // byte-identical to today.
-      fingerprint = 'details|' + cheapDetailsFingerprint(subjectRun, opts.helpers);
+      // Payload-only fingerprint. Control-state changes update the panel
+      // chrome, but only a rendered JSON change should rebuild the pane.
+      fingerprint = detailPaneFingerprint(tabName, subjectRun, opts.helpers);
     }
-    fingerprint += '|subjects:' + subjectFp;
     if (content.getAttribute('data-rendered-fingerprint') === fingerprint && content.firstChild) {
       return;
     }

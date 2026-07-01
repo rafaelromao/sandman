@@ -1856,6 +1856,32 @@ console.log('PASS');
 	runNodeScript(t, js)
 }
 
+func TestPortalDiffUpdateDetailEvents_IgnoresSubjectPickerChurn(t *testing.T) {
+	js := `const body = makeMockBody();
+const parentRun = { key: 'issue-1', kind: 'active', status: 'reviewing', issueLabel: '#1', runId: 'issue-1', issueNumber: 1, reviewCount: 1, events: [{ type: 'start', timestamp: 1700000000000, payload: { ok: true } }] };
+const reviewRun = { key: 'PR42', kind: 'completed', status: 'success', review: true, issueLabel: 'PR42', runId: 'PR42', issueNumber: 1, prNumber: 42 };
+const stopGroups = new Set();
+const opts1 = { helpers, stopGroups, expandedKey: 'issue-1', tabs: { 'issue-1': 'events' }, runs: [parentRun], visibleRuns: [parentRun] };
+SandmanPortalDiff.diffRuns(body, [parentRun], opts1);
+const detailRow = body.children[1];
+const content1 = detailRow.querySelector('.detail-content');
+const pre1 = detailRow.querySelector('pre[data-rendered-json]');
+if (!content1 || !pre1) throw new Error('expected initial events content');
+const opts2 = { helpers, stopGroups, expandedKey: 'issue-1', tabs: { 'issue-1': 'events' }, runs: [parentRun, reviewRun], visibleRuns: [parentRun] };
+SandmanPortalDiff.resetCounters();
+SandmanPortalDiff.diffRuns(body, [parentRun], opts2);
+const counters = SandmanPortalDiff.getCounters();
+if (counters.mutations === 0) throw new Error('subject-picker churn should still update the panel chrome, got 0 mutations');
+const content2 = detailRow.querySelector('.detail-content');
+if (content2 !== content1) throw new Error('events content identity should stay stable when only subject-picker options change');
+const pre2 = detailRow.querySelector('pre[data-rendered-json]');
+if (pre2 !== pre1) throw new Error('events pre should not be replaced when payload is unchanged');
+if (pre2.getAttribute('data-rendered-json') !== pre1.getAttribute('data-rendered-json')) throw new Error('events payload should stay byte-identical when unchanged');
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
 func TestPortalDiffUpdateDetailDetails_RendersPrettyJSON(t *testing.T) {
 	js := `const body = makeMockBody();
 const run = { key: 'a', kind: 'completed', status: 'success', issueLabel: 'A', runId: 'r1', startedAt: 1000, finishedAt: 2000, duration: 1, branch: 'main', logPath: '/tmp/run.log', logUrl: '/log' };
@@ -1897,6 +1923,32 @@ if (content2 !== content1) throw new Error('content identity should be preserved
 const pre2 = detailRow.querySelector('pre[data-rendered-json]');
 if (pre2 !== pre1) throw new Error('details pre should not be replaced');
 if (!pre2.getAttribute('data-rendered-json').includes('"logPath": "/tmp/run.log"')) throw new Error('expected logPath to remain in json');
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+func TestPortalDiffUpdateDetailDetails_IgnoresSubjectPickerChurn(t *testing.T) {
+	js := `const body = makeMockBody();
+const parentRun = { key: 'issue-1', kind: 'completed', status: 'success', issueLabel: '#1', runId: 'issue-1', issueNumber: 1, reviewCount: 1, startedAt: 1000, finishedAt: 2000, duration: 1, branch: 'main', logPath: '/tmp/run.log' };
+const reviewRun = { key: 'PR42', kind: 'completed', status: 'success', review: true, issueLabel: 'PR42', runId: 'PR42', issueNumber: 1, prNumber: 42 };
+const stopGroups = new Set();
+const opts1 = { helpers, stopGroups, expandedKey: 'issue-1', tabs: { 'issue-1': 'details' }, runs: [parentRun], visibleRuns: [parentRun] };
+SandmanPortalDiff.diffRuns(body, [parentRun], opts1);
+const detailRow = body.children[1];
+const content1 = detailRow.querySelector('.detail-content');
+const pre1 = detailRow.querySelector('pre[data-rendered-json]');
+if (!content1 || !pre1) throw new Error('expected initial details content');
+const opts2 = { helpers, stopGroups, expandedKey: 'issue-1', tabs: { 'issue-1': 'details' }, runs: [parentRun, reviewRun], visibleRuns: [parentRun] };
+SandmanPortalDiff.resetCounters();
+SandmanPortalDiff.diffRuns(body, [parentRun], opts2);
+const counters = SandmanPortalDiff.getCounters();
+if (counters.mutations === 0) throw new Error('subject-picker churn should still update the panel chrome, got 0 mutations');
+const content2 = detailRow.querySelector('.detail-content');
+if (content2 !== content1) throw new Error('details content identity should stay stable when only subject-picker options change');
+const pre2 = detailRow.querySelector('pre[data-rendered-json]');
+if (pre2 !== pre1) throw new Error('details pre should not be replaced when payload is unchanged');
+if (pre2.getAttribute('data-rendered-json') !== pre1.getAttribute('data-rendered-json')) throw new Error('details payload should stay byte-identical when unchanged');
 console.log('PASS');
 `
 	runNodeScript(t, js)
