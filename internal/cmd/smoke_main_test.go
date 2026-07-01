@@ -34,6 +34,7 @@ var smokePrewarmVariants = []smokePrewarmVariant{
 	{provider: "opencode", buildTools: "generic"},
 	{provider: "opencode", buildTools: "go"},
 	{provider: "opencode", buildTools: "python"},
+	{provider: "opencode", buildTools: "elixir"},
 }
 
 type smokePrewarmVariant struct {
@@ -95,7 +96,7 @@ func prewarmSmokeImage(provider, buildTools string) (string, error) {
 	if err := s.Scaffold(repoDir, scaffold.Options{BuildTools: buildTools, Agent: provider}, smokePrompter{}); err != nil {
 		return "", fmt.Errorf("scaffold prewarm: %w", err)
 	}
-	if err := addSmokeDockerDeps(repoDir, provider); err != nil {
+	if err := addSmokeDockerDeps(repoDir, provider, buildTools); err != nil {
 		return "", fmt.Errorf("add smoke docker deps: %w", err)
 	}
 

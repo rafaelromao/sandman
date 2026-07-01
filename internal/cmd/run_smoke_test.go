@@ -135,7 +135,7 @@ func prepareSmokeProvider(t *testing.T, tc smokeProviderCase) (runtime string, r
 	if err := s.Scaffold(repoDir, scaffold.Options{BuildTools: tc.buildTools, Agent: tc.name}, smokePrompter{}); err != nil {
 		t.Fatalf("scaffold repo: %v", err)
 	}
-	if err := addSmokeDockerDeps(repoDir, tc.name); err != nil {
+	if err := addSmokeDockerDeps(repoDir, tc.name, tc.buildTools); err != nil {
 		t.Fatalf("update Dockerfile: %v", err)
 	}
 	depsCfg, err := customizeSmokeConfig(repoDir, tc.name, tc.model)
@@ -256,6 +256,15 @@ func TestSmoke_RealAgentCLIs_PythonPreset(t *testing.T) {
 	cases := make([]smokeProviderCase, len(smokeProviderCases))
 	for i, tc := range smokeProviderCases {
 		tc.buildTools = "python"
+		cases[i] = tc
+	}
+	runSmokeProviderCases(t, cases)
+}
+
+func TestSmoke_RealAgentCLIs_ElixirPreset(t *testing.T) {
+	cases := make([]smokeProviderCase, len(smokeProviderCases))
+	for i, tc := range smokeProviderCases {
+		tc.buildTools = "elixir"
 		cases[i] = tc
 	}
 	runSmokeProviderCases(t, cases)
@@ -470,7 +479,7 @@ func copySmokeFile(src, dst string, mode os.FileMode) error {
 	return os.Chmod(dst, mode.Perm())
 }
 
-func addSmokeDockerDeps(repoDir, provider string) error {
+func addSmokeDockerDeps(repoDir, provider, buildTools string) error {
 	dockerfilePath := filepath.Join(repoDir, ".sandman", "Dockerfile")
 	data, err := os.ReadFile(dockerfilePath)
 	if err != nil {
@@ -478,6 +487,9 @@ func addSmokeDockerDeps(repoDir, provider string) error {
 	}
 	if provider == "opencode" {
 		data = append(data, []byte("RUN command -v opencode >/dev/null\n")...)
+	}
+	if buildTools == "elixir" {
+		data = append(data, []byte("RUN command -v mix >/dev/null\n")...)
 	}
 	return os.WriteFile(dockerfilePath, data, 0644)
 }
@@ -632,6 +644,9 @@ func preflightSmokeContainer(t *testing.T, runtime, imageTag, repoDir, homeDir, 
 	}
 	if buildTools == "python" {
 		assertCmd += "; command -v python >/dev/null || command -v python3 >/dev/null"
+	}
+	if buildTools == "elixir" {
+		assertCmd += "; command -v mix >/dev/null; command -v elixir >/dev/null"
 	}
 	check := exec.Command(runtime, "exec", container.ID(), "sh", "-c", assertCmd)
 	if out, err := check.CombinedOutput(); err != nil {

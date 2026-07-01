@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `elixir` BuildToolsPreset. `sandman init` detects Elixir repos from `mix.exs`/`.formatter.exs`/`.elixir_version`/`.tool-versions`, offers `elixir` as the default preset, and still lets `--build-tools generic` win as an explicit override. The preset pins both Elixir and a matched Erlang/OTP via mise (read from the resolved version's `-otp-NN` suffix, falling back to the bundled Elixir-OTP table), and installs mainstream companion tooling (`mix local.hex --force`, `mix local.rebar --force`). Real container build coverage exercises the built-in Agent Provider x `elixir` matrix. (#139)
 - `auto_max_count` config key (default 50) and `sandman config get/set auto_max_count` round-trip. `0` means unlimited. (#896)
 - `sandman run --auto` boolean flag and `sandman run --count N` integer cap. Auto Mode accepts the same filters as regular Sandman runs (label, query, explicit issue args) and lets the agent pick which to implement up to the cap. (#896)
 
