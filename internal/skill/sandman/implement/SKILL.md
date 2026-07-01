@@ -50,7 +50,7 @@ A merged PR that closes an issue will, by GitHub rules, automatically close the 
 1. Run: `gh issue view <ID> --json state`
 2. Decision matrix:
    - **Issue is closed** → verify the issue acceptance criteria against the current state of the base branch after fetching `origin/<base>`; only write `## Status: already resolved` and stop if the base branch actually satisfies every criterion. If the base branch does not satisfy every criterion, continue to step 2 (Plan) as normal.
-   - **Issue is open** → read the issue acceptance criteria and compare against the current state of the base branch after fetching `origin/<base>`. If all acceptance criteria are already met in the base branch, write `## Status: already resolved` to `.sandman/task.md` and stop. Otherwise, proceed to step 2 (Plan) as normal.
+   - **Issue is open** → read the issue acceptance criteria and compare against the current state of the base branch after fetching `origin/<base>`. If all acceptance criteria are already met in the base branch, write `## Status: already resolved` to `.sandman/task.md` and stop without running plan or TDD. Otherwise, proceed to step 2 (Plan) as normal.
 
 ### 2. Plan
 
