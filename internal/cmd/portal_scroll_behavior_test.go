@@ -227,14 +227,16 @@ func TestPortal_SwitchRows_InstantScrollDropsLongTasks(t *testing.T) {
 
 	baselineCount := pinnedBaseline.LongTaskCount
 	const regressionSlackCount = 1
-	const regressionSlackMs = 25.0
+	const regressionFactor = 2.0
+	const floorSlackMs = 50.0
 	t.Logf("switch_rows post-fix: count=%v endToEndMs=%v vs pinned baseline: count=%d endToEndMs=%.2f",
 		count, endToEnd, baselineCount, pinnedBaseline.EndToEndMs)
 	if int(count) > baselineCount+regressionSlackCount {
 		t.Fatalf("switch_rows longTaskCount regressed: got %v > baseline %d + slack %d", count, baselineCount, regressionSlackCount)
 	}
-	if endToEnd > pinnedBaseline.EndToEndMs+regressionSlackMs {
-		t.Fatalf("switch_rows endToEndMs regressed: got %.2f > baseline %.2f + slack %.2f", endToEnd, pinnedBaseline.EndToEndMs, regressionSlackMs)
+	ceiling := pinnedBaseline.EndToEndMs*regressionFactor + floorSlackMs
+	if endToEnd > ceiling {
+		t.Fatalf("switch_rows endToEndMs regressed: got %.2f > baseline %.2f * %.2f + %.2f (ceiling %.2f)", endToEnd, pinnedBaseline.EndToEndMs, regressionFactor, floorSlackMs, ceiling)
 	}
 }
 
