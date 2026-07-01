@@ -7,9 +7,9 @@
       </clipPath>
     </defs>
     <g clip-path="url(#c)">
-      <rect x="1" y="1" width="138" height="18" rx="2" fill="#F2EEE3" stroke="#5B4736" stroke-width="2"/>
       <rect width="20" height="20" fill="#D8B26E"/>
       <rect x="20" width="120" height="20" fill="#F2EEE3"/>
+      <rect x="1" y="1" width="138" height="18" rx="2" fill="none" stroke="#5B4736" stroke-width="2"/>
       <svg x="2" y="2" width="16" height="16" viewBox="-0.5 0 21 28" preserveAspectRatio="xMidYMid meet" aria-hidden="true">
         <g stroke="#FFFFFF" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" fill="none">
           <path d="M 18 1.5 L 7 1.5 A 7.5 7.5 0 0 0 -0.5 9 A 7.5 7.5 0 0 0 7 16.5 L 13 16.5 A 2.5 2.5 0 0 1 15.5 19 A 2.5 2.5 0 0 1 13 21.5 L 2 21.5"/>
