@@ -1787,6 +1787,146 @@ func TestScaffold_GoPresetTakesPriorityOverPython(t *testing.T) {
 	}
 }
 
+func TestScaffold_HasElixirRepoHint(t *testing.T) {
+	tests := []struct {
+		name    string
+		setupFn func(dir string)
+		want    bool
+	}{
+		{
+			name: "mix.exs",
+			setupFn: func(dir string) {
+				os.WriteFile(filepath.Join(dir, "mix.exs"), []byte("defmodule Demo.MixProject do\n  use Mix.Project\n\n  def project do\n    [\n      app: :demo,\n      version: \"0.1.0\",\n      elixir: \"~> 1.18\",\n      elixirc_paths: elixirc_paths(Mix.env())\n    ]\n  end\nend\n"), 0644)
+			},
+			want: true,
+		},
+		{
+			name: ".formatter.exs",
+			setupFn: func(dir string) {
+				os.WriteFile(filepath.Join(dir, ".formatter.exs"), []byte("[\n  inputs: [\"{mix,.formatter}.exs\", \"{config,lib,test}/**/*.{ex,exs}\"]\n]\n"), 0644)
+			},
+			want: true,
+		},
+		{
+			name: ".elixir_version",
+			setupFn: func(dir string) {
+				os.WriteFile(filepath.Join(dir, ".elixir_version"), []byte("1.18.4\n"), 0644)
+			},
+			want: true,
+		},
+		{
+			name: ".tool-versions with elixir",
+			setupFn: func(dir string) {
+				os.WriteFile(filepath.Join(dir, ".tool-versions"), []byte("elixir 1.18.4\nerlang 28.5\n"), 0644)
+			},
+			want: true,
+		},
+		{
+			name: "empty dir",
+			setupFn: func(dir string) {
+				_ = dir
+			},
+			want: false,
+		},
+		{
+			name: "non-elixir repo",
+			setupFn: func(dir string) {
+				os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/demo\n\ngo 1.24\n"), 0644)
+			},
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			tt.setupFn(dir)
+
+			if got := hasElixirRepoHint(dir); got != tt.want {
+				t.Errorf("hasElixirRepoHint(%q) = %v, want %v", dir, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestScaffold_ElixirPresetIsRegistered(t *testing.T) {
+	preset, ok := builtInBuildToolsPresets[elixirBuildToolsPreset]
+	if !ok {
+		t.Fatalf("elixir preset not registered in builtInBuildToolsPresets")
+	}
+	if preset.Name != elixirBuildToolsPreset {
+		t.Errorf("preset.Name = %q, want %q", preset.Name, elixirBuildToolsPreset)
+	}
+	if preset.BaseImage != "debian:bookworm-slim" {
+		t.Errorf("preset.BaseImage = %q, want %q", preset.BaseImage, "debian:bookworm-slim")
+	}
+	if preset.MiseVersion != DefaultMISEVersion {
+		t.Errorf("preset.MiseVersion = %q, want %q", preset.MiseVersion, DefaultMISEVersion)
+	}
+	if len(preset.SharedPackages) != len(sharedPackages) {
+		t.Errorf("preset.SharedPackages length = %d, want %d", len(preset.SharedPackages), len(sharedPackages))
+	}
+	if !containsString(KnownBuildToolsPresets, elixirBuildToolsPreset) {
+		t.Errorf("KnownBuildToolsPresets missing %q, got %v", elixirBuildToolsPreset, KnownBuildToolsPresets)
+	}
+}
+
+func TestScaffold_ElixirRepoAutoDetect(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "mix.exs"), []byte("defmodule Demo.MixProject do\n  use Mix.Project\n\n  def project do\n    [app: :demo, version: \"0.1.0\", elixir: \"~> 1.18\"]\n  end\nend\n"), 0644); err != nil {
+		t.Fatalf("write mix.exs: %v", err)
+	}
+
+	s := &Scaffolder{}
+	preset, err := s.resolveBuildToolsPreset(dir, Options{}, &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("resolve build tools preset: %v", err)
+	}
+	if preset.Name != elixirBuildToolsPreset {
+		t.Errorf("expected elixir preset, got %q", preset.Name)
+	}
+}
+
+func TestScaffold_GenericBuildToolsOverridesElixirRepoHint(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "mix.exs"), []byte("defmodule Demo.MixProject do\n  use Mix.Project\n  def project do\n    [app: :demo, version: \"0.1.0\", elixir: \"~> 1.18\"]\n  end\nend\n"), 0644); err != nil {
+		t.Fatalf("write mix.exs: %v", err)
+	}
+
+	s := &Scaffolder{}
+	preset, err := s.resolveBuildToolsPreset(dir, Options{BuildTools: "generic"}, &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("resolve build tools preset: %v", err)
+	}
+	if preset.Name != "generic" {
+		t.Fatalf("expected explicit generic preset, got %q", preset.Name)
+	}
+}
+
+func TestScaffold_NodePresetTakesPriorityOverElixir(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"name":"demo","engines":{"node":"20"}}`), 0644)
+	os.WriteFile(filepath.Join(dir, "mix.exs"), []byte("defmodule Demo.MixProject do\n  use Mix.Project\n  def project do\n    [app: :demo, version: \"0.1.0\", elixir: \"~> 1.18\"]\n  end\nend\n"), 0644)
+
+	s := &Scaffolder{}
+	preset, err := s.resolveBuildToolsPreset(dir, Options{}, &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("resolve build tools preset: %v", err)
+	}
+	if preset.Name != "node" {
+		t.Errorf("expected Node preset to take priority over Elixir, got %q", preset.Name)
+	}
+}
+
+func containsString(haystack []string, needle string) bool {
+	for _, item := range haystack {
+		if item == needle {
+			return true
+		}
+	}
+	return false
+}
+
 func TestValidateDockerfileMetadata_AllowsGoPreset(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(dir, ".sandman"), 0755); err != nil {

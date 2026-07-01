@@ -29,6 +29,8 @@ const nodeBuildToolsPreset = "node"
 
 const pythonBuildToolsPreset = "python"
 
+const elixirBuildToolsPreset = "elixir"
+
 const DefaultMISEVersion = "v2026.5.8"
 
 const DefaultRTKVersion = "v0.42.0"
@@ -120,6 +122,12 @@ var builtInBuildToolsPresets = map[string]BuildToolsPreset{
 	},
 	pythonBuildToolsPreset: {
 		Name:           pythonBuildToolsPreset,
+		BaseImage:      "debian:bookworm-slim",
+		SharedPackages: sharedPackages,
+		MiseVersion:    DefaultMISEVersion,
+	},
+	elixirBuildToolsPreset: {
+		Name:           elixirBuildToolsPreset,
 		BaseImage:      "debian:bookworm-slim",
 		SharedPackages: sharedPackages,
 		MiseVersion:    DefaultMISEVersion,
@@ -387,6 +395,8 @@ func (s *Scaffolder) resolveBuildToolsPreset(repoRoot string, opts Options, p Pr
 			}
 		} else if hasPythonRepoHint(repoRoot) {
 			name = pythonBuildToolsPreset
+		} else if hasElixirRepoHint(repoRoot) {
+			name = elixirBuildToolsPreset
 		} else if p != nil {
 			selected, err := p.Select("Choose a build tools preset:", KnownBuildToolsPresets)
 			if err == nil {
@@ -452,6 +462,15 @@ func hasNodeRepoHint(repoRoot string) bool {
 
 func hasPythonRepoHint(repoRoot string) bool {
 	for _, rel := range []string{"pyproject.toml", "setup.py", "setup.cfg", "Pipfile", ".python-version"} {
+		if _, err := os.Stat(filepath.Join(repoRoot, rel)); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
+func hasElixirRepoHint(repoRoot string) bool {
+	for _, rel := range []string{"mix.exs", ".formatter.exs", ".elixir_version", ".tool-versions"} {
 		if _, err := os.Stat(filepath.Join(repoRoot, rel)); err == nil {
 			return true
 		}
