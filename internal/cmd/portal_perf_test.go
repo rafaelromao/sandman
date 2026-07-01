@@ -313,3 +313,329 @@ func TestPortalPerf_AsyncLargeLogInflightTabSwitch(t *testing.T) {
 `
 	runNodeScript(t, js)
 }
+
+// TestPortalPerf_StreamCoalescer_LeadingFlushBatchesOneLineIntoFragmentAppend
+// is slice A of the SSE coalescer work for #1563: a single scheduled line
+// should land as a single flush that calls highlightTerminalLog exactly
+// once with the joined batch and appends the result to the run's <pre>
+// using a single DocumentFragment.appendChild. appendStreamLine no longer
+// touches the DOM in the SSE hot path.
+func TestPortalPerf_StreamCoalescer_LeadingFlushBatchesOneLineIntoFragmentAppend(t *testing.T) {
+	js := `
+const rafQueue = [];
+function fakeRaf(cb) { rafQueue.push(cb); }
+const fakeDoc = { createDocumentFragment() { return { nodeType: 11, children: [], appendChild(child) { this.children.push(child); return child; } }; } };
+
+const pre = {
+  tagName: 'PRE', nodeType: 1, children: [],
+  setAttribute(name, value) { this[name] = value; if (name === 'data-rendered-log') this.dataRendered = value; },
+  getAttribute(name) { return this[name] != null ? String(this[name]) : null; },
+  removeAttribute(name) { delete this[name]; },
+  appendChild(child) { child.parentNode = this; this.children.push(child); return child; },
+  scrollTop: 0, scrollHeight: 0,
+  get firstChild() { return this.children[0] || null; },
+};
+pre.setAttribute('data-rendered-log', '');
+
+const highlightCalls = [];
+const highlight = function(text) { highlightCalls.push(text); return '<span>' + text + '</span>'; };
+const preFor = function(runKey) { return pre; };
+const portalScroll = { isSticky() { return true; } };
+
+const coalescer = createStreamCoalescer({
+  rAF: fakeRaf, highlight: highlight, preFor: preFor, portalScroll: portalScroll, doc: fakeDoc, cap: 16,
+});
+coalescer.seedKnownLines('a', []);
+
+// 1 incoming SSE line in the same task that triggered us
+coalescer.scheduleLine('a', 'line1');
+if (rafQueue.length !== 1) throw new Error('expected one rAF scheduled, got ' + rafQueue.length);
+if (coalescer.pendingSize('a') !== 1) throw new Error('expected buffer to hold 1 line, got ' + coalescer.pendingSize('a'));
+
+// Drive the leading flush
+rafQueue.shift()();
+
+// 1 single flush means exactly 1 highlight call with the joined text
+if (highlightCalls.length !== 1) throw new Error('expected 1 highlight call, got ' + highlightCalls.length);
+if (highlightCalls[0] !== 'line1\n') throw new Error('expected highlight input "line1\\n", got ' + JSON.stringify(highlightCalls[0]));
+
+// Exactly one appendChild to the pre (the DocumentFragment), so the
+// per-line scratch-and-walk pattern no longer exists.
+if (pre.children.length !== 1) throw new Error('expected 1 child in pre after flush, got ' + pre.children.length);
+if (pre.dataRendered !== 'line1\n') throw new Error('expected data-rendered-log updated, got ' + JSON.stringify(pre.dataRendered));
+if (coalescer.pendingSize('a') !== 0) throw new Error('expected buffer to drain to 0, got ' + coalescer.pendingSize('a'));
+console.log('PASS');
+`
+	runStreamCoalescerScript(t, js)
+}
+
+// TestPortalPerf_StreamCoalescer_DedupAcrossBufferedBatch
+// is slice A.5 of the coalescer work: duplicate lines within the same
+// pending batch must not produce duplicate DOM writes; lines already in
+// the run's known-lines set must be dropped at schedule time.
+func TestPortalPerf_StreamCoalescer_DedupAcrossBufferedBatch(t *testing.T) {
+	js := `
+const rafQueue = [];
+function fakeRaf(cb) { rafQueue.push(cb); }
+const fakeDoc = { createDocumentFragment() { return { nodeType: 11, children: [], appendChild(child) { this.children.push(child); return child; } }; } };
+
+const pre = {
+  tagName: 'PRE', nodeType: 1, children: [], dataRendered: '',
+  setAttribute(name, value) { this[name] = value; if (name === 'data-rendered-log') this.dataRendered = value; },
+  getAttribute(name) { return this[name] != null ? String(this[name]) : null; },
+  removeAttribute(name) { delete this[name]; },
+  appendChild(child) { child.parentNode = this; this.children.push(child); return child; },
+  scrollTop: 0, scrollHeight: 0,
+  get firstChild() { return this.children[0] || null; },
+};
+pre.setAttribute('data-rendered-log', '');
+
+const highlightCalls = [];
+const highlight = function(text) { highlightCalls.push(text); return '<span>' + text + '</span>'; };
+const preFor = function(runKey) { return pre; };
+const portalScroll = { isSticky() { return true; } };
+
+const coalescer = createStreamCoalescer({
+  rAF: fakeRaf, highlight: highlight, preFor: preFor, portalScroll: portalScroll, doc: fakeDoc, cap: 16,
+});
+
+// 'dup' is already in the run's known-lines (e.g. already in the cached
+// snapshot at startRunStream time) — scheduleLine must drop it before
+// touching the buffer.
+coalescer.seedKnownLines('a', ['dup']);
+if (coalescer.pendingSize('a') !== 0) throw new Error('expected empty buffer after seedKnownLines, got ' + coalescer.pendingSize('a'));
+
+coalescer.scheduleLine('a', 'dup');
+coalescer.scheduleLine('a', 'new');
+coalescer.scheduleLine('a', 'dup'); // duplicate inside buffered batch
+
+if (coalescer.pendingSize('a') !== 1) throw new Error('expected buffer to retain only 1 unique line, got ' + coalescer.pendingSize('a'));
+
+rafQueue.shift()();
+if (highlightCalls.length !== 1) throw new Error('expected 1 highlight call, got ' + highlightCalls.length);
+if (highlightCalls[0] !== 'new\n') throw new Error('expected highlight input "new\\n", got ' + JSON.stringify(highlightCalls[0]));
+console.log('PASS');
+`
+	runStreamCoalescerScript(t, js)
+}
+
+// TestPortalPerf_StreamCoalescer_BurstOf100MessagesProducesAtMost3Flushes
+// is slice B (the headline acceptance test from #1563): 100 SSE messages
+// over a controlled rAF clock must coalesce into <=3 flushes, sticky-bottom
+// must be preserved after each batch.
+func TestPortalPerf_StreamCoalescer_BurstOf100MessagesProducesAtMost3Flushes(t *testing.T) {
+	js := `
+const rafQueue = [];
+function fakeRaf(cb) { rafQueue.push(cb); }
+
+const pre = {
+  tagName: 'PRE', nodeType: 1, children: [], dataRendered: '',
+  setAttribute(name, value) { this[name] = value; if (name === 'data-rendered-log') this.dataRendered = value; },
+  getAttribute(name) { return this[name] != null ? String(this[name]) : null; },
+  removeAttribute(name) { delete this[name]; },
+  appendChild(child) { child.parentNode = this; this.children.push(child); return child; },
+  scrollTop: 0, scrollHeight: 0,
+  get firstChild() { return this.children[0] || null; },
+};
+pre.setAttribute('data-rendered-log', '');
+
+const fakeDoc = { createDocumentFragment() { return { nodeType: 11, children: [], appendChild(child) { this.children.push(child); return child; } }; } };
+const highlightCalls = [];
+const highlight = function(text) { highlightCalls.push(text); return '<span>' + text + '</span>'; };
+const preFor = function() { return pre; };
+const portalScroll = { isSticky() { return true; } };
+
+const coalescer = createStreamCoalescer({
+  rAF: fakeRaf, highlight: highlight, preFor: preFor, portalScroll: portalScroll, doc: fakeDoc, cap: 16,
+});
+coalescer._debug.enableCounters();
+coalescer.seedKnownLines('a', []);
+
+// 100 messages spread across 100ms (one rAF tick every ~16ms). Production
+// holds flush count to <=3 because burst-arriving messages before an rAF
+// callback are coalesced into a single per-run flush.
+const totalMessages = 100;
+for (let i = 0; i < totalMessages; i++) {
+  coalescer.scheduleLine('a', 'line' + i);
+  if (i % 16 === 15) { while (rafQueue.length) rafQueue.shift()(); }
+}
+// Drain any trailing rAFs
+while (rafQueue.length) rafQueue.shift()();
+
+const flushCount = coalescer._debug.flushCount();
+if (flushCount > 3) throw new Error('expected at most 3 flushes for 100-message burst, got ' + flushCount);
+// 100 unique messages must have triggered at least one tokenize + DOM write.
+if (highlightCalls.length !== flushCount) throw new Error('expected one highlight call per flush, got ' + highlightCalls.length + ' highlights vs ' + flushCount + ' flushes');
+// Each highlight input should contain a non-empty joined block ending in newline.
+for (let i = 0; i < highlightCalls.length; i++) {
+  if (highlightCalls[i].slice(-1) !== '\n') throw new Error('expected highlight input to end with newline, got ' + JSON.stringify(highlightCalls[i]));
+}
+
+// Sticky-bottom: after every flush the pre's scrollTop is at scrollHeight.
+if (pre.scrollTop !== pre.scrollHeight) throw new Error('expected sticky-bottom pre.scrollTop === scrollHeight, got scrollTop=' + pre.scrollTop + ' scrollHeight=' + pre.scrollHeight);
+console.log('PASS');
+`
+	runStreamCoalescerScript(t, js)
+}
+
+// TestPortalPerf_StreamCoalescer_OverflowAtCapFlushesImmediately
+// is slice C: with cap = 4, the 5th line in a single-tick burst flushes
+// synchronously inside scheduleLine (no rAF wait). The leading flush +
+// the immediate overflow flush are both visible synchronously.
+func TestPortalPerf_StreamCoalescer_OverflowAtCapFlushesImmediately(t *testing.T) {
+	js := `
+const rafQueue = [];
+function fakeRaf(cb) { rafQueue.push(cb); }
+const fakeDoc = { createDocumentFragment() { return { nodeType: 11, children: [], appendChild(child) { this.children.push(child); return child; } }; } };
+
+const pre = {
+  tagName: 'PRE', nodeType: 1, children: [], dataRendered: '',
+  setAttribute(name, value) { this[name] = value; if (name === 'data-rendered-log') this.dataRendered = value; },
+  getAttribute(name) { return this[name] != null ? String(this[name]) : null; },
+  removeAttribute(name) { delete this[name]; },
+  appendChild(child) { child.parentNode = this; this.children.push(child); return child; },
+  scrollTop: 0, scrollHeight: 0,
+  get firstChild() { return this.children[0] || null; },
+};
+pre.setAttribute('data-rendered-log', '');
+
+const highlightCalls = [];
+const highlight = function(text) { highlightCalls.push(text); return '<span>' + text + '</span>'; };
+const preFor = function() { return pre; };
+const portalScroll = { isSticky() { return false; } };
+
+const coalescer = createStreamCoalescer({
+  rAF: fakeRaf, highlight: highlight, preFor: preFor, portalScroll: portalScroll, doc: fakeDoc, cap: 4,
+});
+coalescer._debug.enableCounters();
+coalescer.seedKnownLines('a', []);
+
+// Fill the cap with 4 distinct lines — none of these should flush yet.
+coalescer.scheduleLine('a', 'A1');
+coalescer.scheduleLine('a', 'A2');
+coalescer.scheduleLine('a', 'A3');
+coalescer.scheduleLine('a', 'A4');
+if (coalescer._debug.flushCount() !== 0) throw new Error('expected 0 flushes while filling cap, got ' + coalescer._debug.flushCount());
+if (coalescer.pendingSize('a') !== 4) throw new Error('expected buffer size 4 at cap, got ' + coalescer.pendingSize('a'));
+
+// 5th line triggers an immediate (synchronous) flush — no rAF wait.
+coalescer.scheduleLine('a', 'A5');
+const syncFlush = coalescer._debug.flushCount();
+if (syncFlush !== 1) throw new Error('expected 1 synchronous flush on overflow, got ' + syncFlush);
+if (coalescer.pendingSize('a') !== 0) throw new Error('expected buffer drained after overflow flush, got ' + coalescer.pendingSize('a'));
+if (highlightCalls.length !== 1) throw new Error('expected 1 highlight call after overflow flush, got ' + highlightCalls.length);
+if (highlightCalls[0].indexOf('A5') >= 0) {
+  throw new Error('expected overflow flush to drain the cap (A1-A4) without A5, got ' + JSON.stringify(highlightCalls[0]));
+}
+
+// Subsequent line goes through normal rAF pipeline.
+coalescer.scheduleLine('a', 'A6');
+if (coalescer._debug.flushCount() !== 1) throw new Error('expected flush count to stay 1 (new line just buffers), got ' + coalescer._debug.flushCount());
+if (coalescer.pendingSize('a') !== 1) throw new Error('expected buffer to hold A6, got ' + coalescer.pendingSize('a'));
+rafQueue.shift()();
+if (coalescer._debug.flushCount() !== 2) throw new Error('expected rAF tick to flush A6, got ' + coalescer._debug.flushCount());
+console.log('PASS');
+`
+	runStreamCoalescerScript(t, js)
+}
+
+// TestPortalPerf_StreamCoalescer_StickyToggleReflectsRunScrolling
+// is slice B continuation: sticky=false must leave scrollTop alone.
+func TestPortalPerf_StreamCoalescer_StickyToggleReflectsRunScrolling(t *testing.T) {
+	js := `
+const rafQueue = [];
+function fakeRaf(cb) { rafQueue.push(cb); }
+const fakeDoc = { createDocumentFragment() { return { nodeType: 11, children: [], appendChild(child) { this.children.push(child); return child; } }; } };
+
+const pre = {
+  tagName: 'PRE', nodeType: 1, children: [], dataRendered: '',
+  setAttribute(name, value) { this[name] = value; if (name === 'data-rendered-log') this.dataRendered = value; },
+  getAttribute(name) { return this[name] != null ? String(this[name]) : null; },
+  removeAttribute(name) { delete this[name]; },
+  appendChild(child) { child.parentNode = this; this.children.push(child); return child; },
+  scrollTop: 42, scrollHeight: 1000,
+  get firstChild() { return this.children[0] || null; },
+};
+pre.setAttribute('data-rendered-log', '');
+
+const highlight = function(text) { return '<span>' + text + '</span>'; };
+const preFor = function() { return pre; };
+const stickyStates = { a: false };
+const portalScroll = { isSticky(runKey) { return stickyStates[runKey] === true; } };
+
+const coalescer = createStreamCoalescer({
+  rAF: fakeRaf, highlight: highlight, preFor: preFor, portalScroll: portalScroll, doc: fakeDoc, cap: 16,
+});
+coalescer.seedKnownLines('a', []);
+coalescer.scheduleLine('a', 'one');
+rafQueue.shift()();
+
+if (pre.scrollTop !== 42) throw new Error('expected scrollTop preserved (sticky=false), got ' + pre.scrollTop);
+
+stickyStates.a = true;
+coalescer.scheduleLine('a', 'two');
+rafQueue.shift()();
+if (pre.scrollTop !== pre.scrollHeight) throw new Error('expected scrollTop=scrollHeight (sticky=true), got ' + pre.scrollTop);
+console.log('PASS');
+`
+	runStreamCoalescerScript(t, js)
+}
+
+// TestPortalPerf_StreamCoalescer_SubjectSwitchClearsPendingBuffer
+// is the subject-switch behavior from #1563 AC: switching the live run
+// while lines are buffered must drop the previous run's pending buffer so
+// no stale DOM writes happen.
+func TestPortalPerf_StreamCoalescer_SubjectSwitchClearsPendingBuffer(t *testing.T) {
+	js := `
+const rafQueue = [];
+function fakeRaf(cb) { rafQueue.push(cb); }
+const fakeDoc = { createDocumentFragment() { return { nodeType: 11, children: [], appendChild(child) { this.children.push(child); return child; } }; } };
+
+const pres = {};
+function makePre(key) {
+  return {
+    tagName: 'PRE', nodeType: 1, children: [], dataRendered: '',
+    setAttribute(name, value) { this[name] = value; if (name === 'data-rendered-log') this.dataRendered = value; },
+    getAttribute(name) { return this[name] != null ? String(this[name]) : null; },
+    removeAttribute(name) { delete this[name]; },
+    appendChild(child) { child.parentNode = this; this.children.push(child); return child; },
+    scrollTop: 0, scrollHeight: 0,
+    get firstChild() { return this.children[0] || null; },
+  };
+}
+pres.a = makePre('a'); pres.a.setAttribute('data-rendered-log', '');
+pres.b = makePre('b'); pres.b.setAttribute('data-rendered-log', '');
+
+const highlightCalls = [];
+const highlight = function(text) { highlightCalls.push(text); return '<span>' + text + '</span>'; };
+const preFor = function(key) { return pres[key]; };
+const portalScroll = { isSticky() { return false; } };
+
+const coalescer = createStreamCoalescer({
+  rAF: fakeRaf, highlight: highlight, preFor: preFor, portalScroll: portalScroll, doc: fakeDoc, cap: 16,
+});
+coalescer.seedKnownLines('a', []);
+coalescer.seedKnownLines('b', []);
+
+// Buffer pending lines for run A
+coalescer.scheduleLine('a', 'stale-A-1');
+coalescer.scheduleLine('a', 'stale-A-2');
+if (coalescer.pendingSize('a') !== 2) throw new Error('expected buffer size 2 on A, got ' + coalescer.pendingSize('a'));
+
+// Subject switch: clear A's pending buffer without flushing, then buffer
+// lines for the new run B
+coalescer.clearBuffer('a');
+if (coalescer.pendingSize('a') !== 0) throw new Error('expected A buffer cleared after subject switch, got ' + coalescer.pendingSize('a'));
+coalescer.scheduleLine('b', 'fresh-B-1');
+
+// Drain rAF: only B's pending line should flush; A's pre is untouched.
+rafQueue.shift()();
+if (highlightCalls.length !== 1) throw new Error('expected exactly 1 highlight call (B only), got ' + highlightCalls.length);
+if (highlightCalls[0] !== 'fresh-B-1\n') throw new Error('expected highlight call to be B\'s line, got ' + JSON.stringify(highlightCalls[0]));
+if (pres.a.children.length !== 0) throw new Error('expected pre A untouched, got ' + pres.a.children.length + ' children');
+if (pres.a.dataRendered !== '') throw new Error('expected pre A data-rendered-log unchanged, got ' + JSON.stringify(pres.a.dataRendered));
+if (pres.b.dataRendered !== 'fresh-B-1\n') throw new Error('expected pre B data-rendered-log updated, got ' + JSON.stringify(pres.b.dataRendered));
+console.log('PASS');
+`
+	runStreamCoalescerScript(t, js)
+}
