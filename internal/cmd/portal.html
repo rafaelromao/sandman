@@ -801,7 +801,12 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
        danger-tinted background for the same reason. Scoped to `td` to
        keep the row's border and the surrounding context-row
        unchanged. The success/danger palette variables already exist in
-       the theme blocks above (line 45-46 and 64-65). */
+       the theme blocks above (line 45-46 and 64-65).
+       Note: row-added is intentionally sticky — it persists across
+       diffRuns ticks on the same row and only clears at detach
+       (where row-removed is applied). The user-visible contract is
+       "this row was added in some recent diff", not a flash that
+       must expire on the next poll. */
     tbody tr.run-row.row-added td { background: color-mix(in oklch, var(--success) 14%, var(--surface)); }
     tbody tr.run-row.row-removed td { background: color-mix(in oklch, var(--danger) 14%, var(--surface)); }
     .cell-duration .cell-duration-stack {
