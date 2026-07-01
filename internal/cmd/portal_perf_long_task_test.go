@@ -233,6 +233,29 @@ func TestPortalPerf_LongTaskProfile_SwitchRows(t *testing.T) {
 	writeLongTaskBaseline(t, "switch_rows", count, maxMs, sumMs, endToEndMs, perClickMaxMs, perClickAvgMs)
 }
 
+func TestPortalPerf_LongTaskProfile_SubjectSwitch(t *testing.T) {
+	outStr := runPortalDiffLongTaskScenario(t, scenarioSubjectSwitchJS)
+	var got map[string]any
+	if err := json.Unmarshal([]byte(outStr), &got); err != nil {
+		t.Fatalf("parse output: %v", err)
+	}
+	count := int(got["count"].(float64))
+	maxMs := got["maxMs"].(float64)
+	sumMs := got["sumMs"].(float64)
+	endToEndMs := got["endToEndMs"].(float64)
+	t.Logf("subject_switch metrics: count=%d maxMs=%.2f sumMs=%.2f endToEndMs=%.2f", count, maxMs, sumMs, endToEndMs)
+	if count < 1 {
+		t.Fatalf("expected subject-switch to capture at least 1 long task, got %d", count)
+	}
+	if maxMs < 50 || sumMs < 50 {
+		t.Fatalf("expected maxMs/sumMs >= 50, got max=%.2f sum=%.2f", maxMs, sumMs)
+	}
+	if endToEndMs <= 0 {
+		t.Fatalf("expected endToEndMs > 0, got %.2f", endToEndMs)
+	}
+	writeLongTaskBaseline(t, "subject_switch", count, maxMs, sumMs, endToEndMs, 0, 0)
+}
+
 func runRecorderScenario(t *testing.T, js string) string {
 	t.Helper()
 	cmd := exec.Command("node", "-e", longTaskRecorderSource+js)
@@ -439,5 +462,27 @@ process.stdout.write(JSON.stringify({
   perClickMaxMs: Math.round(perClickMaxMs * 100) / 100,
   perClickAvgMs: Math.round(perClickAvgMs * 100) / 100,
 }));
+`
+
+const scenarioSubjectSwitchJS = `
+const recorder = longTaskRecorder({ thresholdMs: 50 });
+const body = makeMockBody();
+const runs = perfBuildRuns(5, 12 * 1024);
+for (const run of runs) {
+  run.log = bigLog(run.key, 200);
+  run.events = [];
+  for (let i = 0; i < 200; i++) {
+    run.events.push({ type: 'log', timestamp: 1700000000000 + i, payload: { line: 'event-' + i + ' payload with some text ' + (run.key), extra: bigLog('ev-' + i, 50) } });
+  }
+}
+SandmanPortalDiff.diffRuns(body, runs, { helpers, stopGroups: new Set(), expandedKey: 'k2', tabs: { k2: 'log' } });
+const totalStart = performance.now();
+recorder.start();
+SandmanPortalDiff.diffRuns(body, runs, { helpers, stopGroups: new Set(), expandedKey: 'k2', tabs: { k2: 'events' } });
+perfHeavySyncWork(runs[2].events.map(e => JSON.stringify(e)).join(''), 400);
+SandmanPortalDiff.diffRuns(body, runs, { helpers, stopGroups: new Set(), expandedKey: 'k2', tabs: { k2: 'log' } });
+recorder.stop();
+const totalEnd = performance.now();
+perfEmitMetrics('subject_switch', totalStart, totalEnd, recorder);
 `
 
