@@ -214,6 +214,159 @@ func TestInit_PythonBuildToolsScaffoldsPinnedDockerfile(t *testing.T) {
 	}
 }
 
+func TestInit_ElixirBuildToolsScaffoldsPinnedDockerfile(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	var out bytes.Buffer
+	cmd := NewInitCmd()
+	cmd.SetOut(&out)
+	cmd.SetIn(strings.NewReader(""))
+	cmd.SetArgs([]string{"--build-tools", "elixir"})
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	configData, err := os.ReadFile(filepath.Join(dir, ".sandman", "config.yaml"))
+	if err != nil {
+		t.Fatalf("read config.yaml: %v", err)
+	}
+	if !strings.Contains(string(configData), "build_tools: elixir") {
+		t.Fatalf("config missing elixir build_tools preset, got:\n%s", configData)
+	}
+
+	dockerfileData, err := os.ReadFile(filepath.Join(dir, ".sandman", "Dockerfile"))
+	if err != nil {
+		t.Fatalf("read Dockerfile: %v", err)
+	}
+	dockerfile := string(dockerfileData)
+	if !strings.Contains(dockerfile, "# sandman build-tools: elixir") {
+		t.Fatalf("Dockerfile missing build-tools metadata, got:\n%s", dockerfile)
+	}
+	if !strings.Contains(dockerfile, "# sandman elixir-version:") {
+		t.Fatalf("Dockerfile missing elixir-version metadata, got:\n%s", dockerfile)
+	}
+	if !strings.Contains(dockerfile, "# sandman erlang-version:") {
+		t.Fatalf("Dockerfile missing erlang-version metadata, got:\n%s", dockerfile)
+	}
+	if !strings.Contains(dockerfile, "RUN mise use -g --pin elixir@") {
+		t.Fatalf("Dockerfile missing pinned elixir install, got:\n%s", dockerfile)
+	}
+	if !strings.Contains(dockerfile, "RUN mise use -g --pin erlang@") {
+		t.Fatalf("Dockerfile missing pinned erlang install, got:\n%s", dockerfile)
+	}
+	if !strings.Contains(dockerfile, "RUN mix local.hex --force") {
+		t.Fatalf("Dockerfile missing hex install, got:\n%s", dockerfile)
+	}
+	if !strings.Contains(dockerfile, "RUN mix local.rebar --force") {
+		t.Fatalf("Dockerfile missing rebar3 install, got:\n%s", dockerfile)
+	}
+	if !strings.Contains(dockerfile, "FROM debian:bookworm-slim") {
+		t.Fatalf("Dockerfile missing Debian base image, got:\n%s", dockerfile)
+	}
+	if !strings.Contains(dockerfile, "RUN MISE_VERSION="+scaffold.DefaultMISEVersion+" curl https://mise.run | MISE_INSTALL_PATH=/usr/local/bin/mise sh") {
+		t.Fatalf("Dockerfile missing pinned mise install, got:\n%s", dockerfile)
+	}
+	if !strings.Contains(dockerfile, " gh ") {
+		t.Fatalf("Dockerfile missing gh shared package, got:\n%s", dockerfile)
+	}
+
+	promptData, err := os.ReadFile(filepath.Join(dir, ".sandman", "prompt.md"))
+	if err != nil {
+		t.Fatalf("read prompt.md: %v", err)
+	}
+	promptText := string(promptData)
+	if want := prompt.DefaultPrompt(); promptText != want {
+		t.Fatalf("prompt.md mismatch\nwant:\n%s\ngot:\n%s", want, promptText)
+	}
+}
+
+func TestInit_DefaultsToElixirPresetForElixirRepo(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	if err := os.WriteFile(filepath.Join(dir, "mix.exs"), []byte("defmodule Demo.MixProject do\n  use Mix.Project\n  def project do\n    [app: :demo, version: \"0.1.0\", elixir: \"~> 1.18\"]\n  end\nend\n"), 0644); err != nil {
+		t.Fatalf("write mix.exs: %v", err)
+	}
+
+	var out bytes.Buffer
+	cmd := NewInitCmd()
+	cmd.SetOut(&out)
+	cmd.SetIn(strings.NewReader(""))
+	cmd.SetArgs([]string{})
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	configData, err := os.ReadFile(filepath.Join(dir, ".sandman", "config.yaml"))
+	if err != nil {
+		t.Fatalf("read config.yaml: %v", err)
+	}
+	if !strings.Contains(string(configData), "build_tools: elixir") {
+		t.Fatalf("config missing elixir build_tools preset, got:\n%s", configData)
+	}
+
+	dockerfileData, err := os.ReadFile(filepath.Join(dir, ".sandman", "Dockerfile"))
+	if err != nil {
+		t.Fatalf("read Dockerfile: %v", err)
+	}
+	dockerfile := string(dockerfileData)
+	if !strings.Contains(dockerfile, "# sandman build-tools: elixir") {
+		t.Fatalf("Dockerfile missing elixir build-tools metadata, got:\n%s", dockerfile)
+	}
+	if !strings.Contains(dockerfile, "# sandman elixir-version:") {
+		t.Fatalf("Dockerfile missing elixir-version metadata, got:\n%s", dockerfile)
+	}
+	if !strings.Contains(dockerfile, "RUN mise use -g --pin elixir@") {
+		t.Fatalf("Dockerfile missing pinned elixir install, got:\n%s", dockerfile)
+	}
+	if !strings.Contains(dockerfile, "RUN mix local.rebar --force") {
+		t.Fatalf("Dockerfile missing rebar3 install, got:\n%s", dockerfile)
+	}
+}
+
+func TestInit_ExplicitGenericOverridesElixirRepoHint(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	if err := os.WriteFile(filepath.Join(dir, "mix.exs"), []byte("defmodule Demo.MixProject do\n  use Mix.Project\n  def project do\n    [app: :demo, version: \"0.1.0\", elixir: \"~> 1.18\"]\n  end\nend\n"), 0644); err != nil {
+		t.Fatalf("write mix.exs: %v", err)
+	}
+
+	var out bytes.Buffer
+	cmd := NewInitCmd()
+	cmd.SetOut(&out)
+	cmd.SetIn(strings.NewReader(""))
+	cmd.SetArgs([]string{"--build-tools", "generic"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	configData, err := os.ReadFile(filepath.Join(dir, ".sandman", "config.yaml"))
+	if err != nil {
+		t.Fatalf("read config.yaml: %v", err)
+	}
+	if !strings.Contains(string(configData), "build_tools: generic") {
+		t.Fatalf("config missing generic build_tools preset, got:\n%s", configData)
+	}
+}
+
+func TestInit_ElixirBuildToolsFlagHelpTextMentionsElixir(t *testing.T) {
+	cmd := NewInitCmd()
+	flag := cmd.Flags().Lookup("build-tools")
+	if flag == nil {
+		t.Fatalf("--build-tools flag missing")
+	}
+	if !strings.Contains(flag.Usage, "elixir") {
+		t.Fatalf("--build-tools help text missing elixir, got: %q", flag.Usage)
+	}
+}
+
 func TestInit_DefaultsToPythonPresetForPythonRepo(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
