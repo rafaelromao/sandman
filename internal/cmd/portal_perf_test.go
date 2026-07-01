@@ -40,11 +40,12 @@ if (typeof ha === 'string') {
 }
 
 // TestPortalPerf_AsyncLargeReviewLogRoundTrip verifies that a large saved
-// review log (the "currently being reviewed" parent-issued run, run.log > 32KB
-// async threshold) loads via the async chunked path the same way a normal
-// completed issue run does. Regression guard against re-reverting the slice-B
-// async tokenization work (#1472) which previously made the Log tab appear
-// empty on first expand for the >32KB review case observed on screen.
+// review log (the "currently being reviewed" parent-issued run, run.log well
+// above the async chunk threshold) loads via the async chunked path the same
+// way a normal completed issue run does. Regression guard against re-reverting
+// the slice-B async tokenization work (#1472) which previously made the Log
+// tab appear empty on first expand for the large review case observed on
+// screen.
 func TestPortalPerf_AsyncLargeReviewLogRoundTrip(t *testing.T) {
 	js := `function bigLog(seed, n) { var L = []; for (var i = 0; i < n; i++) L.push(seed + ' step ' + i + ' import return function foo() bar baz qux'); return L.join('\n'); }
 	function waitForRender(pre, log, callback) {
@@ -217,9 +218,10 @@ func TestPortalPerf_AsyncLargeLogRoundTrip(t *testing.T) {
 	runNodeScript(t, js)
 }
 
-// TestPortalPerf_AsyncMidBandTakesChunkedPath is the regression guard for
-// the threshold lowered from 32 KB to 16 KB (#1561). It has two assertions:
-//  1. Mid-band (~23 KB) log is above the new 16 KB threshold and below the
+// TestPortalPerf_AsyncMidBandAndSyncSmallAt16KBThreshold is the regression
+// guard for the threshold lowered from 32 KB to 16 KB (#1561). It exercises
+// both sides of the new threshold:
+//  1. Mid-band (~20 KB) log is above the new 16 KB threshold and below the
 //     old 32 KB threshold, so it takes the async chunked path on the new
 //     threshold (and would have taken the sync path on the old one). The
 //     pre must show data-rendering-log synchronously and data-rendered-log
@@ -227,7 +229,7 @@ func TestPortalPerf_AsyncLargeLogRoundTrip(t *testing.T) {
 //  2. Small (~4 KB) log stays below the new 16 KB threshold and takes the
 //     synchronous path: data-rendered-log set synchronously, no lingering
 //     data-rendering-log.
-func TestPortalPerf_AsyncMidBandTakesChunkedPath(t *testing.T) {
+func TestPortalPerf_AsyncMidBandAndSyncSmallAt16KBThreshold(t *testing.T) {
 	js := `function bigLog(seed, n) { var L = []; for (var i = 0; i < n; i++) L.push(seed + ' step ' + i + ' import return function foo() bar baz qux'); return L.join('\n'); }
 	function waitForRender(pre, log, callback) {
 	  if (pre.getAttribute('data-rendered-log') === log) { callback(); return; }
@@ -235,8 +237,8 @@ func TestPortalPerf_AsyncMidBandTakesChunkedPath(t *testing.T) {
 	  setTimeout(function() { waitForRender(pre, log, callback); }, 10);
 	}
 
-	// --- Assertion 1: ~23 KB mid-band log takes the async chunked path. ---
-	const midbandLog = bigLog('midband', 400); // ~23 KB > 16 KB threshold
+	// --- Assertion 1: ~20 KB mid-band log takes the async chunked path. ---
+	const midbandLog = bigLog('midband', 373); // 20031 bytes > 16 KB threshold
 	const midbandRun = { key: 'midband', kind: 'completed', status: 'success', issueLabel: 'M', runId: 'r-mid', log: midbandLog, startedAt: 1000, finishedAt: 2000, duration: 1, branch: 'main', logPath: '/tmp/mid.log' };
 	const midBody = makeMockBody();
 	const midOpts = { helpers, stopGroups: new Set(), expandedKey: 'midband', tabs: { midband: 'log' } };
@@ -253,7 +255,7 @@ func TestPortalPerf_AsyncMidBandTakesChunkedPath(t *testing.T) {
 	  if (midPre.textContent.indexOf('midband step 0') === -1) throw new Error('expected mid-band log content after completion');
 
 	  // --- Assertion 2: ~4 KB small log still takes the synchronous path. ---
-	  const smallLog = bigLog('small', 70); // ~4 KB < 16 KB threshold
+	  const smallLog = bigLog('small', 73); // 4004 bytes < 16 KB threshold
 	  const smallRun = { key: 'small', kind: 'completed', status: 'success', issueLabel: 'S', runId: 'r-small', log: smallLog, startedAt: 1000, finishedAt: 2000, duration: 1, branch: 'main', logPath: '/tmp/small.log' };
 	  const smallBody = makeMockBody();
 	  const smallOpts = { helpers, stopGroups: new Set(), expandedKey: 'small', tabs: { small: 'log' } };
