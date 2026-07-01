@@ -176,6 +176,29 @@ func batchIDFromRunID(runID string) string {
 	return runID
 }
 
+// batchKeyForActive returns the stable batch identity used to populate
+// BatchKey for rows produced from a live (active) instance. The portal
+// dedups rows by (IssueNumber, BatchKey); a current-batch row that
+// reaches dedup with an empty BatchKey collapses with historical rows
+// (BatchKey="") and silently hides the active work (issue #1541). The
+// fallback chain prefers the live instance's index ID, then the
+// manifest-declared batch ID, then the run directory basename, then a
+// synthetic sentinel anchored on the run ID so a malformed instance
+// still cannot produce an empty BatchKey.
+func batchKeyForActive(active portalActiveRun) string {
+	if active.Key != "" {
+		return active.Key
+	}
+	if active.BatchID != "" {
+		return active.BatchID
+	}
+	base := filepath.Base(active.Dir)
+	if base != "" && base != "." && base != "/" {
+		return base
+	}
+	return "active-" + active.RunID
+}
+
 const portalViewDegradeLogInterval = 30 * time.Second
 
 var (
@@ -994,7 +1017,7 @@ func (v *portalRunsView) runFromActiveBatchIssue(repoRoot string, active portalA
 		LogPath:     v.portalLogPathForRun(repoRoot, runLocator{batchID: active.BatchID, runID: active.RunID}),
 		LogURL:      v.portalLogDownloadURLForRun(repoRoot, runLocator{batchID: active.BatchID, runID: active.RunID}),
 		Log:         "Queued. Waiting to start.",
-		BatchKey:    active.Key,
+		BatchKey:    batchKeyForActive(active),
 	}
 	// Only surface batch membership for mixed batches. A single-issue
 	// batch is not interesting to surface and would add payload noise.
@@ -1005,7 +1028,7 @@ func (v *portalRunsView) runFromActiveBatchIssue(repoRoot string, active portalA
 		activeWithOutput := active
 		activeWithOutput.LiveOutput = liveOutput
 		run = v.runFromState(repoRoot, *state, &activeWithOutput, eventsByRun, deadBatches)
-		run.BatchKey = active.Key
+		run.BatchKey = batchKeyForActive(active)
 		if len(active.IssueNumbers) > 1 {
 			run.BatchIssues = append([]int(nil), active.IssueNumbers...)
 		}
@@ -1131,7 +1154,7 @@ func (v *portalRunsView) runFromActiveMatch(repoRoot string, match portalRunMatc
 	runID := match.instance.Key
 	if match.state != nil {
 		run := v.runFromState(repoRoot, *match.state, &match.instance, eventsByRun, deadBatches)
-		run.BatchKey = match.instance.Key
+		run.BatchKey = batchKeyForActive(match.instance)
 		if match.state.Finished != nil {
 			if strings.TrimSpace(run.Log) == "" {
 				run.Log = v.readPortalTextFile(run.LogPath)
@@ -1189,7 +1212,7 @@ func (v *portalRunsView) runFromActiveMatch(repoRoot string, match portalRunMatc
 		LogURL:      v.portalLogDownloadURLForRun(repoRoot, locator),
 		Log:         stripLogLabels(match.instance.LiveOutput),
 		Events:      eventsByRun[eventKey],
-		BatchKey:    match.instance.Key,
+		BatchKey:    batchKeyForActive(match.instance),
 	}
 	// Populate the live attempt signals from the raw event list when
 	// there is no matched RunState to query (the state-absent branch of
