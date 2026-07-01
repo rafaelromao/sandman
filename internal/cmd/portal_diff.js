@@ -1066,77 +1066,76 @@
     ].join(':');
   }
 
-  function fingerprintHash(value) {
+  function fingerprintHash(text) {
     let hash = 5381;
-    function fold(text) {
-      const value = String(text);
-      for (let i = 0; i < value.length; i += 1) {
-        hash = ((hash << 5) + hash + value.charCodeAt(i)) | 0;
-      }
+    const value = String(text);
+    for (let i = 0; i < value.length; i += 1) {
+      hash = ((hash << 5) + hash + value.charCodeAt(i)) | 0;
     }
-    function visit(item) {
-      if (item === null) {
-        fold('null');
-        return;
-      }
-      const kind = typeof item;
-      if (kind === 'undefined') {
-        fold('undefined');
-        return;
-      }
-      if (kind === 'string') {
-        fold('s:');
-        fold(item);
-        return;
-      }
-      if (kind === 'number') {
-        fold('n:');
-        fold(Number.isNaN(item) ? 'NaN' : String(item));
-        return;
-      }
-      if (kind === 'boolean') {
-        fold(item ? 'true' : 'false');
-        return;
-      }
-      if (kind === 'bigint') {
-        fold('i:');
-        fold(String(item));
-        return;
-      }
-      if (kind === 'object') {
-        if (Array.isArray(item)) {
-          fold('[');
-          for (let i = 0; i < item.length; i += 1) {
-            if (i > 0) fold(',');
-            visit(item[i]);
-          }
-          fold(']');
-          return;
-        }
-        fold('{');
-        const keys = Object.keys(item);
-        for (let i = 0; i < keys.length; i += 1) {
-          if (i > 0) fold(',');
-          const key = keys[i];
-          fold(key);
-          fold(':');
-          visit(item[key]);
-        }
-        fold('}');
-        return;
-      }
-      fold(kind + ':');
-      fold(String(item));
-    }
-    visit(value);
     return (hash >>> 0).toString(36);
   }
 
   function detailPaneFingerprint(tabName, run, helpers) {
     if (tabName === 'events') {
-      return 'events|' + cheapEventsFingerprint(run) + '|h' + fingerprintHash(eventsJSONData(run));
+      return 'events|' + cheapEventsFingerprint(run) + '|h' + fingerprintHash(renderedJSONText(eventsJSONData(run)));
     }
-    return 'details|' + cheapDetailsFingerprint(run, helpers) + '|h' + fingerprintHash(detailsData(run, helpers));
+    return 'details|' + cheapDetailsFingerprint(run, helpers) + '|h' + fingerprintHash(renderedJSONText(detailsData(run, helpers)));
+  }
+
+  function renderedJSONText(value) {
+    return renderedJSONValue(value, 0);
+  }
+
+  function renderedJSONValue(value, depth) {
+    if (value === null) return 'null';
+    if (Array.isArray(value)) {
+      if (!value.length) return '[]';
+      const nextDepth = depth + 1;
+      const pad = '  '.repeat(nextDepth);
+      const closing = '  '.repeat(depth);
+      const parts = new Array(value.length);
+      for (let i = 0; i < value.length; i += 1) {
+        parts[i] = pad + renderedJSONValue(value[i], nextDepth);
+      }
+      return '[\n' + parts.join(',\n') + '\n' + closing + ']';
+    }
+    const kind = typeof value;
+    if (kind === 'string') return '"' + escapeJSONString(value) + '"';
+    if (kind === 'number') return Number.isFinite(value) ? String(value) : 'null';
+    if (kind === 'boolean') return value ? 'true' : 'false';
+    if (kind !== 'object') return 'null';
+    const keys = Object.keys(value);
+    if (!keys.length) return '{}';
+    const nextDepth = depth + 1;
+    const pad = '  '.repeat(nextDepth);
+    const closing = '  '.repeat(depth);
+    const parts = new Array(keys.length);
+    for (let i = 0; i < keys.length; i += 1) {
+      const key = keys[i];
+      parts[i] = pad + '"' + escapeJSONString(key) + '": ' + renderedJSONValue(value[key], nextDepth);
+    }
+    return '{\n' + parts.join(',\n') + '\n' + closing + '}';
+  }
+
+  function escapeJSONString(text) {
+    let out = '';
+    const value = String(text);
+    for (let i = 0; i < value.length; i += 1) {
+      const ch = value.charCodeAt(i);
+      if (ch === 0x22) { out += '\\"'; continue; }
+      if (ch === 0x5c) { out += '\\\\'; continue; }
+      if (ch === 0x08) { out += '\\b'; continue; }
+      if (ch === 0x0c) { out += '\\f'; continue; }
+      if (ch === 0x0a) { out += '\\n'; continue; }
+      if (ch === 0x0d) { out += '\\r'; continue; }
+      if (ch === 0x09) { out += '\\t'; continue; }
+      if (ch < 0x20) {
+        out += '\\u' + ch.toString(16).padStart(4, '0');
+        continue;
+      }
+      out += value.charAt(i);
+    }
+    return out;
   }
 
   function eventsJSONData(run) {
