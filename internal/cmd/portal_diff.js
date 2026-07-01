@@ -959,6 +959,43 @@
     return JSON.stringify(data, null, 2);
   }
 
+  // Cheap poll-time fingerprint for the Events tab. The expensive
+  // `eventsFingerprint` re-stringifies every event payload; that costs
+  // O(events) on every poll (every 2s) even when the events are stable.
+  // The poll path only needs a hash to skip rebuilds, so we use a
+  // constant-time triplet: length + first timestamp + last timestamp.
+  // Trade-off: payload-only mutations inside the same length+timestamp
+  // envelope rebuild more often than ideal, but the rebuilt content is
+  // byte-identical (issue #1562, accepted out-of-scope).
+  function cheapEventsFingerprint(run) {
+    const events = Array.isArray(run && run.events) ? run.events : [];
+    if (!events.length) return '0';
+    const first = events[0] || {};
+    const last = events[events.length - 1] || {};
+    const firstTs = first.timestamp || '';
+    const lastTs = last.timestamp || '';
+    if (events.length === 1) return firstTs + ':' + firstTs;
+    return events.length + ':' + firstTs + ':' + lastTs;
+  }
+
+  // Cheap poll-time fingerprint for the Details tab. Same trade-off as
+  // cheapEventsFingerprint: ignore payload-only mutations of the
+  // details object; rely on the scalar fingerprint changing to trigger
+  // a rebuild (which is still byte-identical via buildDetailsContent).
+  function cheapDetailsFingerprint(run, helpers) {
+    const issueNumber = run && run.issueNumber != null ? run.issueNumber : '';
+    const peers = batchPeers(run);
+    return [
+      issueNumber,
+      run && run.issueTitle != null ? run.issueTitle : '',
+      run && run.branch != null ? run.branch : '',
+      run && run.batchKey != null ? run.batchKey : '',
+      run && run.logPath != null ? run.logPath : '',
+      peers.length,
+      peers.join(','),
+    ].join(':');
+  }
+
   function buildLogContent(content, run, helpers) {
     const section = global.document.createElement('section');
     section.classList.add('detail-box', 'tab-pane', 'fill');
@@ -1016,10 +1053,16 @@
       }
     } else if (tabName === 'events') {
       buildEventsContent(content, subjectRun, helpers);
-      content.setAttribute('data-rendered-fingerprint', 'events|' + eventsFingerprint(subjectRun) + '|subjects:' + subjectFp);
+      // Cheap triplet (issue #1562). Matches the poll-path write in
+      // updateDetailContent so the first poll sees an unchanged attr
+      // and skips the rebuild branch.
+      content.setAttribute('data-rendered-fingerprint', 'events|' + cheapEventsFingerprint(subjectRun) + '|subjects:' + subjectFp);
     } else {
       buildDetailsContent(content, subjectRun, helpers);
-      content.setAttribute('data-rendered-fingerprint', 'details|' + detailsFingerprint(subjectRun, helpers) + '|subjects:' + subjectFp);
+      // Cheap scalar+peers string (issue #1562). Matches the poll-path
+      // write in updateDetailContent so the first poll sees an
+      // unchanged attr and skips the rebuild branch.
+      content.setAttribute('data-rendered-fingerprint', 'details|' + cheapDetailsFingerprint(subjectRun, helpers) + '|subjects:' + subjectFp);
     }
   }
 
@@ -1172,9 +1215,18 @@
     }
     let fingerprint = tabName + '|' + subjectFp;
     if (tabName === 'events') {
-      fingerprint = 'events|' + eventsJSON(subjectRun);
+      // Cheap triplet (issue #1562). The poll no longer re-stringifies
+      // event payloads. The rebuild branch below still calls
+      // buildEventsContent, which re-runs eventsJSON so the rendered
+      // <pre data-rendered-json> content stays byte-identical to today.
+      fingerprint = 'events|' + cheapEventsFingerprint(subjectRun);
     } else {
-      fingerprint = 'details|' + detailsFingerprint(subjectRun, opts.helpers);
+      // Cheap scalar+peers string (issue #1562). The poll no longer
+      // re-stringifies the details object. The rebuild branch below
+      // still calls buildDetailsContent, which re-runs detailsJSON so
+      // the rendered <pre data-rendered-json> content stays
+      // byte-identical to today.
+      fingerprint = 'details|' + cheapDetailsFingerprint(subjectRun, opts.helpers);
     }
     fingerprint += '|subjects:' + subjectFp;
     if (content.getAttribute('data-rendered-fingerprint') === fingerprint && content.firstChild) {
@@ -1593,5 +1645,7 @@
     subjectRunsFor,
     highlightJSON,
     highlightTerminalLog,
+    cheapEventsFingerprint,
+    cheapDetailsFingerprint,
   };
 })(typeof window !== 'undefined' ? window : globalThis);
