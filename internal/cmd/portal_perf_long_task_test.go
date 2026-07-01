@@ -11,15 +11,15 @@ import (
 )
 
 type perfScenarioMetrics struct {
-	Scenario        string  `json:"scenario"`
-	LongTaskCount   int     `json:"longTaskCount"`
-	MaxTaskMs       float64 `json:"maxTaskMs"`
-	SumTaskMs       float64 `json:"sumTaskMs"`
-	EndToEndMs      float64 `json:"endToEndMs"`
-	PerClickMaxMs   float64 `json:"perClickMaxMs,omitempty"`
-	PerClickAvgMs   float64 `json:"perClickAvgMs,omitempty"`
-	ThresholdMs     float64 `json:"thresholdMs"`
-	Version         string  `json:"version"`
+	Scenario      string  `json:"scenario"`
+	LongTaskCount int     `json:"longTaskCount"`
+	MaxTaskMs     float64 `json:"maxTaskMs"`
+	SumTaskMs     float64 `json:"sumTaskMs"`
+	EndToEndMs    float64 `json:"endToEndMs"`
+	PerClickMaxMs float64 `json:"perClickMaxMs,omitempty"`
+	PerClickAvgMs float64 `json:"perClickAvgMs,omitempty"`
+	ThresholdMs   float64 `json:"thresholdMs"`
+	Version       string  `json:"version"`
 }
 
 func perfBaselineDir(t *testing.T) string {
@@ -256,6 +256,121 @@ func TestPortalPerf_LongTaskProfile_SubjectSwitch(t *testing.T) {
 	writeLongTaskBaseline(t, "subject_switch", count, maxMs, sumMs, endToEndMs, 0, 0)
 }
 
+func TestPortalPerf_LongTaskProfile_MarkdownSchemaStable(t *testing.T) {
+	scenarios := []perfScenarioMetrics{
+		{Scenario: "open_cold", LongTaskCount: 1, MaxTaskMs: 76.0, SumTaskMs: 76.0, EndToEndMs: 76.0, PerClickMaxMs: 0, PerClickAvgMs: 0, ThresholdMs: 50, Version: "slice-0"},
+		{Scenario: "open_warm", LongTaskCount: 0, MaxTaskMs: 0.0, SumTaskMs: 0.0, EndToEndMs: 2.0, PerClickMaxMs: 0, PerClickAvgMs: 0, ThresholdMs: 50, Version: "slice-0"},
+		{Scenario: "switch_rows", LongTaskCount: 1, MaxTaskMs: 124.0, SumTaskMs: 124.0, EndToEndMs: 124.0, PerClickMaxMs: 124.0, PerClickAvgMs: 124.0, ThresholdMs: 50, Version: "slice-0"},
+		{Scenario: "subject_switch", LongTaskCount: 1, MaxTaskMs: 2234.0, SumTaskMs: 2234.0, EndToEndMs: 2234.0, PerClickMaxMs: 0, PerClickAvgMs: 0, ThresholdMs: 50, Version: "slice-0"},
+	}
+	rendered := renderPerfMarkdownTable(scenarios)
+	for _, want := range []string{
+		"| Scenario | Metric | Before | After |",
+		"|---|---|---:|---:|",
+		"| open_cold | Long-task count | 1.00 |  |",
+		"| open_warm | Long-task count | 0.00 |  |",
+		"|  | Max blocking time per click (ms) | 124.00 |  |",
+		"|  | Sum of task durations (ms) | 2234.00 |  |",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("renderPerfMarkdownTable missing expected line %q\nrendered:\n%s", want, rendered)
+		}
+	}
+}
+
+func TestPortalPerf_LongTaskProfile_RendersAllScenariosFromBaseline(t *testing.T) {
+	dir := perfBaselineDir(t)
+	scenarios := []string{"open_cold", "open_warm", "switch_rows", "subject_switch"}
+	loaded := make([]perfScenarioMetrics, 0, len(scenarios))
+	for _, name := range scenarios {
+		path := filepath.Join(dir, "portal_perf_"+name+"_baseline.json")
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("missing baseline %s: %v (run the per-scenario tests first)", path, err)
+		}
+		var m perfScenarioMetrics
+		if err := json.Unmarshal(data, &m); err != nil {
+			t.Fatalf("parse baseline %s: %v", path, err)
+		}
+		loaded = append(loaded, m)
+	}
+	rendered := renderPerfMarkdownTable(loaded)
+	t.Logf("baseline markdown payload for #1558:\n%s", rendered)
+	if !strings.Contains(rendered, "| open_cold |") ||
+		!strings.Contains(rendered, "| open_warm |") ||
+		!strings.Contains(rendered, "| switch_rows |") ||
+		!strings.Contains(rendered, "| subject_switch |") {
+		t.Fatalf("rendered markdown missing one or more scenarios:\n%s", rendered)
+	}
+}
+
+func TestPortalPerf_LongTaskProfile_PostCommentSkipsByDefault(t *testing.T) {
+	if strings.TrimSpace(os.Getenv("POST_PERFPORTAL_COMMENT")) != "" {
+		t.Skip("POST_PERFPORTAL_COMMENT is set; this test only runs in default mode")
+	}
+	t.Log("default: POST_PERFPORTAL_COMMENT unset, comment posting skipped")
+}
+
+func TestPortalPerf_LongTaskProfile_PostCommentOnParentIssue(t *testing.T) {
+	if strings.TrimSpace(os.Getenv("POST_PERFPORTAL_COMMENT")) == "" {
+		t.Skip("set POST_PERFPORTAL_COMMENT=1 to enable the #1558 comment post")
+	}
+	dir := perfBaselineDir(t)
+	scenarios := []string{"open_cold", "open_warm", "switch_rows", "subject_switch"}
+	loaded := make([]perfScenarioMetrics, 0, len(scenarios))
+	for _, name := range scenarios {
+		path := filepath.Join(dir, "portal_perf_"+name+"_baseline.json")
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("missing baseline %s: %v", path, err)
+		}
+		var m perfScenarioMetrics
+		if err := json.Unmarshal(data, &m); err != nil {
+			t.Fatalf("parse baseline %s: %v", path, err)
+		}
+		loaded = append(loaded, m)
+	}
+	repo, err := repoSlugFromRemote()
+	if err != nil {
+		t.Fatalf("detect GH repo: %v", err)
+	}
+	payload := buildPerfBaselineComment(loaded)
+	cmd := exec.Command("gh", "api", "-X", "POST",
+		fmt.Sprintf("repos/%s/issues/1558/comments", repo),
+		"-f", "body="+payload,
+	)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("gh api post failed: %v\n%s", err, out)
+	}
+	t.Logf("posted #1558 comment: %s", out)
+}
+
+func repoSlugFromRemote() (string, error) {
+	cmd := exec.Command("git", "config", "--get", "remote.origin.url")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("git config: %w", err)
+	}
+	url := strings.TrimSpace(string(out))
+	url = strings.TrimSuffix(url, ".git")
+	if strings.HasPrefix(url, "git@github.com:") {
+		return strings.TrimPrefix(url, "git@github.com:"), nil
+	}
+	if strings.HasPrefix(url, "https://github.com/") {
+		return strings.TrimPrefix(url, "https://github.com/"), nil
+	}
+	return "", fmt.Errorf("unsupported origin url %q", url)
+}
+
+func buildPerfBaselineComment(metrics []perfScenarioMetrics) string {
+	var b strings.Builder
+	b.WriteString("Filed automatically by `go test ./internal/cmd/ -run TestPortalPerf_LongTaskProfile_` against `portal_diff.js` at the Slice 0 commit. The `After` column is filled in by each downstream slice after it merges. Lower is better.\n\n")
+	b.WriteString(renderPerfMarkdownTable(metrics))
+	b.WriteString("\n<!-- perfportal-baseline-version: slice-0 -->\n")
+	return b.String()
+}
+
 func runRecorderScenario(t *testing.T, js string) string {
 	t.Helper()
 	cmd := exec.Command("node", "-e", longTaskRecorderSource+js)
@@ -314,15 +429,15 @@ process.on('uncaughtException', (err) => { process.stderr.write('uncaught: ' + e
 func writeLongTaskBaseline(t *testing.T, scenario string, count int, maxMs, sumMs, endToEndMs, perClickMaxMs, perClickAvgMs float64) {
 	t.Helper()
 	metrics := perfScenarioMetrics{
-		Scenario:       scenario,
-		LongTaskCount:  count,
-		MaxTaskMs:      roundTo(maxMs, 2),
-		SumTaskMs:      roundTo(sumMs, 2),
-		EndToEndMs:     roundTo(endToEndMs, 2),
-		PerClickMaxMs:  roundTo(perClickMaxMs, 2),
-		PerClickAvgMs:  roundTo(perClickAvgMs, 2),
-		ThresholdMs:    50,
-		Version:        "slice-0",
+		Scenario:      scenario,
+		LongTaskCount: count,
+		MaxTaskMs:     roundTo(maxMs, 2),
+		SumTaskMs:     roundTo(sumMs, 2),
+		EndToEndMs:    roundTo(endToEndMs, 2),
+		PerClickMaxMs: roundTo(perClickMaxMs, 2),
+		PerClickAvgMs: roundTo(perClickAvgMs, 2),
+		ThresholdMs:   50,
+		Version:       "slice-0",
 	}
 	path := writeLongTaskBaselineFile(t, metrics)
 	t.Logf("baseline metrics written to %s: %+v", path, metrics)
@@ -485,4 +600,3 @@ recorder.stop();
 const totalEnd = performance.now();
 perfEmitMetrics('subject_switch', totalStart, totalEnd, recorder);
 `
-
