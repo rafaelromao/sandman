@@ -595,8 +595,8 @@ if (!visibleRow) throw new Error('expected orphan review visible under its real 
 // review-only orphan).
 func TestPortalDiffDiffRuns_SubjectSelectorExcludesUndefinedIssueRuns(t *testing.T) {
 	js := `const body = makeMockBody();
-// Orphan review with an explicit issue — the expanded row.
-const orphan = { key: 'PR42', runId: 'PR42', review: true, issueLabel: 'Review of #5', issueNumber: 5, prNumber: 42, kind: 'active', status: 'reviewing', startedAt: '2026-06-30T12:00:00Z' };
+// Orphan review with no issueNumber at all — the expanded row.
+const orphan = { key: 'PR42', runId: 'PR42', review: true, issueLabel: 'Review of #5', prNumber: 42, kind: 'active', status: 'reviewing', startedAt: '2026-06-30T12:00:00Z' };
 // Unrelated runs that carry NO issueNumber (prompt-only / auto-select rows).
 // These must be ignored entirely, never grouped onto the orphan.
 const noIssue1 = { key: 'prompt-a', runId: 'prompt-a', issueLabel: 'Prompt', kind: 'active', status: 'running' };
