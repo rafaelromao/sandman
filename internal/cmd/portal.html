@@ -922,6 +922,10 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
       min-height: clamp(420px, 68vh, 780px);
       max-height: clamp(420px, 68vh, 780px);
     }
+    .detail-panel.is-loading,
+    .detail-panel.is-loading * {
+      cursor: wait;
+    }
     .detail-subject-picker {
       display: flex;
       align-items: center;
@@ -1887,6 +1891,46 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
       doc: document,
       cap: 16,
     });
+    const detailLoadingCounts = new Map();
+    const loadingDetailKeys = new Set();
+
+    function setDetailLoadingState(panel, loading) {
+      if (!panel) return;
+      if (loading) {
+        if (!panel.classList.contains('is-loading')) panel.classList.add('is-loading');
+        if (panel.getAttribute('aria-busy') !== 'true') panel.setAttribute('aria-busy', 'true');
+      } else {
+        if (panel.classList.contains('is-loading')) panel.classList.remove('is-loading');
+        if (panel.getAttribute('aria-busy') !== null) panel.removeAttribute('aria-busy');
+      }
+    }
+
+    function syncDetailLoadingState(runKey) {
+      const run = findRunByIdentity(runKey);
+      const detailKey = run && run.key ? run.key : runKey;
+      const detail = runsBody.querySelector('tr.detail-row[data-detail-for="' + CSS.escape(detailKey) + '"]');
+      if (!detail) return;
+      const panel = detail.querySelector('.detail-panel');
+      if (!panel) return;
+      setDetailLoadingState(panel, loadingDetailKeys.has(subjectTabKey(runKey)));
+    }
+
+    function setDetailLoading(runKey, loading) {
+      const subjectKey = subjectTabKey(runKey);
+      if (!subjectKey) return false;
+      const current = detailLoadingCounts.get(subjectKey) || 0;
+      const next = loading ? current + 1 : Math.max(0, current - 1);
+      const changed = current !== next;
+      if (next > 0) {
+        detailLoadingCounts.set(subjectKey, next);
+        loadingDetailKeys.add(subjectKey);
+      } else {
+        detailLoadingCounts.delete(subjectKey);
+        loadingDetailKeys.delete(subjectKey);
+      }
+      syncDetailLoadingState(subjectKey);
+      return changed;
+    }
 
     function streamPreFor(runKey) {
       const detail = runsBody.querySelector('tr.detail-row[data-detail-for="' + CSS.escape(runKey) + '"]');
@@ -2653,6 +2697,7 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
         runs: state.runs,
         visibleRuns: filtered,
         streamingKeys: streamingKeys,
+        loadingDetailKeys: loadingDetailKeys,
       };
       if (!state.runs.length) {
         portalDiff.setEmpty(runsBody, '<div class="empty-state">' + escapeHTML(state.loading ? 'Loading runs.' : 'No Sandman runs found.') + '</div>', 6);
@@ -2784,16 +2829,22 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
       }
     }
 
-    async function loadRunDetail(runKey) {
+    async function loadRunDetail(runKey, opts) {
       const run = findRunByIdentity(runKey);
       if (!run) return;
       if (isWaitStateRun(run)) return;
+      const forceFetch = !!(opts && opts.forceFetch);
       const tabKey = run.runId || run.key;
       const currentTab = String((state.tabs && (state.tabs[tabKey] || state.tabs[run.key])) || 'log').trim();
+      const subjectKey = subjectTabKey(runKey);
+      if (currentTab === 'details' && !forceFetch) return;
+      if (loadingDetailKeys.has(subjectKey)) return;
       const hasLog = run.log && String(run.log).trim();
       const hasEvents = Object.prototype.hasOwnProperty.call(run, 'events');
       if (currentTab === 'events' && hasEvents && run.kind !== 'active') return;
       if (currentTab !== 'events' && hasLog) return;
+      setDetailLoading(runKey, true);
+      scheduleRender();
       try {
         const res = await fetch(apiPath + '?runKey=' + encodeURIComponent(run.backendKey || run.key));
         if (!res.ok) return;
@@ -2813,6 +2864,8 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
         }
       } catch (err) {
         // detail fetch failures are non-fatal; user can retry by toggling again
+      } finally {
+        if (setDetailLoading(runKey, false)) scheduleRender();
       }
     }
 
@@ -2844,9 +2897,11 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
       }
       persistPortalViewState();
       const opening = state.expandedRunKey && state.expandedRunKey !== prevExpandedRunKey;
+      if (opening) {
+        loadRunDetail(state.expandedRunKey, { forceFetch: true });
+      }
       scheduleRender(() => {
         if (opening) {
-          loadRunDetail(state.expandedRunKey);
           const row = findRunRowByIdentity(state.expandedRunKey);
           if (row) {
             row.scrollIntoView({ behavior: 'instant', block: 'nearest' });
@@ -2887,9 +2942,7 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
           state.tabs[subjectKey] = tab;
           state.expandedRunKey = subjectKey;
           persistPortalViewState();
-          if (tab === 'events') {
-            loadRunDetail(subjectKey);
-          }
+          if (tab !== 'details') loadRunDetail(subjectKey);
           scheduleRender();
         }
         return;

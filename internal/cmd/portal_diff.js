@@ -482,6 +482,23 @@
     panel.appendChild(tabs);
   }
 
+  function isDetailLoading(opts, subjectRun) {
+    const keys = opts && opts.loadingDetailKeys;
+    if (!keys || !keys.has) return false;
+    const subjectValue = subjectRunValue(subjectRun);
+    return !!subjectValue && keys.has(subjectValue);
+  }
+
+  function setDetailLoadingState(panel, loading) {
+    if (!panel) return;
+    setClass(panel, 'is-loading', loading);
+    if (loading) {
+      setAttr(panel, 'aria-busy', 'true');
+    } else {
+      removeAttr(panel, 'aria-busy');
+    }
+  }
+
   function formatEventTime(timestamp) {
     if (!timestamp) return '—';
     const d = new Date(timestamp);
@@ -1227,6 +1244,7 @@
     const subjectPicker = buildSubjectSelector(panel, rowRun, subjectRun, opts);
     if (subjectPicker) panel.appendChild(subjectPicker);
     buildTabsRow(panel, rowRun, tabName);
+    setDetailLoadingState(panel, isDetailLoading(opts, subjectRun));
     const content = global.document.createElement('div');
     content.classList.add('detail-content');
     content.setAttribute('data-rendered-subject-fingerprint', subjectFp);
@@ -1317,6 +1335,8 @@
     if (subjectSelect && subjectSelect.value !== subjectValue) {
       subjectSelect.value = subjectValue;
     }
+    const panel = detailRow.querySelector('.detail-panel');
+    setDetailLoadingState(panel, isDetailLoading(opts, subjectRun));
     const content = detailRow.querySelector('.detail-content');
     if (!content) return;
     if (tabName === 'log') {

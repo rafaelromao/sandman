@@ -2295,6 +2295,47 @@ console.log('PASS');
 	runNodeScript(t, js)
 }
 
+func TestPortalDiffUpdateDetail_LoadingMarkerAddsBusyState(t *testing.T) {
+	js := `const body = makeMockBody();
+const run = { key: 'a', kind: 'completed', status: 'success', issueLabel: 'A', runId: 'r1', log: '', logPath: '/tmp/run.log' };
+const stopGroups = new Set();
+const loadingDetailKeys = new Set(['r1']);
+const opts = { helpers, stopGroups, expandedKey: 'a', tabs: { a: 'log' }, loadingDetailKeys };
+SandmanPortalDiff.diffRuns(body, [run], opts);
+const detailRow = body.children[1];
+if (!detailRow) throw new Error('expected detail row');
+const panel = detailRow.querySelector('.detail-panel');
+if (!panel) throw new Error('expected detail panel');
+if (panel.getAttribute('aria-busy') !== 'true') throw new Error('expected detail panel aria-busy while loading');
+if (!panel.classList.contains('is-loading')) throw new Error('expected detail panel loading class while loading');
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+func TestPortalDiffUpdateDetail_LoadingMarkerPersistsThenClears(t *testing.T) {
+	js := `const body = makeMockBody();
+const run = { key: 'a', kind: 'completed', status: 'success', issueLabel: 'A', runId: 'r1', log: '', logPath: '/tmp/run.log' };
+const stopGroups = new Set();
+const loadingDetailKeys = new Set(['r1']);
+const opts = { helpers, stopGroups, expandedKey: 'a', tabs: { a: 'log' }, loadingDetailKeys };
+SandmanPortalDiff.diffRuns(body, [run], opts);
+const detailRow = body.children[1];
+if (!detailRow) throw new Error('expected detail row');
+const panel = detailRow.querySelector('.detail-panel');
+if (!panel) throw new Error('expected detail panel');
+if (!panel.classList.contains('is-loading')) throw new Error('expected initial loading class');
+SandmanPortalDiff.diffRuns(body, [run], opts);
+if (!panel.classList.contains('is-loading')) throw new Error('loading class should persist across rerender while fetch is pending');
+loadingDetailKeys.delete('r1');
+SandmanPortalDiff.diffRuns(body, [run], opts);
+if (panel.classList.contains('is-loading')) throw new Error('loading class should clear after fetch settles');
+if (panel.getAttribute('aria-busy') !== null) throw new Error('expected aria-busy to clear after fetch settles');
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
 func TestPortalDiffSetEmpty_UsesReplaceChildren(t *testing.T) {
 	js := `const body = makeMockBody();
 const run = { key: 'a', kind: 'active', status: 'running', issueLabel: 'Issue 1', runId: 'r1' };
