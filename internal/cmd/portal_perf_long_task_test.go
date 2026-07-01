@@ -366,7 +366,7 @@ func repoSlugFromRemote() (string, error) {
 
 func buildPerfBaselineComment(metrics []perfScenarioMetrics) string {
 	var b strings.Builder
-	b.WriteString("Filed automatically by `go test ./internal/cmd/ -run TestPortalPerf_LongTaskProfile_` against `portal_diff.js` at the Slice 0 commit. The `After` column is filled in by each downstream slice after it merges. Lower is better.\n\n")
+	b.WriteString("> **Note:** the numbers below are a Node-`vm` proxy against `portal_diff.js` exercising the production `toggleRun` (extracted from `portal.html`) on synthetic 5-run data, *not* a real Chrome PerformanceObserver capture against `localhost:5000`. AC #3 (live `localhost:5000`) and AC #5 (headless, no manual Chrome) are mutually exclusive in this CI environment; the PR Review Agent accepted the narrowed scope for #1559 (see PR #1574). Treat the `Before` column as relative targets for Slices 1–5, not absolute ground truth.\n\nFiled automatically by `go test ./internal/cmd/ -run TestPortalPerf_LongTaskProfile_` against `portal_diff.js` at the Slice 0 commit. The `After` column is filled in by each downstream slice after it merges. Lower is better.\n\n")
 	b.WriteString(renderPerfMarkdownTable(metrics))
 	b.WriteString("\n<!-- perfportal-baseline-version: slice-0 -->\n")
 	return b.String()
