@@ -1894,6 +1894,14 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
     const detailLoadingCounts = new Map();
     const loadingDetailKeys = new Set();
 
+    function syncDetailLoadingState(runKey) {
+      const detail = runsBody.querySelector('tr.detail-row[data-detail-for="' + runKey + '"]');
+      if (!detail) return;
+      const panel = detail.querySelector('.detail-panel');
+      if (!panel) return;
+      setDetailLoadingState(panel, loadingDetailKeys.has(subjectTabKey(runKey)));
+    }
+
     function setDetailLoading(runKey, loading) {
       const subjectKey = subjectTabKey(runKey);
       if (!subjectKey) return false;
@@ -1907,6 +1915,7 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
         detailLoadingCounts.delete(subjectKey);
         loadingDetailKeys.delete(subjectKey);
       }
+      syncDetailLoadingState(subjectKey);
       return changed;
     }
 
@@ -2914,9 +2923,7 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
           state.tabs[subjectKey] = tab;
           state.expandedRunKey = subjectKey;
           persistPortalViewState();
-          if (tab === 'events') {
-            loadRunDetail(subjectKey);
-          }
+          loadRunDetail(subjectKey);
           scheduleRender();
         }
         return;
