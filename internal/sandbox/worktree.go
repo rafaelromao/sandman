@@ -197,8 +197,25 @@ overrideCleanup:
 		return fmt.Errorf("create worktree base: %w", err)
 	}
 
-	if !s.override && BranchExists(s.repoPath, s.branch) {
-		return fmt.Errorf(`branch %q already exists — delete it with "git branch -D %s" and re-run`, s.branch, s.branch)
+	if !s.override && BranchExists(s.repoPath, s.branch) && !s.workDirExists() {
+		if s.strandedReconcile {
+			headRef, headErr := CurrentBranchRef(s.repoPath)
+			if headErr == nil && headRef == "refs/heads/"+s.branch {
+				return fmt.Errorf(`branch %q already exists — delete it with "git branch -D %s" and re-run`, s.branch, s.branch)
+			}
+			delCmd := exec.Command("git", "branch", "-D", s.branch)
+			delCmd.Dir = s.repoPath
+			if out, err := delCmd.CombinedOutput(); err != nil {
+				return fmt.Errorf(`delete stale branch %q: %w\n%s`, s.branch, err, out)
+			}
+			pruneCmd := exec.Command("git", "worktree", "prune")
+			pruneCmd.Dir = s.repoPath
+			if out, err := pruneCmd.CombinedOutput(); err != nil {
+				return fmt.Errorf("git worktree prune: %w\n%s", err, out)
+			}
+		} else {
+			return fmt.Errorf(`branch %q already exists — delete it with "git branch -D %s" and re-run`, s.branch, s.branch)
+		}
 	}
 
 	addCmd := exec.Command("git", "worktree", "add", "-b", s.branch, s.workDir, s.sourceBranch)
