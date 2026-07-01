@@ -2824,6 +2824,9 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
       if (isWaitStateRun(run)) return;
       const tabKey = run.runId || run.key;
       const currentTab = String((state.tabs && (state.tabs[tabKey] || state.tabs[run.key])) || 'log').trim();
+      const subjectKey = subjectTabKey(runKey);
+      if (currentTab === 'details') return;
+      if (loadingDetailKeys.has(subjectKey)) return;
       const hasLog = run.log && String(run.log).trim();
       const hasEvents = Object.prototype.hasOwnProperty.call(run, 'events');
       if (currentTab === 'events' && hasEvents && run.kind !== 'active') return;
