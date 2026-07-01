@@ -55,6 +55,7 @@ func writeLongTaskBaselineFile(t *testing.T, m perfScenarioMetrics) string {
 	if err != nil {
 		t.Fatalf("marshal baseline %s: %v", m.Scenario, err)
 	}
+	data = append(data, '\n')
 	path := filepath.Join(perfBaselineDir(t), "portal_perf_"+m.Scenario+"_baseline.json")
 	if err := os.WriteFile(path, data, 0o644); err != nil {
 		t.Fatalf("write baseline %s: %v", path, err)
