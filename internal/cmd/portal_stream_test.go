@@ -3,6 +3,7 @@ package cmd
 import (
 	"bufio"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -15,6 +16,7 @@ import (
 	"time"
 
 	"github.com/rafaelromao/sandman/internal/batchindex"
+	"github.com/rafaelromao/sandman/internal/daemon"
 	"github.com/rafaelromao/sandman/internal/events"
 )
 
@@ -93,9 +95,9 @@ func TestPortal_RunStream_BridgesControlSocketToSSE(t *testing.T) {
 		t.Fatal(err)
 	}
 	startFakeRunDaemon(t, sockPath, []string{
-		"\x1b[32m[issue-42]\x1b[0m 12:00:01 starting work\r\n",
-		"[issue-42] 12:00:02 \x1b[1;33mwarning\x1b[0m: low disk\n",
-		"[issue-42] 12:00:03 done\n",
+		"\x1b[32m[" + runID + "]\x1b[0m 12:00:01 starting work\r\n",
+		"[" + runID + "] 12:00:02 \x1b[1;33mwarning\x1b[0m: low disk\n",
+		"[" + runID + "] 12:00:03 done\n",
 	}, 200*time.Millisecond)
 
 	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
@@ -199,4 +201,131 @@ func readSSEEvents(t *testing.T, r io.Reader) []string {
 		t.Fatalf("reading sse stream: %v", err)
 	}
 	return out
+}
+
+// TestPortal_RunStream_FiltersCrossRunBleed is the regression for issue #1544.
+// In a mixed batch every issue row shares the same batch.sock; the daemon
+// prefixes each line with `[<runID>] ` so the bridge can attribute output
+// to a specific run. The SSE stream for a single row must emit only that
+// row's lines and drop sibling and unlabeled lines before they reach the
+// browser, while preserving live tailing, ordering, and the existing
+// ANSI/control-byte cleanup.
+func TestPortal_RunStream_FiltersCrossRunBleed(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	batchID := "run-mixed-1"
+	issueA := 860
+	issueB := 854
+	runIDA := fmt.Sprintf("%s-%d", batchID, issueA)
+	runIDB := fmt.Sprintf("%s-%d", batchID, issueB)
+
+	batchDir := filepath.Join(repoRoot, ".sandman", "batches", batchID)
+	if err := os.MkdirAll(batchDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := daemon.WriteManifest(batchDir, daemon.BatchManifest{
+		Issues:    []int{issueA, issueB},
+		CreatedAt: time.Now(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	batchSock := filepath.Join(batchDir, "batch.sock")
+	idx := &batchindex.Index{Version: batchindex.IndexVersion, Entries: []batchindex.Entry{
+		{ID: batchID, Path: batchDir, Kind: "issue", Status: "active", Issues: []int{issueA, issueB}},
+	}}
+	idxPath := filepath.Join(repoRoot, ".sandman", "batches.json")
+	if err := os.MkdirAll(filepath.Dir(idxPath), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := idx.Save(idxPath); err != nil {
+		t.Fatal(err)
+	}
+
+	// Live-tail fixture: a fake daemon writes four lines in order —
+	// the A line, the B (sibling) line, a second A line, and an
+	// unlabeled banner. The A lines and the banner are interleaved so
+	// any naive "first match wins" or buffering implementation would
+	// be caught by the ordering assertion below.
+	lines := []string{
+		fmt.Sprintf("[%s] 18:51:00 working on PR\n", runIDA),
+		fmt.Sprintf("[%s] 18:51:04 sibling work\n", runIDB),
+		fmt.Sprintf("[%s] 18:51:05 still on it\n", runIDA),
+		"unprefixed banner line that must be dropped\n",
+	}
+	startFakeRunDaemon(t, batchSock, lines, 200*time.Millisecond)
+
+	// Replace the liveness probe so the index entry stays "active"
+	// without a real daemon to back the batch.sock path.
+	originalProbe := portalRunLivenessProbe
+	portalRunLivenessProbe = func(string) bool { return true }
+	t.Cleanup(func() { portalRunLivenessProbe = originalProbe })
+
+	startedAt := time.Now()
+	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
+		{Type: "run.started", Timestamp: startedAt, RunID: runIDA, Issue: issueA},
+		{Type: "run.started", Timestamp: startedAt, RunID: runIDB, Issue: issueB},
+	})
+
+	handler := newPortalHandler(repoRoot)
+	server := startPortalHTTPServer(t, handler)
+	defer server.Close()
+
+	// Resolve the runKey for issue A (the row whose stream we are about
+	// to assert on). The mixed-batch row is keyed by its RunID, which
+	// is `<batchID>-<issue>` (set from the run.started event).
+	wantRunKey := runIDA
+	runs := readPortalRuns(t, server.URL)
+	var matched *portalRun
+	for i := range runs {
+		if runs[i].Key == wantRunKey {
+			matched = &runs[i]
+			break
+		}
+	}
+	if matched == nil {
+		t.Fatalf("expected run key %q in runs, got %#v", wantRunKey, runs)
+	}
+	if matched.RunID != runIDA {
+		t.Fatalf("expected resolved RunID %q, got %q", runIDA, matched.RunID)
+	}
+
+	req, _ := http.NewRequest(http.MethodGet, server.URL+"/api/runs/stream?runKey="+url.QueryEscape(wantRunKey), nil)
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("stream request: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	if ct := resp.Header.Get("Content-Type"); !strings.HasPrefix(ct, "text/event-stream") {
+		t.Fatalf("expected text/event-stream content-type, got %q", ct)
+	}
+
+	got := readSSEEvents(t, resp.Body)
+	want := []string{
+		"18:51:00 working on PR",
+		"18:51:05 still on it",
+	}
+	if len(got) < len(want) {
+		t.Fatalf("expected at least %d events, got %d: %v", len(want), len(got), got)
+	}
+	for i, w := range want {
+		if got[i] != w {
+			t.Fatalf("event %d: got %q, want %q", i, got[i], w)
+		}
+	}
+	for _, ev := range got {
+		if strings.Contains(ev, "sibling work") {
+			t.Fatalf("SSE stream leaked sibling line: %q", ev)
+		}
+		if strings.Contains(ev, "unprefixed banner") {
+			t.Fatalf("SSE stream leaked unlabeled banner: %q", ev)
+		}
+	}
 }
