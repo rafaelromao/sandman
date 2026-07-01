@@ -39,7 +39,7 @@ func TestPortal_PageWiresArchiveAction(t *testing.T) {
 		`async function archiveRun(`,
 		`const currentKey = state.expandedRunKey || runKey;`,
 		`const opening = state.expandedRunKey && state.expandedRunKey !== prevExpandedRunKey;`,
-		`row.scrollIntoView({ behavior: 'smooth', block: 'start' });`,
+		`row.scrollIntoView({ behavior: 'instant', block: 'nearest' });`,
 		`action === 'archive-run'`,
 		`archiveRun(button, runId, label);`,
 		`fetch(archivePath, {`,

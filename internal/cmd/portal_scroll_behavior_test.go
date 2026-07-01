@@ -1,0 +1,296 @@
+package cmd
+
+import (
+	"encoding/json"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"testing"
+)
+
+// TestPortal_ToggleRunUsesInstantNearestScrollIntoView covers the primary
+// behavior in issue #1560: when toggleRun opens a previously-closed row,
+// the rAF render callback must invoke the row's scrollIntoView with
+// behavior: 'instant' and block: 'nearest' — not behavior: 'smooth', which
+// queues a microtask animation that compounds with the next poll's diff.
+//
+// It runs the live toggleRun function extracted from portal.html through
+// a vm sandbox, so the assertion surfaces whatever the production code
+// actually calls. If portal.html ever regresses to behavior: 'smooth'
+// (or any non-instant / non-nearest options), this test goes red.
+func TestPortal_ToggleRunUsesInstantNearestScrollIntoView(t *testing.T) {
+	if _, err := exec.LookPath("node"); err != nil {
+		t.Skip("node is required for portal scroll behavior test")
+	}
+
+	_, currentFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("locate test file")
+	}
+	helperDir := filepath.Dir(currentFile)
+	portalHtmlPath := filepath.Join(helperDir, "portal.html")
+
+	script := `
+const fs = require('fs');
+const vm = require('vm');
+const portalHtmlSrc = fs.readFileSync(` + "`" + portalHtmlPath + "`" + `, 'utf8');
+
+function extractFunction(src, name) {
+  const re = new RegExp('(?:^|\\n)[ \\t]*function[ \\t]+' + name + '\\s*\\([^)]*\\)\\s*\\{', 'm');
+  const startMatch = re.exec(src);
+  if (!startMatch) return null;
+  const openIdx = startMatch.index + startMatch[0].length - 1;
+  let depth = 1, i = openIdx + 1;
+  while (i < src.length && depth > 0) {
+    const ch = src[i];
+    if (ch === '{') depth++;
+    else if (ch === '}') depth--;
+    i++;
+  }
+  return src.slice(startMatch.index, i);
+}
+
+const toggleRunSrc = extractFunction(portalHtmlSrc, 'toggleRun');
+if (!toggleRunSrc) throw new Error('could not extract toggleRun from portal.html');
+
+const scrollCalls = [];
+const stubRow = {
+  scrollIntoView: function (opts) {
+    scrollCalls.push(opts);
+  },
+};
+const sandbox = {
+  console: console,
+  state: {
+    expandedRunKey: null,
+    runs: [{ key: 'r1', runId: 'r1', kind: 'completed', status: 'success', issueLabel: '#1', issueNumber: 1 }],
+    tabs: {},
+    activeBatches: false,
+    showArchived: false,
+    selectedStatus: '',
+  },
+  findRunByIdentity: function (key) {
+    return sandbox.state.runs.find((r) => r && (r.key === key || r.runId === key)) || null;
+  },
+  isWaitStateRun: function () { return false; },
+  subjectRunIdentity: function (run) { return run ? (run.runId || run.key || '') : ''; },
+  summarizeReviewGroup: function (group) { return { source: (group && group[0]) || null }; },
+  persistPortalViewState: function () {},
+  scheduleRender: function (cb) { if (typeof cb === 'function') cb(); },
+  loadRunDetail: function () {},
+  findRunRowByIdentity: function (key) {
+    if (key === sandbox.state.expandedRunKey) return stubRow;
+    return null;
+  },
+};
+sandbox.window = sandbox;
+sandbox.globalThis = sandbox;
+sandbox.JSON = JSON;
+sandbox.Set = Set;
+sandbox.Map = Map;
+
+const scheduleRenderStub = 'function scheduleRender(callback) { if (typeof callback === "function") { callback(); } }';
+vm.runInNewContext(toggleRunSrc + '\n' + scheduleRenderStub + '\nthis.toggleRun = toggleRun; this.scheduleRender = scheduleRender;', sandbox, { filename: 'portal.html#behavior' });
+
+if (typeof sandbox.toggleRun !== 'function') throw new Error('toggleRun did not eval into the sandbox');
+sandbox.toggleRun('r1');
+
+const captured = {
+  expandedAfter: sandbox.state.expandedRunKey,
+  scrollCount: scrollCalls.length,
+  lastOptions: scrollCalls.length > 0 ? scrollCalls[scrollCalls.length - 1] : null,
+  behavior: scrollCalls.length > 0 ? scrollCalls[scrollCalls.length - 1].behavior : null,
+  block: scrollCalls.length > 0 ? scrollCalls[scrollCalls.length - 1].block : null,
+  raw: JSON.stringify(scrollCalls),
+};
+process.stdout.write(JSON.stringify(captured));
+`
+
+	cmd := exec.Command("node", "-e", script)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("portal scroll behavior harness failed: %v\n%s", err, out)
+	}
+	var got struct {
+		ExpandedAfter string          `json:"expandedAfter"`
+		ScrollCount   int             `json:"scrollCount"`
+		LastOptions   json.RawMessage `json:"lastOptions"`
+		Behavior      interface{}     `json:"behavior"`
+		Block         interface{}     `json:"block"`
+	}
+	if err := json.Unmarshal(out, &got); err != nil {
+		t.Fatalf("parse harness output %q: %v", strings.TrimSpace(string(out)), err)
+	}
+	if got.ExpandedAfter != "r1" {
+		t.Fatalf("toggleRun did not open row r1: expandedAfter=%q", got.ExpandedAfter)
+	}
+	if got.ScrollCount != 1 {
+		t.Fatalf("expected exactly 1 scrollIntoView call on the row, got %d", got.ScrollCount)
+	}
+	if got.Behavior != "instant" {
+		t.Fatalf("expected behavior == \"instant\", got %v (last options: %s)", got.Behavior, string(got.LastOptions))
+	}
+	if got.Block != "nearest" {
+		t.Fatalf("expected block == \"nearest\", got %v (last options: %s)", got.Block, string(got.LastOptions))
+	}
+}
+
+// TestPortal_NoSmoothScrollIntoViewInPortalHtml is the audit guard for
+// acceptance criterion #2: no scrollIntoView call in portal.html may use
+// behavior: 'smooth'. The grep is intentionally broad — it also catches
+// 'smooth' adjacent to any scrollIntoView token — so a regression to
+// smooth-scroll would fail this test.
+func TestPortal_NoSmoothScrollIntoViewInPortalHtml(t *testing.T) {
+	_, currentFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("locate test file")
+	}
+	portalHtmlPath := filepath.Join(filepath.Dir(currentFile), "portal.html")
+	data, err := os.ReadFile(portalHtmlPath)
+	if err != nil {
+		t.Fatalf("read portal.html: %v", err)
+	}
+	assertNoSmoothScroll(t, "portal.html", string(data))
+}
+
+// TestPortal_NoSmoothScrollIntoViewInPortalDiffJS is the audit guard for
+// acceptance criterion #2 applied to portal_diff.js. Even though current
+// code has no scrollIntoView call here, locking the audit as a test
+// prevents future regressions.
+func TestPortal_NoSmoothScrollIntoViewInPortalDiffJS(t *testing.T) {
+	_, currentFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("locate test file")
+	}
+	diffPath := filepath.Join(filepath.Dir(currentFile), "portal_diff.js")
+	data, err := os.ReadFile(diffPath)
+	if err != nil {
+		t.Fatalf("read portal_diff.js: %v", err)
+	}
+	assertNoSmoothScroll(t, "portal_diff.js", string(data))
+}
+
+func assertNoSmoothScroll(t *testing.T, file, src string) {
+	t.Helper()
+	for _, needle := range []string{"scrollIntoView", "scrollTo(", "scrollTo (", "scrollBy(", "scrollBy ("} {
+		idx := 0
+		for {
+			at := strings.Index(src[idx:], needle)
+			if at < 0 {
+				break
+			}
+			lineStart := strings.LastIndex(src[:idx+at], "\n") + 1
+			lineEnd := strings.Index(src[idx+at:], "\n")
+			if lineEnd < 0 {
+				lineEnd = len(src)
+			} else {
+				lineEnd += idx + at
+			}
+			line := src[lineStart:lineEnd]
+			if strings.Contains(line, "'smooth'") || strings.Contains(line, "\"smooth\"") {
+				t.Fatalf("%s contains a smooth-scrolling %s call:\n  %s", file, needle, strings.TrimSpace(line))
+			}
+			idx += at + len(needle)
+		}
+	}
+}
+
+// TestPortal_SwitchRows_InstantScrollDropsLongTasks covers acceptance
+// criterion #5 as a regression guard: the Slice 0 rapid-row-switch
+// scenario must not regress versus the pinned slice-0 baseline after
+// the smooth→instant+nearest fix.
+//
+// The slice-0 perf harness TestPortalPerf_LongTaskProfile_SwitchRows
+// REWRITES portal_perf_switch_rows_baseline.json on every run, which
+// would defeat this delta check. We assert against the pinned copy at
+// portal_perf_switch_rows_baseline_slice0.json instead, which was
+// committed in the chore commit before the fix landed.
+//
+// Alphabetical ordering ensures this test runs before
+// TestPortalPerf_LongTaskProfile_SwitchRows so the rewriting never
+// poisons our read.
+//
+// NOTE on AC #5 verifiability: the slice-0 perf harness is a Node-vm
+// proxy (see the long preamble in portal_perf_long_task_test.go). The
+// { behavior: 'smooth' } scrollIntoView option dispatches a compositor
+// animation in a real browser, but vm-based stubs have no compositor,
+// so the post-fix and pre-fix harness runs report the same long-task
+// count. The PR Review Agent that accepted #1559 narrowed scope: "AC #3
+// (live localhost:5000) and AC #5 (headless, no manual Chrome) are
+// mutually exclusive in this CI environment; treat the Before column
+// as relative targets for Slices 1–5, not absolute ground truth."
+// This test asserts no regression (count + 1, endToEnd + 25 ms) to
+// keep the fix honest in this environment; the real-browser long-task
+// delta must be re-measured out of band by the maintainer before
+// marking AC #5 fully closed in the parent #1558 PRD.
+func TestPortal_SwitchRows_InstantScrollDropsLongTasks(t *testing.T) {
+	if _, err := exec.LookPath("node"); err != nil {
+		t.Skip("node is required for portal scroll behavior test")
+	}
+
+	_, currentFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("locate test file")
+	}
+	helperDir := filepath.Dir(currentFile)
+
+	pinnedBaseline, err := loadPinnedSwitchRowsBaseline(t, helperDir)
+	if err != nil {
+		t.Fatalf("load pinned slice-0 baseline: %v", err)
+	}
+
+	outStr := runPortalDiffLongTaskScenario(t, scenarioSwitchRowsJS)
+	var got map[string]any
+	if err := json.Unmarshal([]byte(outStr), &got); err != nil {
+		t.Fatalf("parse harness output %q: %v", outStr, err)
+	}
+	count, ok := got["count"].(float64)
+	if !ok {
+		t.Fatalf("harness did not return count: %+v", got)
+	}
+	endToEnd, ok := got["endToEndMs"].(float64)
+	if !ok {
+		t.Fatalf("harness did not return endToEndMs: %+v", got)
+	}
+
+	baselineCount := pinnedBaseline.LongTaskCount
+	const regressionSlackCount = 1
+	const regressionSlackMs = 25.0
+	t.Logf("switch_rows post-fix: count=%v endToEndMs=%v vs pinned baseline: count=%d endToEndMs=%.2f",
+		count, endToEnd, baselineCount, pinnedBaseline.EndToEndMs)
+	if int(count) > baselineCount+regressionSlackCount {
+		t.Fatalf("switch_rows longTaskCount regressed: got %v > baseline %d + slack %d", count, baselineCount, regressionSlackCount)
+	}
+	if endToEnd > pinnedBaseline.EndToEndMs+regressionSlackMs {
+		t.Fatalf("switch_rows endToEndMs regressed: got %.2f > baseline %.2f + slack %.2f", endToEnd, pinnedBaseline.EndToEndMs, regressionSlackMs)
+	}
+}
+
+type pinnedSwitchRowsBaseline struct {
+	LongTaskCount int     `json:"longTaskCount"`
+	MaxTaskMs     float64 `json:"maxTaskMs"`
+	SumTaskMs     float64 `json:"sumTaskMs"`
+	EndToEndMs    float64 `json:"endToEndMs"`
+}
+
+func loadPinnedSwitchRowsBaseline(t *testing.T, _ string) (*pinnedSwitchRowsBaseline, error) {
+	t.Helper()
+	repoRootCmd := exec.Command("git", "rev-parse", "--show-toplevel")
+	repoRootOut, err := repoRootCmd.CombinedOutput()
+	if err != nil {
+		return nil, err
+	}
+	repoRoot := strings.TrimSpace(string(repoRootOut))
+	pinnedPath := filepath.Join(repoRoot, "testdata", "portal_perf_baseline", "portal_perf_switch_rows_baseline_slice0.json")
+	data, err := os.ReadFile(pinnedPath)
+	if err != nil {
+		return nil, err
+	}
+	var b pinnedSwitchRowsBaseline
+	if err := json.Unmarshal(data, &b); err != nil {
+		return nil, err
+	}
+	return &b, nil
+}
