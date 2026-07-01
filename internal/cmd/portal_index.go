@@ -136,6 +136,18 @@ func (idx *portalRunsIndex) discoverActiveRuns(eventsByRun map[string][]portalEv
 			batchID = manifest.BatchId
 			prNumber = idx.view.prNumberFromEvent(eventsByRun[runID])
 		}
+		if manifestErr == nil && manifest.RunKind == "review" {
+			// ADR-0030 (issue #1551): a review batch owns one row whose
+			// canonical RunID is the per-row folder name (`runs/<rowID>/`).
+			// The batchId and the row RunID are distinct — the legacy
+			// literal `RunID = "review"` alias is gone — so the active
+			// row must source its identity from the on-disk run.json
+			// rather than from the batches-index Entry.ID.
+			if canonical, ok := canonicalReviewRunID(runDir); ok {
+				runID = canonical
+				prNumber = idx.view.prNumberFromEvent(eventsByRun[canonical])
+			}
+		}
 		issueNumbers := []int(nil)
 		issueNumber := 0
 		startedAt := info.ModTime()
@@ -149,7 +161,7 @@ func (idx *portalRunsIndex) discoverActiveRuns(eventsByRun map[string][]portalEv
 			issueNumber = issueNumbers[0]
 		}
 		active = append(active, portalActiveRun{
-			Key:          instance.Name,
+			Key:          runID,
 			Dir:          runDir,
 			SocketPath:   instance.SocketPath,
 			IssueNumber:  issueNumber,
@@ -162,6 +174,34 @@ func (idx *portalRunsIndex) discoverActiveRuns(eventsByRun map[string][]portalEv
 		})
 	}
 	return active, nil
+}
+
+// canonicalReviewRunID returns the per-row RunID for a review batch, read
+// from `runs/<rowID>/run.json` under the given batch directory. Returns
+// ("", false) when the row manifest is absent or unreadable so the caller
+// can fall back to its prior behavior.
+//
+// Per ADR-0030 (issue #1551) review batches are first-class rows, so the
+// canonical row RunID lives in the same `run.json` schema every other run
+// kind uses. The active discovery in `discoverActiveRuns` consults this
+// helper to avoid collapsing the row RunID onto the batchId (which was the
+// legacy review alias behavior).
+func canonicalReviewRunID(batchDir string) (string, bool) {
+	entries, err := os.ReadDir(filepath.Join(batchDir, "runs"))
+	if err != nil {
+		return "", false
+	}
+	for _, e := range entries {
+		if !e.IsDir() || e.Name() == "review" {
+			continue
+		}
+		manifest, err := daemon.ReadRunManifest(batchDir, e.Name())
+		if err != nil || manifest.RunID == "" {
+			continue
+		}
+		return manifest.RunID, true
+	}
+	return "", false
 }
 
 func (idx *portalRunsIndex) readManifestCached(runDir string) (daemon.BatchManifest, error) {
