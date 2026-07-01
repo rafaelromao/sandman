@@ -2671,7 +2671,7 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
           loadRunDetail(state.expandedRunKey);
           const row = findRunRowByIdentity(state.expandedRunKey);
           if (row) {
-            row.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            row.scrollIntoView({ behavior: 'instant', block: 'nearest' });
           }
         }
       });
