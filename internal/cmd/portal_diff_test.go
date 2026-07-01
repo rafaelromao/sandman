@@ -4460,8 +4460,201 @@ func TestPortalRunsView_VisibleRunForIssueGroup_OrphanReviewOnlyHasItsOwnStatus(
 const result = visibleRunForIssueGroup(1223, [liveReview]);
 if (!result) throw new Error('expected visible row');
 if (result.status !== 'reviewing') throw new Error('expected orphan review-only visible status=reviewing (the review is live), got ' + JSON.stringify(result.status));
-if (result.review !== true) throw new Error('expected review=true on orphan review-only stub, got ' + JSON.stringify(result.review));
+if (result.review !== true) throw new Error('expected orphan review-only stub review=true, got ' + JSON.stringify(result.review));
 console.log('PASS');
 `
 	runPortalHTMLScript(t, js)
+}
+
+// TestPortalDiffUpdateDetailEvents_PollFingerprintUsesCheapTriplet (issue
+// #1562) locks AC #1 for the events tab: after the first build-and-poll
+// pair on a stable run, the `data-rendered-fingerprint` attribute on the
+// `.detail-content` div is the cheap triplet
+// `events|<len>:<ts0>:<tsN>|<subjects:...>`, not the full JSON.
+//
+// The expensive `eventsJSON(run)` string would include quoted JSON braces,
+// escaped quotes, and per-event payload dumps; the cheap triplet is purely
+// `events|3:1700000000000:1700000003000|subjects:...` for a 3-event run.
+//
+// We assert on the post-poll fingerprint AFTER two stable diffRuns (the
+// first builds the panel, the second runs updateDetailContent which is
+// the call site the issue targets).
+func TestPortalDiffUpdateDetailEvents_PollFingerprintUsesCheapTriplet(t *testing.T) {
+	js := `const body = makeMockBody();
+const events = [
+  { type: 'start', timestamp: 1700000000000, payload: { ok: true } },
+  { type: 'progress', timestamp: 1700000001000, payload: { step: 1 } },
+  { type: 'finish', timestamp: 1700000003000, payload: { ok: true } },
+];
+const run = { key: 'a', kind: 'active', status: 'running', issueLabel: 'A', runId: 'r1', events: events };
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: 'a', tabs: { a: 'events' } };
+SandmanPortalDiff.diffRuns(body, [run], opts);
+const detailRow = body.children[1];
+const content = detailRow.querySelector('.detail-content');
+if (!content) throw new Error('expected detail-content');
+SandmanPortalDiff.diffRuns(body, [run], opts);
+const fp = content.getAttribute('data-rendered-fingerprint') || '';
+if (fp.indexOf('events|3:1700000000000:1700000003000') !== 0) {
+  throw new Error('expected cheap triplet prefix events|3:1700000000000:1700000003000, got ' + fp);
+}
+if (fp.indexOf('"type"') !== -1 || fp.indexOf('{') !== -1) {
+  throw new Error('fingerprint looks like JSON, expected cheap triplet, got ' + fp);
+}
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+// TestPortalDiffUpdateDetailEvents_PollFingerprintSingleEvent (issue
+// #1562) locks the single-event branch of the cheap triplet: when
+// `events.length === 1`, the triplet collapses to `<ts>:<ts>` so the
+// length slot does not double-count the same event.
+func TestPortalDiffUpdateDetailEvents_PollFingerprintSingleEvent(t *testing.T) {
+	js := `const body = makeMockBody();
+const events = [{ type: 'start', timestamp: 1700000000000, payload: { ok: true } }];
+const run = { key: 'a', kind: 'active', status: 'running', issueLabel: 'A', runId: 'r1', events: events };
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: 'a', tabs: { a: 'events' } };
+SandmanPortalDiff.diffRuns(body, [run], opts);
+const detailRow = body.children[1];
+const content = detailRow.querySelector('.detail-content');
+SandmanPortalDiff.diffRuns(body, [run], opts);
+const fp = content.getAttribute('data-rendered-fingerprint') || '';
+if (fp.indexOf('events|1700000000000:1700000000000') !== 0) {
+  throw new Error('expected cheap triplet prefix events|1700000000000:1700000000000, got ' + fp);
+}
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+// TestPortalDiffUpdateDetailEvents_PollFingerprintEmpty (issue #1562)
+// locks the empty-events branch of the cheap triplet: when there are no
+// events, the fingerprint collapses to `events|0|...` rather than
+// `events|0::` (which would carry two trailing colons that look wrong
+// under the issue's spec "If events is empty, use '0'").
+func TestPortalDiffUpdateDetailEvents_PollFingerprintEmpty(t *testing.T) {
+	js := `const body = makeMockBody();
+const run = { key: 'a', kind: 'active', status: 'running', issueLabel: 'A', runId: 'r1', events: [] };
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: 'a', tabs: { a: 'events' } };
+SandmanPortalDiff.diffRuns(body, [run], opts);
+const detailRow = body.children[1];
+const content = detailRow.querySelector('.detail-content');
+SandmanPortalDiff.diffRuns(body, [run], opts);
+const fp = content.getAttribute('data-rendered-fingerprint') || '';
+if (fp.indexOf('events|0|') !== 0) {
+  throw new Error('expected empty-events fingerprint events|0|..., got ' + fp);
+}
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+// TestPortalDiffUpdateDetailDetails_PollFingerprintUsesCheapTriplet
+// (issue #1562) locks AC #1 for the details tab: after the first
+// build-and-poll pair on a stable run, the `data-rendered-fingerprint`
+// attribute is the cheap string
+// `details|<issueNumber>:<issueTitle>:<branch>:<batchKey>:<logPath>:<peersLen>:<peersCsv>|...`,
+// not the JSON.stringify'd details object.
+func TestPortalDiffUpdateDetailDetails_PollFingerprintUsesCheapTriplet(t *testing.T) {
+	js := `const body = makeMockBody();
+const run = {
+  key: 'a', kind: 'completed', status: 'success', issueLabel: 'A', runId: 'r1',
+  startedAt: 1000, finishedAt: 2000, duration: 1,
+  branch: 'main', batchKey: 'b1', batchIssues: [42, 99],
+  issueNumber: 42, issueTitle: 'Fix the frobnicator',
+  logPath: '/tmp/run.log', logUrl: '/log',
+};
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: 'a', tabs: { a: 'details' } };
+SandmanPortalDiff.diffRuns(body, [run], opts);
+const detailRow = body.children[1];
+const content = detailRow.querySelector('.detail-content');
+SandmanPortalDiff.diffRuns(body, [run], opts);
+const fp = content.getAttribute('data-rendered-fingerprint') || '';
+if (fp.indexOf('details|42:Fix the frobnicator:main:b1:/tmp/run.log:1:99|') !== 0) {
+  throw new Error('expected cheap prefix details|42:Fix the frobnicator:main:b1:/tmp/run.log:1:99|, got ' + fp);
+}
+if (fp.indexOf('"issueNumber"') !== -1 || fp.indexOf('{') !== -1) {
+  throw new Error('fingerprint looks like JSON, expected cheap string, got ' + fp);
+}
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+// TestPortalDiff_StablePollsDoNotInvokeJSONStringify (issue #1562) locks
+// AC #3: across 100 stable polls on the Events tab, `JSON.stringify` is
+// never called by the poll path. The poll path must use the cheap
+// triplet (no payload serialization) so the per-poll cost stays O(1) in
+// `events.length`.
+//
+// The sandbox monkey-patches `JSON.stringify` to count calls *only* in
+// the poll path (the spy is installed after the first build so the
+// build's own stringify invocations aren't counted). Before #1562 the
+// poll path ran `eventsJSON(run)` per diffRuns, so 100 stable polls
+// pushed the counter well past 100. After #1562 the poll path uses the
+// cheap triplet, which never touches JSON.stringify — the counter
+// stays at 0 (or 1, the single fingerprint-attr write on the first
+// poll). We accept ≤ 1 as the structural proxy for AC #3.
+//
+// At the end of the test we mutate events so the rebuild branch still
+// fires and the rendered <pre data-rendered-json> content includes the
+// new event — this locks AC #2 (rebuild branch unchanged).
+func TestPortalDiff_StablePollsDoNotInvokeJSONStringify(t *testing.T) {
+	js := `const body = makeMockBody();
+const events = [];
+for (let i = 0; i < 200; i++) {
+  events.push({ type: 'progress', timestamp: 1700000000000 + i * 1000, payload: { step: i, blob: 'x'.repeat(50) } });
+}
+const run = { key: 'a', kind: 'active', status: 'running', issueLabel: 'A', runId: 'r1', events: events };
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: 'a', tabs: { a: 'events' } };
+SandmanPortalDiff.diffRuns(body, [run], opts);
+const detailRow = body.children[1];
+const content = detailRow.querySelector('.detail-content');
+if (!content) throw new Error('expected detail-content');
+const originalStringify = JSON.stringify;
+let stringifyCalls = 0;
+JSON.stringify = function() { stringifyCalls += 1; return originalStringify.apply(this, arguments); };
+try {
+  for (let i = 0; i < 100; i++) {
+    SandmanPortalDiff.diffRuns(body, [run], opts);
+  }
+} finally {
+  JSON.stringify = originalStringify;
+}
+	if (stringifyCalls !== 0) {
+		throw new Error('expected 0 JSON.stringify calls across 100 stable polls, got ' + stringifyCalls);
+	}
+	// Rebuild branch must still call the real JSON.stringify via
+	// buildEventsContent → eventsJSON, and the rebuilt <pre> content
+	// must remain byte-identical to a direct JSON.stringify of the
+	// event list. This locks AC #2 ("rebuilt content is byte-identical
+	// to today") — the rebuilt JSON is the same JSON.stringify(run2)
+	// the old code would have produced on a rebuild.
+	const run2 = Object.assign({}, run, { events: events.concat([{ type: 'finish', timestamp: 1700000205000, payload: {} }]) });
+	SandmanPortalDiff.diffRuns(body, [run2], opts);
+	const pre = detailRow.querySelector('pre[data-rendered-json]');
+	if (!pre) throw new Error('expected events pre after rebuild');
+	const rendered = pre.getAttribute('data-rendered-json') || '';
+	if (rendered.indexOf('finish') === -1) {
+		throw new Error('rebuilt content should include the new finish event');
+	}
+	// Byte-equality against the canonical eventsJSON serialization
+	// (defines "today's content" precisely, without coupling to
+	// formatting choices elsewhere in the codebase).
+	const expected = JSON.stringify(run2.events.map((event) => ({
+		type: event && event.type ? event.type : 'event',
+		timestamp: event && event.timestamp ? event.timestamp : null,
+		payload: event && event.payload ? event.payload : {},
+	})), null, 2);
+	if (rendered !== expected) {
+		throw new Error('rebuilt content must match JSON.stringify(events, null, 2) byte-for-byte (AC #2).\nGot: ' + rendered.slice(0, 200) + '\nExpected: ' + expected.slice(0, 200));
+	}
+	console.log('PASS');
+`
+	runNodeScript(t, js)
 }
