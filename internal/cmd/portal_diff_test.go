@@ -3992,15 +3992,19 @@ console.log('PASS');
 // parent run (status=success) and a live review child (status=reviewing,
 // kind=active), the visible row must be the terminal parent, not the live
 // child. The review child must remain accessible in the expanded selector.
+// Slice #1527 additionally flips the visible badge to "reviewing" while a
+// live review child is present — the parent's identity (key/kind/review)
+// stays intact and continues to win as the visible row.
 func TestPortalRunsView_VisibleRunForIssueGroup_TerminalParentWinsOverLiveChild(t *testing.T) {
 	js := `const parent = { key: 'issue-1', kind: 'completed', status: 'success', review: false, issueLabel: '#1', runId: 'issue-1', issueNumber: 1, reviewCount: 1 };
 const liveChild = { key: 'PR42', kind: 'active', status: 'reviewing', review: true, issueLabel: 'PR42', runId: 'PR42', issueNumber: 1, prNumber: 42 };
 const result = visibleRunForIssueGroup(1, [parent, liveChild]);
 if (!result) throw new Error('expected visible row');
 if (result.key !== 'issue-1') throw new Error('expected parent as visible row, got ' + JSON.stringify(result.key));
-if (result.status !== 'success') throw new Error('expected terminal status preserved, got ' + JSON.stringify(result.status));
+if (result.status !== 'reviewing') throw new Error('expected visible badge flipped to reviewing while live review child is in group (#1527 AC1), got ' + JSON.stringify(result.status));
 if (result.kind !== 'completed') throw new Error('expected completed kind, got ' + JSON.stringify(result.kind));
 if (result.review) throw new Error('expected review flag false for parent row, got ' + JSON.stringify(result.review));
+if (result.liveReview !== true) throw new Error('expected liveReview=true flag for parent row while live review child is present, got ' + JSON.stringify(result.liveReview));
 console.log('PASS');
 `
 	runPortalHTMLScript(t, js)
@@ -4146,10 +4150,11 @@ const result = visibleRunForIssueGroup(1, [liveParent, review]);
 if (!result) throw new Error('expected visible row');
 if (result.key !== 'issue-1') throw new Error('expected live parent as visible row, got ' + JSON.stringify(result.key));
 if (result.kind !== 'active') throw new Error('expected active kind, got ' + JSON.stringify(result.kind));
-if (result.status !== 'running') throw new Error('expected running status, got ' + JSON.stringify(result.status));
+if (result.status !== 'reviewing') throw new Error('expected visible badge flipped to reviewing while live review child is in group (#1527 AC1), got ' + JSON.stringify(result.status));
 if (result.batchKey !== 'parent-batch') throw new Error('expected parent batchKey, got ' + JSON.stringify(result.batchKey));
 if (result.issueTitle !== 'Fix login bug') throw new Error('expected parent issueTitle, got ' + JSON.stringify(result.issueTitle));
 if (result.startedAt !== '2025-01-15T00:00:00Z') throw new Error('expected parent startedAt, got ' + JSON.stringify(result.startedAt));
+if (result.liveReview !== true) throw new Error('expected liveReview=true flag while live review child is in group, got ' + JSON.stringify(result.liveReview));
 console.log('PASS');
 `
 	runPortalHTMLScript(t, js)
@@ -4330,4 +4335,133 @@ for (const tc of cases) {
 console.log('PASS');
 `
 	runNodeScript(t, js)
+}
+
+// TestPortalRunsView_VisibleRunForIssueGroup_LiveReviewFlipsParentStatusToReviewing
+// is the slice #1527 tracer bullet: when a canonical parent impl row shares
+// an issue group with a single active review child row, the visible run's
+// status must flip to "reviewing" (matching the active review's status)
+// while every identity field stays anchored to the canonical parent row.
+// Acceptance criterion 1 of issue #1527.
+func TestPortalRunsView_VisibleRunForIssueGroup_LiveReviewFlipsParentStatusToReviewing(t *testing.T) {
+	js := `const parent = {
+  key: 'issue-1', kind: 'completed', status: 'success', review: false,
+  issueLabel: '#1', runId: 'issue-1', issueNumber: 1,
+  batchKey: 'parent-batch', issueTitle: 'Fix login bug',
+  startedAt: '2025-01-01T00:00:00Z',
+};
+const liveReview = {
+  key: 'PR42', kind: 'active', status: 'reviewing', review: true,
+  issueLabel: 'PR42', runId: 'PR42', issueNumber: 1, prNumber: 42,
+  batchKey: 'review-batch', issueTitle: 'Review PR42',
+  startedAt: '2025-02-01T00:00:00Z',
+};
+const result = visibleRunForIssueGroup(1, [parent, liveReview]);
+if (!result) throw new Error('expected visible row');
+if (result.key !== 'issue-1') throw new Error('expected canonical parent key issue-1, got ' + JSON.stringify(result.key));
+if (result.runId !== 'issue-1') throw new Error('expected canonical parent runId, got ' + JSON.stringify(result.runId));
+if (result.batchKey !== 'parent-batch') throw new Error('expected canonical parent batchKey parent-batch, got ' + JSON.stringify(result.batchKey));
+if (result.issueTitle !== 'Fix login bug') throw new Error('expected canonical parent issueTitle, got ' + JSON.stringify(result.issueTitle));
+if (result.startedAt !== '2025-01-01T00:00:00Z') throw new Error('expected canonical parent startedAt, got ' + JSON.stringify(result.startedAt));
+if (result.review) throw new Error('expected review=false on visible parent row, got ' + JSON.stringify(result.review));
+if (result.status !== 'reviewing') throw new Error('expected visible status=reviewing while live review child is in group, got ' + JSON.stringify(result.status));
+if (result.liveReview !== true) throw new Error('expected liveReview=true flag while live review child is in group, got ' + JSON.stringify(result.liveReview));
+console.log('PASS');
+`
+	runPortalHTMLScript(t, js)
+}
+
+// TestPortalRunsView_VisibleRunForIssueGroup_CompletedReviewKeepsParentBadge
+// is slice #1527 acceptance criterion 3: when all review child rows have
+// completed (no live/active review children), the visible run's status must
+// revert to the canonical parent's own status — the badge does not flip.
+func TestPortalRunsView_VisibleRunForIssueGroup_CompletedReviewKeepsParentBadge(t *testing.T) {
+	js := `const parent = {
+  key: 'issue-1', kind: 'completed', status: 'success', review: false,
+  issueLabel: '#1', runId: 'issue-1', issueNumber: 1,
+  batchKey: 'parent-batch', issueTitle: 'Fix login bug',
+  startedAt: '2025-01-01T00:00:00Z',
+};
+const completedReview = {
+  key: 'PR42', kind: 'completed', status: 'success', review: true,
+  issueLabel: 'PR42', runId: 'PR42', issueNumber: 1, prNumber: 42,
+  batchKey: 'review-batch', issueTitle: 'Review PR42',
+  startedAt: '2025-01-15T00:00:00Z',
+};
+const result = visibleRunForIssueGroup(1, [parent, completedReview]);
+if (!result) throw new Error('expected visible row');
+if (result.key !== 'issue-1') throw new Error('expected canonical parent key issue-1, got ' + JSON.stringify(result.key));
+if (result.status !== 'success') throw new Error('expected visible status=success (no live review child → no flip), got ' + JSON.stringify(result.status));
+if (result.liveReview) throw new Error('expected liveReview=false (no live review child), got ' + JSON.stringify(result.liveReview));
+console.log('PASS');
+`
+	runPortalHTMLScript(t, js)
+}
+
+// TestPortalRunsView_VisibleRunForIssueGroup_NoReviewChildrenKeepsParentBadge
+// is slice #1527 acceptance criterion 4: a canonical parent with no review
+// children at all must produce a visible row whose status matches the
+// parent's own status, no badge flip.
+func TestPortalRunsView_VisibleRunForIssueGroup_NoReviewChildrenKeepsParentBadge(t *testing.T) {
+	js := `const parent = {
+  key: 'issue-1', kind: 'completed', status: 'success', review: false,
+  issueLabel: '#1', runId: 'issue-1', issueNumber: 1,
+  batchKey: 'parent-batch', issueTitle: 'Fix login bug',
+  startedAt: '2025-01-01T00:00:00Z',
+};
+const result = visibleRunForIssueGroup(1, [parent]);
+if (!result) throw new Error('expected visible row');
+if (result.status !== 'success') throw new Error('expected visible status=success (no review children → no flip), got ' + JSON.stringify(result.status));
+if (result.liveReview) throw new Error('expected liveReview=false (no review children), got ' + JSON.stringify(result.liveReview));
+console.log('PASS');
+`
+	runPortalHTMLScript(t, js)
+}
+
+// TestPortalRunsView_VisibleRunForIssueGroup_LiveActiveParentFlipsBadgeViaChild
+// is slice #1527 with a still-active parent: a parent impl row whose own
+// status is "running" must also flip its visible badge to "reviewing" while
+// a live review child is in the group. The liveReview flag proves the flip
+// is from the child, not the parent's own status.
+func TestPortalRunsView_VisibleRunForIssueGroup_LiveActiveParentFlipsBadgeViaChild(t *testing.T) {
+	js := `const parent = {
+  key: 'issue-1', kind: 'active', status: 'running', review: false,
+  issueLabel: '#1', runId: 'issue-1', issueNumber: 1,
+  batchKey: 'parent-batch', issueTitle: 'Fix login bug',
+  startedAt: '2025-01-15T00:00:00Z',
+};
+const liveReview = {
+  key: 'PR42', kind: 'active', status: 'reviewing', review: true,
+  issueLabel: 'PR42', runId: 'PR42', issueNumber: 1, prNumber: 42,
+  batchKey: 'review-batch', issueTitle: 'Review PR42',
+  startedAt: '2025-02-01T00:00:00Z',
+};
+const result = visibleRunForIssueGroup(1, [parent, liveReview]);
+if (!result) throw new Error('expected visible row');
+if (result.key !== 'issue-1') throw new Error('expected canonical parent key, got ' + JSON.stringify(result.key));
+if (result.status !== 'reviewing') throw new Error('expected visible status=reviewing (live child wins over parent running), got ' + JSON.stringify(result.status));
+if (result.liveReview !== true) throw new Error('expected liveReview=true while live review child is in group, got ' + JSON.stringify(result.liveReview));
+if (result.batchKey !== 'parent-batch') throw new Error('expected parent batchKey, got ' + JSON.stringify(result.batchKey));
+console.log('PASS');
+`
+	runPortalHTMLScript(t, js)
+}
+
+// TestPortalRunsView_VisibleRunForIssueGroup_OrphanReviewOnlyHasItsOwnStatus
+// is slice #1527 acceptance criterion 5: orphan review-only rows (no
+// canonical parent) must NOT trigger any extra badge flip logic — the
+// existing review-only stub synthesis presents its own live-reviewing or
+// terminal verdict status honestly.
+func TestPortalRunsView_VisibleRunForIssueGroup_OrphanReviewOnlyHasItsOwnStatus(t *testing.T) {
+	js := `const liveReview = {
+  key: 'a0c19-260622193226-1227', kind: 'active', status: 'reviewing', review: true,
+  issueLabel: '#1223', runId: 'a0c19-260622193226-1227', issueNumber: 1223, prNumber: 5,
+};
+const result = visibleRunForIssueGroup(1223, [liveReview]);
+if (!result) throw new Error('expected visible row');
+if (result.status !== 'reviewing') throw new Error('expected orphan review-only visible status=reviewing (the review is live), got ' + JSON.stringify(result.status));
+if (result.review !== true) throw new Error('expected review=true on orphan review-only stub, got ' + JSON.stringify(result.review));
+console.log('PASS');
+`
+	runPortalHTMLScript(t, js)
 }

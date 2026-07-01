@@ -2273,10 +2273,16 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
       const parents = group.filter((run) => !run.review);
       if (parents.length) {
         const liveActive = parents.filter((candidate) => candidate.kind === 'active');
+        let picked = null;
         if (liveActive.length) {
-          return liveActive.reduce((best, candidate) => (candidate.startedAt > best.startedAt ? candidate : best));
+          picked = liveActive.reduce((best, candidate) => (candidate.startedAt > best.startedAt ? candidate : best));
+        } else {
+          picked = parents.find((candidate) => Number(candidate.reviewCount || 0) > 0 || candidate.reviewVerdict) || parents[0];
         }
-        return parents.find((candidate) => Number(candidate.reviewCount || 0) > 0 || candidate.reviewVerdict) || parents[0];
+        if (picked && hasLiveReviewChild(group)) {
+          return Object.assign({}, picked, { status: 'reviewing', liveReview: true });
+        }
+        return picked;
       }
       const summary = summarizeReviewGroup(group.filter((run) => run.review));
       const source = summary.source || group[0];
@@ -2300,6 +2306,11 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
         reason: source.reason,
         issueLabel: issueLabel,
       };
+    }
+
+    function hasLiveReviewChild(group) {
+      if (!Array.isArray(group)) return false;
+      return group.some((run) => run && run.review && run.kind === 'active');
     }
 
     function visibleRunsForTable(runs) {
