@@ -2266,19 +2266,26 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
       return summary;
     }
 
+    function pickCanonicalParent(parents) {
+      const liveActive = parents.filter((candidate) => candidate.kind === 'active');
+      if (liveActive.length) {
+        return liveActive.reduce((best, candidate) => (candidate.startedAt > best.startedAt ? candidate : best));
+      }
+      return parents.find((candidate) => Number(candidate.reviewCount || 0) > 0 || candidate.reviewVerdict) || parents[0];
+    }
+
+    function hasLiveReviewChild(group) {
+      if (!Array.isArray(group)) return false;
+      return group.some((run) => run && run.review && run.kind === 'active');
+    }
+
     function visibleRunForIssueGroup(issueNumber, runs) {
       if (!Number.isInteger(issueNumber) || issueNumber <= 0 || !Array.isArray(runs)) return null;
       const group = runs.filter((run) => run && run.issueNumber === issueNumber);
       if (!group.length) return null;
       const parents = group.filter((run) => !run.review);
       if (parents.length) {
-        const liveActive = parents.filter((candidate) => candidate.kind === 'active');
-        let picked = null;
-        if (liveActive.length) {
-          picked = liveActive.reduce((best, candidate) => (candidate.startedAt > best.startedAt ? candidate : best));
-        } else {
-          picked = parents.find((candidate) => Number(candidate.reviewCount || 0) > 0 || candidate.reviewVerdict) || parents[0];
-        }
+        const picked = pickCanonicalParent(parents);
         if (picked && hasLiveReviewChild(group)) {
           return Object.assign({}, picked, { status: 'reviewing', liveReview: true });
         }
@@ -2306,11 +2313,6 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
         reason: source.reason,
         issueLabel: issueLabel,
       };
-    }
-
-    function hasLiveReviewChild(group) {
-      if (!Array.isArray(group)) return false;
-      return group.some((run) => run && run.review && run.kind === 'active');
     }
 
     function visibleRunsForTable(runs) {
