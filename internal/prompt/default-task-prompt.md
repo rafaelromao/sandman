@@ -24,11 +24,19 @@ The worktree MUST be checked out on `{{BRANCH}}` when the run finishes. Do not s
 - [ ] PR-Review (sandman-pr-review)
 - [ ] PR-Merge (sandman-pr-merge)
 
-After completing each item, update `.sandman/task.md` in place by checking that item off.
+Before moving on, check which checklist items are already complete in `.sandman/task.md`. If an item is already checked, treat it as complete and skip it instead of repeating the work.
+
+After checking off an item, update `.sandman/task.md` in place and rewrite the registered `## Next Step` so it points at the next unchecked checklist item.
+
+## Next Step
+
+The registered next step is the first unchecked item in the Execution Checklist.
 
 ## Already Resolved
 
-If the issue is already implemented on `{{BASE_BRANCH}}`, update `.sandman/task.md` so it contains the exact line `## Status: already resolved`.
+If the issue is already implemented on `{{BASE_BRANCH}}`, after fetching and checking the current `origin/{{BASE_BRANCH}}` HEAD against the issue acceptance criteria, update `.sandman/task.md` so it contains the exact line `## Status: already resolved`.
+
+Do not use issue closure, a matching local branch, or unmerged worktree changes as proof that the issue is already resolved. If any acceptance criterion is missing or you are not certain, continue with Plan.
 
 Do not paraphrase this line. Do not use `already implemented`, `no action required`, or any other wording for this marker.
 

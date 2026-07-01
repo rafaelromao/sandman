@@ -815,7 +815,6 @@
       { regex: /^(?:#\d+|PR#?\d+)\b/, render: (m) => wrapToken('term-issue', m[0]) },
       { regex: /^(?:[0-9a-fA-F]{7,})\b/, render: (m) => wrapToken('term-hash', m[0]) },
       { regex: /^\b(?:sub-agent|subagent)\b/, render: (m) => wrapToken('term-subagent', m[0]) },
-      { regex: /^(?:gh|git|go|npm|yarn|node|npx|ls|echo|cat|make|mkdir|rm|cp|mv|find|grep|sed|awk|curl|wget|pwd|cd|printf|tar|unzip|jq|chmod|ln|whoami|sort|head|tail|less|more|touch|ssh|scp)\b/, render: (m) => wrapToken('term-command', m[0]) },
     ];
   }
 
