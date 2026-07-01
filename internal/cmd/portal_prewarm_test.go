@@ -171,3 +171,28 @@ console.log('PASS');
 `
 	runNodeScript(t, js)
 }
+
+// TestPortalPerf_PrewarmLogPaneCache_DiffRunsReusesCachedPane verifies
+// the integration: after tokenizeForCache pre-warms a run, the first
+// diffRuns call that opens it on the Log tab mounts the cached pane by
+// node identity — no rebuild, no fillTerminalPre cycle on the mounted
+// pre. This is the "cache absorbs the build" promise from the issue.
+func TestPortalPerf_PrewarmLogPaneCache_DiffRunsReusesCachedPane(t *testing.T) {
+	js := `const run = { key: 'a', runId: 'a', kind: 'active', status: 'running', issueLabel: '#1', log: 'line one\nline two\nline three' };
+const warmedPane = sandbox.SandmanPortalDiff.tokenizeForCache(run, helpers);
+const warmedPre = warmedPane.querySelector('pre[data-scroll-key]');
+if (!warmedPre) throw new Error('expected warmed pre from tokenizeForCache');
+const body = makeMockBody();
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: 'a', tabs: { a: 'log' }, runs: [run] };
+sandbox.SandmanPortalDiff.diffRuns(body, [run], opts);
+const detailRow = body.children[1];
+const mountedPre = detailRow.querySelector('pre[data-scroll-key]');
+if (!mountedPre) throw new Error('expected mounted pre after diffRuns');
+if (mountedPre !== warmedPre) throw new Error('expected mounted pre to be the same node as the warmed pre (cache hit)');
+if (mountedPre.getAttribute('data-rendering-log')) throw new Error('expected no new data-rendering-log cycle on the mounted pre, found ' + mountedPre.getAttribute('data-rendering-log'));
+if (mountedPre.getAttribute('data-rendered-log') !== 'line one\nline two\nline three') throw new Error('expected data-rendered-log to match input log, got ' + mountedPre.getAttribute('data-rendered-log'));
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
