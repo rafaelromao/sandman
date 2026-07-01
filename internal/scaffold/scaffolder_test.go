@@ -1927,6 +1927,50 @@ func containsString(haystack []string, needle string) bool {
 	return false
 }
 
+func TestScaffold_ElixirPresetResolveVersion_UsesRepoHint(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, ".elixir_version"), []byte("1.18.4\n"), 0644); err != nil {
+		t.Fatalf("write .elixir_version: %v", err)
+	}
+
+	s := &Scaffolder{}
+	got, err := s.resolveElixirVersion(dir, "repo", &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("resolveElixirVersion: %v", err)
+	}
+	if got != "1.18.4" {
+		t.Errorf("expected elixir version %q, got %q", "1.18.4", got)
+	}
+}
+
+func TestScaffold_ElixirPresetResolveVersion_NoHintFallsBackToLatest(t *testing.T) {
+	dir := t.TempDir()
+
+	s := &Scaffolder{}
+	got, err := s.resolveElixirVersion(dir, "", &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("resolveElixirVersion: %v", err)
+	}
+	if got == "" {
+		t.Fatalf("expected non-empty elixir version")
+	}
+	if !strings.Contains(got, ".") {
+		t.Errorf("expected elixir version with dots, got %q", got)
+	}
+}
+
+func TestScaffold_ElixirPresetResolveVersion_ExplicitSelector(t *testing.T) {
+	dir := t.TempDir()
+	s := &Scaffolder{}
+	got, err := s.resolveElixirVersion(dir, "1.18", &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("resolveElixirVersion: %v", err)
+	}
+	if !strings.HasPrefix(got, "1.18") {
+		t.Errorf("expected elixir version starting with 1.18, got %q", got)
+	}
+}
+
 func TestReadElixirVersionHint(t *testing.T) {
 	tests := []struct {
 		name     string

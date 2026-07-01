@@ -197,6 +197,17 @@ var bundledDotnetVersionCatalog = map[string]string{
 	"6.0":    "6.0.428",
 }
 
+var bundledElixirVersionCatalog = map[string]string{
+	"latest": "1.20.2-otp-29",
+	"lts":    "1.18.4-otp-28",
+	"1.20":   "1.20.2-otp-29",
+	"1.19":   "1.19.5-otp-28",
+	"1.18":   "1.18.4-otp-28",
+	"1.17":   "1.17.3-otp-27",
+	"1.16":   "1.16.3-otp-26",
+	"1.15":   "1.15.8-otp-26",
+}
+
 var nodeVersionSelectorPattern = regexp.MustCompile(`\d+(?:\.\d+){0,2}`)
 
 // Scaffolder creates the .sandman/ directory and its files.
@@ -585,6 +596,10 @@ func (s *Scaffolder) resolveNodeVersion(repoRoot, selector string, p Prompter) (
 	return resolveVersion(nodeResolver, repoRoot, selector, p)
 }
 
+func (s *Scaffolder) resolveElixirVersion(repoRoot, selector string, p Prompter) (string, error) {
+	return resolveVersion(elixirResolver, repoRoot, selector, p)
+}
+
 // versionResolver parameterises the shared tool-resolution algorithm with
 // the inputs that differ across the four built-in tool resolvers (go, dotnet,
 // node, python).
@@ -751,6 +766,44 @@ var pythonResolver = versionResolver{
 		minor--
 
 		return fmt.Sprintf("%d.%d", major, minor), nil
+	},
+}
+
+// elixirResolver is the versionResolver configuration for Elixir. The
+// normalize hook accepts mise-style selectors ("1.18", "~> 1.18", "v1.18")
+// and the bare Elixir version form ("1.18.4"). passThroughValid lets the
+// selector flow through to the mise call when the bundled catalog misses,
+// so "~> 1.18" and arbitrary user-supplied selectors stay usable when mise
+// is reachable.
+var elixirResolver = versionResolver{
+	label:      "Elixir",
+	miseTool:   "elixir",
+	hintReader: readElixirVersionHint,
+	normalize: func(selector string) string {
+		selector = strings.TrimSpace(selector)
+		if len(selector) > 6 && strings.HasPrefix(strings.ToLower(selector), "elixir") && selector[6] >= '0' && selector[6] <= '9' {
+			return selector[6:]
+		}
+		if len(selector) > 1 && strings.HasPrefix(strings.ToLower(selector), "v") && selector[1] >= '0' && selector[1] <= '9' {
+			return selector[1:]
+		}
+		return selector
+	},
+	catalog: bundledElixirVersionCatalog,
+	passThroughValid: func(selector string) bool {
+		selector = strings.TrimSpace(selector)
+		if selector == "" || strings.EqualFold(selector, "latest") || strings.EqualFold(selector, "lts") {
+			return false
+		}
+		if strings.HasPrefix(selector, "~>") {
+			return true
+		}
+		for _, c := range selector {
+			if c >= '0' && c <= '9' {
+				return true
+			}
+		}
+		return false
 	},
 }
 
