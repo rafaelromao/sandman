@@ -3790,10 +3790,11 @@ vm.runInNewContext(scriptBody + '\n' + ` + "`" + js + "`" + `, Object.assign({},
 // deterministically. The `_debug.flushCount` counter on the coalescer is
 // what tests assert against for coalescing behavior.
 //
-// User-supplied `js` is escaped for backtick template-literal embedding
-// (the same NewReplacer chain as runPortalHTMLScript) so a test that
-// contains a backtick or `${` does not break or interpolate the
-// surrounding script.
+// The user-supplied `js` is concatenated directly to the prefix
+// (matching the established `runNodeScript` pattern) without
+// template-literal wrapping or escaping. Tests must avoid writing a
+// stray backtick in their source — the established convention across
+// the rest of this file.
 func runStreamCoalescerScript(t *testing.T, js string) {
 	t.Helper()
 	_, currentFile, _, ok := runtime.Caller(0)

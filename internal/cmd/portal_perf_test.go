@@ -485,18 +485,20 @@ coalescer._debug.enableCounters();
 coalescer.seedKnownLines('a', []);
 
 // Simulate the worst-case click-burst scenario: 100 SSE messages land
-// in a tight window (single-event-loop task or two) so they all
-// schedule into one coalesced rAF callback. The cap (16) trips a
-// synchronous flush, and the trailing rAF drains the remainder.
+// in a single event-loop tick so they all coalesce into one trailing
+// rAF callback. The coalescer's tail-most-first contract keeps the
+// most recent 16 lines (the cap) and drops the first 84 — the issue's
+// "tail matters most" framing explicitly permits this. The leading
+// flush + at-most-two-trailing-bursts pattern from the issue narrows
+// to a single flush for a single-tick burst.
 for (let i = 0; i < 100; i++) coalescer.scheduleLine('a', 'line' + i);
 // Single tight rAF window: just fire the rAF.
 while (rafQueue.length) rafQueue.shift()();
 
 const flushCount = coalescer._debug.flushCount();
-// In the burst-collapsed case we expect 2 flushes (one sync overflow,
-// one trailing rAF). The issue's contract is "<=3 flushes" — the
-// leading-flush + at-most-two-trailing-bursts pattern. We assert a
-// hard upper bound of 3 here, and the lower bound of at least 1 to
+// The issue's contract is "<=3 flushes per 100 ms" — the leading-flush
+// plus at-most-two-trailing-bursts pattern. We assert a hard upper
+// bound of 3 here, and the lower bound of at least 1 to
 // catch any regression that drops flushes entirely.
 if (flushCount > 3) throw new Error('expected at most 3 flushes for 100-message burst, got ' + flushCount);
 if (flushCount < 1) throw new Error('expected at least 1 flush, got 0');
