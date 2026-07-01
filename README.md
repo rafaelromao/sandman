@@ -1,6 +1,8 @@
 # Sandman
 
-[![Built with Sandman](https://raw.githubusercontent.com/rafaelromao/sandman/main/assets/badge-built-with-sandman.svg)](https://github.com/rafaelromao/sandman)
+<a href="https://github.com/rafaelromao/sandman">
+  <img src="https://raw.githubusercontent.com/rafaelromao/sandman/main/assets/badge-built-with-sandman.svg" alt="Built with Sandman" width="154" />
+</a>
 
 CLI tool for orchestrating AFK coding agents in isolated sandboxes.
 
