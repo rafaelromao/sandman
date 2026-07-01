@@ -1856,6 +1856,28 @@ func TestScaffold_HasElixirRepoHint(t *testing.T) {
 	}
 }
 
+func TestScaffold_RubyPresetIsRegistered(t *testing.T) {
+	preset, ok := builtInBuildToolsPresets[rubyBuildToolsPreset]
+	if !ok {
+		t.Fatalf("ruby preset not registered in builtInBuildToolsPresets")
+	}
+	if preset.Name != rubyBuildToolsPreset {
+		t.Errorf("preset.Name = %q, want %q", preset.Name, rubyBuildToolsPreset)
+	}
+	if preset.BaseImage != "debian:bookworm-slim" {
+		t.Errorf("preset.BaseImage = %q, want %q", preset.BaseImage, "debian:bookworm-slim")
+	}
+	if preset.MiseVersion != DefaultMISEVersion {
+		t.Errorf("preset.MiseVersion = %q, want %q", preset.MiseVersion, DefaultMISEVersion)
+	}
+	if len(preset.SharedPackages) != len(sharedPackages) {
+		t.Errorf("preset.SharedPackages length = %d, want %d", len(preset.SharedPackages), len(sharedPackages))
+	}
+	if !containsString(KnownBuildToolsPresets, rubyBuildToolsPreset) {
+		t.Errorf("KnownBuildToolsPresets missing %q, got %v", rubyBuildToolsPreset, KnownBuildToolsPresets)
+	}
+}
+
 func TestScaffold_ElixirPresetIsRegistered(t *testing.T) {
 	preset, ok := builtInBuildToolsPresets[elixirBuildToolsPreset]
 	if !ok {
@@ -1922,6 +1944,173 @@ func TestScaffold_NodePresetTakesPriorityOverElixir(t *testing.T) {
 	}
 	if preset.Name != "node" {
 		t.Errorf("expected Node preset to take priority over Elixir, got %q", preset.Name)
+	}
+}
+
+func TestScaffold_HasRubyRepoHint(t *testing.T) {
+	tests := []struct {
+		name    string
+		setupFn func(dir string)
+		want    bool
+	}{
+		{
+			name: "Gemfile",
+			setupFn: func(dir string) {
+				os.WriteFile(filepath.Join(dir, "Gemfile"), []byte("source 'https://rubygems.org'\ngem 'rails'\n"), 0644)
+			},
+			want: true,
+		},
+		{
+			name: "gemspec",
+			setupFn: func(dir string) {
+				os.WriteFile(filepath.Join(dir, "demo.gemspec"), []byte("Gem::Specification.new do |s|\n  s.name = 'demo'\nend\n"), 0644)
+			},
+			want: true,
+		},
+		{
+			name: ".ruby-version",
+			setupFn: func(dir string) {
+				os.WriteFile(filepath.Join(dir, ".ruby-version"), []byte("3.2.2\n"), 0644)
+			},
+			want: true,
+		},
+		{
+			name: ".tool-versions with ruby",
+			setupFn: func(dir string) {
+				os.WriteFile(filepath.Join(dir, ".tool-versions"), []byte("ruby 3.2.2\n"), 0644)
+			},
+			want: true,
+		},
+		{
+			name: ".tool-versions without ruby",
+			setupFn: func(dir string) {
+				os.WriteFile(filepath.Join(dir, ".tool-versions"), []byte("go 1.24\nnode 20.0.0\n"), 0644)
+			},
+			want: false,
+		},
+		{
+			name: "empty dir",
+			setupFn: func(dir string) {
+				_ = dir
+			},
+			want: false,
+		},
+		{
+			name: "non-ruby repo",
+			setupFn: func(dir string) {
+				os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/demo\n\ngo 1.24\n"), 0644)
+			},
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			tt.setupFn(dir)
+
+			if got := hasRubyRepoHint(dir); got != tt.want {
+				t.Errorf("hasRubyRepoHint(%q) = %v, want %v", dir, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestScaffold_RubyRepoAutoDetect(t *testing.T) {
+	tests := []struct {
+		name    string
+		setupFn func(dir string)
+		want    string
+	}{
+		{
+			name: "Gemfile",
+			setupFn: func(dir string) {
+				os.WriteFile(filepath.Join(dir, "Gemfile"), []byte("source 'https://rubygems.org'\ngem 'rails'\n"), 0644)
+			},
+			want: "ruby",
+		},
+		{
+			name: ".ruby-version",
+			setupFn: func(dir string) {
+				os.WriteFile(filepath.Join(dir, ".ruby-version"), []byte("3.2.2\n"), 0644)
+			},
+			want: "ruby",
+		},
+		{
+			name: ".tool-versions",
+			setupFn: func(dir string) {
+				os.WriteFile(filepath.Join(dir, ".tool-versions"), []byte("ruby 3.2.2\n"), 0644)
+			},
+			want: "ruby",
+		},
+		{
+			name: "gemspec",
+			setupFn: func(dir string) {
+				os.WriteFile(filepath.Join(dir, "demo.gemspec"), []byte("Gem::Specification.new do |s|\n  s.name = 'demo'\nend\n"), 0644)
+			},
+			want: "ruby",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			tt.setupFn(dir)
+
+			s := &Scaffolder{}
+			preset, err := s.resolveBuildToolsPreset(dir, Options{}, &fakePrompter{confirm: true})
+			if err != nil {
+				t.Fatalf("resolve build tools preset: %v", err)
+			}
+			if preset.Name != tt.want {
+				t.Errorf("expected preset %q, got %q", tt.want, preset.Name)
+			}
+		})
+	}
+}
+
+func TestScaffold_GenericBuildToolsOverridesRubyRepoHint(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "Gemfile"), []byte("source 'https://rubygems.org'\ngem 'rails'\n"), 0644); err != nil {
+		t.Fatalf("write Gemfile: %v", err)
+	}
+
+	s := &Scaffolder{}
+	preset, err := s.resolveBuildToolsPreset(dir, Options{BuildTools: "generic"}, &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("resolve build tools preset: %v", err)
+	}
+	if preset.Name != "generic" {
+		t.Fatalf("expected explicit generic preset, got %q", preset.Name)
+	}
+}
+
+func TestScaffold_RubyPresetTakesPriorityOverGeneric(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "Gemfile"), []byte("source 'https://rubygems.org'\ngem 'rails'\n"), 0644)
+
+	s := &Scaffolder{}
+	preset, err := s.resolveBuildToolsPreset(dir, Options{}, &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("resolve build tools preset: %v", err)
+	}
+	if preset.Name != "ruby" {
+		t.Errorf("expected Ruby preset, got %q", preset.Name)
+	}
+}
+
+func TestScaffold_ElixirPresetTakesPriorityOverRuby(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "mix.exs"), []byte("defmodule Demo.MixProject do\n  use Mix.Project\n  def project do\n    [app: :demo, version: \"0.1.0\", elixir: \"~> 1.18\"]\n  end\nend\n"), 0644)
+	os.WriteFile(filepath.Join(dir, "Gemfile"), []byte("source 'https://rubygems.org'\ngem 'rails'\n"), 0644)
+
+	s := &Scaffolder{}
+	preset, err := s.resolveBuildToolsPreset(dir, Options{}, &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("resolve build tools preset: %v", err)
+	}
+	if preset.Name != "elixir" {
+		t.Errorf("expected Elixir preset to take priority over Ruby, got %q", preset.Name)
 	}
 }
 
@@ -1993,6 +2182,80 @@ func TestScaffold_ElixirPresetResolvesRangeSelectorToCatalogPin(t *testing.T) {
 	}
 	if got != "1.18.4-otp-28" {
 		t.Fatalf("expected range selector to resolve to catalog pin %q, got %q", "1.18.4-otp-28", got)
+	}
+}
+
+func TestScaffold_RubyPresetResolveVersion_UsesRepoHint(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, ".ruby-version"), []byte("3.2.2\n"), 0644); err != nil {
+		t.Fatalf("write .ruby-version: %v", err)
+	}
+
+	s := &Scaffolder{}
+	got, err := s.resolveRubyVersion(dir, "repo", &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("resolveRubyVersion: %v", err)
+	}
+	if got != "3.2.2" {
+		t.Errorf("expected ruby version %q, got %q", "3.2.2", got)
+	}
+}
+
+func TestScaffold_RubyPresetResolveVersion_NoHintFallsBackToLatest(t *testing.T) {
+	dir := t.TempDir()
+
+	s := &Scaffolder{}
+	got, err := s.resolveRubyVersion(dir, "", &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("resolveRubyVersion: %v", err)
+	}
+	if got == "" {
+		t.Fatalf("expected non-empty ruby version")
+	}
+	if !strings.Contains(got, ".") {
+		t.Errorf("expected ruby version with dots, got %q", got)
+	}
+}
+
+func TestScaffold_RubyPresetResolveVersion_ExplicitSelector(t *testing.T) {
+	dir := t.TempDir()
+	s := &Scaffolder{}
+	got, err := s.resolveRubyVersion(dir, "3.3", &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("resolveRubyVersion: %v", err)
+	}
+	if !strings.HasPrefix(got, "3.3") {
+		t.Errorf("expected ruby version starting with 3.3, got %q", got)
+	}
+}
+
+func TestScaffold_RubyPresetResolvesRangeSelectorToCatalogPin(t *testing.T) {
+	dir := t.TempDir()
+	fakeMise := filepath.Join(dir, "mise")
+	if err := os.WriteFile(fakeMise, []byte("#!/bin/sh\nexit 0\n"), 0755); err != nil {
+		t.Fatalf("write fake mise: %v", err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	s := &Scaffolder{}
+	got, err := s.resolveRubyVersion(dir, "3.3", &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("resolveRubyVersion: %v", err)
+	}
+	if got == "" {
+		t.Fatalf("expected non-empty ruby version")
+	}
+}
+
+func TestScaffold_RenderRubyInstallCommand(t *testing.T) {
+	got := renderRubyInstallCommand("3.2.2")
+	for _, want := range []string{
+		"RUN mise use -g --pin ruby@3.2.2",
+		"RUN gem install bundler",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("renderRubyInstallCommand missing %q, got:\n%s", want, got)
+		}
 	}
 }
 
@@ -2246,5 +2509,121 @@ func TestValidateDockerfileMetadata_AllowsGoPreset(t *testing.T) {
 
 	if err := ValidateDockerfileMetadata(dir, "go", "opencode"); err != nil {
 		t.Fatalf("validate metadata: %v", err)
+	}
+}
+
+func TestReadDockerfileMetadata_RubyVersion(t *testing.T) {
+	dir := t.TempDir()
+	content := "# sandman build-tools: ruby\n# sandman default-agent: opencode\n# sandman ruby-version: 3.2.2\n# sandman mise-version: " + DefaultMISEVersion + "\nFROM debian:bookworm-slim\n"
+	path := filepath.Join(dir, "Dockerfile")
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatalf("write Dockerfile: %v", err)
+	}
+
+	meta, found, err := readDockerfileMetadata(path)
+	if err != nil {
+		t.Fatalf("readDockerfileMetadata: %v", err)
+	}
+	if !found {
+		t.Fatal("expected metadata found")
+	}
+	if meta.RubyVersion != "3.2.2" {
+		t.Errorf("RubyVersion = %q, want %q", meta.RubyVersion, "3.2.2")
+	}
+	if meta.BuildToolsPreset != "ruby" {
+		t.Errorf("BuildToolsPreset = %q, want %q", meta.BuildToolsPreset, "ruby")
+	}
+}
+
+func TestScaffold_RubyPresetWritesPinnedDockerfile(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, ".ruby-version"), []byte("3.2.2\n"), 0644); err != nil {
+		t.Fatalf("write .ruby-version: %v", err)
+	}
+
+	s := &Scaffolder{}
+	wantRubyVersion, err := s.resolveRubyVersion(dir, "", &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("resolve ruby version: %v", err)
+	}
+
+	if err := s.Scaffold(dir, Options{BuildTools: "ruby"}, &fakePrompter{confirm: true}); err != nil {
+		t.Fatalf("scaffold: %v", err)
+	}
+
+	dockerfilePath := filepath.Join(dir, ".sandman", "Dockerfile")
+	data, err := os.ReadFile(dockerfilePath)
+	if err != nil {
+		t.Fatalf("read Dockerfile: %v", err)
+	}
+	content := string(data)
+	for _, want := range []string{
+		"# sandman build-tools: ruby",
+		"# sandman default-agent: opencode",
+		"# sandman ruby-version: " + wantRubyVersion,
+		"# sandman installed-agents: opencode",
+		"FROM debian:bookworm-slim",
+		"RUN mise use -g --pin ruby@" + wantRubyVersion,
+		"RUN gem install bundler",
+		"RUN MISE_VERSION=" + DefaultMISEVersion + " curl https://mise.run | MISE_INSTALL_PATH=/usr/local/bin/mise sh",
+		"RUN npm install -g opencode-ai@" + DefaultBuiltInAgentVersion("opencode"),
+	} {
+		if !strings.Contains(content, want) {
+			t.Errorf("Dockerfile missing %q, got:\n%s", want, content)
+		}
+	}
+
+	promptPath := filepath.Join(dir, ".sandman", "prompt.md")
+	promptData, err := os.ReadFile(promptPath)
+	if err != nil {
+		t.Fatalf("read prompt.md: %v", err)
+	}
+	if got, want := string(promptData), prompt.DefaultPrompt(); got != want {
+		t.Fatalf("prompt.md mismatch\nwant:\n%s\ngot:\n%s", want, got)
+	}
+}
+
+func TestScaffold_RubyPresetAllAgentsGenerateFiles(t *testing.T) {
+	for agent := range config.BuiltInAgentPresets {
+		t.Run(agent, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "Gemfile"), []byte("source 'https://rubygems.org'\ngem 'rails'\n"), 0644); err != nil {
+				t.Fatalf("write Gemfile: %v", err)
+			}
+
+			s := &Scaffolder{}
+			wantRubyVersion, err := s.resolveRubyVersion(dir, "", &fakePrompter{confirm: true})
+			if err != nil {
+				t.Fatalf("resolve ruby version: %v", err)
+			}
+
+			if err := s.Scaffold(dir, Options{BuildTools: "ruby", Agent: agent}, &fakePrompter{confirm: true}); err != nil {
+				t.Fatalf("scaffold: %v", err)
+			}
+
+			configPath := filepath.Join(dir, ".sandman", "config.yaml")
+			cfg, err := config.Load(configPath)
+			if err != nil {
+				t.Fatalf("load config: %v", err)
+			}
+			if cfg.BuildTools != "ruby" {
+				t.Errorf("expected build tools %q, got %q", "ruby", cfg.BuildTools)
+			}
+
+			dockerfileData, err := os.ReadFile(filepath.Join(dir, ".sandman", "Dockerfile"))
+			if err != nil {
+				t.Fatalf("read Dockerfile: %v", err)
+			}
+			content := string(dockerfileData)
+			if !strings.Contains(content, "# sandman build-tools: ruby") {
+				t.Errorf("Dockerfile missing ruby build-tools metadata, got:\n%s", content)
+			}
+			if !strings.Contains(content, "RUN mise use -g --pin ruby@"+wantRubyVersion) {
+				t.Errorf("Dockerfile missing pinned ruby install %q, got:\n%s", wantRubyVersion, content)
+			}
+			if !strings.Contains(content, "RUN gem install bundler") {
+				t.Errorf("Dockerfile missing bundler install, got:\n%s", content)
+			}
+		})
 	}
 }
