@@ -43,7 +43,9 @@ The long workflow now lives in the shared Sandman skill. This page describes the
 
     ## Already Resolved
 
-    If the issue is already implemented on `{{BASE_BRANCH}}`, update `.sandman/task.md` so it contains the exact line `## Status: already resolved`.
+    If the issue is already implemented on `{{BASE_BRANCH}}`, after fetching and checking the current `origin/{{BASE_BRANCH}}` HEAD against the issue acceptance criteria, update `.sandman/task.md` so it contains the exact line `## Status: already resolved`.
+
+    Do not use issue closure, a matching local branch, or unmerged worktree changes as proof that the issue is already resolved. If any acceptance criterion is missing or you are not certain, continue with Plan.
 
     Do not paraphrase this line. Do not use `already implemented`, `no action required`, or any other wording for this marker.
     
@@ -153,6 +155,7 @@ The long workflow now lives in the shared Sandman skill. This page describes the
 - `Runtime Context` passes branch, base, and review metadata into the shared workflow.
 - `Execution Checklist` now tells the agent to skip already-complete items and keep the registered `## Next Step` aligned with the next unchecked item.
 - `Mandatory Execution Contract` forces the agent to load and obey the Sandman skill chain.
+- `Already Resolved` now requires checking the fetched `origin/{{BASE_BRANCH}}` HEAD against acceptance criteria and forbids using issue closure, local branch state, or unmerged worktree changes as proof.
 - `AFK Rule — Absolute` replaces human approval with subagent consensus for plan approval, and bans subagent use for PR review (must use `sandman-pr-review` skill). Self-review uses `sandman-self-review` skill.
 - `Search Scope Restriction` keeps recursive search (grep, rg, find) bounded to the working directory and explicitly named sub-paths, so agent context is not flooded by scans of system folders. It also requires `codeindex` first for symbol lookup, dependency lookup, and blast-radius discovery when `codeindex.json` exists. The rule propagates: the agent must forward it to every subagent it spawns or hands work off to, including subagents launched by Sandman or other loaded skills.
 - `Required Skill Chain` names the mandatory subskills the agent must follow.
