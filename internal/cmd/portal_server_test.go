@@ -2363,6 +2363,77 @@ func TestPortal_DedupKeepsActiveBatchAndHistoricalRows(t *testing.T) {
 	}
 }
 
+// TestPortal_Compute_CrossBatchRowsLockIn is the issue #1542
+// acceptance-criterion #3 regression path: rows for the same issue
+// rendered from two distinct batches (one historical via the event
+// log, one active via a live batch directory) must survive dedup as
+// two separate portal rows. Pre-#1541 the active row reached
+// dedupRuns with empty BatchKey and silently collapsed into the
+// historical row, hiding the current batch. The post-#1541 contract
+// pins two surviving rows with distinct BatchKey values.
+func TestPortal_Compute_CrossBatchRowsLockIn(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	historicalStartedAt := time.Now().Add(-2 * time.Hour)
+	historicalTerminalAt := historicalStartedAt.Add(5 * time.Minute)
+	activeStartedAt := time.Now().Add(-10 * time.Minute)
+
+	runDir := filepath.Join(repoRoot, ".sandman", "batches", "active-1")
+	activeSock := filepath.Join(runDir, "batch.sock")
+	if err := os.MkdirAll(runDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := daemon.WriteManifest(runDir, daemon.BatchManifest{Issues: []int{42}, CreatedAt: activeStartedAt}); err != nil {
+		t.Fatal(err)
+	}
+	ln, err := net.Listen("unix", activeSock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+	addBatchToIndex(t, repoRoot, "active-1", runDir, []int{42})
+
+	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
+		{Type: "run.started", Timestamp: historicalStartedAt, RunID: "historical-1-issue-42", Issue: 42, Payload: map[string]any{"branch": "sandman/42-historical", "batch_id": "historical-1"}},
+		{Type: "run.finished", Timestamp: historicalTerminalAt, RunID: "historical-1-issue-42", Issue: 42, Payload: map[string]any{"status": "aborted", "branch": "sandman/42-historical", "batch_id": "historical-1"}},
+	})
+
+	runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")})
+	if err != nil {
+		t.Fatalf("load portal runs: %v", err)
+	}
+
+	var issueRuns []portalRun
+	for _, run := range runs {
+		if run.IssueNumber == 42 {
+			issueRuns = append(issueRuns, run)
+		}
+	}
+	if len(issueRuns) != 2 {
+		t.Fatalf("expected 2 rows for issue 42 (one historical, one active), got %d: %#v", len(issueRuns), issueRuns)
+	}
+
+	var sawHistorical, sawActive bool
+	for _, run := range issueRuns {
+		switch run.BatchKey {
+		case "historical-1":
+			sawHistorical = true
+		case "active-1":
+			sawActive = true
+		default:
+			t.Fatalf("unexpected BatchKey for issue 42: %q (run: %#v)", run.BatchKey, run)
+		}
+	}
+	if !sawHistorical {
+		t.Fatal("expected historical row with BatchKey \"historical-1\" for issue 42")
+	}
+	if !sawActive {
+		t.Fatal("expected active row with BatchKey \"active-1\" for issue 42")
+	}
+}
+
 func TestPortal_Compute_LiveBatchTerminalRowsAreCompleted(t *testing.T) {
 	cases := []struct {
 		name      string
