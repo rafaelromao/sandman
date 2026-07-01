@@ -2818,14 +2818,15 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
       }
     }
 
-    async function loadRunDetail(runKey) {
+    async function loadRunDetail(runKey, opts) {
       const run = findRunByIdentity(runKey);
       if (!run) return;
       if (isWaitStateRun(run)) return;
+      const forceFetch = !!(opts && opts.forceFetch);
       const tabKey = run.runId || run.key;
       const currentTab = String((state.tabs && (state.tabs[tabKey] || state.tabs[run.key])) || 'log').trim();
       const subjectKey = subjectTabKey(runKey);
-      if (currentTab === 'details') return;
+      if (currentTab === 'details' && !forceFetch) return;
       if (loadingDetailKeys.has(subjectKey)) return;
       const hasLog = run.log && String(run.log).trim();
       const hasEvents = Object.prototype.hasOwnProperty.call(run, 'events');
@@ -2886,7 +2887,7 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
       persistPortalViewState();
       const opening = state.expandedRunKey && state.expandedRunKey !== prevExpandedRunKey;
       if (opening) {
-        loadRunDetail(state.expandedRunKey);
+        loadRunDetail(state.expandedRunKey, { forceFetch: true });
       }
       scheduleRender(() => {
         if (opening) {
@@ -2930,7 +2931,7 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
           state.tabs[subjectKey] = tab;
           state.expandedRunKey = subjectKey;
           persistPortalViewState();
-          loadRunDetail(subjectKey);
+          if (tab !== 'details') loadRunDetail(subjectKey);
           scheduleRender();
         }
         return;

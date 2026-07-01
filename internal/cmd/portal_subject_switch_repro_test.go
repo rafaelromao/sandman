@@ -962,6 +962,140 @@ func TestPortalRefresh_ExpandedRunShowsLoadingCursorWhileDetailFetchPending(t *t
 	}
 }
 
+func TestPortalRefresh_ExpandedDetailsTabShowsLoadingCursorWhileDetailFetchPending(t *testing.T) {
+	runID := "abcd-260618113825-issue-42"
+	summaryRun := map[string]any{
+		"key":         runID,
+		"runId":       runID,
+		"kind":        "active",
+		"status":      "running",
+		"issueLabel":  "#42",
+		"issueNumber": 42,
+		"batchKey":    "abcd-260618113825",
+		"log":         "",
+	}
+	detailRun := map[string]any{
+		"key":         runID,
+		"runId":       runID,
+		"kind":        "active",
+		"status":      "running",
+		"issueLabel":  "#42",
+		"issueNumber": 42,
+		"batchKey":    "abcd-260618113825",
+		"log":         "live log line 1\nlive log line 2",
+	}
+	runsJSON, err := json.Marshal([]map[string]any{summaryRun})
+	if err != nil {
+		t.Fatalf("marshal runs: %v", err)
+	}
+	detailRunJSON, err := json.Marshal(detailRun)
+	if err != nil {
+		t.Fatalf("marshal detail run: %v", err)
+	}
+	stateJSON := `{"expandedRunKey":null,"tabs":{"` + runID + `":"details"},"commandFormCollapsed":false,"showArchived":false,"activeBatches":false,"sortBy":"started","sortDir":"desc"}`
+
+	page := buildPortalReproPage(t, stateJSON, runsJSON, `
+    window.setInterval = function () { return 1; };
+    window.__portalFetchCalls = 0;
+    window.__portalDetailFetchCalls = 0;
+    window.__portalDetailResolve = null;
+    window.fetch = async function (input) {
+      window.__portalFetchCalls += 1;
+      var url = String(input || '');
+      if (url.indexOf('?summary=1') >= 0) {
+        return {
+          ok: true,
+          status: 200,
+          json: async function () { return { runs: `+string(runsJSON)+` }; },
+          text: async function () { return ''; },
+        };
+      }
+      if (url.indexOf('?runKey=`+runID+`') >= 0) {
+        window.__portalDetailFetchCalls += 1;
+        return {
+          ok: true,
+          status: 200,
+          json: async function () {
+            return await new Promise(function (resolve) {
+              window.__portalDetailResolve = resolve;
+            });
+          },
+          text: async function () { return ''; },
+        };
+      }
+      throw new Error('unexpected fetch ' + url);
+    };
+    setTimeout(function () {
+      var row = document.querySelector('tr[data-run-key="`+runID+`"]');
+      if (!row) throw new Error('missing run row');
+      row.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    }, 50);
+    setTimeout(function () {
+      var detail = document.querySelector('tr.detail-row[data-detail-for="`+runID+`"]');
+      var panel = detail && detail.querySelector('.detail-panel');
+      var marker = document.createElement('pre');
+      marker.id = 'portal-expanded-details-loading-before';
+      marker.textContent = JSON.stringify({
+        busy: !!(panel && panel.classList.contains('is-loading')),
+        ariaBusy: panel && panel.getAttribute('aria-busy'),
+        fetchCalls: window.__portalFetchCalls || 0,
+        detailFetchCalls: window.__portalDetailFetchCalls || 0,
+      });
+      document.body.appendChild(marker);
+      if (typeof window.__portalDetailResolve === 'function') {
+        window.__portalDetailResolve({ run: `+string(detailRunJSON)+` });
+      }
+    }, 150);
+    setTimeout(function () {
+      var detail = document.querySelector('tr.detail-row[data-detail-for="`+runID+`"]');
+      var panel = detail && detail.querySelector('.detail-panel');
+      var marker = document.createElement('pre');
+      marker.id = 'portal-expanded-details-loading-after';
+      marker.textContent = JSON.stringify({
+        busy: !!(panel && panel.classList.contains('is-loading')),
+        ariaBusy: panel && panel.getAttribute('aria-busy'),
+        fetchCalls: window.__portalFetchCalls || 0,
+        detailFetchCalls: window.__portalDetailFetchCalls || 0,
+      });
+      document.body.appendChild(marker);
+    }, 700);
+  `)
+
+	dom, _ := runPortalChromium(t, page)
+	before := extractPortalMarker(t, dom, "portal-expanded-details-loading-before")
+	after := extractPortalMarker(t, dom, "portal-expanded-details-loading-after")
+	var beforePayload struct {
+		Busy             bool   `json:"busy"`
+		AriaBusy         string `json:"ariaBusy"`
+		FetchCalls       int    `json:"fetchCalls"`
+		DetailFetchCalls int    `json:"detailFetchCalls"`
+	}
+	if err := json.Unmarshal([]byte(before), &beforePayload); err != nil {
+		t.Fatalf("parse expanded-details loading-before payload: %v\nraw=%s", err, before)
+	}
+	if !beforePayload.Busy || beforePayload.AriaBusy != "true" {
+		t.Fatalf("expected loading cursor on expanded details-tab open, got %#v", beforePayload)
+	}
+	if beforePayload.DetailFetchCalls < 1 {
+		t.Fatalf("expected detail fetch on expanded details-tab open, got %#v", beforePayload)
+	}
+	var afterPayload struct {
+		Busy             bool   `json:"busy"`
+		AriaBusy         string `json:"ariaBusy"`
+		FetchCalls       int    `json:"fetchCalls"`
+		DetailFetchCalls int    `json:"detailFetchCalls"`
+	}
+	if err := json.Unmarshal([]byte(after), &afterPayload); err != nil {
+		t.Fatalf("parse expanded-details loading-after payload: %v\nraw=%s", err, after)
+	}
+	if afterPayload.Busy || afterPayload.AriaBusy != "" {
+		t.Fatalf("expected loading cursor to clear after expanded details fetch settles, got %#v", afterPayload)
+	}
+	if afterPayload.DetailFetchCalls < 1 {
+		t.Fatalf("expected detail fetch to complete, got %#v", afterPayload)
+	}
+}
+
 func TestPortalRefresh_LogTabSwitchShowsLoadingCursorWhileDetailFetchPending(t *testing.T) {
 	runID := "abcd-260618113825-issue-42"
 	summaryRun := map[string]any{
