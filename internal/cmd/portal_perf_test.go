@@ -217,6 +217,59 @@ func TestPortalPerf_AsyncLargeLogRoundTrip(t *testing.T) {
 	runNodeScript(t, js)
 }
 
+// TestPortalPerf_AsyncMidBandTakesChunkedPath is the regression guard for
+// the threshold lowered from 32 KB to 16 KB (#1561). It has two assertions:
+//  1. Mid-band (~23 KB) log is above the new 16 KB threshold and below the
+//     old 32 KB threshold, so it takes the async chunked path on the new
+//     threshold (and would have taken the sync path on the old one). The
+//     pre must show data-rendering-log synchronously and data-rendered-log
+//     only after chunking completes.
+//  2. Small (~4 KB) log stays below the new 16 KB threshold and takes the
+//     synchronous path: data-rendered-log set synchronously, no lingering
+//     data-rendering-log.
+func TestPortalPerf_AsyncMidBandTakesChunkedPath(t *testing.T) {
+	js := `function bigLog(seed, n) { var L = []; for (var i = 0; i < n; i++) L.push(seed + ' step ' + i + ' import return function foo() bar baz qux'); return L.join('\n'); }
+	function waitForRender(pre, log, callback) {
+	  if (pre.getAttribute('data-rendered-log') === log) { callback(); return; }
+	  if (pre.getAttribute('data-rendering-log') !== log) { callback(new Error('rendering marker cleared without completion')); return; }
+	  setTimeout(function() { waitForRender(pre, log, callback); }, 10);
+	}
+
+	// --- Assertion 1: ~23 KB mid-band log takes the async chunked path. ---
+	const midbandLog = bigLog('midband', 400); // ~23 KB > 16 KB threshold
+	const midbandRun = { key: 'midband', kind: 'completed', status: 'success', issueLabel: 'M', runId: 'r-mid', log: midbandLog, startedAt: 1000, finishedAt: 2000, duration: 1, branch: 'main', logPath: '/tmp/mid.log' };
+	const midBody = makeMockBody();
+	const midOpts = { helpers, stopGroups: new Set(), expandedKey: 'midband', tabs: { midband: 'log' } };
+	sandbox.SandmanPortalDiff.diffRuns(midBody, [midbandRun], midOpts);
+	const midDetailRow = midBody.children[1];
+	const midPre = midDetailRow && midDetailRow.querySelector('pre[data-scroll-key]');
+	if (!midPre) throw new Error('expected log pre for mid-band run');
+	if (midPre.getAttribute('data-rendering-log') !== midbandLog) throw new Error('expected async pending marker for mid-band log (above new 16KB threshold)');
+	if (midPre.getAttribute('data-rendered-log')) throw new Error('expected rendered-log to stay empty while async render is pending');
+	waitForRender(midPre, midbandLog, function(err) {
+	  if (err) { console.error('FAIL: ' + err.message); return; }
+	  if (midPre.getAttribute('data-rendering-log')) throw new Error('expected async pending marker cleared after completion');
+	  if (midPre.getAttribute('data-rendered-log') !== midbandLog) throw new Error('expected rendered-log after async completion');
+	  if (midPre.textContent.indexOf('midband step 0') === -1) throw new Error('expected mid-band log content after completion');
+
+	  // --- Assertion 2: ~4 KB small log still takes the synchronous path. ---
+	  const smallLog = bigLog('small', 70); // ~4 KB < 16 KB threshold
+	  const smallRun = { key: 'small', kind: 'completed', status: 'success', issueLabel: 'S', runId: 'r-small', log: smallLog, startedAt: 1000, finishedAt: 2000, duration: 1, branch: 'main', logPath: '/tmp/small.log' };
+	  const smallBody = makeMockBody();
+	  const smallOpts = { helpers, stopGroups: new Set(), expandedKey: 'small', tabs: { small: 'log' } };
+	  sandbox.SandmanPortalDiff.diffRuns(smallBody, [smallRun], smallOpts);
+	  const smallDetailRow = smallBody.children[1];
+	  const smallPre = smallDetailRow && smallDetailRow.querySelector('pre[data-scroll-key]');
+	  if (!smallPre) throw new Error('expected log pre for small run');
+	  if (smallPre.getAttribute('data-rendered-log') !== smallLog) throw new Error('expected sync rendered-log set immediately for small log');
+	  if (smallPre.getAttribute('data-rendering-log')) throw new Error('expected sync path: no lingering data-rendering-log for small log');
+	  if (smallPre.textContent.indexOf('small step 0') === -1) throw new Error('expected small log content after sync render');
+	  console.log('PASS');
+	});
+`
+	runNodeScript(t, js)
+}
+
 // TestPortalPerf_AsyncLargeLogInflightTabSwitch verifies that switching to
 // the details tab while a large log is still chunking cancels the in-flight
 // render and reuses the cached pane on return. The per-element generation
