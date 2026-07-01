@@ -57,3 +57,30 @@ console.log('PASS');
 `
 	runNodeScript(t, js)
 }
+
+// TestPortalPerf_PrewarmLogPaneCache_PicksTopNActiveFirst verifies the
+// top-N selection (issue #1564 spec): active runs first, then by
+// lastOutputAt desc, capped at topN. The fixture has 3 active and 2
+// completed runs; with topN=3, the 3 active subject keys are cached
+// and the completed ones are not.
+func TestPortalPerf_PrewarmLogPaneCache_PicksTopNActiveFirst(t *testing.T) {
+	js := `const runs = [
+  { key: 'a1', runId: 'a1', kind: 'active', status: 'running', issueLabel: '#1', lastOutputAt: '2024-01-01T00:00:01Z', log: 'active one' },
+  { key: 'a2', runId: 'a2', kind: 'active', status: 'running', issueLabel: '#2', lastOutputAt: '2024-01-01T00:00:03Z', log: 'active two' },
+  { key: 'a3', runId: 'a3', kind: 'active', status: 'running', issueLabel: '#3', lastOutputAt: '2024-01-01T00:00:02Z', log: 'active three' },
+  { key: 'c1', runId: 'c1', kind: 'completed', status: 'success', issueLabel: '#4', log: 'completed one' },
+  { key: 'c2', runId: 'c2', kind: 'completed', status: 'success', issueLabel: '#5', log: 'completed two' },
+];
+const n = sandbox.SandmanPortalDiff.prewarmLogPaneCache(runs, helpers, { topN: 3 });
+if (n !== 3) throw new Error('expected 3 newly cached, got ' + n);
+if (sandbox.SandmanPortalDiff.getLogPaneCacheSize() !== 3) throw new Error('expected cache size 3, got ' + sandbox.SandmanPortalDiff.getLogPaneCacheSize());
+for (const key of ['a1', 'a2', 'a3']) {
+  if (!sandbox.SandmanPortalDiff.hasLogPaneCached(key)) throw new Error('expected active subject ' + key + ' to be cached');
+}
+for (const key of ['c1', 'c2']) {
+  if (sandbox.SandmanPortalDiff.hasLogPaneCached(key)) throw new Error('expected completed subject ' + key + ' NOT to be cached');
+}
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}

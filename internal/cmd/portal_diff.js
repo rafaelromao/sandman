@@ -46,6 +46,44 @@
     return pane;
   }
 
+  // prewarmLogPaneCache selects the top-N most-likely-to-be-clicked runs
+  // and feeds each through tokenizeForCache. Selection order (issue
+  // #1564 spec): active runs first, then completed; within each group,
+  // most-recently-chatted first (lastOutputAt desc, falling back to
+  // startedAt, then 0). Capped at opts.topN (default 3). Returns the
+  // number of runs newly cached; idempotent across repeat calls because
+  // tokenizeForCache is a no-op when the subject is already cached.
+  // opts.disabled = true short-circuits the work entirely (issue #1564
+  // open question: power-user opt-out for small screens).
+  const PREWARM_DEFAULT_TOP_N = 3;
+  function prewarmLogPaneCache(runs, helpers, opts) {
+    const options = opts || {};
+    if (options.disabled) return 0;
+    const topN = Number.isFinite(options.topN) && options.topN >= 0 ? options.topN : PREWARM_DEFAULT_TOP_N;
+    if (!Array.isArray(runs) || topN === 0) return 0;
+    const candidates = [];
+    for (const run of runs) {
+      if (!run) continue;
+      const subjectValue = subjectRunValue(run);
+      if (!subjectValue) continue;
+      const log = run.log && String(run.log).trim();
+      if (!log) continue;
+      const ts = Date.parse(run.lastOutputAt || run.startedAt || '') || 0;
+      candidates.push({ run, subjectValue, kind: run.kind === 'active' ? 0 : 1, ts });
+    }
+    candidates.sort((a, b) => {
+      if (a.kind !== b.kind) return a.kind - b.kind;
+      return b.ts - a.ts;
+    });
+    let added = 0;
+    for (let i = 0; i < candidates.length && added < topN; i += 1) {
+      if (logPaneCache.has(candidates[i].subjectValue)) continue;
+      const pane = tokenizeForCache(candidates[i].run, helpers);
+      if (pane) added += 1;
+    }
+    return added;
+  }
+
   function markCachedLogPaneForBottom(pane) {
     if (!pane || !pane.querySelector) return;
     const pre = pane.querySelector('pre[data-scroll-key]');
@@ -1668,6 +1706,7 @@
     cheapEventsFingerprint,
     cheapDetailsFingerprint,
     tokenizeForCache,
+    prewarmLogPaneCache,
     getLogPaneCacheSize: () => logPaneCache.size,
     hasLogPaneCached: (subjectValue) => logPaneCache.has(subjectValue),
   };
