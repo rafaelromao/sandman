@@ -42,6 +42,15 @@ The runs table displays these columns: **Run**, **Status**, **Started**, **Durat
 
 The portal rescans the repository on each poll, so new `sandman run` processes appear without restarting it.
 
+### Review run identity in the portal
+
+Review runs are ordinary AgentRuns. Each row in the runs table — including review runs — is keyed by a canonical per-row RunID minted per [ADR-0030](../adr/0030-standardize-run-id-and-run-dir.md) §Per-row RunID templates:
+
+- **Review without a linked issue:** the row RunID is `<shortid>-<ts>-PR<pr>` (e.g. `abcd-260625120000-PR42`).
+- **Review with a linked issue:** the row RunID is `<shortid>-<ts>-<linkedIssue>-PR<pr>` (e.g. `abcd-260625120000-1551-PR42`).
+
+The row folder under `.sandman/batches/<batch-id>/runs/<runID>/` is named after that per-row RunID — never after a `runs/review` alias — so logs, sockets, and `review-state.json` live under a folder whose name matches the row identity surfaced in the UI. `.sandman/reviews/` is reserved for the review daemon's own files (`review.sock`, `review-prompt.md`) and never holds per-row run folders. See `CONTEXT.md` §Review run for the canonical glossary entry.
+
 ## Stop (Abort)
 
 Use the **Stop** button in the portal UI to abort a running issue. The portal calls:

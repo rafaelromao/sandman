@@ -2486,3 +2486,239 @@ func TestPortalRuns_ReviewAndImplRowsSeparateForSameIssue(t *testing.T) {
 		t.Fatal("expected review row Review=true")
 	}
 }
+
+// TestPortal_RunFromState_ActiveEmptyKeyUsesHelperFallback pins issue
+// #1541 for the runFromState active branch: an active instance whose
+// Key, BatchID, and Dir are all empty (a degraded index entry) must
+// still produce a non-empty BatchKey via the synthetic RunID sentinel.
+func TestPortal_RunFromState_ActiveEmptyKeyUsesHelperFallback(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	startedAt := time.Now().Add(-1 * time.Minute)
+	active := &portalActiveRun{
+		Key:         "",
+		BatchID:     "",
+		Dir:         "",
+		RunID:       "ghost-active-issue-42",
+		IssueNumber: 42,
+		StartedAt:   startedAt,
+	}
+	state := events.RunState{
+		RunID: "ghost-active-issue-42",
+		Started: events.Event{
+			Timestamp: startedAt,
+			Payload:   map[string]any{"issue": float64(42)},
+		},
+	}
+
+	run := (&portalRunsView{}).runFromState(repoRoot, state, active, nil, nil)
+
+	if run.BatchKey == "" {
+		t.Fatalf("expected non-empty BatchKey from helper fallback, got empty")
+	}
+	if run.BatchKey != "active-ghost-active-issue-42" {
+		t.Fatalf("expected BatchKey %q (sentinel), got %q", "active-ghost-active-issue-42", run.BatchKey)
+	}
+}
+
+// TestPortal_RunFromActiveBatchIssue_EmptyKeyStillHasBatchIdentity
+// pins issue #1541: a live instance whose Key is empty must still
+// produce a non-empty BatchKey across queued and blocked statuses.
+func TestPortal_RunFromActiveBatchIssue_EmptyKeyStillHasBatchIdentity(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	sockDir := filepath.Join(repoRoot, "sock")
+	if err := os.MkdirAll(sockDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	sockPath := filepath.Join(sockDir, "b.sock")
+	ln, err := net.Listen("unix", sockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+
+	startedAt := time.Now().Add(-2 * time.Minute)
+	active := portalActiveRun{
+		Key:          "",
+		BatchID:      "",
+		Dir:          filepath.Join(repoRoot, "batches", "current-batch-42"),
+		SocketPath:   sockPath,
+		RunID:        "current-batch-42-issue-42",
+		IssueNumbers: []int{42},
+		StartedAt:    startedAt,
+	}
+
+	cases := []struct {
+		name string
+		run  portalRun
+	}{
+		{
+			name: "queued state preserves identity",
+			run:  (&portalRunsView{}).runFromActiveBatchIssue(repoRoot, active, 42, nil, nil, nil, "", nil, nil),
+		},
+		{
+			name: "blocked state preserves identity",
+			run: func() portalRun {
+				blocked := &events.Event{Type: "run.blocked", Timestamp: startedAt, RunID: "blocked-run", Issue: 42, Payload: map[string]any{}}
+				return (&portalRunsView{}).runFromActiveBatchIssue(repoRoot, active, 42, nil, blocked, nil, "", nil, nil)
+			}(),
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.run.BatchKey == "" {
+				t.Fatalf("expected BatchKey to be non-empty (derived from runDir), got empty (status=%q)", tc.run.Status)
+			}
+			if tc.run.BatchKey != "current-batch-42" {
+				t.Fatalf("expected BatchKey %q (from Dir basename), got %q", "current-batch-42", tc.run.BatchKey)
+			}
+		})
+	}
+}
+
+// TestPortal_RunFromActiveMatch_NormalizesBatchIdentity pins issue
+// #1541 for the prompt-only / auto-select path: an active instance
+// whose Key is empty must still reach dedup with a non-empty BatchKey.
+func TestPortal_RunFromActiveMatch_NormalizesBatchIdentity(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	sockDir := filepath.Join(repoRoot, "sock")
+	if err := os.MkdirAll(sockDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	sockPath := filepath.Join(sockDir, "batch.sock")
+	ln, err := net.Listen("unix", sockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+
+	startedAt := time.Now().Add(-1 * time.Minute)
+	match := portalRunMatch{
+		instance: portalActiveRun{
+			Key:         "",
+			BatchID:     "manifest-42",
+			Dir:         sockDir,
+			SocketPath:  sockPath,
+			RunID:       "manifest-42-prompt",
+			IssueNumber: 0,
+			ModTime:     startedAt,
+		},
+	}
+
+	run := (&portalRunsView{}).runFromActiveMatch(repoRoot, match, nil, nil)
+
+	if run.BatchKey == "" {
+		t.Fatalf("expected BatchKey to be non-empty (derived from BatchID), got empty")
+	}
+	if run.BatchKey != "manifest-42" {
+		t.Fatalf("expected BatchKey %q (derived from BatchID), got %q", "manifest-42", run.BatchKey)
+	}
+}
+
+// TestPortal_DedupRuns_DifferentBatchesRemainSeparate pins issue
+// #1541's second acceptance criterion: rows from different batches
+// for the same issue number survive dedupRuns as two separate rows.
+func TestPortal_DedupRuns_DifferentBatchesRemainSeparate(t *testing.T) {
+	v := &portalRunsView{}
+	base := time.Now().Add(-5 * time.Minute)
+	runs := []portalRun{
+		{Key: "historical-issue-42", Kind: "completed", Status: "aborted", IssueNumber: 42, StartedAt: base.Add(-time.Hour), BatchKey: ""},
+		{Key: "current-issue-42", Kind: "active", Status: "running", IssueNumber: 42, StartedAt: base, BatchKey: "current-derived"},
+	}
+
+	result := v.dedupRuns(runs)
+
+	if len(result) != 2 {
+		t.Fatalf("expected rows from different batches to stay separate (2 rows), got %d: %#v", len(result), result)
+	}
+	gotKeys := map[string]string{}
+	for _, r := range result {
+		gotKeys[r.Key] = r.BatchKey
+	}
+	if gotKeys["historical-issue-42"] != "" {
+		t.Fatalf("historical row lost BatchKey: %#v", result)
+	}
+	if gotKeys["current-issue-42"] != "current-derived" {
+		t.Fatalf("current-batch row lost BatchKey: %#v", result)
+	}
+}
+
+// TestPortal_DedupRuns_SameBatchRowsStillCollapse is the regression
+// guard for issue #1541's third acceptance criterion: same-batch
+// duplicate rows continue to collapse through dedupRuns.
+func TestPortal_DedupRuns_SameBatchRowsStillCollapse(t *testing.T) {
+	v := &portalRunsView{}
+	base := time.Now().Add(-5 * time.Minute)
+	runs := []portalRun{
+		{Key: "active-1-issue-42", Kind: "active", Status: "running", IssueNumber: 42, StartedAt: base, BatchKey: "active-1"},
+		{Key: "active-1-issue-42-dup", Kind: "active", Status: "queued", IssueNumber: 42, StartedAt: base.Add(time.Second), BatchKey: "active-1"},
+	}
+
+	result := v.dedupRuns(runs)
+
+	if len(result) != 1 {
+		t.Fatalf("expected same-batch rows to collapse to 1, got %d: %#v", len(result), result)
+	}
+	if result[0].BatchKey != "active-1" {
+		t.Fatalf("expected collapsed row to retain BatchKey %q, got %q", "active-1", result[0].BatchKey)
+	}
+}
+
+// TestPortal_BatchKeyForActive_FallbackChain pins the contract for
+// batchKeyForActive: every fallback level must return a non-empty
+// string so active rows never reach dedupRuns with an empty BatchKey.
+func TestPortal_BatchKeyForActive_FallbackChain(t *testing.T) {
+	cases := []struct {
+		name   string
+		active portalActiveRun
+		want   string
+	}{
+		{
+			name:   "Key wins when populated",
+			active: portalActiveRun{Key: "active-1", BatchID: "manifest-1", Dir: "/tmp/active-1", RunID: "active-1-issue-42"},
+			want:   "active-1",
+		},
+		{
+			name:   "BatchID used when Key is empty",
+			active: portalActiveRun{Key: "", BatchID: "manifest-2", Dir: "/tmp/active-2", RunID: "active-2-issue-42"},
+			want:   "manifest-2",
+		},
+		{
+			name:   "Dir basename used when Key and BatchID are empty",
+			active: portalActiveRun{Key: "", BatchID: "", Dir: "/tmp/active-3", RunID: "active-3-issue-42"},
+			want:   "active-3",
+		},
+		{
+			name:   "Dot dir falls back to synthetic sentinel",
+			active: portalActiveRun{Key: "", BatchID: "", Dir: ".", RunID: "active-4-issue-42"},
+			want:   "active-active-4-issue-42",
+		},
+		{
+			name:   "All empty inputs still produce a non-empty sentinel",
+			active: portalActiveRun{Key: "", BatchID: "", Dir: "", RunID: "active-5-issue-42"},
+			want:   "active-active-5-issue-42",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := batchKeyForActive(tc.active)
+			if got != tc.want {
+				t.Fatalf("batchKeyForActive = %q, want %q", got, tc.want)
+			}
+			if got == "" {
+				t.Fatal("batchKeyForActive must never return empty string")
+			}
+		})
+	}
+}
