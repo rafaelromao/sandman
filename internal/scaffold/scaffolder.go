@@ -807,11 +807,10 @@ var pythonResolver = versionResolver{
 }
 
 // elixirResolver is the versionResolver configuration for Elixir. The
-// normalize hook accepts mise-style selectors ("1.18", "~> 1.18", "v1.18")
-// and the bare Elixir version form ("1.18.4"). passThroughValid lets the
-// selector flow through to the mise call when the bundled catalog misses,
-// so "~> 1.18" and arbitrary user-supplied selectors stay usable when mise
-// is reachable.
+// normalize hook accepts mise-style selectors ("1.18", "v1.18") and the
+// bare Elixir version form ("1.18.4"). We deliberately do not pass range
+// selectors through when the bundled catalog misses: scaffolded Dockerfiles
+// must pin an exact version or fail.
 var elixirResolver = versionResolver{
 	label:      "Elixir",
 	miseTool:   "elixir",
@@ -827,21 +826,6 @@ var elixirResolver = versionResolver{
 		return selector
 	},
 	catalog: bundledElixirVersionCatalog,
-	passThroughValid: func(selector string) bool {
-		selector = strings.TrimSpace(selector)
-		if selector == "" || strings.EqualFold(selector, "latest") || strings.EqualFold(selector, "lts") {
-			return false
-		}
-		if strings.HasPrefix(selector, "~>") {
-			return true
-		}
-		for _, c := range selector {
-			if c >= '0' && c <= '9' {
-				return true
-			}
-		}
-		return false
-	},
 }
 
 // resolveVersion resolves a version for a single tool, reading the repo hint,

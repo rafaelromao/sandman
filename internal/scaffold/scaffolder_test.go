@@ -1978,6 +1978,20 @@ func TestScaffold_ElixirPresetResolveVersion_ExplicitSelector(t *testing.T) {
 	}
 }
 
+func TestScaffold_ElixirPresetRejectsRangeSelectorFallback(t *testing.T) {
+	dir := t.TempDir()
+	fakeMise := filepath.Join(dir, "mise")
+	if err := os.WriteFile(fakeMise, []byte("#!/bin/sh\nexit 0\n"), 0755); err != nil {
+		t.Fatalf("write fake mise: %v", err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	s := &Scaffolder{}
+	if _, err := s.resolveElixirVersion(dir, "~> 1.18", &fakePrompter{confirm: true}); err == nil {
+		t.Fatal("expected range selector fallback to fail when mise and catalog miss")
+	}
+}
+
 func TestScaffold_DeriveErlangOTPFromElixirVersion(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -2076,7 +2090,7 @@ func TestScaffold_ElixirPresetAllAgentsGenerateFiles(t *testing.T) {
 	for agent := range config.BuiltInAgentPresets {
 		t.Run(agent, func(t *testing.T) {
 			dir := t.TempDir()
-			if err := os.WriteFile(filepath.Join(dir, "mix.exs"), []byte("defmodule Demo.MixProject do\n  use Mix.Project\n  def project do\n    [app: :demo, version: \"0.1.0\", elixir: \"~> 1.18\"]\n  end\nend\n"), 0644); err != nil {
+			if err := os.WriteFile(filepath.Join(dir, "mix.exs"), []byte("defmodule Demo.MixProject do\n  use Mix.Project\n  def project do\n    [app: :demo, version: \"0.1.0\", elixir: \"1.18.4\"]\n  end\nend\n"), 0644); err != nil {
 				t.Fatalf("write mix.exs: %v", err)
 			}
 
