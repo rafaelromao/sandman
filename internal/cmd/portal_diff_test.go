@@ -575,11 +575,40 @@ if (result.inserted < 1) throw new Error('expected rows to be inserted, got ' + 
 if (body.querySelector('tr[data-run-key="review-stub-1"]')) throw new Error('expected no synthetic stub row with placeholder key');
 const visibleRow = body.querySelector('tr[data-run-key="PR42"]');
 if (!visibleRow) throw new Error('expected orphan review visible under its real RunID, got ' + body.innerHTML);
+	const detailRow = body.querySelector('tr.detail-row[data-detail-for="PR42"]');
+	if (!detailRow) throw new Error('expected detail row keyed by the orphan review RunID');
+	// A review-only orphan row is always alone (single subject), so there is
+	// nothing to switch between and no subject selector should render. Its
+	// detail panel shows the review's own content directly.
+	const subjectSelect = detailRow.querySelector('select[data-action="set-subject"]');
+	if (subjectSelect) throw new Error('expected no subject selector for a single orphan review, got ' + subjectSelect.children.length + ' options');
+	console.log('PASS');
+	`
+	runNodeScript(t, js)
+}
+
+// TestPortalDiffDiffRuns_SubjectSelectorExcludesUndefinedIssueRuns is the
+// #1615 regression for the loose issueNumber guard: runs with a missing or
+// non-integer issueNumber must never be grouped together (the old
+// `issueNumber <= 0` check let `undefined` through, grouping unrelated
+// no-issue rows by undefined and producing a giant spurious selector on a
+// review-only orphan).
+func TestPortalDiffDiffRuns_SubjectSelectorExcludesUndefinedIssueRuns(t *testing.T) {
+	js := `const body = makeMockBody();
+// Orphan review with no issueNumber at all — the expanded row.
+const orphan = { key: 'PR42', runId: 'PR42', review: true, issueLabel: 'Review of #5', prNumber: 42, kind: 'active', status: 'reviewing', startedAt: '2026-06-30T12:00:00Z' };
+// Unrelated runs that carry NO issueNumber (prompt-only / auto-select rows).
+// These must be ignored entirely, never grouped onto the orphan.
+const noIssue1 = { key: 'prompt-a', runId: 'prompt-a', issueLabel: 'Prompt', kind: 'active', status: 'running' };
+const noIssue2 = { key: 'auto-b', runId: 'auto-b', issueLabel: 'Auto', kind: 'active', status: 'running' };
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: 'PR42', runs: [orphan, noIssue1, noIssue2], visibleRuns: [orphan] };
+const result = SandmanPortalDiff.diffRuns(body, [orphan], opts);
+if (result.inserted < 1) throw new Error('expected rows to be inserted, got ' + JSON.stringify(result));
 const detailRow = body.querySelector('tr.detail-row[data-detail-for="PR42"]');
-if (!detailRow) throw new Error('expected detail row keyed by the orphan review RunID');
+if (!detailRow) throw new Error('expected detail row for the orphan review');
 const subjectSelect = detailRow.querySelector('select[data-action="set-subject"]');
-if (!subjectSelect || subjectSelect.children.length !== 1) throw new Error('expected exactly one option for single orphan review, got ' + (subjectSelect && subjectSelect.children.length));
-if (subjectSelect.children[0].getAttribute('value') !== 'PR42') throw new Error('expected picker option to match review RunID, got ' + subjectSelect.children[0].getAttribute('value'));
+if (subjectSelect) throw new Error('expected no subject selector on a single-subject orphan, and undefined-issue runs must never join it, got ' + subjectSelect.children.length + ' options');
 console.log('PASS');
 `
 	runNodeScript(t, js)
@@ -636,8 +665,7 @@ const stopGroups = new Set();
 const opts1 = { helpers, stopGroups, expandedKey: 'issue-1', runs: [parentRun] };
 const created = SandmanPortalDiff.insertRunRow(body, parentRun, opts1);
 const subjectSelectBefore = created.detailRow.querySelector('select[data-action="set-subject"]');
-if (!subjectSelectBefore) throw new Error('expected subject selector before refresh');
-if (subjectSelectBefore.children.length !== 1) throw new Error('expected single parent option before child review appears, got ' + subjectSelectBefore.children.length);
+if (subjectSelectBefore) throw new Error('expected no subject selector before a child review appears (nothing to switch between), got ' + subjectSelectBefore.children.length + ' options');
 SandmanPortalDiff.resetCounters();
 const opts2 = { helpers, stopGroups, expandedKey: 'issue-1', runs: [parentRun, childReview] };
 SandmanPortalDiff.diffRuns(body, [parentRun], opts2);
@@ -661,16 +689,14 @@ const result = SandmanPortalDiff.diffRuns(body, [review], opts);
 if (result.inserted < 1) throw new Error('expected rows to be inserted, got ' + JSON.stringify(result));
 const visibleRow = body.querySelector('tr[data-run-key="PR42"]');
 if (!visibleRow) throw new Error('expected review row visible under its real RunID, got ' + body.innerHTML);
-const detailRow = body.querySelector('tr.detail-row[data-detail-for="PR42"]');
-if (!detailRow) throw new Error('expected detail row for the orphan review');
-const subjectSelect = detailRow.querySelector('select[data-action="set-subject"]');
-if (!subjectSelect) throw new Error('expected subject selector on orphan review detail row');
-if (subjectSelect.children.length !== 1) throw new Error('expected exactly one option on orphan review picker, got ' + subjectSelect.children.length);
-if (subjectSelect.children[0].getAttribute('value') !== 'PR42') throw new Error('expected orphan review option to use the review RunID, got ' + subjectSelect.children[0].getAttribute('value'));
-if (subjectSelect.value !== 'PR42') throw new Error('expected picker default value to match the review RunID, got ' + subjectSelect.value);
-if (subjectSelect.children[0].getAttribute('selected') !== 'selected') throw new Error('expected orphan review option to be selected by default');
-console.log('PASS');
-`
+	const detailRow = body.querySelector('tr.detail-row[data-detail-for="PR42"]');
+	if (!detailRow) throw new Error('expected detail row for the orphan review');
+	// A single review-only orphan is always alone: nothing to switch between,
+	// so no subject selector should render on its detail row.
+	const subjectSelect = detailRow.querySelector('select[data-action="set-subject"]');
+	if (subjectSelect) throw new Error('expected no subject selector for a single orphan review, got ' + subjectSelect.children.length + ' options');
+	console.log('PASS');
+	`
 	runNodeScript(t, js)
 }
 
@@ -1860,14 +1886,15 @@ func TestPortalDiffUpdateDetailEvents_IgnoresSubjectPickerChurn(t *testing.T) {
 	js := `const body = makeMockBody();
 const parentRun = { key: 'issue-1', kind: 'active', status: 'reviewing', issueLabel: '#1', runId: 'issue-1', issueNumber: 1, reviewCount: 1, events: [{ type: 'start', timestamp: 1700000000000, payload: { ok: true } }] };
 const reviewRun = { key: 'PR42', kind: 'completed', status: 'success', review: true, issueLabel: 'PR42', runId: 'PR42', issueNumber: 1, prNumber: 42 };
+const reviewRun2 = { key: 'PR43', kind: 'completed', status: 'success', review: true, issueLabel: 'PR43', runId: 'PR43', issueNumber: 1, prNumber: 43 };
 const stopGroups = new Set();
-const opts1 = { helpers, stopGroups, expandedKey: 'issue-1', tabs: { 'issue-1': 'events' }, runs: [parentRun], visibleRuns: [parentRun] };
+const opts1 = { helpers, stopGroups, expandedKey: 'issue-1', tabs: { 'issue-1': 'events' }, runs: [parentRun, reviewRun], visibleRuns: [parentRun] };
 SandmanPortalDiff.diffRuns(body, [parentRun], opts1);
 const detailRow = body.children[1];
 const content1 = detailRow.querySelector('.detail-content');
 const pre1 = detailRow.querySelector('pre[data-rendered-json]');
 if (!content1 || !pre1) throw new Error('expected initial events content');
-const opts2 = { helpers, stopGroups, expandedKey: 'issue-1', tabs: { 'issue-1': 'events' }, runs: [parentRun, reviewRun], visibleRuns: [parentRun] };
+const opts2 = { helpers, stopGroups, expandedKey: 'issue-1', tabs: { 'issue-1': 'events' }, runs: [parentRun, reviewRun, reviewRun2], visibleRuns: [parentRun] };
 SandmanPortalDiff.resetCounters();
 SandmanPortalDiff.diffRuns(body, [parentRun], opts2);
 const counters = SandmanPortalDiff.getCounters();
@@ -1932,14 +1959,15 @@ func TestPortalDiffUpdateDetailDetails_IgnoresSubjectPickerChurn(t *testing.T) {
 	js := `const body = makeMockBody();
 const parentRun = { key: 'issue-1', kind: 'completed', status: 'success', issueLabel: '#1', runId: 'issue-1', issueNumber: 1, reviewCount: 1, startedAt: 1000, finishedAt: 2000, duration: 1, branch: 'main', logPath: '/tmp/run.log' };
 const reviewRun = { key: 'PR42', kind: 'completed', status: 'success', review: true, issueLabel: 'PR42', runId: 'PR42', issueNumber: 1, prNumber: 42 };
+const reviewRun2 = { key: 'PR43', kind: 'completed', status: 'success', review: true, issueLabel: 'PR43', runId: 'PR43', issueNumber: 1, prNumber: 43 };
 const stopGroups = new Set();
-const opts1 = { helpers, stopGroups, expandedKey: 'issue-1', tabs: { 'issue-1': 'details' }, runs: [parentRun], visibleRuns: [parentRun] };
+const opts1 = { helpers, stopGroups, expandedKey: 'issue-1', tabs: { 'issue-1': 'details' }, runs: [parentRun, reviewRun], visibleRuns: [parentRun] };
 SandmanPortalDiff.diffRuns(body, [parentRun], opts1);
 const detailRow = body.children[1];
 const content1 = detailRow.querySelector('.detail-content');
 const pre1 = detailRow.querySelector('pre[data-rendered-json]');
 if (!content1 || !pre1) throw new Error('expected initial details content');
-const opts2 = { helpers, stopGroups, expandedKey: 'issue-1', tabs: { 'issue-1': 'details' }, runs: [parentRun, reviewRun], visibleRuns: [parentRun] };
+const opts2 = { helpers, stopGroups, expandedKey: 'issue-1', tabs: { 'issue-1': 'details' }, runs: [parentRun, reviewRun, reviewRun2], visibleRuns: [parentRun] };
 SandmanPortalDiff.resetCounters();
 SandmanPortalDiff.diffRuns(body, [parentRun], opts2);
 const counters = SandmanPortalDiff.getCounters();
@@ -4088,9 +4116,9 @@ console.log('PASS');
 
 // TestPortalDiffDiffRuns_OrphanReviewWithReviewOnlyLabelExpandsToDetailPanel
 // covers behaviour #4 of issue #1526 at the DOM level: the review-only
-// orphan row must expand to a detail panel keyed by its own runId, and
-// the panel must surface the review run's content (subject picker with
-// the review run as the sole option). The visible row here mirrors what
+// orphan row must expand to a detail panel keyed by its own runId, surfacing
+// the review run's content directly. A review-only orphan is always alone, so
+// no subject selector should render. The visible row here mirrors what
 // visibleRunForIssueGroup produces: identity fields from the review run
 // with an explicit "Review of #N" issueLabel.
 func TestPortalDiffDiffRuns_OrphanReviewWithReviewOnlyLabelExpandsToDetailPanel(t *testing.T) {
@@ -4108,9 +4136,7 @@ if (aria !== 'true') throw new Error('expected review-only orphan row to be expa
 const detailRow = body.querySelector('tr.detail-row[data-detail-for="PR1508"]');
 if (!detailRow) throw new Error('expected detail row keyed by the orphan review RunID');
 const subjectSelect = detailRow.querySelector('select[data-action="set-subject"]');
-if (!subjectSelect) throw new Error('expected subject selector on review-only orphan detail row');
-if (subjectSelect.children.length !== 1) throw new Error('expected exactly one subject option for single review-only orphan, got ' + subjectSelect.children.length);
-if (subjectSelect.children[0].getAttribute('value') !== 'PR1508') throw new Error('expected subject option to use review RunID, got ' + subjectSelect.children[0].getAttribute('value'));
+if (subjectSelect) throw new Error('expected no subject selector on a review-only orphan (always alone), got ' + subjectSelect.children.length + ' options');
 console.log('PASS');
 `
 	runNodeScript(t, js)

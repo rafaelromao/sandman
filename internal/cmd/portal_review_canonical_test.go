@@ -723,6 +723,85 @@ if (visible.batchKey !== 'impl-` + strconv.Itoa(issue) + `') throw new Error('ex
 	}
 }
 
+// TestPortal_DiscoverActiveRuns_ReviewIdentityFromBatchDirPreservesIssueIdentity
+// pins the residual #1615 regression: when a live review batch has no
+// parseable `runs/<run-id>` child folder (so reviewRunIdentityForBatchDir yields
+// nothing), the portal must still recover the review's issue number from the
+// active review identity itself — the resolved runID, the batchID, or the
+// batches-index instance name, all of which encode `<issue>-PR<number>`.
+// Without this, the review row falls through with IssueNumber=0 and renders as
+// a standalone passthrough row instead of grouping under the canonical issue
+// row.
+func TestPortal_DiscoverActiveRuns_ReviewIdentityFromBatchDirPreservesIssueIdentity(t *testing.T) {
+	repoRoot, err := os.MkdirTemp("/tmp", "pri")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(repoRoot) })
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// The batch directory itself encodes the issue+PR (matching the live
+	// shape observed in the wild, e.g. `d42a-260701172902-137-PR1614`).
+	// There is intentionally NO `runs/<...>-137-PR1614/` child folder, so
+	// the folder-based recovery path cannot fire.
+	const issueNumber = 137
+	const batchID = "d42a-260701172902-137-PR1614"
+
+	batchDir := filepath.Join(repoRoot, ".sandman", "batches", batchID)
+	if err := os.MkdirAll(batchDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	createUnixRunSocket(t, filepath.Join(batchDir, "batch.sock"))
+
+	startedAt := time.Now().Add(-4 * time.Minute)
+	if err := daemon.WriteManifest(batchDir, daemon.BatchManifest{
+		BatchId:   batchID,
+		RunKind:   "review",
+		PR:        intPtr(1614),
+		Issues:    []int{},
+		CreatedAt: startedAt,
+	}); err != nil {
+		t.Fatalf("write batch manifest: %v", err)
+	}
+
+	layout := paths.NewLayout(nil, repoRoot)
+	batchesIdx := &batchindex.Index{
+		Version: batchindex.IndexVersion,
+		Entries: []batchindex.Entry{{
+			ID:        batchID,
+			Path:      batchDir,
+			Kind:      batchindex.KindReview,
+			Status:    batchindex.StatusActive,
+			CreatedAt: startedAt,
+			PR:        1614,
+		}},
+	}
+	if err := batchesIdx.Save(layout.BatchesIndexPath); err != nil {
+		t.Fatal(err)
+	}
+
+	// No events: the recovery must rely on the encoded identity, not on a
+	// replayed review run.started event.
+	active, err := (&portalRunsView{}).discoverActiveRuns(repoRoot, map[string][]portalEvent{})
+	if err != nil {
+		t.Fatalf("discoverActiveRuns: %v", err)
+	}
+	if len(active) != 1 {
+		t.Fatalf("expected 1 active instance, got %d: %#v", len(active), active)
+	}
+	if got := active[0].IssueNumber; got != issueNumber {
+		t.Fatalf("expected active IssueNumber %d recovered from the review identity, got %d", issueNumber, got)
+	}
+	if got := active[0].PRNumber; got != 1614 {
+		t.Fatalf("expected active PRNumber 1614, got %d", got)
+	}
+	if got := active[0].IssueNumbers; len(got) != 1 || got[0] != issueNumber {
+		t.Fatalf("expected active IssueNumbers [%d], got %#v", issueNumber, got)
+	}
+}
+
 func badgeAssertion(issue int) string {
 	if issue == 1001 {
 		return `if (visible.status !== 'reviewing') throw new Error('issue 1001 visible badge must flip to reviewing (live review in group, AC1), got ' + JSON.stringify(visible.status));
