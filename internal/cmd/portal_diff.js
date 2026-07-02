@@ -1234,6 +1234,8 @@
       renderTerminalContent: highlightJSON,
     });
     pre.setAttribute('data-rendered-json', json);
+    const events = Array.isArray(run && run.events) ? run.events : [];
+    pre.setAttribute('data-rendered-event-count', String(events.length));
     section.appendChild(pre);
     content.appendChild(section);
   }

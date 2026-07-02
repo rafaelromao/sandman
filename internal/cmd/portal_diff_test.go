@@ -4890,3 +4890,47 @@ try {
 `
 	runNodeScript(t, js)
 }
+
+// TestPortalDiffBuildEventsContent_RenderedEventCountAttribute (issue
+// #1628) — tracer bullet for the events-tab append-only path. When
+// `diffRuns` first builds the events pane for a run with N events, the
+// events <pre> must carry `data-rendered-event-count === String(N)` so the
+// append path can later compute its slice without re-walking the DOM. The
+// `data-rendered-json` attribute must already hold the canonical
+// `JSON.stringify(mappedEvents, null, 2)` byte-for-byte (this is the
+// contract slice 2 will reuse to assert the post-append state).
+func TestPortalDiffBuildEventsContent_RenderedEventCountAttribute(t *testing.T) {
+	js := `const body = makeMockBody();
+const events = [
+  { type: 'start', timestamp: 1700000000000, payload: { ok: true } },
+  { type: 'progress', timestamp: 1700000001000, payload: { step: 1 } },
+  { type: 'finish', timestamp: 1700000003000, payload: { ok: true } },
+];
+const run = { key: 'a', kind: 'active', status: 'running', issueLabel: 'A', runId: 'r1', events: events };
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: 'a', tabs: { a: 'events' } };
+SandmanPortalDiff.diffRuns(body, [run], opts);
+const detailRow = body.children[1];
+if (!detailRow) throw new Error('expected detail row');
+const pre = detailRow.querySelector('pre[data-rendered-json]');
+if (!pre) throw new Error('expected pre[data-rendered-json] in events tab');
+const renderedCount = pre.getAttribute('data-rendered-event-count');
+if (renderedCount !== '3') throw new Error('expected data-rendered-event-count="3", got ' + JSON.stringify(renderedCount));
+const renderedJson = pre.getAttribute('data-rendered-json') || '';
+const expected = JSON.stringify(events.map((event) => ({
+  type: event && event.type ? event.type : 'event',
+  timestamp: event && event.timestamp ? event.timestamp : null,
+  payload: event && event.payload ? event.payload : {},
+})), null, 2);
+if (renderedJson !== expected) throw new Error('data-rendered-json must match JSON.stringify(mappedEvents, null, 2) byte-for-byte');
+if (!pre.querySelector('.json-key')) throw new Error('expected json-key spans in highlighted HTML');
+if (!pre.querySelector('.json-string')) throw new Error('expected json-string spans in highlighted HTML');
+if (!pre.querySelector('.json-punctuation')) throw new Error('expected json-punctuation spans in highlighted HTML');
+SandmanPortalDiff.resetCounters();
+SandmanPortalDiff.diffRuns(body, [run], opts);
+const counters = SandmanPortalDiff.getCounters();
+if (counters.mutations > 1) throw new Error('stable poll must not re-render, mutations=' + counters.mutations);
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
