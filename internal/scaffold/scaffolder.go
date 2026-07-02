@@ -490,7 +490,21 @@ func (s *Scaffolder) resolveBuildToolsPreset(repoRoot string, opts Options, p Pr
 		} else if hasRubyRepoHint(repoRoot) {
 			name = rubyBuildToolsPreset
 		} else if hasRustRepoHint(repoRoot) {
-			name = rustBuildToolsPreset
+			if p != nil {
+				options := []string{rustBuildToolsPreset}
+				for _, preset := range KnownBuildToolsPresets {
+					if preset != rustBuildToolsPreset {
+						options = append(options, preset)
+					}
+				}
+				selected, err := p.Select("Choose a build tools preset:", options)
+				if err == nil {
+					name = strings.ToLower(strings.TrimSpace(selected))
+				}
+			}
+			if name == "" {
+				name = rustBuildToolsPreset
+			}
 		} else if p != nil {
 			selected, err := p.Select("Choose a build tools preset:", KnownBuildToolsPresets)
 			if err == nil {
@@ -723,6 +737,9 @@ func parseRustToolchainVersion(data []byte) string {
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if strings.HasPrefix(line, "[") {
 			continue
 		}
 		if strings.Contains(line, "channel") {
