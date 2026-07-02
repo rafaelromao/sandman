@@ -78,7 +78,11 @@ func PlanOrphanedTestBatches(sandmanDir string, log events.EventLog, isActive fu
 			}
 			return nil, fmt.Errorf("stat manifest for %s: %w", batchPath, err)
 		}
-		if hasMatchingRunID(batchPath, runIDs) {
+		matched, err := hasMatchingRunID(batchPath, runIDs)
+		if err != nil {
+			return nil, err
+		}
+		if matched {
 			continue
 		}
 		if isActive != nil && isActive(batchPath) {
@@ -107,22 +111,22 @@ func collectRunStartedIDs(eventList []events.Event) map[string]struct{} {
 	return ids
 }
 
-func hasMatchingRunID(batchPath string, runIDs map[string]struct{}) bool {
+func hasMatchingRunID(batchPath string, runIDs map[string]struct{}) (bool, error) {
 	if _, ok := runIDs[filepath.Base(batchPath)]; ok {
-		return true
+		return true, nil
 	}
 	runsDir := filepath.Join(batchPath, "runs")
 	runEntries, err := os.ReadDir(runsDir)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return false
+			return false, nil
 		}
-		return false
+		return false, fmt.Errorf("read runs dir %s: %w", runsDir, err)
 	}
 	for _, runEntry := range runEntries {
 		if _, ok := runIDs[runEntry.Name()]; ok {
-			return true
+			return true, nil
 		}
 	}
-	return false
+	return false, nil
 }
