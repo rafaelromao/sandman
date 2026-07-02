@@ -2123,7 +2123,15 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
       const runKey = run ? run.key : key;
       const subjectKey = isWaitStateRun(run) ? '' : (subjectRunIdentity(run) || key);
       const tab = state.tabs[subjectKey] || state.tabs[key] || 'log';
-      const wantStream = run && tab === 'log' && run.kind === 'active' && run.socketPath;
+      // Defer starting the live stream while a fresh detail snapshot is being
+      // fetched. The stream bridges the daemon's Control Socket, whose replay
+      // is a tail of recent output. If the pane still holds a stale cached
+      // beginning (e.g. after a tab round-trip), appending that tail would
+      // leave a gap in the middle. Waiting for the refreshed snapshot lets the
+      // poll path rebuild the pane with the current contiguous tail first;
+      // the stream then only appends genuinely new lines.
+      const detailLoading = loadingDetailKeys.has(subjectKey);
+      const wantStream = run && tab === 'log' && run.kind === 'active' && run.socketPath && !detailLoading;
       for (const openKey of Object.keys(streamSources)) {
         if (openKey !== runKey) {
           // Subject switch: any buffered (not-yet-flushed) lines for the
@@ -2841,7 +2849,7 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
       const hasLog = run.log && String(run.log).trim();
       const hasEvents = Object.prototype.hasOwnProperty.call(run, 'events');
       if (currentTab === 'events' && hasEvents && run.kind !== 'active') return;
-      if (currentTab !== 'events' && hasLog) return;
+      if (currentTab !== 'events' && hasLog && !forceFetch) return;
       setDetailLoading(runKey, true);
       scheduleRender();
       try {
@@ -2853,9 +2861,15 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
         const idx = state.runs.findIndex((r) => r && (r.key === detail.key || r.runId === detail.runId));
         if (idx >= 0) {
           const existing = state.runs[idx];
+          // When forceFetch initiated a fresh detail fetch and the API
+          // returned a non-empty log, use it. Without this, the merge below
+          // would preserve the stale cached beginning (hasLog=true) while the
+          // stream attaches; the daemon's 64 KB tail-replay would then create
+          // the same gap the forceFetch was meant to close.
+          const useDetailLog = !!forceFetch && !!(detail && detail.log);
           state.runs[idx] = {
             ...existing,
-            log: hasLog ? existing.log : detail.log,
+            log: (useDetailLog || !hasLog) ? detail.log : existing.log,
             events: detail.events || existing.events,
             logUrl: detail.logUrl,
           };
@@ -2941,7 +2955,12 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
           state.tabs[subjectKey] = tab;
           state.expandedRunKey = subjectKey;
           persistPortalViewState();
-          if (tab !== 'details') loadRunDetail(subjectKey);
+          const activeLogRun = tab === 'log' ? findRunByIdentity(subjectKey) : null;
+          if (tab === 'log' && activeLogRun && activeLogRun.kind === 'active') {
+            loadRunDetail(subjectKey, { forceFetch: true });
+          } else if (tab !== 'details') {
+            loadRunDetail(subjectKey);
+          }
           scheduleRender();
         }
         return;
