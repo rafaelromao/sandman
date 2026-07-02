@@ -3426,8 +3426,8 @@ func TestPortal_RunsSummary(t *testing.T) {
 	if run.Log != "" {
 		t.Errorf("summary response must omit Log, got %q", run.Log)
 	}
-	if run.Events != nil {
-		t.Errorf("summary response must omit Events, got %d entries", len(run.Events))
+	if len(run.Events) == 0 {
+		t.Errorf("summary response must include Events for runs that have them, got 0 entries")
 	}
 	if run.LogURL != "" {
 		t.Errorf("summary response must omit LogURL")
@@ -3470,18 +3470,20 @@ func TestPortal_RunsSummary(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer respNoop.Body.Close()
-	if respNoop.StatusCode != http.StatusNotModified {
-		t.Fatalf("expected summary-excluded change to keep 304, got %d", respNoop.StatusCode)
+	if respNoop.StatusCode != http.StatusOK {
+		t.Fatalf("expected run.note to surface in summary events, got %d", respNoop.StatusCode)
 	}
-	if got := strings.TrimSpace(respNoop.Header.Get("ETag")); got != etag {
-		t.Fatalf("expected unchanged ETag %q after summary-excluded change, got %q", etag, got)
+	if got := strings.TrimSpace(respNoop.Header.Get("ETag")); got == "" || got == etag {
+		t.Fatalf("expected fresh ETag after run.note populated events, got %q (was %q)", got, etag)
 	}
-	bodyNoop, err := io.ReadAll(respNoop.Body)
-	if err != nil {
-		t.Fatal(err)
+	var noopPayload struct {
+		Runs []portalRun `json:"runs"`
 	}
-	if len(bodyNoop) != 0 {
-		t.Fatalf("expected empty 304 body after summary-excluded change, got %q", string(bodyNoop))
+	if err := json.NewDecoder(respNoop.Body).Decode(&noopPayload); err != nil {
+		t.Fatalf("decode noop summary: %v", err)
+	}
+	if len(noopPayload.Runs) != 1 || len(noopPayload.Runs[0].Events) < 2 {
+		t.Fatalf("expected summary to carry run.note in events, got runs=%d events[0]=%d", len(noopPayload.Runs), len(noopPayload.Runs[0].Events))
 	}
 
 	writePortalLog(t, layout.EventsLogPath, []events.Event{

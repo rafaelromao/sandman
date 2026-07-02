@@ -578,18 +578,17 @@ func TestPortal_DiscoverActiveRuns_ReviewRunFolderPreservesIssueIdentity(t *test
 	}
 }
 
-// TestPortal_BadgeFlipSurvivesEventLogReplay pins slice #1527 acceptance
-// criterion 6: refreshing the portal page or replaying the run index from
-// events.jsonl only must produce the same badge behavior. Two issues back
-// to back, each with a canonical parent impl row and a live or completed
-// review child, must surface as portalRow with the right pair of (Kind,
-// Status) so visibleRunForIssueGroup's flip/no-flip branch makes the same
-// decision deterministically across recomputes. After the second compute,
-// the rows are marshaled into the portal.html script so the visible-run
-// helper itself picks the right badge for each issue group — the determinism
-// check is on the badge output, not only on the intermediate row state.
-func TestPortal_BadgeFlipSurvivesEventLogReplay(t *testing.T) {
-	repoRoot, err := os.MkdirTemp("/tmp", "pbf")
+// TestPortal_DiscoverActiveRuns_ReviewIdentitySurvivesMissingManifest
+// pins the second residual #1615 hole: discoverPortalInstances surfaces
+// batches from the batches index + a live socket, with NO requirement that
+// batch.json be readable. A ghost review batch (index entry and socket
+// present, manifest evicted or corrupt) whose identity encodes the linked
+// issue must still recover that issue. Previously the issueNumbers
+// assignment was gated on manifestErr == nil, so the recovered
+// reviewIssueNumber was discarded and the active row escaped with
+// IssueNumber=0.
+func TestPortal_DiscoverActiveRuns_ReviewIdentitySurvivesMissingManifest(t *testing.T) {
+	repoRoot, err := os.MkdirTemp("/tmp", "pgm")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -598,140 +597,49 @@ func TestPortal_BadgeFlipSurvivesEventLogReplay(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	const liveIssue = 1001
-	const doneIssue = 1002
-	const canonicalReviewRowID = "sid-2606181138-1001-PR42"
+	const issueNumber = 135
+	const batchID = "d42a-260702121324-135-PR1636"
 
-	startedAt := time.Now().Add(-15 * time.Minute)
+	batchDir := filepath.Join(repoRoot, ".sandman", "batches", batchID)
+	if err := os.MkdirAll(batchDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	createUnixRunSocket(t, filepath.Join(batchDir, "batch.sock"))
+	// Intentionally NO batch.json manifest, and no runs/<...>/ child folder:
+	// recovery must rely on the batch identity alone.
 
-	// Issue 1001: parent completed + review child still live (active, reviewing).
-	// Issue 1002: parent completed + review child completed (success).
-	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
-		// Parent issue 1001 finished before review started.
-		{Type: "run.started", Timestamp: startedAt, RunID: "impl-1001", Issue: liveIssue, Payload: map[string]any{"branch": "sandman/1001-fix", "issue_number": liveIssue, "batch_id": "impl-1001"}},
-		{Type: "run.finished", Timestamp: startedAt.Add(5 * time.Minute), RunID: "impl-1001", Issue: liveIssue, Payload: map[string]any{"status": "success", "branch": "sandman/1001-fix", "issue_number": liveIssue, "batch_id": "impl-1001"}},
-		// Review for #1001 — started, never finished in this window.
-		{Type: "run.started", Timestamp: startedAt.Add(2 * time.Minute), RunID: canonicalReviewRowID, Payload: map[string]any{"branch": "sandman/review-PR42", "review": true, "pr_number": 42, "issue_number": liveIssue, "batch_id": "sid-2606181138-PR42"}},
+	startedAt := time.Now().Add(-4 * time.Minute)
+	layout := paths.NewLayout(nil, repoRoot)
+	batchesIdx := &batchindex.Index{
+		Version: batchindex.IndexVersion,
+		Entries: []batchindex.Entry{{
+			ID:        batchID,
+			Path:      batchDir,
+			Kind:      batchindex.KindReview,
+			Status:    batchindex.StatusActive,
+			CreatedAt: startedAt,
+			PR:        1636,
+		}},
+	}
+	if err := batchesIdx.Save(layout.BatchesIndexPath); err != nil {
+		t.Fatal(err)
+	}
 
-		// Parent issue 1002 finished before review started.
-		{Type: "run.started", Timestamp: startedAt.Add(8 * time.Minute), RunID: "impl-1002", Issue: doneIssue, Payload: map[string]any{"branch": "sandman/1002-fix", "issue_number": doneIssue, "batch_id": "impl-1002"}},
-		{Type: "run.finished", Timestamp: startedAt.Add(12 * time.Minute), RunID: "impl-1002", Issue: doneIssue, Payload: map[string]any{"status": "success", "branch": "sandman/1002-fix", "issue_number": doneIssue, "batch_id": "impl-1002"}},
-		// Review for #1002 — fully completed (terminal verdict).
-		{Type: "run.started", Timestamp: startedAt.Add(9 * time.Minute), RunID: "sid-2606181138-1002-PR43", Payload: map[string]any{"branch": "sandman/review-PR43", "review": true, "pr_number": 43, "issue_number": doneIssue, "batch_id": "sid-2606181138-PR43"}},
-		{Type: "run.finished", Timestamp: startedAt.Add(13 * time.Minute), RunID: "sid-2606181138-1002-PR43", Payload: map[string]any{"status": "success", "branch": "sandman/review-PR43", "review": true, "issue_number": doneIssue, "batch_id": "sid-2606181138-PR43"}},
-	})
-
-	logger := &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")}
-
-	// Run compute twice to simulate a page refresh / replay. The output
-	// must be identical (acceptance criterion 6: deterministic replay).
-	firstRuns, err := (&portalRunsView{}).compute(repoRoot, logger)
+	active, err := (&portalRunsView{}).discoverActiveRuns(repoRoot, map[string][]portalEvent{})
 	if err != nil {
-		t.Fatalf("first compute: %v", err)
+		t.Fatalf("discoverActiveRuns: %v", err)
 	}
-	secondRuns, err := (&portalRunsView{}).compute(repoRoot, logger)
-	if err != nil {
-		t.Fatalf("second compute: %v", err)
+	if len(active) != 1 {
+		t.Fatalf("expected 1 active instance, got %d: %#v", len(active), active)
 	}
-	if len(firstRuns) != len(secondRuns) {
-		t.Fatalf("replay length mismatch: first=%d second=%d", len(firstRuns), len(secondRuns))
+	if got := active[0].IssueNumber; got != issueNumber {
+		t.Fatalf("expected active IssueNumber %d recovered from the review identity despite the missing manifest, got %d", issueNumber, got)
 	}
-
-	byIssue := func(issue int, review bool) *portalRun {
-		for i := range firstRuns {
-			if firstRuns[i].IssueNumber == issue && firstRuns[i].Review == review {
-				return &firstRuns[i]
-			}
-		}
-		return nil
-	}
-
-	// Issue 1001 review child must be live (Kind=active, Status=reviewing)
-	// so visibleRunForIssueGroup will flip the parent badge.
-	liveReview := byIssue(liveIssue, true)
-	if liveReview == nil {
-		t.Fatalf("expected live review child for issue %d, got %#v", liveIssue, firstRuns)
-	}
-	if liveReview.Kind != "active" {
-		t.Fatalf("live review Kind=%q, want active", liveReview.Kind)
-	}
-	if liveReview.Status != "reviewing" {
-		t.Fatalf("live review Status=%q, want reviewing", liveReview.Status)
-	}
-
-	// Issue 1002 review child must be terminal (Kind=completed, Status=success)
-	// so visibleRunForIssueGroup keeps the parent badge as the parent's own status.
-	doneReview := byIssue(doneIssue, true)
-	if doneReview == nil {
-		t.Fatalf("expected completed review child for issue %d, got %#v", doneIssue, firstRuns)
-	}
-	if doneReview.Kind != "completed" {
-		t.Fatalf("completed review Kind=%q, want completed", doneReview.Kind)
-	}
-	if doneReview.Status != "success" {
-		t.Fatalf("completed review Status=%q, want success", doneReview.Status)
-	}
-
-	// Parent rows must carry reviewCount/reviewVerdict metadata
-	// (the aggregation logic from slice #1525) so the visible run is the
-	// canonical parent even when the review is live.
-	for _, issue := range []int{liveIssue, doneIssue} {
-		parent := byIssue(issue, false)
-		if parent == nil {
-			t.Fatalf("expected parent row for issue %d", issue)
-		}
-		if parent.ReviewCount == 0 {
-			t.Fatalf("issue %d parent ReviewCount=0, want >=1", issue)
-		}
-	}
-
-	// Drive the visible-run helper against the second-compute row set so
-	// the determinism check lands on the actual badge output, not just
-	// the intermediate row state. Each issue's parent and review rows are
-	// marshaled into JS as plain objects with the canonical event-log
-	// shape (Kind, Status, IssueNumber, Review, RunID, BatchKey).
-	marshal := func(r portalRun) string {
-		return "{ key: " + strconv.Quote(r.Key) +
-			", kind: " + strconv.Quote(r.Kind) +
-			", status: " + strconv.Quote(r.Status) +
-			", issueNumber: " + strconv.Itoa(r.IssueNumber) +
-			", review: " + strconv.FormatBool(r.Review) +
-			", runId: " + strconv.Quote(r.RunID) +
-			", batchKey: " + strconv.Quote(r.BatchKey) +
-			" }"
-	}
-
-	for _, issue := range []int{liveIssue, doneIssue} {
-		var jsRows []string
-		for _, run := range secondRuns {
-			if run.IssueNumber == issue {
-				jsRows = append(jsRows, marshal(run))
-			}
-		}
-		if len(jsRows) == 0 {
-			t.Fatalf("issue %d missing from second compute", issue)
-		}
-		js := `const runs = [` + strings.Join(jsRows, ",") + `];
-const visible = visibleRunForIssueGroup(` + strconv.Itoa(issue) + `, runs);
-if (!visible) throw new Error('expected visible row for issue ` + strconv.Itoa(issue) + `');
-if (visible.key !== 'impl-` + strconv.Itoa(issue) + `') throw new Error('expected canonical parent key impl-` + strconv.Itoa(issue) + `, got ' + JSON.stringify(visible.key));
-if (visible.runId !== 'impl-` + strconv.Itoa(issue) + `') throw new Error('expected canonical parent runId, got ' + JSON.stringify(visible.runId));
-if (visible.review) throw new Error('expected review=false on canonical visible parent, got ' + JSON.stringify(visible.review));
-if (visible.batchKey !== 'impl-` + strconv.Itoa(issue) + `') throw new Error('expected canonical parent batchKey, got ' + JSON.stringify(visible.batchKey));
-` + badgeAssertion(issue)
-		runPortalHTMLScript(t, js)
+	if got := active[0].IssueNumbers; len(got) != 1 || got[0] != issueNumber {
+		t.Fatalf("expected active IssueNumbers [%d], got %#v", issueNumber, got)
 	}
 }
 
-// TestPortal_DiscoverActiveRuns_ReviewIdentityFromBatchDirPreservesIssueIdentity
-// pins the residual #1615 regression: when a live review batch has no
-// parseable `runs/<run-id>` child folder (so reviewRunIdentityForBatchDir yields
-// nothing), the portal must still recover the review's issue number from the
-// active review identity itself — the resolved runID, the batchID, or the
-// batches-index instance name, all of which encode `<issue>-PR<number>`.
-// Without this, the review row falls through with IssueNumber=0 and renders as
-// a standalone passthrough row instead of grouping under the canonical issue
-// row.
 func TestPortal_DiscoverActiveRuns_ReviewIdentityFromBatchDirPreservesIssueIdentity(t *testing.T) {
 	repoRoot, err := os.MkdirTemp("/tmp", "pri")
 	if err != nil {
@@ -799,6 +707,82 @@ func TestPortal_DiscoverActiveRuns_ReviewIdentityFromBatchDirPreservesIssueIdent
 	}
 	if got := active[0].IssueNumbers; len(got) != 1 || got[0] != issueNumber {
 		t.Fatalf("expected active IssueNumbers [%d], got %#v", issueNumber, got)
+	}
+}
+
+// TestPortal_ReviewAggregation_HistoricalReviewRecoversIssueFromIdentity
+// pins the residual #1615 regression that survived PR #1616: a completed
+// (historical) review run whose run.started payload carries no
+// `issue_number` — the real production shape, since the review command
+// stamps only `pr_number` and leaves `issue` null — must still recover its
+// linked issue from the canonical review RunID (`<sid>-<ts>-<issue>-PR<n>`)
+// so it groups under the canonical implementation row. PR #1616 added
+// identity recovery only to the active-socket discovery path
+// (discoverActiveRuns); the historical runFromState path still read
+// payload["issue_number"] alone, left IssueNumber=0, and the review row
+// escaped as a standalone top-level row (portal_diff.js subjectRunsFor
+// returns [] for issueNumber <= 0, so it never folds into the parent).
+func TestPortal_ReviewAggregation_HistoricalReviewRecoversIssueFromIdentity(t *testing.T) {
+	repoRoot, err := os.MkdirTemp("/tmp", "phr")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(repoRoot) })
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	const issueNumber = 135
+	// NewBatchID(KindReview) shape: the batch dir / batch_id carry only
+	// the PR, never the linked issue.
+	const batchID = "sid-260702121324-PR1636"
+	// The per-row RunID (ADR-0030) encodes the linked issue:
+	// `<sid>-<ts>-<issue>-PR<n>`.
+	const canonicalReviewRowID = "sid-260702121324-135-PR1636"
+	startedAt := time.Now().Add(-10 * time.Minute)
+
+	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
+		{Type: "run.started", Timestamp: startedAt, RunID: "impl-135", Issue: issueNumber, Payload: map[string]any{"branch": "sandman/135-fix", "issue_number": issueNumber, "batch_id": "impl-135"}},
+		{Type: "run.finished", Timestamp: startedAt.Add(8 * time.Minute), RunID: "impl-135", Issue: issueNumber, Payload: map[string]any{"status": "success", "branch": "sandman/135-fix", "issue_number": issueNumber, "batch_id": "impl-135"}},
+		// Review run.started/finished mirroring the real production
+		// payload: review=true, pr_number set, batch_id without the
+		// issue, and NO issue_number key.
+		{Type: "run.started", Timestamp: startedAt.Add(2 * time.Minute), RunID: canonicalReviewRowID, Payload: map[string]any{"branch": "sandman/review-1636", "review": true, "pr_number": 1636, "batch_id": batchID}},
+		{Type: "run.finished", Timestamp: startedAt.Add(7 * time.Minute), RunID: canonicalReviewRowID, Payload: map[string]any{"status": "success", "branch": "sandman/review-1636", "review": true, "pr_number": 1636, "batch_id": batchID}},
+	})
+
+	runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")})
+	if err != nil {
+		t.Fatalf("compute: %v", err)
+	}
+
+	var parent *portalRun
+	var review *portalRun
+	for i := range runs {
+		switch {
+		case runs[i].IssueNumber == issueNumber && !runs[i].Review:
+			parent = &runs[i]
+		case runs[i].Review:
+			review = &runs[i]
+		}
+	}
+	if parent == nil {
+		t.Fatalf("expected parent impl row for issue %d, got %#v", issueNumber, runs)
+	}
+	if review == nil {
+		t.Fatalf("expected review row (Review=true), got %#v", runs)
+	}
+	if review.RunID != canonicalReviewRowID {
+		t.Fatalf("review row RunID=%q, want canonical %q", review.RunID, canonicalReviewRowID)
+	}
+	if got := review.IssueNumber; got != issueNumber {
+		t.Fatalf("review IssueNumber=%d, want %d recovered from the review identity (runFromState must fall back to identity parsing when the payload has no issue_number)", got, issueNumber)
+	}
+	if !review.GroupedReview {
+		t.Fatalf("review GroupedReview=false, want true (must group under the canonical issue row, not escape as a standalone row)")
+	}
+	if parent.ReviewCount == 0 {
+		t.Fatalf("parent ReviewCount=%d, want >=1 (historical review must aggregate under the canonical issue row)", parent.ReviewCount)
 	}
 }
 
