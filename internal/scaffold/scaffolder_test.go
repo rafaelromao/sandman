@@ -2637,6 +2637,29 @@ func TestReadDockerfileMetadata_RubyVersion(t *testing.T) {
 	}
 }
 
+func TestReadDockerfileMetadata_RustVersion(t *testing.T) {
+	dir := t.TempDir()
+	content := "# sandman build-tools: rust\n# sandman default-agent: opencode\n# sandman rust-version: 1.95.0\n# sandman mise-version: " + DefaultMISEVersion + "\nFROM debian:bookworm-slim\n"
+	path := filepath.Join(dir, "Dockerfile")
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatalf("write Dockerfile: %v", err)
+	}
+
+	meta, found, err := readDockerfileMetadata(path)
+	if err != nil {
+		t.Fatalf("readDockerfileMetadata: %v", err)
+	}
+	if !found {
+		t.Fatal("expected metadata found")
+	}
+	if meta.RustVersion != "1.95.0" {
+		t.Errorf("RustVersion = %q, want %q", meta.RustVersion, "1.95.0")
+	}
+	if meta.BuildToolsPreset != "rust" {
+		t.Errorf("BuildToolsPreset = %q, want %q", meta.BuildToolsPreset, "rust")
+	}
+}
+
 func TestScaffold_RubyPresetWritesPinnedDockerfile(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, ".ruby-version"), []byte("3.2.2\n"), 0644); err != nil {
