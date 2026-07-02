@@ -3522,6 +3522,96 @@ func TestPortal_RunsSummary(t *testing.T) {
 	}
 }
 
+func TestPortal_RunsSummary_ActiveRunLogMtimeChangesETag(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	layout := paths.NewLayout(nil, repoRoot)
+	startedAt := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	runID := "run-42-1234567890"
+	batchID := "run-42"
+	batchDir := filepath.Join(layout.BatchesDir, batchID)
+	runDir := filepath.Join(batchDir, "runs", runID)
+	createUnixRunSocket(t, filepath.Join(batchDir, "batch.sock"))
+	if err := daemon.WriteManifest(batchDir, daemon.BatchManifest{Issues: []int{42}, CreatedAt: startedAt}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(runDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(runDir, "run.log"), []byte("hello active log\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	addBatchToIndex(t, repoRoot, batchID, batchDir, []int{42})
+	writePortalLog(t, layout.EventsLogPath, []events.Event{{Type: "run.started", Timestamp: startedAt, RunID: runID, Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}}})
+
+	handler := newPortalHandler(repoRoot)
+	server := startPortalHTTPServer(t, handler)
+	defer server.Close()
+
+	resp, err := http.Get(server.URL + "/api/runs?summary=1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	etag := strings.TrimSpace(resp.Header.Get("ETag"))
+	if etag == "" {
+		t.Fatal("expected summary response ETag")
+	}
+	var payload struct {
+		Runs []portalRun `json:"runs"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatal(err)
+	}
+	if len(payload.Runs) != 1 {
+		t.Fatalf("expected 1 active run, got %d", len(payload.Runs))
+	}
+	firstOutputAt := payload.Runs[0].LastOutputAt
+	if firstOutputAt.IsZero() {
+		t.Fatal("expected active run to carry LastOutputAt")
+	}
+
+	time.Sleep(portalRunsSnapshotTTL + 20*time.Millisecond)
+	changedAt := firstOutputAt.Add(2 * time.Second)
+	if err := os.Chtimes(filepath.Join(runDir, "run.log"), changedAt, changedAt); err != nil {
+		t.Fatal(err)
+	}
+
+	req, err := http.NewRequest(http.MethodGet, server.URL+"/api/runs?summary=1", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("If-None-Match", etag)
+	resp2, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp2.Body.Close()
+	if resp2.StatusCode != http.StatusOK {
+		t.Fatalf("expected active log mtime change to return 200, got %d", resp2.StatusCode)
+	}
+	if got := strings.TrimSpace(resp2.Header.Get("ETag")); got == "" || got == etag {
+		t.Fatalf("expected fresh ETag after active log mtime change, got %q", got)
+	}
+	var payload2 struct {
+		Runs []portalRun `json:"runs"`
+	}
+	if err := json.NewDecoder(resp2.Body).Decode(&payload2); err != nil {
+		t.Fatal(err)
+	}
+	if len(payload2.Runs) != 1 {
+		t.Fatalf("expected 1 active run after log mtime change, got %d", len(payload2.Runs))
+	}
+	if payload2.Runs[0].LastOutputAt == nil || !payload2.Runs[0].LastOutputAt.After(*firstOutputAt) {
+		t.Fatalf("expected LastOutputAt to advance after log mtime change, got %v then %v", firstOutputAt, payload2.Runs[0].LastOutputAt)
+	}
+}
+
 func TestPortal_RunsRunKey(t *testing.T) {
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {

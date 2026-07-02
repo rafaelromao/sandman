@@ -182,7 +182,7 @@ func (idx *portalRunsIndex) loadSummaryProbe(ctx context.Context) (portalSummary
 		return portalSummaryState{}, err
 	}
 	batchesIndex := idx.view.loadBatchesIndex(idx.repoRoot)
-	sourceKey, err := portalSummarySourceKey(runStates, activeInstances, batchesIndex)
+	sourceKey, err := portalSummarySourceKey(idx.repoRoot, runStates, activeInstances, batchesIndex)
 	if err != nil {
 		return portalSummaryState{}, err
 	}
@@ -277,10 +277,15 @@ func (idx *portalRunsIndex) discoverActiveRuns(eventsByRun map[string][]portalEv
 		if len(issueNumbers) > 0 {
 			issueNumber = issueNumbers[0]
 		}
+		lastOutputAt := startedAt
+		if logInfo, err := os.Stat(filepath.Join(runDir, "runs", runID, "run.log")); err == nil && !logInfo.IsDir() {
+			lastOutputAt = logInfo.ModTime()
+		}
 		active = append(active, portalActiveRun{
 			Key:          runID,
 			Dir:          runDir,
 			SocketPath:   instance.SocketPath,
+			LastOutputAt: lastOutputAt,
 			IssueNumber:  issueNumber,
 			IssueNumbers: issueNumbers,
 			PRNumber:     prNumber,
@@ -366,15 +371,56 @@ func (idx *portalRunsIndex) Invalidate() {
 	idx.mu.Unlock()
 }
 
-func portalSummarySourceKey(runStates []events.RunState, activeInstances []portalActiveRun, batchesIndex *batchindex.Index) (string, error) {
-	activeFingerprint := append([]portalActiveRun(nil), activeInstances...)
-	for i := range activeFingerprint {
-		activeFingerprint[i].LiveOutput = ""
+func portalSummarySourceKey(repoRoot string, runStates []events.RunState, activeInstances []portalActiveRun, batchesIndex *batchindex.Index) (string, error) {
+	type summaryActiveFingerprint struct {
+		portalActiveRun
+		LastOutputAt time.Time `json:"lastOutputAt,omitempty"`
+	}
+	activeStates := make([]events.RunState, 0, len(runStates))
+	for _, runState := range runStates {
+		if runState.IsActive() {
+			activeStates = append(activeStates, runState)
+		}
+	}
+	matches := (&portalRunsView{}).matchActiveRuns(activeInstances, activeStates)
+	activeFingerprint := make([]summaryActiveFingerprint, len(matches))
+	for i := range matches {
+		match := matches[i]
+		active := match.instance
+		active.LiveOutput = ""
+		runID := active.RunID
+		batchID := active.BatchID
+		startedAt := active.ModTime
+		if startedAt.IsZero() {
+			startedAt = active.StartedAt
+		}
+		if match.state != nil {
+			runID = match.state.RunID
+			if runID == "" && active.Key != "" {
+				if active.IssueNumber > 0 {
+					runID = fmt.Sprintf("%s-issue-%d", active.Key, active.IssueNumber)
+				} else {
+					runID = active.Key
+				}
+			}
+			startedAt = match.state.Started.Timestamp
+			batchID = match.state.BatchID()
+			if batchID == "" {
+				batchID = batchIDFromRunID(runID)
+			}
+			if active.BatchID != "" {
+				batchID = active.BatchID
+			}
+		}
+		activeFingerprint[i] = summaryActiveFingerprint{
+			portalActiveRun: active,
+			LastOutputAt:    portalLastOutputAt((&portalRunsView{}).portalLogPathForRun(repoRoot, runLocator{batchID: batchID, runID: runID}), startedAt),
+		}
 	}
 	payload, err := json.Marshal(struct {
-		RunStates       []events.RunState `json:"runStates"`
-		ActiveInstances []portalActiveRun `json:"activeInstances"`
-		BatchesIndex    *batchindex.Index `json:"batchesIndex,omitempty"`
+		RunStates       []events.RunState          `json:"runStates"`
+		ActiveInstances []summaryActiveFingerprint `json:"activeInstances"`
+		BatchesIndex    *batchindex.Index          `json:"batchesIndex,omitempty"`
 	}{
 		RunStates:       runStates,
 		ActiveInstances: activeFingerprint,

@@ -140,6 +140,7 @@ type portalActiveRun struct {
 	Dir          string
 	SocketPath   string
 	LiveOutput   string
+	LastOutputAt time.Time
 	IssueNumber  int
 	IssueNumbers []int
 	PRNumber     int
@@ -1992,13 +1993,17 @@ func (v *portalRunsView) readPortalSocketOutput(sockPath string) string {
 // neither source is available, which the caller skips before setting
 // LastOutputAt.
 func (v *portalRunsView) lastOutputAt(run portalRun) time.Time {
-	if run.LogPath != "" {
-		if info, err := os.Stat(run.LogPath); err == nil && !info.IsDir() {
+	return portalLastOutputAt(run.LogPath, run.StartedAt)
+}
+
+func portalLastOutputAt(logPath string, startedAt time.Time) time.Time {
+	if logPath != "" {
+		if info, err := os.Stat(logPath); err == nil && !info.IsDir() {
 			return info.ModTime()
 		}
 	}
-	if !run.StartedAt.IsZero() {
-		return run.StartedAt
+	if !startedAt.IsZero() {
+		return startedAt
 	}
 	return time.Time{}
 }
