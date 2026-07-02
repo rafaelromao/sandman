@@ -263,8 +263,8 @@ func TestPortal_Compute_AggregatesChildReviewsOntoIssueRow(t *testing.T) {
 	if issueRow.RunID != "issue-1" {
 		t.Fatalf("expected canonical issue row runID issue-1, got %q", issueRow.RunID)
 	}
-	if issueRow.Status != "success" {
-		t.Fatalf("expected parent status success (terminal) while child review is live, got %q", issueRow.Status)
+	if issueRow.Status != "reviewing" {
+		t.Fatalf("expected parent status reviewing while child review is live (aggregateReviewChildren flips all parents), got %q", issueRow.Status)
 	}
 	if issueRow.ReviewCount != 2 {
 		t.Fatalf("expected review count 2, got %d", issueRow.ReviewCount)
@@ -511,12 +511,11 @@ func TestPortal_TerminalReviewLiveSocket_PreservesStatus(t *testing.T) {
 	}
 }
 
-// TestPortal_ParentSuccWithLiveChild_NotOverwritten is the
-// regression test for the bug where a parent impl run with terminal
-// run.finished status was overwritten to "reviewing" because a live
-// review child existed. The fix: runFromState returns terminal status
-// for review children so aggregateReviewChildren does not set live=true.
-func TestPortal_ParentSuccWithLiveChild_NotOverwritten(t *testing.T) {
+// TestPortal_ParentSuccWithLiveChild_FlipsToReviewing verifies
+// that aggregateReviewChildren flips even a terminal parent's status
+// to "reviewing" when a live review child exists. The frontend was
+// previously re-deriving this; now the backend is the sole source of truth.
+func TestPortal_ParentSuccWithLiveChild_FlipsToReviewing(t *testing.T) {
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -557,8 +556,8 @@ func TestPortal_ParentSuccWithLiveChild_NotOverwritten(t *testing.T) {
 	if issueRow == nil {
 		t.Fatalf("expected issue row for #1, got %#v", runs)
 	}
-	if issueRow.Status != "success" {
-		t.Fatalf("Status = %q, want %q (parent terminal status must not be overwritten by live child review)", issueRow.Status, "success")
+	if issueRow.Status != "reviewing" {
+		t.Fatalf("Status = %q, want %q (parent status must be flipped to reviewing when live review child exists)", issueRow.Status, "reviewing")
 	}
 }
 

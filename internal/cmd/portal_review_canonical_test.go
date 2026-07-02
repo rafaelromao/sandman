@@ -478,8 +478,8 @@ func TestPortal_ReviewAggregation_LiveReviewSocketPreservesIssueIdentity(t *test
 	if !parent.StartedAt.Equal(parentStarted) {
 		t.Fatalf("expected canonical parent StartedAt %s, got %s", parentStarted, parent.StartedAt)
 	}
-	if parent.Status != "success" {
-		t.Fatalf("expected canonical parent status to stay anchored on its own result, got %q", parent.Status)
+	if parent.Status != "reviewing" {
+		t.Fatalf("expected canonical parent status to be reviewing (flipped by aggregateReviewChildren for live review child), got %q", parent.Status)
 	}
 	if parent.ReviewCount != 1 {
 		t.Fatalf("expected canonical parent ReviewCount 1, got %d", parent.ReviewCount)
@@ -804,11 +804,9 @@ func TestPortal_DiscoverActiveRuns_ReviewIdentityFromBatchDirPreservesIssueIdent
 
 func badgeAssertion(issue int) string {
 	if issue == 1001 {
-		return `if (visible.status !== 'reviewing') throw new Error('issue 1001 visible badge must flip to reviewing (live review in group, AC1), got ' + JSON.stringify(visible.status));
-if (visible.liveReview !== true) throw new Error('issue 1001 expected liveReview=true flag, got ' + JSON.stringify(visible.liveReview));
+		return `if (visible.status !== 'reviewing') throw new Error('issue 1001 visible badge must be reviewing (backend-projected for live review), got ' + JSON.stringify(visible.status));
 `
 	}
-	return `if (visible.status !== 'success') throw new Error('issue ` + strconv.Itoa(issue) + ` visible badge must revert to parent status (no live review, AC3), got ' + JSON.stringify(visible.status));
-if (visible.liveReview) throw new Error('issue ` + strconv.Itoa(issue) + ` expected liveReview=false flag, got ' + JSON.stringify(visible.liveReview));
+	return `if (visible.status !== 'success') throw new Error('issue ` + strconv.Itoa(issue) + ` visible badge must be parent status (no live review, AC3), got ' + JSON.stringify(visible.status));
 `
 }
