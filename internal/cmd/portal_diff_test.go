@@ -4886,6 +4886,43 @@ try {
 	if (rendered !== expected) {
 		throw new Error('rebuilt content must match JSON.stringify(events, null, 2) byte-for-byte (AC #2).\nGot: ' + rendered.slice(0, 200) + '\nExpected: ' + expected.slice(0, 200));
 	}
+	console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+// TestPortalDiffBuildEventsContent_RenderedEventCountAttribute (issue
+// #1628) — tracer bullet for the events-tab append-only path. When
+// `diffRuns` first builds the events pane for a run with N events, the
+// events <pre> must carry `data-rendered-event-count === String(N)` so the
+// append path can later compute its slice without re-walking the DOM. The
+// `data-rendered-json` attribute must already hold the canonical
+// `JSON.stringify(mappedEvents, null, 2)` byte-for-byte (this is the
+// contract slice 2 will reuse to assert the post-append state).
+func TestPortalDiffBuildEventsContent_RenderedEventCountAttribute(t *testing.T) {
+	js := `const body = makeMockBody();
+const events = [
+  { type: 'start', timestamp: 1700000000000, payload: { ok: true } },
+  { type: 'progress', timestamp: 1700000001000, payload: { step: 1 } },
+  { type: 'finish', timestamp: 1700000003000, payload: { ok: true } },
+];
+const run = { key: 'a', kind: 'active', status: 'running', issueLabel: 'A', runId: 'r1', events: events };
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: 'a', tabs: { a: 'events' } };
+SandmanPortalDiff.diffRuns(body, [run], opts);
+const detailRow = body.children[1];
+if (!detailRow) throw new Error('expected detail row');
+const pre = detailRow.querySelector('pre[data-rendered-json]');
+if (!pre) throw new Error('expected pre[data-rendered-json] in events tab');
+const renderedCount = pre.getAttribute('data-rendered-event-count');
+if (renderedCount !== '3') throw new Error('expected data-rendered-event-count="3", got ' + JSON.stringify(renderedCount));
+const renderedJson = pre.getAttribute('data-rendered-json') || '';
+const expected = JSON.stringify(events.map((event) => ({
+  type: event && event.type ? event.type : 'event',
+  timestamp: event && event.timestamp ? event.timestamp : null,
+  payload: event && event.payload ? event.payload : {},
+})), null, 2);
+if (renderedJson !== expected) throw new Error('data-rendered-json must match JSON.stringify(mappedEvents, null, 2) byte-for-byte');
 if (!pre.querySelector('.json-key')) throw new Error('expected json-key spans in highlighted HTML');
 if (!pre.querySelector('.json-string')) throw new Error('expected json-string spans in highlighted HTML');
 if (!pre.querySelector('.json-punctuation')) throw new Error('expected json-punctuation spans in highlighted HTML');
@@ -5059,45 +5096,86 @@ console.log('PASS');
 	runNodeScript(t, js)
 }
 
-// TestPortalDiffBuildEventsContent_RenderedEventCountAttribute (issue
-// #1628) — tracer bullet for the events-tab append-only path. When
-// `diffRuns` first builds the events pane for a run with N events, the
-// events <pre> must carry `data-rendered-event-count === String(N)` so the
-// append path can later compute its slice without re-walking the DOM. The
-// `data-rendered-json` attribute must already hold the canonical
-// `JSON.stringify(mappedEvents, null, 2)` byte-for-byte (this is the
-// contract slice 2 will reuse to assert the post-append state).
-func TestPortalDiffBuildEventsContent_RenderedEventCountAttribute(t *testing.T) {
+// TestPortalDiffUpdateDetailPanelEvents_AppendedSuffixHighlighted
+// (issue #1628) — slice 5: the appended region must carry the same JSON
+// syntax highlighting as a full rebuild would. Build a 1-event run,
+// append a 2nd event whose payload exercises every JSON token class
+// (string, boolean, number, null, object), and assert that the new
+// spans wrap the new event's tokens. The pre container itself is
+// reused — only the trailing children are new.
+func TestPortalDiffUpdateDetailPanelEvents_AppendedSuffixHighlighted(t *testing.T) {
 	js := `const body = makeMockBody();
-const events = [
-  { type: 'start', timestamp: 1700000000000, payload: { ok: true } },
-  { type: 'progress', timestamp: 1700000001000, payload: { step: 1 } },
-  { type: 'finish', timestamp: 1700000003000, payload: { ok: true } },
-];
-const run = { key: 'a', kind: 'active', status: 'running', issueLabel: 'A', runId: 'r1', events: events };
+const e1 = { type: 'start', timestamp: 1700000000000, payload: { ok: true } };
+const e2 = {
+  type: 'progress',
+  timestamp: 1700000001000,
+  payload: { ok: false, count: 42, ratio: 1.5, label: 'done', parent: null, child: { nested: 1 } },
+};
+const run = { key: 'a', kind: 'active', status: 'running', issueLabel: 'A', runId: 'r1', events: [e1] };
 const stopGroups = new Set();
 const opts = { helpers, stopGroups, expandedKey: 'a', tabs: { a: 'events' } };
 SandmanPortalDiff.diffRuns(body, [run], opts);
 const detailRow = body.children[1];
-if (!detailRow) throw new Error('expected detail row');
 const pre = detailRow.querySelector('pre[data-rendered-json]');
-if (!pre) throw new Error('expected pre[data-rendered-json] in events tab');
-const renderedCount = pre.getAttribute('data-rendered-event-count');
-if (renderedCount !== '3') throw new Error('expected data-rendered-event-count="3", got ' + JSON.stringify(renderedCount));
-const renderedJson = pre.getAttribute('data-rendered-json') || '';
-const expected = JSON.stringify(events.map((event) => ({
-  type: event && event.type ? event.type : 'event',
-  timestamp: event && event.timestamp ? event.timestamp : null,
-  payload: event && event.payload ? event.payload : {},
-})), null, 2);
-if (renderedJson !== expected) throw new Error('data-rendered-json must match JSON.stringify(mappedEvents, null, 2) byte-for-byte');
-if (!pre.querySelector('.json-key')) throw new Error('expected json-key spans in highlighted HTML');
-if (!pre.querySelector('.json-string')) throw new Error('expected json-string spans in highlighted HTML');
-if (!pre.querySelector('.json-punctuation')) throw new Error('expected json-punctuation spans in highlighted HTML');
-SandmanPortalDiff.resetCounters();
-SandmanPortalDiff.diffRuns(body, [run], opts);
-const counters = SandmanPortalDiff.getCounters();
-if (counters.mutations > 1) throw new Error('stable poll must not re-render, mutations=' + counters.mutations);
+if (!pre) throw new Error('expected events pre');
+const beforeCount = pre.children.length;
+SandmanPortalDiff.updateDetailPanelEvents(body, 'a', [e1, e2], helpers);
+if (pre.children.length <= beforeCount) throw new Error('expected new child nodes after append, got ' + pre.children.length + ' (was ' + beforeCount + ')');
+// The new appended region must contain highlighted spans covering every
+// JSON token class. Walk the new children and look for spans by class.
+const classes = { 'json-key': 0, 'json-string': 0, 'json-boolean': 0, 'json-number': 0, 'json-null': 0, 'json-punctuation': 0 };
+const tail = pre.children.slice(beforeCount);
+for (const node of tail) {
+  const visit = (n) => {
+    if (!n) return;
+    if (n.classList && n.classList._set) {
+      for (const c of n.classList._set) {
+        if (Object.prototype.hasOwnProperty.call(classes, c)) classes[c] += 1;
+      }
+    }
+    if (n.children) for (const ch of n.children) visit(ch);
+  };
+  visit(node);
+}
+if (classes['json-key'] === 0) throw new Error('expected json-key spans on appended region, got ' + JSON.stringify(classes));
+if (classes['json-string'] === 0) throw new Error('expected json-string spans on appended region, got ' + JSON.stringify(classes));
+if (classes['json-boolean'] === 0) throw new Error('expected json-boolean spans on appended region, got ' + JSON.stringify(classes));
+if (classes['json-number'] === 0) throw new Error('expected json-number spans on appended region, got ' + JSON.stringify(classes));
+if (classes['json-null'] === 0) throw new Error('expected json-null spans on appended region, got ' + JSON.stringify(classes));
+if (classes['json-punctuation'] === 0) throw new Error('expected json-punctuation spans on appended region, got ' + JSON.stringify(classes));
+// The textContent of the appended region must match the canonical
+// pretty-printed JSON of the new event (re-indented at array-element
+// depth: 2 leading spaces on first line, 4 on continuation).
+const expectedSuffix = [
+  ',',
+  '  {',
+  '    "type": "progress",',
+  '    "timestamp": 1700000001000,',
+  '    "payload": {',
+  '      "ok": false,',
+  '      "count": 42,',
+  '      "ratio": 1.5,',
+  '      "label": "done",',
+  '      "parent": null,',
+  '      "child": {',
+  '        "nested": 1',
+  '      }',
+  '    }',
+  '  }',
+  ']',
+].join('\n');
+const suffixText = tail.map((n) => n._textContent != null ? n._textContent : (n.textContent || '')).join('');
+// The mock parser HTML-escapes quotes, so unescape them in the joined
+// text before comparing.
+const decoded = suffixText.replace(/&quot;/g, '"').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&#39;/g, "'");
+if (decoded !== expectedSuffix) {
+  for (let i = 0; i < Math.min(decoded.length, expectedSuffix.length); i++) {
+    if (decoded[i] !== expectedSuffix[i]) {
+      throw new Error('appended region text mismatch at ' + i + ': got=' + JSON.stringify(decoded.slice(Math.max(0, i-30), i+40)) + ' expected=' + JSON.stringify(expectedSuffix.slice(Math.max(0, i-30), i+40)));
+    }
+  }
+  throw new Error('appended region text length mismatch: got ' + decoded.length + ' expected ' + expectedSuffix.length + ' got=' + JSON.stringify(decoded.slice(0, 200)));
+}
 console.log('PASS');
 `
 	runNodeScript(t, js)
