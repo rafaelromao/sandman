@@ -2967,7 +2967,7 @@ func TestPortal_ResolveRunLog_PrefersLiveForNonTerminal(t *testing.T) {
 	}
 	savedLog := "12:00:00 saved line\n"
 
-	got := (&portalRunsView{}).resolveRunLog(savedLog, runState, active)
+	got := (&portalRunsView{}).resolveRunLog(func() string { return savedLog }, runState, active)
 	wantLive := strings.TrimSpace(stripLogLabels(active.LiveOutput))
 	if got != wantLive {
 		t.Fatalf("resolveRunLog = %q, want stripped live output %q", got, wantLive)
@@ -3005,7 +3005,7 @@ func TestPortal_ResolveRunLog_SavedWinsForTerminalIssueRow(t *testing.T) {
 	}
 	savedLog := "12:34:00 saved completion line\n12:34:30 saved final line\n"
 
-	got := (&portalRunsView{}).resolveRunLog(savedLog, runState, active)
+	got := (&portalRunsView{}).resolveRunLog(func() string { return savedLog }, runState, active)
 	if got != savedLog {
 		t.Fatalf("resolveRunLog = %q, want saved %q (issue rows must ignore live socket when terminal)", got, savedLog)
 	}
@@ -3050,7 +3050,7 @@ func TestPortal_ResolveRunLog_LiveWinsForTerminalReview(t *testing.T) {
 	}
 	savedLog := "12:34:00 saved review line\n"
 
-	got := (&portalRunsView{}).resolveRunLog(savedLog, runState, active)
+	got := (&portalRunsView{}).resolveRunLog(func() string { return savedLog }, runState, active)
 	wantLive := strings.TrimSpace(stripLogLabels(active.LiveOutput))
 	if got != wantLive {
 		t.Fatalf("resolveRunLog for terminal review = %q, want live %q (review rows on live sockets stay live)", got, wantLive)
@@ -3076,7 +3076,7 @@ func TestPortal_ResolveRunLog_EmptySavedFallsBackToLive(t *testing.T) {
 		LiveOutput: "12:00:00 live only line\n",
 	}
 
-	got := (&portalRunsView{}).resolveRunLog("", runState, active)
+	got := (&portalRunsView{}).resolveRunLog(func() string { return "" }, runState, active)
 	wantLive := strings.TrimSpace(stripLogLabels(active.LiveOutput))
 	if got != wantLive {
 		t.Fatalf("resolveRunLog with empty saved = %q, want live %q", got, wantLive)
@@ -3103,7 +3103,7 @@ func TestPortal_ResolveRunLog_NoActiveReturnsSaved(t *testing.T) {
 	}
 	savedLog := "12:34:00 saved completion line\n"
 
-	got := (&portalRunsView{}).resolveRunLog(savedLog, runState, nil)
+	got := (&portalRunsView{}).resolveRunLog(func() string { return savedLog }, runState, nil)
 	if got != savedLog {
 		t.Fatalf("resolveRunLog with nil active = %q, want saved %q", got, savedLog)
 	}

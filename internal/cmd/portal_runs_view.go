@@ -1172,13 +1172,9 @@ func (v *portalRunsView) runFromActiveBatchIssue(repoRoot string, active portalA
 			run.Log = v.portalBlockedMessage(state.Finished.Payload)
 		case "aborted":
 		default:
-			if live := strings.TrimSpace(stripLogLabels(active.LiveOutput)); live != "" {
-				run.Log = live
-			} else {
-				run.Log = v.resolveRunLog(v.readPortalTextFile(run.LogPath), *state, &active)
-				if strings.TrimSpace(run.Log) == "" {
-					run.Log = "No log file yet."
-				}
+			run.Log = v.resolveRunLog(func() string { return v.readPortalTextFile(run.LogPath) }, *state, &active)
+			if strings.TrimSpace(run.Log) == "" {
+				run.Log = "No log file yet."
 			}
 		}
 		return run
@@ -1413,7 +1409,7 @@ func (v *portalRunsView) runFromState(repoRoot string, runState events.RunState,
 	}
 
 	logPath := v.portalLogPathForRun(repoRoot, locator)
-	logContent := v.resolveRunLog(v.readPortalTextFile(logPath), runState, active)
+	logContent := v.resolveRunLog(func() string { return v.readPortalTextFile(logPath) }, runState, active)
 
 	batchKey := ""
 	if active != nil {
@@ -1682,28 +1678,29 @@ func (v *portalRunsView) filterPortalLogByRunID(text string, runID string) strin
 //     socket may now be broadcasting a different run's content
 //     (issue #1637).
 //
-// `savedLog` is the stripped content of the per-run run.log (what
-// readPortalTextFile returns). `runState` carries the event-fold
+// `loadSaved` lazily reads the per-run run.log; the helper only invokes
+// it on the saved-wins path so the live-wins branch avoids a needless
+// filesystem read on every poll. `runState` carries the event-fold
 // information needed to know whether the row is terminal and whether
 // it is a review/auto-select. `active` is nil for the historical /
 // event-only path, non-nil when an active batch is matched.
-func (v *portalRunsView) resolveRunLog(savedLog string, runState events.RunState, active *portalActiveRun) string {
+func (v *portalRunsView) resolveRunLog(loadSaved func() string, runState events.RunState, active *portalActiveRun) string {
 	if active == nil {
-		return savedLog
+		return loadSaved()
 	}
 	if runState.IsActive() {
 		if live := strings.TrimSpace(stripLogLabels(active.LiveOutput)); live != "" {
 			return live
 		}
-		return savedLog
+		return loadSaved()
 	}
 	if runState.IsReview() || runState.IsAutoSelect() {
 		if live := strings.TrimSpace(stripLogLabels(active.LiveOutput)); live != "" {
 			return live
 		}
-		return savedLog
+		return loadSaved()
 	}
-	return savedLog
+	return loadSaved()
 }
 
 func (v *portalRunsView) portalBlockedMessage(payload map[string]any) string {

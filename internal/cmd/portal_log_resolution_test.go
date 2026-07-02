@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/rafaelromao/sandman/internal/batchindex"
+	"github.com/rafaelromao/sandman/internal/daemon"
 	"github.com/rafaelromao/sandman/internal/events"
 	"github.com/rafaelromao/sandman/internal/paths"
 	"github.com/rafaelromao/sandman/internal/runid"
@@ -312,6 +313,9 @@ func TestPortalRunsView_CompletedRunLogResolvesFromSavedFile(t *testing.T) {
 	}
 	if err := os.WriteFile(filepath.Join(runDir, "run.log"), []byte(rawSavedLog), 0644); err != nil {
 		t.Fatal(err)
+	}
+	if err := daemon.WriteManifest(batchDir, daemon.BatchManifest{Issues: []int{1597, 1598}, BatchId: batchID, CreatedAt: startedAt}); err != nil {
+		t.Fatalf("write manifest: %v", err)
 	}
 
 	sockPath := filepath.Join(batchDir, "batch.sock")
