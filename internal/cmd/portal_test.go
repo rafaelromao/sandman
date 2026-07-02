@@ -1168,6 +1168,124 @@ func TestPortal_RunFromActiveBatchIssue_ActiveReviewPrefersLiveOutput(t *testing
 	}
 }
 
+// TestPortal_RunFromState_CompletedKeepsSavedLogWhenBatchSocketAlive
+// is the regression test for #1637 / #1640: a kind=completed issue row
+// whose batch daemon socket is still connectable must render the Saved
+// Run Log (the per-run run.log), not whatever the live socket happens
+// to be broadcasting — which may belong to a different run that
+// happens to share the batch directory.
+//
+// Setup mirrors the bug scenario from the PRD:
+//   - t.TempDir() repo with .git stub.
+//   - Batch dir with one issue run folder and a populated run.log
+//     (recognisable first + last lines).
+//   - Live Unix socket that the active batch is "broadcasting" on
+//     (sibling-run content). Lives in a separate temp dir because
+//     NewBatchID for KindIssue produces a name with '+', which is
+//     invalid in a Unix socket path; the active portalRun only
+//     cares about SocketPath being alive, not its parent dir.
+//   - A completed events.RunState (status: success).
+//   - A portalActiveRun whose LiveOutput carries lines tagged with a
+//     different run id (the "sibling" run inside the same batch).
+//
+// Assertions (per the PRD and the #1640 acceptance criteria):
+//   - run.Kind == "completed" (primary).
+//   - run.Status == "success" (primary).
+//   - run.Log contains the saved log's first and last lines.
+//   - run.Log does NOT contain any of the live socket's lines.
+func TestPortal_RunFromState_CompletedKeepsSavedLogWhenBatchSocketAlive(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	ts := "260618113825"
+	shortid := "abcd"
+	batchID := runid.NewBatchID(runid.KindIssue, 1, "1597", ts, shortid)
+	rowRunID := runid.NewRunID(runid.KindIssue, "1597", ts, shortid)
+	siblingRunID := runid.NewRunID(runid.KindIssue, "1598", ts, shortid)
+
+	runDir := filepath.Join(repoRoot, ".sandman", "batches", batchID, "runs", rowRunID)
+	if err := os.MkdirAll(runDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	savedLogContent := "[" + rowRunID + "] 13:31:05 > build · MiniMax-M3\n" +
+		"[" + rowRunID + "] 13:31:30 > first saved line\n" +
+		"[" + rowRunID + "] 13:32:00 > middle saved line\n" +
+		"[" + rowRunID + "] 13:33:00 > last saved line\n"
+	if err := os.WriteFile(filepath.Join(runDir, "run.log"), []byte(savedLogContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	sockDir := t.TempDir()
+	sockPath := filepath.Join(sockDir, "batch.sock")
+	ln, err := net.Listen("unix", sockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+
+	startedAt := time.Now().Add(-30 * time.Minute)
+	finishedAt := startedAt.Add(5 * time.Minute)
+	runState := events.RunState{
+		RunID: rowRunID,
+		Started: events.Event{
+			Type:      "run.started",
+			Timestamp: startedAt,
+			RunID:     rowRunID,
+			Issue:     1597,
+			Payload: map[string]any{
+				"batch_id": batchID,
+				"branch":   "sandman/1597-fix",
+			},
+		},
+		Finished: &events.Event{
+			Type:      "run.finished",
+			Timestamp: finishedAt,
+			RunID:     rowRunID,
+			Issue:     1597,
+			Payload: map[string]any{
+				"status":   "success",
+				"batch_id": batchID,
+				"branch":   "sandman/1597-fix",
+			},
+		},
+	}
+	liveOutput := "[" + siblingRunID + "] 13:49:33 sibling run live line\n" +
+		"[" + siblingRunID + "] 13:49:35 another sibling live line\n"
+	active := &portalActiveRun{
+		Key:          batchID,
+		BatchID:      batchID,
+		RunID:        rowRunID,
+		IssueNumber:  1597,
+		IssueNumbers: []int{1597},
+		StartedAt:    startedAt,
+		ModTime:      finishedAt,
+		SocketPath:   sockPath,
+		LiveOutput:   liveOutput,
+	}
+
+	run := (&portalRunsView{}).runFromState(repoRoot, runState, active, nil, nil)
+
+	if run.Kind != "completed" {
+		t.Fatalf("PRIMARY: expected Kind %q for terminal completed row, got %q", "completed", run.Kind)
+	}
+	if run.Status != "success" {
+		t.Fatalf("PRIMARY: expected Status %q, got %q", "success", run.Status)
+	}
+	wantFirst := "13:31:05 > build · MiniMax-M3"
+	wantLast := "13:33:00 > last saved line"
+	if !strings.Contains(run.Log, wantFirst) {
+		t.Fatalf("expected Log to contain saved first line %q, got %q", wantFirst, run.Log)
+	}
+	if !strings.Contains(run.Log, wantLast) {
+		t.Fatalf("expected Log to contain saved last line %q, got %q", wantLast, run.Log)
+	}
+	if strings.Contains(run.Log, "sibling run live line") || strings.Contains(run.Log, "another sibling live line") {
+		t.Fatalf("expected Log NOT to contain sibling-run live output, got %q", run.Log)
+	}
+}
+
 func TestPortal_Compute_ActiveRunRefreshesLiveSocketLog(t *testing.T) {
 	repoRoot, err := os.MkdirTemp("/tmp", "p")
 	if err != nil {
@@ -2824,5 +2942,169 @@ func TestPortal_BatchKeyForActive_FallbackChain(t *testing.T) {
 				t.Fatal("batchKeyForActive must never return empty string")
 			}
 		})
+	}
+}
+
+// TestPortal_ResolveRunLog_PrefersLiveForNonTerminal pins the slice-1
+// (prefactor) contract for portalRunsView.resolveRunLog: a non-terminal
+// state with non-empty active live output returns the live output, not
+// the saved log. This locks in the pre-fix behaviour so the refactor
+// in slice 1 stays red-stays-green. Slice 2 will add a separate test
+// that flips the terminal-row branch via
+// TestPortal_RunFromState_CompletedKeepsSavedLogWhenBatchSocketAlive.
+func TestPortal_ResolveRunLog_PrefersLiveForNonTerminal(t *testing.T) {
+	startedAt := time.Now().Add(-1 * time.Minute)
+	runState := events.RunState{
+		RunID: "abcd-260618113825-active-1",
+		Started: events.Event{
+			Timestamp: startedAt,
+			Payload:   map[string]any{},
+		},
+	}
+	active := &portalActiveRun{
+		Key:        "abcd-260618113825-active-1",
+		LiveOutput: "[abcd-260618113825-active-1] 12:00:00 live line\n",
+	}
+	savedLog := "12:00:00 saved line\n"
+
+	got := (&portalRunsView{}).resolveRunLog(func() string { return savedLog }, runState, active)
+	wantLive := strings.TrimSpace(stripLogLabels(active.LiveOutput))
+	if got != wantLive {
+		t.Fatalf("resolveRunLog = %q, want stripped live output %q", got, wantLive)
+	}
+}
+
+// TestPortal_ResolveRunLog_SavedWinsForTerminalIssueRow pins the
+// slice-2 contract for portalRunsView.resolveRunLog: a terminal state
+// (status=success, runState.Finished != nil) for a non-review,
+// non-auto-select row returns the saved log, NOT the live output.
+// This is the heart of issue #1637: the Saved Run Log is authoritative
+// for finished runs, even when the batch daemon socket is still
+// connectable. Companion tests cover the carve-out (review/auto-select
+// rows on live sockets) and the no-active path.
+func TestPortal_ResolveRunLog_SavedWinsForTerminalIssueRow(t *testing.T) {
+	startedAt := time.Now().Add(-5 * time.Minute)
+	finishedAt := startedAt.Add(2 * time.Minute)
+	runState := events.RunState{
+		RunID: "abcd-260618113825-issue-42",
+		Started: events.Event{
+			Timestamp: startedAt,
+			Payload:   map[string]any{"branch": "sandman/42-fix"},
+		},
+		Finished: &events.Event{
+			Type:      "run.finished",
+			Timestamp: finishedAt,
+			Payload:   map[string]any{"status": "success", "branch": "sandman/42-fix"},
+		},
+	}
+	active := &portalActiveRun{
+		Key:        "abcd-260618113825",
+		BatchID:    "abcd-260618113825",
+		RunID:      "abcd-260618113825-issue-42",
+		LiveOutput: "[different-run] 12:34:56 unrelated live line\n",
+	}
+	savedLog := "12:34:00 saved completion line\n12:34:30 saved final line\n"
+
+	got := (&portalRunsView{}).resolveRunLog(func() string { return savedLog }, runState, active)
+	if got != savedLog {
+		t.Fatalf("resolveRunLog = %q, want saved %q (issue rows must ignore live socket when terminal)", got, savedLog)
+	}
+}
+
+// TestPortal_ResolveRunLog_LiveWinsForTerminalReview pins the slice-2
+// carve-out: terminal review rows (status=success, runState.IsReview()
+// true) on a still-alive socket still receive live output, because
+// those rows are promoted to kind=active downstream (runFromState
+// lines 1490-1492). This matches
+// TestPortal_RunFromActiveBatchIssue_ActiveReviewPrefersLiveOutput's
+// invariant: a terminal review row on a live socket stays live.
+func TestPortal_ResolveRunLog_LiveWinsForTerminalReview(t *testing.T) {
+	startedAt := time.Now().Add(-5 * time.Minute)
+	finishedAt := startedAt.Add(2 * time.Minute)
+	runState := events.RunState{
+		RunID: "abcd-260618113825-review-PR99",
+		Started: events.Event{
+			Timestamp: startedAt,
+			Payload: map[string]any{
+				"branch":    "sandman/review-pr-99",
+				"review":    true,
+				"pr_number": 99,
+			},
+		},
+		Finished: &events.Event{
+			Type:      "run.finished",
+			Timestamp: finishedAt,
+			Payload: map[string]any{
+				"status":    "success",
+				"branch":    "sandman/review-pr-99",
+				"review":    true,
+				"pr_number": 99,
+			},
+		},
+	}
+	active := &portalActiveRun{
+		Key:        "abcd-260618113825",
+		BatchID:    "abcd-260618113825",
+		RunID:      "abcd-260618113825-review-PR99",
+		LiveOutput: "12:34:56 review live line\n",
+	}
+	savedLog := "12:34:00 saved review line\n"
+
+	got := (&portalRunsView{}).resolveRunLog(func() string { return savedLog }, runState, active)
+	wantLive := strings.TrimSpace(stripLogLabels(active.LiveOutput))
+	if got != wantLive {
+		t.Fatalf("resolveRunLog for terminal review = %q, want live %q (review rows on live sockets stay live)", got, wantLive)
+	}
+}
+
+// TestPortal_ResolveRunLog_EmptySavedFallsBackToLive pins the slice-1
+// contract for portalRunsView.resolveRunLog: when the saved log is
+// empty, an active row falls back to the live output (so the portal
+// can show something meaningful during the very first seconds of a
+// run before the log file exists).
+func TestPortal_ResolveRunLog_EmptySavedFallsBackToLive(t *testing.T) {
+	startedAt := time.Now().Add(-1 * time.Minute)
+	runState := events.RunState{
+		RunID: "abcd-260618113825-active-1",
+		Started: events.Event{
+			Timestamp: startedAt,
+			Payload:   map[string]any{},
+		},
+	}
+	active := &portalActiveRun{
+		Key:        "abcd-260618113825-active-1",
+		LiveOutput: "12:00:00 live only line\n",
+	}
+
+	got := (&portalRunsView{}).resolveRunLog(func() string { return "" }, runState, active)
+	wantLive := strings.TrimSpace(stripLogLabels(active.LiveOutput))
+	if got != wantLive {
+		t.Fatalf("resolveRunLog with empty saved = %q, want live %q", got, wantLive)
+	}
+}
+
+// TestPortal_ResolveRunLog_NoActiveReturnsSaved pins the slice-1
+// contract: when no active instance is matched, resolveRunLog returns
+// the saved log unchanged. This is the historical / event-only path.
+func TestPortal_ResolveRunLog_NoActiveReturnsSaved(t *testing.T) {
+	startedAt := time.Now().Add(-5 * time.Minute)
+	finishedAt := startedAt.Add(2 * time.Minute)
+	runState := events.RunState{
+		RunID: "abcd-260618113825-issue-42",
+		Started: events.Event{
+			Timestamp: startedAt,
+			Payload:   map[string]any{},
+		},
+		Finished: &events.Event{
+			Type:      "run.finished",
+			Timestamp: finishedAt,
+			Payload:   map[string]any{"status": "success"},
+		},
+	}
+	savedLog := "12:34:00 saved completion line\n"
+
+	got := (&portalRunsView{}).resolveRunLog(func() string { return savedLog }, runState, nil)
+	if got != savedLog {
+		t.Fatalf("resolveRunLog with nil active = %q, want saved %q", got, savedLog)
 	}
 }
