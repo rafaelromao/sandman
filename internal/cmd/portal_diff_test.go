@@ -829,6 +829,32 @@ console.log('PASS');
 	runNodeScript(t, js)
 }
 
+// TestPortalDiffInsertRunRow_TerminalKindOmitsRowAdded pins the contract
+// from issue #1669: a terminal row (kind === 'completed') must NOT carry
+// the sticky row-added highlight, so completed/failed rows render in the
+// neutral background instead of the green success tint. The Sandman theme
+// expects inactive rows to be muted against active rows.
+func TestPortalDiffInsertRunRow_TerminalKindOmitsRowAdded(t *testing.T) {
+	js := `const body = makeMockBody();
+const completed = { key: 'done', kind: 'completed', status: 'success', issueLabel: 'Done', runId: 'r1' };
+const failed = { key: 'fail', kind: 'completed', status: 'failure', issueLabel: 'Fail', runId: 'r2' };
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: null };
+SandmanPortalDiff.insertRunRow(body, completed, opts);
+SandmanPortalDiff.insertRunRow(body, failed, opts);
+const doneRow = body.querySelector('tr[data-run-key="done"]');
+const failRow = body.querySelector('tr[data-run-key="fail"]');
+if (!doneRow) throw new Error('expected completed row to be inserted');
+if (!failRow) throw new Error('expected failed row to be inserted');
+if (!doneRow.classList.contains('run-row')) throw new Error('expected run-row class on terminal row');
+if (!doneRow.classList.contains('completed')) throw new Error('expected completed kind class on terminal row');
+if (doneRow.classList.contains('row-added')) throw new Error('terminal row must not carry row-added (issue #1669: completed rows render with neutral background, not success tint), got ' + JSON.stringify(Array.from(doneRow.classList)));
+if (failRow.classList.contains('row-added')) throw new Error('terminal row must not carry row-added (issue #1669: failed rows render with neutral background, not success tint), got ' + JSON.stringify(Array.from(failRow.classList)));
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
 // TestPortalDiffDiffRuns_InsertedAndRemovedRowsCarryHighlightClasses is the
 // end-to-end coverage of the diff render path (issue #1548): when diffRuns
 // inserts a new run, the new row carries row-added; when diffRuns removes

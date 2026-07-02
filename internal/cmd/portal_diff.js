@@ -424,7 +424,13 @@
   function buildDataRow(body, run, opts) {
     const tr = body.insertRow();
     tr.classList.add('run-row');
-    tr.classList.add('row-added');
+    // Terminal rows (kind === 'completed') skip the row-added highlight so
+    // they render in the neutral background instead of the green success
+    // tint. Issue #1669: the Sandman theme expects inactive rows to be
+    // muted against active rows. Active and wait-state rows keep row-added
+    // as the "just inserted" cue; terminal rows don't need an attention
+    // signal once they've settled.
+    if (run.kind !== 'completed') tr.classList.add('row-added');
     if (run.kind) tr.classList.add(run.kind);
     if (run.archived) tr.classList.add('row-archived');
     if (run.unavailable) tr.classList.add('row-unavailable');
