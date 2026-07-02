@@ -30,6 +30,26 @@ import (
 // removed directories sorted ascending by filepath.Base for
 // deterministic output.
 func CleanupOrphanedTestBatches(sandmanDir string, log events.EventLog, isActive func(string) bool) ([]string, error) {
+	candidates, err := PlanOrphanedTestBatches(sandmanDir, log, isActive)
+	if err != nil {
+		return nil, err
+	}
+
+	removed := make([]string, 0, len(candidates))
+	for _, batchPath := range candidates {
+		if err := os.RemoveAll(batchPath); err != nil {
+			return removed, fmt.Errorf("remove %s: %w", batchPath, err)
+		}
+		removed = append(removed, batchPath)
+	}
+	return removed, nil
+}
+
+// PlanOrphanedTestBatches returns the absolute paths of batch
+// directories under <sandmanDir>/batches/ that are orphaned by the
+// same criteria as CleanupOrphanedTestBatches, without removing
+// anything. Used by dry-run tooling.
+func PlanOrphanedTestBatches(sandmanDir string, log events.EventLog, isActive func(string) bool) ([]string, error) {
 	batchesDir := filepath.Join(sandmanDir, "batches")
 	entries, err := os.ReadDir(batchesDir)
 	if err != nil {
@@ -70,15 +90,7 @@ func CleanupOrphanedTestBatches(sandmanDir string, log events.EventLog, isActive
 	sort.Slice(candidates, func(i, j int) bool {
 		return filepath.Base(candidates[i]) < filepath.Base(candidates[j])
 	})
-
-	removed := make([]string, 0, len(candidates))
-	for _, batchPath := range candidates {
-		if err := os.RemoveAll(batchPath); err != nil {
-			return removed, fmt.Errorf("remove %s: %w", batchPath, err)
-		}
-		removed = append(removed, batchPath)
-	}
-	return removed, nil
+	return candidates, nil
 }
 
 func collectRunStartedIDs(eventList []events.Event) map[string]struct{} {
