@@ -112,6 +112,17 @@ func (idx *portalRunsIndex) Snapshot(ctx context.Context) ([]portalRun, error) {
 }
 
 func (idx *portalRunsIndex) SummarySnapshot(ctx context.Context, ifNoneMatch string) (portalSummaryResponse, error) {
+	idx.mu.Lock()
+	if (idx.snapshotReady || len(idx.snapshotCache) > 0) && time.Since(idx.snapshotAt) < portalRunsSnapshotTTL {
+		etag := idx.snapshotETag
+		idx.mu.Unlock()
+		if etag != "" && etagMatches(ifNoneMatch, etag) {
+			return portalSummaryResponse{ETag: etag, NotModified: true}, nil
+		}
+	} else {
+		idx.mu.Unlock()
+	}
+
 	state, err := idx.loadSummaryState(ctx)
 	if err != nil {
 		return portalSummaryResponse{}, err
