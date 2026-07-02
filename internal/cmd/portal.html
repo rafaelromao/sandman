@@ -2803,6 +2803,11 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
           if (existing && existing.log && !next.log) {
             next.log = existing.log;
           }
+          // Preserve the previous events array for every run kind,
+          // including active runs. The active-run guard that used to
+          // live here caused expanded events tabs to flash to [] on
+          // every poll because the summary endpoint returned events
+          // only for non-active rows. See issue #1626.
           if (existing && existing.events && !next.events) {
             next.events = existing.events;
           }
