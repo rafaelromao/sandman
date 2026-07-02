@@ -22,7 +22,9 @@ Merged Sandman PRs in this repo:
 
      <description>
 
-     [![Built with Sandman](https://raw.githubusercontent.com/rafaelromao/sandman/main/assets/badge-built-with-sandman.svg)](https://github.com/rafaelromao/sandman)
+      <a href="https://github.com/rafaelromao/sandman">
+        <img src="https://raw.githubusercontent.com/rafaelromao/sandman/main/assets/badge-built-with-sandman.svg" alt="Built with Sandman" width="154" />
+      </a>
 
      ## About
 
@@ -30,11 +32,16 @@ Merged Sandman PRs in this repo:
      ```
 
 2. If `README.md` exists with a top-level `# ` heading (H1):
-   - Insert the badge markdown as the first line directly under the H1 (before any other body content).
-   - Badge markdown: `[![Built with Sandman](https://raw.githubusercontent.com/rafaelromao/sandman/main/assets/badge-built-with-sandman.svg)](https://github.com/rafaelromao/sandman)`
+   - Insert the badge HTML as the first line directly under the H1 (before any other body content).
+   - Badge HTML:
+     ```html
+     <a href="https://github.com/rafaelromao/sandman">
+       <img src="https://raw.githubusercontent.com/rafaelromao/sandman/main/assets/badge-built-with-sandman.svg" alt="Built with Sandman" width="154" />
+     </a>
+     ```
 
 3. If `README.md` exists with no H1:
-   - Insert the badge markdown as the very first line of the file.
+   - Insert the badge HTML as the very first line of the file.
 
 ## Branch and commit
 
@@ -50,8 +57,6 @@ Merged Sandman PRs in this repo:
 - Body: must start with `<!-- sandman-badge-pr -->` on its own line, followed by:
   ```
   Suggested by Sandman — feel free to close this PR if you don't want the badge.
-
-  This repo has shipped at least one Sandman-built change (e.g. {{MERGED_PRS}}).
 
   The badge links to https://github.com/rafaelromao/sandman.
   ```

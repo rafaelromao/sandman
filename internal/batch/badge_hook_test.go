@@ -317,7 +317,10 @@ func TestMaybeSuggestBadge_PromptBodyRationaleReferencesMergedPRs(t *testing.T) 
 	if !strings.Contains(bodySection, "<!-- sandman-badge-pr -->") {
 		t.Fatalf("expected marker comment in ## PR creation section, got section:\n%s", bodySection)
 	}
-	if !strings.Contains(bodySection, "Add login (#10)") {
-		t.Fatalf("expected merged PR rationale to appear in PR body section, got section:\n%s", bodySection)
+	if strings.Contains(bodySection, "Add login (#10)") {
+		t.Fatalf("expected no merged PR rationale in PR body section, got section:\n%s", bodySection)
+	}
+	if !strings.Contains(bodySection, "The badge links to https://github.com/rafaelromao/sandman.") {
+		t.Fatalf("expected generic badge link text in PR body section, got section:\n%s", bodySection)
 	}
 }
