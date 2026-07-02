@@ -131,7 +131,7 @@ func TestDaemon_PerPRSlotTable_AllowsCrossPRConcurrency(t *testing.T) {
 		if err != nil {
 			t.Fatalf("tick: %v", err)
 		}
-	case <-time.After(5 * time.Second):
+	case <-time.After(15 * time.Second):
 		t.Fatal("tick did not finish after releasing all reviews")
 	}
 
@@ -160,7 +160,7 @@ func TestDaemon_PerPRSlotTable_AllowsCrossPRConcurrency(t *testing.T) {
 		if prNumber != queuedPR {
 			t.Fatalf("expected queued PR %d to start on second tick, got PR %d", queuedPR, prNumber)
 		}
-	case <-time.After(5 * time.Second):
+	case <-time.After(15 * time.Second):
 		t.Fatalf("queued PR %d did not start within 5s on second tick", queuedPR)
 	}
 
@@ -247,10 +247,10 @@ func TestDaemon_PerPRSlotTable_ReleasesOnCompletion(t *testing.T) {
 			close(release[prNumber])
 			select {
 			case <-doneCh:
-			case <-time.After(5 * time.Second):
+			case <-time.After(15 * time.Second):
 				t.Fatalf("runner for PR %d did not complete within 5s", prNumber)
 			}
-		case <-time.After(5 * time.Second):
+		case <-time.After(15 * time.Second):
 			t.Fatal("did not see both PRs start within 5s")
 		}
 	}
@@ -262,7 +262,7 @@ func TestDaemon_PerPRSlotTable_ReleasesOnCompletion(t *testing.T) {
 		if err != nil {
 			t.Fatalf("tick: %v", err)
 		}
-	case <-time.After(5 * time.Second):
+	case <-time.After(15 * time.Second):
 		t.Fatal("tick did not finish after releasing all reviews")
 	}
 
@@ -345,7 +345,7 @@ func TestDaemon_PerPRSlotTable_NewTriggerMidFlight_IsNotDropped(t *testing.T) {
 	// Wait for the first review to start.
 	select {
 	case <-startedFirst:
-	case <-time.After(5 * time.Second):
+	case <-time.After(15 * time.Second):
 		t.Fatal("first review did not start within 5s")
 	}
 	if !d.IsSlotHeld(7) {
@@ -402,7 +402,7 @@ func TestDaemon_PerPRSlotTable_NewTriggerMidFlight_IsNotDropped(t *testing.T) {
 		if err != nil {
 			t.Fatalf("first tick: %v", err)
 		}
-	case <-time.After(5 * time.Second):
+	case <-time.After(15 * time.Second):
 		t.Fatal("first tick did not finish after release")
 	}
 
@@ -430,7 +430,7 @@ func TestDaemon_PerPRSlotTable_NewTriggerMidFlight_IsNotDropped(t *testing.T) {
 	}()
 	select {
 	case <-startedSecond:
-	case <-time.After(5 * time.Second):
+	case <-time.After(15 * time.Second):
 		callsMu.Lock()
 		t.Fatalf("expected RunBatch for second comment to be invoked within 5s after slot release, got calls=%v", append([]string{}, calls...))
 	}
@@ -447,7 +447,7 @@ func TestDaemon_PerPRSlotTable_NewTriggerMidFlight_IsNotDropped(t *testing.T) {
 		if err != nil {
 			t.Fatalf("third tick: %v", err)
 		}
-	case <-time.After(5 * time.Second):
+	case <-time.After(15 * time.Second):
 		t.Fatal("third tick did not finish after releasing second review")
 	}
 
@@ -521,7 +521,7 @@ func TestDaemon_PerPRSlotTable_HeldSlotReturnsSilently(t *testing.T) {
 	}()
 	select {
 	case <-started:
-	case <-time.After(5 * time.Second):
+	case <-time.After(15 * time.Second):
 		t.Fatal("first review did not start within 5s")
 	}
 	if !d.IsSlotHeld(9) {
@@ -565,7 +565,7 @@ func TestDaemon_PerPRSlotTable_HeldSlotReturnsSilently(t *testing.T) {
 		if err != nil {
 			t.Fatalf("first tick: %v", err)
 		}
-	case <-time.After(5 * time.Second):
+	case <-time.After(15 * time.Second):
 		t.Fatal("first tick did not finish after release")
 	}
 

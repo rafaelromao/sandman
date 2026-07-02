@@ -523,13 +523,24 @@ func (d *Daemon) effectiveParallel() int {
 // batch request.
 //
 // Acceptance criterion #2 from issue #1224: ".sandman/reviews/
-// contains only review.sock and review-prompt.md".
+// contains only review.sock, review-prompt.md, and the quality
+// rules file materialised alongside it".
 func (d *Daemon) PromptTemplatePath() string {
 	return filepath.Join(d.BaseDir, "reviews", "review-prompt.md")
 }
 
+// QualityRulesPath returns the absolute path of the quality rules file
+// that the reviewer reads at runtime. It lives next to the review
+// prompt so the two are materialised and edited together.
+func (d *Daemon) QualityRulesPath() string {
+	return filepath.Join(d.BaseDir, "reviews", "quality-rules.md")
+}
+
 // initPromptTemplate writes the static, PR-agnostic review prompt
-// template to PromptTemplatePath() exactly once. It is safe to call
+// template to PromptTemplatePath() and the quality rules to
+// .sandman/reviews/quality-rules.md, but only when they are missing.
+// Files materialised by `sandman init` (or by a previous daemon start)
+// are left untouched so user edits survive restarts. It is safe to call
 // from multiple goroutines and from both StartSocket and launchReview.
 func (d *Daemon) initPromptTemplate() error {
 	var err error
@@ -538,11 +549,25 @@ func (d *Daemon) initPromptTemplate() error {
 		if err = os.MkdirAll(dir, 0755); err != nil {
 			return
 		}
-		tmp := d.PromptTemplatePath() + ".tmp"
-		if err = os.WriteFile(tmp, []byte(prompt.DefaultPRReviewPrompt()), 0644); err != nil {
-			return
+		if _, statErr := os.Stat(d.PromptTemplatePath()); os.IsNotExist(statErr) {
+			tmp := d.PromptTemplatePath() + ".tmp"
+			if err = os.WriteFile(tmp, []byte(prompt.DefaultPRReviewPrompt()), 0644); err != nil {
+				return
+			}
+			if err = os.Rename(tmp, d.PromptTemplatePath()); err != nil {
+				return
+			}
 		}
-		err = os.Rename(tmp, d.PromptTemplatePath())
+		qualityRulesPath := d.QualityRulesPath()
+		if _, statErr := os.Stat(qualityRulesPath); os.IsNotExist(statErr) {
+			tmp := qualityRulesPath + ".tmp"
+			if err = os.WriteFile(tmp, []byte(prompt.DefaultQualityRules()), 0644); err != nil {
+				return
+			}
+			if err = os.Rename(tmp, qualityRulesPath); err != nil {
+				return
+			}
+		}
 	})
 	return err
 }

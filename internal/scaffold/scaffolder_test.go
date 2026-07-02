@@ -2752,3 +2752,67 @@ func TestScaffold_RubyPresetAllAgentsGenerateFiles(t *testing.T) {
 		})
 	}
 }
+
+func TestScaffold_MaterializesReviewPromptAndQualityRules(t *testing.T) {
+	dir := t.TempDir()
+	s := &Scaffolder{}
+	if err := s.Scaffold(dir, Options{BuildTools: "generic"}, &fakePrompter{confirm: true}); err != nil {
+		t.Fatalf("scaffold: %v", err)
+	}
+
+	promptPath := filepath.Join(dir, ".sandman", "reviews", "review-prompt.md")
+	promptData, err := os.ReadFile(promptPath)
+	if err != nil {
+		t.Fatalf("read %s: %v", promptPath, err)
+	}
+	if string(promptData) != prompt.DefaultPRReviewPrompt() {
+		t.Errorf("review-prompt.md should match the embedded default")
+	}
+
+	qualityPath := filepath.Join(dir, ".sandman", "reviews", "quality-rules.md")
+	qualityData, err := os.ReadFile(qualityPath)
+	if err != nil {
+		t.Fatalf("read %s: %v", qualityPath, err)
+	}
+	if string(qualityData) != prompt.DefaultQualityRules() {
+		t.Errorf("quality-rules.md should match the embedded default")
+	}
+}
+
+func TestScaffold_ReInitPreservesUserEditedReviewFiles(t *testing.T) {
+	dir := t.TempDir()
+	s := &Scaffolder{}
+	if err := s.Scaffold(dir, Options{BuildTools: "generic"}, &fakePrompter{confirm: true}); err != nil {
+		t.Fatalf("first scaffold: %v", err)
+	}
+
+	promptPath := filepath.Join(dir, ".sandman", "reviews", "review-prompt.md")
+	editedPrompt := []byte("# user-edited review prompt\n")
+	if err := os.WriteFile(promptPath, editedPrompt, 0644); err != nil {
+		t.Fatalf("write user-edited prompt: %v", err)
+	}
+	qualityPath := filepath.Join(dir, ".sandman", "reviews", "quality-rules.md")
+	editedQuality := []byte("# user-edited quality rules\n")
+	if err := os.WriteFile(qualityPath, editedQuality, 0644); err != nil {
+		t.Fatalf("write user-edited quality rules: %v", err)
+	}
+
+	if err := s.Scaffold(dir, Options{BuildTools: "generic"}, &fakePrompter{confirm: true}); err != nil {
+		t.Fatalf("second scaffold: %v", err)
+	}
+
+	promptData, err := os.ReadFile(promptPath)
+	if err != nil {
+		t.Fatalf("read prompt after re-init: %v", err)
+	}
+	if string(promptData) != string(editedPrompt) {
+		t.Errorf("user-edited review-prompt.md was clobbered by re-init\ngot: %q\nwant: %q", promptData, editedPrompt)
+	}
+	qualityData, err := os.ReadFile(qualityPath)
+	if err != nil {
+		t.Fatalf("read quality rules after re-init: %v", err)
+	}
+	if string(qualityData) != string(editedQuality) {
+		t.Errorf("user-edited quality-rules.md was clobbered by re-init\ngot: %q\nwant: %q", qualityData, editedQuality)
+	}
+}

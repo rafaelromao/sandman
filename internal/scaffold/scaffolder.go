@@ -423,6 +423,48 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 		}
 	}
 
+	if err := s.materializeReviewPrompts(sandmanDir); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// materializeReviewPrompts writes the static PR review prompt and the
+// quality rules to .sandman/reviews/. Both files are materialised at init
+// time (not on first daemon use) so the user can edit them before any
+// review runs. Existing files are left untouched to respect user edits
+// across re-inits.
+func (s *Scaffolder) materializeReviewPrompts(sandmanDir string) error {
+	reviewsDir := filepath.Join(sandmanDir, "reviews")
+	if err := os.MkdirAll(reviewsDir, 0755); err != nil {
+		return fmt.Errorf("create reviews dir: %w", err)
+	}
+	if err := writeIfMissing(filepath.Join(reviewsDir, "review-prompt.md"), []byte(prompt.DefaultPRReviewPrompt())); err != nil {
+		return err
+	}
+	if err := writeIfMissing(filepath.Join(reviewsDir, "quality-rules.md"), []byte(prompt.DefaultQualityRules())); err != nil {
+		return err
+	}
+	return nil
+}
+
+// writeIfMissing writes data to path via a temp file + rename only if no
+// file already exists at path. If the file exists, the existing content
+// is preserved so user edits survive re-inits.
+func writeIfMissing(path string, data []byte) error {
+	if _, err := os.Stat(path); err == nil {
+		return nil
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("stat %s: %w", path, err)
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, 0644); err != nil {
+		return fmt.Errorf("write %s: %w", tmp, err)
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		return fmt.Errorf("rename %s: %w", tmp, err)
+	}
 	return nil
 }
 

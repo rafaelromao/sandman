@@ -65,7 +65,7 @@ func TestDaemon_ReviewsDirContainsOnlySocketAndPrompt(t *testing.T) {
 		names = append(names, e.Name())
 	}
 	sort.Strings(names)
-	want := []string{"review-prompt.md", "review.sock"}
+	want := []string{"quality-rules.md", "review-prompt.md", "review.sock"}
 	sort.Strings(want)
 
 	if len(names) != len(want) {
@@ -224,6 +224,56 @@ func TestDaemon_SharedReviewPromptFileExists(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(d.BaseDir, "reviews", "5", "pr-review-prompt.md")); !os.IsNotExist(err) {
 			t.Errorf("per-PR pr-review-prompt.md should not exist for PR %d, got stat err: %v", pr, err)
 		}
+	}
+}
+
+// TestDaemon_RespectsPreMaterialisedReviewFiles asserts that when the
+// review prompt and quality rules are already on disk (e.g. because
+// `sandman init` materialised them), the daemon's lazy-init path leaves
+// them untouched. This lets users edit the files between init and the
+// first review run.
+func TestDaemon_RespectsPreMaterialisedReviewFiles(t *testing.T) {
+	reviewsDir := filepath.Join(t.TempDir(), ".sandman", "reviews")
+	if err := os.MkdirAll(reviewsDir, 0755); err != nil {
+		t.Fatalf("mkdir reviews: %v", err)
+	}
+	editedPrompt := []byte("# user-edited review prompt\n")
+	editedQuality := []byte("# user-edited quality rules\n")
+	if err := os.WriteFile(filepath.Join(reviewsDir, "review-prompt.md"), editedPrompt, 0644); err != nil {
+		t.Fatalf("write review-prompt.md: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(reviewsDir, "quality-rules.md"), editedQuality, 0644); err != nil {
+		t.Fatalf("write quality-rules.md: %v", err)
+	}
+
+	d := &Daemon{BaseDir: filepath.Dir(reviewsDir)}
+	if err := d.initPromptTemplate(); err != nil {
+		t.Fatalf("initPromptTemplate: %v", err)
+	}
+
+	promptData, err := os.ReadFile(filepath.Join(reviewsDir, "review-prompt.md"))
+	if err != nil {
+		t.Fatalf("read review-prompt.md: %v", err)
+	}
+	if string(promptData) != string(editedPrompt) {
+		t.Errorf("daemon clobbered pre-existing review-prompt.md\ngot: %q\nwant: %q", promptData, editedPrompt)
+	}
+	qualityData, err := os.ReadFile(filepath.Join(reviewsDir, "quality-rules.md"))
+	if err != nil {
+		t.Fatalf("read quality-rules.md: %v", err)
+	}
+	if string(qualityData) != string(editedQuality) {
+		t.Errorf("daemon clobbered pre-existing quality-rules.md\ngot: %q\nwant: %q", qualityData, editedQuality)
+	}
+}
+
+// TestDaemon_QualityRulesPathMatchesReviewsDir asserts the runtime path
+// exposed to the reviewer matches the file `sandman init` materialises.
+func TestDaemon_QualityRulesPathMatchesReviewsDir(t *testing.T) {
+	d := &Daemon{BaseDir: "/tmp/example/.sandman"}
+	want := "/tmp/example/.sandman/reviews/quality-rules.md"
+	if got := d.QualityRulesPath(); got != want {
+		t.Errorf("QualityRulesPath: got %q, want %q", got, want)
 	}
 }
 
