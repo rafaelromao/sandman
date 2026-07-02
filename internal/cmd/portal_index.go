@@ -4,14 +4,18 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/rafaelromao/sandman/internal/batchindex"
 	"github.com/rafaelromao/sandman/internal/daemon"
 	"github.com/rafaelromao/sandman/internal/events"
 	"github.com/rafaelromao/sandman/internal/paths"
@@ -21,17 +25,35 @@ const portalRunsSnapshotTTL = 250 * time.Millisecond
 const portalRunsIndexMaxSocketReaders = 4
 
 type portalRunsIndex struct {
-	repoRoot      string
-	eventLogPath  string
-	view          *portalRunsView
-	mu            sync.Mutex
-	snapshotAt    time.Time
-	snapshotCache []portalRun
-	eventsCache   []events.Event
-	eventsOffset  int64
-	eventsModTime time.Time
-	eventsSize    int64
-	manifestCache map[string]portalManifestCacheEntry
+	repoRoot          string
+	eventLogPath      string
+	view              *portalRunsView
+	mu                sync.Mutex
+	snapshotAt        time.Time
+	snapshotReady     bool
+	snapshotCache     []portalRun
+	snapshotSourceKey string
+	snapshotETag      string
+	eventsCache       []events.Event
+	eventsOffset      int64
+	eventsModTime     time.Time
+	eventsSize        int64
+	manifestCache     map[string]portalManifestCacheEntry
+}
+
+type portalSummaryState struct {
+	eventsList      []events.Event
+	runStates       []events.RunState
+	eventsByRun     map[string][]portalEvent
+	activeInstances []portalActiveRun
+	batchesIndex    *batchindex.Index
+	sourceKey       string
+}
+
+type portalSummaryResponse struct {
+	Runs        []portalRun
+	ETag        string
+	NotModified bool
 }
 
 type portalManifestCacheEntry struct {
@@ -59,33 +81,108 @@ func getPortalRunsIndex(repoRoot string) *portalRunsIndex {
 
 func (idx *portalRunsIndex) Snapshot(ctx context.Context) ([]portalRun, error) {
 	idx.mu.Lock()
-	if len(idx.snapshotCache) > 0 && time.Since(idx.snapshotAt) < portalRunsSnapshotTTL {
+	if (idx.snapshotReady || len(idx.snapshotCache) > 0) && time.Since(idx.snapshotAt) < portalRunsSnapshotTTL {
 		runs := clonePortalRuns(idx.snapshotCache)
 		idx.mu.Unlock()
 		return runs, nil
 	}
 	idx.mu.Unlock()
 
-	eventsList, err := idx.readEvents()
+	state, err := idx.loadSummaryState(ctx)
 	if err != nil {
 		return nil, err
 	}
-	eventsByRun := idx.view.groupEventsByRun(eventsList)
-	activeInstances, err := idx.discoverActiveRuns(eventsByRun)
+	runs, err := idx.view.computeWithActiveRunsAndIndex(idx.repoRoot, state.eventsList, state.eventsByRun, state.activeInstances, state.batchesIndex)
 	if err != nil {
 		return nil, err
 	}
-	activeInstances = idx.hydrateActiveRunOutputs(ctx, activeInstances)
-	runs, err := idx.view.computeWithActiveRuns(idx.repoRoot, eventsList, eventsByRun, activeInstances)
+	etag, err := portalSummaryETag(idx.repoRoot, runs)
 	if err != nil {
 		return nil, err
 	}
 
 	idx.mu.Lock()
 	idx.snapshotAt = time.Now()
+	idx.snapshotReady = true
 	idx.snapshotCache = clonePortalRuns(runs)
+	idx.snapshotSourceKey = state.sourceKey
+	idx.snapshotETag = etag
 	idx.mu.Unlock()
 	return clonePortalRuns(runs), nil
+}
+
+func (idx *portalRunsIndex) SummarySnapshot(ctx context.Context, ifNoneMatch string) (portalSummaryResponse, error) {
+	state, err := idx.loadSummaryState(ctx)
+	if err != nil {
+		return portalSummaryResponse{}, err
+	}
+
+	idx.mu.Lock()
+	if (idx.snapshotReady || len(idx.snapshotCache) > 0) && state.sourceKey == idx.snapshotSourceKey {
+		runs := portalSummaryRuns(idx.snapshotCache)
+		etag := idx.snapshotETag
+		idx.mu.Unlock()
+		if etag != "" && etagMatches(ifNoneMatch, etag) {
+			return portalSummaryResponse{ETag: etag, NotModified: true}, nil
+		}
+		return portalSummaryResponse{Runs: runs, ETag: etag}, nil
+	}
+	idx.mu.Unlock()
+
+	runs, err := idx.view.computeWithActiveRunsAndIndex(idx.repoRoot, state.eventsList, state.eventsByRun, state.activeInstances, state.batchesIndex)
+	if err != nil {
+		return portalSummaryResponse{}, err
+	}
+	etag, err := portalSummaryETag(idx.repoRoot, runs)
+	if err != nil {
+		return portalSummaryResponse{}, err
+	}
+	if etag != "" && etagMatches(ifNoneMatch, etag) {
+		idx.mu.Lock()
+		idx.snapshotAt = time.Now()
+		idx.snapshotReady = true
+		idx.snapshotCache = clonePortalRuns(runs)
+		idx.snapshotSourceKey = state.sourceKey
+		idx.snapshotETag = etag
+		idx.mu.Unlock()
+		return portalSummaryResponse{ETag: etag, NotModified: true}, nil
+	}
+
+	idx.mu.Lock()
+	idx.snapshotAt = time.Now()
+	idx.snapshotReady = true
+	idx.snapshotCache = clonePortalRuns(runs)
+	idx.snapshotSourceKey = state.sourceKey
+	idx.snapshotETag = etag
+	idx.mu.Unlock()
+	return portalSummaryResponse{Runs: portalSummaryRuns(runs), ETag: etag}, nil
+}
+
+func (idx *portalRunsIndex) loadSummaryState(ctx context.Context) (portalSummaryState, error) {
+	eventsList, err := idx.readEvents()
+	if err != nil {
+		return portalSummaryState{}, err
+	}
+	eventsByRun := idx.view.groupEventsByRun(eventsList)
+	runStates := events.ProjectRunStates(eventsList)
+	activeInstances, err := idx.discoverActiveRuns(eventsByRun)
+	if err != nil {
+		return portalSummaryState{}, err
+	}
+	activeInstances = idx.hydrateActiveRunOutputs(ctx, activeInstances)
+	batchesIndex := idx.view.loadBatchesIndex(idx.repoRoot)
+	sourceKey, err := portalSummarySourceKey(runStates, activeInstances, batchesIndex)
+	if err != nil {
+		return portalSummaryState{}, err
+	}
+	return portalSummaryState{
+		eventsList:      eventsList,
+		runStates:       runStates,
+		eventsByRun:     eventsByRun,
+		activeInstances: activeInstances,
+		batchesIndex:    batchesIndex,
+		sourceKey:       sourceKey,
+	}, nil
 }
 
 func (idx *portalRunsIndex) hydrateActiveRunOutputs(ctx context.Context, instances []portalActiveRun) []portalActiveRun {
@@ -244,8 +341,62 @@ func (idx *portalRunsIndex) FindByKey(ctx context.Context, runKey string) (porta
 func (idx *portalRunsIndex) Invalidate() {
 	idx.mu.Lock()
 	idx.snapshotAt = time.Time{}
+	idx.snapshotReady = false
 	idx.snapshotCache = nil
 	idx.mu.Unlock()
+}
+
+func portalSummarySourceKey(runStates []events.RunState, activeInstances []portalActiveRun, batchesIndex *batchindex.Index) (string, error) {
+	payload, err := json.Marshal(struct {
+		RunStates       []events.RunState `json:"runStates"`
+		ActiveInstances []portalActiveRun `json:"activeInstances"`
+		BatchesIndex    *batchindex.Index `json:"batchesIndex,omitempty"`
+	}{
+		RunStates:       runStates,
+		ActiveInstances: activeInstances,
+		BatchesIndex:    batchesIndex,
+	})
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(payload)
+	return hex.EncodeToString(sum[:]), nil
+}
+
+func portalSummaryETag(repoRoot string, runs []portalRun) (string, error) {
+	summaryRuns := portalSummaryRuns(runs)
+	payload, err := json.Marshal(map[string]any{"repoRoot": repoRoot, "runs": summaryRuns})
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(payload)
+	return `"` + hex.EncodeToString(sum[:]) + `"`, nil
+}
+
+func portalSummaryRuns(runs []portalRun) []portalRun {
+	summaryRuns := clonePortalRuns(runs)
+	for i := range summaryRuns {
+		summaryRuns[i].Log = ""
+		summaryRuns[i].Events = nil
+		summaryRuns[i].LogURL = ""
+	}
+	return summaryRuns
+}
+
+func etagMatches(ifNoneMatch, etag string) bool {
+	if ifNoneMatch == "" || etag == "" {
+		return false
+	}
+	for _, candidate := range strings.Split(ifNoneMatch, ",") {
+		value := strings.TrimSpace(candidate)
+		if value == etag {
+			return true
+		}
+		if strings.HasPrefix(value, "W/") && strings.TrimPrefix(value, "W/") == etag {
+			return true
+		}
+	}
+	return false
 }
 
 func (idx *portalRunsIndex) readEvents() ([]events.Event, error) {

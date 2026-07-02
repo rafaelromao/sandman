@@ -3418,6 +3418,10 @@ func TestPortal_RunsSummary(t *testing.T) {
 	if len(payload.Runs) != 1 {
 		t.Fatalf("expected 1 run, got %d", len(payload.Runs))
 	}
+	etag := strings.TrimSpace(resp.Header.Get("ETag"))
+	if etag == "" {
+		t.Fatal("expected summary response ETag")
+	}
 	run := payload.Runs[0]
 	if run.Log != "" {
 		t.Errorf("summary response must omit Log, got %q", run.Log)
@@ -3429,19 +3433,92 @@ func TestPortal_RunsSummary(t *testing.T) {
 		t.Errorf("summary response must omit LogURL")
 	}
 
-	resp2, err := http.Get(server.URL + "/api/runs")
+	req304, err := http.NewRequest(http.MethodGet, server.URL+"/api/runs?summary=1", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp2.Body.Close()
-	var payload2 struct {
-		Runs []portalRun `json:"runs"`
-	}
-	if err := json.NewDecoder(resp2.Body).Decode(&payload2); err != nil {
+	req304.Header.Set("If-None-Match", etag)
+	resp304, err := http.DefaultClient.Do(req304)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if payload2.Runs[0].Log == "" {
-		t.Errorf("default /api/runs should still return Log")
+	defer resp304.Body.Close()
+	if resp304.StatusCode != http.StatusNotModified {
+		t.Fatalf("expected 304, got %d", resp304.StatusCode)
+	}
+	if got := strings.TrimSpace(resp304.Header.Get("ETag")); got != etag {
+		t.Fatalf("expected 304 ETag %q, got %q", etag, got)
+	}
+	body304, err := io.ReadAll(resp304.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(body304) != 0 {
+		t.Fatalf("expected empty 304 body, got %q", string(body304))
+	}
+
+	writePortalLog(t, layout.EventsLogPath, []events.Event{{Type: "run.note", Timestamp: finishedAt.Add(1 * time.Minute), RunID: runID, Issue: 42, Payload: map[string]any{"note": "summary-noop"}}})
+	getPortalRunsIndex(repoRoot).Invalidate()
+
+	reqNoop, err := http.NewRequest(http.MethodGet, server.URL+"/api/runs?summary=1", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reqNoop.Header.Set("If-None-Match", etag)
+	respNoop, err := http.DefaultClient.Do(reqNoop)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer respNoop.Body.Close()
+	if respNoop.StatusCode != http.StatusNotModified {
+		t.Fatalf("expected summary-excluded change to keep 304, got %d", respNoop.StatusCode)
+	}
+	if got := strings.TrimSpace(respNoop.Header.Get("ETag")); got != etag {
+		t.Fatalf("expected unchanged ETag %q after summary-excluded change, got %q", etag, got)
+	}
+	bodyNoop, err := io.ReadAll(respNoop.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(bodyNoop) != 0 {
+		t.Fatalf("expected empty 304 body after summary-excluded change, got %q", string(bodyNoop))
+	}
+
+	writePortalLog(t, layout.EventsLogPath, []events.Event{
+		{Type: "run.started", Timestamp: startedAt, RunID: runID, Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
+		{Type: "run.finished", Timestamp: finishedAt, RunID: runID, Issue: 42, Payload: map[string]any{"status": "success", "branch": "sandman/42-fix"}},
+		{Type: "run.started", Timestamp: finishedAt.Add(1 * time.Minute), RunID: "run-99-1234567891", Issue: 99, Payload: map[string]any{"branch": "sandman/99-fix"}},
+	})
+	getPortalRunsIndex(repoRoot).Invalidate()
+
+	reqChanged, err := http.NewRequest(http.MethodGet, server.URL+"/api/runs?summary=1", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reqChanged.Header.Set("If-None-Match", etag)
+	respChanged, err := http.DefaultClient.Do(reqChanged)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer respChanged.Body.Close()
+	if respChanged.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 after change, got %d", respChanged.StatusCode)
+	}
+	if got := strings.TrimSpace(respChanged.Header.Get("ETag")); got == "" || got == etag {
+		t.Fatalf("expected changed summary ETag, got %q", got)
+	}
+	bodyChanged, err := io.ReadAll(respChanged.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var changedPayload struct {
+		Runs []portalRun `json:"runs"`
+	}
+	if err := json.Unmarshal(bodyChanged, &changedPayload); err != nil {
+		t.Fatalf("decode changed summary: %v", err)
+	}
+	if len(changedPayload.Runs) != 2 {
+		t.Fatalf("expected 2 runs after change, got %d", len(changedPayload.Runs))
 	}
 }
 

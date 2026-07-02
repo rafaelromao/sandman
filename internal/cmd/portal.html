@@ -1711,6 +1711,7 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
     const archivePath = "/api/runs/archive";
     const streamPath = "/api/runs/stream";
     let pollInterval = {{.PollInterval}};
+    let summaryETag = '';
     const settingsToggle = document.getElementById('settings-toggle');
     const settingsOverlay = document.getElementById('settings-overlay');
     const settingsPanel = document.getElementById('settings-panel');
@@ -2775,8 +2776,25 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
     async function refresh() {
       try {
         const prevRuns = Array.isArray(state.runs) ? state.runs.slice() : [];
-        const res = await fetch(apiPath + '?summary=1', { cache: 'no-store' });
+        const headers = {};
+        if (summaryETag) {
+          headers['If-None-Match'] = summaryETag;
+        }
+        const res = await fetch(apiPath + '?summary=1', { cache: 'no-store', headers: headers });
+        if (res.status === 304) {
+          state.loading = false;
+          errorBanner.style.display = 'none';
+          errorBanner.textContent = '';
+          lastPollAt = Date.now();
+          pollFailCount = 0;
+          updatePollHealth();
+          return;
+        }
         if (!res.ok) throw new Error('HTTP ' + res.status);
+        const nextETag = res.headers && typeof res.headers.get === 'function' ? res.headers.get('ETag') : '';
+        if (nextETag) {
+          summaryETag = nextETag;
+        }
         const payload = await res.json();
         const nextRuns = Array.isArray(payload.runs) ? payload.runs.map(normalizeRunIdentity) : [];
         // Merge existing detail (log/events) into the summary payload so expanded

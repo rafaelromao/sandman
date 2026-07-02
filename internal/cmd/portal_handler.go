@@ -90,18 +90,29 @@ func (h *portalHandler) handleRuns(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"repoRoot": h.repoRoot, "run": run})
 		return
 	}
+	summary := strings.TrimSpace(r.URL.Query().Get("summary")) == "1"
+	if summary {
+		result, err := h.runsIndex.SummarySnapshot(r.Context(), r.Header.Get("If-None-Match"))
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Cache-Control", "no-store")
+		if result.ETag != "" {
+			w.Header().Set("ETag", result.ETag)
+		}
+		if result.NotModified {
+			w.WriteHeader(http.StatusNotModified)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"repoRoot": h.repoRoot, "runs": result.Runs})
+		return
+	}
 	runs, err := h.runsIndex.Snapshot(r.Context())
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
-	}
-	summary := strings.TrimSpace(r.URL.Query().Get("summary")) == "1"
-	if summary {
-		for i := range runs {
-			runs[i].Log = ""
-			runs[i].Events = nil
-			runs[i].LogURL = ""
-		}
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")

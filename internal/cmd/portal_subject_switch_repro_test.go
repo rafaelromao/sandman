@@ -433,6 +433,101 @@ func TestPortalLogPane_SubjectSwitchReusesCachedPane(t *testing.T) {
 	}
 }
 
+func TestPortalSummaryPoll_UsesIfNoneMatchAndKeepsRowsOn304(t *testing.T) {
+	html, stateJS, scrollJS, diffJS := loadPortalReproAssets(t)
+	page := html
+	page = strings.ReplaceAll(page, "{{.SupportedThemesJSON}}", `['sandman']`)
+	page = strings.ReplaceAll(page, "{{.PortalStateJS}}", stateJS)
+	page = strings.ReplaceAll(page, "{{.PortalScrollJS}}", scrollJS)
+	page = strings.ReplaceAll(page, "{{.PortalDiffJS}}", diffJS)
+	page = strings.ReplaceAll(page, "{{.ThemeOptionsHTML}}", `<option value="sandman">Sandman</option>`)
+	page = strings.ReplaceAll(page, "{{.RefreshPath}}", "/api/runs")
+	page = strings.ReplaceAll(page, "{{.PortalAbortSupported}}", "false")
+	page = strings.ReplaceAll(page, "{{.PortalStateStorageKey}}", "sandman.portal.view-state.v1")
+	page = strings.ReplaceAll(page, "{{.PollInterval}}", "600000")
+	injection := `<script>
+    window.__portalFetchCalls = 0;
+    window.__portalIfNoneMatch = [];
+    window.__portalRenderCalls = 0;
+    window.requestAnimationFrame = function (cb) {
+      window.__portalRenderCalls += 1;
+      return setTimeout(function () { cb(performance.now()); }, 0);
+    };
+    window.cancelAnimationFrame = function (id) { clearTimeout(id); };
+    window.setInterval = function (cb) {
+      if (cb && cb.name === 'refresh') {
+        setTimeout(function () { return cb(); }, 120);
+      }
+      return 1;
+    };
+    window.fetch = async function (input, init) {
+      var headers = init && init.headers ? init.headers : {};
+      var ifNoneMatch = '';
+      if (headers && typeof headers.get === 'function') {
+        ifNoneMatch = headers.get('If-None-Match') || '';
+      } else if (headers && typeof headers === 'object') {
+        ifNoneMatch = headers['If-None-Match'] || headers['if-none-match'] || '';
+      }
+      window.__portalIfNoneMatch.push(ifNoneMatch);
+      window.__portalFetchCalls += 1;
+      if (window.__portalFetchCalls === 1) {
+        return {
+          ok: true,
+          status: 200,
+          headers: { get: function (name) { return name === 'ETag' ? '"etag-1"' : ''; } },
+          json: async function () {
+            return { runs: [{ key: 'r1', runId: 'r1', kind: 'completed', status: 'success', issueLabel: '#1', issueNumber: 1, archived: false, unavailable: false, sourceExists: true }] };
+          },
+          text: async function () { return ''; },
+        };
+      }
+      return {
+        ok: false,
+        status: 304,
+        headers: { get: function (name) { return name === 'ETag' ? '"etag-1"' : ''; } },
+        json: async function () { return { runs: [] }; },
+        text: async function () { return ''; },
+      };
+    };
+    setTimeout(function () {
+      var row = document.querySelector('tr[data-run-key="r1"]');
+      var marker = document.createElement('pre');
+      marker.id = 'portal-summary-etag';
+      marker.textContent = JSON.stringify({
+        fetchCalls: window.__portalFetchCalls || 0,
+        ifNoneMatch: window.__portalIfNoneMatch || [],
+        renderCalls: window.__portalRenderCalls || 0,
+        rowStillShown: !!row,
+      });
+      document.body.appendChild(marker);
+    }, 2600);
+    const apiPath = "/api/runs";`
+	page = strings.Replace(page, "<script>\n    const apiPath = \"/api/runs\";", injection, 1)
+	dom, _ := runPortalChromium(t, page)
+	payload := extractPortalMarker(t, dom, "portal-summary-etag")
+	var result struct {
+		FetchCalls    int      `json:"fetchCalls"`
+		IfNoneMatch   []string `json:"ifNoneMatch"`
+		RenderCalls   int      `json:"renderCalls"`
+		RowStillShown bool     `json:"rowStillShown"`
+	}
+	if err := json.Unmarshal([]byte(payload), &result); err != nil {
+		t.Fatalf("parse summary-etag payload: %v\nraw=%s", err, payload)
+	}
+	if result.FetchCalls != 2 {
+		t.Fatalf("expected 2 summary fetches, got %#v", result)
+	}
+	if len(result.IfNoneMatch) != 2 || result.IfNoneMatch[0] != "" || result.IfNoneMatch[1] != `"etag-1"` {
+		t.Fatalf("expected second poll to send stored ETag, got %#v", result)
+	}
+	if result.RenderCalls != 1 {
+		t.Fatalf("expected only initial render on 304 refresh, got %#v", result)
+	}
+	if !result.RowStillShown {
+		t.Fatalf("expected row to stay visible after 304 refresh, got %#v", result)
+	}
+}
+
 func TestPortalBatchMetadata_RendersBatchAboveRun(t *testing.T) {
 	batchID := "abcd-260618113825"
 	runID := batchID + "-issue-42"

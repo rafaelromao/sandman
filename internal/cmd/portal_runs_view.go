@@ -235,6 +235,11 @@ func (v *portalRunsView) computeFromEvents(repoRoot string, eventList []events.E
 }
 
 func (v *portalRunsView) computeWithActiveRuns(repoRoot string, eventList []events.Event, eventsByRun map[string][]portalEvent, activeInstances []portalActiveRun) ([]portalRun, error) {
+	idx := v.loadBatchesIndex(repoRoot)
+	return v.computeWithActiveRunsAndIndex(repoRoot, eventList, eventsByRun, activeInstances, idx)
+}
+
+func (v *portalRunsView) computeWithActiveRunsAndIndex(repoRoot string, eventList []events.Event, eventsByRun map[string][]portalEvent, activeInstances []portalActiveRun, idx *batchindex.Index) ([]portalRun, error) {
 	runStates := events.ProjectRunStates(eventList)
 	activeStates := make([]events.RunState, 0, len(runStates))
 	activeBatchStart := time.Time{}
@@ -248,7 +253,6 @@ func (v *portalRunsView) computeWithActiveRuns(repoRoot string, eventList []even
 	var deadBatches []daemon.DeadBatch
 	var err error
 
-	idx := v.loadBatchesIndex(repoRoot)
 	for i := range activeInstances {
 		if activeInstances[i].SocketPath == "" {
 			continue
