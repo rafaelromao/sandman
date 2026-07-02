@@ -2542,22 +2542,13 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
       return parents.find((candidate) => Number(candidate.reviewCount || 0) > 0 || candidate.reviewVerdict) || parents[0];
     }
 
-    function hasLiveReviewChild(group) {
-      if (!Array.isArray(group)) return false;
-      return group.some((run) => run && run.review && run.kind === 'active');
-    }
-
     function visibleRunForIssueGroup(issueNumber, runs) {
       if (!Number.isInteger(issueNumber) || issueNumber <= 0 || !Array.isArray(runs)) return null;
       const group = runs.filter((run) => run && run.issueNumber === issueNumber);
       if (!group.length) return null;
       const parents = group.filter((run) => !run.review);
       if (parents.length) {
-        const picked = pickCanonicalParent(parents);
-        if (picked && hasLiveReviewChild(group)) {
-          return Object.assign({}, picked, { status: 'reviewing', liveReview: true });
-        }
-        return picked;
+        return pickCanonicalParent(parents);
       }
       const summary = summarizeReviewGroup(group.filter((run) => run.review));
       const source = summary.source || group[0];
@@ -2570,7 +2561,7 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
         groupedReview: false,
         reviewCount: summary.count,
         reviewVerdict: summary.verdict,
-        status: summary.status || (summary.live ? 'reviewing' : String(source.status || '').trim()),
+        status: summary.status || String(source.status || '').trim(),
         kind: summary.kind,
         issueNumber: issueNumber,
         prNumber: source.prNumber,

@@ -3,7 +3,7 @@
   "longTaskCount": 0,
   "maxTaskMs": 0,
   "sumTaskMs": 0,
-  "endToEndMs": 0.52,
+  "endToEndMs": 0.32,
   "thresholdMs": 50,
   "version": "slice-0"
 }
