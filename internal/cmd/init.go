@@ -68,10 +68,6 @@ func NewInitCmd() *cobra.Command {
 				return err
 			}
 
-			if toolVersion == "" {
-				toolVersion = "repo"
-			}
-
 			s := &scaffold.Scaffolder{}
 			prompter := &cliPrompter{
 				in:  bufio.NewReader(cmd.InOrStdin()),

@@ -182,6 +182,33 @@ func TestInit_RubyPresetBuildsForEveryBuiltInAgentProvider(t *testing.T) {
 	}
 }
 
+func TestInit_RustPresetBuildsForEveryBuiltInAgentProvider(t *testing.T) {
+	runtime, err := sandbox.ResolveRuntime("podman")
+	if err != nil {
+		t.Skipf("container runtime unavailable: %v", err)
+	}
+
+	for agent := range config.BuiltInAgentPresets {
+		t.Run(agent, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "Cargo.toml"), []byte("[package]\nname = \"demo\"\nversion = \"0.1.0\"\nrust-version = \"1.77.0\"\n"), 0644); err != nil {
+				t.Fatalf("write Cargo.toml: %v", err)
+			}
+
+			s := &scaffold.Scaffolder{}
+			if err := s.Scaffold(dir, scaffold.Options{Agent: agent}, buildPrompter{}); err != nil {
+				t.Fatalf("scaffold: %v", err)
+			}
+
+			tag := fmt.Sprintf("sandman-rust-preset-%s-%d:latest", agent, time.Now().UnixNano())
+			buildPresetImage(t, runtime, tag, filepath.Join(dir, ".sandman", "Dockerfile"), dir)
+			t.Cleanup(func() {
+				_ = exec.Command(runtime, "rmi", "-f", tag).Run()
+			})
+		})
+	}
+}
+
 func TestInit_GenericPresetBuildsForEveryBuiltInAgentProvider(t *testing.T) {
 	runtime, err := sandbox.ResolveRuntime("podman")
 	if err != nil {
