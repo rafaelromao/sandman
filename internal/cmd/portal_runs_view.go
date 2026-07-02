@@ -1965,12 +1965,15 @@ func (v *portalRunsView) portalLogDownloadURLForPath(repoRoot, logPath string) s
 }
 
 // resolveRunLog chooses what to render in the portal `Log` field for a row.
-// Today the policy is: live socket output wins when it strips to non-empty,
-// otherwise the saved run log file is authoritative. `runState` is accepted
-// so slice 2 of issue #1637 can branch on `kind` (completed rows must
-// always use the saved log) without changing this signature; the prefactor
-// body does not read it.
+// Live socket output wins when it strips to non-empty; otherwise the saved
+// run log file is authoritative. `runState` is part of the signature today
+// so issue #1637 slice 2 can branch on `kind` (completed rows must always
+// use the saved log) without changing this helper's contract; the prefactor
+// body does not read it yet.
 func (v *portalRunsView) resolveRunLog(savedLogPath string, runState *events.RunState, active *portalActiveRun) string {
+	// runState is reserved for #1637 slice 2; the prefactor body only
+	// needs active and savedLogPath to mirror today's behaviour.
+	_ = runState
 	if active != nil {
 		if live := strings.TrimSpace(stripLogLabels(active.LiveOutput)); live != "" {
 			return live
