@@ -634,7 +634,7 @@ func TestPortalRefresh_LocksRowIdentityAcrossMixedBatchPayloads(t *testing.T) {
 		t.Fatalf("marshal refreshed runs: %v", err)
 	}
 	stateJSON := `{"expandedRunKey":"` + runID + `","tabs":{"` + runID + `":"log"},"commandFormCollapsed":false,"showArchived":false,"activeBatches":false,"sortBy":"started","sortDir":"desc"}`
-  page := buildPortalReproPage(t, stateJSON, runsJSON, `
+	page := buildPortalReproPage(t, stateJSON, runsJSON, `
     window.__portalRefreshEnabled = false;
     window.__portalFetchPayloads = [
       { runs: `+string(runsJSON)+` },
