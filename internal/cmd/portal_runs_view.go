@@ -917,6 +917,14 @@ func (v *portalRunsView) discoverActiveRuns(repoRoot string, eventsByRun map[str
 					issueNumbers = []int{reviewIssueNumber}
 				}
 			}
+		} else if reviewIssueNumber > 0 {
+			// No readable manifest (e.g. a ghost review batch whose
+			// index entry and socket survive but whose batch.json was
+			// evicted or corrupt), yet the review identity encoded the
+			// linked issue. Use it so the active row still groups under
+			// the canonical issue row instead of escaping as a
+			// passthrough row (residual #1615).
+			issueNumbers = []int{reviewIssueNumber}
 		}
 		if len(issueNumbers) > 0 {
 			issueNumber = issueNumbers[0]
@@ -1440,6 +1448,18 @@ func (v *portalRunsView) runFromState(repoRoot string, runState events.RunState,
 	if review {
 		portalRun.PRNumber = prNumber
 		if issueNum := v.reviewIssueNumber(runState.Started.Payload); issueNum > 0 {
+			portalRun.IssueNumber = issueNum
+			portalRun.IssueLabel = fmt.Sprintf("#%d", issueNum)
+		} else if issueNum := reviewIssueNumberFromIdentity(runID, batchID); issueNum > 0 {
+			// The review command stamps only pr_number on the
+			// run.started payload, never issue_number. The linked
+			// issue is encoded solely in the review identity
+			// (`<sid>-<ts>-<issue>-PR<n>`), on both the per-row RunID
+			// and the batch_id. Recover it here so a historical review
+			// row groups under the canonical implementation row instead
+			// of escaping as a standalone passthrough row (residual
+			// #1615 — the active-socket path recovered this, the event
+			// path did not).
 			portalRun.IssueNumber = issueNum
 			portalRun.IssueLabel = fmt.Sprintf("#%d", issueNum)
 		}
