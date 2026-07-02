@@ -1,9 +1,9 @@
 {
   "scenario": "open_cold",
   "longTaskCount": 1,
-  "maxTaskMs": 71.72,
-  "sumTaskMs": 71.72,
-  "endToEndMs": 71.77,
+  "maxTaskMs": 70.61,
+  "sumTaskMs": 70.61,
+  "endToEndMs": 70.66,
   "thresholdMs": 50,
   "version": "slice-0"
 }

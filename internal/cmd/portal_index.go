@@ -114,16 +114,16 @@ func (idx *portalRunsIndex) Snapshot(ctx context.Context) ([]portalRun, error) {
 func (idx *portalRunsIndex) SummarySnapshot(ctx context.Context, ifNoneMatch string) (portalSummaryResponse, error) {
 	idx.mu.Lock()
 	if (idx.snapshotReady || len(idx.snapshotCache) > 0) && time.Since(idx.snapshotAt) < portalRunsSnapshotTTL {
-		etag := idx.snapshotETag
+		eTag := idx.snapshotETag
 		idx.mu.Unlock()
-		if etag != "" && etagMatches(ifNoneMatch, etag) {
-			return portalSummaryResponse{ETag: etag, NotModified: true}, nil
+		if eTag != "" && etagMatches(ifNoneMatch, eTag) {
+			return portalSummaryResponse{ETag: eTag, NotModified: true}, nil
 		}
 	} else {
 		idx.mu.Unlock()
 	}
 
-	state, err := idx.loadSummaryState(ctx)
+	state, err := idx.loadSummaryProbe(ctx)
 	if err != nil {
 		return portalSummaryResponse{}, err
 	}
@@ -140,6 +140,7 @@ func (idx *portalRunsIndex) SummarySnapshot(ctx context.Context, ifNoneMatch str
 	}
 	idx.mu.Unlock()
 
+	state.activeInstances = idx.hydrateActiveRunOutputs(ctx, state.activeInstances)
 	runs, err := idx.view.computeWithActiveRunsAndIndex(idx.repoRoot, state.eventsList, state.eventsByRun, state.activeInstances, state.batchesIndex)
 	if err != nil {
 		return portalSummaryResponse{}, err
@@ -169,7 +170,7 @@ func (idx *portalRunsIndex) SummarySnapshot(ctx context.Context, ifNoneMatch str
 	return portalSummaryResponse{Runs: portalSummaryRuns(runs), ETag: etag}, nil
 }
 
-func (idx *portalRunsIndex) loadSummaryState(ctx context.Context) (portalSummaryState, error) {
+func (idx *portalRunsIndex) loadSummaryProbe(ctx context.Context) (portalSummaryState, error) {
 	eventsList, err := idx.readEvents()
 	if err != nil {
 		return portalSummaryState{}, err
@@ -180,7 +181,6 @@ func (idx *portalRunsIndex) loadSummaryState(ctx context.Context) (portalSummary
 	if err != nil {
 		return portalSummaryState{}, err
 	}
-	activeInstances = idx.hydrateActiveRunOutputs(ctx, activeInstances)
 	batchesIndex := idx.view.loadBatchesIndex(idx.repoRoot)
 	sourceKey, err := portalSummarySourceKey(runStates, activeInstances, batchesIndex)
 	if err != nil {
@@ -194,6 +194,15 @@ func (idx *portalRunsIndex) loadSummaryState(ctx context.Context) (portalSummary
 		batchesIndex:    batchesIndex,
 		sourceKey:       sourceKey,
 	}, nil
+}
+
+func (idx *portalRunsIndex) loadSummaryState(ctx context.Context) (portalSummaryState, error) {
+	state, err := idx.loadSummaryProbe(ctx)
+	if err != nil {
+		return portalSummaryState{}, err
+	}
+	state.activeInstances = idx.hydrateActiveRunOutputs(ctx, state.activeInstances)
+	return state, nil
 }
 
 func (idx *portalRunsIndex) hydrateActiveRunOutputs(ctx context.Context, instances []portalActiveRun) []portalActiveRun {
@@ -358,13 +367,17 @@ func (idx *portalRunsIndex) Invalidate() {
 }
 
 func portalSummarySourceKey(runStates []events.RunState, activeInstances []portalActiveRun, batchesIndex *batchindex.Index) (string, error) {
+	activeFingerprint := append([]portalActiveRun(nil), activeInstances...)
+	for i := range activeFingerprint {
+		activeFingerprint[i].LiveOutput = ""
+	}
 	payload, err := json.Marshal(struct {
 		RunStates       []events.RunState `json:"runStates"`
 		ActiveInstances []portalActiveRun `json:"activeInstances"`
 		BatchesIndex    *batchindex.Index `json:"batchesIndex,omitempty"`
 	}{
 		RunStates:       runStates,
-		ActiveInstances: activeInstances,
+		ActiveInstances: activeFingerprint,
 		BatchesIndex:    batchesIndex,
 	})
 	if err != nil {
