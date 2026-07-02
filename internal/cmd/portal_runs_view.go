@@ -1663,25 +1663,41 @@ func (v *portalRunsView) filterPortalLogByRunID(text string, runID string) strin
 // read via readPortalTextFile) or by the live attach stream coming off
 // the still-connectable batch.sock (read via readPortalSocketOutput).
 //
-// The slice-1 policy mirrors the pre-existing two override sites
-// (runFromState lines 1417-1421 and runFromActiveBatchIssue default
-// branch lines 1175-1183): when an active batch is matched, the live
-// socket output wins if it is non-empty; otherwise the saved log is
-// returned. When no active batch is matched, the saved log is returned
-// as-is. Slice 2 will flip the terminal-row branch of this helper so
-// kind=completed rows always receive the saved log, even when the batch
-// daemon socket is still alive.
+// Policy:
+//   - No active batch matched (active == nil) → saved log.
+//   - Active row (runState is non-terminal, i.e. IsActive() true) →
+//     live wins if non-empty, else saved.
+//   - Terminal review or auto-select row (active != nil AND the state
+//     carries review/auto-select) → live wins if non-empty, else saved.
+//     These rows stay kind=active because their daemon is still
+//     serving them (see the post-helper promotion at lines 1490-1492).
+//   - Terminal kind=completed row (any other terminal state with an
+//     active batch) → saved log wins, even when the batch daemon
+//     socket is still connectable. The Saved Run Log is the
+//     authoritative record of a finished AgentRun per CONTEXT.md; the
+//     socket may now be broadcasting a different run's content
+//     (issue #1637).
 //
 // `savedLog` is the stripped content of the per-run run.log (what
 // readPortalTextFile returns). `runState` carries the event-fold
-// information needed to know whether the row is terminal. `active` is
-// nil for the historical / event-only path, non-nil when an active batch
-// is matched.
+// information needed to know whether the row is terminal and whether
+// it is a review/auto-select. `active` is nil for the historical /
+// event-only path, non-nil when an active batch is matched.
 func (v *portalRunsView) resolveRunLog(savedLog string, runState events.RunState, active *portalActiveRun) string {
-	if active != nil {
+	if active == nil {
+		return savedLog
+	}
+	if runState.IsActive() {
 		if live := strings.TrimSpace(stripLogLabels(active.LiveOutput)); live != "" {
 			return live
 		}
+		return savedLog
+	}
+	if runState.IsReview() || runState.IsAutoSelect() {
+		if live := strings.TrimSpace(stripLogLabels(active.LiveOutput)); live != "" {
+			return live
+		}
+		return savedLog
 	}
 	return savedLog
 }
