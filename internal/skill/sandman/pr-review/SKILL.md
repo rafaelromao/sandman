@@ -162,19 +162,16 @@ printf ',"%s":{"sha256":"%s","pr_number":%s,"run_id":"%s","posted_at":"%s"}' \
 
 **Do NOT read the PR diff or write review comments yourself.** The review must come exclusively from the PR Review Agent.
 
-#### Step 5: Wait for review (timeout: 30 minutes)
+#### Step 5: Wait for review (timeout: 15 minutes)
 
 | Iteration | Sleep before this poll |
 |-----------|------------------------|
-| 1         | (no sleep — first poll fires immediately after the `gh pr comment` post) |
-| 2         | `sleep 30`             |
+| 1         | `sleep 120`            |
+| 2         | `sleep 60`             |
 | 3         | `sleep 60`             |
-| 4         | `sleep 60`             |
-| 5         | `sleep 90`             |
-| 6         | `sleep 90`             |
-| 7         | `sleep 120`            |
+| 4+        | `sleep 30` (repeated until cumulative sleep budget of 900s is exhausted) |
 
-Total polling budget: 30 + 60 + 60 + 90 + 90 + 120 = **450s = 7.5 min** of cumulative sleep.
+Total polling budget: **900s = 15 minutes** of cumulative sleep (120 + 60 + 60 + N×30).
 
 **Hard rule — observed-response fast path.** If any poll iteration observes a new top-level PR conversation comment whose author is not the agent itself, the very next sleep MUST be ≤ 60s.
 
@@ -201,7 +198,7 @@ A reviewer response is **any** of:
 **Self-check (after every poll, before classifying):**
 If `top > 0` AND `reviews == 0` AND `inline == 0`, AND no previous `{{REVIEW_COMMAND}}` is already pending without response, post a follow-up comment with `{{REVIEW_COMMAND}}` plus a freeform clarification request. If a request is already pending, skip — do not pile on.
 
-If no reviewer response arrives within 30 minutes, stop and exit the loop with a `REVIEW_TIMEOUT` reason documented in the run log so the failure is visible in the run history.
+If no reviewer response arrives within 15 minutes, stop and exit the loop with a `REVIEW_TIMEOUT` reason documented in the run log so the failure is visible in the run history.
 
 #### Step 6: Read and classify feedback
 
