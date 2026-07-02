@@ -115,9 +115,11 @@ type Daemon struct {
 
 // New returns a Daemon configured with the project defaults for the
 // polling interval and clock. The seen cache is hydrated eagerly from
-// the on-disk batches index (issue #1480 slice A). A missing or
-// unreadable index yields an empty cache; the rename-loser trade-off
-// from ADR-0034 §3 means a stale skip is acceptable.
+// the on-disk batches index (issue #1480 slice A), and the in-memory
+// pendingReviews map is rehydrated from the same index so an
+// in-flight trigger survives a daemon restart (issue #1635). A
+// missing or unreadable index yields empty caches; the rename-loser
+// trade-off from ADR-0034 §3 means a stale skip is acceptable.
 //
 // parallel and parallelSet thread the CLI --parallel override through to
 // the slot-pool sizing: when parallelSet is true and parallel > 0, the
@@ -154,6 +156,9 @@ func New(baseDir string, gh GitHubClient, prompts Renderer, runner BatchRunner, 
 	}
 	if err := d.loadSeenCache(); err != nil {
 		d.logf("load seen cache: %v", err)
+	}
+	if err := d.loadPendingReviews(); err != nil {
+		d.logf("load pending reviews: %v", err)
 	}
 	return d
 }
@@ -360,6 +365,92 @@ func readReviewRowID(runsDir string) (string, error) {
 // fsnotify) or as a slow-tick recovery path.
 func (d *Daemon) InvalidateSeenCache() error {
 	return d.loadSeenCache()
+}
+
+// loadPendingReviews rehydrates the in-memory pendingReviews map from
+// the on-disk review-state.json files referenced by .sandman/batches.json.
+//
+// The lazy-verify contract (issue #1482 slice D) records each launched
+// trigger as status `pending` in the per-run review-state.json and keeps
+// the matching entry in the in-memory pendingReviews map. The seen-cache
+// hydration at construction deliberately excludes `pending` entries
+// (see shouldSkipDedupStatus), so without this rehydration a daemon
+// restart between launchReview and the first post-launch
+// promotePendingReviews tick would orphan the in-flight trigger and
+// the next instance would re-launch the review. Issue #1635.
+//
+// The rehydration is read-only: it walks the same index the seen cache
+// uses and registers a pendingReviewEntry for every SeenComment whose
+// status is "pending". The since timestamp is the entry's recorded
+// Timestamp (so a fresh promote tick can detect reviewer replies
+// posted at or after the original launch window). Stale entries
+// (rows the bounded-retry escape would have promoted already) are
+// still bounded by the existing pendingMaxCycles cap on the new
+// instance — at most 3 promote ticks escape them to "failure" + the
+// seen cache, matching the in-memory behavior.
+func (d *Daemon) loadPendingReviews() error {
+	d.pendingMu.Lock()
+	defer d.pendingMu.Unlock()
+	d.pendingReviews = map[int][]pendingReviewEntry{}
+
+	idx, err := seenCacheLoader(d.BaseDir)
+	if err != nil {
+		return fmt.Errorf("load batches index: %w", err)
+	}
+	if idx == nil {
+		return nil
+	}
+	for _, entry := range idx.Entries {
+		if entry.Kind != batchindex.KindReview {
+			continue
+		}
+		rowID, err := readReviewRowID(filepath.Join(entry.Path, "runs"))
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			d.logf("read review row id for %s: %v", entry.Path, err)
+			continue
+		}
+		runDir := filepath.Join(entry.Path, "runs", rowID)
+		state, err := seenStateReader(runDir)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			d.logf("read review state %s: %v", runDir, err)
+			continue
+		}
+		reviewStatePath := filepath.Join(runDir, "review-state.json")
+		for _, sc := range state.SeenComments {
+			if sc.Status != "pending" {
+				continue
+			}
+			// Drop zero-timestamp entries: a missing Timestamp
+			// means we cannot bound the promote window safely, and
+			// falling back to wall-clock at rehydration time would
+			// hide reviewer replies that landed before the restart.
+			// The bounded-retry escape on the new instance will
+			// still clear the row after pendingMaxCycles ticks.
+			if sc.Timestamp.IsZero() {
+				d.logf("skip rehydrate of pending %s (zero timestamp on disk)", sc.CommentID)
+				continue
+			}
+			d.pendingReviews[entry.PR] = append(d.pendingReviews[entry.PR], pendingReviewEntry{
+				commentID:   sc.CommentID,
+				since:       sc.Timestamp,
+				reviewState: reviewStatePath,
+			})
+		}
+	}
+	return nil
+}
+
+// InvalidatePendingReviews forces a rebuild of the in-memory
+// pendingReviews map by re-running the on-disk scan. Symmetric with
+// InvalidateSeenCache.
+func (d *Daemon) InvalidatePendingReviews() error {
+	return d.loadPendingReviews()
 }
 
 // SocketPath returns the absolute path of the daemon's control socket.
