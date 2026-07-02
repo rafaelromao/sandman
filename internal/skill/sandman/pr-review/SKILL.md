@@ -135,6 +135,31 @@ gh pr comment <N> --repo <owner/repo> --body "{{REVIEW_COMMAND}}"
 
 After posting, write the current head SHA to `.sandman/.<N>.head_sha` so subsequent passes can detect staleness.
 
+**Self-post dedup (issue #1648).** Immediately after `gh pr comment` returns success, hash the body you just posted and append the hash to `.sandman/reviews/self-posted.json`. The review daemon reads this file and ignores any comment whose body matches a recorded hash, so the bot's own review-comment cannot be mistaken for a fresh `/sandman review` trigger on a later tick. Compute the hash the same way the daemon does (lower-case, trim trailing whitespace, then `sha256sum`):
+
+```bash
+sha=$(printf '%s' "{{REVIEW_COMMAND}}" | tr 'A-Z' 'a-z' | sed 's/[ \t\n]*$//' | sha256sum | awk '{print $1}')
+mkdir -p .sandman/reviews
+tmp=$(mktemp)
+existing='.sandman/reviews/self-posted.json'
+if [ -f "$existing" ]; then cp "$existing" "$tmp"; else echo '{}' > "$tmp"; fi
+jq --arg sha "$sha" --argjson pr <N> --arg run "$RUN_ID" --arg now "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  '.[$sha] = {sha256:$sha, pr_number:$pr, run_id:$run, posted_at:$now}' \
+  "$tmp" > "$tmp.new" && mv "$tmp.new" "$tmp"
+mv "$tmp" "$existing"
+```
+
+If `jq` is unavailable, fall back to the simpler form below (the daemon tolerates any re-record; the file is a JSON object keyed by sha256 hex):
+
+```bash
+sha=$(printf '%s' "{{REVIEW_COMMAND}}" | tr 'A-Z' 'a-z' | sed 's/[ \t\n]*$//' | sha256sum | awk '{print $1}')
+printf ',"%s":{"sha256":"%s","pr_number":%s,"run_id":"%s","posted_at":"%s"}' \
+  "$sha" "$sha" <N> "$RUN_ID" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  >> .sandman/reviews/self-posted.json
+```
+
+(The daemon's defensive observation in `promotePendingComment` is the safety net for any case where this wrapper is bypassed: even if the hash is not recorded here, the next tick will record the observed comment body.)
+
 **Do NOT read the PR diff or write review comments yourself.** The review must come exclusively from the PR Review Agent.
 
 #### Step 5: Wait for review (timeout: 30 minutes)
