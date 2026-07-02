@@ -192,15 +192,6 @@ func batchKeyForActive(active portalActiveRun) string {
 	return "active-" + active.RunID
 }
 
-// activeKeyForActive is the row-Key counterpart of batchKeyForActive.
-// It uses the same fallback chain (active.Key → active.BatchID →
-// filepath.Base(active.Dir) → "active-"+active.RunID) so every active
-// row in the portal reaches dedupRuns/UI with a stable, non-empty Key.
-// When the batches-index entry for an active batch has an empty `id`,
-// the active instance's Key is empty, and the inline `fmt.Sprintf("%s-issue-%d", ...)`
-// at the row builder sites produces "-issue-N" instead of a stable
-// run id (issue #1657). Symmetric to batchKeyForActive so every
-// downstream call site is a one-line swap.
 func activeKeyForActive(active portalActiveRun) string {
 	if active.Key != "" {
 		return active.Key
@@ -208,11 +199,6 @@ func activeKeyForActive(active portalActiveRun) string {
 	if active.BatchID != "" {
 		return active.BatchID
 	}
-	// A trailing slash means the dir points at a parent (e.g. the
-	// ".sandman/batches/" root) rather than a specific batch folder,
-	// so the basename is not a useful identity and we fall through to
-	// the synthetic sentinel. Without this, the parent-folder case
-	// would yield a "batches" Key that collides across every active.
 	if !strings.HasSuffix(active.Dir, "/") {
 		base := filepath.Base(active.Dir)
 		if base != "" && base != "." && base != "/" {
@@ -960,11 +946,6 @@ func (v *portalRunsView) discoverActiveRuns(repoRoot string, eventsByRun map[str
 			issueNumber = issueNumbers[0]
 		}
 		entry := portalActiveRun{
-			// Seed Key with the resolved runID so the activeKeyForActive
-			// helper preserves the canonical review identity (issue #1551)
-			// when the per-row RunID differs from the batchID, and falls
-			// back to a stable sentinel only when runID itself is empty
-			// (the empty-id batches-index case fixed by issue #1657).
 			Key:          runID,
 			Dir:          runDir,
 			SocketPath:   instance.SocketPath,
