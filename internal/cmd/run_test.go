@@ -197,12 +197,23 @@ func (f *fakeGitHubClient) CloseIssue(issueNumber int, comment string) error {
 	return nil
 }
 
-// newRunDeps returns Dependencies for a run command test. The
-// default review command is overridden to "/oc review" so the
-// review daemon guard (issue #383) is bypassed by default. Tests
-// that need to exercise the guard must build their own
+// newRunDeps returns Dependencies for a run command test, isolated
+// from the real repo via a fresh temp dir that is git-init'd and
+// chdir'd into. The default review command is overridden to
+// "/oc review" so the review daemon guard (issue #383) is bypassed by
+// default. Tests that need to exercise the guard must build their own
 // Dependencies and chdir into a temp dir without a live socket.
-func newRunDeps(runner batch.Runner) Dependencies {
+func newRunDeps(t *testing.T, runner batch.Runner) Dependencies {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, ".sandman"), 0o755); err != nil {
+		t.Fatalf("mkdir .sandman: %v", err)
+	}
+	initCmd := exec.Command("git", "init", "-q", dir)
+	if out, err := initCmd.CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v (%s)", err, strings.TrimSpace(string(out)))
+	}
+	t.Chdir(dir)
 	return Dependencies{
 		BatchRunner:  runner,
 		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review"}},
@@ -292,6 +303,49 @@ func newRunDepsAutoWithPrompt(t *testing.T, runner batch.Runner, promptContent s
 		t.Fatalf("write auto-selection-prompt.md: %v", err)
 	}
 	return deps
+}
+
+func TestNewRunDeps(t *testing.T) {
+	spy := &spyBatchRunner{}
+	deps := newRunDeps(t, spy)
+
+	if deps.RepoRoot != "." {
+		t.Errorf("expected RepoRoot \".\", got %q", deps.RepoRoot)
+	}
+	if deps.BatchRunner != spy {
+		t.Error("expected BatchRunner to be wired through")
+	}
+	if deps.ConfigStore == nil || deps.EventLog == nil || deps.GitHubClient == nil {
+		t.Error("expected ConfigStore, EventLog, GitHubClient to be wired")
+	}
+	if deps.IsTTY != nil {
+		t.Error("expected IsTTY to be unset so per-test wiring is preserved")
+	}
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("os.Getwd: %v", err)
+	}
+	info, err := os.Stat(filepath.Join(cwd, ".git"))
+	if err != nil {
+		t.Fatalf("expected .git at cwd: %v", err)
+	}
+	if !info.IsDir() {
+		t.Errorf("expected .git to be a directory, got file")
+	}
+	if _, err := os.Stat(filepath.Join(cwd, ".sandman")); err != nil {
+		t.Errorf("expected .sandman/ at cwd: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(cwd, ".sandman", "auto-selection-prompt.md")); !os.IsNotExist(err) {
+		t.Errorf("expected no auto-selection-prompt.md, got err=%v", err)
+	}
+	got, err := resolveRepoRoot()
+	if err != nil {
+		t.Fatalf("resolveRepoRoot: %v", err)
+	}
+	if got != cwd {
+		t.Errorf("expected resolveRepoRoot to return %q, got %q", cwd, got)
+	}
 }
 
 func TestNewRunDepsAuto(t *testing.T) {
@@ -487,7 +541,7 @@ func TestFilterClosedIssues_FetchErrorIsSkipped(t *testing.T) {
 
 func TestRun_SingleIssueInvokesBatchRunner(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
-	deps := newRunDeps(spy)
+	deps := newRunDeps(t, spy)
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)
@@ -525,12 +579,8 @@ func TestRun_ExpandsPRDBeforeBatchRunner(t *testing.T) {
 		},
 	}
 	spy := &spyBatchRunner{result: &batch.Result{}}
-	deps := Dependencies{
-		BatchRunner:  spy,
-		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review"}},
-		EventLog:     &fakeEventLog{},
-		GitHubClient: gh,
-	}
+	deps := newRunDeps(t, spy)
+	deps.GitHubClient = gh
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)
@@ -594,12 +644,8 @@ func TestRun_MixedPRDAndNonChildIssues(t *testing.T) {
 		},
 	}
 	spy := &spyBatchRunner{result: &batch.Result{}}
-	deps := Dependencies{
-		BatchRunner:  spy,
-		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review"}},
-		EventLog:     &fakeEventLog{},
-		GitHubClient: gh,
-	}
+	deps := newRunDeps(t, spy)
+	deps.GitHubClient = gh
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)
@@ -660,12 +706,8 @@ func TestRun_FailsWhenPRDHasNoChildren(t *testing.T) {
 		},
 	}
 	spy := &spyBatchRunner{result: &batch.Result{}}
-	deps := Dependencies{
-		BatchRunner:  spy,
-		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review"}},
-		EventLog:     &fakeEventLog{},
-		GitHubClient: gh,
-	}
+	deps := newRunDeps(t, spy)
+	deps.GitHubClient = gh
 
 	cmd := NewRunCmd(deps)
 	cmd.SetOut(&bytes.Buffer{})
@@ -774,7 +816,7 @@ func (s *stubClient) EditComment(commentID, body string) error {
 
 func TestRun_MultipleIssuesInvokesBatchRunner(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
-	deps := newRunDeps(spy)
+	deps := newRunDeps(t, spy)
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)
@@ -800,7 +842,7 @@ func TestRun_MultipleIssuesInvokesBatchRunner(t *testing.T) {
 
 func TestRun_ParallelFlagPassedToBatchRunner(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
-	deps := newRunDeps(spy)
+	deps := newRunDeps(t, spy)
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)
@@ -820,7 +862,7 @@ func TestRun_ParallelFlagPassedToBatchRunner(t *testing.T) {
 
 func TestRun_ParallelNegativeValueRejected(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
-	deps := newRunDeps(spy)
+	deps := newRunDeps(t, spy)
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)
@@ -846,7 +888,7 @@ func TestRun_ParallelNegativeValueRejected(t *testing.T) {
 
 func TestRun_RetriesFlagPassedToBatchRunner(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
-	deps := newRunDeps(spy)
+	deps := newRunDeps(t, spy)
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)
@@ -866,7 +908,7 @@ func TestRun_RetriesFlagPassedToBatchRunner(t *testing.T) {
 
 func TestRun_StartDelayFlagPassedToBatchRunner(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
-	deps := newRunDeps(spy)
+	deps := newRunDeps(t, spy)
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)
@@ -889,7 +931,7 @@ func TestRun_StartDelayFlagPassedToBatchRunner(t *testing.T) {
 
 func TestRun_StartDelayNegativeValueRejected(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
-	deps := newRunDeps(spy)
+	deps := newRunDeps(t, spy)
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)
@@ -915,7 +957,7 @@ func TestRun_StartDelayNegativeValueRejected(t *testing.T) {
 
 func TestRun_RunIdleTimeoutFlagPassedToBatchRunner(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
-	deps := newRunDeps(spy)
+	deps := newRunDeps(t, spy)
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)
@@ -938,7 +980,7 @@ func TestRun_RunIdleTimeoutFlagPassedToBatchRunner(t *testing.T) {
 
 func TestRun_RunIdleTimeoutZeroAccepted(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
-	deps := newRunDeps(spy)
+	deps := newRunDeps(t, spy)
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)
@@ -961,7 +1003,7 @@ func TestRun_RunIdleTimeoutZeroAccepted(t *testing.T) {
 
 func TestRun_RunIdleTimeoutNegativeValueRejected(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
-	deps := newRunDeps(spy)
+	deps := newRunDeps(t, spy)
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)
@@ -987,7 +1029,7 @@ func TestRun_RunIdleTimeoutNegativeValueRejected(t *testing.T) {
 
 func TestRun_ModelFlagPassedToBatchRunner(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
-	deps := newRunDeps(spy)
+	deps := newRunDeps(t, spy)
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)
@@ -1007,7 +1049,7 @@ func TestRun_ModelFlagPassedToBatchRunner(t *testing.T) {
 
 func TestRun_UsesDefaultModelWhenModelFlagOmitted(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
-	deps := newRunDeps(spy)
+	deps := newRunDeps(t, spy)
 	deps.ConfigStore = &fakeStore{config: &config.Config{Agent: "opencode", DefaultModel: "openai/gpt-4.1", ReviewCommand: "/oc review"}}
 
 	var buf bytes.Buffer
@@ -1028,7 +1070,7 @@ func TestRun_UsesDefaultModelWhenModelFlagOmitted(t *testing.T) {
 
 func TestRun_DoesNotUseDefaultModelForCustomAgent(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
-	deps := newRunDeps(spy)
+	deps := newRunDeps(t, spy)
 	deps.ConfigStore = &fakeStore{config: &config.Config{
 		Agent:         "custom",
 		DefaultModel:  "openai/gpt-4.1",
@@ -1056,7 +1098,7 @@ func TestRun_DoesNotUseDefaultModelForCustomAgent(t *testing.T) {
 
 func TestRun_LoadConfigError(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
-	deps := newRunDeps(spy)
+	deps := newRunDeps(t, spy)
 	deps.ConfigStore = &fakeStore{err: errors.New("config not found")}
 
 	var buf bytes.Buffer
@@ -1076,7 +1118,7 @@ func TestRun_LoadConfigError(t *testing.T) {
 
 func TestRun_OverrideFlagPassedToBatchRunner(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
-	deps := newRunDeps(spy)
+	deps := newRunDeps(t, spy)
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)
@@ -1096,7 +1138,7 @@ func TestRun_OverrideFlagPassedToBatchRunner(t *testing.T) {
 
 func TestRun_OverrideFalseByDefault(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
-	deps := newRunDeps(spy)
+	deps := newRunDeps(t, spy)
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)
@@ -1130,13 +1172,10 @@ func TestRun_FreshRunErrorsWhenBranchAlreadyExists(t *testing.T) {
 
 	gh := &fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}}}
 	store := &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review", WorktreeDir: ".sandman/worktrees", AgentProviders: map[string]config.Agent{"opencode": {Preset: "opencode", Command: "true"}}}}
-	deps := Dependencies{
-		BatchRunner:  batch.NewOrchestrator(gh, &prompt.Engine{}, store, &fakeEventLog{}),
-		ConfigStore:  store,
-		EventLog:     &fakeEventLog{},
-		GitHubClient: gh,
-		RepoRoot:     ".",
-	}
+	deps := newRunDeps(t, &spyBatchRunner{result: &batch.Result{}})
+	deps.BatchRunner = batch.NewOrchestrator(gh, &prompt.Engine{}, store, &fakeEventLog{})
+	deps.ConfigStore = store
+	deps.GitHubClient = gh
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)
@@ -1157,7 +1196,7 @@ func TestRun_FreshRunErrorsWhenBranchAlreadyExists(t *testing.T) {
 }
 
 func TestRun_NoOverrideAlias(t *testing.T) {
-	cmd := NewRunCmd(newRunDeps(&spyBatchRunner{result: &batch.Result{}}))
+	cmd := NewRunCmd(newRunDeps(t, &spyBatchRunner{result: &batch.Result{}}))
 	if cmd.Flags().Lookup("force") != nil {
 		t.Fatal("expected --force flag to be removed")
 	}
@@ -1168,7 +1207,7 @@ func TestRun_NoOverrideAlias(t *testing.T) {
 
 func TestRun_ReconcileStrandedDefaultTrue(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
-	deps := newRunDeps(spy)
+	deps := newRunDeps(t, spy)
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)
@@ -1186,7 +1225,7 @@ func TestRun_ReconcileStrandedDefaultTrue(t *testing.T) {
 
 func TestRun_NoReconcileStrandedSetsFalse(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
-	deps := newRunDeps(spy)
+	deps := newRunDeps(t, spy)
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)
@@ -1207,7 +1246,7 @@ func TestRun_NoReconcileStrandedSetsFalse(t *testing.T) {
 
 func TestRun_ReconcileStrandedExplicitTrueSetsTrue(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
-	deps := newRunDeps(spy)
+	deps := newRunDeps(t, spy)
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)
@@ -1240,7 +1279,7 @@ func TestRun_ContinueFlagAcceptedAndMutuallyExclusiveWithOverride(t *testing.T) 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			spy := &spyBatchRunner{result: &batch.Result{}}
-			deps := newRunDeps(spy)
+			deps := newRunDeps(t, spy)
 
 			if tt.name == "continue only" {
 				dir := t.TempDir()
@@ -1301,7 +1340,7 @@ func TestRun_ContinueFlag_ReplaysStoredContinuationState(t *testing.T) {
 	}
 
 	spy := &spyBatchRunner{result: &batch.Result{}}
-	deps := newRunDeps(spy)
+	deps := newRunDeps(t, spy)
 	deps.ConfigStore = &fakeStore{config: &config.Config{
 		Agent:         "opencode",
 		DefaultModel:  "openai/gpt-4.1",
@@ -1390,7 +1429,7 @@ func TestRun_ContinueFlag_UsesOverridesAndEmptyTemplateFallback(t *testing.T) {
 	}
 
 	spy := &spyBatchRunner{result: &batch.Result{}}
-	deps := newRunDeps(spy)
+	deps := newRunDeps(t, spy)
 	deps.ConfigStore = &fakeStore{config: &config.Config{
 		Agent:         "opencode",
 		WorktreeDir:   dir,
@@ -1463,7 +1502,7 @@ func TestRun_ContinueFlag_MixedBatchResolvesPerIssueModes(t *testing.T) {
 	}
 
 	spy := &spyBatchRunner{result: &batch.Result{}}
-	deps := newRunDeps(spy)
+	deps := newRunDeps(t, spy)
 	deps.ConfigStore = &fakeStore{config: &config.Config{
 		Agent:         "opencode",
 		WorktreeDir:   dir,
@@ -1513,7 +1552,7 @@ func TestRun_ContinueFlag_MixedBatchResolvesPerIssueModes(t *testing.T) {
 
 func TestRun_ContinueFlag_NoPreviousPromptOnlyRun_ReturnsError(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
-	deps := newRunDeps(spy)
+	deps := newRunDeps(t, spy)
 	deps.EventLog = &fakeEventLog{events: []events.Event{}}
 
 	var buf bytes.Buffer
@@ -1536,7 +1575,7 @@ func TestRun_ContinueFlag_NoPreviousPromptOnlyRun_ReturnsError(t *testing.T) {
 
 func TestRun_ContinueFlag_NoPriorRunPromotesToOverride(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
-	deps := newRunDeps(spy)
+	deps := newRunDeps(t, spy)
 	deps.EventLog = &fakeEventLog{events: []events.Event{}}
 	deps.GitHubClient = &fakeGitHubClient{issues: map[int]*github.Issue{
 		42: {Number: 42, Title: "Fix bug"},
@@ -1568,7 +1607,7 @@ func TestRun_ContinueFlag_WarnsWhenIssueTaskMissing(t *testing.T) {
 	}
 
 	spy := &spyBatchRunner{result: &batch.Result{}}
-	deps := newRunDeps(spy)
+	deps := newRunDeps(t, spy)
 	deps.ConfigStore = &fakeStore{config: &config.Config{
 		Agent:         "opencode",
 		WorktreeDir:   dir,
@@ -1606,7 +1645,7 @@ func TestRun_ContinueFlag_WarnsWhenIssueTaskMissing(t *testing.T) {
 
 func TestRun_NoIssues(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
-	deps := newRunDeps(spy)
+	deps := newRunDeps(t, spy)
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)
@@ -1624,7 +1663,7 @@ func TestRun_NoIssues(t *testing.T) {
 }
 
 func TestRun_HelpMentionsPromptOnlyMode(t *testing.T) {
-	deps := newRunDeps(&spyBatchRunner{result: &batch.Result{}})
+	deps := newRunDeps(t, &spyBatchRunner{result: &batch.Result{}})
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)
@@ -1682,7 +1721,7 @@ func TestRun_PromptOnlyAllowsNoIssueSelection(t *testing.T) {
 		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			spy := &spyBatchRunner{result: &batch.Result{}}
-			deps := newRunDeps(spy)
+			deps := newRunDeps(t, spy)
 			tt.setup(&deps)
 
 			var buf bytes.Buffer
@@ -1707,7 +1746,7 @@ func TestRun_PromptOnlyAllowsNoIssueSelection(t *testing.T) {
 
 func TestRun_PromptOnlyRejectsSubstitutedIssuePlaceholders(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
-	deps := newRunDeps(spy)
+	deps := newRunDeps(t, spy)
 	deps.GitHubClient = &fakeGitHubClient{fetchIssueError: errors.New("fetch should not run")}
 
 	var buf bytes.Buffer
@@ -1748,7 +1787,7 @@ func TestRun_CustomPromptWithIssueSelectionStillUsesIssueDrivenFlow(t *testing.T
 		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			spy := &spyBatchRunner{result: &batch.Result{}}
-			deps := newRunDeps(spy)
+			deps := newRunDeps(t, spy)
 
 			var buf bytes.Buffer
 			cmd := NewRunCmd(deps)
@@ -1790,7 +1829,7 @@ func TestRun_PromptOnlyStillRequiresIssueNumberWhenPromptUsesIt(t *testing.T) {
 		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			spy := &spyBatchRunner{result: &batch.Result{}}
-			deps := newRunDeps(spy)
+			deps := newRunDeps(t, spy)
 			deps.GitHubClient = &fakeGitHubClient{fetchIssueError: errors.New("fetch should not run")}
 
 			var buf bytes.Buffer
@@ -1820,7 +1859,7 @@ func TestRun_PrintsSummaryOnSuccess(t *testing.T) {
 			{IssueNumber: 43, Status: "success", Branch: "sandman/43-new-feature"},
 		},
 	}}
-	deps := newRunDeps(spy)
+	deps := newRunDeps(t, spy)
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)
@@ -1846,7 +1885,7 @@ func TestRun_PrintsRetryCountInSummary(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{
 		Runs: []batch.AgentRunResult{{IssueNumber: 42, Status: "success", RetriesTotal: 3, Branch: "sandman/42-fix-bug"}},
 	}}
-	deps := newRunDeps(spy)
+	deps := newRunDeps(t, spy)
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)
@@ -1872,7 +1911,7 @@ func TestRun_PrintsSummaryOnPartialFailure(t *testing.T) {
 			{IssueNumber: 43, Status: "failure", Branch: "sandman/43-broken"},
 		},
 	}, err: errors.New("1 of 2 runs failed")}
-	deps := newRunDeps(spy)
+	deps := newRunDeps(t, spy)
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)
@@ -1902,7 +1941,7 @@ func TestRun_PrintsSummaryWithBlockedRuns(t *testing.T) {
 			{IssueNumber: 100, Status: "blocked", Branch: "sandman/100-dependent"},
 		},
 	}, err: errors.New("1 of 3 runs failed")}
-	deps := newRunDeps(spy)
+	deps := newRunDeps(t, spy)
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)
@@ -1932,7 +1971,7 @@ func TestRun_PrintsSummaryWithBlockedRunsAndNoFailures(t *testing.T) {
 			{IssueNumber: 101, Status: "blocked", Branch: "sandman/101-another-dependent"},
 		},
 	}}
-	deps := newRunDeps(spy)
+	deps := newRunDeps(t, spy)
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)
@@ -1961,7 +2000,7 @@ func TestRun_PrintsSummaryWithAbortedRuns(t *testing.T) {
 			{IssueNumber: 43, Status: "aborted", Branch: "sandman/43-stalled"},
 		},
 	}}
-	deps := newRunDeps(spy)
+	deps := newRunDeps(t, spy)
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)
@@ -2067,7 +2106,7 @@ func TestRun_ExitsWithCode130OnAbort(t *testing.T) {
 		},
 		err: batch.ErrAborted,
 	}
-	deps := newRunDeps(spy)
+	deps := newRunDeps(t, spy)
 
 	var stdout, stderr bytes.Buffer
 	cmd := NewRunCmd(deps)
@@ -2109,7 +2148,7 @@ func TestRun_PreservesRunBatchErrorMessage(t *testing.T) {
 		},
 		err: errors.New("1 of 1 runs failed"),
 	}
-	deps := newRunDeps(spy)
+	deps := newRunDeps(t, spy)
 
 	var stdout, stderr bytes.Buffer
 	cmd := NewRunCmd(deps)
@@ -2135,7 +2174,7 @@ func TestRun_PreservesRunBatchErrorMessage(t *testing.T) {
 
 func TestRun_PrintsWorktreeHintForCompletedRuns(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{Runs: []batch.AgentRunResult{{IssueNumber: 42, Status: "success", Branch: "sandman/42-fix-bug", WorktreePath: ".sandman/worktrees/sandman/42-fix-bug"}}}}
-	deps := newRunDeps(spy)
+	deps := newRunDeps(t, spy)
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)
@@ -2156,7 +2195,7 @@ func TestRun_PrintsWorktreeHintForCompletedRuns(t *testing.T) {
 
 func TestRun_PrintsPromptOnlySummaryLabel(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{Runs: []batch.AgentRunResult{{Status: "success", Branch: "sandman/return-only-ok-123"}}}}
-	deps := newRunDeps(spy)
+	deps := newRunDeps(t, spy)
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)
@@ -2177,7 +2216,7 @@ func TestRun_PrintsPromptOnlySummaryLabel(t *testing.T) {
 
 func TestRun_PrintsReviewRunSummaryLabel(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{Runs: []batch.AgentRunResult{{Status: "success", Branch: "sandman/review-PR42", Review: true, RunID: "PR42"}}}}
-	deps := newRunDeps(spy)
+	deps := newRunDeps(t, spy)
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)
@@ -2201,7 +2240,7 @@ func TestRun_PrintsReviewRunSummaryLabel(t *testing.T) {
 
 func TestRun_ExplicitZeroParallelPassesThroughToBatchRunner(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
-	deps := newRunDeps(spy)
+	deps := newRunDeps(t, spy)
 	deps.ConfigStore = &fakeStore{config: &config.Config{Agent: "opencode", DefaultParallel: 8, ReviewCommand: "/oc review"}}
 
 	var buf bytes.Buffer
@@ -2222,7 +2261,7 @@ func TestRun_ExplicitZeroParallelPassesThroughToBatchRunner(t *testing.T) {
 
 func TestRun_ConfigParallelDefault(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
-	deps := newRunDeps(spy)
+	deps := newRunDeps(t, spy)
 	deps.ConfigStore = &fakeStore{config: &config.Config{Agent: "opencode", DefaultParallel: 8, ReviewCommand: "/oc review"}}
 
 	var buf bytes.Buffer
@@ -2243,7 +2282,7 @@ func TestRun_ConfigParallelDefault(t *testing.T) {
 
 func TestRun_SandboxFlagPassedToBatchRunner(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
-	deps := newRunDeps(spy)
+	deps := newRunDeps(t, spy)
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)
@@ -2263,7 +2302,7 @@ func TestRun_SandboxFlagPassedToBatchRunner(t *testing.T) {
 
 func TestRun_BaseBranchFlagPassedToBatchRunner(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
-	deps := newRunDeps(spy)
+	deps := newRunDeps(t, spy)
 	deps.ConfigStore = &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review", Git: config.GitConfig{BaseBranch: "trunk"}}}
 
 	var buf bytes.Buffer
@@ -2284,7 +2323,7 @@ func TestRun_BaseBranchFlagPassedToBatchRunner(t *testing.T) {
 
 func TestRun_BaseBranchDefaultsToConfig(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
-	deps := newRunDeps(spy)
+	deps := newRunDeps(t, spy)
 	deps.ConfigStore = &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review", Git: config.GitConfig{BaseBranch: "trunk"}}}
 
 	var buf bytes.Buffer
@@ -2305,7 +2344,7 @@ func TestRun_BaseBranchDefaultsToConfig(t *testing.T) {
 
 func TestRun_InteractiveFlagRejected(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
-	deps := newRunDeps(spy)
+	deps := newRunDeps(t, spy)
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)
@@ -2327,7 +2366,7 @@ func TestRun_InteractiveFlagRejected(t *testing.T) {
 
 func TestRun_IncludeDependenciesResolvesBatchBeforeRunning(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
-	deps := newRunDeps(spy)
+	deps := newRunDeps(t, spy)
 	deps.GitHubClient = &fakeGitHubClient{
 		issues: map[int]*github.Issue{
 			100: {Number: 100, Title: "Feature", BlockedBy: []int{42}},
@@ -2364,7 +2403,7 @@ func TestRun_IncludeDependenciesResolvesBatchBeforeRunning(t *testing.T) {
 
 func TestRun_OpenExternalBlockersAreMarkedBlockedWithoutIncludeDependencies(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
-	deps := newRunDeps(spy)
+	deps := newRunDeps(t, spy)
 	deps.GitHubClient = &fakeGitHubClient{
 		issues: map[int]*github.Issue{
 			100: {Number: 100, Title: "Feature", BlockedBy: []int{42}},
@@ -2396,7 +2435,7 @@ func TestRun_OpenExternalBlockersAreMarkedBlockedWithoutIncludeDependencies(t *t
 
 func TestRun_DependencyCycleReturnsError(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
-	deps := newRunDeps(spy)
+	deps := newRunDeps(t, spy)
 	deps.GitHubClient = &fakeGitHubClient{
 		issues: map[int]*github.Issue{
 			100: {Number: 100, Title: "Feature", BlockedBy: []int{42}},
@@ -2430,13 +2469,9 @@ func TestRun_LabelFlagResolvesIssues(t *testing.T) {
 			{Number: 2, Title: "Bug B"},
 		},
 	}
-	deps := Dependencies{
-		BatchRunner:  spy,
-		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review"}},
-		EventLog:     &fakeEventLog{},
-		GitHubClient: gh,
-		IsTTY:        func() bool { return false },
-	}
+	deps := newRunDeps(t, spy)
+	deps.GitHubClient = gh
+	deps.IsTTY = func() bool { return false }
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)
@@ -2475,14 +2510,10 @@ func TestRun_TTYPickerSelectsIssues(t *testing.T) {
 		},
 	}
 	picker := &fakeIssuePicker{issues: []int{10, 20}}
-	deps := Dependencies{
-		BatchRunner:  spy,
-		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review"}},
-		EventLog:     &fakeEventLog{},
-		GitHubClient: gh,
-		IssuePicker:  picker,
-		IsTTY:        func() bool { return true },
-	}
+	deps := newRunDeps(t, spy)
+	deps.GitHubClient = gh
+	deps.IssuePicker = picker
+	deps.IsTTY = func() bool { return true }
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)
@@ -2506,12 +2537,8 @@ func TestRun_TTYPickerSelectsIssues(t *testing.T) {
 
 func TestRun_NoArgsNoTTYReturnsError(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
-	deps := Dependencies{
-		BatchRunner: spy,
-		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review"}},
-		EventLog:    &fakeEventLog{},
-		IsTTY:       func() bool { return false },
-	}
+	deps := newRunDeps(t, spy)
+	deps.IsTTY = func() bool { return false }
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)
@@ -2535,13 +2562,9 @@ func TestRun_CombinePlainArgsWithLabelUsesCombinedQuery(t *testing.T) {
 			42: {Number: 42, Title: "Bug A", State: "open", Labels: []string{"bug"}},
 		},
 	}
-	deps := Dependencies{
-		BatchRunner:  spy,
-		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review"}},
-		EventLog:     &fakeEventLog{},
-		GitHubClient: gh,
-		IsTTY:        func() bool { return false },
-	}
+	deps := newRunDeps(t, spy)
+	deps.GitHubClient = gh
+	deps.IsTTY = func() bool { return false }
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)
@@ -2580,13 +2603,9 @@ func TestRun_CombinePlainArgsWithLabelSkipsClosedIssue(t *testing.T) {
 			42: {Number: 42, Title: "Bug A", State: "closed", Labels: []string{"bug"}},
 		},
 	}
-	deps := Dependencies{
-		BatchRunner:  spy,
-		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review"}},
-		EventLog:     &fakeEventLog{},
-		GitHubClient: gh,
-		IsTTY:        func() bool { return false },
-	}
+	deps := newRunDeps(t, spy)
+	deps.GitHubClient = gh
+	deps.IsTTY = func() bool { return false }
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)
@@ -2616,13 +2635,9 @@ func TestRun_CombinePlainArgsWithLabelIsCaseInsensitive(t *testing.T) {
 			42: {Number: 42, Title: "Bug A", State: "open", Labels: []string{"Bug"}},
 		},
 	}
-	deps := Dependencies{
-		BatchRunner:  spy,
-		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review"}},
-		EventLog:     &fakeEventLog{},
-		GitHubClient: gh,
-		IsTTY:        func() bool { return false },
-	}
+	deps := newRunDeps(t, spy)
+	deps.GitHubClient = gh
+	deps.IsTTY = func() bool { return false }
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)
@@ -2658,13 +2673,9 @@ func TestRun_CombinePlainArgsWithQueryUsesCombinedQuery(t *testing.T) {
 			42: {Number: 42, Title: "Feature A", State: "open", Labels: []string{"bug"}},
 		},
 	}
-	deps := Dependencies{
-		BatchRunner:  spy,
-		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review"}},
-		EventLog:     &fakeEventLog{},
-		GitHubClient: gh,
-		IsTTY:        func() bool { return false },
-	}
+	deps := newRunDeps(t, spy)
+	deps.GitHubClient = gh
+	deps.IsTTY = func() bool { return false }
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)
@@ -2693,13 +2704,9 @@ func TestRun_CombinePlainArgsWithQueryUsesCombinedQuery(t *testing.T) {
 func TestRun_RangeArgUsesCombinedQuery(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
 	gh := &fakeGitHubClient{}
-	deps := Dependencies{
-		BatchRunner:  spy,
-		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review"}},
-		EventLog:     &fakeEventLog{},
-		GitHubClient: gh,
-		IsTTY:        func() bool { return false },
-	}
+	deps := newRunDeps(t, spy)
+	deps.GitHubClient = gh
+	deps.IsTTY = func() bool { return false }
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)
@@ -2738,13 +2745,9 @@ func TestRun_RangeArgWithLabelUsesCombinedQuery(t *testing.T) {
 			45: {Number: 45, Title: "Bug D", State: "open", Labels: []string{"bug"}},
 		},
 	}
-	deps := Dependencies{
-		BatchRunner:  spy,
-		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review"}},
-		EventLog:     &fakeEventLog{},
-		GitHubClient: gh,
-		IsTTY:        func() bool { return false },
-	}
+	deps := newRunDeps(t, spy)
+	deps.GitHubClient = gh
+	deps.IsTTY = func() bool { return false }
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)
@@ -2788,13 +2791,9 @@ func TestRun_RangeArgWithQueryUsesCombinedQuery(t *testing.T) {
 			45: {Number: 45, Title: "Feature D", State: "open", Labels: []string{"bug"}},
 		},
 	}
-	deps := Dependencies{
-		BatchRunner:  spy,
-		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review"}},
-		EventLog:     &fakeEventLog{},
-		GitHubClient: gh,
-		IsTTY:        func() bool { return false },
-	}
+	deps := newRunDeps(t, spy)
+	deps.GitHubClient = gh
+	deps.IsTTY = func() bool { return false }
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)
@@ -2836,13 +2835,9 @@ func TestRun_MixedArgsWithLabelUsesCombinedQuery(t *testing.T) {
 			44: {Number: 44, Title: "Bug B", State: "open", Labels: []string{"bug"}},
 		},
 	}
-	deps := Dependencies{
-		BatchRunner:  spy,
-		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review"}},
-		EventLog:     &fakeEventLog{},
-		GitHubClient: gh,
-		IsTTY:        func() bool { return false },
-	}
+	deps := newRunDeps(t, spy)
+	deps.GitHubClient = gh
+	deps.IsTTY = func() bool { return false }
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)
@@ -2883,13 +2878,9 @@ func TestRun_UnboundedEndRangeUsesQuery(t *testing.T) {
 			{Number: 42, State: "open", Title: "Issue A"},
 		},
 	}
-	deps := Dependencies{
-		BatchRunner:  spy,
-		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review"}},
-		EventLog:     &fakeEventLog{},
-		GitHubClient: gh,
-		IsTTY:        func() bool { return false },
-	}
+	deps := newRunDeps(t, spy)
+	deps.GitHubClient = gh
+	deps.IsTTY = func() bool { return false }
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)
@@ -2920,13 +2911,9 @@ func TestRun_UnboundedEndRangeWithStateQueryUsesIssueState(t *testing.T) {
 			{Number: 43, State: "closed", Title: "Issue B"},
 		},
 	}
-	deps := Dependencies{
-		BatchRunner:  spy,
-		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review"}},
-		EventLog:     &fakeEventLog{},
-		GitHubClient: gh,
-		IsTTY:        func() bool { return false },
-	}
+	deps := newRunDeps(t, spy)
+	deps.GitHubClient = gh
+	deps.IsTTY = func() bool { return false }
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)
@@ -2964,13 +2951,9 @@ func TestRun_UnboundedStartRangeUsesQuery(t *testing.T) {
 	gh := &fakeGitHubClient{
 		searchIssuesResult: results,
 	}
-	deps := Dependencies{
-		BatchRunner:  spy,
-		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review"}},
-		EventLog:     &fakeEventLog{},
-		GitHubClient: gh,
-		IsTTY:        func() bool { return false },
-	}
+	deps := newRunDeps(t, spy)
+	deps.GitHubClient = gh
+	deps.IsTTY = func() bool { return false }
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)
@@ -3015,13 +2998,9 @@ func TestRun_MixedExactAndUnboundedRangePreservesExplicitIssues(t *testing.T) {
 			{Number: 43, Title: "Issue B"},
 		},
 	}
-	deps := Dependencies{
-		BatchRunner:  spy,
-		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review"}},
-		EventLog:     &fakeEventLog{},
-		GitHubClient: gh,
-		IsTTY:        func() bool { return false },
-	}
+	deps := newRunDeps(t, spy)
+	deps.GitHubClient = gh
+	deps.IsTTY = func() bool { return false }
 
 	var stdout, stderr bytes.Buffer
 	cmd := NewRunCmd(deps)
@@ -3063,7 +3042,7 @@ func TestRun_BoundedRangeWarnsOnClosed(t *testing.T) {
 			45: {Number: 45, Title: "Open C"},
 		},
 	}
-	deps := newRunDeps(spy)
+	deps := newRunDeps(t, spy)
 	deps.GitHubClient = gh
 
 	var stdout, stderr bytes.Buffer
@@ -3100,7 +3079,7 @@ func TestRun_ExplicitClosedIssueLogsWarning(t *testing.T) {
 			42: {Number: 42, Title: "Closed Issue", State: "closed"},
 		},
 	}
-	deps := newRunDeps(spy)
+	deps := newRunDeps(t, spy)
 	deps.GitHubClient = gh
 
 	var stdout, stderr bytes.Buffer
@@ -3136,7 +3115,7 @@ func TestRun_MixedExplicitAndRangeWarnsOnClosed(t *testing.T) {
 			45: {Number: 45, Title: "Open C"},
 		},
 	}
-	deps := newRunDeps(spy)
+	deps := newRunDeps(t, spy)
 	deps.GitHubClient = gh
 
 	var stdout, stderr bytes.Buffer
@@ -3179,7 +3158,7 @@ func TestRun_BoundedRangeAllOpenKeepsWorking(t *testing.T) {
 			45: {Number: 45, Title: "Open D"},
 		},
 	}
-	deps := newRunDeps(spy)
+	deps := newRunDeps(t, spy)
 	deps.GitHubClient = gh
 
 	var stdout, stderr bytes.Buffer
@@ -3214,7 +3193,7 @@ func TestRun_BoundedRangeAllClosedReturnsError(t *testing.T) {
 			43: {Number: 43, Title: "Closed B", State: "closed"},
 		},
 	}
-	deps := newRunDeps(spy)
+	deps := newRunDeps(t, spy)
 	deps.GitHubClient = gh
 
 	var stdout, stderr bytes.Buffer
@@ -3252,7 +3231,7 @@ func TestRun_BoundedRangePrefersSearchOverPerIssueFetch(t *testing.T) {
 			45: {Number: 45, Title: "Open C"},
 		},
 	}
-	deps := newRunDeps(spy)
+	deps := newRunDeps(t, spy)
 	deps.GitHubClient = gh
 
 	var stdout, stderr bytes.Buffer
@@ -3276,13 +3255,8 @@ func TestRun_BoundedRangePrefersSearchOverPerIssueFetch(t *testing.T) {
 
 func TestRun_LargeRangeRejectedBeforeExpansion(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
-	deps := Dependencies{
-		BatchRunner:  spy,
-		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review"}},
-		EventLog:     &fakeEventLog{},
-		GitHubClient: &fakeGitHubClient{},
-		IsTTY:        func() bool { return false },
-	}
+	deps := newRunDeps(t, spy)
+	deps.IsTTY = func() bool { return false }
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)
@@ -3309,13 +3283,9 @@ func TestRun_PositionalSelectionWithUnsupportedQueryRejectsTruncatedSearchResult
 		results[i] = github.Issue{Number: i + 1, Title: fmt.Sprintf("Issue %d", i+1)}
 	}
 	gh := &fakeGitHubClient{searchIssuesResult: results}
-	deps := Dependencies{
-		BatchRunner:  spy,
-		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review"}},
-		EventLog:     &fakeEventLog{},
-		GitHubClient: gh,
-		IsTTY:        func() bool { return false },
-	}
+	deps := newRunDeps(t, spy)
+	deps.GitHubClient = gh
+	deps.IsTTY = func() bool { return false }
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)
@@ -4046,13 +4016,9 @@ func TestRun_QueryFlagResolvesIssues(t *testing.T) {
 			{Number: 3, Title: "Feature A"},
 		},
 	}
-	deps := Dependencies{
-		BatchRunner:  spy,
-		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review"}},
-		EventLog:     &fakeEventLog{},
-		GitHubClient: gh,
-		IsTTY:        func() bool { return false },
-	}
+	deps := newRunDeps(t, spy)
+	deps.GitHubClient = gh
+	deps.IsTTY = func() bool { return false }
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)
@@ -4081,13 +4047,9 @@ func TestRun_LabelAndQueryFlagsUseCombinedQuery(t *testing.T) {
 	gh := &fakeGitHubClient{
 		searchIssuesResult: []github.Issue{{Number: 3, Title: "Feature A"}},
 	}
-	deps := Dependencies{
-		BatchRunner:  spy,
-		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review"}},
-		EventLog:     &fakeEventLog{},
-		GitHubClient: gh,
-		IsTTY:        func() bool { return false },
-	}
+	deps := newRunDeps(t, spy)
+	deps.GitHubClient = gh
+	deps.IsTTY = func() bool { return false }
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)
@@ -4112,13 +4074,9 @@ func TestRun_QueryCommaSeparatedLabelUsesSearch(t *testing.T) {
 	gh := &fakeGitHubClient{
 		searchIssuesResult: []github.Issue{{Number: 42, State: "open", Title: "Bug A"}},
 	}
-	deps := Dependencies{
-		BatchRunner:  spy,
-		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review"}},
-		EventLog:     &fakeEventLog{},
-		GitHubClient: gh,
-		IsTTY:        func() bool { return false },
-	}
+	deps := newRunDeps(t, spy)
+	deps.GitHubClient = gh
+	deps.IsTTY = func() bool { return false }
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)
@@ -4149,7 +4107,7 @@ func TestRun_QueryCommaSeparatedLabelUsesSearch(t *testing.T) {
 
 func TestRun_ContainerFlagsPassedToBatchRunner(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
-	deps := newRunDeps(spy)
+	deps := newRunDeps(t, spy)
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)
@@ -4246,7 +4204,7 @@ func TestRun_InvalidContainerFlagsReturnError(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			spy := &spyBatchRunner{result: &batch.Result{}}
-			deps := newRunDeps(spy)
+			deps := newRunDeps(t, spy)
 
 			var buf bytes.Buffer
 			cmd := NewRunCmd(deps)
@@ -4274,7 +4232,7 @@ func TestRun_InvalidContainerFlagsReturnError(t *testing.T) {
 
 func TestRun_PromptFlagPassedToBatchRunner(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
-	deps := newRunDeps(spy)
+	deps := newRunDeps(t, spy)
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)
@@ -4294,7 +4252,7 @@ func TestRun_PromptFlagPassedToBatchRunner(t *testing.T) {
 
 func TestRun_TemplateFlagPassedToBatchRunner(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
-	deps := newRunDeps(spy)
+	deps := newRunDeps(t, spy)
 	dir := t.TempDir()
 	templatePath := dir + "/my-prompt.md"
 	if err := os.WriteFile(templatePath, []byte("template file {{ISSUE_NUMBER}}"), 0644); err != nil {
@@ -4319,7 +4277,7 @@ func TestRun_TemplateFlagPassedToBatchRunner(t *testing.T) {
 
 func TestRun_BranchFlagPassedToBatchRunnerForPromptOnly(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
-	deps := newRunDeps(spy)
+	deps := newRunDeps(t, spy)
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)
@@ -4339,7 +4297,7 @@ func TestRun_BranchFlagPassedToBatchRunnerForPromptOnly(t *testing.T) {
 
 func TestRun_PromptArgFlagPassedToBatchRunner(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
-	deps := newRunDeps(spy)
+	deps := newRunDeps(t, spy)
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)
@@ -4365,7 +4323,7 @@ func TestRun_PromptArgFlagPassedToBatchRunner(t *testing.T) {
 
 func TestRun_PromptArgFlagInvalidFormat(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
-	deps := newRunDeps(spy)
+	deps := newRunDeps(t, spy)
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)
@@ -4388,7 +4346,7 @@ func TestRun_PromptArgFlagInvalidFormat(t *testing.T) {
 
 func TestRun_PromptArgValidationHappensBeforeDependencyResolution(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
-	deps := newRunDeps(spy)
+	deps := newRunDeps(t, spy)
 	deps.GitHubClient = &fakeGitHubClient{fetchIssueError: errors.New("fetch issue should not run")}
 
 	var buf bytes.Buffer
@@ -4447,7 +4405,7 @@ func TestRun_PromptConfigDefaultsEmpty(t *testing.T) {
 
 func TestRun_ReviewCommandFromConfigPassedToBatchRunner(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
-	deps := newRunDeps(spy)
+	deps := newRunDeps(t, spy)
 	deps.ConfigStore = &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/config review"}}
 
 	var buf bytes.Buffer
@@ -4471,7 +4429,7 @@ func TestRun_ReviewCommandFromConfigPassedToBatchRunner(t *testing.T) {
 
 func TestRun_PromptAndTemplateFlagsCombined(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
-	deps := newRunDeps(spy)
+	deps := newRunDeps(t, spy)
 	dir := t.TempDir()
 	templatePath := dir + "/template.md"
 	if err := os.WriteFile(templatePath, []byte("template file {{ISSUE_NUMBER}}"), 0644); err != nil {
@@ -4508,7 +4466,7 @@ func TestRun_PromptAndTemplateFlagsCombined(t *testing.T) {
 func TestRun_IssueDrivenBatchUsesNewIDScheme(t *testing.T) {
 	t.Skip("flaky in CI; tracked in #1326")
 	spy := &spyBatchRunner{result: &batch.Result{}}
-	deps := newRunDeps(spy)
+	deps := newRunDeps(t, spy)
 	deps.GitHubClient = &fakeGitHubClient{
 		issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug", State: "open"}},
 		prs:    map[string]*github.PR{},

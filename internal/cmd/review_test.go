@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -73,8 +74,23 @@ func (s *spyBatchRunnerMultiCapture) requests() []batch.Request {
 	return s.captured
 }
 
+// newReviewDeps returns Dependencies for a review command test, isolated
+// from the real repo via a fresh temp dir that is git-init'd and
+// chdir'd into. The supplied cfg is wrapped in a fakeStore and a
+// fresh fakeEventLog/Renderer/IssuePicker are wired. All 32 callers
+// inherit isolation automatically. Tests that need a different
+// review guard (issue #383) should build their own Dependencies.
 func newReviewDeps(t *testing.T, gh github.Client, cfg *config.Config, runner batch.Runner) Dependencies {
 	t.Helper()
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, ".sandman"), 0o755); err != nil {
+		t.Fatalf("mkdir .sandman: %v", err)
+	}
+	initCmd := exec.Command("git", "init", "-q", dir)
+	if out, err := initCmd.CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v (%s)", err, strings.TrimSpace(string(out)))
+	}
+	t.Chdir(dir)
 	return Dependencies{
 		BatchRunner:  runner,
 		ConfigStore:  &fakeStore{config: cfg},
@@ -83,6 +99,7 @@ func newReviewDeps(t *testing.T, gh github.Client, cfg *config.Config, runner ba
 		Renderer:     &prompt.Engine{},
 		IssuePicker:  &fakeIssuePicker{},
 		IsTTY:        func() bool { return false },
+		RepoRoot:     ".",
 	}
 }
 
@@ -124,9 +141,6 @@ func TestReviewCmd_NoArgsStartsDaemon(t *testing.T) {
 }
 
 func TestReviewCmd_DaemonModeCreatesReviewSock(t *testing.T) {
-	dir := t.TempDir()
-	t.Chdir(dir)
-
 	var buf bytes.Buffer
 	cfg := &config.Config{
 		DefaultAgent:       "opencode",
@@ -138,6 +152,11 @@ func TestReviewCmd_DaemonModeCreatesReviewSock(t *testing.T) {
 	}
 	runner := &spyBatchRunner{result: &batch.Result{}}
 	deps := newReviewDeps(t, gh, cfg, runner)
+
+	dir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
 
 	prev := reviewDaemonRunner
 	reviewDaemonRunner = func(ctx context.Context, deps Dependencies, cfg *config.Config, sandbox string, cc int, ccSet bool, mc int, mcSet bool, agent string, model string, parallel int, parallelSet bool) error {
@@ -188,12 +207,6 @@ func TestReviewCmd_DaemonModeCreatesReviewSock(t *testing.T) {
 }
 
 func TestReviewCmd_DaemonSocketAcceptsConnections(t *testing.T) {
-	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, ".git"), []byte("gitdir: .git\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	t.Chdir(dir)
-
 	cfg := &config.Config{
 		DefaultAgent:       "opencode",
 		DefaultReviewAgent: "opencode",
@@ -204,6 +217,11 @@ func TestReviewCmd_DaemonSocketAcceptsConnections(t *testing.T) {
 	}
 	runner := &spyBatchRunner{result: &batch.Result{}}
 	deps := newReviewDeps(t, gh, cfg, runner)
+
+	dir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
