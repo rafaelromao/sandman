@@ -3344,13 +3344,8 @@ func TestRun_AutoFlagDelegatesLowestIssue(t *testing.T) {
 			{Number: 2, Title: "Feature B"},
 		},
 	}
-	deps := Dependencies{
-		BatchRunner:  spy,
-		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review"}},
-		EventLog:     &fakeEventLog{},
-		GitHubClient: gh,
-		IsTTY:        func() bool { return false },
-	}
+	deps := newRunDepsAuto(t, spy)
+	deps.GitHubClient = gh
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)
@@ -3388,13 +3383,8 @@ func TestRun_AutoFlagWithCountDelegatesN(t *testing.T) {
 			{Number: 1, Title: "Feature A"},
 		},
 	}
-	deps := Dependencies{
-		BatchRunner:  spy,
-		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review"}},
-		EventLog:     &fakeEventLog{},
-		GitHubClient: gh,
-		IsTTY:        func() bool { return false },
-	}
+	deps := newRunDepsAuto(t, spy)
+	deps.GitHubClient = gh
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)
@@ -3429,13 +3419,8 @@ func TestRun_AutoFlagWithFewerAvailableDelegatesAll(t *testing.T) {
 			{Number: 1, Title: "Feature A"},
 		},
 	}
-	deps := Dependencies{
-		BatchRunner:  spy,
-		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review"}},
-		EventLog:     &fakeEventLog{},
-		GitHubClient: gh,
-		IsTTY:        func() bool { return false },
-	}
+	deps := newRunDepsAuto(t, spy)
+	deps.GitHubClient = gh
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)
@@ -3467,13 +3452,8 @@ func TestRun_AutoFlagNoIssuesReturnsError(t *testing.T) {
 	gh := &fakeGitHubClient{
 		searchIssuesResult: []github.Issue{},
 	}
-	deps := Dependencies{
-		BatchRunner:  spy,
-		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review"}},
-		EventLog:     &fakeEventLog{},
-		GitHubClient: gh,
-		IsTTY:        func() bool { return false },
-	}
+	deps := newRunDepsAuto(t, spy)
+	deps.GitHubClient = gh
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)
@@ -3500,13 +3480,8 @@ func TestRun_AutoFlagZeroCountIsUnlimited(t *testing.T) {
 			{Number: 1, Title: "Feature A"},
 		},
 	}
-	deps := Dependencies{
-		BatchRunner:  spy,
-		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review"}},
-		EventLog:     &fakeEventLog{},
-		GitHubClient: gh,
-		IsTTY:        func() bool { return false },
-	}
+	deps := newRunDepsAuto(t, spy)
+	deps.GitHubClient = gh
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)
@@ -3533,13 +3508,8 @@ func TestRun_AutoFlagAcceptsExplicitArgs(t *testing.T) {
 			42: {Number: 42, State: "open", Title: "Issue 42"},
 		},
 	}
-	deps := Dependencies{
-		BatchRunner:  spy,
-		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review"}},
-		EventLog:     &fakeEventLog{},
-		GitHubClient: gh,
-		IsTTY:        func() bool { return false },
-	}
+	deps := newRunDepsAuto(t, spy)
+	deps.GitHubClient = gh
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)
@@ -3566,13 +3536,8 @@ func TestRun_AutoFlagWithLabelUsesLabelSearch(t *testing.T) {
 			{Number: 1, Title: "Bug A"},
 		},
 	}
-	deps := Dependencies{
-		BatchRunner:  spy,
-		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review"}},
-		EventLog:     &fakeEventLog{},
-		GitHubClient: gh,
-		IsTTY:        func() bool { return false },
-	}
+	deps := newRunDepsAuto(t, spy)
+	deps.GitHubClient = gh
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)
@@ -3600,13 +3565,8 @@ func TestRun_AutoFlagWithQueryUsesRawQuery(t *testing.T) {
 			{Number: 3, Title: "Feature A"},
 		},
 	}
-	deps := Dependencies{
-		BatchRunner:  spy,
-		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review"}},
-		EventLog:     &fakeEventLog{},
-		GitHubClient: gh,
-		IsTTY:        func() bool { return false },
-	}
+	deps := newRunDepsAuto(t, spy)
+	deps.GitHubClient = gh
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)
@@ -3629,12 +3589,7 @@ func TestRun_AutoFlagWithQueryUsesRawQuery(t *testing.T) {
 
 func TestRun_AutoFlagWithLabelAndQueryReturnsError(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
-	deps := Dependencies{
-		BatchRunner: spy,
-		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review"}},
-		EventLog:    &fakeEventLog{},
-		IsTTY:       func() bool { return false },
-	}
+	deps := newRunDepsAuto(t, spy)
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)
@@ -3908,12 +3863,7 @@ func TestSelectionPhase_FormatCandidateIssues(t *testing.T) {
 
 func TestRun_AutoFlagNegativeCountReturnsError(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
-	deps := Dependencies{
-		BatchRunner: spy,
-		ConfigStore: &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review"}},
-		EventLog:    &fakeEventLog{},
-		IsTTY:       func() bool { return false },
-	}
+	deps := newRunDepsAuto(t, spy)
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)
@@ -3941,13 +3891,8 @@ func TestRun_AutoFlagSetsConservativeDefaults(t *testing.T) {
 			{Number: 1, Title: "Feature A"},
 		},
 	}
-	deps := Dependencies{
-		BatchRunner:  spy,
-		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review"}},
-		EventLog:     &fakeEventLog{},
-		GitHubClient: gh,
-		IsTTY:        func() bool { return false },
-	}
+	deps := newRunDepsAuto(t, spy)
+	deps.GitHubClient = gh
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)
@@ -3985,13 +3930,8 @@ func TestRun_AutoFlagParallelOverride(t *testing.T) {
 			{Number: 1, Title: "Feature A"},
 		},
 	}
-	deps := Dependencies{
-		BatchRunner:  spy,
-		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review"}},
-		EventLog:     &fakeEventLog{},
-		GitHubClient: gh,
-		IsTTY:        func() bool { return false },
-	}
+	deps := newRunDepsAuto(t, spy)
+	deps.GitHubClient = gh
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)
@@ -4035,13 +3975,8 @@ func TestRun_AutoFlagRetriesZeroOverride(t *testing.T) {
 			{Number: 1, Title: "Feature A"},
 		},
 	}
-	deps := Dependencies{
-		BatchRunner:  spy,
-		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review"}},
-		EventLog:     &fakeEventLog{},
-		GitHubClient: gh,
-		IsTTY:        func() bool { return false },
-	}
+	deps := newRunDepsAuto(t, spy)
+	deps.GitHubClient = gh
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)
@@ -4073,13 +4008,8 @@ func TestRun_AutoFlagMaxContainersOverride(t *testing.T) {
 			{Number: 1, Title: "Feature A"},
 		},
 	}
-	deps := Dependencies{
-		BatchRunner:  spy,
-		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review"}},
-		EventLog:     &fakeEventLog{},
-		GitHubClient: gh,
-		IsTTY:        func() bool { return false },
-	}
+	deps := newRunDepsAuto(t, spy)
+	deps.GitHubClient = gh
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)
@@ -4251,7 +4181,7 @@ func TestRun_ContainerFlagsPassedToBatchRunner(t *testing.T) {
 
 func TestRun_MaxContainersAutoFlagPassedToBatchRunner(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
-	deps := newRunDeps(spy)
+	deps := newRunDepsAuto(t, spy)
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)
@@ -4274,7 +4204,7 @@ func TestRun_MaxContainersAutoFlagPassedToBatchRunner(t *testing.T) {
 
 func TestRun_ContainerCapacityAutoFlagPassedToBatchRunner(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
-	deps := newRunDeps(spy)
+	deps := newRunDepsAuto(t, spy)
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)
