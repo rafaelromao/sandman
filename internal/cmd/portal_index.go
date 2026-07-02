@@ -281,7 +281,12 @@ func (idx *portalRunsIndex) discoverActiveRuns(eventsByRun map[string][]portalEv
 		if logInfo, err := os.Stat(filepath.Join(runDir, "runs", runID, "run.log")); err == nil && !logInfo.IsDir() {
 			lastOutputAt = logInfo.ModTime()
 		}
-		active = append(active, portalActiveRun{
+		entry := portalActiveRun{
+			// Seed Key with the resolved runID so the activeKeyForActive
+			// helper preserves the canonical review identity (issue #1551)
+			// when the per-row RunID differs from the batchID, and falls
+			// back to a stable sentinel only when runID itself is empty
+			// (the empty-id batches-index case fixed by issue #1657).
 			Key:          runID,
 			Dir:          runDir,
 			SocketPath:   instance.SocketPath,
@@ -293,7 +298,9 @@ func (idx *portalRunsIndex) discoverActiveRuns(eventsByRun map[string][]portalEv
 			RunID:        runID,
 			StartedAt:    startedAt,
 			ModTime:      info.ModTime(),
-		})
+		}
+		entry.Key = activeKeyForActive(entry)
+		active = append(active, entry)
 	}
 	return active, nil
 }

@@ -959,8 +959,13 @@ func (v *portalRunsView) discoverActiveRuns(repoRoot string, eventsByRun map[str
 		if len(issueNumbers) > 0 {
 			issueNumber = issueNumbers[0]
 		}
-		active = append(active, portalActiveRun{
-			Key:          instance.Name,
+		entry := portalActiveRun{
+			// Seed Key with the resolved runID so the activeKeyForActive
+			// helper preserves the canonical review identity (issue #1551)
+			// when the per-row RunID differs from the batchID, and falls
+			// back to a stable sentinel only when runID itself is empty
+			// (the empty-id batches-index case fixed by issue #1657).
+			Key:          runID,
 			Dir:          runDir,
 			SocketPath:   instance.SocketPath,
 			IssueNumber:  issueNumber,
@@ -970,7 +975,9 @@ func (v *portalRunsView) discoverActiveRuns(repoRoot string, eventsByRun map[str
 			RunID:        runID,
 			StartedAt:    startedAt,
 			ModTime:      info.ModTime(),
-		})
+		}
+		entry.Key = activeKeyForActive(entry)
+		active = append(active, entry)
 	}
 	return active, nil
 }
@@ -1161,7 +1168,7 @@ func (v *portalRunsView) stateStartsInBatch(timestamp, batchStart time.Time) boo
 func (v *portalRunsView) runFromActiveBatchIssue(repoRoot string, active portalActiveRun, issueNumber int, state *events.RunState, blocked *events.Event, queued *events.Event, liveOutput string, eventsByRun map[string][]portalEvent, deadBatches []daemon.DeadBatch) portalRun {
 	issueLabel := fmt.Sprintf("#%d", issueNumber)
 	run := portalRun{
-		Key:         fmt.Sprintf("%s-issue-%d", active.Key, issueNumber),
+		Key:         fmt.Sprintf("%s-issue-%d", activeKeyForActive(active), issueNumber),
 		Kind:        "active",
 		Status:      "queued",
 		IssueLabel:  issueLabel,
@@ -1358,7 +1365,7 @@ func (v *portalRunsView) runFromActiveMatch(repoRoot string, match portalRunMatc
 		status = "auto-selecting"
 	}
 	run := portalRun{
-		Key:         runID,
+		Key:         activeKeyForActive(match.instance),
 		RunID:       runID,
 		Kind:        "active",
 		Status:      status,
