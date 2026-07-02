@@ -305,6 +305,49 @@ func newRunDepsAutoWithPrompt(t *testing.T, runner batch.Runner, promptContent s
 	return deps
 }
 
+func TestNewRunDeps(t *testing.T) {
+	spy := &spyBatchRunner{}
+	deps := newRunDeps(t, spy)
+
+	if deps.RepoRoot != "." {
+		t.Errorf("expected RepoRoot \".\", got %q", deps.RepoRoot)
+	}
+	if deps.BatchRunner != spy {
+		t.Error("expected BatchRunner to be wired through")
+	}
+	if deps.ConfigStore == nil || deps.EventLog == nil || deps.GitHubClient == nil {
+		t.Error("expected ConfigStore, EventLog, GitHubClient to be wired")
+	}
+	if deps.IsTTY != nil {
+		t.Error("expected IsTTY to be unset so per-test wiring is preserved")
+	}
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("os.Getwd: %v", err)
+	}
+	info, err := os.Stat(filepath.Join(cwd, ".git"))
+	if err != nil {
+		t.Fatalf("expected .git at cwd: %v", err)
+	}
+	if !info.IsDir() {
+		t.Errorf("expected .git to be a directory, got file")
+	}
+	if _, err := os.Stat(filepath.Join(cwd, ".sandman")); err != nil {
+		t.Errorf("expected .sandman/ at cwd: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(cwd, ".sandman", "auto-selection-prompt.md")); !os.IsNotExist(err) {
+		t.Errorf("expected no auto-selection-prompt.md, got err=%v", err)
+	}
+	got, err := resolveRepoRoot()
+	if err != nil {
+		t.Fatalf("resolveRepoRoot: %v", err)
+	}
+	if got != cwd {
+		t.Errorf("expected resolveRepoRoot to return %q, got %q", cwd, got)
+	}
+}
+
 func TestNewRunDepsAuto(t *testing.T) {
 	spy := &spyBatchRunner{}
 	deps := newRunDepsAuto(t, spy)
