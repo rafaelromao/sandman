@@ -2553,7 +2553,15 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
       const summary = summarizeReviewGroup(group.filter((run) => run.review));
       const source = summary.source || group[0];
       if (!source) return null;
-      const issueLabel = 'Review of #' + String(issueNumber);
+      // Orphan review with a resolved issue: surface the PR the review
+      // targeted first, then the issue it was filed against, so the
+      // user can see both at a glance (e.g. "Review of PR 1668 (#1667)").
+      // Matches the no-issue convention in reviewOrphanIssueLabel
+      // (ADR-0029 §Review-only orphan label, issue #1526 / #1667).
+      const sourcePR = Number(source && source.prNumber) || 0;
+      const issueLabel = sourcePR > 0
+        ? 'Review of PR ' + sourcePR + ' (#' + String(issueNumber) + ')'
+        : 'Review of #' + String(issueNumber);
       return {
         key: source.key,
         runId: source.runId,
