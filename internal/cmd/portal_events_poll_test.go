@@ -14,12 +14,18 @@ import "testing"
 // directly from portal.html via a regex and drives it through Node's
 // vm with a mock prevRuns/nextRuns pair, asserting that an active run
 // keeps its events across one poll cycle.
+//
+// Note: the regex below anchors on 8-space-indent `\s{8}\}` which is
+// load-bearing — the loop's closing brace sits at the for-loop body's
+// outer indent. A re-indent of the merge loop in portal.html must
+// update this regex.
 func TestPortal_EventsSurvivePollCycle_MergePreservesActiveRunEvents(t *testing.T) {
 	js := `const html = fs.readFileSync('portal.html', 'utf8');
 // Extract the per-run merge loop from inside refresh(). The loop body
 // is the only place in portal.html that overwrites next.events from
 // existing.events, so matching it lets us drive the same code path the
-// production poll cycle runs.
+// production poll cycle runs. The 8-space indent anchor matches the
+// for-loop body's outer closing brace in portal.html.
 const mergeLoop = html.match(/for \(const next of nextRuns\) \{[\s\S]*?\n\s{8}\}/);
 if (!mergeLoop) throw new Error('could not locate the refresh() merge loop in portal.html');
 const loopSrc = mergeLoop[0];
