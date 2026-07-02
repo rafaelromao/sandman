@@ -39,6 +39,36 @@ if (typeof ha === 'string') {
 	runNodeScript(t, js)
 }
 
+// TestPortalPerf_LogPaneLRUEvictionPreservesTouchedEntry verifies that the
+// log-pane cache drops only the least-recently-used pane on overflow and keeps
+// the rest of the cached panes intact.
+func TestPortalPerf_LogPaneLRUEvictionPreservesTouchedEntry(t *testing.T) {
+	js := `const body = makeMockBody();
+const stopGroups = new Set();
+function run(n) { return { key: 'r' + n, kind: 'active', status: 'running', issueLabel: '#' + n, runId: 'r' + n, log: 'log ' + n }; }
+
+for (var k = 1; k <= 8; k++) sandbox.SandmanPortalDiff.tokenizeForCache(run(k), helpers);
+if (sandbox.SandmanPortalDiff.getLogPaneCacheSize() !== 8) throw new Error('expected cache size 8 before eviction, got ' + sandbox.SandmanPortalDiff.getLogPaneCacheSize());
+
+const touched = run(2);
+const optsLog = { helpers, stopGroups, expandedKey: touched.key, tabs: { [touched.key]: 'log' } };
+const optsDetails = { helpers, stopGroups, expandedKey: touched.key, tabs: { [touched.key]: 'details' } };
+sandbox.SandmanPortalDiff.diffRuns(body, [touched], optsLog);
+sandbox.SandmanPortalDiff.diffRuns(body, [touched], optsDetails);
+
+sandbox.SandmanPortalDiff.tokenizeForCache(run(9), helpers);
+if (sandbox.SandmanPortalDiff.getLogPaneCacheSize() !== 8) throw new Error('expected cache size to stay capped at 8, got ' + sandbox.SandmanPortalDiff.getLogPaneCacheSize());
+if (sandbox.SandmanPortalDiff.hasLogPaneCached('r1')) throw new Error('expected oldest pane r1 to be evicted');
+if (!sandbox.SandmanPortalDiff.hasLogPaneCached('r2')) throw new Error('expected touched pane r2 to survive eviction');
+for (var k = 3; k <= 8; k++) {
+  if (!sandbox.SandmanPortalDiff.hasLogPaneCached('r' + k)) throw new Error('expected pane r' + k + ' to survive eviction');
+}
+if (!sandbox.SandmanPortalDiff.hasLogPaneCached('r9')) throw new Error('expected new pane r9 to be cached');
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
 // TestPortalPerf_AsyncLargeReviewLogRoundTrip verifies that a large saved
 // review log (the "currently being reviewed" parent-issued run, run.log well
 // above the async chunk threshold) loads via the async chunked path the same
