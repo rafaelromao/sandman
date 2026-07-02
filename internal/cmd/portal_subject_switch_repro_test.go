@@ -62,9 +62,11 @@ func buildPortalReproPage(t *testing.T, stateJSON string, runsJSON []byte, body 
     window.__portalChangeCalls = 0;
     window.__portalFetchCalls = 0;
     window.__portalRefreshCalls = 0;
+    window.__portalRefreshEnabled = true;
     window.setInterval = function (cb) {
       if (cb && cb.name === 'refresh') {
         setTimeout(function () {
+          if (!window.__portalRefreshEnabled) return;
           window.__portalRefreshCalls += 1;
           return cb();
         }, 100);
@@ -632,7 +634,8 @@ func TestPortalRefresh_LocksRowIdentityAcrossMixedBatchPayloads(t *testing.T) {
 		t.Fatalf("marshal refreshed runs: %v", err)
 	}
 	stateJSON := `{"expandedRunKey":"` + runID + `","tabs":{"` + runID + `":"log"},"commandFormCollapsed":false,"showArchived":false,"activeBatches":false,"sortBy":"started","sortDir":"desc"}`
-	page := buildPortalReproPage(t, stateJSON, runsJSON, `
+  page := buildPortalReproPage(t, stateJSON, runsJSON, `
+    window.__portalRefreshEnabled = false;
     window.__portalFetchPayloads = [
       { runs: `+string(runsJSON)+` },
       { runs: `+string(refreshedRunsJSON)+` }
@@ -653,6 +656,7 @@ func TestPortalRefresh_LocksRowIdentityAcrossMixedBatchPayloads(t *testing.T) {
       window.__portalInitialDetail = document.querySelector('tr.detail-row[data-detail-for="`+runID+`"]');
       var initialDetailPre = window.__portalInitialDetail && window.__portalInitialDetail.querySelector('.detail-content pre[data-scroll-key]');
       window.__portalInitialDetailText = initialDetailPre && initialDetailPre.innerText;
+      window.__portalRefreshEnabled = true;
     }, 50);
     setTimeout(function () {
       var row = document.querySelector('tr[data-run-key="`+runID+`"]');
