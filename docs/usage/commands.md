@@ -22,7 +22,7 @@ sandman init [flags]
 | `--parallel-reviews` | `-1` | Persist `parallel_reviews` in scaffolded config (default `1`) |
 | `--run-idle-timeout` | `-1` | Persist `run_idle_timeout` (seconds) in scaffolded config. `-1` keeps the built-in default of `1800`; `0` disables the heartbeat watchdog |
 
-When `--tool-version` is omitted, `init` infers `repo` as the version selector, reading version hints from the repo when available. If flags are completely omitted and no repo hints are found, interactive prompts guide you through the choices.
+When `--tool-version` is omitted, `init` uses the preset resolver's interactive defaults: repo hints are offered when present, otherwise `latest`/`lts` choices are prompted.
 
 ## `sandman run`
 

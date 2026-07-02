@@ -234,14 +234,17 @@ var bundledRubyVersionCatalog = map[string]string{
 }
 
 var bundledRustVersionCatalog = map[string]string{
-	"latest": "1.96.0",
-	"lts":    "1.95.0",
-	"1.96":   "1.96.0",
-	"1.96.0": "1.96.0",
-	"1.95":   "1.95.0",
-	"1.95.0": "1.95.0",
-	"1.94":   "1.94.0",
-	"1.94.0": "1.94.0",
+	"latest":  "1.96.0",
+	"lts":     "1.95.0",
+	"stable":  "1.96.0",
+	"beta":    "1.96.0",
+	"nightly": "1.96.0",
+	"1.96":    "1.96.0",
+	"1.96.0":  "1.96.0",
+	"1.95":    "1.95.0",
+	"1.95.0":  "1.95.0",
+	"1.94":    "1.94.0",
+	"1.94.0":  "1.94.0",
 }
 
 // bundledElixirOTPMap pairs each cataloged Elixir major.minor with the
@@ -610,18 +613,7 @@ func hasRustRepoHint(repoRoot string) bool {
 	if _, found, err := readRustVersionHint(repoRoot); err == nil && found {
 		return true
 	}
-	match := false
-	_ = filepath.WalkDir(repoRoot, func(path string, d fs.DirEntry, err error) error {
-		if err != nil || d == nil {
-			return nil
-		}
-		if strings.HasSuffix(strings.ToLower(d.Name()), ".rs") {
-			match = true
-			return fs.SkipAll
-		}
-		return nil
-	})
-	return match
+	return false
 }
 
 func readRubyVersionHint(repoRoot string) (string, bool, error) {
@@ -1313,7 +1305,15 @@ func resolveMiseVersion(r versionResolver, selector string) (string, error) {
 	if err == nil {
 		version := strings.TrimSpace(string(out))
 		if version != "" {
-			return version, nil
+			if version == selector {
+				parts := strings.Split(version, ".")
+				if len(parts) < 3 {
+					version = ""
+				}
+			}
+			if version != "" {
+				return version, nil
+			}
 		}
 	}
 

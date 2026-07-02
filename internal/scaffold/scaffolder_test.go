@@ -441,6 +441,21 @@ func TestResolveVersion_RustResolver_UsesRustToolchainTomlHint(t *testing.T) {
 	}
 }
 
+func TestResolveVersion_RustResolver_StableChannelPinsExactVersion(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "rust-toolchain.toml"), []byte("[toolchain]\nchannel = \"stable\"\n"), 0644); err != nil {
+		t.Fatalf("write rust-toolchain.toml: %v", err)
+	}
+
+	got, err := resolveVersion(rustResolver, dir, "repo", &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("resolveVersion stable rust-toolchain.toml: %v", err)
+	}
+	if got != "1.96.0" {
+		t.Fatalf("resolveVersion stable rust-toolchain.toml: got %q, want %q", got, "1.96.0")
+	}
+}
+
 func TestScaffold_ResolvesNodeVersionSelectors(t *testing.T) {
 	tests := []struct {
 		name     string
