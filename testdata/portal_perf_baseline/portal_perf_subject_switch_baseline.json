@@ -1,9 +1,9 @@
 {
   "scenario": "subject_switch",
   "longTaskCount": 1,
-  "maxTaskMs": 3000.58,
-  "sumTaskMs": 3000.58,
-  "endToEndMs": 3000.67,
+  "maxTaskMs": 2182.51,
+  "sumTaskMs": 2182.51,
+  "endToEndMs": 2182.56,
   "thresholdMs": 50,
   "version": "slice-0"
 }
