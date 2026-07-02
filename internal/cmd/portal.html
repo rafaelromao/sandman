@@ -809,10 +809,6 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
        must expire on the next poll. */
     tbody tr.run-row.row-added td { background: color-mix(in oklch, var(--success) 14%, var(--surface)); }
     tbody tr.run-row.row-removed td { background: color-mix(in oklch, var(--danger) 14%, var(--surface)); }
-    /* row-added is sticky, so it would otherwise mask the active-row
-       highlight on desktop. Re-assert the live-row accent after the diff
-       highlight rules so active rows stay visually distinct. */
-    tbody tr.run-row.active.row-added td { background: color-mix(in oklch, var(--accent) 12%, var(--surface)); }
     .cell-duration .cell-duration-stack {
       display: flex;
       flex-direction: column;
@@ -1428,12 +1424,6 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
       tbody tr.run-row.row-added td,
       tbody tr.run-row.row-removed td {
         background: transparent;
-      }
-      tbody tr.run-row.active.row-added td {
-        background: color-mix(in oklch, var(--accent) 10%, var(--surface));
-      }
-      tbody tr.run-row.active.row-added {
-        background: color-mix(in oklch, var(--accent) 10%, var(--surface));
       }
       tbody tr.run-row td[data-cell="title"] {
         grid-area: title;

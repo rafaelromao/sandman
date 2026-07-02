@@ -267,28 +267,35 @@ func TestPortal_RowAddedRemovedCSS_AreMutuallyDistinct(t *testing.T) {
 	}
 }
 
-// TestPortal_ActiveRowCSS_ReassertsAfterDiffHighlights ensures the live
-// active-row highlight still has a dedicated rule after the sticky
-// row-added diff highlight, so active rows stay visually distinct on
-// desktop and mobile.
-func TestPortal_ActiveRowCSS_ReassertsAfterDiffHighlights(t *testing.T) {
+// TestPortal_ActiveRowAddedCSS_NoOverrides asserts the `active.row-added`
+// selectors do not exist anywhere in portal.html. These rules were
+// introduced by #1584 and #1591 to re-assert the active-row highlight
+// through the sticky `row-added` class, but since `row-added` is applied
+// to every inserted row, the override produced a palette inversion
+// (active rows got accent tint, non-active rows kept success tint).
+// The fix is to drop the overrides so the sticky diff palette is the
+// single source of truth (issue #1627). The selectors are matched
+// literally so a future re-introduction is caught at source.
+func TestPortal_ActiveRowAddedCSS_NoOverrides(t *testing.T) {
 	html := readPortalHTML(t)
 	for _, selector := range []string{
 		`tbody tr.run-row.active.row-added td`,
 		`tbody tr.run-row.active.row-added`,
 	} {
-		body := extractCSSRuleBody(t, html, selector)
-		if !strings.Contains(body, "background:") {
-			t.Errorf("%s rule missing background", selector)
+		if strings.Contains(html, selector) {
+			t.Errorf("portal.html contains %q selector; active.row-added overrides the sticky diff palette (issue #1627)", selector)
 		}
 	}
 }
 
-// TestPortal_ActiveRowMobileCSS_PaintsCells ensures the mobile card layout
-// still paints the active row on the cells themselves, not only on the row
-// wrapper. That avoids a clipped / patchy highlight when the table switches
-// to display:grid at narrower widths.
-func TestPortal_ActiveRowMobileCSS_PaintsCells(t *testing.T) {
+// TestPortal_ActiveRowAddedMobileCSS_NoOverrides is the mobile-block
+// counterpart of TestPortal_ActiveRowAddedCSS_NoOverrides. It scopes the
+// absence check to the `@media (max-width: 960px)` block so a re-added
+// rule in any other media query (e.g. the 760px or 961px splits) is
+// still caught at the file level by the desktop test, while this test
+// pins the specific mobile block the original #1584/#1591 overrides
+// lived in.
+func TestPortal_ActiveRowAddedMobileCSS_NoOverrides(t *testing.T) {
 	html := readPortalHTML(t)
 	start := strings.Index(html, `@media (max-width: 960px)`)
 	if start < 0 {
@@ -298,11 +305,12 @@ func TestPortal_ActiveRowMobileCSS_PaintsCells(t *testing.T) {
 	if end := strings.Index(block, `@media (max-width: 760px)`); end >= 0 {
 		block = block[:end]
 	}
-	body := extractCSSRuleBody(t, block, "tbody tr.run-row.active.row-added td")
-	if !strings.Contains(body, "background: color-mix(") {
-		t.Fatalf("mobile active-row cell rule missing painted background: %s", body)
-	}
-	if strings.Contains(body, "transparent") {
-		t.Fatalf("mobile active-row cell rule still transparent: %s", body)
+	for _, selector := range []string{
+		`tbody tr.run-row.active.row-added td`,
+		`tbody tr.run-row.active.row-added`,
+	} {
+		if strings.Contains(block, selector) {
+			t.Errorf("mobile media block contains %q selector; active.row-added overrides the sticky diff palette on mobile (issue #1627)", selector)
+		}
 	}
 }
