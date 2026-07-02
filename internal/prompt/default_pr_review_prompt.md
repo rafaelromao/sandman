@@ -86,7 +86,7 @@ Before performing the review, ensure the PR is in a healthy state:
 
    If a finding concerns a gap that the issue itself does not require (the PR does what the issue asked, but you would have asked for more), downgrade it to `Nit` or omit it — do not gate `APPROVED` on a broader interpretation of the issue.
 
-9. **Apply the quality rules.** Read `internal/prompt/quality_rules.md` and apply its rules as a smoke test to the diff. For each rule, judge whether its `Applies to` tag matches the language of the file under review; skip rules that do not apply. Follow the counting model and the 60% threshold defined in that file. Quality findings are never `Blocking` — they are `Important` only when the threshold is crossed, otherwise `Nit` or omitted.
+9. **Apply the quality rules.** Read `.sandman/reviews/quality-rules.md` and apply its rules as a smoke test to the diff. For each rule, judge whether its `Applies to` tag matches the language of the file under review; skip rules that do not apply. Follow the counting model and the 60% threshold defined in that file. Quality findings are never `Blocking` — they are `Important` only when the threshold is crossed, otherwise `Nit` or omitted.
 
 10. When you find an issue, cite the file and line range, quote the offending snippet, and describe the concrete fix.
 

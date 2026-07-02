@@ -19,6 +19,9 @@ var defaultPrompt string
 //go:embed default_pr_review_prompt.md
 var defaultPRReviewPrompt string
 
+//go:embed quality_rules.md
+var defaultQualityRules string
+
 //go:embed auto_selection_prompt.md
 var prioritySelectionPrompt string
 
@@ -46,6 +49,11 @@ func DefaultPrompt() string { return defaultPrompt }
 // DefaultPRReviewPrompt returns the built-in prompt template used by
 // `sandman review` (both one-shot and daemon modes).
 func DefaultPRReviewPrompt() string { return defaultPRReviewPrompt }
+
+// DefaultQualityRules returns the built-in PR review quality rules template.
+// The rules are embedded at compile time and materialised alongside the
+// review prompt so the reviewer can read them at runtime.
+func DefaultQualityRules() string { return defaultQualityRules }
 
 // DefaultPriorityPrompt returns the built-in priority selection prompt template.
 func DefaultPriorityPrompt() string { return prioritySelectionPrompt }

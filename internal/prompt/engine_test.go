@@ -635,6 +635,19 @@ func TestDefaultPRReviewPrompt_EmbeddedTemplate(t *testing.T) {
 	}
 }
 
+func TestDefaultQualityRules_EmbeddedTemplate(t *testing.T) {
+	data, err := os.ReadFile("quality_rules.md")
+	if err != nil {
+		t.Fatalf("read quality rules template: %v", err)
+	}
+
+	want := strings.TrimSpace(string(data))
+	got := strings.TrimSpace(DefaultQualityRules())
+	if got != want {
+		t.Fatalf("default quality rules drifted\nwant:\n%s\ngot:\n%s", want, got)
+	}
+}
+
 func TestDefaultPRReviewPrompt_ContainsRequiredKeys(t *testing.T) {
 	prompt := DefaultPRReviewPrompt()
 	for _, key := range []string{"{{PR_NUMBER}}", "{{PR_TITLE}}", "{{PR_BODY}}", "{{REVIEW_FOCUS}}"} {
