@@ -102,9 +102,13 @@ func NewCleanCmd(deps Dependencies) *cobra.Command {
 			archived, _ := cmd.Flags().GetBool("archived")
 			dryRun, _ := cmd.Flags().GetBool("dry-run")
 			stale, _ := cmd.Flags().GetBool("stale")
+			orphaned, _ := cmd.Flags().GetBool("orphaned")
 
-			if stale && (archived || dryRun) {
-				return fmt.Errorf("--stale is mutually exclusive with --archived and --dry-run")
+			if stale && (archived || dryRun || orphaned) {
+				return fmt.Errorf("--stale is mutually exclusive with --archived, --dry-run, and --orphaned")
+			}
+			if orphaned && (archived || stale) {
+				return fmt.Errorf("--orphaned is mutually exclusive with --archived and --stale")
 			}
 
 			cfg, err := deps.ConfigStore.Load()
@@ -147,6 +151,10 @@ func NewCleanCmd(deps Dependencies) *cobra.Command {
 				return nil
 			}
 
+			if orphaned {
+				return runCleanOrphaned(cmd, deps, layout, dryRun)
+			}
+
 			idx, err := batchindex.Load(layout.BatchesIndexPath)
 			if err != nil {
 				return fmt.Errorf("load batches index: %w", err)
@@ -183,6 +191,7 @@ func NewCleanCmd(deps Dependencies) *cobra.Command {
 	cmd.Flags().Bool("archived", false, "Remove archived batches (combined with unavailable)")
 	cmd.Flags().Bool("dry-run", false, "Print intended deletions without performing I/O")
 	cmd.Flags().Bool("stale", false, "Recover stale runs in dead batches by emitting run.aborted events")
+	cmd.Flags().Bool("orphaned", false, "Remove orphaned test batch directories (no matching run.started event and no live daemon socket)")
 	return cmd
 }
 
@@ -267,4 +276,64 @@ func executeClean(actions []cleanAction, gr gitRunner, idx *batchindex.Index, la
 
 func runCleanStale(layout paths.Layout, eventsList []events.Event, log events.EventLog) (recovered, deadDirs int, err error) {
 	return daemon.RecoverStaleRuns(layout.SandmanDir, eventsList, log)
+}
+
+func runCleanOrphaned(cmd *cobra.Command, deps Dependencies, layout paths.Layout, dryRun bool) error {
+	probe := deps.RunActivityProbe
+	if probe == nil {
+		probe = daemon.IsRunActive
+	}
+	plan, err := daemon.PlanOrphanedTestBatches(layout.SandmanDir, deps.EventLog, probe)
+	if err != nil {
+		return fmt.Errorf("plan orphaned batches: %w", err)
+	}
+
+	if dryRun {
+		if len(plan) == 0 {
+			fmt.Fprintln(cmd.OutOrStdout(), "No orphaned batch directories found.")
+			return nil
+		}
+		fmt.Fprintf(cmd.OutOrStdout(), "Would remove %d orphaned batch director(ies):\n", len(plan))
+		for _, p := range plan {
+			fmt.Fprintf(cmd.OutOrStdout(), "  - %s\n", p)
+		}
+		return nil
+	}
+
+	idx, err := batchindex.Load(layout.BatchesIndexPath)
+	if err != nil {
+		return fmt.Errorf("load batches index: %w", err)
+	}
+
+	pruned := make(map[string]struct{}, len(plan))
+	for _, p := range plan {
+		pruned[filepath.Base(p)] = struct{}{}
+	}
+	var kept []batchindex.Entry
+	for _, entry := range idx.Entries {
+		if _, drop := pruned[entry.ID]; drop {
+			continue
+		}
+		kept = append(kept, entry)
+	}
+	idx.Entries = kept
+
+	if err := idx.Save(layout.BatchesIndexPath); err != nil {
+		return fmt.Errorf("save batches index: %w", err)
+	}
+
+	removed, err := daemon.CleanupOrphanedTestBatches(layout.SandmanDir, deps.EventLog, probe)
+	if err != nil {
+		return fmt.Errorf("cleanup orphaned batches: %w", err)
+	}
+
+	if len(removed) == 0 {
+		fmt.Fprintln(cmd.OutOrStdout(), "No orphaned batch directories found.")
+		return nil
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "Removed %d orphaned batch director(ies):\n", len(removed))
+	for _, p := range removed {
+		fmt.Fprintf(cmd.OutOrStdout(), "  - %s\n", p)
+	}
+	return nil
 }
