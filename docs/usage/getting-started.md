@@ -73,9 +73,9 @@ Sandman resolves them from `~/.gitconfig`, then the host global/XDG Git config, 
 The `init` command interactively prompts you for:
 
 - **Default agent preset** — which built-in agent to use by default (opencode)
-- **Build tools preset** — container recipe for the image (generic, dotnet, go, node, python, elixir, or ruby)
+- **Build tools preset** — container recipe for the image (generic, dotnet, go, node, python, rust, elixir, or ruby)
 
-Sandman auto-detects repo hints and defaults to the matching BuildToolsPreset when it finds .NET, Go, Node, Python, Elixir, or Ruby project files; otherwise it falls back to `generic`.
+Sandman auto-detects repo hints and defaults to the matching BuildToolsPreset when it finds .NET, Go, Node, Python, Rust, Elixir, or Ruby project files; otherwise it falls back to `generic`.
 
 You can skip the prompts by passing flags:
 

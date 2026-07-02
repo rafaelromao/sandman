@@ -334,6 +334,37 @@ func TestScaffold_GenericPresetWritesPinnedDockerfile(t *testing.T) {
 	}
 }
 
+func TestScaffold_RustPresetWritesPinnedDockerfile(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "Cargo.toml"), []byte("[package]\nname = \"demo\"\nversion = \"0.1.0\"\nrust-version = \"1.77.0\"\n"), 0644); err != nil {
+		t.Fatalf("write Cargo.toml: %v", err)
+	}
+
+	s := &Scaffolder{}
+	if err := s.Scaffold(dir, Options{BuildTools: "rust", ToolVersion: "1.95"}, &fakePrompter{confirm: true}); err != nil {
+		t.Fatalf("scaffold: %v", err)
+	}
+
+	dockerfilePath := filepath.Join(dir, ".sandman", "Dockerfile")
+	data, err := os.ReadFile(dockerfilePath)
+	if err != nil {
+		t.Fatalf("read Dockerfile: %v", err)
+	}
+	content := string(data)
+	if !strings.Contains(content, "# sandman build-tools: rust") {
+		t.Fatalf("Dockerfile missing build-tools metadata, got:\n%s", content)
+	}
+	if !strings.Contains(content, "# sandman rust-version: 1.95.0") {
+		t.Fatalf("Dockerfile missing rust-version metadata, got:\n%s", content)
+	}
+	if !strings.Contains(content, "RUN mise use -g --pin rust@1.95.0") {
+		t.Fatalf("Dockerfile missing pinned rust install, got:\n%s", content)
+	}
+	if !strings.Contains(content, "RUN npm install -g opencode-ai@"+DefaultBuiltInAgentVersion("opencode")) {
+		t.Fatalf("Dockerfile missing pinned opencode install, got:\n%s", content)
+	}
+}
+
 func TestReadDockerfileMetadata_ParsesMiseVersion(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "Dockerfile")
@@ -351,6 +382,47 @@ func TestReadDockerfileMetadata_ParsesMiseVersion(t *testing.T) {
 	}
 	if meta.MiseVersion != DefaultMISEVersion {
 		t.Fatalf("expected mise version %q, got %q", DefaultMISEVersion, meta.MiseVersion)
+	}
+}
+
+func TestResolveVersion_RustResolver_Selectors(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "Cargo.toml"), []byte("[package]\nname = \"demo\"\nversion = \"0.1.0\"\nrust-version = \"1.77.0\"\n"), 0644); err != nil {
+		t.Fatalf("write Cargo.toml: %v", err)
+	}
+
+	tests := []struct {
+		name     string
+		selector string
+		want     string
+	}{
+		{name: "repo", selector: "repo", want: "1.77.0"},
+		{name: "latest", selector: "latest", want: "1.96.0"},
+		{name: "lts", selector: "lts", want: "1.95.0"},
+		{name: "shorthand", selector: "1.95", want: "1.95.0"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := resolveVersion(rustResolver, dir, tt.selector, &fakePrompter{confirm: true})
+			if err != nil {
+				t.Fatalf("resolveVersion %s: %v", tt.selector, err)
+			}
+			if got != tt.want {
+				t.Fatalf("resolveVersion %s: got %q, want %q", tt.selector, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestResolveVersion_RustResolver_InteractiveSelection(t *testing.T) {
+	dir := t.TempDir()
+	got, err := resolveVersion(rustResolver, dir, "", &fakePrompter{selected: "lts"})
+	if err != nil {
+		t.Fatalf("resolveVersion interactive rust: %v", err)
+	}
+	if got != "1.95.0" {
+		t.Fatalf("resolveVersion interactive rust: got %q, want %q", got, "1.95.0")
 	}
 }
 
