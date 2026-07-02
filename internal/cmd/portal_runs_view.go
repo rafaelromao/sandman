@@ -1172,13 +1172,9 @@ func (v *portalRunsView) runFromActiveBatchIssue(repoRoot string, active portalA
 			run.Log = v.portalBlockedMessage(state.Finished.Payload)
 		case "aborted":
 		default:
-			if live := strings.TrimSpace(stripLogLabels(active.LiveOutput)); live != "" {
-				run.Log = live
-			} else {
-				run.Log = v.readPortalTextFile(run.LogPath)
-				if strings.TrimSpace(run.Log) == "" {
-					run.Log = "No log file yet."
-				}
+			run.Log = v.resolveRunLog(run.LogPath, state, &active)
+			if strings.TrimSpace(run.Log) == "" {
+				run.Log = "No log file yet."
 			}
 		}
 		return run
@@ -1413,12 +1409,7 @@ func (v *portalRunsView) runFromState(repoRoot string, runState events.RunState,
 	}
 
 	logPath := v.portalLogPathForRun(repoRoot, locator)
-	logContent := v.readPortalTextFile(logPath)
-	if active != nil {
-		if live := strings.TrimSpace(stripLogLabels(active.LiveOutput)); live != "" {
-			logContent = live
-		}
-	}
+	logContent := v.resolveRunLog(logPath, &runState, active)
 
 	batchKey := ""
 	if active != nil {
@@ -1971,6 +1962,21 @@ func (v *portalRunsView) portalLogDownloadURLForPath(repoRoot, logPath string) s
 		return ""
 	}
 	return "/api/logs?path=" + url.QueryEscape(relPath)
+}
+
+// resolveRunLog chooses what to render in the portal `Log` field for a row.
+// Today the policy is: live socket output wins when it strips to non-empty,
+// otherwise the saved run log file is authoritative. `runState` is accepted
+// so slice 2 of issue #1637 can branch on `kind` (completed rows must
+// always use the saved log) without changing this signature; the prefactor
+// body does not read it.
+func (v *portalRunsView) resolveRunLog(savedLogPath string, runState *events.RunState, active *portalActiveRun) string {
+	if active != nil {
+		if live := strings.TrimSpace(stripLogLabels(active.LiveOutput)); live != "" {
+			return live
+		}
+	}
+	return v.readPortalTextFile(savedLogPath)
 }
 
 // readPortalTextFile returns the contents of a saved portal log file.
