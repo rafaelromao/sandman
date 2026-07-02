@@ -1172,13 +1172,9 @@ func (v *portalRunsView) runFromActiveBatchIssue(repoRoot string, active portalA
 			run.Log = v.portalBlockedMessage(state.Finished.Payload)
 		case "aborted":
 		default:
-			if live := strings.TrimSpace(stripLogLabels(active.LiveOutput)); live != "" {
-				run.Log = live
-			} else {
-				run.Log = v.readPortalTextFile(run.LogPath)
-				if strings.TrimSpace(run.Log) == "" {
-					run.Log = "No log file yet."
-				}
+			saved := v.readPortalTextFile(run.LogPath)
+			if run.Log = v.resolveRunLog(saved, *state, &active); strings.TrimSpace(run.Log) == "" {
+				run.Log = "No log file yet."
 			}
 		}
 		return run
@@ -1413,12 +1409,7 @@ func (v *portalRunsView) runFromState(repoRoot string, runState events.RunState,
 	}
 
 	logPath := v.portalLogPathForRun(repoRoot, locator)
-	logContent := v.readPortalTextFile(logPath)
-	if active != nil {
-		if live := strings.TrimSpace(stripLogLabels(active.LiveOutput)); live != "" {
-			logContent = live
-		}
-	}
+	logContent := v.resolveRunLog(v.readPortalTextFile(logPath), runState, active)
 
 	batchKey := ""
 	if active != nil {
@@ -1664,6 +1655,35 @@ func (v *portalRunsView) filterPortalLogByRunID(text string, runID string) strin
 		}
 	}
 	return strings.TrimSpace(strings.Join(filtered, "\n"))
+}
+
+// resolveRunLog is the single source of truth for the portal's saved-vs-
+// live log decision. The Log field on a portalRun is rendered by either
+// the saved run file (.sandman/batches/<batch-id>/runs/<run-id>/run.log,
+// read via readPortalTextFile) or by the live attach stream coming off
+// the still-connectable batch.sock (read via readPortalSocketOutput).
+//
+// The slice-1 policy mirrors the pre-existing two override sites
+// (runFromState lines 1417-1421 and runFromActiveBatchIssue default
+// branch lines 1175-1183): when an active batch is matched, the live
+// socket output wins if it is non-empty; otherwise the saved log is
+// returned. When no active batch is matched, the saved log is returned
+// as-is. Slice 2 will flip the terminal-row branch of this helper so
+// kind=completed rows always receive the saved log, even when the batch
+// daemon socket is still alive.
+//
+// `savedLog` is the stripped content of the per-run run.log (what
+// readPortalTextFile returns). `runState` carries the event-fold
+// information needed to know whether the row is terminal. `active` is
+// nil for the historical / event-only path, non-nil when an active batch
+// is matched.
+func (v *portalRunsView) resolveRunLog(savedLog string, runState events.RunState, active *portalActiveRun) string {
+	if active != nil {
+		if live := strings.TrimSpace(stripLogLabels(active.LiveOutput)); live != "" {
+			return live
+		}
+	}
+	return savedLog
 }
 
 func (v *portalRunsView) portalBlockedMessage(payload map[string]any) string {

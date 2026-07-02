@@ -2826,3 +2826,121 @@ func TestPortal_BatchKeyForActive_FallbackChain(t *testing.T) {
 		})
 	}
 }
+
+// TestPortal_ResolveRunLog_PrefersLiveForNonTerminal pins the slice-1
+// (prefactor) contract for portalRunsView.resolveRunLog: a non-terminal
+// state with non-empty active live output returns the live output, not
+// the saved log. This locks in the pre-fix behaviour so the refactor
+// in slice 1 stays red-stays-green. Slice 2 will add a separate test
+// that flips the terminal-row branch via
+// TestPortal_RunFromState_CompletedKeepsSavedLogWhenBatchSocketAlive.
+func TestPortal_ResolveRunLog_PrefersLiveForNonTerminal(t *testing.T) {
+	startedAt := time.Now().Add(-1 * time.Minute)
+	runState := events.RunState{
+		RunID: "abcd-260618113825-active-1",
+		Started: events.Event{
+			Timestamp: startedAt,
+			Payload:   map[string]any{},
+		},
+	}
+	active := &portalActiveRun{
+		Key:        "abcd-260618113825-active-1",
+		LiveOutput: "[abcd-260618113825-active-1] 12:00:00 live line\n",
+	}
+	savedLog := "12:00:00 saved line\n"
+
+	got := (&portalRunsView{}).resolveRunLog(savedLog, runState, active)
+	wantLive := strings.TrimSpace(stripLogLabels(active.LiveOutput))
+	if got != wantLive {
+		t.Fatalf("resolveRunLog = %q, want stripped live output %q", got, wantLive)
+	}
+}
+
+// TestPortal_ResolveRunLog_LiveWinsWhenActiveForTerminal pins the
+// pre-fix slice-1 contract: today's runFromState override (lines
+// 1417-1421) and runFromActiveBatchIssue default branch (lines
+// 1175-1183) prefer live output when active != nil and live is
+// non-empty, regardless of terminal state. Slice 1's helper must
+// preserve this so the refactor is red-stays-green. The slice-2
+// fix will flip this behaviour for kind=completed rows.
+func TestPortal_ResolveRunLog_LiveWinsWhenActiveForTerminal(t *testing.T) {
+	startedAt := time.Now().Add(-5 * time.Minute)
+	finishedAt := startedAt.Add(2 * time.Minute)
+	runState := events.RunState{
+		RunID: "abcd-260618113825-issue-42",
+		Started: events.Event{
+			Timestamp: startedAt,
+			Payload:   map[string]any{"branch": "sandman/42-fix"},
+		},
+		Finished: &events.Event{
+			Type:      "run.finished",
+			Timestamp: finishedAt,
+			Payload:   map[string]any{"status": "success", "branch": "sandman/42-fix"},
+		},
+	}
+	active := &portalActiveRun{
+		Key:        "abcd-260618113825",
+		BatchID:    "abcd-260618113825",
+		RunID:      "abcd-260618113825-issue-42",
+		LiveOutput: "[different-run] 12:34:56 unrelated live line\n",
+	}
+	savedLog := "12:34:00 saved completion line\n12:34:30 saved final line\n"
+
+	got := (&portalRunsView{}).resolveRunLog(savedLog, runState, active)
+	wantLive := strings.TrimSpace(stripLogLabels(active.LiveOutput))
+	if got != wantLive {
+		t.Fatalf("pre-fix resolveRunLog = %q, want live %q (slice 1 must preserve current override)", got, wantLive)
+	}
+}
+
+// TestPortal_ResolveRunLog_EmptySavedFallsBackToLive pins the slice-1
+// contract for portalRunsView.resolveRunLog: when the saved log is
+// empty, an active row falls back to the live output (so the portal
+// can show something meaningful during the very first seconds of a
+// run before the log file exists).
+func TestPortal_ResolveRunLog_EmptySavedFallsBackToLive(t *testing.T) {
+	startedAt := time.Now().Add(-1 * time.Minute)
+	runState := events.RunState{
+		RunID: "abcd-260618113825-active-1",
+		Started: events.Event{
+			Timestamp: startedAt,
+			Payload:   map[string]any{},
+		},
+	}
+	active := &portalActiveRun{
+		Key:        "abcd-260618113825-active-1",
+		LiveOutput: "12:00:00 live only line\n",
+	}
+
+	got := (&portalRunsView{}).resolveRunLog("", runState, active)
+	wantLive := strings.TrimSpace(stripLogLabels(active.LiveOutput))
+	if got != wantLive {
+		t.Fatalf("resolveRunLog with empty saved = %q, want live %q", got, wantLive)
+	}
+}
+
+// TestPortal_ResolveRunLog_NoActiveReturnsSaved pins the slice-1
+// contract: when no active instance is matched, resolveRunLog returns
+// the saved log unchanged. This is the historical / event-only path.
+func TestPortal_ResolveRunLog_NoActiveReturnsSaved(t *testing.T) {
+	startedAt := time.Now().Add(-5 * time.Minute)
+	finishedAt := startedAt.Add(2 * time.Minute)
+	runState := events.RunState{
+		RunID: "abcd-260618113825-issue-42",
+		Started: events.Event{
+			Timestamp: startedAt,
+			Payload:   map[string]any{},
+		},
+		Finished: &events.Event{
+			Type:      "run.finished",
+			Timestamp: finishedAt,
+			Payload:   map[string]any{"status": "success"},
+		},
+	}
+	savedLog := "12:34:00 saved completion line\n"
+
+	got := (&portalRunsView{}).resolveRunLog(savedLog, runState, nil)
+	if got != savedLog {
+		t.Fatalf("resolveRunLog with nil active = %q, want saved %q", got, savedLog)
+	}
+}
