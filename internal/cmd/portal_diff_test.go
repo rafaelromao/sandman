@@ -4890,3 +4890,275 @@ try {
 `
 	runNodeScript(t, js)
 }
+
+func TestPortalDiffBuildEventsContent_RenderedEventCountAttribute(t *testing.T) {
+	js := `const body = makeMockBody();
+const events = [
+  { type: 'start', timestamp: 1700000000000, payload: { ok: true } },
+  { type: 'progress', timestamp: 1700000001000, payload: { step: 1 } },
+  { type: 'finish', timestamp: 1700000003000, payload: { ok: true } },
+];
+const run = { key: 'a', kind: 'active', status: 'running', issueLabel: 'A', runId: 'r1', events: events };
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: 'a', tabs: { a: 'events' } };
+SandmanPortalDiff.diffRuns(body, [run], opts);
+const detailRow = body.children[1];
+if (!detailRow) throw new Error('expected detail row');
+const pre = detailRow.querySelector('pre[data-rendered-json]');
+if (!pre) throw new Error('expected pre[data-rendered-json] in events tab');
+const renderedCount = pre.getAttribute('data-rendered-event-count');
+if (renderedCount !== '3') throw new Error('expected data-rendered-event-count="3", got ' + JSON.stringify(renderedCount));
+const renderedJson = pre.getAttribute('data-rendered-json') || '';
+const expected = JSON.stringify(events.map((event) => ({
+  type: event && event.type ? event.type : 'event',
+  timestamp: event && event.timestamp ? event.timestamp : null,
+  payload: event && event.payload ? event.payload : {},
+})), null, 2);
+if (renderedJson !== expected) throw new Error('data-rendered-json must match JSON.stringify(mappedEvents, null, 2) byte-for-byte');
+if (!pre.querySelector('.json-key')) throw new Error('expected json-key spans in highlighted HTML');
+if (!pre.querySelector('.json-string')) throw new Error('expected json-string spans in highlighted HTML');
+if (!pre.querySelector('.json-punctuation')) throw new Error('expected json-punctuation spans in highlighted HTML');
+SandmanPortalDiff.resetCounters();
+SandmanPortalDiff.diffRuns(body, [run], opts);
+const counters = SandmanPortalDiff.getCounters();
+if (counters.mutations > 1) throw new Error('stable poll must not re-render, mutations=' + counters.mutations);
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+func TestPortalDiffUpdateDetailPanelEvents_AppendPreservesChildren(t *testing.T) {
+	js := `const body = makeMockBody();
+const e1 = { type: 'start', timestamp: 1700000000000, payload: { ok: true } };
+const e2 = { type: 'progress', timestamp: 1700000001000, payload: { step: 1 } };
+const e3 = { type: 'progress', timestamp: 1700000002000, payload: { step: 2 } };
+const e4 = { type: 'progress', timestamp: 1700000003000, payload: { step: 3 } };
+const e5 = { type: 'finish', timestamp: 1700000004000, payload: { ok: true } };
+const run = { key: 'a', kind: 'active', status: 'running', issueLabel: 'A', runId: 'r1', events: [e1, e2, e3] };
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: 'a', tabs: { a: 'events' } };
+SandmanPortalDiff.diffRuns(body, [run], opts);
+const detailRow = body.children[1];
+const preBefore = detailRow.querySelector('pre[data-rendered-json]');
+if (!preBefore) throw new Error('expected events pre');
+const snapshotChildren = preBefore.children.slice();
+const snapshotPreRenderedJson = preBefore.getAttribute('data-rendered-json') || '';
+SandmanPortalDiff.resetCounters();
+SandmanPortalDiff.updateDetailPanelEvents(body, 'a', [e1, e2, e3, e4, e5], helpers);
+if (preBefore.getAttribute('data-rendered-event-count') !== '5') throw new Error('expected data-rendered-event-count="5", got ' + preBefore.getAttribute('data-rendered-event-count'));
+const expected = JSON.stringify([e1, e2, e3, e4, e5].map((event) => ({
+  type: event && event.type ? event.type : 'event',
+  timestamp: event && event.timestamp ? event.timestamp : null,
+  payload: event && event.payload ? event.payload : {},
+})), null, 2);
+const actual = preBefore.getAttribute('data-rendered-json') || '';
+if (actual !== expected) throw new Error('post-append data-rendered-json must match canonical, got ' + actual.slice(0, 200));
+if (preBefore.children.length < snapshotChildren.length) throw new Error('pre should have at least as many children after append, got ' + preBefore.children.length);
+for (let i = 0; i < snapshotChildren.length; i++) {
+  if (preBefore.children[i] !== snapshotChildren[i]) throw new Error('child at index ' + i + ' lost identity across append (no-flash/no-rewrite violated)');
+}
+const counters = SandmanPortalDiff.getCounters();
+if (counters.mutations === 0) throw new Error('expected mutations on append, got 0');
+const preText = preBefore.textContent;
+if (preText.indexOf('type') === -1) throw new Error('expected original event type field text in pre, got ' + JSON.stringify(preText.slice(0, 200)));
+if (preText.indexOf('finish') === -1) throw new Error('expected appended finish event text in pre, got ' + JSON.stringify(preText.slice(-200)));
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+func TestPortalDiffUpdateDetailPanelEvents_RestructuredFallsBackToRebuild(t *testing.T) {
+	js := `const body = makeMockBody();
+const e1 = { type: 'start', timestamp: 1700000000000, payload: { ok: true } };
+const e2 = { type: 'progress', timestamp: 1700000001000, payload: { step: 1 } };
+const e3 = { type: 'finish', timestamp: 1700000002000, payload: { ok: true } };
+const run = { key: 'a', kind: 'active', status: 'running', issueLabel: 'A', runId: 'r1', events: [e1, e2, e3] };
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: 'a', tabs: { a: 'events' } };
+SandmanPortalDiff.diffRuns(body, [run], opts);
+const detailRow = body.children[1];
+const preBefore = detailRow.querySelector('pre[data-rendered-json]');
+if (!preBefore) throw new Error('expected events pre');
+const snapshotChildren = preBefore.children.slice();
+if (snapshotChildren.length === 0) throw new Error('expected non-empty pre children after initial build');
+const e1Mutated = { type: 'restart', timestamp: 1700000000500, payload: { ok: true } };
+SandmanPortalDiff.updateDetailPanelEvents(body, 'a', [e1Mutated, e2, e3], helpers);
+if (preBefore.getAttribute('data-rendered-event-count') !== '3') throw new Error('expected data-rendered-event-count="3" after restructure, got ' + preBefore.getAttribute('data-rendered-event-count'));
+const expectedMutated = JSON.stringify([e1Mutated, e2, e3].map((event) => ({
+  type: event && event.type ? event.type : 'event',
+  timestamp: event && event.timestamp ? event.timestamp : null,
+  payload: event && event.payload ? event.payload : {},
+})), null, 2);
+if (preBefore.getAttribute('data-rendered-json') !== expectedMutated) throw new Error('post-rebuild data-rendered-json must match canonical after restructure');
+let reused = 0;
+for (const c of snapshotChildren) {
+  if (preBefore.children.indexOf(c) !== -1) reused += 1;
+}
+if (reused !== 0) throw new Error('restructure must rebuild (all-new children), got ' + reused + ' reused children');
+const snapshot2 = preBefore.children.slice();
+SandmanPortalDiff.updateDetailPanelEvents(body, 'a', [e1, e2], helpers);
+if (preBefore.getAttribute('data-rendered-event-count') !== '2') throw new Error('expected data-rendered-event-count="2" after shrink, got ' + preBefore.getAttribute('data-rendered-event-count'));
+const expectedShrunk = JSON.stringify([e1, e2].map((event) => ({
+  type: event && event.type ? event.type : 'event',
+  timestamp: event && event.timestamp ? event.timestamp : null,
+  payload: event && event.payload ? event.payload : {},
+})), null, 2);
+if (preBefore.getAttribute('data-rendered-json') !== expectedShrunk) throw new Error('post-rebuild data-rendered-json must match canonical after shrink');
+let reused2 = 0;
+for (const c of snapshot2) {
+  if (preBefore.children.indexOf(c) !== -1) reused2 += 1;
+}
+if (reused2 !== 0) throw new Error('shrink must rebuild (all-new children), got ' + reused2 + ' reused children');
+const snapshot3 = preBefore.children.slice();
+SandmanPortalDiff.updateDetailPanelEvents(body, 'a', [e2, e1], helpers);
+const expectedReorder = JSON.stringify([e2, e1].map((event) => ({
+  type: event && event.type ? event.type : 'event',
+  timestamp: event && event.timestamp ? event.timestamp : null,
+  payload: event && event.payload ? event.payload : {},
+})), null, 2);
+if (preBefore.getAttribute('data-rendered-json') !== expectedReorder) throw new Error('post-rebuild data-rendered-json must match canonical after reorder');
+let reused3 = 0;
+for (const c of snapshot3) {
+  if (preBefore.children.indexOf(c) !== -1) reused3 += 1;
+}
+if (reused3 !== 0) throw new Error('reorder must rebuild (all-new children), got ' + reused3 + ' reused children');
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+func TestPortalDiffUpdateDetailPanelEvents_PrefixMismatchForcesRebuild(t *testing.T) {
+	js := `const body = makeMockBody();
+const e1 = { type: 'start', timestamp: 1700000000000, payload: { ok: true } };
+const e2 = { type: 'progress', timestamp: 1700000001000, payload: { step: 1 } };
+const e3 = { type: 'progress', timestamp: 1700000002000, payload: { step: 2 } };
+const e4 = { type: 'finish', timestamp: 1700000003000, payload: { ok: true } };
+const run = { key: 'a', kind: 'active', status: 'running', issueLabel: 'A', runId: 'r1', events: [e1, e2, e3] };
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: 'a', tabs: { a: 'events' } };
+SandmanPortalDiff.diffRuns(body, [run], opts);
+const detailRow = body.children[1];
+const preBefore = detailRow.querySelector('pre[data-rendered-json]');
+if (!preBefore) throw new Error('expected events pre');
+const snapshotChildren = preBefore.children.slice();
+const e1Mutated = { type: 'restart', timestamp: 1700000000500, payload: { ok: true } };
+SandmanPortalDiff.updateDetailPanelEvents(body, 'a', [e1Mutated, e2, e3, e4], helpers);
+if (preBefore.getAttribute('data-rendered-event-count') !== '4') throw new Error('expected data-rendered-event-count="4", got ' + preBefore.getAttribute('data-rendered-event-count'));
+const expected = JSON.stringify([e1Mutated, e2, e3, e4].map((event) => ({
+  type: event && event.type ? event.type : 'event',
+  timestamp: event && event.timestamp ? event.timestamp : null,
+  payload: event && event.payload ? event.payload : {},
+})), null, 2);
+if (preBefore.getAttribute('data-rendered-json') !== expected) throw new Error('post-rebuild data-rendered-json must match canonical');
+let reused = 0;
+for (const c of snapshotChildren) {
+  if (preBefore.children.indexOf(c) !== -1) reused += 1;
+}
+if (reused !== 0) throw new Error('prefix-mismatch must force full rebuild (no append), got ' + reused + ' reused children');
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+func TestPortalDiffUpdateDetailPanelEvents_AppendedSuffixHighlighted(t *testing.T) {
+	js := `const body = makeMockBody();
+const e1 = { type: 'start', timestamp: 1700000000000, payload: { ok: true } };
+const e2 = {
+  type: 'progress',
+  timestamp: 1700000001000,
+  payload: { ok: false, count: 42, ratio: 1.5, label: 'done', parent: null, child: { nested: 1 } },
+};
+const run = { key: 'a', kind: 'active', status: 'running', issueLabel: 'A', runId: 'r1', events: [e1] };
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: 'a', tabs: { a: 'events' } };
+SandmanPortalDiff.diffRuns(body, [run], opts);
+const detailRow = body.children[1];
+const pre = detailRow.querySelector('pre[data-rendered-json]');
+if (!pre) throw new Error('expected events pre');
+const beforeCount = pre.children.length;
+SandmanPortalDiff.updateDetailPanelEvents(body, 'a', [e1, e2], helpers);
+if (pre.children.length <= beforeCount) throw new Error('expected new child nodes after append, got ' + pre.children.length + ' (was ' + beforeCount + ')');
+const classes = { 'json-key': 0, 'json-string': 0, 'json-boolean': 0, 'json-number': 0, 'json-null': 0, 'json-punctuation': 0 };
+const tail = pre.children.slice(beforeCount);
+for (const node of tail) {
+  const visit = (n) => {
+    if (!n) return;
+    if (n.classList && n.classList._set) {
+      for (const c of n.classList._set) {
+        if (Object.prototype.hasOwnProperty.call(classes, c)) classes[c] += 1;
+      }
+    }
+    if (n.children) for (const ch of n.children) visit(ch);
+  };
+  visit(node);
+}
+if (classes['json-key'] === 0) throw new Error('expected json-key spans on appended region, got ' + JSON.stringify(classes));
+if (classes['json-string'] === 0) throw new Error('expected json-string spans on appended region, got ' + JSON.stringify(classes));
+if (classes['json-boolean'] === 0) throw new Error('expected json-boolean spans on appended region, got ' + JSON.stringify(classes));
+if (classes['json-number'] === 0) throw new Error('expected json-number spans on appended region, got ' + JSON.stringify(classes));
+if (classes['json-null'] === 0) throw new Error('expected json-null spans on appended region, got ' + JSON.stringify(classes));
+if (classes['json-punctuation'] === 0) throw new Error('expected json-punctuation spans on appended region, got ' + JSON.stringify(classes));
+const expectedSuffix = [
+  ',',
+  '  {',
+  '    "type": "progress",',
+  '    "timestamp": 1700000001000,',
+  '    "payload": {',
+  '      "ok": false,',
+  '      "count": 42,',
+  '      "ratio": 1.5,',
+  '      "label": "done",',
+  '      "parent": null,',
+  '      "child": {',
+  '        "nested": 1',
+  '      }',
+  '    }',
+  '  }',
+  ']',
+].join('\n');
+const suffixText = tail.map((n) => n._textContent != null ? n._textContent : (n.textContent || '')).join('');
+const decoded = suffixText.replace(/&quot;/g, '"').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&#39;/g, "'");
+if (decoded !== expectedSuffix) {
+  for (let i = 0; i < Math.min(decoded.length, expectedSuffix.length); i++) {
+    if (decoded[i] !== expectedSuffix[i]) {
+      throw new Error('appended region text mismatch at ' + i + ': got=' + JSON.stringify(decoded.slice(Math.max(0, i-30), i+40)) + ' expected=' + JSON.stringify(expectedSuffix.slice(Math.max(0, i-30), i+40)));
+    }
+  }
+  throw new Error('appended region text length mismatch: got ' + decoded.length + ' expected ' + expectedSuffix.length + ' got=' + JSON.stringify(decoded.slice(0, 200)));
+}
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+func TestPortalDiffUpdateDetailContent_EventsAppendPath(t *testing.T) {
+	js := `const body = makeMockBody();
+const e1 = { type: 'start', timestamp: 1700000000000, payload: { ok: true } };
+const e2 = { type: 'progress', timestamp: 1700000001000, payload: { step: 1 } };
+const e3 = { type: 'progress', timestamp: 1700000002000, payload: { step: 2 } };
+const e4 = { type: 'progress', timestamp: 1700000003000, payload: { step: 3 } };
+const e5 = { type: 'finish', timestamp: 1700000004000, payload: { ok: true } };
+const run1 = { key: 'a', kind: 'active', status: 'running', issueLabel: 'A', runId: 'r1', events: [e1, e2, e3] };
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: 'a', tabs: { a: 'events' } };
+SandmanPortalDiff.diffRuns(body, [run1], opts);
+const detailRow = body.children[1];
+const preBefore = detailRow.querySelector('pre[data-rendered-json]');
+if (!preBefore) throw new Error('expected events pre');
+const snapshotChildren = preBefore.children.slice();
+const run2 = { key: 'a', kind: 'active', status: 'running', issueLabel: 'A', runId: 'r1', events: [e1, e2, e3, e4, e5] };
+SandmanPortalDiff.diffRuns(body, [run2], opts);
+if (preBefore.getAttribute('data-rendered-event-count') !== '5') throw new Error('expected data-rendered-event-count="5", got ' + preBefore.getAttribute('data-rendered-event-count'));
+const expected = JSON.stringify([e1, e2, e3, e4, e5].map((event) => ({
+  type: event && event.type ? event.type : 'event',
+  timestamp: event && event.timestamp ? event.timestamp : null,
+  payload: event && event.payload ? event.payload : {},
+})), null, 2);
+if (preBefore.getAttribute('data-rendered-json') !== expected) throw new Error('post-update data-rendered-json must match canonical, got ' + preBefore.getAttribute('data-rendered-json').slice(0, 200));
+for (let i = 0; i < snapshotChildren.length; i++) {
+  if (preBefore.children[i] !== snapshotChildren[i]) throw new Error('child at index ' + i + ' lost identity across updateDetailContent append (no-flash violated)');
+}
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}

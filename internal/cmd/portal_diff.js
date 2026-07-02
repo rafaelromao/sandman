@@ -1234,8 +1234,46 @@
       renderTerminalContent: highlightJSON,
     });
     pre.setAttribute('data-rendered-json', json);
+    const events = Array.isArray(run && run.events) ? run.events : [];
+    pre.setAttribute('data-rendered-event-count', String(events.length));
     section.appendChild(pre);
     content.appendChild(section);
+  }
+
+  function reindentEventForArray(eventJson) {
+    return eventJson.split('\n').map((line) => '  ' + line).join('\n');
+  }
+
+  function appendEventsContent(pre, oldRenderedJson, oldEventCount, newEventsAll, newEventCount, helpers) {
+    const newOnes = newEventsAll.slice(oldEventCount);
+    if (!newOnes.length) return false;
+    const lastEventEnd = oldRenderedJson.lastIndexOf('}');
+    if (lastEventEnd < 0) return false;
+    const prefix = oldRenderedJson.slice(0, lastEventEnd + 1);
+    const newJsonSegments = newOnes.map((event) => reindentEventForArray(eventsJSONForEvent(event)));
+    const newRenderedJson = prefix + ',\n' + newJsonSegments.join(',\n') + '\n]';
+    const newSuffixText = newRenderedJson.slice(lastEventEnd + 1);
+    const html = highlightJSON(newSuffixText);
+    const scratch = global.document.createElement('div');
+    scratch.innerHTML = html;
+    const nodes = Array.from(scratch.childNodes);
+    for (const node of nodes) pre.appendChild(node);
+    pre.setAttribute('data-rendered-json', newRenderedJson);
+    pre.setAttribute('data-rendered-event-count', String(newEventCount));
+    return true;
+  }
+
+  function eventsJSONForEvent(event) {
+    const safe = event && typeof event === 'object' ? event : {};
+    return JSON.stringify({
+      type: safe.type ? safe.type : 'event',
+      timestamp: safe.timestamp ? safe.timestamp : null,
+      payload: safe.payload ? safe.payload : {},
+    }, null, 2);
+  }
+
+  function eventsJSONForRun(events) {
+    return eventsJSON({ events: events });
   }
 
   function buildDetailsContent(content, run, helpers) {
@@ -1457,6 +1495,22 @@
     }
     if (content.getAttribute('data-rendered-fingerprint') === fingerprint && content.firstChild) {
       return;
+    }
+    if (tabName === 'events') {
+      const eventsPre = content.querySelector('pre[data-rendered-json]');
+      const subjectEvents = Array.isArray(subjectRun && subjectRun.events) ? subjectRun.events : [];
+      if (eventsPre && subjectEvents.length) {
+        const renderedJson = eventsPre.getAttribute('data-rendered-json') || '';
+        const renderedCount = parseInt(eventsPre.getAttribute('data-rendered-event-count') || '0', 10);
+        if (renderedCount > 0 && subjectEvents.length > renderedCount) {
+          const firstN = eventsJSONForRun(subjectEvents.slice(0, renderedCount));
+          if (firstN === renderedJson && appendEventsContent(eventsPre, renderedJson, renderedCount, subjectEvents, subjectEvents.length, opts.helpers)) {
+            content.setAttribute('data-rendered-fingerprint', fingerprint);
+            mutationCount += 1;
+            return;
+          }
+        }
+      }
     }
     // Leaving the Log tab: preserve the rendered log pane in the per-subject
     // cache instead of discarding it, so returning to Log is O(1).
@@ -1857,6 +1911,32 @@
     mutationCount += 1;
   }
 
+  function updateDetailPanelEvents(body, runKey, events, helpers) {
+    const detailRow = body.querySelector('tr.detail-row[data-detail-for="' + runKey + '"]');
+    if (!detailRow) return;
+    const pre = detailRow.querySelector('pre[data-rendered-json]');
+    if (!pre) return;
+    const eventList = Array.isArray(events) ? events : [];
+    const renderedJson = pre.getAttribute('data-rendered-json') || '';
+    const renderedCount = parseInt(pre.getAttribute('data-rendered-event-count') || '0', 10);
+    const expectedFull = eventsJSONForRun(eventList);
+    if (renderedCount === eventList.length && renderedJson === expectedFull) return;
+    if (renderedCount > 0 && eventList.length > renderedCount) {
+      const firstNRendered = eventsJSONForRun(eventList.slice(0, renderedCount));
+      if (firstNRendered === renderedJson) {
+        if (appendEventsContent(pre, renderedJson, renderedCount, eventList, eventList.length, helpers)) {
+          mutationCount += 1;
+          return;
+        }
+      }
+    }
+    while (pre.firstChild) pre.removeChild(pre.firstChild);
+    fillTerminalPre(pre, expectedFull, { renderTerminalContent: highlightJSON });
+    pre.setAttribute('data-rendered-json', expectedFull);
+    pre.setAttribute('data-rendered-event-count', String(eventList.length));
+    mutationCount += 1;
+  }
+
   global.SandmanPortalDiff = {
     diffRuns,
     insertRunRow,
@@ -1868,6 +1948,7 @@
     resetCounters,
     getCounters,
     updateDetailPanelLog,
+    updateDetailPanelEvents,
     subjectRunValue,
     subjectRunsFor,
     highlightJSON,
