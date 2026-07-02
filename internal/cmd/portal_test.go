@@ -3108,3 +3108,57 @@ func TestPortal_ResolveRunLog_NoActiveReturnsSaved(t *testing.T) {
 		t.Fatalf("resolveRunLog with nil active = %q, want saved %q", got, savedLog)
 	}
 }
+
+// TestPortal_ActiveKeyForActive_FallbackChain pins the contract for
+// activeKeyForActive: every fallback level must return a non-empty
+// string so active rows never reach dedupRuns/UI with an empty Key
+// (the "-issue-N" symptom fixed by issue #1657).
+func TestPortal_ActiveKeyForActive_FallbackChain(t *testing.T) {
+	cases := []struct {
+		name   string
+		active portalActiveRun
+		want   string
+	}{
+		{
+			name:   "Key wins when populated",
+			active: portalActiveRun{Key: "active-1", BatchID: "manifest-1", Dir: "/tmp/active-1", RunID: "active-1-issue-42"},
+			want:   "active-1",
+		},
+		{
+			name:   "BatchID used when Key is empty (issue #1657 acceptance)",
+			active: portalActiveRun{Key: "", BatchID: "batch-abc", Dir: "/repo/.sandman/batches/batch-abc", RunID: "run-1"},
+			want:   "batch-abc",
+		},
+		{
+			name:   "Dir basename used when Key and BatchID are empty",
+			active: portalActiveRun{Key: "", BatchID: "", Dir: "/tmp/active-3", RunID: "active-3-issue-42"},
+			want:   "active-3",
+		},
+		{
+			name:   "Dot dir falls back to synthetic sentinel",
+			active: portalActiveRun{Key: "", BatchID: "", Dir: ".", RunID: "active-4-issue-42"},
+			want:   "active-active-4-issue-42",
+		},
+		{
+			name:   "Trailing-slash dir falls back to synthetic sentinel (issue #1657 acceptance)",
+			active: portalActiveRun{Key: "", BatchID: "", Dir: "/repo/.sandman/batches/", RunID: "run-1"},
+			want:   "active-run-1",
+		},
+		{
+			name:   "All empty inputs still produce a non-empty sentinel",
+			active: portalActiveRun{Key: "", BatchID: "", Dir: "", RunID: "active-5-issue-42"},
+			want:   "active-active-5-issue-42",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := activeKeyForActive(tc.active)
+			if got != tc.want {
+				t.Fatalf("activeKeyForActive = %q, want %q", got, tc.want)
+			}
+			if got == "" {
+				t.Fatal("activeKeyForActive must never return empty string")
+			}
+		})
+	}
+}
