@@ -74,6 +74,12 @@ func (s *spyBatchRunnerMultiCapture) requests() []batch.Request {
 	return s.captured
 }
 
+// newReviewDeps returns Dependencies for a review command test, isolated
+// from the real repo via a fresh temp dir that is git-init'd and
+// chdir'd into. The supplied cfg is wrapped in a fakeStore and a
+// fresh fakeEventLog/Renderer/IssuePicker are wired. All 32 callers
+// inherit isolation automatically. Tests that need a different
+// review guard (issue #383) should build their own Dependencies.
 func newReviewDeps(t *testing.T, gh github.Client, cfg *config.Config, runner batch.Runner) Dependencies {
 	t.Helper()
 	dir := t.TempDir()
