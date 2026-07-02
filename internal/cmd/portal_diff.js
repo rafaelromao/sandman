@@ -1240,6 +1240,53 @@
     content.appendChild(section);
   }
 
+  // eventsJSONData already produces the mapped event objects; reused here
+  // so the append path serializes the same shape buildEventsContent does.
+  function reindentEventForArray(eventJson) {
+    return eventJson.split('\n').map((line) => '  ' + line).join('\n');
+  }
+
+  function appendEventsContent(pre, oldRenderedJson, oldEventCount, newEventsAll, newEventCount, helpers) {
+    const newOnes = newEventsAll.slice(oldEventCount);
+    if (!newOnes.length) return false;
+    // The rendered JSON ends with `  }\n]` for a non-empty event list
+    // (closing brace of the last old event + newline + array close). We
+    // take everything up to and including that closing brace as the
+    // append prefix, then splice in `,\n` followed by each new event's
+    // re-indented JSON, then close with `\n]`.
+    const lastEventEnd = oldRenderedJson.lastIndexOf('}');
+    if (lastEventEnd < 0) return false;
+    const prefix = oldRenderedJson.slice(0, lastEventEnd + 1);
+    const newJsonSegments = newOnes.map((event) => reindentEventForArray(eventsJSONForEvent(event)));
+    const newRenderedJson = prefix + ',\n' + newJsonSegments.join(',\n') + '\n]';
+    const newSuffixText = newRenderedJson.slice(lastEventEnd + 1);
+    const html = highlightJSON(newSuffixText);
+    const scratch = global.document.createElement('div');
+    scratch.innerHTML = html;
+    const nodes = Array.from(scratch.childNodes);
+    for (const node of nodes) pre.appendChild(node);
+    pre.setAttribute('data-rendered-json', newRenderedJson);
+    pre.setAttribute('data-rendered-event-count', String(newEventCount));
+    return true;
+  }
+
+  function eventsJSONForEvent(event) {
+    const safe = event && typeof event === 'object' ? event : {};
+    return JSON.stringify({
+      type: safe.type ? safe.type : 'event',
+      timestamp: safe.timestamp ? safe.timestamp : null,
+      payload: safe.payload ? safe.payload : {},
+    }, null, 2);
+  }
+
+  function eventsJSONForRun(events) {
+    return JSON.stringify((Array.isArray(events) ? events : []).map((event) => ({
+      type: event && event.type ? event.type : 'event',
+      timestamp: event && event.timestamp ? event.timestamp : null,
+      payload: event && event.payload ? event.payload : {},
+    })), null, 2);
+  }
+
   function buildDetailsContent(content, run, helpers) {
     const section = global.document.createElement('section');
     section.classList.add('detail-box', 'tab-pane', 'fill');
@@ -1859,6 +1906,37 @@
     mutationCount += 1;
   }
 
+  function updateDetailPanelEvents(body, runKey, events, helpers) {
+    const detailRow = body.querySelector('tr.detail-row[data-detail-for="' + runKey + '"]');
+    if (!detailRow) return;
+    const pre = detailRow.querySelector('pre[data-rendered-json]');
+    if (!pre) return;
+    const eventList = Array.isArray(events) ? events : [];
+    const renderedJson = pre.getAttribute('data-rendered-json') || '';
+    const renderedCount = parseInt(pre.getAttribute('data-rendered-event-count') || '0', 10);
+    const expectedFull = eventsJSONForRun(eventList);
+    if (renderedCount === eventList.length && renderedJson === expectedFull) return;
+    if (renderedCount > 0 && eventList.length > renderedCount) {
+      // Verify the first `renderedCount` events still match the rendered
+      // prefix — this catches restructured arrays before they hit the
+      // append path.
+      const firstNRendered = eventsJSONForRun(eventList.slice(0, renderedCount));
+      if (firstNRendered === renderedJson) {
+        if (appendEventsContent(pre, renderedJson, renderedCount, eventList, eventList.length, helpers)) {
+          mutationCount += 1;
+          return;
+        }
+      }
+    }
+    // Fallback: full rebuild (events were restructured, count shrank,
+    // pre prefix did not match, or first build).
+    while (pre.firstChild) pre.removeChild(pre.firstChild);
+    fillTerminalPre(pre, expectedFull, { renderTerminalContent: highlightJSON });
+    pre.setAttribute('data-rendered-json', expectedFull);
+    pre.setAttribute('data-rendered-event-count', String(eventList.length));
+    mutationCount += 1;
+  }
+
   global.SandmanPortalDiff = {
     diffRuns,
     insertRunRow,
@@ -1870,6 +1948,7 @@
     resetCounters,
     getCounters,
     updateDetailPanelLog,
+    updateDetailPanelEvents,
     subjectRunValue,
     subjectRunsFor,
     highlightJSON,

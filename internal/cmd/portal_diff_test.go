@@ -4886,7 +4886,62 @@ try {
 	if (rendered !== expected) {
 		throw new Error('rebuilt content must match JSON.stringify(events, null, 2) byte-for-byte (AC #2).\nGot: ' + rendered.slice(0, 200) + '\nExpected: ' + expected.slice(0, 200));
 	}
-	console.log('PASS');
+if (!pre.querySelector('.json-key')) throw new Error('expected json-key spans in highlighted HTML');
+if (!pre.querySelector('.json-string')) throw new Error('expected json-string spans in highlighted HTML');
+if (!pre.querySelector('.json-punctuation')) throw new Error('expected json-punctuation spans in highlighted HTML');
+SandmanPortalDiff.resetCounters();
+SandmanPortalDiff.diffRuns(body, [run], opts);
+const counters = SandmanPortalDiff.getCounters();
+if (counters.mutations > 1) throw new Error('stable poll must not re-render, mutations=' + counters.mutations);
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+// TestPortalDiffUpdateDetailPanelEvents_AppendPreservesChildren (issue
+// #1628) — slice 2: pure append. Build a 3-event run, snapshot
+// pre.children. Drive `updateDetailPanelEvents` with 5 events (the 3
+// originals plus 2 new). Assert: pre identity preserved; the first 3
+// child node references are byte-identical to the snapshot (no re-render
+// of the original events); data-rendered-event-count is 5;
+// data-rendered-json matches the canonical full JSON.
+func TestPortalDiffUpdateDetailPanelEvents_AppendPreservesChildren(t *testing.T) {
+	js := `const body = makeMockBody();
+const e1 = { type: 'start', timestamp: 1700000000000, payload: { ok: true } };
+const e2 = { type: 'progress', timestamp: 1700000001000, payload: { step: 1 } };
+const e3 = { type: 'progress', timestamp: 1700000002000, payload: { step: 2 } };
+const e4 = { type: 'progress', timestamp: 1700000003000, payload: { step: 3 } };
+const e5 = { type: 'finish', timestamp: 1700000004000, payload: { ok: true } };
+const run = { key: 'a', kind: 'active', status: 'running', issueLabel: 'A', runId: 'r1', events: [e1, e2, e3] };
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: 'a', tabs: { a: 'events' } };
+SandmanPortalDiff.diffRuns(body, [run], opts);
+const detailRow = body.children[1];
+const preBefore = detailRow.querySelector('pre[data-rendered-json]');
+if (!preBefore) throw new Error('expected events pre');
+const snapshotChildren = preBefore.children.slice();
+const snapshotPreRenderedJson = preBefore.getAttribute('data-rendered-json') || '';
+SandmanPortalDiff.resetCounters();
+SandmanPortalDiff.updateDetailPanelEvents(body, 'a', [e1, e2, e3, e4, e5], helpers);
+if (preBefore.getAttribute('data-rendered-event-count') !== '5') throw new Error('expected data-rendered-event-count="5", got ' + preBefore.getAttribute('data-rendered-event-count'));
+const expected = JSON.stringify([e1, e2, e3, e4, e5].map((event) => ({
+  type: event && event.type ? event.type : 'event',
+  timestamp: event && event.timestamp ? event.timestamp : null,
+  payload: event && event.payload ? event.payload : {},
+})), null, 2);
+const actual = preBefore.getAttribute('data-rendered-json') || '';
+if (actual !== expected) throw new Error('post-append data-rendered-json must match canonical, got ' + actual.slice(0, 200));
+if (preBefore.children.length < snapshotChildren.length) throw new Error('pre should have at least as many children after append, got ' + preBefore.children.length);
+for (let i = 0; i < snapshotChildren.length; i++) {
+  if (preBefore.children[i] !== snapshotChildren[i]) throw new Error('child at index ' + i + ' lost identity across append (no-flash/no-rewrite violated)');
+}
+const counters = SandmanPortalDiff.getCounters();
+if (counters.mutations === 0) throw new Error('expected mutations on append, got 0');
+// The original events' JSON text must still appear in the pre text.
+const preText = preBefore.textContent;
+if (preText.indexOf('type') === -1) throw new Error('expected original event type field text in pre, got ' + JSON.stringify(preText.slice(0, 200)));
+if (preText.indexOf('finish') === -1) throw new Error('expected appended finish event text in pre, got ' + JSON.stringify(preText.slice(-200)));
+console.log('PASS');
 `
 	runNodeScript(t, js)
 }
