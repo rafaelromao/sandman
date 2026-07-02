@@ -2803,8 +2803,6 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
           if (existing && existing.log && !next.log) {
             next.log = existing.log;
           }
-          // Preserve prior events for every kind (incl. active) so expanded
-          // events tabs survive polls. See issue #1626.
           if (existing && existing.events && !next.events) {
             next.events = existing.events;
           }
