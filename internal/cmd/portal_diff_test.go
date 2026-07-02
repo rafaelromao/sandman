@@ -4114,6 +4114,49 @@ console.log('PASS');
 	runPortalHTMLScript(t, js)
 }
 
+// TestPortalRunsView_VisibleRunsForTable_OrphanReviewWithoutIssueNumberPassesThrough
+// pins the no-issue-number projection of issue #1667: an orphan review
+// row (review=true, no issueNumber) is routed to the passthrough bucket
+// in visibleRunsForTable, and the row survives with whatever issueLabel
+// the Go projection set — here the explicit "Review of #<prNumber>" we
+// now construct server-side for this case.
+func TestPortalRunsView_VisibleRunsForTable_OrphanReviewWithoutIssueNumberPassesThrough(t *testing.T) {
+	js := `const review = { key: 'a0c19-260622193226-PR1508', kind: 'active', status: 'reviewing', review: true, issueLabel: 'Review of #1508', runId: 'a0c19-260622193226-PR1508', prNumber: 1508, startedAt: '2026-06-30T12:00:00Z' };
+const visible = visibleRunsForTable([review]);
+if (visible.length !== 1) throw new Error('expected exactly one visible row, got ' + JSON.stringify(visible.length));
+if (visible[0].key !== 'a0c19-260622193226-PR1508') throw new Error('expected visible row key to match source runId, got ' + JSON.stringify(visible[0].key));
+if (visible[0].issueLabel !== 'Review of #1508') throw new Error('expected visible row label to use the Review of #<pr> form, got ' + JSON.stringify(visible[0].issueLabel));
+console.log('PASS');
+`
+	runPortalHTMLScript(t, js)
+}
+
+// TestPortalDiffCreateRunRow_OrphanReviewWithoutIssueNumberRendersReviewOfPRLabel
+// asserts the DOM end of issue #1667: when a passthrough orphan review
+// row carries an explicit "Review of #<prNumber>" issueLabel, the
+// rendered name cell surfaces that label verbatim (matching the
+// convention used for orphan reviews WITH an issue number,
+// ADR-0029 §Review-only orphan label).
+func TestPortalDiffCreateRunRow_OrphanReviewWithoutIssueNumberRendersReviewOfPRLabel(t *testing.T) {
+	js := `const body = makeMockBody();
+const review = { key: 'a0c19-260622193226-PR1508', kind: 'active', status: 'reviewing', review: true, issueLabel: 'Review of #1508', runId: 'a0c19-260622193226-PR1508', prNumber: 1508, startedAt: '2026-06-30T12:00:00Z' };
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: null };
+const created = SandmanPortalDiff.insertRunRow(body, review, opts);
+const cells = Array.from(created.row.children || []).map((c) => c.getAttribute('data-cell'));
+if (cells.length === 0) throw new Error('expected at least one cell on the row, got ' + JSON.stringify(cells));
+const titleCell = created.row.children.find((c) => c.getAttribute && c.getAttribute('data-cell') === 'title');
+if (!titleCell) throw new Error('expected title cell, got cells=' + JSON.stringify(cells));
+const wrap = titleCell.children[0];
+if (!wrap) throw new Error('expected wrap div in title cell');
+const name = Array.from(wrap.children || []).find((c) => c.classList && c.classList.contains('name'));
+if (!name) throw new Error('expected name span in title wrap, got ' + JSON.stringify(Array.from(wrap.children || []).map((c) => c.className || c.tagName)));
+if (name.textContent !== 'Review of #1508') throw new Error('expected name text "Review of #1508", got ' + JSON.stringify(name.textContent));
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
 // TestPortalDiffDiffRuns_OrphanReviewWithReviewOnlyLabelExpandsToDetailPanel
 // covers behaviour #4 of issue #1526 at the DOM level: the review-only
 // orphan row must expand to a detail panel keyed by its own runId, surfacing

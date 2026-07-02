@@ -28,6 +28,8 @@ The `run.started` event for review runs gains an `issue_number` field in the pay
 
 When only review child rows exist for an issue (no canonical implementation row), the portal `visibleRunForIssueGroup` orphan fallback renders an explicit `Review of #<issueNumber>` label in the row's name cell. The row uses the review run's own `run_id` as the visible row identity (`data-run-key`), does not fabricate implementation-run metadata such as `batchKey` or `issueTitle`, and remains expandable via the subject selector. This replaces the earlier behavior of synthesizing a parent-shaped issue row from the newest review source (issue #1489) with a row whose `issueLabel` mirrored the source PR or fell back to a bare `#N`. The new label preserves the `#N` shape from the prior paragraph (it is embedded inside the prefix) and adds a `Review` prefix so the row cannot be mistaken for a canonical implementation row. References issue #1526.
 
+When an orphan review run lacks an `issueNumber` entirely (the issue could not be resolved from the PR, or older event logs without the `issue_number` field), the Go-side projection (`portalRunsView.runFromState` and `runFromActiveMatch`) renders the same `Review of #<prNumber>` label, substituting the PR number from the run's `run.started` payload for the missing issue number. The `reviewOrphanIssueLabel` helper centralises the rule; the exotic fallback (`runID` with neither an issue nor a PR) is preserved. References issue #1667.
+
 The inline `.badge.kind-chip` chip in the title cell (introduced by #973 / PR #1047) is removed entirely.
 
 ## Consequences

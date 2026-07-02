@@ -1299,7 +1299,12 @@ func (v *portalRunsView) runFromActiveMatch(repoRoot string, match portalRunMatc
 	issueNumber := match.instance.IssueNumber
 	prNumber := match.instance.PRNumber
 	if prNumber > 0 {
-		issueLabel = runID
+		// Live orphan review row (no resolved issue): prefer the
+		// explicit "Review of #<prNumber>" label, matching the
+		// convention used for terminal orphan reviews (ADR-0029
+		// §Review-only orphan label, issue #1526 / #1667). Falls back
+		// to the raw runID, then to "PR<n>", when neither applies.
+		issueLabel = reviewOrphanIssueLabel(runID, prNumber)
 		if issueLabel == "" {
 			issueLabel = fmt.Sprintf("PR%d", prNumber)
 		}
@@ -1382,9 +1387,16 @@ func (v *portalRunsView) runFromState(repoRoot string, runState events.RunState,
 
 	issueNumber := runState.IssueNumber()
 	branch := runState.Branch()
+	review, prNumber := v.reviewContext(runState)
 	issueLabel := runState.IssueLabel()
-	if runState.IsReview() && issueNumber == 0 && runID != "" {
-		issueLabel = runID
+	if runState.IsReview() && issueNumber == 0 {
+		// Orphan review row (no resolved issue): prefer the explicit
+		// "Review of #<prNumber>" label so the table cell matches the
+		// convention used by the visibleRunForIssueGroup fallback
+		// (ADR-0029 §Review-only orphan label, issue #1526). When
+		// even the PR number is missing, fall back to the raw runID —
+		// a degraded but non-leaking display for an exotic edge case.
+		issueLabel = reviewOrphanIssueLabel(runID, prNumber)
 	}
 	if issueLabel == "" {
 		issueLabel = runID
@@ -1399,7 +1411,6 @@ func (v *portalRunsView) runFromState(repoRoot string, runState events.RunState,
 	if runState.Finished != nil {
 		finishedAt = &runState.Finished.Timestamp
 	}
-	review, prNumber := v.reviewContext(runState)
 
 	logPath := v.portalLogPathForRun(repoRoot, locator)
 	logContent := v.readPortalTextFile(logPath)
@@ -1699,6 +1710,20 @@ func (v *portalRunsView) reviewContext(runState events.RunState) (bool, int) {
 		return false, 0
 	}
 	return true, v.reviewPRNumber(runState.Started.Payload)
+}
+
+// reviewOrphanIssueLabel returns the main label for a review run that has
+// no associated issue number. It mirrors the "Review of #N" convention
+// used by the visibleRunForIssueGroup orphan fallback (ADR-0029 §Review-
+// only orphan label, issue #1526), substituting the PR number when no
+// issue number is available. When even the PR number is missing, the
+// raw runID is returned — a degraded display for the exotic case of a
+// review run with neither an issue nor a PR.
+func reviewOrphanIssueLabel(runID string, prNumber int) string {
+	if prNumber > 0 {
+		return fmt.Sprintf("Review of #%d", prNumber)
+	}
+	return runID
 }
 
 // reviewPRNumber reads the pr_number field from a payload, tolerating the
