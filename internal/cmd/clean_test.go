@@ -746,3 +746,150 @@ func TestClean_DryRunArchived_PrintsIntendedDeletions(t *testing.T) {
 		t.Errorf("expected dry-run output to mention batch-archived, got: %s", buf.String())
 	}
 }
+
+func TestClean_Orphaned_RemovesOrphanDirAndPrunesIndex(t *testing.T) {
+	dir := newSandmanDir(t)
+	t.Chdir(dir)
+
+	orphanDir := filepath.Join(dir, ".sandman", "batches", "orphan-x")
+	liveDir := filepath.Join(dir, ".sandman", "batches", "live-y")
+	if err := os.MkdirAll(orphanDir, 0o755); err != nil {
+		t.Fatalf("mkdir orphan: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(orphanDir, "batch.json"), []byte(`{"createdAt":"2026-07-02T00:00:00Z","batchId":"orphan-x"}`), 0o644); err != nil {
+		t.Fatalf("write orphan manifest: %v", err)
+	}
+	if err := os.MkdirAll(liveDir, 0o755); err != nil {
+		t.Fatalf("mkdir live: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(liveDir, "batch.json"), []byte(`{"createdAt":"2026-07-02T00:00:00Z","batchId":"live-y"}`), 0o644); err != nil {
+		t.Fatalf("write live manifest: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(liveDir, "runs", "live-run-y"), 0o755); err != nil {
+		t.Fatalf("mkdir live run: %v", err)
+	}
+	now := time.Now()
+	writeBatchIndex(t, dir, []batchindex.Entry{
+		{ID: "orphan-x", Path: orphanDir, Kind: batchindex.KindIssue, Status: batchindex.StatusActive, CreatedAt: now},
+		{ID: "live-y", Path: liveDir, Kind: batchindex.KindIssue, Status: batchindex.StatusActive, CreatedAt: now},
+	})
+
+	deps := Dependencies{
+		RepoRoot:    dir,
+		ConfigStore: &fakeStore{config: &config.Config{WorktreeDir: filepath.Join(dir, ".sandman", "worktrees")}},
+		EventLog: &fakeEventLog{events: []events.Event{
+			{Type: "run.started", RunID: "live-run-y", Timestamp: now},
+		}},
+		GitRunner: &fakeGitRunner{},
+	}
+
+	var buf bytes.Buffer
+	cmd := NewCleanCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--orphaned"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if _, err := os.Stat(orphanDir); !os.IsNotExist(err) {
+		t.Errorf("orphan dir should be removed, got err=%v", err)
+	}
+	if _, err := os.Stat(liveDir); err != nil {
+		t.Errorf("live dir should NOT be removed, got err=%v", err)
+	}
+
+	var idx batchindex.Index
+	data, _ := os.ReadFile(filepath.Join(dir, ".sandman", "batches.json"))
+	if err := json.Unmarshal(data, &idx); err != nil {
+		t.Fatalf("read index: %v", err)
+	}
+	if len(idx.Entries) != 1 || idx.Entries[0].ID != "live-y" {
+		t.Errorf("expected index to keep only live-y, got %#v", idx.Entries)
+	}
+}
+
+func TestClean_Orphaned_DryRun_NoIOAndKeepsIndex(t *testing.T) {
+	dir := newSandmanDir(t)
+	t.Chdir(dir)
+
+	orphanDir := filepath.Join(dir, ".sandman", "batches", "orphan-x")
+	if err := os.MkdirAll(orphanDir, 0o755); err != nil {
+		t.Fatalf("mkdir orphan: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(orphanDir, "batch.json"), []byte(`{"createdAt":"2026-07-02T00:00:00Z","batchId":"orphan-x"}`), 0o644); err != nil {
+		t.Fatalf("write orphan manifest: %v", err)
+	}
+	now := time.Now()
+	writeBatchIndex(t, dir, []batchindex.Entry{
+		{ID: "orphan-x", Path: orphanDir, Kind: batchindex.KindIssue, Status: batchindex.StatusActive, CreatedAt: now},
+	})
+
+	deps := Dependencies{
+		RepoRoot:    dir,
+		ConfigStore: &fakeStore{config: &config.Config{WorktreeDir: filepath.Join(dir, ".sandman", "worktrees")}},
+		EventLog:    &fakeEventLog{},
+		GitRunner:   &fakeGitRunner{},
+	}
+
+	var buf bytes.Buffer
+	cmd := NewCleanCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--orphaned", "--dry-run"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if _, err := os.Stat(orphanDir); err != nil {
+		t.Errorf("orphan dir should NOT be removed by --dry-run, got err=%v", err)
+	}
+	if !strings.Contains(buf.String(), "orphan-x") {
+		t.Errorf("expected dry-run output to mention orphan-x, got: %s", buf.String())
+	}
+
+	var idx batchindex.Index
+	data, _ := os.ReadFile(filepath.Join(dir, ".sandman", "batches.json"))
+	if err := json.Unmarshal(data, &idx); err != nil {
+		t.Fatalf("read index: %v", err)
+	}
+	if len(idx.Entries) != 1 {
+		t.Errorf("expected index to be unchanged (1 entry), got %d", len(idx.Entries))
+	}
+}
+
+func TestClean_Orphaned_MutuallyExclusiveWithStale(t *testing.T) {
+	deps := newTestDeps()
+	var buf bytes.Buffer
+	cmd := NewCleanCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--orphaned", "--stale"})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected error when --orphaned combined with --stale")
+	}
+	if !strings.Contains(err.Error(), "orphaned") {
+		t.Errorf("expected error to mention --orphaned, got: %v", err)
+	}
+}
+
+func TestClean_Orphaned_MutuallyExclusiveWithArchived(t *testing.T) {
+	deps := newTestDeps()
+	var buf bytes.Buffer
+	cmd := NewCleanCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--orphaned", "--archived"})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected error when --orphaned combined with --archived")
+	}
+	if !strings.Contains(err.Error(), "orphaned") {
+		t.Errorf("expected error to mention --orphaned, got: %v", err)
+	}
+}
