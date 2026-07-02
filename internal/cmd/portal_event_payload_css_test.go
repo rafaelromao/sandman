@@ -288,6 +288,26 @@ func TestPortal_ActiveRowAddedCSS_NoOverrides(t *testing.T) {
 	}
 }
 
+// TestPortal_ActiveRowCSS_UsesReviewingAccent pins the active row background
+// to the reviewing-accent palette so an active row reads as the same
+// purple-tinted highlight as the reviewing badge and the review-only
+// orphan row in the Sandman theme (the "Review of #N" row). Before this
+// the active rule used var(--accent) which renders as a warm
+// yellow-green in Sandman and does not match the purple highlight the
+// user expects on active runs.
+func TestPortal_ActiveRowCSS_UsesReviewingAccent(t *testing.T) {
+	html := readPortalHTML(t)
+	// The --reviewing-accent variable must be defined in :root so the
+	// active row rule can reference it.
+	if !strings.Contains(html, "--reviewing-accent:") {
+		t.Fatalf("portal.html is missing --reviewing-accent CSS variable; active rows must use the reviewing purple")
+	}
+	desktop := extractCSSRuleBody(t, html, "tbody tr.run-row.active td")
+	if !strings.Contains(desktop, "var(--reviewing-accent)") {
+		t.Errorf("desktop tbody tr.run-row.active td must use var(--reviewing-accent) for the purple highlight; got %q", desktop)
+	}
+}
+
 // TestPortal_ActiveRowAddedMobileCSS_NoOverrides is the mobile-block
 // counterpart of TestPortal_ActiveRowAddedCSS_NoOverrides. It scopes the
 // absence check to the `@media (max-width: 960px)` block so a re-added
