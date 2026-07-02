@@ -1,11 +1,11 @@
 {
   "scenario": "switch_rows",
   "longTaskCount": 1,
-  "maxTaskMs": 109.45,
-  "sumTaskMs": 109.45,
-  "endToEndMs": 109.51,
-  "perClickMaxMs": 109.45,
-  "perClickAvgMs": 109.45,
+  "maxTaskMs": 121.82,
+  "sumTaskMs": 121.82,
+  "endToEndMs": 121.85,
+  "perClickMaxMs": 121.82,
+  "perClickAvgMs": 121.82,
   "thresholdMs": 50,
   "version": "slice-0"
 }

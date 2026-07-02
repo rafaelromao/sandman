@@ -709,10 +709,7 @@ func (v *portalRunsView) aggregateReviewChildren(runs []portalRun) []portalRun {
 		runs[idx].ReviewCount = summary.count
 		runs[idx].ReviewVerdict = summary.verdict
 		if summary.live {
-			currentStatus := runs[idx].Status
-			if currentStatus != "success" && currentStatus != "failure" && currentStatus != "aborted" {
-				runs[idx].Status = "reviewing"
-			}
+			runs[idx].Status = "reviewing"
 		}
 	}
 	for i := range runs {
