@@ -1507,6 +1507,28 @@
     if (content.getAttribute('data-rendered-fingerprint') === fingerprint && content.firstChild) {
       return;
     }
+    // Events tab: when the cheap fingerprint changes because new events
+    // were appended, take the append path instead of clearing and
+    // rebuilding the pane. The append guard re-serializes the first
+    // K rendered events and compares with the existing data-rendered-json
+    // — only on a prefix match does the append run; otherwise we fall
+    // through to the full-rebuild branch below.
+    if (tabName === 'events') {
+      const eventsPre = content.querySelector('pre[data-rendered-json]');
+      const subjectEvents = Array.isArray(subjectRun && subjectRun.events) ? subjectRun.events : [];
+      if (eventsPre && subjectEvents.length) {
+        const renderedJson = eventsPre.getAttribute('data-rendered-json') || '';
+        const renderedCount = parseInt(eventsPre.getAttribute('data-rendered-event-count') || '0', 10);
+        if (renderedCount > 0 && subjectEvents.length > renderedCount) {
+          const firstN = eventsJSONForRun(subjectEvents.slice(0, renderedCount));
+          if (firstN === renderedJson && appendEventsContent(eventsPre, renderedJson, renderedCount, subjectEvents, subjectEvents.length, opts.helpers)) {
+            content.setAttribute('data-rendered-fingerprint', fingerprint);
+            mutationCount += 1;
+            return;
+          }
+        }
+      }
+    }
     // Leaving the Log tab: preserve the rendered log pane in the per-subject
     // cache instead of discarding it, so returning to Log is O(1).
     const mountedLogPre = content.querySelector('pre[data-scroll-key]');
