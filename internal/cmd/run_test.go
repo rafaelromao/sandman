@@ -252,14 +252,14 @@ func newRunDepsInDir(t testing.TB, runner batch.Runner) (string, Dependencies) {
 	}
 }
 
-// NewRunDepsAuto builds a Dependencies value whose RepoRoot resolves to a
+// newRunDepsAuto builds a Dependencies value whose RepoRoot resolves to a
 // fresh temp dir rather than the real repo. The temp dir carries a .git
 // marker so resolveRepoRoot() stops at it, plus a .sandman/ subdir so the
 // selection phase sees its scratch space locally. Tests that exercise the
 // numeric-fallback or error paths use this helper; tests that exercise the
-// agent-driven selection path use NewRunDepsAutoWithPrompt so they can plant
+// agent-driven selection path use newRunDepsAutoWithPrompt so they can plant
 // a custom auto-selection-prompt.md.
-func NewRunDepsAuto(t *testing.T, runner batch.Runner) Dependencies {
+func newRunDepsAuto(t *testing.T, runner batch.Runner) Dependencies {
 	t.Helper()
 	dir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(dir, ".sandman"), 0o755); err != nil {
@@ -280,13 +280,13 @@ func NewRunDepsAuto(t *testing.T, runner batch.Runner) Dependencies {
 	}
 }
 
-// NewRunDepsAutoWithPrompt is NewRunDepsAuto plus an auto-selection-prompt.md
+// newRunDepsAutoWithPrompt is newRunDepsAuto plus an auto-selection-prompt.md
 // planted inside the temp .sandman/ directory. With it, runSelectionPhase
 // follows the agent-driven branch and writes its batch scratch under the
 // temp tree instead of the real repo's .sandman/batches/.
-func NewRunDepsAutoWithPrompt(t *testing.T, runner batch.Runner, promptContent string) Dependencies {
+func newRunDepsAutoWithPrompt(t *testing.T, runner batch.Runner, promptContent string) Dependencies {
 	t.Helper()
-	deps := NewRunDepsAuto(t, runner)
+	deps := newRunDepsAuto(t, runner)
 	sandmanDir := filepath.Join(".", ".sandman")
 	if err := os.WriteFile(filepath.Join(sandmanDir, "auto-selection-prompt.md"), []byte(promptContent), 0o644); err != nil {
 		t.Fatalf("write auto-selection-prompt.md: %v", err)
@@ -296,7 +296,7 @@ func NewRunDepsAutoWithPrompt(t *testing.T, runner batch.Runner, promptContent s
 
 func TestNewRunDepsAuto(t *testing.T) {
 	spy := &spyBatchRunner{}
-	deps := NewRunDepsAuto(t, spy)
+	deps := newRunDepsAuto(t, spy)
 
 	if deps.RepoRoot != "." {
 		t.Errorf("expected RepoRoot \".\", got %q", deps.RepoRoot)
@@ -336,7 +336,7 @@ func TestNewRunDepsAuto(t *testing.T) {
 
 func TestNewRunDepsAutoWithPrompt(t *testing.T) {
 	spy := &spyBatchRunner{}
-	deps := NewRunDepsAutoWithPrompt(t, spy, "priority prompt content")
+	deps := newRunDepsAutoWithPrompt(t, spy, "priority prompt content")
 
 	if deps.RepoRoot != "." {
 		t.Errorf("expected RepoRoot \".\", got %q", deps.RepoRoot)
