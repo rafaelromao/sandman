@@ -174,14 +174,11 @@ func TestDaemon_PromotePendingComment_DefensivelyRecordsObservedComment(t *testi
 	if runner.calls != 1 {
 		t.Fatalf("first tick: expected 1 batch run, got %d", runner.calls)
 	}
-	// The defensive observation should have recorded the
-	// review body during the first tick's promotePending
-	// step... actually no, promotePending only runs on
-	// subsequent ticks when the review is still pending.
-	// The defensive observation happens when the next tick
-	// promotes. For this test we directly invoke
-	// promotePendingComment with since=now so it observes
-	// the review comment.
+	// Drive the defensive observation directly. A real
+	// second tick would do this via promotePendingReviews;
+	// we call promotePendingComment with since=now so the
+	// review comment is observed after `since` and the
+	// Record fires.
 	status, err := d.promotePendingComment(context.Background(), 1, "trigger", now.Add(-30*time.Second))
 	if err != nil {
 		t.Fatalf("promotePendingComment: %v", err)

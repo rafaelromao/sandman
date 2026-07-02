@@ -70,6 +70,53 @@ func TestSelfPostStore_Normalization(t *testing.T) {
 	}
 }
 
+// TestSelfPostStore_MissingOrCorruptFile pins the spec's
+// "missing or corrupt file" contract: in both cases, New returns
+// an empty store; in the corrupt case it also returns the parse
+// error so the caller can log it. In both cases, a subsequent
+// Record call succeeds. This test is the union of
+// TestSelfPostStore_StartsEmpty and
+// TestSelfPostStore_CorruptFileDegradesToEmpty.
+func TestSelfPostStore_MissingOrCorruptFile(t *testing.T) {
+	t.Run("missing", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "self-posted.json")
+		store, err := NewSelfPostStore(path)
+		if err != nil {
+			t.Fatalf("NewSelfPostStore on missing file: %v", err)
+		}
+		if store == nil {
+			t.Fatal("store should not be nil on missing file")
+		}
+		if err := store.Record(1, "/sandman review", ""); err != nil {
+			t.Fatalf("Record on missing-file store: %v", err)
+		}
+		if !store.IsSelfPosted("/sandman review") {
+			t.Error("Record on missing-file store should make IsSelfPosted return true")
+		}
+	})
+	t.Run("corrupt", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "self-posted.json")
+		if err := os.WriteFile(path, []byte("not json {{{"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		store, err := NewSelfPostStore(path)
+		if err == nil {
+			t.Fatal("expected error on corrupt file")
+		}
+		if store == nil {
+			t.Fatal("store should not be nil on corrupt file (degraded mode)")
+		}
+		if err := store.Record(1, "/sandman review", ""); err != nil {
+			t.Fatalf("Record on corrupt-file store: %v", err)
+		}
+		if !store.IsSelfPosted("/sandman review") {
+			t.Error("Record on corrupt-file store should make IsSelfPosted return true")
+		}
+	})
+}
+
 // TestSelfPostStore_StartsEmpty pins the missing-file contract:
 // NewSelfPostStore against a non-existent file returns an empty
 // store without error.
@@ -218,7 +265,10 @@ func TestSelfPostStore_AtomicWrite(t *testing.T) {
 
 // TestSelfPostStore_ConcurrentRecord pins the race-detector
 // contract: concurrent Record calls do not corrupt the file or
-// drop entries. Run with `go test -race`.
+// drop entries. The in-memory set is the source of truth: it must
+// contain every distinct body. The on-disk file is the snapshot
+// of the last completed Record; it must be valid JSON. Run with
+// `go test -race`.
 func TestSelfPostStore_ConcurrentRecord(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "self-posted.json")
@@ -226,32 +276,35 @@ func TestSelfPostStore_ConcurrentRecord(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewSelfPostStore: %v", err)
 	}
+	// Pick n distinct bodies so the contract is fully pinned:
+	// every body must be in the in-memory set after the
+	// goroutines complete.
 	const n = 50
+	bodies := make([]string, n)
+	for i := 0; i < n; i++ {
+		bodies[i] = "body-" + string(rune('A'+i%26)) + "-" + string(rune('0'+i%10)) + "-" + string(rune('a'+i%26))
+	}
 	var wg sync.WaitGroup
 	wg.Add(n)
 	for i := 0; i < n; i++ {
 		i := i
 		go func() {
 			defer wg.Done()
-			body := "body-" + string(rune('A'+i%26)) + "-" + string(rune('0'+i%10))
-			if err := store.Record(i, body, ""); err != nil {
+			if err := store.Record(i, bodies[i], ""); err != nil {
 				t.Errorf("Record: %v", err)
 			}
 		}()
 	}
 	wg.Wait()
 
-	// Reload from disk: file must be valid JSON and contain
-	// every recorded hash.
-	reloaded, err := NewSelfPostStore(path)
-	if err != nil {
-		t.Fatalf("reopen: %v", err)
-	}
-	if got := len(reloaded.Hashes()); got == 0 {
-		t.Error("reloaded store should have at least one hash")
+	// In-memory set: every distinct body must be present.
+	for _, b := range bodies {
+		if !store.IsSelfPosted(b) {
+			t.Errorf("in-memory set missing recorded body %q", b)
+		}
 	}
 
-	// File must be valid JSON (no torn write).
+	// On-disk file must be valid JSON (no torn write).
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("ReadFile: %v", err)
@@ -262,13 +315,13 @@ func TestSelfPostStore_ConcurrentRecord(t *testing.T) {
 	}
 }
 
-// TestSelfPostStore_RejectsEmptyBody pins the contract that
+// TestSelfPostStore_AllowsEmptyBody pins the contract that
 // recording an empty body still records a hash (so the daemon
 // will treat empty future comments as self-posted). This is the
 // defensive side: a bug elsewhere in the agent that posts an
 // empty comment must not silently make the daemon treat the next
 // real trigger as self-posted.
-func TestSelfPostStore_RejectsEmptyBody(t *testing.T) {
+func TestSelfPostStore_AllowsEmptyBody(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "self-posted.json")
 	store, err := NewSelfPostStore(path)
