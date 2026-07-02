@@ -447,7 +447,6 @@ func portalSummaryRuns(runs []portalRun) []portalRun {
 	summaryRuns := clonePortalRuns(runs)
 	for i := range summaryRuns {
 		summaryRuns[i].Log = ""
-		summaryRuns[i].Events = nil
 		summaryRuns[i].LogURL = ""
 	}
 	return summaryRuns

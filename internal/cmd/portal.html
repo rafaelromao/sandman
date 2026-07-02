@@ -2794,9 +2794,7 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
             next.log = existing.log;
           }
           if (existing && existing.events && !next.events) {
-            if (existing.kind !== 'active') {
-              next.events = existing.events;
-            }
+            next.events = existing.events;
           }
         }
         if (state.expandedRunKey) {
