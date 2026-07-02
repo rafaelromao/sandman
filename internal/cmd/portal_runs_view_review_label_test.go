@@ -10,15 +10,10 @@ import (
 // TestPortalRunsView_RunFromState_ReviewWithoutIssueNumberUsesReviewOfPRLabel
 // is the tracer bullet for issue #1667: the main label of an orphan
 // review run (review=true, issueNumber=0) must render as
-// "Review of #<prNumber>" instead of leaking the raw runID into the UI.
-//
-// The previous behaviour of `RunState.IssueLabel()` for review runs was
-// to return the runID itself. The portal projection previously preserved
-// that as the cell name. For orphan review rows that already recovered
-// their issue number (visibleRunForIssueGroup, ADR-0029 §Review-only
-// orphan label), the cell shows "Review of #N". This test asserts the
-// same convention — with N taken from pr_number — for orphan rows that
-// have no issue number.
+// "Review of PR <prNumber>" instead of leaking the raw runID into the
+// UI. Mirrors the orphan-with-issue shape (issue #1526,
+// ADR-0029 §Review-only orphan label) but with the PR number standing
+// on its own.
 func TestPortalRunsView_RunFromState_ReviewWithoutIssueNumberUsesReviewOfPRLabel(t *testing.T) {
 	v := &portalRunsView{}
 	runID := "a0c19-260622193226-PR1508"
@@ -40,8 +35,8 @@ func TestPortalRunsView_RunFromState_ReviewWithoutIssueNumberUsesReviewOfPRLabel
 
 	run := v.runFromState("/tmp", state, nil, nil, nil)
 
-	if run.IssueLabel != "Review of #1508" {
-		t.Fatalf("IssueLabel=%q, want %q", run.IssueLabel, "Review of #1508")
+	if run.IssueLabel != "Review of PR 1508" {
+		t.Fatalf("IssueLabel=%q, want %q", run.IssueLabel, "Review of PR 1508")
 	}
 	if run.IssueNumber != 0 {
 		t.Fatalf("IssueNumber=%d, want 0 (orphan review without resolved issue)", run.IssueNumber)

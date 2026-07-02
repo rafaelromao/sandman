@@ -388,11 +388,11 @@ func TestPortal_LoadPortalRunsShowsReviewAndPromptOnlyLabels(t *testing.T) {
 	if !ok {
 		t.Fatal("expected completed review run with RunID PR42")
 	}
-	if reviewRun.IssueLabel != "Review of #42" {
+	if reviewRun.IssueLabel != "Review of PR 42" {
 		// Orphan review run (no resolved issue): the main label
-		// uses the "Review of #<prNumber>" convention (issue #1667,
+		// uses the "Review of PR <n>" convention (issue #1667,
 		// ADR-0029 §Review-only orphan label).
-		t.Fatalf("expected review run label 'Review of #42', got %q", reviewRun.IssueLabel)
+		t.Fatalf("expected review run label 'Review of PR 42', got %q", reviewRun.IssueLabel)
 	}
 	if !reviewRun.Review {
 		t.Fatal("expected review flag on completed review run")
@@ -402,8 +402,8 @@ func TestPortal_LoadPortalRunsShowsReviewAndPromptOnlyLabels(t *testing.T) {
 	if !ok {
 		t.Fatal("expected active review run with RunID PR43")
 	}
-	if activeReview.IssueLabel != "Review of #43" {
-		t.Fatalf("expected active review run label 'Review of #43', got %q", activeReview.IssueLabel)
+	if activeReview.IssueLabel != "Review of PR 43" {
+		t.Fatalf("expected active review run label 'Review of PR 43', got %q", activeReview.IssueLabel)
 	}
 	if !activeReview.Review {
 		t.Fatal("expected review flag on active review run")

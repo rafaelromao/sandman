@@ -1712,16 +1712,17 @@ func (v *portalRunsView) reviewContext(runState events.RunState) (bool, int) {
 	return true, v.reviewPRNumber(runState.Started.Payload)
 }
 
-// reviewOrphanIssueLabel returns the main label for a review run that has
-// no associated issue number. It mirrors the "Review of #N" convention
-// used by the visibleRunForIssueGroup orphan fallback (ADR-0029 §Review-
-// only orphan label, issue #1526), substituting the PR number when no
-// issue number is available. When even the PR number is missing, the
-// raw runID is returned — a degraded display for the exotic case of a
-// review run with neither an issue nor a PR.
+// reviewOrphanIssueLabel returns the main label for an orphan review run
+// that has no associated issue number (i.e. the row survives as a
+// passthrough, not grouped under a canonical implementation row). It
+// uses the "Review of PR <N>" form, matching the orphan-with-issue
+// fallback in portal.html's visibleRunForIssueGroup (ADR-0029 §Review-
+// only orphan label, issue #1526 / #1667). When even the PR number is
+// missing, the raw runID is returned — a degraded display for the
+// exotic case of a review run with neither an issue nor a PR.
 func reviewOrphanIssueLabel(runID string, prNumber int) string {
 	if prNumber > 0 {
-		return fmt.Sprintf("Review of #%d", prNumber)
+		return fmt.Sprintf("Review of PR %d", prNumber)
 	}
 	return runID
 }
