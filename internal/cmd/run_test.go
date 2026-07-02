@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -248,6 +249,112 @@ func newRunDepsInDir(t testing.TB, runner batch.Runner) (string, Dependencies) {
 		EventLog:     &fakeEventLog{},
 		GitHubClient: &fakeGitHubClient{},
 		RepoRoot:     ".",
+	}
+}
+
+// newRunDepsAuto builds a Dependencies value whose RepoRoot resolves to a
+// fresh temp dir rather than the real repo. The temp dir carries a .git
+// marker so resolveRepoRoot() stops at it, plus a .sandman/ subdir so the
+// selection phase sees its scratch space locally. Tests that exercise the
+// numeric-fallback or error paths use this helper; tests that exercise the
+// agent-driven selection path use newRunDepsAutoWithPrompt so they can plant
+// a custom auto-selection-prompt.md.
+func newRunDepsAuto(t *testing.T, runner batch.Runner) Dependencies {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, ".sandman"), 0o755); err != nil {
+		t.Fatalf("mkdir .sandman: %v", err)
+	}
+	initCmd := exec.Command("git", "init", "-q", dir)
+	if out, err := initCmd.CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v (%s)", err, strings.TrimSpace(string(out)))
+	}
+	t.Chdir(dir)
+	return Dependencies{
+		BatchRunner:  runner,
+		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review"}},
+		EventLog:     &fakeEventLog{},
+		GitHubClient: &fakeGitHubClient{},
+		RepoRoot:     ".",
+		IsTTY:        func() bool { return false },
+	}
+}
+
+// newRunDepsAutoWithPrompt is newRunDepsAuto plus an auto-selection-prompt.md
+// planted inside the temp .sandman/ directory. With it, runSelectionPhase
+// follows the agent-driven branch and writes its batch scratch under the
+// temp tree instead of the real repo's .sandman/batches/.
+func newRunDepsAutoWithPrompt(t *testing.T, runner batch.Runner, promptContent string) Dependencies {
+	t.Helper()
+	deps := newRunDepsAuto(t, runner)
+	sandmanDir := filepath.Join(".", ".sandman")
+	if err := os.WriteFile(filepath.Join(sandmanDir, "auto-selection-prompt.md"), []byte(promptContent), 0o644); err != nil {
+		t.Fatalf("write auto-selection-prompt.md: %v", err)
+	}
+	return deps
+}
+
+func TestNewRunDepsAuto(t *testing.T) {
+	spy := &spyBatchRunner{}
+	deps := newRunDepsAuto(t, spy)
+
+	if deps.RepoRoot != "." {
+		t.Errorf("expected RepoRoot \".\", got %q", deps.RepoRoot)
+	}
+	if deps.BatchRunner != spy {
+		t.Error("expected BatchRunner to be wired through")
+	}
+	if deps.ConfigStore == nil || deps.EventLog == nil || deps.GitHubClient == nil {
+		t.Error("expected ConfigStore, EventLog, GitHubClient to be wired")
+	}
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("os.Getwd: %v", err)
+	}
+	info, err := os.Stat(filepath.Join(cwd, ".git"))
+	if err != nil {
+		t.Fatalf("expected .git at cwd: %v", err)
+	}
+	if !info.IsDir() {
+		t.Errorf("expected .git to be a directory, got file")
+	}
+	if _, err := os.Stat(filepath.Join(cwd, ".sandman")); err != nil {
+		t.Errorf("expected .sandman/ at cwd: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(cwd, ".sandman", "auto-selection-prompt.md")); !os.IsNotExist(err) {
+		t.Errorf("expected no auto-selection-prompt.md, got err=%v", err)
+	}
+	got, err := resolveRepoRoot()
+	if err != nil {
+		t.Fatalf("resolveRepoRoot: %v", err)
+	}
+	if got != cwd {
+		t.Errorf("expected resolveRepoRoot to return %q, got %q", cwd, got)
+	}
+}
+
+func TestNewRunDepsAutoWithPrompt(t *testing.T) {
+	spy := &spyBatchRunner{}
+	deps := newRunDepsAutoWithPrompt(t, spy, "priority prompt content")
+
+	if deps.RepoRoot != "." {
+		t.Errorf("expected RepoRoot \".\", got %q", deps.RepoRoot)
+	}
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("os.Getwd: %v", err)
+	}
+	got, err := os.ReadFile(filepath.Join(cwd, ".sandman", "auto-selection-prompt.md"))
+	if err != nil {
+		t.Fatalf("read auto-selection-prompt.md: %v", err)
+	}
+	if string(got) != "priority prompt content" {
+		t.Errorf("expected prompt content %q, got %q", "priority prompt content", string(got))
+	}
+	if _, err := os.Stat(filepath.Join(cwd, ".git")); err != nil {
+		t.Errorf("expected .git at cwd: %v", err)
 	}
 }
 
