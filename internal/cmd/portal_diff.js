@@ -1240,8 +1240,6 @@
     content.appendChild(section);
   }
 
-  // eventsJSONData already produces the mapped event objects; reused here
-  // so the append path serializes the same shape buildEventsContent does.
   function reindentEventForArray(eventJson) {
     return eventJson.split('\n').map((line) => '  ' + line).join('\n');
   }
@@ -1249,11 +1247,6 @@
   function appendEventsContent(pre, oldRenderedJson, oldEventCount, newEventsAll, newEventCount, helpers) {
     const newOnes = newEventsAll.slice(oldEventCount);
     if (!newOnes.length) return false;
-    // The rendered JSON ends with `  }\n]` for a non-empty event list
-    // (closing brace of the last old event + newline + array close). We
-    // take everything up to and including that closing brace as the
-    // append prefix, then splice in `,\n` followed by each new event's
-    // re-indented JSON, then close with `\n]`.
     const lastEventEnd = oldRenderedJson.lastIndexOf('}');
     if (lastEventEnd < 0) return false;
     const prefix = oldRenderedJson.slice(0, lastEventEnd + 1);
@@ -1280,11 +1273,7 @@
   }
 
   function eventsJSONForRun(events) {
-    return JSON.stringify((Array.isArray(events) ? events : []).map((event) => ({
-      type: event && event.type ? event.type : 'event',
-      timestamp: event && event.timestamp ? event.timestamp : null,
-      payload: event && event.payload ? event.payload : {},
-    })), null, 2);
+    return eventsJSON({ events: events });
   }
 
   function buildDetailsContent(content, run, helpers) {
@@ -1507,12 +1496,6 @@
     if (content.getAttribute('data-rendered-fingerprint') === fingerprint && content.firstChild) {
       return;
     }
-    // Events tab: when the cheap fingerprint changes because new events
-    // were appended, take the append path instead of clearing and
-    // rebuilding the pane. The append guard re-serializes the first
-    // K rendered events and compares with the existing data-rendered-json
-    // — only on a prefix match does the append run; otherwise we fall
-    // through to the full-rebuild branch below.
     if (tabName === 'events') {
       const eventsPre = content.querySelector('pre[data-rendered-json]');
       const subjectEvents = Array.isArray(subjectRun && subjectRun.events) ? subjectRun.events : [];
@@ -1939,9 +1922,6 @@
     const expectedFull = eventsJSONForRun(eventList);
     if (renderedCount === eventList.length && renderedJson === expectedFull) return;
     if (renderedCount > 0 && eventList.length > renderedCount) {
-      // Verify the first `renderedCount` events still match the rendered
-      // prefix — this catches restructured arrays before they hit the
-      // append path.
       const firstNRendered = eventsJSONForRun(eventList.slice(0, renderedCount));
       if (firstNRendered === renderedJson) {
         if (appendEventsContent(pre, renderedJson, renderedCount, eventList, eventList.length, helpers)) {
@@ -1950,8 +1930,6 @@
         }
       }
     }
-    // Fallback: full rebuild (events were restructured, count shrank,
-    // pre prefix did not match, or first build).
     while (pre.firstChild) pre.removeChild(pre.firstChild);
     fillTerminalPre(pre, expectedFull, { renderTerminalContent: highlightJSON });
     pre.setAttribute('data-rendered-json', expectedFull);

@@ -4891,14 +4891,6 @@ try {
 	runNodeScript(t, js)
 }
 
-// TestPortalDiffBuildEventsContent_RenderedEventCountAttribute (issue
-// #1628) — tracer bullet for the events-tab append-only path. When
-// `diffRuns` first builds the events pane for a run with N events, the
-// events <pre> must carry `data-rendered-event-count === String(N)` so the
-// append path can later compute its slice without re-walking the DOM. The
-// `data-rendered-json` attribute must already hold the canonical
-// `JSON.stringify(mappedEvents, null, 2)` byte-for-byte (this is the
-// contract slice 2 will reuse to assert the post-append state).
 func TestPortalDiffBuildEventsContent_RenderedEventCountAttribute(t *testing.T) {
 	js := `const body = makeMockBody();
 const events = [
@@ -4935,13 +4927,6 @@ console.log('PASS');
 	runNodeScript(t, js)
 }
 
-// TestPortalDiffUpdateDetailPanelEvents_AppendPreservesChildren (issue
-// #1628) — slice 2: pure append. Build a 3-event run, snapshot
-// pre.children. Drive `updateDetailPanelEvents` with 5 events (the 3
-// originals plus 2 new). Assert: pre identity preserved; the first 3
-// child node references are byte-identical to the snapshot (no re-render
-// of the original events); data-rendered-event-count is 5;
-// data-rendered-json matches the canonical full JSON.
 func TestPortalDiffUpdateDetailPanelEvents_AppendPreservesChildren(t *testing.T) {
 	js := `const body = makeMockBody();
 const e1 = { type: 'start', timestamp: 1700000000000, payload: { ok: true } };
@@ -4974,7 +4959,6 @@ for (let i = 0; i < snapshotChildren.length; i++) {
 }
 const counters = SandmanPortalDiff.getCounters();
 if (counters.mutations === 0) throw new Error('expected mutations on append, got 0');
-// The original events' JSON text must still appear in the pre text.
 const preText = preBefore.textContent;
 if (preText.indexOf('type') === -1) throw new Error('expected original event type field text in pre, got ' + JSON.stringify(preText.slice(0, 200)));
 if (preText.indexOf('finish') === -1) throw new Error('expected appended finish event text in pre, got ' + JSON.stringify(preText.slice(-200)));
@@ -4983,13 +4967,6 @@ console.log('PASS');
 	runNodeScript(t, js)
 }
 
-// TestPortalDiffUpdateDetailPanelEvents_RestructuredFallsBackToRebuild
-// (issue #1628) — slice 3: when the events array is restructured (same
-// count but mutated content, or fewer events), the append path must NOT
-// run. The <pre> container is preserved (DOM identity), but every child
-// node is replaced — the inner spans are entirely new objects. The
-// post-update data-rendered-json must match the canonical
-// JSON.stringify(mappedEvents, null, 2) of the new (restructured) list.
 func TestPortalDiffUpdateDetailPanelEvents_RestructuredFallsBackToRebuild(t *testing.T) {
 	js := `const body = makeMockBody();
 const e1 = { type: 'start', timestamp: 1700000000000, payload: { ok: true } };
@@ -5004,7 +4981,6 @@ const preBefore = detailRow.querySelector('pre[data-rendered-json]');
 if (!preBefore) throw new Error('expected events pre');
 const snapshotChildren = preBefore.children.slice();
 if (snapshotChildren.length === 0) throw new Error('expected non-empty pre children after initial build');
-// Same length, mutated first event → must rebuild (prefix mismatch).
 const e1Mutated = { type: 'restart', timestamp: 1700000000500, payload: { ok: true } };
 SandmanPortalDiff.updateDetailPanelEvents(body, 'a', [e1Mutated, e2, e3], helpers);
 if (preBefore.getAttribute('data-rendered-event-count') !== '3') throw new Error('expected data-rendered-event-count="3" after restructure, got ' + preBefore.getAttribute('data-rendered-event-count'));
@@ -5019,7 +4995,6 @@ for (const c of snapshotChildren) {
   if (preBefore.children.indexOf(c) !== -1) reused += 1;
 }
 if (reused !== 0) throw new Error('restructure must rebuild (all-new children), got ' + reused + ' reused children');
-// Now shrink the count (3 → 2) — also a rebuild.
 const snapshot2 = preBefore.children.slice();
 SandmanPortalDiff.updateDetailPanelEvents(body, 'a', [e1, e2], helpers);
 if (preBefore.getAttribute('data-rendered-event-count') !== '2') throw new Error('expected data-rendered-event-count="2" after shrink, got ' + preBefore.getAttribute('data-rendered-event-count'));
@@ -5034,7 +5009,6 @@ for (const c of snapshot2) {
   if (preBefore.children.indexOf(c) !== -1) reused2 += 1;
 }
 if (reused2 !== 0) throw new Error('shrink must rebuild (all-new children), got ' + reused2 + ' reused children');
-// Reorder: 2 → 2 with different order — also a rebuild.
 const snapshot3 = preBefore.children.slice();
 SandmanPortalDiff.updateDetailPanelEvents(body, 'a', [e2, e1], helpers);
 const expectedReorder = JSON.stringify([e2, e1].map((event) => ({
@@ -5053,13 +5027,6 @@ console.log('PASS');
 	runNodeScript(t, js)
 }
 
-// TestPortalDiffUpdateDetailPanelEvents_PrefixMismatchForcesRebuild
-// (issue #1628) — slice 4: even when the new event count is greater
-// than the rendered count, if the first-N serialization diverges from
-// the rendered prefix (because an earlier event was mutated), the
-// append path is bypassed and the pane is rebuilt. The first child node
-// of the pre is replaced (its reference changes), proving the rebuild
-// ran instead of the append path.
 func TestPortalDiffUpdateDetailPanelEvents_PrefixMismatchForcesRebuild(t *testing.T) {
 	js := `const body = makeMockBody();
 const e1 = { type: 'start', timestamp: 1700000000000, payload: { ok: true } };
@@ -5074,9 +5041,6 @@ const detailRow = body.children[1];
 const preBefore = detailRow.querySelector('pre[data-rendered-json]');
 if (!preBefore) throw new Error('expected events pre');
 const snapshotChildren = preBefore.children.slice();
-// Mutate the first event AND add a 4th. The new count is greater but
-// the first-3 serialization no longer matches the rendered prefix, so
-// the append guard must refuse and the pane must rebuild.
 const e1Mutated = { type: 'restart', timestamp: 1700000000500, payload: { ok: true } };
 SandmanPortalDiff.updateDetailPanelEvents(body, 'a', [e1Mutated, e2, e3, e4], helpers);
 if (preBefore.getAttribute('data-rendered-event-count') !== '4') throw new Error('expected data-rendered-event-count="4", got ' + preBefore.getAttribute('data-rendered-event-count'));
@@ -5096,13 +5060,6 @@ console.log('PASS');
 	runNodeScript(t, js)
 }
 
-// TestPortalDiffUpdateDetailPanelEvents_AppendedSuffixHighlighted
-// (issue #1628) — slice 5: the appended region must carry the same JSON
-// syntax highlighting as a full rebuild would. Build a 1-event run,
-// append a 2nd event whose payload exercises every JSON token class
-// (string, boolean, number, null, object), and assert that the new
-// spans wrap the new event's tokens. The pre container itself is
-// reused — only the trailing children are new.
 func TestPortalDiffUpdateDetailPanelEvents_AppendedSuffixHighlighted(t *testing.T) {
 	js := `const body = makeMockBody();
 const e1 = { type: 'start', timestamp: 1700000000000, payload: { ok: true } };
@@ -5121,8 +5078,6 @@ if (!pre) throw new Error('expected events pre');
 const beforeCount = pre.children.length;
 SandmanPortalDiff.updateDetailPanelEvents(body, 'a', [e1, e2], helpers);
 if (pre.children.length <= beforeCount) throw new Error('expected new child nodes after append, got ' + pre.children.length + ' (was ' + beforeCount + ')');
-// The new appended region must contain highlighted spans covering every
-// JSON token class. Walk the new children and look for spans by class.
 const classes = { 'json-key': 0, 'json-string': 0, 'json-boolean': 0, 'json-number': 0, 'json-null': 0, 'json-punctuation': 0 };
 const tail = pre.children.slice(beforeCount);
 for (const node of tail) {
@@ -5143,9 +5098,6 @@ if (classes['json-boolean'] === 0) throw new Error('expected json-boolean spans 
 if (classes['json-number'] === 0) throw new Error('expected json-number spans on appended region, got ' + JSON.stringify(classes));
 if (classes['json-null'] === 0) throw new Error('expected json-null spans on appended region, got ' + JSON.stringify(classes));
 if (classes['json-punctuation'] === 0) throw new Error('expected json-punctuation spans on appended region, got ' + JSON.stringify(classes));
-// The textContent of the appended region must match the canonical
-// pretty-printed JSON of the new event (re-indented at array-element
-// depth: 2 leading spaces on first line, 4 on continuation).
 const expectedSuffix = [
   ',',
   '  {',
@@ -5165,8 +5117,6 @@ const expectedSuffix = [
   ']',
 ].join('\n');
 const suffixText = tail.map((n) => n._textContent != null ? n._textContent : (n.textContent || '')).join('');
-// The mock parser HTML-escapes quotes, so unescape them in the joined
-// text before comparing.
 const decoded = suffixText.replace(/&quot;/g, '"').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&#39;/g, "'");
 if (decoded !== expectedSuffix) {
   for (let i = 0; i < Math.min(decoded.length, expectedSuffix.length); i++) {
@@ -5175,6 +5125,38 @@ if (decoded !== expectedSuffix) {
     }
   }
   throw new Error('appended region text length mismatch: got ' + decoded.length + ' expected ' + expectedSuffix.length + ' got=' + JSON.stringify(decoded.slice(0, 200)));
+}
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+func TestPortalDiffUpdateDetailContent_EventsAppendPath(t *testing.T) {
+	js := `const body = makeMockBody();
+const e1 = { type: 'start', timestamp: 1700000000000, payload: { ok: true } };
+const e2 = { type: 'progress', timestamp: 1700000001000, payload: { step: 1 } };
+const e3 = { type: 'progress', timestamp: 1700000002000, payload: { step: 2 } };
+const e4 = { type: 'progress', timestamp: 1700000003000, payload: { step: 3 } };
+const e5 = { type: 'finish', timestamp: 1700000004000, payload: { ok: true } };
+const run1 = { key: 'a', kind: 'active', status: 'running', issueLabel: 'A', runId: 'r1', events: [e1, e2, e3] };
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: 'a', tabs: { a: 'events' } };
+SandmanPortalDiff.diffRuns(body, [run1], opts);
+const detailRow = body.children[1];
+const preBefore = detailRow.querySelector('pre[data-rendered-json]');
+if (!preBefore) throw new Error('expected events pre');
+const snapshotChildren = preBefore.children.slice();
+const run2 = { key: 'a', kind: 'active', status: 'running', issueLabel: 'A', runId: 'r1', events: [e1, e2, e3, e4, e5] };
+SandmanPortalDiff.diffRuns(body, [run2], opts);
+if (preBefore.getAttribute('data-rendered-event-count') !== '5') throw new Error('expected data-rendered-event-count="5", got ' + preBefore.getAttribute('data-rendered-event-count'));
+const expected = JSON.stringify([e1, e2, e3, e4, e5].map((event) => ({
+  type: event && event.type ? event.type : 'event',
+  timestamp: event && event.timestamp ? event.timestamp : null,
+  payload: event && event.payload ? event.payload : {},
+})), null, 2);
+if (preBefore.getAttribute('data-rendered-json') !== expected) throw new Error('post-update data-rendered-json must match canonical, got ' + preBefore.getAttribute('data-rendered-json').slice(0, 200));
+for (let i = 0; i < snapshotChildren.length; i++) {
+  if (preBefore.children[i] !== snapshotChildren[i]) throw new Error('child at index ' + i + ' lost identity across updateDetailContent append (no-flash violated)');
 }
 console.log('PASS');
 `
