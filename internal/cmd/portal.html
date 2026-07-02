@@ -2871,9 +2871,15 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
         const idx = state.runs.findIndex((r) => r && (r.key === detail.key || r.runId === detail.runId));
         if (idx >= 0) {
           const existing = state.runs[idx];
+          // When forceFetch initiated a fresh detail fetch and the API
+          // returned a non-empty log, use it. Without this, the merge below
+          // would preserve the stale cached beginning (hasLog=true) while the
+          // stream attaches; the daemon's 64 KB tail-replay would then create
+          // the same gap the forceFetch was meant to close.
+          const useDetailLog = !!forceFetch && !!(detail && detail.log);
           state.runs[idx] = {
             ...existing,
-            log: hasLog ? existing.log : detail.log,
+            log: (useDetailLog || !hasLog) ? detail.log : existing.log,
             events: detail.events || existing.events,
             logUrl: detail.logUrl,
           };

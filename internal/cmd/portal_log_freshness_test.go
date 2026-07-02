@@ -90,7 +90,11 @@ if (typeof sandbox.loadRunDetail !== 'function') throw new Error('loadRunDetail 
   const callsAfterNoForce = fetchCalls;
   await sandbox.loadRunDetail(runID, { forceFetch: true });
   const callsAfterForce = fetchCalls;
-  process.stdout.write(JSON.stringify({ callsAfterNoForce: callsAfterNoForce, callsAfterForce: callsAfterForce }));
+  // After forceFetch, the merge must apply the freshly-fetched detail.log to
+  // state.runs[idx]. Otherwise the stale cached beginning survives and the
+  // SSE stream's tail-replay creates the very gap forceFetch was meant to close.
+  const logAfterForce = sandbox.state.runs[0].log;
+  process.stdout.write(JSON.stringify({ callsAfterNoForce: callsAfterNoForce, callsAfterForce: callsAfterForce, logAfterForce: logAfterForce }));
 })();
 `
 
@@ -99,8 +103,9 @@ if (typeof sandbox.loadRunDetail !== 'function') throw new Error('loadRunDetail 
 		t.Fatalf("freshness harness failed: %v\n%s", err, out)
 	}
 	var got struct {
-		CallsAfterNoForce int `json:"callsAfterNoForce"`
-		CallsAfterForce   int `json:"callsAfterForce"`
+		CallsAfterNoForce int    `json:"callsAfterNoForce"`
+		CallsAfterForce   int    `json:"callsAfterForce"`
+		LogAfterForce     string `json:"logAfterForce"`
 	}
 	if err := json.Unmarshal(out, &got); err != nil {
 		t.Fatalf("parse harness output %q: %v", strings.TrimSpace(string(out)), err)
@@ -110,6 +115,9 @@ if (typeof sandbox.loadRunDetail !== 'function') throw new Error('loadRunDetail 
 	}
 	if got.CallsAfterForce != 1 {
 		t.Fatalf("expected one detail fetch with forceFetch (bypassing hasLog guard), got %d calls", got.CallsAfterForce)
+	}
+	if got.LogAfterForce != "fresh tail" {
+		t.Fatalf("expected forceFetch to apply detail.log to state.runs[idx], got %q (stale cached log survived the merge)", got.LogAfterForce)
 	}
 }
 
