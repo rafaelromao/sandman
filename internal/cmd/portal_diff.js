@@ -22,7 +22,11 @@
   }
   function storeCachedLogPane(subjectValue, pane) {
     if (!subjectValue || !pane) return;
-    if (logPaneCache.size >= LOG_PANE_CACHE_LIMIT) logPaneCache.clear();
+    if (logPaneCache.has(subjectValue)) logPaneCache.delete(subjectValue);
+    if (logPaneCache.size >= LOG_PANE_CACHE_LIMIT) {
+      const oldestKey = logPaneCache.keys().next().value;
+      if (oldestKey !== undefined) logPaneCache.delete(oldestKey);
+    }
     logPaneCache.set(subjectValue, pane);
   }
 
