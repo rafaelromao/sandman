@@ -4946,6 +4946,76 @@ console.log('PASS');
 	runNodeScript(t, js)
 }
 
+// TestPortalDiffUpdateDetailPanelEvents_RestructuredFallsBackToRebuild
+// (issue #1628) — slice 3: when the events array is restructured (same
+// count but mutated content, or fewer events), the append path must NOT
+// run. The <pre> container is preserved (DOM identity), but every child
+// node is replaced — the inner spans are entirely new objects. The
+// post-update data-rendered-json must match the canonical
+// JSON.stringify(mappedEvents, null, 2) of the new (restructured) list.
+func TestPortalDiffUpdateDetailPanelEvents_RestructuredFallsBackToRebuild(t *testing.T) {
+	js := `const body = makeMockBody();
+const e1 = { type: 'start', timestamp: 1700000000000, payload: { ok: true } };
+const e2 = { type: 'progress', timestamp: 1700000001000, payload: { step: 1 } };
+const e3 = { type: 'finish', timestamp: 1700000002000, payload: { ok: true } };
+const run = { key: 'a', kind: 'active', status: 'running', issueLabel: 'A', runId: 'r1', events: [e1, e2, e3] };
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: 'a', tabs: { a: 'events' } };
+SandmanPortalDiff.diffRuns(body, [run], opts);
+const detailRow = body.children[1];
+const preBefore = detailRow.querySelector('pre[data-rendered-json]');
+if (!preBefore) throw new Error('expected events pre');
+const snapshotChildren = preBefore.children.slice();
+if (snapshotChildren.length === 0) throw new Error('expected non-empty pre children after initial build');
+// Same length, mutated first event → must rebuild (prefix mismatch).
+const e1Mutated = { type: 'restart', timestamp: 1700000000500, payload: { ok: true } };
+SandmanPortalDiff.updateDetailPanelEvents(body, 'a', [e1Mutated, e2, e3], helpers);
+if (preBefore.getAttribute('data-rendered-event-count') !== '3') throw new Error('expected data-rendered-event-count="3" after restructure, got ' + preBefore.getAttribute('data-rendered-event-count'));
+const expectedMutated = JSON.stringify([e1Mutated, e2, e3].map((event) => ({
+  type: event && event.type ? event.type : 'event',
+  timestamp: event && event.timestamp ? event.timestamp : null,
+  payload: event && event.payload ? event.payload : {},
+})), null, 2);
+if (preBefore.getAttribute('data-rendered-json') !== expectedMutated) throw new Error('post-rebuild data-rendered-json must match canonical after restructure');
+let reused = 0;
+for (const c of snapshotChildren) {
+  if (preBefore.children.indexOf(c) !== -1) reused += 1;
+}
+if (reused !== 0) throw new Error('restructure must rebuild (all-new children), got ' + reused + ' reused children');
+// Now shrink the count (3 → 2) — also a rebuild.
+const snapshot2 = preBefore.children.slice();
+SandmanPortalDiff.updateDetailPanelEvents(body, 'a', [e1, e2], helpers);
+if (preBefore.getAttribute('data-rendered-event-count') !== '2') throw new Error('expected data-rendered-event-count="2" after shrink, got ' + preBefore.getAttribute('data-rendered-event-count'));
+const expectedShrunk = JSON.stringify([e1, e2].map((event) => ({
+  type: event && event.type ? event.type : 'event',
+  timestamp: event && event.timestamp ? event.timestamp : null,
+  payload: event && event.payload ? event.payload : {},
+})), null, 2);
+if (preBefore.getAttribute('data-rendered-json') !== expectedShrunk) throw new Error('post-rebuild data-rendered-json must match canonical after shrink');
+let reused2 = 0;
+for (const c of snapshot2) {
+  if (preBefore.children.indexOf(c) !== -1) reused2 += 1;
+}
+if (reused2 !== 0) throw new Error('shrink must rebuild (all-new children), got ' + reused2 + ' reused children');
+// Reorder: 2 → 2 with different order — also a rebuild.
+const snapshot3 = preBefore.children.slice();
+SandmanPortalDiff.updateDetailPanelEvents(body, 'a', [e2, e1], helpers);
+const expectedReorder = JSON.stringify([e2, e1].map((event) => ({
+  type: event && event.type ? event.type : 'event',
+  timestamp: event && event.timestamp ? event.timestamp : null,
+  payload: event && event.payload ? event.payload : {},
+})), null, 2);
+if (preBefore.getAttribute('data-rendered-json') !== expectedReorder) throw new Error('post-rebuild data-rendered-json must match canonical after reorder');
+let reused3 = 0;
+for (const c of snapshot3) {
+  if (preBefore.children.indexOf(c) !== -1) reused3 += 1;
+}
+if (reused3 !== 0) throw new Error('reorder must rebuild (all-new children), got ' + reused3 + ' reused children');
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
 // TestPortalDiffBuildEventsContent_RenderedEventCountAttribute (issue
 // #1628) — tracer bullet for the events-tab append-only path. When
 // `diffRuns` first builds the events pane for a run with N events, the
