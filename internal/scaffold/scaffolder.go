@@ -903,6 +903,11 @@ func (s *Scaffolder) resolveElixirVersion(repoRoot, selector string, p Prompter)
 //     (already-normalised) selector as-is when both mise and the bundled
 //     catalog miss (.NET and Node); when nil, the selector errors out (Go
 //     and Python).
+//   - requiresExactPin, when true, makes resolveMiseVersion discard any
+//     mise result that does not pin a full major.minor.patch version
+//     (e.g. "1.95" shorthand echoed back as "1.95" rather than the
+//     resolved patch). This guarantees that the scaffolded Dockerfile
+//     records an exact pin. Only the Rust preset opts in today.
 type versionResolver struct {
 	label            string
 	miseTool         string
@@ -911,6 +916,7 @@ type versionResolver struct {
 	catalog          map[string]string
 	ltsFromLatest    func(latestVersion string) (string, error)
 	passThroughValid func(selector string) bool
+	requiresExactPin bool
 }
 
 // goResolver is the versionResolver configuration for Go. The ltsFromLatest
@@ -1182,11 +1188,15 @@ var rubyResolver = versionResolver{
 
 // rustResolver is the versionResolver configuration for Rust. The normalize
 // hook accepts mise-style selectors ("1.77", "v1.77", "rust1.77") and the
-// repo hint forms supported by readRustVersionHint.
+// repo hint forms supported by readRustVersionHint. requiresExactPin is
+// enabled so the scaffolded Dockerfile always records a full
+// major.minor.patch version rather than a shorthand the mise shim
+// echoed back unresolved.
 var rustResolver = versionResolver{
-	label:      "Rust",
-	miseTool:   "rust",
-	hintReader: readRustVersionHint,
+	label:            "Rust",
+	miseTool:         "rust",
+	hintReader:       readRustVersionHint,
+	requiresExactPin: true,
 	normalize: func(selector string) string {
 		selector = strings.TrimSpace(selector)
 		if len(selector) > 4 && strings.HasPrefix(strings.ToLower(selector), "rust") && selector[4] >= '0' && selector[4] <= '9' {
@@ -1305,7 +1315,7 @@ func resolveMiseVersion(r versionResolver, selector string) (string, error) {
 	if err == nil {
 		version := strings.TrimSpace(string(out))
 		if version != "" {
-			if version == selector {
+			if r.requiresExactPin && version == selector {
 				parts := strings.Split(version, ".")
 				if len(parts) < 3 {
 					version = ""
