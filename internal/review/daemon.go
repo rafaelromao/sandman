@@ -111,6 +111,7 @@ type Daemon struct {
 	slotMu               sync.Mutex
 	pendingMu            sync.Mutex
 	pendingReviews       map[int][]pendingReviewEntry
+	selfPosts            *SelfPostStore
 }
 
 // New returns a Daemon configured with the project defaults for the
@@ -160,6 +161,17 @@ func New(baseDir string, gh GitHubClient, prompts Renderer, runner BatchRunner, 
 	if err := d.loadPendingReviews(); err != nil {
 		d.logf("load pending reviews: %v", err)
 	}
+	// SelfPostStore is best-effort: a missing or corrupt file
+	// yields an empty store. The daemon continues to function
+	// via the existing seenCache + ReviewStateStore; the
+	// self-post filter is an *additional* layer, not a primary
+	// dedup mechanism.
+	spPath := filepath.Join(d.BaseDir, "reviews", "self-posted.json")
+	sp, spErr := NewSelfPostStore(spPath)
+	if spErr != nil {
+		d.logf("load self-posted store: %v (continuing in degraded mode)", spErr)
+	}
+	d.selfPosts = sp
 	return d
 }
 
@@ -705,6 +717,18 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) error {
 	}
 	var triggers []unseenTrigger
 	for _, comment := range comments {
+		// Self-post filter (issue #1648): a comment whose body
+		// matches a hash the bot has previously posted is not a
+		// trigger. Both the implementor agent's `/sandman review`
+		// post and the reviewer agent's actual review can fall
+		// through this filter, breaking the bot's own review
+		// loop. We deliberately do not consult GitHub auth
+		// because both agents share the host user's `gh`
+		// credentials.
+		if d.selfPosts != nil && d.selfPosts.IsSelfPosted(comment.Body) {
+			d.logf("PR #%d: comment %s is a self-post, skipping trigger scan", prNumber, comment.ID)
+			continue
+		}
 		focus, ok := ParseTrigger(comment.Body)
 		if !ok {
 			continue
@@ -1089,15 +1113,28 @@ func (d *Daemon) now() time.Time {
 // asks GitHub for the PR comments and returns the new status to
 // apply:
 //
-//   - "success" when a non-trigger comment has been posted at or after
-//     `since` (the agent posted a review comment).
+//   - "success" when a non-trigger, non-self-posted comment has been
+//     posted at or after `since` (the agent posted a review comment).
 //   - ("pending", error) when no review comment has been observed
-//     yet. The error lets the caller decide whether to increment the
-//     cycle counter or promote to failure after pendingMaxCycles.
+//     yet, or when the only comment observed is a self-post that the
+//     bot's own hash tracking now recognises. The error lets the
+//     caller decide whether to increment the cycle counter or promote
+//     to failure after pendingMaxCycles.
 //
 // The caller is responsible for writing the new status back into the
 // per-run ReviewStateStore and updating the in-memory pending entry.
 // Issue #1482 slice D.
+//
+// As a defensive observation (issue #1648), every comment observed
+// after `since` is recorded in the SelfPostStore so the next tick
+// will treat it as a self-post. The skill wrapper records at
+// posting time; this is the safety net for any case where the
+// wrapper is bypassed. To preserve the "first observation counts
+// as success" contract, the IsSelfPosted check is performed BEFORE
+// the Record call: a body that is already a self-post is the bot's
+// own review, which we do not want to count; a body that is not
+// yet a self-post is either the agent's first review (count as
+// success) or a non-self reviewer reply (also count as success).
 func (d *Daemon) promotePendingComment(ctx context.Context, prNumber int, excludeCommentID string, since time.Time) (string, error) {
 	comments, err := d.GitHub.ListPRComments(prNumber)
 	if err != nil {
@@ -1110,6 +1147,28 @@ func (d *Daemon) promotePendingComment(ctx context.Context, prNumber int, exclud
 		if c.CreatedAt.After(since) || c.CreatedAt.Equal(since) {
 			if c.Body == "" {
 				continue
+			}
+			// Skip if the body is already a self-post
+			// (recorded earlier by the skill wrapper
+			// or by a prior tick's defensive
+			// observation). Such a comment is the
+			// bot's own review or trigger; it must
+			// not be counted as a successful human
+			// review here.
+			if d.selfPosts != nil && d.selfPosts.IsSelfPosted(c.Body) {
+				d.logf("PR #%d: comment %s is a self-post, not counting as review success", prNumber, c.ID)
+				continue
+			}
+			// Defensive observation: record this
+			// comment so the next tick treats it as
+			// a self-post. The skill wrapper
+			// (pr-review SKILL.md Step 4) is the
+			// primary record site; this is the
+			// safety net.
+			if d.selfPosts != nil {
+				if recErr := d.selfPosts.Record(prNumber, c.Body, ""); recErr != nil {
+					d.logf("PR #%d: record self-post %s: %v", prNumber, c.ID, recErr)
+				}
 			}
 			d.logf("PR #%d: review comment verified (ID %s, posted at %v)", prNumber, c.ID, c.CreatedAt)
 			return "success", nil
