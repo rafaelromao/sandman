@@ -1,7 +1,9 @@
 package cmd
 
 import (
+	"encoding/json"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -238,5 +240,182 @@ func TestPortalRunsView_ArchivedBatchCountLogDownload(t *testing.T) {
 	}
 	if string(body) != rawLogContent {
 		t.Fatalf("log body = %q, want %q", body, rawLogContent)
+	}
+}
+
+// TestPortalRunsView_CompletedRunLogResolvesFromSavedFile is the
+// real-artifact regression test for #1637 / #1641: drives the portal's
+// HTTP /api/runs endpoint end-to-end against a temp repo seeded with
+// the bug scenario — a finished run plus a still-connectable batch
+// socket — and asserts the row's Log comes from the Saved Run Log, not
+// from the live socket's broadcast.
+//
+// Setup mirrors the PRD: the run is finished (status=success), but a
+// sibling run lives in the same batch dir, so the batch daemon's
+// batch.sock is still connectable and broadcasting sibling-run
+// content. The completed row's Log field must contain the saved log's
+// first and last lines and must not contain any of the live socket's
+// lines, because the Saved Run Log is the authoritative record of a
+// finished AgentRun per CONTEXT.md.
+//
+// Path coverage: the list endpoint (/api/runs no runKey) goes through
+// runFromActiveMatch → runFromState; the keyed endpoint
+// (/api/runs?runKey=<runID>) goes through runFromActiveBatchIssue →
+// runFromState. Both paths must converge on the saved log for the
+// kind=completed row.
+func TestPortalRunsView_CompletedRunLogResolvesFromSavedFile(t *testing.T) {
+	originalProbe := portalRunLivenessProbe
+	portalRunLivenessProbe = func(string) bool { return true }
+	t.Cleanup(func() { portalRunLivenessProbe = originalProbe })
+
+	repoRoot, err := os.MkdirTemp("/tmp", "p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(repoRoot) })
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	layout := paths.NewLayout(nil, repoRoot)
+
+	ts := "260101120000"
+	shortid := "abcd"
+	batchID := runid.NewBatchID(runid.KindIssue, 2, "1597", ts, shortid)
+	rowRunID := runid.NewRunID(runid.KindIssue, "1597", ts, shortid)
+	siblingRunID := runid.NewRunID(runid.KindIssue, "1598", ts, shortid)
+
+	rawSavedLog := "[" + rowRunID + "] 13:31:05 > build · MiniMax-M3\n" +
+		"[" + rowRunID + "] 13:31:30 > first saved line\n" +
+		"[" + rowRunID + "] 13:32:00 > middle saved line\n" +
+		"[" + rowRunID + "] 13:33:00 > last saved line\n"
+	siblingLivePrefix := "[" + siblingRunID + "]"
+
+	startedAt := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	finishedAt := startedAt.Add(5 * time.Minute)
+	writePortalLog(t, layout.EventsLogPath, []events.Event{
+		{Type: "run.started", Timestamp: startedAt, RunID: rowRunID, Issue: 1597, Payload: map[string]any{
+			"branch":   "sandman/1597-fix",
+			"batch_id": batchID,
+		}},
+		{Type: "run.finished", Timestamp: finishedAt, RunID: rowRunID, Issue: 1597, Payload: map[string]any{
+			"status":   "success",
+			"branch":   "sandman/1597-fix",
+			"batch_id": batchID,
+		}},
+	})
+
+	batchDir := filepath.Join(layout.BatchesDir, batchID)
+	runDir := filepath.Join(batchDir, "runs", rowRunID)
+	if err := os.MkdirAll(runDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(runDir, "run.log"), []byte(rawSavedLog), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	sockPath := filepath.Join(batchDir, "batch.sock")
+	ln, err := net.Listen("unix", sockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	siblingLive := siblingLivePrefix + " 13:49:33 sibling run live line\n" +
+		siblingLivePrefix + " 13:49:35 another sibling live line\n"
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			_, _ = conn.Write([]byte(siblingLive))
+			_ = conn.Close()
+		}
+	}()
+
+	idx := &batchindex.Index{
+		Version: batchindex.IndexVersion,
+		Entries: []batchindex.Entry{
+			{
+				ID:        batchID,
+				Path:      batchDir,
+				Kind:      batchindex.KindIssue,
+				Status:    batchindex.StatusActive,
+				CreatedAt: startedAt,
+				Issues:    []int{1597, 1598},
+			},
+		},
+	}
+	if err := idx.Save(layout.BatchesIndexPath); err != nil {
+		t.Fatal(err)
+	}
+
+	handler := newPortalHandler(repoRoot)
+	server := startPortalHTTPServer(t, handler)
+	defer server.Close()
+
+	// List endpoint: GET /api/runs (no runKey) goes through
+	// runFromActiveMatch → runFromState for this row.
+	listRuns := readPortalRuns(t, server.URL)
+	var target *portalRun
+	for i := range listRuns {
+		if listRuns[i].RunID == rowRunID {
+			target = &listRuns[i]
+			break
+		}
+	}
+	if target == nil {
+		t.Fatalf("expected list endpoint to include row %q, got %#v", rowRunID, listRuns)
+	}
+	assertCompletedRowUsesSavedLog(t, "list", target, rawSavedLog, siblingLivePrefix)
+
+	// Keyed endpoint: GET /api/runs?runKey=<runID> goes through
+	// runFromActiveBatchIssue → runFromState for this row. The keyed
+	// contract is `{repoRoot, run}` (singular), not a list.
+	keyedRun := readPortalRunByKey(t, server.URL, rowRunID)
+	if keyedRun == nil {
+		t.Fatalf("expected keyed endpoint to return row %q, got nil", rowRunID)
+	}
+	assertCompletedRowUsesSavedLog(t, "keyed", keyedRun, rawSavedLog, siblingLivePrefix)
+}
+
+// readPortalRunByKey hits the /api/runs?runKey=<runID> endpoint and
+// returns the singular `run` payload. Returns nil when the endpoint
+// returns a 4xx/5xx response (treated as "row not found").
+func readPortalRunByKey(t *testing.T, baseURL, runKey string) *portalRun {
+	t.Helper()
+	resp, err := http.Get(baseURL + "/api/runs?runKey=" + url.QueryEscape(runKey))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil
+	}
+	var payload struct {
+		Run *portalRun `json:"run"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatal(err)
+	}
+	return payload.Run
+}
+
+func assertCompletedRowUsesSavedLog(t *testing.T, where string, row *portalRun, savedLog, siblingLivePrefix string) {
+	t.Helper()
+	if row.Kind != "completed" {
+		t.Fatalf("%s: expected Kind %q, got %q", where, "completed", row.Kind)
+	}
+	if row.Status != "success" {
+		t.Fatalf("%s: expected Status %q, got %q", where, "success", row.Status)
+	}
+	if !strings.Contains(row.Log, "13:31:05 > build · MiniMax-M3") {
+		t.Fatalf("%s: expected Log to contain saved first line, got %q", where, row.Log)
+	}
+	if !strings.Contains(row.Log, "13:33:00 > last saved line") {
+		t.Fatalf("%s: expected Log to contain saved last line, got %q", where, row.Log)
+	}
+	if strings.Contains(row.Log, siblingLivePrefix) {
+		t.Fatalf("%s: expected Log NOT to contain sibling live prefix %q, got %q", where, siblingLivePrefix, row.Log)
 	}
 }
