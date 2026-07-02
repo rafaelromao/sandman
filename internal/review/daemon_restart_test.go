@@ -71,11 +71,9 @@ func TestDaemon_RestartRecoversPendingFromDisk(t *testing.T) {
 
 	// Sanity check: the on-disk review-state.json for the row
 	// that was just launched must record the trigger as `pending`.
-	statePath, ok := findPendingReviewState(t, dir, prNumber, commentID)
-	if !ok {
+	if _, ok := findPendingReviewState(t, dir, prNumber, commentID); !ok {
 		t.Fatalf("first daemon should have persisted a pending entry for (%d, %s); no review-state.json with that entry was found", prNumber, commentID)
 	}
-	_ = statePath
 
 	// Step 2: simulate a daemon restart by constructing a fresh
 	// daemon against the same BaseDir. The in-memory pendingReviews
@@ -104,13 +102,16 @@ func TestDaemon_RestartRecoversPendingFromDisk(t *testing.T) {
 // under BaseDir and returns the path of the first one that records
 // (prNumber, commentID) with status "pending". Returns (path, true)
 // on hit, ("", false) on miss. Mirrors the per-row layout from
-// ADR-0030 / issue #1551.
+// ADR-0030 / issue #1551. Read errors on the batches dir are fatal;
+// read errors on individual review-state.json files are non-fatal
+// (a row may legitimately have no state file yet, depending on the
+// test's pre-seed).
 func findPendingReviewState(t *testing.T, baseDir string, prNumber int, commentID string) (string, bool) {
 	t.Helper()
 	batchesDir := filepath.Join(baseDir, "batches")
 	entries, err := os.ReadDir(batchesDir)
 	if err != nil {
-		return "", false
+		t.Fatalf("read batches dir: %v", err)
 	}
 	for _, e := range entries {
 		if !e.IsDir() {

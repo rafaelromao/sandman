@@ -426,13 +426,19 @@ func (d *Daemon) loadPendingReviews() error {
 			if sc.Status != "pending" {
 				continue
 			}
-			since := sc.Timestamp
-			if since.IsZero() {
-				since = time.Now()
+			// Drop zero-timestamp entries: a missing Timestamp
+			// means we cannot bound the promote window safely, and
+			// falling back to wall-clock at rehydration time would
+			// hide reviewer replies that landed before the restart.
+			// The bounded-retry escape on the new instance will
+			// still clear the row after pendingMaxCycles ticks.
+			if sc.Timestamp.IsZero() {
+				d.logf("skip rehydrate of pending %s (zero timestamp on disk)", sc.CommentID)
+				continue
 			}
 			d.pendingReviews[entry.PR] = append(d.pendingReviews[entry.PR], pendingReviewEntry{
 				commentID:   sc.CommentID,
-				since:       since,
+				since:       sc.Timestamp,
 				reviewState: reviewStatePath,
 			})
 		}
@@ -442,8 +448,7 @@ func (d *Daemon) loadPendingReviews() error {
 
 // InvalidatePendingReviews forces a rebuild of the in-memory
 // pendingReviews map by re-running the on-disk scan. Symmetric with
-// InvalidateSeenCache. Exposed for the fsnotify-style out-of-band
-// recovery path and for slow-tick consistency.
+// InvalidateSeenCache.
 func (d *Daemon) InvalidatePendingReviews() error {
 	return d.loadPendingReviews()
 }
