@@ -2140,6 +2140,81 @@ func TestScaffold_HasRubyRepoHint(t *testing.T) {
 	}
 }
 
+func TestReadJavaVersionHint(t *testing.T) {
+	tests := []struct {
+		name    string
+		setupFn func(dir string)
+		want    string
+	}{
+		{
+			name: "pom.xml with java.version",
+			setupFn: func(dir string) {
+				os.WriteFile(filepath.Join(dir, "pom.xml"), []byte("<project><properties><java.version>21</java.version></properties></project>\n"), 0644)
+			},
+			want: "21",
+		},
+		{
+			name: "pom.xml with maven.compiler.source",
+			setupFn: func(dir string) {
+				os.WriteFile(filepath.Join(dir, "pom.xml"), []byte("<project><properties><maven.compiler.source>17</maven.compiler.source></properties></project>\n"), 0644)
+			},
+			want: "17",
+		},
+		{
+			name: "build.gradle sourceCompatibility",
+			setupFn: func(dir string) {
+				os.WriteFile(filepath.Join(dir, "build.gradle"), []byte("plugins { id 'java' }\n\njava {\n    sourceCompatibility = '21'\n    targetCompatibility = '21'\n}\n"), 0644)
+			},
+			want: "21",
+		},
+		{
+			name: "build.gradle.kts jvmTarget",
+			setupFn: func(dir string) {
+				os.WriteFile(filepath.Join(dir, "build.gradle.kts"), []byte("plugins { kotlin(\"jvm\") }\n\ntasks.withType<JavaCompile> {\n    sourceCompatibility = \"17\"\n    targetCompatibility = \"17\"\n}\n"), 0644)
+			},
+			want: "17",
+		},
+		{
+			name: ".tool-versions java",
+			setupFn: func(dir string) {
+				os.WriteFile(filepath.Join(dir, ".tool-versions"), []byte("java 21.0.2\ngradle 8.5\n"), 0644)
+			},
+			want: "21.0.2",
+		},
+		{
+			name: "no hint",
+			setupFn: func(dir string) {
+				_ = dir
+			},
+			want: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			tt.setupFn(dir)
+
+			got, found, err := readJavaVersionHint(dir)
+			if err != nil {
+				t.Fatalf("readJavaVersionHint(%q) returned error: %v", dir, err)
+			}
+			if tt.want == "" {
+				if found {
+					t.Errorf("readJavaVersionHint(%q) found = true, want false (got %q)", dir, got)
+				}
+				return
+			}
+			if !found {
+				t.Fatalf("readJavaVersionHint(%q) found = false, want true", dir)
+			}
+			if got != tt.want {
+				t.Errorf("readJavaVersionHint(%q) = %q, want %q", dir, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestScaffold_HasJavaRepoHint(t *testing.T) {
 	tests := []struct {
 		name    string

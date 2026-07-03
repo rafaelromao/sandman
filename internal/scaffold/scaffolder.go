@@ -675,6 +675,120 @@ func hasJavaRepoHint(repoRoot string) bool {
 	return false
 }
 
+func readJavaVersionHint(repoRoot string) (string, bool, error) {
+	for _, rel := range []string{".tool-versions", "pom.xml", "build.gradle", "build.gradle.kts"} {
+		path := filepath.Join(repoRoot, rel)
+		data, err := os.ReadFile(path)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return "", false, fmt.Errorf("read Java version hint from %s: %w", rel, err)
+		}
+		if version, ok := parseJavaVersionHint(rel, data); ok {
+			return version, true, nil
+		}
+	}
+	return "", false, nil
+}
+
+func parseJavaVersionHint(name string, data []byte) (string, bool) {
+	scanner := bufio.NewScanner(bytes.NewReader(data))
+	switch name {
+	case ".tool-versions":
+		for scanner.Scan() {
+			line := strings.TrimSpace(scanner.Text())
+			if line == "" || strings.HasPrefix(line, "#") {
+				continue
+			}
+			fields := strings.Fields(line)
+			if len(fields) >= 2 && fields[0] == "java" {
+				return fields[1], true
+			}
+		}
+	case "pom.xml":
+		for scanner.Scan() {
+			line := strings.TrimSpace(scanner.Text())
+			if line == "" {
+				continue
+			}
+			for _, key := range []string{"<java.version>", "<maven.compiler.source>", "<maven.compiler.target>"} {
+				if strings.Contains(line, key) {
+					if v := extractXMLTagValue(line, key); v != "" {
+						return v, true
+					}
+				}
+			}
+		}
+	case "build.gradle", "build.gradle.kts":
+		for scanner.Scan() {
+			line := strings.TrimSpace(scanner.Text())
+			if line == "" || strings.HasPrefix(line, "//") {
+				continue
+			}
+			for _, key := range []string{"sourceCompatibility", "targetCompatibility", "jvmTarget"} {
+				if idx := strings.Index(line, key); idx >= 0 {
+					rest := line[idx+len(key):]
+					if v := extractJavaDSLValue(rest); v != "" {
+						return v, true
+					}
+				}
+			}
+		}
+	}
+	return "", false
+}
+
+func extractXMLTagValue(line, key string) string {
+	idx := strings.Index(line, key)
+	if idx < 0 {
+		return ""
+	}
+	rest := line[idx+len(key):]
+	rest = strings.TrimSpace(rest)
+	endIdx := strings.Index(rest, "</")
+	if endIdx < 0 {
+		endIdx = strings.Index(rest, "/>")
+		if endIdx < 0 {
+			return ""
+		}
+	}
+	value := strings.TrimSpace(rest[:endIdx])
+	value = strings.Trim(value, "'\"")
+	return value
+}
+
+func extractJavaDSLValue(rest string) string {
+	rest = strings.TrimSpace(rest)
+	if !strings.HasPrefix(rest, "=") {
+		return ""
+	}
+	rest = strings.TrimSpace(strings.TrimPrefix(rest, "="))
+	if rest == "" {
+		return ""
+	}
+	first := rest[0]
+	if first == '"' || first == '\'' {
+		close := strings.IndexRune(rest[1:], rune(first))
+		if close < 0 {
+			return ""
+		}
+		return rest[1 : 1+close]
+	}
+	fields := strings.Fields(rest)
+	if len(fields) == 0 {
+		return ""
+	}
+	if strings.Contains(fields[0], ".") {
+		parts := strings.Split(fields[0], ".")
+		last := parts[len(parts)-1]
+		if _, err := strconv.Atoi(last); err == nil {
+			return last
+		}
+	}
+	return ""
+}
+
 func readRubyVersionHint(repoRoot string) (string, bool, error) {
 	for _, rel := range []string{".ruby-version", ".tool-versions", "Gemfile"} {
 		path := filepath.Join(repoRoot, rel)
