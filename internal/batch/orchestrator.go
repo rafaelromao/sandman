@@ -1739,8 +1739,18 @@ func (s *runSession) withHeartbeat(ctx context.Context, runID string, attempt in
 // recomputing. Errors updating the snapshot are logged but do not change the
 // run outcome. The event-log write is skipped when the orchestrator has no
 // event log.
+//
+// Before normalising the terminal event, emitTerminal performs a defensive
+// post-check: if the agent's branch has an open PR whose mergeable state is
+// `CONFLICTING`, the run is reclassified as `failure` and the terminal event
+// payload carries `merge_conflict: true` and the PR number. This is
+// defence-in-depth against skill regressions that forget to flag the DIRTY
+// PR case; see issue #1684.
 func (s *runSession) emitTerminal(ctx context.Context, runID string, result AgentRunResult) string {
 	o := s.o
+	if conflictResult, ok := s.detectConflictingPR(result, result.Branch); ok {
+		result = conflictResult
+	}
 	terminalEventType, terminalStatus := terminalRunEvent(ctx, result.Status)
 	s.updateRunManifestStatus(runID, batchindex.RunManifestStatus(terminalStatus))
 	if o.eventLog == nil {
@@ -1775,8 +1785,77 @@ func (s *runSession) emitTerminal(ctx context.Context, runID string, result Agen
 			event.Payload["issue_number"] = s.issueNumber
 		}
 	}
+	for k, v := range result.Payload {
+		event.Payload[k] = v
+	}
 	_ = o.eventLog.Log(event)
 	return terminalStatus
+}
+
+// detectConflictingPR inspects the branch's open PR (if any) and, when its
+// mergeable state is `CONFLICTING`, returns a copy of `result` reclassified as
+// `failure` with `merge_conflict: true` and `pr_number` set in
+// `result.Payload`. The second return value is true when the result was
+// reclassified.
+//
+// Errors from the underlying `gh pr list` lookup are logged to `errorLog`
+// but treated as a soft pass-through: a transient gh failure must not
+// silently flip a real success into a fake failure. See issue #1684.
+func (s *runSession) detectConflictingPR(result AgentRunResult, branch string) (AgentRunResult, bool) {
+	o := s.o
+	if strings.TrimSpace(branch) == "" {
+		return result, false
+	}
+	exists, prNumber, mergeable, err := LookupOpenPR(branch)
+	if err != nil {
+		fmt.Fprintf(o.errorLog, "warning: lookup open PR for branch %q: %v\n", branch, err)
+		return result, false
+	}
+	if !exists {
+		return result, false
+	}
+	if strings.EqualFold(mergeable, "CONFLICTING") {
+		if result.Payload == nil {
+			result.Payload = map[string]any{}
+		}
+		result.Payload["merge_conflict"] = true
+		result.Payload["pr_number"] = prNumber
+		result.Status = "failure"
+		fmt.Fprintf(o.errorLog, "error: branch %q has CONFLICTING open PR #%d, overriding run status to failure\n", branch, prNumber)
+		return result, true
+	}
+	return result, false
+}
+
+// hasBlockingOpenPR returns true when the branch currently has an open PR
+// AND the run is being short-circuited to success via the `alreadyResolved`
+// marker. On hit, the helper mutates `result` to status `failure` and
+// annotates its payload with `blocker: "open-pr-blocks-already-resolved"`
+// plus `pr_number`. The PR number is also surfaced via `errorLog` for
+// human inspection. See issue #1684.
+//
+// Errors from `gh pr list` are logged but treated as a soft pass: a
+// transient failure should not flip a real success into a fake failure.
+func hasBlockingOpenPR(o *Orchestrator, branch string, result *AgentRunResult) bool {
+	if o == nil || strings.TrimSpace(branch) == "" {
+		return false
+	}
+	exists, prNumber, _, err := LookupOpenPR(branch)
+	if err != nil {
+		fmt.Fprintf(o.errorLog, "warning: lookup open PR for branch %q: %v\n", branch, err)
+		return false
+	}
+	if !exists {
+		return false
+	}
+	if result.Payload == nil {
+		result.Payload = map[string]any{}
+	}
+	result.Payload["blocker"] = "open-pr-blocks-already-resolved"
+	result.Payload["pr_number"] = prNumber
+	result.Status = "failure"
+	fmt.Fprintf(o.errorLog, "error: branch %q has open PR #%d blocking alreadyResolved short-circuit; overriding run status to failure\n", branch, prNumber)
+	return true
 }
 
 // updateRunManifestStatus rewrites the run.json snapshot with the terminal
@@ -1877,6 +1956,9 @@ func (s *runSession) runOnce(
 				if ctx.Err() != nil {
 					break
 				}
+				if alreadyResolved && hasBlockingOpenPR(o, branch, &result) {
+					break
+				}
 				result.Status = "success"
 				if alreadyResolved && issue != nil && !github.IsIssueClosed(issue) && o.githubClient != nil {
 					if err := o.githubClient.CloseIssue(issue.Number, "Closed by sandman — issue already completed."); err != nil {
@@ -1902,6 +1984,9 @@ func (s *runSession) runOnce(
 					prMerged := checkPRMerged(o.githubClient, branch)
 					if prMerged || alreadyResolved {
 						if alreadyResolved {
+							if hasBlockingOpenPR(o, branch, &result) {
+								break
+							}
 							result.Status = "success"
 						}
 						break

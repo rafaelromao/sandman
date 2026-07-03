@@ -145,6 +145,14 @@ type AgentRunResult struct {
 	WorktreePath string
 	Review       bool
 	RunID        string
+	// Payload is an optional map of extra run-level signals the
+	// terminal event should carry alongside the standard fields. Keys
+	// currently populated by the orchestrator include "blocker"
+	// (string, when an open PR prevents the run from being declared
+	// success), "pr_number" (int, the offending PR), and
+	// "merge_conflict" (bool, true when the branch's open PR is in
+	// CONFLICTING state). New keys may be added over time.
+	Payload map[string]any
 }
 
 // Runnable represents a single agent execution that can be run.

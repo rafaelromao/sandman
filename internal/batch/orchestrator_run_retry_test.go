@@ -204,13 +204,18 @@ func TestRunSingle_AlreadyResolvedTaskMarkerShortCircuitsToSuccess(t *testing.T)
 	currentBranchHeadFn = func(string) (string, error) { return "current-sha", nil }
 	t.Cleanup(func() { currentBranchHeadFn = oldHeadFn })
 
-	pr := &github.PR{Number: 17, State: "open", Merged: false, HeadRefName: branch}
+	oldLookup := lookupOpenPRFn
+	lookupOpenPRFn = func(string) (bool, int, string, error) {
+		return false, 0, "", nil
+	}
+	t.Cleanup(func() { lookupOpenPRFn = oldLookup })
+
 	eventsPath := filepath.Join(t.TempDir(), "events.jsonl")
 	eventLog := &events.JSONLLogger{Path: eventsPath}
 	o := &Orchestrator{
 		githubClient: &fakeGitHubClient{
 			issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}},
-			prs:    map[string]*github.PR{branch: pr},
+			prs:    map[string]*github.PR{},
 		},
 		renderer: &retryRenderer{result: "rendered prompt"},
 		errorLog: io.Discard,
@@ -239,6 +244,86 @@ func TestRunSingle_AlreadyResolvedTaskMarkerShortCircuitsToSuccess(t *testing.T)
 	}
 	if got := o.runnableFactory.(*taskWritingRunnableFactory).created; got != 1 {
 		t.Fatalf("runnable launches = %d, want 1", got)
+	}
+}
+
+func TestRunSingle_AlreadyResolvedOpenPREndsFailure(t *testing.T) {
+	workDir := t.TempDir()
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get wd: %v", err)
+	}
+	if err := os.Chdir(workDir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(oldWD) })
+
+	branch := "sandman/42-fix-bug"
+	rtSandbox := &retrySandbox{
+		workDir: filepath.Join(workDir, "worktree"),
+	}
+	oldHeadFn := currentBranchHeadFn
+	currentBranchHeadFn = func(string) (string, error) { return "current-sha", nil }
+	t.Cleanup(func() { currentBranchHeadFn = oldHeadFn })
+
+	oldLookup := lookupOpenPRFn
+	lookupOpenPRFn = func(string) (bool, int, string, error) {
+		return true, 17, "MERGEABLE", nil
+	}
+	t.Cleanup(func() { lookupOpenPRFn = oldLookup })
+
+	eventsPath := filepath.Join(t.TempDir(), "events.jsonl")
+	eventLog := &events.JSONLLogger{Path: eventsPath}
+	o := &Orchestrator{
+		githubClient: &fakeGitHubClient{
+			issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}},
+			prs:    map[string]*github.PR{branch: {Number: 17, State: "open", Merged: false, HeadRefName: branch}},
+		},
+		renderer: &retryRenderer{result: "rendered prompt"},
+		errorLog: io.Discard,
+		layout:   paths.NewLayout(&config.Config{}, workDir),
+		eventLog: eventLog,
+		sandboxFactory: &retrySandboxFactory{
+			sandbox: rtSandbox,
+		},
+		runnableFactory: &taskWritingRunnableFactory{
+			taskPath:    filepath.Join(workDir, "worktree", ".sandman", "task.md"),
+			result:      AgentRunResult{IssueNumber: 42, Status: "failure", Branch: branch},
+			taskContent: "## Status: already resolved",
+		},
+	}
+
+	cfg := &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}}
+	result, started := o.runSingle(context.Background(), context.Background(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, false, nil, noopIdentityResolver(), map[int]string{42: branch}, prompt.RenderConfig{}, nil, &retrySandboxFactory{sandbox: rtSandbox}, nil, false, "main", nil, 0, 0, 3, 0, "", 0, false, 0, false, false, false, "", "")
+	if !started {
+		t.Fatal("expected run to start")
+	}
+	if result.Status != "failure" {
+		t.Fatalf("status = %q, want failure (alreadyResolved + open PR should be failure, not success)", result.Status)
+	}
+
+	logs, err := eventLog.Read()
+	if err != nil {
+		t.Fatalf("read events: %v", err)
+	}
+	var terminalPayload map[string]any
+	for _, e := range logs {
+		if e.Type == "run.finished" {
+			terminalPayload = e.Payload
+		}
+	}
+	if terminalPayload == nil {
+		t.Fatalf("run.finished event not found in logs: %v", logs)
+	}
+	if blocker, _ := terminalPayload["blocker"].(string); blocker != "open-pr-blocks-already-resolved" {
+		t.Fatalf("run.finished payload blocker = %q, want %q (payload=%v)", blocker, "open-pr-blocks-already-resolved", terminalPayload)
+	}
+	prNumber, ok := terminalPayload["pr_number"].(float64)
+	if !ok {
+		t.Fatalf("run.finished payload pr_number has wrong type %T, want number", terminalPayload["pr_number"])
+	}
+	if prNumber != 17 {
+		t.Fatalf("run.finished payload pr_number = %v, want 17", prNumber)
 	}
 }
 
