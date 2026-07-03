@@ -42,6 +42,7 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
       --accent: oklch(0.76 0.07 75);
       --accent-weak: color-mix(in oklch, var(--accent) 14%, var(--surface));
       --accent-ink: oklch(0.18 0.03 75);
+      --reviewing-accent: oklch(0.65 0.16 285);
       --success: oklch(0.74 0.09 145);
       --danger: oklch(0.68 0.12 25);
       --warning: oklch(0.82 0.07 80);
@@ -683,7 +684,7 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
       background: color-mix(in oklch, var(--surface-3) 86%, var(--accent) 8%);
     }
     tbody tr.run-row.active td {
-      background: color-mix(in oklch, var(--accent) 12%, var(--surface));
+      background: color-mix(in oklch, var(--reviewing-accent) 14%, var(--surface));
     }
     tbody tr.detail-row td {
       background: var(--surface-2);
@@ -772,8 +773,8 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
     }
     .badge.running { background: var(--accent-weak); border-color: color-mix(in oklch, var(--accent) 30%, var(--border)); }
     .badge.running .dot { background: var(--accent); }
-    .badge.reviewing { background: color-mix(in oklch, oklch(0.65 0.16 285) 18%, var(--surface)); border-color: color-mix(in oklch, oklch(0.65 0.16 285) 30%, var(--border)); }
-    .badge.reviewing .dot { background: oklch(0.65 0.16 285); }
+    .badge.reviewing { background: color-mix(in oklch, var(--reviewing-accent) 18%, var(--surface)); border-color: color-mix(in oklch, var(--reviewing-accent) 30%, var(--border)); }
+    .badge.reviewing .dot { background: var(--reviewing-accent); }
     .badge.auto-selecting { background: color-mix(in oklch, var(--accent) 12%, var(--surface)); border-color: color-mix(in oklch, var(--accent) 24%, var(--border)); }
     .badge.auto-selecting .dot { background: var(--accent); }
     .badge.active { background: var(--accent-weak); border-color: color-mix(in oklch, var(--accent) 30%, var(--border)); }
@@ -1400,7 +1401,7 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
       }
       tbody tr.run-row:hover,
       tbody tr.run-row.active {
-        background: color-mix(in oklch, var(--accent) 10%, var(--surface));
+        background: color-mix(in oklch, var(--reviewing-accent) 12%, var(--surface));
       }
       tbody tr.run-row:hover td,
       tbody tr.run-row.active td {
