@@ -1773,20 +1773,26 @@ func (v *portalRunsView) filterPortalLogByRunID(text string, runID string) strin
 // read via readPortalTextFile) or by the live attach stream coming off
 // the still-connectable batch.sock (read via readPortalSocketOutput).
 //
-// Policy:
+// Policy (issue #1730):
 //   - No active batch matched (active == nil) → saved log.
 //   - Active row (runState is non-terminal, i.e. IsActive() true) →
-//     live wins if non-empty, else saved.
-//   - Terminal review or auto-select row (active != nil AND the state
-//     carries review/auto-select) → live wins if non-empty, else saved.
-//     These rows stay kind=active because their daemon is still
-//     serving them (see the post-helper promotion at lines 1490-1492).
-//   - Terminal kind=completed row (any other terminal state with an
-//     active batch) → saved log wins, even when the batch daemon
-//     socket is still connectable. The Saved Run Log is the
-//     authoritative record of a finished AgentRun per CONTEXT.md; the
-//     socket may now be broadcasting a different run's content
-//     (issue #1637).
+//     live wins if non-empty, else saved. The socket is the source of
+//     truth while the run is still in flight.
+//   - Terminal row (runState.Finished != nil, i.e. !IsActive()) →
+//     saved log wins, even when the batch daemon socket is still
+//     connectable. The Saved Run Log is the authoritative record of
+//     a finished AgentRun per CONTEXT.md; the socket may now be
+//     broadcasting a different run's content (issue #1637) and is
+//     also capped at portalReadLimit (64 KiB), so the trailing
+//     verdict line of a long review would otherwise be silently
+//     dropped (issue #1730). This applies uniformly to review,
+//     auto-select, and issue flavours. The kind=active promotion of
+//     terminal review rows at lines 1593-1595 is orthogonal — it
+//     affects the table-cell chip, not the Log tab content.
+//   - Degraded fallback: a terminal row whose saved log is empty
+//     falls back to the live socket output so the Log tab still
+//     shows something meaningful when the log file has not yet been
+//     flushed.
 //
 // `loadSaved` lazily reads the per-run run.log; the helper only invokes
 // it on the saved-wins path so the live-wins branch avoids a needless
@@ -1804,13 +1810,10 @@ func (v *portalRunsView) resolveRunLog(loadSaved func() string, runState events.
 		}
 		return loadSaved()
 	}
-	if runState.IsReview() || runState.IsAutoSelect() {
-		if live := strings.TrimSpace(stripLogLabels(active.LiveOutput)); live != "" {
-			return live
-		}
-		return loadSaved()
+	if saved := loadSaved(); saved != "" {
+		return saved
 	}
-	return loadSaved()
+	return strings.TrimSpace(stripLogLabels(active.LiveOutput))
 }
 
 func (v *portalRunsView) portalBlockedMessage(payload map[string]any) string {

@@ -1091,6 +1091,18 @@ func TestPortal_RunFromActiveBatchIssue_PopulatesIssueTitleForBlocked(t *testing
 	}
 }
 
+// TestPortal_RunFromActiveBatchIssue_ActiveReviewPrefersLiveOutput
+// was the regression test for the slice-2 carve-out under the old
+// (buggy) contract: it fed a TERMINAL review state
+// (runState.Finished != nil) and asserted that the live socket tail
+// won, on the basis that terminal review rows are "promoted to
+// kind=active downstream". Issue #1730 flipped the precedence: the
+// saved run.log is authoritative for any terminal row. The body of
+// this test was rewritten in place to assert the corrected contract —
+// the live socket is now ignored for terminal rows, the saved log
+// wins, and the kind=active promotion (lines 1593-1595) keeps the
+// table-cell chip on the active flavour. The test is preserved
+// (refactored, not deleted) per the repo rule.
 func TestPortal_RunFromActiveBatchIssue_ActiveReviewPrefersLiveOutput(t *testing.T) {
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
@@ -1163,8 +1175,11 @@ func TestPortal_RunFromActiveBatchIssue_ActiveReviewPrefersLiveOutput(t *testing
 	if run.Status != "success" {
 		t.Fatalf("expected terminal status preserved (statusOrDefault returns non-empty status even with active socket), got %q", run.Status)
 	}
-	if !strings.Contains(run.Log, "live review line") {
-		t.Fatalf("expected live review output to win, got %q", run.Log)
+	if !strings.Contains(run.Log, "saved review log") {
+		t.Fatalf("expected saved review log to win for terminal review row, got %q (issue #1730)", run.Log)
+	}
+	if strings.Contains(run.Log, "live review line") {
+		t.Fatalf("expected live socket tail to be ignored for terminal review row, got %q (issue #1730)", run.Log)
 	}
 }
 
@@ -3011,13 +3026,17 @@ func TestPortal_ResolveRunLog_SavedWinsForTerminalIssueRow(t *testing.T) {
 	}
 }
 
-// TestPortal_ResolveRunLog_LiveWinsForTerminalReview pins the slice-2
-// carve-out: terminal review rows (status=success, runState.IsReview()
-// true) on a still-alive socket still receive live output, because
-// those rows are promoted to kind=active downstream (runFromState
-// lines 1490-1492). This matches
-// TestPortal_RunFromActiveBatchIssue_ActiveReviewPrefersLiveOutput's
-// invariant: a terminal review row on a live socket stays live.
+// TestPortal_ResolveRunLog_LiveWinsForTerminalReview pinned the
+// slice-2 carve-out under the old (buggy) contract: terminal review
+// rows on a still-alive socket received live output. Issue #1730
+// flipped the precedence: the saved run.log is authoritative for any
+// terminal row (Finished != nil), regardless of review/auto-select
+// flavour or whether the batch daemon socket is still connectable.
+// See TestPortal_ResolveRunLog_TerminalReviewPrefersSavedLog below for
+// the corrected contract. The body of this test was rewritten in
+// place to assert the corrected precedence rather than deleted, per
+// the repo's "tests are preserved — only extended, fixed, or
+// refactored" rule.
 func TestPortal_ResolveRunLog_LiveWinsForTerminalReview(t *testing.T) {
 	startedAt := time.Now().Add(-5 * time.Minute)
 	finishedAt := startedAt.Add(2 * time.Minute)
@@ -3051,9 +3070,213 @@ func TestPortal_ResolveRunLog_LiveWinsForTerminalReview(t *testing.T) {
 	savedLog := "12:34:00 saved review line\n"
 
 	got := (&portalRunsView{}).resolveRunLog(func() string { return savedLog }, runState, active)
+	if got != savedLog {
+		t.Fatalf("resolveRunLog for terminal review = %q, want saved %q (issue #1730: saved log is authoritative for terminal rows)", got, savedLog)
+	}
+}
+
+// TestPortal_ResolveRunLog_TerminalReviewPrefersSavedLog pins the
+// issue #1730 contract for portalRunsView.resolveRunLog: a terminal
+// review row (runState.Finished != nil, IsReview() == true) returns
+// the saved log verbatim, NOT the live socket output, even when the
+// batch daemon socket is still connectable. The saved log is the
+// authoritative record per CONTEXT.md; the live socket may now be
+// broadcasting a sibling run's tail (issue #1637). Acceptance criterion:
+// a 107 KiB run.log whose socket is still connectable must surface the
+// full ~707-line file including the trailing `**Decision:
+// CHANGES_REQUESTED**` line, not the trailing 64 KiB socket slice.
+func TestPortal_ResolveRunLog_TerminalReviewPrefersSavedLog(t *testing.T) {
+	startedAt := time.Now().Add(-15 * time.Minute)
+	finishedAt := startedAt.Add(13 * time.Minute)
+	runState := events.RunState{
+		RunID: "556c-260703135044-1719-PR1726",
+		Started: events.Event{
+			Timestamp: startedAt,
+			Payload: map[string]any{
+				"branch":    "sandman/review-pr-1726",
+				"review":    true,
+				"pr_number": 1726,
+			},
+		},
+		Finished: &events.Event{
+			Type:      "run.finished",
+			Timestamp: finishedAt,
+			Payload: map[string]any{
+				"status":    "success",
+				"branch":    "sandman/review-pr-1726",
+				"review":    true,
+				"pr_number": 1726,
+			},
+		},
+	}
+	// The live socket still has the trailing 64 KiB slice of the
+	// review's stream (per portalReadLimit). It is non-empty here on
+	// purpose, mirroring the bug scenario where the socket has not
+	// been recycled.
+	active := &portalActiveRun{
+		Key:        "556c-260703135044",
+		BatchID:    "556c-260703135044",
+		RunID:      "556c-260703135044-1719-PR1726",
+		LiveOutput: "[556c-260703135044-1719-PR1726] 13:52:00 socket tail line\n",
+	}
+	// The saved log is the full 707-line record, including the
+	// trailing `**Decision: CHANGES_REQUESTED**` line at 13:52:15.
+	savedLog := "[556c-260703135044-1719-PR1726] 12:00:00 first saved line\n" +
+		"[556c-260703135044-1719-PR1726] 13:52:10 final saved line\n" +
+		"**Decision: CHANGES_REQUESTED**\n"
+
+	got := (&portalRunsView{}).resolveRunLog(func() string { return savedLog }, runState, active)
+	if got != savedLog {
+		t.Fatalf("resolveRunLog for terminal review = %q, want full saved log (issue #1730)", got)
+	}
+	if !strings.Contains(got, "**Decision: CHANGES_REQUESTED**") {
+		t.Fatalf("resolveRunLog for terminal review must surface trailing verdict line, got %q", got)
+	}
+}
+
+// TestPortal_ResolveRunLog_TerminalAutoSelectPrefersSavedLog pins the
+// issue #1730 contract for the auto-select flavour: a terminal
+// auto-select row (runState.Finished != nil, IsAutoSelect() == true)
+// returns the saved log verbatim, NOT the live socket output. Mirrors
+// TestPortal_ResolveRunLog_TerminalReviewPrefersSavedLog for the
+// run_kind=auto-select branch.
+func TestPortal_ResolveRunLog_TerminalAutoSelectPrefersSavedLog(t *testing.T) {
+	startedAt := time.Now().Add(-10 * time.Minute)
+	finishedAt := startedAt.Add(8 * time.Minute)
+	runState := events.RunState{
+		RunID: "abcd-260703135044-1719-auto",
+		Started: events.Event{
+			Timestamp: startedAt,
+			Payload: map[string]any{
+				"branch":   "sandman/auto-1719",
+				"run_kind": "auto-select",
+			},
+		},
+		Finished: &events.Event{
+			Type:      "run.finished",
+			Timestamp: finishedAt,
+			Payload: map[string]any{
+				"status":   "success",
+				"branch":   "sandman/auto-1719",
+				"run_kind": "auto-select",
+			},
+		},
+	}
+	active := &portalActiveRun{
+		Key:        "abcd-260703135044",
+		BatchID:    "abcd-260703135044",
+		RunID:      "abcd-260703135044-1719-auto",
+		LiveOutput: "[abcd-260703135044-1719-auto] 13:00:00 socket tail line\n",
+	}
+	savedLog := "[abcd-260703135044-1719-auto] 12:30:00 saved line\n" +
+		"[abcd-260703135044-1719-auto] 13:00:10 final saved line\n"
+
+	got := (&portalRunsView{}).resolveRunLog(func() string { return savedLog }, runState, active)
+	if got != savedLog {
+		t.Fatalf("resolveRunLog for terminal auto-select = %q, want full saved log (issue #1730)", got)
+	}
+}
+
+// TestPortal_ResolveRunLog_ActiveReviewPrefersLive pins the streaming
+// contract for non-terminal review rows: an active review row
+// (runState.Finished == nil) with a non-empty live socket returns the
+// live output, NOT the saved log. Issue #1730 must not regress the
+// active path. Mirrors TestPortal_ResolveRunLog_PrefersLiveForNonTerminal
+// but with a review payload.
+func TestPortal_ResolveRunLog_ActiveReviewPrefersLive(t *testing.T) {
+	startedAt := time.Now().Add(-1 * time.Minute)
+	runState := events.RunState{
+		RunID: "abcd-260618113825-active-review",
+		Started: events.Event{
+			Timestamp: startedAt,
+			Payload: map[string]any{
+				"review":    true,
+				"pr_number": 99,
+			},
+		},
+	}
+	active := &portalActiveRun{
+		Key:        "abcd-260618113825-active-review",
+		LiveOutput: "[abcd-260618113825-active-review] 12:00:00 live review line\n",
+	}
+	savedLog := "12:00:00 saved review line\n"
+
+	got := (&portalRunsView{}).resolveRunLog(func() string { return savedLog }, runState, active)
 	wantLive := strings.TrimSpace(stripLogLabels(active.LiveOutput))
 	if got != wantLive {
-		t.Fatalf("resolveRunLog for terminal review = %q, want live %q (review rows on live sockets stay live)", got, wantLive)
+		t.Fatalf("resolveRunLog for active review = %q, want stripped live output %q (issue #1730 must preserve active streaming)", got, wantLive)
+	}
+}
+
+// TestPortal_ResolveRunLog_ActiveAutoSelectPrefersLive pins the
+// streaming contract for non-terminal auto-select rows: an active
+// auto-select row (runState.Finished == nil) with a non-empty live
+// socket returns the live output. Mirrors the active-review case for
+// the run_kind=auto-select branch.
+func TestPortal_ResolveRunLog_ActiveAutoSelectPrefersLive(t *testing.T) {
+	startedAt := time.Now().Add(-1 * time.Minute)
+	runState := events.RunState{
+		RunID: "abcd-260618113825-active-auto",
+		Started: events.Event{
+			Timestamp: startedAt,
+			Payload: map[string]any{
+				"run_kind": "auto-select",
+			},
+		},
+	}
+	active := &portalActiveRun{
+		Key:        "abcd-260618113825-active-auto",
+		LiveOutput: "[abcd-260618113825-active-auto] 12:00:00 live auto-select line\n",
+	}
+	savedLog := "12:00:00 saved auto-select line\n"
+
+	got := (&portalRunsView{}).resolveRunLog(func() string { return savedLog }, runState, active)
+	wantLive := strings.TrimSpace(stripLogLabels(active.LiveOutput))
+	if got != wantLive {
+		t.Fatalf("resolveRunLog for active auto-select = %q, want stripped live output %q (issue #1730 must preserve active streaming)", got, wantLive)
+	}
+}
+
+// TestPortal_ResolveRunLog_TerminalReviewEmptySavedFallsBackToLive
+// pins the issue #1730 fallback: a terminal review row whose saved
+// log is empty (e.g. log file not yet flushed to disk) falls back to
+// the live socket output rather than rendering a blank Log tab. This
+// preserves the "show something meaningful" invariant the active path
+// already has. Without it, a terminal review with a missing log file
+// would surface nothing.
+func TestPortal_ResolveRunLog_TerminalReviewEmptySavedFallsBackToLive(t *testing.T) {
+	startedAt := time.Now().Add(-5 * time.Minute)
+	finishedAt := startedAt.Add(2 * time.Minute)
+	runState := events.RunState{
+		RunID: "abcd-260618113825-review-empty-saved",
+		Started: events.Event{
+			Timestamp: startedAt,
+			Payload: map[string]any{
+				"review":    true,
+				"pr_number": 99,
+			},
+		},
+		Finished: &events.Event{
+			Type:      "run.finished",
+			Timestamp: finishedAt,
+			Payload: map[string]any{
+				"status":    "success",
+				"review":    true,
+				"pr_number": 99,
+			},
+		},
+	}
+	active := &portalActiveRun{
+		Key:        "abcd-260618113825",
+		BatchID:    "abcd-260618113825",
+		RunID:      "abcd-260618113825-review-empty-saved",
+		LiveOutput: "12:34:56 review live line\n",
+	}
+
+	got := (&portalRunsView{}).resolveRunLog(func() string { return "" }, runState, active)
+	wantLive := strings.TrimSpace(stripLogLabels(active.LiveOutput))
+	if got != wantLive {
+		t.Fatalf("resolveRunLog for terminal review with empty saved = %q, want live %q (degraded fallback)", got, wantLive)
 	}
 }
 
