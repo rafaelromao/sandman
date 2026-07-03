@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -16,6 +17,9 @@ import (
 )
 
 func TestRun_AutoFlag_EmitsAutoSelectEventsForAgentDrivenPath(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("test name length plus the daemon control-socket bind path exceeds macOS sun_path")
+	}
 	sandmanDir := t.TempDir()
 	t.Chdir(sandmanDir)
 	if err := os.MkdirAll(".sandman", 0o755); err != nil {
@@ -87,6 +91,9 @@ func TestRun_AutoFlag_EmitsAutoSelectEventsForAgentDrivenPath(t *testing.T) {
 }
 
 func TestRun_AutoFlag_AgentFailurePropagatesErrorAndEmitsFailureFinished(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("test name length plus the daemon control-socket bind path exceeds macOS sun_path")
+	}
 	sandmanDir := t.TempDir()
 	t.Chdir(sandmanDir)
 	if err := os.MkdirAll(".sandman", 0o755); err != nil {
@@ -475,6 +482,9 @@ exit 0
 }
 
 func TestRun_AutoFlag_NonPRDPassthroughUntouched(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("test name length plus the daemon control-socket bind path exceeds macOS sun_path")
+	}
 	regular42 := &github.Issue{Number: 42, State: "open", Title: "Issue 42", Body: "## What\n\nJust a regular issue."}
 	regular43 := &github.Issue{Number: 43, State: "open", Title: "Issue 43", Body: "## What\n\nJust a regular issue."}
 
@@ -571,6 +581,9 @@ exit 0
 }
 
 func TestRun_AutoFlag_QueryFilterExpandsPRD(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("test name length plus the daemon control-socket bind path exceeds macOS sun_path")
+	}
 	prdBody := "## Problem Statement\n\nP.\n\n## Solution\n\nS.\n\n## User Stories\n\n1. U.\n\n## Child Issues\n\n- #10\n"
 	childBody := "## Parent\n\n#1\n\n## What\n\n"
 	regularBody := "## What\n\nA regular open issue.\n"

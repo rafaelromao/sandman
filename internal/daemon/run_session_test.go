@@ -210,6 +210,9 @@ func TestRunSession_Prepare_PropagatesControlSocketError(t *testing.T) {
 // teardown: calling Close stops the control socket, preserves the directory,
 // and is safe to call a second time.
 func TestRunSession_Close_StopsControlSocketButKeepsDirectory(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Unix socket bind path exceeds macOS sun_path")
+	}
 	dir := t.TempDir()
 	rs := NewRunSession(dir, "closing-run-1")
 
@@ -276,6 +279,9 @@ func (*nilCommander) AbortIssue(int) error { return nil }
 // appends an entry to batches.json with the expected id, kind, status,
 // issues, and pr fields.
 func TestRunSession_Prepare_AppendsToBatchesIndex(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Unix socket bind path exceeds macOS sun_path")
+	}
 	dir := t.TempDir()
 	rs := NewRunSession(dir, "index-test-run-1")
 	t.Cleanup(func() { _ = rs.Close() })
@@ -356,6 +362,9 @@ func TestRunSession_IdxAddOnlyCalledFromPrepare(t *testing.T) {
 // (e.g. `var c IssueCommander = (*nilCommander)(nil)`) must NOT
 // trigger the run.sock step, because calling its method would panic.
 func TestRunSession_Prepare_TypedNilCommanderIsTreatedAsNil(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Unix socket bind path exceeds macOS sun_path")
+	}
 	dir := t.TempDir()
 	rs := NewRunSession(dir, "typed-nil-run-1")
 	t.Cleanup(func() { _ = rs.Close() })
