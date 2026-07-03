@@ -12,7 +12,7 @@ sandman init [flags]
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--build-tools` | `""` | Build tools preset (`generic`, `dotnet`, `go`, `node`, `python`, `rust`, `elixir`, `ruby`) |
+| `--build-tools` | `""` | Build tools preset (`generic`, `dotnet`, `go`, `node`, `python`, `rust`, `elixir`, `ruby`, `java`) |
 | `--tool-version` | `""` | Version selector (`latest`, `lts`, `repo`, or semver shorthand) |
 | `--agent` | `""` | Default built-in agent preset for `init` (`opencode`) |
 | `--model` | `""` | Default model for the agent |
