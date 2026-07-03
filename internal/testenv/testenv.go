@@ -1,8 +1,10 @@
 // Package testenv provides shared helpers for parsing the env vars that
-// gate sandman test suites. It is consumed by smoke tests, prflow e2e
-// tests, and the batch orchestrator end-to-end test to decide which
-// providers and scenarios should run, and to parameterize the model
-// each agent-driven test targets.
+// gate sandman test suites, plus filesystem helpers that keep Unix-socket
+// tests portable across Linux and macOS. It is consumed by smoke tests,
+// prflow e2e tests, and the batch orchestrator end-to-end test to decide
+// which providers and scenarios should run, to parameterize the model
+// each agent-driven test targets, and to bind Unix sockets at short
+// paths that fit the macOS sun_path limit.
 //
 // Canonical env vars:
 //
@@ -20,6 +22,10 @@
 // When the gate vars are unset, helpers return the skip-friendly default
 // (nil allowlist / false gate) and tests skip themselves. The model
 // override is a pure value substitution with no skip semantics.
+//
+// MkdirShort is the filesystem helper. Use it in any test that binds a
+// Unix domain socket, in place of t.TempDir(); see its doc comment for
+// the macOS sun_path rationale.
 package testenv
 
 import (

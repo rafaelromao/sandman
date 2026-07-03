@@ -21,10 +21,15 @@ type fakeCommander struct {
 	mu         sync.Mutex
 }
 
-func skipIfNotCommandServerSupported(t *testing.T) {
+// skipIfNotAbstractSocketSupported skips tests that exercise the
+// CommandServer's abstract-socket fallback, which is a Linux-only
+// kernel extension. The skip survives from the #1736 migration
+// because the abstract-socket fallback path itself (not the
+// underlying CommandServer) cannot run on macOS.
+func skipIfNotAbstractSocketSupported(t *testing.T) {
 	t.Helper()
 	if runtime.GOOS != "linux" {
-		t.Skip("CommandServer uses Linux-only socket namespaces; tracked by #1736")
+		t.Skip("Abstract unix socket fallback is a Linux-only kernel extension; tracked by #1736")
 	}
 }
 
@@ -58,7 +63,7 @@ func longCommandSocketDir(t *testing.T) string {
 }
 
 func TestCommandServer_StartFallsBackToAbstractSocketForLongPaths(t *testing.T) {
-	skipIfNotCommandServerSupported(t)
+	skipIfNotAbstractSocketSupported(t)
 	dir := longCommandSocketDir(t)
 	stub := &fakeCommander{}
 	server := NewCommandServer(dir, stub)
@@ -95,7 +100,7 @@ func TestCommandServer_StartFallsBackToAbstractSocketForLongPaths(t *testing.T) 
 }
 
 func TestCommandServer_StopLeavesFilesystemAloneForAbstractSocket(t *testing.T) {
-	skipIfNotCommandServerSupported(t)
+	skipIfNotAbstractSocketSupported(t)
 	dir := longCommandSocketDir(t)
 	server := NewCommandServer(dir, &fakeCommander{})
 	if err := server.Start(); err != nil {
