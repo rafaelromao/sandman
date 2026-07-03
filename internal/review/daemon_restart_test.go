@@ -28,6 +28,7 @@ import (
 // The fix: rehydrate `pendingReviews` from on-disk `review-state.json`
 // at construction time, mirroring the existing seen-cache hydration.
 func TestDaemon_RestartRecoversPendingFromDisk(t *testing.T) {
+	skipIfNotAsyncLaunchSupported(t)
 	const (
 		prNumber  = 17
 		commentID = "pending-on-disk"

@@ -86,6 +86,7 @@ func TestDaemon_ReviewsDirContainsOnlySocketAndPrompt(t *testing.T) {
 // recorded with a terminal status. This is acceptance criterion #3
 // ("review-state.json lives at <batch>/runs/<run>/review-state.json").
 func TestDaemon_ProcessPRWritesReviewStateToRunFolder(t *testing.T) {
+	skipIfNotAsyncLaunchSupported(t)
 	now := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
 	gh := &fakeGH{
 		prs: []github.PR{{Number: 9, State: "open"}},
@@ -179,6 +180,7 @@ func TestDaemon_ProcessPRDoesNotCreatePerPRDirectory(t *testing.T) {
 // .sandman/reviews/review-prompt.md exists. This is acceptance criterion
 // #2 (".sandman/reviews/ contains only review.sock and review-prompt.md").
 func TestDaemon_SharedReviewPromptFileExists(t *testing.T) {
+	skipIfNotAsyncLaunchSupported(t)
 	now := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
 	gh := &fakeGH{
 		prs: []github.PR{{Number: 5, State: "open"}},
@@ -289,6 +291,7 @@ var _ = prompt.Engine{}
 // running, skipping") without calling processPR. So concurrent ticks
 // result in only one RunBatch call.
 func TestDaemon_ConcurrentTickOnlyLaunchesOnce(t *testing.T) {
+	skipIfNotAsyncLaunchSupported(t)
 	now := time.Date(2026, 6, 29, 12, 0, 0, 0, time.UTC)
 	gh := &fakeGH{
 		prs: []github.PR{{Number: 1, State: "open"}},
@@ -354,6 +357,7 @@ func TestDaemon_ConcurrentTickOnlyLaunchesOnce(t *testing.T) {
 // fails before review-state.json is written, the claim is released and the
 // next tick retries the same comment.
 func TestDaemon_FailedLaunchRetriesNextTick(t *testing.T) {
+	skipIfNotAsyncLaunchSupported(t)
 	now := time.Date(2026, 6, 29, 12, 0, 0, 0, time.UTC)
 	gh := &fakeGH{
 		prs: []github.PR{{Number: 1, State: "open"}},
