@@ -1169,6 +1169,13 @@ func (v *portalRunsView) stateStartsInBatch(timestamp, batchStart time.Time) boo
 
 func (v *portalRunsView) runFromActiveBatchIssue(repoRoot string, active portalActiveRun, issueNumber int, state *events.RunState, blocked *events.Event, queued *events.Event, liveOutput string, eventsByRun map[string][]portalEvent, deadBatches []daemon.DeadBatch) portalRun {
 	issueLabel := fmt.Sprintf("#%d", issueNumber)
+	// active.Dir is the live batch directory on disk (with the "+N"
+	// suffix for multi-issue batches); active.BatchID is the index
+	// entry id (per-row RunID for the first issue, per ADR-0036) which
+	// does NOT match the on-disk directory name. Resolve LogPath via
+	// active.Dir so the staleness stat hits the real per-row log file
+	// even in the state-less path (issue #1715).
+	logPath, logURL := v.activeRunLogPathAndURL(repoRoot, active)
 	run := portalRun{
 		Key:         fmt.Sprintf("%s-issue-%d", activeKeyForActive(active), issueNumber),
 		Kind:        "active",
@@ -1177,8 +1184,8 @@ func (v *portalRunsView) runFromActiveBatchIssue(repoRoot string, active portalA
 		IssueNumber: issueNumber,
 		StartedAt:   active.StartedAt,
 		SocketPath:  active.SocketPath,
-		LogPath:     v.portalLogPathForRun(repoRoot, runLocator{batchID: active.BatchID, runID: active.RunID}),
-		LogURL:      v.portalLogDownloadURLForRun(repoRoot, runLocator{batchID: active.BatchID, runID: active.RunID}),
+		LogPath:     logPath,
+		LogURL:      logURL,
 		Log:         "Queued. Waiting to start.",
 		BatchKey:    batchKeyForActive(active),
 	}
@@ -1353,7 +1360,11 @@ func (v *portalRunsView) runFromActiveMatch(repoRoot string, match portalRunMatc
 		review = true
 	}
 	locator := runLocator{batchID: match.instance.BatchID, runID: match.instance.RunID}
-	logPath := v.portalLogPathForRun(repoRoot, locator)
+	logPath, logURL := v.activeRunLogPathAndURL(repoRoot, match.instance)
+	if logPath == "" {
+		logPath = v.portalLogPathForRun(repoRoot, locator)
+		logURL = v.portalLogDownloadURLForRun(repoRoot, locator)
+	}
 	eventKey := match.instance.Key
 	if match.instance.RunID != "" {
 		eventKey = match.instance.RunID
@@ -1380,7 +1391,7 @@ func (v *portalRunsView) runFromActiveMatch(repoRoot string, match portalRunMatc
 		Duration:    time.Since(startedAt).Round(time.Second).String(),
 		SocketPath:  match.instance.SocketPath,
 		LogPath:     logPath,
-		LogURL:      v.portalLogDownloadURLForRun(repoRoot, locator),
+		LogURL:      logURL,
 		Log:         stripLogLabels(match.instance.LiveOutput),
 		Events:      eventsByRun[eventKey],
 		BatchKey:    batchKeyForActive(match.instance),
@@ -2094,6 +2105,25 @@ func (v *portalRunsView) portalLogDownloadURLForRun(repoRoot string, locator run
 		return ""
 	}
 	return v.portalLogDownloadURLForPath(repoRoot, logPath)
+}
+
+// activeRunLogPathAndURL resolves the per-row log path directly from
+// active.Dir (the live batch directory on disk, with "+N" suffix for
+// multi-issue batches) instead of routing through Layout.RunFolder.
+// The state-less active-row path (runFromActiveBatchIssue initial
+// values, runFromActiveMatch prompt-only branch) cannot rely on
+// active.BatchID for the locator because that id matches the per-row
+// RunID for the first issue per ADR-0036 and therefore does not match
+// the on-disk directory name. Falling back to Layout.RunFolder with
+// active.BatchID would make the staleness stat miss the per-row log
+// file and surface a stale chip equal to the run duration (issue #1715).
+func (v *portalRunsView) activeRunLogPathAndURL(repoRoot string, active portalActiveRun) (string, string) {
+	if active.Dir == "" || active.RunID == "" {
+		return "", ""
+	}
+	logPath := filepath.Join(active.Dir, "runs", active.RunID, "run.log")
+	logURL := v.portalLogDownloadURLForPath(repoRoot, logPath)
+	return logPath, logURL
 }
 
 // portalLogDownloadURLForPath turns any sandman-relative log file path into

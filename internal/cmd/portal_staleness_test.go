@@ -282,6 +282,56 @@ func TestPortal_DiscoverActiveRuns_IssueMultiBatch_RunIDIsPerRow(t *testing.T) {
 	}
 }
 
+// TestPortal_RunFromActiveBatchIssue_StateLessMultiBatch_LogPathFromActiveDir
+// pins the state-less path of runFromActiveBatchIssue. When the active
+// instance has a live socket but no matching RunState yet (pre-run.started
+// window), the function must resolve LogPath via active.Dir (the on-disk
+// dir with "+N" suffix) — not via Layout.RunFolder(active.BatchID,
+// active.RunID), which would produce a non-existent path and break the
+// staleness stat for state-less active rows (issue #1715).
+func TestPortal_RunFromActiveBatchIssue_StateLessMultiBatch_LogPathFromActiveDir(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	const perRowRunID = "fde2-260703095305-1704"
+	const onDiskDir = "fde2-260703095305-1699+6"
+	const indexEntryID = "fde2-260703095305-1699"
+
+	batchDir := filepath.Join(repoRoot, ".sandman", "batches", onDiskDir)
+	logPath := filepath.Join(batchDir, "runs", perRowRunID, "run.log")
+	if err := os.MkdirAll(filepath.Dir(logPath), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(logPath, []byte("output\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	active := portalActiveRun{
+		Key:        indexEntryID,
+		Dir:        batchDir,
+		SocketPath: filepath.Join(batchDir, "batch.sock"),
+		BatchID:    indexEntryID,
+		RunID:      perRowRunID,
+	}
+
+	// state == nil, blocked == nil, queued == nil: the state-less path
+	// through runFromActiveBatchIssue.
+	run := (&portalRunsView{}).runFromActiveBatchIssue(repoRoot, active, 1704, nil, nil, nil, "", nil, nil)
+
+	if run.LogPath != logPath {
+		t.Fatalf("LogPath=%q, want %q (state-less path must resolve via active.Dir, not active.BatchID)", run.LogPath, logPath)
+	}
+	at := (&portalRunsView{}).lastOutputAt(run)
+	if at.IsZero() {
+		t.Fatal("lastOutputAt is zero; want per-row log mtime")
+	}
+	if at.Equal(run.StartedAt) {
+		t.Fatalf("lastOutputAt=%v equals StartedAt; the state-less path would render a stale chip equal to the run duration (issue #1715)", at)
+	}
+}
+
 // TestPortal_Compute_LeavesLastOutputAtNilForCompletedRows ensures the
 // staleness field is omitted for terminal rows so the JSON contract only
 // carries it for runs that can actually be stale.
