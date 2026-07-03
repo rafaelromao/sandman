@@ -3541,6 +3541,9 @@ func TestRunBatch_NegativeParallelRejected(t *testing.T) {
 }
 
 func TestRunBatch_WaitsForBlockersBeforeStartingDependents(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("CommandServer uses Unix socket path conventions; tracked by #1720")
+	}
 	dir := t.TempDir()
 	t.Chdir(dir)
 	initGitRepo(t, dir)
@@ -3747,6 +3750,9 @@ func TestRunBatch_SkipsIssuesBlockedByOpenExternalBlockers(t *testing.T) {
 }
 
 func TestRunBatch_InBatchBlockerSuccessKeepsDependentBlockedWhenIssueOpen(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("CommandServer uses Unix socket path conventions; tracked by #1720")
+	}
 	dir := t.TempDir()
 	t.Chdir(dir)
 	initGitRepo(t, dir)
