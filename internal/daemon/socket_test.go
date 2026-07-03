@@ -4,20 +4,13 @@ import (
 	"net"
 	"os"
 	"path/filepath"
-	"runtime"
 	"testing"
+
+	"github.com/rafaelromao/sandman/internal/testenv"
 )
 
-func skipIfNotControlSocketSupported(t *testing.T) {
-	t.Helper()
-	if runtime.GOOS != "linux" {
-		t.Skip("ControlSocket uses Linux-only socket namespaces; tracked by #1720")
-	}
-}
-
 func TestControlSocket_StartCreatesSocket(t *testing.T) {
-	skipIfNotControlSocketSupported(t)
-	dir := t.TempDir()
+	dir := testenv.MkdirShort(t, "sm-sock-")
 	sock := NewControlSocket(dir, NewBroadcaster())
 
 	if err := sock.Start(); err != nil {
@@ -33,8 +26,7 @@ func TestControlSocket_StartCreatesSocket(t *testing.T) {
 }
 
 func TestControlSocket_StartSetsSocketMode0600(t *testing.T) {
-	skipIfNotControlSocketSupported(t)
-	dir := t.TempDir()
+	dir := testenv.MkdirShort(t, "sm-sock-")
 	sock := NewControlSocket(dir, NewBroadcaster())
 
 	if err := sock.Start(); err != nil {
@@ -52,8 +44,7 @@ func TestControlSocket_StartSetsSocketMode0600(t *testing.T) {
 }
 
 func TestControlSocket_StartSetsRunDirMode0700(t *testing.T) {
-	skipIfNotControlSocketSupported(t)
-	dir := t.TempDir()
+	dir := testenv.MkdirShort(t, "sm-sock-")
 	sock := NewControlSocket(dir, NewBroadcaster())
 
 	if err := sock.Start(); err != nil {
@@ -71,8 +62,7 @@ func TestControlSocket_StartSetsRunDirMode0700(t *testing.T) {
 }
 
 func TestControlSocket_CustomFilename(t *testing.T) {
-	skipIfNotControlSocketSupported(t)
-	dir := t.TempDir()
+	dir := testenv.MkdirShort(t, "sm-sock-")
 	sock := NewControlSocketWithName(dir, "review.sock", NewBroadcaster())
 
 	if err := sock.Start(); err != nil {
@@ -92,8 +82,7 @@ func TestControlSocket_CustomFilename(t *testing.T) {
 }
 
 func TestControlSocket_StartWithCustomNameSetsSocketMode0600(t *testing.T) {
-	skipIfNotControlSocketSupported(t)
-	dir := t.TempDir()
+	dir := testenv.MkdirShort(t, "sm-sock-")
 	sock := NewControlSocketWithName(dir, "review.sock", NewBroadcaster())
 
 	if err := sock.Start(); err != nil {
@@ -111,8 +100,7 @@ func TestControlSocket_StartWithCustomNameSetsSocketMode0600(t *testing.T) {
 }
 
 func TestControlSocket_StopsAcceptingAfterClose(t *testing.T) {
-	skipIfNotControlSocketSupported(t)
-	dir := t.TempDir()
+	dir := testenv.MkdirShort(t, "sm-sock-")
 	sock := NewControlSocket(dir, NewBroadcaster())
 
 	if err := sock.Start(); err != nil {
@@ -130,8 +118,7 @@ func TestControlSocket_StopsAcceptingAfterClose(t *testing.T) {
 }
 
 func TestControlSocket_Stop_RemovesSocketFile(t *testing.T) {
-	skipIfNotControlSocketSupported(t)
-	dir := t.TempDir()
+	dir := testenv.MkdirShort(t, "sm-sock-")
 	sock := NewControlSocket(dir, NewBroadcaster())
 
 	if err := sock.Start(); err != nil {
@@ -153,8 +140,7 @@ func TestControlSocket_Stop_RemovesSocketFile(t *testing.T) {
 }
 
 func TestControlSocket_RemovesStaleSocketOnStart(t *testing.T) {
-	skipIfNotControlSocketSupported(t)
-	dir := t.TempDir()
+	dir := testenv.MkdirShort(t, "sm-sock-")
 	oldSock := NewControlSocket(dir, NewBroadcaster())
 	if err := oldSock.Start(); err != nil {
 		t.Fatal(err)
@@ -176,7 +162,7 @@ func TestControlSocket_RemovesStaleSocketOnStart(t *testing.T) {
 }
 
 func TestIsRunActive(t *testing.T) {
-	dir := t.TempDir()
+	dir := testenv.MkdirShort(t, "sm-sock-")
 	if IsRunActive(dir) {
 		t.Fatal("expected dir without sockets to be inactive")
 	}
@@ -198,8 +184,7 @@ func TestIsRunActive(t *testing.T) {
 }
 
 func TestIsRunActive_ProbesPerRunSocket(t *testing.T) {
-	skipIfNotControlSocketSupported(t)
-	dir := t.TempDir()
+	dir := testenv.MkdirShort(t, "sm-sock-")
 	runSockDir := filepath.Join(dir, "runs", "run-1")
 	if err := os.MkdirAll(runSockDir, 0755); err != nil {
 		t.Fatal(err)
@@ -216,8 +201,7 @@ func TestIsRunActive_ProbesPerRunSocket(t *testing.T) {
 }
 
 func TestCleanupStaleRunSnapshots_RemovesOnlyInactive(t *testing.T) {
-	skipIfNotControlSocketSupported(t)
-	baseDir := t.TempDir()
+	baseDir := testenv.MkdirShort(t, "sm-sock-")
 	batchesDir := filepath.Join(baseDir, "batches")
 	if err := os.MkdirAll(batchesDir, 0755); err != nil {
 		t.Fatal(err)
@@ -286,7 +270,7 @@ func TestCleanupStaleRunSnapshots_RemovesOnlyInactive(t *testing.T) {
 }
 
 func TestCleanupStaleRunSnapshots_MissingRunsDir(t *testing.T) {
-	baseDir := t.TempDir()
+	baseDir := testenv.MkdirShort(t, "sm-sock-")
 	removed, err := CleanupStaleRunSnapshots(baseDir)
 	if err != nil {
 		t.Fatalf("CleanupStaleRunSnapshots: %v", err)
@@ -297,7 +281,7 @@ func TestCleanupStaleRunSnapshots_MissingRunsDir(t *testing.T) {
 }
 
 func TestFindDeadRunBatches_NoRunsDir(t *testing.T) {
-	baseDir := t.TempDir()
+	baseDir := testenv.MkdirShort(t, "sm-sock-")
 	batches, err := FindDeadRunBatches(baseDir)
 	if err != nil {
 		t.Fatalf("FindDeadRunBatches: %v", err)
@@ -308,8 +292,7 @@ func TestFindDeadRunBatches_NoRunsDir(t *testing.T) {
 }
 
 func TestFindDeadRunBatches_LiveSocketExcluded(t *testing.T) {
-	skipIfNotControlSocketSupported(t)
-	baseDir := t.TempDir()
+	baseDir := testenv.MkdirShort(t, "sm-sock-")
 	batchesDir := filepath.Join(baseDir, "batches")
 	if err := os.MkdirAll(batchesDir, 0755); err != nil {
 		t.Fatal(err)
@@ -343,8 +326,7 @@ func TestFindDeadRunBatches_LiveSocketExcluded(t *testing.T) {
 }
 
 func TestFindDeadRunBatches_DeadSocketIncluded(t *testing.T) {
-	skipIfNotControlSocketSupported(t)
-	baseDir := t.TempDir()
+	baseDir := testenv.MkdirShort(t, "sm-sock-")
 	batchesDir := filepath.Join(baseDir, "batches")
 	if err := os.MkdirAll(batchesDir, 0755); err != nil {
 		t.Fatal(err)
@@ -376,7 +358,7 @@ func TestFindDeadRunBatches_DeadSocketIncluded(t *testing.T) {
 }
 
 func TestFindDeadRunBatches_NoManifestFile(t *testing.T) {
-	baseDir := t.TempDir()
+	baseDir := testenv.MkdirShort(t, "sm-sock-")
 	batchesDir := filepath.Join(baseDir, "batches")
 	if err := os.MkdirAll(batchesDir, 0755); err != nil {
 		t.Fatal(err)
@@ -407,8 +389,7 @@ func TestFindDeadRunBatches_NoManifestFile(t *testing.T) {
 }
 
 func TestFindDeadRunBatches_MultipleDeadBatches(t *testing.T) {
-	skipIfNotControlSocketSupported(t)
-	baseDir := t.TempDir()
+	baseDir := testenv.MkdirShort(t, "sm-sock-")
 	batchesDir := filepath.Join(baseDir, "batches")
 	if err := os.MkdirAll(batchesDir, 0755); err != nil {
 		t.Fatal(err)
