@@ -9,10 +9,13 @@ import (
 )
 
 type fakePRLister struct {
-	mergedPRs []MergedSandmanPR
-	hasBadge  bool
-	mergedErr error
-	badgeErr  error
+	mergedPRs         []MergedSandmanPR
+	hasBadge          bool
+	mergedErr         error
+	badgeErr          error
+	controlFile       bool
+	controlErr        error
+	hasBadgeCallCount int
 }
 
 func (f *fakePRLister) ListMergedSandmanPRs(ctx context.Context) ([]MergedSandmanPR, error) {
@@ -29,10 +32,18 @@ func (f *fakePRLister) ListMergedSandmanPRs(ctx context.Context) ([]MergedSandma
 }
 
 func (f *fakePRLister) HasBadgePR(ctx context.Context) (bool, error) {
+	f.hasBadgeCallCount++
 	if f.badgeErr != nil {
 		return false, f.badgeErr
 	}
 	return f.hasBadge, nil
+}
+
+func (f *fakePRLister) HasBadgeControlFile(ctx context.Context) (bool, error) {
+	if f.controlErr != nil {
+		return false, f.controlErr
+	}
+	return f.controlFile, nil
 }
 
 func intToString(n int) string { return strconv.Itoa(n) }
@@ -262,6 +273,24 @@ func TestNewBadgeHookerWith_DoesNotSpawnWhenNoMergedSandmanPRs(t *testing.T) {
 
 	if fakeRunner.capturedPrompt != "" {
 		t.Errorf("expected no spawn when no merged sandman PRs exist, got prompt=%q", fakeRunner.capturedPrompt)
+	}
+}
+
+func TestMaybeSuggestBadge_ControlFilePresent_ShortCircuitsHasBadgePR(t *testing.T) {
+	fakeGh := &fakePRLister{
+		mergedPRs:   []MergedSandmanPR{{Number: 7, HeadRefName: "sandman/feat", Title: "Add feature"}},
+		controlFile: true,
+	}
+	fakeRunner := &fakeSandmanRunner{prURL: "https://github.com/owner/repo/pull/55"}
+	h := newDefaultBadgeHooker(fakeGh, fakeRunner, io.Discard)
+
+	h.MaybeSuggestBadge(context.Background(), []AgentRunResult{{Status: "success"}})
+
+	if fakeGh.hasBadgeCallCount != 0 {
+		t.Errorf("expected HasBadgePR NOT to be called when control file is present, got %d call(s)", fakeGh.hasBadgeCallCount)
+	}
+	if fakeRunner.capturedPrompt != "" {
+		t.Errorf("expected no spawn when control file is present, got prompt=%q", fakeRunner.capturedPrompt)
 	}
 }
 

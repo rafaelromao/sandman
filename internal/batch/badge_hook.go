@@ -3,10 +3,12 @@ package batch
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 
@@ -35,6 +37,7 @@ func (realGhCommander) runGh(ctx context.Context, args ...string) ([]byte, error
 type PRLister interface {
 	ListMergedSandmanPRs(ctx context.Context) ([]MergedSandmanPR, error)
 	HasBadgePR(ctx context.Context) (bool, error)
+	HasBadgeControlFile(ctx context.Context) (bool, error)
 }
 
 type MergedSandmanPR struct {
@@ -84,6 +87,37 @@ func (d *defaultPRLister) HasBadgePR(ctx context.Context) (bool, error) {
 		}
 	}
 	return false, nil
+}
+
+// badgeControlFileName is the stable filename of the empty control file
+// the badge sidecar writes at PR-creation time. The post-batch hook
+// short-circuits the expensive HasBadgePR check when this file exists.
+//
+// The file is intentionally empty — its mere existence is the signal.
+// It is gitignored and recreated automatically by the badge sidecar
+// on the first batch that successfully proposes the PR.
+const badgeControlFileName = ".built_with_sandman"
+
+// HasBadgeControlFile reports whether the local control file marking
+// "the badge PR has been proposed in this checkout" is present. It is
+// the fast path that lets the hook skip the expensive `gh pr list`
+// call on every batch. Stat errors other than IsNotExist are swallowed
+// and reported as "absent" so a transient filesystem hiccup never
+// blocks the fallback HasBadgePR path.
+func (d *defaultPRLister) HasBadgeControlFile(ctx context.Context) (bool, error) {
+	root, err := os.Getwd()
+	if err != nil {
+		return false, nil
+	}
+	path := filepath.Join(root, ".sandman", badgeControlFileName)
+	info, err := os.Stat(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return false, nil
+		}
+		return false, nil
+	}
+	return info != nil, nil
 }
 
 type prPayloadList struct {
@@ -180,6 +214,15 @@ func (h *defaultBadgeHooker) MaybeSuggestBadge(ctx context.Context, results []Ag
 		return
 	}
 	if len(sandmanPRs) == 0 {
+		return
+	}
+
+	controlFilePresent, err := h.prLister.HasBadgeControlFile(ctx)
+	if err != nil {
+		fmt.Fprintf(h.writer, "Badge PR suggestion skipped: %v\n", err)
+		return
+	}
+	if controlFilePresent {
 		return
 	}
 
