@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 
@@ -13,10 +12,22 @@ import (
 	"github.com/rafaelromao/sandman/internal/sandbox"
 )
 
+// addStrandedWorktree registers a worktree at <worktreeBase>/<expectedBranch>
+// whose HEAD points at <otherBranch>. It avoids `git worktree add --force`
+// which fails on macOS git when <branch> is already checked out elsewhere;
+// instead it uses `git worktree add --detach` (allowed on both Linux and macOS)
+// and then rewrites the worktree's HEAD via `git symbolic-ref HEAD`.
+// <otherBranch> is created if missing; <expectedBranch> is intentionally NOT
+// created so callers can exercise the "missing locally" precondition. See #1738.
+func addStrandedWorktree(t *testing.T, repoDir, worktreeBase, expectedBranch, otherBranch string) string {
+	t.Helper()
+	wtPath := filepath.Join(worktreeBase, expectedBranch)
+	runGit(t, repoDir, "worktree", "add", "--detach", wtPath, otherBranch)
+	runGit(t, wtPath, "symbolic-ref", "HEAD", "refs/heads/"+otherBranch)
+	return wtPath
+}
+
 func TestStrandedCmd_ListsAllStrandedWorktrees(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		t.Skip("git worktree add --force behavior differs on macOS; tracked by follow-up work")
-	}
 	repoDir := t.TempDir()
 	initRunIntegrationRepo(t, repoDir)
 	t.Chdir(repoDir)
@@ -31,7 +42,7 @@ func TestStrandedCmd_ListsAllStrandedWorktrees(t *testing.T) {
 	}
 
 	runGit(t, repoDir, "worktree", "add", filepath.Join(worktreeBase, "sandman/1-healthy"), "sandman/1-healthy")
-	runGit(t, repoDir, "worktree", "add", "--force", filepath.Join(worktreeBase, "sandman/2-wrong"), "sandman/1-healthy")
+	addStrandedWorktree(t, repoDir, worktreeBase, "sandman/2-wrong", "sandman/1-healthy")
 	runGit(t, repoDir, "worktree", "add", filepath.Join(worktreeBase, "sandman/3-detached"), "sandman/3-detached")
 	runGit(t, filepath.Join(worktreeBase, "sandman/3-detached"), "checkout", "--detach", "HEAD")
 
@@ -62,9 +73,6 @@ func TestStrandedCmd_ListsAllStrandedWorktrees(t *testing.T) {
 }
 
 func TestStrandedCmd_JSONOutput(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		t.Skip("git worktree add --force behavior differs on macOS; tracked by follow-up work")
-	}
 	repoDir := t.TempDir()
 	initRunIntegrationRepo(t, repoDir)
 	t.Chdir(repoDir)
@@ -107,9 +115,6 @@ func TestStrandedCmd_JSONOutput(t *testing.T) {
 }
 
 func TestStrandedCmd_DefaultsWorktreeDirFromConfig(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		t.Skip("git worktree add --force behavior differs on macOS; tracked by follow-up work")
-	}
 	repoDir := t.TempDir()
 	initRunIntegrationRepo(t, repoDir)
 	t.Chdir(repoDir)
@@ -121,7 +126,7 @@ func TestStrandedCmd_DefaultsWorktreeDirFromConfig(t *testing.T) {
 		t.Fatalf("mkdir worktreeBase: %v", err)
 	}
 	runGit(t, repoDir, "branch", "sandman/1-other")
-	runGit(t, repoDir, "worktree", "add", "--force", filepath.Join(worktreeBase, "sandman/5-stuck"), "sandman/1-other")
+	addStrandedWorktree(t, repoDir, worktreeBase, "sandman/5-stuck", "sandman/1-other")
 
 	cmd := NewStrandedCmd(Dependencies{
 		ConfigStore: &fakeStore{config: &config.Config{WorktreeDir: worktreeBase}},

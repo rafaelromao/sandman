@@ -3,15 +3,24 @@ package sandbox
 import (
 	"os"
 	"path/filepath"
-	"runtime"
 	"testing"
 )
 
-func skipIfNotStrandedSupported(t *testing.T) {
+// addStrandedWorktree registers a worktree at <worktreeBase>/<expectedBranch>
+// whose HEAD points at <otherBranch>, so the detector sees it as stranded.
+// It avoids `git worktree add --force <path> <branch>`, which fails on macOS
+// git when <branch> is already checked out elsewhere. Instead, it uses
+// `git worktree add --detach` (allowed on both Linux and macOS even when the
+// branch is checked out elsewhere) and then rewrites the worktree's HEAD to
+// <otherBranch> via `git symbolic-ref HEAD`. <otherBranch> is created if
+// missing; <expectedBranch> is intentionally NOT created so callers can
+// exercise the "missing locally" precondition. See #1738.
+func addStrandedWorktree(t *testing.T, repoDir, worktreeBase, expectedBranch, otherBranch string) string {
 	t.Helper()
-	if runtime.GOOS != "linux" {
-		t.Skip("stranded worktree detection uses git worktree semantics that vary on macOS")
-	}
+	wtPath := filepath.Join(worktreeBase, expectedBranch)
+	runGit(t, repoDir, "worktree", "add", "--detach", wtPath, otherBranch)
+	runGit(t, wtPath, "symbolic-ref", "HEAD", "refs/heads/"+otherBranch)
+	return wtPath
 }
 
 func TestStrandedWorktree_MissingBaseReturnsFalse(t *testing.T) {
@@ -71,7 +80,6 @@ func TestStrandedWorktree_CleanWorktreeOnExpectedBranchReturnsFalse(t *testing.T
 }
 
 func TestStrandedWorktree_MismatchedBranchReturnsTrue(t *testing.T) {
-	skipIfNotStrandedSupported(t)
 	repoDir := t.TempDir()
 	initGitRepo(t, repoDir)
 
@@ -84,8 +92,7 @@ func TestStrandedWorktree_MismatchedBranchReturnsTrue(t *testing.T) {
 	if err := os.MkdirAll(worktreeBase, 0755); err != nil {
 		t.Fatalf("mkdir worktreeBase: %v", err)
 	}
-	wtPath := filepath.Join(worktreeBase, expected)
-	runGit(t, repoDir, "worktree", "add", "--force", wtPath, actual)
+	wtPath := addStrandedWorktree(t, repoDir, worktreeBase, expected, actual)
 
 	info, stranded := StrandedWorktree(repoDir, worktreeBase, expected)
 	if !stranded {
@@ -103,7 +110,6 @@ func TestStrandedWorktree_MismatchedBranchReturnsTrue(t *testing.T) {
 }
 
 func TestStrandedWorktree_DetachedHeadReturnsTrue(t *testing.T) {
-	skipIfNotStrandedSupported(t)
 	repoDir := t.TempDir()
 	initGitRepo(t, repoDir)
 
@@ -134,7 +140,6 @@ func TestStrandedWorktree_DetachedHeadReturnsTrue(t *testing.T) {
 }
 
 func TestStrandedWorktree_ExpectedRefMissingLocallyReturnsTrue(t *testing.T) {
-	skipIfNotStrandedSupported(t)
 	repoDir := t.TempDir()
 	initGitRepo(t, repoDir)
 
@@ -149,8 +154,7 @@ func TestStrandedWorktree_ExpectedRefMissingLocallyReturnsTrue(t *testing.T) {
 	if err := os.MkdirAll(worktreeBase, 0755); err != nil {
 		t.Fatalf("mkdir worktreeBase: %v", err)
 	}
-	wtPath := filepath.Join(worktreeBase, expected)
-	runGit(t, repoDir, "worktree", "add", "--force", wtPath, actual)
+	wtPath := addStrandedWorktree(t, repoDir, worktreeBase, expected, actual)
 
 	info, stranded := StrandedWorktree(repoDir, worktreeBase, expected)
 	if !stranded {
@@ -171,7 +175,6 @@ func TestStrandedWorktree_ExpectedRefMissingLocallyReturnsTrue(t *testing.T) {
 }
 
 func TestStrandedWorktree_IgnoresSiblingWorktrees(t *testing.T) {
-	skipIfNotStrandedSupported(t)
 	repoDir := t.TempDir()
 	initGitRepo(t, repoDir)
 
@@ -185,7 +188,7 @@ func TestStrandedWorktree_IgnoresSiblingWorktrees(t *testing.T) {
 		t.Fatalf("mkdir worktreeBase: %v", err)
 	}
 	runGit(t, repoDir, "worktree", "add", filepath.Join(worktreeBase, healthy), healthy)
-	runGit(t, repoDir, "worktree", "add", "--force", filepath.Join(worktreeBase, stranded), healthy)
+	addStrandedWorktree(t, repoDir, worktreeBase, stranded, healthy)
 
 	info, ok := StrandedWorktree(repoDir, worktreeBase, stranded)
 	if !ok {
@@ -208,7 +211,6 @@ func TestStrandedWorktree_IgnoresSiblingWorktrees(t *testing.T) {
 }
 
 func TestListStrandedWorktrees(t *testing.T) {
-	skipIfNotStrandedSupported(t)
 	repoDir := t.TempDir()
 	initGitRepo(t, repoDir)
 
@@ -223,7 +225,7 @@ func TestListStrandedWorktrees(t *testing.T) {
 
 	runGit(t, repoDir, "branch", "no-issue-branch")
 	runGit(t, repoDir, "worktree", "add", filepath.Join(worktreeBase, "sandman/1-healthy"), "sandman/1-healthy")
-	runGit(t, repoDir, "worktree", "add", "--force", filepath.Join(worktreeBase, "sandman/2-wrong"), "sandman/1-healthy")
+	addStrandedWorktree(t, repoDir, worktreeBase, "sandman/2-wrong", "sandman/1-healthy")
 	runGit(t, repoDir, "worktree", "add", filepath.Join(worktreeBase, "sandman/3-detached"), "sandman/3-detached")
 	runGit(t, filepath.Join(worktreeBase, "sandman/3-detached"), "checkout", "--detach", "HEAD")
 	runGit(t, repoDir, "worktree", "add", filepath.Join(worktreeBase, "no-issue-prefix"), "no-issue-branch")
@@ -311,7 +313,6 @@ func TestStrandedWorktree_PrunableWorktreeIsNotFlagged(t *testing.T) {
 }
 
 func TestReclaimableWorktree_PrunableWorktreeAtPathReturnsTrue(t *testing.T) {
-	skipIfNotStrandedSupported(t)
 	repoDir := t.TempDir()
 	initGitRepo(t, repoDir)
 
@@ -375,7 +376,6 @@ func TestReclaimableWorktree_MissingBaseReturnsFalse(t *testing.T) {
 }
 
 func TestReclaimableWorktree_NonPrunableWorktreeAtPathReturnsTrue(t *testing.T) {
-	skipIfNotStrandedSupported(t)
 	repoDir := t.TempDir()
 	initGitRepo(t, repoDir)
 
