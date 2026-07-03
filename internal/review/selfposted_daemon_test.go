@@ -201,13 +201,21 @@ func TestDaemon_ProcessPR_RecordedReviewBody_DoesNotReTrigger(t *testing.T) {
 	}
 }
 
-// TestDaemon_PromotePendingComment_DefensivelyRecordsObservedComment
-// pins the contract that promotePendingComment records the first
-// non-trigger comment it observes so the next tick treats it as a
-// self-post. The first observation still counts as success (it is
-// the agent's review or a non-self reviewer reply), but the next
-// tick will skip it as a trigger.
-func TestDaemon_PromotePendingComment_DefensivelyRecordsObservedComment(t *testing.T) {
+// TestDaemon_PromotePendingComment_DoesNotRecordObservedComment pins the
+// post-#1722 contract: promotePendingComment detects success from any
+// non-empty comment posted after `since`, but it MUST NOT write that
+// comment into SelfPostStore. The defensive observation that used to
+// live here recorded every observed comment — including the
+// implementor's repeated `/sandman review` trigger body — and once
+// that hash entered the store, processPR's IsSelfPosted-first filter
+// dropped every future review request (permanent blindness). The
+// self-post store is now populated ONLY by the pr-review skill
+// wrapper (Step 4b).
+//
+// Both the first and any subsequent call return "success" (any
+// comment after `since` settles the lazy-verify entry); neither call
+// poisons the store.
+func TestDaemon_PromotePendingComment_DoesNotRecordObservedComment(t *testing.T) {
 	now := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
 	reviewBody := "## Summary\nLGTM, no blockers."
 
@@ -227,8 +235,7 @@ func TestDaemon_PromotePendingComment_DefensivelyRecordsObservedComment(t *testi
 	})
 	d.Clock = func() time.Time { return now.Add(-2 * time.Minute) }
 
-	// Pre-seed the SelfPostStore with nothing — the daemon
-	// should defensively record the observed review.
+	// SelfPostStore starts empty — the daemon must keep it empty.
 	spPath := filepath.Join(dir, "reviews", "self-posted.json")
 	sp, err := NewSelfPostStore(spPath)
 	if err != nil {
@@ -236,62 +243,64 @@ func TestDaemon_PromotePendingComment_DefensivelyRecordsObservedComment(t *testi
 	}
 	d.selfPosts = sp
 
-	// First tick: launch the review. tickAndWait blocks until the
-	// async review goroutine completes (RunBatch now launches in a
-	// background goroutine).
-	tickAndWait(t, d, context.Background())
-	if runner.calls != 1 {
-		t.Fatalf("first tick: expected 1 batch run, got %d", runner.calls)
-	}
-	// Drive the defensive observation directly. A real
-	// second tick would do this via promotePendingReviews;
-	// we call promotePendingComment with since=now so the
-	// review comment is observed after `since` and the
-	// Record fires.
+	// First observation: success, but NO recording.
 	status, err := d.promotePendingComment(context.Background(), 1, "trigger", now.Add(-30*time.Second))
 	if err != nil {
 		t.Fatalf("promotePendingComment: %v", err)
 	}
 	if status != "success" {
-		t.Errorf("expected status 'success' on first observation, got %q", status)
+		t.Errorf("expected status 'success' on observation, got %q", status)
 	}
-	if !d.selfPosts.IsSelfPosted(reviewBody) {
-		t.Error("expected reviewBody to be recorded as self-post after defensive observation")
+	if d.selfPosts.IsSelfPosted(reviewBody) {
+		t.Error("promotePendingComment MUST NOT record the observed comment (#1722), poisoned SelfPostStore")
 	}
 
-	// Second observation (simulating a later tick): the same
-	// body is now self-posted and must NOT count as success.
+	// Second observation: still success. The entry is not poisoned, so
+	// re-evaluation is stable (and in the real flow the entry is
+	// dropped after the first success anyway).
 	status, err = d.promotePendingComment(context.Background(), 1, "trigger", now.Add(-30*time.Second))
-	if err == nil {
-		t.Fatalf("expected pending error on second observation of self-post, got status=%q", status)
+	if err != nil {
+		t.Fatalf("second promotePendingComment: %v", err)
 	}
-	if status != "pending" {
-		t.Errorf("expected status 'pending' on second observation, got %q", status)
+	if status != "success" {
+		t.Errorf("expected status 'success' on second observation, got %q", status)
+	}
+	if d.selfPosts.IsSelfPosted(reviewBody) {
+		t.Error("second observation MUST NOT poison SelfPostStore either (#1722)")
 	}
 }
 
-// TestDaemon_PromotePendingComment_DefensiveRecordSurvivesAcrossTicks
-// pins the cross-tick race-safety introduced by issue #1704: the
-// defensive `Record` in `Daemon.promotePendingComment` populates
-// `SelfPostStore` on the SAME tick that `processPR` would otherwise
-// misclassify the bot's review-body as a fresh trigger. Without the
-// ordering fix from issue #1702 (`promotePendingReviews` runs before
-// `processPR` per PR inside `tick`), tick N+1's `processPR` would
-// observe the bot's review body, parse the literal `/sandman review`
-// substring from its `## Previous review progress` section, and
-// re-launch — a self-loop.
+// TestDaemon_PromotePendingComment_NoPoisoning_CrossTickSuccessSettlesWithoutLoop
+// pins the post-#1722 cross-tick contract end-to-end via the full
+// tick() ordering.
 //
-// The test exercises the full `tick()` ordering end-to-end: the
-// bot's review-body is appended to `fakeGH.comments` between the two
-// `tickAndWait` calls, so tick N+1's `promotePendingReviews` is the
-// only path that can populate `SelfPostStore` with the review body
-// before `processPR` iterates the comments. The assertions
-// (runner.calls stays at 1, review body is in SelfPostStore)
-// transitively prove the pending entry was registered on tick N and
-// that the promotion step ran on tick N+1.
-func TestDaemon_PromotePendingComment_DefensiveRecordSurvivesAcrossTicks(t *testing.T) {
+// The bot's review body follows the #1709 prompt rule: it does NOT
+// contain the literal `/sandman review` substring, so ParseTrigger
+// cannot match it. The wrapper (Step 4b) is bypassed in this test
+// (the body is not pre-seeded in SelfPostStore) to prove that, with
+// the trigger substring removed at the source, the daemon needs no
+// runtime poisoning of observed comments to avoid a self-loop.
+//
+//   - Tick N: implementor's trigger lands; processPR launches the
+//     review and registers the pending entry.
+//   - Between ticks: the bot posts its review body (no trigger
+//     substring).
+//   - Tick N+1: promotePendingReviews runs first, observes the body
+//     after `since`, returns success — WITHOUT recording it — and
+//     MarkSeens the trigger. processPR then runs: the body does not
+//     match ParseTrigger, and the trigger is filtered by the seen
+//     cache.
+//
+// Assertions: runner.calls stays at 1 across both ticks (no
+// re-launch) and the review body is NOT in SelfPostStore (the daemon
+// never records observed comments). Pre-#1722 this test recorded the
+// body defensively; that recording is what blinded the daemon to
+// later `/sandman review` re-requests.
+func TestDaemon_PromotePendingComment_NoPoisoning_CrossTickSuccessSettlesWithoutLoop(t *testing.T) {
 	now := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
-	reviewBody := "## Previous review progress\n/sandman review\n\nLGTM, no blockers."
+	// Post-#1709 review body: paraphrases prior requests, no literal
+	// trigger substring.
+	reviewBody := "## Previous review progress\nOpen review requests: none.\n\nLGTM, no blockers."
 
 	gh := &fakeGH{
 		prs: []github.PR{{Number: 1, State: "open"}},
@@ -309,17 +318,14 @@ func TestDaemon_PromotePendingComment_DefensiveRecordSurvivesAcrossTicks(t *test
 	d.Clock = func() time.Time { return now.Add(-1 * time.Minute) }
 
 	// Tick N: implementor's trigger lands; processPR launches the
-	// review and registers the pending entry. tickAndWait blocks
-	// until the async launch goroutine has completed, so the
-	// pending entry is in d.pendingReviews[1] by the time this
-	// returns.
+	// review and registers the pending entry.
 	tickAndWait(t, d, context.Background())
 	if runner.calls != 1 {
 		t.Fatalf("tick N: expected 1 batch run, got %d", runner.calls)
 	}
 
-	// Between ticks: the bot's reviewer agent posts its review
-	// body. Lock fakeGH.mu so the test stays race-safe.
+	// Between ticks: the bot posts its review body (no trigger
+	// substring). Lock fakeGH.mu so the test stays race-safe.
 	gh.mu.Lock()
 	gh.comments[1] = append(gh.comments[1], github.PRComment{
 		ID:        "bot-review",
@@ -328,34 +334,31 @@ func TestDaemon_PromotePendingComment_DefensiveRecordSurvivesAcrossTicks(t *test
 	})
 	gh.mu.Unlock()
 
-	// Tick N+1: drive a fresh tick on the same daemon. The
-	// ordering under test is: promotePendingReviews runs first,
-	// observes the bot's review body via promotePendingComment,
-	// defensively Records it into SelfPostStore, and MarkSeens
-	// the trigger as "success". processPR then runs and skips
-	// the bot's review body via the IsSelfPosted-before-
-	// ParseTrigger filter; the original trigger is filtered by
-	// the seen cache ("success" was MarkSeen in the previous
-	// step). Expected result: no second batch run, and the
-	// review body is recorded in SelfPostStore.
+	// Tick N+1: promote sees the body → success (no recording);
+	// processPR does not re-launch.
 	tickAndWait(t, d, context.Background())
 
 	if runner.calls != 1 {
-		t.Errorf("tick N+1 MUST NOT re-launch on the recorded review body (#1704), got %d total batch runs", runner.calls)
+		t.Errorf("tick N+1 MUST NOT re-launch on the bot review body (#1722), got %d total batch runs", runner.calls)
 	}
-	if !d.selfPosts.IsSelfPosted(reviewBody) {
-		t.Error("tick N+1: review body must be in SelfPostStore after the defensive observation, was not")
+	if d.selfPosts.IsSelfPosted(reviewBody) {
+		t.Error("tick N+1 MUST NOT record the observed review body (#1722); a poisoned store blinds the daemon to later triggers")
 	}
 }
 
-// TestDaemon_PromotePendingComment_DoesNotCountSelfPostAsSuccess
-// pins the contract that when the only comment observed after
-// `since` is already in the SelfPostStore, the function returns
-// ("pending", err). This is the case where the bot's own
-// review-comment body is observed on a tick that did not do the
-// defensive Record yet (because the defensive Record only fires
-// in the same call when the body is NOT already a self-post).
-func TestDaemon_PromotePendingComment_DoesNotCountSelfPostAsSuccess(t *testing.T) {
+// TestDaemon_PromotePendingComment_CountsWrapperRecordedBotBodyAsSuccess
+// pins the post-#1722 contract that a bot review-body recorded by the
+// pr-review skill wrapper (Step 4b) IS the success signal for the
+// pending entry that launched it.
+//
+// Pre-#1722, promotePendingComment ran an IsSelfPosted check that
+// SKIPPED wrapper-recorded bodies, so a review whose body was
+// correctly recorded by the wrapper was never detected as success and
+// was mislabelled `failure` after pendingMaxCycles. The check existed
+// only to support the defensive-record double-count avoidance; with
+// the defensive record gone (#1722), the check is gone too, and the
+// bot's own recorded body correctly settles the entry as success.
+func TestDaemon_PromotePendingComment_CountsWrapperRecordedBotBodyAsSuccess(t *testing.T) {
 	now := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
 	reviewBody := "## Summary\nself-review by the bot"
 
@@ -375,8 +378,8 @@ func TestDaemon_PromotePendingComment_DoesNotCountSelfPostAsSuccess(t *testing.T
 	})
 	d.Clock = func() time.Time { return now.Add(-2 * time.Minute) }
 
-	// Pre-seed: the review body is ALREADY in selfPosts (as
-	// if the skill wrapper recorded it at posting time).
+	// Pre-seed: the review body is ALREADY in selfPosts, as if the
+	// skill wrapper recorded it at posting time (Step 4b).
 	spPath := filepath.Join(dir, "reviews", "self-posted.json")
 	sp, err := NewSelfPostStore(spPath)
 	if err != nil {
@@ -388,11 +391,11 @@ func TestDaemon_PromotePendingComment_DoesNotCountSelfPostAsSuccess(t *testing.T
 	d.selfPosts = sp
 
 	status, err := d.promotePendingComment(context.Background(), 1, "trigger", now.Add(-30*time.Second))
-	if err == nil {
-		t.Fatalf("expected pending error when only observation is a self-post, got status=%q", status)
+	if err != nil {
+		t.Fatalf("expected success for a wrapper-recorded bot body, got error: %v", err)
 	}
-	if status != "pending" {
-		t.Errorf("expected status 'pending', got %q", status)
+	if status != "success" {
+		t.Errorf("expected status 'success' (the bot's recorded body is the success signal, #1722), got %q", status)
 	}
 }
 
@@ -457,28 +460,28 @@ func TestDaemon_ProcessPR_BotReviewBodyWithTriggerSubstring_DoesNotLoop(t *testi
 	}
 }
 
-// TestDaemon_ProcessPR_BotReviewBodyWithoutSelfPostHash_StillNotLoop_AfterDefensiveRecord
-// pins the cross-tick defensive-record path: even when the bot's
-// review-body hash is NOT pre-seeded in SelfPostStore (the skill
-// wrapper's Step 4b was bypassed or the bot was restarted before
-// posting), the daemon's promotePendingComment records the body
-// defensively on a tick, and a subsequent tick drops the body
-// because its hash is now in the store.
+// TestDaemon_ProcessPR_PostFixBotReviewBodyWithoutSubstring_DoesNotLoopWithoutRecording
+// pins the post-#1722 contract for the wrapper-bypass case: even when
+// the pr-review skill wrapper (Step 4b) does NOT record the bot's
+// review-body hash, processPR does not loop — because the #1709
+// prompt rule keeps the literal `/sandman review` substring out of
+// the body, so ParseTrigger cannot match it.
 //
-// Sequence:
-//  1. PR has one comment: the bot's review-body (with the trigger
-//     substring). SelfPostStore is empty.
-//  2. Test calls d.promotePendingComment to defensively record the
-//     body (this is the "previous tick" observation path).
-//  3. tickAndWait runs processPR. Because the body hash is now in
-//     the store, IsSelfPosted drops it before ParseTrigger can
-//     match the trigger substring.
-//  4. Assert: zero batch runs.
+// Pre-#1722 this test relied on promotePendingComment defensively
+// recording the observed body so a subsequent processPR would drop it
+// via IsSelfPosted. That defensive recording is what blinded the
+// daemon to legit triggers (#1722), so it has been removed. This test
+// now proves the self-loop is prevented at the source (#1709) without
+// any runtime poisoning of observed comments: the body is never
+// recorded, yet no review is launched.
 //
-// Issue #1703 acceptance criterion #2.
-func TestDaemon_ProcessPR_BotReviewBodyWithoutSelfPostHash_StillNotLoop_AfterDefensiveRecord(t *testing.T) {
+// Issue #1703 acceptance criterion #2 (re-purposed for the #1722
+// source-fix model).
+func TestDaemon_ProcessPR_PostFixBotReviewBodyWithoutSubstring_DoesNotLoopWithoutRecording(t *testing.T) {
 	now := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
-	reviewBody := "## Previous review progress\n/sandman review\n\nLGTM, no blockers."
+	// Post-#1709 body: paraphrases prior requests, no literal trigger
+	// substring.
+	reviewBody := "## Previous review progress\nOpen review requests: none.\n\nLGTM, no blockers."
 
 	gh := &fakeGH{
 		prs: []github.PR{{Number: 1, State: "open"}},
@@ -495,8 +498,8 @@ func TestDaemon_ProcessPR_BotReviewBodyWithoutSelfPostHash_StillNotLoop_AfterDef
 	})
 	d.Clock = func() time.Time { return now.Add(-1 * time.Minute) }
 
-	// SelfPostStore starts empty. The bot's body is NOT pre-seeded
-	// (simulating the wrapper-bypass failure mode).
+	// SelfPostStore starts empty and MUST stay empty: the daemon no
+	// longer records observed comments (#1722).
 	spPath := filepath.Join(dir, "reviews", "self-posted.json")
 	sp, err := NewSelfPostStore(spPath)
 	if err != nil {
@@ -504,25 +507,13 @@ func TestDaemon_ProcessPR_BotReviewBodyWithoutSelfPostHash_StillNotLoop_AfterDef
 	}
 	d.selfPosts = sp
 
-	// Drive the defensive observation directly: a previous tick's
-	// promotePendingComment would have observed this comment and
-	// recorded it. We call promotePendingComment with since=now-30s
-	// so the review comment (created at `now`) is observed after
-	// `since` and the Record fires inside promotePendingComment.
-	if _, err := d.promotePendingComment(context.Background(), 1, "trigger", now.Add(-30*time.Second)); err != nil {
-		t.Fatalf("promotePendingComment (defensive record): %v", err)
-	}
-	if !d.selfPosts.IsSelfPosted(reviewBody) {
-		t.Fatal("expected reviewBody to be recorded as self-post after defensive observation")
-	}
-
-	// Now run a tick. processPR should drop the body because
-	// IsSelfPosted returns true for it (the hash is in the store
-	// after the defensive record above).
 	tickAndWait(t, d, context.Background())
 
 	if runner.calls != 0 {
-		t.Errorf("MUST drop a bot review-body whose hash was defensively recorded on a prior tick (issue #1703), got %d batch runs", runner.calls)
+		t.Errorf("MUST NOT launch on a post-#1709 bot review body even when it is unrecorded (#1722), got %d batch runs", runner.calls)
+	}
+	if d.selfPosts.IsSelfPosted(reviewBody) {
+		t.Error("processPR MUST NOT record the observed body (#1722); a poisoned store blinds the daemon to later triggers")
 	}
 }
 
@@ -565,5 +556,84 @@ func TestDaemon_ProcessPR_ImplementorTriggerStillLaunches_WhenTriggerHashNotReco
 
 	if runner.calls != 1 {
 		t.Fatalf("MUST launch a review for an implementor trigger whose hash is not recorded (issue #1703), got %d batch runs", runner.calls)
+	}
+}
+
+// TestDaemon_NoBlindness_TriggerReRequestAfterPendingWindow_Launches is
+// the definitive regression test for issue #1722: the daemon MUST NOT
+// go blind to a legit `/sandman review` re-request that lands while (or
+// after) a previous review is still pending verification.
+//
+// The pr-review skill posts `/sandman review` repeatedly across passes
+// (Step 4), so every re-request shares one body and therefore one
+// SHA-256 hash. Pre-#1722, promotePendingComment defensively recorded
+// the first re-request it observed after `since`; from that tick on,
+// processPR's IsSelfPosted-first filter dropped EVERY `/sandman review`
+// comment and the daemon was permanently blind.
+//
+// Sequence:
+//  1. C1 = `/sandman review` (trigger). Tick N launches a review and
+//     registers a pending entry with since = tick N's clock.
+//  2. Between ticks, a second `/sandman review` re-request (C2, same
+//     body, new comment ID) lands after `since`.
+//  3. Tick N+1: promotePendingReviews observes C2, returns success for
+//     C1 (WITHOUT recording C2), and MarkSeens C1. processPR then
+//     skips C1 via the seen cache and launches C2 — the re-request is
+//     honoured, not swallowed.
+//
+// Assertions:
+//   - runner.calls == 2 (C1 on tick N, C2 on tick N+1). Pre-#1722 this
+//     was 1: C2 was poisoned into SelfPostStore and dropped.
+//   - hashBody("/sandman review") is NOT in SelfPostStore. The store
+//     must never contain the trigger body.
+func TestDaemon_NoBlindness_TriggerReRequestAfterPendingWindow_Launches(t *testing.T) {
+	now := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
+	triggerBody := "/sandman review"
+
+	gh := &fakeGH{
+		prs: []github.PR{{Number: 1, State: "open"}},
+		comments: map[int][]github.PRComment{
+			1: {
+				{ID: "t1", Body: triggerBody, CreatedAt: now},
+			},
+		},
+	}
+	runner := &capturedRequest{}
+	d, _, _ := newDaemonForTest(t, gh, runner, &config.Config{
+		DefaultReviewAgent: "opencode",
+		DefaultReviewModel: "opencode/foo",
+	})
+	// d.now() is the `since` recorded for the pending entry on tick N.
+	// Keep it at `now` so the re-request at now+1m is observed after it.
+	d.Clock = func() time.Time { return now }
+
+	// Tick N: launch the review for C1, register the pending entry.
+	tickAndWait(t, d, context.Background())
+	if runner.calls != 1 {
+		t.Fatalf("tick N: expected 1 batch run, got %d", runner.calls)
+	}
+
+	// Between ticks: a legit `/sandman review` re-request (C2) lands.
+	// Same body, new comment ID — exactly what the pr-review skill
+	// posts on its next pass.
+	gh.mu.Lock()
+	gh.comments[1] = append(gh.comments[1], github.PRComment{
+		ID:        "t2",
+		Body:      triggerBody,
+		CreatedAt: now.Add(1 * time.Minute),
+	})
+	gh.mu.Unlock()
+
+	// Tick N+1: C1 is promoted to success (via C2) and dropped from
+	// pending; processPR must launch C2. Pre-#1722 the defensive
+	// record poisoned triggerBody and C2 was dropped (runner.calls
+	// stayed at 1 — the blindness).
+	tickAndWait(t, d, context.Background())
+
+	if runner.calls != 2 {
+		t.Errorf("tick N+1 MUST launch the re-request C2 (no blindness, #1722); expected 2 total batch runs, got %d", runner.calls)
+	}
+	if d.selfPosts.IsSelfPosted(triggerBody) {
+		t.Errorf("tick N+1 MUST NOT record the trigger body in SelfPostStore (#1722); a poisoned trigger hash blinds the daemon to all future /sandman review requests")
 	}
 }

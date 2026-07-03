@@ -179,7 +179,7 @@ record_review_posted_fallback() {
 
 **`body` here is the bot's review markdown, NOT `{{REVIEW_COMMAND}}`.** Pass the full markdown the reviewer agent just posted.
 
-(The daemon's defensive observation in `promotePendingComment` is the safety net for any case where this wrapper is bypassed: even if the hash is not recorded here, the next tick will record the observed comment body. This is why dropping the trigger-hash recording in Step 4 is safe — `promotePendingComment` still records every comment it observes.)
+The daemon's `SelfPostStore` is populated **only** by this wrapper function — it is the single authoritative record of "bodies the bot posted." `Daemon.processPR` consults the store before `ParseTrigger` (issue #1702) so a recorded review-body is dropped before it can match the trigger regex, even if it ever quotes the trigger text. The daemon's `promotePendingComment` no longer records observed comments itself (issue #1722): the defensive observation that used to run there poisoned legit `/sandman review` triggers — every re-request shares one body hash, so recording one blinded the daemon to all of them. Self-loop prevention now rests on this recording site plus the review prompt's rule that forbids emitting the literal `{{REVIEW_COMMAND}}` substring in the review body. Run `record_review_posted` on every review-body post so the store stays complete.
 
 **Do NOT read the PR diff or write review comments yourself.** The review must come exclusively from the PR Review Agent.
 
