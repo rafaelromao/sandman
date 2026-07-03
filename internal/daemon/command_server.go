@@ -101,6 +101,9 @@ func (s *CommandServer) Start() error {
 			go s.acceptLoop()
 			return nil
 		}
+		if platformErr := nonLinuxPlatformError(sockPath); platformErr != nil {
+			return platformErr
+		}
 		return fmt.Errorf("create command socket: %w", err)
 	}
 	if err := os.Chmod(sockPath, 0o600); err != nil {
