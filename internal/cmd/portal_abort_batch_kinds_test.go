@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -252,9 +251,6 @@ type portalAbortBatchKindsOpts struct {
 // `<batchDir>/runs/<perRowID>/run.sock`. The orchestrator must
 // receive `Issue=42`.
 func TestPortal_AbortEndpoint_SingleIssueRunRow_ResolvesPerRunSocket(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		t.Skip("portal Abort endpoint requires peer-PID resolution on Linux; tracked by #1721")
-	}
 	if !portalAbortSupported() {
 		t.Skip("abort unsupported on this platform")
 	}
@@ -319,9 +315,6 @@ func TestPortal_AbortEndpoint_SingleIssueRunRow_ResolvesPerRunSocket(t *testing.
 // the orchestrator must receive `Issue=42` (the linked issue, not
 // the PR number, not 0).
 func TestPortal_AbortEndpoint_ContinueReviewRow_ResolvesPerRunSocket(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		t.Skip("portal Abort endpoint requires peer-PID resolution on Linux; tracked by #1721")
-	}
 	if !portalAbortSupported() {
 		t.Skip("abort unsupported on this platform")
 	}
@@ -391,9 +384,6 @@ func TestPortal_AbortEndpoint_ContinueReviewRow_ResolvesPerRunSocket(t *testing.
 // `<batchDir>/runs/<perRowID>/run.sock` and the orchestrator must
 // receive `Issue=42`.
 func TestPortal_AbortEndpoint_ContinueIssueRunRow_ResolvesPerRunSocket(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		t.Skip("portal Abort endpoint requires peer-PID resolution on Linux; tracked by #1721")
-	}
 	if !portalAbortSupported() {
 		t.Skip("abort unsupported on this platform")
 	}
@@ -467,9 +457,6 @@ func TestPortal_AbortEndpoint_ContinueIssueRunRow_ResolvesPerRunSocket(t *testin
 // directly with `issueNumber: 0` and asserts the spy receives
 // `AbortIssue(0)`.
 func TestAbortPortalRun_OrphanReviewRow_ResolvesPerRunSocket(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		t.Skip("portal Abort endpoint requires peer-PID resolution on Linux; tracked by #1721")
-	}
 	if !portalAbortSupported() {
 		t.Skip("abort unsupported on this platform")
 	}

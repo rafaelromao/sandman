@@ -26,6 +26,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/daemon"
 	"github.com/rafaelromao/sandman/internal/events"
 	"github.com/rafaelromao/sandman/internal/paths"
+	"github.com/rafaelromao/sandman/internal/testenv"
 )
 
 type portalTestOutput struct {
@@ -616,14 +617,7 @@ func TestPortal_LoadPortalRuns_ShowsQueuedIssuesFromEvents(t *testing.T) {
 }
 
 func TestPortal_AbortRunEndpointAbortsActiveRunAndRefreshesStatus(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		t.Skip("portal Abort endpoint requires peer-PID resolution on Linux; tracked by #1721")
-	}
-	repoRoot, err := os.MkdirTemp("/tmp", "sm-portal-")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(repoRoot) })
+	repoRoot := testenv.MkdirShort(t, "sm-portal-")
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -694,11 +688,7 @@ func TestPortal_AbortRunEndpointAbortsActiveRunAndRefreshesStatus(t *testing.T) 
 }
 
 func TestAbortPortalRunSendsAbortRequestAndReturnsSuccess(t *testing.T) {
-	repoRoot, err := os.MkdirTemp("/tmp", "sm-stop-")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(repoRoot) })
+	repoRoot := testenv.MkdirShort(t, "sm-stop-")
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -798,9 +788,6 @@ func TestAbortPortalRunSendsAbortRequestAndReturnsSuccess(t *testing.T) {
 }
 
 func TestAbortPortalRun_ReturnsHTTPStatusCodes(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		t.Skip("portal Abort endpoint requires peer-PID resolution on Linux; tracked by #1721")
-	}
 	t.Run("missing run", func(t *testing.T) {
 		repoRoot := t.TempDir()
 		if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
@@ -818,11 +805,7 @@ func TestAbortPortalRun_ReturnsHTTPStatusCodes(t *testing.T) {
 	})
 
 	t.Run("dial failure is sanitized", func(t *testing.T) {
-		repoRoot, err := os.MkdirTemp("/tmp", "sm-abort-")
-		if err != nil {
-			t.Fatal(err)
-		}
-		t.Cleanup(func() { _ = os.RemoveAll(repoRoot) })
+		repoRoot := testenv.MkdirShort(t, "sm-abort-")
 		if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
 			t.Fatal(err)
 		}
@@ -1954,9 +1937,6 @@ func TestPortal_BindsToLocalhostAndFailsWhenPortBusy(t *testing.T) {
 }
 
 func TestPortal_AbortRejectsOversizedBody(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		t.Skip("portal Abort endpoint requires peer-PID resolution on Linux; tracked by #1721")
-	}
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
 		t.Fatal(err)
