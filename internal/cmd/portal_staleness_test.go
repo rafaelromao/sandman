@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/rafaelromao/sandman/internal/batchindex"
+	"github.com/rafaelromao/sandman/internal/daemon"
 	"github.com/rafaelromao/sandman/internal/events"
 )
 
@@ -185,6 +187,98 @@ func TestPortal_RunFromState_ActiveNil_MultiIssueBatch_LogPathFromEventPayload(t
 	}
 	if run.LastOutputAt != nil {
 		t.Fatalf("LastOutputAt=%v, want nil for completed row", run.LastOutputAt)
+	}
+}
+
+// TestPortal_DiscoverActiveRuns_IssueMultiBatch_RunIDIsPerRow pins the
+// discovery path of the active-batch bug: for a multi-issue batch the
+// per-row RunID must be resolved from the per-row run.json under the
+// on-disk "+N" directory, not collapsed onto the index entry id (which
+// equals the per-row RunID for the first issue per ADR-0036 but does
+// not match the on-disk directory name and does not identify any
+// individual row). Without this fix, active.RunID == active.BatchID
+// and the staleness stat falls back to startedAt (issue #1715).
+func TestPortal_DiscoverActiveRuns_IssueMultiBatch_RunIDIsPerRow(t *testing.T) {
+	repoRoot, err := os.MkdirTemp("/tmp", "pda")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(repoRoot) })
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	const firstIssue = 1699
+	const issueN = 6
+	const perRowRunID = "fde2-260703095305-1704"
+	const onDiskDir = "fde2-260703095305-1699+6"
+	const indexEntryID = "fde2-260703095305-1699"
+
+	batchDir := filepath.Join(repoRoot, ".sandman", "batches", onDiskDir)
+	batchSockPath := filepath.Join(batchDir, "batch.sock")
+	runDir := filepath.Join(batchDir, "runs", perRowRunID)
+	logPath := filepath.Join(runDir, "run.log")
+	if err := os.MkdirAll(runDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	createUnixRunSocket(t, batchSockPath)
+
+	// Per ADR-0036: manifest.BatchId equals the per-row RunID for the
+	// first issue (no "+N").
+	if err := daemon.WriteManifest(batchDir, daemon.BatchManifest{
+		BatchId:   indexEntryID,
+		RunKind:   "issue",
+		Issues:    []int{1699, 1700, 1701, 1702, 1703, 1704},
+		CreatedAt: time.Now().Add(-time.Minute),
+	}); err != nil {
+		t.Fatalf("write batch manifest: %v", err)
+	}
+
+	// Per-row manifest under the on-disk (+N) dir. Issue matches the
+	// runID's embedded issue number (1704).
+	if err := daemon.WriteRunManifest(batchDir, perRowRunID, batchindex.RunManifest{
+		RunID:     perRowRunID,
+		BatchID:   indexEntryID,
+		Issue:     1704,
+		Branch:    "sandman/1704-fix",
+		Kind:      batchindex.KindIssue,
+		Status:    batchindex.RunManifestStatusActive,
+		CreatedAt: time.Now(),
+	}); err != nil {
+		t.Fatalf("write run manifest: %v", err)
+	}
+
+	// Write the per-row log and pin its mtime so the assertion is
+	// deterministic.
+	if err := os.WriteFile(logPath, []byte("output\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	logMtime := time.Now().Add(-30 * time.Second).Round(time.Second)
+	if err := os.Chtimes(logPath, logMtime, logMtime); err != nil {
+		t.Fatal(err)
+	}
+
+	// Index entry: id = per-row RunID for first issue (no "+N"), path =
+	// on-disk dir (with "+N").
+	addBatchToIndex(t, repoRoot, indexEntryID, batchDir, []int{1699, 1700, 1701, 1702, 1703, 1704})
+
+	idx := getPortalRunsIndex(repoRoot)
+	active, err := idx.discoverActiveRuns(nil)
+	if err != nil {
+		t.Fatalf("discoverActiveRuns: %v", err)
+	}
+	if len(active) != 1 {
+		t.Fatalf("expected 1 active instance, got %d: %#v", len(active), active)
+	}
+	got := active[0]
+	if got.RunID != perRowRunID {
+		t.Fatalf("active.RunID=%q, want per-row RunID %q (issue #1715: must not collapse to index entry id %q)", got.RunID, perRowRunID, indexEntryID)
+	}
+	if got.BatchID != indexEntryID {
+		t.Fatalf("active.BatchID=%q, want %q", got.BatchID, indexEntryID)
+	}
+	if !got.LastOutputAt.Equal(logMtime) {
+		t.Fatalf("active.LastOutputAt=%v, want per-row log mtime %v (issue #1715: stat must hit the real per-row log)", got.LastOutputAt, logMtime)
 	}
 }
 

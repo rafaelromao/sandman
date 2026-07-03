@@ -253,6 +253,20 @@ func (idx *portalRunsIndex) discoverActiveRuns(eventsByRun map[string][]portalEv
 			batchID = manifest.BatchId
 			prNumber = idx.view.prNumberFromEvent(eventsByRun[runID])
 		}
+		// For non-review batches, resolve the per-row RunID from the
+		// per-row run.json so the LastOutputAt stat below hits the real
+		// per-row log file. instance.Name is the batches index entry id
+		// which equals the per-row RunID for the first issue per
+		// ADR-0036 — does not match the on-disk directory name (which
+		// carries the "+N" suffix) and does not identify any individual
+		// row. Falling back to the entry id here made the staleness
+		// stat miss the per-row log entirely (issue #1715).
+		if manifestErr == nil && manifest.RunKind != "review" {
+			if perRowID, ok := canonicalIssueRunID(runDir); ok {
+				runID = perRowID
+				prNumber = idx.view.prNumberFromEvent(eventsByRun[perRowID])
+			}
+		}
 		if manifestErr == nil && manifest.RunKind == "review" {
 			// ADR-0030 (issue #1551): a review batch owns one row whose
 			// canonical RunID is the per-row folder name (`runs/<rowID>/`).
@@ -317,6 +331,29 @@ func canonicalReviewRunID(batchDir string) (string, bool) {
 	}
 	for _, e := range entries {
 		if !e.IsDir() || e.Name() == "review" {
+			continue
+		}
+		manifest, err := daemon.ReadRunManifest(batchDir, e.Name())
+		if err != nil || manifest.RunID == "" {
+			continue
+		}
+		return manifest.RunID, true
+	}
+	return "", false
+}
+
+// canonicalIssueRunID returns the per-row RunID for the first issue row
+// of a non-review batch. Mirrors canonicalReviewRunID's read of
+// `runs/<rowID>/run.json` so the portal's staleness stat hits the real
+// per-row log file instead of a non-existent "<entryId>/runs/<entryId>/run.log"
+// path (issue #1715).
+func canonicalIssueRunID(batchDir string) (string, bool) {
+	entries, err := os.ReadDir(filepath.Join(batchDir, "runs"))
+	if err != nil {
+		return "", false
+	}
+	for _, e := range entries {
+		if !e.IsDir() {
 			continue
 		}
 		manifest, err := daemon.ReadRunManifest(batchDir, e.Name())
