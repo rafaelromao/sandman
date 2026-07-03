@@ -10,15 +10,21 @@ import (
 	"github.com/rafaelromao/sandman/internal/github"
 )
 
-// TestDaemon_ProcessPR_SelfPostedTriggerStillLaunches pins the fix
-// for issue #1682: when the only `/sandman review` trigger on a PR
-// has a body that is in the SelfPostStore, the daemon STILL launches
-// a review for it. ParseTrigger runs before the self-post check so
-// trigger commands are always detected regardless of self-post status.
-// The self-post filter applies only to non-trigger comments (review
-// responses), preventing the bot's own review from being mistaken
-// for a human reply during promotion.
-func TestDaemon_ProcessPR_SelfPostedTriggerStillLaunches(t *testing.T) {
+// TestDaemon_ProcessPR_SelfPostedReviewBody_DoesNotTrigger pins the
+// new contract introduced by issue #1702: when the only comment on a
+// PR matches the trigger regex AND its body is in the SelfPostStore,
+// the daemon MUST NOT launch a review. The self-post filter runs
+// before ParseTrigger in processPR, so a body that has been recorded
+// as a self-post is dropped before it can match the trigger regex.
+// This protects the daemon from re-triggering a review on the bot's
+// own review-body (which contains the literal `/sandman review`
+// substring in its `## Previous review progress` section).
+//
+// Issue #1682's ordering (ParseTrigger before IsSelfPosted) is
+// reversed here. The implementor's `/sandman review` trigger still
+// launches a review on a fresh tick because the trigger body is NOT
+// in SelfPostStore — see TestDaemon_ProcessPR_StillTriggersOnNonSelfComment.
+func TestDaemon_ProcessPR_SelfPostedReviewBody_DoesNotTrigger(t *testing.T) {
 	now := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
 	triggerBody := "/sandman review focus on tests"
 
@@ -50,8 +56,8 @@ func TestDaemon_ProcessPR_SelfPostedTriggerStillLaunches(t *testing.T) {
 
 	tickAndWait(t, d, context.Background())
 
-	if runner.calls != 1 {
-		t.Errorf("daemon SHOULD launch a review for a self-posted trigger (#1682 fix), got %d batch runs", runner.calls)
+	if runner.calls != 0 {
+		t.Errorf("daemon MUST drop a self-posted trigger-shaped body before parsing (#1702), got %d batch runs", runner.calls)
 	}
 }
 
@@ -121,13 +127,15 @@ func TestDaemon_ProcessPR_SkipsOnlySelfPostedAmongTriggers(t *testing.T) {
 	}
 	d.selfPosts = sp
 
-	// After issue #1682, both trigger comments are detected (the
-	// self-post filter now applies only to non-trigger comments).
-	// The daemon picks the newest trigger and marks older ones
-	// superseded: realBody (focus beta) is newer than selfBody, so
-	// realBody wins. tickAndWait blocks until the async review
-	// goroutine completes (RunBatch now launches in a background
-	// goroutine).
+	// After issue #1702, the self-post filter runs BEFORE
+	// ParseTrigger in processPR. The self-posted trigger comment
+	// (c1) is therefore dropped at the IsSelfPosted check and
+	// never reaches the trigger-parse path. Only c2 (realBody,
+	// "focus beta") is parsed and queued as a trigger, and c2
+	// is the only trigger — no supersede happens because c1
+	// never entered the trigger slice. tickAndWait blocks until
+	// the async review goroutine completes (RunBatch now
+	// launches in a background goroutine).
 	tickAndWait(t, d, context.Background())
 
 	if runner.calls != 1 {
@@ -135,6 +143,61 @@ func TestDaemon_ProcessPR_SkipsOnlySelfPostedAmongTriggers(t *testing.T) {
 	}
 	if runner.last.ReviewFocus != "focus beta" {
 		t.Errorf("expected focus 'focus beta', got %q", runner.last.ReviewFocus)
+	}
+}
+
+// TestDaemon_ProcessPR_RecordedReviewBody_DoesNotReTrigger pins the
+// contract that a bot review-body recorded as a self-post is dropped
+// by processPR on a subsequent tick — even when the body contains
+// the trigger substring. This is the regression-prevention pin for
+// issue #1702's self-loop failure: without the new ordering, the
+// bot's review body, which contains the literal `/sandman review`
+// substring in its `## Previous review progress` section, would
+// match the trigger regex and re-launch a review.
+//
+// The PR has exactly one comment: the bot's review-body. The body
+// contains the trigger substring and is pre-seeded in SelfPostStore.
+// Under the OLD ordering, ParseTrigger would match the substring
+// and the daemon would launch a review — a self-loop. Under the
+// NEW ordering, IsSelfPosted runs first, drops the body, and no
+// review is launched.
+func TestDaemon_ProcessPR_RecordedReviewBody_DoesNotReTrigger(t *testing.T) {
+	now := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
+	reviewBody := "## Previous review progress\n/sandman review\n\nLGTM, no blockers."
+
+	gh := &fakeGH{
+		prs: []github.PR{{Number: 1, State: "open"}},
+		comments: map[int][]github.PRComment{
+			1: {
+				{ID: "review", Body: reviewBody, CreatedAt: now},
+			},
+		},
+	}
+	runner := &capturedRequest{}
+	d, _, dir := newDaemonForTest(t, gh, runner, &config.Config{
+		DefaultReviewAgent: "opencode",
+		DefaultReviewModel: "opencode/foo",
+	})
+	d.Clock = func() time.Time { return now.Add(-1 * time.Minute) }
+
+	// Pre-seed the SelfPostStore with the review-body — the
+	// defensive record path. The body must be in the store
+	// BEFORE processPR iterates the comments; otherwise it
+	// would be treated as a fresh trigger on this tick.
+	spPath := filepath.Join(dir, "reviews", "self-posted.json")
+	sp, err := NewSelfPostStore(spPath)
+	if err != nil {
+		t.Fatalf("NewSelfPostStore: %v", err)
+	}
+	if err := sp.Record(1, reviewBody, ""); err != nil {
+		t.Fatalf("seed Record: %v", err)
+	}
+	d.selfPosts = sp
+
+	tickAndWait(t, d, context.Background())
+
+	if runner.calls != 0 {
+		t.Errorf("MUST drop a recorded review-body that contains the trigger substring (#1702), got %d batch runs", runner.calls)
 	}
 }
 

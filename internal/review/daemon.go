@@ -764,19 +764,26 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) error {
 	}
 	var triggers []unseenTrigger
 	for _, comment := range comments {
+		// Self-post filter (issue #1648, ordering fixed by #1702):
+		// runs BEFORE ParseTrigger so a comment whose body matches
+		// a hash the bot has previously posted is dropped before its
+		// body is parsed for a trigger. This protects the daemon
+		// from re-triggering a review on the bot's own review-body,
+		// which contains the literal `/sandman review` substring in
+		// its `## Previous review progress` section. The
+		// SelfPostStore only ever contains bodies the bot posted
+		// (review-bodies via Step 4b of the pr-review skill, plus
+		// any body defensively observed by promotePendingComment),
+		// never the implementor's trigger command — so applying the
+		// filter before ParseTrigger does not regress trigger
+		// detection for fresh human-issued trigger commands.
+		if d.selfPosts != nil && d.selfPosts.IsSelfPosted(comment.Body) {
+			d.logf("PR #%d: comment %s is a self-post, skipping", prNumber, comment.ID)
+			continue
+		}
 		focus, ok := ParseTrigger(comment.Body)
 		if ok {
 			triggers = append(triggers, unseenTrigger{comment: comment, focus: focus})
-			continue
-		}
-		// Self-post filter (issue #1648): a non-trigger comment
-		// whose body matches a hash the bot has previously posted
-		// is the bot's own review, not a human reviewer's reply.
-		// The filter applies ONLY to non-trigger comments so a
-		// self-posted /sandman review command is still detected as
-		// a trigger (issue #1682).
-		if d.selfPosts != nil && d.selfPosts.IsSelfPosted(comment.Body) {
-			d.logf("PR #%d: comment %s is a self-post (non-trigger), skipping", prNumber, comment.ID)
 			continue
 		}
 	}
