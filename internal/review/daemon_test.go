@@ -462,6 +462,11 @@ func TestDaemon_TickLaunchesReviewsInParallel(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("tick did not finish after releasing parallel reviews")
 	}
+	idleCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := d.WaitForIdle(idleCtx); err != nil {
+		t.Fatalf("WaitForIdle: %v", err)
+	}
 }
 
 func TestDaemon_ParallelOverrideCapsSlotPool(t *testing.T) {
@@ -2320,6 +2325,11 @@ func TestDaemon_ConcurrentPRsDoNotClobberSharedPrompt(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("tick did not finish after releasing parallel reviews")
+	}
+	idleCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := d.WaitForIdle(idleCtx); err != nil {
+		t.Fatalf("WaitForIdle: %v", err)
 	}
 
 	mu.Lock()
