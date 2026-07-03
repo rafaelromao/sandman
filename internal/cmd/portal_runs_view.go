@@ -1170,7 +1170,16 @@ func (v *portalRunsView) stateStartsInBatch(timestamp, batchStart time.Time) boo
 func (v *portalRunsView) runFromActiveBatchIssue(repoRoot string, active portalActiveRun, issueNumber int, state *events.RunState, blocked *events.Event, queued *events.Event, liveOutput string, eventsByRun map[string][]portalEvent, deadBatches []daemon.DeadBatch) portalRun {
 	issueLabel := fmt.Sprintf("#%d", issueNumber)
 	run := portalRun{
-		Key:         fmt.Sprintf("%s-issue-%d", activeKeyForActive(active), issueNumber),
+		Key: fmt.Sprintf("%s-issue-%d", activeKeyForActive(active), issueNumber),
+		// An active batch's wait-state row (queued/blocked) starts
+		// as kind="active" so the row stays in the "Active Batches"
+		// filter and the user can still abort it. The
+		// markCompletedIfSocketDead call at the bottom of this
+		// function demotes the row to kind="completed" when the
+		// batch socket is dead — that's the issue #1699 dead-batch
+		// case, and it's already covered by the liveness probe (the
+		// row only reaches this branch when discoverActiveRuns
+		// surfaced the batch as live).
 		Kind:        "active",
 		Status:      "queued",
 		IssueLabel:  issueLabel,
@@ -1596,18 +1605,15 @@ func attemptsAndLastRetryReasonFromEvents(events []portalEvent) (int, string) {
 
 func (v *portalRunsView) kindForRun(runState events.RunState) string {
 	// An active state (run.started / run.continued, no terminal
-	// event yet) is naturally "active". A queued state has no
-	// terminal event of its own — the run.queued placeholder is
-	// carried as Finished for projection purposes, but the actual
-	// run is still waiting to start, so the row must render as
-	// "active" with status "queued" rather than "completed". This
-	// keeps the orphan-batch code path consistent with the
-	// active-batch code path in runFromActiveBatchIssue, which
-	// also renders queued rows as kind="active".
+	// event yet) is naturally "active". Wait-state rows (queued,
+	// blocked) project as kind="completed" so the portal's
+	// "Active Batches" filter and active-row CSS chrome do not
+	// light up on rows that have no live daemon. The wait-state
+	// status badge, the "Blocked by #…" log message, and the
+	// row-non-expandable class are gated off `status`, not
+	// `kind`, so demoting kind leaves the wait-state contract
+	// intact (issue #1699).
 	if runState.IsActive() {
-		return "active"
-	}
-	if runState.Status() == "queued" || runState.Status() == "blocked" {
 		return "active"
 	}
 	return "completed"

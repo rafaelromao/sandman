@@ -2647,7 +2647,15 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
     }
 
     function isRunAbortable(run, abortReservations) {
-      if (!run || run.kind !== 'active') return false;
+      if (!run) return false;
+      // Abortability is a status-level concept: any row that is still
+      // waiting to start, currently running, or under review can be
+      // aborted. The kind check used to live here too, but issue #1699
+      // demoted queued/blocked rows to kind="completed" so they would
+      // stop appearing in the "Active Batches" filter and lose the
+      // active-row chrome. Gating abort on status keeps the Abort
+      // button available on wait-state rows whose batch daemon is
+      // still alive and reachable via the per-run socket.
       if (run.status !== 'running' && run.status !== 'reviewing' && run.status !== 'queued' && run.status !== 'blocked') return false;
       if (!run.batchKey) return false;
       const reservationKey = run.key + ':' + String(run.issueNumber != null ? run.issueNumber : '');

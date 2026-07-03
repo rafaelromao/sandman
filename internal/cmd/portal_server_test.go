@@ -599,13 +599,17 @@ func TestPortal_LoadPortalRuns_ShowsQueuedIssuesFromEvents(t *testing.T) {
 	if run := byIssue[1]; run.Kind != "completed" || run.Status != "success" {
 		t.Fatalf("expected completed success run for issue 1, got kind=%q status=%q", run.Kind, run.Status)
 	}
-	// Queued runs render as active/queued (see kindForRun): they
-	// are still waiting to start, not done.
-	if run := byIssue[2]; run.Kind != "active" || run.Status != "queued" {
-		t.Fatalf("expected active queued run for issue 2, got kind=%q status=%q", run.Kind, run.Status)
+	// Queued runs project as completed/queued (issue #1699): they
+	// are not actually running, so the active-row chrome and the
+	// "Active Batches" filter must not light up on them. Status
+	// stays "queued" so the wait-state badge, the
+	// row-non-expandable class, and the "Queued. Waiting to
+	// start." log message still render correctly.
+	if run := byIssue[2]; run.Kind != "completed" || run.Status != "queued" {
+		t.Fatalf("expected completed queued run for issue 2, got kind=%q status=%q", run.Kind, run.Status)
 	}
-	if run := byIssue[3]; run.Kind != "active" || run.Status != "queued" {
-		t.Fatalf("expected active queued run for issue 3, got kind=%q status=%q", run.Kind, run.Status)
+	if run := byIssue[3]; run.Kind != "completed" || run.Status != "queued" {
+		t.Fatalf("expected completed queued run for issue 3, got kind=%q status=%q", run.Kind, run.Status)
 	}
 }
 
@@ -1104,7 +1108,17 @@ func TestAbortPortalRun_BlockedRunEmitsRunAborted(t *testing.T) {
 	}
 }
 
-func TestPortal_QueuedOnlyRowHasActiveKindSoAbortRenders(t *testing.T) {
+// TestPortal_QueuedOnlyRowRendersAbortButtonViaStatus is the issue
+// #1699 retest: the frontend's isRunAbortable now keys off
+// run.status (queued/running/reviewing/blocked) rather than
+// run.kind, so the row stays abortable through the batch daemon's
+// per-run socket. This test wires a live batch.sock, registers a
+// single queued event for issue 42, and verifies that the row
+// surfaces with the data the new abort predicate checks:
+// Status="queued", BatchKey set, and (since the batch socket is
+// alive) Kind="active" so it still appears in the "Active Batches"
+// filter.
+func TestPortal_QueuedOnlyRowRendersAbortButtonViaStatus(t *testing.T) {
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
 		t.Fatal(err)
@@ -1149,8 +1163,18 @@ func TestPortal_QueuedOnlyRowHasActiveKindSoAbortRenders(t *testing.T) {
 	if queuedRow == nil {
 		t.Fatalf("expected a queued row for issue 42, got runs: %#v", runs)
 	}
+	// Live batch → kind stays "active" so the row remains visible
+	// in the "Active Batches" filter. Wait-state rows in dead
+	// batches (no batch.sock) get kind="completed" via kindForRun
+	// — covered separately by TestPortal_BlockedRunInDeadBatch_KindIsCompleted.
 	if queuedRow.Kind != "active" {
-		t.Fatalf("expected queued row to have Kind='active' so Abort button renders, got Kind=%q", queuedRow.Kind)
+		t.Fatalf("expected queued row in live batch to keep Kind='active', got Kind=%q", queuedRow.Kind)
+	}
+	if queuedRow.Status != "queued" {
+		t.Fatalf("expected queued row Status='queued', got Status=%q", queuedRow.Status)
+	}
+	if queuedRow.BatchKey == "" {
+		t.Fatalf("expected queued row BatchKey set so the Abort button renders (issue #1699: Abort now keys off status, not kind), got BatchKey=%q", queuedRow.BatchKey)
 	}
 }
 
@@ -2345,14 +2369,19 @@ func TestPortal_DedupKeepsActiveBatchAndHistoricalRows(t *testing.T) {
 	var sawActiveQueued, sawHistoricalBlocked bool
 	for _, run := range issueRuns {
 		switch {
+		// The active batch has a live batch.sock, so its
+		// wait-state row stays kind="active" (issue #1699 only
+		// demotes wait-state rows when the batch daemon is
+		// dead). Status is "queued" because the run.queued
+		// event happened during the active batch's lifetime.
 		case run.Kind == "active" && run.Status == "queued":
 			sawActiveQueued = true
-		// Historical blocked rows render as kind="active"
-		// (queued/blocked states are still waiting, not done —
-		// see kindForRun). The historical signal here is the
-		// orphan BatchKey="" distinguishing it from the active
-		// batch's row.
-		case run.Kind == "active" && run.Status == "blocked" && run.BatchKey == "":
+		// Historical blocked rows (run.blocked before the
+		// active batch started, no live socket) render as
+		// kind="completed" via kindForRun. The historical
+		// signal is the orphan BatchKey="" distinguishing
+		// it from the active batch's row.
+		case run.Kind == "completed" && run.Status == "blocked" && run.BatchKey == "":
 			sawHistoricalBlocked = true
 		default:
 			t.Fatalf("unexpected row for issue 42: %#v", run)
@@ -3114,6 +3143,66 @@ func TestPortal_BlockedThenFailureShowsFailureAfterBatchEnds(t *testing.T) {
 	}
 }
 
+// TestPortal_BlockedRunInDeadBatch_KindIsCompleted is the end-to-end
+// tracer bullet for issue #1699. The reproduction: a batch daemon that
+// started a mix of runs and then died (no batch.sock on disk, no live
+// process) leaves behind a `run.blocked` event for an issue whose
+// blocker never finished. The portal must surface that row with
+// kind="completed" and status="blocked" so the "Active Batches" filter
+// and the active-row CSS chrome do not light up on a row that has no
+// live daemon. Before the fix this test went red: the row was
+// kind="active" and the active-row purple tint rendered against a row
+// that was, in reality, idle.
+func TestPortal_BlockedRunInDeadBatch_KindIsCompleted(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	batchID := "b7cf-260702214402-1640+13"
+	batchDir := filepath.Join(repoRoot, ".sandman", "batches", batchID)
+	if err := os.MkdirAll(batchDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	// batch.json without batch.sock: the daemon is dead, the entry is
+	// still indexed as active in batches.json (MarkUnavailable only
+	// flips entries whose backing dir was deleted, not entries whose
+	// daemon merely exited — that's a separate slice).
+	if err := os.WriteFile(filepath.Join(batchDir, "batch.json"),
+		[]byte(`{"issues":[1640,1641],"createdAt":"2026-07-02T21:44:02-03:00","runKind":"issue"}`),
+		0644); err != nil {
+		t.Fatal(err)
+	}
+	addBatchToIndex(t, repoRoot, batchID, batchDir, []int{1640, 1641})
+
+	blockedAt := time.Date(2026, 7, 2, 21, 44, 14, 0, time.UTC)
+	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
+		{Type: "run.blocked", Timestamp: blockedAt, RunID: "b7cf-260702214402-1641", Issue: 1641, Payload: map[string]any{"batch_id": batchID, "blocked_by": []int{1640}, "branch": "sandman/1641-fix", "issue_title": "blocked issue"}},
+	})
+
+	runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")})
+	if err != nil {
+		t.Fatalf("load portal runs: %v", err)
+	}
+
+	var blockedRun *portalRun
+	for i := range runs {
+		if runs[i].IssueNumber == 1641 {
+			blockedRun = &runs[i]
+			break
+		}
+	}
+	if blockedRun == nil {
+		t.Fatalf("expected a row for issue 1641, got %#v", runs)
+	}
+	if blockedRun.Status != "blocked" {
+		t.Fatalf("expected status 'blocked', got %q", blockedRun.Status)
+	}
+	if blockedRun.Kind != "completed" {
+		t.Fatalf("expected kind 'completed' (issue #1699: blocked runs must not be tagged active), got %q", blockedRun.Kind)
+	}
+}
+
 func TestPortal_StaleCleanerRunsOnceOnStartupAndNotOnPoll(t *testing.T) {
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
@@ -3832,9 +3921,16 @@ func TestPortal_OrphanActiveBatch_AllRowsRender(t *testing.T) {
 		if !ok {
 			t.Fatalf("issue %d: no portal row returned", issue)
 		}
-		wantKind := "active"
+		// Issue 1014 was started → kind="active" status="running".
+		// The other issues were queued → kind="completed"
+		// status="queued" (issue #1699: wait-state rows are not
+		// active, even when their batch daemon is alive). The
+		// running row's kind still surfaces the live batch in
+		// the "Active Batches" filter.
+		wantKind := "completed"
 		wantStatus := "queued"
 		if issue == 1014 {
+			wantKind = "active"
 			wantStatus = "running"
 		}
 		if row.Kind != wantKind {
