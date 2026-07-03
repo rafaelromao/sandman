@@ -62,9 +62,7 @@ func TestDaemon_RestartRecoversPendingFromDisk(t *testing.T) {
 		DefaultReviewModel: "opencode/foo",
 	}, &lockedBuffer{}, 0, false)
 	d1.Clock = func() time.Time { return now }
-	if err := d1.tick(context.Background()); err != nil {
-		t.Fatalf("first daemon tick: %v", err)
-	}
+	tickAndWait(t, d1, context.Background())
 	if runner.calls != 1 {
 		t.Fatalf("first daemon should launch the review once, got %d calls", runner.calls)
 	}

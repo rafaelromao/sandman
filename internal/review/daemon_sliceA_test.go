@@ -226,9 +226,7 @@ func TestDaemon_ProcessPRScalesConstantlyWithPriorBatches(t *testing.T) {
 		counter.Install(t)
 
 		start := time.Now()
-		if err := d.tick(context.Background()); err != nil {
-			t.Fatalf("tick (N=%d): %v", priorCount, err)
-		}
+		tickAndWait(t, d, context.Background())
 		elapsed := time.Since(start)
 
 		if runner.calls != 1 {
@@ -407,9 +405,10 @@ func TestDaemon_ReviewStateStore_MarkSeenInvalidatesCacheMidProcess(t *testing.T
 
 	// First tick: cache is empty, so processPR should launch a batch
 	// and record the trigger as pending (slice D lazy verify).
-	if err := d.tick(context.Background()); err != nil {
-		t.Fatalf("first tick: %v", err)
-	}
+	// tickAndWait blocks until the async review goroutine completes so
+	// the runner.calls assertion is stable AND the pending entry is
+	// registered before the second tick's dedup check runs.
+	tickAndWait(t, d, context.Background())
 	if runner.calls != 1 {
 		t.Fatalf("first tick should launch exactly one batch, got %d", runner.calls)
 	}

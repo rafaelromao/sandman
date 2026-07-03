@@ -177,6 +177,22 @@ func newDaemonForTest(t *testing.T, gh GitHubClient, runner BatchRunner, cfg *co
 	return d, buf, dir
 }
 
+// tickAndWait runs tick then waits for all background review goroutines to
+// complete (slotHeldCount == 0). Use in tests that assert on runner state
+// or filesystem artifacts after tick — tick now returns before RunBatch
+// finishes because reviews launch asynchronously.
+func tickAndWait(t *testing.T, d *Daemon, ctx context.Context) {
+	t.Helper()
+	if err := d.tick(ctx); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+	idleCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := d.WaitForIdle(idleCtx); err != nil {
+		t.Fatalf("WaitForIdle: %v", err)
+	}
+}
+
 func newDaemonForTestWithParallel(t *testing.T, gh GitHubClient, runner BatchRunner, cfg *config.Config, parallel int, parallelSet bool) (*Daemon, *lockedBuffer, string) {
 	t.Helper()
 	dir := t.TempDir()
@@ -209,9 +225,7 @@ func TestDaemon_ProcessPRCommentsSortedByCreatedAt(t *testing.T) {
 	})
 	d.Clock = func() time.Time { return now.Add(-1 * time.Minute) }
 
-	if err := d.tick(context.Background()); err != nil {
-		t.Fatalf("tick: %v", err)
-	}
+	tickAndWait(t, d, context.Background())
 
 	if runner.calls != 1 {
 		t.Fatalf("expected 1 batch run (only newest trigger), got %d", runner.calls)
@@ -249,9 +263,7 @@ func TestDaemon_OnlyNewestUnseenTriggerProcessed(t *testing.T) {
 	})
 	d.Clock = func() time.Time { return now.Add(-1 * time.Minute) }
 
-	if err := d.tick(context.Background()); err != nil {
-		t.Fatalf("tick: %v", err)
-	}
+	tickAndWait(t, d, context.Background())
 
 	if runner.calls != 1 {
 		t.Fatalf("expected 1 batch run (only newest trigger), got %d", runner.calls)
@@ -326,9 +338,7 @@ func TestDaemon_TickLaunchesReviewForTriggerComment(t *testing.T) {
 	})
 	d.Clock = func() time.Time { return now.Add(-1 * time.Minute) }
 
-	if err := d.tick(context.Background()); err != nil {
-		t.Fatalf("tick: %v", err)
-	}
+	tickAndWait(t, d, context.Background())
 
 	if runner.calls != 1 {
 		t.Fatalf("expected 1 batch run, got %d", runner.calls)
@@ -475,8 +485,9 @@ func TestDaemon_ParallelOverrideCapsSlotPool(t *testing.T) {
 	}, 2, true)
 	d.Clock = func() time.Time { return now }
 
-	done := make(chan error, 1)
-	go func() { done <- d.tick(context.Background()) }()
+	if err := d.tick(context.Background()); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
 
 	seen := map[int]struct{}{}
 	for len(seen) < 2 {
@@ -495,14 +506,7 @@ func TestDaemon_ParallelOverrideCapsSlotPool(t *testing.T) {
 	}
 
 	close(release)
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Fatalf("tick: %v", err)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("tick did not finish after releasing parallel reviews")
-	}
+	waitIdle(t, d)
 }
 
 func TestDaemon_EffectiveParallelPrefersOverride(t *testing.T) {
@@ -523,9 +527,7 @@ func TestDaemon_EffectiveParallelPrefersOverride(t *testing.T) {
 	d.Parallel = 4
 	d.ParallelSet = true
 
-	if err := d.tick(context.Background()); err != nil {
-		t.Fatalf("tick: %v", err)
-	}
+	tickAndWait(t, d, context.Background())
 
 	if runner.last.Parallel != 4 {
 		t.Errorf("expected effectiveParallel() to prefer d.Parallel (4) over cfg (7), got %d", runner.last.Parallel)
@@ -549,9 +551,7 @@ func TestDaemon_EffectiveParallelFallsBackToConfig(t *testing.T) {
 	})
 	// d.Parallel and d.ParallelSet left at zero values; cfg fallback should win.
 
-	if err := d.tick(context.Background()); err != nil {
-		t.Fatalf("tick: %v", err)
-	}
+	tickAndWait(t, d, context.Background())
 
 	if runner.last.Parallel != 7 {
 		t.Errorf("expected effectiveParallel() to fall back to cfg.EffectiveReviewParallel() (7), got %d", runner.last.Parallel)
@@ -579,9 +579,7 @@ func TestDaemon_LaunchReviewPropagatesAgentModelParallelOverrides(t *testing.T) 
 	d.Agent = "claude"
 	d.Model = "anthropic/claude-sonnet-4"
 
-	if err := d.tick(context.Background()); err != nil {
-		t.Fatalf("tick: %v", err)
-	}
+	tickAndWait(t, d, context.Background())
 
 	if runner.calls != 1 {
 		t.Fatalf("expected 1 batch run, got %d", runner.calls)
@@ -615,9 +613,7 @@ func TestDaemon_TickAddsReactionAndRemovesAfterReview(t *testing.T) {
 	})
 	d.Clock = func() time.Time { return now.Add(-1 * time.Minute) }
 
-	if err := d.tick(context.Background()); err != nil {
-		t.Fatalf("tick: %v", err)
-	}
+	tickAndWait(t, d, context.Background())
 
 	// Verify reactions were added and then removed.
 	foundAddComment := false
@@ -684,9 +680,7 @@ func TestDaemon_ReactionRemovedOnRunBatchError(t *testing.T) {
 		DefaultReviewModel: "opencode/foo",
 	})
 
-	if err := d.tick(context.Background()); err != nil {
-		t.Fatalf("tick: %v", err)
-	}
+	tickAndWait(t, d, context.Background())
 
 	// Reactions should still be removed even though RunBatch failed.
 	foundRemoveComment := false
@@ -795,9 +789,7 @@ func TestDaemon_StaleTriggersLogged(t *testing.T) {
 		DefaultReviewModel: "opencode/foo",
 	})
 
-	if err := d.tick(context.Background()); err != nil {
-		t.Fatalf("tick: %v", err)
-	}
+	tickAndWait(t, d, context.Background())
 
 	if runner.calls != 1 {
 		t.Fatalf("expected 1 batch run, got %d", runner.calls)
@@ -879,9 +871,7 @@ func TestDaemon_MixedSeenAndUnseenTriggers(t *testing.T) {
 		t.Fatalf("save batches index: %v", err)
 	}
 
-	if err := d.tick(context.Background()); err != nil {
-		t.Fatalf("tick: %v", err)
-	}
+	tickAndWait(t, d, context.Background())
 
 	if runner.calls != 1 {
 		t.Fatalf("expected 1 batch run (only newest unseen), got %d", runner.calls)
@@ -915,9 +905,7 @@ func TestDaemon_TickCaseInsensitive(t *testing.T) {
 		DefaultReviewModel: "opencode/foo",
 	})
 
-	if err := d.tick(context.Background()); err != nil {
-		t.Fatalf("tick: %v", err)
-	}
+	tickAndWait(t, d, context.Background())
 	if runner.calls != 1 {
 		t.Errorf("expected 1 batch run, got %d", runner.calls)
 	}
@@ -1298,9 +1286,7 @@ func TestDaemon_LaunchReviewPropagatesSandboxParams(t *testing.T) {
 	d.MaxContainers = 2
 	d.MaxContainersSet = true
 
-	if err := d.tick(context.Background()); err != nil {
-		t.Fatalf("tick: %v", err)
-	}
+	tickAndWait(t, d, context.Background())
 
 	if runner.calls != 1 {
 		t.Fatalf("expected 1 batch run, got %d", runner.calls)
@@ -1342,9 +1328,7 @@ func TestDaemon_LaunchReviewPropagatesAgentModelOverrides(t *testing.T) {
 	d.Agent = "claude"
 	d.Model = "anthropic/claude-sonnet-4"
 
-	if err := d.tick(context.Background()); err != nil {
-		t.Fatalf("tick: %v", err)
-	}
+	tickAndWait(t, d, context.Background())
 
 	if runner.calls != 1 {
 		t.Fatalf("expected 1 batch run, got %d", runner.calls)
@@ -1376,9 +1360,7 @@ func TestDaemon_LaunchReviewFallsBackToConfigForAgentModel(t *testing.T) {
 	d, _, _ := newDaemonForTest(t, gh, runner, cfg)
 	// Leave d.Agent and d.Model empty to exercise config fallback.
 
-	if err := d.tick(context.Background()); err != nil {
-		t.Fatalf("tick: %v", err)
-	}
+	tickAndWait(t, d, context.Background())
 
 	if runner.calls != 1 {
 		t.Fatalf("expected 1 batch run, got %d", runner.calls)
@@ -1408,9 +1390,7 @@ func TestDaemon_LaunchReviewFallsBackToConfigSandbox(t *testing.T) {
 	d, _, _ := newDaemonForTest(t, gh, runner, cfg)
 	// Deliberately leave d.Sandbox empty to exercise the cfg.Sandbox fallback.
 
-	if err := d.tick(context.Background()); err != nil {
-		t.Fatalf("tick: %v", err)
-	}
+	tickAndWait(t, d, context.Background())
 
 	if runner.calls != 1 {
 		t.Fatalf("expected 1 batch run, got %d", runner.calls)
@@ -1441,9 +1421,7 @@ func TestDaemon_ProcessPRLaunchesNewestTriggerOnly(t *testing.T) {
 	d, buf, _ := newDaemonForTest(t, gh, runner, cfg)
 	d.Clock = func() time.Time { return time.Date(2026, 6, 10, 9, 0, 0, 0, time.UTC) }
 
-	if err := d.tick(context.Background()); err != nil {
-		t.Fatalf("tick: %v", err)
-	}
+	tickAndWait(t, d, context.Background())
 
 	if runner.calls != 1 {
 		t.Fatalf("expected exactly 1 batch run for the newest trigger, got %d", runner.calls)
@@ -1984,9 +1962,7 @@ func TestDaemon_TickFailingReviewRecordsFailure(t *testing.T) {
 		DefaultReviewModel: "opencode/foo",
 	})
 
-	if err := d.tick(context.Background()); err != nil {
-		t.Fatalf("tick: %v", err)
-	}
+	tickAndWait(t, d, context.Background())
 
 	if runner.calls != 1 {
 		t.Fatalf("expected 1 batch run, got %d", runner.calls)
@@ -2087,9 +2063,7 @@ func TestDaemon_AbortedReviewRetriesOnNextTick(t *testing.T) {
 		t.Fatalf("save batches index: %v", err)
 	}
 
-	if err := d.tick(context.Background()); err != nil {
-		t.Fatalf("first tick: %v", err)
-	}
+	tickAndWait(t, d, context.Background())
 
 	if runner.calls != 1 {
 		t.Fatalf("expected 1 batch run on first tick (aborted not skipped), got %d", runner.calls)
@@ -2124,9 +2098,7 @@ func TestDaemon_TickFailingReviewRetriesOnNextTick(t *testing.T) {
 		DefaultReviewModel: "opencode/foo",
 	})
 
-	if err := d.tick(context.Background()); err != nil {
-		t.Fatalf("first tick: %v", err)
-	}
+	tickAndWait(t, d, context.Background())
 
 	if runner.calls != 1 {
 		t.Fatalf("expected 1 batch run on first tick, got %d", runner.calls)
@@ -2148,9 +2120,7 @@ func TestDaemon_TickFailingReviewRetriesOnNextTick(t *testing.T) {
 		t.Fatalf("first tick should have recorded failure, got: %+v", state.SeenComments)
 	}
 
-	if err := d.tick(context.Background()); err != nil {
-		t.Fatalf("second tick: %v", err)
-	}
+	tickAndWait(t, d, context.Background())
 
 	if runner.calls != 2 {
 		t.Errorf("expected 2 batch runs (retry on second tick), got %d", runner.calls)
