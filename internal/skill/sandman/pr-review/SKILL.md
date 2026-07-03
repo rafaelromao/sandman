@@ -235,9 +235,9 @@ On **every** poll iteration, after running the three commands above, inspect the
 4. Restart polling from Step 1 — a fresh CI run will be triggered by the push, and the review agent may have already posted feedback on the prior SHA that the polling loop should classify on the next pass.
 5. If back-merge fails to resolve conflicts (e.g. semantic conflict, merge helper rejected a hunk), exit the loop with a distinct `REVIEW_CONFLICT_UNRESOLVED` reason in the run log. This is **never** a `REVIEW_TIMEOUT`. It is also **never** a silent success — the PR remains unmergeable and a future run must continue from this state.
 
-**Hard rule — DIRTY is not REVIEW_TIMEOUT.** A DIRTY PR that back-merge cannot resolve is a structured failure with a clear signal (the orchestrator's `merge_conflict: true` payload field on the `run.finished` event, set by Guard B from issue #1684). Do not collapse it into the generic review-timeout bucket: the two failures have different remediation paths and different downstream tooling.
+**Hard rule — DIRTY is not REVIEW_TIMEOUT.** A DIRTY PR that back-merge cannot resolve is a structured failure with a downstream signal in the run payload. Do not collapse it into the generic review-timeout bucket: the two failures have different remediation paths and different downstream tooling.
 
-**Hard rule — DIRTY is not silent success.** Observing a DIRTY PR and continuing to poll for reviewer comments is exactly the failure mode that stranded run `8861-260702183922-1639` (PR #1671). The fix is action, not observation.
+**Hard rule — DIRTY is not silent success.** Observing a DIRTY PR and continuing to poll for reviewer comments is the failure mode the skill exists to prevent. The fix is action, not observation.
 
 #### Step 6: Read and classify feedback
 
