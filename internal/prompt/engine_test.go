@@ -719,10 +719,12 @@ func TestDefaultPRReviewPrompt_ContainsQualityCheckSection(t *testing.T) {
 	prompt := string(data)
 
 	required := []string{
-		"## Quality check",
-		"`## Quality check` section that always renders",
-		"all rules skipped — no language-tagged rules matched the diff",
-		"`## Quality check` — always render; cite n/t, the ratio, the threshold verdict using `internal/prompt/quality_rules.md` (never restate the literal)",
+		"After applying the rules, **render a `## Quality check` section**",
+		"\"below threshold\", \"at or above threshold\", or `all rules skipped — no language-tagged rules matched the diff`",
+		"complexity signals, OC, SOLID",
+		"Do not restate the threshold literal; refer to `internal/prompt/quality_rules.md`",
+		"- `## Quality check` — Always render. Cite n/t, the ratio, the threshold verdict (using the threshold defined in `internal/prompt/quality_rules.md`; never restate the literal)",
+		"render a one-line \"all rules skipped — no language-tagged rules matched the diff\" verdict",
 		"10. ",
 		"11. When you find an issue, cite the file and line range, quote the offending snippet, and describe the concrete fix.",
 	}
