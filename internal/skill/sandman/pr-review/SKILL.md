@@ -167,7 +167,7 @@ record_review_posted() {
 If `jq` is unavailable, fall back to the simpler form below (the daemon tolerates any re-record; the file is a JSON object keyed by sha256 hex):
 
 ```bash
-record_review_posted_plain() {
+record_review_posted_fallback() {
   local body="$1"
   local sha=$(printf '%s' "$body" | tr 'A-Z' 'a-z' | sed 's/[ \t\n]*$//' | sha256sum | awk '{print $1}')
   printf ',"%s":{"sha256":"%s","pr_number":%s,"run_id":"%s","posted_at":"%s"}' \
