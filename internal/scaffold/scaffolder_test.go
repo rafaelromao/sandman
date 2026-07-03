@@ -1980,6 +1980,28 @@ func TestScaffold_RubyPresetIsRegistered(t *testing.T) {
 	}
 }
 
+func TestScaffold_JavaPresetIsRegistered(t *testing.T) {
+	preset, ok := builtInBuildToolsPresets[javaBuildToolsPreset]
+	if !ok {
+		t.Fatalf("java preset not registered in builtInBuildToolsPresets")
+	}
+	if preset.Name != javaBuildToolsPreset {
+		t.Errorf("preset.Name = %q, want %q", preset.Name, javaBuildToolsPreset)
+	}
+	if preset.BaseImage != "debian:bookworm-slim" {
+		t.Errorf("preset.BaseImage = %q, want %q", preset.BaseImage, "debian:bookworm-slim")
+	}
+	if preset.MiseVersion != DefaultMISEVersion {
+		t.Errorf("preset.MiseVersion = %q, want %q", preset.MiseVersion, DefaultMISEVersion)
+	}
+	if len(preset.SharedPackages) != len(sharedPackages) {
+		t.Errorf("preset.SharedPackages length = %d, want %d", len(preset.SharedPackages), len(sharedPackages))
+	}
+	if !containsString(KnownBuildToolsPresets, javaBuildToolsPreset) {
+		t.Errorf("KnownBuildToolsPresets missing %q, got %v", javaBuildToolsPreset, KnownBuildToolsPresets)
+	}
+}
+
 func TestScaffold_ElixirPresetIsRegistered(t *testing.T) {
 	preset, ok := builtInBuildToolsPresets[elixirBuildToolsPreset]
 	if !ok {
