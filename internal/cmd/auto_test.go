@@ -479,7 +479,7 @@ func TestRun_AutoFlag_NonPRDPassthroughUntouched(t *testing.T) {
 	regular42 := &github.Issue{Number: 42, State: "open", Title: "Issue 42", Body: "## What\n\nJust a regular issue."}
 	regular43 := &github.Issue{Number: 43, State: "open", Title: "Issue 43", Body: "## What\n\nJust a regular issue."}
 
-	repoDir := t.TempDir()
+	repoDir := testenv.MkdirShort(t, "sm-auto-")
 	sandmanDir := filepath.Join(repoDir, ".sandman")
 	if err := os.MkdirAll(sandmanDir, 0o755); err != nil {
 		t.Fatalf("create sandman dir: %v", err)
@@ -576,7 +576,7 @@ func TestRun_AutoFlag_QueryFilterExpandsPRD(t *testing.T) {
 	childBody := "## Parent\n\n#1\n\n## What\n\n"
 	regularBody := "## What\n\nA regular open issue.\n"
 
-	repoDir := t.TempDir()
+	repoDir := testenv.MkdirShort(t, "sm-auto-")
 	sandmanDir := filepath.Join(repoDir, ".sandman")
 	if err := os.MkdirAll(sandmanDir, 0o755); err != nil {
 		t.Fatalf("create sandman dir: %v", err)

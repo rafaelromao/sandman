@@ -63,6 +63,14 @@ func TestDaemon_RestartRecoversPendingFromDisk(t *testing.T) {
 	}, &lockedBuffer{}, 0, false)
 	d1.Clock = func() time.Time { return now }
 	tickAndWait(t, d1, context.Background())
+	// tickAndWait waits for slotHeldCount to drop, but the async
+	// launch goroutine may not have invoked runner.Run yet on macOS
+	// (a documented goroutine-scheduling sensitivity). Poll for up
+	// to 2 s for the call to land.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) && runner.calls == 0 {
+		time.Sleep(10 * time.Millisecond)
+	}
 	if runner.calls != 1 {
 		t.Fatalf("first daemon should launch the review once, got %d calls", runner.calls)
 	}
