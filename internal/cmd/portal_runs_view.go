@@ -1191,10 +1191,9 @@ func (v *portalRunsView) runFromActiveBatchIssue(repoRoot string, active portalA
 			run.Log = v.portalBlockedMessage(state.Finished.Payload)
 		case "aborted":
 		default:
-run.Log = v.resolveRunLog(func() string { return v.readPortalTextFile(run.LogPath) }, *state, &active)
+			run.Log = v.resolveRunLog(func() string { return v.readPortalTextFile(run.LogPath) }, *state, &active)
 			if strings.TrimSpace(run.Log) == "" {
 				run.Log = "No log file yet."
-			}
 			}
 		}
 		return run
@@ -1429,7 +1428,7 @@ func (v *portalRunsView) runFromState(repoRoot string, runState events.RunState,
 	}
 
 	logPath := v.portalLogPathForRun(repoRoot, locator)
-logContent := v.resolveRunLog(func() string { return v.readPortalTextFile(logPath) }, runState, active)
+	logContent := v.resolveRunLog(func() string { return v.readPortalTextFile(logPath) }, runState, active)
 
 	batchKey := ""
 	if active != nil {
