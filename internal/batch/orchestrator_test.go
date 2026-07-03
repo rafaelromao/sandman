@@ -4052,6 +4052,9 @@ func TestRunBatch_RechecksExternalBlockerStateBeforeDependentStart(t *testing.T)
 }
 
 func TestRunBatch_PreservesParallelismWithinDependencyLevel(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("CommandServer uses Unix socket path conventions; tracked by #1720")
+	}
 	dir := t.TempDir()
 	t.Chdir(dir)
 	initGitRepo(t, dir)
