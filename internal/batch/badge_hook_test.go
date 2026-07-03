@@ -3,6 +3,8 @@ package batch
 import (
 	"context"
 	"io"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -14,7 +16,6 @@ type fakePRLister struct {
 	mergedErr         error
 	badgeErr          error
 	controlFile       bool
-	controlErr        error
 	hasBadgeCallCount int
 }
 
@@ -39,11 +40,8 @@ func (f *fakePRLister) HasBadgePR(ctx context.Context) (bool, error) {
 	return f.hasBadge, nil
 }
 
-func (f *fakePRLister) HasBadgeControlFile(ctx context.Context) (bool, error) {
-	if f.controlErr != nil {
-		return false, f.controlErr
-	}
-	return f.controlFile, nil
+func (f *fakePRLister) HasBadgeControlFile(_ context.Context) bool {
+	return f.controlFile
 }
 
 func intToString(n int) string { return strconv.Itoa(n) }
@@ -291,6 +289,97 @@ func TestMaybeSuggestBadge_ControlFilePresent_ShortCircuitsHasBadgePR(t *testing
 	}
 	if fakeRunner.capturedPrompt != "" {
 		t.Errorf("expected no spawn when control file is present, got prompt=%q", fakeRunner.capturedPrompt)
+	}
+}
+
+func TestMaybeSuggestBadge_ControlFileAbsent_FallsThroughToHasBadgePR(t *testing.T) {
+	fakeGh := &fakePRLister{
+		mergedPRs: []MergedSandmanPR{{Number: 7, HeadRefName: "sandman/feat", Title: "Add feature"}},
+		hasBadge:  true,
+	}
+	fakeRunner := &fakeSandmanRunner{prURL: "https://github.com/owner/repo/pull/55"}
+	h := newDefaultBadgeHooker(fakeGh, fakeRunner, io.Discard)
+
+	h.MaybeSuggestBadge(context.Background(), []AgentRunResult{{Status: "success"}})
+
+	if fakeGh.hasBadgeCallCount != 1 {
+		t.Errorf("expected HasBadgePR to be called once when control file is absent, got %d call(s)", fakeGh.hasBadgeCallCount)
+	}
+	if fakeRunner.capturedPrompt != "" {
+		t.Errorf("expected no spawn when HasBadgePR reports badge present, got prompt=%q", fakeRunner.capturedPrompt)
+	}
+}
+
+func TestMaybeSuggestBadge_DefaultLister_TreatsMissingControlFileAsAbsent(t *testing.T) {
+	tmp := t.TempDir()
+	prev, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	if err := os.Chdir(tmp); err != nil {
+		t.Fatalf("chdir tmp: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chdir(prev)
+	})
+
+	lister := &defaultPRLister{gh: realGhCommander{}}
+	if got := lister.HasBadgeControlFile(context.Background()); got {
+		t.Errorf("expected HasBadgeControlFile to return false when control file is absent, got true")
+	}
+}
+
+func TestMaybeSuggestBadge_DefaultLister_TreatsPresentControlFileAsPresent(t *testing.T) {
+	tmp := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(tmp, ".sandman"), 0o755); err != nil {
+		t.Fatalf("mkdir .sandman: %v", err)
+	}
+	controlPath := filepath.Join(tmp, ".sandman", ".built_with_sandman")
+	if err := os.WriteFile(controlPath, nil, 0o644); err != nil {
+		t.Fatalf("write control file: %v", err)
+	}
+
+	prev, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	if err := os.Chdir(tmp); err != nil {
+		t.Fatalf("chdir tmp: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chdir(prev)
+	})
+
+	lister := &defaultPRLister{gh: realGhCommander{}}
+	if got := lister.HasBadgeControlFile(context.Background()); !got {
+		t.Errorf("expected HasBadgeControlFile to return true when control file is present, got false")
+	}
+}
+
+func TestMaybeSuggestBadge_DefaultLister_TreatsStatErrorAsAbsent(t *testing.T) {
+	tmp := t.TempDir()
+	sandmanDir := filepath.Join(tmp, ".sandman")
+	if err := os.MkdirAll(sandmanDir, 0o000); err != nil {
+		t.Fatalf("mkdir .sandman: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chmod(sandmanDir, 0o755)
+	})
+
+	prev, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	if err := os.Chdir(tmp); err != nil {
+		t.Fatalf("chdir tmp: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chdir(prev)
+	})
+
+	lister := &defaultPRLister{gh: realGhCommander{}}
+	if got := lister.HasBadgeControlFile(context.Background()); got {
+		t.Errorf("expected HasBadgeControlFile to return false when stat errors (e.g. permission denied), got true")
 	}
 }
 

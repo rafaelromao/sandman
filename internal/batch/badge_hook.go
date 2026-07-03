@@ -3,7 +3,6 @@ package batch
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -37,7 +36,7 @@ func (realGhCommander) runGh(ctx context.Context, args ...string) ([]byte, error
 type PRLister interface {
 	ListMergedSandmanPRs(ctx context.Context) ([]MergedSandmanPR, error)
 	HasBadgePR(ctx context.Context) (bool, error)
-	HasBadgeControlFile(ctx context.Context) (bool, error)
+	HasBadgeControlFile(ctx context.Context) bool
 }
 
 type MergedSandmanPR struct {
@@ -104,20 +103,17 @@ const badgeControlFileName = ".built_with_sandman"
 // call on every batch. Stat errors other than IsNotExist are swallowed
 // and reported as "absent" so a transient filesystem hiccup never
 // blocks the fallback HasBadgePR path.
-func (d *defaultPRLister) HasBadgeControlFile(ctx context.Context) (bool, error) {
+func (d *defaultPRLister) HasBadgeControlFile(_ context.Context) bool {
 	root, err := os.Getwd()
 	if err != nil {
-		return false, nil
+		return false
 	}
 	path := filepath.Join(root, ".sandman", badgeControlFileName)
 	info, err := os.Stat(path)
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return false, nil
-		}
-		return false, nil
+		return false
 	}
-	return info != nil, nil
+	return info != nil
 }
 
 type prPayloadList struct {
@@ -217,11 +213,7 @@ func (h *defaultBadgeHooker) MaybeSuggestBadge(ctx context.Context, results []Ag
 		return
 	}
 
-	controlFilePresent, err := h.prLister.HasBadgeControlFile(ctx)
-	if err != nil {
-		fmt.Fprintf(h.writer, "Badge PR suggestion skipped: %v\n", err)
-		return
-	}
+	controlFilePresent := h.prLister.HasBadgeControlFile(ctx)
 	if controlFilePresent {
 		return
 	}
