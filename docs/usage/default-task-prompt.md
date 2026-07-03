@@ -41,13 +41,26 @@ The long workflow now lives in the shared Sandman skill. This page describes the
 
     The registered next step is the first unchecked item in the Execution Checklist.
 
-    ## Already Resolved
-
+## Already Resolved
+    
     If the issue is already implemented on `{{BASE_BRANCH}}`, after fetching and checking the current `origin/{{BASE_BRANCH}}` HEAD against the issue acceptance criteria, update `.sandman/task.md` so it contains the exact line `## Status: already resolved`.
-
+    
     Do not use issue closure, a matching local branch, or unmerged worktree changes as proof that the issue is already resolved. If any acceptance criterion is missing or you are not certain, continue with Plan.
-
+    
     Do not paraphrase this line. Do not use `already implemented`, `no action required`, or any other wording for this marker.
+    
+    Before writing `## Status: already resolved`, the `sandman-implement` skill requires two pre-flight checks (see Step 1.5). Both must pass before the marker is written. If either fails, do NOT write the marker — fix the underlying condition first, or stop and let the existing PR drive the run.
+    
+    ## Success-Blocking Conditions
+    
+    The run is NOT considered successful (and `## Status: already resolved` MUST NOT be written) while any of the following are true:
+    
+    - **Open PR with no approval** — `gh pr list --head <branch> --state open` returns one or more PRs that have not been approved (or the approval state is unknown).
+    - **`mergeable: CONFLICTING`** — the branch's open PR is in a conflict state with the base branch.
+    - **Unpushed commits** — `git log @{u}..HEAD` (or `git log origin/{{BASE_BRANCH}}..HEAD` for a new branch) is non-empty; the local branch has commits the remote does not.
+    - **Unresolved AC blocker** — any acceptance criterion in the issue body is unmet, contested, or marked blocked by another open issue.
+    
+    Re-check this block immediately before writing `## Status: already resolved`. If any condition is true, abort the marker and address the underlying problem (close orphan PR, back-merge, push commits, or resolve the blocker).
     
     ## Mandatory Execution Contract
     
