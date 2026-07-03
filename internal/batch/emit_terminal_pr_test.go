@@ -32,7 +32,7 @@ func TestEmitTerminal_PROpenConflictingOverridesStatus(t *testing.T) {
 	s.o.eventLog = &events.JSONLLogger{Path: eventsPath}
 
 	result := AgentRunResult{IssueNumber: 42, Branch: "sandman/42-fix-bug", Status: "success", RetriesTotal: 1}
-	got := s.emitTerminal(context.Background(), "run-id", result)
+	got := s.emitTerminal(context.Background(), "run-id", result, nil)
 	if got != "failure" {
 		t.Fatalf("emitTerminal returned %q, want failure (CONFLICTING PR overrides success)", got)
 	}
@@ -82,7 +82,7 @@ func TestEmitTerminal_PROpenCleanLeavesStatusUnchanged(t *testing.T) {
 	s.o.eventLog = &events.JSONLLogger{Path: eventsPath}
 
 	result := AgentRunResult{IssueNumber: 42, Branch: "sandman/42-fix-bug", Status: "success", RetriesTotal: 1}
-	got := s.emitTerminal(context.Background(), "run-id", result)
+	got := s.emitTerminal(context.Background(), "run-id", result, nil)
 	if got != "success" {
 		t.Fatalf("emitTerminal returned %q, want success (MERGEABLE PR should not override)", got)
 	}
@@ -120,7 +120,7 @@ func TestEmitTerminal_NoOpenPRLeavesStatusUnchanged(t *testing.T) {
 	s.o.eventLog = &events.JSONLLogger{Path: eventsPath}
 
 	result := AgentRunResult{IssueNumber: 42, Branch: "sandman/42-fix-bug", Status: "success", RetriesTotal: 1}
-	got := s.emitTerminal(context.Background(), "run-id", result)
+	got := s.emitTerminal(context.Background(), "run-id", result, nil)
 	if got != "success" {
 		t.Fatalf("emitTerminal returned %q, want success (no PR should not change status)", got)
 	}
@@ -158,7 +158,7 @@ func TestEmitTerminal_GHLookupErrorLeavesStatusUnchanged(t *testing.T) {
 	s.o.eventLog = &events.JSONLLogger{Path: eventsPath}
 
 	result := AgentRunResult{IssueNumber: 42, Branch: "sandman/42-fix-bug", Status: "success", RetriesTotal: 1}
-	got := s.emitTerminal(context.Background(), "run-id", result)
+	got := s.emitTerminal(context.Background(), "run-id", result, nil)
 	if got != "success" {
 		t.Fatalf("emitTerminal returned %q, want success (gh error must be a soft pass-through)", got)
 	}
