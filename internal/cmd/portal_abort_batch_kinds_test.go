@@ -124,7 +124,11 @@ func portalAbortBatchKindsFixture(t *testing.T, opts portalAbortBatchKindsOpts) 
 		t.Fatal(err)
 	}
 
-	batchDir := filepath.Join(repoRoot, ".sandman", "batches", opts.batchKey)
+	batchDirName := opts.batchDirName
+	if batchDirName == "" {
+		batchDirName = opts.batchKey
+	}
+	batchDir := filepath.Join(repoRoot, ".sandman", "batches", batchDirName)
 	if err := os.MkdirAll(batchDir, 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -226,6 +230,7 @@ func portalAbortBatchKindsFixture(t *testing.T, opts portalAbortBatchKindsOpts) 
 
 type portalAbortBatchKindsOpts struct {
 	batchKey       string
+	batchDirName   string // optional: overrides batchKey as the on-disk dir name (post-#1675 entry id may differ from batchDirName for multi-issue)
 	perRowID       string
 	idxKind        batchindex.Kind
 	issues         []int
@@ -367,14 +372,16 @@ func TestPortal_AbortEndpoint_ContinueReviewRow_ResolvesPerRunSocket(t *testing.
 }
 
 // TestPortal_AbortEndpoint_ContinueIssueRunRow_ResolvesPerRunSocket
-// covers a `--continue` issue run on a multi-issue batch: the
-// per-row id equals the batch entry id (the orchestrator picks the
-// first subject as the resume row), so the abort handler takes the
-// `runID == batchKey` branch (portal.go:357). The fixture's batch
-// manifest must carry `BatchId: batchKey` so `daemon.ReadManifest`
-// matches; the fallback then resolves perRunID to
-// `filepath.Base(runDir)` and the per-run socket lives at
-// `<batchDir>/runs/<batchKey>/run.sock`. The orchestrator must
+// covers a `--continue` issue run on a multi-issue batch. After #1675
+// the per-row RunID is `<sid>-<ts>-<num>` (NOT the batch dir name
+// `<sid>-<ts>-<num>+N`). The batch index entry id is the per-row RunID
+// of the canonical row (first issue), so `run.RunID == run.BatchKey ==
+// perRowID` (both equal the per-row RunID). The abort handler takes
+// the `runID == batchKey` branch at portal.go:357; the discriminator
+// must use `manifest.RunKind` to detect orphan reviews (where the
+// per-row RunID is the batch dir name) instead of falling through to
+// `filepath.Base(runDir)` for issue runs. The per-run socket lives at
+// `<batchDir>/runs/<perRowID>/run.sock` and the orchestrator must
 // receive `Issue=42`.
 func TestPortal_AbortEndpoint_ContinueIssueRunRow_ResolvesPerRunSocket(t *testing.T) {
 	if !portalAbortSupported() {
@@ -382,19 +389,21 @@ func TestPortal_AbortEndpoint_ContinueIssueRunRow_ResolvesPerRunSocket(t *testin
 	}
 	ts := "260618113825"
 	shortid := "abcd"
-	batchKey := runid.NewBatchID(runid.KindIssue, 2, "42", ts, shortid)
-	perRowID := runid.NewBatchID(runid.KindIssue, 2, "42", ts, shortid)
-	if perRowID != batchKey {
-		t.Fatalf("fixture invariant: --continue perRowID %q must equal batchKey %q", perRowID, batchKey)
+	batchDirName := runid.NewBatchID(runid.KindIssue, 2, "42", ts, shortid)
+	perRowID := runid.NewRunID(runid.KindIssue, "42", ts, shortid)
+	if perRowID == batchDirName {
+		t.Fatalf("fixture invariant: perRowID %q must differ from batchDirName %q", perRowID, batchDirName)
 	}
 
 	batchManifest := daemon.BatchManifest{
 		Issues:    []int{42, 43},
-		BatchId:   batchKey,
+		BatchId:   perRowID, // post-#1675: BatchId == per-row RunID for the canonical row
+		RunKind:   "issue",
 		CreatedAt: time.Now().Add(-10 * time.Minute),
 	}
 	repoRoot, _ := portalAbortBatchKindsFixture(t, portalAbortBatchKindsOpts{
-		batchKey:      batchKey,
+		batchKey:      perRowID,     // index entry id == per-row RunID of canonical row
+		batchDirName:  batchDirName, // ADR-0030 batch dir name `<sid>-<ts>-42+2`
 		perRowID:      perRowID,
 		idxKind:       batchindex.KindIssue,
 		issues:        []int{42, 43},
@@ -403,7 +412,7 @@ func TestPortal_AbortEndpoint_ContinueIssueRunRow_ResolvesPerRunSocket(t *testin
 		batchManifest: &batchManifest,
 	})
 
-	perRunSock := filepath.Join(repoRoot, ".sandman", "batches", batchKey, "runs", batchKey, "run.sock")
+	perRunSock := filepath.Join(repoRoot, ".sandman", "batches", batchDirName, "runs", perRowID, "run.sock")
 	spy := &abortSpy{}
 	startAbortCommandServer(t, perRunSock, spy)
 	stubPortalPeerPIDForAbort(t, perRunSock)

@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/rafaelromao/sandman/internal/batch"
+	"github.com/rafaelromao/sandman/internal/batchindex"
 	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/events"
 	"github.com/rafaelromao/sandman/internal/github"
@@ -1741,6 +1742,47 @@ func TestRun_PromptOnlyAllowsNoIssueSelection(t *testing.T) {
 				t.Fatalf("expected no issues, got %v", spy.req.Issues)
 			}
 		})
+	}
+}
+
+// TestRun_PromptOnlyWithRunIDRegistersOrchestratorRunIDInBatchesIndex
+// verifies that `sandman run --prompt "..." --run-id myid` registers
+// the batches index entry with id `<sid>-<ts>-prompt-myid`, matching
+// the per-row RunID the orchestrator will emit in run.started for a
+// prompt-only session (see internal/batch/orchestrator.go where the
+// subject is "prompt-<userid>"). Mirrors #1675 acceptance criterion
+// "every batch kind" — prompt-only was previously falling back to the
+// path basename `<sid>-<ts>-myid>`, which did NOT match the orchestrator's
+// emitted RunID.
+func TestRun_PromptOnlyWithRunIDRegistersOrchestratorRunIDInBatchesIndex(t *testing.T) {
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	dir, deps := newRunDepsInDir(t, spy)
+	deps.GitHubClient = &fakeGitHubClient{fetchIssueError: errors.New("fetch should not run")}
+
+	var buf bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--prompt", "Return only OK.", "--run-id", "myid"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	idx, err := batchindex.Load(filepath.Join(dir, ".sandman", "batches.json"))
+	if err != nil {
+		t.Fatalf("load batches index: %v", err)
+	}
+
+	// entryID should be <sid>-<ts>-prompt-myid (mirror the
+	// orchestrator's subject formula).
+	wantSuffix := "-prompt-myid"
+	if len(idx.Entries) != 1 {
+		t.Fatalf("expected exactly 1 batch index entry, got %d (entries=%v)", len(idx.Entries), idx.Entries)
+	}
+	got := idx.Entries[0]
+	if !strings.HasSuffix(got.ID, wantSuffix) {
+		t.Errorf("entry ID = %q, want suffix %q (orchestrator's emitted RunID)", got.ID, wantSuffix)
 	}
 }
 
@@ -4496,5 +4538,156 @@ func TestRun_IssueDrivenBatchUsesNewIDScheme(t *testing.T) {
 	want := filepath.Join(".sandman", "batches", spy.req.RunShortID+"-"+spy.req.RunTS+"-42+1")
 	if dir != want {
 		t.Fatalf("expected run dir %q, got %q", want, dir)
+	}
+}
+
+// TestRun_SingleIssueRegistersPerRowRunIDInBatchesIndex verifies that
+// `sandman run 42` registers the batches index entry with an id equal to
+// the per-row RunID the orchestrator will emit in run.started, namely
+// `<sid>-<ts>-42`, NOT the batch dir name `<sid>-<ts>-42+1` (acceptance
+// criterion for #1675: "every batch kind"). This is the structural fix
+// for the per-row-vs-index id mismatch that previously required the
+// slice-1 path-basename fallback in batchindex.canonicalizeEntryID.
+func TestRun_SingleIssueRegistersPerRowRunIDInBatchesIndex(t *testing.T) {
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	dir, deps := newRunDepsInDir(t, spy)
+	deps.GitHubClient = &fakeGitHubClient{
+		issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug", State: "open"}},
+		prs:    map[string]*github.PR{},
+	}
+
+	var buf bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"42"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	idx, err := batchindex.Load(filepath.Join(dir, ".sandman", "batches.json"))
+	if err != nil {
+		t.Fatalf("load batches index: %v", err)
+	}
+
+	wantPerRowID := spy.req.RunShortID + "-" + spy.req.RunTS + "-42"
+	if len(idx.Entries) != 1 {
+		t.Fatalf("expected exactly 1 batch index entry, got %d (entries=%v)", len(idx.Entries), idx.Entries)
+	}
+	got := idx.Entries[0]
+	if got.ID != wantPerRowID {
+		t.Errorf("entry ID = %q, want %q (per-row RunID)", got.ID, wantPerRowID)
+	}
+	if got.Kind != batchindex.KindIssue {
+		t.Errorf("entry Kind = %v, want %v", got.Kind, batchindex.KindIssue)
+	}
+	if got.Path == "" {
+		t.Error("entry Path must be non-empty")
+	}
+	// Path must still be the batch dir name (sid-ts-N+N), so the
+	// on-disk layout is unchanged from today.
+	if filepath.Base(got.Path) != spy.req.RunShortID+"-"+spy.req.RunTS+"-42+1" {
+		t.Errorf("entry Path basename = %q, want batch dir name %q", filepath.Base(got.Path), spy.req.RunShortID+"-"+spy.req.RunTS+"-42+1")
+	}
+}
+
+// TestRun_MultiIssueRegistersFirstRowAsCanonicalEntryID verifies that
+// `sandman run 42 43` registers a SINGLE batch index entry whose id is
+// the first issue's per-row RunID `<sid>-<ts>-42` (the canonical row for
+// the batch). Per-row addressability is via the per-run folders under
+// `runs/<sid>-<ts>-<num>/`, not via additional index entries (issue
+// #1675: "the batch-level entry id picks a canonical row").
+func TestRun_MultiIssueRegistersFirstRowAsCanonicalEntryID(t *testing.T) {
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	dir, deps := newRunDepsInDir(t, spy)
+	deps.GitHubClient = &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			42: {Number: 42, Title: "First", State: "open"},
+			43: {Number: 43, Title: "Second", State: "open"},
+		},
+		prs: map[string]*github.PR{},
+	}
+
+	var buf bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"42", "43"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	idx, err := batchindex.Load(filepath.Join(dir, ".sandman", "batches.json"))
+	if err != nil {
+		t.Fatalf("load batches index: %v", err)
+	}
+
+	wantCanonicalID := spy.req.RunShortID + "-" + spy.req.RunTS + "-42"
+	wantSecondID := spy.req.RunShortID + "-" + spy.req.RunTS + "-43"
+	if len(idx.Entries) != 1 {
+		t.Fatalf("expected exactly 1 batch index entry for multi-issue run, got %d (entries=%v)", len(idx.Entries), idx.Entries)
+	}
+	got := idx.Entries[0]
+	if got.ID != wantCanonicalID {
+		t.Errorf("entry ID = %q, want %q (first row's per-row RunID)", got.ID, wantCanonicalID)
+	}
+	// The second row's per-row id is NOT a separate index entry;
+	// it lives in runs/<sid>-<ts>-43/run.json instead.
+	if idx.Resolve(wantSecondID) != nil {
+		t.Errorf("second row's id %q must NOT have a separate index entry; only the canonical row does", wantSecondID)
+	}
+	// Path is still the batch dir name (sid-ts-42+2), unchanged.
+	if filepath.Base(got.Path) != spy.req.RunShortID+"-"+spy.req.RunTS+"-42+2" {
+		t.Errorf("entry Path basename = %q, want batch dir name %q", filepath.Base(got.Path), spy.req.RunShortID+"-"+spy.req.RunTS+"-42+2")
+	}
+}
+
+// TestRun_ContinueRegistersPerRowRunIDInBatchesIndex verifies that
+// `sandman run --continue 42` registers the batches index entry with id
+// `<sid>-<ts>-42` (the per-row RunID the orchestrator will emit in
+// run.continued). Mirrors #1675's `sandman run --continue <issue>`
+// acceptance criterion and pins the structural-ordering invariant that
+// `req.RunTS`/`RunShortID` must be minted before `Prepare` is called.
+func TestRun_ContinueRegistersPerRowRunIDInBatchesIndex(t *testing.T) {
+	// newRunDeps chdirs into a fresh temp dir. Place the worktree
+	// inside that same dir so filepath.Join(WorktreeDir, branch)
+	// resolves relative to the chdir.
+	branch := "sandman/42-fix-bug"
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	deps := newRunDeps(t, spy)
+	if err := os.MkdirAll(filepath.Join(".", branch, ".sandman"), 0755); err != nil {
+		t.Fatalf("mkdir worktree: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(".", branch, ".sandman", "task.md"), []byte("## Completed\nInitial pass.\n"), 0644); err != nil {
+		t.Fatalf("write task: %v", err)
+	}
+	deps.ConfigStore = &fakeStore{config: &config.Config{Agent: "opencode", WorktreeDir: ".", ReviewCommand: "/oc review", AgentProviders: map[string]config.Agent{"opencode": {Preset: "opencode", Command: "true"}}}}
+	deps.EventLog = &fakeEventLog{events: []events.Event{{Type: "run.started", RunID: testRunIDIssue42First, Issue: 42, Payload: map[string]any{"branch": branch, "base_branch": "main", "agent": "opencode"}}}}
+	deps.GitHubClient = &fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, State: "open"}}, prs: map[string]*github.PR{}}
+
+	var buf bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--continue", "42"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	idx, err := batchindex.Load(filepath.Join(".", ".sandman", "batches.json"))
+	if err != nil {
+		t.Fatalf("load batches index: %v", err)
+	}
+
+	wantPerRowID := spy.req.RunShortID + "-" + spy.req.RunTS + "-42"
+	if len(idx.Entries) != 1 {
+		t.Logf("buf: %s", buf.String())
+		t.Fatalf("expected exactly 1 batch index entry, got %d (entries=%v)", len(idx.Entries), idx.Entries)
+	}
+	if got := idx.Entries[0].ID; got != wantPerRowID {
+		t.Errorf("entry ID = %q, want %q (per-row RunID)", got, wantPerRowID)
 	}
 }

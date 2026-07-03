@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/rafaelromao/sandman/internal/batch"
+	"github.com/rafaelromao/sandman/internal/batchindex"
 	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/daemon"
 	"github.com/rafaelromao/sandman/internal/github"
@@ -1594,3 +1595,116 @@ func TestReviewCmd_UnboundedRange_EmptyOpenPRs(t *testing.T) {
 type testError struct{ msg string }
 
 func (e *testError) Error() string { return e.msg }
+
+// TestReviewCmd_OneShotWithLinkedIssueRegistersPerRowRunID verifies that
+// `sandman review 42` for a PR with linked issue #42 registers the
+// batches index entry with id `<sid>-<ts>-42-PR42`, matching the
+// orchestrator's emitted per-row RunID for the review (acceptance
+// criterion #1675 §review with linked issue).
+func TestReviewCmd_OneShotWithLinkedIssueRegistersPerRowRunID(t *testing.T) {
+	var buf bytes.Buffer
+	cfg := &config.Config{
+		DefaultAgent:       "opencode",
+		DefaultModel:       "opencode/big-pickle",
+		DefaultReviewAgent: "opencode",
+		DefaultReviewModel: "openai/gpt-5",
+		Agent:              "opencode",
+		Sandbox:            "podman",
+		AgentProviders: map[string]config.Agent{
+			"opencode": {Preset: "opencode", Command: "opencode"},
+		},
+	}
+	// Body contains "Fixes #42" so github.PR.LinkedIssueNumber() returns 42
+	// via the body-fallback regex (issue #1675: subject `<issue>-PR<pr>`).
+	gh := &fakePRGitHubClient{
+		fakeGitHubClient: &fakeGitHubClient{},
+		pr: &github.PR{
+			Number: 42,
+			Title:  "Implement feature",
+			Body:   "Fixes #42",
+		},
+	}
+	runner := &spyBatchRunner{result: &batch.Result{}}
+	deps := newReviewDeps(t, gh, cfg, runner)
+
+	cmd := NewReviewCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"42"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	idx, err := batchindex.Load(filepath.Join(".", ".sandman", "batches.json"))
+	if err != nil {
+		t.Fatalf("load batches index: %v", err)
+	}
+	if len(idx.Entries) != 1 {
+		t.Fatalf("expected exactly 1 batch index entry, got %d (entries=%v)", len(idx.Entries), idx.Entries)
+	}
+	got := idx.Entries[0]
+	wantSuffix := "-42-PR42"
+	if !strings.HasSuffix(got.ID, wantSuffix) {
+		t.Errorf("entry ID = %q, want suffix %q", got.ID, wantSuffix)
+	}
+	if got.Kind != batchindex.KindReview {
+		t.Errorf("entry Kind = %v, want %v", got.Kind, batchindex.KindReview)
+	}
+}
+
+// TestReviewCmd_OneShotOrphanRegistersPerRowRunID verifies that
+// `sandman review 17` for an orphan PR (no linked issue) registers the
+// batches index entry with id `<sid>-<ts>-PR17` — the same form the
+// orchestrator emits in its review run event (acceptance criterion
+// #1675 §orphan review).
+func TestReviewCmd_OneShotOrphanRegistersPerRowRunID(t *testing.T) {
+	var buf bytes.Buffer
+	cfg := &config.Config{
+		DefaultAgent:       "opencode",
+		DefaultModel:       "opencode/big-pickle",
+		DefaultReviewAgent: "opencode",
+		DefaultReviewModel: "openai/gpt-5",
+		Agent:              "opencode",
+		Sandbox:            "podman",
+		AgentProviders: map[string]config.Agent{
+			"opencode": {Preset: "opencode", Command: "opencode"},
+		},
+	}
+	// No linked issue: empty body and no ClosingIssuesReferences populated.
+	gh := &fakePRGitHubClient{
+		fakeGitHubClient: &fakeGitHubClient{},
+		pr: &github.PR{
+			Number: 17,
+			Title:  "Refactor daemon",
+			Body:   "Splits the orchestrator.",
+		},
+	}
+	runner := &spyBatchRunner{result: &batch.Result{}}
+	deps := newReviewDeps(t, gh, cfg, runner)
+
+	cmd := NewReviewCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"17"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	idx, err := batchindex.Load(filepath.Join(".", ".sandman", "batches.json"))
+	if err != nil {
+		t.Fatalf("load batches index: %v", err)
+	}
+	if len(idx.Entries) != 1 {
+		t.Fatalf("expected exactly 1 batch index entry, got %d (entries=%v)", len(idx.Entries), idx.Entries)
+	}
+	got := idx.Entries[0]
+	wantSuffix := "-PR17"
+	if !strings.HasSuffix(got.ID, wantSuffix) {
+		t.Errorf("entry ID = %q, want suffix %q", got.ID, wantSuffix)
+	}
+	if got.Kind != batchindex.KindReview {
+		t.Errorf("entry Kind = %v, want %v", got.Kind, batchindex.KindReview)
+	}
+}

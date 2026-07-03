@@ -172,7 +172,11 @@ func runReviewOneShot(cmd *cobra.Command, deps Dependencies, cfg *config.Config,
 	perRowRunID := runid.NewRunID(runid.KindReview, subject, ts, shortid)
 
 	rs := daemon.NewRunSession(sandmanDir, batchDirName)
-	manifest := daemon.BatchManifest{BatchId: batchDirName, CreatedAt: time.Now(), RunKind: "review", PR: &pr.Number}
+	// Index entry id MUST equal the per-row RunID the orchestrator will emit
+	// for this review (see #1675). batchDirName is the ADR-0030 batch-level
+	// dir name `<sid>-<ts>-PR<pr>`, which equals perRowRunID for orphan
+	// reviews but NOT for reviews with a linked issue (`<sid>-<ts>-<issue>-PR<pr>`).
+	manifest := daemon.BatchManifest{BatchId: perRowRunID, CreatedAt: time.Now(), RunKind: "review", PR: &pr.Number}
 	if err := rs.Prepare(manifest); err != nil {
 		_ = rs.Close()
 		return fmt.Errorf("bootstrap review session: %w", err)
