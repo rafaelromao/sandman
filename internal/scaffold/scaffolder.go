@@ -1747,6 +1747,9 @@ func (s *Scaffolder) renderBuildToolsDockerfile(preset BuildToolsPreset, default
 	if preset.Name == rustBuildToolsPreset {
 		fmt.Fprintf(&out, "# sandman rust-version: %s\n", rustVersion)
 	}
+	if preset.Name == javaBuildToolsPreset {
+		fmt.Fprintf(&out, "# sandman java-version: %s\n", javaVersion)
+	}
 	fmt.Fprintf(&out, "# sandman mise-version: %s\n", preset.MiseVersion)
 	fmt.Fprintf(&out, "# sandman rtk-version: %s\n", DefaultRTKVersion)
 	fmt.Fprintf(&out, "FROM %s\n", preset.BaseImage)
@@ -1781,6 +1784,9 @@ func (s *Scaffolder) renderBuildToolsDockerfile(preset BuildToolsPreset, default
 	}
 	if preset.Name == rustBuildToolsPreset {
 		out.WriteString(renderRustInstallCommand(rustVersion))
+	}
+	if preset.Name == javaBuildToolsPreset {
+		out.WriteString(renderJavaInstallCommand(javaVersion))
 	}
 	out.WriteString(renderCodeindexInstallCommand())
 	out.WriteString(renderAgentInstallCommand("opencode", DefaultBuiltInAgentVersion("opencode")))
@@ -2029,6 +2035,10 @@ func renderRubyInstallCommand(version string) string {
 
 func renderRustInstallCommand(version string) string {
 	return fmt.Sprintf("RUN mise use -g --pin rust@%s\n", version)
+}
+
+func renderJavaInstallCommand(version string) string {
+	return fmt.Sprintf("RUN mise use -g --pin java@%s\n", version)
 }
 
 func renderCodeindexInstallCommand() string {
