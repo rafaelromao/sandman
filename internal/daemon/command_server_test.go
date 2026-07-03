@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -16,6 +17,13 @@ type fakeCommander struct {
 	abortCalls []int
 	abortErr   error
 	mu         sync.Mutex
+}
+
+func skipIfNotCommandServerSupported(t *testing.T) {
+	t.Helper()
+	if runtime.GOOS != "linux" {
+		t.Skip("CommandServer uses Linux-only socket namespaces; tracked by #1720")
+	}
 }
 
 func (s *fakeCommander) AbortIssue(issueNumber int) error {
@@ -48,6 +56,7 @@ func longCommandSocketDir(t *testing.T) string {
 }
 
 func TestCommandServer_StartFallsBackToAbstractSocketForLongPaths(t *testing.T) {
+	skipIfNotCommandServerSupported(t)
 	dir := longCommandSocketDir(t)
 	stub := &fakeCommander{}
 	server := NewCommandServer(dir, stub)
@@ -84,6 +93,7 @@ func TestCommandServer_StartFallsBackToAbstractSocketForLongPaths(t *testing.T) 
 }
 
 func TestCommandServer_StopLeavesFilesystemAloneForAbstractSocket(t *testing.T) {
+	skipIfNotCommandServerSupported(t)
 	dir := longCommandSocketDir(t)
 	server := NewCommandServer(dir, &fakeCommander{})
 	if err := server.Start(); err != nil {
@@ -109,6 +119,7 @@ func TestCommandServer_StopLeavesFilesystemAloneForAbstractSocket(t *testing.T) 
 }
 
 func TestCommandServer_AbortFailureReturnsStableCode(t *testing.T) {
+	skipIfNotCommandServerSupported(t)
 	dir := t.TempDir()
 	stub := &fakeCommander{abortErr: errors.New("upstream-internal-sentinel-do-not-leak")}
 	server := NewCommandServer(dir, stub)
@@ -147,6 +158,7 @@ func TestCommandServer_AbortFailureReturnsStableCode(t *testing.T) {
 }
 
 func TestCommandServer_RejectsUnknownFields(t *testing.T) {
+	skipIfNotCommandServerSupported(t)
 	dir := t.TempDir()
 	stub := &fakeCommander{}
 	server := NewCommandServer(dir, stub)
@@ -183,6 +195,7 @@ func TestCommandServer_RejectsUnknownFields(t *testing.T) {
 }
 
 func TestCommandServer_RejectsOversizeBody(t *testing.T) {
+	skipIfNotCommandServerSupported(t)
 	dir := t.TempDir()
 	stub := &fakeCommander{}
 	server := NewCommandServer(dir, stub)
@@ -251,6 +264,7 @@ func TestCommandServer_RejectsOversizeBody(t *testing.T) {
 }
 
 func TestCommandServer_StartSetsSocketMode0600(t *testing.T) {
+	skipIfNotCommandServerSupported(t)
 	dir := t.TempDir()
 	server := NewCommandServer(dir, &fakeCommander{})
 	if err := server.Start(); err != nil {
@@ -268,6 +282,7 @@ func TestCommandServer_StartSetsSocketMode0600(t *testing.T) {
 }
 
 func TestCommandServer_StartSetsRunDirMode0700(t *testing.T) {
+	skipIfNotCommandServerSupported(t)
 	dir := t.TempDir()
 	server := NewCommandServer(dir, &fakeCommander{})
 	if err := server.Start(); err != nil {
@@ -285,6 +300,7 @@ func TestCommandServer_StartSetsRunDirMode0700(t *testing.T) {
 }
 
 func TestCommandServer_DispatchesAbortAndWritesResponse(t *testing.T) {
+	skipIfNotCommandServerSupported(t)
 	dir := t.TempDir()
 	stub := &fakeCommander{}
 	server := NewCommandServer(dir, stub)
@@ -318,6 +334,7 @@ func TestCommandServer_DispatchesAbortAndWritesResponse(t *testing.T) {
 }
 
 func TestCommandServer_TranslatesAbortError(t *testing.T) {
+	skipIfNotCommandServerSupported(t)
 	dir := t.TempDir()
 	stub := &fakeCommander{abortErr: errors.New("batch: no such issue")}
 	server := NewCommandServer(dir, stub)
@@ -353,6 +370,7 @@ func TestCommandServer_TranslatesAbortError(t *testing.T) {
 }
 
 func TestCommandServer_UnknownAction(t *testing.T) {
+	skipIfNotCommandServerSupported(t)
 	dir := t.TempDir()
 	stub := &fakeCommander{}
 	server := NewCommandServer(dir, stub)
@@ -385,6 +403,7 @@ func TestCommandServer_UnknownAction(t *testing.T) {
 }
 
 func TestCommandServer_StopRemovesSocket(t *testing.T) {
+	skipIfNotCommandServerSupported(t)
 	dir := t.TempDir()
 	server := NewCommandServer(dir, &fakeCommander{})
 	if err := server.Start(); err != nil {
@@ -406,6 +425,7 @@ func TestCommandServer_StopRemovesSocket(t *testing.T) {
 }
 
 func TestCommandServer_StartRemovesStaleSocket(t *testing.T) {
+	skipIfNotCommandServerSupported(t)
 	dir := t.TempDir()
 	first := NewCommandServer(dir, &fakeCommander{})
 	if err := first.Start(); err != nil {
@@ -464,6 +484,7 @@ func TestCommandResponse_DecodesRecordedAbortResponse(t *testing.T) {
 }
 
 func TestCommandServer_HandlesConcurrentConnections(t *testing.T) {
+	skipIfNotCommandServerSupported(t)
 	dir := t.TempDir()
 	stub := &fakeCommander{}
 	server := NewCommandServer(dir, stub)

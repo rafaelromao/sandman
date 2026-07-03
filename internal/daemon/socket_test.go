@@ -4,10 +4,19 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
+func skipIfNotControlSocketSupported(t *testing.T) {
+	t.Helper()
+	if runtime.GOOS != "linux" {
+		t.Skip("ControlSocket uses Linux-only socket namespaces; tracked by #1720")
+	}
+}
+
 func TestControlSocket_StartCreatesSocket(t *testing.T) {
+	skipIfNotControlSocketSupported(t)
 	dir := t.TempDir()
 	sock := NewControlSocket(dir, NewBroadcaster())
 
@@ -24,6 +33,7 @@ func TestControlSocket_StartCreatesSocket(t *testing.T) {
 }
 
 func TestControlSocket_StartSetsSocketMode0600(t *testing.T) {
+	skipIfNotControlSocketSupported(t)
 	dir := t.TempDir()
 	sock := NewControlSocket(dir, NewBroadcaster())
 
@@ -42,6 +52,7 @@ func TestControlSocket_StartSetsSocketMode0600(t *testing.T) {
 }
 
 func TestControlSocket_StartSetsRunDirMode0700(t *testing.T) {
+	skipIfNotControlSocketSupported(t)
 	dir := t.TempDir()
 	sock := NewControlSocket(dir, NewBroadcaster())
 
@@ -60,6 +71,7 @@ func TestControlSocket_StartSetsRunDirMode0700(t *testing.T) {
 }
 
 func TestControlSocket_CustomFilename(t *testing.T) {
+	skipIfNotControlSocketSupported(t)
 	dir := t.TempDir()
 	sock := NewControlSocketWithName(dir, "review.sock", NewBroadcaster())
 
@@ -80,6 +92,7 @@ func TestControlSocket_CustomFilename(t *testing.T) {
 }
 
 func TestControlSocket_StartWithCustomNameSetsSocketMode0600(t *testing.T) {
+	skipIfNotControlSocketSupported(t)
 	dir := t.TempDir()
 	sock := NewControlSocketWithName(dir, "review.sock", NewBroadcaster())
 
@@ -98,6 +111,7 @@ func TestControlSocket_StartWithCustomNameSetsSocketMode0600(t *testing.T) {
 }
 
 func TestControlSocket_StopsAcceptingAfterClose(t *testing.T) {
+	skipIfNotControlSocketSupported(t)
 	dir := t.TempDir()
 	sock := NewControlSocket(dir, NewBroadcaster())
 
@@ -116,6 +130,7 @@ func TestControlSocket_StopsAcceptingAfterClose(t *testing.T) {
 }
 
 func TestControlSocket_Stop_RemovesSocketFile(t *testing.T) {
+	skipIfNotControlSocketSupported(t)
 	dir := t.TempDir()
 	sock := NewControlSocket(dir, NewBroadcaster())
 
@@ -138,6 +153,7 @@ func TestControlSocket_Stop_RemovesSocketFile(t *testing.T) {
 }
 
 func TestControlSocket_RemovesStaleSocketOnStart(t *testing.T) {
+	skipIfNotControlSocketSupported(t)
 	dir := t.TempDir()
 	oldSock := NewControlSocket(dir, NewBroadcaster())
 	if err := oldSock.Start(); err != nil {
@@ -182,6 +198,7 @@ func TestIsRunActive(t *testing.T) {
 }
 
 func TestIsRunActive_ProbesPerRunSocket(t *testing.T) {
+	skipIfNotControlSocketSupported(t)
 	dir := t.TempDir()
 	runSockDir := filepath.Join(dir, "runs", "run-1")
 	if err := os.MkdirAll(runSockDir, 0755); err != nil {
@@ -199,6 +216,7 @@ func TestIsRunActive_ProbesPerRunSocket(t *testing.T) {
 }
 
 func TestCleanupStaleRunSnapshots_RemovesOnlyInactive(t *testing.T) {
+	skipIfNotControlSocketSupported(t)
 	baseDir := t.TempDir()
 	batchesDir := filepath.Join(baseDir, "batches")
 	if err := os.MkdirAll(batchesDir, 0755); err != nil {
@@ -324,6 +342,7 @@ func TestFindDeadRunBatches_LiveSocketExcluded(t *testing.T) {
 }
 
 func TestFindDeadRunBatches_DeadSocketIncluded(t *testing.T) {
+	skipIfNotControlSocketSupported(t)
 	baseDir := t.TempDir()
 	batchesDir := filepath.Join(baseDir, "batches")
 	if err := os.MkdirAll(batchesDir, 0755); err != nil {
@@ -387,6 +406,7 @@ func TestFindDeadRunBatches_NoManifestFile(t *testing.T) {
 }
 
 func TestFindDeadRunBatches_MultipleDeadBatches(t *testing.T) {
+	skipIfNotControlSocketSupported(t)
 	baseDir := t.TempDir()
 	batchesDir := filepath.Join(baseDir, "batches")
 	if err := os.MkdirAll(batchesDir, 0755); err != nil {

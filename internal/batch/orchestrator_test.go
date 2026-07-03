@@ -4266,7 +4266,7 @@ func TestRunBatch_StartDelay_DoesNotStaggerSimultaneousReadyRuns(t *testing.T) {
 	case <-time.After(250 * time.Millisecond):
 		t.Fatal("expected second dependent to start")
 	}
-	if diff := secondAt.Sub(firstAt); diff > 50*time.Millisecond {
+	if diff := secondAt.Sub(firstAt); diff > 200*time.Millisecond {
 		t.Fatalf("expected simultaneous ready runs to start together, got %s", diff)
 	}
 

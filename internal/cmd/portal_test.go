@@ -1971,7 +1971,11 @@ func TestPortal_ReviewRunLifecycle(t *testing.T) {
 	})
 
 	t.Run("dead socket after restart", func(t *testing.T) {
-		repoRoot := t.TempDir()
+		repoRoot, err := os.MkdirTemp("/tmp", "p")
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.RemoveAll(repoRoot) })
 		if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
 			t.Fatal(err)
 		}

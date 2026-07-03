@@ -2,9 +2,17 @@ package daemon
 
 import (
 	"net"
+	"runtime"
 	"testing"
 	"time"
 )
+
+func skipIfNotBroadcasterSupported(t *testing.T) {
+	t.Helper()
+	if runtime.GOOS != "linux" {
+		t.Skip("Broadcaster uses Linux-only socket namespaces; tracked by #1720")
+	}
+}
 
 func TestBroadcaster_StoresAndReturnsBytes(t *testing.T) {
 	b := NewBroadcaster()
@@ -22,6 +30,7 @@ func TestBroadcaster_StoresAndReturnsBytes(t *testing.T) {
 }
 
 func TestBroadcaster_ClientReplayOnConnect(t *testing.T) {
+	skipIfNotBroadcasterSupported(t)
 	dir := t.TempDir()
 	sock := NewControlSocket(dir, NewBroadcaster())
 	if err := sock.Start(); err != nil {
@@ -53,6 +62,7 @@ func TestBroadcaster_ClientReplayOnConnect(t *testing.T) {
 }
 
 func TestBroadcaster_ClientLiveStream(t *testing.T) {
+	skipIfNotBroadcasterSupported(t)
 	dir := t.TempDir()
 	b := NewBroadcaster()
 	sock := NewControlSocket(dir, b)
@@ -84,6 +94,7 @@ func TestBroadcaster_ClientLiveStream(t *testing.T) {
 }
 
 func TestBroadcaster_MultipleClientsAllReceiveSameData(t *testing.T) {
+	skipIfNotBroadcasterSupported(t)
 	dir := t.TempDir()
 	b := NewBroadcaster()
 	sock := NewControlSocket(dir, b)
@@ -187,6 +198,7 @@ func TestBroadcaster_TrimsBufferOnOverflow(t *testing.T) {
 }
 
 func TestBroadcaster_NewClientGetsTrimmedReplay(t *testing.T) {
+	skipIfNotBroadcasterSupported(t)
 	dir := t.TempDir()
 	b := NewBroadcaster()
 	sock := NewControlSocket(dir, b)
@@ -225,6 +237,7 @@ func TestBroadcaster_NewClientGetsTrimmedReplay(t *testing.T) {
 }
 
 func TestBroadcaster_CloseClosesAllClients(t *testing.T) {
+	skipIfNotBroadcasterSupported(t)
 	dir := t.TempDir()
 	b := NewBroadcaster()
 	sock := NewControlSocket(dir, b)
