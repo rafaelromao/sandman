@@ -630,6 +630,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 			}
 
 			sessionRunID := runID
+			entryID := ""
 			if len(req.Issues) > 0 {
 				ts, shortid, err := runid.NewBatch()
 				if err != nil {
@@ -642,6 +643,11 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 					firstIssueNum = issues[0]
 				}
 				sessionRunID = batch.BatchIDForIssue(firstIssueNum, len(issues), ts, shortid)
+				// Index entry id MUST equal the per-row RunID the orchestrator
+				// emits in run.started for the first issue (the canonical row
+				// for multi-issue batches). For single-issue this is `<sid>-<ts>-<num>`.
+				// See #1675.
+				entryID = runid.NewRunID(runid.KindIssue, fmt.Sprintf("%d", firstIssueNum), ts, shortid)
 			} else if overridePrompt {
 				ts, shortid, err := runid.NewBatch()
 				if err != nil {
@@ -651,6 +657,14 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 					req.BatchTS = ts
 					req.BatchShortID = shortid
 					sessionRunID = runid.NewBatchID(runid.KindPromptOnly, 1, runID, ts, shortid)
+					// Mirror the orchestrator's prompt-only RunID formula at
+					// internal/batch/orchestrator.go so the index entry id
+					// matches the RunID emitted in run.started. See #1675.
+					promptSubject := "prompt"
+					if strings.TrimSpace(runID) != "" {
+						promptSubject = "prompt-" + runID
+					}
+					entryID = runid.NewRunID(runid.KindPromptOnly, promptSubject, ts, shortid)
 				}
 			}
 
@@ -668,7 +682,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 			// non-nil but unusable. The `--continue` flag
 			// already suppresses the cmd.sock server; per-run
 			// CommandServer creation is handled by the orchestrator.
-			manifest := daemon.BatchManifest{Issues: append([]int(nil), req.Issues...), CreatedAt: time.Now(), BatchId: autoIssueRunID, RunKind: "issue"}
+			manifest := daemon.BatchManifest{Issues: append([]int(nil), req.Issues...), CreatedAt: time.Now(), BatchId: entryID, RunKind: "issue"}
 			if err := rs.Prepare(manifest); err != nil {
 				_ = rs.Close()
 				// A daemon without a control socket is invisible

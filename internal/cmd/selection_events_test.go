@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/rafaelromao/sandman/internal/batchindex"
 	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/daemon"
 	"github.com/rafaelromao/sandman/internal/events"
@@ -383,5 +384,54 @@ func TestRunSelectionPhaseWithEvents_LeavesRunDirOnFailure(t *testing.T) {
 	manifestPath := filepath.Join(runDir, entries[0].Name(), "batch.json")
 	if _, err := os.Stat(manifestPath); os.IsNotExist(err) {
 		t.Fatalf("batch.json should exist at %s after failure", manifestPath)
+	}
+}
+
+// TestRunSelectionPhaseWithEvents_AutoSelectEntryIDMatchesOrchestratorRunID
+// pins the #1675 contract for the auto-select selection phase: the
+// batches index entry id MUST equal the per-row RunID the orchestrator
+// emits in run.started. For auto-select both `runid.NewBatchID(KindAutoSelect, N, "", ts, shortid)`
+// (the batch dir name / batch id) and `runid.NewRunID(KindAutoSelect, "auto-N", ts, shortid)`
+// (the per-row RunID) happen to produce the same `<sid>-<ts>-auto-N` string.
+// This test pins both forms so a future refactor of NewBatchID vs
+// NewRunID for KindAutoSelect can't silently diverge the index entry id
+// from the orchestrator's emitted RunID.
+func TestRunSelectionPhaseWithEvents_AutoSelectEntryIDMatchesOrchestratorRunID(t *testing.T) {
+	sandmanDir := shortTempDir(t)
+	gh := &fakeGitHubClient{
+		searchIssuesResult: []github.Issue{
+			{Number: 1, Title: "A", Body: "A"},
+		},
+	}
+	cfg := &config.Config{
+		Agent:         "test-agent",
+		ReviewCommand: "/oc review",
+	}
+	cfg.AgentProviders = map[string]config.Agent{
+		"test-agent": {
+			Command: fmt.Sprintf("echo '[1]' > %s/selected-issues.json", sandmanDir),
+		},
+	}
+	log := &recordingEventLog{}
+
+	_, _, _, err := runSelectionPhaseWithEvents(context.Background(), gh, 1, sandmanDir, "test-agent", "", cfg, []int{1}, "label:bug is:open", log)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	started, _ := findAutoSelectEvents(log)
+	if started == nil {
+		t.Fatal("expected a run.started event with auto-select kind")
+	}
+
+	idx, err := batchindex.Load(filepath.Join(sandmanDir, "batches.json"))
+	if err != nil {
+		t.Fatalf("load batches index: %v", err)
+	}
+	if len(idx.Entries) != 1 {
+		t.Fatalf("expected exactly 1 batch index entry, got %d (entries=%v)", len(idx.Entries), idx.Entries)
+	}
+	if got := idx.Entries[0].ID; got != started.RunID {
+		t.Errorf("entry ID = %q, want orchestrator's RunID %q", got, started.RunID)
 	}
 }

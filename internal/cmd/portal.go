@@ -351,14 +351,14 @@ func abortPortalRun(ctx context.Context, repoRoot, runKey string, issueNumber in
 		// If the command socket isn't at the batch level, check the per-run folder.
 		if run.RunID != "" && run.BatchKey != "" {
 			perRunID := run.RunID
-			// When runID equals batchKey, runID might actually be the batchID
-			// (set when manifest.BatchId is configured). The actual run folder
-			// name is filepath.Base(runDir) in this case.
-			if run.RunID == run.BatchKey {
-				if manifest, err := daemon.ReadManifest(runDir); err == nil && manifest.BatchId != "" && manifest.BatchId == run.BatchKey {
-					perRunID = filepath.Base(runDir)
-				}
-			}
+			// Post-#1675: manifest.BatchId ALWAYS equals the per-row RunID
+			// (the orchestrator's emitted run_id) for every batch kind,
+			// not the batch dir name. The previous fallback that used
+			// `filepath.Base(runDir)` (= batchDirName) was correct only
+			// for orphan reviews where batchDirName == perRowRunID, and
+			// would have regressed issue runs where batchDirName carries
+			// the `+N` suffix. `run.RunID` is now the canonical per-row
+			// id in all cases, so use it directly.
 			perRunDir := filepath.Join(runDir, "runs", perRunID)
 			perRunSock := daemon.CommandSocketPath(perRunDir)
 			if _, statErr := os.Stat(perRunSock); statErr == nil {

@@ -46,12 +46,12 @@ Each AgentRun within a batch receives a unique RunID built from the batch's `<sh
 
 | Kind | Template |
 |------|----------|
-| Regular issue | `<shortid>-<ts>-issue-<issueNum>` |
+| Regular issue | `<shortid>-<ts>-<issueNum>` |
 | Review (with linked issue) | `<shortid>-<ts>-<linkedIssueNum>-PR<prNum>` |
 | Review (without linked issue) | `<shortid>-<ts>-PR<prNum>` |
 | Auto-select | `<shortid>-<ts>-auto-<N>` |
-| Prompt-only (with user id) | `<shortid>-<ts>-<userid>` |
-| Prompt-only (without user id) | `<shortid>-<ts>` |
+| Prompt-only (with user id) | `<shortid>-<ts>-prompt-<userid>` |
+| Prompt-only (without user id) | `<shortid>-<ts>-prompt` |
 
 ### `--run-id` flag preserved
 

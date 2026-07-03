@@ -101,6 +101,33 @@ func (s *RunSession) Broadcaster() *Broadcaster {
 //
 // Per-run artifacts (run.json, run.log, run.sock) are created by the
 // orchestrator in the per-row execution path, not by Prepare.
+//
+// # Contract: manifest.BatchId MUST equal the per-row RunID
+//
+// Per ADR-0036, the batches index entry id (set from manifest.BatchId)
+// MUST equal the per-row RunID the orchestrator will emit in
+// run.started/run.continued and store in run.json's RunID field. This
+// applies to every batch kind:
+//
+//   - `sandman run --auto`  → runid.NewRunID(KindIssue, "<firstIssue>", ts, shortid)
+//   - `sandman run <issue>` → runid.NewRunID(KindIssue, "<firstIssue>", ts, shortid)
+//   - `sandman run --continue <issue>` → same as `run <issue>`
+//   - `sandman run --prompt --run-id myid` → runid.NewRunID(KindPromptOnly, "prompt-myid", ts, shortid)
+//   - `sandman run --prompt` (no userid) → runid.NewRunID(KindPromptOnly, "prompt", ts, shortid)
+//   - `sandman review` → reviewRunIDFor(prNumber, linkedIssue, ts, shortid)
+//   - `selection.go` auto-select → runid.NewRunID(KindAutoSelect, "auto-<N>", ts, shortid)
+//
+// Setting manifest.BatchId to the batch dir name (e.g. <sid>-<ts>-<num>+N)
+// instead of the per-row RunID is a contract violation: the portal's
+// `idx.Resolve(perRowRunID)` would return nil and every per-row id
+// lookup would fall through to the legacy `canonicalizeEntryID`
+// path-basename fallback. For new batches (this slice), the fallback
+// is unreachable; legacy batches provisioned before ADR-0036 still
+// rely on it.
+//
+// Tests in `internal/daemon/run_session_test.go` (TestRunSession_IdxAddOnlyCalledFromPrepare)
+// pin the invariant that this is the only `idx.Add` site in production
+// code.
 func (s *RunSession) Prepare(manifest BatchManifest) error {
 	s.runDir = s.RunDir()
 

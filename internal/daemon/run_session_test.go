@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -20,6 +21,27 @@ func mustParseTime(t *testing.T, s string) time.Time {
 		t.Fatalf("parse time %q: %v", s, err)
 	}
 	return parsed
+}
+
+// findRepoRoot locates the repository root by walking up from this
+// test file until it finds go.mod. Used by the idx.Add grep test to
+// search across all packages regardless of test cwd.
+func findRepoRoot(t *testing.T) string {
+	t.Helper()
+	dir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	for {
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			t.Fatalf("could not find repo root from %s", dir)
+		}
+		dir = parent
+	}
 }
 
 // stubCommander is a minimal IssueCommander used by RunSession tests.
@@ -286,6 +308,42 @@ func TestRunSession_Prepare_AppendsToBatchesIndex(t *testing.T) {
 	}
 	if entry.PR != 42 {
 		t.Errorf("entry.PR = %v, want 42", entry.PR)
+	}
+}
+
+// TestRunSession_IdxAddOnlyCalledFromPrepare pins the structural
+// invariant that no production code path can bypass Prepare to add a
+// batches index entry directly. The ADR-0036 contract is that every
+// batch kind goes through Prepare, which sets `manifest.BatchId` to
+// the per-row RunID. A rogue direct call would silently register an
+// entry without the contract. The grep scope is restricted to non-test
+// Go files because the batchindex tests legitimately construct Index
+// values directly to exercise the index schema.
+func TestRunSession_IdxAddOnlyCalledFromPrepare(t *testing.T) {
+	// Search from the repo root. The repo's layout is internal/ at the
+	// repo root; this test runs in a temp cwd (t.Chdir is used by
+	// sibling tests) so we resolve the repo root via the test's cwd
+	// plus the `internal/daemon` package's parent.
+	cmd := exec.Command("grep", "-rn", "--include=*.go", "--exclude=*_test.go",
+		`\.Add(batchindex\.Entry{`, ".")
+	cmd.Dir = findRepoRoot(t)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("grep failed: %v\n%s", err, out)
+	}
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	var hits []string
+	for _, line := range lines {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		hits = append(hits, line)
+	}
+	if len(hits) != 1 {
+		t.Errorf("expected exactly 1 production idx.Add site (daemon.RunSession.Prepare), got %d:\n%s", len(hits), strings.Join(hits, "\n"))
+	}
+	if len(hits) == 1 && !strings.Contains(hits[0], "internal/daemon/run_session.go") {
+		t.Errorf("idx.Add call site moved to %q; update ADR-0036 contract", hits[0])
 	}
 }
 
