@@ -42,3 +42,20 @@ func TestDefaultBadgePrompt_PreservesExistingSections(t *testing.T) {
 		t.Errorf("expected badge prompt to preserve the marker comment, got:\n%s", prompt)
 	}
 }
+
+func TestDefaultBadgePrompt_ControlFileOrderingMatchesPRCreation(t *testing.T) {
+	prompt := DefaultBadgePrompt()
+
+	prCreationIdx := strings.Index(prompt, "## PR creation")
+	controlFileIdx := strings.Index(prompt, "## Control file")
+
+	if prCreationIdx < 0 {
+		t.Fatalf("expected badge prompt to contain '## PR creation' section, got:\n%s", prompt)
+	}
+	if controlFileIdx < 0 {
+		t.Fatalf("expected badge prompt to contain '## Control file' section, got:\n%s", prompt)
+	}
+	if controlFileIdx <= prCreationIdx {
+		t.Fatalf("expected '## Control file' section to appear after '## PR creation', got prCreation=%d controlFile=%d", prCreationIdx, controlFileIdx)
+	}
+}
