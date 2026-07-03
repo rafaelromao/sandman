@@ -10,12 +10,15 @@ import (
 	"github.com/rafaelromao/sandman/internal/github"
 )
 
-// TestDaemon_ProcessPR_SkipsSelfPostedTrigger pins the contract from
-// issue #1648: when the only `/sandman review` trigger on a PR has a
-// body that is in the SelfPostStore, the daemon does not launch a
-// review for it. The bot's own review-comment body is filtered
-// out so the bot cannot trigger itself into an infinite loop.
-func TestDaemon_ProcessPR_SkipsSelfPostedTrigger(t *testing.T) {
+// TestDaemon_ProcessPR_SelfPostedTriggerStillLaunches pins the fix
+// for issue #1682: when the only `/sandman review` trigger on a PR
+// has a body that is in the SelfPostStore, the daemon STILL launches
+// a review for it. ParseTrigger runs before the self-post check so
+// trigger commands are always detected regardless of self-post status.
+// The self-post filter applies only to non-trigger comments (review
+// responses), preventing the bot's own review from being mistaken
+// for a human reply during promotion.
+func TestDaemon_ProcessPR_SelfPostedTriggerStillLaunches(t *testing.T) {
 	now := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
 	triggerBody := "/sandman review focus on tests"
 
@@ -34,7 +37,7 @@ func TestDaemon_ProcessPR_SkipsSelfPostedTrigger(t *testing.T) {
 	})
 
 	// Pre-seed the SelfPostStore with the trigger body so the
-	// daemon treats it as a self-post.
+	// daemon would have treated it as a self-post before #1682.
 	spPath := filepath.Join(dir, "reviews", "self-posted.json")
 	sp, err := NewSelfPostStore(spPath)
 	if err != nil {
@@ -45,12 +48,10 @@ func TestDaemon_ProcessPR_SkipsSelfPostedTrigger(t *testing.T) {
 	}
 	d.selfPosts = sp
 
-	if err := d.tick(context.Background()); err != nil {
-		t.Fatalf("tick: %v", err)
-	}
+	tickAndWait(t, d, context.Background())
 
-	if runner.calls != 0 {
-		t.Errorf("daemon should NOT launch a review for a self-posted trigger, got %d batch runs", runner.calls)
+	if runner.calls != 1 {
+		t.Errorf("daemon SHOULD launch a review for a self-posted trigger (#1682 fix), got %d batch runs", runner.calls)
 	}
 }
 
@@ -75,10 +76,10 @@ func TestDaemon_ProcessPR_StillTriggersOnNonSelfComment(t *testing.T) {
 	})
 	d.Clock = func() time.Time { return now.Add(-1 * time.Minute) }
 
-	// SelfPostStore is empty (no prior posts).
-	if err := d.tick(context.Background()); err != nil {
-		t.Fatalf("tick: %v", err)
-	}
+	// SelfPostStore is empty (no prior posts). tickAndWait blocks
+	// until the async review goroutine completes (RunBatch now
+	// launches in a background goroutine).
+	tickAndWait(t, d, context.Background())
 
 	if runner.calls != 1 {
 		t.Fatalf("expected 1 batch run for a fresh trigger, got %d", runner.calls)
@@ -120,12 +121,17 @@ func TestDaemon_ProcessPR_SkipsOnlySelfPostedAmongTriggers(t *testing.T) {
 	}
 	d.selfPosts = sp
 
-	if err := d.tick(context.Background()); err != nil {
-		t.Fatalf("tick: %v", err)
-	}
+	// After issue #1682, both trigger comments are detected (the
+	// self-post filter now applies only to non-trigger comments).
+	// The daemon picks the newest trigger and marks older ones
+	// superseded: realBody (focus beta) is newer than selfBody, so
+	// realBody wins. tickAndWait blocks until the async review
+	// goroutine completes (RunBatch now launches in a background
+	// goroutine).
+	tickAndWait(t, d, context.Background())
 
 	if runner.calls != 1 {
-		t.Fatalf("expected 1 batch run (only the non-self trigger), got %d", runner.calls)
+		t.Fatalf("expected 1 batch run (newest non-self trigger wins), got %d", runner.calls)
 	}
 	if runner.last.ReviewFocus != "focus beta" {
 		t.Errorf("expected focus 'focus beta', got %q", runner.last.ReviewFocus)
@@ -167,10 +173,10 @@ func TestDaemon_PromotePendingComment_DefensivelyRecordsObservedComment(t *testi
 	}
 	d.selfPosts = sp
 
-	// First tick: launch the review.
-	if err := d.tick(context.Background()); err != nil {
-		t.Fatalf("first tick: %v", err)
-	}
+	// First tick: launch the review. tickAndWait blocks until the
+	// async review goroutine completes (RunBatch now launches in a
+	// background goroutine).
+	tickAndWait(t, d, context.Background())
 	if runner.calls != 1 {
 		t.Fatalf("first tick: expected 1 batch run, got %d", runner.calls)
 	}
