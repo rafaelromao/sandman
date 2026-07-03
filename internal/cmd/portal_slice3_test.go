@@ -1913,6 +1913,36 @@ func TestPortal_ReviewVerdictFromRunLog(t *testing.T) {
 			wantOK:  false,
 		},
 		{
+			name: "## Decisions (plural heading) does not match the bare Decision section",
+			logText: "13:50:00 ## Decisions\n" +
+				"13:50:01 **APPROVED**\n" +
+				"13:51:00 ## Decision\n" +
+				"13:51:01 **CHANGES_REQUESTED**\n",
+			want:   "Changes requested",
+			wantOK: true,
+		},
+		{
+			name: "## Decision Tree heading does not match",
+			logText: "13:50:00 ## Decision Tree\n" +
+				"13:50:01 **APPROVED**\n" +
+				"13:51:00 ## Decision\n" +
+				"13:51:01 **APPROVED**\n",
+			want:   "Approved",
+			wantOK: true,
+		},
+		{
+			name:    "## Decision Summary heading does not match",
+			logText: "13:50:00 ## Decision Summary\n13:50:01 **APPROVED**\n13:51:00 ## Decision\n13:51:01 **CHANGES_REQUESTED**\n",
+			want:    "Changes requested",
+			wantOK:  true,
+		},
+		{
+			name:    "## Decisionmid-sentence does not match",
+			logText: "13:50:00 some prose mentioning ## Decision in a sentence\n13:50:01 **APPROVED**\n",
+			want:    "",
+			wantOK:  false,
+		},
+		{
 			name:    "case-insensitive Decision heading match",
 			logText: "13:50:00 ## decision\n13:50:01 **APPROVED**\n",
 			want:    "Approved",

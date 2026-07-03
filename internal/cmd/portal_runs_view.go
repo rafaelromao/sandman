@@ -215,6 +215,19 @@ const portalViewDegradeLogInterval = 30 * time.Second
 var (
 	portalViewDegradeLogMu   sync.Mutex
 	portalViewDegradeLogSeen = make(map[string]time.Time)
+	// reviewSectionDecisionHeading matches the bare "## Decision"
+	// heading on a line by itself (case-insensitive, optional trailing
+	// whitespace). The match is anchored to the whole line so headings
+	// like "## Decisions" or "## Decision Tree" do not collide with
+	// this section's verdict scan (issue #1729 review feedback).
+	reviewSectionDecisionHeading = regexp.MustCompile(`(?i)^## decision\s*$`)
+	// reviewVerdictMarkerLine matches a whole line whose only content is
+	// the literal **MARKER** form. Spelling variants such as trailing
+	// periods or lowercase markers are rejected.
+	reviewVerdictMarkerLine = regexp.MustCompile(`^\*\*([A-Z_]+)\*\*$`)
+	// reviewLogTimestampPrefix strips the "[<runID>] HH:MM:SS " log
+	// prefix that the agent output stream adds to each line.
+	reviewLogTimestampPrefix = regexp.MustCompile(`^\d{2}:\d{2}:\d{2}\s+`)
 )
 
 // logPortalViewDegrade rate-limits repeated portal-view degradation logs per
@@ -819,14 +832,11 @@ func reviewVerdictFromRunLog(logText string) (string, bool) {
 	// "Unclear" instead of being silently coerced.
 	lines := strings.Split(logText, "\n")
 	inDecision := false
-	markerPattern := regexp.MustCompile(`^\*\*([A-Z_]+)\*\*$`)
-	timestampPrefix := regexp.MustCompile(`^\d{2}:\d{2}:\d{2}\s+`)
 	for _, raw := range lines {
 		payload := stripLogLabel(raw)
 		line := strings.TrimSpace(payload)
-		line = timestampPrefix.ReplaceAllString(line, "")
-		lower := strings.ToLower(line)
-		if !inDecision && strings.HasPrefix(lower, "## decision") {
+		line = reviewLogTimestampPrefix.ReplaceAllString(line, "")
+		if !inDecision && reviewSectionDecisionHeading.MatchString(line) {
 			inDecision = true
 			continue
 		}
@@ -839,7 +849,7 @@ func reviewVerdictFromRunLog(logText string) (string, bool) {
 		if line == "" {
 			continue
 		}
-		matches := markerPattern.FindStringSubmatch(line)
+		matches := reviewVerdictMarkerLine.FindStringSubmatch(line)
 		if matches == nil {
 			continue
 		}
