@@ -135,7 +135,15 @@ gh pr comment <N> --repo <owner/repo> --body "{{REVIEW_COMMAND}}"
 
 After posting, write the current head SHA to `.sandman/.<N>.head_sha` so subsequent passes can detect staleness.
 
-**The trigger command is intentionally NOT recorded in `.sandman/reviews/self-posted.json`** (issue #1700). The trigger is a request for review, not a bot-comment that needs to be filtered. Trigger detection in `Daemon.processPR` does not depend on the self-post filter (issue #1682 ordering: `IsSelfPosted` applies only to non-trigger comments), so dropping the trigger-hash recording is safe. A paired `record_trigger_posted()` is therefore a deliberate no-op — it documents the symmetric counterpart of `record_review_posted()` in Step 4b so future readers see both call sites even though only one writes to the store.
+**The trigger command is intentionally NOT recorded in `.sandman/reviews/self-posted.json`** (issue #1700). The trigger is a request for review, not a bot-comment that needs to be filtered. Trigger detection in `Daemon.processPR` does not depend on the self-post filter (issue #1682 ordering: `IsSelfPosted` applies only to non-trigger comments), so dropping the trigger-hash recording is safe. A paired `record_trigger_posted()` is therefore a deliberate no-op — it documents the symmetric counterpart of `record_review_posted()` in Step 4b so future readers see both call sites even though only one writes to the store:
+
+```bash
+record_trigger_posted() {
+  # Deliberate no-op (issue #1700): the trigger is a review-request, not
+  # a bot-comment to filter. The bot's review-body (Step 4b) is recorded.
+  : # no-op
+}
+```
 
 #### Step 4b: Record the bot's review-body post (issue #1700)
 
