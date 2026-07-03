@@ -63,3 +63,22 @@ Merged Sandman PRs in this repo:
 - Do not edit any file other than `README.md`.
 - Do not auto-merge the PR.
 - Do not add CI, workflow, or configuration changes.
+
+## Control file
+
+After the PR is created successfully (the `gh pr create` call returns the
+new PR URL), create an empty sentinel file at
+`.sandman/.built_with_sandman` so subsequent Sandman batches in this
+checkout can short-circuit the `gh pr list` check:
+
+```sh
+tmp="$(mktemp .sandman/.built_with_sandman.XXXXXX)"
+: > "$tmp"
+mv "$tmp" ".sandman/.built_with_sandman"
+```
+
+The file is intentionally empty — its mere existence is the signal that
+the badge has already been proposed in this checkout. It is gitignored
+and recreated automatically by every successful badge sidecar run. Use
+the temp-file + `mv` (rename) pattern above so the file is either fully
+present or fully absent on disk — never half-written.
