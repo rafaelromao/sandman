@@ -681,7 +681,7 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
       vertical-align: top;
     }
     tbody tr.run-row:hover td {
-      background: color-mix(in oklch, var(--surface-3) 86%, var(--accent) 8%);
+      background: transparent;
     }
     tbody tr.run-row.active td {
       background: color-mix(in oklch, var(--reviewing-accent) 14%, var(--surface));
@@ -804,12 +804,15 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
        unchanged. The success/danger palette variables already exist in
        the theme blocks above (line 45-46 and 64-65).
        Note: row-added is intentionally sticky across diffRuns ticks on
-       non-terminal rows so a run that was just inserted keeps a brief
-       "added in some recent diff" highlight until it settles. Terminal
-       rows (kind === 'completed') never carry row-added — they render in
-       the neutral background so the Sandman theme reads inactive rows
-       as muted against active rows (issue #1669). Both classes only
-       clear at detach (where row-removed is applied). */
+       wait-state rows so a row that was just inserted keeps a brief
+       "added in some recent diff" highlight until it settles. Active
+       rows AND terminal rows (kind === 'completed') never carry
+       row-added: active rows need the purple --reviewing-accent
+       highlight to win the equal-specificity tie on the td, and
+       terminal rows render in the neutral background so the Sandman
+       theme reads inactive rows as muted against active rows
+       (issue #1669 + PR #1677 follow-up). Both classes only clear at
+       detach (where row-removed is applied). */
     tbody tr.run-row.row-added td { background: color-mix(in oklch, var(--success) 14%, var(--surface)); }
     tbody tr.run-row.row-removed td { background: color-mix(in oklch, var(--danger) 14%, var(--surface)); }
     .cell-duration .cell-duration-stack {
@@ -1399,11 +1402,12 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
       tbody tr.run-row:has(+ tr.context-row) {
         border-bottom: none;
       }
-      tbody tr.run-row:hover,
+      tbody tr.run-row:hover {
+        background: transparent;
+      }
       tbody tr.run-row.active {
         background: color-mix(in oklch, var(--reviewing-accent) 12%, var(--surface));
       }
-      tbody tr.run-row:hover td,
       tbody tr.run-row.active td {
         background: transparent;
       }

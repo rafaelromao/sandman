@@ -786,12 +786,13 @@ console.log('PASS');
 
 func TestPortalDiffInsertRunRow_AddsRowAddedClass(t *testing.T) {
 	js := `const body = makeMockBody();
-const run = { key: 'a', kind: 'active', status: 'running', issueLabel: 'Issue 1', runId: 'r1' };
+// Wait-state row (no kind) keeps row-added as the "just inserted" cue.
+const run = { key: 'a', status: 'running', issueLabel: 'Issue 1', runId: 'r1' };
 const stopGroups = new Set();
 const opts = { helpers, stopGroups, expandedKey: null };
 const created = SandmanPortalDiff.insertRunRow(body, run, opts);
 if (!created.row) throw new Error('expected data row');
-if (!created.row.classList.contains('row-added')) throw new Error('expected row-added class on inserted row, got ' + JSON.stringify(Array.from(created.row.classList)));
+if (!created.row.classList.contains('row-added')) throw new Error('expected row-added class on inserted wait-state row, got ' + JSON.stringify(Array.from(created.row.classList)));
 const cellTags = created.row.children.filter((c) => c.tagName === 'TD' || c.tagName === 'TH');
 if (cellTags.length !== 6) throw new Error('expected 6 cells in inserted row, got ' + cellTags.length);
 console.log('PASS');
@@ -816,14 +817,28 @@ console.log('PASS');
 	runNodeScript(t, js)
 }
 
-func TestPortalDiffInsertRunRow_ActiveKindKeepsBothClasses(t *testing.T) {
+// TestPortalDiffInsertRunRow_ActiveKindOmitsRowAdded pins the contract
+// from PR #1677 follow-up: an active row (kind === 'active') must NOT
+// carry the sticky row-added highlight either. The green --success tint
+// on row-added otherwise wins over the purple --reviewing-accent active
+// background at equal CSS specificity (both (0,0,2,3) on the td), so
+// the active row would render green instead of purple. Skipping row-added
+// for active rows makes the purple highlight win by absence.
+func TestPortalDiffInsertRunRow_ActiveKindOmitsRowAdded(t *testing.T) {
 	js := `const body = makeMockBody();
-const run = { key: 'a', kind: 'active', status: 'running', issueLabel: 'Issue 1', runId: 'r1' };
+const active = { key: 'live', kind: 'active', status: 'running', issueLabel: 'Live', runId: 'r1' };
+const reviewing = { key: 'rev', kind: 'active', status: 'reviewing', issueLabel: 'Rev', runId: 'r2' };
 const stopGroups = new Set();
 const opts = { helpers, stopGroups, expandedKey: null };
-const created = SandmanPortalDiff.insertRunRow(body, run, opts);
-if (!created.row.classList.contains('active')) throw new Error('expected active class on inserted active row');
-if (!created.row.classList.contains('row-added')) throw new Error('expected row-added class on inserted active row');
+SandmanPortalDiff.insertRunRow(body, active, opts);
+SandmanPortalDiff.insertRunRow(body, reviewing, opts);
+const liveRow = body.querySelector('tr[data-run-key="live"]');
+const revRow = body.querySelector('tr[data-run-key="rev"]');
+if (!liveRow) throw new Error('expected active row to be inserted');
+if (!revRow) throw new Error('expected reviewing row to be inserted');
+if (!liveRow.classList.contains('active')) throw new Error('expected active kind class on active row');
+if (liveRow.classList.contains('row-added')) throw new Error('active row must not carry row-added (PR #1677 follow-up: row-added green would override the purple active highlight at equal CSS specificity), got ' + JSON.stringify(Array.from(liveRow.classList)));
+if (revRow.classList.contains('row-added')) throw new Error('reviewing row must not carry row-added (same reason), got ' + JSON.stringify(Array.from(revRow.classList)));
 console.log('PASS');
 `
 	runNodeScript(t, js)
@@ -863,8 +878,9 @@ console.log('PASS');
 // has its class list set even though the node is detached from body).
 func TestPortalDiffDiffRuns_InsertedAndRemovedRowsCarryHighlightClasses(t *testing.T) {
 	js := `const body = makeMockBody();
-const runA = { key: 'a', kind: 'active', status: 'running', issueLabel: 'A', runId: 'r1' };
-const runB = { key: 'b', kind: 'active', status: 'running', issueLabel: 'B', runId: 'r2' };
+// Wait-state rows (no kind) keep row-added as the "just inserted" cue.
+const runA = { key: 'a', status: 'running', issueLabel: 'A', runId: 'r1' };
+const runB = { key: 'b', status: 'running', issueLabel: 'B', runId: 'r2' };
 const stopGroups = new Set();
 const opts1 = { helpers, stopGroups, expandedKey: null };
 SandmanPortalDiff.diffRuns(body, [runA], opts1);
