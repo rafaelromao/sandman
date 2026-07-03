@@ -648,12 +648,25 @@ func TestPortalRefresh_LocksRowIdentityAcrossMixedBatchPayloads(t *testing.T) {
         text: async function () { return ''; },
       };
     };
-    setTimeout(function () {
-      window.__portalInitialRow = document.querySelector('tr[data-run-key="`+runID+`"]');
-      window.__portalInitialDetail = document.querySelector('tr.detail-row[data-detail-for="`+runID+`"]');
-      var initialDetailPre = window.__portalInitialDetail && window.__portalInitialDetail.querySelector('.detail-content pre[data-scroll-key]');
-      window.__portalInitialDetailText = initialDetailPre && initialDetailPre.innerText;
-    }, 50);
+    (function pollForInitialRender(deadline) {
+      var row = document.querySelector('tr[data-run-key="`+runID+`"]');
+      var detail = document.querySelector('tr.detail-row[data-detail-for="`+runID+`"]');
+      var pre = detail && detail.querySelector('.detail-content pre[data-scroll-key]');
+      var textReady = !!(pre && pre.innerText && pre.innerText.indexOf('initial mixed log line 1') !== -1);
+      if (row && detail && pre && textReady) {
+        window.__portalInitialRow = row;
+        window.__portalInitialDetail = detail;
+        window.__portalInitialDetailText = pre.innerText;
+        return;
+      }
+      if (performance.now() >= deadline) {
+        window.__portalInitialRow = row;
+        window.__portalInitialDetail = detail;
+        window.__portalInitialDetailText = pre ? pre.innerText : '';
+        return;
+      }
+      setTimeout(function () { pollForInitialRender(deadline); }, 10);
+    })(performance.now() + 1500);
     setTimeout(function () {
       var row = document.querySelector('tr[data-run-key="`+runID+`"]');
       var detail = document.querySelector('tr.detail-row[data-detail-for="`+runID+`"]');
