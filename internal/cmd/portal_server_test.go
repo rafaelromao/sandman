@@ -3972,3 +3972,206 @@ func TestPortal_MatchRunState_FallbackDoesNotBindOrphanIssueToPromptOnly(t *test
 		t.Fatalf("matchRunState bound a prompt-only instance to an issue-bound state; returned idx=%d (state=%#v)", idx, states[idx])
 	}
 }
+
+// seedMixedActiveBatchIndex mirrors the createMixedBatchRunSocket helper
+// pattern from portal_e2e_test.go (which lives behind //go:build e2e and
+// is not linkable from this package without the tag). It writes a batch
+// directory with a live Unix socket, a manifest covering every issue, and
+// a batches-index entry whose literal "id" field is the empty string.
+//
+// The empty "id" is the pre-#1657 shape that exercises the
+// activeKeyForActive fallback chain. Writing the JSON directly via
+// os.WriteFile bypasses batchindex.Index.Add's canonicalizeEntryID,
+// which would otherwise backfill the id from the path basename and
+// hide the bug. Only the index id is empty; path and status="active"
+// are set so discoverPortalInstances still finds the entry by socket
+// probe.
+func seedMixedActiveBatchIndex(t *testing.T, repoRoot, runName string, issues []int) {
+	t.Helper()
+
+	batchDir := filepath.Join(repoRoot, ".sandman", "batches", runName)
+	if err := os.MkdirAll(batchDir, 0755); err != nil {
+		t.Fatalf("create batch dir: %v", err)
+	}
+
+	if err := daemon.WriteManifest(batchDir, daemon.BatchManifest{
+		Issues:    append([]int(nil), issues...),
+		BatchId:   runName,
+		RunKind:   "issue",
+		CreatedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+	}); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+
+	ln, err := net.Listen("unix", filepath.Join(batchDir, "batch.sock"))
+	if err != nil {
+		t.Fatalf("listen batch.sock: %v", err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			_ = conn.Close()
+		}
+	}()
+
+	layout := paths.NewLayout(nil, repoRoot)
+	if err := os.MkdirAll(filepath.Dir(layout.BatchesIndexPath), 0755); err != nil {
+		t.Fatalf("mkdir batches index dir: %v", err)
+	}
+	issuesJSON, err := json.Marshal(issues)
+	if err != nil {
+		t.Fatalf("marshal issues: %v", err)
+	}
+	createdAt := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC).UTC().Format(time.RFC3339Nano)
+	indexLiteral := fmt.Sprintf(`{
+  "version": 1,
+  "entries": [
+    {
+      "id": "",
+      "path": %q,
+      "kind": "issue",
+      "status": "active",
+      "createdAt": %q,
+      "issues": %s
+    }
+  ]
+}
+`, batchDir, createdAt, string(issuesJSON))
+	if err := os.WriteFile(layout.BatchesIndexPath, []byte(indexLiteral), 0644); err != nil {
+		t.Fatalf("write batches index: %v", err)
+	}
+}
+
+// TestPortal_ActiveMixedBatch_AllIssuesRenderedAcrossStatuses is the
+// regression repro for issue #1658. A single active batch covers 7
+// distinct issues: 3 are still queued (run.queued events only) and 4
+// are already running (run.started events). Hitting /api/runs must
+// return 7 rows, one per issue, with the right status for each. The
+// batches-index entry is written with an empty "id" so the repro
+// exercises the activeKeyForActive fallback chain that issue #1657
+// introduced and the empty-id pre-condition for the dead-batch
+// synthesis edge case.
+//
+// Note: as of #1680 (the activeKeyForActive prefactor), this test
+// passes on main for the realistic config below (every event has a
+// non-empty RunID and a payload.batch_id). The matching fix from
+// issue #1659 is expected to land alongside this test; this test
+// acts as the gating verification that the future fix preserves the
+// all-7-issues-render invariant across queued and running statuses
+// when the batches-index entry id is empty. If a future change
+// reintroduces the regression where any subset of the 7 issues is
+// dropped, replaced by an aborted synthesized row, or collapses via
+// dedup, the assertion will fail.
+func TestPortal_ActiveMixedBatch_AllIssuesRenderedAcrossStatuses(t *testing.T) {
+	// shortTempDir keeps the unix batch.sock path well below the
+	// 108-byte sun_path limit on macOS/Linux. portalRunsIndexes is a
+	// package-level sync.Map keyed by repoRoot; collisions across
+	// tests would serve stale snapshots, so clear the entry for this
+	// isolated dir before constructing the handler.
+	repoRoot := shortTempDir(t)
+	portalRunsIndexes.Delete(repoRoot)
+
+	// The portal handler spawns a stale-run cleaner on startup that
+	// emits run.aborted for any queued-but-not-started event in the
+	// log, corrupting the test's queued-event input. Disable it for
+	// the duration of the test, matching the override pattern used by
+	// TestPortal_AbortEndpoint_* in portal_abort_batch_kinds_test.go.
+	prevStale := portalStaleCleaner
+	portalStaleCleaner = func(string) error { return nil }
+	t.Cleanup(func() { portalStaleCleaner = prevStale })
+
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	const runName = "mixed-active-1"
+	issues := []int{101, 102, 103, 104, 105, 106, 107}
+	queued := []int{101, 102, 103}
+	started := []int{104, 105, 106, 107}
+
+	seedMixedActiveBatchIndex(t, repoRoot, runName, issues)
+	batchID := runName
+
+	pinnedTime := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	var ev []events.Event
+	for i, issue := range queued {
+		ev = append(ev, events.Event{
+			Type:      "run.queued",
+			Timestamp: pinnedTime.Add(time.Duration(i) * time.Second),
+			RunID:     fmt.Sprintf("%s-%d", runName, issue),
+			Issue:     issue,
+			Payload:   map[string]any{"batch_id": batchID},
+		})
+	}
+	for i, issue := range started {
+		ev = append(ev, events.Event{
+			Type:      "run.started",
+			Timestamp: pinnedTime.Add(time.Duration(len(queued)+i) * time.Second),
+			RunID:     fmt.Sprintf("%s-%d", runName, issue),
+			Issue:     issue,
+			Payload: map[string]any{
+				"branch":   fmt.Sprintf("sandman/%d-fix", issue),
+				"batch_id": batchID,
+			},
+		})
+	}
+	logPath := filepath.Join(repoRoot, ".sandman", "events.jsonl")
+	writePortalLog(t, logPath, ev)
+
+	handler := newPortalHandler(repoRoot)
+	server := startPortalHTTPServer(t, handler)
+	defer server.Close()
+
+	runs := readPortalRuns(t, server.URL)
+
+	byIssue := make(map[int]portalRun, len(runs))
+	for _, r := range runs {
+		if r.IssueNumber > 0 {
+			byIssue[r.IssueNumber] = r
+		}
+	}
+
+	present := make([]int, 0, len(byIssue))
+	missing := make([]int, 0)
+	for _, issue := range issues {
+		if _, ok := byIssue[issue]; ok {
+			present = append(present, issue)
+		} else {
+			missing = append(missing, issue)
+		}
+	}
+
+	if got, want := len(runs), len(issues); got != want {
+		t.Fatalf("expected %d portal rows for the %d active-batch issues, got %d\npresent=%v missing=%v\nruns=%#v",
+			want, len(issues), got, present, missing, runs)
+	}
+	for _, issue := range missing {
+		t.Errorf("issue %d: no portal row returned (issue is part of the active batch but is missing from /api/runs)", issue)
+	}
+
+	for _, issue := range issues {
+		row, ok := byIssue[issue]
+		if !ok {
+			continue
+		}
+		wantKind := "active"
+		wantStatus := "queued"
+		for _, s := range started {
+			if issue == s {
+				wantStatus = "running"
+				break
+			}
+		}
+		if row.Kind != wantKind {
+			t.Errorf("issue %d: Kind=%q want %q (row=%#v)", issue, row.Kind, wantKind, row)
+		}
+		if row.Status != wantStatus {
+			t.Errorf("issue %d: Status=%q want %q (row=%#v)", issue, row.Status, wantStatus, row)
+		}
+	}
+}
