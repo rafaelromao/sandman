@@ -1596,18 +1596,16 @@ func attemptsAndLastRetryReasonFromEvents(events []portalEvent) (int, string) {
 
 func (v *portalRunsView) kindForRun(runState events.RunState) string {
 	// An active state (run.started / run.continued, no terminal
-	// event yet) is naturally "active". A queued state has no
-	// terminal event of its own — the run.queued placeholder is
-	// carried as Finished for projection purposes, but the actual
-	// run is still waiting to start, so the row must render as
-	// "active" with status "queued" rather than "completed". This
-	// keeps the orphan-batch code path consistent with the
-	// active-batch code path in runFromActiveBatchIssue, which
-	// also renders queued rows as kind="active".
+	// event yet) is naturally "active". Wait-state runs (queued
+	// and blocked) have no live daemon, no socket, no log to
+	// stream, so classifying them as "active" would surface them
+	// in the "Active Batches" filter and paint them with the
+	// active-row chrome. They are demoted to "completed" here;
+	// the wait-state chrome (status badge, "Blocked by #…" log
+	// message, row-non-expandable, aria-expanded="false") is
+	// already gated on status via isRowExpandable,
+	// isWaitStateRun, and portalBlockedMessage (issue #1699).
 	if runState.IsActive() {
-		return "active"
-	}
-	if runState.Status() == "queued" || runState.Status() == "blocked" {
 		return "active"
 	}
 	return "completed"
