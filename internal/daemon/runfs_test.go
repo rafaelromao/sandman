@@ -3,6 +3,7 @@ package daemon
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
@@ -151,6 +152,9 @@ func TestUpdateRunManifestStatus_WritesTerminalStatus(t *testing.T) {
 }
 
 func TestIsRunActive_ProbesBatchSock(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("IsRunActive uses Unix socket path conventions; tracked by #1720")
+	}
 	tmp := t.TempDir()
 	batchPath := filepath.Join(tmp, "batch1")
 	if err := os.MkdirAll(batchPath, 0755); err != nil {

@@ -34,6 +34,7 @@ import (
 //   - The legacy `runs/review/...` path is NOT written by the
 //     daemon (acceptance #4).
 func TestDaemon_ReviewRunIDAndFolder_AreCanonical(t *testing.T) {
+	skipIfNotAsyncLaunchSupported(t)
 	now := time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC)
 	gh := &fakeGH{
 		prs: []github.PR{{Number: 42, State: "open"}},
@@ -132,6 +133,7 @@ func TestDaemon_ReviewRunIDAndFolder_AreCanonical(t *testing.T) {
 // `-PR<pr>`. This is the new shape introduced by ADR-0030 and
 // required by acceptance criterion #1 of issue #1551.
 func TestDaemon_ReviewRunIDAndFolder_AreCanonicalWithLinkedIssue(t *testing.T) {
+	skipIfNotAsyncLaunchSupported(t)
 	now := time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC)
 	gh := &fakeGH{
 		prs: []github.PR{{Number: 42, State: "open"}},

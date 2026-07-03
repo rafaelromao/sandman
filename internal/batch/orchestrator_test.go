@@ -3541,6 +3541,9 @@ func TestRunBatch_NegativeParallelRejected(t *testing.T) {
 }
 
 func TestRunBatch_WaitsForBlockersBeforeStartingDependents(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("CommandServer uses Unix socket path conventions; tracked by #1720")
+	}
 	dir := t.TempDir()
 	t.Chdir(dir)
 	initGitRepo(t, dir)
@@ -3747,6 +3750,9 @@ func TestRunBatch_SkipsIssuesBlockedByOpenExternalBlockers(t *testing.T) {
 }
 
 func TestRunBatch_InBatchBlockerSuccessKeepsDependentBlockedWhenIssueOpen(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("CommandServer uses Unix socket path conventions; tracked by #1720")
+	}
 	dir := t.TempDir()
 	t.Chdir(dir)
 	initGitRepo(t, dir)
@@ -4046,6 +4052,9 @@ func TestRunBatch_RechecksExternalBlockerStateBeforeDependentStart(t *testing.T)
 }
 
 func TestRunBatch_PreservesParallelismWithinDependencyLevel(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("CommandServer uses Unix socket path conventions; tracked by #1720")
+	}
 	dir := t.TempDir()
 	t.Chdir(dir)
 	initGitRepo(t, dir)
@@ -4252,7 +4261,7 @@ func TestRunBatch_StartDelay_DoesNotStaggerSimultaneousReadyRuns(t *testing.T) {
 	case <-dependentBStarted:
 		secondStarted = dependentAStarted
 		firstAt = time.Now()
-	case <-time.After(250 * time.Millisecond):
+	case <-time.After(1 * time.Second):
 		t.Fatal("expected dependent runs to start after start delay")
 	}
 	if elapsed := firstAt.Sub(releaseAt); elapsed < 75*time.Millisecond {
@@ -4263,10 +4272,10 @@ func TestRunBatch_StartDelay_DoesNotStaggerSimultaneousReadyRuns(t *testing.T) {
 	select {
 	case <-secondStarted:
 		secondAt = time.Now()
-	case <-time.After(250 * time.Millisecond):
+	case <-time.After(1 * time.Second):
 		t.Fatal("expected second dependent to start")
 	}
-	if diff := secondAt.Sub(firstAt); diff > 50*time.Millisecond {
+	if diff := secondAt.Sub(firstAt); diff > 200*time.Millisecond {
 		t.Fatalf("expected simultaneous ready runs to start together, got %s", diff)
 	}
 

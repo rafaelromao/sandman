@@ -3,6 +3,7 @@ package review
 import (
 	"context"
 	"errors"
+	"runtime"
 	"sync"
 	"testing"
 	"time"
@@ -12,12 +13,20 @@ import (
 	"github.com/rafaelromao/sandman/internal/github"
 )
 
+func skipIfNotAsyncLaunchSupported(t *testing.T) {
+	t.Helper()
+	if runtime.GOOS != "linux" {
+		t.Skip("Unix socket bind path exceeds macOS sun_path")
+	}
+}
+
 // TestDaemon_AsyncLaunch_TickReturnsImmediately exercises the core fix:
 // tick returns within a bounded window even though the fake BatchRunner
 // blocks on a release channel. The slot is held while the review is
 // in-flight and freed after the review completes (verified via
 // WaitForIdle).
 func TestDaemon_AsyncLaunch_TickReturnsImmediately(t *testing.T) {
+	skipIfNotAsyncLaunchSupported(t)
 	now := time.Date(2026, 7, 2, 12, 0, 0, 0, time.UTC)
 	afterReview := now.Add(1 * time.Minute)
 	gh := &fakeGH{
@@ -91,6 +100,7 @@ func TestDaemon_AsyncLaunch_TickReturnsImmediately(t *testing.T) {
 // on a different PR. All three slots are held simultaneously while the fake
 // runner blocks — proving the slot pool fills across ticks.
 func TestDaemon_AsyncLaunch_CrossTickSlotAccumulation(t *testing.T) {
+	skipIfNotAsyncLaunchSupported(t)
 	now := time.Date(2026, 7, 2, 12, 0, 0, 0, time.UTC)
 	afterReview := now.Add(1 * time.Minute)
 	gh := &fakeGH{
@@ -190,6 +200,7 @@ func TestDaemon_AsyncLaunch_CrossTickSlotAccumulation(t *testing.T) {
 // loss: a trigger on PR B is picked up on the next tick while PR A's review
 // is still in-flight. Both reviews run concurrently.
 func TestDaemon_AsyncLaunch_CommandPickupDuringInFlight(t *testing.T) {
+	skipIfNotAsyncLaunchSupported(t)
 	now := time.Date(2026, 7, 2, 12, 0, 0, 0, time.UTC)
 	afterReview := now.Add(1 * time.Minute)
 	gh := &fakeGH{
@@ -271,6 +282,7 @@ func TestDaemon_AsyncLaunch_CommandPickupDuringInFlight(t *testing.T) {
 // error marks the trigger as failure (retryable, NOT terminal-seen) and
 // releases the slot.
 func TestDaemon_AsyncLaunch_RunBatchErrorRetryable(t *testing.T) {
+	skipIfNotAsyncLaunchSupported(t)
 	now := time.Date(2026, 7, 2, 12, 0, 0, 0, time.UTC)
 	gh := &fakeGH{
 		prs: []github.PR{{Number: 9, State: "open"}},
@@ -325,6 +337,7 @@ func TestDaemon_AsyncLaunch_RunBatchErrorRetryable(t *testing.T) {
 // cancellation waits for in-flight background goroutines and releases
 // their slots before Run returns.
 func TestDaemon_AsyncLaunch_GracefulShutdown(t *testing.T) {
+	skipIfNotAsyncLaunchSupported(t)
 	now := time.Date(2026, 7, 2, 12, 0, 0, 0, time.UTC)
 	afterReview := now.Add(1 * time.Minute)
 	gh := &fakeGH{

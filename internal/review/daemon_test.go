@@ -10,6 +10,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -207,6 +208,9 @@ func newDaemonForTestWithParallel(t *testing.T, gh GitHubClient, runner BatchRun
 // newest unseen trigger is processed when multiple trigger comments exist
 // with different creation times.
 func TestDaemon_ProcessPRCommentsSortedByCreatedAt(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Unix socket bind path exceeds macOS sun_path")
+	}
 	now := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
 	gh := &fakeGH{
 		prs: []github.PR{{Number: 1, State: "open"}},
@@ -244,6 +248,9 @@ func TestDaemon_ProcessPRCommentsSortedByCreatedAt(t *testing.T) {
 }
 
 func TestDaemon_OnlyNewestUnseenTriggerProcessed(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Unix socket bind path exceeds macOS sun_path")
+	}
 	now := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
 	gh := &fakeGH{
 		prs: []github.PR{{Number: 1, State: "open"}},
@@ -319,6 +326,9 @@ func TestDaemon_OnlyNewestUnseenTriggerProcessed(t *testing.T) {
 }
 
 func TestDaemon_TickLaunchesReviewForTriggerComment(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Unix socket bind path exceeds macOS sun_path")
+	}
 	now := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
 	gh := &fakeGH{
 		prs: []github.PR{{Number: 42, State: "open"}},
@@ -392,6 +402,9 @@ func TestDaemon_TickLaunchesReviewForTriggerComment(t *testing.T) {
 }
 
 func TestDaemon_TickLaunchesReviewsInParallel(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Unix socket bind path exceeds macOS sun_path")
+	}
 	now := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
 	after := now.Add(1 * time.Minute)
 	gh := &fakeGH{
@@ -449,9 +462,17 @@ func TestDaemon_TickLaunchesReviewsInParallel(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("tick did not finish after releasing parallel reviews")
 	}
+	idleCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := d.WaitForIdle(idleCtx); err != nil {
+		t.Fatalf("WaitForIdle: %v", err)
+	}
 }
 
 func TestDaemon_ParallelOverrideCapsSlotPool(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Unix socket bind path exceeds macOS sun_path")
+	}
 	now := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
 	after := now.Add(1 * time.Minute)
 	gh := &fakeGH{
@@ -510,6 +531,9 @@ func TestDaemon_ParallelOverrideCapsSlotPool(t *testing.T) {
 }
 
 func TestDaemon_EffectiveParallelPrefersOverride(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Unix socket bind path exceeds macOS sun_path")
+	}
 	now := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
 	gh := &fakeGH{
 		prs: []github.PR{{Number: 1, State: "open"}},
@@ -535,6 +559,9 @@ func TestDaemon_EffectiveParallelPrefersOverride(t *testing.T) {
 }
 
 func TestDaemon_EffectiveParallelFallsBackToConfig(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Unix socket bind path exceeds macOS sun_path")
+	}
 	now := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
 	gh := &fakeGH{
 		prs: []github.PR{{Number: 1, State: "open"}},
@@ -559,6 +586,9 @@ func TestDaemon_EffectiveParallelFallsBackToConfig(t *testing.T) {
 }
 
 func TestDaemon_LaunchReviewPropagatesAgentModelParallelOverrides(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Unix socket bind path exceeds macOS sun_path")
+	}
 	gh := &fakeGH{
 		prs: []github.PR{{Number: 30, State: "open"}},
 		comments: map[int][]github.PRComment{
@@ -596,6 +626,9 @@ func TestDaemon_LaunchReviewPropagatesAgentModelParallelOverrides(t *testing.T) 
 }
 
 func TestDaemon_TickAddsReactionAndRemovesAfterReview(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Unix socket bind path exceeds macOS sun_path")
+	}
 	now := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
 	gh := &fakeGH{
 		prs: []github.PR{{Number: 42, State: "open"}},
@@ -663,6 +696,9 @@ func TestDaemon_TickAddsReactionAndRemovesAfterReview(t *testing.T) {
 }
 
 func TestDaemon_ReactionRemovedOnRunBatchError(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Unix socket bind path exceeds macOS sun_path")
+	}
 	gh := &fakeGH{
 		prs: []github.PR{{Number: 1, State: "open"}},
 		comments: map[int][]github.PRComment{
@@ -702,6 +738,9 @@ func TestDaemon_ReactionRemovedOnRunBatchError(t *testing.T) {
 }
 
 func TestDaemon_TickSkipsSeenComment(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Unix socket bind path exceeds macOS sun_path")
+	}
 	now := time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC)
 	gh := &fakeGH{
 		prs: []github.PR{{Number: 42, State: "open"}},
@@ -771,6 +810,9 @@ func TestDaemon_TickSkipsSeenComment(t *testing.T) {
 }
 
 func TestDaemon_StaleTriggersLogged(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Unix socket bind path exceeds macOS sun_path")
+	}
 	now := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
 	gh := &fakeGH{
 		prs: []github.PR{{Number: 1, State: "open"}},
@@ -808,6 +850,9 @@ func TestDaemon_StaleTriggersLogged(t *testing.T) {
 }
 
 func TestDaemon_MixedSeenAndUnseenTriggers(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Unix socket bind path exceeds macOS sun_path")
+	}
 	now := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
 	gh := &fakeGH{
 		prs: []github.PR{{Number: 1, State: "open"}},
@@ -893,6 +938,9 @@ func TestDaemon_MixedSeenAndUnseenTriggers(t *testing.T) {
 }
 
 func TestDaemon_TickCaseInsensitive(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Unix socket bind path exceeds macOS sun_path")
+	}
 	gh := &fakeGH{
 		prs: []github.PR{{Number: 7, State: "open"}},
 		comments: map[int][]github.PRComment{
@@ -912,6 +960,9 @@ func TestDaemon_TickCaseInsensitive(t *testing.T) {
 }
 
 func TestDaemon_StartSocketCreatesReviewSock(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("review socket starts an abstract-socket listener; tracked by #1720")
+	}
 	gh := &fakeGH{}
 	runner := &capturedRequest{}
 	d, _, _ := newDaemonForTest(t, gh, runner, &config.Config{})
@@ -929,6 +980,9 @@ func TestDaemon_StartSocketCreatesReviewSock(t *testing.T) {
 }
 
 func TestDaemon_RunRespondsToTrigger(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Unix socket bind path exceeds macOS sun_path")
+	}
 	gh := &fakeGH{
 		prs: []github.PR{{Number: 1, State: "open"}},
 	}
@@ -976,6 +1030,9 @@ func TestDaemon_RunRespondsToTrigger(t *testing.T) {
 }
 
 func TestDaemon_StopCancelsInflightBatch(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Unix socket bind path exceeds macOS sun_path")
+	}
 	gh := &fakeGH{
 		prs: []github.PR{{Number: 1, State: "open"}},
 		comments: map[int][]github.PRComment{
@@ -1022,6 +1079,9 @@ func (f batchFunc) RunBatch(ctx context.Context, req batch.Request) (*batch.Resu
 }
 
 func TestDaemon_ListOpenPRsErrorIsLogged(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Unix socket bind path exceeds macOS sun_path")
+	}
 	gh := &fakeGH{listErr: errList}
 	runner := &capturedRequest{}
 	d, buf, _ := newDaemonForTest(t, gh, runner, &config.Config{
@@ -1062,6 +1122,9 @@ func TestDaemon_ListOpenPRsErrorIsLogged(t *testing.T) {
 // If the fixture regresses to a raw *bytes.Buffer (issue #1034), the race
 // detector will fail this test.
 func TestDaemon_BroadcasterFixtureIsSafeUnderRace(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Unix socket bind path exceeds macOS sun_path")
+	}
 	// Each iteration re-creates the fixture via newDaemonForTest so a
 	// stale writer from a previous iteration cannot poison the next
 	// iteration's buf assertion.
@@ -1158,6 +1221,9 @@ type jsonError string
 func (e jsonError) Error() string { return string(e) }
 
 func TestDaemon_RunFailsFastOnInvalidReviewAgent(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Unix socket bind path exceeds macOS sun_path")
+	}
 	gh := &fakeGH{}
 	runner := &capturedRequest{}
 	d, buf, _ := newDaemonForTest(t, gh, runner, &config.Config{
@@ -1192,6 +1258,9 @@ func TestDaemon_RunFailsFastOnInvalidReviewAgent(t *testing.T) {
 }
 
 func TestDaemon_RunFailsFastOnMissingReviewModel(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Unix socket bind path exceeds macOS sun_path")
+	}
 	gh := &fakeGH{}
 	runner := &capturedRequest{}
 	cfg := &config.Config{
@@ -1229,6 +1298,9 @@ func TestDaemon_RunFailsFastOnMissingReviewModel(t *testing.T) {
 }
 
 func TestDaemon_RunHonorsAgentModelOverridesAtStartup(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Unix socket bind path exceeds macOS sun_path")
+	}
 	gh := &fakeGH{}
 	runner := &capturedRequest{}
 	// Deliberately leave config review_agent/review_model empty.
@@ -1267,6 +1339,9 @@ func TestDaemon_RunHonorsAgentModelOverridesAtStartup(t *testing.T) {
 }
 
 func TestDaemon_LaunchReviewPropagatesSandboxParams(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Unix socket bind path exceeds macOS sun_path")
+	}
 	gh := &fakeGH{
 		prs: []github.PR{{Number: 10, State: "open"}},
 		comments: map[int][]github.PRComment{
@@ -1309,6 +1384,9 @@ func TestDaemon_LaunchReviewPropagatesSandboxParams(t *testing.T) {
 }
 
 func TestDaemon_LaunchReviewPropagatesAgentModelOverrides(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Unix socket bind path exceeds macOS sun_path")
+	}
 	gh := &fakeGH{
 		prs: []github.PR{{Number: 20, State: "open"}},
 		comments: map[int][]github.PRComment{
@@ -1342,6 +1420,9 @@ func TestDaemon_LaunchReviewPropagatesAgentModelOverrides(t *testing.T) {
 }
 
 func TestDaemon_LaunchReviewFallsBackToConfigForAgentModel(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Unix socket bind path exceeds macOS sun_path")
+	}
 	gh := &fakeGH{
 		prs: []github.PR{{Number: 21, State: "open"}},
 		comments: map[int][]github.PRComment{
@@ -1374,6 +1455,9 @@ func TestDaemon_LaunchReviewFallsBackToConfigForAgentModel(t *testing.T) {
 }
 
 func TestDaemon_LaunchReviewFallsBackToConfigSandbox(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Unix socket bind path exceeds macOS sun_path")
+	}
 	gh := &fakeGH{
 		prs: []github.PR{{Number: 11, State: "open"}},
 		comments: map[int][]github.PRComment{
@@ -1401,6 +1485,9 @@ func TestDaemon_LaunchReviewFallsBackToConfigSandbox(t *testing.T) {
 }
 
 func TestDaemon_ProcessPRLaunchesNewestTriggerOnly(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Unix socket bind path exceeds macOS sun_path")
+	}
 	gh := &fakeGH{
 		prs: []github.PR{{Number: 1, State: "open"}},
 		comments: map[int][]github.PRComment{
@@ -1435,6 +1522,9 @@ func TestDaemon_ProcessPRLaunchesNewestTriggerOnly(t *testing.T) {
 }
 
 func TestDaemon_OnlyNewestTriggerIgnoredWhenAllStale(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Unix socket bind path exceeds macOS sun_path")
+	}
 	gh := &fakeGH{
 		prs: []github.PR{{Number: 1, State: "open"}},
 		comments: map[int][]github.PRComment{
@@ -1510,6 +1600,9 @@ func TestDaemon_OnlyNewestTriggerIgnoredWhenAllStale(t *testing.T) {
 }
 
 func TestDaemon_ContextCancellationPropagates(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Unix socket bind path exceeds macOS sun_path")
+	}
 	started := make(chan struct{}, 1)
 
 	gh := &fakeGH{
@@ -1552,6 +1645,9 @@ func TestDaemon_ContextCancellationPropagates(t *testing.T) {
 }
 
 func TestDaemon_ClaimFailureSkipsComment(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Unix socket bind path exceeds macOS sun_path")
+	}
 	gh := &fakeGH{
 		prs: []github.PR{{Number: 1, State: "open"}},
 		comments: map[int][]github.PRComment{
@@ -1630,6 +1726,9 @@ func TestDaemon_ClaimFailureSkipsComment(t *testing.T) {
 }
 
 func TestDaemon_LaunchReviewErrorsOnMissingModel(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Unix socket bind path exceeds macOS sun_path")
+	}
 
 	gh := &fakeGH{
 		prFetch: map[int]*github.PR{1: {Number: 1, Title: "T", Body: "B"}},
@@ -1661,6 +1760,9 @@ func TestDaemon_LaunchReviewErrorsOnMissingModel(t *testing.T) {
 }
 
 func TestDaemon_LaunchReviewCreatesControlSocketAndManifest(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Unix socket bind path exceeds macOS sun_path")
+	}
 	now := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
 	gh := &fakeGH{
 		prs: []github.PR{{Number: 1, State: "open"}},
@@ -1728,6 +1830,9 @@ func TestDaemon_LaunchReviewCreatesControlSocketAndManifest(t *testing.T) {
 }
 
 func TestDaemon_LaunchReviewCleansUpRunDirOnError(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Unix socket bind path exceeds macOS sun_path")
+	}
 	gh := &fakeGH{
 		prFetch: map[int]*github.PR{1: {Number: 1, Title: "T", Body: "B"}},
 	}
@@ -1763,6 +1868,9 @@ func TestDaemon_LaunchReviewCleansUpRunDirOnError(t *testing.T) {
 }
 
 func TestDaemon_LaunchReviewReplacesStaleSocket(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Unix socket bind path exceeds macOS sun_path")
+	}
 	now := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
 	gh := &fakeGH{
 		prs: []github.PR{{Number: 1, State: "open"}},
@@ -1831,6 +1939,9 @@ func TestDaemon_LaunchReviewReplacesStaleSocket(t *testing.T) {
 }
 
 func TestDaemon_LaunchReviewRoutesOutputToPerPRSock(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Unix socket bind path exceeds macOS sun_path")
+	}
 	now := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
 	gh := &fakeGH{
 		prs: []github.PR{{Number: 1, State: "open"}},
@@ -1894,6 +2005,9 @@ func TestDaemon_LaunchReviewRoutesOutputToPerPRSock(t *testing.T) {
 // The negative-case assertion (no review comment found) is preserved
 // at the same line count in the new test.
 func TestDaemon_VerifyReviewPosted_FailsWhenNoNewComments(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Unix socket bind path exceeds macOS sun_path")
+	}
 	t.Skip("refactored into TestDaemon_PromotePendingComment_ReturnsErrorWhenMissing (slice D)")
 }
 
@@ -1904,6 +2018,9 @@ func TestDaemon_VerifyReviewPosted_FailsWhenNoNewComments(t *testing.T) {
 // The positive-case assertion (review comment found) is preserved at
 // the same line count in the new test.
 func TestDaemon_VerifyReviewPosted_PassesWhenNewCommentFound(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Unix socket bind path exceeds macOS sun_path")
+	}
 	t.Skip("refactored into TestDaemon_PromotePendingComment_ReturnsSuccessWhenReviewFound (slice D)")
 }
 
@@ -1915,6 +2032,9 @@ func TestDaemon_VerifyReviewPosted_PassesWhenNewCommentFound(t *testing.T) {
 // promote/fail path. The trigger-comment-not-marked-seen assertion is
 // preserved at the corresponding test site.
 func TestDaemon_LaunchReviewFailsWhenVerificationFails(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Unix socket bind path exceeds macOS sun_path")
+	}
 	t.Skip("refactored into TestDaemon_NextTickRejectsPendingCommentToFailureAfterBound (slice D)")
 }
 
@@ -1925,6 +2045,9 @@ func TestDaemon_LaunchReviewFailsWhenVerificationFails(t *testing.T) {
 // launchReview always succeeds as long as RunBatch returns; the
 // lazy-verify promotion is the consumer of the review comment.
 func TestDaemon_LaunchReviewSucceedsWhenVerificationPasses(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Unix socket bind path exceeds macOS sun_path")
+	}
 	t.Skip("refactored into TestDaemon_LaunchReviewReturnsFastAndRecordsPending + TestDaemon_NextTickPromotesPendingCommentToSuccess (slice D)")
 }
 
@@ -1934,6 +2057,9 @@ func TestDaemon_LaunchReviewSucceedsWhenVerificationPasses(t *testing.T) {
 // missing seam that let the regression ship: the launch error was shadowed
 // by a later NewReviewStateStore assignment, so MarkSeen always passed.
 func TestDaemon_TickFailingReviewRecordsFailure(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Unix socket bind path exceeds macOS sun_path")
+	}
 	gh := &fakeGH{
 		prs: []github.PR{{Number: 1, State: "open"}},
 		comments: map[int][]github.PRComment{
@@ -1994,6 +2120,9 @@ func TestDaemon_TickFailingReviewRecordsFailure(t *testing.T) {
 // This confirms the global-dedup skip rule intentionally deviates from
 // PRD #1218's terminal run-status set for "aborted".
 func TestDaemon_AbortedReviewRetriesOnNextTick(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Unix socket bind path exceeds macOS sun_path")
+	}
 	gh := &fakeGH{
 		prs: []github.PR{{Number: 1, State: "open"}},
 		comments: map[int][]github.PRComment{
@@ -2070,6 +2199,9 @@ func TestDaemon_AbortedReviewRetriesOnNextTick(t *testing.T) {
 // skip rule only treats "success" as terminal, not "failure", so failed
 // triggers can be retried.
 func TestDaemon_TickFailingReviewRetriesOnNextTick(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Unix socket bind path exceeds macOS sun_path")
+	}
 	gh := &fakeGH{
 		prs: []github.PR{{Number: 1, State: "open"}},
 		comments: map[int][]github.PRComment{
@@ -2127,6 +2259,9 @@ func TestDaemon_TickFailingReviewRetriesOnNextTick(t *testing.T) {
 // title, body, and review focus must reach the agent only through the
 // per-run batch request.
 func TestDaemon_ConcurrentPRsDoNotClobberSharedPrompt(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Unix socket bind path exceeds macOS sun_path")
+	}
 	now := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
 	gh := &fakeGH{
 		prs: []github.PR{{Number: 1, State: "open"}, {Number: 2, State: "open"}},
@@ -2191,6 +2326,11 @@ func TestDaemon_ConcurrentPRsDoNotClobberSharedPrompt(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("tick did not finish after releasing parallel reviews")
 	}
+	idleCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := d.WaitForIdle(idleCtx); err != nil {
+		t.Fatalf("WaitForIdle: %v", err)
+	}
 
 	mu.Lock()
 	r1, ok1 := seenReqs[1]
@@ -2223,6 +2363,9 @@ func TestDaemon_ConcurrentPRsDoNotClobberSharedPrompt(t *testing.T) {
 }
 
 func TestDaemon_TickSaturationDoesNotDropTriggers(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Unix socket bind path exceeds macOS sun_path")
+	}
 	now := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
 	afterReview := now.Add(1 * time.Minute)
 	gh := &fakeGH{

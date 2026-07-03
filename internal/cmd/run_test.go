@@ -327,6 +327,9 @@ func TestNewRunDeps(t *testing.T) {
 	if err != nil {
 		t.Fatalf("os.Getwd: %v", err)
 	}
+	if resolved, err := filepath.EvalSymlinks(cwd); err == nil {
+		cwd = resolved
+	}
 	info, err := os.Stat(filepath.Join(cwd, ".git"))
 	if err != nil {
 		t.Fatalf("expected .git at cwd: %v", err)
@@ -366,6 +369,9 @@ func TestNewRunDepsAuto(t *testing.T) {
 	cwd, err := os.Getwd()
 	if err != nil {
 		t.Fatalf("os.Getwd: %v", err)
+	}
+	if resolved, err := filepath.EvalSymlinks(cwd); err == nil {
+		cwd = resolved
 	}
 	info, err := os.Stat(filepath.Join(cwd, ".git"))
 	if err != nil {
