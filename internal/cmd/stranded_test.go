@@ -17,8 +17,8 @@ import (
 // which fails on macOS git when <branch> is already checked out elsewhere;
 // instead it uses `git worktree add --detach` (allowed on both Linux and macOS)
 // and then rewrites the worktree's HEAD via `git symbolic-ref HEAD`.
-// <otherBranch> is created if missing; <expectedBranch> is intentionally NOT
-// created so callers can exercise the "missing locally" precondition. See #1738.
+// The helper does not create <expectedBranch> (callers decide — needed for the
+// "missing locally" precondition); <otherBranch> must already exist. See #1738.
 func addStrandedWorktree(t *testing.T, repoDir, worktreeBase, expectedBranch, otherBranch string) string {
 	t.Helper()
 	wtPath := filepath.Join(worktreeBase, expectedBranch)

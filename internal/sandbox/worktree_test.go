@@ -810,8 +810,7 @@ func TestWorktreeSandbox_RecoversFromMainRepoBranch_StrandedWorktreePath(t *test
 
 	runGit(t, dir, "branch", branch)
 	runGit(t, dir, "branch", otherBranch)
-	strandedPath := filepath.Join(worktreeBase, branch)
-	runGit(t, dir, "worktree", "add", "--force", strandedPath, otherBranch)
+	addStrandedWorktree(t, dir, worktreeBase, branch, otherBranch)
 
 	runGit(t, dir, "checkout", branch)
 
