@@ -193,6 +193,22 @@ func batchKeyForActive(active portalActiveRun) string {
 	return "active-" + active.RunID
 }
 
+func activeKeyForActive(active portalActiveRun) string {
+	if active.Key != "" {
+		return active.Key
+	}
+	if active.BatchID != "" {
+		return active.BatchID
+	}
+	if !strings.HasSuffix(active.Dir, "/") {
+		base := filepath.Base(active.Dir)
+		if base != "" && base != "." && base != "/" {
+			return base
+		}
+	}
+	return "active-" + active.RunID
+}
+
 const portalViewDegradeLogInterval = 30 * time.Second
 
 var (
@@ -930,8 +946,8 @@ func (v *portalRunsView) discoverActiveRuns(repoRoot string, eventsByRun map[str
 		if len(issueNumbers) > 0 {
 			issueNumber = issueNumbers[0]
 		}
-		active = append(active, portalActiveRun{
-			Key:          instance.Name,
+		entry := portalActiveRun{
+			Key:          runID,
 			Dir:          runDir,
 			SocketPath:   instance.SocketPath,
 			IssueNumber:  issueNumber,
@@ -941,7 +957,9 @@ func (v *portalRunsView) discoverActiveRuns(repoRoot string, eventsByRun map[str
 			RunID:        runID,
 			StartedAt:    startedAt,
 			ModTime:      info.ModTime(),
-		})
+		}
+		entry.Key = activeKeyForActive(entry)
+		active = append(active, entry)
 	}
 	return active, nil
 }
@@ -1132,7 +1150,7 @@ func (v *portalRunsView) stateStartsInBatch(timestamp, batchStart time.Time) boo
 func (v *portalRunsView) runFromActiveBatchIssue(repoRoot string, active portalActiveRun, issueNumber int, state *events.RunState, blocked *events.Event, queued *events.Event, liveOutput string, eventsByRun map[string][]portalEvent, deadBatches []daemon.DeadBatch) portalRun {
 	issueLabel := fmt.Sprintf("#%d", issueNumber)
 	run := portalRun{
-		Key:         fmt.Sprintf("%s-issue-%d", active.Key, issueNumber),
+		Key:         fmt.Sprintf("%s-issue-%d", activeKeyForActive(active), issueNumber),
 		Kind:        "active",
 		Status:      "queued",
 		IssueLabel:  issueLabel,
@@ -1329,7 +1347,7 @@ func (v *portalRunsView) runFromActiveMatch(repoRoot string, match portalRunMatc
 		status = "auto-selecting"
 	}
 	run := portalRun{
-		Key:         runID,
+		Key:         activeKeyForActive(match.instance),
 		RunID:       runID,
 		Kind:        "active",
 		Status:      status,
