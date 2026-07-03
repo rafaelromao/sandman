@@ -30,6 +30,11 @@ description: Automates the GitHub PR review loop with the PR Review Agent. Waits
 
 9. **You must use `codeindex` before `grep` or `glob` when looking for symbols, blast radius, dependencies, or other broad code locations.** Load the `sandman-index` skill first — it encapsulates all codeindex guidance including the hard rule, command reference, query refinement strategies, and read discipline.
 
+10. **Any PR comment intended to be read by the reviewer MUST start with the review command.** A comment that does not begin with the review command is treated as boilerplate by the daemon and ignored — it does not reach the reviewer and does not advance the loop. Concretely:
+    - When posting the trigger comment (Step 4), the body must be exactly the review command on its own (e.g. `gh pr comment <N> --repo <owner/repo> --body "{{REVIEW_COMMAND}}"`).
+    - When posting a clarification request, a follow-up after a stalled poll, or any other reviewer-facing message, the body must begin with the review command and may include additional freeform text afterwards (e.g. `{{REVIEW_COMMAND}} — please clarify which file you mean`). The leading review-command substring is what the daemon's `ParseTrigger` matches on; the trailing freeform text is read by the reviewer but ignored by the trigger filter.
+    - When posting the bot's own review-body (Step 4b), do NOT prefix it with the review command. The review-body is the substance the reviewer writes back to you — prefixing it would cause the daemon to mis-classify the body as a duplicate trigger on the next tick and drop the actual review content. Record the review-body hash with `record_review_posted` as described in Step 4b.
+
 ## Workflow
 
 ### Prerequisites
@@ -64,7 +69,7 @@ comments=$(echo "$pr_data" | jq -r '.comments')
 # Step 1 already fetched mergeStateStatus — use it directly. If DIRTY, trigger back-merge first.
 if [ "$mergeStateStatus" = "DIRTY" ]; then
   echo "PR is in 'DIRTY' state (merge conflicts). CI cannot run. Running sandman-back-merge to resolve."
-  # Load and run back-merge: merges origin/main into the current branch, resolves conflicts, pushes.
+  # Load and run back-merge: merges the base branch into the current branch, resolves conflicts, pushes.
   # This can recover fixes that landed on main after the branch was created.
   # If back-merge fails, the PR remains unmergeable — keep polling so we re-enter this block.
   if sandman-back-merge; then
@@ -196,6 +201,8 @@ Total polling budget: **900s = 15 minutes** of cumulative sleep (120 + 60 + 60 +
 
 **Hard rule — observed-response fast path.** If any poll iteration observes a new top-level PR conversation comment whose author is not the agent itself, the very next sleep MUST be ≤ 60s.
 
+**Hard rule — DIRTY mid-poll must trigger back-merge, not be observed and ignored.** A PR whose `mergeStateStatus` was CLEAN at Step 1 can drift to `DIRTY` mid-poll once a new commit lands on the base branch and conflicts with the PR. The DIRTY pre-check at Step 2 only catches the initial state; subsequent polls MUST detect and resolve this. See Step 5a.
+
 On **every** poll iteration run all three commands separately:
 
 ```bash
@@ -220,6 +227,22 @@ A reviewer response is **any** of:
 If `top > 0` AND `reviews == 0` AND `inline == 0`, AND no previous `{{REVIEW_COMMAND}}` is already pending without response, post a follow-up comment with `{{REVIEW_COMMAND}}` plus a freeform clarification request. If a request is already pending, skip — do not pile on.
 
 If no reviewer response arrives within 15 minutes, stop and exit the loop with a `REVIEW_TIMEOUT` reason documented in the run log so the failure is visible in the run history.
+
+#### Step 5a: DIRTY handling — every poll iteration
+
+> **Prerequisite**: a DIRTY (`mergeable == CONFLICTING`) PR cannot run CI, cannot be reviewed on its diff cleanly, and cannot be merged. The Step 2 pre-check catches the initial state, but a PR can drift to DIRTY mid-poll once new commits land on the base branch. This section is the per-poll guard.
+
+On **every** poll iteration, after running the three commands above, inspect the `mergeStateStatus` field already returned by the first command (do **not** make a separate `gh pr view` call). If `mergeStateStatus == "DIRTY"`:
+
+1. Stop polling for review feedback. The PR is unmergeable until the conflict is resolved; reviewer comments posted on a DIRTY PR do not produce a usable review.
+2. Load `sandman-back-merge` (see the `sandman-back-merge` skill). Run it on the current branch. It performs the disciplined 3-way merge of the base branch into the working branch and resolves conflicts without history rewrites.
+3. If back-merge succeeds, push the updated branch with `git push`. Update `.sandman/.<N>.head_sha` with the new head SHA so Step 3's stale-request check sees the new commit and re-evaluates.
+4. Restart polling from Step 1 — a fresh CI run will be triggered by the push, and the review agent may have already posted feedback on the prior SHA that the polling loop should classify on the next pass.
+5. If back-merge fails to resolve conflicts (e.g. semantic conflict, merge helper rejected a hunk), exit the loop with a distinct `REVIEW_CONFLICT_UNRESOLVED` reason in the run log. This is **never** a `REVIEW_TIMEOUT`. It is also **never** a silent success — the PR remains unmergeable and a future run must continue from this state.
+
+**Hard rule — DIRTY is not REVIEW_TIMEOUT.** A DIRTY PR that back-merge cannot resolve is a structured failure with a downstream signal in the run payload. Do not collapse it into the generic review-timeout bucket: the two failures have different remediation paths and different downstream tooling.
+
+**Hard rule — DIRTY is not silent success.** Observing a DIRTY PR and continuing to poll for reviewer comments is the failure mode the skill exists to prevent. The fix is action, not observation.
 
 #### Step 6: Read and classify feedback
 
@@ -293,13 +316,14 @@ Stop only when:
 - Formal approval (A or C)
 - User explicitly asks to stop
 - Max 10 passes reached with unresolved blockers
+- **`REVIEW_CONFLICT_UNRESOLVED` — back-merge failed to resolve a DIRTY PR; not a `REVIEW_TIMEOUT`, never silent**
 
 Continue polling when:
 - Review pending / no reviews yet
 - Only boilerplate comments exist
 - Only nits/suggestions remain
 - CI is still running
-- **CI is blocked by merge conflicts (PR in DIRTY state) — this is handled by Step 2's back-merge loop; keep polling until conflicts are resolved**
+- **The PR is DIRTY mid-poll — Step 5a triggers `sandman-back-merge`, then restarts polling from Step 1 after a successful push. Keep going while back-merge is making progress; exit with `REVIEW_CONFLICT_UNRESOLVED` only when back-merge itself fails.**
 - Any `CHANGES_REQUESTED` review exists but is addressable
 - Only already-addressed inline comment IDs remain
 - Top-level PR conversation has new comments from non-agent author
@@ -316,4 +340,4 @@ Continue polling when:
 - Review agents may post feedback as: top-level comments, inline diff comments, or formal `COMMENT` reviews. Always check all three sources.
 - When CI is broken and the failure may be base-branch drift, load `sandman-back-merge` first so any fix that landed on the base branch can be merged before retrying.
 - When CI is failing, fix it first — CI must be green before any review feedback can be meaningfully addressed.
-- **DIRTY PR handling is now a hard Step 2 pre-check, not just a tip.** If `mergeable == CONFLICTING`, Step 2 will call `sandman-back-merge` automatically. Do not treat a DIRTY PR as a manual-resolution situation.
+- **DIRTY PR handling is now a hard per-poll guard, not just a Step 2 pre-check.** If `mergeable == CONFLICTING` is observed on ANY poll iteration, Step 5a triggers `sandman-back-merge` automatically. Do not treat a DIRTY PR as a manual-resolution situation, do not classify it as `REVIEW_TIMEOUT`, and do not exit the loop with silent success. The only acceptable outcomes are: (a) back-merge succeeded → push → restart polling; (b) back-merge failed → exit with `REVIEW_CONFLICT_UNRESOLVED`.
