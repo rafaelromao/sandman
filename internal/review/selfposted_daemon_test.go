@@ -270,6 +270,84 @@ func TestDaemon_PromotePendingComment_DefensivelyRecordsObservedComment(t *testi
 	}
 }
 
+// TestDaemon_PromotePendingComment_DefensiveRecordSurvivesAcrossTicks
+// pins the cross-tick race-safety introduced by issue #1704: the
+// defensive `Record` in `Daemon.promotePendingComment` populates
+// `SelfPostStore` on the SAME tick that `processPR` would otherwise
+// misclassify the bot's review-body as a fresh trigger. Without the
+// ordering fix from issue #1702 (`promotePendingReviews` runs before
+// `processPR` per PR inside `tick`), tick N+1's `processPR` would
+// observe the bot's review body, parse the literal `/sandman review`
+// substring from its `## Previous review progress` section, and
+// re-launch — a self-loop.
+//
+// The test exercises the full `tick()` ordering end-to-end: the
+// bot's review-body is appended to `fakeGH.comments` between the two
+// `tickAndWait` calls, so tick N+1's `promotePendingReviews` is the
+// only path that can populate `SelfPostStore` with the review body
+// before `processPR` iterates the comments. The assertions
+// (runner.calls stays at 1, review body is in SelfPostStore)
+// transitively prove the pending entry was registered on tick N and
+// that the promotion step ran on tick N+1.
+func TestDaemon_PromotePendingComment_DefensiveRecordSurvivesAcrossTicks(t *testing.T) {
+	now := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
+	reviewBody := "## Previous review progress\n/sandman review\n\nLGTM, no blockers."
+
+	gh := &fakeGH{
+		prs: []github.PR{{Number: 1, State: "open"}},
+		comments: map[int][]github.PRComment{
+			1: {
+				{ID: "trigger", Body: "/sandman review", CreatedAt: now},
+			},
+		},
+	}
+	runner := &capturedRequest{}
+	d, _, _ := newDaemonForTest(t, gh, runner, &config.Config{
+		DefaultReviewAgent: "opencode",
+		DefaultReviewModel: "opencode/foo",
+	})
+	d.Clock = func() time.Time { return now.Add(-1 * time.Minute) }
+
+	// Tick N: implementor's trigger lands; processPR launches the
+	// review and registers the pending entry. tickAndWait blocks
+	// until the async launch goroutine has completed, so the
+	// pending entry is in d.pendingReviews[1] by the time this
+	// returns.
+	tickAndWait(t, d, context.Background())
+	if runner.calls != 1 {
+		t.Fatalf("tick N: expected 1 batch run, got %d", runner.calls)
+	}
+
+	// Between ticks: the bot's reviewer agent posts its review
+	// body. Lock fakeGH.mu so the test stays race-safe.
+	gh.mu.Lock()
+	gh.comments[1] = append(gh.comments[1], github.PRComment{
+		ID:        "bot-review",
+		Body:      reviewBody,
+		CreatedAt: now.Add(1 * time.Minute),
+	})
+	gh.mu.Unlock()
+
+	// Tick N+1: drive a fresh tick on the same daemon. The
+	// ordering under test is: promotePendingReviews runs first,
+	// observes the bot's review body via promotePendingComment,
+	// defensively Records it into SelfPostStore, and MarkSeens
+	// the trigger as "success". processPR then runs and skips
+	// the bot's review body via the IsSelfPosted-before-
+	// ParseTrigger filter; the original trigger is filtered by
+	// the seen cache ("success" was MarkSeen in the previous
+	// step). Expected result: no second batch run, and the
+	// review body is recorded in SelfPostStore.
+	tickAndWait(t, d, context.Background())
+
+	if runner.calls != 1 {
+		t.Errorf("tick N+1 MUST NOT re-launch on the recorded review body (#1704), got %d total batch runs", runner.calls)
+	}
+	if !d.selfPosts.IsSelfPosted(reviewBody) {
+		t.Error("tick N+1: review body must be in SelfPostStore after the defensive observation, was not")
+	}
+}
+
 // TestDaemon_PromotePendingComment_DoesNotCountSelfPostAsSuccess
 // pins the contract that when the only comment observed after
 // `since` is already in the SelfPostStore, the function returns
