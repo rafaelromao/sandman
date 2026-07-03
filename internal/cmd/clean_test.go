@@ -16,14 +16,14 @@ import (
 )
 
 func TestClean_Stale_AloneAccepted(t *testing.T) {
-	dir := newSandmanDir(t)
-	t.Chdir(dir)
-
-	deps := Dependencies{
-		ConfigStore: &fakeStore{config: &config.Config{WorktreeDir: filepath.Join(dir, ".sandman", "worktrees")}},
-		EventLog:    &fakeEventLog{},
-		GitRunner:   &fakeGitRunner{},
+	deps := newRunDepsAuto(t, &fakeBatchRunner{})
+	dir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("os.Getwd: %v", err)
 	}
+	deps.ConfigStore = &fakeStore{config: &config.Config{WorktreeDir: filepath.Join(dir, ".sandman", "worktrees")}}
+	deps.EventLog = &fakeEventLog{}
+	deps.GitRunner = &fakeGitRunner{}
 
 	var buf bytes.Buffer
 	cmd := NewCleanCmd(deps)
@@ -117,8 +117,11 @@ func writeRunManifest(t *testing.T, batchDir string, manifest batchindex.RunMani
 }
 
 func TestClean_DryRun_ProducesNoIO(t *testing.T) {
-	dir := newSandmanDir(t)
-	t.Chdir(dir)
+	deps := newRunDepsAuto(t, &fakeBatchRunner{})
+	dir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("os.Getwd: %v", err)
+	}
 
 	batchDir := filepath.Join(dir, ".sandman", "batches", "batch-1")
 	worktreeDir := filepath.Join(dir, ".sandman", "worktrees", "sandman", "42-fix")
@@ -139,12 +142,9 @@ func TestClean_DryRun_ProducesNoIO(t *testing.T) {
 		{ID: "batch-1", Path: batchDir, Kind: batchindex.KindIssue, Status: batchindex.StatusActive, CreatedAt: now},
 	})
 
-	deps := Dependencies{
-		RepoRoot:    dir,
-		ConfigStore: &fakeStore{config: &config.Config{WorktreeDir: filepath.Join(dir, ".sandman", "worktrees")}},
-		EventLog:    &fakeEventLog{},
-		GitRunner:   &fakeGitRunner{},
-	}
+	deps.ConfigStore = &fakeStore{config: &config.Config{WorktreeDir: filepath.Join(dir, ".sandman", "worktrees")}}
+	deps.EventLog = &fakeEventLog{}
+	deps.GitRunner = &fakeGitRunner{}
 
 	var buf bytes.Buffer
 	cmd := NewCleanCmd(deps)
@@ -152,7 +152,7 @@ func TestClean_DryRun_ProducesNoIO(t *testing.T) {
 	cmd.SetErr(&buf)
 	cmd.SetArgs([]string{"--dry-run"})
 
-	err := cmd.Execute()
+	err = cmd.Execute()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -169,8 +169,11 @@ func TestClean_DryRun_ProducesNoIO(t *testing.T) {
 }
 
 func TestClean_RemovesActiveAndUnavailableEntries(t *testing.T) {
-	dir := newSandmanDir(t)
-	t.Chdir(dir)
+	deps := newRunDepsAuto(t, &fakeBatchRunner{})
+	dir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("os.Getwd: %v", err)
+	}
 
 	batchActive := filepath.Join(dir, ".sandman", "batches", "batch-active")
 	batchArchived := filepath.Join(dir, ".sandman", "batches", "batch-archived")
@@ -210,12 +213,9 @@ func TestClean_RemovesActiveAndUnavailableEntries(t *testing.T) {
 	})
 
 	gr := &fakeGitRunner{}
-	deps := Dependencies{
-		RepoRoot:    dir,
-		ConfigStore: &fakeStore{config: &config.Config{WorktreeDir: filepath.Join(dir, ".sandman", "worktrees")}},
-		EventLog:    &fakeEventLog{},
-		GitRunner:   gr,
-	}
+	deps.ConfigStore = &fakeStore{config: &config.Config{WorktreeDir: filepath.Join(dir, ".sandman", "worktrees")}}
+	deps.EventLog = &fakeEventLog{}
+	deps.GitRunner = gr
 
 	var buf bytes.Buffer
 	cmd := NewCleanCmd(deps)
@@ -223,7 +223,7 @@ func TestClean_RemovesActiveAndUnavailableEntries(t *testing.T) {
 	cmd.SetErr(&buf)
 	cmd.SetArgs([]string{})
 
-	err := cmd.Execute()
+	err = cmd.Execute()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -253,8 +253,11 @@ func TestClean_RemovesActiveAndUnavailableEntries(t *testing.T) {
 }
 
 func TestClean_Archived_RemovesArchivedAndUnavailableEntries(t *testing.T) {
-	dir := newSandmanDir(t)
-	t.Chdir(dir)
+	deps := newRunDepsAuto(t, &fakeBatchRunner{})
+	dir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("os.Getwd: %v", err)
+	}
 
 	batchActive := filepath.Join(dir, ".sandman", "batches", "batch-active")
 	batchArchived := filepath.Join(dir, ".sandman", "batches", "batch-archived")
@@ -294,12 +297,9 @@ func TestClean_Archived_RemovesArchivedAndUnavailableEntries(t *testing.T) {
 	})
 
 	gr := &fakeGitRunner{}
-	deps := Dependencies{
-		RepoRoot:    dir,
-		ConfigStore: &fakeStore{config: &config.Config{WorktreeDir: filepath.Join(dir, ".sandman", "worktrees")}},
-		EventLog:    &fakeEventLog{},
-		GitRunner:   gr,
-	}
+	deps.ConfigStore = &fakeStore{config: &config.Config{WorktreeDir: filepath.Join(dir, ".sandman", "worktrees")}}
+	deps.EventLog = &fakeEventLog{}
+	deps.GitRunner = gr
 
 	var buf bytes.Buffer
 	cmd := NewCleanCmd(deps)
@@ -307,7 +307,7 @@ func TestClean_Archived_RemovesArchivedAndUnavailableEntries(t *testing.T) {
 	cmd.SetErr(&buf)
 	cmd.SetArgs([]string{"--archived"})
 
-	err := cmd.Execute()
+	err = cmd.Execute()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -331,20 +331,20 @@ func TestClean_Archived_RemovesArchivedAndUnavailableEntries(t *testing.T) {
 }
 
 func TestClean_Unavailable_ReapedByBothCleanAndArchived(t *testing.T) {
-	dir := newSandmanDir(t)
-	t.Chdir(dir)
+	deps := newRunDepsAuto(t, &fakeBatchRunner{})
+	dir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("os.Getwd: %v", err)
+	}
 
 	now := time.Now()
 	writeBatchIndex(t, dir, []batchindex.Entry{
 		{ID: "batch-unavail", Path: "", Kind: batchindex.KindIssue, Status: batchindex.StatusUnavailable, CreatedAt: now},
 	})
 
-	deps := Dependencies{
-		RepoRoot:    dir,
-		ConfigStore: &fakeStore{config: &config.Config{WorktreeDir: filepath.Join(dir, ".sandman", "worktrees")}},
-		EventLog:    &fakeEventLog{},
-		GitRunner:   &fakeGitRunner{},
-	}
+	deps.ConfigStore = &fakeStore{config: &config.Config{WorktreeDir: filepath.Join(dir, ".sandman", "worktrees")}}
+	deps.EventLog = &fakeEventLog{}
+	deps.GitRunner = &fakeGitRunner{}
 
 	var buf bytes.Buffer
 	cmd := NewCleanCmd(deps)
@@ -352,7 +352,7 @@ func TestClean_Unavailable_ReapedByBothCleanAndArchived(t *testing.T) {
 	cmd.SetErr(&buf)
 	cmd.SetArgs([]string{})
 
-	err := cmd.Execute()
+	err = cmd.Execute()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -366,8 +366,11 @@ func TestClean_Unavailable_ReapedByBothCleanAndArchived(t *testing.T) {
 }
 
 func TestClean_Stale_NoIndexChange(t *testing.T) {
-	dir := newSandmanDir(t)
-	t.Chdir(dir)
+	deps := newRunDepsAuto(t, &fakeBatchRunner{})
+	dir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("os.Getwd: %v", err)
+	}
 
 	batchDir := filepath.Join(dir, ".sandman", "batches", "batch-1")
 	writeRunManifest(t, batchDir, batchindex.RunManifest{
@@ -381,12 +384,9 @@ func TestClean_Stale_NoIndexChange(t *testing.T) {
 		{ID: "batch-1", Path: batchDir, Kind: batchindex.KindIssue, Status: batchindex.StatusActive, CreatedAt: now},
 	})
 
-	deps := Dependencies{
-		RepoRoot:    dir,
-		ConfigStore: &fakeStore{config: &config.Config{WorktreeDir: filepath.Join(dir, ".sandman", "worktrees")}},
-		EventLog:    &fakeEventLog{},
-		GitRunner:   &fakeGitRunner{},
-	}
+	deps.ConfigStore = &fakeStore{config: &config.Config{WorktreeDir: filepath.Join(dir, ".sandman", "worktrees")}}
+	deps.EventLog = &fakeEventLog{}
+	deps.GitRunner = &fakeGitRunner{}
 
 	var buf bytes.Buffer
 	cmd := NewCleanCmd(deps)
@@ -394,7 +394,7 @@ func TestClean_Stale_NoIndexChange(t *testing.T) {
 	cmd.SetErr(&buf)
 	cmd.SetArgs([]string{"--stale"})
 
-	err := cmd.Execute()
+	err = cmd.Execute()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -408,8 +408,11 @@ func TestClean_Stale_NoIndexChange(t *testing.T) {
 }
 
 func TestRecoverStaleRuns_DeadBatchUnterminated_EmitsAborted(t *testing.T) {
-	dir := newSandmanDir(t)
-	t.Chdir(dir)
+	deps := newRunDepsAuto(t, &fakeBatchRunner{})
+	dir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("os.Getwd: %v", err)
+	}
 
 	createdAt := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
 	started := createdAt.Add(5 * time.Minute)
@@ -420,12 +423,12 @@ func TestRecoverStaleRuns_DeadBatchUnterminated_EmitsAborted(t *testing.T) {
 		{Type: "run.started", RunID: "run-43", Issue: 43, Timestamp: started, Payload: map[string]any{"branch": "sandman/43-fix"}},
 	}}
 
+	deps.ConfigStore = &fakeStore{config: &config.Config{WorktreeDir: filepath.Join(dir, ".sandman", "worktrees")}}
+	deps.EventLog = log
+	deps.GitRunner = &fakeGitRunner{}
+
 	var buf bytes.Buffer
-	cmd := NewCleanCmd(Dependencies{
-		ConfigStore: &fakeStore{config: &config.Config{WorktreeDir: filepath.Join(dir, ".sandman", "worktrees")}},
-		EventLog:    log,
-		GitRunner:   &fakeGitRunner{},
-	})
+	cmd := NewCleanCmd(deps)
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
 	cmd.SetArgs([]string{"--stale"})
@@ -455,8 +458,11 @@ func TestRecoverStaleRuns_DeadBatchUnterminated_EmitsAborted(t *testing.T) {
 }
 
 func TestRecoverStaleRuns_LiveBatch_NoEventEmitted(t *testing.T) {
-	dir := newSandmanDir(t)
-	t.Chdir(dir)
+	deps := newRunDepsAuto(t, &fakeBatchRunner{})
+	dir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("os.Getwd: %v", err)
+	}
 
 	createdAt := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
 	started := createdAt.Add(5 * time.Minute)
@@ -480,12 +486,12 @@ func TestRecoverStaleRuns_LiveBatch_NoEventEmitted(t *testing.T) {
 		{Type: "run.started", RunID: "run-42", Issue: 42, Timestamp: started, Payload: map[string]any{"branch": "sandman/42-fix"}},
 	}}
 
+	deps.ConfigStore = &fakeStore{config: &config.Config{WorktreeDir: filepath.Join(dir, ".sandman", "worktrees")}}
+	deps.EventLog = log
+	deps.GitRunner = &fakeGitRunner{}
+
 	var buf bytes.Buffer
-	cmd := NewCleanCmd(Dependencies{
-		ConfigStore: &fakeStore{config: &config.Config{WorktreeDir: filepath.Join(dir, ".sandman", "worktrees")}},
-		EventLog:    log,
-		GitRunner:   &fakeGitRunner{},
-	})
+	cmd := NewCleanCmd(deps)
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
 	cmd.SetArgs([]string{"--stale"})
@@ -503,8 +509,11 @@ func TestRecoverStaleRuns_LiveBatch_NoEventEmitted(t *testing.T) {
 }
 
 func TestRecoverStaleRuns_RunStartedBeforeManifestCreatedAt_RecoveredAsOrphan(t *testing.T) {
-	dir := newSandmanDir(t)
-	t.Chdir(dir)
+	deps := newRunDepsAuto(t, &fakeBatchRunner{})
+	dir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("os.Getwd: %v", err)
+	}
 
 	createdAt := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
 	started := createdAt.Add(-1 * time.Hour)
@@ -514,12 +523,12 @@ func TestRecoverStaleRuns_RunStartedBeforeManifestCreatedAt_RecoveredAsOrphan(t 
 		{Type: "run.started", RunID: "run-42", Issue: 42, Timestamp: started, Payload: map[string]any{"branch": "sandman/42-fix"}},
 	}}
 
+	deps.ConfigStore = &fakeStore{config: &config.Config{WorktreeDir: filepath.Join(dir, ".sandman", "worktrees")}}
+	deps.EventLog = log
+	deps.GitRunner = &fakeGitRunner{}
+
 	var buf bytes.Buffer
-	cmd := NewCleanCmd(Dependencies{
-		ConfigStore: &fakeStore{config: &config.Config{WorktreeDir: filepath.Join(dir, ".sandman", "worktrees")}},
-		EventLog:    log,
-		GitRunner:   &fakeGitRunner{},
-	})
+	cmd := NewCleanCmd(deps)
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
 	cmd.SetArgs([]string{"--stale"})
@@ -537,8 +546,11 @@ func TestRecoverStaleRuns_RunStartedBeforeManifestCreatedAt_RecoveredAsOrphan(t 
 }
 
 func TestRecoverStaleRuns_AlreadyTerminated_NoEventEmitted(t *testing.T) {
-	dir := newSandmanDir(t)
-	t.Chdir(dir)
+	deps := newRunDepsAuto(t, &fakeBatchRunner{})
+	dir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("os.Getwd: %v", err)
+	}
 
 	createdAt := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
 	started := createdAt.Add(5 * time.Minute)
@@ -549,12 +561,12 @@ func TestRecoverStaleRuns_AlreadyTerminated_NoEventEmitted(t *testing.T) {
 		{Type: "run.finished", RunID: "run-42", Issue: 42, Timestamp: started.Add(time.Hour), Payload: map[string]any{"status": "success"}},
 	}}
 
+	deps.ConfigStore = &fakeStore{config: &config.Config{WorktreeDir: filepath.Join(dir, ".sandman", "worktrees")}}
+	deps.EventLog = log
+	deps.GitRunner = &fakeGitRunner{}
+
 	var buf bytes.Buffer
-	cmd := NewCleanCmd(Dependencies{
-		ConfigStore: &fakeStore{config: &config.Config{WorktreeDir: filepath.Join(dir, ".sandman", "worktrees")}},
-		EventLog:    log,
-		GitRunner:   &fakeGitRunner{},
-	})
+	cmd := NewCleanCmd(deps)
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
 	cmd.SetArgs([]string{"--stale"})
@@ -569,8 +581,11 @@ func TestRecoverStaleRuns_AlreadyTerminated_NoEventEmitted(t *testing.T) {
 }
 
 func TestRecoverStaleRuns_ContinuedResetsStartedTimestamp(t *testing.T) {
-	dir := newSandmanDir(t)
-	t.Chdir(dir)
+	deps := newRunDepsAuto(t, &fakeBatchRunner{})
+	dir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("os.Getwd: %v", err)
+	}
 
 	createdAt := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
 	firstStart := createdAt.Add(-2 * time.Hour)
@@ -582,12 +597,12 @@ func TestRecoverStaleRuns_ContinuedResetsStartedTimestamp(t *testing.T) {
 		{Type: "run.continued", RunID: "run-42", Issue: 42, Timestamp: continuedAt, Payload: map[string]any{"branch": "sandman/42-fix"}},
 	}}
 
+	deps.ConfigStore = &fakeStore{config: &config.Config{WorktreeDir: filepath.Join(dir, ".sandman", "worktrees")}}
+	deps.EventLog = log
+	deps.GitRunner = &fakeGitRunner{}
+
 	var buf bytes.Buffer
-	cmd := NewCleanCmd(Dependencies{
-		ConfigStore: &fakeStore{config: &config.Config{WorktreeDir: filepath.Join(dir, ".sandman", "worktrees")}},
-		EventLog:    log,
-		GitRunner:   &fakeGitRunner{},
-	})
+	cmd := NewCleanCmd(deps)
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
 	cmd.SetArgs([]string{"--stale"})
@@ -605,8 +620,11 @@ func TestRecoverStaleRuns_ContinuedResetsStartedTimestamp(t *testing.T) {
 }
 
 func TestRecoverStaleRuns_MultipleDeadBatches(t *testing.T) {
-	dir := newSandmanDir(t)
-	t.Chdir(dir)
+	deps := newRunDepsAuto(t, &fakeBatchRunner{})
+	dir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("os.Getwd: %v", err)
+	}
 
 	createdA := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
 	createdB := time.Date(2026, 6, 9, 12, 0, 0, 0, time.UTC)
@@ -618,12 +636,12 @@ func TestRecoverStaleRuns_MultipleDeadBatches(t *testing.T) {
 		{Type: "run.started", RunID: "run-2", Issue: 2, Timestamp: createdB.Add(time.Minute)},
 	}}
 
+	deps.ConfigStore = &fakeStore{config: &config.Config{WorktreeDir: filepath.Join(dir, ".sandman", "worktrees")}}
+	deps.EventLog = log
+	deps.GitRunner = &fakeGitRunner{}
+
 	var buf bytes.Buffer
-	cmd := NewCleanCmd(Dependencies{
-		ConfigStore: &fakeStore{config: &config.Config{WorktreeDir: filepath.Join(dir, ".sandman", "worktrees")}},
-		EventLog:    log,
-		GitRunner:   &fakeGitRunner{},
-	})
+	cmd := NewCleanCmd(deps)
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
 	cmd.SetArgs([]string{"--stale"})
@@ -641,8 +659,11 @@ func TestRecoverStaleRuns_MultipleDeadBatches(t *testing.T) {
 }
 
 func TestRecoverStaleRuns_JSONRoundTripPreservesIssue(t *testing.T) {
-	dir := newSandmanDir(t)
-	t.Chdir(dir)
+	deps := newRunDepsAuto(t, &fakeBatchRunner{})
+	dir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("os.Getwd: %v", err)
+	}
 
 	createdAt := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
 	started := createdAt.Add(5 * time.Minute)
@@ -667,12 +688,12 @@ func TestRecoverStaleRuns_JSONRoundTripPreservesIssue(t *testing.T) {
 		t.Fatalf("read events: %v", err)
 	}
 
+	deps.ConfigStore = &fakeStore{config: &config.Config{WorktreeDir: filepath.Join(dir, ".sandman", "worktrees")}}
+	deps.EventLog = logger
+	deps.GitRunner = &fakeGitRunner{}
+
 	var buf bytes.Buffer
-	cmd := NewCleanCmd(Dependencies{
-		ConfigStore: &fakeStore{config: &config.Config{WorktreeDir: filepath.Join(dir, ".sandman", "worktrees")}},
-		EventLog:    logger,
-		GitRunner:   &fakeGitRunner{},
-	})
+	cmd := NewCleanCmd(deps)
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
 	cmd.SetArgs([]string{"--stale"})
@@ -706,8 +727,11 @@ func TestRecoverStaleRuns_JSONRoundTripPreservesIssue(t *testing.T) {
 }
 
 func TestClean_DryRunArchived_PrintsIntendedDeletions(t *testing.T) {
-	dir := newSandmanDir(t)
-	t.Chdir(dir)
+	deps := newRunDepsAuto(t, &fakeBatchRunner{})
+	dir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("os.Getwd: %v", err)
+	}
 
 	batchDir := filepath.Join(dir, ".sandman", "batches", "batch-archived")
 	writeRunManifest(t, batchDir, batchindex.RunManifest{
@@ -721,12 +745,9 @@ func TestClean_DryRunArchived_PrintsIntendedDeletions(t *testing.T) {
 		{ID: "batch-archived", Path: batchDir, Kind: batchindex.KindIssue, Status: batchindex.StatusArchived, CreatedAt: now},
 	})
 
-	deps := Dependencies{
-		RepoRoot:    dir,
-		ConfigStore: &fakeStore{config: &config.Config{WorktreeDir: filepath.Join(dir, ".sandman", "worktrees")}},
-		EventLog:    &fakeEventLog{},
-		GitRunner:   &fakeGitRunner{},
-	}
+	deps.ConfigStore = &fakeStore{config: &config.Config{WorktreeDir: filepath.Join(dir, ".sandman", "worktrees")}}
+	deps.EventLog = &fakeEventLog{}
+	deps.GitRunner = &fakeGitRunner{}
 
 	var buf bytes.Buffer
 	cmd := NewCleanCmd(deps)
@@ -734,7 +755,7 @@ func TestClean_DryRunArchived_PrintsIntendedDeletions(t *testing.T) {
 	cmd.SetErr(&buf)
 	cmd.SetArgs([]string{"--dry-run", "--archived"})
 
-	err := cmd.Execute()
+	err = cmd.Execute()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -748,8 +769,11 @@ func TestClean_DryRunArchived_PrintsIntendedDeletions(t *testing.T) {
 }
 
 func TestClean_Orphaned_RemovesOrphanDirAndPrunesIndex(t *testing.T) {
-	dir := newSandmanDir(t)
-	t.Chdir(dir)
+	deps := newRunDepsAuto(t, &fakeBatchRunner{})
+	dir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("os.Getwd: %v", err)
+	}
 
 	orphanDir := filepath.Join(dir, ".sandman", "batches", "orphan-x")
 	liveDir := filepath.Join(dir, ".sandman", "batches", "live-y")
@@ -774,14 +798,11 @@ func TestClean_Orphaned_RemovesOrphanDirAndPrunesIndex(t *testing.T) {
 		{ID: "live-y", Path: liveDir, Kind: batchindex.KindIssue, Status: batchindex.StatusActive, CreatedAt: now},
 	})
 
-	deps := Dependencies{
-		RepoRoot:    dir,
-		ConfigStore: &fakeStore{config: &config.Config{WorktreeDir: filepath.Join(dir, ".sandman", "worktrees")}},
-		EventLog: &fakeEventLog{events: []events.Event{
-			{Type: "run.started", RunID: "live-run-y", Timestamp: now},
-		}},
-		GitRunner: &fakeGitRunner{},
-	}
+	deps.ConfigStore = &fakeStore{config: &config.Config{WorktreeDir: filepath.Join(dir, ".sandman", "worktrees")}}
+	deps.EventLog = &fakeEventLog{events: []events.Event{
+		{Type: "run.started", RunID: "live-run-y", Timestamp: now},
+	}}
+	deps.GitRunner = &fakeGitRunner{}
 
 	var buf bytes.Buffer
 	cmd := NewCleanCmd(deps)
@@ -811,8 +832,11 @@ func TestClean_Orphaned_RemovesOrphanDirAndPrunesIndex(t *testing.T) {
 }
 
 func TestClean_Orphaned_DryRun_NoIOAndKeepsIndex(t *testing.T) {
-	dir := newSandmanDir(t)
-	t.Chdir(dir)
+	deps := newRunDepsAuto(t, &fakeBatchRunner{})
+	dir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("os.Getwd: %v", err)
+	}
 
 	orphanDir := filepath.Join(dir, ".sandman", "batches", "orphan-x")
 	if err := os.MkdirAll(orphanDir, 0o755); err != nil {
@@ -826,12 +850,9 @@ func TestClean_Orphaned_DryRun_NoIOAndKeepsIndex(t *testing.T) {
 		{ID: "orphan-x", Path: orphanDir, Kind: batchindex.KindIssue, Status: batchindex.StatusActive, CreatedAt: now},
 	})
 
-	deps := Dependencies{
-		RepoRoot:    dir,
-		ConfigStore: &fakeStore{config: &config.Config{WorktreeDir: filepath.Join(dir, ".sandman", "worktrees")}},
-		EventLog:    &fakeEventLog{},
-		GitRunner:   &fakeGitRunner{},
-	}
+	deps.ConfigStore = &fakeStore{config: &config.Config{WorktreeDir: filepath.Join(dir, ".sandman", "worktrees")}}
+	deps.EventLog = &fakeEventLog{}
+	deps.GitRunner = &fakeGitRunner{}
 
 	var buf bytes.Buffer
 	cmd := NewCleanCmd(deps)
