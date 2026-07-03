@@ -10,7 +10,7 @@ import (
 )
 
 func TestRoot_SilencesUsageAndErrors(t *testing.T) {
-	deps := newTestDeps()
+	deps := newTestDeps(t)
 	rootCmd := NewRootCmd(deps)
 
 	if !rootCmd.SilenceUsage {
@@ -23,7 +23,7 @@ func TestRoot_SilencesUsageAndErrors(t *testing.T) {
 
 func TestRoot_ExecutionDoesNotPrintUsageOnRuntimeError(t *testing.T) {
 	var buf bytes.Buffer
-	deps := newTestDeps()
+	deps := newTestDeps(t)
 	rootCmd := NewRootCmd(deps)
 	rootCmd.SetOut(&buf)
 	rootCmd.SetErr(&buf)
@@ -45,7 +45,7 @@ func TestRoot_ExecutionDoesNotPrintUsageOnRuntimeError(t *testing.T) {
 
 func TestRoot_FlagErrorFuncWrapsWithUsageError(t *testing.T) {
 	var buf bytes.Buffer
-	deps := newTestDeps()
+	deps := newTestDeps(t)
 	rootCmd := NewRootCmd(deps)
 	rootCmd.SetOut(&buf)
 	rootCmd.SetErr(&buf)

@@ -23,7 +23,15 @@ import (
 // Dependencies. Tests that need a live .sandman/review.sock
 // (e.g. the run-guard-bypass tests) should also build their own
 // Dependencies or set ReviewCommand: "/oc review" explicitly.
-func newTestDeps() Dependencies {
+//
+// newTestDeps takes t and uses it only to satisfy the helper
+// signature shared with newReviewDeps. It does NOT chdir: tests
+// that exercise the batch runner must chdir into a temp dir
+// themselves (or call newTestDepsAuto for the auto-chdiring
+// variant). RepoRoot is "." so batch writes land in the test's
+// own cwd rather than the real repo's .sandman/batches/.
+func newTestDeps(t *testing.T) Dependencies {
+	t.Helper()
 	return Dependencies{
 		BatchRunner:  &fakeBatchRunner{},
 		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review"}},
@@ -32,6 +40,7 @@ func newTestDeps() Dependencies {
 		Renderer:     &prompt.Engine{},
 		IssuePicker:  &fakeIssuePicker{},
 		IsTTY:        func() bool { return false },
+		RepoRoot:     ".",
 	}
 }
 
@@ -151,7 +160,7 @@ func (f *fakeGitRunner) removeOrphanBranches() (int, error) {
 
 func TestRootHelpListsAllCommands(t *testing.T) {
 	var buf bytes.Buffer
-	deps := newTestDeps()
+	deps := newTestDeps(t)
 	rootCmd := NewRootCmd(deps)
 	rootCmd.SetOut(&buf)
 	rootCmd.SetErr(&buf)
@@ -172,19 +181,18 @@ func TestRootHelpListsAllCommands(t *testing.T) {
 }
 
 func TestInitViaRoot_CreatesSandmanFiles(t *testing.T) {
+	deps := newTestDeps(t)
 	dir := t.TempDir()
 	t.Chdir(dir)
 
-	var buf bytes.Buffer
-	deps := newTestDeps()
 	rootCmd := NewRootCmd(deps)
+	var buf bytes.Buffer
 	rootCmd.SetOut(&buf)
 	rootCmd.SetErr(&buf)
 	rootCmd.SetIn(strings.NewReader(""))
 	rootCmd.SetArgs([]string{"init", "--build-tools", "generic"})
 
-	err := rootCmd.Execute()
-	if err != nil {
+	if err := rootCmd.Execute(); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -195,7 +203,7 @@ func TestInitViaRoot_CreatesSandmanFiles(t *testing.T) {
 
 func TestRunPlaceholder(t *testing.T) {
 	var buf bytes.Buffer
-	deps := newTestDeps()
+	deps := newTestDeps(t)
 	rootCmd := NewRootCmd(deps)
 	rootCmd.SetOut(&buf)
 	rootCmd.SetErr(&buf)
@@ -208,8 +216,14 @@ func TestRunPlaceholder(t *testing.T) {
 }
 
 func TestRun_ParallelFlagParsed(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	if err := os.MkdirAll(filepath.Join(dir, ".sandman"), 0o755); err != nil {
+		t.Fatalf("mkdir .sandman: %v", err)
+	}
+
 	var buf bytes.Buffer
-	deps := newTestDeps()
+	deps := newTestDeps(t)
 	rootCmd := NewRootCmd(deps)
 	rootCmd.SetOut(&buf)
 	rootCmd.SetErr(&buf)
@@ -223,7 +237,7 @@ func TestRun_ParallelFlagParsed(t *testing.T) {
 
 func TestStatusNoActiveRuns(t *testing.T) {
 	var buf bytes.Buffer
-	deps := newTestDeps()
+	deps := newTestDeps(t)
 	rootCmd := NewRootCmd(deps)
 	rootCmd.SetOut(&buf)
 	rootCmd.SetErr(&buf)
@@ -241,7 +255,7 @@ func TestStatusNoActiveRuns(t *testing.T) {
 
 func TestHistoryNoCompletedRuns(t *testing.T) {
 	var buf bytes.Buffer
-	deps := newTestDeps()
+	deps := newTestDeps(t)
 	rootCmd := NewRootCmd(deps)
 	rootCmd.SetOut(&buf)
 	rootCmd.SetErr(&buf)
@@ -259,7 +273,7 @@ func TestHistoryNoCompletedRuns(t *testing.T) {
 
 func TestContinue_IsUnknownCommand(t *testing.T) {
 	var buf bytes.Buffer
-	deps := newTestDeps()
+	deps := newTestDeps(t)
 	rootCmd := NewRootCmd(deps)
 	rootCmd.SetOut(&buf)
 	rootCmd.SetErr(&buf)
@@ -299,7 +313,7 @@ func TestClean_NoFlagsAccepted(t *testing.T) {
 
 func TestConfigPlaceholder(t *testing.T) {
 	var buf bytes.Buffer
-	deps := newTestDeps()
+	deps := newTestDeps(t)
 	rootCmd := NewRootCmd(deps)
 	rootCmd.SetOut(&buf)
 	rootCmd.SetErr(&buf)
@@ -317,8 +331,8 @@ func TestConfigPlaceholder(t *testing.T) {
 
 func TestCommandsAreIsolated(t *testing.T) {
 	// Verify that each command construction is independent
-	deps1 := newTestDeps()
-	deps2 := newTestDeps()
+	deps1 := newTestDeps(t)
+	deps2 := newTestDeps(t)
 
 	root1 := NewRootCmd(deps1)
 	root2 := NewRootCmd(deps2)

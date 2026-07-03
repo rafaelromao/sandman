@@ -146,6 +146,11 @@ func TestRun_AutoFlag_AgentFailurePropagatesErrorAndEmitsFailureFinished(t *test
 }
 
 func TestRun_AutoFlag_NumericFallbackPathEmitsNoAutoSelectEvents(t *testing.T) {
+	sandmanDir := t.TempDir()
+	t.Chdir(sandmanDir)
+	if err := os.MkdirAll(".sandman", 0o755); err != nil {
+		t.Fatalf("mkdir .sandman: %v", err)
+	}
 	spy := &spyBatchRunner{result: &batch.Result{}}
 	gh := &fakeGitHubClient{
 		searchIssuesResult: []github.Issue{
@@ -160,6 +165,7 @@ func TestRun_AutoFlag_NumericFallbackPathEmitsNoAutoSelectEvents(t *testing.T) {
 		EventLog:     log,
 		GitHubClient: gh,
 		IsTTY:        func() bool { return false },
+		RepoRoot:     ".",
 	}
 
 	var buf bytes.Buffer
