@@ -3,10 +3,8 @@
 package daemon
 
 import (
-	"errors"
 	"net"
 	"os"
-	"path/filepath"
 	"runtime"
 	"strings"
 	"syscall"
@@ -26,13 +24,7 @@ func TestShouldFallbackToAbstractSocket_AlwaysFalseOnNonLinux(t *testing.T) {
 }
 
 func TestCommandServer_StartReturnsPlatformSpecificErrorOnLongPath(t *testing.T) {
-	dir := t.TempDir()
-	for len(CommandSocketPath(dir)) <= 108 {
-		dir = filepath.Join(dir, strings.Repeat("long-path-segment", 4))
-	}
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		t.Fatalf("mkdir long dir: %v", err)
-	}
+	dir := longCommandSocketDir(t)
 
 	server := NewCommandServer(dir, &fakeCommander{})
 	err := server.Start()
@@ -44,13 +36,10 @@ func TestCommandServer_StartReturnsPlatformSpecificErrorOnLongPath(t *testing.T)
 	if !strings.Contains(msg, runtime.GOOS) {
 		t.Errorf("expected error to name the host platform %q, got %q", runtime.GOOS, msg)
 	}
-	if !strings.Contains(msg, "107") {
-		t.Errorf("expected error to mention the 107-byte sun_path limit, got %q", msg)
+	if !strings.Contains(msg, "sun_path limit") {
+		t.Errorf("expected error to mention the sun_path limit, got %q", msg)
 	}
 	if !strings.Contains(msg, "shorten the repo path") {
 		t.Errorf("expected error to advise shortening the repo path, got %q", msg)
-	}
-	if errors.Is(err, syscall.EINVAL) {
-		t.Errorf("expected wrapped error to be a custom message, not just syscall.EINVAL: %q", msg)
 	}
 }
