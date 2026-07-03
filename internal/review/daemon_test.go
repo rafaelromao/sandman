@@ -1534,10 +1534,11 @@ func TestDaemon_ContextCancellationPropagates(t *testing.T) {
 	d, _, _ := newDaemonForTest(t, gh, blockingRunner, cfg)
 
 	ctx, cancel := context.WithCancel(context.Background())
-	errCh := make(chan error, 1)
-	go func() {
-		errCh <- d.tick(ctx)
-	}()
+
+	// Tick returns immediately (async launch). The goroutine blocks on ctx.Done().
+	if err := d.tick(ctx); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
 
 	select {
 	case <-started:
@@ -1547,14 +1548,7 @@ func TestDaemon_ContextCancellationPropagates(t *testing.T) {
 
 	cancel() // cancel ctx while RunBatch is blocking
 
-	select {
-	case err := <-errCh:
-		if err != nil {
-			t.Errorf("tick should not return error on ctx cancellation: %v", err)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("timeout waiting for tick to complete after cancel")
-	}
+	waitIdle(t, d) // wait for goroutine to finish and release the slot
 }
 
 func TestDaemon_ClaimFailureSkipsComment(t *testing.T) {
@@ -2262,19 +2256,25 @@ func TestDaemon_TickSaturationDoesNotDropTriggers(t *testing.T) {
 		<-release
 		return &batch.Result{}, nil
 	})
-	d, buf, _ := newDaemonForTest(t, gh, runner, &config.Config{
+	d, _, _ := newDaemonForTest(t, gh, runner, &config.Config{
 		DefaultReviewAgent:    "opencode",
 		DefaultReviewModel:    "opencode/foo",
 		DefaultReviewParallel: 1,
 	})
 	d.Clock = func() time.Time { return now }
 
-	done := make(chan error, 1)
-	go func() {
-		done <- d.tick(context.Background())
-	}()
+	// Tick returns immediately (async launch). PR 1 acquires the slot
+	// and launches a background goroutine; PR 2 cannot get a slot and
+	// returns, but its comments are still read (ListPRComments called).
+	if err := d.tick(context.Background()); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
 
-	time.Sleep(100 * time.Millisecond)
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("PR 1 review did not start")
+	}
 
 	gh.mu.Lock()
 	commentCalls1 := gh.commentCalls[1]
@@ -2289,15 +2289,7 @@ func TestDaemon_TickSaturationDoesNotDropTriggers(t *testing.T) {
 	}
 
 	close(release)
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Fatalf("tick: %v", err)
-		}
-	case <-time.After(15 * time.Second):
-		bufStr := buf.String()
-		t.Fatalf("tick did not finish after releasing parallel reviews. logs: %s", bufStr)
-	}
+	waitIdle(t, d)
 
 	runMu.Lock()
 	calls := runCalls
