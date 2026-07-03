@@ -711,6 +711,40 @@ func TestDefaultPRReviewPrompt_ForbidsLiteralTriggerSubstring(t *testing.T) {
 	}
 }
 
+func TestDefaultPRReviewPrompt_ContainsQualityCheckSection(t *testing.T) {
+	data, err := os.ReadFile("default_pr_review_prompt.md")
+	if err != nil {
+		t.Fatalf("read default PR review prompt template: %v", err)
+	}
+	prompt := string(data)
+
+	required := []string{
+		"After applying the rules, **render a `## Quality check` section**",
+		"\"below threshold\", \"at or above threshold\", or `all rules skipped — no language-tagged rules matched the diff`",
+		"complexity signals, OC, SOLID",
+		"Do not restate the threshold literal; refer to `internal/prompt/quality_rules.md`",
+		"- `## Quality check` — Always render. Cite n/t, the ratio, the threshold verdict (using the threshold defined in `internal/prompt/quality_rules.md`; never restate the literal)",
+		"render a one-line \"all rules skipped — no language-tagged rules matched the diff\" verdict",
+		"10. ",
+		"11. When you find an issue, cite the file and line range, quote the offending snippet, and describe the concrete fix.",
+	}
+	for _, phrase := range required {
+		if !strings.Contains(prompt, phrase) {
+			t.Errorf("default PR review prompt must retain canonical quality-check phrase %q", phrase)
+		}
+	}
+
+	buggyInstructional := []string{
+		"0.75",
+		"75%",
+	}
+	for _, phrase := range buggyInstructional {
+		if strings.Contains(prompt, phrase) {
+			t.Errorf("default PR review prompt must not restate the threshold literal %q; refer to internal/prompt/quality_rules.md (issue #1714)", phrase)
+		}
+	}
+}
+
 func TestApplyPRSubstitutions(t *testing.T) {
 	template := "PR #{{PR_NUMBER}}: {{PR_TITLE}}\n\n{{PR_BODY}}\n\nfocus: {{REVIEW_FOCUS}}"
 	data := PRData{
