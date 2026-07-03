@@ -48,9 +48,28 @@ After setting up the branch, determine whether the issue's work is already compl
 A merged PR that closes an issue will, by GitHub rules, automatically close the issue — so there is no need to search for a closing PR separately.
 
 1. Run: `gh issue view <ID> --json state`
-2. Decision matrix:
+2. Run branch freshness check:
+
+   ```bash
+   git fetch origin main
+   git merge-base --is-ancestor HEAD origin/main
+   ```
+
+   If `merge-base --is-ancestor HEAD origin/main` returns false, **STOP**. Do NOT write `## Status: already resolved`. Load `sandman-back-merge` and merge the base branch into the current branch before re-evaluating. A branch that is behind `origin/main` is stale and cannot reliably be claimed as "already resolved" — the issue's AC may be partially met by local work that is not yet on `main`, or the AC check will race with the next main-line push.
+3. Run open-PR check:
+
+   ```bash
+   gh pr list --head <branch> --state open
+   ```
+
+   If this prints one or more PR numbers, **do NOT write `## Status: already resolved` while an open PR exists for the current branch**. Pick one of:
+   - **(a) Close the orphan PR** with `gh pr close <N> --delete-branch=false --comment "Closed by sandman: issue resolved on origin/main; branch superseded"` before writing the marker, OR
+   - **(b) Stop without writing the marker** and let the existing PR drive the run — this is the safer default; the open PR is itself durable evidence of partial or pending work.
+4. Decision matrix (after branch freshness and open-PR checks pass):
    - **Issue is closed** → verify the issue acceptance criteria against the current state of the base branch after fetching `origin/<base>`; only write `## Status: already resolved` and stop if the base branch actually satisfies every criterion. If the base branch does not satisfy every criterion, continue to step 2 (Plan) as normal.
    - **Issue is open** → read the issue acceptance criteria and compare against the current state of the base branch after fetching `origin/<base>`. If all acceptance criteria are already met in the base branch, write `## Status: already resolved` to `.sandman/task.md` and stop without running plan or TDD. Otherwise, proceed to step 2 (Plan) as normal.
+
+The orchestrator's Layer 1 guard will reject the run and emit failure if `## Status: already resolved` is written while a PR is open, so step 3 is not optional.
 
 ### 2. Plan
 
