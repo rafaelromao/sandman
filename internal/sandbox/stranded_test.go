@@ -3,15 +3,42 @@ package sandbox
 import (
 	"os"
 	"path/filepath"
-	"runtime"
 	"testing"
 )
 
-func skipIfNotStrandedSupported(t *testing.T) {
+// addStrandedWorktree registers a worktree at <worktreeBase>/<expectedBranch>
+// whose HEAD points at <otherBranch>, so the detector sees it as stranded.
+// It avoids `git worktree add --force <path> <branch>`, which fails on macOS
+// git when <branch> is already checked out elsewhere. Instead, it uses
+// `git worktree add --detach` (allowed on both Linux and macOS even when the
+// branch is checked out elsewhere) and then rewrites the worktree's HEAD to
+// <otherBranch> via `git symbolic-ref HEAD`. The helper does not create
+// <expectedBranch> (callers decide — needed for the "missing locally"
+// precondition); <otherBranch> must already exist.
+//
+// The returned path is symlink-resolved so it matches what `git worktree list
+// --porcelain` reports (necessary on macOS where /tmp is a symlink to
+// /private/tmp). See #1738.
+func addStrandedWorktree(t *testing.T, repoDir, worktreeBase, expectedBranch, otherBranch string) string {
 	t.Helper()
-	if runtime.GOOS != "linux" {
-		t.Skip("stranded worktree detection uses git worktree semantics that vary on macOS")
+	wtPath := filepath.Join(worktreeBase, expectedBranch)
+	runGit(t, repoDir, "worktree", "add", "--detach", wtPath, otherBranch)
+	runGit(t, wtPath, "symbolic-ref", "HEAD", "refs/heads/"+otherBranch)
+	if resolved, err := filepath.EvalSymlinks(wtPath); err == nil {
+		return resolved
 	}
+	return wtPath
+}
+
+// resolveWorktreePath resolves a path the same way `git worktree list
+// --porcelain` reports it (symlinks resolved). Tests use this when comparing
+// info.Path against an expected worktree path, so the comparison matches on
+// macOS where /tmp is a symlink to /private/tmp. See #1738.
+func resolveWorktreePath(p string) string {
+	if resolved, err := filepath.EvalSymlinks(p); err == nil {
+		return resolved
+	}
+	return p
 }
 
 func TestStrandedWorktree_MissingBaseReturnsFalse(t *testing.T) {
@@ -71,7 +98,6 @@ func TestStrandedWorktree_CleanWorktreeOnExpectedBranchReturnsFalse(t *testing.T
 }
 
 func TestStrandedWorktree_MismatchedBranchReturnsTrue(t *testing.T) {
-	skipIfNotStrandedSupported(t)
 	repoDir := t.TempDir()
 	initGitRepo(t, repoDir)
 
@@ -84,15 +110,14 @@ func TestStrandedWorktree_MismatchedBranchReturnsTrue(t *testing.T) {
 	if err := os.MkdirAll(worktreeBase, 0755); err != nil {
 		t.Fatalf("mkdir worktreeBase: %v", err)
 	}
-	wtPath := filepath.Join(worktreeBase, expected)
-	runGit(t, repoDir, "worktree", "add", "--force", wtPath, actual)
+	wtPath := addStrandedWorktree(t, repoDir, worktreeBase, expected, actual)
 
 	info, stranded := StrandedWorktree(repoDir, worktreeBase, expected)
 	if !stranded {
 		t.Fatalf("expected true when worktree HEAD is on a different branch, got info=%+v", info)
 	}
-	if info.Path != wtPath {
-		t.Errorf("Path: got %q, want %q", info.Path, wtPath)
+	if info.Path != resolveWorktreePath(wtPath) {
+		t.Errorf("Path: got %q, want %q", info.Path, resolveWorktreePath(wtPath))
 	}
 	if info.ActualBranch != "refs/heads/"+actual {
 		t.Errorf("ActualBranch: got %q, want %q", info.ActualBranch, "refs/heads/"+actual)
@@ -103,7 +128,6 @@ func TestStrandedWorktree_MismatchedBranchReturnsTrue(t *testing.T) {
 }
 
 func TestStrandedWorktree_DetachedHeadReturnsTrue(t *testing.T) {
-	skipIfNotStrandedSupported(t)
 	repoDir := t.TempDir()
 	initGitRepo(t, repoDir)
 
@@ -122,8 +146,8 @@ func TestStrandedWorktree_DetachedHeadReturnsTrue(t *testing.T) {
 	if !stranded {
 		t.Fatalf("expected true when worktree is in detached HEAD state, got info=%+v", info)
 	}
-	if info.Path != wtPath {
-		t.Errorf("Path: got %q, want %q", info.Path, wtPath)
+	if info.Path != resolveWorktreePath(wtPath) {
+		t.Errorf("Path: got %q, want %q", info.Path, resolveWorktreePath(wtPath))
 	}
 	if info.ActualBranch != "" {
 		t.Errorf("ActualBranch: got %q, want empty (detached)", info.ActualBranch)
@@ -134,7 +158,6 @@ func TestStrandedWorktree_DetachedHeadReturnsTrue(t *testing.T) {
 }
 
 func TestStrandedWorktree_ExpectedRefMissingLocallyReturnsTrue(t *testing.T) {
-	skipIfNotStrandedSupported(t)
 	repoDir := t.TempDir()
 	initGitRepo(t, repoDir)
 
@@ -149,15 +172,14 @@ func TestStrandedWorktree_ExpectedRefMissingLocallyReturnsTrue(t *testing.T) {
 	if err := os.MkdirAll(worktreeBase, 0755); err != nil {
 		t.Fatalf("mkdir worktreeBase: %v", err)
 	}
-	wtPath := filepath.Join(worktreeBase, expected)
-	runGit(t, repoDir, "worktree", "add", "--force", wtPath, actual)
+	wtPath := addStrandedWorktree(t, repoDir, worktreeBase, expected, actual)
 
 	info, stranded := StrandedWorktree(repoDir, worktreeBase, expected)
 	if !stranded {
 		t.Fatalf("expected true when worktree is stranded and expected ref is missing, got info=%+v", info)
 	}
-	if info.Path != wtPath {
-		t.Errorf("Path: got %q, want %q", info.Path, wtPath)
+	if info.Path != resolveWorktreePath(wtPath) {
+		t.Errorf("Path: got %q, want %q", info.Path, resolveWorktreePath(wtPath))
 	}
 	if info.ActualBranch != "refs/heads/"+actual {
 		t.Errorf("ActualBranch: got %q, want %q", info.ActualBranch, "refs/heads/"+actual)
@@ -171,7 +193,6 @@ func TestStrandedWorktree_ExpectedRefMissingLocallyReturnsTrue(t *testing.T) {
 }
 
 func TestStrandedWorktree_IgnoresSiblingWorktrees(t *testing.T) {
-	skipIfNotStrandedSupported(t)
 	repoDir := t.TempDir()
 	initGitRepo(t, repoDir)
 
@@ -185,14 +206,14 @@ func TestStrandedWorktree_IgnoresSiblingWorktrees(t *testing.T) {
 		t.Fatalf("mkdir worktreeBase: %v", err)
 	}
 	runGit(t, repoDir, "worktree", "add", filepath.Join(worktreeBase, healthy), healthy)
-	runGit(t, repoDir, "worktree", "add", "--force", filepath.Join(worktreeBase, stranded), healthy)
+	addStrandedWorktree(t, repoDir, worktreeBase, stranded, healthy)
 
 	info, ok := StrandedWorktree(repoDir, worktreeBase, stranded)
 	if !ok {
 		t.Fatalf("expected stranded=true for %q, got false (info=%+v)", stranded, info)
 	}
-	if info.Path != filepath.Join(worktreeBase, stranded) {
-		t.Errorf("Path: got %q, want %q", info.Path, filepath.Join(worktreeBase, stranded))
+	if info.Path != resolveWorktreePath(filepath.Join(worktreeBase, stranded)) {
+		t.Errorf("Path: got %q, want %q", info.Path, resolveWorktreePath(filepath.Join(worktreeBase, stranded)))
 	}
 	if info.ActualBranch != "refs/heads/"+healthy {
 		t.Errorf("ActualBranch: got %q, want %q", info.ActualBranch, "refs/heads/"+healthy)
@@ -208,7 +229,6 @@ func TestStrandedWorktree_IgnoresSiblingWorktrees(t *testing.T) {
 }
 
 func TestListStrandedWorktrees(t *testing.T) {
-	skipIfNotStrandedSupported(t)
 	repoDir := t.TempDir()
 	initGitRepo(t, repoDir)
 
@@ -223,7 +243,7 @@ func TestListStrandedWorktrees(t *testing.T) {
 
 	runGit(t, repoDir, "branch", "no-issue-branch")
 	runGit(t, repoDir, "worktree", "add", filepath.Join(worktreeBase, "sandman/1-healthy"), "sandman/1-healthy")
-	runGit(t, repoDir, "worktree", "add", "--force", filepath.Join(worktreeBase, "sandman/2-wrong"), "sandman/1-healthy")
+	addStrandedWorktree(t, repoDir, worktreeBase, "sandman/2-wrong", "sandman/1-healthy")
 	runGit(t, repoDir, "worktree", "add", filepath.Join(worktreeBase, "sandman/3-detached"), "sandman/3-detached")
 	runGit(t, filepath.Join(worktreeBase, "sandman/3-detached"), "checkout", "--detach", "HEAD")
 	runGit(t, repoDir, "worktree", "add", filepath.Join(worktreeBase, "no-issue-prefix"), "no-issue-branch")
@@ -311,7 +331,6 @@ func TestStrandedWorktree_PrunableWorktreeIsNotFlagged(t *testing.T) {
 }
 
 func TestReclaimableWorktree_PrunableWorktreeAtPathReturnsTrue(t *testing.T) {
-	skipIfNotStrandedSupported(t)
 	repoDir := t.TempDir()
 	initGitRepo(t, repoDir)
 
@@ -324,6 +343,7 @@ func TestReclaimableWorktree_PrunableWorktreeAtPathReturnsTrue(t *testing.T) {
 	}
 	wtPath := filepath.Join(worktreeBase, branch)
 	runGit(t, repoDir, "worktree", "add", wtPath, branch)
+	wantPath := resolveWorktreePath(wtPath)
 
 	if err := os.RemoveAll(wtPath); err != nil {
 		t.Fatalf("remove wtPath: %v", err)
@@ -333,8 +353,8 @@ func TestReclaimableWorktree_PrunableWorktreeAtPathReturnsTrue(t *testing.T) {
 	if !reclaimable {
 		t.Fatalf("expected reclaimable=true for prunable worktree at path, got info=%+v", info)
 	}
-	if info.Path != wtPath {
-		t.Errorf("Path: got %q, want %q", info.Path, wtPath)
+	if info.Path != wantPath {
+		t.Errorf("Path: got %q, want %q", info.Path, wantPath)
 	}
 	if info.ExpectedBranch != "refs/heads/"+branch {
 		t.Errorf("ExpectedBranch: got %q, want %q", info.ExpectedBranch, "refs/heads/"+branch)
@@ -375,7 +395,6 @@ func TestReclaimableWorktree_MissingBaseReturnsFalse(t *testing.T) {
 }
 
 func TestReclaimableWorktree_NonPrunableWorktreeAtPathReturnsTrue(t *testing.T) {
-	skipIfNotStrandedSupported(t)
 	repoDir := t.TempDir()
 	initGitRepo(t, repoDir)
 
@@ -393,8 +412,8 @@ func TestReclaimableWorktree_NonPrunableWorktreeAtPathReturnsTrue(t *testing.T) 
 	if !reclaimable {
 		t.Fatalf("expected reclaimable=true for non-prunable worktree at path, got info=%+v", info)
 	}
-	if info.Path != wtPath {
-		t.Errorf("Path: got %q, want %q", info.Path, wtPath)
+	if info.Path != resolveWorktreePath(wtPath) {
+		t.Errorf("Path: got %q, want %q", info.Path, resolveWorktreePath(wtPath))
 	}
 	if info.ExpectedBranch != "refs/heads/"+branch {
 		t.Errorf("ExpectedBranch: got %q, want %q", info.ExpectedBranch, "refs/heads/"+branch)
