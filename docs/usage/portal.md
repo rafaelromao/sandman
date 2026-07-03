@@ -66,7 +66,7 @@ The endpoint signals the command server and waits for the AgentRun to abort, ret
 {"runKey": "...", "issue": <N>, "status": "aborted", "scope": "issue"}
 ```
 
-Abort is available on Linux; other platforms return `501 Not Implemented`. macOS support is planned.
+Abort is available on Linux and macOS; other platforms return `501 Not Implemented`.
 
 ## Log streaming
 
