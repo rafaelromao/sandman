@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -681,7 +682,120 @@ func TestPortal_ArchiveEndpoint_ResolvesPerRowRunIDToBatchEntryID(t *testing.T) 
 	}
 }
 
-// TestPortal_ArchiveEndpoint_ContinueReview covers the per-row probe path
+// TestPortal_ArchiveEndpoint_MultiIssuePerRowIDsResolveToSameEntry locks in
+// the multi-issue acceptance criterion: more than one per-row run id in the
+// same batch is addressable independently, and each resolves to the same
+// batch index entry. Posts the first per-row id, asserts the archive moves
+// the batch dir, and then constructs a second batch fixture where the same
+// batch is addressed via the second per-row id and verifies the result is
+// identical.
+func TestPortal_ArchiveEndpoint_MultiIssuePerRowIDsResolveToSameEntry(t *testing.T) {
+	ts := "260618113825"
+	shortid := "abcd"
+	batchEntryID := runid.NewBatchID(runid.KindIssue, 2, "42", ts, shortid)
+	firstPerRowID := runid.NewRunID(runid.KindIssue, "42", ts, shortid)
+	secondPerRowID := runid.NewRunID(runid.KindIssue, "43", ts, shortid)
+	if firstPerRowID == batchEntryID || secondPerRowID == batchEntryID || firstPerRowID == secondPerRowID {
+		t.Fatalf("fixture invariant: ids must all differ (batch=%q first=%q second=%q)", batchEntryID, firstPerRowID, secondPerRowID)
+	}
+
+	for _, perRowID := range []string{firstPerRowID, secondPerRowID} {
+		t.Run(perRowID, func(t *testing.T) {
+			repoRoot, err := os.MkdirTemp("/tmp", "sm-archive-multi-")
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = os.RemoveAll(repoRoot) })
+			if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+				t.Fatal(err)
+			}
+
+			batchDir := filepath.Join(repoRoot, ".sandman", "batches", batchEntryID)
+			if err := os.MkdirAll(batchDir, 0755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(batchDir, "marker.txt"), []byte("hello"), 0644); err != nil {
+				t.Fatal(err)
+			}
+
+			for _, id := range []string{firstPerRowID, secondPerRowID} {
+				perRowDir := filepath.Join(batchDir, "runs", id)
+				if err := os.MkdirAll(perRowDir, 0755); err != nil {
+					t.Fatal(err)
+				}
+				issueNum := 42
+				if id == secondPerRowID {
+					issueNum = 43
+				}
+				perRowManifest := batchindex.RunManifest{
+					RunID:     id,
+					BatchID:   batchEntryID,
+					Issue:     issueNum,
+					Kind:      batchindex.KindIssue,
+					CreatedAt: time.Now(),
+					Status:    batchindex.RunManifestStatusSuccess,
+				}
+				if err := batchindex.WriteManifest(perRowDir, perRowManifest); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			batchManifest := batchindex.RunManifest{
+				BatchID:   batchEntryID,
+				Kind:      batchindex.KindIssue,
+				CreatedAt: time.Now(),
+				Status:    batchindex.RunManifestStatusActive,
+			}
+			if err := batchindex.WriteManifest(batchDir, batchManifest); err != nil {
+				t.Fatal(err)
+			}
+
+			idx := batchindex.Index{Version: batchindex.IndexVersion, Entries: []batchindex.Entry{
+				{ID: batchEntryID, Path: batchDir, Kind: batchindex.KindIssue, Status: batchindex.StatusActive, CreatedAt: time.Now(), Issues: []int{42, 43}},
+			}}
+			data, _ := json.Marshal(idx)
+			if err := os.WriteFile(filepath.Join(repoRoot, ".sandman", "batches.json"), data, 0644); err != nil {
+				t.Fatal(err)
+			}
+
+			originalProbe := portalRunLivenessProbe
+			portalRunLivenessProbe = func(string) bool { return false }
+			t.Cleanup(func() { portalRunLivenessProbe = originalProbe })
+
+			resp, body := postPortalArchive(t, newPortalArchiveHandlerForTest(t, repoRoot), perRowID)
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("expected 200 for per-row id %q, got %d: %s", perRowID, resp.StatusCode, body)
+			}
+
+			var payload struct {
+				RunID  string `json:"runId"`
+				Status string `json:"status"`
+			}
+			if err := json.Unmarshal(body, &payload); err != nil {
+				t.Fatalf("unmarshal: %v: %s", err, body)
+			}
+			if payload.RunID != batchEntryID {
+				t.Errorf("expected echoed runId %q (batch entry id), got %q", batchEntryID, payload.RunID)
+			}
+			if payload.Status != "archived" {
+				t.Errorf("expected status %q, got %q", "archived", payload.Status)
+			}
+
+			if _, err := os.Stat(batchDir); !os.IsNotExist(err) {
+				t.Fatalf("expected batch dir %q to be gone, stat err = %v", batchDir, err)
+			}
+			archivedDir := filepath.Join(repoRoot, ".sandman", "archive", batchEntryID)
+			info, err := os.Stat(archivedDir)
+			if err != nil {
+				t.Fatalf("expected archive dir %q to exist, stat err = %v", archivedDir, err)
+			}
+			if !info.IsDir() {
+				t.Fatalf("expected archive target to be a directory, got mode %s", info.Mode())
+			}
+		})
+	}
+}
+
 // for a continue review (review that picked up an existing issue link
 // from a follow-up comment): the per-row id carries the linked issue
 // subject while the batch entry id is the PR-shaped template. Posting
@@ -925,7 +1039,8 @@ func TestPortal_ArchiveEndpoint_SingleIssueRun(t *testing.T) {
 // TestPortal_ArchiveEndpoint_ContinueIssueRun covers the --continue flag
 // path on a multi-issue issue run: the orchestrator resumes the existing
 // batch dir, so the per-row id matches the batch entry id (the
-// orchestrator picks the first subject). Either id form succeeds.
+// orchestrator picks the first subject as the resume row). The fast
+// path (idx.Resolve) resolves either id form to the same entry.
 func TestPortal_ArchiveEndpoint_ContinueIssueRun(t *testing.T) {
 	repoRoot, err := os.MkdirTemp("/tmp", "sm-archive-cissue-")
 	if err != nil {
@@ -939,29 +1054,13 @@ func TestPortal_ArchiveEndpoint_ContinueIssueRun(t *testing.T) {
 	ts := "260618113825"
 	shortid := "abcd"
 	batchEntryID := runid.NewBatchID(runid.KindIssue, 2, "42", ts, shortid)
-	perRowID := runid.NewRunID(runid.KindIssue, "42", ts, shortid)
-	if perRowID == batchEntryID {
-		t.Fatalf("fixture invariant: perRowID %q must differ from batchEntryID %q", perRowID, batchEntryID)
+	perRowID := runid.NewBatchID(runid.KindIssue, 2, "42", ts, shortid)
+	if perRowID != batchEntryID {
+		t.Fatalf("fixture invariant: --continue perRowID %q must equal batchEntryID %q", perRowID, batchEntryID)
 	}
 
 	batchDir := filepath.Join(repoRoot, ".sandman", "batches", batchEntryID)
 	if err := os.MkdirAll(batchDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-
-	perRowDir := filepath.Join(batchDir, "runs", perRowID)
-	if err := os.MkdirAll(perRowDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	perRowManifest := batchindex.RunManifest{
-		RunID:     perRowID,
-		BatchID:   batchEntryID,
-		Issue:     42,
-		Kind:      batchindex.KindIssue,
-		CreatedAt: time.Now(),
-		Status:    batchindex.RunManifestStatusSuccess,
-	}
-	if err := batchindex.WriteManifest(perRowDir, perRowManifest); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1316,6 +1415,77 @@ func TestPortal_ArchiveEndpoint_PerRowIDPreservesErrorStatuses(t *testing.T) {
 		}
 		if !strings.Contains(strings.ToLower(payload.Error), "archiv") {
 			t.Errorf("expected error to mention 'archive', got %q", payload.Error)
+		}
+	})
+
+	t.Run("500 when archiver fails", func(t *testing.T) {
+		repoRoot, err := os.MkdirTemp("/tmp", "sm-archive-500-probe-")
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.RemoveAll(repoRoot) })
+		if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		batchDir := filepath.Join(repoRoot, ".sandman", "batches", batchEntryID)
+		if err := os.MkdirAll(batchDir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		manifest := batchindex.RunManifest{
+			BatchID:   batchEntryID,
+			Kind:      batchindex.KindIssue,
+			CreatedAt: time.Now(),
+			Status:    batchindex.RunManifestStatusActive,
+		}
+		if err := batchindex.WriteManifest(batchDir, manifest); err != nil {
+			t.Fatal(err)
+		}
+		perRowDir := filepath.Join(batchDir, "runs", perRowID)
+		if err := os.MkdirAll(perRowDir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		perRowManifest := batchindex.RunManifest{
+			RunID:     perRowID,
+			BatchID:   batchEntryID,
+			Issue:     42,
+			Kind:      batchindex.KindIssue,
+			CreatedAt: time.Now(),
+			Status:    batchindex.RunManifestStatusSuccess,
+		}
+		if err := batchindex.WriteManifest(perRowDir, perRowManifest); err != nil {
+			t.Fatal(err)
+		}
+		idx := batchindex.Index{Version: batchindex.IndexVersion, Entries: []batchindex.Entry{
+			{ID: batchEntryID, Path: batchDir, Kind: batchindex.KindIssue, Status: batchindex.StatusActive, CreatedAt: time.Now(), Issues: []int{42, 43}},
+		}}
+		data, _ := json.Marshal(idx)
+		if err := os.WriteFile(filepath.Join(repoRoot, ".sandman", "batches.json"), data, 0644); err != nil {
+			t.Fatal(err)
+		}
+
+		originalProbe := portalRunLivenessProbe
+		portalRunLivenessProbe = func(string) bool { return false }
+		t.Cleanup(func() { portalRunLivenessProbe = originalProbe })
+
+		originalArchiver := portalRunArchiver
+		portalRunArchiver = func(string, string) error {
+			return fmt.Errorf("synthetic archiver failure")
+		}
+		t.Cleanup(func() { portalRunArchiver = originalArchiver })
+
+		resp, body := postPortalArchive(t, newPortalArchiveHandlerForTest(t, repoRoot), perRowID)
+		if resp.StatusCode != http.StatusInternalServerError {
+			t.Fatalf("expected 500 for archiver failure, got %d: %s", resp.StatusCode, body)
+		}
+		var payload struct {
+			Error string `json:"error"`
+		}
+		if err := json.Unmarshal(body, &payload); err != nil {
+			t.Fatalf("unmarshal error body: %v: %s", err, body)
+		}
+		if !strings.Contains(strings.ToLower(payload.Error), "synthetic archiver failure") {
+			t.Errorf("expected error to surface archiver message, got %q", payload.Error)
 		}
 	})
 }

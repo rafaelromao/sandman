@@ -260,7 +260,7 @@ func archivePortalRunHandler(repoRoot, runID string) (string, error) {
 	}
 
 	if portalRunLivenessProbe(entry.Path) {
-		return entry.ID, &portalArchiveError{status: http.StatusConflict, message: fmt.Sprintf("run %q is still active; stop the daemon before archiving", entry.ID)}
+		return entry.ID, &portalArchiveError{status: http.StatusConflict, message: fmt.Sprintf("batch %q is still active (daemon socket); stop the daemon before archiving", entry.ID)}
 	}
 
 	archiveDir := portalArchiveDir(repoRoot, entry.ID)
