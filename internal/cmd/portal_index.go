@@ -443,12 +443,22 @@ func portalSummarySourceKey(repoRoot string, runStates []events.RunState, active
 				}
 			}
 			startedAt = match.state.Started.Timestamp
+			// Resolve batchID from the event payload's batch_id (with
+			// "+N" on-disk suffix for multi-issue batches) first, and
+			// only fall back to active.BatchID when the payload has no
+			// batch_id. The active instance's BatchID comes from
+			// manifest.BatchId, which equals the per-row RunID for the
+			// first issue (ADR-0036) and does not match the on-disk
+			// directory name; using it for the log-path locator makes
+			// the summary ETag stat miss the real per-row log file
+			// (issue #1715).
 			batchID = match.state.BatchID()
 			if batchID == "" {
-				batchID = batchIDFromRunID(runID)
-			}
-			if active.BatchID != "" {
-				batchID = active.BatchID
+				if active.BatchID != "" {
+					batchID = active.BatchID
+				} else {
+					batchID = batchIDFromRunID(runID)
+				}
 			}
 		}
 		activeFingerprint[i] = summaryActiveFingerprint{
