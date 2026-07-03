@@ -682,6 +682,35 @@ func TestDefaultPRReviewPrompt_ContainsOmitPreviousReviewProgressRule(t *testing
 	}
 }
 
+func TestDefaultPRReviewPrompt_ForbidsLiteralTriggerSubstring(t *testing.T) {
+	data, err := os.ReadFile("default_pr_review_prompt.md")
+	if err != nil {
+		t.Fatalf("read default PR review prompt template: %v", err)
+	}
+	prompt := string(data)
+
+	required := []string{
+		"Issue #1701",
+		"do NOT write the literal `/sandman review` substring",
+		"Open review requests",
+	}
+	for _, phrase := range required {
+		if !strings.Contains(prompt, phrase) {
+			t.Errorf("default PR review prompt must retain canonical no-emit-trigger-substring phrase %q", phrase)
+		}
+	}
+
+	buggyInstructional := []string{
+		"refer to prior review requests as `Open /sandman review requests`",
+		"write `Open /sandman review requests`",
+	}
+	for _, phrase := range buggyInstructional {
+		if strings.Contains(prompt, phrase) {
+			t.Errorf("default PR review prompt must not instruct the bot to emit the buggy phrasing %q in its review output (issue #1701)", phrase)
+		}
+	}
+}
+
 func TestApplyPRSubstitutions(t *testing.T) {
 	template := "PR #{{PR_NUMBER}}: {{PR_TITLE}}\n\n{{PR_BODY}}\n\nfocus: {{REVIEW_FOCUS}}"
 	data := PRData{
