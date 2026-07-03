@@ -14,12 +14,19 @@ import (
 // branch is checked out elsewhere) and then rewrites the worktree's HEAD to
 // <otherBranch> via `git symbolic-ref HEAD`. The helper does not create
 // <expectedBranch> (callers decide — needed for the "missing locally"
-// precondition); <otherBranch> must already exist. See #1738.
+// precondition); <otherBranch> must already exist.
+//
+// The returned path is symlink-resolved so it matches what `git worktree list
+// --porcelain` reports (necessary on macOS where /tmp is a symlink to
+// /private/tmp). See #1738.
 func addStrandedWorktree(t *testing.T, repoDir, worktreeBase, expectedBranch, otherBranch string) string {
 	t.Helper()
 	wtPath := filepath.Join(worktreeBase, expectedBranch)
 	runGit(t, repoDir, "worktree", "add", "--detach", wtPath, otherBranch)
 	runGit(t, wtPath, "symbolic-ref", "HEAD", "refs/heads/"+otherBranch)
+	if resolved, err := filepath.EvalSymlinks(wtPath); err == nil {
+		return resolved
+	}
 	return wtPath
 }
 
