@@ -24,12 +24,12 @@ import (
 // (e.g. the run-guard-bypass tests) should also build their own
 // Dependencies or set ReviewCommand: "/oc review" explicitly.
 //
-// newTestDeps takes t and uses it only to satisfy the helper
-// signature shared with newReviewDeps. It does NOT chdir: tests
-// that exercise the batch runner must chdir into a temp dir
-// themselves (or call newTestDepsAuto for the auto-chdiring
-// variant). RepoRoot is "." so batch writes land in the test's
-// own cwd rather than the real repo's .sandman/batches/.
+// newTestDeps takes t so its signature matches newRunDeps /
+// newRunDepsAuto. It does NOT chdir: tests that exercise the
+// batch runner must chdir into a temp dir themselves (or call
+// newRunDepsAuto for the auto-chdiring variant). RepoRoot is "."
+// so batch writes land in the test's own cwd rather than the
+// real repo's .sandman/batches/.
 func newTestDeps(t *testing.T) Dependencies {
 	t.Helper()
 	return Dependencies{
@@ -216,14 +216,8 @@ func TestRunPlaceholder(t *testing.T) {
 }
 
 func TestRun_ParallelFlagParsed(t *testing.T) {
-	dir := t.TempDir()
-	t.Chdir(dir)
-	if err := os.MkdirAll(filepath.Join(dir, ".sandman"), 0o755); err != nil {
-		t.Fatalf("mkdir .sandman: %v", err)
-	}
-
 	var buf bytes.Buffer
-	deps := newTestDeps(t)
+	deps := newRunDepsAuto(t, &fakeBatchRunner{})
 	rootCmd := NewRootCmd(deps)
 	rootCmd.SetOut(&buf)
 	rootCmd.SetErr(&buf)
