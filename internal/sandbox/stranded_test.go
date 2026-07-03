@@ -30,6 +30,17 @@ func addStrandedWorktree(t *testing.T, repoDir, worktreeBase, expectedBranch, ot
 	return wtPath
 }
 
+// resolveWorktreePath resolves a path the same way `git worktree list
+// --porcelain` reports it (symlinks resolved). Tests use this when comparing
+// info.Path against an expected worktree path, so the comparison matches on
+// macOS where /tmp is a symlink to /private/tmp. See #1738.
+func resolveWorktreePath(p string) string {
+	if resolved, err := filepath.EvalSymlinks(p); err == nil {
+		return resolved
+	}
+	return p
+}
+
 func TestStrandedWorktree_MissingBaseReturnsFalse(t *testing.T) {
 	repoDir := t.TempDir()
 	initGitRepo(t, repoDir)
@@ -105,8 +116,8 @@ func TestStrandedWorktree_MismatchedBranchReturnsTrue(t *testing.T) {
 	if !stranded {
 		t.Fatalf("expected true when worktree HEAD is on a different branch, got info=%+v", info)
 	}
-	if info.Path != wtPath {
-		t.Errorf("Path: got %q, want %q", info.Path, wtPath)
+	if info.Path != resolveWorktreePath(wtPath) {
+		t.Errorf("Path: got %q, want %q", info.Path, resolveWorktreePath(wtPath))
 	}
 	if info.ActualBranch != "refs/heads/"+actual {
 		t.Errorf("ActualBranch: got %q, want %q", info.ActualBranch, "refs/heads/"+actual)
@@ -135,8 +146,8 @@ func TestStrandedWorktree_DetachedHeadReturnsTrue(t *testing.T) {
 	if !stranded {
 		t.Fatalf("expected true when worktree is in detached HEAD state, got info=%+v", info)
 	}
-	if info.Path != wtPath {
-		t.Errorf("Path: got %q, want %q", info.Path, wtPath)
+	if info.Path != resolveWorktreePath(wtPath) {
+		t.Errorf("Path: got %q, want %q", info.Path, resolveWorktreePath(wtPath))
 	}
 	if info.ActualBranch != "" {
 		t.Errorf("ActualBranch: got %q, want empty (detached)", info.ActualBranch)
@@ -167,8 +178,8 @@ func TestStrandedWorktree_ExpectedRefMissingLocallyReturnsTrue(t *testing.T) {
 	if !stranded {
 		t.Fatalf("expected true when worktree is stranded and expected ref is missing, got info=%+v", info)
 	}
-	if info.Path != wtPath {
-		t.Errorf("Path: got %q, want %q", info.Path, wtPath)
+	if info.Path != resolveWorktreePath(wtPath) {
+		t.Errorf("Path: got %q, want %q", info.Path, resolveWorktreePath(wtPath))
 	}
 	if info.ActualBranch != "refs/heads/"+actual {
 		t.Errorf("ActualBranch: got %q, want %q", info.ActualBranch, "refs/heads/"+actual)
@@ -201,8 +212,8 @@ func TestStrandedWorktree_IgnoresSiblingWorktrees(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected stranded=true for %q, got false (info=%+v)", stranded, info)
 	}
-	if info.Path != filepath.Join(worktreeBase, stranded) {
-		t.Errorf("Path: got %q, want %q", info.Path, filepath.Join(worktreeBase, stranded))
+	if info.Path != resolveWorktreePath(filepath.Join(worktreeBase, stranded)) {
+		t.Errorf("Path: got %q, want %q", info.Path, resolveWorktreePath(filepath.Join(worktreeBase, stranded)))
 	}
 	if info.ActualBranch != "refs/heads/"+healthy {
 		t.Errorf("ActualBranch: got %q, want %q", info.ActualBranch, "refs/heads/"+healthy)
@@ -341,8 +352,8 @@ func TestReclaimableWorktree_PrunableWorktreeAtPathReturnsTrue(t *testing.T) {
 	if !reclaimable {
 		t.Fatalf("expected reclaimable=true for prunable worktree at path, got info=%+v", info)
 	}
-	if info.Path != wtPath {
-		t.Errorf("Path: got %q, want %q", info.Path, wtPath)
+	if info.Path != resolveWorktreePath(wtPath) {
+		t.Errorf("Path: got %q, want %q", info.Path, resolveWorktreePath(wtPath))
 	}
 	if info.ExpectedBranch != "refs/heads/"+branch {
 		t.Errorf("ExpectedBranch: got %q, want %q", info.ExpectedBranch, "refs/heads/"+branch)
@@ -400,8 +411,8 @@ func TestReclaimableWorktree_NonPrunableWorktreeAtPathReturnsTrue(t *testing.T) 
 	if !reclaimable {
 		t.Fatalf("expected reclaimable=true for non-prunable worktree at path, got info=%+v", info)
 	}
-	if info.Path != wtPath {
-		t.Errorf("Path: got %q, want %q", info.Path, wtPath)
+	if info.Path != resolveWorktreePath(wtPath) {
+		t.Errorf("Path: got %q, want %q", info.Path, resolveWorktreePath(wtPath))
 	}
 	if info.ExpectedBranch != "refs/heads/"+branch {
 		t.Errorf("ExpectedBranch: got %q, want %q", info.ExpectedBranch, "refs/heads/"+branch)
