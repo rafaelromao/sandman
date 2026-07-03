@@ -23,10 +23,10 @@ here only ever escalates to `Important` when the threshold below is crossed.
 Let `n` be the number of distinct smelly locations in the diff, and `t` the
 total number of locations reviewed.
 
-- If `n / t >= 0.6` → at least one representative finding must be filed as
+- If `n / t >= 0.75` → at least one representative finding must be filed as
   `Important`. The rest stay `Important` or `Nit` at the reviewer's
   discretion.
-- If `n / t < 0.6` → findings are `Nit` or omitted.
+- If `n / t < 0.75` → findings are `Nit` or omitted.
 
 In both cases, every `Nit` must cite the specific rule it breaks.
 
@@ -105,7 +105,7 @@ not match the file's language family. The tags are:
 ## Severity recap
 
 - Per-finding: `Nit` (or omit) by default.
-- Aggregate: if the 60% threshold is crossed, file at least one
+- Aggregate: if the 75% threshold is crossed, file at least one
   representative finding as `Important` and reference this file.
 - Never combine a quality-rules finding with a `Blocking` severity.
   Quality smells do not block the PR.

@@ -12,9 +12,9 @@ regressions the issue might not have called out — deep nesting, OC and SOLID
 violations, mixed concerns, etc.
 
 The rules never block the PR on their own. They escalate to `Important` only
-when the **60% threshold** is crossed (see
-[`quality_rules.md`](../../internal/prompt/quality_rules.md) for the
-counting model).
+when the **threshold defined in
+[`quality_rules.md`](../../internal/prompt/quality_rules.md)** is crossed
+(see that file for the counting model).
 
 ## How the reviewer judges a rule
 
@@ -26,16 +26,18 @@ rule's `Applies to` tag matches the file's language family:
 - **`[OOP]`** — applies to languages with classes and methods. The reviewer
   skips these for Go, Rust, C, or pure-functional files.
 
-Skipped rules do not count toward the 60% threshold. This is the only
-language-sensitivity the rules file encodes.
+Skipped rules do not count toward the threshold defined in the rules file.
+This is the only language-sensitivity the rules file encodes.
 
 ## Severity flow
 
 1. The reviewer counts distinct smelly locations (`n`) and total locations
    reviewed (`t`).
 2. Each smelly location produces a finding citing every rule it breaks.
-3. If `n / t < 0.6`, every finding is a `Nit` (or omitted).
-4. If `n / t >= 0.6`, at least one representative finding is filed as
+3. If `n / t` falls below the threshold defined in `quality_rules.md`,
+   every finding is a `Nit` (or omitted).
+4. If `n / t` meets or exceeds the threshold defined in
+   `quality_rules.md`, at least one representative finding is filed as
    `Important` and references this doc plus `quality_rules.md`. Other
    findings stay `Nit` or `Important` at the reviewer's discretion.
 5. Quality findings are **never** `Blocking`. A `Blocking` severity must
