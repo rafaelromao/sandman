@@ -2,9 +2,9 @@
 <!--
 Issue #1701: this prompt must NEVER instruct the bot to emit the literal
 "/sandman review" substring in its review-body output, even when quoting
-prior trigger comments. The bot is the consumer of `ParseTrigger`, and any
-literal substring it writes back into a PR comment is treated as a fresh
-trigger. See internal/review/trigger.go.
+prior trigger comments. The bot is itself the consumer of `ParseTrigger`,
+so any literal substring it writes back into a PR comment is treated as a
+fresh trigger.
 -->
 
 Review pull request #{{PR_NUMBER}}: {{PR_TITLE}}
@@ -115,7 +115,7 @@ Format the body as Markdown with the following sections:
 - `## Findings` — bulleted list grouped by severity (`Blocking`, `Important`, `Nit`). If there are no findings in a group, omit it. Every `Nit` must cite a specific documented rule from step 7 (file + section); otherwise omit it. Do not pad the section — empty means `APPROVED`.
 - `## Suggested next steps` — the minimum set of follow-ups for the author. Do not suggest splitting the PR; review the diff as one unit.
 - `## Decision` — If there are zero `Blocking` or `Important` findings, place a single line: `**APPROVED**`. Otherwise, place `**CHANGES_REQUESTED**`.
-- `## Previous review progress` — Render this section **only** when prior comments exist (check both review comments and issue comments from step 4). When they exist, list each prior finding and its status: **resolved**, **partially addressed**, or **still outstanding**. Do not render this section if there are no prior reviews. Do not write a placeholder such as "No previous reviews found." When summarizing prior review requests, refer to them as `Open review requests` (or `Open /review requests`) — never as `Open /sandman review requests`.
+- `## Previous review progress` — Render this section **only** when prior comments exist (check both review comments and issue comments from step 4). When they exist, list each prior finding and its status: **resolved**, **partially addressed**, or **still outstanding**. Do not render this section if there are no prior reviews. Do not write a placeholder such as "No previous reviews found." When summarizing prior review requests, refer to them as `Open review requests` (or `Open /review requests`); see the hard rule at the top of this prompt for the reason.
 
 Keep the comment terse and actionable. Do not post review commentary outside the single `gh pr comment` invocation.
 
