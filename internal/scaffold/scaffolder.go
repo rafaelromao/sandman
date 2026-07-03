@@ -2101,6 +2101,7 @@ type dockerfileMetadata struct {
 	ErlangVersion    string
 	RubyVersion      string
 	RustVersion      string
+	JavaVersion      string
 	ToolVersion      string
 	MiseVersion      string
 	RtkVersion       string
@@ -2174,6 +2175,8 @@ func readDockerfileMetadata(path string) (dockerfileMetadata, bool, error) {
 			meta.RubyVersion = strings.TrimSpace(value)
 		case "rust-version":
 			meta.RustVersion = strings.TrimSpace(value)
+		case "java-version":
+			meta.JavaVersion = strings.TrimSpace(value)
 		case "mise-version":
 			meta.MiseVersion = strings.TrimSpace(value)
 		case "rtk-version":
