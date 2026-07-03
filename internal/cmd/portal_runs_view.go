@@ -1410,14 +1410,23 @@ func (v *portalRunsView) runFromState(repoRoot string, runState events.RunState,
 		}
 	}
 
+	// Resolve batchID from the event payload's batch_id (with "+N" on-disk
+	// suffix for multi-issue batches) first, and only fall back to
+	// active.BatchID when the event payload has no batch_id. The active
+	// instance's BatchID comes from manifest.BatchId, which equals the
+	// per-row RunID for the first issue (ADR-0036) and therefore does not
+	// match the on-disk directory name; using it for the log-path locator
+	// would make the staleness stat fall back to startedAt and surface a
+	// stale chip equal to the run duration (issue #1715).
 	batchID := runState.BatchID()
 	if batchID == "" {
-		batchID = batchIDFromRunID(runID)
+		if active != nil && active.BatchID != "" {
+			batchID = active.BatchID
+		} else {
+			batchID = batchIDFromRunID(runID)
+		}
 	}
 	activeSocket := active != nil && strings.TrimSpace(active.SocketPath) != ""
-	if active != nil && active.BatchID != "" {
-		batchID = active.BatchID
-	}
 	locator := runLocator{batchID: batchID, runID: runID}
 
 	issueNumber := runState.IssueNumber()
