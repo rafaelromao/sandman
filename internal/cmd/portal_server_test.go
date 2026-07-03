@@ -4057,16 +4057,16 @@ func seedMixedActiveBatchIndex(t *testing.T, repoRoot, runName string, issues []
 // introduced and the empty-id pre-condition for the dead-batch
 // synthesis edge case.
 //
-// Note: as of #1680 (the activeKeyForActive prefactor), this test
-// passes on main for the realistic config below (every event has a
-// non-empty RunID and a payload.batch_id). The matching fix from
-// issue #1659 is expected to land alongside this test; this test
-// acts as the gating verification that the future fix preserves the
-// all-7-issues-render invariant across queued and running statuses
-// when the batches-index entry id is empty. If a future change
-// reintroduces the regression where any subset of the 7 issues is
-// dropped, replaced by an aborted synthesized row, or collapses via
-// dedup, the assertion will fail.
+// The queued events deliberately carry an empty RunID to model the
+// legacy event-log shape where a run.queued is recorded before the
+// orchestrator knows the eventual run id. With the empty-id index
+// entry, the active instance's per-row dedup falls through to the
+// dead-batch synthesis path in seenIssuesForBatch, which skips rows
+// whose runState.RunID is empty. The 3 queued issues then surface as
+// `kind=completed status=aborted` synthesized rows instead of the
+// expected `kind=active status=queued` rows. The 4 started events
+// carry a non-empty RunID so they remain visible. The matching fix
+// from issue #1659 must make the 3 queued rows render correctly.
 func TestPortal_ActiveMixedBatch_AllIssuesRenderedAcrossStatuses(t *testing.T) {
 	// shortTempDir keeps the unix batch.sock path well below the
 	// 108-byte sun_path limit on macOS/Linux. portalRunsIndexes is a
@@ -4103,7 +4103,7 @@ func TestPortal_ActiveMixedBatch_AllIssuesRenderedAcrossStatuses(t *testing.T) {
 		ev = append(ev, events.Event{
 			Type:      "run.queued",
 			Timestamp: pinnedTime.Add(time.Duration(i) * time.Second),
-			RunID:     fmt.Sprintf("%s-%d", runName, issue),
+			RunID:     "",
 			Issue:     issue,
 			Payload:   map[string]any{"batch_id": batchID},
 		})
