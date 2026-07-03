@@ -1969,9 +1969,7 @@ func (v *portalRunsView) findBatchDirForRun(repoRoot, runID string, deadBatches 
 // portalBatchEntryNotFoundError signals that no batch index entry
 // resolves the supplied run id via either the fast path (idx.Resolve)
 // or the on-disk fallback (per-row manifest batchId). Callers map it
-// to HTTP 404 batch not found via errors.As. Shape matches the
-// package's other typed errors (portalArchiveError, portalAbortError)
-// so handler 404/409/500 status mapping stays uniform.
+// to HTTP 404 batch not found via errors.As.
 type portalBatchEntryNotFoundError struct {
 	runID string
 }
@@ -1993,13 +1991,6 @@ func (e *portalBatchEntryNotFoundError) Error() string {
 // and map to http.StatusNotFound. The returned entry has Path
 // populated on either success path so downstream log path resolution
 // and archive moves work without a second index lookup.
-//
-// Slice 1 helper: no production caller invokes this method yet. The
-// slice 2 free function `resolveBatchEntryForRunID` in portal.go
-// (used by archivePortalRunHandler) is the current production caller
-// for the per-row id fallback; a follow-up consolidation slice is
-// expected to replace the free function with this method and add the
-// handler 404 mapping.
 func (v *portalRunsView) resolveBatchEntryForRunID(idx *batchindex.Index, runID string) (*batchindex.Entry, error) {
 	if idx == nil || runID == "" {
 		return nil, &portalBatchEntryNotFoundError{runID: runID}

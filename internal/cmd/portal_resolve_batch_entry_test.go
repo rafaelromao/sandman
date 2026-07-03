@@ -11,16 +11,8 @@ import (
 	"github.com/rafaelromao/sandman/internal/batchindex"
 )
 
-// TestPortalRunsView_ResolveBatchEntryForRunID_BothMiss pins the
-// slice-1 prefactor contract: when neither the index's fast path nor
-// any on-disk per-row manifest resolves the runID, the helper returns
-// a typed *portalBatchEntryNotFoundError the caller can errors.As-match
-// to map to 404. The helper is added with no production caller in this
-// slice; slice 2 wires it into the archive handler (the slice 2 free
-// function `resolveBatchEntryForRunID` in portal.go is its current
-// production caller, and stays untouched in this slice).
+// Both miss returns the typed not-found error.
 func TestPortalRunsView_ResolveBatchEntryForRunID_BothMiss(t *testing.T) {
-	v := &portalRunsView{}
 	idx := &batchindex.Index{Version: batchindex.IndexVersion}
 
 	cases := []struct {
@@ -34,7 +26,7 @@ func TestPortalRunsView_ResolveBatchEntryForRunID_BothMiss(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			entry, err := v.resolveBatchEntryForRunID(tc.idx, tc.runID)
+			entry, err := (&portalRunsView{}).resolveBatchEntryForRunID(tc.idx, tc.runID)
 			if entry != nil {
 				t.Fatalf("expected nil entry on miss, got %#v", entry)
 			}
@@ -52,11 +44,7 @@ func TestPortalRunsView_ResolveBatchEntryForRunID_BothMiss(t *testing.T) {
 	}
 }
 
-// TestPortalRunsView_ResolveBatchEntryForRunID_ExactMatch pins the
-// slice-1 fast-path contract: when the run id matches an index entry's
-// ID directly, the helper returns that entry without touching the
-// filesystem. The returned entry must have Path populated so callers
-// can use it for archive moves and log path resolution.
+// Exact match returns the index entry with Path populated.
 func TestPortalRunsView_ResolveBatchEntryForRunID_ExactMatch(t *testing.T) {
 	runID := "abcd-260618113825-issue-42"
 	batchDir := filepath.Join(t.TempDir(), runID)
@@ -82,13 +70,7 @@ func TestPortalRunsView_ResolveBatchEntryForRunID_ExactMatch(t *testing.T) {
 	}
 }
 
-// TestPortalRunsView_ResolveBatchEntryForRunID_FallbackByRunManifest
-// pins the slice-1 fallback contract: when the fast path misses, the
-// helper walks each entry's runs/<runID>/run.json, parses the per-row
-// manifest's BatchID, and resolves that ID in the index. The returned
-// entry must have Entry.ID == parsed BatchID (proving the parse+re-
-// resolve happened), and Entry.Path must be the containing batch dir
-// so downstream archive moves point at the right location.
+// Fallback walks each entry's runs/<runID>/run.json, parses BatchID, and re-resolves it.
 func TestPortalRunsView_ResolveBatchEntryForRunID_FallbackByRunManifest(t *testing.T) {
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
@@ -135,13 +117,7 @@ func TestPortalRunsView_ResolveBatchEntryForRunID_FallbackByRunManifest(t *testi
 	}
 }
 
-// TestPortalRunsView_ResolveBatchEntryForRunID_FallbackBatchIdNotInIndex
-// pins the load-bearing contract: the fallback MUST parse the BatchID
-// and re-resolve it in the index, not just trust whatever entry's
-// directory the run.json happened to live under. A manifest whose
-// BatchID is absent from the index surfaces the typed not-found error,
-// so a future refactor that returns the manifest's containing entry
-// unconditionally will fail this test.
+// Parsed BatchID not in the index surfaces the typed not-found error.
 func TestPortalRunsView_ResolveBatchEntryForRunID_FallbackBatchIdNotInIndex(t *testing.T) {
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
@@ -155,9 +131,6 @@ func TestPortalRunsView_ResolveBatchEntryForRunID_FallbackBatchIdNotInIndex(t *t
 	if err := os.MkdirAll(filepath.Join(batchDir, "runs", perRowID), 0755); err != nil {
 		t.Fatal(err)
 	}
-	// Per-row manifest claims a batchId that is NOT in the index (the
-	// index entry was evicted or never existed). The helper must NOT
-	// return the containing entry; it must surface the typed not-found.
 	perRowManifest := batchindex.RunManifest{
 		RunID:     perRowID,
 		BatchID:   staleBatchID,
