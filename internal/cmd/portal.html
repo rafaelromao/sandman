@@ -2498,14 +2498,15 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
       return status || 'default';
     }
 
-    function reviewVerdictForStatus(status) {
-      const value = String(status || '').trim();
-      if (value === 'success') return 'Approved';
-      if (value === 'failure') return 'Changes requested';
-      return '';
-    }
-
     function summarizeReviewGroup(reviews) {
+      // The Go projection at portalRunsView.aggregateReviewChildren
+      // (portal_runs_view.go) now derives the verdict from each
+      // terminal review child's saved run.log, so it already flows
+      // through the canonical-parent path with the right value. This
+      // orphan-review-only path cannot read a child run.log without an
+      // async fetch that isn't yet available, so we leave summary.verdict
+      // empty and rely on renderRunMeta's `if (run.reviewVerdict)` guard
+      // to skip the trailing dash (issue #1729).
       const summary = { count: 0, live: false, verdict: '', status: '', kind: 'completed', source: null };
       if (!Array.isArray(reviews) || !reviews.length) return summary;
       summary.count = reviews.length;
@@ -2526,14 +2527,10 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
         }
       }
       if (!summary.live) {
-        for (const review of ordered) {
-          const verdict = reviewVerdictForStatus(review && review.status);
-          if (verdict) {
-            summary.verdict = verdict;
-            summary.status = String(review && review.status ? review.status : '').trim();
-            summary.kind = 'completed';
-            break;
-          }
+        const terminal = ordered.find((review) => /^(success|failure|aborted)$/i.test(String((review && review.status) || '').trim()));
+        if (terminal) {
+          summary.status = String(terminal.status || '').trim();
+          summary.kind = 'completed';
         }
       }
       return summary;

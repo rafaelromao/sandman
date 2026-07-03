@@ -4266,7 +4266,11 @@ const stub = visibleRunForIssueGroup(1223, [review]);
 if (!stub) throw new Error('expected stub row for terminal review group');
 if (stub.kind !== 'completed') throw new Error('expected completed kind once terminal status is present, got ' + JSON.stringify(stub.kind));
 if (stub.status !== 'success') throw new Error('expected terminal status to win over live kind, got ' + JSON.stringify(stub.status));
-if (stub.reviewVerdict !== 'Approved') throw new Error('expected Approved verdict, got ' + JSON.stringify(stub.reviewVerdict));
+// Issue #1729: orphan review-only groups can no longer project a verdict
+// from run.status (the heuristic is wrong). The Go projection covers the
+// canonical-parent path; the JS orphan path renders an empty verdict and
+// the meta line guard in renderRunMeta hides the trailing dash.
+if (stub.reviewVerdict !== '') throw new Error('expected empty reviewVerdict on orphan review-only group (issue #1729), got ' + JSON.stringify(stub.reviewVerdict));
 if (stub.review !== true) throw new Error('expected review=true on visible row for terminal review-only group, got ' + JSON.stringify(stub.review));
 if (stub.groupedReview !== false) throw new Error('expected groupedReview=false on visible row for review-only group, got ' + JSON.stringify(stub.groupedReview));
 console.log('PASS');
