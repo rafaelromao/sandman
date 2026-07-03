@@ -18,6 +18,18 @@ type StrandedWorktreeInfo struct {
 	ExpectedBranch string // the ref the directory name implies (e.g. "refs/heads/sandman/907-...")
 }
 
+// resolveBase resolves a worktreeBase path to an absolute, symlink-free form
+// so path comparisons against `git worktree list --porcelain` output match on
+// platforms where the working directory is reached through a symlink (notably
+// macOS, where /tmp is a symlink to /private/tmp and `t.TempDir()` returns
+// paths under /tmp).
+func resolveBase(worktreeBase string) string {
+	if resolved, err := filepath.EvalSymlinks(worktreeBase); err == nil {
+		return resolved
+	}
+	return worktreeBase
+}
+
 // StrandedWorktree checks whether a worktree for the given branch exists under
 // worktreeBase in a stranded state (HEAD does not match the expected ref).
 // Returns the StrandedWorktreeInfo and true if stranded, zero value and false otherwise.
@@ -32,6 +44,7 @@ func StrandedWorktree(repoPath, worktreeBase, branch string) (StrandedWorktreeIn
 	if _, err := os.Stat(worktreeBase); err != nil {
 		return StrandedWorktreeInfo{}, false
 	}
+	worktreeBase = resolveBase(worktreeBase)
 
 	expectedRef := "refs/heads/" + branch
 	target := filepath.Join(worktreeBase, branch)
@@ -75,6 +88,7 @@ func ReclaimableWorktree(repoPath, worktreeBase, branch string) (StrandedWorktre
 	if _, err := os.Stat(worktreeBase); err != nil {
 		return StrandedWorktreeInfo{}, false
 	}
+	worktreeBase = resolveBase(worktreeBase)
 
 	expectedRef := "refs/heads/" + branch
 	target := filepath.Join(worktreeBase, branch)
@@ -111,6 +125,7 @@ func ListStrandedWorktrees(repoPath, worktreeBase string) []StrandedWorktreeInfo
 	if _, err := os.Stat(worktreeBase); err != nil {
 		return nil
 	}
+	worktreeBase = resolveBase(worktreeBase)
 
 	prefix := worktreeBase
 	if !strings.HasSuffix(prefix, string(filepath.Separator)) {
