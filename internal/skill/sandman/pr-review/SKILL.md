@@ -123,7 +123,7 @@ Read `.sandman/.<N>.head_sha` if it exists and compare against the current head 
 - **SHA changed** (new commit landed since last request): mark all previous review state stale. Delete `.sandman/.<N>.addressed_comments` if it exists, because inline comment IDs from the old commit are no longer relevant. A fresh review request is always permitted.
 - **SHA unchanged**: apply the "previous request still pending" logic before posting again.
 
-#### Step 4: Delegate review to the PR Review Agent
+#### Step 4: Delegate review to the PR Review Agent (trigger post — NOT recorded as a self-post)
 
 If SHA changed since the last request, always allow re-requesting. If SHA is unchanged, skip this step if no review response has arrived yet.
 
@@ -135,30 +135,42 @@ gh pr comment <N> --repo <owner/repo> --body "{{REVIEW_COMMAND}}"
 
 After posting, write the current head SHA to `.sandman/.<N>.head_sha` so subsequent passes can detect staleness.
 
-**Self-post dedup (issue #1648).** Immediately after `gh pr comment` returns success, hash the body you just posted and append the hash to `.sandman/reviews/self-posted.json`. The review daemon reads this file and ignores any comment whose body matches a recorded hash, so the bot's own review-comment cannot be mistaken for a fresh `/sandman review` trigger on a later tick. Compute the hash the same way the daemon does (lower-case, trim trailing whitespace, then `sha256sum`):
+**The trigger command is intentionally NOT recorded in `.sandman/reviews/self-posted.json`** (issue #1700). The trigger is a request for review, not a bot-comment that needs to be filtered. Trigger detection in `Daemon.processPR` does not depend on the self-post filter (issue #1682 ordering: `IsSelfPosted` applies only to non-trigger comments), so dropping the trigger-hash recording is safe. A paired `record_trigger_posted()` is therefore a deliberate no-op — it documents the symmetric counterpart of `record_review_posted()` in Step 4b so future readers see both call sites even though only one writes to the store.
+
+#### Step 4b: Record the bot's review-body post (issue #1700)
+
+The PR Review Agent posts its review-body via `gh pr comment <N> --body "<long markdown review>"`. That post is the comment the self-post filter exists to suppress — if the reviewer agent's body ever contains the trigger substring (a self-review summary quoting the request, a future skill variant, etc.), the daemon must not mistake it for a fresh `/sandman review` trigger on a later tick. Immediately after `gh pr comment` returns success on the review-body post, hash the body and append the hash to `.sandman/reviews/self-posted.json`. The hash normalization matches the daemon's `SelfPostStore.normalize` (internal/review/selfposted.go) — lower-case + trim trailing whitespace + `sha256sum`:
 
 ```bash
-sha=$(printf '%s' "{{REVIEW_COMMAND}}" | tr 'A-Z' 'a-z' | sed 's/[ \t\n]*$//' | sha256sum | awk '{print $1}')
-mkdir -p .sandman/reviews
-tmp=$(mktemp)
-existing='.sandman/reviews/self-posted.json'
-if [ -f "$existing" ]; then cp "$existing" "$tmp"; else echo '{}' > "$tmp"; fi
-jq --arg sha "$sha" --argjson pr <N> --arg run "$RUN_ID" --arg now "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-  '.[$sha] = {sha256:$sha, pr_number:$pr, run_id:$run, posted_at:$now}' \
-  "$tmp" > "$tmp.new" && mv "$tmp.new" "$tmp"
-mv "$tmp" "$existing"
+record_review_posted() {
+  local body="$1"
+  local sha=$(printf '%s' "$body" | tr 'A-Z' 'a-z' | sed 's/[ \t\n]*$//' | sha256sum | awk '{print $1}')
+  mkdir -p .sandman/reviews
+  tmp=$(mktemp)
+  existing='.sandman/reviews/self-posted.json'
+  if [ -f "$existing" ]; then cp "$existing" "$tmp"; else echo '{}' > "$tmp"; fi
+  jq --arg sha "$sha" --argjson pr <N> --arg run "$RUN_ID" --arg now "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    '.[$sha] = {sha256:$sha, pr_number:$pr, run_id:$run, posted_at:$now}' \
+    "$tmp" > "$tmp.new" && mv "$tmp.new" "$tmp"
+  mv "$tmp" "$existing"
+}
 ```
 
 If `jq` is unavailable, fall back to the simpler form below (the daemon tolerates any re-record; the file is a JSON object keyed by sha256 hex):
 
 ```bash
-sha=$(printf '%s' "{{REVIEW_COMMAND}}" | tr 'A-Z' 'a-z' | sed 's/[ \t\n]*$//' | sha256sum | awk '{print $1}')
-printf ',"%s":{"sha256":"%s","pr_number":%s,"run_id":"%s","posted_at":"%s"}' \
-  "$sha" "$sha" <N> "$RUN_ID" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-  >> .sandman/reviews/self-posted.json
+record_review_posted_plain() {
+  local body="$1"
+  local sha=$(printf '%s' "$body" | tr 'A-Z' 'a-z' | sed 's/[ \t\n]*$//' | sha256sum | awk '{print $1}')
+  printf ',"%s":{"sha256":"%s","pr_number":%s,"run_id":"%s","posted_at":"%s"}' \
+    "$sha" "$sha" <N> "$RUN_ID" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    >> .sandman/reviews/self-posted.json
+}
 ```
 
-(The daemon's defensive observation in `promotePendingComment` is the safety net for any case where this wrapper is bypassed: even if the hash is not recorded here, the next tick will record the observed comment body.)
+**`body` here is the bot's review markdown, NOT `{{REVIEW_COMMAND}}`.** Pass the full markdown the reviewer agent just posted.
+
+(The daemon's defensive observation in `promotePendingComment` is the safety net for any case where this wrapper is bypassed: even if the hash is not recorded here, the next tick will record the observed comment body. This is why dropping the trigger-hash recording in Step 4 is safe — `promotePendingComment` still records every comment it observes.)
 
 **Do NOT read the PR diff or write review comments yourself.** The review must come exclusively from the PR Review Agent.
 

@@ -74,12 +74,12 @@ The review workflow is a closed loop: the implementor agent posts `/sandman revi
 
 ### Decision
 
-Track the SHA-256 hash of every comment the bot posts, and ignore any comment whose body matches a recorded hash.
+Track the SHA-256 hash of the bot's review-body posts, and ignore any comment whose body matches a recorded hash.
 
 - **Storage**: `<.sandman>/reviews/self-posted.json` (a JSON object keyed by hex `sha256(body)`, values include `pr_number`, `run_id`, `posted_at`). Atomic write via temp-file + `os.Rename`. Missing or corrupt file → empty store, daemon continues in degraded mode.
-- **Record site (primary)**: the `pr-review` SKILL.md Step 4 wrapper hashes the body immediately after `gh pr comment <N> --body ...` returns success.
-- **Record site (defensive)**: `Daemon.promotePendingComment` records any non-trigger comment it observes after `since`, so a skipped skill wrapper still leaves a hash for the next tick.
-- **Filter site**: `Daemon.processPR` calls `selfPosts.IsSelfPosted(comment.Body)` on each PR comment before `ParseTrigger`. A self-posted comment is not a trigger; it does not block other comments and is not added to `MarkSeen`.
+- **Record site (primary)**: the `pr-review` SKILL.md Step 4b wrapper hashes the bot's review-body (long markdown review) immediately after `gh pr comment <N> --body ...` returns success. Only the review-body post is recorded; the implementor's trigger command (Step 4) is intentionally NOT recorded. The trigger is a request for review, not a bot-comment to filter — tracking its hash would mask future legitimate trigger lookups. The bot's review-body, by contrast, can inadvertently contain trigger-substring text (PR #1671) and MUST be filtered to break the self-re-trigger loop.
+- **Record site (defensive)**: `Daemon.promotePendingComment` records any non-trigger comment it observes after `since`, so a skipped skill wrapper still leaves a hash for the next tick. This defensive observation is also what makes the trigger-hash non-recording safe: even if the Step 4b wrapper is bypassed, the bot's review body will be recorded on the next tick.
+- **Filter site**: `Daemon.processPR` calls `selfPosts.IsSelfPosted(comment.Body)` on each PR comment before `ParseTrigger`. A self-posted comment is not a trigger; it does not block other comments and is not added to `MarkSeen`. The filter applies only to non-trigger comments (issue #1682), so removing the trigger-hash recording does not affect trigger detection.
 
 ### Why not GitHub auth?
 
