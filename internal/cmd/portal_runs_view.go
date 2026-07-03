@@ -519,6 +519,20 @@ func (v *portalRunsView) deadBatchesFromIndex(idx *batchindex.Index, activeInsta
 		if active.BatchID != "" {
 			activeBatchIDs[active.BatchID] = struct{}{}
 		}
+		// A batches-index entry's Path is the same live batch
+		// directory the active instance was loaded from. Including it
+		// in the lookup set prevents a live batch whose index entry
+		// has an empty "id" (the pre-#1657 shape) from being
+		// misclassified as a dead batch. Without this,
+		// synthesizedDeadBatchRows would emit kind=completed
+		// status=aborted rows for the active batch's still-queued
+		// issues (whose run.queued events carry an empty RunID and
+		// are absent from ProjectRunStates), and dedupRunGroup would
+		// prefer the synthesized aborted row over the live
+		// kind=active row (issue #1659).
+		if active.Dir != "" {
+			activeBatchIDs[active.Dir] = struct{}{}
+		}
 	}
 	deadBatches := make([]daemon.DeadBatch, 0, len(idx.Entries))
 	for i := range idx.Entries {
@@ -527,6 +541,12 @@ func (v *portalRunsView) deadBatchesFromIndex(idx *batchindex.Index, activeInsta
 			continue
 		}
 		if _, ok := activeBatchIDs[entry.ID]; ok {
+			continue
+		}
+		// Match the live batch directory as well so an index entry
+		// whose ID is empty but whose Path points at a live batch is
+		// not treated as dead.
+		if _, ok := activeBatchIDs[entry.Path]; ok {
 			continue
 		}
 		manifest, err := daemon.ReadManifest(entry.Path)
