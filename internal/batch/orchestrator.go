@@ -1739,8 +1739,30 @@ func (s *runSession) withHeartbeat(ctx context.Context, runID string, attempt in
 // recomputing. Errors updating the snapshot are logged but do not change the
 // run outcome. The event-log write is skipped when the orchestrator has no
 // event log.
-func (s *runSession) emitTerminal(ctx context.Context, runID string, result AgentRunResult) string {
+//
+// extras carries extra run.finished payload keys that the caller wants to
+// merge into the event (e.g. "blocker", "pr_number", "merge_conflict" — see
+// issue #1684). Passing nil is fine; the standard payload keys
+// ("status", "branch", "base_branch", "retries_total", etc.) are always set
+// by this function.
+//
+// Before normalising the terminal event, emitTerminal performs a defensive
+// post-check: if the agent's branch has an open PR whose mergeable state is
+// `CONFLICTING`, the run is reclassified as `failure` and the terminal event
+// payload carries `merge_conflict: true` and the PR number. This is
+// defence-in-depth against skill regressions that forget to flag the DIRTY
+// PR case; see issue #1684.
+func (s *runSession) emitTerminal(ctx context.Context, runID string, result AgentRunResult, extras map[string]any) string {
 	o := s.o
+	if conflictExtras, ok := s.detectConflictingPR(result.Branch); ok {
+		result.Status = "failure"
+		if extras == nil {
+			extras = map[string]any{}
+		}
+		for k, v := range conflictExtras {
+			extras[k] = v
+		}
+	}
 	terminalEventType, terminalStatus := terminalRunEvent(ctx, result.Status)
 	s.updateRunManifestStatus(runID, batchindex.RunManifestStatus(terminalStatus))
 	if o.eventLog == nil {
@@ -1775,8 +1797,62 @@ func (s *runSession) emitTerminal(ctx context.Context, runID string, result Agen
 			event.Payload["issue_number"] = s.issueNumber
 		}
 	}
+	for k, v := range extras {
+		event.Payload[k] = v
+	}
 	_ = o.eventLog.Log(event)
 	return terminalStatus
+}
+
+// detectConflictingPR inspects the branch's open PR and, when its mergeable
+// state is `CONFLICTING`, returns a payload extras map with
+// `merge_conflict: true` and `pr_number` set, plus a `true` ok flag.
+//
+// Errors from the underlying `gh pr list` lookup are logged to `errorLog`
+// but treated as a soft pass-through: a transient gh failure must not
+// silently flip a real success into a fake failure. See issue #1684.
+func (s *runSession) detectConflictingPR(branch string) (map[string]any, bool) {
+	o := s.o
+	if strings.TrimSpace(branch) == "" {
+		return nil, false
+	}
+	exists, prNumber, mergeable, err := LookupOpenPR(branch)
+	if err != nil {
+		fmt.Fprintf(o.errorLog, "warning: lookup open PR for branch %q: %v\n", branch, err)
+		return nil, false
+	}
+	if !exists {
+		return nil, false
+	}
+	if strings.EqualFold(mergeable, "CONFLICTING") {
+		fmt.Fprintf(o.errorLog, "error: branch %q has CONFLICTING open PR #%d, overriding run status to failure\n", branch, prNumber)
+		return map[string]any{"merge_conflict": true, "pr_number": prNumber}, true
+	}
+	return nil, false
+}
+
+// hasBlockingOpenPR returns true when the branch currently has an open PR
+// AND the run is being short-circuited to success via the `alreadyResolved`
+// marker. On hit, it returns a payload extras map with
+// `blocker: "open-pr-blocks-already-resolved"` and the PR number. See
+// issue #1684.
+//
+// Errors from `gh pr list` are logged but treated as a soft pass: a
+// transient failure should not flip a real success into a fake failure.
+func hasBlockingOpenPR(o *Orchestrator, branch string) (map[string]any, bool) {
+	if o == nil || strings.TrimSpace(branch) == "" {
+		return nil, false
+	}
+	exists, prNumber, _, err := LookupOpenPR(branch)
+	if err != nil {
+		fmt.Fprintf(o.errorLog, "warning: lookup open PR for branch %q: %v\n", branch, err)
+		return nil, false
+	}
+	if !exists {
+		return nil, false
+	}
+	fmt.Fprintf(o.errorLog, "error: branch %q has open PR #%d blocking alreadyResolved short-circuit; overriding run status to failure\n", branch, prNumber)
+	return map[string]any{"blocker": "open-pr-blocks-already-resolved", "pr_number": prNumber}, true
 }
 
 // updateRunManifestStatus rewrites the run.json snapshot with the terminal
@@ -1799,6 +1875,12 @@ func (s *runSession) updateRunManifestStatus(runID string, status batchindex.Run
 // result with Status="success" (e.g. the pre-retry guard on a merged PR)
 // propagates as a started run so the terminal success event is emitted;
 // any other short-circuit status propagates as a non-started failure.
+//
+// The returned `terminalExtras` carries extra payload keys the terminal
+// event should merge in (e.g. "blocker" / "pr_number" when an open PR
+// blocks the run from being declared success — see issue #1684). It may
+// be nil. Started mirrors the second return value of the original
+// signature.
 func (s *runSession) runOnce(
 	ctx context.Context,
 	issue *github.Issue,
@@ -1808,7 +1890,7 @@ func (s *runSession) runOnce(
 	runID string,
 	mergeRequired bool,
 	prepareAttempt func(attempt int) (prompt.RenderConfig, *AgentRunResult),
-) (AgentRunResult, bool) {
+) (AgentRunResult, map[string]any, bool) {
 	o := s.o
 	if s.renderCfg.PromptFile == "" {
 		s.renderCfg.PromptFile = filepath.Join(".", ".sandman", "prompt.md")
@@ -1826,10 +1908,11 @@ func (s *runSession) runOnce(
 		factory = defaultRunnableFactory{}
 	}
 
+	var terminalExtras map[string]any
 	for attempt := 0; attempt < attempts; attempt++ {
 		attemptRenderCfg, errResult := prepareAttempt(attempt)
 		if errResult != nil {
-			return *errResult, events.RunStatusFromPayload(errResult.Status).IsSuccess()
+			return *errResult, nil, events.RunStatusFromPayload(errResult.Status).IsSuccess()
 		}
 
 		if attempt > 0 {
@@ -1877,6 +1960,13 @@ func (s *runSession) runOnce(
 				if ctx.Err() != nil {
 					break
 				}
+				if alreadyResolved {
+					if extras, blocked := hasBlockingOpenPR(o, branch); blocked {
+						terminalExtras = extras
+						result.Status = "failure"
+						break
+					}
+				}
 				result.Status = "success"
 				if alreadyResolved && issue != nil && !github.IsIssueClosed(issue) && o.githubClient != nil {
 					if err := o.githubClient.CloseIssue(issue.Number, "Closed by sandman — issue already completed."); err != nil {
@@ -1902,6 +1992,11 @@ func (s *runSession) runOnce(
 					prMerged := checkPRMerged(o.githubClient, branch)
 					if prMerged || alreadyResolved {
 						if alreadyResolved {
+							if extras, blocked := hasBlockingOpenPR(o, branch); blocked {
+								terminalExtras = extras
+								result.Status = "failure"
+								break
+							}
 							result.Status = "success"
 						}
 						break
@@ -1914,7 +2009,7 @@ func (s *runSession) runOnce(
 		}
 	}
 
-	return result, true
+	return result, terminalExtras, true
 }
 
 // runSingle runs a single issue-driven AgentRun. It builds a runSession and
@@ -2144,7 +2239,7 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 
 	runFolder := s.runFolderFor(runID)
 	logPath := filepath.Join(runFolder, "run.log")
-	result, started := s.runOnce(ctx, issue, branch, wt, logPath, runID, s.mode != ModeContinue, func(attempt int) (prompt.RenderConfig, *AgentRunResult) {
+	result, terminalExtras, started := s.runOnce(ctx, issue, branch, wt, logPath, runID, s.mode != ModeContinue, func(attempt int) (prompt.RenderConfig, *AgentRunResult) {
 		attemptRenderCfg := s.renderCfg
 		if attempt > 0 {
 			// Pre-retry guard: if the PR was merged between attempts (e.g. the
@@ -2198,7 +2293,7 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 		return result, false
 	}
 
-	result.Status = s.emitTerminal(ctx, runID, result)
+	result.Status = s.emitTerminal(ctx, runID, result, terminalExtras)
 
 	if events.RunStatusFromPayload(result.Status).IsSuccess() {
 		s.reconcileWorktreeBranch(wt, branch)
@@ -2493,7 +2588,7 @@ func (s *runSession) executePromptOnly(ctx context.Context) (AgentRunResult, boo
 
 	runFolder := s.runFolderFor(runID)
 	logPath := filepath.Join(runFolder, "run.log")
-	result, started := s.runOnce(ctx, nil, branch, wt, logPath, runID, false, func(attempt int) (prompt.RenderConfig, *AgentRunResult) {
+	result, terminalExtras, started := s.runOnce(ctx, nil, branch, wt, logPath, runID, false, func(attempt int) (prompt.RenderConfig, *AgentRunResult) {
 		if attempt > 0 {
 			if err := o.resetRetryBranch(ctx, wt, branch, s.baseBranch); err != nil {
 				fmt.Fprintf(o.errorLog, "error: reset retry branch for prompt-only run: %v\n", err)
@@ -2517,7 +2612,7 @@ func (s *runSession) executePromptOnly(ctx context.Context) (AgentRunResult, boo
 		return result, false
 	}
 
-	result.Status = s.emitTerminal(ctx, runID, result)
+	result.Status = s.emitTerminal(ctx, runID, result, terminalExtras)
 
 	return result, true
 }
