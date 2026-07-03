@@ -30,6 +30,11 @@ description: Automates the GitHub PR review loop with the PR Review Agent. Waits
 
 9. **You must use `codeindex` before `grep` or `glob` when looking for symbols, blast radius, dependencies, or other broad code locations.** Load the `sandman-index` skill first — it encapsulates all codeindex guidance including the hard rule, command reference, query refinement strategies, and read discipline.
 
+10. **Any PR comment intended to be read by the reviewer MUST start with the review command.** A comment that does not begin with the review command is treated as boilerplate by the daemon and ignored — it does not reach the reviewer and does not advance the loop. Concretely:
+    - When posting the trigger comment (Step 4), the body must be exactly the review command on its own (e.g. `gh pr comment <N> --repo <owner/repo> --body "{{REVIEW_COMMAND}}"`).
+    - When posting a clarification request, a follow-up after a stalled poll, or any other reviewer-facing message, the body must begin with the review command and may include additional freeform text afterwards (e.g. `{{REVIEW_COMMAND}} — please clarify which file you mean`). The leading review-command substring is what the daemon's `ParseTrigger` matches on; the trailing freeform text is read by the reviewer but ignored by the trigger filter.
+    - When posting the bot's own review-body (Step 4b), do NOT prefix it with the review command. The review-body is the substance the reviewer writes back to you — prefixing it would cause the daemon to mis-classify the body as a duplicate trigger on the next tick and drop the actual review content. Record the review-body hash with `record_review_posted` as described in Step 4b.
+
 ## Workflow
 
 ### Prerequisites
