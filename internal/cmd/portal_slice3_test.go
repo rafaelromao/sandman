@@ -620,6 +620,60 @@ func TestPortal_KindForRun_TerminalAutoSelectAndReviewClassifiedAsCompleted(t *t
 	}
 }
 
+// TestPortal_KindForRun_BlockedStateReturnsCompleted pins the unit-level
+// behavior for issue #1699: a wait-state run whose event-fold
+// projection lands on Status() == "blocked" must be classified as
+// "completed", not "active". The active-row chrome (purple tint,
+// row-added highlight, "Active Batches" filter) is gated on Kind ==
+// "active" in portal.html / portal_diff.js / portal_runs_view.go's
+// sort predicate; classifying a blocked run as "active" pollutes
+// that chrome and surfaces the row in the active filter even
+// though its daemon is gone (the issue's symptom).
+//
+// The blocked status here comes from a run.blocked event being
+// projected as the run's terminal fold (Finished != nil, Status()
+// == "blocked"), which is exactly what the event log presents for
+// a row whose batch has died — see portal_runs_view.go around the
+// runFrom* constructors.
+func TestPortal_KindForRun_BlockedStateReturnsCompleted(t *testing.T) {
+	v := &portalRunsView{}
+	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
+	finishedAt := startedAt.Add(1 * time.Minute)
+
+	runState := events.RunState{
+		RunID:    "blocked-run-42",
+		Started:  events.Event{Timestamp: startedAt, Payload: map[string]any{"branch": "sandman/42-fix"}},
+		Finished: &events.Event{Timestamp: finishedAt, Payload: map[string]any{"blocked_by": []int{99}, "status": "blocked"}},
+	}
+
+	if got := v.kindForRun(runState); got != "completed" {
+		t.Fatalf("kindForRun(blocked) = %q, want %q", got, "completed")
+	}
+}
+
+// TestPortal_KindForRun_QueuedStateReturnsCompleted pins the unit-level
+// behavior for issue #1699: a wait-state run whose event-fold
+// projection lands on Status() == "queued" must be classified as
+// "completed", not "active". The queued status comes from a
+// run.queued event projected as the run's terminal fold (Finished
+// != nil, Status() == "queued") — the same fold the event log
+// presents for an orphan queued member whose batch has died.
+func TestPortal_KindForRun_QueuedStateReturnsCompleted(t *testing.T) {
+	v := &portalRunsView{}
+	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
+	finishedAt := startedAt.Add(1 * time.Minute)
+
+	runState := events.RunState{
+		RunID:    "queued-run-42",
+		Started:  events.Event{Timestamp: startedAt, Payload: map[string]any{"branch": "sandman/42-fix"}},
+		Finished: &events.Event{Timestamp: finishedAt, Payload: map[string]any{"blocked_by": []int{99}, "status": "queued"}},
+	}
+
+	if got := v.kindForRun(runState); got != "completed" {
+		t.Fatalf("kindForRun(queued) = %q, want %q", got, "completed")
+	}
+}
+
 // TestPortal_MarkCompletedIfSocketDead_LeavesCompletedRowsAlone pins the
 // dead-socket reaper's invariant: a terminal row whose Kind is already
 // "completed" is not touched, even if its socket is dead. A regression
