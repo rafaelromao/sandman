@@ -135,19 +135,20 @@ gh pr comment <N> --repo <owner/repo> --body "{{REVIEW_COMMAND}}"
 
 After posting, write the current head SHA to `.sandman/.<N>.head_sha` so subsequent passes can detect staleness.
 
-**The trigger command is intentionally NOT recorded in `.sandman/reviews/self-posted.json`** (issue #1700). The trigger is a request for review, not a bot-comment that needs to be filtered. Trigger detection in `Daemon.processPR` does not depend on the self-post filter (issue #1682 ordering: `IsSelfPosted` applies only to non-trigger comments), so dropping the trigger-hash recording is safe. A paired `record_trigger_posted()` is therefore a deliberate no-op — it documents the symmetric counterpart of `record_review_posted()` in Step 4b so future readers see both call sites even though only one writes to the store:
+**The trigger command is intentionally NOT recorded in `.sandman/reviews/self-posted.json`** (issue #1702, originally introduced as a no-op by #1700). The trigger is a request for review, not a bot-comment that needs to be filtered. Trigger detection in `Daemon.processPR` runs the self-post filter BEFORE `ParseTrigger` (issue #1702, reversing the #1682 ordering), so a trigger comment whose body happens to be in SelfPostStore would be dropped before its body is parsed for a trigger. Recording the trigger hash would therefore be redundant — only the bot's review-body is recorded (Step 4b), and the SelfPostStore only ever contains bodies the bot posted. A paired `record_trigger_posted()` is therefore a deliberate no-op — it documents the symmetric counterpart of `record_review_posted()` in Step 4b so future readers see both call sites even though only one writes to the store:
 
 ```bash
 record_trigger_posted() {
-  # Deliberate no-op (issue #1700): the trigger is a review-request, not
-  # a bot-comment to filter. The bot's review-body (Step 4b) is recorded.
+  # Deliberate no-op (issue #1702, original no-op introduced by #1700):
+  # the trigger is a review-request, not a bot-comment to filter. The
+  # bot's review-body (Step 4b) is recorded.
   : # no-op
 }
 ```
 
-#### Step 4b: Record the bot's review-body post (issue #1700)
+#### Step 4b: Record the bot's review-body post (issues #1700, #1702)
 
-The PR Review Agent posts its review-body via `gh pr comment <N> --body "<long markdown review>"`. That post is the comment the self-post filter exists to suppress — if the reviewer agent's body ever contains the trigger substring (a self-review summary quoting the request, a future skill variant, etc.), the daemon must not mistake it for a fresh `/sandman review` trigger on a later tick. Immediately after `gh pr comment` returns success on the review-body post, hash the body and append the hash to `.sandman/reviews/self-posted.json`. The hash normalization matches the daemon's `SelfPostStore.normalize` (internal/review/selfposted.go) — lower-case + trim trailing whitespace + `sha256sum`:
+The PR Review Agent posts its review-body via `gh pr comment <N> --body "<long markdown review>"`. That post is the comment the self-post filter exists to suppress — the reviewer agent's body routinely contains the trigger substring (its `## Previous review progress` section quotes the `/sandman review` request verbatim) and without the recording + the new IsSelfPosted-first ordering in `Daemon.processPR` (issue #1702), the daemon would re-trigger on its own review body on the next tick. Immediately after `gh pr comment` returns success on the review-body post, hash the body and append the hash to `.sandman/reviews/self-posted.json`. The hash normalization matches the daemon's `SelfPostStore.normalize` (internal/review/selfposted.go) — lower-case + trim trailing whitespace + `sha256sum`:
 
 ```bash
 record_review_posted() {
