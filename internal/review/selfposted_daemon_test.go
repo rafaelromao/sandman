@@ -317,3 +317,175 @@ func TestDaemon_PromotePendingComment_DoesNotCountSelfPostAsSuccess(t *testing.T
 		t.Errorf("expected status 'pending', got %q", status)
 	}
 }
+
+// TestDaemon_ProcessPR_BotReviewBodyWithTriggerSubstring_DoesNotLoop
+// is the regression-prevention pin for the PR #1671 failure: a bot
+// review body that contains the literal `/sandman review` substring
+// (in its `## Previous review progress` section, per the pr-review
+// skill's review-body format) MUST be dropped by processPR and MUST
+// NOT launch a fresh review.
+//
+// The PR has exactly one comment: the bot's review-body. The body
+// contains the trigger substring and is pre-seeded in SelfPostStore
+// (this is the path the pr-review skill wrapper takes at Step 4b —
+// it records the review-body hash at posting time so the daemon's
+// IsSelfPosted check, which runs BEFORE ParseTrigger, drops the
+// body before it can match the trigger regex).
+//
+// Without the new ordering (ParseTrigger before IsSelfPosted, the
+// pre-#1702 behavior), the body would match the trigger regex and
+// the daemon would launch a self-loop review — this is the live
+// failure observed on PR #1671. With the new ordering, the body is
+// filtered as a self-post and the daemon launches zero reviews.
+//
+// Issue #1703 acceptance criterion #1.
+func TestDaemon_ProcessPR_BotReviewBodyWithTriggerSubstring_DoesNotLoop(t *testing.T) {
+	now := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
+	reviewBody := "## Previous review progress\n/sandman review\n\nLGTM, no blockers."
+
+	gh := &fakeGH{
+		prs: []github.PR{{Number: 1, State: "open"}},
+		comments: map[int][]github.PRComment{
+			1: {
+				{ID: "review", Body: reviewBody, CreatedAt: now},
+			},
+		},
+	}
+	runner := &capturedRequest{}
+	d, _, dir := newDaemonForTest(t, gh, runner, &config.Config{
+		DefaultReviewAgent: "opencode",
+		DefaultReviewModel: "opencode/foo",
+	})
+	d.Clock = func() time.Time { return now.Add(-1 * time.Minute) }
+
+	// Pre-seed the SelfPostStore with the bot's review-body hash.
+	// This is the path the pr-review skill wrapper takes at Step
+	// 4b: it hashes the review body and appends it to the store
+	// at posting time.
+	spPath := filepath.Join(dir, "reviews", "self-posted.json")
+	sp, err := NewSelfPostStore(spPath)
+	if err != nil {
+		t.Fatalf("NewSelfPostStore: %v", err)
+	}
+	if err := sp.Record(1, reviewBody, ""); err != nil {
+		t.Fatalf("seed Record: %v", err)
+	}
+	d.selfPosts = sp
+
+	tickAndWait(t, d, context.Background())
+
+	if runner.calls != 0 {
+		t.Errorf("MUST drop a bot review-body containing the trigger substring (PR #1671 / issue #1703), got %d batch runs", runner.calls)
+	}
+}
+
+// TestDaemon_ProcessPR_BotReviewBodyWithoutSelfPostHash_StillNotLoop_AfterDefensiveRecord
+// pins the cross-tick defensive-record path: even when the bot's
+// review-body hash is NOT pre-seeded in SelfPostStore (the skill
+// wrapper's Step 4b was bypassed or the bot was restarted before
+// posting), the daemon's promotePendingComment records the body
+// defensively on a tick, and a subsequent tick drops the body
+// because its hash is now in the store.
+//
+// Sequence:
+//  1. PR has one comment: the bot's review-body (with the trigger
+//     substring). SelfPostStore is empty.
+//  2. Test calls d.promotePendingComment to defensively record the
+//     body (this is the "previous tick" observation path).
+//  3. tickAndWait runs processPR. Because the body hash is now in
+//     the store, IsSelfPosted drops it before ParseTrigger can
+//     match the trigger substring.
+//  4. Assert: zero batch runs.
+//
+// Issue #1703 acceptance criterion #2.
+func TestDaemon_ProcessPR_BotReviewBodyWithoutSelfPostHash_StillNotLoop_AfterDefensiveRecord(t *testing.T) {
+	now := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
+	reviewBody := "## Previous review progress\n/sandman review\n\nLGTM, no blockers."
+
+	gh := &fakeGH{
+		prs: []github.PR{{Number: 1, State: "open"}},
+		comments: map[int][]github.PRComment{
+			1: {
+				{ID: "review", Body: reviewBody, CreatedAt: now},
+			},
+		},
+	}
+	runner := &capturedRequest{}
+	d, _, dir := newDaemonForTest(t, gh, runner, &config.Config{
+		DefaultReviewAgent: "opencode",
+		DefaultReviewModel: "opencode/foo",
+	})
+	d.Clock = func() time.Time { return now.Add(-1 * time.Minute) }
+
+	// SelfPostStore starts empty. The bot's body is NOT pre-seeded
+	// (simulating the wrapper-bypass failure mode).
+	spPath := filepath.Join(dir, "reviews", "self-posted.json")
+	sp, err := NewSelfPostStore(spPath)
+	if err != nil {
+		t.Fatalf("NewSelfPostStore: %v", err)
+	}
+	d.selfPosts = sp
+
+	// Drive the defensive observation directly: a previous tick's
+	// promotePendingComment would have observed this comment and
+	// recorded it. We call promotePendingComment with since=now-30s
+	// so the review comment (created at `now`) is observed after
+	// `since` and the Record fires inside promotePendingComment.
+	if _, err := d.promotePendingComment(context.Background(), 1, "trigger", now.Add(-30*time.Second)); err != nil {
+		t.Fatalf("promotePendingComment (defensive record): %v", err)
+	}
+	if !d.selfPosts.IsSelfPosted(reviewBody) {
+		t.Fatal("expected reviewBody to be recorded as self-post after defensive observation")
+	}
+
+	// Now run a tick. processPR should drop the body because
+	// IsSelfPosted returns true for it (the hash is in the store
+	// after the defensive record above).
+	tickAndWait(t, d, context.Background())
+
+	if runner.calls != 0 {
+		t.Errorf("MUST drop a bot review-body whose hash was defensively recorded on a prior tick (issue #1703), got %d batch runs", runner.calls)
+	}
+}
+
+// TestDaemon_ProcessPR_ImplementorTriggerStillLaunches_WhenTriggerHashNotRecorded
+// pins the happy path after the trigger-hash recording is removed
+// (issue #1700): an implementor's `/sandman review` trigger whose
+// body is NOT in SelfPostStore (because the skill no longer records
+// the trigger command) still launches a review. This is the contract
+// that the new "IsSelfPosted first" ordering in processPR does not
+// regress the implementor's review-request flow.
+//
+// The test pre-seeds the SelfPostStore with NOTHING (so the trigger
+// body is not in the store) and the only PR comment is a fresh
+// implementor trigger. The daemon must launch one batch run.
+//
+// Issue #1703 acceptance criterion #3.
+func TestDaemon_ProcessPR_ImplementorTriggerStillLaunches_WhenTriggerHashNotRecorded(t *testing.T) {
+	now := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
+	triggerBody := "/sandman review focus on tests"
+
+	gh := &fakeGH{
+		prs: []github.PR{{Number: 1, State: "open"}},
+		comments: map[int][]github.PRComment{
+			1: {
+				{ID: "trigger", Body: triggerBody, CreatedAt: now},
+			},
+		},
+	}
+	runner := &capturedRequest{}
+	d, _, _ := newDaemonForTest(t, gh, runner, &config.Config{
+		DefaultReviewAgent: "opencode",
+		DefaultReviewModel: "opencode/foo",
+	})
+	d.Clock = func() time.Time { return now.Add(-1 * time.Minute) }
+
+	// SelfPostStore is empty: the implementor's trigger is NOT
+	// recorded (per #1700 trigger-hash removal). The daemon must
+	// still launch a review.
+	tickAndWait(t, d, context.Background())
+
+	if runner.calls != 1 {
+		t.Fatalf("MUST launch a review for an implementor trigger whose hash is not recorded (issue #1703), got %d batch runs", runner.calls)
+	}
+}
