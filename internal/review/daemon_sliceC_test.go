@@ -27,7 +27,6 @@ func waitIdle(t *testing.T, d *Daemon) {
 // The trigger survives in ListPRComments and is processed on the
 // next tick once a slot frees.
 func TestDaemon_PerPRSlotTable_AllowsCrossPRConcurrency(t *testing.T) {
-	skipIfNotAsyncLaunchSupported(t)
 	now := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
 	afterReview := now.Add(1 * time.Minute)
 	gh := &fakeGH{
@@ -161,7 +160,6 @@ func TestDaemon_PerPRSlotTable_AllowsCrossPRConcurrency(t *testing.T) {
 // table does not leak: after all in-flight reviews complete, an
 // idle daemon reports no slots held.
 func TestDaemon_PerPRSlotTable_ReleasesOnCompletion(t *testing.T) {
-	skipIfNotAsyncLaunchSupported(t)
 	now := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
 	afterReview := now.Add(1 * time.Minute)
 	gh := &fakeGH{
@@ -237,7 +235,6 @@ func TestDaemon_PerPRSlotTable_ReleasesOnCompletion(t *testing.T) {
 // released; the next tick must invoke RunBatch for the new commentID
 // within a bounded wait — the trigger is not silently dropped.
 func TestDaemon_PerPRSlotTable_NewTriggerMidFlight_IsNotDropped(t *testing.T) {
-	skipIfNotAsyncLaunchSupported(t)
 	now := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
 	gh := &fakeGH{
 		prs: []github.PR{{Number: 7, State: "open"}},
@@ -385,7 +382,6 @@ func TestDaemon_PerPRSlotTable_NewTriggerMidFlight_IsNotDropped(t *testing.T) {
 // The seen-cache stays non-terminal so the trigger is naturally
 // picked up on the next tick.
 func TestDaemon_PerPRSlotTable_HeldSlotReturnsSilently(t *testing.T) {
-	skipIfNotAsyncLaunchSupported(t)
 	now := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
 	gh := &fakeGH{
 		prs: []github.PR{{Number: 9, State: "open"}},

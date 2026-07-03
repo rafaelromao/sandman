@@ -177,7 +177,6 @@ func TestDaemon_SeenCacheHydratedAtConstruction(t *testing.T) {
 // short-circuited so Load + ReadReviewState counters stay at zero
 // regardless of N (and timings stay within a generous guardrail).
 func TestDaemon_ProcessPRScalesConstantlyWithPriorBatches(t *testing.T) {
-	skipIfNotAsyncLaunchSupported(t)
 	const (
 		freshPR   = 99
 		triggerID = "fresh-trigger"
@@ -380,7 +379,6 @@ func TestDaemon_ReleaseForgetsCacheEntry(t *testing.T) {
 // the in-memory cache so a third tick short-circuits on cache hits
 // without re-reading the batches index or any review-state.json.
 func TestDaemon_ReviewStateStore_MarkSeenInvalidatesCacheMidProcess(t *testing.T) {
-	skipIfNotAsyncLaunchSupported(t)
 	const (
 		prNumber  = 33
 		triggerID = "trigger-mid"

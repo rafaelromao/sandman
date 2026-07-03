@@ -25,7 +25,6 @@ import (
 // launches a review on a fresh tick because the trigger body is NOT
 // in SelfPostStore — see TestDaemon_ProcessPR_StillTriggersOnNonSelfComment.
 func TestDaemon_ProcessPR_SelfPostedReviewBody_DoesNotTrigger(t *testing.T) {
-	skipIfNotAsyncLaunchSupported(t)
 	now := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
 	triggerBody := "/sandman review focus on tests"
 
@@ -67,7 +66,6 @@ func TestDaemon_ProcessPR_SelfPostedReviewBody_DoesNotTrigger(t *testing.T) {
 // path: a normal `/sandman review` comment whose body is NOT in the
 // SelfPostStore still triggers a review.
 func TestDaemon_ProcessPR_StillTriggersOnNonSelfComment(t *testing.T) {
-	skipIfNotAsyncLaunchSupported(t)
 	now := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
 	gh := &fakeGH{
 		prs: []github.PR{{Number: 1, State: "open"}},
@@ -99,7 +97,6 @@ func TestDaemon_ProcessPR_StillTriggersOnNonSelfComment(t *testing.T) {
 // self-posted and one whose body is not. The daemon processes
 // only the non-self one.
 func TestDaemon_ProcessPR_SkipsOnlySelfPostedAmongTriggers(t *testing.T) {
-	skipIfNotAsyncLaunchSupported(t)
 	now := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
 	selfBody := "/sandman review focus alpha"
 	realBody := "/sandman review focus beta"
@@ -165,7 +162,6 @@ func TestDaemon_ProcessPR_SkipsOnlySelfPostedAmongTriggers(t *testing.T) {
 // NEW ordering, IsSelfPosted runs first, drops the body, and no
 // review is launched.
 func TestDaemon_ProcessPR_RecordedReviewBody_DoesNotReTrigger(t *testing.T) {
-	skipIfNotAsyncLaunchSupported(t)
 	now := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
 	reviewBody := "## Previous review progress\n/sandman review\n\nLGTM, no blockers."
 
@@ -220,7 +216,6 @@ func TestDaemon_ProcessPR_RecordedReviewBody_DoesNotReTrigger(t *testing.T) {
 // comment after `since` settles the lazy-verify entry); neither call
 // poisons the store.
 func TestDaemon_PromotePendingComment_DoesNotRecordObservedComment(t *testing.T) {
-	skipIfNotAsyncLaunchSupported(t)
 	now := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
 	reviewBody := "## Summary\nLGTM, no blockers."
 
@@ -302,7 +297,6 @@ func TestDaemon_PromotePendingComment_DoesNotRecordObservedComment(t *testing.T)
 // body defensively; that recording is what blinded the daemon to
 // later `/sandman review` re-requests.
 func TestDaemon_PromotePendingComment_NoPoisoning_CrossTickSuccessSettlesWithoutLoop(t *testing.T) {
-	skipIfNotAsyncLaunchSupported(t)
 	now := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
 	// Post-#1709 review body: paraphrases prior requests, no literal
 	// trigger substring.
@@ -365,7 +359,6 @@ func TestDaemon_PromotePendingComment_NoPoisoning_CrossTickSuccessSettlesWithout
 // the defensive record gone (#1722), the check is gone too, and the
 // bot's own recorded body correctly settles the entry as success.
 func TestDaemon_PromotePendingComment_CountsWrapperRecordedBotBodyAsSuccess(t *testing.T) {
-	skipIfNotAsyncLaunchSupported(t)
 	now := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
 	reviewBody := "## Summary\nself-review by the bot"
 
@@ -428,7 +421,6 @@ func TestDaemon_PromotePendingComment_CountsWrapperRecordedBotBodyAsSuccess(t *t
 //
 // Issue #1703 acceptance criterion #1.
 func TestDaemon_ProcessPR_BotReviewBodyWithTriggerSubstring_DoesNotLoop(t *testing.T) {
-	skipIfNotAsyncLaunchSupported(t)
 	now := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
 	reviewBody := "## Previous review progress\n/sandman review\n\nLGTM, no blockers."
 
@@ -486,7 +478,6 @@ func TestDaemon_ProcessPR_BotReviewBodyWithTriggerSubstring_DoesNotLoop(t *testi
 // Issue #1703 acceptance criterion #2 (re-purposed for the #1722
 // source-fix model).
 func TestDaemon_ProcessPR_PostFixBotReviewBodyWithoutSubstring_DoesNotLoopWithoutRecording(t *testing.T) {
-	skipIfNotAsyncLaunchSupported(t)
 	now := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
 	// Post-#1709 body: paraphrases prior requests, no literal trigger
 	// substring.
@@ -540,7 +531,6 @@ func TestDaemon_ProcessPR_PostFixBotReviewBodyWithoutSubstring_DoesNotLoopWithou
 //
 // Issue #1703 acceptance criterion #3.
 func TestDaemon_ProcessPR_ImplementorTriggerStillLaunches_WhenTriggerHashNotRecorded(t *testing.T) {
-	skipIfNotAsyncLaunchSupported(t)
 	now := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
 	triggerBody := "/sandman review focus on tests"
 
@@ -597,7 +587,6 @@ func TestDaemon_ProcessPR_ImplementorTriggerStillLaunches_WhenTriggerHashNotReco
 //   - hashBody("/sandman review") is NOT in SelfPostStore. The store
 //     must never contain the trigger body.
 func TestDaemon_NoBlindness_TriggerReRequestAfterPendingWindow_Launches(t *testing.T) {
-	skipIfNotAsyncLaunchSupported(t)
 	now := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
 	triggerBody := "/sandman review"
 
