@@ -10,7 +10,7 @@ import (
 func skipIfNotStrandedSupported(t *testing.T) {
 	t.Helper()
 	if runtime.GOOS != "linux" {
-		t.Skip("stranded worktree detection uses git worktree semantics that vary on macOS")
+		t.Skip("stranded worktree detection uses git worktree semantics that vary on macOS; tracked by #1736")
 	}
 }
 

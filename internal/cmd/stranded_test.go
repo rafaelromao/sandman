@@ -15,7 +15,7 @@ import (
 
 func TestStrandedCmd_ListsAllStrandedWorktrees(t *testing.T) {
 	if runtime.GOOS != "linux" {
-		t.Skip("git worktree add --force behavior differs on macOS; tracked by follow-up work")
+		t.Skip("git worktree add --force behavior differs on macOS; tracked by #1736")
 	}
 	repoDir := t.TempDir()
 	initRunIntegrationRepo(t, repoDir)
@@ -63,7 +63,7 @@ func TestStrandedCmd_ListsAllStrandedWorktrees(t *testing.T) {
 
 func TestStrandedCmd_JSONOutput(t *testing.T) {
 	if runtime.GOOS != "linux" {
-		t.Skip("git worktree add --force behavior differs on macOS; tracked by follow-up work")
+		t.Skip("git worktree add --force behavior differs on macOS; tracked by #1736")
 	}
 	repoDir := t.TempDir()
 	initRunIntegrationRepo(t, repoDir)
@@ -108,7 +108,7 @@ func TestStrandedCmd_JSONOutput(t *testing.T) {
 
 func TestStrandedCmd_DefaultsWorktreeDirFromConfig(t *testing.T) {
 	if runtime.GOOS != "linux" {
-		t.Skip("git worktree add --force behavior differs on macOS; tracked by follow-up work")
+		t.Skip("git worktree add --force behavior differs on macOS; tracked by #1736")
 	}
 	repoDir := t.TempDir()
 	initRunIntegrationRepo(t, repoDir)
