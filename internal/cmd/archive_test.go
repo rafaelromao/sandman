@@ -50,7 +50,7 @@ func writeBatchDirForArchive(t *testing.T, batchDir string, runManifest batchind
 
 func TestArchiveRun_NoArgsReturnsUsageError(t *testing.T) {
 	var buf bytes.Buffer
-	cmd := NewArchiveCmd(newTestDeps())
+	cmd := NewArchiveCmd(newTestDeps(t))
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
 	cmd.SetArgs([]string{"run"})
@@ -70,7 +70,7 @@ func TestArchiveStale_NoArgsAcceptsNone(t *testing.T) {
 	t.Chdir(dir)
 
 	var buf bytes.Buffer
-	deps := newTestDeps()
+	deps := newTestDeps(t)
 	deps.EventLog = &fakeEventLog{}
 	cmd := NewArchiveCmd(deps)
 	cmd.SetOut(&buf)
@@ -89,7 +89,7 @@ func TestArchiveBatch_NonexistentBatchReturnsError(t *testing.T) {
 	writeBatchIndexForArchive(t, dir, nil)
 
 	var buf bytes.Buffer
-	cmd := NewArchiveCmd(newTestDeps())
+	cmd := NewArchiveCmd(newTestDeps(t))
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
 	cmd.SetArgs([]string{"batch", "missing-1"})
@@ -114,7 +114,7 @@ func TestArchiveRun_NonexistentRunReturnsError(t *testing.T) {
 	writeBatchIndexForArchive(t, dir, nil)
 
 	var buf bytes.Buffer
-	cmd := NewArchiveCmd(newTestDeps())
+	cmd := NewArchiveCmd(newTestDeps(t))
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
 	cmd.SetArgs([]string{"run", "missing-1"})
@@ -155,7 +155,7 @@ func TestArchiveRun_LiveRunReturnsError(t *testing.T) {
 	defer ctlSocket.Stop()
 
 	var buf bytes.Buffer
-	cmd := NewArchiveCmd(newTestDeps())
+	cmd := NewArchiveCmd(newTestDeps(t))
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
 	cmd.SetArgs([]string{"run", "live-1"})
@@ -190,7 +190,7 @@ func TestArchiveRun_DeadRunMovesDirectory(t *testing.T) {
 	})
 
 	var buf bytes.Buffer
-	cmd := NewArchiveCmd(newTestDeps())
+	cmd := NewArchiveCmd(newTestDeps(t))
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
 	cmd.SetArgs([]string{"run", "dead-1"})
@@ -276,7 +276,7 @@ func TestArchiveRun_NoSocketsInArchive(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	cmd := NewArchiveCmd(newTestDeps())
+	cmd := NewArchiveCmd(newTestDeps(t))
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
 	cmd.SetArgs([]string{"run", "socket-test"})
@@ -352,7 +352,7 @@ func TestArchiveBatch_LiveBatchReturnsError(t *testing.T) {
 	defer ctlSocket.Stop()
 
 	var buf bytes.Buffer
-	cmd := NewArchiveCmd(newTestDeps())
+	cmd := NewArchiveCmd(newTestDeps(t))
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
 	cmd.SetArgs([]string{"batch", "live-1"})
@@ -387,7 +387,7 @@ func TestArchiveBatch_DeadBatchMovesDirectory(t *testing.T) {
 	})
 
 	var buf bytes.Buffer
-	cmd := NewArchiveCmd(newTestDeps())
+	cmd := NewArchiveCmd(newTestDeps(t))
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
 	cmd.SetArgs([]string{"batch", "dead-1"})
@@ -460,7 +460,7 @@ func TestArchiveBatch_CollisionWithExistingArchiveDirReturnsError(t *testing.T) 
 	}
 
 	var buf bytes.Buffer
-	cmd := NewArchiveCmd(newTestDeps())
+	cmd := NewArchiveCmd(newTestDeps(t))
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
 	cmd.SetArgs([]string{"batch", "dead-2"})
@@ -506,7 +506,7 @@ func TestArchiveRun_CollisionWithExistingArchiveDirReturnsError(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	cmd := NewArchiveCmd(newTestDeps())
+	cmd := NewArchiveCmd(newTestDeps(t))
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
 	cmd.SetArgs([]string{"run", "dead-2"})
@@ -534,7 +534,7 @@ func TestArchiveOlderThan_NoRunsLeavesEmptyArchiveDir(t *testing.T) {
 	writeBatchIndexForArchive(t, dir, nil)
 
 	var buf bytes.Buffer
-	cmd := NewArchiveCmd(newTestDeps())
+	cmd := NewArchiveCmd(newTestDeps(t))
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
 	cmd.SetArgs([]string{"older-than", "30"})
@@ -571,7 +571,7 @@ func TestArchiveOlderThan_ArchivesOldDeadBatch(t *testing.T) {
 	})
 
 	var buf bytes.Buffer
-	cmd := NewArchiveCmd(newTestDeps())
+	cmd := NewArchiveCmd(newTestDeps(t))
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
 	cmd.SetArgs([]string{"older-than", "30"})
@@ -607,7 +607,7 @@ func TestArchiveOlderThan_SkipsYoungDeadBatch(t *testing.T) {
 	})
 
 	var buf bytes.Buffer
-	cmd := NewArchiveCmd(newTestDeps())
+	cmd := NewArchiveCmd(newTestDeps(t))
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
 	cmd.SetArgs([]string{"older-than", "30"})
@@ -648,7 +648,7 @@ func TestArchiveOlderThan_SkipsLiveBatch(t *testing.T) {
 	defer ctlSocket.Stop()
 
 	var buf bytes.Buffer
-	cmd := NewArchiveCmd(newTestDeps())
+	cmd := NewArchiveCmd(newTestDeps(t))
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
 	cmd.SetArgs([]string{"older-than", "30"})
@@ -716,7 +716,7 @@ func TestArchiveOlderThan_MixedBatchArchivesOnlyEligible(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	cmd := NewArchiveCmd(newTestDeps())
+	cmd := NewArchiveCmd(newTestDeps(t))
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
 	cmd.SetArgs([]string{"older-than", "30"})
@@ -767,7 +767,7 @@ func TestArchiveOlderThan_NonIntegerDaysReturnsError(t *testing.T) {
 	writeBatchIndexForArchive(t, dir, nil)
 
 	var buf bytes.Buffer
-	cmd := NewArchiveCmd(newTestDeps())
+	cmd := NewArchiveCmd(newTestDeps(t))
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
 	cmd.SetArgs([]string{"older-than", "abc"})
@@ -788,7 +788,7 @@ func TestArchiveOlderThan_NegativeDaysReturnsError(t *testing.T) {
 	writeBatchIndexForArchive(t, dir, nil)
 
 	var buf bytes.Buffer
-	cmd := NewArchiveCmd(newTestDeps())
+	cmd := NewArchiveCmd(newTestDeps(t))
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
 	cmd.SetArgs([]string{"older-than", "--", "-5"})
@@ -809,7 +809,7 @@ func TestArchiveOlderThan_MissingArgReturnsError(t *testing.T) {
 	writeBatchIndexForArchive(t, dir, nil)
 
 	var buf bytes.Buffer
-	cmd := NewArchiveCmd(newTestDeps())
+	cmd := NewArchiveCmd(newTestDeps(t))
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
 	cmd.SetArgs([]string{"older-than"})
@@ -837,7 +837,7 @@ func TestArchiveOlderThan_ZeroDaysArchivesAllDead(t *testing.T) {
 	})
 
 	var buf bytes.Buffer
-	cmd := NewArchiveCmd(newTestDeps())
+	cmd := NewArchiveCmd(newTestDeps(t))
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
 	cmd.SetArgs([]string{"older-than", "0"})
@@ -856,7 +856,7 @@ func TestArchiveHelpListsStaleSubcommand(t *testing.T) {
 	t.Chdir(dir)
 
 	var buf bytes.Buffer
-	cmd := NewArchiveCmd(newTestDeps())
+	cmd := NewArchiveCmd(newTestDeps(t))
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
 	cmd.SetArgs([]string{"--help"})
@@ -903,7 +903,7 @@ func TestArchiveStale_CollisionWithExistingArchivePreservesBoth(t *testing.T) {
 		{Type: "run.started", RunID: "run-42", Issue: 42, Timestamp: createdAt.Add(5 * time.Minute)},
 		{Type: "run.finished", RunID: "run-42", Issue: 42, Timestamp: createdAt.Add(10 * time.Minute), Payload: map[string]any{"status": "success"}},
 	}}
-	deps := newTestDeps()
+	deps := newTestDeps(t)
 	deps.EventLog = log
 
 	var buf bytes.Buffer
@@ -949,7 +949,7 @@ func TestArchiveStale_MixedStatusDeadBatchEmitsAbortedAndArchives(t *testing.T) 
 		{Type: "run.finished", RunID: "run-43", Issue: 43, Timestamp: createdAt.Add(10 * time.Minute), Payload: map[string]any{"status": "success"}},
 		{Type: "run.started", RunID: "run-42", Issue: 42, Timestamp: createdAt.Add(20 * time.Minute)},
 	}}
-	deps := newTestDeps()
+	deps := newTestDeps(t)
 	deps.EventLog = log
 
 	var buf bytes.Buffer
@@ -1014,7 +1014,7 @@ func TestArchiveStale_AllTerminatedDeadBatchIsArchived(t *testing.T) {
 		{Type: "run.started", RunID: "run-42", Issue: 42, Timestamp: createdAt.Add(5 * time.Minute)},
 		{Type: "run.finished", RunID: "run-42", Issue: 42, Timestamp: createdAt.Add(10 * time.Minute), Payload: map[string]any{"status": "success"}},
 	}}
-	deps := newTestDeps()
+	deps := newTestDeps(t)
 	deps.EventLog = log
 
 	var buf bytes.Buffer
@@ -1069,7 +1069,7 @@ func TestArchiveStale_LiveBatchIsNoop(t *testing.T) {
 	log := &fakeEventLog{events: []events.Event{
 		{Type: "run.started", RunID: "run-42", Issue: 42, Timestamp: createdAt.Add(5 * time.Minute)},
 	}}
-	deps := newTestDeps()
+	deps := newTestDeps(t)
 	deps.EventLog = log
 
 	var buf bytes.Buffer
@@ -1110,7 +1110,7 @@ func TestArchiveOlderThan_YoungMtimeKeepsUnmanifestedBatch(t *testing.T) {
 	})
 
 	var buf bytes.Buffer
-	cmd := NewArchiveCmd(newTestDeps())
+	cmd := NewArchiveCmd(newTestDeps(t))
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
 	cmd.SetArgs([]string{"older-than", "30"})
@@ -1145,7 +1145,7 @@ func TestArchiveOlderThan_ArchivesUnmanifestedBatchByDirMtime(t *testing.T) {
 	})
 
 	var buf bytes.Buffer
-	cmd := NewArchiveCmd(newTestDeps())
+	cmd := NewArchiveCmd(newTestDeps(t))
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
 	cmd.SetArgs([]string{"older-than", "30"})

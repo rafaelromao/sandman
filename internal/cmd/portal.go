@@ -232,38 +232,90 @@ func portalArchiveDir(repoRoot, runID string) string {
 // returns portalArchiveError values so the HTTP handler can map each
 // failure mode to a specific status code; the archiver itself is only
 // invoked on the happy path.
-func archivePortalRunHandler(repoRoot, runID string) error {
+//
+// The supplied runID may be either the batch index entry id (e.g.
+// "abcd-260618113825-42+1") or the per-row run id the portal UI sends
+// (e.g. "abcd-260618113825-43"). resolveBatchEntryForRunID resolves
+// either form to the batch index entry; the rest of the handler then
+// uses entry.ID so the archive directory name and the response payload
+// are coherent across both forms. The first return value is the
+// resolved batch entry id, surfaced in the success response so the
+// portal UI sees the canonical id even when the request body used the
+// per-row form.
+func archivePortalRunHandler(repoRoot, runID string) (string, error) {
 	layout := paths.NewLayout(&config.Config{}, repoRoot)
 
 	idx, err := batchindex.Load(layout.BatchesIndexPath)
 	if err != nil {
-		return &portalArchiveError{status: http.StatusInternalServerError, message: fmt.Sprintf("load batches index: %v", err)}
+		return "", &portalArchiveError{status: http.StatusInternalServerError, message: fmt.Sprintf("load batches index: %v", err)}
 	}
 
-	entry := idx.Resolve(runID)
+	entry := resolveBatchEntryForRunID(idx, runID)
 	if entry == nil {
-		return &portalArchiveError{status: http.StatusNotFound, message: fmt.Sprintf("batch %q not found in index", runID)}
+		return "", &portalArchiveError{status: http.StatusNotFound, message: fmt.Sprintf("batch %q not found in index", runID)}
 	}
 
 	if entry.Status != batchindex.StatusActive {
-		return &portalArchiveError{status: http.StatusConflict, message: fmt.Sprintf("batch %q is not active (status=%s)", runID, entry.Status)}
+		return entry.ID, &portalArchiveError{status: http.StatusConflict, message: fmt.Sprintf("batch %q is not active (status=%s)", entry.ID, entry.Status)}
 	}
 
 	if portalRunLivenessProbe(entry.Path) {
-		return &portalArchiveError{status: http.StatusConflict, message: fmt.Sprintf("run %q is still active; stop the daemon before archiving", runID)}
+		return entry.ID, &portalArchiveError{status: http.StatusConflict, message: fmt.Sprintf("batch %q is still active (daemon socket); stop the daemon before archiving", entry.ID)}
 	}
 
-	archiveDir := portalArchiveDir(repoRoot, runID)
+	archiveDir := portalArchiveDir(repoRoot, entry.ID)
 	if info, err := os.Stat(archiveDir); err == nil {
 		if info.IsDir() {
-			return &portalArchiveError{status: http.StatusConflict, message: fmt.Sprintf("archive %q already exists", runID)}
+			return entry.ID, &portalArchiveError{status: http.StatusConflict, message: fmt.Sprintf("archive %q already exists", entry.ID)}
 		}
 	} else if !os.IsNotExist(err) {
-		return &portalArchiveError{status: http.StatusInternalServerError, message: fmt.Sprintf("stat archive target: %v", err)}
+		return entry.ID, &portalArchiveError{status: http.StatusInternalServerError, message: fmt.Sprintf("stat archive target: %v", err)}
 	}
 
-	if err := portalRunArchiver(repoRoot, runID); err != nil {
-		return &portalArchiveError{status: http.StatusInternalServerError, message: err.Error()}
+	if err := portalRunArchiver(repoRoot, entry.ID); err != nil {
+		return entry.ID, &portalArchiveError{status: http.StatusInternalServerError, message: err.Error()}
+	}
+	return entry.ID, nil
+}
+
+// resolveBatchEntryForRunID returns the batch index entry that the
+// given run id identifies, accepting either the batch entry id (the
+// batches.json Entry.ID) or the per-row run id (the row RunID the
+// portal UI sends). It returns nil when no entry matches either form.
+//
+// The fast path is idx.Resolve(runID), which matches the batch entry
+// id directly and is the only signal for batches whose per-row run id
+// equals their entry id (auto-select, single-issue issue runs, the
+// first row of a multi-issue batch when the first subject happens to
+// match, --continue issue runs that resume the existing batch dir).
+//
+// The fallback path scans each entry's runs/<runID>/run.json on disk
+// and returns the first entry that hosts the per-row manifest. This is
+// the signal the portal UI relies on for multi-issue batches, reviews
+// (where reviewRunIDFor produces e.g. "abcd-260618113825-42-PR99"
+// while the batch entry id is "abcd-260618113825-PR42"), and
+// prompt-only runs (where req.RunID is the user-supplied string and
+// the batch entry id is "{shortid}-{ts}-{userid}").
+//
+// The helper returns the entry regardless of its Status; callers apply
+// any active/archived check separately so the 404/409/500 paths stay
+// observable per kind.
+func resolveBatchEntryForRunID(idx *batchindex.Index, runID string) *batchindex.Entry {
+	if idx == nil || runID == "" {
+		return nil
+	}
+	if entry := idx.Resolve(runID); entry != nil {
+		return entry
+	}
+	for i := range idx.Entries {
+		entry := &idx.Entries[i]
+		if entry.Path == "" {
+			continue
+		}
+		manifestPath := filepath.Join(entry.Path, "runs", runID, "run.json")
+		if _, err := os.Stat(manifestPath); err == nil {
+			return entry
+		}
 	}
 	return nil
 }
@@ -299,14 +351,14 @@ func abortPortalRun(ctx context.Context, repoRoot, runKey string, issueNumber in
 		// If the command socket isn't at the batch level, check the per-run folder.
 		if run.RunID != "" && run.BatchKey != "" {
 			perRunID := run.RunID
-			// When runID equals batchKey, runID might actually be the batchID
-			// (set when manifest.BatchId is configured). The actual run folder
-			// name is filepath.Base(runDir) in this case.
-			if run.RunID == run.BatchKey {
-				if manifest, err := daemon.ReadManifest(runDir); err == nil && manifest.BatchId != "" && manifest.BatchId == run.BatchKey {
-					perRunID = filepath.Base(runDir)
-				}
-			}
+			// Post-#1675: manifest.BatchId ALWAYS equals the per-row RunID
+			// (the orchestrator's emitted run_id) for every batch kind,
+			// not the batch dir name. The previous fallback that used
+			// `filepath.Base(runDir)` (= batchDirName) was correct only
+			// for orphan reviews where batchDirName == perRowRunID, and
+			// would have regressed issue runs where batchDirName carries
+			// the `+N` suffix. `run.RunID` is now the canonical per-row
+			// id in all cases, so use it directly.
 			perRunDir := filepath.Join(runDir, "runs", perRunID)
 			perRunSock := daemon.CommandSocketPath(perRunDir)
 			if _, statErr := os.Stat(perRunSock); statErr == nil {

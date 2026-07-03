@@ -143,9 +143,7 @@ func TestDaemon_LaunchReviewReturnsFastAndRecordsPending(t *testing.T) {
 	d.Clock = func() time.Time { return now }
 
 	start := time.Now()
-	if err := d.tick(context.Background()); err != nil {
-		t.Fatalf("tick: %v", err)
-	}
+	tickAndWait(t, d, context.Background())
 	elapsed := time.Since(start)
 	if elapsed > 5*time.Second {
 		t.Fatalf("tick took %v, expected well under 5s (no 15s retry chain)", elapsed)
@@ -215,9 +213,7 @@ func TestDaemon_NextTickPromotesPendingCommentToSuccess(t *testing.T) {
 	d.Clock = func() time.Time { return now }
 
 	// First tick: launch the review and record it as pending.
-	if err := d.tick(context.Background()); err != nil {
-		t.Fatalf("first tick: %v", err)
-	}
+	tickAndWait(t, d, context.Background())
 	if runner.calls != 1 {
 		t.Fatalf("first tick should launch exactly 1 batch, got %d", runner.calls)
 	}
@@ -274,9 +270,7 @@ func TestDaemon_NextTickRejectsPendingCommentToFailureAfterBound(t *testing.T) {
 	})
 	d.Clock = func() time.Time { return now }
 
-	if err := d.tick(context.Background()); err != nil {
-		t.Fatalf("first tick: %v", err)
-	}
+	tickAndWait(t, d, context.Background())
 	runDir := runner.last.RunDir
 
 	// Drive enough ticks to exhaust the bounded retry budget.
@@ -333,9 +327,7 @@ func TestDaemon_PendingCommentIsNotRelaunchedMidCycle(t *testing.T) {
 	d.Clock = func() time.Time { return now }
 
 	// First tick: launch + record pending.
-	if err := d.tick(context.Background()); err != nil {
-		t.Fatalf("first tick: %v", err)
-	}
+	tickAndWait(t, d, context.Background())
 	if runner.calls != 1 {
 		t.Fatalf("first tick should launch exactly 1 batch, got %d", runner.calls)
 	}
@@ -380,9 +372,7 @@ func TestDaemon_NextTickRejectsPendingCommentTwiceNoOp(t *testing.T) {
 	})
 	d.Clock = func() time.Time { return now }
 
-	if err := d.tick(context.Background()); err != nil {
-		t.Fatalf("first tick: %v", err)
-	}
+	tickAndWait(t, d, context.Background())
 	for i := 0; i < pendingMaxCycles+2; i++ {
 		if err := d.tick(context.Background()); err != nil {
 			t.Fatalf("tick: %v", err)
@@ -442,9 +432,7 @@ func TestDaemon_LaunchReviewReturnsFastOnRunBatchError(t *testing.T) {
 	d.Clock = func() time.Time { return now }
 
 	start := time.Now()
-	if err := d.tick(context.Background()); err != nil {
-		t.Fatalf("tick: %v", err)
-	}
+	tickAndWait(t, d, context.Background())
 	elapsed := time.Since(start)
 	if elapsed > 5*time.Second {
 		t.Errorf("tick took %v on RunBatch error, expected under 5s", elapsed)

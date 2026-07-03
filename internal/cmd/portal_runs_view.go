@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net"
@@ -188,6 +189,22 @@ func batchKeyForActive(active portalActiveRun) string {
 	base := filepath.Base(active.Dir)
 	if base != "" && base != "." && base != "/" {
 		return base
+	}
+	return "active-" + active.RunID
+}
+
+func activeKeyForActive(active portalActiveRun) string {
+	if active.Key != "" {
+		return active.Key
+	}
+	if active.BatchID != "" {
+		return active.BatchID
+	}
+	if !strings.HasSuffix(active.Dir, "/") {
+		base := filepath.Base(active.Dir)
+		if base != "" && base != "." && base != "/" {
+			return base
+		}
 	}
 	return "active-" + active.RunID
 }
@@ -929,8 +946,8 @@ func (v *portalRunsView) discoverActiveRuns(repoRoot string, eventsByRun map[str
 		if len(issueNumbers) > 0 {
 			issueNumber = issueNumbers[0]
 		}
-		active = append(active, portalActiveRun{
-			Key:          instance.Name,
+		entry := portalActiveRun{
+			Key:          runID,
 			Dir:          runDir,
 			SocketPath:   instance.SocketPath,
 			IssueNumber:  issueNumber,
@@ -940,7 +957,9 @@ func (v *portalRunsView) discoverActiveRuns(repoRoot string, eventsByRun map[str
 			RunID:        runID,
 			StartedAt:    startedAt,
 			ModTime:      info.ModTime(),
-		})
+		}
+		entry.Key = activeKeyForActive(entry)
+		active = append(active, entry)
 	}
 	return active, nil
 }
@@ -1131,7 +1150,7 @@ func (v *portalRunsView) stateStartsInBatch(timestamp, batchStart time.Time) boo
 func (v *portalRunsView) runFromActiveBatchIssue(repoRoot string, active portalActiveRun, issueNumber int, state *events.RunState, blocked *events.Event, queued *events.Event, liveOutput string, eventsByRun map[string][]portalEvent, deadBatches []daemon.DeadBatch) portalRun {
 	issueLabel := fmt.Sprintf("#%d", issueNumber)
 	run := portalRun{
-		Key:         fmt.Sprintf("%s-issue-%d", active.Key, issueNumber),
+		Key:         fmt.Sprintf("%s-issue-%d", activeKeyForActive(active), issueNumber),
 		Kind:        "active",
 		Status:      "queued",
 		IssueLabel:  issueLabel,
@@ -1172,9 +1191,10 @@ func (v *portalRunsView) runFromActiveBatchIssue(repoRoot string, active portalA
 			run.Log = v.portalBlockedMessage(state.Finished.Payload)
 		case "aborted":
 		default:
-			run.Log = v.resolveRunLog(run.LogPath, state, &active)
+run.Log = v.resolveRunLog(func() string { return v.readPortalTextFile(run.LogPath) }, *state, &active)
 			if strings.TrimSpace(run.Log) == "" {
 				run.Log = "No log file yet."
+			}
 			}
 		}
 		return run
@@ -1328,7 +1348,7 @@ func (v *portalRunsView) runFromActiveMatch(repoRoot string, match portalRunMatc
 		status = "auto-selecting"
 	}
 	run := portalRun{
-		Key:         runID,
+		Key:         activeKeyForActive(match.instance),
 		RunID:       runID,
 		Kind:        "active",
 		Status:      status,
@@ -1409,7 +1429,7 @@ func (v *portalRunsView) runFromState(repoRoot string, runState events.RunState,
 	}
 
 	logPath := v.portalLogPathForRun(repoRoot, locator)
-	logContent := v.resolveRunLog(logPath, &runState, active)
+logContent := v.resolveRunLog(func() string { return v.readPortalTextFile(logPath) }, runState, active)
 
 	batchKey := ""
 	if active != nil {
@@ -1655,6 +1675,52 @@ func (v *portalRunsView) filterPortalLogByRunID(text string, runID string) strin
 		}
 	}
 	return strings.TrimSpace(strings.Join(filtered, "\n"))
+}
+
+// resolveRunLog is the single source of truth for the portal's saved-vs-
+// live log decision. The Log field on a portalRun is rendered by either
+// the saved run file (.sandman/batches/<batch-id>/runs/<run-id>/run.log,
+// read via readPortalTextFile) or by the live attach stream coming off
+// the still-connectable batch.sock (read via readPortalSocketOutput).
+//
+// Policy:
+//   - No active batch matched (active == nil) → saved log.
+//   - Active row (runState is non-terminal, i.e. IsActive() true) →
+//     live wins if non-empty, else saved.
+//   - Terminal review or auto-select row (active != nil AND the state
+//     carries review/auto-select) → live wins if non-empty, else saved.
+//     These rows stay kind=active because their daemon is still
+//     serving them (see the post-helper promotion at lines 1490-1492).
+//   - Terminal kind=completed row (any other terminal state with an
+//     active batch) → saved log wins, even when the batch daemon
+//     socket is still connectable. The Saved Run Log is the
+//     authoritative record of a finished AgentRun per CONTEXT.md; the
+//     socket may now be broadcasting a different run's content
+//     (issue #1637).
+//
+// `loadSaved` lazily reads the per-run run.log; the helper only invokes
+// it on the saved-wins path so the live-wins branch avoids a needless
+// filesystem read on every poll. `runState` carries the event-fold
+// information needed to know whether the row is terminal and whether
+// it is a review/auto-select. `active` is nil for the historical /
+// event-only path, non-nil when an active batch is matched.
+func (v *portalRunsView) resolveRunLog(loadSaved func() string, runState events.RunState, active *portalActiveRun) string {
+	if active == nil {
+		return loadSaved()
+	}
+	if runState.IsActive() {
+		if live := strings.TrimSpace(stripLogLabels(active.LiveOutput)); live != "" {
+			return live
+		}
+		return loadSaved()
+	}
+	if runState.IsReview() || runState.IsAutoSelect() {
+		if live := strings.TrimSpace(stripLogLabels(active.LiveOutput)); live != "" {
+			return live
+		}
+		return loadSaved()
+	}
+	return loadSaved()
 }
 
 func (v *portalRunsView) portalBlockedMessage(payload map[string]any) string {
@@ -1919,6 +1985,62 @@ func (v *portalRunsView) findBatchDirForRun(repoRoot, runID string, deadBatches 
 	return "", nil
 }
 
+// portalBatchEntryNotFoundError signals that no batch index entry
+// resolves the supplied run id via either the fast path (idx.Resolve)
+// or the on-disk fallback (per-row manifest batchId). Callers map it
+// to HTTP 404 batch not found via errors.As.
+type portalBatchEntryNotFoundError struct {
+	runID string
+}
+
+func (e *portalBatchEntryNotFoundError) Error() string {
+	return fmt.Sprintf("no batch entry resolves run %q", e.runID)
+}
+
+// resolveBatchEntryForRunID returns the batch index entry that the
+// given per-row run id identifies. The fast path is idx.Resolve, which
+// matches the canonical batch entry id directly. The fallback path
+// reads each entry's runs/<runID>/run.json, parses the per-row
+// RunManifest's BatchID field, and re-resolves that id in the index.
+// This generalises the per-row pattern implemented for reviews in
+// internal/review/daemon.go readReviewRowID across every batch kind.
+//
+// On neither-path-resolves, the helper returns a typed
+// *portalBatchEntryNotFoundError so callers can errors.As-match it
+// and map to http.StatusNotFound. The returned entry has Path
+// populated on either success path so downstream log path resolution
+// and archive moves work without a second index lookup.
+func (v *portalRunsView) resolveBatchEntryForRunID(idx *batchindex.Index, runID string) (*batchindex.Entry, error) {
+	if idx == nil || runID == "" {
+		return nil, &portalBatchEntryNotFoundError{runID: runID}
+	}
+	if entry := idx.Resolve(runID); entry != nil {
+		return entry, nil
+	}
+	for i := range idx.Entries {
+		entry := &idx.Entries[i]
+		if entry.Path == "" {
+			continue
+		}
+		manifestPath := filepath.Join(entry.Path, "runs", runID, "run.json")
+		data, err := os.ReadFile(manifestPath)
+		if err != nil {
+			continue
+		}
+		var manifest batchindex.RunManifest
+		if err := json.Unmarshal(data, &manifest); err != nil {
+			continue
+		}
+		if manifest.BatchID == "" {
+			continue
+		}
+		if resolved := idx.Resolve(manifest.BatchID); resolved != nil {
+			return resolved, nil
+		}
+	}
+	return nil, &portalBatchEntryNotFoundError{runID: runID}
+}
+
 func (v *portalRunsView) runDirExists(repoRoot string, locator runLocator) bool {
 	if locator.runID == "" {
 		return false
@@ -1962,24 +2084,6 @@ func (v *portalRunsView) portalLogDownloadURLForPath(repoRoot, logPath string) s
 		return ""
 	}
 	return "/api/logs?path=" + url.QueryEscape(relPath)
-}
-
-// resolveRunLog chooses what to render in the portal `Log` field for a row.
-// Live socket output wins when it strips to non-empty; otherwise the saved
-// run log file is authoritative. `runState` is part of the signature today
-// so issue #1637 slice 2 can branch on `kind` (completed rows must always
-// use the saved log) without changing this helper's contract; the prefactor
-// body does not read it yet.
-func (v *portalRunsView) resolveRunLog(savedLogPath string, runState *events.RunState, active *portalActiveRun) string {
-	// runState is reserved for #1637 slice 2; the prefactor body only
-	// needs active and savedLogPath to mirror today's behaviour.
-	_ = runState
-	if active != nil {
-		if live := strings.TrimSpace(stripLogLabels(active.LiveOutput)); live != "" {
-			return live
-		}
-	}
-	return v.readPortalTextFile(savedLogPath)
 }
 
 // readPortalTextFile returns the contents of a saved portal log file.

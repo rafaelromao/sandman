@@ -51,9 +51,7 @@ func TestDaemon_ReviewRunIDAndFolder_AreCanonical(t *testing.T) {
 	})
 	d.Clock = func() time.Time { return now }
 
-	if err := d.tick(context.Background()); err != nil {
-		t.Fatalf("tick: %v", err)
-	}
+	tickAndWait(t, d, context.Background())
 	if runner.calls != 1 {
 		t.Fatalf("expected 1 batch run, got %d", runner.calls)
 	}
@@ -153,9 +151,7 @@ func TestDaemon_ReviewRunIDAndFolder_AreCanonicalWithLinkedIssue(t *testing.T) {
 	})
 	d.Clock = func() time.Time { return now }
 
-	if err := d.tick(context.Background()); err != nil {
-		t.Fatalf("tick: %v", err)
-	}
+	tickAndWait(t, d, context.Background())
 	if runner.calls != 1 {
 		t.Fatalf("expected 1 batch run, got %d", runner.calls)
 	}

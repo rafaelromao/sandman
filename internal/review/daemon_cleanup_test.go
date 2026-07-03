@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/rafaelromao/sandman/internal/batch"
+	"github.com/rafaelromao/sandman/internal/batchindex"
 	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/github"
 )
@@ -257,6 +258,70 @@ func TestLaunchReview_CleansUpWorktreeAndBranchOnSuccess(t *testing.T) {
 	}
 	if _, err := os.Stat(capturedRunDir); err != nil {
 		t.Errorf("batch directory should still exist after launchReview, but stat returned: %v", err)
+	}
+
+	// Acceptance criterion #1675: the batches index entry id must equal
+	// the per-row RunID the orchestrator will emit for this review.
+	// daemon.BatchesIndexPath(baseDir) = <baseDir>/batches.json (not
+	// <baseDir>/.sandman/batches.json — the batches.json file lives at
+	// the sandman root, not under .sandman/).
+	idxPath := filepath.Join(worktreeDir, "..", "..", "batches.json")
+	idx, err := batchindex.Load(idxPath)
+	if err != nil {
+		t.Fatalf("load batches index from %s: %v", idxPath, err)
+	}
+	if len(idx.Entries) != 1 {
+		t.Fatalf("expected exactly 1 batch index entry, got %d (entries=%v)", len(idx.Entries), idx.Entries)
+	}
+	if got := idx.Entries[0].ID; got != perRowRunID {
+		t.Errorf("entry ID = %q, want perRowRunID %q", got, perRowRunID)
+	}
+}
+
+// TestPrepareReviewRun_LinkedIssueRegistersPerRowRunID verifies that
+// when the review daemon prepares a run for a PR with a linked issue,
+// the batches index entry id equals the per-row RunID
+// `<sid>-<ts>-<issue>-PR<pr>` (subject derived from the PR body's
+// "Fixes #N" keyword). Mirrors #1675 §review with linked issue.
+func TestPrepareReviewRun_LinkedIssueRegistersPerRowRunID(t *testing.T) {
+	now := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
+	gh := &fakeGH{
+		prs: []github.PR{{Number: 42, State: "open"}},
+		prFetch: map[int]*github.PR{
+			42: {Number: 42, Title: "T", Body: "Fixes #99"},
+		},
+	}
+	runner := batchFunc(func(ctx context.Context, req batch.Request) (*batch.Result, error) {
+		return &batch.Result{}, nil
+	})
+
+	d, _, worktreeDir := newReviewLaunchTestDaemon(t, gh, runner, newReviewLaunchTestConfig())
+	d.Clock = func() time.Time { return now }
+	branch := reviewBranchName(42, "c1")
+	stageReviewWorktree(t, worktreeDir, branch)
+
+	reviewRunFolder, perRowRunID, rs, _, prepErr := d.prepareReviewRun(42, "c1")
+	if prepErr != nil {
+		t.Fatalf("prepareReviewRun: %v", prepErr)
+	}
+	if err := d.launchReview(context.Background(), 42, "", "c1", "", "", reviewRunFolder, perRowRunID, rs); err != nil {
+		t.Fatalf("launchReview: %v", err)
+	}
+
+	// Per-row RunID must include the linked issue (subject = `99-PR42`).
+	if !strings.Contains(perRowRunID, "-99-PR42") {
+		t.Fatalf("expected perRowRunID to contain -99-PR42, got %q", perRowRunID)
+	}
+
+	idx, err := batchindex.Load(filepath.Join(worktreeDir, "..", "..", "batches.json"))
+	if err != nil {
+		t.Fatalf("load batches index: %v", err)
+	}
+	if len(idx.Entries) != 1 {
+		t.Fatalf("expected exactly 1 batch index entry, got %d (entries=%v)", len(idx.Entries), idx.Entries)
+	}
+	if got := idx.Entries[0].ID; got != perRowRunID {
+		t.Errorf("entry ID = %q, want perRowRunID %q", got, perRowRunID)
 	}
 }
 

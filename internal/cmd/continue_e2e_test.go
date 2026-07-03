@@ -26,7 +26,7 @@ func TestRun_ContinueFlag_ReplaysPromptOnlyRun_E2E(t *testing.T) {
 	}
 
 	spy := &spyBatchRunner{result: &batch.Result{}}
-	deps := newRunDeps(spy)
+	deps := newRunDeps(t, spy)
 	deps.ConfigStore = &fakeStore{config: &config.Config{
 		Agent:         "opencode",
 		WorktreeDir:   dir,
@@ -81,7 +81,7 @@ func TestRun_ContinueFlag_WarnsWhenPromptOnlyTaskMissing(t *testing.T) {
 	}
 
 	spy := &spyBatchRunner{result: &batch.Result{}}
-	deps := newRunDeps(spy)
+	deps := newRunDeps(t, spy)
 	deps.ConfigStore = &fakeStore{config: &config.Config{
 		Agent:         "opencode",
 		WorktreeDir:   dir,

@@ -37,7 +37,7 @@ func TestClean_Stale_AloneAccepted(t *testing.T) {
 }
 
 func TestClean_Stale_MutuallyExclusiveWithArchived(t *testing.T) {
-	deps := newTestDeps()
+	deps := newTestDeps(t)
 	var buf bytes.Buffer
 	cmd := NewCleanCmd(deps)
 	cmd.SetOut(&buf)
@@ -54,7 +54,7 @@ func TestClean_Stale_MutuallyExclusiveWithArchived(t *testing.T) {
 }
 
 func TestClean_Stale_MutuallyExclusiveWithDryRun(t *testing.T) {
-	deps := newTestDeps()
+	deps := newTestDeps(t)
 	var buf bytes.Buffer
 	cmd := NewCleanCmd(deps)
 	cmd.SetOut(&buf)
@@ -861,7 +861,7 @@ func TestClean_Orphaned_DryRun_NoIOAndKeepsIndex(t *testing.T) {
 }
 
 func TestClean_Orphaned_MutuallyExclusiveWithStale(t *testing.T) {
-	deps := newTestDeps()
+	deps := newTestDeps(t)
 	var buf bytes.Buffer
 	cmd := NewCleanCmd(deps)
 	cmd.SetOut(&buf)
@@ -878,7 +878,7 @@ func TestClean_Orphaned_MutuallyExclusiveWithStale(t *testing.T) {
 }
 
 func TestClean_Orphaned_MutuallyExclusiveWithArchived(t *testing.T) {
-	deps := newTestDeps()
+	deps := newTestDeps(t)
 	var buf bytes.Buffer
 	cmd := NewCleanCmd(deps)
 	cmd.SetOut(&buf)

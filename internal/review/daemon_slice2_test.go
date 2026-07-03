@@ -48,9 +48,7 @@ func TestDaemon_ReviewsDirContainsOnlySocketAndPrompt(t *testing.T) {
 	defer d.Stop()
 	d.Clock = func() time.Time { return now }
 
-	if err := d.tick(context.Background()); err != nil {
-		t.Fatalf("tick: %v", err)
-	}
+	tickAndWait(t, d, context.Background())
 	if runner.calls != 1 {
 		t.Fatalf("expected 1 batch run, got %d", runner.calls)
 	}
@@ -102,9 +100,7 @@ func TestDaemon_ProcessPRWritesReviewStateToRunFolder(t *testing.T) {
 	})
 	d.Clock = func() time.Time { return now }
 
-	if err := d.tick(context.Background()); err != nil {
-		t.Fatalf("tick: %v", err)
-	}
+	tickAndWait(t, d, context.Background())
 	if runner.calls != 1 {
 		t.Fatalf("expected 1 batch run, got %d", runner.calls)
 	}
@@ -197,9 +193,7 @@ func TestDaemon_SharedReviewPromptFileExists(t *testing.T) {
 	})
 	d.Clock = func() time.Time { return now }
 
-	if err := d.tick(context.Background()); err != nil {
-		t.Fatalf("tick: %v", err)
-	}
+	tickAndWait(t, d, context.Background())
 
 	promptPath := filepath.Join(d.BaseDir, "reviews", "review-prompt.md")
 	data, err := os.ReadFile(promptPath)
@@ -337,6 +331,12 @@ func TestDaemon_ConcurrentTickOnlyLaunchesOnce(t *testing.T) {
 	close(runnerFinished)
 	tick2Wg.Wait()
 
+	idleCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := d.WaitForIdle(idleCtx); err != nil {
+		t.Fatalf("WaitForIdle: %v", err)
+	}
+
 	runMu.Lock()
 	calls := runCalls
 	runMu.Unlock()
@@ -376,9 +376,7 @@ func TestDaemon_FailedLaunchRetriesNextTick(t *testing.T) {
 	})
 	d.Clock = func() time.Time { return now }
 
-	if err := d.tick(context.Background()); err != nil {
-		t.Fatalf("first tick: %v", err)
-	}
+	tickAndWait(t, d, context.Background())
 
 	runMu.Lock()
 	firstCalls := runCalls
@@ -392,9 +390,7 @@ func TestDaemon_FailedLaunchRetriesNextTick(t *testing.T) {
 	runCalls = 0
 	runMu.Unlock()
 
-	if err := d.tick(context.Background()); err != nil {
-		t.Fatalf("second tick: %v", err)
-	}
+	tickAndWait(t, d, context.Background())
 
 	runMu.Lock()
 	secondCalls := runCalls

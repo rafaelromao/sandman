@@ -112,6 +112,7 @@ type Daemon struct {
 	pendingMu            sync.Mutex
 	pendingReviews       map[int][]pendingReviewEntry
 	selfPosts            *SelfPostStore
+	inFlight             sync.WaitGroup
 }
 
 // New returns a Daemon configured with the project defaults for the
@@ -234,6 +235,26 @@ func (d *Daemon) slotHeldCount() int {
 	d.slotMu.Lock()
 	defer d.slotMu.Unlock()
 	return len(d.slotTable)
+}
+
+// WaitForIdle blocks until all in-flight review goroutines have completed
+// (slotHeldCount returns 0) or ctx is cancelled. It is intended for tests
+// that need to wait for background reviews to settle after tick returns.
+// It does NOT gate on pendingReviews — a successful launch registers a
+// pending entry that is only drained by a promotion tick (separate behavior).
+func (d *Daemon) WaitForIdle(ctx context.Context) error {
+	ticker := time.NewTicker(20 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if d.slotHeldCount() == 0 {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+		}
+	}
 }
 
 // IsTerminalSeen reports whether the daemon's seen cache currently
@@ -625,6 +646,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 		return err
 	}
 	defer d.Stop()
+	defer d.inFlight.Wait()
 
 	if d.Config != nil {
 		effectiveAgent := d.effectiveAgent()
@@ -742,23 +764,21 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) error {
 	}
 	var triggers []unseenTrigger
 	for _, comment := range comments {
-		// Self-post filter (issue #1648): a comment whose body
-		// matches a hash the bot has previously posted is not a
-		// trigger. Both the implementor agent's `/sandman review`
-		// post and the reviewer agent's actual review can fall
-		// through this filter, breaking the bot's own review
-		// loop. We deliberately do not consult GitHub auth
-		// because both agents share the host user's `gh`
-		// credentials.
-		if d.selfPosts != nil && d.selfPosts.IsSelfPosted(comment.Body) {
-			d.logf("PR #%d: comment %s is a self-post, skipping trigger scan", prNumber, comment.ID)
-			continue
-		}
 		focus, ok := ParseTrigger(comment.Body)
-		if !ok {
+		if ok {
+			triggers = append(triggers, unseenTrigger{comment: comment, focus: focus})
 			continue
 		}
-		triggers = append(triggers, unseenTrigger{comment: comment, focus: focus})
+		// Self-post filter (issue #1648): a non-trigger comment
+		// whose body matches a hash the bot has previously posted
+		// is the bot's own review, not a human reviewer's reply.
+		// The filter applies ONLY to non-trigger comments so a
+		// self-posted /sandman review command is still detected as
+		// a trigger (issue #1682).
+		if d.selfPosts != nil && d.selfPosts.IsSelfPosted(comment.Body) {
+			d.logf("PR #%d: comment %s is a self-post (non-trigger), skipping", prNumber, comment.ID)
+			continue
+		}
 	}
 	if len(triggers) == 0 {
 		return nil
@@ -827,17 +847,18 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) error {
 	if !d.acquirePRSlot(prNumber) {
 		return nil
 	}
-	defer d.releasePRSlot(prNumber)
 
 	reviewRunFolder, perRowRunID, rs, state, prepErr := d.prepareReviewRun(prNumber, comment.ID)
 	if prepErr != nil {
 		d.logf("prepare review run for PR #%d comment %s: %v", prNumber, comment.ID, prepErr)
+		d.releasePRSlot(prNumber)
 		return nil
 	}
 
 	if !state.TryClaim(comment.ID) {
 		d.logf("comment %s already claimed or terminal-seen, skipping", comment.ID)
 		_ = rs.Close()
+		d.releasePRSlot(prNumber)
 		return nil
 	}
 
@@ -850,13 +871,14 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) error {
 		d.logf("add reaction to PR #%d: %v", prNumber, prErr)
 	}
 
-	launchErr := d.launchReview(ctx, prNumber, focus, comment.ID, commentReactionID, prReactionID, reviewRunFolder, perRowRunID, rs)
-	if launchErr != nil {
-		d.logf("launch review for PR #%d comment %s: %v", prNumber, comment.ID, launchErr)
-	}
-
+	// persisted must be captured before any MarkSeen call so it
+	// reflects whether the state file pre-existed the launch path.
 	statePath := d.ReviewStatePath(reviewRunFolder)
 	persisted, _ := os.Stat(statePath)
+
+	// Superseded marking is independent of RunBatch and stays
+	// synchronous so the goroutine and the sync preamble never
+	// touch the ReviewStateStore concurrently.
 	for _, t := range unprocessed {
 		if t.comment.ID == comment.ID {
 			continue
@@ -870,23 +892,38 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) error {
 			d.logf("skipping stale trigger comment %s (newer %s exists)", t.comment.ID, comment.ID)
 		}
 	}
-	if launchErr == nil {
-		// Lazy verify (issue #1482 slice D): record the trigger as
-		// pending so the next tick can promote it to success/failure.
-		// The state handle here is the same one used above for the
-		// superseded writes, so all writes land in the same file.
-		if err := state.MarkSeen(comment.ID, "pending"); err != nil {
-			d.logf("mark comment %s pending: %v", comment.ID, err)
+
+	// Launch the review asynchronously so tick returns immediately.
+	// The slot is held by the goroutine and released after MarkSeen
+	// persists terminal-seen state on disk — this lets the slot pool
+	// fill across ticks as ADR-0034 §Per-PR slot table intended.
+	d.inFlight.Add(1)
+	go func() {
+		defer d.inFlight.Done()
+		defer d.releasePRSlot(prNumber)
+
+		launchErr := d.launchReview(ctx, prNumber, focus, comment.ID, commentReactionID, prReactionID, reviewRunFolder, perRowRunID, rs)
+		if launchErr != nil {
+			d.logf("launch review for PR #%d comment %s: %v", prNumber, comment.ID, launchErr)
 		}
-		d.registerPendingReview(prNumber, comment.ID, d.now(), statePath, state)
-	} else {
-		if persisted == nil {
-			state.Release(comment.ID)
+
+		if launchErr == nil {
+			// Lazy verify (issue #1482 slice D): record the trigger as
+			// pending so the next tick can promote it to success/failure.
+			if err := state.MarkSeen(comment.ID, "pending"); err != nil {
+				d.logf("mark comment %s pending: %v", comment.ID, err)
+			}
+			d.registerPendingReview(prNumber, comment.ID, d.now(), statePath, state)
+		} else {
+			if persisted == nil {
+				state.Release(comment.ID)
+			}
+			if err := state.MarkSeen(comment.ID, "failure"); err != nil {
+				d.logf("mark comment %s failure: %v", comment.ID, err)
+			}
 		}
-		if err := state.MarkSeen(comment.ID, "failure"); err != nil {
-			d.logf("mark comment %s failure: %v", comment.ID, err)
-		}
-	}
+	}()
+
 	return nil
 }
 
@@ -949,7 +986,11 @@ func (d *Daemon) prepareReviewRun(prNumber int, commentID string) (string, strin
 	perRowRunID := reviewRunIDFor(prNumber, linkedIssue, ts, shortid)
 
 	rs := daemon.NewRunSession(d.BaseDir, batchDirName)
-	manifest := daemon.BatchManifest{BatchId: batchDirName, CreatedAt: time.Now(), RunKind: "review", Issues: []int{}, PR: &prNumber}
+	// Index entry id MUST equal the per-row RunID the orchestrator will emit
+	// for this review (see #1675). batchDirName is the ADR-0030 batch-level
+	// dir name `<sid>-<ts>-PR<pr>`, which equals perRowRunID for orphan
+	// reviews but NOT for reviews with a linked issue (`<sid>-<ts>-<issue>-PR<pr>`).
+	manifest := daemon.BatchManifest{BatchId: perRowRunID, CreatedAt: time.Now(), RunKind: "review", Issues: []int{}, PR: &prNumber}
 	if err := rs.Prepare(manifest); err != nil {
 		_ = rs.Close()
 		return "", "", nil, nil, fmt.Errorf("prepare review run session: %w", err)
