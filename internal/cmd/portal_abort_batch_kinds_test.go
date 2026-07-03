@@ -48,14 +48,14 @@ func (s *abortSpy) Snapshot() []int {
 // socket: it accepts one connection, decodes the JSON abort request,
 // forwards it to the spy, and writes back daemon.CommandResponse{ok}.
 // Closing done signals the goroutine completed a round trip. The
-// returned listener is registered for cleanup.
-func startAbortCommandServer(t *testing.T, sockPath string, spy *abortSpy) net.Listener {
+// listener is registered for cleanup via t.Cleanup; the test does
+// not need to close it.
+func startAbortCommandServer(t *testing.T, sockPath string, spy *abortSpy) {
 	t.Helper()
 	ln, err := net.Listen("unix", sockPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = ln.Close() })
 	done := make(chan struct{}, 1)
 	go func() {
 		conn, err := ln.Accept()
@@ -78,12 +78,12 @@ func startAbortCommandServer(t *testing.T, sockPath string, spy *abortSpy) net.L
 		}
 	}()
 	t.Cleanup(func() {
+		_ = ln.Close()
 		select {
 		case <-done:
 		case <-time.After(2 * time.Second):
 		}
 	})
-	return ln
 }
 
 // stubPortalPeerPIDForAbort replaces portalPeerPID with a stub that
@@ -108,6 +108,10 @@ func stubPortalPeerPIDForAbort(t *testing.T, expectedSock string) {
 // a batch.sock listener, a per-run run.sock listener, the batch
 // manifest, the per-row run.json, and a run.started event. It returns
 // the repoRoot and the per-row RunID the portal row is keyed by.
+//
+// The repoRoot is created under /tmp with a short prefix rather than
+// t.TempDir() because t.TempDir's full path can push the per-run
+// socket path past the 108-byte Unix sun_path limit.
 func portalAbortBatchKindsFixture(t *testing.T, opts portalAbortBatchKindsOpts) (repoRoot, perRowID string) {
 	t.Helper()
 	shortRoot, err := os.MkdirTemp("/tmp", "sm-abk-")
@@ -264,7 +268,7 @@ func TestPortal_AbortEndpoint_SingleIssueRunRow_ResolvesPerRunSocket(t *testing.
 
 	perRunSock := filepath.Join(repoRoot, ".sandman", "batches", batchKey, "runs", perRowID, "run.sock")
 	spy := &abortSpy{}
-	_ = startAbortCommandServer(t, perRunSock, spy)
+	startAbortCommandServer(t, perRunSock, spy)
 	stubPortalPeerPIDForAbort(t, perRunSock)
 
 	prevStale := portalStaleCleaner
@@ -272,7 +276,6 @@ func TestPortal_AbortEndpoint_SingleIssueRunRow_ResolvesPerRunSocket(t *testing.
 	t.Cleanup(func() { portalStaleCleaner = prevStale })
 
 	server := startPortalHTTPServer(t, newPortalHandler(repoRoot))
-	defer server.Close()
 
 	req, err := http.NewRequest(http.MethodPost, server.URL+"/api/runs/abort", strings.NewReader(`{"runKey":"`+perRowID+`","issue":42}`))
 	if err != nil {
@@ -330,7 +333,7 @@ func TestPortal_AbortEndpoint_ContinueReviewRow_ResolvesPerRunSocket(t *testing.
 
 	perRunSock := filepath.Join(repoRoot, ".sandman", "batches", batchKey, "runs", perRowID, "run.sock")
 	spy := &abortSpy{}
-	_ = startAbortCommandServer(t, perRunSock, spy)
+	startAbortCommandServer(t, perRunSock, spy)
 	stubPortalPeerPIDForAbort(t, perRunSock)
 
 	prevStale := portalStaleCleaner
@@ -338,7 +341,6 @@ func TestPortal_AbortEndpoint_ContinueReviewRow_ResolvesPerRunSocket(t *testing.
 	t.Cleanup(func() { portalStaleCleaner = prevStale })
 
 	server := startPortalHTTPServer(t, newPortalHandler(repoRoot))
-	defer server.Close()
 
 	req, err := http.NewRequest(http.MethodPost, server.URL+"/api/runs/abort", strings.NewReader(`{"runKey":"`+perRowID+`","issue":42}`))
 	if err != nil {
@@ -403,7 +405,7 @@ func TestPortal_AbortEndpoint_ContinueIssueRunRow_ResolvesPerRunSocket(t *testin
 
 	perRunSock := filepath.Join(repoRoot, ".sandman", "batches", batchKey, "runs", batchKey, "run.sock")
 	spy := &abortSpy{}
-	_ = startAbortCommandServer(t, perRunSock, spy)
+	startAbortCommandServer(t, perRunSock, spy)
 	stubPortalPeerPIDForAbort(t, perRunSock)
 
 	prevStale := portalStaleCleaner
@@ -411,7 +413,6 @@ func TestPortal_AbortEndpoint_ContinueIssueRunRow_ResolvesPerRunSocket(t *testin
 	t.Cleanup(func() { portalStaleCleaner = prevStale })
 
 	server := startPortalHTTPServer(t, newPortalHandler(repoRoot))
-	defer server.Close()
 
 	req, err := http.NewRequest(http.MethodPost, server.URL+"/api/runs/abort", strings.NewReader(`{"runKey":"`+perRowID+`","issue":42}`))
 	if err != nil {
@@ -437,16 +438,16 @@ func TestPortal_AbortEndpoint_ContinueIssueRunRow_ResolvesPerRunSocket(t *testin
 	}
 }
 
-// TestPortal_AbortEndpoint_OrphanReviewRow_ResolvesPerRunSocket
-// covers an orphan review row (PR with no linked issue): the
-// per-row id is `PR<n>` and equals the batch entry id, so the abort
-// handler takes the `runID == batchKey` branch (portal.go:357). The
-// batch manifest has `RunKind: review` and `PR: <n>` but no
-// `Issues`; the row's `IssueNumber` is 0. The HTTP handler rejects
-// `Issue <= 0` (portal_handler.go:152), so this test calls
-// `abortPortalRun` directly with `issueNumber: 0` and asserts the
-// spy receives `AbortIssue(0)`.
-func TestPortal_AbortEndpoint_OrphanReviewRow_ResolvesPerRunSocket(t *testing.T) {
+// TestAbortPortalRun_OrphanReviewRow_ResolvesPerRunSocket covers an
+// orphan review row (PR with no linked issue): the per-row id is
+// `PR<n>` and equals the batch entry id, so the abort handler takes
+// the `runID == batchKey` branch (portal.go:357). The batch manifest
+// has `RunKind: review` and `PR: <n>` but no `Issues`; the row's
+// `IssueNumber` is 0. The HTTP handler rejects `Issue <= 0`
+// (portal_handler.go:152), so this test calls `abortPortalRun`
+// directly with `issueNumber: 0` and asserts the spy receives
+// `AbortIssue(0)`.
+func TestAbortPortalRun_OrphanReviewRow_ResolvesPerRunSocket(t *testing.T) {
 	if !portalAbortSupported() {
 		t.Skip("abort unsupported on this platform")
 	}
@@ -478,7 +479,7 @@ func TestPortal_AbortEndpoint_OrphanReviewRow_ResolvesPerRunSocket(t *testing.T)
 
 	perRunSock := filepath.Join(repoRoot, ".sandman", "batches", batchKey, "runs", batchKey, "run.sock")
 	spy := &abortSpy{}
-	_ = startAbortCommandServer(t, perRunSock, spy)
+	startAbortCommandServer(t, perRunSock, spy)
 	stubPortalPeerPIDForAbort(t, perRunSock)
 
 	prevStale := portalStaleCleaner
