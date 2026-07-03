@@ -3137,6 +3137,48 @@ func TestScaffold_RubyPresetAllAgentsGenerateFiles(t *testing.T) {
 	}
 }
 
+func TestScaffold_JavaPresetAllAgentsGenerateFiles(t *testing.T) {
+	for agent := range config.BuiltInAgentPresets {
+		t.Run(agent, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "pom.xml"), []byte("<project><properties><java.version>21</java.version></properties></project>\n"), 0644); err != nil {
+				t.Fatalf("write pom.xml: %v", err)
+			}
+
+			s := &Scaffolder{}
+			wantJavaVersion, err := s.resolveJavaVersion(dir, "", &fakePrompter{confirm: true})
+			if err != nil {
+				t.Fatalf("resolve java version: %v", err)
+			}
+
+			if err := s.Scaffold(dir, Options{BuildTools: "java", Agent: agent}, &fakePrompter{confirm: true}); err != nil {
+				t.Fatalf("scaffold: %v", err)
+			}
+
+			configPath := filepath.Join(dir, ".sandman", "config.yaml")
+			cfg, err := config.Load(configPath)
+			if err != nil {
+				t.Fatalf("load config: %v", err)
+			}
+			if cfg.BuildTools != "java" {
+				t.Errorf("expected build tools %q, got %q", "java", cfg.BuildTools)
+			}
+
+			dockerfileData, err := os.ReadFile(filepath.Join(dir, ".sandman", "Dockerfile"))
+			if err != nil {
+				t.Fatalf("read Dockerfile: %v", err)
+			}
+			content := string(dockerfileData)
+			if !strings.Contains(content, "# sandman build-tools: java") {
+				t.Errorf("Dockerfile missing java build-tools metadata, got:\n%s", content)
+			}
+			if !strings.Contains(content, "RUN mise use -g --pin java@"+wantJavaVersion) {
+				t.Errorf("Dockerfile missing pinned java install %q, got:\n%s", wantJavaVersion, content)
+			}
+		})
+	}
+}
+
 func TestScaffold_MaterializesReviewPromptAndQualityRules(t *testing.T) {
 	dir := t.TempDir()
 	s := &Scaffolder{}
