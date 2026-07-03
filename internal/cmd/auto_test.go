@@ -7,20 +7,17 @@ import (
 	"net"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 
 	"github.com/rafaelromao/sandman/internal/batch"
 	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/github"
+	"github.com/rafaelromao/sandman/internal/testenv"
 )
 
 func TestRun_AutoFlag_EmitsAutoSelectEventsForAgentDrivenPath(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		t.Skip("test name length plus the daemon control-socket bind path exceeds macOS sun_path")
-	}
-	sandmanDir := t.TempDir()
+	sandmanDir := testenv.MkdirShort(t, "sm-auto-")
 	t.Chdir(sandmanDir)
 	if err := os.MkdirAll(".sandman", 0o755); err != nil {
 		t.Fatalf("mkdir .sandman: %v", err)
@@ -91,10 +88,7 @@ func TestRun_AutoFlag_EmitsAutoSelectEventsForAgentDrivenPath(t *testing.T) {
 }
 
 func TestRun_AutoFlag_AgentFailurePropagatesErrorAndEmitsFailureFinished(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		t.Skip("test name length plus the daemon control-socket bind path exceeds macOS sun_path")
-	}
-	sandmanDir := t.TempDir()
+	sandmanDir := testenv.MkdirShort(t, "sm-auto-")
 	t.Chdir(sandmanDir)
 	if err := os.MkdirAll(".sandman", 0o755); err != nil {
 		t.Fatalf("mkdir .sandman: %v", err)
@@ -481,11 +475,7 @@ exit 0
 	}
 }
 
-func TestRun_AutoFlag_NonPRDPassthroughUntouched(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		t.Skip("test name length plus the daemon control-socket bind path exceeds macOS sun_path")
-	}
-	regular42 := &github.Issue{Number: 42, State: "open", Title: "Issue 42", Body: "## What\n\nJust a regular issue."}
+func TestRun_AutoFlag_NonPRDPassthroughUntouched(t *testing.T) {	regular42 := &github.Issue{Number: 42, State: "open", Title: "Issue 42", Body: "## What\n\nJust a regular issue."}
 	regular43 := &github.Issue{Number: 43, State: "open", Title: "Issue 43", Body: "## What\n\nJust a regular issue."}
 
 	repoDir := t.TempDir()
@@ -580,11 +570,7 @@ exit 0
 	}
 }
 
-func TestRun_AutoFlag_QueryFilterExpandsPRD(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		t.Skip("test name length plus the daemon control-socket bind path exceeds macOS sun_path")
-	}
-	prdBody := "## Problem Statement\n\nP.\n\n## Solution\n\nS.\n\n## User Stories\n\n1. U.\n\n## Child Issues\n\n- #10\n"
+func TestRun_AutoFlag_QueryFilterExpandsPRD(t *testing.T) {	prdBody := "## Problem Statement\n\nP.\n\n## Solution\n\nS.\n\n## User Stories\n\n1. U.\n\n## Child Issues\n\n- #10\n"
 	childBody := "## Parent\n\n#1\n\n## What\n\n"
 	regularBody := "## What\n\nA regular open issue.\n"
 
