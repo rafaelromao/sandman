@@ -343,6 +343,7 @@ func TestReclaimableWorktree_PrunableWorktreeAtPathReturnsTrue(t *testing.T) {
 	}
 	wtPath := filepath.Join(worktreeBase, branch)
 	runGit(t, repoDir, "worktree", "add", wtPath, branch)
+	wantPath := resolveWorktreePath(wtPath)
 
 	if err := os.RemoveAll(wtPath); err != nil {
 		t.Fatalf("remove wtPath: %v", err)
@@ -352,8 +353,8 @@ func TestReclaimableWorktree_PrunableWorktreeAtPathReturnsTrue(t *testing.T) {
 	if !reclaimable {
 		t.Fatalf("expected reclaimable=true for prunable worktree at path, got info=%+v", info)
 	}
-	if info.Path != resolveWorktreePath(wtPath) {
-		t.Errorf("Path: got %q, want %q", info.Path, resolveWorktreePath(wtPath))
+	if info.Path != wantPath {
+		t.Errorf("Path: got %q, want %q", info.Path, wantPath)
 	}
 	if info.ExpectedBranch != "refs/heads/"+branch {
 		t.Errorf("ExpectedBranch: got %q, want %q", info.ExpectedBranch, "refs/heads/"+branch)
