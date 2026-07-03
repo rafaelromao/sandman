@@ -2140,6 +2140,83 @@ func TestScaffold_HasRubyRepoHint(t *testing.T) {
 	}
 }
 
+func TestScaffold_HasJavaRepoHint(t *testing.T) {
+	tests := []struct {
+		name    string
+		setupFn func(dir string)
+		want    bool
+	}{
+		{
+			name: "pom.xml",
+			setupFn: func(dir string) {
+				os.WriteFile(filepath.Join(dir, "pom.xml"), []byte("<?xml version=\"1.0\"?>\n<project></project>\n"), 0644)
+			},
+			want: true,
+		},
+		{
+			name: "build.gradle",
+			setupFn: func(dir string) {
+				os.WriteFile(filepath.Join(dir, "build.gradle"), []byte("plugins { id 'java' }\n"), 0644)
+			},
+			want: true,
+		},
+		{
+			name: "build.gradle.kts",
+			setupFn: func(dir string) {
+				os.WriteFile(filepath.Join(dir, "build.gradle.kts"), []byte("plugins { kotlin(\"jvm\") }\n"), 0644)
+			},
+			want: true,
+		},
+		{
+			name: "empty dir",
+			setupFn: func(dir string) {
+				_ = dir
+			},
+			want: false,
+		},
+		{
+			name: "non-jvm repo",
+			setupFn: func(dir string) {
+				os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/demo\n\ngo 1.24\n"), 0644)
+			},
+			want: false,
+		},
+		{
+			name: "ruby repo",
+			setupFn: func(dir string) {
+				os.WriteFile(filepath.Join(dir, "Gemfile"), []byte("source 'https://rubygems.org'\n"), 0644)
+			},
+			want: false,
+		},
+		{
+			name: "node repo",
+			setupFn: func(dir string) {
+				os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"name":"demo"}`), 0644)
+			},
+			want: false,
+		},
+		{
+			name: "pom.xml only in subdirectory",
+			setupFn: func(dir string) {
+				os.MkdirAll(filepath.Join(dir, "sub"), 0755)
+				os.WriteFile(filepath.Join(dir, "sub", "pom.xml"), []byte("<project></project>\n"), 0644)
+			},
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			tt.setupFn(dir)
+
+			if got := hasJavaRepoHint(dir); got != tt.want {
+				t.Errorf("hasJavaRepoHint(%q) = %v, want %v", dir, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestScaffold_RubyRepoAutoDetect(t *testing.T) {
 	tests := []struct {
 		name    string

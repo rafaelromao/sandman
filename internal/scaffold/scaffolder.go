@@ -666,6 +666,15 @@ func hasRustRepoHint(repoRoot string) bool {
 	return false
 }
 
+func hasJavaRepoHint(repoRoot string) bool {
+	for _, rel := range []string{"pom.xml", "build.gradle", "build.gradle.kts"} {
+		if _, err := os.Stat(filepath.Join(repoRoot, rel)); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
 func readRubyVersionHint(repoRoot string) (string, bool, error) {
 	for _, rel := range []string{".ruby-version", ".tool-versions", "Gemfile"} {
 		path := filepath.Join(repoRoot, rel)
