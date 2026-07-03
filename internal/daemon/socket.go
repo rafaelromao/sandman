@@ -77,10 +77,6 @@ func isPathTooLong(err error) bool {
 	return false
 }
 
-func shouldFallbackToAbstractSocket(sockPath string, err error) bool {
-	return len(sockPath) > 107 && isPathTooLong(err)
-}
-
 func (s *ControlSocket) startWithShortSockName() error {
 	abstractName := abstractSocketName(s.dir)
 	listener, err := net.Listen("unix", abstractName)
