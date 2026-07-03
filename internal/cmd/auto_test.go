@@ -154,13 +154,9 @@ func TestRun_AutoFlag_NumericFallbackPathEmitsNoAutoSelectEvents(t *testing.T) {
 		},
 	}
 	log := &recordingEventLog{}
-	deps := Dependencies{
-		BatchRunner:  spy,
-		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review"}},
-		EventLog:     log,
-		GitHubClient: gh,
-		IsTTY:        func() bool { return false },
-	}
+	deps := newRunDepsAuto(t, spy)
+	deps.GitHubClient = gh
+	deps.EventLog = log
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)
