@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -214,6 +215,19 @@ const portalViewDegradeLogInterval = 30 * time.Second
 var (
 	portalViewDegradeLogMu   sync.Mutex
 	portalViewDegradeLogSeen = make(map[string]time.Time)
+	// reviewSectionDecisionHeading matches the bare "## Decision"
+	// heading on a line by itself (case-insensitive, optional trailing
+	// whitespace). The match is anchored to the whole line so headings
+	// like "## Decisions" or "## Decision Tree" do not collide with
+	// this section's verdict scan (issue #1729 review feedback).
+	reviewSectionDecisionHeading = regexp.MustCompile(`(?i)^## decision\s*$`)
+	// reviewVerdictMarkerLine matches a whole line whose only content is
+	// the literal **MARKER** form. Spelling variants such as trailing
+	// periods or lowercase markers are rejected.
+	reviewVerdictMarkerLine = regexp.MustCompile(`^\*\*([A-Z_]+)\*\*$`)
+	// reviewLogTimestampPrefix strips the "[<runID>] HH:MM:SS " log
+	// prefix that the agent output stream adds to each line.
+	reviewLogTimestampPrefix = regexp.MustCompile(`^\d{2}:\d{2}:\d{2}\s+`)
 )
 
 // logPortalViewDegrade rate-limits repeated portal-view degradation logs per
@@ -721,11 +735,14 @@ func (v *portalRunsView) aggregateReviewChildren(runs []portalRun) []portalRun {
 			if run.Status == "reviewing" {
 				summary.live = true
 			}
-			if verdict := reviewVerdictForStatus(run.Status); verdict != "" {
-				finishedAt := run.StartedAt
-				if run.FinishedAt != nil {
-					finishedAt = *run.FinishedAt
+			// Only terminal review rows project a verdict; an in-flight
+			// review has no final "## Decision" yet (issue #1729, slice 3).
+			if run.FinishedAt != nil {
+				verdict := "Unclear"
+				if v, ok := reviewVerdictFromRunLog(run.Log); ok {
+					verdict = v
 				}
+				finishedAt := *run.FinishedAt
 				if summary.verdict == "" || finishedAt.After(summary.finishedAt) || (finishedAt.Equal(summary.finishedAt) && run.StartedAt.After(summary.startedAt)) {
 					summary.verdict = verdict
 					summary.finishedAt = finishedAt
@@ -799,15 +816,51 @@ func (v *portalRunsView) demoteOrphanedActiveRunsFromDeadBatches(repoRoot string
 	return runs
 }
 
-func reviewVerdictForStatus(status string) string {
-	switch strings.TrimSpace(status) {
-	case "success":
-		return "Approved"
-	case "failure":
-		return "Changes requested"
-	default:
-		return ""
+func reviewVerdictFromRunLog(logText string) (string, bool) {
+	// Scan the log for a "## Decision" heading; the first non-empty
+	// line inside that section must be the verdict marker. This
+	// matches the prompt convention at internal/prompt/default_pr_review_prompt.md
+	// step "Posting the Review" (issue #1729).
+	//
+	// Each line is prefixed with "[<runID>] HH:MM:SS " by the agent
+	// output streaming (see CONTEXT.md Saved Run Log), so we strip
+	// everything up to and including the timestamp before matching
+	// the section heading or the marker. The marker match is anchored
+	// to the entire line (after stripping the prefix and trimming
+	// whitespace) — spelling variants such as a trailing period or
+	// lowercase marker are rejected so prompt drift surfaces as
+	// "Unclear" instead of being silently coerced.
+	lines := strings.Split(logText, "\n")
+	inDecision := false
+	for _, raw := range lines {
+		payload := stripLogLabel(raw)
+		line := strings.TrimSpace(payload)
+		line = reviewLogTimestampPrefix.ReplaceAllString(line, "")
+		if !inDecision && reviewSectionDecisionHeading.MatchString(line) {
+			inDecision = true
+			continue
+		}
+		if !inDecision {
+			continue
+		}
+		if strings.HasPrefix(line, "## ") {
+			return "", false
+		}
+		if line == "" {
+			continue
+		}
+		matches := reviewVerdictMarkerLine.FindStringSubmatch(line)
+		if matches == nil {
+			continue
+		}
+		switch matches[1] {
+		case "APPROVED":
+			return "Approved", true
+		case "CHANGES_REQUESTED":
+			return "Changes requested", true
+		}
 	}
+	return "", false
 }
 
 // dedupRunGroup collapses duplicate rows for one issue within one batch.

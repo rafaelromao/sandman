@@ -2498,14 +2498,20 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
       return status || 'default';
     }
 
-    function reviewVerdictForStatus(status) {
-      const value = String(status || '').trim();
-      if (value === 'success') return 'Approved';
-      if (value === 'failure') return 'Changes requested';
-      return '';
-    }
-
     function summarizeReviewGroup(reviews) {
+      // The Go projection at portalRunsView.aggregateReviewChildren
+      // (portal_runs_view.go) now derives the verdict from each
+      // terminal review child's saved run.log, so it already flows
+      // through the canonical-parent path with the right value.
+      //
+      // This orphan-review-only path (no implementation row, only review
+      // children for an issue) cannot read each child's run.log content
+      // in JS without an async fetch that isn't wired here. Per issue
+      // #1729, orphan groups therefore render with an empty verdict
+      // ("N review" with no verdict suffix); renderRunMeta's
+      // `if (run.reviewVerdict)` guard at line ~2632 hides the trailing
+      // dash. Canonical parents (the primary case) get the full verdict
+      // from the server-side projection.
       const summary = { count: 0, live: false, verdict: '', status: '', kind: 'completed', source: null };
       if (!Array.isArray(reviews) || !reviews.length) return summary;
       summary.count = reviews.length;
@@ -2526,14 +2532,10 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
         }
       }
       if (!summary.live) {
-        for (const review of ordered) {
-          const verdict = reviewVerdictForStatus(review && review.status);
-          if (verdict) {
-            summary.verdict = verdict;
-            summary.status = String(review && review.status ? review.status : '').trim();
-            summary.kind = 'completed';
-            break;
-          }
+        const terminal = ordered.find((review) => /^(success|failure|aborted)$/i.test(String((review && review.status) || '').trim()));
+        if (terminal) {
+          summary.status = String(terminal.status || '').trim();
+          summary.kind = 'completed';
         }
       }
       return summary;
@@ -2632,6 +2634,10 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
       if (Number(run.reviewCount || 0) > 0) {
         const count = Number(run.reviewCount || 0);
         const reviewPart = count + ' review' + (count === 1 ? '' : 's');
+        // Empty reviewVerdict intentionally skips the trailing dash so
+        // orphan review-only groups (which the JS summarizeReviewGroup
+        // path at line ~2508 cannot populate without an async log fetch)
+        // render cleanly (issue #1729).
         if (run.reviewVerdict) {
           counterParts.push(reviewPart + ' - ' + run.reviewVerdict);
         } else {
