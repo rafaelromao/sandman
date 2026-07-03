@@ -23,8 +23,14 @@ type lookupOpenPRResult struct {
 
 // LookupOpenPR reports whether the given branch has an open pull
 // request (state=open) and, if so, returns its number and the
-// `gh`-reported mergeable state (`"MERGEABLE"`, `"CONFLICTING"`, or
-// `"UNKNOWN"`).
+// `gh`-reported mergeable state.
+//
+// `gh` reports mergeable as one of: `"MERGEABLE"`, `"CONFLICTING"`, or
+// `"UNKNOWN"` (when GitHub has not yet finished computing). Callers
+// should compare case-insensitively (see `detectConflictingPR` in
+// orchestrator.go for the canonical helper). When the mergeable value
+// is irrelevant for a given caller, the `mergeable` return can be
+// ignored — pass an `_` binding.
 //
 // Merged PRs are out of scope: `gh pr list --state open` filters them
 // out, so a merged branch looks identical to a branch with no PR. The
