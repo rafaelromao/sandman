@@ -2140,6 +2140,84 @@ func TestScaffold_HasRubyRepoHint(t *testing.T) {
 	}
 }
 
+func TestBundledJavaVersionCatalog(t *testing.T) {
+	expectedKeys := []string{"latest", "lts", "21", "21.0", "21.0.2", "17", "17.0", "17.0.10", "11", "11.0", "11.0.22", "8", "8.0", "8.0.412"}
+	for _, key := range expectedKeys {
+		v, ok := bundledJavaVersionCatalog[key]
+		if !ok {
+			t.Errorf("bundledJavaVersionCatalog missing key %q", key)
+			continue
+		}
+		if v == "" {
+			t.Errorf("bundledJavaVersionCatalog[%q] is empty", key)
+		}
+		if !strings.Contains(v, ".") {
+			t.Errorf("bundledJavaVersionCatalog[%q] = %q, want a pinned version with dots", key, v)
+		}
+	}
+}
+
+func TestJavaResolver_NormalizeAndPassThrough(t *testing.T) {
+	tests := []struct {
+		selector string
+		want     bool
+	}{
+		{selector: "21", want: true},
+		{selector: "21.0", want: true},
+		{selector: "21.0.2", want: true},
+		{selector: "17.0.10", want: true},
+		{selector: "11.0.22", want: true},
+		{selector: "", want: false},
+		{selector: "abc", want: false},
+		{selector: "temurin@21", want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.selector, func(t *testing.T) {
+			got := javaResolver.passThroughValid(tt.selector)
+			if got != tt.want {
+				t.Errorf("javaResolver.passThroughValid(%q) = %v, want %v", tt.selector, got, tt.want)
+			}
+		})
+	}
+
+	normalizeTests := []struct {
+		in   string
+		want string
+	}{
+		{in: "21", want: "21"},
+		{in: "java21", want: "21"},
+		{in: "jdk21", want: "21"},
+		{in: "openjdk-21", want: "21"},
+		{in: "21.0.2", want: "21.0.2"},
+	}
+	for _, tt := range normalizeTests {
+		t.Run("normalize_"+tt.in, func(t *testing.T) {
+			got := javaResolver.normalize(tt.in)
+			if got != tt.want {
+				t.Errorf("javaResolver.normalize(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestScaffold_JavaPresetResolvesRangeSelectorToCatalogPin(t *testing.T) {
+	dir := t.TempDir()
+	fakeMise := filepath.Join(dir, "mise")
+	if err := os.WriteFile(fakeMise, []byte("#!/bin/sh\nexit 0\n"), 0755); err != nil {
+		t.Fatalf("write fake mise: %v", err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	s := &Scaffolder{}
+	got, err := s.resolveJavaVersion(dir, "21", &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("resolveJavaVersion: %v", err)
+	}
+	if !strings.HasPrefix(got, "21") {
+		t.Errorf("expected java version starting with 21, got %q", got)
+	}
+}
+
 func TestReadJavaVersionHint(t *testing.T) {
 	tests := []struct {
 		name    string

@@ -255,6 +255,23 @@ var bundledRustVersionCatalog = map[string]string{
 	"1.94.0":  "1.94.0",
 }
 
+var bundledJavaVersionCatalog = map[string]string{
+	"latest":  "21.0.2",
+	"lts":     "17.0.10",
+	"21":      "21.0.2",
+	"21.0":    "21.0.2",
+	"21.0.2":  "21.0.2",
+	"17":      "17.0.10",
+	"17.0":    "17.0.10",
+	"17.0.10": "17.0.10",
+	"11":      "11.0.22",
+	"11.0":    "11.0.22",
+	"11.0.22": "11.0.22",
+	"8":       "8.0.412",
+	"8.0":     "8.0.412",
+	"8.0.412": "8.0.412",
+}
+
 // bundledElixirOTPMap pairs each cataloged Elixir major.minor with the
 // Erlang/OTP release that ships with it. deriveErlangOTPFromElixir uses
 // it as the offline fallback when the resolved Elixir version lacks the
@@ -274,6 +291,8 @@ const bundledElixirDefaultOTP = "29"
 var nodeVersionSelectorPattern = regexp.MustCompile(`\d+(?:\.\d+){0,2}`)
 
 var rustVersionSelectorPattern = regexp.MustCompile(`\d+(?:\.\d+){0,2}`)
+
+var javaVersionSelectorPattern = regexp.MustCompile(`^\d+(\.\d+){0,2}(\+\d+)?$`)
 
 var elixirVersionPattern = regexp.MustCompile(`(\d+)\.(\d+)`)
 
@@ -1061,6 +1080,10 @@ func (s *Scaffolder) resolveRustVersion(repoRoot, selector string, p Prompter) (
 	return resolveVersion(rustResolver, repoRoot, selector, p)
 }
 
+func (s *Scaffolder) resolveJavaVersion(repoRoot, selector string, p Prompter) (string, error) {
+	return resolveVersion(javaResolver, repoRoot, selector, p)
+}
+
 func (s *Scaffolder) resolveElixirVersion(repoRoot, selector string, p Prompter) (string, error) {
 	return resolveVersion(elixirResolver, repoRoot, selector, p)
 }
@@ -1383,6 +1406,56 @@ var rustResolver = versionResolver{
 	catalog: bundledRustVersionCatalog,
 	passThroughValid: func(selector string) bool {
 		return selector != "" && rustVersionSelectorPattern.MatchString(selector)
+	},
+}
+
+// javaResolver is the versionResolver configuration for Java. The ltsFromLatest
+// hook goes one major back from the latest resolved version, mirroring Ruby's
+// pattern. Java LTS releases are every 3 years (8, 11, 17, 21), so for the
+// current `latest=21` the lts selector resolves to 17. The normalize hook
+// strips common JDK identifier prefixes ("java", "jdk", "openjdk") so users
+// can pass `jdk21` or `openjdk-21` and still hit the catalog.
+var javaResolver = versionResolver{
+	label:      "Java",
+	miseTool:   "java",
+	hintReader: readJavaVersionHint,
+	normalize: func(selector string) string {
+		selector = strings.TrimSpace(selector)
+		lower := strings.ToLower(selector)
+		if strings.HasPrefix(lower, "openjdk-") {
+			return selector[len("openjdk-"):]
+		}
+		if strings.HasPrefix(lower, "jdk") && len(selector) > 3 && selector[3] >= '0' && selector[3] <= '9' {
+			return selector[3:]
+		}
+		if strings.HasPrefix(lower, "java") && len(selector) > 4 && selector[4] >= '0' && selector[4] <= '9' {
+			return selector[4:]
+		}
+		return selector
+	},
+	catalog: bundledJavaVersionCatalog,
+	ltsFromLatest: func(version string) (string, error) {
+		version = strings.TrimSpace(version)
+		parts := strings.Split(version, ".")
+		if len(parts) == 0 {
+			return "", fmt.Errorf("unexpected Java version %q", version)
+		}
+		major, err := strconv.Atoi(parts[0])
+		if err != nil {
+			return "", fmt.Errorf("parse Java major version %q: %w", version, err)
+		}
+		if major <= 1 {
+			return "", fmt.Errorf("unexpected Java major version %q", version)
+		}
+		major--
+		return fmt.Sprintf("%d", major), nil
+	},
+	passThroughValid: func(selector string) bool {
+		selector = strings.TrimSpace(selector)
+		if selector == "" {
+			return false
+		}
+		return javaVersionSelectorPattern.MatchString(selector)
 	},
 }
 
