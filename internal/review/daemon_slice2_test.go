@@ -28,7 +28,7 @@ import (
 // and #2 (".sandman/reviews/ contains only review.sock and review-prompt.md").
 func TestDaemon_ReviewsDirContainsOnlySocketAndPrompt(t *testing.T) {
 	if runtime.GOOS != "linux" {
-		t.Skip("review daemon uses Unix socket path conventions; tracked by #1720")
+		t.Skip("review daemon uses Unix socket path conventions; tracked by #1736")
 	}
 	now := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
 	gh := &fakeGH{

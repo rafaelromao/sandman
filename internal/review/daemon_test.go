@@ -961,7 +961,7 @@ func TestDaemon_TickCaseInsensitive(t *testing.T) {
 
 func TestDaemon_StartSocketCreatesReviewSock(t *testing.T) {
 	if runtime.GOOS != "linux" {
-		t.Skip("review socket starts an abstract-socket listener; tracked by #1720")
+		t.Skip("review socket starts an abstract-socket listener; tracked by #1736")
 	}
 	gh := &fakeGH{}
 	runner := &capturedRequest{}

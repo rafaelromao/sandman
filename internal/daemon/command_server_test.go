@@ -22,7 +22,7 @@ type fakeCommander struct {
 func skipIfNotCommandServerSupported(t *testing.T) {
 	t.Helper()
 	if runtime.GOOS != "linux" {
-		t.Skip("CommandServer uses Linux-only socket namespaces; tracked by #1720")
+		t.Skip("CommandServer uses Linux-only socket namespaces; tracked by #1736")
 	}
 }
 

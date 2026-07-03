@@ -153,7 +153,7 @@ func TestUpdateRunManifestStatus_WritesTerminalStatus(t *testing.T) {
 
 func TestIsRunActive_ProbesBatchSock(t *testing.T) {
 	if runtime.GOOS != "linux" {
-		t.Skip("IsRunActive uses Unix socket path conventions; tracked by #1720")
+		t.Skip("IsRunActive uses Unix socket path conventions; tracked by #1736")
 	}
 	tmp := t.TempDir()
 	batchPath := filepath.Join(tmp, "batch1")

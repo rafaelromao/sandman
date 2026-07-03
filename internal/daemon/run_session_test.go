@@ -174,7 +174,7 @@ func TestRunSession_Prepare_SkipsCommandServerWhenCommanderNil(t *testing.T) {
 // non-empty directory fails with EADDRINUSE / "address already in use".
 func TestRunSession_Prepare_PropagatesControlSocketError(t *testing.T) {
 	if runtime.GOOS != "linux" {
-		t.Skip("control socket errors depend on Unix socket path conventions; tracked by #1720")
+		t.Skip("control socket errors depend on Unix socket path conventions; tracked by #1736")
 	}
 	dir := t.TempDir()
 	rs := NewRunSession(dir, "failing-run-1")
