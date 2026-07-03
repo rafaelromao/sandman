@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net"
@@ -1963,6 +1964,62 @@ func (v *portalRunsView) findBatchDirForRun(repoRoot, runID string, deadBatches 
 		}
 	}
 	return "", nil
+}
+
+// portalBatchEntryNotFoundError signals that no batch index entry
+// resolves the supplied run id via either the fast path (idx.Resolve)
+// or the on-disk fallback (per-row manifest batchId). Callers map it
+// to HTTP 404 batch not found via errors.As.
+type portalBatchEntryNotFoundError struct {
+	runID string
+}
+
+func (e *portalBatchEntryNotFoundError) Error() string {
+	return fmt.Sprintf("no batch entry resolves run %q", e.runID)
+}
+
+// resolveBatchEntryForRunID returns the batch index entry that the
+// given per-row run id identifies. The fast path is idx.Resolve, which
+// matches the canonical batch entry id directly. The fallback path
+// reads each entry's runs/<runID>/run.json, parses the per-row
+// RunManifest's BatchID field, and re-resolves that id in the index.
+// This generalises the per-row pattern implemented for reviews in
+// internal/review/daemon.go readReviewRowID across every batch kind.
+//
+// On neither-path-resolves, the helper returns a typed
+// *portalBatchEntryNotFoundError so callers can errors.As-match it
+// and map to http.StatusNotFound. The returned entry has Path
+// populated on either success path so downstream log path resolution
+// and archive moves work without a second index lookup.
+func (v *portalRunsView) resolveBatchEntryForRunID(idx *batchindex.Index, runID string) (*batchindex.Entry, error) {
+	if idx == nil || runID == "" {
+		return nil, &portalBatchEntryNotFoundError{runID: runID}
+	}
+	if entry := idx.Resolve(runID); entry != nil {
+		return entry, nil
+	}
+	for i := range idx.Entries {
+		entry := &idx.Entries[i]
+		if entry.Path == "" {
+			continue
+		}
+		manifestPath := filepath.Join(entry.Path, "runs", runID, "run.json")
+		data, err := os.ReadFile(manifestPath)
+		if err != nil {
+			continue
+		}
+		var manifest batchindex.RunManifest
+		if err := json.Unmarshal(data, &manifest); err != nil {
+			continue
+		}
+		if manifest.BatchID == "" {
+			continue
+		}
+		if resolved := idx.Resolve(manifest.BatchID); resolved != nil {
+			return resolved, nil
+		}
+	}
+	return nil, &portalBatchEntryNotFoundError{runID: runID}
 }
 
 func (v *portalRunsView) runDirExists(repoRoot string, locator runLocator) bool {
