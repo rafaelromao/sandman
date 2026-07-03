@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sandman Dark 1 — Current (ref)</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: oklch(0.165 0.018 260);
+    --surface: oklch(0.20 0.018 260);
+    --surface-2: oklch(0.235 0.018 260);
+    --surface-3: oklch(0.275 0.020 260);
+    --border: oklch(0.31 0.020 260);
+    --text: oklch(0.93 0.015 80);
+    --muted: oklch(0.68 0.025 80);
+    --accent: oklch(0.76 0.07 75);
+    --accent-weak: color-mix(in oklch, var(--accent) 14%, var(--surface));
+    --accent-ink: oklch(0.18 0.03 75);
+    --reviewing-accent: oklch(0.65 0.16 285);
+    --success: oklch(0.74 0.09 145);
+    --danger: oklch(0.68 0.12 25);
+    --warning: oklch(0.82 0.07 80);
+    --shadow: 0 1px 0 oklch(0.97 0.01 245 / 0.05), 0 24px 48px oklch(0.11 0.01 245 / 0.28);
+    --page-top: oklch(0.14 0.03 260);
+    --page-bottom: var(--bg);
+  }
+  * { box-sizing: border-box; }
+  html, body { min-height: 100%; }
+  body { margin: 0; font: 14px/1.5 -apple-system, "Segoe UI", system-ui, sans-serif; color: var(--text); background: linear-gradient(180deg, var(--page-top) 0%, var(--page-bottom) 240px); }
+  main { width: min(100%, 1360px); margin: 0 auto; padding: 22px 18px 32px; min-height: 100vh; display: flex; flex-direction: column; }
+  .masthead { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 16px; padding: 12px 16px 14px; margin-bottom: 12px; border-bottom: 1px solid color-mix(in oklch, var(--border) 78%, var(--bg)); }
+  .topbar-left, .topbar-right { display: flex; align-items: center; min-width: 0; }
+  .topbar-left { flex: 1 1 auto; gap: 12px; }
+  .topbar-right { flex: 0 0 auto; gap: 10px; margin-left: auto; }
+  .brand { display: inline-flex; align-items: center; gap: 10px; }
+  .brand svg { width: 22px; height: 22px; color: var(--accent); }
+  .brand strong { font-size: 12px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--text); }
+  .divider { width: 1px; align-self: stretch; min-height: 16px; background: var(--border); opacity: 0.85; }
+  .repo { color: var(--muted); font-size: 12px; }
+  .pill { display: inline-flex; align-items: center; gap: 7px; height: 34px; padding: 0 12px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface-2); color: var(--muted); font-size: 11.5px; }
+  .pill .dot { width: 7px; height: 7px; border-radius: 999px; background: var(--success); }
+  .toolbar { display: flex; align-items: center; justify-content: space-between; gap: 16px 20px; padding: 14px 18px; margin-bottom: 14px; border: 1px solid var(--border); border-radius: 18px; background: var(--surface); box-shadow: var(--shadow); flex-wrap: wrap; }
+  .chips { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .chip { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface-2); color: var(--muted); font-size: 12px; }
+  .chip.on { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 600; }
+  .summary { color: var(--muted); font-size: 12px; }
+  .summary strong { color: var(--text); }
+  .table-shell { border: 1px solid var(--border); border-radius: 18px; background: var(--surface); box-shadow: var(--shadow); overflow: hidden; }
+  table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 13px; }
+  thead th { text-align: left; padding: 12px 14px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; font-size: 11px; border-bottom: 1px solid var(--border); background: color-mix(in oklch, var(--surface) 90%, var(--bg)); }
+  tbody td { padding: 12px 14px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  tbody tr:last-child td { border-bottom: none; }
+  tbody tr.run-row.active td { background: var(--accent-weak); }
+  .name { font-weight: 700; letter-spacing: -0.02em; font-size: 14px; }
+  .meta-line { color: var(--muted); font-size: 12px; }
+  .meta-line span { text-transform: uppercase; letter-spacing: 0.10em; font-size: 10px; }
+  .badge { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface-2); font-size: 11.5px; }
+  .badge .dot { width: 7px; height: 7px; border-radius: 999px; background: var(--muted); }
+  .badge.running { background: var(--accent-weak); border-color: color-mix(in oklch, var(--accent) 32%, var(--border)); color: var(--accent-ink); }
+  .badge.running .dot { background: var(--accent); }
+  .badge.reviewing { background: color-mix(in oklch, var(--reviewing-accent) 18%, var(--surface)); border-color: color-mix(in oklch, var(--reviewing-accent) 32%, var(--border)); color: var(--reviewing-accent); }
+  .badge.reviewing .dot { background: var(--reviewing-accent); }
+  .badge.queued { background: var(--surface-2); color: var(--muted); }
+  .badge.success { background: color-mix(in oklch, var(--success) 14%, var(--surface)); border-color: color-mix(in oklch, var(--success) 28%, var(--border)); color: var(--success); }
+  .badge.success .dot { background: var(--success); }
+  .badge.failure { background: color-mix(in oklch, var(--danger) 12%, var(--surface)); border-color: color-mix(in oklch, var(--danger) 28%, var(--border)); color: var(--danger); }
+  .badge.failure .dot { background: var(--danger); }
+  .badge.aborted { background: color-mix(in oklch, var(--danger) 8%, var(--surface)); color: color-mix(in oklch, var(--danger) 72%, var(--muted)); }
+  .mono, code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-variant-numeric: tabular-nums; }
+  .detail-grid { display: grid; grid-template-columns: 1.4fr 0.8fr; gap: 14px; padding: 14px; }
+  .detail-shell { border: 1px solid var(--border); border-radius: 18px; background: var(--surface); box-shadow: var(--shadow); overflow: hidden; }
+  .detail-tabs { display: flex; gap: 0; border-bottom: 1px solid var(--border); padding: 0 12px; }
+  .tab { padding: 12px 14px; color: var(--muted); font-size: 12.5px; font-weight: 600; border-bottom: 2px solid transparent; cursor: pointer; }
+  .tab.on { color: var(--text); border-bottom-color: var(--accent); }
+  pre.term { margin: 0; padding: 14px 16px; font-size: 12.5px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; line-height: 1.55; color: var(--text); }
+  .term-prompt { color: var(--accent); font-weight: 600; }
+  .term-pass { color: var(--success); font-weight: 600; }
+  .term-fail { color: var(--danger); font-weight: 600; }
+  .term-heading { color: var(--text); font-weight: 700; }
+  .term-mute { color: var(--muted); }
+  .term-time { color: var(--warning); font-weight: 500; }
+  .kv { display: grid; gap: 12px; padding: 14px; }
+  .kv div { display: grid; gap: 3px; }
+  .kv span { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: 0.12em; }
+  .kv strong, .kv code { font-weight: 500; color: var(--text); }
+  .panel-wrap { margin-top: 14px; }
+</style>
+</head>
+<body>
+<main>
+  <header class="masthead">
+    <div class="topbar-left">
+      <div class="brand">
+        <svg viewBox="0 0 320 320" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <g fill="none" stroke="currentColor" stroke-width="14" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M 245 14 L 115 14 A 91 91 0 0 0 24 105 A 91 91 0 0 0 115 196 L 205 196 A 19 19 0 0 1 224 215 A 19 19 0 0 1 205 234 L 75 234"/>
+            <path d="M 245 32 L 115 32 A 73 73 0 0 0 42 105 A 73 73 0 0 0 115 178 L 205 178 A 37 37 0 0 1 242 215 A 37 37 0 0 1 205 252 L 75 252"/>
+            <path d="M 245 50 L 115 50 A 55 55 0 0 0 60 105 A 55 55 0 0 0 115 160 L 205 160 A 55 55 0 0 1 260 215 A 55 55 0 0 1 205 270 L 75 270"/>
+            <path d="M 245 68 L 115 68 A 37 37 0 0 0 78 105 A 37 37 0 0 0 115 142 L 205 142 A 73 73 0 0 1 278 215 A 73 73 0 0 1 205 288 L 75 288"/>
+            <path d="M 245 86 L 115 86 A 19 19 0 0 0 96 105 A 19 19 0 0 0 115 124 L 205 124 A 91 91 0 0 1 296 215 A 91 91 0 0 1 205 306 L 75 306"/>
+          </g>
+        </svg>
+        <div class="brand-text"><strong>SANDMAN</strong></div>
+      </div>
+      <div class="divider"></div>
+      <div class="repo"><code>rafaelromao/sandman</code></div>
+    </div>
+    <div class="topbar-right">
+      <span class="pill"><span class="dot"></span>Polling · 1s ago</span>
+      <span class="pill">Current</span>
+    </div>
+  </header>
+
+  <div class="toolbar">
+    <div class="chips">
+      <span class="chip on">All</span>
+      <span class="chip">Running</span>
+      <span class="chip">Reviewing</span>
+      <span class="chip">Queued</span>
+      <span class="chip">Completed</span>
+      <span class="chip">Failed</span>
+      <span class="chip">Archived</span>
+    </div>
+    <div class="summary">Showing <strong>6 runs</strong></div>
+  </div>
+
+  <div class="table-shell">
+    <table>
+      <thead>
+        <tr><th style="width:42%">Run</th><th style="width:14%">Status</th><th style="width:22%">Started</th><th style="width:22%">Duration</th></tr>
+      </thead>
+      <tbody>
+        <tr class="run-row active">
+          <td><div class="name">#42 Refactor portal settings overlay</div><div class="meta-line"><span>Issue</span> Settings panel needs to remember theme + poll</div></td>
+          <td><span class="badge running"><span class="dot"></span>running</span></td>
+          <td class="mono">2 min ago</td>
+          <td class="mono">00:08:14</td>
+        </tr>
+        <tr class="run-row">
+          <td><div class="name">#43 Add light theme tokens</div><div class="meta-line"><span>Issue</span> Bring the badge palette into the portal</div></td>
+          <td><span class="badge reviewing"><span class="dot"></span>reviewing</span></td>
+          <td class="mono">11 min ago</td>
+          <td class="mono">00:14:42</td>
+        </tr>
+        <tr class="run-row">
+          <td><div class="name">#44 Surface queue length in header</div><div class="meta-line"><span>Issue</span> Show pending count next to settings</div></td>
+          <td><span class="badge queued"><span class="dot"></span>queued</span></td>
+          <td class="mono">just now</td>
+          <td class="mono">—</td>
+        </tr>
+        <tr class="run-row">
+          <td><div class="name">#41 Polish diff view spacing</div><div class="meta-line"><span>Issue</span> Tighten gutter on narrow viewports</div></td>
+          <td><span class="badge success"><span class="dot"></span>completed</span></td>
+          <td class="mono">38 min ago</td>
+          <td class="mono">00:21:03</td>
+        </tr>
+        <tr class="run-row">
+          <td><div class="name">#40 Wire abort endpoint</div><div class="meta-line"><span>Issue</span> POST /abort returns 409 on stale peer</div></td>
+          <td><span class="badge failure"><span class="dot"></span>failed</span></td>
+          <td class="mono">1 h ago</td>
+          <td class="mono">00:06:55</td>
+        </tr>
+        <tr class="run-row">
+          <td><div class="name">#39 Rerun archived batches</div><div class="meta-line"><span>Issue</span> Operator triggered re-run, then closed</div></td>
+          <td><span class="badge aborted"><span class="dot"></span>aborted</span></td>
+          <td class="mono">2 h ago</td>
+          <td class="mono">00:00:42</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="panel-wrap">
+    <div class="detail-shell">
+      <div class="detail-tabs"><div class="tab on">Logs</div><div class="tab">Diff</div><div class="tab">Events</div><div class="tab">Meta</div></div>
+      <div class="detail-grid">
+        <pre class="term"><span class="term-time">[10:42:08]</span> <span class="term-heading">run #42</span> started by <span class="term-prompt">$ sandman run 42</span>
+<span class="term-time">[10:42:09]</span> provisioning sandbox <span class="term-mute">(docker, ~3.4s)</span>
+<span class="term-time">[10:42:12]</span> agent claude-opus · branch <span class="term-mute">issue/42-settings-overlay</span>
+<span class="term-time">[10:42:14]</span> prompt · "tweak settings overlay so theme + poll persist"
+<span class="term-time">[10:42:39]</span> edit  src/internal/cmd/portal.html
+<span class="term-time">[10:42:54]</span> edit  src/internal/cmd/portal_server.go
+<span class="term-time">[10:48:33]</span> <span class="term-pass">PASS</span> go test ./internal/cmd/...
+<span class="term-time">[10:50:14]</span> reviewing · awaiting operator</pre>
+        <div class="kv">
+          <div><span>Issue</span><code>#42</code></div>
+          <div><span>Branch</span><code>issue/42-settings-overlay</code></div>
+          <div><span>Agent</span><strong>claude-opus</strong></div>
+          <div><span>Sandbox</span><strong>docker</strong></div>
+          <div><span>PR</span><code>rafaelromao/sandman#1782</code></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</main>
+</body>
+</html>
