@@ -269,14 +269,72 @@ func TestPortal_Compute_AggregatesChildReviewsOntoIssueRow(t *testing.T) {
 	if issueRow.ReviewCount != 2 {
 		t.Fatalf("expected review count 2, got %d", issueRow.ReviewCount)
 	}
-	if issueRow.ReviewVerdict != "Approved" {
-		t.Fatalf("expected latest terminal review verdict Approved, got %q", issueRow.ReviewVerdict)
+	if issueRow.ReviewVerdict != "Unclear" {
+		// PR43-done is terminal with status="success" but the fixture
+		// has no saved run.log; under the slice-1 fix the verdict comes
+		// from the log's ## Decision marker, not the run status. A
+		// missing marker → "Unclear" (issue #1729).
+		t.Fatalf("expected latest terminal review verdict Unclear (no saved log marker), got %q", issueRow.ReviewVerdict)
 	}
 	if reviewRows != 2 {
 		t.Fatalf("expected 2 review child rows, got %d from %#v", reviewRows, runs)
 	}
 	if groupedReviewRows != 2 {
 		t.Fatalf("expected 2 grouped review child rows, got %d from %#v", groupedReviewRows, runs)
+	}
+}
+
+// TestPortal_Compute_TerminalReviewWithApprovedMarker_ProjectsApproved
+// is the slice-2 positive mirror of TestPortal_Compute_AggregatesChildReviewsOntoIssueRow:
+// when the saved run.log for a terminal review carries the **APPROVED**
+// marker in its ## Decision section, the parent row's ReviewVerdict
+// surfaces "Approved" — even when run.finished.status is "success"
+// (issue #1729).
+func TestPortal_Compute_TerminalReviewWithApprovedMarker_ProjectsApproved(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
+	finishedAt := startedAt.Add(2 * time.Minute)
+
+	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
+		{Type: "run.started", Timestamp: startedAt, RunID: "issue-99", Issue: 99, Payload: map[string]any{"branch": "sandman/99-fix"}},
+		{Type: "run.finished", Timestamp: startedAt.Add(1 * time.Minute), RunID: "issue-99", Issue: 99, Payload: map[string]any{"branch": "sandman/99-fix", "status": "success"}},
+		{Type: "run.started", Timestamp: startedAt.Add(30 * time.Second), RunID: "PR99-review", Issue: 99, Payload: map[string]any{"review": true, "pr_number": 99, "branch": "sandman/review-PR99"}},
+		{Type: "run.finished", Timestamp: finishedAt, RunID: "PR99-review", Issue: 99, Payload: map[string]any{"review": true, "pr_number": 99, "branch": "sandman/review-PR99", "status": "success"}},
+	})
+
+	reviewRunDir := filepath.Join(repoRoot, ".sandman", "batches", "PR99-review", "runs", "PR99-review")
+	if err := os.MkdirAll(reviewRunDir, 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	reviewLog := "[PR99-review] 12:01:00 ## Summary\r\n" +
+		"[PR99-review] 12:01:00 LGTM.\r\n" +
+		"[PR99-review] 12:01:30 ## Decision\r\n" +
+		"[PR99-review] 12:01:30 **APPROVED**\r\n"
+	if err := os.WriteFile(filepath.Join(reviewRunDir, "run.log"), []byte(reviewLog), 0644); err != nil {
+		t.Fatalf("write log: %v", err)
+	}
+
+	runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")})
+	if err != nil {
+		t.Fatalf("compute: %v", err)
+	}
+
+	var parent *portalRun
+	for i := range runs {
+		if runs[i].IssueNumber == 99 && !runs[i].Review {
+			parent = &runs[i]
+			break
+		}
+	}
+	if parent == nil {
+		t.Fatalf("expected parent issue row, got %#v", runs)
+	}
+	if parent.ReviewVerdict != "Approved" {
+		t.Fatalf("parent ReviewVerdict=%q, want %q (saved run.log carries ## Decision / **APPROVED**)", parent.ReviewVerdict, "Approved")
 	}
 }
 
@@ -1676,5 +1734,212 @@ func TestPortal_Compute_MultipleDeadBatches_IndependentIssueSets(t *testing.T) {
 		if !found {
 			t.Fatalf("expected row for issue %d, not found", b.issueNum)
 		}
+	}
+}
+
+// TestPortal_Compute_ReviewVerdictFromDecisionMarkerOnSavedRunLog
+// is the slice-1 tracer bullet for issue #1729. The bug: today's
+// portal infers the parent row's review verdict from the review run's
+// exit status ("success" → "Approved"). But the review agent always
+// exits 0 because it posts a single `gh pr comment` and exits cleanly,
+// regardless of what it decided. The actual reviewer decision lives
+// only in the posted comment body, written to the saved run.log as a
+// "## Decision" section with a literal marker.
+//
+// This test pins the new behaviour: when the saved run.log for a
+// review run contains the `**CHANGES_REQUESTED**` marker in its
+// `## Decision` section, the parent issue row's ReviewVerdict must be
+// the literal string "Changes requested" — not "Approved".
+func TestPortal_Compute_ReviewVerdictFromDecisionMarkerOnSavedRunLog(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	startedAt := time.Date(2026, 7, 3, 13, 50, 0, 0, time.UTC)
+	finishedAt := startedAt.Add(2 * time.Minute)
+
+	reviewRunID := "556c-260703135044-1719-PR1726"
+	reviewBatchID := "556c-260703135044-1719-PR1726"
+	implRunID := "c5ed-260703133706-1719"
+	implBatchID := "c5ed-260703133706-1719"
+
+	// Implementation run for issue #1719. The review is launched
+	// against the PR that this implementation produced, so the review's
+	// IssueNumber resolves to 1719 in the event log (Issue field is
+	// empty here because the review event payload carries
+	// review=true/pr_number=, mirroring events.jsonl:180-181).
+	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
+		{Type: "run.started", Timestamp: startedAt.Add(-13 * time.Minute), RunID: implRunID, Issue: 1719, Payload: map[string]any{
+			"branch":      "sandman/1719-ci-add-macos-latest",
+			"batch_id":    implBatchID,
+			"base_branch": "main",
+		}},
+		{Type: "run.finished", Timestamp: startedAt, RunID: implRunID, Issue: 1719, Payload: map[string]any{
+			"branch":   "sandman/1719-ci-add-macos-latest",
+			"batch_id": implBatchID,
+			"status":   "success",
+		}},
+		{Type: "run.started", Timestamp: startedAt, RunID: reviewRunID, Payload: map[string]any{
+			"branch":       "sandman/review-1726-4878138837",
+			"batch_id":     reviewBatchID,
+			"review":       true,
+			"pr_number":    1726,
+			"issue_number": 1719,
+			"base_branch":  "main",
+		}},
+		{Type: "run.finished", Timestamp: finishedAt, RunID: reviewRunID, Payload: map[string]any{
+			"branch":    "sandman/review-1726-4878138837",
+			"batch_id":  reviewBatchID,
+			"review":    true,
+			"pr_number": 1726,
+			"status":    "success",
+		}},
+	})
+
+	// Saved run.log for the review run, mirroring the actual
+	// production log (events.jsonl:181 → run.finished status="success",
+	// but the agent wrote `**CHANGES_REQUESTED**` inside the
+	// `## Decision` section of the posted comment before exiting).
+	// The slice-1 fix must read THIS, not the status.
+	reviewLog := "[556c-260703135044-1719-PR1726] 13:51:47 ## Findings\r\n" +
+		"[556c-260703135044-1719-PR1726] 13:51:47 - macOS job is red on this PR.\r\n" +
+		"[556c-260703135044-1719-PR1726] 13:52:10 ## Decision\r\n" +
+		"[556c-260703135044-1719-PR1726] 13:52:11 **CHANGES_REQUESTED**\r\n"
+	reviewRunDir := filepath.Join(repoRoot, ".sandman", "batches", reviewBatchID, "runs", reviewRunID)
+	if err := os.MkdirAll(reviewRunDir, 0755); err != nil {
+		t.Fatalf("mkdir review run dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(reviewRunDir, "run.log"), []byte(reviewLog), 0644); err != nil {
+		t.Fatalf("write review run.log: %v", err)
+	}
+
+	runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")})
+	if err != nil {
+		t.Fatalf("compute: %v", err)
+	}
+
+	var implRow, reviewRow *portalRun
+	for i := range runs {
+		run := &runs[i]
+		switch {
+		case run.IssueNumber == 1719 && !run.Review:
+			implRow = run
+		case run.Review && run.RunID == reviewRunID:
+			reviewRow = run
+		}
+	}
+	if implRow == nil {
+		t.Fatalf("expected impl row for issue #1719, got %#v", runs)
+	}
+	if reviewRow == nil {
+		t.Fatalf("expected review row %q, got %#v", reviewRunID, runs)
+	}
+	if !strings.Contains(reviewRow.Log, "CHANGES_REQUESTED") {
+		t.Fatalf("review row Log missing CHANGES_REQUESTED marker: %q", reviewRow.Log)
+	}
+	if reviewRow.Status != "success" {
+		t.Fatalf("review row Status=%q, want success (the agent exits 0 even when it requested changes)", reviewRow.Status)
+	}
+	if implRow.ReviewCount != 1 {
+		t.Fatalf("impl row ReviewCount=%d, want 1", implRow.ReviewCount)
+	}
+	if got := implRow.ReviewVerdict; got != "Changes requested" {
+		t.Fatalf("impl row ReviewVerdict=%q, want %q (the saved run.log carries **Decision: CHANGES_REQUESTED**)", got, "Changes requested")
+	}
+}
+
+// TestPortal_ReviewVerdictFromRunLog pins the boundary of the
+// reviewVerdictFromRunLog helper directly (slice-1 extraction test).
+// It exercises the markers the prompt today produces and the
+// out-of-scope spelling variants that must NOT be coerced. The
+// integration tests above already assert the projection flows through
+// compute(); this test pins the helper's behaviour so that future
+// prompt-edits that introduce new marker spellings fail loudly
+// instead of silently disagreeing with production.
+func TestPortal_ReviewVerdictFromRunLog(t *testing.T) {
+	cases := []struct {
+		name    string
+		logText string
+		want    string
+		wantOK  bool
+	}{
+		{
+			name:    "CHANGES_REQUESTED inside ## Decision is recognised",
+			logText: "13:52:10 ## Decision\n13:52:11 **CHANGES_REQUESTED**\n",
+			want:    "Changes requested",
+			wantOK:  true,
+		},
+		{
+			name:    "APPROVED inside ## Decision is recognised",
+			logText: "13:52:10 ## Decision\n13:52:11 **APPROVED**\n",
+			want:    "Approved",
+			wantOK:  true,
+		},
+		{
+			name:    "marker outside Decision section is ignored",
+			logText: "13:50:00 ## Summary\n13:50:01 **CHANGES_REQUESTED** is unrelated prose\n13:51:00 ## Decision\n13:51:01 **APPROVED**\n",
+			want:    "Approved",
+			wantOK:  true,
+		},
+		{
+			name:    "no Decision section yields no verdict",
+			logText: "13:50:00 ## Summary\n13:50:01 LGTM\n",
+			want:    "",
+			wantOK:  false,
+		},
+		{
+			name:    "Decision section with no marker yields no verdict",
+			logText: "13:50:00 ## Decision\n13:50:01 the author will iterate\n",
+			want:    "",
+			wantOK:  false,
+		},
+		{
+			name:    "spelling variant with space (CHANGES REQUESTED) is not coerced",
+			logText: "13:50:00 ## Decision\n13:50:01 **CHANGES REQUESTED**\n",
+			want:    "",
+			wantOK:  false,
+		},
+		{
+			name:    "spelling variant with trailing period is not coerced",
+			logText: "13:50:00 ## Decision\n13:50:01 **CHANGES_REQUESTED**.\n",
+			want:    "",
+			wantOK:  false,
+		},
+		{
+			name:    "lowercase spelling is not coerced",
+			logText: "13:50:00 ## Decision\n13:50:01 **changes_requested**\n",
+			want:    "",
+			wantOK:  false,
+		},
+		{
+			name:    "case-insensitive Decision heading match",
+			logText: "13:50:00 ## decision\n13:50:01 **APPROVED**\n",
+			want:    "Approved",
+			wantOK:  true,
+		},
+		{
+			name:    "empty log yields no verdict",
+			logText: "",
+			want:    "",
+			wantOK:  false,
+		},
+		{
+			name:    "log with timestamps and runID prefix is parsed",
+			logText: "[abcd-260618113825-PR42] 13:52:10 ## Decision\n[abcd-260618113825-PR42] 13:52:11 **CHANGES_REQUESTED**\n",
+			want:    "Changes requested",
+			wantOK:  true,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := reviewVerdictFromRunLog(tc.logText)
+			if ok != tc.wantOK {
+				t.Fatalf("ok = %v, want %v", ok, tc.wantOK)
+			}
+			if got != tc.want {
+				t.Fatalf("verdict = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }

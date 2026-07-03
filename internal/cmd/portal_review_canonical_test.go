@@ -348,6 +348,20 @@ func TestPortal_ReviewAggregation_HonorsCanonicalRowID(t *testing.T) {
 		{Type: "run.finished", Timestamp: startedAt.Add(7 * time.Minute), RunID: canonicalReviewRowID, Payload: map[string]any{"status": "success", "branch": "sandman/review-PR42", "review": true, "pr_number": 42, "issue_number": issueNumber, "batch_id": "sid-2606181138-PR42"}},
 	})
 
+	// Issue #1729: parent ReviewVerdict flows from the saved review
+	// run.log's ## Decision marker, not from run.finished.status. Seed
+	// an APPROVED marker so the verdict projection has a real value to
+	// surface.
+	reviewRunDir := filepath.Join(repoRoot, ".sandman", "batches", "sid-2606181138-PR42", "runs", canonicalReviewRowID)
+	if err := os.MkdirAll(reviewRunDir, 0755); err != nil {
+		t.Fatalf("mkdir review run dir: %v", err)
+	}
+	reviewLog := "[" + canonicalReviewRowID + "] 12:00:00 ## Decision\r\n" +
+		"[" + canonicalReviewRowID + "] 12:00:30 **APPROVED**\r\n"
+	if err := os.WriteFile(filepath.Join(reviewRunDir, "run.log"), []byte(reviewLog), 0644); err != nil {
+		t.Fatalf("write review run.log: %v", err)
+	}
+
 	runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")})
 	if err != nil {
 		t.Fatalf("compute: %v", err)
@@ -381,8 +395,8 @@ func TestPortal_ReviewAggregation_HonorsCanonicalRowID(t *testing.T) {
 	if parent.ReviewCount == 0 {
 		t.Fatalf("parent ReviewCount=%d, want >=1 (aggregation must include canonical-row-id'd review)", parent.ReviewCount)
 	}
-	if parent.ReviewVerdict == "" {
-		t.Fatalf("parent ReviewVerdict=%q, want non-empty (Approved or Changes requested)", parent.ReviewVerdict)
+	if parent.ReviewVerdict != "Approved" {
+		t.Fatalf("parent ReviewVerdict=%q, want %q (saved run.log carries ## Decision / **APPROVED**)", parent.ReviewVerdict, "Approved")
 	}
 }
 
