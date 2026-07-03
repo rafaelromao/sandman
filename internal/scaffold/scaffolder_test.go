@@ -1958,6 +1958,74 @@ func TestScaffold_HasElixirRepoHint(t *testing.T) {
 	}
 }
 
+func TestScaffold_JavaRepoAutoDetect(t *testing.T) {
+	tests := []struct {
+		name    string
+		setupFn func(dir string)
+		want    string
+	}{
+		{
+			name: "pom.xml",
+			setupFn: func(dir string) {
+				os.WriteFile(filepath.Join(dir, "pom.xml"), []byte("<project></project>\n"), 0644)
+			},
+			want: javaBuildToolsPreset,
+		},
+		{
+			name: "build.gradle",
+			setupFn: func(dir string) {
+				os.WriteFile(filepath.Join(dir, "build.gradle"), []byte("plugins { id 'java' }\n"), 0644)
+			},
+			want: javaBuildToolsPreset,
+		},
+		{
+			name: "build.gradle.kts",
+			setupFn: func(dir string) {
+				os.WriteFile(filepath.Join(dir, "build.gradle.kts"), []byte("plugins { kotlin(\"jvm\") }\n"), 0644)
+			},
+			want: javaBuildToolsPreset,
+		},
+		{
+			name: "node takes priority over java",
+			setupFn: func(dir string) {
+				os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"name":"demo","engines":{"node":"20"}}`), 0644)
+				os.WriteFile(filepath.Join(dir, "pom.xml"), []byte("<project></project>\n"), 0644)
+			},
+			want: nodeBuildToolsPreset,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			tt.setupFn(dir)
+
+			s := &Scaffolder{}
+			preset, err := s.resolveBuildToolsPreset(dir, Options{}, &fakePrompter{confirm: true})
+			if err != nil {
+				t.Fatalf("resolveBuildToolsPreset: %v", err)
+			}
+			if preset.Name != tt.want {
+				t.Errorf("expected preset %q, got %q", tt.want, preset.Name)
+			}
+		})
+	}
+}
+
+func TestScaffold_GenericBuildToolsOverridesJavaRepoHint(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "pom.xml"), []byte("<project></project>\n"), 0644)
+
+	s := &Scaffolder{}
+	preset, err := s.resolveBuildToolsPreset(dir, Options{BuildTools: "generic"}, &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("resolveBuildToolsPreset: %v", err)
+	}
+	if preset.Name != "generic" {
+		t.Errorf("expected explicit generic preset, got %q", preset.Name)
+	}
+}
+
 func TestScaffold_RubyPresetIsRegistered(t *testing.T) {
 	preset, ok := builtInBuildToolsPresets[rubyBuildToolsPreset]
 	if !ok {
@@ -2610,6 +2678,47 @@ func TestScaffold_RenderRubyInstallCommand(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Errorf("renderRubyInstallCommand missing %q, got:\n%s", want, got)
 		}
+	}
+}
+
+func TestScaffold_RenderJavaInstallCommand(t *testing.T) {
+	got := renderJavaInstallCommand("21.0.2")
+	if !strings.Contains(got, "RUN mise use -g --pin java@21.0.2") {
+		t.Errorf("renderJavaInstallCommand missing mise pin, got:\n%s", got)
+	}
+}
+
+func TestScaffold_JavaPresetWritesPinnedDockerfile(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "pom.xml"), []byte("<project><properties><java.version>21</java.version></properties></project>\n"), 0644)
+
+	s := &Scaffolder{}
+	if err := s.Scaffold(dir, Options{BuildTools: "java"}, &fakePrompter{confirm: true}); err != nil {
+		t.Fatalf("scaffold: %v", err)
+	}
+
+	dockerfilePath := filepath.Join(dir, ".sandman", "Dockerfile")
+	data, err := os.ReadFile(dockerfilePath)
+	if err != nil {
+		t.Fatalf("read Dockerfile: %v", err)
+	}
+	content := string(data)
+	for _, want := range []string{
+		"# sandman build-tools: java",
+		"# sandman default-agent: opencode",
+		"# sandman java-version: 21.0.2",
+		"# sandman installed-agents: opencode",
+		"FROM debian:bookworm-slim",
+		"RUN mise use -g --pin java@21.0.2",
+		"RUN MISE_VERSION=" + DefaultMISEVersion + " curl https://mise.run | MISE_INSTALL_PATH=/usr/local/bin/mise sh",
+		"RUN npm install -g opencode-ai@" + DefaultBuiltInAgentVersion("opencode"),
+	} {
+		if !strings.Contains(content, want) {
+			t.Errorf("Dockerfile missing %q, got:\n%s", want, content)
+		}
+	}
+	if strings.Contains(content, "maven") || strings.Contains(content, "gradle") {
+		t.Errorf("Dockerfile should not install maven or gradle (repos use mvnw/gradlew wrappers), got:\n%s", content)
 	}
 }
 
