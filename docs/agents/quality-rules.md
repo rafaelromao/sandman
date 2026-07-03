@@ -34,9 +34,9 @@ This is the only language-sensitivity the rules file encodes.
 1. The reviewer counts distinct smelly locations (`n`) and total locations
    reviewed (`t`).
 2. Each smelly location produces a finding citing every rule it breaks.
-3. If the count of distinct smelly locations falls below the threshold
-   defined in `quality_rules.md`, every finding is a `Nit` (or omitted).
-4. If the count meets or exceeds the threshold defined in
+3. If `n / t` falls below the threshold defined in `quality_rules.md`,
+   every finding is a `Nit` (or omitted).
+4. If `n / t` meets or exceeds the threshold defined in
    `quality_rules.md`, at least one representative finding is filed as
    `Important` and references this doc plus `quality_rules.md`. Other
    findings stay `Nit` or `Important` at the reviewer's discretion.
