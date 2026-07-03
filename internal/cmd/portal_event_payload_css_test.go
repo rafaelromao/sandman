@@ -288,26 +288,35 @@ func TestPortal_ActiveRowAddedCSS_NoOverrides(t *testing.T) {
 	}
 }
 
-// TestPortal_ActiveRowCSS_UsesReviewingAccent pins the active row background
-// to the reviewing-accent palette so an active row reads as the same
-// purple-tinted highlight as the reviewing badge and the review-only
-// orphan row in the Sandman theme (the "Review of #N" row). Before this
-// the active rule used var(--accent) which renders as a warm
-// yellow-green in Sandman and does not match the purple highlight the
-// user expects on active runs.
-func TestPortal_ActiveRowCSS_UsesReviewingAccent(t *testing.T) {
+// TestPortal_ActiveRowCSS_MatchesRunningChip pins the active row background
+// to var(--accent-weak) — the same warm accent tint the `.badge.running`
+// chip uses for its inside fill. The active row should read as a
+// continuation of the running chip: same warm accent mix on the dark
+// surface, so a live row and its badge look like one highlight. The
+// previous attempt (PR #1677 + #1705) used var(--reviewing-accent),
+// which produces a *different* purple (hue 285) that does not match the
+// running chip; in the Sandman theme the user reads the active row as
+// the wrong color because it disagrees with the chip on the same row.
+// Non-Sandman themes (Catppuccin, Tokyo Night, etc.) already render the
+// right accent tint, so this fix only flips the Sandman reading.
+func TestPortal_ActiveRowCSS_MatchesRunningChip(t *testing.T) {
 	html := readPortalHTML(t)
-	// The --reviewing-accent variable must be defined in :root so the
-	// active row rule can reference it.
-	if !strings.Contains(html, "--reviewing-accent:") {
-		t.Fatalf("portal.html is missing --reviewing-accent CSS variable; active rows must use the reviewing purple")
+	// Sanity: the running chip and the active row must share one source
+	// of truth. The chip is `.badge.running { background: var(--accent-weak); }`
+	// and the active row must use the same variable.
+	chip := extractCSSRuleBody(t, html, ".badge.running")
+	if !strings.Contains(chip, "var(--accent-weak)") {
+		t.Fatalf(".badge.running must use var(--accent-weak) so the active row can match it; got %q", chip)
 	}
 	desktop := extractCSSRuleBody(t, html, "tbody tr.run-row.active td")
-	if !strings.Contains(desktop, "var(--reviewing-accent)") {
-		t.Errorf("desktop tbody tr.run-row.active td must use var(--reviewing-accent) for the purple highlight; got %q", desktop)
+	if !strings.Contains(desktop, "var(--accent-weak)") {
+		t.Errorf("desktop tbody tr.run-row.active td must use var(--accent-weak) to match the running chip background; got %q", desktop)
+	}
+	if strings.Contains(desktop, "var(--reviewing-accent)") {
+		t.Errorf("desktop tbody tr.run-row.active td must NOT use var(--reviewing-accent) — the reviewing purple is for the reviewing chip / orphan review rows, not for active issue rows; got %q", desktop)
 	}
 	// Mobile active rule (in the @media (max-width: 960px) block, before
-	// the 760px split) must also use --reviewing-accent.
+	// the 760px split) must use --accent-weak too.
 	start := strings.Index(html, "@media (max-width: 960px)")
 	if start < 0 {
 		t.Fatal("mobile media query not found")
@@ -317,8 +326,11 @@ func TestPortal_ActiveRowCSS_UsesReviewingAccent(t *testing.T) {
 		mobile = mobile[:end]
 	}
 	mobileActive := extractCSSRuleBody(t, mobile, "tbody tr.run-row.active")
-	if !strings.Contains(mobileActive, "var(--reviewing-accent)") {
-		t.Errorf("mobile tbody tr.run-row.active must use var(--reviewing-accent) for the purple highlight; got %q", mobileActive)
+	if !strings.Contains(mobileActive, "var(--accent-weak)") {
+		t.Errorf("mobile tbody tr.run-row.active must use var(--accent-weak) to match the running chip; got %q", mobileActive)
+	}
+	if strings.Contains(mobileActive, "var(--reviewing-accent)") {
+		t.Errorf("mobile tbody tr.run-row.active must NOT use var(--reviewing-accent); got %q", mobileActive)
 	}
 }
 
@@ -330,10 +342,10 @@ func TestPortal_HoverRowCSS_NoAccentTint(t *testing.T) {
 	html := readPortalHTML(t)
 	hover := extractCSSRuleBody(t, html, "tbody tr.run-row:hover td")
 	if strings.Contains(hover, "var(--accent)") {
-		t.Errorf("desktop tbody tr.run-row:hover td must not mix var(--accent) into the hover background (active owns the purple highlight; hover is neutral); got %q", hover)
+		t.Errorf("desktop tbody tr.run-row:hover td must not mix var(--accent) into the hover background (active owns the running-chip tint; hover is neutral); got %q", hover)
 	}
 	// Mobile: hover and active must be split rules; the combined mobile
-	// selector that painted hover with the reviewing purple is gone.
+	// selector that painted hover with the reviewing accent is gone.
 	start := strings.Index(html, "@media (max-width: 960px)")
 	if start < 0 {
 		t.Fatal("mobile media query not found")
@@ -343,10 +355,10 @@ func TestPortal_HoverRowCSS_NoAccentTint(t *testing.T) {
 		mobile = mobile[:end]
 	}
 	if strings.Contains(mobile, "tbody tr.run-row:hover,\n      tbody tr.run-row.active") {
-		t.Errorf("mobile hover and active must be split into separate rules so hover can be neutral while active is purple; combined selector still present")
+		t.Errorf("mobile hover and active must be split into separate rules so hover can be neutral while active is warm-accent; combined selector still present")
 	}
 	mobileHover := extractCSSRuleBody(t, mobile, "tbody tr.run-row:hover")
-	if strings.Contains(mobileHover, "var(--reviewing-accent)") || strings.Contains(mobileHover, "var(--accent)") {
+	if strings.Contains(mobileHover, "var(--reviewing-accent)") || strings.Contains(mobileHover, "var(--accent)") || strings.Contains(mobileHover, "var(--accent-weak)") {
 		t.Errorf("mobile tbody tr.run-row:hover must not use the reviewing or accent palette; got %q", mobileHover)
 	}
 }
