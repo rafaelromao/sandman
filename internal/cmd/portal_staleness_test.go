@@ -140,6 +140,54 @@ func TestPortal_RunFromState_MultiIssueBatchActive_LogPathUsesOnDiskDirSuffix(t 
 	}
 }
 
+// TestPortal_RunFromState_ActiveNil_MultiIssueBatch_LogPathFromEventPayload
+// pins the regression guard for the active==nil path of runFromState.
+// The completed-row branch of compute() calls runFromState with
+// active=nil; for a multi-issue batch the LogPath must still come from
+// runState.BatchID() (the event payload's batch_id, with "+N") — NOT
+// from a hard-coded index-entry-id. This slice is the no-regression
+// guard for the active-row fix in Slice 1.
+func TestPortal_RunFromState_ActiveNil_MultiIssueBatch_LogPathFromEventPayload(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	const perRowRunID = "fde2-260703095305-1704"
+	const onDiskDir = "fde2-260703095305-1699+6"
+
+	logPath := filepath.Join(repoRoot, ".sandman", "batches", onDiskDir, "runs", perRowRunID, "run.log")
+	if err := os.MkdirAll(filepath.Dir(logPath), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(logPath, []byte("output\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	startedAt := time.Date(2025, 6, 17, 12, 0, 0, 0, time.UTC)
+	finishedAt := startedAt.Add(2 * time.Minute)
+	runState := events.RunState{
+		RunID: perRowRunID,
+		Started: events.Event{
+			Timestamp: startedAt,
+			Payload: map[string]any{
+				"batch_id": onDiskDir,
+				"branch":   "sandman/1704-fix",
+			},
+		},
+		Finished: &events.Event{Timestamp: finishedAt, Payload: map[string]any{"status": "success"}},
+	}
+
+	run := (&portalRunsView{}).runFromState(repoRoot, runState, nil, nil, nil)
+
+	if run.LogPath != logPath {
+		t.Fatalf("LogPath=%q, want %q (active==nil path must keep using state.BatchID())", run.LogPath, logPath)
+	}
+	if run.LastOutputAt != nil {
+		t.Fatalf("LastOutputAt=%v, want nil for completed row", run.LastOutputAt)
+	}
+}
+
 // TestPortal_Compute_LeavesLastOutputAtNilForCompletedRows ensures the
 // staleness field is omitted for terminal rows so the JSON contract only
 // carries it for runs that can actually be stale.
