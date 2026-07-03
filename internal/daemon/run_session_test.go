@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -172,6 +173,9 @@ func TestRunSession_Prepare_SkipsCommandServerWhenCommanderNil(t *testing.T) {
 // net.Listen("unix", <dir>/batch.sock) where <dir>/batch.sock is a
 // non-empty directory fails with EADDRINUSE / "address already in use".
 func TestRunSession_Prepare_PropagatesControlSocketError(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("control socket errors depend on Unix socket path conventions; tracked by #1720")
+	}
 	dir := t.TempDir()
 	rs := NewRunSession(dir, "failing-run-1")
 	t.Cleanup(func() { _ = rs.Close() })

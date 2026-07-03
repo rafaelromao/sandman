@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -26,6 +27,9 @@ import (
 // acceptance criteria #1 ("No code path creates .sandman/reviews/<PR>/")
 // and #2 (".sandman/reviews/ contains only review.sock and review-prompt.md").
 func TestDaemon_ReviewsDirContainsOnlySocketAndPrompt(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("review daemon uses Unix socket path conventions; tracked by #1720")
+	}
 	now := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
 	gh := &fakeGH{
 		prs: []github.PR{{Number: 7, State: "open"}},

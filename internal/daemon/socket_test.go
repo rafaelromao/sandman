@@ -308,6 +308,7 @@ func TestFindDeadRunBatches_NoRunsDir(t *testing.T) {
 }
 
 func TestFindDeadRunBatches_LiveSocketExcluded(t *testing.T) {
+	skipIfNotControlSocketSupported(t)
 	baseDir := t.TempDir()
 	batchesDir := filepath.Join(baseDir, "batches")
 	if err := os.MkdirAll(batchesDir, 0755); err != nil {

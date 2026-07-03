@@ -10,6 +10,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -912,6 +913,9 @@ func TestDaemon_TickCaseInsensitive(t *testing.T) {
 }
 
 func TestDaemon_StartSocketCreatesReviewSock(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("review socket starts an abstract-socket listener; tracked by #1720")
+	}
 	gh := &fakeGH{}
 	runner := &capturedRequest{}
 	d, _, _ := newDaemonForTest(t, gh, runner, &config.Config{})

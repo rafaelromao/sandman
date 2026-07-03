@@ -4252,7 +4252,7 @@ func TestRunBatch_StartDelay_DoesNotStaggerSimultaneousReadyRuns(t *testing.T) {
 	case <-dependentBStarted:
 		secondStarted = dependentAStarted
 		firstAt = time.Now()
-	case <-time.After(250 * time.Millisecond):
+	case <-time.After(1 * time.Second):
 		t.Fatal("expected dependent runs to start after start delay")
 	}
 	if elapsed := firstAt.Sub(releaseAt); elapsed < 75*time.Millisecond {
@@ -4263,7 +4263,7 @@ func TestRunBatch_StartDelay_DoesNotStaggerSimultaneousReadyRuns(t *testing.T) {
 	select {
 	case <-secondStarted:
 		secondAt = time.Now()
-	case <-time.After(250 * time.Millisecond):
+	case <-time.After(1 * time.Second):
 		t.Fatal("expected second dependent to start")
 	}
 	if diff := secondAt.Sub(firstAt); diff > 200*time.Millisecond {

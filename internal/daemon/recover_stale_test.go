@@ -3,6 +3,7 @@ package daemon
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
@@ -173,6 +174,9 @@ func TestRecoverStaleRuns_SkipsTerminatedRun(t *testing.T) {
 }
 
 func TestRecoverStaleRuns_LiveRunExcluded(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("daemon socket liveness probing depends on Unix socket semantics; tracked by #1720")
+	}
 	baseDir := t.TempDir()
 	createdAt := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
 	started := createdAt.Add(5 * time.Minute)
