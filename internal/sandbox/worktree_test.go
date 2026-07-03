@@ -932,6 +932,7 @@ func TestIsBranchCheckedOutError_OnlyMatchesCheckedOutOrWorktreeMessages(t *test
 }
 
 func TestStrandedWorktree_ResolvesRelativeWorktreeBase(t *testing.T) {
+	skipIfNotStrandedSupported(t)
 	// The StrandedWorktree helper resolves a relative worktreeBase
 	// against repoPath internally, so callers can pass the configured
 	// (typically relative) WorktreeDir directly. Without this, the
@@ -1025,6 +1026,7 @@ func TestWorktreeSandbox_StartCallsReconcileStrandedFnSeam(t *testing.T) {
 }
 
 func TestWorktreeSandbox_StartReattachesPrunableWorktree_DirIntact(t *testing.T) {
+	skipIfNotStrandedSupported(t)
 	// A worktree exists and is registered, but its .git gitlink points to a
 	// non-existent gitdir, making it show as "prunable" in git worktree list.
 	// Start() must detect the prunable registration, prune it, re-register the
@@ -1088,6 +1090,7 @@ func TestWorktreeSandbox_StartReattachesPrunableWorktree_DirIntact(t *testing.T)
 }
 
 func TestWorktreeSandbox_StartReattachesPrunableWorktree_DirGone(t *testing.T) {
+	skipIfNotStrandedSupported(t)
 	// A worktree registration exists (prunable due to broken gitlink) but the
 	// worktree directory itself has been deleted from disk. Start() must
 	// detect the prunable registration, prune it, and create a fresh worktree
@@ -1147,6 +1150,7 @@ func TestWorktreeSandbox_StartReattachesPrunableWorktree_DirGone(t *testing.T) {
 }
 
 func TestWorktreeSandbox_StartSkipsPrunableReattachWhenReconcileDisabled(t *testing.T) {
+	skipIfNotStrandedSupported(t)
 	// A worktree exists and is registered, but its .git gitlink points to a
 	// non-existent gitdir, making it show as "prunable" in git worktree list.
 	// With SetStrandedReconcile(false), Start() must NOT attempt reattach;

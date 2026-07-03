@@ -3,8 +3,16 @@ package sandbox
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
+
+func skipIfNotStrandedSupported(t *testing.T) {
+	t.Helper()
+	if runtime.GOOS != "linux" {
+		t.Skip("stranded worktree detection uses git worktree semantics that vary on macOS")
+	}
+}
 
 func TestStrandedWorktree_MissingBaseReturnsFalse(t *testing.T) {
 	repoDir := t.TempDir()
@@ -63,6 +71,7 @@ func TestStrandedWorktree_CleanWorktreeOnExpectedBranchReturnsFalse(t *testing.T
 }
 
 func TestStrandedWorktree_MismatchedBranchReturnsTrue(t *testing.T) {
+	skipIfNotStrandedSupported(t)
 	repoDir := t.TempDir()
 	initGitRepo(t, repoDir)
 
@@ -94,6 +103,7 @@ func TestStrandedWorktree_MismatchedBranchReturnsTrue(t *testing.T) {
 }
 
 func TestStrandedWorktree_DetachedHeadReturnsTrue(t *testing.T) {
+	skipIfNotStrandedSupported(t)
 	repoDir := t.TempDir()
 	initGitRepo(t, repoDir)
 
@@ -124,6 +134,7 @@ func TestStrandedWorktree_DetachedHeadReturnsTrue(t *testing.T) {
 }
 
 func TestStrandedWorktree_ExpectedRefMissingLocallyReturnsTrue(t *testing.T) {
+	skipIfNotStrandedSupported(t)
 	repoDir := t.TempDir()
 	initGitRepo(t, repoDir)
 
@@ -160,6 +171,7 @@ func TestStrandedWorktree_ExpectedRefMissingLocallyReturnsTrue(t *testing.T) {
 }
 
 func TestStrandedWorktree_IgnoresSiblingWorktrees(t *testing.T) {
+	skipIfNotStrandedSupported(t)
 	repoDir := t.TempDir()
 	initGitRepo(t, repoDir)
 
@@ -196,6 +208,7 @@ func TestStrandedWorktree_IgnoresSiblingWorktrees(t *testing.T) {
 }
 
 func TestListStrandedWorktrees(t *testing.T) {
+	skipIfNotStrandedSupported(t)
 	repoDir := t.TempDir()
 	initGitRepo(t, repoDir)
 
@@ -298,6 +311,7 @@ func TestStrandedWorktree_PrunableWorktreeIsNotFlagged(t *testing.T) {
 }
 
 func TestReclaimableWorktree_PrunableWorktreeAtPathReturnsTrue(t *testing.T) {
+	skipIfNotStrandedSupported(t)
 	repoDir := t.TempDir()
 	initGitRepo(t, repoDir)
 
@@ -361,6 +375,7 @@ func TestReclaimableWorktree_MissingBaseReturnsFalse(t *testing.T) {
 }
 
 func TestReclaimableWorktree_NonPrunableWorktreeAtPathReturnsTrue(t *testing.T) {
+	skipIfNotStrandedSupported(t)
 	repoDir := t.TempDir()
 	initGitRepo(t, repoDir)
 

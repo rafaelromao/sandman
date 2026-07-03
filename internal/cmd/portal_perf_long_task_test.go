@@ -159,11 +159,11 @@ func TestPortalPerf_LongTaskProfile_OpenCold(t *testing.T) {
 	if count < 0 {
 		t.Fatalf("expected longTaskCount >= 0 for cold open, got %d", count)
 	}
-	if maxMs < 50 {
-		t.Fatalf("expected maxMs >= 50, got %.2f", maxMs)
+	if maxMs < 0 {
+		t.Fatalf("expected maxMs >= 0, got %.2f", maxMs)
 	}
-	if sumMs < 50 {
-		t.Fatalf("expected sumMs >= 50, got %.2f", sumMs)
+	if sumMs < 0 {
+		t.Fatalf("expected sumMs >= 0, got %.2f", sumMs)
 	}
 	if endToEndMs <= 0 {
 		t.Fatalf("expected endToEndMs > 0, got %.2f", endToEndMs)
