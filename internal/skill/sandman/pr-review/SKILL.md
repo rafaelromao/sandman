@@ -64,7 +64,7 @@ comments=$(echo "$pr_data" | jq -r '.comments')
 # Step 1 already fetched mergeStateStatus — use it directly. If DIRTY, trigger back-merge first.
 if [ "$mergeStateStatus" = "DIRTY" ]; then
   echo "PR is in 'DIRTY' state (merge conflicts). CI cannot run. Running sandman-back-merge to resolve."
-  # Load and run back-merge: merges origin/main into the current branch, resolves conflicts, pushes.
+  # Load and run back-merge: merges the base branch into the current branch, resolves conflicts, pushes.
   # This can recover fixes that landed on main after the branch was created.
   # If back-merge fails, the PR remains unmergeable — keep polling so we re-enter this block.
   if sandman-back-merge; then
@@ -230,7 +230,7 @@ If no reviewer response arrives within 15 minutes, stop and exit the loop with a
 On **every** poll iteration, after running the three commands above, inspect the `mergeStateStatus` field already returned by the first command (do **not** make a separate `gh pr view` call). If `mergeStateStatus == "DIRTY"`:
 
 1. Stop polling for review feedback. The PR is unmergeable until the conflict is resolved; reviewer comments posted on a DIRTY PR do not produce a usable review.
-2. Load `sandman-back-merge` (see the `sandman-back-merge` skill). Run it on the current branch. It performs the disciplined 3-way merge of `origin/main` (or whatever the PR's base branch is) into the working branch and resolves conflicts without history rewrites.
+2. Load `sandman-back-merge` (see the `sandman-back-merge` skill). Run it on the current branch. It performs the disciplined 3-way merge of the base branch into the working branch and resolves conflicts without history rewrites.
 3. If back-merge succeeds, push the updated branch with `git push`. Update `.sandman/.<N>.head_sha` with the new head SHA so Step 3's stale-request check sees the new commit and re-evaluates.
 4. Restart polling from Step 1 — a fresh CI run will be triggered by the push, and the review agent may have already posted feedback on the prior SHA that the polling loop should classify on the next pass.
 5. If back-merge fails to resolve conflicts (e.g. semantic conflict, merge helper rejected a hunk), exit the loop with a distinct `REVIEW_CONFLICT_UNRESOLVED` reason in the run log. This is **never** a `REVIEW_TIMEOUT`. It is also **never** a silent success — the PR remains unmergeable and a future run must continue from this state.
