@@ -306,6 +306,49 @@ func TestPortal_ActiveRowCSS_UsesReviewingAccent(t *testing.T) {
 	if !strings.Contains(desktop, "var(--reviewing-accent)") {
 		t.Errorf("desktop tbody tr.run-row.active td must use var(--reviewing-accent) for the purple highlight; got %q", desktop)
 	}
+	// Mobile active rule (in the @media (max-width: 960px) block, before
+	// the 760px split) must also use --reviewing-accent.
+	start := strings.Index(html, "@media (max-width: 960px)")
+	if start < 0 {
+		t.Fatal("mobile media query not found")
+	}
+	mobile := html[start:]
+	if end := strings.Index(mobile, "@media (max-width: 760px)"); end >= 0 {
+		mobile = mobile[:end]
+	}
+	mobileActive := extractCSSRuleBody(t, mobile, "tbody tr.run-row.active")
+	if !strings.Contains(mobileActive, "var(--reviewing-accent)") {
+		t.Errorf("mobile tbody tr.run-row.active must use var(--reviewing-accent) for the purple highlight; got %q", mobileActive)
+	}
+}
+
+// TestPortal_HoverRowCSS_NoAccentTint pins hover to a neutral background
+// (no accent or surface-3 lift) so the "purpleish" hover tint that
+// competed with the active row is gone. The user wants active to be the
+// only highlighted state.
+func TestPortal_HoverRowCSS_NoAccentTint(t *testing.T) {
+	html := readPortalHTML(t)
+	hover := extractCSSRuleBody(t, html, "tbody tr.run-row:hover td")
+	if strings.Contains(hover, "var(--accent)") {
+		t.Errorf("desktop tbody tr.run-row:hover td must not mix var(--accent) into the hover background (active owns the purple highlight; hover is neutral); got %q", hover)
+	}
+	// Mobile: hover and active must be split rules; the combined mobile
+	// selector that painted hover with the reviewing purple is gone.
+	start := strings.Index(html, "@media (max-width: 960px)")
+	if start < 0 {
+		t.Fatal("mobile media query not found")
+	}
+	mobile := html[start:]
+	if end := strings.Index(mobile, "@media (max-width: 760px)"); end >= 0 {
+		mobile = mobile[:end]
+	}
+	if strings.Contains(mobile, "tbody tr.run-row:hover,\n      tbody tr.run-row.active") {
+		t.Errorf("mobile hover and active must be split into separate rules so hover can be neutral while active is purple; combined selector still present")
+	}
+	mobileHover := extractCSSRuleBody(t, mobile, "tbody tr.run-row:hover")
+	if strings.Contains(mobileHover, "var(--reviewing-accent)") || strings.Contains(mobileHover, "var(--accent)") {
+		t.Errorf("mobile tbody tr.run-row:hover must not use the reviewing or accent palette; got %q", mobileHover)
+	}
 }
 
 // TestPortal_ActiveRowAddedMobileCSS_NoOverrides is the mobile-block
