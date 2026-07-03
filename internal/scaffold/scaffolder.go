@@ -35,6 +35,8 @@ const rubyBuildToolsPreset = "ruby"
 
 const rustBuildToolsPreset = "rust"
 
+const javaBuildToolsPreset = "java"
+
 const DefaultMISEVersion = "v2026.5.8"
 
 const DefaultRTKVersion = "v0.42.0"
@@ -144,6 +146,12 @@ var builtInBuildToolsPresets = map[string]BuildToolsPreset{
 	},
 	rustBuildToolsPreset: {
 		Name:           rustBuildToolsPreset,
+		BaseImage:      "debian:bookworm-slim",
+		SharedPackages: sharedPackages,
+		MiseVersion:    DefaultMISEVersion,
+	},
+	javaBuildToolsPreset: {
+		Name:           javaBuildToolsPreset,
 		BaseImage:      "debian:bookworm-slim",
 		SharedPackages: sharedPackages,
 		MiseVersion:    DefaultMISEVersion,
