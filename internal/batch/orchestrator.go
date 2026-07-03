@@ -690,7 +690,17 @@ func NewBadgeHooker(w io.Writer) BadgeHooker {
 	if err != nil {
 		return nopBadgeHooker{}
 	}
-	return newDefaultBadgeHooker(&defaultPRLister{gh: realGhCommander{}}, sandmanRunner, w)
+	root, err := filepath.Abs(".")
+	if err != nil {
+		root = "."
+	}
+	layout := paths.NewLayout(nil, root)
+	return newDefaultBadgeHooker(
+		&defaultPRLister{gh: realGhCommander{}},
+		&defaultBadgeControlFileReader{layout: layout},
+		sandmanRunner,
+		w,
+	)
 }
 
 // NewBadgeHookerWith returns a BadgeHooker that uses the provided
@@ -702,7 +712,12 @@ func NewBadgeHooker(w io.Writer) BadgeHooker {
 // Production wiring continues to use NewBadgeHooker(io.Writer) — its nop
 // fallback when the sandman binary is unresolved is preserved.
 func NewBadgeHookerWith(w io.Writer, runner SandmanRunner, lister PRLister) BadgeHooker {
-	return newDefaultBadgeHooker(lister, runner, w)
+	root, err := filepath.Abs(".")
+	if err != nil {
+		root = "."
+	}
+	layout := paths.NewLayout(nil, root)
+	return newDefaultBadgeHooker(lister, &defaultBadgeControlFileReader{layout: layout}, runner, w)
 }
 
 // trackShutdownSupervisor records a done channel returned by

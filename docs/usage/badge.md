@@ -12,7 +12,13 @@ After a batch completes with at least one merged `sandman/*` PR, Sandman's post-
 
 The PR is created by an agent — the same agent infrastructure used for issue-driven runs — not by hardcoded Go logic. The agent reads or scaffolds the README, inserts the badge, pushes the branch, and opens the PR.
 
-## The marker comment
+## The control file (fast path)
+
+When the badge sidecar successfully creates the PR, it writes an empty sentinel file at `.sandman/.built_with_sandman` (atomically, via temp-file + rename). The post-batch hook checks for this file **before** running the expensive `gh pr list --state all --limit 100` scan: if the file is present, the hook treats the badge as already proposed and exits silently.
+
+The file is gitignored (it lives under `.sandman/`), is per-checkout, and is intentionally empty — its mere existence is the signal. Removing it has no harmful effect: the next batch just pays the `gh pr list` cost once and the sidecar re-writes the file if the marker comment is still found.
+
+## The marker comment (fallback)
 
 The PR body starts with:
 

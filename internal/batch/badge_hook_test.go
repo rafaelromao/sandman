@@ -3,16 +3,21 @@ package batch
 import (
 	"context"
 	"io"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/rafaelromao/sandman/internal/paths"
 )
 
 type fakePRLister struct {
-	mergedPRs []MergedSandmanPR
-	hasBadge  bool
-	mergedErr error
-	badgeErr  error
+	mergedPRs         []MergedSandmanPR
+	hasBadge          bool
+	mergedErr         error
+	badgeErr          error
+	hasBadgeCallCount int
 }
 
 func (f *fakePRLister) ListMergedSandmanPRs(ctx context.Context) ([]MergedSandmanPR, error) {
@@ -29,10 +34,19 @@ func (f *fakePRLister) ListMergedSandmanPRs(ctx context.Context) ([]MergedSandma
 }
 
 func (f *fakePRLister) HasBadgePR(ctx context.Context) (bool, error) {
+	f.hasBadgeCallCount++
 	if f.badgeErr != nil {
 		return false, f.badgeErr
 	}
 	return f.hasBadge, nil
+}
+
+type fakeBadgeControlFileReader struct {
+	present bool
+}
+
+func (f *fakeBadgeControlFileReader) HasBadgeControlFile() bool {
+	return f.present
 }
 
 func intToString(n int) string { return strconv.Itoa(n) }
@@ -50,12 +64,20 @@ func (f *fakeSandmanRunner) RunPrompt(ctx context.Context, promptText, branch st
 	return f.prURL, f.err
 }
 
+// newTestBadgeHooker wires the production defaultBadgeHooker with the
+// given lister/runner plus a no-control-file reader. Tests that need
+// the short-circuit path construct their own fakeBadgeControlFileReader
+// and pass it directly to newDefaultBadgeHooker.
+func newTestBadgeHooker(lister *fakePRLister, runner *fakeSandmanRunner, writer io.Writer) *defaultBadgeHooker {
+	return newDefaultBadgeHooker(lister, &fakeBadgeControlFileReader{present: false}, runner, writer)
+}
+
 func TestMaybeSuggestBadge_NoSuccessRuns(t *testing.T) {
 	fakeGh := &fakePRLister{
 		mergedPRs: []MergedSandmanPR{{Number: 1, HeadRefName: "sandman/feat", Title: "Test"}},
 	}
 	fakeRunner := &fakeSandmanRunner{prURL: "https://github.com/owner/repo/pull/99"}
-	h := newDefaultBadgeHooker(fakeGh, fakeRunner, io.Discard)
+	h := newTestBadgeHooker(fakeGh, fakeRunner, io.Discard)
 
 	results := []AgentRunResult{
 		{Status: "failed"},
@@ -74,7 +96,7 @@ func TestMaybeSuggestBadge_ZeroMergedSandmanPRs(t *testing.T) {
 		mergedPRs: []MergedSandmanPR{},
 	}
 	fakeRunner := &fakeSandmanRunner{prURL: "https://github.com/owner/repo/pull/99"}
-	h := newDefaultBadgeHooker(fakeGh, fakeRunner, io.Discard)
+	h := newTestBadgeHooker(fakeGh, fakeRunner, io.Discard)
 
 	results := []AgentRunResult{
 		{Status: "success"},
@@ -93,7 +115,7 @@ func TestMaybeSuggestBadge_HasBadgePR(t *testing.T) {
 		hasBadge:  true,
 	}
 	fakeRunner := &fakeSandmanRunner{prURL: "https://github.com/owner/repo/pull/99"}
-	h := newDefaultBadgeHooker(fakeGh, fakeRunner, io.Discard)
+	h := newTestBadgeHooker(fakeGh, fakeRunner, io.Discard)
 
 	results := []AgentRunResult{
 		{Status: "success"},
@@ -117,7 +139,7 @@ func TestMaybeSuggestBadge_TriggersChildSandman(t *testing.T) {
 	fakeRunner := &fakeSandmanRunner{
 		prURL: "https://github.com/owner/repo/pull/99",
 	}
-	h := newDefaultBadgeHooker(fakeGh, fakeRunner, io.Discard)
+	h := newTestBadgeHooker(fakeGh, fakeRunner, io.Discard)
 
 	results := []AgentRunResult{
 		{Status: "success"},
@@ -139,7 +161,7 @@ func TestMaybeSuggestBadge_TriggersChildSandman_MultipleSuccessRuns(t *testing.T
 		hasBadge:  false,
 	}
 	fakeRunner := &fakeSandmanRunner{prURL: "https://github.com/owner/repo/pull/7"}
-	h := newDefaultBadgeHooker(fakeGh, fakeRunner, io.Discard)
+	h := newTestBadgeHooker(fakeGh, fakeRunner, io.Discard)
 
 	results := []AgentRunResult{
 		{Status: "failed"},
@@ -159,7 +181,7 @@ func TestMaybeSuggestBadge_MergedErr_WarnsAndContinues(t *testing.T) {
 		mergedErr: context.DeadlineExceeded,
 	}
 	fakeRunner := &fakeSandmanRunner{prURL: "https://github.com/owner/repo/pull/99"}
-	h := newDefaultBadgeHooker(fakeGh, fakeRunner, io.Discard)
+	h := newTestBadgeHooker(fakeGh, fakeRunner, io.Discard)
 
 	results := []AgentRunResult{{Status: "success"}}
 
@@ -176,7 +198,7 @@ func TestMaybeSuggestBadge_BadgeErr_WarnsAndContinues(t *testing.T) {
 		badgeErr:  context.DeadlineExceeded,
 	}
 	fakeRunner := &fakeSandmanRunner{prURL: "https://github.com/owner/repo/pull/99"}
-	h := newDefaultBadgeHooker(fakeGh, fakeRunner, io.Discard)
+	h := newTestBadgeHooker(fakeGh, fakeRunner, io.Discard)
 
 	results := []AgentRunResult{{Status: "success"}}
 
@@ -193,7 +215,7 @@ func TestMaybeSuggestBadge_SandmanRunErr_WarnsAndContinues(t *testing.T) {
 		hasBadge:  false,
 	}
 	fakeRunner := &fakeSandmanRunner{err: context.DeadlineExceeded}
-	h := newDefaultBadgeHooker(fakeGh, fakeRunner, io.Discard)
+	h := newTestBadgeHooker(fakeGh, fakeRunner, io.Discard)
 
 	results := []AgentRunResult{{Status: "success"}}
 
@@ -210,7 +232,7 @@ func TestMaybeSuggestBadge_NonSandmanBranchFiltered(t *testing.T) {
 		hasBadge: false,
 	}
 	fakeRunner := &fakeSandmanRunner{prURL: "https://github.com/owner/repo/pull/99"}
-	h := newDefaultBadgeHooker(fakeGh, fakeRunner, io.Discard)
+	h := newTestBadgeHooker(fakeGh, fakeRunner, io.Discard)
 
 	results := []AgentRunResult{{Status: "success"}}
 
@@ -265,6 +287,96 @@ func TestNewBadgeHookerWith_DoesNotSpawnWhenNoMergedSandmanPRs(t *testing.T) {
 	}
 }
 
+func TestMaybeSuggestBadge_ControlFilePresent_ShortCircuitsHasBadgePR(t *testing.T) {
+	fakeGh := &fakePRLister{
+		mergedPRs: []MergedSandmanPR{{Number: 7, HeadRefName: "sandman/feat", Title: "Add feature"}},
+	}
+	fakeRunner := &fakeSandmanRunner{prURL: "https://github.com/owner/repo/pull/55"}
+	controlReader := &fakeBadgeControlFileReader{present: true}
+	h := newDefaultBadgeHooker(fakeGh, controlReader, fakeRunner, io.Discard)
+
+	h.MaybeSuggestBadge(context.Background(), []AgentRunResult{{Status: "success"}})
+
+	if fakeGh.hasBadgeCallCount != 0 {
+		t.Errorf("expected HasBadgePR NOT to be called when control file is present, got %d call(s)", fakeGh.hasBadgeCallCount)
+	}
+	if fakeRunner.capturedPrompt != "" {
+		t.Errorf("expected no spawn when control file is present, got prompt=%q", fakeRunner.capturedPrompt)
+	}
+}
+
+func TestMaybeSuggestBadge_ControlFileAbsent_FallsThroughToHasBadgePR(t *testing.T) {
+	fakeGh := &fakePRLister{
+		mergedPRs: []MergedSandmanPR{{Number: 7, HeadRefName: "sandman/feat", Title: "Add feature"}},
+		hasBadge:  true,
+	}
+	fakeRunner := &fakeSandmanRunner{prURL: "https://github.com/owner/repo/pull/55"}
+	h := newTestBadgeHooker(fakeGh, fakeRunner, io.Discard)
+
+	h.MaybeSuggestBadge(context.Background(), []AgentRunResult{{Status: "success"}})
+
+	if fakeGh.hasBadgeCallCount != 1 {
+		t.Errorf("expected HasBadgePR to be called once when control file is absent, got %d call(s)", fakeGh.hasBadgeCallCount)
+	}
+	if fakeRunner.capturedPrompt != "" {
+		t.Errorf("expected no spawn when HasBadgePR reports badge present, got prompt=%q", fakeRunner.capturedPrompt)
+	}
+}
+
+func TestDefaultBadgeControlFileReader_TreatsMissingFileAsAbsent(t *testing.T) {
+	tmp := t.TempDir()
+	layout := paths.NewLayout(nil, tmp)
+
+	reader := &defaultBadgeControlFileReader{layout: layout}
+	if got := reader.HasBadgeControlFile(); got {
+		t.Errorf("expected HasBadgeControlFile to return false when control file is absent, got true")
+	}
+}
+
+func TestDefaultBadgeControlFileReader_TreatsPresentFileAsPresent(t *testing.T) {
+	tmp := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(tmp, ".sandman"), 0o755); err != nil {
+		t.Fatalf("mkdir .sandman: %v", err)
+	}
+	controlPath := filepath.Join(tmp, ".sandman", ".built_with_sandman")
+	if err := os.WriteFile(controlPath, nil, 0o644); err != nil {
+		t.Fatalf("write control file: %v", err)
+	}
+	layout := paths.NewLayout(nil, tmp)
+
+	reader := &defaultBadgeControlFileReader{layout: layout}
+	if got := reader.HasBadgeControlFile(); !got {
+		t.Errorf("expected HasBadgeControlFile to return true when control file is present, got false")
+	}
+}
+
+func TestDefaultBadgeControlFileReader_TreatsStatErrorAsAbsent(t *testing.T) {
+	tmp := t.TempDir()
+	sandmanDir := filepath.Join(tmp, ".sandman")
+	if err := os.MkdirAll(sandmanDir, 0o000); err != nil {
+		t.Fatalf("mkdir .sandman: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chmod(sandmanDir, 0o755)
+	})
+
+	layout := paths.NewLayout(nil, tmp)
+	reader := &defaultBadgeControlFileReader{layout: layout}
+	if got := reader.HasBadgeControlFile(); got {
+		t.Errorf("expected HasBadgeControlFile to return false when stat errors (e.g. permission denied), got true")
+	}
+}
+
+func TestDefaultBadgeControlFileReader_TreatsMissingSandmanDirAsAbsent(t *testing.T) {
+	tmp := t.TempDir()
+	layout := paths.NewLayout(nil, tmp)
+
+	reader := &defaultBadgeControlFileReader{layout: layout}
+	if got := reader.HasBadgeControlFile(); got {
+		t.Errorf("expected HasBadgeControlFile to return false when .sandman dir does not exist, got true")
+	}
+}
+
 func TestMaybeSuggestBadge_PromptContainsMergedPRs(t *testing.T) {
 	fakeGh := &fakePRLister{
 		mergedPRs: []MergedSandmanPR{
@@ -274,7 +386,7 @@ func TestMaybeSuggestBadge_PromptContainsMergedPRs(t *testing.T) {
 		hasBadge: false,
 	}
 	fakeRunner := &fakeSandmanRunner{prURL: "https://github.com/owner/repo/pull/5"}
-	h := newDefaultBadgeHooker(fakeGh, fakeRunner, io.Discard)
+	h := newTestBadgeHooker(fakeGh, fakeRunner, io.Discard)
 
 	results := []AgentRunResult{{Status: "success"}}
 
@@ -299,7 +411,7 @@ func TestMaybeSuggestBadge_PromptBodyRationaleReferencesMergedPRs(t *testing.T) 
 		hasBadge: false,
 	}
 	fakeRunner := &fakeSandmanRunner{prURL: "https://github.com/owner/repo/pull/5"}
-	h := newDefaultBadgeHooker(fakeGh, fakeRunner, io.Discard)
+	h := newTestBadgeHooker(fakeGh, fakeRunner, io.Discard)
 
 	results := []AgentRunResult{{Status: "success"}}
 

@@ -41,8 +41,9 @@ func (r *cmdBadgeRunner) RunPrompt(_ context.Context, promptText, branch string)
 // marker-PR-found flag so the trigger decision is exercised under
 // controlled inputs.
 type cmdBadgeLister struct {
-	mergedPRs []batch.MergedSandmanPR
-	hasBadge  bool
+	mergedPRs         []batch.MergedSandmanPR
+	hasBadge          bool
+	hasBadgeCallCount int
 }
 
 func (l *cmdBadgeLister) ListMergedSandmanPRs(_ context.Context) ([]batch.MergedSandmanPR, error) {
@@ -50,6 +51,7 @@ func (l *cmdBadgeLister) ListMergedSandmanPRs(_ context.Context) ([]batch.Merged
 }
 
 func (l *cmdBadgeLister) HasBadgePR(_ context.Context) (bool, error) {
+	l.hasBadgeCallCount++
 	return l.hasBadge, nil
 }
 
@@ -119,6 +121,73 @@ func TestBadge_E2E_HappyPath(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "Sandman suggested a Built with Sandman badge PR: https://example.test/badge/pull/99 (close it to dismiss)") {
 		t.Errorf("expected stderr to contain summary line, got: %s", stderr.String())
+	}
+}
+
+func TestBadge_E2E_ControlFilePresent_ShortCircuitsBadgeHook(t *testing.T) {
+	if !testenv.E2EGateAllowed(testenv.E2EScenarioBadge) {
+		t.Skip("set SANDMAN_E2E_GATES=badge (or all) to run badge e2e tests")
+	}
+
+	repoDir := t.TempDir()
+	t.Chdir(repoDir)
+	initRunIntegrationRepo(t, repoDir)
+
+	remoteDir := filepath.Join(repoDir, "remote")
+	if err := os.MkdirAll(remoteDir, 0755); err != nil {
+		t.Fatalf("create remote dir: %v", err)
+	}
+	bareInit := exec.Command("git", "init", "--bare")
+	bareInit.Dir = remoteDir
+	if out, err := bareInit.CombinedOutput(); err != nil {
+		t.Fatalf("init bare remote: %v: %s", out, err)
+	}
+	runGit(t, repoDir, "remote", "add", "origin", remoteDir)
+	runGit(t, repoDir, "push", "-u", "origin", "main")
+
+	seedBadgeTestRepo(t, repoDir)
+	runGit(t, repoDir, "remote", "set-url", "origin", "git@github.com:rafaelromao/sandman.git")
+
+	ghShimDir := t.TempDir()
+	writeBadgeGHShim(t, ghShimDir, repoDir)
+	prependPath(t, ghShimDir)
+
+	sandmanDir := filepath.Join(repoDir, ".sandman")
+	if err := os.MkdirAll(sandmanDir, 0755); err != nil {
+		t.Fatalf("create .sandman dir: %v", err)
+	}
+	controlPath := filepath.Join(sandmanDir, ".built_with_sandman")
+	if err := os.WriteFile(controlPath, nil, 0o644); err != nil {
+		t.Fatalf("seed control file: %v", err)
+	}
+
+	rec := &cmdBadgeRunner{branch: "sandman/built-with-sandman", prURL: "https://example.test/badge/pull/99"}
+	lister := &cmdBadgeLister{mergedPRs: []batch.MergedSandmanPR{{Number: 1, HeadRefName: "sandman/1-fix", Title: "Fix failing test"}}, hasBadge: false}
+	stderr := &bytes.Buffer{}
+	badgeHook := batch.NewBadgeHookerWith(stderr, rec, lister)
+
+	deps := badgeTestDeps(repoDir, badgeHook)
+	runRootCommand(t, deps, "init", "--agent", "opencode")
+	runRootCommand(t, deps, "config", "set", "review_command", "/oc review")
+
+	badgeGHShimDir := filepath.Join(repoDir, ".sandman", "bin")
+	writeBadgeGHShimForContainer(t, badgeGHShimDir, repoDir)
+
+	out, err := runRootCommand(t, deps, "run", "--agent", "opencode", "--sandbox", "worktree", "1")
+	t.Logf("sandman run returned err=%v output=%s", err, out)
+
+	if err != nil {
+		t.Fatalf("sandman run failed: %v output=%s", err, out)
+	}
+
+	if lister.hasBadgeCallCount != 0 {
+		t.Errorf("expected HasBadgePR NOT to be invoked when control file is present, got %d call(s)", lister.hasBadgeCallCount)
+	}
+	if rec.capturedPrompt != "" {
+		t.Errorf("expected badge hook NOT to spawn when control file is present, got prompt=%q", rec.capturedPrompt)
+	}
+	if strings.Contains(stderr.String(), "Sandman suggested a Built with Sandman badge PR") {
+		t.Errorf("expected no summary line on stderr when control file is present, got: %s", stderr.String())
 	}
 }
 
@@ -251,6 +320,8 @@ case "$1" in
         printf '%s' "$body_val" > "$badge_state_dir/badge-pr-body.txt"
         badge_pr_json=$(printf '{"number":99,"state":"open","headRefName":"%s","title":"%s"}' "$head_val" "$title_val")
         printf '%s\n' "$badge_pr_json" > "$badge_state_dir/badge-pr.json"
+        mkdir -p "$shim_dir/.sandman"
+        : > "$shim_dir/.sandman/.built_with_sandman"
         printf 'https://example.test/example/sandbox/pull/99\n'
         exit 0
       fi
@@ -453,6 +524,8 @@ case "$1" in
         printf '%s' "$body_val" > "$badge_state_dir/badge-pr-body.txt"
         badge_pr_json=$(printf '{"number":99,"state":"open","headRefName":"%s","title":"%s"}' "$head_val" "$title_val")
         printf '%s\n' "$badge_pr_json" > "$badge_state_dir/badge-pr.json"
+        mkdir -p "$shim_dir/.sandman"
+        : > "$shim_dir/.sandman/.built_with_sandman"
         printf 'https://example.test/example/sandbox/pull/99\n'
         exit 0
       fi
