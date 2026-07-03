@@ -105,7 +105,7 @@ func TestMaybeSuggestBadge_TriggerDecisions(t *testing.T) {
 				err:   tc.runnerErr,
 			}
 			var warnBuf warnBuffer
-			h := newDefaultBadgeHooker(fakeGh, fakeRunner, &warnBuf)
+			h := newTestBadgeHooker(fakeGh, fakeRunner, &warnBuf)
 
 			results := []AgentRunResult{{Status: "success"}}
 			h.MaybeSuggestBadge(context.Background(), results)
@@ -160,7 +160,7 @@ func TestMaybeSuggestBadge_MultipleMergedPRsPassedToPrompt(t *testing.T) {
 		hasBadge: false,
 	}
 	fakeRunner := &fakeSandmanRunner{prURL: "https://github.com/owner/repo/pull/5"}
-	h := newDefaultBadgeHooker(fakeGh, fakeRunner, io.Discard)
+	h := newTestBadgeHooker(fakeGh, fakeRunner, io.Discard)
 
 	results := []AgentRunResult{{Status: "success"}}
 	h.MaybeSuggestBadge(context.Background(), results)

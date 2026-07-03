@@ -43,7 +43,6 @@ func (r *cmdBadgeRunner) RunPrompt(_ context.Context, promptText, branch string)
 type cmdBadgeLister struct {
 	mergedPRs         []batch.MergedSandmanPR
 	hasBadge          bool
-	controlFile       bool
 	hasBadgeCallCount int
 }
 
@@ -54,10 +53,6 @@ func (l *cmdBadgeLister) ListMergedSandmanPRs(_ context.Context) ([]batch.Merged
 func (l *cmdBadgeLister) HasBadgePR(_ context.Context) (bool, error) {
 	l.hasBadgeCallCount++
 	return l.hasBadge, nil
-}
-
-func (l *cmdBadgeLister) HasBadgeControlFile(_ context.Context) bool {
-	return l.controlFile
 }
 
 func TestBadge_E2E_HappyPath(t *testing.T) {
@@ -167,7 +162,7 @@ func TestBadge_E2E_ControlFilePresent_ShortCircuitsBadgeHook(t *testing.T) {
 	}
 
 	rec := &cmdBadgeRunner{branch: "sandman/built-with-sandman", prURL: "https://example.test/badge/pull/99"}
-	lister := &cmdBadgeLister{mergedPRs: []batch.MergedSandmanPR{{Number: 1, HeadRefName: "sandman/1-fix", Title: "Fix failing test"}}, hasBadge: false, controlFile: true}
+	lister := &cmdBadgeLister{mergedPRs: []batch.MergedSandmanPR{{Number: 1, HeadRefName: "sandman/1-fix", Title: "Fix failing test"}}, hasBadge: false}
 	stderr := &bytes.Buffer{}
 	badgeHook := batch.NewBadgeHookerWith(stderr, rec, lister)
 

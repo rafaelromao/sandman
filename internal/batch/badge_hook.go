@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/rafaelromao/sandman/internal/paths"
 	"github.com/rafaelromao/sandman/internal/prompt"
 )
 
@@ -36,7 +37,16 @@ func (realGhCommander) runGh(ctx context.Context, args ...string) ([]byte, error
 type PRLister interface {
 	ListMergedSandmanPRs(ctx context.Context) ([]MergedSandmanPR, error)
 	HasBadgePR(ctx context.Context) (bool, error)
-	HasBadgeControlFile(ctx context.Context) bool
+}
+
+// BadgeControlFileReader reports whether the local control file that
+// marks "the Built with Sandman badge PR has been proposed in this
+// checkout" is present. The post-batch BadgeHooker checks this file
+// before paying for the expensive `gh pr list` fallback, so the
+// interface lives next to the hook rather than on PRLister (which is
+// PR-focused).
+type BadgeControlFileReader interface {
+	HasBadgeControlFile() bool
 }
 
 type MergedSandmanPR struct {
@@ -89,31 +99,41 @@ func (d *defaultPRLister) HasBadgePR(ctx context.Context) (bool, error) {
 }
 
 // badgeControlFileName is the stable filename of the empty control file
-// the badge sidecar writes at PR-creation time. The post-batch hook
-// short-circuits the expensive HasBadgePR check when this file exists.
+// the badge sidecar writes at PR-creation time. The post-batch
+// BadgeHooker short-circuits the expensive HasBadgePR check when this
+// file exists.
 //
 // The file is intentionally empty — its mere existence is the signal.
 // It is gitignored and recreated automatically by the badge sidecar
 // on the first batch that successfully proposes the PR.
 const badgeControlFileName = ".built_with_sandman"
 
-// HasBadgeControlFile reports whether the local control file marking
-// "the badge PR has been proposed in this checkout" is present. It is
-// the fast path that lets the hook skip the expensive `gh pr list`
-// call on every batch. Stat errors other than IsNotExist are swallowed
-// and reported as "absent" so a transient filesystem hiccup never
-// blocks the fallback HasBadgePR path.
-func (d *defaultPRLister) HasBadgeControlFile(_ context.Context) bool {
-	root, err := os.Getwd()
+// badgeControlFilePath returns the absolute path to the badge control
+// file under the given layout, matching every other .sandman/*
+// persisted artifact.
+func badgeControlFilePath(layout paths.Layout) string {
+	return filepath.Join(layout.SandmanDir, badgeControlFileName)
+}
+
+// defaultBadgeControlFileReader is the production implementation of
+// BadgeControlFileReader. It looks for the control file under the
+// layout-resolved SandmanDir (not process cwd) so the read survives
+// worktree or subdir invocations.
+type defaultBadgeControlFileReader struct {
+	layout paths.Layout
+}
+
+// HasBadgeControlFile reports whether the control file is present
+// under the resolved SandmanDir. Stat errors other than "not exist"
+// are swallowed and reported as "absent" — the fallback HasBadgePR
+// path provides the authoritative answer, so a transient filesystem
+// hiccup must never block it.
+func (d *defaultBadgeControlFileReader) HasBadgeControlFile() bool {
+	_, err := os.Stat(badgeControlFilePath(d.layout))
 	if err != nil {
 		return false
 	}
-	path := filepath.Join(root, ".sandman", badgeControlFileName)
-	info, err := os.Stat(path)
-	if err != nil {
-		return false
-	}
-	return info != nil
+	return true
 }
 
 type prPayloadList struct {
@@ -180,13 +200,15 @@ func (n nopBadgeHooker) MaybeSuggestBadge(ctx context.Context, results []AgentRu
 
 type defaultBadgeHooker struct {
 	prLister      PRLister
+	controlReader BadgeControlFileReader
 	sandmanRunner SandmanRunner
 	writer        io.Writer
 }
 
-func newDefaultBadgeHooker(prLister PRLister, sandmanRunner SandmanRunner, writer io.Writer) *defaultBadgeHooker {
+func newDefaultBadgeHooker(prLister PRLister, controlReader BadgeControlFileReader, sandmanRunner SandmanRunner, writer io.Writer) *defaultBadgeHooker {
 	return &defaultBadgeHooker{
 		prLister:      prLister,
+		controlReader: controlReader,
 		sandmanRunner: sandmanRunner,
 		writer:        writer,
 	}
@@ -213,7 +235,7 @@ func (h *defaultBadgeHooker) MaybeSuggestBadge(ctx context.Context, results []Ag
 		return
 	}
 
-	controlFilePresent := h.prLister.HasBadgeControlFile(ctx)
+	controlFilePresent := h.controlReader.HasBadgeControlFile()
 	if controlFilePresent {
 		return
 	}
