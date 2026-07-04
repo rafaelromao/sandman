@@ -51,18 +51,27 @@ func TestPortal_LiveOutputReturnsTailForLongStream(t *testing.T) {
 	}
 	suffix := "\n[issue-1] 12:59:59 final output\n"
 
+	readyPath := filepath.Join(repoRoot, "server-ready")
 	go func() {
+		if err := os.WriteFile(readyPath, []byte("ok"), 0644); err != nil {
+			return
+		}
 		conn, err := ln.Accept()
 		if err != nil {
 			return
 		}
 		defer conn.Close()
 		_, _ = conn.Write(largeData)
+		// The 200ms pause shapes the data the test reads: the suffix
+		// must arrive AFTER the client has had time to consume the
+		// bulk of largeData, but BEFORE the 250ms read deadline
+		// expires. Removing the pause changes the assertion's
+		// observable (the read would either short-read or block).
 		time.Sleep(200 * time.Millisecond)
 		_, _ = conn.Write([]byte(suffix))
 	}()
 
-	time.Sleep(50 * time.Millisecond)
+	waitForPathTB(t, readyPath, 2*time.Second)
 	output := (&portalRunsView{}).readPortalSocketOutput(sockPath)
 
 	if len(output) != portalReadLimit {
