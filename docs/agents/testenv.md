@@ -10,6 +10,24 @@ infrastructure that fits the same scope lands here.
 When a test binds a Unix domain socket, **use `testenv.MkdirShort(t,
 dirHint)` instead of `t.TempDir()`**.
 
+### Naming convention for `dirHint`
+
+The `dirHint` becomes the basename prefix in `/tmp/<dirHint><random>`,
+so pick something that makes `/tmp` dumps easy to read during a
+debugging session. The convention is `sm-<package>-`:
+
+| Package                       | dirHint         |
+|-------------------------------|-----------------|
+| `internal/testenv`            | `sm-` (any)     |
+| `internal/review`             | `sm-review-`    |
+| `internal/daemon`             | `sm-daemon-` (broadcasters, control sockets, command servers) |
+| `internal/cmd` (orchestrator) | `sm-orch-` (batch / orchestrator scenarios) |
+| `internal/cmd` (portal/abort) | `sm-portal-` / `sm-abort-` / `sm-stop-` |
+| `internal/cmd` (auto)         | `sm-auto-`      |
+
+The `sm-` prefix keeps test directories visually distinct from
+user-created temp dirs in the same shared `/tmp` namespace.
+
 ```go
 func TestSomething(t *testing.T) {
     dir := testenv.MkdirShort(t, "sm-review-")

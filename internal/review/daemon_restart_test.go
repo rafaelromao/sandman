@@ -65,9 +65,11 @@ func TestDaemon_RestartRecoversPendingFromDisk(t *testing.T) {
 	tickAndWait(t, d1, context.Background())
 	// tickAndWait waits for slotHeldCount to drop, but the async
 	// launch goroutine may not have invoked runner.Run yet on macOS
-	// (a documented goroutine-scheduling sensitivity). Poll for up
-	// to 10 s for the call to land — well past the worst seen in CI.
-	deadline := time.Now().Add(10 * time.Second)
+	// (a documented goroutine-scheduling sensitivity — see #1736
+	// and the relaxations already in orchestrator_test.go). Poll
+	// for up to 60 s for the call to land; 10 s was insufficient
+	// in CI load tests.
+	deadline := time.Now().Add(60 * time.Second)
 	for time.Now().Before(deadline) && runner.calls == 0 {
 		time.Sleep(50 * time.Millisecond)
 	}
