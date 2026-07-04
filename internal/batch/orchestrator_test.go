@@ -12,9 +12,11 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -8755,6 +8757,163 @@ func TestOrchestrator_AbortIssue_ActiveRunContainer_ReachesAbortedTerminal(t *te
 	if status, _ := abortedEvent.Payload["status"].(string); status != "aborted" {
 		t.Fatalf("expected aborted terminal status, got %q", status)
 	}
+}
+
+// TestOrchestrator_AbortIssue_ActiveRunWorktree_KillsSleepChild is the
+// worktree analogue of the ContainerSandbox abort test above. It wires a
+// REAL *sandbox.WorktreeSandbox into runSingle so the production waitCmd
+// path (negative-PGID SIGKILL via the Setpgid: true cmd.SysProcAttr
+// added in #1782) is exercised end-to-end. The fake runnable's Run
+// method calls sb.ExecInteractive(ctx, "sh -c 'echo $$ > pidfile; touch
+// ready; sleep 60'"); the test polls for the pidfile, reads the spawned
+// PID, calls AbortIssue, and asserts (a) the child PID is observed
+// alive before abort and gone (syscall.Kill(pid, 0) == ESRCH) within 2s
+// of abort, (b) the orchestrator goroutine returns within 3s — which
+// only happens if waitCmd killed the sleep process — and (c) a
+// run.aborted event lands with status "aborted". Regression for #1782.
+func TestOrchestrator_AbortIssue_ActiveRunWorktree_KillsSleepChild(t *testing.T) {
+	if err := exec.Command("sleep", "0").Run(); err != nil {
+		t.Skipf("sleep command not available: %v", err)
+	}
+
+	dir := testenv.MkdirShort(t, "sm-orch-")
+	t.Chdir(dir)
+	initGitRepo(t, dir)
+
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			42: {Number: 42, Title: "Fix bug"},
+		},
+	}
+
+	sbFactory := sandboxFactoryFunc(func(repoPath, worktreeBase, branch, sourceBranch string, container sandbox.Container) sandbox.Sandbox {
+		return sandbox.NewWorktreeSandbox(repoPath, worktreeBase, branch, sourceBranch)
+	})
+
+	worktreeDir := filepath.Join(".", ".sandman", "worktrees", "sandman/42-fix-bug")
+	pidFile := filepath.Join(worktreeDir, "agent.pid")
+
+	factory := &worktreeSleepRunnableFactory{
+		pidFile: pidFile,
+	}
+
+	spyLog := &spyEventLog{}
+
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog)
+	o.sandboxFactory = sbFactory
+	o.runnableFactory = factory
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _ = o.RunBatch(context.Background(), Request{Issues: []int{42}})
+	}()
+
+	absPidFile, err := filepath.Abs(pidFile)
+	if err != nil {
+		t.Fatalf("abs pidfile: %v", err)
+	}
+	waitForFileTB(t, absPidFile, 5*time.Second)
+
+	pidBytes, err := os.ReadFile(pidFile)
+	if err != nil {
+		t.Fatalf("read pid file: %v", err)
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(pidBytes)))
+	if err != nil {
+		t.Fatalf("parse pid %q: %v", strings.TrimSpace(string(pidBytes)), err)
+	}
+
+	if err := syscall.Kill(pid, 0); err != nil {
+		t.Fatalf("expected child pid %d alive before abort, got kill-0 err: %v", pid, err)
+	}
+
+	if err := o.AbortIssue(42); err != nil {
+		t.Fatalf("AbortIssue returned error: %v", err)
+	}
+
+	killDeadline := time.Now().Add(2 * time.Second)
+	for {
+		if err := syscall.Kill(pid, 0); err == syscall.ESRCH {
+			break
+		}
+		if time.Now().After(killDeadline) {
+			t.Fatalf("child pid %d still alive 2s after AbortIssue — negative-PGID SIGKILL did not reach the agent process group (Setpgid missing on WorktreeSandbox.ExecInteractive?)", pid)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("orchestrator goroutine did not return within 3s — AbortIssue did not unblock the production waitCmd")
+	}
+
+	var abortedEvent *events.Event
+	for i := range spyLog.events {
+		e := &spyLog.events[i]
+		if e.Issue == 42 && e.Type == "run.aborted" {
+			abortedEvent = e
+			break
+		}
+	}
+	if abortedEvent == nil {
+		t.Fatalf("expected run.aborted event for issue 42, got %v", spyLog.events)
+	}
+	if status, _ := abortedEvent.Payload["status"].(string); status != "aborted" {
+		t.Fatalf("expected aborted terminal status, got %q", status)
+	}
+}
+
+// worktreeSleepRunnableFactory is the fake runnable factory used by
+// TestOrchestrator_AbortIssue_ActiveRunWorktree_KillsSleepChild. The
+// runnable it produces calls sb.ExecInteractive(ctx, "sh -c 'echo $$ >
+// pidfile; touch ready; sleep 60'") and lets the production waitCmd
+// path (ctx-cancel → negative-PGID SIGKILL) do the killing. The
+// pidfile lets the test observe that the child was actually forked
+// before asserting it is gone after abort.
+type worktreeSleepRunnableFactory struct {
+	pidFile string
+}
+
+func (f *worktreeSleepRunnableFactory) NewRunnable(issue *github.Issue, branch string, sb sandbox.Sandbox) Runnable {
+	return &worktreeSleepRunnable{factory: f, sb: sb}
+}
+
+type worktreeSleepRunnable struct {
+	factory *worktreeSleepRunnableFactory
+	sb      sandbox.Sandbox
+}
+
+// waitForFileTB polls for a file to exist; fails the test on timeout.
+// Used by TestOrchestrator_AbortIssue_ActiveRunWorktree_KillsSleepChild to
+// gate on the spawned sh -c having actually written its PID file before
+// we call AbortIssue.
+func waitForFileTB(t *testing.T, path string, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for {
+		if _, err := os.Stat(path); err == nil {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for %s", path)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+func (r *worktreeSleepRunnable) Run(ctx context.Context, _ prompt.IssueRenderer, _ string, _ prompt.RenderConfig) AgentRunResult {
+	abs, err := filepath.Abs(r.factory.pidFile)
+	if err != nil {
+		return AgentRunResult{Status: "failure"}
+	}
+	absReady := abs + ".ready"
+	cmd := fmt.Sprintf("echo $$ > %s; touch %s; sleep 60", shellenv.Quote(abs), shellenv.Quote(absReady))
+	if err := r.sb.ExecInteractive(ctx, cmd); err != nil {
+		return AgentRunResult{Status: "failure"}
+	}
+	return AgentRunResult{Status: "success"}
 }
 
 // fakeWorktreeForContainerAbortTest is a minimal sandbox.Sandbox used only by
