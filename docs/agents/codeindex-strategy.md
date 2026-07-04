@@ -2,7 +2,7 @@
 
 Session-level policy for fast, scoped code discovery. Prevents context pollution from broad searches and wrong-file reads.
 
-This file is loaded into every OpenCode session via the `instructions` field in `opencode.json`. It runs once per session — the `sandman-index` skill is the complementary reference layer (loaded on demand).
+This file is loaded into every OpenCode session via the `instructions` field in `opencode.json`. It runs once per session — the `sandman-codeindex` sub-skill (under `sandman`) is the complementary reference layer (loaded on demand).
 
 ## Session initialization
 
@@ -38,11 +38,11 @@ Pass this precondition verbatim to every subagent spawned via `task`:
 
 > Before any broad search or file read, run `codeindex lookup <symbol>` or `codeindex search "concept"` to narrow targets. Skip only for config files, logs, or generated artifacts.
 
-## Relationship with `sandman-index` skill
+## Relationship with `sandman-codeindex` sub-skill
 
 | Layer | File | Scope | When |
 |-------|------|-------|------|
 | **Policy** (this file) | `docs/agents/codeindex-strategy.md` | Session init + precondition | Every session, once |
-| **Reference** (`sandman-index`) | `/.agents/skills/sandman-index/SKILL.md` | Command ref, refinement, discipline | On demand, loaded by agent |
+| **Reference** (`sandman-codeindex`) | `/.agents/skills/sandman/codeindex/SKILL.md` | Command ref, refinement, discipline | On demand, loaded by agent |
 
 The policy says **when** and **whether**. The skill says **how**. They complement, not duplicate.
