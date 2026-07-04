@@ -63,19 +63,15 @@ func TestSyncInstallsExactIssueClosingGuardInImplementSkill(t *testing.T) {
 	}
 	text := string(data)
 	checks := []string{
-		"set `body` to exactly `Fixes #<issue_number>`",
-		"Verify the final `body` string is exactly `Fixes #<issue_number>` and contains no other issue references or extra text",
+		"set `body` to exactly the closing-reference string",
+		"Verify the final `body` string is exactly that closing-reference string",
 		"If the body is wrong",
 		"report the exact wrong body to the user and stop",
-		"PR created with `Fixes #<issue_number>`",
 	}
 	for _, want := range checks {
 		if !strings.Contains(text, want) {
 			t.Fatalf("expected implement skill to contain %q, got:\n%s", want, text)
 		}
-	}
-	if strings.Contains(text, "Fixes #<ID>") {
-		t.Fatalf("expected implement skill to reject stale placeholder, got:\n%s", text)
 	}
 }
 
@@ -93,8 +89,8 @@ func TestSyncInstallsPreFlightCheckInImplementSkill(t *testing.T) {
 	text := string(data)
 
 	checks := []string{
-		"gh issue view <ID> --json state",
-		"GitHub rules",
+		"\"view work item\" CLI to read the current state",
+		"tracker's merge rules",
 		"## Status: already resolved",
 		"stop without running",
 		"acceptance criteria",
