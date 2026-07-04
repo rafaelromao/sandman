@@ -69,7 +69,7 @@ A merged change request will, by the tracker's merge rules, automatically close 
    - **Issue is closed** → verify the issue acceptance criteria against the current state of the base branch after fetching `origin/<base>`; only write `## Status: already resolved` and stop if the base branch actually satisfies every criterion. If the base branch does not satisfy every criterion, continue to step 2 (Plan) as normal.
    - **Issue is open** → read the issue acceptance criteria and compare against the current state of the base branch after fetching `origin/<base>`. If all acceptance criteria are already met in the base branch, write `## Status: already resolved` to `.sandman/task.md` and stop without running plan or TDD. Otherwise, proceed to step 2 (Plan) as normal.
 
-The orchestrator's Layer 1 guard will reject the run and emit failure if `## Status: already resolved` is written while a PR is open, so step 3 is not optional.
+Writing `## Status: already resolved` while a PR is open fails the run, so step 3 is not optional.
 
 ### 2. Plan
 
