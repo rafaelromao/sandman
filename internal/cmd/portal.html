@@ -78,12 +78,18 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
       --border: oklch(0.80 0.01 260);
       --text: oklch(0.30 0.02 260);
       --muted: oklch(0.50 0.02 260);
-      --accent: oklch(0.72 0.12 82);
-      --accent-weak: color-mix(in oklch, var(--accent) 12%, var(--surface));
+      /* Border-tinted palette retune (issue #1744): the existing
+         tokens now carry the border-tinted values from prototype
+         variant 4. accent-weak = the soft tinted badge background;
+         accent = the saturated dot colour. success / danger / warning
+         carry the per-state tint that the global .badge.* rules
+         consume via color-mix. */
+      --accent: oklch(0.65 0.110 75);
+      --accent-weak: oklch(0.93 0.040 75);
       --accent-ink: oklch(0.22 0.03 260);
-      --success: oklch(0.57 0.15 145);
-      --danger: oklch(0.55 0.18 25);
-      --warning: oklch(0.70 0.13 78);
+      --success: oklch(0.55 0.115 145);
+      --danger: oklch(0.55 0.155 28);
+      --warning: oklch(0.62 0.130 80);
       --shadow: 0 1px 0 oklch(0.30 0.02 260 / 0.05), 0 24px 48px oklch(0.30 0.02 260 / 0.12);
       --page-top: oklch(0.99 0.008 260);
       --page-bottom: oklch(0.95 0.008 260);
