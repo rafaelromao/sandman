@@ -72,10 +72,18 @@ type Renderer interface {
 // has not yet been observed. The lazy-verify contract (issue #1482
 // slice D) holds these in memory so a subsequent tick can resolve
 // them without keeping `launchReview` on the critical path.
+//
+// runLogPath is the path to the per-run run.log; promotePendingReviews
+// greps it via extractBodiesFromLog to discover bot-authored bodies
+// (issue #1759). Default value when missing: filepath.Dir(reviewState)
+// + "/run.log". The default is applied in processPR's launch
+// goroutine when the entry is registered, and in loadPendingReviews
+// for entries rehydrated from disk.
 type pendingReviewEntry struct {
 	commentID   string
 	since       time.Time
 	reviewState string // path to <runDir>/review-state.json for the launched run
+	runLogPath  string // path to <runDir>/run.log (issue #1759)
 	storeRef    *ReviewStateStore
 	cycles      int
 }
@@ -478,6 +486,11 @@ func (d *Daemon) loadPendingReviews() error {
 				commentID:   sc.CommentID,
 				since:       sc.Timestamp,
 				reviewState: reviewStatePath,
+				// Issue #1759: pending entries persisted before the
+				// runLogPath field existed are rehydrated with the
+				// default value, so the bounded-retry grace path can
+				// grep the log on the new daemon instance.
+				runLogPath: filepath.Join(filepath.Dir(reviewStatePath), "run.log"),
 			})
 		}
 	}
@@ -938,7 +951,11 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) error {
 			if err := state.MarkSeen(comment.ID, "pending"); err != nil {
 				d.logf("mark comment %s pending: %v", comment.ID, err)
 			}
-			d.registerPendingReview(prNumber, comment.ID, d.now(), statePath, state)
+			// Issue #1759: pass the run-log path so the next tick's
+			// promotePendingReviews step can grep the log for bot bodies.
+			// Default if not explicitly provided: filepath.Dir(reviewState)+"/run.log".
+			runLogPath := filepath.Join(reviewRunFolder, "run.log")
+			d.registerPendingReview(prNumber, comment.ID, d.now(), statePath, runLogPath, state)
 		} else {
 			if persisted == nil {
 				state.Release(comment.ID)
@@ -1354,13 +1371,23 @@ func (d *Daemon) promotePendingReviews(ctx context.Context) error {
 // registerPendingReview records a new pending review entry after
 // launchReview returned successfully. processPR calls this once the
 // per-run ReviewStateStore has been written with status=pending.
-func (d *Daemon) registerPendingReview(prNumber int, commentID string, since time.Time, statePath string, store *ReviewStateStore) {
+//
+// runLogPath is the path to the per-run run.log; promotePendingReviews
+// greps it via extractBodiesFromLog to discover bot-authored bodies
+// (issue #1759). An empty runLogPath falls back to
+// filepath.Dir(statePath)+"/run.log" so the bounded-retry grace path
+// always has a log to read.
+func (d *Daemon) registerPendingReview(prNumber int, commentID string, since time.Time, statePath, runLogPath string, store *ReviewStateStore) {
+	if runLogPath == "" {
+		runLogPath = filepath.Join(filepath.Dir(statePath), "run.log")
+	}
 	d.pendingMu.Lock()
 	defer d.pendingMu.Unlock()
 	d.pendingReviews[prNumber] = append(d.pendingReviews[prNumber], pendingReviewEntry{
 		commentID:   commentID,
 		since:       since,
 		reviewState: statePath,
+		runLogPath:  runLogPath,
 		storeRef:    store,
 	})
 }
