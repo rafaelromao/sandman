@@ -51,7 +51,11 @@ func TestPortal_LiveOutputReturnsTailForLongStream(t *testing.T) {
 	}
 	suffix := "\n[issue-1] 12:59:59 final output\n"
 
+	readyPath := filepath.Join(repoRoot, "server-ready")
 	go func() {
+		if err := os.WriteFile(readyPath, []byte("ok"), 0644); err != nil {
+			return
+		}
 		conn, err := ln.Accept()
 		if err != nil {
 			return
@@ -62,7 +66,7 @@ func TestPortal_LiveOutputReturnsTailForLongStream(t *testing.T) {
 		_, _ = conn.Write([]byte(suffix))
 	}()
 
-	time.Sleep(50 * time.Millisecond)
+	waitForPathTB(t, readyPath, 2*time.Second)
 	output := (&portalRunsView{}).readPortalSocketOutput(sockPath)
 
 	if len(output) != portalReadLimit {
