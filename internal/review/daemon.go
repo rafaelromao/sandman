@@ -777,11 +777,13 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) error {
 		// which contains the literal `/sandman review` substring in
 		// its `## Previous review progress` section. The
 		// SelfPostStore only ever contains bodies the bot posted
-		// (review-bodies via Step 4b of the pr-review skill, plus
-		// any body defensively observed by promotePendingComment),
+		// (review-bodies via Step 4b of the pr-review skill wrapper),
 		// never the implementor's trigger command — so applying the
 		// filter before ParseTrigger does not regress trigger
 		// detection for fresh human-issued trigger commands.
+		// (Note: issue #1722 removed the defensive recording site in
+		// promotePendingComment — the only authoritative writer today
+		// is the wrapper at Step 4b.)
 		if d.selfPosts != nil && d.selfPosts.IsSelfPosted(prNumber, comment.Body) {
 			d.logf("PR #%d: comment %s is a self-post, skipping", prNumber, comment.ID)
 			continue
