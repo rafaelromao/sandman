@@ -144,8 +144,16 @@ func readBodyFile(path, runLogPath string, lineNo int) (string, error) {
 // isReviewRunLog reports whether the run log at runLogPath belongs to
 // a `kind: "review"` batch run. The check is by log type (parent
 // `run.json` Kind), not by log content. A missing or unreadable
-// `run.json` returns true (the caller already filters by
-// `batchindex.KindReview`; this is defense-in-depth).
+// `run.json` returns true: the caller's `batchindex.KindReview`
+// filter (loadSeenCache / loadPendingReviews) is the authoritative
+// gate, and a missing manifest is most often a test fixture rather
+// than a misclassified run. When a real implementation-run log
+// (kind "issue") reaches this helper, its `run.json` declares
+// `Kind: "issue"` and the helper correctly returns false. This is
+// the defense-in-depth layer for the case where the caller's
+// filter lets a non-review log through; the missing-manifest branch
+// is the "assume kind: review" fallback for production-shaped
+// paths whose manifest write raced with the daemon's read.
 func isReviewRunLog(runLogPath string) bool {
 	runDir := strings.TrimSuffix(runLogPath, string(filepath.Separator)+"run.log")
 	runJSON := filepath.Join(runDir, "run.json")
@@ -164,7 +172,7 @@ func isReviewRunLog(runLogPath string) bool {
 
 // bodyAccumulator is the in-progress body of a `gh pr comment --body`
 // invocation that may span multiple log lines. quote is the opening
-// quote character ('\'' or '"') that bounds the body.
+// quote character ('\” or '"') that bounds the body.
 type bodyAccumulator struct {
 	body  string
 	quote byte
@@ -199,8 +207,14 @@ func stripLogContinuationPrefix(raw string) string {
 //     body.
 //   - ("", 0, false, "", err) on parse error (unclosed quote with
 //     lineNo).
+//
+// The `gh pr comment` match must be at a shell-prompt position:
+// either the start of the stripped line, or preceded by `cd <path>
+// && ` (one shell-wrapper invocation). Substring matches inside body
+// text (e.g. a bot body that quotes the literal `gh pr comment` for
+// documentation) are NOT treated as invocations.
 func parseGhPrCommentBody(stripped string, lineNo int) (string, byte, bool, string, error) {
-	idx := strings.Index(stripped, "gh pr comment")
+	idx := indexOfGhPrComment(stripped)
 	if idx < 0 {
 		return "", 0, false, "", nil
 	}
@@ -233,6 +247,52 @@ func parseGhPrCommentBody(stripped string, lineNo int) (string, byte, bool, stri
 	default:
 		return "", 0, false, "", fmt.Errorf("unclosed body flag on line %d", lineNo)
 	}
+}
+
+// indexOfGhPrComment returns the start index of the first `gh pr
+// comment` invocation in s that occurs at a shell-prompt position
+// (start of line, or preceded by `cd <path> && `). Returns -1 if no
+// such invocation is found. Substring matches inside body text are
+// ignored.
+func indexOfGhPrComment(s string) int {
+	const token = "gh pr comment"
+	from := 0
+	for {
+		idx := strings.Index(s[from:], token)
+		if idx < 0 {
+			return -1
+		}
+		abs := from + idx
+		if isShellPromptPosition(s, abs) {
+			return abs
+		}
+		from = abs + 1
+	}
+}
+
+// isShellPromptPosition reports whether abs (a byte index in s) sits
+// at a shell-prompt position. Accepted positions:
+//
+//   - abs == 0 (start of line — the parser is called with the line's
+//     timestamp prefix already stripped, so position 0 is where the
+//     prompt would be).
+//   - abs is immediately preceded by "$ " — the agent's shell prompt.
+//   - abs is immediately preceded by " && " — the cd-wrapper
+//     invocation `cd <path> && gh pr comment ...`.
+//
+// Anything else (a body substring quoting the literal `gh pr
+// comment`) is rejected.
+func isShellPromptPosition(s string, abs int) bool {
+	if abs == 0 {
+		return true
+	}
+	if abs >= 2 && s[abs-2:abs] == "$ " {
+		return true
+	}
+	if abs >= 4 && s[abs-4:abs] == " && " {
+		return true
+	}
+	return false
 }
 
 // splitFirstToken returns the first whitespace-delimited token of s

@@ -223,7 +223,7 @@ func TestExtractBodiesFromLog_IgnoresBodiesInImplementationRunLog(t *testing.T) 
 	if err := os.WriteFile(logPath, []byte(logContent), 0644); err != nil {
 		t.Fatalf("write log: %v", err)
 	}
-	runJSON := `{"Kind": "issue", "RunID": "x"}`
+	runJSON := `{"kind": "issue", "run_id": "x"}`
 	if err := os.WriteFile(filepath.Join(dir, "run.json"), []byte(runJSON), 0644); err != nil {
 		t.Fatalf("write run.json: %v", err)
 	}
@@ -248,7 +248,7 @@ func TestExtractBodiesFromLog_ReviewKind_ReturnsBodies(t *testing.T) {
 	if err := os.WriteFile(logPath, []byte(logContent), 0644); err != nil {
 		t.Fatalf("write log: %v", err)
 	}
-	runJSON := `{"Kind": "review", "RunID": "x"}`
+	runJSON := `{"kind": "review", "run_id": "x"}`
 	if err := os.WriteFile(filepath.Join(dir, "run.json"), []byte(runJSON), 0644); err != nil {
 		t.Fatalf("write run.json: %v", err)
 	}
@@ -262,5 +262,36 @@ func TestExtractBodiesFromLog_ReviewKind_ReturnsBodies(t *testing.T) {
 	}
 	if got[0] != "review body" {
 		t.Errorf("body: got %q, want %q", got[0], "review body")
+	}
+}
+
+// TestExtractBodiesFromLog_IgnoresGhPrCommentInsideBody pins the
+// shell-prompt-position check: a body whose text contains the
+// literal `gh pr comment` substring MUST NOT be re-opened as a
+// separate invocation. The log line is a single `gh pr comment`
+// invocation whose body text happens to mention the command for
+// documentation. Only the outer invocation is extracted.
+//
+// The body is plain text (no embedded quote characters) so the
+// double-quoted body is unambiguous: bash parses it as a single
+// body argument.
+func TestExtractBodiesFromLog_IgnoresGhPrCommentInsideBody(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "run.log")
+	body := "Run the gh pr comment command to post a review"
+	logContent := "[run-1] 12:00:00 $ gh pr comment 42 --body \"" + body + "\"\n"
+	if err := os.WriteFile(logPath, []byte(logContent), 0644); err != nil {
+		t.Fatalf("write log: %v", err)
+	}
+
+	got, err := extractBodiesFromLog(logPath)
+	if err != nil {
+		t.Fatalf("extractBodiesFromLog: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("expected exactly 1 body (outer invocation), got %d: %v", len(got), got)
+	}
+	if got[0] != body {
+		t.Errorf("body: got %q, want %q", got[0], body)
 	}
 }
