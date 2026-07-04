@@ -1,0 +1,95 @@
+# Test environment helpers
+
+Shared helpers for writing tests that are portable across Linux and macOS.
+Today this package hosts `MkdirShort` and the canonical SANDMAN env-var
+helpers (`E2EGateAllowed`, `ResolveTestModel`, etc.). Future test
+infrastructure that fits the same scope lands here.
+
+## `MkdirShort(t, dirHint)` — short Unix-socket bind paths
+
+When a test binds a Unix domain socket, **use `testenv.MkdirShort(t,
+dirHint)` instead of `t.TempDir()`**.
+
+### Naming convention for `dirHint`
+
+The `dirHint` becomes the basename prefix in `/tmp/<dirHint><random>`,
+so pick something that makes `/tmp` dumps easy to read during a
+debugging session. The convention is `sm-<package>-`:
+
+| Package                       | dirHint         |
+|-------------------------------|-----------------|
+| `internal/testenv`            | `sm-` (any)     |
+| `internal/review`             | `sm-review-`    |
+| `internal/daemon`             | `sm-daemon-` (broadcasters, control sockets, command servers) |
+| `internal/cmd` (orchestrator) | `sm-orch-` (batch / orchestrator scenarios) |
+| `internal/cmd` (portal/abort) | `sm-portal-` / `sm-abort-` / `sm-stop-` |
+| `internal/cmd` (auto)         | `sm-auto-`      |
+
+The `sm-` prefix keeps test directories visually distinct from
+user-created temp dirs in the same shared `/tmp` namespace.
+
+```go
+func TestSomething(t *testing.T) {
+    dir := testenv.MkdirShort(t, "sm-review-")
+    sock := NewControlSocket(dir, NewBroadcaster())
+    if err := sock.Start(); err != nil {
+        t.Fatalf("Start: %v", err)
+    }
+    defer sock.Stop()
+    // ...
+}
+```
+
+### Why
+
+`t.TempDir()` returns a path rooted at `$TMPDIR`. On Linux that is
+`/tmp` (short, ~30 char paths). On macOS `$TMPDIR` is
+`/var/folders/.../T/<long-test-name>/001/` — a path that easily
+exceeds 120 chars when a test name is descriptive and the bind path
+includes nested directories.
+
+The Unix `sun_path` limit is 108 chars on Linux and 104 on macOS.
+Tests that bind a socket from a `t.TempDir()`-rooted directory get
+runtime errors on macOS, and historically the workaround has been to
+add `if runtime.GOOS != "linux" { t.Skip(...) }` guards — skipping
+~109 tests on the macOS build of the matrix.
+
+`MkdirShort` returns a path under `/tmp/` with a random suffix
+(`/tmp/<dirHint><random>`), which stays under ~40 chars on both
+platforms. The directory is removed when the test ends via
+`t.Cleanup`.
+
+### Cross-platform capability gates
+
+For tests that need platform-specific capabilities (peer-PID
+resolution, abstract sockets, etc.), use the existing capability
+gate rather than `runtime.GOOS != "linux"`:
+
+- `portalAbortSupported() bool` in `internal/cmd` returns true on
+  linux + darwin, false elsewhere. Portal-abort tests gate on this
+  function; see `internal/cmd/portal_abort_batch_kinds_test.go` for
+  examples.
+- `shouldFallbackToAbstractSocket` and `nonLinuxPlatformError` in
+  `internal/daemon` are build-tag-gated across `socket_linux.go` and
+  `socket_other.go`, with `socket_fallback_other_test.go` exercising
+  the non-Linux branch on every non-Linux platform via build tag.
+
+### Skips that survive in this slice
+
+The stranded worktree detector's macOS `--force` semantics are
+intentionally out of scope for `MkdirShort`-based migration
+(tracked by issue #1736 in `internal/cmd/stranded_test.go` and the
+`skipIfNotStrandedSupported` helper in `internal/sandbox/stranded_test.go`).
+The skip itself stays until the detector is re-implemented; the
+tracker string now points at #1736 instead of "follow-up work".
+
+## SANDMAN canonical env vars
+
+| Var | Helper | Purpose |
+|-----|--------|---------|
+| `SANDMAN_TEST_PROVIDERS` | `ResolveProviderAllowlist` / `ParseList` | Provider allowlist for smoke and prflow tests |
+| `SANDMAN_E2E_GATES` | `E2EGateAllowed` / `E2EGateListAllowed` | Stable e2e scenario identifiers (`batch`, `continue_multi`, `opencode_subagent`, `badge`, `pathlen`) |
+| `SANDMAN_TEST_MODEL_<AGENT>` | `ResolveTestModel` | Per-agent model override for smoke/e2e tests |
+
+When the gate vars are unset, helpers return the skip-friendly default
+(nil allowlist / false gate) and tests skip themselves.

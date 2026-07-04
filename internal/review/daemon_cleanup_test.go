@@ -222,7 +222,6 @@ func newReviewLaunchTestConfig() *config.Config {
 // the review worktree and branch must be gone from git, while the batch
 // metadata directory under .sandman/ survives.
 func TestLaunchReview_CleansUpWorktreeAndBranchOnSuccess(t *testing.T) {
-	skipIfNotAsyncLaunchSupported(t)
 	now := time.Now().UTC()
 	gh := &fakeGH{
 		prs: []github.PR{{Number: 42, State: "open"}},
@@ -285,7 +284,6 @@ func TestLaunchReview_CleansUpWorktreeAndBranchOnSuccess(t *testing.T) {
 // `<sid>-<ts>-<issue>-PR<pr>` (subject derived from the PR body's
 // "Fixes #N" keyword). Mirrors #1675 §review with linked issue.
 func TestPrepareReviewRun_LinkedIssueRegistersPerRowRunID(t *testing.T) {
-	skipIfNotAsyncLaunchSupported(t)
 	now := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
 	gh := &fakeGH{
 		prs: []github.PR{{Number: 42, State: "open"}},
@@ -330,7 +328,6 @@ func TestPrepareReviewRun_LinkedIssueRegistersPerRowRunID(t *testing.T) {
 // TestLaunchReview_CleansUpOnRunBatchFailure verifies that when RunBatch
 // returns an error, launchReview still cleans up the worktree and branch.
 func TestLaunchReview_CleansUpOnRunBatchFailure(t *testing.T) {
-	skipIfNotAsyncLaunchSupported(t)
 	now := time.Now().UTC()
 	gh := &fakeGH{
 		prs: []github.PR{{Number: 42, State: "open"}},
@@ -370,7 +367,6 @@ func TestLaunchReview_CleansUpOnRunBatchFailure(t *testing.T) {
 // context passed to RunBatch is cancelled, launchReview still cleans up
 // the worktree and branch.
 func TestLaunchReview_CleansUpOnContextCancellation(t *testing.T) {
-	skipIfNotAsyncLaunchSupported(t)
 	now := time.Now().UTC()
 	gh := &fakeGH{
 		prs: []github.PR{{Number: 42, State: "open"}},

@@ -4,12 +4,12 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"runtime"
 	"sort"
 	"testing"
 	"time"
 
 	"github.com/rafaelromao/sandman/internal/events"
+	"github.com/rafaelromao/sandman/internal/testenv"
 )
 
 type fakeEventLog struct {
@@ -107,10 +107,7 @@ func TestCleanupOrphanedTestBatches_RunSubdirMatchesRunStarted_KeepsDir(t *testi
 }
 
 func TestCleanupOrphanedTestBatches_LiveBatchSock_KeepsDirEvenWithNoMatchingEvents(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		t.Skip("Unix socket bind path exceeds macOS sun_path")
-	}
-	baseDir := t.TempDir()
+	baseDir := testenv.MkdirShort(t, "sm-daemon-")
 	batchDir := filepath.Join(baseDir, "lb")
 	writeBatchManifest(t, batchDir)
 
@@ -138,10 +135,7 @@ func TestCleanupOrphanedTestBatches_LiveBatchSock_KeepsDirEvenWithNoMatchingEven
 }
 
 func TestCleanupOrphanedTestBatches_LiveRunSock_KeepsDirEvenWithNoMatchingEvents(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		t.Skip("Unix socket bind path exceeds macOS sun_path")
-	}
-	baseDir := t.TempDir()
+	baseDir := testenv.MkdirShort(t, "sm-daemon-")
 	batchDir := filepath.Join(baseDir, "lr")
 	writeBatchManifest(t, batchDir)
 	writeRunSubdir(t, batchDir, "rr")

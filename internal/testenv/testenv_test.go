@@ -1,6 +1,8 @@
 package testenv
 
 import (
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -269,5 +271,41 @@ func TestResolveTestModel_AgentScoped(t *testing.T) {
 	t.Setenv("SANDMAN_TEST_MODEL_OPENCODE", "opencode/x")
 	if got := ResolveTestModel("claude", "kilo/kilo-auto/free"); got != "kilo/kilo-auto/free" {
 		t.Fatalf("expected claude default unaffected by opencode env, got %q", got)
+	}
+}
+
+func TestMkdirShort_ReturnsPathUnderTmp(t *testing.T) {
+	got := MkdirShort(t, "sandman-test-")
+	if !strings.HasPrefix(got, "/tmp/") {
+		t.Fatalf("MkdirShort returned %q, want path under /tmp/", got)
+	}
+}
+
+func TestMkdirShort_HintAppearsInPath(t *testing.T) {
+	got := MkdirShort(t, "sandman-hint-")
+	base := filepath.Base(got)
+	if !strings.HasPrefix(base, "sandman-hint-") {
+		t.Fatalf("MkdirShort basename = %q, want prefix %q", base, "sandman-hint-")
+	}
+}
+
+func TestMkdirShort_RemovesDirectoryOnCleanup(t *testing.T) {
+	var captured string
+	t.Run("inner", func(t *testing.T) {
+		captured = MkdirShort(t, "sandman-clean-")
+		if _, err := os.Stat(captured); err != nil {
+			t.Fatalf("expected dir to exist during test, stat err: %v", err)
+		}
+	})
+	if _, err := os.Stat(captured); !os.IsNotExist(err) {
+		t.Fatalf("expected MkdirShort directory to be removed after test, stat err: %v", err)
+	}
+}
+
+func TestMkdirShort_PathFitsUnixSunPath(t *testing.T) {
+	got := MkdirShort(t, "sandman-pathlen-")
+	const sunPathLimit = 104
+	if len(got)+len("/batch.sock") >= sunPathLimit {
+		t.Fatalf("MkdirShort returned %q (len=%d) plus /batch.sock exceeds macOS sun_path limit %d", got, len(got), sunPathLimit)
 	}
 }

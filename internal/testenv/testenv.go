@@ -1,8 +1,10 @@
 // Package testenv provides shared helpers for parsing the env vars that
-// gate sandman test suites. It is consumed by smoke tests, prflow e2e
-// tests, and the batch orchestrator end-to-end test to decide which
-// providers and scenarios should run, and to parameterize the model
-// each agent-driven test targets.
+// gate sandman test suites, plus filesystem helpers that keep Unix-socket
+// tests portable across Linux and macOS. It is consumed by smoke tests,
+// prflow e2e tests, and the batch orchestrator end-to-end test to decide
+// which providers and scenarios should run, to parameterize the model
+// each agent-driven test targets, and to bind Unix sockets at short
+// paths that fit the macOS sun_path limit.
 //
 // Canonical env vars:
 //
@@ -20,12 +22,17 @@
 // When the gate vars are unset, helpers return the skip-friendly default
 // (nil allowlist / false gate) and tests skip themselves. The model
 // override is a pure value substitution with no skip semantics.
+//
+// MkdirShort is the filesystem helper. Use it in any test that binds a
+// Unix domain socket, in place of t.TempDir(); see its doc comment for
+// the macOS sun_path rationale.
 package testenv
 
 import (
 	"fmt"
 	"os"
 	"strings"
+	"testing"
 )
 
 // E2E scenario identifiers (stable across versions).
@@ -145,4 +152,31 @@ func E2EGateListAllowed(scenario, raw string, known []string) bool {
 //	}
 func E2EGateAllowed(scenario string) bool {
 	return E2EGateListAllowed(scenario, os.Getenv(CanonicalE2EGatesEnvVar), allE2EScenarios)
+}
+
+// MkdirShort returns a per-test directory rooted at /tmp/ (not the
+// testing.T-managed temp dir) and registers a Cleanup that removes the
+// directory when the test finishes.
+//
+// Why not t.TempDir(): the Go runtime picks $TMPDIR which on macOS is
+// /var/folders/.../T/<long-test-name>/001/. A Unix socket bind path like
+// /var/folders/.../T/TestReviewDaemonProcessPRCommentsSortedByCreatedAt1234567890/001/<batch.sock>
+// is ~120 chars, exceeding macOS sun_path (104) and forcing every socket
+// test to skip on darwin. The /tmp/ root keeps the path well under both
+// Linux (108) and macOS (104) sun_path limits so a Unix socket bind
+// succeeds on every host. Use this helper whenever a test binds a Unix
+// socket, in place of t.TempDir().
+//
+// dirHint is the prefix the OS appends a random suffix to, e.g.
+// "sm-review-"; the resulting basename looks like /tmp/sm-review-1234567890.
+// /tmp may be a symlink (e.g. /tmp -> /private/tmp on macOS); os.MkdirTemp
+// resolves through the symlink so the returned path stays short.
+func MkdirShort(t *testing.T, dirHint string) string {
+	t.Helper()
+	path, err := os.MkdirTemp("/tmp", dirHint)
+	if err != nil {
+		t.Fatalf("MkdirShort: os.MkdirTemp: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(path) })
+	return path
 }

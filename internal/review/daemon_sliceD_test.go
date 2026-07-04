@@ -123,7 +123,6 @@ func TestDaemon_PromotePendingComment_IgnoresTriggerComment(t *testing.T) {
 // times; lazy verify records pending after one RunBatch, no further
 // ListPRComments happens in this tick.
 func TestDaemon_LaunchReviewReturnsFastAndRecordsPending(t *testing.T) {
-	skipIfNotAsyncLaunchSupported(t)
 	now := time.Date(2026, 6, 30, 12, 0, 0, 0, time.UTC)
 	gh := &fakeGH{
 		prs: []github.PR{{Number: 7, State: "open"}},
@@ -193,7 +192,6 @@ func TestDaemon_LaunchReviewReturnsFastAndRecordsPending(t *testing.T) {
 // on the next tick — verify is no longer inline-blocked. The next tick
 // also MUST NOT re-launch the review.
 func TestDaemon_NextTickPromotesPendingCommentToSuccess(t *testing.T) {
-	skipIfNotAsyncLaunchSupported(t)
 	now := time.Date(2026, 6, 30, 12, 0, 0, 0, time.UTC)
 	afterReview := now.Add(1 * time.Minute)
 	gh := &fakeGH{
@@ -254,7 +252,6 @@ func TestDaemon_NextTickPromotesPendingCommentToSuccess(t *testing.T) {
 // never appears, the daemon promotes the pending comment to failure
 // after `pendingMaxCycles` ticks, instead of retrying forever.
 func TestDaemon_NextTickRejectsPendingCommentToFailureAfterBound(t *testing.T) {
-	skipIfNotAsyncLaunchSupported(t)
 	now := time.Date(2026, 6, 30, 12, 0, 0, 0, time.UTC)
 	gh := &fakeGH{
 		prs: []github.PR{{Number: 13, State: "open"}},
@@ -312,7 +309,6 @@ func TestDaemon_NextTickRejectsPendingCommentToFailureAfterBound(t *testing.T) {
 // never arriving must keep RunBatch calls at exactly 1 — neither tick
 // may launch a new batch.
 func TestDaemon_PendingCommentIsNotRelaunchedMidCycle(t *testing.T) {
-	skipIfNotAsyncLaunchSupported(t)
 	now := time.Date(2026, 6, 30, 12, 0, 0, 0, time.UTC)
 	gh := &fakeGH{
 		prs: []github.PR{{Number: 19, State: "open"}},
@@ -359,7 +355,6 @@ func TestDaemon_PendingCommentIsNotRelaunchedMidCycle(t *testing.T) {
 // criterion "without re-launching the review" applied to the failure
 // half of the bounded retry escape.
 func TestDaemon_NextTickRejectsPendingCommentTwiceNoOp(t *testing.T) {
-	skipIfNotAsyncLaunchSupported(t)
 	now := time.Date(2026, 6, 30, 12, 0, 0, 0, time.UTC)
 	gh := &fakeGH{
 		prs: []github.PR{{Number: 17, State: "open"}},
@@ -414,7 +409,6 @@ func TestDaemon_PendingNotTerminalInSeenCache(t *testing.T) {
 // The test drives a full tick so the production-shaped flow runs:
 // prepare -> launch (error) -> processPR records failure.
 func TestDaemon_LaunchReviewReturnsFastOnRunBatchError(t *testing.T) {
-	skipIfNotAsyncLaunchSupported(t)
 	now := time.Date(2026, 6, 30, 12, 0, 0, 0, time.UTC)
 	gh := &fakeGH{
 		prs: []github.PR{{Number: 21, State: "open"}},

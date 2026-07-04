@@ -2426,7 +2426,7 @@ func TestRunBatch_PreservesWorktreeOnInterrupt(t *testing.T) {
 }
 
 func TestRunBatch_PreservesWorktreeOnSuccess(t *testing.T) {
-	dir := t.TempDir()
+	dir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(dir)
 	initGitRepo(t, dir)
 
@@ -2450,7 +2450,7 @@ func TestRunBatch_PreservesWorktreeOnSuccess(t *testing.T) {
 }
 
 func TestRunBatch_DoesNotCallStopOnSuccess(t *testing.T) {
-	dir := t.TempDir()
+	dir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(dir)
 	initGitRepo(t, dir)
 
@@ -2598,7 +2598,7 @@ func TestRunBatch_SendsSIGKILLAfterTimeout(t *testing.T) {
 }
 
 func TestRunBatch_FetchesSingleIssue(t *testing.T) {
-	dir := t.TempDir()
+	dir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(dir)
 	initGitRepo(t, dir)
 
@@ -2625,7 +2625,7 @@ func TestRunBatch_FetchesSingleIssue(t *testing.T) {
 }
 
 func TestRunBatch_FetchesMultipleIssues(t *testing.T) {
-	dir := t.TempDir()
+	dir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(dir)
 	initGitRepo(t, dir)
 
@@ -2652,7 +2652,7 @@ func TestRunBatch_FetchesMultipleIssues(t *testing.T) {
 }
 
 func TestRunBatch_AbortsUpfrontWhenAnyBranchExists(t *testing.T) {
-	dir := t.TempDir()
+	dir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(dir)
 	initGitRepo(t, dir)
 
@@ -2721,7 +2721,7 @@ func TestRunBatch_AbortsUpfrontWhenAnyBranchExists(t *testing.T) {
 }
 
 func TestValidateBatchBranches_RecommendsCorrectFlagPerIssue(t *testing.T) {
-	dir := t.TempDir()
+	dir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(dir)
 	initGitRepo(t, dir)
 
@@ -2803,7 +2803,7 @@ func TestValidateBatchBranches_RecommendsCorrectFlagPerIssue(t *testing.T) {
 }
 
 func TestRunBatch_AllowsBatchWhenNoBranchExists(t *testing.T) {
-	dir := t.TempDir()
+	dir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(dir)
 	initGitRepo(t, dir)
 
@@ -2880,7 +2880,7 @@ func TestRunBatch_AllowsBatchWhenNoBranchExists(t *testing.T) {
 }
 
 func TestRunBatch_OverrideClearsExistingBranchesAndProceeds(t *testing.T) {
-	dir := t.TempDir()
+	dir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(dir)
 	initGitRepo(t, dir)
 
@@ -2934,7 +2934,7 @@ func TestRunBatch_OverrideClearsExistingBranchesAndProceeds(t *testing.T) {
 }
 
 func TestRunBatch_MixedContinueStillValidatesFreshBranches(t *testing.T) {
-	dir := t.TempDir()
+	dir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(dir)
 	initGitRepo(t, dir)
 
@@ -3131,7 +3131,7 @@ func TestRunBatch_SyncsBaseBranchBeforeEachAgentRunStarts(t *testing.T) {
 }
 
 func TestRunBatch_RendersPromptForIssue(t *testing.T) {
-	dir := t.TempDir()
+	dir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(dir)
 	initGitRepo(t, dir)
 
@@ -3179,7 +3179,7 @@ func TestRunBatch_RenderError(t *testing.T) {
 }
 
 func TestRunBatch_WritesPromptAndExecutesAgent(t *testing.T) {
-	dir := t.TempDir()
+	dir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(dir)
 	initGitRepo(t, dir)
 
@@ -3224,7 +3224,7 @@ func TestRunBatch_WritesPromptAndExecutesAgent(t *testing.T) {
 }
 
 func TestRunBatch_PopulatesBranch(t *testing.T) {
-	dir := t.TempDir()
+	dir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(dir)
 	initGitRepo(t, dir)
 
@@ -3249,7 +3249,7 @@ func TestRunBatch_PopulatesBranch(t *testing.T) {
 }
 
 func TestRunBatch_AgentFailure(t *testing.T) {
-	dir := t.TempDir()
+	dir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(dir)
 	initGitRepo(t, dir)
 
@@ -3285,7 +3285,7 @@ func TestRunBatch_EndToEnd(t *testing.T) {
 	if !testenv.E2EGateAllowed(testenv.E2EScenarioBatch) {
 		t.Skip("set SANDMAN_E2E_GATES=batch (or all) to run end-to-end batch test")
 	}
-	dir := t.TempDir()
+	dir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(dir)
 	initGitRepo(t, dir)
 
@@ -3365,7 +3365,7 @@ sandbox: worktree
 }
 
 func TestRunBatch_RespectsParallelLimit(t *testing.T) {
-	dir := t.TempDir()
+	dir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(dir)
 	initGitRepo(t, dir)
 
@@ -3410,7 +3410,7 @@ func TestRunBatch_RespectsParallelLimit(t *testing.T) {
 }
 
 func TestRunBatch_OneFailureDoesNotAbortOthers(t *testing.T) {
-	dir := t.TempDir()
+	dir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(dir)
 	initGitRepo(t, dir)
 
@@ -3461,7 +3461,7 @@ func TestRunBatch_OneFailureDoesNotAbortOthers(t *testing.T) {
 }
 
 func TestRunBatch_ZeroParallelAllowsAllRunsToStart(t *testing.T) {
-	dir := t.TempDir()
+	dir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(dir)
 	initGitRepo(t, dir)
 
@@ -3525,7 +3525,7 @@ func TestRunBatch_ZeroParallelAllowsAllRunsToStart(t *testing.T) {
 }
 
 func TestRunBatch_NegativeParallelRejected(t *testing.T) {
-	dir := t.TempDir()
+	dir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(dir)
 	initGitRepo(t, dir)
 
@@ -3541,10 +3541,7 @@ func TestRunBatch_NegativeParallelRejected(t *testing.T) {
 }
 
 func TestRunBatch_WaitsForBlockersBeforeStartingDependents(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		t.Skip("CommandServer uses Unix socket path conventions; tracked by #1736")
-	}
-	dir := t.TempDir()
+	dir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(dir)
 	initGitRepo(t, dir)
 
@@ -3602,7 +3599,7 @@ func TestRunBatch_WaitsForBlockersBeforeStartingDependents(t *testing.T) {
 }
 
 func TestRunBatch_SkipsDependentsWhenBlockerFails(t *testing.T) {
-	dir := t.TempDir()
+	dir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(dir)
 	initGitRepo(t, dir)
 
@@ -3679,7 +3676,7 @@ func TestRunBatch_SkipsDependentsWhenBlockerFails(t *testing.T) {
 }
 
 func TestRunBatch_SkipsIssuesBlockedByOpenExternalBlockers(t *testing.T) {
-	dir := t.TempDir()
+	dir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(dir)
 	initGitRepo(t, dir)
 
@@ -3750,10 +3747,7 @@ func TestRunBatch_SkipsIssuesBlockedByOpenExternalBlockers(t *testing.T) {
 }
 
 func TestRunBatch_InBatchBlockerSuccessKeepsDependentBlockedWhenIssueOpen(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		t.Skip("CommandServer uses Unix socket path conventions; tracked by #1736")
-	}
-	dir := t.TempDir()
+	dir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(dir)
 	initGitRepo(t, dir)
 
@@ -3827,7 +3821,7 @@ func TestRunBatch_InBatchBlockerSuccessKeepsDependentBlockedWhenIssueOpen(t *tes
 }
 
 func TestRunBatch_InBatchBlockerWithEmptyStatusDoesNotBlockDependent(t *testing.T) {
-	dir := t.TempDir()
+	dir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(dir)
 	initGitRepo(t, dir)
 
@@ -3898,7 +3892,7 @@ func TestRunBatch_InBatchBlockerWithEmptyStatusDoesNotBlockDependent(t *testing.
 }
 
 func TestRunBatch_InBatchBlockerWithNonTerminalRawStatusDoesNotBlockDependent(t *testing.T) {
-	dir := t.TempDir()
+	dir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(dir)
 	initGitRepo(t, dir)
 
@@ -3969,7 +3963,7 @@ func TestRunBatch_InBatchBlockerWithNonTerminalRawStatusDoesNotBlockDependent(t 
 }
 
 func TestRunBatch_RechecksExternalBlockerStateBeforeDependentStart(t *testing.T) {
-	dir := t.TempDir()
+	dir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(dir)
 	initGitRepo(t, dir)
 
@@ -4052,10 +4046,7 @@ func TestRunBatch_RechecksExternalBlockerStateBeforeDependentStart(t *testing.T)
 }
 
 func TestRunBatch_PreservesParallelismWithinDependencyLevel(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		t.Skip("CommandServer uses Unix socket path conventions; tracked by #1736")
-	}
-	dir := t.TempDir()
+	dir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(dir)
 	initGitRepo(t, dir)
 
@@ -4126,7 +4117,7 @@ func TestRunBatch_PreservesParallelismWithinDependencyLevel(t *testing.T) {
 }
 
 func TestRunBatch_StartDelay_WaitsAfterRunFinishesBeforeNextStart(t *testing.T) {
-	dir := t.TempDir()
+	dir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(dir)
 	initGitRepo(t, dir)
 
@@ -4201,7 +4192,7 @@ func TestRunBatch_StartDelay_WaitsAfterRunFinishesBeforeNextStart(t *testing.T) 
 }
 
 func TestRunBatch_StartDelay_DoesNotStaggerSimultaneousReadyRuns(t *testing.T) {
-	dir := t.TempDir()
+	dir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(dir)
 	initGitRepo(t, dir)
 
@@ -4285,7 +4276,7 @@ func TestRunBatch_StartDelay_DoesNotStaggerSimultaneousReadyRuns(t *testing.T) {
 }
 
 func TestRunBatch_StartDelay_AbortsImmediatelyOnCancel(t *testing.T) {
-	dir := t.TempDir()
+	dir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(dir)
 	initGitRepo(t, dir)
 
@@ -4351,7 +4342,7 @@ func TestRunBatch_StartDelay_AbortsImmediatelyOnCancel(t *testing.T) {
 }
 
 func TestRunBatch_LogsStartedAndFinishedEvents(t *testing.T) {
-	dir := t.TempDir()
+	dir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(dir)
 	initGitRepo(t, dir)
 
@@ -4394,7 +4385,7 @@ func TestRunBatch_LogsStartedAndFinishedEvents(t *testing.T) {
 }
 
 func TestRunBatch_UpdatesRunManifestStatusToTerminal(t *testing.T) {
-	dir := t.TempDir()
+	dir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(dir)
 	initGitRepo(t, dir)
 
@@ -4509,7 +4500,7 @@ func TestRunBatch_LogsPromptMetadataOnStartedEvent(t *testing.T) {
 }
 
 func TestRunBatch_LogsPromptOnlyTemplateSource(t *testing.T) {
-	dir := t.TempDir()
+	dir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(dir)
 	initGitRepo(t, dir)
 
@@ -4590,7 +4581,7 @@ func TestRunBatch_PromptOnlyBaseBranchSyncFailureReturnsError(t *testing.T) {
 }
 
 func TestRunBatch_PromptOnlyRunSkipsIssueLookupAndUsesNullIssue(t *testing.T) {
-	dir := t.TempDir()
+	dir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(dir)
 	initGitRepo(t, dir)
 
@@ -4636,7 +4627,7 @@ func TestRunBatch_PromptOnlyRunSkipsIssueLookupAndUsesNullIssue(t *testing.T) {
 }
 
 func TestRunBatch_PromptOnlyReviewRunEmitsReviewTag(t *testing.T) {
-	dir := t.TempDir()
+	dir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(dir)
 	initGitRepo(t, dir)
 
@@ -4676,7 +4667,7 @@ func TestRunBatch_PromptOnlyReviewRunEmitsReviewTag(t *testing.T) {
 }
 
 func TestRunBatch_PromptOnlyReviewRunResultCarriesReviewIdentity(t *testing.T) {
-	dir := t.TempDir()
+	dir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(dir)
 	initGitRepo(t, dir)
 
@@ -4710,7 +4701,7 @@ func TestRunBatch_PromptOnlyReviewRunResultCarriesReviewIdentity(t *testing.T) {
 }
 
 func TestRunBatch_PromptOnlyReviewRunWithEmptyFocus(t *testing.T) {
-	dir := t.TempDir()
+	dir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(dir)
 	initGitRepo(t, dir)
 
@@ -4748,7 +4739,7 @@ func TestRunBatch_PromptOnlyReviewRunWithEmptyFocus(t *testing.T) {
 }
 
 func TestRunBatch_PromptOnlyImplementationRunOmitsReviewKey(t *testing.T) {
-	dir := t.TempDir()
+	dir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(dir)
 	initGitRepo(t, dir)
 
@@ -5072,7 +5063,7 @@ func TestRunBatch_ContinuationSkipsBaseBranchSync(t *testing.T) {
 }
 
 func TestRunBatch_ChainedContinuationFlow(t *testing.T) {
-	dir := t.TempDir()
+	dir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(dir)
 
 	branch := "sandman/42-fix-bug"
@@ -5151,7 +5142,7 @@ func TestRunBatch_ChainedContinuationFlow(t *testing.T) {
 }
 
 func TestRunBatch_ModeContinueAgentSuccessUnmergedPR(t *testing.T) {
-	dir := t.TempDir()
+	dir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(dir)
 
 	branch := "sandman/42-fix-bug"
@@ -5244,7 +5235,7 @@ func TestRunBatch_LogsModelOnStartedEvent(t *testing.T) {
 }
 
 func TestRunBatch_LogsFinishedEventWithBranch(t *testing.T) {
-	dir := t.TempDir()
+	dir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(dir)
 	initGitRepo(t, dir)
 
@@ -5273,7 +5264,7 @@ func TestRunBatch_LogsFinishedEventWithBranch(t *testing.T) {
 }
 
 func TestRunBatch_LogsWorktreeStateDeletedOnSuccess(t *testing.T) {
-	dir := t.TempDir()
+	dir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(dir)
 	initGitRepo(t, dir)
 
@@ -5302,7 +5293,7 @@ func TestRunBatch_LogsWorktreeStateDeletedOnSuccess(t *testing.T) {
 }
 
 func TestRunBatch_LogsWorktreeStatePreservedOnFailure(t *testing.T) {
-	dir := t.TempDir()
+	dir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(dir)
 	initGitRepo(t, dir)
 
@@ -5387,7 +5378,7 @@ func TestRunBatch_RecordsWorktreePathOnFailure(t *testing.T) {
 }
 
 func TestRunBatch_LogsWorktreeStatePreservedOnSuccess(t *testing.T) {
-	dir := t.TempDir()
+	dir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(dir)
 	initGitRepo(t, dir)
 
@@ -5416,7 +5407,7 @@ func TestRunBatch_LogsWorktreeStatePreservedOnSuccess(t *testing.T) {
 }
 
 func TestRunBatch_LogsFinishedEventOnFailure(t *testing.T) {
-	dir := t.TempDir()
+	dir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(dir)
 	initGitRepo(t, dir)
 
@@ -5521,7 +5512,7 @@ func TestOrchestrator_ContainerMetadataDriftFailsBeforeBuild(t *testing.T) {
 	if _, err := sandbox.ResolveRuntime("podman"); err != nil {
 		t.Skip("container runtime unavailable")
 	}
-	dir := t.TempDir()
+	dir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(dir)
 
 	if err := os.MkdirAll(filepath.Join(dir, ".sandman"), 0755); err != nil {
@@ -5560,7 +5551,7 @@ func TestOrchestrator_MetadataFreeDockerfileSkipsDriftValidation(t *testing.T) {
 	if _, err := sandbox.ResolveRuntime("podman"); err != nil {
 		t.Skip("container runtime unavailable")
 	}
-	dir := t.TempDir()
+	dir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(dir)
 	t.Setenv("HOME", t.TempDir())
 
@@ -7078,7 +7069,7 @@ func TestResolveSandboxExecutionPolicy_WorktreeModeDoesNotBuildContainerImage(t 
 }
 
 func TestRunBatch_UsesNonInteractiveRunPath(t *testing.T) {
-	dir := t.TempDir()
+	dir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(dir)
 	initGitRepo(t, dir)
 
@@ -7374,7 +7365,7 @@ func TestPrepareContainerConfigMounts_OpencodePresetEndToEnd(t *testing.T) {
 }
 
 func TestRunBatch_UsesDotGitconfigIdentityOverRepoLocalConfig(t *testing.T) {
-	dir := t.TempDir()
+	dir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(dir)
 	initGitRepo(t, dir)
 	home := t.TempDir()
@@ -7417,7 +7408,7 @@ func TestRunBatch_UsesDotGitconfigIdentityOverRepoLocalConfig(t *testing.T) {
 }
 
 func TestRunBatch_UsesXDGGitIdentityWhenDotGitconfigLacksIdentity(t *testing.T) {
-	dir := t.TempDir()
+	dir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(dir)
 	initGitRepo(t, dir)
 	home := t.TempDir()
@@ -7468,7 +7459,7 @@ func TestRunBatch_UsesXDGGitIdentityWhenDotGitconfigLacksIdentity(t *testing.T) 
 }
 
 func TestRunBatch_FallsBackToRepoLocalGitIdentity(t *testing.T) {
-	dir := t.TempDir()
+	dir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(dir)
 	initGitRepo(t, dir)
 	home := t.TempDir()
@@ -7509,7 +7500,7 @@ func TestRunBatch_FallsBackToRepoLocalGitIdentity(t *testing.T) {
 }
 
 func TestRunBatch_FailsWhenNoGitIdentityResolved(t *testing.T) {
-	dir := t.TempDir()
+	dir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(dir)
 	initGitRepo(t, dir)
 	home := t.TempDir()
@@ -7644,7 +7635,7 @@ func TestBranchName(t *testing.T) {
 }
 
 func TestClearIssueArtifacts_RemovesWorktree(t *testing.T) {
-	dir := t.TempDir()
+	dir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(dir)
 	initGitRepo(t, dir)
 
@@ -7718,7 +7709,7 @@ func TestClearIssueArtifacts_RemovesWorktree(t *testing.T) {
 }
 
 func TestClearIssueArtifacts_Idempotent(t *testing.T) {
-	dir := t.TempDir()
+	dir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(dir)
 	initGitRepo(t, dir)
 
@@ -7733,7 +7724,7 @@ func TestClearIssueArtifacts_RemovesOrphanWorktreeDirectory(t *testing.T) {
 	// `git worktree remove --force` / `git worktree prune` / `git branch -D`
 	// all no-op. ClearIssueArtifacts must still clean up the orphan dir.
 	// See #545.
-	dir := t.TempDir()
+	dir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(dir)
 	initGitRepo(t, dir)
 
@@ -7794,7 +7785,7 @@ func TestClearIssueArtifacts_RemovesOrphanWorktreeDirectory(t *testing.T) {
 }
 
 func TestClearIssueArtifacts_OnlyRemovesTargetIssue(t *testing.T) {
-	dir := t.TempDir()
+	dir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(dir)
 	initGitRepo(t, dir)
 
@@ -7955,7 +7946,7 @@ func TestClearIssueArtifacts_ReconcilesStrandedWorktreeInMainRepo(t *testing.T) 
 // preserved: the delete failure is logged, the function continues, and the
 // branch is NOT auto-recovered (it stays so the operator can fix it).
 func TestClearIssueArtifacts_NoReconcileKeepsBeltAndSuspenders(t *testing.T) {
-	dir := t.TempDir()
+	dir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(dir)
 	initGitRepo(t, dir)
 
@@ -7983,7 +7974,7 @@ func TestClearIssueArtifacts_NoReconcileKeepsBeltAndSuspenders(t *testing.T) {
 // asserts that an explicit `strandedReconcile=false` preserves today's
 // belt-and-suspenders behaviour (the opt-out gate from --no-reconcile-stranded).
 func TestClearIssueArtifacts_ExplicitFalseReconcileKeepsBeltAndSuspenders(t *testing.T) {
-	dir := t.TempDir()
+	dir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(dir)
 	initGitRepo(t, dir)
 
@@ -8010,7 +8001,7 @@ func TestClearIssueArtifacts_ExplicitFalseReconcileKeepsBeltAndSuspenders(t *tes
 
 func TestClearIssueArtifacts_RemovesPrunableWorktree(t *testing.T) {
 	branch := "sandman/42-fix-bug"
-	dir := t.TempDir()
+	dir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(dir)
 	initGitRepo(t, dir)
 
@@ -8057,7 +8048,7 @@ func TestClearIssueArtifacts_RemovesPrunableWorktree(t *testing.T) {
 }
 
 func TestOrchestrator_EmitsRunQueuedEventWhenBlocked(t *testing.T) {
-	dir := t.TempDir()
+	dir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(dir)
 	initGitRepo(t, dir)
 
@@ -8127,7 +8118,7 @@ func TestOrchestrator_EmitsRunQueuedEventWhenBlocked(t *testing.T) {
 }
 
 func TestOrchestrator_QueuedEventCarriesIssueTitle(t *testing.T) {
-	dir := t.TempDir()
+	dir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(dir)
 	initGitRepo(t, dir)
 
@@ -8189,7 +8180,7 @@ func TestOrchestrator_QueuedEventCarriesIssueTitle(t *testing.T) {
 }
 
 func TestOrchestrator_RunQueuedOnlyForWaitingIssues(t *testing.T) {
-	dir := t.TempDir()
+	dir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(dir)
 	initGitRepo(t, dir)
 
@@ -8300,7 +8291,7 @@ func TestSyncBaseBranchSerializesAcrossParallelCalls(t *testing.T) {
 }
 
 func TestSyncBaseBranchSerializesAgainstRealGitFetch(t *testing.T) {
-	dir := t.TempDir()
+	dir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(dir)
 	initGitRepo(t, dir)
 	for i := 0; i < 5; i++ {
@@ -8424,7 +8415,7 @@ func TestRunBatch_LogsAbortedForQueuedRunOnCancel(t *testing.T) {
 }
 
 func TestRunBatch_CascadesAbortFromBlockerToDependents(t *testing.T) {
-	dir := t.TempDir()
+	dir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(dir)
 	initGitRepo(t, dir)
 
@@ -8552,7 +8543,7 @@ func findQueuedAndAborted(t *testing.T, recorded []events.Event, issueNum int) (
 }
 
 func TestOrchestrator_AbortIssue_AlreadyFinishedReturnsErrNoSuchIssue(t *testing.T) {
-	dir := t.TempDir()
+	dir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(dir)
 	initGitRepo(t, dir)
 
@@ -8579,7 +8570,7 @@ func TestOrchestrator_AbortIssue_AlreadyFinishedReturnsErrNoSuchIssue(t *testing
 }
 
 func TestOrchestrator_AbortIssue_ActiveRun(t *testing.T) {
-	dir := t.TempDir()
+	dir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(dir)
 	initGitRepo(t, dir)
 
@@ -8811,7 +8802,7 @@ func (f *fakeContainerForAbortTest) Stop() error { return nil }
 // path" guarantee the original TestOrchestrator_AbortIssue_ActiveRun
 // test was written to assert, generalised to a multi-issue batch.
 func TestOrchestrator_AbortIssue_SiblingIsNotSignalled(t *testing.T) {
-	dir := t.TempDir()
+	dir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(dir)
 	initGitRepo(t, dir)
 
@@ -8942,7 +8933,7 @@ func (r *shortSuccessRunnable) Run(ctx context.Context, _ prompt.IssueRenderer, 
 }
 
 func TestOrchestrator_AbortIssue_QueuedRun(t *testing.T) {
-	dir := t.TempDir()
+	dir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(dir)
 	initGitRepo(t, dir)
 
@@ -8992,7 +8983,7 @@ func TestOrchestrator_AbortIssue_QueuedRun(t *testing.T) {
 }
 
 func TestOrchestrator_AbortIssue_BlockedRun(t *testing.T) {
-	dir := t.TempDir()
+	dir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(dir)
 	initGitRepo(t, dir)
 

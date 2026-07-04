@@ -11,6 +11,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/rafaelromao/sandman/internal/testenv"
 )
 
 type fakeCommander struct {
@@ -19,10 +21,15 @@ type fakeCommander struct {
 	mu         sync.Mutex
 }
 
-func skipIfNotCommandServerSupported(t *testing.T) {
+// skipIfNotAbstractSocketSupported skips tests that exercise the
+// CommandServer's abstract-socket fallback, which is a Linux-only
+// kernel extension. The skip survives from the #1736 migration
+// because the abstract-socket fallback path itself (not the
+// underlying CommandServer) cannot run on macOS.
+func skipIfNotAbstractSocketSupported(t *testing.T) {
 	t.Helper()
 	if runtime.GOOS != "linux" {
-		t.Skip("CommandServer uses Linux-only socket namespaces; tracked by #1736")
+		t.Skip("Abstract unix socket fallback is a Linux-only kernel extension; tracked by #1736")
 	}
 }
 
@@ -45,7 +52,7 @@ func (s *fakeCommander) calls() []int {
 func longCommandSocketDir(t *testing.T) string {
 	t.Helper()
 
-	dir := t.TempDir()
+	dir := testenv.MkdirShort(t, "sm-cmd-")
 	for len(CommandSocketPath(dir)) <= 108 {
 		dir = filepath.Join(dir, strings.Repeat("long-path-segment", 4))
 	}
@@ -56,7 +63,7 @@ func longCommandSocketDir(t *testing.T) string {
 }
 
 func TestCommandServer_StartFallsBackToAbstractSocketForLongPaths(t *testing.T) {
-	skipIfNotCommandServerSupported(t)
+	skipIfNotAbstractSocketSupported(t)
 	dir := longCommandSocketDir(t)
 	stub := &fakeCommander{}
 	server := NewCommandServer(dir, stub)
@@ -93,7 +100,7 @@ func TestCommandServer_StartFallsBackToAbstractSocketForLongPaths(t *testing.T) 
 }
 
 func TestCommandServer_StopLeavesFilesystemAloneForAbstractSocket(t *testing.T) {
-	skipIfNotCommandServerSupported(t)
+	skipIfNotAbstractSocketSupported(t)
 	dir := longCommandSocketDir(t)
 	server := NewCommandServer(dir, &fakeCommander{})
 	if err := server.Start(); err != nil {
@@ -119,8 +126,7 @@ func TestCommandServer_StopLeavesFilesystemAloneForAbstractSocket(t *testing.T) 
 }
 
 func TestCommandServer_AbortFailureReturnsStableCode(t *testing.T) {
-	skipIfNotCommandServerSupported(t)
-	dir := t.TempDir()
+	dir := testenv.MkdirShort(t, "sm-cmd-")
 	stub := &fakeCommander{abortErr: errors.New("upstream-internal-sentinel-do-not-leak")}
 	server := NewCommandServer(dir, stub)
 	if err := server.Start(); err != nil {
@@ -158,8 +164,7 @@ func TestCommandServer_AbortFailureReturnsStableCode(t *testing.T) {
 }
 
 func TestCommandServer_RejectsUnknownFields(t *testing.T) {
-	skipIfNotCommandServerSupported(t)
-	dir := t.TempDir()
+	dir := testenv.MkdirShort(t, "sm-cmd-")
 	stub := &fakeCommander{}
 	server := NewCommandServer(dir, stub)
 	if err := server.Start(); err != nil {
@@ -195,8 +200,7 @@ func TestCommandServer_RejectsUnknownFields(t *testing.T) {
 }
 
 func TestCommandServer_RejectsOversizeBody(t *testing.T) {
-	skipIfNotCommandServerSupported(t)
-	dir := t.TempDir()
+	dir := testenv.MkdirShort(t, "sm-cmd-")
 	stub := &fakeCommander{}
 	server := NewCommandServer(dir, stub)
 	if err := server.Start(); err != nil {
@@ -264,8 +268,7 @@ func TestCommandServer_RejectsOversizeBody(t *testing.T) {
 }
 
 func TestCommandServer_StartSetsSocketMode0600(t *testing.T) {
-	skipIfNotCommandServerSupported(t)
-	dir := t.TempDir()
+	dir := testenv.MkdirShort(t, "sm-cmd-")
 	server := NewCommandServer(dir, &fakeCommander{})
 	if err := server.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
@@ -282,8 +285,7 @@ func TestCommandServer_StartSetsSocketMode0600(t *testing.T) {
 }
 
 func TestCommandServer_StartSetsRunDirMode0700(t *testing.T) {
-	skipIfNotCommandServerSupported(t)
-	dir := t.TempDir()
+	dir := testenv.MkdirShort(t, "sm-cmd-")
 	server := NewCommandServer(dir, &fakeCommander{})
 	if err := server.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
@@ -300,8 +302,7 @@ func TestCommandServer_StartSetsRunDirMode0700(t *testing.T) {
 }
 
 func TestCommandServer_DispatchesAbortAndWritesResponse(t *testing.T) {
-	skipIfNotCommandServerSupported(t)
-	dir := t.TempDir()
+	dir := testenv.MkdirShort(t, "sm-cmd-")
 	stub := &fakeCommander{}
 	server := NewCommandServer(dir, stub)
 	if err := server.Start(); err != nil {
@@ -334,8 +335,7 @@ func TestCommandServer_DispatchesAbortAndWritesResponse(t *testing.T) {
 }
 
 func TestCommandServer_TranslatesAbortError(t *testing.T) {
-	skipIfNotCommandServerSupported(t)
-	dir := t.TempDir()
+	dir := testenv.MkdirShort(t, "sm-cmd-")
 	stub := &fakeCommander{abortErr: errors.New("batch: no such issue")}
 	server := NewCommandServer(dir, stub)
 	if err := server.Start(); err != nil {
@@ -370,8 +370,7 @@ func TestCommandServer_TranslatesAbortError(t *testing.T) {
 }
 
 func TestCommandServer_UnknownAction(t *testing.T) {
-	skipIfNotCommandServerSupported(t)
-	dir := t.TempDir()
+	dir := testenv.MkdirShort(t, "sm-cmd-")
 	stub := &fakeCommander{}
 	server := NewCommandServer(dir, stub)
 	if err := server.Start(); err != nil {
@@ -403,8 +402,7 @@ func TestCommandServer_UnknownAction(t *testing.T) {
 }
 
 func TestCommandServer_StopRemovesSocket(t *testing.T) {
-	skipIfNotCommandServerSupported(t)
-	dir := t.TempDir()
+	dir := testenv.MkdirShort(t, "sm-cmd-")
 	server := NewCommandServer(dir, &fakeCommander{})
 	if err := server.Start(); err != nil {
 		t.Fatalf("Start failed: %v", err)
@@ -425,8 +423,7 @@ func TestCommandServer_StopRemovesSocket(t *testing.T) {
 }
 
 func TestCommandServer_StartRemovesStaleSocket(t *testing.T) {
-	skipIfNotCommandServerSupported(t)
-	dir := t.TempDir()
+	dir := testenv.MkdirShort(t, "sm-cmd-")
 	first := NewCommandServer(dir, &fakeCommander{})
 	if err := first.Start(); err != nil {
 		t.Fatalf("first Start failed: %v", err)
@@ -484,8 +481,7 @@ func TestCommandResponse_DecodesRecordedAbortResponse(t *testing.T) {
 }
 
 func TestCommandServer_HandlesConcurrentConnections(t *testing.T) {
-	skipIfNotCommandServerSupported(t)
-	dir := t.TempDir()
+	dir := testenv.MkdirShort(t, "sm-cmd-")
 	stub := &fakeCommander{}
 	server := NewCommandServer(dir, stub)
 	if err := server.Start(); err != nil {

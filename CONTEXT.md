@@ -321,5 +321,9 @@ _Avoid_: Continuation context (legacy filename), continuation file.
 
 - "run" was used to mean both the CLI command (`sandman run`) and a single agent execution. Resolved: the CLI command triggers a **Batch**; each execution is an **AgentRun**.
 - "sandbox" was used interchangeably with "worktree" and "container." Resolved: **Sandbox** is the abstract isolation contract; **WorktreeSandbox** and **ContainerSandbox** are the concrete adapters. A **Worktree** is a git concept — a dedicated checkout that lives inside a sandbox.
-- "language" was used to mean both repo detection and scaffold recipe choice. Resolved: **BuildToolsPreset** is the scaffold-time recipe term; avoid "language" for that choice.
+- "language" was used interchangeably with both repo detection and scaffold recipe choice. Resolved: **BuildToolsPreset** is the scaffold-time recipe term; avoid "language" for that choice.
 - "running process" was used to mean both a **Daemon Process** (background sandman) and an **AgentRun** (agent execution). Resolved: **Daemon Process** is the long-lived sandman process; an **AgentRun** is a single agent execution within a batch.
+
+## Test infrastructure
+
+Tests that bind a Unix domain socket should use `testenv.MkdirShort(t, dirHint)` instead of `t.TempDir()` — the latter resolves through macOS's long `$TMPDIR` and exceeds the 104-char `sun_path` limit on darwin. See `docs/agents/testenv.md` for the rationale and the per-platform capability gates that replace ad-hoc `runtime.GOOS != "linux"` guards.

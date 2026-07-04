@@ -3,12 +3,12 @@ package daemon
 import (
 	"os"
 	"path/filepath"
-	"runtime"
 	"testing"
 	"time"
 
 	"github.com/rafaelromao/sandman/internal/batchindex"
 	"github.com/rafaelromao/sandman/internal/events"
+	"github.com/rafaelromao/sandman/internal/testenv"
 )
 
 // recordingEventLog captures every event handed to Log.
@@ -174,10 +174,7 @@ func TestRecoverStaleRuns_SkipsTerminatedRun(t *testing.T) {
 }
 
 func TestRecoverStaleRuns_LiveRunExcluded(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		t.Skip("daemon socket liveness probing depends on Unix socket semantics; tracked by #1736")
-	}
-	baseDir := t.TempDir()
+	baseDir := testenv.MkdirShort(t, "sm-daemon-")
 	createdAt := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
 	started := createdAt.Add(5 * time.Minute)
 
