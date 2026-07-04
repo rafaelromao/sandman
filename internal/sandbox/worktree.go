@@ -430,6 +430,7 @@ func (s *WorktreeSandbox) ExecInteractive(ctx context.Context, command string) e
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("exec start: %w", err)
