@@ -65,6 +65,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Breaking default change: `DefaultRetries = 3` is now applied by `Load()` when the YAML `retries:` key is absent (was implicitly `0`). This is the new ralph-style default and flows through `resolveRetries` to runtime behaviour. To preserve the prior no-retry behaviour, set `retries: 0` explicitly in `.sandman/config.yaml` (or pass `sandman init --retries 0` on first scaffold).
 - Renamed the `run.cancelled` event type to `run.aborted`. New runs emit `run.aborted` with `status: aborted`. The projected status for a cancellation event is now `"aborted"` (was `"failure"`). Legacy `run.cancelled` events in existing `events.jsonl` files continue to project as `"aborted"`, so the cut-over is lossless for the abort semantic.
 - Dependency resolution now treats in-batch success as sufficient to unblock dependents. When a blocker AgentRun in the same batch finishes with status `success`, its dependents start immediately without re-fetching the blocker's GitHub issue state. Only external blockers (issues not in the current batch) are still re-checked against GitHub closure right before a dependent starts, preserving the existing gate when an external blocker has not closed yet.
+- Fix: portal review verdict now surfaces 'Approved' / 'Changes requested' for reviews posted via `gh pr comment --body "..."` instead of defaulting to 'Unclear' (follow-up to #1729, #1767).
 
 ### Removed
 
