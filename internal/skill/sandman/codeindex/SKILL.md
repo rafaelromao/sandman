@@ -1,10 +1,10 @@
 ---
-name: sandman-index
+name: sandman-codeindex
 disable-model-invocation: true
-description: Non-discoverable. Load manually with /skill sandman-index when you need codeindex guidance.
+description: Non-discoverable. Load manually with /skill sandman-codeindex when you need codeindex guidance.
 ---
 
-# sandman-index
+# sandman-codeindex
 
 Symbol index for fast, scoped code discovery. Keeps large codebases navigable without flooding context with line-by-line file reads.
 

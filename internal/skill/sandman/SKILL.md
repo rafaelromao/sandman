@@ -28,6 +28,7 @@ sandman pr-merge
 - `pr-review` -> `sandman-pr-review`
 - `back-merge` -> `sandman-back-merge`
 - `pr-merge` -> `sandman-pr-merge`
+- `codeindex` -> `sandman-codeindex`
 
 ## Use
 
