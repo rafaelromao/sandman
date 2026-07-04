@@ -313,3 +313,27 @@ func TestSandmanPlanSkill_OutputShapeNoNextStep(t *testing.T) {
 		t.Fatal("expected sandman-plan SKILL.md to contain a 'Plan output shape' section")
 	}
 }
+
+func TestSyncInstallsCodeindexSubSkill(t *testing.T) {
+	home := t.TempDir()
+
+	if err := Sync(SyncOptions{HomeDir: home, ReviewCommand: "/review-please"}); err != nil {
+		t.Fatalf("sync skill: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(home, ".agents", "skills", embeddedSkillRoot, "codeindex", "SKILL.md"))
+	if err != nil {
+		t.Fatalf("read codeindex sub-skill: %v", err)
+	}
+	text := string(data)
+
+	checks := []string{
+		"name: sandman-codeindex",
+		"disable-model-invocation: true",
+	}
+	for _, want := range checks {
+		if !strings.Contains(text, want) {
+			t.Fatalf("expected codeindex sub-skill to contain %q, got:\n%s", want, text)
+		}
+	}
+}
