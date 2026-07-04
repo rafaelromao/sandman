@@ -165,16 +165,49 @@ func TestPortalRunsIndex_DiscoverActiveRuns_RefreshesManifestCacheOnChange(t *te
 		t.Fatalf("expected first manifest issues [860], got %#v", first)
 	}
 
-	// Ensure the manifest modtime changes so the cache re-reads it.
-	time.Sleep(20 * time.Millisecond)
+	beforeModTime := manifestModTime(t, runDir)
 	if err := daemon.WriteManifest(runDir, daemon.BatchManifest{Issues: []int{854}, CreatedAt: time.Now().Add(-time.Minute)}); err != nil {
 		t.Fatal(err)
 	}
+	waitForManifestModTimeAfter(t, runDir, beforeModTime, time.Second)
 	second, err := idx.discoverActiveRuns(nil)
 	if err != nil {
 		t.Fatalf("discoverActiveRuns second: %v", err)
 	}
 	if len(second) != 1 || !reflect.DeepEqual(second[0].IssueNumbers, []int{854}) {
 		t.Fatalf("expected refreshed manifest issues [854], got %#v", second)
+	}
+}
+
+// manifestModTime returns the on-disk modtime of the batch manifest
+// at runDir. Used by tests that need to detect a re-write without
+// resorting to a fixed time.Sleep between writes.
+func manifestModTime(t *testing.T, runDir string) time.Time {
+	t.Helper()
+	info, err := os.Stat(daemon.ManifestPath(runDir))
+	if err != nil {
+		t.Fatalf("stat manifest at %s: %v", runDir, err)
+	}
+	return info.ModTime()
+}
+
+// waitForManifestModTimeAfter polls the batch manifest at runDir
+// until its modtime is strictly after before (a deadline-bounded
+// replacement for a fixed time.Sleep between manifest writes).
+// Mirrors the poll-with-deadline shape used elsewhere in the test
+// suite (waitForPathTB / waitForSocketTB).
+func waitForManifestModTimeAfter(t *testing.T, runDir string, before time.Time, timeout time.Duration) {
+	t.Helper()
+	path := daemon.ManifestPath(runDir)
+	deadline := time.Now().Add(timeout)
+	for {
+		info, err := os.Stat(path)
+		if err == nil && info.ModTime().After(before) {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for %s modtime to advance past %v", path, before)
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 }

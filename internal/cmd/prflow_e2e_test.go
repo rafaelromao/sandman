@@ -1729,7 +1729,9 @@ func TestE2E_QueuedIssuesPersistAfterBatchCompletes(t *testing.T) {
 			_ = root.ExecuteContext(ctx)
 		}()
 
-		time.Sleep(2 * time.Second)
+		if conn := waitForTCPAddrTB(t, "127.0.0.1:5000", 5*time.Second); conn != nil {
+			_ = conn.Close()
+		}
 		cancel()
 
 		runs, err := (&portalRunsView{}).compute(repoDir, &events.JSONLLogger{Path: filepath.Join(repoDir, ".sandman", "events.jsonl")})

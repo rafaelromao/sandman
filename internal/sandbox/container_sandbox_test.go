@@ -3,11 +3,16 @@ package sandbox
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/rafaelromao/sandman/internal/shellenv"
 )
 
 type fakeWorktreeForContainer struct {
@@ -447,13 +452,14 @@ func TestContainerSandbox_Exec_KillAgentFnCalledOnAbort(t *testing.T) {
 		KillAgentFn = prevKill
 	}()
 
+	readyPath := filepath.Join(t.TempDir(), "child.ready")
 	var killCalls []string
 	KillAgentFn = func(containerID string) error {
 		killCalls = append(killCalls, containerID)
 		return nil
 	}
 	ExecCommandFn = func(name string, arg ...string) *exec.Cmd {
-		return exec.Command("sleep", "60")
+		return exec.Command("sh", "-c", fmt.Sprintf("touch %s && sleep 60", shellenv.Quote(readyPath)))
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -463,7 +469,7 @@ func TestContainerSandbox_Exec_KillAgentFnCalledOnAbort(t *testing.T) {
 		errCh <- sb.Exec(ctx, "echo hello", io.Discard, io.Discard)
 	}()
 
-	time.Sleep(200 * time.Millisecond)
+	waitForChildReadyTB(t, readyPath, 2*time.Second)
 	cancel()
 
 	select {
@@ -497,8 +503,9 @@ func TestContainerSandbox_Exec_CancelsViaContext(t *testing.T) {
 
 	prev := ExecCommandFn
 	defer func() { ExecCommandFn = prev }()
+	readyPath := filepath.Join(t.TempDir(), "child.ready")
 	ExecCommandFn = func(name string, arg ...string) *exec.Cmd {
-		return exec.Command("sleep", "60")
+		return exec.Command("sh", "-c", fmt.Sprintf("touch %s && sleep 60", shellenv.Quote(readyPath)))
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -508,7 +515,7 @@ func TestContainerSandbox_Exec_CancelsViaContext(t *testing.T) {
 		errCh <- sb.Exec(ctx, "echo hello", io.Discard, io.Discard)
 	}()
 
-	time.Sleep(200 * time.Millisecond)
+	waitForChildReadyTB(t, readyPath, 2*time.Second)
 	cancel()
 
 	select {
@@ -535,8 +542,9 @@ func TestContainerSandbox_ExecInteractive_CancelsViaContext(t *testing.T) {
 
 	prev := ExecCommandFn
 	defer func() { ExecCommandFn = prev }()
+	readyPath := filepath.Join(t.TempDir(), "child.ready")
 	ExecCommandFn = func(name string, arg ...string) *exec.Cmd {
-		return exec.Command("sleep", "60")
+		return exec.Command("sh", "-c", fmt.Sprintf("touch %s && sleep 60", shellenv.Quote(readyPath)))
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -546,7 +554,7 @@ func TestContainerSandbox_ExecInteractive_CancelsViaContext(t *testing.T) {
 		errCh <- sb.ExecInteractive(ctx, "echo hello")
 	}()
 
-	time.Sleep(200 * time.Millisecond)
+	waitForChildReadyTB(t, readyPath, 2*time.Second)
 	cancel()
 
 	select {
@@ -559,6 +567,27 @@ func TestContainerSandbox_ExecInteractive_CancelsViaContext(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("ExecInteractive did not unblock after context cancel — missing Setpgid on container sandbox?")
+	}
+}
+
+// waitForChildReadyTB polls for a child-process readiness marker
+// file; fails the test on timeout. The container-exec tests inject
+// an ExecCommandFn whose underlying command writes the marker
+// before sleeping, so the marker observing the file means the OS
+// has actually forked+exec'd the child — the same guarantee the
+// previous fixed time.Sleep(200ms) provided, with a deadline
+// instead of a wall-clock guess.
+func waitForChildReadyTB(t *testing.T, path string, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for {
+		if info, err := os.Stat(path); err == nil && !info.IsDir() {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for child readiness marker %s", path)
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 }
 
