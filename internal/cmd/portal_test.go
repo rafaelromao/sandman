@@ -62,6 +62,11 @@ func TestPortal_LiveOutputReturnsTailForLongStream(t *testing.T) {
 		}
 		defer conn.Close()
 		_, _ = conn.Write(largeData)
+		// The 200ms pause shapes the data the test reads: the suffix
+		// must arrive AFTER the client has had time to consume the
+		// bulk of largeData, but BEFORE the 250ms read deadline
+		// expires. Removing the pause changes the assertion's
+		// observable (the read would either short-read or block).
 		time.Sleep(200 * time.Millisecond)
 		_, _ = conn.Write([]byte(suffix))
 	}()
