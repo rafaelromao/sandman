@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/rafaelromao/sandman/internal/testenv"
 )
 
 // TestPollSocketOnce exercises the one-shot poll helper that
@@ -13,10 +15,7 @@ import (
 // entry point covered by a separate caller test.
 func TestPollSocketOnce(t *testing.T) {
 	t.Run("ReadyAddressReturnsConn", func(t *testing.T) {
-		dir, err := filepath.EvalSymlinks(t.TempDir())
-		if err != nil {
-			t.Fatalf("eval tempdir: %v", err)
-		}
+		dir := testenv.MkdirShort(t, "sm-orch-")
 		addr := filepath.Join(dir, "ready.sock")
 		listener, err := net.Listen("unix", addr)
 		if err != nil {
@@ -41,10 +40,7 @@ func TestPollSocketOnce(t *testing.T) {
 	})
 
 	t.Run("MissingAddressReturnsFalseFast", func(t *testing.T) {
-		dir, err := filepath.EvalSymlinks(t.TempDir())
-		if err != nil {
-			t.Fatalf("eval tempdir: %v", err)
-		}
+		dir := testenv.MkdirShort(t, "sm-orch-")
 		addr := filepath.Join(dir, "never.sock")
 		const perAttemptTimeout = 200 * time.Millisecond
 
@@ -78,10 +74,7 @@ func TestPollSocketOnce(t *testing.T) {
 // since waitForSocketTB is built by looping pollSocketOnce on a
 // 20ms cadence.
 func TestWaitForSocketTB(t *testing.T) {
-	dir, err := filepath.EvalSymlinks(t.TempDir())
-	if err != nil {
-		t.Fatalf("eval tempdir: %v", err)
-	}
+	dir := testenv.MkdirShort(t, "sm-orch-")
 	addr := filepath.Join(dir, "late.sock")
 	const startDelay = 100 * time.Millisecond
 	const timeout = 5 * time.Second

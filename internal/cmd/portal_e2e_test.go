@@ -24,11 +24,7 @@ import (
 )
 
 func TestPortal_E2E_TwoLiveRuns(t *testing.T) {
-	// CI: STALE — this test uses buildSandmanBinary + startPortalBinary and requires no
-	// provider auth or podman runtime. The blanket CI skip predates the podman-installed
-	// CI workflow at .github/workflows/go.yml:26-34 and gives no justification of its own.
-	// Un-stale by deleting the `if os.Getenv("CI") != ""` block; the test should run in CI
-	// on both Linux (podman installed) and macOS (no runtime needed for this code path).
+	// CI: STALE — uses buildSandmanBinary + startPortalBinary; no provider auth or runtime required.
 	if os.Getenv("CI") != "" {
 		t.Skip("skip e2e in CI")
 	}
@@ -79,11 +75,7 @@ func TestPortal_E2E_TwoLiveRuns(t *testing.T) {
 }
 
 func TestPortal_E2E_AbortStopsOneIssueAndBatchContinues(t *testing.T) {
-	// CI: STALE — abort path uses worktree sandbox; no provider auth or runtime
-	// hard-requirement beyond what portalAbortSupported gates. The blanket CI skip
-	// predates the podman-installed CI workflow at .github/workflows/go.yml:26-34 and
-	// gives no justification of its own. Un-stale by deleting the `if os.Getenv("CI") != ""`
-	// block; the existing platform support self-skip below is the only real gate.
+	// CI: STALE — abort path uses worktree sandbox; platform support gate below is the real guard.
 	if os.Getenv("CI") != "" {
 		t.Skip("skip e2e in CI")
 	}
@@ -176,11 +168,7 @@ func TestPortal_E2E_AbortStopsOneIssueAndBatchContinues(t *testing.T) {
 }
 
 func TestPortal_E2E_AbortStopsOneIssueAndBatchContinues_Container(t *testing.T) {
-	// CI: STALE — guards on containerRuntimeAvailable which already self-skips when the
-	// runtime is absent. On Linux CI the podman install at .github/workflows/go.yml:26-34
-	// makes this skip fully redundant. On macOS the containerRuntimeAvailable helper still
-	// self-skips correctly. Un-stale by deleting the `if os.Getenv("CI") != ""` block; the
-	// runtime check below already covers the cross-platform case.
+	// CI: STALE — containerRuntimeAvailable below already self-skips; podman install on Linux CI is redundant.
 	if os.Getenv("CI") != "" {
 		t.Skip("skip e2e in CI")
 	}
@@ -262,11 +250,7 @@ func TestPortal_E2E_AbortStopsOneIssueAndBatchContinues_Container(t *testing.T) 
 }
 
 func TestPortal_E2E_MixedBatchShowsBatchMembershipAndFiltersSiblingLogs(t *testing.T) {
-	// CI: STALE — this test uses buildSandmanBinary + startPortalBinary and requires no
-	// provider auth or podman runtime. The blanket CI skip predates the podman-installed
-	// CI workflow at .github/workflows/go.yml:26-34 and gives no justification of its own.
-	// Un-stale by deleting the `if os.Getenv("CI") != ""` block; the test should run in CI
-	// on both Linux (podman installed) and macOS (no runtime needed for this code path).
+	// CI: STALE — uses buildSandmanBinary + startPortalBinary; no provider auth or runtime required.
 	if os.Getenv("CI") != "" {
 		t.Skip("skip e2e in CI")
 	}
@@ -333,11 +317,7 @@ func TestPortal_E2E_MixedBatchShowsBatchMembershipAndFiltersSiblingLogs(t *testi
 }
 
 func TestPortal_E2E_AbortReturns404ForUnknownRun(t *testing.T) {
-	// CI: STALE — abort path uses worktree sandbox; no provider auth or runtime
-	// hard-requirement beyond what portalAbortSupported gates. The blanket CI skip
-	// predates the podman-installed CI workflow at .github/workflows/go.yml:26-34 and
-	// gives no justification of its own. Un-stale by deleting the `if os.Getenv("CI") != ""`
-	// block; the existing platform support self-skip below is the only real gate.
+	// CI: STALE — abort path uses worktree sandbox; platform support gate below is the real guard.
 	if os.Getenv("CI") != "" {
 		t.Skip("skip e2e in CI")
 	}
@@ -392,12 +372,7 @@ func containerRuntimeAvailable(t *testing.T) bool {
 			return true
 		}
 	}
-	// CI: STALE — the helper already self-skips below with the generic "no container
-	// runtime available (podman or docker)" message which covers macOS CI and any
-	// elsewhere without a runtime. The CI-specialized message is misleading because
-	// .github/workflows/go.yml:26-34 installs podman on Linux CI runners, so the
-	// CI-specific branch never fires on Linux. Un-stale by deleting this branch
-	// (skip-altering would belong to a later slice, not slice 0).
+	// CI: STALE — generic self-skip below already covers macOS CI; the CI-specific message is misleading because the workflow installs podman on Linux.
 	if os.Getenv("CI") != "" {
 		t.Skip("no container runtime available in CI")
 	}

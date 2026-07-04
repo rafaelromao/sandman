@@ -104,11 +104,7 @@ func runPRFlowProviderCases(t *testing.T, fn func(t *testing.T, tc prFlowProvide
 }
 
 func TestPRFlow_PodmanSandboxBinaryCommitsAndPushes(t *testing.T) {
-	// CI: JUSTIFIED — calls requirePRFlowProvider (real ~/.local/share/opencode/auth.json)
-	// and requirePodmanE2E; CI does not provision the auth secret today, so the blanket
-	// skip remains load-bearing. Un-stale by adding the auth secret to GitHub Actions and
-	// confirming the podman install at .github/workflows/go.yml:26-34 covers this test's
-	// sandbox mode on Linux (macOS CI runner has no runtime).
+	// CI: JUSTIFIED — calls requirePRFlowProvider (real provider auth) and requirePodmanE2E.
 	if os.Getenv("CI") != "" {
 		t.Skip("skip e2e in CI")
 	}
@@ -239,11 +235,7 @@ func TestPRFlow_PodmanSandboxBinaryCommitsAndPushes(t *testing.T) {
 }
 
 func TestPRFlow_PodmanSandboxCommitsAndPushes(t *testing.T) {
-	// CI: JUSTIFIED — calls requirePRFlowProvider (real ~/.local/share/opencode/auth.json)
-	// and requirePodmanE2E; CI does not provision the auth secret today, so the blanket
-	// skip remains load-bearing. Un-stale by adding the auth secret to GitHub Actions and
-	// confirming the podman install at .github/workflows/go.yml:26-34 covers this test's
-	// sandbox mode on Linux (macOS CI runner has no runtime).
+	// CI: JUSTIFIED — calls requirePRFlowProvider (real provider auth) and requirePodmanE2E.
 	if os.Getenv("CI") != "" {
 		t.Skip("skip e2e in CI")
 	}
@@ -369,10 +361,7 @@ func TestPRFlow_PodmanSandboxCommitsAndPushes(t *testing.T) {
 }
 
 func TestPRFlow_WorktreeSandboxCommitsAndPushes(t *testing.T) {
-	// CI: JUSTIFIED — calls requirePRFlowProvider (real ~/.local/share/opencode/auth.json);
-	// worktree-mode sandbox has no runtime hard-requirement, but CI does not provision the
-	// auth secret today. Un-stale by adding the auth secret to GitHub Actions; podman is
-	// not required for this test (worktree sandbox).
+	// CI: JUSTIFIED — calls requirePRFlowProvider (real provider auth); worktree sandbox, no runtime.
 	if os.Getenv("CI") != "" {
 		t.Skip("skip e2e in CI")
 	}
@@ -1097,11 +1086,7 @@ exit 1
 }
 
 func TestPRFlow_PodmanSandboxBinaryParallelAgentRuns(t *testing.T) {
-	// CI: JUSTIFIED — calls requirePRFlowProvider (real ~/.local/share/opencode/auth.json)
-	// and requirePodmanE2E; CI does not provision the auth secret today, so the blanket
-	// skip remains load-bearing. Un-stale by adding the auth secret to GitHub Actions and
-	// confirming the podman install at .github/workflows/go.yml:26-34 covers this test's
-	// sandbox mode on Linux (macOS CI runner has no runtime).
+	// CI: JUSTIFIED — calls requirePRFlowProvider (real provider auth) and requirePodmanE2E.
 	if os.Getenv("CI") != "" {
 		t.Skip("skip e2e in CI")
 	}
@@ -1326,11 +1311,7 @@ func TestPRFlow_PodmanSandboxBinaryParallelAgentRuns(t *testing.T) {
 }
 
 func TestPRFlow_PodmanSandboxBinaryParallelAgentRunsAutoCapacity(t *testing.T) {
-	// CI: JUSTIFIED — calls requirePRFlowProvider (real ~/.local/share/opencode/auth.json)
-	// and requirePodmanE2E; CI does not provision the auth secret today, so the blanket
-	// skip remains load-bearing. Un-stale by adding the auth secret to GitHub Actions and
-	// confirming the podman install at .github/workflows/go.yml:26-34 covers this test's
-	// sandbox mode on Linux (macOS CI runner has no runtime).
+	// CI: JUSTIFIED — calls requirePRFlowProvider (real provider auth) and requirePodmanE2E.
 	if os.Getenv("CI") != "" {
 		t.Skip("skip e2e in CI")
 	}
@@ -1613,11 +1594,7 @@ func TestDoubleFor152(t *testing.T) {
 }
 
 func TestE2E_QueuedIssuesPersistAfterBatchCompletes(t *testing.T) {
-	// CI: JUSTIFIED — calls requirePRFlowProvider (real ~/.local/share/opencode/auth.json)
-	// and requirePodmanE2E; CI does not provision the auth secret today, so the blanket
-	// skip remains load-bearing. Un-stale by adding the auth secret to GitHub Actions and
-	// confirming the podman install at .github/workflows/go.yml:26-34 covers this test's
-	// sandbox mode on Linux (macOS CI runner has no runtime).
+	// CI: JUSTIFIED — calls requirePRFlowProvider (real provider auth) and requirePodmanE2E.
 	if os.Getenv("CI") != "" {
 		t.Skip("skip e2e in CI")
 	}
