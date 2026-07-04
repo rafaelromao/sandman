@@ -168,6 +168,7 @@ func TestPRReviewSkill_ADRNotesDaemonOwnership(t *testing.T) {
 		"the skill no longer maintains `.sandman/reviews/self-posted.json`",
 		"sole authoritative record",
 		"#1757",
+		"`Daemon.processPR` is the sole authoritative record",
 	}
 	for _, phrase := range required {
 		if !strings.Contains(text, phrase) {
@@ -177,5 +178,8 @@ func TestPRReviewSkill_ADRNotesDaemonOwnership(t *testing.T) {
 
 	if strings.Contains(text, "the `pr-review` SKILL.md Step 4b wrapper hashes the bot's review-body") {
 		t.Errorf("ADR-0014 Record-site (primary) bullet must no longer claim the pr-review SKILL.md Step 4b wrapper is the primary record site (issue #1757)")
+	}
+	if strings.Contains(text, "`Daemon.promotePendingComment` is the sole authoritative record") {
+		t.Errorf("ADR-0014 Ownership note must name processPR — not promotePendingComment — as the sole authoritative record site (issue #1757)")
 	}
 }
