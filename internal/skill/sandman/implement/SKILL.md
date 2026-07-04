@@ -47,7 +47,7 @@ After setting up the branch, determine whether the issue's work is already compl
 
 A merged change request will, by the tracker's merge rules, automatically close its work item — so there is no need to search for a closing change request separately.
 
-1. Run: `gh issue view <ID> --json state`
+1. Run the platform's "view work item" CLI to read the current state of the open work item.
 2. Run branch freshness check:
 
    ```bash
@@ -63,7 +63,7 @@ A merged change request will, by the tracker's merge rules, automatically close 
    ```
 
    If this prints one or more PR numbers, **do NOT write `## Status: already resolved` while an open PR exists for the current branch**. Pick one of:
-   - **(a) Close the orphan PR** with `gh pr close <N> --delete-branch=false --comment "Closed by sandman: issue resolved on origin/main; branch superseded"` before writing the marker, OR
+   - **(a) Close the orphan PR** with the platform's "close change request" CLI, preserving the branch and commenting that the work is superseded by the new run, before writing the marker, OR
    - **(b) Stop without writing the marker** and let the existing PR drive the run — this is the safer default; the open PR is itself durable evidence of partial or pending work.
 4. Decision matrix (after branch freshness and open-PR checks pass):
    - **Issue is closed** → verify the issue acceptance criteria against the current state of the base branch after fetching `origin/<base>`; only write `## Status: already resolved` and stop if the base branch actually satisfies every criterion. If the base branch does not satisfy every criterion, continue to step 2 (Plan) as normal.
@@ -133,8 +133,8 @@ git push -u origin <branch>
 gh pr create --title "<issue title>" --body "Fixes #<issue_number>"
 ```
 
-Before running `gh pr create`, set `body` to exactly `Fixes #<issue_number>`.
-Verify the final `body` string is exactly `Fixes #<issue_number>` and contains no other issue references or extra text.
+Before running the platform's "create change request" CLI, set `body` to exactly the closing-reference string (the one that links the change request back to the implementor's open work item so the tracker auto-closes it on merge).
+Verify the final `body` string is exactly that closing-reference string and contains no other work-item references or extra text.
 If the body is wrong, do NOT create the PR. Instead, report the exact wrong body to the user and stop.
 
 Capture the PR URL and number.

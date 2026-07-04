@@ -31,7 +31,7 @@ description: Automates the GitHub PR review loop with the PR Review Agent. Waits
 9. **You must use `codeindex` before `grep` or `glob` when looking for symbols, blast radius, dependencies, or other broad code locations.** Load the `sandman-codeindex` sub-skill first — it encapsulates all codeindex guidance including the hard rule, command reference, query refinement strategies, and read discipline.
 
 10. **Any PR comment intended to be read by the reviewer MUST start with the review command.** A comment that does not begin with the review command is treated as boilerplate by the daemon and ignored — it does not reach the reviewer and does not advance the loop. Concretely:
-    - When posting the trigger comment (Step 4), the body must be exactly the review command on its own (e.g. `gh pr comment <N> --repo <owner/repo> --body "{{REVIEW_COMMAND}}"`).
+    - When posting the trigger comment (Step 4), the body must be exactly the review command on its own (e.g. via the platform's "post PR comment" CLI, passing the change-request identifier and the review-command body).
     - When posting a clarification request, a follow-up after a stalled poll, or any other reviewer-facing message, the body must begin with the review command and may include additional freeform text afterwards (e.g. `{{REVIEW_COMMAND}} — please clarify which file you mean`). The leading review-command substring is what the daemon's trigger filter matches on; the trailing freeform text is read by the reviewer but ignored by the trigger filter.
     - When posting the bot's own review-body (Step 4b), do NOT prefix it with the review command. The review-body is the substance the reviewer writes back to you — prefixing it would cause the daemon to mis-classify the body as a duplicate trigger on the next tick and drop the actual review content. Record the review-body hash with `record_review_posted` as described in Step 4b.
 
@@ -154,7 +154,7 @@ record_trigger_posted() {
 
 #### Step 4b: Record the bot's review-body post (per the change-request history)
 
-The PR Review Agent posts its review-body via `gh pr comment <N> --body "<long markdown review>"`. That post is the comment the self-post filter exists to suppress — the reviewer's `## Previous review progress` section can quote the original `/sandman review` request verbatim (the prompt's omit-when-no-prior-reviews rule in ADR-0028 sometimes fails to constrain the model, as on a recent change request) and the substring would otherwise re-match the trigger regex on the next tick. Recording the review body, combined with the new IsSelfPosted-first ordering in the daemon's per-PR processing (per the change-request history), breaks this self-loop. Immediately after `gh pr comment` returns success on the review-body post, hash the body and append the hash to `.sandman/reviews/self-posted.json`. The hash normalization matches the daemon's posted-body record normalization — lower-case + trim trailing whitespace + `sha256sum`:
+The PR Review Agent posts its review-body via the platform's "post PR comment" CLI, passing the long markdown review as the body. That post is the comment the self-post filter exists to suppress — the reviewer's `## Previous review progress` section can quote the original `/sandman review` request verbatim (the prompt's omit-when-no-prior-reviews rule in ADR-0028 sometimes fails to constrain the model, as on a recent change request) and the substring would otherwise re-match the trigger regex on the next tick. Recording the review body, combined with the new IsSelfPosted-first ordering in the daemon's per-PR processing (per the change-request history), breaks this self-loop. Immediately after the CLI call returns success on the review-body post, hash the body and append the hash to `.sandman/reviews/self-posted.json`. The hash normalization matches the daemon's posted-body record normalization — lower-case + trim trailing whitespace + `sha256sum`:
 
 ```bash
 record_review_posted() {
@@ -221,9 +221,9 @@ gh api repos/<owner>/<repo>/pulls/<N>/comments --paginate
 Counter: `top=<count> reviews=<count> inline=<count>`
 
 Counter definitions:
-- `top` = top-level PR comments from `gh pr view --json comments` whose author is not the agent itself AND whose body is not the `{{REVIEW_COMMAND}}` request
-- `reviews` = entries returned by `gh api .../reviews` (full entry, not truncated `latestReviews`)
-- `inline` = entries returned by `gh api .../comments --paginate`
+- `top` = top-level PR comments from the change-request view (the JSON `comments` field) whose author is not the agent itself AND whose body is not the `{{REVIEW_COMMAND}}` request
+- `reviews` = entries returned by the reviews endpoint (full entry, not truncated `latestReviews`)
+- `inline` = entries returned by the inline comments endpoint with pagination
 
 A reviewer response is **any** of:
 - A new top-level comment whose author is not the agent itself and whose body is not the `{{REVIEW_COMMAND}}` request
@@ -239,7 +239,7 @@ If no reviewer response arrives within 15 minutes, stop and exit the loop with a
 
 > **Prerequisite**: a DIRTY (`mergeable == CONFLICTING`) PR cannot run CI, cannot be reviewed on its diff cleanly, and cannot be merged. The Step 2 pre-check catches the initial state, but a PR can drift to DIRTY mid-poll once new commits land on the base branch. This section is the per-poll guard.
 
-On **every** poll iteration, after running the three commands above, inspect the `mergeStateStatus` field already returned by the first command (do **not** make a separate `gh pr view` call). If `mergeStateStatus == "DIRTY"`:
+On **every** poll iteration, after running the three commands above, inspect the `mergeStateStatus` field already returned by the first command (do **not** make a separate change-request view call). If `mergeStateStatus == "DIRTY"`:
 
 1. Stop polling for review feedback. The PR is unmergeable until the conflict is resolved; reviewer comments posted on a DIRTY PR do not produce a usable review.
 2. Load `sandman-back-merge` (see the `sandman-back-merge` skill). Run it on the current branch. It performs the disciplined 3-way merge of the base branch into the working branch and resolves conflicts without history rewrites.
@@ -339,7 +339,7 @@ Continue polling when:
 
 ## Tips
 
-- Use `gh pr view --json state,mergeStateStatus` to check merge readiness after approval.
+- Use the change-request view (the `state` and `mergeStateStatus` JSON fields) to check merge readiness after approval.
 - Always include `top=<count> reviews=<count> inline=<count>` in the final report.
 - Never force-push or amend commits.
 - Keep commits focused: one commit per review round.
