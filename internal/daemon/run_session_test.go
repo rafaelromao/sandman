@@ -326,6 +326,10 @@ func TestRunSession_IdxAddOnlyCalledFromPrepare(t *testing.T) {
 	// sibling tests) so we resolve the repo root via the test's cwd
 	// plus the `internal/daemon` package's parent.
 	cmd := exec.Command("grep", "-rn", "--include=*.go", "--exclude=*_test.go",
+		"--exclude-dir=.sandman",
+		"--exclude-dir=worktrees",
+		"--exclude-dir=node_modules",
+		"--exclude-dir=.git",
 		`\.Add(batchindex\.Entry{`, ".")
 	cmd.Dir = findRepoRoot(t)
 	out, err := cmd.CombinedOutput()

@@ -65,7 +65,7 @@ func runSelectionPhaseWithEvents(ctx context.Context, client github.Client, coun
 		return nil, "", "", err
 	}
 	if len(candidateIssues) == 0 {
-		return nil, "", "", fmt.Errorf("no candidate issues found")
+		return nil, "", "", fmt.Errorf("no candidate issues ready for agent")
 	}
 
 	effectiveCount := count

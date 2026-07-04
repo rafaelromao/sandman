@@ -227,8 +227,8 @@ func TestRun_AutoFlag_NoIssuesReturnsError(t *testing.T) {
 	if spy.called {
 		t.Error("expected batch runner not to be called")
 	}
-	if !strings.Contains(err.Error(), "no issues ready for agent") {
-		t.Errorf("expected 'no issues ready for agent' error, got: %v", err)
+	if !strings.Contains(err.Error(), "no candidate issues") {
+		t.Errorf("expected 'no candidate issues' error, got: %v", err)
 	}
 }
 
