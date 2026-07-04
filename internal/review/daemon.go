@@ -771,12 +771,17 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) error {
 		// from re-triggering a review on the bot's own review-body,
 		// which contains the literal `/sandman review` substring in
 		// its `## Previous review progress` section. The
-		// SelfPostStore only ever contains bodies the bot posted
-		// (review-bodies via Step 4b of the pr-review skill, plus
-		// any body defensively observed by promotePendingComment),
-		// never the implementor's trigger command — so applying the
-		// filter before ParseTrigger does not regress trigger
-		// detection for fresh human-issued trigger commands.
+		// SelfPostStore is populated by processPR itself: every
+		// non-trigger comment observed here is recorded, so the next
+		// tick's IsSelfPosted check suppresses it. Trigger bodies
+		// are deliberately NOT recorded — recording them would mask
+		// legitimate future trigger lookups (every re-request shares
+		// one body hash). This replaces the previous LLM-side
+		// `record_review_posted` wrapper (issue #1757) and the prior
+		// promotePendingComment defensive observation (issue
+		// #1722); the daemon is now the sole authoritative record
+		// site. See ADR-0014 "Self-posted comment filter" and the
+		// ownership note in §Ownership note (issue #1757).
 		if d.selfPosts != nil && d.selfPosts.IsSelfPosted(comment.Body) {
 			d.logf("PR #%d: comment %s is a self-post, skipping", prNumber, comment.ID)
 			continue
@@ -785,6 +790,11 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) error {
 		if ok {
 			triggers = append(triggers, unseenTrigger{comment: comment, focus: focus})
 			continue
+		}
+		if d.selfPosts != nil {
+			if err := d.selfPosts.Record(prNumber, comment.Body, ""); err != nil {
+				d.logf("PR #%d: record non-trigger body %s failed: %v", prNumber, comment.ID, err)
+			}
 		}
 	}
 	if len(triggers) == 0 {

@@ -209,8 +209,9 @@ func TestDaemon_ProcessPR_RecordedReviewBody_DoesNotReTrigger(t *testing.T) {
 // implementor's repeated `/sandman review` trigger body — and once
 // that hash entered the store, processPR's IsSelfPosted-first filter
 // dropped every future review request (permanent blindness). The
-// self-post store is now populated ONLY by the pr-review skill
-// wrapper (Step 4b).
+// self-post store is now populated ONLY by processPR itself
+// (issue #1757), which records every non-trigger comment it observes
+// and deliberately skips trigger bodies.
 //
 // Both the first and any subsequent call return "success" (any
 // comment after `since` settles the lazy-verify entry); neither call
@@ -272,30 +273,29 @@ func TestDaemon_PromotePendingComment_DoesNotRecordObservedComment(t *testing.T)
 
 // TestDaemon_PromotePendingComment_NoPoisoning_CrossTickSuccessSettlesWithoutLoop
 // pins the post-#1722 cross-tick contract end-to-end via the full
-// tick() ordering.
+// tick() ordering, after the #1757 recording-source move.
 //
 // The bot's review body follows the #1709 prompt rule: it does NOT
 // contain the literal `/sandman review` substring, so ParseTrigger
-// cannot match it. The wrapper (Step 4b) is bypassed in this test
-// (the body is not pre-seeded in SelfPostStore) to prove that, with
-// the trigger substring removed at the source, the daemon needs no
-// runtime poisoning of observed comments to avoid a self-loop.
+// cannot match it. The wrapper (Step 4b) is gone (issue #1757); the
+// daemon's processPR is the sole authoritative record site.
 //
 //   - Tick N: implementor's trigger lands; processPR launches the
 //     review and registers the pending entry.
 //   - Between ticks: the bot posts its review body (no trigger
 //     substring).
 //   - Tick N+1: promotePendingReviews runs first, observes the body
-//     after `since`, returns success — WITHOUT recording it — and
-//     MarkSeens the trigger. processPR then runs: the body does not
-//     match ParseTrigger, and the trigger is filtered by the seen
-//     cache.
+//     after `since`, returns success. processPR then runs: the body
+//     is not in SelfPostStore yet so IsSelfPosted is false; the
+//     trigger is filtered by the seen cache; the new review body is
+//     recorded as a non-trigger body so any later re-observation is
+//     suppressed. No review is re-launched.
 //
 // Assertions: runner.calls stays at 1 across both ticks (no
-// re-launch) and the review body is NOT in SelfPostStore (the daemon
-// never records observed comments). Pre-#1722 this test recorded the
-// body defensively; that recording is what blinded the daemon to
-// later `/sandman review` re-requests.
+// re-launch). The bot review body IS in SelfPostStore after tick
+// N+1 — processPR now records every non-trigger body it observes
+// (issue #1757). Trigger bodies (the implementor's /sandman review)
+// are deliberately NOT recorded, which is why no blindness occurs.
 func TestDaemon_PromotePendingComment_NoPoisoning_CrossTickSuccessSettlesWithoutLoop(t *testing.T) {
 	now := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
 	// Post-#1709 review body: paraphrases prior requests, no literal
@@ -341,8 +341,11 @@ func TestDaemon_PromotePendingComment_NoPoisoning_CrossTickSuccessSettlesWithout
 	if runner.calls != 1 {
 		t.Errorf("tick N+1 MUST NOT re-launch on the bot review body (#1722), got %d total batch runs", runner.calls)
 	}
-	if d.selfPosts.IsSelfPosted(reviewBody) {
-		t.Error("tick N+1 MUST NOT record the observed review body (#1722); a poisoned store blinds the daemon to later triggers")
+	if d.selfPosts.IsSelfPosted("/sandman review") {
+		t.Error("tick N+1 MUST NOT record the implementor's trigger body (issue #1757); trigger bodies are deliberately skipped to keep future trigger lookups live")
+	}
+	if !d.selfPosts.IsSelfPosted(reviewBody) {
+		t.Error("tick N+1 MUST record the bot's review body (issue #1757); processPR is the sole authoritative record site for non-trigger bodies")
 	}
 }
 
@@ -460,24 +463,23 @@ func TestDaemon_ProcessPR_BotReviewBodyWithTriggerSubstring_DoesNotLoop(t *testi
 	}
 }
 
-// TestDaemon_ProcessPR_PostFixBotReviewBodyWithoutSubstring_DoesNotLoopWithoutRecording
-// pins the post-#1722 contract for the wrapper-bypass case: even when
-// the pr-review skill wrapper (Step 4b) does NOT record the bot's
-// review-body hash, processPR does not loop — because the #1709
-// prompt rule keeps the literal `/sandman review` substring out of
-// the body, so ParseTrigger cannot match it.
+// TestDaemon_ProcessPR_RecordsNonTriggerBotReviewBody pins the post-#1757
+// contract: processPR itself is the sole authoritative record site
+// (replacing both the pr-review SKILL.md Step 4b wrapper and the
+// promotePendingComment defensive observation). For every non-trigger
+// comment it observes, processPR records the body into SelfPostStore
+// so the next tick's IsSelfPosted check suppresses it. Trigger bodies
+// are deliberately NOT recorded — recording them would mask future
+// legitimate trigger lookups (every re-request shares one body hash).
 //
-// Pre-#1722 this test relied on promotePendingComment defensively
-// recording the observed body so a subsequent processPR would drop it
-// via IsSelfPosted. That defensive recording is what blinded the
-// daemon to legit triggers (#1722), so it has been removed. This test
-// now proves the self-loop is prevented at the source (#1709) without
-// any runtime poisoning of observed comments: the body is never
-// recorded, yet no review is launched.
+// The bot's review body has no literal trigger substring (post-#1709
+// prompt rule), so the first tick of processPR falls through to the
+// new Record call. The second tick finds the body in the store and
+// skips it before ParseTrigger, so no review is launched.
 //
-// Issue #1703 acceptance criterion #2 (re-purposed for the #1722
-// source-fix model).
-func TestDaemon_ProcessPR_PostFixBotReviewBodyWithoutSubstring_DoesNotLoopWithoutRecording(t *testing.T) {
+// Issue #1757 acceptance criterion: the daemon exclusively owns the
+// SelfPostStore, the skill-side wrapper is gone.
+func TestDaemon_ProcessPR_RecordsNonTriggerBotReviewBody(t *testing.T) {
 	now := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
 	// Post-#1709 body: paraphrases prior requests, no literal trigger
 	// substring.
@@ -498,8 +500,6 @@ func TestDaemon_ProcessPR_PostFixBotReviewBodyWithoutSubstring_DoesNotLoopWithou
 	})
 	d.Clock = func() time.Time { return now.Add(-1 * time.Minute) }
 
-	// SelfPostStore starts empty and MUST stay empty: the daemon no
-	// longer records observed comments (#1722).
 	spPath := filepath.Join(dir, "reviews", "self-posted.json")
 	sp, err := NewSelfPostStore(spPath)
 	if err != nil {
@@ -510,10 +510,10 @@ func TestDaemon_ProcessPR_PostFixBotReviewBodyWithoutSubstring_DoesNotLoopWithou
 	tickAndWait(t, d, context.Background())
 
 	if runner.calls != 0 {
-		t.Errorf("MUST NOT launch on a post-#1709 bot review body even when it is unrecorded (#1722), got %d batch runs", runner.calls)
+		t.Errorf("MUST NOT launch on a post-#1709 bot review body; the recorded body must be suppressed on the next tick (issue #1757), got %d batch runs", runner.calls)
 	}
-	if d.selfPosts.IsSelfPosted(reviewBody) {
-		t.Error("processPR MUST NOT record the observed body (#1722); a poisoned store blinds the daemon to later triggers")
+	if !d.selfPosts.IsSelfPosted(reviewBody) {
+		t.Error("processPR MUST record every non-trigger body it observes (issue #1757); the daemon is the sole authoritative record site")
 	}
 }
 
