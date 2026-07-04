@@ -3,6 +3,7 @@ package sandbox
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -10,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/rafaelromao/sandman/internal/shellenv"
 )
 
 type fakeWorktreeForContainer struct {
@@ -456,7 +459,7 @@ func TestContainerSandbox_Exec_KillAgentFnCalledOnAbort(t *testing.T) {
 		return nil
 	}
 	ExecCommandFn = func(name string, arg ...string) *exec.Cmd {
-		return exec.Command("sh", "-c", "touch '"+readyPath+"' && sleep 60")
+		return exec.Command("sh", "-c", fmt.Sprintf("touch %s && sleep 60", shellenv.Quote(readyPath)))
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -502,7 +505,7 @@ func TestContainerSandbox_Exec_CancelsViaContext(t *testing.T) {
 	defer func() { ExecCommandFn = prev }()
 	readyPath := filepath.Join(t.TempDir(), "child.ready")
 	ExecCommandFn = func(name string, arg ...string) *exec.Cmd {
-		return exec.Command("sh", "-c", "touch '"+readyPath+"' && sleep 60")
+		return exec.Command("sh", "-c", fmt.Sprintf("touch %s && sleep 60", shellenv.Quote(readyPath)))
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -541,7 +544,7 @@ func TestContainerSandbox_ExecInteractive_CancelsViaContext(t *testing.T) {
 	defer func() { ExecCommandFn = prev }()
 	readyPath := filepath.Join(t.TempDir(), "child.ready")
 	ExecCommandFn = func(name string, arg ...string) *exec.Cmd {
-		return exec.Command("sh", "-c", "touch '"+readyPath+"' && sleep 60")
+		return exec.Command("sh", "-c", fmt.Sprintf("touch %s && sleep 60", shellenv.Quote(readyPath)))
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())

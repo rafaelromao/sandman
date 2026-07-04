@@ -5,8 +5,6 @@ import (
 	"strconv"
 	"testing"
 	"time"
-
-	"github.com/rafaelromao/sandman/internal/testenv"
 )
 
 // TestPollTCPAddrOnce exercises the one-shot poll helper that
@@ -78,8 +76,6 @@ func TestPollTCPAddrOnce(t *testing.T) {
 // helper must observe the listener come up and return a non-nil
 // connection within the timeout budget. Mirrors TestWaitForSocketTB.
 func TestWaitForTCPAddrTB(t *testing.T) {
-	dir := testenv.MkdirShort(t, "sm-orch-")
-	_ = dir
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen on 127.0.0.1:0: %v", err)
