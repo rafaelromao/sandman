@@ -252,7 +252,7 @@ func TestDaemon_PromotePendingComment_DoesNotRecordObservedComment(t *testing.T)
 	if status != "success" {
 		t.Errorf("expected status 'success' on observation, got %q", status)
 	}
-	if d.selfPosts.IsSelfPosted(reviewBody) {
+	if d.selfPosts.IsSelfPosted(1, reviewBody) {
 		t.Error("promotePendingComment MUST NOT record the observed comment (#1722), poisoned SelfPostStore")
 	}
 
@@ -266,7 +266,7 @@ func TestDaemon_PromotePendingComment_DoesNotRecordObservedComment(t *testing.T)
 	if status != "success" {
 		t.Errorf("expected status 'success' on second observation, got %q", status)
 	}
-	if d.selfPosts.IsSelfPosted(reviewBody) {
+	if d.selfPosts.IsSelfPosted(1, reviewBody) {
 		t.Error("second observation MUST NOT poison SelfPostStore either (#1722)")
 	}
 }
@@ -341,10 +341,10 @@ func TestDaemon_PromotePendingComment_NoPoisoning_CrossTickSuccessSettlesWithout
 	if runner.calls != 1 {
 		t.Errorf("tick N+1 MUST NOT re-launch on the bot review body (#1722), got %d total batch runs", runner.calls)
 	}
-	if d.selfPosts.IsSelfPosted("/sandman review") {
+	if d.selfPosts.IsSelfPosted(1, "/sandman review") {
 		t.Error("tick N+1 MUST NOT record the implementor's trigger body (issue #1757); trigger bodies are deliberately skipped to keep future trigger lookups live")
 	}
-	if !d.selfPosts.IsSelfPosted(reviewBody) {
+	if !d.selfPosts.IsSelfPosted(1, reviewBody) {
 		t.Error("tick N+1 MUST record the bot's review body (issue #1757); processPR is the sole authoritative record site for non-trigger bodies")
 	}
 }
@@ -512,7 +512,7 @@ func TestDaemon_ProcessPR_RecordsNonTriggerBotReviewBody(t *testing.T) {
 	if runner.calls != 0 {
 		t.Errorf("MUST NOT launch on a post-#1709 bot review body; the recorded body must be suppressed on the next tick (issue #1757), got %d batch runs", runner.calls)
 	}
-	if !d.selfPosts.IsSelfPosted(reviewBody) {
+	if !d.selfPosts.IsSelfPosted(1, reviewBody) {
 		t.Error("processPR MUST record every non-trigger body it observes (issue #1757); the daemon is the sole authoritative record site")
 	}
 }
@@ -633,7 +633,7 @@ func TestDaemon_NoBlindness_TriggerReRequestAfterPendingWindow_Launches(t *testi
 	if runner.calls != 2 {
 		t.Errorf("tick N+1 MUST launch the re-request C2 (no blindness, #1722); expected 2 total batch runs, got %d", runner.calls)
 	}
-	if d.selfPosts.IsSelfPosted(triggerBody) {
+	if d.selfPosts.IsSelfPosted(1, triggerBody) {
 		t.Errorf("tick N+1 MUST NOT record the trigger body in SelfPostStore (#1722); a poisoned trigger hash blinds the daemon to all future /sandman review requests")
 	}
 }

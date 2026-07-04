@@ -162,11 +162,16 @@ func New(baseDir string, gh GitHubClient, prompts Renderer, runner BatchRunner, 
 	if err := d.loadPendingReviews(); err != nil {
 		d.logf("load pending reviews: %v", err)
 	}
-	// SelfPostStore is best-effort: a missing or corrupt file
-	// yields an empty store. The daemon continues to function
-	// via the existing seenCache + ReviewStateStore; the
-	// self-post filter is an *additional* layer, not a primary
-	// dedup mechanism.
+	// SelfPostStore is best-effort: under the post-#1756
+	// greenfield loader any pre-existing self-posted.json is
+	// renamed to self-posted.json.ignore-<ts>.bak at startup
+	// and the in-memory store starts empty. The new dedup key
+	// is (prNumber, sha256(body)), closing the cross-PR
+	// poisoning failure mode observed on PR 1752 (a trigger
+	// hash recorded on PR A no longer drops the same body on
+	// PR B). The daemon continues to function via the existing
+	// seenCache + ReviewStateStore; the self-post filter is
+	// an *additional* layer, not a primary dedup mechanism.
 	spPath := filepath.Join(d.BaseDir, "reviews", "self-posted.json")
 	sp, spErr := NewSelfPostStore(spPath)
 	if spErr != nil {
@@ -780,9 +785,12 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) error {
 		// `record_review_posted` wrapper (issue #1757) and the prior
 		// promotePendingComment defensive observation (issue
 		// #1722); the daemon is now the sole authoritative record
-		// site. See ADR-0014 "Self-posted comment filter" and the
-		// ownership note in §Ownership note (issue #1757).
-		if d.selfPosts != nil && d.selfPosts.IsSelfPosted(comment.Body) {
+		// site. The (prNumber, sha256) composite key from #1764
+		// scopes the store per-PR so a body recorded against one PR
+		// cannot drop the trigger on another. See ADR-0014
+		// "Self-posted comment filter" and the ownership note in
+		// §Ownership note (issue #1757).
+		if d.selfPosts != nil && d.selfPosts.IsSelfPosted(prNumber, comment.Body) {
 			d.logf("PR #%d: comment %s is a self-post, skipping", prNumber, comment.ID)
 			continue
 		}
