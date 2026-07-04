@@ -196,17 +196,24 @@ func TestReviewDaemonE2E_FullLoopPastLaunchReview(t *testing.T) {
 	d.PollInterval = 0
 	d.Clock = func() time.Time { return now }
 
-	if err := d.StartSocket(); err != nil {
-		t.Fatalf("StartSocket: %v", err)
-	}
-	defer d.Stop()
-
+	// d.Run will call StartSocket internally; calling it twice is safe
+	// but adds a small race where the socket is briefly usable from the
+	// test goroutine before the daemon goroutine has started. Skipping
+	// the upfront call lets Run own the socket lifecycle entirely.
 	trigger := make(chan struct{}, 4)
 	d.Trigger = trigger
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() { done <- d.Run(ctx) }()
+	// Give the daemon's Run goroutine a brief moment to enter its
+	// for-select loop before we send the first trigger. Without this,
+	// macOS CI under heavy parallel load (processPR + portal + this
+	// test concurrently producing `gh` subprocesses) can occasionally
+	// drop the buffered trigger if the goroutine scheduling slips past
+	// our send. A 100ms sleep is cheap and the test already drives its
+	// own ticks explicitly so the daemon is otherwise idle.
+	time.Sleep(100 * time.Millisecond)
 	defer func() {
 		cancel()
 		select {
@@ -216,9 +223,13 @@ func TestReviewDaemonE2E_FullLoopPastLaunchReview(t *testing.T) {
 		}
 	}()
 
-	// Tick 1: launch the review.
+	// Tick 1: launch the review. macOS CI under heavy parallel test
+	// load occasionally takes longer than the existing launch-only
+	// sibling's 5s budget to reach RunBatch (the daemon does several
+	// `gh` subshell invocations before the goroutine enters RunBatch).
+	// 30s is still bounded; locally the test completes in <1s.
 	trigger <- struct{}{}
-	if !waitForReviewLaunch(t, runner, 5*time.Second) {
+	if !waitForReviewLaunch(t, runner, 30*time.Second) {
 		t.Fatal("expected at least 1 batch run after tick 1, got 0")
 	}
 	if got := runner.Calls(); got != 1 {
