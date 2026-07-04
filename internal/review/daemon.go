@@ -1224,59 +1224,69 @@ func (d *Daemon) now() time.Time {
 //   - "success" when any non-empty comment has been posted at or after
 //     `since` (the agent posted a review comment, or a human replied —
 //     either is sufficient activity to settle the lazy-verify entry).
+//     Every post-`since` comment whose body matches one of botBodies
+//     is recorded into SelfPostStore (see B12 below).
 //   - ("pending", error) when no comment has been observed yet. The
 //     error lets the caller decide whether to increment the cycle
 //     counter or promote to failure after pendingMaxCycles.
 //
+// botBodies is the list of bodies the bot itself posted in this run
+// (as discovered by extractBodiesFromLog in promotePendingReviews).
+// When a post-`since` comment body matches one of botBodies, the
+// helper records it into SelfPostStore so the next tick's
+// processPR IsSelfPosted-first filter drops it (issue #1759 B12).
+// Comments that do NOT match botBodies are treated as human replies
+// and are not recorded — this is the #1722 contract: a defensive
+// observation that recorded every observed comment would poison the
+// implementor's repeated `/sandman review` trigger hash and blind
+// the daemon. The new path is safe because it only ever records
+// bodies the bot itself posted (per the run-log grep).
+//
+// All post-`since` comments are iterated so multiple bot bodies (a
+// bot follow-up comment after the first review) are recorded in the
+// same call. The function returns on the FIRST post-`since` comment
+// (success) — but the recording loop runs to completion over the
+// full set so a second bot body that landed at or after `since` is
+// also recorded. Subsequent post-`since` comments are recorded but
+// do not change the returned status.
+//
 // The caller is responsible for writing the new status back into the
 // per-run ReviewStateStore and updating the in-memory pending entry.
 // Issue #1482 slice D.
-//
-// promotePendingComment deliberately does NOT touch SelfPostStore
-// (issue #1722). The defensive observation that used to live here
-// recorded EVERY comment posted after `since` into the store. Because
-// it could not distinguish the bot's review body from any other
-// comment, it also recorded the implementor's repeated `/sandman
-// review` trigger body (identical hash on every post). Once that hash
-// entered the store, processPR's IsSelfPosted-first filter dropped
-// every future `/sandman review` request and the daemon went
-// permanently blind — un-doing the #1700/#1702 fix that had
-// deliberately stopped recording the trigger hash.
-//
-// The self-loop the defensive record was meant to catch is now
-// prevented at the source, with no need for runtime poisoning of
-// observed comments:
-//
-//   - #1709 — the review prompt forbids emitting the literal
-//     `/sandman review` substring in the bot's review body, so
-//     ParseTrigger no longer matches the bot's body.
-//   - pr-review SKILL.md Step 4b — records the bot's review-body hash
-//     at posting time. This is the single authoritative source of
-//     "bodies the bot posted"; processPR's IsSelfPosted-first filter
-//     drops those bodies.
-//   - #1702 — processPR runs IsSelfPosted before ParseTrigger.
-//
-// Any non-empty comment after `since` counts as success. The bot's
-// wrapper-recorded review body is the expected success signal, so it
-// must NOT be skipped here: the pre-#1722 IsSelfPosted check skipped
-// it and therefore never detected success for wrapper-recorded
-// reviews, mislabelling them as `failure`.
-func (d *Daemon) promotePendingComment(ctx context.Context, prNumber int, excludeCommentID string, since time.Time) (string, error) {
+func (d *Daemon) promotePendingComment(ctx context.Context, prNumber int, excludeCommentID string, since time.Time, botBodies []string) (string, error) {
 	comments, err := d.GitHub.ListPRComments(prNumber)
 	if err != nil {
 		return "", fmt.Errorf("list PR comments: %w", err)
 	}
+	botSet := make(map[string]struct{}, len(botBodies))
+	for _, b := range botBodies {
+		botSet[b] = struct{}{}
+	}
+	sawSuccess := false
 	for _, c := range comments {
 		if c.ID == excludeCommentID {
 			continue
 		}
-		if c.CreatedAt.After(since) || c.CreatedAt.Equal(since) {
-			if c.Body == "" {
-				continue
-			}
-			d.logf("PR #%d: review comment verified (ID %s, posted at %v)", prNumber, c.ID, c.CreatedAt)
-			return "success", nil
+		if c.CreatedAt.Before(since) {
+			continue
 		}
+		if c.Body == "" {
+			continue
+		}
+		if !sawSuccess {
+			d.logf("PR #%d: review comment verified (ID %s, posted at %v)", prNumber, c.ID, c.CreatedAt)
+		}
+		if _, ok := botSet[c.Body]; ok {
+			if d.selfPosts != nil {
+				if err := d.selfPosts.Record(prNumber, c.Body, ""); err != nil {
+					d.logf("PR #%d: record bot body %s failed: %v", prNumber, c.ID, err)
+				}
+			}
+		}
+		sawSuccess = true
+	}
+	if sawSuccess {
+		return "success", nil
 	}
 	return "pending", fmt.Errorf("no review comment found on PR #%d after %v", prNumber, since)
 }
@@ -1286,29 +1296,53 @@ func (d *Daemon) promotePendingComment(ctx context.Context, prNumber int, exclud
 // to advance any pending lazy-verify entries toward a terminal status.
 // For each pending entry:
 //
+//   - Resolve the bot bodies for this entry's runLogPath (one
+//     extraction per unique log file per tick; cache survives for the
+//     duration of this tick only, see B11). The bodies are passed to
+//     promotePendingComment so a matched post-`since` comment can be
+//     recorded into SelfPostStore (issue #1759 B12).
 //   - Call promotePendingComment against GitHub.
 //   - If success: MarkSeen("success") on the per-run store and drop
 //     the entry. The MarkSeen fires the seen-cache hook on success
 //     per slice A, so the next tick skips the comment via the seen
 //     cache.
 //   - If pending: increment the cycle counter; once it reaches
-//     pendingMaxCycles the daemon calls MarkSeen("failure") on the
-//     per-run store and drops the entry. Bounded-retry failure is
-//     added to the seen cache directly via MarkTerminalSeen so the
-//     next tick does NOT re-launch the review (the failure escape has
-//     already fired); this is a slice-D-only path and does not affect
-//     the slice-A "RunBatch-error failure is retryable" contract
-//     because that path lives in processPR, not here.
+//     pendingMaxCycles the daemon runs the bounded-retry grace
+//     (issue #1759 B13): one final extractBodiesFromLog. If any body
+//     is found, mark success and record the bodies. Only if the log
+//     is empty (bot truly failed) mark failure.
 //
-// Errors from ListPRComments are logged and the entry is kept — the
-// next tick will retry. This is conservative: a temporary GitHub
-// outage does not silently promote an in-flight review to failure.
-// Issue #1482 slice D.
+// Errors from ListPRComments or extractBodiesFromLog are logged and
+// the entry is kept — the next tick will retry. This is conservative:
+// a temporary GitHub outage or a missing run.log does not silently
+// promote an in-flight review to failure.
+//
+// Issue #1482 slice D + #1759.
 func (d *Daemon) promotePendingReviews(ctx context.Context) error {
 	d.pendingMu.Lock()
 	defer d.pendingMu.Unlock()
 	if len(d.pendingReviews) == 0 {
 		return nil
+	}
+
+	// Per-tick cache: one extractBodiesFromLog call per unique
+	// runLogPath. Rebuilt every tick; not retained across ticks so
+	// the bot's later posts are observed on the next cycle. See B11.
+	logBodyCache := map[string][]string{}
+	loadBodies := func(path string) []string {
+		if path == "" {
+			return nil
+		}
+		if bodies, ok := logBodyCache[path]; ok {
+			return bodies
+		}
+		bodies, err := extractBodiesFromLog(path)
+		if err != nil {
+			d.logf("PR #?: extractBodiesFromLog(%s): %v", path, err)
+			bodies = nil
+		}
+		logBodyCache[path] = bodies
+		return bodies
 	}
 
 	for prNumber, entries := range d.pendingReviews {
@@ -1330,7 +1364,8 @@ func (d *Daemon) promotePendingReviews(ctx context.Context) error {
 				store = s
 			}
 
-			status, err := d.promotePendingComment(ctx, prNumber, e.commentID, e.since)
+			botBodies := loadBodies(e.runLogPath)
+			status, err := d.promotePendingComment(ctx, prNumber, e.commentID, e.since, botBodies)
 			if err == nil && status == "success" {
 				if markErr := store.MarkSeen(e.commentID, "success"); markErr != nil {
 					d.logf("PR #%d: promote pending %s to success: %v", prNumber, e.commentID, markErr)
@@ -1346,6 +1381,29 @@ func (d *Daemon) promotePendingReviews(ctx context.Context) error {
 			// bounded-retry escape.
 			e.cycles++
 			if e.cycles >= pendingMaxCycles {
+				// Bounded-retry grace (issue #1759 B13): one
+				// final grep before the failure escape. If the
+				// bot has since posted a body that GitHub's
+				// ListPRComments didn't return (slow network,
+				// eventual consistency), the log is the
+				// authoritative source. Any body in the log
+				// settles as success; only an empty log
+				// triggers the failure escape.
+				graceBodies := loadBodies(e.runLogPath)
+				if len(graceBodies) > 0 {
+					if d.selfPosts != nil {
+						for _, body := range graceBodies {
+							if recErr := d.selfPosts.Record(prNumber, body, ""); recErr != nil {
+								d.logf("PR #%d: record grace body failed: %v", prNumber, recErr)
+							}
+						}
+					}
+					if markErr := store.MarkSeen(e.commentID, "success"); markErr != nil {
+						d.logf("PR #%d: promote pending %s to success (grace): %v", prNumber, e.commentID, markErr)
+					}
+					d.logf("PR #%d: bounded-retry grace: bot body in log after pendingMaxCycles, settled as success", prNumber)
+					continue
+				}
 				if markErr := store.MarkSeen(e.commentID, "failure"); markErr != nil {
 					d.logf("PR #%d: promote pending %s to failure: %v", prNumber, e.commentID, markErr)
 				}
