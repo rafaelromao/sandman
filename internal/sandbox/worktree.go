@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 )
 
@@ -22,6 +23,7 @@ type WorktreeSandbox struct {
 	workDir           string
 	gitName           string
 	gitEmail          string
+	mu                sync.Mutex
 	cmd               *exec.Cmd
 	processWrapper    *processWrapper
 	errorLog          io.Writer
@@ -410,8 +412,10 @@ func (s *WorktreeSandbox) Exec(ctx context.Context, command string, stdout, stde
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("exec start: %w", err)
 	}
+	s.mu.Lock()
 	s.cmd = cmd
 	s.processWrapper = newProcessWrapper(cmd)
+	s.mu.Unlock()
 
 	if err := waitCmd(ctx, cmd, s.processWrapper, nil); err != nil {
 		return fmt.Errorf("exec: %w", err)
@@ -430,8 +434,10 @@ func (s *WorktreeSandbox) ExecInteractive(ctx context.Context, command string) e
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("exec start: %w", err)
 	}
+	s.mu.Lock()
 	s.cmd = cmd
 	s.processWrapper = newProcessWrapper(cmd)
+	s.mu.Unlock()
 
 	if err := waitCmd(ctx, cmd, s.processWrapper, nil); err != nil {
 		return fmt.Errorf("exec: %w", err)
@@ -473,6 +479,8 @@ func (s *WorktreeSandbox) RepoPath() string {
 
 // Process returns the running OS process, or nil if no process is active.
 func (s *WorktreeSandbox) Process() Process {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s.cmd == nil || s.cmd.Process == nil {
 		return nil
 	}
