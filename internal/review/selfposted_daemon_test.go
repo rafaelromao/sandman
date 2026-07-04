@@ -245,7 +245,7 @@ func TestDaemon_PromotePendingComment_DoesNotRecordObservedComment(t *testing.T)
 	d.selfPosts = sp
 
 	// First observation: success, but NO recording.
-	status, err := d.promotePendingComment(context.Background(), 1, "trigger", now.Add(-30*time.Second))
+	status, err := d.promotePendingComment(context.Background(), 1, "trigger", now.Add(-30*time.Second), nil)
 	if err != nil {
 		t.Fatalf("promotePendingComment: %v", err)
 	}
@@ -259,7 +259,7 @@ func TestDaemon_PromotePendingComment_DoesNotRecordObservedComment(t *testing.T)
 	// Second observation: still success. The entry is not poisoned, so
 	// re-evaluation is stable (and in the real flow the entry is
 	// dropped after the first success anyway).
-	status, err = d.promotePendingComment(context.Background(), 1, "trigger", now.Add(-30*time.Second))
+	status, err = d.promotePendingComment(context.Background(), 1, "trigger", now.Add(-30*time.Second), nil)
 	if err != nil {
 		t.Fatalf("second promotePendingComment: %v", err)
 	}
@@ -393,7 +393,7 @@ func TestDaemon_PromotePendingComment_CountsWrapperRecordedBotBodyAsSuccess(t *t
 	}
 	d.selfPosts = sp
 
-	status, err := d.promotePendingComment(context.Background(), 1, "trigger", now.Add(-30*time.Second))
+	status, err := d.promotePendingComment(context.Background(), 1, "trigger", now.Add(-30*time.Second), nil)
 	if err != nil {
 		t.Fatalf("expected success for a wrapper-recorded bot body, got error: %v", err)
 	}
