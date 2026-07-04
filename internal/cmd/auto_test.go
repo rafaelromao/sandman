@@ -204,6 +204,11 @@ func TestRun_AutoFlag_NegativeCountReturnsError(t *testing.T) {
 }
 
 func TestRun_AutoFlag_NoIssuesReturnsError(t *testing.T) {
+	sandmanDir := testenv.MkdirShort(t, "sm-auto-")
+	t.Chdir(sandmanDir)
+	if err := os.MkdirAll(filepath.Join(sandmanDir, ".sandman"), 0o755); err != nil {
+		t.Fatalf("mkdir .sandman: %v", err)
+	}
 	spy := &spyBatchRunner{result: &batch.Result{}}
 	gh := &fakeGitHubClient{searchIssuesResult: []github.Issue{}}
 	deps := Dependencies{
@@ -211,6 +216,7 @@ func TestRun_AutoFlag_NoIssuesReturnsError(t *testing.T) {
 		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review"}},
 		EventLog:     &fakeEventLog{},
 		GitHubClient: gh,
+		RepoRoot:     sandmanDir,
 		IsTTY:        func() bool { return false },
 	}
 
@@ -227,8 +233,8 @@ func TestRun_AutoFlag_NoIssuesReturnsError(t *testing.T) {
 	if spy.called {
 		t.Error("expected batch runner not to be called")
 	}
-	if !strings.Contains(err.Error(), "no candidate issues") {
-		t.Errorf("expected 'no candidate issues' error, got: %v", err)
+	if !strings.Contains(err.Error(), "no issues ready for agent") {
+		t.Errorf("expected 'no issues ready for agent' error, got: %v", err)
 	}
 }
 
