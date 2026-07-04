@@ -1,4 +1,0 @@
-/* Generates dark theme variants from a palette spec.
- * Run: python3 build-dark.py > ../../index-dark-built.html  (debug only)
- * Not used at runtime; the dark pages are committed by hand below.
- */
