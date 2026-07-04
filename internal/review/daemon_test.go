@@ -140,6 +140,16 @@ func (c *capturedRequest) RunBatch(ctx context.Context, req batch.Request) (*bat
 	return &batch.Result{}, nil
 }
 
+// Calls returns the captured call count under the lock so test goroutines
+// observe the RunBatch writer's increment reliably on every platform
+// (Linux's memory model tolerated an unlocked read; macOS exposes the
+// race as a persistent zero — see TestDaemon_RestartRecoversPendingFromDisk).
+func (c *capturedRequest) Calls() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.calls
+}
+
 // lockedBuffer is a goroutine-safe wrapper around bytes.Buffer used as the
 // Daemon.Broadcaster fixture in tests. The daemon writes from a background
 // goroutine while the test reads buf.String() to assert on log output;

@@ -4,7 +4,6 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"runtime"
 	"testing"
 	"time"
 
@@ -29,14 +28,6 @@ import (
 // The fix: rehydrate `pendingReviews` from on-disk `review-state.json`
 // at construction time, mirroring the existing seen-cache hydration.
 func TestDaemon_RestartRecoversPendingFromDisk(t *testing.T) {
-	// Skipped on macOS: the review daemon's async launch goroutine
-	// does not reliably invoke runner.Run under macOS CI load even
-	// with a 60 s post-tickAndWait poll, making the "first daemon
-	// launched the review once" assertion flaky. Issue #1736 owns
-	// the underlying async-launch cross-platform portability.
-	if runtime.GOOS != "linux" {
-		t.Skip("review daemon async launch is macOS-flaky under CI load; tracked by #1736")
-	}
 	const (
 		prNumber  = 17
 		commentID = "pending-on-disk"
@@ -72,18 +63,17 @@ func TestDaemon_RestartRecoversPendingFromDisk(t *testing.T) {
 	}, &lockedBuffer{}, 0, false)
 	d1.Clock = func() time.Time { return now }
 	tickAndWait(t, d1, context.Background())
-	// tickAndWait waits for slotHeldCount to drop, but the async
-	// launch goroutine may not have invoked runner.Run yet on macOS
-	// (a documented goroutine-scheduling sensitivity — see #1736
-	// and the relaxations already in orchestrator_test.go). Poll
-	// for up to 60 s for the call to land; 10 s was insufficient
-	// in CI load tests.
-	deadline := time.Now().Add(60 * time.Second)
-	for time.Now().Before(deadline) && runner.calls == 0 {
-		time.Sleep(50 * time.Millisecond)
-	}
-	if runner.calls != 1 {
-		t.Fatalf("first daemon should launch the review once, got %d calls", runner.calls)
+	// tickAndWait waits for slotHeldCount to drop (the post-launch
+	// goroutine has returned), but the launch goroutine may invoke
+	// runner.RunBatch immediately after slotHeldCount is decremented.
+	// On macOS the goroutine scheduling differs (the writer's
+	// increment to runner.calls can land after tickAndWait returns),
+	// so a single unbounded read under the capturedRequest lock is
+	// sufficient: the Read path inside Calls() acquires runner.mu,
+	// which establishes happens-before with the Write path inside
+	// RunBatch.
+	if calls := runner.Calls(); calls != 1 {
+		t.Fatalf("first daemon should launch the review once, got %d calls", calls)
 	}
 
 	// Sanity check: the on-disk review-state.json for the row
@@ -110,8 +100,8 @@ func TestDaemon_RestartRecoversPendingFromDisk(t *testing.T) {
 	if err := d2.tick(context.Background()); err != nil {
 		t.Fatalf("second daemon tick: %v", err)
 	}
-	if runner2.calls != 0 {
-		t.Errorf("second daemon must not re-launch the in-flight trigger after restart, got %d RunBatch calls", runner2.calls)
+	if calls := runner2.Calls(); calls != 0 {
+		t.Errorf("second daemon must not re-launch the in-flight trigger after restart, got %d RunBatch calls", calls)
 	}
 }
 
