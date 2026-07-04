@@ -1958,6 +1958,74 @@ func TestScaffold_HasElixirRepoHint(t *testing.T) {
 	}
 }
 
+func TestScaffold_JavaRepoAutoDetect(t *testing.T) {
+	tests := []struct {
+		name    string
+		setupFn func(dir string)
+		want    string
+	}{
+		{
+			name: "pom.xml",
+			setupFn: func(dir string) {
+				os.WriteFile(filepath.Join(dir, "pom.xml"), []byte("<project></project>\n"), 0644)
+			},
+			want: javaBuildToolsPreset,
+		},
+		{
+			name: "build.gradle",
+			setupFn: func(dir string) {
+				os.WriteFile(filepath.Join(dir, "build.gradle"), []byte("plugins { id 'java' }\n"), 0644)
+			},
+			want: javaBuildToolsPreset,
+		},
+		{
+			name: "build.gradle.kts",
+			setupFn: func(dir string) {
+				os.WriteFile(filepath.Join(dir, "build.gradle.kts"), []byte("plugins { kotlin(\"jvm\") }\n"), 0644)
+			},
+			want: javaBuildToolsPreset,
+		},
+		{
+			name: "node takes priority over java",
+			setupFn: func(dir string) {
+				os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"name":"demo","engines":{"node":"20"}}`), 0644)
+				os.WriteFile(filepath.Join(dir, "pom.xml"), []byte("<project></project>\n"), 0644)
+			},
+			want: nodeBuildToolsPreset,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			tt.setupFn(dir)
+
+			s := &Scaffolder{}
+			preset, err := s.resolveBuildToolsPreset(dir, Options{}, &fakePrompter{confirm: true})
+			if err != nil {
+				t.Fatalf("resolveBuildToolsPreset: %v", err)
+			}
+			if preset.Name != tt.want {
+				t.Errorf("expected preset %q, got %q", tt.want, preset.Name)
+			}
+		})
+	}
+}
+
+func TestScaffold_GenericBuildToolsOverridesJavaRepoHint(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "pom.xml"), []byte("<project></project>\n"), 0644)
+
+	s := &Scaffolder{}
+	preset, err := s.resolveBuildToolsPreset(dir, Options{BuildTools: "generic"}, &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("resolveBuildToolsPreset: %v", err)
+	}
+	if preset.Name != "generic" {
+		t.Errorf("expected explicit generic preset, got %q", preset.Name)
+	}
+}
+
 func TestScaffold_RubyPresetIsRegistered(t *testing.T) {
 	preset, ok := builtInBuildToolsPresets[rubyBuildToolsPreset]
 	if !ok {
@@ -1977,6 +2045,28 @@ func TestScaffold_RubyPresetIsRegistered(t *testing.T) {
 	}
 	if !containsString(KnownBuildToolsPresets, rubyBuildToolsPreset) {
 		t.Errorf("KnownBuildToolsPresets missing %q, got %v", rubyBuildToolsPreset, KnownBuildToolsPresets)
+	}
+}
+
+func TestScaffold_JavaPresetIsRegistered(t *testing.T) {
+	preset, ok := builtInBuildToolsPresets[javaBuildToolsPreset]
+	if !ok {
+		t.Fatalf("java preset not registered in builtInBuildToolsPresets")
+	}
+	if preset.Name != javaBuildToolsPreset {
+		t.Errorf("preset.Name = %q, want %q", preset.Name, javaBuildToolsPreset)
+	}
+	if preset.BaseImage != "debian:bookworm-slim" {
+		t.Errorf("preset.BaseImage = %q, want %q", preset.BaseImage, "debian:bookworm-slim")
+	}
+	if preset.MiseVersion != DefaultMISEVersion {
+		t.Errorf("preset.MiseVersion = %q, want %q", preset.MiseVersion, DefaultMISEVersion)
+	}
+	if len(preset.SharedPackages) != len(sharedPackages) {
+		t.Errorf("preset.SharedPackages length = %d, want %d", len(preset.SharedPackages), len(sharedPackages))
+	}
+	if !containsString(KnownBuildToolsPresets, javaBuildToolsPreset) {
+		t.Errorf("KnownBuildToolsPresets missing %q, got %v", javaBuildToolsPreset, KnownBuildToolsPresets)
 	}
 }
 
@@ -2113,6 +2203,268 @@ func TestScaffold_HasRubyRepoHint(t *testing.T) {
 
 			if got := hasRubyRepoHint(dir); got != tt.want {
 				t.Errorf("hasRubyRepoHint(%q) = %v, want %v", dir, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestJavaResolver_LtsFromLatest(t *testing.T) {
+	tests := []struct {
+		latest string
+		want   string
+	}{
+		{latest: "21.0.2", want: "17"},
+		{latest: "17.0.10", want: "11"},
+		{latest: "11.0.22", want: "8"},
+	}
+	for _, tt := range tests {
+		t.Run("latest="+tt.latest, func(t *testing.T) {
+			got, err := javaResolver.ltsFromLatest(tt.latest)
+			if err != nil {
+				t.Fatalf("javaResolver.ltsFromLatest(%q) returned error: %v", tt.latest, err)
+			}
+			if got != tt.want {
+				t.Errorf("javaResolver.ltsFromLatest(%q) = %q, want %q", tt.latest, got, tt.want)
+			}
+			if _, ok := bundledJavaVersionCatalog[got]; !ok {
+				t.Errorf("ltsFromLatest returned %q, which is not in bundledJavaVersionCatalog", got)
+			}
+		})
+	}
+
+	t.Run("latest=8 has no prior LTS", func(t *testing.T) {
+		_, err := javaResolver.ltsFromLatest("8.0.412")
+		if err == nil {
+			t.Errorf("javaResolver.ltsFromLatest(\"8.0.412\") expected error, got nil")
+		}
+	})
+}
+
+func TestBundledJavaVersionCatalog(t *testing.T) {
+	expectedKeys := []string{"latest", "lts", "21", "21.0", "21.0.2", "17", "17.0", "17.0.10", "11", "11.0", "11.0.22", "8", "8.0", "8.0.412"}
+	for _, key := range expectedKeys {
+		v, ok := bundledJavaVersionCatalog[key]
+		if !ok {
+			t.Errorf("bundledJavaVersionCatalog missing key %q", key)
+			continue
+		}
+		if v == "" {
+			t.Errorf("bundledJavaVersionCatalog[%q] is empty", key)
+		}
+		if !strings.Contains(v, ".") {
+			t.Errorf("bundledJavaVersionCatalog[%q] = %q, want a pinned version with dots", key, v)
+		}
+	}
+}
+
+func TestJavaResolver_NormalizeAndPassThrough(t *testing.T) {
+	tests := []struct {
+		selector string
+		want     bool
+	}{
+		{selector: "21", want: true},
+		{selector: "21.0", want: true},
+		{selector: "21.0.2", want: true},
+		{selector: "17.0.10", want: true},
+		{selector: "11.0.22", want: true},
+		{selector: "", want: false},
+		{selector: "abc", want: false},
+		{selector: "temurin@21", want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.selector, func(t *testing.T) {
+			got := javaResolver.passThroughValid(tt.selector)
+			if got != tt.want {
+				t.Errorf("javaResolver.passThroughValid(%q) = %v, want %v", tt.selector, got, tt.want)
+			}
+		})
+	}
+
+	normalizeTests := []struct {
+		in   string
+		want string
+	}{
+		{in: "21", want: "21"},
+		{in: "java21", want: "21"},
+		{in: "jdk21", want: "21"},
+		{in: "openjdk-21", want: "21"},
+		{in: "21.0.2", want: "21.0.2"},
+	}
+	for _, tt := range normalizeTests {
+		t.Run("normalize_"+tt.in, func(t *testing.T) {
+			got := javaResolver.normalize(tt.in)
+			if got != tt.want {
+				t.Errorf("javaResolver.normalize(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestScaffold_JavaPresetResolvesRangeSelectorToCatalogPin(t *testing.T) {
+	dir := t.TempDir()
+	fakeMise := filepath.Join(dir, "mise")
+	if err := os.WriteFile(fakeMise, []byte("#!/bin/sh\nexit 0\n"), 0755); err != nil {
+		t.Fatalf("write fake mise: %v", err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	s := &Scaffolder{}
+	got, err := s.resolveJavaVersion(dir, "21", &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("resolveJavaVersion: %v", err)
+	}
+	if !strings.HasPrefix(got, "21") {
+		t.Errorf("expected java version starting with 21, got %q", got)
+	}
+}
+
+func TestReadJavaVersionHint(t *testing.T) {
+	tests := []struct {
+		name    string
+		setupFn func(dir string)
+		want    string
+	}{
+		{
+			name: "pom.xml with java.version",
+			setupFn: func(dir string) {
+				os.WriteFile(filepath.Join(dir, "pom.xml"), []byte("<project><properties><java.version>21</java.version></properties></project>\n"), 0644)
+			},
+			want: "21",
+		},
+		{
+			name: "pom.xml with maven.compiler.source",
+			setupFn: func(dir string) {
+				os.WriteFile(filepath.Join(dir, "pom.xml"), []byte("<project><properties><maven.compiler.source>17</maven.compiler.source></properties></project>\n"), 0644)
+			},
+			want: "17",
+		},
+		{
+			name: "build.gradle sourceCompatibility",
+			setupFn: func(dir string) {
+				os.WriteFile(filepath.Join(dir, "build.gradle"), []byte("plugins { id 'java' }\n\njava {\n    sourceCompatibility = '21'\n    targetCompatibility = '21'\n}\n"), 0644)
+			},
+			want: "21",
+		},
+		{
+			name: "build.gradle.kts jvmTarget",
+			setupFn: func(dir string) {
+				os.WriteFile(filepath.Join(dir, "build.gradle.kts"), []byte("plugins { kotlin(\"jvm\") }\n\ntasks.withType<JavaCompile> {\n    sourceCompatibility = \"17\"\n    targetCompatibility = \"17\"\n}\n"), 0644)
+			},
+			want: "17",
+		},
+		{
+			name: ".tool-versions java",
+			setupFn: func(dir string) {
+				os.WriteFile(filepath.Join(dir, ".tool-versions"), []byte("java 21.0.2\ngradle 8.5\n"), 0644)
+			},
+			want: "21.0.2",
+		},
+		{
+			name: "no hint",
+			setupFn: func(dir string) {
+				_ = dir
+			},
+			want: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			tt.setupFn(dir)
+
+			got, found, err := readJavaVersionHint(dir)
+			if err != nil {
+				t.Fatalf("readJavaVersionHint(%q) returned error: %v", dir, err)
+			}
+			if tt.want == "" {
+				if found {
+					t.Errorf("readJavaVersionHint(%q) found = true, want false (got %q)", dir, got)
+				}
+				return
+			}
+			if !found {
+				t.Fatalf("readJavaVersionHint(%q) found = false, want true", dir)
+			}
+			if got != tt.want {
+				t.Errorf("readJavaVersionHint(%q) = %q, want %q", dir, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestScaffold_HasJavaRepoHint(t *testing.T) {
+	tests := []struct {
+		name    string
+		setupFn func(dir string)
+		want    bool
+	}{
+		{
+			name: "pom.xml",
+			setupFn: func(dir string) {
+				os.WriteFile(filepath.Join(dir, "pom.xml"), []byte("<?xml version=\"1.0\"?>\n<project></project>\n"), 0644)
+			},
+			want: true,
+		},
+		{
+			name: "build.gradle",
+			setupFn: func(dir string) {
+				os.WriteFile(filepath.Join(dir, "build.gradle"), []byte("plugins { id 'java' }\n"), 0644)
+			},
+			want: true,
+		},
+		{
+			name: "build.gradle.kts",
+			setupFn: func(dir string) {
+				os.WriteFile(filepath.Join(dir, "build.gradle.kts"), []byte("plugins { kotlin(\"jvm\") }\n"), 0644)
+			},
+			want: true,
+		},
+		{
+			name: "empty dir",
+			setupFn: func(dir string) {
+				_ = dir
+			},
+			want: false,
+		},
+		{
+			name: "non-jvm repo",
+			setupFn: func(dir string) {
+				os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/demo\n\ngo 1.24\n"), 0644)
+			},
+			want: false,
+		},
+		{
+			name: "ruby repo",
+			setupFn: func(dir string) {
+				os.WriteFile(filepath.Join(dir, "Gemfile"), []byte("source 'https://rubygems.org'\n"), 0644)
+			},
+			want: false,
+		},
+		{
+			name: "node repo",
+			setupFn: func(dir string) {
+				os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"name":"demo"}`), 0644)
+			},
+			want: false,
+		},
+		{
+			name: "pom.xml only in subdirectory",
+			setupFn: func(dir string) {
+				os.MkdirAll(filepath.Join(dir, "sub"), 0755)
+				os.WriteFile(filepath.Join(dir, "sub", "pom.xml"), []byte("<project></project>\n"), 0644)
+			},
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			tt.setupFn(dir)
+
+			if got := hasJavaRepoHint(dir); got != tt.want {
+				t.Errorf("hasJavaRepoHint(%q) = %v, want %v", dir, got, tt.want)
 			}
 		})
 	}
@@ -2358,6 +2710,47 @@ func TestScaffold_RenderRubyInstallCommand(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Errorf("renderRubyInstallCommand missing %q, got:\n%s", want, got)
 		}
+	}
+}
+
+func TestScaffold_RenderJavaInstallCommand(t *testing.T) {
+	got := renderJavaInstallCommand("21.0.2")
+	if !strings.Contains(got, "RUN mise use -g --pin java@21.0.2") {
+		t.Errorf("renderJavaInstallCommand missing mise pin, got:\n%s", got)
+	}
+}
+
+func TestScaffold_JavaPresetWritesPinnedDockerfile(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "pom.xml"), []byte("<project><properties><java.version>21</java.version></properties></project>\n"), 0644)
+
+	s := &Scaffolder{}
+	if err := s.Scaffold(dir, Options{BuildTools: "java"}, &fakePrompter{confirm: true}); err != nil {
+		t.Fatalf("scaffold: %v", err)
+	}
+
+	dockerfilePath := filepath.Join(dir, ".sandman", "Dockerfile")
+	data, err := os.ReadFile(dockerfilePath)
+	if err != nil {
+		t.Fatalf("read Dockerfile: %v", err)
+	}
+	content := string(data)
+	for _, want := range []string{
+		"# sandman build-tools: java",
+		"# sandman default-agent: opencode",
+		"# sandman java-version: 21.0.2",
+		"# sandman installed-agents: opencode",
+		"FROM debian:bookworm-slim",
+		"RUN mise use -g --pin java@21.0.2",
+		"RUN MISE_VERSION=" + DefaultMISEVersion + " curl https://mise.run | MISE_INSTALL_PATH=/usr/local/bin/mise sh",
+		"RUN npm install -g opencode-ai@" + DefaultBuiltInAgentVersion("opencode"),
+	} {
+		if !strings.Contains(content, want) {
+			t.Errorf("Dockerfile missing %q, got:\n%s", want, content)
+		}
+	}
+	if strings.Contains(content, "maven") || strings.Contains(content, "gradle") {
+		t.Errorf("Dockerfile should not install maven or gradle (repos use mvnw/gradlew wrappers), got:\n%s", content)
 	}
 }
 
@@ -2660,6 +3053,29 @@ func TestReadDockerfileMetadata_RustVersion(t *testing.T) {
 	}
 }
 
+func TestReadDockerfileMetadata_JavaVersion(t *testing.T) {
+	dir := t.TempDir()
+	content := "# sandman build-tools: java\n# sandman default-agent: opencode\n# sandman java-version: 21.0.2\n# sandman mise-version: " + DefaultMISEVersion + "\nFROM debian:bookworm-slim\n"
+	path := filepath.Join(dir, "Dockerfile")
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatalf("write Dockerfile: %v", err)
+	}
+
+	meta, found, err := readDockerfileMetadata(path)
+	if err != nil {
+		t.Fatalf("readDockerfileMetadata: %v", err)
+	}
+	if !found {
+		t.Fatal("expected metadata found")
+	}
+	if meta.JavaVersion != "21.0.2" {
+		t.Errorf("JavaVersion = %q, want %q", meta.JavaVersion, "21.0.2")
+	}
+	if meta.BuildToolsPreset != "java" {
+		t.Errorf("BuildToolsPreset = %q, want %q", meta.BuildToolsPreset, "java")
+	}
+}
+
 func TestScaffold_RubyPresetWritesPinnedDockerfile(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, ".ruby-version"), []byte("3.2.2\n"), 0644); err != nil {
@@ -2748,6 +3164,48 @@ func TestScaffold_RubyPresetAllAgentsGenerateFiles(t *testing.T) {
 			}
 			if !strings.Contains(content, "RUN gem install bundler") {
 				t.Errorf("Dockerfile missing bundler install, got:\n%s", content)
+			}
+		})
+	}
+}
+
+func TestScaffold_JavaPresetAllAgentsGenerateFiles(t *testing.T) {
+	for agent := range config.BuiltInAgentPresets {
+		t.Run(agent, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "pom.xml"), []byte("<project><properties><java.version>21</java.version></properties></project>\n"), 0644); err != nil {
+				t.Fatalf("write pom.xml: %v", err)
+			}
+
+			s := &Scaffolder{}
+			wantJavaVersion, err := s.resolveJavaVersion(dir, "", &fakePrompter{confirm: true})
+			if err != nil {
+				t.Fatalf("resolve java version: %v", err)
+			}
+
+			if err := s.Scaffold(dir, Options{BuildTools: "java", Agent: agent}, &fakePrompter{confirm: true}); err != nil {
+				t.Fatalf("scaffold: %v", err)
+			}
+
+			configPath := filepath.Join(dir, ".sandman", "config.yaml")
+			cfg, err := config.Load(configPath)
+			if err != nil {
+				t.Fatalf("load config: %v", err)
+			}
+			if cfg.BuildTools != "java" {
+				t.Errorf("expected build tools %q, got %q", "java", cfg.BuildTools)
+			}
+
+			dockerfileData, err := os.ReadFile(filepath.Join(dir, ".sandman", "Dockerfile"))
+			if err != nil {
+				t.Fatalf("read Dockerfile: %v", err)
+			}
+			content := string(dockerfileData)
+			if !strings.Contains(content, "# sandman build-tools: java") {
+				t.Errorf("Dockerfile missing java build-tools metadata, got:\n%s", content)
+			}
+			if !strings.Contains(content, "RUN mise use -g --pin java@"+wantJavaVersion) {
+				t.Errorf("Dockerfile missing pinned java install %q, got:\n%s", wantJavaVersion, content)
 			}
 		})
 	}

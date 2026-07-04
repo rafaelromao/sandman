@@ -35,6 +35,8 @@ const rubyBuildToolsPreset = "ruby"
 
 const rustBuildToolsPreset = "rust"
 
+const javaBuildToolsPreset = "java"
+
 const DefaultMISEVersion = "v2026.5.8"
 
 const DefaultRTKVersion = "v0.42.0"
@@ -148,6 +150,12 @@ var builtInBuildToolsPresets = map[string]BuildToolsPreset{
 		SharedPackages: sharedPackages,
 		MiseVersion:    DefaultMISEVersion,
 	},
+	javaBuildToolsPreset: {
+		Name:           javaBuildToolsPreset,
+		BaseImage:      "debian:bookworm-slim",
+		SharedPackages: sharedPackages,
+		MiseVersion:    DefaultMISEVersion,
+	},
 }
 
 // DefaultBuiltInAgentVersion returns the latest bundled version pin for a built-in agent.
@@ -247,6 +255,23 @@ var bundledRustVersionCatalog = map[string]string{
 	"1.94.0":  "1.94.0",
 }
 
+var bundledJavaVersionCatalog = map[string]string{
+	"latest":  "21.0.2",
+	"lts":     "17.0.10",
+	"21":      "21.0.2",
+	"21.0":    "21.0.2",
+	"21.0.2":  "21.0.2",
+	"17":      "17.0.10",
+	"17.0":    "17.0.10",
+	"17.0.10": "17.0.10",
+	"11":      "11.0.22",
+	"11.0":    "11.0.22",
+	"11.0.22": "11.0.22",
+	"8":       "8.0.412",
+	"8.0":     "8.0.412",
+	"8.0.412": "8.0.412",
+}
+
 // bundledElixirOTPMap pairs each cataloged Elixir major.minor with the
 // Erlang/OTP release that ships with it. deriveErlangOTPFromElixir uses
 // it as the offline fallback when the resolved Elixir version lacks the
@@ -266,6 +291,8 @@ const bundledElixirDefaultOTP = "29"
 var nodeVersionSelectorPattern = regexp.MustCompile(`\d+(?:\.\d+){0,2}`)
 
 var rustVersionSelectorPattern = regexp.MustCompile(`\d+(?:\.\d+){0,2}`)
+
+var javaVersionSelectorPattern = regexp.MustCompile(`^\d+(\.\d+){0,2}(\+\d+)?$`)
 
 var elixirVersionPattern = regexp.MustCompile(`(\d+)\.(\d+)`)
 
@@ -310,6 +337,7 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 	erlangVersion := ""
 	rubyVersion := ""
 	rustVersion := ""
+	javaVersion := ""
 	if preset.Name == goBuildToolsPreset {
 		goVersion, err = s.resolveGoVersion(repoRoot, opts.ToolVersion, p)
 		if err != nil {
@@ -346,6 +374,11 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 		}
 	} else if preset.Name == rustBuildToolsPreset {
 		rustVersion, err = s.resolveRustVersion(repoRoot, opts.ToolVersion, p)
+		if err != nil {
+			return err
+		}
+	} else if preset.Name == javaBuildToolsPreset {
+		javaVersion, err = s.resolveJavaVersion(repoRoot, opts.ToolVersion, p)
 		if err != nil {
 			return err
 		}
@@ -398,7 +431,7 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 		return fmt.Errorf("save config: %w", err)
 	}
 
-	dockerfile := s.renderBuildToolsDockerfile(preset, defaultAgent, goVersion, dotnetVersion, nodeVersion, pythonVersion, elixirVersion, erlangVersion, rubyVersion, rustVersion)
+	dockerfile := s.renderBuildToolsDockerfile(preset, defaultAgent, goVersion, dotnetVersion, nodeVersion, pythonVersion, elixirVersion, erlangVersion, rubyVersion, rustVersion, javaVersion)
 	dockerfilePath := filepath.Join(sandmanDir, "Dockerfile")
 	if err := os.WriteFile(dockerfilePath, []byte(dockerfile), 0644); err != nil {
 		return fmt.Errorf("write Dockerfile: %w", err)
@@ -550,6 +583,8 @@ func (s *Scaffolder) resolveBuildToolsPreset(repoRoot string, opts Options, p Pr
 			if name == "" {
 				name = rustBuildToolsPreset
 			}
+		} else if hasJavaRepoHint(repoRoot) {
+			name = javaBuildToolsPreset
 		} else if p != nil {
 			selected, err := p.Select("Choose a build tools preset:", KnownBuildToolsPresets)
 			if err == nil {
@@ -656,6 +691,135 @@ func hasRustRepoHint(repoRoot string) bool {
 		return true
 	}
 	return false
+}
+
+func hasJavaRepoHint(repoRoot string) bool {
+	for _, rel := range []string{"pom.xml", "build.gradle", "build.gradle.kts"} {
+		if _, err := os.Stat(filepath.Join(repoRoot, rel)); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
+func readJavaVersionHint(repoRoot string) (string, bool, error) {
+	for _, rel := range []string{".tool-versions", "pom.xml", "build.gradle", "build.gradle.kts"} {
+		path := filepath.Join(repoRoot, rel)
+		data, err := os.ReadFile(path)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return "", false, fmt.Errorf("read Java version hint from %s: %w", rel, err)
+		}
+		if version, ok := parseJavaVersionHint(rel, data); ok {
+			return version, true, nil
+		}
+	}
+	return "", false, nil
+}
+
+func parseJavaVersionHint(name string, data []byte) (string, bool) {
+	scanner := bufio.NewScanner(bytes.NewReader(data))
+	switch name {
+	case ".tool-versions":
+		for scanner.Scan() {
+			line := strings.TrimSpace(scanner.Text())
+			if line == "" || strings.HasPrefix(line, "#") {
+				continue
+			}
+			fields := strings.Fields(line)
+			if len(fields) >= 2 && fields[0] == "java" {
+				return fields[1], true
+			}
+		}
+	case "pom.xml":
+		for scanner.Scan() {
+			line := strings.TrimSpace(scanner.Text())
+			if line == "" {
+				continue
+			}
+			for _, key := range []string{"<java.version>", "<maven.compiler.source>", "<maven.compiler.target>"} {
+				if strings.Contains(line, key) {
+					if v := extractXMLTagValue(line, key); v != "" {
+						return v, true
+					}
+				}
+			}
+		}
+	case "build.gradle", "build.gradle.kts":
+		for scanner.Scan() {
+			line := strings.TrimSpace(scanner.Text())
+			if line == "" || strings.HasPrefix(line, "//") {
+				continue
+			}
+			for _, key := range []string{"sourceCompatibility", "targetCompatibility", "jvmTarget"} {
+				if idx := strings.Index(line, key); idx >= 0 {
+					rest := line[idx+len(key):]
+					if v := extractJavaDSLValue(rest); v != "" {
+						return v, true
+					}
+				}
+			}
+		}
+	}
+	return "", false
+}
+
+func extractXMLTagValue(line, key string) string {
+	idx := strings.Index(line, key)
+	if idx < 0 {
+		return ""
+	}
+	rest := line[idx+len(key):]
+	rest = strings.TrimSpace(rest)
+	endIdx := strings.Index(rest, "</")
+	if endIdx < 0 {
+		endIdx = strings.Index(rest, "/>")
+		if endIdx < 0 {
+			return ""
+		}
+	}
+	value := strings.TrimSpace(rest[:endIdx])
+	value = strings.Trim(value, "'\"")
+	return value
+}
+
+func extractJavaDSLValue(rest string) string {
+	rest = strings.TrimSpace(rest)
+	if !strings.HasPrefix(rest, "=") {
+		return ""
+	}
+	rest = strings.TrimSpace(strings.TrimPrefix(rest, "="))
+	if rest == "" {
+		return ""
+	}
+	first := rest[0]
+	if first == '"' || first == '\'' {
+		close := strings.IndexRune(rest[1:], rune(first))
+		if close < 0 {
+			return ""
+		}
+		return rest[1 : 1+close]
+	}
+	// Match `JavaVersion.VERSION_<n>` (e.g. `JavaVersion.VERSION_21`) and
+	// return the trailing integer. The quoted-string branch above handles
+	// `JavaVersion.toVersion("21")`-style expressions.
+	if m := regexp.MustCompile(`JavaVersion\.VERSION_(\d+)`).FindStringSubmatch(rest); len(m) == 2 {
+		return m[1]
+	}
+	fields := strings.Fields(rest)
+	if len(fields) == 0 {
+		return ""
+	}
+	if strings.Contains(fields[0], ".") {
+		parts := strings.Split(fields[0], ".")
+		last := parts[len(parts)-1]
+		if _, err := strconv.Atoi(last); err == nil {
+			return last
+		}
+	}
+	return ""
 }
 
 func readRubyVersionHint(repoRoot string) (string, bool, error) {
@@ -928,6 +1092,10 @@ func (s *Scaffolder) resolveRubyVersion(repoRoot, selector string, p Prompter) (
 
 func (s *Scaffolder) resolveRustVersion(repoRoot, selector string, p Prompter) (string, error) {
 	return resolveVersion(rustResolver, repoRoot, selector, p)
+}
+
+func (s *Scaffolder) resolveJavaVersion(repoRoot, selector string, p Prompter) (string, error) {
+	return resolveVersion(javaResolver, repoRoot, selector, p)
 }
 
 func (s *Scaffolder) resolveElixirVersion(repoRoot, selector string, p Prompter) (string, error) {
@@ -1255,6 +1423,69 @@ var rustResolver = versionResolver{
 	},
 }
 
+// javaResolver is the versionResolver configuration for Java. The ltsFromLatest
+// hook goes one major back from the latest resolved version, mirroring Ruby's
+// pattern. Java LTS releases are every 3 years (8, 11, 17, 21), so for the
+// current `latest=21` the lts selector resolves to 17. The normalize hook
+// strips common JDK identifier prefixes ("java", "jdk", "openjdk") so users
+// can pass `jdk21` or `openjdk-21` and still hit the catalog.
+var javaResolver = versionResolver{
+	label:      "Java",
+	miseTool:   "java",
+	hintReader: readJavaVersionHint,
+	normalize: func(selector string) string {
+		selector = strings.TrimSpace(selector)
+		lower := strings.ToLower(selector)
+		if strings.HasPrefix(lower, "openjdk-") {
+			return selector[len("openjdk-"):]
+		}
+		if strings.HasPrefix(lower, "jdk") && len(selector) > 3 && selector[3] >= '0' && selector[3] <= '9' {
+			return selector[3:]
+		}
+		if strings.HasPrefix(lower, "java") && len(selector) > 4 && selector[4] >= '0' && selector[4] <= '9' {
+			return selector[4:]
+		}
+		return selector
+	},
+	catalog: bundledJavaVersionCatalog,
+	ltsFromLatest: func(version string) (string, error) {
+		version = strings.TrimSpace(version)
+		parts := strings.Split(version, ".")
+		if len(parts) == 0 {
+			return "", fmt.Errorf("unexpected Java version %q", version)
+		}
+		major, err := strconv.Atoi(parts[0])
+		if err != nil {
+			return "", fmt.Errorf("parse Java major version %q: %w", version, err)
+		}
+		if major <= 1 {
+			return "", fmt.Errorf("unexpected Java major version %q", version)
+		}
+		// Java LTS releases land every 3 majors (8, 11, 17, 21, ...).
+		// Walk back at most 6 majors to find an LTS that the bundled catalog
+		// actually has a pin for; if none found in that window, fall back to
+		// the lowest cataloged major.
+		for offset := 1; offset <= 6; offset++ {
+			candidate := major - offset
+			if candidate < 1 {
+				break
+			}
+			key := fmt.Sprintf("%d", candidate)
+			if _, ok := bundledJavaVersionCatalog[key]; ok {
+				return key, nil
+			}
+		}
+		return "", fmt.Errorf("no Java LTS version found in bundled catalog for latest=%q", version)
+	},
+	passThroughValid: func(selector string) bool {
+		selector = strings.TrimSpace(selector)
+		if selector == "" {
+			return false
+		}
+		return javaVersionSelectorPattern.MatchString(selector)
+	},
+}
+
 // resolveVersion resolves a version for a single tool, reading the repo hint,
 // determining the choice via Prompter or default, and dispatching to the
 // mise-backed resolution path.
@@ -1508,7 +1739,7 @@ func resolveVersionChoice(choice string, versions []string) (string, error) {
 	return "", fmt.Errorf("no version matching %q", choice)
 }
 
-func (s *Scaffolder) renderBuildToolsDockerfile(preset BuildToolsPreset, defaultAgent, goVersion, dotnetVersion, nodeVersion, pythonVersion, elixirVersion, erlangVersion, rubyVersion, rustVersion string) string {
+func (s *Scaffolder) renderBuildToolsDockerfile(preset BuildToolsPreset, defaultAgent, goVersion, dotnetVersion, nodeVersion, pythonVersion, elixirVersion, erlangVersion, rubyVersion, rustVersion, javaVersion string) string {
 	var out strings.Builder
 	fmt.Fprintf(&out, "# sandman build-tools: %s\n", preset.Name)
 	fmt.Fprintf(&out, "# sandman default-agent: %s\n", defaultAgent)
@@ -1534,6 +1765,9 @@ func (s *Scaffolder) renderBuildToolsDockerfile(preset BuildToolsPreset, default
 	}
 	if preset.Name == rustBuildToolsPreset {
 		fmt.Fprintf(&out, "# sandman rust-version: %s\n", rustVersion)
+	}
+	if preset.Name == javaBuildToolsPreset {
+		fmt.Fprintf(&out, "# sandman java-version: %s\n", javaVersion)
 	}
 	fmt.Fprintf(&out, "# sandman mise-version: %s\n", preset.MiseVersion)
 	fmt.Fprintf(&out, "# sandman rtk-version: %s\n", DefaultRTKVersion)
@@ -1569,6 +1803,9 @@ func (s *Scaffolder) renderBuildToolsDockerfile(preset BuildToolsPreset, default
 	}
 	if preset.Name == rustBuildToolsPreset {
 		out.WriteString(renderRustInstallCommand(rustVersion))
+	}
+	if preset.Name == javaBuildToolsPreset {
+		out.WriteString(renderJavaInstallCommand(javaVersion))
 	}
 	out.WriteString(renderCodeindexInstallCommand())
 	out.WriteString(renderAgentInstallCommand("opencode", DefaultBuiltInAgentVersion("opencode")))
@@ -1819,6 +2056,10 @@ func renderRustInstallCommand(version string) string {
 	return fmt.Sprintf("RUN mise use -g --pin rust@%s\n", version)
 }
 
+func renderJavaInstallCommand(version string) string {
+	return fmt.Sprintf("RUN mise use -g --pin java@%s\n", version)
+}
+
 func renderCodeindexInstallCommand() string {
 	return "RUN git clone https://github.com/rafaelromao/codeindex /tmp/codeindex && pip3 install -e /tmp/codeindex --break-system-packages\n"
 }
@@ -1879,6 +2120,7 @@ type dockerfileMetadata struct {
 	ErlangVersion    string
 	RubyVersion      string
 	RustVersion      string
+	JavaVersion      string
 	ToolVersion      string
 	MiseVersion      string
 	RtkVersion       string
@@ -1952,6 +2194,8 @@ func readDockerfileMetadata(path string) (dockerfileMetadata, bool, error) {
 			meta.RubyVersion = strings.TrimSpace(value)
 		case "rust-version":
 			meta.RustVersion = strings.TrimSpace(value)
+		case "java-version":
+			meta.JavaVersion = strings.TrimSpace(value)
 		case "mise-version":
 			meta.MiseVersion = strings.TrimSpace(value)
 		case "rtk-version":
