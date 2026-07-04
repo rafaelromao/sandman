@@ -162,11 +162,16 @@ func New(baseDir string, gh GitHubClient, prompts Renderer, runner BatchRunner, 
 	if err := d.loadPendingReviews(); err != nil {
 		d.logf("load pending reviews: %v", err)
 	}
-	// SelfPostStore is best-effort: a missing or corrupt file
-	// yields an empty store. The daemon continues to function
-	// via the existing seenCache + ReviewStateStore; the
-	// self-post filter is an *additional* layer, not a primary
-	// dedup mechanism.
+	// SelfPostStore is best-effort: under the post-#1756
+	// greenfield loader any pre-existing self-posted.json is
+	// renamed to self-posted.json.ignore-<ts>.bak at startup
+	// and the in-memory store starts empty. The new dedup key
+	// is (prNumber, sha256(body)), closing the cross-PR
+	// poisoning failure mode observed on PR 1752 (a trigger
+	// hash recorded on PR A no longer drops the same body on
+	// PR B). The daemon continues to function via the existing
+	// seenCache + ReviewStateStore; the self-post filter is
+	// an *additional* layer, not a primary dedup mechanism.
 	spPath := filepath.Join(d.BaseDir, "reviews", "self-posted.json")
 	sp, spErr := NewSelfPostStore(spPath)
 	if spErr != nil {
@@ -772,12 +777,14 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) error {
 		// which contains the literal `/sandman review` substring in
 		// its `## Previous review progress` section. The
 		// SelfPostStore only ever contains bodies the bot posted
-		// (review-bodies via Step 4b of the pr-review skill, plus
-		// any body defensively observed by promotePendingComment),
+		// (review-bodies via Step 4b of the pr-review skill wrapper),
 		// never the implementor's trigger command — so applying the
 		// filter before ParseTrigger does not regress trigger
 		// detection for fresh human-issued trigger commands.
-		if d.selfPosts != nil && d.selfPosts.IsSelfPosted(comment.Body) {
+		// (Note: issue #1722 removed the defensive recording site in
+		// promotePendingComment — the only authoritative writer today
+		// is the wrapper at Step 4b.)
+		if d.selfPosts != nil && d.selfPosts.IsSelfPosted(prNumber, comment.Body) {
 			d.logf("PR #%d: comment %s is a self-post, skipping", prNumber, comment.ID)
 			continue
 		}
