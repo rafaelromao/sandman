@@ -163,21 +163,27 @@ record_review_posted() {
   tmp=$(mktemp)
   existing='.sandman/reviews/self-posted.json'
   if [ -f "$existing" ]; then cp "$existing" "$tmp"; else echo '{}' > "$tmp"; fi
+  # Issue #1756: keys are composite "pr-<N>-<sha>"; the daemon's
+  # SelfPostStore dedup key is (prNumber, sha256(body)), not the
+  # body hash alone. Writing the legacy bare-sha key would be
+  # silently archived by the greenfield loader on the next daemon
+  # start and re-open the cross-PR poisoning failure the wrapper
+  # exists to prevent.
   jq --arg sha "$sha" --argjson pr <N> --arg run "$RUN_ID" --arg now "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-    '.[$sha] = {sha256:$sha, pr_number:$pr, run_id:$run, posted_at:$now}' \
+    '.[("pr-" + ($pr|tostring) + "-" + $sha)] = {sha256:$sha, pr_number:$pr, run_id:$run, posted_at:$now}' \
     "$tmp" > "$tmp.new" && mv "$tmp.new" "$tmp"
   mv "$tmp" "$existing"
 }
 ```
 
-If `jq` is unavailable, fall back to the simpler form below (the daemon tolerates any re-record; the file is a JSON object keyed by sha256 hex):
+If `jq` is unavailable, fall back to the simpler form below (the daemon tolerates any re-record; the file is a JSON object keyed by composite `pr-<N>-<sha>` per issue #1756):
 
 ```bash
 record_review_posted_fallback() {
   local body="$1"
   local sha=$(printf '%s' "$body" | tr 'A-Z' 'a-z' | sed 's/[ \t\n]*$//' | sha256sum | awk '{print $1}')
-  printf ',"%s":{"sha256":"%s","pr_number":%s,"run_id":"%s","posted_at":"%s"}' \
-    "$sha" "$sha" <N> "$RUN_ID" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  printf ',"pr-%d-%s":{"sha256":"%s","pr_number":%d,"run_id":"%s","posted_at":"%s"}' \
+    <N> "$sha" "$sha" <N> "$RUN_ID" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     >> .sandman/reviews/self-posted.json
 }
 ```
