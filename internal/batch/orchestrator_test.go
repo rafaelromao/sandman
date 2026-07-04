@@ -7050,7 +7050,7 @@ func TestResolveSandboxExecutionPolicy_WorktreeModeDoesNotBuildContainerImage(t 
 	factory := &fakeContainerRuntimeFactory{starter: starter}
 	o := &Orchestrator{containerRuntimeFactory: factory}
 
-	policy, err := o.resolveSandboxExecutionPolicy(&config.Config{DefaultAgent: "test-agent", Agent: "test-agent", BuildTools: "generic"}, config.Agent{Command: "true"}, Request{}, "worktree")
+	policy, err := o.resolveSandboxExecutionPolicy(context.Background(), &config.Config{DefaultAgent: "test-agent", Agent: "test-agent", BuildTools: "generic"}, config.Agent{Command: "true"}, Request{}, "worktree")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -7326,7 +7326,7 @@ func TestPrepareContainerConfigMounts_OpencodePresetEndToEnd(t *testing.T) {
 		t.Fatalf("build start options: %v", err)
 	}
 
-	cleanup, err := PrepareContainerConfigMounts(t.TempDir(), "", &startOpts, nil)
+	cleanup, err := PrepareContainerConfigMounts(context.Background(), t.TempDir(), "", &startOpts, func(context.Context) (string, error) { return "", nil })
 	if err != nil {
 		t.Fatalf("prepare container config mounts: %v", err)
 	}

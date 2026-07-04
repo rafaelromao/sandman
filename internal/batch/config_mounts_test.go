@@ -1,6 +1,7 @@
 package batch
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -27,13 +28,13 @@ func TestPrepareContainerConfigMounts_StoresSnapshotUnderRunDir(t *testing.T) {
 		t.Fatalf("write auth: %v", err)
 	}
 
-	lookup := func() (string, error) { return "gho_run_dir_token", nil }
+	lookup := func(context.Context) (string, error) { return "gho_run_dir_token", nil }
 
 	opts := sandbox.StartOptions{
 		AgentConfigDirs: []string{opencodeDir},
 	}
 
-	cleanup, err := PrepareContainerConfigMounts(t.TempDir(), runDir, &opts, lookup)
+	cleanup, err := PrepareContainerConfigMounts(context.Background(), t.TempDir(), runDir, &opts, lookup)
 	if err != nil {
 		t.Fatalf("prepare container config mounts: %v", err)
 	}
@@ -95,7 +96,7 @@ func TestPrepareContainerConfigMounts_RewritesGitConfigCopiesSSHAndHydratesGH(t 
 		t.Fatalf("write opencode auth file: %v", err)
 	}
 
-	lookup := func() (string, error) { return "gho_test_token", nil }
+	lookup := func(context.Context) (string, error) { return "gho_test_token", nil }
 
 	opts := sandbox.StartOptions{
 		GitConfigPath:    gitConfig,
@@ -104,7 +105,7 @@ func TestPrepareContainerConfigMounts_RewritesGitConfigCopiesSSHAndHydratesGH(t 
 		SSH:              true,
 	}
 
-	cleanup, err := PrepareContainerConfigMounts(repoDir, "", &opts, lookup)
+	cleanup, err := PrepareContainerConfigMounts(context.Background(), repoDir, "", &opts, lookup)
 	if err != nil {
 		t.Fatalf("prepare container config mounts: %v", err)
 	}
@@ -166,10 +167,10 @@ func TestPrepareContainerConfigMounts_ErrorsWhenGHTokenMissingFromCopiedConfig(t
 		t.Fatalf("write gh hosts file: %v", err)
 	}
 
-	lookup := func() (string, error) { return "", fmt.Errorf("no token available") }
+	lookup := func(context.Context) (string, error) { return "", fmt.Errorf("no token available") }
 
 	opts := sandbox.StartOptions{AgentConfigDirs: []string{ghConfigDir}}
-	cleanup, err := PrepareContainerConfigMounts(t.TempDir(), "", &opts, lookup)
+	cleanup, err := PrepareContainerConfigMounts(context.Background(), t.TempDir(), "", &opts, lookup)
 	if cleanup != nil {
 		defer cleanup()
 	}
@@ -204,7 +205,7 @@ func TestPrepareContainerConfigMounts_HonorsAgentConfigExcludes(t *testing.T) {
 		AgentConfigDirs:     []string{opencodeDir},
 		AgentConfigExcludes: []string{tokenOptimizer},
 	}
-	cleanup, err := PrepareContainerConfigMounts(t.TempDir(), "", &opts, nil)
+	cleanup, err := PrepareContainerConfigMounts(context.Background(), t.TempDir(), "", &opts, func(context.Context) (string, error) { return "", nil })
 	if err != nil {
 		t.Fatalf("prepare container config mounts: %v", err)
 	}
@@ -253,7 +254,7 @@ func TestPrepareContainerConfigMounts_AppendsLiveMountsForExistingPaths(t *testi
 		AgentConfigDirs: []string{opencodeDir},
 		LiveMounts:      []string{dbPath, missingShm},
 	}
-	cleanup, err := PrepareContainerConfigMounts(t.TempDir(), "", &opts, nil)
+	cleanup, err := PrepareContainerConfigMounts(context.Background(), t.TempDir(), "", &opts, func(context.Context) (string, error) { return "", nil })
 	if err != nil {
 		t.Fatalf("prepare container config mounts: %v", err)
 	}
@@ -342,7 +343,7 @@ func TestOpenCodePreset_ExcludesMutableStateAndLiveMountsDatabase(t *testing.T) 
 		},
 		LiveMounts: []string{dbPath, dbShm, dbWal},
 	}
-	cleanup, err := PrepareContainerConfigMounts(t.TempDir(), "", &opts, nil)
+	cleanup, err := PrepareContainerConfigMounts(context.Background(), t.TempDir(), "", &opts, func(context.Context) (string, error) { return "", nil })
 	if err != nil {
 		t.Fatalf("prepare container config mounts: %v", err)
 	}
@@ -439,7 +440,7 @@ func TestConfigMounts_ExcludesAndLiveMountsDirectories(t *testing.T) {
 		AgentConfigExcludes: []string{exclude1, exclude2},
 		LiveMounts:          []string{exclude1, exclude2},
 	}
-	cleanup, err := PrepareContainerConfigMounts(t.TempDir(), "", &opts, nil)
+	cleanup, err := PrepareContainerConfigMounts(context.Background(), t.TempDir(), "", &opts, func(context.Context) (string, error) { return "", nil })
 	if err != nil {
 		t.Fatalf("prepare container config mounts: %v", err)
 	}
@@ -513,7 +514,7 @@ func TestPrepareContainerConfigMounts_RunOwnedSnapshotUnderRunDir(t *testing.T) 
 	opts := sandbox.StartOptions{
 		AgentConfigDirs: []string{configDir},
 	}
-	cleanup, err := PrepareContainerConfigMounts(t.TempDir(), runDir, &opts, nil)
+	cleanup, err := PrepareContainerConfigMounts(context.Background(), t.TempDir(), runDir, &opts, func(context.Context) (string, error) { return "", nil })
 	if err != nil {
 		t.Fatalf("prepare container config mounts: %v", err)
 	}

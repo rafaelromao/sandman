@@ -261,8 +261,10 @@ type Orchestrator struct {
 	// lifetime) rather than on runSessionOptions (per-session lifetime).
 	// NewOrchestrator initialises it to defaultLookupGHToken; tests in
 	// this package assign a fake to drive token-resolution paths without
-	// shelling out to `gh auth token`.
-	lookupGHToken func() (string, error)
+	// shelling out to `gh auth token`. Takes a context so the spawned
+	// `gh auth token` invocation honours the caller's cancellation
+	// (issue #1780).
+	lookupGHToken func(ctx context.Context) (string, error)
 
 	// runSessionOpts bundles the test-injection hooks consumed by
 	// runSession (the function overrides and the test-tunable killTimeout)
@@ -295,9 +297,13 @@ type Orchestrator struct {
 // silently inject an empty oauth_token. The exec.ErrNotFound special-case
 // for callers that want to skip token injection on minimal hosts lives
 // in hydrateGHHostsFile, not here.
-func defaultLookupGHToken() (string, error) {
-	out, err := exec.Command("gh", "auth", "token").Output()
+func defaultLookupGHToken(ctx context.Context) (string, error) {
+	cmd := exec.CommandContext(ctx, "gh", "auth", "token")
+	out, err := cmd.Output()
 	if err != nil {
+		if cerr := ctx.Err(); cerr != nil {
+			return "", fmt.Errorf("gh auth token (context: %w): %w", cerr, err)
+		}
 		return "", err
 	}
 	token := strings.TrimSpace(string(out))
@@ -841,7 +847,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 		baseBranch = "main"
 	}
 
-	policy, err := o.resolveSandboxExecutionPolicy(cfg, agentCfg, req, sandboxMode)
+	policy, err := o.resolveSandboxExecutionPolicy(ctx, cfg, agentCfg, req, sandboxMode)
 	if err != nil {
 		return nil, err
 	}
@@ -1230,7 +1236,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 	return &Result{Runs: results}, nil
 }
 
-func (o *Orchestrator) resolveSandboxExecutionPolicy(cfg *config.Config, agentCfg config.Agent, req Request, sandboxMode string) (*sandboxExecutionPolicy, error) {
+func (o *Orchestrator) resolveSandboxExecutionPolicy(ctx context.Context, cfg *config.Config, agentCfg config.Agent, req Request, sandboxMode string) (*sandboxExecutionPolicy, error) {
 	startOpts, err := buildStartOptions(agentCfg)
 	if err != nil {
 		return nil, err
@@ -1292,7 +1298,7 @@ func (o *Orchestrator) resolveSandboxExecutionPolicy(cfg *config.Config, agentCf
 		return nil, fmt.Errorf("max_containers must be 0 or greater")
 	}
 
-	cleanup, err := PrepareContainerConfigMounts(".", req.RunDir, &startOpts, o.lookupGHToken)
+	cleanup, err := PrepareContainerConfigMounts(ctx, ".", req.RunDir, &startOpts, o.lookupGHToken)
 	if err != nil {
 		return nil, fmt.Errorf("prepare container config mounts: %w", err)
 	}
