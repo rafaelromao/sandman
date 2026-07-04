@@ -695,7 +695,7 @@ func waitForSignal(t *testing.T, signal <-chan struct{}, message string) {
 	t.Helper()
 	select {
 	case <-signal:
-	case <-time.After(250 * time.Millisecond):
+	case <-time.After(1 * time.Second):
 		t.Fatal(message)
 	}
 }

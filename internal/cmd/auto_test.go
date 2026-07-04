@@ -204,6 +204,11 @@ func TestRun_AutoFlag_NegativeCountReturnsError(t *testing.T) {
 }
 
 func TestRun_AutoFlag_NoIssuesReturnsError(t *testing.T) {
+	sandmanDir := testenv.MkdirShort(t, "sm-auto-")
+	t.Chdir(sandmanDir)
+	if err := os.MkdirAll(filepath.Join(sandmanDir, ".sandman"), 0o755); err != nil {
+		t.Fatalf("mkdir .sandman: %v", err)
+	}
 	spy := &spyBatchRunner{result: &batch.Result{}}
 	gh := &fakeGitHubClient{searchIssuesResult: []github.Issue{}}
 	deps := Dependencies{
@@ -211,6 +216,7 @@ func TestRun_AutoFlag_NoIssuesReturnsError(t *testing.T) {
 		ConfigStore:  &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review"}},
 		EventLog:     &fakeEventLog{},
 		GitHubClient: gh,
+		RepoRoot:     sandmanDir,
 		IsTTY:        func() bool { return false },
 	}
 

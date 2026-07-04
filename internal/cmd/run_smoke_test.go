@@ -173,8 +173,7 @@ func assertSmokeProviderRun(t *testing.T, out string, tc smokeProviderCase, repo
 		t.Fatalf("expected branch %q in output, got:\n%s", tc.wantBranch, out)
 	}
 
-	logPath := filepath.Join(repoDir, ".sandman", "logs", fmt.Sprintf("%d.log", issue.Number))
-	logData, err := os.ReadFile(logPath)
+	logData, err := findFirstRunLog(t, repoDir)
 	if err != nil {
 		t.Fatalf("read log: %v", err)
 	}
@@ -193,7 +192,6 @@ func runSmokeProvider(t *testing.T, tc smokeProviderCase) {
 	runtime, repoDir, deps, issue := prepareSmokeProvider(t, tc)
 	out, err := executeSmokeRun(t, deps, runtime, issue.Number)
 	if err != nil {
-		logPath := filepath.Join(repoDir, ".sandman", "logs", fmt.Sprintf("%d.log", issue.Number))
 		worktreePath := filepath.Join(repoDir, ".sandman", "worktrees", tc.wantBranch)
 		promptPath := filepath.Join(worktreePath, ".sandman", "task.md")
 		if _, statErr := os.Stat(worktreePath); statErr == nil {
@@ -202,15 +200,9 @@ func runSmokeProvider(t *testing.T, tc smokeProviderCase) {
 			}
 			t.Fatalf("unexpected error: %v\noutput:\n%s\nworktree exists: %s\nprompt read error: %v", err, out, worktreePath, statErr)
 		}
-		logData, readErr := os.ReadFile(logPath)
+		logData, readErr := findFirstRunLog(t, repoDir)
 		if readErr == nil {
 			t.Fatalf("unexpected error: %v\noutput:\n%s\nlog:\n%s", err, out, logData)
-		} else if entries, dirErr := os.ReadDir(filepath.Dir(logPath)); dirErr == nil {
-			var names []string
-			for _, entry := range entries {
-				names = append(names, entry.Name())
-			}
-			t.Fatalf("unexpected error: %v\noutput:\n%s\nlog read error: %v\nlogs dir entries: %s", err, out, readErr, strings.Join(names, ", "))
 		} else {
 			t.Fatalf("unexpected error: %v\noutput:\n%s\nlog read error: %v", err, out, readErr)
 		}
