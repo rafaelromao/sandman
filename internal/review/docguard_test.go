@@ -346,3 +346,76 @@ func TestADRSelfPostFilter_NoLongerReferencesWrapper(t *testing.T) {
 		}
 	}
 }
+
+// TestADR_CrossReferencesConsistent asserts the cross-ADR consistency
+// invariant: only ADR-0014 may name the old self-post wrapper, the
+// step-4b wrapper, the record_review_posted helper, or the run-log
+// grep helper. No other ADR under docs/adr/ should reference the
+// recording site or the SelfPostStore. If a future ADR introduces a
+// new mention of SelfPostStore, this test will surface it for review.
+//
+// The test also pins that any reference to the wrapper names inside
+// ADR-0014 lives only in the §Ownership note paragraph.
+func TestADR_CrossReferencesConsistent(t *testing.T) {
+	root, err := repoRoot()
+	if err != nil {
+		t.Fatalf("locate repo root: %v", err)
+	}
+	adrDir := filepath.Join(root, "docs", "adr")
+	entries, err := os.ReadDir(adrDir)
+	if err != nil {
+		t.Fatalf("read adr dir: %v", err)
+	}
+
+	storeOrWrapperPhrases := []string{
+		"SelfPostStore",
+		"self-posted.json",
+		"record_review_posted",
+		"Step 4b",
+		"extractBodiesFromLog",
+	}
+
+	const adr0014 = "0014-sandman-review-daemon-and-guard.md"
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
+			continue
+		}
+		if e.Name() == adr0014 {
+			continue
+		}
+		path := filepath.Join(adrDir, e.Name())
+		body, err := os.ReadFile(path)
+		if err != nil {
+			t.Errorf("read %s: %v", e.Name(), err)
+			continue
+		}
+		for _, phrase := range storeOrWrapperPhrases {
+			if strings.Contains(string(body), phrase) {
+				t.Errorf("ADR %s must not reference %q; only ADR-0014 owns the SelfPostStore / wrapper references", e.Name(), phrase)
+			}
+		}
+	}
+
+	// ADR-0014's wrapper references must live inside the
+	// §Ownership note historical-context paragraph.
+	adrBody, err := os.ReadFile(filepath.Join(adrDir, adr0014))
+	if err != nil {
+		t.Fatalf("read ADR-0014: %v", err)
+	}
+	lines := strings.Split(string(adrBody), "\n")
+	inOwnershipNote := false
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "### ") || strings.HasPrefix(trimmed, "## ") {
+			inOwnershipNote = strings.HasPrefix(trimmed, "### Ownership note (issue #1757)")
+		}
+		if inOwnershipNote {
+			continue
+		}
+		for _, phrase := range []string{"record_review_posted", "Step 4b"} {
+			if strings.Contains(line, phrase) {
+				t.Errorf("ADR-0014 line %d: wrapper reference %q outside §Ownership note historical-context paragraph", i+1, phrase)
+			}
+		}
+	}
+}
