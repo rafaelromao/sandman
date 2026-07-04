@@ -222,9 +222,14 @@ var (
 	// this section's verdict scan (issue #1729 review feedback).
 	reviewSectionDecisionHeading = regexp.MustCompile(`(?i)^## decision\s*$`)
 	// reviewVerdictMarkerLine matches a whole line whose only content is
-	// the literal **MARKER** form. Spelling variants such as trailing
-	// periods or lowercase markers are rejected.
-	reviewVerdictMarkerLine = regexp.MustCompile(`^\*\*([A-Z_]+)\*\*$`)
+	// the literal **MARKER** form, with an optional trailing `"` (and
+	// optional trailing whitespace) so the portal tolerates the bash
+	// closing quote that `gh pr comment --body "..."` leaves on the
+	// same line as the marker (issue #1767, follow-up to #1729).
+	// Spelling variants such as trailing periods, double quotes, or
+	// lowercase markers are still rejected so prompt drift surfaces
+	// as "Unclear" instead of being silently coerced.
+	reviewVerdictMarkerLine = regexp.MustCompile(`^\*\*([A-Z_]+)\*\*\"?\s*$`)
 	// reviewLogTimestampPrefix strips the "[<runID>] HH:MM:SS " log
 	// prefix that the agent output stream adds to each line.
 	reviewLogTimestampPrefix = regexp.MustCompile(`^\d{2}:\d{2}:\d{2}\s+`)
