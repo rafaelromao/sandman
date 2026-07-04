@@ -6,7 +6,6 @@ import (
 	"bytes"
 	"context"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -56,13 +55,13 @@ func (l *cmdBadgeLister) HasBadgePR(_ context.Context) (bool, error) {
 }
 
 // TestBadge_E2E_HappyPath exercises the post-batch badge hook end-to-end
-// through the production BatchRunner wiring. It currently drives the real
-// opencode agent against a synthetic gh shim, which does not complete in
-// this test environment and causes the batch to abort after 3 retries.
-// Tracked in https://github.com/rafaelromao/sandman/issues/1772 — the fix
-// is to swap the real BatchRunner for a fake (see internal/batch/badge_e2e_test.go
-// for the pattern) so the test verifies the badge hook without invoking
-// the agent.
+// through the production BatchRunner wiring using a fake BatchRunner that
+// drives the badge hook directly from a synthetic AgentRunResult. This
+// replaces the prior real-opencode-agent wiring, which did not complete
+// in this test environment and caused the batch to abort after 3
+// retries (https://github.com/rafaelromao/sandman/issues/1772). The fake
+// matches the pattern in internal/batch/badge_e2e_test.go so the test
+// verifies the badge hook without invoking the agent.
 func TestBadge_E2E_HappyPath(t *testing.T) {
 	if !testenv.E2EGateAllowed(testenv.E2EScenarioBadge) {
 		t.Skip("set SANDMAN_E2E_GATES=badge (or all) to run badge e2e tests")
@@ -71,28 +70,10 @@ func TestBadge_E2E_HappyPath(t *testing.T) {
 	repoDir := t.TempDir()
 	t.Chdir(repoDir)
 	initRunIntegrationRepo(t, repoDir)
-
-	remoteDir := filepath.Join(repoDir, "remote")
-	if err := os.MkdirAll(remoteDir, 0755); err != nil {
-		t.Fatalf("create remote dir: %v", err)
-	}
-	bareInit := exec.Command("git", "init", "--bare")
-	bareInit.Dir = remoteDir
-	if out, err := bareInit.CombinedOutput(); err != nil {
-		t.Fatalf("init bare remote: %v: %s", err, out)
-	}
-	runGit(t, repoDir, "remote", "add", "origin", remoteDir)
-	runGit(t, repoDir, "push", "-u", "origin", "main")
-
 	seedBadgeTestRepo(t, repoDir)
-	runGit(t, repoDir, "remote", "set-url", "origin", "git@github.com:rafaelromao/sandman.git")
 
-	ghShimDir := t.TempDir()
-	writeBadgeGHShim(t, ghShimDir, repoDir)
-	prependPath(t, ghShimDir)
-
-	// Wire the production badge hook path: WithBadgeHooker wrapping a
-	// defaultBadgeHooker that captures the branch + prompt it would
+	// Wire the production badge hook path: NewBadgeHookerWith wrapping
+	// a defaultBadgeHooker that captures the branch + prompt it would
 	// have spawned a child `sandman run --prompt` for. The recorder
 	// stands in for the real sandman binary so this test exercises
 	// the production hook end-to-end without shelling out.
@@ -104,9 +85,6 @@ func TestBadge_E2E_HappyPath(t *testing.T) {
 	deps := badgeTestDeps(repoDir, badgeHook)
 	runRootCommand(t, deps, "init", "--agent", "opencode")
 	runRootCommand(t, deps, "config", "set", "review_command", "/oc review")
-
-	badgeGHShimDir := filepath.Join(repoDir, ".sandman", "bin")
-	writeBadgeGHShimForContainer(t, badgeGHShimDir, repoDir)
 
 	out, err := runRootCommand(t, deps, "run", "--agent", "opencode", "--sandbox", "worktree", "1")
 	t.Logf("sandman run returned err=%v output=%s", err, out)
@@ -133,9 +111,10 @@ func TestBadge_E2E_HappyPath(t *testing.T) {
 }
 
 // TestBadge_E2E_ControlFilePresent_ShortCircuitsBadgeHook shares the
-// same end-to-end wiring as TestBadge_E2E_HappyPath and has the same
-// opencode-agent hang. Tracked together in
-// https://github.com/rafaelromao/sandman/issues/1772.
+// same fake-BatchRunner wiring as TestBadge_E2E_HappyPath and verifies
+// that the control-file short-circuit skips the badge hook without
+// shelling out to the agent
+// (https://github.com/rafaelromao/sandman/issues/1772).
 func TestBadge_E2E_ControlFilePresent_ShortCircuitsBadgeHook(t *testing.T) {
 	if !testenv.E2EGateAllowed(testenv.E2EScenarioBadge) {
 		t.Skip("set SANDMAN_E2E_GATES=badge (or all) to run badge e2e tests")
@@ -144,25 +123,7 @@ func TestBadge_E2E_ControlFilePresent_ShortCircuitsBadgeHook(t *testing.T) {
 	repoDir := t.TempDir()
 	t.Chdir(repoDir)
 	initRunIntegrationRepo(t, repoDir)
-
-	remoteDir := filepath.Join(repoDir, "remote")
-	if err := os.MkdirAll(remoteDir, 0755); err != nil {
-		t.Fatalf("create remote dir: %v", err)
-	}
-	bareInit := exec.Command("git", "init", "--bare")
-	bareInit.Dir = remoteDir
-	if out, err := bareInit.CombinedOutput(); err != nil {
-		t.Fatalf("init bare remote: %v: %s", out, err)
-	}
-	runGit(t, repoDir, "remote", "add", "origin", remoteDir)
-	runGit(t, repoDir, "push", "-u", "origin", "main")
-
 	seedBadgeTestRepo(t, repoDir)
-	runGit(t, repoDir, "remote", "set-url", "origin", "git@github.com:rafaelromao/sandman.git")
-
-	ghShimDir := t.TempDir()
-	writeBadgeGHShim(t, ghShimDir, repoDir)
-	prependPath(t, ghShimDir)
 
 	rec := &cmdBadgeRunner{branch: "sandman/built-with-sandman", prURL: "https://example.test/badge/pull/99"}
 	lister := &cmdBadgeLister{mergedPRs: []batch.MergedSandmanPR{{Number: 1, HeadRefName: "sandman/1-fix", Title: "Fix failing test"}}, hasBadge: false}
@@ -178,9 +139,6 @@ func TestBadge_E2E_ControlFilePresent_ShortCircuitsBadgeHook(t *testing.T) {
 	if err := os.WriteFile(controlPath, nil, 0o644); err != nil {
 		t.Fatalf("seed control file: %v", err)
 	}
-
-	badgeGHShimDir := filepath.Join(repoDir, ".sandman", "bin")
-	writeBadgeGHShimForContainer(t, badgeGHShimDir, repoDir)
 
 	out, err := runRootCommand(t, deps, "run", "--agent", "opencode", "--sandbox", "worktree", "1")
 	t.Logf("sandman run returned err=%v output=%s", err, out)
@@ -234,7 +192,6 @@ func TestDouble(t *testing.T) {
 
 	runGit(t, dir, "add", "-A")
 	runGit(t, dir, "commit", "-m", "feat: seed failing test")
-	runGit(t, dir, "push", "origin", "main")
 }
 
 func writeBadgeGHShim(t *testing.T, dir string, repoDir string) {
@@ -619,15 +576,49 @@ printf 'unexpected gh command: %s\n' "$*" >&2
 exit 1
 `
 
+// fakeBadgeBatchRunner is the batch.Runner used by the badge e2e tests.
+// It skips the real orchestrator and drives the post-batch badge hook
+// directly from a synthetic AgentRunResult so the tests verify the
+// operator-visible badge hook without ever shelling out to opencode.
+// This is the seam that fixes
+// https://github.com/rafaelromao/sandman/issues/1772 — the prior wiring
+// of batch.NewOrchestrator drove the real agent against a synthetic gh
+// shim, which never reached the PR-merge state and caused the batch to
+// abort after 3 retries.
+type fakeBadgeBatchRunner struct {
+	hook batch.BadgeHooker
+}
+
+func (f *fakeBadgeBatchRunner) RunBatch(ctx context.Context, req batch.Request) (*batch.Result, error) {
+	results := make([]batch.AgentRunResult, len(req.Issues))
+	for i, issue := range req.Issues {
+		results[i] = batch.AgentRunResult{
+			IssueNumber: issue,
+			Status:      "success",
+			Branch:      "sandman/1-fix",
+		}
+	}
+	if f.hook != nil {
+		f.hook.MaybeSuggestBadge(ctx, results)
+	}
+	return &batch.Result{Runs: results}, nil
+}
+
 func badgeTestDeps(repoDir string, badgeHook batch.BadgeHooker) Dependencies {
 	cfgStore := &config.FileStore{Path: filepath.Join(repoDir, ".sandman", "config.yaml")}
 	eventLog := &events.JSONLLogger{Path: filepath.Join(repoDir, ".sandman", "events.jsonl")}
 
+	gh := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			1: {Number: 1, State: "open", Title: "Fix failing test"},
+		},
+	}
+
 	return Dependencies{
-		BatchRunner:  batch.NewOrchestrator(&github.CLIClient{}, &prompt.Engine{}, cfgStore, eventLog, batch.WithBadgeHooker(badgeHook)),
+		BatchRunner:  &fakeBadgeBatchRunner{hook: badgeHook},
 		ConfigStore:  cfgStore,
 		EventLog:     eventLog,
-		GitHubClient: &github.CLIClient{},
+		GitHubClient: gh,
 		Renderer:     &prompt.Engine{},
 		IssuePicker:  &SimpleIssuePicker{},
 		IsTTY:        isStdoutTTY,
