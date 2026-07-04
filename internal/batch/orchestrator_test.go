@@ -167,7 +167,7 @@ type fakeGitHubClient struct {
 	issueComments      map[int][]github.IssueComment
 }
 
-func (f *fakeGitHubClient) FetchIssue(number int) (*github.Issue, error) {
+func (f *fakeGitHubClient) FetchIssue(ctx context.Context, number int) (*github.Issue, error) {
 	if f.err != nil {
 		return nil, f.err
 	}
@@ -177,7 +177,7 @@ func (f *fakeGitHubClient) FetchIssue(number int) (*github.Issue, error) {
 	return f.issues[number], nil
 }
 
-func (f *fakeGitHubClient) FetchIssueDependencies(number int) ([]int, error) {
+func (f *fakeGitHubClient) FetchIssueDependencies(ctx context.Context, number int) ([]int, error) {
 	if f.err != nil {
 		return nil, f.err
 	}
@@ -187,11 +187,11 @@ func (f *fakeGitHubClient) FetchIssueDependencies(number int) ([]int, error) {
 	return nil, nil
 }
 
-func (f *fakeGitHubClient) FetchPR(number int) (*github.PR, error) {
+func (f *fakeGitHubClient) FetchPR(ctx context.Context, number int) (*github.PR, error) {
 	return &github.PR{Number: number, State: "open"}, nil
 }
 
-func (f *fakeGitHubClient) SearchIssues(query string) ([]github.Issue, error) {
+func (f *fakeGitHubClient) SearchIssues(ctx context.Context, query string) ([]github.Issue, error) {
 	f.searchCalls = append(f.searchCalls, query)
 	if f.searchIssuesError != nil {
 		return nil, f.searchIssuesError
@@ -202,7 +202,7 @@ func (f *fakeGitHubClient) SearchIssues(query string) ([]github.Issue, error) {
 	return nil, nil
 }
 
-func (f *fakeGitHubClient) FindPRByBranch(branch string) (*github.PR, error) {
+func (f *fakeGitHubClient) FindPRByBranch(ctx context.Context, branch string) (*github.PR, error) {
 	if f.findPRHook != nil {
 		f.findPRHook()
 	}
@@ -226,50 +226,50 @@ func (f *fakeGitHubClient) FindPRByBranch(branch string) (*github.PR, error) {
 	return nil, nil
 }
 
-func (f *fakeGitHubClient) ListOpenPRs() ([]github.PR, error) {
+func (f *fakeGitHubClient) ListOpenPRs(ctx context.Context) ([]github.PR, error) {
 	return nil, nil
 }
 
-func (f *fakeGitHubClient) ListPRComments(number int) ([]github.PRComment, error) {
+func (f *fakeGitHubClient) ListPRComments(ctx context.Context, number int) ([]github.PRComment, error) {
 	return nil, nil
 }
 
-func (f *fakeGitHubClient) ListIssueComments(number int) ([]github.IssueComment, error) {
+func (f *fakeGitHubClient) ListIssueComments(ctx context.Context, number int) ([]github.IssueComment, error) {
 	if f.issueComments == nil {
 		return nil, nil
 	}
 	return f.issueComments[number], nil
 }
 
-func (f *fakeGitHubClient) RepoName() (string, error) {
+func (f *fakeGitHubClient) RepoName(ctx context.Context) (string, error) {
 	return "owner/repo", nil
 }
 
-func (f *fakeGitHubClient) EditComment(commentID, body string) error {
+func (f *fakeGitHubClient) EditComment(ctx context.Context, commentID, body string) error {
 	return nil
 }
 
-func (f *fakeGitHubClient) EditPRBody(prNumber int, body string) error {
+func (f *fakeGitHubClient) EditPRBody(ctx context.Context, prNumber int, body string) error {
 	return nil
 }
 
-func (f *fakeGitHubClient) AddCommentReaction(commentID, content string) (string, error) {
+func (f *fakeGitHubClient) AddCommentReaction(ctx context.Context, commentID, content string) (string, error) {
 	return "", nil
 }
 
-func (f *fakeGitHubClient) AddIssueReaction(issueNumber int, content string) (string, error) {
+func (f *fakeGitHubClient) AddIssueReaction(ctx context.Context, issueNumber int, content string) (string, error) {
 	return "", nil
 }
 
-func (f *fakeGitHubClient) RemoveCommentReaction(commentID, reactionID string) error {
+func (f *fakeGitHubClient) RemoveCommentReaction(ctx context.Context, commentID, reactionID string) error {
 	return nil
 }
 
-func (f *fakeGitHubClient) RemoveIssueReaction(issueNumber int, reactionID string) error {
+func (f *fakeGitHubClient) RemoveIssueReaction(ctx context.Context, issueNumber int, reactionID string) error {
 	return nil
 }
 
-func (f *fakeGitHubClient) CloseIssue(issueNumber int, comment string) error {
+func (f *fakeGitHubClient) CloseIssue(ctx context.Context, issueNumber int, comment string) error {
 	return nil
 }
 
@@ -865,23 +865,23 @@ func TestCheckPRMergedAtHead(t *testing.T) {
 		"explicit": {Number: 4, State: "merged", Merged: false, HeadRefName: "explicit", HeadRefOid: "explicit-sha"},
 	}}
 
-	if merged := checkPRMerged(nil, ""); merged {
+	if merged := checkPRMerged(context.Background(), nil, ""); merged {
 		t.Fatal("expected nil client to report unmerged")
 	}
 
-	if merged, err := checkPRMergedAtHead(client, "open", "open-sha"); err != nil || merged {
+	if merged, err := checkPRMergedAtHead(context.Background(), client, "open", "open-sha"); err != nil || merged {
 		t.Fatalf("expected open PR to be false, got merged=%v err=%v", merged, err)
 	}
-	if merged, err := checkPRMergedAtHead(client, "merged", "merged-sha"); err != nil || !merged {
+	if merged, err := checkPRMergedAtHead(context.Background(), client, "merged", "merged-sha"); err != nil || !merged {
 		t.Fatalf("expected merged PR to be true, got merged=%v err=%v", merged, err)
 	}
-	if merged, err := checkPRMergedAtHead(client, "merged", "stale-sha"); err != nil || merged {
+	if merged, err := checkPRMergedAtHead(context.Background(), client, "merged", "stale-sha"); err != nil || merged {
 		t.Fatalf("expected stale merged PR to be false, got merged=%v err=%v", merged, err)
 	}
-	if merged, err := checkPRMergedAtHead(client, "closed", "closed-sha"); err != nil || merged {
+	if merged, err := checkPRMergedAtHead(context.Background(), client, "closed", "closed-sha"); err != nil || merged {
 		t.Fatalf("expected closed-unmerged PR to be false, got merged=%v err=%v", merged, err)
 	}
-	if merged, err := checkPRMergedAtHead(client, "explicit", "explicit-sha"); err != nil || !merged {
+	if merged, err := checkPRMergedAtHead(context.Background(), client, "explicit", "explicit-sha"); err != nil || !merged {
 		t.Fatalf("expected merged state to be true, got merged=%v err=%v", merged, err)
 	}
 }
@@ -7050,7 +7050,7 @@ func TestResolveSandboxExecutionPolicy_WorktreeModeDoesNotBuildContainerImage(t 
 	factory := &fakeContainerRuntimeFactory{starter: starter}
 	o := &Orchestrator{containerRuntimeFactory: factory}
 
-	policy, err := o.resolveSandboxExecutionPolicy(&config.Config{DefaultAgent: "test-agent", Agent: "test-agent", BuildTools: "generic"}, config.Agent{Command: "true"}, Request{}, "worktree")
+	policy, err := o.resolveSandboxExecutionPolicy(context.Background(), &config.Config{DefaultAgent: "test-agent", Agent: "test-agent", BuildTools: "generic"}, config.Agent{Command: "true"}, Request{}, "worktree")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -7326,7 +7326,7 @@ func TestPrepareContainerConfigMounts_OpencodePresetEndToEnd(t *testing.T) {
 		t.Fatalf("build start options: %v", err)
 	}
 
-	cleanup, err := PrepareContainerConfigMounts(t.TempDir(), "", &startOpts, nil)
+	cleanup, err := PrepareContainerConfigMounts(context.Background(), t.TempDir(), "", &startOpts, func(context.Context) (string, error) { return "", nil })
 	if err != nil {
 		t.Fatalf("prepare container config mounts: %v", err)
 	}

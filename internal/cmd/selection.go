@@ -60,7 +60,7 @@ func runSelectionPhaseWithEvents(ctx context.Context, client github.Client, coun
 	if err := requireReviewDaemon(cfg.EffectiveReviewCommand(), sandmanDir); err != nil {
 		return nil, "", "", err
 	}
-	candidateIssues, err := fetchCandidateIssues(client, candidates)
+	candidateIssues, err := fetchCandidateIssues(ctx, client, candidates)
 	if err != nil {
 		return nil, "", "", err
 	}
@@ -233,7 +233,7 @@ func emitAutoSelectFinished(eventLog events.EventLog, runID, status, reason stri
 	})
 }
 
-func fetchCandidateIssues(client github.Client, candidates []int) ([]github.Issue, error) {
+func fetchCandidateIssues(ctx context.Context, client github.Client, candidates []int) ([]github.Issue, error) {
 	if len(candidates) == 0 {
 		return nil, nil
 	}
@@ -244,7 +244,7 @@ func fetchCandidateIssues(client github.Client, candidates []int) ([]github.Issu
 			continue
 		}
 		seen[n] = struct{}{}
-		issue, err := client.FetchIssue(n)
+		issue, err := client.FetchIssue(ctx, n)
 		if err != nil {
 			return nil, fmt.Errorf("fetch candidate issue #%d: %w", n, err)
 		}

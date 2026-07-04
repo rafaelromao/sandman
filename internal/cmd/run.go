@@ -38,15 +38,15 @@ func newCachedGitHubClient(client github.Client) *cachedGitHubClient {
 	}
 }
 
-func (c *cachedGitHubClient) FetchIssue(number int) (*github.Issue, error) {
+func (c *cachedGitHubClient) FetchIssue(ctx context.Context, number int) (*github.Issue, error) {
 	return getOrFill(&c.mu, c.issues, number, func() (*github.Issue, error) {
-		return c.Client.FetchIssue(number)
+		return c.Client.FetchIssue(ctx, number)
 	})
 }
 
-func (c *cachedGitHubClient) ListIssueComments(number int) ([]github.IssueComment, error) {
+func (c *cachedGitHubClient) ListIssueComments(ctx context.Context, number int) ([]github.IssueComment, error) {
 	return getOrFill(&c.mu, c.comments, number, func() ([]github.IssueComment, error) {
-		comments, err := c.Client.ListIssueComments(number)
+		comments, err := c.Client.ListIssueComments(ctx, number)
 		if err != nil {
 			return nil, err
 		}
@@ -257,7 +257,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 						if hasUnboundedEnd {
 							numbersForFilter = explicitIssueNumbers(selection)
 						}
-						issues, err = filterClosedIssues(numbersForFilter, githubClient.SearchIssues, githubClient.FetchIssue, cmd.ErrOrStderr())
+						issues, err = filterClosedIssues(cmd.Context(), numbersForFilter, githubClient.SearchIssues, githubClient.FetchIssue, cmd.ErrOrStderr())
 						if err != nil {
 							if hasUnboundedEnd && errors.Is(err, errAllExplicitClosed) {
 								issues = nil
@@ -289,7 +289,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 							}
 						}
 					} else if querySupportsLocalFiltering(query) {
-						resolved, err := resolveIssuesLocally(githubClient, orderedIssues, label, query)
+						resolved, err := resolveIssuesLocally(cmd.Context(), githubClient, orderedIssues, label, query)
 						if err != nil {
 							return err
 						}
@@ -519,7 +519,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 			var continuationReq batch.Request
 			var hasContinuationReq bool
 			if continueFlag && (len(continueIssues) > 0 || runID != "") {
-				continuationReq, err = buildContinuationRequest(cmd, deps, cfg, continueIssues, runID)
+				continuationReq, err = buildContinuationRequest(cmd.Context(), cmd, deps, cfg, continueIssues, runID)
 				if err != nil {
 					return err
 				}
@@ -952,11 +952,11 @@ func issueHasLabel(labels []string, target string) bool {
 	return false
 }
 
-func resolveIssuesLocally(client github.Client, numbers []int, label, query string) ([]int, error) {
+func resolveIssuesLocally(ctx context.Context, client github.Client, numbers []int, label, query string) ([]int, error) {
 	issues := make([]int, 0, len(numbers))
 	seen := make(map[int]struct{}, len(numbers))
 	for _, number := range numbers {
-		issue, err := client.FetchIssue(number)
+		issue, err := client.FetchIssue(ctx, number)
 		if err != nil {
 			return nil, fmt.Errorf("fetch issue #%d: %w", number, err)
 		}
@@ -1007,8 +1007,8 @@ var errAllExplicitClosed = errors.New("all explicit issues are closed")
 // unbounded-end range) should pass only the explicit numbers via
 // explicitIssueNumbers so the filter classifies them as a single
 // coherent batch.
-func filterClosedIssues(numbers []int, searchFn func(string) ([]github.Issue, error), fetchFn func(int) (*github.Issue, error), stderr io.Writer) ([]int, error) {
-	openSet, searchHitLimit, searchErr := loadOpenIssueSet(searchFn)
+func filterClosedIssues(ctx context.Context, numbers []int, searchFn func(context.Context, string) ([]github.Issue, error), fetchFn func(context.Context, int) (*github.Issue, error), stderr io.Writer) ([]int, error) {
+	openSet, searchHitLimit, searchErr := loadOpenIssueSet(ctx, searchFn)
 	if searchErr == nil && !searchHitLimit {
 		filtered, allClosed := filterClosedByOpenSet(numbers, openSet, stderr)
 		if allClosed {
@@ -1020,7 +1020,7 @@ func filterClosedIssues(numbers []int, searchFn func(string) ([]github.Issue, er
 	filtered := make([]int, 0, len(numbers))
 	closedCount := 0
 	for _, n := range numbers {
-		issue, err := fetchFn(n)
+		issue, err := fetchFn(ctx, n)
 		if err != nil {
 			fmt.Fprintf(stderr, "Warning: could not fetch issue #%d: %v\n", n, err)
 			continue
@@ -1042,8 +1042,8 @@ func filterClosedIssues(numbers []int, searchFn func(string) ([]github.Issue, er
 // of open issue numbers. When the search hits GitHub's 1000-result
 // limit, the set is unreliable (an open issue past the cutoff would
 // look closed) and the caller should fall back to per-issue fetch.
-func loadOpenIssueSet(searchFn func(string) ([]github.Issue, error)) (map[int]struct{}, bool, error) {
-	results, err := searchFn("is:open")
+func loadOpenIssueSet(ctx context.Context, searchFn func(context.Context, string) ([]github.Issue, error)) (map[int]struct{}, bool, error) {
+	results, err := searchFn(ctx, "is:open")
 	if err != nil {
 		return nil, false, err
 	}
@@ -1083,7 +1083,7 @@ func extractIssueNumbers(ghIssues []github.Issue) []int {
 }
 
 func searchIssues(ctx context.Context, client github.Client, query string) ([]github.Issue, error) {
-	ghIssues, err := client.SearchIssues(query)
+	ghIssues, err := client.SearchIssues(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("search issues: %w", err)
 	}
@@ -1099,7 +1099,7 @@ func resolveIssues(ctx context.Context, client github.Client, query string) ([]i
 }
 
 func pickIssues(ctx context.Context, client github.Client, picker IssuePicker) ([]int, error) {
-	ghIssues, err := client.SearchIssues("is:open")
+	ghIssues, err := client.SearchIssues(ctx, "is:open")
 	if err != nil {
 		return nil, fmt.Errorf("list open issues: %w", err)
 	}
@@ -1157,7 +1157,7 @@ func resolveAutoCandidates(ctx context.Context, client github.Client, args []str
 			if hasUnboundedEnd {
 				numbersForFilter = explicitIssueNumbers(selection)
 			}
-			candidates, err := filterClosedIssues(numbersForFilter, client.SearchIssues, client.FetchIssue, stderr)
+			candidates, err := filterClosedIssues(ctx, numbersForFilter, client.SearchIssues, client.FetchIssue, stderr)
 			if err != nil {
 				if hasUnboundedEnd && errors.Is(err, errAllExplicitClosed) {
 					return nil, nil
@@ -1190,7 +1190,7 @@ func resolveAutoCandidates(ctx context.Context, client github.Client, args []str
 			return candidates, nil
 		}
 		if querySupportsLocalFiltering(query) {
-			resolved, err := resolveIssuesLocally(client, orderedIssues, label, query)
+			resolved, err := resolveIssuesLocally(ctx, client, orderedIssues, label, query)
 			if err != nil {
 				return nil, err
 			}

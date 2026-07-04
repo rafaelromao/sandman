@@ -1,6 +1,7 @@
 package batch
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -47,8 +48,10 @@ func prepareSnapshotParent(runDir string) (string, func(), error) {
 //
 // lookupGHToken is the explicit port used to resolve the host GitHub auth
 // token when hydrating the copied gh hosts.yml; production callers pass a
-// function that shells out to `gh auth token`, tests pass a fake.
-func PrepareContainerConfigMounts(repoPath, runDir string, opts *sandbox.StartOptions, lookupGHToken func() (string, error)) (func(), error) {
+// function that shells out to `gh auth token`, tests pass a fake. Takes
+// a context so the spawned `gh auth token` invocation honours the
+// caller's cancellation (issue #1780).
+func PrepareContainerConfigMounts(ctx context.Context, repoPath, runDir string, opts *sandbox.StartOptions, lookupGHToken func(context.Context) (string, error)) (func(), error) {
 	dirs := append([]string(nil), opts.AgentConfigDirs...)
 	files := append([]string(nil), opts.AgentConfigFiles...)
 	excludes := append([]string(nil), opts.AgentConfigExcludes...)
@@ -113,7 +116,7 @@ func PrepareContainerConfigMounts(repoPath, runDir string, opts *sandbox.StartOp
 		opts.SSH = false
 	}
 
-	if err := hydrateGHConfigMount(mounts, lookupGHToken); err != nil {
+	if err := hydrateGHConfigMount(ctx, mounts, lookupGHToken); err != nil {
 		cleanup()
 		return nil, err
 	}
@@ -203,19 +206,19 @@ func rewriteGitConfigFile(path, absRepo string) error {
 // hydrateGHConfigMount injects an oauth_token into the copied gh hosts.yml
 // when the host uses keyring-backed auth (which leaves oauth_token empty in
 // the on-disk file). Without this, gh inside the container cannot authenticate.
-func hydrateGHConfigMount(mounts []sandbox.ConfigMount, lookupGHToken func() (string, error)) error {
+func hydrateGHConfigMount(ctx context.Context, mounts []sandbox.ConfigMount, lookupGHToken func(context.Context) (string, error)) error {
 	for _, mount := range mounts {
 		if mount.Target != "/.config/gh" {
 			continue
 		}
 		hostsPath := filepath.Join(mount.Source, "hosts.yml")
-		return hydrateGHHostsFile(hostsPath, lookupGHToken)
+		return hydrateGHHostsFile(ctx, hostsPath, lookupGHToken)
 	}
 
 	return nil
 }
 
-func hydrateGHHostsFile(path string, lookupGHToken func() (string, error)) error {
+func hydrateGHHostsFile(ctx context.Context, path string, lookupGHToken func(context.Context) (string, error)) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -243,7 +246,7 @@ func hydrateGHHostsFile(path string, lookupGHToken func() (string, error)) error
 		return nil
 	}
 
-	token, err := lookupGHToken()
+	token, err := lookupGHToken(ctx)
 	if err != nil {
 		var execErr *exec.Error
 		if errors.As(err, &execErr) && execErr.Err == exec.ErrNotFound {
