@@ -3,12 +3,41 @@ package cmd
 import (
 	"errors"
 	"net"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
 )
 
-const reviewDaemonDialTimeout = 50 * time.Millisecond
+// defaultReviewDaemonDialTimeout is the fallback dial timeout used by
+// the review daemon guard when the SANDMAN_REVIEW_DIAL_TIMEOUT env var
+// is unset or cannot be parsed as a time.Duration. It was raised from
+// 50ms to 200ms so the dial survives filesystem contention on a loaded
+// CI runner while still failing fast under normal conditions.
+const defaultReviewDaemonDialTimeout = 200 * time.Millisecond
+
+// reviewDaemonDialTimeout is the timeout used by the review daemon guard
+// when dialing the local control socket. It is computed once at package
+// init from the SANDMAN_REVIEW_DIAL_TIMEOUT environment variable; if
+// the variable is unset or unparseable, the guard falls back to
+// defaultReviewDaemonDialTimeout (200ms). The default was raised from
+// 50ms to 200ms so the dial survives filesystem contention on a loaded
+// CI runner while still failing fast under normal conditions.
+// Tests must exercise resolveReviewDaemonDialTimeout directly to
+// observe env changes; this var is frozen at init time.
+var reviewDaemonDialTimeout = resolveReviewDaemonDialTimeout()
+
+func resolveReviewDaemonDialTimeout() time.Duration {
+	raw := strings.TrimSpace(os.Getenv("SANDMAN_REVIEW_DIAL_TIMEOUT"))
+	if raw == "" {
+		return defaultReviewDaemonDialTimeout
+	}
+	parsed, err := time.ParseDuration(raw)
+	if err != nil {
+		return defaultReviewDaemonDialTimeout
+	}
+	return parsed
+}
 
 // reviewGuardMessage is the user-facing error when the review command
 // requires a running review daemon but no live daemon socket is found.
