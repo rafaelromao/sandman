@@ -13,6 +13,7 @@ var (
 	internalPackagePathRe  = regexp.MustCompile(`internal/(review|cmd|batch|daemon|skill|prompt|runid)/`)
 	internalGoIdentifierRe = regexp.MustCompile(`processPR|MarkSeen|SelfPostStore|ParseTrigger|promotePendingComment|launchReview|RunSession|PrepareReviewRun|runid\.|batch\.Request`)
 	sandmanPathRe          = regexp.MustCompile(`\.sandman/`)
+	issueTrackerJargonRe   = regexp.MustCompile(`issue #\d+|PR #\d+|GitHub issue|triage|kanban|ready-for-agent`)
 )
 
 func readSkillMarkdown(t *testing.T) map[string]string {
@@ -81,5 +82,14 @@ func TestSkills_PreserveUserFacingPaths(t *testing.T) {
 	}
 	if hits == 0 {
 		t.Fatalf("expected at least one .md to reference a .sandman/ path, found none across %d files", len(files))
+	}
+}
+
+func TestSkills_NoIssueTrackerReferences(t *testing.T) {
+	files := readSkillMarkdown(t)
+	for path, text := range files {
+		if loc := issueTrackerJargonRe.FindStringIndex(text); loc != nil {
+			t.Errorf("%s contains forbidden issue tracker jargon %q at offset %d", path, text[loc[0]:loc[1]], loc[0])
+		}
 	}
 }

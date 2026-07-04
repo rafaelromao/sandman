@@ -5,11 +5,11 @@ description: Automates the full issue implementation workflow from branch creati
 
 # implement
 
-End-to-end automation for implementing a GitHub issue in the current repository's codebase.
+End-to-end automation for implementing an open work item in the current repository's codebase.
 
 ## Scope
 
-This skill implements a GitHub issue by modifying the current repository's source code, tests, and configuration files. It does NOT create or modify skill definitions, documentation, or any meta-infrastructure.
+This skill implements an open work item by modifying the current repository's source code, tests, and configuration files. It does NOT create or modify skill definitions, documentation, or any meta-infrastructure.
 
 ## Prerequisites
 
@@ -45,7 +45,7 @@ gh issue view <ID> --json title,number
 
 After setting up the branch, determine whether the issue's work is already complete before running `sandman-plan` or `sandman-tdd`.
 
-A merged PR that closes an issue will, by GitHub rules, automatically close the issue — so there is no need to search for a closing PR separately.
+A merged change request will, by the tracker's merge rules, automatically close its work item — so there is no need to search for a closing change request separately.
 
 1. Run: `gh issue view <ID> --json state`
 2. Run branch freshness check:

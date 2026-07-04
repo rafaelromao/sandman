@@ -140,20 +140,21 @@ gh pr comment <N> --repo <owner/repo> --body "{{REVIEW_COMMAND}}"
 
 After posting, write the current head SHA to `.sandman/.<N>.head_sha` so subsequent passes can detect staleness.
 
-**The trigger command is intentionally NOT recorded in `.sandman/reviews/self-posted.json`** (issue #1702, originally introduced as a no-op by #1700). The trigger is a request for review, not a bot-comment that needs to be filtered. Trigger detection runs the self-post filter BEFORE the trigger regex (issue #1702, reversing the #1682 ordering), so a trigger comment whose body happens to be in the posted-body record would be dropped before its body is parsed for a trigger. Recording the trigger hash would therefore be redundant — only the bot's review-body is recorded (Step 4b), and the posted-body record only ever contains bodies the bot posted. A paired `record_trigger_posted()` is therefore a deliberate no-op — it documents the symmetric counterpart of `record_review_posted()` in Step 4b so future readers see both call sites even though only one writes to the store:
+**The trigger command is intentionally NOT recorded in `.sandman/reviews/self-posted.json`** (the design recorded in the change-request history, originally introduced as a no-op by an earlier change). The trigger is a request for review, not a bot-comment that needs to be filtered. Trigger detection runs the self-post filter BEFORE the trigger regex (the design recorded in the change-request history, reversing the prior ordering), so a trigger comment whose body happens to be in the posted-body record would be dropped before its body is parsed for a trigger. Recording the trigger hash would therefore be redundant — only the bot's review-body is recorded (Step 4b), and the posted-body record only ever contains bodies the bot posted. A paired `record_trigger_posted()` is therefore a deliberate no-op — it documents the symmetric counterpart of `record_review_posted()` in Step 4b so future readers see both call sites even though only one writes to the store:
 
 ```bash
 record_trigger_posted() {
-  # Deliberate no-op (issue #1702, original no-op introduced by #1700):
+  # Deliberate no-op (per the change-request history, original no-op
+  # introduced by an earlier change):
   # the trigger is a review-request, not a bot-comment to filter. The
   # bot's review-body (Step 4b) is recorded.
   : # no-op
 }
 ```
 
-#### Step 4b: Record the bot's review-body post (issues #1700, #1702)
+#### Step 4b: Record the bot's review-body post (per the change-request history)
 
-The PR Review Agent posts its review-body via `gh pr comment <N> --body "<long markdown review>"`. That post is the comment the self-post filter exists to suppress — the reviewer's `## Previous review progress` section can quote the original `/sandman review` request verbatim (the prompt's omit-when-no-prior-reviews rule in ADR-0028 sometimes fails to constrain the model, as on PR #1671) and the substring would otherwise re-match the trigger regex on the next tick. Recording the review body, combined with the new IsSelfPosted-first ordering in the daemon's per-PR processing (issue #1702), breaks this self-loop. Immediately after `gh pr comment` returns success on the review-body post, hash the body and append the hash to `.sandman/reviews/self-posted.json`. The hash normalization matches the daemon's posted-body record normalization — lower-case + trim trailing whitespace + `sha256sum`:
+The PR Review Agent posts its review-body via `gh pr comment <N> --body "<long markdown review>"`. That post is the comment the self-post filter exists to suppress — the reviewer's `## Previous review progress` section can quote the original `/sandman review` request verbatim (the prompt's omit-when-no-prior-reviews rule in ADR-0028 sometimes fails to constrain the model, as on a recent change request) and the substring would otherwise re-match the trigger regex on the next tick. Recording the review body, combined with the new IsSelfPosted-first ordering in the daemon's per-PR processing (per the change-request history), breaks this self-loop. Immediately after `gh pr comment` returns success on the review-body post, hash the body and append the hash to `.sandman/reviews/self-posted.json`. The hash normalization matches the daemon's posted-body record normalization — lower-case + trim trailing whitespace + `sha256sum`:
 
 ```bash
 record_review_posted() {
@@ -176,7 +177,7 @@ record_review_posted() {
 }
 ```
 
-If `jq` is unavailable, fall back to the simpler form below (the daemon tolerates any re-record; the file is a JSON object keyed by composite `pr-<N>-<sha>` per issue #1756):
+If `jq` is unavailable, fall back to the simpler form below (the daemon tolerates any re-record; the file is a JSON object keyed by composite `pr-<N>-<sha>` per the change-request history):
 
 ```bash
 record_review_posted_fallback() {
@@ -190,7 +191,7 @@ record_review_posted_fallback() {
 
 **`body` here is the bot's review markdown, NOT `{{REVIEW_COMMAND}}`.** Pass the full markdown the reviewer agent just posted.
 
-The daemon's posted-body record is populated **only** by this wrapper function — it is the single authoritative record of "bodies the bot posted." The daemon consults the record before applying the trigger regex (issue #1702) so a recorded review-body is dropped before it can match the trigger regex, even if it ever quotes the trigger text. The daemon's pending-comment promotion no longer records observed comments itself (issue #1722): the defensive observation that used to run there poisoned legit `/sandman review` triggers — every re-request shares one body hash, so recording one blinded the daemon to all of them. Self-loop prevention now rests on this recording site plus the review prompt's rule that forbids emitting the literal `{{REVIEW_COMMAND}}` substring in the review body. Run `record_review_posted` on every review-body post so the store stays complete.
+The daemon's posted-body record is populated **only** by this wrapper function — it is the single authoritative record of "bodies the bot posted." The daemon consults the record before applying the trigger regex (per the change-request history) so a recorded review-body is dropped before it can match the trigger regex, even if it ever quotes the trigger text. The daemon's pending-comment promotion no longer records observed comments itself (per the change-request history): the defensive observation that used to run there poisoned legit `/sandman review` triggers — every re-request shares one body hash, so recording one blinded the daemon to all of them. Self-loop prevention now rests on this recording site plus the review prompt's rule that forbids emitting the literal `{{REVIEW_COMMAND}}` substring in the review body. Run `record_review_posted` on every review-body post so the store stays complete.
 
 **Do NOT read the PR diff or write review comments yourself.** The review must come exclusively from the PR Review Agent.
 
