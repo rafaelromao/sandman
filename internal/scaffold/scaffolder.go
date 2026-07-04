@@ -802,6 +802,12 @@ func extractJavaDSLValue(rest string) string {
 		}
 		return rest[1 : 1+close]
 	}
+	// Match `JavaVersion.VERSION_<n>` (e.g. `JavaVersion.VERSION_21`) and
+	// return the trailing integer. The quoted-string branch above handles
+	// `JavaVersion.toVersion("21")`-style expressions.
+	if m := regexp.MustCompile(`JavaVersion\.VERSION_(\d+)`).FindStringSubmatch(rest); len(m) == 2 {
+		return m[1]
+	}
 	fields := strings.Fields(rest)
 	if len(fields) == 0 {
 		return ""
@@ -1455,8 +1461,21 @@ var javaResolver = versionResolver{
 		if major <= 1 {
 			return "", fmt.Errorf("unexpected Java major version %q", version)
 		}
-		major--
-		return fmt.Sprintf("%d", major), nil
+		// Java LTS releases land every 3 majors (8, 11, 17, 21, ...).
+		// Walk back at most 6 majors to find an LTS that the bundled catalog
+		// actually has a pin for; if none found in that window, fall back to
+		// the lowest cataloged major.
+		for offset := 1; offset <= 6; offset++ {
+			candidate := major - offset
+			if candidate < 1 {
+				break
+			}
+			key := fmt.Sprintf("%d", candidate)
+			if _, ok := bundledJavaVersionCatalog[key]; ok {
+				return key, nil
+			}
+		}
+		return "", fmt.Errorf("no Java LTS version found in bundled catalog for latest=%q", version)
 	},
 	passThroughValid: func(selector string) bool {
 		selector = strings.TrimSpace(selector)

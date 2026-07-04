@@ -49,3 +49,7 @@ jobs:
 
       - name: Test
         run: go test -race -v ./...
+
+      - name: Java preset smoke test
+        if: runner.os == 'Linux'
+        run: go test -tags smoke -v -run TestInit_JavaPresetBuildsForEveryBuiltInAgentProvider ./internal/cmd/...

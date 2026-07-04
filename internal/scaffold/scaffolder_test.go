@@ -2208,6 +2208,38 @@ func TestScaffold_HasRubyRepoHint(t *testing.T) {
 	}
 }
 
+func TestJavaResolver_LtsFromLatest(t *testing.T) {
+	tests := []struct {
+		latest string
+		want   string
+	}{
+		{latest: "21.0.2", want: "17"},
+		{latest: "17.0.10", want: "11"},
+		{latest: "11.0.22", want: "8"},
+	}
+	for _, tt := range tests {
+		t.Run("latest="+tt.latest, func(t *testing.T) {
+			got, err := javaResolver.ltsFromLatest(tt.latest)
+			if err != nil {
+				t.Fatalf("javaResolver.ltsFromLatest(%q) returned error: %v", tt.latest, err)
+			}
+			if got != tt.want {
+				t.Errorf("javaResolver.ltsFromLatest(%q) = %q, want %q", tt.latest, got, tt.want)
+			}
+			if _, ok := bundledJavaVersionCatalog[got]; !ok {
+				t.Errorf("ltsFromLatest returned %q, which is not in bundledJavaVersionCatalog", got)
+			}
+		})
+	}
+
+	t.Run("latest=8 has no prior LTS", func(t *testing.T) {
+		_, err := javaResolver.ltsFromLatest("8.0.412")
+		if err == nil {
+			t.Errorf("javaResolver.ltsFromLatest(\"8.0.412\") expected error, got nil")
+		}
+	})
+}
+
 func TestBundledJavaVersionCatalog(t *testing.T) {
 	expectedKeys := []string{"latest", "lts", "21", "21.0", "21.0.2", "17", "17.0", "17.0.10", "11", "11.0", "11.0.22", "8", "8.0", "8.0.412"}
 	for _, key := range expectedKeys {
