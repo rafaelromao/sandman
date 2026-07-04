@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/rafaelromao/sandman/internal/config"
+	"github.com/rafaelromao/sandman/internal/testenv"
 )
 
 const DefaultContainerImage = "alpine"
@@ -955,7 +956,7 @@ func TestResolveConfigMounts_ResolvesFileSymlink(t *testing.T) {
 }
 
 func TestResolveConfigMounts_SkipsSpecialFiles(t *testing.T) {
-	dir := t.TempDir()
+	dir := testenv.MkdirShort(t, "sm-sock-")
 	if err := os.WriteFile(filepath.Join(dir, "valid.txt"), []byte("ok"), 0644); err != nil {
 		t.Fatal(err)
 	}
