@@ -275,14 +275,8 @@ func TestReviewDaemonE2E_FullLoopPastLaunchReview(t *testing.T) {
 	}()
 
 	// Tick 1: launch the review.
-	//
-	// macOS CI under heavy parallel test load occasionally takes longer
-	// than the existing launch-only sibling's 5s budget to reach
-	// RunBatch (the daemon's launched goroutine does several `gh`
-	// subshell invocations before reaching `RunBatch`). We use 60s,
-	// still bounded; locally the test completes in <400ms.
 	trigger <- struct{}{}
-	if !waitForReviewLaunch(t, runner, 60*time.Second) {
+	if !waitForReviewLaunch(t, runner, 10*time.Second) {
 		t.Fatal("expected at least 1 batch run after tick 1, got 0")
 	}
 	if got := runner.Calls(); got != 1 {
