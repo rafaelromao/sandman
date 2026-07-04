@@ -270,3 +270,33 @@ func mustContain(t *testing.T, haystack, needle string) {
 		t.Errorf("CONTEXT.md must contain %q per issue #1552", needle)
 	}
 }
+
+// TestADRSelfPostFilter_DocumentsNewModel pins the positive phrasing of
+// the self-post filter section in ADR-0014 after the new model
+// introduced by issues #1756, #1757, and #1759. The ADR must use the
+// canonical phrases for the run-log grep, the bot's own review run
+// log, the per-PR scoping, and the on-disk composite key. A future
+// drift that loses any of these phrases will fail the build even if
+// no forbidden wording has been added.
+func TestADRSelfPostFilter_DocumentsNewModel(t *testing.T) {
+	root, err := repoRoot()
+	if err != nil {
+		t.Fatalf("locate repo root: %v", err)
+	}
+	adrPath := filepath.Join(root, "docs", "adr", "0014-sandman-review-daemon-and-guard.md")
+	body, err := os.ReadFile(adrPath)
+	if err != nil {
+		t.Fatalf("read ADR-0014: %v", err)
+	}
+	text := string(body)
+	for _, phrase := range []string{
+		"run-log",
+		"bot's own review run log",
+		"per-PR",
+		"pr-<N>-<sha>",
+	} {
+		if !strings.Contains(text, phrase) {
+			t.Errorf("ADR-0014 must contain %q per issues #1756/#1757/#1759", phrase)
+		}
+	}
+}
