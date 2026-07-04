@@ -2192,19 +2192,22 @@ func TestRunBatch_SendsSIGTERMOnCancel(t *testing.T) {
 	proc := makeFakeProcess()
 	sb := &fakeSandbox{process: proc}
 	factory := &fakeSandboxFactory{sandbox: sb}
-	blockRunnable := &blockingRunnable{delayAfterCancel: 100 * time.Millisecond}
+	blockRunnable := &blockingRunnable{delayAfterCancel: 100 * time.Millisecond, running: make(chan struct{})}
 
 	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
 	o.sandboxFactory = factory
 	o.runnableFactory = &blockingRunnableFactory{runnable: blockRunnable}
 
 	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
 	go func() {
-		time.Sleep(50 * time.Millisecond)
-		cancel()
+		defer close(done)
+		_, _ = o.RunBatch(ctx, Request{Issues: []int{42}})
 	}()
 
-	_, _ = o.RunBatch(ctx, Request{Issues: []int{42}})
+	waitForSignal(t, blockRunnable.running, "expected runnable to start before cancel")
+	cancel()
+	waitForSignal(t, done, "expected RunBatch to return after cancel")
 
 	if !proc.sigTermObserved() {
 		t.Error("expected SIGTERM to be sent to process")
