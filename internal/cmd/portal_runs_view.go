@@ -229,7 +229,7 @@ var (
 	// Spelling variants such as trailing periods, double quotes, or
 	// lowercase markers are still rejected so prompt drift surfaces
 	// as "Unclear" instead of being silently coerced.
-	reviewVerdictMarkerLine = regexp.MustCompile(`^\*\*([A-Z_]+)\*\*\"?\s*$`)
+	reviewVerdictMarkerLine = regexp.MustCompile(`^\*\*([A-Z_]+)\*\*"?\s*$`)
 	// reviewLogTimestampPrefix strips the "[<runID>] HH:MM:SS " log
 	// prefix that the agent output stream adds to each line.
 	reviewLogTimestampPrefix = regexp.MustCompile(`^\d{2}:\d{2}:\d{2}\s+`)
