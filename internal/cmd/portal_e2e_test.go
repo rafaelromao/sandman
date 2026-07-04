@@ -24,6 +24,7 @@ import (
 )
 
 func TestPortal_E2E_TwoLiveRuns(t *testing.T) {
+	// CI: STALE — uses buildSandmanBinary + startPortalBinary; no provider auth or runtime required.
 	if os.Getenv("CI") != "" {
 		t.Skip("skip e2e in CI")
 	}
@@ -74,6 +75,7 @@ func TestPortal_E2E_TwoLiveRuns(t *testing.T) {
 }
 
 func TestPortal_E2E_AbortStopsOneIssueAndBatchContinues(t *testing.T) {
+	// CI: STALE — abort path uses worktree sandbox; platform support gate below is the real guard.
 	if os.Getenv("CI") != "" {
 		t.Skip("skip e2e in CI")
 	}
@@ -166,6 +168,7 @@ func TestPortal_E2E_AbortStopsOneIssueAndBatchContinues(t *testing.T) {
 }
 
 func TestPortal_E2E_AbortStopsOneIssueAndBatchContinues_Container(t *testing.T) {
+	// CI: STALE — containerRuntimeAvailable below already self-skips; podman install on Linux CI is redundant.
 	if os.Getenv("CI") != "" {
 		t.Skip("skip e2e in CI")
 	}
@@ -247,6 +250,7 @@ func TestPortal_E2E_AbortStopsOneIssueAndBatchContinues_Container(t *testing.T) 
 }
 
 func TestPortal_E2E_MixedBatchShowsBatchMembershipAndFiltersSiblingLogs(t *testing.T) {
+	// CI: STALE — uses buildSandmanBinary + startPortalBinary; no provider auth or runtime required.
 	if os.Getenv("CI") != "" {
 		t.Skip("skip e2e in CI")
 	}
@@ -313,6 +317,7 @@ func TestPortal_E2E_MixedBatchShowsBatchMembershipAndFiltersSiblingLogs(t *testi
 }
 
 func TestPortal_E2E_AbortReturns404ForUnknownRun(t *testing.T) {
+	// CI: STALE — abort path uses worktree sandbox; platform support gate below is the real guard.
 	if os.Getenv("CI") != "" {
 		t.Skip("skip e2e in CI")
 	}
@@ -367,6 +372,7 @@ func containerRuntimeAvailable(t *testing.T) bool {
 			return true
 		}
 	}
+	// CI: STALE — generic self-skip below already covers macOS CI; the CI-specific message is misleading because the workflow installs podman on Linux.
 	if os.Getenv("CI") != "" {
 		t.Skip("no container runtime available in CI")
 	}
