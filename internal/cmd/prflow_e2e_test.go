@@ -1729,7 +1729,13 @@ func TestE2E_QueuedIssuesPersistAfterBatchCompletes(t *testing.T) {
 			_ = root.ExecuteContext(ctx)
 		}()
 
-		time.Sleep(2 * time.Second)
+		portalReadyDeadline := time.Now().Add(5 * time.Second)
+		for time.Now().Before(portalReadyDeadline) {
+			if conn, ok := pollTCPAddrOnce("127.0.0.1:5000", 100*time.Millisecond); ok {
+				_ = conn.Close()
+				break
+			}
+		}
 		cancel()
 
 		runs, err := (&portalRunsView{}).compute(repoDir, &events.JSONLLogger{Path: filepath.Join(repoDir, ".sandman", "events.jsonl")})
