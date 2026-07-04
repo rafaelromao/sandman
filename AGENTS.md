@@ -102,6 +102,16 @@ When writing or updating tests:
 - Preserve DI seams. Prefer injecting dependencies over hard-coding globals or constructing deep dependencies inline.
 - Keep IPC changes compatible with Unix domain socket assumptions already used in the repo.
 
+## Skill content constraints
+
+Skills under `internal/skill/sandman/` describe how coding agents work with the **user-facing** concepts (`.sandman/` state files, public CLI, review commands, worktrees, ADRs). They must not reference Sandman's **internals** — Go package paths under `internal/`, Go type and function names like `processPR` / `MarkSeen` / `SelfPostStore`, or other implementation details that may shift.
+
+Skills also must not mention the GitHub issue tracker directly (issue numbers, kanban labels, or triage vocabulary). When a skill needs to refer to a project decision, link to the relevant ADR (`docs/adr/`) or `CONTEXT.md` instead; when it needs to refer to the user's work item, describe it behaviorally ("the implementor's open work item") rather than by tracker coordinates.
+
+Concretely: a contributor reviewing a skill should be able to read it without knowing Sandman's package layout or workflow automation. If a paragraph needs re-reading after the user-facing vocab is internalized, it shouldn't name internals.
+
+**Violations** to be caught during `sandman-self-review` and `sandman-pr-review`. The regression net is `internal/skill/sandman/skill_hygiene_test.go`, which scans all skill prose for forbidden internal package paths, forbidden internal Go identifiers, and tracker jargon.
+
 ## Before committing
 
 Run:
