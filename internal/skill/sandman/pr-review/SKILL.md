@@ -164,7 +164,7 @@ record_review_posted() {
   existing='.sandman/reviews/self-posted.json'
   if [ -f "$existing" ]; then cp "$existing" "$tmp"; else echo '{}' > "$tmp"; fi
   # Issue #1756: keys are composite "pr-<N>-<sha>"; the daemon's
-  # SelfPostStore dedup key is (prNumber, sha256(body)), not the
+  # per-PR dedup key is (prNumber, sha256(body)), not the
   # body hash alone. Writing the legacy bare-sha key would be
   # silently archived by the greenfield loader on the next daemon
   # start and re-open the cross-PR poisoning failure the wrapper
