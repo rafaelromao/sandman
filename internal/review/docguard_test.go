@@ -300,3 +300,49 @@ func TestADRSelfPostFilter_DocumentsNewModel(t *testing.T) {
 		}
 	}
 }
+
+// TestADRSelfPostFilter_NoLongerReferencesWrapper pins the negative
+// side: ADR-0014 must not present the old `record_review_posted`
+// wrapper, the old `Step 4b` ownership, or the skill-side ownership
+// claim in canonical-style prose. The wrapper names are allowed only
+// inside the §Ownership note (issue #1757) historical-context
+// paragraph; anywhere else in the file the wrapper references must
+// be absent.
+//
+// The test reads ADR-0014 line by line, classifies each line by the
+// ADR heading structure, and flags any forbidden phrase that lives
+// outside the §Ownership note paragraph.
+func TestADRSelfPostFilter_NoLongerReferencesWrapper(t *testing.T) {
+	root, err := repoRoot()
+	if err != nil {
+		t.Fatalf("locate repo root: %v", err)
+	}
+	adrPath := filepath.Join(root, "docs", "adr", "0014-sandman-review-daemon-and-guard.md")
+	body, err := os.ReadFile(adrPath)
+	if err != nil {
+		t.Fatalf("read ADR-0014: %v", err)
+	}
+	lines := strings.Split(string(body), "\n")
+
+	forbidden := []string{
+		"record_review_posted",
+		"Step 4b",
+	}
+
+	inOwnershipNote := false
+	for i, line := range lines {
+		// A new H2 (`## `) or H3 (`### `) heading closes any
+		// previously-open historical-context paragraph.
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "### ") || strings.HasPrefix(trimmed, "## ") {
+			inOwnershipNote = strings.HasPrefix(trimmed, "### Ownership note (issue #1757)")
+		}
+		if !inOwnershipNote {
+			for _, phrase := range forbidden {
+				if strings.Contains(line, phrase) {
+					t.Errorf("ADR-0014 line %d: forbidden canonical-style wrapper reference %q outside §Ownership note (issue #1757) historical-context paragraph", i+1, phrase)
+				}
+			}
+		}
+	}
+}
