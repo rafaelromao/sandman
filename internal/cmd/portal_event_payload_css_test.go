@@ -176,6 +176,66 @@ func TestPortal_TerminalLogCSS_OnlyOneRule(t *testing.T) {
 	}
 }
 
+// TestPortal_TerminalJSONCSS_HorizontalScrollbar asserts the `.terminal-json`
+// rule in portal.html declares `white-space: pre` (no line wrapping) and
+// `overflow-x: auto` (horizontal scrollbar when content overflows). The
+// rule applies to the Details and Events <pre> elements rendered by
+// buildDetailsContent / buildEventsContent in portal_diff.js so long
+// JSON values (command, path, event payload) stay on one line instead
+// of wrapping across multiple lines (issue #1751).
+//
+// The test also pins source order: the `.terminal-json` rule must appear
+// AFTER `.terminal-text` in portal.html. Both selectors are single
+// classes with equal specificity, so whichever appears last in source
+// order wins. `.terminal-text` sets `white-space: pre-wrap`; a refactor
+// that reorders the rules and lets `.terminal-text` come after
+// `.terminal-json` would silently re-introduce wrapping and break the
+// user-visible contract even though both rules pass their own token
+// checks. Anchoring the source-order invariant here makes the regression
+// visible at the test boundary.
+func TestPortal_TerminalJSONCSS_HorizontalScrollbar(t *testing.T) {
+	html := readPortalHTML(t)
+	body := extractCSSRuleBody(t, html, ".terminal-json")
+
+	for _, required := range []struct {
+		token string
+		why   string
+	}{
+		{"white-space: pre", "no line wrapping — long JSON values stay on one line"},
+		{"overflow-x: auto", "horizontal scrollbar appears only when content overflows"},
+		{"font-family: ui-monospace", "preserves monospace terminal rendering"},
+	} {
+		if !strings.Contains(body, required.token) {
+			t.Errorf(".terminal-json rule missing %q (%s)", required.token, required.why)
+		}
+	}
+
+	textIdx := strings.Index(html, ".terminal-text ")
+	jsonIdx := strings.Index(html, ".terminal-json")
+	if textIdx < 0 {
+		t.Fatalf(".terminal-text selector not found in portal.html")
+	}
+	if jsonIdx < 0 {
+		t.Fatalf(".terminal-json selector not found in portal.html")
+	}
+	if textIdx > jsonIdx {
+		t.Errorf(".terminal-text (idx %d) appears AFTER .terminal-json (idx %d) in portal.html; the terminal-json rule must come after terminal-text so its white-space: pre wins over terminal-text's pre-wrap (equal specificity, last-wins)", textIdx, jsonIdx)
+	}
+}
+
+// TestPortal_TerminalJSONCSS_OnlyOneRule asserts exactly one `.terminal-json`
+// rule lives in portal.html so the scrollbar fix is unambiguous.
+func TestPortal_TerminalJSONCSS_OnlyOneRule(t *testing.T) {
+	html := readPortalHTML(t)
+	count := strings.Count(html, ".terminal-json")
+	if count < 1 {
+		t.Fatalf(".terminal-json selector not found in portal.html")
+	}
+	if count > 1 {
+		t.Errorf(".terminal-json selector appears %d times in portal.html; expected a single rule", count)
+	}
+}
+
 // TestPortal_DrawerShellCSS_IsFlatSurfaceAndKeepsBorderDivider asserts the
 // `.settings-panel` rule (the slide-out settings drawer) declares a flat
 // `--surface` background, no `linear-gradient`, no `box-shadow`, and keeps

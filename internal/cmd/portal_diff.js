@@ -1236,6 +1236,7 @@
     section.classList.add('detail-box', 'tab-pane', 'fill');
     const pre = global.document.createElement('pre');
     pre.classList.add('terminal-text');
+    pre.classList.add('terminal-json');
     const json = eventsJSON(run);
     fillTerminalPre(pre, json, {
       renderTerminalContent: highlightJSON,
@@ -1288,6 +1289,7 @@
     section.classList.add('detail-box', 'tab-pane', 'fill');
     const pre = global.document.createElement('pre');
     pre.classList.add('terminal-text');
+    pre.classList.add('terminal-json');
     const json = detailsJSON(run, helpers);
     fillTerminalPre(pre, json, {
       renderTerminalContent: highlightJSON,
