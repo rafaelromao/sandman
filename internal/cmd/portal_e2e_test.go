@@ -46,9 +46,9 @@ func TestPortal_E2E_TwoLiveRuns(t *testing.T) {
 	t.Logf("instances before creating runs: %d", len(instancesBefore))
 
 	run1Dir := createPromptOnlyRunSocket(t, repoDir, "run-1", 1)
-	time.Sleep(500 * time.Millisecond)
+	waitForRunCount(t, portalURL, 1)
 	run2Dir := createPromptOnlyRunSocket(t, repoDir, "run-2", 2)
-	time.Sleep(500 * time.Millisecond)
+	waitForRunCount(t, portalURL, 2)
 
 	instancesAfter := fetchPortalInstances(t, portalURL)
 	t.Logf("instances after creating runs: %d", len(instancesAfter))
