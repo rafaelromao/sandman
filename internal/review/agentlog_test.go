@@ -155,3 +155,112 @@ func TestExtractBodiesFromLog_MultilineBody(t *testing.T) {
 		t.Errorf("body: got %q, want %q", got[0], want)
 	}
 }
+
+// TestExtractBodiesFromLog_BodyFileAbsolute pins the --body-file
+// variant: the body is read from the file at the given absolute path.
+// This is the most common shape for long review bodies (the shell
+// wrapper writes the body to a file to avoid quoting trouble).
+func TestExtractBodiesFromLog_BodyFileAbsolute(t *testing.T) {
+	dir := t.TempDir()
+	bodyPath := filepath.Join(dir, "body.md")
+	if err := os.WriteFile(bodyPath, []byte("Body from file"), 0644); err != nil {
+		t.Fatalf("write body: %v", err)
+	}
+	logPath := filepath.Join(dir, "run.log")
+	logContent := "[run-1] 12:00:00 $ gh pr comment 42 --body-file " + bodyPath + "\n"
+	if err := os.WriteFile(logPath, []byte(logContent), 0644); err != nil {
+		t.Fatalf("write log: %v", err)
+	}
+
+	got, err := extractBodiesFromLog(logPath)
+	if err != nil {
+		t.Fatalf("extractBodiesFromLog: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("expected 1 body, got %d: %v", len(got), got)
+	}
+	if got[0] != "Body from file" {
+		t.Errorf("body: got %q, want %q", got[0], "Body from file")
+	}
+}
+
+// TestExtractBodiesFromLog_CDAndRepoWrapped pins the wrapper shape:
+// the agent shells out from its worktree, so the log line is
+//
+//	cd <worktree> && gh pr comment <N> --repo <owner/name> --body "..."
+//
+// The helper must strip the `cd` prefix and the `--repo` flag and
+// extract the body.
+func TestExtractBodiesFromLog_CDAndRepoWrapped(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "run.log")
+	logContent := "[run-1] 12:00:00 $ cd /tmp/worktree && gh pr comment 42 --repo owner/repo --body \"wrapped body\"\n"
+	if err := os.WriteFile(logPath, []byte(logContent), 0644); err != nil {
+		t.Fatalf("write log: %v", err)
+	}
+
+	got, err := extractBodiesFromLog(logPath)
+	if err != nil {
+		t.Fatalf("extractBodiesFromLog: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("expected 1 body, got %d: %v", len(got), got)
+	}
+	if got[0] != "wrapped body" {
+		t.Errorf("body: got %q, want %q", got[0], "wrapped body")
+	}
+}
+
+// TestExtractBodiesFromLog_IgnoresBodiesInImplementationRunLog pins
+// the log-type discriminator (issue #1759 B9): the helper reads the
+// sibling run.json and returns an empty list when its Kind is "issue"
+// (an implementation run). A "kind: review" run.json with the same
+// log content returns the bodies — that is the positive twin pin.
+func TestExtractBodiesFromLog_IgnoresBodiesInImplementationRunLog(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "run.log")
+	logContent := "[run-1] 12:00:00 $ gh pr comment 42 --body \"should not be picked up\"\n"
+	if err := os.WriteFile(logPath, []byte(logContent), 0644); err != nil {
+		t.Fatalf("write log: %v", err)
+	}
+	runJSON := `{"Kind": "issue", "RunID": "x"}`
+	if err := os.WriteFile(filepath.Join(dir, "run.json"), []byte(runJSON), 0644); err != nil {
+		t.Fatalf("write run.json: %v", err)
+	}
+
+	got, err := extractBodiesFromLog(logPath)
+	if err != nil {
+		t.Fatalf("extractBodiesFromLog: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("expected empty bodies for kind:issue log, got %v", got)
+	}
+}
+
+// TestExtractBodiesFromLog_ReviewKind_ReturnsBodies is the positive
+// twin of IgnoresBodiesInImplementationRunLog: a log whose sibling
+// run.json declares kind "review" returns the bodies it contains.
+// This pins the discriminator's positive direction.
+func TestExtractBodiesFromLog_ReviewKind_ReturnsBodies(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "run.log")
+	logContent := "[run-1] 12:00:00 $ gh pr comment 42 --body \"review body\"\n"
+	if err := os.WriteFile(logPath, []byte(logContent), 0644); err != nil {
+		t.Fatalf("write log: %v", err)
+	}
+	runJSON := `{"Kind": "review", "RunID": "x"}`
+	if err := os.WriteFile(filepath.Join(dir, "run.json"), []byte(runJSON), 0644); err != nil {
+		t.Fatalf("write run.json: %v", err)
+	}
+
+	got, err := extractBodiesFromLog(logPath)
+	if err != nil {
+		t.Fatalf("extractBodiesFromLog: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("expected 1 body for kind:review log, got %d: %v", len(got), got)
+	}
+	if got[0] != "review body" {
+		t.Errorf("body: got %q, want %q", got[0], "review body")
+	}
+}

@@ -2,8 +2,10 @@ package review
 
 import (
 	"bufio"
+	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 )
@@ -15,7 +17,47 @@ import (
 // the only entity that both sees the run log and can decide which
 // bodies are self-authored, so this is the right ownership boundary
 // (issue #1759).
+//
+// Quote handling:
+//   - `--body '...'` (single quotes): the body is the bytes between
+//     the opening `'` and the next `'`.
+//   - `--body "..."` (double quotes): the body is the bytes between
+//     the opening `"` and the next unescaped `"`.
+//   - `--body-file /absolute/path`: the body is the file content at
+//     that path. Relative paths are joined against the run-log
+//     directory.
+//
+// Wrappers: a single `cd <worktree> && ` prefix and a `--repo
+// <owner/name>` flag on the same `gh pr comment` invocation are
+// tolerated (the parser scans for `gh pr comment` and the `--body`
+// or `--body-file` flag anywhere on the line; the wrapper content
+// between is ignored).
+//
+// Multiline bodies: the log writer prefixes every physical line with
+// `[<runID>] HH:MM:SS ` (or just `HH:MM:SS ` for continuation lines
+// after the `$` shell prompt has dropped). Continuation lines are
+// appended to the current body. A non-continuation line ends the
+// current body (the body is closed and returned).
+//
+// Error semantics: a body whose opening quote is never closed returns
+// a single error of the form `unclosed body at end of log (line <N>)`
+// and a nil slice. Partial bodies are not returned alongside the
+// error. The caller treats an error as "no bodies extracted for this
+// cycle" and retries on the next tick.
+//
+// Missing log file: returns (nil, nil). The daemon may invoke the
+// helper before the agent has written the first log line.
+//
+// Log-type discrimination: the helper reads the sibling `run.json` if
+// present and returns (nil, nil) when its `Kind` is not `"review"`.
+// This is defense-in-depth on top of the caller's
+// `batchindex.KindReview` filter (loadSeenCache / loadPendingReviews),
+// so an implementation-run log (`Kind: "issue"`) never feeds
+// self-post recording even when the caller misclassifies.
 func extractBodiesFromLog(runLogPath string) ([]string, error) {
+	if !isReviewRunLog(runLogPath) {
+		return nil, nil
+	}
 	f, err := os.Open(runLogPath)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -52,9 +94,19 @@ func extractBodiesFromLog(runLogPath string) ([]string, error) {
 			}
 			continue
 		}
-		body, quote, open, err := parseGhPrCommentBody(stripped, lineNo)
+		body, quote, open, bodyFilePath, err := parseGhPrCommentBody(stripped, lineNo)
 		if err != nil {
 			return nil, err
+		}
+		if bodyFilePath != "" {
+			fileBody, err := readBodyFile(bodyFilePath, runLogPath, lineNo)
+			if err != nil {
+				return nil, err
+			}
+			if fileBody != "" {
+				bodies = append(bodies, fileBody)
+			}
+			continue
 		}
 		if open {
 			current = &bodyAccumulator{body: body, quote: quote}
@@ -72,6 +124,42 @@ func extractBodiesFromLog(runLogPath string) ([]string, error) {
 		return nil, fmt.Errorf("unclosed body at end of log (line %d)", lineNo)
 	}
 	return bodies, nil
+}
+
+// readBodyFile reads the body from path. path may be absolute or
+// relative; relative paths are joined against the run-log directory.
+// A missing file returns an explicit error (the caller treats this as
+// "no bodies extracted for this cycle" and retries next tick).
+func readBodyFile(path, runLogPath string, lineNo int) (string, error) {
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(filepath.Dir(runLogPath), path)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("read --body-file %q (line %d): %w", path, lineNo, err)
+	}
+	return string(data), nil
+}
+
+// isReviewRunLog reports whether the run log at runLogPath belongs to
+// a `kind: "review"` batch run. The check is by log type (parent
+// `run.json` Kind), not by log content. A missing or unreadable
+// `run.json` returns true (the caller already filters by
+// `batchindex.KindReview`; this is defense-in-depth).
+func isReviewRunLog(runLogPath string) bool {
+	runDir := strings.TrimSuffix(runLogPath, string(filepath.Separator)+"run.log")
+	runJSON := filepath.Join(runDir, "run.json")
+	data, err := os.ReadFile(runJSON)
+	if err != nil {
+		return true
+	}
+	var manifest struct {
+		Kind string `json:"Kind"`
+	}
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		return true
+	}
+	return manifest.Kind == "" || manifest.Kind == "review"
 }
 
 // bodyAccumulator is the in-progress body of a `gh pr comment --body`
@@ -100,43 +188,85 @@ func stripLogContinuationPrefix(raw string) string {
 // parseGhPrCommentBody scans stripped for a `gh pr comment` invocation
 // and extracts the body. Returns:
 //
-//   - (body, quote, true, nil) when an opening quote is found and the
-//     body is open across lines (the caller must keep accumulating
+//   - (body, quote, true, "", nil) when an opening quote is found and
+//     the body is open across lines (the caller must keep accumulating
 //     continuation lines until a closing quote is observed).
-//   - (body, quote, false, nil) when the body is fully closed on this
-//     line.
-//   - ("", 0, false, nil) when the line contains no `gh pr comment` body.
-//   - ("", 0, false, err) on parse error (unclosed quote with lineNo).
-func parseGhPrCommentBody(stripped string, lineNo int) (string, byte, bool, error) {
+//   - (body, quote, false, "", nil) when the body is fully closed on
+//     this line.
+//   - ("", 0, false, path, nil) when --body-file was specified; path
+//     is the file path. The caller reads the file.
+//   - ("", 0, false, "", nil) when the line contains no `gh pr comment`
+//     body.
+//   - ("", 0, false, "", err) on parse error (unclosed quote with
+//     lineNo).
+func parseGhPrCommentBody(stripped string, lineNo int) (string, byte, bool, string, error) {
 	idx := strings.Index(stripped, "gh pr comment")
 	if idx < 0 {
-		return "", 0, false, nil
+		return "", 0, false, "", nil
 	}
 	// Find --body or --body-file after the gh pr comment invocation.
-	bodyIdx, _, hasBody, hasBodyFile := indexOfBodyFlag(stripped, idx)
+	bodyIdx, bodyFileIdx, hasBody, hasBodyFile := indexOfBodyFlag(stripped, idx)
 	if hasBodyFile {
-		// --body-file is parsed by the caller via a separate helper;
-		// for the first slice we only handle --body. (Slice 2 covers
-		// --body-file.)
-		return "", 0, false, nil
+		rest := stripped[bodyFileIdx+len("--body-file"):]
+		rest = strings.TrimLeft(rest, " \t")
+		if rest == "" {
+			return "", 0, false, "", fmt.Errorf("--body-file path missing on line %d", lineNo)
+		}
+		path, _ := splitFirstToken(rest)
+		return "", 0, false, path, nil
 	}
 	if !hasBody {
-		return "", 0, false, nil
+		return "", 0, false, "", nil
 	}
 	rest := stripped[bodyIdx+len("--body"):]
 	rest = strings.TrimLeft(rest, " \t")
 	if rest == "" {
-		return "", 0, false, fmt.Errorf("unclosed body flag on line %d", lineNo)
+		return "", 0, false, "", fmt.Errorf("unclosed body flag on line %d", lineNo)
 	}
 	switch rest[0] {
 	case '\'':
 		body, open, err := parseSingleQuoted(rest)
-		return body, '\'', open, err
+		return body, '\'', open, "", err
 	case '"':
 		body, open, err := parseDoubleQuoted(rest)
-		return body, '"', open, err
+		return body, '"', open, "", err
 	default:
-		return "", 0, false, fmt.Errorf("unclosed body flag on line %d", lineNo)
+		return "", 0, false, "", fmt.Errorf("unclosed body flag on line %d", lineNo)
+	}
+}
+
+// splitFirstToken returns the first whitespace-delimited token of s
+// and the remainder. A token may be unquoted or wrapped in ' or ";
+// the surrounding quotes are stripped from the token.
+func splitFirstToken(s string) (string, string) {
+	s = strings.TrimLeft(s, " \t")
+	if s == "" {
+		return "", ""
+	}
+	switch s[0] {
+	case '\'':
+		// Find the matching closing single quote.
+		end := strings.IndexByte(s[1:], '\'')
+		if end < 0 {
+			return s[1:], ""
+		}
+		return s[1 : 1+end], strings.TrimLeft(s[1+end+1:], " \t")
+	case '"':
+		// Find the matching closing double quote (no escape handling
+		// for paths; review bodies don't need it here).
+		end := strings.IndexByte(s[1:], '"')
+		if end < 0 {
+			return s[1:], ""
+		}
+		return s[1 : 1+end], strings.TrimLeft(s[1+end+1:], " \t")
+	default:
+		// Unquoted: take until first whitespace.
+		for i := 0; i < len(s); i++ {
+			if s[i] == ' ' || s[i] == '\t' {
+				return s[:i], strings.TrimLeft(s[i:], " \t")
+			}
+		}
+		return s, ""
 	}
 }
 
