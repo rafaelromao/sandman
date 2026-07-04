@@ -7,9 +7,6 @@ import (
 	"testing"
 )
 
-// readPRReviewSkill returns the contents of internal/skill/sandman/pr-review/SKILL.md.
-// The test binary's working directory is the package directory, so we resolve the
-// path relative to that working directory.
 func readPRReviewSkill(t *testing.T) string {
 	t.Helper()
 	wd, err := os.Getwd()
@@ -67,7 +64,6 @@ func TestPRReviewSkill_NoSelfPostWrappers(t *testing.T) {
 		}
 	}
 
-	// Step 4b must no longer exist as a section heading.
 	if strings.Contains(text, "#### Step 4b") {
 		t.Errorf("pr-review SKILL.md must not contain the `#### Step 4b` heading after issue #1757 removal")
 	}
@@ -92,8 +88,6 @@ func TestPRReviewSkill_NoInternalPaths(t *testing.T) {
 func TestPRReviewSkill_PromptRulePreserved(t *testing.T) {
 	prompt := readPRReviewPrompt(t)
 
-	// Exact phrase from the prompt's hard rule (issue #1701). It is now
-	// defence-in-depth rather than load-bearing, but it must remain verbatim.
 	required := []string{
 		"Issue #1701",
 		"do NOT write the literal `/sandman review` substring",
@@ -105,7 +99,6 @@ func TestPRReviewSkill_PromptRulePreserved(t *testing.T) {
 		}
 	}
 
-	// Negative phrases that would re-introduce the bug.
 	buggy := []string{
 		"refer to prior review requests as `Open /sandman review requests`",
 		"write `Open /sandman review requests`",
@@ -120,9 +113,6 @@ func TestPRReviewSkill_PromptRulePreserved(t *testing.T) {
 func TestPRReviewSkill_BehavioralSmoke(t *testing.T) {
 	text := readPRReviewSkill(t)
 
-	// Anchors that must survive the cleanup edit. If any of these disappear
-	// during the Step 4b removal, the resulting skill would no longer instruct
-	// an implementor/agent on the core review loop.
 	anchors := []struct {
 		name    string
 		substr  string
@@ -165,8 +155,6 @@ func TestPRReviewSkill_BehavioralSmoke(t *testing.T) {
 		}
 	}
 
-	// Hard rule 10's review-body prefix guard must remain verbatim. This is
-	// the bullet the issue asks us to preserve unchanged.
 	prefixGuard := "do NOT prefix it with the review command"
 	if !strings.Contains(text, prefixGuard) {
 		t.Errorf("pr-review SKILL.md must retain the prefix-guard bullet verbatim; missing %q", prefixGuard)
@@ -176,16 +164,9 @@ func TestPRReviewSkill_BehavioralSmoke(t *testing.T) {
 func TestPRReviewSkill_ADRNotesDaemonOwnership(t *testing.T) {
 	text := readADR0014(t)
 
-	// After slice 2's edit, the ADR must clearly state that the daemon owns
-	// the SelfPostStore exclusively and that the skill-side wrapper path is
-	// no longer in use. We assert on a phrase that conveys exclusive
-	// ownership of the store by the daemon.
 	required := []string{
-		// The new note states the skill no longer maintains the store.
 		"the skill no longer maintains `.sandman/reviews/self-posted.json`",
-		// The new note states the daemon is the sole authoritative record.
 		"sole authoritative record",
-		// The new note cites issue #1757 as the change.
 		"#1757",
 	}
 	for _, phrase := range required {
@@ -194,9 +175,6 @@ func TestPRReviewSkill_ADRNotesDaemonOwnership(t *testing.T) {
 		}
 	}
 
-	// After the rewrite, the bullets under "Self-posted comment filter" must
-	// no longer describe the pr-review SKILL.md Step 4b wrapper as the
-	// primary record site.
 	if strings.Contains(text, "the `pr-review` SKILL.md Step 4b wrapper hashes the bot's review-body") {
 		t.Errorf("ADR-0014 Record-site (primary) bullet must no longer claim the pr-review SKILL.md Step 4b wrapper is the primary record site (issue #1757)")
 	}
