@@ -1,6 +1,6 @@
 ---
 name: sandman-pr-merge
-description: Merges a fully approved PR only after checks are green and GitHub reports it mergeable. Use when user says sandman pr-merge, wants to merge an approved PR, or needs the final PR merge gate from Sandman's default prompt.
+description: Merges a fully approved change request only after checks are green and the tracker reports it mergeable. Use when user says sandman pr-merge, wants to merge an approved change request, or needs the final change-request merge gate from Sandman's default prompt.
 ---
 
 # PR Merge
@@ -13,13 +13,13 @@ Merge the PR only when all merge gates pass.
 
 - PR fully approved
 - Required checks green
-- GitHub reports PR mergeable
+- The tracker reports the change request mergeable
 
 ## Workflow
 
-1. Confirm PR is fully approved.
+1. Confirm the change request is fully approved.
 2. Confirm required checks are green.
-3. Confirm GitHub reports PR mergeable.
+3. Confirm the tracker reports the change request mergeable.
 4. Merge with squash: `gh pr merge --squash`. Do not pass `--delete-branch`; the local branch must remain in this worktree for downstream sandman tooling (next run, --continue, --override).
 5. Verify the PR actually merged.
 6. After verifying, delete the remote branch from a different worktree — never from this worktree: `git push origin --delete <branch>`.

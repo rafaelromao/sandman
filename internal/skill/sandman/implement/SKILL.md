@@ -1,6 +1,6 @@
 ---
 name: sandman-implement
-description: Automates the full issue implementation workflow from branch creation to PR merge in the current repository's codebase. Use when user says sandman implement, /work_on_issue, wants to implement an issue end-to-end, or mentions automating the issue workflow.
+description: Automates the full work-item implementation workflow from branch creation to change-request merge in the current repository's codebase. Use when user says sandman implement, wants to implement an open work item end-to-end, or mentions automating the implement workflow.
 ---
 
 # implement
@@ -157,5 +157,5 @@ Capture the PR URL and number.
 - [ ] Implementation committed
 - [ ] Self-review performed and fixes committed
 - [ ] Base branch merged into current branch with `sandman-back-merge`
-- [ ] PR created with `Fixes #<issue_number>` (Hard Rule 3 — even with partial implementation)
+- [ ] PR created with the closing-reference body that links back to the implementor's open work item (Hard Rule 3 — even with partial implementation)
 - [ ] Delegate review completed

@@ -144,16 +144,16 @@ func TestSkills_ImplementSkillStillReadable(t *testing.T) {
 	}
 	if descLine == "" {
 		t.Errorf("%s has no non-empty frontmatter description line", target)
+		return
 	}
-	if len(descLine) < len("description: x") {
-		t.Errorf("%s description is suspiciously short: %q", target, descLine)
+	if !strings.Contains(text, "End-to-end automation for implementing") {
+		t.Errorf("%s missing the entry-point signal phrase %q", target, "End-to-end automation for implementing")
 	}
 	if h1Line == "" {
 		t.Errorf("%s has no H1 heading", target)
 		return
 	}
-	lower := strings.ToLower(h1Line)
-	if !strings.Contains(lower, "implement") {
-		t.Errorf("%s H1 %q does not contain entry-point word %q", target, h1Line, "implement")
+	if !strings.HasPrefix(strings.TrimSpace(h1Line), "# implement") {
+		t.Errorf("%s H1 %q does not start with the literal entry-point heading %q", target, h1Line, "# implement")
 	}
 }

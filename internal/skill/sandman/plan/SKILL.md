@@ -1,6 +1,6 @@
 ---
 name: sandman-plan
-description: Create an execution-ready implementation plan from issue context, codebase exploration, and subagent review. Use before sandman-tdd when sandman-implement needs a behavior-first plan.
+description: Create an execution-ready implementation plan from the implementor's open work item, codebase exploration, and subagent review. Use before sandman-tdd when sandman-implement needs a behavior-first plan.
 ---
 
 # Plan
