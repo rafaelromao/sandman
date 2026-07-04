@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -22,68 +23,111 @@ import (
 	"github.com/rafaelromao/sandman/internal/review"
 )
 
-// writeReviewDaemonGHShimFullLoop writes a gh shim for the full-loop test.
-// Like writeReviewDaemonGHShim, it responds to gh api / gh pr * but also
-// emits a pre-baked "bot" comment alongside the trigger on the api
-// repos/issues/comments endpoint. The bot comment's body and creation
-// timestamp are parameters so the test can anchor CreatedAt >= since
-// (the daemon's pending-entry `since` timestamp). The bot comment always
-// appears after the trigger in the api response (the GH API uses
-// sort=created&direction=asc, so the older trigger comes first).
+// ghResponseForFullLoop returns the canned gh CLI response for a given
+// gh subcommand and arg list. The full-loop test never invokes real
+// `gh` — the fake exec runner wires these responses through
+// `exec.CommandContext("echo", ...)` so the daemon's CLI path stays
+// hermetic and macOS CI under heavy parallel load does not flake on
+// shell-fork cold-start latency that `gh` (a large Go binary) incurs
+// when several `go test -race -v ./...` runs share the runner.
 //
-// triggerCreatedAt and botCreatedAt must be formatted RFC3339 strings.
-// botCreatedAt must be strictly later than triggerCreatedAt; the daemon
-// requires post-since comments to satisfy the lazy-verify contract.
-func writeReviewDaemonGHShimFullLoop(t *testing.T, dir, triggerCommentID, triggerBody, triggerCreatedAt, botID, botBody, botCreatedAt string) {
-	t.Helper()
-
-	script := `#!/bin/sh
-set -eu
-shim_dir="` + dir + `"
-trigger_id=` + triggerCommentID + `
-trigger_ts="` + triggerCreatedAt + `"
-bot_id=` + botID + `
-bot_ts="` + botCreatedAt + `"
-case "${1:-}" in
-  repo)
-    echo '{"name":"sandbox","owner":{"login":"example"}}'
-    exit 0 ;;
-  pr)
-    case "${2:-}" in
-      list)
-        echo '[{"number":1,"state":"open","mergedAt":null,"headRefName":"feature-x","headRefOid":"0000000000000000000000000000000000000000"}]' ;;
-      view)
-        echo '{"number":1,"title":"Test PR","body":"A test pull request","state":"open","mergedAt":null,"headRefName":"feature-x","headRefOid":"0000000000000000000000000000000000000000"}' ;;
-      comment)
-        c=$(cat "$shim_dir/gh-comment.count" 2>/dev/null || echo 0)
-        echo $((c+1)) > "$shim_dir/gh-comment.count"
-        while [ $# -gt 0 ]; do case "$1" in --body) shift; printf '%s\n' "${1:-}" > "$shim_dir/gh-comment.body";; esac; shift; done
-        echo "commented" ;;
-    esac
-    exit 0 ;;
-  api)
-    shift
-    path=""
-    for a do [ -z "$path" ] && case "$a" in --*) ;; *) path="$a" ;; esac; done
-    case "$path" in
-      *repos*issues*comments*)
-        cat <<JSON
-[{"id":$trigger_id,"body":"` + triggerBody + `","created_at":"$trigger_ts","user":{"login":"user1"}},{"id":$bot_id,"body":"` + botBody + `","created_at":"$bot_ts","user":{"login":"bot"}}]
-JSON
-        ;;
-      *) echo "[]" ;;
-    esac
-    exit 0 ;;
-  auth) exit 0 ;;
-esac
-echo "unhandled gh: $*" >&2
-exit 1
-`
-
-	binPath := filepath.Join(dir, "gh")
-	if err := os.WriteFile(binPath, []byte(script), 0755); err != nil {
-		t.Fatalf("write gh shim (full loop): %v", err)
+// Each invocation returns synthetic data shaped exactly like real gh
+// JSON so the daemon's parsers (PRComment.payload, RepoName) see the
+// same struct types they would in production.
+func ghResponseForFullLoop(name string, args []string, fixture reviewLoopGHFixture) string {
+	if name != "gh" {
+		return ""
 	}
+	if len(args) == 0 {
+		return ""
+	}
+	switch args[0] {
+	case "repo":
+		// gh repo view --json owner,name
+		return `{"name":"sandbox","owner":{"login":"example"}}`
+	case "pr":
+		if len(args) >= 2 {
+			switch args[1] {
+			case "list":
+				// gh pr list --head <branch> --state all ...
+				// Return a single open PR for our fixture.
+				return fmt.Sprintf(`[{"number":1,"state":"open","mergedAt":null,"headRefName":"%s","headRefOid":"0000000000000000000000000000000000000000"}]`, fixture.featureBranch)
+			case "view":
+				return fmt.Sprintf(`{"number":1,"title":"Test PR","body":"%s","state":"open","mergedAt":null,"headRefName":"%s","headRefOid":"0000000000000000000000000000000000000000","closingIssuesReferences":[]}`, fixture.prBody, fixture.featureBranch)
+			}
+		}
+	case "api":
+		// args[0] is the "api" gh subcommand; the path is args[1].
+		path := ""
+		for i := 1; i < len(args); i++ {
+			a := args[i]
+			if !strings.HasPrefix(a, "--") && !strings.HasPrefix(a, "-") {
+				path = a
+				break
+			}
+		}
+		if strings.Contains(path, "issues/") && strings.Contains(path, "/comments") {
+			// Return the trigger + bot bodies in chronological order.
+			return fmt.Sprintf(`[{"id":%s,"body":"%s","created_at":"%s","user":{"login":"user1"}},{"id":%s,"body":"%s","created_at":"%s","user":{"login":"bot"}}]`,
+				fixture.triggerID, fixture.triggerBody, fixture.triggerCreatedAt,
+				fixture.botID, fixture.botBody, fixture.botCreatedAt)
+		}
+		if strings.Contains(path, "/reactions") {
+			// Reaction POST returns the new reaction id; DELETE returns nothing.
+			if len(args) >= 2 && args[1] == "DELETE" {
+				return ""
+			}
+			// POST /reactions — return a numeric reaction id.
+			return `1`
+		}
+		// Default: empty list.
+		return `[]`
+	}
+	return ""
+}
+
+// reviewLoopGHFixture is the canned gh data for the full-loop test.
+type reviewLoopGHFixture struct {
+	prBody           string
+	featureBranch    string
+	triggerID        string
+	triggerBody      string
+	triggerCreatedAt string
+	botID            string
+	botBody          string
+	botCreatedAt     string
+}
+
+// reviewLoopFakeRunner is the fake exec runner for the full-loop test.
+// It dispatches on the gh subcommand and returns canned JSON that the
+// daemon's *github.CLIClient parses as if it came from real gh.
+type reviewLoopFakeRunner struct {
+	mu      sync.Mutex
+	calls   int
+	fixture reviewLoopGHFixture
+}
+
+func (f *reviewLoopFakeRunner) Run(ctx context.Context, name string, arg ...string) *exec.Cmd {
+	f.mu.Lock()
+	f.calls++
+	argsCopy := append([]string(nil), arg...)
+	fixture := f.fixture
+	f.mu.Unlock()
+
+	out := ghResponseForFullLoop(name, argsCopy, fixture)
+	// echo prints its arguments separated by spaces and terminated
+	// with a newline. This is the exact binary shape the daemon's
+	// runCmd + CombinedOutput expects.
+	if out == "" {
+		return exec.CommandContext(ctx, "true")
+	}
+	return exec.CommandContext(ctx, "echo", out)
+}
+
+func (f *reviewLoopFakeRunner) Calls() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.calls
 }
 
 // reviewE2EWriteRunLogRunner is the fake batch runner for the full-loop
@@ -171,15 +215,22 @@ func TestReviewDaemonE2E_FullLoopPastLaunchReview(t *testing.T) {
 	triggerBody := "/sandman review check tests"
 	botBody := "## Summary LGTM no blockers — bot reviewer"
 
-	shimDir := t.TempDir()
-	writeReviewDaemonGHShimFullLoop(t, shimDir, triggerCommentID, triggerBody, triggerCreatedAt, botCommentID, botBody, botCreatedAt)
-
-	t.Setenv("PATH", shimDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("GH_TOKEN", "fake")
 	t.Setenv("GITHUB_TOKEN", "fake")
 	t.Setenv("SANDMAN_TEST_MODEL_OPENCODE", "opencode-go/deepseek-v4-flash")
 
-	ghClient := &github.CLIClient{}
+	ghFixture := reviewLoopGHFixture{
+		prBody:           "A test pull request",
+		featureBranch:    "feature-x",
+		triggerID:        triggerCommentID,
+		triggerBody:      triggerBody,
+		triggerCreatedAt: triggerCreatedAt,
+		botID:            botCommentID,
+		botBody:          botBody,
+		botCreatedAt:     botCreatedAt,
+	}
+	ghRunner := &reviewLoopFakeRunner{fixture: ghFixture}
+	ghClient := github.NewCLIClient(github.WithRunner(ghRunner))
 	runner := &reviewE2EWriteRunLogRunner{botBody: botBody}
 	cfg := &config.Config{
 		DefaultModel:       "opencode-go/deepseek-v4-flash",
