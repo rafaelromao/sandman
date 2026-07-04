@@ -468,10 +468,10 @@ func TestWorktreeSandbox_ExecInteractive_RunsCommand(t *testing.T) {
 	}
 }
 
-// TestWorktreeSandbox_ExecInteractive_IsProcessGroupLeader proves that
+// TestWorktreeSandbox_ExecInteractive_IsProcessGroupLeader asserts that
 // ExecInteractive spawns its command as a process-group leader (PGID == PID),
 // so waitCmd's negative-PID SIGKILL on context cancel targets only the
-// agent's group instead of the daemon's inherited group. Regression for #1782.
+// agent's group. Regression for #1782.
 func TestWorktreeSandbox_ExecInteractive_IsProcessGroupLeader(t *testing.T) {
 	if err := exec.Command("sh", "-c", "true").Run(); err != nil {
 		t.Skipf("sh not available: %v", err)
@@ -501,7 +501,7 @@ func TestWorktreeSandbox_ExecInteractive_IsProcessGroupLeader(t *testing.T) {
 		errCh <- s.ExecInteractive(ctx, command)
 	}()
 
-	waitForFileTB(t, pidFile, 2*time.Second)
+	waitForChildReadyFileTB(t, pidFile, 2*time.Second)
 	pidBytes, err := os.ReadFile(pidFile)
 	if err != nil {
 		t.Fatalf("read pid file: %v", err)
@@ -527,7 +527,7 @@ func TestWorktreeSandbox_ExecInteractive_IsProcessGroupLeader(t *testing.T) {
 	}
 }
 
-func waitForFileTB(t *testing.T, path string, timeout time.Duration) {
+func waitForChildReadyFileTB(t *testing.T, path string, timeout time.Duration) {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
 	for {

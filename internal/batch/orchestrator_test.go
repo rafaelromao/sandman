@@ -8760,17 +8760,14 @@ func TestOrchestrator_AbortIssue_ActiveRunContainer_ReachesAbortedTerminal(t *te
 }
 
 // TestOrchestrator_AbortIssue_ActiveRunWorktree_KillsSleepChild is the
-// worktree analogue of the ContainerSandbox abort test above. It wires a
-// REAL *sandbox.WorktreeSandbox into runSingle so the production waitCmd
-// path (negative-PGID SIGKILL via the Setpgid: true cmd.SysProcAttr
-// added in #1782) is exercised end-to-end. The fake runnable's Run
-// method calls sb.ExecInteractive(ctx, "sh -c 'echo $$ > pidfile; touch
-// ready; sleep 60'"); the test polls for the pidfile, reads the spawned
-// PID, calls AbortIssue, and asserts (a) the child PID is observed
-// alive before abort and gone (syscall.Kill(pid, 0) == ESRCH) within 2s
-// of abort, (b) the orchestrator goroutine returns within 3s — which
-// only happens if waitCmd killed the sleep process — and (c) a
-// run.aborted event lands with status "aborted". Regression for #1782.
+// worktree analogue of TestOrchestrator_AbortIssue_ActiveRunContainer
+// _ReachesAbortedTerminal. It wires a real *sandbox.WorktreeSandbox into
+// runSingle so the production waitCmd path (negative-PGID SIGKILL via the
+// Setpgid: true cmd.SysProcAttr added in #1782) is exercised end-to-end:
+// the fake runnable spawns a sleep loop through sb.ExecInteractive, the
+// test calls AbortIssue, and asserts the spawned PID is dead within 2s,
+// the orchestrator goroutine returns within 3s, and a run.aborted event
+// lands. Regression for #1782.
 func TestOrchestrator_AbortIssue_ActiveRunWorktree_KillsSleepChild(t *testing.T) {
 	if err := exec.Command("sleep", "0").Run(); err != nil {
 		t.Skipf("sleep command not available: %v", err)
@@ -8813,7 +8810,7 @@ func TestOrchestrator_AbortIssue_ActiveRunWorktree_KillsSleepChild(t *testing.T)
 	if err != nil {
 		t.Fatalf("abs pidfile: %v", err)
 	}
-	waitForFileTB(t, absPidFile, 5*time.Second)
+	waitForChildReadyFileTB(t, absPidFile, 5*time.Second)
 
 	pidBytes, err := os.ReadFile(pidFile)
 	if err != nil {
@@ -8869,9 +8866,9 @@ func TestOrchestrator_AbortIssue_ActiveRunWorktree_KillsSleepChild(t *testing.T)
 // TestOrchestrator_AbortIssue_ActiveRunWorktree_KillsSleepChild. The
 // runnable it produces calls sb.ExecInteractive(ctx, "sh -c 'echo $$ >
 // pidfile; touch ready; sleep 60'") and lets the production waitCmd
-// path (ctx-cancel → negative-PGID SIGKILL) do the killing. The
-// pidfile lets the test observe that the child was actually forked
-// before asserting it is gone after abort.
+// path (ctx-cancel → negative-PGID SIGKILL) do the killing. The pidfile
+// lets the test observe the child was forked before asserting it is
+// gone after abort.
 type worktreeSleepRunnableFactory struct {
 	pidFile string
 }
@@ -8885,11 +8882,10 @@ type worktreeSleepRunnable struct {
 	sb      sandbox.Sandbox
 }
 
-// waitForFileTB polls for a file to exist; fails the test on timeout.
-// Used by TestOrchestrator_AbortIssue_ActiveRunWorktree_KillsSleepChild to
-// gate on the spawned sh -c having actually written its PID file before
-// we call AbortIssue.
-func waitForFileTB(t *testing.T, path string, timeout time.Duration) {
+// waitForChildReadyFileTB polls for a file to exist; fails the test on
+// timeout. Used to gate on a spawned child having written its PID/ready
+// marker before the test calls AbortIssue.
+func waitForChildReadyFileTB(t *testing.T, path string, timeout time.Duration) {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
 	for {
