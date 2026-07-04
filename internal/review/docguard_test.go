@@ -419,3 +419,37 @@ func TestADR_CrossReferencesConsistent(t *testing.T) {
 		}
 	}
 }
+
+// TestCONTEXT_GlossaryHasNewTerms asserts that CONTEXT.md carries
+// glossary entries (or pointers) for `Review run log` and
+// `SelfPostStore` that reflect the new self-post filter contract
+// introduced by issues #1756, #1757, and #1759. The `Review run
+// log` entry may be a pointer to the existing `Saved Run Log`
+// entry (which already pins the on-disk path); the `SelfPostStore`
+// entry may be a pointer to the `Review daemon state` paragraph,
+// but the paragraph itself must reflect the new contract — it must
+// NOT describe the old `pr-review SKILL.md Step 4 wrapper` claim.
+func TestCONTEXT_GlossaryHasNewTerms(t *testing.T) {
+	root, err := repoRoot()
+	if err != nil {
+		t.Fatalf("locate repo root: %v", err)
+	}
+	contextPath := filepath.Join(root, "CONTEXT.md")
+	body, err := os.ReadFile(contextPath)
+	if err != nil {
+		t.Fatalf("read CONTEXT.md: %v", err)
+	}
+	text := string(body)
+
+	mustContain(t, text, "**Review run log**:")
+	mustContain(t, text, "**SelfPostStore**:")
+
+	// Positive phrasing on the new SelfPostStore contract.
+	mustContain(t, text, "(prNumber, sha256(body))")
+
+	// Negative phrasing: the stale claim that the skill-side
+	// wrapper records the hash at posting time must not appear.
+	if strings.Contains(text, "SKILL.md Step 4 wrapper records the hash at posting time") {
+		t.Errorf("CONTEXT.md must not describe the legacy pr-review SKILL.md Step 4 wrapper claim (issues #1757, #1759)")
+	}
+}
