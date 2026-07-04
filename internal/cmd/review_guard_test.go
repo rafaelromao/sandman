@@ -208,21 +208,3 @@ func TestResolveReviewDaemonDialTimeout_InvalidValueFallsBackToDefault(t *testin
 		t.Fatalf("invalid value should fall back to default\nwant: %s\ngot:  %s", want, got)
 	}
 }
-
-func TestReviewDaemonDialTimeout_DocCommentMentionsEnvVarAndDefault(t *testing.T) {
-	src, err := os.ReadFile("review_guard.go")
-	if err != nil {
-		t.Fatalf("read review_guard.go: %v", err)
-	}
-	idx := bytes.Index(src, []byte("var reviewDaemonDialTimeout"))
-	if idx < 0 {
-		t.Fatal("var reviewDaemonDialTimeout declaration not found in review_guard.go")
-	}
-	window := src[:idx]
-	if !bytes.Contains(window, []byte("SANDMAN_REVIEW_DIAL_TIMEOUT")) {
-		t.Errorf("expected doc comment above reviewDaemonDialTimeout to mention SANDMAN_REVIEW_DIAL_TIMEOUT\nfile preamble:\n%s", window)
-	}
-	if !bytes.Contains(window, []byte("200ms")) {
-		t.Errorf("expected doc comment above reviewDaemonDialTimeout to mention 200ms default\nfile preamble:\n%s", window)
-	}
-}

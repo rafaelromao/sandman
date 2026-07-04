@@ -9,6 +9,11 @@ import (
 	"time"
 )
 
+// defaultReviewDaemonDialTimeout is the fallback dial timeout used by
+// the review daemon guard when the SANDMAN_REVIEW_DIAL_TIMEOUT env var
+// is unset or cannot be parsed as a time.Duration. It was raised from
+// 50ms to 200ms so the dial survives filesystem contention on a loaded
+// CI runner while still failing fast under normal conditions.
 const defaultReviewDaemonDialTimeout = 200 * time.Millisecond
 
 // reviewDaemonDialTimeout is the timeout used by the review daemon guard
