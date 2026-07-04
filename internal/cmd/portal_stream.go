@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -16,6 +17,14 @@ import (
 // the stream (and its goroutine) open forever. The browser's EventSource
 // reconnects transparently if the stream ends.
 var portalStreamReadTimeout = 30 * time.Second
+
+// portalStreamHeartbeat is the cadence at which the SSE bridge emits a
+// `: keepalive` SSE comment when no data has flowed through the bridged
+// Control Socket. SSE comments are ignored by the browser's onmessage
+// handler but keep the TCP connection warm so intermediate proxies and
+// the browser's own idle reaper do not silently close a healthy tail of
+// a quiet agent. Set well below the typical 30s HTTP idle timeout.
+var portalStreamHeartbeat = 15 * time.Second
 
 // servePortalRunStream bridges a live run's Control Socket (run.sock) to an
 // HTTP Server-Sent Events stream. The daemon's Broadcaster
@@ -92,15 +101,54 @@ func servePortalRunStream(w http.ResponseWriter, r *http.Request, repoRoot strin
 	}()
 
 	br := bufio.NewReader(conn)
+	// http.ResponseWriter is not safe for concurrent writes. The heartbeat
+	// goroutine and the main read loop both write to it; serialize them via
+	// this mutex so concurrent Fprintf/Flush calls don't race (caught by
+	// `-race` in CI). The mutex also protects against the http server's
+	// own internal flush during finishRequest racing with our flush.
+	var writeMu sync.Mutex
+	heartbeat := time.NewTicker(portalStreamHeartbeat)
+	defer heartbeat.Stop()
+	heartbeatStop := make(chan struct{})
+	heartbeatDone := make(chan struct{})
+	defer func() {
+		close(heartbeatStop)
+		<-heartbeatDone
+	}()
+	go func() {
+		defer close(heartbeatDone)
+		for {
+			select {
+			case <-heartbeatStop:
+				return
+			case <-heartbeat.C:
+				writeMu.Lock()
+				if _, werr := fmt.Fprintf(w, ": keepalive\n\n"); werr != nil {
+					writeMu.Unlock()
+					return
+				}
+				_ = rc.Flush()
+				writeMu.Unlock()
+			}
+		}
+	}()
 	for {
+		select {
+		case <-r.Context().Done():
+			return
+		default:
+		}
 		_ = conn.SetReadDeadline(time.Now().Add(portalStreamReadTimeout))
 		line, readErr := br.ReadString('\n')
 		if line != "" && lineBelongsToRun(line, run.RunID) {
 			cleaned := cleanPortalStreamLine(line)
+			writeMu.Lock()
 			if _, werr := fmt.Fprintf(w, "data: %s\n\n", cleaned); werr != nil {
+				writeMu.Unlock()
 				return
 			}
 			_ = rc.Flush()
+			writeMu.Unlock()
 		}
 		if readErr != nil {
 			// A timeout is a transient read deadline expiry, not a reason

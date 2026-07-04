@@ -146,6 +146,97 @@ func TestPortal_RunStream_BridgesControlSocketToSSE(t *testing.T) {
 	}
 }
 
+// TestPortal_RunStream_EmitsHeartbeatOnIdleSocket pins the keepalive
+// behavior: when the bridged Control Socket has no new data, the SSE
+// bridge must emit a `: keepalive` SSE comment at the heartbeat cadence
+// so intermediate proxies and the browser's idle reaper do not close
+// a healthy tail. Without it, a quiet agent (one that pauses between
+// commands) silently disconnects and the Log tab freezes until the user
+// re-selects the row.
+func TestPortal_RunStream_EmitsHeartbeatOnIdleSocket(t *testing.T) {
+	originalHeartbeat := portalStreamHeartbeat
+	portalStreamHeartbeat = 100 * time.Millisecond
+	t.Cleanup(func() { portalStreamHeartbeat = originalHeartbeat })
+
+	repoRoot, err := os.MkdirTemp("/tmp", "p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(repoRoot) })
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	batchDir := filepath.Join(repoRoot, ".sandman", "batches", "PR42")
+	runID := "PR42"
+	runFolder := filepath.Join(batchDir, "runs", runID)
+	sockPath := filepath.Join(runFolder, "run.sock")
+	if err := os.MkdirAll(runFolder, 0755); err != nil {
+		t.Fatal(err)
+	}
+	runManifest := batchindex.RunManifest{Issue: 42}
+	runManifestData, _ := json.Marshal(runManifest)
+	if err := os.WriteFile(filepath.Join(runFolder, "run.json"), runManifestData, 0644); err != nil {
+		t.Fatal(err)
+	}
+	idx := &batchindex.Index{Version: batchindex.IndexVersion, Entries: []batchindex.Entry{
+		{ID: runID, Path: batchDir, Kind: "batch", Status: "active", Issues: []int{42}},
+	}}
+	idxPath := filepath.Join(repoRoot, ".sandman", "batches.json")
+	if err := os.MkdirAll(filepath.Dir(idxPath), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := idx.Save(idxPath); err != nil {
+		t.Fatal(err)
+	}
+
+	// Fake daemon writes a single line, then stays connected without
+	// writing more. The bridge should emit the line, then start
+	// emitting heartbeat comments.
+	startFakeRunDaemon(t, sockPath, []string{
+		"[" + runID + "] 12:00:00 starting work\n",
+	}, 2*time.Second)
+
+	startedAt := time.Now().Add(-5 * time.Minute)
+	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
+		{Type: "run.started", Timestamp: startedAt, RunID: runID, Payload: map[string]any{"branch": "sandman/review-PR42", "review": true, "pr_number": 42}},
+	})
+
+	handler := newPortalHandler(repoRoot)
+	server := startPortalHTTPServer(t, handler)
+	defer server.Close()
+
+	runKey := readPortalRuns(t, server.URL)[0].Key
+	getPortalRunsIndex(repoRoot).Invalidate()
+
+	req, _ := http.NewRequest(http.MethodGet, server.URL+"/api/runs/stream?runKey="+url.QueryEscape(runKey), nil)
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("stream request: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+
+	scanner := bufio.NewScanner(resp.Body)
+	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
+	var keepalives int
+	for scanner.Scan() {
+		if strings.HasPrefix(scanner.Text(), ": keepalive") {
+			keepalives++
+			if keepalives >= 3 {
+				return
+			}
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		t.Fatalf("scanner error: %v", err)
+	}
+	t.Fatalf("expected at least 3 heartbeat comments within 5s, got %d (idle bridge silently disconnected)", keepalives)
+}
+
 // TestPortal_RunStream_RejectsNonActiveRun asserts the endpoint refuses to
 // stream a terminal run (no live socket) with 409, and a missing runKey
 // with 400.
