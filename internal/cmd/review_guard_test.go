@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/rafaelromao/sandman/internal/batch"
 	"github.com/rafaelromao/sandman/internal/config"
@@ -169,5 +170,59 @@ func TestRun_AutoGuardFiresWhenReviewCommandContainsSandmanAndNoSocket(t *testin
 	}
 	if spy.called {
 		t.Errorf("expected batch runner NOT to be called for --auto, but it was")
+	}
+}
+
+func TestResolveReviewDaemonDialTimeout_DefaultWhenEnvUnset(t *testing.T) {
+	t.Setenv("SANDMAN_REVIEW_DIAL_TIMEOUT", "")
+	got := resolveReviewDaemonDialTimeout()
+	want := 200 * time.Millisecond
+	if got != want {
+		t.Fatalf("default dial timeout\nwant: %s\ngot:  %s", want, got)
+	}
+}
+
+func TestResolveReviewDaemonDialTimeout_OverrideWhenEnvSet(t *testing.T) {
+	t.Setenv("SANDMAN_REVIEW_DIAL_TIMEOUT", "750ms")
+	got := resolveReviewDaemonDialTimeout()
+	want := 750 * time.Millisecond
+	if got != want {
+		t.Fatalf("env override dial timeout\nwant: %s\ngot:  %s", want, got)
+	}
+}
+
+func TestResolveReviewDaemonDialTimeout_OverrideTrimsWhitespace(t *testing.T) {
+	t.Setenv("SANDMAN_REVIEW_DIAL_TIMEOUT", "  2s\n")
+	got := resolveReviewDaemonDialTimeout()
+	want := 2 * time.Second
+	if got != want {
+		t.Fatalf("trimmed env override dial timeout\nwant: %s\ngot:  %s", want, got)
+	}
+}
+
+func TestResolveReviewDaemonDialTimeout_InvalidValueFallsBackToDefault(t *testing.T) {
+	t.Setenv("SANDMAN_REVIEW_DIAL_TIMEOUT", "not-a-duration")
+	got := resolveReviewDaemonDialTimeout()
+	want := 200 * time.Millisecond
+	if got != want {
+		t.Fatalf("invalid value should fall back to default\nwant: %s\ngot:  %s", want, got)
+	}
+}
+
+func TestReviewDaemonDialTimeout_DocCommentMentionsEnvVarAndDefault(t *testing.T) {
+	src, err := os.ReadFile("review_guard.go")
+	if err != nil {
+		t.Fatalf("read review_guard.go: %v", err)
+	}
+	idx := bytes.Index(src, []byte("var reviewDaemonDialTimeout"))
+	if idx < 0 {
+		t.Fatal("var reviewDaemonDialTimeout declaration not found in review_guard.go")
+	}
+	window := src[:idx]
+	if !bytes.Contains(window, []byte("SANDMAN_REVIEW_DIAL_TIMEOUT")) {
+		t.Errorf("expected doc comment above reviewDaemonDialTimeout to mention SANDMAN_REVIEW_DIAL_TIMEOUT\nfile preamble:\n%s", window)
+	}
+	if !bytes.Contains(window, []byte("200ms")) {
+		t.Errorf("expected doc comment above reviewDaemonDialTimeout to mention 200ms default\nfile preamble:\n%s", window)
 	}
 }
