@@ -246,6 +246,29 @@ func readEmbeddedSkill(t *testing.T, rel string) string {
 	return string(data)
 }
 
+func TestSyncInstallsSandmanIndexSubSkill(t *testing.T) {
+	home := t.TempDir()
+
+	if err := Sync(SyncOptions{HomeDir: home, ReviewCommand: "/review-please"}); err != nil {
+		t.Fatalf("sync skill: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(home, ".agents", "skills", embeddedSkillRoot, "index", "SKILL.md"))
+	if err != nil {
+		t.Fatalf("read sandman-index sub-skill: %v", err)
+	}
+	text := string(data)
+	checks := []string{
+		"name: sandman-index",
+		"disable-model-invocation: true",
+	}
+	for _, want := range checks {
+		if !strings.Contains(text, want) {
+			t.Errorf("expected sandman-index sub-skill to contain %q, got:\n%s", want, text)
+		}
+	}
+}
+
 func TestSandmanTddSkill_PlanReuseAndNoPlanBranches(t *testing.T) {
 	text := readEmbeddedSkill(t, "tdd/SKILL.md")
 
@@ -307,29 +330,5 @@ func TestSandmanPlanSkill_OutputShapeNoNextStep(t *testing.T) {
 	}
 	if !strings.Contains(text, "## Plan output shape") {
 		t.Fatal("expected sandman-plan SKILL.md to contain a 'Plan output shape' section")
-	}
-}
-
-func TestSyncInstallsCodeindexSubSkill(t *testing.T) {
-	home := t.TempDir()
-
-	if err := Sync(SyncOptions{HomeDir: home, ReviewCommand: "/review-please"}); err != nil {
-		t.Fatalf("sync skill: %v", err)
-	}
-
-	data, err := os.ReadFile(filepath.Join(home, ".agents", "skills", embeddedSkillRoot, "codeindex", "SKILL.md"))
-	if err != nil {
-		t.Fatalf("read codeindex sub-skill: %v", err)
-	}
-	text := string(data)
-
-	checks := []string{
-		"name: sandman-codeindex",
-		"disable-model-invocation: true",
-	}
-	for _, want := range checks {
-		if !strings.Contains(text, want) {
-			t.Fatalf("expected codeindex sub-skill to contain %q, got:\n%s", want, text)
-		}
 	}
 }
