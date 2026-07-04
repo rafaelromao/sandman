@@ -60,7 +60,7 @@ func main() {
 		os.Exit(1)
 	}
 	cfgStore := &config.FileStore{Path: ".sandman/config.yaml"}
-	ghClient := &github.CLIClient{}
+	ghClient := github.NewCLIClient()
 	renderer := &prompt.Engine{}
 	eventLog := &events.JSONLLogger{Path: ".sandman/events.jsonl"}
 

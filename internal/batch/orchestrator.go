@@ -132,7 +132,7 @@ func gitTopLevel(repoPath string) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
-func (o *Orchestrator) validateBatchBranches(req Request) error {
+func (o *Orchestrator) validateBatchBranches(ctx context.Context, req Request) error {
 	if !branchValidationEnabled || len(req.Issues) == 0 {
 		return nil
 	}
@@ -150,7 +150,7 @@ func (o *Orchestrator) validateBatchBranches(req Request) error {
 		if req.IssueMode(num) != ModeFresh {
 			continue
 		}
-		issue, err := o.githubClient.FetchIssue(num)
+		issue, err := o.githubClient.FetchIssue(ctx, num)
 		if err != nil {
 			if o.errorLog != nil {
 				fmt.Fprintf(o.errorLog, "error: fetch issue %d for branch validation: %v\n", num, err)
@@ -926,7 +926,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 		if req.IssueMode(num) != ModeOverride {
 			continue
 		}
-		issue, err := o.githubClient.FetchIssue(num)
+		issue, err := o.githubClient.FetchIssue(ctx, num)
 		if err != nil {
 			fmt.Fprintf(o.errorLog, "error: fetch issue %d for force-clean: %v\n", num, err)
 			continue
@@ -937,7 +937,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 		}
 	}
 
-	if err := o.validateBatchBranches(req); err != nil {
+	if err := o.validateBatchBranches(ctx, req); err != nil {
 		return nil, err
 	}
 
@@ -1015,7 +1015,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 		runID := buildRunID(num, req.RunTS, req.RunShortID)
 		if o.eventLog != nil && (len(dependencies[num]) > 0 || (effectiveParallel > 0 && effectiveParallel < len(req.Issues))) {
 			queuedPayload := map[string]any{"blocked_by": dependencies[num]}
-			if issue, err := o.githubClient.FetchIssue(num); err == nil && issue != nil {
+			if issue, err := o.githubClient.FetchIssue(ctx, num); err == nil && issue != nil {
 				queuedPayload["issue_title"] = issue.Title
 			}
 			if issueBatchID != "" {
@@ -1086,7 +1086,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				case blockerStatus.IsAborted():
 					abortedBy = append(abortedBy, blocker)
 				case blockerStatus.IsSuccess():
-					issue, err := o.githubClient.FetchIssue(blocker)
+					issue, err := o.githubClient.FetchIssue(issueCtx, blocker)
 					if err == nil && issue != nil && strings.EqualFold(issue.State, "open") {
 						stillBlockedBy = append(stillBlockedBy, blocker)
 					}
@@ -1952,7 +1952,7 @@ func (s *runSession) runOnce(
 		taskContent, _, _ := ReadTaskContent(taskPath)
 		alreadyResolved := hasExactTaskStatus(taskContent, "## Status: already resolved")
 		if mergeRequired {
-			prMerged := checkPRMerged(o.githubClient, branch)
+			prMerged := checkPRMerged(ctx, o.githubClient, branch)
 			if events.RunStatusFromPayload(result.Status).IsAborted() {
 				continue
 			}
@@ -1969,7 +1969,7 @@ func (s *runSession) runOnce(
 				}
 				result.Status = "success"
 				if alreadyResolved && issue != nil && !github.IsIssueClosed(issue) && o.githubClient != nil {
-					if err := o.githubClient.CloseIssue(issue.Number, "Closed by sandman — issue already completed."); err != nil {
+					if err := o.githubClient.CloseIssue(ctx, issue.Number, "Closed by sandman — issue already completed."); err != nil {
 						fmt.Fprintf(o.errorLog, "error: close issue %d: %v\n", issue.Number, err)
 					}
 				}
@@ -1983,13 +1983,13 @@ func (s *runSession) runOnce(
 			result.Status = "failure"
 		} else {
 			if alreadyResolved && issue != nil && !github.IsIssueClosed(issue) && o.githubClient != nil {
-				if err := o.githubClient.CloseIssue(issue.Number, "Closed by sandman — issue already completed."); err != nil {
+				if err := o.githubClient.CloseIssue(ctx, issue.Number, "Closed by sandman — issue already completed."); err != nil {
 					fmt.Fprintf(o.errorLog, "error: close issue %d: %v\n", issue.Number, err)
 				}
 			}
 			if events.RunStatusFromPayload(result.Status).IsSuccess() || alreadyResolved {
 				if issue != nil && o.githubClient != nil {
-					prMerged := checkPRMerged(o.githubClient, branch)
+					prMerged := checkPRMerged(ctx, o.githubClient, branch)
 					if prMerged || alreadyResolved {
 						if alreadyResolved {
 							if extras, blocked := hasBlockingOpenPR(o, branch); blocked {
@@ -2072,7 +2072,7 @@ func (o *Orchestrator) runSingle(ctx context.Context, parentCtx context.Context,
 // contains the body that previously lived in (*Orchestrator).runSingle.
 func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 	o := s.o
-	issue, err := o.githubClient.FetchIssue(s.issueNumber)
+	issue, err := o.githubClient.FetchIssue(ctx, s.issueNumber)
 	if err != nil {
 		fmt.Fprintf(o.errorLog, "error: fetch issue %d: %v\n", s.issueNumber, err)
 		return AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "failure"}, false
@@ -2250,11 +2250,11 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 			// issue-driven runs (see #860). ModeContinue uses a different
 			// `prepareAttempt` closure (the prompt-only one) that does not
 			// contain this guard, so continuation replays are unaffected.
-			if checkPRMerged(o.githubClient, branch) {
+			if checkPRMerged(ctx, o.githubClient, branch) {
 				return attemptRenderCfg, &AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "success", Branch: branch, RetriesTotal: attempt}
 			}
 			taskPath := filepath.Join(wt.WorkDir(), ".sandman", "task.md")
-			openPR, prLookupErr := findOpenPRByBranch(o.githubClient, branch)
+			openPR, prLookupErr := findOpenPRByBranch(ctx, o.githubClient, branch)
 			// Always pass the task content verbatim (or empty template if
 			// missing). The agent reads its next instruction from the task
 			// document's ## Next Step field directly. The openPR value is only
@@ -2350,7 +2350,7 @@ func (o *Orchestrator) recheckBlockedBy(ctx context.Context, blockers []int) ([]
 			return nil, err
 		}
 
-		issue, err := o.githubClient.FetchIssue(blocker)
+		issue, err := o.githubClient.FetchIssue(ctx, blocker)
 		if err != nil {
 			return nil, fmt.Errorf("fetch blocker issue %d: %w", blocker, err)
 		}

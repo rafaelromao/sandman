@@ -1,6 +1,7 @@
 package github
 
 import (
+	"context"
 	"regexp"
 	"strconv"
 	"strings"
@@ -67,22 +68,25 @@ type IssueComment struct {
 	CreatedAt time.Time
 }
 
-// Client wraps gh CLI for GitHub operations.
+// Client wraps gh CLI for GitHub operations. Every method takes a
+// context.Context so callers can cancel a hung gh invocation; the
+// underlying CLIClient applies a per-call timeout when the caller's
+// context has no deadline. See internal/github/cli_client.go.
 type Client interface {
-	FetchIssue(number int) (*Issue, error)
-	FetchIssueDependencies(number int) ([]int, error)
-	FetchPR(number int) (*PR, error)
-	FindPRByBranch(branch string) (*PR, error)
-	SearchIssues(query string) ([]Issue, error)
-	ListOpenPRs() ([]PR, error)
-	ListPRComments(number int) ([]PRComment, error)
-	ListIssueComments(number int) ([]IssueComment, error)
-	RepoName() (string, error)
-	EditComment(commentID, body string) error
-	EditPRBody(prNumber int, body string) error
-	AddCommentReaction(commentID, content string) (string, error)
-	AddIssueReaction(issueNumber int, content string) (string, error)
-	RemoveCommentReaction(commentID, reactionID string) error
-	RemoveIssueReaction(issueNumber int, reactionID string) error
-	CloseIssue(issueNumber int, comment string) error
+	FetchIssue(ctx context.Context, number int) (*Issue, error)
+	FetchIssueDependencies(ctx context.Context, number int) ([]int, error)
+	FetchPR(ctx context.Context, number int) (*PR, error)
+	FindPRByBranch(ctx context.Context, branch string) (*PR, error)
+	SearchIssues(ctx context.Context, query string) ([]Issue, error)
+	ListOpenPRs(ctx context.Context) ([]PR, error)
+	ListPRComments(ctx context.Context, number int) ([]PRComment, error)
+	ListIssueComments(ctx context.Context, number int) ([]IssueComment, error)
+	RepoName(ctx context.Context) (string, error)
+	EditComment(ctx context.Context, commentID, body string) error
+	EditPRBody(ctx context.Context, prNumber int, body string) error
+	AddCommentReaction(ctx context.Context, commentID, content string) (string, error)
+	AddIssueReaction(ctx context.Context, issueNumber int, content string) (string, error)
+	RemoveCommentReaction(ctx context.Context, commentID, reactionID string) error
+	RemoveIssueReaction(ctx context.Context, issueNumber int, reactionID string) error
+	CloseIssue(ctx context.Context, issueNumber int, comment string) error
 }

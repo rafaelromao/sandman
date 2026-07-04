@@ -218,73 +218,73 @@ type fetchIssueErrorClient struct {
 	issues map[int]*github.Issue
 }
 
-func (c *fetchIssueErrorClient) FetchIssue(number int) (*github.Issue, error) {
+func (c *fetchIssueErrorClient) FetchIssue(ctx context.Context, number int) (*github.Issue, error) {
 	if number == 999 {
 		return nil, errors.New("boom")
 	}
 	return c.issues[number], nil
 }
 
-func (c *fetchIssueErrorClient) FetchIssueDependencies(number int) ([]int, error) {
+func (c *fetchIssueErrorClient) FetchIssueDependencies(ctx context.Context, number int) ([]int, error) {
 	if issue := c.issues[number]; issue != nil {
 		return issue.BlockedBy, nil
 	}
 	return nil, nil
 }
 
-func (c *fetchIssueErrorClient) FetchPR(number int) (*github.PR, error) {
+func (c *fetchIssueErrorClient) FetchPR(ctx context.Context, number int) (*github.PR, error) {
 	return nil, nil
 }
 
-func (c *fetchIssueErrorClient) SearchIssues(query string) ([]github.Issue, error) {
+func (c *fetchIssueErrorClient) SearchIssues(ctx context.Context, query string) ([]github.Issue, error) {
 	return nil, nil
 }
 
-func (c *fetchIssueErrorClient) FindPRByBranch(branch string) (*github.PR, error) {
+func (c *fetchIssueErrorClient) FindPRByBranch(ctx context.Context, branch string) (*github.PR, error) {
 	return nil, nil
 }
 
-func (c *fetchIssueErrorClient) ListOpenPRs() ([]github.PR, error) {
+func (c *fetchIssueErrorClient) ListOpenPRs(ctx context.Context) ([]github.PR, error) {
 	return nil, nil
 }
 
-func (c *fetchIssueErrorClient) ListPRComments(number int) ([]github.PRComment, error) {
+func (c *fetchIssueErrorClient) ListPRComments(ctx context.Context, number int) ([]github.PRComment, error) {
 	return nil, nil
 }
 
-func (c *fetchIssueErrorClient) ListIssueComments(number int) ([]github.IssueComment, error) {
+func (c *fetchIssueErrorClient) ListIssueComments(ctx context.Context, number int) ([]github.IssueComment, error) {
 	return nil, nil
 }
 
-func (c *fetchIssueErrorClient) RepoName() (string, error) {
+func (c *fetchIssueErrorClient) RepoName(ctx context.Context) (string, error) {
 	return "owner/repo", nil
 }
 
-func (c *fetchIssueErrorClient) EditComment(commentID, body string) error {
+func (c *fetchIssueErrorClient) EditComment(ctx context.Context, commentID, body string) error {
 	return nil
 }
 
-func (c *fetchIssueErrorClient) EditPRBody(prNumber int, body string) error {
+func (c *fetchIssueErrorClient) EditPRBody(ctx context.Context, prNumber int, body string) error {
 	return nil
 }
 
-func (c *fetchIssueErrorClient) AddCommentReaction(commentID, content string) (string, error) {
+func (c *fetchIssueErrorClient) AddCommentReaction(ctx context.Context, commentID, content string) (string, error) {
 	return "", nil
 }
 
-func (c *fetchIssueErrorClient) AddIssueReaction(issueNumber int, content string) (string, error) {
+func (c *fetchIssueErrorClient) AddIssueReaction(ctx context.Context, issueNumber int, content string) (string, error) {
 	return "", nil
 }
 
-func (c *fetchIssueErrorClient) RemoveCommentReaction(commentID, reactionID string) error {
+func (c *fetchIssueErrorClient) RemoveCommentReaction(ctx context.Context, commentID, reactionID string) error {
 	return nil
 }
 
-func (c *fetchIssueErrorClient) RemoveIssueReaction(issueNumber int, reactionID string) error {
+func (c *fetchIssueErrorClient) RemoveIssueReaction(ctx context.Context, issueNumber int, reactionID string) error {
 	return nil
 }
 
-func (c *fetchIssueErrorClient) CloseIssue(issueNumber int, comment string) error {
+func (c *fetchIssueErrorClient) CloseIssue(ctx context.Context, issueNumber int, comment string) error {
 	return nil
 }
 

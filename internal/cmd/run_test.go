@@ -77,7 +77,7 @@ func (f *fakeGitHubClient) setIssueState(number int, state string) {
 	f.issues[number] = &updated
 }
 
-func (f *fakeGitHubClient) FetchIssue(number int) (*github.Issue, error) {
+func (f *fakeGitHubClient) FetchIssue(ctx context.Context, number int) (*github.Issue, error) {
 	f.mu.Lock()
 	if f.fetchCount == nil {
 		f.fetchCount = make(map[int]int)
@@ -97,7 +97,11 @@ func (f *fakeGitHubClient) FetchIssue(number int) (*github.Issue, error) {
 		}
 	}
 	if release != nil && count > threshold {
-		<-release
+		select {
+		case <-release:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
 	}
 	f.mu.Lock()
 	issue, ok := f.issues[number]
@@ -108,7 +112,7 @@ func (f *fakeGitHubClient) FetchIssue(number int) (*github.Issue, error) {
 	return &github.Issue{Number: number}, nil
 }
 
-func (f *fakeGitHubClient) FetchIssueDependencies(number int) ([]int, error) {
+func (f *fakeGitHubClient) FetchIssueDependencies(ctx context.Context, number int) ([]int, error) {
 	f.mu.Lock()
 	issue, ok := f.issues[number]
 	f.mu.Unlock()
@@ -118,11 +122,11 @@ func (f *fakeGitHubClient) FetchIssueDependencies(number int) ([]int, error) {
 	return nil, nil
 }
 
-func (f *fakeGitHubClient) FetchPR(number int) (*github.PR, error) {
+func (f *fakeGitHubClient) FetchPR(ctx context.Context, number int) (*github.PR, error) {
 	return &github.PR{Number: number, State: "open"}, nil
 }
 
-func (f *fakeGitHubClient) SearchIssues(query string) ([]github.Issue, error) {
+func (f *fakeGitHubClient) SearchIssues(ctx context.Context, query string) ([]github.Issue, error) {
 	f.mu.Lock()
 	f.searchIssuesQuery = query
 	if f.searchIssuesResult != nil || f.searchIssuesError != nil {
@@ -144,7 +148,7 @@ func (f *fakeGitHubClient) SearchIssues(query string) ([]github.Issue, error) {
 	return results, nil
 }
 
-func (f *fakeGitHubClient) FindPRByBranch(branch string) (*github.PR, error) {
+func (f *fakeGitHubClient) FindPRByBranch(ctx context.Context, branch string) (*github.PR, error) {
 	if f.prs != nil {
 		if pr, ok := f.prs[branch]; ok {
 			return pr, nil
@@ -154,47 +158,47 @@ func (f *fakeGitHubClient) FindPRByBranch(branch string) (*github.PR, error) {
 	return nil, nil
 }
 
-func (f *fakeGitHubClient) ListOpenPRs() ([]github.PR, error) {
+func (f *fakeGitHubClient) ListOpenPRs(ctx context.Context) ([]github.PR, error) {
 	return nil, nil
 }
 
-func (f *fakeGitHubClient) ListPRComments(number int) ([]github.PRComment, error) {
+func (f *fakeGitHubClient) ListPRComments(ctx context.Context, number int) ([]github.PRComment, error) {
 	return nil, nil
 }
 
-func (f *fakeGitHubClient) ListIssueComments(number int) ([]github.IssueComment, error) {
+func (f *fakeGitHubClient) ListIssueComments(ctx context.Context, number int) ([]github.IssueComment, error) {
 	return nil, nil
 }
 
-func (f *fakeGitHubClient) RepoName() (string, error) {
+func (f *fakeGitHubClient) RepoName(ctx context.Context) (string, error) {
 	return "owner/repo", nil
 }
 
-func (f *fakeGitHubClient) EditComment(commentID, body string) error {
+func (f *fakeGitHubClient) EditComment(ctx context.Context, commentID, body string) error {
 	return nil
 }
 
-func (f *fakeGitHubClient) EditPRBody(prNumber int, body string) error {
+func (f *fakeGitHubClient) EditPRBody(ctx context.Context, prNumber int, body string) error {
 	return nil
 }
 
-func (f *fakeGitHubClient) AddCommentReaction(commentID, content string) (string, error) {
+func (f *fakeGitHubClient) AddCommentReaction(ctx context.Context, commentID, content string) (string, error) {
 	return "", nil
 }
 
-func (f *fakeGitHubClient) AddIssueReaction(issueNumber int, content string) (string, error) {
+func (f *fakeGitHubClient) AddIssueReaction(ctx context.Context, issueNumber int, content string) (string, error) {
 	return "", nil
 }
 
-func (f *fakeGitHubClient) RemoveCommentReaction(commentID, reactionID string) error {
+func (f *fakeGitHubClient) RemoveCommentReaction(ctx context.Context, commentID, reactionID string) error {
 	return nil
 }
 
-func (f *fakeGitHubClient) RemoveIssueReaction(issueNumber int, reactionID string) error {
+func (f *fakeGitHubClient) RemoveIssueReaction(ctx context.Context, issueNumber int, reactionID string) error {
 	return nil
 }
 
-func (f *fakeGitHubClient) CloseIssue(issueNumber int, comment string) error {
+func (f *fakeGitHubClient) CloseIssue(ctx context.Context, issueNumber int, comment string) error {
 	return nil
 }
 
@@ -475,18 +479,18 @@ func TestFilterClosedIssues_Helper(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			searchFn := func(query string) ([]github.Issue, error) {
+			searchFn := func(ctx context.Context, query string) ([]github.Issue, error) {
 				results := make([]github.Issue, 0, len(tt.openSet))
 				for n := range tt.openSet {
 					results = append(results, github.Issue{Number: n, State: "open"})
 				}
 				return results, nil
 			}
-			fetchFn := func(n int) (*github.Issue, error) {
+			fetchFn := func(ctx context.Context, n int) (*github.Issue, error) {
 				return &github.Issue{Number: n, State: tt.states[n]}, nil
 			}
 			var stderr bytes.Buffer
-			got, err := filterClosedIssues(tt.numbers, searchFn, fetchFn, &stderr)
+			got, err := filterClosedIssues(context.Background(), tt.numbers, searchFn, fetchFn, &stderr)
 			if tt.wantErr != nil {
 				if !errors.Is(err, tt.wantErr) {
 					t.Fatalf("expected error %v, got %v", tt.wantErr, err)
@@ -510,14 +514,14 @@ func TestFilterClosedIssues_Helper(t *testing.T) {
 }
 
 func TestFilterClosedIssues_FallsBackToFetchOnSearchError(t *testing.T) {
-	searchFn := func(query string) ([]github.Issue, error) {
+	searchFn := func(ctx context.Context, query string) ([]github.Issue, error) {
 		return nil, fmt.Errorf("transient gh error")
 	}
-	fetchFn := func(n int) (*github.Issue, error) {
+	fetchFn := func(ctx context.Context, n int) (*github.Issue, error) {
 		return &github.Issue{Number: n, State: "open"}, nil
 	}
 	var stderr bytes.Buffer
-	got, err := filterClosedIssues([]int{42, 43}, searchFn, fetchFn, &stderr)
+	got, err := filterClosedIssues(context.Background(), []int{42, 43}, searchFn, fetchFn, &stderr)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -527,14 +531,14 @@ func TestFilterClosedIssues_FallsBackToFetchOnSearchError(t *testing.T) {
 }
 
 func TestFilterClosedIssues_FetchErrorIsSkipped(t *testing.T) {
-	searchFn := func(query string) ([]github.Issue, error) {
+	searchFn := func(ctx context.Context, query string) ([]github.Issue, error) {
 		return nil, fmt.Errorf("transient gh error")
 	}
-	fetchFn := func(n int) (*github.Issue, error) {
+	fetchFn := func(ctx context.Context, n int) (*github.Issue, error) {
 		return nil, fmt.Errorf("network error")
 	}
 	var stderr bytes.Buffer
-	got, err := filterClosedIssues([]int{42}, searchFn, fetchFn, &stderr)
+	got, err := filterClosedIssues(context.Background(), []int{42}, searchFn, fetchFn, &stderr)
 	if err != nil {
 		t.Fatalf("expected no error when fetch errors are skipped, got %v", err)
 	}
@@ -743,7 +747,7 @@ func TestCachedGitHubClient_ListIssueComments_CachesResult(t *testing.T) {
 	}
 
 	c := newCachedGitHubClient(delegate)
-	got, err := c.ListIssueComments(42)
+	got, err := c.ListIssueComments(context.Background(), 42)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -754,7 +758,7 @@ func TestCachedGitHubClient_ListIssueComments_CachesResult(t *testing.T) {
 		t.Fatalf("expected delegate to be called once, got %d", count)
 	}
 	// Second call should hit the cache, not the delegate.
-	got, err = c.ListIssueComments(42)
+	got, err = c.ListIssueComments(context.Background(), 42)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -772,7 +776,7 @@ type countingCommentsClient struct {
 	fetch    func()
 }
 
-func (c *countingCommentsClient) ListIssueComments(number int) ([]github.IssueComment, error) {
+func (c *countingCommentsClient) ListIssueComments(ctx context.Context, number int) ([]github.IssueComment, error) {
 	if c.fetch != nil {
 		c.fetch()
 	}
@@ -790,7 +794,7 @@ func TestCachedGitHubClient_DelegatesNonCachedMethods(t *testing.T) {
 
 	c := newCachedGitHubClient(delegate)
 
-	got, err := c.RepoName()
+	got, err := c.RepoName(context.Background())
 	if err != nil {
 		t.Fatalf("RepoName() error: %v", err)
 	}
@@ -798,7 +802,7 @@ func TestCachedGitHubClient_DelegatesNonCachedMethods(t *testing.T) {
 		t.Fatalf("RepoName() = %q, want %q", got, "rafaelromao/sandman")
 	}
 
-	if err := c.EditComment("c1", "body"); err != nil {
+	if err := c.EditComment(context.Background(), "c1", "body"); err != nil {
 		t.Fatalf("EditComment() error: %v", err)
 	}
 	if !editCalled {
@@ -813,8 +817,8 @@ type stubClient struct {
 	onEdit    func()
 }
 
-func (s *stubClient) RepoName() (string, error) { return s.repo, nil }
-func (s *stubClient) EditComment(commentID, body string) error {
+func (s *stubClient) RepoName(ctx context.Context) (string, error) { return s.repo, nil }
+func (s *stubClient) EditComment(ctx context.Context, commentID, body string) error {
 	if s.onEdit != nil {
 		s.onEdit()
 	}

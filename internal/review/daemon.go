@@ -46,15 +46,17 @@ type Trigger <-chan struct{}
 
 // GitHubClient is the subset of github.Client used by the review daemon.
 // It is exposed as a small interface so tests can substitute a fake.
+// Every method takes a context.Context so a hung gh invocation can be
+// cancelled by the daemon's loop or by an operator signal (issue #1780).
 type GitHubClient interface {
-	ListOpenPRs() ([]github.PR, error)
-	ListPRComments(number int) ([]github.PRComment, error)
-	FetchPR(number int) (*github.PR, error)
-	RepoName() (string, error)
-	AddCommentReaction(commentID, content string) (string, error)
-	AddIssueReaction(issueNumber int, content string) (string, error)
-	RemoveCommentReaction(commentID, reactionID string) error
-	RemoveIssueReaction(issueNumber int, reactionID string) error
+	ListOpenPRs(ctx context.Context) ([]github.PR, error)
+	ListPRComments(ctx context.Context, number int) ([]github.PRComment, error)
+	FetchPR(ctx context.Context, number int) (*github.PR, error)
+	RepoName(ctx context.Context) (string, error)
+	AddCommentReaction(ctx context.Context, commentID, content string) (string, error)
+	AddIssueReaction(ctx context.Context, issueNumber int, content string) (string, error)
+	RemoveCommentReaction(ctx context.Context, commentID, reactionID string) error
+	RemoveIssueReaction(ctx context.Context, issueNumber int, reactionID string) error
 }
 
 // BatchRunner is the subset of batch.Runner used by the review daemon.
@@ -731,7 +733,7 @@ func (d *Daemon) tick(ctx context.Context) error {
 		d.logf("promote pending reviews: %v", err)
 	}
 
-	prs, err := d.GitHub.ListOpenPRs()
+	prs, err := d.GitHub.ListOpenPRs(ctx)
 	if err != nil {
 		return fmt.Errorf("list open PRs: %w", err)
 	}
@@ -764,7 +766,7 @@ func (d *Daemon) tick(ctx context.Context) error {
 //   - No code path creates `.sandman/reviews/<PR>/`
 //   - `review-state.json` lives at `<batch>/runs/<run>/review-state.json`
 func (d *Daemon) processPR(ctx context.Context, prNumber int) error {
-	comments, err := d.GitHub.ListPRComments(prNumber)
+	comments, err := d.GitHub.ListPRComments(ctx, prNumber)
 	if err != nil {
 		return fmt.Errorf("list comments: %w", err)
 	}
@@ -886,7 +888,7 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) error {
 		return nil
 	}
 
-	reviewRunFolder, perRowRunID, rs, state, prepErr := d.prepareReviewRun(prNumber, comment.ID)
+	reviewRunFolder, perRowRunID, rs, state, prepErr := d.prepareReviewRun(ctx, prNumber, comment.ID)
 	if prepErr != nil {
 		d.logf("prepare review run for PR #%d comment %s: %v", prNumber, comment.ID, prepErr)
 		d.releasePRSlot(prNumber)
@@ -900,11 +902,11 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) error {
 		return nil
 	}
 
-	commentReactionID, commentErr := d.GitHub.AddCommentReaction(comment.ID, "eyes")
+	commentReactionID, commentErr := d.GitHub.AddCommentReaction(ctx, comment.ID, "eyes")
 	if commentErr != nil {
 		d.logf("add reaction to comment %s: %v", comment.ID, commentErr)
 	}
-	prReactionID, prErr := d.GitHub.AddIssueReaction(prNumber, "eyes")
+	prReactionID, prErr := d.GitHub.AddIssueReaction(ctx, prNumber, "eyes")
 	if prErr != nil {
 		d.logf("add reaction to PR #%d: %v", prNumber, prErr)
 	}
@@ -1007,7 +1009,7 @@ func shouldSkipDedupStatus(status string) bool {
 // alias). This replaces the legacy literal `RunID: "review"` alias —
 // issue #1551 makes the review run a first-class row like every other
 // run kind.
-func (d *Daemon) prepareReviewRun(prNumber int, commentID string) (string, string, *daemon.RunSession, *ReviewStateStore, error) {
+func (d *Daemon) prepareReviewRun(ctx context.Context, prNumber int, commentID string) (string, string, *daemon.RunSession, *ReviewStateStore, error) {
 	ts, shortid, err := runid.NewBatch()
 	if err != nil {
 		return "", "", nil, nil, fmt.Errorf("generate batch ID: %w", err)
@@ -1015,7 +1017,7 @@ func (d *Daemon) prepareReviewRun(prNumber int, commentID string) (string, strin
 	batchDirName := runid.NewBatchID(runid.KindReview, 1, fmt.Sprintf("%d", prNumber), ts, shortid)
 
 	var linkedIssue int
-	if pr, fetchErr := d.GitHub.FetchPR(prNumber); fetchErr == nil && pr != nil {
+	if pr, fetchErr := d.GitHub.FetchPR(ctx, prNumber); fetchErr == nil && pr != nil {
 		linkedIssue = pr.LinkedIssueNumber()
 	} else if fetchErr != nil {
 		// Non-fatal: a transient GitHub API failure must not block
@@ -1117,12 +1119,12 @@ func (d *Daemon) launchReview(ctx context.Context, prNumber int, focus, commentI
 			_ = rs.Close()
 		}
 		if commentReactionID != "" {
-			if err := d.GitHub.RemoveCommentReaction(commentID, commentReactionID); err != nil {
+			if err := d.GitHub.RemoveCommentReaction(ctx, commentID, commentReactionID); err != nil {
 				d.logf("remove reaction from comment %s: %v", commentID, err)
 			}
 		}
 		if prReactionID != "" {
-			if err := d.GitHub.RemoveIssueReaction(prNumber, prReactionID); err != nil {
+			if err := d.GitHub.RemoveIssueReaction(ctx, prNumber, prReactionID); err != nil {
 				d.logf("remove reaction from PR #%d: %v", prNumber, err)
 			}
 		}
@@ -1134,7 +1136,7 @@ func (d *Daemon) launchReview(ctx context.Context, prNumber int, focus, commentI
 		}
 	}()
 
-	pr, err := d.GitHub.FetchPR(prNumber)
+	pr, err := d.GitHub.FetchPR(ctx, prNumber)
 	if err != nil {
 		return fmt.Errorf("fetch PR: %w", err)
 	}
@@ -1173,7 +1175,7 @@ func (d *Daemon) launchReview(ctx context.Context, prNumber int, focus, commentI
 		return fmt.Errorf("review model is not set; configure review_model or model in sandman config")
 	}
 
-	repoName, err := d.GitHub.RepoName()
+	repoName, err := d.GitHub.RepoName(ctx)
 	if err != nil {
 		return fmt.Errorf("get repo name: %w", err)
 	}
@@ -1254,7 +1256,7 @@ func (d *Daemon) now() time.Time {
 // per-run ReviewStateStore and updating the in-memory pending entry.
 // Issue #1482 slice D.
 func (d *Daemon) promotePendingComment(ctx context.Context, prNumber int, excludeCommentID string, since time.Time, botBodies []string) (string, error) {
-	comments, err := d.GitHub.ListPRComments(prNumber)
+	comments, err := d.GitHub.ListPRComments(ctx, prNumber)
 	if err != nil {
 		return "", fmt.Errorf("list PR comments: %w", err)
 	}

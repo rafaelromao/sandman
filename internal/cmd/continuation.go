@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -15,7 +16,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func buildContinuationRequest(cmd *cobra.Command, deps Dependencies, cfg *config.Config, issues []int, runID string) (batch.Request, error) {
+func buildContinuationRequest(ctx context.Context, cmd *cobra.Command, deps Dependencies, cfg *config.Config, issues []int, runID string) (batch.Request, error) {
 	eventsList, err := deps.EventLog.Read()
 	if err != nil {
 		return batch.Request{}, fmt.Errorf("read event log: %w", err)
@@ -62,7 +63,7 @@ func buildContinuationRequest(cmd *cobra.Command, deps Dependencies, cfg *config
 			if !ok || strings.TrimSpace(baseBranch) == "" {
 				return batch.Request{}, fmt.Errorf("missing base branch in previous run for issue #%d", num)
 			}
-			merged, err := batch.CheckPRMergedAtHead(deps.GitHubClient, branch, "")
+			merged, err := batch.CheckPRMergedAtHead(ctx, deps.GitHubClient, branch, "")
 			if err != nil {
 				return batch.Request{}, fmt.Errorf("check merged status for issue #%d: %w", num, err)
 			}
