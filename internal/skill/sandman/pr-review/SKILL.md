@@ -119,7 +119,7 @@ while true; do
 done
 ```
 
-**Key change vs before**: On CI failure we `continue` the outer loop to wait for the newly-triggered CI run after pushing the fix — NOT `exit 1` which would fall through to posting a review on a broken PR. Also: if `mergeStateStatus` is `DIRTY`/`CONFLICTING` (PR has merge conflicts), CI cannot run at all — we now detect this upfront and call `sandman-back-merge` to resolve the conflict before waiting for CI. This prevents the agent from spinning forever on empty check results or declaring the PR "requires manual resolution."
+On CI failure, `continue` the outer loop to wait for the newly-triggered CI run after pushing the fix — not `exit 1`, which would fall through to posting a review on a broken PR. If `mergeStateStatus` is `DIRTY`/`CONFLICTING` (the PR has merge conflicts), CI cannot run at all: Step 2 detects that upfront and delegates to `sandman-back-merge` to resolve the conflict before waiting for CI. This prevents the agent from spinning forever on empty check results or declaring the PR "requires manual resolution."
 
 #### Step 3: Check if SHA changed (stale request check)
 
@@ -292,4 +292,4 @@ Continue polling when:
 - Review agents may post feedback as: top-level comments, inline diff comments, or formal `COMMENT` reviews. Always check all three sources.
 - When CI is broken and the failure may be base-branch drift, load `sandman-back-merge` first so any fix that landed on the base branch can be merged before retrying.
 - When CI is failing, fix it first — CI must be green before any review feedback can be meaningfully addressed.
-- **DIRTY PR handling is now a hard per-poll guard, not just a Step 2 pre-check.** If `mergeable == CONFLICTING` is observed on ANY poll iteration, Step 5a triggers `sandman-back-merge` automatically. Do not treat a DIRTY PR as a manual-resolution situation, do not classify it as `REVIEW_TIMEOUT`, and do not exit the loop with silent success. The only acceptable outcomes are: (a) back-merge succeeded → push → restart polling; (b) back-merge failed → exit with `REVIEW_CONFLICT_UNRESOLVED`.
+- **DIRTY PR handling is a hard per-poll guard.** If `mergeable == CONFLICTING` is observed on ANY poll iteration, Step 5a triggers `sandman-back-merge` automatically. Do not treat a DIRTY PR as a manual-resolution situation, do not classify it as `REVIEW_TIMEOUT`, and do not exit the loop with silent success. The only acceptable outcomes are: (a) back-merge succeeded → push → restart polling; (b) back-merge failed → exit with `REVIEW_CONFLICT_UNRESOLVED`.
