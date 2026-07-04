@@ -55,6 +55,14 @@ func (l *cmdBadgeLister) HasBadgePR(_ context.Context) (bool, error) {
 	return l.hasBadge, nil
 }
 
+// TestBadge_E2E_HappyPath exercises the post-batch badge hook end-to-end
+// through the production BatchRunner wiring. It currently drives the real
+// opencode agent against a synthetic gh shim, which does not complete in
+// this test environment and causes the batch to abort after 3 retries.
+// Tracked in https://github.com/rafaelromao/sandman/issues/1772 — the fix
+// is to swap the real BatchRunner for a fake (see internal/batch/badge_e2e_test.go
+// for the pattern) so the test verifies the badge hook without invoking
+// the agent.
 func TestBadge_E2E_HappyPath(t *testing.T) {
 	if !testenv.E2EGateAllowed(testenv.E2EScenarioBadge) {
 		t.Skip("set SANDMAN_E2E_GATES=badge (or all) to run badge e2e tests")
@@ -124,6 +132,10 @@ func TestBadge_E2E_HappyPath(t *testing.T) {
 	}
 }
 
+// TestBadge_E2E_ControlFilePresent_ShortCircuitsBadgeHook shares the
+// same end-to-end wiring as TestBadge_E2E_HappyPath and has the same
+// opencode-agent hang. Tracked together in
+// https://github.com/rafaelromao/sandman/issues/1772.
 func TestBadge_E2E_ControlFilePresent_ShortCircuitsBadgeHook(t *testing.T) {
 	if !testenv.E2EGateAllowed(testenv.E2EScenarioBadge) {
 		t.Skip("set SANDMAN_E2E_GATES=badge (or all) to run badge e2e tests")
@@ -152,15 +164,6 @@ func TestBadge_E2E_ControlFilePresent_ShortCircuitsBadgeHook(t *testing.T) {
 	writeBadgeGHShim(t, ghShimDir, repoDir)
 	prependPath(t, ghShimDir)
 
-	sandmanDir := filepath.Join(repoDir, ".sandman")
-	if err := os.MkdirAll(sandmanDir, 0755); err != nil {
-		t.Fatalf("create .sandman dir: %v", err)
-	}
-	controlPath := filepath.Join(sandmanDir, ".built_with_sandman")
-	if err := os.WriteFile(controlPath, nil, 0o644); err != nil {
-		t.Fatalf("seed control file: %v", err)
-	}
-
 	rec := &cmdBadgeRunner{branch: "sandman/built-with-sandman", prURL: "https://example.test/badge/pull/99"}
 	lister := &cmdBadgeLister{mergedPRs: []batch.MergedSandmanPR{{Number: 1, HeadRefName: "sandman/1-fix", Title: "Fix failing test"}}, hasBadge: false}
 	stderr := &bytes.Buffer{}
@@ -169,6 +172,12 @@ func TestBadge_E2E_ControlFilePresent_ShortCircuitsBadgeHook(t *testing.T) {
 	deps := badgeTestDeps(repoDir, badgeHook)
 	runRootCommand(t, deps, "init", "--agent", "opencode")
 	runRootCommand(t, deps, "config", "set", "review_command", "/oc review")
+
+	sandmanDir := filepath.Join(repoDir, ".sandman")
+	controlPath := filepath.Join(sandmanDir, ".built_with_sandman")
+	if err := os.WriteFile(controlPath, nil, 0o644); err != nil {
+		t.Fatalf("seed control file: %v", err)
+	}
 
 	badgeGHShimDir := filepath.Join(repoDir, ".sandman", "bin")
 	writeBadgeGHShimForContainer(t, badgeGHShimDir, repoDir)
