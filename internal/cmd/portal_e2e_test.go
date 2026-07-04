@@ -762,7 +762,7 @@ func waitForPortalReady(t *testing.T, baseURL string) {
 				return
 			}
 		}
-		time.Sleep(200 * time.Millisecond)
+		time.Sleep(20 * time.Millisecond)
 	}
 	t.Fatalf("portal not ready at %s", baseURL)
 }
