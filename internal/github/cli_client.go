@@ -204,22 +204,23 @@ func (c *CLIClient) command(ctx context.Context, name string, arg ...string) *ex
 // runCmd executes the cmd with the supplied ctx and reports a wrapped
 // error. When ctx is done at exit time, the wrapped error preserves the
 // ctx error (via errors.Is) instead of the underlying "signal: killed"
-// so callers can detect cancellation. For other failures the captured
-// stdout/stderr is appended to the error message so the existing
-// surfaced `gh` output (API errors, network failures, etc.) is preserved
-// for the operator.
+// so callers can detect cancellation. For both branches the captured
+// stdout/stderr is appended to the error message when non-empty so the
+// surfaced `gh` output (auth failure, rate-limit message, network error
+// text) survives the wrap.
 func runCmd(ctx context.Context, cmd *exec.Cmd, errMsg string) ([]byte, error) {
 	out, err := cmd.CombinedOutput()
 	if err == nil {
 		return out, nil
 	}
-	if cerr := ctx.Err(); cerr != nil {
-		return out, fmt.Errorf("%s (context: %w): %w", errMsg, cerr, err)
-	}
+	suffix := ""
 	if len(bytes.TrimSpace(out)) > 0 {
-		return out, fmt.Errorf("%s: %w\n%s", errMsg, err, out)
+		suffix = "\n" + string(out)
 	}
-	return out, fmt.Errorf("%s: %w", errMsg, err)
+	if cerr := ctx.Err(); cerr != nil {
+		return out, fmt.Errorf("%s (context: %w): %w%s", errMsg, cerr, err, suffix)
+	}
+	return out, fmt.Errorf("%s: %w%s", errMsg, err, suffix)
 }
 
 func (c *CLIClient) resolveRepo(ctx context.Context) (string, string, error) {
