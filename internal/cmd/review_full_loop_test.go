@@ -226,10 +226,15 @@ func TestReviewDaemonE2E_FullLoopPastLaunchReview(t *testing.T) {
 	}
 
 	// Wait for the launched goroutine to durably persist the pending
-	// entry to disk (slice 3's WaitForIdle gates only on slot release;
-	// we additionally poll the per-run review-state.json so tick 2's
-	// promote step observes the pending state).
+	// entry to disk before tick 2's promote step runs. WaitForIdle gates
+	// on slot release (which happens after MarkSeen persists the pending
+	// status).
 	runDir := runner.last.RunDir
+	idleCtx, cancelIdle := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancelIdle()
+	if err := d.WaitForIdle(idleCtx); err != nil {
+		t.Fatalf("daemon did not reach idle after tick 1: %v", err)
+	}
 	waitForPendingInReviewState(t, runDir, "100", 5*time.Second)
 
 	// Tick 2: promotePendingReviews → promotePendingComment → MarkSeen("success").
