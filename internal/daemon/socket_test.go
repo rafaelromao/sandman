@@ -11,7 +11,7 @@ import (
 func skipIfNotControlSocketSupported(t *testing.T) {
 	t.Helper()
 	if runtime.GOOS != "linux" {
-		t.Skip("ControlSocket uses Linux-only socket namespaces; tracked by #1720")
+		t.Skip("ControlSocket uses Linux-only socket namespaces; tracked by #1736")
 	}
 }
 

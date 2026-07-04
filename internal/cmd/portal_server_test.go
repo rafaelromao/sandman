@@ -617,7 +617,7 @@ func TestPortal_LoadPortalRuns_ShowsQueuedIssuesFromEvents(t *testing.T) {
 
 func TestPortal_AbortRunEndpointAbortsActiveRunAndRefreshesStatus(t *testing.T) {
 	if runtime.GOOS != "linux" {
-		t.Skip("portal Abort endpoint requires peer-PID resolution on Linux; tracked by #1721")
+		t.Skip("portal Abort endpoint requires peer-PID resolution on Linux; tracked by #1736")
 	}
 	repoRoot, err := os.MkdirTemp("/tmp", "sm-portal-")
 	if err != nil {
@@ -799,7 +799,7 @@ func TestAbortPortalRunSendsAbortRequestAndReturnsSuccess(t *testing.T) {
 
 func TestAbortPortalRun_ReturnsHTTPStatusCodes(t *testing.T) {
 	if runtime.GOOS != "linux" {
-		t.Skip("portal Abort endpoint requires peer-PID resolution on Linux; tracked by #1721")
+		t.Skip("portal Abort endpoint requires peer-PID resolution on Linux; tracked by #1736")
 	}
 	t.Run("missing run", func(t *testing.T) {
 		repoRoot := t.TempDir()
@@ -1955,7 +1955,7 @@ func TestPortal_BindsToLocalhostAndFailsWhenPortBusy(t *testing.T) {
 
 func TestPortal_AbortRejectsOversizedBody(t *testing.T) {
 	if runtime.GOOS != "linux" {
-		t.Skip("portal Abort endpoint requires peer-PID resolution on Linux; tracked by #1721")
+		t.Skip("portal Abort endpoint requires peer-PID resolution on Linux; tracked by #1736")
 	}
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {

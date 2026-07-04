@@ -10,7 +10,7 @@ import (
 func skipIfNotBroadcasterSupported(t *testing.T) {
 	t.Helper()
 	if runtime.GOOS != "linux" {
-		t.Skip("Broadcaster uses Linux-only socket namespaces; tracked by #1720")
+		t.Skip("Broadcaster uses Linux-only socket namespaces; tracked by #1736")
 	}
 }
 
