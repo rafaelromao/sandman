@@ -1,14 +1,16 @@
 ---
-name: sandman-codeindex
+name: sandman-index
 disable-model-invocation: true
-description: Non-discoverable. Load manually with /skill sandman-codeindex when you need codeindex guidance.
+description: Non-discoverable. Load manually with /skill sandman-index when you need codeindex guidance.
 ---
 
-# sandman-codeindex
+# sandman-index
 
 Symbol index for fast, scoped code discovery. Keeps large codebases navigable without flooding context with line-by-line file reads.
 
 This skill is the **reference layer** — loaded on demand for command syntax, query refinement, and read discipline. The policy layer (session init + precondition) lives in `docs/agents/codeindex-strategy.md`. They complement, not duplicate.
+
+This skill is shipped as a sub-skill of the `sandman` bundle and installed to `~/.agents/skills/sandman/index/SKILL.md`.
 
 ## Hard rule
 
