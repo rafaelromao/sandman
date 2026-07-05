@@ -890,3 +890,56 @@ func TestWriteReadReviewState(t *testing.T) {
 		t.Fatalf("SeenComments len = %d, want 1", len(read.SeenComments))
 	}
 }
+
+// TestWriteReviewState_AtomicRenameNoLeftoverTmp asserts that
+// WriteReviewState writes review-state.json through a unique temp file
+// (os.CreateTemp + os.Rename). A pre-existing destination is fully
+// replaced with the new state, and no .tmp* siblings remain in the run
+// directory after the call returns.
+func TestWriteReviewState_AtomicRenameNoLeftoverTmp(t *testing.T) {
+	runDir := t.TempDir()
+	statePath := filepath.Join(runDir, "review-state.json")
+
+	prevData, _ := json.Marshal(ReviewState{
+		PR:           9999,
+		SeenComments: []SeenComment{},
+		Claims:       map[string]Claim{},
+	})
+	if err := os.WriteFile(statePath, prevData, 0644); err != nil {
+		t.Fatalf("write stale state: %v", err)
+	}
+
+	now := time.Now().Truncate(time.Second)
+	state := ReviewState{
+		PR: 1217,
+		SeenComments: []SeenComment{
+			{CommentID: "12345", Status: "success", Timestamp: now},
+		},
+		Claims: map[string]Claim{
+			"12345": {Holder: "pid123", Since: now},
+		},
+	}
+
+	if err := WriteReviewState(runDir, state); err != nil {
+		t.Fatalf("WriteReviewState: %v", err)
+	}
+
+	read, err := ReadReviewState(runDir)
+	if err != nil {
+		t.Fatalf("ReadReviewState: %v", err)
+	}
+	if read.PR != state.PR {
+		t.Errorf("PR after rewrite: got %d, want %d (torn mix would decode to stale value)", read.PR, state.PR)
+	}
+	if len(read.SeenComments) != 1 || read.SeenComments[0].CommentID != "12345" {
+		t.Errorf("SeenComments after rewrite: got %+v, want one entry with id 12345", read.SeenComments)
+	}
+
+	matches, err := filepath.Glob(filepath.Join(runDir, "review-state.json.tmp*"))
+	if err != nil {
+		t.Fatalf("glob tmp files: %v", err)
+	}
+	if len(matches) != 0 {
+		t.Errorf("temp files still exist after WriteReviewState: %v", matches)
+	}
+}
