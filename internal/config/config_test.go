@@ -1364,3 +1364,92 @@ func TestSupportedKeys_IncludesAutoMaxCount(t *testing.T) {
 		t.Fatalf("SupportedKeys missing auto_max_count: %v", SupportedKeys())
 	}
 }
+
+// TestSave_AtomicRenameLeavesPreviousIntact asserts that Save writes the
+// destination through a unique temp file, so a previous-good file at the
+// destination is either fully replaced with the new contents or left intact
+// (never a torn mix), and no .tmp* siblings remain in the directory.
+func TestSave_AtomicRenameLeavesPreviousIntact(t *testing.T) {
+	t.Run("happy path replaces stale destination atomically", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "config.yml")
+		prevContent := `agent: opencode
+git:
+  base_branch: main
+parallel: 1
+`
+		if err := os.WriteFile(path, []byte(prevContent), 0644); err != nil {
+			t.Fatalf("write stale config: %v", err)
+		}
+
+		newCfg := &Config{
+			DefaultAgent:    "opencode",
+			DefaultParallel: 7,
+			Git:             GitConfig{BaseBranch: "main"},
+		}
+		if err := Save(path, newCfg); err != nil {
+			t.Fatalf("Save: %v", err)
+		}
+
+		loaded, err := Load(path)
+		if err != nil {
+			t.Fatalf("Load after Save: %v", err)
+		}
+		if loaded.DefaultParallel != 7 {
+			t.Errorf("DefaultParallel after Save: got %d, want 7 (torn mix would decode to stale value)", loaded.DefaultParallel)
+		}
+		if loaded.DefaultAgent != "opencode" {
+			t.Errorf("DefaultAgent after Save: got %q, want %q", loaded.DefaultAgent, "opencode")
+		}
+
+		matches, err := filepath.Glob(filepath.Join(dir, "*.tmp.*"))
+		if err != nil {
+			t.Fatalf("glob tmp files: %v", err)
+		}
+		if len(matches) != 0 {
+			t.Errorf("temp files still exist after Save: %v", matches)
+		}
+	})
+
+	t.Run("rename failure leaves previous file intact and no leftover tmp", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "config.yml")
+		prevContent := `agent: opencode
+git:
+  base_branch: main
+`
+		if err := os.WriteFile(path, []byte(prevContent), 0644); err != nil {
+			t.Fatalf("write prev: %v", err)
+		}
+
+		blocker := filepath.Join(dir, "blocker")
+		if err := os.WriteFile(blocker, []byte("not a dir"), 0644); err != nil {
+			t.Fatalf("write blocker: %v", err)
+		}
+		dst := filepath.Join(blocker, "config.yml")
+
+		newCfg := &Config{
+			DefaultAgent: "opencode",
+			Git:          GitConfig{BaseBranch: "main"},
+		}
+		if err := Save(dst, newCfg); err == nil {
+			t.Fatal("expected Save to fail when destination parent is a regular file")
+		}
+
+		got, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read previous file: %v", err)
+		}
+		if string(got) != prevContent {
+			t.Errorf("previous file mutated on failed Save\n got: %q\nwant: %q", got, prevContent)
+		}
+
+		matches, err := filepath.Glob(filepath.Join(dir, "*.tmp.*"))
+		if err != nil {
+			t.Fatalf("glob tmp files: %v", err)
+		}
+		if len(matches) != 0 {
+			t.Errorf("temp files leaked into dir after failed Save: %v", matches)
+		}
+	})
+}

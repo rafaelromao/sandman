@@ -384,9 +384,38 @@ func WriteReviewState(runDir string, state ReviewState) error {
 		return fmt.Errorf("marshal review state: %w", err)
 	}
 	statePath := filepath.Join(runDir, "review-state.json")
-	if err := os.WriteFile(statePath, data, 0644); err != nil {
-		return fmt.Errorf("write review state: %w", err)
+	dir := filepath.Dir(statePath)
+
+	// Reachable only from tests in the current codebase (the production
+	// writer is ReviewStateStore.saveLocked in internal/review/state.go),
+	// but still atomic so the tests that exercise it cannot leave a torn
+	// file if they crash mid-call. We deliberately use os.CreateTemp
+	// with a random suffix rather than a fixed-name .tmp to close the
+	// concurrency window the production writer still has.
+	tmpFile, err := os.CreateTemp(dir, filepath.Base(statePath)+".tmp.")
+	if err != nil {
+		return fmt.Errorf("create review state tmp: %w", err)
 	}
+	tmpPath := tmpFile.Name()
+	renamed := false
+	defer func() {
+		if !renamed {
+			os.Remove(tmpPath)
+		}
+	}()
+
+	if _, err := tmpFile.Write(data); err != nil {
+		tmpFile.Close()
+		return fmt.Errorf("write review state tmp: %w", err)
+	}
+	if err := tmpFile.Close(); err != nil {
+		return fmt.Errorf("close review state tmp: %w", err)
+	}
+
+	if err := os.Rename(tmpPath, statePath); err != nil {
+		return fmt.Errorf("rename review state tmp: %w", err)
+	}
+	renamed = true
 	return nil
 }
 
