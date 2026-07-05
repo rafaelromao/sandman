@@ -170,11 +170,32 @@ func TestReviewDaemon_FullLoopPastLaunchReview(t *testing.T) {
 	d.PollInterval = 0
 	d.Clock = func() time.Time { return now }
 
+	// Drive the daemon via the same Trigger channel pattern as
+	// TestDaemon_RunRespondsToTrigger (daemon_test.go). macOS CI under
+	// heavy `go test -race -v ./...` parallel load starves ad-hoc
+	// goroutines; the daemon's Run goroutine is the macOS-CI-blessed
+	// scheduling domain. The test still owns the only tick
+	// invocations (the trigger channel is the gate) so behaviour is
+	// fully deterministic — PollInterval=0 means the ticker is
+	// suppressed while d.Trigger is non-nil.
+	trigger := make(chan struct{}, 4)
+	d.Trigger = trigger
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- d.Run(ctx) }()
+	defer func() {
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Fatal("daemon did not stop after cancel")
+		}
+	}()
+
 	// Tick 1: processPR observes the trigger; the launched goroutine
 	// registers the trigger as pending.
-	if err := d.tick(context.Background()); err != nil {
-		t.Fatalf("tick 1: %v", err)
-	}
+	trigger <- struct{}{}
 	// Wait for the launched goroutine to durably persist the pending
 	// entry to disk before tick 2's promote step runs. The goroutine
 	// races with tick's wg.Wait(); it may have set runner.last.RunDir
