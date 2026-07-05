@@ -5,7 +5,6 @@ package cmd
 import (
 	"encoding/json"
 	"io"
-	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -13,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/rafaelromao/sandman/internal/daemon"
 	"github.com/rafaelromao/sandman/internal/events"
 )
 
@@ -408,10 +408,17 @@ func TestPortal_E2E_CleanRunOmitsAttemptsAndLastRetryReason(t *testing.T) {
 	}
 }
 
-// TestPortal_E2E_ParentSuccWithLiveChild is the end-to-end regression test
-// for the bug where a parent impl run with terminal run.finished status was
-// overwritten to "reviewing" because a live review child existed. The portal's
-// Active filter then showed the row as "reviewing" instead of "success".
+// TestPortal_E2E_ParentSuccWithLiveChild is the HTTP end-to-end regression
+// test for the consolidated reviewing-badge backend rule (PR #1622, commit
+// 7c35a23e, "Portal: consolidate reviewing badge-flip to a single backend
+// layer"): the backend is the sole source of truth for the parent row's
+// status; a live review child flips even a terminal parent's status to
+// "reviewing". The mirror at TestPortal_ParentSuccWithLiveChild_FlipsToReviewing
+// asserts the same rule against the compute() projection; this variant
+// additionally exercises the JSON-over-HTTP serialization path.
+// TODO: add coverage for the complementary case — parent terminal with no
+// live review child — which would project status "success" under the same
+// rule.
 func TestPortal_E2E_ParentSuccWithLiveChild(t *testing.T) {
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0o644); err != nil {
@@ -422,14 +429,10 @@ func TestPortal_E2E_ParentSuccWithLiveChild(t *testing.T) {
 
 	batchDir := filepath.Join(repoRoot, ".sandman", "batches", "PR42-live")
 	sockPath := filepath.Join(batchDir, "batch.sock")
-	if err := os.MkdirAll(batchDir, 0o755); err != nil {
+	createUnixRunSocket(t, sockPath)
+	if err := daemon.WriteManifest(batchDir, daemon.BatchManifest{Issues: []int{1}, CreatedAt: startedAt, BatchId: "PR42-live"}); err != nil {
 		t.Fatal(err)
 	}
-	ln, err := net.Listen("unix", sockPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = ln.Close() })
 	addBatchToIndex(t, repoRoot, "PR42-live", batchDir, []int{1})
 
 	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
@@ -456,8 +459,8 @@ func TestPortal_E2E_ParentSuccWithLiveChild(t *testing.T) {
 	if parentRow == nil {
 		t.Fatalf("expected parent row for issue #1, got %#v", rows)
 	}
-	if parentRow.Status != "success" {
-		t.Fatalf("expected parent Status='success', got %q", parentRow.Status)
+	if parentRow.Status != "reviewing" {
+		t.Fatalf("expected parent Status='reviewing' (post-#1622 backend policy flips terminal parents when a live review child exists), got %q", parentRow.Status)
 	}
 	if parentRow.ReviewCount == 0 {
 		t.Fatalf("expected parent ReviewCount > 0 (review child exists), got %d", parentRow.ReviewCount)
