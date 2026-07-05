@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -218,6 +219,15 @@ func TestReviewDaemonE2E_FullLoopPastLaunchReview(t *testing.T) {
 	trigger := make(chan struct{}, 4)
 	d.Trigger = trigger
 
+	// macOS CI under heavy `go test -race -v ./...` parallel load
+	// starves small goroutines (the daemon's `Run` for-select loop
+	// never gets scheduled within the 30s budget on a fully loaded
+	// runner). Pin GOMAXPROCS=1 around this test to force a single
+	// scheduling domain and remove the preemption race. Linux CI
+	// doesn't need this (test completes in <300ms there).
+	prevMaxProcs := runtime.GOMAXPROCS(1)
+	defer runtime.GOMAXPROCS(prevMaxProcs)
+
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() { done <- d.Run(ctx) }()
@@ -232,7 +242,7 @@ func TestReviewDaemonE2E_FullLoopPastLaunchReview(t *testing.T) {
 
 	// Tick 1: launch the review.
 	trigger <- struct{}{}
-	if !waitForReviewLaunch(t, runner, 30*time.Second) {
+	if !waitForReviewLaunch(t, runner, 10*time.Second) {
 		t.Fatal("expected at least 1 batch run after tick 1, got 0")
 	}
 	if got := runner.Calls(); got != 1 {
