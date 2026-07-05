@@ -83,8 +83,8 @@
 //     → TestRun_SingleIssueRegistersPerRowRunIDInBatchesIndex (internal/cmd)
 //
 //   - TestRun_ContinueMode_RunDirAndSocketsBeforeContinuedEvent
-//       → TestRun_BootArtifactsBeforeRunStarted (internal/cmd)
-//       → TestRun_CreatesControlSocketInRunDirWithCommander (internal/cmd)
+//     → TestRun_BootArtifactsBeforeRunStarted (internal/cmd)
+//     → TestRun_CreatesControlSocketInRunDirWithCommander (internal/cmd)
 //
 //   - TestRun_RemovesCommandSocketOnCompletion
 //     → TestRun_BootArtifactsBeforeRunStarted (internal/cmd) + lifecycle tests
