@@ -18,12 +18,16 @@ type buildPrompter struct{}
 func (buildPrompter) Confirm(string) (bool, error)            { return true, nil }
 func (buildPrompter) Select(string, []string) (string, error) { return "", nil }
 
-// buildPresetImageSkipRationale documents why each per-test podman build is
-// gated on the smoke pre-warm phase. Erlang/OTP 28 takes 5-10 minutes to
-// compile from source under mise, well past the 10m per-test timeout, and
-// the pre-warm phase already builds every variant we want to assert against.
-// See https://github.com/rafaelromao/sandman/issues/1793.
-const buildPresetImageSkipRationale = "per-test podman build skipped: relying on smoke pre-warm image for Erlang/OTP 28 compile cost (see issue #1793)"
+// buildPresetImageSkipRationale is emitted when the smoke pre-warm phase did
+// not produce a matching image for this (agent, preset) pair. The per-test
+// build path was removed because compiling language toolchains from source
+// (notably Erlang/OTP 28 via mise, which alone takes 5-10 minutes) routinely
+// exceeded the 10m per-test timeout, taking the whole test binary down with
+// SIGQUIT. The smoke pre-warm already exercises every variant we want to
+// assert against when the host can build it; on hosts where the pre-warm
+// could not produce the image (or where SANDMAN_SMOKE_PREFETCH=0), the test
+// is skipped instead of being retried.
+const buildPresetImageSkipRationale = "smoke pre-warm image not available for this (agent, preset) pair; per-test build skipped to stay inside the 10m timeout"
 
 func TestInit_ElixirPresetBuildsForEveryBuiltInAgentProvider(t *testing.T) {
 	runtime, err := sandbox.ResolveRuntime("podman")
