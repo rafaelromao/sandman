@@ -122,6 +122,17 @@ The seed step is the structural complement to the layered loader above:
 
 For an implementation run with a `--body` body that the post-#1709 prompt rule keeps free of the trigger substring, this is defence-in-depth: the bot body does not contain `/sandman review` literally, so `ParseTrigger` cannot match it. The structural fix on issue #1821 covers the legitimate corner case where the prompt rule is broken or the bot's body legitimately quotes the trigger substring.
 
+### Structural self-defence sniff (issue #1821)
+
+The IsSelfPosted-first filter (issue #1702) is the primary gate. The layered loader and the run-log seed step ensure the bot body is in `SelfPostStore` so the gate fires. As a structural backstop, `processPR` consults a sniff that flags bodies that match the *structural shape* the bot's review body always carries: a `## Previous review progress` markdown heading AND the literal `/sandman review` substring somewhere in the body. When both hold, the body is recorded into `SelfPostStore` (so the next tick's primary gate also catches it) and dropped before `ParseTrigger` runs.
+
+The sniff is asymmetric: bare implementor triggers (`/sandman review` standalone, with focus, with a leading bot mention) never carry the previous-review-progress heading, so they are not flagged. The sniff fires only on bodies that structurally look like a bot review. This is the "even when SelfPostStore is empty" backstop called out in the issue #1821 acceptance criteria — the structural pattern is the only signal that holds for a brand new daemon on a brand new repo, before the loader has anything to recover and before the seed step has run.logs to seed from.
+
+Tests:
+
+- `TestLooksLikeBotReviewBody_HitsBotShapedBodies` and `TestLooksLikeBotReviewBody_MissesImplementorTriggers` pin the asymmetric contract.
+- `TestDaemon_BotShapedBody_DoesNotReactEvenWithEmptySelfPostStore` is the AC-level pin: a bot-shaped body alone, with no other fixture, must not trigger a batch run or add an eyes reaction. Pre-fix this fails (got 1 batch run, 1 reaction). Post-fix it passes.
+
 ### Discovery via run-log grep (issue #1759)
 
 The bot's own review run log is the daemon's authoritative source for which bodies the bot posted. The helper `extractBodiesFromLog(runLogPath)` in `internal/review/agentlog.go` greps the per-run run.log for `gh pr comment <N> --body <body>` invocations and returns every body the bot posted, in chronological order. The parse is robust against:

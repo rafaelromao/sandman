@@ -877,6 +877,32 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) error {
 			d.logf("PR #%d: comment %s is a self-post, skipping", prNumber, comment.ID)
 			continue
 		}
+		// Structural self-defence (issue #1821): a body that
+		// carries the `## Previous review progress` heading AND
+		// the literal `/sandman review` trigger substring is
+		// overwhelmingly likely to be a previous bot review
+		// body, not a fresh implementor trigger. The IsSelfPosted
+		// check above is the primary gate; this sniff is the
+		// backstop so the daemon never reaches the launch path
+		// for such a body even when the SelfPostStore has
+		// forgotten the entry across a daemon restart (the
+		// cross-restart failure mode that motivated #1821). The
+		// asymmetric contract — bot bodies are flagged, bare
+		// implementor triggers are not — is pinned by
+		// TestLooksLikeBotReviewBody. Record the body into
+		// SelfPostStore so the next tick's IsSelfPosted check
+		// also catches it (the sniff's primary line of defence
+		// for subsequent ticks is the primary gate, not the
+		// structural marker).
+		if LooksLikeBotReviewBody(comment.Body) {
+			if d.selfPosts != nil {
+				if err := d.selfPosts.Record(prNumber, comment.Body, ""); err != nil {
+					d.logf("PR #%d: record bot-shaped body %s failed: %v", prNumber, comment.ID, err)
+				}
+			}
+			d.logf("PR #%d: comment %s structurally matches a bot review body; dropping before ParseTrigger (issue #1821 self-defence)", prNumber, comment.ID)
+			continue
+		}
 		focus, ok := ParseTrigger(comment.Body)
 		if ok {
 			triggers = append(triggers, unseenTrigger{comment: comment, focus: focus})

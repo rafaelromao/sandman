@@ -858,3 +858,57 @@ func TestDaemon_StaleBotBody_DoesNotRetriggerAcrossRestart(t *testing.T) {
 		}
 	}
 }
+
+// TestDaemon_BotShapedBody_DoesNotReactEvenWithEmptySelfPostStore
+// is the defence-in-depth pin for issue #1821's third AC:
+// ProcessPR must skip the launch+reaction path on a body that
+// structurally looks like a bot review body — carrying the
+// `## Previous review progress` heading AND the literal
+// `/sandman review` trigger substring — even when SelfPostStore
+// is empty. The structural sniff in trigger.go is the backstop
+// for the case where neither the slice-1 on-disk loader NOR the
+// slice-2 run-log seed step could recover the entry (a brand new
+// daemon on a brand new repo, or a fixture that exercises the
+// cross-process invariant without a seeded run log).
+//
+// Pre-fix the daemon launched a review and added an eyes reaction
+// on the bot body — that is the failure reported on PR #1809 and
+// pinned live above. This test exercises the gate in isolation:
+// the only comment on the PR is the bot body. With SelfPostStore
+// empty and no run log to seed from, only the structural sniff
+// can suppress the launch. Pre-#1821 this test fails (1 batch
+// run, 1 reaction); post-#1821 it passes (0 batch runs, 0
+// reactions).
+func TestDaemon_BotShapedBody_DoesNotReactEvenWithEmptySelfPostStore(t *testing.T) {
+	now := time.Date(2026, 7, 5, 0, 16, 0, 0, time.UTC)
+	botBody := "## Previous review progress\nFirst review pass on PR #1809. Prior activity includes a single `/sandman review` trigger."
+
+	gh := &fakeGH{
+		prs: []github.PR{{Number: 1809, State: "open"}},
+		comments: map[int][]github.PRComment{
+			1809: {
+				{ID: "stale-bot", Body: botBody, CreatedAt: now},
+			},
+		},
+		prFetch: map[int]*github.PR{1809: {Number: 1809, Title: "T", Body: "B"}},
+	}
+	runner := &capturedRequest{}
+	d, _, _ := newDaemonForTest(t, gh, runner, &config.Config{
+		DefaultReviewAgent: "opencode",
+		DefaultReviewModel: "opencode/foo",
+	})
+	d.Clock = func() time.Time { return now.Add(-1 * time.Minute) }
+
+	tickAndWait(t, d, context.Background())
+
+	if runner.calls != 0 {
+		t.Errorf("defence-in-depth: bot-shaped body MUST NOT cause a batch run via structural sniff (issue #1821 AC #3); got %d", runner.calls)
+	}
+	gh.mu.Lock()
+	defer gh.mu.Unlock()
+	for _, c := range gh.reactionCalls {
+		if c.kind == "add_comment" && c.commentID == "stale-bot" {
+			t.Errorf("defence-in-depth: daemon MUST NOT add an eyes reaction to a bot-shaped body via structural sniff (issue #1821 AC #3); got reaction %+v", c)
+		}
+	}
+}
