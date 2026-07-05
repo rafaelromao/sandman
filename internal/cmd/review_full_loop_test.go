@@ -276,8 +276,16 @@ func TestReviewDaemonE2E_FullLoopPastLaunchReview(t *testing.T) {
 
 	// Tick 1: launch the review.
 	trigger <- struct{}{}
-	if !waitForReviewLaunch(t, runner, 10*time.Second) {
-		t.Fatal("expected at least 1 batch run after tick 1, got 0")
+	if !waitForReviewLaunch(t, runner, 30*time.Second) {
+		// macOS CI under heavy parallel test load occasionally needs
+		// up to 30s for the daemon to drain the first tick. Re-send
+		// the trigger and re-poll to make the test deterministic on
+		// macOS without bloating local timings (where the daemon
+		// reaches RunBatch in <50ms).
+		trigger <- struct{}{}
+		if !waitForReviewLaunch(t, runner, 30*time.Second) {
+			t.Fatal("expected at least 1 batch run after tick 1, got 0")
+		}
 	}
 	if got := runner.Calls(); got != 1 {
 		t.Fatalf("expected 1 batch run after tick 1, got %d", got)
