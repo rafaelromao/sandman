@@ -1,6 +1,7 @@
 package batch
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -60,20 +61,20 @@ func parseLogForCompletion(logPath string) bool {
 	return hasItem
 }
 
-func checkPRMerged(client github.Client, branch string) bool {
-	merged, err := checkPRMergedAtHead(client, branch, "")
+func checkPRMerged(ctx context.Context, client github.Client, branch string) bool {
+	merged, err := checkPRMergedAtHead(ctx, client, branch, "")
 	return err == nil && merged
 }
 
-func CheckPRMergedAtHead(client github.Client, branch, headSHA string) (bool, error) {
-	return checkPRMergedAtHead(client, branch, headSHA)
+func CheckPRMergedAtHead(ctx context.Context, client github.Client, branch, headSHA string) (bool, error) {
+	return checkPRMergedAtHead(ctx, client, branch, headSHA)
 }
 
-func checkPRMergedAtHead(client github.Client, branch, headSHA string) (bool, error) {
+func checkPRMergedAtHead(ctx context.Context, client github.Client, branch, headSHA string) (bool, error) {
 	if client == nil || strings.TrimSpace(branch) == "" {
 		return false, nil
 	}
-	pr, err := client.FindPRByBranch(branch)
+	pr, err := client.FindPRByBranch(ctx, branch)
 	if err != nil || pr == nil {
 		return false, err
 	}
@@ -86,11 +87,11 @@ func checkPRMergedAtHead(client github.Client, branch, headSHA string) (bool, er
 	return true, nil
 }
 
-func findOpenPRByBranch(client github.Client, branch string) (*github.PR, error) {
+func findOpenPRByBranch(ctx context.Context, client github.Client, branch string) (*github.PR, error) {
 	if client == nil || strings.TrimSpace(branch) == "" {
 		return nil, nil
 	}
-	pr, err := client.FindPRByBranch(branch)
+	pr, err := client.FindPRByBranch(ctx, branch)
 	if err != nil || pr == nil {
 		return nil, err
 	}

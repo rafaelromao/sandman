@@ -59,6 +59,7 @@ type BuildToolsPreset struct {
 	Name           string
 	BaseImage      string
 	SharedPackages []string
+	ExtraPackages  []string
 	MiseVersion    string
 }
 
@@ -136,6 +137,7 @@ var builtInBuildToolsPresets = map[string]BuildToolsPreset{
 		Name:           elixirBuildToolsPreset,
 		BaseImage:      "debian:bookworm-slim",
 		SharedPackages: sharedPackages,
+		ExtraPackages:  []string{"libncurses-dev"},
 		MiseVersion:    DefaultMISEVersion,
 	},
 	rubyBuildToolsPreset: {
@@ -1772,7 +1774,9 @@ func (s *Scaffolder) renderBuildToolsDockerfile(preset BuildToolsPreset, default
 	fmt.Fprintf(&out, "# sandman mise-version: %s\n", preset.MiseVersion)
 	fmt.Fprintf(&out, "# sandman rtk-version: %s\n", DefaultRTKVersion)
 	fmt.Fprintf(&out, "FROM %s\n", preset.BaseImage)
-	fmt.Fprintf(&out, "RUN apt-get update && apt-get install -y --no-install-recommends %s && rm -rf /var/lib/apt/lists/*\n", strings.Join(preset.SharedPackages, " "))
+	aptPackages := append([]string{}, preset.SharedPackages...)
+	aptPackages = append(aptPackages, preset.ExtraPackages...)
+	fmt.Fprintf(&out, "RUN apt-get update && apt-get install -y --no-install-recommends %s && rm -rf /var/lib/apt/lists/*\n", strings.Join(aptPackages, " "))
 	fmt.Fprintf(&out, "RUN MISE_VERSION=%s curl https://mise.run | MISE_INSTALL_PATH=/usr/local/bin/mise sh\n", preset.MiseVersion)
 	out.WriteString("ENV MISE_GLOBAL_CONFIG_FILE=\"/etc/mise/config.toml\"\n")
 	out.WriteString("ENV MISE_CONFIG_DIR=\"/etc/mise\"\n")

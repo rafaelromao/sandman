@@ -32,7 +32,7 @@ type fakePRGitHubClient struct {
 	prByNumber map[int]*github.PR
 }
 
-func (f *fakePRGitHubClient) FetchPR(number int) (*github.PR, error) {
+func (f *fakePRGitHubClient) FetchPR(ctx context.Context, number int) (*github.PR, error) {
 	if f.prByNumber != nil {
 		if pr, ok := f.prByNumber[number]; ok {
 			return pr, nil
@@ -41,11 +41,11 @@ func (f *fakePRGitHubClient) FetchPR(number int) (*github.PR, error) {
 	return f.pr, f.prErr
 }
 
-func (f *fakePRGitHubClient) ListOpenPRs() ([]github.PR, error) {
+func (f *fakePRGitHubClient) ListOpenPRs(ctx context.Context) ([]github.PR, error) {
 	return f.openPRs, f.openPRErr
 }
 
-func (f *fakePRGitHubClient) ListPRComments(number int) ([]github.PRComment, error) {
+func (f *fakePRGitHubClient) ListPRComments(ctx context.Context, number int) ([]github.PRComment, error) {
 	return nil, nil
 }
 

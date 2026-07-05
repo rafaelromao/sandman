@@ -1,6 +1,8 @@
 package github
 
 import (
+	"context"
+	"errors"
 	"os/exec"
 	"reflect"
 	"slices"
@@ -15,6 +17,7 @@ type fakeRunner struct {
 }
 
 type fakeCall struct {
+	ctx  context.Context
 	name string
 	args []string
 }
@@ -24,16 +27,38 @@ type fakeResponse struct {
 	err    error
 }
 
-func (f *fakeRunner) Run(name string, arg ...string) *exec.Cmd {
-	f.calls = append(f.calls, fakeCall{name: name, args: append([]string(nil), arg...)})
+func (f *fakeRunner) Run(ctx context.Context, name string, arg ...string) *exec.Cmd {
+	f.calls = append(f.calls, fakeCall{ctx: ctx, name: name, args: append([]string(nil), arg...)})
 	idx := len(f.calls) - 1
 	if idx < len(f.responses) && f.responses[idx].err != nil {
 		return exec.Command("sh", "-c", "echo error >&2; exit 1")
 	}
 	if idx < len(f.responses) {
-		return exec.Command("echo", f.responses[idx].output)
+		return exec.CommandContext(ctx, "echo", f.responses[idx].output)
 	}
-	return exec.Command("echo")
+	return exec.CommandContext(ctx, "echo")
+}
+
+// blockingFakeRunner blocks the supplied *exec.Cmd on ctx cancellation.
+// Used to prove that CLIClient honours the caller's ctx and the
+// configured per-call Timeout.
+type blockingFakeRunner struct {
+	startCount int
+}
+
+func (b *blockingFakeRunner) Run(ctx context.Context, name string, arg ...string) *exec.Cmd {
+	b.startCount++
+	cmd := exec.CommandContext(ctx, "sleep", "60")
+	configureCancelProcessGroup(cmd)
+	return cmd
+}
+
+// blockingCmd returns an *exec.Cmd whose Run blocks until ctx is
+// cancelled. The returned error is the ctx error after cancellation.
+func blockingCmd(ctx context.Context) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, "sleep", "60")
+	configureCancelProcessGroup(cmd)
+	return cmd
 }
 
 func TestCLIClient_ListIssueComments_Success(t *testing.T) {
@@ -43,7 +68,7 @@ func TestCLIClient_ListIssueComments_Success(t *testing.T) {
 	}}
 	client := &CLIClient{runner: runner}
 
-	comments, err := client.ListIssueComments(895)
+	comments, err := client.ListIssueComments(context.Background(), 895)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -73,7 +98,7 @@ func TestCLIClient_SearchIssues_Success(t *testing.T) {
 	runner := &fakeRunner{responses: []fakeResponse{{output: `[{"number":1,"state":"open","title":"Bug","body":"bug body","labels":[{"name":"bug"}]},{"number":2,"state":"closed","title":"Feature","body":"feat body","labels":[]}]`}}}
 	client := &CLIClient{runner: runner}
 
-	issues, err := client.SearchIssues("is:open label:bug")
+	issues, err := client.SearchIssues(context.Background(), "is:open label:bug")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -116,7 +141,7 @@ func TestCLIClient_SearchIssues_Error(t *testing.T) {
 	runner := &fakeRunner{responses: []fakeResponse{{err: exec.ErrNotFound}}}
 	client := &CLIClient{runner: runner}
 
-	_, err := client.SearchIssues("is:open")
+	_, err := client.SearchIssues(context.Background(), "is:open")
 	if err == nil {
 		t.Fatal("expected error when gh issue list fails")
 	}
@@ -126,7 +151,7 @@ func TestCLIClient_SearchIssues_SortsByNumberAscending(t *testing.T) {
 	runner := &fakeRunner{responses: []fakeResponse{{output: `[{"number":921,"state":"open","title":"Newer","body":"","labels":[]},{"number":903,"state":"open","title":"Middle","body":"","labels":[]},{"number":902,"state":"open","title":"Oldest","body":"","labels":[]},{"number":904,"state":"open","title":"Just After","body":"","labels":[]}]`}}}
 	client := &CLIClient{runner: runner}
 
-	issues, err := client.SearchIssues("is:open")
+	issues, err := client.SearchIssues(context.Background(), "is:open")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -145,7 +170,7 @@ func TestCLIClient_FindPRByBranch_Success(t *testing.T) {
 	runner := &fakeRunner{responses: []fakeResponse{{output: `[{"number":17,"state":"open","mergedAt":null,"headRefName":"issue-386/smart-completion-detection-phase-aware-retry","headRefOid":"abc123"}]`}}}
 	client := &CLIClient{runner: runner}
 
-	pr, err := client.FindPRByBranch("issue-386/smart-completion-detection-phase-aware-retry")
+	pr, err := client.FindPRByBranch(context.Background(), "issue-386/smart-completion-detection-phase-aware-retry")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -180,7 +205,7 @@ func TestCLIClient_ResolveRepo_Success(t *testing.T) {
 	runner := &fakeRunner{responses: []fakeResponse{{output: `{"name":"sandman","owner":{"login":"rafaelromao"}}`}}}
 	client := &CLIClient{runner: runner}
 
-	owner, repo, err := client.resolveRepo()
+	owner, repo, err := client.resolveRepo(context.Background())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -208,11 +233,11 @@ func TestCLIClient_ResolveRepo_CachesResult(t *testing.T) {
 	runner := &fakeRunner{responses: []fakeResponse{{output: `{"name":"sandman","owner":{"login":"rafaelromao"}}`}}}
 	client := &CLIClient{runner: runner}
 
-	owner1, repo1, err := client.resolveRepo()
+	owner1, repo1, err := client.resolveRepo(context.Background())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	owner2, repo2, err := client.resolveRepo()
+	owner2, repo2, err := client.resolveRepo(context.Background())
 	if err != nil {
 		t.Fatalf("unexpected error on cached lookup: %v", err)
 	}
@@ -228,7 +253,7 @@ func TestCLIClient_ResolveRepo_UsesRepoOverride(t *testing.T) {
 	runner := &fakeRunner{responses: []fakeResponse{{output: `{"name":"sandman","owner":{"login":"rafaelromao"}}`}}}
 	client := &CLIClient{runner: runner, RepoOverride: "octo/sandman"}
 
-	_, _, err := client.resolveRepo()
+	_, _, err := client.resolveRepo(context.Background())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -250,7 +275,7 @@ func TestCLIClient_ResolveRepo_Error(t *testing.T) {
 	runner := &fakeRunner{responses: []fakeResponse{{err: exec.ErrNotFound}}}
 	client := &CLIClient{runner: runner}
 
-	_, _, err := client.resolveRepo()
+	_, _, err := client.resolveRepo(context.Background())
 	if err == nil {
 		t.Fatal("expected error when gh repo view fails")
 	}
@@ -264,7 +289,7 @@ func TestCLIClient_FetchIssue_Success(t *testing.T) {
 	}}
 	client := &CLIClient{runner: runner}
 
-	issue, err := client.FetchIssue(61)
+	issue, err := client.FetchIssue(context.Background(), 61)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -305,7 +330,7 @@ func TestCLIClient_FetchIssueDependencies_FromIssuePayload(t *testing.T) {
 	}}
 	client := &CLIClient{runner: runner}
 
-	blockedBy, err := client.FetchIssueDependencies(62)
+	blockedBy, err := client.FetchIssueDependencies(context.Background(), 62)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -328,7 +353,7 @@ func TestCLIClient_FetchIssueDependencies_FallsBackToEvents(t *testing.T) {
 	}}
 	client := &CLIClient{runner: runner}
 
-	blockedBy, err := client.FetchIssueDependencies(62)
+	blockedBy, err := client.FetchIssueDependencies(context.Background(), 62)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -351,7 +376,7 @@ func TestCLIClient_FetchIssueDependencies_FallsBackToCrossReferencesWithoutSumma
 	}}
 	client := &CLIClient{runner: runner}
 
-	blockedBy, err := client.FetchIssueDependencies(62)
+	blockedBy, err := client.FetchIssueDependencies(context.Background(), 62)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -373,7 +398,7 @@ func TestCLIClient_FetchIssueDependencies_IgnoresSummaryCountsInsidePayload(t *t
 	}}
 	client := &CLIClient{runner: runner}
 
-	blockedBy, err := client.FetchIssueDependencies(62)
+	blockedBy, err := client.FetchIssueDependencies(context.Background(), 62)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -394,7 +419,7 @@ func TestCLIClient_FetchIssue_UnionBodyAndNativeDependencies(t *testing.T) {
 	}}
 	client := &CLIClient{runner: runner}
 
-	issue, err := client.FetchIssue(62)
+	issue, err := client.FetchIssue(context.Background(), 62)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -411,7 +436,7 @@ func TestCLIClient_FetchIssue_GracefullyFallsBackToBodyOnly(t *testing.T) {
 	}}
 	client := &CLIClient{runner: runner}
 
-	issue, err := client.FetchIssue(62)
+	issue, err := client.FetchIssue(context.Background(), 62)
 	if err != nil {
 		t.Fatalf("expected body-only fallback, got error: %v", err)
 	}
@@ -430,10 +455,10 @@ func TestCLIClient_FetchIssue_CachesResolvedRepo(t *testing.T) {
 	}}
 	client := &CLIClient{runner: runner}
 
-	if _, err := client.FetchIssue(61); err != nil {
+	if _, err := client.FetchIssue(context.Background(), 61); err != nil {
 		t.Fatalf("unexpected error on first fetch: %v", err)
 	}
-	if _, err := client.FetchIssue(62); err != nil {
+	if _, err := client.FetchIssue(context.Background(), 62); err != nil {
 		t.Fatalf("unexpected error on second fetch: %v", err)
 	}
 	if len(runner.calls) != 5 {
@@ -460,7 +485,7 @@ func TestCLIClient_FetchIssue_Error(t *testing.T) {
 	}}
 	client := &CLIClient{runner: runner}
 
-	_, err := client.FetchIssue(61)
+	_, err := client.FetchIssue(context.Background(), 61)
 	if err == nil {
 		t.Fatal("expected error when gh api fails")
 	}
@@ -571,7 +596,7 @@ func TestCLIClient_FetchPR_Success(t *testing.T) {
 	}}
 	client := &CLIClient{runner: runner}
 
-	pr, err := client.FetchPR(42)
+	pr, err := client.FetchPR(context.Background(), 42)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -621,7 +646,7 @@ func TestCLIClient_FetchPR_DetectsMerged(t *testing.T) {
 	}}
 	client := &CLIClient{runner: runner}
 
-	pr, err := client.FetchPR(7)
+	pr, err := client.FetchPR(context.Background(), 7)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -637,7 +662,7 @@ func TestCLIClient_FetchPR_Error(t *testing.T) {
 	}}
 	client := &CLIClient{runner: runner}
 
-	_, err := client.FetchPR(99)
+	_, err := client.FetchPR(context.Background(), 99)
 	if err == nil {
 		t.Fatal("expected error when gh pr view fails")
 	}
@@ -650,7 +675,7 @@ func TestCLIClient_FetchPR_ClosingIssuesReferences(t *testing.T) {
 	}}
 	client := &CLIClient{runner: runner}
 
-	pr, err := client.FetchPR(55)
+	pr, err := client.FetchPR(context.Background(), 55)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -672,7 +697,7 @@ func TestCLIClient_FetchPR_LinkedIssueFallsBackToBody(t *testing.T) {
 	}}
 	client := &CLIClient{runner: runner}
 
-	pr, err := client.FetchPR(77)
+	pr, err := client.FetchPR(context.Background(), 77)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -688,7 +713,7 @@ func TestCLIClient_ListOpenPRs_Success(t *testing.T) {
 	runner := &fakeRunner{responses: []fakeResponse{{output: `[{"number":7,"state":"open","title":"Fix login","body":"x","mergedAt":null,"headRefName":"fix/login","headRefOid":"abc"},{"number":8,"state":"open","title":"Add feature","body":"y","mergedAt":null,"headRefName":"feat/x","headRefOid":"def"}]`}}}
 	client := &CLIClient{runner: runner}
 
-	prs, err := client.ListOpenPRs()
+	prs, err := client.ListOpenPRs(context.Background())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -713,7 +738,7 @@ func TestCLIClient_ListOpenPRs_Error(t *testing.T) {
 	runner := &fakeRunner{responses: []fakeResponse{{err: exec.ErrNotFound}}}
 	client := &CLIClient{runner: runner}
 
-	_, err := client.ListOpenPRs()
+	_, err := client.ListOpenPRs(context.Background())
 	if err == nil {
 		t.Fatal("expected error when gh pr list fails")
 	}
@@ -726,7 +751,7 @@ func TestCLIClient_ListPRComments_Success(t *testing.T) {
 	}}
 	client := &CLIClient{runner: runner}
 
-	comments, err := client.ListPRComments(42)
+	comments, err := client.ListPRComments(context.Background(), 42)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -751,7 +776,7 @@ func TestCLIClient_ListPRComments_Error(t *testing.T) {
 	}}
 	client := &CLIClient{runner: runner}
 
-	_, err := client.ListPRComments(42)
+	_, err := client.ListPRComments(context.Background(), 42)
 	if err == nil {
 		t.Fatal("expected error when gh api fails")
 	}
@@ -764,7 +789,7 @@ func TestCLIClient_EditComment_Success(t *testing.T) {
 	}}
 	client := &CLIClient{runner: runner}
 
-	err := client.EditComment("123", "updated body")
+	err := client.EditComment(context.Background(), "123", "updated body")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -784,7 +809,7 @@ func TestCLIClient_EditComment_Error(t *testing.T) {
 	}}
 	client := &CLIClient{runner: runner}
 
-	err := client.EditComment("123", "body")
+	err := client.EditComment(context.Background(), "123", "body")
 	if err == nil {
 		t.Fatal("expected error when gh api fails")
 	}
@@ -797,7 +822,7 @@ func TestCLIClient_EditPRBody_Success(t *testing.T) {
 	}}
 	client := &CLIClient{runner: runner}
 
-	err := client.EditPRBody(42, "updated body")
+	err := client.EditPRBody(context.Background(), 42, "updated body")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -817,7 +842,7 @@ func TestCLIClient_EditPRBody_Error(t *testing.T) {
 	}}
 	client := &CLIClient{runner: runner}
 
-	err := client.EditPRBody(42, "body")
+	err := client.EditPRBody(context.Background(), 42, "body")
 	if err == nil {
 		t.Fatal("expected error when gh api fails")
 	}
@@ -830,7 +855,7 @@ func TestCLIClient_ListPRComments_SortParams(t *testing.T) {
 	}}
 	client := &CLIClient{runner: runner}
 
-	if _, err := client.ListPRComments(42); err != nil {
+	if _, err := client.ListPRComments(context.Background(), 42); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if len(runner.calls) < 2 {
@@ -856,7 +881,7 @@ func TestCLIClient_ListPRComments_PopulatesCreatedAt(t *testing.T) {
 	}}
 	client := &CLIClient{runner: runner}
 
-	comments, err := client.ListPRComments(42)
+	comments, err := client.ListPRComments(context.Background(), 42)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -882,7 +907,7 @@ func TestCLIClient_ListPRComments_Paginated(t *testing.T) {
 	}}
 	client := &CLIClient{runner: runner}
 
-	comments, err := client.ListPRComments(42)
+	comments, err := client.ListPRComments(context.Background(), 42)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -904,7 +929,7 @@ func TestCLIClient_AddCommentReaction_Success(t *testing.T) {
 	}}
 	client := &CLIClient{runner: runner}
 
-	id, err := client.AddCommentReaction("100", "eyes")
+	id, err := client.AddCommentReaction(context.Background(), "100", "eyes")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -927,7 +952,7 @@ func TestCLIClient_AddCommentReaction_Error(t *testing.T) {
 	}}
 	client := &CLIClient{runner: runner}
 
-	_, err := client.AddCommentReaction("100", "eyes")
+	_, err := client.AddCommentReaction(context.Background(), "100", "eyes")
 	if err == nil {
 		t.Fatal("expected error when gh api fails")
 	}
@@ -940,7 +965,7 @@ func TestCLIClient_AddCommentReaction_EmptyID(t *testing.T) {
 	}}
 	client := &CLIClient{runner: runner}
 
-	_, err := client.AddCommentReaction("100", "eyes")
+	_, err := client.AddCommentReaction(context.Background(), "100", "eyes")
 	if err == nil {
 		t.Fatal("expected error for empty reaction ID")
 	}
@@ -953,7 +978,7 @@ func TestCLIClient_AddIssueReaction_Success(t *testing.T) {
 	}}
 	client := &CLIClient{runner: runner}
 
-	id, err := client.AddIssueReaction(42, "eyes")
+	id, err := client.AddIssueReaction(context.Background(), 42, "eyes")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -976,7 +1001,7 @@ func TestCLIClient_AddIssueReaction_Error(t *testing.T) {
 	}}
 	client := &CLIClient{runner: runner}
 
-	_, err := client.AddIssueReaction(42, "eyes")
+	_, err := client.AddIssueReaction(context.Background(), 42, "eyes")
 	if err == nil {
 		t.Fatal("expected error when gh api fails")
 	}
@@ -989,7 +1014,7 @@ func TestCLIClient_AddIssueReaction_EmptyID(t *testing.T) {
 	}}
 	client := &CLIClient{runner: runner}
 
-	_, err := client.AddIssueReaction(42, "eyes")
+	_, err := client.AddIssueReaction(context.Background(), 42, "eyes")
 	if err == nil {
 		t.Fatal("expected error for empty reaction ID")
 	}
@@ -1002,7 +1027,7 @@ func TestCLIClient_RemoveCommentReaction_Success(t *testing.T) {
 	}}
 	client := &CLIClient{runner: runner}
 
-	err := client.RemoveCommentReaction("100", "123")
+	err := client.RemoveCommentReaction(context.Background(), "100", "123")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1022,7 +1047,7 @@ func TestCLIClient_RemoveCommentReaction_Error(t *testing.T) {
 	}}
 	client := &CLIClient{runner: runner}
 
-	err := client.RemoveCommentReaction("100", "123")
+	err := client.RemoveCommentReaction(context.Background(), "100", "123")
 	if err == nil {
 		t.Fatal("expected error when gh api fails")
 	}
@@ -1035,7 +1060,7 @@ func TestCLIClient_RemoveIssueReaction_Success(t *testing.T) {
 	}}
 	client := &CLIClient{runner: runner}
 
-	err := client.RemoveIssueReaction(42, "456")
+	err := client.RemoveIssueReaction(context.Background(), 42, "456")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1055,7 +1080,7 @@ func TestCLIClient_RemoveIssueReaction_Error(t *testing.T) {
 	}}
 	client := &CLIClient{runner: runner}
 
-	err := client.RemoveIssueReaction(42, "456")
+	err := client.RemoveIssueReaction(context.Background(), 42, "456")
 	if err == nil {
 		t.Fatal("expected error when gh api fails")
 	}
@@ -1068,7 +1093,7 @@ func TestCLIClient_CloseIssue_Success(t *testing.T) {
 	}}
 	client := &CLIClient{runner: runner}
 
-	err := client.CloseIssue(42, "Closed by sandman — test.")
+	err := client.CloseIssue(context.Background(), 42, "Closed by sandman — test.")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1096,7 +1121,7 @@ func TestCLIClient_CloseIssue_WithoutComment(t *testing.T) {
 	}}
 	client := &CLIClient{runner: runner}
 
-	err := client.CloseIssue(42, "")
+	err := client.CloseIssue(context.Background(), 42, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1118,8 +1143,188 @@ func TestCLIClient_CloseIssue_Error(t *testing.T) {
 	}}
 	client := &CLIClient{runner: runner}
 
-	err := client.CloseIssue(42, "comment")
+	err := client.CloseIssue(context.Background(), 42, "comment")
 	if err == nil {
 		t.Fatal("expected error when gh issue close fails")
+	}
+}
+
+// slice-1: ctx threading — recorded ctx must equal the caller's ctx so
+// downstream layers can plumb it through unchanged.
+func TestFakeRunner_RecordsCallerContext(t *testing.T) {
+	runner := &fakeRunner{responses: []fakeResponse{{output: `[{"number":1,"state":"open","title":"","body":"","labels":[]}]`}}}
+	client := &CLIClient{runner: runner}
+
+	type contextKey struct{}
+	parent := context.WithValue(context.Background(), contextKey{}, "marker")
+	if _, err := client.SearchIssues(parent, "is:open"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(runner.calls) != 1 {
+		t.Fatalf("expected 1 command, got %d", len(runner.calls))
+	}
+	got := runner.calls[0].ctx.Value(contextKey{})
+	if got != "marker" {
+		t.Errorf("expected ctx value 'marker' to flow into fakeRunner, got %v", got)
+	}
+}
+
+// slice-2: a fake execRunner whose returned cmd blocks until ctx is
+// cancelled. The CLIClient must honour the caller's ctx via the
+// underlying exec.CommandContext even when no Timeout is configured
+// (zero-value test path).
+func TestCLIClient_CancelledContextReturnsError(t *testing.T) {
+	runner := &blockingFakeRunner{}
+	client := &CLIClient{runner: runner}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		_, err := client.SearchIssues(ctx, "is:open")
+		done <- err
+	}()
+
+	// Give the goroutine a moment to enter the blocking cmd.
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("expected error from cancelled ctx, got nil")
+		}
+		if !errors.Is(err, context.Canceled) && !strings.Contains(err.Error(), "context canceled") {
+			t.Errorf("expected ctx-cancelled error, got %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("SearchIssues did not return within 2 s after ctx cancel; hung")
+	}
+	if runner.startCount == 0 {
+		t.Fatal("expected fakeRunner.Run to have been invoked at least once")
+	}
+}
+
+// slice-2: when the caller's ctx has a tight deadline and the
+// client has no Timeout (zero-value), the caller's deadline wins.
+// The blocking cmd returns the deadline-exceeded error in bounded time.
+func TestCLIClient_CallerDeadlineWinsOverNoClientTimeout(t *testing.T) {
+	runner := &blockingFakeRunner{}
+	client := &CLIClient{runner: runner}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	start := time.Now()
+	_, err := client.SearchIssues(ctx, "is:open")
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatal("expected error from caller deadline, got nil")
+	}
+	if !errors.Is(err, context.DeadlineExceeded) && !strings.Contains(err.Error(), "context deadline exceeded") {
+		t.Errorf("expected context-deadline-exceeded error, got %v", err)
+	}
+	if elapsed > 2*time.Second {
+		t.Errorf("SearchIssues did not honour caller deadline; elapsed=%v", elapsed)
+	}
+}
+
+// slice-2: NewCLIClient applies the 30 s default timeout. A cancellation
+// without a caller-side deadline still completes in bounded time.
+func TestNewCLIClient_DefaultTimeoutBoundsCall(t *testing.T) {
+	runner := &blockingFakeRunner{}
+	client := NewCLIClient(WithRunner(runner))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := client.SearchIssues(ctx, "is:open")
+		done <- err
+	}()
+
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("expected error from cancellation, got nil")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("SearchIssues did not return within 2 s after ctx cancel; call hung")
+	}
+}
+
+// slice-2: when both the caller's ctx has a deadline and the client
+// has a Timeout, the earlier deadline wins. A caller deadline of 30 ms
+// must beat a client Timeout of 30 s.
+func TestCLIClient_CallerDeadlineWinsOverClientTimeout(t *testing.T) {
+	runner := &blockingFakeRunner{}
+	client := NewCLIClient(WithRunner(runner), WithTimeout(30*time.Second))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	start := time.Now()
+	_, err := client.SearchIssues(ctx, "is:open")
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatal("expected error from caller deadline, got nil")
+	}
+	if elapsed > 2*time.Second {
+		t.Errorf("expected caller's 50 ms deadline to bound the call, elapsed=%v", elapsed)
+	}
+}
+
+// slice-2: when the client's Timeout is the only deadline, an unset
+// caller ctx gets the Timeout applied. A short Timeout (50 ms) bounds
+// the call even though the caller's ctx has no deadline.
+func TestCLIClient_ClientTimeoutBoundsCallWithoutCallerDeadline(t *testing.T) {
+	runner := &blockingFakeRunner{}
+	client := NewCLIClient(WithRunner(runner), WithTimeout(50*time.Millisecond))
+
+	start := time.Now()
+	_, err := client.SearchIssues(context.Background(), "is:open")
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatal("expected error from client-side timeout, got nil")
+	}
+	if !errors.Is(err, context.DeadlineExceeded) && !strings.Contains(err.Error(), "context deadline exceeded") {
+		t.Errorf("expected context-deadline-exceeded error, got %v", err)
+	}
+	if elapsed > 2*time.Second {
+		t.Errorf("expected 50 ms client timeout to bound the call, elapsed=%v", elapsed)
+	}
+}
+
+// slice-2: WithTimeout(0) keeps the zero-value behaviour — no per-call
+// timeout is applied. A blocking call with no caller deadline waits
+// for cancellation rather than timing out. We use a short test by
+// cancelling the caller's ctx explicitly.
+func TestCLIClient_WithTimeoutZeroPreservesNoTimeout(t *testing.T) {
+	runner := &blockingFakeRunner{}
+	client := NewCLIClient(WithRunner(runner), WithTimeout(0))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		_, err := client.SearchIssues(ctx, "is:open")
+		done <- err
+	}()
+
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("expected error from cancellation, got nil")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("SearchIssues did not return within 2 s after ctx cancel")
 	}
 }

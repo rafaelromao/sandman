@@ -63,19 +63,15 @@ func TestSyncInstallsExactIssueClosingGuardInImplementSkill(t *testing.T) {
 	}
 	text := string(data)
 	checks := []string{
-		"set `body` to exactly `Fixes #<issue_number>`",
-		"Verify the final `body` string is exactly `Fixes #<issue_number>` and contains no other issue references or extra text",
+		"set `body` to exactly the closing-reference string",
+		"Verify the final `body` string is exactly that closing-reference string",
 		"If the body is wrong",
 		"report the exact wrong body to the user and stop",
-		"PR created with `Fixes #<issue_number>`",
 	}
 	for _, want := range checks {
 		if !strings.Contains(text, want) {
 			t.Fatalf("expected implement skill to contain %q, got:\n%s", want, text)
 		}
-	}
-	if strings.Contains(text, "Fixes #<ID>") {
-		t.Fatalf("expected implement skill to reject stale placeholder, got:\n%s", text)
 	}
 }
 
@@ -93,8 +89,8 @@ func TestSyncInstallsPreFlightCheckInImplementSkill(t *testing.T) {
 	text := string(data)
 
 	checks := []string{
-		"gh issue view <ID> --json state",
-		"GitHub rules",
+		"\"view work item\" CLI to read the current state",
+		"tracker's merge rules",
 		"## Status: already resolved",
 		"stop without running",
 		"acceptance criteria",
@@ -250,6 +246,29 @@ func readEmbeddedSkill(t *testing.T, rel string) string {
 	return string(data)
 }
 
+func TestSyncInstallsSandmanIndexSubSkill(t *testing.T) {
+	home := t.TempDir()
+
+	if err := Sync(SyncOptions{HomeDir: home, ReviewCommand: "/review-please"}); err != nil {
+		t.Fatalf("sync skill: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(home, ".agents", "skills", embeddedSkillRoot, "index", "SKILL.md"))
+	if err != nil {
+		t.Fatalf("read sandman-index sub-skill: %v", err)
+	}
+	text := string(data)
+	checks := []string{
+		"name: sandman-index",
+		"disable-model-invocation: true",
+	}
+	for _, want := range checks {
+		if !strings.Contains(text, want) {
+			t.Errorf("expected sandman-index sub-skill to contain %q, got:\n%s", want, text)
+		}
+	}
+}
+
 func TestSandmanTddSkill_PlanReuseAndNoPlanBranches(t *testing.T) {
 	text := readEmbeddedSkill(t, "tdd/SKILL.md")
 
@@ -311,29 +330,5 @@ func TestSandmanPlanSkill_OutputShapeNoNextStep(t *testing.T) {
 	}
 	if !strings.Contains(text, "## Plan output shape") {
 		t.Fatal("expected sandman-plan SKILL.md to contain a 'Plan output shape' section")
-	}
-}
-
-func TestSyncInstallsCodeindexSubSkill(t *testing.T) {
-	home := t.TempDir()
-
-	if err := Sync(SyncOptions{HomeDir: home, ReviewCommand: "/review-please"}); err != nil {
-		t.Fatalf("sync skill: %v", err)
-	}
-
-	data, err := os.ReadFile(filepath.Join(home, ".agents", "skills", embeddedSkillRoot, "codeindex", "SKILL.md"))
-	if err != nil {
-		t.Fatalf("read codeindex sub-skill: %v", err)
-	}
-	text := string(data)
-
-	checks := []string{
-		"name: sandman-codeindex",
-		"disable-model-invocation: true",
-	}
-	for _, want := range checks {
-		if !strings.Contains(text, want) {
-			t.Fatalf("expected codeindex sub-skill to contain %q, got:\n%s", want, text)
-		}
 	}
 }

@@ -1,6 +1,6 @@
 ---
 name: sandman
-description: Routes to Sandman modes for planning, issue implementation, test-driven development, self-review, PR review, back-merge, and PR merge workflows. Use when user mentions sandman or asks for plan, implement, tdd, self-review, pr-review, back-merge, or pr-merge modes.
+description: Routes to Sandman modes for planning, work-item implementation, test-driven development, self-review, change-request review, back-merge, and change-request merge workflows. Use when user mentions sandman or asks for plan, implement, tdd, self-review, pr-review, back-merge, or pr-merge modes.
 ---
 
 # Sandman
@@ -28,8 +28,10 @@ sandman pr-merge
 - `pr-review` -> `sandman-pr-review`
 - `back-merge` -> `sandman-back-merge`
 - `pr-merge` -> `sandman-pr-merge`
-- `codeindex` -> `sandman-codeindex`
+- `index` -> `sandman-index` (non-discoverable; load manually for codeindex guidance)
 
 ## Use
 
 Load the matching subskill for the requested mode and follow it end to end.
+
+For code discovery, load the `sandman-index` sub-skill for codeindex command reference, query refinement, and read discipline.

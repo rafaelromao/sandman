@@ -49,14 +49,14 @@ type fakeGH struct {
 	addReactionID int // auto-increment for fake reaction IDs
 }
 
-func (f *fakeGH) ListOpenPRs() ([]github.PR, error) {
+func (f *fakeGH) ListOpenPRs(ctx context.Context) ([]github.PR, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.listCalls++
 	return f.prs, f.listErr
 }
 
-func (f *fakeGH) ListPRComments(number int) ([]github.PRComment, error) {
+func (f *fakeGH) ListPRComments(ctx context.Context, number int) ([]github.PRComment, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.commentCalls == nil {
@@ -74,7 +74,7 @@ func (f *fakeGH) ListPRComments(number int) ([]github.PRComment, error) {
 	return result, nil
 }
 
-func (f *fakeGH) FetchPR(number int) (*github.PR, error) {
+func (f *fakeGH) FetchPR(ctx context.Context, number int) (*github.PR, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.fetchErr != nil {
@@ -90,11 +90,11 @@ func (f *fakeGH) FetchPR(number int) (*github.PR, error) {
 	return &github.PR{Number: number, Title: "T", Body: body}, nil
 }
 
-func (f *fakeGH) RepoName() (string, error) {
+func (f *fakeGH) RepoName(ctx context.Context) (string, error) {
 	return "owner/repo", nil
 }
 
-func (f *fakeGH) AddCommentReaction(commentID, content string) (string, error) {
+func (f *fakeGH) AddCommentReaction(ctx context.Context, commentID, content string) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.addReactionID++
@@ -103,7 +103,7 @@ func (f *fakeGH) AddCommentReaction(commentID, content string) (string, error) {
 	return id, nil
 }
 
-func (f *fakeGH) AddIssueReaction(issueNumber int, content string) (string, error) {
+func (f *fakeGH) AddIssueReaction(ctx context.Context, issueNumber int, content string) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.addReactionID++
@@ -112,14 +112,14 @@ func (f *fakeGH) AddIssueReaction(issueNumber int, content string) (string, erro
 	return id, nil
 }
 
-func (f *fakeGH) RemoveCommentReaction(commentID, reactionID string) error {
+func (f *fakeGH) RemoveCommentReaction(ctx context.Context, commentID, reactionID string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.reactionCalls = append(f.reactionCalls, reactionCall{kind: "remove_comment", commentID: commentID, reactionID: reactionID})
 	return nil
 }
 
-func (f *fakeGH) RemoveIssueReaction(issueNumber int, reactionID string) error {
+func (f *fakeGH) RemoveIssueReaction(ctx context.Context, issueNumber int, reactionID string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.reactionCalls = append(f.reactionCalls, reactionCall{kind: "remove_issue", issueNumber: issueNumber, reactionID: reactionID})
@@ -1730,7 +1730,7 @@ func TestDaemon_LaunchReviewCreatesControlSocketAndManifest(t *testing.T) {
 	d.Config = cfg
 	d.Clock = func() time.Time { return now }
 
-	reviewRunFolder, perRowRunID, rs, _, prepErr := d.prepareReviewRun(1, "c1")
+	reviewRunFolder, perRowRunID, rs, _, prepErr := d.prepareReviewRun(context.Background(), 1, "c1")
 	if prepErr != nil {
 		t.Fatalf("prepareReviewRun: %v", prepErr)
 	}
@@ -1764,7 +1764,7 @@ func TestDaemon_LaunchReviewCleansUpRunDirOnError(t *testing.T) {
 	d, _, _ := newDaemonForTest(t, gh, runner, cfg)
 	d.Config = cfg
 
-	reviewRunFolder, perRowRunID, rs, _, prepErr := d.prepareReviewRun(1, "c1")
+	reviewRunFolder, perRowRunID, rs, _, prepErr := d.prepareReviewRun(context.Background(), 1, "c1")
 	if prepErr != nil {
 		t.Fatalf("prepareReviewRun: %v", prepErr)
 	}
@@ -1827,7 +1827,7 @@ func TestDaemon_LaunchReviewReplacesStaleSocket(t *testing.T) {
 	d.Config = cfg
 	d.Clock = func() time.Time { return now }
 
-	reviewRunFolder, perRowRunID, rs, _, prepErr := d.prepareReviewRun(1, "c1")
+	reviewRunFolder, perRowRunID, rs, _, prepErr := d.prepareReviewRun(context.Background(), 1, "c1")
 	if prepErr != nil {
 		t.Fatalf("prepareReviewRun: %v", prepErr)
 	}
@@ -1882,7 +1882,7 @@ func TestDaemon_LaunchReviewRoutesOutputToPerPRSock(t *testing.T) {
 	d.Config = cfg
 	d.Clock = func() time.Time { return now }
 
-	reviewRunFolder, perRowRunID, rs, _, prepErr := d.prepareReviewRun(1, "c1")
+	reviewRunFolder, perRowRunID, rs, _, prepErr := d.prepareReviewRun(context.Background(), 1, "c1")
 	if prepErr != nil {
 		t.Fatalf("prepareReviewRun: %v", prepErr)
 	}

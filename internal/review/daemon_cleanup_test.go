@@ -241,7 +241,7 @@ func TestLaunchReview_CleansUpWorktreeAndBranchOnSuccess(t *testing.T) {
 	branch := reviewBranchName(42, "c1")
 	stageReviewWorktree(t, worktreeDir, branch)
 
-	reviewRunFolder, perRowRunID, rs, _, prepErr := d.prepareReviewRun(42, "c1")
+	reviewRunFolder, perRowRunID, rs, _, prepErr := d.prepareReviewRun(context.Background(), 42, "c1")
 	if prepErr != nil {
 		t.Fatalf("prepareReviewRun: %v", prepErr)
 	}
@@ -300,7 +300,7 @@ func TestPrepareReviewRun_LinkedIssueRegistersPerRowRunID(t *testing.T) {
 	branch := reviewBranchName(42, "c1")
 	stageReviewWorktree(t, worktreeDir, branch)
 
-	reviewRunFolder, perRowRunID, rs, _, prepErr := d.prepareReviewRun(42, "c1")
+	reviewRunFolder, perRowRunID, rs, _, prepErr := d.prepareReviewRun(context.Background(), 42, "c1")
 	if prepErr != nil {
 		t.Fatalf("prepareReviewRun: %v", prepErr)
 	}
@@ -345,7 +345,7 @@ func TestLaunchReview_CleansUpOnRunBatchFailure(t *testing.T) {
 	branch := reviewBranchName(42, "c1")
 	stageReviewWorktree(t, worktreeDir, branch)
 
-	reviewRunFolder, perRowRunID, rs, _, prepErr := d.prepareReviewRun(42, "c1")
+	reviewRunFolder, perRowRunID, rs, _, prepErr := d.prepareReviewRun(context.Background(), 42, "c1")
 	if prepErr != nil {
 		t.Fatalf("prepareReviewRun: %v", prepErr)
 	}
@@ -390,7 +390,7 @@ func TestLaunchReview_CleansUpOnContextCancellation(t *testing.T) {
 	branch := reviewBranchName(42, "c1")
 	stageReviewWorktree(t, worktreeDir, branch)
 
-	reviewRunFolder, perRowRunID, rs, _, prepErr := d.prepareReviewRun(42, "c1")
+	reviewRunFolder, perRowRunID, rs, _, prepErr := d.prepareReviewRun(context.Background(), 42, "c1")
 	if prepErr != nil {
 		t.Fatalf("prepareReviewRun: %v", prepErr)
 	}

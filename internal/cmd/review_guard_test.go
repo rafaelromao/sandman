@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/rafaelromao/sandman/internal/batch"
 	"github.com/rafaelromao/sandman/internal/config"
@@ -169,5 +170,41 @@ func TestRun_AutoGuardFiresWhenReviewCommandContainsSandmanAndNoSocket(t *testin
 	}
 	if spy.called {
 		t.Errorf("expected batch runner NOT to be called for --auto, but it was")
+	}
+}
+
+func TestResolveReviewDaemonDialTimeout_DefaultWhenEnvUnset(t *testing.T) {
+	t.Setenv("SANDMAN_REVIEW_DIAL_TIMEOUT", "")
+	got := resolveReviewDaemonDialTimeout()
+	want := 200 * time.Millisecond
+	if got != want {
+		t.Fatalf("default dial timeout\nwant: %s\ngot:  %s", want, got)
+	}
+}
+
+func TestResolveReviewDaemonDialTimeout_OverrideWhenEnvSet(t *testing.T) {
+	t.Setenv("SANDMAN_REVIEW_DIAL_TIMEOUT", "750ms")
+	got := resolveReviewDaemonDialTimeout()
+	want := 750 * time.Millisecond
+	if got != want {
+		t.Fatalf("env override dial timeout\nwant: %s\ngot:  %s", want, got)
+	}
+}
+
+func TestResolveReviewDaemonDialTimeout_OverrideTrimsWhitespace(t *testing.T) {
+	t.Setenv("SANDMAN_REVIEW_DIAL_TIMEOUT", "  2s\n")
+	got := resolveReviewDaemonDialTimeout()
+	want := 2 * time.Second
+	if got != want {
+		t.Fatalf("trimmed env override dial timeout\nwant: %s\ngot:  %s", want, got)
+	}
+}
+
+func TestResolveReviewDaemonDialTimeout_InvalidValueFallsBackToDefault(t *testing.T) {
+	t.Setenv("SANDMAN_REVIEW_DIAL_TIMEOUT", "not-a-duration")
+	got := resolveReviewDaemonDialTimeout()
+	want := 200 * time.Millisecond
+	if got != want {
+		t.Fatalf("invalid value should fall back to default\nwant: %s\ngot:  %s", want, got)
 	}
 }

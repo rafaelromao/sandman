@@ -12,9 +12,11 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -167,7 +169,7 @@ type fakeGitHubClient struct {
 	issueComments      map[int][]github.IssueComment
 }
 
-func (f *fakeGitHubClient) FetchIssue(number int) (*github.Issue, error) {
+func (f *fakeGitHubClient) FetchIssue(ctx context.Context, number int) (*github.Issue, error) {
 	if f.err != nil {
 		return nil, f.err
 	}
@@ -177,7 +179,7 @@ func (f *fakeGitHubClient) FetchIssue(number int) (*github.Issue, error) {
 	return f.issues[number], nil
 }
 
-func (f *fakeGitHubClient) FetchIssueDependencies(number int) ([]int, error) {
+func (f *fakeGitHubClient) FetchIssueDependencies(ctx context.Context, number int) ([]int, error) {
 	if f.err != nil {
 		return nil, f.err
 	}
@@ -187,11 +189,11 @@ func (f *fakeGitHubClient) FetchIssueDependencies(number int) ([]int, error) {
 	return nil, nil
 }
 
-func (f *fakeGitHubClient) FetchPR(number int) (*github.PR, error) {
+func (f *fakeGitHubClient) FetchPR(ctx context.Context, number int) (*github.PR, error) {
 	return &github.PR{Number: number, State: "open"}, nil
 }
 
-func (f *fakeGitHubClient) SearchIssues(query string) ([]github.Issue, error) {
+func (f *fakeGitHubClient) SearchIssues(ctx context.Context, query string) ([]github.Issue, error) {
 	f.searchCalls = append(f.searchCalls, query)
 	if f.searchIssuesError != nil {
 		return nil, f.searchIssuesError
@@ -202,7 +204,7 @@ func (f *fakeGitHubClient) SearchIssues(query string) ([]github.Issue, error) {
 	return nil, nil
 }
 
-func (f *fakeGitHubClient) FindPRByBranch(branch string) (*github.PR, error) {
+func (f *fakeGitHubClient) FindPRByBranch(ctx context.Context, branch string) (*github.PR, error) {
 	if f.findPRHook != nil {
 		f.findPRHook()
 	}
@@ -226,50 +228,50 @@ func (f *fakeGitHubClient) FindPRByBranch(branch string) (*github.PR, error) {
 	return nil, nil
 }
 
-func (f *fakeGitHubClient) ListOpenPRs() ([]github.PR, error) {
+func (f *fakeGitHubClient) ListOpenPRs(ctx context.Context) ([]github.PR, error) {
 	return nil, nil
 }
 
-func (f *fakeGitHubClient) ListPRComments(number int) ([]github.PRComment, error) {
+func (f *fakeGitHubClient) ListPRComments(ctx context.Context, number int) ([]github.PRComment, error) {
 	return nil, nil
 }
 
-func (f *fakeGitHubClient) ListIssueComments(number int) ([]github.IssueComment, error) {
+func (f *fakeGitHubClient) ListIssueComments(ctx context.Context, number int) ([]github.IssueComment, error) {
 	if f.issueComments == nil {
 		return nil, nil
 	}
 	return f.issueComments[number], nil
 }
 
-func (f *fakeGitHubClient) RepoName() (string, error) {
+func (f *fakeGitHubClient) RepoName(ctx context.Context) (string, error) {
 	return "owner/repo", nil
 }
 
-func (f *fakeGitHubClient) EditComment(commentID, body string) error {
+func (f *fakeGitHubClient) EditComment(ctx context.Context, commentID, body string) error {
 	return nil
 }
 
-func (f *fakeGitHubClient) EditPRBody(prNumber int, body string) error {
+func (f *fakeGitHubClient) EditPRBody(ctx context.Context, prNumber int, body string) error {
 	return nil
 }
 
-func (f *fakeGitHubClient) AddCommentReaction(commentID, content string) (string, error) {
+func (f *fakeGitHubClient) AddCommentReaction(ctx context.Context, commentID, content string) (string, error) {
 	return "", nil
 }
 
-func (f *fakeGitHubClient) AddIssueReaction(issueNumber int, content string) (string, error) {
+func (f *fakeGitHubClient) AddIssueReaction(ctx context.Context, issueNumber int, content string) (string, error) {
 	return "", nil
 }
 
-func (f *fakeGitHubClient) RemoveCommentReaction(commentID, reactionID string) error {
+func (f *fakeGitHubClient) RemoveCommentReaction(ctx context.Context, commentID, reactionID string) error {
 	return nil
 }
 
-func (f *fakeGitHubClient) RemoveIssueReaction(issueNumber int, reactionID string) error {
+func (f *fakeGitHubClient) RemoveIssueReaction(ctx context.Context, issueNumber int, reactionID string) error {
 	return nil
 }
 
-func (f *fakeGitHubClient) CloseIssue(issueNumber int, comment string) error {
+func (f *fakeGitHubClient) CloseIssue(ctx context.Context, issueNumber int, comment string) error {
 	return nil
 }
 
@@ -865,23 +867,23 @@ func TestCheckPRMergedAtHead(t *testing.T) {
 		"explicit": {Number: 4, State: "merged", Merged: false, HeadRefName: "explicit", HeadRefOid: "explicit-sha"},
 	}}
 
-	if merged := checkPRMerged(nil, ""); merged {
+	if merged := checkPRMerged(context.Background(), nil, ""); merged {
 		t.Fatal("expected nil client to report unmerged")
 	}
 
-	if merged, err := checkPRMergedAtHead(client, "open", "open-sha"); err != nil || merged {
+	if merged, err := checkPRMergedAtHead(context.Background(), client, "open", "open-sha"); err != nil || merged {
 		t.Fatalf("expected open PR to be false, got merged=%v err=%v", merged, err)
 	}
-	if merged, err := checkPRMergedAtHead(client, "merged", "merged-sha"); err != nil || !merged {
+	if merged, err := checkPRMergedAtHead(context.Background(), client, "merged", "merged-sha"); err != nil || !merged {
 		t.Fatalf("expected merged PR to be true, got merged=%v err=%v", merged, err)
 	}
-	if merged, err := checkPRMergedAtHead(client, "merged", "stale-sha"); err != nil || merged {
+	if merged, err := checkPRMergedAtHead(context.Background(), client, "merged", "stale-sha"); err != nil || merged {
 		t.Fatalf("expected stale merged PR to be false, got merged=%v err=%v", merged, err)
 	}
-	if merged, err := checkPRMergedAtHead(client, "closed", "closed-sha"); err != nil || merged {
+	if merged, err := checkPRMergedAtHead(context.Background(), client, "closed", "closed-sha"); err != nil || merged {
 		t.Fatalf("expected closed-unmerged PR to be false, got merged=%v err=%v", merged, err)
 	}
-	if merged, err := checkPRMergedAtHead(client, "explicit", "explicit-sha"); err != nil || !merged {
+	if merged, err := checkPRMergedAtHead(context.Background(), client, "explicit", "explicit-sha"); err != nil || !merged {
 		t.Fatalf("expected merged state to be true, got merged=%v err=%v", merged, err)
 	}
 }
@@ -2192,19 +2194,22 @@ func TestRunBatch_SendsSIGTERMOnCancel(t *testing.T) {
 	proc := makeFakeProcess()
 	sb := &fakeSandbox{process: proc}
 	factory := &fakeSandboxFactory{sandbox: sb}
-	blockRunnable := &blockingRunnable{delayAfterCancel: 100 * time.Millisecond}
+	blockRunnable := &blockingRunnable{delayAfterCancel: 100 * time.Millisecond, running: make(chan struct{})}
 
 	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
 	o.sandboxFactory = factory
 	o.runnableFactory = &blockingRunnableFactory{runnable: blockRunnable}
 
 	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
 	go func() {
-		time.Sleep(50 * time.Millisecond)
-		cancel()
+		defer close(done)
+		_, _ = o.RunBatch(ctx, Request{Issues: []int{42}})
 	}()
 
-	_, _ = o.RunBatch(ctx, Request{Issues: []int{42}})
+	waitForSignal(t, blockRunnable.running, "expected runnable to start before cancel")
+	cancel()
+	waitForSignal(t, done, "expected RunBatch to return after cancel")
 
 	if !proc.sigTermObserved() {
 		t.Error("expected SIGTERM to be sent to process")
@@ -7050,7 +7055,7 @@ func TestResolveSandboxExecutionPolicy_WorktreeModeDoesNotBuildContainerImage(t 
 	factory := &fakeContainerRuntimeFactory{starter: starter}
 	o := &Orchestrator{containerRuntimeFactory: factory}
 
-	policy, err := o.resolveSandboxExecutionPolicy(&config.Config{DefaultAgent: "test-agent", Agent: "test-agent", BuildTools: "generic"}, config.Agent{Command: "true"}, Request{}, "worktree")
+	policy, err := o.resolveSandboxExecutionPolicy(context.Background(), &config.Config{DefaultAgent: "test-agent", Agent: "test-agent", BuildTools: "generic"}, config.Agent{Command: "true"}, Request{}, "worktree")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -7326,7 +7331,7 @@ func TestPrepareContainerConfigMounts_OpencodePresetEndToEnd(t *testing.T) {
 		t.Fatalf("build start options: %v", err)
 	}
 
-	cleanup, err := PrepareContainerConfigMounts(t.TempDir(), "", &startOpts, nil)
+	cleanup, err := PrepareContainerConfigMounts(context.Background(), t.TempDir(), "", &startOpts, func(context.Context) (string, error) { return "", nil })
 	if err != nil {
 		t.Fatalf("prepare container config mounts: %v", err)
 	}
@@ -8752,6 +8757,159 @@ func TestOrchestrator_AbortIssue_ActiveRunContainer_ReachesAbortedTerminal(t *te
 	if status, _ := abortedEvent.Payload["status"].(string); status != "aborted" {
 		t.Fatalf("expected aborted terminal status, got %q", status)
 	}
+}
+
+// TestOrchestrator_AbortIssue_ActiveRunWorktree_KillsSleepChild is the
+// worktree analogue of TestOrchestrator_AbortIssue_ActiveRunContainer
+// _ReachesAbortedTerminal. It wires a real *sandbox.WorktreeSandbox into
+// runSingle so the production waitCmd path (negative-PGID SIGKILL via the
+// Setpgid: true cmd.SysProcAttr added in #1782) is exercised end-to-end:
+// the fake runnable spawns a sleep loop through sb.ExecInteractive, the
+// test calls AbortIssue, and asserts the spawned PID is dead within 2s,
+// the orchestrator goroutine returns within 3s, and a run.aborted event
+// lands. Regression for #1782.
+func TestOrchestrator_AbortIssue_ActiveRunWorktree_KillsSleepChild(t *testing.T) {
+	if err := exec.Command("sleep", "0").Run(); err != nil {
+		t.Skipf("sleep command not available: %v", err)
+	}
+
+	dir := testenv.MkdirShort(t, "sm-orch-")
+	t.Chdir(dir)
+	initGitRepo(t, dir)
+
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			42: {Number: 42, Title: "Fix bug"},
+		},
+	}
+
+	sbFactory := sandboxFactoryFunc(func(repoPath, worktreeBase, branch, sourceBranch string, container sandbox.Container) sandbox.Sandbox {
+		return sandbox.NewWorktreeSandbox(repoPath, worktreeBase, branch, sourceBranch)
+	})
+
+	worktreeDir := filepath.Join(".", ".sandman", "worktrees", "sandman/42-fix-bug")
+	pidFile := filepath.Join(worktreeDir, "agent.pid")
+
+	factory := &worktreeSleepRunnableFactory{
+		pidFile: pidFile,
+	}
+
+	spyLog := &spyEventLog{}
+
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog)
+	o.sandboxFactory = sbFactory
+	o.runnableFactory = factory
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _ = o.RunBatch(context.Background(), Request{Issues: []int{42}})
+	}()
+
+	absPidFile, err := filepath.Abs(pidFile)
+	if err != nil {
+		t.Fatalf("abs pidfile: %v", err)
+	}
+	waitForChildReadyFileTB(t, absPidFile, 5*time.Second)
+
+	pidBytes, err := os.ReadFile(pidFile)
+	if err != nil {
+		t.Fatalf("read pid file: %v", err)
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(pidBytes)))
+	if err != nil {
+		t.Fatalf("parse pid %q: %v", strings.TrimSpace(string(pidBytes)), err)
+	}
+
+	if err := syscall.Kill(pid, 0); err != nil {
+		t.Fatalf("expected child pid %d alive before abort, got kill-0 err: %v", pid, err)
+	}
+
+	if err := o.AbortIssue(42); err != nil {
+		t.Fatalf("AbortIssue returned error: %v", err)
+	}
+
+	killDeadline := time.Now().Add(2 * time.Second)
+	for {
+		if err := syscall.Kill(pid, 0); err == syscall.ESRCH {
+			break
+		}
+		if time.Now().After(killDeadline) {
+			t.Fatalf("child pid %d still alive 2s after AbortIssue — negative-PGID SIGKILL did not reach the agent process group (Setpgid missing on WorktreeSandbox.ExecInteractive?)", pid)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("orchestrator goroutine did not return within 3s — AbortIssue did not unblock the production waitCmd")
+	}
+
+	var abortedEvent *events.Event
+	for i := range spyLog.events {
+		e := &spyLog.events[i]
+		if e.Issue == 42 && e.Type == "run.aborted" {
+			abortedEvent = e
+			break
+		}
+	}
+	if abortedEvent == nil {
+		t.Fatalf("expected run.aborted event for issue 42, got %v", spyLog.events)
+	}
+	if status, _ := abortedEvent.Payload["status"].(string); status != "aborted" {
+		t.Fatalf("expected aborted terminal status, got %q", status)
+	}
+}
+
+// worktreeSleepRunnableFactory is the fake runnable factory used by
+// TestOrchestrator_AbortIssue_ActiveRunWorktree_KillsSleepChild. The
+// runnable it produces calls sb.ExecInteractive(ctx, "sh -c 'echo $$ >
+// pidfile; touch ready; sleep 60'") and lets the production waitCmd
+// path (ctx-cancel → negative-PGID SIGKILL) do the killing. The pidfile
+// lets the test observe the child was forked before asserting it is
+// gone after abort.
+type worktreeSleepRunnableFactory struct {
+	pidFile string
+}
+
+func (f *worktreeSleepRunnableFactory) NewRunnable(issue *github.Issue, branch string, sb sandbox.Sandbox) Runnable {
+	return &worktreeSleepRunnable{factory: f, sb: sb}
+}
+
+type worktreeSleepRunnable struct {
+	factory *worktreeSleepRunnableFactory
+	sb      sandbox.Sandbox
+}
+
+// waitForChildReadyFileTB polls for a file to exist; fails the test on
+// timeout. Used to gate on a spawned child having written its PID/ready
+// marker before the test calls AbortIssue.
+func waitForChildReadyFileTB(t *testing.T, path string, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for {
+		if _, err := os.Stat(path); err == nil {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for %s", path)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+func (r *worktreeSleepRunnable) Run(ctx context.Context, _ prompt.IssueRenderer, _ string, _ prompt.RenderConfig) AgentRunResult {
+	abs, err := filepath.Abs(r.factory.pidFile)
+	if err != nil {
+		return AgentRunResult{Status: "failure"}
+	}
+	absReady := abs + ".ready"
+	cmd := fmt.Sprintf("echo $$ > %s; touch %s; sleep 60", shellenv.Quote(abs), shellenv.Quote(absReady))
+	if err := r.sb.ExecInteractive(ctx, cmd); err != nil {
+		return AgentRunResult{Status: "failure"}
+	}
+	return AgentRunResult{Status: "success"}
 }
 
 // fakeWorktreeForContainerAbortTest is a minimal sandbox.Sandbox used only by

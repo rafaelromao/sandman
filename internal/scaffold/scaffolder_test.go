@@ -2826,6 +2826,9 @@ func TestScaffold_ElixirPresetWritesPinnedDockerfile(t *testing.T) {
 		"# sandman erlang-version: " + wantOTP,
 		"# sandman installed-agents: opencode",
 		"FROM debian:bookworm-slim",
+		// Erlang/OTP compilation requires libncurses-dev; without it
+		// `mise use -g erlang` fails with "No curses library functions found".
+		"libncurses-dev",
 		"RUN mise use -g --pin erlang@" + wantOTP,
 		"RUN mise use -g --pin elixir@" + wantElixirVersion,
 		"RUN mix local.hex --force",

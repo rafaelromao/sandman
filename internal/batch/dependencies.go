@@ -137,7 +137,7 @@ func fetchDependencyIssue(ctx context.Context, client github.Client, cache map[i
 		return nil, err
 	}
 
-	issue, err := client.FetchIssue(issueNum)
+	issue, err := client.FetchIssue(ctx, issueNum)
 	if err != nil {
 		return nil, err
 	}

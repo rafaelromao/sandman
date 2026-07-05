@@ -72,7 +72,7 @@ func (r *PRDResolver) Resolve(ctx context.Context, issues []int) ([]int, error) 
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		issue, err := r.client.FetchIssue(num)
+		issue, err := r.client.FetchIssue(ctx, num)
 		if err != nil {
 			return nil, fmt.Errorf("fetch issue #%d: %w", num, err)
 		}
@@ -96,7 +96,7 @@ func (r *PRDResolver) Resolve(ctx context.Context, issues []int) ([]int, error) 
 }
 
 func (r *PRDResolver) resolvePRDChildren(ctx context.Context, parent int, body string, userInputSet map[int]struct{}) ([]int, error) {
-	candidates := r.collectCandidates(parent, body)
+	candidates := r.collectCandidates(ctx, parent, body)
 	if len(candidates) == 0 {
 		return nil, fmt.Errorf("no child issues for PRD #%d", parent)
 	}
@@ -109,7 +109,7 @@ func (r *PRDResolver) resolvePRDChildren(ctx context.Context, parent int, body s
 			accepted = append(accepted, child)
 			continue
 		}
-		childIssue, err := r.client.FetchIssue(child)
+		childIssue, err := r.client.FetchIssue(ctx, child)
 		if err != nil {
 			return nil, fmt.Errorf("fetch child #%d: %w", child, err)
 		}
@@ -131,7 +131,7 @@ func (r *PRDResolver) resolvePRDChildren(ctx context.Context, parent int, body s
 	return accepted, nil
 }
 
-func (r *PRDResolver) collectCandidates(parent int, body string) []int {
+func (r *PRDResolver) collectCandidates(ctx context.Context, parent int, body string) []int {
 	order := make([]int, 0)
 	seen := make(map[int]struct{})
 	add := func(nums []int) {
@@ -147,7 +147,7 @@ func (r *PRDResolver) collectCandidates(parent int, body string) []int {
 		}
 	}
 	add(ExtractIssueReferences(body))
-	if comments, err := r.client.ListIssueComments(parent); err == nil {
+	if comments, err := r.client.ListIssueComments(ctx, parent); err == nil {
 		for _, c := range comments {
 			add(ExtractIssueReferences(c.Body))
 		}
@@ -155,7 +155,7 @@ func (r *PRDResolver) collectCandidates(parent int, body string) []int {
 		fmt.Fprintf(r.warningWriter, "warning: could not list comments for PRD #%d: %v\n", parent, err)
 	}
 	if len(order) == 0 {
-		if results, err := r.client.SearchIssues(prdSearchToken(parent)); err == nil {
+		if results, err := r.client.SearchIssues(ctx, prdSearchToken(parent)); err == nil {
 			for _, issue := range results {
 				add([]int{issue.Number})
 			}

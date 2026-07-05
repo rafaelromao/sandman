@@ -270,3 +270,186 @@ func mustContain(t *testing.T, haystack, needle string) {
 		t.Errorf("CONTEXT.md must contain %q per issue #1552", needle)
 	}
 }
+
+// TestADRSelfPostFilter_DocumentsNewModel pins the positive phrasing of
+// the self-post filter section in ADR-0014 after the new model
+// introduced by issues #1756, #1757, and #1759. The ADR must use the
+// canonical phrases for the run-log grep, the bot's own review run
+// log, the per-PR scoping, and the on-disk composite key. A future
+// drift that loses any of these phrases will fail the build even if
+// no forbidden wording has been added.
+func TestADRSelfPostFilter_DocumentsNewModel(t *testing.T) {
+	root, err := repoRoot()
+	if err != nil {
+		t.Fatalf("locate repo root: %v", err)
+	}
+	adrPath := filepath.Join(root, "docs", "adr", "0014-sandman-review-daemon-and-guard.md")
+	body, err := os.ReadFile(adrPath)
+	if err != nil {
+		t.Fatalf("read ADR-0014: %v", err)
+	}
+	text := string(body)
+	for _, phrase := range []string{
+		"run-log",
+		"bot's own review run log",
+		"per-PR",
+		"pr-<N>-<sha>",
+	} {
+		if !strings.Contains(text, phrase) {
+			t.Errorf("ADR-0014 must contain %q per issues #1756/#1757/#1759", phrase)
+		}
+	}
+}
+
+// TestADRSelfPostFilter_NoLongerReferencesWrapper pins the negative
+// side: ADR-0014 must not present the old `record_review_posted`
+// wrapper, the old `Step 4b` ownership, or the skill-side ownership
+// claim in canonical-style prose. The wrapper names are allowed only
+// inside the §Ownership note (issue #1757) historical-context
+// paragraph; anywhere else in the file the wrapper references must
+// be absent.
+//
+// The test reads ADR-0014 line by line, classifies each line by the
+// ADR heading structure, and flags any forbidden phrase that lives
+// outside the §Ownership note paragraph.
+func TestADRSelfPostFilter_NoLongerReferencesWrapper(t *testing.T) {
+	root, err := repoRoot()
+	if err != nil {
+		t.Fatalf("locate repo root: %v", err)
+	}
+	adrPath := filepath.Join(root, "docs", "adr", "0014-sandman-review-daemon-and-guard.md")
+	body, err := os.ReadFile(adrPath)
+	if err != nil {
+		t.Fatalf("read ADR-0014: %v", err)
+	}
+	lines := strings.Split(string(body), "\n")
+
+	forbidden := []string{
+		"record_review_posted",
+		"Step 4b",
+	}
+
+	inOwnershipNote := false
+	for i, line := range lines {
+		// A new H2 (`## `) or H3 (`### `) heading closes any
+		// previously-open historical-context paragraph.
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "### ") || strings.HasPrefix(trimmed, "## ") {
+			inOwnershipNote = strings.HasPrefix(trimmed, "### Ownership note (issue #1757)")
+		}
+		if !inOwnershipNote {
+			for _, phrase := range forbidden {
+				if strings.Contains(line, phrase) {
+					t.Errorf("ADR-0014 line %d: forbidden canonical-style wrapper reference %q outside §Ownership note (issue #1757) historical-context paragraph", i+1, phrase)
+				}
+			}
+		}
+	}
+}
+
+// TestADR_CrossReferencesConsistent asserts the cross-ADR consistency
+// invariant: only ADR-0014 may name the old self-post wrapper, the
+// step-4b wrapper, the record_review_posted helper, or the run-log
+// grep helper. No other ADR under docs/adr/ should reference the
+// recording site or the SelfPostStore. If a future ADR introduces a
+// new mention of SelfPostStore, this test will surface it for review.
+//
+// The test also pins that any reference to the wrapper names inside
+// ADR-0014 lives only in the §Ownership note paragraph.
+func TestADR_CrossReferencesConsistent(t *testing.T) {
+	root, err := repoRoot()
+	if err != nil {
+		t.Fatalf("locate repo root: %v", err)
+	}
+	adrDir := filepath.Join(root, "docs", "adr")
+	entries, err := os.ReadDir(adrDir)
+	if err != nil {
+		t.Fatalf("read adr dir: %v", err)
+	}
+
+	storeOrWrapperPhrases := []string{
+		"SelfPostStore",
+		"self-posted.json",
+		"record_review_posted",
+		"Step 4b",
+		"extractBodiesFromLog",
+	}
+
+	const adr0014 = "0014-sandman-review-daemon-and-guard.md"
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
+			continue
+		}
+		if e.Name() == adr0014 {
+			continue
+		}
+		path := filepath.Join(adrDir, e.Name())
+		body, err := os.ReadFile(path)
+		if err != nil {
+			t.Errorf("read %s: %v", e.Name(), err)
+			continue
+		}
+		for _, phrase := range storeOrWrapperPhrases {
+			if strings.Contains(string(body), phrase) {
+				t.Errorf("ADR %s must not reference %q; only ADR-0014 owns the SelfPostStore / wrapper references", e.Name(), phrase)
+			}
+		}
+	}
+
+	// ADR-0014's wrapper references must live inside the
+	// §Ownership note historical-context paragraph.
+	adrBody, err := os.ReadFile(filepath.Join(adrDir, adr0014))
+	if err != nil {
+		t.Fatalf("read ADR-0014: %v", err)
+	}
+	lines := strings.Split(string(adrBody), "\n")
+	inOwnershipNote := false
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "### ") || strings.HasPrefix(trimmed, "## ") {
+			inOwnershipNote = strings.HasPrefix(trimmed, "### Ownership note (issue #1757)")
+		}
+		if inOwnershipNote {
+			continue
+		}
+		for _, phrase := range []string{"record_review_posted", "Step 4b"} {
+			if strings.Contains(line, phrase) {
+				t.Errorf("ADR-0014 line %d: wrapper reference %q outside §Ownership note historical-context paragraph", i+1, phrase)
+			}
+		}
+	}
+}
+
+// TestCONTEXT_GlossaryHasNewTerms asserts that CONTEXT.md carries
+// glossary entries (or pointers) for `Review run log` and
+// `SelfPostStore` that reflect the new self-post filter contract
+// introduced by issues #1756, #1757, and #1759. The `Review run
+// log` entry may be a pointer to the existing `Saved Run Log`
+// entry (which already pins the on-disk path); the `SelfPostStore`
+// entry may be a pointer to the `Review daemon state` paragraph,
+// but the paragraph itself must reflect the new contract — it must
+// NOT describe the old `pr-review SKILL.md Step 4 wrapper` claim.
+func TestCONTEXT_GlossaryHasNewTerms(t *testing.T) {
+	root, err := repoRoot()
+	if err != nil {
+		t.Fatalf("locate repo root: %v", err)
+	}
+	contextPath := filepath.Join(root, "CONTEXT.md")
+	body, err := os.ReadFile(contextPath)
+	if err != nil {
+		t.Fatalf("read CONTEXT.md: %v", err)
+	}
+	text := string(body)
+
+	mustContain(t, text, "**Review run log**:")
+	mustContain(t, text, "**SelfPostStore**:")
+
+	// Positive phrasing on the new SelfPostStore contract.
+	mustContain(t, text, "(prNumber, sha256(body))")
+
+	// Negative phrasing: the stale claim that the skill-side
+	// wrapper records the hash at posting time must not appear.
+	if strings.Contains(text, "SKILL.md Step 4 wrapper records the hash at posting time") {
+		t.Errorf("CONTEXT.md must not describe the legacy pr-review SKILL.md Step 4 wrapper claim (issues #1757, #1759)")
+	}
+}

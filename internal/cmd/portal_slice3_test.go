@@ -338,6 +338,117 @@ func TestPortal_Compute_TerminalReviewWithApprovedMarker_ProjectsApproved(t *tes
 	}
 }
 
+// TestPortal_Compute_ApprovesIssue1755FromRealRunLogShape is the
+// end-to-end regression test for issue #1767. The bug: the review
+// agent posts its decision via `gh pr comment <PR> --body "..."`,
+// which leaves a trailing `"` on the same line as the `**APPROVED**`
+// marker inside the `## Decision` section of the saved run.log. The
+// portal's verdict projection anchored the entire marker line, so the
+// regex missed and the parent issue row rendered `ReviewVerdict="Unclear"`
+// even when the underlying PR was approved and merged.
+//
+// The reproduction here mirrors the exact log tail captured locally
+// from `4f35-260704130316-1755-PR1763/run.log` (work item
+// 18dc-260704125005-1755 / issue #1755 "Embed sandman-index as a
+// sub-skill of sandman"). The test asserts that with the trailing `"`
+// tolerated, the parent row surfaces "Approved"; without the fix, the
+// helper falls through and the parent row stays "Unclear".
+func TestPortal_Compute_ApprovesIssue1755FromRealRunLogShape(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	implRunID := "18dc-260704125005-1755"
+	implBatchID := "18dc-260704125005-1755"
+	reviewRunID := "4f35-260704130316-1755-PR1763"
+	reviewBatchID := "4f35-260704130316-1755-PR1763"
+
+	startedAt := time.Date(2026, 7, 4, 12, 50, 5, 0, time.UTC)
+	reviewFinishedAt := startedAt.Add(1*time.Hour + 3*time.Minute + 11*time.Second)
+
+	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
+		{Type: "run.started", Timestamp: startedAt, RunID: implRunID, Issue: 1755, Payload: map[string]any{
+			"branch":      "sandman/1763-embed-sandman-index-as-sub-skill",
+			"batch_id":    implBatchID,
+			"base_branch": "main",
+		}},
+		{Type: "run.finished", Timestamp: startedAt.Add(30 * time.Minute), RunID: implRunID, Issue: 1755, Payload: map[string]any{
+			"branch":   "sandman/1763-embed-sandman-index-as-sub-skill",
+			"batch_id": implBatchID,
+			"status":   "success",
+		}},
+		{Type: "run.started", Timestamp: startedAt.Add(1*time.Hour + 3*time.Minute + 11*time.Second), RunID: reviewRunID, Payload: map[string]any{
+			"branch":       "sandman/review-1763-4878138837",
+			"batch_id":     reviewBatchID,
+			"review":       true,
+			"pr_number":    1763,
+			"issue_number": 1755,
+			"base_branch":  "main",
+		}},
+		{Type: "run.finished", Timestamp: reviewFinishedAt, RunID: reviewRunID, Payload: map[string]any{
+			"branch":    "sandman/review-1763-4878138837",
+			"batch_id":  reviewBatchID,
+			"review":    true,
+			"pr_number": 1763,
+			"status":    "success",
+		}},
+	})
+
+	// Saved run.log for the review run, mirroring the actual
+	// production log captured at 4f35-260704130316-1755-PR1763/run.log.
+	// The final line is `**APPROVED**"` — the trailing `"` is the
+	// bash closing quote that `gh pr comment --body "..."` leaves
+	// behind on the marker line.
+	reviewLog := "[4f35-260704130316-1755-PR1763] 13:02:40 ## Summary\r\n" +
+		"[4f35-260704130316-1755-PR1763] 13:02:40 LGTM.\r\n" +
+		"[4f35-260704130316-1755-PR1763] 13:03:10 ## Findings\r\n" +
+		"[4f35-260704130316-1755-PR1763] 13:03:10 None.\r\n" +
+		"[4f35-260704130316-1755-PR1763] 13:03:16 ## Decision\r\n" +
+		"[4f35-260704130316-1755-PR1763] 13:03:16 **APPROVED**\"\r\n"
+	reviewRunDir := filepath.Join(repoRoot, ".sandman", "batches", reviewBatchID, "runs", reviewRunID)
+	if err := os.MkdirAll(reviewRunDir, 0755); err != nil {
+		t.Fatalf("mkdir review run dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(reviewRunDir, "run.log"), []byte(reviewLog), 0644); err != nil {
+		t.Fatalf("write review run.log: %v", err)
+	}
+
+	runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")})
+	if err != nil {
+		t.Fatalf("compute: %v", err)
+	}
+
+	var implRow, reviewRow *portalRun
+	for i := range runs {
+		run := &runs[i]
+		switch {
+		case run.IssueNumber == 1755 && !run.Review:
+			implRow = run
+		case run.Review && run.RunID == reviewRunID:
+			reviewRow = run
+		}
+	}
+	if implRow == nil {
+		t.Fatalf("expected impl row for issue #1755, got %#v", runs)
+	}
+	if reviewRow == nil {
+		t.Fatalf("expected review row %q, got %#v", reviewRunID, runs)
+	}
+	if !strings.Contains(reviewRow.Log, "**APPROVED**\"") {
+		t.Fatalf("review row Log missing the trailing-quote marker: %q", reviewRow.Log)
+	}
+	if reviewRow.Status != "success" {
+		t.Fatalf("review row Status=%q, want success (the agent exits 0 even when it approved)", reviewRow.Status)
+	}
+	if implRow.ReviewCount != 1 {
+		t.Fatalf("impl row ReviewCount=%d, want 1", implRow.ReviewCount)
+	}
+	if got := implRow.ReviewVerdict; got != "Approved" {
+		t.Fatalf("impl row ReviewVerdict=%q, want %q (issue #1767 — the saved run.log carries ## Decision / **APPROVED**\")", got, "Approved")
+	}
+}
+
 // TestPortal_Compute_CanonicalParentIdentityPreservedWithReviewChildren
 // is the backend regression test for issue #1525 acceptance criterion #6:
 // when compute() projects an issue group that has both a canonical
@@ -1959,6 +2070,36 @@ func TestPortal_ReviewVerdictFromRunLog(t *testing.T) {
 			logText: "[abcd-260618113825-PR42] 13:52:10 ## Decision\n[abcd-260618113825-PR42] 13:52:11 **CHANGES_REQUESTED**\n",
 			want:    "Changes requested",
 			wantOK:  true,
+		},
+		{
+			name:    "APPROVED with trailing double-quote (gh pr comment --body) is recognised",
+			logText: "13:52:10 ## Decision\n13:52:11 **APPROVED**\"\n",
+			want:    "Approved",
+			wantOK:  true,
+		},
+		{
+			name:    "CHANGES_REQUESTED with trailing double-quote (gh pr comment --body) is recognised",
+			logText: "13:52:10 ## Decision\n13:52:11 **CHANGES_REQUESTED**\"\n",
+			want:    "Changes requested",
+			wantOK:  true,
+		},
+		{
+			name:    "runID-prefixed APPROVED with trailing double-quote is recognised",
+			logText: "[4f35-260704130316-1755-PR1763] 13:03:16 ## Decision\n[4f35-260704130316-1755-PR1763] 13:03:16 **APPROVED**\"\n",
+			want:    "Approved",
+			wantOK:  true,
+		},
+		{
+			name:    "double trailing quote is not coerced",
+			logText: "13:50:00 ## Decision\n13:50:01 **APPROVED**\"\"\n",
+			want:    "",
+			wantOK:  false,
+		},
+		{
+			name:    "trailing period after quote is not coerced",
+			logText: "13:50:00 ## Decision\n13:50:01 **APPROVED**\".\n",
+			want:    "",
+			wantOK:  false,
 		},
 	}
 	for _, tc := range cases {

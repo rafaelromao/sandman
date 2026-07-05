@@ -2,11 +2,17 @@ package sandbox
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
+
+	"github.com/rafaelromao/sandman/internal/shellenv"
 )
 
 func initGitRepo(t *testing.T, dir string) {
@@ -459,6 +465,79 @@ func TestWorktreeSandbox_ExecInteractive_RunsCommand(t *testing.T) {
 	markerPath := filepath.Join(s.WorkDir(), "interactive-ran.txt")
 	if _, err := os.Stat(markerPath); err != nil {
 		t.Errorf("expected interactive marker file to exist: %v", err)
+	}
+}
+
+// TestWorktreeSandbox_ExecInteractive_IsProcessGroupLeader asserts that
+// ExecInteractive spawns its command as a process-group leader (PGID == PID),
+// so waitCmd's negative-PID SIGKILL on context cancel targets only the
+// agent's group. Regression for #1782.
+func TestWorktreeSandbox_ExecInteractive_IsProcessGroupLeader(t *testing.T) {
+	if err := exec.Command("sh", "-c", "true").Run(); err != nil {
+		t.Skipf("sh not available: %v", err)
+	}
+
+	dir := t.TempDir()
+	_ = initGitRepoWithRemote(t, dir)
+	removeBranch(t, dir, "sandman/42-fix-bug")
+
+	s := NewWorktreeSandbox(dir, filepath.Join(dir, ".sandman", "worktrees"), "sandman/42-fix-bug", "main")
+	if err := s.Start(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	t.Cleanup(func() {
+		s.Stop()
+		removeBranch(t, dir, "sandman/42-fix-bug")
+	})
+
+	pidFile := filepath.Join(t.TempDir(), "child.pid")
+	command := fmt.Sprintf("echo $$ > %s; sleep 30", shellenv.Quote(pidFile))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- s.ExecInteractive(ctx, command)
+	}()
+
+	waitForChildReadyFileTB(t, pidFile, 2*time.Second)
+	pidBytes, err := os.ReadFile(pidFile)
+	if err != nil {
+		t.Fatalf("read pid file: %v", err)
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(pidBytes)))
+	if err != nil {
+		t.Fatalf("parse pid %q: %v", strings.TrimSpace(string(pidBytes)), err)
+	}
+
+	pgid, err := syscall.Getpgid(pid)
+	if err != nil {
+		t.Fatalf("getpgid(%d): %v", pid, err)
+	}
+	if pgid != pid {
+		t.Fatalf("expected spawned shell PID %d to equal its PGID (be a process-group leader); got PGID %d — missing Setpgid on WorktreeSandbox.ExecInteractive?", pid, pgid)
+	}
+
+	cancel()
+	select {
+	case <-errCh:
+	case <-time.After(3 * time.Second):
+		t.Fatal("ExecInteractive did not return within 3s of cancel")
+	}
+}
+
+func waitForChildReadyFileTB(t *testing.T, path string, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for {
+		if _, err := os.Stat(path); err == nil {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for %s", path)
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 }
 

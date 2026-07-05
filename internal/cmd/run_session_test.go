@@ -49,6 +49,76 @@ func waitForPathTB(t *testing.T, path string, timeout time.Duration) string {
 	}
 }
 
+// waitForSocketTB polls the Unix-domain socket at path until a dial
+// succeeds or the timeout expires; on expiry, the test is failed. The
+// returned connection is open and the caller is responsible for
+// closing it. Mirrors waitForPathTB's poll cadence (20ms) and fatal
+// style.
+func waitForSocketTB(t *testing.T, path string, timeout time.Duration) net.Conn {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for {
+		conn, ok := pollSocketOnce(path, 20*time.Millisecond)
+		if ok {
+			return conn
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for %s", path)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// pollSocketOnce dials path once with a bounded per-attempt timeout.
+// On success it returns (conn, true); the caller owns the connection
+// and must close it. On failure it returns (nil, false). It is the
+// single-shot front-end that waitForSocketTB drives in a 20ms-poll
+// loop, and is also exercised directly by tests that want to observe
+// the missing-listener branch without invoking t.Fatalf.
+func pollSocketOnce(path string, perAttemptTimeout time.Duration) (net.Conn, bool) {
+	conn, err := net.DialTimeout("unix", path, perAttemptTimeout)
+	if err != nil {
+		return nil, false
+	}
+	return conn, true
+}
+
+// pollTCPAddrOnce dials a TCP addr once with a bounded per-attempt
+// timeout. On success it returns (conn, true); the caller owns the
+// connection and must close it. On failure it returns (nil, false).
+// It is the single-shot front-end that waitForTCPAddrTB drives in a
+// 20ms-poll loop, and is also exercised directly by tests that want
+// to observe the missing-listener branch without invoking t.Fatalf.
+// Mirrors pollSocketOnce's shape so a future reviewer sees a single
+// helper-table style for the Unix-socket and TCP variants.
+func pollTCPAddrOnce(addr string, perAttemptTimeout time.Duration) (net.Conn, bool) {
+	conn, err := net.DialTimeout("tcp", addr, perAttemptTimeout)
+	if err != nil {
+		return nil, false
+	}
+	return conn, true
+}
+
+// waitForTCPAddrTB polls the TCP address at addr until a dial
+// succeeds or the timeout expires; on expiry, the test is failed. The
+// returned connection is open and the caller is responsible for
+// closing it. Mirrors waitForSocketTB's poll cadence (20ms) and fatal
+// style.
+func waitForTCPAddrTB(t *testing.T, addr string, timeout time.Duration) net.Conn {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for {
+		conn, ok := pollTCPAddrOnce(addr, 20*time.Millisecond)
+		if ok {
+			return conn
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for %s", addr)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
 // runSessionTestEnv bundles the per-test artifacts that the kill-and-inspect
 // test (and its successors) need to inspect the boot sequence in isolation.
 type runSessionTestEnv struct {

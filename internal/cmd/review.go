@@ -92,7 +92,7 @@ func NewReviewCmd(deps Dependencies) *cobra.Command {
 // Kept as a separate function so the daemon and multi-PR branches can be
 // tested independently.
 func runReviewOneShot(cmd *cobra.Command, deps Dependencies, cfg *config.Config, prNumber int, parallelFlag int) error {
-	pr, err := deps.GitHubClient.FetchPR(prNumber)
+	pr, err := deps.GitHubClient.FetchPR(cmd.Context(), prNumber)
 	if err != nil {
 		return fmt.Errorf("fetch PR #%d: %w", prNumber, err)
 	}
@@ -127,7 +127,7 @@ func runReviewOneShot(cmd *cobra.Command, deps Dependencies, cfg *config.Config,
 		reviewParallel = cfg.EffectiveReviewParallel()
 	}
 
-	repoName, err := deps.GitHubClient.RepoName()
+	repoName, err := deps.GitHubClient.RepoName(cmd.Context())
 	if err != nil {
 		return fmt.Errorf("get repo name: %w", err)
 	}
@@ -246,7 +246,7 @@ func runReviewOneShotMulti(cmd *cobra.Command, deps Dependencies, cfg *config.Co
 	}
 
 	if hasUnbounded {
-		openPRs, err := deps.GitHubClient.ListOpenPRs()
+		openPRs, err := deps.GitHubClient.ListOpenPRs(cmd.Context())
 		if err != nil {
 			return fmt.Errorf("list open PRs: %w", err)
 		}
