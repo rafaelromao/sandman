@@ -2730,6 +2730,43 @@ func TestRunBatch_AbortsUpfrontWhenAnyBranchExists(t *testing.T) {
 	}
 }
 
+func TestRunBatch_ContainerModeFailsBeforeAgentWhenDockerfileMissing(t *testing.T) {
+	if _, err := sandbox.ResolveRuntime("podman"); err != nil {
+		t.Skip("container runtime unavailable")
+	}
+	dir := testenv.MkdirShort(t, "sm-orch-")
+	t.Chdir(dir)
+	initGitRepo(t, dir)
+
+	if _, err := os.Stat(filepath.Join(dir, ".sandman", "Dockerfile")); err == nil {
+		t.Fatalf("precondition: expected .sandman/Dockerfile to be absent, found it")
+	}
+
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			42: {Number: 42, Title: "Fix bug"},
+		},
+	}
+	factory := &controlledRunnableFactory{}
+
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
+	o.runnableFactory = factory
+
+	_, err := o.RunBatch(context.Background(), Request{Issues: []int{42}, Sandbox: "podman", RequireDockerfile: true})
+	if err == nil {
+		t.Fatal("expected preflight error when .sandman/Dockerfile is missing")
+	}
+	if !strings.Contains(err.Error(), ".sandman/Dockerfile not found") {
+		t.Fatalf("expected error to mention missing Dockerfile, got %q", err.Error())
+	}
+	if strings.Contains(err.Error(), "Summary:") {
+		t.Fatalf("expected no summary output before agent run, got %q", err.Error())
+	}
+	if len(factory.created) != 0 {
+		t.Fatalf("expected no runnable created when preflight fails, got %d (issues=%v)", len(factory.created), factory.created)
+	}
+}
+
 func TestValidateBatchBranches_RecommendsCorrectFlagPerIssue(t *testing.T) {
 	dir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(dir)

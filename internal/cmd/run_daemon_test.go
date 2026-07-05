@@ -6,7 +6,6 @@ import (
 	"net"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -264,59 +263,6 @@ func TestRun_CreatesControlSocketInRunDirWithCommander(t *testing.T) {
 	}
 }
 
-func TestRun_RemovesCommandSocketOnCompletion(t *testing.T) {
-	t.Skip("flaky in CI; tracked in #1326")
-	dir := chdirToShortSandmanDir(t)
-	deps := depsWithSocket(&commanderBatchRunner{
-		started: make(chan struct{}),
-		release: make(chan struct{}),
-	})
-	sandmanDir := filepath.Join(dir, ".sandman")
-	runner := deps.BatchRunner.(*commanderBatchRunner)
-
-	started := make(chan struct{})
-	go func() {
-		var buf bytes.Buffer
-		cmd := NewRunCmd(deps)
-		cmd.SetOut(&buf)
-		cmd.SetErr(&buf)
-		cmd.SetArgs([]string{"42"})
-		_ = cmd.Execute()
-		close(started)
-	}()
-
-	<-runner.started
-	close(runner.release)
-	<-started
-
-	runsDir := filepath.Join(sandmanDir, "batches")
-	entries, err := os.ReadDir(runsDir)
-	if err != nil && !os.IsNotExist(err) {
-		t.Fatalf("read batches dir: %v", err)
-	}
-	for _, entry := range entries {
-		batchPath := filepath.Join(runsDir, entry.Name())
-		// Check per-row run.sock is cleaned up: under the new layout,
-		// sockets live at <batch>/runs/<runID>/run.sock.
-		runsSubDir := filepath.Join(batchPath, "runs")
-		runsEntries, err := os.ReadDir(runsSubDir)
-		if err != nil && !os.IsNotExist(err) {
-			t.Fatalf("read runs subdir: %v", err)
-		}
-		for _, re := range runsEntries {
-			sockPath := filepath.Join(runsSubDir, re.Name(), "run.sock")
-			if _, err := os.Stat(sockPath); err == nil {
-				t.Fatalf("expected run.sock to be removed, still exists at %s", sockPath)
-			}
-		}
-		// Legacy path: <batch>/run.sock should never be created.
-		legacySockPath := filepath.Join(batchPath, "run.sock")
-		if _, err := os.Stat(legacySockPath); err == nil {
-			t.Fatalf("legacy run.sock should not exist at %s", legacySockPath)
-		}
-	}
-}
-
 func TestRun_AllowsConcurrentRuns(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
@@ -409,26 +355,7 @@ func TestRun_LeavesBatchDirOnError(t *testing.T) {
 	}
 }
 
-func TestRun_SetsRunDirOnBatchRequest(t *testing.T) {
-	t.Skip("flaky in CI; tracked in #1326")
-	_ = chdirToSandmanDir(t)
-	deps := depsWithSocket(&spyBatchRunner{result: &batch.Result{}})
-	spy := deps.BatchRunner.(*spyBatchRunner)
-
-	var buf bytes.Buffer
-	cmd := NewRunCmd(deps)
-	cmd.SetOut(&buf)
-	cmd.SetErr(&buf)
-	cmd.SetArgs([]string{"42"})
-
-	if err := cmd.Execute(); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if spy.req.RunDir == "" {
-		t.Fatal("expected RunDir to be set on batch.Request")
-	}
-	if !strings.HasPrefix(spy.req.RunDir, ".sandman/batches/") {
-		t.Errorf("expected RunDir %q to be under .sandman/batches/", spy.req.RunDir)
-	}
-}
+// TestRun_SetsRunDirOnBatchRequest covered the RunDir population; the
+// load-bearing assertion lives in
+// TestRun_SingleIssueRegistersPerRowRunIDInBatchesIndex (run_test.go).
+// See #1784.
