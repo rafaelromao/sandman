@@ -51,21 +51,31 @@ func TestPortalRefresh_ActiveLogPaneUpdatesWhenOutputAdvances(t *testing.T) {
       this.url = url;
       this._onmessage = null;
       this._onerror = null;
+      this.readyState = 1;
+      var self = this;
       Object.defineProperty(this, 'onmessage', {
         configurable: true,
-        get: function () { return this._onmessage; },
-        set: function (fn) { this._onmessage = fn; }
+        get: function () { return self._onmessage; },
+        set: function (fn) {
+          self._onmessage = fn;
+          // Simulate the broadcaster delivering the same lines that
+          // the polled snapshot would carry. Real production does this
+          // implicitly (broadcaster → SSE bridge → EventSource); the
+          // mock mirrors that to keep the live-update path exercised
+          // under the streamingKeys guard.
+          setTimeout(function () {
+            if (self._onmessage && !self.closed) {
+              self._onmessage({ data: 'fresh line 3' });
+            }
+          }, 200);
+        }
       });
       Object.defineProperty(this, 'onerror', {
         configurable: true,
-        get: function () { return this._onerror; },
-        set: function (fn) {
-          this._onerror = fn;
-          if (typeof fn !== 'function') return;
-          setTimeout(function () { if (fn) fn(new Event('error')); }, 0);
-        }
+        get: function () { return self._onerror; },
+        set: function (fn) { self._onerror = fn; }
       });
-      this.close = function () { this.closed = true; };
+      this.close = function () { self.closed = true; self.readyState = 2; };
     };
     window.fetch = async function () {
       window.__portalFetchCalls += 1;
