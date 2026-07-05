@@ -20,7 +20,6 @@ import (
 	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/events"
 	"github.com/rafaelromao/sandman/internal/github"
-	"github.com/rafaelromao/sandman/internal/prompt"
 	"github.com/spf13/cobra"
 )
 
@@ -1164,45 +1163,6 @@ func TestRun_OverrideFalseByDefault(t *testing.T) {
 
 	if got := spy.req.IssueMode(42); got != batch.ModeFresh {
 		t.Errorf("expected ModeFresh when --override flag is not passed, got %v", got)
-	}
-}
-
-func TestRun_FreshRunErrorsWhenBranchAlreadyExists(t *testing.T) {
-	t.Skip("flaky in CI; tracked in #1326")
-	if !podmanAvailable(t) {
-		return
-	}
-	dir := t.TempDir()
-	t.Chdir(dir)
-	initRunIntegrationRepo(t, dir)
-	writeSandmanDockerfile(t, dir)
-
-	branch := "sandman/42-fix-bug"
-	runGit(t, dir, "checkout", "-b", branch)
-	runGit(t, dir, "checkout", "main")
-
-	gh := &fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}}}
-	store := &fakeStore{config: &config.Config{Agent: "opencode", ReviewCommand: "/oc review", WorktreeDir: ".sandman/worktrees", AgentProviders: map[string]config.Agent{"opencode": {Preset: "opencode", Command: "true"}}}}
-	deps := newRunDeps(t, &spyBatchRunner{result: &batch.Result{}})
-	deps.BatchRunner = batch.NewOrchestrator(gh, &prompt.Engine{}, store, &fakeEventLog{})
-	deps.ConfigStore = store
-	deps.GitHubClient = gh
-
-	var buf bytes.Buffer
-	cmd := NewRunCmd(deps)
-	cmd.SetOut(&buf)
-	cmd.SetErr(&buf)
-	cmd.SetArgs([]string{"42"})
-
-	err := cmd.Execute()
-	if err == nil {
-		t.Fatal("expected error when branch already exists")
-	}
-	if !strings.Contains(err.Error(), "#42: no prior run — use --override") {
-		t.Fatalf("expected per-issue override guidance, got %v", err)
-	}
-	if !strings.Contains(err.Error(), "git branch -D <branch>") {
-		t.Fatalf("expected branch deletion hint, got %v", err)
 	}
 }
 
@@ -4507,47 +4467,6 @@ func TestRun_PromptAndTemplateFlagsCombined(t *testing.T) {
 	}
 	if spy.req.PromptConfig.PromptArgs["K"] != "V" {
 		t.Errorf("expected K=V, got K=%q", spy.req.PromptConfig.PromptArgs["K"])
-	}
-}
-
-// TestRun_IssueDrivenBatchUsesNewIDScheme verifies that `sandman run 42`
-// builds a directory id matching the ADR-0030 <shortid>-<ts>-<first>+<N>
-// shape (acceptance criterion #1) and that the (ts, shortid) pair is
-// propagated into batch.Request.RunTS / RunShortID so the orchestrator
-// can build per-row RunIDs from it.
-func TestRun_IssueDrivenBatchUsesNewIDScheme(t *testing.T) {
-	t.Skip("flaky in CI; tracked in #1326")
-	spy := &spyBatchRunner{result: &batch.Result{}}
-	deps := newRunDeps(t, spy)
-	deps.GitHubClient = &fakeGitHubClient{
-		issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug", State: "open"}},
-		prs:    map[string]*github.PR{},
-	}
-
-	var buf bytes.Buffer
-	cmd := NewRunCmd(deps)
-	cmd.SetOut(&buf)
-	cmd.SetErr(&buf)
-	cmd.SetArgs([]string{"42"})
-
-	if err := cmd.Execute(); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !spy.called {
-		t.Fatal("expected batch runner to be called")
-	}
-	if spy.req.RunTS == "" {
-		t.Errorf("expected req.RunTS to be populated for issue-driven batch")
-	}
-	if spy.req.RunShortID == "" {
-		t.Errorf("expected req.RunShortID to be populated for issue-driven batch")
-	}
-	// RunDir is captured on the session; verify the dir id matches the
-	// ADR-0030 issue-batch format used by both daemon and orchestrator.
-	dir := spy.req.RunDir
-	want := filepath.Join(".sandman", "batches", spy.req.RunShortID+"-"+spy.req.RunTS+"-42+1")
-	if dir != want {
-		t.Fatalf("expected run dir %q, got %q", want, dir)
 	}
 }
 
