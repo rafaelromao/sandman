@@ -513,4 +513,4 @@ func TestRun_ContainerSandboxMode_RunDirAndSocketsBeforeAgentStart(t *testing.T)
 // run.continued path; its load-bearing assertions (run.sock / batch.sock
 // boot order, commander-nil path) are now in
 // TestRun_BootArtifactsBeforeRunStarted and
-// TestRunSession_Prepare_SkipsCommandServerWhenCommanderNil. See #1784.
+// TestRun_CreatesControlSocketInRunDirWithCommander. See #1784.
