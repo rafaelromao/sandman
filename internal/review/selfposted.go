@@ -9,6 +9,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -66,38 +67,118 @@ type SelfPostStore struct {
 	entries map[int]map[string]selfPostEntry
 }
 
-// NewSelfPostStore loads the store from path. Issue #1756 makes
-// the loader greenfield: any pre-existing `self-posted.json` at
-// load time is renamed out of the way (to
-// `self-posted.json.ignore-<ts>.bak`) exactly once at startup, the
-// in-memory store starts empty, and the loader returns no error.
+// newShapeKeyRegex matches every on-disk key the post-#1756 daemon
+// writes: "pr-<int>-<64-hex>". It is the load-time shape probe the
+// new layered loader (issue #1821) uses to distinguish a steady-state
+// new-shape file (loaded in-memory) from a legacy / mixed / corrupt
+// file (renamed aside, started empty). The regex is intentionally
+// strict: anything that does not match — legacy sha-only keys,
+// future-shape keys, mixed files, corrupt JSON — falls through to
+// the original #1756 one-shot rename + greenfield path. Silent
+// partial-merges are not safe (cross-PR poisoning from PR 1752 is
+// the live failure mode that motivated the rename policy).
+var newShapeKeyRegex = regexp.MustCompile(`^pr-(\d+)-([0-9a-f]{64})$`)
+
+// NewSelfPostStore loads the store from path. Issue #1756 reshaped
+// the on-disk key from `sha256(body)` to `pr-<N>-<sha256(body)>`,
+// and the original #1756 loader was *greenfield*: it renamed any
+// pre-existing file out of the way and started the in-memory store
+// empty. The rename policy was correct for the one-shot key-shape
+// migration (a sha-only file could not be merged silently into the
+// new key space without mis-attributing bodies to an arbitrary PR
+// — the cross-PR poisoning failure observed on PR 1752). It was
+// not, however, safe to keep applying on every daemon start: every
+// restart lost every prior bot-post entry, and a bot review body
+// whose body contained the literal `/sandman review` substring
+// (typical of `## Previous review progress` sections) re-matched
+// the trigger regex on the next session. The daemon re-launched a
+// self-loop review on its own previous output (live failure on PR
+// #1809, run `4f33-260705092651-PR1809`).
 //
-// Rationale: the per-PR scoped dedup key is incompatible with any
-// file produced under the legacy single-body-hash key shape. A
-// silent merge would either ignore the legacy entries (silent data
-// loss) or attempt to attribute them to an arbitrary PR (silent
-// mis-scoping). The rename-and-start-empty invariant gives
-// operators a recoverable artifact (the .bak file) without
-// smuggling stale state into the new key space.
+// The issue #1821 loader is layered:
 //
-// A missing file is also acceptable: the store starts empty with
-// no rename to perform. The new file is created via the existing
-// atomic temp-file + rename path on the next Record.
+//   - If the file is missing: start empty, no rename to perform.
+//   - If every on-disk key matches `pr-<N>-<sha256>`: load the
+//     entries into the in-memory store, leave the file in place,
+//     and return. This is the steady state every post-#1756 daemon
+//     has been writing since the #1764 migration.
+//   - Otherwise (legacy sha-only keys, mixed-shape keys, future
+//     keys, corrupt JSON): keep the issue #1756 one-shot rename +
+//     greenfield behaviour. A silent partial-merge would either
+//     drop bodies (data loss) or attribute them to an arbitrary
+//     PR (cross-PR poisoning), so the only safe recovery is to
+//     move the file aside and let the new key space start clean.
+//
+// Operators who want to retain a legacy / mixed file for forensics
+// read the `.ignore-<ts>.bak` exactly as before; the rename is the
+// migration seam, not a destructive operation.
 func NewSelfPostStore(path string) (*SelfPostStore, error) {
 	s := &SelfPostStore{
 		path:    path,
 		entries: map[int]map[string]selfPostEntry{},
 	}
-	if _, err := os.Stat(path); err == nil {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return s, nil
+		}
+		return s, fmt.Errorf("stat self-posted: %w", err)
+	}
+	if !isNewShapeFile(data) {
 		bakPath := fmt.Sprintf("%s.ignore-%d.bak", path, time.Now().UTC().UnixNano())
 		if renameErr := os.Rename(path, bakPath); renameErr != nil {
 			return s, fmt.Errorf("archive legacy self-posted (%s -> %s): %w", path, bakPath, renameErr)
 		}
 		log.Printf("self-post store: archived legacy self-posted.json to %s, starting greenfield", filepath.Base(bakPath))
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return s, fmt.Errorf("stat self-posted: %w", err)
+		return s, nil
+	}
+	var disk map[string]selfPostEntry
+	if err := json.Unmarshal(data, &disk); err != nil {
+		// New-shape file but the bytes are not valid JSON (a
+		// race with a concurrent writer that left a truncated
+		// temp file behind, for example). Treat as legacy:
+		// rename aside, start empty. The next Record rewrites
+		// the file via the atomic temp-file + rename path.
+		bakPath := fmt.Sprintf("%s.ignore-%d.bak", path, time.Now().UTC().UnixNano())
+		if renameErr := os.Rename(path, bakPath); renameErr != nil {
+			return s, fmt.Errorf("archive torn self-posted (%s -> %s): %w", path, bakPath, renameErr)
+		}
+		log.Printf("self-post store: archived torn self-posted.json to %s, starting greenfield", filepath.Base(bakPath))
+		return s, nil
+	}
+	for _, entry := range disk {
+		if entry.Hash == "" || entry.PRNumber == 0 {
+			continue
+		}
+		prBucket, ok := s.entries[entry.PRNumber]
+		if !ok {
+			prBucket = map[string]selfPostEntry{}
+			s.entries[entry.PRNumber] = prBucket
+		}
+		prBucket[entry.Hash] = entry
 	}
 	return s, nil
+}
+
+// isNewShapeFile reports whether the on-disk bytes at path are a
+// JSON object whose keys all match the post-#1756 `pr-<N>-<sha>`
+// shape. Mixed-shape files, legacy sha-only files, future shapes,
+// and non-JSON payloads all return false and fall through to the
+// rename + greenfield path. The check is structural: every key in
+// the JSON object MUST match the regex. A file that decodes to a
+// JSON object with zero keys is treated as new-shape (load zero
+// entries and keep the file).
+func isNewShapeFile(data []byte) bool {
+	var probe map[string]json.RawMessage
+	if err := json.Unmarshal(data, &probe); err != nil {
+		return false
+	}
+	for k := range probe {
+		if !newShapeKeyRegex.MatchString(k) {
+			return false
+		}
+	}
+	return true
 }
 
 // hashBody normalizes a comment body the same way on record and
