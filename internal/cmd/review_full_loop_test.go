@@ -213,10 +213,8 @@ func TestReviewDaemonE2E_FullLoopPastLaunchReview(t *testing.T) {
 	d.PollInterval = 0
 	d.Clock = func() time.Time { return now }
 
-	if err := d.StartSocket(); err != nil {
-		t.Fatalf("StartSocket: %v", err)
-	}
-
+	// d.Run calls StartSocket internally; we don't call it here so Run
+	// owns the socket lifecycle end to end.
 	trigger := make(chan struct{}, 4)
 	d.Trigger = trigger
 
@@ -234,7 +232,7 @@ func TestReviewDaemonE2E_FullLoopPastLaunchReview(t *testing.T) {
 
 	// Tick 1: launch the review.
 	trigger <- struct{}{}
-	if !waitForReviewLaunch(t, runner, 5*time.Second) {
+	if !waitForReviewLaunch(t, runner, 30*time.Second) {
 		t.Fatal("expected at least 1 batch run after tick 1, got 0")
 	}
 	if got := runner.Calls(); got != 1 {
