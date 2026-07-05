@@ -2107,7 +2107,16 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
       const src = new EventSource(streamPath + '?runKey=' + encodeURIComponent(backendKey));
       src.onmessage = function (ev) { streamCoalescer.scheduleLine(run.key, ev.data); };
       src.onerror = function () {
-        stopRunStream(run.key);
+        // EventSource fires onerror for both transient network errors
+        // (readyState 0 — CONNECTING, browser will auto-reconnect) and
+        // permanent closes (readyState 2 — CLOSED). Stopping the stream
+        // on every error kills the browser's native auto-reconnect, so a
+        // single transient blip permanently silences the live log until
+        // the user manually re-selects the row. Only tear down when the
+        // source is fully closed.
+        if (src.readyState === 2) {
+          stopRunStream(run.key);
+        }
       };
       streamSources[run.key] = src;
       streamingKeys.add(run.key);
