@@ -1359,7 +1359,7 @@ func (o *Orchestrator) logAborted(issueNum int, runID string, abortedBy []int) {
 		IssueRef:  issueRef(issueNum),
 		Payload:   payload,
 	}); err != nil {
-		fmt.Fprintf(o.errorLog, "error: event log write failed: run.aborted (issue=%d run=%s): %v\n", issueNum, runID, err)
+		fmt.Fprintf(o.errorLog, "event log write failed: run.aborted (issue=%d run=%s): %v\n", issueNum, runID, err)
 	}
 }
 

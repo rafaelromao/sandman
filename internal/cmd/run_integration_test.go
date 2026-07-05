@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -207,19 +208,38 @@ func podmanAvailable(t *testing.T) bool {
 }
 
 type recordingEventLog struct {
+	mu     sync.Mutex
 	events []events.Event
+	// errs is an optional per-call error queue. When set, each Log call
+	// returns the head of the queue (advancing on each call) instead of
+	// nil. Used by tests that need to assert the call site surfaces a
+	// write failure rather than silently discarding it.
+	errs []error
 }
 
 func (l *recordingEventLog) Log(event events.Event) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	l.events = append(l.events, event)
-	return nil
+	if len(l.errs) == 0 {
+		return nil
+	}
+	err := l.errs[0]
+	if len(l.errs) > 1 {
+		l.errs = l.errs[1:]
+	}
+	return err
 }
 
 func (l *recordingEventLog) Read() ([]events.Event, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	return append([]events.Event(nil), l.events...), nil
 }
 
 func (l *recordingEventLog) RemoveEventsByIssue(issueNumber int) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	var kept []events.Event
 	for _, e := range l.events {
 		if e.Issue == issueNumber {
