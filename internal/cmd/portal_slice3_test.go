@@ -449,6 +449,122 @@ func TestPortal_Compute_ApprovesIssue1755FromRealRunLogShape(t *testing.T) {
 	}
 }
 
+// TestPortal_Compute_ApprovesIssue1779FromRealRunLogShape is the
+// end-to-end regression test for issue #1792. The bug: the review
+// agent posts its decision via `gh pr comment <PR> --body "..." 2>&1 |
+// tail -5`, which leaves a trailing `"` PLUS a redirect-and-pipe
+// trailer (`2>&1 | tail -5`) on the same line as the `**APPROVED**`
+// marker inside the `## Decision` section of the saved run.log. The
+// portal's verdict projection (as of #1767) anchored the marker line
+// to `"?\s*$`, so the regex missed and the parent issue row rendered
+// `ReviewVerdict="Unclear"` even when the underlying PR was approved
+// and merged.
+//
+// The reproduction here mirrors the actual log tail captured locally
+// from `d9f0-260704185852-1779-PR1789/run.log` (work item
+// a9d3-260704183525-1779 "[slice 0] e2e gate hygiene" / issue #1779 /
+// PR #1789). The test asserts that with the broader marker rule in
+// place, the parent row surfaces "Approved"; without it, the helper
+// falls through and the parent row stays "Unclear".
+func TestPortal_Compute_ApprovesIssue1779FromRealRunLogShape(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	implRunID := "a9d3-260704183525-1779"
+	implBatchID := "a9d3-260704183525-1779"
+	reviewRunID := "d9f0-260704185852-1779-PR1789"
+	reviewBatchID := "d9f0-260704185852-1779-PR1789"
+
+	startedAt := time.Date(2026, 7, 4, 18, 35, 25, 0, time.UTC)
+	reviewFinishedAt := startedAt.Add(26*time.Minute + 35*time.Second)
+
+	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
+		{Type: "run.started", Timestamp: startedAt, RunID: implRunID, Issue: 1779, Payload: map[string]any{
+			"branch":      "sandman/1789-slice-0-e2e-gate-hygiene",
+			"batch_id":    implBatchID,
+			"base_branch": "main",
+		}},
+		{Type: "run.finished", Timestamp: startedAt.Add(22 * time.Minute), RunID: implRunID, Issue: 1779, Payload: map[string]any{
+			"branch":   "sandman/1789-slice-0-e2e-gate-hygiene",
+			"batch_id": implBatchID,
+			"status":   "success",
+		}},
+		{Type: "run.started", Timestamp: startedAt.Add(25 * time.Minute), RunID: reviewRunID, Payload: map[string]any{
+			"branch":       "sandman/review-1789-4878138837",
+			"batch_id":     reviewBatchID,
+			"review":       true,
+			"pr_number":    1789,
+			"issue_number": 1779,
+			"base_branch":  "main",
+		}},
+		{Type: "run.finished", Timestamp: reviewFinishedAt, RunID: reviewRunID, Payload: map[string]any{
+			"branch":    "sandman/review-1789-4878138837",
+			"batch_id":  reviewBatchID,
+			"review":    true,
+			"pr_number": 1789,
+			"status":    "success",
+		}},
+	})
+
+	// Saved run.log for the review run, mirroring the actual
+	// production log captured at d9f0-260704185852-1779-PR1789/run.log.
+	// The final line is `**APPROVED**" 2>&1 | tail -5` — the trailing
+	// `"` is the bash closing quote of `gh pr comment --body "..."`
+	// and the `2>&1 | tail -5` is the redirect-and-pipe trailer the
+	// agent (or the operator) chained onto the same `gh pr comment`
+	// invocation. Both pieces of debris must be tolerated by the
+	// marker rule for the parent issue row to surface "Approved".
+	reviewLog := "[d9f0-260704185852-1779-PR1789] 18:58:30 ## Summary\r\n" +
+		"[d9f0-260704185852-1779-PR1789] 18:58:30 Reviewed the e2e gate hygiene slice.\r\n" +
+		"[d9f0-260704185852-1779-PR1789] 18:59:50 ## Findings\r\n" +
+		"[d9f0-260704185852-1779-PR1789] 18:59:50 None — slice is clean and the helper is in place.\r\n" +
+		"[d9f0-260704185852-1779-PR1789] 19:00:55 ## Decision\r\n" +
+		"[d9f0-260704185852-1779-PR1789] 19:01:06 **APPROVED**\" 2>&1 | tail -5\r\n"
+	reviewRunDir := filepath.Join(repoRoot, ".sandman", "batches", reviewBatchID, "runs", reviewRunID)
+	if err := os.MkdirAll(reviewRunDir, 0755); err != nil {
+		t.Fatalf("mkdir review run dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(reviewRunDir, "run.log"), []byte(reviewLog), 0644); err != nil {
+		t.Fatalf("write review run.log: %v", err)
+	}
+
+	runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")})
+	if err != nil {
+		t.Fatalf("compute: %v", err)
+	}
+
+	var implRow, reviewRow *portalRun
+	for i := range runs {
+		run := &runs[i]
+		switch {
+		case run.IssueNumber == 1779 && !run.Review:
+			implRow = run
+		case run.Review && run.RunID == reviewRunID:
+			reviewRow = run
+		}
+	}
+	if implRow == nil {
+		t.Fatalf("expected impl row for issue #1779, got %#v", runs)
+	}
+	if reviewRow == nil {
+		t.Fatalf("expected review row %q, got %#v", reviewRunID, runs)
+	}
+	if !strings.Contains(reviewRow.Log, `**APPROVED**" 2>&1 | tail -5`) {
+		t.Fatalf("review row Log missing the trailing-quote+pipe marker: %q", reviewRow.Log)
+	}
+	if reviewRow.Status != "success" {
+		t.Fatalf("review row Status=%q, want success (the agent exits 0 even when it approved)", reviewRow.Status)
+	}
+	if implRow.ReviewCount != 1 {
+		t.Fatalf("impl row ReviewCount=%d, want 1", implRow.ReviewCount)
+	}
+	if got := implRow.ReviewVerdict; got != "Approved" {
+		t.Fatalf("impl row ReviewVerdict=%q, want %q (issue #1792 — the saved run.log carries ## Decision / **APPROVED**\" 2>&1 | tail -5)", got, "Approved")
+	}
+}
+
 // TestPortal_Compute_CanonicalParentIdentityPreservedWithReviewChildren
 // is the backend regression test for issue #1525 acceptance criterion #6:
 // when compute() projects an issue group that has both a canonical
@@ -2012,10 +2128,17 @@ func TestPortal_ReviewVerdictFromRunLog(t *testing.T) {
 			wantOK:  false,
 		},
 		{
-			name:    "spelling variant with trailing period is not coerced",
+			// Issue #1792: the lenient marker rule intentionally
+			// accepts a trailing period, so this spelling variant
+			// is no longer rejected. The remaining safety net
+			// against "mid-line prose" is the alphanum guard
+			// (see "marker inside Decision followed by prose" below),
+			// not the trailing-period rule. The case stays in the
+			// table to pin the flip explicitly.
+			name:    "spelling variant with trailing period is recognised (lenient regex flip)",
 			logText: "13:50:00 ## Decision\n13:50:01 **CHANGES_REQUESTED**.\n",
-			want:    "",
-			wantOK:  false,
+			want:    "Changes requested",
+			wantOK:  true,
 		},
 		{
 			name:    "lowercase spelling is not coerced",
@@ -2090,14 +2213,63 @@ func TestPortal_ReviewVerdictFromRunLog(t *testing.T) {
 			wantOK:  true,
 		},
 		{
-			name:    "double trailing quote is not coerced",
-			logText: "13:50:00 ## Decision\n13:50:01 **APPROVED**\"\"\n",
-			want:    "",
-			wantOK:  false,
+			// Issue #1792: production log line at 19:01:06 in
+			// d9f0-260704185852-1779-PR1789/run.log is
+			// `**APPROVED**" 2>&1 | tail -5` — the bash shell left
+			// the closing quote of `gh pr comment --body "..."`
+			// AND the redirect-and-pipe trailer on the same line
+			// as the marker. The lenient regex `[^a-zA-Z]*$`
+			// tolerates both as trailing non-letter garbage.
+			name:    "APPROVED with trailing shell-pipe debris (2>&1 | tail -5) is recognised",
+			logText: "13:50:00 ## Decision\n13:50:01 **APPROVED**\" 2>&1 | tail -5\n",
+			want:    "Approved",
+			wantOK:  true,
 		},
 		{
-			name:    "trailing period after quote is not coerced",
+			// Single-quote trailer — also a frequent shell artifact
+			// when the operator hand-types the gh invocation.
+			name:    "APPROVED with trailing single quote is recognised",
+			logText: "13:50:00 ## Decision\n13:50:01 **APPROVED**'\n",
+			want:    "Approved",
+			wantOK:  true,
+		},
+		{
+			// Full d9f0-…-PR1789 log-line shape: the runID timestamp
+			// prefix is on the same line as the marker.
+			name:    "runID-prefixed APPROVED with trailing shell-pipe debris is recognised",
+			logText: "[d9f0-260704185852-1779-PR1789] 19:01:06 ## Decision\n[d9f0-260704185852-1779-PR1789] 19:01:06 **APPROVED**\" 2>&1 | tail -5\n",
+			want:    "Approved",
+			wantOK:  true,
+		},
+		{
+			// Issue #1792: with the lenient regex, the second `"` is
+			// just more trailing non-letter garbage, so the marker
+			// is accepted. Pinning this so a future tightening of
+			// the regex back to `"?\s*$` would have to update this
+			// case explicitly.
+			name:    "APPROVED with double trailing quote is recognised (lenient regex flips)",
+			logText: "13:50:00 ## Decision\n13:50:01 **APPROVED**\"\"\n",
+			want:    "Approved",
+			wantOK:  true,
+		},
+		{
+			// Issue #1792: trailing period-after-quote — both chars
+			// are non-letters, so the lenient regex accepts. Pinning
+			// this for the same reason as the previous case.
+			name:    "APPROVED with quote+period trailer is recognised (lenient regex flips)",
 			logText: "13:50:00 ## Decision\n13:50:01 **APPROVED**\".\n",
+			want:    "Approved",
+			wantOK:  true,
+		},
+		{
+			// Issue #1792: the alphanum rule is the only remaining
+			// safety net for "mid-line prose" once the lenient regex
+			// accepts trailing non-letters. A letter immediately
+			// after the marker is still rejected, so the helper
+			// keeps ignoring a Decision-line marker that is part of
+			// a larger prose sentence.
+			name:    "marker inside Decision followed by prose is not coerced (alphanum guard)",
+			logText: "13:50:00 ## Decision\n13:50:01 **APPROVED** is unrelated prose\n",
 			want:    "",
 			wantOK:  false,
 		},
