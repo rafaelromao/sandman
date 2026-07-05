@@ -66,6 +66,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Renamed the `run.cancelled` event type to `run.aborted`. New runs emit `run.aborted` with `status: aborted`. The projected status for a cancellation event is now `"aborted"` (was `"failure"`). Legacy `run.cancelled` events in existing `events.jsonl` files continue to project as `"aborted"`, so the cut-over is lossless for the abort semantic.
 - Dependency resolution now treats in-batch success as sufficient to unblock dependents. When a blocker AgentRun in the same batch finishes with status `success`, its dependents start immediately without re-fetching the blocker's GitHub issue state. Only external blockers (issues not in the current batch) are still re-checked against GitHub closure right before a dependent starts, preserving the existing gate when an external blocker has not closed yet.
 - Fix: portal review verdict now surfaces 'Approved' / 'Changes requested' for reviews posted via `gh pr comment --body "..."` instead of defaulting to 'Unclear' (follow-up to #1729, #1767).
+- Fix: portal review verdict now surfaces 'Approved' / 'Changes requested' even when the reviewer posts via `gh pr comment --body "..." 2>&1 | tail -N` or other shell-piped variants, instead of defaulting to 'Unclear' (follow-up to #1767).
 
 ### Removed
 
