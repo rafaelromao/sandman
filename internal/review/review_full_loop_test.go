@@ -19,6 +19,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/github"
 	"github.com/rafaelromao/sandman/internal/prompt"
+	"github.com/rafaelromao/sandman/internal/testenv"
 )
 
 // fullLoopInitGitRepo initialises a fresh git repo at dir with a single
@@ -124,7 +125,13 @@ func (r *fullLoopWriteRunLogRunner) Calls() int {
 // produces and the per-run review-state.json the daemon materialises
 // via its existing seams.
 func TestReviewDaemon_FullLoopPastLaunchReview(t *testing.T) {
-	repoDir := t.TempDir()
+	// MkdirShort uses /tmp directly (not the t.TempDir default, which
+	// can be /tmp/go-build.../.../.../ on CI). The shorter path stays
+	// under the macOS sun_path limit and keeps socket setup unblocked
+	// on the GitHub Actions macOS runner. See testenv.MkdirShort's
+	// comment for the macOS /tmp-symlink rationale.
+	repoDir := testenv.MkdirShort(t, "sm-fullloop-")
+	t.Chdir(repoDir)
 	fullLoopInitGitRepo(t, repoDir)
 
 	// Anchor `since` to a static time so the test is deterministic
