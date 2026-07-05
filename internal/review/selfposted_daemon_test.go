@@ -726,3 +726,135 @@ func TestDaemon_New_SeedsSelfPostStoreFromReviewRunLogs(t *testing.T) {
 		t.Errorf("after Daemon.New, the bot body extracted from the review run log MUST be in SelfPostStore (issue #1821 seed step); IsSelfPosted(%d, %q) returned false", prNumber, botBody)
 	}
 }
+
+// TestDaemon_StaleBotBody_DoesNotRetriggerAcrossRestart is the
+// end-to-end AC regression for issue #1821. A fresh daemon —
+// constructed against a BaseDir that already contains the bot's
+// own previous-run review body both in the seeded run.log AND on
+// the fake GitHub PR comments endpoint — does NOT launch a batch
+// run and does NOT add an eyes reaction to that body when ticked.
+//
+// The body is the exact shape that broke PR #1809: the bot's
+// previous-review body on PR #1809 (comment 4884234243, posted
+// 2026-07-05T00:15:54Z). It quotes the original trigger
+// substring in its `## Previous review progress` section, so
+// `ParseTrigger` matches it. Without the slice-1 loader and the
+// slice-2 seed step, the bot body is not in SelfPostStore when
+// the daemon starts — the IsSelfPosted check returns false on
+// this tick, ParseTrigger matches, the daemon launches a fresh
+// review run for this comment, and the daemon adds an eyes
+// reaction to its own comment (live failure observed on PR
+// #1809's run `4f33-260705092651-PR1809`).
+//
+// Pre-#1821 this test MUST fail (got 1 batch run AND 1 reaction
+// on the bot's comment). Post-#1821 the daemon must:
+//   1. Find the bot body in SelfPostStore via the slice-2 seed
+//      step (the run.log contains a gh pr comment invocation
+//      with this exact body),
+//   2. Drop the comment via the IsSelfPosted-first filter in
+//      processPR (issue #1702),
+//   3. Launch zero batch runs and add zero eyes reactions for
+//      this PR.
+func TestDaemon_StaleBotBody_DoesNotRetriggerAcrossRestart(t *testing.T) {
+	now := time.Date(2026, 7, 5, 0, 16, 0, 0, time.UTC)
+
+	// This is the bot's review body verbatim from PR #1809,
+	// comment 4884234243. The previous-review-progress section
+	// quotes the literal `/sandman review` substring so
+	// ParseTrigger would match if SelfPostStore forgot the
+	// entry.
+	botBody := "## Summary\n\nThis is the bot's previous-review body for PR #1809. The original /sandman review trigger was posted at 2026-07-05T00:11:28Z. No prior review findings exist to track."
+
+	dir := testenv.MkdirShort(t, "sm-ac-selfposts-")
+	t.Chdir(dir)
+
+	const prNumber = 1809
+
+	// The daemons run log for a prior-session review of PR #1809
+	// (the on-disk source of truth per the issue #1821 seed
+	// step). The daemon's `extractBodiesFromLog` must be able to
+	// read this exactly the same way it reads live run logs.
+	batchID := "abcd-20260705-PR1809"
+	rowID := deriveReviewRowID(batchID, prNumber)
+	priorRunDir := filepath.Join(dir, "batches", batchID, "runs", rowID)
+	if err := os.MkdirAll(priorRunDir, 0o755); err != nil {
+		t.Fatalf("mkdir prior run dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(priorRunDir, "run.log"), []byte(
+		"[abcd-20260705-PR1809] 09:28:20 $ gh pr comment 1809 --body \""+botBody+"\"\n",
+	), 0o644); err != nil {
+		t.Fatalf("write prior run.log: %v", err)
+	}
+	if err := batchindex.WriteManifest(priorRunDir, batchindex.RunManifest{
+		RunID:     rowID,
+		BatchID:   batchID,
+		PR:        prNumber,
+		Kind:      batchindex.KindReview,
+		CreatedAt: now.Add(-1 * time.Hour),
+		Status:    batchindex.RunManifestStatusActive,
+	}); err != nil {
+		t.Fatalf("write prior run manifest: %v", err)
+	}
+	priorBatchDir := filepath.Join(dir, "batches", batchID)
+	indexPath := daemon.BatchesIndexPath(dir)
+	idx, err := batchindex.Load(indexPath)
+	if err != nil {
+		t.Fatalf("load batches index: %v", err)
+	}
+	idx.Add(batchindex.Entry{
+		ID:   batchID,
+		Path: priorBatchDir,
+		Kind: batchindex.KindReview,
+		PR:   prNumber,
+	})
+	if err := idx.Save(indexPath); err != nil {
+		t.Fatalf("save batches index: %v", err)
+	}
+
+	// The fake GitHub endpoint serves the PR with two comments:
+	// the original implementor trigger and the bot's previous-run
+	// review body. The daemon's processPR must drop the bot body
+	// via the IsSelfPosted-first filter and treat only the
+	// implementor trigger as a fresh trigger to launch against.
+	gh := &fakeGH{
+		prs: []github.PR{{Number: prNumber, State: "open"}},
+		comments: map[int][]github.PRComment{
+			prNumber: {
+				{ID: "trigger", Body: "/sandman review", CreatedAt: now.Add(-1 * time.Hour)},
+				{ID: "stale-bot", Body: botBody, CreatedAt: now.Add(-30 * time.Minute)},
+			},
+		},
+		prFetch: map[int]*github.PR{prNumber: {Number: prNumber, Title: "T", Body: "B"}},
+	}
+	runner := &capturedRequest{}
+
+	// Construct the fresh daemon AFTER seeding the run-log
+	// fixture, so the slice-2 seed step has the prior-session
+	// run log available at construction time.
+	d := New(dir, gh, &prompt.Engine{}, runner, &config.Config{
+		DefaultReviewAgent: "opencode",
+		DefaultReviewModel: "opencode/foo",
+	}, &lockedBuffer{}, 0, false)
+	d.Clock = func() time.Time { return now.Add(-1 * time.Minute) }
+
+	if !d.selfPosts.IsSelfPosted(prNumber, botBody) {
+		t.Fatalf("setup invariant: seed step should have placed the bot body in SelfPostStore; IsSelfPosted(%d, %q) = false", prNumber, botBody)
+	}
+
+	tickAndWait(t, d, context.Background())
+
+	if runner.calls != 1 {
+		t.Errorf("AC FAIL: stale bot body MUST NOT cause a self-loop batch run (issue #1821 / #1809); expected 1 run (the implementor trigger), got %d", runner.calls)
+	}
+	// AC: the daemon must NOT add an eyes reaction to the
+	// bot's own comment. This is the exact symptom reported on
+	// the screenshot for PR #1809 (👀 eyes count = 1 on the
+	// bot's previous-review comment).
+	gh.mu.Lock()
+	defer gh.mu.Unlock()
+	for _, c := range gh.reactionCalls {
+		if c.kind == "add_comment" && c.commentID == "stale-bot" {
+			t.Errorf("AC FAIL: daemon MUST NOT add an eyes reaction to the bot's own comment (issue #1821 / #1809); got reaction %+v", c)
+		}
+	}
+}
