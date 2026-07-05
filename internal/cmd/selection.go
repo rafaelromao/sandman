@@ -101,7 +101,7 @@ func runSelectionPhaseWithEvents(ctx context.Context, client github.Client, coun
 	}
 	defer rs.Close()
 
-	_ = eventLog.Log(events.Event{
+	if err := eventLog.Log(events.Event{
 		Type:      "run.started",
 		Timestamp: time.Now(),
 		RunID:     runID,
@@ -111,7 +111,9 @@ func runSelectionPhaseWithEvents(ctx context.Context, client github.Client, coun
 			"query":      query,
 			"candidates": append([]int(nil), candidates...),
 		},
-	})
+	}); err != nil {
+		fmt.Fprintf(os.Stderr, "event log write failed: run.started (run=%s): %v\n", runID, err)
+	}
 
 	candidateText := formatCandidateIssues(candidateIssues)
 
@@ -225,12 +227,14 @@ func emitAutoSelectFinished(eventLog events.EventLog, runID, status, reason stri
 	if status == "success" {
 		payload["selected"] = append([]int(nil), selected...)
 	}
-	_ = eventLog.Log(events.Event{
+	if err := eventLog.Log(events.Event{
 		Type:      "run.finished",
 		Timestamp: time.Now(),
 		RunID:     runID,
 		Payload:   payload,
-	})
+	}); err != nil {
+		fmt.Fprintf(os.Stderr, "event log write failed: run.finished (run=%s): %v\n", runID, err)
+	}
 }
 
 func fetchCandidateIssues(ctx context.Context, client github.Client, candidates []int) ([]github.Issue, error) {

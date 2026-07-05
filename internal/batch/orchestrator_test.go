@@ -9800,3 +9800,58 @@ func TestRunBatch_ContinuedRunReplaysPreviousRunID(t *testing.T) {
 		t.Fatalf("previous_run_id = %q, want %q", got, prev)
 	}
 }
+
+// erroredSpyEventLog mirrors spyEventLog but returns a fixed error from
+// Log so tests can verify the orchestrator surfaces the failure to
+// errorLog instead of silently dropping it.
+type erroredSpyEventLog struct {
+	mu     sync.Mutex
+	events []events.Event
+	err    error
+}
+
+func (s *erroredSpyEventLog) Log(e events.Event) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.events = append(s.events, e)
+	return s.err
+}
+
+func (s *erroredSpyEventLog) Read() ([]events.Event, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]events.Event, len(s.events))
+	copy(out, s.events)
+	return out, nil
+}
+
+func (s *erroredSpyEventLog) RemoveEventsByIssue(issueNumber int) error {
+	return nil
+}
+
+func TestLogAborted_EventLogWriteErrorIsSurfacedOnErrorLog(t *testing.T) {
+	var errBuf bytes.Buffer
+	writeErr := errors.New("disk full on run.aborted write")
+	log := &erroredSpyEventLog{err: writeErr}
+	o := &Orchestrator{eventLog: log, errorLog: &errBuf}
+
+	o.logAborted(42, "test-run-id", []int{1, 2})
+
+	if !strings.Contains(errBuf.String(), writeErr.Error()) {
+		t.Errorf("expected run.aborted error %q on errorLog, got:\n%s", writeErr.Error(), errBuf.String())
+	}
+	if !strings.Contains(errBuf.String(), "run.aborted") {
+		t.Errorf("expected errorLog line to mention run.aborted, got:\n%s", errBuf.String())
+	}
+}
+
+func TestLogAborted_NilEventLogIsNoOp(t *testing.T) {
+	var errBuf bytes.Buffer
+	o := &Orchestrator{eventLog: nil, errorLog: &errBuf}
+
+	o.logAborted(42, "test-run-id", nil)
+
+	if errBuf.Len() != 0 {
+		t.Errorf("expected no errorLog output for nil eventLog, got:\n%s", errBuf.String())
+	}
+}
