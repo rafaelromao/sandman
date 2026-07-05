@@ -748,13 +748,13 @@ func TestDaemon_New_SeedsSelfPostStoreFromReviewRunLogs(t *testing.T) {
 //
 // Pre-#1821 this test MUST fail (got 1 batch run AND 1 reaction
 // on the bot's comment). Post-#1821 the daemon must:
-//   1. Find the bot body in SelfPostStore via the slice-2 seed
-//      step (the run.log contains a gh pr comment invocation
-//      with this exact body),
-//   2. Drop the comment via the IsSelfPosted-first filter in
-//      processPR (issue #1702),
-//   3. Launch zero batch runs and add zero eyes reactions for
-//      this PR.
+//  1. Find the bot body in SelfPostStore via the slice-2 seed
+//     step (the run.log contains a gh pr comment invocation
+//     with this exact body),
+//  2. Drop the comment via the IsSelfPosted-first filter in
+//     processPR (issue #1702),
+//  3. Launch zero batch runs and add zero eyes reactions for
+//     this PR.
 func TestDaemon_StaleBotBody_DoesNotRetriggerAcrossRestart(t *testing.T) {
 	now := time.Date(2026, 7, 5, 0, 16, 0, 0, time.UTC)
 

@@ -99,11 +99,28 @@ Track the SHA-256 hash of the bot's review-body posts, scoped per PR number, and
 
 The `pr-review` skill no longer maintains `.sandman/reviews/self-posted.json` from any wrapper; the LLM agent is not in the loop on the store's write path. The skill-side responsibility-boundary violation that produced cross-PR poisoning on PR 1752 is gone.
 
-### Loader behavior (issue #1756)
+### Loader behavior (issues #1756, #1821)
 
-`NewSelfPostStore` is greenfield. Any pre-existing `self-posted.json` at startup is atomically renamed to `self-posted.json.ignore-<ts>.bak` exactly once, the in-memory store starts empty (a one-line info log records the rename), and the loader returns no error. The file is rewritten via the existing atomic temp-file + rename path on the next `Record`. The renaming is irrecoverable from the loader's perspective — operators who want to retain the archived bodies for forensics read the `.bak`; the new store starts clean. This sweep is the only safe recovery for a key-shape change, because silently merging legacy single-body-hash entries into the new `(prNumber, sha)` space would either drop them (silent data loss) or mis-attribute them to an arbitrary PR (silent mis-scoping).
+`NewSelfPostStore` is layered:
 
-A missing file at startup is also acceptable: no rename to perform, store starts empty.
+- A missing file at startup is acceptable: no rename to perform, the in-memory store starts empty.
+- A pre-existing `self-posted.json` whose keys are all in the post-#1756 `pr-<N>-<sha>` shape is loaded into the in-memory store and the file is left in place. This is the steady state every post-#1756 daemon has been writing, and reloading it is what lets the daemon remember bot-posted bodies across restarts (issue #1821).
+- Any other file (legacy sha-only keys from a pre-#1756 daemon, mixed-shape keys, future-shape keys, non-JSON bytes from a torn write) is renamed aside to `self-posted.json.ignore-<ts>.bak` exactly once and the in-memory store starts empty. Silent partial-merges on these files are not safe (cross-PR poisoning from PR 1752 is the live failure that motivated the rename policy): a sha-only entry attributed to an arbitrary PR is indistinguishable from a real new-shape entry on disk, and a dropped-entry merge is silent data loss.
+
+The boundary between the two paths is the regex `^pr-\d+-[0-9a-f]{64}$`: every key in the JSON object must match for the load path to fire, and any non-matching key (or any non-JSON bytes) sends the file to the rename path. Operators who want to retain a renamed file for forensics read the `.bak`; the new store starts clean.
+
+### Cross-restart seeding (issue #1821)
+
+Issue #1821 closes the across-restart failure mode observed on PR #1809: the loader above preserves new-shape on-disk entries, but operators with a greenfield store (no `self-posted.json` at all) or a legacy-store deployment that already ran the #1756 one-shot rename have nothing for the loader to recover. Their bot bodies are therefore forgotten the moment the daemon restarts, and a bot review body that contains the literal `/sandman review` substring in its `## Previous review progress` section re-matches the trigger regex on the next tick and re-launches a self-loop review on the bot's own previous output.
+
+To close this without a manual replay step, `Daemon.New` greps every review-kind batch's `runs/<rowID>/run.log` once at startup and records every extracted body into `SelfPostStore` via the same `Record(pr, body, runID)` path the per-tick lazy-verify step already uses. The walk reuses the existing `seenCacheLoader`, `readReviewRowID`, and `extractBodiesFromLog` seams so it sees exactly the same on-disk shape the rest of the daemon reads from. The seed is best-effort: a missing run.json, a non-review kind, an unreadable log, or a partial extraction is logged and skipped, never fatal — the daemon still recovers the entries the loader missed, and a transient read error on one batch does not block startup.
+
+The seed step is the structural complement to the layered loader above:
+
+- **Layered loader**: preserves new-shape `self-posted.json` across restarts. Operators who have been running a post-#1756 daemon recover prior-session entries automatically.
+- **Cross-restart seed**: also reads the bot's own run logs. Operators on a greenfield store (or a legacy-store deployment that ran the #1756 rename) also recover across-restart memory without a manual replay step.
+
+For an implementation run with a `--body` body that the post-#1709 prompt rule keeps free of the trigger substring, this is defence-in-depth: the bot body does not contain `/sandman review` literally, so `ParseTrigger` cannot match it. The structural fix on issue #1821 covers the legitimate corner case where the prompt rule is broken or the bot's body legitimately quotes the trigger substring.
 
 ### Discovery via run-log grep (issue #1759)
 
