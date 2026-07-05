@@ -244,7 +244,7 @@ var (
 	//     debris shapes. Issue #1792 (follow-up to #1767, itself
 	//     a follow-up to #1729).
 	reviewVerdictMarkerLineBare       = regexp.MustCompile(`^\*\*([A-Z_]+)\*\*$`)
-	reviewVerdictMarkerLineWithDebris = regexp.MustCompile(`^\*\*([A-Z_]+)\*\*["'.` + "`" + `\-|&][^\n]*$`)
+	reviewVerdictMarkerLineWithDebris = regexp.MustCompile("^\\*\\*([A-Z_]+)\\*\\*[\"'`\\.\\-|&][^\\n]*$")
 	// reviewLogTimestampPrefix strips the "[<runID>] HH:MM:SS " log
 	// prefix that the agent output stream adds to each line.
 	reviewLogTimestampPrefix = regexp.MustCompile(`^\d{2}:\d{2}:\d{2}\s+`)
@@ -847,9 +847,16 @@ func reviewVerdictFromRunLog(logText string) (string, bool) {
 	// everything up to and including the timestamp before matching
 	// the section heading or the marker. The marker match is anchored
 	// to the entire line (after stripping the prefix and trimming
-	// whitespace) — spelling variants such as a trailing period or
-	// lowercase marker are rejected so prompt drift surfaces as
-	// "Unclear" instead of being silently coerced.
+	// whitespace) — see reviewVerdictMarkerLineBare and
+	// reviewVerdictMarkerLineWithDebris for the exact rule. The
+	// with-debris regex requires a non-whitespace sentinel
+	// immediately after the closing `**` so that mid-line prose
+	// such as `**APPROVED** is unrelated prose` is still rejected
+	// while the production shell-piped shape
+	// `**APPROVED**" 2>&1 | tail -5` is accepted. Lowercase markers
+	// and the space-inside-asterisks variant are still rejected
+	// by both regexes; trailing periods and trailing quotes
+	// individually are now accepted (issues #1767, #1792).
 	lines := strings.Split(logText, "\n")
 	inDecision := false
 	for _, raw := range lines {
