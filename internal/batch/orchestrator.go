@@ -1351,14 +1351,16 @@ func (o *Orchestrator) logAborted(issueNum int, runID string, abortedBy []int) {
 	if len(abortedBy) > 0 {
 		payload["aborted_by"] = abortedBy
 	}
-	_ = o.eventLog.Log(events.Event{
+	if err := o.eventLog.Log(events.Event{
 		Type:      "run.aborted",
 		Timestamp: time.Now(),
 		RunID:     runID,
 		Issue:     issueNum,
 		IssueRef:  issueRef(issueNum),
 		Payload:   payload,
-	})
+	}); err != nil {
+		fmt.Fprintf(o.errorLog, "event log write failed: run.aborted (issue=%d run=%s): %v\n", issueNum, runID, err)
+	}
 }
 
 // mapRetryReason picks the closed-vocabulary reason for a run.retry emit

@@ -483,13 +483,18 @@ type spyEventLog struct {
 	events                   []events.Event
 	removedIssueNumber       int
 	removeEventsByIssueCalls int
+	// err is the optional fixed error returned by Log. When nil, Log
+	// returns nil (the default for happy-path tests). Set to verify that
+	// the production code surfaces the write failure instead of silently
+	// discarding it.
+	err error
 }
 
 func (s *spyEventLog) Log(e events.Event) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.events = append(s.events, e)
-	return nil
+	return s.err
 }
 
 func (s *spyEventLog) Read() ([]events.Event, error) {
@@ -9798,5 +9803,21 @@ func TestRunBatch_ContinuedRunReplaysPreviousRunID(t *testing.T) {
 	}
 	if got, _ := continued.Payload["previous_run_id"].(string); got != prev {
 		t.Fatalf("previous_run_id = %q, want %q", got, prev)
+	}
+}
+
+func TestLogAborted_EventLogWriteErrorIsSurfacedOnErrorLog(t *testing.T) {
+	var errBuf bytes.Buffer
+	writeErr := errors.New("disk full on run.aborted write")
+	log := &spyEventLog{err: writeErr}
+	o := &Orchestrator{eventLog: log, errorLog: &errBuf}
+
+	o.logAborted(42, "test-run-id", []int{1, 2})
+
+	if !strings.Contains(errBuf.String(), writeErr.Error()) {
+		t.Errorf("expected run.aborted error %q on errorLog, got:\n%s", writeErr.Error(), errBuf.String())
+	}
+	if !strings.Contains(errBuf.String(), "run.aborted") {
+		t.Errorf("expected errorLog line to mention run.aborted, got:\n%s", errBuf.String())
 	}
 }
