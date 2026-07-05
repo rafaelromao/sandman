@@ -9,12 +9,17 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 // TestSelfPostStore_RecordAndLookup pins the round-trip contract:
 // Record stores the hash; IsSelfPosted returns true for the same
 // body and false for a different body. Reloading from disk after
-// Record preserves the hash.
+// Record preserves the hash because the on-disk file is in the
+// post-#1756 `pr-<N>-<sha>` shape and the post-#1821 layered
+// loader loads new-shape entries instead of renaming the file
+// aside (issue #1821 closes the daemon-forgets-prior-self-posts
+// failure observed on PR #1809).
 func TestSelfPostStore_RecordAndLookup(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "self-posted.json")
@@ -34,18 +39,21 @@ func TestSelfPostStore_RecordAndLookup(t *testing.T) {
 		t.Error("IsSelfPosted should return false for a different body")
 	}
 
-	// Issue #1756 made the loader greenfield: a re-open renames
-	// any pre-existing self-posted.json away and starts empty.
-	// Reloading therefore sees the new (greenfield) store, which
-	// reflects the very-near-term state only. Pin the new
-	// contract instead of the legacy reload-preserves-entries
-	// contract.
+	// Issue #1821 makes the loader shape-aware: a re-open on a
+	// new-shape file loads the prior entries into the in-memory
+	// store instead of renaming the file aside. Legacy / mixed /
+	// corrupt shapes still fall through to the issue #1756
+	// one-shot rename + greenfield path (see
+	// TestSelfPostStore_GreenfieldLoad_OldFileBackedUpAndIgnored).
 	reloaded, err := NewSelfPostStore(path)
 	if err != nil {
 		t.Fatalf("reopen: %v", err)
 	}
-	if got := len(reloaded.Hashes()); got != 0 {
-		t.Errorf("greenfield loader should drop prior contents (#1756), got %d entries on re-open", got)
+	if got := len(reloaded.Hashes()); got != 1 {
+		t.Errorf("layered loader should preserve new-shape entries on re-open (#1821), got %d entries", got)
+	}
+	if !reloaded.IsSelfPosted(42, body) {
+		t.Error("reloaded store MUST report the prior entry as self-posted (#1821)")
 	}
 }
 
@@ -252,10 +260,10 @@ func TestSelfPostStore_RecordIdempotent(t *testing.T) {
 // writing the temp file and the rename leaves the previous file
 // intact. The store is best-effort; this is a smoke test for the
 // rename-after-write pattern, not a crash-injection test. Post
-// #1756, the greenfield loader renames any existing file away on
-// load — so the test pins: (a) no .tmp residue after a successful
-// save, (b) the in-memory set reflects both distinct keys for the
-// recording PRs.
+// #1756 / #1821, the loader preserves new-shape files instead of
+// renaming them — so the test pins: (a) no .tmp residue after a
+// successful save, (b) the in-memory set reflects both distinct
+// keys for the recording PRs.
 func TestSelfPostStore_AtomicWrite(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "self-posted.json")
@@ -398,5 +406,92 @@ func TestSelfPostStore_IgnoresLeadingSpaces(t *testing.T) {
 	sum := sha256.Sum256([]byte(strings.ToLower(strings.TrimRight("/sandman review", " \t\n"))))
 	if got := hashBody("/sandman review  "); got != hex.EncodeToString(sum[:]) {
 		t.Errorf("hashBody drift: %s vs %s", got, hex.EncodeToString(sum[:]))
+	}
+}
+
+// TestSelfPostStore_LoadsNewShapeEntriesFromDisk pins the post-#1821
+// loader contract: when the on-disk file is already keyed in the
+// post-#1756 `pr-<N>-<sha>` shape (the steady state after any
+// post-#1756 daemon has run), NewSelfPostStore loads those entries
+// into the in-memory store instead of renaming the file aside. This
+// is what lets the daemon remember bot-posted bodies across
+// restarts so a stale bot body cannot re-trigger a review.
+//
+// Pre-#1821 the loader was *greenfield* on every daemon start: any
+// pre-existing file was renamed to `.ignore-<ts>.bak` and the
+// in-memory store started empty. That closed the cross-PR
+// poisoning failure from PR 1752 (issue #1756) but introduced a
+// new failure: every daemon restart lost every prior bot-post
+// entry, so a bot review body whose body contained the literal
+// `/sandman review` substring (typical of `## Previous review
+// progress` sections) re-matched the trigger regex and the daemon
+// launched a self-loop review on its own previous output (live
+// failure on PR #1809, run `4f33-260705092651-PR1809`).
+//
+// The new contract preserves the issue #1756 invariant for the
+// shapes that motivated it (legacy sha-only keys, corrupt JSON,
+// mixed-shape files): those files are still renamed aside and the
+// in-memory store starts empty. The new-shape-only path is the
+// one that loads entries.
+func TestSelfPostStore_LoadsNewShapeEntriesFromDisk(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "self-posted.json")
+
+	body := "/sandman review focus alpha"
+	sum := sha256.Sum256([]byte(strings.ToLower(strings.TrimRight(body, " \t\n"))))
+	sha := hex.EncodeToString(sum[:])
+
+	// Seed an on-disk file with two new-shape keys so the loader
+	// sees a multi-entry steady state.
+	seed := map[string]selfPostEntry{
+		"pr-7-" + sha: {
+			Hash:     sha,
+			PRNumber: 7,
+			RunID:    "seed-7",
+			PostedAt: time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC),
+		},
+		"pr-9-" + sha: {
+			Hash:     sha,
+			PRNumber: 9,
+			RunID:    "seed-9",
+			PostedAt: time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC),
+		},
+	}
+	raw, err := json.MarshalIndent(seed, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal seed: %v", err)
+	}
+	if err := os.WriteFile(path, raw, 0644); err != nil {
+		t.Fatalf("WriteFile seed: %v", err)
+	}
+
+	store, err := NewSelfPostStore(path)
+	if err != nil {
+		t.Fatalf("NewSelfPostStore: %v", err)
+	}
+
+	// Behaviour: entries persisted in the new shape are loaded
+	// into the in-memory store. A second start no longer sees an
+	// empty store.
+	if !store.IsSelfPosted(7, body) {
+		t.Error("PR 7: new-shape seeded entry MUST be loaded on startup (#1821)")
+	}
+	if !store.IsSelfPosted(9, body) {
+		t.Error("PR 9: new-shape seeded entry MUST be loaded on startup (#1821)")
+	}
+	if got := len(store.Hashes()); got != 2 {
+		t.Errorf("loaded store should have 2 entries, got %d", got)
+	}
+	// Cross-PR scoping still holds: a body recorded on PR 7 is
+	// NOT considered self-posted on PR 8.
+	if store.IsSelfPosted(8, body) {
+		t.Error("cross-PR scoping invariant (#1756) must still hold after the loader change")
+	}
+
+	// The on-disk file is left in place (no rename). Any
+	// subsequent save rewrites it atomically via temp-file +
+	// rename, which would lose an open .bak file pointer.
+	if _, err := os.Stat(path); err != nil {
+		t.Errorf("new-shape file should remain in place (no rename), stat err: %v", err)
 	}
 }

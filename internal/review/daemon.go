@@ -188,7 +188,75 @@ func New(baseDir string, gh GitHubClient, prompts Renderer, runner BatchRunner, 
 		d.logf("load self-posted store: %v (continuing in degraded mode)", spErr)
 	}
 	d.selfPosts = sp
+	// Issue #1821 seed step. The new-shape file loader (slice 1)
+	// already preserves on-disk self-posts across restarts, but
+	// operators with a greenfield store (or a legacy-store
+	// deployment that ran the issue #1756 rename) have nothing
+	// to reload. The bot's own review run logs are the only
+	// durable record of what the bot actually posted on the PR,
+	// so the daemon greps them at startup and records every
+	// extracted body into SelfPostStore. A transient failure on
+	// any single run log is logged and skipped so a partial
+	// walk still yields the entries the loader missed.
+	if sp != nil {
+		d.seedSelfPostStoreFromRunLogs()
+	}
 	return d
+}
+
+// seedSelfPostStoreFromRunLogs walks every review-kind batch in
+// the daemon's BaseDir and records every body the run-log reader
+// can extract into SelfPostStore. The seed is best-effort: a
+// missing run.json, a non-review kind, an unreadable log, or a
+// partial extraction is logged and skipped, never fatal. The
+// walk reuses the existing `seenCacheLoader`, `readReviewRowID`,
+// and `extractBodiesFromLog` paths so it sees the same on-disk
+// shape the rest of the daemon already reads from.
+//
+// Issue #1821 closes the daemon-forgets-prior-self-posts failure
+// mode observed on PR #1809: a fresh daemon with no on-disk
+// self-post store cannot infer what the bot previously posted
+// from `ExtractBodiesFromLog`s alone, so a bot review body that
+// contains the literal `/sandman review` substring re-matches the
+// trigger regex on the next tick and the daemon self-loops. The
+// seed step is structural defence against that failure: the run
+// log is the only durable source for what the bot posted, and
+// `SelfPostStore.Record` already does the right thing idempotently
+// when given one of those bodies.
+func (d *Daemon) seedSelfPostStoreFromRunLogs() {
+	idx, err := seenCacheLoader(d.BaseDir)
+	if err != nil {
+		d.logf("seed self-post store: load batches index: %v", err)
+		return
+	}
+	if idx == nil {
+		return
+	}
+	for _, entry := range idx.Entries {
+		if entry.Kind != batchindex.KindReview {
+			continue
+		}
+		rowID, err := readReviewRowID(filepath.Join(entry.Path, "runs"))
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			d.logf("seed self-post store: read review row id for %s: %v", entry.Path, err)
+			continue
+		}
+		runDir := filepath.Join(entry.Path, "runs", rowID)
+		runLogPath := filepath.Join(runDir, "run.log")
+		bodies, err := extractBodiesFromLog(runLogPath)
+		if err != nil {
+			d.logf("seed self-post store: extractBodiesFromLog(%s): %v", runLogPath, err)
+			continue
+		}
+		for _, body := range bodies {
+			if err := d.selfPosts.Record(entry.PR, body, rowID); err != nil {
+				d.logf("seed self-post store: Record pr=%d body=<%d bytes>: %v", entry.PR, len(body), err)
+			}
+		}
+	}
 }
 
 // acquirePRSlot reserves one of the parallel_reviews slots for
@@ -807,6 +875,32 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) error {
 		// §Ownership note (issue #1757).
 		if d.selfPosts != nil && d.selfPosts.IsSelfPosted(prNumber, comment.Body) {
 			d.logf("PR #%d: comment %s is a self-post, skipping", prNumber, comment.ID)
+			continue
+		}
+		// Structural self-defence (issue #1821): a body that
+		// carries the `## Previous review progress` heading AND
+		// the literal `/sandman review` trigger substring is
+		// overwhelmingly likely to be a previous bot review
+		// body, not a fresh implementor trigger. The IsSelfPosted
+		// check above is the primary gate; this sniff is the
+		// backstop so the daemon never reaches the launch path
+		// for such a body even when the SelfPostStore has
+		// forgotten the entry across a daemon restart (the
+		// cross-restart failure mode that motivated #1821). The
+		// asymmetric contract — bot bodies are flagged, bare
+		// implementor triggers are not — is pinned by
+		// TestLooksLikeBotReviewBody. Record the body into
+		// SelfPostStore so the next tick's IsSelfPosted check
+		// also catches it (the sniff's primary line of defence
+		// for subsequent ticks is the primary gate, not the
+		// structural marker).
+		if LooksLikeBotReviewBody(comment.Body) {
+			if d.selfPosts != nil {
+				if err := d.selfPosts.Record(prNumber, comment.Body, ""); err != nil {
+					d.logf("PR #%d: record bot-shaped body %s failed: %v", prNumber, comment.ID, err)
+				}
+			}
+			d.logf("PR #%d: comment %s structurally matches a bot review body; dropping before ParseTrigger (issue #1821 self-defence)", prNumber, comment.ID)
 			continue
 		}
 		focus, ok := ParseTrigger(comment.Body)
