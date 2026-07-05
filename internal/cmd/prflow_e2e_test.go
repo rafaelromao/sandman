@@ -889,6 +889,10 @@ func customizeOpenCodeAgentForContainer(t *testing.T, repoDir, model string) {
 func writeFakeGHShim(t *testing.T, dir string) {
 	t.Helper()
 
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatalf("create gh shim dir: %v", err)
+	}
+
 	script := strings.ReplaceAll(`#!/bin/sh
 set -eu
 
