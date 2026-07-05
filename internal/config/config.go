@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -306,14 +307,45 @@ func Load(path string) (*Config, error) {
 }
 
 // Save writes the config to the given path as YAML.
+//
+// The write goes through a unique temp file (os.CreateTemp with a random
+// suffix, mirroring the pattern used by batchindex.Index.Save) and is
+// committed via os.Rename. A process crash or interrupted write leaves
+// the destination untouched — readers either see the previous-good file
+// or the new file, never a torn mix. We deliberately omit an explicit
+// os.Chmod step so the temp file's 0600 default is carried through the
+// rename, matching the package's other atomic writers.
 func Save(path string, cfg *Config) error {
 	data, err := yaml.Marshal(cfg)
 	if err != nil {
 		return fmt.Errorf("marshal config: %w", err)
 	}
-	if err := os.WriteFile(path, data, 0644); err != nil {
-		return fmt.Errorf("write config: %w", err)
+
+	dir := filepath.Dir(path)
+	tmpFile, err := os.CreateTemp(dir, ".config.yml.tmp.*")
+	if err != nil {
+		return fmt.Errorf("create config tmp: %w", err)
 	}
+	tmpPath := tmpFile.Name()
+	renamed := false
+	defer func() {
+		if !renamed {
+			os.Remove(tmpPath)
+		}
+	}()
+
+	if _, err := tmpFile.Write(data); err != nil {
+		tmpFile.Close()
+		return fmt.Errorf("write config tmp: %w", err)
+	}
+	if err := tmpFile.Close(); err != nil {
+		return fmt.Errorf("close config tmp: %w", err)
+	}
+
+	if err := os.Rename(tmpPath, path); err != nil {
+		return fmt.Errorf("rename config tmp: %w", err)
+	}
+	renamed = true
 	return nil
 }
 
