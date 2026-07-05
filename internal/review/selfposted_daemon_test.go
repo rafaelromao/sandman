@@ -2,12 +2,17 @@ package review
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/rafaelromao/sandman/internal/batchindex"
 	"github.com/rafaelromao/sandman/internal/config"
+	"github.com/rafaelromao/sandman/internal/daemon"
 	"github.com/rafaelromao/sandman/internal/github"
+	"github.com/rafaelromao/sandman/internal/prompt"
+	"github.com/rafaelromao/sandman/internal/testenv"
 )
 
 // TestDaemon_ProcessPR_SelfPostedReviewBody_DoesNotTrigger pins the
@@ -635,5 +640,89 @@ func TestDaemon_NoBlindness_TriggerReRequestAfterPendingWindow_Launches(t *testi
 	}
 	if d.selfPosts.IsSelfPosted(1, triggerBody) {
 		t.Errorf("tick N+1 MUST NOT record the trigger body in SelfPostStore (#1722); a poisoned trigger hash blinds the daemon to all future /sandman review requests")
+	}
+}
+
+// TestDaemon_New_SeedsSelfPostStoreFromReviewRunLogs is the slice-2
+// pin for issue #1821: a daemon freshly constructed against a
+// BaseDir that already contains a review-kind batch's run.log with
+// a `gh pr comment <N> --body <body>` invocation MUST observe the
+// bot body in its SelfPostStore. This closes the across-restart
+// failure mode on operators who have no on-disk self-posted.json
+// to reload (greenfield cases where slice 1's loader has nothing
+// to recover) — the run log is the only authoritative source for
+// what the bot posted, and the seed step is the structural fix.
+//
+// Without this slice, a `sandman` operator who restarts the daemon
+// after the bot posted a review body loses the entry on restart,
+// the bot's body re-matches the trigger regex on the next tick
+// (because it contains the literal `/sandman review` substring in
+// its `## Previous review progress` section), and the daemon
+// launches a self-loop review (live failure on PR #1809).
+func TestDaemon_New_SeedsSelfPostStoreFromReviewRunLogs(t *testing.T) {
+	// Pre-populate a review-kind batch with a run.log that the
+	// daemon's run-log reader (extractBodiesFromLog) can parse.
+	dir := testenv.MkdirShort(t, "sm-seed-selfposts-")
+	t.Chdir(dir)
+
+	const prNumber = 1809
+	const botBody = "## Summary\nThis is the bot's review body for PR #1809. It contains /sandman review as a quoted literal substring so the previous-review-progress failure mode reproduces if SelfPostStore forgets it."
+
+	// Layout:
+	//   <dir>/batches/<batch>/runs/<row>/run.json  (kind=review)
+	//   <dir>/batches/<batch>/runs/<row>/run.log  (one gh pr comment line)
+	//   <dir>/batches.json                        (index entry)
+	batchID := "abcd-20260701-PR1809"
+	rowID := deriveReviewRowID(batchID, prNumber)
+	runDir := filepath.Join(dir, "batches", batchID, "runs", rowID)
+	if err := os.MkdirAll(runDir, 0o755); err != nil {
+		t.Fatalf("mkdir run dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(runDir, "run.log"), []byte(
+		"[abcd-20260701-PR1809] 12:00:00 $ gh pr comment 1809 --body \""+botBody+"\"\n",
+	), 0o644); err != nil {
+		t.Fatalf("write run.log: %v", err)
+	}
+	if err := batchindex.WriteManifest(runDir, batchindex.RunManifest{
+		RunID:     rowID,
+		BatchID:   batchID,
+		PR:        prNumber,
+		Kind:      batchindex.KindReview,
+		CreatedAt: time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC),
+		Status:    batchindex.RunManifestStatusActive,
+	}); err != nil {
+		t.Fatalf("write run manifest: %v", err)
+	}
+	batchDir := filepath.Join(dir, "batches", batchID)
+	indexPath := daemon.BatchesIndexPath(dir)
+	idx, err := batchindex.Load(indexPath)
+	if err != nil {
+		t.Fatalf("load batches index: %v", err)
+	}
+	idx.Add(batchindex.Entry{
+		ID:   batchID,
+		Path: batchDir,
+		Kind: batchindex.KindReview,
+		PR:   prNumber,
+	})
+	if err := idx.Save(indexPath); err != nil {
+		t.Fatalf("save batches index: %v", err)
+	}
+
+	// Construct a daemon. After New() returns, the bot body
+	// must be in SelfPostStore for PR 1809 — observable via
+	// IsSelfPosted on the public field.
+	gh := &fakeGH{}
+	runner := &capturedRequest{}
+	d := New(dir, gh, &prompt.Engine{}, runner, &config.Config{
+		DefaultReviewAgent: "opencode",
+		DefaultReviewModel: "opencode/foo",
+	}, &lockedBuffer{}, 0, false)
+
+	if d.selfPosts == nil {
+		t.Fatal("daemon.selfPosts must be non-nil after New")
+	}
+	if !d.selfPosts.IsSelfPosted(prNumber, botBody) {
+		t.Errorf("after Daemon.New, the bot body extracted from the review run log MUST be in SelfPostStore (issue #1821 seed step); IsSelfPosted(%d, %q) returned false", prNumber, botBody)
 	}
 }
