@@ -923,7 +923,7 @@ func TestPortal_RunFromActiveMatch_StateAbsentPopulatesAttemptsAndLastRetryReaso
 	}
 }
 
-func TestPortal_RunFromState_EmptyRunIDWithIssueNumberUsesCompoundKey(t *testing.T) {
+func TestPortal_RunFromState_UsesRunStateRunIDDirectly(t *testing.T) {
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
 		t.Fatal(err)
@@ -933,7 +933,7 @@ func TestPortal_RunFromState_EmptyRunIDWithIssueNumberUsesCompoundKey(t *testing
 	}
 
 	runState := events.RunState{
-		RunID: "",
+		RunID: "abcd-260618113825-42",
 		Started: events.Event{
 			Timestamp: time.Now().Add(-1 * time.Minute),
 			Payload:   map[string]any{},
@@ -948,11 +948,40 @@ func TestPortal_RunFromState_EmptyRunIDWithIssueNumberUsesCompoundKey(t *testing
 
 	run := (&portalRunsView{}).runFromState(repoRoot, runState, active, nil, nil)
 
-	if run.Key != "abcd-260618113825-issue-42" {
-		t.Fatalf("expected Key %q for batch issue with empty state.RunID, got %q", "abcd-260618113825-issue-42", run.Key)
+	if run.Key != "abcd-260618113825-42" {
+		t.Fatalf("expected Key %q, got %q", "abcd-260618113825-42", run.Key)
 	}
-	if run.RunID != "abcd-260618113825-issue-42" {
-		t.Fatalf("expected RunID %q for batch issue with empty state.RunID, got %q", "abcd-260618113825-issue-42", run.RunID)
+	if run.RunID != "abcd-260618113825-42" {
+		t.Fatalf("expected RunID %q, got %q", "abcd-260618113825-42", run.RunID)
+	}
+}
+
+func TestPortal_RunFromActiveBatchIssue_DerivesPerRowRunIDFromManifest(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(repoRoot, ".sandman", "logs"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	active := portalActiveRun{
+		Key:         "abcd-260618113825-1793+1",
+		Dir:         "/tmp/batch",
+		IssueNumber: 1793,
+		BatchID:     "abcd-260618113825-1793+1",
+		RunTS:       "260618113825",
+		RunShortID:  "abcd",
+	}
+
+	run := (&portalRunsView{}).runFromActiveBatchIssue(repoRoot, active, 1793, nil, nil, nil, "", nil, nil)
+
+	wantRunID := "abcd-260618113825-1793"
+	if run.Key != wantRunID {
+		t.Fatalf("expected Key %q (derived per-row RunID), got %q", wantRunID, run.Key)
+	}
+	if run.RunID != wantRunID {
+		t.Fatalf("expected RunID %q (derived per-row RunID), got %q", wantRunID, run.RunID)
 	}
 }
 
@@ -1613,11 +1642,11 @@ func TestPortal_RunFromState_ActiveFreshBatchCarriesBatchKey(t *testing.T) {
 	}
 
 	state := events.RunState{
-		RunID: "",
+		RunID: "abcd-260618113825-42",
 		Started: events.Event{
 			Type:      "run.started",
 			Timestamp: startedAt,
-			RunID:     "abcd-260618113825-issue-42",
+			RunID:     "abcd-260618113825-42",
 			Payload: map[string]any{
 				"issue": float64(42),
 			},

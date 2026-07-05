@@ -682,7 +682,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 			// non-nil but unusable. The `--continue` flag
 			// already suppresses the cmd.sock server; per-run
 			// CommandServer creation is handled by the orchestrator.
-			manifest := daemon.BatchManifest{Issues: append([]int(nil), req.Issues...), CreatedAt: time.Now(), BatchId: entryID, RunKind: "issue"}
+			manifest := daemon.BatchManifest{Issues: append([]int(nil), req.Issues...), CreatedAt: time.Now(), BatchId: entryID, RunKind: "issue", RunTS: req.RunTS, RunShortID: req.RunShortID}
 			if err := rs.Prepare(manifest); err != nil {
 				_ = rs.Close()
 				// A daemon without a control socket is invisible
