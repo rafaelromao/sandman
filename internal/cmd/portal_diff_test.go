@@ -4539,6 +4539,33 @@ console.log('PASS');
 	runNodeScript(t, js)
 }
 
+// TestPortalDiff_SubjectRunsFor_MultipleParentsPicksNewestNonAborted
+// pins the regression observed on issue #1855: an issue group can carry
+// two impl rows (one earlier abandoned, one later successful) plus
+// sibling reviews. The earlier parent pick required `parents.length === 1`
+// to fall back to the only parent; with two parents the dropdown lost
+// the parent entirely and listed only the reviews, breaking the subject
+// switcher. The canonical pick now prefers the latest non-aborted parent,
+// so both impls surface and the latest owned group remains first.
+func TestPortalDiff_SubjectRunsFor_MultipleParentsPicksNewestNonAborted(t *testing.T) {
+	js := `const opts = { helpers, runs: [
+  { key: 'fb4a-260706132041-1855', runId: 'fb4a-260706132041-1855', kind: 'completed', status: 'success', review: false, issueNumber: 1855, issueLabel: '#1855', startedAt: '2026-07-06T13:20:48Z' },
+  { key: '1058-260706140827-1855-PR1875', runId: '1058-260706140827-1855-PR1875', kind: 'completed', status: 'success', review: true, issueNumber: 1855, issueLabel: 'PR1875', prNumber: 1875, startedAt: '2026-07-06T14:08:32Z' },
+  { key: 'e39d-260706134357-1855-PR1875', runId: 'e39d-260706134357-1855-PR1875', kind: 'completed', status: 'success', review: true, issueNumber: 1855, issueLabel: 'PR1875', prNumber: 1875, startedAt: '2026-07-06T13:44:02Z' },
+  { key: '2569-260706132006-1855', runId: '2569-260706132006-1855', kind: 'completed', status: 'aborted', review: false, issueNumber: 1855, issueLabel: '#1855', startedAt: '2026-07-06T12:00:00Z' },
+] };
+const rowRun = opts.runs[0];
+const related = SandmanPortalDiff.subjectRunsFor(rowRun, opts);
+if (!Array.isArray(related) || related.length !== 3) throw new Error('expected 3 related subjects (parent + 2 reviews), got ' + JSON.stringify(related.length));
+if (related[0].review) throw new Error('expected first related subject to be the canonical parent (non-aborted), got review row first');
+if (related[0].runId !== 'fb4a-260706132041-1855') throw new Error('expected canonical parent fb4a-260706132041-1855 (newest non-aborted), got ' + JSON.stringify(related[0].runId));
+const reviewIds = related.slice(1).map((r) => r.runId).sort();
+if (reviewIds[0] !== '1058-260706140827-1855-PR1875' || reviewIds[1] !== 'e39d-260706134357-1855-PR1875') throw new Error('expected both reviews in related subjects, got ' + JSON.stringify(reviewIds));
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
 // TestPortalRunsView_VisibleRunForIssueGroup_LiveActiveParentKeepsIdentity
 // is slice 2 for issue #1525: a live, active canonical parent row must
 // remain the visible row even when a later-started review child exists in

@@ -558,6 +558,40 @@
     return subjectRunValue(run) || 'Run';
   }
 
+  // pickCanonicalParent chooses the single impl row that "owns" an issue
+  // group in the subject selector. Multiple impl rows for the same
+  // issueNumber appear when a prior run was abandoned or succeeded and a
+  // later run was launched; the selector needs one canonical row to act
+  // as the parent's identity, plus the sibling reviews.
+  //
+  // Pick priority (highest first):
+  //   1. A parent stamped with review metadata (reviewCount > 0 or a
+  //      reviewVerdict) — the JS-side sibling-stamping pass on the
+  //      visibleRunForIssueGroup surface marks these as the group owner.
+  //   2. The latest-by-startedAt non-aborted parent (success/failure/
+  //      running/queued/blocked). Aborted parents are abandoned work,
+  //      not the active owner.
+  //   3. The latest-by-startedAt parent regardless of status.
+  //   4. The caller row itself, when it is an impl row carrying review
+  //      metadata — preserves the legacy single-self fallback.
+  function pickCanonicalParent(parents, run) {
+    if (!parents || !parents.length) {
+      if (run && !run.review && Number(run.reviewCount || 0) > 0) return run;
+      return null;
+    }
+    const stamped = parents.find((candidate) => Number(candidate.reviewCount || 0) > 0 || candidate.reviewVerdict);
+    if (stamped) return stamped;
+    const sortedByStart = parents.slice().sort((a, b) => {
+      const aStart = a.startedAt ? new Date(a.startedAt).getTime() : 0;
+      const bStart = b.startedAt ? new Date(b.startedAt).getTime() : 0;
+      if (aStart !== bStart) return bStart - aStart;
+      return subjectRunValue(a).localeCompare(subjectRunValue(b));
+    });
+    const nonAborted = sortedByStart.find((candidate) => String(candidate.status || '').toLowerCase() !== 'aborted');
+    if (nonAborted) return nonAborted;
+    return sortedByStart[0];
+  }
+
   function subjectRunsFor(run, opts) {
     const visible = Array.isArray(opts && opts.runs) ? opts.runs : [];
     // Strict positive-integer guard: a missing/undefined/non-integer
@@ -578,7 +612,7 @@
       if (candidate.review) reviews.push(candidate);
       else parents.push(candidate);
     }
-    const canonicalParent = parents.find((candidate) => Number(candidate.reviewCount || 0) > 0 || candidate.reviewVerdict) || (parents.length === 1 ? parents[0] : null) || (!run.review && Number(run.reviewCount || 0) > 0 ? run : null);
+    const canonicalParent = pickCanonicalParent(parents, run);
     const related = [];
     if (canonicalParent) related.push(canonicalParent);
     reviews.sort((a, b) => {
