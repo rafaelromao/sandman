@@ -1943,6 +1943,24 @@ func (s *runSession) runOnce(
 			agentRun.dangerouslySkipPermissions = &s.dangerouslySkipPermissions
 			agentRun.sessionName = "Sandman " + runID + ": "
 			agentRun.runFolder = s.runFolderFor(runID)
+			// Issue #1845: for review runs, expose the per-row run
+			// folder path to the agent as SANDMAN_RUN_DIR so it can
+			// discover the run directory via the environment as a
+			// fallback to the templated {{RUN_DIR}} in the prompt.
+			// The agent writes its review body to <runDir>/decision.md
+			// and the daemon reads it back from the same path.
+			if s.review && agentRun.runFolder != "" {
+				if agentRun.env == nil {
+					agentRun.env = map[string]string{}
+				} else {
+					merged := make(map[string]string, len(agentRun.env)+1)
+					for k, v := range agentRun.env {
+						merged[k] = v
+					}
+					agentRun.env = merged
+				}
+				agentRun.env["SANDMAN_RUN_DIR"] = agentRun.runFolder
+			}
 		}
 
 		result, abortedByHeartbeat = s.withHeartbeat(ctx, runID, attempt, logPath, wt, func() AgentRunResult {
