@@ -2715,14 +2715,21 @@ func TestDedupPortalRunGroup_AbortedWinsOverActiveBlockedQueued(t *testing.T) {
 
 	result := (&portalRunsView{}).dedupRunGroup(group)
 
-	if len(result) != 1 {
-		t.Fatalf("expected aborted to win and return 1 row, got %d: %#v", len(result), result)
+	if len(result) != 2 {
+		t.Fatalf("expected queued/blocked stripped and active+aborted to survive (2 rows), got %d: %#v", len(result), result)
 	}
-	if result[0].Key != "aborted-row" {
-		t.Fatalf("expected aborted-row to win, got key=%q status=%q", result[0].Key, result[0].Status)
+	gotKeys := make(map[string]bool, len(result))
+	for _, r := range result {
+		gotKeys[r.Key] = true
 	}
-	if result[0].Status != "aborted" {
-		t.Fatalf("expected aborted status, got %q", result[0].Status)
+	if !gotKeys["active-row"] {
+		t.Fatalf("expected active-row to survive, got keys=%v", gotKeys)
+	}
+	if !gotKeys["aborted-row"] {
+		t.Fatalf("expected aborted-row to survive, got keys=%v", gotKeys)
+	}
+	if gotKeys["blocked-row"] || gotKeys["queued-row"] {
+		t.Fatalf("expected queued/blocked rows to be stripped, got keys=%v", gotKeys)
 	}
 }
 
@@ -2735,11 +2742,15 @@ func TestDedupPortalRunGroup_TieBrokenByLatestStartedAt(t *testing.T) {
 
 	result := (&portalRunsView{}).dedupRunGroup(group)
 
-	if len(result) != 1 {
-		t.Fatalf("expected single row, got %d: %#v", len(result), result)
+	if len(result) != 2 {
+		t.Fatalf("expected both aborted rows to survive (no priority collapse), got %d: %#v", len(result), result)
 	}
-	if result[0].Key != "aborted-later" {
-		t.Fatalf("expected tie-break to pick latest StartedAt (aborted-later), got %q", result[0].Key)
+	gotKeys := make(map[string]bool, len(result))
+	for _, r := range result {
+		gotKeys[r.Key] = true
+	}
+	if !gotKeys["aborted-earlier"] || !gotKeys["aborted-later"] {
+		t.Fatalf("expected both aborted-earlier and aborted-later to survive, got keys=%v", gotKeys)
 	}
 }
 
