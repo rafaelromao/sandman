@@ -313,6 +313,14 @@ func RecoverStaleRuns(baseDir string, eventsList []events.Event, log events.Even
 
 	var recovered int
 	recoveredRunIDs := make(map[string]struct{})
+	// recoveredAt is the wall-clock time at which this recovery sweep
+	// started. It is stamped onto every synthesized run.aborted event
+	// so downstream consumers (portal Duration, archive --older-than,
+	// clean --stale) reason about recovered runs using their real
+	// recovery time instead of the zero-value timestamp. Captured once
+	// per call so all events emitted by a single sweep share a coherent
+	// timestamp.
+	recoveredAt := time.Now().UTC()
 	emitOrphan := func(run events.RunState, issueNumber int) error {
 		var issueRef *int
 		if issueNumber > 0 {
@@ -320,11 +328,12 @@ func RecoverStaleRuns(baseDir string, eventsList []events.Event, log events.Even
 			issueRef = &ref
 		}
 		event := events.Event{
-			Type:     "run.aborted",
-			RunID:    run.RunID,
-			Issue:    issueNumber,
-			IssueRef: issueRef,
-			Payload:  map[string]any{"recovered": true},
+			Type:      "run.aborted",
+			Timestamp: recoveredAt,
+			RunID:     run.RunID,
+			Issue:     issueNumber,
+			IssueRef:  issueRef,
+			Payload:   map[string]any{"recovered": true},
 		}
 		if err := log.Log(event); err != nil {
 			return fmt.Errorf("log run.aborted for issue %d: %w", issueNumber, err)
@@ -350,8 +359,9 @@ func RecoverStaleRuns(baseDir string, eventsList []events.Event, log events.Even
 				continue
 			}
 			event := events.Event{
-				Type:  "run.aborted",
-				RunID: run.RunID,
+				Type:      "run.aborted",
+				Timestamp: recoveredAt,
+				RunID:     run.RunID,
 				Payload: map[string]any{
 					"recovered": true,
 					"run_kind":  "auto-select",
@@ -395,7 +405,7 @@ func RecoverStaleRuns(baseDir string, eventsList []events.Event, log events.Even
 		}
 	}
 
-	orphanRecovered, orphanErr := recoverOrphanActiveRuns(baseDir, eventsList, log, recoveredRunIDs)
+	orphanRecovered, orphanErr := recoverOrphanActiveRuns(baseDir, eventsList, log, recoveredRunIDs, recoveredAt)
 	if orphanErr != nil {
 		return recovered, len(dead), orphanErr
 	}
@@ -495,7 +505,7 @@ func buildSupersededIssues(runs []events.RunState) map[int]bool {
 // queued and blocked runs are also recovered when no subsequent run.started
 // exists for the same issue (meaning the queued/blocked state was never
 // superseded by actual work — the batch was destroyed, not completed).
-func recoverOrphanActiveRuns(baseDir string, eventsList []events.Event, log events.EventLog, skipRunIDs map[string]struct{}) (int, error) {
+func recoverOrphanActiveRuns(baseDir string, eventsList []events.Event, log events.EventLog, skipRunIDs map[string]struct{}, recoveredAt time.Time) (int, error) {
 	runs := events.ProjectRunStates(eventsList)
 
 	byIssue := make(map[int][]events.RunState)
@@ -624,11 +634,12 @@ func recoverOrphanActiveRuns(baseDir string, eventsList []events.Event, log even
 			issueRef = &issueNum
 		}
 		event := events.Event{
-			Type:     "run.aborted",
-			RunID:    run.RunID,
-			Issue:    issueNum,
-			IssueRef: issueRef,
-			Payload:  map[string]any{"recovered": true},
+			Type:      "run.aborted",
+			Timestamp: recoveredAt,
+			RunID:     run.RunID,
+			Issue:     issueNum,
+			IssueRef:  issueRef,
+			Payload:   map[string]any{"recovered": true},
 		}
 		if err := log.Log(event); err != nil {
 			return recovered, fmt.Errorf("log run.aborted for orphan %q: %w", run.RunID, err)

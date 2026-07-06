@@ -834,3 +834,44 @@ func TestRecoverStaleRuns_SkipsAutoSelectWithTerminalStatus(t *testing.T) {
 		t.Fatalf("expected 0 logged events for terminal auto-select run, got %d", len(eventLog.logged))
 	}
 }
+
+// TestRecoverStaleRuns_EmitsNonZeroTimestamp pins the contract from
+// issue #1886: a recovered run.aborted event must carry a non-zero
+// timestamp within the recovery window so the portal can render a
+// meaningful Duration (rather than the misleading "0s" that the
+// zero-value timestamp would produce) and so archive --older-than
+// and clean --stale can reason about recovered runs using their real
+// recovery time.
+func TestRecoverStaleRuns_EmitsNonZeroTimestamp(t *testing.T) {
+	baseDir := t.TempDir()
+	createdAt := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
+	started := createdAt.Add(5 * time.Minute)
+
+	runDir := filepath.Join(baseDir, "batches", "dead-1")
+	writeManifestFile(t, runDir, BatchManifest{Issues: []int{42}, CreatedAt: createdAt})
+
+	eventLog := &recordingEventLog{}
+	existing := []events.Event{
+		{Type: "run.started", RunID: "run-42", Issue: 42, Timestamp: started},
+	}
+
+	before := time.Now().UTC()
+	if _, _, err := RecoverStaleRuns(baseDir, existing, eventLog); err != nil {
+		t.Fatalf("RecoverStaleRuns: %v", err)
+	}
+	after := time.Now().UTC()
+
+	if len(eventLog.logged) != 1 {
+		t.Fatalf("expected 1 logged event, got %d", len(eventLog.logged))
+	}
+	e := eventLog.logged[0]
+	if e.Type != "run.aborted" {
+		t.Fatalf("expected run.aborted, got %q", e.Type)
+	}
+	if e.Timestamp.IsZero() {
+		t.Fatalf("recovered run.aborted must carry a non-zero timestamp, got %v", e.Timestamp)
+	}
+	if e.Timestamp.Before(before) || e.Timestamp.After(after) {
+		t.Errorf("recovered run.aborted timestamp %v not within recovery window [%v, %v]", e.Timestamp, before, after)
+	}
+}
