@@ -3,6 +3,7 @@ package review
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -383,5 +384,96 @@ func TestDaemon_S4_RehydratePost_HappyPath(t *testing.T) {
 	// terminal-seen filter.
 	if !d.IsTerminalSeen(prNumber, commentID) {
 		t.Errorf("seenCache should mark (%d, %s) terminal-seen after MarkSeen(success), got %v", prNumber, commentID, d.seenCache)
+	}
+}
+
+// TestDaemon_S4_RehydratePost_FailedPost_KeepsEntry pins the
+// Slice-D failure surface: when CommentPoster.PostComment returns
+// a non-ctx error during the rehydrate branch, the daemon must
+// (a) call the poster exactly once, (b) NOT call BatchRunner,
+// (c) KEEP the pendingPost entry so the next tick retries,
+// (d) leave review-state.json's status as 'pending' (no MarkSeen).
+func TestDaemon_S4_RehydratePost_FailedPost_KeepsEntry(t *testing.T) {
+	const (
+		prNumber  = 6061
+		commentID = "c-s4-failpost-1"
+	)
+	gh := &fakeGH{
+		prs: []github.PR{{Number: prNumber, State: "open"}},
+		comments: map[int][]github.PRComment{
+			prNumber: {{ID: commentID, Body: "/sandman review", CreatedAt: mustParseTime(t, "2026-07-06T13:00:01Z")}},
+		},
+		prFetch: map[int]*github.PR{prNumber: {Number: prNumber, Title: "PR S4 fail", Body: "Body"}},
+	}
+	runner := &capturedRequest{} // no BatchRunner invocation.
+	cfg := &config.Config{
+		DefaultReviewAgent: "opencode",
+		DefaultReviewModel: "opencode/foo",
+	}
+	poster := &fakeCommentPoster{err: errors.New("gh pr comment: simulated post failure")}
+
+	dir := t.TempDir()
+	const batchID = "sip-batch-PR6061"
+	seedPriorReviewEntry(t, dir, batchID, prNumber, commentID, "pending")
+	if err := os.WriteFile(decisionPathForTest(t, dir, batchID, prNumber), []byte("body"), 0644); err != nil {
+		t.Fatalf("write decision.md: %v", err)
+	}
+
+	d := New(dir, gh, &prompt.Engine{}, runner, cfg, &lockedBuffer{}, 0, false, poster)
+	d.PollInterval = 0
+
+	if err := d.tick(context.Background()); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+
+	// (a) Poster called exactly once.
+	if poster.Calls() != 1 {
+		t.Fatalf("expected exactly 1 PostComment call on rehydrate path, got %d", poster.Calls())
+	}
+	// (b) No BatchRunner invocation.
+	if runner.Calls() != 0 {
+		t.Fatalf("expected BatchRunner.RunBatch NOT to be called on rehydrate failure path, got %d calls", runner.Calls())
+	}
+
+	// (c) Entry still in pendingPost (retry next tick).
+	if _, ok := d.peekPendingPost(prNumber, commentID); !ok {
+		t.Errorf("pendingPost should retain the entry on a failed post (Slice D failure surface)")
+	}
+
+	// (d) On-disk review-state.json's status is still 'pending'
+	// (no MarkSeen fired; the next tick's rehydrate branch will
+	// retry the post).
+	statePath := locateReviewStatePath(t, dir)
+	stateBytes, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatalf("read review-state.json: %v", err)
+	}
+	var state batchindex.ReviewState
+	if err := json.Unmarshal(stateBytes, &state); err != nil {
+		t.Fatalf("unmarshal review-state.json: %v", err)
+	}
+	for _, sc := range state.SeenComments {
+		if sc.CommentID == commentID {
+			if sc.Status != "pending" {
+				t.Errorf("review-state.json should keep status='pending' on failed post (Slice D contract), got %q for %s", sc.Status, sc.CommentID)
+			}
+		}
+	}
+
+	// Sanity: a second tick re-attempts the post and STILL does
+	// not launch the agent (the entry is still in pendingPost).
+	poster2 := &fakeCommentPoster{}
+	d.CommentPoster = poster2
+	if err := d.tick(context.Background()); err != nil {
+		t.Fatalf("second tick: %v", err)
+	}
+	if poster2.Calls() != 1 {
+		t.Errorf("expected retry on second tick, got %d calls", poster2.Calls())
+	}
+	if runner.Calls() != 0 {
+		t.Errorf("expected no BatchRunner runs on retry, got %d", runner.Calls())
+	}
+	if _, ok := d.peekPendingPost(prNumber, commentID); ok {
+		t.Errorf("pendingPost should drop the entry on successful retry, got it still present")
 	}
 }
