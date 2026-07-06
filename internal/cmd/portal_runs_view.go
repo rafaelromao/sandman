@@ -649,7 +649,7 @@ func (v *portalRunsView) synthesizedDeadBatchRows(deadBatches []daemon.DeadBatch
 			startedAt = batch.Manifest.CreatedAt
 		}
 		for _, issueNumber := range missing {
-			runID := fmt.Sprintf("%s-issue-%d", batchKey, issueNumber)
+			runID := perRowRunIDForManifest(batch.Manifest.RunTS, batch.Manifest.RunShortID, 0, issueNumber, nil)
 			finishedAt := startedAt
 			run := portalRun{
 				Key:         runID,
@@ -1529,13 +1529,6 @@ func (v *portalRunsView) runFromActiveMatch(repoRoot string, match portalRunMatc
 
 func (v *portalRunsView) runFromState(repoRoot string, runState events.RunState, active *portalActiveRun, eventsByRun map[string][]portalEvent, deadBatches []daemon.DeadBatch) portalRun {
 	runID := runState.RunID
-	if runID == "" && active != nil {
-		if active.IssueNumber > 0 {
-			runID = fmt.Sprintf("%s-issue-%d", active.Key, active.IssueNumber)
-		} else {
-			runID = active.Key
-		}
-	}
 
 	// Resolve batchID from the event payload's batch_id (with "+N" on-disk
 	// suffix for multi-issue batches) first, and only fall back to

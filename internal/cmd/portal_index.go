@@ -435,13 +435,6 @@ func portalSummarySourceKey(repoRoot string, runStates []events.RunState, active
 		}
 		if match.state != nil {
 			runID = match.state.RunID
-			if runID == "" && active.Key != "" {
-				if active.IssueNumber > 0 {
-					runID = fmt.Sprintf("%s-issue-%d", active.Key, active.IssueNumber)
-				} else {
-					runID = active.Key
-				}
-			}
 			startedAt = match.state.Started.Timestamp
 			// Resolve batchID from the event payload's batch_id (with
 			// "+N" on-disk suffix for multi-issue batches) first, and
