@@ -78,6 +78,35 @@ The portal uses `KindFromDirName(name string) (Kind, bool)` to recover the batch
 - `*-prompt-only*` → `KindPromptOnly` (old format backwards compat)
 - New format with no other marker → `KindPromptOnly` (fallback)
 
+### Manifest carries `RunTS` and `RunShortID`
+
+The `BatchManifest` persisted at `<batchDir>/batch.json` (see `internal/daemon/runfs.go`) carries the batch's `<shortid>` and `<ts>` primitives as top-level fields, alongside the existing `BatchId`:
+
+- `RunTS` — the `time.Now().Format("060102150405")` timestamp (12 chars, local time, 2-digit year) that the orchestrator generated when it called `NewBatch` at session start. See "Timestamp + shortid collision guard" above for the primitive definition.
+- `RunShortID` — the 4 lowercase hex characters (`%04x` of `unixNano % 0xFFFF`) that acted as the same-second collision guard during `NewBatch`. See "Timestamp + shortid collision guard" above for the primitive definition.
+- `BatchId` — the full assembled batch identifier (`<shortid>-<ts>-<kindSuffix>`), retained for backward compatibility.
+
+Every manifest creation site (`internal/cmd/run.go` for issue-driven runs, `internal/cmd/review.go` for one-shot review, `internal/cmd/selection.go` for auto-select, and `internal/review/daemon.go` for the review daemon) populates both fields. The JSON tags use `runTs` and `runShortId` with `omitempty`, so manifests written before this amendment decode as zero values and remain readable.
+
+### Per-row RunID derivation contract
+
+Event-log-less consumers (most prominently the portal's nil-state path, before `run.started` fires in `events.jsonl`) MUST derive per-row RunIDs from manifest fields via `runid.NewRunID`. Synthesizing ad-hoc formats such as `<shortid>-<issue>-<N>` or any string containing the literal word `"issue"` is forbidden, because such strings violate this ADR's per-row RunID templates and break the portal's row-key contract.
+
+The canonical call shape for a regular issue batch is:
+
+```go
+runid.NewRunID(runid.KindIssue, fmt.Sprintf("%d", issueNum), manifest.RunTS, manifest.RunShortID)
+```
+
+The four arguments are positional and named here for clarity: `KindIssue` selects the issue template, `fmt.Sprintf("%d", issueNum)` is the per-row subject (`<issueNum>`, never `"issue-<issueNum>"`), `manifest.RunTS` is the `<ts>` primitive from the manifest, and `manifest.RunShortID` is the `<shortid>` primitive.
+
+The portal implements this contract through two helpers in `internal/cmd/portal_runs_view.go`:
+
+- `perRowRunIDForManifest(runTS, runShortID, prNumber, issueNumber, queued *events.Event)` — the pure derivation helper. When `(runTS, runShortID)` are both non-empty it returns `runid.NewRunID(runid.KindReview, …)` for PR runs (with or without a linked issue) and `runid.NewRunID(runid.KindIssue, …)` for regular issue batches. When either manifest field is empty it falls back to `queued.RunID` if a queued event is available, or returns the empty string.
+- `perRowRunIDForActive(active portalActiveRun, issueNumber int, queued *events.Event)` — the active-batch wrapper that pulls `(RunTS, RunShortID, PRNumber)` from a `portalActiveRun` snapshot and delegates to `perRowRunIDForManifest`. This is the entry point used by `runFromActiveBatchIssue`.
+
+Any future consumer that needs per-row RunIDs without consulting the event log (for example, a new CLI command that lists a live batch before any `run.started` event lands) MUST route through these helpers or call `runid.NewRunID` with the same `(KindIssue, fmt.Sprintf("%d", issueNum), manifest.RunTS, manifest.RunShortID)` shape. Other derivations are out of contract.
+
 ## Consequences
 
 ### Positive
