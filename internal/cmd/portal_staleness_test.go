@@ -263,7 +263,7 @@ func TestPortal_DiscoverActiveRuns_IssueMultiBatch_RunIDIsPerRow(t *testing.T) {
 	addBatchToIndex(t, repoRoot, indexEntryID, batchDir, []int{1699, 1700, 1701, 1702, 1703, 1704})
 
 	idx := getPortalRunsIndex(repoRoot)
-	active, err := idx.discoverActiveRuns(nil)
+	active, err := idx.view.discoverActiveRuns(repoRoot, nil)
 	if err != nil {
 		t.Fatalf("discoverActiveRuns: %v", err)
 	}

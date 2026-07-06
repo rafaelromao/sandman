@@ -10,13 +10,11 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/rafaelromao/sandman/internal/batchindex"
-	"github.com/rafaelromao/sandman/internal/daemon"
 	"github.com/rafaelromao/sandman/internal/events"
 	"github.com/rafaelromao/sandman/internal/paths"
 )
@@ -38,7 +36,6 @@ type portalRunsIndex struct {
 	eventsOffset      int64
 	eventsModTime     time.Time
 	eventsSize        int64
-	manifestCache     map[string]portalManifestCacheEntry
 }
 
 type portalSummaryState struct {
@@ -56,12 +53,6 @@ type portalSummaryResponse struct {
 	NotModified bool
 }
 
-type portalManifestCacheEntry struct {
-	size     int64
-	modTime  time.Time
-	manifest daemon.BatchManifest
-}
-
 var portalRunsIndexes sync.Map // map[repoRoot]*portalRunsIndex
 
 func getPortalRunsIndex(repoRoot string) *portalRunsIndex {
@@ -73,7 +64,8 @@ func getPortalRunsIndex(repoRoot string) *portalRunsIndex {
 		repoRoot:      repoRoot,
 		eventLogPath:  layout.EventsLogPath,
 		view:          &portalRunsView{},
-		manifestCache: make(map[string]portalManifestCacheEntry),
+		snapshotAt:    time.Time{},
+		snapshotReady: false,
 	}
 	actual, _ := portalRunsIndexes.LoadOrStore(repoRoot, idx)
 	return actual.(*portalRunsIndex)
@@ -177,7 +169,7 @@ func (idx *portalRunsIndex) loadSummaryProbe(ctx context.Context) (portalSummary
 	}
 	eventsByRun := idx.view.groupEventsByRun(eventsList)
 	runStates := events.ProjectRunStates(eventsList)
-	activeInstances, err := idx.discoverActiveRuns(eventsByRun)
+	activeInstances, err := idx.view.discoverActiveRuns(idx.repoRoot, eventsByRun)
 	if err != nil {
 		return portalSummaryState{}, err
 	}
@@ -227,166 +219,6 @@ func (idx *portalRunsIndex) hydrateActiveRunOutputs(ctx context.Context, instanc
 	}
 	wg.Wait()
 	return instances
-}
-
-func (idx *portalRunsIndex) discoverActiveRuns(eventsByRun map[string][]portalEvent) ([]portalActiveRun, error) {
-	instances, err := discoverPortalInstances(idx.repoRoot)
-	if err != nil {
-		return nil, err
-	}
-
-	active := make([]portalActiveRun, 0, len(instances))
-	for _, instance := range instances {
-		info, err := os.Stat(instance.SocketPath)
-		if err != nil {
-			if !os.IsNotExist(err) {
-				logPortalViewDegrade("stat-socket:"+instance.SocketPath, "stat %q: %v", instance.SocketPath, err)
-			}
-			continue
-		}
-		runDir := filepath.Dir(instance.SocketPath)
-		manifest, manifestErr := idx.readManifestCached(runDir)
-		prNumber := 0
-		batchID := instance.Name
-		runID := instance.Name
-		if manifestErr == nil && manifest.BatchId != "" {
-			batchID = manifest.BatchId
-			prNumber = idx.view.prNumberFromEvent(eventsByRun[runID])
-		}
-		// For non-review batches, resolve the per-row RunID from the
-		// per-row run.json so the LastOutputAt stat below hits the real
-		// per-row log file. instance.Name is the batches index entry id
-		// which equals the per-row RunID for the first issue per
-		// ADR-0036 — does not match the on-disk directory name (which
-		// carries the "+N" suffix) and does not identify any individual
-		// row. Falling back to the entry id here made the staleness
-		// stat miss the per-row log entirely (issue #1715).
-		if manifestErr == nil && manifest.RunKind != "review" {
-			if perRowID, ok := canonicalIssueRunID(runDir); ok {
-				runID = perRowID
-				prNumber = idx.view.prNumberFromEvent(eventsByRun[perRowID])
-			}
-		}
-		if manifestErr == nil && manifest.RunKind == "review" {
-			// ADR-0030 (issue #1551): a review batch owns one row whose
-			// canonical RunID is the per-row folder name (`runs/<rowID>/`).
-			// The batchId and the row RunID are distinct — the legacy
-			// literal `RunID = "review"` alias is gone — so the active
-			// row must source its identity from the on-disk run.json
-			// rather than from the batches-index Entry.ID.
-			if canonical, ok := canonicalReviewRunID(runDir); ok {
-				runID = canonical
-				prNumber = idx.view.prNumberFromEvent(eventsByRun[canonical])
-			}
-		}
-		issueNumbers := []int(nil)
-		issueNumber := 0
-		startedAt := info.ModTime()
-		if manifestErr == nil {
-			issueNumbers = append(issueNumbers, manifest.Issues...)
-			if !manifest.CreatedAt.IsZero() {
-				startedAt = manifest.CreatedAt
-			}
-		}
-		if len(issueNumbers) > 0 {
-			issueNumber = issueNumbers[0]
-		}
-		lastOutputAt := startedAt
-		if logInfo, err := os.Stat(filepath.Join(runDir, "runs", runID, "run.log")); err == nil && !logInfo.IsDir() {
-			lastOutputAt = logInfo.ModTime()
-		}
-		entry := portalActiveRun{
-			Key:          runID,
-			Dir:          runDir,
-			SocketPath:   instance.SocketPath,
-			LastOutputAt: lastOutputAt,
-			IssueNumber:  issueNumber,
-			IssueNumbers: issueNumbers,
-			PRNumber:     prNumber,
-			BatchID:      batchID,
-			RunID:        runID,
-			StartedAt:    startedAt,
-			ModTime:      info.ModTime(),
-		}
-		entry.Key = activeKeyForActive(entry)
-		active = append(active, entry)
-	}
-	return active, nil
-}
-
-// canonicalReviewRunID returns the per-row RunID for a review batch, read
-// from `runs/<rowID>/run.json` under the given batch directory. Returns
-// ("", false) when the row manifest is absent or unreadable so the caller
-// can fall back to its prior behavior.
-//
-// Per ADR-0030 (issue #1551) review batches are first-class rows, so the
-// canonical row RunID lives in the same `run.json` schema every other run
-// kind uses. The active discovery in `discoverActiveRuns` consults this
-// helper to avoid collapsing the row RunID onto the batchId (which was the
-// legacy review alias behavior).
-func canonicalReviewRunID(batchDir string) (string, bool) {
-	entries, err := os.ReadDir(filepath.Join(batchDir, "runs"))
-	if err != nil {
-		return "", false
-	}
-	for _, e := range entries {
-		if !e.IsDir() || e.Name() == "review" {
-			continue
-		}
-		manifest, err := daemon.ReadRunManifest(batchDir, e.Name())
-		if err != nil || manifest.RunID == "" {
-			continue
-		}
-		return manifest.RunID, true
-	}
-	return "", false
-}
-
-// canonicalIssueRunID returns the per-row RunID for the first issue row
-// of a non-review batch. Mirrors canonicalReviewRunID's read of
-// `runs/<rowID>/run.json` so the portal's staleness stat hits the real
-// per-row log file instead of a non-existent "<entryId>/runs/<entryId>/run.log"
-// path (issue #1715).
-func canonicalIssueRunID(batchDir string) (string, bool) {
-	entries, err := os.ReadDir(filepath.Join(batchDir, "runs"))
-	if err != nil {
-		return "", false
-	}
-	for _, e := range entries {
-		if !e.IsDir() {
-			continue
-		}
-		manifest, err := daemon.ReadRunManifest(batchDir, e.Name())
-		if err != nil || manifest.RunID == "" {
-			continue
-		}
-		return manifest.RunID, true
-	}
-	return "", false
-}
-
-func (idx *portalRunsIndex) readManifestCached(runDir string) (daemon.BatchManifest, error) {
-	path := daemon.ManifestPath(runDir)
-	info, err := os.Stat(path)
-	if err != nil {
-		return daemon.BatchManifest{}, err
-	}
-	idx.mu.Lock()
-	if entry, ok := idx.manifestCache[path]; ok && entry.size == info.Size() && entry.modTime.Equal(info.ModTime()) {
-		manifest := entry.manifest
-		idx.mu.Unlock()
-		return manifest, nil
-	}
-	idx.mu.Unlock()
-
-	manifest, err := daemon.ReadManifest(runDir)
-	if err != nil {
-		return daemon.BatchManifest{}, err
-	}
-	idx.mu.Lock()
-	idx.manifestCache[path] = portalManifestCacheEntry{size: info.Size(), modTime: info.ModTime(), manifest: manifest}
-	idx.mu.Unlock()
-	return manifest, nil
 }
 
 func (idx *portalRunsIndex) FindByKey(ctx context.Context, runKey string) (portalRun, error) {

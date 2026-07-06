@@ -3777,10 +3777,9 @@ func TestPortal_RunsRunKey_ReportsSnapshotFailuresAsInternalServerError(t *testi
 	handler := &portalHandler{
 		repoRoot: repoRoot,
 		runsIndex: &portalRunsIndex{
-			repoRoot:      repoRoot,
-			eventLogPath:  repoRoot,
-			view:          &portalRunsView{},
-			manifestCache: map[string]portalManifestCacheEntry{},
+			repoRoot:     repoRoot,
+			eventLogPath: repoRoot,
+			view:         &portalRunsView{},
 		},
 		staleCleaner: portalStaleCleaner,
 	}

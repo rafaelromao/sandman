@@ -156,8 +156,11 @@ func TestPortalRunsIndex_DiscoverActiveRuns_RefreshesManifestCacheOnChange(t *te
 		t.Fatal(err)
 	}
 
-	idx := getPortalRunsIndex(repoRoot)
-	first, err := idx.discoverActiveRuns(nil)
+	view := (&portalRunsIndex{}).view
+	if view == nil {
+		view = &portalRunsView{}
+	}
+	first, err := view.discoverActiveRuns(repoRoot, nil)
 	if err != nil {
 		t.Fatalf("discoverActiveRuns first: %v", err)
 	}
@@ -170,7 +173,7 @@ func TestPortalRunsIndex_DiscoverActiveRuns_RefreshesManifestCacheOnChange(t *te
 		t.Fatal(err)
 	}
 	waitForManifestModTimeAfter(t, runDir, beforeModTime, time.Second)
-	second, err := idx.discoverActiveRuns(nil)
+	second, err := view.discoverActiveRuns(repoRoot, nil)
 	if err != nil {
 		t.Fatalf("discoverActiveRuns second: %v", err)
 	}

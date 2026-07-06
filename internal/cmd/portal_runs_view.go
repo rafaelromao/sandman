@@ -169,7 +169,43 @@ type portalRunMatch struct {
 	state    *events.RunState
 }
 
-type portalRunsView struct{}
+type portalRunsView struct {
+	mu            sync.Mutex
+	manifestCache map[string]portalManifestCacheEntry
+}
+
+type portalManifestCacheEntry struct {
+	size     int64
+	modTime  time.Time
+	manifest daemon.BatchManifest
+}
+
+func (v *portalRunsView) readManifestCached(runDir string) (daemon.BatchManifest, error) {
+	path := daemon.ManifestPath(runDir)
+	info, err := os.Stat(path)
+	if err != nil {
+		return daemon.BatchManifest{}, err
+	}
+	v.mu.Lock()
+	if v.manifestCache == nil {
+		v.manifestCache = make(map[string]portalManifestCacheEntry)
+	}
+	if entry, ok := v.manifestCache[path]; ok && entry.size == info.Size() && entry.modTime.Equal(info.ModTime()) {
+		manifest := entry.manifest
+		v.mu.Unlock()
+		return manifest, nil
+	}
+	v.mu.Unlock()
+
+	manifest, err := daemon.ReadManifest(runDir)
+	if err != nil {
+		return daemon.BatchManifest{}, err
+	}
+	v.mu.Lock()
+	v.manifestCache[path] = portalManifestCacheEntry{size: info.Size(), modTime: info.ModTime(), manifest: manifest}
+	v.mu.Unlock()
+	return manifest, nil
+}
 
 type runLocator struct {
 	batchID string
@@ -891,7 +927,7 @@ func (v *portalRunsView) discoverActiveRuns(repoRoot string, eventsByRun map[str
 			continue
 		}
 		runDir := filepath.Dir(instance.SocketPath)
-		manifest, manifestErr := daemon.ReadManifest(runDir)
+		manifest, manifestErr := v.readManifestCached(runDir)
 		prNumber := 0
 		batchID := instance.Name
 		runID := filepath.Base(runDir)
@@ -907,6 +943,9 @@ func (v *portalRunsView) discoverActiveRuns(repoRoot string, eventsByRun map[str
 					runID = filepath.Base(runDir)
 				}
 			} else {
+				if perRowID, ok := v.canonicalIssueRunIDForBatchDir(runDir); ok {
+					runID = perRowID
+				}
 				prNumber = v.prNumberFromEvent(eventsByRun[runID])
 			}
 		}
@@ -954,10 +993,15 @@ func (v *portalRunsView) discoverActiveRuns(repoRoot string, eventsByRun map[str
 		if len(issueNumbers) > 0 {
 			issueNumber = issueNumbers[0]
 		}
+		lastOutputAt := startedAt
+		if logInfo, err := os.Stat(filepath.Join(runDir, "runs", runID, "run.log")); err == nil && !logInfo.IsDir() {
+			lastOutputAt = logInfo.ModTime()
+		}
 		entry := portalActiveRun{
 			Key:          runID,
 			Dir:          runDir,
 			SocketPath:   instance.SocketPath,
+			LastOutputAt: lastOutputAt,
 			IssueNumber:  issueNumber,
 			IssueNumbers: issueNumbers,
 			PRNumber:     prNumber,
@@ -1029,6 +1073,28 @@ func (v *portalRunsView) reviewRunIdentityForBatchDir(batchDir string) (string, 
 		}
 	}
 	return "", 0
+}
+
+// canonicalIssueRunIDForBatchDir mirrors the (now-removed) index-side
+// canonicalIssueRunID helper. For non-review batches the per-row RunID lives
+// in `runs/<rowID>/run.json` and is distinct from the on-disk dir name
+// (which carries the "+N" suffix) — see ADR-0036 and issue #1715.
+func (v *portalRunsView) canonicalIssueRunIDForBatchDir(batchDir string) (string, bool) {
+	entries, err := os.ReadDir(filepath.Join(batchDir, "runs"))
+	if err != nil {
+		return "", false
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		manifest, err := daemon.ReadRunManifest(batchDir, entry.Name())
+		if err != nil || manifest.RunID == "" {
+			continue
+		}
+		return manifest.RunID, true
+	}
+	return "", false
 }
 
 func reviewIssueNumberFromRunID(runID string) int {
@@ -1260,6 +1326,19 @@ func (v *portalRunsView) runFromActiveBatchIssue(repoRoot string, active portalA
 	// run.queued event for this issue.
 	if run.IssueTitle == "" && queued != nil {
 		run.IssueTitle = v.issueTitleFromPayload(queued.Payload)
+	}
+	// The state-less path falls through to "queued" by default so a
+	// pre-run.started implementation row reads as waiting. When the
+	// underlying active instance is actually a live review, the row must
+	// promote to "reviewing" instead, since the linked review is what is
+	// doing the work for this issue (mirrors the contract pinned by
+	// runFromActiveMatch's `if prNumber > 0` branch). Without this
+	// promotion, a review that started before run.started lands would
+	// surface its issue row stuck on "queued" forever.
+	if run.Status == "queued" && blocked == nil && active.PRNumber > 0 {
+		run.Status = "reviewing"
+		run.Review = true
+		run.PRNumber = active.PRNumber
 	}
 	v.markCompletedIfSocketDead(&run, run.SocketPath)
 	return run

@@ -49,6 +49,13 @@ package-lock.json
 # Token optimizer sessions
 token-optimizer/
 
+# Test fixtures and test-only artifacts produced locally by go test (perf
+# baselines, ad-hoc test reports). The portal perf tests write JSON
+# baselines under testdata/portal_perf_baseline/ on every run; they are
+# reproducible from a test invocation and should not be tracked.
+testdata/
+TEST_REPORT.md
+
 # OpenCode sessions
 .opencode/
 
