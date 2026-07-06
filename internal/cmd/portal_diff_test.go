@@ -5059,10 +5059,10 @@ try {
 		timestamp: event && event.timestamp ? event.timestamp : null,
 		payload: event && event.payload ? event.payload : {},
 	})), null, 2);
-	if (rendered !== expected) {
-		throw new Error('rebuilt content must match JSON.stringify(events, null, 2) byte-for-byte (AC #2).\nGot: ' + rendered.slice(0, 200) + '\nExpected: ' + expected.slice(0, 200));
-	}
-console.log('PASS');
+ 	if (rendered !== expected) {
+ 		throw new Error('rebuilt content must match JSON.stringify(events, null, 2) byte-for-byte (AC #2).\nGot: ' + rendered.slice(0, 200) + '\nExpected: ' + expected.slice(0, 200));
+ 	}
+	console.log('PASS');
 `
 	runNodeScript(t, js)
 }
@@ -5192,22 +5192,24 @@ console.log('PASS');
 }
 
 // TestSummarizeReviewGroup_Verdict_LatestReviewWinsTieBreak pins the
-// tie-break rule when two reviews share startedAt: the existing
-// summarizeReviewGroup sort uses runId asc on the equal-startedAt
-// fallback, so the lower runId comes first and (since the verdict
-// scan walks ordered[0..N] for the first marker) supplies the verdict.
+// "latest review wins" contract: when two reviews have different
+// startedAt and disagree on the marker, the verdict comes from the
+// newer review. The existing summarizeReviewGroup sort puts the
+// newest startedAt first; the verdict scan walks the ordered list
+// in that order and returns the first recoverable marker.
 func TestSummarizeReviewGroup_Verdict_LatestReviewWinsTieBreak(t *testing.T) {
 	js := `const NL = String.fromCharCode(10);
-// same startedAt for both; r1 (alphabetically first) has the marker.
+// r1 is older and has CHANGES_REQUESTED; r2 is newer and has
+// APPROVED. The verdict scan must pick r2's marker (newer wins).
 const reviews = [
-  { key: 'r1', runId: 'r1', review: true, status: 'success', startedAt: '2026-07-01T00:00:00Z', log: '## Decision' + NL + '**APPROVED**' + NL },
-  { key: 'r2', runId: 'r2', review: true, status: 'success', startedAt: '2026-07-01T00:00:00Z', log: '## Decision' + NL + '**CHANGES_REQUESTED**' + NL },
+  { key: 'r1', runId: 'r1', review: true, status: 'success', startedAt: '2026-07-01T00:00:00Z', log: '## Decision' + NL + '**CHANGES_REQUESTED**' + NL },
+  { key: 'r2', runId: 'r2', review: true, status: 'success', startedAt: '2026-07-02T00:00:00Z', log: '## Decision' + NL + '**APPROVED**' + NL },
 ];
 const summary = summarizeReviewGroup(reviews);
-// summarizeReviewGroup sorts by startedAt desc, then runId asc
-// localeCompare on the equal-startedAt fallback. So r1 is ordered
-// first and the verdict scan picks r1's marker.
-if (summary.verdict !== 'Approved') throw new Error('expected verdict from first-ordered review (r1, APPROVED), got ' + JSON.stringify(summary.verdict));
+// summarizeReviewGroup sorts by startedAt desc, so r2 (newer) is
+// ordered first. The verdict scan walks reviews in that order and
+// returns the verdict from the first review whose log has a marker.
+if (summary.verdict !== 'Approved') throw new Error('expected verdict from newer review (r2, APPROVED), got ' + JSON.stringify(summary.verdict));
 console.log('PASS');
 `
 	runPortalHTMLScript(t, js)
@@ -5353,6 +5355,36 @@ if (visible.status !== 'success') throw new Error('expected visible status=succe
 if (visible.reviewCount !== 1) throw new Error('expected reviewCount=1, got ' + JSON.stringify(visible.reviewCount));
 // live review has no terminal marker, so verdict stays ''.
 if (visible.reviewVerdict !== '') throw new Error('expected empty reviewVerdict when only live review, got ' + JSON.stringify(visible.reviewVerdict));
+console.log('PASS');
+`
+	runPortalHTMLScript(t, js)
+}
+
+// TestVisibleRunForIssueGroup_ActiveKindParentAlongsideLiveReview pins
+// the strict reading of AC 6 (d): when the parent row's own kind is
+// 'active' (the implementation is still in flight) and a live review
+// child is present, the enrichment must keep the parent's own
+// identity fields — not blend in the live review's status. This is a
+// stronger contract than the completed-parent test: the parent kind
+// is 'active' here, exercising the same code path the canonical
+// issue #1845 (succeeded parent with reviews) does, but with an
+// 'active' kind to pin the no-status-flip rule on the active side too.
+func TestVisibleRunForIssueGroup_ActiveKindParentAlongsideLiveReview(t *testing.T) {
+	js := `const parent = {
+  key: 'impl-4b', kind: 'active', status: 'running', review: false,
+  issueLabel: '#4b', runId: 'impl-4b', issueNumber: 41,
+  batchKey: 'parent-batch', issueTitle: 'Fix live bug',
+  startedAt: '2025-01-01T00:00:00Z',
+};
+const liveReview = {
+  key: 'PR51', runId: 'PR51', kind: 'active', status: 'reviewing', review: true,
+  issueNumber: 41, prNumber: 51, startedAt: '2025-02-01T00:00:00Z',
+};
+const visible = visibleRunForIssueGroup(41, [parent, liveReview]);
+if (!visible) throw new Error('expected visible row');
+if (visible.kind !== 'active') throw new Error('expected active kind preserved, got ' + JSON.stringify(visible.kind));
+if (visible.status !== 'running') throw new Error('expected running status preserved (no review flip), got ' + JSON.stringify(visible.status));
+if (visible.reviewCount !== 1) throw new Error('expected reviewCount=1, got ' + JSON.stringify(visible.reviewCount));
 console.log('PASS');
 `
 	runPortalHTMLScript(t, js)
