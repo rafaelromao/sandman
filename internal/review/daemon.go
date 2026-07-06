@@ -27,6 +27,28 @@ import (
 // reference the same constant.
 const PollingInterval = 30 * time.Second
 
+// PostStepMaxAttempts caps the number of gh pr comment invocations
+// postDecision makes before falling back to the rehydrate path. A
+// transient gh failure (network blip, rate limit, auth refresh) is
+// retried in-process; only a sustained failure reaches the
+// pending-rehydrate escape (issue #1847 S4).
+const PostStepMaxAttempts = 5
+
+// postStepBackoffs is the per-attempt sleep schedule postWithRetry
+// honours between transient PostComment failures. Total worst case
+// 1+2+4+8+16 = 31s. The slot is held for that window but the busy
+// semaphore has already been released (tick returned when the
+// goroutine launched), so the next tick runs unaffected. The
+// per-PR slot table (issue #1481 slice C) keeps the trigger from
+// being re-launched while the post retries are in flight.
+var postStepBackoffs = []time.Duration{
+	1 * time.Second,
+	2 * time.Second,
+	4 * time.Second,
+	8 * time.Second,
+	16 * time.Second,
+}
+
 // Clock returns the current time. Inject a custom clock in tests to avoid
 // time-based dependencies.
 type Clock func() time.Time
@@ -1359,20 +1381,32 @@ func (d *Daemon) postDecision(ctx context.Context, prNumber int, commentID, revi
 	}
 
 	redacted := RedactBody(string(body))
-	if err := d.CommentPoster.PostComment(ctx, prNumber, redacted); err != nil {
+	postErr := postWithRetry(ctx, d, prNumber, redacted)
+	if postErr != nil {
 		if cerr := ctx.Err(); cerr != nil {
 			d.logf("PR #%d: ctx cancelled during post; leaving status untouched (issue #1846)", prNumber)
 			return cerr
 		}
-		d.logf("PR #%d: post failed: %v; marking failure (issue #1846)", prNumber, err)
+		// Post failed after the retry budget. Fall back to the
+		// rehydrate path: write `pending` on disk and register a
+		// pendingPost entry so the same-process next tick (or
+		// the S4 rehydrate walker after a daemon restart) picks
+		// the trigger up and re-attempts the post. The trigger is
+		// NOT marked terminal-seen — failure here means "post did
+		// not land", not "review is permanently lost". This
+		// supersedes the S6 single-shot escape (issue #1849) for
+		// the post-failure branch only; the missing-decision.md
+		// and directory branches above still apply
+		// MarkTerminalSeen because those represent "the agent did
+		// not produce a review", not "the post could not land".
+		d.logf("PR #%d: post failed after %d attempts (last err: %v); registering as pending for rehydrate (issue #1891)", prNumber, PostStepMaxAttempts, postErr)
 		if state != nil {
-			if markErr := state.MarkSeen(commentID, "failure"); markErr != nil {
-				d.logf("PR #%d: mark %s failure: %v", prNumber, commentID, markErr)
+			if markErr := state.MarkSeen(commentID, "pending"); markErr != nil {
+				d.logf("PR #%d: mark %s pending: %v", prNumber, commentID, markErr)
 			}
 		}
-		// Issue #1849 (S6): see missing-decision.md branch above.
-		d.MarkTerminalSeen(prNumber, commentID)
-		return fmt.Errorf("post decision: %w", err)
+		d.registerPendingPost(prNumber, commentID, reviewRunFolder)
+		return fmt.Errorf("post decision: %w", postErr)
 	}
 
 	if state != nil {
@@ -1381,6 +1415,63 @@ func (d *Daemon) postDecision(ctx context.Context, prNumber int, commentID, revi
 		}
 	}
 	return nil
+}
+
+// postWithRetry calls CommentPoster.PostComment up to
+// PostStepMaxAttempts times. Between attempts it sleeps
+// postStepBackoffs[attempt-1]. Returns the last error from
+// PostComment on exhaustion, or ctx.Err() if the context is
+// cancelled at any point. Issue #1891.
+func postWithRetry(ctx context.Context, d *Daemon, prNumber int, body string) error {
+	var lastErr error
+	for attempt := 1; attempt <= PostStepMaxAttempts; attempt++ {
+		if cerr := ctx.Err(); cerr != nil {
+			return cerr
+		}
+		if err := d.CommentPoster.PostComment(ctx, prNumber, body); err != nil {
+			lastErr = err
+			if cerr := ctx.Err(); cerr != nil {
+				return cerr
+			}
+			if attempt < PostStepMaxAttempts {
+				backoff := postStepBackoffs[attempt-1]
+				d.logf("PR #%d: post attempt %d/%d failed: %v; retrying in %v", prNumber, attempt, PostStepMaxAttempts, err, backoff)
+				select {
+				case <-time.After(backoff):
+					continue
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+			}
+			continue
+		}
+		if attempt > 1 {
+			d.logf("PR #%d: post succeeded on attempt %d/%d", prNumber, attempt, PostStepMaxAttempts)
+		}
+		return nil
+	}
+	return lastErr
+}
+
+// registerPendingPost registers (prNumber, commentID) in the
+// in-memory pendingPost map so the same-process next tick re-runs
+// tryRehydratePost (issue #1847 S4). The on-disk review-state.json
+// must already carry status="pending" — postDecision writes it via
+// state.MarkSeen just before calling this helper. Locking matches
+// loadPendingPosts and tryRehydratePost: pendingPostMu only, never
+// shared with seenCacheMu. Issue #1891.
+func (d *Daemon) registerPendingPost(prNumber int, commentID, reviewRunFolder string) {
+	d.pendingPostMu.Lock()
+	defer d.pendingPostMu.Unlock()
+	if _, ok := d.pendingPost[prNumber]; !ok {
+		d.pendingPost[prNumber] = map[string]pendingPostEntry{}
+	}
+	d.pendingPost[prNumber][commentID] = pendingPostEntry{
+		commentID:   commentID,
+		runDir:      reviewRunFolder,
+		reviewState: d.ReviewStatePath(reviewRunFolder),
+		since:       d.now(),
+	}
 }
 
 // tryRehydratePost handles a rehydrate-eligible trigger discovered

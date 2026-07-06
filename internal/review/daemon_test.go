@@ -221,7 +221,11 @@ func tickAndWait(t *testing.T, d *Daemon, ctx context.Context) {
 	if err := d.tick(ctx); err != nil {
 		t.Fatalf("tick: %v", err)
 	}
-	idleCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	// WaitForIdle bounds the in-flight review goroutines. The launch
+	// goroutine holds the per-PR slot until launchReview returns, which
+	// for a post-failure path includes the full PostStepMaxAttempts ×
+	// postStepBackoffs worst-case window (~31s). Issue #1891.
+	idleCtx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	if err := d.WaitForIdle(idleCtx); err != nil {
 		t.Fatalf("WaitForIdle: %v", err)
