@@ -90,6 +90,29 @@ type pendingReviewEntry struct {
 	cycles      int
 }
 
+// pendingPostEntry is the in-memory record the daemon keeps for a
+// review whose agent-run has produced <runDir>/decision.md but
+// whose daemon-side post step did not complete (e.g. the daemon
+// was cancelled mid-post). The rehydrate-on-startup path (issue
+// #1847 S4) walks every review-kind batch at construction; for
+// every `pending` review-state.json whose row folder has a
+// decision.md on disk, it registers one of these entries keyed by
+// (prNumber, commentID).
+//
+// runDir and reviewStatePath are absolute paths so the processPR
+// rehydrate branch can read decision.md and open the per-run
+// ReviewStateStore without further resolution. The rehydrate
+// branch drops the entry on a successful post (MarkSeen("success")
+// is the new terminal-seen status) and retains it on a failed post
+// (the next tick retries). When decision.md is missing at tick
+// time the entry is treated as stale and the daemon falls through
+// to the existing launch path.
+type pendingPostEntry struct {
+	commentID       string
+	runDir          string // absolute path to <batch>/runs/<rowID>
+	reviewStatePath string // absolute path to <runDir>/review-state.json
+}
+
 // Daemon polls the repo for /sandman review comments and launches review
 // agents serially.
 type Daemon struct {
@@ -122,8 +145,25 @@ type Daemon struct {
 	slotMu               sync.Mutex
 	pendingMu            sync.Mutex
 	pendingReviews       map[int][]pendingReviewEntry
-	selfPosts            *SelfPostStore
-	inFlight             sync.WaitGroup
+	// pendingPost is the rehydrate-on-startup map (issue #1847 S4).
+	// Outer key is PR number; inner key is the trigger comment ID.
+	// Each entry remembers the absolute path of the per-row folder
+	// (so the daemon can read <runDir>/decision.md at tick time)
+	// and the absolute path of the per-run review-state.json (so
+	// the rehydrate post can MarkSeen on the right store). Entries
+	// are written by loadPendingPosts at construction, read and
+	// dropped by processPR's rehydrate branch on a successful
+	// post, and read-and-retained on a failed post.
+	//
+	// The map is locked by a dedicated mutex (pendingPostMu) to
+	// match the existing one-mutex-per-data-structure convention
+	// (pendingMu guards pendingReviews; seenCacheMu guards
+	// seenCache). Sharing pendingMu between the two maps would
+	// create ambiguous ownership for future readers.
+	pendingPostMu sync.Mutex
+	pendingPost   map[int]map[string]pendingPostEntry
+	selfPosts     *SelfPostStore
+	inFlight      sync.WaitGroup
 }
 
 // New returns a Daemon configured with the project defaults for the
@@ -177,6 +217,10 @@ func New(baseDir string, gh GitHubClient, prompts Renderer, runner BatchRunner, 
 		slotTable:      map[int]struct{}{},
 		slotPool:       make(chan struct{}, parallelReviews),
 		pendingReviews: map[int][]pendingReviewEntry{},
+		// S4 (issue #1847): initialise the rehydrate-on-startup
+		// map; loadPendingPosts (Slice B) populates it from the
+		// on-disk review-state.json files at construction.
+		pendingPost: map[int]map[string]pendingPostEntry{},
 	}
 	if err := d.loadSeenCache(); err != nil {
 		d.logf("load seen cache: %v", err)
@@ -391,6 +435,23 @@ func (d *Daemon) Forget(prNumber int, commentID string) {
 	if seen, ok := d.seenCache[prNumber]; ok {
 		delete(seen, commentID)
 	}
+}
+
+// peekPendingPost reports the rehydrate post entry for
+// (prNumber, commentID), if any. The slice-A/B/C/D/E regression
+// tests use this to observe the in-memory map without depending
+// on processPR's launch/rehydrate internal wiring. Returns
+// (entry, true) on a hit, (zero, false) on a miss. Reads the
+// pendingPostMu lock under which the walker (Slice B) writes.
+func (d *Daemon) peekPendingPost(prNumber int, commentID string) (pendingPostEntry, bool) {
+	d.pendingPostMu.Lock()
+	defer d.pendingPostMu.Unlock()
+	if m, ok := d.pendingPost[prNumber]; ok {
+		if entry, ok := m[commentID]; ok {
+			return entry, true
+		}
+	}
+	return pendingPostEntry{}, false
 }
 
 // loadSeenCache rebuilds the seen cache from scratch by scanning the
