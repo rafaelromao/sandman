@@ -3,6 +3,7 @@ package cmd
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -312,6 +313,115 @@ func TestPortal_NoRunsReviewLiteralInPortalCode(t *testing.T) {
 			}
 		}
 	}
+}
+
+// TestPortal_DocComments_DescribeJSSynthesisForBothPaths pins acceptance
+// criterion 7 for issue #1856: the doc comments on
+// portalRun.ReviewCount, ReviewVerdict, and GroupedReview in
+// portal_runs_view.go must describe that these fields are no longer
+// stamped by the Go server and are now synthesized in JS
+// (visibleRunForIssueGroup) for both the orphan path AND the
+// parent-enrichment case. The Go server is no longer a source for
+// these values; a future maintainer reading the field comments must
+// learn that the JS enrichment is the canonical writer.
+func TestPortal_DocComments_DescribeJSSynthesisForBothPaths(t *testing.T) {
+	// Locate portal_runs_view.go next to this test file (the test cwd
+	// is the package directory, not the repo root).
+	_, currentFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("locate test file")
+	}
+	path := filepath.Join(filepath.Dir(currentFile), "portal_runs_view.go")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	text := string(data)
+
+	// Locate each field's doc comment block (the lines immediately
+	// above the field declaration) and assert that they collectively
+	// mention visibleRunForIssueGroup + parent enrichment + orphan.
+	type fieldBlock struct {
+		field    string
+		required []string
+	}
+	checks := []fieldBlock{
+		{
+			field: "ReviewCount",
+			required: []string{
+				"visibleRunForIssueGroup", // canonical JS writer
+				"parent enrichment",       // parent path (slice 2)
+			},
+		},
+		{
+			field: "ReviewVerdict",
+			required: []string{
+				"visibleRunForIssueGroup", // canonical JS writer
+				"parent enrichment",       // parent path (slice 2)
+			},
+		},
+		{
+			field: "GroupedReview",
+			required: []string{
+				"orphan", // orphan-path synthesis
+			},
+		},
+	}
+
+	for _, check := range checks {
+		idx := strings.Index(text, "\t"+check.field+" ")
+		if idx < 0 {
+			t.Errorf("could not locate field %q in portal_runs_view.go", check.field)
+			continue
+		}
+		// Walk backwards from the field declaration to find the start of
+		// the doc comment (the nearest "//" line) — but only within a
+		// small window to avoid pulling in stale comments from another
+		// field.
+		blockStart := idx
+		for {
+			prev := strings.LastIndex(text[:blockStart], "\n\t// ")
+			if prev < 0 {
+				prev = strings.LastIndex(text[:blockStart], "\n// ")
+			}
+			if prev < 0 {
+				break
+			}
+			// Verify there is no non-comment line between `prev` and
+			// `blockStart` (i.e. the doc comment is contiguous).
+			between := text[prev+1 : blockStart]
+			if strings.Contains(between, "\n\t") || strings.Contains(between, "}") {
+				break
+			}
+			blockStart = prev + 1
+		}
+		block := text[blockStart:idx]
+		// Normalize the block by stripping the per-line `// ` markers so
+		// cross-line mentions like "parent\n\t// enrichment" still match
+		// the needle "parent enrichment".
+		normalized := stripGoCommentPrefix(block)
+		for _, needle := range check.required {
+			if !strings.Contains(normalized, needle) {
+				t.Errorf("doc comment for %q in portal_runs_view.go must mention %q; normalized block was:\n---\n%s\n---", check.field, needle, normalized)
+			}
+		}
+	}
+}
+
+// stripGoCommentPrefix removes the leading `// ` (or `//\t`) from each
+// line of a Go doc comment, so cross-line mentions can be matched as a
+// single contiguous string.
+func stripGoCommentPrefix(s string) string {
+	lines := strings.Split(s, "\n")
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "//") {
+			trimmed = strings.TrimPrefix(trimmed, "//")
+			trimmed = strings.TrimSpace(trimmed)
+		}
+		lines[i] = trimmed
+	}
+	return strings.Join(lines, " ")
 }
 
 func intPtr(v int) *int {
