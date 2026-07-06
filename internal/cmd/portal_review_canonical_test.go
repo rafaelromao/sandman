@@ -98,7 +98,7 @@ func TestPortal_ResolveReviewRunFromCanonicalFolder_Active(t *testing.T) {
 	})
 
 	idx := getPortalRunsIndex(repoRoot)
-	active, err := idx.discoverActiveRuns(map[string][]portalEvent{
+	active, err := idx.view.discoverActiveRuns(repoRoot, map[string][]portalEvent{
 		canonicalRowID: {
 			{Type: "run.started", Timestamp: startedAt, Payload: map[string]any{"review": true, "pr_number": 42, "branch": "sandman/review-PR42"}},
 		},
@@ -792,6 +792,115 @@ func TestPortal_ReviewAggregation_HistoricalReviewRecoversIssueFromIdentity(t *t
 	}
 	if parent.Status != "success" {
 		t.Fatalf("parent Status=%q, want %q (terminal run.finished status preserved after aggregateReviewChildren removal)", parent.Status, "success")
+	}
+}
+
+// TestPortal_ReviewRun_ShowsReviewingBeforeRunStarted pins the regression
+// behind #1858 (live PR-review row pinned to "running" until run.started
+// lands). The portal's Snapshot path resolves active review runs through
+// view.discoverActiveRuns, which must surface status="reviewing" the moment
+// the on-disk batch manifest + run.json are populated — without waiting for
+// the run.started event to land in events.jsonl.
+//
+// The state-less branch (runFromActiveMatch, no RunState match) is the one
+// that broke: discoverActiveRuns returned PRNumber=0 when the run.started
+// event had not yet been replayed, so runFromActiveMatch fell into the
+// "running" branch instead of "reviewing".
+func TestPortal_ReviewRun_ShowsReviewingBeforeRunStarted(t *testing.T) {
+	repoRoot, err := os.MkdirTemp("/tmp", "rbs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(repoRoot) })
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	const issueNumber = 1846
+	const prNumber = 1858
+	const batchID = "e1dd-260706100650-1846-PR1858"
+	const canonicalReviewRowID = "e1dd-260706100650-1846-PR1858"
+	const runTS = "260706100650"
+	const runShortID = "e1dd"
+
+	batchDir := filepath.Join(repoRoot, ".sandman", "batches", batchID)
+	createUnixRunSocket(t, filepath.Join(batchDir, "batch.sock"))
+
+	startedAt := time.Now().Add(-2 * time.Minute)
+	if err := daemon.WriteManifest(batchDir, daemon.BatchManifest{
+		BatchId:    batchID,
+		RunKind:    "review",
+		PR:         intPtr(prNumber),
+		Issues:     []int{},
+		RunTS:      runTS,
+		RunShortID: runShortID,
+		CreatedAt:  startedAt,
+	}); err != nil {
+		t.Fatalf("write batch manifest: %v", err)
+	}
+
+	// Per-row manifest so the canonical RunID resolves from the on-disk
+	// run.json (mirrors the real review-daemon path that writes
+	// runs/<rowID>/run.json during RunSession.Prepare).
+	if err := daemon.WriteRunManifest(batchDir, canonicalReviewRowID, batchindex.RunManifest{
+		RunID:     canonicalReviewRowID,
+		BatchID:   batchID,
+		PR:        prNumber,
+		Kind:      batchindex.KindReview,
+		CreatedAt: startedAt,
+		Status:    batchindex.RunManifestStatusActive,
+	}); err != nil {
+		t.Fatalf("write run manifest: %v", err)
+	}
+
+	// Register the batch in the batches index so discoverPortalInstances
+	// picks it up via the production Snapshot path.
+	layout := paths.NewLayout(nil, repoRoot)
+	batchesIdx := &batchindex.Index{
+		Version: batchindex.IndexVersion,
+		Entries: []batchindex.Entry{{
+			ID:        batchID,
+			Path:      batchDir,
+			Kind:      batchindex.KindReview,
+			Status:    batchindex.StatusActive,
+			CreatedAt: startedAt,
+			PR:        prNumber,
+		}},
+	}
+	if err := batchesIdx.Save(layout.BatchesIndexPath); err != nil {
+		t.Fatal(err)
+	}
+
+	// Critically: NO run.started event has been written to events.jsonl.
+	// The portal must still project status="reviewing" from the on-disk
+	// batch manifest (PR=prNumber) and per-row run.json.
+	handler := newPortalHandler(repoRoot)
+	server := startPortalHTTPServer(t, handler)
+	defer server.Close()
+
+	runs := readPortalRuns(t, server.URL)
+	if len(runs) != 1 {
+		t.Fatalf("expected 1 run, got %d: %#v", len(runs), runs)
+	}
+	got := runs[0]
+	if got.Status != "reviewing" {
+		t.Fatalf("expected status=reviewing (manifest-only, no run.started), got %q (review=%v, prNumber=%d, runID=%q)",
+			got.Status, got.Review, got.PRNumber, got.RunID)
+	}
+	if !got.Review {
+		t.Fatalf("expected Review=true for active review row, got false")
+	}
+	if got.Kind != "active" {
+		t.Fatalf("expected kind=active for live review, got %q", got.Kind)
+	}
+	if got.PRNumber != prNumber {
+		t.Fatalf("expected PRNumber=%d (from manifest.PR fallback), got %d", prNumber, got.PRNumber)
+	}
+	if got.RunID != canonicalReviewRowID {
+		t.Fatalf("expected RunID=%q (per-row run.json), got %q", canonicalReviewRowID, got.RunID)
+	}
+	if got.IssueNumber != issueNumber {
+		t.Fatalf("expected IssueNumber=%d (recovered from review identity), got %d", issueNumber, got.IssueNumber)
 	}
 }
 
