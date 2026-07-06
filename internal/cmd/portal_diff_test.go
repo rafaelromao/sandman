@@ -5244,6 +5244,227 @@ console.log('PASS');
 	runPortalHTMLScript(t, js)
 }
 
+// --- Issue #1856: slice 2 — visibleRunForIssueGroup parent enrichment ---
+
+// TestVisibleRunForIssueGroup_ParentStampsTwoReviews is AC 6 (a): a
+// completed parent with two terminal review children that each carry
+// an APPROVED marker in their run.log must surface reviewCount=2 and
+// reviewVerdict="Approved" on the visible parent row, with the
+// parent's identity fields preserved verbatim.
+func TestVisibleRunForIssueGroup_ParentStampsTwoReviews(t *testing.T) {
+	js := `const NL = String.fromCharCode(10);
+const parent = {
+  key: 'impl-1', kind: 'completed', status: 'success', review: false,
+  issueLabel: '#1', runId: 'impl-1', issueNumber: 1,
+  batchKey: 'parent-batch', issueTitle: 'Fix login bug',
+  startedAt: '2025-01-01T00:00:00Z',
+};
+const review1 = {
+  key: 'PR42', runId: 'PR42', kind: 'completed', status: 'success', review: true,
+  issueNumber: 1, prNumber: 42, startedAt: '2025-01-15T00:00:00Z',
+  log: '## Decision' + NL + '**APPROVED**' + NL,
+};
+const review2 = {
+  key: 'PR43', runId: 'PR43', kind: 'completed', status: 'success', review: true,
+  issueNumber: 1, prNumber: 43, startedAt: '2025-01-20T00:00:00Z',
+  log: '## Decision' + NL + '**APPROVED**' + NL,
+};
+const visible = visibleRunForIssueGroup(1, [parent, review1, review2]);
+if (!visible) throw new Error('expected visible row');
+if (visible.reviewCount !== 2) throw new Error('expected reviewCount=2, got ' + JSON.stringify(visible.reviewCount));
+if (visible.reviewVerdict !== 'Approved') throw new Error('expected reviewVerdict=Approved, got ' + JSON.stringify(visible.reviewVerdict));
+if (visible.key !== 'impl-1') throw new Error('expected parent key preserved, got ' + JSON.stringify(visible.key));
+if (visible.runId !== 'impl-1') throw new Error('expected parent runId preserved, got ' + JSON.stringify(visible.runId));
+if (visible.batchKey !== 'parent-batch') throw new Error('expected parent batchKey preserved, got ' + JSON.stringify(visible.batchKey));
+if (visible.issueTitle !== 'Fix login bug') throw new Error('expected parent issueTitle preserved, got ' + JSON.stringify(visible.issueTitle));
+if (visible.startedAt !== '2025-01-01T00:00:00Z') throw new Error('expected parent startedAt preserved, got ' + JSON.stringify(visible.startedAt));
+if (visible.status !== 'success') throw new Error('expected parent status preserved, got ' + JSON.stringify(visible.status));
+console.log('PASS');
+`
+	runPortalHTMLScript(t, js)
+}
+
+// TestVisibleRunForIssueGroup_ParentStampsOneReview is AC 6 (b): a
+// completed parent with one terminal review child must surface
+// reviewCount=1 and reviewVerdict="Approved".
+func TestVisibleRunForIssueGroup_ParentStampsOneReview(t *testing.T) {
+	js := `const NL = String.fromCharCode(10);
+const parent = {
+  key: 'impl-2', kind: 'completed', status: 'success', review: false,
+  issueLabel: '#2', runId: 'impl-2', issueNumber: 2,
+  batchKey: 'parent-batch', issueTitle: 'Fix signup bug',
+  startedAt: '2025-01-01T00:00:00Z',
+};
+const review = {
+  key: 'PR44', runId: 'PR44', kind: 'completed', status: 'success', review: true,
+  issueNumber: 2, prNumber: 44, startedAt: '2025-01-15T00:00:00Z',
+  log: '## Decision' + NL + '**APPROVED**' + NL,
+};
+const visible = visibleRunForIssueGroup(2, [parent, review]);
+if (!visible) throw new Error('expected visible row');
+if (visible.reviewCount !== 1) throw new Error('expected reviewCount=1, got ' + JSON.stringify(visible.reviewCount));
+if (visible.reviewVerdict !== 'Approved') throw new Error('expected reviewVerdict=Approved, got ' + JSON.stringify(visible.reviewVerdict));
+if (visible.key !== 'impl-2') throw new Error('expected parent key preserved, got ' + JSON.stringify(visible.key));
+console.log('PASS');
+`
+	runPortalHTMLScript(t, js)
+}
+
+// TestVisibleRunForIssueGroup_ParentNoReviewsNoStamp is AC 6 (c): a
+// completed parent with zero review children must not have
+// reviewCount/reviewVerdict stamped onto the visible row. The visible
+// row is the parent identity, unchanged.
+func TestVisibleRunForIssueGroup_ParentNoReviewsNoStamp(t *testing.T) {
+	js := `const parent = {
+  key: 'impl-3', kind: 'completed', status: 'success', review: false,
+  issueLabel: '#3', runId: 'impl-3', issueNumber: 3,
+  batchKey: 'parent-batch', issueTitle: 'Fix reset bug',
+  startedAt: '2025-01-01T00:00:00Z',
+};
+const visible = visibleRunForIssueGroup(3, [parent]);
+if (!visible) throw new Error('expected visible row');
+if (visible.reviewCount) throw new Error('expected no reviewCount when no review children, got ' + JSON.stringify(visible.reviewCount));
+if (visible.reviewVerdict) throw new Error('expected no reviewVerdict when no review children, got ' + JSON.stringify(visible.reviewVerdict));
+if (visible.key !== 'impl-3') throw new Error('expected parent key preserved, got ' + JSON.stringify(visible.key));
+console.log('PASS');
+`
+	runPortalHTMLScript(t, js)
+}
+
+// TestVisibleRunForIssueGroup_ActiveParentLiveReviewNoStatusFlip is AC 6
+// (d): an active parent alongside a live (non-terminal) review child
+// must keep the parent's terminal success status — no status flip from
+// the live review. reviewCount is stamped, reviewVerdict may be empty
+// (no terminal review child).
+func TestVisibleRunForIssueGroup_ActiveParentLiveReviewNoStatusFlip(t *testing.T) {
+	js := `const parent = {
+  key: 'impl-4', kind: 'completed', status: 'success', review: false,
+  issueLabel: '#4', runId: 'impl-4', issueNumber: 4,
+  batchKey: 'parent-batch', issueTitle: 'Fix toggle bug',
+  startedAt: '2025-01-01T00:00:00Z',
+};
+const liveReview = {
+  key: 'PR50', runId: 'PR50', kind: 'active', status: 'reviewing', review: true,
+  issueNumber: 4, prNumber: 50, startedAt: '2025-02-01T00:00:00Z',
+};
+const visible = visibleRunForIssueGroup(4, [parent, liveReview]);
+if (!visible) throw new Error('expected visible row');
+if (visible.status !== 'success') throw new Error('expected visible status=success (no live review flip), got ' + JSON.stringify(visible.status));
+if (visible.reviewCount !== 1) throw new Error('expected reviewCount=1, got ' + JSON.stringify(visible.reviewCount));
+// live review has no terminal marker, so verdict stays ''.
+if (visible.reviewVerdict !== '') throw new Error('expected empty reviewVerdict when only live review, got ' + JSON.stringify(visible.reviewVerdict));
+console.log('PASS');
+`
+	runPortalHTMLScript(t, js)
+}
+
+// TestVisibleRunForIssueGroup_OrphanReviewOnlyPathUnchanged is AC 4:
+// the orphan review-only group path (no canonical parent) must remain
+// unchanged. The synthesized stub already gets reviewCount and
+// reviewVerdict from summarizeReviewGroup (slice 1 propagation). The
+// visible row is the orphan stub, not the canonical parent shape.
+func TestVisibleRunForIssueGroup_OrphanReviewOnlyPathUnchanged(t *testing.T) {
+	js := `const NL = String.fromCharCode(10);
+const review1 = {
+  key: 'r1', runId: 'r1', kind: 'completed', status: 'success', review: true,
+  issueNumber: 5, prNumber: 60, startedAt: '2025-01-15T00:00:00Z',
+  log: '## Decision' + NL + '**APPROVED**' + NL,
+};
+const review2 = {
+  key: 'r2', runId: 'r2', kind: 'completed', status: 'success', review: true,
+  issueNumber: 5, prNumber: 61, startedAt: '2025-01-20T00:00:00Z',
+  log: '## Decision' + NL + '**APPROVED**' + NL,
+};
+const visible = visibleRunForIssueGroup(5, [review1, review2]);
+if (!visible) throw new Error('expected visible orphan stub row');
+if (visible.review !== true) throw new Error('expected review=true on orphan stub, got ' + JSON.stringify(visible.review));
+if (visible.reviewCount !== 2) throw new Error('expected orphan stub reviewCount=2, got ' + JSON.stringify(visible.reviewCount));
+if (visible.reviewVerdict !== 'Approved') throw new Error('expected orphan stub reviewVerdict=Approved, got ' + JSON.stringify(visible.reviewVerdict));
+if (visible.kind !== 'completed') throw new Error('expected orphan stub kind=completed, got ' + JSON.stringify(visible.kind));
+if (visible.status !== 'success') throw new Error('expected orphan stub status=success, got ' + JSON.stringify(visible.status));
+console.log('PASS');
+`
+	runPortalHTMLScript(t, js)
+}
+
+// TestVisibleRunForIssueGroup_ParentEnrichmentNoFetch is AC 5: the
+// parent enrichment must not introduce a network fetch. The summary
+// endpoint already provides the in-memory log content; enrichment
+// derives reviewCount/reviewVerdict from the same rows the orphan path
+// already operates on. Pinned by a window.fetch spy that asserts the
+// call count is zero across the visibleRunForIssueGroup call.
+func TestVisibleRunForIssueGroup_ParentEnrichmentNoFetch(t *testing.T) {
+	js := `const NL = String.fromCharCode(10);
+let fetchCount = 0;
+const originalFetch = window.fetch;
+window.fetch = function () { fetchCount++; return Promise.reject(new Error('fetch must not be called by parent enrichment')); };
+try {
+  const parent = {
+    key: 'impl-6', kind: 'completed', status: 'success', review: false,
+    issueLabel: '#6', runId: 'impl-6', issueNumber: 6,
+    batchKey: 'parent-batch', issueTitle: 'Fix six',
+    startedAt: '2025-01-01T00:00:00Z',
+  };
+  const review = {
+    key: 'PR66', runId: 'PR66', kind: 'completed', status: 'success', review: true,
+    issueNumber: 6, prNumber: 66, startedAt: '2025-01-15T00:00:00Z',
+    log: '## Decision' + NL + '**APPROVED**' + NL,
+  };
+  const visible = visibleRunForIssueGroup(6, [parent, review]);
+  if (!visible) throw new Error('expected visible row');
+  if (visible.reviewCount !== 1) throw new Error('expected reviewCount=1, got ' + JSON.stringify(visible.reviewCount));
+  if (fetchCount !== 0) throw new Error('expected zero fetch calls during parent enrichment, got ' + fetchCount);
+} finally {
+  window.fetch = originalFetch;
+}
+console.log('PASS');
+`
+	runPortalHTMLScript(t, js)
+}
+
+// TestVisibleRunForIssueGroup_ParentEnrichmentAdditiveNotReplacing pins
+// the additive contract: the enrichment must stamp the new fields
+// without replacing any of the canonical parent's own fields. We
+// double-stamp the parent with a pre-set reviewCount=99 to confirm the
+// enrichment does not blindly replace it (the canonical parent's own
+// value is preserved; the enrichment overwrites it with the derived
+// value from the sibling reviews). The strict contract: the enrichment
+// uses the sibling reviews' aggregated count, not the parent's
+// pre-existing field. Pre-existing parent fields that are not
+// reviewCount/reviewVerdict must be preserved verbatim.
+func TestVisibleRunForIssueGroup_ParentEnrichmentAdditiveNotReplacing(t *testing.T) {
+	js := `const NL = String.fromCharCode(10);
+const parent = {
+  key: 'impl-7', kind: 'completed', status: 'success', review: false,
+  issueLabel: '#7', runId: 'impl-7', issueNumber: 7,
+  batchKey: 'parent-batch', issueTitle: 'Fix seven',
+  startedAt: '2025-01-01T00:00:00Z',
+  // Pre-existing fields (would have been stamped by the now-removed Go
+  // cross-batch aggregation). The JS enrichment must NOT preserve
+  // these stale values when sibling reviews exist — it derives fresh
+  // values from the siblings. This pins the issue #1825 fix
+  // (no stale Go projection) plus the #1856 JS-side replacement.
+  reviewCount: 99, reviewVerdict: 'stale-verdict',
+};
+const review = {
+  key: 'PR77', runId: 'PR77', kind: 'completed', status: 'success', review: true,
+  issueNumber: 7, prNumber: 77, startedAt: '2025-01-15T00:00:00Z',
+  log: '## Decision' + NL + '**APPROVED**' + NL,
+};
+const visible = visibleRunForIssueGroup(7, [parent, review]);
+if (!visible) throw new Error('expected visible row');
+// Enrichment derives from siblings (1 review) — overwrites the
+// pre-existing stale 99/Approved with the fresh value.
+if (visible.reviewCount !== 1) throw new Error('expected enrichment reviewCount=1 (derived from siblings, not parent pre-existing 99), got ' + JSON.stringify(visible.reviewCount));
+if (visible.reviewVerdict !== 'Approved') throw new Error('expected enrichment reviewVerdict=Approved, got ' + JSON.stringify(visible.reviewVerdict));
+// Identity fields preserved.
+if (visible.key !== 'impl-7') throw new Error('expected parent key preserved, got ' + JSON.stringify(visible.key));
+if (visible.batchKey !== 'parent-batch') throw new Error('expected parent batchKey preserved, got ' + JSON.stringify(visible.batchKey));
+console.log('PASS');
+`
+	runPortalHTMLScript(t, js)
+}
+
 func TestPortalDiffBuildEventsContent_RenderedEventCountAttribute(t *testing.T) {
 	js := `const body = makeMockBody();
 const events = [
