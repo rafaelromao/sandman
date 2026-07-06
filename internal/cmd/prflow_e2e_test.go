@@ -254,6 +254,13 @@ func TestPRFlow_PodmanSandboxCommitsAndPushes(t *testing.T) {
 		seedPRFlowRepo(t, repoDir)
 		runGit(t, repoDir, "remote", "set-url", "origin", "git@github.com:rafaelromao/sandman.git")
 
+		absRepo, err := filepath.Abs(repoDir)
+		if err != nil {
+			t.Fatalf("resolve repoDir to absolute path: %v", err)
+		}
+		rewrittenOriginURL := "file://" + filepath.Join(absRepo, "remote")
+		runGit(t, repoDir, "remote", "set-url", "origin", rewrittenOriginURL)
+
 		setupIsolatedPRFlowHome(t, realHome, repoDir, "sandman-podman-e2e-", tc.authPaths)
 
 		runRootCommand(t, prFlowDeps(repoDir), "init", "--agent", tc.name)
@@ -268,6 +275,7 @@ func TestPRFlow_PodmanSandboxCommitsAndPushes(t *testing.T) {
 		ghShimDir := t.TempDir()
 		writeFakeGHShim(t, ghShimDir)
 		prependPath(t, ghShimDir)
+		assertHostShimResolves(t, ghShimDir)
 
 		deps := prFlowDeps(repoDir)
 
@@ -282,12 +290,14 @@ func TestPRFlow_PodmanSandboxCommitsAndPushes(t *testing.T) {
 		if out, err := exec.Command("podman", "run", "--rm", "sandman-e2e-model-detect", "sh", "-c", "command -v go >/dev/null").CombinedOutput(); err != nil {
 			t.Fatalf("go toolchain missing in container image: %v\n%s", err, out)
 		}
+		assertContainerShimFresh(t, "sandman-e2e-model-detect", containerGhShimDir)
 		t.Logf("using provider model: %s", tc.model)
 
 		customizePRFlowAgent(t, repoDir, tc, prFlowAgentOptions{container: true})
 		writePRFlowPrompt(t, repoDir)
 
-		_, err := runRootCommand(t, deps, "run", "--agent", tc.name, "--sandbox", "podman", strconv.Itoa(prFlowIssueNumber))
+		scrubGitHubEnv(t)
+		_, err = runRootCommand(t, deps, "run", "--agent", tc.name, "--sandbox", "podman", strconv.Itoa(prFlowIssueNumber))
 		t.Logf("sandman run returned err=%v", err)
 
 		logPath := filepath.Join(repoDir, ".sandman", "logs", fmt.Sprintf("%d.log", prFlowIssueNumber))
@@ -348,6 +358,8 @@ func TestPRFlow_PodmanSandboxCommitsAndPushes(t *testing.T) {
 		if len(fields) == 0 || fields[0] != branchHash {
 			t.Fatalf("remote branch hash mismatch: got %q, want %q", remoteHash, branchHash)
 		}
+
+		assertRemoteOriginRewritten(t, repoDir, rewrittenOriginURL)
 	})
 }
 
