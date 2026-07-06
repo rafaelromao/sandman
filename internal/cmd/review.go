@@ -325,10 +325,13 @@ func runReviewDaemon(parent context.Context, deps Dependencies, cfg *config.Conf
 	return d.Run(ctx)
 }
 
-// ghCommentPosterFromDeps builds a production GHCommentPoster from
-// the deps.GitHubClient. Returns nil when the GitHubClient is not a
-// *ghcli.CLIClient (e.g. test fakes); the daemon falls back to its
-// built-in nopPoster in that case. Issue #1846.
+// ghCommentPosterFromDeps is a fallback that builds a
+// GHCommentPoster from deps.GitHubClient when the deps wiring did
+// not already provide a CommentPoster. The production path
+// (cmd/sandman/main.go) pre-builds and assigns the poster, so this
+// fallback only fires for tests / non-production wiring that pass a
+// fake GitHubClient. Returning nil lets the daemon's nil-safe
+// default take over; see review.New's nil-to-nop fallback.
 func ghCommentPosterFromDeps(deps Dependencies) review.CommentPoster {
 	if deps.GitHubClient == nil {
 		return nil

@@ -1,6 +1,9 @@
 package review
 
-import "context"
+import (
+	"context"
+	"errors"
+)
 
 // CommentPoster publishes a comment body on a pull request.
 //
@@ -30,4 +33,33 @@ type nopCommentPoster struct{}
 
 func (nopCommentPoster) PostComment(context.Context, int, string) error {
 	return nil
+}
+
+// postStepError signals that launchReview's post step recorded
+// MarkSeen("failure") for the trigger — either decision.md was
+// missing or PostComment returned an error. The launch goroutine
+// detects this via errors.As and registers a pending entry so the
+// bounded-retry escape engages. Pre-batch errors (RunBatch,
+// FetchPR, ...) bypass this wrap so the launch goroutine falls
+// through to its release-claim path and the trigger can be
+// retried by the next processPR tick.
+type postStepError struct{ cause error }
+
+func (e *postStepError) Error() string { return e.cause.Error() }
+func (e *postStepError) Unwrap() error { return e.cause }
+
+// asPostStepError is the canonical constructor used by postDecision.
+func asPostStepError(cause error) error { return &postStepError{cause: cause} }
+
+// isPostStepError reports whether err originated inside
+// postDecision. The launch goroutine uses this to decide
+// between registerPendingReview (post-step failure, bounded-
+// retry path) and release-claim (pre-batch failure, immediate
+// retry path).
+func isPostStepError(err error) bool {
+	if err == nil {
+		return false
+	}
+	var p *postStepError
+	return errors.As(err, &p)
 }

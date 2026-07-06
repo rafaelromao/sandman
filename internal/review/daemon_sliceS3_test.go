@@ -362,7 +362,16 @@ func TestDaemon_S3_CtxCancelDuringPost_StaysPending(t *testing.T) {
 
 	statePath := locateReviewStatePath(t, dir)
 	if statePath == "" {
-		// no MarkSeen was called; no review-state.json is acceptable.
+		// AC-8 ("status stays pending") reads: no MarkSeen is
+		// recorded for the trigger when ctx is cancelled between
+		// RunBatch returning and the post step. Under S3 the
+		// launch goroutine does not pre-register a pending
+		// entry; absent a MarkSeen call, no row exists for
+		// c-s3-4 in review-state.json. The bounded-retry escape
+		// on the next tick picks the trigger up because the
+		// seen-cache has no terminal-seen record either. The
+		// file absence is the canonical "status stays pending"
+		// surface for the S3 architecture.
 		return
 	}
 	data, err := os.ReadFile(statePath)

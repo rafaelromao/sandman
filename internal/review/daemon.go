@@ -1061,24 +1061,65 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) error {
 		launchErr := d.launchReview(ctx, prNumber, focus, comment.ID, commentReactionID, prReactionID, reviewRunFolder, perRowRunID, rs, state)
 		if launchErr != nil {
 			d.logf("launch review for PR #%d comment %s: %v", prNumber, comment.ID, launchErr)
-		} else {
-			// Lazy verify (issue #1482 slice D): register the trigger
-			// as pending so the next tick's promotePendingReviews
-			// step (issue #1759 B12) can still observe a
-			// bot-authored review body that landed AFTER the
-			// daemon's own post. The post step is the new
-			// terminal action (issue #1846), but the
-			// promotion-to-success path remains a safety net for
-			// the pre-S3 lazy-verify semantics. The trigger is
-			// already MarkSeen("success") on disk via the post
-			// step, so the seen-cache short-circuit prevents a
-			// re-launch even if a pending entry were registered.
-			runLogPath := filepath.Join(reviewRunFolder, "run.log")
-			d.registerPendingReview(prNumber, comment.ID, d.now(), statePath, runLogPath, state)
+			// Issue #1846 (S3): launchReview owns MarkSeen
+			// exclusively. The launch goroutine handles three
+			// failure-surface branches:
+			//
+			//  (a) ctx-cancel between RunBatch returning and
+			//      post completing (AC-8 "stays pending"): no
+			//      MarkSeen was recorded; release the claim so
+			//      the bounded-retry escape can re-process on
+			//      the next tick.
+			//
+			//  (b) MarkSeen("failure") was recorded by the post
+			//      step (missing decision.md or post error,
+			//      distinguishable via isPostStepError): the
+			//      `failure` is retryable per shouldSkipDedupStatus
+			//      but unbounded per-tick retries are a regression
+			//      versus the pre-#1846 bounded-retry escape.
+			//      Register a `pending` entry so the existing
+			//      promotePendingReviews bounded-retry mechanism
+			//      (pendingMaxCycles) fires and converts the
+			//      infinite-retry failure mode to a once-per-
+			//      pendingMaxCycles retry.
+			//
+			//  (c) Pre-batch failure (RunBatch, FetchPR,
+			//      RenderReview, RepoName, missing agent/model):
+			//      launchReview returns a plain error (no
+			//      postStepError wrap); the trigger must be
+			//      retried on the next tick WITHOUT waiting for
+			//      the bounded-retry grace, so just release the
+			//      claim and exit. processPR's seen-cache filter
+			//      lets the trigger re-process.
+			if isPostStepError(launchErr) {
+				runLogPath := filepath.Join(reviewRunFolder, "run.log")
+				d.registerPendingReview(prNumber, comment.ID, d.now(), statePath, runLogPath, state)
+				return
+			}
+			if errors.Is(launchErr, context.Canceled) || errors.Is(launchErr, context.DeadlineExceeded) {
+				if persisted == nil {
+					state.Release(comment.ID)
+				}
+				return
+			}
+			if persisted == nil {
+				state.Release(comment.ID)
+			}
+			return
 		}
-		// The goroutine does NOT call MarkSeen — launchReview
-		// owns that side effect entirely.
-		_ = persisted
+		// Lazy verify (issue #1482 slice D): register the trigger
+		// as pending so the next tick's promotePendingReviews
+		// step (issue #1759 B12) can still observe a
+		// bot-authored review body that landed AFTER the
+		// daemon's own post. The post step is the new
+		// terminal action (issue #1846), but the
+		// promotion-to-success path remains a safety net for
+		// the pre-S3 lazy-verify semantics. The trigger is
+		// already MarkSeen("success") on disk via the post
+		// step, so the seen-cache short-circuit prevents a
+		// re-launch even if a pending entry were registered.
+		runLogPath := filepath.Join(reviewRunFolder, "run.log")
+		d.registerPendingReview(prNumber, comment.ID, d.now(), statePath, runLogPath, state)
 	}()
 
 	return nil
@@ -1251,7 +1292,7 @@ func (d *Daemon) launchReview(ctx context.Context, prNumber int, focus, commentI
 
 	pr, err := d.GitHub.FetchPR(ctx, prNumber)
 	if err != nil {
-		return d.recordLaunchFailure(ctx, commentID, state, fmt.Errorf("fetch PR: %w", err))
+		return fmt.Errorf("fetch PR: %w", err)
 	}
 
 	rendered, err := d.Prompts.RenderReview(prompt.RenderConfig{}, prompt.PRData{
@@ -1262,11 +1303,11 @@ func (d *Daemon) launchReview(ctx context.Context, prNumber int, focus, commentI
 		RunDir:      reviewRunFolder,
 	})
 	if err != nil {
-		return d.recordLaunchFailure(ctx, commentID, state, fmt.Errorf("render prompt: %w", err))
+		return fmt.Errorf("render prompt: %w", err)
 	}
 
 	if err := d.initPromptTemplate(); err != nil {
-		return d.recordLaunchFailure(ctx, commentID, state, fmt.Errorf("init review prompt template: %w", err))
+		return fmt.Errorf("init review prompt template: %w", err)
 	}
 
 	agentName := ""
@@ -1283,15 +1324,15 @@ func (d *Daemon) launchReview(ctx context.Context, prNumber int, focus, commentI
 		modelName = d.effectiveModel()
 	}
 	if agentName == "" {
-		return d.recordLaunchFailure(ctx, commentID, state, errors.New("review agent is not set; configure review_agent or agent in sandman config"))
+		return errors.New("review agent is not set; configure review_agent or agent in sandman config")
 	}
 	if modelName == "" {
-		return d.recordLaunchFailure(ctx, commentID, state, errors.New("review model is not set; configure review_model or model in sandman config"))
+		return errors.New("review model is not set; configure review_model or model in sandman config")
 	}
 
 	repoName, err := d.GitHub.RepoName(ctx)
 	if err != nil {
-		return d.recordLaunchFailure(ctx, commentID, state, fmt.Errorf("get repo name: %w", err))
+		return fmt.Errorf("get repo name: %w", err)
 	}
 	d.logf("repo=%s agent=%s model=%s pr=%d", repoName, agentName, modelName, prNumber)
 
@@ -1357,7 +1398,7 @@ func (d *Daemon) postDecision(ctx context.Context, prNumber int, commentID, revi
 					d.logf("PR #%d: mark %s failure: %v", prNumber, commentID, markErr)
 				}
 			}
-			return fmt.Errorf("missing %s: %w", decisionPath, err)
+			return asPostStepError(fmt.Errorf("missing %s: %w", decisionPath, err))
 		}
 		return fmt.Errorf("stat %s: %w", decisionPath, err)
 	}
@@ -1368,7 +1409,7 @@ func (d *Daemon) postDecision(ctx context.Context, prNumber int, commentID, revi
 				d.logf("PR #%d: mark %s failure: %v", prNumber, commentID, markErr)
 			}
 		}
-		return fmt.Errorf("%s is a directory", decisionPath)
+		return asPostStepError(fmt.Errorf("%s is a directory", decisionPath))
 	}
 
 	body, err := os.ReadFile(decisionPath)
@@ -1397,7 +1438,7 @@ func (d *Daemon) postDecision(ctx context.Context, prNumber int, commentID, revi
 				d.logf("PR #%d: mark %s failure: %v", prNumber, commentID, markErr)
 			}
 		}
-		return fmt.Errorf("post decision: %w", err)
+		return asPostStepError(fmt.Errorf("post decision: %w", err))
 	}
 
 	if state != nil {
