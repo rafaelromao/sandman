@@ -30,7 +30,7 @@ func TestPortalLoadRunDetail_ForceFetchBypassesHasLogGuard(t *testing.T) {
 		t.Skip("node is required for portal freshness test")
 	}
 	portalHtmlPath := portalHtmlPathForTest(t)
-	const runID = "abcd-260618113825-issue-42"
+	const runID = "abcd-260618113825-42"
 
 	script := `
 const fs = require('fs');
@@ -131,7 +131,7 @@ func TestPortalReconcileRunStreams_GatesStreamWhileDetailLoading(t *testing.T) {
 		t.Skip("node is required for portal stream gate test")
 	}
 	portalHtmlPath := portalHtmlPathForTest(t)
-	const runID = "abcd-260618113825-issue-42"
+	const runID = "abcd-260618113825-42"
 
 	script := `
 const fs = require('fs');

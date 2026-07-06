@@ -163,13 +163,13 @@ func TestPortalReviewSubjectSwitch_PreservesSelectedSubjectAcrossRefresh(t *test
 	childLog := strings.Join(childLogLines, "\n")
 
 	parent := map[string]any{
-		"key":         "issue-1",
-		"runId":       "issue-1",
+		"key":         "abcd-260618113825-1",
+		"runId":       "abcd-260618113825-1",
 		"kind":        "active",
 		"status":      "reviewing",
 		"issueLabel":  "#1",
 		"issueNumber": 1,
-		"batchKey":    "issue-1",
+		"batchKey":    "abcd-260618113825-1",
 		"reviewCount": 1,
 		"log":         parentLog,
 	}
@@ -188,7 +188,7 @@ func TestPortalReviewSubjectSwitch_PreservesSelectedSubjectAcrossRefresh(t *test
 	if err != nil {
 		t.Fatalf("marshal runs: %v", err)
 	}
-	stateJSON := `{"expandedRunKey":"issue-1","tabs":{"issue-1":"log"},"commandFormCollapsed":false,"showArchived":false,"activeBatches":false,"sortBy":"started","sortDir":"desc"}`
+	stateJSON := `{"expandedRunKey":"abcd-260618113825-1","tabs":{"abcd-260618113825-1":"log"},"commandFormCollapsed":false,"showArchived":false,"activeBatches":false,"sortBy":"started","sortDir":"desc"}`
 
 	page := buildPortalReproPage(t, stateJSON, runsJSON, `
     setTimeout(function () {
@@ -203,8 +203,8 @@ func TestPortalReviewSubjectSwitch_PreservesSelectedSubjectAcrossRefresh(t *test
       }
     }, 50);
     setTimeout(function () {
-      var row = document.querySelector('tr[data-run-key="issue-1"]');
-      var detail = document.querySelector('tr.detail-row[data-detail-for="issue-1"]');
+      var row = document.querySelector('tr[data-run-key="abcd-260618113825-1"]');
+      var detail = document.querySelector('tr.detail-row[data-detail-for="abcd-260618113825-1"]');
       var select = document.querySelector('select[data-action="set-subject"]');
       var title = row && row.querySelector('[data-cell="title"] .name');
       var meta = row && row.querySelector('[data-cell="title"] .meta-line');
@@ -247,13 +247,13 @@ func TestPortalReviewSubjectSwitch_PreservesSelectedSubjectAcrossRefresh(t *test
 	if result.SelectedLabel != "PR42" {
 		t.Fatalf("expected visible subject label PR42 after refresh, got %#v", result)
 	}
-	if result.RowKey != "issue-1" || result.DetailFor != "issue-1" {
+	if result.RowKey != "abcd-260618113825-1" || result.DetailFor != "abcd-260618113825-1" {
 		t.Fatalf("expected the visible parent row to stay locked to issue-1, got %#v", result)
 	}
 	if result.RowName != "#1" {
 		t.Fatalf("expected visible row title to stay on the parent issue, got %#v", result)
 	}
-	if !strings.HasPrefix(strings.TrimSpace(result.MetaText), "Batch: issue-1") {
+	if !strings.HasPrefix(strings.TrimSpace(result.MetaText), "Batch: abcd-260618113825-1") {
 		t.Fatalf("expected visible batch metadata on the parent row, got %#v", result)
 	}
 	if !strings.Contains(result.DetailText, "child log line 1") || strings.Contains(result.DetailText, "parent log line 1") {
@@ -266,8 +266,8 @@ func TestPortalReviewSubjectSwitch_PreservesSelectedSubjectAcrossRefresh(t *test
 
 func TestPortalReviewSubjectSwitch_GroupBeforeFilterKeepsParentIssueVisible(t *testing.T) {
 	parent := map[string]any{
-		"key":         "issue-1",
-		"runId":       "issue-1",
+		"key":         "abcd-260618113825-1",
+		"runId":       "abcd-260618113825-1",
 		"kind":        "active",
 		"status":      "success",
 		"issueLabel":  "#1",
@@ -319,7 +319,7 @@ func TestPortalReviewSubjectSwitch_GroupBeforeFilterKeepsParentIssueVisible(t *t
 	if err := json.Unmarshal([]byte(payload), &result); err != nil {
 		t.Fatalf("parse parent-visible payload: %v\nraw=%s", err, payload)
 	}
-	if result.RowKey != "issue-1" {
+	if result.RowKey != "abcd-260618113825-1" {
 		t.Fatalf("expected grouped row to stay on the parent issue, got %#v", result)
 	}
 	if result.RowName != "#1" {
@@ -328,7 +328,7 @@ func TestPortalReviewSubjectSwitch_GroupBeforeFilterKeepsParentIssueVisible(t *t
 	if result.Selected != "PR42" {
 		t.Fatalf("expected subject selector to stay on the review child, got %#v", result)
 	}
-	if len(result.OptionValues) != 2 || result.OptionValues[0] != "issue-1" || result.OptionValues[1] != "PR42" {
+	if len(result.OptionValues) != 2 || result.OptionValues[0] != "abcd-260618113825-1" || result.OptionValues[1] != "PR42" {
 		t.Fatalf("expected distinct parent and review options, got %#v", result.OptionValues)
 	}
 }
@@ -338,8 +338,8 @@ func TestPortalLogPane_SubjectSwitchReusesCachedPane(t *testing.T) {
 	const childLog = "child log line 1\nchild log line 2\nchild log line 3"
 
 	parent := map[string]any{
-		"key":         "issue-1",
-		"runId":       "issue-1",
+		"key":         "abcd-260618113825-1",
+		"runId":       "abcd-260618113825-1",
 		"kind":        "active",
 		"status":      "running",
 		"issueLabel":  "#1",
@@ -361,13 +361,13 @@ func TestPortalLogPane_SubjectSwitchReusesCachedPane(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal runs: %v", err)
 	}
-	stateJSON := `{"expandedRunKey":"issue-1","tabs":{"issue-1":"log"},"commandFormCollapsed":false,"showArchived":false,"activeBatches":false,"sortBy":"started","sortDir":"desc"}`
+	stateJSON := `{"expandedRunKey":"abcd-260618113825-1","tabs":{"abcd-260618113825-1":"log"},"commandFormCollapsed":false,"showArchived":false,"activeBatches":false,"sortBy":"started","sortDir":"desc"}`
 
 	page := buildPortalReproPage(t, stateJSON, runsJSON, `
     setTimeout(function () {
       var select = document.querySelector('select[data-action="set-subject"]');
       if (!select) throw new Error('missing subject selector');
-      var detail = document.querySelector('tr.detail-row[data-detail-for="issue-1"] .detail-content');
+      var detail = document.querySelector('tr.detail-row[data-detail-for="abcd-260618113825-1"] .detail-content');
       var parentPre1 = detail && detail.querySelector('pre[data-scroll-key]');
       if (!parentPre1) throw new Error('expected parent log pane initially');
       var parentFirstChild = parentPre1.firstChild;
@@ -380,7 +380,7 @@ func TestPortalLogPane_SubjectSwitchReusesCachedPane(t *testing.T) {
         if (!childPre || childPre === parentPre1) throw new Error('expected fresh child pane on first subject switch');
         if (childPre.textContent.indexOf('child log line 1') === -1) throw new Error('expected child log after subject switch, got ' + (childPre && childPre.textContent));
 
-        select.value = 'issue-1';
+        select.value = 'abcd-260618113825-1';
         select.dispatchEvent(new Event('change', { bubbles: true }));
 
         setTimeout(function () {
@@ -530,7 +530,7 @@ func TestPortalSummaryPoll_UsesIfNoneMatchAndKeepsRowsOn304(t *testing.T) {
 
 func TestPortalBatchMetadata_RendersBatchAboveRun(t *testing.T) {
 	batchID := "abcd-260618113825"
-	runID := batchID + "-issue-42"
+	runID := batchID + "-42"
 	run := map[string]any{
 		"key":         runID,
 		"runId":       runID,
@@ -602,7 +602,7 @@ func TestPortalBatchMetadata_RendersBatchAboveRun(t *testing.T) {
 
 func TestPortalRefresh_LocksRowIdentityAcrossMixedBatchPayloads(t *testing.T) {
 	batchID := "abcd-260618113825"
-	runID := batchID + "-issue-42"
+	runID := batchID + "-42"
 	initialRun := map[string]any{
 		"key":         batchID,
 		"runId":       runID,
@@ -846,7 +846,7 @@ func TestPortalRefresh_IgnoresEmptyExpandedStateBeforeDetailFetch(t *testing.T) 
 }
 
 func TestPortalRefresh_ActiveEventsTabHydratesDetail(t *testing.T) {
-	runID := "abcd-260618113825-issue-42"
+	runID := "abcd-260618113825-42"
 	summaryRun := map[string]any{
 		"key":         runID,
 		"runId":       runID,
@@ -942,7 +942,7 @@ func TestPortalRefresh_ActiveEventsTabHydratesDetail(t *testing.T) {
 }
 
 func TestPortalRefresh_ExpandedRunShowsLoadingCursorWhileDetailFetchPending(t *testing.T) {
-	runID := "abcd-260618113825-issue-42"
+	runID := "abcd-260618113825-42"
 	summaryRun := map[string]any{
 		"key":         runID,
 		"runId":       runID,
@@ -1071,7 +1071,7 @@ func TestPortalRefresh_ExpandedRunShowsLoadingCursorWhileDetailFetchPending(t *t
 }
 
 func TestPortalRefresh_ExpandedDetailsTabShowsLoadingCursorWhileDetailFetchPending(t *testing.T) {
-	runID := "abcd-260618113825-issue-42"
+	runID := "abcd-260618113825-42"
 	summaryRun := map[string]any{
 		"key":         runID,
 		"runId":       runID,
@@ -1205,7 +1205,7 @@ func TestPortalRefresh_ExpandedDetailsTabShowsLoadingCursorWhileDetailFetchPendi
 }
 
 func TestPortalRefresh_LogTabSwitchShowsLoadingCursorWhileDetailFetchPending(t *testing.T) {
-	runID := "abcd-260618113825-issue-42"
+	runID := "abcd-260618113825-42"
 	summaryRun := map[string]any{
 		"key":         runID,
 		"runId":       runID,
@@ -1347,7 +1347,7 @@ func TestPortalRefresh_LogTabSwitchShowsLoadingCursorWhileDetailFetchPending(t *
 
 func TestPortalRefresh_LogTabSwitchShowsLoadingCursorForMismatchedRunIdentity(t *testing.T) {
 	runKey := "abcd-260618113825-row-42"
-	runID := "abcd-260618113825-issue-42"
+	runID := "abcd-260618113825-42"
 	summaryRun := map[string]any{
 		"key":         runKey,
 		"runId":       runID,
@@ -1554,8 +1554,8 @@ func TestPortalRowClick_IgnoresForcedToggleAttrsOnQueuedRun(t *testing.T) {
 
 func TestPortalReviewSubjectSwitch_ReusesCachedParentPaneAcrossRoundTrip(t *testing.T) {
 	parent := map[string]any{
-		"key":         "issue-1",
-		"runId":       "issue-1",
+		"key":         "abcd-260618113825-1",
+		"runId":       "abcd-260618113825-1",
 		"kind":        "active",
 		"status":      "reviewing",
 		"issueLabel":  "#1",
@@ -1578,7 +1578,7 @@ func TestPortalReviewSubjectSwitch_ReusesCachedParentPaneAcrossRoundTrip(t *test
 	if err != nil {
 		t.Fatalf("marshal runs: %v", err)
 	}
-	stateJSON := `{"expandedRunKey":"issue-1","tabs":{"issue-1":"log"},"commandFormCollapsed":false,"showArchived":false,"activeBatches":false,"sortBy":"started","sortDir":"desc"}`
+	stateJSON := `{"expandedRunKey":"abcd-260618113825-1","tabs":{"abcd-260618113825-1":"log"},"commandFormCollapsed":false,"showArchived":false,"activeBatches":false,"sortBy":"started","sortDir":"desc"}`
 
 	page := buildPortalReproPage(t, stateJSON, runsJSON, `
     window.__hlCalls = 0;
@@ -1609,7 +1609,7 @@ func TestPortalReviewSubjectSwitch_ReusesCachedParentPaneAcrossRoundTrip(t *test
       window.__beforeReturnCalls = window.__hlCalls;
       var select = document.querySelector('select[data-action="set-subject"]');
       if (!select) throw new Error('missing subject selector before return');
-      select.value = 'issue-1';
+      select.value = 'abcd-260618113825-1';
       select.dispatchEvent(new Event('change', { bubbles: true }));
     }, 180);
     setTimeout(function () {
@@ -1659,8 +1659,8 @@ func TestPortalReviewSubjectSwitch_ReusesCachedParentPaneAcrossRoundTrip(t *test
 
 func TestPortalSubjectSwitch_IgnoresEmptySelectionChange(t *testing.T) {
 	parent := map[string]any{
-		"key":         "issue-1",
-		"runId":       "issue-1",
+		"key":         "abcd-260618113825-1",
+		"runId":       "abcd-260618113825-1",
 		"kind":        "active",
 		"status":      "reviewing",
 		"issueLabel":  "#1",
@@ -1683,7 +1683,7 @@ func TestPortalSubjectSwitch_IgnoresEmptySelectionChange(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal runs: %v", err)
 	}
-	stateJSON := `{"expandedRunKey":"issue-1","tabs":{"issue-1":"log"},"commandFormCollapsed":false,"showArchived":false,"activeBatches":false,"sortBy":"started","sortDir":"desc"}`
+	stateJSON := `{"expandedRunKey":"abcd-260618113825-1","tabs":{"abcd-260618113825-1":"log"},"commandFormCollapsed":false,"showArchived":false,"activeBatches":false,"sortBy":"started","sortDir":"desc"}`
 
 	page := buildPortalReproPage(t, stateJSON, runsJSON, `
     setTimeout(function () {
@@ -1722,13 +1722,13 @@ func TestPortalSubjectSwitch_IgnoresEmptySelectionChange(t *testing.T) {
 	if err := json.Unmarshal([]byte(payload), &result); err != nil {
 		t.Fatalf("parse empty-subject payload: %v\nraw=%s", err, payload)
 	}
-	if result.SubjectValue != "issue-1" {
+	if result.SubjectValue != "abcd-260618113825-1" {
 		t.Fatalf("expected blank subject change to be ignored and parent to remain selected, got %#v", result)
 	}
 	if !strings.Contains(result.DetailText, "parent log line 1") {
 		t.Fatalf("expected parent detail to remain visible after blank subject change, got %#v", result)
 	}
-	if result.ExpandedRunKey != "issue-1" {
+	if result.ExpandedRunKey != "abcd-260618113825-1" {
 		t.Fatalf("expected blank subject change to leave expanded state unchanged, got %#v", result)
 	}
 	if result.FetchCalls > 2 {
@@ -1821,8 +1821,8 @@ func TestPortalRefreshHydratesRestoredExpandedRunDetail(t *testing.T) {
 
 func TestPortalReviewSubjectSwitch_HydratesSelectedSubjectDetail(t *testing.T) {
 	parent := map[string]any{
-		"key":         "issue-1",
-		"runId":       "issue-1",
+		"key":         "abcd-260618113825-1",
+		"runId":       "abcd-260618113825-1",
 		"kind":        "active",
 		"status":      "reviewing",
 		"issueLabel":  "#1",
@@ -1852,8 +1852,8 @@ func TestPortalReviewSubjectSwitch_HydratesSelectedSubjectDetail(t *testing.T) {
 		"events":      []map[string]any{{"type": "run.finished"}},
 	}
 	parentDetail := map[string]any{
-		"key":         "issue-1",
-		"runId":       "issue-1",
+		"key":         "abcd-260618113825-1",
+		"runId":       "abcd-260618113825-1",
 		"kind":        "active",
 		"status":      "reviewing",
 		"issueLabel":  "#1",
@@ -1874,7 +1874,7 @@ func TestPortalReviewSubjectSwitch_HydratesSelectedSubjectDetail(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal child detail: %v", err)
 	}
-	stateJSON := `{"expandedRunKey":"issue-1","tabs":{"issue-1":"log"},"commandFormCollapsed":false,"showArchived":false,"activeBatches":false,"sortBy":"started","sortDir":"desc"}`
+	stateJSON := `{"expandedRunKey":"abcd-260618113825-1","tabs":{"abcd-260618113825-1":"log"},"commandFormCollapsed":false,"showArchived":false,"activeBatches":false,"sortBy":"started","sortDir":"desc"}`
 
 	page := buildPortalReproPage(t, stateJSON, runsJSON, `
     window.__portalFetchCalls = 0;
@@ -1884,7 +1884,7 @@ func TestPortalReviewSubjectSwitch_HydratesSelectedSubjectDetail(t *testing.T) {
       var next = { runs: `+string(runsJSON)+` };
       if (url.indexOf('?runKey=PR42') >= 0) {
         next = { run: `+string(childDetailJSON)+` };
-      } else if (url.indexOf('?runKey=issue-1') >= 0) {
+      } else if (url.indexOf('?runKey=abcd-260618113825-1') >= 0) {
         next = { run: `+string(parentDetailJSON)+` };
       }
       return {

@@ -128,8 +128,8 @@ func TestPortal_Compute_ReasonTableForAllRunKinds(t *testing.T) {
 		{
 			name: "regular issue-driven run",
 			events: []events.Event{
-				{Type: "run.started", Timestamp: time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC), RunID: "abcd-260618113825-issue-42", Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
-				{Type: "run.finished", Timestamp: time.Date(2025, 1, 1, 12, 5, 0, 0, time.UTC), RunID: "abcd-260618113825-issue-42", Issue: 42, Payload: map[string]any{"status": "success", "branch": "sandman/42-fix"}},
+				{Type: "run.started", Timestamp: time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC), RunID: "abcd-260618113825-42", Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
+				{Type: "run.finished", Timestamp: time.Date(2025, 1, 1, 12, 5, 0, 0, time.UTC), RunID: "abcd-260618113825-42", Issue: 42, Payload: map[string]any{"status": "success", "branch": "sandman/42-fix"}},
 			},
 			want: want{reason: "", status: "success", kind: "completed", label: "#42"},
 		},
@@ -229,8 +229,8 @@ func TestPortal_Compute_AggregatesChildReviewsOntoIssueRow(t *testing.T) {
 	}
 	addBatchToIndex(t, repoRoot, "PR42-live", reviewRunDir, []int{1})
 	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
-		{Type: "run.started", Timestamp: startedAt, RunID: "issue-1", Issue: 1, Payload: map[string]any{"branch": "sandman/1-fix"}},
-		{Type: "run.finished", Timestamp: startedAt.Add(1 * time.Minute), RunID: "issue-1", Issue: 1, Payload: map[string]any{"branch": "sandman/1-fix", "status": "success"}},
+		{Type: "run.started", Timestamp: startedAt, RunID: "abcd-260618113825-1", Issue: 1, Payload: map[string]any{"branch": "sandman/1-fix"}},
+		{Type: "run.finished", Timestamp: startedAt.Add(1 * time.Minute), RunID: "abcd-260618113825-1", Issue: 1, Payload: map[string]any{"branch": "sandman/1-fix", "status": "success"}},
 		{Type: "run.started", Timestamp: startedAt.Add(30 * time.Second), RunID: "PR42-live", Issue: 1, Payload: map[string]any{"review": true, "pr_number": 42, "branch": "sandman/review-PR42"}},
 		{Type: "run.started", Timestamp: startedAt.Add(90 * time.Second), RunID: "PR43-done", Issue: 1, Payload: map[string]any{"review": true, "pr_number": 43, "branch": "sandman/review-PR43"}},
 		{Type: "run.finished", Timestamp: terminalReviewAt, RunID: "PR43-done", Issue: 1, Payload: map[string]any{"review": true, "pr_number": 43, "branch": "sandman/review-PR43", "status": "success"}},
@@ -257,7 +257,7 @@ func TestPortal_Compute_AggregatesChildReviewsOntoIssueRow(t *testing.T) {
 	if issueRow == nil {
 		t.Fatalf("expected issue row for #1, got %#v", runs)
 	}
-	if issueRow.RunID != "issue-1" {
+	if issueRow.RunID != "abcd-260618113825-1" {
 		t.Fatalf("expected canonical issue row runID issue-1, got %q", issueRow.RunID)
 	}
 	if issueRow.Status != "success" {
@@ -285,8 +285,8 @@ func TestPortal_Compute_TerminalReviewWithApprovedMarker_PreservesParentStatus(t
 	finishedAt := startedAt.Add(2 * time.Minute)
 
 	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
-		{Type: "run.started", Timestamp: startedAt, RunID: "issue-99", Issue: 99, Payload: map[string]any{"branch": "sandman/99-fix"}},
-		{Type: "run.finished", Timestamp: startedAt.Add(1 * time.Minute), RunID: "issue-99", Issue: 99, Payload: map[string]any{"branch": "sandman/99-fix", "status": "success"}},
+		{Type: "run.started", Timestamp: startedAt, RunID: "abcd-260618113825-99", Issue: 99, Payload: map[string]any{"branch": "sandman/99-fix"}},
+		{Type: "run.finished", Timestamp: startedAt.Add(1 * time.Minute), RunID: "abcd-260618113825-99", Issue: 99, Payload: map[string]any{"branch": "sandman/99-fix", "status": "success"}},
 		{Type: "run.started", Timestamp: startedAt.Add(30 * time.Second), RunID: "PR99-review", Issue: 99, Payload: map[string]any{"review": true, "pr_number": 99, "branch": "sandman/review-PR99"}},
 		{Type: "run.finished", Timestamp: finishedAt, RunID: "PR99-review", Issue: 99, Payload: map[string]any{"review": true, "pr_number": 99, "branch": "sandman/review-PR99", "status": "success"}},
 	})
@@ -584,7 +584,7 @@ func TestPortal_Compute_CanonicalParentIdentityPreservedWithReviewChildren(t *te
 		{
 			Type:      "run.started",
 			Timestamp: startedAt,
-			RunID:     "issue-1",
+			RunID:     "abcd-260618113825-1",
 			Issue:     1,
 			Payload: map[string]any{
 				"branch":      parentBranch,
@@ -594,7 +594,7 @@ func TestPortal_Compute_CanonicalParentIdentityPreservedWithReviewChildren(t *te
 		{
 			Type:      "run.finished",
 			Timestamp: startedAt.Add(1 * time.Minute),
-			RunID:     "issue-1",
+			RunID:     "abcd-260618113825-1",
 			Issue:     1,
 			Payload: map[string]any{
 				"branch": parentBranch,
@@ -651,7 +651,7 @@ func TestPortal_Compute_CanonicalParentIdentityPreservedWithReviewChildren(t *te
 	if reviewChildCount != 2 {
 		t.Fatalf("expected 2 review child rows, got %d from %#v", reviewChildCount, runs)
 	}
-	if parentRow.RunID != "issue-1" {
+	if parentRow.RunID != "abcd-260618113825-1" {
 		t.Fatalf("expected canonical parent RunID issue-1, got %q", parentRow.RunID)
 	}
 	if parentRow.IssueTitle != "Fix login bug" {
@@ -700,7 +700,7 @@ func TestPortal_TerminalReviewChild_ParentNotStuck(t *testing.T) {
 	addBatchToIndex(t, repoRoot, "PR42", runDir, []int{})
 
 	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
-		{Type: "run.started", Timestamp: startedAt, RunID: "issue-1", Issue: 1, Payload: map[string]any{"branch": "sandman/1-fix"}},
+		{Type: "run.started", Timestamp: startedAt, RunID: "abcd-260618113825-1", Issue: 1, Payload: map[string]any{"branch": "sandman/1-fix"}},
 		{Type: "run.started", Timestamp: startedAt.Add(30 * time.Second), RunID: "PR42", Issue: 1, Payload: map[string]any{"review": true, "pr_number": 42, "branch": "sandman/review-PR42"}},
 		{Type: "run.finished", Timestamp: reviewFinishedAt, RunID: "PR42", Issue: 1, Payload: map[string]any{"review": true, "pr_number": 42, "branch": "sandman/review-PR42", "status": "success"}},
 	})
@@ -805,8 +805,8 @@ func TestPortal_ParentSuccWithLiveChild_KeepsSuccessStatus(t *testing.T) {
 	addBatchToIndex(t, repoRoot, "PR42", runDir, []int{1})
 
 	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
-		{Type: "run.started", Timestamp: startedAt, RunID: "issue-1", Issue: 1, Payload: map[string]any{"branch": "sandman/1-fix"}},
-		{Type: "run.finished", Timestamp: startedAt.Add(1 * time.Minute), RunID: "issue-1", Issue: 1, Payload: map[string]any{"branch": "sandman/1-fix", "status": "success"}},
+		{Type: "run.started", Timestamp: startedAt, RunID: "abcd-260618113825-1", Issue: 1, Payload: map[string]any{"branch": "sandman/1-fix"}},
+		{Type: "run.finished", Timestamp: startedAt.Add(1 * time.Minute), RunID: "abcd-260618113825-1", Issue: 1, Payload: map[string]any{"branch": "sandman/1-fix", "status": "success"}},
 		{Type: "run.started", Timestamp: startedAt.Add(30 * time.Second), RunID: "PR42", Issue: 1, Payload: map[string]any{"review": true, "pr_number": 42, "branch": "sandman/review-PR42"}},
 	})
 
@@ -872,7 +872,7 @@ func TestPortal_KindForRun_TerminalAutoSelectAndReviewClassifiedAsCompleted(t *t
 		{
 			name: "terminal issue is completed",
 			runState: events.RunState{
-				RunID:    "abcd-260618113825-issue-42",
+				RunID:    "abcd-260618113825-42",
 				Started:  events.Event{Timestamp: startedAt},
 				Finished: makeFinished(map[string]any{"status": "success"}),
 			},
@@ -1383,7 +1383,7 @@ func TestPortal_Compute_CompletedRunWithBatchDir_DoesNotCountAsSourceExists(t *t
 		t.Fatal(err)
 	}
 
-	const runID = "abcd-260618113825-issue-42"
+	const runID = "abcd-260618113825-42"
 	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
 	finishedAt := startedAt.Add(2 * time.Minute)
 	runDir := filepath.Join(repoRoot, ".sandman", "batches", "batch-42")
@@ -1428,7 +1428,7 @@ func TestPortal_Compute_CompletedRunWithDeadBatchDir_ReportsSourceExists(t *test
 		t.Fatal(err)
 	}
 
-	const runID = "abcd-260618113825-issue-42"
+	const runID = "abcd-260618113825-42"
 	runDir := filepath.Join(repoRoot, ".sandman", "batches", "batch-42")
 	if err := os.MkdirAll(filepath.Join(runDir, "runs", runID), 0755); err != nil {
 		t.Fatal(err)
@@ -1626,7 +1626,7 @@ func TestPortal_Compute_OrphanedActiveRunFromDeadBatch_Demoted(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	runID := "abcd-260618113825-issue-42"
+	runID := "abcd-260618113825-42"
 	batchID := "abcd-260618113825-999-1"
 	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
 
@@ -1689,7 +1689,7 @@ func TestPortal_Compute_DeadBatchWithStaleRunSock_StillDemoted(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	runID := "abcd-260618113825-issue-42"
+	runID := "abcd-260618113825-42"
 	batchID := "abcd-260618113825-999-1"
 	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
 
@@ -1796,7 +1796,7 @@ func TestPortal_Compute_LiveParentAndDeadReviewChild_DoesNotAggregateReviewing(t
 	deadReviewAt := startedAt
 
 	liveBatchID := "batch-live"
-	liveRunID := "run-live-issue-1"
+	liveRunID := "run-live-1"
 	liveBatchDir := filepath.Join(repoRoot, ".sandman", "batches", liveBatchID)
 	liveRunDir := filepath.Join(liveBatchDir, "runs", liveRunID)
 	if err := os.MkdirAll(liveRunDir, 0755); err != nil {
@@ -1883,9 +1883,9 @@ func TestPortal_Compute_MultipleDeadBatches_IndependentIssueSets(t *testing.T) {
 		issueNum int
 	}
 	batches := []batch{
-		{batchID: "batch-001", runID: "run-001-issue-1", issueNum: 1},
-		{batchID: "batch-002", runID: "run-002-issue-2", issueNum: 2},
-		{batchID: "batch-003", runID: "run-003-issue-3", issueNum: 3},
+		{batchID: "batch-001", runID: "run-001-1", issueNum: 1},
+		{batchID: "batch-002", runID: "run-002-2", issueNum: 2},
+		{batchID: "batch-003", runID: "run-003-3", issueNum: 3},
 	}
 
 	var evts []events.Event
