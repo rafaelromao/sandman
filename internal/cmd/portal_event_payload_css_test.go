@@ -449,3 +449,59 @@ func TestPortal_ActiveRowAddedMobileCSS_NoOverrides(t *testing.T) {
 		}
 	}
 }
+
+// TestPortal_MobileIssueTitleCSS_AlignSelfCenterIn960pxBlock is the
+// regression pin for issue #1857 (Slice 2 of #1854). Slice 1
+// (issue #1855) deleted the `td[data-cell="issue-title"] { display: none; }`
+// rule from the `@media (max-width: 760px)` block in portal.html so
+// the cell renders on mobile, and added `align-self: center;` to the
+// existing `tbody tr.run-row td[data-cell="issue-title"]` rule in the
+// `@media (max-width: 960px)` block so the cell vertically centres
+// against the action cell on row 2 of the mobile grid.
+//
+// This test is the css-test-file sibling of the existing pin in
+// `portal_server_test.go:TestPortal_PageExposesMobileExpandedRunPanelStyles`
+// (which asserts the same property on the same selector in the same
+// 960px block). It is scoped to the 960px media block — the same block
+// the row-added and active-palette absence checks (`:433-451`,
+// `:362-395`) use — so a future agent who drops the `align-self: center`
+// declaration on the issue-title rule fails this test even if the
+// server-test pin is removed or rewritten. The companion `display: none`
+// absence in the 760px block is already pinned by
+// `TestPortal_PageExposesMobileExpandedRunPanelStyles` and is not
+// re-asserted here so this file does not duplicate its sibling.
+//
+// Note: the issue #1857 body references the "760px block" for this
+// assertion, but the rule S1 added lives in the 960px block (the 960px
+// block applies to all mobile widths; the 760px block is a refinement
+// for very small screens). The issue's no-CSS-change constraint and
+// the S1 commit location make the 960px block the only stable home for
+// the property, so this test pins the contract there.
+func TestPortal_MobileIssueTitleCSS_AlignSelfCenterIn960pxBlock(t *testing.T) {
+	html := readPortalHTML(t)
+	start := strings.Index(html, `@media (max-width: 960px)`)
+	if start < 0 {
+		t.Fatal("960px mobile media query not found")
+	}
+	block := html[start:]
+	if end := strings.Index(block, `@media (max-width: 760px)`); end >= 0 {
+		block = block[:end]
+	}
+	selIdx := strings.Index(block, `tbody tr.run-row td[data-cell="issue-title"]`)
+	if selIdx < 0 {
+		t.Fatalf("960px media block missing %q selector; the mobile run row must render the issue-title cell (issue #1857 / #1854)\n%s", `tbody tr.run-row td[data-cell="issue-title"]`, block[:min(1000, len(block))])
+	}
+	open := strings.Index(block[selIdx:], "{")
+	if open < 0 {
+		t.Fatalf("960px media block %q rule has no opening brace\n%s", `tbody tr.run-row td[data-cell="issue-title"]`, block[:min(1000, len(block))])
+	}
+	bodyStart := selIdx + open + 1
+	close := strings.Index(block[bodyStart:], "}")
+	if close < 0 {
+		t.Fatalf("960px media block %q rule has no closing brace\n%s", `tbody tr.run-row td[data-cell="issue-title"]`, block[:min(1000, len(block))])
+	}
+	body := block[bodyStart : bodyStart+close]
+	if !strings.Contains(body, "align-self: center;") {
+		t.Errorf("960px media block %q rule missing %q; the cell must be vertically centred in the mobile run row (issue #1857 / #1854)\n%s", `tbody tr.run-row td[data-cell="issue-title"]`, "align-self: center;", body)
+	}
+}
