@@ -5447,13 +5447,13 @@ console.log('PASS');
 	runPortalHTMLScript(t, js)
 }
 
-// TestVisibleRunForIssueGroup_ActiveKindParentAlongsideLiveReview pins
-// AC 6 (d) for the active-parent path: when the parent row's own kind is
+// TestVisibleRunForIssueGroup_ActiveKindParentAlongsideLiveReview_FlipsToReviewing
+// pins AC 6 (d) for the active-parent path: when the parent row's own kind is
 // 'active' (the implementation is still in flight) and a live review
 // child is present, the server stamps status="reviewing" (badge-flip) and
 // reviewCount onto the parent; the JS passes them through, preserving
 // the parent's own identity fields (key, kind, runId).
-func TestVisibleRunForIssueGroup_ActiveKindParentAlongsideLiveReview(t *testing.T) {
+func TestVisibleRunForIssueGroup_ActiveKindParentAlongsideLiveReview_FlipsToReviewing(t *testing.T) {
 	js := `const parent = {
   key: 'impl-4b', kind: 'active', status: 'reviewing', review: false,
   issueLabel: '#4b', runId: 'impl-4b', issueNumber: 41,
