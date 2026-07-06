@@ -2789,9 +2789,12 @@ func TestPortal_ReasonChipCSS_DefinesAutoSelectAndReviewVariants(t *testing.T) {
 // RunState.IssueNumber() returns N for the review row even though its
 // RunID is `PR<k>`. The dedup pass groups rows by IssueNumber, so the
 // review row and the impl row for the same issue both end up in the
-// same dedup group. Without the fix, `dedupRunGroup` collapses them
-// into a single row that drops either the impl run or the review run
-// depending on priority (aborted > active > default).
+// same dedup group. Without the fix, `dedupRuns` did not split impl
+// from review, so both rows reached `dedupRunGroup` together and the
+// later row could replace the earlier one (or they were collapsed by
+// priority in older code paths). The fix splits impl vs review rows
+// inside `dedupRuns` before bucketing by BatchKey, so each side reaches
+// `dedupRunGroup` as its own group and both rows surface.
 func TestPortalRuns_ReviewAndImplRowsSeparateForSameIssue(t *testing.T) {
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
