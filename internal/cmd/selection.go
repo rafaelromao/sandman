@@ -83,11 +83,18 @@ func runSelectionPhaseWithEvents(ctx context.Context, client github.Client, coun
 		return nil, "", "", fmt.Errorf("generate batch id: %w", err)
 	}
 	batchID := runid.NewBatchID(runid.KindAutoSelect, effectiveCount, "", ts, shortid)
-	runID := runid.NewRunID(runid.KindAutoSelect, fmt.Sprintf("auto-%d", effectiveCount), ts, shortid)
+	// Per ADR-0036, manifest.BatchId MUST equal the per-row RunID the
+	// orchestrator will emit in run.started. For auto-select the two
+	// formulas happen to produce the same string today (`<sid>-<ts>-auto-N`),
+	// but binding BatchId to the per-row RunID formula keeps the
+	// contract explicit and survives future formula changes. Pin in
+	// TestADR0036_BatchManifestBatchIdFromPerRowRunID.
+	perRowRunID := runid.NewRunID(runid.KindAutoSelect, fmt.Sprintf("auto-%d", effectiveCount), ts, shortid)
+	runID := perRowRunID
 
 	manifest := daemon.BatchManifest{
 		RunKind:    "auto-select",
-		BatchId:    batchID,
+		BatchId:    perRowRunID,
 		RunTS:      ts,
 		RunShortID: shortid,
 		Candidates: append([]int(nil), candidates...),
