@@ -57,10 +57,12 @@ func ParseTrigger(body string) (string, bool) {
 //     prior activity).
 //
 // When both hold, the body is overwhelmingly likely to be a previous bot
-// review comment, not a fresh implementor trigger. The sniff exists so the
-// daemon does NOT add an eyes reaction or launch a review on such a body
-// even when the SelfPostStore has forgotten the body across a daemon
-// restart (the cross-restart failure mode that motivated #1821).
+// review comment, not a fresh implementor trigger. Post-#1848 this sniff
+// is the SOLE self-defence gate in `processPR`: the `SelfPostStore`
+// hash tracker is gone, and daemon-side redaction (issue #1845) is the
+// load-bearing mitigation. The sniff is the structural last line of
+// defence for the case where redaction is missing or where a bot body
+// legitimately quotes the trigger substring.
 //
 // The check is intentionally separate from `ParseTrigger` so it can be
 // invoked independently as a self-defence gate. `ParseTrigger` still

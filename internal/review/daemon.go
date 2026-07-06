@@ -75,19 +75,50 @@ type Renderer interface {
 // slice D) holds these in memory so a subsequent tick can resolve
 // them without keeping `launchReview` on the critical path.
 //
-// runLogPath is the path to the per-run run.log; promotePendingReviews
-// greps it via extractBodiesFromLog to discover bot-authored bodies
-// (issue #1759). Default value when missing: filepath.Dir(reviewState)
-// + "/run.log". The default is applied in processPR's launch
-// goroutine when the entry is registered, and in loadPendingReviews
-// for entries rehydrated from disk.
+// runLogPath is the path to the per-run run.log. Post-#1848 the
+// daemon no longer greps it via `extractBodiesFromLog` (that helper
+// is deleted along with `SelfPostStore`); the field is retained for
+// audit / debugging. Default value when missing:
+// filepath.Dir(reviewState) + "/run.log". The default is applied in
+// processPR's launch goroutine when the entry is registered, and in
+// loadPendingReviews for entries rehydrated from disk.
 type pendingReviewEntry struct {
 	commentID   string
 	since       time.Time
 	reviewState string // path to <runDir>/review-state.json for the launched run
-	runLogPath  string // path to <runDir>/run.log (issue #1759)
+	runLogPath  string // path to <runDir>/run.log (retained post-#1848)
 	storeRef    *ReviewStateStore
 	cycles      int
+}
+
+// pendingPostEntry is the in-memory record the daemon keeps for a
+// review whose agent-run has produced <runDir>/decision.md but
+// whose daemon-side post step did not complete (e.g. the daemon
+// was cancelled mid-post). The rehydrate-on-startup path (issue
+// #1847 S4) walks every review-kind batch at construction; for
+// every `pending` review-state.json whose row folder has a
+// decision.md on disk, it registers one of these entries keyed by
+// (prNumber, commentID).
+//
+// runDir and reviewState are absolute paths so the processPR
+// rehydrate branch can read decision.md and open the per-run
+// ReviewStateStore without further resolution. The rehydrate
+// branch drops the entry on a successful post (MarkSeen("success")
+// is the new terminal-seen status) and retains it on a failed post
+// (the next tick retries). When decision.md is missing at tick
+// time the entry is treated as stale and the daemon falls through
+// to the existing launch path.
+//
+// since mirrors the same field on pendingReviewEntry: it carries
+// the original review-state.json Timestamp so future
+// observability surfaces (operator queries, logs) can answer "how
+// long has this rehydrate been waiting?" without re-reading the
+// on-disk JSON.
+type pendingPostEntry struct {
+	commentID   string
+	runDir      string    // absolute path to <batch>/runs/<rowID>
+	reviewState string    // absolute path to <runDir>/review-state.json
+	since       time.Time // when the trigger entered `pending` on disk
 }
 
 // Daemon polls the repo for /sandman review comments and launches review
@@ -111,6 +142,7 @@ type Daemon struct {
 	Model                string
 	Parallel             int
 	ParallelSet          bool
+	CommentPoster        CommentPoster
 	controlSocket        *daemon.ControlSocket
 	busy                 chan struct{}
 	promptOnce           sync.Once
@@ -121,8 +153,24 @@ type Daemon struct {
 	slotMu               sync.Mutex
 	pendingMu            sync.Mutex
 	pendingReviews       map[int][]pendingReviewEntry
-	selfPosts            *SelfPostStore
-	inFlight             sync.WaitGroup
+	// pendingPost is the rehydrate-on-startup map (issue #1847 S4).
+	// Outer key is PR number; inner key is the trigger comment ID.
+	// Each entry remembers the absolute path of the per-row folder
+	// (so the daemon can read <runDir>/decision.md at tick time)
+	// and the absolute path of the per-run review-state.json (so
+	// the rehydrate post can MarkSeen on the right store). Entries
+	// are written by loadPendingPosts at construction, read and
+	// dropped by processPR's rehydrate branch on a successful
+	// post, and read-and-retained on a failed post.
+	//
+	// The map is locked by a dedicated mutex (pendingPostMu) to
+	// match the existing one-mutex-per-data-structure convention
+	// (pendingMu guards pendingReviews; seenCacheMu guards
+	// seenCache). Sharing pendingMu between the two maps would
+	// create ambiguous ownership for future readers.
+	pendingPostMu sync.Mutex
+	pendingPost   map[int]map[string]pendingPostEntry
+	inFlight      sync.WaitGroup
 }
 
 // New returns a Daemon configured with the project defaults for the
@@ -138,7 +186,17 @@ type Daemon struct {
 // slot pool is sized to parallel regardless of cfg.DefaultReviewParallel.
 // When parallelSet is false, the slot pool falls back to
 // cfg.EffectiveReviewParallel() (the historical behavior).
-func New(baseDir string, gh GitHubClient, prompts Renderer, runner BatchRunner, cfg *config.Config, broadcaster io.Writer, parallel int, parallelSet bool) *Daemon {
+func New(baseDir string, gh GitHubClient, prompts Renderer, runner BatchRunner, cfg *config.Config, broadcaster io.Writer, parallel int, parallelSet bool, poster CommentPoster) *Daemon {
+	// poster is required in production. The nil-to-nop fallback
+	// exists only so the dozens of pre-#1846 test fixtures
+	// (daemon_test.go, daemon_canonical_test.go, etc.) keep
+	// compiling without each one adding an explicit CommentPoster
+	// argument. The cmd layer (cmd/review.go) always wires a real
+	// GH-backed poster; tests that exercise the post step
+	// (daemon_sliceS3_test.go) inject a fake at the seam.
+	if poster == nil {
+		poster = nopCommentPoster{}
+	}
 	parallelReviews := 1
 	if parallelSet && parallel > 0 {
 		parallelReviews = parallel
@@ -160,11 +218,16 @@ func New(baseDir string, gh GitHubClient, prompts Renderer, runner BatchRunner, 
 		PollInterval:   PollingInterval,
 		Parallel:       parallel,
 		ParallelSet:    parallelSet,
+		CommentPoster:  poster,
 		busy:           make(chan struct{}, 1),
 		seenCache:      map[int]map[string]bool{},
 		slotTable:      map[int]struct{}{},
 		slotPool:       make(chan struct{}, parallelReviews),
 		pendingReviews: map[int][]pendingReviewEntry{},
+		// S4 (issue #1847): initialise the rehydrate-on-startup
+		// map; loadPendingPosts (Slice B) populates it from the
+		// on-disk review-state.json files at construction.
+		pendingPost: map[int]map[string]pendingPostEntry{},
 	}
 	if err := d.loadSeenCache(); err != nil {
 		d.logf("load seen cache: %v", err)
@@ -172,91 +235,18 @@ func New(baseDir string, gh GitHubClient, prompts Renderer, runner BatchRunner, 
 	if err := d.loadPendingReviews(); err != nil {
 		d.logf("load pending reviews: %v", err)
 	}
-	// SelfPostStore is best-effort: under the post-#1756
-	// greenfield loader any pre-existing self-posted.json is
-	// renamed to self-posted.json.ignore-<ts>.bak at startup
-	// and the in-memory store starts empty. The new dedup key
-	// is (prNumber, sha256(body)), closing the cross-PR
-	// poisoning failure mode observed on PR 1752 (a trigger
-	// hash recorded on PR A no longer drops the same body on
-	// PR B). The daemon continues to function via the existing
-	// seenCache + ReviewStateStore; the self-post filter is
-	// an *additional* layer, not a primary dedup mechanism.
-	spPath := filepath.Join(d.BaseDir, "reviews", "self-posted.json")
-	sp, spErr := NewSelfPostStore(spPath)
-	if spErr != nil {
-		d.logf("load self-posted store: %v (continuing in degraded mode)", spErr)
-	}
-	d.selfPosts = sp
-	// Issue #1821 seed step. The new-shape file loader (slice 1)
-	// already preserves on-disk self-posts across restarts, but
-	// operators with a greenfield store (or a legacy-store
-	// deployment that ran the issue #1756 rename) have nothing
-	// to reload. The bot's own review run logs are the only
-	// durable record of what the bot actually posted on the PR,
-	// so the daemon greps them at startup and records every
-	// extracted body into SelfPostStore. A transient failure on
-	// any single run log is logged and skipped so a partial
-	// walk still yields the entries the loader missed.
-	if sp != nil {
-		d.seedSelfPostStoreFromRunLogs()
+	// Issue #1847 (S4): rehydrate-on-startup. Walk every
+	// review-kind batch and register one pendingPost entry per
+	// `pending` review-state.json whose row folder has
+	// decision.md on disk. The next tick's processPR consults
+	// this map before the launch path so the daemon posts the
+	// existing body instead of re-running the agent. See
+	// loadPendingPosts for the full filter and the disjoint-
+	// from-pendingReviews invariant.
+	if err := d.loadPendingPosts(); err != nil {
+		d.logf("load pending posts: %v", err)
 	}
 	return d
-}
-
-// seedSelfPostStoreFromRunLogs walks every review-kind batch in
-// the daemon's BaseDir and records every body the run-log reader
-// can extract into SelfPostStore. The seed is best-effort: a
-// missing run.json, a non-review kind, an unreadable log, or a
-// partial extraction is logged and skipped, never fatal. The
-// walk reuses the existing `seenCacheLoader`, `readReviewRowID`,
-// and `extractBodiesFromLog` paths so it sees the same on-disk
-// shape the rest of the daemon already reads from.
-//
-// Issue #1821 closes the daemon-forgets-prior-self-posts failure
-// mode observed on PR #1809: a fresh daemon with no on-disk
-// self-post store cannot infer what the bot previously posted
-// from `ExtractBodiesFromLog`s alone, so a bot review body that
-// contains the literal `/sandman review` substring re-matches the
-// trigger regex on the next tick and the daemon self-loops. The
-// seed step is structural defence against that failure: the run
-// log is the only durable source for what the bot posted, and
-// `SelfPostStore.Record` already does the right thing idempotently
-// when given one of those bodies.
-func (d *Daemon) seedSelfPostStoreFromRunLogs() {
-	idx, err := seenCacheLoader(d.BaseDir)
-	if err != nil {
-		d.logf("seed self-post store: load batches index: %v", err)
-		return
-	}
-	if idx == nil {
-		return
-	}
-	for _, entry := range idx.Entries {
-		if entry.Kind != batchindex.KindReview {
-			continue
-		}
-		rowID, err := readReviewRowID(filepath.Join(entry.Path, "runs"))
-		if err != nil {
-			if os.IsNotExist(err) {
-				continue
-			}
-			d.logf("seed self-post store: read review row id for %s: %v", entry.Path, err)
-			continue
-		}
-		runDir := filepath.Join(entry.Path, "runs", rowID)
-		runLogPath := filepath.Join(runDir, "run.log")
-		bodies, err := extractBodiesFromLog(runLogPath)
-		if err != nil {
-			d.logf("seed self-post store: extractBodiesFromLog(%s): %v", runLogPath, err)
-			continue
-		}
-		for _, body := range bodies {
-			if err := d.selfPosts.Record(entry.PR, body, rowID); err != nil {
-				d.logf("seed self-post store: Record pr=%d body=<%d bytes>: %v", entry.PR, len(body), err)
-			}
-		}
-	}
 }
 
 // acquirePRSlot reserves one of the parallel_reviews slots for
@@ -379,6 +369,23 @@ func (d *Daemon) Forget(prNumber int, commentID string) {
 	if seen, ok := d.seenCache[prNumber]; ok {
 		delete(seen, commentID)
 	}
+}
+
+// peekPendingPost reports the rehydrate post entry for
+// (prNumber, commentID), if any. The slice-A/B/C/D/E regression
+// tests use this to observe the in-memory map without depending
+// on processPR's launch/rehydrate internal wiring. Returns
+// (entry, true) on a hit, (zero, false) on a miss. Reads the
+// pendingPostMu lock under which the walker (Slice B) writes.
+func (d *Daemon) peekPendingPost(prNumber int, commentID string) (pendingPostEntry, bool) {
+	d.pendingPostMu.Lock()
+	defer d.pendingPostMu.Unlock()
+	if m, ok := d.pendingPost[prNumber]; ok {
+		if entry, ok := m[commentID]; ok {
+			return entry, true
+		}
+	}
+	return pendingPostEntry{}, false
 }
 
 // loadSeenCache rebuilds the seen cache from scratch by scanning the
@@ -572,6 +579,122 @@ func (d *Daemon) loadPendingReviews() error {
 // InvalidateSeenCache.
 func (d *Daemon) InvalidatePendingReviews() error {
 	return d.loadPendingReviews()
+}
+
+// loadPendingPosts rehydrates the in-memory pendingPost map from the
+// on-disk review-state.json files referenced by .sandman/batches.json.
+//
+// Issue #1847 (S4): a daemon restart between the agent-run finishing
+// its write of <runDir>/decision.md and the daemon completing the
+// post step (e.g. process killed during `gh pr comment`, ctx cancelled
+// mid-post, network blip) leaves a review in the state "review is on
+// disk but not on the PR". Rather than re-launch the agent on the
+// next tick — which would produce a duplicate review the bot has no
+// memory of writing — the next daemon reads the existing
+// decision.md, redacts it via RedactBody, and posts it as part of
+// the normal tick. The pendingPost map is the in-memory index of
+// "review files waiting for the daemon to post".
+//
+// The walker is read-only and reuses the seenCacheLoader +
+// readReviewRowID + seenStateReader seams so it observes the same
+// on-disk shape the existing loadSeenCache and loadPendingReviews
+// walkers already read from. Per-row RunID resolution (ADR-0030 §Per-
+// row RunID templates, issue #1551) is preserved.
+//
+// The walker's three filters are all required for an entry to be
+// registered:
+//
+//  1. entry.Kind == batchindex.KindReview (so non-review batches
+//     such as changes cannot register a pendingPost);
+//  2. sc.Status == "pending" (matches the S3 lazy-verify contract:
+//     terminal-seen statuses do not get reposted);
+//  3. <runDir>/decision.md exists on disk (the source-of-truth gate:
+//     a missing file means the bot never finished, so rehydrate has
+//     nothing to post — leave to lazy-verify bounded-retry).
+//
+// Coexistence with loadPendingReviews: the two walkers may both
+// register an entry for the same (prNumber, commentID). They are NOT
+// required to be disjoint — processPR's rehydrate branch (Slice C)
+// fires when pendingPost has the trigger; the lazy-verify pendingSet
+// filter is the pre-existing fallback for entries that resolve via
+// the lazy-verify grace path instead. A row with decision.md on disk
+// takes the rehydrate path; a row without decision.md (or with the
+// rehydrate drop on a stale entry) falls through to lazy-verify.
+//
+// Existing entries are replaced (consistent with loadSeenCache and
+// loadPendingReviews). Best-effort on partial-failure: a single
+// unreadable review-state.json is logged and skipped, never fatal,
+// because the rename-loser trade-off from ADR-0034 §3 accepts a
+// stale skip over a daemon-start failure.
+func (d *Daemon) loadPendingPosts() error {
+	d.pendingPostMu.Lock()
+	defer d.pendingPostMu.Unlock()
+	d.pendingPost = map[int]map[string]pendingPostEntry{}
+
+	idx, err := seenCacheLoader(d.BaseDir)
+	if err != nil {
+		return fmt.Errorf("load batches index: %w", err)
+	}
+	if idx == nil {
+		return nil
+	}
+	for _, entry := range idx.Entries {
+		if entry.Kind != batchindex.KindReview {
+			continue
+		}
+		rowID, err := readReviewRowID(filepath.Join(entry.Path, "runs"))
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			d.logf("read review row id for %s: %v", entry.Path, err)
+			continue
+		}
+		runDir := filepath.Join(entry.Path, "runs", rowID)
+		state, err := seenStateReader(runDir)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			d.logf("read review state %s: %v", runDir, err)
+			continue
+		}
+		reviewState := filepath.Join(runDir, "review-state.json")
+		for _, sc := range state.SeenComments {
+			if sc.Status != "pending" {
+				continue
+			}
+			// Source-of-truth gate: a row is rehydrate-eligible
+			// only when decision.md actually exists on disk.
+			// A `pending` row without decision.md means the bot
+			// had not finished writing yet; the lazy-verify
+			// bounded-retry escape handles that case.
+			decisionPath := filepath.Join(runDir, "decision.md")
+			if _, statErr := os.Stat(decisionPath); statErr != nil {
+				if !os.IsNotExist(statErr) {
+					d.logf("stat %s: %v", decisionPath, statErr)
+				}
+				continue
+			}
+			if _, ok := d.pendingPost[entry.PR]; !ok {
+				d.pendingPost[entry.PR] = map[string]pendingPostEntry{}
+			}
+			d.pendingPost[entry.PR][sc.CommentID] = pendingPostEntry{
+				commentID:   sc.CommentID,
+				runDir:      runDir,
+				reviewState: reviewState,
+				since:       sc.Timestamp,
+			}
+		}
+	}
+	return nil
+}
+
+// InvalidatePendingPosts forces a rebuild of the in-memory
+// pendingPost map by re-running the on-disk scan. Symmetric with
+// InvalidatePendingReviews.
+func (d *Daemon) InvalidatePendingPosts() error {
+	return d.loadPendingPosts()
 }
 
 // SocketPath returns the absolute path of the daemon's control socket.
@@ -859,47 +982,23 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) error {
 		// from re-triggering a review on the bot's own review-body,
 		// which contains the literal `/sandman review` substring in
 		// its `## Previous review progress` section. The
-		// SelfPostStore is populated by processPR itself: every
-		// non-trigger comment observed here is recorded, so the next
-		// tick's IsSelfPosted check suppresses it. Trigger bodies
-		// are deliberately NOT recorded — recording them would mask
-		// legitimate future trigger lookups (every re-request shares
-		// one body hash). This replaces the previous LLM-side
-		// `record_review_posted` wrapper (issue #1757) and the prior
-		// promotePendingComment defensive observation (issue
-		// #1722); the daemon is now the sole authoritative record
-		// site. The (prNumber, sha256) composite key from #1764
-		// scopes the store per-PR so a body recorded against one PR
-		// cannot drop the trigger on another. See ADR-0014
-		// "Self-posted comment filter" and the ownership note in
-		// §Ownership note (issue #1757).
-		if d.selfPosts != nil && d.selfPosts.IsSelfPosted(prNumber, comment.Body) {
-			d.logf("PR #%d: comment %s is a self-post, skipping", prNumber, comment.ID)
-			continue
-		}
-		// Structural self-defence (issue #1821): a body that
-		// carries the `## Previous review progress` heading AND
-		// the literal `/sandman review` trigger substring is
+		// Structural self-defence (issues #1821 / #1848): a body
+		// that carries the `## Previous review progress` heading
+		// AND the literal `/sandman review` trigger substring is
 		// overwhelmingly likely to be a previous bot review
-		// body, not a fresh implementor trigger. The IsSelfPosted
-		// check above is the primary gate; this sniff is the
-		// backstop so the daemon never reaches the launch path
-		// for such a body even when the SelfPostStore has
-		// forgotten the entry across a daemon restart (the
-		// cross-restart failure mode that motivated #1821). The
-		// asymmetric contract — bot bodies are flagged, bare
-		// implementor triggers are not — is pinned by
-		// TestLooksLikeBotReviewBody. Record the body into
-		// SelfPostStore so the next tick's IsSelfPosted check
-		// also catches it (the sniff's primary line of defence
-		// for subsequent ticks is the primary gate, not the
-		// structural marker).
+		// body, not a fresh implementor trigger. Post-#1848 the
+		// `SelfPostStore` is gone and this sniff is the SOLE
+		// gate that drops bot-shaped bodies before
+		// `ParseTrigger`. Daemon-side redaction (issue #1845)
+		// makes this a defence-in-depth measure — the bot body
+		// never contains the trigger substring in the normal
+		// case — but it remains the structural last line of
+		// defence against a previous bot review re-matching the
+		// trigger regex. The asymmetric contract — bot bodies
+		// are flagged, bare implementor triggers are not — is
+		// pinned by `TestLooksLikeBotReviewBody` in
+		// `trigger_test.go`.
 		if LooksLikeBotReviewBody(comment.Body) {
-			if d.selfPosts != nil {
-				if err := d.selfPosts.Record(prNumber, comment.Body, ""); err != nil {
-					d.logf("PR #%d: record bot-shaped body %s failed: %v", prNumber, comment.ID, err)
-				}
-			}
 			d.logf("PR #%d: comment %s structurally matches a bot review body; dropping before ParseTrigger (issue #1821 self-defence)", prNumber, comment.ID)
 			continue
 		}
@@ -907,11 +1006,6 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) error {
 		if ok {
 			triggers = append(triggers, unseenTrigger{comment: comment, focus: focus})
 			continue
-		}
-		if d.selfPosts != nil {
-			if err := d.selfPosts.Record(prNumber, comment.Body, ""); err != nil {
-				d.logf("PR #%d: record non-trigger body %s failed: %v", prNumber, comment.ID, err)
-			}
 		}
 	}
 	if len(triggers) == 0 {
@@ -938,6 +1032,37 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) error {
 	d.seenCacheMu.RUnlock()
 	if len(unprocessed) == 0 {
 		return nil
+	}
+
+	// Rehydrate-on-startup (issue #1847 S4): consult pendingPost for
+	// each remaining trigger BEFORE the lazy-verify filter so that
+	// a row in BOTH pendingReviews and pendingPost takes the
+	// rehydrate path (the lazy-verify entry is harmless after
+	// MarkSeen("success") takes effect). TryRehydratePost returns
+	// true when the entry was handled (success, failure, ctx-cancel,
+	// or kept-for-retry) — the trigger is dropped from unprocessed.
+	// Returns false when the entry is stale (decision.md missing at
+	// tick time) — the trigger falls through to the launch path.
+	d.pendingPostMu.Lock()
+	hasPostEntry := map[string]bool{}
+	for cid := range d.pendingPost[prNumber] {
+		hasPostEntry[cid] = true
+	}
+	d.pendingPostMu.Unlock()
+	if len(hasPostEntry) > 0 {
+		var filtered []unseenTrigger
+		for _, t := range unprocessed {
+			if hasPostEntry[t.comment.ID] {
+				if d.tryRehydratePost(ctx, prNumber, t.comment) {
+					continue
+				}
+			}
+			filtered = append(filtered, t)
+		}
+		if len(filtered) == 0 {
+			return nil
+		}
+		unprocessed = filtered
 	}
 
 	// Lazy verify (issue #1482 slice D): drop triggers that are
@@ -1031,35 +1156,83 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) error {
 	// The slot is held by the goroutine and released after MarkSeen
 	// persists terminal-seen state on disk — this lets the slot pool
 	// fill across ticks as ADR-0034 §Per-PR slot table intended.
+	//
+	// Issue #1846 (S3): launchReview is the SOLE writer to
+	// MarkSeen on the launch path. The goroutine therefore no
+	// longer makes MarkSeen calls: it launches the review, lets
+	// the post step decide success/failure/leave-untouched, and
+	// releases the slot. The previous "pending" record step is
+	// dropped because launchReview drives terminal state directly;
+	// the lazy-verify path (promotePendingReviews) is preserved
+	// unchanged as a safety net for the old-style bot-review flows
+	// that pre-date this slice.
 	d.inFlight.Add(1)
 	go func() {
 		defer d.inFlight.Done()
 		defer d.releasePRSlot(prNumber)
 
-		launchErr := d.launchReview(ctx, prNumber, focus, comment.ID, commentReactionID, prReactionID, reviewRunFolder, perRowRunID, rs)
+		launchErr := d.launchReview(ctx, prNumber, focus, comment.ID, commentReactionID, prReactionID, reviewRunFolder, perRowRunID, rs, state)
 		if launchErr != nil {
 			d.logf("launch review for PR #%d comment %s: %v", prNumber, comment.ID, launchErr)
-		}
-
-		if launchErr == nil {
-			// Lazy verify (issue #1482 slice D): record the trigger as
-			// pending so the next tick can promote it to success/failure.
-			if err := state.MarkSeen(comment.ID, "pending"); err != nil {
-				d.logf("mark comment %s pending: %v", comment.ID, err)
+			// Issue #1846 (S3): launchReview owns MarkSeen
+			// exclusively. The launch goroutine handles three
+			// failure-surface branches:
+			//
+			//  (a) ctx-cancel between RunBatch returning and
+			//      post completing (AC-8 "stays pending"): no
+			//      MarkSeen was recorded; release the claim so
+			//      the bounded-retry escape can re-process on
+			//      the next tick.
+			//
+			//  (b) MarkSeen("failure") was recorded by the post
+			//      step (missing decision.md or post error,
+			//      distinguishable via isPostStepError): the
+			//      `failure` is retryable per shouldSkipDedupStatus
+			//      but unbounded per-tick retries are a regression
+			//      versus the pre-#1846 bounded-retry escape.
+			//      Register a `pending` entry so the existing
+			//      promotePendingReviews bounded-retry mechanism
+			//      (pendingMaxCycles) fires and converts the
+			//      infinite-retry failure mode to a once-per-
+			//      pendingMaxCycles retry.
+			//
+			//  (c) Pre-batch failure (RunBatch, FetchPR,
+			//      RenderReview, RepoName, missing agent/model):
+			//      launchReview returns a plain error (no
+			//      postStepError wrap); the trigger must be
+			//      retried on the next tick WITHOUT waiting for
+			//      the bounded-retry grace, so just release the
+			//      claim and exit. processPR's seen-cache filter
+			//      lets the trigger re-process.
+			if isPostStepError(launchErr) {
+				runLogPath := filepath.Join(reviewRunFolder, "run.log")
+				d.registerPendingReview(prNumber, comment.ID, d.now(), statePath, runLogPath, state)
+				return
 			}
-			// Issue #1759: pass the run-log path so the next tick's
-			// promotePendingReviews step can grep the log for bot bodies.
-			// Default if not explicitly provided: filepath.Dir(reviewState)+"/run.log".
-			runLogPath := filepath.Join(reviewRunFolder, "run.log")
-			d.registerPendingReview(prNumber, comment.ID, d.now(), statePath, runLogPath, state)
-		} else {
+			if errors.Is(launchErr, context.Canceled) || errors.Is(launchErr, context.DeadlineExceeded) {
+				if persisted == nil {
+					state.Release(comment.ID)
+				}
+				return
+			}
 			if persisted == nil {
 				state.Release(comment.ID)
 			}
-			if err := state.MarkSeen(comment.ID, "failure"); err != nil {
-				d.logf("mark comment %s failure: %v", comment.ID, err)
-			}
+			return
 		}
+		// Lazy verify (issue #1482 slice D): register the trigger
+		// as pending so the next tick's promotePendingReviews
+		// step (issue #1759 B12) can still observe a
+		// bot-authored review body that landed AFTER the
+		// daemon's own post. The post step is the new
+		// terminal action (issue #1846), but the
+		// promotion-to-success path remains a safety net for
+		// the pre-S3 lazy-verify semantics. The trigger is
+		// already MarkSeen("success") on disk via the post
+		// step, so the seen-cache short-circuit prevents a
+		// re-launch even if a pending entry were registered.
+		runLogPath := filepath.Join(reviewRunFolder, "run.log")
+		d.registerPendingReview(prNumber, comment.ID, d.now(), statePath, runLogPath, state)
 	}()
 
 	return nil
@@ -1201,7 +1374,7 @@ func logWriterFor(d *Daemon) io.Writer {
 // promotePendingReviews step will then promote the comment to success
 // when the agent's review comment arrives, or to failure after
 // pendingMaxCycles ticks.
-func (d *Daemon) launchReview(ctx context.Context, prNumber int, focus, commentID, commentReactionID, prReactionID, reviewRunFolder, perRowRunID string, rs *daemon.RunSession) error {
+func (d *Daemon) launchReview(ctx context.Context, prNumber int, focus, commentID, commentReactionID, prReactionID, reviewRunFolder, perRowRunID string, rs *daemon.RunSession, state *ReviewStateStore) error {
 	// We compute the review branch name up-front so the cleanup defer
 	// has it available on every exit path, including early errors
 	// before RunBatch runs. The same value is reused in the
@@ -1240,6 +1413,7 @@ func (d *Daemon) launchReview(ctx context.Context, prNumber int, focus, commentI
 		Title:       pr.Title,
 		Body:        pr.Body,
 		ReviewFocus: focus,
+		RunDir:      reviewRunFolder,
 	})
 	if err != nil {
 		return fmt.Errorf("render prompt: %w", err)
@@ -1263,10 +1437,10 @@ func (d *Daemon) launchReview(ctx context.Context, prNumber int, focus, commentI
 		modelName = d.effectiveModel()
 	}
 	if agentName == "" {
-		return fmt.Errorf("review agent is not set; configure review_agent or agent in sandman config")
+		return errors.New("review agent is not set; configure review_agent or agent in sandman config")
 	}
 	if modelName == "" {
-		return fmt.Errorf("review model is not set; configure review_model or model in sandman config")
+		return errors.New("review model is not set; configure review_model or model in sandman config")
 	}
 
 	repoName, err := d.GitHub.RepoName(ctx)
@@ -1298,9 +1472,215 @@ func (d *Daemon) launchReview(ctx context.Context, prNumber int, focus, commentI
 		RunDir:       reviewRunFolder,
 	}
 	if _, err := d.Runner.RunBatch(ctx, req); err != nil {
-		return fmt.Errorf("run batch: %w", err)
+		return d.recordLaunchFailure(ctx, commentID, state, fmt.Errorf("run batch: %w", err))
+	}
+
+	// S3 post step (issue #1846): the agent writes
+	// <runDir>/decision.md; the daemon reads it, redacts it, and
+	// posts via d.CommentPoster. The post step is the terminal
+	// action of launchReview, so this function owns the
+	// MarkSeen("success"/"failure") recording rather than the
+	// launch goroutine doing it. The goroutine therefore no
+	// longer makes MarkSeen calls on the launch path — its
+	// `else` branch only Releases the claim so the bounded-retry
+	// escape can re-process the comment if launchReview returned
+	// an error before any decision.md existed.
+	return d.postDecision(ctx, prNumber, commentID, reviewRunFolder, state)
+}
+
+// postDecision implements the S3 post step (issue #1846):
+//
+//   - If <runDir>/decision.md is missing: MarkSeen("failure") and
+//     return an error so the bounded-retry escape applies.
+//   - If present: read it, run RedactBody, call
+//     d.CommentPoster.PostComment(ctx, prNumber, redacted).
+//   - On successful post: MarkSeen("success").
+//   - On post error or ctx.Err() != nil while preparing/posting:
+//     leave status untouched (no MarkSeen call so the trigger stays
+//     in the previous on-disk state, which is `pending` from the
+//     launch goroutine's path-or-absent as recorded by prepareReviewRun);
+//     return the error so the goroutine takes its claim-Release path.
+func (d *Daemon) postDecision(ctx context.Context, prNumber int, commentID, reviewRunFolder string, state *ReviewStateStore) error {
+	decisionPath := filepath.Join(reviewRunFolder, "decision.md")
+	info, err := os.Stat(decisionPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			d.logf("PR #%d: missing %s after RunBatch; marking failure (issue #1846)", prNumber, decisionPath)
+			if state != nil {
+				if markErr := state.MarkSeen(commentID, "failure"); markErr != nil {
+					d.logf("PR #%d: mark %s failure: %v", prNumber, commentID, markErr)
+				}
+			}
+			return asPostStepError(fmt.Errorf("missing %s: %w", decisionPath, err))
+		}
+		return fmt.Errorf("stat %s: %w", decisionPath, err)
+	}
+	if info.IsDir() {
+		d.logf("PR #%d: %s is a directory, not a file; marking failure (issue #1846)", prNumber, decisionPath)
+		if state != nil {
+			if markErr := state.MarkSeen(commentID, "failure"); markErr != nil {
+				d.logf("PR #%d: mark %s failure: %v", prNumber, commentID, markErr)
+			}
+		}
+		return asPostStepError(fmt.Errorf("%s is a directory", decisionPath))
+	}
+
+	body, err := os.ReadFile(decisionPath)
+	if err != nil {
+		return fmt.Errorf("read %s: %w", decisionPath, err)
+	}
+
+	// Honour ctx cancellation observed between RunBatch returning
+	// and the post step: do NOT call MarkSeen so the trigger
+	// stays in the prior on-disk state (the bounded-retry escape
+	// engages on a subsequent tick).
+	if cerr := ctx.Err(); cerr != nil {
+		d.logf("PR #%d: ctx cancelled before post; leaving status untouched (issue #1846)", prNumber)
+		return cerr
+	}
+
+	redacted := RedactBody(string(body))
+	if err := d.CommentPoster.PostComment(ctx, prNumber, redacted); err != nil {
+		if cerr := ctx.Err(); cerr != nil {
+			d.logf("PR #%d: ctx cancelled during post; leaving status untouched (issue #1846)", prNumber)
+			return cerr
+		}
+		d.logf("PR #%d: post failed: %v; marking failure (issue #1846)", prNumber, err)
+		if state != nil {
+			if markErr := state.MarkSeen(commentID, "failure"); markErr != nil {
+				d.logf("PR #%d: mark %s failure: %v", prNumber, commentID, markErr)
+			}
+		}
+		return asPostStepError(fmt.Errorf("post decision: %w", err))
+	}
+
+	if state != nil {
+		if err := state.MarkSeen(commentID, "success"); err != nil {
+			return fmt.Errorf("mark %s success: %w", commentID, err)
+		}
 	}
 	return nil
+}
+
+// tryRehydratePost handles a rehydrate-eligible trigger discovered
+// in pendingPost by processPR (issue #1847 S4). It returns true
+// when the entry was registered AND decision.md is still on disk,
+// signalling that processPR should NOT proceed to the launch path.
+//
+// Three branches:
+//
+//   - decision.md on disk, post succeeds: MarkSeen("success") is
+//     persisted on the per-run ReviewStateStore (which fires the
+//     seen-cache hook so the next tick's processPR short-circuits
+//     the trigger), the pendingPost entry is dropped, and the
+//     function returns true. No new agent run is launched.
+//
+//   - decision.md on disk, post fails (PostComment returns an
+//     error): the entry is kept in pendingPost so the next tick
+//     retries; MarkSeen is left untouched so the trigger stays
+//     `pending` on disk. No new agent run is launched. Returns
+//     true so processPR does not fall through to launch.
+//
+//   - decision.md missing at tick time (stale entry, e.g. an
+//     operator removed the file or it was never written): the
+//     entry is dropped from pendingPost and the function returns
+//     false so processPR falls through to the existing launch
+//     path. The launch path's prepareReviewRun / TryClaim /
+//     launchReview cycle handles the trigger from scratch — the
+//     rehydrate-on-startup walker has nothing to recover.
+//
+// tryRehydratePost holds the per-run ReviewStateStore open only
+// for the MarkSeen call and never spawns a goroutine, so it can
+// run inline in processPR.
+func (d *Daemon) tryRehydratePost(ctx context.Context, prNumber int, comment github.PRComment) bool {
+	d.pendingPostMu.Lock()
+	m, ok := d.pendingPost[prNumber]
+	if !ok {
+		d.pendingPostMu.Unlock()
+		return false
+	}
+	entry, ok := m[comment.ID]
+	if !ok {
+		d.pendingPostMu.Unlock()
+		return false
+	}
+	d.pendingPostMu.Unlock()
+
+	decisionPath := filepath.Join(entry.runDir, "decision.md")
+	body, err := os.ReadFile(decisionPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			// Stale entry: drop and fall through to launch.
+			d.logf("PR #%d comment %s: rehydrate entry stale, decision.md missing at tick time, falling through to launch (issue #1847)", prNumber, comment.ID)
+			d.pendingPostMu.Lock()
+			delete(d.pendingPost[prNumber], comment.ID)
+			if len(d.pendingPost[prNumber]) == 0 {
+				delete(d.pendingPost, prNumber)
+			}
+			d.pendingPostMu.Unlock()
+			return false
+		}
+		// Read failed for some other reason (perm denied, IO).
+		// Keep the entry; the next tick retries. Do NOT proceed
+		// to launch because the existing post is still better
+		// than re-running the agent.
+		d.logf("PR #%d comment %s: rehydrate post read %s failed: %v; keeping entry for retry (issue #1847)", prNumber, comment.ID, decisionPath, err)
+		return true
+	}
+
+	// Honour ctx cancellation observed between ReadFile and the
+	// post step: do NOT call MarkSeen so the trigger stays in
+	// the prior on-disk state (the next daemon's rehydrate walker
+	// picks the entry up again on restart).
+	if cerr := ctx.Err(); cerr != nil {
+		d.logf("PR #%d comment %s: ctx cancelled before rehydrate post; leaving entry untouched (issue #1847)", prNumber, comment.ID)
+		return true
+	}
+
+	redacted := RedactBody(string(body))
+	if err := d.CommentPoster.PostComment(ctx, prNumber, redacted); err != nil {
+		if cerr := ctx.Err(); cerr != nil {
+			// Ctx cancelled DURING post: leave entry; the next
+			// daemon's rehydrate walker re-attempts.
+			d.logf("PR #%d comment %s: ctx cancelled during rehydrate post; leaving entry untouched (issue #1847)", prNumber, comment.ID)
+			return true
+		}
+		// Post failed for a non-ctx reason: log, keep the entry
+		// so the next tick retries. Do NOT MarkSeen; the
+		// bounded-retry-grace dance is owned by the lazy-verify
+		// path on a different row.
+		d.logf("PR #%d comment %s: rehydrate post failed: %v; keeping entry for next-tick retry (issue #1847)", prNumber, comment.ID, err)
+		return true
+	}
+
+	// Successful post. MarkSeen("success") on the per-run store
+	// fires the SeenCacheInvalidator seam (production: d), which
+	// MarkTerminalSeen's the (prNumber, commentID) pair in the
+	// in-memory seenCache. The on-disk review-state.json gets
+	// the success status updated atomically by ReviewStateStore.
+	store, storeErr := NewReviewStateStore(entry.reviewState, prNumber, d)
+	if storeErr != nil {
+		// State store could not be opened: log and keep the entry
+		// so the next tick retries — but DO call MarkTerminalSeen
+		// on the seen cache so the trigger is not reprocessed as
+		// a fresh launch in the interim (the entry acts as the
+		// source of truth until the store can be opened).
+		d.logf("PR #%d comment %s: open review-state for MarkSeen failed: %v; keeping entry and seen-cache untouched (issue #1847)", prNumber, comment.ID, storeErr)
+		return true
+	}
+	if err := store.MarkSeen(comment.ID, "success"); err != nil {
+		d.logf("PR #%d comment %s: MarkSeen(success) failed in rehydrate branch: %v; keeping entry (issue #1847)", prNumber, comment.ID, err)
+		return true
+	}
+
+	// Drop the entry from pendingPost under the dedicated mutex.
+	d.pendingPostMu.Lock()
+	delete(d.pendingPost[prNumber], comment.ID)
+	if len(d.pendingPost[prNumber]) == 0 {
+		delete(d.pendingPost, prNumber)
+	}
+	d.pendingPostMu.Unlock()
+	return true
 }
 
 // otherwise falls back to time.Now. Tests inject a custom clock.
@@ -1309,6 +1689,25 @@ func (d *Daemon) now() time.Time {
 		return d.Clock()
 	}
 	return time.Now()
+}
+
+// recordLaunchFailure records MarkSeen("failure") for commentID
+// and returns the wrapped error so the caller can propagate it.
+// Honours ctx cancellation observed before MarkSeen by leaving
+// the status untouched (matching the "stays pending on
+// cancellation" semantic pinned by issue #1846).
+func (d *Daemon) recordLaunchFailure(ctx context.Context, commentID string, state *ReviewStateStore, cause error) error {
+	if state == nil {
+		return cause
+	}
+	if cerr := ctx.Err(); cerr != nil {
+		d.logf("comment %s: ctx cancelled before launch failure recorded; leaving status untouched (issue #1846)", commentID)
+		return cerr
+	}
+	if err := state.MarkSeen(commentID, "failure"); err != nil {
+		d.logf("mark %s failure: %v", commentID, err)
+	}
+	return cause
 }
 
 // promotePendingComment resolves a single pending review: the daemon
@@ -1320,43 +1719,25 @@ func (d *Daemon) now() time.Time {
 //   - "success" when any non-empty comment has been posted at or after
 //     `since` (the agent posted a review comment, or a human replied —
 //     either is sufficient activity to settle the lazy-verify entry).
-//     Every post-`since` comment whose body matches one of botBodies
-//     is recorded into SelfPostStore (see B12 below).
 //   - ("pending", error) when no comment has been observed yet. The
 //     error lets the caller decide whether to increment the cycle
 //     counter or promote to failure after pendingMaxCycles.
 //
-// botBodies is the list of bodies the bot itself posted in this run
-// (as discovered by extractBodiesFromLog in promotePendingReviews).
-// When a post-`since` comment body matches one of botBodies, the
-// helper records it into SelfPostStore so the next tick's
-// processPR IsSelfPosted-first filter drops it (issue #1759 B12).
-// Comments that do NOT match botBodies are treated as human replies
-// and are not recorded — this is the #1722 contract: a defensive
-// observation that recorded every observed comment would poison the
-// implementor's repeated `/sandman review` trigger hash and blind
-// the daemon. The new path is safe because it only ever records
-// bodies the bot itself posted (per the run-log grep).
-//
-// All post-`since` comments are iterated so multiple bot bodies (a
-// bot follow-up comment after the first review) are recorded in the
-// same call. The function returns on the FIRST post-`since` comment
-// (success) — but the recording loop runs to completion over the
-// full set so a second bot body that landed at or after `since` is
-// also recorded. Subsequent post-`since` comments are recorded but
-// do not change the returned status.
+// Post-#1848 the botBodies discovery path is gone: the function no
+// longer greps the run log to confirm bot authorship, and the
+// SelfPostStore is no longer written from this path. The
+// daemon-side redaction layer (issue #1845) plus the structural
+// sniff (issue #1821) are the load-bearing mitigation against
+// self-loops; the lazy-verify path is preserved as a safety net
+// only.
 //
 // The caller is responsible for writing the new status back into the
 // per-run ReviewStateStore and updating the in-memory pending entry.
 // Issue #1482 slice D.
-func (d *Daemon) promotePendingComment(ctx context.Context, prNumber int, excludeCommentID string, since time.Time, botBodies []string) (string, error) {
+func (d *Daemon) promotePendingComment(ctx context.Context, prNumber int, excludeCommentID string, since time.Time) (string, error) {
 	comments, err := d.GitHub.ListPRComments(ctx, prNumber)
 	if err != nil {
 		return "", fmt.Errorf("list PR comments: %w", err)
-	}
-	botSet := make(map[string]struct{}, len(botBodies))
-	for _, b := range botBodies {
-		botSet[b] = struct{}{}
 	}
 	sawSuccess := false
 	for _, c := range comments {
@@ -1372,13 +1753,6 @@ func (d *Daemon) promotePendingComment(ctx context.Context, prNumber int, exclud
 		if !sawSuccess {
 			d.logf("PR #%d: review comment verified (ID %s, posted at %v)", prNumber, c.ID, c.CreatedAt)
 		}
-		if _, ok := botSet[c.Body]; ok {
-			if d.selfPosts != nil {
-				if err := d.selfPosts.Record(prNumber, c.Body, ""); err != nil {
-					d.logf("PR #%d: record bot body %s failed: %v", prNumber, c.ID, err)
-				}
-			}
-		}
 		sawSuccess = true
 	}
 	if sawSuccess {
@@ -1392,53 +1766,36 @@ func (d *Daemon) promotePendingComment(ctx context.Context, prNumber int, exclud
 // to advance any pending lazy-verify entries toward a terminal status.
 // For each pending entry:
 //
-//   - Resolve the bot bodies for this entry's runLogPath (one
-//     extraction per unique log file per tick; cache survives for the
-//     duration of this tick only, see B11). The bodies are passed to
-//     promotePendingComment so a matched post-`since` comment can be
-//     recorded into SelfPostStore (issue #1759 B12).
 //   - Call promotePendingComment against GitHub.
 //   - If success: MarkSeen("success") on the per-run store and drop
 //     the entry. The MarkSeen fires the seen-cache hook on success
 //     per slice A, so the next tick skips the comment via the seen
 //     cache.
 //   - If pending: increment the cycle counter; once it reaches
-//     pendingMaxCycles the daemon runs the bounded-retry grace
-//     (issue #1759 B13): one final extractBodiesFromLog. If any body
-//     is found, mark success and record the bodies. Only if the log
-//     is empty (bot truly failed) mark failure.
+//     pendingMaxCycles the daemon runs the bounded-retry escape:
+//     MarkSeen("failure") and MarkTerminalSeen so the next tick's
+//     processPR skips the trigger.
 //
-// Errors from ListPRComments or extractBodiesFromLog are logged and
-// the entry is kept — the next tick will retry. This is conservative:
-// a temporary GitHub outage or a missing run.log does not silently
-// promote an in-flight review to failure.
+// Errors from ListPRComments are logged and the entry is kept —
+// the next tick will retry. This is conservative: a temporary
+// GitHub outage does not silently promote an in-flight review to
+// failure.
 //
-// Issue #1482 slice D + #1759.
+// Post-#1848 the botBodies discovery path and the bounded-retry
+// grace grep are gone: `SelfPostStore` no longer exists and
+// `extractBodiesFromLog` is deleted. The lazy-verify path is
+// retained as a safety net only; the S3 happy path (issue #1846)
+// MarkSeens success on the launching tick, so production reviews
+// do not reach the bounded-retry escape. The cycle counter
+// increments on every error, and the bounded-retry escape fires
+// after `pendingMaxCycles` cycles.
+//
+// Issue #1482 slice D.
 func (d *Daemon) promotePendingReviews(ctx context.Context) error {
 	d.pendingMu.Lock()
 	defer d.pendingMu.Unlock()
 	if len(d.pendingReviews) == 0 {
 		return nil
-	}
-
-	// Per-tick cache: one extractBodiesFromLog call per unique
-	// runLogPath. Rebuilt every tick; not retained across ticks so
-	// the bot's later posts are observed on the next cycle. See B11.
-	logBodyCache := map[string][]string{}
-	loadBodies := func(path string) []string {
-		if path == "" {
-			return nil
-		}
-		if bodies, ok := logBodyCache[path]; ok {
-			return bodies
-		}
-		bodies, err := extractBodiesFromLog(path)
-		if err != nil {
-			d.logf("PR #?: extractBodiesFromLog(%s): %v", path, err)
-			bodies = nil
-		}
-		logBodyCache[path] = bodies
-		return bodies
 	}
 
 	for prNumber, entries := range d.pendingReviews {
@@ -1460,8 +1817,7 @@ func (d *Daemon) promotePendingReviews(ctx context.Context) error {
 				store = s
 			}
 
-			botBodies := loadBodies(e.runLogPath)
-			status, err := d.promotePendingComment(ctx, prNumber, e.commentID, e.since, botBodies)
+			status, err := d.promotePendingComment(ctx, prNumber, e.commentID, e.since)
 			if err == nil && status == "success" {
 				if markErr := store.MarkSeen(e.commentID, "success"); markErr != nil {
 					d.logf("PR #%d: promote pending %s to success: %v", prNumber, e.commentID, markErr)
@@ -1477,29 +1833,11 @@ func (d *Daemon) promotePendingReviews(ctx context.Context) error {
 			// bounded-retry escape.
 			e.cycles++
 			if e.cycles >= pendingMaxCycles {
-				// Bounded-retry grace (issue #1759 B13): one
-				// final grep before the failure escape. If the
-				// bot has since posted a body that GitHub's
-				// ListPRComments didn't return (slow network,
-				// eventual consistency), the log is the
-				// authoritative source. Any body in the log
-				// settles as success; only an empty log
-				// triggers the failure escape.
-				graceBodies := loadBodies(e.runLogPath)
-				if len(graceBodies) > 0 {
-					if d.selfPosts != nil {
-						for _, body := range graceBodies {
-							if recErr := d.selfPosts.Record(prNumber, body, ""); recErr != nil {
-								d.logf("PR #%d: record grace body failed: %v", prNumber, recErr)
-							}
-						}
-					}
-					if markErr := store.MarkSeen(e.commentID, "success"); markErr != nil {
-						d.logf("PR #%d: promote pending %s to success (grace): %v", prNumber, e.commentID, markErr)
-					}
-					d.logf("PR #%d: bounded-retry grace: bot body in log after pendingMaxCycles, settled as success", prNumber)
-					continue
-				}
+				// Bounded-retry escape (post-#1848): no
+				// run-log grace grep — the SelfPostStore and
+				// extractBodiesFromLog are gone. After
+				// `pendingMaxCycles` cycles without a comment
+				// observed on GitHub, settle as failure.
 				if markErr := store.MarkSeen(e.commentID, "failure"); markErr != nil {
 					d.logf("PR #%d: promote pending %s to failure: %v", prNumber, e.commentID, markErr)
 				}
@@ -1526,11 +1864,11 @@ func (d *Daemon) promotePendingReviews(ctx context.Context) error {
 // launchReview returned successfully. processPR calls this once the
 // per-run ReviewStateStore has been written with status=pending.
 //
-// runLogPath is the path to the per-run run.log; promotePendingReviews
-// greps it via extractBodiesFromLog to discover bot-authored bodies
-// (issue #1759). An empty runLogPath falls back to
-// filepath.Dir(statePath)+"/run.log" so the bounded-retry grace path
-// always has a log to read.
+// runLogPath is the path to the per-run run.log; it is retained
+// post-#1848 for audit / debugging but no current consumer reads
+// it (the run-log grep and SelfPostStore recording are gone). An
+// empty runLogPath falls back to
+// filepath.Dir(statePath)+"/run.log".
 func (d *Daemon) registerPendingReview(prNumber int, commentID string, since time.Time, statePath, runLogPath string, store *ReviewStateStore) {
 	if runLogPath == "" {
 		runLogPath = filepath.Join(filepath.Dir(statePath), "run.log")

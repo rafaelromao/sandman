@@ -14,6 +14,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/batch"
 	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/daemon"
+	ghcli "github.com/rafaelromao/sandman/internal/github"
 	"github.com/rafaelromao/sandman/internal/prompt"
 	"github.com/rafaelromao/sandman/internal/review"
 	"github.com/rafaelromao/sandman/internal/runid"
@@ -133,15 +134,6 @@ func runReviewOneShot(cmd *cobra.Command, deps Dependencies, cfg *config.Config,
 	}
 	fmt.Fprintf(cmd.OutOrStdout(), "repo=%s agent=%s model=%s\n", repoName, reviewAgentName, reviewModel)
 
-	rendered, err := deps.Renderer.RenderReview(prompt.RenderConfig{}, prompt.PRData{
-		Number: pr.Number,
-		Title:  pr.Title,
-		Body:   pr.Body,
-	})
-	if err != nil {
-		return fmt.Errorf("render review prompt: %w", err)
-	}
-
 	sandboxMode := strings.TrimSpace(sandboxFlag)
 	if sandboxMode == "" {
 		sandboxMode = cfg.Sandbox
@@ -183,9 +175,25 @@ func runReviewOneShot(cmd *cobra.Command, deps Dependencies, cfg *config.Config,
 	}
 	defer rs.Close()
 
-	relRunDir, err := filepath.Rel(repoRoot, rs.RunDir())
+	// Per-row run folder under <batchDir>/runs/<perRowRunID>/ — the
+	// agent writes <runDir>/decision.md and the daemon reads it back
+	// from the same path. Matches the daemon's prepareReviewRun.
+	absRunDir, err := filepath.Abs(filepath.Join(rs.RunDir(), "runs", perRowRunID))
 	if err != nil {
-		return fmt.Errorf("rel run dir: %w", err)
+		return fmt.Errorf("abs run dir: %w", err)
+	}
+	if err := os.MkdirAll(absRunDir, 0755); err != nil {
+		return fmt.Errorf("create per-row run folder: %w", err)
+	}
+
+	rendered, err := deps.Renderer.RenderReview(prompt.RenderConfig{}, prompt.PRData{
+		Number: pr.Number,
+		Title:  pr.Title,
+		Body:   pr.Body,
+		RunDir: absRunDir,
+	})
+	if err != nil {
+		return fmt.Errorf("render review prompt: %w", err)
 	}
 
 	if _, err := deps.BatchRunner.RunBatch(cmd.Context(), batch.Request{
@@ -207,7 +215,7 @@ func runReviewOneShot(cmd *cobra.Command, deps Dependencies, cfg *config.Config,
 		IssueNumber:  pr.LinkedIssueNumber(),
 		RunID:        perRowRunID,
 		OutputWriter: rs.Broadcaster(),
-		RunDir:       relRunDir,
+		RunDir:       absRunDir,
 	}); err != nil {
 		return fmt.Errorf("run review batch: %w", err)
 	}
@@ -301,7 +309,11 @@ func runReviewDaemon(parent context.Context, deps Dependencies, cfg *config.Conf
 	socketDir := filepath.Join(sandmanDir, "reviews")
 	broadcaster := daemon.NewBroadcaster()
 	ctlSocket := daemon.NewControlSocketWithName(socketDir, "review.sock", broadcaster)
-	d := review.New(sandmanDir, deps.GitHubClient, deps.Renderer, deps.BatchRunner, cfg, broadcaster, parallel, parallelSet)
+	poster := deps.CommentPoster
+	if poster == nil {
+		poster = ghCommentPosterFromDeps(deps)
+	}
+	d := review.New(sandmanDir, deps.GitHubClient, deps.Renderer, deps.BatchRunner, cfg, broadcaster, parallel, parallelSet, poster)
 	d.Sandbox = sandbox
 	d.ContainerCapacity = cc
 	d.ContainerCapacitySet = ccSet
@@ -311,4 +323,22 @@ func runReviewDaemon(parent context.Context, deps Dependencies, cfg *config.Conf
 	d.Model = modelFlag
 	d.SetSocket(ctlSocket)
 	return d.Run(ctx)
+}
+
+// ghCommentPosterFromDeps is a fallback that builds a
+// GHCommentPoster from deps.GitHubClient when the deps wiring did
+// not already provide a CommentPoster. The production path
+// (cmd/sandman/main.go) pre-builds and assigns the poster, so this
+// fallback only fires for tests / non-production wiring that pass a
+// fake GitHubClient. Returning nil lets the daemon's nil-safe
+// default take over; see review.New's nil-to-nop fallback.
+func ghCommentPosterFromDeps(deps Dependencies) review.CommentPoster {
+	if deps.GitHubClient == nil {
+		return nil
+	}
+	cli, ok := deps.GitHubClient.(*ghcli.CLIClient)
+	if !ok {
+		return nil
+	}
+	return ghcli.NewGHCommentPoster(cli)
 }

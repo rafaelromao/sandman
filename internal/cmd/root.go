@@ -8,6 +8,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/events"
 	"github.com/rafaelromao/sandman/internal/github"
 	"github.com/rafaelromao/sandman/internal/prompt"
+	"github.com/rafaelromao/sandman/internal/review"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 )
@@ -23,6 +24,7 @@ type Dependencies struct {
 	ConfigStore      config.Store
 	EventLog         events.EventLog
 	GitHubClient     github.Client
+	CommentPoster    review.CommentPoster
 	Renderer         prompt.IssueRenderer
 	IssuePicker      IssuePicker
 	IsTTY            func() bool

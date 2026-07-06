@@ -88,14 +88,20 @@ func TestPRReviewSkill_NoInternalPaths(t *testing.T) {
 func TestPRReviewSkill_PromptRulePreserved(t *testing.T) {
 	prompt := readPRReviewPrompt(t)
 
+	// The line-34 hard rule from issue #1701 was softened into a Note
+	// about daemon-side redaction by issue #1845. The old literal
+	// prohibition is gone; the new canonical mitigation text is the
+	// daemon redacts every `/sandman` substring before posting.
+	if strings.Contains(prompt, "do NOT write the literal `/sandman review` substring") {
+		t.Error("default PR review prompt must not retain the line-34 hard rule from issue #1701; it was softened into a Note about daemon-side redaction by issue #1845")
+	}
 	required := []string{
-		"Issue #1701",
-		"do NOT write the literal `/sandman review` substring",
+		"the daemon redacts every `/sandman` substring",
 		"Open review requests",
 	}
 	for _, phrase := range required {
 		if !strings.Contains(prompt, phrase) {
-			t.Errorf("default PR review prompt must retain canonical no-emit-trigger-substring phrase %q", phrase)
+			t.Errorf("default PR review prompt must retain canonical daemon-redaction phrasing %q", phrase)
 		}
 	}
 

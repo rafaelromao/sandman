@@ -208,7 +208,7 @@ sandman review [flags]
 
 With `--pr`, posts a single review comment and exits. Without `--pr`, starts the review daemon that polls open PRs every 60s for `/sandman review` comments and launches review agents.
 
-The daemon tracks the SHA-256 hash of every comment the bot has posted, scoped per PR number, in `.sandman/reviews/self-posted.json` (keys are composite `pr-<N>-<sha>`). It ignores any PR comment whose `(PR, body)` matches a recorded entry. This stops the bot from triggering itself when its own review-comment body happens to contain the `/sandman review` trigger substring — and, per issue #1756, prevents the cross-PR poisoning failure where a trigger hash recorded against PR A would otherwise silently drop the same body on PR B. See [ADR-0014 §Self-posted comment filter](../adr/0014-sandman-review-daemon-and-guard.md) for the full rationale.
+The daemon's review path runs the `processPR` self-defence sniff before parsing any PR comment for a `/sandman review` trigger. A comment body that structurally looks like a previous bot review (carries the `## Previous review progress` markdown heading AND the literal `/sandman review` trigger substring) is dropped before `ParseTrigger` runs — no batch run, no eyes reaction. This is the surviving self-defence gate after the SHA-256 hash tracker and run-log grep were removed (issue #1848). Daemon-side redaction (issue #1845) strips every `/sandman` substring from the bot's post before it reaches the PR, so the sniff is defence-in-depth on the load-bearing mitigation. See [ADR-0014 §Removal (issue #1848)](../adr/0014-sandman-review-daemon-and-guard.md#removal-issue-1848) for the full rationale.
 
 | Flag | Default | Description |
 |------|---------|-------------|

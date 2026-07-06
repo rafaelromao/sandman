@@ -61,18 +61,20 @@ func main() {
 	}
 	cfgStore := &config.FileStore{Path: ".sandman/config.yaml"}
 	ghClient := github.NewCLIClient()
+	commentPoster := github.NewGHCommentPoster(ghClient)
 	renderer := &prompt.Engine{}
 	eventLog := &events.JSONLLogger{Path: ".sandman/events.jsonl"}
 
 	deps := cmd.Dependencies{
-		BatchRunner:  batch.NewOrchestrator(ghClient, renderer, cfgStore, eventLog, batch.WithBadgeHooker(batch.NewBadgeHooker(os.Stderr))),
-		ConfigStore:  cfgStore,
-		EventLog:     eventLog,
-		GitHubClient: ghClient,
-		Renderer:     renderer,
-		IssuePicker:  &cmd.SimpleIssuePicker{},
-		IsTTY:        isStdoutTTY,
-		RepoRoot:     repoRoot,
+		BatchRunner:   batch.NewOrchestrator(ghClient, renderer, cfgStore, eventLog, batch.WithBadgeHooker(batch.NewBadgeHooker(os.Stderr))),
+		ConfigStore:   cfgStore,
+		EventLog:      eventLog,
+		GitHubClient:  ghClient,
+		CommentPoster: commentPoster,
+		Renderer:      renderer,
+		IssuePicker:   &cmd.SimpleIssuePicker{},
+		IsTTY:         isStdoutTTY,
+		RepoRoot:      repoRoot,
 	}
 
 	rootCmd := cmd.NewRootCmd(deps)

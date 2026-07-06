@@ -39,7 +39,7 @@ func TestDaemon_PromotePendingComment_ReturnsSuccessWhenReviewFound(t *testing.T
 	})
 	d.Clock = func() time.Time { return now }
 
-	status, err := d.promotePendingComment(context.Background(), 42, "100", now, nil)
+	status, err := d.promotePendingComment(context.Background(), 42, "100", now)
 	if err != nil {
 		t.Fatalf("expected no error when review comment is present, got: %v", err)
 	}
@@ -68,7 +68,7 @@ func TestDaemon_PromotePendingComment_ReturnsErrorWhenMissing(t *testing.T) {
 	})
 	d.Clock = func() time.Time { return now }
 
-	_, err := d.promotePendingComment(context.Background(), 42, "100", now, nil)
+	_, err := d.promotePendingComment(context.Background(), 42, "100", now)
 	if err == nil {
 		t.Fatal("expected error when no review comment is present")
 	}
@@ -101,7 +101,7 @@ func TestDaemon_PromotePendingComment_IgnoresTriggerComment(t *testing.T) {
 	})
 	d.Clock = func() time.Time { return now }
 
-	_, err := d.promotePendingComment(context.Background(), 42, "100", now, nil)
+	_, err := d.promotePendingComment(context.Background(), 42, "100", now)
 	if err == nil {
 		t.Fatal("expected error when only the trigger comment exists")
 	}
@@ -135,7 +135,7 @@ func TestDaemon_LaunchReviewReturnsFastAndRecordsPending(t *testing.T) {
 		},
 		prFetch: map[int]*github.PR{7: {Number: 7, Title: "PR 7", Body: "Body"}},
 	}
-	runner := &capturedRequest{}
+	runner := newDecisionRunner()
 	d, _, _ := newDaemonForTest(t, gh, runner, &config.Config{
 		DefaultReviewAgent: "opencode",
 		DefaultReviewModel: "opencode/foo",
@@ -162,8 +162,11 @@ func TestDaemon_LaunchReviewReturnsFastAndRecordsPending(t *testing.T) {
 		t.Errorf("ListPRComments should be called exactly once during the first tick (no missing-comment retry chain), got %d calls", got)
 	}
 
-	// review-state.json should record trigger as pending so the next
-	// tick can promote it.
+	// Issue #1846 (S3): launchReview now owns MarkSeen. A
+	// successful post records `success` directly; the previous
+	// `pending` -> next-tick-promotion flow still exists as a
+	// safety net for the pre-S3 lazy-verify semantics but the
+	// happy path settles as `success` on the launching tick.
 	runDir := runner.last.RunDir
 	statePath := filepath.Join(runDir, "review-state.json")
 	data, readErr := os.ReadFile(statePath)
@@ -174,15 +177,15 @@ func TestDaemon_LaunchReviewReturnsFastAndRecordsPending(t *testing.T) {
 	if err := json.Unmarshal(data, &state); err != nil {
 		t.Fatalf("decode review-state.json: %v", err)
 	}
-	foundPending := false
+	foundStatus := ""
 	for _, sc := range state.SeenComments {
-		if sc.CommentID == "trigger" && sc.Status == "pending" {
-			foundPending = true
+		if sc.CommentID == "trigger" {
+			foundStatus = sc.Status
 			break
 		}
 	}
-	if !foundPending {
-		t.Errorf("expected trigger recorded as pending in review-state.json, got %+v", state.SeenComments)
+	if foundStatus != "success" {
+		t.Errorf("expected trigger recorded as success in review-state.json (S3 happy path), got %q (SeenComments=%+v)", foundStatus, state.SeenComments)
 	}
 }
 
@@ -205,14 +208,17 @@ func TestDaemon_NextTickPromotesPendingCommentToSuccess(t *testing.T) {
 		},
 		prFetch: map[int]*github.PR{11: {Number: 11, Title: "PR 11", Body: "Body"}},
 	}
-	runner := &capturedRequest{}
+	runner := newDecisionRunner()
 	d, _, _ := newDaemonForTest(t, gh, runner, &config.Config{
 		DefaultReviewAgent: "opencode",
 		DefaultReviewModel: "opencode/foo",
 	})
 	d.Clock = func() time.Time { return now }
 
-	// First tick: launch the review and record it as pending.
+	// First tick: launch the review and settle it on success
+	// (issue #1846 happy path: post step reads decision.md
+	// written by the test runner and MarkSeen("success") is
+	// recorded directly by launchReview).
 	tickAndWait(t, d, context.Background())
 	if runner.calls != 1 {
 		t.Fatalf("first tick should launch exactly 1 batch, got %d", runner.calls)

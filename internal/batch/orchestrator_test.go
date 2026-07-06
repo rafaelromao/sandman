@@ -4747,6 +4747,87 @@ func TestRunBatch_PromptOnlyReviewRunResultCarriesReviewIdentity(t *testing.T) {
 	}
 }
 
+// capturingAgentRunFactory returns a real *AgentRun and captures it on a
+// channel so the test can inspect the env map the orchestrator's
+// runSession.execute site set. This pins the SANDMAN_RUN_DIR env export:
+// the orchestrator must inject SANDMAN_RUN_DIR=<runFolder> into
+// agentRun.env for review runs.
+type capturingAgentRunFactory struct {
+	agentRunCh chan *AgentRun
+}
+
+func (f *capturingAgentRunFactory) NewRunnable(issue *github.Issue, branch string, sb sandbox.Sandbox) Runnable {
+	ar := NewAgentRun(issue, branch, sb)
+	select {
+	case f.agentRunCh <- ar:
+	default:
+	}
+	return ar
+}
+
+func TestRunBatch_ReviewRunExportsSandmanRunDirEnv(t *testing.T) {
+	dir := testenv.MkdirShort(t, "sm-orch-")
+	t.Chdir(dir)
+	initGitRepo(t, dir)
+
+	client := &fakeGitHubClient{err: errors.New("fetch should not run")}
+	spyLog := &spyEventLog{}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{
+		Agent:       "test-agent",
+		Sandbox:     "worktree",
+		WorktreeDir: ".sandman/worktrees",
+		Git:         config.GitConfig{BaseBranch: "main"},
+		AgentProviders: map[string]config.Agent{
+			"test-agent": {Command: "true"},
+		},
+	}}, spyLog)
+	o.sandboxFactory = &fakeSandboxFactory{sandbox: &fakeSandbox{workDir: filepath.Join(".sandman", "worktrees", "sandman", "review-17-1")}}
+	agentRunCh := make(chan *AgentRun, 1)
+	o.runnableFactory = &capturingAgentRunFactory{agentRunCh: agentRunCh}
+
+	_, err := o.RunBatch(context.Background(), Request{
+		PromptConfig: prompt.RenderConfig{PromptFlag: "Review the PR."},
+		Review:       true,
+		PRNumber:     17,
+		RunID:        "PR17",
+		RunDir:       ".sandman/batches/PR17-review/runs/PR17",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	select {
+	case ar := <-agentRunCh:
+		if ar.env == nil {
+			t.Fatal("expected agentRun.env to be set, got nil")
+		}
+		got, ok := ar.env["SANDMAN_RUN_DIR"]
+		if !ok {
+			t.Fatalf("expected SANDMAN_RUN_DIR in agent env, got keys: %v", keysOf(ar.env))
+		}
+		// The runFolder is computed by runSession.runFolderFor. We
+		// don't pin the exact path here (depends on tmp dir layout
+		// from testenv.MkdirShort); we pin that the value is non-empty
+		// and points at a directory that contains the runID.
+		if got == "" {
+			t.Error("expected SANDMAN_RUN_DIR to be non-empty")
+		}
+		if !strings.Contains(got, "PR17") {
+			t.Errorf("expected SANDMAN_RUN_DIR to contain the runID PR17, got %q", got)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for AgentRun to be created")
+	}
+}
+
+func keysOf(m map[string]string) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	return out
+}
+
 func TestRunBatch_PromptOnlyReviewRunWithEmptyFocus(t *testing.T) {
 	dir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(dir)

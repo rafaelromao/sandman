@@ -259,7 +259,7 @@ func TestDaemon_LoadSeenCache_ReadsCanonicalRunFolder(t *testing.T) {
 	d := New(dir, gh, &prompt.Engine{}, &capturedRequest{}, &config.Config{
 		DefaultReviewAgent: "opencode",
 		DefaultReviewModel: "opencode/foo",
-	}, &lockedBuffer{}, 0, false)
+	}, &lockedBuffer{}, 0, false, nil)
 
 	if !d.IsTerminalSeen(prNumber, commentID) {
 		t.Fatalf("seenCache should have hydrated (PR %d, %s) from canonical run folder %s, got %v",
@@ -314,7 +314,7 @@ func TestDaemon_LoadSeenCache_IgnoresLegacyRunsReviewFolder(t *testing.T) {
 	d := New(dir, gh, &prompt.Engine{}, &capturedRequest{}, &config.Config{
 		DefaultReviewAgent: "opencode",
 		DefaultReviewModel: "opencode/foo",
-	}, &lockedBuffer{}, 0, false)
+	}, &lockedBuffer{}, 0, false, nil)
 
 	if d.IsTerminalSeen(prNumber, commentID) {
 		t.Fatalf("loadSeenCache must not hydrate from the legacy runs/review/ folder, got cache %v",

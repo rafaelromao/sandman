@@ -30,6 +30,10 @@ type PRData struct {
 	Title       string
 	Body        string
 	ReviewFocus string
+	// RunDir is substituted into `{{RUN_DIR}}` in the review prompt.
+	// Empty renders as empty (no unfilled-key error) so callers that
+	// have not yet been migrated continue to work.
+	RunDir string
 }
 
 // IssueRenderer renders prompt templates with substitutions.

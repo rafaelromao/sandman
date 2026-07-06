@@ -38,6 +38,21 @@ func TestRender_BuiltInDefaultRendersIssueData(t *testing.T) {
 	}
 }
 
+func TestDefaultTaskPrompt_DoesNotMentionDecisionMdOrRunDir(t *testing.T) {
+	// The implementor bot's prompt is out of scope for issue #1845:
+	// it still posts its trigger comment via `gh pr comment` from its
+	// worktree, and it has no run folder to write a decision.md to.
+	// This pins that the implementor-side prompt is not contaminated
+	// by the review-side prompt contract.
+	prompt := DefaultPrompt()
+	if strings.Contains(prompt, "decision.md") {
+		t.Error("implementor-side default task prompt must not mention `decision.md` (issue #1845)")
+	}
+	if strings.Contains(prompt, "{{RUN_DIR}}") {
+		t.Error("implementor-side default task prompt must not reference `{{RUN_DIR}}` (issue #1845)")
+	}
+}
+
 func TestDefaultPrompt_EmbeddedPromptMatchesTemplate(t *testing.T) {
 	data, err := os.ReadFile("default-task-prompt.md")
 	if err != nil {
@@ -650,16 +665,63 @@ func TestDefaultQualityRules_EmbeddedTemplate(t *testing.T) {
 
 func TestDefaultPRReviewPrompt_ContainsRequiredKeys(t *testing.T) {
 	prompt := DefaultPRReviewPrompt()
-	for _, key := range []string{"{{PR_NUMBER}}", "{{PR_TITLE}}", "{{PR_BODY}}", "{{REVIEW_FOCUS}}"} {
+	for _, key := range []string{"{{PR_NUMBER}}", "{{PR_TITLE}}", "{{PR_BODY}}", "{{REVIEW_FOCUS}}", "{{RUN_DIR}}"} {
 		if !strings.Contains(prompt, key) {
 			t.Errorf("review prompt missing key %s", key)
 		}
 	}
-	if !strings.Contains(prompt, "gh pr comment {{PR_NUMBER}}") {
-		t.Error("review prompt must instruct agent to post via gh pr comment with PR_NUMBER")
-	}
 	if !strings.Contains(prompt, "gh pr diff {{PR_NUMBER}}") {
 		t.Error("review prompt must instruct agent to read the diff via gh pr diff with PR_NUMBER")
+	}
+	if strings.Contains(prompt, "gh pr comment {{PR_NUMBER}} --body") {
+		t.Error("review prompt must NOT instruct the agent to post via `gh pr comment {{PR_NUMBER}} --body`; the agent writes <RUN_DIR>/decision.md and the daemon posts (issue #1845)")
+	}
+	required := []string{
+		"## Posting the Review",
+		"decision.md",
+		"decision.md.tmp",
+		"os.Rename",
+		"atomic",
+	}
+	for _, phrase := range required {
+		if !strings.Contains(prompt, phrase) {
+			t.Errorf("default PR review prompt must retain canonical decision.md posting phrase %q", phrase)
+		}
+	}
+}
+
+func TestDefaultPRReviewPrompt_ContainsDaemonRedactionNote(t *testing.T) {
+	data, err := os.ReadFile("default_pr_review_prompt.md")
+	if err != nil {
+		t.Fatalf("read default PR review prompt template: %v", err)
+	}
+	prompt := string(data)
+
+	required := []string{
+		"## Note",
+		"/sandman",
+		"case-insensitive",
+		"redact",
+	}
+	for _, phrase := range required {
+		if !strings.Contains(prompt, phrase) {
+			t.Errorf("default PR review prompt must retain canonical daemon-redaction note phrase %q", phrase)
+		}
+	}
+}
+
+func TestDefaultPRReviewPrompt_AFKRuleIsDecisionMdWrite(t *testing.T) {
+	data, err := os.ReadFile("default_pr_review_prompt.md")
+	if err != nil {
+		t.Fatalf("read default PR review prompt template: %v", err)
+	}
+	prompt := string(data)
+
+	if !strings.Contains(prompt, "Write `<RUN_DIR>/decision.md`, then exit.") {
+		t.Error("default PR review prompt's AFK Rule must be `Write <RUN_DIR>/decision.md, then exit.` (issue #1845)")
+	}
+	if strings.Contains(prompt, "Produce the comment, post it, and exit.") {
+		t.Error("default PR review prompt must not retain the old AFK Rule `Produce the comment, post it, and exit.` (issue #1845)")
 	}
 }
 
@@ -689,14 +751,25 @@ func TestDefaultPRReviewPrompt_ForbidsLiteralTriggerSubstring(t *testing.T) {
 	}
 	prompt := string(data)
 
+	// The line-34 hard rule from issue #1701 has been softened into a
+	// daemon-side redaction Note (issue #1845). The prompt must NOT
+	// retain the literal "do NOT write the literal `/sandman review`
+	// substring" prohibition.
+	if strings.Contains(prompt, "do NOT write the literal `/sandman review` substring") {
+		t.Error("default PR review prompt must not retain the literal line-34 hard rule from issue #1701; the rule has been softened into a Note about daemon-side redaction (issue #1845)")
+	}
+
+	// The new canonical mitigation text (the daemon redacts every
+	// `/sandman` substring before posting) must be present so a future
+	// reader can see why the trigger substring is no longer a bot-side
+	// concern.
 	required := []string{
-		"Issue #1701",
-		"do NOT write the literal `/sandman review` substring",
+		"the daemon redacts every `/sandman` substring",
 		"Open review requests",
 	}
 	for _, phrase := range required {
 		if !strings.Contains(prompt, phrase) {
-			t.Errorf("default PR review prompt must retain canonical no-emit-trigger-substring phrase %q", phrase)
+			t.Errorf("default PR review prompt must retain canonical daemon-redaction phrasing %q", phrase)
 		}
 	}
 
@@ -771,6 +844,27 @@ func TestApplyPRSubstitutions_EmptyFocusBecomesEmpty(t *testing.T) {
 	}
 }
 
+func TestApplyPRSubstitutions_RunDirSubstituted(t *testing.T) {
+	template := "RunDir: {{RUN_DIR}}"
+	data := PRData{RunDir: "/abs/path/to/run"}
+
+	got := ApplyPRSubstitutions(template, data)
+	want := "RunDir: /abs/path/to/run"
+	if got != want {
+		t.Errorf("got: %q, want: %q", got, want)
+	}
+}
+
+func TestApplyPRSubstitutions_EmptyRunDirBecomesEmpty(t *testing.T) {
+	template := "RunDir: {{RUN_DIR}}"
+	data := PRData{RunDir: ""}
+
+	got := ApplyPRSubstitutions(template, data)
+	if got != "RunDir: " {
+		t.Errorf("expected empty RunDir to render as empty, got %q", got)
+	}
+}
+
 func TestRenderReview_BuiltInDefaultRendersPRData(t *testing.T) {
 	engine := &Engine{}
 	data := PRData{
@@ -778,6 +872,7 @@ func TestRenderReview_BuiltInDefaultRendersPRData(t *testing.T) {
 		Title:       "Refactor daemon",
 		Body:        "Splits the orchestrator.",
 		ReviewFocus: "",
+		RunDir:      "/abs/path/to/run",
 	}
 
 	result, err := engine.RenderReview(RenderConfig{}, data)
@@ -790,6 +885,7 @@ func TestRenderReview_BuiltInDefaultRendersPRData(t *testing.T) {
 	want = strings.ReplaceAll(want, "{{PR_TITLE}}", "Refactor daemon")
 	want = strings.ReplaceAll(want, "{{PR_BODY}}", "Splits the orchestrator.")
 	want = strings.ReplaceAll(want, "{{REVIEW_FOCUS}}", "")
+	want = strings.ReplaceAll(want, "{{RUN_DIR}}", "/abs/path/to/run")
 
 	if result != want {
 		t.Errorf("unexpected rendered review prompt\nwant:\n%s\ngot:\n%s", want, result)
