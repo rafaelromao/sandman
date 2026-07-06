@@ -14,6 +14,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/batch"
 	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/daemon"
+	ghcli "github.com/rafaelromao/sandman/internal/github"
 	"github.com/rafaelromao/sandman/internal/prompt"
 	"github.com/rafaelromao/sandman/internal/review"
 	"github.com/rafaelromao/sandman/internal/runid"
@@ -308,7 +309,11 @@ func runReviewDaemon(parent context.Context, deps Dependencies, cfg *config.Conf
 	socketDir := filepath.Join(sandmanDir, "reviews")
 	broadcaster := daemon.NewBroadcaster()
 	ctlSocket := daemon.NewControlSocketWithName(socketDir, "review.sock", broadcaster)
-	d := review.New(sandmanDir, deps.GitHubClient, deps.Renderer, deps.BatchRunner, cfg, broadcaster, parallel, parallelSet)
+	poster := deps.CommentPoster
+	if poster == nil {
+		poster = ghCommentPosterFromDeps(deps)
+	}
+	d := review.New(sandmanDir, deps.GitHubClient, deps.Renderer, deps.BatchRunner, cfg, broadcaster, parallel, parallelSet, poster)
 	d.Sandbox = sandbox
 	d.ContainerCapacity = cc
 	d.ContainerCapacitySet = ccSet
@@ -318,4 +323,19 @@ func runReviewDaemon(parent context.Context, deps Dependencies, cfg *config.Conf
 	d.Model = modelFlag
 	d.SetSocket(ctlSocket)
 	return d.Run(ctx)
+}
+
+// ghCommentPosterFromDeps builds a production GHCommentPoster from
+// the deps.GitHubClient. Returns nil when the GitHubClient is not a
+// *ghcli.CLIClient (e.g. test fakes); the daemon falls back to its
+// built-in nopPoster in that case. Issue #1846.
+func ghCommentPosterFromDeps(deps Dependencies) review.CommentPoster {
+	if deps.GitHubClient == nil {
+		return nil
+	}
+	cli, ok := deps.GitHubClient.(*ghcli.CLIClient)
+	if !ok {
+		return nil
+	}
+	return ghcli.NewGHCommentPoster(cli)
 }

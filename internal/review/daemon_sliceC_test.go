@@ -2,6 +2,8 @@ package review
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -68,6 +70,13 @@ func TestDaemon_PerPRSlotTable_AllowsCrossPRConcurrency(t *testing.T) {
 		startedCount++
 		countMu.Unlock()
 		started <- req.PRNumber
+		// Issue #1846 (S3): write decision.md so the post step
+		// succeeds after the runner unblocks, instead of failing
+		// on missing decision.md. Concurrency invariants are
+		// unaffected by the post step.
+		if err := os.WriteFile(filepath.Join(req.RunDir, "decision.md"), []byte("ok"), 0644); err != nil {
+			return nil, err
+		}
 		<-release[req.PRNumber]
 		return &batch.Result{}, nil
 	})
@@ -189,6 +198,12 @@ func TestDaemon_PerPRSlotTable_ReleasesOnCompletion(t *testing.T) {
 	}
 	runner := batchFunc(func(ctx context.Context, req batch.Request) (*batch.Result, error) {
 		started <- req.PRNumber
+		// Issue #1846 (S3): write decision.md before unblocking so
+		// the post step succeeds after release. Concurrency invariants
+		// are unaffected.
+		if err := os.WriteFile(filepath.Join(req.RunDir, "decision.md"), []byte("ok"), 0644); err != nil {
+			return nil, err
+		}
 		<-release[req.PRNumber]
 		return &batch.Result{}, nil
 	})
@@ -257,6 +272,12 @@ func TestDaemon_PerPRSlotTable_NewTriggerMidFlight_IsNotDropped(t *testing.T) {
 		cid := req.PromptConfig.Branch
 		calls = append(calls, cid)
 		callsMu.Unlock()
+		// Issue #1846 (S3): write decision.md so the post step
+		// can complete after the runner unblocks. Concurrency
+		// invariants tested below are unaffected by the post step.
+		if err := os.WriteFile(filepath.Join(req.RunDir, "decision.md"), []byte("ok"), 0644); err != nil {
+			return nil, err
+		}
 		if cid == "sandman/review-7-first" {
 			select {
 			case startedFirst <- struct{}{}:
@@ -404,6 +425,13 @@ func TestDaemon_PerPRSlotTable_HeldSlotReturnsSilently(t *testing.T) {
 		select {
 		case started <- struct{}{}:
 		default:
+		}
+		// Issue #1846 (S3): write decision.md so the post step
+		// can complete after release. The dedicated HeldSlot
+		// test below still exercises the in-flight slot-held
+		// invariant.
+		if err := os.WriteFile(filepath.Join(req.RunDir, "decision.md"), []byte("ok"), 0644); err != nil {
+			return nil, err
 		}
 		<-release
 		return &batch.Result{}, nil

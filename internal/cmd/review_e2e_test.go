@@ -99,7 +99,7 @@ func TestReviewDaemonE2E_TriggerCommentLaunchesReview(t *testing.T) {
 	}
 
 	broadcaster := daemon.NewBroadcaster()
-	d := review.New(repoDir, ghClient, &prompt.Engine{}, runner, cfg, broadcaster, 0, false)
+	d := review.New(repoDir, ghClient, &prompt.Engine{}, runner, cfg, broadcaster, 0, false, nil)
 	d.PollInterval = 0
 
 	if err := d.StartSocket(); err != nil {

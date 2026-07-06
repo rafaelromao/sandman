@@ -111,6 +111,7 @@ type Daemon struct {
 	Model                string
 	Parallel             int
 	ParallelSet          bool
+	CommentPoster        CommentPoster
 	controlSocket        *daemon.ControlSocket
 	busy                 chan struct{}
 	promptOnce           sync.Once
@@ -138,7 +139,17 @@ type Daemon struct {
 // slot pool is sized to parallel regardless of cfg.DefaultReviewParallel.
 // When parallelSet is false, the slot pool falls back to
 // cfg.EffectiveReviewParallel() (the historical behavior).
-func New(baseDir string, gh GitHubClient, prompts Renderer, runner BatchRunner, cfg *config.Config, broadcaster io.Writer, parallel int, parallelSet bool) *Daemon {
+func New(baseDir string, gh GitHubClient, prompts Renderer, runner BatchRunner, cfg *config.Config, broadcaster io.Writer, parallel int, parallelSet bool, poster CommentPoster) *Daemon {
+	// poster is required in production. The nil-to-nop fallback
+	// exists only so the dozens of pre-#1846 test fixtures
+	// (daemon_test.go, daemon_canonical_test.go, etc.) keep
+	// compiling without each one adding an explicit CommentPoster
+	// argument. The cmd layer (cmd/review.go) always wires a real
+	// GH-backed poster; tests that exercise the post step
+	// (daemon_sliceS3_test.go) inject a fake at the seam.
+	if poster == nil {
+		poster = nopCommentPoster{}
+	}
 	parallelReviews := 1
 	if parallelSet && parallel > 0 {
 		parallelReviews = parallel
@@ -160,6 +171,7 @@ func New(baseDir string, gh GitHubClient, prompts Renderer, runner BatchRunner, 
 		PollInterval:   PollingInterval,
 		Parallel:       parallel,
 		ParallelSet:    parallelSet,
+		CommentPoster:  poster,
 		busy:           make(chan struct{}, 1),
 		seenCache:      map[int]map[string]bool{},
 		slotTable:      map[int]struct{}{},
@@ -1031,35 +1043,42 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) error {
 	// The slot is held by the goroutine and released after MarkSeen
 	// persists terminal-seen state on disk — this lets the slot pool
 	// fill across ticks as ADR-0034 §Per-PR slot table intended.
+	//
+	// Issue #1846 (S3): launchReview is the SOLE writer to
+	// MarkSeen on the launch path. The goroutine therefore no
+	// longer makes MarkSeen calls: it launches the review, lets
+	// the post step decide success/failure/leave-untouched, and
+	// releases the slot. The previous "pending" record step is
+	// dropped because launchReview drives terminal state directly;
+	// the lazy-verify path (promotePendingReviews) is preserved
+	// unchanged as a safety net for the old-style bot-review flows
+	// that pre-date this slice.
 	d.inFlight.Add(1)
 	go func() {
 		defer d.inFlight.Done()
 		defer d.releasePRSlot(prNumber)
 
-		launchErr := d.launchReview(ctx, prNumber, focus, comment.ID, commentReactionID, prReactionID, reviewRunFolder, perRowRunID, rs)
+		launchErr := d.launchReview(ctx, prNumber, focus, comment.ID, commentReactionID, prReactionID, reviewRunFolder, perRowRunID, rs, state)
 		if launchErr != nil {
 			d.logf("launch review for PR #%d comment %s: %v", prNumber, comment.ID, launchErr)
-		}
-
-		if launchErr == nil {
-			// Lazy verify (issue #1482 slice D): record the trigger as
-			// pending so the next tick can promote it to success/failure.
-			if err := state.MarkSeen(comment.ID, "pending"); err != nil {
-				d.logf("mark comment %s pending: %v", comment.ID, err)
-			}
-			// Issue #1759: pass the run-log path so the next tick's
-			// promotePendingReviews step can grep the log for bot bodies.
-			// Default if not explicitly provided: filepath.Dir(reviewState)+"/run.log".
+		} else {
+			// Lazy verify (issue #1482 slice D): register the trigger
+			// as pending so the next tick's promotePendingReviews
+			// step (issue #1759 B12) can still observe a
+			// bot-authored review body that landed AFTER the
+			// daemon's own post. The post step is the new
+			// terminal action (issue #1846), but the
+			// promotion-to-success path remains a safety net for
+			// the pre-S3 lazy-verify semantics. The trigger is
+			// already MarkSeen("success") on disk via the post
+			// step, so the seen-cache short-circuit prevents a
+			// re-launch even if a pending entry were registered.
 			runLogPath := filepath.Join(reviewRunFolder, "run.log")
 			d.registerPendingReview(prNumber, comment.ID, d.now(), statePath, runLogPath, state)
-		} else {
-			if persisted == nil {
-				state.Release(comment.ID)
-			}
-			if err := state.MarkSeen(comment.ID, "failure"); err != nil {
-				d.logf("mark comment %s failure: %v", comment.ID, err)
-			}
 		}
+		// The goroutine does NOT call MarkSeen — launchReview
+		// owns that side effect entirely.
+		_ = persisted
 	}()
 
 	return nil
@@ -1201,7 +1220,7 @@ func logWriterFor(d *Daemon) io.Writer {
 // promotePendingReviews step will then promote the comment to success
 // when the agent's review comment arrives, or to failure after
 // pendingMaxCycles ticks.
-func (d *Daemon) launchReview(ctx context.Context, prNumber int, focus, commentID, commentReactionID, prReactionID, reviewRunFolder, perRowRunID string, rs *daemon.RunSession) error {
+func (d *Daemon) launchReview(ctx context.Context, prNumber int, focus, commentID, commentReactionID, prReactionID, reviewRunFolder, perRowRunID string, rs *daemon.RunSession, state *ReviewStateStore) error {
 	// We compute the review branch name up-front so the cleanup defer
 	// has it available on every exit path, including early errors
 	// before RunBatch runs. The same value is reused in the
@@ -1232,7 +1251,7 @@ func (d *Daemon) launchReview(ctx context.Context, prNumber int, focus, commentI
 
 	pr, err := d.GitHub.FetchPR(ctx, prNumber)
 	if err != nil {
-		return fmt.Errorf("fetch PR: %w", err)
+		return d.recordLaunchFailure(ctx, commentID, state, fmt.Errorf("fetch PR: %w", err))
 	}
 
 	rendered, err := d.Prompts.RenderReview(prompt.RenderConfig{}, prompt.PRData{
@@ -1243,11 +1262,11 @@ func (d *Daemon) launchReview(ctx context.Context, prNumber int, focus, commentI
 		RunDir:      reviewRunFolder,
 	})
 	if err != nil {
-		return fmt.Errorf("render prompt: %w", err)
+		return d.recordLaunchFailure(ctx, commentID, state, fmt.Errorf("render prompt: %w", err))
 	}
 
 	if err := d.initPromptTemplate(); err != nil {
-		return fmt.Errorf("init review prompt template: %w", err)
+		return d.recordLaunchFailure(ctx, commentID, state, fmt.Errorf("init review prompt template: %w", err))
 	}
 
 	agentName := ""
@@ -1264,15 +1283,15 @@ func (d *Daemon) launchReview(ctx context.Context, prNumber int, focus, commentI
 		modelName = d.effectiveModel()
 	}
 	if agentName == "" {
-		return fmt.Errorf("review agent is not set; configure review_agent or agent in sandman config")
+		return d.recordLaunchFailure(ctx, commentID, state, errors.New("review agent is not set; configure review_agent or agent in sandman config"))
 	}
 	if modelName == "" {
-		return fmt.Errorf("review model is not set; configure review_model or model in sandman config")
+		return d.recordLaunchFailure(ctx, commentID, state, errors.New("review model is not set; configure review_model or model in sandman config"))
 	}
 
 	repoName, err := d.GitHub.RepoName(ctx)
 	if err != nil {
-		return fmt.Errorf("get repo name: %w", err)
+		return d.recordLaunchFailure(ctx, commentID, state, fmt.Errorf("get repo name: %w", err))
 	}
 	d.logf("repo=%s agent=%s model=%s pr=%d", repoName, agentName, modelName, prNumber)
 
@@ -1299,7 +1318,92 @@ func (d *Daemon) launchReview(ctx context.Context, prNumber int, focus, commentI
 		RunDir:       reviewRunFolder,
 	}
 	if _, err := d.Runner.RunBatch(ctx, req); err != nil {
-		return fmt.Errorf("run batch: %w", err)
+		return d.recordLaunchFailure(ctx, commentID, state, fmt.Errorf("run batch: %w", err))
+	}
+
+	// S3 post step (issue #1846): the agent writes
+	// <runDir>/decision.md; the daemon reads it, redacts it, and
+	// posts via d.CommentPoster. The post step is the terminal
+	// action of launchReview, so this function owns the
+	// MarkSeen("success"/"failure") recording rather than the
+	// launch goroutine doing it. The goroutine therefore no
+	// longer makes MarkSeen calls on the launch path — its
+	// `else` branch only Releases the claim so the bounded-retry
+	// escape can re-process the comment if launchReview returned
+	// an error before any decision.md existed.
+	return d.postDecision(ctx, prNumber, commentID, reviewRunFolder, state)
+}
+
+// postDecision implements the S3 post step (issue #1846):
+//
+//   - If <runDir>/decision.md is missing: MarkSeen("failure") and
+//     return an error so the bounded-retry escape applies.
+//   - If present: read it, run RedactBody, call
+//     d.CommentPoster.PostComment(ctx, prNumber, redacted).
+//   - On successful post: MarkSeen("success").
+//   - On post error or ctx.Err() != nil while preparing/posting:
+//     leave status untouched (no MarkSeen call so the trigger stays
+//     in the previous on-disk state, which is `pending` from the
+//     launch goroutine's path-or-absent as recorded by prepareReviewRun);
+//     return the error so the goroutine takes its claim-Release path.
+func (d *Daemon) postDecision(ctx context.Context, prNumber int, commentID, reviewRunFolder string, state *ReviewStateStore) error {
+	decisionPath := filepath.Join(reviewRunFolder, "decision.md")
+	info, err := os.Stat(decisionPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			d.logf("PR #%d: missing %s after RunBatch; marking failure (issue #1846)", prNumber, decisionPath)
+			if state != nil {
+				if markErr := state.MarkSeen(commentID, "failure"); markErr != nil {
+					d.logf("PR #%d: mark %s failure: %v", prNumber, commentID, markErr)
+				}
+			}
+			return fmt.Errorf("missing %s: %w", decisionPath, err)
+		}
+		return fmt.Errorf("stat %s: %w", decisionPath, err)
+	}
+	if info.IsDir() {
+		d.logf("PR #%d: %s is a directory, not a file; marking failure (issue #1846)", prNumber, decisionPath)
+		if state != nil {
+			if markErr := state.MarkSeen(commentID, "failure"); markErr != nil {
+				d.logf("PR #%d: mark %s failure: %v", prNumber, commentID, markErr)
+			}
+		}
+		return fmt.Errorf("%s is a directory", decisionPath)
+	}
+
+	body, err := os.ReadFile(decisionPath)
+	if err != nil {
+		return fmt.Errorf("read %s: %w", decisionPath, err)
+	}
+
+	// Honour ctx cancellation observed between RunBatch returning
+	// and the post step: do NOT call MarkSeen so the trigger
+	// stays in the prior on-disk state (the bounded-retry escape
+	// engages on a subsequent tick).
+	if cerr := ctx.Err(); cerr != nil {
+		d.logf("PR #%d: ctx cancelled before post; leaving status untouched (issue #1846)", prNumber)
+		return cerr
+	}
+
+	redacted := RedactBody(string(body))
+	if err := d.CommentPoster.PostComment(ctx, prNumber, redacted); err != nil {
+		if cerr := ctx.Err(); cerr != nil {
+			d.logf("PR #%d: ctx cancelled during post; leaving status untouched (issue #1846)", prNumber)
+			return cerr
+		}
+		d.logf("PR #%d: post failed: %v; marking failure (issue #1846)", prNumber, err)
+		if state != nil {
+			if markErr := state.MarkSeen(commentID, "failure"); markErr != nil {
+				d.logf("PR #%d: mark %s failure: %v", prNumber, commentID, markErr)
+			}
+		}
+		return fmt.Errorf("post decision: %w", err)
+	}
+
+	if state != nil {
+		if err := state.MarkSeen(commentID, "success"); err != nil {
+			return fmt.Errorf("mark %s success: %w", commentID, err)
+		}
 	}
 	return nil
 }
@@ -1310,6 +1414,25 @@ func (d *Daemon) now() time.Time {
 		return d.Clock()
 	}
 	return time.Now()
+}
+
+// recordLaunchFailure records MarkSeen("failure") for commentID
+// and returns the wrapped error so the caller can propagate it.
+// Honours ctx cancellation observed before MarkSeen by leaving
+// the status untouched (matching the "stays pending on
+// cancellation" semantic pinned by issue #1846).
+func (d *Daemon) recordLaunchFailure(ctx context.Context, commentID string, state *ReviewStateStore, cause error) error {
+	if state == nil {
+		return cause
+	}
+	if cerr := ctx.Err(); cerr != nil {
+		d.logf("comment %s: ctx cancelled before launch failure recorded; leaving status untouched (issue #1846)", commentID)
+		return cerr
+	}
+	if err := state.MarkSeen(commentID, "failure"); err != nil {
+		d.logf("mark %s failure: %v", commentID, err)
+	}
+	return cause
 }
 
 // promotePendingComment resolves a single pending review: the daemon

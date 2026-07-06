@@ -25,6 +25,7 @@ import (
 // greps the run log first; only an empty log triggers the failure
 // escape.
 func TestDaemon_BoundedRetry_GrepsLogBeforeFailing(t *testing.T) {
+	t.Skip("issue #1846 (S3) supersedes the lazy-verify grace path: launchReview now owns MarkSeen directly via the decision.md post step. The bounded-retry grace path remains a no-op safety net in the new architecture. See TestDaemon_S3_HappyPath_PostsRedactedDecision for the post-step success path and TestDaemon_PromotePendingReviews_LazyVerifySafetyNet for the preserved (non-primary) lazy-verify path.")
 	now := time.Date(2026, 7, 4, 12, 0, 0, 0, time.UTC)
 	botBody := "## Summary\nLGTM, no blockers."
 
@@ -108,6 +109,7 @@ func TestDaemon_BoundedRetry_GrepsLogBeforeFailing(t *testing.T) {
 // failure. This is the regression of the old behavior for the
 // truly-failed case.
 func TestDaemon_BoundedRetry_FailsWhenLogIsEmpty(t *testing.T) {
+	t.Skip("issue #1846 (S3) supersedes the lazy-verify empty-log path. The primary failure surface is now the post-step (missing decision.md or PostComment error). See TestDaemon_S3_MissingDecision_FailsClosed.")
 	now := time.Date(2026, 7, 4, 12, 0, 0, 0, time.UTC)
 
 	dir := t.TempDir()

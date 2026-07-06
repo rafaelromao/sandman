@@ -1,114 +1,28 @@
 package review
 
 import (
-	"context"
 	"os"
 	"path/filepath"
-	"runtime"
 	"testing"
-	"time"
 
 	"github.com/rafaelromao/sandman/internal/batchindex"
-	"github.com/rafaelromao/sandman/internal/config"
-	"github.com/rafaelromao/sandman/internal/github"
-	"github.com/rafaelromao/sandman/internal/prompt"
 )
 
 // TestDaemon_RestartRecoversPendingFromDisk pins acceptance criterion
-// #1 from issue #1635: a daemon restart between `launchReview` and
-// the first post-launch `promotePendingReviews` tick must NOT cause
-// the new daemon instance to re-launch a review for the same trigger.
+// from issue #1635: a daemon restart between `launchReview` and the
+// first post-launch `promotePendingReviews` tick must NOT cause the
+// new daemon instance to re-launch a review for the same trigger.
 //
-// The bug: `(*Daemon).pendingReviews` is in-memory only, and the
-// seen-cache hydration at construction deliberately excludes
-// `pending` entries (`shouldSkipDedupStatus("pending") == false`).
-// After a restart, a trigger that was already in flight (status
-// `pending` on disk) is invisible to the new instance, so the tick
-// re-launches the review.
-//
-// The fix: rehydrate `pendingReviews` from on-disk `review-state.json`
-// at construction time, mirroring the existing seen-cache hydration.
+// Issue #1846 (S3) supersedes the lazy-verify restart recovery path:
+// launchReview now owns MarkSeen directly via the decision.md post
+// step, so the pending-across-restart contract is no longer
+// exercised in production. The on-disk MarkSeen("success") state is
+// persisted by the post step (via ReviewStateStore), so a daemon
+// restart that re-reads review-state.json will short-circuit the
+// trigger through the existing seen-cache hydration path. That
+// invariant is verified by TestDaemon_ReviewStateStore_HydratesSuccessCacheFromDisk.
 func TestDaemon_RestartRecoversPendingFromDisk(t *testing.T) {
-	// Skipped on darwin: even with the capturedRequest.Calls()
-	// race fix below (see commit 811d368a in PR #1741), the review
-	// launch goroutine's runner.RunBatch invocation is not
-	// observed reliably on macOS CI runners — the launch path
-	// returns before the bounded read, leaving runner.calls at 0.
-	// The Linux CI evidence is consistent: linux passes 10/10 and
-	// reports no race; the macOS failures point at a separate
-	// launch-path scheduling defect outside the scope of #1736.
-	if runtime.GOOS != "linux" {
-		t.Skip("review launch goroutine scheduling on darwin; tracked by #1736")
-	}
-	const (
-		prNumber  = 17
-		commentID = "pending-on-disk"
-	)
-	now := time.Date(2026, 6, 30, 12, 0, 0, 0, time.UTC)
-	after := now.Add(2 * time.Minute)
-
-	gh := &fakeGH{
-		prs: []github.PR{{Number: prNumber, State: "open"}},
-		comments: map[int][]github.PRComment{
-			prNumber: {
-				{ID: commentID, Body: "/sandman review", CreatedAt: now},
-				// A reviewer reply that the second daemon's
-				// promotePendingReviews step should pick up on
-				// its first tick (since the reply's CreatedAt
-				// is after the recorded `since`).
-				{ID: "review-reply", Body: "## Summary\nLGTM", CreatedAt: after},
-			},
-		},
-		prFetch: map[int]*github.PR{prNumber: {Number: prNumber, Title: "T", Body: "B"}},
-	}
-	runner := &capturedRequest{}
-
-	// Step 1: launch a daemon, tick once, and capture the on-disk
-	// side effect: a run folder with `review-state.json` recording
-	// the trigger as `pending`. This mirrors the production
-	// "daemon launched the review, agent is still working" state.
-	dir := t.TempDir()
-	t.Chdir(dir)
-	d1 := New(dir, gh, &prompt.Engine{}, runner, &config.Config{
-		DefaultReviewAgent: "opencode",
-		DefaultReviewModel: "opencode/foo",
-	}, &lockedBuffer{}, 0, false)
-	d1.Clock = func() time.Time { return now }
-	tickAndWait(t, d1, context.Background())
-	// Calls() acquires runner.mu — the same happens-before
-	// established by RunBatch's Lock — so the read observes the
-	// writer's increment reliably on every platform.
-	if calls := runner.Calls(); calls != 1 {
-		t.Fatalf("first daemon should launch the review once, got %d calls", calls)
-	}
-
-	// Sanity check: the on-disk review-state.json for the row
-	// that was just launched must record the trigger as `pending`.
-	if _, ok := findPendingReviewState(t, dir, prNumber, commentID); !ok {
-		t.Fatalf("first daemon should have persisted a pending entry for (%d, %s); no review-state.json with that entry was found", prNumber, commentID)
-	}
-
-	// Step 2: simulate a daemon restart by constructing a fresh
-	// daemon against the same BaseDir. The in-memory pendingReviews
-	// map and the in-memory seenCache are both empty on the new
-	// instance; only the on-disk state survives.
-	runner2 := &capturedRequest{}
-	d2 := New(dir, gh, &prompt.Engine{}, runner2, &config.Config{
-		DefaultReviewAgent: "opencode",
-		DefaultReviewModel: "opencode/foo",
-	}, &lockedBuffer{}, 0, false)
-	d2.Clock = func() time.Time { return now.Add(1 * time.Minute) }
-
-	// Step 3: drive one tick on the fresh daemon. The replay
-	// guard under test (pendingReviews rehydrated from disk) must
-	// prevent processPR from launching a second batch for the
-	// already-in-flight trigger.
-	if err := d2.tick(context.Background()); err != nil {
-		t.Fatalf("second daemon tick: %v", err)
-	}
-	if calls := runner2.Calls(); calls != 0 {
-		t.Errorf("second daemon must not re-launch the in-flight trigger after restart, got %d RunBatch calls", calls)
-	}
+	t.Skip("issue #1846 (S3) supersedes the lazy-verify restart recovery path. The post step now records MarkSeen directly on the launching tick, so the pending-across-restart contract is no longer exercised; the seen-cache hydration invariant is still verified by TestDaemon_ReviewStateStore_HydratesSuccessCacheFromDisk.")
 }
 
 // findPendingReviewState walks the on-disk review-state.json files
