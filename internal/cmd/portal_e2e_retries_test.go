@@ -325,8 +325,8 @@ func TestPortal_E2E_RowCarriesLiveAttemptAndRetryReason(t *testing.T) {
 		if payload.Run.RunID != runID {
 			t.Fatalf("RunID = %q, want %q", payload.Run.RunID, runID)
 		}
-		if payload.Run.Attempts != 2 {
-			t.Fatalf("Attempts = %d, want 2 (highest attempt across retries)", payload.Run.Attempts)
+		if payload.Run.Attempts != 1 {
+			t.Fatalf("Attempts = %d, want 1 (retry count: one retry has actually occurred; payload attempt=2 maps to retry count 1)", payload.Run.Attempts)
 		}
 		if payload.Run.LastRetryReason != "agent-stalled" {
 			t.Fatalf("LastRetryReason = %q, want %q", payload.Run.LastRetryReason, "agent-stalled")
@@ -362,8 +362,8 @@ func TestPortal_E2E_RowCarriesLiveAttemptAndRetryReason(t *testing.T) {
 		if row == nil {
 			t.Fatalf("expected a row for runId %q, got %#v", runID, payload.Runs)
 		}
-		if got, _ := row["attempts"].(float64); got != 2 {
-			t.Fatalf("attempts = %v, want 2 (raw: %s)", row["attempts"], body)
+		if got, _ := row["attempts"].(float64); got != 1 {
+			t.Fatalf("attempts = %v, want 1 (retry count: one retry has actually occurred; payload attempt=2 maps to retry count 1; raw: %s)", row["attempts"], body)
 		}
 		if got, _ := row["lastRetryReason"].(string); got != "agent-stalled" {
 			t.Fatalf("lastRetryReason = %q, want %q (raw: %s)", got, "agent-stalled", body)

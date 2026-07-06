@@ -253,16 +253,18 @@ func (r RunState) RetriesDone() int {
 }
 
 // LiveAttempt returns the count of retries that have actually occurred
-// (initial run excluded) for an active run. It is the "retry count"
-// unit the portal's active-row chip renders, NOT the 1-indexed
-// `run.retry.payload.attempt` value defined in ADR-0035 (in practice
-// the two coincide because `attempt` is 1-indexed, so the highest
-// retry attempt seen across `run.retry` events equals the number of
-// retries so far — but they are conceptually distinct). It reads the
-// projected Retries slice so the answer is meaningful before
-// `run.finished` is written; we keep the highest attempt seen, not
-// the last-seen one, so a non-monotonic attempt value still surfaces
-// the peak. Returns 0 when no retries exist.
+// (initial run excluded), reading from the projected Retries slice so
+// the answer is meaningful before `run.finished` is written. The
+// orchestrator's `run.retry` payload carries `attempt` as the
+// about-to-start 1-indexed attempt number, where the loop counter
+// starts at 0 for the initial run — so the i-th retry event writes
+// `attempt: i+1`. This helper therefore walks the slice and reports
+// the maximum `attempt - 1`, with each candidate clamped at 0 so a
+// malformed payload (`attempt: 0` or any non-positive value) cannot
+// drag the running best below 0 and cannot produce a negative retry
+// count. At terminal time it matches `RetriesDone` for the same run,
+// so the active row and the finished row render the same number for
+// the same run. Returns 0 when no retries exist.
 func (r RunState) LiveAttempt() int {
 	best := 0
 	for _, event := range r.Retries {
@@ -270,8 +272,12 @@ func (r RunState) LiveAttempt() int {
 		if !ok {
 			continue
 		}
-		if v > best {
-			best = v
+		retries := v - 1
+		if retries < 0 {
+			retries = 0
+		}
+		if retries > best {
+			best = retries
 		}
 	}
 	return best
