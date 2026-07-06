@@ -462,21 +462,54 @@ func (v *portalRunsView) computeWithActiveRunsAndIndex(repoRoot string, eventLis
 		}
 	}
 
-	// Strip synthetic rows that shadow event-backed rows with the same
-	// (issue, batch) pair after BatchKey enrichment. A row is synthetic
-	// when it has no events. Without this, the higher priority "aborted"
-	// status on synthetic rows would suppress the real event row in
-	// dedupRunGroup.
-	eventsBacked := make(map[string]struct{}, len(runs))
+	// Strip synthetic rows whose issue is already covered by an
+	// event-backed implementation row anywhere in the index, regardless
+	// of BatchKey. A row is synthetic when it has no events, Kind is
+	// "completed" and Status is "aborted" (the shape
+	// synthesizedDeadBatchRows produces). Live rows (Kind="active")
+	// and historical-but-non-synthetic rows are never stripped here.
+	//
+	// Two distinct strip passes run here:
+	//
+	//   1. Same-BatchKey: drop a synthetic row when an event-backed row
+	//      shares its (IssueNumber, BatchKey). Without this, the higher
+	//      priority "aborted" status on synthetic rows would suppress
+	//      the real event row in dedupRunGroup.
+	//
+	//   2. Cross-batch: drop a synthetic row when *any* event-backed
+	//      implementation row exists for the same IssueNumber in a
+	//      different batch. This handles the orphan "ghost" case
+	//      tracked by issue #1886: a stale batch directory that claims
+	//      an issue but never ran it, while a newer batch produced the
+	//      real run. Without the cross-batch strip the portal shows a
+	//      0s aborted ghost row with no log path over the real row.
+	//
+	// Review rows (Review=true) are excluded from the cross-batch set
+	// because review runs and implementation runs are different work
+	// even when they target the same issue — see dedupRuns for the
+	// parallel split.
+	eventsBackedSameBatch := make(map[string]struct{}, len(runs))
+	eventsBackedByIssue := make(map[int]struct{}, len(runs))
 	for _, run := range runs {
-		if run.IssueNumber > 0 && run.BatchKey != "" && len(run.Events) > 0 {
-			eventsBacked[issueBatchKey(run.IssueNumber, run.BatchKey)] = struct{}{}
+		if run.IssueNumber <= 0 || len(run.Events) == 0 {
+			continue
+		}
+		if run.BatchKey != "" {
+			eventsBackedSameBatch[issueBatchKey(run.IssueNumber, run.BatchKey)] = struct{}{}
+		}
+		if !run.Review && run.PRNumber == 0 {
+			eventsBackedByIssue[run.IssueNumber] = struct{}{}
 		}
 	}
 	filtered := make([]portalRun, 0, len(runs))
 	for _, run := range runs {
-		if run.IssueNumber > 0 && run.BatchKey != "" && len(run.Events) == 0 {
-			if _, hasEvent := eventsBacked[issueBatchKey(run.IssueNumber, run.BatchKey)]; hasEvent {
+		if isSyntheticDeadBatchRow(run) {
+			if run.BatchKey != "" {
+				if _, hasEvent := eventsBackedSameBatch[issueBatchKey(run.IssueNumber, run.BatchKey)]; hasEvent {
+					continue
+				}
+			}
+			if _, hasEvent := eventsBackedByIssue[run.IssueNumber]; hasEvent {
 				continue
 			}
 		}
@@ -666,6 +699,16 @@ func missingManifestIssues(manifest daemon.BatchManifest, seen map[int]struct{})
 		missing = append(missing, issue)
 	}
 	return missing
+}
+
+// isSyntheticDeadBatchRow reports whether the given row is a
+// placeholder fabricated by synthesizedDeadBatchRows for an issue in
+// a dead batch that never reached a real run.started event. Synthetic
+// rows carry no events, are flagged completed, and are stamped
+// "aborted" with a zero-second duration. Live active rows and
+// event-backed historical rows never satisfy this shape.
+func isSyntheticDeadBatchRow(run portalRun) bool {
+	return run.IssueNumber > 0 && len(run.Events) == 0 && run.Kind == "completed" && run.Status == "aborted"
 }
 
 func (v *portalRunsView) synthesizedDeadBatchRows(deadBatches []daemon.DeadBatch, runStates []events.RunState) []portalRun {

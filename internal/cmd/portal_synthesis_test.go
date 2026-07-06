@@ -136,27 +136,24 @@ func TestPortal_DeadBatchSynthesizesOnlyMissingManifestMembers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load portal runs: %v", err)
 	}
-	// Without runs/ directory, dirIDs is empty and the event-backed
-	// member for issue 1 also gets a synthesized row.
-	if len(runs) != 4 {
-		t.Fatalf("expected 4 runs (1 event-backed + 3 synthesized), got %d: %#v", len(runs), runs)
+	// Without runs/ directory, dirIDs is empty so the event-backed
+	// member for issue 1 still gets a synthetic row from
+	// synthesizedDeadBatchRows. The cross-batch dedup strip pass (issue
+	// #1886) drops that duplicate because issue 1 is already covered
+	// by an event-backed row.
+	if len(runs) != 3 {
+		t.Fatalf("expected 3 runs (1 event-backed + 2 synthesized), got %d: %#v", len(runs), runs)
 	}
 
 	byIssue := map[int][]portalRun{}
 	for _, run := range runs {
 		byIssue[run.IssueNumber] = append(byIssue[run.IssueNumber], run)
 	}
-	if got := len(byIssue[1]); got != 2 {
-		t.Fatalf("expected 2 rows for issue 1 (event + synthesized), got %d: %#v", got, byIssue[1])
+	if got := len(byIssue[1]); got != 1 {
+		t.Fatalf("expected 1 row for issue 1 (event-backed only, duplicate synthesized row suppressed), got %d: %#v", got, byIssue[1])
 	}
-	for _, run := range byIssue[1] {
-		if run.Kind == "completed" && run.Status == "success" && run.BatchKey == "" {
-			continue // event-backed row
-		}
-		if run.Kind == "completed" && run.Status == "aborted" && run.BatchKey == "dead-1" {
-			continue // synthesized row (runs/ missing)
-		}
-		t.Fatalf("unexpected row for issue 1: %#v", run)
+	if run := byIssue[1][0]; run.Status != "success" {
+		t.Fatalf("expected issue 1 to remain event-backed success, got %#v", run)
 	}
 	for _, issue := range []int{2, 3} {
 		if got := len(byIssue[issue]); got != 1 {
@@ -195,32 +192,22 @@ func TestPortal_DeadBatchSynthesizesNeverStartedMembersWithoutRunsTree(t *testin
 		t.Fatalf("load portal runs: %v", err)
 	}
 	// Without runs/ directory, dirIDs is empty and synthesis cannot
-	// distinguish batch identity. The event-backed member coexists
-	// with its synthesized row as a known limitation.
-	if len(runs) != 4 {
-		t.Fatalf("expected 4 runs (1 event + 3 synthesized, runs/ dir missing), got %d: %#v", len(runs), runs)
+	// distinguish batch identity, so synthesizedDeadBatchRows still
+	// fabricates a row for issue 1. The cross-batch dedup strip pass
+	// (issue #1886) drops that duplicate because issue 1 is already
+	// covered by the event-backed row.
+	if len(runs) != 3 {
+		t.Fatalf("expected 3 runs (1 event + 2 synthesized, runs/ dir missing), got %d: %#v", len(runs), runs)
 	}
 	byIssue := map[int][]portalRun{}
 	for _, run := range runs {
 		byIssue[run.IssueNumber] = append(byIssue[run.IssueNumber], run)
 	}
-	if got := len(byIssue[1]); got != 2 {
-		t.Fatalf("expected 2 rows for issue 1 (event + synthesized, runs/ missing), got %d: %#v", got, byIssue[1])
+	if got := len(byIssue[1]); got != 1 {
+		t.Fatalf("expected 1 row for issue 1 (event-backed only, duplicate synthesized row suppressed), got %d: %#v", got, byIssue[1])
 	}
-	var sawEventIss1, sawSynthIss1 bool
-	for _, run := range byIssue[1] {
-		if run.Kind == "completed" && run.Status == "success" && run.BatchKey == "" {
-			sawEventIss1 = true
-		}
-		if run.Kind == "completed" && run.Status == "aborted" && run.BatchKey == "dead-1" {
-			sawSynthIss1 = true
-		}
-	}
-	if !sawEventIss1 {
-		t.Fatal("expected event-backed issue 1 to have a completed success row")
-	}
-	if !sawSynthIss1 {
-		t.Fatal("expected issue 1 to also have a synthesized row (runs/ missing)")
+	if run := byIssue[1][0]; run.Status != "success" {
+		t.Fatalf("expected issue 1 to remain event-backed success, got %#v", run)
 	}
 	for _, issue := range []int{2, 3} {
 		if got := len(byIssue[issue]); got != 1 {
@@ -233,7 +220,17 @@ func TestPortal_DeadBatchSynthesizesNeverStartedMembersWithoutRunsTree(t *testin
 	}
 }
 
-func TestPortal_DeadBatchesReuseIssueNumberWithoutSuppressingLaterSynthesis(t *testing.T) {
+// TestPortal_DeadBatchesReuseIssueNumberWithEventBackedSuppression pins
+// the cross-batch dedup contract from issue #1886: when two dead
+// batches claim the same issue, a synthetic aborted row for the issue
+// must be suppressed if any other batch carries an event-backed row
+// for that issue, regardless of BatchKey. Without the suppression the
+// portal surfaces a 0s aborted row with no log over the real row.
+//
+// The companion case where no batch has any events for the issue is
+// covered by TestPortal_DeadBatchSynthesizesOnlyMissingManifestMembers
+// and TestPortal_DeadBatchSynthesizesAllManifestMembersWithNoIssueEvents.
+func TestPortal_DeadBatchesReuseIssueNumberWithEventBackedSuppression(t *testing.T) {
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
 		t.Fatal(err)
@@ -272,25 +269,18 @@ func TestPortal_DeadBatchesReuseIssueNumberWithoutSuppressingLaterSynthesis(t *t
 	if err != nil {
 		t.Fatalf("load portal runs: %v", err)
 	}
-	if len(runs) != 2 {
-		t.Fatalf("expected 2 rows for issue 42 across two dead batches, got %d: %#v", len(runs), runs)
+	if len(runs) != 1 {
+		t.Fatalf("expected 1 row for issue 42 (event-backed success only, dead-2 synthesized row suppressed), got %d: %#v", len(runs), runs)
 	}
-	var sawSuccess, sawAborted bool
-	for _, run := range runs {
-		if run.IssueNumber != 42 {
-			t.Fatalf("expected issue 42 in both rows, got %#v", run)
-		}
-		switch run.Status {
-		case "success":
-			sawSuccess = true
-		case "aborted":
-			sawAborted = true
-		default:
-			t.Fatalf("unexpected status for reused issue 42: %#v", run)
-		}
+	row := runs[0]
+	if row.IssueNumber != 42 {
+		t.Fatalf("expected issue 42, got %#v", row)
 	}
-	if !sawSuccess || !sawAborted {
-		t.Fatalf("expected both success and synthesized aborted rows, got %#v", runs)
+	if row.Status != "success" {
+		t.Fatalf("expected event-backed success row, got %#v", row)
+	}
+	if row.BatchKey != "dead-1" {
+		t.Fatalf("expected row anchored to event-backed batch dead-1, got BatchKey %q", row.BatchKey)
 	}
 }
 
@@ -513,5 +503,151 @@ func TestPortal_Compute_ReviewOnlyRunRemainsInComputedSet(t *testing.T) {
 	}
 	if run.IssueNumber != 1472 {
 		t.Fatalf("expected computed run to carry IssueNumber=1472, got %#v", run)
+	}
+}
+
+// TestPortal_CrossBatchSynthesisSuppressedWhenIssueAlreadyCovered pins
+// the cross-batch dedup behaviour for issue #1886: a dead-batch
+// synthesized aborted row must be suppressed when any other batch (live
+// or dead) already carries an event-backed row for the same issue. The
+// common case is an orphaned "ghost" batch directory that was created
+// but never received a run, while the real run lives in a newer batch.
+// Without this suppression the portal surfaces a 0s aborted row with
+// no log path over the real row, because dedup only collapsed rows
+// within the same BatchKey.
+func TestPortal_CrossBatchSynthesisSuppressedWhenIssueAlreadyCovered(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	realStart := time.Now().Add(-15 * time.Minute)
+	realDir := filepath.Join(repoRoot, ".sandman", "batches", "fb4a-real")
+	if err := os.MkdirAll(realDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := daemon.WriteManifest(realDir, daemon.BatchManifest{Issues: []int{1857}, CreatedAt: realStart}); err != nil {
+		t.Fatal(err)
+	}
+	addBatchToIndex(t, repoRoot, "fb4a-real", realDir, []int{1857})
+	if err := daemon.WriteRunManifest(realDir, "fb4a-real-1857", batchindex.RunManifest{Issue: 1857, BatchID: "fb4a-real", CreatedAt: realStart.Add(1 * time.Minute)}); err != nil {
+		t.Fatal(err)
+	}
+
+	ghostStart := time.Now().Add(-30 * time.Minute)
+	ghostDir := filepath.Join(repoRoot, ".sandman", "batches", "2569-ghost")
+	if err := os.MkdirAll(ghostDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := daemon.WriteManifest(ghostDir, daemon.BatchManifest{Issues: []int{1855, 1857}, CreatedAt: ghostStart}); err != nil {
+		t.Fatal(err)
+	}
+	addBatchToIndex(t, repoRoot, "2569-ghost", ghostDir, []int{1855, 1857})
+
+	logPath := filepath.Join(repoRoot, ".sandman", "events.jsonl")
+	writePortalLog(t, logPath, []events.Event{
+		{Type: "run.started", Timestamp: realStart.Add(1 * time.Minute), RunID: "fb4a-real-1857", Issue: 1857, Payload: map[string]any{"branch": "sandman/1857-fix", "batch_id": "fb4a-real"}},
+		{Type: "run.finished", Timestamp: realStart.Add(2 * time.Minute), RunID: "fb4a-real-1857", Issue: 1857, Payload: map[string]any{"status": "success", "branch": "sandman/1857-fix"}},
+	})
+
+	runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: logPath})
+	if err != nil {
+		t.Fatalf("load portal runs: %v", err)
+	}
+
+	byIssue := map[int][]portalRun{}
+	for _, run := range runs {
+		byIssue[run.IssueNumber] = append(byIssue[run.IssueNumber], run)
+	}
+
+	if rows := byIssue[1857]; len(rows) != 1 {
+		t.Fatalf("expected exactly 1 row for issue 1857 (event-backed only, ghost synthesized row suppressed), got %d: %#v", len(rows), rows)
+	}
+	row := byIssue[1857][0]
+	if row.Status != "success" {
+		t.Fatalf("expected issue 1857 row to be the event-backed success row, got %#v", row)
+	}
+	if row.BatchKey != "fb4a-real" {
+		t.Fatalf("expected issue 1857 row to be anchored to real batch fb4a-real, got %q", row.BatchKey)
+	}
+
+	if rows := byIssue[1855]; len(rows) != 1 {
+		t.Fatalf("expected exactly 1 row for issue 1855 (ghost-synthesized only), got %d: %#v", len(rows), rows)
+	}
+	ghost := byIssue[1855][0]
+	if ghost.Kind != "completed" || ghost.Status != "aborted" || ghost.BatchKey != "2569-ghost" {
+		t.Fatalf("expected issue 1855 to keep the ghost-batch synthesized aborted row, got %#v", ghost)
+	}
+}
+
+// TestPortal_CrossBatchSynthesisKeepsReviewRunDistinct is the regression
+// guard for the cross-batch dedup fix: a review run on the same issue
+// must not suppress the ghost-batch synthesized aborted row, because
+// review and implementation runs are different work. Without this guard
+// the dedup pass would treat every review row as a covered issue and
+// drop legitimate dead-batch placeholders for unimplemented work.
+func TestPortal_CrossBatchSynthesisKeepsReviewRunDistinct(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	reviewAt := time.Now().Add(-15 * time.Minute)
+	reviewBatchDir := filepath.Join(repoRoot, ".sandman", "batches", "review-42")
+	if err := os.MkdirAll(reviewBatchDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := daemon.WriteManifest(reviewBatchDir, daemon.BatchManifest{Issues: []int{42}, RunKind: "review", CreatedAt: reviewAt}); err != nil {
+		t.Fatal(err)
+	}
+	addBatchToIndex(t, repoRoot, "review-42", reviewBatchDir, []int{42})
+	if err := daemon.WriteRunManifest(reviewBatchDir, "review-42-42", batchindex.RunManifest{Issue: 42, BatchID: "review-42", CreatedAt: reviewAt.Add(1 * time.Minute)}); err != nil {
+		t.Fatal(err)
+	}
+
+	deadAt := time.Now().Add(-30 * time.Minute)
+	deadDir := filepath.Join(repoRoot, ".sandman", "batches", "dead-impl")
+	if err := os.MkdirAll(deadDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := daemon.WriteManifest(deadDir, daemon.BatchManifest{Issues: []int{42}, CreatedAt: deadAt}); err != nil {
+		t.Fatal(err)
+	}
+	addBatchToIndex(t, repoRoot, "dead-impl", deadDir, []int{42})
+
+	logPath := filepath.Join(repoRoot, ".sandman", "events.jsonl")
+	writePortalLog(t, logPath, []events.Event{
+		{Type: "run.started", Timestamp: reviewAt.Add(1 * time.Minute), RunID: "review-42-42", Issue: 42, Payload: map[string]any{"review": true, "pr_number": 99, "branch": "sandman/review-99"}},
+		{Type: "run.finished", Timestamp: reviewAt.Add(2 * time.Minute), RunID: "review-42-42", Issue: 42, Payload: map[string]any{"review": true, "status": "success", "pr_number": 99, "branch": "sandman/review-99"}},
+	})
+
+	runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: logPath})
+	if err != nil {
+		t.Fatalf("load portal runs: %v", err)
+	}
+
+	byIssue := map[int][]portalRun{}
+	for _, run := range runs {
+		byIssue[run.IssueNumber] = append(byIssue[run.IssueNumber], run)
+	}
+
+	rows := byIssue[42]
+	if len(rows) != 2 {
+		t.Fatalf("expected exactly 2 rows for issue 42 (review + ghost synthesized), got %d: %#v", len(rows), rows)
+	}
+	var sawReview, sawSynth bool
+	for _, run := range rows {
+		if run.Review {
+			sawReview = true
+		}
+		if !run.Review && run.Kind == "completed" && run.Status == "aborted" && run.BatchKey == "dead-impl" {
+			sawSynth = true
+		}
+	}
+	if !sawReview {
+		t.Fatal("expected review row for issue 42")
+	}
+	if !sawSynth {
+		t.Fatal("expected ghost-batch synthesized aborted row for issue 42 (review run must not suppress synthesis)")
 	}
 }
