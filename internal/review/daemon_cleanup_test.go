@@ -217,6 +217,71 @@ func newReviewLaunchTestConfig() *config.Config {
 	return cfg
 }
 
+// TestPrepareReviewRun_PathMatchesLegacyBatchDirForLinkedIssue pins the
+// on-disk shape the daemon-side `decision.md` lookup relies on for a
+// PR that closes an issue (per-row RunID is `<sid>-<ts>-<issue>-PR<pr>`,
+// distinct from the legacy batch dir `<sid>-<ts>-PR<pr>`). The
+// orchestrator-side fix for the PR #1875 incident makes
+// `agentRun.runFolder` use the legacy-batch-dir/runID layout, so the
+// daemon must compute the same path. If a future change to
+// `prepareReviewRun` flips the batch-level parent to the per-row
+// RunID, the reviewer bot's `decision.md` would orphan again.
+//
+// Bug discovered on PR #1875: a daemon + orchestrator path mismatch
+// caused the reviewer bot to write `decision.md` next to the
+// orchestrator's per-row RunID parent while the daemon read it from
+// the legacy batch dir parent, so the post step silently marked the
+// review as failure.
+func TestPrepareReviewRun_PathMatchesLegacyBatchDirForLinkedIssue(t *testing.T) {
+	now := time.Date(2026, 7, 6, 13, 43, 57, 0, time.UTC)
+	gh := &fakeGH{
+		prs: []github.PR{{Number: 1875, State: "open"}},
+		prFetch: map[int]*github.PR{
+			// Body carries "Fixes #1855" so LinkedIssueNumber returns 1855,
+			// mirroring the production failure on PR #1875.
+			1875: {Number: 1875, Title: "T", Body: "Fixes #1855"},
+		},
+	}
+	runner := &capturedRequest{}
+	d, dir, _ := newReviewLaunchTestDaemon(t, gh, runner, newReviewLaunchTestConfig())
+	d.Clock = func() time.Time { return now }
+
+	reviewRunFolder, perRowRunID, _, _, prepErr := d.prepareReviewRun(context.Background(), 1875, "c1")
+	if prepErr != nil {
+		t.Fatalf("prepareReviewRun: %v", prepErr)
+	}
+
+	// The per-row RunID must include the linked issue (1551 contract).
+	if !strings.HasSuffix(perRowRunID, "-1855-PR1875") {
+		t.Errorf("perRowRunID = %q, want suffix %q", perRowRunID, "-1855-PR1875")
+	}
+
+	// The batch-level parent must be the legacy format (<sid>-<ts>-PR<pr>),
+	// NOT the per-row RunID. This is the path the orchestrator's
+	// `batchIDForPromptOnly` now derives from `req.RunDir` and the
+	// path the agent's `runFolder` matches.
+	legacyBatchDir := filepath.Dir(filepath.Dir(reviewRunFolder))
+	// Strip the linked-issue segment (`-1855`) from the per-row RunID
+	// to derive the expected legacy batch dir. The legacy format is
+	// `<sid>-<ts>-PR<pr>`; the per-row format is
+	// `<sid>-<ts>-<issue>-PR<pr>`. The cut point is the second-to-last
+	// `-PR<pr>` segment.
+	trimmed := strings.TrimSuffix(perRowRunID, "-1855-PR1875")
+	wantBatchDirName := trimmed + "-PR1875"
+	// newDaemonForTest passes dir as BaseDir (not dir/.sandman), so the
+	// batch dir lives directly under dir/batches/.
+	wantBatchDir := filepath.Join(dir, "batches", wantBatchDirName)
+	if legacyBatchDir != wantBatchDir {
+		t.Errorf("batch dir = %q, want %q (legacy format)", legacyBatchDir, wantBatchDir)
+	}
+
+	// The run-level folder must be <legacyBatchDir>/runs/<perRowRunID>.
+	wantRunDir := filepath.Join(wantBatchDir, "runs", perRowRunID)
+	if reviewRunFolder != wantRunDir {
+		t.Errorf("reviewRunFolder = %q, want %q", reviewRunFolder, wantRunDir)
+	}
+}
+
 // TestLaunchReview_CleansUpWorktreeAndBranchOnSuccess is the end-to-end
 // happy-path test for issue #1494: after launchReview returns successfully,
 // the review worktree and branch must be gone from git, while the batch
