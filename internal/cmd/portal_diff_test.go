@@ -4388,17 +4388,19 @@ console.log('PASS');
 // TestPortalRunsView_VisibleRunForIssueGroup_NewerSuccessWinsOverOlderAbortedWithReviews
 // is the regression test for issue #1825: when the same issue has two
 // terminal impl rows from different batches (older aborted carrying
-// review metadata, newer successful without), the visible row must be the
-// newer successful run — never the older aborted run. The backend
+// review metadata, newer successful without), the visible row must be
+// the newer successful run — never the older aborted run. The backend
 // projection no longer stamps review metadata across batches, and the
-// frontend's pickCanonicalParent must pick the newest parent by
-// FinishedAt rather than preferring parents that happen to carry
-// reviewCount/reviewVerdict from a previous batch.
+// frontend's pickCanonicalParent must pick the first parent in the
+// input order rather than preferring parents that happen to carry
+// reviewCount/reviewVerdict from a previous batch. The caller
+// (visibleRunsForTable) sorts runs by startedAt desc, so the first
+// parent in this test fixture is the newer one by FinishedAt.
 func TestPortalRunsView_VisibleRunForIssueGroup_NewerSuccessWinsOverOlderAbortedWithReviews(t *testing.T) {
-	js := `// The portal sorts runs by startedAt desc inside visibleRunsForTable,
-// so the newest parent sits at index 0 when visibleRunForIssueGroup is
-// invoked. The bug was that pickCanonicalParent reached past parents[0]
-// to find the older impl row that carried reviewCount/reviewVerdict.
+	js := `// visibleRunsForTable sorts runs by startedAt desc, so the newest
+// parent sits at index 0 when visibleRunForIssueGroup is invoked. The
+// bug was that pickCanonicalParent reached past parents[0] to find
+// the older impl row that carried reviewCount/reviewVerdict.
 const newerSuccess = {
   key: 'impl-9744', kind: 'completed', status: 'success', review: false,
   issueLabel: '#1793', runId: 'impl-9744', issueNumber: 1793,
