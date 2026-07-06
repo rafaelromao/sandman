@@ -133,15 +133,6 @@ func runReviewOneShot(cmd *cobra.Command, deps Dependencies, cfg *config.Config,
 	}
 	fmt.Fprintf(cmd.OutOrStdout(), "repo=%s agent=%s model=%s\n", repoName, reviewAgentName, reviewModel)
 
-	rendered, err := deps.Renderer.RenderReview(prompt.RenderConfig{}, prompt.PRData{
-		Number: pr.Number,
-		Title:  pr.Title,
-		Body:   pr.Body,
-	})
-	if err != nil {
-		return fmt.Errorf("render review prompt: %w", err)
-	}
-
 	sandboxMode := strings.TrimSpace(sandboxFlag)
 	if sandboxMode == "" {
 		sandboxMode = cfg.Sandbox
@@ -183,9 +174,25 @@ func runReviewOneShot(cmd *cobra.Command, deps Dependencies, cfg *config.Config,
 	}
 	defer rs.Close()
 
-	relRunDir, err := filepath.Rel(repoRoot, rs.RunDir())
+	// Per-row run folder under <batchDir>/runs/<perRowRunID>/ — the
+	// agent writes <runDir>/decision.md and the daemon reads it back
+	// from the same path. Matches the daemon's prepareReviewRun.
+	absRunDir, err := filepath.Abs(filepath.Join(rs.RunDir(), "runs", perRowRunID))
 	if err != nil {
-		return fmt.Errorf("rel run dir: %w", err)
+		return fmt.Errorf("abs run dir: %w", err)
+	}
+	if err := os.MkdirAll(absRunDir, 0755); err != nil {
+		return fmt.Errorf("create per-row run folder: %w", err)
+	}
+
+	rendered, err := deps.Renderer.RenderReview(prompt.RenderConfig{}, prompt.PRData{
+		Number: pr.Number,
+		Title:  pr.Title,
+		Body:   pr.Body,
+		RunDir: absRunDir,
+	})
+	if err != nil {
+		return fmt.Errorf("render review prompt: %w", err)
 	}
 
 	if _, err := deps.BatchRunner.RunBatch(cmd.Context(), batch.Request{
@@ -207,7 +214,7 @@ func runReviewOneShot(cmd *cobra.Command, deps Dependencies, cfg *config.Config,
 		IssueNumber:  pr.LinkedIssueNumber(),
 		RunID:        perRowRunID,
 		OutputWriter: rs.Broadcaster(),
-		RunDir:       relRunDir,
+		RunDir:       absRunDir,
 	}); err != nil {
 		return fmt.Errorf("run review batch: %w", err)
 	}

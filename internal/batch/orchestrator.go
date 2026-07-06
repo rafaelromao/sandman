@@ -1943,6 +1943,15 @@ func (s *runSession) runOnce(
 			agentRun.dangerouslySkipPermissions = &s.dangerouslySkipPermissions
 			agentRun.sessionName = "Sandman " + runID + ": "
 			agentRun.runFolder = s.runFolderFor(runID)
+			// Expose the per-row run folder to the review agent as
+			// SANDMAN_RUN_DIR so it can locate decision.md via the
+			// environment as a fallback to the templated {{RUN_DIR}}.
+			if s.review && agentRun.runFolder != "" {
+				if agentRun.env == nil {
+					agentRun.env = map[string]string{}
+				}
+				agentRun.env["SANDMAN_RUN_DIR"] = agentRun.runFolder
+			}
 		}
 
 		result, abortedByHeartbeat = s.withHeartbeat(ctx, runID, attempt, logPath, wt, func() AgentRunResult {

@@ -1240,6 +1240,7 @@ func (d *Daemon) launchReview(ctx context.Context, prNumber int, focus, commentI
 		Title:       pr.Title,
 		Body:        pr.Body,
 		ReviewFocus: focus,
+		RunDir:      reviewRunFolder,
 	})
 	if err != nil {
 		return fmt.Errorf("render prompt: %w", err)

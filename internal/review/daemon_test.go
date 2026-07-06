@@ -1357,6 +1357,44 @@ func TestDaemon_LaunchReviewPropagatesAgentModelOverrides(t *testing.T) {
 	}
 }
 
+func TestDaemon_LaunchReviewPropagatesRunDirToRenderedPrompt(t *testing.T) {
+	// Slice 3 of issue #1845: launchReview must pass the per-row run
+	// folder path on the PRData that RenderReview substitutes into
+	// {{RUN_DIR}}. The rendered prompt captured by the test runner
+	// must contain the same absolute path the daemon stored in
+	// Request.RunDir so the agent can locate decision.md regardless
+	// of its sandbox CWD.
+	gh := &fakeGH{
+		prs: []github.PR{{Number: 42, State: "open"}},
+		comments: map[int][]github.PRComment{
+			42: {{ID: "c-rundir", Body: "/sandman review"}},
+		},
+		prFetch: map[int]*github.PR{42: {Number: 42, Title: "PR 42", Body: "Body"}},
+	}
+	runner := &capturedRequest{}
+	cfg := &config.Config{
+		DefaultReviewAgent: "opencode",
+		DefaultReviewModel: "opencode/foo",
+	}
+	d, _, _ := newDaemonForTest(t, gh, runner, cfg)
+
+	tickAndWait(t, d, context.Background())
+
+	if runner.calls != 1 {
+		t.Fatalf("expected 1 batch run, got %d", runner.calls)
+	}
+	runDir := runner.last.RunDir
+	if runDir == "" {
+		t.Fatalf("expected non-empty RunDir in batch request, got empty")
+	}
+	if !strings.Contains(runner.last.PromptConfig.PromptFlag, "RunDir: "+runDir) {
+		t.Errorf("rendered prompt must contain `RunDir: %s` substituted from PRData.RunDir, got prompt:\n%s", runDir, runner.last.PromptConfig.PromptFlag)
+	}
+	if strings.Contains(runner.last.PromptConfig.PromptFlag, "{{RUN_DIR}}") {
+		t.Errorf("rendered prompt must not retain the unfilled {{RUN_DIR}} placeholder, got prompt:\n%s", runner.last.PromptConfig.PromptFlag)
+	}
+}
+
 func TestDaemon_LaunchReviewFallsBackToConfigForAgentModel(t *testing.T) {
 	gh := &fakeGH{
 		prs: []github.PR{{Number: 21, State: "open"}},

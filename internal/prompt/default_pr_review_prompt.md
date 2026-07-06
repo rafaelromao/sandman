@@ -1,11 +1,4 @@
 # PR Review
-<!--
-Issue #1701: this prompt must NEVER instruct the bot to emit the literal
-"/sandman review" substring in its review-body output, even when quoting
-prior trigger comments. The bot is itself the consumer of `ParseTrigger`,
-so any literal substring it writes back into a PR comment is treated as a
-fresh trigger.
--->
 
 Review pull request #{{PR_NUMBER}}: {{PR_TITLE}}
 
@@ -29,14 +22,17 @@ Skip these by default:
 - Suggestions to split the PR. Prefer to review the whole diff as one unit. Only flag splitting if a subset is genuinely unreviewable as part of this PR; otherwise note unrelated parts as a single `Important` finding and move on.
 - Changes the issue did not ask for, even if they would be improvements.
 
-Hard rules for the bot's own review-body output:
+## Note
 
-1. When referencing prior review requests in the `## Previous review progress` section, paraphrase the command — do NOT write the literal `/sandman review` substring in the review body. Use a phrasing such as `Open review requests` or `Open /review requests` instead. The bot is itself the consumer of `ParseTrigger`, so any literal substring it emits back into a PR comment is treated as a fresh trigger.
+The Sandman review daemon is the sole poster of reviewer comments for this run. Before posting, the daemon redacts every `/sandman` substring in your review body (case-insensitive), so you may quote prior review activity — including any `Open /sandman review requests` lines — verbatim without triggering a self-review loop. You are responsible for writing the body; the daemon is responsible for posting it.
+
+When referencing prior review requests in the `## Previous review progress` section, prefer the phrasing `Open review requests` (or `Open /review requests`); the daemon will redact any `/sandman` substring that survives in your prose, but the canonical phrasing keeps the body readable.
 
 ## Runtime Context
 
 - You are running inside a Sandman-created worktree on a dedicated review branch.
 - The current PR is #{{PR_NUMBER}}. Title and body are pre-fetched above.
+- RunDir: {{RUN_DIR}}
 - When the focus section is empty, perform a general code review. When it contains guidance, treat it as the reviewer's stated priorities.
 
 ## Review Procedure
@@ -105,10 +101,23 @@ Before performing the review, ensure the PR is in a healthy state:
 
 ## Posting the Review
 
-Post your findings as a single PR comment using the GitHub CLI:
+Write your review body to `<RUN_DIR>/decision.md` and exit. The daemon reads that file, applies daemon-side redaction, and posts the result to the PR; you do not call `gh pr comment` yourself.
+
+Use an atomic write so a torn write never produces a half-posted review body:
 
 ```bash
-gh pr comment {{PR_NUMBER}} --body "..."
+cat > "<RUN_DIR>/decision.md.tmp" <<'EOF'
+<full review body in Markdown>
+EOF
+mv "<RUN_DIR>/decision.md.tmp" "<RUN_DIR>/decision.md"
+```
+
+This is the standard atomic-rename pattern (write to a temp file, then `os.Rename` the temp to the canonical path) used throughout Sandman for `run.json`, `review-state.json`, and other per-run artefacts. The daemon treats the file's presence (after the atomic rename) as "review is ready to post". If the rename fails for any reason, surface the error and exit non-zero so the daemon can record a failure.
+
+You can also discover `<RUN_DIR>` from the `SANDMAN_RUN_DIR` environment variable:
+
+```bash
+echo "$SANDMAN_RUN_DIR"
 ```
 
 Format the body as Markdown with the following sections:
@@ -118,13 +127,13 @@ Format the body as Markdown with the following sections:
 - `## Findings` — bulleted list grouped by severity (`Blocking`, `Important`, `Nit`). If there are no findings in a group, omit it. Every `Nit` must cite a specific documented rule from step 7 (file + section); otherwise omit it. Do not pad the section — empty means `APPROVED`.
 - `## Suggested next steps` — the minimum set of follow-ups for the author. Do not suggest splitting the PR; review the diff as one unit.
 - `## Decision` — If there are zero `Blocking` or `Important` findings, place a single line: `**APPROVED**`. Otherwise, place `**CHANGES_REQUESTED**`.
-- `## Previous review progress` — Render this section **only** when prior comments exist (check both review comments and issue comments from step 4). When they exist, list each prior finding and its status: **resolved**, **partially addressed**, or **still outstanding**. Do not render this section if there are no prior reviews. Do not write a placeholder such as "No previous reviews found." When summarizing prior review requests, refer to them as `Open review requests` (or `Open /review requests`); see the hard rule at the top of this prompt for the reason.
+- `## Previous review progress` — Render this section **only** when prior comments exist (check both review comments and issue comments from step 4). When they exist, list each prior finding and its status: **resolved**, **partially addressed**, or **still outstanding**. Do not render this section if there are no prior reviews. Do not write a placeholder such as "No previous reviews found." When summarizing prior review requests, refer to them as `Open review requests` (or `Open /review requests`); see the `## Note` block above for the reason.
 
-Keep the comment terse and actionable. Do not post review commentary outside the single `gh pr comment` invocation.
+Keep the body terse and actionable. Do not invoke `gh pr comment` from this prompt — the daemon posts on your behalf.
 
 ## AFK Rule
 
-This is an Away From Keyboard workflow. Do not ask the user for approval, confirmation, or decisions during execution. Produce the comment, post it, and exit.
+This is an Away From Keyboard workflow. Do not ask the user for approval, confirmation, or decisions during execution. Write `<RUN_DIR>/decision.md`, then exit.
 
 ## Search Scope Restriction
 
