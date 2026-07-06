@@ -186,11 +186,17 @@ func runReviewOneShot(cmd *cobra.Command, deps Dependencies, cfg *config.Config,
 		return fmt.Errorf("create per-row run folder: %w", err)
 	}
 
+	priorReviewExists, err := computePriorReviewExists(cmd.Context(), deps.GitHubClient, pr.Number)
+	if err != nil {
+		return fmt.Errorf("compute prior review flag: %w", err)
+	}
+
 	rendered, err := deps.Renderer.RenderReview(prompt.RenderConfig{}, prompt.PRData{
-		Number: pr.Number,
-		Title:  pr.Title,
-		Body:   pr.Body,
-		RunDir: absRunDir,
+		Number:            pr.Number,
+		Title:             pr.Title,
+		Body:              pr.Body,
+		RunDir:            absRunDir,
+		PriorReviewExists: priorReviewExists,
 	})
 	if err != nil {
 		return fmt.Errorf("render review prompt: %w", err)
@@ -341,4 +347,25 @@ func ghCommentPosterFromDeps(deps Dependencies) review.CommentPoster {
 		return nil
 	}
 	return ghcli.NewGHCommentPoster(cli)
+}
+
+// computePriorReviewExists returns whether the PR has at least one prior
+// review comment (issue #1892). It mirrors the daemon's logic — exclude
+// review requests (implementor/mention-prefixed comments containing
+// "review") — so the `{{PRIOR_REVIEW_EXISTS}}` substitution is consistent
+// across the daemon and one-shot paths. Returns false on a list error so
+// the review agent renders the section safely; the daemon returns the
+// error and aborts because it must distinguish "no prior reviews" from
+// "couldn't fetch comments".
+func computePriorReviewExists(ctx context.Context, client review.GitHubClient, prNumber int) (bool, error) {
+	comments, err := client.ListPRComments(ctx, prNumber)
+	if err != nil {
+		return false, err
+	}
+	for _, c := range comments {
+		if !review.IsReviewRequest(c.Body) {
+			return true, nil
+		}
+	}
+	return false, nil
 }

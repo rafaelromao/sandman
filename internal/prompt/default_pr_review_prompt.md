@@ -22,6 +22,26 @@ Skip these by default:
 - Suggestions to split the PR. Prefer to review the whole diff as one unit. Only flag splitting if a subset is genuinely unreviewable as part of this PR; otherwise note unrelated parts as a single `Important` finding and move on.
 - Changes the issue did not ask for, even if they would be improvements.
 
+## Previous review progress — hard rule
+
+The `## Previous review progress` section is a **conditional section**, not a
+default slot. The deterministic prior-review flag is `{{PRIOR_REVIEW_EXISTS}}`
+(`YES` when at least one prior review exists on the PR after the
+implementor-trigger filter, `NO` otherwise).
+
+- When `YES`: render the section. List each prior finding and its status
+  (**resolved**, **partially addressed**, or **still outstanding**).
+- When `NO`: render **no heading, no placeholder, no default body**. The
+  section is absent, not empty. Do not write "No previous reviews found."
+  or "No prior review comments or reviews on this PR." or any other
+  default-text body. Treat `NO` as authoritative — it is computed from
+  the PR's actual comment list, not from your own `gh api` calls.
+
+This rule overrides any default behaviour that renders named sections
+unconditionally. The two existing procedural and format-spec copies of
+the rule elsewhere in this prompt remain in force; this block is the
+**primary contract** for the section.
+
 ## Note
 
 The Sandman review daemon is the sole poster of reviewer comments for this run. Before posting, the daemon redacts every `/sandman` substring in your review body (case-insensitive), so you may quote prior review activity — including any `Open /sandman review requests` lines — verbatim without triggering a self-review loop. You are responsible for writing the body; the daemon is responsible for posting it.
