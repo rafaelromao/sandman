@@ -7,7 +7,9 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
+	"github.com/rafaelromao/sandman/internal/batch"
 	"github.com/rafaelromao/sandman/internal/batchindex"
 	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/github"
@@ -475,5 +477,92 @@ func TestDaemon_S4_RehydratePost_FailedPost_KeepsEntry(t *testing.T) {
 	}
 	if _, ok := d.peekPendingPost(prNumber, commentID); ok {
 		t.Errorf("pendingPost should drop the entry on successful retry, got it still present")
+	}
+}
+
+// TestDaemon_S4_RehydratePost_StaleEntry_FallsThroughLaunch pins
+// the Slice-E stale-entry contract: when a pendingPost entry
+// exists from construction (decision.md was on disk then) but
+// <runDir>/decision.md has been removed (or never existed at tick
+// time — the entry was injected artificially), the rehydrate
+// branch drops the entry from pendingPost AND falls through to
+// the launch path so a fresh agent is launched for the trigger.
+func TestDaemon_S4_RehydratePost_StaleEntry_FallsThroughLaunch(t *testing.T) {
+	const (
+		prNumber  = 6062
+		commentID = "c-s4-stale-1"
+	)
+	gh := &fakeGH{
+		prs: []github.PR{{Number: prNumber, State: "open"}},
+		comments: map[int][]github.PRComment{
+			prNumber: {{ID: commentID, Body: "/sandman review", CreatedAt: mustParseTime(t, "2026-07-06T13:00:02Z")}},
+		},
+		prFetch: map[int]*github.PR{prNumber: {Number: prNumber, Title: "PR S4 stale", Body: "Body"}},
+	}
+	// Runner writes decision.md before RunBatch returns so the
+	// launch path has a fresh body to post (mirrors the S3 happy
+	// path fixture).
+	runner := &seamRunner{
+		capturedRequest: &capturedRequest{},
+		beforeReturn: func(req batch.Request) {
+			path := filepath.Join(req.RunDir, "decision.md")
+			if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+				t.Fatalf("mkdir decision.md dir: %v", err)
+			}
+			if err := os.WriteFile(path, []byte("fresh launch decision"), 0644); err != nil {
+				t.Fatalf("write decision.md: %v", err)
+			}
+		},
+	}
+	cfg := &config.Config{
+		DefaultReviewAgent: "opencode",
+		DefaultReviewModel: "opencode/foo",
+	}
+	poster := &fakeCommentPoster{}
+
+	dir := t.TempDir()
+
+	// Construct the daemon normally first, then inject a stale
+	// pendingPost entry whose runDir points to a non-existent
+	// decision.md. Mirrors the production scenario: an operator
+	// deleted decision.md (or the entry survived a manual
+	// cleanup) before the daemon restarted.
+	d := New(dir, gh, &prompt.Engine{}, runner, cfg, &lockedBuffer{}, 0, false, poster)
+	d.PollInterval = 0
+
+	staleRunDir := filepath.Join(dir, "batches", "stale-batch", "runs", "stale-batch-PR6062")
+	d.pendingPostMu.Lock()
+	d.pendingPost[prNumber] = map[string]pendingPostEntry{
+		commentID: {
+			commentID:       commentID,
+			runDir:          staleRunDir,
+			reviewStatePath: filepath.Join(staleRunDir, "review-state.json"),
+		},
+	}
+	d.pendingPostMu.Unlock()
+
+	if err := d.tick(context.Background()); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+
+	// Wait for the launch goroutine to finish so RunBatch has fired.
+	idleCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := d.WaitForIdle(idleCtx); err != nil {
+		t.Fatalf("WaitForIdle: %v", err)
+	}
+
+	// Stale entry was dropped from pendingPost.
+	if _, ok := d.peekPendingPost(prNumber, commentID); ok {
+		t.Errorf("pendingPost should drop a stale entry (decision.md missing) and fall through to launch (Slice E contract)")
+	}
+
+	// Launch path fired: BatchRunner was called exactly once.
+	if runner.Calls() != 1 {
+		t.Fatalf("expected BatchRunner.RunBatch to fire on stale-entry fall-through, got %d calls", runner.Calls())
+	}
+	// S3 happy path: poster captured the freshly-launched body.
+	if poster.Calls() != 1 {
+		t.Errorf("expected exactly 1 PostComment call from the fresh launch, got %d", poster.Calls())
 	}
 }
