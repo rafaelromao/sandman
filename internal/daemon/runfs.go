@@ -152,6 +152,8 @@ type BatchManifest struct {
 	CreatedAt  time.Time `json:"createdAt"`
 	RunKind    string    `json:"runKind,omitempty"`
 	BatchId    string    `json:"batchId,omitempty"`
+	RunTS      string    `json:"runTs,omitempty"`
+	RunShortID string    `json:"runShortId,omitempty"`
 	PR         *int      `json:"pr,omitempty"`
 	Candidates []int     `json:"candidates,omitempty"`
 	Query      string    `json:"query,omitempty"`

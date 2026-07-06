@@ -184,3 +184,37 @@ func TestIsRunActive_RejectsStaleOnlyDirs(t *testing.T) {
 		t.Error("expected IsRunActive to return false for empty batch dir")
 	}
 }
+
+func TestBatchManifest_RunTSAndRunShortIDRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	pr := 42
+	manifest := BatchManifest{
+		Issues:     []int{7, 8},
+		CreatedAt:  time.Date(2026, 6, 18, 11, 38, 25, 0, time.UTC),
+		RunKind:    "issue",
+		BatchId:    "abcd-260618113825-7+2",
+		RunTS:      "260618113825",
+		RunShortID: "abcd",
+		PR:         &pr,
+	}
+	if err := WriteManifest(dir, manifest); err != nil {
+		t.Fatalf("WriteManifest: %v", err)
+	}
+
+	got, err := ReadManifest(dir)
+	if err != nil {
+		t.Fatalf("ReadManifest: %v", err)
+	}
+	if got.RunTS != "260618113825" {
+		t.Errorf("RunTS = %q, want %q", got.RunTS, "260618113825")
+	}
+	if got.RunShortID != "abcd" {
+		t.Errorf("RunShortID = %q, want %q", got.RunShortID, "abcd")
+	}
+	if got.BatchId != "abcd-260618113825-7+2" {
+		t.Errorf("BatchId = %q, want preserved value", got.BatchId)
+	}
+	if got.RunKind != "issue" {
+		t.Errorf("RunKind = %q, want %q", got.RunKind, "issue")
+	}
+}

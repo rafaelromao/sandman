@@ -21,6 +21,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/daemon"
 	"github.com/rafaelromao/sandman/internal/events"
 	"github.com/rafaelromao/sandman/internal/paths"
+	"github.com/rafaelromao/sandman/internal/runid"
 )
 
 type portalEvent struct {
@@ -148,6 +149,8 @@ type portalActiveRun struct {
 	PRNumber     int
 	BatchID      string
 	RunID        string
+	RunTS        string
+	RunShortID   string
 	StartedAt    time.Time
 	ModTime      time.Time
 }
@@ -1250,6 +1253,37 @@ func (v *portalRunsView) stateStartsInBatch(timestamp, batchStart time.Time) boo
 	return !timestamp.Before(batchStart)
 }
 
+// perRowRunIDForActive derives the per-row RunID for an issue within an
+// active batch, before run.started lands in the event log. It uses the
+// batch manifest's (RunTS, RunShortID) pair to construct the canonical
+// ADR-0030 per-row RunID (<shortid>-<ts>-<issueNum> for issue-driven
+// runs, <shortid>-<ts>-<linkedIssue>-PR<pr> for review runs with a
+// linked issue), falling back to the run.queued event's RunID when
+// manifest fields are absent.
+func perRowRunIDForActive(active portalActiveRun, issueNumber int, queued *events.Event) string {
+	return perRowRunIDForManifest(active.RunTS, active.RunShortID, active.PRNumber, issueNumber, queued)
+}
+
+// perRowRunIDForManifest constructs the per-row RunID from the batch
+// manifest's (RunTS, RunShortID) pair and the issue/pr identity. Falls
+// back to the queued event's RunID when manifest fields are absent.
+func perRowRunIDForManifest(runTS, runShortID string, prNumber, issueNumber int, queued *events.Event) string {
+	if runTS != "" && runShortID != "" {
+		if prNumber > 0 {
+			subject := fmt.Sprintf("PR%d", prNumber)
+			if issueNumber > 0 {
+				subject = fmt.Sprintf("%d-PR%d", issueNumber, prNumber)
+			}
+			return runid.NewRunID(runid.KindReview, subject, runTS, runShortID)
+		}
+		return runid.NewRunID(runid.KindIssue, fmt.Sprintf("%d", issueNumber), runTS, runShortID)
+	}
+	if queued != nil && queued.RunID != "" {
+		return queued.RunID
+	}
+	return ""
+}
+
 func (v *portalRunsView) runFromActiveBatchIssue(repoRoot string, active portalActiveRun, issueNumber int, state *events.RunState, blocked *events.Event, queued *events.Event, liveOutput string, eventsByRun map[string][]portalEvent, deadBatches []daemon.DeadBatch) portalRun {
 	issueLabel := fmt.Sprintf("#%d", issueNumber)
 	// active.Dir is the live batch directory on disk (with the "+N"
@@ -1259,8 +1293,10 @@ func (v *portalRunsView) runFromActiveBatchIssue(repoRoot string, active portalA
 	// active.Dir so the staleness stat hits the real per-row log file
 	// even in the state-less path (issue #1715).
 	logPath, logURL := v.activeRunLogPathAndURL(repoRoot, active)
+	derivedRunID := perRowRunIDForActive(active, issueNumber, queued)
 	run := portalRun{
-		Key:         fmt.Sprintf("%s-issue-%d", activeKeyForActive(active), issueNumber),
+		Key:         derivedRunID,
+		RunID:       derivedRunID,
 		Kind:        "active",
 		Status:      "queued",
 		IssueLabel:  issueLabel,
@@ -1276,9 +1312,6 @@ func (v *portalRunsView) runFromActiveBatchIssue(repoRoot string, active portalA
 	// batch is not interesting to surface and would add payload noise.
 	if len(active.IssueNumbers) > 1 {
 		run.BatchIssues = append([]int(nil), active.IssueNumbers...)
-	}
-	if active.PRNumber > 0 && active.RunID != "" && active.RunID != active.BatchID {
-		run.RunID = active.RunID
 	}
 	if state != nil {
 		activeWithOutput := active

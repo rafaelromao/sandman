@@ -956,6 +956,122 @@ func TestPortal_RunFromState_EmptyRunIDWithIssueNumberUsesCompoundKey(t *testing
 	}
 }
 
+func TestPerRowRunIDForManifest_IssueDriven(t *testing.T) {
+	got := perRowRunIDForManifest("260618113825", "abcd", 0, 42, nil)
+	want := "abcd-260618113825-42"
+	if got != want {
+		t.Fatalf("perRowRunIDForManifest issue-driven = %q, want %q", got, want)
+	}
+}
+
+func TestPerRowRunIDForManifest_ReviewWithLinkedIssue(t *testing.T) {
+	got := perRowRunIDForManifest("260618113825", "abcd", 7, 42, nil)
+	want := "abcd-260618113825-42-PR7"
+	if got != want {
+		t.Fatalf("perRowRunIDForManifest review+linked issue = %q, want %q", got, want)
+	}
+}
+
+func TestPerRowRunIDForManifest_OrphanReview(t *testing.T) {
+	got := perRowRunIDForManifest("260618113825", "abcd", 7, 0, nil)
+	want := "abcd-260618113825-PR7"
+	if got != want {
+		t.Fatalf("perRowRunIDForManifest orphan review = %q, want %q", got, want)
+	}
+}
+
+func TestPerRowRunIDForManifest_FallsBackToQueuedRunID(t *testing.T) {
+	queued := &events.Event{RunID: "abcd-260618113825-42"}
+	got := perRowRunIDForManifest("", "", 0, 42, queued)
+	if got != "abcd-260618113825-42" {
+		t.Fatalf("perRowRunIDForManifest fallback = %q, want queued RunID", got)
+	}
+}
+
+func TestPerRowRunIDForManifest_NoFieldsNoQueuedReturnsEmpty(t *testing.T) {
+	got := perRowRunIDForManifest("", "", 0, 42, nil)
+	if got != "" {
+		t.Fatalf("perRowRunIDForManifest empty = %q, want empty string", got)
+	}
+}
+
+func TestPerRowRunIDForManifest_EmptyQueuedRunIDFallsThrough(t *testing.T) {
+	got := perRowRunIDForManifest("", "", 0, 42, &events.Event{})
+	if got != "" {
+		t.Fatalf("perRowRunIDForManifest empty queued.RunID = %q, want empty string", got)
+	}
+}
+
+func TestPerRowRunIDForActive_PropagatesFields(t *testing.T) {
+	active := portalActiveRun{
+		RunTS:      "260618113825",
+		RunShortID: "abcd",
+		PRNumber:   0,
+	}
+	got := perRowRunIDForActive(active, 1793, nil)
+	want := "abcd-260618113825-1793"
+	if got != want {
+		t.Fatalf("perRowRunIDForActive = %q, want %q", got, want)
+	}
+}
+
+func TestPortal_RunFromActiveBatchIssue_DerivesPerRowRunIDFromManifest(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(repoRoot, ".sandman", "logs"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	active := portalActiveRun{
+		Key:         "abcd-260618113825-1793+1",
+		Dir:         "/tmp/batch",
+		IssueNumber: 1793,
+		BatchID:     "abcd-260618113825-1793+1",
+		RunTS:       "260618113825",
+		RunShortID:  "abcd",
+	}
+
+	run := (&portalRunsView{}).runFromActiveBatchIssue(repoRoot, active, 1793, nil, nil, nil, "", nil, nil)
+
+	wantRunID := "abcd-260618113825-1793"
+	if run.Key != wantRunID {
+		t.Fatalf("expected Key %q (derived per-row RunID), got %q", wantRunID, run.Key)
+	}
+	if run.RunID != wantRunID {
+		t.Fatalf("expected RunID %q (derived per-row RunID), got %q", wantRunID, run.RunID)
+	}
+}
+
+func TestPortal_RunFromActiveBatchIssue_DoesNotEmitIssueN(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(repoRoot, ".sandman", "logs"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	active := portalActiveRun{
+		Key:         "abcd-260618113825-1793+1",
+		Dir:         "/tmp/batch",
+		IssueNumber: 1793,
+		BatchID:     "abcd-260618113825-1793+1",
+		RunTS:       "260618113825",
+		RunShortID:  "abcd",
+	}
+
+	run := (&portalRunsView{}).runFromActiveBatchIssue(repoRoot, active, 1793, nil, nil, nil, "", nil, nil)
+
+	if strings.Contains(run.Key, "issue-") {
+		t.Fatalf("expected derived RunID to not contain 'issue-', got %q", run.Key)
+	}
+	if strings.Contains(run.RunID, "issue-") {
+		t.Fatalf("expected derived RunID to not contain 'issue-', got %q", run.RunID)
+	}
+}
+
 func TestPortal_RunFromActiveBatchIssue_PopulatesIssueTitle(t *testing.T) {
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
