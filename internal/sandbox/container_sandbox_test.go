@@ -480,7 +480,13 @@ func TestContainerSandbox_Exec_KillAgentFnCalledOnAbort(t *testing.T) {
 		if !errors.Is(err, context.Canceled) {
 			t.Fatalf("expected context.Canceled, got: %v", err)
 		}
-	case <-time.After(2 * time.Second):
+	case <-time.After(5 * time.Second):
+		// 5 s ceiling matches the macOS-CI defensive bump pattern
+		// applied to TestDaemon_RestartRecoversPendingFromDisk (60 s,
+		// see docs in CHANGELOG and commit aa06f957). The kernel +
+		// container-emulator signal delivery on a CI-loaded macOS runner
+		// can take several seconds; the assertion semantic is the
+		// exit-error class, not the wall-clock latency.
 		t.Fatal("Exec did not unblock after context cancel")
 	}
 
