@@ -1260,6 +1260,13 @@ func TestPRFlow_PodmanSandboxBinaryParallelAgentRuns(t *testing.T) {
 		seedParallelPRFlowRepo(t, repoDir)
 		runGit(t, repoDir, "remote", "set-url", "origin", "git@github.com:rafaelromao/sandman.git")
 
+		absRepo, err := filepath.Abs(repoDir)
+		if err != nil {
+			t.Fatalf("resolve repoDir to absolute path: %v", err)
+		}
+		rewrittenOriginURL := "file://" + filepath.Join(absRepo, "remote")
+		runGit(t, repoDir, "remote", "set-url", "origin", rewrittenOriginURL)
+
 		setupIsolatedPRFlowHome(t, realHome, repoDir, "sandman-podman-e2e-parallel-", tc.authPaths)
 
 		out, err := runSandmanBinary(t, binPath, repoDir, "init", "--agent", tc.name)
@@ -1279,6 +1286,7 @@ func TestPRFlow_PodmanSandboxBinaryParallelAgentRuns(t *testing.T) {
 		ghShimDir := t.TempDir()
 		writeFakeGHShimParallel(t, ghShimDir)
 		prependPath(t, ghShimDir)
+		assertHostShimResolves(t, ghShimDir)
 
 		containerGhShimDir := filepath.Join(repoDir, ".sandman", "bin")
 		writeFakeGHShimForContainerParallel(t, containerGhShimDir)
@@ -1291,11 +1299,13 @@ func TestPRFlow_PodmanSandboxBinaryParallelAgentRuns(t *testing.T) {
 		if out, err := exec.Command("podman", "run", "--rm", "sandman-e2e-model-detect-parallel", "sh", "-c", "command -v go >/dev/null").CombinedOutput(); err != nil {
 			t.Fatalf("go toolchain missing in container image: %v\n%s", err, out)
 		}
+		assertContainerShimFresh(t, "sandman-e2e-model-detect-parallel", containerGhShimDir)
 		t.Logf("using provider model: %s", tc.model)
 
 		customizePRFlowAgent(t, repoDir, tc, prFlowAgentOptions{container: true, echo: true})
 		writeParallelPRFlowPrompt(t, repoDir, tc)
 
+		scrubGitHubEnv(t)
 		out, err = runSandmanBinary(t, binPath, repoDir, "run",
 			"--agent", tc.name,
 			"--sandbox", "podman",
@@ -1390,67 +1400,15 @@ func TestPRFlow_PodmanSandboxBinaryParallelAgentRuns(t *testing.T) {
 			}
 		}
 
-		for i := 1; i <= 2; i++ {
-			argsFile := filepath.Join(containerGhShimDir, fmt.Sprintf("pr-create.args.%d", i))
-			if _, err := os.Stat(argsFile); err != nil {
-				t.Fatalf("missing pr-create.args.%d: %v", i, err)
-			}
-		}
-		countData, err := os.ReadFile(filepath.Join(containerGhShimDir, "pr-create.count"))
-		if err != nil {
-			t.Fatalf("read pr create count: %v", err)
-		}
-		if got := strings.TrimSpace(string(countData)); got != "2" {
-			t.Fatalf("expected exactly two pr create invocations, got %q", got)
-		}
-
-		type prCreateCall struct {
-			branch string
-			title  string
-			body   string
-		}
-		expected := map[string]prCreateCall{
-			parallelBranch150: {parallelBranch150, "Fix 150", "Fixes #150"},
-			parallelBranch151: {parallelBranch151, "Fix 151", "Fixes #151"},
-		}
-		seen := make(map[string]bool)
-		for i := 1; i <= 2; i++ {
-			argsData, err := os.ReadFile(filepath.Join(containerGhShimDir, fmt.Sprintf("pr-create.args.%d", i)))
-			if err != nil {
-				t.Fatalf("read pr create args.%d: %v", i, err)
-			}
-			args := strings.Split(strings.TrimSpace(string(argsData)), "\n")
-			head := prFlowFlagValue(args, "--head")
-			if head == "" {
-				t.Fatalf("pr create %d: missing --head flag in args:\n%s", i, argsData)
-			}
-			if seen[head] {
-				t.Fatalf("pr create %d: duplicate branch %q", i, head)
-			}
-			seen[head] = true
-
-			call, ok := expected[head]
-			if !ok {
-				t.Fatalf("pr create %d: unexpected --head %q, expected one of %q or %q", i, head, parallelBranch150, parallelBranch151)
-			}
-			if got := prFlowFlagValue(args, "--base"); got != "main" {
-				t.Fatalf("pr create %d (%s): --base got %q, want %q", i, head, got, "main")
-			}
-			if got := prFlowFlagValue(args, "--title"); got != call.title {
-				t.Fatalf("pr create %d (%s): --title got %q, want %q", i, head, got, call.title)
-			}
-
-			bodyData, err := os.ReadFile(filepath.Join(containerGhShimDir, fmt.Sprintf("pr-create.body.%d", i)))
-			if err != nil {
-				t.Fatalf("read pr create body.%d: %v", i, err)
-			}
-			if got := strings.TrimSpace(string(bodyData)); got != call.body {
-				t.Fatalf("pr create %d (%s): body got %q, want %q", i, head, got, call.body)
-			}
-		}
-		if len(seen) != 2 {
-			t.Fatalf("expected pr creates for both branches, got %v", seen)
-		}
+		assertHermeticGHShimsParallel(t, []prFlowHermeticScope{{
+			RepoDir:            repoDir,
+			ContainerGhShimDir: containerGhShimDir,
+			ExpectedOriginURL:  rewrittenOriginURL,
+			ExpectedPRCalls: []prFlowExpectedPR{
+				{Branch: parallelBranch150, Title: "Fix 150", Body: "Fixes #150"},
+				{Branch: parallelBranch151, Title: "Fix 151", Body: "Fixes #151"},
+			},
+		}})
 	})
 }
 
@@ -1485,6 +1443,13 @@ func TestPRFlow_PodmanSandboxBinaryParallelAgentRunsAutoCapacity(t *testing.T) {
 		seedParallelPRFlowRepo(t, repoDir)
 		runGit(t, repoDir, "remote", "set-url", "origin", "git@github.com:rafaelromao/sandman.git")
 
+		absRepo, err := filepath.Abs(repoDir)
+		if err != nil {
+			t.Fatalf("resolve repoDir to absolute path: %v", err)
+		}
+		rewrittenOriginURL := "file://" + filepath.Join(absRepo, "remote")
+		runGit(t, repoDir, "remote", "set-url", "origin", rewrittenOriginURL)
+
 		setupIsolatedPRFlowHome(t, realHome, repoDir, "sandman-podman-e2e-parallel-auto-", tc.authPaths)
 
 		out, err := runSandmanBinary(t, binPath, repoDir, "init", "--agent", tc.name)
@@ -1504,6 +1469,7 @@ func TestPRFlow_PodmanSandboxBinaryParallelAgentRunsAutoCapacity(t *testing.T) {
 		ghShimDir := t.TempDir()
 		writeFakeGHShimParallel(t, ghShimDir)
 		prependPath(t, ghShimDir)
+		assertHostShimResolves(t, ghShimDir)
 
 		containerGhShimDir := filepath.Join(repoDir, ".sandman", "bin")
 		writeFakeGHShimForContainerParallel(t, containerGhShimDir)
@@ -1516,11 +1482,13 @@ func TestPRFlow_PodmanSandboxBinaryParallelAgentRunsAutoCapacity(t *testing.T) {
 		if out, err := exec.Command("podman", "run", "--rm", "sandman-e2e-model-detect-parallel-auto", "sh", "-c", "command -v go >/dev/null").CombinedOutput(); err != nil {
 			t.Fatalf("go toolchain missing in container image: %v\n%s", err, out)
 		}
+		assertContainerShimFresh(t, "sandman-e2e-model-detect-parallel-auto", containerGhShimDir)
 		t.Logf("using provider model: %s", tc.model)
 
 		customizePRFlowAgent(t, repoDir, tc, prFlowAgentOptions{container: true, echo: true})
 		writeParallelPRFlowPrompt(t, repoDir, tc)
 
+		scrubGitHubEnv(t)
 		out, err = runSandmanBinary(t, binPath, repoDir, "run",
 			"--agent", tc.name,
 			"--sandbox", "podman",
@@ -1624,67 +1592,15 @@ func TestPRFlow_PodmanSandboxBinaryParallelAgentRunsAutoCapacity(t *testing.T) {
 			}
 		}
 
-		for i := 1; i <= 2; i++ {
-			argsFile := filepath.Join(containerGhShimDir, fmt.Sprintf("pr-create.args.%d", i))
-			if _, err := os.Stat(argsFile); err != nil {
-				t.Fatalf("missing pr-create.args.%d: %v", i, err)
-			}
-		}
-		countData, err := os.ReadFile(filepath.Join(containerGhShimDir, "pr-create.count"))
-		if err != nil {
-			t.Fatalf("read pr create count: %v", err)
-		}
-		if got := strings.TrimSpace(string(countData)); got != "2" {
-			t.Fatalf("expected exactly two pr create invocations, got %q", got)
-		}
-
-		type prCreateCall struct {
-			branch string
-			title  string
-			body   string
-		}
-		expected := map[string]prCreateCall{
-			parallelBranch150: {parallelBranch150, "Fix 150", "Fixes #150"},
-			parallelBranch151: {parallelBranch151, "Fix 151", "Fixes #151"},
-		}
-		seen := make(map[string]bool)
-		for i := 1; i <= 2; i++ {
-			argsData, err := os.ReadFile(filepath.Join(containerGhShimDir, fmt.Sprintf("pr-create.args.%d", i)))
-			if err != nil {
-				t.Fatalf("read pr create args.%d: %v", i, err)
-			}
-			args := strings.Split(strings.TrimSpace(string(argsData)), "\n")
-			head := prFlowFlagValue(args, "--head")
-			if head == "" {
-				t.Fatalf("pr create %d: missing --head flag in args:\n%s", i, argsData)
-			}
-			if seen[head] {
-				t.Fatalf("pr create %d: duplicate branch %q", i, head)
-			}
-			seen[head] = true
-
-			call, ok := expected[head]
-			if !ok {
-				t.Fatalf("pr create %d: unexpected --head %q, expected one of %q or %q", i, head, parallelBranch150, parallelBranch151)
-			}
-			if got := prFlowFlagValue(args, "--base"); got != "main" {
-				t.Fatalf("pr create %d (%s): --base got %q, want %q", i, head, got, "main")
-			}
-			if got := prFlowFlagValue(args, "--title"); got != call.title {
-				t.Fatalf("pr create %d (%s): --title got %q, want %q", i, head, got, call.title)
-			}
-
-			bodyData, err := os.ReadFile(filepath.Join(containerGhShimDir, fmt.Sprintf("pr-create.body.%d", i)))
-			if err != nil {
-				t.Fatalf("read pr create body.%d: %v", i, err)
-			}
-			if got := strings.TrimSpace(string(bodyData)); got != call.body {
-				t.Fatalf("pr create %d (%s): body got %q, want %q", i, head, got, call.body)
-			}
-		}
-		if len(seen) != 2 {
-			t.Fatalf("expected pr creates for both branches, got %v", seen)
-		}
+		assertHermeticGHShimsParallel(t, []prFlowHermeticScope{{
+			RepoDir:            repoDir,
+			ContainerGhShimDir: containerGhShimDir,
+			ExpectedOriginURL:  rewrittenOriginURL,
+			ExpectedPRCalls: []prFlowExpectedPR{
+				{Branch: parallelBranch150, Title: "Fix 150", Body: "Fixes #150"},
+				{Branch: parallelBranch151, Title: "Fix 151", Body: "Fixes #151"},
+			},
+		}})
 	})
 }
 
@@ -1768,6 +1684,13 @@ func TestE2E_QueuedIssuesPersistAfterBatchCompletes(t *testing.T) {
 		seedParallelPRFlowRepo(t, repoDir)
 		runGit(t, repoDir, "remote", "set-url", "origin", "git@github.com:rafaelromao/sandman.git")
 
+		absRepo, err := filepath.Abs(repoDir)
+		if err != nil {
+			t.Fatalf("resolve repoDir to absolute path: %v", err)
+		}
+		rewrittenOriginURL := "file://" + filepath.Join(absRepo, "remote")
+		runGit(t, repoDir, "remote", "set-url", "origin", rewrittenOriginURL)
+
 		setupIsolatedPRFlowHome(t, realHome, repoDir, "sandman-podman-e2e-queued-", tc.authPaths)
 
 		out, err := runSandmanBinary(t, binPath, repoDir, "init", "--agent", tc.name)
@@ -1782,6 +1705,7 @@ func TestE2E_QueuedIssuesPersistAfterBatchCompletes(t *testing.T) {
 		ghShimDir := t.TempDir()
 		writeFakeGHShimParallel(t, ghShimDir)
 		prependPath(t, ghShimDir)
+		assertHostShimResolves(t, ghShimDir)
 
 		containerGhShimDir := filepath.Join(repoDir, ".sandman", "bin")
 		writeFakeGHShimForContainerParallel(t, containerGhShimDir)
@@ -1791,10 +1715,12 @@ func TestE2E_QueuedIssuesPersistAfterBatchCompletes(t *testing.T) {
 		if out, err := buildCmd.CombinedOutput(); err != nil {
 			t.Fatalf("build image: %v: %s", err, out)
 		}
+		assertContainerShimFresh(t, "sandman-e2e-queued", containerGhShimDir)
 
 		customizePRFlowAgent(t, repoDir, tc, prFlowAgentOptions{container: true})
 		writeParallelPRFlowPrompt(t, repoDir, tc)
 
+		scrubGitHubEnv(t)
 		out, err = runSandmanBinary(t, binPath, repoDir, "run",
 			"--agent", tc.name,
 			"--sandbox", "podman",
@@ -1907,6 +1833,16 @@ func TestE2E_QueuedIssuesPersistAfterBatchCompletes(t *testing.T) {
 		} else if run.Status != "queued" {
 			t.Fatalf("expected issue %d status=queued, got %q", parallelIssue152, run.Status)
 		}
+
+		assertHermeticGHShimsParallel(t, []prFlowHermeticScope{{
+			RepoDir:            repoDir,
+			ContainerGhShimDir: containerGhShimDir,
+			ExpectedOriginURL:  rewrittenOriginURL,
+			ExpectedPRCalls: []prFlowExpectedPR{
+				{Branch: parallelBranch150, Title: "Fix 150", Body: "Fixes #150"},
+				{Branch: parallelBranch151, Title: "Fix 151", Body: "Fixes #151"},
+			},
+		}})
 	})
 }
 
@@ -2436,5 +2372,94 @@ func assertRemoteOriginRewritten(t *testing.T, repoDir, expectedURL string) {
 	got := strings.TrimSpace(string(out))
 	if got != expectedURL {
 		t.Fatalf("hermeticity assertion: remote.origin.url = %q, want %q (real remote URL escaped the test)", got, expectedURL)
+	}
+}
+
+type prFlowExpectedPR struct {
+	Branch string
+	Title  string
+	Body   string
+}
+
+type prFlowHermeticScope struct {
+	RepoDir            string
+	ContainerGhShimDir string
+	ExpectedOriginURL  string
+	ExpectedPRCalls    []prFlowExpectedPR
+}
+
+func assertHermeticGHShimsParallel(t *testing.T, scopes []prFlowHermeticScope) {
+	t.Helper()
+
+	for _, scope := range scopes {
+		assertRemoteOriginRewritten(t, scope.RepoDir, scope.ExpectedOriginURL)
+	}
+
+	for _, scope := range scopes {
+		assertPRCreateArtifactsParallel(t, scope)
+	}
+}
+
+func assertPRCreateArtifactsParallel(t *testing.T, scope prFlowHermeticScope) {
+	t.Helper()
+
+	expected := scope.ExpectedPRCalls
+	countFile := filepath.Join(scope.ContainerGhShimDir, "pr-create.count")
+	countData, err := os.ReadFile(countFile)
+	if err != nil {
+		t.Fatalf("hermeticity assertion (%s): read pr-create.count: %v", scope.RepoDir, err)
+	}
+	gotCount := strings.TrimSpace(string(countData))
+	wantCount := fmt.Sprintf("%d", len(expected))
+	if gotCount != wantCount {
+		t.Fatalf("hermeticity assertion (%s): pr-create.count = %q, want %q", scope.RepoDir, gotCount, wantCount)
+	}
+
+	seen := make(map[string]bool)
+	for i := 1; i <= len(expected); i++ {
+		argsFile := filepath.Join(scope.ContainerGhShimDir, fmt.Sprintf("pr-create.args.%d", i))
+		argsData, err := os.ReadFile(argsFile)
+		if err != nil {
+			t.Fatalf("hermeticity assertion (%s): read pr-create.args.%d: %v", scope.RepoDir, i, err)
+		}
+		args := strings.Split(strings.TrimSpace(string(argsData)), "\n")
+		head := prFlowFlagValue(args, "--head")
+		if head == "" {
+			t.Fatalf("hermeticity assertion (%s): pr-create.args.%d missing --head:\n%s", scope.RepoDir, i, argsData)
+		}
+		if seen[head] {
+			t.Fatalf("hermeticity assertion (%s): pr-create.args.%d duplicate --head %q", scope.RepoDir, i, head)
+		}
+		seen[head] = true
+
+		matched := false
+		for _, want := range expected {
+			if want.Branch != head {
+				continue
+			}
+			if got := prFlowFlagValue(args, "--base"); got != "main" {
+				t.Fatalf("hermeticity assertion (%s): pr-create.args.%d --base = %q, want %q", scope.RepoDir, i, got, "main")
+			}
+			if got := prFlowFlagValue(args, "--title"); got != want.Title {
+				t.Fatalf("hermeticity assertion (%s): pr-create.args.%d --title = %q, want %q", scope.RepoDir, i, got, want.Title)
+			}
+			bodyFile := filepath.Join(scope.ContainerGhShimDir, fmt.Sprintf("pr-create.body.%d", i))
+			bodyData, err := os.ReadFile(bodyFile)
+			if err != nil {
+				t.Fatalf("hermeticity assertion (%s): read pr-create.body.%d: %v", scope.RepoDir, i, err)
+			}
+			if got := strings.TrimSpace(string(bodyData)); got != want.Body {
+				t.Fatalf("hermeticity assertion (%s): pr-create.body.%d = %q, want %q", scope.RepoDir, i, got, want.Body)
+			}
+			matched = true
+			break
+		}
+		if !matched {
+			t.Fatalf("hermeticity assertion (%s): pr-create.args.%d --head %q did not match any expected branch", scope.RepoDir, i, head)
+		}
+	}
+
+	if len(seen) != len(expected) {
+		t.Fatalf("hermeticity assertion (%s): expected pr-create invocations for %d branches, got %d (%v)", scope.RepoDir, len(expected), len(seen), seen)
 	}
 }
