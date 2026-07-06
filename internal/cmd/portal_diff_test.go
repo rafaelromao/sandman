@@ -4370,18 +4370,50 @@ console.log('PASS');
 // is the regression test for issue #1362: when an issue has both a terminal
 // parent run and a live review child, the visible row must be the terminal
 // parent, not the live child. The review child must remain accessible in the
-// expanded selector. The badge status comes from the backend projection
-// (aggregateReviewChildren flips to "reviewing"); the frontend passes through
-// the backend-provided status without re-deriving it.
+// expanded selector.
 func TestPortalRunsView_VisibleRunForIssueGroup_TerminalParentWinsOverLiveChild(t *testing.T) {
-	js := `const parent = { key: 'issue-1', kind: 'completed', status: 'reviewing', review: false, issueLabel: '#1', runId: 'issue-1', issueNumber: 1, reviewCount: 1 };
+	js := `const parent = { key: 'issue-1', kind: 'completed', status: 'success', review: false, issueLabel: '#1', runId: 'issue-1', issueNumber: 1 };
 const liveChild = { key: 'PR42', kind: 'active', status: 'reviewing', review: true, issueLabel: 'PR42', runId: 'PR42', issueNumber: 1, prNumber: 42 };
 const result = visibleRunForIssueGroup(1, [parent, liveChild]);
 if (!result) throw new Error('expected visible row');
 if (result.key !== 'issue-1') throw new Error('expected parent as visible row, got ' + JSON.stringify(result.key));
-if (result.status !== 'reviewing') throw new Error('expected visible badge to be reviewing (backend-provided), got ' + JSON.stringify(result.status));
+if (result.status !== 'success') throw new Error('expected visible badge to be parent status (no live review flip), got ' + JSON.stringify(result.status));
 if (result.kind !== 'completed') throw new Error('expected completed kind, got ' + JSON.stringify(result.kind));
 if (result.review) throw new Error('expected review flag false for parent row, got ' + JSON.stringify(result.review));
+console.log('PASS');
+`
+	runPortalHTMLScript(t, js)
+}
+
+// TestPortalRunsView_VisibleRunForIssueGroup_NewerSuccessWinsOverOlderAbortedWithReviews
+// is the regression test for issue #1825: when the same issue has two
+// terminal impl rows from different batches (older aborted carrying
+// review metadata, newer successful without), the visible row must be the
+// newer successful run — never the older aborted run. The backend
+// projection no longer stamps review metadata across batches, and the
+// frontend's pickCanonicalParent must pick the newest parent by
+// FinishedAt rather than preferring parents that happen to carry
+// reviewCount/reviewVerdict from a previous batch.
+func TestPortalRunsView_VisibleRunForIssueGroup_NewerSuccessWinsOverOlderAbortedWithReviews(t *testing.T) {
+	js := `// The portal sorts runs by startedAt desc inside visibleRunsForTable,
+// so the newest parent sits at index 0 when visibleRunForIssueGroup is
+// invoked. The bug was that pickCanonicalParent reached past parents[0]
+// to find the older impl row that carried reviewCount/reviewVerdict.
+const newerSuccess = {
+  key: 'impl-9744', kind: 'completed', status: 'success', review: false,
+  issueLabel: '#1793', runId: 'impl-9744', issueNumber: 1793,
+  startedAt: '2026-07-05T00:00:00Z', finishedAt: '2026-07-05T00:30:00Z',
+};
+const olderAborted = {
+  key: 'impl-2bf9', kind: 'completed', status: 'aborted', review: false,
+  issueLabel: '#1793', runId: 'impl-2bf9', issueNumber: 1793,
+  startedAt: '2026-07-04T00:00:00Z', finishedAt: '2026-07-04T00:30:00Z',
+  reviewCount: 1, reviewVerdict: 'Approved',
+};
+const result = visibleRunForIssueGroup(1793, [newerSuccess, olderAborted]);
+if (!result) throw new Error('expected visible row');
+if (result.runId !== 'impl-9744') throw new Error('expected newer successful parent as visible row, got ' + JSON.stringify(result.runId));
+if (result.status !== 'success') throw new Error('expected visible status=success (newer run wins), got ' + JSON.stringify(result.status));
 console.log('PASS');
 `
 	runPortalHTMLScript(t, js)
@@ -4715,10 +4747,12 @@ console.log('PASS');
 }
 
 // TestPortalRunsView_VisibleRunForIssueGroup_LiveReviewFlipsParentStatusToReviewing
-// verifies that when a canonical parent impl row has a live review child,
-// the badge status from the backend projection (aggregateReviewChildren)
-// passes through the frontend unchanged. The flip to "reviewing" now
-// happens only in backend aggregateReviewChildren, not in JS.
+// verifies that the frontend passes through the parent row's status field
+// without re-deriving it. The synthetic literal here explicitly sets
+// status="reviewing" so the test pins the frontend's pass-through behavior
+// rather than asserting on backend projection (the backend no longer stamps
+// review metadata onto parent rows after the cross-batch aggregation
+// removal in issue #1825).
 func TestPortalRunsView_VisibleRunForIssueGroup_LiveReviewFlipsParentStatusToReviewing(t *testing.T) {
 	js := `const parent = {
   key: 'issue-1', kind: 'completed', status: 'reviewing', review: false,

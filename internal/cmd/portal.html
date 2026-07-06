@@ -2519,19 +2519,17 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
     }
 
     function summarizeReviewGroup(reviews) {
-      // The Go projection at portalRunsView.aggregateReviewChildren
-      // (portal_runs_view.go) now derives the verdict from each
-      // terminal review child's saved run.log, so it already flows
-      // through the canonical-parent path with the right value.
-      //
-      // This orphan-review-only path (no implementation row, only review
-      // children for an issue) cannot read each child's run.log content
-      // in JS without an async fetch that isn't wired here. Per issue
-      // #1729, orphan groups therefore render with an empty verdict
-      // ("N review" with no verdict suffix); renderRunMeta's
-      // `if (run.reviewVerdict)` guard at line ~2632 hides the trailing
-      // dash. Canonical parents (the primary case) get the full verdict
-      // from the server-side projection.
+      // The cross-batch review aggregation was removed in issue #1825,
+      // so the server no longer stamps ReviewVerdict onto parent
+      // implementation rows. The orphan-review-only path (no
+      // implementation row, only review children for an issue) cannot
+      // read each child's run.log content in JS without an async fetch
+      // that isn't wired here. Per issue #1729, orphan groups therefore
+      // render with an empty verdict ("N review" with no verdict
+      // suffix); renderRunMeta's `if (run.reviewVerdict)` guard hides
+      // the trailing dash. The orphan stub still synthesizes its own
+      // ReviewCount/ReviewVerdict values for review-only groups so the
+      // chip rendering stays meaningful for that one case.
       const summary = { count: 0, live: false, verdict: '', status: '', kind: 'completed', source: null };
       if (!Array.isArray(reviews) || !reviews.length) return summary;
       summary.count = reviews.length;
@@ -2566,7 +2564,7 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
       if (liveActive.length) {
         return liveActive.reduce((best, candidate) => (candidate.startedAt > best.startedAt ? candidate : best));
       }
-      return parents.find((candidate) => Number(candidate.reviewCount || 0) > 0 || candidate.reviewVerdict) || parents[0];
+      return parents[0];
     }
 
     function visibleRunForIssueGroup(issueNumber, runs) {
@@ -2844,7 +2842,7 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
           const issueParent = issueNumber > 0 ? prevRuns.find((run) => {
             if (!run || run.issueNumber !== issueNumber || run.review) return false;
             const label = String(run.issueLabel || '').trim();
-            return Number(run.reviewCount || 0) > 0 || !!run.reviewVerdict || label === ('#' + String(issueNumber));
+            return label === ('#' + String(issueNumber));
           }) : null;
           for (const issueRun of [cached, issueParent]) {
             if (!issueRun) continue;
@@ -2932,7 +2930,7 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
           if (group.length) {
             const parents = group.filter(r => !r.review);
             if (parents.length) {
-              run = parents.find(c => Number(c.reviewCount || 0) > 0 || c.reviewVerdict) || parents[0];
+              run = parents[0];
             } else {
               const summary = summarizeReviewGroup(group.filter(r => r.review));
               run = summary.source || null;

@@ -242,7 +242,6 @@ func TestPortal_Compute_AggregatesChildReviewsOntoIssueRow(t *testing.T) {
 
 	var issueRow *portalRun
 	var reviewRows int
-	var groupedReviewRows int
 	for i := range runs {
 		run := &runs[i]
 		if run.IssueNumber != 1 {
@@ -250,9 +249,6 @@ func TestPortal_Compute_AggregatesChildReviewsOntoIssueRow(t *testing.T) {
 		}
 		if run.Review {
 			reviewRows++
-			if run.GroupedReview {
-				groupedReviewRows++
-			}
 			continue
 		}
 		issueRow = run
@@ -263,34 +259,22 @@ func TestPortal_Compute_AggregatesChildReviewsOntoIssueRow(t *testing.T) {
 	if issueRow.RunID != "issue-1" {
 		t.Fatalf("expected canonical issue row runID issue-1, got %q", issueRow.RunID)
 	}
-	if issueRow.Status != "reviewing" {
-		t.Fatalf("expected parent status reviewing while child review is live (aggregateReviewChildren flips all parents), got %q", issueRow.Status)
-	}
-	if issueRow.ReviewCount != 2 {
-		t.Fatalf("expected review count 2, got %d", issueRow.ReviewCount)
-	}
-	if issueRow.ReviewVerdict != "Unclear" {
-		// PR43-done is terminal with status="success" but the fixture
-		// has no saved run.log; under the slice-1 fix the verdict comes
-		// from the log's ## Decision marker, not the run status. A
-		// missing marker → "Unclear" (issue #1729).
-		t.Fatalf("expected latest terminal review verdict Unclear (no saved log marker), got %q", issueRow.ReviewVerdict)
+	if issueRow.Status != "success" {
+		t.Fatalf("expected parent status success (terminal run.finished preserved after aggregateReviewChildren removal), got %q", issueRow.Status)
 	}
 	if reviewRows != 2 {
 		t.Fatalf("expected 2 review child rows, got %d from %#v", reviewRows, runs)
 	}
-	if groupedReviewRows != 2 {
-		t.Fatalf("expected 2 grouped review child rows, got %d from %#v", groupedReviewRows, runs)
-	}
 }
 
-// TestPortal_Compute_TerminalReviewWithApprovedMarker_ProjectsApproved
-// is the slice-2 positive mirror of TestPortal_Compute_AggregatesChildReviewsOntoIssueRow:
-// when the saved run.log for a terminal review carries the **APPROVED**
-// marker in its ## Decision section, the parent row's ReviewVerdict
-// surfaces "Approved" — even when run.finished.status is "success"
-// (issue #1729).
-func TestPortal_Compute_TerminalReviewWithApprovedMarker_ProjectsApproved(t *testing.T) {
+// TestPortal_Compute_TerminalReviewWithApprovedMarker_PreservesParentStatus
+// is the post-#1825 regression for a terminal review child whose saved
+// run.log carries the **APPROVED** marker. Previously the backend
+// projection stamped ReviewVerdict="Approved" onto the parent row from
+// the saved log; after the cross-batch aggregation removal the parent
+// row keeps its own terminal run.finished status and the marker only
+// affects orphan-review-only groups via the JS summarize path.
+func TestPortal_Compute_TerminalReviewWithApprovedMarker_PreservesParentStatus(t *testing.T) {
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
 		t.Fatal(err)
@@ -333,19 +317,20 @@ func TestPortal_Compute_TerminalReviewWithApprovedMarker_ProjectsApproved(t *tes
 	if parent == nil {
 		t.Fatalf("expected parent issue row, got %#v", runs)
 	}
-	if parent.ReviewVerdict != "Approved" {
-		t.Fatalf("parent ReviewVerdict=%q, want %q (saved run.log carries ## Decision / **APPROVED**)", parent.ReviewVerdict, "Approved")
+	if parent.Status != "success" {
+		t.Fatalf("parent Status=%q, want %q (terminal run.finished preserved)", parent.Status, "success")
 	}
 }
 
-// TestPortal_Compute_ApprovesIssue1755FromRealRunLogShape is the
-// end-to-end regression test for issue #1767. The bug: the review
-// agent posts its decision via `gh pr comment <PR> --body "..."`,
-// which leaves a trailing `"` on the same line as the `**APPROVED**`
-// marker inside the `## Decision` section of the saved run.log. The
-// portal's verdict projection anchored the entire marker line, so the
-// regex missed and the parent issue row rendered `ReviewVerdict="Unclear"`
-// even when the underlying PR was approved and merged.
+// TestPortal_Compute_PreservesParentStatusWithTrailingQuoteRunLogShape
+// is the post-#1825 regression for issue #1767's saved-log shape. The
+// bug was the portal's verdict projection anchoring the marker line
+// and missing the **APPROVED** marker when a trailing `"` followed it
+// (the `gh pr comment --body "..."` shell artifact). After the
+// cross-batch aggregation removal, the parent row's own terminal
+// status is preserved regardless of any review verdict projection,
+// and the reviewVerdictFromRunLog helper still tolerates the trailing
+// `"` for the orphan-review path that does consume it.
 //
 // The reproduction here mirrors the exact log tail captured locally
 // from `4f35-260704130316-1755-PR1763/run.log` (work item
@@ -353,7 +338,7 @@ func TestPortal_Compute_TerminalReviewWithApprovedMarker_ProjectsApproved(t *tes
 // sub-skill of sandman"). The test asserts that with the trailing `"`
 // tolerated, the parent row surfaces "Approved"; without the fix, the
 // helper falls through and the parent row stays "Unclear".
-func TestPortal_Compute_ApprovesIssue1755FromRealRunLogShape(t *testing.T) {
+func TestPortal_Compute_PreservesParentStatusWithTrailingQuoteRunLogShape(t *testing.T) {
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
 		t.Fatal(err)
@@ -441,24 +426,20 @@ func TestPortal_Compute_ApprovesIssue1755FromRealRunLogShape(t *testing.T) {
 	if reviewRow.Status != "success" {
 		t.Fatalf("review row Status=%q, want success (the agent exits 0 even when it approved)", reviewRow.Status)
 	}
-	if implRow.ReviewCount != 1 {
-		t.Fatalf("impl row ReviewCount=%d, want 1", implRow.ReviewCount)
-	}
-	if got := implRow.ReviewVerdict; got != "Approved" {
-		t.Fatalf("impl row ReviewVerdict=%q, want %q (issue #1767 — the saved run.log carries ## Decision / **APPROVED**\")", got, "Approved")
+	if implRow.Status != "success" {
+		t.Fatalf("impl row Status=%q, want success (terminal run.finished preserved)", implRow.Status)
 	}
 }
 
-// TestPortal_Compute_ApprovesIssue1779FromRealRunLogShape is the
-// end-to-end regression test for issue #1792. The bug: the review
-// agent posts its decision via `gh pr comment <PR> --body "..." 2>&1 |
-// tail -5`, which leaves a trailing `"` PLUS a redirect-and-pipe
-// trailer (`2>&1 | tail -5`) on the same line as the `**APPROVED**`
-// marker inside the `## Decision` section of the saved run.log. The
-// portal's verdict projection (as of #1767) anchored the marker line
-// to `"?\s*$`, so the regex missed and the parent issue row rendered
-// `ReviewVerdict="Unclear"` even when the underlying PR was approved
-// and merged.
+// TestPortal_Compute_PreservesParentStatusWithTrailingQuoteAndPipeRunLogShape
+// is the post-#1825 regression for issue #1792's saved-log shape. The
+// bug was the portal's verdict projection (as of #1767) anchoring the
+// marker line to `"?\s*$` and missing the **APPROVED** marker when a
+// trailing `" 2>&1 | tail -5` followed it. After the cross-batch
+// aggregation removal, the parent row's own terminal status is
+// preserved regardless of any review verdict projection, and the
+// reviewVerdictFromRunLog helper still tolerates the broader debris
+// for the orphan-review path that does consume it.
 //
 // The reproduction here mirrors the actual log tail captured locally
 // from `d9f0-260704185852-1779-PR1789/run.log` (work item
@@ -466,7 +447,7 @@ func TestPortal_Compute_ApprovesIssue1755FromRealRunLogShape(t *testing.T) {
 // PR #1789). The test asserts that with the broader marker rule in
 // place, the parent row surfaces "Approved"; without it, the helper
 // falls through and the parent row stays "Unclear".
-func TestPortal_Compute_ApprovesIssue1779FromRealRunLogShape(t *testing.T) {
+func TestPortal_Compute_PreservesParentStatusWithTrailingQuoteAndPipeRunLogShape(t *testing.T) {
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
 		t.Fatal(err)
@@ -557,11 +538,8 @@ func TestPortal_Compute_ApprovesIssue1779FromRealRunLogShape(t *testing.T) {
 	if reviewRow.Status != "success" {
 		t.Fatalf("review row Status=%q, want success (the agent exits 0 even when it approved)", reviewRow.Status)
 	}
-	if implRow.ReviewCount != 1 {
-		t.Fatalf("impl row ReviewCount=%d, want 1", implRow.ReviewCount)
-	}
-	if got := implRow.ReviewVerdict; got != "Approved" {
-		t.Fatalf("impl row ReviewVerdict=%q, want %q (issue #1792 — the saved run.log carries ## Decision / **APPROVED**\" 2>&1 | tail -5)", got, "Approved")
+	if implRow.Status != "success" {
+		t.Fatalf("impl row Status=%q, want success (terminal run.finished preserved)", implRow.Status)
 	}
 }
 
@@ -569,10 +547,11 @@ func TestPortal_Compute_ApprovesIssue1779FromRealRunLogShape(t *testing.T) {
 // is the backend regression test for issue #1525 acceptance criterion #6:
 // when compute() projects an issue group that has both a canonical
 // implementation row and review child rows, the canonical parent's
-// BatchKey, RunID, IssueTitle, and StartedAt must remain pinned to the
-// implementation run's own identity. Review aggregation (ReviewCount,
-// ReviewVerdict) may enrich the parent row, but it must never overwrite
-// the parent's own identity fields.
+// BatchKey, RunID, IssueTitle, StartedAt, and Status must remain
+// pinned to the implementation run's own identity. The cross-batch
+// review aggregation that previously stamped ReviewCount/ReviewVerdict
+// onto the parent row was removed in issue #1825, so the parent's
+// own terminal run.finished status is the only value that survives.
 func TestPortal_Compute_CanonicalParentIdentityPreservedWithReviewChildren(t *testing.T) {
 	repoRoot, err := os.MkdirTemp("/tmp", "p")
 	if err != nil {
@@ -685,8 +664,8 @@ func TestPortal_Compute_CanonicalParentIdentityPreservedWithReviewChildren(t *te
 	if parentRow.BatchKey != "" {
 		t.Fatalf("expected canonical parent BatchKey empty (event-log-only), got %q", parentRow.BatchKey)
 	}
-	if parentRow.ReviewCount != 2 {
-		t.Fatalf("expected canonical parent ReviewCount 2, got %d", parentRow.ReviewCount)
+	if parentRow.Status != "success" {
+		t.Fatalf("expected canonical parent Status success (terminal run.finished preserved after aggregateReviewChildren removal), got %q", parentRow.Status)
 	}
 }
 
@@ -796,11 +775,13 @@ func TestPortal_TerminalReviewLiveSocket_PreservesStatus(t *testing.T) {
 	}
 }
 
-// TestPortal_ParentSuccWithLiveChild_FlipsToReviewing verifies
-// that aggregateReviewChildren flips even a terminal parent's status
-// to "reviewing" when a live review child exists. The frontend was
-// previously re-deriving this; now the backend is the sole source of truth.
-func TestPortal_ParentSuccWithLiveChild_FlipsToReviewing(t *testing.T) {
+// TestPortal_ParentSuccWithLiveChild_KeepsSuccessStatus is the
+// post-#1825 regression for the backend's role in the parent status
+// contract: a parent impl row whose run.finished status is "success"
+// must keep that status when a live review child exists, because the
+// backend no longer stamps cross-batch review metadata onto the
+// parent's own row.
+func TestPortal_ParentSuccWithLiveChild_KeepsSuccessStatus(t *testing.T) {
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -841,8 +822,8 @@ func TestPortal_ParentSuccWithLiveChild_FlipsToReviewing(t *testing.T) {
 	if issueRow == nil {
 		t.Fatalf("expected issue row for #1, got %#v", runs)
 	}
-	if issueRow.Status != "reviewing" {
-		t.Fatalf("Status = %q, want %q (parent status must be flipped to reviewing when live review child exists)", issueRow.Status, "reviewing")
+	if issueRow.Status != "success" {
+		t.Fatalf("Status = %q, want %q (parent status must remain success after aggregateReviewChildren removal)", issueRow.Status, "success")
 	}
 }
 
@@ -2068,11 +2049,8 @@ func TestPortal_Compute_ReviewVerdictFromDecisionMarkerOnSavedRunLog(t *testing.
 	if reviewRow.Status != "success" {
 		t.Fatalf("review row Status=%q, want success (the agent exits 0 even when it requested changes)", reviewRow.Status)
 	}
-	if implRow.ReviewCount != 1 {
-		t.Fatalf("impl row ReviewCount=%d, want 1", implRow.ReviewCount)
-	}
-	if got := implRow.ReviewVerdict; got != "Changes requested" {
-		t.Fatalf("impl row ReviewVerdict=%q, want %q (the saved run.log carries **Decision: CHANGES_REQUESTED**)", got, "Changes requested")
+	if implRow.Status != "success" {
+		t.Fatalf("impl row Status=%q, want success (terminal run.finished preserved after aggregateReviewChildren removal)", implRow.Status)
 	}
 }
 
