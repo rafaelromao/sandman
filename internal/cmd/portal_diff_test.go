@@ -279,6 +279,26 @@ console.log('PASS');
 	runPortalHTMLScript(t, js)
 }
 
+// TestRenderRunMeta_ActiveRowFromServerJSONWithOneRetryEvent_RendersOneRetry
+// is the end-to-end HTML regression test for issue #1879: when a server
+// JSON row is backed by exactly one run.retry event with attempt=2
+// (i.e., one actual retry), the live attempts field is the retry count
+// (1), and the rendered meta line must read "1 retry" — not "2 retries".
+// The bug report ("1 retry + initial run shows '2 retries'") goes away
+// here. The run object mirrors the portalRun wire format emitted by
+// portalRunsView.compute (the same shape /api/runs serializes), with
+// retriesDone omitted because the run has not finished. The test drives
+// the same runPortalHTMLScript seam as the adjacent slice tests.
+func TestRenderRunMeta_ActiveRowFromServerJSONWithOneRetryEvent_RendersOneRetry(t *testing.T) {
+	js := `const serverRow = { key: 'r-active-1retry', runId: 'r-active-1retry', kind: 'active', status: 'running', issueLabel: '#42', issueNumber: 42, attempts: 1, lastRetryReason: 'agent-stalled' };
+const meta = helpers.renderRunMeta(serverRow);
+if (!meta.includes('1 retry')) throw new Error('expected meta to include "1 retry" for one retry event (attempt=2 maps to retry count 1), got: ' + JSON.stringify(meta));
+if (meta.includes('2 retries')) throw new Error('must not show "2 retries" for one retry event, got: ' + JSON.stringify(meta));
+console.log('PASS');
+`
+	runPortalHTMLScript(t, js)
+}
+
 // TestRenderRunMeta_ActiveZeroAttempts_OmitsCounterLine is the
 // regression guard for the no-attempts active case: when attempts is
 // zero (or omitted) the trailing counter line must not appear, even
