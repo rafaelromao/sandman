@@ -706,9 +706,6 @@ func TestProjectRunStates_LiveAttempt_MalformedZeroAttemptClampsAtZero(t *testin
 	if got := runs[0].LiveAttempt(); got != 0 {
 		t.Fatalf("LiveAttempt = %d, want 0 (malformed attempt=0 must clamp to non-negative)", got)
 	}
-	if got := runs[0].LiveAttempt(); got < 0 {
-		t.Fatalf("LiveAttempt = %d, must never return a negative value", got)
-	}
 }
 
 func TestProjectRunStates_LiveAttempt_FinishedRunStillReturnsRetryAttempt(t *testing.T) {

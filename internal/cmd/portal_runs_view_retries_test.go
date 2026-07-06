@@ -38,9 +38,6 @@ func TestAttemptsAndLastRetryReasonFromEvents_MalformedZeroAttemptClampsAtZero(t
 	if got != 0 {
 		t.Fatalf("attempts = %d, want 0 (malformed attempt=0 must clamp to non-negative)", got)
 	}
-	if got < 0 {
-		t.Fatalf("attempts = %d, must never return a negative value", got)
-	}
 	if reason != "" {
 		t.Fatalf("reason = %q, want empty when retry payload omits reason", reason)
 	}
