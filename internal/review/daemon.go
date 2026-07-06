@@ -99,7 +99,7 @@ type pendingReviewEntry struct {
 // decision.md on disk, it registers one of these entries keyed by
 // (prNumber, commentID).
 //
-// runDir and reviewStatePath are absolute paths so the processPR
+// runDir and reviewState are absolute paths so the processPR
 // rehydrate branch can read decision.md and open the per-run
 // ReviewStateStore without further resolution. The rehydrate
 // branch drops the entry on a successful post (MarkSeen("success")
@@ -107,10 +107,17 @@ type pendingReviewEntry struct {
 // (the next tick retries). When decision.md is missing at tick
 // time the entry is treated as stale and the daemon falls through
 // to the existing launch path.
+//
+// since mirrors the same field on pendingReviewEntry: it carries
+// the original review-state.json Timestamp so future
+// observability surfaces (operator queries, logs) can answer "how
+// long has this rehydrate been waiting?" without re-reading the
+// on-disk JSON.
 type pendingPostEntry struct {
-	commentID       string
-	runDir          string // absolute path to <batch>/runs/<rowID>
-	reviewStatePath string // absolute path to <runDir>/review-state.json
+	commentID   string
+	runDir      string    // absolute path to <batch>/runs/<rowID>
+	reviewState string    // absolute path to <runDir>/review-state.json
+	since       time.Time // when the trigger entered `pending` on disk
 }
 
 // Daemon polls the repo for /sandman review comments and launches review
@@ -736,7 +743,7 @@ func (d *Daemon) loadPendingPosts() error {
 			d.logf("read review state %s: %v", runDir, err)
 			continue
 		}
-		reviewStatePath := filepath.Join(runDir, "review-state.json")
+		reviewState := filepath.Join(runDir, "review-state.json")
 		for _, sc := range state.SeenComments {
 			if sc.Status != "pending" {
 				continue
@@ -757,9 +764,10 @@ func (d *Daemon) loadPendingPosts() error {
 				d.pendingPost[entry.PR] = map[string]pendingPostEntry{}
 			}
 			d.pendingPost[entry.PR][sc.CommentID] = pendingPostEntry{
-				commentID:       sc.CommentID,
-				runDir:          runDir,
-				reviewStatePath: reviewStatePath,
+				commentID:   sc.CommentID,
+				runDir:      runDir,
+				reviewState: reviewState,
+				since:       sc.Timestamp,
 			}
 		}
 	}
@@ -1763,7 +1771,7 @@ func (d *Daemon) tryRehydratePost(ctx context.Context, prNumber int, comment git
 	// MarkTerminalSeen's the (prNumber, commentID) pair in the
 	// in-memory seenCache. The on-disk review-state.json gets
 	// the success status updated atomically by ReviewStateStore.
-	store, storeErr := NewReviewStateStore(entry.reviewStatePath, prNumber, d)
+	store, storeErr := NewReviewStateStore(entry.reviewState, prNumber, d)
 	if storeErr != nil {
 		// State store could not be opened: log and keep the entry
 		// so the next tick retries — but DO call MarkTerminalSeen

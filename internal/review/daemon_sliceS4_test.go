@@ -66,7 +66,7 @@ func TestDaemon_S4_EmptyMapAtConstruction(t *testing.T) {
 // TestDaemon_S4_PeekRegisteredEntry pins the peekPendingPost helper:
 // when an entry is registered with the daemon, peekPendingPost
 // returns it under the lock so concurrent test readers see a
-// consistent (runDir, reviewStatePath) tuple. The Slice B walker
+// consistent (runDir, reviewState) tuple. The Slice B walker
 // will be the producer of these entries; Slice A wires the
 // consumer side.
 //
@@ -79,15 +79,15 @@ func TestDaemon_S4_PeekRegisteredEntry(t *testing.T) {
 		DefaultReviewModel: "opencode/foo",
 	})
 	runDir := filepath.Join(t.TempDir(), "row")
-	reviewStatePath := filepath.Join(runDir, "review-state.json")
+	reviewState := filepath.Join(runDir, "review-state.json")
 
 	d.pendingPostMu.Lock()
 	d.pendingPost = map[int]map[string]pendingPostEntry{
 		4242: {
 			"c-s4-1": {
-				commentID:       "c-s4-1",
-				runDir:          runDir,
-				reviewStatePath: reviewStatePath,
+				commentID:   "c-s4-1",
+				runDir:      runDir,
+				reviewState: reviewState,
 			},
 		},
 	}
@@ -100,8 +100,8 @@ func TestDaemon_S4_PeekRegisteredEntry(t *testing.T) {
 	if entry.runDir != runDir {
 		t.Errorf("peekPendingPost returned runDir=%q, want %q", entry.runDir, runDir)
 	}
-	if entry.reviewStatePath != reviewStatePath {
-		t.Errorf("peekPendingPost returned reviewStatePath=%q, want %q", entry.reviewStatePath, reviewStatePath)
+	if entry.reviewState != reviewState {
+		t.Errorf("peekPendingPost returned reviewState=%q, want %q", entry.reviewState, reviewState)
 	}
 	if entry.commentID != "c-s4-1" {
 		t.Errorf("peekPendingPost returned commentID=%q, want %q", entry.commentID, "c-s4-1")
@@ -136,7 +136,7 @@ func runDirForTest(t *testing.T, baseDir, batchID string, prNumber int) string {
 // TestDaemon_S4_LoadPendingPosts_RegistersDecisionPending pins the
 // Slice-B happy path: a pending review-state.json whose row folder
 // has decision.md on disk produces exactly one pendingPost entry at
-// Daemon.New. The entry holds the absolute runDir and reviewStatePath
+// Daemon.New. The entry holds the absolute runDir and reviewState
 // so the rehydrate post (Slice C) can read the file and call
 // MarkSeen without resolving paths.
 func TestDaemon_S4_LoadPendingPosts_RegistersDecisionPending(t *testing.T) {
@@ -169,8 +169,8 @@ func TestDaemon_S4_LoadPendingPosts_RegistersDecisionPending(t *testing.T) {
 		t.Errorf("entry.runDir=%q, want %q", entry.runDir, wantRunDir)
 	}
 	wantStatePath := filepath.Join(wantRunDir, "review-state.json")
-	if entry.reviewStatePath != wantStatePath {
-		t.Errorf("entry.reviewStatePath=%q, want %q", entry.reviewStatePath, wantStatePath)
+	if entry.reviewState != wantStatePath {
+		t.Errorf("entry.reviewState=%q, want %q", entry.reviewState, wantStatePath)
 	}
 	if entry.commentID != commentID {
 		t.Errorf("entry.commentID=%q, want %q", entry.commentID, commentID)
@@ -534,9 +534,9 @@ func TestDaemon_S4_RehydratePost_StaleEntry_FallsThroughLaunch(t *testing.T) {
 	d.pendingPostMu.Lock()
 	d.pendingPost[prNumber] = map[string]pendingPostEntry{
 		commentID: {
-			commentID:       commentID,
-			runDir:          staleRunDir,
-			reviewStatePath: filepath.Join(staleRunDir, "review-state.json"),
+			commentID:   commentID,
+			runDir:      staleRunDir,
+			reviewState: filepath.Join(staleRunDir, "review-state.json"),
 		},
 	}
 	d.pendingPostMu.Unlock()
