@@ -1293,15 +1293,18 @@ func (d *Daemon) launchReview(ctx context.Context, prNumber int, focus, commentI
 // postDecision implements the S3 post step (issue #1846):
 //
 //   - If <runDir>/decision.md is missing: MarkSeen("failure") and
-//     return an error so the bounded-retry escape applies.
+//     call MarkTerminalSeen (issue #1849 S6) so the next tick's
+//     processPR drops the trigger via the seen-cache short-circuit.
 //   - If present: read it, run RedactBody, call
 //     d.CommentPoster.PostComment(ctx, prNumber, redacted).
-//   - On successful post: MarkSeen("success").
+//   - On successful post: MarkSeen("success"). The SeenCacheInvalidator
+//     hook fires MarkTerminalSeen, short-circuiting subsequent ticks.
 //   - On post error or ctx.Err() != nil while preparing/posting:
 //     leave status untouched (no MarkSeen call so the trigger stays
-//     in the previous on-disk state, which is `pending` from the
-//     launch goroutine's path-or-absent as recorded by prepareReviewRun);
-//     return the error so the goroutine takes its claim-Release path.
+//     in the previous on-disk state, which is absent at this point —
+//     no daemon code path writes `pending` anymore per issue #1849
+//     S6); return the error so the goroutine takes its claim-Release
+//     path and the next tick's processPR re-launches the trigger.
 func (d *Daemon) postDecision(ctx context.Context, prNumber int, commentID, reviewRunFolder string, state *ReviewStateStore) error {
 	decisionPath := filepath.Join(reviewRunFolder, "decision.md")
 	info, err := os.Stat(decisionPath)
@@ -1465,8 +1468,8 @@ func (d *Daemon) tryRehydratePost(ctx context.Context, prNumber int, comment git
 		}
 		// Post failed for a non-ctx reason: log, keep the entry
 		// so the next tick retries. Do NOT MarkSeen; the
-		// bounded-retry-grace dance is owned by the lazy-verify
-		// path on a different row.
+		// rehydrate entry is the source of truth and the
+		// next tick re-attempts the post.
 		d.logf("PR #%d comment %s: rehydrate post failed: %v; keeping entry for next-tick retry (issue #1847)", prNumber, comment.ID, err)
 		return true
 	}
