@@ -67,6 +67,7 @@ const visualFixtureRowsJS = `
     { issueLabel: '#960', key: 'a', metaText: 'ID abcd-260618113825-960', status: 'success', started: 'Jun 15, 11:40:40 AM', duration: '37m46s', issueTitle: '[slice 1] Add internal/shellenv with key-validation + value-quoting', batchIssues: [960, 961, 962, 963, 964, 965, 966, 967, 968] },
     { issueLabel: '#961', key: 'b', metaText: 'ID abcd-260618113825-961', status: 'running', started: 'Jun 15, 12:18:30 PM', duration: '17s', issueTitle: '[slice 2] Add internal/prompt.Renderer with body-insert substitution', batchIssues: null },
     { issueLabel: '#962', key: 'c', metaText: 'ID abcd-260618113825-962', status: 'queued', started: 'Jun 15, 11:38:51 AM', duration: '\u2014', issueTitle: '[slice 3] Add internal/orchestrator dependencies path', batchIssues: [960, 961, 962, 963, 964, 965, 966, 967, 968] },
+    { issueLabel: '#963', key: 'd', metaText: 'ID abcd-260618113825-963', status: 'success', started: 'Jun 15, 11:40:40 AM', duration: '12m00s', issueTitle: '[slice 4] Wire internal/orchestrator dependencies into the slice-3 runnable so the new shellenv renderer is exercised end-to-end on a 500px mobile viewport', batchIssues: null },
   ];
   const body = document.getElementById('runs-body');
   rows.forEach(r => body.appendChild(buildRow(r)));
@@ -327,11 +328,10 @@ func TestPortal_Visual_NoHorizontalScrollAt1280px(t *testing.T) {
 }
 
 // TestPortal_Visual_RunRowStaysShortOnMobileViewport asserts that at a
-// narrow viewport the run row does not stretch tall because of long
-// issue-title cells. Before the fix, those cells wrapped to
-// multiple lines and forced the row to ~285px. The fix applies
-// white-space:nowrap + overflow:hidden + text-overflow:ellipsis so
-// they stay on a single line.
+// narrow viewport the run row's issue-title cell renders: short titles
+// stay on a single line (<= 25 px) and long titles wrap freely to
+// two lines (<= 50 px), without any line-clamp capping. The row grows
+// with the wrapped content.
 //
 // Chromium's headless mode has a minimum window width of ~500px, so we
 // use 500x720 as the narrowest we can test.
@@ -361,8 +361,37 @@ func TestPortal_Visual_RunRowStaysShortOnMobileViewport(t *testing.T) {
 	if row.TitleCell.H > 120 {
 		t.Errorf("title cell height %d on 500px viewport; expected <= 120", row.TitleCell.H)
 	}
-	// Issue-title cell should be on a single line (height ~17px).
-	if row.IssueTitle != nil && row.IssueTitle.H > 25 {
-		t.Errorf("issue-title cell height %d on 500px viewport; expected <= 25", row.IssueTitle.H)
+	// Short issue-title cell should be on a single line (height ~17px).
+	if row.IssueTitle == nil {
+		t.Fatalf("row 0 missing issueTitle rect; issue-title cell is not rendering on mobile")
+	}
+	if row.IssueTitle.H > 25 {
+		t.Errorf("issue-title cell height %d on 500px viewport; expected <= 25 (single line)", row.IssueTitle.H)
+	}
+	// Multi-line row: row index 3 carries a deliberately long
+	// issueTitle that must wrap to two lines on a 500px viewport.
+	var longRow *visualRow
+	for i := range dump.Rows {
+		if dump.Rows[i].Idx == 3 {
+			longRow = &dump.Rows[i]
+			break
+		}
+	}
+	if longRow == nil {
+		t.Fatalf("multi-line row 3 missing from dump: %+v", dump.Rows)
+	}
+	if longRow.IssueTitle == nil {
+		t.Fatalf("multi-line row 3 missing issueTitle rect; issue-title cell is not rendering on mobile")
+	}
+	// Wrapped (two-line) height must stay under the 50 px cap.
+	if longRow.IssueTitle.H > 50 {
+		t.Errorf("multi-line issue-title cell height %d on 500px viewport; expected <= 50 (two lines)", longRow.IssueTitle.H)
+	}
+	// The long-title cell must actually be taller than the single-line
+	// cap — this is the load-bearing check that catches the un-fixed
+	// `display: none` (height=0) and any line-clamp regression that
+	// pins the long cell to a single line.
+	if longRow.IssueTitle.H <= 25 {
+		t.Errorf("multi-line issue-title cell height %d on 500px viewport; expected > 25 (fixture must wrap to two lines)", longRow.IssueTitle.H)
 	}
 }
