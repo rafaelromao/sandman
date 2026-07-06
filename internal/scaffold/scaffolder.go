@@ -244,12 +244,13 @@ var bundledRubyVersionCatalog = map[string]string{
 }
 
 var bundledRustVersionCatalog = map[string]string{
-	"latest":  "1.96.0",
+	"latest":  "1.96.1",
 	"lts":     "1.95.0",
-	"stable":  "1.96.0",
-	"beta":    "1.96.0",
-	"nightly": "1.96.0",
-	"1.96":    "1.96.0",
+	"stable":  "1.96.1",
+	"beta":    "1.96.1",
+	"nightly": "1.96.1",
+	"1.96":    "1.96.1",
+	"1.96.1":  "1.96.1",
 	"1.96.0":  "1.96.0",
 	"1.95":    "1.95.0",
 	"1.95.0":  "1.95.0",
