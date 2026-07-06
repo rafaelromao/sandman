@@ -1139,6 +1139,37 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) error {
 		return nil
 	}
 
+	// Rehydrate-on-startup (issue #1847 S4): consult pendingPost for
+	// each remaining trigger BEFORE the lazy-verify filter so that
+	// a row in BOTH pendingReviews and pendingPost takes the
+	// rehydrate path (the lazy-verify entry is harmless after
+	// MarkSeen("success") takes effect). TryRehydratePost returns
+	// true when the entry was handled (success, failure, ctx-cancel,
+	// or kept-for-retry) — the trigger is dropped from unprocessed.
+	// Returns false when the entry is stale (decision.md missing at
+	// tick time) — the trigger falls through to the launch path.
+	d.pendingPostMu.Lock()
+	hasPostEntry := map[string]bool{}
+	for cid := range d.pendingPost[prNumber] {
+		hasPostEntry[cid] = true
+	}
+	d.pendingPostMu.Unlock()
+	if len(hasPostEntry) > 0 {
+		var filtered []unseenTrigger
+		for _, t := range unprocessed {
+			if hasPostEntry[t.comment.ID] {
+				if d.tryRehydratePost(ctx, prNumber, t.comment) {
+					continue
+				}
+			}
+			filtered = append(filtered, t)
+		}
+		if len(filtered) == 0 {
+			return nil
+		}
+		unprocessed = filtered
+	}
+
 	// Lazy verify (issue #1482 slice D): drop triggers that are
 	// already registered as pending in this daemon. The next tick's
 	// promotePendingReviews step will observe the agent's review
@@ -1634,6 +1665,127 @@ func (d *Daemon) postDecision(ctx context.Context, prNumber int, commentID, revi
 		}
 	}
 	return nil
+}
+
+// tryRehydratePost handles a rehydrate-eligible trigger discovered
+// in pendingPost by processPR (issue #1847 S4). It returns true
+// when the entry was registered AND decision.md is still on disk,
+// signalling that processPR should NOT proceed to the launch path.
+//
+// Three branches:
+//
+//   - decision.md on disk, post succeeds: MarkSeen("success") is
+//     persisted on the per-run ReviewStateStore (which fires the
+//     seen-cache hook so the next tick's processPR short-circuits
+//     the trigger), the pendingPost entry is dropped, and the
+//     function returns true. No new agent run is launched.
+//
+//   - decision.md on disk, post fails (PostComment returns an
+//     error): the entry is kept in pendingPost so the next tick
+//     retries; MarkSeen is left untouched so the trigger stays
+//     `pending` on disk. No new agent run is launched. Returns
+//     true so processPR does not fall through to launch.
+//
+//   - decision.md missing at tick time (stale entry, e.g. an
+//     operator removed the file or it was never written): the
+//     entry is dropped from pendingPost and the function returns
+//     false so processPR falls through to the existing launch
+//     path. The launch path's prepareReviewRun / TryClaim /
+//     launchReview cycle handles the trigger from scratch — the
+//     rehydrate-on-startup walker has nothing to recover.
+//
+// tryRehydratePost holds the per-run ReviewStateStore open only
+// for the MarkSeen call and never spawns a goroutine, so it can
+// run inline in processPR.
+func (d *Daemon) tryRehydratePost(ctx context.Context, prNumber int, comment github.PRComment) bool {
+	d.pendingPostMu.Lock()
+	m, ok := d.pendingPost[prNumber]
+	if !ok {
+		d.pendingPostMu.Unlock()
+		return false
+	}
+	entry, ok := m[comment.ID]
+	if !ok {
+		d.pendingPostMu.Unlock()
+		return false
+	}
+	d.pendingPostMu.Unlock()
+
+	decisionPath := filepath.Join(entry.runDir, "decision.md")
+	body, err := os.ReadFile(decisionPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			// Stale entry: drop and fall through to launch.
+			d.logf("PR #%d comment %s: rehydrate entry stale, decision.md missing at tick time, falling through to launch (issue #1847)", prNumber, comment.ID)
+			d.pendingPostMu.Lock()
+			delete(d.pendingPost[prNumber], comment.ID)
+			if len(d.pendingPost[prNumber]) == 0 {
+				delete(d.pendingPost, prNumber)
+			}
+			d.pendingPostMu.Unlock()
+			return false
+		}
+		// Read failed for some other reason (perm denied, IO).
+		// Keep the entry; the next tick retries. Do NOT proceed
+		// to launch because the existing post is still better
+		// than re-running the agent.
+		d.logf("PR #%d comment %s: rehydrate post read %s failed: %v; keeping entry for retry (issue #1847)", prNumber, comment.ID, decisionPath, err)
+		return true
+	}
+
+	// Honour ctx cancellation observed between ReadFile and the
+	// post step: do NOT call MarkSeen so the trigger stays in
+	// the prior on-disk state (the next daemon's rehydrate walker
+	// picks the entry up again on restart).
+	if cerr := ctx.Err(); cerr != nil {
+		d.logf("PR #%d comment %s: ctx cancelled before rehydrate post; leaving entry untouched (issue #1847)", prNumber, comment.ID)
+		return true
+	}
+
+	redacted := RedactBody(string(body))
+	if err := d.CommentPoster.PostComment(ctx, prNumber, redacted); err != nil {
+		if cerr := ctx.Err(); cerr != nil {
+			// Ctx cancelled DURING post: leave entry; the next
+			// daemon's rehydrate walker re-attempts.
+			d.logf("PR #%d comment %s: ctx cancelled during rehydrate post; leaving entry untouched (issue #1847)", prNumber, comment.ID)
+			return true
+		}
+		// Post failed for a non-ctx reason: log, keep the entry
+		// so the next tick retries. Do NOT MarkSeen; the
+		// bounded-retry-grace dance is owned by the lazy-verify
+		// path on a different row.
+		d.logf("PR #%d comment %s: rehydrate post failed: %v; keeping entry for next-tick retry (issue #1847)", prNumber, comment.ID, err)
+		return true
+	}
+
+	// Successful post. MarkSeen("success") on the per-run store
+	// fires the SeenCacheInvalidator seam (production: d), which
+	// MarkTerminalSeen's the (prNumber, commentID) pair in the
+	// in-memory seenCache. The on-disk review-state.json gets
+	// the success status updated atomically by ReviewStateStore.
+	store, storeErr := NewReviewStateStore(entry.reviewStatePath, prNumber, d)
+	if storeErr != nil {
+		// State store could not be opened: log and keep the entry
+		// so the next tick retries — but DO call MarkTerminalSeen
+		// on the seen cache so the trigger is not reprocessed as
+		// a fresh launch in the interim (the entry acts as the
+		// source of truth until the store can be opened).
+		d.logf("PR #%d comment %s: open review-state for MarkSeen failed: %v; keeping entry and seen-cache untouched (issue #1847)", prNumber, comment.ID, storeErr)
+		return true
+	}
+	if err := store.MarkSeen(comment.ID, "success"); err != nil {
+		d.logf("PR #%d comment %s: MarkSeen(success) failed in rehydrate branch: %v; keeping entry (issue #1847)", prNumber, comment.ID, err)
+		return true
+	}
+
+	// Drop the entry from pendingPost under the dedicated mutex.
+	d.pendingPostMu.Lock()
+	delete(d.pendingPost[prNumber], comment.ID)
+	if len(d.pendingPost[prNumber]) == 0 {
+		delete(d.pendingPost, prNumber)
+	}
+	d.pendingPostMu.Unlock()
+	return true
 }
 
 // otherwise falls back to time.Now. Tests inject a custom clock.

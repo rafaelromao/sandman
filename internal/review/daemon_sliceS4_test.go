@@ -2,11 +2,14 @@ package review
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
 
+	"github.com/rafaelromao/sandman/internal/batchindex"
 	"github.com/rafaelromao/sandman/internal/config"
+	"github.com/rafaelromao/sandman/internal/github"
 	"github.com/rafaelromao/sandman/internal/prompt"
 )
 
@@ -273,4 +276,112 @@ func TestDaemon_S4_LoadPendingPosts_DoesNotDoubleHandleByDeleting(t *testing.T) 
 	// pending). We do not assert it is in pendingReviews here — that
 	// is loadPendingReviews' own contract; this test pins only the
 	// rehydrate map's behaviour when both walkers share a row.
+}
+
+// TestDaemon_S4_RehydratePost_HappyPath is the seam-4 contract test
+// pinned by issue #1847 / PRD #1843. It exercises the full
+// rehydrate-on-startup pipeline against the existing
+// fakeCommentPoster and capturedRequest seams:
+//
+//  1. Pre-populate .sandman/batches/<batch>/runs/<runID>/
+//     review-state.json with a 'pending' SeenComment and
+//     <runDir>/decision.md with a body that contains /sandman
+//     substrings (so RedactBody must transform them).
+//  2. Construct a fresh Daemon via New; loadPendingPosts picks up
+//     the rehydrate-eligible row.
+//  3. Run a single tick. processPR's rehydrate branch must read
+//     decision.md, redact it, post via the fake CommentPoster,
+//     call MarkSeen("success") on the per-run store, drop the
+//     pendingPost entry, and NOT call BatchRunner.RunBatch.
+//
+// The assertions are the exact acceptance criteria pinned by the
+// issue body.
+func TestDaemon_S4_RehydratePost_HappyPath(t *testing.T) {
+	const (
+		prNumber  = 6060
+		commentID = "c-s4-rehydrate-1"
+	)
+	gh := &fakeGH{
+		prs: []github.PR{{Number: prNumber, State: "open"}},
+		comments: map[int][]github.PRComment{
+			prNumber: {{ID: commentID, Body: "/sandman review", CreatedAt: mustParseTime(t, "2026-07-06T13:00:00Z")}},
+		},
+		prFetch: map[int]*github.PR{prNumber: {Number: prNumber, Title: "PR S4", Body: "Body"}},
+	}
+	runner := &capturedRequest{} // BATCH RUNNER MUST NOT BE CALLED.
+
+	cfg := &config.Config{
+		DefaultReviewAgent: "opencode",
+		DefaultReviewModel: "opencode/foo",
+	}
+	poster := &fakeCommentPoster{}
+
+	// Pre-seed a fresh daemon workspace: pending review-state +
+	// decision.md on disk, then construct the daemon so its
+	// loadPendingPosts walker registers the entry.
+	dir := t.TempDir()
+	const batchID = "sip-batch-PR6060"
+	seedPriorReviewEntry(t, dir, batchID, prNumber, commentID, "pending")
+	body := "/sandman review please.\n/Sandman reply.\nplain sandman stays.\n"
+	if err := os.WriteFile(decisionPathForTest(t, dir, batchID, prNumber), []byte(body), 0644); err != nil {
+		t.Fatalf("write decision.md: %v", err)
+	}
+
+	d := New(dir, gh, &prompt.Engine{}, runner, cfg, &lockedBuffer{}, 0, false, poster)
+	d.PollInterval = 0
+
+	if err := d.tick(context.Background()); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+
+	// (a) BatchRunner MUST NOT be called (acceptance criterion).
+	if runner.Calls() != 0 {
+		t.Fatalf("expected BatchRunner.RunBatch NOT to be called on rehydrate path, got %d calls", runner.Calls())
+	}
+
+	// (b) CommentPoster captured the redacted body.
+	if poster.Calls() != 1 {
+		t.Fatalf("expected exactly 1 PostComment call from the rehydrate branch, got %d", poster.Calls())
+	}
+	gotPR, gotBody := poster.Captured()
+	if gotPR != prNumber {
+		t.Errorf("PostComment prNumber=%d, want %d", gotPR, prNumber)
+	}
+	wantBody := RedactBody(body)
+	if gotBody != wantBody {
+		t.Errorf("posted body mismatch:\n want=%q\n got =%q", wantBody, gotBody)
+	}
+
+	// (c) MarkSeen("success") was persisted to disk.
+	statePath := locateReviewStatePath(t, dir)
+	stateBytes, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatalf("read review-state.json: %v", err)
+	}
+	var state batchindex.ReviewState
+	if err := json.Unmarshal(stateBytes, &state); err != nil {
+		t.Fatalf("unmarshal review-state.json: %v", err)
+	}
+	found := false
+	for _, sc := range state.SeenComments {
+		if sc.CommentID == commentID && sc.Status == "success" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("review-state.json missing MarkSeen(success) for %s: %s", commentID, string(stateBytes))
+	}
+
+	// (d) pendingPost entry has been dropped.
+	if _, ok := d.peekPendingPost(prNumber, commentID); ok {
+		t.Errorf("pendingPost should drop the entry after a successful rehydrate post (Slice C contract)")
+	}
+
+	// (e) seenCache now contains the (prNumber, commentID) pair so
+	// the next tick's processPR short-circuits via the existing
+	// terminal-seen filter.
+	if !d.IsTerminalSeen(prNumber, commentID) {
+		t.Errorf("seenCache should mark (%d, %s) terminal-seen after MarkSeen(success), got %v", prNumber, commentID, d.seenCache)
+	}
 }
