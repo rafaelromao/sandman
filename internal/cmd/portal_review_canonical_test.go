@@ -315,16 +315,18 @@ func TestPortal_NoRunsReviewLiteralInPortalCode(t *testing.T) {
 	}
 }
 
-// TestPortal_DocComments_DescribeJSSynthesisForBothPaths pins acceptance
-// criterion 7 for issue #1856: the doc comments on
-// portalRun.ReviewCount, ReviewVerdict, and GroupedReview in
-// portal_runs_view.go must describe that these fields are no longer
-// stamped by the Go server and are now synthesized in JS
-// (visibleRunForIssueGroup) for both the orphan path AND the
-// parent-enrichment case. The Go server is no longer a source for
-// these values; a future maintainer reading the field comments must
-// learn that the JS enrichment is the canonical writer.
-func TestPortal_DocComments_DescribeJSSynthesisForBothPaths(t *testing.T) {
+// TestPortal_DocComments_DescribeServerSideStampingAndOrphanJSPath pins the
+// documentation restored in #1897: the doc comments on portalRun.ReviewCount,
+// ReviewVerdict, and GroupedReview in portal_runs_view.go must describe that
+// these fields are stamped by the Go server via aggregateReviewChildren during
+// compute (the canonical writer for parent impl rows), with the orphan
+// review-only JS path (visibleRunForIssueGroup, portal.html) handling the
+// no-implementation-parent case. #1825 deleted the server stamping and #1856
+// moved it to JS; #1897 restored the server-side writer so the verdict
+// survives the summary endpoint's log-stripping. A future maintainer reading
+// the field comments must learn that aggregateReviewChildren is the canonical
+// writer for parent rows.
+func TestPortal_DocComments_DescribeServerSideStampingAndOrphanJSPath(t *testing.T) {
 	// Locate portal_runs_view.go next to this test file (the test cwd
 	// is the package directory, not the repo root).
 	_, currentFile, _, ok := runtime.Caller(0)
@@ -340,7 +342,7 @@ func TestPortal_DocComments_DescribeJSSynthesisForBothPaths(t *testing.T) {
 
 	// Locate each field's doc comment block (the lines immediately
 	// above the field declaration) and assert that they collectively
-	// mention visibleRunForIssueGroup + parent enrichment + orphan.
+	// mention the server-side writer + the orphan JS fallback.
 	type fieldBlock struct {
 		field    string
 		required []string
@@ -349,21 +351,22 @@ func TestPortal_DocComments_DescribeJSSynthesisForBothPaths(t *testing.T) {
 		{
 			field: "ReviewCount",
 			required: []string{
-				"visibleRunForIssueGroup", // canonical JS writer
-				"parent enrichment",       // parent path (slice 2)
+				"aggregateReviewChildren", // canonical Go writer (parent rows)
+				"orphan",                  // orphan review-only JS path
 			},
 		},
 		{
 			field: "ReviewVerdict",
 			required: []string{
-				"visibleRunForIssueGroup", // canonical JS writer
-				"parent enrichment",       // parent path (slice 2)
+				"aggregateReviewChildren", // canonical Go writer (parent rows)
+				"reviewVerdictFromRunLog", // verdict extraction helper
 			},
 		},
 		{
 			field: "GroupedReview",
 			required: []string{
-				"orphan", // orphan-path synthesis
+				"aggregateReviewChildren", // canonical Go writer
+				"orphan",                  // orphan review-only JS path
 			},
 		},
 	}
@@ -434,10 +437,10 @@ func intPtr(v int) *int {
 // canonical row RunID (rather than the batchId). The review row stays
 // discoverable as a Review=true row in the same issue group, and the
 // canonical parent's own identity (RunID, BatchKey, IssueTitle, StartedAt)
-// is preserved. Issue #1825 removes the cross-batch aggregation that used
-// to stamp ReviewCount/ReviewVerdict onto the parent; the parent row here
-// no longer carries those fields and its status stays on its terminal
-// run.finished value.
+// is preserved. aggregateReviewChildren (restored in #1897) stamps
+// ReviewCount/ReviewVerdict onto the parent from the sibling review's saved
+// run.log; the parent row carries those fields and, with a terminal review
+// child only, its status stays on its terminal run.finished value.
 func TestPortal_ReviewAggregation_HonorsCanonicalRowID(t *testing.T) {
 	repoRoot, err := os.MkdirTemp("/tmp", "pag")
 	if err != nil {
@@ -462,13 +465,10 @@ func TestPortal_ReviewAggregation_HonorsCanonicalRowID(t *testing.T) {
 		{Type: "run.finished", Timestamp: startedAt.Add(7 * time.Minute), RunID: canonicalReviewRowID, Payload: map[string]any{"status": "success", "branch": "sandman/review-PR42", "review": true, "pr_number": 42, "issue_number": issueNumber, "batch_id": "sid-2606181138-PR42"}},
 	})
 
-	// Issue #1729 historically drove the parent ReviewVerdict from the
-	// saved review run.log's ## Decision marker; after #1825 the
-	// cross-batch aggregation no longer stamps ReviewVerdict onto the
-	// parent row. The marker is still seeded here so any future
-	// re-introduction of cross-batch verdict projection has a real
-	// value to assert against, but the parent-status assertion below
-	// is what this test now pins.
+	// Issue #1729: parent ReviewVerdict flows from the saved review
+	// run.log's ## Decision marker, not from run.finished.status. Seed
+	// an APPROVED marker so the verdict projection has a real value to
+	// surface.
 	reviewRunDir := filepath.Join(repoRoot, ".sandman", "batches", "sid-2606181138-PR42", "runs", canonicalReviewRowID)
 	if err := os.MkdirAll(reviewRunDir, 0755); err != nil {
 		t.Fatalf("mkdir review run dir: %v", err)
@@ -510,8 +510,183 @@ func TestPortal_ReviewAggregation_HonorsCanonicalRowID(t *testing.T) {
 		t.Fatalf("review row Status=%q, want success", review.Status)
 	}
 	if parent.Status != "success" {
-		t.Fatalf("parent Status=%q, want %q (terminal run.finished status preserved after aggregateReviewChildren removal)", parent.Status, "success")
+		t.Fatalf("parent Status=%q, want %q (terminal run.finished status; no live review child to flip the badge)", parent.Status, "success")
 	}
+	if parent.ReviewCount == 0 {
+		t.Fatalf("parent ReviewCount=%d, want >=1 (aggregation must include canonical-row-id'd review)", parent.ReviewCount)
+	}
+	if parent.ReviewVerdict != "Approved" {
+		t.Fatalf("parent ReviewVerdict=%q, want %q (saved run.log carries ## Decision / **APPROVED**)", parent.ReviewVerdict, "Approved")
+	}
+}
+
+// TestPortal_ParentImplRow_ReviewCountAndVerdictSurviveSummaryStrip pins the
+// cold-load regression from #1825: a terminal parent impl row, served via the
+// summary endpoint (logs stripped by portalSummaryRuns), must carry the
+// ReviewCount and ReviewVerdict derived from its sibling review child's saved
+// run.log. #1825 deleted aggregateReviewChildren, so the verdict was silently
+// elided on cold load; this test guards the server-side stamping restoration.
+func TestPortal_ParentImplRow_ReviewCountAndVerdictSurviveSummaryStrip(t *testing.T) {
+	repoRoot, err := os.MkdirTemp("/tmp", "pvs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(repoRoot) })
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	const issueNumber = 1066
+	canonicalReviewRowID := "sid-2606181138-1066-PR42"
+	startedAt := time.Now().Add(-10 * time.Minute)
+
+	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
+		{Type: "run.started", Timestamp: startedAt, RunID: "impl-1066", Issue: issueNumber, Payload: map[string]any{"branch": "sandman/1066-fix", "issue_number": issueNumber, "batch_id": "impl-1066"}},
+		{Type: "run.finished", Timestamp: startedAt.Add(8 * time.Minute), RunID: "impl-1066", Issue: issueNumber, Payload: map[string]any{"status": "success", "branch": "sandman/1066-fix", "issue_number": issueNumber, "batch_id": "impl-1066"}},
+		{Type: "run.started", Timestamp: startedAt.Add(2 * time.Minute), RunID: canonicalReviewRowID, Payload: map[string]any{"branch": "sandman/review-PR42", "review": true, "pr_number": 42, "issue_number": issueNumber, "batch_id": "sid-2606181138-PR42"}},
+		{Type: "run.finished", Timestamp: startedAt.Add(7 * time.Minute), RunID: canonicalReviewRowID, Payload: map[string]any{"status": "success", "branch": "sandman/review-PR42", "review": true, "pr_number": 42, "issue_number": issueNumber, "batch_id": "sid-2606181138-PR42"}},
+	})
+
+	reviewRunDir := filepath.Join(repoRoot, ".sandman", "batches", "sid-2606181138-PR42", "runs", canonicalReviewRowID)
+	if err := os.MkdirAll(reviewRunDir, 0755); err != nil {
+		t.Fatalf("mkdir review run dir: %v", err)
+	}
+	reviewLog := "[" + canonicalReviewRowID + "] 12:00:00 ## Decision\r\n" +
+		"[" + canonicalReviewRowID + "] 12:00:30 **APPROVED**\r\n"
+	if err := os.WriteFile(filepath.Join(reviewRunDir, "run.log"), []byte(reviewLog), 0644); err != nil {
+		t.Fatalf("write review run.log: %v", err)
+	}
+
+	runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")})
+	if err != nil {
+		t.Fatalf("compute: %v", err)
+	}
+
+	// Summary endpoint strips Log/LogURL for transport. The verdict must
+	// survive because aggregateReviewChildren stamps ReviewVerdict (a
+	// separate field) during compute, before portalSummaryRuns blanks Log.
+	summary := portalSummaryRuns(runs)
+
+	var parent *portalRun
+	for i := range summary {
+		if summary[i].IssueNumber == issueNumber && !summary[i].Review {
+			parent = &summary[i]
+		}
+	}
+	if parent == nil {
+		t.Fatalf("expected parent impl row for issue %d, got %#v", issueNumber, summary)
+	}
+	if parent.ReviewCount != 1 {
+		t.Fatalf("parent ReviewCount=%d, want 1 (server-side stamping survives summary strip)", parent.ReviewCount)
+	}
+	if parent.ReviewVerdict != "Approved" {
+		t.Fatalf("parent ReviewVerdict=%q, want %q (verdict stamped server-side from saved review run.log before Log blanking)", parent.ReviewVerdict, "Approved")
+	}
+	if parent.Log != "" {
+		t.Fatalf("parent Log must be stripped on summary endpoint, got %q", parent.Log)
+	}
+}
+
+// TestAggregateReviewChildren_StampLandsOnCanonicalParent pins the parent-pick
+// adaptation restored in #1897: aggregateReviewChildren must stamp
+// ReviewCount/ReviewVerdict onto the same parent that the JS pickCanonicalParent
+// displays (active parent with latest StartedAt; else terminal parent with
+// latest FinishedAt), never onto a hidden sibling. This guards the #1825 fix
+// (newer successful run wins over older aborted run with review children) while
+// restoring server-side stamping: the older aborted parent stays clean and the
+// newer successful parent carries the aggregated review metadata.
+func TestAggregateReviewChildren_StampLandsOnCanonicalParent(t *testing.T) {
+	reviewStarted := time.Date(2026, 7, 4, 12, 0, 0, 0, time.UTC)
+	reviewFinished := time.Date(2026, 7, 4, 12, 5, 0, 0, time.UTC)
+	reviewLog := "## Decision\n**APPROVED**\n"
+	makeReview := func() portalRun {
+		return portalRun{
+			IssueNumber: 1793, Review: true, RunID: "rev-1", Key: "rev-1",
+			Kind: "completed", Status: "success",
+			StartedAt: reviewStarted, FinishedAt: &reviewFinished, Log: reviewLog,
+		}
+	}
+
+	t.Run("terminal_latest_finished_wins", func(t *testing.T) {
+		oldFinished := time.Date(2026, 7, 4, 0, 30, 0, 0, time.UTC)
+		newFinished := time.Date(2026, 7, 5, 0, 30, 0, 0, time.UTC)
+		old := portalRun{IssueNumber: 1793, RunID: "impl-2bf9", Key: "impl-2bf9", Kind: "completed", Status: "aborted", StartedAt: reviewStarted.Add(-time.Hour), FinishedAt: &oldFinished}
+		new := portalRun{IssueNumber: 1793, RunID: "impl-9744", Key: "impl-9744", Kind: "completed", Status: "success", StartedAt: reviewStarted, FinishedAt: &newFinished}
+		runs := (&portalRunsView{}).aggregateReviewChildren([]portalRun{old, new, makeReview()})
+		var oldP, newP *portalRun
+		for i := range runs {
+			switch runs[i].RunID {
+			case "impl-2bf9":
+				oldP = &runs[i]
+			case "impl-9744":
+				newP = &runs[i]
+			}
+		}
+		if newP.ReviewCount != 1 {
+			t.Fatalf("newer successful parent ReviewCount=%d, want 1 (stamp lands on canonical parent)", newP.ReviewCount)
+		}
+		if newP.ReviewVerdict != "Approved" {
+			t.Fatalf("newer successful parent ReviewVerdict=%q, want Approved", newP.ReviewVerdict)
+		}
+		if oldP.ReviewCount != 0 {
+			t.Fatalf("older aborted parent ReviewCount=%d, want 0 (stamp must not land on hidden parent)", oldP.ReviewCount)
+		}
+		if oldP.ReviewVerdict != "" {
+			t.Fatalf("older aborted parent ReviewVerdict=%q, want empty", oldP.ReviewVerdict)
+		}
+	})
+
+	t.Run("active_parent_preferred_over_terminal", func(t *testing.T) {
+		termFinished := time.Date(2026, 7, 5, 0, 30, 0, 0, time.UTC)
+		activeStarted := time.Date(2026, 7, 5, 1, 0, 0, 0, time.UTC)
+		term := portalRun{IssueNumber: 1793, RunID: "impl-old", Key: "impl-old", Kind: "completed", Status: "success", StartedAt: reviewStarted, FinishedAt: &termFinished}
+		active := portalRun{IssueNumber: 1793, RunID: "impl-live", Key: "impl-live", Kind: "active", Status: "running", StartedAt: activeStarted}
+		runs := (&portalRunsView{}).aggregateReviewChildren([]portalRun{term, active, makeReview()})
+		var activeP, termP *portalRun
+		for i := range runs {
+			switch runs[i].RunID {
+			case "impl-live":
+				activeP = &runs[i]
+			case "impl-old":
+				termP = &runs[i]
+			}
+		}
+		if activeP.ReviewCount != 1 {
+			t.Fatalf("active parent ReviewCount=%d, want 1 (active parent wins over terminal)", activeP.ReviewCount)
+		}
+		if activeP.ReviewVerdict != "Approved" {
+			t.Fatalf("active parent ReviewVerdict=%q, want Approved", activeP.ReviewVerdict)
+		}
+		if activeP.Status != "running" {
+			t.Fatalf("active parent Status=%q, want running (no badge-flip; sibling review is terminal, not live)", activeP.Status)
+		}
+		if termP.ReviewCount != 0 {
+			t.Fatalf("terminal parent ReviewCount=%d, want 0 (stamp did not land on non-canonical parent)", termP.ReviewCount)
+		}
+	})
+
+	t.Run("two_active_latest_started_wins", func(t *testing.T) {
+		earlier := time.Date(2026, 7, 5, 0, 0, 0, 0, time.UTC)
+		later := time.Date(2026, 7, 5, 1, 0, 0, 0, time.UTC)
+		a := portalRun{IssueNumber: 1793, RunID: "impl-a", Key: "impl-a", Kind: "active", Status: "running", StartedAt: earlier}
+		b := portalRun{IssueNumber: 1793, RunID: "impl-b", Key: "impl-b", Kind: "active", Status: "running", StartedAt: later}
+		runs := (&portalRunsView{}).aggregateReviewChildren([]portalRun{a, b, makeReview()})
+		var aP, bP *portalRun
+		for i := range runs {
+			switch runs[i].RunID {
+			case "impl-a":
+				aP = &runs[i]
+			case "impl-b":
+				bP = &runs[i]
+			}
+		}
+		if bP.ReviewCount != 1 {
+			t.Fatalf("later-started active parent ReviewCount=%d, want 1", bP.ReviewCount)
+		}
+		if aP.ReviewCount != 0 {
+			t.Fatalf("earlier active parent ReviewCount=%d, want 0", aP.ReviewCount)
+		}
+	})
 }
 
 // TestPortal_ReviewAggregation_LiveReviewSocketPreservesIssueIdentity
@@ -606,14 +781,20 @@ func TestPortal_ReviewAggregation_LiveReviewSocketPreservesIssueIdentity(t *test
 	if !parent.StartedAt.Equal(parentStarted) {
 		t.Fatalf("expected canonical parent StartedAt %s, got %s", parentStarted, parent.StartedAt)
 	}
-	if parent.Status != "success" {
-		t.Fatalf("expected canonical parent status to stay on terminal run.finished value (no aggregateReviewChildren flip), got %q", parent.Status)
+	if parent.Status != "reviewing" {
+		t.Fatalf("expected canonical parent status to be reviewing (flipped by aggregateReviewChildren for live review child), got %q", parent.Status)
+	}
+	if parent.ReviewCount != 1 {
+		t.Fatalf("expected canonical parent ReviewCount 1, got %d", parent.ReviewCount)
 	}
 	if review.IssueNumber != issueNumber {
 		t.Fatalf("expected live review IssueNumber %d, got %d", issueNumber, review.IssueNumber)
 	}
 	if !review.Review {
 		t.Fatalf("expected live review row to remain review=true, got %#v", review)
+	}
+	if !review.GroupedReview {
+		t.Fatalf("expected live review row to be grouped, got %#v", review)
 	}
 	if review.Kind != "active" || review.Status != "reviewing" {
 		t.Fatalf("expected live review row to remain active/reviewing, got %#v", review)

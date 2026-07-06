@@ -59,30 +59,28 @@ type portalRun struct {
 	// contract for implementation runs.
 	Review bool `json:"review,omitempty"`
 	// ReviewCount summarizes child review runs owned by a canonical issue row.
-	// Kept on the struct for forward compat with the JSON wire shape; the
-	// portal no longer stamps this from the event log after issue #1825
-	// (no Go writer remains). The value is now synthesized in JS by
-	// visibleRunForIssueGroup (portal.html) for both the orphan review-only
-	// path and the parent enrichment case (parent impl row alongside
-	// sibling review children), per issue #1856.
+	// Stamped by aggregateReviewChildren during compute (restored in #1897
+	// after #1825 deleted it): for each issue with sibling review rows, the
+	// count lands on the canonical parent implementation row (the same row
+	// the JS pickCanonicalParent displays). The orphan review-only JS path
+	// (visibleRunForIssueGroup, portal.html) also derives a count for its
+	// synthetic row when no implementation parent exists.
 	ReviewCount int `json:"reviewCount,omitempty"`
 	// ReviewVerdict carries latest terminal child-review status for canonical
-	// issue rows. Kept on the struct for the same reason as ReviewCount:
-	// the JSON wire shape is preserved, no Go writer remains, and the
-	// value is now synthesized in JS by visibleRunForIssueGroup
-	// (portal.html) for both the orphan review-only path and the parent
-	// enrichment case, per issue #1856. The verdict is read from the
-	// sibling review's run.log `## Decision` marker; when no marker is
-	// recoverable the field stays empty and the renderRunMeta trailing
-	// dash is suppressed.
+	// issue rows. Stamped by aggregateReviewChildren during compute (restored
+	// in #1897): the verdict is read from each terminal review child's saved
+	// run.log `## Decision` marker via reviewVerdictFromRunLog before
+	// portalSummaryRuns blanks Log for transport, so it survives the summary
+	// endpoint. The latest-finished review wins. The orphan review-only JS
+	// path (visibleRunForIssueGroup, portal.html) opportunistically recovers
+	// a verdict from an already-loaded sibling review.log, but the server
+	// stamp is the canonical source for parent rows.
 	ReviewVerdict string `json:"reviewVerdict,omitempty"`
 	// GroupedReview marks review rows that are owned by an issue-parent row.
-	// Kept on the struct for the same reason as ReviewCount and
-	// ReviewVerdict: the JSON wire shape is preserved. The portal no
-	// longer sets this from the event log; the orphan review-only JS
-	// path (visibleRunForIssueGroup, portal.html) hardcodes
-	// groupedReview=false on its synthetic row, and the parent
-	// enrichment case does not touch the field (per issue #1856).
+	// Set by aggregateReviewChildren during compute (restored in #1897) for
+	// every review row in an issue group that has an implementation parent.
+	// The orphan review-only JS path (visibleRunForIssueGroup, portal.html)
+	// hardcodes groupedReview=false on its synthetic row.
 	GroupedReview bool `json:"groupedReview,omitempty"`
 	// PRNumber mirrors payload.pr_number from the run.started event. Only
 	// meaningful when Review is true; omitted from JSON otherwise.
@@ -526,6 +524,7 @@ func (v *portalRunsView) computeWithActiveRunsAndIndex(repoRoot string, eventLis
 
 	runs = v.dedupRuns(runs)
 	runs = v.demoteOrphanedActiveRunsFromDeadBatches(repoRoot, runs)
+	runs = v.aggregateReviewChildren(runs)
 	for i := range runs {
 		// Active runs are never marked archived, even if a directory
 		// matching the run ID happens to exist under .sandman/archive.
@@ -864,6 +863,115 @@ func (v *portalRunsView) demoteOrphanedActiveRunsFromDeadBatches(repoRoot string
 		runs[i].FinishedAt = &ts
 	}
 	return runs
+}
+
+// aggregateReviewChildren stamps ReviewCount, ReviewVerdict, and the live
+// "reviewing" badge-flip onto the canonical parent implementation row for
+// each issue that has sibling review-only children. The verdict is read from
+// each terminal review child's saved run.log via reviewVerdictFromRunLog
+// during compute, before portalSummaryRuns blanks Log for transport — so the
+// verdict survives the summary endpoint. Restored per issue #1897 after #1825
+// deleted it; the parent pick mirrors the JS pickCanonicalParent (see
+// portal.html) so the stamp lands on the row the portal actually displays.
+func (v *portalRunsView) aggregateReviewChildren(runs []portalRun) []portalRun {
+	if len(runs) == 0 {
+		return runs
+	}
+	type reviewSummary struct {
+		count      int
+		live       bool
+		verdict    string
+		finishedAt time.Time
+		startedAt  time.Time
+	}
+	parents := make(map[int]int)
+	summaries := make(map[int]*reviewSummary)
+	for i := range runs {
+		run := runs[i]
+		if run.IssueNumber <= 0 {
+			continue
+		}
+		if run.Review {
+			summary := summaries[run.IssueNumber]
+			if summary == nil {
+				summary = &reviewSummary{}
+				summaries[run.IssueNumber] = summary
+			}
+			summary.count++
+			if run.Status == "reviewing" {
+				summary.live = true
+			}
+			// Only terminal review rows project a verdict; an in-flight
+			// review has no final "## Decision" yet (issue #1729, slice 3).
+			if run.FinishedAt != nil {
+				verdict := "Unclear"
+				if vv, ok := reviewVerdictFromRunLog(run.Log); ok {
+					verdict = vv
+				}
+				finishedAt := *run.FinishedAt
+				if summary.verdict == "" || finishedAt.After(summary.finishedAt) || (finishedAt.Equal(summary.finishedAt) && run.StartedAt.After(summary.startedAt)) {
+					summary.verdict = verdict
+					summary.finishedAt = finishedAt
+					summary.startedAt = run.StartedAt
+				}
+			}
+			continue
+		}
+		if idx, ok := parents[run.IssueNumber]; !ok || canonicalParentIsBetter(run, runs[idx]) {
+			parents[run.IssueNumber] = i
+		}
+	}
+	for issueNumber, summary := range summaries {
+		idx, ok := parents[issueNumber]
+		if !ok || summary.count == 0 {
+			continue
+		}
+		runs[idx].ReviewCount = summary.count
+		runs[idx].ReviewVerdict = summary.verdict
+		if summary.live {
+			runs[idx].Status = "reviewing"
+		}
+	}
+	for i := range runs {
+		if runs[i].Review {
+			runs[i].GroupedReview = true
+		}
+	}
+	return runs
+}
+
+// canonicalParentIsBetter reports whether candidate is a "more canonical"
+// parent than incumbent, mirroring the JS pickCanonicalParent rule in
+// portal.html: active parents win over terminal parents; within active, the
+// latest StartedAt wins; within terminal, the latest FinishedAt wins (then
+// StartedAt, then RunID). Used by aggregateReviewChildren, which runs before
+// the sort.SliceStable at compute, so the comparison must be explicit rather
+// than rely on slice order.
+func canonicalParentIsBetter(candidate, incumbent portalRun) bool {
+	cActive := candidate.Kind == "active"
+	iActive := incumbent.Kind == "active"
+	if cActive != iActive {
+		return cActive
+	}
+	if cActive {
+		return candidate.StartedAt.After(incumbent.StartedAt)
+	}
+	cFin := finishedAtOrZero(candidate)
+	iFin := finishedAtOrZero(incumbent)
+	if !cFin.Equal(iFin) {
+		return cFin.After(iFin)
+	}
+	if !candidate.StartedAt.Equal(incumbent.StartedAt) {
+		return candidate.StartedAt.After(incumbent.StartedAt)
+	}
+	return candidate.RunID > incumbent.RunID
+}
+
+func finishedAtOrZero(run portalRun) time.Time {
+	if run.FinishedAt != nil {
+		return *run.FinishedAt
+	}
+	return time.Time{}
 }
 
 func reviewVerdictFromRunLog(logText string) (string, bool) {
