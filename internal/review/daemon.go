@@ -829,6 +829,24 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) error {
 		return comments[i].CreatedAt.Before(comments[j].CreatedAt)
 	})
 
+	// priorReviewExists is computed from the raw comment list (before
+	// any trigger / bot-shaped filter) and feeds the {{PRIOR_REVIEW_EXISTS}}
+	// substitution in the review prompt (issue #1892). The flag tells
+	// the review agent whether to render the `## Previous review
+	// progress` section at all. IsReviewRequest excludes implementor
+	// triggers (`/sandman review …`, `@bot /sandman review …`) so they
+	// are NOT counted as prior reviews. Bot self-posts (filtered out of
+	// the trigger list by LooksLikeBotReviewBody below) ARE counted as
+	// prior reviews — they are reviews of the PR, just not fresh
+	// triggers. The two filters answer different questions and coexist.
+	priorReviewExists := false
+	for _, c := range comments {
+		if !IsReviewRequest(c.Body) {
+			priorReviewExists = true
+			break
+		}
+	}
+
 	type unseenTrigger struct {
 		comment github.PRComment
 		focus   string
@@ -1011,7 +1029,7 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) error {
 		defer d.inFlight.Done()
 		defer d.releasePRSlot(prNumber)
 
-		launchErr := d.launchReview(ctx, prNumber, focus, comment.ID, commentReactionID, prReactionID, reviewRunFolder, perRowRunID, rs, state)
+		launchErr := d.launchReview(ctx, prNumber, focus, comment.ID, commentReactionID, prReactionID, reviewRunFolder, perRowRunID, rs, state, priorReviewExists)
 		if launchErr != nil {
 			d.logf("launch review for PR #%d comment %s: %v", prNumber, comment.ID, launchErr)
 			// Ctx-cancel between RunBatch and the post step:
@@ -1176,7 +1194,7 @@ func logWriterFor(d *Daemon) io.Writer {
 // drops the trigger before launch (issue #1849 S6 — the lazy-verify
 // bounded-retry walker is gone; the bounded-retry contract is now
 // expressed as a single-shot at launch-end via the seen-cache).
-func (d *Daemon) launchReview(ctx context.Context, prNumber int, focus, commentID, commentReactionID, prReactionID, reviewRunFolder, perRowRunID string, rs *daemon.RunSession, state *ReviewStateStore) error {
+func (d *Daemon) launchReview(ctx context.Context, prNumber int, focus, commentID, commentReactionID, prReactionID, reviewRunFolder, perRowRunID string, rs *daemon.RunSession, state *ReviewStateStore, priorReviewExists bool) error {
 	// We compute the review branch name up-front so the cleanup defer
 	// has it available on every exit path, including early errors
 	// before RunBatch runs. The same value is reused in the
@@ -1211,11 +1229,12 @@ func (d *Daemon) launchReview(ctx context.Context, prNumber int, focus, commentI
 	}
 
 	rendered, err := d.Prompts.RenderReview(prompt.RenderConfig{}, prompt.PRData{
-		Number:      pr.Number,
-		Title:       pr.Title,
-		Body:        pr.Body,
-		ReviewFocus: focus,
-		RunDir:      reviewRunFolder,
+		Number:            pr.Number,
+		Title:             pr.Title,
+		Body:              pr.Body,
+		ReviewFocus:       focus,
+		RunDir:            reviewRunFolder,
+		PriorReviewExists: priorReviewExists,
 	})
 	if err != nil {
 		return fmt.Errorf("render prompt: %w", err)

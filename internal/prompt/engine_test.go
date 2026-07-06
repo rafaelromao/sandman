@@ -736,6 +736,14 @@ func TestDefaultPRReviewPrompt_ContainsOmitPreviousReviewProgressRule(t *testing
 		"**omit** the `## Previous review progress` section from the posted comment",
 		"Do not render this section if there are no prior reviews",
 		"Do not write a placeholder such as \"No previous reviews found.\"",
+		// Slice 3 additions (issue #1892): the new hard-rule block
+		// must be present and must reference the deterministic
+		// {{PRIOR_REVIEW_EXISTS}} token with the explicit three
+		// prohibitions (no heading, no placeholder, no default body).
+		"## Previous review progress — hard rule",
+		"deterministic prior-review flag is `{{PRIOR_REVIEW_EXISTS}}`",
+		"render **no heading, no placeholder, no default body**",
+		"Treat `NO` as authoritative",
 	}
 	for _, phrase := range required {
 		if !strings.Contains(prompt, phrase) {
@@ -886,6 +894,8 @@ func TestRenderReview_BuiltInDefaultRendersPRData(t *testing.T) {
 	want = strings.ReplaceAll(want, "{{PR_BODY}}", "Splits the orchestrator.")
 	want = strings.ReplaceAll(want, "{{REVIEW_FOCUS}}", "")
 	want = strings.ReplaceAll(want, "{{RUN_DIR}}", "/abs/path/to/run")
+	// Issue #1892: zero-value PRData.PriorReviewExists is false -> "NO".
+	want = strings.ReplaceAll(want, "{{PRIOR_REVIEW_EXISTS}}", "NO")
 
 	if result != want {
 		t.Errorf("unexpected rendered review prompt\nwant:\n%s\ngot:\n%s", want, result)
@@ -955,5 +965,32 @@ func TestRender_IssuePathDoesNotConsumePRKeys(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "PR_NUMBER") {
 		t.Errorf("error should mention PR_NUMBER, got: %v", err)
+	}
+}
+
+func TestApplyPRSubstitutions_PriorReviewExistsTrueRendersYES(t *testing.T) {
+	template := "PRIOR_REVIEW_EXISTS={{PRIOR_REVIEW_EXISTS}}"
+	data := PRData{PriorReviewExists: true}
+
+	got := ApplyPRSubstitutions(template, data)
+	if got != "PRIOR_REVIEW_EXISTS=YES" {
+		t.Errorf("got %q, want %q", got, "PRIOR_REVIEW_EXISTS=YES")
+	}
+}
+
+func TestApplyPRSubstitutions_PriorReviewExistsFalseRendersNO(t *testing.T) {
+	template := "PRIOR_REVIEW_EXISTS={{PRIOR_REVIEW_EXISTS}}"
+	data := PRData{PriorReviewExists: false}
+
+	got := ApplyPRSubstitutions(template, data)
+	if got != "PRIOR_REVIEW_EXISTS=NO" {
+		t.Errorf("got %q, want %q", got, "PRIOR_REVIEW_EXISTS=NO")
+	}
+}
+
+func TestDefaultPRReviewPrompt_ContainsPriorReviewExistsKey(t *testing.T) {
+	prompt := DefaultPRReviewPrompt()
+	if !strings.Contains(prompt, "{{PRIOR_REVIEW_EXISTS}}") {
+		t.Errorf("review prompt must include {{PRIOR_REVIEW_EXISTS}} placeholder (issue #1892)")
 	}
 }

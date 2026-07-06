@@ -319,7 +319,7 @@ func TestLaunchReview_CleansUpWorktreeAndBranchOnSuccess(t *testing.T) {
 		t.Fatalf("write decision.md: %v", err)
 	}
 
-	if err := d.launchReview(context.Background(), 42, "", "c1", "", "", reviewRunFolder, perRowRunID, rs, state); err != nil {
+	if err := d.launchReview(context.Background(), 42, "", "c1", "", "", reviewRunFolder, perRowRunID, rs, state, false); err != nil {
 		t.Fatalf("launchReview: %v", err)
 	}
 
@@ -380,7 +380,7 @@ func TestPrepareReviewRun_LinkedIssueRegistersPerRowRunID(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(reviewRunFolder, "decision.md"), []byte("ok"), 0644); err != nil {
 		t.Fatalf("write decision.md: %v", err)
 	}
-	if err := d.launchReview(context.Background(), 42, "", "c1", "", "", reviewRunFolder, perRowRunID, rs, state); err != nil {
+	if err := d.launchReview(context.Background(), 42, "", "c1", "", "", reviewRunFolder, perRowRunID, rs, state, false); err != nil {
 		t.Fatalf("launchReview: %v", err)
 	}
 
@@ -426,7 +426,7 @@ func TestLaunchReview_CleansUpOnRunBatchFailure(t *testing.T) {
 		t.Fatalf("prepareReviewRun: %v", prepErr)
 	}
 
-	err := d.launchReview(context.Background(), 42, "", "c1", "", "", reviewRunFolder, perRowRunID, rs, nil)
+	err := d.launchReview(context.Background(), 42, "", "c1", "", "", reviewRunFolder, perRowRunID, rs, nil, false)
 	if err == nil {
 		t.Fatal("expected launchReview to return the RunBatch error")
 	}
@@ -471,7 +471,7 @@ func TestLaunchReview_CleansUpOnContextCancellation(t *testing.T) {
 		t.Fatalf("prepareReviewRun: %v", prepErr)
 	}
 
-	err := d.launchReview(ctx, 42, "", "c1", "", "", reviewRunFolder, perRowRunID, rs, nil)
+	err := d.launchReview(ctx, 42, "", "c1", "", "", reviewRunFolder, perRowRunID, rs, nil, false)
 	if err == nil {
 		t.Fatal("expected launchReview to return a context.Canceled error")
 	}
