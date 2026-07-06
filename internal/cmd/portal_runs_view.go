@@ -1061,6 +1061,8 @@ func (v *portalRunsView) discoverActiveRuns(repoRoot string, eventsByRun map[str
 			PRNumber:     prNumber,
 			BatchID:      batchID,
 			RunID:        runID,
+			RunTS:        manifest.RunTS,
+			RunShortID:   manifest.RunShortID,
 			StartedAt:    startedAt,
 			ModTime:      info.ModTime(),
 		}
