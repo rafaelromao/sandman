@@ -61,21 +61,28 @@ type portalRun struct {
 	// ReviewCount summarizes child review runs owned by a canonical issue row.
 	// Kept on the struct for forward compat with the JSON wire shape; the
 	// portal no longer stamps this from the event log after issue #1825
-	// (no Go writer remains), and the orphan-review JS path
-	// (portal.html visibleRunForIssueGroup) synthesizes its own value
-	// for review-only groups.
+	// (no Go writer remains). The value is now synthesized in JS by
+	// visibleRunForIssueGroup (portal.html) for both the orphan review-only
+	// path and the parent enrichment case (parent impl row alongside
+	// sibling review children), per issue #1856.
 	ReviewCount int `json:"reviewCount,omitempty"`
 	// ReviewVerdict carries latest terminal child-review status for canonical
 	// issue rows. Kept on the struct for the same reason as ReviewCount:
 	// the JSON wire shape is preserved, no Go writer remains, and the
-	// orphan-review JS path synthesizes its own value for review-only
-	// groups.
+	// value is now synthesized in JS by visibleRunForIssueGroup
+	// (portal.html) for both the orphan review-only path and the parent
+	// enrichment case, per issue #1856. The verdict is read from the
+	// sibling review's run.log `## Decision` marker; when no marker is
+	// recoverable the field stays empty and the renderRunMeta trailing
+	// dash is suppressed.
 	ReviewVerdict string `json:"reviewVerdict,omitempty"`
 	// GroupedReview marks review rows that are owned by an issue-parent row.
 	// Kept on the struct for the same reason as ReviewCount and
 	// ReviewVerdict: the JSON wire shape is preserved. The portal no
-	// longer sets this from the event log; the orphan-review JS path
-	// hardcodes groupedReview=false on its synthetic row.
+	// longer sets this from the event log; the orphan review-only JS
+	// path (visibleRunForIssueGroup, portal.html) hardcodes
+	// groupedReview=false on its synthetic row, and the parent
+	// enrichment case does not touch the field (per issue #1856).
 	GroupedReview bool `json:"groupedReview,omitempty"`
 	// PRNumber mirrors payload.pr_number from the run.started event. Only
 	// meaningful when Review is true; omitted from JSON otherwise.
