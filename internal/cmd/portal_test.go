@@ -795,8 +795,8 @@ func TestPortal_RunFromState_ActiveRunPopulatesAttemptsAndLastRetryReason(t *tes
 
 	run := (&portalRunsView{}).runFromState(repoRoot, runState, nil, nil, nil)
 
-	if run.Attempts != 2 {
-		t.Fatalf("expected Attempts=2 for active retried run, got %d", run.Attempts)
+	if run.Attempts != 1 {
+		t.Fatalf("expected Attempts=1 (retry count) for active retried run, got %d", run.Attempts)
 	}
 	if run.LastRetryReason != "agent-stalled" {
 		t.Fatalf("expected LastRetryReason=agent-stalled, got %q", run.LastRetryReason)
@@ -915,8 +915,8 @@ func TestPortal_RunFromActiveMatch_StateAbsentPopulatesAttemptsAndLastRetryReaso
 
 	run := (&portalRunsView{}).runFromActiveMatch(repoRoot, match, eventsByRun, nil)
 
-	if run.Attempts != 2 {
-		t.Fatalf("expected Attempts=2 from raw event list, got %d", run.Attempts)
+	if run.Attempts != 1 {
+		t.Fatalf("expected Attempts=1 (retry count) from raw event list, got %d", run.Attempts)
 	}
 	if run.LastRetryReason != "agent-stalled" {
 		t.Fatalf("expected LastRetryReason=agent-stalled from raw event list, got %q", run.LastRetryReason)

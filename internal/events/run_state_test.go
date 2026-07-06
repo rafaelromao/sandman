@@ -643,8 +643,30 @@ func TestProjectRunStates_LiveAttempt_ReturnsHighestRetryAttempt(t *testing.T) {
 		t.Fatalf("expected 1 run, got %d", len(runs))
 	}
 
-	if got := runs[0].LiveAttempt(); got != 3 {
-		t.Fatalf("LiveAttempt = %d, want 3 (highest attempt across retries)", got)
+	if got := runs[0].LiveAttempt(); got != 2 {
+		t.Fatalf("LiveAttempt = %d, want 2 (retry count: two retries have actually occurred, initial run excluded)", got)
+	}
+}
+
+func TestProjectRunStates_LiveAttempt_SingleRetryReturnsOne(t *testing.T) {
+	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
+
+	runs := ProjectRunStates([]Event{
+		{Type: "run.started", Timestamp: startedAt, RunID: "run-single-retry", Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
+		{Type: "run.retry", Timestamp: startedAt.Add(2 * time.Minute), RunID: "run-single-retry", Issue: 42, Payload: map[string]any{
+			"attempt":         2,
+			"max_attempts":    3,
+			"previous_status": "failure",
+			"branch":          "sandman/42-fix",
+		}},
+	})
+
+	if len(runs) != 1 {
+		t.Fatalf("expected 1 run, got %d", len(runs))
+	}
+
+	if got := runs[0].LiveAttempt(); got != 1 {
+		t.Fatalf("LiveAttempt = %d, want 1 (one retry has occurred, payload attempt=2 maps to retry count 1)", got)
 	}
 }
 
@@ -661,6 +683,31 @@ func TestProjectRunStates_LiveAttempt_NoRetriesReturnsZero(t *testing.T) {
 
 	if got := runs[0].LiveAttempt(); got != 0 {
 		t.Fatalf("LiveAttempt = %d, want 0 for run without retries", got)
+	}
+}
+
+func TestProjectRunStates_LiveAttempt_MalformedZeroAttemptClampsAtZero(t *testing.T) {
+	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
+
+	runs := ProjectRunStates([]Event{
+		{Type: "run.started", Timestamp: startedAt, RunID: "run-malformed", Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
+		{Type: "run.retry", Timestamp: startedAt.Add(1 * time.Minute), RunID: "run-malformed", Issue: 42, Payload: map[string]any{
+			"attempt":         0,
+			"max_attempts":    3,
+			"previous_status": "failure",
+			"branch":          "sandman/42-fix",
+		}},
+	})
+
+	if len(runs) != 1 {
+		t.Fatalf("expected 1 run, got %d", len(runs))
+	}
+
+	if got := runs[0].LiveAttempt(); got != 0 {
+		t.Fatalf("LiveAttempt = %d, want 0 (malformed attempt=0 must clamp to non-negative)", got)
+	}
+	if got := runs[0].LiveAttempt(); got < 0 {
+		t.Fatalf("LiveAttempt = %d, must never return a negative value", got)
 	}
 }
 
@@ -691,8 +738,8 @@ func TestProjectRunStates_LiveAttempt_FinishedRunStillReturnsRetryAttempt(t *tes
 	if runs[0].IsActive() {
 		t.Fatal("expected run to be terminal after run.finished")
 	}
-	if got := runs[0].LiveAttempt(); got != 2 {
-		t.Fatalf("LiveAttempt = %d, want 2 (helper walks raw event list, independent of Finished)", got)
+	if got := runs[0].LiveAttempt(); got != 1 {
+		t.Fatalf("LiveAttempt = %d, want 1 (one retry has occurred; helper walks raw event list, independent of Finished)", got)
 	}
 }
 

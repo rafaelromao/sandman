@@ -1675,20 +1675,31 @@ func (v *portalRunsView) attemptsForRun(runState events.RunState) int {
 // attemptsAndLastRetryReasonFromEvents computes the live attempt signals
 // from a raw event list. The state-absent branch of runFromActiveMatch
 // has no RunState to query, so it walks the same retry events directly.
-// "Most recent" follows the same rule as RunState.LastRetryReason:
-// largest Timestamp, ties broken by last-encountered order. Returns
-// (0, "") when no retries are present or when the most recent retry
-// payload omits the `reason` key.
+// The returned retry count is the maximum `attempt - 1` across the
+// retry events, with each candidate clamped at 0 so a malformed
+// payload cannot produce a negative count. This mirrors
+// events.RunState.LiveAttempt's retry-count semantic so the two
+// active-row code paths (state-present vs. state-absent) agree. "Most
+// recent" follows the same rule as RunState.LastRetryReason: largest
+// Timestamp, ties broken by last-encountered order. Returns (0, "")
+// when no retries are present or when the most recent retry payload
+// omits the `reason` key.
 func attemptsAndLastRetryReasonFromEvents(events []portalEvent) (int, string) {
-	bestAttempt := 0
+	bestRetries := 0
 	latestRetryIdx := -1
 	latestTs := time.Time{}
 	for i, event := range events {
 		if event.Type != "run.retry" {
 			continue
 		}
-		if attempt, ok := payloadInt(event.Payload, "attempt"); ok && attempt > bestAttempt {
-			bestAttempt = attempt
+		if attempt, ok := payloadInt(event.Payload, "attempt"); ok {
+			retries := attempt - 1
+			if retries < 0 {
+				retries = 0
+			}
+			if retries > bestRetries {
+				bestRetries = retries
+			}
 		}
 		if latestRetryIdx == -1 || !event.Timestamp.Before(latestTs) {
 			latestRetryIdx = i
@@ -1700,10 +1711,10 @@ func attemptsAndLastRetryReasonFromEvents(events []portalEvent) (int, string) {
 	}
 	latest := events[latestRetryIdx]
 	if latest.Payload == nil {
-		return bestAttempt, ""
+		return bestRetries, ""
 	}
 	reason, _ := latest.Payload["reason"].(string)
-	return bestAttempt, reason
+	return bestRetries, reason
 }
 
 func (v *portalRunsView) kindForRun(runState events.RunState) string {
