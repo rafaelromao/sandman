@@ -162,6 +162,10 @@ The earlier design split the SelfPostStore's record site between the `pr-review`
 
 Both the implementor and reviewer agents share the host user's `gh` credentials, so `comment.author.login` is the same value for both. Author identity cannot distinguish "the bot is asking" from "the bot just answered". Hash tracking is identity-agnostic and survives a future change in which user the agents run as.
 
+### Removal (issue #1848)
+
+The SHA-256 hash tracker (`SelfPostStore`, `.sandman/reviews/self-posted.json`, `extractBodiesFromLog`) is deleted. The load-bearing mitigation against self-loops is now the daemon-side redaction layer (issue #1845): the daemon redacts every `/sandman` substring from the bot's `decision.md` body before posting, so the bot's review body never contains the trigger substring in the normal case. The structural sniff `LooksLikeBotReviewBody` (§Structural self-defence sniff above) is the sole surviving self-defence gate that drops a body before `ParseTrigger` runs; it covers the case where the redaction layer has not yet been wired through or where a bot body legitimately quotes the trigger substring. The pre-#1848 lazy-verify path (`promotePendingReviews` / `promotePendingComment`) is preserved unchanged as a safety net for the old-style bot-review flows that pre-date the S3 post step, but it no longer reads or writes `SelfPostStore` and no longer greps the run log for `extractBodiesFromLog`.
+
 ## Blocked by
 
 None - can start immediately

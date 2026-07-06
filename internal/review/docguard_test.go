@@ -420,15 +420,15 @@ func TestADR_CrossReferencesConsistent(t *testing.T) {
 	}
 }
 
-// TestCONTEXT_GlossaryHasNewTerms asserts that CONTEXT.md carries
-// glossary entries (or pointers) for `Review run log` and
-// `SelfPostStore` that reflect the new self-post filter contract
-// introduced by issues #1756, #1757, and #1759. The `Review run
-// log` entry may be a pointer to the existing `Saved Run Log`
-// entry (which already pins the on-disk path); the `SelfPostStore`
-// entry may be a pointer to the `Review daemon state` paragraph,
-// but the paragraph itself must reflect the new contract — it must
-// NOT describe the old `pr-review SKILL.md Step 4 wrapper` claim.
+// TestCONTEXT_GlossaryHasNewTerms asserts that CONTEXT.md carries a
+// glossary entry for `Review run log` that reflects the post-#1848
+// contract: the SelfPostStore and `extractBodiesFromLog` are deleted,
+// and the daemon no longer greps the run log for bot-body
+// attribution. The `Review run log` entry may be a pointer to the
+// existing `Saved Run Log` entry. The test also asserts that the
+// `SelfPostStore` glossary entry has been removed and that the
+// pre-#1848 contract phrasing does not return, so a future
+// re-introduction is caught.
 func TestCONTEXT_GlossaryHasNewTerms(t *testing.T) {
 	root, err := repoRoot()
 	if err != nil {
@@ -442,10 +442,16 @@ func TestCONTEXT_GlossaryHasNewTerms(t *testing.T) {
 	text := string(body)
 
 	mustContain(t, text, "**Review run log**:")
-	mustContain(t, text, "**SelfPostStore**:")
 
-	// Positive phrasing on the new SelfPostStore contract.
-	mustContain(t, text, "(prNumber, sha256(body))")
+	// Regression guard: post-#1848 the SelfPostStore glossary
+	// entry must not return. A future slice that re-introduces
+	// the store must update this test and the surrounding docs.
+	if strings.Contains(text, "**SelfPostStore**:") {
+		t.Errorf("CONTEXT.md must not carry a SelfPostStore glossary entry (issue #1848)")
+	}
+	if strings.Contains(text, "(prNumber, sha256(body))") {
+		t.Errorf("CONTEXT.md must not describe the SelfPostStore (prNumber, sha256(body)) contract (issue #1848)")
+	}
 
 	// Negative phrasing: the stale claim that the skill-side
 	// wrapper records the hash at posting time must not appear.

@@ -75,9 +75,9 @@ func TestParseTrigger_NewlineSeparated(t *testing.T) {
 // /sandman review trigger substring is structurally a previous
 // bot review, not a fresh implementor trigger. The daemon's
 // processPR consults this gate before AddCommentReaction so the
-// eyes reaction does not land on the bot's own comment even when
-// the SelfPostStore forgot the body across a daemon restart
-// (issue #1821).
+// eyes reaction does not land on the bot's own comment (issue
+// #1821). Post-#1848 this sniff is the SOLE surviving self-defence
+// gate; the SelfPostStore is gone.
 func TestLooksLikeBotReviewBody_HitsBotShapedBodies(t *testing.T) {
 	cases := []string{
 		// Exact case, single-line body that quoted the marker
