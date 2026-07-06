@@ -88,6 +88,8 @@ func runSelectionPhaseWithEvents(ctx context.Context, client github.Client, coun
 	manifest := daemon.BatchManifest{
 		RunKind:    "auto-select",
 		BatchId:    batchID,
+		RunTS:      ts,
+		RunShortID: shortid,
 		Candidates: append([]int(nil), candidates...),
 		Query:      query,
 		Count:      effectiveCount,

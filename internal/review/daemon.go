@@ -1128,7 +1128,7 @@ func (d *Daemon) prepareReviewRun(ctx context.Context, prNumber int, commentID s
 	// for this review (see #1675). batchDirName is the ADR-0030 batch-level
 	// dir name `<sid>-<ts>-PR<pr>`, which equals perRowRunID for orphan
 	// reviews but NOT for reviews with a linked issue (`<sid>-<ts>-<issue>-PR<pr>`).
-	manifest := daemon.BatchManifest{BatchId: perRowRunID, CreatedAt: time.Now(), RunKind: "review", Issues: []int{}, PR: &prNumber}
+	manifest := daemon.BatchManifest{BatchId: perRowRunID, CreatedAt: time.Now(), RunKind: "review", RunTS: ts, RunShortID: shortid, Issues: []int{}, PR: &prNumber}
 	if err := rs.Prepare(manifest); err != nil {
 		_ = rs.Close()
 		return "", "", nil, nil, fmt.Errorf("prepare review run session: %w", err)
