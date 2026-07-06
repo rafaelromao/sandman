@@ -782,7 +782,15 @@ func TestPortal_TerminalReviewLiveSocket_PreservesStatus(t *testing.T) {
 // backend no longer stamps cross-batch review metadata onto the
 // parent's own row.
 func TestPortal_ParentSuccWithLiveChild_KeepsSuccessStatus(t *testing.T) {
-	repoRoot := t.TempDir()
+	// Unix sockets reject paths longer than 108 bytes; t.TempDir() puts
+	// us under a path whose name contains this test's full identifier,
+	// which combined with ".sandman/batches/PR42/batch.sock" blows the
+	// budget on macOS CI. Use a short tmpdir under /tmp instead.
+	repoRoot, err := os.MkdirTemp("/tmp", "pswl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(repoRoot) })
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
