@@ -135,6 +135,7 @@ func TestPRFlow_PodmanSandboxBinaryCommitsAndPushes(t *testing.T) {
 		ghShimDir := t.TempDir()
 		writeFakeGHShim(t, ghShimDir)
 		prependPath(t, ghShimDir)
+		assertHostShimResolves(t, ghShimDir)
 
 		initDeps := prFlowDeps(repoDir)
 		runRootCommand(t, initDeps, "init", "--agent", tc.name)
@@ -2339,4 +2340,89 @@ func runSandmanBinary(t *testing.T, binPath, workDir string, args ...string) (st
 	)
 	out, err := cmd.CombinedOutput()
 	return string(out), err
+}
+
+func assertHostShimResolves(t *testing.T, ghShimDir string) {
+	t.Helper()
+
+	shimPath := filepath.Join(ghShimDir, "gh")
+
+	whichOut, err := exec.Command("which", "gh").CombinedOutput()
+	if err != nil {
+		t.Fatalf("hermeticity assertion: host which gh failed: %v: %s", err, whichOut)
+	}
+	whichResolved := strings.TrimSpace(string(whichOut))
+	if whichResolved != shimPath {
+		t.Fatalf("hermeticity assertion: host `which gh` = %q, want %q (prependPath not active)", whichResolved, shimPath)
+	}
+
+	readlinkOut, err := exec.Command("readlink", "-f", whichResolved).CombinedOutput()
+	if err != nil {
+		t.Fatalf("hermeticity assertion: host `readlink -f $(which gh)` failed: %v: %s", err, readlinkOut)
+	}
+	readlinkResolved := strings.TrimSpace(string(readlinkOut))
+	if readlinkResolved != shimPath {
+		t.Fatalf("hermeticity assertion: host `readlink -f $(which gh)` = %q, want %q (symlink or alias mismatch)", readlinkResolved, shimPath)
+	}
+}
+
+func scrubGitHubEnv(t *testing.T) {
+	t.Helper()
+
+	for _, key := range []string{"GH_HOST", "GH_TOKEN", "GITHUB_API_URL", "GITHUB_TOKEN", "GH_CONFIG_DIR", "XDG_CONFIG_HOME"} {
+		t.Setenv(key, "")
+	}
+}
+
+func assertContainerShimFresh(t *testing.T, imageName, hostShimDir string) {
+	t.Helper()
+
+	hostShimPath := filepath.Join(hostShimDir, "gh")
+	hostSumOut, err := exec.Command("sha256sum", hostShimPath).CombinedOutput()
+	if err != nil {
+		t.Fatalf("hermeticity assertion: host sha256sum %s failed: %v: %s", hostShimPath, err, hostSumOut)
+	}
+	hostSum := strings.Fields(strings.TrimSpace(string(hostSumOut)))[0]
+	if hostSum == "" {
+		t.Fatalf("hermeticity assertion: empty host sha256 for %s", hostShimPath)
+	}
+
+	checkScript := "set -eu; gh_path=$(command -v gh); echo \"PATH=${gh_path}\"; echo \"SUM=$(sha256sum \"${gh_path}\" | awk '{print $1}')\""
+	podmanOut, err := exec.Command("podman", "run", "--rm", imageName, "sh", "-c", checkScript).CombinedOutput()
+	if err != nil {
+		t.Fatalf("hermeticity assertion: podman run for in-container gh check failed: %v: %s", err, podmanOut)
+	}
+	var containerPath, containerSum string
+	for _, line := range strings.Split(strings.TrimSpace(string(podmanOut)), "\n") {
+		switch {
+		case strings.HasPrefix(line, "PATH="):
+			containerPath = strings.TrimPrefix(line, "PATH=")
+		case strings.HasPrefix(line, "SUM="):
+			containerSum = strings.TrimPrefix(line, "SUM=")
+		}
+	}
+	if containerPath != "/usr/local/bin/gh" {
+		t.Fatalf("hermeticity assertion: in-container `command -v gh` = %q, want %q (Dockerfile COPY target missing)", containerPath, "/usr/local/bin/gh")
+	}
+	if containerSum == "" {
+		t.Fatalf("hermeticity assertion: empty in-container sha256; output: %s", string(podmanOut))
+	}
+	if containerSum != hostSum {
+		t.Fatalf("hermeticity assertion: in-container gh SHA-256 = %s, host SHA-256 = %s (stale podman build cache)", containerSum, hostSum)
+	}
+}
+
+func assertRemoteOriginRewritten(t *testing.T, repoDir, expectedURL string) {
+	t.Helper()
+
+	cmd := exec.Command("git", "config", "--get", "remote.origin.url")
+	cmd.Dir = repoDir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("hermeticity assertion: `git config --get remote.origin.url` failed: %v: %s", err, out)
+	}
+	got := strings.TrimSpace(string(out))
+	if got != expectedURL {
+		t.Fatalf("hermeticity assertion: remote.origin.url = %q, want %q (real remote URL escaped the test)", got, expectedURL)
+	}
 }
