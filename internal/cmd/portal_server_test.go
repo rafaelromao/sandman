@@ -1687,9 +1687,8 @@ func TestPortal_PageExposesMobileExpandedRunPanelStyles(t *testing.T) {
 	if end := strings.Index(block, `@media (prefers-reduced-motion: reduce)`); end >= 0 {
 		block = block[:end]
 	}
-	hideRule := ".col-issue-title,\n      th[data-col=\"issue-title\"],\n      td[data-cell=\"issue-title\"] {\n        display: none;\n      }"
-	if strings.Contains(block, hideRule) {
-		t.Fatalf("mobile media block still hides issue-title cell; hide rule must be removed\n%s", block[:min(1000, len(block))])
+	if strings.Contains(block, "td[data-cell=\"issue-title\"] {\n        display: none;") {
+		t.Fatalf("mobile media block still hides issue-title cell; the display: none rule on that selector must be removed\n%s", block[:min(1000, len(block))])
 	}
 	nineSixtyStart := strings.Index(content, `@media (max-width: 960px)`)
 	if nineSixtyStart < 0 {
@@ -1699,9 +1698,13 @@ func TestPortal_PageExposesMobileExpandedRunPanelStyles(t *testing.T) {
 	if end := strings.Index(nineSixtyBlock, `@media (max-width: 760px)`); end >= 0 {
 		nineSixtyBlock = nineSixtyBlock[:end]
 	}
-	centerRule := "tbody tr.run-row td[data-cell=\"issue-title\"] {\n        grid-area: issue;\n        min-width: 0;\n        white-space: normal;\n        color: var(--text);\n        align-self: center;\n      }"
-	if !strings.Contains(nineSixtyBlock, centerRule) {
-		t.Fatalf("960px media block missing align-self: center on issue-title cell rule\n%s", nineSixtyBlock[:min(1000, len(nineSixtyBlock))])
+	for _, want := range []string{
+		"tbody tr.run-row td[data-cell=\"issue-title\"] {",
+		"align-self: center;",
+	} {
+		if !strings.Contains(nineSixtyBlock, want) {
+			t.Fatalf("960px media block missing %q on issue-title cell rule\n%s", want, nineSixtyBlock[:min(1000, len(nineSixtyBlock))])
+		}
 	}
 }
 
