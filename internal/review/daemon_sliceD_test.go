@@ -39,7 +39,7 @@ func TestDaemon_PromotePendingComment_ReturnsSuccessWhenReviewFound(t *testing.T
 	})
 	d.Clock = func() time.Time { return now }
 
-	status, err := d.promotePendingComment(context.Background(), 42, "100", now, nil)
+	status, err := d.promotePendingComment(context.Background(), 42, "100", now)
 	if err != nil {
 		t.Fatalf("expected no error when review comment is present, got: %v", err)
 	}
@@ -68,7 +68,7 @@ func TestDaemon_PromotePendingComment_ReturnsErrorWhenMissing(t *testing.T) {
 	})
 	d.Clock = func() time.Time { return now }
 
-	_, err := d.promotePendingComment(context.Background(), 42, "100", now, nil)
+	_, err := d.promotePendingComment(context.Background(), 42, "100", now)
 	if err == nil {
 		t.Fatal("expected error when no review comment is present")
 	}
@@ -101,7 +101,7 @@ func TestDaemon_PromotePendingComment_IgnoresTriggerComment(t *testing.T) {
 	})
 	d.Clock = func() time.Time { return now }
 
-	_, err := d.promotePendingComment(context.Background(), 42, "100", now, nil)
+	_, err := d.promotePendingComment(context.Background(), 42, "100", now)
 	if err == nil {
 		t.Fatal("expected error when only the trigger comment exists")
 	}

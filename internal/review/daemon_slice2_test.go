@@ -19,15 +19,15 @@ import (
 	"github.com/rafaelromao/sandman/internal/prompt"
 )
 
-// TestDaemon_ReviewsDirContainsOnlySocketPromptAndSelfPosted asserts the
-// daemon leaves .sandman/reviews/ flat: after a successful tick with a
+// TestDaemon_ReviewsDirContainsOnlySocketPrompt asserts the daemon
+// leaves .sandman/reviews/ flat: after a successful tick with a
 // trigger comment, the entries under <BaseDir>/reviews/ are
-// review.sock, review-prompt.md, quality-rules.md, and (issue #1757)
-// self-posted.json. No per-PR subdirectory is created. This locks in
-// acceptance criteria #1 ("No code path creates .sandman/reviews/<PR>/")
-// from issue #1224 and the post-#1757 contract that processPR is the
-// sole authoritative record site (it writes self-posted.json itself).
-func TestDaemon_ReviewsDirContainsOnlySocketPromptAndSelfPosted(t *testing.T) {
+// review.sock, review-prompt.md, and quality-rules.md. No
+// per-PR subdirectory is created. Post-#1848 the SelfPostStore and
+// its self-posted.json file are gone — the reviews dir contains no
+// self-post data. This locks in acceptance criterion #1 ("No code
+// path creates .sandman/reviews/<PR>/") from issue #1224.
+func TestDaemon_ReviewsDirContainsOnlySocketPrompt(t *testing.T) {
 	now := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
 	gh := &fakeGH{
 		prs: []github.PR{{Number: 7, State: "open"}},
@@ -65,7 +65,7 @@ func TestDaemon_ReviewsDirContainsOnlySocketPromptAndSelfPosted(t *testing.T) {
 		names = append(names, e.Name())
 	}
 	sort.Strings(names)
-	want := []string{"quality-rules.md", "review-prompt.md", "review.sock", "self-posted.json"}
+	want := []string{"quality-rules.md", "review-prompt.md", "review.sock"}
 	sort.Strings(want)
 
 	if len(names) != len(want) {

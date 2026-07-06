@@ -104,7 +104,7 @@ When writing or updating tests:
 
 ## Skill content constraints
 
-Skills under `internal/skill/sandman/` describe how coding agents work with the **user-facing** concepts (`.sandman/` state files, public CLI, review commands, worktrees, ADRs). They must not reference Sandman's **internals** — Go package paths under `internal/`, Go type and function names like `processPR` / `MarkSeen` / `SelfPostStore`, or other implementation details that may shift.
+Skills under `internal/skill/sandman/` describe how coding agents work with the **user-facing** concepts (`.sandman/` state files, public CLI, review commands, worktrees, ADRs). They must not reference Sandman's **internals** — Go package paths under `internal/`, Go type and function names like `processPR` / `MarkSeen` / `launchReview`, or other implementation details that may shift.
 
 Skills also must not mention the GitHub issue tracker directly (issue numbers, kanban labels, or triage vocabulary). When a skill needs to refer to a project decision, link to the relevant ADR (`docs/adr/`) or `CONTEXT.md` instead; when it needs to refer to the user's work item, describe it behaviorally ("the implementor's open work item") rather than by tracker coordinates.
 
