@@ -1,15 +1,15 @@
 package review
 
 import (
-	"regexp"
 	"testing"
 )
 
-// residualRedactPattern mirrors the redactor's pattern under case-insensitive
-// matching. The redactor's contract requires that no `/sandman` substring
-// (case-insensitive) ever survives a redaction pass; tests assert that
-// invariant after every transformation.
-var residualRedactPattern = regexp.MustCompile(`(?i)/sandman`)
+// The redactor's contract requires that no `/sandman` substring
+// (case-insensitive) ever survives a redaction pass. Tests assert that
+// invariant after every transformation by re-scanning the output with the
+// package-level `redactPattern` — the single source of truth for the
+// redaction regex — so the invariant can never drift from the production
+// pattern.
 
 func TestRedactBody_Lowercase(t *testing.T) {
 	got := RedactBody("hello /sandman world")
@@ -113,7 +113,7 @@ func TestRedactBody_ResidualInvariant(t *testing.T) {
 	}
 	for _, in := range inputs {
 		out := RedactBody(in)
-		if residualRedactPattern.MatchString(out) {
+		if redactPattern.MatchString(out) {
 			t.Errorf("residual /sandman substring found in redacted output for input %q: %q", in, out)
 		}
 	}
