@@ -207,7 +207,12 @@ func TestPortal_SwitchRows_InstantScrollDoesNotRegress(t *testing.T) {
 		t.Skip("node is required for portal scroll behavior test")
 	}
 
-	pinnedBaseline, err := loadPinnedSwitchRowsBaseline(t, perfBaselineDir(t))
+	baselineDir := perfBaselineDir(t)
+	if !pinnedSwitchRowsBaselineExists(t, baselineDir) {
+		t.Skipf("pinned slice-0 baseline missing at %s (testdata/ is gitignored; populate locally before running)", baselineDir)
+	}
+
+	pinnedBaseline, err := loadPinnedSwitchRowsBaseline(t, baselineDir)
 	if err != nil {
 		t.Fatalf("load pinned slice-0 baseline: %v", err)
 	}
@@ -260,4 +265,14 @@ func loadPinnedSwitchRowsBaseline(t *testing.T, baselineDir string) (*pinnedSwit
 		return nil, err
 	}
 	return &b, nil
+}
+
+// pinnedSwitchRowsBaselineExists reports whether the slice-0 baseline file is
+// available on disk. The file lives under testdata/, which is gitignored —
+// test authors populate it locally before running the regression test.
+// Callers should skip rather than fail when the file is absent.
+func pinnedSwitchRowsBaselineExists(t *testing.T, baselineDir string) bool {
+	t.Helper()
+	_, err := os.Stat(filepath.Join(baselineDir, "portal_perf_switch_rows_baseline_slice0.json"))
+	return err == nil
 }
