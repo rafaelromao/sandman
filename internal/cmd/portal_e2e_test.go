@@ -575,9 +575,14 @@ func writeAbortRequest(t *testing.T, baseURL, runKey string, issue int) (int, []
 }
 
 func createPromptOnlyRunSocket(t *testing.T, repoDir, runName string, issueNumber int) string {
-	runDir := filepath.Join(repoDir, ".sandman", "runs", runName)
-	if err := os.MkdirAll(runDir, 0755); err != nil {
-		t.Fatalf("create run dir: %v", err)
+	sandmanDir := filepath.Join(repoDir, ".sandman")
+	if err := os.MkdirAll(sandmanDir, 0755); err != nil {
+		t.Fatalf("create .sandman dir: %v", err)
+	}
+
+	batchDir := filepath.Join(sandmanDir, "batches", runName)
+	if err := os.MkdirAll(batchDir, 0755); err != nil {
+		t.Fatalf("create batch dir: %v", err)
 	}
 
 	manifest := daemon.BatchManifest{
@@ -587,11 +592,11 @@ func createPromptOnlyRunSocket(t *testing.T, repoDir, runName string, issueNumbe
 	if issueNumber > 0 {
 		manifest.Issues = []int{issueNumber}
 	}
-	if err := daemon.WriteManifest(runDir, manifest); err != nil {
+	if err := daemon.WriteManifest(batchDir, manifest); err != nil {
 		t.Fatalf("write manifest: %v", err)
 	}
 
-	ln, err := net.Listen("unix", filepath.Join(runDir, "run.sock"))
+	ln, err := net.Listen("unix", filepath.Join(batchDir, "batch.sock"))
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
@@ -608,7 +613,24 @@ func createPromptOnlyRunSocket(t *testing.T, repoDir, runName string, issueNumbe
 		}
 	}()
 
-	return runDir
+	layout := paths.NewLayout(nil, repoDir)
+	idx, err := batchindex.Load(layout.BatchesIndexPath)
+	if err != nil {
+		t.Fatalf("load batches index: %v", err)
+	}
+	idx.Add(batchindex.Entry{
+		ID:        runName,
+		Path:      batchDir,
+		Kind:      batchindex.KindIssue,
+		Status:    batchindex.StatusActive,
+		CreatedAt: time.Now(),
+		Issues:    manifest.Issues,
+	})
+	if err := idx.Save(layout.BatchesIndexPath); err != nil {
+		t.Fatalf("save batches index: %v", err)
+	}
+
+	return batchDir
 }
 
 // createMixedBatchRunSocket reproduces the exact mixed-batch shape from
