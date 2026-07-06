@@ -564,32 +564,31 @@
   // later run was launched; the selector needs one canonical row to act
   // as the parent's identity, plus the sibling reviews.
   //
-  // Pick priority (highest first):
-  //   1. A parent stamped with review metadata (reviewCount > 0 or a
-  //      reviewVerdict) — the JS-side sibling-stamping pass on the
-  //      visibleRunForIssueGroup surface marks these as the group owner.
-  //   2. The latest-by-startedAt non-aborted parent (success/failure/
-  //      running/queued/blocked). Aborted parents are abandoned work,
-  //      not the active owner.
-  //   3. The latest-by-startedAt parent regardless of status.
-  //   4. The caller row itself, when it is an impl row carrying review
-  //      metadata — preserves the legacy single-self fallback.
+  // Pick logic mirrors the table-visibility helper pickCanonicalParent
+  // in portal.html (used by visibleRunForIssueGroup), so the dropdown's
+  // canonical option agrees with the visible table row:
+  //
+  //   1. The currently-running parent (kind === 'active'), if any.
+  //      Within actives, the latest by startedAt wins. The
+  //      startedAt-desc filter is a tiebreaker — reviews and prior
+  //      impl rows can never surface because they live in the
+  //      reviews / parents splits separately.
+  //   2. Otherwise, parents[0] — the caller's order is authoritative.
+  //      visibleRunsForTable sorts runs by startedAt desc, so
+  //      parents[0] is the most-recent terminal impl row. The
+  //      #1825 contract forbids preferring a parent that carries
+  //      stale review metadata over a newer parent that does not —
+  //      the table-visibility helper enforces this by trusting
+  //      caller order, and so do we.
   function pickCanonicalParent(parents, run) {
     if (!parents || !parents.length) {
-      if (run && !run.review && Number(run.reviewCount || 0) > 0) return run;
-      return null;
+      return run && !run.review ? run : null;
     }
-    const stamped = parents.find((candidate) => Number(candidate.reviewCount || 0) > 0 || candidate.reviewVerdict);
-    if (stamped) return stamped;
-    const sortedByStart = parents.slice().sort((a, b) => {
-      const aStart = a.startedAt ? new Date(a.startedAt).getTime() : 0;
-      const bStart = b.startedAt ? new Date(b.startedAt).getTime() : 0;
-      if (aStart !== bStart) return bStart - aStart;
-      return subjectRunValue(a).localeCompare(subjectRunValue(b));
-    });
-    const nonAborted = sortedByStart.find((candidate) => String(candidate.status || '').toLowerCase() !== 'aborted');
-    if (nonAborted) return nonAborted;
-    return sortedByStart[0];
+    const liveActive = parents.filter((candidate) => candidate.kind === 'active');
+    if (liveActive.length) {
+      return liveActive.reduce((best, candidate) => (candidate.startedAt > best.startedAt ? candidate : best));
+    }
+    return parents[0];
   }
 
   function subjectRunsFor(run, opts) {

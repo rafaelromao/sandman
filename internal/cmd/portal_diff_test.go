@@ -4539,28 +4539,53 @@ console.log('PASS');
 	runNodeScript(t, js)
 }
 
-// TestPortalDiff_SubjectRunsFor_MultipleParentsPicksNewestNonAborted
-// pins the regression observed on issue #1855: an issue group can carry
-// two impl rows (one earlier abandoned, one later successful) plus
-// sibling reviews. The earlier parent pick required `parents.length === 1`
-// to fall back to the only parent; with two parents the dropdown lost
-// the parent entirely and listed only the reviews, breaking the subject
-// switcher. The canonical pick now prefers the latest non-aborted parent,
-// so both impls surface and the latest owned group remains first.
-func TestPortalDiff_SubjectRunsFor_MultipleParentsPicksNewestNonAborted(t *testing.T) {
+// TestPortalDiff_SubjectRunsFor_MultipleParentsPicksCanonical pins the
+// regression observed on issue #1855: an issue group can carry two impl
+// rows (one earlier abandoned, one later successful) plus sibling
+// reviews. The earlier parent pick required `parents.length === 1` to
+// fall back to the only parent; with two parents the dropdown lost
+// the parent entirely and listed only the reviews, breaking the
+// subject switcher. The canonical pick now mirrors the table-visibility
+// helper pickCanonicalParent in portal.html (used by
+// visibleRunForIssueGroup): prefer an active (currently-running)
+// parent, otherwise trust the caller's order. visibleRunsForTable
+// passes rows in startedAt desc, so parents[0] is the most-recent
+// terminal impl — never the olderAborted-with-reviewMetadata row,
+// which is exactly the #1825 cross-batch guard's contract.
+func TestPortalDiff_SubjectRunsFor_MultipleParentsPicksCanonical(t *testing.T) {
 	js := `const opts = { helpers, runs: [
-  { key: 'fb4a-260706132041-1855', runId: 'fb4a-260706132041-1855', kind: 'completed', status: 'success', review: false, issueNumber: 1855, issueLabel: '#1855', startedAt: '2026-07-06T13:20:48Z' },
   { key: '1058-260706140827-1855-PR1875', runId: '1058-260706140827-1855-PR1875', kind: 'completed', status: 'success', review: true, issueNumber: 1855, issueLabel: 'PR1875', prNumber: 1875, startedAt: '2026-07-06T14:08:32Z' },
   { key: 'e39d-260706134357-1855-PR1875', runId: 'e39d-260706134357-1855-PR1875', kind: 'completed', status: 'success', review: true, issueNumber: 1855, issueLabel: 'PR1875', prNumber: 1875, startedAt: '2026-07-06T13:44:02Z' },
+  { key: 'fb4a-260706132041-1855', runId: 'fb4a-260706132041-1855', kind: 'completed', status: 'success', review: false, issueNumber: 1855, issueLabel: '#1855', startedAt: '2026-07-06T13:20:48Z' },
   { key: '2569-260706132006-1855', runId: '2569-260706132006-1855', kind: 'completed', status: 'aborted', review: false, issueNumber: 1855, issueLabel: '#1855', startedAt: '2026-07-06T12:00:00Z' },
 ] };
 const rowRun = opts.runs[0];
 const related = SandmanPortalDiff.subjectRunsFor(rowRun, opts);
 if (!Array.isArray(related) || related.length !== 3) throw new Error('expected 3 related subjects (parent + 2 reviews), got ' + JSON.stringify(related.length));
-if (related[0].review) throw new Error('expected first related subject to be the canonical parent (non-aborted), got review row first');
-if (related[0].runId !== 'fb4a-260706132041-1855') throw new Error('expected canonical parent fb4a-260706132041-1855 (newest non-aborted), got ' + JSON.stringify(related[0].runId));
+if (related[0].review) throw new Error('expected first related subject to be the canonical parent, got review row first');
+if (related[0].runId !== 'fb4a-260706132041-1855') throw new Error('expected canonical parent fb4a-260706132041-1855 (caller-order), got ' + JSON.stringify(related[0].runId));
 const reviewIds = related.slice(1).map((r) => r.runId).sort();
 if (reviewIds[0] !== '1058-260706140827-1855-PR1875' || reviewIds[1] !== 'e39d-260706134357-1855-PR1875') throw new Error('expected both reviews in related subjects, got ' + JSON.stringify(reviewIds));
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+// TestPortalDiff_SubjectRunsFor_ActiveParentWinsOverOlderTerminals pins
+// the active-first branch of pickCanonicalParent: a currently-running
+// parent (kind === 'active') owns the issue group even when an older
+// successful impl exists in the caller's array. Within actives the
+// latest by startedAt wins.
+func TestPortalDiff_SubjectRunsFor_ActiveParentWinsOverOlderTerminals(t *testing.T) {
+	js := `const opts = { helpers, runs: [
+  { key: 'old-impl', runId: 'old-impl', kind: 'completed', status: 'success', review: false, issueNumber: 100, issueLabel: '#100', startedAt: '2026-07-06T10:00:00Z' },
+  { key: 'new-impl-active', runId: 'new-impl-active', kind: 'active', status: 'running', review: false, issueNumber: 100, issueLabel: '#100', startedAt: '2026-07-06T15:00:00Z' },
+  { key: 'newer-active', runId: 'newer-active', kind: 'active', status: 'running', review: false, issueNumber: 100, issueLabel: '#100', startedAt: '2026-07-06T15:30:00Z' },
+] };
+const rowRun = opts.runs[0];
+const related = SandmanPortalDiff.subjectRunsFor(rowRun, opts);
+if (related.length !== 1) throw new Error('expected 1 related subject (active parent only — no reviews), got ' + JSON.stringify(related.length));
+if (related[0].runId !== 'newer-active') throw new Error('expected newest active parent newer-active, got ' + JSON.stringify(related[0].runId));
 console.log('PASS');
 `
 	runNodeScript(t, js)
