@@ -145,7 +145,7 @@ func TestDaemon_SeenCacheHydratedAtConstruction(t *testing.T) {
 	d := New(dir, gh, &prompt.Engine{}, runner, &config.Config{
 		DefaultReviewAgent: "opencode",
 		DefaultReviewModel: "opencode/foo",
-	}, &lockedBuffer{}, 0, false)
+	}, &lockedBuffer{}, 0, false, nil)
 
 	counter := &sliceASeenLoader{}
 	counter.Install(t)
@@ -393,7 +393,7 @@ func TestDaemon_ReviewStateStore_MarkSeenInvalidatesCacheMidProcess(t *testing.T
 		},
 		prFetch: map[int]*github.PR{prNumber: {Number: prNumber, Title: "T", Body: "B"}},
 	}
-	runner := &capturedRequest{}
+	runner := newDecisionRunner()
 	d, _, _ := newDaemonForTest(t, gh, runner, &config.Config{
 		DefaultReviewAgent: "opencode",
 		DefaultReviewModel: "opencode/foo",
@@ -403,30 +403,30 @@ func TestDaemon_ReviewStateStore_MarkSeenInvalidatesCacheMidProcess(t *testing.T
 	counter := &sliceASeenLoader{}
 	counter.Install(t)
 
-	// First tick: cache is empty, so processPR should launch a batch
-	// and record the trigger as pending (slice D lazy verify).
-	// tickAndWait blocks until the async review goroutine completes so
-	// the runner.calls assertion is stable AND the pending entry is
-	// registered before the second tick's dedup check runs.
+	// First tick: cache is empty, so processPR should launch a
+	// batch and the S3 post step (issue #1846) records the trigger
+	// as success directly via MarkSeen. tickAndWait blocks until
+	// the async review goroutine completes so the runner.calls
+	// assertion is stable AND the seen-cache hook has fired.
 	tickAndWait(t, d, context.Background())
 	if runner.calls != 1 {
 		t.Fatalf("first tick should launch exactly one batch, got %d", runner.calls)
 	}
-	if d.IsTerminalSeen(prNumber, triggerID) {
-		t.Fatalf("after first tick pending mark must NOT hydrate the seen cache (shouldSkipDedupStatus=pending is false), got cache %v", d.seenCache)
+	if !d.IsTerminalSeen(prNumber, triggerID) {
+		t.Fatalf("after first tick the S3 post step (issue #1846) should have hydrated the seen cache with success, got cache %v", d.seenCache)
 	}
 
-	// Second tick: promotePendingReviews observes the agent's review
-	// comment and promotes the pending entry to success, firing the
-	// MarkTerminalSeen hook. The cache should now contain the pair.
+	// Second tick: the seen cache now short-circuits the trigger
+	// (the post step's MarkSeen('success') fired MarkTerminalSeen).
+	// runner.calls stays at 1 because no new launch happens.
 	if err := d.tick(context.Background()); err != nil {
 		t.Fatalf("second tick: %v", err)
 	}
 	if runner.calls != 1 {
-		t.Errorf("second tick must not re-launch the review (now promoted via lazy verify), got %d total calls", runner.calls)
+		t.Errorf("second tick must not re-launch the review (already terminal-seen via S3 post step), got %d total calls", runner.calls)
 	}
 	if !d.IsTerminalSeen(prNumber, triggerID) {
-		t.Fatalf("after second tick the cache should have (%d, %s) from promotion to success, got %v", prNumber, triggerID, d.seenCache)
+		t.Fatalf("after second tick the cache should have (%d, %s) from S3 success, got %v", prNumber, triggerID, d.seenCache)
 	}
 
 	// Reset the counters so the assertion below measures the third tick only.

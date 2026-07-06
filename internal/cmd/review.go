@@ -14,6 +14,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/batch"
 	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/daemon"
+	ghcli "github.com/rafaelromao/sandman/internal/github"
 	"github.com/rafaelromao/sandman/internal/prompt"
 	"github.com/rafaelromao/sandman/internal/review"
 	"github.com/rafaelromao/sandman/internal/runid"
@@ -308,7 +309,11 @@ func runReviewDaemon(parent context.Context, deps Dependencies, cfg *config.Conf
 	socketDir := filepath.Join(sandmanDir, "reviews")
 	broadcaster := daemon.NewBroadcaster()
 	ctlSocket := daemon.NewControlSocketWithName(socketDir, "review.sock", broadcaster)
-	d := review.New(sandmanDir, deps.GitHubClient, deps.Renderer, deps.BatchRunner, cfg, broadcaster, parallel, parallelSet)
+	poster := deps.CommentPoster
+	if poster == nil {
+		poster = ghCommentPosterFromDeps(deps)
+	}
+	d := review.New(sandmanDir, deps.GitHubClient, deps.Renderer, deps.BatchRunner, cfg, broadcaster, parallel, parallelSet, poster)
 	d.Sandbox = sandbox
 	d.ContainerCapacity = cc
 	d.ContainerCapacitySet = ccSet
@@ -318,4 +323,22 @@ func runReviewDaemon(parent context.Context, deps Dependencies, cfg *config.Conf
 	d.Model = modelFlag
 	d.SetSocket(ctlSocket)
 	return d.Run(ctx)
+}
+
+// ghCommentPosterFromDeps is a fallback that builds a
+// GHCommentPoster from deps.GitHubClient when the deps wiring did
+// not already provide a CommentPoster. The production path
+// (cmd/sandman/main.go) pre-builds and assigns the poster, so this
+// fallback only fires for tests / non-production wiring that pass a
+// fake GitHubClient. Returning nil lets the daemon's nil-safe
+// default take over; see review.New's nil-to-nop fallback.
+func ghCommentPosterFromDeps(deps Dependencies) review.CommentPoster {
+	if deps.GitHubClient == nil {
+		return nil
+	}
+	cli, ok := deps.GitHubClient.(*ghcli.CLIClient)
+	if !ok {
+		return nil
+	}
+	return ghcli.NewGHCommentPoster(cli)
 }

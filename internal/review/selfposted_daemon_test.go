@@ -315,7 +315,7 @@ func TestDaemon_PromotePendingComment_NoPoisoning_CrossTickSuccessSettlesWithout
 			},
 		},
 	}
-	runner := &capturedRequest{}
+	runner := newDecisionRunner()
 	d, _, _ := newDaemonForTest(t, gh, runner, &config.Config{
 		DefaultReviewAgent: "opencode",
 		DefaultReviewModel: "opencode/foo",
@@ -323,7 +323,8 @@ func TestDaemon_PromotePendingComment_NoPoisoning_CrossTickSuccessSettlesWithout
 	d.Clock = func() time.Time { return now.Add(-1 * time.Minute) }
 
 	// Tick N: implementor's trigger lands; processPR launches the
-	// review and registers the pending entry.
+	// review and the S3 post step (issue #1846) MarkSeens success
+	// directly because the test runner writes decision.md.
 	tickAndWait(t, d, context.Background())
 	if runner.calls != 1 {
 		t.Fatalf("tick N: expected 1 batch run, got %d", runner.calls)
@@ -339,8 +340,12 @@ func TestDaemon_PromotePendingComment_NoPoisoning_CrossTickSuccessSettlesWithout
 	})
 	gh.mu.Unlock()
 
-	// Tick N+1: promote sees the body → success (no recording);
-	// processPR does not re-launch.
+	// Tick N+1: the trigger is terminal-seen via the S3 post step
+	// (MarkSeen("success") on tick N fired MarkTerminalSeen), so
+	// processPR drops it before launching. The bot review body is
+	// still observed on this tick and recorded into SelfPostStore
+	// by the bot-shape defence (issue #1821) so a follow-up
+	// bare-/sandman-review look-up cannot self-loop on it.
 	tickAndWait(t, d, context.Background())
 
 	if runner.calls != 1 {
@@ -350,7 +355,7 @@ func TestDaemon_PromotePendingComment_NoPoisoning_CrossTickSuccessSettlesWithout
 		t.Error("tick N+1 MUST NOT record the implementor's trigger body (issue #1757); trigger bodies are deliberately skipped to keep future trigger lookups live")
 	}
 	if !d.selfPosts.IsSelfPosted(1, reviewBody) {
-		t.Error("tick N+1 MUST record the bot's review body (issue #1757); processPR is the sole authoritative record site for non-trigger bodies")
+		t.Error("tick N+1 MUST record the bot's review body (issue #1757 / #1821 defence); processPR is the sole authoritative record site for non-trigger bodies")
 	}
 }
 
@@ -717,7 +722,7 @@ func TestDaemon_New_SeedsSelfPostStoreFromReviewRunLogs(t *testing.T) {
 	d := New(dir, gh, &prompt.Engine{}, runner, &config.Config{
 		DefaultReviewAgent: "opencode",
 		DefaultReviewModel: "opencode/foo",
-	}, &lockedBuffer{}, 0, false)
+	}, &lockedBuffer{}, 0, false, nil)
 
 	if d.selfPosts == nil {
 		t.Fatal("daemon.selfPosts must be non-nil after New")
@@ -834,7 +839,7 @@ func TestDaemon_StaleBotBody_DoesNotRetriggerAcrossRestart(t *testing.T) {
 	d := New(dir, gh, &prompt.Engine{}, runner, &config.Config{
 		DefaultReviewAgent: "opencode",
 		DefaultReviewModel: "opencode/foo",
-	}, &lockedBuffer{}, 0, false)
+	}, &lockedBuffer{}, 0, false, nil)
 	d.Clock = func() time.Time { return now.Add(-1 * time.Minute) }
 
 	if !d.selfPosts.IsSelfPosted(prNumber, botBody) {

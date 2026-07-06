@@ -13,18 +13,27 @@ import (
 	"github.com/rafaelromao/sandman/internal/github"
 )
 
-// TestDaemon_BoundedRetry_GrepsLogBeforeFailing pins B13: when the
-// cycle counter reaches pendingMaxCycles but the run log contains
-// bodies the bot posted, the entry settles as success (not failure).
-// The bodies are recorded into SelfPostStore. This closes the
-// "bot was slower than 90s and the daemon would have wrongly
-// labelled success as failure" race.
+// TestPromotePendingReviews_BoundedRetryGrepsLogBeforeFailing pins
+// B13: when the cycle counter reaches pendingMaxCycles but the run
+// log contains bodies the bot posted, the entry settles as success
+// (not failure). The bodies are recorded into SelfPostStore. This
+// closes the "bot was slower than 90s and the daemon would have
+// wrongly labelled success as failure" race.
 //
-// The pre-#1759 behavior marked the entry as failure after
-// pendingMaxCycles with no second-chance check. The new behavior
-// greps the run log first; only an empty log triggers the failure
-// escape.
-func TestDaemon_BoundedRetry_GrepsLogBeforeFailing(t *testing.T) {
+// Issue #1846 (S3) rewrote launchReview to own MarkSeen directly
+// via the decision.md post step. The lazy-verify promotion path is
+// preserved unchanged as a safety net, but the S3 happy path
+// MarkSeens success on the launching tick — so a real launch never
+// leaves a pending entry alive long enough for the bounded-retry
+// grace to fire. This test exercises the preserved code by
+// pre-registering a `pending` entry and seeding the in-memory
+// `runLogPath` so the grace path reads the fixture directly,
+// bypassing the launch path entirely. The pre-#1846
+// TestDaemon_BoundedRetry_GrepsLogBeforeFailing test was rewritten
+// to this form (issue #1846 self-review noted that skipping it
+// would weaken the regression net for the retained
+// promotePendingReviews grace code).
+func TestPromotePendingReviews_BoundedRetryGrepsLogBeforeFailing(t *testing.T) {
 	now := time.Date(2026, 7, 4, 12, 0, 0, 0, time.UTC)
 	botBody := "## Summary\nLGTM, no blockers."
 
@@ -54,34 +63,28 @@ func TestDaemon_BoundedRetry_GrepsLogBeforeFailing(t *testing.T) {
 	d.Clock = func() time.Time { return now }
 	d.selfPosts = mustSelfPostStore(t, d.BaseDir)
 
-	// First tick: launch + register pending.
-	tickAndWait(t, d, context.Background())
-	if runner.calls != 1 {
-		t.Fatalf("expected 1 batch run, got %d", runner.calls)
-	}
-
 	// Drive enough ticks to reach the bounded-retry boundary.
-	// After the last tick the entry must settle as success (not
-	// failure) because the run log has the bot's body.
-	statePath := runner.last.RunDir
+	// On every tick we re-seed a pending entry pointing at the
+	// run.log fixture, simulating the pre-S3 condition where the
+	// launch goroutine had registered `pending` and the next
+	// tick's promote step would walk it.
+	runDir := filepath.Join(d.BaseDir, "fake-state")
 	for i := 0; i < pendingMaxCycles; i++ {
-		// Overwrite the entry's runLogPath each cycle so the
-		// grace path can read the test's run.log fixture (the
-		// daemon defaults to <runDir>/run.log, which is empty
-		// in this test because no agent actually wrote it).
-		d.pendingMu.Lock()
-		for i, entries := range d.pendingReviews {
-			for j := range entries {
-				d.pendingReviews[i][j].runLogPath = runLogPath
-			}
+		_ = os.MkdirAll(runDir, 0755)
+		// Open a fresh per-run store so the promote path has
+		// somewhere to write the final MarkSeen.
+		statePath := filepath.Join(runDir, "review-state.json")
+		store, err := NewReviewStateStore(statePath, 7, d)
+		if err != nil {
+			t.Fatalf("open review state: %v", err)
 		}
-		d.pendingMu.Unlock()
+		d.registerPendingReview(7, "trigger", now.Add(-1*time.Minute), statePath, runLogPath, store)
 		if err := d.tick(context.Background()); err != nil {
 			t.Fatalf("tick %d: %v", i+2, err)
 		}
 	}
 
-	state, err := batchindex.ReadReviewState(statePath)
+	state, err := batchindex.ReadReviewState(runDir)
 	if err != nil {
 		t.Fatalf("read review state: %v", err)
 	}
@@ -107,7 +110,15 @@ func TestDaemon_BoundedRetry_GrepsLogBeforeFailing(t *testing.T) {
 // run log is empty (the bot truly failed), the entry settles as
 // failure. This is the regression of the old behavior for the
 // truly-failed case.
-func TestDaemon_BoundedRetry_FailsWhenLogIsEmpty(t *testing.T) {
+// TestPromotePendingReviews_BoundedRetryFailsWhenLogIsEmpty pins
+// the negative half of B13: when the cycle counter reaches
+// pendingMaxCycles AND the run log is empty (the bot truly
+// failed), the entry settles as failure. Issue #1846 preserves the
+// code but the launch goroutine no longer registers an entry under
+// S3 (post step owns MarkSeen); the test now exercises the
+// preserved code by re-seeding the in-memory pending entry on each
+// tick so the bounded-retry grace path fires.
+func TestPromotePendingReviews_BoundedRetryFailsWhenLogIsEmpty(t *testing.T) {
 	now := time.Date(2026, 7, 4, 12, 0, 0, 0, time.UTC)
 
 	dir := t.TempDir()
@@ -134,32 +145,26 @@ func TestDaemon_BoundedRetry_FailsWhenLogIsEmpty(t *testing.T) {
 	d.Clock = func() time.Time { return now }
 	d.selfPosts = mustSelfPostStore(t, d.BaseDir)
 
-	// First tick: launch + register pending.
-	tickAndWait(t, d, context.Background())
-	if runner.calls != 1 {
-		t.Fatalf("expected 1 batch run, got %d", runner.calls)
-	}
-
 	// Drive enough ticks to exhaust the bounded retry budget.
-	statePath := runner.last.RunDir
+	// Issue #1846 (S3) preserves the lazy-verify path as a safety
+	// net; this test exercises the preserved code by re-seeding
+	// the in-memory pending entry on each tick so the bounded-
+	// retry grace path reaches the empty-log branch.
+	runDir := filepath.Join(d.BaseDir, "fake-state-empty")
 	for i := 0; i < pendingMaxCycles; i++ {
-		// Overwrite the entry's runLogPath each cycle so the
-		// grace path can read the test's run.log fixture (the
-		// daemon defaults to <runDir>/run.log, which is empty
-		// in this test because no agent actually wrote it).
-		d.pendingMu.Lock()
-		for i, entries := range d.pendingReviews {
-			for j := range entries {
-				d.pendingReviews[i][j].runLogPath = runLogPath
-			}
+		_ = os.MkdirAll(runDir, 0755)
+		statePath := filepath.Join(runDir, "review-state.json")
+		store, err := NewReviewStateStore(statePath, 7, d)
+		if err != nil {
+			t.Fatalf("open review state: %v", err)
 		}
-		d.pendingMu.Unlock()
+		d.registerPendingReview(7, "trigger", now.Add(-1*time.Minute), statePath, runLogPath, store)
 		if err := d.tick(context.Background()); err != nil {
 			t.Fatalf("tick %d: %v", i+2, err)
 		}
 	}
 
-	state, err := batchindex.ReadReviewState(statePath)
+	state, err := batchindex.ReadReviewState(runDir)
 	if err != nil {
 		t.Fatalf("read review state: %v", err)
 	}
@@ -177,7 +182,7 @@ func TestDaemon_BoundedRetry_FailsWhenLogIsEmpty(t *testing.T) {
 	}
 
 	// Verify the trigger's review-state.json is well-formed JSON.
-	data, err := os.ReadFile(filepath.Join(statePath, "review-state.json"))
+	data, err := os.ReadFile(filepath.Join(runDir, "review-state.json"))
 	if err != nil {
 		t.Fatalf("read review-state.json: %v", err)
 	}

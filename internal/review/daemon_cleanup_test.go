@@ -241,12 +241,20 @@ func TestLaunchReview_CleansUpWorktreeAndBranchOnSuccess(t *testing.T) {
 	branch := reviewBranchName(42, "c1")
 	stageReviewWorktree(t, worktreeDir, branch)
 
-	reviewRunFolder, perRowRunID, rs, _, prepErr := d.prepareReviewRun(context.Background(), 42, "c1")
+	reviewRunFolder, perRowRunID, rs, state, prepErr := d.prepareReviewRun(context.Background(), 42, "c1")
 	if prepErr != nil {
 		t.Fatalf("prepareReviewRun: %v", prepErr)
 	}
 
-	if err := d.launchReview(context.Background(), 42, "", "c1", "", "", reviewRunFolder, perRowRunID, rs); err != nil {
+	// Issue #1846 (S3): launchReview now reads and posts
+	// decision.md. Pre-create one so the post step (which the
+	// review-daemon test fixtures above wire to nopCommentPoster)
+	// can complete and MarkSeen("success") can fire.
+	if err := os.WriteFile(filepath.Join(reviewRunFolder, "decision.md"), []byte("ok"), 0644); err != nil {
+		t.Fatalf("write decision.md: %v", err)
+	}
+
+	if err := d.launchReview(context.Background(), 42, "", "c1", "", "", reviewRunFolder, perRowRunID, rs, state); err != nil {
 		t.Fatalf("launchReview: %v", err)
 	}
 
@@ -300,11 +308,14 @@ func TestPrepareReviewRun_LinkedIssueRegistersPerRowRunID(t *testing.T) {
 	branch := reviewBranchName(42, "c1")
 	stageReviewWorktree(t, worktreeDir, branch)
 
-	reviewRunFolder, perRowRunID, rs, _, prepErr := d.prepareReviewRun(context.Background(), 42, "c1")
+	reviewRunFolder, perRowRunID, rs, state, prepErr := d.prepareReviewRun(context.Background(), 42, "c1")
 	if prepErr != nil {
 		t.Fatalf("prepareReviewRun: %v", prepErr)
 	}
-	if err := d.launchReview(context.Background(), 42, "", "c1", "", "", reviewRunFolder, perRowRunID, rs); err != nil {
+	if err := os.WriteFile(filepath.Join(reviewRunFolder, "decision.md"), []byte("ok"), 0644); err != nil {
+		t.Fatalf("write decision.md: %v", err)
+	}
+	if err := d.launchReview(context.Background(), 42, "", "c1", "", "", reviewRunFolder, perRowRunID, rs, state); err != nil {
 		t.Fatalf("launchReview: %v", err)
 	}
 
@@ -350,7 +361,7 @@ func TestLaunchReview_CleansUpOnRunBatchFailure(t *testing.T) {
 		t.Fatalf("prepareReviewRun: %v", prepErr)
 	}
 
-	err := d.launchReview(context.Background(), 42, "", "c1", "", "", reviewRunFolder, perRowRunID, rs)
+	err := d.launchReview(context.Background(), 42, "", "c1", "", "", reviewRunFolder, perRowRunID, rs, nil)
 	if err == nil {
 		t.Fatal("expected launchReview to return the RunBatch error")
 	}
@@ -395,7 +406,7 @@ func TestLaunchReview_CleansUpOnContextCancellation(t *testing.T) {
 		t.Fatalf("prepareReviewRun: %v", prepErr)
 	}
 
-	err := d.launchReview(ctx, 42, "", "c1", "", "", reviewRunFolder, perRowRunID, rs)
+	err := d.launchReview(ctx, 42, "", "c1", "", "", reviewRunFolder, perRowRunID, rs, nil)
 	if err == nil {
 		t.Fatal("expected launchReview to return a context.Canceled error")
 	}

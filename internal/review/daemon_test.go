@@ -178,12 +178,36 @@ func (l *lockedBuffer) Bytes() []byte {
 	return append([]byte(nil), l.buf.Bytes()...)
 }
 
+// decisionCapturingRunner wraps a capturedRequest so the fake agent
+// writes a deterministic <runDir>/decision.md before RunBatch
+// returns. Issue #1846 changed launchReview so a review run is not
+// considered "complete" until decision.md is read and posted; this
+// shim lets the pre-S3 test fixtures (slice C, slice D, daemon_test)
+// continue to drive the launch path without each test having to
+// fabricate the file inline.
+type decisionCapturingRunner struct {
+	*capturedRequest
+	body string
+}
+
+func (d *decisionCapturingRunner) RunBatch(ctx context.Context, req batch.Request) (*batch.Result, error) {
+	path := filepath.Join(req.RunDir, "decision.md")
+	if err := os.WriteFile(path, []byte(d.body), 0644); err != nil {
+		return nil, fmt.Errorf("write decision.md: %w", err)
+	}
+	return d.capturedRequest.RunBatch(ctx, req)
+}
+
+func newDecisionRunner() *decisionCapturingRunner {
+	return &decisionCapturingRunner{capturedRequest: &capturedRequest{}, body: "ok"}
+}
+
 func newDaemonForTest(t *testing.T, gh GitHubClient, runner BatchRunner, cfg *config.Config) (*Daemon, *lockedBuffer, string) {
 	t.Helper()
 	dir := testenv.MkdirShort(t, "sm-review-")
 	t.Chdir(dir)
 	buf := &lockedBuffer{}
-	d := New(dir, gh, &prompt.Engine{}, runner, cfg, buf, 0, false)
+	d := New(dir, gh, &prompt.Engine{}, runner, cfg, buf, 0, false, nil)
 	d.PollInterval = 0
 	return d, buf, dir
 }
@@ -209,7 +233,7 @@ func newDaemonForTestWithParallel(t *testing.T, gh GitHubClient, runner BatchRun
 	dir := testenv.MkdirShort(t, "sm-review-")
 	t.Chdir(dir)
 	buf := &lockedBuffer{}
-	d := New(dir, gh, &prompt.Engine{}, runner, cfg, buf, parallel, parallelSet)
+	d := New(dir, gh, &prompt.Engine{}, runner, cfg, buf, parallel, parallelSet, nil)
 	d.PollInterval = 0
 	return d, buf, dir
 }
@@ -1705,7 +1729,7 @@ func TestDaemon_LaunchReviewErrorsOnMissingModel(t *testing.T) {
 	}
 	d.Config = cfg
 
-	err := d.launchReview(context.Background(), 1, "", "c1", "", "", "", "", nil)
+	err := d.launchReview(context.Background(), 1, "", "c1", "", "", "", "", nil, nil)
 	if err == nil {
 		t.Fatal("expected error from launchReview when model is empty")
 	}
@@ -1734,6 +1758,13 @@ func TestDaemon_LaunchReviewCreatesControlSocketAndManifest(t *testing.T) {
 	var capturedRunDir string
 	runner := batchFunc(func(ctx context.Context, req batch.Request) (*batch.Result, error) {
 		capturedRunDir = req.RunDir
+
+		// Issue #1846 (S3): write decision.md so the post step
+		// succeeds; this test asserts on socket/manifest creation,
+		// not on the post step itself.
+		if err := os.WriteFile(filepath.Join(req.RunDir, "decision.md"), []byte("ok"), 0644); err != nil {
+			return nil, err
+		}
 
 		// Per ADR-0030 the run folder is <batchDir>/runs/<runID>/, so
 		// the RunDir's parent batch dir ends with "-PR1".
@@ -1768,11 +1799,11 @@ func TestDaemon_LaunchReviewCreatesControlSocketAndManifest(t *testing.T) {
 	d.Config = cfg
 	d.Clock = func() time.Time { return now }
 
-	reviewRunFolder, perRowRunID, rs, _, prepErr := d.prepareReviewRun(context.Background(), 1, "c1")
+	reviewRunFolder, perRowRunID, rs, state, prepErr := d.prepareReviewRun(context.Background(), 1, "c1")
 	if prepErr != nil {
 		t.Fatalf("prepareReviewRun: %v", prepErr)
 	}
-	if err := d.launchReview(context.Background(), 1, "", "c1", "", "", reviewRunFolder, perRowRunID, rs); err != nil {
+	if err := d.launchReview(context.Background(), 1, "", "c1", "", "", reviewRunFolder, perRowRunID, rs, state); err != nil {
 		t.Fatalf("launchReview: %v", err)
 	}
 
@@ -1806,7 +1837,7 @@ func TestDaemon_LaunchReviewCleansUpRunDirOnError(t *testing.T) {
 	if prepErr != nil {
 		t.Fatalf("prepareReviewRun: %v", prepErr)
 	}
-	err := d.launchReview(context.Background(), 1, "", "c1", "", "", reviewRunFolder, perRowRunID, rs)
+	err := d.launchReview(context.Background(), 1, "", "c1", "", "", reviewRunFolder, perRowRunID, rs, nil)
 	if err == nil {
 		t.Fatal("expected error from launchReview")
 	}
@@ -1865,11 +1896,14 @@ func TestDaemon_LaunchReviewReplacesStaleSocket(t *testing.T) {
 	d.Config = cfg
 	d.Clock = func() time.Time { return now }
 
-	reviewRunFolder, perRowRunID, rs, _, prepErr := d.prepareReviewRun(context.Background(), 1, "c1")
+	reviewRunFolder, perRowRunID, rs, state, prepErr := d.prepareReviewRun(context.Background(), 1, "c1")
 	if prepErr != nil {
 		t.Fatalf("prepareReviewRun: %v", prepErr)
 	}
-	if err := d.launchReview(context.Background(), 1, "", "c1", "", "", reviewRunFolder, perRowRunID, rs); err != nil {
+	if err := os.WriteFile(filepath.Join(reviewRunFolder, "decision.md"), []byte("ok"), 0644); err != nil {
+		t.Fatalf("write decision.md: %v", err)
+	}
+	if err := d.launchReview(context.Background(), 1, "", "c1", "", "", reviewRunFolder, perRowRunID, rs, state); err != nil {
 		t.Fatalf("launchReview: %v", err)
 	}
 
@@ -1920,11 +1954,14 @@ func TestDaemon_LaunchReviewRoutesOutputToPerPRSock(t *testing.T) {
 	d.Config = cfg
 	d.Clock = func() time.Time { return now }
 
-	reviewRunFolder, perRowRunID, rs, _, prepErr := d.prepareReviewRun(context.Background(), 1, "c1")
+	reviewRunFolder, perRowRunID, rs, state, prepErr := d.prepareReviewRun(context.Background(), 1, "c1")
 	if prepErr != nil {
 		t.Fatalf("prepareReviewRun: %v", prepErr)
 	}
-	if err := d.launchReview(context.Background(), 1, "", "c1", "", "", reviewRunFolder, perRowRunID, rs); err != nil {
+	if err := os.WriteFile(filepath.Join(reviewRunFolder, "decision.md"), []byte("ok"), 0644); err != nil {
+		t.Fatalf("write decision.md: %v", err)
+	}
+	if err := d.launchReview(context.Background(), 1, "", "c1", "", "", reviewRunFolder, perRowRunID, rs, state); err != nil {
 		t.Fatalf("launchReview: %v", err)
 	}
 
