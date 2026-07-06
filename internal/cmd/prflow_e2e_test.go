@@ -1400,10 +1400,9 @@ func TestPRFlow_PodmanSandboxBinaryParallelAgentRuns(t *testing.T) {
 			}
 		}
 
-		assertHermeticGHShimsParallel(t, ghShimDir, []prFlowHermeticScope{{
+		assertHermeticGHShimsParallel(t, []prFlowHermeticScope{{
 			RepoDir:            repoDir,
 			ContainerGhShimDir: containerGhShimDir,
-			ImageName:          "sandman-e2e-model-detect-parallel",
 			ExpectedOriginURL:  rewrittenOriginURL,
 			ExpectedPRCalls: []prFlowExpectedPR{
 				{Branch: parallelBranch150, Title: "Fix 150", Body: "Fixes #150"},
@@ -1593,10 +1592,9 @@ func TestPRFlow_PodmanSandboxBinaryParallelAgentRunsAutoCapacity(t *testing.T) {
 			}
 		}
 
-		assertHermeticGHShimsParallel(t, ghShimDir, []prFlowHermeticScope{{
+		assertHermeticGHShimsParallel(t, []prFlowHermeticScope{{
 			RepoDir:            repoDir,
 			ContainerGhShimDir: containerGhShimDir,
-			ImageName:          "sandman-e2e-model-detect-parallel-auto",
 			ExpectedOriginURL:  rewrittenOriginURL,
 			ExpectedPRCalls: []prFlowExpectedPR{
 				{Branch: parallelBranch150, Title: "Fix 150", Body: "Fixes #150"},
@@ -1836,10 +1834,9 @@ func TestE2E_QueuedIssuesPersistAfterBatchCompletes(t *testing.T) {
 			t.Fatalf("expected issue %d status=queued, got %q", parallelIssue152, run.Status)
 		}
 
-		assertHermeticGHShimsParallel(t, ghShimDir, []prFlowHermeticScope{{
+		assertHermeticGHShimsParallel(t, []prFlowHermeticScope{{
 			RepoDir:            repoDir,
 			ContainerGhShimDir: containerGhShimDir,
-			ImageName:          "sandman-e2e-queued",
 			ExpectedOriginURL:  rewrittenOriginURL,
 			ExpectedPRCalls: []prFlowExpectedPR{
 				{Branch: parallelBranch150, Title: "Fix 150", Body: "Fixes #150"},
@@ -2387,12 +2384,11 @@ type prFlowExpectedPR struct {
 type prFlowHermeticScope struct {
 	RepoDir            string
 	ContainerGhShimDir string
-	ImageName          string
 	ExpectedOriginURL  string
 	ExpectedPRCalls    []prFlowExpectedPR
 }
 
-func assertHermeticGHShimsParallel(t *testing.T, ghShimDir string, scopes []prFlowHermeticScope) {
+func assertHermeticGHShimsParallel(t *testing.T, scopes []prFlowHermeticScope) {
 	t.Helper()
 
 	for _, scope := range scopes {

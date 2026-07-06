@@ -5,18 +5,17 @@ package cmd
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"testing"
 )
 
 func TestAssertHermeticGHShimsParallel_HappyPath(t *testing.T) {
-	repoDir := initParallelTestRepo(t, "file:///tmp/example.git")
+	repoDir := initHermeticTestRepo(t, "file:///tmp/example.git")
 	containerGhShimDir := filepath.Join(repoDir, ".sandman", "bin")
 	if err := os.MkdirAll(containerGhShimDir, 0755); err != nil {
 		t.Fatalf("mkdir shim: %v", err)
 	}
-	writeParallelFakeShimArtifacts(t, containerGhShimDir, []prFlowExpectedPR{
+	writeFakePRCreateArtifactsParallel(t, containerGhShimDir, []prFlowExpectedPR{
 		{Branch: "sandman/150-fix-150", Title: "Fix 150", Body: "Fixes #150"},
 		{Branch: "sandman/151-fix-151", Title: "Fix 151", Body: "Fixes #151"},
 	})
@@ -33,26 +32,26 @@ func TestAssertHermeticGHShimsParallel_HappyPath(t *testing.T) {
 		},
 	}
 
-	assertHermeticGHShimsParallel(t, t.TempDir(), scopes)
+	assertHermeticGHShimsParallel(t, scopes)
 }
 
 func TestAssertHermeticGHShimsParallel_MultipleScopes(t *testing.T) {
-	repoA := initParallelTestRepo(t, "file:///tmp/a.git")
+	repoA := initHermeticTestRepo(t, "file:///tmp/a.git")
 	shimA := filepath.Join(repoA, ".sandman", "bin")
 	if err := os.MkdirAll(shimA, 0755); err != nil {
 		t.Fatalf("mkdir shimA: %v", err)
 	}
-	writeParallelFakeShimArtifacts(t, shimA, []prFlowExpectedPR{
+	writeFakePRCreateArtifactsParallel(t, shimA, []prFlowExpectedPR{
 		{Branch: "sandman/10-fix-10", Title: "Fix 10", Body: "Fixes #10"},
 		{Branch: "sandman/11-fix-11", Title: "Fix 11", Body: "Fixes #11"},
 	})
 
-	repoB := initParallelTestRepo(t, "file:///tmp/b.git")
+	repoB := initHermeticTestRepo(t, "file:///tmp/b.git")
 	shimB := filepath.Join(repoB, ".sandman", "bin")
 	if err := os.MkdirAll(shimB, 0755); err != nil {
 		t.Fatalf("mkdir shimB: %v", err)
 	}
-	writeParallelFakeShimArtifacts(t, shimB, []prFlowExpectedPR{
+	writeFakePRCreateArtifactsParallel(t, shimB, []prFlowExpectedPR{
 		{Branch: "sandman/20-fix-20", Title: "Fix 20", Body: "Fixes #20"},
 	})
 
@@ -76,27 +75,19 @@ func TestAssertHermeticGHShimsParallel_MultipleScopes(t *testing.T) {
 		},
 	}
 
-	assertHermeticGHShimsParallel(t, t.TempDir(), scopes)
+	assertHermeticGHShimsParallel(t, scopes)
 }
 
-func initParallelTestRepo(t *testing.T, originURL string) string {
+func initHermeticTestRepo(t *testing.T, originURL string) string {
 	t.Helper()
 
 	dir := t.TempDir()
-	cmd := exec.Command("git", "init")
-	cmd.Dir = dir
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("git init: %v: %s", err, out)
-	}
-	cmd = exec.Command("git", "remote", "add", "origin", originURL)
-	cmd.Dir = dir
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("git remote add: %v: %s", err, out)
-	}
+	runGit(t, dir, "init")
+	runGit(t, dir, "remote", "add", "origin", originURL)
 	return dir
 }
 
-func writeParallelFakeShimArtifacts(t *testing.T, containerGhShimDir string, calls []prFlowExpectedPR) {
+func writeFakePRCreateArtifactsParallel(t *testing.T, containerGhShimDir string, calls []prFlowExpectedPR) {
 	t.Helper()
 
 	countFile := filepath.Join(containerGhShimDir, "pr-create.count")
