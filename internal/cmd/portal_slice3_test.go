@@ -329,9 +329,10 @@ func TestPortal_Compute_TerminalReviewWithApprovedMarker_PreservesParentStatus(t
 // and missing the **APPROVED** marker when a trailing `"` followed it
 // (the `gh pr comment --body "..."` shell artifact). After the
 // cross-batch aggregation removal, the parent row's own terminal
-// status is preserved regardless of any review verdict projection,
-// and the reviewVerdictFromRunLog helper still tolerates the trailing
-// `"` for the orphan-review path that does consume it.
+// status is preserved regardless of any review verdict projection.
+// The reviewVerdictFromRunLog helper is kept as forward-compat and
+// tolerates the trailing `"`; its direct unit-test coverage lives in
+// TestPortal_ReviewVerdictFromRunLog below.
 //
 // The reproduction here mirrors the exact log tail captured locally
 // from `4f35-260704130316-1755-PR1763/run.log` (work item
@@ -438,9 +439,10 @@ func TestPortal_Compute_PreservesParentStatusWithTrailingQuoteRunLogShape(t *tes
 // marker line to `"?\s*$` and missing the **APPROVED** marker when a
 // trailing `" 2>&1 | tail -5` followed it. After the cross-batch
 // aggregation removal, the parent row's own terminal status is
-// preserved regardless of any review verdict projection, and the
-// reviewVerdictFromRunLog helper still tolerates the broader debris
-// for the orphan-review path that does consume it.
+// preserved regardless of any review verdict projection. The
+// reviewVerdictFromRunLog helper is kept as forward-compat and
+// tolerates the broader debris; its direct unit-test coverage lives
+// in TestPortal_ReviewVerdictFromRunLog below.
 //
 // The reproduction here mirrors the actual log tail captured locally
 // from `d9f0-260704185852-1779-PR1789/run.log` (work item
