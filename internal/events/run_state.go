@@ -234,7 +234,15 @@ func (r RunState) RetriesTotal() int {
 	return v
 }
 
-// RetriesDone returns the retry iterations actually executed from the finished payload.
+// RetriesDone returns the count of retries actually executed by the run
+// (initial run excluded), read from the `retries_done` key of the
+// run.finished / run.aborted payload. At terminal time it matches the
+// active-row `LiveAttempt` value for the same run, so the active row
+// and the finished row render the same number for the same run — see
+// the conversion from `AgentRunResult.RetriesTotal - 1` performed in
+// `emitTerminal` (internal/batch/orchestrator.go). Returns 0 when the
+// run has not finished yet, or when the finished payload omits the
+// key (legacy shapes).
 func (r RunState) RetriesDone() int {
 	if r.Finished == nil {
 		return 0
@@ -243,11 +251,15 @@ func (r RunState) RetriesDone() int {
 	return v
 }
 
-// LiveAttempt returns the highest `attempt` value across the run's
-// `run.retry` events, reading from the projected Retries slice so the
-// answer is meaningful before `run.finished` is written. We keep the
-// highest attempt seen, not the last-seen one, so a non-monotonic
-// attempt value still surfaces the peak. Returns 0 when no retries exist.
+// LiveAttempt returns the count of retries that have actually occurred
+// (initial run excluded) for an active run, projected from the run's
+// `run.retry` events before `run.finished` is written. The unit is
+// "number of retries so far", NOT "attempt number" — a brand-new run
+// with no retries yet returns 0, the first retry returns 1, and so on.
+// It is implemented as the highest `attempt` value across the
+// projected Retries slice (highest-seen, not last-seen, so a
+// non-monotonic attempt value still surfaces the peak). Returns 0
+// when no retries exist.
 func (r RunState) LiveAttempt() int {
 	best := 0
 	for _, event := range r.Retries {
