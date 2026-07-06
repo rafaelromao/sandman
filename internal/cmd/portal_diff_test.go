@@ -5324,7 +5324,9 @@ console.log('PASS');
 // completed parent with two terminal review children that each carry
 // an APPROVED marker in their run.log must surface reviewCount=2 and
 // reviewVerdict="Approved" on the visible parent row, with the
-// parent's identity fields preserved verbatim.
+// parent's identity fields preserved verbatim. After #1897 the server
+// (aggregateReviewChildren) stamps these onto the parent during compute;
+// the JS passes the server-stamped values through unchanged.
 func TestVisibleRunForIssueGroup_ParentStampsTwoReviews(t *testing.T) {
 	js := `const NL = String.fromCharCode(10);
 const parent = {
@@ -5332,6 +5334,8 @@ const parent = {
   issueLabel: '#1', runId: 'impl-1', issueNumber: 1,
   batchKey: 'parent-batch', issueTitle: 'Fix login bug',
   startedAt: '2025-01-01T00:00:00Z',
+  // Server-stamped by aggregateReviewChildren (#1897).
+  reviewCount: 2, reviewVerdict: 'Approved',
 };
 const review1 = {
   key: 'PR42', runId: 'PR42', kind: 'completed', status: 'success', review: true,
@@ -5360,7 +5364,9 @@ console.log('PASS');
 
 // TestVisibleRunForIssueGroup_ParentStampsOneReview is AC 6 (b): a
 // completed parent with one terminal review child must surface
-// reviewCount=1 and reviewVerdict="Approved".
+// reviewCount=1 and reviewVerdict="Approved". After #1897 the server
+// (aggregateReviewChildren) stamps these onto the parent during compute;
+// the JS passes the server-stamped values through unchanged.
 func TestVisibleRunForIssueGroup_ParentStampsOneReview(t *testing.T) {
 	js := `const NL = String.fromCharCode(10);
 const parent = {
@@ -5368,6 +5374,9 @@ const parent = {
   issueLabel: '#2', runId: 'impl-2', issueNumber: 2,
   batchKey: 'parent-batch', issueTitle: 'Fix signup bug',
   startedAt: '2025-01-01T00:00:00Z',
+  // Server-stamped by aggregateReviewChildren (#1897) from the sibling
+  // review's saved run.log; the JS must pass these through unchanged.
+  reviewCount: 1, reviewVerdict: 'Approved',
 };
 const review = {
   key: 'PR44', runId: 'PR44', kind: 'completed', status: 'success', review: true,
@@ -5405,17 +5414,21 @@ console.log('PASS');
 	runPortalHTMLScript(t, js)
 }
 
-// TestVisibleRunForIssueGroup_ActiveParentLiveReviewNoStatusFlip is AC 6
-// (d): an active parent alongside a live (non-terminal) review child
-// must keep the parent's terminal success status — no status flip from
-// the live review. reviewCount is stamped, reviewVerdict may be empty
-// (no terminal review child).
-func TestVisibleRunForIssueGroup_ActiveParentLiveReviewNoStatusFlip(t *testing.T) {
+// TestVisibleRunForIssueGroup_ActiveParentLiveReviewShowsReviewingFlip is
+// AC 6 (d) post-#1897: a terminal parent alongside a live (non-terminal)
+// review child must show status="reviewing" — the server-side
+// aggregateReviewChildren flips the parent's badge when a live sibling
+// review exists (restored #1527/#1609 feature). reviewCount is stamped;
+// reviewVerdict stays empty (no terminal review child with a marker).
+func TestVisibleRunForIssueGroup_ActiveParentLiveReviewShowsReviewingFlip(t *testing.T) {
 	js := `const parent = {
-  key: 'impl-4', kind: 'completed', status: 'success', review: false,
+  key: 'impl-4', kind: 'completed', status: 'reviewing', review: false,
   issueLabel: '#4', runId: 'impl-4', issueNumber: 4,
   batchKey: 'parent-batch', issueTitle: 'Fix toggle bug',
   startedAt: '2025-01-01T00:00:00Z',
+  // Server-stamped by aggregateReviewChildren (#1897): live sibling
+  // review flips the parent badge to "reviewing" and stamps reviewCount.
+  reviewCount: 1,
 };
 const liveReview = {
   key: 'PR50', runId: 'PR50', kind: 'active', status: 'reviewing', review: true,
@@ -5423,30 +5436,31 @@ const liveReview = {
 };
 const visible = visibleRunForIssueGroup(4, [parent, liveReview]);
 if (!visible) throw new Error('expected visible row');
-if (visible.status !== 'success') throw new Error('expected visible status=success (no live review flip), got ' + JSON.stringify(visible.status));
+if (visible.status !== 'reviewing') throw new Error('expected visible status=reviewing (server flip for live review child), got ' + JSON.stringify(visible.status));
 if (visible.reviewCount !== 1) throw new Error('expected reviewCount=1, got ' + JSON.stringify(visible.reviewCount));
-// live review has no terminal marker, so verdict stays ''.
-if (visible.reviewVerdict !== '') throw new Error('expected empty reviewVerdict when only live review, got ' + JSON.stringify(visible.reviewVerdict));
+// live review has no terminal marker, so verdict stays '' (omitted on
+// the wire via json,omitempty; treat undefined and '' equivalently).
+const verdict = visible.reviewVerdict || '';
+if (verdict !== '') throw new Error('expected empty reviewVerdict when only live review, got ' + JSON.stringify(visible.reviewVerdict));
 console.log('PASS');
 `
 	runPortalHTMLScript(t, js)
 }
 
-// TestVisibleRunForIssueGroup_ActiveKindParentAlongsideLiveReview pins
-// the strict reading of AC 6 (d): when the parent row's own kind is
+// TestVisibleRunForIssueGroup_ActiveKindParentAlongsideLiveReview_FlipsToReviewing
+// pins AC 6 (d) for the active-parent path: when the parent row's own kind is
 // 'active' (the implementation is still in flight) and a live review
-// child is present, the enrichment must keep the parent's own
-// identity fields — not blend in the live review's status. This is a
-// stronger contract than the completed-parent test: the parent kind
-// is 'active' here, exercising the same code path the canonical
-// issue #1845 (succeeded parent with reviews) does, but with an
-// 'active' kind to pin the no-status-flip rule on the active side too.
-func TestVisibleRunForIssueGroup_ActiveKindParentAlongsideLiveReview(t *testing.T) {
+// child is present, the server stamps status="reviewing" (badge-flip) and
+// reviewCount onto the parent; the JS passes them through, preserving
+// the parent's own identity fields (key, kind, runId).
+func TestVisibleRunForIssueGroup_ActiveKindParentAlongsideLiveReview_FlipsToReviewing(t *testing.T) {
 	js := `const parent = {
-  key: 'impl-4b', kind: 'active', status: 'running', review: false,
+  key: 'impl-4b', kind: 'active', status: 'reviewing', review: false,
   issueLabel: '#4b', runId: 'impl-4b', issueNumber: 41,
   batchKey: 'parent-batch', issueTitle: 'Fix live bug',
   startedAt: '2025-01-01T00:00:00Z',
+  // Server-stamped by aggregateReviewChildren (#1897).
+  reviewCount: 1,
 };
 const liveReview = {
   key: 'PR51', runId: 'PR51', kind: 'active', status: 'reviewing', review: true,
@@ -5455,7 +5469,7 @@ const liveReview = {
 const visible = visibleRunForIssueGroup(41, [parent, liveReview]);
 if (!visible) throw new Error('expected visible row');
 if (visible.kind !== 'active') throw new Error('expected active kind preserved, got ' + JSON.stringify(visible.kind));
-if (visible.status !== 'running') throw new Error('expected running status preserved (no review flip), got ' + JSON.stringify(visible.status));
+if (visible.status !== 'reviewing') throw new Error('expected reviewing status (server flip for live review child), got ' + JSON.stringify(visible.status));
 if (visible.reviewCount !== 1) throw new Error('expected reviewCount=1, got ' + JSON.stringify(visible.reviewCount));
 console.log('PASS');
 `
@@ -5492,22 +5506,22 @@ console.log('PASS');
 }
 
 // TestVisibleRunForIssueGroup_ParentEnrichmentNoFetch is AC 5: the
-// parent enrichment must not introduce a network fetch. The summary
-// endpoint already provides the in-memory log content; enrichment
-// derives reviewCount/reviewVerdict from the same rows the orphan path
-// already operates on. Pinned by a window.fetch spy that asserts the
-// call count is zero across the visibleRunForIssueGroup call.
+// parent row's reviewCount/reviewVerdict arrive server-stamped on the
+// /api/runs?summary=1 payload (restored #1897); the JS must NOT fetch
+// sibling review logs to recompute them. Zero fetch calls expected.
 func TestVisibleRunForIssueGroup_ParentEnrichmentNoFetch(t *testing.T) {
 	js := `const NL = String.fromCharCode(10);
 let fetchCount = 0;
 const originalFetch = window.fetch;
-window.fetch = function () { fetchCount++; return Promise.reject(new Error('fetch must not be called by parent enrichment')); };
+window.fetch = function() { fetchCount++; return Promise.reject(new Error('unexpected fetch')); };
 try {
   const parent = {
     key: 'impl-6', kind: 'completed', status: 'success', review: false,
     issueLabel: '#6', runId: 'impl-6', issueNumber: 6,
     batchKey: 'parent-batch', issueTitle: 'Fix six',
     startedAt: '2025-01-01T00:00:00Z',
+    // Server-stamped by aggregateReviewChildren (#1897).
+    reviewCount: 1, reviewVerdict: 'Approved',
   };
   const review = {
     key: 'PR66', runId: 'PR66', kind: 'completed', status: 'success', review: true,
@@ -5516,8 +5530,9 @@ try {
   };
   const visible = visibleRunForIssueGroup(6, [parent, review]);
   if (!visible) throw new Error('expected visible row');
-  if (visible.reviewCount !== 1) throw new Error('expected reviewCount=1, got ' + JSON.stringify(visible.reviewCount));
-  if (fetchCount !== 0) throw new Error('expected zero fetch calls during parent enrichment, got ' + fetchCount);
+  if (visible.reviewCount !== 1) throw new Error('expected reviewCount=1 (server-stamped, passed through), got ' + JSON.stringify(visible.reviewCount));
+  if (visible.reviewVerdict !== 'Approved') throw new Error('expected reviewVerdict=Approved (server-stamped), got ' + JSON.stringify(visible.reviewVerdict));
+  if (fetchCount !== 0) throw new Error('expected zero fetch calls (server stamps the verdict; JS must not refetch sibling logs), got ' + fetchCount);
 } finally {
   window.fetch = originalFetch;
 }
@@ -5526,29 +5541,24 @@ console.log('PASS');
 	runPortalHTMLScript(t, js)
 }
 
-// TestVisibleRunForIssueGroup_ParentEnrichmentAdditiveNotReplacing pins
-// the additive contract: the enrichment must stamp the new fields
-// without replacing any of the canonical parent's own fields. We
-// double-stamp the parent with a pre-set reviewCount=99 to confirm the
-// enrichment does not blindly replace it (the canonical parent's own
-// value is preserved; the enrichment overwrites it with the derived
-// value from the sibling reviews). The strict contract: the enrichment
-// uses the sibling reviews' aggregated count, not the parent's
-// pre-existing field. Pre-existing parent fields that are not
-// reviewCount/reviewVerdict must be preserved verbatim.
-func TestVisibleRunForIssueGroup_ParentEnrichmentAdditiveNotReplacing(t *testing.T) {
+// TestVisibleRunForIssueGroup_ParentServerStampAuthoritativeNotOverwritten
+// pins the #1897 contract: the server-stamped reviewCount/reviewVerdict on
+// the parent row are authoritative — the JS must NOT recompute or overwrite
+// them from sibling reviews. (Pre-#1897 the #1856 JS enrichment overwrote
+// stale Go projections; with server-side stamping restored, the parent's
+// own stamped values are the canonical source and must pass through
+// unchanged.) Identity fields are also preserved verbatim.
+func TestVisibleRunForIssueGroup_ParentServerStampAuthoritativeNotOverwritten(t *testing.T) {
 	js := `const NL = String.fromCharCode(10);
 const parent = {
   key: 'impl-7', kind: 'completed', status: 'success', review: false,
   issueLabel: '#7', runId: 'impl-7', issueNumber: 7,
   batchKey: 'parent-batch', issueTitle: 'Fix seven',
   startedAt: '2025-01-01T00:00:00Z',
-  // Pre-existing fields (would have been stamped by the now-removed Go
-  // cross-batch aggregation). The JS enrichment must NOT preserve
-  // these stale values when sibling reviews exist — it derives fresh
-  // values from the siblings. This pins the issue #1825 fix
-  // (no stale Go projection) plus the #1856 JS-side replacement.
-  reviewCount: 99, reviewVerdict: 'stale-verdict',
+  // Server-stamped by aggregateReviewChildren (#1897). The JS must
+  // pass these through unchanged — NOT recompute from the sibling
+  // review's log (which the summary endpoint strips anyway).
+  reviewCount: 5, reviewVerdict: 'Changes requested',
 };
 const review = {
   key: 'PR77', runId: 'PR77', kind: 'completed', status: 'success', review: true,
@@ -5557,10 +5567,10 @@ const review = {
 };
 const visible = visibleRunForIssueGroup(7, [parent, review]);
 if (!visible) throw new Error('expected visible row');
-// Enrichment derives from siblings (1 review) — overwrites the
-// pre-existing stale 99/Approved with the fresh value.
-if (visible.reviewCount !== 1) throw new Error('expected enrichment reviewCount=1 (derived from siblings, not parent pre-existing 99), got ' + JSON.stringify(visible.reviewCount));
-if (visible.reviewVerdict !== 'Approved') throw new Error('expected enrichment reviewVerdict=Approved, got ' + JSON.stringify(visible.reviewVerdict));
+// Server-stamped values are authoritative; JS must not overwrite with
+// sibling-derived values (which would be 1 / Approved here).
+if (visible.reviewCount !== 5) throw new Error('expected server-stamped reviewCount=5 preserved (JS must not overwrite), got ' + JSON.stringify(visible.reviewCount));
+if (visible.reviewVerdict !== 'Changes requested') throw new Error('expected server-stamped reviewVerdict preserved (JS must not overwrite), got ' + JSON.stringify(visible.reviewVerdict));
 // Identity fields preserved.
 if (visible.key !== 'impl-7') throw new Error('expected parent key preserved, got ' + JSON.stringify(visible.key));
 if (visible.batchKey !== 'parent-batch') throw new Error('expected parent batchKey preserved, got ' + JSON.stringify(visible.batchKey));

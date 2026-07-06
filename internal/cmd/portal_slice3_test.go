@@ -260,8 +260,11 @@ func TestPortal_Compute_AggregatesChildReviewsOntoIssueRow(t *testing.T) {
 	if issueRow.RunID != "abcd-260618113825-1" {
 		t.Fatalf("expected canonical issue row runID issue-1, got %q", issueRow.RunID)
 	}
-	if issueRow.Status != "success" {
-		t.Fatalf("expected parent status success (terminal run.finished preserved after aggregateReviewChildren removal), got %q", issueRow.Status)
+	if issueRow.Status != "reviewing" {
+		t.Fatalf("expected parent status reviewing (badge-flip restored by aggregateReviewChildren for live review child), got %q", issueRow.Status)
+	}
+	if issueRow.ReviewCount != 2 {
+		t.Fatalf("expected parent ReviewCount 2 (both review children aggregate onto the canonical parent), got %d", issueRow.ReviewCount)
 	}
 	if reviewRows != 2 {
 		t.Fatalf("expected 2 review child rows, got %d from %#v", reviewRows, runs)
@@ -269,12 +272,12 @@ func TestPortal_Compute_AggregatesChildReviewsOntoIssueRow(t *testing.T) {
 }
 
 // TestPortal_Compute_TerminalReviewWithApprovedMarker_PreservesParentStatus
-// is the post-#1825 regression for a terminal review child whose saved
-// run.log carries the **APPROVED** marker. Previously the backend
-// projection stamped ReviewVerdict="Approved" onto the parent row from
-// the saved log; after the cross-batch aggregation removal the parent
-// row keeps its own terminal run.finished status and the marker only
-// affects orphan-review-only groups via the JS summarize path.
+// pins the restored #1897 behavior for a terminal review child whose saved
+// run.log carries the **APPROVED** marker: aggregateReviewChildren stamps
+// ReviewVerdict="Approved" onto the parent row from the saved log (during
+// compute, before the summary endpoint strips Log). The parent's own
+// terminal run.finished status ("success") is preserved because the sibling
+// review is terminal, not live — no badge-flip fires.
 func TestPortal_Compute_TerminalReviewWithApprovedMarker_PreservesParentStatus(t *testing.T) {
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
@@ -319,7 +322,13 @@ func TestPortal_Compute_TerminalReviewWithApprovedMarker_PreservesParentStatus(t
 		t.Fatalf("expected parent issue row, got %#v", runs)
 	}
 	if parent.Status != "success" {
-		t.Fatalf("parent Status=%q, want %q (terminal run.finished preserved)", parent.Status, "success")
+		t.Fatalf("parent Status=%q, want %q (terminal run.finished preserved; no live review child to flip the badge)", parent.Status, "success")
+	}
+	if parent.ReviewVerdict != "Approved" {
+		t.Fatalf("parent ReviewVerdict=%q, want %q (restored server-side stamping from saved review run.log ## Decision marker)", parent.ReviewVerdict, "Approved")
+	}
+	if parent.ReviewCount != 1 {
+		t.Fatalf("parent ReviewCount=%d, want 1", parent.ReviewCount)
 	}
 }
 
@@ -667,8 +676,11 @@ func TestPortal_Compute_CanonicalParentIdentityPreservedWithReviewChildren(t *te
 	if parentRow.BatchKey != "" {
 		t.Fatalf("expected canonical parent BatchKey empty (event-log-only), got %q", parentRow.BatchKey)
 	}
-	if parentRow.Status != "success" {
-		t.Fatalf("expected canonical parent Status success (terminal run.finished preserved after aggregateReviewChildren removal), got %q", parentRow.Status)
+	if parentRow.Status != "reviewing" {
+		t.Fatalf("expected canonical parent Status reviewing (badge-flip restored by aggregateReviewChildren for live review child), got %q", parentRow.Status)
+	}
+	if parentRow.ReviewCount != 2 {
+		t.Fatalf("expected canonical parent ReviewCount 2, got %d", parentRow.ReviewCount)
 	}
 }
 
@@ -778,13 +790,13 @@ func TestPortal_TerminalReviewLiveSocket_PreservesStatus(t *testing.T) {
 	}
 }
 
-// TestPortal_ParentSuccWithLiveChild_KeepsSuccessStatus is the
-// post-#1825 regression for the backend's role in the parent status
-// contract: a parent impl row whose run.finished status is "success"
-// must keep that status when a live review child exists, because the
-// backend no longer stamps cross-batch review metadata onto the
-// parent's own row.
-func TestPortal_ParentSuccWithLiveChild_KeepsSuccessStatus(t *testing.T) {
+// TestPortal_ParentSuccWithLiveChild_FlipsToReviewing pins the restored
+// badge-flip (#1897, originally #1527/#1609): a terminal parent impl row
+// (success) with a live (active) sibling review child must show status
+// "reviewing" on the parent row, projected by aggregateReviewChildren.
+// #1825 deleted that projection and left the parent stuck on "success";
+// the restoration flips it back to "reviewing" while the review is live.
+func TestPortal_ParentSuccWithLiveChild_FlipsToReviewing(t *testing.T) {
 	repoRoot := testenv.MkdirShort(t, "pswl")
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -825,8 +837,11 @@ func TestPortal_ParentSuccWithLiveChild_KeepsSuccessStatus(t *testing.T) {
 	if issueRow == nil {
 		t.Fatalf("expected issue row for #1, got %#v", runs)
 	}
-	if issueRow.Status != "success" {
-		t.Fatalf("Status = %q, want %q (parent status must remain success after aggregateReviewChildren removal)", issueRow.Status, "success")
+	if issueRow.Status != "reviewing" {
+		t.Fatalf("Status = %q, want %q (parent badge flips to reviewing via aggregateReviewChildren for live review child)", issueRow.Status, "reviewing")
+	}
+	if issueRow.ReviewCount != 1 {
+		t.Fatalf("expected parent ReviewCount 1, got %d", issueRow.ReviewCount)
 	}
 }
 

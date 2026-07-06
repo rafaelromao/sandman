@@ -2515,16 +2515,18 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
     }
 
     function summarizeReviewGroup(reviews) {
-      // The cross-batch review aggregation was removed in issue #1825,
-      // so the server no longer stamps ReviewVerdict onto parent
-      // implementation rows. Issue #1856 reintroduces the verdict scan
-      // in JS, using the same ## Decision marker rule the Go side
-      // reviewVerdictFromRunLog used (reviewVerdictMarkerLineBare +
-      // reviewVerdictMarkerLineWithDebris): APPROVED -> "Approved",
-      // CHANGES_REQUESTED -> "Changes requested". The scan reads each
-      // review's already-loaded `log` field (no Go server round-trip);
-      // when no log content is available (the common case: the summary
-      // endpoint strips logs) verdict stays '' and the renderRunMeta
+      // Orphan review-only path (no implementation parent): build the
+      // count and, when a sibling review's `log` is already loaded in
+      // the client, the verdict. Issue #1897 restored server-side
+      // stamping for parent impl rows (aggregateReviewChildren), so
+      // this helper is no longer used to enrich the parent row — only
+      // the orphan synthetic row below. The verdict scan uses the same
+      // ## Decision marker rule the Go side reviewVerdictFromRunLog uses
+      // (reviewVerdictMarkerLineBare + reviewVerdictMarkerLineWithDebris):
+      // APPROVED -> "Approved", CHANGES_REQUESTED -> "Changes requested".
+      // The scan reads each review's already-loaded `log` field; when no
+      // log content is available (the common case: the summary endpoint
+      // strips logs) verdict stays '' and the renderRunMeta
       // `if (run.reviewVerdict)` guard hides the trailing dash. The
       // verdict is taken from the first review in the existing
       // startedAt-desc/runId-asc sort that carries a marker, so the
@@ -2626,23 +2628,15 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
       if (!group.length) return null;
       const parents = group.filter((run) => !run.review);
       if (parents.length) {
-        // Issue #1856: when the canonical parent has sibling review
-        // children, stamp reviewCount (and reviewVerdict when
-        // recoverable) onto the visible parent row so renderRunMeta
-        // can render the "N reviews - <verdict>" counter line. The
-        // enrichment derives its values from the same in-memory rows
-        // the orphan path already operates on (no Go server round-
-        // trip), and overwrites any stale reviewCount/reviewVerdict
-        // the canonical parent may still carry from a pre-#1825 batch.
-        // The sibling review's own identity (key, runId, startedAt,
-        // batchKey, issueTitle) is never blended into the parent row.
+        // The canonical parent's reviewCount/reviewVerdict are stamped
+        // server-side by aggregateReviewChildren during compute (restored
+        // in #1897), so they ride the JSON from /api/runs?summary=1 even
+        // though the summary endpoint strips Log. The JS must NOT overwrite
+        // them, or the verdict is lost on cold load (the #1856 workaround
+        // read sibling review.log, but logs are stripped on the summary
+        // endpoint). The orphan review-only path (below) still uses
+        // summarizeReviewGroup because no impl parent carries the stamp.
         const visibleParent = pickCanonicalParent(parents);
-        const siblingReviews = group.filter((run) => run.review);
-        if (siblingReviews.length && visibleParent) {
-          const summary = summarizeReviewGroup(siblingReviews);
-          visibleParent.reviewCount = summary.count;
-          visibleParent.reviewVerdict = summary.verdict;
-        }
         return visibleParent;
       }
       const summary = summarizeReviewGroup(group.filter((run) => run.review));
