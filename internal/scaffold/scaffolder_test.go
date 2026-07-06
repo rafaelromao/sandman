@@ -397,7 +397,7 @@ func TestResolveVersion_RustResolver_Selectors(t *testing.T) {
 		want     string
 	}{
 		{name: "repo", selector: "repo", want: "1.77.0"},
-		{name: "latest", selector: "latest", want: "1.96.0"},
+		{name: "latest", selector: "latest", want: "1.96.1"},
 		{name: "lts", selector: "lts", want: "1.95.0"},
 		{name: "shorthand", selector: "1.95", want: "1.95.0"},
 	}
@@ -451,8 +451,8 @@ func TestResolveVersion_RustResolver_StableChannelPinsExactVersion(t *testing.T)
 	if err != nil {
 		t.Fatalf("resolveVersion stable rust-toolchain.toml: %v", err)
 	}
-	if got != "1.96.0" {
-		t.Fatalf("resolveVersion stable rust-toolchain.toml: got %q, want %q", got, "1.96.0")
+	if got != "1.96.1" {
+		t.Fatalf("resolveVersion stable rust-toolchain.toml: got %q, want %q", got, "1.96.1")
 	}
 }
 
