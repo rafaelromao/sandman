@@ -320,10 +320,14 @@ func intPtr(v int) *int {
 
 // TestPortal_ReviewAggregation_HonorsCanonicalRowID pins slice 4: a parent
 // implementation row and a child review row for the same IssueNumber must
-// continue to aggregate after the child resolves to its canonical row RunID
-// (rather than the batchId). The review row's status flows to the parent's
-// `ReviewCount`/`ReviewVerdict` exactly as it did before the fix; only the
-// row keys move from batchId-shaped to rowId-shaped.
+// continue to surface from the event log after the child resolves to its
+// canonical row RunID (rather than the batchId). The review row stays
+// discoverable as a Review=true row in the same issue group, and the
+// canonical parent's own identity (RunID, BatchKey, IssueTitle, StartedAt)
+// is preserved. Issue #1825 removes the cross-batch aggregation that used
+// to stamp ReviewCount/ReviewVerdict onto the parent; the parent row here
+// no longer carries those fields and its status stays on its terminal
+// run.finished value.
 func TestPortal_ReviewAggregation_HonorsCanonicalRowID(t *testing.T) {
 	repoRoot, err := os.MkdirTemp("/tmp", "pag")
 	if err != nil {
@@ -348,10 +352,13 @@ func TestPortal_ReviewAggregation_HonorsCanonicalRowID(t *testing.T) {
 		{Type: "run.finished", Timestamp: startedAt.Add(7 * time.Minute), RunID: canonicalReviewRowID, Payload: map[string]any{"status": "success", "branch": "sandman/review-PR42", "review": true, "pr_number": 42, "issue_number": issueNumber, "batch_id": "sid-2606181138-PR42"}},
 	})
 
-	// Issue #1729: parent ReviewVerdict flows from the saved review
-	// run.log's ## Decision marker, not from run.finished.status. Seed
-	// an APPROVED marker so the verdict projection has a real value to
-	// surface.
+	// Issue #1729 historically drove the parent ReviewVerdict from the
+	// saved review run.log's ## Decision marker; after #1825 the
+	// cross-batch aggregation no longer stamps ReviewVerdict onto the
+	// parent row. The marker is still seeded here so any future
+	// re-introduction of cross-batch verdict projection has a real
+	// value to assert against, but the parent-status assertion below
+	// is what this test now pins.
 	reviewRunDir := filepath.Join(repoRoot, ".sandman", "batches", "sid-2606181138-PR42", "runs", canonicalReviewRowID)
 	if err := os.MkdirAll(reviewRunDir, 0755); err != nil {
 		t.Fatalf("mkdir review run dir: %v", err)
@@ -392,11 +399,8 @@ func TestPortal_ReviewAggregation_HonorsCanonicalRowID(t *testing.T) {
 	if review.Status != "success" {
 		t.Fatalf("review row Status=%q, want success", review.Status)
 	}
-	if parent.ReviewCount == 0 {
-		t.Fatalf("parent ReviewCount=%d, want >=1 (aggregation must include canonical-row-id'd review)", parent.ReviewCount)
-	}
-	if parent.ReviewVerdict != "Approved" {
-		t.Fatalf("parent ReviewVerdict=%q, want %q (saved run.log carries ## Decision / **APPROVED**)", parent.ReviewVerdict, "Approved")
+	if parent.Status != "success" {
+		t.Fatalf("parent Status=%q, want %q (terminal run.finished status preserved after aggregateReviewChildren removal)", parent.Status, "success")
 	}
 }
 
@@ -492,20 +496,14 @@ func TestPortal_ReviewAggregation_LiveReviewSocketPreservesIssueIdentity(t *test
 	if !parent.StartedAt.Equal(parentStarted) {
 		t.Fatalf("expected canonical parent StartedAt %s, got %s", parentStarted, parent.StartedAt)
 	}
-	if parent.Status != "reviewing" {
-		t.Fatalf("expected canonical parent status to be reviewing (flipped by aggregateReviewChildren for live review child), got %q", parent.Status)
-	}
-	if parent.ReviewCount != 1 {
-		t.Fatalf("expected canonical parent ReviewCount 1, got %d", parent.ReviewCount)
+	if parent.Status != "success" {
+		t.Fatalf("expected canonical parent status to stay on terminal run.finished value (no aggregateReviewChildren flip), got %q", parent.Status)
 	}
 	if review.IssueNumber != issueNumber {
 		t.Fatalf("expected live review IssueNumber %d, got %d", issueNumber, review.IssueNumber)
 	}
 	if !review.Review {
 		t.Fatalf("expected live review row to remain review=true, got %#v", review)
-	}
-	if !review.GroupedReview {
-		t.Fatalf("expected live review row to be grouped, got %#v", review)
 	}
 	if review.Kind != "active" || review.Status != "reviewing" {
 		t.Fatalf("expected live review row to remain active/reviewing, got %#v", review)
@@ -792,11 +790,8 @@ func TestPortal_ReviewAggregation_HistoricalReviewRecoversIssueFromIdentity(t *t
 	if got := review.IssueNumber; got != issueNumber {
 		t.Fatalf("review IssueNumber=%d, want %d recovered from the review identity (runFromState must fall back to identity parsing when the payload has no issue_number)", got, issueNumber)
 	}
-	if !review.GroupedReview {
-		t.Fatalf("review GroupedReview=false, want true (must group under the canonical issue row, not escape as a standalone row)")
-	}
-	if parent.ReviewCount == 0 {
-		t.Fatalf("parent ReviewCount=%d, want >=1 (historical review must aggregate under the canonical issue row)", parent.ReviewCount)
+	if parent.Status != "success" {
+		t.Fatalf("parent Status=%q, want %q (terminal run.finished status preserved after aggregateReviewChildren removal)", parent.Status, "success")
 	}
 }
 
