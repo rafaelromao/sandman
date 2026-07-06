@@ -91,6 +91,36 @@ type pendingReviewEntry struct {
 	cycles      int
 }
 
+// pendingPostEntry is the in-memory record the daemon keeps for a
+// review whose agent-run has produced <runDir>/decision.md but
+// whose daemon-side post step did not complete (e.g. the daemon
+// was cancelled mid-post). The rehydrate-on-startup path (issue
+// #1847 S4) walks every review-kind batch at construction; for
+// every `pending` review-state.json whose row folder has a
+// decision.md on disk, it registers one of these entries keyed by
+// (prNumber, commentID).
+//
+// runDir and reviewState are absolute paths so the processPR
+// rehydrate branch can read decision.md and open the per-run
+// ReviewStateStore without further resolution. The rehydrate
+// branch drops the entry on a successful post (MarkSeen("success")
+// is the new terminal-seen status) and retains it on a failed post
+// (the next tick retries). When decision.md is missing at tick
+// time the entry is treated as stale and the daemon falls through
+// to the existing launch path.
+//
+// since mirrors the same field on pendingReviewEntry: it carries
+// the original review-state.json Timestamp so future
+// observability surfaces (operator queries, logs) can answer "how
+// long has this rehydrate been waiting?" without re-reading the
+// on-disk JSON.
+type pendingPostEntry struct {
+	commentID   string
+	runDir      string    // absolute path to <batch>/runs/<rowID>
+	reviewState string    // absolute path to <runDir>/review-state.json
+	since       time.Time // when the trigger entered `pending` on disk
+}
+
 // Daemon polls the repo for /sandman review comments and launches review
 // agents serially.
 type Daemon struct {
@@ -123,7 +153,24 @@ type Daemon struct {
 	slotMu               sync.Mutex
 	pendingMu            sync.Mutex
 	pendingReviews       map[int][]pendingReviewEntry
-	inFlight             sync.WaitGroup
+	// pendingPost is the rehydrate-on-startup map (issue #1847 S4).
+	// Outer key is PR number; inner key is the trigger comment ID.
+	// Each entry remembers the absolute path of the per-row folder
+	// (so the daemon can read <runDir>/decision.md at tick time)
+	// and the absolute path of the per-run review-state.json (so
+	// the rehydrate post can MarkSeen on the right store). Entries
+	// are written by loadPendingPosts at construction, read and
+	// dropped by processPR's rehydrate branch on a successful
+	// post, and read-and-retained on a failed post.
+	//
+	// The map is locked by a dedicated mutex (pendingPostMu) to
+	// match the existing one-mutex-per-data-structure convention
+	// (pendingMu guards pendingReviews; seenCacheMu guards
+	// seenCache). Sharing pendingMu between the two maps would
+	// create ambiguous ownership for future readers.
+	pendingPostMu sync.Mutex
+	pendingPost   map[int]map[string]pendingPostEntry
+	inFlight      sync.WaitGroup
 }
 
 // New returns a Daemon configured with the project defaults for the
@@ -177,12 +224,27 @@ func New(baseDir string, gh GitHubClient, prompts Renderer, runner BatchRunner, 
 		slotTable:      map[int]struct{}{},
 		slotPool:       make(chan struct{}, parallelReviews),
 		pendingReviews: map[int][]pendingReviewEntry{},
+		// S4 (issue #1847): initialise the rehydrate-on-startup
+		// map; loadPendingPosts (Slice B) populates it from the
+		// on-disk review-state.json files at construction.
+		pendingPost: map[int]map[string]pendingPostEntry{},
 	}
 	if err := d.loadSeenCache(); err != nil {
 		d.logf("load seen cache: %v", err)
 	}
 	if err := d.loadPendingReviews(); err != nil {
 		d.logf("load pending reviews: %v", err)
+	}
+	// Issue #1847 (S4): rehydrate-on-startup. Walk every
+	// review-kind batch and register one pendingPost entry per
+	// `pending` review-state.json whose row folder has
+	// decision.md on disk. The next tick's processPR consults
+	// this map before the launch path so the daemon posts the
+	// existing body instead of re-running the agent. See
+	// loadPendingPosts for the full filter and the disjoint-
+	// from-pendingReviews invariant.
+	if err := d.loadPendingPosts(); err != nil {
+		d.logf("load pending posts: %v", err)
 	}
 	return d
 }
@@ -307,6 +369,23 @@ func (d *Daemon) Forget(prNumber int, commentID string) {
 	if seen, ok := d.seenCache[prNumber]; ok {
 		delete(seen, commentID)
 	}
+}
+
+// peekPendingPost reports the rehydrate post entry for
+// (prNumber, commentID), if any. The slice-A/B/C/D/E regression
+// tests use this to observe the in-memory map without depending
+// on processPR's launch/rehydrate internal wiring. Returns
+// (entry, true) on a hit, (zero, false) on a miss. Reads the
+// pendingPostMu lock under which the walker (Slice B) writes.
+func (d *Daemon) peekPendingPost(prNumber int, commentID string) (pendingPostEntry, bool) {
+	d.pendingPostMu.Lock()
+	defer d.pendingPostMu.Unlock()
+	if m, ok := d.pendingPost[prNumber]; ok {
+		if entry, ok := m[commentID]; ok {
+			return entry, true
+		}
+	}
+	return pendingPostEntry{}, false
 }
 
 // loadSeenCache rebuilds the seen cache from scratch by scanning the
@@ -500,6 +579,122 @@ func (d *Daemon) loadPendingReviews() error {
 // InvalidateSeenCache.
 func (d *Daemon) InvalidatePendingReviews() error {
 	return d.loadPendingReviews()
+}
+
+// loadPendingPosts rehydrates the in-memory pendingPost map from the
+// on-disk review-state.json files referenced by .sandman/batches.json.
+//
+// Issue #1847 (S4): a daemon restart between the agent-run finishing
+// its write of <runDir>/decision.md and the daemon completing the
+// post step (e.g. process killed during `gh pr comment`, ctx cancelled
+// mid-post, network blip) leaves a review in the state "review is on
+// disk but not on the PR". Rather than re-launch the agent on the
+// next tick — which would produce a duplicate review the bot has no
+// memory of writing — the next daemon reads the existing
+// decision.md, redacts it via RedactBody, and posts it as part of
+// the normal tick. The pendingPost map is the in-memory index of
+// "review files waiting for the daemon to post".
+//
+// The walker is read-only and reuses the seenCacheLoader +
+// readReviewRowID + seenStateReader seams so it observes the same
+// on-disk shape the existing loadSeenCache and loadPendingReviews
+// walkers already read from. Per-row RunID resolution (ADR-0030 §Per-
+// row RunID templates, issue #1551) is preserved.
+//
+// The walker's three filters are all required for an entry to be
+// registered:
+//
+//  1. entry.Kind == batchindex.KindReview (so non-review batches
+//     such as changes cannot register a pendingPost);
+//  2. sc.Status == "pending" (matches the S3 lazy-verify contract:
+//     terminal-seen statuses do not get reposted);
+//  3. <runDir>/decision.md exists on disk (the source-of-truth gate:
+//     a missing file means the bot never finished, so rehydrate has
+//     nothing to post — leave to lazy-verify bounded-retry).
+//
+// Coexistence with loadPendingReviews: the two walkers may both
+// register an entry for the same (prNumber, commentID). They are NOT
+// required to be disjoint — processPR's rehydrate branch (Slice C)
+// fires when pendingPost has the trigger; the lazy-verify pendingSet
+// filter is the pre-existing fallback for entries that resolve via
+// the lazy-verify grace path instead. A row with decision.md on disk
+// takes the rehydrate path; a row without decision.md (or with the
+// rehydrate drop on a stale entry) falls through to lazy-verify.
+//
+// Existing entries are replaced (consistent with loadSeenCache and
+// loadPendingReviews). Best-effort on partial-failure: a single
+// unreadable review-state.json is logged and skipped, never fatal,
+// because the rename-loser trade-off from ADR-0034 §3 accepts a
+// stale skip over a daemon-start failure.
+func (d *Daemon) loadPendingPosts() error {
+	d.pendingPostMu.Lock()
+	defer d.pendingPostMu.Unlock()
+	d.pendingPost = map[int]map[string]pendingPostEntry{}
+
+	idx, err := seenCacheLoader(d.BaseDir)
+	if err != nil {
+		return fmt.Errorf("load batches index: %w", err)
+	}
+	if idx == nil {
+		return nil
+	}
+	for _, entry := range idx.Entries {
+		if entry.Kind != batchindex.KindReview {
+			continue
+		}
+		rowID, err := readReviewRowID(filepath.Join(entry.Path, "runs"))
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			d.logf("read review row id for %s: %v", entry.Path, err)
+			continue
+		}
+		runDir := filepath.Join(entry.Path, "runs", rowID)
+		state, err := seenStateReader(runDir)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			d.logf("read review state %s: %v", runDir, err)
+			continue
+		}
+		reviewState := filepath.Join(runDir, "review-state.json")
+		for _, sc := range state.SeenComments {
+			if sc.Status != "pending" {
+				continue
+			}
+			// Source-of-truth gate: a row is rehydrate-eligible
+			// only when decision.md actually exists on disk.
+			// A `pending` row without decision.md means the bot
+			// had not finished writing yet; the lazy-verify
+			// bounded-retry escape handles that case.
+			decisionPath := filepath.Join(runDir, "decision.md")
+			if _, statErr := os.Stat(decisionPath); statErr != nil {
+				if !os.IsNotExist(statErr) {
+					d.logf("stat %s: %v", decisionPath, statErr)
+				}
+				continue
+			}
+			if _, ok := d.pendingPost[entry.PR]; !ok {
+				d.pendingPost[entry.PR] = map[string]pendingPostEntry{}
+			}
+			d.pendingPost[entry.PR][sc.CommentID] = pendingPostEntry{
+				commentID:   sc.CommentID,
+				runDir:      runDir,
+				reviewState: reviewState,
+				since:       sc.Timestamp,
+			}
+		}
+	}
+	return nil
+}
+
+// InvalidatePendingPosts forces a rebuild of the in-memory
+// pendingPost map by re-running the on-disk scan. Symmetric with
+// InvalidatePendingReviews.
+func (d *Daemon) InvalidatePendingPosts() error {
+	return d.loadPendingPosts()
 }
 
 // SocketPath returns the absolute path of the daemon's control socket.
@@ -837,6 +1032,37 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) error {
 	d.seenCacheMu.RUnlock()
 	if len(unprocessed) == 0 {
 		return nil
+	}
+
+	// Rehydrate-on-startup (issue #1847 S4): consult pendingPost for
+	// each remaining trigger BEFORE the lazy-verify filter so that
+	// a row in BOTH pendingReviews and pendingPost takes the
+	// rehydrate path (the lazy-verify entry is harmless after
+	// MarkSeen("success") takes effect). TryRehydratePost returns
+	// true when the entry was handled (success, failure, ctx-cancel,
+	// or kept-for-retry) — the trigger is dropped from unprocessed.
+	// Returns false when the entry is stale (decision.md missing at
+	// tick time) — the trigger falls through to the launch path.
+	d.pendingPostMu.Lock()
+	hasPostEntry := map[string]bool{}
+	for cid := range d.pendingPost[prNumber] {
+		hasPostEntry[cid] = true
+	}
+	d.pendingPostMu.Unlock()
+	if len(hasPostEntry) > 0 {
+		var filtered []unseenTrigger
+		for _, t := range unprocessed {
+			if hasPostEntry[t.comment.ID] {
+				if d.tryRehydratePost(ctx, prNumber, t.comment) {
+					continue
+				}
+			}
+			filtered = append(filtered, t)
+		}
+		if len(filtered) == 0 {
+			return nil
+		}
+		unprocessed = filtered
 	}
 
 	// Lazy verify (issue #1482 slice D): drop triggers that are
@@ -1334,6 +1560,127 @@ func (d *Daemon) postDecision(ctx context.Context, prNumber int, commentID, revi
 		}
 	}
 	return nil
+}
+
+// tryRehydratePost handles a rehydrate-eligible trigger discovered
+// in pendingPost by processPR (issue #1847 S4). It returns true
+// when the entry was registered AND decision.md is still on disk,
+// signalling that processPR should NOT proceed to the launch path.
+//
+// Three branches:
+//
+//   - decision.md on disk, post succeeds: MarkSeen("success") is
+//     persisted on the per-run ReviewStateStore (which fires the
+//     seen-cache hook so the next tick's processPR short-circuits
+//     the trigger), the pendingPost entry is dropped, and the
+//     function returns true. No new agent run is launched.
+//
+//   - decision.md on disk, post fails (PostComment returns an
+//     error): the entry is kept in pendingPost so the next tick
+//     retries; MarkSeen is left untouched so the trigger stays
+//     `pending` on disk. No new agent run is launched. Returns
+//     true so processPR does not fall through to launch.
+//
+//   - decision.md missing at tick time (stale entry, e.g. an
+//     operator removed the file or it was never written): the
+//     entry is dropped from pendingPost and the function returns
+//     false so processPR falls through to the existing launch
+//     path. The launch path's prepareReviewRun / TryClaim /
+//     launchReview cycle handles the trigger from scratch — the
+//     rehydrate-on-startup walker has nothing to recover.
+//
+// tryRehydratePost holds the per-run ReviewStateStore open only
+// for the MarkSeen call and never spawns a goroutine, so it can
+// run inline in processPR.
+func (d *Daemon) tryRehydratePost(ctx context.Context, prNumber int, comment github.PRComment) bool {
+	d.pendingPostMu.Lock()
+	m, ok := d.pendingPost[prNumber]
+	if !ok {
+		d.pendingPostMu.Unlock()
+		return false
+	}
+	entry, ok := m[comment.ID]
+	if !ok {
+		d.pendingPostMu.Unlock()
+		return false
+	}
+	d.pendingPostMu.Unlock()
+
+	decisionPath := filepath.Join(entry.runDir, "decision.md")
+	body, err := os.ReadFile(decisionPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			// Stale entry: drop and fall through to launch.
+			d.logf("PR #%d comment %s: rehydrate entry stale, decision.md missing at tick time, falling through to launch (issue #1847)", prNumber, comment.ID)
+			d.pendingPostMu.Lock()
+			delete(d.pendingPost[prNumber], comment.ID)
+			if len(d.pendingPost[prNumber]) == 0 {
+				delete(d.pendingPost, prNumber)
+			}
+			d.pendingPostMu.Unlock()
+			return false
+		}
+		// Read failed for some other reason (perm denied, IO).
+		// Keep the entry; the next tick retries. Do NOT proceed
+		// to launch because the existing post is still better
+		// than re-running the agent.
+		d.logf("PR #%d comment %s: rehydrate post read %s failed: %v; keeping entry for retry (issue #1847)", prNumber, comment.ID, decisionPath, err)
+		return true
+	}
+
+	// Honour ctx cancellation observed between ReadFile and the
+	// post step: do NOT call MarkSeen so the trigger stays in
+	// the prior on-disk state (the next daemon's rehydrate walker
+	// picks the entry up again on restart).
+	if cerr := ctx.Err(); cerr != nil {
+		d.logf("PR #%d comment %s: ctx cancelled before rehydrate post; leaving entry untouched (issue #1847)", prNumber, comment.ID)
+		return true
+	}
+
+	redacted := RedactBody(string(body))
+	if err := d.CommentPoster.PostComment(ctx, prNumber, redacted); err != nil {
+		if cerr := ctx.Err(); cerr != nil {
+			// Ctx cancelled DURING post: leave entry; the next
+			// daemon's rehydrate walker re-attempts.
+			d.logf("PR #%d comment %s: ctx cancelled during rehydrate post; leaving entry untouched (issue #1847)", prNumber, comment.ID)
+			return true
+		}
+		// Post failed for a non-ctx reason: log, keep the entry
+		// so the next tick retries. Do NOT MarkSeen; the
+		// bounded-retry-grace dance is owned by the lazy-verify
+		// path on a different row.
+		d.logf("PR #%d comment %s: rehydrate post failed: %v; keeping entry for next-tick retry (issue #1847)", prNumber, comment.ID, err)
+		return true
+	}
+
+	// Successful post. MarkSeen("success") on the per-run store
+	// fires the SeenCacheInvalidator seam (production: d), which
+	// MarkTerminalSeen's the (prNumber, commentID) pair in the
+	// in-memory seenCache. The on-disk review-state.json gets
+	// the success status updated atomically by ReviewStateStore.
+	store, storeErr := NewReviewStateStore(entry.reviewState, prNumber, d)
+	if storeErr != nil {
+		// State store could not be opened: log and keep the entry
+		// so the next tick retries — but DO call MarkTerminalSeen
+		// on the seen cache so the trigger is not reprocessed as
+		// a fresh launch in the interim (the entry acts as the
+		// source of truth until the store can be opened).
+		d.logf("PR #%d comment %s: open review-state for MarkSeen failed: %v; keeping entry and seen-cache untouched (issue #1847)", prNumber, comment.ID, storeErr)
+		return true
+	}
+	if err := store.MarkSeen(comment.ID, "success"); err != nil {
+		d.logf("PR #%d comment %s: MarkSeen(success) failed in rehydrate branch: %v; keeping entry (issue #1847)", prNumber, comment.ID, err)
+		return true
+	}
+
+	// Drop the entry from pendingPost under the dedicated mutex.
+	d.pendingPostMu.Lock()
+	delete(d.pendingPost[prNumber], comment.ID)
+	if len(d.pendingPost[prNumber]) == 0 {
+		delete(d.pendingPost, prNumber)
+	}
+	d.pendingPostMu.Unlock()
+	return true
 }
 
 // otherwise falls back to time.Now. Tests inject a custom clock.
