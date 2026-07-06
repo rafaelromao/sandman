@@ -409,16 +409,11 @@ func TestPortal_E2E_CleanRunOmitsAttemptsAndLastRetryReason(t *testing.T) {
 }
 
 // TestPortal_E2E_ParentSuccWithLiveChild is the HTTP end-to-end regression
-// test for the consolidated reviewing-badge backend rule (PR #1622, commit
-// 7c35a23e, "Portal: consolidate reviewing badge-flip to a single backend
-// layer"): the backend is the sole source of truth for the parent row's
-// status; a live review child flips even a terminal parent's status to
-// "reviewing". The mirror at TestPortal_ParentSuccWithLiveChild_FlipsToReviewing
-// asserts the same rule against the compute() projection; this variant
-// additionally exercises the JSON-over-HTTP serialization path.
-// TODO: add coverage for the complementary case — parent terminal with no
-// live review child — which would project status "success" under the same
-// rule.
+// test for the cross-batch portal contract (issue #1825): a parent impl row
+// with a live review child surfaces through /api/runs without the parent
+// row's own status being rewritten, and without backend-stamped review
+// metadata crossing batch boundaries. This variant exercises the
+// JSON-over-HTTP serialization path.
 func TestPortal_E2E_ParentSuccWithLiveChild(t *testing.T) {
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0o644); err != nil {
@@ -459,20 +454,14 @@ func TestPortal_E2E_ParentSuccWithLiveChild(t *testing.T) {
 	if parentRow == nil {
 		t.Fatalf("expected parent row for issue #1, got %#v", rows)
 	}
-	if parentRow.Status != "reviewing" {
-		t.Fatalf("expected parent Status='reviewing' (post-#1622 backend policy flips terminal parents when a live review child exists), got %q", parentRow.Status)
-	}
-	if parentRow.ReviewCount == 0 {
-		t.Fatalf("expected parent ReviewCount > 0 (review child exists), got %d", parentRow.ReviewCount)
+	if parentRow.Status != "success" {
+		t.Fatalf("expected parent Status='success' (terminal run.finished value preserved after aggregateReviewChildren removal), got %q", parentRow.Status)
 	}
 	if reviewChild == nil {
 		t.Fatalf("expected review child row for issue #1, got %#v", rows)
 	}
 	if !reviewChild.Review {
 		t.Fatalf("expected review child Review=true, got %v", reviewChild.Review)
-	}
-	if !reviewChild.GroupedReview {
-		t.Fatalf("expected review child GroupedReview=true (behind expanded selector), got %v", reviewChild.GroupedReview)
 	}
 	if reviewChild.PRNumber != 42 {
 		t.Fatalf("expected review child PRNumber=42, got %d", reviewChild.PRNumber)

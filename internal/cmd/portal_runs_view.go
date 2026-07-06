@@ -59,14 +59,23 @@ type portalRun struct {
 	// contract for implementation runs.
 	Review bool `json:"review,omitempty"`
 	// ReviewCount summarizes child review runs owned by a canonical issue row.
-	// It is populated only on issue-owner rows and omitted from JSON when zero.
+	// Kept on the struct for forward compat with the JSON wire shape; the
+	// portal no longer stamps this from the event log after issue #1825
+	// (no Go writer remains), and the orphan-review JS path
+	// (portal.html visibleRunForIssueGroup) synthesizes its own value
+	// for review-only groups.
 	ReviewCount int `json:"reviewCount,omitempty"`
 	// ReviewVerdict carries latest terminal child-review status for canonical
-	// issue rows. It is omitted when no terminal child verdict exists yet.
+	// issue rows. Kept on the struct for the same reason as ReviewCount:
+	// the JSON wire shape is preserved, no Go writer remains, and the
+	// orphan-review JS path synthesizes its own value for review-only
+	// groups.
 	ReviewVerdict string `json:"reviewVerdict,omitempty"`
 	// GroupedReview marks review rows that are owned by an issue-parent row.
-	// Grouped review rows suppress legacy row chrome because canonical parent
-	// already shows review summary.
+	// Kept on the struct for the same reason as ReviewCount and
+	// ReviewVerdict: the JSON wire shape is preserved. The portal no
+	// longer sets this from the event log; the orphan-review JS path
+	// hardcodes groupedReview=false on its synthetic row.
 	GroupedReview bool `json:"groupedReview,omitempty"`
 	// PRNumber mirrors payload.pr_number from the run.started event. Only
 	// meaningful when Review is true; omitted from JSON otherwise.
@@ -441,7 +450,6 @@ func (v *portalRunsView) computeWithActiveRunsAndIndex(repoRoot string, eventLis
 
 	runs = v.dedupRuns(runs)
 	runs = v.demoteOrphanedActiveRunsFromDeadBatches(repoRoot, runs)
-	runs = v.aggregateReviewChildren(runs)
 	for i := range runs {
 		// Active runs are never marked archived, even if a directory
 		// matching the run ID happens to exist under .sandman/archive.
@@ -728,73 +736,6 @@ func (v *portalRunsView) dedupRuns(runs []portalRun) []portalRun {
 		}
 	}
 	return result
-}
-
-func (v *portalRunsView) aggregateReviewChildren(runs []portalRun) []portalRun {
-	if len(runs) == 0 {
-		return runs
-	}
-	type reviewSummary struct {
-		count      int
-		live       bool
-		verdict    string
-		finishedAt time.Time
-		startedAt  time.Time
-	}
-	parents := make(map[int]int)
-	summaries := make(map[int]*reviewSummary)
-	for i := range runs {
-		run := runs[i]
-		if run.IssueNumber <= 0 {
-			continue
-		}
-		if run.Review {
-			summary := summaries[run.IssueNumber]
-			if summary == nil {
-				summary = &reviewSummary{}
-				summaries[run.IssueNumber] = summary
-			}
-			summary.count++
-			if run.Status == "reviewing" {
-				summary.live = true
-			}
-			// Only terminal review rows project a verdict; an in-flight
-			// review has no final "## Decision" yet (issue #1729, slice 3).
-			if run.FinishedAt != nil {
-				verdict := "Unclear"
-				if v, ok := reviewVerdictFromRunLog(run.Log); ok {
-					verdict = v
-				}
-				finishedAt := *run.FinishedAt
-				if summary.verdict == "" || finishedAt.After(summary.finishedAt) || (finishedAt.Equal(summary.finishedAt) && run.StartedAt.After(summary.startedAt)) {
-					summary.verdict = verdict
-					summary.finishedAt = finishedAt
-					summary.startedAt = run.StartedAt
-				}
-			}
-			continue
-		}
-		if idx, ok := parents[run.IssueNumber]; !ok || run.StartedAt.Before(runs[idx].StartedAt) {
-			parents[run.IssueNumber] = i
-		}
-	}
-	for issueNumber, summary := range summaries {
-		idx, ok := parents[issueNumber]
-		if !ok || summary.count == 0 {
-			continue
-		}
-		runs[idx].ReviewCount = summary.count
-		runs[idx].ReviewVerdict = summary.verdict
-		if summary.live {
-			runs[idx].Status = "reviewing"
-		}
-	}
-	for i := range runs {
-		if runs[i].Review {
-			runs[i].GroupedReview = true
-		}
-	}
-	return runs
 }
 
 func (v *portalRunsView) demoteOrphanedActiveRunsFromDeadBatches(repoRoot string, runs []portalRun) []portalRun {
