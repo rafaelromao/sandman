@@ -234,7 +234,16 @@ func (r RunState) RetriesTotal() int {
 	return v
 }
 
-// RetriesDone returns the retry iterations actually executed from the finished payload.
+// RetriesDone returns the count of retries actually executed by the run
+// (initial run excluded), read from the `retries_done` key of the
+// finished-run payload (run.finished / run.aborted). At terminal time
+// it matches the active-row `LiveAttempt` value for the same run, so
+// the active row and the finished row render the same number for the
+// same run — `emitTerminal` in `internal/batch/orchestrator.go` writes
+// `retries_done` as `AgentRunResult.RetriesTotal - 1`, while
+// `LiveAttempt` returns the equivalent value computed from the live
+// `run.retry` stream. Returns 0 when the run has not finished yet, or
+// when the finished payload omits the key (legacy shapes).
 func (r RunState) RetriesDone() int {
 	if r.Finished == nil {
 		return 0
@@ -253,7 +262,9 @@ func (r RunState) RetriesDone() int {
 // the maximum `attempt - 1`, with each candidate clamped at 0 so a
 // malformed payload (`attempt: 0` or any non-positive value) cannot
 // drag the running best below 0 and cannot produce a negative retry
-// count. Returns 0 when no retries exist.
+// count. At terminal time it matches `RetriesDone` for the same run,
+// so the active row and the finished row render the same number for
+// the same run. Returns 0 when no retries exist.
 func (r RunState) LiveAttempt() int {
 	best := 0
 	for _, event := range r.Retries {

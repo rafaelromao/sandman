@@ -136,6 +136,15 @@ type Result struct {
 }
 
 // AgentRunResult describes the outcome of a single AgentRun.
+//
+// Note on RetriesTotal: this field stores the total agent
+// invocations attempted for the run, including the initial run — so
+// the value is "agent invocations" rather than the "retry count"
+// unit used by `events.RunState.LiveAttempt` and
+// `events.RunState.RetriesDone` (the initial run is included here;
+// those helpers exclude it). The conversion to retry count happens
+// at write time in `emitTerminal` in `internal/batch/orchestrator.go`,
+// where the `retries_done` payload key is set to `RetriesTotal - 1`.
 type AgentRunResult struct {
 	IssueNumber  int
 	Issue        *int
