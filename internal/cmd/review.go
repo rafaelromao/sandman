@@ -174,12 +174,8 @@ func runReviewOneShot(cmd *cobra.Command, deps Dependencies, cfg *config.Config,
 	}
 	defer rs.Close()
 
-	// Use the absolute run-dir path for both PRData.RunDir and
-	// batch.Request.RunDir so the agent's prompt can find decision.md
-	// regardless of the sandbox CWD (issue #1845). The orchestrator's
-	// config_mounts snapshot path accepts absolute paths and treats
-	// them the same as relative ones (MkdirAll is a no-op for
-	// already-existing dirs).
+	// Use the absolute run-dir path so the agent's prompt can find
+	// decision.md regardless of the sandbox CWD.
 	absRunDir, err := filepath.Abs(rs.RunDir())
 	if err != nil {
 		return fmt.Errorf("abs run dir: %w", err)

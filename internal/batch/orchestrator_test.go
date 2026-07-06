@@ -4747,14 +4747,12 @@ func TestRunBatch_PromptOnlyReviewRunResultCarriesReviewIdentity(t *testing.T) {
 	}
 }
 
-// capturingAgentRunFactory returns a real *AgentRun and captures the env
-// map the orchestrator's runSession.execute site sets on it. This is the
-// seam for the SANDMAN_RUN_DIR env export (slice 4 of issue #1845): the
-// orchestrator must inject SANDMAN_RUN_DIR=<runFolder> into agentRun.env
-// for review runs so the agent can `echo $SANDMAN_RUN_DIR` as a fallback
-// discovery path for the prompt's <RUN_DIR>.
+// capturingAgentRunFactory returns a real *AgentRun and captures it on a
+// channel so the test can inspect the env map the orchestrator's
+// runSession.execute site set. This pins the SANDMAN_RUN_DIR env export:
+// the orchestrator must inject SANDMAN_RUN_DIR=<runFolder> into
+// agentRun.env for review runs.
 type capturingAgentRunFactory struct {
-	captured   *sync.Mutex
 	agentRunCh chan *AgentRun
 }
 

@@ -30,11 +30,9 @@ type PRData struct {
 	Title       string
 	Body        string
 	ReviewFocus string
-	// RunDir is the per-row run folder path (typically
-	// `.sandman/batches/<batchID>/runs/<runID>/`). It is substituted
-	// into `{{RUN_DIR}}` in the review prompt template. When empty the
-	// placeholder renders as empty (no unfilled-key error) so callers
-	// that have not yet been migrated continue to work.
+	// RunDir is substituted into `{{RUN_DIR}}` in the review prompt.
+	// Empty renders as empty (no unfilled-key error) so callers that
+	// have not yet been migrated continue to work.
 	RunDir string
 }
 
