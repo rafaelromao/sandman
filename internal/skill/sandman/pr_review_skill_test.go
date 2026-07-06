@@ -170,22 +170,30 @@ func TestPRReviewSkill_BehavioralSmoke(t *testing.T) {
 func TestPRReviewSkill_ADRNotesDaemonOwnership(t *testing.T) {
 	text := readADR0014(t)
 
+	// Post-#1845 the trust boundary is the daemon transform, not the
+	// LLM prompt. ADR-0014 §Daemon-side redaction must name the
+	// daemon as the sole poster (reads decision.md, redacts, posts
+	// via gh pr comment) and the agent as the writer of the canonical
+	// body file. The old "sole authoritative record" SelfPostStore
+	// ownership note was removed by S7 because the store itself is
+	// gone.
 	required := []string{
-		"the skill no longer maintains `.sandman/reviews/self-posted.json`",
-		"sole authoritative record",
-		"#1757",
-		"`Daemon.processPR` is the sole authoritative record",
+		"The daemon posts the review comment",
+		"<runDir>/decision.md",
+		"RedactBody",
+		"daemon-side transform that runs out-of-band of the LLM",
+		"#1845",
 	}
 	for _, phrase := range required {
 		if !strings.Contains(text, phrase) {
-			t.Errorf("ADR-0014 must record the daemon-owns-the-store ownership note after issue #1757; missing %q", phrase)
+			t.Errorf("ADR-0014 must record the daemon-as-poster ownership after issue #1845; missing %q", phrase)
 		}
 	}
 
 	if strings.Contains(text, "the `pr-review` SKILL.md Step 4b wrapper hashes the bot's review-body") {
-		t.Errorf("ADR-0014 Record-site (primary) bullet must no longer claim the pr-review SKILL.md Step 4b wrapper is the primary record site (issue #1757)")
+		t.Errorf("ADR-0014 must no longer claim the pr-review SKILL.md Step 4b wrapper is the primary record site (issue #1757)")
 	}
-	if strings.Contains(text, "`Daemon.promotePendingComment` is the sole authoritative record") {
-		t.Errorf("ADR-0014 Ownership note must name processPR — not promotePendingComment — as the sole authoritative record site (issue #1757)")
+	if strings.Contains(text, "the skill no longer maintains `.sandman/reviews/self-posted.json`") {
+		t.Errorf("ADR-0014 must no longer reference the deleted self-posted.json store (issues #1845/#1848)")
 	}
 }

@@ -84,9 +84,9 @@ _Avoid_: review-only RunID, special review alias, `runs/review`.
 _See_: Run, RunID, Review daemon state.
 
 **Review daemon state**:
-Flat files under `.sandman/reviews/` for daemon-level state only: `review.sock` (daemon command socket), `review-prompt.md` (shared prompt template), and `quality-rules.md` (materialised alongside the prompt). The folder holds **no** per-PR subdirectories and **no** per-row RunID folders — per-run review state (`review-state.json` with seen comments and claim locks) lives inside the batch run folder at `.sandman/batches/<batch-id>/runs/<runID>/review-state.json`, where `<runID>` is the canonical per-row RunID for the review run (see `Review run`), NOT the legacy `runs/review` alias. Dedup key is `(prNumber, commentID)`.
+Flat files under `.sandman/reviews/` for daemon-level state only: `review.sock` (daemon command socket), `review-prompt.md` (shared prompt template), and `quality-rules.md` (materialised alongside the prompt). The folder holds **no** per-PR subdirectories, **no** per-row RunID folders, and **no** body-hash tracker. Per-run review state (`review-state.json` with seen comments and claim locks) lives inside the batch run folder at `.sandman/batches/<batch-id>/runs/<runID>/review-state.json`, where `<runID>` is the canonical per-row RunID for the review run (see `Review run`), NOT the legacy `runs/review` alias. Dedup key is `(prNumber, commentID)`.
 
-Post-#1848 the `.sandman/reviews/self-posted.json` file and the daemon-side `SelfPostStore` are gone. The bot's review body cannot re-trigger the daemon because the daemon-side redaction layer (issue #1845) strips every `/sandman` substring before posting, and the structural sniff `LooksLikeBotReviewBody` (issue #1821) drops bodies that structurally look like a previous bot review (carrying both the `## Previous review progress` heading AND the literal `/sandman review` substring) before `ParseTrigger` runs. The structural sniff is the sole surviving self-defence gate; the previous SHA-256 hash tracker and run-log grep are deleted.
+Post-#1845 the bot's review body cannot re-trigger the daemon because the daemon-side redaction layer (issue #1845) strips every `/sandman` substring from `<runDir>/decision.md` (see `Review decision`) before posting via `gh pr comment`, and the structural sniff `LooksLikeBotReviewBody` (issue #1821) drops bodies that structurally look like a previous bot review (carrying both the `## Previous review progress` heading AND the literal `/sandman review` substring) before `ParseTrigger` runs. The redactor is the primary defence; the structural sniff is the belt-and-braces backstop.
 _Avoid_: review state, PR state.
 
 **Review daemon slot**:
@@ -95,6 +95,17 @@ A per-PR in-memory slot of size 1: one slot per PR, all PRs sharing a global poo
 **Review daemon tick**:
 One scan cycle of the review daemon's polling loop. A tick acquires the `busy` semaphore (buffer size 1, unconditional) before scanning open PRs; if already held, the tick returns immediately ("previous tick still running, skipping"). This `busy=1` invariant means at most one tick runs at a time regardless of `parallel_reviews`. The inner `sem` channel (sized to `EffectiveReviewParallel()`) still allows a single tick to launch review runs for multiple PRs concurrently. Within a tick, `processPR` uses `ReviewStateStore.TryClaim` to acquire an in-memory claim lock before adding reactions or calling `launchReview`; the claim is in-memory only and is released if `launchReview` fails before the state is written, allowing retry on the next tick. As the first step of every tick (after acquiring `busy`, before `ListOpenPRs`) the daemon runs `promotePendingReviews` which walks the in-memory `pendingReviews` map for triggers that were launched by a prior tick but whose agent-posted review comment has not yet been observed; the entries are promoted to `success` or `failure` per ADR-0034 §Verify off the critical path. References ADR-0034 §Cross-tick claim lock and §Verify off the critical path.
 _Avoid_: scan cycle, polling loop.
+
+**Review decision**:
+The review pipeline is **daemon-as-poster**: the reviewer agent writes its body to `<runDir>/decision.md` (atomic temp-file + `os.Rename`) and the daemon reads it, redacts it, and posts the redacted body via `gh pr comment`. Three load-bearing properties:
+
+- **Canonical body file**: `<runDir>/decision.md` lives in the per-run folder, not a shared daemon path. The agent's only daemon-visible side effect is the file; the daemon never sees the agent's stdout and never asks the LLM to call `gh pr comment` itself. The atomic-rename property is what makes the rehydrate-on-startup path safe.
+- **Redactor**: the daemon applies `RedactBody` (S1, `internal/review/redactor.go:21`) — the regex `(?i)/sandman` → `sandman` — to the body before posting. The redactor is the load-bearing safety net for the no-self-loop invariant: it runs **out-of-band of the LLM**, so the bot can write whatever it likes into `decision.md` and the daemon transform still strips the trigger substring before the post lands. The invariant becomes a property of the daemon code, not the model.
+- **`pendingPost` rehydrate-on-startup**: the in-memory `pendingPost` map (`internal/review/daemon.go:138`) is rehydrated on `Daemon.New` from every review-kind batch's `runs/<rowID>/decision.md`, so a daemon crash between agent exit and post is recovered on the next start without losing the body. The rehydrate is best-effort: a missing `run.json`, a non-review kind, an unreadable `decision.md`, or a partial write is logged and skipped, never fatal.
+
+The trust boundary is the daemon transform, not the LLM prompt. The structural sniff `LooksLikeBotReviewBody` (see `Review daemon state`) is the surviving belt-and-braces self-defence gate. References ADR-0014 §Daemon-side redaction and §Rehydrate-on-startup.
+_Avoid_: bot log (the run log is the canonical per-run artefact, not a self-post source), `gh pr comment` invocation by the agent.
+_See_: Review daemon state, Review run log.
 
 **Branch**:
 A git branch named `sandman/<issue-number>-<slugified-title>` for issue-driven AgentRuns, or `sandman/<slug>-<timestamp>` for prompt-only runs.
@@ -223,7 +234,7 @@ The persisted twin of the live attach stream, written to `.sandman/batches/<batc
 _Avoid_: Log file.
 
 **Review run log**:
-The same on-disk file as the **Saved Run Log** (`.sandman/batches/<batch-id>/runs/<run-id>/run.log`). Post-#1848 the daemon no longer greps the run log via `extractBodiesFromLog` (that helper is deleted along with `SelfPostStore`); the file is still the canonical per-run artefact referenced by the run manifest and the review-state, and is read by the portal and by `pendingReviewEntry.runLogPath` for audit / debugging.
+The same on-disk file as the **Saved Run Log** (`.sandman/batches/<batch-id>/runs/<run-id>/run.log`). The daemon does not parse the review run log for self-post attribution — the agent's body hand-off is the file `<runDir>/decision.md` (see `Review decision`), not the run log. The run log is the canonical per-run artefact referenced by the run manifest and the review-state, and is read by the portal and by `pendingReviewEntry.runLogPath` for audit / debugging.
 _Avoid_: bot log, agent log, comment log.
 _See_: Saved Run Log.
 
