@@ -161,8 +161,8 @@ func TestDaemon_S3_HappyPath_PostsRedactedDecision(t *testing.T) {
 	d, _, dir := newDaemonForTestS3(t, gh, runner, cfg, poster)
 	tickAndWait(t, d, context.Background())
 
-	if poster.calls != 1 {
-		t.Fatalf("expected 1 PostComment call, got %d", poster.calls)
+	if poster.Calls() != 1 {
+		t.Fatalf("expected 1 PostComment call, got %d", poster.Calls())
 	}
 	gotPR, gotBody := poster.Captured()
 	if gotPR != prNumber {
@@ -219,8 +219,8 @@ func TestDaemon_S3_MissingDecision_FailsClosed(t *testing.T) {
 	d, _, dir := newDaemonForTestS3(t, gh, runner, cfg, poster)
 	tickAndWait(t, d, context.Background())
 
-	if poster.calls != 0 {
-		t.Errorf("expected 0 PostComment calls when decision.md is missing, got %d", poster.calls)
+	if poster.Calls() != 0 {
+		t.Errorf("expected 0 PostComment calls when decision.md is missing, got %d", poster.Calls())
 	}
 	statePath := locateReviewStatePath(t, dir)
 	stateBytes, err := os.ReadFile(statePath)
@@ -276,8 +276,8 @@ func TestDaemon_S3_FailedPost_FailsClosed(t *testing.T) {
 	d, _, dir := newDaemonForTestS3(t, gh, runner, cfg, poster)
 	tickAndWait(t, d, context.Background())
 
-	if poster.calls != 1 {
-		t.Fatalf("expected 1 PostComment call, got %d", poster.calls)
+	if poster.Calls() != 1 {
+		t.Fatalf("expected 1 PostComment call, got %d", poster.Calls())
 	}
 	statePath := locateReviewStatePath(t, dir)
 	stateBytes, err := os.ReadFile(statePath)
@@ -347,11 +347,11 @@ func TestDaemon_S3_CtxCancelDuringPost_StaysPending(t *testing.T) {
 	// Wait for the launch goroutine to enter the post step
 	// (PostComment is blocked on the release channel).
 	deadline := time.Now().Add(2 * time.Second)
-	for poster.calls == 0 && time.Now().Before(deadline) {
+	for poster.Calls() == 0 && time.Now().Before(deadline) {
 		time.Sleep(10 * time.Millisecond)
 	}
-	if poster.calls != 1 {
-		t.Fatalf("expected PostComment to be entered before ctx cancel, got %d calls", poster.calls)
+	if poster.Calls() != 1 {
+		t.Fatalf("expected PostComment to be entered before ctx cancel, got %d calls", poster.Calls())
 	}
 
 	cancel()
