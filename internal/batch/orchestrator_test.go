@@ -4374,7 +4374,12 @@ func TestRunBatch_StartDelay_AbortsImmediatelyOnCancel(t *testing.T) {
 	case <-started2:
 		firstRelease = release2
 		secondStarted = started1
-	case <-time.After(250 * time.Millisecond):
+	case <-time.After(2 * time.Second):
+		// The first runnable's start gate is a RunBatch scheduling step,
+		// not a tight timing constraint. On CI-loaded macOS runners the
+		// orchestrator + worktree setup can exceed 250 ms; the 2 s ceiling
+		// matches waitForSignal elsewhere in this file and stays well
+		// under the cancel() deadline the test then exercises.
 		t.Fatal("expected first run to start")
 	}
 	cancel()
