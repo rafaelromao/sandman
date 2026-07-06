@@ -838,24 +838,19 @@ func reviewVerdictFromRunLog(logText string) (string, bool) {
 }
 
 // dedupRunGroup collapses duplicate rows for one issue within one batch.
-// It first strips queued and blocked rows when any other row exists, then
-// applies runPriority (aborted > active > blocked > queued > other) and
-// breaks ties by latest StartedAt. The active vs terminal reconciliation
-// for the same RunID happens in compute() before this pass; this helper
-// stays untouched so unrelated terminal rows for the same issue (e.g.,
-// a recovered failure plus a fresh success) continue to surface as two
-// rows.
+// It strips queued and blocked rows when any non-waiting row exists
+// (queued/blocked only describe the wait state of an AgentRun and are
+// superseded by any later non-waiting row for the same AgentRun), and
+// returns all remaining rows as-is — no priority-based collapsing. The
+// active vs terminal reconciliation for the same RunID happens in
+// compute() before this pass; unrelated terminal rows for the same issue
+// (e.g. a recovered failure plus a fresh success) must surface as two
+// rows, and an aborted run must not suppress a successful run for the
+// same issue within the same batch.
 func (v *portalRunsView) dedupRunGroup(runs []portalRun) []portalRun {
 	if len(runs) <= 1 {
 		return runs
 	}
-	// A queued or blocked row only describes the wait state of an AgentRun
-	// and is superseded by any later non-waiting row for the same AgentRun.
-	// When the group mixes waiting rows with terminal/active rows (e.g. a
-	// queued or blocked event followed by run.started + run.finished events
-	// that the same AgentRun emits with a different RunID once it leaves the
-	// wait state), strip the waiting rows so the terminal status wins
-	// regardless of the other priorities.
 	terminal := make([]portalRun, 0, len(runs))
 	waiting := make([]portalRun, 0, len(runs))
 	for _, run := range runs {
@@ -877,41 +872,7 @@ func (v *portalRunsView) dedupRunGroup(runs []portalRun) []portalRun {
 		}
 		return []portalRun{waiting[bestIdx]}
 	}
-	runs = terminal
-	bestIdx := 0
-	bestPriority := v.runPriority(runs[0])
-	for i := 1; i < len(runs); i++ {
-		priority := v.runPriority(runs[i])
-		if priority > bestPriority {
-			bestIdx = i
-			bestPriority = priority
-			continue
-		}
-		if priority == bestPriority && runs[i].StartedAt.After(runs[bestIdx].StartedAt) {
-			bestIdx = i
-		}
-	}
-	if bestPriority == 0 {
-		return runs
-	}
-	return []portalRun{runs[bestIdx]}
-}
-
-// runPriority encodes the reachable per-issue dedup priority order:
-// aborted > active > other.
-//
-// queued/blocked rows never reach this function: dedupRunGroup strips them
-// into the waiting slice first and either returns the latest waiting row
-// directly (when there are no non-waiting rows) or drops them entirely when
-// a later active/terminal row exists.
-func (v *portalRunsView) runPriority(run portalRun) int {
-	if run.Status == "aborted" {
-		return 4
-	}
-	if run.Kind == "active" {
-		return 3
-	}
-	return 0
+	return terminal
 }
 
 func (v *portalRunsView) discoverActiveRuns(repoRoot string, eventsByRun map[string][]portalEvent) ([]portalActiveRun, error) {
