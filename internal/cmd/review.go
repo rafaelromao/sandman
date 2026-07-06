@@ -133,15 +133,6 @@ func runReviewOneShot(cmd *cobra.Command, deps Dependencies, cfg *config.Config,
 	}
 	fmt.Fprintf(cmd.OutOrStdout(), "repo=%s agent=%s model=%s\n", repoName, reviewAgentName, reviewModel)
 
-	rendered, err := deps.Renderer.RenderReview(prompt.RenderConfig{}, prompt.PRData{
-		Number: pr.Number,
-		Title:  pr.Title,
-		Body:   pr.Body,
-	})
-	if err != nil {
-		return fmt.Errorf("render review prompt: %w", err)
-	}
-
 	sandboxMode := strings.TrimSpace(sandboxFlag)
 	if sandboxMode == "" {
 		sandboxMode = cfg.Sandbox
@@ -183,9 +174,25 @@ func runReviewOneShot(cmd *cobra.Command, deps Dependencies, cfg *config.Config,
 	}
 	defer rs.Close()
 
-	relRunDir, err := filepath.Rel(repoRoot, rs.RunDir())
+	// Use the absolute run-dir path for both PRData.RunDir and
+	// batch.Request.RunDir so the agent's prompt can find decision.md
+	// regardless of the sandbox CWD (issue #1845). The orchestrator's
+	// config_mounts snapshot path accepts absolute paths and treats
+	// them the same as relative ones (MkdirAll is a no-op for
+	// already-existing dirs).
+	absRunDir, err := filepath.Abs(rs.RunDir())
 	if err != nil {
-		return fmt.Errorf("rel run dir: %w", err)
+		return fmt.Errorf("abs run dir: %w", err)
+	}
+
+	rendered, err := deps.Renderer.RenderReview(prompt.RenderConfig{}, prompt.PRData{
+		Number: pr.Number,
+		Title:  pr.Title,
+		Body:   pr.Body,
+		RunDir: absRunDir,
+	})
+	if err != nil {
+		return fmt.Errorf("render review prompt: %w", err)
 	}
 
 	if _, err := deps.BatchRunner.RunBatch(cmd.Context(), batch.Request{
@@ -207,7 +214,7 @@ func runReviewOneShot(cmd *cobra.Command, deps Dependencies, cfg *config.Config,
 		IssueNumber:  pr.LinkedIssueNumber(),
 		RunID:        perRowRunID,
 		OutputWriter: rs.Broadcaster(),
-		RunDir:       relRunDir,
+		RunDir:       absRunDir,
 	}); err != nil {
 		return fmt.Errorf("run review batch: %w", err)
 	}

@@ -306,12 +306,19 @@ func TestReviewCmd_OneShotRendersPromptAndInvokesBatch(t *testing.T) {
 		"Review pull request #17: Refactor daemon",
 		"Splits the orchestrator.",
 		"gh pr diff 17",
-		"gh pr comment 17",
+		"decision.md",
+		"RunDir: ",
 	}
 	for _, w := range want {
 		if !strings.Contains(runner.captured.PromptConfig.PromptFlag, w) {
 			t.Errorf("rendered prompt missing %q\nprompt:\n%s", w, runner.captured.PromptConfig.PromptFlag)
 		}
+	}
+	if strings.Contains(runner.captured.PromptConfig.PromptFlag, "gh pr comment 17") {
+		t.Errorf("rendered prompt must not retain the old `gh pr comment 17` posting instruction; the agent writes <RUN_DIR>/decision.md and the daemon posts (issue #1845)\nprompt:\n%s", runner.captured.PromptConfig.PromptFlag)
+	}
+	if strings.Contains(runner.captured.PromptConfig.PromptFlag, "{{RUN_DIR}}") {
+		t.Errorf("rendered prompt must not retain the unfilled {{RUN_DIR}} placeholder, got prompt:\n%s", runner.captured.PromptConfig.PromptFlag)
 	}
 	if runner.captured.Agent != "opencode" {
 		t.Errorf("expected review agent 'opencode', got %q", runner.captured.Agent)
@@ -339,6 +346,9 @@ func TestReviewCmd_OneShotRendersPromptAndInvokesBatch(t *testing.T) {
 	}
 	if !strings.Contains(runner.captured.RunDir, "PR17") {
 		t.Errorf("expected RunDir to contain PR17, got %q", runner.captured.RunDir)
+	}
+	if !filepath.IsAbs(runner.captured.RunDir) {
+		t.Errorf("expected one-shot review RunDir to be absolute (issue #1845), got %q", runner.captured.RunDir)
 	}
 	if runner.captured.Parallel != 1 {
 		t.Errorf("expected default review parallel 1, got %d", runner.captured.Parallel)
