@@ -350,6 +350,20 @@ func TestReviewCmd_OneShotRendersPromptAndInvokesBatch(t *testing.T) {
 	if !filepath.IsAbs(runner.captured.RunDir) {
 		t.Errorf("expected one-shot review RunDir to be absolute (issue #1845), got %q", runner.captured.RunDir)
 	}
+	// Pin the per-row folder shape: the agent must write to
+	// <batchDir>/runs/<perRowRunID>/decision.md, not the batch dir.
+	// This matches the daemon's prepareReviewRun contract
+	// (internal/review/daemon.go:1137-1138) and the parent PRD
+	// "Review decision file" decision (issue #1843).
+	if !strings.HasSuffix(runner.captured.RunDir, string(filepath.Separator)+"runs"+string(filepath.Separator)+runner.captured.RunID) {
+		t.Errorf("expected one-shot review RunDir to be the per-row folder under <batchDir>/runs/<runID>, got %q (runID=%q)", runner.captured.RunDir, runner.captured.RunID)
+	}
+	// The rendered prompt's {{RUN_DIR}} substitution must match the
+	// per-row folder, not the batch dir, so the agent's
+	// <RUN_DIR>/decision.md lands in the right place.
+	if !strings.Contains(runner.captured.PromptConfig.PromptFlag, "RunDir: "+runner.captured.RunDir) {
+		t.Errorf("rendered prompt's {{RUN_DIR}} substitution must equal the per-row RunDir, got prompt:\n%s\nRunDir: %q", runner.captured.PromptConfig.PromptFlag, runner.captured.RunDir)
+	}
 	if runner.captured.Parallel != 1 {
 		t.Errorf("expected default review parallel 1, got %d", runner.captured.Parallel)
 	}

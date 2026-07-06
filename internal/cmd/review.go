@@ -174,11 +174,15 @@ func runReviewOneShot(cmd *cobra.Command, deps Dependencies, cfg *config.Config,
 	}
 	defer rs.Close()
 
-	// Use the absolute run-dir path so the agent's prompt can find
-	// decision.md regardless of the sandbox CWD.
-	absRunDir, err := filepath.Abs(rs.RunDir())
+	// Per-row run folder under <batchDir>/runs/<perRowRunID>/ — the
+	// agent writes <runDir>/decision.md and the daemon reads it back
+	// from the same path. Matches the daemon's prepareReviewRun.
+	absRunDir, err := filepath.Abs(filepath.Join(rs.RunDir(), "runs", perRowRunID))
 	if err != nil {
 		return fmt.Errorf("abs run dir: %w", err)
+	}
+	if err := os.MkdirAll(absRunDir, 0755); err != nil {
+		return fmt.Errorf("create per-row run folder: %w", err)
 	}
 
 	rendered, err := deps.Renderer.RenderReview(prompt.RenderConfig{}, prompt.PRData{
