@@ -20,15 +20,22 @@ import (
 )
 
 // fakeCommentPoster is the CommentPoster fake used by the seam-1
-// integration tests (issue #1846). The seam-1 contract reads:
+// integration tests (issue #1846) and the post-step retry tests
+// (issue #1891). The contract reads:
 //
-//   - PostComment is called exactly once per daemon tick that
-//     launches a review run for a PR with a valid /sandman review
-//     trigger.
+//   - PostComment is called by the daemon's post step exactly once
+//     per attempt; postWithRetry (issue #1891) may invoke it up to
+//     PostStepMaxAttempts times within a single tick.
 //   - The body passed to PostComment is RedactBody(<decision.md>)
 //     byte-for-byte.
-//   - The "err" field, when non-nil, is returned from PostComment
-//     so the test can simulate a failed post.
+//   - The "err" field, when non-nil, is returned from every
+//     PostComment call so the test can simulate a sustained post
+//     failure.
+//   - The "errs" slice, when non-empty, is indexed by attempt-1 to
+//     return a different error per attempt; tests use this to
+//     simulate a transient failure that recovers (e.g. errs[0..2]
+//     set, errs[3..] nil). When both err and errs are set, errs
+//     wins.
 //   - "release" is a channel the test can close to make
 //     PostComment block (used by the ctx-cancel-during-post test).
 type fakeCommentPoster struct {
@@ -37,6 +44,7 @@ type fakeCommentPoster struct {
 	body       string
 	calls      int
 	err        error
+	errs       []error
 	release    chan struct{}
 	gotRelease bool
 }
@@ -47,6 +55,17 @@ func (f *fakeCommentPoster) PostComment(ctx context.Context, prNumber int, body 
 	f.prNumber = prNumber
 	f.body = body
 	release := f.release
+	attempt := f.calls
+	var err error
+	if len(f.errs) > 0 {
+		if attempt-1 < len(f.errs) {
+			err = f.errs[attempt-1]
+		} else {
+			err = f.errs[len(f.errs)-1]
+		}
+	} else {
+		err = f.err
+	}
 	f.mu.Unlock()
 	if release != nil {
 		select {
@@ -54,12 +73,12 @@ func (f *fakeCommentPoster) PostComment(ctx context.Context, prNumber int, body 
 			f.mu.Lock()
 			f.gotRelease = true
 			f.mu.Unlock()
-			return f.err
+			return err
 		case <-ctx.Done():
 			return ctx.Err()
 		}
 	}
-	return f.err
+	return err
 }
 
 func (f *fakeCommentPoster) Calls() int {
@@ -243,10 +262,16 @@ func TestDaemon_S3_MissingDecision_FailsClosed(t *testing.T) {
 	}
 }
 
-// TestDaemon_S3_FailedPost_FailsClosed asserts the post-error branch:
-// when PostComment returns an error, the daemon records
-// MarkSeen("failure") and returns the error.
-func TestDaemon_S3_FailedPost_FailsClosed(t *testing.T) {
+// TestDaemon_S3_FailedPost_FallsBackToPending asserts the post-error
+// branch under the issue #1891 retry contract: when PostComment
+// returns an error on every attempt of the PostStepMaxAttempts
+// budget, the daemon records MarkSeen("pending") and registers a
+// pendingPost entry so the S4 rehydrate walker picks the trigger up
+// on the next tick. The trigger is NOT marked terminal-seen —
+// failure here means "post did not land", not "review is lost".
+// Pre-#1891 this test pinned the S6 contract that wrote
+// MarkSeen("failure") and called MarkTerminalSeen.
+func TestDaemon_S3_FailedPost_FallsBackToPending(t *testing.T) {
 	const prNumber = 4244
 
 	gh := &fakeGH{
@@ -276,8 +301,8 @@ func TestDaemon_S3_FailedPost_FailsClosed(t *testing.T) {
 	d, _, dir := newDaemonForTestS3(t, gh, runner, cfg, poster)
 	tickAndWait(t, d, context.Background())
 
-	if poster.Calls() != 1 {
-		t.Fatalf("expected 1 PostComment call, got %d", poster.Calls())
+	if poster.Calls() != PostStepMaxAttempts {
+		t.Errorf("expected %d PostComment calls (full retry budget), got %d", PostStepMaxAttempts, poster.Calls())
 	}
 	statePath := locateReviewStatePath(t, dir)
 	stateBytes, err := os.ReadFile(statePath)
@@ -288,15 +313,24 @@ func TestDaemon_S3_FailedPost_FailsClosed(t *testing.T) {
 	if err := json.Unmarshal(stateBytes, &state); err != nil {
 		t.Fatalf("unmarshal review-state.json: %v", err)
 	}
-	found := false
+	foundPending := false
 	for _, sc := range state.SeenComments {
-		if sc.CommentID == "c-s3-3" && sc.Status == "failure" {
-			found = true
+		if sc.CommentID == "c-s3-3" && sc.Status == "pending" {
+			foundPending = true
 			break
 		}
 	}
-	if !found {
-		t.Errorf("review-state.json missing MarkSeen(failure) for c-s3-3: %s", string(stateBytes))
+	if !foundPending {
+		t.Errorf("review-state.json missing MarkSeen(pending) for c-s3-3: %s", string(stateBytes))
+	}
+	if d.IsTerminalSeen(prNumber, "c-s3-3") {
+		t.Errorf("seenCache must NOT mark (pr=%d, comment=c-s3-3) terminal-seen under issue #1891, got cache %+v", prNumber, d.seenCache)
+	}
+	d.pendingPostMu.Lock()
+	_, hasPending := d.pendingPost[prNumber]["c-s3-3"]
+	d.pendingPostMu.Unlock()
+	if !hasPending {
+		t.Errorf("pendingPost should register an entry for (pr=%d, comment=c-s3-3) after retry budget exhausted, got map %+v", prNumber, d.pendingPost)
 	}
 }
 

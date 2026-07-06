@@ -102,6 +102,22 @@ A review that wrote `decision.md` but failed to post (daemon crash, transient `g
 
 Pre-#1759, the bounded-retry escape (3 cycles × 30s = 90s) marked a pending review as `failure` when no post-`since` PR comment had arrived. The bot's typical post latency is sometimes longer than 90s, so a successful review was wrongly labelled as a failure. The new bounded-retry grace: when the cycle counter reaches `pendingMaxCycles`, the daemon performs one final `decision.md` read. If the file is present and redacts cleanly, the daemon attempts the post; only a missing or unredactable file (the bot truly failed) triggers the failure escape. The grace path closes the "bot was slower than 90s" race without giving up the bounded-retry escape that prevents silent retry forever. The grace is now a daemon-post failure recovery, not an agent-post race: it tolerates transient `gh` failures (rate limit, network blip) and retry-then-succeed.
 
+## Retry the post step on transient gh failures (issue #1891)
+
+A transient `gh pr comment` failure (network blip, rate limit, auth refresh) during the post step used to be treated as terminal: postDecision recorded `MarkSeen("failure")` on disk and called `MarkTerminalSeen` to drop the trigger from the seen cache. All subsequent ticks then short-circuited the trigger via `IsTerminalSeen`, the bot's review body never reached GitHub, and the trigger was permanently ignored until a daemon restart. PR #1887 hit this exact path on 2026-07-06 at 15:38:46 — the agent approved the PR but the bot never posted the review because the daemon treated a transient `gh` error as terminal.
+
+**Chosen option:** retry the post step in-process up to `PostStepMaxAttempts = 5` times with exponential backoff (1s, 2s, 4s, 8s, 16s; total worst case ~31s). On final failure, fall back to the S4 rehydrate path: write `pending` to `review-state.json` AND register a `pendingPost` entry so the same-process next tick (or the S4 walker after a daemon restart) re-attempts the post. The trigger is NOT marked terminal-seen — a post failure means "post did not land", not "review is permanently lost".
+
+**Carve-out:** the `missing decision.md` and `decision.md is a directory` branches of `postDecision` still call `MarkTerminalSeen`. Those represent "the agent did not produce a review", not "the post could not land"; the retry-then-pending escape applies only to the post-failure branch.
+
+**Critical-path timing:** the launch goroutine holds the per-PR slot until `launchReview` returns, which now includes the full retry budget worst case (~31s). The busy semaphore (`busy=1`) has already been released when the goroutine launched, so the next `tick` runs unaffected and processes other PRs. The per-PR slot table (issue #1481 slice C) keeps the trigger from being re-launched while the post retries are in flight — `acquirePRSlot` returns false on the next tick for the same PR until the goroutine completes.
+
+**Operator escape:** a stuck pending entry (e.g. `gh` outage longer than 31s) can be cleared by removing `decision.md` from the run folder; the next tick observes the missing-decision.md condition via the S4 walker's stale-entry branch and falls through to the launch path. See `internal/review/daemon.go::tryRehydratePost` for the existing operator escape.
+
+**Why not longer backoff or more attempts?** 5 attempts × 16s = 31s, which already approaches the `PollingInterval` (30s). A larger budget would risk tripping the per-PR slot from being held past a tick boundary, complicating the launch path's invariants. The S4 rehydrate walker is the correct escape for sustained `gh` outages; the inline retry budget is sized for the typical transient case (single-digit second blips).
+
+**Tests:** `TestDaemon_PostRetriesOnTransientFailure`, `TestDaemon_PostFinalFailure_RegistersPendingPost`, `TestDaemon_PostFinalFailure_NextTickRehydrates`, `TestDaemon_PostRetry_CtxCancelStopsRetrying` (in `internal/review/daemon_s6_test.go`); the seam-3 `TestDaemon_S3_FailedPost_FallsBackToPending` was renamed from `TestDaemon_S3_FailedPost_FailsClosed` and updated to assert the new pending contract.
+
 ## Blocked by
 
 None - can start immediately
