@@ -141,10 +141,17 @@ func ApplySubstitutions(template string, cfg RenderConfig) string {
 }
 
 // ApplyPRSubstitutions renders {{PR_NUMBER}}, {{PR_TITLE}}, {{PR_BODY}},
-// {{REVIEW_FOCUS}}, and {{RUN_DIR}} in a review prompt template. The
-// substitution set is deliberately separate from ApplySubstitutions so
-// the issue-running render path does not consume PR keys and so the
-// review path stays decoupled from the issue metadata shape.
+// {{REVIEW_FOCUS}}, {{RUN_DIR}}, and {{PRIOR_REVIEW_EXISTS}} in a review
+// prompt template. The substitution set is deliberately separate from
+// ApplySubstitutions so the issue-running render path does not consume PR
+// keys and so the review path stays decoupled from the issue metadata
+// shape.
+//
+// {{PRIOR_REVIEW_EXISTS}} renders to the literal token "YES" or "NO"
+// (issue #1892). The prompt's `## Previous review progress — hard rule`
+// block reads the token verbatim and treats NO as authoritative — when
+// NO is rendered the review agent must omit the conditional section
+// entirely.
 func ApplyPRSubstitutions(template string, data PRData) string {
 	result := template
 	result = strings.ReplaceAll(result, "{{PR_NUMBER}}", fmt.Sprintf("%d", data.Number))
@@ -152,7 +159,19 @@ func ApplyPRSubstitutions(template string, data PRData) string {
 	result = strings.ReplaceAll(result, "{{PR_BODY}}", data.Body)
 	result = strings.ReplaceAll(result, "{{REVIEW_FOCUS}}", data.ReviewFocus)
 	result = strings.ReplaceAll(result, "{{RUN_DIR}}", data.RunDir)
+	result = strings.ReplaceAll(result, "{{PRIOR_REVIEW_EXISTS}}", priorReviewExistsToken(data.PriorReviewExists))
 	return result
+}
+
+// priorReviewExistsToken renders the deterministic YES/NO token used by
+// the review prompt to gate the `## Previous review progress` section
+// (issue #1892). YES means at least one prior review exists (after the
+// IsReviewRequest filter); NO means none exist.
+func priorReviewExistsToken(exists bool) string {
+	if exists {
+		return "YES"
+	}
+	return "NO"
 }
 
 // Engine renders prompt templates with issue metadata.

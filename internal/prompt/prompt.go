@@ -34,6 +34,13 @@ type PRData struct {
 	// Empty renders as empty (no unfilled-key error) so callers that
 	// have not yet been migrated continue to work.
 	RunDir string
+	// PriorReviewExists drives the `{{PRIOR_REVIEW_EXISTS}}` placeholder
+	// in the review prompt. The engine renders it as "YES" when true and
+	// "NO" otherwise (issue #1892). When false the prompt instructs the
+	// review agent to omit the `## Previous review progress` section
+	// entirely — see default_pr_review_prompt.md "Previous review
+	// progress — hard rule".
+	PriorReviewExists bool
 }
 
 // IssueRenderer renders prompt templates with substitutions.

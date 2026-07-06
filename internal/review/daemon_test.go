@@ -1733,7 +1733,7 @@ func TestDaemon_LaunchReviewErrorsOnMissingModel(t *testing.T) {
 	}
 	d.Config = cfg
 
-	err := d.launchReview(context.Background(), 1, "", "c1", "", "", "", "", nil, nil)
+	err := d.launchReview(context.Background(), 1, "", "c1", "", "", "", "", nil, nil, false)
 	if err == nil {
 		t.Fatal("expected error from launchReview when model is empty")
 	}
@@ -1807,7 +1807,7 @@ func TestDaemon_LaunchReviewCreatesControlSocketAndManifest(t *testing.T) {
 	if prepErr != nil {
 		t.Fatalf("prepareReviewRun: %v", prepErr)
 	}
-	if err := d.launchReview(context.Background(), 1, "", "c1", "", "", reviewRunFolder, perRowRunID, rs, state); err != nil {
+	if err := d.launchReview(context.Background(), 1, "", "c1", "", "", reviewRunFolder, perRowRunID, rs, state, false); err != nil {
 		t.Fatalf("launchReview: %v", err)
 	}
 
@@ -1841,7 +1841,7 @@ func TestDaemon_LaunchReviewCleansUpRunDirOnError(t *testing.T) {
 	if prepErr != nil {
 		t.Fatalf("prepareReviewRun: %v", prepErr)
 	}
-	err := d.launchReview(context.Background(), 1, "", "c1", "", "", reviewRunFolder, perRowRunID, rs, nil)
+	err := d.launchReview(context.Background(), 1, "", "c1", "", "", reviewRunFolder, perRowRunID, rs, nil, false)
 	if err == nil {
 		t.Fatal("expected error from launchReview")
 	}
@@ -1907,7 +1907,7 @@ func TestDaemon_LaunchReviewReplacesStaleSocket(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(reviewRunFolder, "decision.md"), []byte("ok"), 0644); err != nil {
 		t.Fatalf("write decision.md: %v", err)
 	}
-	if err := d.launchReview(context.Background(), 1, "", "c1", "", "", reviewRunFolder, perRowRunID, rs, state); err != nil {
+	if err := d.launchReview(context.Background(), 1, "", "c1", "", "", reviewRunFolder, perRowRunID, rs, state, false); err != nil {
 		t.Fatalf("launchReview: %v", err)
 	}
 
@@ -1965,7 +1965,7 @@ func TestDaemon_LaunchReviewRoutesOutputToPerPRSock(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(reviewRunFolder, "decision.md"), []byte("ok"), 0644); err != nil {
 		t.Fatalf("write decision.md: %v", err)
 	}
-	if err := d.launchReview(context.Background(), 1, "", "c1", "", "", reviewRunFolder, perRowRunID, rs, state); err != nil {
+	if err := d.launchReview(context.Background(), 1, "", "c1", "", "", reviewRunFolder, perRowRunID, rs, state, false); err != nil {
 		t.Fatalf("launchReview: %v", err)
 	}
 
