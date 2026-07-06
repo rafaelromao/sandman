@@ -235,20 +235,18 @@ func TestDaemon_S4_LoadPendingPosts_SkipsTerminalStatuses(t *testing.T) {
 }
 
 // TestDaemon_S4_LoadPendingPosts_DoesNotDoubleHandleByDeleting pins
-// that both walkers may end up registering the same row: a row that
-// has BOTH a non-zero Timestamp (so loadPendingReviews registers it)
-// AND decision.md on disk (so loadPendingPosts also registers it) is
-// present in both maps. The actual precedence is decided at tick time
-// by processPR (Slice C: rehydrate branch fires first), so this test
-// only asserts the coexistence invariant — both maps end up holding
-// the entry, and Slice C will exercise the precedence.
+// that the rehydrate walker is now the SOLE walker for `pending`
+// review-state rows (issue #1849 S6). The pre-S6 lazy-verify walker
+// (`loadPendingReviews`) is gone; loadPendingPosts is the only walker
+// that registers rehydrate-eligible entries at construction. The test
+// name retains the historical "double-handle" framing for symmetry
+// with prior slices; with S6 in place, only the rehydrate walker
+// participates, and this test pins the rehydrate map's behaviour.
 //
-// This explicitly documents the design choice: a strict disjoint
-// invariant would force exactly one of the two walkers to "lose" the
-// row, but in production a row that meets BOTH gates deserves both:
-// the rehydrate walker posts the body synchronously, and the lazy-
-// verify entry is harmless after MarkSeen("success") takes effect
-// (the seen-cache hydrate-and-filter path prevents re-processing).
+// This explicitly documents the design choice: pre-S6, two walkers
+// could both register the same row, and a strict disjoint invariant
+// would force exactly one of them to "lose" the row. Post-S6, the
+// lazy-verify walker is gone, so only loadPendingPosts participates.
 func TestDaemon_S4_LoadPendingPosts_DoesNotDoubleHandleByDeleting(t *testing.T) {
 	const (
 		prNumber  = 5053
@@ -273,10 +271,10 @@ func TestDaemon_S4_LoadPendingPosts_DoesNotDoubleHandleByDeleting(t *testing.T) 
 	if _, ok := d.peekPendingPost(prNumber, commentID); !ok {
 		t.Fatalf("pendingPost should register the entry when decision.md is present (Slice B coexistence)")
 	}
-	// Lazy-verify map also has the entry (timestamp non-zero, status
-	// pending). We do not assert it is in pendingReviews here — that
-	// is loadPendingReviews' own contract; this test pins only the
-	// rehydrate map's behaviour when both walkers share a row.
+	// Issue #1849 (S6): the lazy-verify map (`pendingReviews`) is
+	// gone — there is no second walker to assert against. The
+	// rehydrate walker is the sole source of truth for pending
+	// review-state rows.
 }
 
 // TestDaemon_S4_RehydratePost_HappyPath is the seam-4 contract test
@@ -559,9 +557,9 @@ func TestDaemon_S4_RehydratePost_StaleEntry_FallsThroughLaunch(t *testing.T) {
 
 	// Invariant: once dropped, a fresh tick's tryRehydratePost on
 	// the same comment ID returns false (no entry) — the trigger
-	// is now in lazy-verify territory, where the existing
-	// pendingSet filter takes over (and, for tests without prior
-	// pendingReviews entries, falls through to the launch path).
+	// falls through to the launch path. Issue #1849 (S6): the
+	// lazy-verify pendingSet filter is gone; the launch path is
+	// the only fallback for a stale rehydrate entry.
 	comment2 := github.PRComment{ID: commentID, Body: "/sandman review", CreatedAt: mustParseTime(t, "2026-07-06T13:00:02Z")}
 	if handled := d.tryRehydratePost(context.Background(), prNumber, comment2); handled {
 		t.Fatalf("tryRehydratePost should return false after the stale entry has been dropped (no entry to dispatch)")
