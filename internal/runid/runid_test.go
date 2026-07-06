@@ -393,15 +393,15 @@ func TestADR0036_BatchManifestBatchIdFromPerRowRunID(t *testing.T) {
 			// matching `}` and capture each one.
 			literals := findBatchManifestLiterals(content)
 			if len(literals) != len(tc.identifiers) {
-				var got []string
-				for _, lit := range literals {
-					got = append(got, batchIdIdentifier(lit))
+				var foundIdentifiers []string
+				for _, literal := range literals {
+					foundIdentifiers = append(foundIdentifiers, batchIdIdentifier(literal))
 				}
 				t.Fatalf("expected %d daemon.BatchManifest{BatchId: ...} literal(s) in %s, got %d (BatchId identifiers found: %v). Update the test when a new registration site is added.",
-					len(tc.identifiers), tc.file, len(literals), got)
+					len(tc.identifiers), tc.file, len(literals), foundIdentifiers)
 			}
-			for i, lit := range literals {
-				got := batchIdIdentifier(lit)
+			for i, literal := range literals {
+				got := batchIdIdentifier(literal)
 				if got != tc.identifiers[i] {
 					t.Errorf("daemon.BatchManifest{BatchId: %q} in %s does not match expected identifier %q (ADR-0036: BatchId must be the per-row RunID the orchestrator emits).",
 						got, tc.file, tc.identifiers[i])
@@ -412,13 +412,13 @@ func TestADR0036_BatchManifestBatchIdFromPerRowRunID(t *testing.T) {
 			// from runid.NewBatchID(...). Allowed sources are
 			// runid.NewRunID(...) and helper functions that wrap
 			// NewRunID (e.g. reviewRunIDFor in internal/review/runid.go).
-			for _, ident := range tc.identifiers {
+			for _, identifier := range tc.identifiers {
 				newBatchIDBinding := regexp.MustCompile(
-					`\b` + regexp.QuoteMeta(ident) + `\s*(?::=|=)\s*runid\.NewBatchID\b`,
+					`\b` + regexp.QuoteMeta(identifier) + `\s*(?::=|=)\s*runid\.NewBatchID\b`,
 				)
 				if newBatchIDBinding.MatchString(content) {
 					t.Errorf("ADR-0036 violation: %s binds %q to runid.NewBatchID(...), but manifest.BatchId must equal the per-row RunID the orchestrator emits. Use the per-row RunID formula (runid.NewRunID(...) or a helper that calls it).",
-						tc.file, ident)
+						tc.file, identifier)
 				}
 			}
 		})
