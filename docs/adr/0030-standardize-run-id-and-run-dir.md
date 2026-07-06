@@ -78,6 +78,42 @@ The portal uses `KindFromDirName(name string) (Kind, bool)` to recover the batch
 - `*-prompt-only*` → `KindPromptOnly` (old format backwards compat)
 - New format with no other marker → `KindPromptOnly` (fallback)
 
+### Manifest carries `RunTS` and `RunShortID`
+
+The `BatchManifest` persisted at `<batchDir>/batch.json` carries the batch's `<shortid>` and `<ts>` primitives as top-level fields, alongside the existing `BatchId`:
+
+- `RunTS` — the timestamp from "Timestamp + shortid collision guard" above, repeated here for self-containment. Format: `time.Now().Format("060102150405")` (12 chars, local time, 2-digit year).
+- `RunShortID` — the collision guard from "Timestamp + shortid collision guard" above, repeated here for self-containment. Format: `%04x` of `unixNano % 0xFFFF` (4 lowercase hex chars).
+- `BatchId` — the full assembled batch identifier (`<shortid>-<ts>-<kindSuffix>`), retained for backward compatibility.
+
+The manifest's JSON schema is therefore:
+
+```json
+{
+  "batchId": "<shortid>-<ts>-<kindSuffix>",
+  "runTs": "<ts, 060102150405>",
+  "runShortId": "<shortid, 4 hex chars>"
+}
+```
+
+Both fields are tagged `omitempty`, so manifests written before this amendment decode as zero values and remain readable.
+
+### Per-row RunID derivation contract
+
+Event-log-less consumers (most prominently the portal's nil-state path, before `run.started` fires in `events.jsonl`) MUST derive per-row RunIDs from manifest fields via `runid.NewRunID`. Synthesizing ad-hoc formats that violate this ADR's per-row RunID templates (above) is forbidden, because such strings break the portal's row-key contract.
+
+For a regular issue batch, the canonical call shape is:
+
+```go
+runid.NewRunID(runid.KindIssue, fmt.Sprintf("%d", issueNum), manifest.RunTS, manifest.RunShortID)
+```
+
+The four arguments are positional and named here for clarity: `KindIssue` selects the issue template, `fmt.Sprintf("%d", issueNum)` is the per-row subject (`<issueNum>`, never `"issue-<issueNum>"`), `manifest.RunTS` is the `<ts>` primitive from the manifest, and `manifest.RunShortID` is the `<shortid>` primitive.
+
+For review (PR) batches, the portal uses `runid.NewRunID(runid.KindReview, …)` with the same `(RunTS, RunShortID)` arguments — see the per-row RunID templates above for the PR subject shape. This is included here so consumers do not have to re-derive it independently, but the issue-driven contract above is the canonical entry point called out by the issue body.
+
+When either manifest field is absent, callers should fall back to the queued event's `RunID` if one is available, or return the empty string. The portal implements both paths through `perRowRunIDForManifest(runTS, runShortID, prNumber, issueNumber, queued)` (pure helper) and its active-batch wrapper `perRowRunIDForActive(active, issueNumber, queued)`.
+
 ## Consequences
 
 ### Positive
@@ -87,16 +123,20 @@ The portal uses `KindFromDirName(name string) (Kind, bool)` to recover the batch
 - Shortid-first ordering maximises collision resistance within the same timestamp.
 - Pattern-based `KindFromDirName` enables the portal to recover batch kind from directory names alone.
 - Validation is loosened to accept the full range of identifiers users are likely to choose.
+- Carrying `RunTS` and `RunShortID` on the manifest lets event-log-less consumers (the portal, before `run.started` lands) derive canonical per-row RunIDs without synthesizing ad-hoc formats.
+- The `runid.NewRunID` derivation contract pins the canonical call shape so future consumers cannot drift back to synthetic "issue-N" RunIDs.
 
 ### Negative
 
 - Existing RunDir names generated before this ADR are not renamed. Old runs continue to use their original names.
 - The `--run-id` flag no longer influences the RunDir name. Scripts that relied on this behavior must be updated.
+- Manifests written before this amendment cannot supply `RunTS`/`RunShortID`; consumers must keep the queued-event fallback for old batches.
 
 ### Neutral
 
 - The `internal/runid` package is wire-agnostic: it performs no I/O beyond checking for directory existence during collision detection. Callers remain responsible for creating the RunDir after calling `NewBatch()`.
 - The collision guard retries up to 16 times, which is sufficient for the 65536-value shortid space. In practice, collisions within the same second are rare.
+- The manifest's `omitempty` tags keep the new fields backward-compatible at the wire level: older manifests decode without errors, and newer manifests are still readable by older readers that ignore unknown fields.
 
 ## Blocked by
 
