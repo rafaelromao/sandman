@@ -487,20 +487,7 @@ func TestPortal_MobileIssueTitleCSS_AlignSelfCenterIn960pxBlock(t *testing.T) {
 	if end := strings.Index(block, `@media (max-width: 760px)`); end >= 0 {
 		block = block[:end]
 	}
-	selIdx := strings.Index(block, `tbody tr.run-row td[data-cell="issue-title"]`)
-	if selIdx < 0 {
-		t.Fatalf("960px media block missing %q selector; the mobile run row must render the issue-title cell (issue #1857 / #1854)\n%s", `tbody tr.run-row td[data-cell="issue-title"]`, block[:min(1000, len(block))])
-	}
-	open := strings.Index(block[selIdx:], "{")
-	if open < 0 {
-		t.Fatalf("960px media block %q rule has no opening brace\n%s", `tbody tr.run-row td[data-cell="issue-title"]`, block[:min(1000, len(block))])
-	}
-	bodyStart := selIdx + open + 1
-	close := strings.Index(block[bodyStart:], "}")
-	if close < 0 {
-		t.Fatalf("960px media block %q rule has no closing brace\n%s", `tbody tr.run-row td[data-cell="issue-title"]`, block[:min(1000, len(block))])
-	}
-	body := block[bodyStart : bodyStart+close]
+	body := extractCSSRuleBody(t, block, `tbody tr.run-row td[data-cell="issue-title"]`)
 	if !strings.Contains(body, "align-self: center;") {
 		t.Errorf("960px media block %q rule missing %q; the cell must be vertically centred in the mobile run row (issue #1857 / #1854)\n%s", `tbody tr.run-row td[data-cell="issue-title"]`, "align-self: center;", body)
 	}
