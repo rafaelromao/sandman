@@ -5062,9 +5062,186 @@ try {
 	if (rendered !== expected) {
 		throw new Error('rebuilt content must match JSON.stringify(events, null, 2) byte-for-byte (AC #2).\nGot: ' + rendered.slice(0, 200) + '\nExpected: ' + expected.slice(0, 200));
 	}
-	console.log('PASS');
+console.log('PASS');
 `
 	runNodeScript(t, js)
+}
+
+// --- Issue #1856: slice 1 — summarizeReviewGroup verdict extraction ---
+
+// Note: runInNewContext does not accept single-quoted strings that span
+// multiple lines, so the fixture logs are built with String.fromCharCode(10)
+// (= '\n') instead of literal newlines. This is a vm/parser constraint,
+// not a portal.html contract.
+
+// TestSummarizeReviewGroup_Verdict_EmptyLogReturnsEmptyVerdict pins the
+// steady-state default for issue #1856: a review child whose `log` is
+// missing or empty contributes no verdict, so the orphan-path stub and
+// the parent-enrichment path both render the counter line as "N review"
+// with no trailing dash. This is the realistic default in production
+// because the summary endpoint strips logs from each row.
+func TestSummarizeReviewGroup_Verdict_EmptyLogReturnsEmptyVerdict(t *testing.T) {
+	js := `const reviews = [
+  { key: 'r1', runId: 'r1', review: true, status: 'success', startedAt: '2026-07-01T00:00:00Z' },
+];
+const summary = summarizeReviewGroup(reviews);
+if (summary.verdict !== '') throw new Error('expected empty verdict when log is missing, got ' + JSON.stringify(summary.verdict));
+console.log('PASS');
+`
+	runPortalHTMLScript(t, js)
+}
+
+// TestSummarizeReviewGroup_Verdict_EmptyStringLogReturnsEmptyVerdict pins
+// the same steady-state default with an explicit empty string log.
+func TestSummarizeReviewGroup_Verdict_EmptyStringLogReturnsEmptyVerdict(t *testing.T) {
+	js := `const reviews = [
+  { key: 'r1', runId: 'r1', review: true, status: 'success', startedAt: '2026-07-01T00:00:00Z', log: '' },
+];
+const summary = summarizeReviewGroup(reviews);
+if (summary.verdict !== '') throw new Error('expected empty verdict when log is empty string, got ' + JSON.stringify(summary.verdict));
+console.log('PASS');
+`
+	runPortalHTMLScript(t, js)
+}
+
+// TestSummarizeReviewGroup_Verdict_NoDecisionSectionReturnsEmptyVerdict
+// pins the case where the run.log has content but no `## Decision`
+// section.
+func TestSummarizeReviewGroup_Verdict_NoDecisionSectionReturnsEmptyVerdict(t *testing.T) {
+	js := `const NL = String.fromCharCode(10);
+const reviews = [
+  { key: 'r1', runId: 'r1', review: true, status: 'success', startedAt: '2026-07-01T00:00:00Z', log: 'some other log content' + NL + '**APPROVED**' + NL },
+];
+const summary = summarizeReviewGroup(reviews);
+if (summary.verdict !== '') throw new Error('expected empty verdict when no ## Decision section, got ' + JSON.stringify(summary.verdict));
+console.log('PASS');
+`
+	runPortalHTMLScript(t, js)
+}
+
+// TestSummarizeReviewGroup_Verdict_ApprovedMarker pins the canonical
+// "## Decision\n**APPROVED**" shape: verdict becomes "Approved".
+func TestSummarizeReviewGroup_Verdict_ApprovedMarker(t *testing.T) {
+	js := `const NL = String.fromCharCode(10);
+const reviews = [
+  { key: 'r1', runId: 'r1', review: true, status: 'success', startedAt: '2026-07-01T00:00:00Z', log: '## Decision' + NL + '**APPROVED**' + NL },
+];
+const summary = summarizeReviewGroup(reviews);
+if (summary.verdict !== 'Approved') throw new Error('expected verdict=Approved, got ' + JSON.stringify(summary.verdict));
+console.log('PASS');
+`
+	runPortalHTMLScript(t, js)
+}
+
+// TestSummarizeReviewGroup_Verdict_ChangesRequestedMarker pins the
+// "**CHANGES_REQUESTED**" case.
+func TestSummarizeReviewGroup_Verdict_ChangesRequestedMarker(t *testing.T) {
+	js := `const NL = String.fromCharCode(10);
+const reviews = [
+  { key: 'r1', runId: 'r1', review: true, status: 'success', startedAt: '2026-07-01T00:00:00Z', log: '## Decision' + NL + '**CHANGES_REQUESTED**' + NL },
+];
+const summary = summarizeReviewGroup(reviews);
+if (summary.verdict !== 'Changes requested') throw new Error('expected verdict=Changes requested, got ' + JSON.stringify(summary.verdict));
+console.log('PASS');
+`
+	runPortalHTMLScript(t, js)
+}
+
+// TestSummarizeReviewGroup_Verdict_GoRegexParityBare pins Go-side parity
+// for the bare marker line shape (reviewVerdictMarkerLineBare).
+func TestSummarizeReviewGroup_Verdict_GoRegexParityBare(t *testing.T) {
+	js := `const NL = String.fromCharCode(10);
+const reviews = [
+  { key: 'r1', runId: 'r1', review: true, status: 'success', startedAt: '2026-07-01T00:00:00Z', log: '## Decision' + NL + '**APPROVED**' + NL },
+];
+const summary = summarizeReviewGroup(reviews);
+if (summary.verdict !== 'Approved') throw new Error('bare marker must match (Go reviewVerdictMarkerLineBare), got ' + JSON.stringify(summary.verdict));
+console.log('PASS');
+`
+	runPortalHTMLScript(t, js)
+}
+
+// TestSummarizeReviewGroup_Verdict_GoRegexParityWithDebris pins Go-side
+// parity for the with-debris shape (reviewVerdictMarkerLineWithDebris):
+// the shell-piped marker line **APPROVED**" 2>&1 | tail -5 is accepted.
+func TestSummarizeReviewGroup_Verdict_GoRegexParityWithDebris(t *testing.T) {
+	js := `const NL = String.fromCharCode(10);
+const reviews = [
+  { key: 'r1', runId: 'r1', review: true, status: 'success', startedAt: '2026-07-01T00:00:00Z', log: '## Decision' + NL + '**APPROVED**" 2>&1 | tail -5' + NL },
+];
+const summary = summarizeReviewGroup(reviews);
+if (summary.verdict !== 'Approved') throw new Error('with-debris marker must match (Go reviewVerdictMarkerLineWithDebris), got ' + JSON.stringify(summary.verdict));
+console.log('PASS');
+`
+	runPortalHTMLScript(t, js)
+}
+
+// TestSummarizeReviewGroup_Verdict_RejectsMidLineProse pins Go-side parity
+// for the negative case: mid-line prose like **APPROVED** is unrelated
+// prose is rejected (no false positive).
+func TestSummarizeReviewGroup_Verdict_RejectsMidLineProse(t *testing.T) {
+	js := `const NL = String.fromCharCode(10);
+const reviews = [
+  { key: 'r1', runId: 'r1', review: true, status: 'success', startedAt: '2026-07-01T00:00:00Z', log: '## Decision' + NL + '**APPROVED** is unrelated prose' + NL },
+];
+const summary = summarizeReviewGroup(reviews);
+if (summary.verdict !== '') throw new Error('mid-line prose must be rejected (Go regex parity), got ' + JSON.stringify(summary.verdict));
+console.log('PASS');
+`
+	runPortalHTMLScript(t, js)
+}
+
+// TestSummarizeReviewGroup_Verdict_LatestReviewWinsTieBreak pins the
+// tie-break rule when two reviews share startedAt: the existing
+// summarizeReviewGroup sort uses runId asc on the equal-startedAt
+// fallback, so the lower runId comes first and (since the verdict
+// scan walks ordered[0..N] for the first marker) supplies the verdict.
+func TestSummarizeReviewGroup_Verdict_LatestReviewWinsTieBreak(t *testing.T) {
+	js := `const NL = String.fromCharCode(10);
+// same startedAt for both; r1 (alphabetically first) has the marker.
+const reviews = [
+  { key: 'r1', runId: 'r1', review: true, status: 'success', startedAt: '2026-07-01T00:00:00Z', log: '## Decision' + NL + '**APPROVED**' + NL },
+  { key: 'r2', runId: 'r2', review: true, status: 'success', startedAt: '2026-07-01T00:00:00Z', log: '## Decision' + NL + '**CHANGES_REQUESTED**' + NL },
+];
+const summary = summarizeReviewGroup(reviews);
+// summarizeReviewGroup sorts by startedAt desc, then runId asc
+// localeCompare on the equal-startedAt fallback. So r1 is ordered
+// first and the verdict scan picks r1's marker.
+if (summary.verdict !== 'Approved') throw new Error('expected verdict from first-ordered review (r1, APPROVED), got ' + JSON.stringify(summary.verdict));
+console.log('PASS');
+`
+	runPortalHTMLScript(t, js)
+}
+
+// TestSummarizeReviewGroup_Verdict_LogLinePrefixStrips pins parity with
+// the Go-side stripLogLabel: each line may be prefixed with
+// "[<runID>] HH:MM:SS " by the agent output stream.
+func TestSummarizeReviewGroup_Verdict_LogLinePrefixStrips(t *testing.T) {
+	js := `const NL = String.fromCharCode(10);
+const reviews = [
+  { key: 'r1', runId: 'r1', review: true, status: 'success', startedAt: '2026-07-01T00:00:00Z', log: '[r1] 12:00:00 ## Decision' + NL + '[r1] 12:00:30 **APPROVED**' + NL },
+];
+const summary = summarizeReviewGroup(reviews);
+if (summary.verdict !== 'Approved') throw new Error('expected verdict=Approved after stripping [runID] HH:MM:SS prefix, got ' + JSON.stringify(summary.verdict));
+console.log('PASS');
+`
+	runPortalHTMLScript(t, js)
+}
+
+// TestSummarizeReviewGroup_Verdict_OrphanPathPicksUpNewExtraction pins
+// the orphan path: with the new extraction, an orphan review-only group
+// whose log has a Decision marker must also surface the verdict through
+// the existing summary path (no separate code change in the orphan
+// branch). Slice 1's effect propagates to the orphan stub automatically.
+func TestSummarizeReviewGroup_Verdict_OrphanPathPicksUpNewExtraction(t *testing.T) {
+	js := `const NL = String.fromCharCode(10);
+const review = { key: 'r1', runId: 'r1', review: true, status: 'success', issueNumber: 1, prNumber: 5, startedAt: '2026-07-01T00:00:00Z', log: '## Decision' + NL + '**APPROVED**' + NL };
+const stub = visibleRunForIssueGroup(1, [review]);
+if (!stub) throw new Error('expected orphan stub row');
+if (stub.reviewVerdict !== 'Approved') throw new Error('expected orphan stub to surface Approved via new verdict extraction, got ' + JSON.stringify(stub.reviewVerdict));
+console.log('PASS');
+`
+	runPortalHTMLScript(t, js)
 }
 
 func TestPortalDiffBuildEventsContent_RenderedEventCountAttribute(t *testing.T) {

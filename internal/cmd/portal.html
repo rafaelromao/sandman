@@ -2521,15 +2521,18 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
     function summarizeReviewGroup(reviews) {
       // The cross-batch review aggregation was removed in issue #1825,
       // so the server no longer stamps ReviewVerdict onto parent
-      // implementation rows. The orphan-review-only path (no
-      // implementation row, only review children for an issue) cannot
-      // read each child's run.log content in JS without an async fetch
-      // that isn't wired here. Per issue #1729, orphan groups therefore
-      // render with an empty verdict ("N review" with no verdict
-      // suffix); renderRunMeta's `if (run.reviewVerdict)` guard hides
-      // the trailing dash. The orphan stub still synthesizes its own
-      // ReviewCount/ReviewVerdict values for review-only groups so the
-      // chip rendering stays meaningful for that one case.
+      // implementation rows. Issue #1856 reintroduces the verdict scan
+      // in JS, using the same ## Decision marker rule the Go side
+      // reviewVerdictFromRunLog used (reviewVerdictMarkerLineBare +
+      // reviewVerdictMarkerLineWithDebris): APPROVED -> "Approved",
+      // CHANGES_REQUESTED -> "Changes requested". The scan reads each
+      // review's already-loaded `log` field (no Go server round-trip);
+      // when no log content is available (the common case: the summary
+      // endpoint strips logs) verdict stays '' and the renderRunMeta
+      // `if (run.reviewVerdict)` guard hides the trailing dash. The
+      // verdict is taken from the first review in the existing
+      // startedAt-desc/runId-asc sort that carries a marker, so the
+      // "latest review wins" contract is preserved.
       const summary = { count: 0, live: false, verdict: '', status: '', kind: 'completed', source: null };
       if (!Array.isArray(reviews) || !reviews.length) return summary;
       summary.count = reviews.length;
@@ -2556,7 +2559,61 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
           summary.kind = 'completed';
         }
       }
+      // Verdict extraction: walk the ordered reviews, scan each one's
+      // `log` for the ## Decision marker. Mirrors Go's
+      // reviewVerdictFromRunLog (portal_runs_view.go:819) and accepts
+      // the same bare and with-debris shapes.
+      for (const review of ordered) {
+        const verdict = extractReviewVerdictFromLog(review && review.log);
+        if (verdict) {
+          summary.verdict = verdict;
+          break;
+        }
+      }
       return summary;
+    }
+
+    // extractReviewVerdictFromLog scans a single review run's log text
+    // for the ## Decision marker, mirroring the Go-side
+    // reviewVerdictFromRunLog helper (portal_runs_view.go). Returns the
+    // user-facing verdict string ("Approved" / "Changes requested") or
+    // '' when no marker is recoverable. Tolerates missing or empty log
+    // (returns ''), the "[<runID>] HH:MM:SS " line prefix added by the
+    // agent output stream, and the with-debris shell-piped shape
+    // ("**APPROVED**" 2>&1 | tail -5).
+    function extractReviewVerdictFromLog(logText) {
+      if (!logText) return '';
+      const text = String(logText);
+      if (!text) return '';
+      const lines = text.split('\n');
+      let inDecision = false;
+      const bareRe = /^\*\*([A-Z_]+)\*\*$/;
+      const debrisRe = /^\*\*([A-Z_]+)\*\*["'`\.\-|&][^\n]*$/;
+      const headingRe = /^##\s+decision\s*$/i;
+      const labelRe = /^\[[^\]]*\]\s*/;
+      const tsRe = /^\d{2}:\d{2}:\d{2}\s+/;
+      for (let i = 0; i < lines.length; i++) {
+        let line = lines[i];
+        if (labelRe.test(line)) {
+          line = line.replace(labelRe, '');
+        }
+        line = line.replace(tsRe, '');
+        const trimmed = line.trim();
+        if (!inDecision && headingRe.test(trimmed)) {
+          inDecision = true;
+          continue;
+        }
+        if (!inDecision) continue;
+        if (/^##\s+/.test(trimmed)) return '';
+        if (trimmed === '') continue;
+        let m = bareRe.exec(trimmed);
+        if (!m) m = debrisRe.exec(trimmed);
+        if (!m) continue;
+        if (m[1] === 'APPROVED') return 'Approved';
+        if (m[1] === 'CHANGES_REQUESTED') return 'Changes requested';
+        return '';
+      }
+      return '';
     }
 
     function pickCanonicalParent(parents) {
