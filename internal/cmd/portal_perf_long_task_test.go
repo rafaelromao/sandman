@@ -238,11 +238,11 @@ func TestPortalPerf_LongTaskProfile_SubjectSwitch(t *testing.T) {
 	outStr := runPortalDiffLongTaskScenario(t, `
 const recorder = longTaskRecorder({ thresholdMs: 50 });
 const body = makeMockBody();
-const parentRun = { key: 'issue-1', kind: 'active', status: 'reviewing', issueLabel: '#1', runId: 'issue-1', issueNumber: 1, reviewCount: 1, log: 'parent log', socketPath: '/tmp/sock' };
+const parentRun = { key: 'abcd-260618113825-1', kind: 'active', status: 'reviewing', issueLabel: '#1', runId: 'abcd-260618113825-1', issueNumber: 1, reviewCount: 1, log: 'parent log', socketPath: '/tmp/sock' };
 const childReview = { key: 'PR42', kind: 'completed', status: 'success', review: true, issueLabel: 'PR42', runId: 'PR42', issueNumber: 1, prNumber: 42, log: 'review log' };
 sandbox.state.runs = [parentRun, childReview];
-sandbox.state.expandedRunKey = 'issue-1';
-sandbox.state.tabs = { 'issue-1': 'log' };
+sandbox.state.expandedRunKey = 'abcd-260618113825-1';
+sandbox.state.tabs = { 'abcd-260618113825-1': 'log' };
 const stopGroups = new Set();
 let renderCount = 0;
 sandbox.render = function () { renderCount += 1; };
@@ -251,7 +251,7 @@ sandbox.scheduleRender();
 const coalesced = sandbox.flushAnimationFrames();
 if (coalesced !== 1) throw new Error('expected scheduleRender to coalesce initial render, got ' + coalesced);
 if (renderCount !== 1) throw new Error('expected exactly one initial render, got ' + renderCount);
-const opts1 = { helpers, stopGroups, expandedKey: 'issue-1', tabs: { 'issue-1': 'log' }, runs: [parentRun, childReview], visibleRuns: [parentRun] };
+const opts1 = { helpers, stopGroups, expandedKey: 'abcd-260618113825-1', tabs: { 'abcd-260618113825-1': 'log' }, runs: [parentRun, childReview], visibleRuns: [parentRun] };
 SandmanPortalDiff.diffRuns(body, [parentRun], opts1);
 const detailRow = body.children[1];
 const pre1 = detailRow.querySelector('pre[data-scroll-key]');
@@ -264,7 +264,7 @@ sandbox.stopRunStream = function () { stopCalls += 1; };
 const opts2 = { helpers, stopGroups, expandedKey: 'PR42', tabs: { 'PR42': 'log' }, runs: [parentRun, childReview], visibleRuns: [parentRun] };
 const totalStart = performance.now();
 recorder.start();
-perfDispatchSubjectSelect('issue-1', 'PR42', 'log');
+perfDispatchSubjectSelect('abcd-260618113825-1', 'PR42', 'log');
 SandmanPortalDiff.resetCounters();
 SandmanPortalDiff.diffRuns(body, [parentRun], opts2);
 const flushed = sandbox.flushAnimationFrames();
@@ -309,7 +309,7 @@ func TestPortalPerf_LongTaskProfile_Abort(t *testing.T) {
 	outStr := runPortalDiffLongTaskScenario(t, `
 const recorder = longTaskRecorder({ thresholdMs: 50 });
 const body = makeMockBody();
-const runOld = { key: 'issue-1', kind: 'active', status: 'running', issueLabel: '#1', runId: 'issue-1', issueNumber: 1, batchKey: 'batch-1', socketPath: '/tmp/sock', log: 'running log' };
+const runOld = { key: 'abcd-260618113825-1', kind: 'active', status: 'running', issueLabel: '#1', runId: 'abcd-260618113825-1', issueNumber: 1, batchKey: 'batch-1', socketPath: '/tmp/sock', log: 'running log' };
 const runNew = Object.assign({}, runOld, { kind: 'completed', status: 'aborted' });
 sandbox.state.runs = [runOld];
 const stopGroups = new Set();
@@ -363,7 +363,7 @@ func TestPortalPerf_LongTaskProfile_Archive(t *testing.T) {
 	outStr := runPortalDiffLongTaskScenario(t, `
 const recorder = longTaskRecorder({ thresholdMs: 50 });
 const body = makeMockBody();
-const runOld = { key: 'issue-2', kind: 'completed', status: 'success', issueLabel: '#2', runId: 'issue-2', issueNumber: 2, archived: false, sourceExists: true, log: 'archive me' };
+const runOld = { key: 'abcd-260618113825-2', kind: 'completed', status: 'success', issueLabel: '#2', runId: 'abcd-260618113825-2', issueNumber: 2, archived: false, sourceExists: true, log: 'archive me' };
 const runNew = Object.assign({}, runOld, { archived: true });
 const stopGroups = new Set();
 const opts = { helpers, stopGroups, expandedKey: null };
@@ -416,7 +416,7 @@ func TestPortalPerf_LongTaskProfile_ArchivedToggle(t *testing.T) {
 	outStr := runPortalDiffLongTaskScenario(t, `
 const recorder = longTaskRecorder({ thresholdMs: 50 });
 const body = makeMockBody();
-const runOld = { key: 'issue-3', kind: 'completed', status: 'success', issueLabel: '#3', runId: 'issue-3', issueNumber: 3, archived: false, sourceExists: true, log: 'toggle archive' };
+const runOld = { key: 'abcd-260618113825-3', kind: 'completed', status: 'success', issueLabel: '#3', runId: 'abcd-260618113825-3', issueNumber: 3, archived: false, sourceExists: true, log: 'toggle archive' };
 const runNew = Object.assign({}, runOld, { archived: true });
 const stopGroups = new Set();
 const opts = { helpers, stopGroups, expandedKey: null };

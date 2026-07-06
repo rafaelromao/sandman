@@ -21,8 +21,8 @@ func TestPortalRunsView_ResolveBatchEntryForRunID_BothMiss(t *testing.T) {
 		runID string
 	}{
 		{name: "empty index and run id", idx: idx, runID: ""},
-		{name: "nil index", idx: nil, runID: "abcd-260618113825-issue-42"},
-		{name: "empty index with run id", idx: &batchindex.Index{Version: batchindex.IndexVersion}, runID: "abcd-260618113825-issue-42"},
+		{name: "nil index", idx: nil, runID: "abcd-260618113825-42"},
+		{name: "empty index with run id", idx: &batchindex.Index{Version: batchindex.IndexVersion}, runID: "abcd-260618113825-42"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -46,7 +46,7 @@ func TestPortalRunsView_ResolveBatchEntryForRunID_BothMiss(t *testing.T) {
 
 // Exact match returns the index entry with Path populated.
 func TestPortalRunsView_ResolveBatchEntryForRunID_ExactMatch(t *testing.T) {
-	runID := "abcd-260618113825-issue-42"
+	runID := "abcd-260618113825-42"
 	batchDir := filepath.Join(t.TempDir(), runID)
 	idx := &batchindex.Index{
 		Version: batchindex.IndexVersion,

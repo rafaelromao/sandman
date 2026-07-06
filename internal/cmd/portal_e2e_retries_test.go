@@ -431,8 +431,8 @@ func TestPortal_E2E_ParentSuccWithLiveChild(t *testing.T) {
 	addBatchToIndex(t, repoRoot, "PR42-live", batchDir, []int{1})
 
 	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
-		{Type: "run.started", Timestamp: startedAt, RunID: "issue-1", Issue: 1, Payload: map[string]any{"branch": "sandman/1-fix"}},
-		{Type: "run.finished", Timestamp: startedAt.Add(1 * time.Minute), RunID: "issue-1", Issue: 1, Payload: map[string]any{"branch": "sandman/1-fix", "status": "success"}},
+		{Type: "run.started", Timestamp: startedAt, RunID: "abcd-260618113825-1", Issue: 1, Payload: map[string]any{"branch": "sandman/1-fix"}},
+		{Type: "run.finished", Timestamp: startedAt.Add(1 * time.Minute), RunID: "abcd-260618113825-1", Issue: 1, Payload: map[string]any{"branch": "sandman/1-fix", "status": "success"}},
 		{Type: "run.started", Timestamp: startedAt.Add(30 * time.Second), RunID: "PR42-live", Issue: 1, Payload: map[string]any{"review": true, "pr_number": 42, "branch": "sandman/review-PR42"}},
 	})
 

@@ -145,7 +145,7 @@ func TestPortal_RunFromActiveBatchIssueSetsCompletedWhenSocketDead(t *testing.T)
 	ln.Close()
 
 	active := portalActiveRun{
-		Key:          "abcd-260618113825-issue-42",
+		Key:          "abcd-260618113825-42",
 		Dir:          sockDir,
 		SocketPath:   sockPath,
 		IssueNumbers: []int{42},
@@ -154,7 +154,7 @@ func TestPortal_RunFromActiveBatchIssueSetsCompletedWhenSocketDead(t *testing.T)
 
 	started := time.Now().Add(-1 * time.Minute)
 	state := &events.RunState{
-		RunID: "abcd-260618113825-issue-42",
+		RunID: "abcd-260618113825-42",
 		Started: events.Event{
 			Timestamp: started,
 			Payload:   map[string]any{},
@@ -263,7 +263,7 @@ func TestPortal_RunFromActiveBatchIssueKeepsActiveWhenSocketAlive(t *testing.T) 
 	t.Cleanup(func() { _ = ln.Close() })
 
 	active := portalActiveRun{
-		Key:          "abcd-260618113825-issue-42",
+		Key:          "abcd-260618113825-42",
 		Dir:          sockDir,
 		SocketPath:   sockPath,
 		IssueNumbers: []int{42},
@@ -272,7 +272,7 @@ func TestPortal_RunFromActiveBatchIssueKeepsActiveWhenSocketAlive(t *testing.T) 
 
 	started := time.Now().Add(-1 * time.Minute)
 	state := &events.RunState{
-		RunID: "abcd-260618113825-issue-42",
+		RunID: "abcd-260618113825-42",
 		Started: events.Event{
 			Timestamp: started,
 			Payload:   map[string]any{},
@@ -698,7 +698,7 @@ func TestPortal_RunFromState_PopulatesRetriesFromFinishedPayload(t *testing.T) {
 	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
 	finishedAt := startedAt.Add(2 * time.Minute)
 	runState := events.RunState{
-		RunID: "abcd-260618113825-issue-1",
+		RunID: "abcd-260618113825-1",
 		Started: events.Event{
 			Timestamp: startedAt,
 			Payload:   map[string]any{"branch": "sandman/42-fix"},
@@ -1090,7 +1090,7 @@ func TestPortal_RunFromActiveBatchIssue_PopulatesIssueTitle(t *testing.T) {
 	t.Cleanup(func() { _ = ln.Close() })
 
 	active := portalActiveRun{
-		Key:          "abcd-260618113825-issue-42",
+		Key:          "abcd-260618113825-42",
 		Dir:          sockDir,
 		SocketPath:   sockPath,
 		IssueNumbers: []int{42},
@@ -1098,7 +1098,7 @@ func TestPortal_RunFromActiveBatchIssue_PopulatesIssueTitle(t *testing.T) {
 	}
 
 	state := &events.RunState{
-		RunID: "abcd-260618113825-issue-42",
+		RunID: "abcd-260618113825-42",
 		Started: events.Event{
 			Timestamp: time.Now().Add(-1 * time.Minute),
 			Payload: map[string]any{
@@ -1687,7 +1687,7 @@ func TestPortal_RunFromActiveBatchIssue_SingleIssueOmitsBatchIssues(t *testing.T
 
 	startedAt := time.Now().Add(-1 * time.Minute)
 	active := portalActiveRun{
-		Key:          "abcd-260618113825-issue-42",
+		Key:          "abcd-260618113825-42",
 		Dir:          sockDir,
 		SocketPath:   sockPath,
 		IssueNumbers: []int{42},
@@ -2810,8 +2810,8 @@ func TestPortalRuns_ReviewAndImplRowsSeparateForSameIssue(t *testing.T) {
 		// production shape where the first attempt was aborted
 		// and the second attempt is mid-flight, leaving an
 		// aborted row in the event log.
-		{Type: "run.started", Timestamp: startedAt, RunID: "abcd-260618113825-issue-1066-impl", Issue: 1066, Payload: map[string]any{"branch": "sandman/1066-impl"}},
-		{Type: "run.aborted", Timestamp: abortedAt, RunID: "abcd-260618113825-issue-1066-impl", Issue: 1066, Payload: map[string]any{"branch": "sandman/1066-impl", "status": "aborted"}},
+		{Type: "run.started", Timestamp: startedAt, RunID: "abcd-260618113825-1066-impl", Issue: 1066, Payload: map[string]any{"branch": "sandman/1066-impl"}},
+		{Type: "run.aborted", Timestamp: abortedAt, RunID: "abcd-260618113825-1066-impl", Issue: 1066, Payload: map[string]any{"branch": "sandman/1066-impl", "status": "aborted"}},
 		// Review run for PR 1075 of issue 1066 — finished. The
 		// orchestrator stamps `issue: 1066` on the finished event
 		// (and `issue_number: 1066` in the payload), so both the
@@ -2830,7 +2830,7 @@ func TestPortalRuns_ReviewAndImplRowsSeparateForSameIssue(t *testing.T) {
 	var implRun, reviewRun *portalRun
 	for i := range runs {
 		switch runs[i].RunID {
-		case "abcd-260618113825-issue-1066-impl":
+		case "abcd-260618113825-1066-impl":
 			implRun = &runs[i]
 		case "PR1075":
 			reviewRun = &runs[i]
@@ -2871,12 +2871,12 @@ func TestPortal_RunFromState_ActiveEmptyKeyUsesHelperFallback(t *testing.T) {
 		Key:         "",
 		BatchID:     "",
 		Dir:         "",
-		RunID:       "ghost-active-issue-42",
+		RunID:       "ghost-active-42",
 		IssueNumber: 42,
 		StartedAt:   startedAt,
 	}
 	state := events.RunState{
-		RunID: "ghost-active-issue-42",
+		RunID: "ghost-active-42",
 		Started: events.Event{
 			Timestamp: startedAt,
 			Payload:   map[string]any{"issue": float64(42)},
@@ -2888,8 +2888,8 @@ func TestPortal_RunFromState_ActiveEmptyKeyUsesHelperFallback(t *testing.T) {
 	if run.BatchKey == "" {
 		t.Fatalf("expected non-empty BatchKey from helper fallback, got empty")
 	}
-	if run.BatchKey != "active-ghost-active-issue-42" {
-		t.Fatalf("expected BatchKey %q (sentinel), got %q", "active-ghost-active-issue-42", run.BatchKey)
+	if run.BatchKey != "active-ghost-active-42" {
+		t.Fatalf("expected BatchKey %q (sentinel), got %q", "active-ghost-active-42", run.BatchKey)
 	}
 }
 
@@ -2918,7 +2918,7 @@ func TestPortal_RunFromActiveBatchIssue_EmptyKeyStillHasBatchIdentity(t *testing
 		BatchID:      "",
 		Dir:          filepath.Join(repoRoot, "batches", "current-batch-42"),
 		SocketPath:   sockPath,
-		RunID:        "current-batch-42-issue-42",
+		RunID:        "current-batch-42-42",
 		IssueNumbers: []int{42},
 		StartedAt:    startedAt,
 	}
@@ -3002,8 +3002,8 @@ func TestPortal_DedupRuns_DifferentBatchesRemainSeparate(t *testing.T) {
 	v := &portalRunsView{}
 	base := time.Now().Add(-5 * time.Minute)
 	runs := []portalRun{
-		{Key: "historical-issue-42", Kind: "completed", Status: "aborted", IssueNumber: 42, StartedAt: base.Add(-time.Hour), BatchKey: ""},
-		{Key: "current-issue-42", Kind: "active", Status: "running", IssueNumber: 42, StartedAt: base, BatchKey: "current-derived"},
+		{Key: "historical-42", Kind: "completed", Status: "aborted", IssueNumber: 42, StartedAt: base.Add(-time.Hour), BatchKey: ""},
+		{Key: "current-42", Kind: "active", Status: "running", IssueNumber: 42, StartedAt: base, BatchKey: "current-derived"},
 	}
 
 	result := v.dedupRuns(runs)
@@ -3015,10 +3015,10 @@ func TestPortal_DedupRuns_DifferentBatchesRemainSeparate(t *testing.T) {
 	for _, r := range result {
 		gotKeys[r.Key] = r.BatchKey
 	}
-	if gotKeys["historical-issue-42"] != "" {
+	if gotKeys["historical-42"] != "" {
 		t.Fatalf("historical row lost BatchKey: %#v", result)
 	}
-	if gotKeys["current-issue-42"] != "current-derived" {
+	if gotKeys["current-42"] != "current-derived" {
 		t.Fatalf("current-batch row lost BatchKey: %#v", result)
 	}
 }
@@ -3030,8 +3030,8 @@ func TestPortal_DedupRuns_SameBatchRowsStillCollapse(t *testing.T) {
 	v := &portalRunsView{}
 	base := time.Now().Add(-5 * time.Minute)
 	runs := []portalRun{
-		{Key: "active-1-issue-42", Kind: "active", Status: "running", IssueNumber: 42, StartedAt: base, BatchKey: "active-1"},
-		{Key: "active-1-issue-42-dup", Kind: "active", Status: "queued", IssueNumber: 42, StartedAt: base.Add(time.Second), BatchKey: "active-1"},
+		{Key: "active-1-42", Kind: "active", Status: "running", IssueNumber: 42, StartedAt: base, BatchKey: "active-1"},
+		{Key: "active-1-42-dup", Kind: "active", Status: "queued", IssueNumber: 42, StartedAt: base.Add(time.Second), BatchKey: "active-1"},
 	}
 
 	result := v.dedupRuns(runs)
@@ -3055,28 +3055,28 @@ func TestPortal_BatchKeyForActive_FallbackChain(t *testing.T) {
 	}{
 		{
 			name:   "Key wins when populated",
-			active: portalActiveRun{Key: "active-1", BatchID: "manifest-1", Dir: "/tmp/active-1", RunID: "active-1-issue-42"},
+			active: portalActiveRun{Key: "active-1", BatchID: "manifest-1", Dir: "/tmp/active-1", RunID: "active-1-42"},
 			want:   "active-1",
 		},
 		{
 			name:   "BatchID used when Key is empty",
-			active: portalActiveRun{Key: "", BatchID: "manifest-2", Dir: "/tmp/active-2", RunID: "active-2-issue-42"},
+			active: portalActiveRun{Key: "", BatchID: "manifest-2", Dir: "/tmp/active-2", RunID: "active-2-42"},
 			want:   "manifest-2",
 		},
 		{
 			name:   "Dir basename used when Key and BatchID are empty",
-			active: portalActiveRun{Key: "", BatchID: "", Dir: "/tmp/active-3", RunID: "active-3-issue-42"},
+			active: portalActiveRun{Key: "", BatchID: "", Dir: "/tmp/active-3", RunID: "active-3-42"},
 			want:   "active-3",
 		},
 		{
 			name:   "Dot dir falls back to synthetic sentinel",
-			active: portalActiveRun{Key: "", BatchID: "", Dir: ".", RunID: "active-4-issue-42"},
-			want:   "active-active-4-issue-42",
+			active: portalActiveRun{Key: "", BatchID: "", Dir: ".", RunID: "active-4-42"},
+			want:   "active-active-4-42",
 		},
 		{
 			name:   "All empty inputs still produce a non-empty sentinel",
-			active: portalActiveRun{Key: "", BatchID: "", Dir: "", RunID: "active-5-issue-42"},
-			want:   "active-active-5-issue-42",
+			active: portalActiveRun{Key: "", BatchID: "", Dir: "", RunID: "active-5-42"},
+			want:   "active-active-5-42",
 		},
 	}
 	for _, tc := range cases {
@@ -3133,7 +3133,7 @@ func TestPortal_ResolveRunLog_SavedWinsForTerminalIssueRow(t *testing.T) {
 	startedAt := time.Now().Add(-5 * time.Minute)
 	finishedAt := startedAt.Add(2 * time.Minute)
 	runState := events.RunState{
-		RunID: "abcd-260618113825-issue-42",
+		RunID: "abcd-260618113825-42",
 		Started: events.Event{
 			Timestamp: startedAt,
 			Payload:   map[string]any{"branch": "sandman/42-fix"},
@@ -3147,7 +3147,7 @@ func TestPortal_ResolveRunLog_SavedWinsForTerminalIssueRow(t *testing.T) {
 	active := &portalActiveRun{
 		Key:        "abcd-260618113825",
 		BatchID:    "abcd-260618113825",
-		RunID:      "abcd-260618113825-issue-42",
+		RunID:      "abcd-260618113825-42",
 		LiveOutput: "[different-run] 12:34:56 unrelated live line\n",
 	}
 	savedLog := "12:34:00 saved completion line\n12:34:30 saved final line\n"
@@ -3445,7 +3445,7 @@ func TestPortal_ResolveRunLog_NoActiveReturnsSaved(t *testing.T) {
 	startedAt := time.Now().Add(-5 * time.Minute)
 	finishedAt := startedAt.Add(2 * time.Minute)
 	runState := events.RunState{
-		RunID: "abcd-260618113825-issue-42",
+		RunID: "abcd-260618113825-42",
 		Started: events.Event{
 			Timestamp: startedAt,
 			Payload:   map[string]any{},
@@ -3476,7 +3476,7 @@ func TestPortal_ActiveKeyForActive_FallbackChain(t *testing.T) {
 	}{
 		{
 			name:   "Key wins when populated",
-			active: portalActiveRun{Key: "active-1", BatchID: "manifest-1", Dir: "/tmp/active-1", RunID: "active-1-issue-42"},
+			active: portalActiveRun{Key: "active-1", BatchID: "manifest-1", Dir: "/tmp/active-1", RunID: "active-1-42"},
 			want:   "active-1",
 		},
 		{
@@ -3486,13 +3486,13 @@ func TestPortal_ActiveKeyForActive_FallbackChain(t *testing.T) {
 		},
 		{
 			name:   "Dir basename used when Key and BatchID are empty",
-			active: portalActiveRun{Key: "", BatchID: "", Dir: "/tmp/active-3", RunID: "active-3-issue-42"},
+			active: portalActiveRun{Key: "", BatchID: "", Dir: "/tmp/active-3", RunID: "active-3-42"},
 			want:   "active-3",
 		},
 		{
 			name:   "Dot dir falls back to synthetic sentinel",
-			active: portalActiveRun{Key: "", BatchID: "", Dir: ".", RunID: "active-4-issue-42"},
-			want:   "active-active-4-issue-42",
+			active: portalActiveRun{Key: "", BatchID: "", Dir: ".", RunID: "active-4-42"},
+			want:   "active-active-4-42",
 		},
 		{
 			name:   "Trailing-slash dir falls back to synthetic sentinel (issue #1657 acceptance)",
@@ -3501,8 +3501,8 @@ func TestPortal_ActiveKeyForActive_FallbackChain(t *testing.T) {
 		},
 		{
 			name:   "All empty inputs still produce a non-empty sentinel",
-			active: portalActiveRun{Key: "", BatchID: "", Dir: "", RunID: "active-5-issue-42"},
-			want:   "active-active-5-issue-42",
+			active: portalActiveRun{Key: "", BatchID: "", Dir: "", RunID: "active-5-42"},
+			want:   "active-active-5-42",
 		},
 	}
 	for _, tc := range cases {

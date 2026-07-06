@@ -22,7 +22,7 @@ import (
 // during a quiet agent.
 func TestPortalStream_PreservesReconnectOnTransientError(t *testing.T) {
 	batchID := "abcd-260618113825"
-	runID := batchID + "-issue-42"
+	runID := batchID + "-42"
 	initialRun := map[string]any{
 		"key":         runID,
 		"runId":       runID,

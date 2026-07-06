@@ -39,9 +39,9 @@ const (
 	testRunTS      = "260618113825"
 	testRunShortID = "abcd"
 
-	testRunIDIssue42First  = testRunShortID + "-" + testRunTS + "-issue-42-1"
-	testRunIDIssue42Second = testRunShortID + "-" + testRunTS + "-issue-42-2"
-	testRunIDIssue42Prev   = testRunShortID + "-" + testRunTS + "-issue-42-prev"
+	testRunID42First  = testRunShortID + "-" + testRunTS + "-42-1"
+	testRunID42Second = testRunShortID + "-" + testRunTS + "-42-2"
+	testRunID42Prev   = testRunShortID + "-" + testRunTS + "-42-prev"
 )
 
 func (s *spyBatchRunner) RunBatch(ctx context.Context, req batch.Request) (*batch.Result, error) {
@@ -1262,7 +1262,7 @@ func TestRun_ContinueFlagAcceptedAndMutuallyExclusiveWithOverride(t *testing.T) 
 					t.Fatalf("write task: %v", err)
 				}
 				deps.ConfigStore = &fakeStore{config: &config.Config{Agent: "opencode", WorktreeDir: dir, ReviewCommand: "/oc review", AgentProviders: map[string]config.Agent{"opencode": {Preset: "opencode", Command: "true"}}}}
-				deps.EventLog = &fakeEventLog{events: []events.Event{{Type: "run.started", RunID: testRunIDIssue42First, Issue: 42, Payload: map[string]any{"branch": branch, "base_branch": "main", "agent": "opencode"}}}}
+				deps.EventLog = &fakeEventLog{events: []events.Event{{Type: "run.started", RunID: testRunID42First, Issue: 42, Payload: map[string]any{"branch": branch, "base_branch": "main", "agent": "opencode"}}}}
 				deps.GitHubClient = &fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, State: "open"}}, prs: map[string]*github.PR{}}
 			}
 
@@ -1323,8 +1323,8 @@ func TestRun_ContinueFlag_ReplaysStoredContinuationState(t *testing.T) {
 		},
 	}}
 	deps.EventLog = &fakeEventLog{events: []events.Event{
-		{Type: "run.started", RunID: testRunIDIssue42First, Issue: 42, Payload: map[string]any{"branch": branch, "base_branch": "main", "agent": "opencode", "model": "gpt-4.1", "review_command": "/custom review", "parallel": 1, "start_delay": 3, "retries": 2, "sandbox": "worktree", "container_capacity": 1, "container_capacity_set": true, "max_containers": 2, "max_containers_set": true}},
-		{Type: "run.continued", RunID: testRunIDIssue42Second, Issue: 42, Payload: map[string]any{"branch": branch, "base_branch": "main", "agent": "opencode", "model": "gpt-4.2", "review_command": "/custom review 2", "parallel": 7, "start_delay": 11, "retries": 4, "sandbox": "docker", "container_capacity": 3, "container_capacity_set": true, "max_containers": 5, "max_containers_set": true}},
+		{Type: "run.started", RunID: testRunID42First, Issue: 42, Payload: map[string]any{"branch": branch, "base_branch": "main", "agent": "opencode", "model": "gpt-4.1", "review_command": "/custom review", "parallel": 1, "start_delay": 3, "retries": 2, "sandbox": "worktree", "container_capacity": 1, "container_capacity_set": true, "max_containers": 2, "max_containers_set": true}},
+		{Type: "run.continued", RunID: testRunID42Second, Issue: 42, Payload: map[string]any{"branch": branch, "base_branch": "main", "agent": "opencode", "model": "gpt-4.2", "review_command": "/custom review 2", "parallel": 7, "start_delay": 11, "retries": 4, "sandbox": "docker", "container_capacity": 3, "container_capacity_set": true, "max_containers": 5, "max_containers_set": true}},
 	}}
 	deps.GitHubClient = &fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, State: "open"}}, prs: map[string]*github.PR{}}
 
@@ -1345,8 +1345,8 @@ func TestRun_ContinueFlag_ReplaysStoredContinuationState(t *testing.T) {
 	if got := spy.req.IssueMode(42); got != batch.ModeContinue {
 		t.Fatalf("expected ModeContinue request, got %v", got)
 	}
-	if spy.req.PreviousRunIDs[42] != testRunIDIssue42Second {
-		t.Fatalf("expected PreviousRunIDs[42]=%s, got %q", testRunIDIssue42Second, spy.req.PreviousRunIDs[42])
+	if spy.req.PreviousRunIDs[42] != testRunID42Second {
+		t.Fatalf("expected PreviousRunIDs[42]=%s, got %q", testRunID42Second, spy.req.PreviousRunIDs[42])
 	}
 	if spy.req.Branches[42] != branch {
 		t.Fatalf("expected branch %q, got %q", branch, spy.req.Branches[42])
@@ -1411,7 +1411,7 @@ func TestRun_ContinueFlag_UsesOverridesAndEmptyTemplateFallback(t *testing.T) {
 		},
 	}}
 	deps.GitHubClient = &fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, State: "open"}}, prs: map[string]*github.PR{}}
-	deps.EventLog = &fakeEventLog{events: []events.Event{{Type: "run.started", RunID: testRunIDIssue42First, Issue: 42, Payload: map[string]any{"branch": branch, "base_branch": "main", "agent": "opencode", "model": "gpt-4.1", "review_command": "/custom review", "parallel": 1, "start_delay": 3, "retries": 2, "sandbox": "docker", "container_capacity": 1, "container_capacity_set": true, "max_containers": 2, "max_containers_set": true}}}}
+	deps.EventLog = &fakeEventLog{events: []events.Event{{Type: "run.started", RunID: testRunID42First, Issue: 42, Payload: map[string]any{"branch": branch, "base_branch": "main", "agent": "opencode", "model": "gpt-4.1", "review_command": "/custom review", "parallel": 1, "start_delay": 3, "retries": 2, "sandbox": "docker", "container_capacity": 1, "container_capacity_set": true, "max_containers": 2, "max_containers_set": true}}}}
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)
@@ -1482,7 +1482,7 @@ func TestRun_ContinueFlag_MixedBatchResolvesPerIssueModes(t *testing.T) {
 			"opencode": {Preset: "opencode", Command: "true"},
 		},
 	}}
-	deps.EventLog = &fakeEventLog{events: []events.Event{{Type: "run.started", RunID: testRunIDIssue42Prev, Issue: 42, Payload: map[string]any{"agent": "opencode", "branch": branch, "base_branch": "main"}}}}
+	deps.EventLog = &fakeEventLog{events: []events.Event{{Type: "run.started", RunID: testRunID42Prev, Issue: 42, Payload: map[string]any{"agent": "opencode", "branch": branch, "base_branch": "main"}}}}
 	deps.GitHubClient = &fakeGitHubClient{issues: map[int]*github.Issue{
 		42: {Number: 42, Title: "Fix bug"},
 		43: {Number: 43, Title: "Fresh bug"},
@@ -1504,7 +1504,7 @@ func TestRun_ContinueFlag_MixedBatchResolvesPerIssueModes(t *testing.T) {
 	if got := spy.req.IssueMode(43); got != batch.ModeOverride {
 		t.Fatalf("expected issue 43 override mode (promoted from --continue), got %v", got)
 	}
-	if spy.req.PreviousRunIDs[42] != testRunIDIssue42Prev {
+	if spy.req.PreviousRunIDs[42] != testRunID42Prev {
 		t.Fatalf("expected issue 42 previous run replay, got %q", spy.req.PreviousRunIDs[42])
 	}
 	if _, ok := spy.req.PreviousRunIDs[43]; ok {
@@ -1587,7 +1587,7 @@ func TestRun_ContinueFlag_WarnsWhenIssueTaskMissing(t *testing.T) {
 			"opencode": {Preset: "opencode", Command: "true"},
 		},
 	}}
-	deps.EventLog = &fakeEventLog{events: []events.Event{{Type: "run.started", RunID: testRunIDIssue42Prev, Issue: 42, Payload: map[string]any{"agent": "opencode", "branch": branch, "base_branch": "main"}}}}
+	deps.EventLog = &fakeEventLog{events: []events.Event{{Type: "run.started", RunID: testRunID42Prev, Issue: 42, Payload: map[string]any{"agent": "opencode", "branch": branch, "base_branch": "main"}}}}
 	deps.GitHubClient = &fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, State: "open"}}}
 
 	var buf bytes.Buffer
@@ -4593,7 +4593,7 @@ func TestRun_ContinueRegistersPerRowRunIDInBatchesIndex(t *testing.T) {
 		t.Fatalf("write task: %v", err)
 	}
 	deps.ConfigStore = &fakeStore{config: &config.Config{Agent: "opencode", WorktreeDir: ".", ReviewCommand: "/oc review", AgentProviders: map[string]config.Agent{"opencode": {Preset: "opencode", Command: "true"}}}}
-	deps.EventLog = &fakeEventLog{events: []events.Event{{Type: "run.started", RunID: testRunIDIssue42First, Issue: 42, Payload: map[string]any{"branch": branch, "base_branch": "main", "agent": "opencode"}}}}
+	deps.EventLog = &fakeEventLog{events: []events.Event{{Type: "run.started", RunID: testRunID42First, Issue: 42, Payload: map[string]any{"branch": branch, "base_branch": "main", "agent": "opencode"}}}}
 	deps.GitHubClient = &fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, State: "open"}}, prs: map[string]*github.PR{}}
 
 	var buf bytes.Buffer
