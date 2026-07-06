@@ -11,7 +11,7 @@ import (
 
 var (
 	internalPackagePathRe  = regexp.MustCompile(`internal/(review|cmd|batch|daemon|skill|prompt|runid)/`)
-	internalGoIdentifierRe = regexp.MustCompile(`processPR|MarkSeen|ParseTrigger|promotePendingComment|launchReview|RunSession|PrepareReviewRun|runid\.|batch\.Request`)
+	internalGoIdentifierRe = regexp.MustCompile(`processPR|MarkSeen|ParseTrigger|launchReview|RunSession|PrepareReviewRun|runid\.|batch\.Request`)
 	sandmanPathRe          = regexp.MustCompile(`\.sandman/`)
 	issueTrackerJargonRe   = regexp.MustCompile(`issue #\d+|PR #\d+|GitHub issue|triage|kanban|ready-for-agent`)
 	ghCliInProseRe         = regexp.MustCompile(`gh (issue|pr|api|repo) (create|view|list|edit|comment|close)`)

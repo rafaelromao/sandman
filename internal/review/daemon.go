@@ -27,15 +27,6 @@ import (
 // reference the same constant.
 const PollingInterval = 30 * time.Second
 
-// pendingMaxCycles is the upper bound on consecutive `tick` cycles a
-// pending review may stay in `pending` status before the daemon
-// promotes it to `failure`. Three cycles is ~90s at the default
-// 30s PollingInterval — large enough to tolerate GitHub API eventual
-// consistency and the agent's startup latency, small enough that the
-// daemon does not silently retry indefinitely when the agent never
-// posts a review comment.
-const pendingMaxCycles = 3
-
 // Clock returns the current time. Inject a custom clock in tests to avoid
 // time-based dependencies.
 type Clock func() time.Time
@@ -69,28 +60,6 @@ type Renderer interface {
 	RenderReview(cfg prompt.RenderConfig, data prompt.PRData) (string, error)
 }
 
-// pendingReviewEntry is the in-memory record the daemon keeps for a
-// review that has been launched but whose agent-posted review comment
-// has not yet been observed. The lazy-verify contract (issue #1482
-// slice D) holds these in memory so a subsequent tick can resolve
-// them without keeping `launchReview` on the critical path.
-//
-// runLogPath is the path to the per-run run.log. Post-#1848 the
-// daemon no longer greps it via `extractBodiesFromLog` (that helper
-// is deleted along with `SelfPostStore`); the field is retained for
-// audit / debugging. Default value when missing:
-// filepath.Dir(reviewState) + "/run.log". The default is applied in
-// processPR's launch goroutine when the entry is registered, and in
-// loadPendingReviews for entries rehydrated from disk.
-type pendingReviewEntry struct {
-	commentID   string
-	since       time.Time
-	reviewState string // path to <runDir>/review-state.json for the launched run
-	runLogPath  string // path to <runDir>/run.log (retained post-#1848)
-	storeRef    *ReviewStateStore
-	cycles      int
-}
-
 // pendingPostEntry is the in-memory record the daemon keeps for a
 // review whose agent-run has produced <runDir>/decision.md but
 // whose daemon-side post step did not complete (e.g. the daemon
@@ -109,8 +78,7 @@ type pendingReviewEntry struct {
 // time the entry is treated as stale and the daemon falls through
 // to the existing launch path.
 //
-// since mirrors the same field on pendingReviewEntry: it carries
-// the original review-state.json Timestamp so future
+// since carries the original review-state.json Timestamp so future
 // observability surfaces (operator queries, logs) can answer "how
 // long has this rehydrate been waiting?" without re-reading the
 // on-disk JSON.
@@ -151,8 +119,6 @@ type Daemon struct {
 	slotTable            map[int]struct{}
 	slotPool             chan struct{}
 	slotMu               sync.Mutex
-	pendingMu            sync.Mutex
-	pendingReviews       map[int][]pendingReviewEntry
 	// pendingPost is the rehydrate-on-startup map (issue #1847 S4).
 	// Outer key is PR number; inner key is the trigger comment ID.
 	// Each entry remembers the absolute path of the per-row folder
@@ -165,9 +131,9 @@ type Daemon struct {
 	//
 	// The map is locked by a dedicated mutex (pendingPostMu) to
 	// match the existing one-mutex-per-data-structure convention
-	// (pendingMu guards pendingReviews; seenCacheMu guards
-	// seenCache). Sharing pendingMu between the two maps would
-	// create ambiguous ownership for future readers.
+	// (seenCacheMu guards seenCache). Sharing pendingPostMu between
+	// this map and any future map would create ambiguous ownership
+	// for future readers.
 	pendingPostMu sync.Mutex
 	pendingPost   map[int]map[string]pendingPostEntry
 	inFlight      sync.WaitGroup
@@ -176,8 +142,8 @@ type Daemon struct {
 // New returns a Daemon configured with the project defaults for the
 // polling interval and clock. The seen cache is hydrated eagerly from
 // the on-disk batches index (issue #1480 slice A), and the in-memory
-// pendingReviews map is rehydrated from the same index so an
-// in-flight trigger survives a daemon restart (issue #1635). A
+// pendingPost map (issue #1847 S4) is rehydrated from the same index
+// so an in-flight rehydrate post survives a daemon restart. A
 // missing or unreadable index yields empty caches; the rename-loser
 // trade-off from ADR-0034 §3 means a stale skip is acceptable.
 //
@@ -207,23 +173,22 @@ func New(baseDir string, gh GitHubClient, prompts Renderer, runner BatchRunner, 
 		}
 	}
 	d := &Daemon{
-		BaseDir:        baseDir,
-		GitHub:         gh,
-		Prompts:        prompts,
-		Runner:         runner,
-		Config:         cfg,
-		Broadcaster:    broadcaster,
-		Clock:          time.Now,
-		Trigger:        nil,
-		PollInterval:   PollingInterval,
-		Parallel:       parallel,
-		ParallelSet:    parallelSet,
-		CommentPoster:  poster,
-		busy:           make(chan struct{}, 1),
-		seenCache:      map[int]map[string]bool{},
-		slotTable:      map[int]struct{}{},
-		slotPool:       make(chan struct{}, parallelReviews),
-		pendingReviews: map[int][]pendingReviewEntry{},
+		BaseDir:       baseDir,
+		GitHub:        gh,
+		Prompts:       prompts,
+		Runner:        runner,
+		Config:        cfg,
+		Broadcaster:   broadcaster,
+		Clock:         time.Now,
+		Trigger:       nil,
+		PollInterval:  PollingInterval,
+		Parallel:      parallel,
+		ParallelSet:   parallelSet,
+		CommentPoster: poster,
+		busy:          make(chan struct{}, 1),
+		seenCache:     map[int]map[string]bool{},
+		slotTable:     map[int]struct{}{},
+		slotPool:      make(chan struct{}, parallelReviews),
 		// S4 (issue #1847): initialise the rehydrate-on-startup
 		// map; loadPendingPosts (Slice B) populates it from the
 		// on-disk review-state.json files at construction.
@@ -232,17 +197,13 @@ func New(baseDir string, gh GitHubClient, prompts Renderer, runner BatchRunner, 
 	if err := d.loadSeenCache(); err != nil {
 		d.logf("load seen cache: %v", err)
 	}
-	if err := d.loadPendingReviews(); err != nil {
-		d.logf("load pending reviews: %v", err)
-	}
 	// Issue #1847 (S4): rehydrate-on-startup. Walk every
 	// review-kind batch and register one pendingPost entry per
 	// `pending` review-state.json whose row folder has
 	// decision.md on disk. The next tick's processPR consults
 	// this map before the launch path so the daemon posts the
 	// existing body instead of re-running the agent. See
-	// loadPendingPosts for the full filter and the disjoint-
-	// from-pendingReviews invariant.
+	// loadPendingPosts for the full filter.
 	if err := d.loadPendingPosts(); err != nil {
 		d.logf("load pending posts: %v", err)
 	}
@@ -313,8 +274,9 @@ func (d *Daemon) slotHeldCount() int {
 // WaitForIdle blocks until all in-flight review goroutines have completed
 // (slotHeldCount returns 0) or ctx is cancelled. It is intended for tests
 // that need to wait for background reviews to settle after tick returns.
-// It does NOT gate on pendingReviews — a successful launch registers a
-// pending entry that is only drained by a promotion tick (separate behavior).
+// It does NOT gate on the S4 rehydrate map — successful posts drop their
+// entries inline in processPR; failed posts retain entries and are retried
+// on the next tick (separate behaviour from in-flight goroutines).
 func (d *Daemon) WaitForIdle(ctx context.Context) error {
 	ticker := time.NewTicker(20 * time.Millisecond)
 	defer ticker.Stop()
@@ -490,97 +452,6 @@ func (d *Daemon) InvalidateSeenCache() error {
 	return d.loadSeenCache()
 }
 
-// loadPendingReviews rehydrates the in-memory pendingReviews map from
-// the on-disk review-state.json files referenced by .sandman/batches.json.
-//
-// The lazy-verify contract (issue #1482 slice D) records each launched
-// trigger as status `pending` in the per-run review-state.json and keeps
-// the matching entry in the in-memory pendingReviews map. The seen-cache
-// hydration at construction deliberately excludes `pending` entries
-// (see shouldSkipDedupStatus), so without this rehydration a daemon
-// restart between launchReview and the first post-launch
-// promotePendingReviews tick would orphan the in-flight trigger and
-// the next instance would re-launch the review. Issue #1635.
-//
-// The rehydration is read-only: it walks the same index the seen cache
-// uses and registers a pendingReviewEntry for every SeenComment whose
-// status is "pending". The since timestamp is the entry's recorded
-// Timestamp (so a fresh promote tick can detect reviewer replies
-// posted at or after the original launch window). Stale entries
-// (rows the bounded-retry escape would have promoted already) are
-// still bounded by the existing pendingMaxCycles cap on the new
-// instance — at most 3 promote ticks escape them to "failure" + the
-// seen cache, matching the in-memory behavior.
-func (d *Daemon) loadPendingReviews() error {
-	d.pendingMu.Lock()
-	defer d.pendingMu.Unlock()
-	d.pendingReviews = map[int][]pendingReviewEntry{}
-
-	idx, err := seenCacheLoader(d.BaseDir)
-	if err != nil {
-		return fmt.Errorf("load batches index: %w", err)
-	}
-	if idx == nil {
-		return nil
-	}
-	for _, entry := range idx.Entries {
-		if entry.Kind != batchindex.KindReview {
-			continue
-		}
-		rowID, err := readReviewRowID(filepath.Join(entry.Path, "runs"))
-		if err != nil {
-			if os.IsNotExist(err) {
-				continue
-			}
-			d.logf("read review row id for %s: %v", entry.Path, err)
-			continue
-		}
-		runDir := filepath.Join(entry.Path, "runs", rowID)
-		state, err := seenStateReader(runDir)
-		if err != nil {
-			if os.IsNotExist(err) {
-				continue
-			}
-			d.logf("read review state %s: %v", runDir, err)
-			continue
-		}
-		reviewStatePath := filepath.Join(runDir, "review-state.json")
-		for _, sc := range state.SeenComments {
-			if sc.Status != "pending" {
-				continue
-			}
-			// Drop zero-timestamp entries: a missing Timestamp
-			// means we cannot bound the promote window safely, and
-			// falling back to wall-clock at rehydration time would
-			// hide reviewer replies that landed before the restart.
-			// The bounded-retry escape on the new instance will
-			// still clear the row after pendingMaxCycles ticks.
-			if sc.Timestamp.IsZero() {
-				d.logf("skip rehydrate of pending %s (zero timestamp on disk)", sc.CommentID)
-				continue
-			}
-			d.pendingReviews[entry.PR] = append(d.pendingReviews[entry.PR], pendingReviewEntry{
-				commentID:   sc.CommentID,
-				since:       sc.Timestamp,
-				reviewState: reviewStatePath,
-				// Issue #1759: pending entries persisted before the
-				// runLogPath field existed are rehydrated with the
-				// default value, so the bounded-retry grace path can
-				// grep the log on the new daemon instance.
-				runLogPath: filepath.Join(filepath.Dir(reviewStatePath), "run.log"),
-			})
-		}
-	}
-	return nil
-}
-
-// InvalidatePendingReviews forces a rebuild of the in-memory
-// pendingReviews map by re-running the on-disk scan. Symmetric with
-// InvalidateSeenCache.
-func (d *Daemon) InvalidatePendingReviews() error {
-	return d.loadPendingReviews()
-}
-
 // loadPendingPosts rehydrates the in-memory pendingPost map from the
 // on-disk review-state.json files referenced by .sandman/batches.json.
 //
@@ -597,9 +468,9 @@ func (d *Daemon) InvalidatePendingReviews() error {
 //
 // The walker is read-only and reuses the seenCacheLoader +
 // readReviewRowID + seenStateReader seams so it observes the same
-// on-disk shape the existing loadSeenCache and loadPendingReviews
-// walkers already read from. Per-row RunID resolution (ADR-0030 §Per-
-// row RunID templates, issue #1551) is preserved.
+// on-disk shape the existing loadSeenCache walker already reads
+// from. Per-row RunID resolution (ADR-0030 §Per-row RunID
+// templates, issue #1551) is preserved.
 //
 // The walker's three filters are all required for an entry to be
 // registered:
@@ -610,22 +481,20 @@ func (d *Daemon) InvalidatePendingReviews() error {
 //     terminal-seen statuses do not get reposted);
 //  3. <runDir>/decision.md exists on disk (the source-of-truth gate:
 //     a missing file means the bot never finished, so rehydrate has
-//     nothing to post — leave to lazy-verify bounded-retry).
+//     nothing to post — the daemon launches a fresh agent instead).
 //
-// Coexistence with loadPendingReviews: the two walkers may both
-// register an entry for the same (prNumber, commentID). They are NOT
-// required to be disjoint — processPR's rehydrate branch (Slice C)
-// fires when pendingPost has the trigger; the lazy-verify pendingSet
-// filter is the pre-existing fallback for entries that resolve via
-// the lazy-verify grace path instead. A row with decision.md on disk
-// takes the rehydrate path; a row without decision.md (or with the
-// rehydrate drop on a stale entry) falls through to lazy-verify.
+// Issue #1849 (S6): the lazy-verify walker that previously
+// coexisted with this one is gone. `pendingPost` is now the SOLE
+// rehydrate mechanism. A row with decision.md on disk takes the
+// rehydrate path; a row without decision.md (or with the rehydrate
+// drop on a stale entry) falls through to the launch path which
+// re-runs the agent.
 //
-// Existing entries are replaced (consistent with loadSeenCache and
-// loadPendingReviews). Best-effort on partial-failure: a single
-// unreadable review-state.json is logged and skipped, never fatal,
-// because the rename-loser trade-off from ADR-0034 §3 accepts a
-// stale skip over a daemon-start failure.
+// Existing entries are replaced (consistent with loadSeenCache).
+// Best-effort on partial-failure: a single unreadable
+// review-state.json is logged and skipped, never fatal, because the
+// rename-loser trade-off from ADR-0034 §3 accepts a stale skip over
+// a daemon-start failure.
 func (d *Daemon) loadPendingPosts() error {
 	d.pendingPostMu.Lock()
 	defer d.pendingPostMu.Unlock()
@@ -692,7 +561,7 @@ func (d *Daemon) loadPendingPosts() error {
 
 // InvalidatePendingPosts forces a rebuild of the in-memory
 // pendingPost map by re-running the on-disk scan. Symmetric with
-// InvalidatePendingReviews.
+// InvalidateSeenCache.
 func (d *Daemon) InvalidatePendingPosts() error {
 	return d.loadPendingPosts()
 }
@@ -915,15 +784,6 @@ func (d *Daemon) tick(ctx context.Context) error {
 		return nil
 	}
 
-	// Lazy verify (issue #1482 slice D): before scanning open PRs for
-	// new triggers, the daemon promotes or rejects any pending
-	// verification carried over from previous launches. This keeps
-	// launchReview on the critical path (RunBatch only) while still
-	// detecting agent-posted review comments on the next tick.
-	if err := d.promotePendingReviews(ctx); err != nil {
-		d.logf("promote pending reviews: %v", err)
-	}
-
 	prs, err := d.GitHub.ListOpenPRs(ctx)
 	if err != nil {
 		return fmt.Errorf("list open PRs: %w", err)
@@ -1035,14 +895,13 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) error {
 	}
 
 	// Rehydrate-on-startup (issue #1847 S4): consult pendingPost for
-	// each remaining trigger BEFORE the lazy-verify filter so that
-	// a row in BOTH pendingReviews and pendingPost takes the
-	// rehydrate path (the lazy-verify entry is harmless after
-	// MarkSeen("success") takes effect). TryRehydratePost returns
-	// true when the entry was handled (success, failure, ctx-cancel,
-	// or kept-for-retry) — the trigger is dropped from unprocessed.
-	// Returns false when the entry is stale (decision.md missing at
-	// tick time) — the trigger falls through to the launch path.
+	// each remaining trigger. Issue #1849 (S6): the lazy-verify
+	// map is gone, so this is the SOLE rehydrate gate. TryRehydratePost
+	// returns true when the entry was handled (success, failure,
+	// ctx-cancel, or kept-for-retry) — the trigger is dropped from
+	// unprocessed. Returns false when the entry is stale (decision.md
+	// missing at tick time) — the trigger falls through to the launch
+	// path.
 	d.pendingPostMu.Lock()
 	hasPostEntry := map[string]bool{}
 	for cid := range d.pendingPost[prNumber] {
@@ -1065,30 +924,10 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) error {
 		unprocessed = filtered
 	}
 
-	// Lazy verify (issue #1482 slice D): drop triggers that are
-	// already registered as pending in this daemon. The next tick's
-	// promotePendingReviews step will observe the agent's review
-	// comment and promote them to success/failure; launching a second
-	// review for the same trigger would double-process the comment.
-	d.pendingMu.Lock()
-	pendingSet := map[string]bool{}
-	for _, e := range d.pendingReviews[prNumber] {
-		pendingSet[e.commentID] = true
-	}
-	d.pendingMu.Unlock()
-	if len(pendingSet) > 0 {
-		var filtered []unseenTrigger
-		for _, t := range unprocessed {
-			if pendingSet[t.comment.ID] {
-				continue
-			}
-			filtered = append(filtered, t)
-		}
-		if len(filtered) == 0 {
-			return nil
-		}
-		unprocessed = filtered
-	}
+	// Lazy verify (issue #1482 slice D) is gone (issue #1849 S6);
+	// no in-memory pendingSet filter is needed — the seen-cache
+	// short-circuit (driven by MarkSeen on success / failure) is
+	// the sole deduplication gate.
 
 	newest := unprocessed[0]
 	for i := 1; i < len(unprocessed); i++ {
@@ -1157,15 +996,16 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) error {
 	// persists terminal-seen state on disk — this lets the slot pool
 	// fill across ticks as ADR-0034 §Per-PR slot table intended.
 	//
-	// Issue #1846 (S3): launchReview is the SOLE writer to
-	// MarkSeen on the launch path. The goroutine therefore no
-	// longer makes MarkSeen calls: it launches the review, lets
-	// the post step decide success/failure/leave-untouched, and
-	// releases the slot. The previous "pending" record step is
-	// dropped because launchReview drives terminal state directly;
-	// the lazy-verify path (promotePendingReviews) is preserved
-	// unchanged as a safety net for the old-style bot-review flows
-	// that pre-date this slice.
+	// Issue #1846 (S3) and #1849 (S6): launchReview is the SOLE
+	// writer to MarkSeen on the launch path, and the lazy-verify
+	// multi-cycle walker is gone. The goroutine's only failure
+	// surface is ctx-cancel between RunBatch returning and the post
+	// step recording terminal-seen state; in that case no MarkSeen
+	// was recorded, so the goroutine releases the claim and the
+	// next tick's processPR re-launches the trigger. All other
+	// errors (post-step failures, pre-batch errors) are already
+	// terminal-seen by the time the goroutine sees them, so the
+	// seen-cache short-circuit keeps the trigger from re-launching.
 	d.inFlight.Add(1)
 	go func() {
 		defer d.inFlight.Done()
@@ -1174,65 +1014,22 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) error {
 		launchErr := d.launchReview(ctx, prNumber, focus, comment.ID, commentReactionID, prReactionID, reviewRunFolder, perRowRunID, rs, state)
 		if launchErr != nil {
 			d.logf("launch review for PR #%d comment %s: %v", prNumber, comment.ID, launchErr)
-			// Issue #1846 (S3): launchReview owns MarkSeen
-			// exclusively. The launch goroutine handles three
-			// failure-surface branches:
-			//
-			//  (a) ctx-cancel between RunBatch returning and
-			//      post completing (AC-8 "stays pending"): no
-			//      MarkSeen was recorded; release the claim so
-			//      the bounded-retry escape can re-process on
-			//      the next tick.
-			//
-			//  (b) MarkSeen("failure") was recorded by the post
-			//      step (missing decision.md or post error,
-			//      distinguishable via isPostStepError): the
-			//      `failure` is retryable per shouldSkipDedupStatus
-			//      but unbounded per-tick retries are a regression
-			//      versus the pre-#1846 bounded-retry escape.
-			//      Register a `pending` entry so the existing
-			//      promotePendingReviews bounded-retry mechanism
-			//      (pendingMaxCycles) fires and converts the
-			//      infinite-retry failure mode to a once-per-
-			//      pendingMaxCycles retry.
-			//
-			//  (c) Pre-batch failure (RunBatch, FetchPR,
-			//      RenderReview, RepoName, missing agent/model):
-			//      launchReview returns a plain error (no
-			//      postStepError wrap); the trigger must be
-			//      retried on the next tick WITHOUT waiting for
-			//      the bounded-retry grace, so just release the
-			//      claim and exit. processPR's seen-cache filter
-			//      lets the trigger re-process.
-			if isPostStepError(launchErr) {
-				runLogPath := filepath.Join(reviewRunFolder, "run.log")
-				d.registerPendingReview(prNumber, comment.ID, d.now(), statePath, runLogPath, state)
-				return
-			}
+			// Ctx-cancel between RunBatch and the post step:
+			// no MarkSeen was recorded; release the claim so
+			// the next tick's processPR can re-launch.
 			if errors.Is(launchErr, context.Canceled) || errors.Is(launchErr, context.DeadlineExceeded) {
 				if persisted == nil {
 					state.Release(comment.ID)
 				}
 				return
 			}
-			if persisted == nil {
-				state.Release(comment.ID)
-			}
+			// All other errors (post-step or pre-batch):
+			// postDecision recorded MarkSeen("failure") and
+			// fired MarkTerminalSeen on the seen cache. The
+			// slot release runs via the defer; nothing else
+			// to do.
 			return
 		}
-		// Lazy verify (issue #1482 slice D): register the trigger
-		// as pending so the next tick's promotePendingReviews
-		// step (issue #1759 B12) can still observe a
-		// bot-authored review body that landed AFTER the
-		// daemon's own post. The post step is the new
-		// terminal action (issue #1846), but the
-		// promotion-to-success path remains a safety net for
-		// the pre-S3 lazy-verify semantics. The trigger is
-		// already MarkSeen("success") on disk via the post
-		// step, so the seen-cache short-circuit prevents a
-		// re-launch even if a pending entry were registered.
-		runLogPath := filepath.Join(reviewRunFolder, "run.log")
-		d.registerPendingReview(prNumber, comment.ID, d.now(), statePath, runLogPath, state)
 	}()
 
 	return nil
@@ -1248,17 +1045,20 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) error {
 //
 // This intentionally deviates from PRD #1218's terminal run-status set
 // {success, failure, aborted}:
-//   - failure is retryable (per #1333)
+//   - failure is treated as terminal-seen in the in-memory seen
+//     cache (issue #1849 S6): the lazy-verify bounded-retry walker
+//     is gone, so the bounded-retry contract is now expressed by
+//     postDecision calling MarkTerminalSeen immediately after
+//     MarkSeen("failure"). The on-disk status remains "failure"
+//     (so operator-driven retry via re-post still works), but the
+//     processPR loop drops the trigger before launch.
 //   - aborted is retryable (the run was interrupted before publishing a
 //     review, so the trigger should be retried)
 //   - superseded is treated as terminal (obsolete trigger, not in PRD set)
 //   - success is terminal (the review comment was published)
-//   - pending is retryable (issue #1482 slice D): the lazy-verify
-//     promotion step walks pending comments on every tick and either
-//     promotes them to success (review comment observed) or to
-//     failure (bounded retry escape). The seen-cache must therefore
-//     NOT short-circuit pending entries, otherwise a follow-up tick
-//     would never see them and the promotion step would never run.
+//   - pending is retryable: the S4 rehydrate walker (issue #1847) is
+//     the only mechanism that observes pending entries from disk;
+//     no daemon code path writes "pending" anymore.
 func shouldSkipDedupStatus(status string) bool {
 	return status == "success" || status == "superseded"
 }
@@ -1368,12 +1168,14 @@ func logWriterFor(d *Daemon) io.Writer {
 // launched but the run folder may have been created and must be cleaned
 // up by the portal's stale recovery (issue #1024).
 //
-// On success this function records the trigger comment as `pending` in
-// the per-run review-state.json and registers the entry in the
-// daemon's pending set (issue #1482 slice D). The next tick's
-// promotePendingReviews step will then promote the comment to success
-// when the agent's review comment arrives, or to failure after
-// pendingMaxCycles ticks.
+// On success this function records the trigger comment as `success`
+// (or `failure`, on post-step errors) in the per-run review-state.json
+// via the post step (issue #1846 S3). The seen-cache hook fires on
+// `success`, short-circuiting subsequent ticks. On `failure`, the post
+// step additionally calls MarkTerminalSeen so the next tick's processPR
+// drops the trigger before launch (issue #1849 S6 — the lazy-verify
+// bounded-retry walker is gone; the bounded-retry contract is now
+// expressed as a single-shot at launch-end via the seen-cache).
 func (d *Daemon) launchReview(ctx context.Context, prNumber int, focus, commentID, commentReactionID, prReactionID, reviewRunFolder, perRowRunID string, rs *daemon.RunSession, state *ReviewStateStore) error {
 	// We compute the review branch name up-front so the cleanup defer
 	// has it available on every exit path, including early errors
@@ -1511,7 +1313,20 @@ func (d *Daemon) postDecision(ctx context.Context, prNumber int, commentID, revi
 					d.logf("PR #%d: mark %s failure: %v", prNumber, commentID, markErr)
 				}
 			}
-			return asPostStepError(fmt.Errorf("missing %s: %w", decisionPath, err))
+			// Issue #1849 (S6): the lazy-verify multi-cycle
+			// bounded-retry escape is gone; the bounded-retry
+			// contract is now a single-shot at launch-end via the
+			// seen-cache short-circuit. MarkSeen("failure") does
+			// not fire the SeenCacheInvalidator hook (slice A),
+			// so postDecision explicitly records the pair as
+			// terminal-seen so the next tick's processPR drops
+			// the trigger via IsTerminalSeen and does not call
+			// RunBatch again. The on-disk state remains
+			// "failure" (retryable per shouldSkipDedupStatus), so
+			// an operator-driven recovery (re-post
+			// `/sandman review`) still works.
+			d.MarkTerminalSeen(prNumber, commentID)
+			return fmt.Errorf("missing %s: %w", decisionPath, err)
 		}
 		return fmt.Errorf("stat %s: %w", decisionPath, err)
 	}
@@ -1522,7 +1337,8 @@ func (d *Daemon) postDecision(ctx context.Context, prNumber int, commentID, revi
 				d.logf("PR #%d: mark %s failure: %v", prNumber, commentID, markErr)
 			}
 		}
-		return asPostStepError(fmt.Errorf("%s is a directory", decisionPath))
+		d.MarkTerminalSeen(prNumber, commentID)
+		return fmt.Errorf("%s is a directory", decisionPath)
 	}
 
 	body, err := os.ReadFile(decisionPath)
@@ -1551,7 +1367,9 @@ func (d *Daemon) postDecision(ctx context.Context, prNumber int, commentID, revi
 				d.logf("PR #%d: mark %s failure: %v", prNumber, commentID, markErr)
 			}
 		}
-		return asPostStepError(fmt.Errorf("post decision: %w", err))
+		// Issue #1849 (S6): see missing-decision.md branch above.
+		d.MarkTerminalSeen(prNumber, commentID)
+		return fmt.Errorf("post decision: %w", err)
 	}
 
 	if state != nil {
@@ -1708,180 +1526,6 @@ func (d *Daemon) recordLaunchFailure(ctx context.Context, commentID string, stat
 		d.logf("mark %s failure: %v", commentID, err)
 	}
 	return cause
-}
-
-// promotePendingComment resolves a single pending review: the daemon
-// has launched an agent for a trigger comment and recorded the trigger
-// as `pending`. The next tick calls this method for the entry; it
-// asks GitHub for the PR comments and returns the new status to
-// apply:
-//
-//   - "success" when any non-empty comment has been posted at or after
-//     `since` (the agent posted a review comment, or a human replied —
-//     either is sufficient activity to settle the lazy-verify entry).
-//   - ("pending", error) when no comment has been observed yet. The
-//     error lets the caller decide whether to increment the cycle
-//     counter or promote to failure after pendingMaxCycles.
-//
-// Post-#1848 the botBodies discovery path is gone: the function no
-// longer greps the run log to confirm bot authorship, and the
-// SelfPostStore is no longer written from this path. The
-// daemon-side redaction layer (issue #1845) plus the structural
-// sniff (issue #1821) are the load-bearing mitigation against
-// self-loops; the lazy-verify path is preserved as a safety net
-// only.
-//
-// The caller is responsible for writing the new status back into the
-// per-run ReviewStateStore and updating the in-memory pending entry.
-// Issue #1482 slice D.
-func (d *Daemon) promotePendingComment(ctx context.Context, prNumber int, excludeCommentID string, since time.Time) (string, error) {
-	comments, err := d.GitHub.ListPRComments(ctx, prNumber)
-	if err != nil {
-		return "", fmt.Errorf("list PR comments: %w", err)
-	}
-	sawSuccess := false
-	for _, c := range comments {
-		if c.ID == excludeCommentID {
-			continue
-		}
-		if c.CreatedAt.Before(since) {
-			continue
-		}
-		if c.Body == "" {
-			continue
-		}
-		if !sawSuccess {
-			d.logf("PR #%d: review comment verified (ID %s, posted at %v)", prNumber, c.ID, c.CreatedAt)
-		}
-		sawSuccess = true
-	}
-	if sawSuccess {
-		return "success", nil
-	}
-	return "pending", fmt.Errorf("no review comment found on PR #%d after %v", prNumber, since)
-}
-
-// promotePendingReviews is the tick-level walker that runs at the
-// start of every tick (after busy is acquired and before ListOpenPRs)
-// to advance any pending lazy-verify entries toward a terminal status.
-// For each pending entry:
-//
-//   - Call promotePendingComment against GitHub.
-//   - If success: MarkSeen("success") on the per-run store and drop
-//     the entry. The MarkSeen fires the seen-cache hook on success
-//     per slice A, so the next tick skips the comment via the seen
-//     cache.
-//   - If pending: increment the cycle counter; once it reaches
-//     pendingMaxCycles the daemon runs the bounded-retry escape:
-//     MarkSeen("failure") and MarkTerminalSeen so the next tick's
-//     processPR skips the trigger.
-//
-// Errors from ListPRComments are logged and the entry is kept —
-// the next tick will retry. This is conservative: a temporary
-// GitHub outage does not silently promote an in-flight review to
-// failure.
-//
-// Post-#1848 the botBodies discovery path and the bounded-retry
-// grace grep are gone: `SelfPostStore` no longer exists and
-// `extractBodiesFromLog` is deleted. The lazy-verify path is
-// retained as a safety net only; the S3 happy path (issue #1846)
-// MarkSeens success on the launching tick, so production reviews
-// do not reach the bounded-retry escape. The cycle counter
-// increments on every error, and the bounded-retry escape fires
-// after `pendingMaxCycles` cycles.
-//
-// Issue #1482 slice D.
-func (d *Daemon) promotePendingReviews(ctx context.Context) error {
-	d.pendingMu.Lock()
-	defer d.pendingMu.Unlock()
-	if len(d.pendingReviews) == 0 {
-		return nil
-	}
-
-	for prNumber, entries := range d.pendingReviews {
-		if len(entries) == 0 {
-			delete(d.pendingReviews, prNumber)
-			continue
-		}
-		kept := make([]pendingReviewEntry, 0, len(entries))
-		for _, e := range entries {
-			// Open the per-run store lazily if we did not cache it.
-			store := e.storeRef
-			if store == nil {
-				s, err := NewReviewStateStore(e.reviewState, prNumber, d)
-				if err != nil {
-					d.logf("PR #%d: reopen review-state for pending %s: %v", prNumber, e.commentID, err)
-					kept = append(kept, e)
-					continue
-				}
-				store = s
-			}
-
-			status, err := d.promotePendingComment(ctx, prNumber, e.commentID, e.since)
-			if err == nil && status == "success" {
-				if markErr := store.MarkSeen(e.commentID, "success"); markErr != nil {
-					d.logf("PR #%d: promote pending %s to success: %v", prNumber, e.commentID, markErr)
-				}
-				continue
-			}
-			// err != nil covers both "no review comment yet" (the
-			// usual path) and a transient ListPRComments failure
-			// (kept by the next tick). The status field is always
-			// "pending" in this branch — promotePendingComment only
-			// returns (success, nil) or (pending, err) — so we can
-			// safely increment the cycle counter and bail on the
-			// bounded-retry escape.
-			e.cycles++
-			if e.cycles >= pendingMaxCycles {
-				// Bounded-retry escape (post-#1848): no
-				// run-log grace grep — the SelfPostStore and
-				// extractBodiesFromLog are gone. After
-				// `pendingMaxCycles` cycles without a comment
-				// observed on GitHub, settle as failure.
-				if markErr := store.MarkSeen(e.commentID, "failure"); markErr != nil {
-					d.logf("PR #%d: promote pending %s to failure: %v", prNumber, e.commentID, markErr)
-				}
-				// Bounded-retry escape: cache the pair so the
-				// next tick's processPR skips the trigger. This
-				// is a slice-D-only path (processPR's RunBatch-
-				// error failure path does NOT fire this).
-				d.MarkTerminalSeen(prNumber, e.commentID)
-				continue
-			}
-			e.storeRef = store
-			kept = append(kept, e)
-		}
-		if len(kept) > 0 {
-			d.pendingReviews[prNumber] = kept
-		} else {
-			delete(d.pendingReviews, prNumber)
-		}
-	}
-	return nil
-}
-
-// registerPendingReview records a new pending review entry after
-// launchReview returned successfully. processPR calls this once the
-// per-run ReviewStateStore has been written with status=pending.
-//
-// runLogPath is the path to the per-run run.log; it is retained
-// post-#1848 for audit / debugging but no current consumer reads
-// it (the run-log grep and SelfPostStore recording are gone). An
-// empty runLogPath falls back to
-// filepath.Dir(statePath)+"/run.log".
-func (d *Daemon) registerPendingReview(prNumber int, commentID string, since time.Time, statePath, runLogPath string, store *ReviewStateStore) {
-	if runLogPath == "" {
-		runLogPath = filepath.Join(filepath.Dir(statePath), "run.log")
-	}
-	d.pendingMu.Lock()
-	defer d.pendingMu.Unlock()
-	d.pendingReviews[prNumber] = append(d.pendingReviews[prNumber], pendingReviewEntry{
-		commentID:   commentID,
-		since:       since,
-		reviewState: statePath,
-		runLogPath:  runLogPath,
-		storeRef:    store,
-	})
 }
 
 // logf writes a line to the broadcaster (or stderr when none is wired).

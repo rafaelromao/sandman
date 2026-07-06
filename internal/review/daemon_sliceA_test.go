@@ -377,12 +377,12 @@ func TestDaemon_ReleaseForgetsCacheEntry(t *testing.T) {
 // TestDaemon_ReviewStateStore_MarkSeenInvalidatesCacheMidProcess pins
 // criterion #6: a comment marked via ReviewStateStore.MarkSeen
 // mid-process is honored by a subsequent processPR call without
-// requiring a daemon restart. Under the lazy-verify contract (issue
-// #1482 slice D) the first tick records the comment as pending and
-// the second tick's promotePendingReviews step promotes it to
-// success; the cache hook fires on success via MarkSeen, hydrating
-// the in-memory cache so a third tick short-circuits on cache hits
-// without re-reading the batches index or any review-state.json.
+// requiring a daemon restart. Under the post-#1846 / post-#1849
+// (S6) contract, the first tick records the comment as `success` on
+// the launching tick via the post step (issue #1846); the cache hook
+// fires on success via MarkSeen, hydrating the in-memory cache so a
+// second tick short-circuits on cache hits without re-reading the
+// batches index or any review-state.json.
 func TestDaemon_ReviewStateStore_MarkSeenInvalidatesCacheMidProcess(t *testing.T) {
 	const (
 		prNumber  = 33

@@ -173,10 +173,13 @@ func (s *ReviewStateStore) Release(commentID string) {
 // MarkSeen records a terminal status for commentID and persists the
 // store via atomic-rename. status must be non-empty; the typical
 // values are "success", "failure", "superseded", or "aborted".
-// "pending" is also accepted (issue #1482 slice D): it is the
-// lazy-verify entry recorded by the daemon right after a launch and
-// is promoted to "success" or "failure" by `(*Daemon).promotePendingReviews`
-// on a later tick. The seen cache hook does NOT fire for "pending".
+// "pending" is also accepted by the on-disk schema (issue #1847 S4
+// rehydrate walker): it represents a row whose <runDir>/decision.md
+// exists but whose daemon-side post step did not complete. The
+// daemon does not write "pending" to review-state.json anymore
+// (issue #1849 S6 — the lazy-verify walker is gone); pending rows
+// only appear on disk after a daemon restart during the rehydrate
+// window. The seen cache hook does NOT fire for "pending".
 //
 // The comment is recorded in SeenComments with the timestamp; the
 // Claims map is removed for that comment so a later worker does not
