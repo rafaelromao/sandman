@@ -234,7 +234,16 @@ func (r RunState) RetriesTotal() int {
 	return v
 }
 
-// RetriesDone returns the retry iterations actually executed from the finished payload.
+// RetriesDone returns the count of retries actually executed by the run
+// (initial run excluded), read from the `retries_done` key of the
+// finished-run payload (run.finished / run.aborted). At terminal time
+// it matches the active-row `LiveAttempt` value for the same run, so
+// the active row and the finished row render the same number for the
+// same run — `emitTerminal` in `internal/batch/orchestrator.go` writes
+// `retries_done` as `AgentRunResult.RetriesTotal - 1`, while
+// `LiveAttempt` returns the equivalent value computed from the live
+// `run.retry` stream. Returns 0 when the run has not finished yet, or
+// when the finished payload omits the key (legacy shapes).
 func (r RunState) RetriesDone() int {
 	if r.Finished == nil {
 		return 0
@@ -243,11 +252,17 @@ func (r RunState) RetriesDone() int {
 	return v
 }
 
-// LiveAttempt returns the highest `attempt` value across the run's
-// `run.retry` events, reading from the projected Retries slice so the
-// answer is meaningful before `run.finished` is written. We keep the
-// highest attempt seen, not the last-seen one, so a non-monotonic
-// attempt value still surfaces the peak. Returns 0 when no retries exist.
+// LiveAttempt returns the count of retries that have actually occurred
+// (initial run excluded) for an active run. It is the "retry count"
+// unit the portal's active-row chip renders, NOT the 1-indexed
+// `run.retry.payload.attempt` value defined in ADR-0035 (in practice
+// the two coincide because `attempt` is 1-indexed, so the highest
+// retry attempt seen across `run.retry` events equals the number of
+// retries so far — but they are conceptually distinct). It reads the
+// projected Retries slice so the answer is meaningful before
+// `run.finished` is written; we keep the highest attempt seen, not
+// the last-seen one, so a non-monotonic attempt value still surfaces
+// the peak. Returns 0 when no retries exist.
 func (r RunState) LiveAttempt() int {
 	best := 0
 	for _, event := range r.Retries {
