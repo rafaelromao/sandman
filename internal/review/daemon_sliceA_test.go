@@ -56,7 +56,12 @@ func (s *sliceASeenLoader) readReviewState(runDir string) (batchindex.ReviewStat
 // `<batch>/runs/<rowID>/review-state.json`. The legacy
 // `runs/review/` alias folder is no longer used by the hydration
 // path.
-func seedPriorReviewEntry(t *testing.T, baseDir, batchID string, prNumber int, commentID string) {
+//
+// status is the literal status written into the seeded
+// SeenComment entry. slice-A passes "success" (matches the
+// pre-existing fixtures); slice-S4 passes "pending" to exercise
+// the rehydrate walker.
+func seedPriorReviewEntry(t *testing.T, baseDir, batchID string, prNumber int, commentID, status string) {
 	t.Helper()
 	batchesDir := filepath.Join(baseDir, "batches")
 	batchPath := filepath.Join(batchesDir, batchID)
@@ -68,7 +73,7 @@ func seedPriorReviewEntry(t *testing.T, baseDir, batchID string, prNumber int, c
 	state := batchindex.ReviewState{
 		PR: prNumber,
 		SeenComments: []batchindex.SeenComment{
-			{CommentID: commentID, Status: "success", Timestamp: time.Now()},
+			{CommentID: commentID, Status: status, Timestamp: time.Now()},
 		},
 	}
 	if err := batchindex.WriteReviewState(runDir, state); err != nil {
@@ -140,7 +145,7 @@ func TestDaemon_SeenCacheHydratedAtConstruction(t *testing.T) {
 	// production lifecycle: daemon restarts and reads existing state).
 	dir := t.TempDir()
 	t.Chdir(dir)
-	seedPriorReviewEntry(t, dir, "prior-batch-PR42", prNumber, commentID)
+	seedPriorReviewEntry(t, dir, "prior-batch-PR42", prNumber, commentID, "success")
 
 	d := New(dir, gh, &prompt.Engine{}, runner, &config.Config{
 		DefaultReviewAgent: "opencode",
@@ -213,7 +218,7 @@ func TestDaemon_ProcessPRScalesConstantlyWithPriorBatches(t *testing.T) {
 		d.Clock = func() time.Time { return time.Now().Add(-1 * time.Minute) }
 		for i := 0; i < priorCount; i++ {
 			batchID := "prior-batch-PR" + itoa(freshPR, i)
-			seedPriorReviewEntry(t, dir, batchID, freshPR, batchID+"-c")
+			seedPriorReviewEntry(t, dir, batchID, freshPR, batchID+"-c", "success")
 		}
 		// Re-hydrate the cache after seeding so the production
 		// invariant is asserted: a cache hydrated after seed data

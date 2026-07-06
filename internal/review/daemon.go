@@ -228,6 +228,17 @@ func New(baseDir string, gh GitHubClient, prompts Renderer, runner BatchRunner, 
 	if err := d.loadPendingReviews(); err != nil {
 		d.logf("load pending reviews: %v", err)
 	}
+	// Issue #1847 (S4): rehydrate-on-startup. Walk every
+	// review-kind batch and register one pendingPost entry per
+	// `pending` review-state.json whose row folder has
+	// decision.md on disk. The next tick's processPR consults
+	// this map before the launch path so the daemon posts the
+	// existing body instead of re-running the agent. See
+	// loadPendingPosts for the full filter and the disjoint-
+	// from-pendingReviews invariant.
+	if err := d.loadPendingPosts(); err != nil {
+		d.logf("load pending posts: %v", err)
+	}
 	// SelfPostStore is best-effort: under the post-#1756
 	// greenfield loader any pre-existing self-posted.json is
 	// renamed to self-posted.json.ignore-<ts>.bak at startup
@@ -645,6 +656,121 @@ func (d *Daemon) loadPendingReviews() error {
 // InvalidateSeenCache.
 func (d *Daemon) InvalidatePendingReviews() error {
 	return d.loadPendingReviews()
+}
+
+// loadPendingPosts rehydrates the in-memory pendingPost map from the
+// on-disk review-state.json files referenced by .sandman/batches.json.
+//
+// Issue #1847 (S4): a daemon restart between the agent-run finishing
+// its write of <runDir>/decision.md and the daemon completing the
+// post step (e.g. process killed during `gh pr comment`, ctx cancelled
+// mid-post, network blip) leaves a review in the state "review is on
+// disk but not on the PR". Rather than re-launch the agent on the
+// next tick — which would produce a duplicate review the bot has no
+// memory of writing — the next daemon reads the existing
+// decision.md, redacts it via RedactBody, and posts it as part of
+// the normal tick. The pendingPost map is the in-memory index of
+// "review files waiting for the daemon to post".
+//
+// The walker is read-only and reuses the seenCacheLoader +
+// readReviewRowID + seenStateReader seams so it observes the same
+// on-disk shape the existing loadSeenCache and loadPendingReviews
+// walkers already read from. Per-row RunID resolution (ADR-0030 §Per-
+// row RunID templates, issue #1551) is preserved.
+//
+// The walker's three filters are all required for an entry to be
+// registered:
+//
+//  1. entry.Kind == batchindex.KindReview (so non-review batches
+//     such as changes cannot register a pendingPost);
+//  2. sc.Status == "pending" (matches the S3 lazy-verify contract:
+//     terminal-seen statuses do not get reposted);
+//  3. <runDir>/decision.md exists on disk (the source-of-truth gate:
+//     a missing file means the bot never finished, so rehydrate has
+//     nothing to post — leave to lazy-verify bounded-retry).
+//
+// Coexistence with loadPendingReviews: the two walkers may both
+// register an entry for the same (prNumber, commentID). They are NOT
+// required to be disjoint — processPR's rehydrate branch (Slice C)
+// fires when pendingPost has the trigger; the lazy-verify pendingSet
+// filter is the pre-existing fallback for entries that resolve via
+// the lazy-verify grace path instead. A row with decision.md on disk
+// takes the rehydrate path; a row without decision.md (or with the
+// rehydrate drop on a stale entry) falls through to lazy-verify.
+//
+// Existing entries are replaced (consistent with loadSeenCache and
+// loadPendingReviews). Best-effort on partial-failure: a single
+// unreadable review-state.json is logged and skipped, never fatal,
+// because the rename-loser trade-off from ADR-0034 §3 accepts a
+// stale skip over a daemon-start failure.
+func (d *Daemon) loadPendingPosts() error {
+	d.pendingPostMu.Lock()
+	defer d.pendingPostMu.Unlock()
+	d.pendingPost = map[int]map[string]pendingPostEntry{}
+
+	idx, err := seenCacheLoader(d.BaseDir)
+	if err != nil {
+		return fmt.Errorf("load batches index: %w", err)
+	}
+	if idx == nil {
+		return nil
+	}
+	for _, entry := range idx.Entries {
+		if entry.Kind != batchindex.KindReview {
+			continue
+		}
+		rowID, err := readReviewRowID(filepath.Join(entry.Path, "runs"))
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			d.logf("read review row id for %s: %v", entry.Path, err)
+			continue
+		}
+		runDir := filepath.Join(entry.Path, "runs", rowID)
+		state, err := seenStateReader(runDir)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			d.logf("read review state %s: %v", runDir, err)
+			continue
+		}
+		reviewStatePath := filepath.Join(runDir, "review-state.json")
+		for _, sc := range state.SeenComments {
+			if sc.Status != "pending" {
+				continue
+			}
+			// Source-of-truth gate: a row is rehydrate-eligible
+			// only when decision.md actually exists on disk.
+			// A `pending` row without decision.md means the bot
+			// had not finished writing yet; the lazy-verify
+			// bounded-retry escape handles that case.
+			decisionPath := filepath.Join(runDir, "decision.md")
+			if _, statErr := os.Stat(decisionPath); statErr != nil {
+				if !os.IsNotExist(statErr) {
+					d.logf("stat %s: %v", decisionPath, statErr)
+				}
+				continue
+			}
+			if _, ok := d.pendingPost[entry.PR]; !ok {
+				d.pendingPost[entry.PR] = map[string]pendingPostEntry{}
+			}
+			d.pendingPost[entry.PR][sc.CommentID] = pendingPostEntry{
+				commentID:       sc.CommentID,
+				runDir:          runDir,
+				reviewStatePath: reviewStatePath,
+			}
+		}
+	}
+	return nil
+}
+
+// InvalidatePendingPosts forces a rebuild of the in-memory
+// pendingPost map by re-running the on-disk scan. Symmetric with
+// InvalidatePendingReviews.
+func (d *Daemon) InvalidatePendingPosts() error {
+	return d.loadPendingPosts()
 }
 
 // SocketPath returns the absolute path of the daemon's control socket.
