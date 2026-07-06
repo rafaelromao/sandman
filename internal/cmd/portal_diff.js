@@ -558,6 +558,39 @@
     return subjectRunValue(run) || 'Run';
   }
 
+  // pickCanonicalParent chooses the single impl row that "owns" an issue
+  // group in the subject selector. Multiple impl rows for the same
+  // issueNumber appear when a prior run was abandoned or succeeded and a
+  // later run was launched; the selector needs one canonical row to act
+  // as the parent's identity, plus the sibling reviews.
+  //
+  // Pick logic mirrors the table-visibility helper pickCanonicalParent
+  // in portal.html (used by visibleRunForIssueGroup), so the dropdown's
+  // canonical option agrees with the visible table row:
+  //
+  //   1. The currently-running parent (kind === 'active'), if any.
+  //      Within actives, the latest by startedAt wins. The
+  //      startedAt-desc filter is a tiebreaker — reviews and prior
+  //      impl rows can never surface because they live in the
+  //      reviews / parents splits separately.
+  //   2. Otherwise, parents[0] — the caller's order is authoritative.
+  //      visibleRunsForTable sorts runs by startedAt desc, so
+  //      parents[0] is the most-recent terminal impl row. The
+  //      #1825 contract forbids preferring a parent that carries
+  //      stale review metadata over a newer parent that does not —
+  //      the table-visibility helper enforces this by trusting
+  //      caller order, and so do we.
+  function pickCanonicalParent(parents, run) {
+    if (!parents || !parents.length) {
+      return run && !run.review ? run : null;
+    }
+    const liveActive = parents.filter((candidate) => candidate.kind === 'active');
+    if (liveActive.length) {
+      return liveActive.reduce((best, candidate) => (candidate.startedAt > best.startedAt ? candidate : best));
+    }
+    return parents[0];
+  }
+
   function subjectRunsFor(run, opts) {
     const visible = Array.isArray(opts && opts.runs) ? opts.runs : [];
     // Strict positive-integer guard: a missing/undefined/non-integer
@@ -578,7 +611,7 @@
       if (candidate.review) reviews.push(candidate);
       else parents.push(candidate);
     }
-    const canonicalParent = parents.find((candidate) => Number(candidate.reviewCount || 0) > 0 || candidate.reviewVerdict) || (parents.length === 1 ? parents[0] : null) || (!run.review && Number(run.reviewCount || 0) > 0 ? run : null);
+    const canonicalParent = pickCanonicalParent(parents, run);
     const related = [];
     if (canonicalParent) related.push(canonicalParent);
     reviews.sort((a, b) => {

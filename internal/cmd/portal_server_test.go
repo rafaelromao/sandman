@@ -1679,6 +1679,33 @@ func TestPortal_PageExposesMobileExpandedRunPanelStyles(t *testing.T) {
 			t.Fatalf("page missing %q\n%s", want, content[:1000])
 		}
 	}
+	start := strings.Index(content, `@media (max-width: 760px)`)
+	if start < 0 {
+		t.Fatalf("page missing mobile media query\n%s", content[:min(1000, len(content))])
+	}
+	block := content[start:]
+	if end := strings.Index(block, `@media (prefers-reduced-motion: reduce)`); end >= 0 {
+		block = block[:end]
+	}
+	if strings.Contains(block, "td[data-cell=\"issue-title\"] {\n        display: none;") {
+		t.Fatalf("mobile media block still hides issue-title cell; the display: none rule on that selector must be removed\n%s", block[:min(1000, len(block))])
+	}
+	nineSixtyStart := strings.Index(content, `@media (max-width: 960px)`)
+	if nineSixtyStart < 0 {
+		t.Fatalf("page missing 960px media query\n%s", content[:min(1000, len(content))])
+	}
+	nineSixtyBlock := content[nineSixtyStart:]
+	if end := strings.Index(nineSixtyBlock, `@media (max-width: 760px)`); end >= 0 {
+		nineSixtyBlock = nineSixtyBlock[:end]
+	}
+	for _, want := range []string{
+		"tbody tr.run-row td[data-cell=\"issue-title\"] {",
+		"align-self: center;",
+	} {
+		if !strings.Contains(nineSixtyBlock, want) {
+			t.Fatalf("960px media block missing %q on issue-title cell rule\n%s", want, nineSixtyBlock[:min(1000, len(nineSixtyBlock))])
+		}
+	}
 }
 
 func TestPortal_PageExposesMobileRunDetailFactsLayout(t *testing.T) {

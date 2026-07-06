@@ -272,7 +272,7 @@ func TestRunSingle_EmitsRunRetryWithKillTimeoutReasonOnParentCtxCancel(t *testin
 	var started bool
 	go func() {
 		defer close(done)
-		result, started = o.runPromptOnlySingle(runCtx, cfg, "opencode", config.Agent{Command: "echo hi"}, noopIdentityResolver(), branch, prompt.RenderConfig{}, nil, &retrySandboxFactory{sandbox: rtSandbox}, nil, ModeFresh, "main", 0, 0, 2, "", 0, false, 0, false, false, false, false, 0, "", "run-kill-timeout-1", nil, 0, "", "")
+		result, started = o.runPromptOnlySingle(runCtx, cfg, "opencode", config.Agent{Command: "echo hi"}, noopIdentityResolver(), branch, prompt.RenderConfig{}, nil, &retrySandboxFactory{sandbox: rtSandbox}, nil, ModeFresh, "main", 0, 0, 2, "", 0, false, 0, false, false, false, false, 0, "", "run-kill-timeout-1", nil, 0, "", "", "")
 	}()
 
 	// Give the first runnable time to start, then cancel the parent

@@ -2051,7 +2051,7 @@ func TestRunPromptOnlySingle_LogsRunMarkerInWorktreePath(t *testing.T) {
 	}
 
 	cfg := &config.Config{WorktreeDir: "worktree", Git: config.GitConfig{BaseBranch: "main"}}
-	result, started := o.runPromptOnlySingle(context.Background(), cfg, "opencode", config.Agent{Command: "echo hi"}, noopIdentityResolver(), "prompt-only", prompt.RenderConfig{}, nil, &fakeSandboxFactory{sandbox: rtSandbox}, nil, ModeFresh, "main", 0, 0, 0, "", 0, false, 0, false, false, false, false, 0, "", "prompt-run-123", nil, 0, "", "")
+	result, started := o.runPromptOnlySingle(context.Background(), cfg, "opencode", config.Agent{Command: "echo hi"}, noopIdentityResolver(), "prompt-only", prompt.RenderConfig{}, nil, &fakeSandboxFactory{sandbox: rtSandbox}, nil, ModeFresh, "main", 0, 0, 0, "", 0, false, 0, false, false, false, false, 0, "", "prompt-run-123", nil, 0, "", "", "")
 	if !started {
 		t.Fatal("expected prompt-only run to start")
 	}
@@ -2085,7 +2085,7 @@ func TestRunPromptOnlySingle_PrefixesOutputWithRunID(t *testing.T) {
 	}
 
 	cfg := &config.Config{WorktreeDir: "worktree", Git: config.GitConfig{BaseBranch: "main"}}
-	result, started := o.runPromptOnlySingle(context.Background(), cfg, "opencode", config.Agent{Command: "echo hi"}, noopIdentityResolver(), "sandman/review-17-1", prompt.RenderConfig{}, &output, &fakeSandboxFactory{sandbox: rtSandbox}, nil, ModeFresh, "main", 0, 0, 0, "", 0, false, 0, false, false, false, true, 17, "check tests", "PR17", nil, 0, "", "")
+	result, started := o.runPromptOnlySingle(context.Background(), cfg, "opencode", config.Agent{Command: "echo hi"}, noopIdentityResolver(), "sandman/review-17-1", prompt.RenderConfig{}, &output, &fakeSandboxFactory{sandbox: rtSandbox}, nil, ModeFresh, "main", 0, 0, 0, "", 0, false, 0, false, false, false, true, 17, "check tests", "PR17", nil, 0, "", "", "")
 	if !started {
 		t.Fatal("expected prompt-only review run to start")
 	}
@@ -2122,7 +2122,7 @@ func TestRunPromptOnlySingle_PrefixesOutputPromptOnlyWhenNotReview(t *testing.T)
 	}
 
 	cfg := &config.Config{WorktreeDir: "worktree", Git: config.GitConfig{BaseBranch: "main"}}
-	result, started := o.runPromptOnlySingle(context.Background(), cfg, "opencode", config.Agent{Command: "echo hi"}, noopIdentityResolver(), "sandman/prompt-only-123", prompt.RenderConfig{}, &output, &fakeSandboxFactory{sandbox: rtSandbox}, nil, ModeFresh, "main", 0, 0, 0, "", 0, false, 0, false, false, false, false, 0, "", "run-123", nil, 0, "", "")
+	result, started := o.runPromptOnlySingle(context.Background(), cfg, "opencode", config.Agent{Command: "echo hi"}, noopIdentityResolver(), "sandman/prompt-only-123", prompt.RenderConfig{}, &output, &fakeSandboxFactory{sandbox: rtSandbox}, nil, ModeFresh, "main", 0, 0, 0, "", 0, false, 0, false, false, false, false, 0, "", "run-123", nil, 0, "", "", "")
 	if !started {
 		t.Fatal("expected prompt-only run to start")
 	}
@@ -4825,12 +4825,155 @@ func TestRunBatch_ReviewRunExportsSandmanRunDirEnv(t *testing.T) {
 	}
 }
 
+// TestRunBatch_ReviewRunFolderHonorsReqRunDir pins the orchestrator ↔
+// daemon contract for review runs: when the caller sets
+// `Request.RunDir` (which the cmd/review.go one-shot path does, as
+// the daemon's `prepareReviewRun` lookup target for `decision.md`),
+// the orchestrator's AgentRun.runFolder and SANDMAN_RUN_DIR env MUST
+// equal `req.RunDir` exactly. Otherwise the reviewer bot writes
+// `decision.md` to a path the daemon never reads and the review
+// comment is silently dropped (issue discovered on PR #1875 where
+// the per-row RunID `<sid>-<ts>-<linkedIssue>-PR<pr>` diverged from
+// the legacy batch dir `<sid>-<ts>-PR<pr>` that `prepareReviewRun`
+// uses as the batch-level parent).
+func TestRunBatch_ReviewRunFolderHonorsReqRunDir(t *testing.T) {
+	dir := testenv.MkdirShort(t, "sm-orch-")
+	t.Chdir(dir)
+	initGitRepo(t, dir)
+
+	client := &fakeGitHubClient{err: errors.New("fetch should not run")}
+	spyLog := &spyEventLog{}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{
+		Agent:       "test-agent",
+		Sandbox:     "worktree",
+		WorktreeDir: ".sandman/worktrees",
+		Git:         config.GitConfig{BaseBranch: "main"},
+		AgentProviders: map[string]config.Agent{
+			"test-agent": {Command: "true"},
+		},
+	}}, spyLog)
+	o.sandboxFactory = &fakeSandboxFactory{sandbox: &fakeSandbox{workDir: filepath.Join(".sandman", "worktrees", "sandman", "review-17-1855-1")}}
+	agentRunCh := make(chan *AgentRun, 1)
+	o.runnableFactory = &capturingAgentRunFactory{agentRunCh: agentRunCh}
+
+	// PR 17 with linked issue 1855: the per-row RunID
+	// `<sid>-<ts>-<linkedIssue>-PR<pr>` diverges from the legacy
+	// batch dir `<sid>-<ts>-PR<pr>` that cmd/review.go's
+	// prepareReviewRun mints. This divergence is what made
+	// `decision.md` orphan on PR #1875.
+	const perRowRunID = "abcd-260618113825-1855-PR17"
+	const legacyBatchDir = "abcd-260618113825-PR17"
+	runDir := filepath.Join(dir, ".sandman", "batches", legacyBatchDir, "runs", perRowRunID)
+
+	_, err := o.RunBatch(context.Background(), Request{
+		PromptConfig: prompt.RenderConfig{PromptFlag: "Review the PR."},
+		Review:       true,
+		PRNumber:     17,
+		RunID:        perRowRunID,
+		RunDir:       runDir,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	select {
+	case ar := <-agentRunCh:
+		if ar.runFolder != runDir {
+			t.Errorf("agentRun.runFolder = %q, want %q (req.RunDir)", ar.runFolder, runDir)
+		}
+		got, ok := ar.env["SANDMAN_RUN_DIR"]
+		if !ok {
+			t.Fatalf("expected SANDMAN_RUN_DIR in agent env, got keys: %v", keysOf(ar.env))
+		}
+		if got != runDir {
+			t.Errorf("SANDMAN_RUN_DIR = %q, want %q (req.RunDir)", got, runDir)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for AgentRun to be created")
+	}
+}
+
 func keysOf(m map[string]string) []string {
 	out := make([]string, 0, len(m))
 	for k := range m {
 		out = append(out, k)
 	}
 	return out
+}
+
+// TestRunBatch_ReviewRunFolderMatchesLegacyBatchDirFormula pins the
+// orchestrator ↔ daemon agreement for review runs that close an
+// issue. The cmd layer sets `Request.RunDir` to
+// `<batchesDir>/<legacyBatchDir>/runs/<perRowRunID>`, where
+// `legacyBatchDir = <sid>-<ts>-PR<pr>` and
+// `perRowRunID = <sid>-<ts>-<linkedIssue>-PR<pr>`. The orchestrator's
+// `agentRun.runFolder` MUST equal `req.RunDir` exactly, otherwise
+// the reviewer bot writes `decision.md` to a path the daemon never
+// reads and the post step silently marks the review as failure
+// (PR #1875 incident).
+//
+// This is the cross-seam e2e regression test: it pins the contract
+// that `req.RunDir` is the authoritative path both sides agree on.
+// Failing here means the bot will silently drop review comments on
+// any PR that closes an issue.
+func TestRunBatch_ReviewRunFolderMatchesLegacyBatchDirFormula(t *testing.T) {
+	dir := testenv.MkdirShort(t, "sm-orch-agree-")
+	t.Chdir(dir)
+	initGitRepo(t, dir)
+
+	client := &fakeGitHubClient{err: errors.New("fetch should not run")}
+	spyLog := &spyEventLog{}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{
+		Agent:       "test-agent",
+		Sandbox:     "worktree",
+		WorktreeDir: ".sandman/worktrees",
+		Git:         config.GitConfig{BaseBranch: "main"},
+		AgentProviders: map[string]config.Agent{
+			"test-agent": {Command: "true"},
+		},
+	}}, spyLog)
+	o.sandboxFactory = &fakeSandboxFactory{sandbox: &fakeSandbox{workDir: filepath.Join(".sandman", "worktrees", "sandman", "review-1875-1")}}
+	agentRunCh := make(chan *AgentRun, 1)
+	o.runnableFactory = &capturingAgentRunFactory{agentRunCh: agentRunCh}
+
+	// Compose the run folder the same way cmd/review.go does:
+	// legacy batch dir as parent, per-row RunID as run folder. The
+	// per-row RunID includes the linked-issue segment which is
+	// what made the bug surface only on PRs that close an issue.
+	const prNumber = 1875
+	const linkedIssue = 1855
+	const ts = "260618113825"
+	const shortid = "abcd"
+	legacyBatchDir := runid.NewBatchID(runid.KindReview, 1, fmt.Sprintf("%d", prNumber), ts, shortid)
+	perRowRunID := runid.NewRunID(runid.KindReview, fmt.Sprintf("%d-PR%d", linkedIssue, prNumber), ts, shortid)
+	runDir := filepath.Join(dir, ".sandman", "batches", legacyBatchDir, "runs", perRowRunID)
+
+	_, err := o.RunBatch(context.Background(), Request{
+		PromptConfig: prompt.RenderConfig{PromptFlag: "Review the PR."},
+		Review:       true,
+		PRNumber:     prNumber,
+		RunID:        perRowRunID,
+		RunDir:       runDir,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	select {
+	case ar := <-agentRunCh:
+		if ar.runFolder != runDir {
+			t.Errorf("orchestrator/daemon path mismatch:\n  orchestrator agentRun.runFolder = %q\n  cmd-layer req.RunDir          = %q\n  (the daemon reads decision.md from this exact path; the orchestrator must place agentRun.runFolder at the same path or the reviewer bot's decision.md orphans)", ar.runFolder, runDir)
+		}
+		got, ok := ar.env["SANDMAN_RUN_DIR"]
+		if !ok {
+			t.Fatalf("expected SANDMAN_RUN_DIR in agent env, got keys: %v", keysOf(ar.env))
+		}
+		if got != runDir {
+			t.Errorf("SANDMAN_RUN_DIR = %q, want %q (req.RunDir)", got, runDir)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for AgentRun to be created")
+	}
 }
 
 func TestRunBatch_PromptOnlyReviewRunWithEmptyFocus(t *testing.T) {
