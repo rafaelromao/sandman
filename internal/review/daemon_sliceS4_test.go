@@ -545,7 +545,19 @@ func TestDaemon_S4_RehydratePost_StaleEntry_FallsThroughLaunch(t *testing.T) {
 		t.Fatalf("tick: %v", err)
 	}
 
-	// Wait for the launch goroutine to finish so RunBatch has fired.
+	// Wait for the launch goroutine to call RunBatch at least once.
+	// WaitForIdle checks slotHeldCount, but on macOS the slot is
+	// sometimes released before RunBatch fires (a known race in the
+	// S3-era launch goroutine). Polling runner.Calls() is more
+	// reliable for the Slice-E stale-entry fall-through contract.
+	runDeadline := time.Now().Add(10 * time.Second)
+	for runner.Calls() == 0 && time.Now().Before(runDeadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	// Then wait for the slot to release (so the goroutine has
+	// finished MarkSeen too — Slice-E asserts only on RunBatch
+	// firing, but the Slot/S3 happy-path follow-up assertions need
+	// the post step to settle).
 	idleCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := d.WaitForIdle(idleCtx); err != nil {
