@@ -100,9 +100,9 @@ func TestAGENTS_SkillContentConstraintsSectionHasExpectedClauses(t *testing.T) {
 			meaning: "section names example internal Go identifiers (e.g., processPR) to make the prohibition unambiguous",
 		},
 		{
-			name:    "internals prohibition names SelfPostStore",
-			substr:  "SelfPostStore",
-			meaning: "section names SelfPostStore as an example internal Go identifier",
+			name:    "internals prohibition names launchReview",
+			substr:  "launchReview",
+			meaning: "section names launchReview as an example internal Go identifier (issue #1848 swap; SelfPostStore is gone)",
 		},
 		{
 			name:    "tracker prohibition names issue numbers",
