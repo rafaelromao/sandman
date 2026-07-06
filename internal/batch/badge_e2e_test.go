@@ -57,32 +57,52 @@ func badgeE2EConfig() *config.Config {
 // after the fake runnable returns.
 type badgeE2EIssueGitHubClient struct{}
 
-func (badgeE2EIssueGitHubClient) FetchIssue(num int) (*github.Issue, error) {
+func (badgeE2EIssueGitHubClient) FetchIssue(_ context.Context, num int) (*github.Issue, error) {
 	return &github.Issue{Number: num, Title: "Fix bug"}, nil
 }
-func (badgeE2EIssueGitHubClient) FetchIssueDependencies(_ int) ([]int, error) { return nil, nil }
-func (badgeE2EIssueGitHubClient) FetchPR(_ int) (*github.PR, error) {
+func (badgeE2EIssueGitHubClient) FetchIssueDependencies(_ context.Context, _ int) ([]int, error) {
+	return nil, nil
+}
+func (badgeE2EIssueGitHubClient) FetchPR(_ context.Context, _ int) (*github.PR, error) {
 	return &github.PR{Number: 1, State: "closed", Merged: true}, nil
 }
-func (badgeE2EIssueGitHubClient) SearchIssues(_ string) ([]github.Issue, error) {
+func (badgeE2EIssueGitHubClient) SearchIssues(_ context.Context, _ string) ([]github.Issue, error) {
 	return nil, nil
 }
-func (badgeE2EIssueGitHubClient) FindPRByBranch(branch string) (*github.PR, error) {
+func (badgeE2EIssueGitHubClient) FindPRByBranch(_ context.Context, branch string) (*github.PR, error) {
 	return &github.PR{Number: 1, State: "closed", Merged: true, HeadRefName: branch}, nil
 }
-func (badgeE2EIssueGitHubClient) ListOpenPRs() ([]github.PR, error)                { return nil, nil }
-func (badgeE2EIssueGitHubClient) ListPRComments(_ int) ([]github.PRComment, error) { return nil, nil }
-func (badgeE2EIssueGitHubClient) ListIssueComments(_ int) ([]github.IssueComment, error) {
+func (badgeE2EIssueGitHubClient) ListOpenPRs(_ context.Context) ([]github.PR, error) { return nil, nil }
+func (badgeE2EIssueGitHubClient) ListPRComments(_ context.Context, _ int) ([]github.PRComment, error) {
 	return nil, nil
 }
-func (badgeE2EIssueGitHubClient) RepoName() (string, error)                        { return "owner/repo", nil }
-func (badgeE2EIssueGitHubClient) EditComment(_, _ string) error                    { return nil }
-func (badgeE2EIssueGitHubClient) EditPRBody(_ int, _ string) error                 { return nil }
-func (badgeE2EIssueGitHubClient) AddCommentReaction(_, _ string) (string, error)   { return "", nil }
-func (badgeE2EIssueGitHubClient) AddIssueReaction(_ int, _ string) (string, error) { return "", nil }
-func (badgeE2EIssueGitHubClient) RemoveCommentReaction(_, _ string) error          { return nil }
-func (badgeE2EIssueGitHubClient) RemoveIssueReaction(_ int, _ string) error        { return nil }
-func (badgeE2EIssueGitHubClient) CloseIssue(_ int, _ string) error                 { return nil }
+func (badgeE2EIssueGitHubClient) ListIssueComments(_ context.Context, _ int) ([]github.IssueComment, error) {
+	return nil, nil
+}
+func (badgeE2EIssueGitHubClient) RepoName(_ context.Context) (string, error) {
+	return "owner/repo", nil
+}
+func (badgeE2EIssueGitHubClient) EditComment(_ context.Context, _, _ string) error {
+	return nil
+}
+func (badgeE2EIssueGitHubClient) EditPRBody(_ context.Context, _ int, _ string) error {
+	return nil
+}
+func (badgeE2EIssueGitHubClient) AddCommentReaction(_ context.Context, _, _ string) (string, error) {
+	return "", nil
+}
+func (badgeE2EIssueGitHubClient) AddIssueReaction(_ context.Context, _ int, _ string) (string, error) {
+	return "", nil
+}
+func (badgeE2EIssueGitHubClient) RemoveCommentReaction(_ context.Context, _, _ string) error {
+	return nil
+}
+func (badgeE2EIssueGitHubClient) RemoveIssueReaction(_ context.Context, _ int, _ string) error {
+	return nil
+}
+func (badgeE2EIssueGitHubClient) CloseIssue(_ context.Context, _ int, _ string) error {
+	return nil
+}
 
 // badgeE2ENoopRenderer is a renderer that hands back the empty
 // prompt. It satisfies prompt.IssueRenderer so the orchestrator can
