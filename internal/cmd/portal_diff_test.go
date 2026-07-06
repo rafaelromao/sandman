@@ -5465,6 +5465,72 @@ console.log('PASS');
 	runPortalHTMLScript(t, js)
 }
 
+// --- Issue #1856: slice 3 — renderRunMeta line shape for parent with reviews ---
+
+// TestRenderRunMeta_ParentWithTwoReviewsPluralWording is AC 1 (plural):
+// the meta line for a visible parent row with reviewCount=2 and
+// reviewVerdict="Approved" must include "2 reviews - Approved" on the
+// counter line.
+func TestRenderRunMeta_ParentWithTwoReviewsPluralWording(t *testing.T) {
+	js := `const run = {
+  key: 'impl-1', runId: 'impl-1', batchKey: 'parent-batch',
+  kind: 'completed', status: 'success', reviewCount: 2, reviewVerdict: 'Approved',
+};
+const meta = helpers.renderRunMeta(run);
+if (meta.indexOf('2 reviews - Approved') < 0) throw new Error('expected "2 reviews - Approved" in meta, got ' + JSON.stringify(meta));
+console.log('PASS');
+`
+	runPortalHTMLScript(t, js)
+}
+
+// TestRenderRunMeta_ParentWithOneReviewSingularWording is AC 1 (singular):
+// the meta line for reviewCount=1 must use "1 review" (no plural 's').
+func TestRenderRunMeta_ParentWithOneReviewSingularWording(t *testing.T) {
+	js := `const run = {
+  key: 'impl-2', runId: 'impl-2', batchKey: 'parent-batch',
+  kind: 'completed', status: 'success', reviewCount: 1, reviewVerdict: 'Approved',
+};
+const meta = helpers.renderRunMeta(run);
+if (meta.indexOf('1 review - Approved') < 0) throw new Error('expected "1 review - Approved" in meta, got ' + JSON.stringify(meta));
+if (meta.indexOf('1 reviews') >= 0) throw new Error('expected no plural "1 reviews" in meta, got ' + JSON.stringify(meta));
+console.log('PASS');
+`
+	runPortalHTMLScript(t, js)
+}
+
+// TestRenderRunMeta_ParentWithTwoReviewsNoVerdictSuppressesDash is AC 2
+// (no marker recoverable): the meta line for reviewCount=2 with empty
+// reviewVerdict must render "2 reviews" with no trailing dash.
+func TestRenderRunMeta_ParentWithTwoReviewsNoVerdictSuppressesDash(t *testing.T) {
+	js := `const run = {
+  key: 'impl-3', runId: 'impl-3', batchKey: 'parent-batch',
+  kind: 'completed', status: 'success', reviewCount: 2, reviewVerdict: '',
+};
+const meta = helpers.renderRunMeta(run);
+if (meta.indexOf('2 reviews -') >= 0) throw new Error('expected no trailing dash in meta when reviewVerdict empty, got ' + JSON.stringify(meta));
+if (meta.indexOf('2 reviews') < 0) throw new Error('expected "2 reviews" in meta, got ' + JSON.stringify(meta));
+console.log('PASS');
+`
+	runPortalHTMLScript(t, js)
+}
+
+// TestRenderRunMeta_ParentWithoutReviewCountUnchanged pins the no-reviews
+// steady state: a parent row without reviewCount must render only
+// "Batch: <key>" and "Run: <runId>" — no counter line.
+func TestRenderRunMeta_ParentWithoutReviewCountUnchanged(t *testing.T) {
+	js := `const run = {
+  key: 'impl-4', runId: 'impl-4', batchKey: 'parent-batch',
+  kind: 'completed', status: 'success',
+};
+const meta = helpers.renderRunMeta(run);
+if (meta.indexOf('Batch: parent-batch') < 0) throw new Error('expected Batch: line in meta, got ' + JSON.stringify(meta));
+if (meta.indexOf('Run: impl-4') < 0) throw new Error('expected Run: line in meta, got ' + JSON.stringify(meta));
+if (meta.indexOf('review') >= 0) throw new Error('expected no "review" text in meta for no-review parent, got ' + JSON.stringify(meta));
+console.log('PASS');
+`
+	runPortalHTMLScript(t, js)
+}
+
 func TestPortalDiffBuildEventsContent_RenderedEventCountAttribute(t *testing.T) {
 	js := `const body = makeMockBody();
 const events = [
