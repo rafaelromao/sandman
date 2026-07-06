@@ -105,7 +105,7 @@ func runPRFlowProviderCases(t *testing.T, fn func(t *testing.T, tc prFlowProvide
 
 func TestPRFlow_PodmanSandboxBinaryCommitsAndPushes(t *testing.T) {
 	// CI: JUSTIFIED — calls requirePodmanE2E (real container build). The agent
-	// is faked via prFlowBinaryFakeRunner so the test no longer drives the
+	// is faked via prFlowSandboxFakeRunner so the test no longer drives the
 	// real opencode agent against the LLM (issue #1797).
 	if os.Getenv("CI") != "" {
 		t.Skip("skip e2e in CI")
@@ -136,13 +136,14 @@ func TestPRFlow_PodmanSandboxBinaryCommitsAndPushes(t *testing.T) {
 		writeFakeGHShim(t, ghShimDir)
 		prependPath(t, ghShimDir)
 
-		runRootCommand(t, prFlowDeps(repoDir), "init", "--agent", tc.name)
+		initDeps := prFlowDeps(repoDir)
+		runRootCommand(t, initDeps, "init", "--agent", tc.name)
 		for _, rel := range []string{".sandman/config.yaml", ".sandman/Dockerfile", ".sandman/prompt.md"} {
 			if _, err := os.Stat(filepath.Join(repoDir, rel)); err != nil {
 				t.Fatalf("expected scaffolded %s: %v", rel, err)
 			}
 		}
-		runRootCommand(t, prFlowDeps(repoDir), "config", "set", "review_command", "/oc review")
+		runRootCommand(t, initDeps, "config", "set", "review_command", "/oc review")
 		baselineHash := strings.TrimSpace(runGit(t, repoDir, "rev-parse", "HEAD"))
 
 		buildCmd := exec.Command("podman", "build", "-t", "sandman-e2e-model-detect", "-f",
@@ -158,7 +159,7 @@ func TestPRFlow_PodmanSandboxBinaryCommitsAndPushes(t *testing.T) {
 		customizePRFlowAgent(t, repoDir, tc, prFlowAgentOptions{container: true})
 		writePRFlowPrompt(t, repoDir)
 
-		deps := prFlowBinaryDeps(repoDir, prFlowBranch, prFlowIssueNumber, ghShimDir)
+		deps := prFlowSandboxDeps(repoDir, prFlowBranch, tc.name, prFlowIssueNumber)
 		out, err := runRootCommand(t, deps, "run", "--agent", tc.name, "--sandbox", "podman", strconv.Itoa(prFlowIssueNumber))
 		t.Logf("sandman run returned err=%v output=%s", err, out)
 
@@ -472,129 +473,47 @@ func prFlowDeps(repoDir string) Dependencies {
 	}
 }
 
-// prFlowBinaryDeps returns Dependencies whose BatchRunner is a fake that
+// prFlowSandboxDeps returns Dependencies whose BatchRunner is a fake that
 // drives the same observable side-effects the test asserts on (worktree +
 // commit + push + pr create + log file + events) without ever spawning the
 // real opencode agent against the LLM. This is the seam that fixes
 // https://github.com/rafaelromao/sandman/issues/1797 — the prior wiring
 // drove the real opencode agent inside a real podman container, which
 // never made progress and caused the test to hang past the 30m test
-// timeout.
-func prFlowBinaryDeps(repoDir, branch string, issue int, ghShimDir string) Dependencies {
+// timeout. The agent step is the only faked piece; commit, push, pr create,
+// the per-issue log, and the run events all happen for real on disk.
+func prFlowSandboxDeps(repoDir, branch string, agentName string, issue int) Dependencies {
 	base := prFlowDeps(repoDir)
-	gh := &prFlowFakeGitHub{
-		repoName: "rafaelromao/sandman",
-		issue:    &github.Issue{Number: issue, Title: "Fix failing test", Body: "Make Double(2) return 4."},
+	base.GitHubClient = &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			issue: {Number: issue, State: "open", Title: "Fix failing test"},
+		},
 	}
-	base.GitHubClient = gh
-	base.BatchRunner = &prFlowBinaryFakeRunner{
+	base.BatchRunner = &prFlowSandboxFakeRunner{
 		repoDir:   repoDir,
 		branch:    branch,
+		agentName: agentName,
 		issue:     issue,
-		ghShimDir: ghShimDir,
 		eventLog:  base.EventLog,
-		gh:        gh,
 	}
 	return base
 }
 
-// prFlowFakeGitHub is the minimal github.Client needed by prFlowBinaryFakeRunner
-// and by the run command's filterClosedIssues pass.
-type prFlowFakeGitHub struct {
-	repoName string
-	issue    *github.Issue
-}
-
-func (g *prFlowFakeGitHub) FetchIssue(_ context.Context, number int) (*github.Issue, error) {
-	if g.issue != nil && g.issue.Number == number {
-		return g.issue, nil
-	}
-	return &github.Issue{Number: number, Title: "Fix failing test", Body: "Make Double(2) return 4."}, nil
-}
-
-func (g *prFlowFakeGitHub) FetchIssueDependencies(_ context.Context, _ int) ([]int, error) {
-	return nil, nil
-}
-
-func (g *prFlowFakeGitHub) FetchPR(_ context.Context, number int) (*github.PR, error) {
-	return &github.PR{Number: number, State: "open"}, nil
-}
-
-func (g *prFlowFakeGitHub) SearchIssues(_ context.Context, _ string) ([]github.Issue, error) {
-	if g.issue == nil {
-		return nil, nil
-	}
-	return []github.Issue{*g.issue}, nil
-}
-
-func (g *prFlowFakeGitHub) FindPRByBranch(_ context.Context, _ string) (*github.PR, error) {
-	return nil, nil
-}
-
-func (g *prFlowFakeGitHub) ListOpenPRs(_ context.Context) ([]github.PR, error) {
-	return nil, nil
-}
-
-func (g *prFlowFakeGitHub) ListPRComments(_ context.Context, _ int) ([]github.PRComment, error) {
-	return nil, nil
-}
-
-func (g *prFlowFakeGitHub) ListIssueComments(_ context.Context, _ int) ([]github.IssueComment, error) {
-	return nil, nil
-}
-
-func (g *prFlowFakeGitHub) RepoName(_ context.Context) (string, error) {
-	return g.repoName, nil
-}
-
-func (g *prFlowFakeGitHub) EditComment(_ context.Context, _, _ string) error {
-	return nil
-}
-
-func (g *prFlowFakeGitHub) EditPRBody(_ context.Context, _ int, _ string) error {
-	return nil
-}
-
-func (g *prFlowFakeGitHub) AddCommentReaction(_ context.Context, _, _ string) (string, error) {
-	return "", nil
-}
-
-func (g *prFlowFakeGitHub) AddIssueReaction(_ context.Context, _ int, _ string) (string, error) {
-	return "", nil
-}
-
-func (g *prFlowFakeGitHub) RemoveCommentReaction(_ context.Context, _, _ string) error {
-	return nil
-}
-
-func (g *prFlowFakeGitHub) RemoveIssueReaction(_ context.Context, _ int, _ string) error {
-	return nil
-}
-
-func (g *prFlowFakeGitHub) CloseIssue(_ context.Context, _ int, _ string) error {
-	return nil
-}
-
-// prFlowBinaryFakeRunner is the batch.Runner used by
+// prFlowSandboxFakeRunner is the batch.Runner used by
 // TestPRFlow_PodmanSandboxBinaryCommitsAndPushes. It bypasses the real
 // orchestrator and drives the end-to-end PR-flow observable side-effects
 // (worktree + commit + push + gh pr create + per-issue log + run events)
 // in-process, so the test verifies the full PR-flow path without ever
-// shelling out to a real opencode agent. The agent step is the only
-// faked piece — commit, push, pr create, the per-issue log, and the
-// run events all happen for real on disk, which preserves the test's
-// stated intent (end-to-end PR-flow path including commit + push
-// semantics).
-type prFlowBinaryFakeRunner struct {
+// shelling out to a real opencode agent.
+type prFlowSandboxFakeRunner struct {
 	repoDir   string
 	branch    string
+	agentName string
 	issue     int
-	ghShimDir string
 	eventLog  events.EventLog
-	gh        *prFlowFakeGitHub
 }
 
-func (f *prFlowBinaryFakeRunner) RunBatch(_ context.Context, _ batch.Request) (*batch.Result, error) {
+func (f *prFlowSandboxFakeRunner) RunBatch(_ context.Context, _ batch.Request) (*batch.Result, error) {
 	now := time.Now().UTC()
 
 	if f.eventLog != nil {
@@ -604,7 +523,7 @@ func (f *prFlowBinaryFakeRunner) RunBatch(_ context.Context, _ batch.Request) (*
 			Issue:     f.issue,
 			Payload: map[string]any{
 				"branch":      f.branch,
-				"agent":       "opencode",
+				"agent":       f.agentName,
 				"sandbox":     "podman",
 				"issue":       f.issue,
 				"issue_title": "Fix failing test",
@@ -656,22 +575,18 @@ func Double(n int) int {
 		"--body", "Fixes #1",
 	)
 	prCmd.Dir = worktreeDir
-	prOut, err := prCmd.CombinedOutput()
-	if err != nil {
-		return nil, fmt.Errorf("gh pr create: %w: %s", err, prOut)
+	if out, err := prCmd.CombinedOutput(); err != nil {
+		return nil, fmt.Errorf("gh pr create: %w: %s", err, out)
 	}
-	prURL := strings.TrimSpace(string(prOut))
 
 	logsDir := filepath.Join(f.repoDir, ".sandman", "logs")
 	if err := os.MkdirAll(logsDir, 0755); err != nil {
 		return nil, fmt.Errorf("create logs dir: %w", err)
 	}
 	logPath := filepath.Join(logsDir, fmt.Sprintf("%d.log", f.issue))
-	logLine := fmt.Sprintf("https://example.test/example/sandbox/pull/1\n")
-	if err := os.WriteFile(logPath, []byte(logLine), 0644); err != nil {
+	if err := os.WriteFile(logPath, []byte("https://example.test/example/sandbox/pull/1\n"), 0644); err != nil {
 		return nil, fmt.Errorf("write log: %w", err)
 	}
-	_ = prURL
 
 	if f.eventLog != nil {
 		_ = f.eventLog.Log(events.Event{
