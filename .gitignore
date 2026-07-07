@@ -18,10 +18,8 @@ go.work
 
 # Sandman runtime state
 .sandman/
-# Per-checkout control file written by the badge sidecar when the Built
-# with Sandman badge PR is created. .sandman/ already covers it; the
-# explicit line keeps the intent obvious for readers scanning .gitignore.
-.sandman/.built_with_sandman
+# The .sandman/ rule above covers everything under state/ (including
+# state/.built_with_sandman and state/<N>.head_sha / state/<N>.addressed_comments).
 
 # Environment files
 .env
@@ -60,7 +58,7 @@ TEST_REPORT.md
 .opencode/
 
 # Review state files
-*.addressed_comments
+state/*.addressed_comments
 
 # OS
 .DS_Store

@@ -131,12 +131,12 @@ func TestPRReviewSkill_BehavioralSmoke(t *testing.T) {
 		},
 		{
 			name:    "head-SHA tracking",
-			substr:  ".sandman/.<N>.head_sha",
+			substr:  ".sandman/state/<N>.head_sha",
 			message: "head-SHA tracking path must remain",
 		},
 		{
 			name:    "addressed-comments tracking",
-			substr:  ".sandman/.<N>.addressed_comments",
+			substr:  ".sandman/state/<N>.addressed_comments",
 			message: "addressed-comments tracking path must remain",
 		},
 		{
