@@ -108,6 +108,40 @@ The legacy `BatchManifest.RunID` field is renamed to `BatchId`. The field semant
 
 Folder rename always happens before the index update during archive. If the index write fails, the inconsistency is detectable on next read.
 
+### Row-level action resolution
+
+Row-level actions (archive, abort, log download) MUST resolve by per-row RunID, not by the public BatchId. The portal UI sends the per-row RunID because that is the id the orchestrator emits in `run.started` and stores in `run.json.RunID` — the per-row RunID is the id the operator sees on the row, not the batch folder basename they never see.
+
+| Action | Input | Resolver | Per-run artifact |
+|--------|-------|----------|------------------|
+| Archive | `runId` (per-row RunID) | `resolveBatchEntryForRunID` → index entry | `archive/<batch-entry-id>/runs/<perRowRunID>/` |
+| Abort | `runKey` (per-row RunID) | `portalRunForKey` → `portalRun.RunID` → `<batchDir>/runs/<perRowRunID>/run.sock` | `<batchDir>/runs/<perRowRunID>/run.sock` |
+| Log download | `runKey` (per-row RunID) | keyed row lookup → row log path | `<batchDir>/runs/<perRowRunID>/run.log` |
+
+The resolver is lenient: it accepts either the per-row RunID OR the batch entry id. The fast path is `idx.Resolve(runID)`, which matches the batch entry id directly; the fallback scans each entry's `runs/<runID>/run.json` on disk and returns the first entry that hosts the per-row manifest. The fallback is what the portal UI relies on for multi-issue batches and reviews with linked issues, where the per-row RunID is distinct from the batch entry id.
+
+The per-run folder is the canonical target for every row action. The archive directory is named after the batch entry id (the public BatchId), so the on-disk tree after archive mirrors the active tree 1:1 (`archive/<batch-entry-id>/runs/<perRowRunID>/run.json` corresponds to `batches/<batch-entry-id>/runs/<perRowRunID>/run.json`). The success response surfaces the resolved batch entry id even when the request body used the per-row form, so the portal UI sees a canonical id regardless of which form it sent.
+
+#### Identity table: when per-row RunID equals the public BatchId
+
+The slice-1 contract (manifest.BatchId == public BatchId == batch folder basename) deliberately makes the per-row RunID and the batch entry id equal for some batch kinds and deliberately distinct for others. The row-action resolver handles both forms transparently; the identity table is the public specification of which is which.
+
+| Batch kind | Public BatchId (== batch folder basename) | Per-row RunID (== `run.json.RunID`) | Equal? |
+|------------|-------------------------------------------|-------------------------------------|--------|
+| Issue single | `<sid>-<ts>-<num>` | `<sid>-<ts>-<num>` | yes (no `+N` suffix on single-issue) |
+| Issue multi (canonical row = first issue) | `<sid>-<ts>-<firstIssue>+<N>` | `<sid>-<ts>-<firstIssue>` | no (carries `+<N>`) |
+| Review (orphan) | `<sid>-<ts>-PR<pr>` | `<sid>-<ts>-PR<pr>` | yes |
+| Review (linked to issue) | `<sid>-<ts>-<linkedIssue>-PR<pr>` | `<sid>-<ts>-<linkedIssue>-PR<pr>` | yes |
+| Auto-select | `<sid>-<ts>-auto-<N>` | `<sid>-<ts>-auto-<N>` | yes |
+| Prompt-only (no user id) | `<sid>-<ts>-prompt` | `<sid>-<ts>-prompt` | yes |
+| Prompt-only (with user id) | `<sid>-<ts>-prompt-<userid>` | `<sid>-<ts>-prompt-<userid>` | yes |
+
+The "no" row in the table is the only case where the row-action resolver MUST exercise its fallback path. The fast path (`idx.Resolve(runID)`) succeeds on every kind except multi-issue, and even there the fallback is automatic — the resolver's contract is "accept either form, return the right batch entry." Operators do not need to know which kind they are working against; the resolver hides that detail.
+
+Multi-issue batch row actions target the selected row, not a sibling row. Each per-row RunID is a distinct string, and the resolver's on-disk scan picks the entry whose `runs/<runID>/run.json` exists; two sibling rows in the same batch produce two distinct `runs/<runID>/run.json` files, so the resolver always returns the entry that owns the selected row. The archive endpoint then walks the per-run folder, the abort endpoint dials `<batchDir>/runs/<perRowRunID>/run.sock`, and the log endpoint serves `<batchDir>/runs/<perRowRunID>/run.log` — three independent code paths that all key on the same per-row RunID.
+
+Error semantics are preserved: archive returns 404 when no entry hosts the per-row manifest, 409 when the resolved batch is not active or the daemon socket is still live, and 500 only on filesystem failure. Abort returns 404 when the per-run socket does not exist, 409 when the daemon is no longer live or the orchestrator rejects the abort, and 502 only on dial / read / write failure. The 404/409 paths are observable per kind and per row, not collapsed to a single batch-level status.
+
 ### Index writer
 
 One `batches.json` document. Atomic write: write to `batches.json.tmp`, then `os.Rename` over `batches.json`. Keep `batches.json.bak` on each successful write for recovery.
