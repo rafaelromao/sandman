@@ -34,7 +34,8 @@ The shortid is placed first to maximise collision resistance within the same tim
 |------|----------|
 | Regular issue (single) | `<shortid>-<ts>-<issue>` (no +N suffix) |
 | Regular issue (multi)  | `<shortid>-<ts>-<firstIssueNum>+<additionalCount>` |
-| Review | `<shortid>-<ts>-PR<prNum>` |
+| Review (without linked issue) | `<shortid>-<ts>-PR<prNum>` |
+| Review (with linked issue)    | `<shortid>-<ts>-<linkedIssueNum>-PR<prNum>` |
 | Auto-select | `<shortid>-<ts>-auto-<N>` |
 | Prompt-only (with user id) | `<shortid>-<ts>-<userid>` |
 | Prompt-only (without user id) | `<shortid>-<ts>` |
@@ -50,6 +51,8 @@ Per issue #1917 (slice 1 of #1916), the issue batch template uses **additional c
 The omitted suffix on single-issue batches keeps the public BatchId from carrying redundant information; `+<additionalCount>` makes the suffix meaningful (it counts the issues *beyond* the first). The per-row RunID still uses `<sid>-<ts>-<issueNum>` (no suffix), so the per-row identity is unchanged.
 
 The public BatchId (== batch folder basename) MUST agree with `batch.json.batchId`, `run.json.BatchID`, and the event payload `batch_id` field. The portal Batch label and Details tab render the public BatchId.
+
+Per issue #1919 (slice 3 of #1916), the review RunDir naming and the review per-row RunID template agree exactly: the review RunDir is whichever of the two review templates above (linked vs. orphan) the PR's `LinkedIssueNumber()` resolves to. The on-disk batch directory name therefore equals the per-row RunID for both orphan and linked reviews, the per-row run folder is `<perRowRunID>/runs/<perRowRunID>/`, and the event payload's `batch_id` matches `run.json.BatchID` and the folder basename for both flavours. Review rows whose `LinkedIssueNumber()` resolves group under their linked issue row in the portal; orphan reviews stay as standalone "Review of PR <n>" rows.
 
 ### Per-row RunID templates
 

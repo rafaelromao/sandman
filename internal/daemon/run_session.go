@@ -109,11 +109,12 @@ func (s *RunSession) Broadcaster() *Broadcaster {
 // batch folder basename). This supersedes the earlier ADR-0036
 // contract (manifest.BatchId == per-row RunID).
 //
-// The public BatchId rules (per #1917):
+// The public BatchId rules (per #1917, refined for review by #1919 slice 3):
 //
 //   - Issue single:    "<sid>-<ts>-<num>"                    (no +N suffix)
 //   - Issue multi:     "<sid>-<ts>-<firstIssue>+<additionalCount>"
-//   - Review:          "<sid>-<ts>-PR<pr>" or "<sid>-<ts>-<issue>-PR<pr>"
+//   - Review (orphan):  "<sid>-<ts>-PR<pr>"
+//   - Review (linked):  "<sid>-<ts>-<linkedIssue>-PR<pr>"
 //   - Auto-select:     "<sid>-<ts>-auto-<N>"
 //   - Prompt-only:     "<sid>-<ts>-prompt[-<userid>]"
 //

@@ -1437,3 +1437,179 @@ func badgeAssertion(issue int) string {
 	return `if (visible.status !== 'success') throw new Error('issue ` + strconv.Itoa(issue) + ` visible badge must be parent status (no live review, AC3), got ' + JSON.stringify(visible.status));
 `
 }
+
+// TestPortal_ReviewGrouping_OrphanReviewStaysOrphan pins the slice-3
+// acceptance criterion: an orphan review (no linked issue) must
+// surface as a standalone "Review of PR <n>" row, NOT grouped under
+// any issue. The row's GroupedReview flag is false and IssueNumber
+// is 0. Without this invariant the portal would either drop the row
+// in dedupRuns or falsely attach it to an unrelated issue.
+func TestPortal_ReviewGrouping_OrphanReviewStaysOrphan(t *testing.T) {
+	repoRoot, err := os.MkdirTemp("/tmp", "porph")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(repoRoot) })
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Per slice 3: batch_id == per-row RunID. For an orphan review
+	// the per-row RunID is `<sid>-<ts>-PR<pr>`, so batch_id is the
+	// same value. No `issue_number` in the payload (orphan).
+	const (
+		ts      = "260618113825"
+		shortid = "abcd"
+		rowID   = "abcd-260618113825-PR17"
+	)
+	startedAt := time.Now().Add(-3 * time.Minute)
+	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
+		{Type: "run.started", Timestamp: startedAt, RunID: rowID, Payload: map[string]any{"review": true, "pr_number": 17, "branch": "sandman/review-PR17", "batch_id": rowID}},
+		{Type: "run.finished", Timestamp: startedAt.Add(1 * time.Minute), RunID: rowID, Payload: map[string]any{"status": "success", "review": true, "pr_number": 17, "batch_id": rowID}},
+	})
+
+	runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")})
+	if err != nil {
+		t.Fatalf("compute: %v", err)
+	}
+	if len(runs) != 1 {
+		t.Fatalf("expected 1 row, got %d: %#v", len(runs), runs)
+	}
+	row := runs[0]
+	if row.RunID != rowID {
+		t.Errorf("RunID=%q, want %q", row.RunID, rowID)
+	}
+	if row.IssueNumber != 0 {
+		t.Errorf("IssueNumber=%d, want 0 (orphan review without linked issue)", row.IssueNumber)
+	}
+	if row.GroupedReview {
+		t.Errorf("GroupedReview=true, want false (orphan review must not group under an issue)")
+	}
+	if !strings.HasPrefix(row.IssueLabel, "Review of PR") {
+		t.Errorf("IssueLabel=%q, want prefix %q (ADR-0029 orphan review label)", row.IssueLabel, "Review of PR")
+	}
+}
+
+// TestPortal_ReviewGrouping_LinkedReviewGroupsUnderIssue pins the
+// slice-3 acceptance criterion: a linked review (PR body carries
+// "Fixes #<n>") must surface as a child of the linked issue, with
+// GroupedReview=true and IssueNumber equal to the linked issue. The
+// per-row RunID carries the linked issue in the
+// `<sid>-<ts>-<issue>-PR<pr>` shape and reviewIssueNumberFromIdentity
+// recovers the issue from the per-row identity (both runID and
+// batch_id agree post-slice-3).
+func TestPortal_ReviewGrouping_LinkedReviewGroupsUnderIssue(t *testing.T) {
+	repoRoot, err := os.MkdirTemp("/tmp", "plnk")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(repoRoot) })
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	const (
+		linkedIssue = 1066
+		ts          = "260618113825"
+		shortid     = "abcd"
+		rowID       = "abcd-260618113825-1066-PR42"
+		parentRowID = "impl-1066"
+	)
+	startedAt := time.Now().Add(-10 * time.Minute)
+	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
+		{Type: "run.started", Timestamp: startedAt, RunID: parentRowID, Issue: linkedIssue, Payload: map[string]any{"branch": "sandman/1066-fix", "issue_number": linkedIssue, "batch_id": parentRowID}},
+		{Type: "run.finished", Timestamp: startedAt.Add(8 * time.Minute), RunID: parentRowID, Issue: linkedIssue, Payload: map[string]any{"status": "success", "branch": "sandman/1066-fix", "issue_number": linkedIssue, "batch_id": parentRowID}},
+		{Type: "run.started", Timestamp: startedAt.Add(2 * time.Minute), RunID: rowID, Payload: map[string]any{"branch": "sandman/review-PR42", "review": true, "pr_number": 42, "batch_id": rowID}},
+		{Type: "run.finished", Timestamp: startedAt.Add(7 * time.Minute), RunID: rowID, Payload: map[string]any{"status": "success", "review": true, "pr_number": 42, "batch_id": rowID}},
+	})
+
+	runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")})
+	if err != nil {
+		t.Fatalf("compute: %v", err)
+	}
+
+	var parent, review *portalRun
+	for i := range runs {
+		switch {
+		case runs[i].RunID == parentRowID:
+			parent = &runs[i]
+		case runs[i].RunID == rowID:
+			review = &runs[i]
+		}
+	}
+	if parent == nil {
+		t.Fatalf("expected parent impl row %q, got %#v", parentRowID, runs)
+	}
+	if review == nil {
+		t.Fatalf("expected review row %q, got %#v", rowID, runs)
+	}
+	if review.IssueNumber != linkedIssue {
+		t.Errorf("review IssueNumber=%d, want %d (linked issue recovered from per-row RunID)", review.IssueNumber, linkedIssue)
+	}
+	if !review.GroupedReview {
+		t.Errorf("review GroupedReview=false, want true (linked review must group under its issue)")
+	}
+	if parent.ReviewCount == 0 {
+		t.Errorf("parent ReviewCount=0, want >=1 (linked review must be counted under parent)")
+	}
+}
+
+// TestPortal_ReviewLogResolution_TerminalPrefersSavedLog pins the
+// slice-3 invariant that terminal review rows still prefer the saved
+// run.log over the live batch socket output. The on-disk
+// `<perRowRunID>/runs/<perRowRunID>/run.log` is the authoritative
+// record of a finished AgentRun; the live socket may now be
+// broadcasting a different run's content.
+func TestPortal_ReviewLogResolution_TerminalPrefersSavedLog(t *testing.T) {
+	repoRoot, err := os.MkdirTemp("/tmp", "plog")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(repoRoot) })
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	const (
+		ts      = "260618113825"
+		shortid = "abcd"
+		rowID   = "abcd-260618113825-PR42"
+	)
+	startedAt := time.Now().Add(-5 * time.Minute)
+	finishedAt := startedAt.Add(2 * time.Minute)
+	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
+		{Type: "run.started", Timestamp: startedAt, RunID: rowID, Payload: map[string]any{"review": true, "pr_number": 42, "branch": "sandman/review-PR42", "batch_id": rowID}},
+		{Type: "run.finished", Timestamp: finishedAt, RunID: rowID, Payload: map[string]any{"status": "success", "review": true, "pr_number": 42, "batch_id": rowID}},
+	})
+
+	// Write the saved per-row run.log at the canonical
+	// <perRowRunID>/runs/<perRowRunID>/run.log path.
+	layout := paths.NewLayout(nil, repoRoot)
+	runDir := filepath.Join(layout.BatchesDir, rowID, "runs", rowID)
+	if err := os.MkdirAll(runDir, 0755); err != nil {
+		t.Fatalf("mkdir run dir: %v", err)
+	}
+	savedLog := "[" + rowID + "] 10:00:00 ## Decision\n[" + rowID + "] 10:00:30 **APPROVED**\n"
+	if err := os.WriteFile(filepath.Join(runDir, "run.log"), []byte(savedLog), 0644); err != nil {
+		t.Fatalf("write saved run.log: %v", err)
+	}
+
+	runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")})
+	if err != nil {
+		t.Fatalf("compute: %v", err)
+	}
+	if len(runs) != 1 {
+		t.Fatalf("expected 1 row, got %d: %#v", len(runs), runs)
+	}
+	row := runs[0]
+	if row.Log == "" {
+		t.Fatal("expected non-empty Log on terminal review row")
+	}
+	if !strings.Contains(row.Log, "APPROVED") {
+		t.Errorf("expected saved log content (APPROVED marker) on terminal review row, got %q", row.Log)
+	}
+	wantLogPath := filepath.Join(runDir, "run.log")
+	if row.LogPath != wantLogPath {
+		t.Errorf("LogPath=%q, want %q (per-row saved log path)", row.LogPath, wantLogPath)
+	}
+}
