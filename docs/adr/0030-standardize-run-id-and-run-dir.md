@@ -42,13 +42,13 @@ The shortid is placed first to maximise collision resistance within the same tim
 
 `<N>` is the count (number of issues in a batch, number of candidates in auto-select). `firstIssueNum` is the first issue number for regular issues.
 
-Per issue #1917 (slice 1 of #1916), the issue batch template uses **additional count** (not total count):
+Per issue #1917 (slice 1 of #1916), the issue batch template uses **additional issue count beyond the first** (not total count):
 
 - Single issue (`n==1`): `<sid>-<ts>-<num>` (no `+N` suffix).
 - Two issues (`n==2`): `<sid>-<ts>-<firstIssue>+1`.
 - Nine issues (`n==9`): `<sid>-<ts>-<firstIssue>+8`.
 
-The omitted suffix on single-issue batches keeps the public BatchId from carrying redundant information; `+<additionalCount>` makes the suffix meaningful (it counts the issues *beyond* the first). The per-row RunID still uses `<sid>-<ts>-<issueNum>` (no suffix), so the per-row identity is unchanged.
+The `+N` suffix on multi-issue batches therefore means **additional issue count beyond the first** — so `n=2` carries `+1` (one issue beyond the first) and `n=9` carries `+8` (eight issues beyond the first). Single-issue batches omit the plus suffix entirely; there is no `+0` because a single issue carries no additional count to advertise. The omitted suffix on single-issue batches keeps the public BatchId from carrying redundant information. The per-row RunID still uses `<sid>-<ts>-<issueNum>` (no suffix), so the per-row identity is unchanged.
 
 The public BatchId (== batch folder basename) MUST agree with `batch.json.batchId`, `run.json.BatchID`, and the event payload `batch_id` field. The portal Batch label and Details tab render the public BatchId.
 
@@ -67,16 +67,24 @@ Each AgentRun within a batch receives a unique RunID built from the batch's `<sh
 | Prompt-only (with user id) | `<shortid>-<ts>-prompt-<userid>` |
 | Prompt-only (without user id) | `<shortid>-<ts>-prompt` |
 
-### Prompt-only public BatchId == per-row RunID
+### Prompt BatchId and RunID use the `prompt` segment
 
-Per issue #1920 (slice 4 of parent PRD #1916), the prompt-only RunDir template and the per-row RunID template collapse to the same string:
+Per issue #1920 (slice 4 of parent PRD #1916), every prompt-only public BatchId and every prompt-only per-row RunID carries the literal `prompt` segment. The two templates are:
 
-- With userid: `<sid>-<ts>-prompt-<userid>`
-- Without userid: `<sid>-<ts>-prompt`
+- With `--run-id <userid>`: `<sid>-<ts>-prompt-<userid>` — the `<userid>` is appended after the literal `prompt-` prefix.
+- Without `--run-id`: `<sid>-<ts>-prompt` — the bare `prompt` segment terminates the id.
 
-The `prompt` literal is canonical and is hard-coded inside `runid.NewBatchID(KindPromptOnly, …)` and `runid.NewRunID(KindPromptOnly, …)` so callers cannot drift back to a bare `<userid>` shape. The public BatchId (== batch folder basename == `batch.json.batchId` == event payload `batch_id` == per-row RunID) is a single identifier for every prompt-only run.
+The literal `prompt` segment is hard-coded in both `runid.NewBatchID(KindPromptOnly, …)` and `runid.NewRunID(KindPromptOnly, …)` so callers cannot drift back to a bare `<userid>` shape. The segment is also the disambiguator between prompt-only batches and issue batches: a numeric `--run-id` (e.g. `--run-id 42`) would otherwise produce `<sid>-<ts>-42`, which is also a valid single-issue BatchId. The literal `prompt` is unparseable as an issue number, so the new shape is unambiguous on disk and `KindFromDirName` matches `-prompt` literally before the numeric-issue-tail check.
 
-The `prompt` segment also disambiguates prompt-only batches from issue batches. A `--run-id` that is purely numeric (e.g. `--run-id 42`) would otherwise produce `<sid>-<ts>-42`, which is also a valid single-issue BatchId. The literal `prompt` is unparseable as an issue number, so the new shape is unambiguous on disk. `KindFromDirName` matches the `-prompt` segment literally before the numeric-issue-tail check, so a numeric `--run-id` resolves to `KindPromptOnly` (not `KindIssue`).
+Because the prompt-only RunDir template and the per-row RunID template are the same string, the public BatchId (== batch folder basename == `batch.json.batchId` == event payload `batch_id` == per-row RunID) is a single identifier for every prompt-only run. There is no BatchId-vs-RunID split for prompt-only batches.
+
+### Linked review BatchId and RunID include the linked issue
+
+Per issue #1919 (slice 3 of parent PRD #1916), every review with a `LinkedIssueNumber()` carries the linked issue in both the public BatchId and the per-row RunID. The template is:
+
+- Review with linked issue: `<sid>-<ts>-<linkedIssueNum>-PR<prNum>` — e.g. `<sid>-<ts>-1551-PR42`.
+
+This applies to both the RunDir name (== public BatchId == batch folder basename) and the per-row RunID (== `run.json.runID` == event payload `run_id`). Orphan reviews (no `LinkedIssueNumber()`) stay PR-only and use `<sid>-<ts>-PR<prNum>` so they do not incorrectly group under any issue. See ADR-0032 §Row-level action resolution identity table for the full kind-by-kind breakdown.
 
 ### `--run-id` flag preserved
 
