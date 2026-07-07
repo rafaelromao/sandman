@@ -114,12 +114,32 @@ func TestDaemon_S4_PeekRegisteredEntry(t *testing.T) {
 }
 
 // decisionPathForTest returns the absolute path a Slice B / Slice C
-// fixture should write decision.md into. Mirrors the per-row folder
-// that seedPriorReviewEntry creates: <baseDir>/batches/<batch>/runs/<rowID>/.
-func decisionPathForTest(t *testing.T, baseDir, batchID string, prNumber int) string {
+// fixture should write decision.md into. Issue #1953: decision.md
+// lives in the per-row worktree (the agent's CWD), not the run
+// folder. The worktree path mirrors the daemon's
+// reviewWorktreePath: <baseDir>/.sandman/worktrees/sandman/review-<pr>-<commentID>/decision.md.
+// Tests using this helper must set cfg.WorktreeDir = ".sandman/worktrees"
+// on the daemon (default in cmd/review.go) before constructing it.
+func decisionPathForTest(t *testing.T, baseDir, _ string, prNumber int, commentID string) string {
 	t.Helper()
-	rowID := deriveReviewRowID(batchID, prNumber)
-	return filepath.Join(baseDir, "batches", batchID, "runs", rowID, "decision.md")
+	return filepath.Join(baseDir, ".sandman", "worktrees",
+		reviewBranchName(prNumber, commentID), "decision.md")
+}
+
+// writeDecisionForTest writes the decision.md file at the canonical
+// worktree path, creating the worktree directory first. Mirrors
+// what the agent does in production: write to the worktree CWD
+// (issue #1953).
+func writeDecisionForTest(t *testing.T, baseDir, batchID string, prNumber int, commentID, body string) string {
+	t.Helper()
+	path := decisionPathForTest(t, baseDir, batchID, prNumber, commentID)
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatalf("mkdir worktree: %v", err)
+	}
+	if err := os.WriteFile(path, []byte(body), 0644); err != nil {
+		t.Fatalf("write decision.md: %v", err)
+	}
+	return path
 }
 
 // runDirForTest returns the absolute row folder for a seeded entry.
@@ -147,25 +167,27 @@ func TestDaemon_S4_LoadPendingPosts_RegistersDecisionPending(t *testing.T) {
 	const batchID = "sip-batch-PR5050"
 	seedPriorReviewEntry(t, dir, batchID, prNumber, commentID, "pending")
 
-	decisionPath := decisionPathForTest(t, dir, batchID, prNumber)
 	body := "## Summary\n## Decision\nthis is the unposted body.\n"
-	if err := os.WriteFile(decisionPath, []byte(body), 0644); err != nil {
-		t.Fatalf("write decision.md: %v", err)
-	}
+	writeDecisionForTest(t, dir, batchID, prNumber, commentID, body)
 
 	d := New(dir, &fakeGH{}, &prompt.Engine{}, &capturedRequest{}, &config.Config{
 		DefaultReviewAgent: "opencode",
 		DefaultReviewModel: "opencode/foo",
+		WorktreeDir:        ".sandman/worktrees",
 	}, &lockedBuffer{}, 0, false, nil)
 
 	entry, ok := d.peekPendingPost(prNumber, commentID)
 	if !ok {
 		t.Fatalf("pendingPost should hold an entry for (PR=%d, comment=%s) after Daemon.New, peek returned !ok", prNumber, commentID)
 	}
-	wantRunDir := runDirForTest(t, dir, batchID, prNumber)
-	if entry.runDir != wantRunDir {
-		t.Errorf("entry.runDir=%q, want %q", entry.runDir, wantRunDir)
+	// Issue #1953: entry.runDir is the worktree path (where
+	// decision.md lives), not the run folder. The run folder is
+	// only used for review-state.json (entry.reviewState).
+	wantWorktreeDir := filepath.Join(dir, ".sandman", "worktrees", reviewBranchName(prNumber, commentID))
+	if entry.runDir != wantWorktreeDir {
+		t.Errorf("entry.runDir=%q, want %q (worktree, issue #1953)", entry.runDir, wantWorktreeDir)
 	}
+	wantRunDir := runDirForTest(t, dir, batchID, prNumber)
 	wantStatePath := filepath.Join(wantRunDir, "review-state.json")
 	if entry.reviewState != wantStatePath {
 		t.Errorf("entry.reviewState=%q, want %q", entry.reviewState, wantStatePath)
@@ -215,17 +237,12 @@ func TestDaemon_S4_LoadPendingPosts_SkipsTerminalStatuses(t *testing.T) {
 			batchID := "sip-batch-PR5052"
 			seedPriorReviewEntry(t, dir, batchID, prNumber, commentID, status)
 
-			decisionPath := decisionPathForTest(t, dir, batchID, prNumber)
-			if err := os.MkdirAll(filepath.Dir(decisionPath), 0755); err != nil {
-				t.Fatalf("mkdir decision.md dir: %v", err)
-			}
-			if err := os.WriteFile(decisionPath, []byte("body"), 0644); err != nil {
-				t.Fatalf("write decision.md: %v", err)
-			}
+			writeDecisionForTest(t, dir, batchID, prNumber, commentID, "body")
 
 			d := New(dir, &fakeGH{}, &prompt.Engine{}, &capturedRequest{}, &config.Config{
 				DefaultReviewAgent: "opencode",
 				DefaultReviewModel: "opencode/foo",
+				WorktreeDir:        ".sandman/worktrees",
 			}, &lockedBuffer{}, 0, false, nil)
 			if _, ok := d.peekPendingPost(prNumber, commentID); ok {
 				t.Fatalf("pendingPost should not register entry for status=%s (Slice B status filter)", status)
@@ -257,14 +274,12 @@ func TestDaemon_S4_LoadPendingPosts_DoesNotDoubleHandleByDeleting(t *testing.T) 
 	seedPriorReviewEntry(t, dir, batchID, prNumber, commentID, "pending")
 
 	// decision.md present ⇒ both walkers register the row.
-	decisionPath := decisionPathForTest(t, dir, batchID, prNumber)
-	if err := os.WriteFile(decisionPath, []byte("body"), 0644); err != nil {
-		t.Fatalf("write decision.md: %v", err)
-	}
+	writeDecisionForTest(t, dir, batchID, prNumber, commentID, "body")
 
 	d := New(dir, &fakeGH{}, &prompt.Engine{}, &capturedRequest{}, &config.Config{
 		DefaultReviewAgent: "opencode",
 		DefaultReviewModel: "opencode/foo",
+		WorktreeDir:        ".sandman/worktrees",
 	}, &lockedBuffer{}, 0, false, nil)
 
 	// Rehydrate map has the entry.
@@ -312,6 +327,7 @@ func TestDaemon_S4_RehydratePost_HappyPath(t *testing.T) {
 	cfg := &config.Config{
 		DefaultReviewAgent: "opencode",
 		DefaultReviewModel: "opencode/foo",
+		WorktreeDir:        ".sandman/worktrees",
 	}
 	poster := &fakeCommentPoster{}
 
@@ -322,9 +338,7 @@ func TestDaemon_S4_RehydratePost_HappyPath(t *testing.T) {
 	const batchID = "sip-batch-PR6060"
 	seedPriorReviewEntry(t, dir, batchID, prNumber, commentID, "pending")
 	body := "/sandman review please.\n/Sandman reply.\nplain sandman stays.\n"
-	if err := os.WriteFile(decisionPathForTest(t, dir, batchID, prNumber), []byte(body), 0644); err != nil {
-		t.Fatalf("write decision.md: %v", err)
-	}
+	writeDecisionForTest(t, dir, batchID, prNumber, commentID, body)
 
 	d := New(dir, gh, &prompt.Engine{}, runner, cfg, &lockedBuffer{}, 0, false, poster)
 	d.PollInterval = 0
@@ -407,15 +421,14 @@ func TestDaemon_S4_RehydratePost_FailedPost_KeepsEntry(t *testing.T) {
 	cfg := &config.Config{
 		DefaultReviewAgent: "opencode",
 		DefaultReviewModel: "opencode/foo",
+		WorktreeDir:        ".sandman/worktrees",
 	}
 	poster := &fakeCommentPoster{err: errors.New("gh pr comment: simulated post failure")}
 
 	dir := t.TempDir()
 	const batchID = "sip-batch-PR6061"
 	seedPriorReviewEntry(t, dir, batchID, prNumber, commentID, "pending")
-	if err := os.WriteFile(decisionPathForTest(t, dir, batchID, prNumber), []byte("body"), 0644); err != nil {
-		t.Fatalf("write decision.md: %v", err)
-	}
+	writeDecisionForTest(t, dir, batchID, prNumber, commentID, "body")
 
 	d := New(dir, gh, &prompt.Engine{}, runner, cfg, &lockedBuffer{}, 0, false, poster)
 	d.PollInterval = 0

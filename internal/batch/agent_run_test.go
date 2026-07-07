@@ -640,60 +640,6 @@ func TestAgentRun_Run_PassesEnvAndPromptFileThroughFullChain(t *testing.T) {
 	}
 }
 
-func TestAgentRun_Run_ExportsSandmanRunDirEnv(t *testing.T) {
-	// Slice 4 of issue #1845: the orchestrator's runSession.execute
-	// site injects `SANDMAN_RUN_DIR=<runFolder>` into agentRun.env
-	// for review runs. The agent must observe the env via the
-	// prependEnv path so it can `echo $SANDMAN_RUN_DIR` as a fallback
-	// discovery path for the prompt's <RUN_DIR>. This test pins
-	// AgentRun.Run → prependEnv → shellenv.Build → command line.
-	issue := &github.Issue{Number: 7, Title: "Fix auth"}
-	sb := &fakeSandbox{workDir: "/tmp/worktrees/fix-auth"}
-	spy := &spyRenderer{result: "rendered prompt"}
-
-	run := NewAgentRun(issue, "sandman/7-fix-auth", sb)
-	run.baseBranch = "main"
-	run.env = map[string]string{"SANDMAN_RUN_DIR": "/abs/path/to/run-folder"}
-
-	res := run.Run(context.Background(), spy, "opencode run {{.PromptFile}}", prompt.RenderConfig{
-		PromptFile: ".sandman/prompt.md",
-	})
-
-	if res.Status != "success" {
-		t.Fatalf("expected status success, got %s", res.Status)
-	}
-	if !strings.Contains(sb.execCommand, "export SANDMAN_RUN_DIR=/abs/path/to/run-folder") {
-		t.Errorf("expected export of SANDMAN_RUN_DIR in exec command, got:\n%s", sb.execCommand)
-	}
-}
-
-func TestAgentRun_Run_EmptySandmanRunDirNotExported(t *testing.T) {
-	// If the orchestrator's injection site does not set SANDMAN_RUN_DIR
-	// (e.g. for non-review runs where runFolder is empty), the env
-	// must not export a bare SANDMAN_RUN_DIR= entry. The orchestrator
-	// guards the injection with `s.review && agentRun.runFolder != ""`.
-	// This test pins that prependEnv only exports env entries that are
-	// actually present in r.env.
-	issue := &github.Issue{Number: 7, Title: "Fix auth"}
-	sb := &fakeSandbox{workDir: "/tmp/worktrees/fix-auth"}
-	spy := &spyRenderer{result: "rendered prompt"}
-
-	run := NewAgentRun(issue, "sandman/7-fix-auth", sb)
-	run.baseBranch = "main"
-	run.env = map[string]string{"UNRELATED_KEY": "value"}
-
-	res := run.Run(context.Background(), spy, "opencode run {{.PromptFile}}", prompt.RenderConfig{
-		PromptFile: ".sandman/prompt.md",
-	})
-
-	if res.Status != "success" {
-		t.Fatalf("expected status success, got %s", res.Status)
-	}
-	if strings.Contains(sb.execCommand, "SANDMAN_RUN_DIR") {
-		t.Errorf("expected no SANDMAN_RUN_DIR in exec command when env does not set it, got:\n%s", sb.execCommand)
-	}
-}
-
 func TestAgentRun_Run_TemplateErrorCausesFailure(t *testing.T) {
 	issue := &github.Issue{Number: 42, Title: "Fix bug"}
 	sb := &fakeSandbox{workDir: t.TempDir()}

@@ -104,8 +104,14 @@ func (f *fakeCommentPoster) Released() bool {
 // RunBatch call returns. The seam-1 happy-path test uses this to
 // pre-populate decision.md AFTER prepareReviewRun creates the run
 // folder, so the call ordering is deterministic.
+//
+// Issue #1953: decision.md lives in the per-row worktree, not the
+// run folder. The worktree path is derived from
+// req.PromptConfig.Branch + worktreeDir (defaults to
+// ".sandman/worktrees" to match cmd/review.go's production wiring).
 type seamRunner struct {
 	*capturedRequest
+	worktreeDir  string
 	beforeReturn func(req batch.Request)
 }
 
@@ -157,13 +163,23 @@ func TestDaemon_S3_HappyPath_PostsRedactedDecision(t *testing.T) {
 
 	// Pre-populate decision.md AFTER prepareReviewRun creates
 	// the run folder, so the daemon reads it during the post step.
+	// Issue #1953: decision.md lives in the per-row worktree, not
+	// the run folder. The daemon passes the resolved worktree
+	// path on req.WorktreeDir; fall back to the legacy default
+	// for tests that pre-date the field.
 	runner := &seamRunner{
 		capturedRequest: &capturedRequest{},
+		worktreeDir:     ".sandman/worktrees",
 		beforeReturn: func(req batch.Request) {
 			body := "/sandman review please.\n/Sandman reply.\n/SANDMAN echo.\nplain sandman stays.\n"
-			path := filepath.Join(req.RunDir, "decision.md")
-			if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-				t.Fatalf("mkdir run dir: %v", err)
+			worktreeDir := req.WorktreeDir
+			if worktreeDir == "" {
+				worktreeDir = filepath.Join(".sandman", "worktrees")
+			}
+			worktreePath := filepath.Join(worktreeDir, req.PromptConfig.Branch)
+			path := filepath.Join(worktreePath, "decision.md")
+			if err := os.MkdirAll(worktreePath, 0755); err != nil {
+				t.Fatalf("mkdir worktree: %v", err)
 			}
 			if err := os.WriteFile(path, []byte(body), 0644); err != nil {
 				t.Fatalf("write decision.md: %v", err)
@@ -174,6 +190,7 @@ func TestDaemon_S3_HappyPath_PostsRedactedDecision(t *testing.T) {
 	cfg := &config.Config{
 		DefaultReviewAgent: "opencode",
 		DefaultReviewModel: "opencode/foo",
+		WorktreeDir:        ".sandman/worktrees",
 	}
 
 	poster := &fakeCommentPoster{}
@@ -233,6 +250,7 @@ func TestDaemon_S3_MissingDecision_FailsClosed(t *testing.T) {
 	cfg := &config.Config{
 		DefaultReviewAgent: "opencode",
 		DefaultReviewModel: "opencode/foo",
+		WorktreeDir:        ".sandman/worktrees",
 	}
 	poster := &fakeCommentPoster{}
 	d, _, dir := newDaemonForTestS3(t, gh, runner, cfg, poster)
@@ -283,10 +301,16 @@ func TestDaemon_S3_FailedPost_FallsBackToPending(t *testing.T) {
 	}
 	runner := &seamRunner{
 		capturedRequest: &capturedRequest{},
+		worktreeDir:     ".sandman/worktrees",
 		beforeReturn: func(req batch.Request) {
-			path := filepath.Join(req.RunDir, "decision.md")
-			if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-				t.Fatalf("mkdir run dir: %v", err)
+			worktreeDir := req.WorktreeDir
+			if worktreeDir == "" {
+				worktreeDir = filepath.Join(".sandman", "worktrees")
+			}
+			worktreePath := filepath.Join(worktreeDir, req.PromptConfig.Branch)
+			path := filepath.Join(worktreePath, "decision.md")
+			if err := os.MkdirAll(worktreePath, 0755); err != nil {
+				t.Fatalf("mkdir worktree: %v", err)
 			}
 			if err := os.WriteFile(path, []byte("payload"), 0644); err != nil {
 				t.Fatalf("write decision.md: %v", err)
@@ -296,6 +320,7 @@ func TestDaemon_S3_FailedPost_FallsBackToPending(t *testing.T) {
 	cfg := &config.Config{
 		DefaultReviewAgent: "opencode",
 		DefaultReviewModel: "opencode/foo",
+		WorktreeDir:        ".sandman/worktrees",
 	}
 	poster := &fakeCommentPoster{err: errors.New("gh pr comment: simulated failure")}
 	d, _, dir := newDaemonForTestS3(t, gh, runner, cfg, poster)
@@ -354,10 +379,16 @@ func TestDaemon_S3_CtxCancelDuringPost_StaysPending(t *testing.T) {
 	// cancellation BEFORE post".
 	runner := &seamRunner{
 		capturedRequest: &capturedRequest{},
+		worktreeDir:     ".sandman/worktrees",
 		beforeReturn: func(req batch.Request) {
-			path := filepath.Join(req.RunDir, "decision.md")
-			if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-				t.Fatalf("mkdir run dir: %v", err)
+			worktreeDir := req.WorktreeDir
+			if worktreeDir == "" {
+				worktreeDir = filepath.Join(".sandman", "worktrees")
+			}
+			worktreePath := filepath.Join(worktreeDir, req.PromptConfig.Branch)
+			path := filepath.Join(worktreePath, "decision.md")
+			if err := os.MkdirAll(worktreePath, 0755); err != nil {
+				t.Fatalf("mkdir worktree: %v", err)
 			}
 			if err := os.WriteFile(path, []byte("payload"), 0644); err != nil {
 				t.Fatalf("write decision.md: %v", err)
@@ -367,6 +398,7 @@ func TestDaemon_S3_CtxCancelDuringPost_StaysPending(t *testing.T) {
 	cfg := &config.Config{
 		DefaultReviewAgent: "opencode",
 		DefaultReviewModel: "opencode/foo",
+		WorktreeDir:        ".sandman/worktrees",
 	}
 	poster := &fakeCommentPoster{release: release}
 	d, _, dir := newDaemonForTestS3(t, gh, runner, cfg, poster)

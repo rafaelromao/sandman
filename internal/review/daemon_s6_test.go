@@ -127,6 +127,7 @@ func TestDaemon_PostRetriesOnTransientFailure(t *testing.T) {
 	cfg := &config.Config{
 		DefaultReviewAgent: "opencode",
 		DefaultReviewModel: "opencode/foo",
+		WorktreeDir:        ".sandman/worktrees",
 	}
 	d, _, _ := newDaemonForTestS3(t, gh, runner, cfg, poster)
 
@@ -187,6 +188,7 @@ func TestDaemon_PostFinalFailure_RegistersPendingPost(t *testing.T) {
 	cfg := &config.Config{
 		DefaultReviewAgent: "opencode",
 		DefaultReviewModel: "opencode/foo",
+		WorktreeDir:        ".sandman/worktrees",
 	}
 	d, _, dir := newDaemonForTestS3(t, gh, runner, cfg, poster)
 
@@ -268,6 +270,7 @@ func TestDaemon_PostFinalFailure_NextTickRehydrates(t *testing.T) {
 	cfg := &config.Config{
 		DefaultReviewAgent: "opencode",
 		DefaultReviewModel: "opencode/foo",
+		WorktreeDir:        ".sandman/worktrees",
 	}
 	d, _, _ := newDaemonForTestS3(t, gh, runner, cfg, poster)
 
@@ -325,6 +328,7 @@ func TestDaemon_PostRetry_CtxCancelStopsRetrying(t *testing.T) {
 	cfg := &config.Config{
 		DefaultReviewAgent: "opencode",
 		DefaultReviewModel: "opencode/foo",
+		WorktreeDir:        ".sandman/worktrees",
 	}
 	d, _, _ := newDaemonForTestS3(t, gh, runner, cfg, poster)
 

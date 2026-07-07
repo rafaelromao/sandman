@@ -50,6 +50,7 @@ func TestDaemon_LaunchReviewReturnsFastAndRecordsPending(t *testing.T) {
 	d, _, _ := newDaemonForTest(t, gh, runner, &config.Config{
 		DefaultReviewAgent: "opencode",
 		DefaultReviewModel: "opencode/foo",
+		WorktreeDir:        ".sandman/worktrees",
 	})
 	d.Clock = func() time.Time { return now }
 
@@ -124,6 +125,7 @@ func TestDaemon_NextTickIsNoOpAfterSuccess(t *testing.T) {
 	d, _, _ := newDaemonForTest(t, gh, runner, &config.Config{
 		DefaultReviewAgent: "opencode",
 		DefaultReviewModel: "opencode/foo",
+		WorktreeDir:        ".sandman/worktrees",
 	})
 	d.Clock = func() time.Time { return now }
 

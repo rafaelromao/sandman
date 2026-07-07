@@ -179,7 +179,7 @@ func TestPRReviewSkill_ADRNotesDaemonOwnership(t *testing.T) {
 	// gone.
 	required := []string{
 		"The daemon posts the review comment",
-		"<runDir>/decision.md",
+		"<worktree>/decision.md",
 		"RedactBody",
 		"daemon-side transform that runs out-of-band of the LLM",
 		"#1845",

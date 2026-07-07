@@ -560,10 +560,13 @@ func (d *Daemon) loadPendingPosts() error {
 			}
 			// Source-of-truth gate: a row is rehydrate-eligible
 			// only when decision.md actually exists on disk.
-			// A `pending` row without decision.md means the bot
-			// had not finished writing yet; the lazy-verify
-			// bounded-retry escape handles that case.
-			decisionPath := filepath.Join(runDir, "decision.md")
+			// Issue #1953: decision.md lives in the per-row
+			// worktree (the agent's CWD), not the run folder.
+			// The worktree path is derived from (prNumber,
+			// commentID) so the walker can compute it without
+			// coordination with the orchestrator.
+			worktreePath := d.reviewWorktreePath(entry.PR, sc.CommentID)
+			decisionPath := filepath.Join(worktreePath, "decision.md")
 			if _, statErr := os.Stat(decisionPath); statErr != nil {
 				if !os.IsNotExist(statErr) {
 					d.logf("stat %s: %v", decisionPath, statErr)
@@ -575,7 +578,7 @@ func (d *Daemon) loadPendingPosts() error {
 			}
 			d.pendingPost[entry.PR][sc.CommentID] = pendingPostEntry{
 				commentID:   sc.CommentID,
-				runDir:      runDir,
+				runDir:      worktreePath,
 				reviewState: reviewState,
 				since:       sc.Timestamp,
 			}
@@ -1200,6 +1203,52 @@ func reviewBranchName(prNumber int, commentID string) string {
 	return fmt.Sprintf("sandman/review-%d-%s", prNumber, commentID)
 }
 
+// reviewWorktreeBase returns the host-absolute path of the
+// per-row review worktree base directory. The worktree itself is
+// <reviewWorktreeBase>/<reviewBranchName(pr, commentID)>.
+//
+// In production (cmd/review.go) the daemon's Layout is set by
+// paths.NewLayout(cfg, repoRoot), which already resolves a
+// relative cfg.WorktreeDir against repoRoot. We use that resolved
+// path as the source of truth so the daemon and the orchestrator
+// (which creates the worktree via NewSandbox) agree on the exact
+// location. For the test fixture path (newDaemonForTest) where
+// Layout is the zero value, we fall back to resolving
+// cfg.WorktreeDir against d.BaseDir to keep the existing tests
+// working.
+func (d *Daemon) reviewWorktreeBase() string {
+	if d.Layout.RepoRoot != "" {
+		return d.Layout.WorktreeDir
+	}
+	worktreeDir := ""
+	if d.Config != nil {
+		worktreeDir = strings.TrimSpace(d.Config.WorktreeDir)
+	}
+	if worktreeDir != "" && !filepath.IsAbs(worktreeDir) {
+		worktreeDir = filepath.Join(d.BaseDir, worktreeDir)
+	}
+	return worktreeDir
+}
+
+// reviewWorktreePath returns the host-absolute path of the per-row
+// review worktree (issue #1953). The worktree layout is fixed:
+// <reviewWorktreeBase>/<reviewBranchName(pr, commentID)>. The
+// sandbox creation path in the container runtime creates the
+// directory at this exact location; both the daemon and the agent
+// can therefore compute the same path without coordination.
+func (d *Daemon) reviewWorktreePath(prNumber int, commentID string) string {
+	return filepath.Join(d.reviewWorktreeBase(), reviewBranchName(prNumber, commentID))
+}
+
+// reviewDecisionPath returns the host-absolute path of the
+// decision.md file the agent writes. The worktree IS the canonical
+// location for review artifacts (issue #1953); the run folder
+// keeps run.json, run.log, and the per-row state files but
+// decision.md belongs to the worktree.
+func (d *Daemon) reviewDecisionPath(prNumber int, commentID string) string {
+	return filepath.Join(d.reviewWorktreePath(prNumber, commentID), "decision.md")
+}
+
 // logWriterFor returns the io.Writer ClearReviewArtifacts should write
 // cleanup logs to. Falls back to the daemon's Broadcaster when set,
 // otherwise to stderr (matching d.logf's fallback). Using Broadcaster
@@ -1281,34 +1330,26 @@ func (d *Daemon) launchReview(ctx context.Context, prNumber int, focus, commentI
 		sandboxMode = config.DefaultSandbox
 	}
 
-	// Issue #1902: when the agent runs inside a container sandbox
-	// (podman/docker) the host repository root is bind-mounted at
-	// /workspace inside the container and host-absolute paths are not
-	// visible. The prompt's {{RUN_DIR}} substitution instructs the
-	// agent where to write decision.md; the legacy form passed the
-	// host-absolute reviewRunFolder, so the agent mkdir'd an ephemeral
-	// in-container directory tree under the host path, wrote
-	// decision.md there, and the file was discarded when the container
-	// exited — postDecision then os.Stat'd the host path and saw
-	// ENOENT, marking every review as failure (issue #1887 et al).
+	// Issue #1902 + issue #1953: the prompt's {{RUN_DIR}} resolves
+	// to the per-row worktree path (the agent's CWD), not the run
+	// folder. The worktree path is deterministic from
+	// (prNumber, commentID, d.Config.WorktreeDir) so the daemon
+	// knows where the agent wrote decision.md before the orchestrator
+	// reports back. Translate to the container-visible form so the
+	// agent inside a podman/docker sandbox sees the same path the
+	// daemon writes from on the host.
 	//
-	// Translate reviewRunFolder to the container-visible form for the
-	// prompt substitution only. req.RunDir and postDecision's own read
-	// path stay on the host form; the orchestrator-side
-	// SANDMAN_RUN_DIR env var (issue #1902, sibling change in
-	// internal/batch/orchestrator.go) applies the same translation so
-	// the env-var fallback path the agent discovers via
-	// `echo $SANDMAN_RUN_DIR` lands on the same bind-mounted file. The
-	// production wiring in cmd/review.go passes
-	// filepath.Join(repoRoot, ".sandman") as the Daemon's BaseDir, so
-	// filepath.Dir(d.BaseDir) is the host repo root; the
-	// ".sandman"-suffix guard keeps the translation a no-op for tests
-	// (newDaemonForTest passes a tmp dir directly, no .sandman layout).
+	// The production wiring in cmd/review.go passes
+	// filepath.Join(repoRoot, ".sandman") as the Daemon's BaseDir,
+	// so filepath.Dir(d.BaseDir) is the host repo root; the
+	// ".sandman"-suffix guard keeps the translation a no-op for
+	// tests (newDaemonForTest passes a tmp dir directly, no
+	// .sandman layout).
 	repoRoot := ""
 	if filepath.Base(d.BaseDir) == ".sandman" {
 		repoRoot = filepath.Dir(d.BaseDir)
 	}
-	agentRunDir := sandbox.ContainerVisiblePath(reviewRunFolder, repoRoot, sandboxMode)
+	agentRunDir := sandbox.ContainerVisiblePath(d.reviewWorktreePath(prNumber, commentID), repoRoot, sandboxMode)
 
 	rendered, err := d.Prompts.RenderReview(prompt.RenderConfig{}, prompt.PRData{
 		Number:            pr.Number,
@@ -1366,6 +1407,7 @@ func (d *Daemon) launchReview(ctx context.Context, prNumber int, focus, commentI
 		ReviewFocus:  focus,
 		RunID:        perRowRunID,
 		RunDir:       reviewRunFolder,
+		WorktreeDir:  d.reviewWorktreeBase(),
 	}
 	if _, err := d.Runner.RunBatch(ctx, req); err != nil {
 		return d.recordLaunchFailure(ctx, commentID, state, fmt.Errorf("run batch: %w", err))
@@ -1386,7 +1428,7 @@ func (d *Daemon) launchReview(ctx context.Context, prNumber int, focus, commentI
 
 // postDecision implements the S3 post step (issue #1846):
 //
-//   - If <runDir>/decision.md is missing: MarkSeen("failure") and
+//   - If <worktree>/decision.md is missing: MarkSeen("failure") and
 //     call MarkTerminalSeen (issue #1849 S6) so the next tick's
 //     processPR drops the trigger via the seen-cache short-circuit.
 //   - If present: read it, run RedactBody, call
@@ -1399,22 +1441,16 @@ func (d *Daemon) launchReview(ctx context.Context, prNumber int, focus, commentI
 //     no daemon code path writes `pending` anymore per issue #1849
 //     S6); return the error so the goroutine takes its claim-Release
 //     path and the next tick's processPR re-launches the trigger.
+//
+// Issue #1953: decision.md lives in the per-row worktree (the
+// agent's CWD), not the run folder. The run folder keeps run.json,
+// run.log, run.sock, and the per-row state files. The worktree
+// path is deterministic from (prNumber, commentID,
+// d.Config.WorktreeDir), so the daemon computes it without waiting
+// for the orchestrator to report back.
 func (d *Daemon) postDecision(ctx context.Context, prNumber int, commentID, reviewRunFolder string, state *ReviewStateStore) error {
-	decisionPath := filepath.Join(reviewRunFolder, "decision.md")
+	decisionPath := d.reviewDecisionPath(prNumber, commentID)
 	info, err := os.Stat(decisionPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			// PR #1942-shaped fallback: the reviewer bot wrote
-			// decision.md to its CWD (the per-review worktree) instead
-			// of the run folder the daemon reads from. The worktree
-			// path is recorded on the canonical run manifest, so look
-			// it up there before treating the artifact as missing.
-			if alt, altErr := d.decisionInWorktree(reviewRunFolder); altErr == nil {
-				decisionPath = alt
-				info, err = os.Stat(decisionPath)
-			}
-		}
-	}
 	if err != nil {
 		if os.IsNotExist(err) {
 			d.logf("PR #%d: missing %s after RunBatch; marking failure (issue #1846)", prNumber, decisionPath)
@@ -1490,7 +1526,7 @@ func (d *Daemon) postDecision(ctx context.Context, prNumber int, commentID, revi
 				d.logf("PR #%d: mark %s pending: %v", prNumber, commentID, markErr)
 			}
 		}
-		d.registerPendingPost(prNumber, commentID, reviewRunFolder)
+		d.registerPendingPost(prNumber, commentID, d.reviewWorktreePath(prNumber, commentID), reviewRunFolder)
 		return fmt.Errorf("post decision: %w", postErr)
 	}
 
@@ -1543,9 +1579,15 @@ func postWithRetry(ctx context.Context, d *Daemon, prNumber int, body string) er
 // tryRehydratePost (issue #1847 S4). The on-disk review-state.json
 // must already carry status="pending" — postDecision writes it via
 // state.MarkSeen just before calling this helper. Locking matches
-// loadPendingPosts and tryRehydratePost: pendingPostMu only, never
-// shared with seenCacheMu. Issue #1891.
-func (d *Daemon) registerPendingPost(prNumber int, commentID, reviewRunFolder string) {
+// registerPendingPost records a rehydrate-eligible trigger under
+// (prNumber, commentID). The worktree path is where decision.md
+// lives (canonical artifact path, issue #1953); the run folder
+// path is where review-state.json lives. Both must be recorded so
+// the next tick's processPR can pick the trigger up after a
+// daemon restart via loadPendingPosts, which only knows the
+// review-state.json's PR number — the worktree path is derived
+// deterministically from (prNumber, commentID) at read time.
+func (d *Daemon) registerPendingPost(prNumber int, commentID, worktreePath, reviewRunFolder string) {
 	d.pendingPostMu.Lock()
 	defer d.pendingPostMu.Unlock()
 	if _, ok := d.pendingPost[prNumber]; !ok {
@@ -1553,7 +1595,7 @@ func (d *Daemon) registerPendingPost(prNumber int, commentID, reviewRunFolder st
 	}
 	d.pendingPost[prNumber][commentID] = pendingPostEntry{
 		commentID:   commentID,
-		runDir:      reviewRunFolder,
+		runDir:      worktreePath,
 		reviewState: d.ReviewStatePath(reviewRunFolder),
 		since:       d.now(),
 	}
@@ -1705,33 +1747,6 @@ func (d *Daemon) recordLaunchFailure(ctx context.Context, commentID string, stat
 		d.logf("mark %s failure: %v", commentID, err)
 	}
 	return cause
-}
-
-// decisionInWorktree returns the absolute path to <worktree>/decision.md
-// when the per-run manifest carries a non-empty worktreePath and that
-// file exists. It is the PR #1942-shaped fallback that rescues reviews
-// where the reviewer bot wrote decision.md to its worktree CWD instead
-// of the daemon-readable run folder. Returns the empty path on any
-// lookup failure so the caller can fall through to the existing
-// missing-decision.md branch.
-func (d *Daemon) decisionInWorktree(reviewRunFolder string) (string, error) {
-	manifestPath := filepath.Join(reviewRunFolder, "run.json")
-	data, err := os.ReadFile(manifestPath)
-	if err != nil {
-		return "", err
-	}
-	var manifest batchindex.RunManifest
-	if err := json.Unmarshal(data, &manifest); err != nil {
-		return "", fmt.Errorf("decode run manifest: %w", err)
-	}
-	if strings.TrimSpace(manifest.WorktreePath) == "" {
-		return "", os.ErrNotExist
-	}
-	candidate := filepath.Join(manifest.WorktreePath, "decision.md")
-	if _, err := os.Stat(candidate); err != nil {
-		return "", err
-	}
-	return candidate, nil
 }
 
 // logf writes a line to the broadcaster (or stderr when none is wired).

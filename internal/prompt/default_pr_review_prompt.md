@@ -134,12 +134,6 @@ mv "<RUN_DIR>/decision.md.tmp" "<RUN_DIR>/decision.md"
 
 This is the standard atomic-rename pattern (write to a temp file, then `os.Rename` the temp to the canonical path) used throughout Sandman for `run.json`, `review-state.json`, and other per-run artefacts. The daemon treats the file's presence (after the atomic rename) as "review is ready to post". If the rename fails for any reason, surface the error and exit non-zero so the daemon can record a failure.
 
-You can also discover `<RUN_DIR>` from the `SANDMAN_RUN_DIR` environment variable:
-
-```bash
-echo "$SANDMAN_RUN_DIR"
-```
-
 Format the body as Markdown with the following sections:
 
 - `## Summary` — one paragraph describing what the PR does.
