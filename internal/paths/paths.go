@@ -1,3 +1,6 @@
+// Package paths resolves every canonical on-disk location for a Sandman repo
+// from a single Layout struct. See docs/architecture/disk-layout.md for the
+// full on-disk layout (tree, per-artifact table, out-of-layout exceptions).
 package paths
 
 import (
