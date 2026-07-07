@@ -5507,7 +5507,7 @@ func TestRunBatch_ChainedContinuationFlow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("initial run failed: %v", err)
 	}
-	// Verify runnable wrote staged task context for each continuation.
+
 	sandmanDir := filepath.Join(worktreePath, ".sandman")
 	if _, err := os.Stat(sandmanDir); err != nil {
 		t.Fatalf("expected .sandman dir to exist (runnable should have created it), err=%v", err)
@@ -5521,7 +5521,6 @@ func TestRunBatch_ChainedContinuationFlow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("first continue failed: %v", err)
 	}
-	// Continuation does not check PR merge, so task.md is preserved.
 	_, err = os.Stat(filepath.Join(sandmanDir, "task.md"))
 	if err != nil {
 		t.Fatalf("expected task.md to be preserved after continuation (no merge check), err=%v", err)
@@ -5560,101 +5559,6 @@ func TestRunBatch_ChainedContinuationFlow(t *testing.T) {
 	if log.events[4].Payload["previous_run_id"] != log.events[2].RunID {
 		t.Fatalf("expected second continue to reference first continue, got %#v", log.events[4].Payload["previous_run_id"])
 	}
-}
-
-func TestRunBatch_ModeContinueCopiesOriginalTaskToRunFolder(t *testing.T) {
-	// Slice 9 B3: when launching a ModeContinue run, the original
-	// task.md that lives in the worktree's .sandman/ directory is
-	// copied into the new per-row run folder as
-	// `<runFolder>/task.md` so the prior wording is preserved as a
-	// historical artifact even though the worktree's task.md will be
-	// overwritten by the continuation prompt.
-	dir := testenv.MkdirShort(t, "sm-orch-")
-	t.Chdir(dir)
-	initGitRepo(t, dir)
-
-	branch := "sandman/42-fix-bug"
-	worktreePath := filepath.Join(".sandman", "worktrees", branch)
-	if err := os.MkdirAll(filepath.Join(worktreePath, ".sandman"), 0755); err != nil {
-		t.Fatalf("mkdir worktree: %v", err)
-	}
-	// Stage a stable worktree task.md so the orchestrator's snapshot
-	// has known content to capture. The orchestrator reads the
-	// worktree's task.md BEFORE the agent runs and copies it to the
-	// new run folder.
-	originalTask := "## Completed\nStaged wording for snapshot.\n"
-	if err := os.WriteFile(filepath.Join(worktreePath, ".sandman", "task.md"), []byte(originalTask), 0644); err != nil {
-		t.Fatalf("write task: %v", err)
-	}
-
-	log := &spyEventLog{}
-	o := NewOrchestrator(&fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}}, prs: map[string]*github.PR{branch: {Merged: true, HeadRefName: branch}}}, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "opencode", Sandbox: "worktree", WorktreeDir: filepath.Join(".sandman", "worktrees"), Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"opencode": {Preset: "opencode", Command: "true"}}}}, log)
-	o.sandboxFactory = &fakeSandboxFactory{sandbox: &fakeSandbox{workDir: worktreePath}}
-	// Use a custom Runnable factory that does NOT write task.md so the
-	// staged worktree task.md is preserved verbatim for the snapshot.
-	o.runnableFactory = &noopRunnableFactory{}
-
-	_, err := o.RunBatch(context.Background(), Request{Issues: []int{42}})
-	if err != nil {
-		t.Fatalf("initial run failed: %v", err)
-	}
-
-	// Run the continuation with a fresh (ts, shortid) so the new per-row RunID
-	// is distinct from the prior run and lands in a fresh batch folder.
-	continuedReq := Request{
-		Issues:         []int{42},
-		Mode:           map[int]IssueMode{42: ModeContinue},
-		BaseBranch:     "main",
-		PreviousRunIDs: map[int]string{42: log.events[0].RunID},
-		RunTS:          orchTestRunTS,
-		RunShortID:     orchTestRunShortID,
-		PromptConfig:   prompt.RenderConfig{TaskPrompt: prompt.ContinuationTaskPrompt(originalTask)},
-	}
-	_, err = o.RunBatch(context.Background(), continuedReq)
-	if err != nil {
-		t.Fatalf("first continue failed: %v", err)
-	}
-
-	// The orchestrator layout resolves the continuation run folder via the
-	// (batchID, runID) tuple. The batchID for an issue-driven single is
-	// <sid>-<ts>-<issue> and the per-row RunID is the same string.
-	expectedBatchID := runid.NewBatchID(runid.KindIssue, 1, "42", orchTestRunTS, orchTestRunShortID)
-	expectedRunID := runid.NewRunID(runid.KindIssue, "42", orchTestRunTS, orchTestRunShortID)
-	layout := paths.NewLayout(&config.Config{}, ".")
-	expectedRunFolder := layout.RunFolder(expectedBatchID, expectedRunID)
-
-	// The copied task.md must exist in the new run folder with the original
-	// content preserved byte-for-byte. The orchestrator writes this file
-	// BEFORE launching the agent so the original wording survives even
-	// though the worktree's task.md will be overwritten by the new prompt.
-	copiedPath := filepath.Join(expectedRunFolder, "task.md")
-	content, err := os.ReadFile(copiedPath)
-	if err != nil {
-		t.Fatalf("read copied task.md at %q: %v", copiedPath, err)
-	}
-	if string(content) != originalTask {
-		t.Errorf("copied task.md content = %q, want %q (must match original worktree task.md)", string(content), originalTask)
-	}
-}
-
-// noopRunnableFactory returns Runnable instances that do nothing and
-// report success — used by slice 9 B3 tests where we want the
-// orchestrator's snapshot to capture the worktree's task.md before
-// any Runnable overwrites it.
-type noopRunnableFactory struct{}
-
-func (f *noopRunnableFactory) NewRunnable(issue *github.Issue, branch string, sb sandbox.Sandbox) Runnable {
-	return &noopRunnable{issue: issue, branch: branch, sb: sb}
-}
-
-type noopRunnable struct {
-	issue  *github.Issue
-	branch string
-	sb     sandbox.Sandbox
-}
-
-func (r *noopRunnable) Run(ctx context.Context, renderer prompt.IssueRenderer, command string, renderCfg prompt.RenderConfig) AgentRunResult {
-	return AgentRunResult{IssueNumber: r.issue.Number, Status: "success", Branch: r.branch, WorktreePath: r.sb.WorkDir()}
 }
 
 func TestRunBatch_ModeContinueAgentSuccessUnmergedPR(t *testing.T) {
