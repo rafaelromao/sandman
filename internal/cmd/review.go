@@ -322,6 +322,7 @@ func runReviewDaemon(parent context.Context, deps Dependencies, cfg *config.Conf
 		poster = ghCommentPosterFromDeps(deps)
 	}
 	d := review.New(sandmanDir, deps.GitHubClient, deps.Renderer, deps.BatchRunner, cfg, broadcaster, parallel, parallelSet, poster)
+	d.Layout = layout
 	d.Sandbox = sandbox
 	d.ContainerCapacity = cc
 	d.ContainerCapacitySet = ccSet
