@@ -634,7 +634,7 @@ go 1.24
 		"double.go": `package prflow
 
 func Double(n int) int {
-	return 0
+	return n * 2
 }
 `,
 		"double_test.go": `package prflow
@@ -1615,7 +1615,7 @@ go 1.24
 		"double.go": `package prflow
 
 func Double(n int) int {
-	return 0
+	return n * 2
 }
 `,
 		"double_test.go": `package prflow
