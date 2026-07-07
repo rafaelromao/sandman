@@ -110,7 +110,7 @@ Folder rename always happens before the index update during archive. If the inde
 
 ### Row-level action resolution
 
-Row-level actions (archive, abort, log download) MUST resolve by per-row RunID, not by the public BatchId. The portal UI sends the per-row RunID because that is the id the orchestrator emits in `run.started` and stores in `run.json.RunID` — the per-row RunID is the id the operator sees on the row, not the batch folder basename they never see.
+Row-level actions (archive, abort, log download) MUST resolve by per-row RunID, not by the public BatchId. The portal UI sends the per-row RunID because that is the id the orchestrator emits in `run.started` and stores in `run.json.runID` — the per-row RunID is the id the operator sees on the row, not the batch folder basename they never see.
 
 | Action | Input | Resolver | Per-run artifact |
 |--------|-------|----------|------------------|
@@ -126,7 +126,7 @@ The per-run folder is the canonical target for every row action. The archive dir
 
 The slice-1 contract (manifest.BatchId == public BatchId == batch folder basename) deliberately makes the per-row RunID and the batch entry id equal for some batch kinds and deliberately distinct for others. The row-action resolver handles both forms transparently; the identity table is the public specification of which is which.
 
-| Batch kind | Public BatchId (== batch folder basename) | Per-row RunID (== `run.json.RunID`) | Equal? |
+| Batch kind | Public BatchId (== batch folder basename) | Per-row RunID (== `run.json.runID`) | Equal? |
 |------------|-------------------------------------------|-------------------------------------|--------|
 | Issue single | `<sid>-<ts>-<num>` | `<sid>-<ts>-<num>` | yes (no `+N` suffix on single-issue) |
 | Issue multi (canonical row = first issue) | `<sid>-<ts>-<firstIssue>+<N>` | `<sid>-<ts>-<firstIssue>` | no (carries `+<N>`) |
