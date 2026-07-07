@@ -6,6 +6,8 @@ This repo has at least one merged `sandman/*` PR — the trigger for suggesting 
 
 Before making any changes, run `gh pr list --state all --limit 100 --json body`. If **any** PR body contains the string `<!-- sandman-badge-pr -->`, stop immediately and exit cleanly. The marker in any state (open, closed, merged) means the badge has already been proposed.
 
+This in-agent check is **defense-in-depth, not the only contract.** The post-batch hook in `internal/batch/badge_hook.go` (`MaybeSuggestBadge`) is the authoritative gate — it already calls `gh pr list` with a much larger limit and consults the marker-comment PR check before the local control file, so a duplicate badge PR should never be spawned even if you skip or fail this check. Treat your check as a final safety net to avoid wasted work in the rare case the Go-side hook's query was truncated.
+
 ## Context
 
 Merged Sandman PRs in this repo:
