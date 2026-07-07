@@ -197,7 +197,7 @@ func NewCleanCmd(deps Dependencies) *cobra.Command {
 
 func collectCleanActions(idx *batchindex.Index, targetStatus batchindex.Status) []cleanAction {
 	var actions []cleanAction
-	for _, entry := range idx.Entries {
+	for _, entry := range idx.Batches {
 		if entry.Status == targetStatus || entry.Status == batchindex.StatusUnavailable {
 			action := cleanAction{
 				BatchID:   entry.ID,
@@ -259,12 +259,13 @@ func executeClean(actions []cleanAction, gr gitRunner, idx *batchindex.Index, la
 		removed++
 	}
 
-	var kept []batchindex.Entry
-	for _, entry := range idx.Entries {
+	var kept []batchindex.Batch
+	for _, entry := range idx.Batches {
 		if !actionIDs[entry.ID] {
 			kept = append(kept, entry)
 		}
 	}
+	idx.Batches = kept
 	idx.Entries = kept
 
 	if err := idx.Save(layout.BatchesIndexPath); err != nil {
@@ -309,13 +310,14 @@ func runCleanOrphaned(cmd *cobra.Command, deps Dependencies, layout paths.Layout
 	for _, p := range plan {
 		pruned[filepath.Base(p)] = struct{}{}
 	}
-	var kept []batchindex.Entry
-	for _, entry := range idx.Entries {
+	var kept []batchindex.Batch
+	for _, entry := range idx.Batches {
 		if _, drop := pruned[entry.ID]; drop {
 			continue
 		}
 		kept = append(kept, entry)
 	}
+	idx.Batches = kept
 	idx.Entries = kept
 
 	if err := idx.Save(layout.BatchesIndexPath); err != nil {

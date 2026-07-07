@@ -195,7 +195,7 @@ func portalAbortBatchKindsFixture(t *testing.T, opts portalAbortBatchKindsOpts) 
 	}
 
 	createUnixRunSocket(t, filepath.Join(batchDir, "batch.sock"))
-	idx := &batchindex.Index{Version: batchindex.IndexVersion, Entries: []batchindex.Entry{
+	idx := &batchindex.Index{Version: batchindex.IndexVersion, Batches: []batchindex.Batch{
 		{ID: opts.batchKey, Path: batchDir, Kind: opts.idxKind, Status: batchindex.StatusActive, CreatedAt: time.Now(), Issues: opts.issues, PR: opts.pr},
 	}}
 	idxPath := filepath.Join(repoRoot, ".sandman", "batches.json")
@@ -247,7 +247,7 @@ type portalAbortBatchKindsOpts struct {
 // where n=1. Per issue #1917 (slice 1), the public BatchId for
 // single-issue batches is `<sid>-<ts>-<num>` with no +N suffix, which
 // is identical to the per-row RunID. The abort handler's fast path
-// (`idx.Resolve(runID)` at portal.go:307) matches the batch entry id
+// (`idx.ResolveBatch(runID)` at portal.go:307) matches the batch entry id
 // directly. The orchestrator must receive `Issue=42`.
 func TestPortal_AbortEndpoint_SingleIssueRunRow_ResolvesPerRunSocket(t *testing.T) {
 	if !portalAbortSupported() {

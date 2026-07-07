@@ -1591,7 +1591,6 @@ func TestRun_ContinueFlag_WarnsWhenIssueTaskMissing(t *testing.T) {
 	}}
 	deps.EventLog = &fakeEventLog{events: []events.Event{{Type: "run.started", RunID: testRunID42Prev, Issue: 42, Payload: map[string]any{"agent": "opencode", "branch": branch, "base_branch": "main"}}}}
 	deps.GitHubClient = &fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, State: "open"}}}
-
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)
 	cmd.SetOut(&buf)
@@ -1746,10 +1745,10 @@ func TestRun_PromptOnlyWithRunIDRegistersOrchestratorRunIDInBatchesIndex(t *test
 		t.Fatalf("load batches index: %v", err)
 	}
 
-	if len(idx.Entries) != 1 {
-		t.Fatalf("expected exactly 1 batch index entry, got %d (entries=%v)", len(idx.Entries), idx.Entries)
+	if len(idx.Batches) != 1 {
+		t.Fatalf("expected exactly 1 batch index entry, got %d (entries=%v)", len(idx.Batches), idx.Batches)
 	}
-	got := idx.Entries[0]
+	got := idx.Batches[0]
 	// Pin the full public BatchId: <sid>-<ts>-prompt-myid. We assert
 	// the literal segment that hard-codes the `prompt` discriminator
 	// (issue #1920) — that is the load-bearing assertion this test
@@ -1805,10 +1804,10 @@ func TestRun_PromptOnlyWithoutRunIDRegistersCanonicalBatchIdInBatchesIndex(t *te
 		t.Fatalf("load batches index: %v", err)
 	}
 
-	if len(idx.Entries) != 1 {
-		t.Fatalf("expected exactly 1 batch index entry, got %d (entries=%v)", len(idx.Entries), idx.Entries)
+	if len(idx.Batches) != 1 {
+		t.Fatalf("expected exactly 1 batch index entry, got %d (entries=%v)", len(idx.Batches), idx.Batches)
 	}
-	got := idx.Entries[0]
+	got := idx.Batches[0]
 	// Pin the full public BatchId: <sid>-<ts>-prompt. The entry id
 	// must end with `-prompt` (the canonical discriminator) and must
 	// NOT have a trailing userid segment (since --run-id was empty).
@@ -4680,10 +4679,10 @@ func TestRun_SingleIssueRegistersPublicBatchIdInBatchesIndex(t *testing.T) {
 	}
 
 	wantPublicBatchID := spy.req.RunShortID + "-" + spy.req.RunTS + "-42"
-	if len(idx.Entries) != 1 {
-		t.Fatalf("expected exactly 1 batch index entry, got %d (entries=%v)", len(idx.Entries), idx.Entries)
+	if len(idx.Batches) != 1 {
+		t.Fatalf("expected exactly 1 batch index entry, got %d (entries=%v)", len(idx.Batches), idx.Batches)
 	}
-	got := idx.Entries[0]
+	got := idx.Batches[0]
 	if got.ID != wantPublicBatchID {
 		t.Errorf("entry ID = %q, want %q (public BatchId)", got.ID, wantPublicBatchID)
 	}
@@ -4744,20 +4743,20 @@ func TestRun_MultiIssueRegistersPublicBatchIdInBatchesIndex(t *testing.T) {
 	wantPublicBatchID := spy.req.RunShortID + "-" + spy.req.RunTS + "-42+1"
 	wantFirstRowID := spy.req.RunShortID + "-" + spy.req.RunTS + "-42"
 	wantSecondRowID := spy.req.RunShortID + "-" + spy.req.RunTS + "-43"
-	if len(idx.Entries) != 1 {
-		t.Fatalf("expected exactly 1 batch index entry for multi-issue run, got %d (entries=%v)", len(idx.Entries), idx.Entries)
+	if len(idx.Batches) != 1 {
+		t.Fatalf("expected exactly 1 batch index entry for multi-issue run, got %d (entries=%v)", len(idx.Batches), idx.Batches)
 	}
-	got := idx.Entries[0]
+	got := idx.Batches[0]
 	if got.ID != wantPublicBatchID {
 		t.Errorf("entry ID = %q, want %q (public BatchId)", got.ID, wantPublicBatchID)
 	}
 	// Per-row RunIDs are NOT separate index entries; they live in
 	// runs/<sid>-<ts>-<num>/run.json. Only the public BatchId is keyed
 	// in the index.
-	if idx.Resolve(wantFirstRowID) != nil {
+	if idx.ResolveBatch(wantFirstRowID) != nil {
 		t.Errorf("first row's per-row RunID %q must NOT have a separate index entry", wantFirstRowID)
 	}
-	if idx.Resolve(wantSecondRowID) != nil {
+	if idx.ResolveBatch(wantSecondRowID) != nil {
 		t.Errorf("second row's per-row RunID %q must NOT have a separate index entry", wantSecondRowID)
 	}
 	// Path is the public BatchId (= batch dir basename).
@@ -4813,11 +4812,81 @@ func TestRun_ContinueRegistersPerRowRunIDInBatchesIndex(t *testing.T) {
 	}
 
 	wantPublicBatchID := spy.req.RunShortID + "-" + spy.req.RunTS + "-42"
-	if len(idx.Entries) != 1 {
+	if len(idx.Batches) != 1 {
 		t.Logf("buf: %s", buf.String())
-		t.Fatalf("expected exactly 1 batch index entry, got %d (entries=%v)", len(idx.Entries), idx.Entries)
+		t.Fatalf("expected exactly 1 batch index entry, got %d (entries=%v)", len(idx.Batches), idx.Batches)
 	}
-	if got := idx.Entries[0].ID; got != wantPublicBatchID {
+	if got := idx.Batches[0].ID; got != wantPublicBatchID {
 		t.Errorf("entry ID = %q, want %q (public BatchId for single issue)", got, wantPublicBatchID)
+	}
+}
+
+// TestRun_Continue_MultiIssueFreshBatchAndRunIDs verifies that a multi-issue
+// continuation mints a fresh public BatchId from a new (ts, shortid) pair and
+// carries the previous per-row RunIDs only as lineage inputs.
+func TestRun_Continue_MultiIssueFreshBatchAndRunIDs(t *testing.T) {
+	branch := "sandman/42-43-fix-bugs"
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	deps := newRunDeps(t, spy)
+	if err := os.MkdirAll(filepath.Join(".", branch, ".sandman"), 0755); err != nil {
+		t.Fatalf("mkdir worktree: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(".", branch, ".sandman", "task.md"), []byte("## Completed\nInitial pass.\n"), 0644); err != nil {
+		t.Fatalf("write task: %v", err)
+	}
+	deps.ConfigStore = &fakeStore{config: &config.Config{Agent: "opencode", WorktreeDir: ".", ReviewCommand: "/oc review", AgentProviders: map[string]config.Agent{"opencode": {Preset: "opencode", Command: "true"}}}}
+	deps.EventLog = &fakeEventLog{events: []events.Event{
+		{Type: "run.started", RunID: "prev-ts-abcd-42", Issue: 42, Payload: map[string]any{"branch": branch, "base_branch": "main", "agent": "opencode"}},
+		{Type: "run.started", RunID: "prev-ts-abcd-43", Issue: 43, Payload: map[string]any{"branch": branch, "base_branch": "main", "agent": "opencode"}},
+	}}
+	deps.GitHubClient = &fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, State: "open"}, 43: {Number: 43, State: "open"}}, prs: map[string]*github.PR{}}
+	var buf bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--continue", "42", "43"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !spy.called {
+		t.Fatal("expected batch runner to be called")
+	}
+	if spy.req.RunTS == "" || spy.req.RunShortID == "" {
+		t.Fatalf("expected continuation to mint a fresh batch identity, got ts=%q shortid=%q", spy.req.RunTS, spy.req.RunShortID)
+	}
+	if got := spy.req.PreviousRunIDs[42]; got != "prev-ts-abcd-42" {
+		t.Fatalf("PreviousRunIDs[42] = %q, want prior run", got)
+	}
+	if got := spy.req.PreviousRunIDs[43]; got != "prev-ts-abcd-43" {
+		t.Fatalf("PreviousRunIDs[43] = %q, want prior run", got)
+	}
+	if got := spy.req.Branches[42]; got != branch {
+		t.Fatalf("Branches[42] = %q, want reused branch %q", got, branch)
+	}
+	if got := spy.req.Branches[43]; got != branch {
+		t.Fatalf("Branches[43] = %q, want reused branch %q", got, branch)
+	}
+	if got, want := spy.req.TaskPrompts[42], "## Completed\nInitial pass.\n"; got != want {
+		t.Fatalf("TaskPrompts[42] = %q, want original task content %q", got, want)
+	}
+
+	idx, err := batchindex.Load(filepath.Join(".", ".sandman", "batches.json"))
+	if err != nil {
+		t.Fatalf("load batches index: %v", err)
+	}
+	if len(idx.Batches) != 1 {
+		t.Logf("buf: %s", buf.String())
+		t.Fatalf("expected exactly 1 batch index entry for the continuation, got %d (batches=%v)", len(idx.Batches), idx.Batches)
+	}
+	wantPublicBatchID := spy.req.RunShortID + "-" + spy.req.RunTS + "-42+1"
+	if got := idx.Batches[0].ID; got != wantPublicBatchID {
+		t.Errorf("continuation entry ID = %q, want %q (fresh public BatchId for multi-issue)", got, wantPublicBatchID)
+	}
+	if idx.Batches[0].ID == "prev-ts-abcd-42" || idx.Batches[0].ID == "prev-ts-abcd-43" {
+		t.Errorf("continuation entry ID collided with prior per-row RunID: %q", idx.Batches[0].ID)
+	}
+	if got := filepath.Base(idx.Batches[0].Path); got != wantPublicBatchID {
+		t.Errorf("continuation entry path basename = %q, want fresh public BatchId %q", got, wantPublicBatchID)
 	}
 }

@@ -1664,10 +1664,10 @@ func TestReviewCmd_OneShotWithLinkedIssueRegistersPerRowRunID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load batches index: %v", err)
 	}
-	if len(idx.Entries) != 1 {
-		t.Fatalf("expected exactly 1 batch index entry, got %d (entries=%v)", len(idx.Entries), idx.Entries)
+	if len(idx.Batches) != 1 {
+		t.Fatalf("expected exactly 1 batch index entry, got %d (entries=%v)", len(idx.Batches), idx.Batches)
 	}
-	got := idx.Entries[0]
+	got := idx.Batches[0]
 	wantSuffix := "-42-PR42"
 	if !strings.HasSuffix(got.ID, wantSuffix) {
 		t.Errorf("entry ID = %q, want suffix %q", got.ID, wantSuffix)
@@ -1720,10 +1720,10 @@ func TestReviewCmd_OneShotOrphanRegistersPerRowRunID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load batches index: %v", err)
 	}
-	if len(idx.Entries) != 1 {
-		t.Fatalf("expected exactly 1 batch index entry, got %d (entries=%v)", len(idx.Entries), idx.Entries)
+	if len(idx.Batches) != 1 {
+		t.Fatalf("expected exactly 1 batch index entry, got %d (entries=%v)", len(idx.Batches), idx.Batches)
 	}
-	got := idx.Entries[0]
+	got := idx.Batches[0]
 	wantSuffix := "-PR17"
 	if !strings.HasSuffix(got.ID, wantSuffix) {
 		t.Errorf("entry ID = %q, want suffix %q", got.ID, wantSuffix)
@@ -1796,11 +1796,11 @@ func TestReviewCmd_OneShotBatchDirName_MatchesPerRowRunID(t *testing.T) {
 			if err != nil {
 				t.Fatalf("load batches index: %v", err)
 			}
-			if len(idx.Entries) != 1 {
-				t.Fatalf("expected exactly 1 batch index entry, got %d", len(idx.Entries))
+			if len(idx.Batches) != 1 {
+				t.Fatalf("expected exactly 1 batch index entry, got %d", len(idx.Batches))
 			}
-			if idx.Entries[0].ID != rowID {
-				t.Errorf("batches index entry id = %q, want %q", idx.Entries[0].ID, rowID)
+			if idx.Batches[0].ID != rowID {
+				t.Errorf("batches index entry id = %q, want %q", idx.Batches[0].ID, rowID)
 			}
 		})
 	}

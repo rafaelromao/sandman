@@ -362,7 +362,7 @@ func TestDaemon_LoadSeenCache_ReadsCanonicalRunFolder(t *testing.T) {
 	}
 	idxPath := daemon.BatchesIndexPath(dir)
 	idx := &batchindex.Index{Version: batchindex.IndexVersion}
-	idx.Add(batchindex.Entry{
+	idx.AddBatch(batchindex.Batch{
 		ID:        batchID,
 		Path:      batchPath,
 		Kind:      batchindex.KindReview,
@@ -417,7 +417,7 @@ func TestDaemon_LoadSeenCache_IgnoresLegacyRunsReviewFolder(t *testing.T) {
 	}
 	idxPath := daemon.BatchesIndexPath(dir)
 	idx := &batchindex.Index{Version: batchindex.IndexVersion}
-	idx.Add(batchindex.Entry{
+	idx.AddBatch(batchindex.Batch{
 		ID:        batchID,
 		Path:      batchPath,
 		Kind:      batchindex.KindReview,

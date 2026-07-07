@@ -51,6 +51,25 @@ Review runs are ordinary AgentRuns. Each row in the runs table — including rev
 
 The row folder under `.sandman/batches/<batch-id>/runs/<runID>/` is named after that per-row RunID — never after a `runs/review` alias — so logs, sockets, and `review-state.json` live under a folder whose name matches the row identity surfaced in the UI. `.sandman/reviews/` is reserved for the review daemon's own files (`review.sock`, `review-prompt.md`) and never holds per-row run folders. See `CONTEXT.md` §Review run for the canonical glossary entry.
 
+### Public BatchId vs per-row RunID
+
+The portal surfaces two distinct identifiers per the slice-1 contract ([ADR-0030](../adr/0030-standardize-run-id-and-run-dir.md) and [ADR-0032](../adr/0032-sandman-layout-redesign.md) §`batch.json` schema and §Row-level action resolution identity table):
+
+- **Public BatchId** — the batch-level identifier rendered in the Batch label and Details tab. Equals the batch folder basename (`batches/<id>/`'s last segment), `batch.json.batchId`, `run.json.BatchID`, and the event payload `batch_id`.
+- **Per-row RunID** — the row-level identifier rendered per row and used by row-level actions (archive, abort, log download). Equals `run.json.runID` and the event payload `run_id`.
+
+For multi-issue batches the two diverge: the public BatchId carries the `+N` additional count suffix and the per-row RunID does not. For every other kind (single-issue, prompt-only, review, auto-select) the two are identical. See [ADR-0032](../adr/0032-sandman-layout-redesign.md) §Row-level action resolution for the full kind-by-kind identity table.
+
+### Continuation history
+
+Continuation runs started with `sandman run --continue` appear as separate rows with their own RunID and Batch label. The continued row keeps a `previous_run_id` link in its events, and the expanded-row subject picker includes that previous run as a selectable sibling when it is present in the portal data.
+
+Use the picker to switch between the continuation and the previous run without changing the table row. Selecting the previous run shows its own log, events, and details, so lineage stays navigable while each run remains independently addressable for row-level actions.
+
+### Existing `.sandman` migration is out of scope
+
+**Existing `.sandman` migration is out of scope.** The slice-1 contract change (issue #1917) and the identity alignment that followed (slices 2–6 of parent PRD #1916) rename the public BatchId surface and the per-row RunID templates. Batches provisioned before the contract change carry old id shapes (legacy `+1` single-issue, total-count `+N`, prompt-only without the `prompt` segment, etc.) and are not rewritten in place. After upgrading, the operator should delete `.sandman` and rebuild; no migration tool ships for the old layout.
+
 ## Stop (Abort)
 
 Use the **Stop** button in the portal UI to abort a running issue. The portal calls:

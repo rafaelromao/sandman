@@ -618,7 +618,7 @@ func createPromptOnlyRunSocket(t *testing.T, repoDir, runName string, issueNumbe
 	if err != nil {
 		t.Fatalf("load batches index: %v", err)
 	}
-	idx.Add(batchindex.Entry{
+	idx.AddBatch(batchindex.Batch{
 		ID:        runName,
 		Path:      batchDir,
 		Kind:      batchindex.KindIssue,
@@ -705,7 +705,7 @@ func createMixedBatchRunSocket(t *testing.T, repoDir, runName string) string {
 	layout := paths.NewLayout(nil, repoDir)
 	batchIdx := &batchindex.Index{
 		Version: batchindex.IndexVersion,
-		Entries: []batchindex.Entry{
+		Batches: []batchindex.Batch{
 			{
 				ID:        runName,
 				Path:      batchDir,

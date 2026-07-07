@@ -34,9 +34,11 @@ Sandman writes structured events to `.sandman/events.jsonl` in newline-delimited
 |-------|-------------|
 | `type` | Event type (`run.started`, `run.continued`, `run.queued`, `run.blocked`, `run.retry`, `run.idle_timeout`, `run.warning`, `run.finished`, `run.aborted`) |
 | `timestamp` | ISO 8601 timestamp |
-| `run_id` | Unique run identifier per [ADR-0030](../adr/0030-standardize-run-id-and-run-dir.md) §Per-row RunID templates. For review runs the shape is `<shortid>-<ts>-<linkedIssue?>-PR<pr>` — never the legacy literal `"review"` alias. |
+| `run_id` | Per-row RunID per [ADR-0030](../adr/0030-standardize-run-id-and-run-dir.md) §Per-row RunID templates. For review runs the shape is `<shortid>-<ts>-<linkedIssue?>-PR<pr>` — never the legacy literal `"review"` alias. This is the row-level identifier; the batch-level identifier (== public BatchId == batch folder basename) is the `batch_id` field on the run.started/run.finished payloads, not this row. |
 | `issue` | GitHub issue number, or `null` for prompt-only runs |
 | `payload` | Event-specific data (see below) |
+
+The `run_id` (per-row RunID) and the `payload.batch_id` (public BatchId) follow the [slice-1 contract](../adr/0032-sandman-layout-redesign.md) (public BatchId == batch folder basename == batch.json.batchId == run.json.BatchID == event payload batch_id). For multi-issue batches the two diverge — the public BatchId carries the `+N` additional count suffix and the per-row RunID does not. For every other kind (single-issue, prompt-only, review, auto-select) the two are identical.
 
 ### Event payloads
 
@@ -45,6 +47,7 @@ Emitted when an agent run begins. `run.continued` replays stored `agent`, `model
 
 | Field | Description |
 |-------|-------------|
+| `batch_id` | Public BatchId per the [slice-1 contract](../adr/0032-sandman-layout-redesign.md) §`batch.json` schema. Equals the batch folder basename and is the batch-level identifier (not the per-row `run_id` above). |
 | `run_kind` | Optional taxonomy tag. `"auto-select"` for the auto-select selection phase driven by `sandman run --auto` (and the portal "Auto Mode" preset); `"review"` is signalled via the boolean `review` field. Issue-driven and prompt-only runs leave it absent. |
 | `count` | Optional candidate cap for `run_kind: "auto-select"` runs. |
 | `query` | Resolved GitHub search query used to find candidates for `run_kind: "auto-select"` runs. Defaults to `label:ready-for-agent is:open` when no `--label` or `--query` flag was provided. |
@@ -218,3 +221,7 @@ Prompt-only runs show the same summary with `prompt-only` in the issue column.
 Per-row archive does not edit `events.jsonl` and does not touch `.sandman/worktrees/`. The HTTP `POST /api/runs/archive` endpoint shares the `archive run` contract: per-row, empty `200` on success, structured `409` (with `archivePath`) on collision or non-terminal, `404` when the row id is unknown.
 
 Bulk commands process each row individually; a batch with multiple terminal rows archives them one at a time and leaves any still-active row live. Whole-batch archive is the only path that moves the batch root.
+
+## Existing `.sandman` migration is out of scope
+
+**Existing `.sandman` migration is out of scope.** The slice-1 contract change (issue #1917) and the identity alignment that followed (slices 2–6 of parent PRD #1916) rename the public BatchId surface and the per-row RunID templates. Batches provisioned before the contract change carry old id shapes (legacy `+1` single-issue, total-count `+N`, prompt-only without the `prompt` segment, etc.) and are not rewritten in place. After upgrading, the operator should delete `.sandman` and rebuild; no migration tool ships for the old layout. Events in a pre-upgrade `events.jsonl` may project to `unknown` rows in the portal until the operator clears `.sandman` and starts a fresh batch.

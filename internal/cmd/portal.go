@@ -252,15 +252,15 @@ func portalArchiveDir(repoRoot, runID string) string {
 // can map each failure mode to a specific status code; the archiver
 // itself is only invoked on the happy path.
 //
-// The supplied runID may be either the batch index entry id (e.g.
+// The supplied runID may be either the batch index batch id (e.g.
 // "abcd-260618113825-42+1") or the per-row run id the portal UI sends
-// (e.g. "abcd-260618113825-43"). resolveBatchEntryForRunID resolves
-// either form to the batch index entry; the rest of the handler then
-// uses entry.ID so the archive directory name and the response payload
-// are coherent across both forms. The first return value is the
-// resolved batch entry id, surfaced in the success response so the
-// portal UI sees the canonical id even when the request body used the
-// per-row form.
+// (e.g. "abcd-260618113825-43"). resolveBatchFromRunIDFastOrScan
+// resolves either form to the batch index batch; the rest of the
+// handler then uses batch.ID so the archive directory name and the
+// response payload are coherent across both forms. The first return
+// value is the resolved batch id, surfaced in the success response so
+// the portal UI sees the canonical id even when the request body used
+// the per-row form.
 func archivePortalRunHandler(repoRoot, runID string) (string, error) {
 	layout := paths.NewLayout(&config.Config{}, repoRoot)
 
@@ -268,26 +268,25 @@ func archivePortalRunHandler(repoRoot, runID string) (string, error) {
 	if err != nil {
 		return "", &portalArchiveError{status: http.StatusInternalServerError, message: fmt.Sprintf("load batches index: %v", err)}
 	}
-
-	entry := resolveBatchEntryForRunID(idx, runID)
-	if entry == nil {
+	batch := resolveBatchFromRunIDFastOrScan(idx, runID)
+	if batch == nil {
 		return "", &portalArchiveError{status: http.StatusNotFound, message: fmt.Sprintf("run %q not found", runID)}
 	}
 
-	if entry.Status == batchindex.StatusArchived {
-		return entry.ID, &portalArchiveError{status: http.StatusConflict, message: fmt.Sprintf("batch %q is already archived", entry.ID)}
+	if batch.Status != batchindex.StatusActive {
+		return batch.ID, &portalArchiveError{status: http.StatusConflict, message: fmt.Sprintf("batch %q is not active (status=%s)", batch.ID, batch.Status)}
 	}
 
-	status, statusErr := portalRowStatusProbe(entry, runID)
+	status, statusErr := portalRowStatusProbe(batch, runID)
 	if statusErr != nil {
-		return entry.ID, &portalArchiveError{status: http.StatusInternalServerError, message: statusErr.Error()}
+		return batch.ID, &portalArchiveError{status: http.StatusInternalServerError, message: statusErr.Error()}
 	}
 	if !isTerminalRunManifestStatus(status) {
-		return entry.ID, &portalArchiveError{status: http.StatusConflict, message: fmt.Sprintf("run %q is not in a terminal status", runID)}
+		return batch.ID, &portalArchiveError{status: http.StatusConflict, message: fmt.Sprintf("run %q is not in a terminal status", runID)}
 	}
 
-	if rec := idx.RunRecordFor(entry.ID, runID); rec != nil && rec.Status == batchindex.RunRecordStatusArchived && rec.ArchivePath != "" {
-		return entry.ID, &portalArchiveError{
+	if rec := idx.RunRecordFor(batch.ID, runID); rec != nil && rec.Status == batchindex.RunRecordStatusArchived && rec.ArchivePath != "" {
+		return batch.ID, &portalArchiveError{
 			status:  http.StatusConflict,
 			message: fmt.Sprintf("run %q is already archived at %q", runID, rec.ArchivePath),
 			path:    rec.ArchivePath,
@@ -298,21 +297,21 @@ func archivePortalRunHandler(repoRoot, runID string) (string, error) {
 	// exists (legacy state from before the index recorded Runs[]),
 	// surface 409 with the existing path so the operator can inspect
 	// it.
-	relArchive := filepath.Join(".sandman", "archive", entry.ID, "runs", runID)
+	relArchive := filepath.Join(".sandman", "archive", batch.ID, "runs", runID)
 	if _, err := os.Stat(filepath.Join(repoRoot, relArchive)); err == nil {
-		return entry.ID, &portalArchiveError{
+		return batch.ID, &portalArchiveError{
 			status:  http.StatusConflict,
 			message: fmt.Sprintf("run %q is already archived at %q", runID, relArchive),
 			path:    relArchive,
 		}
 	} else if !os.IsNotExist(err) {
-		return entry.ID, &portalArchiveError{status: http.StatusInternalServerError, message: fmt.Sprintf("stat archive target: %v", err)}
+		return batch.ID, &portalArchiveError{status: http.StatusInternalServerError, message: fmt.Sprintf("stat archive target: %v", err)}
 	}
 
-	if err := portalRunArchiver(repoRoot, entry.ID, runID); err != nil {
+	if err := portalRunArchiver(repoRoot, batch.ID, runID); err != nil {
 		var archived *daemon.AlreadyArchivedError
 		if errors.As(err, &archived) {
-			return entry.ID, &portalArchiveError{
+			return batch.ID, &portalArchiveError{
 				status:  http.StatusConflict,
 				message: fmt.Sprintf("run %q is already archived at %q", runID, archived.ArchivePath),
 				path:    archived.ArchivePath,
@@ -320,11 +319,11 @@ func archivePortalRunHandler(repoRoot, runID string) (string, error) {
 		}
 		var nonTerminal *daemon.NonTerminalRowError
 		if errors.As(err, &nonTerminal) {
-			return entry.ID, &portalArchiveError{status: http.StatusConflict, message: fmt.Sprintf("run %q is not in a terminal status", runID)}
+			return batch.ID, &portalArchiveError{status: http.StatusConflict, message: fmt.Sprintf("run %q is not in a terminal status", runID)}
 		}
-		return entry.ID, &portalArchiveError{status: http.StatusInternalServerError, message: err.Error()}
+		return batch.ID, &portalArchiveError{status: http.StatusInternalServerError, message: err.Error()}
 	}
-	return entry.ID, nil
+	return batch.ID, nil
 }
 
 // isTerminalRunManifestStatus reports whether the supplied run.json
@@ -354,8 +353,8 @@ var portalRowStatusProbe = portalReadRowStatus
 // live directory and returns the Status field. A missing manifest
 // produces a NotFound error; a malformed manifest produces a Decode
 // error. The default implementation of portalRowStatusProbe.
-func portalReadRowStatus(entry *batchindex.Entry, runID string) (batchindex.RunManifestStatus, error) {
-	manifestPath := filepath.Join(entry.Path, "runs", runID, "run.json")
+func portalReadRowStatus(batch *batchindex.Batch, runID string) (batchindex.RunManifestStatus, error) {
+	manifestPath := filepath.Join(batch.Path, "runs", runID, "run.json")
 	data, err := os.ReadFile(manifestPath)
 	if err != nil {
 		return "", err
@@ -379,7 +378,7 @@ func archivePortalRowArchiver(repoRoot string, entryID, runID string) error {
 	if err != nil {
 		return fmt.Errorf("load batches index: %w", err)
 	}
-	entry := idx.Resolve(entryID)
+	entry := idx.ResolveBatch(entryID)
 	if entry == nil {
 		return fmt.Errorf("entry %q not found", entryID)
 	}
@@ -399,16 +398,17 @@ func archivePortalRowArchiver(repoRoot string, entryID, runID string) error {
 	return nil
 }
 
-// resolveBatchEntryForRunID returns the batch index entry that the
-// given run id identifies, accepting either the batch entry id (the
-// batches.json Entry.ID) or the per-row run id (the row RunID the
-// portal UI sends). It returns nil when no entry matches either form.
+// resolveBatchFromRunIDFastOrScan returns the batch index batch that
+// the given run id identifies, accepting either the public batch id
+// (the batches.json Batch.ID == folder basename) or the per-row
+// run id (the row RunID the portal UI sends). It returns nil when no
+// batch matches either form.
 //
-// The fast path is idx.Resolve(runID), which matches the batch entry
-// id directly and is the only signal for batches whose per-row run id
-// equals their entry id (auto-select, single-issue issue runs, the
-// first row of a multi-issue batch when the first subject happens to
-// match, --continue issue runs that resume the existing batch dir).
+// The fast path is idx.ResolveBatch(runID), which matches the public
+// batch id directly and is the only signal for batches whose per-row
+// run id equals their batch id (auto-select, single-issue issue runs,
+// the first row of a multi-issue batch when the first subject happens
+// to match, --continue issue runs that resume the existing batch dir).
 //
 // The second path consults each entry's Runs[] records so already-
 // archived rows can still be resolved from the index after their live
@@ -424,15 +424,15 @@ func archivePortalRowArchiver(repoRoot string, entryID, runID string) error {
 // prompt-only runs (where req.RunID is the user-supplied string and
 // the batch entry id is "{shortid}-{ts}-{userid}").
 //
-// The helper returns the entry regardless of its Status; callers apply
-// any active/archived check separately so the 404/409/500 paths stay
-// observable per kind.
-func resolveBatchEntryForRunID(idx *batchindex.Index, runID string) *batchindex.Entry {
+// The helper returns the batch regardless of its Status; callers
+// apply any active/archived check separately so the 404/409/500 paths
+// stay observable per kind.
+func resolveBatchFromRunIDFastOrScan(idx *batchindex.Index, runID string) *batchindex.Batch {
 	if idx == nil || runID == "" {
 		return nil
 	}
-	if entry := idx.Resolve(runID); entry != nil {
-		return entry
+	if batch := idx.ResolveBatch(runID); batch != nil {
+		return batch
 	}
 	for i := range idx.Entries {
 		entry := &idx.Entries[i]
@@ -623,8 +623,8 @@ func discoverPortalInstances(repoRoot string) ([]portalInstance, error) {
 		}
 	}
 
-	instances := make([]portalInstance, 0, len(idx.Entries))
-	for _, entry := range idx.Entries {
+	instances := make([]portalInstance, 0, len(idx.Batches))
+	for _, entry := range idx.Batches {
 		if entry.Status != batchindex.StatusActive && entry.Status != batchindex.StatusArchived {
 			continue
 		}

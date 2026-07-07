@@ -89,7 +89,7 @@ func TestPortal_RunStream_BridgesControlSocketToSSE(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(runFolder, "run.json"), runManifestData, 0644); err != nil {
 		t.Fatal(err)
 	}
-	idx := &batchindex.Index{Version: batchindex.IndexVersion, Entries: []batchindex.Entry{
+	idx := &batchindex.Index{Version: batchindex.IndexVersion, Batches: []batchindex.Batch{
 		{ID: runID, Path: batchDir, Kind: "batch", Status: "active", Issues: []int{42}},
 	}}
 	idxPath := filepath.Join(repoRoot, ".sandman", "batches.json")
@@ -179,7 +179,7 @@ func TestPortal_RunStream_EmitsHeartbeatOnIdleSocket(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(runFolder, "run.json"), runManifestData, 0644); err != nil {
 		t.Fatal(err)
 	}
-	idx := &batchindex.Index{Version: batchindex.IndexVersion, Entries: []batchindex.Entry{
+	idx := &batchindex.Index{Version: batchindex.IndexVersion, Batches: []batchindex.Batch{
 		{ID: runID, Path: batchDir, Kind: "batch", Status: "active", Issues: []int{42}},
 	}}
 	idxPath := filepath.Join(repoRoot, ".sandman", "batches.json")
@@ -330,7 +330,7 @@ func TestPortal_RunStream_FiltersCrossRunBleed(t *testing.T) {
 	}
 
 	batchSock := filepath.Join(batchDir, "batch.sock")
-	idx := &batchindex.Index{Version: batchindex.IndexVersion, Entries: []batchindex.Entry{
+	idx := &batchindex.Index{Version: batchindex.IndexVersion, Batches: []batchindex.Batch{
 		{ID: batchID, Path: batchDir, Kind: "issue", Status: "active", Issues: []int{issueA, issueB}},
 	}}
 	idxPath := filepath.Join(repoRoot, ".sandman", "batches.json")

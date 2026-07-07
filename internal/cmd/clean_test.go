@@ -86,9 +86,9 @@ func writeBatchManifest(t *testing.T, baseDir, runID string, issues []int, creat
 	}
 }
 
-func writeBatchIndex(t *testing.T, baseDir string, entries []batchindex.Entry) {
+func writeBatchIndex(t *testing.T, baseDir string, entries []batchindex.Batch) {
 	t.Helper()
-	idx := batchindex.Index{Version: batchindex.IndexVersion, Entries: entries}
+	idx := batchindex.Index{Version: batchindex.IndexVersion, Batches: entries}
 	data, err := json.MarshalIndent(idx, "", "  ")
 	if err != nil {
 		t.Fatalf("marshal index: %v", err)
@@ -138,7 +138,7 @@ func TestClean_DryRun_ProducesNoIO(t *testing.T) {
 		Status:       batchindex.RunManifestStatusActive,
 	})
 	now := time.Now()
-	writeBatchIndex(t, dir, []batchindex.Entry{
+	writeBatchIndex(t, dir, []batchindex.Batch{
 		{ID: "batch-1", Path: batchDir, Kind: batchindex.KindIssue, Status: batchindex.StatusActive, CreatedAt: now},
 	})
 
@@ -206,7 +206,7 @@ func TestClean_RemovesActiveAndUnavailableEntries(t *testing.T) {
 		Status:       batchindex.RunManifestStatusActive,
 	})
 	now := time.Now()
-	writeBatchIndex(t, dir, []batchindex.Entry{
+	writeBatchIndex(t, dir, []batchindex.Batch{
 		{ID: "batch-active", Path: batchActive, Kind: batchindex.KindIssue, Status: batchindex.StatusActive, CreatedAt: now},
 		{ID: "batch-unavail", Path: "", Kind: batchindex.KindIssue, Status: batchindex.StatusUnavailable, CreatedAt: now},
 		{ID: "batch-archived", Path: batchArchived, Kind: batchindex.KindIssue, Status: batchindex.StatusArchived, CreatedAt: now},
@@ -244,11 +244,11 @@ func TestClean_RemovesActiveAndUnavailableEntries(t *testing.T) {
 	var idx batchindex.Index
 	data, _ := os.ReadFile(filepath.Join(dir, ".sandman", "batches.json"))
 	json.Unmarshal(data, &idx)
-	if len(idx.Entries) != 1 {
-		t.Errorf("expected 1 entry remaining (archived), got %d", len(idx.Entries))
+	if len(idx.Batches) != 1 {
+		t.Errorf("expected 1 entry remaining (archived), got %d", len(idx.Batches))
 	}
-	if idx.Entries[0].ID != "batch-archived" {
-		t.Errorf("expected remaining entry to be batch-archived, got %s", idx.Entries[0].ID)
+	if idx.Batches[0].ID != "batch-archived" {
+		t.Errorf("expected remaining entry to be batch-archived, got %s", idx.Batches[0].ID)
 	}
 }
 
@@ -290,7 +290,7 @@ func TestClean_Archived_RemovesArchivedAndUnavailableEntries(t *testing.T) {
 		Status:       batchindex.RunManifestStatusActive,
 	})
 	now := time.Now()
-	writeBatchIndex(t, dir, []batchindex.Entry{
+	writeBatchIndex(t, dir, []batchindex.Batch{
 		{ID: "batch-active", Path: batchActive, Kind: batchindex.KindIssue, Status: batchindex.StatusActive, CreatedAt: now},
 		{ID: "batch-unavail", Path: "", Kind: batchindex.KindIssue, Status: batchindex.StatusUnavailable, CreatedAt: now},
 		{ID: "batch-archived", Path: batchArchived, Kind: batchindex.KindIssue, Status: batchindex.StatusArchived, CreatedAt: now},
@@ -322,11 +322,11 @@ func TestClean_Archived_RemovesArchivedAndUnavailableEntries(t *testing.T) {
 	var idx batchindex.Index
 	data, _ := os.ReadFile(filepath.Join(dir, ".sandman", "batches.json"))
 	json.Unmarshal(data, &idx)
-	if len(idx.Entries) != 1 {
-		t.Errorf("expected 1 entry remaining (active), got %d", len(idx.Entries))
+	if len(idx.Batches) != 1 {
+		t.Errorf("expected 1 entry remaining (active), got %d", len(idx.Batches))
 	}
-	if idx.Entries[0].ID != "batch-active" {
-		t.Errorf("expected remaining entry to be batch-active, got %s", idx.Entries[0].ID)
+	if idx.Batches[0].ID != "batch-active" {
+		t.Errorf("expected remaining entry to be batch-active, got %s", idx.Batches[0].ID)
 	}
 }
 
@@ -338,7 +338,7 @@ func TestClean_Unavailable_ReapedByBothCleanAndArchived(t *testing.T) {
 	}
 
 	now := time.Now()
-	writeBatchIndex(t, dir, []batchindex.Entry{
+	writeBatchIndex(t, dir, []batchindex.Batch{
 		{ID: "batch-unavail", Path: "", Kind: batchindex.KindIssue, Status: batchindex.StatusUnavailable, CreatedAt: now},
 	})
 
@@ -360,8 +360,8 @@ func TestClean_Unavailable_ReapedByBothCleanAndArchived(t *testing.T) {
 	var idx batchindex.Index
 	data, _ := os.ReadFile(filepath.Join(dir, ".sandman", "batches.json"))
 	json.Unmarshal(data, &idx)
-	if len(idx.Entries) != 0 {
-		t.Errorf("expected unavailable entry to be removed, got %d entries", len(idx.Entries))
+	if len(idx.Batches) != 0 {
+		t.Errorf("expected unavailable entry to be removed, got %d entries", len(idx.Batches))
 	}
 }
 
@@ -380,7 +380,7 @@ func TestClean_Stale_NoIndexChange(t *testing.T) {
 		Status:  batchindex.RunManifestStatusActive,
 	})
 	now := time.Now()
-	writeBatchIndex(t, dir, []batchindex.Entry{
+	writeBatchIndex(t, dir, []batchindex.Batch{
 		{ID: "batch-1", Path: batchDir, Kind: batchindex.KindIssue, Status: batchindex.StatusActive, CreatedAt: now},
 	})
 
@@ -402,8 +402,8 @@ func TestClean_Stale_NoIndexChange(t *testing.T) {
 	var idx batchindex.Index
 	data, _ := os.ReadFile(filepath.Join(dir, ".sandman", "batches.json"))
 	json.Unmarshal(data, &idx)
-	if len(idx.Entries) != 1 {
-		t.Errorf("expected index to be unchanged (1 entry), got %d entries", len(idx.Entries))
+	if len(idx.Batches) != 1 {
+		t.Errorf("expected index to be unchanged (1 entry), got %d entries", len(idx.Batches))
 	}
 }
 
@@ -741,7 +741,7 @@ func TestClean_DryRunArchived_PrintsIntendedDeletions(t *testing.T) {
 		Status:  batchindex.RunManifestStatusActive,
 	})
 	now := time.Now()
-	writeBatchIndex(t, dir, []batchindex.Entry{
+	writeBatchIndex(t, dir, []batchindex.Batch{
 		{ID: "batch-archived", Path: batchDir, Kind: batchindex.KindIssue, Status: batchindex.StatusArchived, CreatedAt: now},
 	})
 
@@ -793,7 +793,7 @@ func TestClean_Orphaned_RemovesOrphanDirAndPrunesIndex(t *testing.T) {
 		t.Fatalf("mkdir live run: %v", err)
 	}
 	now := time.Now()
-	writeBatchIndex(t, dir, []batchindex.Entry{
+	writeBatchIndex(t, dir, []batchindex.Batch{
 		{ID: "orphan-x", Path: orphanDir, Kind: batchindex.KindIssue, Status: batchindex.StatusActive, CreatedAt: now},
 		{ID: "live-y", Path: liveDir, Kind: batchindex.KindIssue, Status: batchindex.StatusActive, CreatedAt: now},
 	})
@@ -826,8 +826,8 @@ func TestClean_Orphaned_RemovesOrphanDirAndPrunesIndex(t *testing.T) {
 	if err := json.Unmarshal(data, &idx); err != nil {
 		t.Fatalf("read index: %v", err)
 	}
-	if len(idx.Entries) != 1 || idx.Entries[0].ID != "live-y" {
-		t.Errorf("expected index to keep only live-y, got %#v", idx.Entries)
+	if len(idx.Batches) != 1 || idx.Batches[0].ID != "live-y" {
+		t.Errorf("expected index to keep only live-y, got %#v", idx.Batches)
 	}
 }
 
@@ -846,7 +846,7 @@ func TestClean_Orphaned_DryRun_NoIOAndKeepsIndex(t *testing.T) {
 		t.Fatalf("write orphan manifest: %v", err)
 	}
 	now := time.Now()
-	writeBatchIndex(t, dir, []batchindex.Entry{
+	writeBatchIndex(t, dir, []batchindex.Batch{
 		{ID: "orphan-x", Path: orphanDir, Kind: batchindex.KindIssue, Status: batchindex.StatusActive, CreatedAt: now},
 	})
 
@@ -876,8 +876,8 @@ func TestClean_Orphaned_DryRun_NoIOAndKeepsIndex(t *testing.T) {
 	if err := json.Unmarshal(data, &idx); err != nil {
 		t.Fatalf("read index: %v", err)
 	}
-	if len(idx.Entries) != 1 {
-		t.Errorf("expected index to be unchanged (1 entry), got %d", len(idx.Entries))
+	if len(idx.Batches) != 1 {
+		t.Errorf("expected index to be unchanged (1 entry), got %d", len(idx.Batches))
 	}
 }
 

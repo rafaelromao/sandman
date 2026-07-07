@@ -141,7 +141,7 @@ func TestPortalRunsIndex_DiscoverActiveRuns_RefreshesManifestCacheOnChange(t *te
 	layout := paths.NewLayout(nil, repoRoot)
 	batchIdx := &batchindex.Index{
 		Version: batchindex.IndexVersion,
-		Entries: []batchindex.Entry{
+		Batches: []batchindex.Batch{
 			{
 				ID:        "abcd-260618113825-1",
 				Path:      runDir,
