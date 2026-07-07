@@ -1732,3 +1732,76 @@ func TestReviewCmd_OneShotOrphanRegistersPerRowRunID(t *testing.T) {
 		t.Errorf("entry Kind = %v, want %v", got.Kind, batchindex.KindReview)
 	}
 }
+
+// TestReviewCmd_OneShotBatchDirName_MatchesPerRowRunID pins the
+// slice-3 invariant of issue #1919: the on-disk batch directory name
+// equals the per-row RunID for both orphan and linked reviews. The
+// linked form is the regression to fix. Mirrors
+// TestDaemon_ReviewBatchDirName_MatchesPerRowRunID for the one-shot
+// path.
+func TestReviewCmd_OneShotBatchDirName_MatchesPerRowRunID(t *testing.T) {
+	tests := []struct {
+		name        string
+		prNumber    int
+		prBody      string
+		wantSubject string
+	}{
+		{name: "orphan review", prNumber: 17, prBody: "no linked issue here", wantSubject: "PR17"},
+		{name: "linked review", prNumber: 42, prBody: "Fixes #1234", wantSubject: "1234-PR42"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &config.Config{
+				DefaultAgent:       "opencode",
+				DefaultModel:       "opencode/big-pickle",
+				DefaultReviewAgent: "opencode",
+				DefaultReviewModel: "openai/gpt-5",
+				Agent:              "opencode",
+				Sandbox:            "podman",
+				AgentProviders: map[string]config.Agent{
+					"opencode": {Preset: "opencode", Command: "opencode"},
+				},
+			}
+			gh := &fakePRGitHubClient{
+				fakeGitHubClient: &fakeGitHubClient{},
+				pr:               &github.PR{Number: tt.prNumber, Title: "T", Body: tt.prBody},
+			}
+			runner := &spyBatchRunnerWithCapture{spyBatchRunner: spyBatchRunner{result: &batch.Result{}}}
+			deps := newReviewDeps(t, gh, cfg, runner)
+
+			cmd := NewReviewCmd(deps)
+			cmd.SetOut(&bytes.Buffer{})
+			cmd.SetErr(&bytes.Buffer{})
+			cmd.SetArgs([]string{fmt.Sprintf("%d", tt.prNumber)})
+
+			if err := cmd.Execute(); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			rowID := runner.captured.RunID
+			if !strings.HasSuffix(rowID, "-"+tt.wantSubject) {
+				t.Errorf("RunID = %q, want suffix -%s", rowID, tt.wantSubject)
+			}
+			runDir := runner.captured.RunDir
+			if runDir == "" {
+				t.Fatal("captured RunDir is empty")
+			}
+			batchDir := filepath.Dir(filepath.Dir(runDir))
+			if filepath.Base(batchDir) != rowID {
+				t.Errorf("on-disk batch dir name = %q, want %q (per-row RunID; slice 3 invariant)", filepath.Base(batchDir), rowID)
+			}
+
+			// Also check the batches index entry id agrees.
+			idx, err := batchindex.Load(filepath.Join(".", ".sandman", "batches.json"))
+			if err != nil {
+				t.Fatalf("load batches index: %v", err)
+			}
+			if len(idx.Entries) != 1 {
+				t.Fatalf("expected exactly 1 batch index entry, got %d", len(idx.Entries))
+			}
+			if idx.Entries[0].ID != rowID {
+				t.Errorf("batches index entry id = %q, want %q", idx.Entries[0].ID, rowID)
+			}
+		})
+	}
+}

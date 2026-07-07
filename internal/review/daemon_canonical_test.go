@@ -197,6 +197,125 @@ func TestDaemon_ReviewRunIDAndFolder_AreCanonicalWithLinkedIssue(t *testing.T) {
 	}
 }
 
+// TestDaemon_ReviewBatchDirName_MatchesPerRowRunID pins the
+// slice-3 invariant of issue #1919: the on-disk batch directory name
+// equals the per-row RunID for both orphan and linked reviews. The
+// orphan form already agrees (both are `<sid>-<ts>-PR<pr>`); the
+// linked form is the regression to fix. Without this invariant, the
+// portal's per-row locator (<batch>/runs/<runID>) cannot be derived
+// from a known batchID, and the per-row run folder lives at
+// `<sid>-<ts>-PR<pr>/runs/<sid>-<ts>-<linkedIssue>-PR<pr>/` instead
+// of the canonical `<sid>-<ts>-<linkedIssue>-PR<pr>/runs/<sid>-<ts>-<linkedIssue>-PR<pr>/`.
+func TestDaemon_ReviewBatchDirName_MatchesPerRowRunID(t *testing.T) {
+	now := time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name        string
+		prBody      string
+		wantSubject string
+	}{
+		{
+			name:        "orphan review",
+			prBody:      "no linked issue here",
+			wantSubject: "PR42",
+		},
+		{
+			name:        "linked review",
+			prBody:      "This PR fixes #1551.",
+			wantSubject: "1551-PR42",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gh := &fakeGH{
+				prs: []github.PR{{Number: 42, State: "open"}},
+				comments: map[int][]github.PRComment{
+					42: {
+						{ID: "100", Body: "/sandman review", CreatedAt: now},
+					},
+				},
+				prFetch: map[int]*github.PR{
+					42: {Number: 42, Title: "PR 42", Body: tt.prBody},
+				},
+			}
+			runner := &capturedRequest{}
+			d, _, _ := newDaemonForTest(t, gh, runner, &config.Config{
+				DefaultReviewAgent: "opencode",
+				DefaultReviewModel: "opencode/foo",
+			})
+			d.Clock = func() time.Time { return now }
+
+			tickAndWait(t, d, context.Background())
+			if runner.calls != 1 {
+				t.Fatalf("expected 1 batch run, got %d", runner.calls)
+			}
+
+			rowID := runner.last.RunID
+			batchDir := filepath.Dir(filepath.Dir(runner.last.RunDir))
+			if filepath.Base(batchDir) != rowID {
+				t.Errorf("on-disk batch dir name = %q, want %q (per-row RunID; slice 3 invariant)", filepath.Base(batchDir), rowID)
+			}
+			if !strings.HasSuffix(rowID, "-"+tt.wantSubject) {
+				t.Errorf("RunID = %q, want suffix -%s", rowID, tt.wantSubject)
+			}
+		})
+	}
+}
+
+// TestDaemon_ReviewRunManifest_BatchIDAgreesWithPerRowRunID pins
+// the slice-3 invariant that run.json.BatchID equals the per-row
+// RunID for both orphan and linked reviews. ADR-0030 requires
+// run.json.BatchID, batch.json.batchId, and the event payload
+// batch_id to all agree, so the per-row manifest's BatchID must
+// track the per-row RunID too.
+func TestDaemon_ReviewRunManifest_BatchIDAgreesWithPerRowRunID(t *testing.T) {
+	now := time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name   string
+		prBody string
+	}{
+		{name: "orphan review", prBody: "no linked issue here"},
+		{name: "linked review", prBody: "This PR fixes #1551."},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gh := &fakeGH{
+				prs: []github.PR{{Number: 42, State: "open"}},
+				comments: map[int][]github.PRComment{
+					42: {{ID: "100", Body: "/sandman review", CreatedAt: now}},
+				},
+				prFetch: map[int]*github.PR{
+					42: {Number: 42, Title: "PR 42", Body: tt.prBody},
+				},
+			}
+			runner := &capturedRequest{}
+			d, _, _ := newDaemonForTest(t, gh, runner, &config.Config{
+				DefaultReviewAgent: "opencode",
+				DefaultReviewModel: "opencode/foo",
+			})
+			d.Clock = func() time.Time { return now }
+
+			tickAndWait(t, d, context.Background())
+			if runner.calls != 1 {
+				t.Fatalf("expected 1 batch run, got %d", runner.calls)
+			}
+
+			rowID := runner.last.RunID
+			manifestPath := filepath.Join(runner.last.RunDir, "run.json")
+			data, err := os.ReadFile(manifestPath)
+			if err != nil {
+				t.Fatalf("read run.json at %s: %v", manifestPath, err)
+			}
+			var manifest batchindex.RunManifest
+			if err := json.Unmarshal(data, &manifest); err != nil {
+				t.Fatalf("decode run.json: %v", err)
+			}
+			if manifest.BatchID != rowID {
+				t.Errorf("run.json.BatchID = %q, want %q (per-row RunID; slice 3 invariant)", manifest.BatchID, rowID)
+			}
+		})
+	}
+}
+
 // TestDaemon_LoadSeenCache_ReadsCanonicalRunFolder pins Slice 2 of
 // the canonical hydration path. After launch, the daemon's
 // loadSeenCache must consult `<batch>/runs/<rowID>/review-state.json`

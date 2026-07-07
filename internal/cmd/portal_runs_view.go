@@ -78,9 +78,12 @@ type portalRun struct {
 	ReviewVerdict string `json:"reviewVerdict,omitempty"`
 	// GroupedReview marks review rows that are owned by an issue-parent row.
 	// Set by aggregateReviewChildren during compute (restored in #1897) for
-	// every review row in an issue group that has an implementation parent.
-	// The orphan review-only JS path (visibleRunForIssueGroup, portal.html)
-	// hardcodes groupedReview=false on its synthetic row.
+	// every review row that has a resolved linked issue (IssueNumber > 0) so
+	// it can be folded into the parent issue's group. Issue #1919 slice 3
+	// tightened the contract: orphan reviews (no linked issue, IssueNumber
+	// == 0) keep GroupedReview=false and render via the orphan review-only
+	// JS path (visibleRunForIssueGroup, portal.html), which hardcodes
+	// groupedReview=false on its synthetic row.
 	GroupedReview bool `json:"groupedReview,omitempty"`
 	// PRNumber mirrors payload.pr_number from the run.started event. Only
 	// meaningful when Review is true; omitted from JSON otherwise.
@@ -933,7 +936,14 @@ func (v *portalRunsView) aggregateReviewChildren(runs []portalRun) []portalRun {
 		}
 	}
 	for i := range runs {
-		if runs[i].Review {
+		// Issue #1919 slice 3: only reviews with a resolved linked
+		// issue group under the parent issue row. Orphan reviews
+		// (no linked issue, IssueNumber == 0) stay as standalone
+		// "Review of PR <n>" rows; the JS orphan path renders them
+		// outside the issue group. Setting GroupedReview=true for
+		// every review row would let the JS-grouped path consume an
+		// orphan row that has no parent.
+		if runs[i].Review && runs[i].IssueNumber > 0 {
 			runs[i].GroupedReview = true
 		}
 	}
