@@ -7,7 +7,10 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
+
+	"github.com/rafaelromao/sandman/internal/events"
 	"testing"
 
 	"github.com/rafaelromao/sandman/internal/batch"
@@ -86,6 +89,165 @@ func TestRun_AutoFlag_EmitsAutoSelectEventsForAgentDrivenPath(t *testing.T) {
 	if !ok || len(selected) != 2 || selected[0] != 1 || selected[1] != 2 {
 		t.Fatalf("expected finished selected [1, 2], got %v", finished.Payload["selected"])
 	}
+}
+
+// findIssueStartedEvent returns the first run.started event in the log
+// whose payload run_kind is "issue" (the post-selection issue batch
+// synthetic event, as opposed to the auto-select selector event). It
+// returns nil when no such event is present.
+func findIssueStartedEvent(log *recordingEventLog) *events.Event {
+	for i := range log.events {
+		e := log.events[i]
+		if e.Type != "run.started" {
+			continue
+		}
+		kind, _ := e.Payload["run_kind"].(string)
+		if kind == "issue" {
+			return &log.events[i]
+		}
+	}
+	return nil
+}
+
+// TestRun_AutoFlag_PostSelectionIssueBatchHasIssueIdentity pins issue
+// #1918 slice 2: the post-selection phase is a normal issue batch, not
+// an auto-select run. The synthetic run.started emitted before
+// BatchRunner.RunBatch MUST carry:
+//   - run_kind == "issue"
+//   - no auto-select marker in the payload
+//   - batch_id equal to the public issue BatchId (<sid>-<ts>-<firstIssue>
+//     for single, <sid>-<ts>-<firstIssue>+N-1 for multi), NOT the
+//     selector's <sid>-<ts>-auto-N
+//   - RunID equal to the per-row issue RunID, NOT the selector's
+//     <sid>-<ts>-auto-N
+//
+// The post-selection (sid, ts) is the batch session's freshly minted
+// pair, not the auto-select selector's (sid, ts) — these are two
+// distinct batch identities. The test pins that the post-selection
+// forms a self-consistent normal issue batch (RunID and batch_id share
+// the same (sid, ts) prefix and the per-row RunID follows the
+// <sid>-<ts>-<firstIssue> pattern).
+func TestRun_AutoFlag_PostSelectionIssueBatchHasIssueIdentity(t *testing.T) {
+	sandmanDir := testenv.MkdirShort(t, "sm-auto-")
+	t.Chdir(sandmanDir)
+	if err := os.MkdirAll(".sandman", 0o755); err != nil {
+		t.Fatalf("mkdir .sandman: %v", err)
+	}
+	promptPath := filepath.Join(".sandman", "auto-selection-prompt.md")
+	if err := os.WriteFile(promptPath, []byte("priority prompt"), 0644); err != nil {
+		t.Fatalf("create priority prompt: %v", err)
+	}
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	gh := &fakeGitHubClient{
+		searchIssuesResult: []github.Issue{
+			{Number: 1, Title: "Feature A", Body: "A", Labels: []string{"bug"}},
+			{Number: 2, Title: "Feature B", Body: "B", Labels: []string{"bug"}},
+		},
+	}
+	log := &recordingEventLog{}
+	cfg := &config.Config{
+		Agent:         "opencode",
+		ReviewCommand: "/oc review",
+		AutoMaxCount:  5,
+	}
+	cfg.AgentProviders = map[string]config.Agent{
+		"opencode": {
+			Command: fmt.Sprintf("mkdir -p %s/state && echo '[1, 2]' > %s/state/selected-issues.json", filepath.Join(sandmanDir, ".sandman"), filepath.Join(sandmanDir, ".sandman")),
+		},
+	}
+	deps := Dependencies{
+		BatchRunner:  spy,
+		ConfigStore:  &fakeStore{config: cfg},
+		EventLog:     log,
+		GitHubClient: gh,
+		IsTTY:        func() bool { return false },
+		RepoRoot:     sandmanDir,
+	}
+
+	var buf bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--auto"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !spy.called {
+		t.Fatal("expected batch runner to be called")
+	}
+
+	autoStarted, _ := findAutoSelectEvents(log)
+	if autoStarted == nil {
+		t.Fatal("expected a run.started event with auto-select-* RunID")
+	}
+	selectorRunID := autoStarted.RunID
+	if !autoSelectRunIDRe.MatchString(selectorRunID) {
+		t.Fatalf("expected auto-select RunID pattern, got %q", selectorRunID)
+	}
+
+	issueStarted := findIssueStartedEvent(log)
+	if issueStarted == nil {
+		t.Fatal("expected a run.started event with run_kind=issue (post-selection synthetic event)")
+	}
+
+	if strings.Contains(issueStarted.RunID, "-auto-") {
+		t.Errorf("post-selection issue RunID %q must not carry the auto marker", issueStarted.RunID)
+	}
+	if !issuePerRowRunIDRe.MatchString(issueStarted.RunID) {
+		t.Errorf("post-selection issue RunID %q does not match <sid>-<ts>-<num> pattern", issueStarted.RunID)
+	}
+
+	if kind, _ := issueStarted.Payload["run_kind"].(string); kind != "issue" {
+		t.Errorf("post-selection run_kind = %q, want \"issue\"", kind)
+	}
+	if val, ok := issueStarted.Payload["batch_id"].(string); !ok || val == "" {
+		t.Fatalf("post-selection payload missing batch_id, got %v (type %T)", issueStarted.Payload["batch_id"], issueStarted.Payload["batch_id"])
+	}
+	batchID, _ := issueStarted.Payload["batch_id"].(string)
+	if strings.Contains(batchID, "-auto-") {
+		t.Errorf("post-selection batch_id %q must not carry the auto marker", batchID)
+	}
+
+	batchPrefix := runidSidTsPrefix(t, batchID)
+	runIDPrefix := runidSidTsPrefix(t, issueStarted.RunID)
+	if batchPrefix != runIDPrefix {
+		t.Errorf("post-selection batch_id %q and RunID %q do not share a (sid, ts) prefix (got %q vs %q)",
+			batchID, issueStarted.RunID, batchPrefix, runIDPrefix)
+	}
+
+	verifyAutoStartedBeforeIssue := func() bool {
+		seenAuto := false
+		for _, e := range log.events {
+			if !seenAuto && e.Type == autoStarted.Type && e.RunID == autoStarted.RunID && e.Timestamp.Equal(autoStarted.Timestamp) {
+				seenAuto = true
+				continue
+			}
+			if e.Type == issueStarted.Type && e.RunID == issueStarted.RunID && e.Timestamp.Equal(issueStarted.Timestamp) {
+				return seenAuto
+			}
+		}
+		return false
+	}
+	if !verifyAutoStartedBeforeIssue() {
+		t.Errorf("expected auto-select run.started to land before the post-selection issue run.started in the event log")
+	}
+}
+
+// issuePerRowRunIDRe matches a per-row issue RunID of the form
+// <sid>-<ts>-<num>. The (sid, ts) is the batch's freshly minted pair,
+// not the auto-select selector's.
+var issuePerRowRunIDRe = regexp.MustCompile(`^[0-9a-f]{4}-\d{12}-\d+(\+\d+)?$`)
+
+// runidSidTsPrefix returns the <sid>-<ts> prefix of any RunID / BatchId
+// that follows the new <sid>-<ts>-<rest> format.
+func runidSidTsPrefix(t *testing.T, runID string) string {
+	t.Helper()
+	parts := strings.SplitN(runID, "-", 3)
+	if len(parts) < 3 {
+		t.Fatalf("RunID %q does not match <sid>-<ts>-... pattern", runID)
+	}
+	return parts[0] + "-" + parts[1]
 }
 
 func TestRun_AutoFlag_AgentFailurePropagatesErrorAndEmitsFailureFinished(t *testing.T) {

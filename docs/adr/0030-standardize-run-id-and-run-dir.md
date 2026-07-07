@@ -151,6 +151,25 @@ For prompt-only the per-row RunID equals the public BatchId, so the on-disk batc
 
 When either manifest field is absent, callers should fall back to the queued event's `RunID` if one is available, or return the empty string. The portal implements both paths through `perRowRunIDForManifest(runTS, runShortID, prNumber, issueNumber, queued)` (pure helper) and its active-batch wrapper `perRowRunIDForActive(active, issueNumber, queued)`.
 
+### Auto-select and post-selection issue batch
+
+Auto mode is a two-phase flow: an auto-select selector run that picks the issues, followed by a normal issue batch that runs the selected issues. These two phases are **two distinct batches** with **two distinct identities** and must never be conflated.
+
+The auto-select selector run uses the auto-select naming template:
+
+- BatchId: `<shortid>-<ts>-auto-<N>` where `<N>` is the candidate count
+- RunID: the same string (`<shortid>-<ts>-auto-<N>`)
+- batch_id in the run.started and run.finished event payloads: the selector BatchId
+
+The post-selection phase is a **normal issue batch** and follows the regular issue rules above. It does **not** inherit the auto-select selector's `<shortid>-<ts>` pair, does **not** carry an `-auto-` marker in its BatchId or RunID, and does **not** have `run_kind: "auto-select"` in any of its event payloads. The post-selection issue batch's per-row RunIDs are issue-specific (per the regular issue template), not auto-select RunIDs.
+
+Concretely, when `--auto` runs to completion, two batch directories appear under `.sandman/batches/`:
+
+1. `<sid1>-<ts1>-auto-N` (the auto-select selector)
+2. `<sid2>-<ts2>-<firstIssue>[+<additionalCount>]` (the post-selection issue batch)
+
+with `<sid1>` ≠ `<sid2>` and `<ts1>` ≠ `<ts2>` in general. The portal renders the selector as an "auto-selecting" row (one row per selector run) and the post-selection issue batch as a normal "running" row (one row per issue), and never shows the auto-selecting chip on the post-selection rows.
+
 ## Consequences
 
 ### Positive
@@ -162,6 +181,7 @@ When either manifest field is absent, callers should fall back to the queued eve
 - Validation is loosened to accept the full range of identifiers users are likely to choose.
 - Carrying `RunTS` and `RunShortID` on the manifest lets event-log-less consumers (the portal, before `run.started` lands) derive canonical per-row RunIDs without synthesizing ad-hoc formats.
 - The `runid.NewRunID` derivation contract pins the canonical call shape so future consumers cannot drift back to synthetic "issue-N" RunIDs.
+- The auto-select vs post-selection identity split (issue #1918 slice 2) prevents the portal from showing the auto-selecting chip on the post-selection issue batch rows, and lets downstream consumers resolve the selector's batch identity from the event stream without back-deriving it from the RunID.
 
 ### Negative
 
@@ -183,3 +203,4 @@ None - can start immediately
 
 - Issue: #984
 - Parent: #982
+- Slice 2 amendment: #1918 (auto-select selector id and post-selection issue batch identity)

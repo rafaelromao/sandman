@@ -196,7 +196,6 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 			}
 
 			var issues []int
-			var autoIssueRunID string
 			if overridePrompt && !issueSelectionProvided {
 				if promptNeedsIssueSelection {
 					return MarkUsage(fmt.Errorf("prompt requires issue selection but no issue selection was provided"))
@@ -216,42 +215,9 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 						return err
 					}
 					resolvedQuery := resolveAutoQuery(label, query)
-					autoTS, autoShortID := "", ""
-					issues, autoTS, autoShortID, err = resolveAutoIssues(cmd.Context(), githubClient, effectiveCount, candidates, sandmanDir, agentName, modelFlag, cfg, resolvedQuery, deps.EventLog)
+					issues, _, _, err = resolveAutoIssues(cmd.Context(), githubClient, effectiveCount, candidates, sandmanDir, agentName, modelFlag, cfg, resolvedQuery, deps.EventLog)
 					if err != nil {
 						return err
-					}
-					if autoTS != "" && autoShortID != "" {
-						firstSubject := ""
-						if len(issues) > 0 {
-							firstSubject = fmt.Sprintf("%d", issues[0])
-						}
-						// Pass the total issue count to NewBatchID.
-						// NewBatchID for KindIssue uses +<additionalCount>
-						// (single issue omits the suffix) so the batch
-						// folder basename equals the public BatchId
-						// (issue #1917 slice 1).
-						batchID := runid.NewBatchID(runid.KindIssue, len(issues), firstSubject, autoTS, autoShortID)
-						issueRunDir := daemon.RunDir(sandmanDir, batchID)
-						if err := os.MkdirAll(issueRunDir, 0o700); err != nil {
-							return fmt.Errorf("create issue batch dir: %w", err)
-						}
-						autoIssueRunID = runid.NewRunID(runid.KindIssue, fmt.Sprintf("%d", issues[0]), autoTS, autoShortID)
-						if deps.EventLog != nil {
-							if err := deps.EventLog.Log(events.Event{
-								Type:      "run.started",
-								Timestamp: time.Now(),
-								RunID:     autoIssueRunID,
-								Issue:     issues[0],
-								Payload: map[string]any{
-									"run_kind": "issue",
-									"issues":   append([]int(nil), issues...),
-								},
-							}); err != nil {
-								return fmt.Errorf("log issue run.started: %w", err)
-							}
-						}
-						runID = batchID
 					}
 				} else if len(args) > 0 {
 					selection, orderedIssues, _, hasUnboundedEnd, err := parseIssueSelection(args)
@@ -653,6 +619,25 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 				// For single-issue this equals the per-row RunID for the first
 				// issue; for multi-issue it carries the +<n-1> suffix.
 				sessionRunID = batch.BatchIDForIssue(firstIssueNum, len(issues), ts, shortid)
+				if deps.EventLog != nil && autoProvided {
+					issueRunID := runid.NewRunID(runid.KindIssue, fmt.Sprintf("%d", firstIssueNum), ts, shortid)
+					if err := deps.EventLog.Log(events.Event{
+						Type:      "run.started",
+						Timestamp: time.Now(),
+						RunID:     issueRunID,
+						Issue:     firstIssueNum,
+						Payload: map[string]any{
+							"run_kind": "issue",
+							"issues":   append([]int(nil), issues...),
+							"batch_id": sessionRunID,
+						},
+					}); err != nil {
+						return fmt.Errorf("log issue run.started: %w", err)
+					}
+				}
+				if autoProvided {
+					runID = sessionRunID
+				}
 			} else if overridePrompt {
 				ts, shortid, err := runid.NewBatch()
 				if err != nil {

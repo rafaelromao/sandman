@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -146,6 +147,41 @@ func TestNewRunID(t *testing.T) {
 			got := NewRunID(tt.kind, tt.subject, ts, shortid)
 			if got != tt.want {
 				t.Errorf("NewRunID() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestAutoSelect_BatchIDEqualsRunID pins the issue #1918 slice 2
+// contract that the auto-select selector BatchId and RunID are the
+// same value: NewBatchID(KindAutoSelect, N, "", ts, shortid) ==
+// NewRunID(KindAutoSelect, "auto-N", ts, shortid). Both must produce
+// the canonical <sid>-<ts>-auto-<N> string.
+func TestAutoSelect_BatchIDEqualsRunID(t *testing.T) {
+	cases := []struct {
+		name    string
+		ts      string
+		shortid string
+		n       int
+	}{
+		{"single candidate", "260618113825", "abcd", 1},
+		{"five candidates", "260618113825", "abcd", 5},
+		{"fifty candidates", "260618113825", "abcd", 50},
+		{"max shortid", "260618113825", "ffff", 12},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			batchID := NewBatchID(KindAutoSelect, tc.n, "", tc.ts, tc.shortid)
+			runID := NewRunID(KindAutoSelect, fmt.Sprintf("auto-%d", tc.n), tc.ts, tc.shortid)
+			if batchID != runID {
+				t.Errorf("selector BatchId and RunID diverged: BatchId=%q RunID=%q", batchID, runID)
+			}
+			wantPrefix := tc.shortid + "-" + tc.ts + "-auto-"
+			if !strings.HasPrefix(batchID, wantPrefix) {
+				t.Errorf("selector BatchId %q does not start with %q", batchID, wantPrefix)
+			}
+			if !strings.HasSuffix(batchID, fmt.Sprintf("-%d", tc.n)) {
+				t.Errorf("selector BatchId %q does not end with -%d", batchID, tc.n)
 			}
 		})
 	}

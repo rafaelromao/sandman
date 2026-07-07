@@ -113,6 +113,7 @@ func runSelectionPhaseWithEvents(ctx context.Context, client github.Client, coun
 			"count":      effectiveCount,
 			"query":      query,
 			"candidates": append([]int(nil), candidates...),
+			"batch_id":   batchID,
 		},
 	}); err != nil {
 		fmt.Fprintf(os.Stderr, "event log write failed: run.started (run=%s): %v\n", runID, err)
@@ -127,14 +128,14 @@ func runSelectionPhaseWithEvents(ctx context.Context, client github.Client, coun
 
 	promptPath := filepath.Join(sandmanDir, "selection-prompt.md")
 	if err := os.WriteFile(promptPath, []byte(promptText), 0o644); err != nil {
-		emitAutoSelectFinished(eventLog, runID, "failure", fmt.Sprintf("write selection prompt: %v", err), nil)
+		emitAutoSelectFinished(eventLog, runID, batchID, "failure", fmt.Sprintf("write selection prompt: %v", err), nil)
 		return nil, "", "", fmt.Errorf("write selection prompt: %w", err)
 	}
 	defer os.Remove(promptPath)
 
 	agentCfg, err := cfg.ResolveAgentProvider(agentName)
 	if err != nil {
-		emitAutoSelectFinished(eventLog, runID, "failure", fmt.Sprintf("resolve agent: %v", err), nil)
+		emitAutoSelectFinished(eventLog, runID, batchID, "failure", fmt.Sprintf("resolve agent: %v", err), nil)
 		return nil, "", "", fmt.Errorf("resolve agent: %w", err)
 	}
 
@@ -145,7 +146,7 @@ func runSelectionPhaseWithEvents(ctx context.Context, client github.Client, coun
 		ModelFlag:  modelFlagStr,
 	})
 	if err != nil {
-		emitAutoSelectFinished(eventLog, runID, "failure", fmt.Sprintf("render agent command: %v", err), nil)
+		emitAutoSelectFinished(eventLog, runID, batchID, "failure", fmt.Sprintf("render agent command: %v", err), nil)
 		return nil, "", "", fmt.Errorf("render agent command: %w", err)
 	}
 
@@ -154,16 +155,16 @@ func runSelectionPhaseWithEvents(ctx context.Context, client github.Client, coun
 	cmd.Stderr = &stderrBuf
 	if err := cmd.Run(); err != nil {
 		agentErr := fmt.Errorf("selection agent failed with stderr: %s: %w", strings.TrimSpace(stderrBuf.String()), err)
-		emitAutoSelectFinished(eventLog, runID, "failure", agentErr.Error(), nil)
+		emitAutoSelectFinished(eventLog, runID, batchID, "failure", agentErr.Error(), nil)
 		return nil, "", "", agentErr
 	}
 
 	selected, err := readSelectedIssues(paths.NewLayout(nil, filepath.Dir(sandmanDir)), effectiveCount)
 	if err != nil {
-		emitAutoSelectFinished(eventLog, runID, "failure", err.Error(), nil)
+		emitAutoSelectFinished(eventLog, runID, batchID, "failure", err.Error(), nil)
 		return nil, "", "", err
 	}
-	emitAutoSelectFinished(eventLog, runID, "success", "", selected)
+	emitAutoSelectFinished(eventLog, runID, batchID, "success", "", selected)
 	return selected, ts, shortid, nil
 }
 
@@ -216,13 +217,14 @@ func runSelectionPhaseLegacy(ctx context.Context, client github.Client, effectiv
 // both the instrumented and the legacy code paths. The reason field is
 // omitted on success; the selected field is included on success and omitted
 // on failure.
-func emitAutoSelectFinished(eventLog events.EventLog, runID, status, reason string, selected []int) {
+func emitAutoSelectFinished(eventLog events.EventLog, runID, batchID, status, reason string, selected []int) {
 	if eventLog == nil {
 		return
 	}
 	payload := map[string]any{
 		"run_kind": "auto-select",
 		"status":   status,
+		"batch_id": batchID,
 	}
 	if reason != "" {
 		payload["reason"] = reason
