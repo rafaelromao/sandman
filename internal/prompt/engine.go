@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/rafaelromao/sandman/internal/atomicfs"
 	"github.com/rafaelromao/sandman/internal/config"
 )
 
@@ -35,8 +36,10 @@ var badgePrompt string
 var promptVersion string
 
 // promptVersionFile is the sidecar file that records the version of the
-// materialized prompt template inside .sandman/.
-const promptVersionFile = ".prompt-version"
+// materialized prompt template under .sandman/state/. It is interpreted
+// relative to filepath.Dir(cfg.PromptFile), which resolves to
+// <repo>/.sandman when cfg.PromptFile ends in .sandman/prompt.md.
+const promptVersionFile = "state/.prompt-version"
 
 func init() {
 	sum := sha256.Sum256([]byte(defaultPrompt))
@@ -251,13 +254,10 @@ func MaterializePromptFile(cfg RenderConfig) error {
 		return nil
 	}
 
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return fmt.Errorf("create prompt directory: %w", err)
-	}
-	if err := os.WriteFile(cfg.PromptFile, []byte(DefaultPrompt()), 0644); err != nil {
+	if err := atomicfs.WriteAtomic(cfg.PromptFile, []byte(DefaultPrompt()), 0644); err != nil {
 		return fmt.Errorf("write prompt file: %w", err)
 	}
-	return os.WriteFile(versionPath, []byte(promptVersion), 0644)
+	return atomicfs.WriteAtomic(versionPath, []byte(promptVersion), 0644)
 }
 
 // Ensure Engine implements IssueRenderer.

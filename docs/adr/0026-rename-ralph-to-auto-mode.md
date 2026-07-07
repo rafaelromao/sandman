@@ -69,6 +69,15 @@ ADR-0012 is an immutable historical record of the original decision. We add ADR-
 
 None - can start immediately
 
+## Follow-up (issue #1867)
+
+The soft migration described under "Soft-migration of the prompt filename" is
+end-of-life as of #1867. `.sandman/priority-selection-prompt.md` is no longer
+read by `sandman init`; if the new `.sandman/auto-selection-prompt.md` is
+absent, Sandman writes the embedded default verbatim, regardless of whether
+a legacy file is present. Operators with a customized legacy file must rename
+it to `.sandman/auto-selection-prompt.md` manually before re-running `init`.
+
 ## Runtime Context
 
 - Issue: #896
