@@ -34,9 +34,11 @@ Sandman writes structured events to `.sandman/events.jsonl` in newline-delimited
 |-------|-------------|
 | `type` | Event type (`run.started`, `run.continued`, `run.queued`, `run.blocked`, `run.retry`, `run.idle_timeout`, `run.warning`, `run.finished`, `run.aborted`) |
 | `timestamp` | ISO 8601 timestamp |
-| `run_id` | Unique run identifier per [ADR-0030](../adr/0030-standardize-run-id-and-run-dir.md) §Per-row RunID templates. For review runs the shape is `<shortid>-<ts>-<linkedIssue?>-PR<pr>` — never the legacy literal `"review"` alias. |
+| `run_id` | Per-row RunID per [ADR-0030](../adr/0030-standardize-run-id-and-run-dir.md) §Per-row RunID templates. For review runs the shape is `<shortid>-<ts>-<linkedIssue?>-PR<pr>` — never the legacy literal `"review"` alias. This is the row-level identifier; the batch-level identifier (== public BatchId == batch folder basename) is the `batch_id` field on the run.started/run.finished payloads, not this row. |
 | `issue` | GitHub issue number, or `null` for prompt-only runs |
 | `payload` | Event-specific data (see below) |
+
+The `run_id` (per-row RunID) and the `payload.batch_id` (public BatchId) follow the [slice-1 contract](../adr/0032-sandman-layout-redesign.md) (public BatchId == batch folder basename == batch.json.batchId == run.json.BatchID == event payload batch_id). For multi-issue batches the two diverge — the public BatchId carries the `+N` additional count suffix and the per-row RunID does not. For every other kind (single-issue, prompt-only, review, auto-select) the two are identical.
 
 ### Event payloads
 
@@ -203,3 +205,7 @@ Summary: 1 succeeded, 1 aborted
 ```
 
 Prompt-only runs show the same summary with `prompt-only` in the issue column.
+
+## Existing `.sandman` migration is out of scope
+
+**Existing `.sandman` migration is out of scope.** The slice-1 contract change (issue #1917) and the identity alignment that followed (slices 2–6 of parent PRD #1916) rename the public BatchId surface and the per-row RunID templates. Batches provisioned before the contract change carry old id shapes (legacy `+1` single-issue, total-count `+N`, prompt-only without the `prompt` segment, etc.) and are not rewritten in place. After upgrading, the operator should delete `.sandman` and rebuild; no migration tool ships for the old layout. Events in a pre-upgrade `events.jsonl` may project to `unknown` rows in the portal until the operator clears `.sandman` and starts a fresh batch.

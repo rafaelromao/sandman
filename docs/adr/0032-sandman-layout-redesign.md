@@ -187,6 +187,10 @@ Bulk operations (`archive older-than`, `archive stale`, `clean`, `clean --archiv
 - No automatic archiving; artifacts accumulate until operator runs `archive` or `clean`.
 - Concurrent index writers use last-wins semantics; some batch metadata may be lost under heavy write contention (acceptable for single-repo, single-operator workload).
 
+### Migration out of scope
+
+**Existing `.sandman` migration is out of scope.** The slice-1 contract change (issue #1917) and the identity alignment that followed (slices 2–6 of parent PRD #1916) rename the public BatchId surface and the per-row RunID templates. Batches provisioned before the contract change carry old id shapes (legacy `+1` single-issue, total-count `+N`, prompt-only without the `prompt` segment, etc.) and are not rewritten in place. The operator is expected to delete `.sandman` after rebuilding; no migration tool ships for the old layout. This is a greenfield redesign, not a back-compat release.
+
 ### Neutral
 
 - ADR-0030 (Standardize Run ID and Run Dir naming) is extended by this ADR's batch/run split.
