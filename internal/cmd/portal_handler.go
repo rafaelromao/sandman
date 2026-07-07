@@ -185,20 +185,17 @@ func (h *portalHandler) handleRunArchive(w http.ResponseWriter, r *http.Request)
 		writeJSONError(w, "missing runId", http.StatusBadRequest)
 		return
 	}
-	archivedID, err := archivePortalRunHandler(h.repoRoot, req.RunID)
-	if err != nil {
+	if _, err := archivePortalRunHandler(h.repoRoot, req.RunID); err != nil {
 		var archiveErr *portalArchiveError
 		if errors.As(err, &archiveErr) {
-			writeJSONError(w, archiveErr.message, archiveErr.status)
+			writeJSONArchiveError(w, archiveErr.message, archiveErr.path, archiveErr.status)
 			return
 		}
 		writeJSONError(w, "archive failed", http.StatusInternalServerError)
 		return
 	}
 	h.runsIndex.Invalidate()
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Cache-Control", "no-store")
-	_ = json.NewEncoder(w).Encode(map[string]any{"runId": archivedID, "status": "archived"})
+	w.WriteHeader(http.StatusOK)
 }
 
 func (h *portalHandler) handleLogs(w http.ResponseWriter, r *http.Request) {
