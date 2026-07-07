@@ -1136,7 +1136,6 @@ func (d *Daemon) prepareReviewRun(ctx context.Context, prNumber int, commentID s
 	if err != nil {
 		return "", "", nil, nil, fmt.Errorf("generate batch ID: %w", err)
 	}
-	batchDirName := runid.NewBatchID(runid.KindReview, 1, fmt.Sprintf("%d", prNumber), ts, shortid)
 
 	var linkedIssue int
 	if pr, fetchErr := d.GitHub.FetchPR(ctx, prNumber); fetchErr == nil && pr != nil {
@@ -1151,11 +1150,13 @@ func (d *Daemon) prepareReviewRun(ctx context.Context, prNumber int, commentID s
 
 	perRowRunID := reviewRunIDFor(prNumber, linkedIssue, ts, shortid)
 
-	rs := daemon.NewRunSession(d.BaseDir, batchDirName)
-	// Index entry id MUST equal the per-row RunID the orchestrator will emit
-	// for this review (see #1675). batchDirName is the ADR-0030 batch-level
-	// dir name `<sid>-<ts>-PR<pr>`, which equals perRowRunID for orphan
-	// reviews but NOT for reviews with a linked issue (`<sid>-<ts>-<issue>-PR<pr>`).
+	rs := daemon.NewRunSession(d.BaseDir, perRowRunID)
+	// Issue #1919 slice 3: the on-disk batch directory name and the
+	// per-row RunID MUST agree for both orphan and linked reviews.
+	// For orphan reviews both are `<sid>-<ts>-PR<pr>`; for linked
+	// reviews both are `<sid>-<ts>-<linkedIssue>-PR<pr>`. ADR-0030
+	// pins the same invariant on batch.json.batchId, run.json.BatchID,
+	// and the run.started payload's batch_id field.
 	manifest := daemon.BatchManifest{BatchId: perRowRunID, CreatedAt: time.Now(), RunKind: "review", RunTS: ts, RunShortID: shortid, Issues: []int{}, PR: &prNumber}
 	if err := rs.Prepare(manifest); err != nil {
 		_ = rs.Close()
@@ -1171,7 +1172,7 @@ func (d *Daemon) prepareReviewRun(ctx context.Context, prNumber int, commentID s
 
 	runManifest := batchindex.RunManifest{
 		RunID:     perRowRunID,
-		BatchID:   batchDirName,
+		BatchID:   perRowRunID,
 		PR:        prNumber,
 		Kind:      batchindex.KindReview,
 		CreatedAt: time.Now(),
