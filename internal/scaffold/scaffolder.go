@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/rafaelromao/sandman/internal/atomicfs"
 	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/prompt"
 )
@@ -436,12 +437,12 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 
 	dockerfile := s.renderBuildToolsDockerfile(preset, defaultAgent, goVersion, dotnetVersion, nodeVersion, pythonVersion, elixirVersion, erlangVersion, rubyVersion, rustVersion, javaVersion)
 	dockerfilePath := filepath.Join(sandmanDir, "Dockerfile")
-	if err := os.WriteFile(dockerfilePath, []byte(dockerfile), 0644); err != nil {
+	if err := atomicfs.WriteAtomic(dockerfilePath, []byte(dockerfile), 0644); err != nil {
 		return fmt.Errorf("write Dockerfile: %w", err)
 	}
 
 	promptPath := filepath.Join(sandmanDir, "prompt.md")
-	if err := os.WriteFile(promptPath, []byte(prompt.DefaultPrompt()), 0644); err != nil {
+	if err := atomicfs.WriteAtomic(promptPath, []byte(prompt.DefaultPrompt()), 0644); err != nil {
 		return fmt.Errorf("write prompt.md: %w", err)
 	}
 
@@ -449,11 +450,11 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 	legacyPromptPath := filepath.Join(sandmanDir, "priority-selection-prompt.md")
 	if _, err := os.Stat(autoPromptPath); os.IsNotExist(err) {
 		if legacyData, err := os.ReadFile(legacyPromptPath); err == nil {
-			if err := os.WriteFile(autoPromptPath, legacyData, 0644); err != nil {
+			if err := atomicfs.WriteAtomic(autoPromptPath, legacyData, 0644); err != nil {
 				return fmt.Errorf("write auto-selection-prompt.md: %w", err)
 			}
 		} else {
-			if err := os.WriteFile(autoPromptPath, []byte(prompt.DefaultPriorityPrompt()), 0644); err != nil {
+			if err := atomicfs.WriteAtomic(autoPromptPath, []byte(prompt.DefaultPriorityPrompt()), 0644); err != nil {
 				return fmt.Errorf("write auto-selection-prompt.md: %w", err)
 			}
 		}
@@ -494,14 +495,7 @@ func writeIfMissing(path string, data []byte) error {
 	} else if !os.IsNotExist(err) {
 		return fmt.Errorf("stat %s: %w", path, err)
 	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0644); err != nil {
-		return fmt.Errorf("write %s: %w", tmp, err)
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		return fmt.Errorf("rename %s: %w", tmp, err)
-	}
-	return nil
+	return atomicfs.WriteAtomic(path, data, 0644)
 }
 
 func effectiveReviewCommand(value string) string {

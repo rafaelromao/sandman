@@ -14,6 +14,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/rafaelromao/sandman/internal/atomicfs"
 )
 
 const embeddedSkillRoot = "sandman"
@@ -233,14 +235,7 @@ func writeManifest(targetDir string) error {
 		}
 		m.Files[rel] = hash
 	}
-	data, err := json.MarshalIndent(m, "", "  ")
-	if err != nil {
-		return fmt.Errorf("marshal skill manifest: %w", err)
-	}
-	if err := os.WriteFile(filepath.Join(targetDir, manifestFileName), data, 0o644); err != nil {
-		return fmt.Errorf("write skill manifest: %w", err)
-	}
-	return nil
+	return atomicfs.WriteAtomicJSON(filepath.Join(targetDir, manifestFileName), m, 0o644)
 }
 
 func matchesManifest(targetDir string, m *manifest) (bool, error) {

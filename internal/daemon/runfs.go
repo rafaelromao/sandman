@@ -9,6 +9,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/rafaelromao/sandman/internal/atomicfs"
 	"github.com/rafaelromao/sandman/internal/batchindex"
 	"github.com/rafaelromao/sandman/internal/events"
 )
@@ -192,16 +193,15 @@ func BatchesIndexPath(baseDir string) string {
 }
 
 // WriteManifest serialises a BatchManifest as JSON and writes it to
-// ManifestPath(runDir). The file is created with mode 0644.
+// ManifestPath(runDir). The file is created with mode 0644 and the
+// write is rename-style atomic so a crash between write and rename
+// leaves the previous manifest intact.
 func WriteManifest(runDir string, manifest BatchManifest) error {
 	data, err := json.Marshal(manifest)
 	if err != nil {
 		return fmt.Errorf("marshal batch manifest: %w", err)
 	}
-	if err := os.WriteFile(ManifestPath(runDir), data, 0644); err != nil {
-		return fmt.Errorf("write batch manifest: %w", err)
-	}
-	return nil
+	return atomicfs.WriteAtomic(ManifestPath(runDir), data, 0644)
 }
 
 // ReadManifest decodes the batch manifest stored at runDir. It first

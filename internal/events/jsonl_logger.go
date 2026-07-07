@@ -8,6 +8,8 @@ import (
 	"os"
 	"strings"
 	"sync"
+
+	"github.com/rafaelromao/sandman/internal/atomicfs"
 )
 
 // JSONLLogger writes events to a JSONL file.
@@ -189,7 +191,7 @@ func parseLogLines(raw string) ([]Event, [][]byte) {
 // bound.
 func (l *JSONLLogger) quarantineMalformed(bad [][]byte) error {
 	sidecar := l.Path + ".malformed"
-	side, err := os.OpenFile(sidecar, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0644)
+	side, err := atomicfs.OpenAppend(sidecar, 0644)
 	if err != nil {
 		return fmt.Errorf("open quarantine sidecar: %w", err)
 	}
@@ -293,6 +295,12 @@ func (l *JSONLLogger) ensureOpen() (*os.File, error) {
 	// pipe-sized write. O_APPEND makes the kernel position every
 	// write at the current EOF atomically, which is exactly the
 	// guarantee a JSONL log needs.
+	//
+	// O_RDWR is required alongside O_APPEND because Read and
+	// RemoveEventsByIssue seek back to offset 0 and read the full
+	// file through the same descriptor (no second open). atomicfs
+	// does not expose an RDWR variant, so this site keeps os.OpenFile
+	// while the sidecar uses atomicfs.OpenAppend (WRONLY).
 	f, err := os.OpenFile(l.Path, os.O_APPEND|os.O_RDWR|os.O_CREATE, 0644)
 	if err != nil {
 		return nil, fmt.Errorf("open event log: %w", err)

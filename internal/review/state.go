@@ -5,11 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/rafaelromao/sandman/internal/atomicfs"
 	"github.com/rafaelromao/sandman/internal/batchindex"
 )
 
@@ -243,22 +243,10 @@ func (s *ReviewStateStore) Save() error {
 	return s.saveLocked()
 }
 
-// saveLocked writes to <path>.tmp and renames over <path>. The caller
-// must hold s.mu.
+// saveLocked writes the state to s.path via a unique temp file plus
+// os.Rename. The unique temp name closes the concurrency window the
+// old fixed-name <path>.tmp writer had: two concurrent saves could
+// otherwise race on the same tmp file. The caller must hold s.mu.
 func (s *ReviewStateStore) saveLocked() error {
-	if err := os.MkdirAll(filepath.Dir(s.path), 0755); err != nil {
-		return fmt.Errorf("create state dir: %w", err)
-	}
-	tmpPath := s.path + ".tmp"
-	data, err := json.MarshalIndent(s.state, "", "  ")
-	if err != nil {
-		return fmt.Errorf("marshal review state: %w", err)
-	}
-	if err := os.WriteFile(tmpPath, data, 0644); err != nil {
-		return fmt.Errorf("write review state tmp: %w", err)
-	}
-	if err := os.Rename(tmpPath, s.path); err != nil {
-		return fmt.Errorf("rename review state: %w", err)
-	}
-	return nil
+	return atomicfs.WriteAtomicJSON(s.path, s.state, 0644)
 }
