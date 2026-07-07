@@ -72,7 +72,10 @@ func NewBatchIn(baseBatchesDir string) (ts, shortid string, err error) {
 func NewBatchID(kind Kind, n int, firstSubject string, ts, shortid string) string {
 	switch kind {
 	case KindIssue:
-		return fmt.Sprintf("%s-%s-%s+%d", shortid, ts, firstSubject, n)
+		if n <= 1 {
+			return fmt.Sprintf("%s-%s-%s", shortid, ts, firstSubject)
+		}
+		return fmt.Sprintf("%s-%s-%s+%d", shortid, ts, firstSubject, n-1)
 	case KindReview:
 		return fmt.Sprintf("%s-%s-PR%s", shortid, ts, firstSubject)
 	case KindAutoSelect:
@@ -110,6 +113,7 @@ func IsValidUserRunID(s string) error {
 }
 
 var newFormatRe = regexp.MustCompile(`^[0-9a-f]{4}-\d{12}`)
+var numericIssueTailRe = regexp.MustCompile(`^[0-9a-f]{4}-\d{12}-\d+$`)
 
 func KindFromDirName(name string) (Kind, bool) {
 	// New format: {sid}-{ts}-{rest}
@@ -121,6 +125,12 @@ func KindFromDirName(name string) (Kind, bool) {
 	}
 	// New format issue batch: {sid}-{ts}-{n}+{count} (contains "+")
 	if strings.Contains(name, "+") {
+		return KindIssue, true
+	}
+	// New format single-issue batch: {sid}-{ts}-{num} (numeric tail, no +N).
+	// Disambiguate from prompt-only-with-userid ({sid}-{ts}-{userid}) by
+	// checking that the trailing token is purely digits.
+	if numericIssueTailRe.MatchString(name) {
 		return KindIssue, true
 	}
 	// Old format: {ts}-{sid}-{rest}

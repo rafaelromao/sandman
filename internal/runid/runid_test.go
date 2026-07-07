@@ -36,11 +36,25 @@ func TestNewBatchID(t *testing.T) {
 		want         string
 	}{
 		{
-			name:         "KindIssue",
+			name:         "KindIssue single omits +N",
 			kind:         KindIssue,
-			n:            3,
+			n:            1,
 			firstSubject: "42",
-			want:         "abcd-260618113825-42+3",
+			want:         "abcd-260618113825-42",
+		},
+		{
+			name:         "KindIssue two uses +1",
+			kind:         KindIssue,
+			n:            2,
+			firstSubject: "42",
+			want:         "abcd-260618113825-42+1",
+		},
+		{
+			name:         "KindIssue nine uses +8",
+			kind:         KindIssue,
+			n:            9,
+			firstSubject: "42",
+			want:         "abcd-260618113825-42+8",
 		},
 		{
 			name:         "KindReview",
@@ -175,6 +189,12 @@ func TestKindFromDirName(t *testing.T) {
 		{
 			name:      "New format KindIssue batch dir",
 			input:     "abcd-260618113825-42+2",
+			wantKind:  KindIssue,
+			wantFound: true,
+		},
+		{
+			name:      "New format KindIssue single-issue batch dir (no +N)",
+			input:     "abcd-260618113825-42",
 			wantKind:  KindIssue,
 			wantFound: true,
 		},
