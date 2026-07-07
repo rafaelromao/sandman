@@ -281,3 +281,132 @@ func TestPortalRefresh_StreamedLogPaneIsNotOverwrittenByPollRefreshes(t *testing
 		t.Fatalf("expected streamed line to remain in rendered log cache, got %#v", result)
 	}
 }
+
+func TestPortalRefresh_AsyncLargeLogKeepsStreamOpenDuringRender(t *testing.T) {
+	batchID := "abcd-260618113825"
+	runID := batchID + "-42"
+	initialRun := map[string]any{
+		"key":          runID,
+		"runId":        runID,
+		"kind":         "active",
+		"status":       "running",
+		"issueLabel":   "#42",
+		"issueNumber":  42,
+		"batchKey":     batchID,
+		"socketPath":   "/tmp/" + runID + ".sock",
+		"log":          "initial line 1\ninitial line 2",
+		"lastOutputAt": "2025-06-26T12:00:00Z",
+	}
+	refreshedRun := map[string]any{
+		"key":          runID,
+		"runId":        runID,
+		"kind":         "active",
+		"status":       "running",
+		"issueLabel":   "#42",
+		"issueNumber":  42,
+		"batchKey":     batchID,
+		"socketPath":   "/tmp/" + runID + ".sock",
+		"log":          strings.Repeat("refresh line\n", 2400),
+		"lastOutputAt": "2025-06-26T12:01:00Z",
+	}
+	runsJSON, err := json.Marshal([]map[string]any{initialRun})
+	if err != nil {
+		t.Fatalf("marshal runs: %v", err)
+	}
+	refreshedRunsJSON, err := json.Marshal([]map[string]any{refreshedRun})
+	if err != nil {
+		t.Fatalf("marshal refreshed runs: %v", err)
+	}
+	stateJSON := `{"expandedRunKey":"` + runID + `","tabs":{"` + runID + `":"log"},"commandFormCollapsed":false,"showArchived":false,"activeBatches":false,"sortBy":"started","sortDir":"desc"}`
+	page := buildPortalReproPage(t, stateJSON, runsJSON, `
+    window.__portalFetchPayloads = [
+      { runs: `+string(runsJSON)+` },
+      { runs: `+string(refreshedRunsJSON)+` }
+    ];
+    window.__portalStreams = [];
+    window.__portalClosedDuringRefresh = false;
+    window.__portalRefreshCalls = 0;
+    window.__portalRefreshFn = null;
+    window.setInterval = function (cb) {
+      if (cb && cb.name === 'refresh') {
+        window.__portalRefreshFn = cb;
+      }
+      return 1;
+    };
+    window.EventSource = function (url) {
+      this.url = url;
+      this._onmessage = null;
+      this._onerror = null;
+      this.readyState = 1;
+      this.closed = false;
+      var self = this;
+      Object.defineProperty(this, 'onmessage', {
+        configurable: true,
+        get: function () { return self._onmessage; },
+        set: function (fn) { self._onmessage = fn; }
+      });
+      Object.defineProperty(this, 'onerror', {
+        configurable: true,
+        get: function () { return self._onerror; },
+        set: function (fn) { self._onerror = fn; }
+      });
+      this.close = function () { self.closed = true; window.__portalClosedDuringRefresh = true; };
+      window.__portalStreams.push(this);
+      if (window.__portalStreams.length === 1 && typeof window.__portalRefreshFn === 'function') {
+        setTimeout(function () {
+          window.__portalRefreshCalls += 1;
+          window.__portalRefreshFn();
+        }, 0);
+      }
+    };
+    window.fetch = async function () {
+      window.__portalFetchCalls += 1;
+      var next = window.__portalFetchPayloads.length ? window.__portalFetchPayloads.shift() : { runs: `+string(refreshedRunsJSON)+` };
+      return {
+        ok: true,
+        status: 200,
+        json: async function () { return next; },
+        text: async function () { return ''; },
+      };
+    };
+    setTimeout(function () {
+      var detail = document.querySelector('tr.detail-row[data-detail-for="`+runID+`"]');
+      var pre = detail && detail.querySelector('.detail-content pre[data-scroll-key]');
+      var marker = document.createElement('pre');
+      marker.id = 'portal-async-stream-close';
+      marker.textContent = JSON.stringify({
+        refreshCalls: window.__portalRefreshCalls,
+        closedDuringRefresh: window.__portalClosedDuringRefresh,
+        streamCount: window.__portalStreams.length,
+        firstStreamClosed: window.__portalStreams[0] ? window.__portalStreams[0].closed : false,
+        renderingLog: pre ? pre.getAttribute('data-rendering-log') : '',
+      });
+      document.body.appendChild(marker);
+    }, 2500);
+  `)
+
+	dom, _ := runPortalChromium(t, page)
+	payload := extractPortalMarker(t, dom, "portal-async-stream-close")
+	var result struct {
+		RefreshCalls        int    `json:"refreshCalls"`
+		ClosedDuringRefresh bool   `json:"closedDuringRefresh"`
+		StreamCount         int    `json:"streamCount"`
+		FirstStreamClosed   bool   `json:"firstStreamClosed"`
+		RenderingLog        string `json:"renderingLog"`
+	}
+	if err := json.Unmarshal([]byte(payload), &result); err != nil {
+		t.Fatalf("parse async stream payload: %v\nraw=%s", err, payload)
+	}
+	if result.ClosedDuringRefresh {
+		t.Fatalf("expected the live stream to stay open across refresh, got %#v", result)
+	}
+	if result.RefreshCalls == 0 {
+		t.Fatalf("expected the refresh callback to run, got %#v", result)
+	}
+	if result.StreamCount == 0 {
+		t.Fatalf("expected at least one live stream to have been attached, got %#v", result)
+	}
+	if result.FirstStreamClosed {
+		t.Fatalf("expected the first live stream to remain open during refresh, got %#v", result)
+	}
+}

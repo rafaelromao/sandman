@@ -172,7 +172,7 @@ const sandbox = {
   isWaitStateRun: function () { return false; },
   subjectRunIdentity: function (r) { return r && r.runId; },
   streamPreFor: function () { return null; },
-  streamCoalescer: { seedKnownLines: function () {}, clearBuffer: function () {}, scheduleLine: function () {} },
+  streamCoalescer: { seedKnownLines: function () {}, clearBuffer: function () {}, scheduleLine: function () {}, setBlocked: function () {}, flushPending: function () {} },
 };
 sandbox.state.tabs[runID] = 'log';
 sandbox.JSON = JSON;
