@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -1192,6 +1193,239 @@ func TestPortal_ReviewRun_ShowsReviewingBeforeRunStarted(t *testing.T) {
 	}
 	if got.IssueNumber != issueNumber {
 		t.Fatalf("expected IssueNumber=%d (recovered from review identity), got %d", issueNumber, got.IssueNumber)
+	}
+}
+
+// TestPortal_Compute_ActiveReviewDoesNotDuplicateParentCount pins the
+// regression behind the active-review row duplication: while a review is
+// active, the portal must surface exactly one row for the review and the
+// parent impl row's reviewCount must equal the number of distinct review
+// rows (not the count of duplicate rows from the active-socket path AND
+// the final-loop runFromState pass).
+//
+// Root cause: the review's run.started event has issue=null, so
+// runState.IssueNumber()=0 and latestRunStateForIssue never matches the
+// review's own state. Without state, runsFromActiveBatch's state-driven
+// branch is skipped, the initial run literal is used, and usedRunIDs is
+// not updated. The final loop then re-emits the same RunID from the
+// event log with a different BatchKey (the on-disk directory vs the
+// per-row RunID), and dedupRuns cannot merge them.
+func TestPortal_Compute_ActiveReviewDoesNotDuplicateParentCount(t *testing.T) {
+	repoRoot, err := os.MkdirTemp("/tmp", "ard")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(repoRoot) })
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	const issueNumber = 1863
+	const prNumber = 1912
+	const batchID = "b822-260707091520-PR1912"
+	const canonicalReviewRowID = "b822-260707091520-1863-PR1912"
+	const runTS = "260707091520"
+	const runShortID = "b822"
+
+	batchDir := filepath.Join(repoRoot, ".sandman", "batches", batchID)
+	createUnixRunSocket(t, filepath.Join(batchDir, "batch.sock"))
+
+	// The 5-second skew between batch.json.createdAt and the
+	// run.started event reproduces the real prepareReviewRun shape
+	// (internal/review/daemon.go calls time.Now() twice — once for
+	// batch.json, once for run.json). Without the skew, the impl state
+	// for the same issue could pass stateStartsInBatch and accidentally
+	// satisfy the issue-based state lookup, masking the bug.
+	manifestCreatedAt := time.Now().Add(-30 * time.Second).Add(-5 * time.Second)
+	runStartedAt := manifestCreatedAt.Add(5 * time.Second)
+
+	if err := daemon.WriteManifest(batchDir, daemon.BatchManifest{
+		BatchId:    batchID,
+		RunKind:    "review",
+		PR:         intPtr(prNumber),
+		Issues:     []int{},
+		RunTS:      runTS,
+		RunShortID: runShortID,
+		CreatedAt:  manifestCreatedAt,
+	}); err != nil {
+		t.Fatalf("write batch manifest: %v", err)
+	}
+	if err := daemon.WriteRunManifest(batchDir, canonicalReviewRowID, batchindex.RunManifest{
+		RunID:     canonicalReviewRowID,
+		BatchID:   batchID,
+		PR:        prNumber,
+		Kind:      batchindex.KindReview,
+		CreatedAt: runStartedAt,
+		Status:    batchindex.RunManifestStatusActive,
+	}); err != nil {
+		t.Fatalf("write run manifest: %v", err)
+	}
+
+	layout := paths.NewLayout(nil, repoRoot)
+	batchesIdx := &batchindex.Index{
+		Version: batchindex.IndexVersion,
+		Entries: []batchindex.Entry{{
+			ID:        batchID,
+			Path:      batchDir,
+			Kind:      batchindex.KindReview,
+			Status:    batchindex.StatusActive,
+			CreatedAt: manifestCreatedAt,
+			PR:        prNumber,
+		}},
+	}
+	if err := batchesIdx.Save(layout.BatchesIndexPath); err != nil {
+		t.Fatal(err)
+	}
+
+	// Impl run for the same issue so aggregateReviewChildren has a
+	// parent row to stamp. Starts well before batch.json.createdAt, so
+	// stateStartsInBatch filters it out of the review's
+	// latestRunStateForIssue lookup.
+	implRunID := "516b-260707064710-1863"
+	implStart := time.Now().Add(-2 * time.Hour)
+	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
+		{Type: "run.started", Timestamp: implStart, RunID: implRunID, Issue: issueNumber, Payload: map[string]any{"branch": "sandman/1863-fix", "batch_id": "516b-260707064710-1860+9"}},
+		{Type: "run.started", Timestamp: runStartedAt, RunID: canonicalReviewRowID, Payload: map[string]any{"review": true, "pr_number": prNumber, "branch": "sandman/review-1912", "batch_id": batchID}},
+	})
+
+	runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")})
+	if err != nil {
+		t.Fatalf("compute: %v", err)
+	}
+
+	var reviewRows []portalRun
+	var issueRow *portalRun
+	for i := range runs {
+		run := &runs[i]
+		if run.IssueNumber != issueNumber {
+			continue
+		}
+		if run.Review {
+			reviewRows = append(reviewRows, *run)
+			continue
+		}
+		issueRow = run
+	}
+	if issueRow == nil {
+		t.Fatalf("expected impl row for #%d, got %#v", issueNumber, runs)
+	}
+	if len(reviewRows) != 1 {
+		var keys []string
+		for _, r := range reviewRows {
+			keys = append(keys, fmt.Sprintf("%s(batchKey=%s, status=%s, startedAt=%s)", r.RunID, r.BatchKey, r.Status, r.StartedAt.Format(time.RFC3339Nano)))
+		}
+		t.Fatalf("expected exactly 1 review row while review is active, got %d: %v", len(reviewRows), keys)
+	}
+	if reviewRows[0].BatchKey != batchID {
+		t.Fatalf("active review BatchKey=%q, want %q (must use directory to match the terminal runFromState row)", reviewRows[0].BatchKey, batchID)
+	}
+	if issueRow.ReviewCount != 1 {
+		t.Fatalf("impl row ReviewCount=%d, want 1 (one review child, no inflation)", issueRow.ReviewCount)
+	}
+}
+
+// TestPortal_Compute_ActiveReviewStatusFollowsEventLog pins the second
+// half of the fix: once the review emits run.finished, the active row's
+// Status and FinishedAt must follow the event log (Status="success" and
+// FinishedAt = the event timestamp), not stay stuck on Status="reviewing"
+// from the state-less initial run literal.
+//
+// Before the fix, the state-driven branch in runFromActiveBatchIssue
+// never fired for reviews (latestRunStateForIssue could not match a
+// review state's IssueNumber=0), so the initial run literal's
+// Status="queued" promotion to "reviewing" via the post-block at line
+// 1496 was the only path. With the fix, the state is matched by
+// active.RunID, the state-driven branch fires, and Status/FinishedAt
+// are read from the event log.
+func TestPortal_Compute_ActiveReviewStatusFollowsEventLog(t *testing.T) {
+	repoRoot, err := os.MkdirTemp("/tmp", "ars")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(repoRoot) })
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	const prNumber = 1912
+	const batchID = "b822-260707091520-PR1912"
+	const canonicalReviewRowID = "b822-260707091520-1863-PR1912"
+	const runTS = "260707091520"
+	const runShortID = "b822"
+
+	batchDir := filepath.Join(repoRoot, ".sandman", "batches", batchID)
+	createUnixRunSocket(t, filepath.Join(batchDir, "batch.sock"))
+
+	manifestCreatedAt := time.Now().Add(-30 * time.Second).Add(-5 * time.Second)
+	runStartedAt := manifestCreatedAt.Add(5 * time.Second)
+	runFinishedAt := runStartedAt.Add(2 * time.Minute)
+
+	if err := daemon.WriteManifest(batchDir, daemon.BatchManifest{
+		BatchId:    batchID,
+		RunKind:    "review",
+		PR:         intPtr(prNumber),
+		Issues:     []int{},
+		RunTS:      runTS,
+		RunShortID: runShortID,
+		CreatedAt:  manifestCreatedAt,
+	}); err != nil {
+		t.Fatalf("write batch manifest: %v", err)
+	}
+	if err := daemon.WriteRunManifest(batchDir, canonicalReviewRowID, batchindex.RunManifest{
+		RunID:     canonicalReviewRowID,
+		BatchID:   batchID,
+		PR:        prNumber,
+		Kind:      batchindex.KindReview,
+		CreatedAt: runStartedAt,
+		Status:    batchindex.RunManifestStatusActive,
+	}); err != nil {
+		t.Fatalf("write run manifest: %v", err)
+	}
+
+	layout := paths.NewLayout(nil, repoRoot)
+	batchesIdx := &batchindex.Index{
+		Version: batchindex.IndexVersion,
+		Entries: []batchindex.Entry{{
+			ID:        batchID,
+			Path:      batchDir,
+			Kind:      batchindex.KindReview,
+			Status:    batchindex.StatusActive,
+			CreatedAt: manifestCreatedAt,
+			PR:        prNumber,
+		}},
+	}
+	if err := batchesIdx.Save(layout.BatchesIndexPath); err != nil {
+		t.Fatal(err)
+	}
+
+	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
+		{Type: "run.started", Timestamp: runStartedAt, RunID: canonicalReviewRowID, Payload: map[string]any{"review": true, "pr_number": prNumber, "branch": "sandman/review-1912", "batch_id": batchID}},
+		{Type: "run.finished", Timestamp: runFinishedAt, RunID: canonicalReviewRowID, Payload: map[string]any{"status": "success", "review": true, "pr_number": prNumber, "batch_id": batchID}},
+	})
+
+	runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")})
+	if err != nil {
+		t.Fatalf("compute: %v", err)
+	}
+
+	var reviewRow *portalRun
+	for i := range runs {
+		if runs[i].RunID == canonicalReviewRowID {
+			reviewRow = &runs[i]
+			break
+		}
+	}
+	if reviewRow == nil {
+		t.Fatalf("expected review row %q, got %#v", canonicalReviewRowID, runs)
+	}
+	if reviewRow.Status != "success" {
+		t.Fatalf("active review Status=%q, want %q (must follow run.finished event while socket is still alive)", reviewRow.Status, "success")
+	}
+	if reviewRow.FinishedAt == nil {
+		t.Fatalf("active review FinishedAt=nil, want non-nil (event timestamp %s)", runFinishedAt.Format(time.RFC3339Nano))
+	}
+	if !reviewRow.FinishedAt.Equal(runFinishedAt) {
+		t.Fatalf("active review FinishedAt=%s, want %s", reviewRow.FinishedAt.Format(time.RFC3339Nano), runFinishedAt.Format(time.RFC3339Nano))
 	}
 }
 

@@ -1294,6 +1294,26 @@ func (v *portalRunsView) runsFromActiveBatch(repoRoot string, active portalActiv
 		blocked := v.latestBlockedEventForIssue(eventList, issueNumber, batchStart)
 		queued := v.latestQueuedEventForIssue(eventList, issueNumber, batchStart)
 		state := v.latestRunStateForIssue(runStates, issueNumber, batchStart)
+		// Review events omit `issue` (runState.IssueNumber() == 0), so
+		// latestRunStateForIssue cannot match the review's own state
+		// against the issue number this active instance claims. Fall
+		// back to looking up the state by active.RunID so the
+		// state-driven branch in runFromActiveBatchIssue fires for
+		// review batches — without it, Status/FinishedAt come from
+		// the state-less initial run literal and the state is never
+		// consumed, so the final loop re-emits the same RunID as a
+		// duplicate row (the active review's reviewCount gets
+		// inflated by one and the active row stays stuck on
+		// "reviewing" after run.finished lands).
+		if state == nil && active.RunID != "" {
+			for i := range runStates {
+				if runStates[i].RunID == active.RunID {
+					copy := runStates[i]
+					state = &copy
+					break
+				}
+			}
+		}
 		if state != nil && !state.IsActive() && (state.Status() == "queued" || (state.Status() == "blocked" && blocked == nil)) {
 			state = nil
 		}
@@ -1303,6 +1323,18 @@ func (v *portalRunsView) runsFromActiveBatch(repoRoot string, active portalActiv
 			if !(state.IsActive() && run.Kind == "completed") {
 				usedRunIDs[state.RunID] = struct{}{}
 			}
+		} else if active.RunID != "" {
+			// Defensive: if even the runID-based state lookup missed
+			// (e.g. the run.started event has not been replayed yet
+			// into events.jsonl), still consume the active RunID so
+			// the final loop's runFromState pass cannot re-emit the
+			// row with a different BatchKey. The active row from
+			// runFromActiveBatchIssue already represents this run
+			// and the next portal poll will pick up the real state
+			// once the event lands — one poll of duplication is the
+			// accepted trade-off here, matching ADR-0034 §3's
+			// rename-loser contract.
+			usedRunIDs[active.RunID] = struct{}{}
 		}
 	}
 	return runs, usedRunIDs
@@ -1422,6 +1454,18 @@ func (v *portalRunsView) runFromActiveBatchIssue(repoRoot string, active portalA
 	// even in the state-less path (issue #1715).
 	logPath, logURL := v.activeRunLogPathAndURL(repoRoot, active)
 	derivedRunID := perRowRunIDForActive(active, issueNumber, queued)
+	// Reviews must share a BatchKey with the terminal runFromState
+	// row (filepath.Base(batchDir)) so dedupRuns groups them
+	// together across the active→terminal transition. The state-driven
+	// path below overrides BatchKey with batchKeyForActive(active) =
+	// the per-row RunID, which only matches the active row; without
+	// this prefix the state-less path's BatchKey would never collide
+	// with the terminal row's, leaving two rows in different dedup
+	// groups across the transition window.
+	batchKey := batchKeyForActive(active)
+	if active.PRNumber > 0 {
+		batchKey = filepath.Base(active.Dir)
+	}
 	run := portalRun{
 		Key:         derivedRunID,
 		RunID:       derivedRunID,
@@ -1434,7 +1478,7 @@ func (v *portalRunsView) runFromActiveBatchIssue(repoRoot string, active portalA
 		LogPath:     logPath,
 		LogURL:      logURL,
 		Log:         "Queued. Waiting to start.",
-		BatchKey:    batchKeyForActive(active),
+		BatchKey:    batchKey,
 	}
 	// Only surface batch membership for mixed batches. A single-issue
 	// batch is not interesting to surface and would add payload noise.
@@ -1445,7 +1489,7 @@ func (v *portalRunsView) runFromActiveBatchIssue(repoRoot string, active portalA
 		activeWithOutput := active
 		activeWithOutput.LiveOutput = liveOutput
 		run = v.runFromState(repoRoot, *state, &activeWithOutput, eventsByRun, deadBatches)
-		run.BatchKey = batchKeyForActive(active)
+		run.BatchKey = batchKey
 		if len(active.IssueNumbers) > 1 {
 			run.BatchIssues = append([]int(nil), active.IssueNumbers...)
 		}
