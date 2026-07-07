@@ -36,9 +36,15 @@ func buildRunID(num int, ts, shortid string) string {
 	return runid.NewRunID(runid.KindIssue, fmt.Sprintf("%d", num), ts, shortid)
 }
 
-// BatchIDForIssue returns the per-batch directory name for an issue-driven
-// session, derived from the batch's first issue number, issue count, and the
-// (ts, shortid) pair.
+// BatchIDForIssue returns the per-batch directory name (the public BatchId)
+// for an issue-driven session, derived from the batch's first issue number,
+// total issue count, and the (ts, shortid) pair.
+//
+// The returned value is the canonical public BatchId:
+//   - single issue (n==1): "<sid>-<ts>-<num>" (no +N suffix)
+//   - multi-issue (n>=2):   "<sid>-<ts>-<firstIssue>+<additionalCount>"
+//
+// This delegates the +N/omission rule to runid.NewBatchID(KindIssue, n, ...).
 func BatchIDForIssue(firstIssueNum, n int, ts, shortid string) string {
 	if shortid == "" && ts == "" {
 		return ""
