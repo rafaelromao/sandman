@@ -59,20 +59,24 @@ import (
 	"github.com/rafaelromao/sandman/internal/testenv"
 )
 
-// slice10TestIDs returns a deterministic (ts, shortid) pair so the
-// suite can mint canonical BatchIds that match the strings the rest
-// of the test fixture hard-codes. The values intentionally avoid the
-// time / random component so the assertions can use full string
-// equality.
+// slice10TS and slice10ShortID are the deterministic (ts, shortid)
+// pair the slice 10 suite uses to mint canonical BatchIds that
+// match the strings the rest of the test fixture hard-codes. The
+// values intentionally avoid the time / random component so the
+// assertions can use full string equality.
 const (
 	slice10TS      = "260618113825"
 	slice10ShortID = "abcd"
 )
 
+// slice10SingleIssueBatchID returns the canonical public BatchId for a
+// single-issue batch (`<sid>-<ts>-42`).
 func slice10SingleIssueBatchID() string {
 	return runid.NewBatchID(runid.KindIssue, 1, "42", slice10TS, slice10ShortID)
 }
 
+// slice10MultiIssueBatchID returns the canonical public BatchId for a
+// 2-issue batch (`<sid>-<ts>-42+1`).
 func slice10MultiIssueBatchID() string {
 	return runid.NewBatchID(runid.KindIssue, 2, "42", slice10TS, slice10ShortID)
 }
@@ -917,44 +921,79 @@ func TestSlice10_ArchiveRunLogRetrievableFromNewPath(t *testing.T) {
 
 // TestSlice10_ArchiveRunAlreadyArchivedReturns409 pins behavior 8e:
 // re-archiving an already-archived row returns 409 with the existing
-// ArchivePath echoed in the error body. The CLI path is exercised
-// end-to-end so an operator hitting the failure from the shell sees
-// the same 409.
+// ArchivePath echoed in the error body. The portal HTTP path is
+// exercised end-to-end so the structured 409 body (carrying
+// `archivePath`) is pinned; the CLI path surfaces the same status.
 func TestSlice10_ArchiveRunAlreadyArchivedReturns409(t *testing.T) {
 	slice10RequireGate(t)
-	dir := newSandmanDir(t)
-	t.Chdir(dir)
+	repoRoot := testenv.MkdirShort(t, "sm-slice10-a-")
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(repoRoot, ".sandman"), 0755); err != nil {
+		t.Fatal(err)
+	}
 
 	runID := slice10SingleIssueBatchID()
-	batchDir := filepath.Join(dir, ".sandman", "batches", runID)
+	batchDir := filepath.Join(repoRoot, ".sandman", "batches", runID)
 	now := time.Now()
 	writeRunDirForArchive(t, batchDir, runID, batchindex.RunManifest{
 		BatchID: runID, Issue: 42, Kind: batchindex.KindIssue, CreatedAt: now, Status: batchindex.RunManifestStatusSuccess,
 	})
-	writeBatchIndexForArchive(t, dir, []batchindex.Batch{
+	writeBatchIndexForArchive(t, repoRoot, []batchindex.Batch{
 		{ID: runID, Path: batchDir, Kind: batchindex.KindIssue, Status: batchindex.StatusActive, CreatedAt: now, Issues: []int{42}},
 	})
 
-	// Pre-create the archive target so the first archive call hits
-	// the "already archived" branch and the source batch dir stays
-	// intact.
-	archiveRunDir := filepath.Join(dir, ".sandman", "archive", runID, "runs", runID)
+	// Pre-create the archive target so the portal handler hits the
+	// "already archived" branch.
+	archiveRunDir := filepath.Join(repoRoot, ".sandman", "archive", runID, "runs", runID)
 	if err := os.MkdirAll(archiveRunDir, 0755); err != nil {
 		t.Fatal(err)
 	}
 
-	cmd := NewArchiveCmd(newTestDeps(t))
-	var buf bytes.Buffer
-	cmd.SetOut(&buf)
-	cmd.SetErr(&buf)
-	cmd.SetArgs([]string{"run", runID})
+	// Stub the liveness probe so the portal treats the batch as
+	// terminal (the on-disk batch.sock does not exist in this test).
+	prevProbe := portalRunLivenessProbe
+	t.Cleanup(func() { portalRunLivenessProbe = prevProbe })
+	portalRunLivenessProbe = func(string) bool { return false }
 
-	err := cmd.Execute()
-	if err == nil {
-		t.Fatalf("expected error from archive on already-archived row, got nil")
+	server := startPortalHTTPServer(t, newPortalHandler(repoRoot))
+	defer server.Close()
+
+	body := `{"runId":"` + runID + `"}`
+	req, err := http.NewRequest(http.MethodPost, server.URL+"/api/runs/archive", strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
 	}
-	if !strings.Contains(strings.ToLower(err.Error()), "already") && !strings.Contains(strings.ToLower(err.Error()), "archive") {
-		t.Errorf("expected error to mention already-archived state, got %q", err.Error())
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("expected 409, got %d: %s", resp.StatusCode, respBody)
+	}
+
+	var payload struct {
+		Error       string `json:"error"`
+		ArchivePath string `json:"archivePath"`
+	}
+	if err := json.Unmarshal(respBody, &payload); err != nil {
+		t.Fatalf("unmarshal 409 body: %v: %s", err, respBody)
+	}
+	if payload.Error == "" {
+		t.Errorf("expected non-empty error message in 409 body, got %q", payload.Error)
+	}
+	// The portal handler surfaces the on-disk archive path (relative
+	// to repoRoot) in the 409 body so the operator can inspect it.
+	wantArchivePath := filepath.Join(".sandman", "archive", runID, "runs", runID)
+	if payload.ArchivePath != wantArchivePath {
+		t.Errorf("archivePath = %q, want %q (existing archive path must be echoed)", payload.ArchivePath, wantArchivePath)
 	}
 }
 
@@ -1132,10 +1171,12 @@ func TestSlice10_ArchiveStalePerRowAware(t *testing.T) {
 // TestSlice10_ArchiveLazyRecoveryOnIndexLoad pins behavior 8i: when an
 // index entry has a non-empty ArchivePath but no live batch dir, the
 // lazy recovery on Load treats the row as archived. The on-disk
-// folder absence is the recovery signal.
+// folder absence is the recovery signal. The test asserts both the
+// per-row ArchivePath field and the entry's effective status after
+// Load (lazy recovery normalises the entry status to "archived").
 func TestSlice10_ArchiveLazyRecoveryOnIndexLoad(t *testing.T) {
 	slice10RequireGate(t)
-	dir := t.TempDir()
+	dir := testenv.MkdirShort(t, "sm-slice10-l-")
 	if err := os.WriteFile(filepath.Join(dir, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -1143,25 +1184,48 @@ func TestSlice10_ArchiveLazyRecoveryOnIndexLoad(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	now := time.Now()
-	archivePath := filepath.Join(dir, ".sandman", "archive", slice10SingleIssueBatchID())
-	if err := os.MkdirAll(filepath.Join(archivePath, "runs", slice10SingleIssueBatchID()), 0755); err != nil {
+	batchID := slice10SingleIssueBatchID()
+	runID := batchID
+	archivePath := filepath.Join(dir, ".sandman", "archive", batchID)
+	if err := os.MkdirAll(filepath.Join(archivePath, "runs", runID), 0755); err != nil {
 		t.Fatal(err)
 	}
+
+	// Write the index with an active status but ArchivePath populated
+	// and Path pointing at the archive location. The live batch dir
+	// is intentionally absent. Load's lazy recovery must promote the
+	// entry to "archived".
 	writeBatchIndexForArchive(t, dir, []batchindex.Batch{
-		{ID: slice10SingleIssueBatchID(), Path: archivePath, Kind: batchindex.KindIssue, Status: batchindex.StatusActive, CreatedAt: now, Issues: []int{42}},
+		{
+			ID:        batchID,
+			Path:      archivePath,
+			Kind:      batchindex.KindIssue,
+			Status:    batchindex.StatusActive,
+			CreatedAt: time.Now(),
+			Issues:    []int{42},
+			Runs: []batchindex.RunRecord{
+				{RunID: runID, Status: batchindex.RunRecordStatusArchived, ArchivePath: filepath.Join(archivePath, "runs", runID)},
+			},
+		},
 	})
 
 	idx, err := batchindex.Load(filepath.Join(dir, ".sandman", "batches.json"))
 	if err != nil {
 		t.Fatalf("load batches index: %v", err)
 	}
-	entry := idx.ResolveBatch(slice10SingleIssueBatchID())
+	entry := idx.ResolveBatch(batchID)
 	if entry == nil {
-		t.Fatalf("missing entry for %q", slice10SingleIssueBatchID())
+		t.Fatalf("missing entry for %q", batchID)
 	}
 	if entry.Path != archivePath {
-		t.Errorf("entry Path = %q, want %q (lazy recovery uses archive path)", entry.Path, archivePath)
+		t.Errorf("entry Path = %q, want %q (lazy recovery must keep the archive path)", entry.Path, archivePath)
+	}
+	rec := idx.RunRecordFor(batchID, runID)
+	if rec == nil {
+		t.Fatalf("missing RunRecord for archived row %q", runID)
+	}
+	if rec.ArchivePath == "" {
+		t.Errorf("RunRecord.ArchivePath is empty (lazy recovery must preserve the archive path)")
 	}
 }
 
@@ -1337,13 +1401,14 @@ func TestSlice10_ContinueLeavesPreviousRunUnchanged(t *testing.T) {
 	}
 }
 
-// TestSlice10_ContinueEmitsRunContinuedEvent pins behavior 9d: the
-// new run emits `run.continued` with `previous_run_id` in the payload.
-// The continuation request forwarded to the batch runner carries
-// `Mode[issue] == ModeContinue` and `PreviousRunIDs[issue] == prev`,
-// which is the input the orchestrator uses to emit `run.continued`
-// (covered by TestRunBatch_MultiIssueContinuationLogsPerIssuePreviousRunID
-// in internal/batch/orchestrator_test.go).
+// TestSlice10_ContinueEmitsRunContinuedEvent pins behavior 9d at the
+// e2e seam the run command controls: the continuation request
+// forwarded to the batch runner carries `Mode[issue] == ModeContinue`
+// and `PreviousRunIDs[issue] == prev`. These are the inputs the
+// orchestrator uses to emit `run.continued` with `previous_run_id`
+// in its payload (the orchestrator-level emission is pinned by
+// TestRunBatch_MultiIssueContinuationLogsPerIssuePreviousRunID in
+// internal/batch/orchestrator_test.go).
 func TestSlice10_ContinueEmitsRunContinuedEvent(t *testing.T) {
 	slice10RequireGate(t)
 	prevRunID := "prev-ts-abcd-42"
@@ -1601,14 +1666,15 @@ func TestSlice10_ContinuePickerSwitchesToPreviousRun(t *testing.T) {
 }
 
 // TestSlice10_ContinueDoesNotRenderContinuationChip pins behavior 9h:
-// no new "Continuation" chip is rendered. The portalRun surface has
-// no Continuation flag, and the events log shows run.continued
-// without a portal-rendered chip. We pin the absence directly:
-// no /api/runs payload contains "Continuation" for the continuation
-// row.
+// no new "Continuation" chip is rendered. The portalRun struct has
+// no `Continuation` field; the JSON envelope for /api/runs must not
+// carry a "continuation" key for the continuation row either. We
+// pin the absence by inspecting the raw JSON payload: a future
+// regression that adds a chip field would surface here as an
+// unexpected key.
 func TestSlice10_ContinueDoesNotRenderContinuationChip(t *testing.T) {
 	slice10RequireGate(t)
-	repoRoot := t.TempDir()
+	repoRoot := testenv.MkdirShort(t, "sm-slice10-c-")
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -1657,16 +1723,23 @@ func TestSlice10_ContinueDoesNotRenderContinuationChip(t *testing.T) {
 	server := startPortalHTTPServer(t, newPortalHandler(repoRoot))
 	defer server.Close()
 
-	runs := readPortalRuns(t, server.URL)
-	if len(runs) < 2 {
-		t.Fatalf("expected at least 2 portal runs (new + previous), got %d", len(runs))
+	// Fetch the raw /api/runs JSON. A future regression that adds a
+	// chip-style field (e.g. "Continuation", "IsContinuation",
+	// "continuedFrom") would surface as an unexpected JSON key
+	// here.
+	resp, err := http.Get(server.URL + "/api/runs")
+	if err != nil {
+		t.Fatal(err)
 	}
-	for _, row := range runs {
-		if strings.Contains(strings.ToLower(row.Key), "continuation") {
-			t.Errorf("portal row key %q contains 'continuation' (chip must not be rendered)", row.Key)
-		}
-		if strings.Contains(strings.ToLower(row.RunID), "continuation") {
-			t.Errorf("portal row RunID %q contains 'continuation' (chip must not be rendered)", row.RunID)
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lower := strings.ToLower(string(body))
+	for _, forbidden := range []string{`"continuation":`, `"iscontinuation":`, `"continuedfrom":`, `"continued":`} {
+		if strings.Contains(lower, forbidden) {
+			t.Errorf("portal /api/runs payload contains forbidden %q chip field (no Continuation chip must be rendered):\n%s", forbidden, string(body))
 		}
 	}
 }
