@@ -58,20 +58,44 @@ type Entry struct {
 	Issues     []int      `json:"issues,omitempty"`
 	PR         int        `json:"pr,omitempty"`
 	ArchivedAt *time.Time `json:"archivedAt,omitempty"`
+	Runs       []RunRecord `json:"runs,omitempty"`
+}
+
+// RunRecordStatus is the lifecycle status of a single row as recorded
+// in the per-row index. It mirrors the entry-level Status enum but is
+// kept independent so callers do not have to thread both into the same
+// decision.
+type RunRecordStatus string
+
+const (
+	RunRecordStatusActive      RunRecordStatus = "active"
+	RunRecordStatusArchived    RunRecordStatus = "archived"
+	RunRecordStatusUnavailable RunRecordStatus = "unavailable"
+)
+
+// RunRecord is the per-row projection of an Entry. It is appended to
+// Entry.Runs so each row's lifecycle is observable independently of the
+// entry-level Status (which stays active until every row is archived
+// and the batch daemon is gone).
+type RunRecord struct {
+	RunID       string          `json:"runId"`
+	Status      RunRecordStatus `json:"status"`
+	ArchivePath string          `json:"archivePath,omitempty"`
 }
 
 // MarshalJSON writes the batches index with prompt-only entries carrying an
 // explicit empty issues array, matching ADR-0032's index schema.
 func (i Index) MarshalJSON() ([]byte, error) {
 	type entryJSON struct {
-		ID         string     `json:"id"`
-		Path       string     `json:"path"`
-		Kind       Kind       `json:"kind"`
-		Status     Status     `json:"status"`
-		CreatedAt  time.Time  `json:"createdAt"`
-		Issues     []int      `json:"issues"`
-		PR         int        `json:"pr,omitempty"`
-		ArchivedAt *time.Time `json:"archivedAt,omitempty"`
+		ID         string      `json:"id"`
+		Path       string      `json:"path"`
+		Kind       Kind        `json:"kind"`
+		Status     Status      `json:"status"`
+		CreatedAt  time.Time   `json:"createdAt"`
+		Issues     []int       `json:"issues"`
+		PR         int         `json:"pr,omitempty"`
+		ArchivedAt *time.Time  `json:"archivedAt,omitempty"`
+		Runs       []RunRecord `json:"runs,omitempty"`
 	}
 
 	entries := make([]any, 0, len(i.Entries))
@@ -89,6 +113,7 @@ func (i Index) MarshalJSON() ([]byte, error) {
 			Issues:     issues,
 			PR:         e.PR,
 			ArchivedAt: e.ArchivedAt,
+			Runs:       e.Runs,
 		})
 	}
 
@@ -215,6 +240,16 @@ func (idx *Index) EnsureStatus() error {
 	return nil
 }
 
+// EnsureStatusWithLayout reconciles both entry-level unavailable
+// detection (MarkUnavailable) and per-row reconciliation
+// (ReconcileRuns). The layout parameter is the repo root used to
+// resolve on-disk paths for per-row reconciliation.
+func (idx *Index) EnsureStatusWithLayout(repoRoot string) error {
+	idx.MarkUnavailable()
+	idx.ReconcileRuns(repoRoot)
+	return nil
+}
+
 func (idx *Index) Save(indexPath string) error {
 	for i := range idx.Entries {
 		idx.Entries[i].ID = canonicalizeEntryID(idx.Entries[i].ID, idx.Entries[i].Path)
@@ -298,6 +333,104 @@ func (idx *Index) SetArchived(id, archivePath string, archivedAt time.Time) erro
 		}
 	}
 	return fmt.Errorf("batch not found: %s", id)
+}
+
+// AddRun records a per-row RunRecord against the named entry. If a
+// record with the same RunID already exists, it is replaced (so the
+// caller can re-record an updated status without duplicating rows).
+func (idx *Index) AddRun(entryID string, rec RunRecord) {
+	for i := range idx.Entries {
+		if idx.Entries[i].ID != entryID {
+			continue
+		}
+		for j := range idx.Entries[i].Runs {
+			if idx.Entries[i].Runs[j].RunID == rec.RunID {
+				idx.Entries[i].Runs[j] = rec
+				return
+			}
+		}
+		idx.Entries[i].Runs = append(idx.Entries[i].Runs, rec)
+		return
+	}
+}
+
+// MarkRunArchived flips the named row's record to archived and sets
+// its ArchivePath. It returns an error when the entry or the row does
+// not exist so callers can fail loudly instead of silently losing the
+// archive marker.
+func (idx *Index) MarkRunArchived(entryID, runID, archivePath string) error {
+	for i := range idx.Entries {
+		if idx.Entries[i].ID != entryID {
+			continue
+		}
+		for j := range idx.Entries[i].Runs {
+			if idx.Entries[i].Runs[j].RunID != runID {
+				continue
+			}
+			idx.Entries[i].Runs[j].Status = RunRecordStatusArchived
+			idx.Entries[i].Runs[j].ArchivePath = archivePath
+			return nil
+		}
+		return fmt.Errorf("run %q not found in entry %q", runID, entryID)
+	}
+	return fmt.Errorf("batch not found: %s", entryID)
+}
+
+// RunRecordFor returns the per-row RunRecord for the given entry id
+// and run id, or nil when neither the entry nor the row is recorded.
+func (idx *Index) RunRecordFor(entryID, runID string) *RunRecord {
+	for i := range idx.Entries {
+		if idx.Entries[i].ID != entryID {
+			continue
+		}
+		for j := range idx.Entries[i].Runs {
+			if idx.Entries[i].Runs[j].RunID == runID {
+				return &idx.Entries[i].Runs[j]
+			}
+		}
+		return nil
+	}
+	return nil
+}
+
+// ReconcileRuns walks the per-row Records and reconciles each one
+// against the on-disk layout. For a row whose ArchivePath is non-empty:
+//
+//   - live runs/<runID>/ present → leave the record as-is
+//     (post-archive state, normal case)
+//   - live missing, archive present → leave the record as archived
+//     (lazy recovery; the archive is the source of truth)
+//   - live missing, archive missing → flip the row to unavailable and
+//     clear ArchivePath so subsequent renders do not echo a phantom
+//     archive path
+//
+// ReconcileRuns is safe to call on entries that have no Runs records
+// (legacy entries); it is a no-op for them. It does not flip the
+// entry-level Status — that decision belongs to EnsureStatus/MarkUnavailable.
+func (idx *Index) ReconcileRuns(repoRoot string) {
+	statFn := idx.StatFn
+	if statFn == nil {
+		statFn = os.Stat
+	}
+	for i := range idx.Entries {
+		entry := &idx.Entries[i]
+		for j := range entry.Runs {
+			rec := &entry.Runs[j]
+			if rec.ArchivePath == "" {
+				continue
+			}
+			livePath := filepath.Join(repoRoot, ".sandman", "batches", entry.ID, "runs", rec.RunID)
+			if _, err := statFn(livePath); err == nil {
+				continue
+			}
+			archivePath := filepath.Join(repoRoot, rec.ArchivePath)
+			if _, err := statFn(archivePath); err == nil {
+				continue
+			}
+			rec.Status = RunRecordStatusUnavailable
+			rec.ArchivePath = ""
+		}
+	}
 }
 
 func (idx *Index) RemoveBatch(id string) error {

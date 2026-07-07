@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sync"
 	"testing"
 	"time"
@@ -991,4 +992,228 @@ func TestWriteReviewState_AtomicRenameNoLeftoverTmp(t *testing.T) {
 			t.Errorf("temp files leaked into runDir after failed WriteReviewState: %v", matches)
 		}
 	})
+}
+
+// TestRunRecord_JSONRoundTrip is the slice-1 tracer bullet. It pins
+// the per-row JSON wire shape: a RunRecord must serialise to
+// {"runId": ..., "status": "active|archived", "archivePath": ""} (the
+// archivePath field is omitted when empty so the persisted batches.json
+// stays compact for the common active-row case). Decoding back must
+// produce the same struct.
+func TestRunRecord_JSONRoundTrip(t *testing.T) {
+	t.Run("active row omits archivePath", func(t *testing.T) {
+		rec := RunRecord{RunID: "abcd-260618113825-42", Status: RunRecordStatusActive}
+		data, err := json.Marshal(rec)
+		if err != nil {
+			t.Fatalf("marshal: %v", err)
+		}
+		var decoded map[string]any
+		if err := json.Unmarshal(data, &decoded); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		if got := decoded["runId"]; got != "abcd-260618113825-42" {
+			t.Errorf("runId = %v, want %q", got, "abcd-260618113825-42")
+		}
+		if got := decoded["status"]; got != "active" {
+			t.Errorf("status = %v, want %q", got, "active")
+		}
+		if _, present := decoded["archivePath"]; present {
+			t.Errorf("archivePath must be omitted on active row, got %v", decoded["archivePath"])
+		}
+
+		var back RunRecord
+		if err := json.Unmarshal(data, &back); err != nil {
+			t.Fatalf("unmarshal back: %v", err)
+		}
+		if back != rec {
+			t.Errorf("round-trip mismatch: got %+v, want %+v", back, rec)
+		}
+	})
+
+	t.Run("archived row includes archivePath", func(t *testing.T) {
+		rec := RunRecord{
+			RunID:       "abcd-260618113825-42",
+			Status:      RunRecordStatusArchived,
+			ArchivePath: "archive/abcd-260618113825-42/runs/abcd-260618113825-42",
+		}
+		data, err := json.Marshal(rec)
+		if err != nil {
+			t.Fatalf("marshal: %v", err)
+		}
+		var decoded map[string]any
+		if err := json.Unmarshal(data, &decoded); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		if got := decoded["archivePath"]; got != "archive/abcd-260618113825-42/runs/abcd-260618113825-42" {
+			t.Errorf("archivePath = %v, want archived path", got)
+		}
+
+		var back RunRecord
+		if err := json.Unmarshal(data, &back); err != nil {
+			t.Fatalf("unmarshal back: %v", err)
+		}
+		if back != rec {
+			t.Errorf("round-trip mismatch: got %+v, want %+v", back, rec)
+		}
+	})
+}
+
+// TestIndex_AddRun_PersistsRecord covers slice 1: AddRun records a row
+// against the named entry, dedupes by RunID, and the result survives
+// a Save/Load round-trip so subsequent code can rely on the persisted
+// record to drive lazy recovery.
+func TestIndex_AddRun_PersistsRecord(t *testing.T) {
+	repoRoot := t.TempDir()
+	indexPath := filepath.Join(repoRoot, ".sandman", "batches.json")
+	if err := os.MkdirAll(filepath.Dir(indexPath), 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	idx := &Index{
+		Version: IndexVersion,
+		Entries: []Entry{
+			{ID: "batch-1", Path: filepath.Join(repoRoot, ".sandman", "batches", "batch-1"), Kind: KindIssue, Status: StatusActive, CreatedAt: time.Now().Truncate(time.Second)},
+		},
+	}
+	idx.AddRun("batch-1", RunRecord{RunID: "row-1", Status: RunRecordStatusActive})
+	idx.AddRun("batch-1", RunRecord{RunID: "row-2", Status: RunRecordStatusActive})
+
+	if got := len(idx.Entries[0].Runs); got != 2 {
+		t.Fatalf("Runs len = %d, want 2", got)
+	}
+
+	if err := idx.Save(indexPath); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	loaded, err := Load(indexPath)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	entry := loaded.Resolve("batch-1")
+	if entry == nil {
+		t.Fatal("Resolve(batch-1) returned nil after round-trip")
+	}
+	if got := len(entry.Runs); got != 2 {
+		t.Fatalf("Runs len after round-trip = %d, want 2", got)
+	}
+	runIDs := []string{entry.Runs[0].RunID, entry.Runs[1].RunID}
+	if !reflect.DeepEqual(runIDs, []string{"row-1", "row-2"}) {
+		t.Errorf("Runs round-trip order = %v, want [row-1 row-2]", runIDs)
+	}
+}
+
+// TestIndex_MarkRunArchived_UpdatesRecord covers slice 1: MarkRunArchived
+// flips the targeted row's record from active to archived, populates
+// ArchivePath, and is a no-op when no row matches.
+func TestIndex_MarkRunArchived_UpdatesRecord(t *testing.T) {
+	idx := &Index{
+		Version: IndexVersion,
+		Entries: []Entry{
+			{
+				ID:    "batch-1",
+				Path:  "/tmp/.sandman/batches/batch-1",
+				Kind:  KindIssue,
+				Runs:  []RunRecord{{RunID: "row-1", Status: RunRecordStatusActive}, {RunID: "row-2", Status: RunRecordStatusActive}},
+			},
+		},
+	}
+
+	if err := idx.MarkRunArchived("batch-1", "row-1", "archive/batch-1/runs/row-1"); err != nil {
+		t.Fatalf("MarkRunArchived: %v", err)
+	}
+
+	if idx.Entries[0].Runs[0].Status != RunRecordStatusArchived {
+		t.Errorf("row-1 status = %s, want %s", idx.Entries[0].Runs[0].Status, RunRecordStatusArchived)
+	}
+	if idx.Entries[0].Runs[0].ArchivePath != "archive/batch-1/runs/row-1" {
+		t.Errorf("row-1 archivePath = %q, want archive path", idx.Entries[0].Runs[0].ArchivePath)
+	}
+	if idx.Entries[0].Runs[1].Status != RunRecordStatusActive {
+		t.Errorf("row-2 status = %s, want %s (sibling must stay active)", idx.Entries[0].Runs[1].Status, RunRecordStatusActive)
+	}
+
+	if err := idx.MarkRunArchived("batch-1", "missing-row", "archive/missing"); err == nil {
+		t.Errorf("MarkRunArchived on missing row must return an error, got nil")
+	}
+}
+
+// TestIndex_ReconcileRuns_ArchivedMissingLive verifies slice 7: when
+// the index already records a per-row ArchivePath but the live
+// runs/<runID>/ folder is missing, ReconcileRuns leaves the record as
+// archived (no change), preserving the post-archive on-disk view.
+func TestIndex_ReconcileRuns_ArchivedMissingLive(t *testing.T) {
+	repoRoot := t.TempDir()
+	batchDir := filepath.Join(repoRoot, ".sandman", "batches", "batch-1")
+	archiveDir := filepath.Join(repoRoot, ".sandman", "archive", "batch-1", "runs", "row-1")
+	if err := os.MkdirAll(batchDir, 0755); err != nil {
+		t.Fatalf("mkdir batch: %v", err)
+	}
+	if err := os.MkdirAll(archiveDir, 0755); err != nil {
+		t.Fatalf("mkdir archive: %v", err)
+	}
+
+	idx := &Index{
+		Version: IndexVersion,
+		Entries: []Entry{
+			{
+				ID:    "batch-1",
+				Path:  batchDir,
+				Kind:  KindIssue,
+				Runs:  []RunRecord{{RunID: "row-1", Status: RunRecordStatusArchived, ArchivePath: ".sandman/archive/batch-1/runs/row-1"}},
+			},
+		},
+		StatFn: os.Stat,
+	}
+
+	idx.ReconcileRuns(repoRoot)
+
+	entry := idx.Resolve("batch-1")
+	if entry == nil {
+		t.Fatal("Resolve(batch-1) returned nil")
+	}
+	if got := entry.Runs[0].Status; got != RunRecordStatusArchived {
+		t.Errorf("row-1 status after reconcile = %s, want archived", got)
+	}
+	if got := entry.Runs[0].ArchivePath; got != ".sandman/archive/batch-1/runs/row-1" {
+		t.Errorf("row-1 archivePath after reconcile = %q, want archived path", got)
+	}
+}
+
+// TestIndex_ReconcileRuns_ArchivedMissingLiveAndArchive verifies slice
+// 7: when the index records an ArchivePath but neither the live nor
+// the archive folder exists on disk (a torn state from a crash), the
+// row's record flips to unavailable with ArchivePath cleared.
+func TestIndex_ReconcileRuns_ArchivedMissingLiveAndArchive(t *testing.T) {
+	repoRoot := t.TempDir()
+	batchDir := filepath.Join(repoRoot, ".sandman", "batches", "batch-1")
+	if err := os.MkdirAll(batchDir, 0755); err != nil {
+		t.Fatalf("mkdir batch: %v", err)
+	}
+
+	idx := &Index{
+		Version: IndexVersion,
+		Entries: []Entry{
+			{
+				ID:   "batch-1",
+				Path: batchDir,
+				Kind: KindIssue,
+				Runs: []RunRecord{{RunID: "row-1", Status: RunRecordStatusArchived, ArchivePath: ".sandman/archive/batch-1/runs/row-1"}},
+			},
+		},
+		StatFn: os.Stat,
+	}
+
+	idx.ReconcileRuns(repoRoot)
+
+	entry := idx.Resolve("batch-1")
+	if entry == nil {
+		t.Fatal("Resolve(batch-1) returned nil")
+	}
+	if got := entry.Runs[0].Status; got != RunRecordStatusUnavailable {
+		t.Errorf("row-1 status after reconcile (no live, no archive) = %s, want unavailable", got)
+	}
+	if got := entry.Runs[0].ArchivePath; got != "" {
+		t.Errorf("row-1 archivePath after reconcile (no live, no archive) = %q, want cleared", got)
+	}
 }
