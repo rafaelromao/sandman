@@ -1404,6 +1404,19 @@ func (d *Daemon) postDecision(ctx context.Context, prNumber int, commentID, revi
 	info, err := os.Stat(decisionPath)
 	if err != nil {
 		if os.IsNotExist(err) {
+			// PR #1942-shaped fallback: the reviewer bot wrote
+			// decision.md to its CWD (the per-review worktree) instead
+			// of the run folder the daemon reads from. The worktree
+			// path is recorded on the canonical run manifest, so look
+			// it up there before treating the artifact as missing.
+			if alt, altErr := d.decisionInWorktree(reviewRunFolder); altErr == nil {
+				decisionPath = alt
+				info, err = os.Stat(decisionPath)
+			}
+		}
+	}
+	if err != nil {
+		if os.IsNotExist(err) {
 			d.logf("PR #%d: missing %s after RunBatch; marking failure (issue #1846)", prNumber, decisionPath)
 			if state != nil {
 				if markErr := state.MarkSeen(commentID, "failure"); markErr != nil {
@@ -1692,6 +1705,33 @@ func (d *Daemon) recordLaunchFailure(ctx context.Context, commentID string, stat
 		d.logf("mark %s failure: %v", commentID, err)
 	}
 	return cause
+}
+
+// decisionInWorktree returns the absolute path to <worktree>/decision.md
+// when the per-run manifest carries a non-empty worktreePath and that
+// file exists. It is the PR #1942-shaped fallback that rescues reviews
+// where the reviewer bot wrote decision.md to its worktree CWD instead
+// of the daemon-readable run folder. Returns the empty path on any
+// lookup failure so the caller can fall through to the existing
+// missing-decision.md branch.
+func (d *Daemon) decisionInWorktree(reviewRunFolder string) (string, error) {
+	manifestPath := filepath.Join(reviewRunFolder, "run.json")
+	data, err := os.ReadFile(manifestPath)
+	if err != nil {
+		return "", err
+	}
+	var manifest batchindex.RunManifest
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		return "", fmt.Errorf("decode run manifest: %w", err)
+	}
+	if strings.TrimSpace(manifest.WorktreePath) == "" {
+		return "", os.ErrNotExist
+	}
+	candidate := filepath.Join(manifest.WorktreePath, "decision.md")
+	if _, err := os.Stat(candidate); err != nil {
+		return "", err
+	}
+	return candidate, nil
 }
 
 // logf writes a line to the broadcaster (or stderr when none is wired).
