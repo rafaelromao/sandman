@@ -177,8 +177,8 @@ set -eu
 
 # Selection phase: when selection-prompt.md exists, write selected-issues.json
 if [ -f ".sandman/selection-prompt.md" ]; then
-  mkdir -p .sandman
-  cat > .sandman/selected-issues.json <<'ISSUES'
+  mkdir -p .sandman/state
+  cat > .sandman/state/selected-issues.json <<'ISSUES'
 %s
 ISSUES
   exit 0

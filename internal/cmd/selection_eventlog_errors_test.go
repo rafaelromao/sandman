@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -42,7 +43,10 @@ func captureStderr(t *testing.T, fn func()) string {
 }
 
 func TestRunSelectionPhaseWithEvents_EventLogWriteErrorsAreSurfacedOnStderr(t *testing.T) {
-	sandmanDir := shortTempDir(t)
+	sandmanDir := filepath.Join(shortTempDir(t), ".sandman")
+	if err := os.MkdirAll(sandmanDir, 0o755); err != nil {
+		t.Fatalf("mkdir sandman: %v", err)
+	}
 	gh := &fakeGitHubClient{
 		searchIssuesResult: []github.Issue{
 			{Number: 1, Title: "Feature A", Body: "A", Labels: []string{"bug"}},
@@ -55,7 +59,7 @@ func TestRunSelectionPhaseWithEvents_EventLogWriteErrorsAreSurfacedOnStderr(t *t
 	}
 	cfg.AgentProviders = map[string]config.Agent{
 		"test-agent": {
-			Command: fmt.Sprintf("echo '[2, 1]' > %s/selected-issues.json", sandmanDir),
+			Command: fmt.Sprintf("mkdir -p %s/state && echo '[2, 1]' > %s/state/selected-issues.json", sandmanDir, sandmanDir),
 		},
 	}
 	startedErr := fmt.Errorf("disk full on run.started write")

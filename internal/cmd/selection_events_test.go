@@ -62,7 +62,10 @@ func autoSelectEventOrder(log *recordingEventLog) []string {
 }
 
 func TestRunSelectionPhaseWithEvents_EmitsRunStartedBeforeAgentAndFinishedAfterOnSuccess(t *testing.T) {
-	sandmanDir := shortTempDir(t)
+	sandmanDir := filepath.Join(shortTempDir(t), ".sandman")
+	if err := os.MkdirAll(sandmanDir, 0o755); err != nil {
+		t.Fatalf("mkdir sandman: %v", err)
+	}
 	gh := &fakeGitHubClient{
 		searchIssuesResult: []github.Issue{
 			{Number: 1, Title: "Feature A", Body: "A", Labels: []string{"bug"}},
@@ -75,7 +78,7 @@ func TestRunSelectionPhaseWithEvents_EmitsRunStartedBeforeAgentAndFinishedAfterO
 	}
 	cfg.AgentProviders = map[string]config.Agent{
 		"test-agent": {
-			Command: fmt.Sprintf("echo '[2, 1]' > %s/selected-issues.json", sandmanDir),
+			Command: fmt.Sprintf("mkdir -p %s/state && echo '[2, 1]' > %s/state/selected-issues.json", sandmanDir, sandmanDir),
 		},
 	}
 	log := &recordingEventLog{}
@@ -138,7 +141,10 @@ func TestRunSelectionPhaseWithEvents_EmitsRunStartedBeforeAgentAndFinishedAfterO
 }
 
 func TestRunSelectionPhaseWithEvents_AgentNonZeroExitEmitsFailureAndPropagatesError(t *testing.T) {
-	sandmanDir := shortTempDir(t)
+	sandmanDir := filepath.Join(shortTempDir(t), ".sandman")
+	if err := os.MkdirAll(sandmanDir, 0o755); err != nil {
+		t.Fatalf("mkdir sandman: %v", err)
+	}
 	gh := &fakeGitHubClient{
 		searchIssuesResult: []github.Issue{{Number: 1, Title: "Feature A"}},
 	}
@@ -175,7 +181,10 @@ func TestRunSelectionPhaseWithEvents_AgentNonZeroExitEmitsFailureAndPropagatesEr
 }
 
 func TestRunSelectionPhaseWithEvents_MissingJSONEmitsFailureAndPropagatesError(t *testing.T) {
-	sandmanDir := shortTempDir(t)
+	sandmanDir := filepath.Join(shortTempDir(t), ".sandman")
+	if err := os.MkdirAll(sandmanDir, 0o755); err != nil {
+		t.Fatalf("mkdir sandman: %v", err)
+	}
 	gh := &fakeGitHubClient{
 		searchIssuesResult: []github.Issue{{Number: 1, Title: "Feature A"}},
 	}
@@ -209,14 +218,17 @@ func TestRunSelectionPhaseWithEvents_MissingJSONEmitsFailureAndPropagatesError(t
 }
 
 func TestRunSelectionPhaseWithEvents_EmptySelectedListEmitsFailureAndPropagatesError(t *testing.T) {
-	sandmanDir := shortTempDir(t)
+	sandmanDir := filepath.Join(shortTempDir(t), ".sandman")
+	if err := os.MkdirAll(sandmanDir, 0o755); err != nil {
+		t.Fatalf("mkdir sandman: %v", err)
+	}
 	gh := &fakeGitHubClient{
 		searchIssuesResult: []github.Issue{{Number: 1, Title: "Feature A"}},
 	}
 	cfg := &config.Config{Agent: "test-agent", ReviewCommand: "/oc review"}
 	cfg.AgentProviders = map[string]config.Agent{
 		"test-agent": {
-			Command: fmt.Sprintf("echo '[]' > %s", filepath.Join(sandmanDir, "selected-issues.json")),
+			Command: fmt.Sprintf("mkdir -p %s/state && echo '[]' > %s/state/selected-issues.json", sandmanDir, sandmanDir),
 		},
 	}
 	log := &recordingEventLog{}
@@ -245,7 +257,10 @@ func TestRunSelectionPhaseWithEvents_EmptySelectedListEmitsFailureAndPropagatesE
 }
 
 func TestRunSelectionPhaseWithEvents_ReviewDaemonGuardFailureEmitsNoRunStarted(t *testing.T) {
-	sandmanDir := shortTempDir(t)
+	sandmanDir := filepath.Join(shortTempDir(t), ".sandman")
+	if err := os.MkdirAll(sandmanDir, 0o755); err != nil {
+		t.Fatalf("mkdir sandman: %v", err)
+	}
 	gh := &fakeGitHubClient{
 		searchIssuesResult: []github.Issue{{Number: 1, Title: "Feature A"}},
 	}
@@ -273,7 +288,10 @@ func TestRunSelectionPhaseWithEvents_ReviewDaemonGuardFailureEmitsNoRunStarted(t
 }
 
 func TestRunSelectionPhaseWithEvents_NoCandidateIssuesEmitsNoRunStarted(t *testing.T) {
-	sandmanDir := shortTempDir(t)
+	sandmanDir := filepath.Join(shortTempDir(t), ".sandman")
+	if err := os.MkdirAll(sandmanDir, 0o755); err != nil {
+		t.Fatalf("mkdir sandman: %v", err)
+	}
 	gh := &fakeGitHubClient{}
 	cfg := &config.Config{Agent: "test-agent", ReviewCommand: "/oc review"}
 	cfg.AgentProviders = map[string]config.Agent{
@@ -299,7 +317,10 @@ func TestRunSelectionPhaseWithEvents_NoCandidateIssuesEmitsNoRunStarted(t *testi
 }
 
 func TestRunSelectionPhaseWithEvents_CreatesDirManifestAndSocketsOnFailure(t *testing.T) {
-	sandmanDir := shortTempDir(t)
+	sandmanDir := filepath.Join(shortTempDir(t), ".sandman")
+	if err := os.MkdirAll(sandmanDir, 0o755); err != nil {
+		t.Fatalf("mkdir sandman: %v", err)
+	}
 	gh := &fakeGitHubClient{
 		searchIssuesResult: []github.Issue{
 			{Number: 1, Title: "Feature A", Body: "A", Labels: []string{"bug"}},
@@ -356,7 +377,10 @@ func TestRunSelectionPhaseWithEvents_CreatesDirManifestAndSocketsOnFailure(t *te
 }
 
 func TestRunSelectionPhaseWithEvents_LeavesRunDirOnFailure(t *testing.T) {
-	sandmanDir := shortTempDir(t)
+	sandmanDir := filepath.Join(shortTempDir(t), ".sandman")
+	if err := os.MkdirAll(sandmanDir, 0o755); err != nil {
+		t.Fatalf("mkdir sandman: %v", err)
+	}
 	gh := &fakeGitHubClient{
 		searchIssuesResult: []github.Issue{
 			{Number: 10, Title: "Bug A", Body: "A", Labels: []string{"bug"}},
@@ -397,7 +421,10 @@ func TestRunSelectionPhaseWithEvents_LeavesRunDirOnFailure(t *testing.T) {
 // NewRunID for KindAutoSelect can't silently diverge the index entry id
 // from the orchestrator's emitted RunID.
 func TestRunSelectionPhaseWithEvents_AutoSelectEntryIDMatchesOrchestratorRunID(t *testing.T) {
-	sandmanDir := shortTempDir(t)
+	sandmanDir := filepath.Join(shortTempDir(t), ".sandman")
+	if err := os.MkdirAll(sandmanDir, 0o755); err != nil {
+		t.Fatalf("mkdir sandman: %v", err)
+	}
 	gh := &fakeGitHubClient{
 		searchIssuesResult: []github.Issue{
 			{Number: 1, Title: "A", Body: "A"},
@@ -409,7 +436,7 @@ func TestRunSelectionPhaseWithEvents_AutoSelectEntryIDMatchesOrchestratorRunID(t
 	}
 	cfg.AgentProviders = map[string]config.Agent{
 		"test-agent": {
-			Command: fmt.Sprintf("echo '[1]' > %s/selected-issues.json", sandmanDir),
+			Command: fmt.Sprintf("mkdir -p %s/state && echo '[1]' > %s/state/selected-issues.json", sandmanDir, sandmanDir),
 		},
 	}
 	log := &recordingEventLog{}

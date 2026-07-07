@@ -7,7 +7,6 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"regexp"
 	"strings"
 
@@ -98,21 +97,11 @@ func (d *defaultPRLister) HasBadgePR(ctx context.Context) (bool, error) {
 	return false, nil
 }
 
-// badgeControlFileName is the stable filename of the empty control file
-// the badge sidecar writes at PR-creation time. The post-batch
-// BadgeHooker short-circuits the expensive HasBadgePR check when this
-// file exists.
-//
-// The file is intentionally empty — its mere existence is the signal.
-// It is gitignored and recreated automatically by the badge sidecar
-// on the first batch that successfully proposes the PR.
-const badgeControlFileName = ".built_with_sandman"
-
 // badgeControlFilePath returns the absolute path to the badge control
 // file under the given layout, matching every other .sandman/*
 // persisted artifact.
 func badgeControlFilePath(layout paths.Layout) string {
-	return filepath.Join(layout.SandmanDir, badgeControlFileName)
+	return layout.BadgeControlFilePath()
 }
 
 // defaultBadgeControlFileReader is the production implementation of

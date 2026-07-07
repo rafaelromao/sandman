@@ -68,13 +68,13 @@ Merged Sandman PRs in this repo:
 
 After the PR is created successfully (the `gh pr create` call returns the
 new PR URL), create an empty sentinel file at
-`.sandman/.built_with_sandman` so subsequent Sandman batches in this
+`.sandman/state/.built_with_sandman` so subsequent Sandman batches in this
 checkout can short-circuit the `gh pr list` check:
 
 ```sh
-tmp="$(mktemp .sandman/.built_with_sandman.XXXXXX)"
+tmp="$(mktemp .sandman/state/.built_with_sandman.XXXXXX)"
 : > "$tmp"
-mv "$tmp" ".sandman/.built_with_sandman"
+mv "$tmp" ".sandman/state/.built_with_sandman"
 ```
 
 The file is intentionally empty — its mere existence is the signal that
