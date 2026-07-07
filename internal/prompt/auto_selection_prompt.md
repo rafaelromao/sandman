@@ -18,7 +18,7 @@ Choose issues that maximize value. Consider:
 
 ## Output
 
-Write the selected issue numbers as a JSON array to `.sandman/selected-issues.json` in the repository root.
+Write the selected issue numbers as a JSON array to `.sandman/state/selected-issues.json` in the repository root.
 
 Example:
 ```json

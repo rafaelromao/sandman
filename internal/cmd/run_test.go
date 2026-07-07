@@ -20,6 +20,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/events"
 	"github.com/rafaelromao/sandman/internal/github"
+	"github.com/rafaelromao/sandman/internal/paths"
 	"github.com/spf13/cobra"
 )
 
@@ -3624,12 +3625,16 @@ func TestResolveAutoIssues_PriorityPromptFileAbsentUsesNumericSort(t *testing.T)
 
 func TestReadSelectedIssues_ValidJSONReturnsNumbers(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "selected-issues.json")
+	layout := paths.NewLayout(nil, dir)
+	path := layout.SelectedIssuesPath()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir state: %v", err)
+	}
 	if err := os.WriteFile(path, []byte("[1, 2, 3]"), 0644); err != nil {
 		t.Fatalf("write file: %v", err)
 	}
 
-	got, err := readSelectedIssues(dir, 5)
+	got, err := readSelectedIssues(layout, 5)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -3646,12 +3651,16 @@ func TestReadSelectedIssues_ValidJSONReturnsNumbers(t *testing.T) {
 
 func TestReadSelectedIssues_CapsAtMaxCount(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "selected-issues.json")
+	layout := paths.NewLayout(nil, dir)
+	path := layout.SelectedIssuesPath()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir state: %v", err)
+	}
 	if err := os.WriteFile(path, []byte("[1, 2, 3, 4, 5]"), 0644); err != nil {
 		t.Fatalf("write file: %v", err)
 	}
 
-	got, err := readSelectedIssues(dir, 3)
+	got, err := readSelectedIssues(layout, 3)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -3663,8 +3672,9 @@ func TestReadSelectedIssues_CapsAtMaxCount(t *testing.T) {
 
 func TestReadSelectedIssues_MissingFileReturnsError(t *testing.T) {
 	dir := t.TempDir()
+	layout := paths.NewLayout(nil, dir)
 
-	_, err := readSelectedIssues(dir, 5)
+	_, err := readSelectedIssues(layout, 5)
 	if err == nil {
 		t.Fatal("expected error for missing file")
 	}
@@ -3675,12 +3685,16 @@ func TestReadSelectedIssues_MissingFileReturnsError(t *testing.T) {
 
 func TestReadSelectedIssues_InvalidJSONReturnsError(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "selected-issues.json")
+	layout := paths.NewLayout(nil, dir)
+	path := layout.SelectedIssuesPath()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir state: %v", err)
+	}
 	if err := os.WriteFile(path, []byte("not-json"), 0644); err != nil {
 		t.Fatalf("write file: %v", err)
 	}
 
-	_, err := readSelectedIssues(dir, 5)
+	_, err := readSelectedIssues(layout, 5)
 	if err == nil {
 		t.Fatal("expected error for invalid JSON")
 	}
@@ -3691,12 +3705,16 @@ func TestReadSelectedIssues_InvalidJSONReturnsError(t *testing.T) {
 
 func TestReadSelectedIssues_NonArrayJSONReturnsError(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "selected-issues.json")
+	layout := paths.NewLayout(nil, dir)
+	path := layout.SelectedIssuesPath()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir state: %v", err)
+	}
 	if err := os.WriteFile(path, []byte(`{"key": "value"}`), 0644); err != nil {
 		t.Fatalf("write file: %v", err)
 	}
 
-	_, err := readSelectedIssues(dir, 5)
+	_, err := readSelectedIssues(layout, 5)
 	if err == nil {
 		t.Fatal("expected error for non-array JSON")
 	}
@@ -3707,12 +3725,16 @@ func TestReadSelectedIssues_NonArrayJSONReturnsError(t *testing.T) {
 
 func TestReadSelectedIssues_EmptyArrayReturnsError(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "selected-issues.json")
+	layout := paths.NewLayout(nil, dir)
+	path := layout.SelectedIssuesPath()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir state: %v", err)
+	}
 	if err := os.WriteFile(path, []byte("[]"), 0644); err != nil {
 		t.Fatalf("write file: %v", err)
 	}
 
-	_, err := readSelectedIssues(dir, 5)
+	_, err := readSelectedIssues(layout, 5)
 	if err == nil {
 		t.Fatal("expected error for empty array")
 	}
@@ -3723,12 +3745,16 @@ func TestReadSelectedIssues_EmptyArrayReturnsError(t *testing.T) {
 
 func TestReadSelectedIssues_NonIntArrayReturnsError(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "selected-issues.json")
+	layout := paths.NewLayout(nil, dir)
+	path := layout.SelectedIssuesPath()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir state: %v", err)
+	}
 	if err := os.WriteFile(path, []byte(`["a", "b"]`), 0644); err != nil {
 		t.Fatalf("write file: %v", err)
 	}
 
-	_, err := readSelectedIssues(dir, 5)
+	_, err := readSelectedIssues(layout, 5)
 	if err == nil {
 		t.Fatal("expected error for non-int array")
 	}
@@ -3738,7 +3764,10 @@ func TestReadSelectedIssues_NonIntArrayReturnsError(t *testing.T) {
 }
 
 func TestRunSelectionPhase_AgentWritesSelectedIssuesAndReturnsNumbers(t *testing.T) {
-	sandmanDir := t.TempDir()
+	sandmanDir := filepath.Join(t.TempDir(), ".sandman")
+	if err := os.MkdirAll(sandmanDir, 0o755); err != nil {
+		t.Fatalf("mkdir sandman: %v", err)
+	}
 
 	gh := &fakeGitHubClient{
 		searchIssuesResult: []github.Issue{
@@ -3754,7 +3783,7 @@ func TestRunSelectionPhase_AgentWritesSelectedIssuesAndReturnsNumbers(t *testing
 	}
 	cfg.AgentProviders = map[string]config.Agent{
 		"test-agent": {
-			Command: fmt.Sprintf("echo '[2, 1]' > %s/selected-issues.json", sandmanDir),
+			Command: fmt.Sprintf("mkdir -p %s/state && echo '[2, 1]' > %s/state/selected-issues.json", sandmanDir, sandmanDir),
 		},
 	}
 

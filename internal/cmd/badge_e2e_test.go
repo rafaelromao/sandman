@@ -135,7 +135,7 @@ func TestBadge_E2E_ControlFilePresent_ShortCircuitsBadgeHook(t *testing.T) {
 	runRootCommand(t, deps, "config", "set", "review_command", "/oc review")
 
 	sandmanDir := filepath.Join(repoDir, ".sandman")
-	controlPath := filepath.Join(sandmanDir, ".built_with_sandman")
+	controlPath := filepath.Join(sandmanDir, "state", ".built_with_sandman")
 	if err := os.WriteFile(controlPath, nil, 0o644); err != nil {
 		t.Fatalf("seed control file: %v", err)
 	}

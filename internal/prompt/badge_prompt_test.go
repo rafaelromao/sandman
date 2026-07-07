@@ -8,8 +8,8 @@ import (
 func TestDefaultBadgePrompt_DirectsAgentToCreateControlFile(t *testing.T) {
 	prompt := DefaultBadgePrompt()
 
-	if !strings.Contains(prompt, ".sandman/.built_with_sandman") {
-		t.Fatalf("expected badge prompt to mention the control file path .sandman/.built_with_sandman, got:\n%s", prompt)
+	if !strings.Contains(prompt, ".sandman/state/.built_with_sandman") {
+		t.Fatalf("expected badge prompt to mention the control file path .sandman/state/.built_with_sandman, got:\n%s", prompt)
 	}
 
 	if !strings.Contains(prompt, "temp-file") {
@@ -24,7 +24,7 @@ func TestDefaultBadgePrompt_DirectsAgentToCreateControlFile(t *testing.T) {
 		t.Fatalf("expected badge prompt to contain '## PR creation' section, got:\n%s", prompt)
 	}
 	bodySection := prompt[prCreationIdx:]
-	if !strings.Contains(bodySection, ".built_with_sandman") {
+	if !strings.Contains(bodySection, ".sandman/state/.built_with_sandman") {
 		t.Errorf("expected control-file instruction to be in or after '## PR creation' section, got section:\n%s", bodySection)
 	}
 }

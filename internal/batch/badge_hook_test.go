@@ -335,10 +335,10 @@ func TestDefaultBadgeControlFileReader_TreatsMissingFileAsAbsent(t *testing.T) {
 
 func TestDefaultBadgeControlFileReader_TreatsPresentFileAsPresent(t *testing.T) {
 	tmp := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(tmp, ".sandman"), 0o755); err != nil {
-		t.Fatalf("mkdir .sandman: %v", err)
+	if err := os.MkdirAll(filepath.Join(tmp, ".sandman", "state"), 0o755); err != nil {
+		t.Fatalf("mkdir .sandman/state: %v", err)
 	}
-	controlPath := filepath.Join(tmp, ".sandman", ".built_with_sandman")
+	controlPath := filepath.Join(tmp, ".sandman", "state", ".built_with_sandman")
 	if err := os.WriteFile(controlPath, nil, 0o644); err != nil {
 		t.Fatalf("write control file: %v", err)
 	}
@@ -352,12 +352,12 @@ func TestDefaultBadgeControlFileReader_TreatsPresentFileAsPresent(t *testing.T) 
 
 func TestDefaultBadgeControlFileReader_TreatsStatErrorAsAbsent(t *testing.T) {
 	tmp := t.TempDir()
-	sandmanDir := filepath.Join(tmp, ".sandman")
-	if err := os.MkdirAll(sandmanDir, 0o000); err != nil {
-		t.Fatalf("mkdir .sandman: %v", err)
+	stateDir := filepath.Join(tmp, ".sandman", "state")
+	if err := os.MkdirAll(stateDir, 0o000); err != nil {
+		t.Fatalf("mkdir .sandman/state: %v", err)
 	}
 	t.Cleanup(func() {
-		_ = os.Chmod(sandmanDir, 0o755)
+		_ = os.Chmod(stateDir, 0o755)
 	})
 
 	layout := paths.NewLayout(nil, tmp)

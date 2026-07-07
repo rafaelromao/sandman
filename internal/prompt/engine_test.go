@@ -421,8 +421,8 @@ func TestDefaultPriorityPrompt_ContainsRequiredKeys(t *testing.T) {
 	if !strings.Contains(prompt, "{{MAX_COUNT}}") {
 		t.Error("auto prompt missing {{MAX_COUNT}} key")
 	}
-	if !strings.Contains(prompt, ".sandman/selected-issues.json") {
-		t.Error("auto prompt missing .sandman/selected-issues.json output path")
+	if !strings.Contains(prompt, ".sandman/state/selected-issues.json") {
+		t.Error("auto prompt missing .sandman/state/selected-issues.json output path")
 	}
 	if !strings.Contains(prompt, "Auto Mode") {
 		t.Error("auto prompt header should mention Auto Mode")

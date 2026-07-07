@@ -17,6 +17,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/daemon"
 	"github.com/rafaelromao/sandman/internal/events"
 	"github.com/rafaelromao/sandman/internal/github"
+	"github.com/rafaelromao/sandman/internal/paths"
 	"github.com/rafaelromao/sandman/internal/prompt"
 	"github.com/rafaelromao/sandman/internal/runid"
 )
@@ -157,7 +158,7 @@ func runSelectionPhaseWithEvents(ctx context.Context, client github.Client, coun
 		return nil, "", "", agentErr
 	}
 
-	selected, err := readSelectedIssues(sandmanDir, effectiveCount)
+	selected, err := readSelectedIssues(paths.NewLayout(nil, filepath.Dir(sandmanDir)), effectiveCount)
 	if err != nil {
 		emitAutoSelectFinished(eventLog, runID, "failure", err.Error(), nil)
 		return nil, "", "", err
@@ -202,7 +203,7 @@ func runSelectionPhaseLegacy(ctx context.Context, client github.Client, effectiv
 		return nil, fmt.Errorf("selection agent failed with stderr: %s: %w", strings.TrimSpace(stderrBuf.String()), err)
 	}
 
-	selected, err := readSelectedIssues(sandmanDir, effectiveCount)
+	selected, err := readSelectedIssues(paths.NewLayout(nil, filepath.Dir(sandmanDir)), effectiveCount)
 	if err != nil {
 		return nil, err
 	}
@@ -262,9 +263,8 @@ func fetchCandidateIssues(ctx context.Context, client github.Client, candidates 
 	return issues, nil
 }
 
-func readSelectedIssues(sandmanDir string, maxCount int) ([]int, error) {
-	selectedPath := filepath.Join(sandmanDir, "selected-issues.json")
-	data, err := os.ReadFile(selectedPath)
+func readSelectedIssues(layout paths.Layout, maxCount int) ([]int, error) {
+	data, err := os.ReadFile(layout.SelectedIssuesPath())
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, fmt.Errorf("selection phase produced no output")

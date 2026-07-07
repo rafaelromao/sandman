@@ -41,7 +41,7 @@ func TestRun_AutoFlag_EmitsAutoSelectEventsForAgentDrivenPath(t *testing.T) {
 	}
 	cfg.AgentProviders = map[string]config.Agent{
 		"opencode": {
-			Command: fmt.Sprintf("echo '[1, 2]' > %s/selected-issues.json", filepath.Join(sandmanDir, ".sandman")),
+			Command: fmt.Sprintf("mkdir -p %s/state && echo '[1, 2]' > %s/state/selected-issues.json", filepath.Join(sandmanDir, ".sandman"), filepath.Join(sandmanDir, ".sandman")),
 		},
 	}
 	deps := Dependencies{
@@ -510,8 +510,8 @@ if ! printf '%s\n' "$prompt" | grep -q '^#43 '; then
   echo "issue #43 missing from selection prompt" >&2
   exit 4
 fi
-mkdir -p .sandman
-printf '[42, 43]\n' > .sandman/selected-issues.json
+mkdir -p .sandman/state
+printf '[42, 43]\n' > .sandman/state/selected-issues.json
 exit 0
 `
 	if err := os.WriteFile(filepath.Join(agentDir, "opencode"), []byte(agentScript), 0o755); err != nil {
@@ -610,8 +610,8 @@ if ! grep -q '^#30 ' .sandman/selection-prompt.md; then
   echo "regular #30 missing from selection prompt" >&2
   exit 5
 fi
-mkdir -p .sandman
-printf '[10, 30]\n' > .sandman/selected-issues.json
+mkdir -p .sandman/state
+printf '[10, 30]\n' > .sandman/state/selected-issues.json
 exit 0
 `
 	if err := os.WriteFile(filepath.Join(agentDir, "opencode"), []byte(agentScript), 0o755); err != nil {
