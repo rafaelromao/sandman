@@ -4976,6 +4976,92 @@ func TestRunBatch_ReviewRunFolderMatchesLegacyBatchDirFormula(t *testing.T) {
 	}
 }
 
+// TestRunBatch_ReviewContainerSandboxRebasesSandmanRunDirEnv pins the
+// issue #1902 fix on the orchestrator side: when the sandbox mode is
+// container-style (podman/docker), the SANDMAN_RUN_DIR env var
+// exported to the agent MUST be the container-visible form
+// (/workspace/<rel>) so the agent writes decision.md to a path that
+// lands on the bind-mounted host filesystem. agentRun.runFolder
+// stays host-absolute — the orchestrator uses it to write run.log and
+// the daemon reads decision.md from the host path via req.RunDir.
+//
+// Pre-fix this test would fail: SANDMAN_RUN_DIR would equal the
+// host-absolute runFolder, the agent's mkdir + write would land in the
+// container's ephemeral write layer, and decision.md would be missing
+// on the host when postDecision ran os.Stat.
+func TestRunBatch_ReviewContainerSandboxRebasesSandmanRunDirEnv(t *testing.T) {
+	for _, mode := range []string{"podman", "docker"} {
+		t.Run(mode, func(t *testing.T) {
+			// ResolveRuntime checks for the binary; skip if the
+			// runtime is not installed (CI portability).
+			if _, err := exec.LookPath(mode); err != nil {
+				t.Skipf("%s not installed, skipping container-path translation test", mode)
+			}
+
+			dir := testenv.MkdirShort(t, "sm-orch-cpath-")
+			t.Chdir(dir)
+			initGitRepo(t, dir)
+
+			client := &fakeGitHubClient{err: errors.New("fetch should not run")}
+			spyLog := &spyEventLog{}
+			o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{
+				Agent:       "test-agent",
+				Sandbox:     "worktree",
+				WorktreeDir: ".sandman/worktrees",
+				Git:         config.GitConfig{BaseBranch: "main"},
+				AgentProviders: map[string]config.Agent{
+					"test-agent": {Command: "true"},
+				},
+			}}, spyLog)
+			o.sandboxFactory = &fakeSandboxFactory{sandbox: &fakeSandbox{workDir: filepath.Join(".sandman", "worktrees", "sandman", "review-17-1")}}
+			// Container-mode RunBatch calls BuildImage before the
+			// sandbox factory; inject the fake starter so the test
+			// does not require a real .sandman/Dockerfile.
+			o.containerRuntimeFactory = &fakeContainerRuntimeFactory{starter: &fakeContainerStarter{}}
+			agentRunCh := make(chan *AgentRun, 1)
+			o.runnableFactory = &capturingAgentRunFactory{agentRunCh: agentRunCh}
+
+			runDir := filepath.Join(dir, ".sandman", "batches", "b1", "runs", "r1")
+			_, err := o.RunBatch(context.Background(), Request{
+				PromptConfig: prompt.RenderConfig{PromptFlag: "Review the PR."},
+				Review:       true,
+				PRNumber:     17,
+				RunID:        "r1",
+				RunDir:       runDir,
+				Sandbox:      mode,
+			})
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			select {
+			case ar := <-agentRunCh:
+				// agentRun.runFolder MUST stay host-absolute — the
+				// orchestrator uses it to write run.log on the host.
+				if ar.runFolder != runDir {
+					t.Errorf("agentRun.runFolder = %q, want %q (host-absolute)", ar.runFolder, runDir)
+				}
+				got, ok := ar.env["SANDMAN_RUN_DIR"]
+				if !ok {
+					t.Fatalf("expected SANDMAN_RUN_DIR in agent env, got keys: %v", keysOf(ar.env))
+				}
+				// SANDMAN_RUN_DIR MUST be the container-visible form.
+				wantContainer := filepath.Join("/workspace", strings.TrimPrefix(runDir, dir))
+				wantContainer = filepath.Clean(wantContainer)
+				if got != wantContainer {
+					t.Errorf("SANDMAN_RUN_DIR = %q, want %q (container-visible form under %s)", got, wantContainer, "/workspace")
+				}
+				// MUST NOT be the host-absolute path.
+				if got == runDir {
+					t.Errorf("SANDMAN_RUN_DIR must NOT equal host-absolute runDir %q (issue #1902: agent would write decision.md to an in-container phantom path)", runDir)
+				}
+			case <-time.After(2 * time.Second):
+				t.Fatal("timed out waiting for AgentRun to be created")
+			}
+		})
+	}
+}
+
 func TestRunBatch_PromptOnlyReviewRunWithEmptyFocus(t *testing.T) {
 	dir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(dir)

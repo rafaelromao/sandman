@@ -21,6 +21,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/daemon"
 	"github.com/rafaelromao/sandman/internal/github"
 	"github.com/rafaelromao/sandman/internal/prompt"
+	"github.com/rafaelromao/sandman/internal/sandbox"
 	"github.com/rafaelromao/sandman/internal/testenv"
 )
 
@@ -1420,6 +1421,130 @@ func TestDaemon_LaunchReviewPropagatesRunDirToRenderedPrompt(t *testing.T) {
 	}
 	if strings.Contains(runner.last.PromptConfig.PromptFlag, "{{RUN_DIR}}") {
 		t.Errorf("rendered prompt must not retain the unfilled {{RUN_DIR}} placeholder, got prompt:\n%s", runner.last.PromptConfig.PromptFlag)
+	}
+}
+
+// TestDaemon_LaunchReviewRebasesRunDirForContainerSandbox pins the
+// issue #1902 fix: when the daemon is wired in production shape
+// (BaseDir = <repoRoot>/.sandman, matching cmd/review.go) and the
+// sandbox mode is container-style (podman/docker), the prompt's
+// {{RUN_DIR}} substitution MUST be the container-visible form
+// (/workspace/<rel>) so the agent writes decision.md to a path that
+// lands on the bind-mounted host filesystem the daemon reads back.
+// req.RunDir stays host-absolute: postDecision reads decision.md from
+// the host path, not the container path.
+//
+// Pre-fix this test would fail: the prompt would contain
+// `RunDir: <host-absolute>` and the agent's mkdir + write would land
+// in the container's ephemeral write layer, so decision.md would be
+// missing on the host and postDecision would mark the review as
+// failure (the silent review-loss bug observed on 2026-07-06).
+func TestDaemon_LaunchReviewRebasesRunDirForContainerSandbox(t *testing.T) {
+	for _, mode := range []string{"podman", "docker"} {
+		t.Run(mode, func(t *testing.T) {
+			gh := &fakeGH{
+				prs: []github.PR{{Number: 42, State: "open"}},
+				comments: map[int][]github.PRComment{
+					42: {{ID: "c-cpath", Body: "/sandman review"}},
+				},
+				prFetch: map[int]*github.PR{42: {Number: 42, Title: "PR 42", Body: "Body"}},
+			}
+			runner := &capturedRequest{}
+			cfg := &config.Config{
+				DefaultReviewAgent: "opencode",
+				DefaultReviewModel: "opencode/foo",
+			}
+			// Production wiring: BaseDir is <repoRoot>/.sandman (see
+			// cmd/review.go). The baseDir-ending-in-".sandman" guard
+			// is what enables the path translation.
+			repoRoot := testenv.MkdirShort(t, "sm-review-cpath-")
+			sandmanDir := filepath.Join(repoRoot, ".sandman")
+			if err := os.MkdirAll(sandmanDir, 0755); err != nil {
+				t.Fatalf("mkdir sandmanDir: %v", err)
+			}
+			t.Chdir(repoRoot)
+			buf := &lockedBuffer{}
+			d := New(sandmanDir, gh, &prompt.Engine{}, runner, cfg, buf, 0, false, nil)
+			d.PollInterval = 0
+			d.Sandbox = mode
+
+			tickAndWait(t, d, context.Background())
+
+			if runner.calls != 1 {
+				t.Fatalf("expected 1 batch run, got %d", runner.calls)
+			}
+			hostRunDir := runner.last.RunDir
+			if hostRunDir == "" {
+				t.Fatalf("expected non-empty RunDir in batch request, got empty")
+			}
+			// req.RunDir MUST stay host-absolute — postDecision
+			// reads decision.md from the host path.
+			if !strings.HasPrefix(hostRunDir, repoRoot) {
+				t.Errorf("req.RunDir must stay host-absolute (%s...), got %q", repoRoot, hostRunDir)
+			}
+			prompt := runner.last.PromptConfig.PromptFlag
+			// The prompt MUST contain the container-visible form.
+			// /workspace prefix is the bind-mount target.
+			containerForm := strings.Replace(hostRunDir, repoRoot, sandbox.ContainerWorkspaceMount, 1)
+			if !strings.Contains(prompt, "RunDir: "+containerForm) {
+				t.Errorf("rendered prompt must contain `RunDir: %s` (container-visible form), got prompt:\n%s", containerForm, prompt)
+			}
+			// The prompt MUST NOT contain the host-absolute path as
+			// the RunDir: prefix — that was the pre-fix bug.
+			if strings.Contains(prompt, "RunDir: "+hostRunDir) {
+				t.Errorf("rendered prompt must NOT contain host-absolute `RunDir: %s` (issue #1902 regression: agent would write to an in-container phantom path), got prompt:\n%s", hostRunDir, prompt)
+			}
+			if strings.Contains(prompt, "{{RUN_DIR}}") {
+				t.Errorf("rendered prompt must not retain the unfilled {{RUN_DIR}} placeholder, got prompt:\n%s", prompt)
+			}
+		})
+	}
+}
+
+// TestDaemon_LaunchReviewNoOpRunDirWhenBaseDirNotSandman pins the
+// guard: when BaseDir does NOT end in ".sandman" (the test-fixture
+// shape used by newDaemonForTest, where a tmp dir is passed directly),
+// the translation is a no-op even under a container sandbox mode.
+// This preserves the existing contract pinned by
+// TestDaemon_LaunchReviewPropagatesRunDirToRenderedPrompt: the prompt
+// contains the host-absolute RunDir verbatim. The guard exists so a
+// misconfigured daemon (no .sandman layout to compute the repo root
+// from) degrades to the legacy host-path behaviour rather than guessing.
+func TestDaemon_LaunchReviewNoOpRunDirWhenBaseDirNotSandman(t *testing.T) {
+	gh := &fakeGH{
+		prs: []github.PR{{Number: 42, State: "open"}},
+		comments: map[int][]github.PRComment{
+			42: {{ID: "c-noop", Body: "/sandman review"}},
+		},
+		prFetch: map[int]*github.PR{42: {Number: 42, Title: "PR 42", Body: "Body"}},
+	}
+	runner := &capturedRequest{}
+	cfg := &config.Config{
+		DefaultReviewAgent: "opencode",
+		DefaultReviewModel: "opencode/foo",
+	}
+	d, _, _ := newDaemonForTest(t, gh, runner, cfg)
+	d.Sandbox = "podman"
+
+	tickAndWait(t, d, context.Background())
+
+	if runner.calls != 1 {
+		t.Fatalf("expected 1 batch run, got %d", runner.calls)
+	}
+	hostRunDir := runner.last.RunDir
+	if hostRunDir == "" {
+		t.Fatalf("expected non-empty RunDir in batch request, got empty")
+	}
+	// When BaseDir does not end in ".sandman", the translation must
+	// no-op: the prompt contains the host-absolute RunDir verbatim.
+	// This is the guard's safety property — a test fixture without
+	// the .sandman layout degrades to legacy behaviour rather than
+	// silently producing /workspace paths against an unknown root.
+	if !strings.Contains(runner.last.PromptConfig.PromptFlag, "RunDir: "+hostRunDir) {
+		t.Errorf("rendered prompt must contain host-absolute `RunDir: %s` when BaseDir guard does not match, got prompt:\n%s", hostRunDir, runner.last.PromptConfig.PromptFlag)
+	}
+	if strings.Contains(runner.last.PromptConfig.PromptFlag, sandbox.ContainerWorkspaceMount) {
+		t.Errorf("rendered prompt must NOT contain %q when BaseDir guard does not match, got prompt:\n%s", sandbox.ContainerWorkspaceMount, runner.last.PromptConfig.PromptFlag)
 	}
 }
 
