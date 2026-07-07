@@ -1971,11 +1971,32 @@ func (s *runSession) runOnce(
 			// Expose the per-row run folder to the review agent as
 			// SANDMAN_RUN_DIR so it can locate decision.md via the
 			// environment as a fallback to the templated {{RUN_DIR}}.
+			//
+			// Issue #1902: agentRun.runFolder is the host-absolute
+			// path the orchestrator uses to write run.log; when the
+			// agent runs inside a container sandbox (podman/docker)
+			// the host path is invisible (the host repo is
+			// bind-mounted at /workspace). Rebase to the
+			// container-visible form so the agent writes decision.md
+			// to a path that lands on the bind-mounted host
+			// filesystem the daemon reads back via the host-absolute
+			// form. The non-container-sandbox branch (worktree/host)
+			// keeps the host path: the agent process shares that
+			// filesystem view. s.o.layout.RepoRoot is the same root
+			// the daemon computes from filepath.Dir(d.BaseDir); the
+			// sandbox.ContainerVisiblePath helper guards both emptiness
+			// and the descendant check, so a partial layout still
+			// degrades to the host path rather than misleading the
+			// agent.
 			if s.review && agentRun.runFolder != "" {
 				if agentRun.env == nil {
 					agentRun.env = map[string]string{}
 				}
-				agentRun.env["SANDMAN_RUN_DIR"] = agentRun.runFolder
+				agentRun.env["SANDMAN_RUN_DIR"] = sandbox.ContainerVisiblePath(
+					agentRun.runFolder,
+					s.o.layout.RepoRoot,
+					s.sandboxMode,
+				)
 			}
 		}
 

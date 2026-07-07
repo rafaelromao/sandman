@@ -20,6 +20,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/github"
 	"github.com/rafaelromao/sandman/internal/prompt"
 	"github.com/rafaelromao/sandman/internal/runid"
+	"github.com/rafaelromao/sandman/internal/sandbox"
 )
 
 // PollingInterval is the default interval at which the daemon scans open PRs
@@ -1250,12 +1251,56 @@ func (d *Daemon) launchReview(ctx context.Context, prNumber int, focus, commentI
 		return fmt.Errorf("fetch PR: %w", err)
 	}
 
+	// sandboxMode stays the effective resolution the rest of this
+	// function relies on. Computed here (rather than at the original
+	// site further down) so the prompt's {{RUN_DIR}} substitution below
+	// can rebase reviewRunFolder onto the container mount when the
+	// sandbox is container-style. The value is reused verbatim in
+	// req.Sandbox a few dozen lines below; the only behaviour change
+	// vs. the previous ordering is that sandboxMode is available here.
+	sandboxMode := d.Sandbox
+	if sandboxMode == "" && d.Config != nil {
+		sandboxMode = d.Config.Sandbox
+	}
+	if sandboxMode == "" {
+		sandboxMode = config.DefaultSandbox
+	}
+
+	// Issue #1902: when the agent runs inside a container sandbox
+	// (podman/docker) the host repository root is bind-mounted at
+	// /workspace inside the container and host-absolute paths are not
+	// visible. The prompt's {{RUN_DIR}} substitution instructs the
+	// agent where to write decision.md; the legacy form passed the
+	// host-absolute reviewRunFolder, so the agent mkdir'd an ephemeral
+	// in-container directory tree under the host path, wrote
+	// decision.md there, and the file was discarded when the container
+	// exited — postDecision then os.Stat'd the host path and saw
+	// ENOENT, marking every review as failure (issue #1887 et al).
+	//
+	// Translate reviewRunFolder to the container-visible form for the
+	// prompt substitution only. req.RunDir and postDecision's own read
+	// path stay on the host form; the orchestrator-side
+	// SANDMAN_RUN_DIR env var (issue #1902, sibling change in
+	// internal/batch/orchestrator.go) applies the same translation so
+	// the env-var fallback path the agent discovers via
+	// `echo $SANDMAN_RUN_DIR` lands on the same bind-mounted file. The
+	// production wiring in cmd/review.go passes
+	// filepath.Join(repoRoot, ".sandman") as the Daemon's BaseDir, so
+	// filepath.Dir(d.BaseDir) is the host repo root; the
+	// ".sandman"-suffix guard keeps the translation a no-op for tests
+	// (newDaemonForTest passes a tmp dir directly, no .sandman layout).
+	repoRoot := ""
+	if filepath.Base(d.BaseDir) == ".sandman" {
+		repoRoot = filepath.Dir(d.BaseDir)
+	}
+	agentRunDir := sandbox.ContainerVisiblePath(reviewRunFolder, repoRoot, sandboxMode)
+
 	rendered, err := d.Prompts.RenderReview(prompt.RenderConfig{}, prompt.PRData{
 		Number:            pr.Number,
 		Title:             pr.Title,
 		Body:              pr.Body,
 		ReviewFocus:       focus,
-		RunDir:            reviewRunFolder,
+		RunDir:            agentRunDir,
 		PriorReviewExists: priorReviewExists,
 	})
 	if err != nil {
@@ -1268,13 +1313,6 @@ func (d *Daemon) launchReview(ctx context.Context, prNumber int, focus, commentI
 
 	agentName := ""
 	modelName := ""
-	sandboxMode := d.Sandbox
-	if sandboxMode == "" && d.Config != nil {
-		sandboxMode = d.Config.Sandbox
-	}
-	if sandboxMode == "" {
-		sandboxMode = config.DefaultSandbox
-	}
 	if d.Config != nil {
 		agentName = d.effectiveAgent()
 		modelName = d.effectiveModel()
