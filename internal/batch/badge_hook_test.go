@@ -353,8 +353,11 @@ func TestDefaultBadgeControlFileReader_TreatsPresentFileAsPresent(t *testing.T) 
 func TestDefaultBadgeControlFileReader_TreatsStatErrorAsAbsent(t *testing.T) {
 	tmp := t.TempDir()
 	stateDir := filepath.Join(tmp, ".sandman", "state")
-	if err := os.MkdirAll(stateDir, 0o000); err != nil {
+	if err := os.MkdirAll(stateDir, 0o755); err != nil {
 		t.Fatalf("mkdir .sandman/state: %v", err)
+	}
+	if err := os.Chmod(stateDir, 0o000); err != nil {
+		t.Fatalf("chmod .sandman/state: %v", err)
 	}
 	t.Cleanup(func() {
 		_ = os.Chmod(stateDir, 0o755)
