@@ -81,7 +81,7 @@ func (d *defaultPRLister) ListMergedSandmanPRs(ctx context.Context) ([]MergedSan
 }
 
 func (d *defaultPRLister) HasBadgePR(ctx context.Context) (bool, error) {
-	out, err := d.gh.runGh(ctx, "pr", "list", "--state", "all", "--limit", "100", "--json", "number,body")
+	out, err := d.gh.runGh(ctx, "pr", "list", "--state", "all", "--limit", "1000", "--json", "number,body")
 	if err != nil {
 		return false, err
 	}
@@ -224,17 +224,17 @@ func (h *defaultBadgeHooker) MaybeSuggestBadge(ctx context.Context, results []Ag
 		return
 	}
 
-	controlFilePresent := h.controlReader.HasBadgeControlFile()
-	if controlFilePresent {
-		return
-	}
-
 	hasBadge, err := h.prLister.HasBadgePR(ctx)
 	if err != nil {
 		fmt.Fprintf(h.writer, "Badge PR suggestion skipped: %v\n", err)
 		return
 	}
 	if hasBadge {
+		return
+	}
+
+	controlFilePresent := h.controlReader.HasBadgeControlFile()
+	if controlFilePresent {
 		return
 	}
 

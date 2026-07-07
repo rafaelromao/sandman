@@ -2,6 +2,8 @@ package batch
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -47,6 +49,22 @@ type fakeBadgeControlFileReader struct {
 
 func (f *fakeBadgeControlFileReader) HasBadgeControlFile() bool {
 	return f.present
+}
+
+type fakeGhCommander struct {
+	payload []byte
+	err     error
+	args    []string
+	calls   int
+}
+
+func (f *fakeGhCommander) runGh(ctx context.Context, args ...string) ([]byte, error) {
+	f.calls++
+	f.args = append([]string(nil), args...)
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.payload, nil
 }
 
 func intToString(n int) string { return strconv.Itoa(n) }
@@ -106,25 +124,6 @@ func TestMaybeSuggestBadge_ZeroMergedSandmanPRs(t *testing.T) {
 
 	if fakeRunner.capturedPrompt != "" {
 		t.Errorf("expected no prompt run, got prompt=%q", fakeRunner.capturedPrompt)
-	}
-}
-
-func TestMaybeSuggestBadge_HasBadgePR(t *testing.T) {
-	fakeGh := &fakePRLister{
-		mergedPRs: []MergedSandmanPR{{Number: 1, HeadRefName: "sandman/feat", Title: "Test"}},
-		hasBadge:  true,
-	}
-	fakeRunner := &fakeSandmanRunner{prURL: "https://github.com/owner/repo/pull/99"}
-	h := newTestBadgeHooker(fakeGh, fakeRunner, io.Discard)
-
-	results := []AgentRunResult{
-		{Status: "success"},
-	}
-
-	h.MaybeSuggestBadge(context.Background(), results)
-
-	if fakeRunner.capturedPrompt != "" {
-		t.Errorf("expected no prompt run when badge PR exists, got prompt=%q", fakeRunner.capturedPrompt)
 	}
 }
 
@@ -287,25 +286,7 @@ func TestNewBadgeHookerWith_DoesNotSpawnWhenNoMergedSandmanPRs(t *testing.T) {
 	}
 }
 
-func TestMaybeSuggestBadge_ControlFilePresent_ShortCircuitsHasBadgePR(t *testing.T) {
-	fakeGh := &fakePRLister{
-		mergedPRs: []MergedSandmanPR{{Number: 7, HeadRefName: "sandman/feat", Title: "Add feature"}},
-	}
-	fakeRunner := &fakeSandmanRunner{prURL: "https://github.com/owner/repo/pull/55"}
-	controlReader := &fakeBadgeControlFileReader{present: true}
-	h := newDefaultBadgeHooker(fakeGh, controlReader, fakeRunner, io.Discard)
-
-	h.MaybeSuggestBadge(context.Background(), []AgentRunResult{{Status: "success"}})
-
-	if fakeGh.hasBadgeCallCount != 0 {
-		t.Errorf("expected HasBadgePR NOT to be called when control file is present, got %d call(s)", fakeGh.hasBadgeCallCount)
-	}
-	if fakeRunner.capturedPrompt != "" {
-		t.Errorf("expected no spawn when control file is present, got prompt=%q", fakeRunner.capturedPrompt)
-	}
-}
-
-func TestMaybeSuggestBadge_ControlFileAbsent_FallsThroughToHasBadgePR(t *testing.T) {
+func TestMaybeSuggestBadge_ControlFileAbsent_StillChecksPRExistence(t *testing.T) {
 	fakeGh := &fakePRLister{
 		mergedPRs: []MergedSandmanPR{{Number: 7, HeadRefName: "sandman/feat", Title: "Add feature"}},
 		hasBadge:  true,
@@ -316,10 +297,82 @@ func TestMaybeSuggestBadge_ControlFileAbsent_FallsThroughToHasBadgePR(t *testing
 	h.MaybeSuggestBadge(context.Background(), []AgentRunResult{{Status: "success"}})
 
 	if fakeGh.hasBadgeCallCount != 1 {
-		t.Errorf("expected HasBadgePR to be called once when control file is absent, got %d call(s)", fakeGh.hasBadgeCallCount)
+		t.Errorf("expected HasBadgePR to be called even when control file is absent (authoritative gate), got %d call(s)", fakeGh.hasBadgeCallCount)
 	}
 	if fakeRunner.capturedPrompt != "" {
-		t.Errorf("expected no spawn when HasBadgePR reports badge present, got prompt=%q", fakeRunner.capturedPrompt)
+		t.Errorf("expected no spawn when HasBadgePR reports a marker PR on a fresh checkout, got prompt=%q", fakeRunner.capturedPrompt)
+	}
+}
+
+func TestMaybeSuggestBadge_ControlFileAbsent_NoMarkerPR_SpawnsSidecar(t *testing.T) {
+	fakeGh := &fakePRLister{
+		mergedPRs: []MergedSandmanPR{{Number: 7, HeadRefName: "sandman/feat", Title: "Add feature"}},
+		hasBadge:  false,
+	}
+	fakeRunner := &fakeSandmanRunner{prURL: "https://github.com/owner/repo/pull/55"}
+	h := newTestBadgeHooker(fakeGh, fakeRunner, io.Discard)
+
+	h.MaybeSuggestBadge(context.Background(), []AgentRunResult{{Status: "success"}})
+
+	if fakeGh.hasBadgeCallCount != 1 {
+		t.Errorf("expected HasBadgePR to be called when control file is absent, got %d call(s)", fakeGh.hasBadgeCallCount)
+	}
+	if fakeRunner.capturedPrompt == "" {
+		t.Errorf("expected spawn when control file is absent and HasBadgePR reports no marker PR (cold-start path)")
+	}
+}
+
+func TestMaybeSuggestBadge_HasBadgePR_AnyState_SkipsSpawn(t *testing.T) {
+	tests := []struct {
+		name        string
+		prState     string
+		expectSpawn bool
+	}{
+		{name: "open marker PR", prState: "open", expectSpawn: false},
+		{name: "closed marker PR", prState: "closed", expectSpawn: false},
+		{name: "merged marker PR", prState: "merged", expectSpawn: false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			fakeGh := &fakePRLister{
+				mergedPRs: []MergedSandmanPR{{Number: 7, HeadRefName: "sandman/feat", Title: "Add feature"}},
+				hasBadge:  true,
+			}
+			fakeRunner := &fakeSandmanRunner{prURL: "https://github.com/owner/repo/pull/55"}
+			h := newTestBadgeHooker(fakeGh, fakeRunner, io.Discard)
+
+			h.MaybeSuggestBadge(context.Background(), []AgentRunResult{{Status: "success"}})
+
+			if tc.expectSpawn {
+				if fakeRunner.capturedPrompt == "" {
+					t.Errorf("expected spawn for state=%s, got no prompt", tc.prState)
+				}
+			} else {
+				if fakeRunner.capturedPrompt != "" {
+					t.Errorf("expected NO spawn when HasBadgePR reports a marker PR in state=%s, got prompt=%q", tc.prState, fakeRunner.capturedPrompt)
+				}
+			}
+		})
+	}
+}
+
+func TestMaybeSuggestBadge_ControlFilePresent_SuppressesSpawnWhenHasBadgePRIsFalse(t *testing.T) {
+	fakeGh := &fakePRLister{
+		mergedPRs: []MergedSandmanPR{{Number: 7, HeadRefName: "sandman/feat", Title: "Add feature"}},
+		hasBadge:  false,
+	}
+	fakeRunner := &fakeSandmanRunner{prURL: "https://github.com/owner/repo/pull/55"}
+	controlReader := &fakeBadgeControlFileReader{present: true}
+	h := newDefaultBadgeHooker(fakeGh, controlReader, fakeRunner, io.Discard)
+
+	h.MaybeSuggestBadge(context.Background(), []AgentRunResult{{Status: "success"}})
+
+	if fakeGh.hasBadgeCallCount != 1 {
+		t.Errorf("expected HasBadgePR to be called once (authoritative gate runs first), got %d call(s)", fakeGh.hasBadgeCallCount)
+	}
+	if fakeRunner.capturedPrompt != "" {
+		t.Errorf("expected no spawn when control file is present (optimistic fast-path suppresses spawn), got prompt=%q", fakeRunner.capturedPrompt)
 	}
 }
 
@@ -437,5 +490,55 @@ func TestMaybeSuggestBadge_PromptBodyRationaleReferencesMergedPRs(t *testing.T) 
 	}
 	if !strings.Contains(bodySection, "The badge links to https://github.com/rafaelromao/sandman.") {
 		t.Fatalf("expected generic badge link text in PR body section, got section:\n%s", bodySection)
+	}
+}
+
+// hasBadgePR_FakePRPayload builds a JSON array of prPayloadBody entries
+// where the first `nonMarker` entries have non-marker bodies and the
+// final entry carries the badge marker. The synthetic payload is used
+// to prove that HasBadgePR searches beyond the historical 100-PR page.
+func hasBadgePR_FakePRPayload(nonMarker, markerNumber int) []byte {
+	entries := make([]prPayloadBody, 0, nonMarker+1)
+	for i := 0; i < nonMarker; i++ {
+		entries = append(entries, prPayloadBody{
+			Number: i + 1,
+			Body:   fmt.Sprintf("Plain PR body #%d", i+1),
+		})
+	}
+	entries = append(entries, prPayloadBody{
+		Number: markerNumber,
+		Body:   "<!-- sandman-badge-pr -->\nProposed by agent.",
+	})
+	out, err := json.Marshal(entries)
+	if err != nil {
+		panic(err)
+	}
+	return out
+}
+
+func TestHasBadgePR_FindsMarkerBeyondDefaultPage(t *testing.T) {
+	fakeGh := &fakeGhCommander{payload: hasBadgePR_FakePRPayload(500, 501)}
+	lister := &defaultPRLister{gh: fakeGh}
+
+	got, err := lister.HasBadgePR(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error from HasBadgePR: %v", err)
+	}
+	if !got {
+		t.Fatalf("expected HasBadgePR to find the marker PR located at position 500 (beyond the 100-PR page); got false")
+	}
+
+	limitIdx := -1
+	for i, a := range fakeGh.args {
+		if a == "--limit" {
+			limitIdx = i
+			break
+		}
+	}
+	if limitIdx < 0 || limitIdx+1 >= len(fakeGh.args) {
+		t.Fatalf("expected --limit flag in gh args, got: %v", fakeGh.args)
+	}
+	if fakeGh.args[limitIdx+1] != "1000" {
+		t.Errorf("expected default HasBadgePR query to use --limit 1000, got --limit %s", fakeGh.args[limitIdx+1])
 	}
 }

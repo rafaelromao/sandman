@@ -43,6 +43,40 @@ func TestDefaultBadgePrompt_PreservesExistingSections(t *testing.T) {
 	}
 }
 
+func TestDefaultBadgePrompt_IdempotencyCheckIsDefenseInDepth(t *testing.T) {
+	prompt := DefaultBadgePrompt()
+
+	idempotencyIdx := strings.Index(prompt, "## Idempotency check")
+	if idempotencyIdx < 0 {
+		t.Fatalf("expected badge prompt to contain '## Idempotency check' section, got:\n%s", prompt)
+	}
+	nextSectionIdx := strings.Index(prompt[idempotencyIdx+1:], "\n## ")
+	var sectionEnd int
+	if nextSectionIdx < 0 {
+		sectionEnd = len(prompt)
+	} else {
+		sectionEnd = idempotencyIdx + 1 + nextSectionIdx
+	}
+	section := prompt[idempotencyIdx:sectionEnd]
+
+	lowered := strings.ToLower(section)
+	if !strings.Contains(lowered, "defense-in-depth") && !strings.Contains(lowered, "defense in depth") {
+		t.Errorf("expected idempotency section to frame the in-agent check as defense-in-depth, got section:\n%s", section)
+	}
+
+	authoritativeHookMarkers := []string{"badge_hook.go", "MaybeSuggestBadge", "authoritative gate", "post-batch hook", "Go-side hook"}
+	found := false
+	for _, m := range authoritativeHookMarkers {
+		if strings.Contains(section, m) {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected idempotency section to reference the authoritative Go-side hook (one of %v), got section:\n%s", authoritativeHookMarkers, section)
+	}
+}
+
 func TestDefaultBadgePrompt_ControlFileOrderingMatchesPRCreation(t *testing.T) {
 	prompt := DefaultBadgePrompt()
 
