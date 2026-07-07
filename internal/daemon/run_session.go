@@ -102,32 +102,31 @@ func (s *RunSession) Broadcaster() *Broadcaster {
 // Per-run artifacts (run.json, run.log, run.sock) are created by the
 // orchestrator in the per-row execution path, not by Prepare.
 //
-// # Contract: manifest.BatchId MUST equal the per-row RunID
+// # Contract: manifest.BatchId equals the PUBLIC BatchId
 //
-// Per ADR-0036, the batches index entry id (set from manifest.BatchId)
-// MUST equal the per-row RunID the orchestrator will emit in
-// run.started/run.continued and store in run.json's RunID field. This
-// applies to every batch kind:
+// Per issue #1917 (slice 1 of #1916), the batches index entry id and
+// the batch.json.batchId field MUST equal the public BatchId (the
+// batch folder basename). This supersedes the earlier ADR-0036
+// contract (manifest.BatchId == per-row RunID).
 //
-//   - `sandman run --auto`  → runid.NewRunID(KindIssue, "<firstIssue>", ts, shortid)
-//   - `sandman run <issue>` → runid.NewRunID(KindIssue, "<firstIssue>", ts, shortid)
-//   - `sandman run --continue <issue>` → same as `run <issue>`
-//   - `sandman run --prompt --run-id myid` → runid.NewRunID(KindPromptOnly, "prompt-myid", ts, shortid)
-//   - `sandman run --prompt` (no userid) → runid.NewRunID(KindPromptOnly, "prompt", ts, shortid)
-//   - `sandman review` → reviewRunIDFor(prNumber, linkedIssue, ts, shortid)
-//   - `selection.go` auto-select → runid.NewRunID(KindAutoSelect, "auto-<N>", ts, shortid)
+// The public BatchId rules (per #1917):
 //
-// Setting manifest.BatchId to the batch dir name (e.g. <sid>-<ts>-<num>+N)
-// instead of the per-row RunID is a contract violation: the portal's
-// `idx.Resolve(perRowRunID)` would return nil and every per-row id
-// lookup would fall through to the legacy `canonicalizeEntryID`
-// path-basename fallback. For new batches (this slice), the fallback
-// is unreachable; legacy batches provisioned before ADR-0036 still
-// rely on it.
+//   - Issue single:    "<sid>-<ts>-<num>"                    (no +N suffix)
+//   - Issue multi:     "<sid>-<ts>-<firstIssue>+<additionalCount>"
+//   - Review:          "<sid>-<ts>-PR<pr>" or "<sid>-<ts>-<issue>-PR<pr>"
+//   - Auto-select:     "<sid>-<ts>-auto-<N>"
+//   - Prompt-only:     "<sid>-<ts>-prompt[-<userid>]"
+//
+// The per-row RunID is no longer stamped into batch.json. It lives in
+// run.json.RunID and the per-run folder name `<batch>/runs/<runID>/`.
+// Per-row archive/abort resolution must map per-row RunID → public
+// BatchId before consulting the index (e.g. by walking the batch
+// folder for `runs/<runID>/run.json` or by scanning the entry's path
+// for the per-run folder).
 //
 // Tests in `internal/daemon/run_session_test.go` (TestRunSession_IdxAddOnlyCalledFromPrepare)
-// pin the invariant that this is the only `idx.Add` site in production
-// code.
+// pin the invariant that `idx.Add` is only called from `Prepare`,
+// which is preserved across the #1917 contract change.
 func (s *RunSession) Prepare(manifest BatchManifest) error {
 	s.runDir = s.RunDir()
 

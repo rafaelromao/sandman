@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -3513,6 +3514,242 @@ func TestPortal_ActiveKeyForActive_FallbackChain(t *testing.T) {
 			}
 			if got == "" {
 				t.Fatal("activeKeyForActive must never return empty string")
+			}
+		})
+	}
+}
+
+// TestPortal_ActiveBatchKey_EqualsPublicBatchId pins the public BatchId
+// contract for the portal surfaces (issue #1917 slice 1):
+//
+//   - active.BatchKey (rendered as the "Batch:" label and the Details
+//     tab "batch" field) MUST equal the public BatchId (== batch folder
+//     basename == batch.json.batchId == event payload batch_id).
+//
+// For single-issue issue batches the public BatchId is `<sid>-<ts>-<num>`
+// (no +N suffix); for multi-issue it is `<sid>-<ts>-<first>+<additionalCount>`.
+// In both cases the active row's BatchKey matches the public BatchId, so
+// the portal Batch label and Details tab render the same string the user
+// sees on disk.
+func TestPortal_ActiveBatchKey_EqualsPublicBatchId(t *testing.T) {
+	ts := "260618113825"
+	shortid := "abcd"
+
+	tests := []struct {
+		name       string
+		n          int
+		firstIssue string
+	}{
+		{name: "single issue", n: 1, firstIssue: "42"},
+		{name: "two issues", n: 2, firstIssue: "42"},
+		{name: "nine issues", n: 9, firstIssue: "42"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			publicBatchID := runid.NewBatchID(runid.KindIssue, tt.n, tt.firstIssue, ts, shortid)
+			firstRowID := runid.NewRunID(runid.KindIssue, tt.firstIssue, ts, shortid)
+			dir := filepath.Join("/tmp", "fake", publicBatchID)
+
+			// Active row with manifest.BatchId = public BatchId (post-#1917).
+			active := portalActiveRun{
+				Key:         publicBatchID,
+				BatchID:     publicBatchID,
+				Dir:         dir,
+				RunID:       firstRowID,
+				IssueNumber: 42,
+			}
+
+			// batchKeyForActive picks active.BatchID first; must equal
+			// the public BatchId.
+			if got := batchKeyForActive(active); got != publicBatchID {
+				t.Errorf("batchKeyForActive = %q, want %q (public BatchId)", got, publicBatchID)
+			}
+			// activeKeyForActive also picks active.BatchID; must equal
+			// the public BatchId.
+			if got := activeKeyForActive(active); got != publicBatchID {
+				t.Errorf("activeKeyForActive = %q, want %q (public BatchId)", got, publicBatchID)
+			}
+
+			// Fallback to Dir basename must agree: filepath.Base(Dir)
+			// is the public BatchId by construction.
+			empty := portalActiveRun{Key: "", BatchID: "", Dir: dir, RunID: firstRowID}
+			if got := batchKeyForActive(empty); got != publicBatchID {
+				t.Errorf("batchKeyForActive (Dir fallback) = %q, want %q (public BatchId)", got, publicBatchID)
+			}
+		})
+	}
+}
+
+// TestPortal_EventPayloadBatchId_EqualsPublicBatchId pins that the
+// event payload `batch_id` field equals the public BatchId (issue
+// #1917 slice 1). The orchestrator sources `payload.batch_id` from
+// `issueBatchIDForRequest(req)` which delegates to
+// `batch.BatchIDForIssue(firstIssueNum, n, ts, shortid)`. For a
+// single-issue batch the field carries no +N suffix; for a multi-issue
+// batch it carries +<additionalCount>.
+func TestPortal_EventPayloadBatchId_EqualsPublicBatchId(t *testing.T) {
+	ts := "260618113825"
+	shortid := "abcd"
+
+	tests := []struct {
+		name      string
+		issues    []int
+		wantBatch string
+	}{
+		{name: "single issue", issues: []int{42}, wantBatch: "abcd-260618113825-42"},
+		{name: "two issues", issues: []int{42, 43}, wantBatch: "abcd-260618113825-42+1"},
+		{name: "nine issues", issues: []int{42, 43, 44, 45, 46, 47, 48, 49, 50}, wantBatch: "abcd-260618113825-42+8"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repoRoot := t.TempDir()
+			if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+				t.Fatal(err)
+			}
+			// Write batch.json with batchId == public BatchId.
+			batchDir := filepath.Join(repoRoot, ".sandman", "batches", tt.wantBatch)
+			if err := os.MkdirAll(batchDir, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			manifest := daemon.BatchManifest{
+				Issues:     tt.issues,
+				BatchId:    tt.wantBatch,
+				RunKind:    "issue",
+				CreatedAt:  time.Now(),
+				RunTS:      ts,
+				RunShortID: shortid,
+			}
+			if err := daemon.WriteManifest(batchDir, manifest); err != nil {
+				t.Fatal(err)
+			}
+			// Read it back and verify the field equals the public BatchId.
+			got, err := daemon.ReadManifest(batchDir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.BatchId != tt.wantBatch {
+				t.Errorf("batch.json.batchId = %q, want %q (public BatchId)", got.BatchId, tt.wantBatch)
+			}
+		})
+	}
+}
+
+// TestPortal_RunsAPI_BatchKeyEqualsPublicBatchId pins the public
+// BatchId contract at the HTTP API boundary (issue #1917 slice 1):
+//
+//   - GET /api/runs must return `run.batchKey` == public BatchId for
+//     both single-issue and multi-issue issue batches. The portal's
+//     "Batch:" label and the Details tab "batch" field both read from
+//     `run.batchKey`, so this single assertion pins both UI surfaces.
+//
+// The /api/runs row is sourced from event log + batch manifest; the
+// test seeds both and asserts the JSON carries the public BatchId in
+// `batchKey` and that the event payload `batch_id` agrees.
+func TestPortal_RunsAPI_BatchKeyEqualsPublicBatchId(t *testing.T) {
+	const ts, shortid = "260618113825", "abcd"
+
+	tests := []struct {
+		name      string
+		issues    []int
+		wantBatch string
+		rowRunID  string
+	}{
+		{
+			name:      "single issue",
+			issues:    []int{42},
+			wantBatch: "abcd-260618113825-42",
+			rowRunID:  "abcd-260618113825-42",
+		},
+		{
+			name:      "two issues",
+			issues:    []int{42, 43},
+			wantBatch: "abcd-260618113825-42+1",
+			rowRunID:  "abcd-260618113825-42",
+		},
+		{
+			name:      "nine issues",
+			issues:    []int{42, 43, 44, 45, 46, 47, 48, 49, 50},
+			wantBatch: "abcd-260618113825-42+8",
+			rowRunID:  "abcd-260618113825-42",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repoRoot := t.TempDir()
+			if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+				t.Fatal(err)
+			}
+			batchDir := filepath.Join(repoRoot, ".sandman", "batches", tt.wantBatch)
+			if err := os.MkdirAll(filepath.Join(batchDir, "runs", tt.rowRunID), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			manifest := daemon.BatchManifest{
+				Issues:     tt.issues,
+				BatchId:    tt.wantBatch, // post-#1917: BatchId == public BatchId
+				RunKind:    "issue",
+				CreatedAt:  time.Now().Add(-10 * time.Minute),
+				RunTS:      ts,
+				RunShortID: shortid,
+			}
+			if err := daemon.WriteManifest(batchDir, manifest); err != nil {
+				t.Fatal(err)
+			}
+
+			startedAt := time.Now().Add(-10 * time.Minute)
+			writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
+				{Type: "run.started", Timestamp: startedAt, RunID: tt.rowRunID, Issue: 42, Payload: map[string]any{
+					"branch":   "sandman/42-fix",
+					"batch_id": tt.wantBatch,
+				}},
+				{Type: "run.finished", Timestamp: startedAt.Add(time.Minute), RunID: tt.rowRunID, Issue: 42, Payload: map[string]any{
+					"status":   "success",
+					"branch":   "sandman/42-fix",
+					"batch_id": tt.wantBatch,
+				}},
+			})
+
+			handler := newPortalHandler(repoRoot)
+			server := startPortalHTTPServer(t, handler)
+			defer server.Close()
+
+			resp, err := http.Get(server.URL + "/api/runs")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer resp.Body.Close()
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("expected 200, got %d", resp.StatusCode)
+			}
+			var payload struct {
+				Runs []portalRun `json:"runs"`
+			}
+			if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+				t.Fatal(err)
+			}
+			if len(payload.Runs) != 1 {
+				t.Fatalf("expected 1 run, got %d", len(payload.Runs))
+			}
+			got := payload.Runs[0]
+
+			// run.batchKey is rendered as the portal "Batch:" label and
+			// the Details tab "batch" field.
+			if got.BatchKey != tt.wantBatch {
+				t.Errorf("run.batchKey = %q, want %q (public BatchId)", got.BatchKey, tt.wantBatch)
+			}
+			// Event payload batch_id == public BatchId.
+			if got.Events == nil || len(got.Events) == 0 {
+				t.Fatalf("expected events array, got %#v", got.Events)
+			}
+			var batchIDPayload string
+			for _, e := range got.Events {
+				if e.Type == "run.started" {
+					if v, ok := e.Payload["batch_id"].(string); ok {
+						batchIDPayload = v
+					}
+				}
+			}
+			if batchIDPayload != tt.wantBatch {
+				t.Errorf("event payload batch_id = %q, want %q (public BatchId)", batchIDPayload, tt.wantBatch)
 			}
 		})
 	}

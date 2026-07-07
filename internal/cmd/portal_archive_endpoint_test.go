@@ -467,6 +467,10 @@ func TestPortal_ArchiveEndpoint_SurfaceArchivedFlagInRunsAPI(t *testing.T) {
 // only accepts the batch entry id would 404 in production. The
 // archive directory name is the batch entry id (not the per-row id),
 // matching today's behaviour.
+//
+// Uses n=2 (multi-issue) so the public BatchId carries +1 and differs
+// from the per-row RunID; single-issue batches use the public BatchId
+// = per-row RunID shape (issue #1917 slice 1).
 func TestPortal_ArchiveEndpoint_EndToEndRealRunIDToDirName(t *testing.T) {
 	repoRoot, err := os.MkdirTemp("/tmp", "sm-archive-e2e-")
 	if err != nil {
@@ -479,7 +483,7 @@ func TestPortal_ArchiveEndpoint_EndToEndRealRunIDToDirName(t *testing.T) {
 
 	ts := "260618113825"
 	shortid := "abcd"
-	batchEntryID := runid.NewBatchID(runid.KindIssue, 1, "42", ts, shortid)
+	batchEntryID := runid.NewBatchID(runid.KindIssue, 2, "42", ts, shortid)
 	perRowID := runid.NewRunID(runid.KindIssue, "42", ts, shortid)
 	if perRowID == batchEntryID {
 		t.Fatalf("fixture invariant: per-row id %q must differ from batch entry id %q", perRowID, batchEntryID)

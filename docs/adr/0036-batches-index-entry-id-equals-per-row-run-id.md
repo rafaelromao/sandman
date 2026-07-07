@@ -2,7 +2,16 @@
 
 ## Status
 
-accepted
+superseded
+
+> **Superseded by issue #1917 slice 1 (March 2026):** the
+> `manifest.BatchId == per-row RunID` contract is replaced by
+> `manifest.BatchId == public BatchId == batch folder basename`.
+> See the new contract in `internal/daemon/run_session.go` (lines
+> 105–135) and the amended templates in `docs/adr/0030-standardize-run-id-and-run-dir.md`.
+> The `idx.Add`-only-called-from-`Prepare` invariant (line 128 of
+> this ADR) is preserved across the contract change; only the value
+> of `manifest.BatchId` shifted.
 
 ## Context
 

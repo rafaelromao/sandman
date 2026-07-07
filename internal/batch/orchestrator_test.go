@@ -786,6 +786,65 @@ func TestReadTailLines_TrailingNewline(t *testing.T) {
 	}
 }
 
+// TestBatchIDForIssue_PublicBatchIdShape pins the public BatchId contract
+// for issue batches (issue #1917 slice 1):
+//
+//   - single issue (n=1): "<sid>-<ts>-<num>" (no +N suffix)
+//   - two issues    (n=2): "<sid>-<ts>-<firstIssue>+1"
+//   - nine issues   (n=9): "<sid>-<ts>-<firstIssue>+8"
+//
+// The public BatchId is what the portal Batch label, Details tab, batch
+// folder basename, batch.json.batchId, run.json.BatchID, and event payload
+// batch_id all must agree on.
+func TestBatchIDForIssue_PublicBatchIdShape(t *testing.T) {
+	const ts, sid = "260618113825", "abcd"
+	tests := []struct {
+		name        string
+		firstIssue  int
+		n           int
+		wantBatchID string
+	}{
+		{name: "single issue omits +N", firstIssue: 42, n: 1, wantBatchID: "abcd-260618113825-42"},
+		{name: "two issues uses +1", firstIssue: 42, n: 2, wantBatchID: "abcd-260618113825-42+1"},
+		{name: "nine issues uses +8", firstIssue: 42, n: 9, wantBatchID: "abcd-260618113825-42+8"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := BatchIDForIssue(tt.firstIssue, tt.n, ts, sid)
+			if got != tt.wantBatchID {
+				t.Errorf("BatchIDForIssue(%d, %d, %q, %q) = %q, want %q",
+					tt.firstIssue, tt.n, ts, sid, got, tt.wantBatchID)
+			}
+		})
+	}
+}
+
+// TestIssueBatchIDForRequest_UsesPublicBatchIdShape pins that
+// issueBatchIDForRequest, the source of the event payload batch_id and
+// run.json.BatchID for fresh issue batches, returns the public BatchId
+// shape (no +1 for single, +<additionalCount> for multi).
+func TestIssueBatchIDForRequest_UsesPublicBatchIdShape(t *testing.T) {
+	const ts, sid = "260618113825", "abcd"
+	tests := []struct {
+		name      string
+		issues    []int
+		wantBatch string
+	}{
+		{name: "single issue", issues: []int{42}, wantBatch: "abcd-260618113825-42"},
+		{name: "two issues", issues: []int{42, 43}, wantBatch: "abcd-260618113825-42+1"},
+		{name: "nine issues", issues: []int{42, 43, 44, 45, 46, 47, 48, 49, 50}, wantBatch: "abcd-260618113825-42+8"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := Request{Issues: tt.issues, RunTS: ts, RunShortID: sid}
+			got := issueBatchIDForRequest(req)
+			if got != tt.wantBatch {
+				t.Errorf("issueBatchIDForRequest(%v) = %q, want %q", tt.issues, got, tt.wantBatch)
+			}
+		})
+	}
+}
+
 func TestResolveRetries(t *testing.T) {
 	cfg := &config.Config{Retries: 3}
 
