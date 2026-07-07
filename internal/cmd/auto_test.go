@@ -50,6 +50,7 @@ func TestRun_AutoFlag_EmitsAutoSelectEventsForAgentDrivenPath(t *testing.T) {
 		EventLog:     log,
 		GitHubClient: gh,
 		IsTTY:        func() bool { return false },
+		RepoRoot:     sandmanDir,
 	}
 
 	var buf bytes.Buffer
@@ -112,6 +113,7 @@ func TestRun_AutoFlag_AgentFailurePropagatesErrorAndEmitsFailureFinished(t *test
 		EventLog:     log,
 		GitHubClient: gh,
 		IsTTY:        func() bool { return false },
+		RepoRoot:     sandmanDir,
 	}
 
 	var buf bytes.Buffer
