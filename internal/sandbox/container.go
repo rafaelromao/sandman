@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/rafaelromao/sandman/internal/config"
+	"github.com/rafaelromao/sandman/internal/paths"
 )
 
 // Container represents a running Docker or Podman container.
@@ -148,7 +149,7 @@ func (r *ContainerRuntime) Start(image, repoPath string, opts StartOptions) (Con
 // collisions when sandman manages multiple repositories concurrently while
 // still rebuilding when the scaffold changes.
 func (r *ContainerRuntime) BuildImage(repoPath string) (string, error) {
-	dockerfile := filepath.Join(repoPath, ".sandman", "Dockerfile")
+	dockerfile := paths.NewLayout(&config.Config{}, repoPath).DockerfilePath()
 	if _, err := os.Stat(dockerfile); err != nil {
 		if os.IsNotExist(err) {
 			return "", fmt.Errorf(".sandman/Dockerfile not found at %s; container mode requires a Dockerfile in the .sandman directory", dockerfile)

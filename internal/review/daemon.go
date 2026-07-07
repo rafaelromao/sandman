@@ -18,6 +18,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/daemon"
 	"github.com/rafaelromao/sandman/internal/github"
+	"github.com/rafaelromao/sandman/internal/paths"
 	"github.com/rafaelromao/sandman/internal/prompt"
 	"github.com/rafaelromao/sandman/internal/runid"
 	"github.com/rafaelromao/sandman/internal/sandbox"
@@ -116,6 +117,7 @@ type pendingPostEntry struct {
 // agents serially.
 type Daemon struct {
 	BaseDir              string
+	Layout               paths.Layout
 	GitHub               GitHubClient
 	Prompts              Renderer
 	Runner               BatchRunner
@@ -592,8 +594,14 @@ func (d *Daemon) InvalidatePendingPosts() error {
 // SocketPath returns the absolute path of the daemon's control socket.
 // The socket lives under .sandman/reviews/ alongside the shared prompt
 // template, so the daemon's on-disk footprint is just two files plus
-// run folders under .sandman/batches/.
+// run folders under .sandman/batches/. When the daemon has a layout
+// field set, the layout's ReviewSocketPath is the single source of
+// truth; otherwise the legacy BaseDir-derived path is returned for
+// callers that pre-date the layout migration.
 func (d *Daemon) SocketPath() string {
+	if d.Layout.RepoRoot != "" {
+		return d.Layout.ReviewSocketPath()
+	}
 	return filepath.Join(d.BaseDir, "reviews", "review.sock")
 }
 
@@ -650,6 +658,9 @@ func (d *Daemon) effectiveParallel() int {
 // contains only review.sock, review-prompt.md, and the quality
 // rules file materialised alongside it".
 func (d *Daemon) PromptTemplatePath() string {
+	if d.Layout.RepoRoot != "" {
+		return d.Layout.ReviewPromptPath()
+	}
 	return filepath.Join(d.BaseDir, "reviews", "review-prompt.md")
 }
 
@@ -657,6 +668,9 @@ func (d *Daemon) PromptTemplatePath() string {
 // that the reviewer reads at runtime. It lives next to the review
 // prompt so the two are materialised and edited together.
 func (d *Daemon) QualityRulesPath() string {
+	if d.Layout.RepoRoot != "" {
+		return d.Layout.QualityRulesPath()
+	}
 	return filepath.Join(d.BaseDir, "reviews", "quality-rules.md")
 }
 

@@ -6,9 +6,9 @@ import (
 	"net"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 
+	"github.com/rafaelromao/sandman/internal/paths"
 	"github.com/spf13/cobra"
 )
 
@@ -57,13 +57,13 @@ func resolveRepoRoot() (string, error) {
 func findDaemonSocket(baseDir string) (string, error) {
 	candidates := []string{}
 
-	sandmanDir := filepath.Join(baseDir, ".sandman")
-	reviewSock := filepath.Join(sandmanDir, "reviews", "review.sock")
+	layout := paths.NewLayout(nil, baseDir)
+	reviewSock := layout.ReviewSocketPath()
 	if _, err := os.Stat(reviewSock); err == nil {
 		candidates = append(candidates, reviewSock)
 	}
 
-	batchesDir := filepath.Join(sandmanDir, "batches")
+	batchesDir := layout.BatchesDir
 	entries, err := os.ReadDir(batchesDir)
 	if err != nil && !os.IsNotExist(err) {
 		return "", fmt.Errorf("read batches dir: %w", err)
@@ -72,7 +72,7 @@ func findDaemonSocket(baseDir string) (string, error) {
 		if !entry.IsDir() {
 			continue
 		}
-		sockPath := filepath.Join(batchesDir, entry.Name(), "batch.sock")
+		sockPath := layout.BatchSocketPath(entry.Name())
 		if _, err := os.Stat(sockPath); err == nil {
 			candidates = append(candidates, sockPath)
 		}

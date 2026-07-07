@@ -124,6 +124,12 @@ func (r *AgentRun) Execute(ctx context.Context, command string, stdout, stderr i
 }
 
 // Run executes the full lifecycle of the AgentRun and returns the result.
+//
+// The rendered prompt file path is worktree-relative. When the caller does
+// not supply a RenderedPromptFile, the default is `./.sandman/task.md` —
+// the agent reads this file from inside the worktree, not from the host
+// repo's `.sandman/`. The path is intentionally literal because the
+// worktree has its own `.sandman/` directory that the layout does not own.
 func (r *AgentRun) Run(ctx context.Context, renderer prompt.IssueRenderer, command string, renderCfg prompt.RenderConfig) AgentRunResult {
 	renderedPromptFile := renderCfg.RenderedPromptFile
 	if renderedPromptFile == "" {
