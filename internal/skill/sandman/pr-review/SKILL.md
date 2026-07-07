@@ -45,8 +45,8 @@ description: Automates the GitHub PR review loop with the PR Review Agent. Waits
 
 ### State tracked across passes
 
-- `.sandman/.<N>.head_sha` — the head commit SHA at which the last `{{REVIEW_COMMAND}}` was posted. If the current head SHA differs, all previous review state is stale and a fresh request is always permitted.
-- `.sandman/.<N>.addressed_comments` — one inline comment ID per line, tracking which inline comments have already been acted on. Cleared when head SHA changes (new commit invalidates all old inline comment IDs).
+- `.sandman/state/<N>.head_sha` — the head commit SHA at which the last `{{REVIEW_COMMAND}}` was posted. If the current head SHA differs, all previous review state is stale and a fresh request is always permitted.
+- `.sandman/state/<N>.addressed_comments` — one inline comment ID per line, tracking which inline comments have already been acted on. Cleared when head SHA changes (new commit invalidates all old inline comment IDs).
 
 ### Iteration loop (max 10 passes)
 
@@ -123,9 +123,9 @@ On CI failure, `continue` the outer loop to wait for the newly-triggered CI run 
 
 #### Step 3: Check if SHA changed (stale request check)
 
-Read `.sandman/.<N>.head_sha` if it exists and compare against the current head SHA from Step 1.
+Read `.sandman/state/<N>.head_sha` if it exists and compare against the current head SHA from Step 1.
 
-- **SHA changed** (new commit landed since last request): mark all previous review state stale. Delete `.sandman/.<N>.addressed_comments` if it exists, because inline comment IDs from the old commit are no longer relevant. A fresh review request is always permitted.
+- **SHA changed** (new commit landed since last request): mark all previous review state stale. Delete `.sandman/state/<N>.addressed_comments` if it exists, because inline comment IDs from the old commit are no longer relevant. A fresh review request is always permitted.
 - **SHA unchanged**: apply the "previous request still pending" logic before posting again.
 
 #### Step 4: Delegate review to the PR Review Agent (trigger post)
@@ -138,7 +138,7 @@ Only post `{{REVIEW_COMMAND}}` after CI has reached a green terminal state in St
 gh pr comment <N> --repo <owner/repo> --body "{{REVIEW_COMMAND}}"
 ```
 
-After posting, write the current head SHA to `.sandman/.<N>.head_sha` so subsequent passes can detect staleness.
+After posting, write the current head SHA to `.sandman/state/<N>.head_sha` so subsequent passes can detect staleness.
 
 #### Step 5: Wait for review (timeout: 15 minutes)
 
@@ -188,7 +188,7 @@ On **every** poll iteration, after running the three commands above, inspect the
 
 1. Stop polling for review feedback. The PR is unmergeable until the conflict is resolved; reviewer comments posted on a DIRTY PR do not produce a usable review.
 2. Load `sandman-back-merge` (see the `sandman-back-merge` skill). Run it on the current branch. It performs the disciplined 3-way merge of the base branch into the working branch and resolves conflicts without history rewrites.
-3. If back-merge succeeds, push the updated branch with `git push`. Update `.sandman/.<N>.head_sha` with the new head SHA so Step 3's stale-request check sees the new commit and re-evaluates.
+3. If back-merge succeeds, push the updated branch with `git push`. Update `.sandman/state/<N>.head_sha` with the new head SHA so Step 3's stale-request check sees the new commit and re-evaluates.
 4. Restart polling from Step 1 — a fresh CI run will be triggered by the push, and the review agent may have already posted feedback on the prior SHA that the polling loop should classify on the next pass.
 5. If back-merge fails to resolve conflicts (e.g. semantic conflict, merge helper rejected a hunk), exit the loop with a distinct `REVIEW_CONFLICT_UNRESOLVED` reason in the run log. This is **never** a `REVIEW_TIMEOUT`. It is also **never** a silent success — the PR remains unmergeable and a future run must continue from this state.
 
@@ -239,12 +239,12 @@ An inline file comment OR top-level comment OR review body contains concrete cod
 
 **Hard rule — never exit with `CHANGES_REQUESTED` unresolved.** If a `CHANGES_REQUESTED` review exists after applying fixes, do not declare the run done. Re-request review (Step 4) and continue the loop. Only approval (formal case A or informal case C), explicit user stop, or max passes reached may end the loop. Applying a fix that you believe addresses the reviewer's concern does NOT close the loop — the reviewer must explicitly approve.
 
-- Read `.sandman/.<N>.addressed_comments` — skip any inline comment IDs already present.
+- Read `.sandman/state/<N>.addressed_comments` — skip any inline comment IDs already present.
 - Read relevant source files, make minimal changes.
 - Run project tests and formatting (e.g., `go test ./...`, `gofmt -w .`).
 - Commit: `git add -A && git commit -m "refactor: address review feedback on #<N>"`
 - Push: `git push`
-- Append acted-on inline comment IDs to `.sandman/.<N>.addressed_comments`.
+- Append acted-on inline comment IDs to `.sandman/state/<N>.addressed_comments`.
 - **After pushing, loop back to Step 2 to wait for the new CI run triggered by the push.** Do not proceed to Step 8 until CI reaches a terminal state.
 
 #### Step 8: Repeat
@@ -253,8 +253,8 @@ Go to Step 1 for the next pass. Before re-requesting in Step 4: if head SHA chan
 
 ### State files
 
-- `.sandman/.<N>.head_sha` — rewritten on every new review request post. SHA change = all prior review state stale, fresh request always permitted.
-- `.sandman/.<N>.addressed_comments` — cleared when head SHA changes (new commit invalidates old inline comment IDs). One inline comment ID per line.
+- `.sandman/state/<N>.head_sha` — rewritten on every new review request post. SHA change = all prior review state stale, fresh request always permitted.
+- `.sandman/state/<N>.addressed_comments` — cleared when head SHA changes (new commit invalidates old inline comment IDs). One inline comment ID per line.
 
 ### Same comment ID 3+ passes without resolution
 
