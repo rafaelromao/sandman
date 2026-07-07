@@ -37,8 +37,8 @@ The shortid is placed first to maximise collision resistance within the same tim
 | Review (without linked issue) | `<shortid>-<ts>-PR<prNum>` |
 | Review (with linked issue)    | `<shortid>-<ts>-<linkedIssueNum>-PR<prNum>` |
 | Auto-select | `<shortid>-<ts>-auto-<N>` |
-| Prompt-only (with user id) | `<shortid>-<ts>-<userid>` |
-| Prompt-only (without user id) | `<shortid>-<ts>` |
+| Prompt-only (with user id) | `<shortid>-<ts>-prompt-<userid>` |
+| Prompt-only (without user id) | `<shortid>-<ts>-prompt` |
 
 `<N>` is the count (number of issues in a batch, number of candidates in auto-select). `firstIssueNum` is the first issue number for regular issues.
 
@@ -67,6 +67,17 @@ Each AgentRun within a batch receives a unique RunID built from the batch's `<sh
 | Prompt-only (with user id) | `<shortid>-<ts>-prompt-<userid>` |
 | Prompt-only (without user id) | `<shortid>-<ts>-prompt` |
 
+### Prompt-only public BatchId == per-row RunID
+
+Per issue #1920 (slice 4 of parent PRD #1916), the prompt-only RunDir template and the per-row RunID template collapse to the same string:
+
+- With userid: `<sid>-<ts>-prompt-<userid>`
+- Without userid: `<sid>-<ts>-prompt`
+
+The `prompt` literal is canonical and is hard-coded inside `runid.NewBatchID(KindPromptOnly, …)` and `runid.NewRunID(KindPromptOnly, …)` so callers cannot drift back to a bare `<userid>` shape. The public BatchId (== batch folder basename == `batch.json.batchId` == event payload `batch_id` == per-row RunID) is a single identifier for every prompt-only run.
+
+The `prompt` segment also disambiguates prompt-only batches from issue batches. A `--run-id` that is purely numeric (e.g. `--run-id 42`) would otherwise produce `<sid>-<ts>-42`, which is also a valid single-issue BatchId. The literal `prompt` is unparseable as an issue number, so the new shape is unambiguous on disk. `KindFromDirName` matches the `-prompt` segment literally before the numeric-issue-tail check, so a numeric `--run-id` resolves to `KindPromptOnly` (not `KindIssue`).
+
 ### `--run-id` flag preserved
 
 The `--run-id` flag on `sandman run` is retained for prompt-only runs where the user may want a self-chosen identifier. However, it no longer influences the RunDir name. The RunDir is always generated fresh via `NewBatchID`. This keeps the naming scheme uniform while preserving the flag for its original purpose: giving prompt-only runs a human-meaningful identity in the portal.
@@ -86,6 +97,7 @@ The portal uses `KindFromDirName(name string) (Kind, bool)` to recover the batch
 - `*-auto-*` → `KindAutoSelect`
 - `*-PR*` → `KindReview`
 - `*+*` → `KindIssue` (batch dirs only; `+N` suffix)
+- `<sid>-<ts>-prompt*` (literal `prompt` segment) → `KindPromptOnly` (new format, run *before* the numeric-issue-tail check so `--run-id <num>` does not collide with issue `<sid>-<ts>-<num>`)
 - `*-issues-first-*` → `KindIssue` (old format backwards compat)
 - `*-review-*` → `KindReview` (old format backwards compat)
 - `*-auto-select-*-candidates` → `KindAutoSelect` (old format backwards compat)
@@ -125,6 +137,17 @@ runid.NewRunID(runid.KindIssue, fmt.Sprintf("%d", issueNum), manifest.RunTS, man
 The four arguments are positional and named here for clarity: `KindIssue` selects the issue template, `fmt.Sprintf("%d", issueNum)` is the per-row subject (`<issueNum>`, never `"issue-<issueNum>"`), `manifest.RunTS` is the `<ts>` primitive from the manifest, and `manifest.RunShortID` is the `<shortid>` primitive.
 
 For review (PR) batches, the portal uses `runid.NewRunID(runid.KindReview, …)` with the same `(RunTS, RunShortID)` arguments — see the per-row RunID templates above for the PR subject shape. This is included here so consumers do not have to re-derive it independently, but the issue-driven contract above is the canonical entry point called out by the issue body.
+
+For prompt-only batches (issue #1920 slice 4), the per-row RunID is derived from the user-supplied `--run-id` (or `""` if absent) plus the `(RunTS, RunShortID)` primitives:
+
+```go
+// With --run-id <userid>: <sid>-<ts>-prompt-<userid>
+runid.NewRunID(runid.KindPromptOnly, userRunID, manifest.RunTS, manifest.RunShortID)
+// Without --run-id:        <sid>-<ts>-prompt
+runid.NewRunID(runid.KindPromptOnly, "", manifest.RunTS, manifest.RunShortID)
+```
+
+For prompt-only the per-row RunID equals the public BatchId, so the on-disk batch folder basename, `batch.json.batchId`, the event payload `batch_id`, and the per-row RunID all carry the same string. The manifest's `RunKind` field is `"prompt-only"` for these batches.
 
 When either manifest field is absent, callers should fall back to the queued event's `RunID` if one is available, or return the empty string. The portal implements both paths through `perRowRunIDForManifest(runTS, runShortID, prNumber, issueNumber, queued)` (pure helper) and its active-batch wrapper `perRowRunIDForActive(active, issueNumber, queued)`.
 

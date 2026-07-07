@@ -82,15 +82,21 @@ func NewBatchID(kind Kind, n int, firstSubject string, ts, shortid string) strin
 		return fmt.Sprintf("%s-%s-auto-%d", shortid, ts, n)
 	case KindPromptOnly:
 		if firstSubject == "" {
-			return fmt.Sprintf("%s-%s", shortid, ts)
+			return fmt.Sprintf("%s-%s-prompt", shortid, ts)
 		}
-		return fmt.Sprintf("%s-%s-%s", shortid, ts, firstSubject)
+		return fmt.Sprintf("%s-%s-prompt-%s", shortid, ts, firstSubject)
 	default:
 		return ""
 	}
 }
 
 func NewRunID(kind Kind, subject string, ts, shortid string) string {
+	if kind == KindPromptOnly {
+		if subject == "" {
+			return fmt.Sprintf("%s-%s-prompt", shortid, ts)
+		}
+		return fmt.Sprintf("%s-%s-prompt-%s", shortid, ts, subject)
+	}
 	if subject == "" {
 		return fmt.Sprintf("%s-%s", shortid, ts)
 	}
@@ -114,6 +120,7 @@ func IsValidUserRunID(s string) error {
 
 var newFormatRe = regexp.MustCompile(`^[0-9a-f]{4}-\d{12}`)
 var numericIssueTailRe = regexp.MustCompile(`^[0-9a-f]{4}-\d{12}-\d+$`)
+var promptOnlySegmentRe = regexp.MustCompile(`^([0-9a-f]{4})-(\d{12})-prompt(-|$)`)
 
 func KindFromDirName(name string) (Kind, bool) {
 	// New format: {sid}-{ts}-{rest}
@@ -126,6 +133,13 @@ func KindFromDirName(name string) (Kind, bool) {
 	// New format issue batch: {sid}-{ts}-{n}+{count} (contains "+")
 	if strings.Contains(name, "+") {
 		return KindIssue, true
+	}
+	// New format prompt-only batch: {sid}-{ts}-prompt or {sid}-{ts}-prompt-{userid}.
+	// Match the literal "prompt" segment before falling through to the
+	// numeric-issue-tail check below, so a numeric userid (e.g. --run-id 42)
+	// is not misclassified as a single-issue batch ({sid}-{ts}-42).
+	if promptOnlySegmentRe.MatchString(name) {
+		return KindPromptOnly, true
 	}
 	// New format single-issue batch: {sid}-{ts}-{num} (numeric tail, no +N).
 	// Disambiguate from prompt-only-with-userid ({sid}-{ts}-{userid}) by

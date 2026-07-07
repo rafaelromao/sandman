@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/rafaelromao/sandman/internal/batch"
+	"github.com/rafaelromao/sandman/internal/batchindex"
 	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/daemon"
 	"github.com/rafaelromao/sandman/internal/events"
@@ -636,7 +637,6 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 			}
 
 			sessionRunID := runID
-			entryID := ""
 			if len(req.Issues) > 0 {
 				ts, shortid, err := runid.NewBatch()
 				if err != nil {
@@ -653,8 +653,6 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 				// For single-issue this equals the per-row RunID for the first
 				// issue; for multi-issue it carries the +<n-1> suffix.
 				sessionRunID = batch.BatchIDForIssue(firstIssueNum, len(issues), ts, shortid)
-				// Issue #1917 (slice 1): manifest.BatchId = public BatchId.
-				// entryID is no longer needed for the issue path.
 			} else if overridePrompt {
 				ts, shortid, err := runid.NewBatch()
 				if err != nil {
@@ -663,22 +661,16 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 					req.RunID = runID
 					req.BatchTS = ts
 					req.BatchShortID = shortid
-					// Prompt-only batches: the public BatchId is the batch folder
-					// basename (sessionRunID); the per-row RunID keeps the
-					// `prompt-` subject prefix. Issue #1917 slice 1 covers issue
-					// batches only; prompt-only public BatchId policy follows
-					// in a later slice (per parent PRD #1916 user story 7).
+					// Prompt-only batches: per issue #1920 (slice 4 of #1916),
+					// the public BatchId, the batch folder basename, and the
+					// per-row RunID all carry the same `prompt` segment so the
+					// on-disk folder name, batch.json.batchId, run.json.BatchID,
+					// event payload batch_id, and the batches index entry id
+					// agree. runid.NewBatchID(KindPromptOnly, …) hard-codes the
+					// `prompt` literal internally — passing the user-supplied
+					// runID as firstSubject (or "" for the no-userid case) is
+					// sufficient to mint the canonical public BatchId.
 					sessionRunID = runid.NewBatchID(runid.KindPromptOnly, 1, runID, ts, shortid)
-					// Mirror the orchestrator's prompt-only RunID formula at
-					// internal/batch/orchestrator.go so the index entry id
-					// matches the RunID emitted in run.started (legacy contract
-					// for prompt-only; preserved until the prompt-only public
-					// BatchId slice lands).
-					promptSubject := "prompt"
-					if strings.TrimSpace(runID) != "" {
-						promptSubject = "prompt-" + runID
-					}
-					entryID = runid.NewRunID(runid.KindPromptOnly, promptSubject, ts, shortid)
 				}
 			}
 
@@ -697,24 +689,21 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 			// already suppresses the cmd.sock server; per-run
 			// CommandServer creation is handled by the orchestrator.
 			//
-			// Per issue #1917 (slice 1): for issue batches,
+			// Per issue #1917 (slice 1) and #1920 (slice 4 of #1916):
 			// manifest.BatchId holds the PUBLIC BatchId (== batch folder
 			// basename), so the on-disk batch.json.batchId agrees with
 			// run.json.BatchID, the event payload batch_id, and the
-			// portal Batch label. The per-row RunID is no longer stamped
-			// into batch.json; it lives in run.json.RunID and the per-run
-			// folder name.
-			//
-			// For prompt-only batches (this slice is issue-only), the
-			// legacy contract still applies: manifest.BatchId mirrors
-			// the orchestrator's per-row RunID (with `prompt-` subject
-			// prefix). The prompt-only public BatchId policy follows in
-			// a later slice.
+			// portal Batch label. For prompt-only batches the public
+			// BatchId carries the `prompt` segment so it can never be
+			// confused with an issue batch. The per-row RunID is no
+			// longer stamped into batch.json; it lives in run.json.RunID
+			// and the per-run folder name.
 			batchIDForManifest := sessionRunID
-			if len(req.Issues) == 0 && entryID != "" {
-				batchIDForManifest = entryID
+			manifestRunKind := string(batchindex.KindIssue)
+			if len(req.Issues) == 0 {
+				manifestRunKind = string(batchindex.KindPromptOnly)
 			}
-			manifest := daemon.BatchManifest{Issues: append([]int(nil), req.Issues...), CreatedAt: time.Now(), BatchId: batchIDForManifest, RunKind: "issue", RunTS: req.RunTS, RunShortID: req.RunShortID}
+			manifest := daemon.BatchManifest{Issues: append([]int(nil), req.Issues...), CreatedAt: time.Now(), BatchId: batchIDForManifest, RunKind: manifestRunKind, RunTS: req.RunTS, RunShortID: req.RunShortID}
 			if err := rs.Prepare(manifest); err != nil {
 				_ = rs.Close()
 				// A daemon without a control socket is invisible

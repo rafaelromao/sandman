@@ -3754,3 +3754,200 @@ func TestPortal_RunsAPI_BatchKeyEqualsPublicBatchId(t *testing.T) {
 		})
 	}
 }
+
+// TestPortal_ActiveBatchKey_EqualsPublicBatchId_PromptOnly pins the
+// prompt-only public BatchId contract at the active-row portal seam
+// (issue #1920 slice 4 of #1916):
+//
+//   - active.BatchKey (rendered as the "Batch:" label and the Details
+//     tab "batch" field) MUST equal the public BatchId (== batch folder
+//     basename == batch.json.batchId == event payload batch_id).
+//   - For prompt-only with userid the public BatchId is
+//     `<sid>-<ts>-prompt-<userid>` and the per-row RunID equals the
+//     public BatchId (RunID == BatchId for prompt-only).
+//   - For prompt-only without userid the public BatchId is
+//     `<sid>-<ts>-prompt` and the per-row RunID equals the public
+//     BatchId.
+//
+// In both cases the active row's BatchKey matches the public BatchId,
+// so the portal Batch label and Details tab render the same string
+// the user sees on disk.
+func TestPortal_ActiveBatchKey_EqualsPublicBatchId_PromptOnly(t *testing.T) {
+	ts, shortid := "260618113825", "abcd"
+
+	tests := []struct {
+		name     string
+		firstSub string
+		wantID   string
+	}{
+		{name: "with userid", firstSub: "myid", wantID: "abcd-260618113825-prompt-myid"},
+		{name: "without userid", firstSub: "", wantID: "abcd-260618113825-prompt"},
+		{name: "with numeric userid", firstSub: "42", wantID: "abcd-260618113825-prompt-42"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			publicBatchID := runid.NewBatchID(runid.KindPromptOnly, 1, tt.firstSub, ts, shortid)
+			perRowID := runid.NewRunID(runid.KindPromptOnly, tt.firstSub, ts, shortid)
+			// RunID == BatchId for prompt-only (issue #1920 slice 4).
+			if perRowID != publicBatchID {
+				t.Errorf("per-row RunID = %q, want %q (RunID == public BatchId for prompt-only)", perRowID, publicBatchID)
+			}
+			dir := filepath.Join("/tmp", "fake", publicBatchID)
+
+			// Active row with manifest.BatchId = public BatchId (post-#1917, #1920).
+			active := portalActiveRun{
+				Key:         publicBatchID,
+				BatchID:     publicBatchID,
+				Dir:         dir,
+				RunID:       perRowID,
+				IssueNumber: 0,
+			}
+
+			// batchKeyForActive picks active.BatchID first; must equal
+			// the public BatchId.
+			if got := batchKeyForActive(active); got != publicBatchID {
+				t.Errorf("batchKeyForActive = %q, want %q (public BatchId)", got, publicBatchID)
+			}
+			// activeKeyForActive also picks active.BatchID; must equal
+			// the public BatchId.
+			if got := activeKeyForActive(active); got != publicBatchID {
+				t.Errorf("activeKeyForActive = %q, want %q (public BatchId)", got, publicBatchID)
+			}
+
+			// Fallback to Dir basename must agree: filepath.Base(Dir)
+			// is the public BatchId by construction.
+			empty := portalActiveRun{Key: "", BatchID: "", Dir: dir, RunID: perRowID}
+			if got := batchKeyForActive(empty); got != publicBatchID {
+				t.Errorf("batchKeyForActive (Dir fallback) = %q, want %q (public BatchId)", got, publicBatchID)
+			}
+		})
+	}
+}
+
+// TestPortal_RunsAPI_BatchKeyEqualsPublicBatchId_PromptOnly pins the
+// prompt-only public BatchId contract at the HTTP API boundary
+// (issue #1920 slice 4 of #1916):
+//
+//   - GET /api/runs must return `run.batchKey` == public BatchId for
+//     both the with-userid and without-userid prompt-only shapes. The
+//     portal's "Batch:" label and the Details tab "batch" field both
+//     read from `run.batchKey`, so this single assertion pins both UI
+//     surfaces.
+//   - The event payload `batch_id` MUST equal the public BatchId.
+//
+// The /api/runs row is sourced from event log + batch manifest; the
+// test seeds both and asserts the JSON carries the public BatchId in
+// `batchKey` and that the event payload `batch_id` agrees.
+func TestPortal_RunsAPI_BatchKeyEqualsPublicBatchId_PromptOnly(t *testing.T) {
+	const ts, shortid = "260618113825", "abcd"
+
+	tests := []struct {
+		name      string
+		firstSub  string
+		wantBatch string
+		rowRunID  string
+	}{
+		{
+			name:      "with userid",
+			firstSub:  "myid",
+			wantBatch: "abcd-260618113825-prompt-myid",
+			rowRunID:  "abcd-260618113825-prompt-myid",
+		},
+		{
+			name:      "without userid",
+			firstSub:  "",
+			wantBatch: "abcd-260618113825-prompt",
+			rowRunID:  "abcd-260618113825-prompt",
+		},
+		{
+			name:      "with numeric userid",
+			firstSub:  "42",
+			wantBatch: "abcd-260618113825-prompt-42",
+			rowRunID:  "abcd-260618113825-prompt-42",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repoRoot := t.TempDir()
+			if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+				t.Fatal(err)
+			}
+			batchDir := filepath.Join(repoRoot, ".sandman", "batches", tt.wantBatch)
+			if err := os.MkdirAll(filepath.Join(batchDir, "runs", tt.rowRunID), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			manifest := daemon.BatchManifest{
+				Issues:     nil,
+				BatchId:    tt.wantBatch, // post-#1920: BatchId == public BatchId
+				RunKind:    "prompt-only",
+				CreatedAt:  time.Now().Add(-10 * time.Minute),
+				RunTS:      ts,
+				RunShortID: shortid,
+			}
+			if err := daemon.WriteManifest(batchDir, manifest); err != nil {
+				t.Fatal(err)
+			}
+
+			startedAt := time.Now().Add(-10 * time.Minute)
+			writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
+				{Type: "run.started", Timestamp: startedAt, RunID: tt.rowRunID, Issue: 0, IssueRef: nil, Payload: map[string]any{
+					"branch":   "sandman/prompt-only-branch",
+					"batch_id": tt.wantBatch,
+				}},
+				{Type: "run.finished", Timestamp: startedAt.Add(time.Minute), RunID: tt.rowRunID, Issue: 0, IssueRef: nil, Payload: map[string]any{
+					"status":   "success",
+					"branch":   "sandman/prompt-only-branch",
+					"batch_id": tt.wantBatch,
+				}},
+			})
+
+			handler := newPortalHandler(repoRoot)
+			server := startPortalHTTPServer(t, handler)
+			defer server.Close()
+
+			resp, err := http.Get(server.URL + "/api/runs")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer resp.Body.Close()
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("expected 200, got %d", resp.StatusCode)
+			}
+			var payload struct {
+				Runs []portalRun `json:"runs"`
+			}
+			if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+				t.Fatal(err)
+			}
+			if len(payload.Runs) != 1 {
+				t.Fatalf("expected 1 run, got %d", len(payload.Runs))
+			}
+			got := payload.Runs[0]
+			// run.batchKey is rendered as the "Batch:" label and the
+			// Details tab "batch" field.
+			if got.BatchKey != tt.wantBatch {
+				t.Errorf("run.batchKey = %q, want %q (public BatchId)", got.BatchKey, tt.wantBatch)
+			}
+			// Per-row RunID must equal the public BatchId (issue #1920
+			// slice 4 contract: RunID == BatchId for prompt-only).
+			if got.RunID != tt.wantBatch {
+				t.Errorf("run.runID = %q, want %q (public BatchId == per-row RunID for prompt-only)", got.RunID, tt.wantBatch)
+			}
+			// Event payload batch_id == public BatchId.
+			if got.Events == nil || len(got.Events) == 0 {
+				t.Fatalf("expected events array, got %#v", got.Events)
+			}
+			var batchIDPayload string
+			for _, e := range got.Events {
+				if e.Type == "run.started" {
+					if v, ok := e.Payload["batch_id"].(string); ok {
+						batchIDPayload = v
+					}
+				}
+			}
+			if batchIDPayload != tt.wantBatch {
+				t.Errorf("event payload batch_id = %q, want %q (public BatchId)", batchIDPayload, tt.wantBatch)
+			}
+		})
+	}
+}

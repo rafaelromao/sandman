@@ -75,14 +75,14 @@ func TestNewBatchID(t *testing.T) {
 			kind:         KindPromptOnly,
 			n:            1,
 			firstSubject: "myid",
-			want:         "abcd-260618113825-myid",
+			want:         "abcd-260618113825-prompt-myid",
 		},
 		{
 			name:         "KindPromptOnly without userid",
 			kind:         KindPromptOnly,
 			n:            1,
 			firstSubject: "",
-			want:         "abcd-260618113825",
+			want:         "abcd-260618113825-prompt",
 		},
 	}
 	for _, tt := range tests {
@@ -132,13 +132,13 @@ func TestNewRunID(t *testing.T) {
 			name:    "KindPromptOnly with userid",
 			kind:    KindPromptOnly,
 			subject: "myid",
-			want:    "abcd-260618113825-myid",
+			want:    "abcd-260618113825-prompt-myid",
 		},
 		{
 			name:    "KindPromptOnly without userid",
 			kind:    KindPromptOnly,
 			subject: "",
-			want:    "abcd-260618113825",
+			want:    "abcd-260618113825-prompt",
 		},
 	}
 	for _, tt := range tests {
@@ -212,13 +212,19 @@ func TestKindFromDirName(t *testing.T) {
 		},
 		{
 			name:      "New format KindPromptOnly with ID",
-			input:     "abcd-260618113825-myid",
+			input:     "abcd-260618113825-prompt-myid",
 			wantKind:  KindPromptOnly,
 			wantFound: true,
 		},
 		{
 			name:      "New format KindPromptOnly without ID",
-			input:     "abcd-260618113825",
+			input:     "abcd-260618113825-prompt",
+			wantKind:  KindPromptOnly,
+			wantFound: true,
+		},
+		{
+			name:      "New format KindPromptOnly with numeric userid",
+			input:     "abcd-260618113825-prompt-42",
 			wantKind:  KindPromptOnly,
 			wantFound: true,
 		},
