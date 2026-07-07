@@ -65,12 +65,12 @@ func TestPortalRunsView_StatusOrDefault_ActiveIssueIsNotAutoSelecting(t *testing
 	v := &portalRunsView{}
 
 	cases := []struct {
-		name        string
-		status      string
-		active      bool
-		isReview    bool
-		isAuto      bool
-		want        string
+		name     string
+		status   string
+		active   bool
+		isReview bool
+		isAuto   bool
+		want     string
 	}{
 		{name: "active issue is running", status: "", active: true, isReview: false, isAuto: false, want: "running"},
 		{name: "active review is reviewing", status: "", active: true, isReview: true, isAuto: false, want: "reviewing"},
