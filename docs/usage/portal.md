@@ -51,6 +51,12 @@ Review runs are ordinary AgentRuns. Each row in the runs table — including rev
 
 The row folder under `.sandman/batches/<batch-id>/runs/<runID>/` is named after that per-row RunID — never after a `runs/review` alias — so logs, sockets, and `review-state.json` live under a folder whose name matches the row identity surfaced in the UI. `.sandman/reviews/` is reserved for the review daemon's own files (`review.sock`, `review-prompt.md`) and never holds per-row run folders. See `CONTEXT.md` §Review run for the canonical glossary entry.
 
+### Continuation history
+
+Continuation runs started with `sandman run --continue` appear as separate rows with their own RunID and Batch label. The continued row keeps a `previous_run_id` link in its events, and the expanded-row subject picker includes that previous run as a selectable sibling when it is present in the portal data.
+
+Use the picker to switch between the continuation and the previous run without changing the table row. Selecting the previous run shows its own log, events, and details, so lineage stays navigable while each run remains independently addressable for row-level actions.
+
 ## Stop (Abort)
 
 Use the **Stop** button in the portal UI to abort a running issue. The portal calls:

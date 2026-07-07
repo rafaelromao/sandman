@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"runtime"
 	"strconv"
@@ -1932,6 +1933,103 @@ func TestPortalReviewSubjectSwitch_HydratesSelectedSubjectDetail(t *testing.T) {
 	}
 	if result.FetchCalls < 2 {
 		t.Fatalf("expected initial refresh plus subject detail fetch, got %#v", result)
+	}
+}
+
+func TestPortalSubjectSwitch_ContinuationRowExposesPreviousRun(t *testing.T) {
+	continuation := map[string]any{
+		"key":         "new-run",
+		"runId":       "new-run",
+		"kind":        "active",
+		"status":      "running",
+		"issueLabel":  "#1",
+		"issueNumber": 1,
+		"events": []map[string]any{{
+			"type":    "run.continued",
+			"payload": map[string]any{"previous_run_id": "old-run"},
+		}},
+	}
+	previous := map[string]any{
+		"key":         "old-run",
+		"runId":       "old-run",
+		"kind":        "completed",
+		"status":      "success",
+		"issueLabel":  "#1",
+		"issueNumber": 1,
+	}
+	previousDetail := map[string]any{
+		"key":         "old-run",
+		"runId":       "old-run",
+		"kind":        "completed",
+		"status":      "success",
+		"issueLabel":  "#1",
+		"issueNumber": 1,
+		"log":         "previous run log line 1\nprevious run log line 2",
+		"events":      []map[string]any{{"type": "run.finished"}},
+	}
+	runsJSON, err := json.Marshal([]map[string]any{continuation, previous})
+	if err != nil {
+		t.Fatalf("marshal runs: %v", err)
+	}
+	previousDetailJSON, err := json.Marshal(previousDetail)
+	if err != nil {
+		t.Fatalf("marshal previous detail: %v", err)
+	}
+	stateJSON := `{"expandedRunKey":"new-run","tabs":{"new-run":"log","old-run":"log"},"commandFormCollapsed":false,"showArchived":false,"activeBatches":false,"sortBy":"started","sortDir":"desc"}`
+
+	page := buildPortalReproPage(t, stateJSON, runsJSON, `
+    window.fetch = async function (input) {
+      window.__portalFetchCalls += 1;
+      var url = String(input || '');
+      var next = { runs: `+string(runsJSON)+` };
+      if (url.indexOf('?runKey=old-run') >= 0) {
+        next = { run: `+string(previousDetailJSON)+` };
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async function () { return next; },
+        text: async function () { return ''; },
+      };
+    };
+    setTimeout(function () {
+      var select = document.querySelector('select[data-action="set-subject"]');
+      if (!select) throw new Error('missing subject selector');
+      select.value = 'old-run';
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+    }, 120);
+    setTimeout(function () {
+      var select = document.querySelector('select[data-action="set-subject"]');
+      var detail = document.querySelector('pre[data-scroll-key]');
+      var marker = document.createElement('pre');
+      marker.id = 'portal-continuation-previous-subject';
+      marker.textContent = JSON.stringify({
+        options: select ? Array.from(select.options).map(function (option) { return option.value; }) : [],
+        subjectValue: select && select.value,
+        detailText: detail && detail.textContent,
+      });
+      document.body.appendChild(marker);
+    }, 2200);
+  `)
+
+	dom, _ := runPortalChromium(t, page)
+	payload := extractPortalMarker(t, dom, "portal-continuation-previous-subject")
+	var result struct {
+		Options      []string `json:"options"`
+		SubjectValue string   `json:"subjectValue"`
+		DetailText   string   `json:"detailText"`
+	}
+	if err := json.Unmarshal([]byte(payload), &result); err != nil {
+		t.Fatalf("parse continuation subject payload: %v\nraw=%s", err, payload)
+	}
+	if !reflect.DeepEqual(result.Options, []string{"new-run", "old-run"}) {
+		t.Fatalf("expected continuation picker options [new-run old-run], got %#v", result.Options)
+	}
+	if result.SubjectValue != "old-run" {
+		t.Fatalf("expected previous run to stay selected, got %#v", result)
+	}
+	if !strings.Contains(result.DetailText, "previous run log line 1") {
+		t.Fatalf("expected previous run detail to hydrate, got %#v", result)
 	}
 }
 

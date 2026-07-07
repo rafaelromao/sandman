@@ -4559,6 +4559,27 @@ console.log('PASS');
 	runNodeScript(t, js)
 }
 
+func TestPortalDiff_SubjectRunsFor_IncludesPreviousContinuationRun(t *testing.T) {
+	js := `const previous = {
+  key: 'old-run', runId: 'old-run', kind: 'completed', status: 'success', review: false,
+  issueNumber: 1, issueLabel: '#1', startedAt: '2026-07-06T10:00:00Z',
+};
+const continuation = {
+  key: 'new-run', runId: 'new-run', kind: 'active', status: 'running', review: false,
+  issueNumber: 1, issueLabel: '#1', startedAt: '2026-07-07T10:00:00Z',
+  events: [{ type: 'run.continued', payload: { previous_run_id: 'old-run' } }],
+};
+const opts = { helpers, runs: [continuation, previous] };
+const related = SandmanPortalDiff.subjectRunsFor(continuation, opts);
+const ids = related.map((run) => run.runId);
+if (ids.length !== 2) throw new Error('expected continuation plus previous run, got ' + JSON.stringify(ids));
+if (ids[0] !== 'new-run') throw new Error('expected current continuation first, got ' + JSON.stringify(ids));
+if (ids[1] !== 'old-run') throw new Error('expected previous run as sibling, got ' + JSON.stringify(ids));
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
 // TestPortalDiff_SubjectRunsFor_MultipleParentsPicksCanonical pins the
 // regression observed on issue #1855: an issue group can carry two impl
 // rows (one earlier abandoned, one later successful) plus sibling
