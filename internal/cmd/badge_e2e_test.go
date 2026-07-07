@@ -110,7 +110,7 @@ func TestBadge_E2E_HappyPath(t *testing.T) {
 	}
 }
 
-// TestBadge_E2E_ControlFilePresent_ShortCircuitsBadgeHook shares the
+// TestBadge_E2E_MarkerPRSeeded_ShortCircuitsBadgeHook shares the
 // same fake-BatchRunner wiring as TestBadge_E2E_HappyPath and verifies
 // that the marker-comment PR check is the authoritative short-circuit:
 // under the new ordering (see internal/batch/badge_hook.go), HasBadgePR
@@ -121,7 +121,7 @@ func TestBadge_E2E_HappyPath(t *testing.T) {
 // never call lister" ordering
 // (https://github.com/rafaelromao/sandman/issues/1772,
 // https://github.com/rafaelromao/sandman/issues/1929).
-func TestBadge_E2E_ControlFilePresent_ShortCircuitsBadgeHook(t *testing.T) {
+func TestBadge_E2E_MarkerPRSeeded_ShortCircuitsBadgeHook(t *testing.T) {
 	if !testenv.E2EGateAllowed(testenv.E2EScenarioBadge) {
 		t.Skip("set SANDMAN_E2E_GATES=badge (or all) to run badge e2e tests")
 	}
