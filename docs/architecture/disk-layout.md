@@ -1,5 +1,7 @@
 # Disk layout
 
+## Intro
+
 Every persisted Sandman artifact lives under `<repo>/.sandman/` (with two documented exceptions: out-of-repo tempdirs used as fallback parents for config snapshots, and the shared `~/.agents/skills/sandman/**` skill tree installed into the user's home).
 
 This document captures the canonical on-disk layout that every slice of the on-disk-rename PRD is converging toward. It reflects the post-#1848 end state — `SelfPostStore` and `.sandman/reviews/self-posted.json` are gone — and lists the runtime sidecars that this slice introduces under `state/`.
@@ -81,7 +83,7 @@ This document captures the canonical on-disk layout that every slice of the on-d
 
 The following artefacts do **not** live under `<repo>/.sandman/` and are documented here for completeness. They are out-of-layout by design — they are either shared across repos (skills) or out-of-repo tempdirs (config-snapshot fallback).
 
-- **`os.MkdirTemp("", "sandman-config-*")`** (in `internal/batch/config_mounts.go:29`) — the **config-snapshot parent tempdir**, used by `PrepareContainerConfigMounts` when the caller passes an empty `runDir`. This is the only production-code out-of-repo tempdir and exists because the agent's `ConfigDirs` / `ConfigFiles` mount resolution (ADR-0008) needs a parent to host the resolved snapshot tree when no run-owned parent is available. The directory is removed by the cleanup function returned from `prepareSnapshotParent`.
+- **`os.MkdirTemp("", "sandman-config-*")`** (in `internal/batch/config_mounts.go:29`) — the **config-snapshot parent tempdir**, used by `PrepareContainerConfigMounts` when the caller passes an empty `runDir`. This is an out-of-repo tempdir because the agent's `ConfigDirs` / `ConfigFiles` mount resolution (ADR-0008) needs a parent to host the resolved snapshot tree when no run-owned parent is available. The directory is removed by the cleanup function returned from `prepareSnapshotParent`.
 - **`os.MkdirTemp(parentDir, ".config-*")`** (in `internal/sandbox/container.go:310`) — the **config-snapshot subdir**, atomically renamed to `<parentDir>/config/` immediately after creation. When `parentDir` is a run-owned path, this lands back under `.sandman/batches/<batchID>/runs/<runID>/config/` and is on-layout; when `parentDir` is the tempdir parent above, this is the out-of-layout half of the same pair.
 - **`~/.agents/skills/sandman/**`** — the **shared Sandman skill tree**, installed by `sandman init` into the user's home directory. This is repo-scoped *content* but not repo-scoped *location*: it is a single installed tree shared across every repo on the host, so it is intentionally out of the per-repo `.sandman/` layout. See `CONTEXT.md` §Sandman Skill.
 
