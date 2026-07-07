@@ -31,6 +31,8 @@ This file provides operating instructions for coding agents working in this repo
 
 ## Sandman task routing
 
+Canonical on-disk layout reference: `docs/architecture/disk-layout.md`.
+
 Start from the most likely architectural seam for the problem.
 
 ### Status and run-state bugs
