@@ -1702,35 +1702,6 @@ func batchIDFromRunID(runID string) string {
 	return runID
 }
 
-// snapshotOriginalTask copies the worktree's live task.md into the new
-// per-row run folder as a historical snapshot before the agent overwrites
-// it with the continuation prompt. Used by ModeContinue (slice 9 B3) so
-// the prior task wording survives in <runFolder>/task.md for the
-// operator to revisit later. The function is best-effort: a missing
-// source file (already warned about upstream) is treated as a no-op
-// rather than a fatal error.
-func snapshotOriginalTask(worktreeDir, runFolder string) error {
-	if strings.TrimSpace(worktreeDir) == "" || strings.TrimSpace(runFolder) == "" {
-		return fmt.Errorf("worktree dir or run folder is empty")
-	}
-	src := filepath.Join(worktreeDir, ".sandman", "task.md")
-	content, err := os.ReadFile(src)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return fmt.Errorf("read source task.md: %w", err)
-	}
-	if err := os.MkdirAll(runFolder, 0o755); err != nil {
-		return fmt.Errorf("create run folder: %w", err)
-	}
-	dst := filepath.Join(runFolder, "task.md")
-	if err := os.WriteFile(dst, content, 0o644); err != nil {
-		return fmt.Errorf("write snapshot task.md: %w", err)
-	}
-	return nil
-}
-
 func hasExactTaskStatus(taskContent, status string) bool {
 	for _, line := range strings.Split(taskContent, "\n") {
 		if strings.TrimSpace(line) == status {
@@ -2002,27 +1973,6 @@ func (s *runSession) runOnce(
 		}
 
 		runnable := factory.NewRunnable(issue, branch, wt)
-		// Slice 9 B3: when launching a continuation, copy the original
-		// task.md that lives in the worktree into the new per-row run
-		// folder as a sibling of run.json / run.log. The worktree file
-		// is about to be overwritten by the continuation prompt; this
-		// snapshot preserves the prior wording as a historical artifact
-		// for the operator to revisit. The copy is best-effort: if the
-		// worktree's task.md is missing (already warned about upstream)
-		// we silently skip the snapshot — the operator still has the
-		// live run.log and event log to reconstruct state. The
-		// runFolder is the same path the AgentRun (or any other
-		// Runnable implementation that respects the per-row folder)
-		// would write to, so the snapshot lands alongside run.json /
-		// run.log regardless of which Runnable factory is in use.
-		if s.mode == ModeContinue {
-			runFolder := s.runFolderFor(runID)
-			if runFolder != "" {
-				if err := snapshotOriginalTask(wt.WorkDir(), runFolder); err != nil {
-					fmt.Fprintf(o.errorLog, "warning: snapshot task.md for continuation run %s: %v\n", runID, err)
-				}
-			}
-		}
 		if agentRun, ok := runnable.(*AgentRun); ok {
 			agentRun.env = s.agentCfg.Env
 			agentRun.preset = s.agentCfg.Preset
