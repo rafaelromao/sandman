@@ -70,7 +70,6 @@ Use the picker to switch between the continuation and the previous run without c
 
 **Existing `.sandman` migration is out of scope.** The slice-1 contract change (issue #1917) and the identity alignment that followed (slices 2–6 of parent PRD #1916) rename the public BatchId surface and the per-row RunID templates. Batches provisioned before the contract change carry old id shapes (legacy `+1` single-issue, total-count `+N`, prompt-only without the `prompt` segment, etc.) and are not rewritten in place. After upgrading, the operator should delete `.sandman` and rebuild; no migration tool ships for the old layout.
 
->>>>>>> origin/main
 ## Stop (Abort)
 
 Use the **Stop** button in the portal UI to abort a running issue. The portal calls:
