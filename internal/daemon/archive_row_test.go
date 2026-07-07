@@ -13,6 +13,7 @@ import (
 	"golang.org/x/sys/unix"
 
 	"github.com/rafaelromao/sandman/internal/batchindex"
+	"github.com/rafaelromao/sandman/internal/testenv"
 )
 
 func writePerRowArchiveManifest(t *testing.T, runDir string, manifest batchindex.RunManifest) {
@@ -116,7 +117,7 @@ func TestArchiveRow_MovesRunFolder(t *testing.T) {
 // socket file inside the moved folder must be removed before the move
 // returns, so the archive never ships live daemon sockets.
 func TestArchiveRow_StripsSocketsFromMovedFolder(t *testing.T) {
-	repoRoot := t.TempDir()
+	repoRoot := testenv.MkdirShort(t, "sm-arow-")
 	runID := "r1"
 	batchID := "b1"
 	runDir := filepath.Join(repoRoot, ".sandman", "batches", batchID, "runs", runID)
@@ -307,7 +308,7 @@ func dialUnixSock(path string) bool {
 // row of a multi-run batch must leave the sibling row's folder, log
 // file, and socket in place.
 func TestArchiveRow_LeavesSiblingRowsAlive(t *testing.T) {
-	repoRoot := t.TempDir()
+	repoRoot := testenv.MkdirShort(t, "sm-arow-")
 	batchID := "bM"
 	row1 := "r1"
 	row2 := "r2"
