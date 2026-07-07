@@ -31,6 +31,13 @@
 // model. events.jsonl and run.log use OpenAppend; batches.json, run.json,
 // and config.yaml use WriteAtomic / WriteAtomicJSON. The two idioms are
 // not interchangeable.
+//
+// WriteAtomic / WriteAtomicJSON take an explicit perm and apply it via
+// os.Chmod before the rename. The pre-existing in-tree writers
+// (batchindex.Index.Save, batchindex.WriteManifest, config.Save) do not
+// chmod and rely on the umask-driven 0600 default of os.CreateTemp;
+// once those call sites migrate onto WriteAtomic, each one will pass
+// the perm it wants rather than inherit the umask.
 package atomicfs
 
 import (
