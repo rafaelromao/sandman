@@ -26,9 +26,9 @@ func TestPortalRunsView_ResolveBatchFromRowID_BothMiss(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			entry, err := (&portalRunsView{}).resolveBatchFromRowID(tc.idx, tc.runID)
-			if entry != nil {
-				t.Fatalf("expected nil entry on miss, got %#v", entry)
+			batch, err := (&portalRunsView{}).resolveBatchFromRowID(tc.idx, tc.runID)
+			if batch != nil {
+				t.Fatalf("expected nil batch on miss, got %#v", batch)
 			}
 			if err == nil {
 				t.Fatalf("expected typed not-found error, got nil")
@@ -44,7 +44,7 @@ func TestPortalRunsView_ResolveBatchFromRowID_BothMiss(t *testing.T) {
 	}
 }
 
-// Exact match returns the index entry with Path populated.
+// Exact match returns the index batch with Path populated.
 func TestPortalRunsView_ResolveBatchFromRowID_ExactMatch(t *testing.T) {
 	runID := "abcd-260618113825-42"
 	batchDir := filepath.Join(t.TempDir(), runID)
@@ -55,37 +55,37 @@ func TestPortalRunsView_ResolveBatchFromRowID_ExactMatch(t *testing.T) {
 		},
 	}
 
-	entry, err := (&portalRunsView{}).resolveBatchFromRowID(idx, runID)
+	batch, err := (&portalRunsView{}).resolveBatchFromRowID(idx, runID)
 	if err != nil {
 		t.Fatalf("expected no error on exact match, got %v", err)
 	}
-	if entry == nil {
-		t.Fatal("expected entry on exact match, got nil")
+	if batch == nil {
+		t.Fatal("expected batch on exact match, got nil")
 	}
-	if entry.ID != runID {
-		t.Errorf("expected entry ID %q, got %q", runID, entry.ID)
+	if batch.ID != runID {
+		t.Errorf("expected batch ID %q, got %q", runID, batch.ID)
 	}
-	if entry.Path != batchDir {
-		t.Errorf("expected entry Path %q, got %q", batchDir, entry.Path)
+	if batch.Path != batchDir {
+		t.Errorf("expected batch Path %q, got %q", batchDir, batch.Path)
 	}
 }
 
-// Fallback walks each entry's runs/<runID>/run.json, parses BatchID, and re-resolves it.
+// Fallback walks each batch's runs/<runID>/run.json, parses BatchID, and re-resolves it.
 func TestPortalRunsView_ResolveBatchFromRowID_FallbackByRunManifest(t *testing.T) {
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
-	batchEntryID := "abcd-260618113825-42+1"
+	publicBatchID := "abcd-260618113825-42+1"
 	perRowID := "abcd-260618113825-42"
-	batchDir := filepath.Join(repoRoot, ".sandman", "batches", batchEntryID)
+	batchDir := filepath.Join(repoRoot, ".sandman", "batches", publicBatchID)
 	if err := os.MkdirAll(filepath.Join(batchDir, "runs", perRowID), 0755); err != nil {
 		t.Fatal(err)
 	}
 	perRowManifest := batchindex.RunManifest{
 		RunID:     perRowID,
-		BatchID:   batchEntryID,
+		BatchID:   publicBatchID,
 		Issue:     42,
 		Kind:      batchindex.KindIssue,
 		CreatedAt: time.Now(),
@@ -98,22 +98,22 @@ func TestPortalRunsView_ResolveBatchFromRowID_FallbackByRunManifest(t *testing.T
 	idx := &batchindex.Index{
 		Version: batchindex.IndexVersion,
 		Batches: []batchindex.Batch{
-			{ID: batchEntryID, Path: batchDir, Kind: batchindex.KindIssue, Status: batchindex.StatusActive, CreatedAt: time.Now(), Issues: []int{42}},
+			{ID: publicBatchID, Path: batchDir, Kind: batchindex.KindIssue, Status: batchindex.StatusActive, CreatedAt: time.Now(), Issues: []int{42}},
 		},
 	}
 
-	entry, err := (&portalRunsView{}).resolveBatchFromRowID(idx, perRowID)
+	batch, err := (&portalRunsView{}).resolveBatchFromRowID(idx, perRowID)
 	if err != nil {
 		t.Fatalf("expected no error on fallback resolve, got %v", err)
 	}
-	if entry == nil {
-		t.Fatal("expected entry on fallback resolve, got nil")
+	if batch == nil {
+		t.Fatal("expected batch on fallback resolve, got nil")
 	}
-	if entry.ID != batchEntryID {
-		t.Errorf("expected entry ID %q (parsed BatchID), got %q", batchEntryID, entry.ID)
+	if batch.ID != publicBatchID {
+		t.Errorf("expected batch ID %q (parsed BatchID), got %q", publicBatchID, batch.ID)
 	}
-	if entry.Path != batchDir {
-		t.Errorf("expected entry Path %q, got %q", batchDir, entry.Path)
+	if batch.Path != batchDir {
+		t.Errorf("expected batch Path %q, got %q", batchDir, batch.Path)
 	}
 }
 
@@ -124,10 +124,10 @@ func TestPortalRunsView_ResolveBatchFromRowID_FallbackBatchIdNotInIndex(t *testi
 		t.Fatal(err)
 	}
 
-	batchEntryID := "abcd-260618113825-42+1"
+	publicBatchID := "abcd-260618113825-42+1"
 	perRowID := "abcd-260618113825-42"
 	staleBatchID := "abcd-260618113825-42+1-stale-evicted"
-	batchDir := filepath.Join(repoRoot, ".sandman", "batches", batchEntryID)
+	batchDir := filepath.Join(repoRoot, ".sandman", "batches", publicBatchID)
 	if err := os.MkdirAll(filepath.Join(batchDir, "runs", perRowID), 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -146,13 +146,13 @@ func TestPortalRunsView_ResolveBatchFromRowID_FallbackBatchIdNotInIndex(t *testi
 	idx := &batchindex.Index{
 		Version: batchindex.IndexVersion,
 		Batches: []batchindex.Batch{
-			{ID: batchEntryID, Path: batchDir, Kind: batchindex.KindIssue, Status: batchindex.StatusActive, CreatedAt: time.Now(), Issues: []int{42}},
+			{ID: publicBatchID, Path: batchDir, Kind: batchindex.KindIssue, Status: batchindex.StatusActive, CreatedAt: time.Now(), Issues: []int{42}},
 		},
 	}
 
-	entry, err := (&portalRunsView{}).resolveBatchFromRowID(idx, perRowID)
-	if entry != nil {
-		t.Fatalf("expected nil entry when parsed BatchID is not in index, got %#v", entry)
+	batch, err := (&portalRunsView{}).resolveBatchFromRowID(idx, perRowID)
+	if batch != nil {
+		t.Fatalf("expected nil batch when parsed BatchID is not in index, got %#v", batch)
 	}
 	if err == nil {
 		t.Fatalf("expected typed not-found error when parsed BatchID is not in index, got nil")

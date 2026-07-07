@@ -1042,9 +1042,9 @@ func TestPortal_ArchiveEndpoint_SingleIssueRun(t *testing.T) {
 
 // TestPortal_ArchiveEndpoint_ContinueIssueRun covers the --continue flag
 // path on a multi-issue issue run: the orchestrator resumes the existing
-// batch dir, so the per-row id matches the batch entry id (the
+// batch dir, so the per-row id matches the public BatchId (the
 // orchestrator picks the first subject as the resume row). The fast
-// path (idx.Resolve) resolves either id form to the same entry.
+// path (idx.ResolveBatch) resolves either id form to the same batch.
 func TestPortal_ArchiveEndpoint_ContinueIssueRun(t *testing.T) {
 	repoRoot, err := os.MkdirTemp("/tmp", "sm-archive-cissue-")
 	if err != nil {

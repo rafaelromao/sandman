@@ -545,10 +545,10 @@ func (v *portalRunsView) computeWithActiveRunsAndIndex(repoRoot string, eventLis
 		locator := v.sourceDirID(idx, runs[i])
 		runs[i].Archived = v.isRunArchived(idx, locator)
 		runs[i].SourceExists = v.runDirExists(repoRoot, locator)
-		// Unavailable is keyed by batchID (the index Entry.ID)
-		// because the batchindex entry is the source of truth for the
+		// Unavailable is keyed by batchID (the index Batch.ID)
+		// because the batchindex batch is the source of truth for the
 		// unavailable flip (set by MarkUnavailable when the backing dir
-		// is missing). MarkUnavailable skips archived entries, so
+		// is missing). MarkUnavailable skips archived batches, so
 		// Archived and Unavailable stay mutually exclusive in normal
 		// operation.
 		if _, ok := unavailableRunIDs[locator.batchID]; ok {

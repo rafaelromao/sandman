@@ -19,7 +19,7 @@ import (
 // TestPortal_ResolveReviewRunFromCanonicalFolder_Active pins the canonical
 // portal behavior for an ACTIVE review run: the active row's RunID must
 // equal the per-row RunID written to runs/<rowID>/run.json by the review
-// daemon (issue #1551), not the batches-index Entry.ID (the batch dir name).
+// daemon (issue #1551), not the batches-index Batch.ID (the batch dir name).
 //
 // The previous portal behavior collapsed both onto the batch id, which broke
 // the eventsByRun lookup for the canonical review RunID and made the log
