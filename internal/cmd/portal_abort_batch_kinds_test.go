@@ -244,12 +244,11 @@ type portalAbortBatchKindsOpts struct {
 
 // TestPortal_AbortEndpoint_SingleIssueRunRow_ResolvesPerRunSocket is
 // the tracer bullet for the slice: a single-issue `sandman run` row
-// where n=1, so the batch entry id carries a "+1" suffix and the
-// per-row id does not. The abort handler takes the `runID !=
-// batchKey` branch (portal.go:353), resolves perRunID to the per-row
-// id, and dispatches the abort request to the per-run socket at
-// `<batchDir>/runs/<perRowID>/run.sock`. The orchestrator must
-// receive `Issue=42`.
+// where n=1. Per issue #1917 (slice 1), the public BatchId for
+// single-issue batches is `<sid>-<ts>-<num>` with no +N suffix, which
+// is identical to the per-row RunID. The abort handler's fast path
+// (`idx.Resolve(runID)` at portal.go:307) matches the batch entry id
+// directly. The orchestrator must receive `Issue=42`.
 func TestPortal_AbortEndpoint_SingleIssueRunRow_ResolvesPerRunSocket(t *testing.T) {
 	if !portalAbortSupported() {
 		t.Skip("abort unsupported on this platform")
@@ -258,8 +257,8 @@ func TestPortal_AbortEndpoint_SingleIssueRunRow_ResolvesPerRunSocket(t *testing.
 	shortid := "abcd"
 	batchKey := runid.NewBatchID(runid.KindIssue, 1, "42", ts, shortid)
 	perRowID := runid.NewRunID(runid.KindIssue, "42", ts, shortid)
-	if perRowID == batchKey {
-		t.Fatalf("fixture invariant: perRowID %q must differ from batchKey %q", perRowID, batchKey)
+	if perRowID != batchKey {
+		t.Fatalf("fixture invariant: perRowID %q must equal batchKey %q for single issue (issue #1917 slice 1)", perRowID, batchKey)
 	}
 
 	repoRoot, _ := portalAbortBatchKindsFixture(t, portalAbortBatchKindsOpts{
@@ -397,13 +396,13 @@ func TestPortal_AbortEndpoint_ContinueIssueRunRow_ResolvesPerRunSocket(t *testin
 
 	batchManifest := daemon.BatchManifest{
 		Issues:    []int{42, 43},
-		BatchId:   perRowID, // post-#1675: BatchId == per-row RunID for the canonical row
+		BatchId:   batchDirName, // post-#1917 slice 1: BatchId == public BatchId == batch dir basename
 		RunKind:   "issue",
 		CreatedAt: time.Now().Add(-10 * time.Minute),
 	}
 	repoRoot, _ := portalAbortBatchKindsFixture(t, portalAbortBatchKindsOpts{
-		batchKey:      perRowID,     // index entry id == per-row RunID of canonical row
-		batchDirName:  batchDirName, // ADR-0030 batch dir name `<sid>-<ts>-42+2`
+		batchKey:      batchDirName, // index entry id == public BatchId for multi-issue (issue #1917 slice 1)
+		batchDirName:  batchDirName,
 		perRowID:      perRowID,
 		idxKind:       batchindex.KindIssue,
 		issues:        []int{42, 43},

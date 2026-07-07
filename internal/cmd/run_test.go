@@ -18,6 +18,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/batch"
 	"github.com/rafaelromao/sandman/internal/batchindex"
 	"github.com/rafaelromao/sandman/internal/config"
+	"github.com/rafaelromao/sandman/internal/daemon"
 	"github.com/rafaelromao/sandman/internal/events"
 	"github.com/rafaelromao/sandman/internal/github"
 	"github.com/rafaelromao/sandman/internal/paths"
@@ -4499,14 +4500,12 @@ func TestRun_PromptAndTemplateFlagsCombined(t *testing.T) {
 	}
 }
 
-// TestRun_SingleIssueRegistersPerRowRunIDInBatchesIndex verifies that
-// `sandman run 42` registers the batches index entry with an id equal to
-// the per-row RunID the orchestrator will emit in run.started, namely
-// `<sid>-<ts>-42`, NOT the batch dir name `<sid>-<ts>-42+1` (acceptance
-// criterion for #1675: "every batch kind"). This is the structural fix
-// for the per-row-vs-index id mismatch that previously required the
-// slice-1 path-basename fallback in batchindex.canonicalizeEntryID.
-func TestRun_SingleIssueRegistersPerRowRunIDInBatchesIndex(t *testing.T) {
+// TestRun_SingleIssueRegistersPublicBatchIdInBatchesIndex verifies that
+// `sandman run 42` registers a SINGLE batch index entry whose id and
+// path equal the public BatchId `<sid>-<ts>-42` (issue #1917 slice 1).
+// For single-issue batches, the public BatchId (== per-row RunID ==
+// batch folder basename) carries no +N suffix.
+func TestRun_SingleIssueRegistersPublicBatchIdInBatchesIndex(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
 	dir, deps := newRunDepsInDir(t, spy)
 	deps.GitHubClient = &fakeGitHubClient{
@@ -4529,13 +4528,13 @@ func TestRun_SingleIssueRegistersPerRowRunIDInBatchesIndex(t *testing.T) {
 		t.Fatalf("load batches index: %v", err)
 	}
 
-	wantPerRowID := spy.req.RunShortID + "-" + spy.req.RunTS + "-42"
+	wantPublicBatchID := spy.req.RunShortID + "-" + spy.req.RunTS + "-42"
 	if len(idx.Entries) != 1 {
 		t.Fatalf("expected exactly 1 batch index entry, got %d (entries=%v)", len(idx.Entries), idx.Entries)
 	}
 	got := idx.Entries[0]
-	if got.ID != wantPerRowID {
-		t.Errorf("entry ID = %q, want %q (per-row RunID)", got.ID, wantPerRowID)
+	if got.ID != wantPublicBatchID {
+		t.Errorf("entry ID = %q, want %q (public BatchId)", got.ID, wantPublicBatchID)
 	}
 	if got.Kind != batchindex.KindIssue {
 		t.Errorf("entry Kind = %v, want %v", got.Kind, batchindex.KindIssue)
@@ -4543,20 +4542,29 @@ func TestRun_SingleIssueRegistersPerRowRunIDInBatchesIndex(t *testing.T) {
 	if got.Path == "" {
 		t.Error("entry Path must be non-empty")
 	}
-	// Path must still be the batch dir name (sid-ts-N+N), so the
-	// on-disk layout is unchanged from today.
-	if filepath.Base(got.Path) != spy.req.RunShortID+"-"+spy.req.RunTS+"-42+1" {
-		t.Errorf("entry Path basename = %q, want batch dir name %q", filepath.Base(got.Path), spy.req.RunShortID+"-"+spy.req.RunTS+"-42+1")
+	// Path is the public BatchId (= batch folder basename). For single
+	// issue batches there is no +N suffix (issue #1917 slice 1).
+	if filepath.Base(got.Path) != wantPublicBatchID {
+		t.Errorf("entry Path basename = %q, want public BatchId %q", filepath.Base(got.Path), wantPublicBatchID)
+	}
+	// Manifest on disk must also carry the public BatchId in batchId.
+	batchManifest, err := daemon.ReadManifest(filepath.Join(dir, ".sandman", "batches", wantPublicBatchID))
+	if err != nil {
+		t.Fatalf("read manifest: %v", err)
+	}
+	if batchManifest.BatchId != wantPublicBatchID {
+		t.Errorf("batch.json.batchId = %q, want %q (public BatchId)", batchManifest.BatchId, wantPublicBatchID)
 	}
 }
 
-// TestRun_MultiIssueRegistersFirstRowAsCanonicalEntryID verifies that
-// `sandman run 42 43` registers a SINGLE batch index entry whose id is
-// the first issue's per-row RunID `<sid>-<ts>-42` (the canonical row for
-// the batch). Per-row addressability is via the per-run folders under
-// `runs/<sid>-<ts>-<num>/`, not via additional index entries (issue
-// #1675: "the batch-level entry id picks a canonical row").
-func TestRun_MultiIssueRegistersFirstRowAsCanonicalEntryID(t *testing.T) {
+// TestRun_MultiIssueRegistersPublicBatchIdInBatchesIndex verifies that
+// `sandman run 42 43` registers a SINGLE batch index entry whose id and
+// path equal the public BatchId `<sid>-<ts>-42+1` (issue #1917 slice 1).
+// Per-row addressability is via the per-run folders under
+// `runs/<sid>-<ts>-<num>/`, not via additional index entries. The
+// batch.json.batchId stored on disk MUST equal the public BatchId
+// (== entry id == batch folder basename).
+func TestRun_MultiIssueRegistersPublicBatchIdInBatchesIndex(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
 	dir, deps := newRunDepsInDir(t, spy)
 	deps.GitHubClient = &fakeGitHubClient{
@@ -4582,23 +4590,36 @@ func TestRun_MultiIssueRegistersFirstRowAsCanonicalEntryID(t *testing.T) {
 		t.Fatalf("load batches index: %v", err)
 	}
 
-	wantCanonicalID := spy.req.RunShortID + "-" + spy.req.RunTS + "-42"
-	wantSecondID := spy.req.RunShortID + "-" + spy.req.RunTS + "-43"
+	wantPublicBatchID := spy.req.RunShortID + "-" + spy.req.RunTS + "-42+1"
+	wantFirstRowID := spy.req.RunShortID + "-" + spy.req.RunTS + "-42"
+	wantSecondRowID := spy.req.RunShortID + "-" + spy.req.RunTS + "-43"
 	if len(idx.Entries) != 1 {
 		t.Fatalf("expected exactly 1 batch index entry for multi-issue run, got %d (entries=%v)", len(idx.Entries), idx.Entries)
 	}
 	got := idx.Entries[0]
-	if got.ID != wantCanonicalID {
-		t.Errorf("entry ID = %q, want %q (first row's per-row RunID)", got.ID, wantCanonicalID)
+	if got.ID != wantPublicBatchID {
+		t.Errorf("entry ID = %q, want %q (public BatchId)", got.ID, wantPublicBatchID)
 	}
-	// The second row's per-row id is NOT a separate index entry;
-	// it lives in runs/<sid>-<ts>-43/run.json instead.
-	if idx.Resolve(wantSecondID) != nil {
-		t.Errorf("second row's id %q must NOT have a separate index entry; only the canonical row does", wantSecondID)
+	// Per-row RunIDs are NOT separate index entries; they live in
+	// runs/<sid>-<ts>-<num>/run.json. Only the public BatchId is keyed
+	// in the index.
+	if idx.Resolve(wantFirstRowID) != nil {
+		t.Errorf("first row's per-row RunID %q must NOT have a separate index entry", wantFirstRowID)
 	}
-	// Path is still the batch dir name (sid-ts-42+2), unchanged.
-	if filepath.Base(got.Path) != spy.req.RunShortID+"-"+spy.req.RunTS+"-42+2" {
-		t.Errorf("entry Path basename = %q, want batch dir name %q", filepath.Base(got.Path), spy.req.RunShortID+"-"+spy.req.RunTS+"-42+2")
+	if idx.Resolve(wantSecondRowID) != nil {
+		t.Errorf("second row's per-row RunID %q must NOT have a separate index entry", wantSecondRowID)
+	}
+	// Path is the public BatchId (= batch dir basename).
+	if filepath.Base(got.Path) != wantPublicBatchID {
+		t.Errorf("entry Path basename = %q, want %q", filepath.Base(got.Path), wantPublicBatchID)
+	}
+	// Manifest on disk must also carry the public BatchId in batchId.
+	batchManifest, err := daemon.ReadManifest(filepath.Join(dir, ".sandman", "batches", wantPublicBatchID))
+	if err != nil {
+		t.Fatalf("read manifest: %v", err)
+	}
+	if batchManifest.BatchId != wantPublicBatchID {
+		t.Errorf("batch.json.batchId = %q, want %q (public BatchId)", batchManifest.BatchId, wantPublicBatchID)
 	}
 }
 
@@ -4640,12 +4661,12 @@ func TestRun_ContinueRegistersPerRowRunIDInBatchesIndex(t *testing.T) {
 		t.Fatalf("load batches index: %v", err)
 	}
 
-	wantPerRowID := spy.req.RunShortID + "-" + spy.req.RunTS + "-42"
+	wantPublicBatchID := spy.req.RunShortID + "-" + spy.req.RunTS + "-42"
 	if len(idx.Entries) != 1 {
 		t.Logf("buf: %s", buf.String())
 		t.Fatalf("expected exactly 1 batch index entry, got %d (entries=%v)", len(idx.Entries), idx.Entries)
 	}
-	if got := idx.Entries[0].ID; got != wantPerRowID {
-		t.Errorf("entry ID = %q, want %q (per-row RunID)", got, wantPerRowID)
+	if got := idx.Entries[0].ID; got != wantPublicBatchID {
+		t.Errorf("entry ID = %q, want %q (public BatchId for single issue)", got, wantPublicBatchID)
 	}
 }
