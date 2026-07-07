@@ -40,8 +40,9 @@ type PRLister interface {
 
 // BadgeControlFileReader reports whether the local control file that
 // marks "the Built with Sandman badge PR has been proposed in this
-// checkout" is present. The post-batch BadgeHooker checks this file
-// before paying for the expensive `gh pr list` fallback, so the
+// checkout" is present. The post-batch BadgeHooker consults the
+// marker-comment PR check first and only reads this file as an
+// optimistic fast-path after HasBadgePR returns false, so the
 // interface lives next to the hook rather than on PRLister (which is
 // PR-focused).
 type BadgeControlFileReader interface {
@@ -114,9 +115,10 @@ type defaultBadgeControlFileReader struct {
 
 // HasBadgeControlFile reports whether the control file is present
 // under the resolved SandmanDir. Stat errors other than "not exist"
-// are swallowed and reported as "absent" — the fallback HasBadgePR
-// path provides the authoritative answer, so a transient filesystem
-// hiccup must never block it.
+// are swallowed and reported as "absent" — a transient filesystem
+// hiccup must never block the spawn path. The marker-comment PR check
+// runs first, so the file's presence is a fast-path trust signal
+// rather than an authoritative gate.
 func (d *defaultBadgeControlFileReader) HasBadgeControlFile() bool {
 	_, err := os.Stat(badgeControlFilePath(d.layout))
 	if err != nil {
