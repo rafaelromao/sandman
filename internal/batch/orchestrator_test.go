@@ -5507,7 +5507,7 @@ func TestRunBatch_ChainedContinuationFlow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("initial run failed: %v", err)
 	}
-	// Verify runnable wrote staged task context for each continuation.
+
 	sandmanDir := filepath.Join(worktreePath, ".sandman")
 	if _, err := os.Stat(sandmanDir); err != nil {
 		t.Fatalf("expected .sandman dir to exist (runnable should have created it), err=%v", err)
@@ -5521,7 +5521,6 @@ func TestRunBatch_ChainedContinuationFlow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("first continue failed: %v", err)
 	}
-	// Continuation does not check PR merge, so task.md is preserved.
 	_, err = os.Stat(filepath.Join(sandmanDir, "task.md"))
 	if err != nil {
 		t.Fatalf("expected task.md to be preserved after continuation (no merge check), err=%v", err)
