@@ -192,6 +192,10 @@ func TestRunSelectionPhaseWithEvents_PayloadsCarryBatchId(t *testing.T) {
 	if startedBatchID != started.RunID {
 		t.Errorf("started batch_id %q does not match selector RunID %q", startedBatchID, started.RunID)
 	}
+	wantShape := regexp.MustCompile(`^[0-9a-f]{4}-\d{12}-auto-5$`)
+	if !wantShape.MatchString(startedBatchID) {
+		t.Errorf("started batch_id %q does not match canonical <sid>-<ts>-auto-<count> shape for count=5", startedBatchID)
+	}
 	if !autoSelectRunIDRe.MatchString(startedBatchID) {
 		t.Errorf("started batch_id %q does not match auto-select pattern %s", startedBatchID, autoSelectRunIDRe.String())
 	}

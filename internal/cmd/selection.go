@@ -216,9 +216,7 @@ func runSelectionPhaseLegacy(ctx context.Context, client github.Client, effectiv
 // When eventLog is nil this is a no-op so the function can be called from
 // both the instrumented and the legacy code paths. The reason field is
 // omitted on success; the selected field is included on success and omitted
-// on failure. The batch_id field carries the selector BatchId so portal
-// consumers can resolve the auto-select row's batch identity from the
-// event stream (issue #1918 slice 2).
+// on failure.
 func emitAutoSelectFinished(eventLog events.EventLog, runID, batchID, status, reason string, selected []int) {
 	if eventLog == nil {
 		return

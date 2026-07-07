@@ -619,16 +619,6 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 				// For single-issue this equals the per-row RunID for the first
 				// issue; for multi-issue it carries the +<n-1> suffix.
 				sessionRunID = batch.BatchIDForIssue(firstIssueNum, len(issues), ts, shortid)
-				// Issue #1917 (slice 1): manifest.BatchId = public BatchId.
-				// entryID is no longer needed for the issue path.
-				// Issue #1918 (slice 2): the post-selection issue batch
-				// emits a synthetic run.started for the portal. The
-				// RunID and batch_id are the per-row issue RunID and
-				// the public issue BatchId (no auto marker, no shared
-				// (ts, shortid) with the auto-select selector). This
-				// synthetic event lands before the per-row events the
-				// orchestrator emits during RunBatch, so portal
-				// readers see the issue row appear at the right time.
 				if deps.EventLog != nil && autoProvided {
 					issueRunID := runid.NewRunID(runid.KindIssue, fmt.Sprintf("%d", firstIssueNum), ts, shortid)
 					if err := deps.EventLog.Log(events.Event{
@@ -645,10 +635,6 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 						return fmt.Errorf("log issue run.started: %w", err)
 					}
 				}
-				// Mark sessionRunID for the post-selection path so
-				// downstream checks that gate on "we have an issue
-				// batch" still trip the same way as the legacy
-				// autoTS-derived batchID assignment did.
 				if autoProvided {
 					runID = sessionRunID
 				}

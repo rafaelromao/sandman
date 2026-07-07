@@ -3357,6 +3357,78 @@ func TestRun_AutoFlagDelegatesLowestIssue(t *testing.T) {
 	}
 }
 
+// TestRun_AutoFlag_PostSelectionIssueBatchIdentity exercises the
+// public run.go path (NewRunCmd with --auto) and pins that the
+// post-selection issue batch uses normal issue batch rules and that
+// the orchestrator's batch.RunTS / batch.RunShortID are the
+// freshly-minted (ts, shortid) for the post-selection batch — not the
+// auto-select selector's (ts, shortid) and not the auto marker. The
+// synthetic run.started the run command emits for the post-selection
+// batch must carry the matching batch_id (issue #1918 slice 2).
+func TestRun_AutoFlag_PostSelectionIssueBatchIdentity(t *testing.T) {
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	gh := &fakeGitHubClient{
+		searchIssuesResult: []github.Issue{
+			{Number: 1, Title: "Feature A"},
+			{Number: 2, Title: "Feature B"},
+		},
+	}
+	log := &recordingEventLog{}
+	sandmanDir := filepath.Join(".", ".sandman")
+	deps := newRunDepsAutoWithPrompt(t, spy, "priority prompt")
+	deps.GitHubClient = gh
+	deps.EventLog = log
+	deps.ConfigStore = &fakeStore{config: &config.Config{
+		Agent:         "opencode",
+		ReviewCommand: "/oc review",
+		AgentProviders: map[string]config.Agent{
+			"opencode": {
+				Command: fmt.Sprintf("mkdir -p %s/state && echo '[1, 2]' > %s/state/selected-issues.json", sandmanDir, sandmanDir),
+			},
+		},
+	}}
+
+	var buf bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--auto"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !spy.called {
+		t.Fatal("expected batch runner to be called")
+	}
+
+	issueStarted := findIssueStartedEvent(log)
+	if issueStarted == nil {
+		t.Fatal("expected a run.started event with run_kind=issue (post-selection synthetic event)")
+	}
+	if strings.Contains(issueStarted.RunID, "-auto-") {
+		t.Errorf("post-selection issue RunID %q must not carry the auto marker", issueStarted.RunID)
+	}
+	if val, ok := issueStarted.Payload["batch_id"].(string); !ok || val == "" {
+		t.Fatalf("post-selection payload missing batch_id, got %v", issueStarted.Payload["batch_id"])
+	}
+	batchID, _ := issueStarted.Payload["batch_id"].(string)
+	if strings.Contains(batchID, "-auto-") {
+		t.Errorf("post-selection batch_id %q must not carry the auto marker", batchID)
+	}
+
+	if spy.req.RunTS == "" || spy.req.RunShortID == "" {
+		t.Fatalf("batch runner received empty RunTS/RunShortID: ts=%q shortid=%q", spy.req.RunTS, spy.req.RunShortID)
+	}
+	wantBatchID := spy.req.RunShortID + "-" + spy.req.RunTS + "-1+1"
+	if batchID != wantBatchID {
+		t.Errorf("post-selection batch_id = %q, want public issue BatchId %q (multi-issue, from batch.RunTS/RunShortID)", batchID, wantBatchID)
+	}
+	wantPerRowRunID := spy.req.RunShortID + "-" + spy.req.RunTS + "-1"
+	if issueStarted.RunID != wantPerRowRunID {
+		t.Errorf("post-selection issue RunID = %q, want per-row issue RunID %q", issueStarted.RunID, wantPerRowRunID)
+	}
+}
+
 func TestRun_AutoFlagWithCountDelegatesN(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
 	gh := &fakeGitHubClient{
