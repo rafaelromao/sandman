@@ -12,7 +12,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/sandbox"
 )
 
-func TestPrepareContainerConfigMounts_StoresSnapshotUnderRunDir(t *testing.T) {
+func TestPrepareContainerConfigMounts_StoresSnapshotUnderBatchConfigDir(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 

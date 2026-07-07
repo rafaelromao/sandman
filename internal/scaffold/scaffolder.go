@@ -459,11 +459,6 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 			return fmt.Errorf("write auto-selection-prompt.md: %w", err)
 		}
 	}
-	if _, err := os.Stat(autoPromptPath); os.IsNotExist(err) {
-		if err := atomicfs.WriteAtomic(autoPromptPath, []byte(prompt.DefaultPriorityPrompt()), 0644); err != nil {
-			return fmt.Errorf("write auto-selection-prompt.md: %w", err)
-		}
-	}
 
 	if err := s.materializeReviewPrompts(layout); err != nil {
 		return err
