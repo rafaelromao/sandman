@@ -193,11 +193,12 @@ func TestPortal_RunFromState_ActiveNil_MultiIssueBatch_LogPathFromEventPayload(t
 // TestPortal_DiscoverActiveRuns_IssueMultiBatch_RunIDIsPerRow pins the
 // discovery path of the active-batch bug: for a multi-issue batch the
 // per-row RunID must be resolved from the per-row run.json under the
-// on-disk "+N" directory, not collapsed onto the index entry id (which
-// equals the per-row RunID for the first issue per ADR-0036 but does
-// not match the on-disk directory name and does not identify any
-// individual row). Without this fix, active.RunID == active.BatchID
-// and the staleness stat falls back to startedAt (issue #1715).
+// on-disk "+N" directory, distinct from the on-disk BatchId. Without
+// this fix, active.RunID == active.BatchID and the staleness stat
+// falls back to startedAt (issue #1715). Issue #1954 (slice 11) pins
+// the public BatchId contract: the manifest BatchId must equal the
+// on-disk directory basename (with "+N"), so the portal Batch label
+// and Details tab render `<sid>-<ts>-<first>+<additionalCount>`.
 func TestPortal_DiscoverActiveRuns_IssueMultiBatch_RunIDIsPerRow(t *testing.T) {
 	repoRoot, err := os.MkdirTemp("/tmp", "pda")
 	if err != nil {
@@ -212,7 +213,6 @@ func TestPortal_DiscoverActiveRuns_IssueMultiBatch_RunIDIsPerRow(t *testing.T) {
 	const issueN = 6
 	const perRowRunID = "fde2-260703095305-1704"
 	const onDiskDir = "fde2-260703095305-1699+6"
-	const indexEntryID = "fde2-260703095305-1699"
 
 	batchDir := filepath.Join(repoRoot, ".sandman", "batches", onDiskDir)
 	batchSockPath := filepath.Join(batchDir, "batch.sock")
@@ -223,10 +223,10 @@ func TestPortal_DiscoverActiveRuns_IssueMultiBatch_RunIDIsPerRow(t *testing.T) {
 	}
 	createUnixRunSocket(t, batchSockPath)
 
-	// Per ADR-0036: manifest.BatchId equals the per-row RunID for the
-	// first issue (no "+N").
+	// Public BatchId (issue #1954): manifest.BatchId equals the
+	// on-disk batch directory basename and carries the "+N" suffix.
 	if err := daemon.WriteManifest(batchDir, daemon.BatchManifest{
-		BatchId:   indexEntryID,
+		BatchId:   onDiskDir,
 		RunKind:   "issue",
 		Issues:    []int{1699, 1700, 1701, 1702, 1703, 1704},
 		CreatedAt: time.Now().Add(-time.Minute),
@@ -238,7 +238,7 @@ func TestPortal_DiscoverActiveRuns_IssueMultiBatch_RunIDIsPerRow(t *testing.T) {
 	// runID's embedded issue number (1704).
 	if err := daemon.WriteRunManifest(batchDir, perRowRunID, batchindex.RunManifest{
 		RunID:     perRowRunID,
-		BatchID:   indexEntryID,
+		BatchID:   onDiskDir,
 		Issue:     1704,
 		Branch:    "sandman/1704-fix",
 		Kind:      batchindex.KindIssue,
@@ -258,9 +258,11 @@ func TestPortal_DiscoverActiveRuns_IssueMultiBatch_RunIDIsPerRow(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Index entry: id = per-row RunID for first issue (no "+N"), path =
-	// on-disk dir (with "+N").
-	addBatchToIndex(t, repoRoot, indexEntryID, batchDir, []int{1699, 1700, 1701, 1702, 1703, 1704})
+	// Index entry: id == on-disk dir with "+N" (the public BatchId),
+	// path == on-disk dir. Pre-#1954 this used the per-row RunID of
+	// the first issue (no "+N"); post-#1954 the index id matches the
+	// public BatchId in both shape and value.
+	addBatchToIndex(t, repoRoot, onDiskDir, batchDir, []int{1699, 1700, 1701, 1702, 1703, 1704})
 
 	idx := getPortalRunsIndex(repoRoot)
 	active, err := idx.view.discoverActiveRuns(repoRoot, nil)
@@ -272,10 +274,10 @@ func TestPortal_DiscoverActiveRuns_IssueMultiBatch_RunIDIsPerRow(t *testing.T) {
 	}
 	got := active[0]
 	if got.RunID != perRowRunID {
-		t.Fatalf("active.RunID=%q, want per-row RunID %q (issue #1715: must not collapse to index entry id %q)", got.RunID, perRowRunID, indexEntryID)
+		t.Fatalf("active.RunID=%q, want per-row RunID %q (issue #1715: must not collapse to on-disk BatchId %q)", got.RunID, perRowRunID, onDiskDir)
 	}
-	if got.BatchID != indexEntryID {
-		t.Fatalf("active.BatchID=%q, want %q", got.BatchID, indexEntryID)
+	if got.BatchID != onDiskDir {
+		t.Fatalf("active.BatchID=%q, want %q (public BatchId per ADR-0032)", got.BatchID, onDiskDir)
 	}
 	if !got.LastOutputAt.Equal(logMtime) {
 		t.Fatalf("active.LastOutputAt=%v, want per-row log mtime %v (issue #1715: stat must hit the real per-row log)", got.LastOutputAt, logMtime)

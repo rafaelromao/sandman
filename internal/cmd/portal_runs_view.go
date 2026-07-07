@@ -237,11 +237,21 @@ func batchIDFromRunID(runID string) string {
 }
 
 func batchKeyForActive(active portalActiveRun) string {
-	if active.Key != "" {
-		return active.Key
-	}
+	// BatchID is the public BatchId sourced from batch.json.batchId
+	// (sourced via discoverActiveRuns reading the batch manifest) and
+	// equals the on-disk batch directory basename. The portal Batch
+	// label and Details tab "batch" field must render the public
+	// BatchId so multi-issue rows display
+	// `<sid>-<ts>-<first>+<additionalCount>` instead of the per-row
+	// RunID of the first issue (issue #1954; ADR-0030 §"Public
+	// BatchId"; ADR-0032 §"Row-level action resolution"). When the
+	// manifest has no BatchId (a historical/legacy case), fall back
+	// to the per-row Key so the row still has a stable identity.
 	if active.BatchID != "" {
 		return active.BatchID
+	}
+	if active.Key != "" {
+		return active.Key
 	}
 	base := filepath.Base(active.Dir)
 	if base != "" && base != "." && base != "/" {

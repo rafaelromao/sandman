@@ -3055,8 +3055,18 @@ func TestPortal_BatchKeyForActive_FallbackChain(t *testing.T) {
 		want   string
 	}{
 		{
-			name:   "Key wins when populated",
-			active: portalActiveRun{Key: "active-1", BatchID: "manifest-1", Dir: "/tmp/active-1", RunID: "active-1-42"},
+			// Issue #1954 (slice 11): BatchID (public BatchId) wins
+			// over Key (per-row RunID) so the portal Batch label and
+			// Details tab render the public BatchId for multi-issue
+			// active rows. Pre-#1917 this case expected "per-row-1";
+			// post-#1917 the public BatchId takes priority.
+			name:   "BatchID (public BatchId) wins over populated Key",
+			active: portalActiveRun{Key: "per-row-1", BatchID: "public-2", Dir: "/tmp/public-2/runs/per-row-1", RunID: "per-row-1"},
+			want:   "public-2",
+		},
+		{
+			name:   "Key used when BatchID is empty",
+			active: portalActiveRun{Key: "active-1", BatchID: "", Dir: "/tmp/active-1", RunID: "active-1-42"},
 			want:   "active-1",
 		},
 		{
