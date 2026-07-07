@@ -123,23 +123,21 @@ Row-level actions (archive, abort, log download) MUST resolve by per-row RunID, 
 
 | Action | Input | Resolver | Per-run artifact |
 |--------|-------|----------|------------------|
-| Archive | `runId` (per-row RunID) | `resolveBatchFromRunIDFastOrScan` → index batch | `archive/<batch-id>/runs/<perRowRunID>/` |
-| Abort | `runKey` (per-row RunID) | `portalRunForKey` → `portalRun.RunID` → `<batchDir>/runs/<perRowRunID>/run.sock` | `<batchDir>/runs/<perRowRunID>/run.sock` |
-| Log download | `/api/runs?runKey=<perRowRunID>` → `/api/logs?path=<per-row-log-path>` | keyed row lookup → `runLogPath` → `handleLogs` | `<batchDir>/runs/<perRowRunID>/run.log` |
-| Whole-batch archive | `batchId` (CLI only) | `idx.Resolve(batchId)` → index entry | `archive/<batch-id>/` |
+| Per-row archive | `runId` (per-row RunID) | `resolveBatchEntryForRunID` -> index entry | `archive/<batch-id>/runs/<perRowRunID>/` |
+| Abort | `runKey` (per-row RunID) | `portalRunForKey` -> `portalRun.RunID` -> `<batchDir>/runs/<perRowRunID>/run.sock` | `<batchDir>/runs/<perRowRunID>/run.sock` |
+| Log download | `/api/runs?runKey=<perRowRunID>` -> `/api/logs?path=<per-row-log-path>` | keyed row lookup -> `runLogPath` -> `handleLogs` | `<batchDir>/runs/<perRowRunID>/run.log` |
+| Whole-batch archive | `batchId` (CLI only) | `idx.Resolve(batchId)` -> index entry | `archive/<batch-id>/` |
 
 Two distinct helpers resolve row-action inputs because their fallback contracts differ (issue #1923 slice 7):
 
-- `resolveBatchFromRunIDFastOrScan` (package-level, `internal/cmd/portal.go`) is the **archive-endpoint hot path**. The fast path is `idx.ResolveBatch(runID)`, which matches the public BatchId directly; the fallback is a **stat-only** scan that returns the first batch whose `runs/<runID>/run.json` exists on disk (the archive endpoint trusts that any batch with a per-row run folder owns that row).
-- `resolveBatchFromRowID` (method, `internal/cmd/portal_runs_view.go`) is the log/portal runs-view path. The fast path is identical; the fallback **parses** each `runs/<runID>/run.json`, reads `run.json.batchId`, and **re-resolves that id in the index** — returning the batch that the per-row manifest names, not just any batch whose file is on disk.
+- `resolveBatchEntryForRunID` (package-level, `internal/cmd/portal.go`) is the archive-endpoint hot path. The fast path is `idx.Resolve(runID)`, which matches the batch entry id directly; the second path walks each entry's `Runs[]` records so already-archived rows resolve from the index without an on-disk probe; the final fallback is a stat-only scan that returns the first entry whose `runs/<runID>/run.json` exists on disk.
+- `resolveBatchFromRowID` (method, `internal/cmd/portal_runs_view.go`) is the log/portal runs-view path. Its fast path is also `idx.Resolve(runID)`, but the fallback parses each `runs/<runID>/run.json`, reads `run.json.batchId`, and re-resolves that id in the index so the log path follows the manifest's declared owner.
 
-The fast path succeeds for every batch kind in production except multi-issue issue runs (`<sid>-<ts>-<firstIssue>+<N>` vs `<sid>-<ts>-<firstIssue>`); the fallback path covers multi-issue batches and any legacy batches provisioned before the #1917 slice-1 contract change pinned `manifest.BatchId == public BatchId`. The resolver contract is "accept either form, return the right batch" — operators do not need to know which kind they are working against, and each helper hides that detail behind its own focused fallback contract.
+The fast path succeeds for every batch kind in production except multi-issue issue runs (`<sid>-<ts>-<firstIssue>+<N>` vs `<sid>-<ts>-<firstIssue>`); the fallback path covers multi-issue batches and any legacy batches provisioned before the #1917 slice-1 contract change pinned `manifest.BatchId == public BatchId`. The resolver contract is "accept either form, return the right entry" - operators do not need to know which kind they are working against, and each helper hides that detail behind its own focused fallback contract.
 
-The per-run folder is the canonical target for every row action. The archive directory is named after the public BatchId, so the on-disk tree after archive mirrors the active tree 1:1 (`archive/<batch-id>/runs/<perRowRunID>/run.json` corresponds to `batches/<batch-id>/runs/<perRowRunID>/run.json`). The success response surfaces the resolved batch id even when the request body used the per-row form, so the portal UI sees a canonical id regardless of which form it sent.
+The per-run folder is the canonical target for every row action. The archive directory is named after the batch entry id (the public BatchId), so the on-disk tree after per-row archive mirrors the active tree 1:1 (`archive/<batch-id>/runs/<perRowRunID>/run.json` corresponds to `batches/<batch-id>/runs/<perRowRunID>/run.json`). Per-row archive moves ONLY `runs/<perRowRunID>/`, leaves sibling rows and the batch daemon live, and writes a `Runs[runID]` record carrying `status: "archived"` and the relative `archivePath` so the row survives crash recovery. The portal archive endpoint returns empty `200` on success and `409` with `archivePath` echoed in the body when the row is already archived.
 
-Per-row archive moves ONLY `runs/<perRowRunID>/`, leaves sibling rows and the batch daemon live, and writes a `Runs[runID]` record carrying `status: "archived"` and the relative `archivePath` so the row survives crash recovery. The portal archive endpoint returns empty `200` on success and `409` with `archivePath` echoed in the body when the row is already archived.
-
-Whole-batch archive (CLI `archive batch <batchId>` only — not exposed via HTTP) moves the entire batch dir to `.sandman/archive/<batchId>/` and flips the entry-level `Status` to `archived`. The daemon control socket must be gone for whole-batch archive to succeed; per-row archive has no daemon liveness requirement because the targeted row is terminal by contract.
+Whole-batch archive (CLI `archive batch <batchId>` only - not exposed via HTTP) moves the entire batch dir to `.sandman/archive/<batchId>/` and flips the entry-level `Status` to `archived`. The daemon control socket must be gone for whole-batch archive to succeed; per-row archive has no daemon liveness requirement because the targeted row is terminal by contract.
 
 #### Identity table: when per-row RunID equals the public BatchId
 

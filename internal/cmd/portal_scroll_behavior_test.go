@@ -67,7 +67,7 @@ const sandbox = {
     expandedRunKey: null,
     runs: [{ key: 'r1', runId: 'r1', kind: 'completed', status: 'success', issueLabel: '#1', issueNumber: 1 }],
     tabs: {},
-    activeBatches: false,
+		activeBatches: false,
     showArchived: false,
     selectedStatus: '',
   },

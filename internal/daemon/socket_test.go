@@ -284,7 +284,7 @@ func TestFindDeadRunBatches_NoRunsDir(t *testing.T) {
 	baseDir := testenv.MkdirShort(t, "sm-sock-")
 	batches, err := FindDeadRunBatches(baseDir)
 	if err != nil {
-		t.Fatalf("FindDeadRunBatches: %v", err)
+		t.Fatalf("FindDeadRunEntries: %v", err)
 	}
 	if len(batches) != 0 {
 		t.Errorf("expected 0 dead batches, got %d", len(batches))
@@ -313,7 +313,7 @@ func TestFindDeadRunBatches_LiveSocketExcluded(t *testing.T) {
 
 	batches, err := FindDeadRunBatches(baseDir)
 	if err != nil {
-		t.Fatalf("FindDeadRunBatches: %v", err)
+		t.Fatalf("FindDeadRunEntries: %v", err)
 	}
 	if len(batches) != 0 {
 		t.Errorf("expected active batch to be excluded, got %d dead batches", len(batches))
@@ -343,7 +343,7 @@ func TestFindDeadRunBatches_DeadSocketIncluded(t *testing.T) {
 
 	batches, err := FindDeadRunBatches(baseDir)
 	if err != nil {
-		t.Fatalf("FindDeadRunBatches: %v", err)
+		t.Fatalf("FindDeadRunEntries: %v", err)
 	}
 	if len(batches) != 1 {
 		t.Fatalf("expected 1 dead batch, got %d", len(batches))
@@ -371,7 +371,7 @@ func TestFindDeadRunBatches_NoManifestFile(t *testing.T) {
 
 	batches, err := FindDeadRunBatches(baseDir)
 	if err != nil {
-		t.Fatalf("FindDeadRunBatches: %v", err)
+		t.Fatalf("FindDeadRunEntries: %v", err)
 	}
 	if len(batches) != 1 {
 		t.Fatalf("expected 1 dead batch (dead dir without manifest), got %d", len(batches))
@@ -426,7 +426,7 @@ func TestFindDeadRunBatches_MultipleDeadBatches(t *testing.T) {
 
 	batches, err := FindDeadRunBatches(baseDir)
 	if err != nil {
-		t.Fatalf("FindDeadRunBatches: %v", err)
+		t.Fatalf("FindDeadRunEntries: %v", err)
 	}
 	if len(batches) != 2 {
 		t.Fatalf("expected 2 dead batches, got %d", len(batches))
