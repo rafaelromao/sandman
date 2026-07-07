@@ -149,12 +149,6 @@ func runReviewOneShot(cmd *cobra.Command, deps Dependencies, cfg *config.Config,
 			return fmt.Errorf("resolve repo root: %w", err)
 		}
 	}
-	// Resolve repoRoot to an absolute path so the per-row worktree
-	// path (issue #1953) is absolute regardless of how the caller
-	// configured deps.RepoRoot.
-	if abs, absErr := filepath.Abs(repoRoot); absErr == nil {
-		repoRoot = abs
-	}
 	sandmanDir := paths.NewLayout(cfg, repoRoot).SandmanDir
 
 	ts, shortid, err := runid.NewBatch()
