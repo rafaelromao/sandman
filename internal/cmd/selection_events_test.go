@@ -140,6 +140,74 @@ func TestRunSelectionPhaseWithEvents_EmitsRunStartedBeforeAgentAndFinishedAfterO
 	}
 }
 
+// TestRunSelectionPhaseWithEvents_PayloadsCarryBatchId pins issue #1918
+// slice 2: the auto-select run.started and run.finished event payloads
+// MUST include `batch_id` equal to the selector BatchId (which equals
+// the selector RunID by contract). Without it, the portal cannot
+// resolve the auto-select row's batch identity from the event stream
+// and the slice 2 contract "auto-select event payload batch_id matches
+// the selector BatchId" is violated.
+func TestRunSelectionPhaseWithEvents_PayloadsCarryBatchId(t *testing.T) {
+	sandmanDir := filepath.Join(shortTempDir(t), ".sandman")
+	if err := os.MkdirAll(sandmanDir, 0o755); err != nil {
+		t.Fatalf("mkdir sandman: %v", err)
+	}
+	gh := &fakeGitHubClient{
+		searchIssuesResult: []github.Issue{
+			{Number: 1, Title: "Feature A", Body: "A", Labels: []string{"bug"}},
+			{Number: 2, Title: "Feature B", Body: "B", Labels: []string{"bug"}},
+		},
+	}
+	cfg := &config.Config{
+		Agent:         "test-agent",
+		ReviewCommand: "/oc review",
+	}
+	cfg.AgentProviders = map[string]config.Agent{
+		"test-agent": {
+			Command: fmt.Sprintf("mkdir -p %s/state && echo '[2, 1]' > %s/state/selected-issues.json", sandmanDir, sandmanDir),
+		},
+	}
+	log := &recordingEventLog{}
+
+	selected, _, _, err := runSelectionPhaseWithEvents(context.Background(), gh, 5, sandmanDir, "test-agent", "", cfg, []int{1, 2}, "label:bug is:open", log)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(selected) != 2 {
+		t.Fatalf("expected 2 selected, got %v", selected)
+	}
+
+	started, finished := findAutoSelectEvents(log)
+	if started == nil {
+		t.Fatal("expected a run.started event with auto-select kind")
+	}
+	if finished == nil {
+		t.Fatal("expected a run.finished event with auto-select kind")
+	}
+
+	startedBatchID, ok := started.Payload["batch_id"].(string)
+	if !ok || startedBatchID == "" {
+		t.Fatalf("expected started payload batch_id (non-empty string), got %v (type %T)", started.Payload["batch_id"], started.Payload["batch_id"])
+	}
+	if startedBatchID != started.RunID {
+		t.Errorf("started batch_id %q does not match selector RunID %q", startedBatchID, started.RunID)
+	}
+	if !autoSelectRunIDRe.MatchString(startedBatchID) {
+		t.Errorf("started batch_id %q does not match auto-select pattern %s", startedBatchID, autoSelectRunIDRe.String())
+	}
+
+	finishedBatchID, ok := finished.Payload["batch_id"].(string)
+	if !ok || finishedBatchID == "" {
+		t.Fatalf("expected finished payload batch_id (non-empty string), got %v (type %T)", finished.Payload["batch_id"], finished.Payload["batch_id"])
+	}
+	if finishedBatchID != started.RunID {
+		t.Errorf("finished batch_id %q does not match selector RunID %q", finishedBatchID, started.RunID)
+	}
+	if finishedBatchID != startedBatchID {
+		t.Errorf("finished batch_id %q does not match started batch_id %q", finishedBatchID, startedBatchID)
+	}
+}
+
 func TestRunSelectionPhaseWithEvents_AgentNonZeroExitEmitsFailureAndPropagatesError(t *testing.T) {
 	sandmanDir := filepath.Join(shortTempDir(t), ".sandman")
 	if err := os.MkdirAll(sandmanDir, 0o755); err != nil {
