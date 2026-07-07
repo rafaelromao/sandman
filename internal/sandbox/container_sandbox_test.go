@@ -168,6 +168,21 @@ func TestContainerSandbox_WorkDir_DelegatesToWorktree(t *testing.T) {
 	}
 }
 
+func TestContainerSandbox_containerWorkDir_UsesWorkspacePrefixForRelativeRepoPath(t *testing.T) {
+	repoPath := "."
+	repoRoot, err := filepath.Abs(repoPath)
+	if err != nil {
+		t.Fatalf("resolve repo root: %v", err)
+	}
+	worktreePath := filepath.Join(repoRoot, ".sandman", "worktrees", "branch")
+	wt := &fakeWorktreeForContainer{workDir: worktreePath}
+	sb := NewContainerSandbox(wt, &fakeContainer{id: "abc123"}, "docker", repoPath)
+
+	if got := sb.containerWorkDir(); got != "/workspace/.sandman/worktrees/branch" {
+		t.Fatalf("expected container workdir /workspace/.sandman/worktrees/branch, got %q", got)
+	}
+}
+
 func TestContainerSandbox_WritePrompt_DelegatesToWorktree(t *testing.T) {
 	wt := &fakeWorktreeForContainer{}
 	ctr := &fakeContainer{id: "abc123"}
