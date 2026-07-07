@@ -304,6 +304,11 @@ var elixirVersionPattern = regexp.MustCompile(`(\d+)\.(\d+)`)
 type Scaffolder struct{}
 
 // Scaffold writes config.yaml, Dockerfile, and prompt.md into .sandman/.
+//
+// The soft migration that copied a pre-existing
+// `.sandman/priority-selection-prompt.md` to `.sandman/auto-selection-prompt.md`
+// is no longer performed; operators with a customized legacy file must rename
+// it to `.sandman/auto-selection-prompt.md` manually before re-running `init`.
 func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 	sandmanDir := filepath.Join(repoRoot, ".sandman")
 
@@ -447,16 +452,9 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 	}
 
 	autoPromptPath := filepath.Join(sandmanDir, "auto-selection-prompt.md")
-	legacyPromptPath := filepath.Join(sandmanDir, "priority-selection-prompt.md")
 	if _, err := os.Stat(autoPromptPath); os.IsNotExist(err) {
-		if legacyData, err := os.ReadFile(legacyPromptPath); err == nil {
-			if err := atomicfs.WriteAtomic(autoPromptPath, legacyData, 0644); err != nil {
-				return fmt.Errorf("write auto-selection-prompt.md: %w", err)
-			}
-		} else {
-			if err := atomicfs.WriteAtomic(autoPromptPath, []byte(prompt.DefaultPriorityPrompt()), 0644); err != nil {
-				return fmt.Errorf("write auto-selection-prompt.md: %w", err)
-			}
+		if err := atomicfs.WriteAtomic(autoPromptPath, []byte(prompt.DefaultPriorityPrompt()), 0644); err != nil {
+			return fmt.Errorf("write auto-selection-prompt.md: %w", err)
 		}
 	}
 
