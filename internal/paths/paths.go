@@ -2,6 +2,7 @@ package paths
 
 import (
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/rafaelromao/sandman/internal/config"
@@ -10,6 +11,27 @@ import (
 // Layout groups the canonical on-disk locations for a Sandman repo. Every
 // field is resolved against RepoRoot so the orchestrator, agent run, portal,
 // and clean command stop hand-rolling filepath.Join(".sandman", ...).
+//
+// The layout covers four groups:
+//
+//	(a) Scaffold state under SandmanDir: DockerfilePath, ConfigPath,
+//	    PromptPath, AutoSelectionPromptPath.
+//	(b) Repo-global state: BatchesIndexPath, EventsLogPath, plus StateDir
+//	    and its children (PromptVersionPath, BadgeControlFilePath,
+//	    SelectedIssuesPath, PRHeadShaPath, PRAddressedCommentsPath).
+//	(c) Per-batch + per-row tree under BatchesDir: BatchDir, BatchManifestPath,
+//	    BatchSocketPath, BatchConfigSnapshotDir, RunFolder, RunLogPath,
+//	    RunSocketPath, RunManifestPath, ReviewStatePath, RunConfigSnapshotDir.
+//	(d) Review-daemon state under ReviewsDir(): ReviewPromptPath,
+//	    QualityRulesPath, ReviewSocketPath.
+//
+// Out-of-repo tempdirs (os.TempDir()/sandman-config-*,
+// os.TempDir()/sandman-gitconfig-*) and ~/.agents/skills/sandman/** are
+// intentionally not exposed on the layout.
+//
+// Note: the StateDir field doubles as its accessor; there is no StateDir()
+// method because Go forbids a method and a field with the same name on the
+// same struct.
 type Layout struct {
 	RepoRoot         string
 	SandmanDir       string
@@ -18,6 +40,7 @@ type Layout struct {
 	BatchesIndexPath string
 	EventsLogPath    string
 	ArchiveDir       string
+	StateDir         string
 }
 
 // BatchDir returns the root directory for a batch: .sandman/batches/<batchID>
@@ -29,6 +52,111 @@ func (l Layout) BatchDir(batchID string) string {
 // This is where run.json, run.log, and run.sock live.
 func (l Layout) RunFolder(batchID, runID string) string {
 	return filepath.Join(l.BatchDir(batchID), "runs", runID)
+}
+
+// ReviewsDir returns the review-daemon directory: <repo>/.sandman/reviews
+func (l Layout) ReviewsDir() string {
+	return filepath.Join(l.SandmanDir, "reviews")
+}
+
+// ReviewPromptPath returns the review prompt file: <repo>/.sandman/reviews/review-prompt.md
+func (l Layout) ReviewPromptPath() string {
+	return filepath.Join(l.ReviewsDir(), "review-prompt.md")
+}
+
+// QualityRulesPath returns the quality rules file: <repo>/.sandman/reviews/quality-rules.md
+func (l Layout) QualityRulesPath() string {
+	return filepath.Join(l.ReviewsDir(), "quality-rules.md")
+}
+
+// ReviewSocketPath returns the review daemon socket: <repo>/.sandman/reviews/review.sock
+func (l Layout) ReviewSocketPath() string {
+	return filepath.Join(l.ReviewsDir(), "review.sock")
+}
+
+// DockerfilePath returns the sandbox Dockerfile: <repo>/.sandman/Dockerfile
+func (l Layout) DockerfilePath() string {
+	return filepath.Join(l.SandmanDir, "Dockerfile")
+}
+
+// ConfigPath returns the sandman config file: <repo>/.sandman/config.yaml
+func (l Layout) ConfigPath() string {
+	return filepath.Join(l.SandmanDir, "config.yaml")
+}
+
+// PromptPath returns the default task prompt file: <repo>/.sandman/prompt.md
+func (l Layout) PromptPath() string {
+	return filepath.Join(l.SandmanDir, "prompt.md")
+}
+
+// AutoSelectionPromptPath returns the auto-selection prompt file: <repo>/.sandman/auto-selection-prompt.md
+func (l Layout) AutoSelectionPromptPath() string {
+	return filepath.Join(l.SandmanDir, "auto-selection-prompt.md")
+}
+
+// RunLogPath returns the run log file: <batchesDir>/<batchID>/runs/<runID>/run.log
+func (l Layout) RunLogPath(batchID, runID string) string {
+	return filepath.Join(l.RunFolder(batchID, runID), "run.log")
+}
+
+// RunSocketPath returns the run socket: <batchesDir>/<batchID>/runs/<runID>/run.sock
+func (l Layout) RunSocketPath(batchID, runID string) string {
+	return filepath.Join(l.RunFolder(batchID, runID), "run.sock")
+}
+
+// RunManifestPath returns the run manifest file: <batchesDir>/<batchID>/runs/<runID>/run.json
+func (l Layout) RunManifestPath(batchID, runID string) string {
+	return filepath.Join(l.RunFolder(batchID, runID), "run.json")
+}
+
+// ReviewStatePath returns the per-run review state file: <batchesDir>/<batchID>/runs/<runID>/review-state.json
+func (l Layout) ReviewStatePath(batchID, runID string) string {
+	return filepath.Join(l.RunFolder(batchID, runID), "review-state.json")
+}
+
+// RunConfigSnapshotDir returns the per-run config snapshot directory: <batchesDir>/<batchID>/runs/<runID>/config
+func (l Layout) RunConfigSnapshotDir(batchID, runID string) string {
+	return filepath.Join(l.RunFolder(batchID, runID), "config")
+}
+
+// BatchManifestPath returns the batch manifest file: <batchesDir>/<batchID>/batch.json
+func (l Layout) BatchManifestPath(batchID string) string {
+	return filepath.Join(l.BatchDir(batchID), "batch.json")
+}
+
+// BatchSocketPath returns the batch socket: <batchesDir>/<batchID>/batch.sock
+func (l Layout) BatchSocketPath(batchID string) string {
+	return filepath.Join(l.BatchDir(batchID), "batch.sock")
+}
+
+// BatchConfigSnapshotDir returns the per-batch config snapshot directory: <batchesDir>/<batchID>/config
+func (l Layout) BatchConfigSnapshotDir(batchID string) string {
+	return filepath.Join(l.BatchDir(batchID), "config")
+}
+
+// PromptVersionPath returns the prompt version marker: <repo>/.sandman/state/.prompt-version
+func (l Layout) PromptVersionPath() string {
+	return filepath.Join(l.StateDir, ".prompt-version")
+}
+
+// BadgeControlFilePath returns the badge hook control file: <repo>/.sandman/state/.built_with_sandman
+func (l Layout) BadgeControlFilePath() string {
+	return filepath.Join(l.StateDir, ".built_with_sandman")
+}
+
+// SelectedIssuesPath returns the auto-selection output file: <repo>/.sandman/state/selected-issues.json
+func (l Layout) SelectedIssuesPath() string {
+	return filepath.Join(l.StateDir, "selected-issues.json")
+}
+
+// PRHeadShaPath returns the cached PR head sha file: <repo>/.sandman/state/<N>.head_sha
+func (l Layout) PRHeadShaPath(prNumber int) string {
+	return filepath.Join(l.StateDir, strconv.Itoa(prNumber)+".head_sha")
+}
+
+// PRAddressedCommentsPath returns the addressed-comments file for a PR: <repo>/.sandman/state/<N>.addressed_comments
+func (l Layout) PRAddressedCommentsPath(prNumber int) string {
+	return filepath.Join(l.StateDir, strconv.Itoa(prNumber)+".addressed_comments")
 }
 
 // NewLayout resolves a Layout for the given repo root, honoring cfg.WorktreeDir
@@ -53,5 +181,6 @@ func NewLayout(cfg *config.Config, repoRoot string) Layout {
 		BatchesIndexPath: filepath.Join(repoRoot, ".sandman", "batches.json"),
 		EventsLogPath:    filepath.Join(repoRoot, ".sandman", "events.jsonl"),
 		ArchiveDir:       filepath.Join(repoRoot, ".sandman", "archive"),
+		StateDir:         filepath.Join(repoRoot, ".sandman", "state"),
 	}
 }
