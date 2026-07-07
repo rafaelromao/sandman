@@ -32,13 +32,24 @@ The shortid is placed first to maximise collision resistance within the same tim
 
 | Kind | Template |
 |------|----------|
-| Regular issue | `<shortid>-<ts>-<firstIssueNum>+<N>` |
+| Regular issue (single) | `<shortid>-<ts>-<issue>` (no +N suffix) |
+| Regular issue (multi)  | `<shortid>-<ts>-<firstIssueNum>+<additionalCount>` |
 | Review | `<shortid>-<ts>-PR<prNum>` |
 | Auto-select | `<shortid>-<ts>-auto-<N>` |
 | Prompt-only (with user id) | `<shortid>-<ts>-<userid>` |
 | Prompt-only (without user id) | `<shortid>-<ts>` |
 
-`<N>` is the count (number of issues in a batch, number of candidates in auto-select). `firstIssueNum` is the first issue number for regular issues. For issue batches, `+<N>` means "primary issue + N more issues" (e.g., `42+2` = 3 issues total).
+`<N>` is the count (number of issues in a batch, number of candidates in auto-select). `firstIssueNum` is the first issue number for regular issues.
+
+Per issue #1917 (slice 1 of #1916), the issue batch template uses **additional count** (not total count):
+
+- Single issue (`n==1`): `<sid>-<ts>-<num>` (no `+N` suffix).
+- Two issues (`n==2`): `<sid>-<ts>-<firstIssue>+1`.
+- Nine issues (`n==9`): `<sid>-<ts>-<firstIssue>+8`.
+
+The omitted suffix on single-issue batches keeps the public BatchId from carrying redundant information; `+<additionalCount>` makes the suffix meaningful (it counts the issues *beyond* the first). The per-row RunID still uses `<sid>-<ts>-<issueNum>` (no suffix), so the per-row identity is unchanged.
+
+The public BatchId (== batch folder basename) MUST agree with `batch.json.batchId`, `run.json.BatchID`, and the event payload `batch_id` field. The portal Batch label and Details tab render the public BatchId.
 
 ### Per-row RunID templates
 
