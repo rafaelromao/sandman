@@ -4875,18 +4875,18 @@ func TestRun_Continue_MultiIssueFreshBatchAndRunIDs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load batches index: %v", err)
 	}
-	if len(idx.Entries) != 1 {
+	if len(idx.Batches) != 1 {
 		t.Logf("buf: %s", buf.String())
-		t.Fatalf("expected exactly 1 batch index entry for the continuation, got %d (entries=%v)", len(idx.Entries), idx.Entries)
+		t.Fatalf("expected exactly 1 batch index entry for the continuation, got %d (batches=%v)", len(idx.Batches), idx.Batches)
 	}
 	wantPublicBatchID := spy.req.RunShortID + "-" + spy.req.RunTS + "-42+1"
-	if got := idx.Entries[0].ID; got != wantPublicBatchID {
+	if got := idx.Batches[0].ID; got != wantPublicBatchID {
 		t.Errorf("continuation entry ID = %q, want %q (fresh public BatchId for multi-issue)", got, wantPublicBatchID)
 	}
-	if idx.Entries[0].ID == "prev-ts-abcd-42" || idx.Entries[0].ID == "prev-ts-abcd-43" {
-		t.Errorf("continuation entry ID collided with prior per-row RunID: %q", idx.Entries[0].ID)
+	if idx.Batches[0].ID == "prev-ts-abcd-42" || idx.Batches[0].ID == "prev-ts-abcd-43" {
+		t.Errorf("continuation entry ID collided with prior per-row RunID: %q", idx.Batches[0].ID)
 	}
-	if got := filepath.Base(idx.Entries[0].Path); got != wantPublicBatchID {
+	if got := filepath.Base(idx.Batches[0].Path); got != wantPublicBatchID {
 		t.Errorf("continuation entry path basename = %q, want fresh public BatchId %q", got, wantPublicBatchID)
 	}
 }
