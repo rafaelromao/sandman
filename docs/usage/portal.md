@@ -70,6 +70,19 @@ Use the picker to switch between the continuation and the previous run without c
 
 **Existing `.sandman` migration is out of scope.** The slice-1 contract change (issue #1917) and the identity alignment that followed (slices 2–6 of parent PRD #1916) rename the public BatchId surface and the per-row RunID templates. Batches provisioned before the contract change carry old id shapes (legacy `+1` single-issue, total-count `+N`, prompt-only without the `prompt` segment, etc.) and are not rewritten in place. After upgrading, the operator should delete `.sandman` and rebuild; no migration tool ships for the old layout.
 
+### Public BatchId vs per-row RunID
+
+The portal surfaces two distinct identifiers per the slice-1 contract ([ADR-0030](../adr/0030-standardize-run-id-and-run-dir.md) and [ADR-0032](../adr/0032-sandman-layout-redesign.md) §`batch.json` schema and §Row-level action resolution identity table):
+
+- **Public BatchId** — the batch-level identifier rendered in the Batch label and Details tab. Equals the batch folder basename (`batches/<id>/`'s last segment), `batch.json.batchId`, `run.json.BatchID`, and the event payload `batch_id`.
+- **Per-row RunID** — the row-level identifier rendered per row and used by row-level actions (archive, abort, log download). Equals `run.json.runID` and the event payload `run_id`.
+
+For multi-issue batches the two diverge: the public BatchId carries the `+N` additional count suffix and the per-row RunID does not. For every other kind (single-issue, prompt-only, review, auto-select) the two are identical. See [ADR-0032](../adr/0032-sandman-layout-redesign.md) §Row-level action resolution for the full kind-by-kind identity table.
+
+### Existing `.sandman` migration is out of scope
+
+**Existing `.sandman` migration is out of scope.** The slice-1 contract change (issue #1917) and the identity alignment that followed (slices 2–6 of parent PRD #1916) rename the public BatchId surface and the per-row RunID templates. Batches provisioned before the contract change carry old id shapes (legacy `+1` single-issue, total-count `+N`, prompt-only without the `prompt` segment, etc.) and are not rewritten in place. After upgrading, the operator should delete `.sandman` and rebuild; no migration tool ships for the old layout.
+
 ## Stop (Abort)
 
 Use the **Stop** button in the portal UI to abort a running issue. The portal calls:
@@ -101,6 +114,24 @@ Special states return fixed messages:
 |--------|---------|
 | `blocked` | `Blocked. Waiting on unresolved blockers.` (or listed blocker issue numbers) |
 | `queued` | `Queued. Waiting to start.` |
+
+## Archive
+
+Use the **Archive** button on a completed row to move that single run to `.sandman/archive/<batchId>/runs/<runId>/`. The portal calls:
+
+```
+POST /api/runs/archive
+{"runId": "<per-row RunID>"}
+```
+
+The endpoint is strictly per-row: it accepts only the row RunID, validates the row's `run.json.Status` is terminal (success / failure / aborted / blocked), and returns:
+
+- empty `200` on success — the next `/api/runs` poll re-renders the row with the `Archived` chip and updates the log download URL to point at `.sandman/archive/<batchId>/runs/<runId>/run.log`
+- `409` with `{"error": "...", "archivePath": "..."}` when the row is already archived; the body echoes the existing archive path so the operator can inspect it
+- `409` with a non-terminal message when the row's `run.json.Status` is still `active`
+- `404` when the row id does not resolve on disk or in the index
+
+The portal does not dispatch per-row vs whole-batch — the HTTP surface only exposes per-row archive. Whole-batch archive (`sandman archive batch <batchId>`) is a CLI-only subcommand.
 
 ## Notes
 

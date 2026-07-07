@@ -50,7 +50,7 @@ func TestCleanupOrphanedTestBatches_NoMatchAndNoSocket_RemovesDir(t *testing.T) 
 
 	removed, err := CleanupOrphanedTestBatches(baseDir, log, func(string) bool { return false })
 	if err != nil {
-		t.Fatalf("CleanupOrphanedTestBatches: %v", err)
+		t.Fatalf("CleanupOrphanedTestEntries: %v", err)
 	}
 
 	if len(removed) != 1 || removed[0] != orphanDir {
@@ -72,7 +72,7 @@ func TestCleanupOrphanedTestBatches_DirNameMatchesRunStarted_KeepsDir(t *testing
 
 	removed, err := CleanupOrphanedTestBatches(baseDir, log, func(string) bool { return false })
 	if err != nil {
-		t.Fatalf("CleanupOrphanedTestBatches: %v", err)
+		t.Fatalf("CleanupOrphanedTestEntries: %v", err)
 	}
 
 	if len(removed) != 0 {
@@ -95,7 +95,7 @@ func TestCleanupOrphanedTestBatches_RunSubdirMatchesRunStarted_KeepsDir(t *testi
 
 	removed, err := CleanupOrphanedTestBatches(baseDir, log, func(string) bool { return false })
 	if err != nil {
-		t.Fatalf("CleanupOrphanedTestBatches: %v", err)
+		t.Fatalf("CleanupOrphanedTestEntries: %v", err)
 	}
 
 	if len(removed) != 0 {
@@ -123,7 +123,7 @@ func TestCleanupOrphanedTestBatches_LiveBatchSock_KeepsDirEvenWithNoMatchingEven
 
 	removed, err := CleanupOrphanedTestBatches(baseDir, log, IsRunActive)
 	if err != nil {
-		t.Fatalf("CleanupOrphanedTestBatches: %v", err)
+		t.Fatalf("CleanupOrphanedTestEntries: %v", err)
 	}
 
 	if len(removed) != 0 {
@@ -152,7 +152,7 @@ func TestCleanupOrphanedTestBatches_LiveRunSock_KeepsDirEvenWithNoMatchingEvents
 
 	removed, err := CleanupOrphanedTestBatches(baseDir, log, IsRunActive)
 	if err != nil {
-		t.Fatalf("CleanupOrphanedTestBatches: %v", err)
+		t.Fatalf("CleanupOrphanedTestEntries: %v", err)
 	}
 
 	if len(removed) != 0 {
@@ -175,7 +175,7 @@ func TestCleanupOrphanedTestBatches_NonDirEntries_Ignored(t *testing.T) {
 
 	removed, err := CleanupOrphanedTestBatches(baseDir, log, func(string) bool { return false })
 	if err != nil {
-		t.Fatalf("CleanupOrphanedTestBatches: %v", err)
+		t.Fatalf("CleanupOrphanedTestEntries: %v", err)
 	}
 	if len(removed) != 0 {
 		t.Fatalf("removed = %v, want none", removed)
@@ -191,7 +191,7 @@ func TestCleanupOrphanedTestBatches_MissingBatchesDir_ReturnsEmptyNoError(t *tes
 
 	removed, err := CleanupOrphanedTestBatches(baseDir, log, func(string) bool { return false })
 	if err != nil {
-		t.Fatalf("CleanupOrphanedTestBatches: %v", err)
+		t.Fatalf("CleanupOrphanedTestEntries: %v", err)
 	}
 	if len(removed) != 0 {
 		t.Fatalf("removed = %v, want empty", removed)
@@ -238,7 +238,7 @@ func TestCleanupOrphanedTestBatches_ArchiveDirNotTouched(t *testing.T) {
 
 	removed, err := CleanupOrphanedTestBatches(baseDir, log, func(string) bool { return false })
 	if err != nil {
-		t.Fatalf("CleanupOrphanedTestBatches: %v", err)
+		t.Fatalf("CleanupOrphanedTestEntries: %v", err)
 	}
 
 	if len(removed) != 1 || removed[0] != orphanBatchDir {
@@ -264,7 +264,7 @@ func TestCleanupOrphanedTestBatches_DeterministicOrder(t *testing.T) {
 
 	removed, err := CleanupOrphanedTestBatches(baseDir, log, func(string) bool { return false })
 	if err != nil {
-		t.Fatalf("CleanupOrphanedTestBatches: %v", err)
+		t.Fatalf("CleanupOrphanedTestEntries: %v", err)
 	}
 
 	bases := make([]string, len(removed))

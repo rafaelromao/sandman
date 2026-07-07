@@ -12,7 +12,7 @@ import (
 )
 
 // Both miss returns the typed not-found error.
-func TestPortalRunsView_ResolveBatchFromRowID_BothMiss(t *testing.T) {
+func TestPortalRunsView_ResolveFromRowID_BothMiss(t *testing.T) {
 	idx := &batchindex.Index{Version: batchindex.IndexVersion}
 
 	cases := []struct {
@@ -45,12 +45,12 @@ func TestPortalRunsView_ResolveBatchFromRowID_BothMiss(t *testing.T) {
 }
 
 // Exact match returns the index batch with Path populated.
-func TestPortalRunsView_ResolveBatchFromRowID_ExactMatch(t *testing.T) {
+func TestPortalRunsView_ResolveFromRowID_ExactMatch(t *testing.T) {
 	runID := "abcd-260618113825-42"
 	batchDir := filepath.Join(t.TempDir(), runID)
 	idx := &batchindex.Index{
 		Version: batchindex.IndexVersion,
-		Batches: []batchindex.Batch{
+		Entries: []batchindex.Entry{
 			{ID: runID, Path: batchDir, Kind: batchindex.KindIssue, Status: batchindex.StatusActive, CreatedAt: time.Now(), Issues: []int{42}},
 		},
 	}
@@ -71,7 +71,7 @@ func TestPortalRunsView_ResolveBatchFromRowID_ExactMatch(t *testing.T) {
 }
 
 // Fallback walks each batch's runs/<runID>/run.json, parses BatchID, and re-resolves it.
-func TestPortalRunsView_ResolveBatchFromRowID_FallbackByRunManifest(t *testing.T) {
+func TestPortalRunsView_ResolveFromRowID_FallbackByRunManifest(t *testing.T) {
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
 		t.Fatal(err)
@@ -97,7 +97,7 @@ func TestPortalRunsView_ResolveBatchFromRowID_FallbackByRunManifest(t *testing.T
 
 	idx := &batchindex.Index{
 		Version: batchindex.IndexVersion,
-		Batches: []batchindex.Batch{
+		Entries: []batchindex.Entry{
 			{ID: publicBatchID, Path: batchDir, Kind: batchindex.KindIssue, Status: batchindex.StatusActive, CreatedAt: time.Now(), Issues: []int{42}},
 		},
 	}
@@ -118,7 +118,7 @@ func TestPortalRunsView_ResolveBatchFromRowID_FallbackByRunManifest(t *testing.T
 }
 
 // Parsed BatchID not in the index surfaces the typed not-found error.
-func TestPortalRunsView_ResolveBatchFromRowID_FallbackBatchIdNotInIndex(t *testing.T) {
+func TestPortalRunsView_ResolveFromRowID_FallbackBatchIdNotInIndex(t *testing.T) {
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
 		t.Fatal(err)
@@ -145,7 +145,7 @@ func TestPortalRunsView_ResolveBatchFromRowID_FallbackBatchIdNotInIndex(t *testi
 
 	idx := &batchindex.Index{
 		Version: batchindex.IndexVersion,
-		Batches: []batchindex.Batch{
+		Entries: []batchindex.Entry{
 			{ID: publicBatchID, Path: batchDir, Kind: batchindex.KindIssue, Status: batchindex.StatusActive, CreatedAt: time.Now(), Issues: []int{42}},
 		},
 	}

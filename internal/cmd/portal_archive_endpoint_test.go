@@ -21,6 +21,37 @@ func newPortalArchiveHandlerForTest(t *testing.T, repoRoot string) http.Handler 
 	return newPortalHandler(repoRoot)
 }
 
+// writeManifestForArchive writes the supplied RunManifest to the
+// per-row location expected by the slice-8 archive contract
+// (runs/<runID>/run.json inside the batch dir). It mirrors the
+// older batch-root write so legacy slice-5 test fixtures keep
+// working without a rewrite. When the manifest carries BatchID but
+// no RunID, the run id falls back to the batch dir basename; when
+// neither is set, the file is written at the batch root as a
+// last-ditch fallback for fixtures that genuinely test whole-batch
+// state.
+func writeManifestForArchive(t *testing.T, batchDir string, manifest batchindex.RunManifest) error {
+	t.Helper()
+	runID := manifest.RunID
+	if runID == "" {
+		runID = manifest.BatchID
+	}
+	if runID == "" {
+		return batchindex.WriteManifest(batchDir, manifest)
+	}
+	runDir := filepath.Join(batchDir, "runs", runID)
+	if err := os.MkdirAll(runDir, 0755); err != nil {
+		return err
+	}
+	if manifest.BatchID == "" {
+		manifest.BatchID = filepath.Base(batchDir)
+	}
+	if manifest.RunID == "" {
+		manifest.RunID = runID
+	}
+	return batchindex.WriteManifest(runDir, manifest)
+}
+
 func postPortalArchive(t *testing.T, handler http.Handler, runID string) (*http.Response, []byte) {
 	t.Helper()
 	server := startPortalHTTPServer(t, handler)
@@ -61,10 +92,13 @@ func postPortalArchiveRaw(t *testing.T, handler http.Handler, rawBody string) (*
 	return resp, body
 }
 
-// TestPortal_ArchiveEndpointMovesCompletedRunToArchiveDirectory is the
-// tracer-bullet slice: a POST with {"runId": "<id>"} for a dead completed
-// run returns 200 with {"runId": <id>, "status": "archived"}, and the batch
-// directory is relocated from .sandman/batches/ to .sandman/archive/.
+// TestPortal_ArchiveEndpointMovesCompletedRunToArchiveDirectory is
+// the legacy tracer-bullet kept around for the slice-8 contract: a
+// POST with {"runId": "<id>"} for a dead completed run returns
+// empty 200, the per-row runs/<runID>/ folder moves to
+// .sandman/archive/<batchID>/runs/<runID>/, and the per-row Runs
+// record flips to archived. The batch dir remains in place under
+// .sandman/batches/ for any sibling rows.
 func TestPortal_ArchiveEndpointMovesCompletedRunToArchiveDirectory(t *testing.T) {
 	repoRoot, err := os.MkdirTemp("/tmp", "sm-archive-ok-")
 	if err != nil {
@@ -77,20 +111,22 @@ func TestPortal_ArchiveEndpointMovesCompletedRunToArchiveDirectory(t *testing.T)
 
 	runID := "abcd-260618113825-archive-ok"
 	batchDir := filepath.Join(repoRoot, ".sandman", "batches", runID)
-	if err := os.MkdirAll(batchDir, 0755); err != nil {
+	liveRunDir := filepath.Join(batchDir, "runs", runID)
+	if err := os.MkdirAll(liveRunDir, 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(batchDir, "marker.txt"), []byte("hello"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(liveRunDir, "marker.txt"), []byte("hello"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
-	batchManifest := batchindex.RunManifest{
+	runManifest := batchindex.RunManifest{
+		RunID:     runID,
 		BatchID:   runID,
 		Kind:      batchindex.KindIssue,
 		CreatedAt: time.Now(),
-		Status:    batchindex.RunManifestStatusActive,
+		Status:    batchindex.RunManifestStatusSuccess,
 	}
-	if err := batchindex.WriteManifest(batchDir, batchManifest); err != nil {
+	if err := batchindex.WriteManifest(liveRunDir, runManifest); err != nil {
 		t.Fatal(err)
 	}
 
@@ -111,32 +147,24 @@ func TestPortal_ArchiveEndpointMovesCompletedRunToArchiveDirectory(t *testing.T)
 		t.Fatalf("expected 200, got %d: %s", resp.StatusCode, body)
 	}
 
-	var payload struct {
-		RunID  string `json:"runId"`
-		Status string `json:"status"`
+	if len(bytesTrimSpace(body)) != 0 {
+		t.Errorf("expected empty 200 body, got %q", body)
 	}
-	if err := json.Unmarshal(body, &payload); err != nil {
-		t.Fatalf("unmarshal success body: %v: %s", err, body)
+	if _, err := os.Stat(liveRunDir); !os.IsNotExist(err) {
+		t.Fatalf("expected live run dir %q to be gone after archive, stat err = %v", liveRunDir, err)
 	}
-	if payload.RunID != runID {
-		t.Errorf("expected echoed runId %q, got %q", runID, payload.RunID)
+	if _, err := os.Stat(batchDir); err != nil {
+		t.Errorf("expected batch dir to remain (siblings live), got: %v", err)
 	}
-	if payload.Status != "archived" {
-		t.Errorf("expected status %q, got %q (body=%s)", "archived", payload.Status, body)
-	}
-
-	if _, err := os.Stat(batchDir); !os.IsNotExist(err) {
-		t.Fatalf("expected batch dir %q to be gone, stat err = %v", batchDir, err)
-	}
-	archivedDir := filepath.Join(repoRoot, ".sandman", "archive", runID)
-	info, err := os.Stat(archivedDir)
+	archivedRunDir := filepath.Join(repoRoot, ".sandman", "archive", runID, "runs", runID)
+	info, err := os.Stat(archivedRunDir)
 	if err != nil {
-		t.Fatalf("expected archive dir %q to exist, stat err = %v", archivedDir, err)
+		t.Fatalf("expected archive run dir %q to exist, stat err = %v", archivedRunDir, err)
 	}
 	if !info.IsDir() {
 		t.Fatalf("expected archive target to be a directory, got mode %s", info.Mode())
 	}
-	marker, err := os.ReadFile(filepath.Join(archivedDir, "marker.txt"))
+	marker, err := os.ReadFile(filepath.Join(archivedRunDir, "marker.txt"))
 	if err != nil {
 		t.Fatalf("expected marker file to follow the move: %v", err)
 	}
@@ -170,7 +198,7 @@ func TestPortal_ArchiveEndpoint_RejectsActiveRun(t *testing.T) {
 		CreatedAt: time.Now(),
 		Status:    batchindex.RunManifestStatusActive,
 	}
-	if err := batchindex.WriteManifest(batchDir, batchManifest); err != nil {
+	if err := writeManifestForArchive(t, batchDir, batchManifest); err != nil {
 		t.Fatal(err)
 	}
 	idx := batchindex.Index{Version: batchindex.IndexVersion, Batches: []batchindex.Batch{
@@ -186,7 +214,7 @@ func TestPortal_ArchiveEndpoint_RejectsActiveRun(t *testing.T) {
 	t.Cleanup(func() { portalRunLivenessProbe = originalProbe })
 
 	originalArchiver := portalRunArchiver
-	portalRunArchiver = func(string, string) error {
+	portalRunArchiver = func(string, string, string) error {
 		t.Fatalf("archiver must not be called for an active run")
 		return nil
 	}
@@ -202,7 +230,7 @@ func TestPortal_ArchiveEndpoint_RejectsActiveRun(t *testing.T) {
 	if err := json.Unmarshal(body, &payload); err != nil {
 		t.Fatalf("unmarshal error body: %v: %s", err, body)
 	}
-	if !strings.Contains(strings.ToLower(payload.Error), "active") {
+	if !strings.Contains(strings.ToLower(payload.Error), "terminal") {
 		t.Errorf("expected error message to mention 'active', got %q", payload.Error)
 	}
 
@@ -236,9 +264,9 @@ func TestPortal_ArchiveEndpoint_RejectsAlreadyArchivedRun(t *testing.T) {
 		BatchID:   runID,
 		Kind:      batchindex.KindIssue,
 		CreatedAt: time.Now(),
-		Status:    batchindex.RunManifestStatusActive,
+		Status:    batchindex.RunManifestStatusSuccess,
 	}
-	if err := batchindex.WriteManifest(batchDir, batchManifest); err != nil {
+	if err := writeManifestForArchive(t, batchDir, batchManifest); err != nil {
 		t.Fatal(err)
 	}
 	idx := batchindex.Index{Version: batchindex.IndexVersion, Batches: []batchindex.Batch{
@@ -248,7 +276,7 @@ func TestPortal_ArchiveEndpoint_RejectsAlreadyArchivedRun(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(repoRoot, ".sandman", "batches.json"), data, 0644); err != nil {
 		t.Fatal(err)
 	}
-	archiveDir := filepath.Join(repoRoot, ".sandman", "archive", runID)
+	archiveDir := filepath.Join(repoRoot, ".sandman", "archive", runID, "runs", runID)
 	if err := os.MkdirAll(archiveDir, 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -261,7 +289,7 @@ func TestPortal_ArchiveEndpoint_RejectsAlreadyArchivedRun(t *testing.T) {
 	t.Cleanup(func() { portalRunLivenessProbe = originalProbe })
 
 	originalArchiver := portalRunArchiver
-	portalRunArchiver = func(string, string) error {
+	portalRunArchiver = func(string, string, string) error {
 		t.Fatalf("archiver must not be called when archive already exists")
 		return nil
 	}
@@ -303,7 +331,7 @@ func TestPortal_ArchiveEndpoint_Returns404ForMissingRun(t *testing.T) {
 	}
 
 	originalArchiver := portalRunArchiver
-	portalRunArchiver = func(string, string) error {
+	portalRunArchiver = func(string, string, string) error {
 		t.Fatalf("archiver must not be called for a missing run")
 		return nil
 	}
@@ -325,7 +353,7 @@ func TestPortal_ArchiveEndpoint_ValidatesRunID(t *testing.T) {
 	}
 
 	originalArchiver := portalRunArchiver
-	portalRunArchiver = func(string, string) error {
+	portalRunArchiver = func(string, string, string) error {
 		t.Fatalf("archiver must not be called with empty runId")
 		return nil
 	}
@@ -388,9 +416,9 @@ func TestPortal_ArchiveEndpoint_SurfaceArchivedFlagInRunsAPI(t *testing.T) {
 		Issue:     42,
 		Kind:      batchindex.KindIssue,
 		CreatedAt: started,
-		Status:    batchindex.RunManifestStatusActive,
+		Status:    batchindex.RunManifestStatusSuccess,
 	}
-	if err := batchindex.WriteManifest(batchDir, batchManifest); err != nil {
+	if err := writeManifestForArchive(t, batchDir, batchManifest); err != nil {
 		t.Fatal(err)
 	}
 	idx := batchindex.Index{Version: batchindex.IndexVersion, Batches: []batchindex.Batch{
@@ -493,7 +521,11 @@ func TestPortal_ArchiveEndpoint_EndToEndRealRunIDToDirName(t *testing.T) {
 	if err := os.MkdirAll(batchDir, 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(batchDir, "log.txt"), []byte("run output"), 0644); err != nil {
+	perRowDir := filepath.Join(batchDir, "runs", perRowID)
+	if err := os.MkdirAll(perRowDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(perRowDir, "log.txt"), []byte("run output"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -503,13 +535,9 @@ func TestPortal_ArchiveEndpoint_EndToEndRealRunIDToDirName(t *testing.T) {
 		Issue:     42,
 		Kind:      batchindex.KindIssue,
 		CreatedAt: started,
-		Status:    batchindex.RunManifestStatusActive,
+		Status:    batchindex.RunManifestStatusSuccess,
 	}
-	if err := batchindex.WriteManifest(batchDir, batchManifest); err != nil {
-		t.Fatal(err)
-	}
-	perRowDir := filepath.Join(batchDir, "runs", perRowID)
-	if err := os.MkdirAll(perRowDir, 0755); err != nil {
+	if err := writeManifestForArchive(t, batchDir, batchManifest); err != nil {
 		t.Fatal(err)
 	}
 	perRowManifest := batchindex.RunManifest{
@@ -545,29 +573,25 @@ func TestPortal_ArchiveEndpoint_EndToEndRealRunIDToDirName(t *testing.T) {
 		t.Fatalf("expected 200 for per-row id %q, got %d: %s", perRowID, resp.StatusCode, body)
 	}
 
-	var payload struct {
-		RunID  string `json:"runId"`
-		Status string `json:"status"`
+	// Slice 8 contract: 200 has an empty body.
+	if len(bytesTrimSpace(body)) != 0 {
+		t.Errorf("expected empty 200 body, got %q", body)
 	}
-	if err := json.Unmarshal(body, &payload); err != nil {
-		t.Fatalf("unmarshal success body: %v: %s", err, body)
+	if _, err := os.Stat(filepath.Join(batchDir, "runs", perRowID)); !os.IsNotExist(err) {
+		t.Fatalf("expected live row dir %q to be gone after archive, stat err = %v", perRowID, err)
 	}
-	if payload.RunID != batchEntryID {
-		t.Errorf("expected echoed runId %q (batch entry id), got %q", batchEntryID, payload.RunID)
+	if _, err := os.Stat(batchDir); err != nil {
+		t.Errorf("expected batch dir to remain (siblings live), got: %v", err)
 	}
-
-	if _, err := os.Stat(batchDir); !os.IsNotExist(err) {
-		t.Fatalf("expected batch dir %q to be gone after archive, stat err = %v", batchDir, err)
-	}
-	archivedDir := filepath.Join(repoRoot, ".sandman", "archive", batchEntryID)
-	info, err := os.Stat(archivedDir)
+	archivedRunDir := filepath.Join(repoRoot, ".sandman", "archive", batchEntryID, "runs", perRowID)
+	info, err := os.Stat(archivedRunDir)
 	if err != nil {
-		t.Fatalf("expected archive dir %q to exist, stat err = %v", archivedDir, err)
+		t.Fatalf("expected archive run dir %q to exist, stat err = %v", archivedRunDir, err)
 	}
 	if !info.IsDir() {
 		t.Fatalf("expected archive target to be a directory, got mode %s", info.Mode())
 	}
-	log, err := os.ReadFile(filepath.Join(archivedDir, "log.txt"))
+	log, err := os.ReadFile(filepath.Join(archivedRunDir, "log.txt"))
 	if err != nil {
 		t.Fatalf("expected log.txt to follow the move: %v", err)
 	}
@@ -605,12 +629,12 @@ func TestPortal_ArchiveEndpoint_ResolvesPerRowRunIDToBatchEntryID(t *testing.T) 
 	if err := os.MkdirAll(batchDir, 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(batchDir, "marker.txt"), []byte("hello"), 0644); err != nil {
-		t.Fatal(err)
-	}
 
 	perRowDir := filepath.Join(batchDir, "runs", perRowID)
 	if err := os.MkdirAll(perRowDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(perRowDir, "marker.txt"), []byte("hello"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	perRowManifest := batchindex.RunManifest{
@@ -629,9 +653,9 @@ func TestPortal_ArchiveEndpoint_ResolvesPerRowRunIDToBatchEntryID(t *testing.T) 
 		BatchID:   batchEntryID,
 		Kind:      batchindex.KindIssue,
 		CreatedAt: time.Now(),
-		Status:    batchindex.RunManifestStatusActive,
+		Status:    batchindex.RunManifestStatusSuccess,
 	}
-	if err := batchindex.WriteManifest(batchDir, batchManifest); err != nil {
+	if err := writeManifestForArchive(t, batchDir, batchManifest); err != nil {
 		t.Fatal(err)
 	}
 
@@ -652,32 +676,25 @@ func TestPortal_ArchiveEndpoint_ResolvesPerRowRunIDToBatchEntryID(t *testing.T) 
 		t.Fatalf("expected 200 for per-row id %q, got %d: %s", perRowID, resp.StatusCode, body)
 	}
 
-	var payload struct {
-		RunID  string `json:"runId"`
-		Status string `json:"status"`
+	// Slice 8 contract: 200 has an empty body.
+	if len(bytesTrimSpace(body)) != 0 {
+		t.Errorf("expected empty 200 body, got %q", body)
 	}
-	if err := json.Unmarshal(body, &payload); err != nil {
-		t.Fatalf("unmarshal success body: %v: %s", err, body)
+	if _, err := os.Stat(filepath.Join(batchDir, "runs", perRowID)); !os.IsNotExist(err) {
+		t.Fatalf("expected live row dir %q to be gone after archive, stat err = %v", perRowID, err)
 	}
-	if payload.RunID != batchEntryID {
-		t.Errorf("expected echoed runId %q (batch entry id), got %q", batchEntryID, payload.RunID)
+	if _, err := os.Stat(batchDir); err != nil {
+		t.Errorf("expected batch dir to remain (siblings live), got: %v", err)
 	}
-	if payload.Status != "archived" {
-		t.Errorf("expected status %q, got %q (body=%s)", "archived", payload.Status, body)
-	}
-
-	if _, err := os.Stat(batchDir); !os.IsNotExist(err) {
-		t.Fatalf("expected batch dir %q to be gone, stat err = %v", batchDir, err)
-	}
-	archivedDir := filepath.Join(repoRoot, ".sandman", "archive", batchEntryID)
-	info, err := os.Stat(archivedDir)
+	archivedRunDir := filepath.Join(repoRoot, ".sandman", "archive", batchEntryID, "runs", perRowID)
+	info, err := os.Stat(archivedRunDir)
 	if err != nil {
-		t.Fatalf("expected archive dir %q to exist, stat err = %v", archivedDir, err)
+		t.Fatalf("expected archive run dir %q to exist, stat err = %v", archivedRunDir, err)
 	}
 	if !info.IsDir() {
 		t.Fatalf("expected archive target to be a directory, got mode %s", info.Mode())
 	}
-	marker, err := os.ReadFile(filepath.Join(archivedDir, "marker.txt"))
+	marker, err := os.ReadFile(filepath.Join(archivedRunDir, "marker.txt"))
 	if err != nil {
 		t.Fatalf("expected marker file to follow the move: %v", err)
 	}
@@ -748,9 +765,9 @@ func TestPortal_ArchiveEndpoint_MultiIssuePerRowIDsResolveToSameEntry(t *testing
 				BatchID:   batchEntryID,
 				Kind:      batchindex.KindIssue,
 				CreatedAt: time.Now(),
-				Status:    batchindex.RunManifestStatusActive,
+				Status:    batchindex.RunManifestStatusSuccess,
 			}
-			if err := batchindex.WriteManifest(batchDir, batchManifest); err != nil {
+			if err := writeManifestForArchive(t, batchDir, batchManifest); err != nil {
 				t.Fatal(err)
 			}
 
@@ -771,27 +788,21 @@ func TestPortal_ArchiveEndpoint_MultiIssuePerRowIDsResolveToSameEntry(t *testing
 				t.Fatalf("expected 200 for per-row id %q, got %d: %s", perRowID, resp.StatusCode, body)
 			}
 
-			var payload struct {
-				RunID  string `json:"runId"`
-				Status string `json:"status"`
-			}
-			if err := json.Unmarshal(body, &payload); err != nil {
-				t.Fatalf("unmarshal: %v: %s", err, body)
-			}
-			if payload.RunID != batchEntryID {
-				t.Errorf("expected echoed runId %q (batch entry id), got %q", batchEntryID, payload.RunID)
-			}
-			if payload.Status != "archived" {
-				t.Errorf("expected status %q, got %q", "archived", payload.Status)
+			// Slice 8 contract: 200 has an empty body.
+			if len(bytesTrimSpace(body)) != 0 {
+				t.Errorf("expected empty 200 body, got %q", body)
 			}
 
-			if _, err := os.Stat(batchDir); !os.IsNotExist(err) {
-				t.Fatalf("expected batch dir %q to be gone, stat err = %v", batchDir, err)
+			if _, err := os.Stat(filepath.Join(batchDir, "runs", perRowID)); !os.IsNotExist(err) {
+				t.Fatalf("expected live row dir %q to be gone after archive, stat err = %v", perRowID, err)
 			}
-			archivedDir := filepath.Join(repoRoot, ".sandman", "archive", batchEntryID)
+			if _, err := os.Stat(batchDir); err != nil {
+				t.Errorf("expected batch dir to remain (siblings live), got: %v", err)
+			}
+			archivedDir := filepath.Join(repoRoot, ".sandman", "archive", batchEntryID, "runs", perRowID)
 			info, err := os.Stat(archivedDir)
 			if err != nil {
-				t.Fatalf("expected archive dir %q to exist, stat err = %v", archivedDir, err)
+				t.Fatalf("expected archive run dir %q to exist, stat err = %v", archivedDir, err)
 			}
 			if !info.IsDir() {
 				t.Fatalf("expected archive target to be a directory, got mode %s", info.Mode())
@@ -853,9 +864,9 @@ func TestPortal_ArchiveEndpoint_ContinueReview(t *testing.T) {
 		PR:        99,
 		Kind:      batchindex.KindReview,
 		CreatedAt: time.Now(),
-		Status:    batchindex.RunManifestStatusActive,
+		Status:    batchindex.RunManifestStatusSuccess,
 	}
-	if err := batchindex.WriteManifest(batchDir, batchManifest); err != nil {
+	if err := writeManifestForArchive(t, batchDir, batchManifest); err != nil {
 		t.Fatal(err)
 	}
 
@@ -876,17 +887,12 @@ func TestPortal_ArchiveEndpoint_ContinueReview(t *testing.T) {
 		t.Fatalf("expected 200 for per-row id %q, got %d: %s", perRowID, resp.StatusCode, body)
 	}
 
-	var payload struct {
-		RunID string `json:"runId"`
+	// Slice 8 contract: 200 has an empty body.
+	if len(bytesTrimSpace(body)) != 0 {
+		t.Errorf("expected empty 200 body, got %q", body)
 	}
-	if err := json.Unmarshal(body, &payload); err != nil {
-		t.Fatalf("unmarshal: %v: %s", err, body)
-	}
-	if payload.RunID != batchEntryID {
-		t.Errorf("expected echoed runId %q (batch entry id), got %q", batchEntryID, payload.RunID)
-	}
-	if _, err := os.Stat(filepath.Join(repoRoot, ".sandman", "archive", batchEntryID)); err != nil {
-		t.Fatalf("expected archive dir %q to exist, stat err = %v", batchEntryID, err)
+	if _, err := os.Stat(filepath.Join(repoRoot, ".sandman", "archive", batchEntryID, "runs", perRowID)); err != nil {
+		t.Fatalf("expected archive run dir to exist, stat err = %v", err)
 	}
 }
 
@@ -941,9 +947,9 @@ func TestPortal_ArchiveEndpoint_OrphanReview(t *testing.T) {
 		PR:        100,
 		Kind:      batchindex.KindReview,
 		CreatedAt: time.Now(),
-		Status:    batchindex.RunManifestStatusActive,
+		Status:    batchindex.RunManifestStatusSuccess,
 	}
-	if err := batchindex.WriteManifest(batchDir, batchManifest); err != nil {
+	if err := writeManifestForArchive(t, batchDir, batchManifest); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1014,9 +1020,9 @@ func TestPortal_ArchiveEndpoint_SingleIssueRun(t *testing.T) {
 		Issue:     42,
 		Kind:      batchindex.KindIssue,
 		CreatedAt: time.Now(),
-		Status:    batchindex.RunManifestStatusActive,
+		Status:    batchindex.RunManifestStatusSuccess,
 	}
-	if err := batchindex.WriteManifest(batchDir, batchManifest); err != nil {
+	if err := writeManifestForArchive(t, batchDir, batchManifest); err != nil {
 		t.Fatal(err)
 	}
 	idx := batchindex.Index{Version: batchindex.IndexVersion, Batches: []batchindex.Batch{
@@ -1044,7 +1050,7 @@ func TestPortal_ArchiveEndpoint_SingleIssueRun(t *testing.T) {
 // path on a multi-issue issue run: the orchestrator resumes the existing
 // batch dir, so the per-row id matches the public BatchId (the
 // orchestrator picks the first subject as the resume row). The fast
-// path (idx.ResolveBatch) resolves either id form to the same batch.
+// path (idx.Resolve) resolves either id form to the same entry.
 func TestPortal_ArchiveEndpoint_ContinueIssueRun(t *testing.T) {
 	repoRoot, err := os.MkdirTemp("/tmp", "sm-archive-cissue-")
 	if err != nil {
@@ -1073,9 +1079,9 @@ func TestPortal_ArchiveEndpoint_ContinueIssueRun(t *testing.T) {
 		Issue:     42,
 		Kind:      batchindex.KindIssue,
 		CreatedAt: time.Now(),
-		Status:    batchindex.RunManifestStatusActive,
+		Status:    batchindex.RunManifestStatusSuccess,
 	}
-	if err := batchindex.WriteManifest(batchDir, batchManifest); err != nil {
+	if err := writeManifestForArchive(t, batchDir, batchManifest); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1130,9 +1136,9 @@ func TestPortal_ArchiveEndpoint_AutoSelectRun(t *testing.T) {
 		BatchID:   batchEntryID,
 		Kind:      batchindex.KindAutoSelect,
 		CreatedAt: time.Now(),
-		Status:    batchindex.RunManifestStatusActive,
+		Status:    batchindex.RunManifestStatusSuccess,
 	}
-	if err := batchindex.WriteManifest(batchDir, batchManifest); err != nil {
+	if err := writeManifestForArchive(t, batchDir, batchManifest); err != nil {
 		t.Fatal(err)
 	}
 	idx := batchindex.Index{Version: batchindex.IndexVersion, Batches: []batchindex.Batch{
@@ -1209,9 +1215,9 @@ func TestPortal_ArchiveEndpoint_PromptOnlyRun(t *testing.T) {
 		BatchID:   publicBatchID,
 		Kind:      batchindex.KindPromptOnly,
 		CreatedAt: time.Now(),
-		Status:    batchindex.RunManifestStatusActive,
+		Status:    batchindex.RunManifestStatusSuccess,
 	}
-	if err := batchindex.WriteManifest(batchDir, batchManifest); err != nil {
+	if err := writeManifestForArchive(t, batchDir, batchManifest); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1232,15 +1238,15 @@ func TestPortal_ArchiveEndpoint_PromptOnlyRun(t *testing.T) {
 		t.Fatalf("expected 200 for per-row id %q, got %d: %s", perRowID, resp.StatusCode, body)
 	}
 
-	if _, err := os.Stat(filepath.Join(repoRoot, ".sandman", "archive", publicBatchID)); err != nil {
-		t.Fatalf("expected archive dir %q to exist, stat err = %v", publicBatchID, err)
+	if _, err := os.Stat(filepath.Join(repoRoot, ".sandman", "archive", publicBatchID, "runs", perRowID)); err != nil {
+		t.Fatalf("expected archive run dir %q to exist, stat err = %v", perRowID, err)
 	}
-	marker, err := os.ReadFile(filepath.Join(repoRoot, ".sandman", "archive", publicBatchID, "marker.txt"))
+	marker, err := os.ReadFile(filepath.Join(repoRoot, ".sandman", "archive", publicBatchID, "runs", perRowID, "run.json"))
 	if err != nil {
-		t.Fatalf("expected marker file to follow the move: %v", err)
+		t.Fatalf("expected run.json to follow the move: %v", err)
 	}
-	if string(marker) != "prompt-marker" {
-		t.Fatalf("expected prompt marker, got %q", marker)
+	if !strings.Contains(string(marker), perRowID) {
+		t.Errorf("expected run.json contents, got %q", marker)
 	}
 }
 
@@ -1262,7 +1268,7 @@ func TestPortal_ArchiveEndpoint_PerRowIDPreservesErrorStatuses(t *testing.T) {
 		}
 
 		originalArchiver := portalRunArchiver
-		portalRunArchiver = func(string, string) error {
+		portalRunArchiver = func(string, string, string) error {
 			t.Fatalf("archiver must not be called for a missing run")
 			return nil
 		}
@@ -1292,9 +1298,9 @@ func TestPortal_ArchiveEndpoint_PerRowIDPreservesErrorStatuses(t *testing.T) {
 			BatchID:   batchEntryID,
 			Kind:      batchindex.KindIssue,
 			CreatedAt: time.Now(),
-			Status:    batchindex.RunManifestStatusActive,
+			Status:    batchindex.RunManifestStatusSuccess,
 		}
-		if err := batchindex.WriteManifest(batchDir, manifest); err != nil {
+		if err := writeManifestForArchive(t, batchDir, manifest); err != nil {
 			t.Fatal(err)
 		}
 		perRowDir := filepath.Join(batchDir, "runs", perRowID)
@@ -1307,7 +1313,7 @@ func TestPortal_ArchiveEndpoint_PerRowIDPreservesErrorStatuses(t *testing.T) {
 			Issue:     42,
 			Kind:      batchindex.KindIssue,
 			CreatedAt: time.Now(),
-			Status:    batchindex.RunManifestStatusSuccess,
+			Status:    batchindex.RunManifestStatusActive,
 		}
 		if err := batchindex.WriteManifest(perRowDir, perRowManifest); err != nil {
 			t.Fatal(err)
@@ -1325,7 +1331,7 @@ func TestPortal_ArchiveEndpoint_PerRowIDPreservesErrorStatuses(t *testing.T) {
 		t.Cleanup(func() { portalRunLivenessProbe = originalProbe })
 
 		originalArchiver := portalRunArchiver
-		portalRunArchiver = func(string, string) error {
+		portalRunArchiver = func(string, string, string) error {
 			t.Fatalf("archiver must not be called for an active run")
 			return nil
 		}
@@ -1341,7 +1347,7 @@ func TestPortal_ArchiveEndpoint_PerRowIDPreservesErrorStatuses(t *testing.T) {
 		if err := json.Unmarshal(body, &payload); err != nil {
 			t.Fatalf("unmarshal error body: %v: %s", err, body)
 		}
-		if !strings.Contains(strings.ToLower(payload.Error), "active") {
+		if !strings.Contains(strings.ToLower(payload.Error), "terminal") {
 			t.Errorf("expected error to mention 'active', got %q", payload.Error)
 		}
 	})
@@ -1364,9 +1370,9 @@ func TestPortal_ArchiveEndpoint_PerRowIDPreservesErrorStatuses(t *testing.T) {
 			BatchID:   batchEntryID,
 			Kind:      batchindex.KindIssue,
 			CreatedAt: time.Now(),
-			Status:    batchindex.RunManifestStatusActive,
+			Status:    batchindex.RunManifestStatusSuccess,
 		}
-		if err := batchindex.WriteManifest(batchDir, manifest); err != nil {
+		if err := writeManifestForArchive(t, batchDir, manifest); err != nil {
 			t.Fatal(err)
 		}
 		perRowDir := filepath.Join(batchDir, "runs", perRowID)
@@ -1391,7 +1397,7 @@ func TestPortal_ArchiveEndpoint_PerRowIDPreservesErrorStatuses(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(repoRoot, ".sandman", "batches.json"), data, 0644); err != nil {
 			t.Fatal(err)
 		}
-		archiveDir := filepath.Join(repoRoot, ".sandman", "archive", batchEntryID)
+		archiveDir := filepath.Join(repoRoot, ".sandman", "archive", batchEntryID, "runs", perRowID)
 		if err := os.MkdirAll(archiveDir, 0755); err != nil {
 			t.Fatal(err)
 		}
@@ -1404,7 +1410,7 @@ func TestPortal_ArchiveEndpoint_PerRowIDPreservesErrorStatuses(t *testing.T) {
 		t.Cleanup(func() { portalRunLivenessProbe = originalProbe })
 
 		originalArchiver := portalRunArchiver
-		portalRunArchiver = func(string, string) error {
+		portalRunArchiver = func(string, string, string) error {
 			t.Fatalf("archiver must not be called when archive already exists")
 			return nil
 		}
@@ -1415,13 +1421,18 @@ func TestPortal_ArchiveEndpoint_PerRowIDPreservesErrorStatuses(t *testing.T) {
 			t.Fatalf("expected 409 for already-archived run, got %d: %s", resp.StatusCode, body)
 		}
 		var payload struct {
-			Error string `json:"error"`
+			Error       string `json:"error"`
+			ArchivePath string `json:"archivePath"`
 		}
 		if err := json.Unmarshal(body, &payload); err != nil {
 			t.Fatalf("unmarshal error body: %v: %s", err, body)
 		}
 		if !strings.Contains(strings.ToLower(payload.Error), "archiv") {
 			t.Errorf("expected error to mention 'archive', got %q", payload.Error)
+		}
+		want := filepath.Join(".sandman", "archive", batchEntryID, "runs", perRowID)
+		if payload.ArchivePath != want {
+			t.Errorf("archivePath = %q, want %q", payload.ArchivePath, want)
 		}
 	})
 
@@ -1443,9 +1454,9 @@ func TestPortal_ArchiveEndpoint_PerRowIDPreservesErrorStatuses(t *testing.T) {
 			BatchID:   batchEntryID,
 			Kind:      batchindex.KindIssue,
 			CreatedAt: time.Now(),
-			Status:    batchindex.RunManifestStatusActive,
+			Status:    batchindex.RunManifestStatusSuccess,
 		}
-		if err := batchindex.WriteManifest(batchDir, manifest); err != nil {
+		if err := writeManifestForArchive(t, batchDir, manifest); err != nil {
 			t.Fatal(err)
 		}
 		perRowDir := filepath.Join(batchDir, "runs", perRowID)
@@ -1476,7 +1487,7 @@ func TestPortal_ArchiveEndpoint_PerRowIDPreservesErrorStatuses(t *testing.T) {
 		t.Cleanup(func() { portalRunLivenessProbe = originalProbe })
 
 		originalArchiver := portalRunArchiver
-		portalRunArchiver = func(string, string) error {
+		portalRunArchiver = func(string, string, string) error {
 			return fmt.Errorf("synthetic archiver failure")
 		}
 		t.Cleanup(func() { portalRunArchiver = originalArchiver })
@@ -1495,4 +1506,301 @@ func TestPortal_ArchiveEndpoint_PerRowIDPreservesErrorStatuses(t *testing.T) {
 			t.Errorf("expected error to surface archiver message, got %q", payload.Error)
 		}
 	})
+}
+
+// TestPortal_ArchiveEndpoint_PerRowEmpty200 covers slice 3: the
+// archive endpoint is per-row, returns empty 200 on success, and
+// moves only runs/<runID>/ to archive/<batchID>/runs/<runID>/. The
+// batch dir stays in place under .sandman/batches/ and the live run
+// manifest is moved into the new archive path.
+func TestPortal_ArchiveEndpoint_PerRowEmpty200(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	const batchID = "b-per-row"
+	const runID = "row-per-row"
+	batchDir := filepath.Join(repoRoot, ".sandman", "batches", batchID)
+	liveRunDir := filepath.Join(batchDir, "runs", runID)
+	if err := os.MkdirAll(liveRunDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := batchindex.WriteManifest(liveRunDir, batchindex.RunManifest{
+		RunID:   runID,
+		BatchID: batchID,
+		Kind:    batchindex.KindIssue,
+		Status:  batchindex.RunManifestStatusSuccess,
+		Issue:   42,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(liveRunDir, "run.log"), []byte("per-row log\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	idx := batchindex.Index{Version: batchindex.IndexVersion, Entries: []batchindex.Entry{
+		{ID: batchID, Path: batchDir, Kind: batchindex.KindIssue, Status: batchindex.StatusActive, CreatedAt: time.Now()},
+	}}
+	if err := idx.Save(filepath.Join(repoRoot, ".sandman", "batches.json")); err != nil {
+		t.Fatal(err)
+	}
+
+	resp, body := postPortalArchive(t, newPortalArchiveHandlerForTest(t, repoRoot), runID)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", resp.StatusCode, body)
+	}
+	if len(bytesTrimSpace(body)) != 0 {
+		t.Errorf("expected empty 200 body, got %q", body)
+	}
+
+	if _, err := os.Stat(liveRunDir); !os.IsNotExist(err) {
+		t.Errorf("live run dir still present after archive: stat err = %v", err)
+	}
+	if _, err := os.Stat(batchDir); err != nil {
+		t.Errorf("live batch dir must remain (siblings live): %v", err)
+	}
+	archivedRunDir := filepath.Join(repoRoot, ".sandman", "archive", batchID, "runs", runID)
+	if _, err := os.Stat(archivedRunDir); err != nil {
+		t.Fatalf("archived run dir missing: %v", err)
+	}
+	logContent, err := os.ReadFile(filepath.Join(archivedRunDir, "run.log"))
+	if err != nil {
+		t.Fatalf("read archived run log: %v", err)
+	}
+	if string(logContent) != "per-row log\n" {
+		t.Errorf("archived run.log content = %q, want %q", logContent, "per-row log\n")
+	}
+
+	updatedIdx, err := batchindex.Load(filepath.Join(repoRoot, ".sandman", "batches.json"))
+	if err != nil {
+		t.Fatalf("reload index: %v", err)
+	}
+	entry := updatedIdx.Resolve(batchID)
+	if entry == nil {
+		t.Fatal("entry missing after archive")
+	}
+	rec := updatedIdx.RunRecordFor(batchID, runID)
+	if rec == nil {
+		t.Fatal("per-row record missing after archive")
+	}
+	if rec.Status != batchindex.RunRecordStatusArchived {
+		t.Errorf("record status = %s, want archived", rec.Status)
+	}
+	if rec.ArchivePath != filepath.Join(".sandman", "archive", batchID, "runs", runID) {
+		t.Errorf("record archivePath = %q, want per-row archive path", rec.ArchivePath)
+	}
+}
+
+// TestPortal_ArchiveEndpoint_409NonTerminal covers slice 3: a row
+// whose run.json Status is still active must return 409 with a
+// non-terminal message; the live folder is preserved and the index
+// does not grow a per-row record.
+func TestPortal_ArchiveEndpoint_409NonTerminal(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	const batchID = "b-nt"
+	const runID = "row-nt"
+	batchDir := filepath.Join(repoRoot, ".sandman", "batches", batchID)
+	liveRunDir := filepath.Join(batchDir, "runs", runID)
+	if err := os.MkdirAll(liveRunDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := batchindex.WriteManifest(liveRunDir, batchindex.RunManifest{
+		RunID:   runID,
+		BatchID: batchID,
+		Kind:    batchindex.KindIssue,
+		Status:  batchindex.RunManifestStatusActive,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	idx := batchindex.Index{Version: batchindex.IndexVersion, Entries: []batchindex.Entry{
+		{ID: batchID, Path: batchDir, Kind: batchindex.KindIssue, Status: batchindex.StatusActive, CreatedAt: time.Now()},
+	}}
+	if err := idx.Save(filepath.Join(repoRoot, ".sandman", "batches.json")); err != nil {
+		t.Fatal(err)
+	}
+
+	resp, body := postPortalArchive(t, newPortalArchiveHandlerForTest(t, repoRoot), runID)
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("expected 409 for non-terminal row, got %d: %s", resp.StatusCode, body)
+	}
+	var payload struct {
+		Error       string `json:"error"`
+		ArchivePath string `json:"archivePath"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		t.Fatalf("unmarshal: %v: %s", err, body)
+	}
+	if !strings.Contains(strings.ToLower(payload.Error), "terminal") {
+		t.Errorf("expected error to mention terminal, got %q", payload.Error)
+	}
+	if payload.ArchivePath != "" {
+		t.Errorf("non-terminal response must not carry archivePath, got %q", payload.ArchivePath)
+	}
+	if _, err := os.Stat(liveRunDir); err != nil {
+		t.Errorf("live run dir must remain after 409: %v", err)
+	}
+
+	updatedIdx, err := batchindex.Load(filepath.Join(repoRoot, ".sandman", "batches.json"))
+	if err != nil {
+		t.Fatalf("reload index: %v", err)
+	}
+	if rec := updatedIdx.RunRecordFor(batchID, runID); rec != nil {
+		t.Errorf("per-row record must not exist after 409, got %+v", rec)
+	}
+}
+
+// TestPortal_ArchiveEndpoint_409AlreadyArchived_EchoesArchivePath
+// covers slice 3: an already-archived row returns 409 with the
+// existing ArchivePath echoed in the error body so the operator can
+// see where it lives.
+func TestPortal_ArchiveEndpoint_409AlreadyArchived_EchoesArchivePath(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	const batchID = "b-dup"
+	const runID = "row-dup"
+	batchDir := filepath.Join(repoRoot, ".sandman", "batches", batchID)
+	liveRunDir := filepath.Join(batchDir, "runs", runID)
+	if err := os.MkdirAll(liveRunDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := batchindex.WriteManifest(liveRunDir, batchindex.RunManifest{
+		RunID:   runID,
+		BatchID: batchID,
+		Kind:    batchindex.KindIssue,
+		Status:  batchindex.RunManifestStatusSuccess,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	existingArchive := filepath.Join(repoRoot, ".sandman", "archive", batchID, "runs", runID)
+	if err := os.MkdirAll(existingArchive, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	idx := batchindex.Index{Version: batchindex.IndexVersion, Entries: []batchindex.Entry{
+		{ID: batchID, Path: batchDir, Kind: batchindex.KindIssue, Status: batchindex.StatusActive, CreatedAt: time.Now()},
+	}}
+	if err := idx.Save(filepath.Join(repoRoot, ".sandman", "batches.json")); err != nil {
+		t.Fatal(err)
+	}
+
+	resp, body := postPortalArchive(t, newPortalArchiveHandlerForTest(t, repoRoot), runID)
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("expected 409 for already-archived row, got %d: %s", resp.StatusCode, body)
+	}
+	var payload struct {
+		Error       string `json:"error"`
+		ArchivePath string `json:"archivePath"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		t.Fatalf("unmarshal: %v: %s", err, body)
+	}
+	want := filepath.Join(".sandman", "archive", batchID, "runs", runID)
+	if payload.ArchivePath != want {
+		t.Errorf("archivePath = %q, want %q", payload.ArchivePath, want)
+	}
+}
+
+// TestPortal_ArchiveEndpoint_LeavesSiblingsAlive covers slice 3: when
+// a batch hosts two runs and the operator archives one, the sibling
+// row folder, log, and socket must remain in place under
+// .sandman/batches/<batchID>/runs/<sibling>/.
+func TestPortal_ArchiveEndpoint_LeavesSiblingsAlive(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	const batchID = "b-multi"
+	const archivedRow = "r-archived"
+	const siblingRow = "r-sibling"
+
+	batchDir := filepath.Join(repoRoot, ".sandman", "batches", batchID)
+	archivedRunDir := filepath.Join(batchDir, "runs", archivedRow)
+	siblingRunDir := filepath.Join(batchDir, "runs", siblingRow)
+	if err := os.MkdirAll(archivedRunDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(siblingRunDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := batchindex.WriteManifest(archivedRunDir, batchindex.RunManifest{
+		RunID:   archivedRow,
+		BatchID: batchID,
+		Kind:    batchindex.KindIssue,
+		Status:  batchindex.RunManifestStatusSuccess,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := batchindex.WriteManifest(siblingRunDir, batchindex.RunManifest{
+		RunID:   siblingRow,
+		BatchID: batchID,
+		Kind:    batchindex.KindIssue,
+		Status:  batchindex.RunManifestStatusSuccess,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(siblingRunDir, "run.log"), []byte("sibling log\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	idx := batchindex.Index{Version: batchindex.IndexVersion, Entries: []batchindex.Entry{
+		{ID: batchID, Path: batchDir, Kind: batchindex.KindIssue, Status: batchindex.StatusActive, CreatedAt: time.Now()},
+	}}
+	if err := idx.Save(filepath.Join(repoRoot, ".sandman", "batches.json")); err != nil {
+		t.Fatal(err)
+	}
+
+	resp, body := postPortalArchive(t, newPortalArchiveHandlerForTest(t, repoRoot), archivedRow)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", resp.StatusCode, body)
+	}
+	if _, err := os.Stat(siblingRunDir); err != nil {
+		t.Errorf("sibling run dir must survive: %v", err)
+	}
+	log, err := os.ReadFile(filepath.Join(siblingRunDir, "run.log"))
+	if err != nil {
+		t.Errorf("sibling log must survive: %v", err)
+	}
+	if !strings.Contains(string(log), "sibling log") {
+		t.Errorf("sibling log content changed: %q", string(log))
+	}
+}
+
+// TestPortal_ArchiveEndpoint_404ForUnknownRunID covers slice 3: a
+// request whose runId does not resolve on disk or in the index must
+// return 404, leaving the index untouched.
+func TestPortal_ArchiveEndpoint_404ForUnknownRunID(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	resp, body := postPortalArchive(t, newPortalArchiveHandlerForTest(t, repoRoot), "missing-run-id")
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d: %s", resp.StatusCode, body)
+	}
+}
+
+// bytesTrimSpace trims surrounding whitespace from a byte slice so
+// the empty-200 assertion is robust against stray newlines that some
+// http clients or framework defaults append.
+func bytesTrimSpace(b []byte) []byte {
+	start, end := 0, len(b)
+	for start < end && (b[start] == ' ' || b[start] == '\n' || b[start] == '\r' || b[start] == '\t') {
+		start++
+	}
+	for end > start && (b[end-1] == ' ' || b[end-1] == '\n' || b[end-1] == '\r' || b[end-1] == '\t') {
+		end--
+	}
+	return b[start:end]
 }

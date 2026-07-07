@@ -830,7 +830,7 @@ func (v *portalRunsView) demoteOrphanedActiveRunsFromDeadBatches(repoRoot string
 	layout := paths.NewLayout(&config.Config{}, repoRoot)
 	allDead, err := daemon.FindDeadRunBatches(layout.SandmanDir)
 	if err != nil {
-		logPortalViewDegrade("orphan-demotion", "FindDeadRunBatches: %v", err)
+		logPortalViewDegrade("orphan-demotion", "FindDeadRunEntries: %v", err)
 		return runs
 	}
 	if len(allDead) == 0 {
@@ -2235,11 +2235,12 @@ func (v *portalRunsView) loadBatchesIndex(repoRoot string) *batchindex.Index {
 	return idx
 }
 
-// isRunArchived reports whether the batch's directory currently lives under
-// .sandman/archive instead of .sandman/batches/<batch-id>/. A non-empty batchID that does
-// not resolve to an index entry returns false; otherwise, archived-ness
-// is reported from the entry's Status field, so transient or half-moved
-// state never lights up the flag.
+// isRunArchived reports whether the row is currently archived. A
+// row is archived when either (a) its batch entry's Status is
+// archived (whole-batch archive path) or (b) its per-row Runs[]
+// record carries Status: archived (per-row archive path). The
+// fallback to entry-level Status keeps legacy entries without Runs
+// records visible in the same way as before slice 8.
 func (v *portalRunsView) isRunArchived(idx *batchindex.Index, locator runLocator) bool {
 	if locator.batchID == "" || idx == nil {
 		return false
@@ -2248,7 +2249,15 @@ func (v *portalRunsView) isRunArchived(idx *batchindex.Index, locator runLocator
 	if entry == nil {
 		return false
 	}
-	return entry.Status == batchindex.StatusArchived
+	if entry.Status == batchindex.StatusArchived {
+		return true
+	}
+	if locator.runID != "" {
+		if rec := idx.RunRecordFor(locator.batchID, locator.runID); rec != nil && rec.Status == batchindex.RunRecordStatusArchived {
+			return true
+		}
+	}
+	return false
 }
 
 func (v *portalRunsView) sourceDirID(idx *batchindex.Index, run portalRun) runLocator {
@@ -2340,10 +2349,10 @@ func (v *portalRunsView) findBatchDirForRun(repoRoot, runID string, deadBatches 
 	return "", nil
 }
 
-// portalBatchNotFoundError signals that no batch index batch resolves
-// the supplied run id via either the fast path (idx.ResolveBatch) or
-// the on-disk fallback (per-row manifest batchId). Callers map it to
-// HTTP 404 batch not found via errors.As.
+// portalBatchNotFoundError signals that no batch index entry resolves
+// the supplied run id via either the fast path (idx.Resolve) or the
+// on-disk fallback (per-row manifest batchId). Callers map it to HTTP
+// 404 batch not found via errors.As.
 type portalBatchNotFoundError struct {
 	runID string
 }
@@ -2352,15 +2361,14 @@ func (e *portalBatchNotFoundError) Error() string {
 	return fmt.Sprintf("no batch resolves run %q", e.runID)
 }
 
-// resolveBatchFromRowID returns the batch index batch that the given
+// resolveBatchFromRowID returns the batch index entry that the given
 // per-row run id identifies, accepting either the per-row RunID
-// itself OR the public BatchId (== batch folder basename) — both
-// shapes are valid row-action inputs. The fast path is
-// idx.ResolveBatch(runID), which matches the canonical public
-// BatchId directly. The fallback path reads each batch's
-// runs/<runID>/run.json, parses the per-row RunManifest's BatchID
-// field, and re-resolves that id in the index. This generalises the
-// per-row pattern implemented for reviews in
+// itself OR the public BatchId (== batch folder basename) - both
+// shapes are valid row-action inputs. The fast path is idx.Resolve,
+// which matches the canonical batch entry id directly. The fallback
+// path reads each entry's runs/<runID>/run.json, parses the per-row
+// RunManifest's BatchID field, and re-resolves that id in the index.
+// This generalises the per-row pattern implemented for reviews in
 // internal/review/daemon.go readReviewRowID across every batch kind.
 //
 // See also: internal/cmd/portal.go's package-level helper
@@ -2370,23 +2378,23 @@ func (e *portalBatchNotFoundError) Error() string {
 // endpoints.
 //
 // On neither-path-resolves, the helper returns a typed
-// *portalBatchNotFoundError so callers can errors.As-match it and
-// map to http.StatusNotFound. The returned batch has Path populated
-// on either success path so downstream log path resolution and
-// archive moves work without a second index lookup.
-func (v *portalRunsView) resolveBatchFromRowID(idx *batchindex.Index, runID string) (*batchindex.Batch, error) {
+// *portalBatchNotFoundError so callers can errors.As-match it and map
+// to http.StatusNotFound. The returned entry has Path populated on
+// either success path so downstream log path resolution and archive
+// moves work without a second index lookup.
+func (v *portalRunsView) resolveBatchFromRowID(idx *batchindex.Index, runID string) (*batchindex.Entry, error) {
 	if idx == nil || runID == "" {
 		return nil, &portalBatchNotFoundError{runID: runID}
 	}
-	if batch := idx.ResolveBatch(runID); batch != nil {
-		return batch, nil
+	if entry := idx.Resolve(runID); entry != nil {
+		return entry, nil
 	}
-	for i := range idx.Batches {
-		batch := &idx.Batches[i]
-		if batch.Path == "" {
+	for i := range idx.Entries {
+		entry := &idx.Entries[i]
+		if entry.Path == "" {
 			continue
 		}
-		manifestPath := filepath.Join(batch.Path, "runs", runID, "run.json")
+		manifestPath := filepath.Join(entry.Path, "runs", runID, "run.json")
 		data, err := os.ReadFile(manifestPath)
 		if err != nil {
 			continue
@@ -2398,7 +2406,7 @@ func (v *portalRunsView) resolveBatchFromRowID(idx *batchindex.Index, runID stri
 		if manifest.BatchID == "" {
 			continue
 		}
-		if resolved := idx.ResolveBatch(manifest.BatchID); resolved != nil {
+		if resolved := idx.Resolve(manifest.BatchID); resolved != nil {
 			return resolved, nil
 		}
 	}

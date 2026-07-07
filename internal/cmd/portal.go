@@ -48,14 +48,14 @@ var portalSignalProcess = signalPortalProcess
 // portalRunLivenessProbe is a package-level var so tests can substitute it.
 var portalRunLivenessProbe = daemon.IsRunActive
 
-// portalRunArchiver moves a batch directory from .sandman/batches/<batch-id> to
-// .sandman/archive/<batch-id>. It is a package-level var so tests can substitute
-// a deterministic move without touching the real filesystem. The default
-// delegates to archivePortalRun, which keeps the portal and the CLI on a
-// single move implementation. The handler performs the liveness check and
-// destination collision check before invoking the archiver, so this var
-// only needs to perform the move.
-var portalRunArchiver = archivePortalRun
+// portalRunArchiver is the per-row archive dispatcher used by the
+// HTTP handler. It receives the resolved batch entry id and the
+// per-row run id and must perform the move + index update. It is a
+// package-level var so tests can substitute a deterministic move
+// without touching the real filesystem. The default implementation
+// resolves the entry via the per-row index, calls daemon.ArchiveRow,
+// and writes the resulting RunRecord into the index's Runs slice.
+var portalRunArchiver = archivePortalRowArchiver
 
 // portalStaleCleaner is the function invoked once per portal server
 // startup to recover stale runs and clean up dead directories.
@@ -206,6 +206,19 @@ func writeJSONError(w http.ResponseWriter, msg string, status int) {
 	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg})
 }
 
+// writeJSONArchiveError writes a structured 409 body for the per-row
+// archive endpoint. The body carries the error message and (when
+// supplied) the existing ArchivePath the operator can inspect.
+func writeJSONArchiveError(w http.ResponseWriter, msg, archivePath string, status int) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	payload := map[string]string{"error": msg}
+	if archivePath != "" {
+		payload["archivePath"] = archivePath
+	}
+	_ = json.NewEncoder(w).Encode(payload)
+}
+
 type portalAbortError struct {
 	status  int
 	message string
@@ -216,9 +229,15 @@ func (e *portalAbortError) Error() string { return e.message }
 type portalArchiveError struct {
 	status  int
 	message string
+	path    string
 }
 
-func (e *portalArchiveError) Error() string { return e.message }
+func (e *portalArchiveError) Error() string {
+	if e.path == "" {
+		return e.message
+	}
+	return fmt.Sprintf("%s (archivePath=%q)", e.message, e.path)
+}
 
 // portalArchiveDir returns the absolute archive directory path for a
 // given repo root and run id.
@@ -227,11 +246,11 @@ func portalArchiveDir(repoRoot, runID string) string {
 	return filepath.Join(layout.ArchiveDir, runID)
 }
 
-// archivePortalRunHandler performs the daemon-liveness and destination
-// collision checks, then hands off to portalRunArchiver. The function
-// returns portalArchiveError values so the HTTP handler can map each
-// failure mode to a specific status code; the archiver itself is only
-// invoked on the happy path.
+// archivePortalRunHandler performs the per-row terminal-check and
+// destination collision checks, then hands off to portalRunArchiver.
+// The function returns portalArchiveError values so the HTTP handler
+// can map each failure mode to a specific status code; the archiver
+// itself is only invoked on the happy path.
 //
 // The supplied runID may be either the batch index batch id (e.g.
 // "abcd-260618113825-42+1") or the per-row run id the portal UI sends
@@ -249,33 +268,134 @@ func archivePortalRunHandler(repoRoot, runID string) (string, error) {
 	if err != nil {
 		return "", &portalArchiveError{status: http.StatusInternalServerError, message: fmt.Sprintf("load batches index: %v", err)}
 	}
-
 	batch := resolveBatchFromRunIDFastOrScan(idx, runID)
 	if batch == nil {
-		return "", &portalArchiveError{status: http.StatusNotFound, message: fmt.Sprintf("batch %q not found in index", runID)}
+		return "", &portalArchiveError{status: http.StatusNotFound, message: fmt.Sprintf("run %q not found", runID)}
 	}
 
 	if batch.Status != batchindex.StatusActive {
 		return batch.ID, &portalArchiveError{status: http.StatusConflict, message: fmt.Sprintf("batch %q is not active (status=%s)", batch.ID, batch.Status)}
 	}
 
-	if portalRunLivenessProbe(batch.Path) {
-		return batch.ID, &portalArchiveError{status: http.StatusConflict, message: fmt.Sprintf("batch %q is still active (daemon socket); stop the daemon before archiving", batch.ID)}
+	status, statusErr := portalRowStatusProbe(batch, runID)
+	if statusErr != nil {
+		return batch.ID, &portalArchiveError{status: http.StatusInternalServerError, message: statusErr.Error()}
+	}
+	if !isTerminalRunManifestStatus(status) {
+		return batch.ID, &portalArchiveError{status: http.StatusConflict, message: fmt.Sprintf("run %q is not in a terminal status", runID)}
 	}
 
-	archiveDir := portalArchiveDir(repoRoot, batch.ID)
-	if info, err := os.Stat(archiveDir); err == nil {
-		if info.IsDir() {
-			return batch.ID, &portalArchiveError{status: http.StatusConflict, message: fmt.Sprintf("archive %q already exists", batch.ID)}
+	if rec := idx.RunRecordFor(batch.ID, runID); rec != nil && rec.Status == batchindex.RunRecordStatusArchived && rec.ArchivePath != "" {
+		return batch.ID, &portalArchiveError{
+			status:  http.StatusConflict,
+			message: fmt.Sprintf("run %q is already archived at %q", runID, rec.ArchivePath),
+			path:    rec.ArchivePath,
+		}
+	}
+
+	// On-disk collision check: if the per-row destination already
+	// exists (legacy state from before the index recorded Runs[]),
+	// surface 409 with the existing path so the operator can inspect
+	// it.
+	relArchive := filepath.Join(".sandman", "archive", batch.ID, "runs", runID)
+	if _, err := os.Stat(filepath.Join(repoRoot, relArchive)); err == nil {
+		return batch.ID, &portalArchiveError{
+			status:  http.StatusConflict,
+			message: fmt.Sprintf("run %q is already archived at %q", runID, relArchive),
+			path:    relArchive,
 		}
 	} else if !os.IsNotExist(err) {
 		return batch.ID, &portalArchiveError{status: http.StatusInternalServerError, message: fmt.Sprintf("stat archive target: %v", err)}
 	}
 
-	if err := portalRunArchiver(repoRoot, batch.ID); err != nil {
+	if err := portalRunArchiver(repoRoot, batch.ID, runID); err != nil {
+		var archived *daemon.AlreadyArchivedError
+		if errors.As(err, &archived) {
+			return batch.ID, &portalArchiveError{
+				status:  http.StatusConflict,
+				message: fmt.Sprintf("run %q is already archived at %q", runID, archived.ArchivePath),
+				path:    archived.ArchivePath,
+			}
+		}
+		var nonTerminal *daemon.NonTerminalRowError
+		if errors.As(err, &nonTerminal) {
+			return batch.ID, &portalArchiveError{status: http.StatusConflict, message: fmt.Sprintf("run %q is not in a terminal status", runID)}
+		}
 		return batch.ID, &portalArchiveError{status: http.StatusInternalServerError, message: err.Error()}
 	}
 	return batch.ID, nil
+}
+
+// isTerminalRunManifestStatus reports whether the supplied run.json
+// Status is one of the terminal values (success / failure / aborted
+// / blocked). The per-row archive contract requires a terminal row,
+// because the per-run command socket is idle in that state and the
+// run folder can be safely relocated.
+func isTerminalRunManifestStatus(s batchindex.RunManifestStatus) bool {
+	switch s {
+	case batchindex.RunManifestStatusSuccess,
+		batchindex.RunManifestStatusFailure,
+		batchindex.RunManifestStatusAborted,
+		batchindex.RunManifestStatusBlocked:
+		return true
+	}
+	return false
+}
+
+// portalRowStatusProbe is the seam the archive handler uses to read
+// the targeted row's run.json Status. It is a package-level var so
+// tests can simulate non-terminal rows without touching the real
+// filesystem. The default reads runs/<runID>/run.json and returns the
+// Status field.
+var portalRowStatusProbe = portalReadRowStatus
+
+// portalReadRowStatus reads runs/<runID>/run.json from the batch's
+// live directory and returns the Status field. A missing manifest
+// produces a NotFound error; a malformed manifest produces a Decode
+// error. The default implementation of portalRowStatusProbe.
+func portalReadRowStatus(batch *batchindex.Batch, runID string) (batchindex.RunManifestStatus, error) {
+	manifestPath := filepath.Join(batch.Path, "runs", runID, "run.json")
+	data, err := os.ReadFile(manifestPath)
+	if err != nil {
+		return "", err
+	}
+	var manifest batchindex.RunManifest
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		return "", fmt.Errorf("decode run manifest: %w", err)
+	}
+	return manifest.Status, nil
+}
+
+// archivePortalRowArchiver is the default implementation of
+// portalRunArchiver: it resolves the entry's path, calls
+// daemon.ArchiveRow for the targeted run, and writes the resulting
+// RunRecord into the entry's Runs slice. It also appends an active
+// RunRecord for the row if the index has not seen it yet so the
+// record survives crash recovery.
+func archivePortalRowArchiver(repoRoot string, entryID, runID string) error {
+	layout := paths.NewLayout(&config.Config{}, repoRoot)
+	idx, err := batchindex.Load(layout.BatchesIndexPath)
+	if err != nil {
+		return fmt.Errorf("load batches index: %w", err)
+	}
+	entry := idx.ResolveBatch(entryID)
+	if entry == nil {
+		return fmt.Errorf("entry %q not found", entryID)
+	}
+	if idx.RunRecordFor(entryID, runID) == nil {
+		idx.AddRun(entryID, batchindex.RunRecord{RunID: runID, Status: batchindex.RunRecordStatusActive})
+	}
+	rec, err := daemon.ArchiveRow(repoRoot, entry, runID)
+	if err != nil {
+		return err
+	}
+	if err := idx.MarkRunArchived(entryID, runID, rec.ArchivePath); err != nil {
+		return fmt.Errorf("mark run archived: %w", err)
+	}
+	if err := idx.Save(layout.BatchesIndexPath); err != nil {
+		return fmt.Errorf("save batches index: %w", err)
+	}
+	return nil
 }
 
 // resolveBatchFromRunIDFastOrScan returns the batch index batch that
@@ -290,14 +410,19 @@ func archivePortalRunHandler(repoRoot, runID string) (string, error) {
 // the first row of a multi-issue batch when the first subject happens
 // to match, --continue issue runs that resume the existing batch dir).
 //
-// The fallback path is a stat-only scan: for each indexed batch the
-// helper checks whether runs/<runID>/run.json exists on disk and
-// returns the first batch whose file exists. This stat-only path is
-// the hot path used by the archive endpoint, which trusts that any
-// batch with a per-row run folder on disk owns that row — see
-// internal/cmd/portal_runs_view.go's sibling helper
-// (resolveBatchFromRowID) for the parse-then-resolve variant used by
-// the log/portal runs-view endpoints.
+// The second path consults each entry's Runs[] records so already-
+// archived rows can still be resolved from the index after their live
+// folder has moved. This is what stops the per-row archive endpoint
+// from 404'ing on archived rows when the operator paginates back to
+// them in the portal UI.
+//
+// The final fallback path scans each entry's runs/<runID>/run.json
+// on disk and returns the first entry that hosts the per-row manifest.
+// This is the signal the portal UI relies on for multi-issue batches,
+// reviews (where reviewRunIDFor produces e.g. "abcd-260618113825-42-PR99"
+// while the batch entry id is "abcd-260618113825-PR42"), and
+// prompt-only runs (where req.RunID is the user-supplied string and
+// the batch entry id is "{shortid}-{ts}-{userid}").
 //
 // The helper returns the batch regardless of its Status; callers
 // apply any active/archived check separately so the 404/409/500 paths
@@ -309,14 +434,22 @@ func resolveBatchFromRunIDFastOrScan(idx *batchindex.Index, runID string) *batch
 	if batch := idx.ResolveBatch(runID); batch != nil {
 		return batch
 	}
-	for i := range idx.Batches {
-		batch := &idx.Batches[i]
-		if batch.Path == "" {
+	for i := range idx.Entries {
+		entry := &idx.Entries[i]
+		for j := range entry.Runs {
+			if entry.Runs[j].RunID == runID {
+				return entry
+			}
+		}
+	}
+	for i := range idx.Entries {
+		entry := &idx.Entries[i]
+		if entry.Path == "" {
 			continue
 		}
-		manifestPath := filepath.Join(batch.Path, "runs", runID, "run.json")
+		manifestPath := filepath.Join(entry.Path, "runs", runID, "run.json")
 		if _, err := os.Stat(manifestPath); err == nil {
-			return batch
+			return entry
 		}
 	}
 	return nil
