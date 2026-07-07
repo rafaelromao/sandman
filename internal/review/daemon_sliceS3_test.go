@@ -174,10 +174,11 @@ func TestDaemon_S3_HappyPath_PostsRedactedDecision(t *testing.T) {
 			body := "/sandman review please.\n/Sandman reply.\n/SANDMAN echo.\nplain sandman stays.\n"
 			worktreeDir := req.WorktreeDir
 			if worktreeDir == "" {
-				worktreeDir = filepath.Join(".sandman", "worktrees", req.PromptConfig.Branch)
+				worktreeDir = filepath.Join(".sandman", "worktrees")
 			}
-			path := filepath.Join(worktreeDir, "decision.md")
-			if err := os.MkdirAll(worktreeDir, 0755); err != nil {
+			worktreePath := filepath.Join(worktreeDir, req.PromptConfig.Branch)
+			path := filepath.Join(worktreePath, "decision.md")
+			if err := os.MkdirAll(worktreePath, 0755); err != nil {
 				t.Fatalf("mkdir worktree: %v", err)
 			}
 			if err := os.WriteFile(path, []byte(body), 0644); err != nil {
@@ -304,10 +305,11 @@ func TestDaemon_S3_FailedPost_FallsBackToPending(t *testing.T) {
 		beforeReturn: func(req batch.Request) {
 			worktreeDir := req.WorktreeDir
 			if worktreeDir == "" {
-				worktreeDir = filepath.Join(".sandman", "worktrees", req.PromptConfig.Branch)
+				worktreeDir = filepath.Join(".sandman", "worktrees")
 			}
-			path := filepath.Join(worktreeDir, "decision.md")
-			if err := os.MkdirAll(worktreeDir, 0755); err != nil {
+			worktreePath := filepath.Join(worktreeDir, req.PromptConfig.Branch)
+			path := filepath.Join(worktreePath, "decision.md")
+			if err := os.MkdirAll(worktreePath, 0755); err != nil {
 				t.Fatalf("mkdir worktree: %v", err)
 			}
 			if err := os.WriteFile(path, []byte("payload"), 0644); err != nil {
@@ -379,7 +381,11 @@ func TestDaemon_S3_CtxCancelDuringPost_StaysPending(t *testing.T) {
 		capturedRequest: &capturedRequest{},
 		worktreeDir:     ".sandman/worktrees",
 		beforeReturn: func(req batch.Request) {
-			worktreePath := filepath.Join(".sandman", "worktrees", req.PromptConfig.Branch)
+			worktreeDir := req.WorktreeDir
+			if worktreeDir == "" {
+				worktreeDir = filepath.Join(".sandman", "worktrees")
+			}
+			worktreePath := filepath.Join(worktreeDir, req.PromptConfig.Branch)
 			path := filepath.Join(worktreePath, "decision.md")
 			if err := os.MkdirAll(worktreePath, 0755); err != nil {
 				t.Fatalf("mkdir worktree: %v", err)

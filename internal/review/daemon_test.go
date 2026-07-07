@@ -199,21 +199,19 @@ type decisionCapturingRunner struct {
 }
 
 func (d *decisionCapturingRunner) RunBatch(ctx context.Context, req batch.Request) (*batch.Result, error) {
-	// Issue #1953: decision.md lives in the per-row worktree. The
-	// daemon passes the resolved worktree path on req.WorktreeDir
-	// (host-absolute). Fall back to the legacy default for tests
-	// that pre-date the field.
 	worktreeDir := req.WorktreeDir
 	if worktreeDir == "" {
-		worktreeDir = filepath.Join(d.worktreeDir, req.PromptConfig.Branch)
-		if d.worktreeDir == "" {
-			worktreeDir = filepath.Join(".sandman", "worktrees", req.PromptConfig.Branch)
+		if d.worktreeDir != "" {
+			worktreeDir = d.worktreeDir
+		} else {
+			worktreeDir = filepath.Join(".sandman", "worktrees")
 		}
 	}
-	if err := os.MkdirAll(worktreeDir, 0755); err != nil {
+	worktreePath := filepath.Join(worktreeDir, req.PromptConfig.Branch)
+	if err := os.MkdirAll(worktreePath, 0755); err != nil {
 		return nil, fmt.Errorf("mkdir worktree: %w", err)
 	}
-	path := filepath.Join(worktreeDir, "decision.md")
+	path := filepath.Join(worktreePath, "decision.md")
 	if err := os.WriteFile(path, []byte(d.body), 0644); err != nil {
 		return nil, fmt.Errorf("write decision.md: %w", err)
 	}
@@ -1455,11 +1453,13 @@ func TestDaemon_LaunchReviewPropagatesRunDirToRenderedPrompt(t *testing.T) {
 // worktree. req.RunDir stays on the run folder (used by the
 // orchestrator to place run.log and run.json).
 //
-// Pre-fix this test would fail: the prompt would contain
-// `RunDir: <host-absolute>` and the agent's mkdir + write would land
-// in the container's ephemeral write layer, so decision.md would be
-// missing on the host and postDecision would mark the review as
-// failure (the silent review-loss bug observed on 2026-07-06).
+// This test uses production wiring with `cfg.WorktreeDir =
+// ".sandman/worktrees"` so it exercises the layout-vs-cfg path
+// the reviewer's regression test called for. The daemon's
+// reviewWorktreeBase must agree with the orchestrator's
+// NewSandbox worktree location (which also uses the resolved
+// WorktreeDir), so the agent's decision.md lands where the
+// daemon reads it back.
 func TestDaemon_LaunchReviewRebasesRunDirForContainerSandbox(t *testing.T) {
 	for _, mode := range []string{"podman", "docker"} {
 		t.Run(mode, func(t *testing.T) {
@@ -1474,6 +1474,7 @@ func TestDaemon_LaunchReviewRebasesRunDirForContainerSandbox(t *testing.T) {
 			cfg := &config.Config{
 				DefaultReviewAgent: "opencode",
 				DefaultReviewModel: "opencode/foo",
+				WorktreeDir:        ".sandman/worktrees",
 			}
 			// Production wiring: BaseDir is <repoRoot>/.sandman (see
 			// cmd/review.go). The baseDir-ending-in-".sandman" guard
@@ -1506,8 +1507,8 @@ func TestDaemon_LaunchReviewRebasesRunDirForContainerSandbox(t *testing.T) {
 			prompt := runner.last.PromptConfig.PromptFlag
 			// The prompt MUST contain the container-visible form of
 			// the worktree path (issue #1953). The worktree lives
-			// under .sandman/worktrees/ on the host, so the
-			// container-visible form starts with
+			// under <repoRoot>/.sandman/worktrees/ on the host, so
+			// the container-visible form starts with
 			// /workspace/.sandman/worktrees/.
 			wantWorktree := d.reviewWorktreePath(42, "c-cpath")
 			containerForm := strings.Replace(wantWorktree, repoRoot, sandbox.ContainerWorkspaceMount, 1)

@@ -24,7 +24,7 @@ Rationale: the daemon enables the full automated workflow (AFK agent finishes wo
 
 ### Daemon posts the review comment
 
-The daemon posts the review comment. The reviewer agent writes its body to `<runDir>/decision.md`; the daemon reads it, applies a regex redactor that strips every `/sandman` substring (case-insensitive), and posts the redacted body via `gh pr comment`. This moves the no-self-loop invariant from LLM-side prompt compliance to a daemon-side transform that runs out-of-band of the LLM.
+The daemon posts the review comment. The reviewer agent writes its body to `<worktree>/decision.md` (its CWD, the per-row review worktree, issue #1953); the daemon reads it, applies a regex redactor that strips every `/sandman` substring (case-insensitive), and posts the redacted body via `gh pr comment`. This moves the no-self-loop invariant from LLM-side prompt compliance to a daemon-side transform that runs out-of-band of the LLM.
 
 Rationale: the daemon-side redaction is the load-bearing safety net for the no-self-loop invariant. The agent can be instructed, prompted, and audited; the daemon transform cannot forget, drift, or be subverted by an LLM refusing to follow the prompt's hard rule. The redaction runs out-of-band of the LLM, so a self-loop is structurally impossible regardless of what the bot writes.
 
@@ -74,11 +74,13 @@ The review workflow is a closed loop: the implementor agent posts `/sandman revi
 
 ### Canonical body file: `decision.md`
 
-The reviewer agent writes its review body to `<runDir>/decision.md` — the per-run folder for the review AgentRun, not a shared daemon path. The agent writes the file via `os.WriteFile` and the daemon reads it back at post time. The file is the canonical hand-off: the daemon never sees the agent's stdout, never parses the agent's run log, and never asks the LLM to call `gh pr comment` itself. The agent's only daemon-visible side effect is the file; the daemon owns everything after.
+The reviewer agent writes its review body to `<worktree>/decision.md` (issue #1953) — the per-row review worktree, which is the agent's CWD, not a shared daemon path. The worktree path is `<WorktreeDir>/<reviewBranchName(pr, commentID)>`, where `<WorktreeDir>` is resolved by `paths.NewLayout(cfg, repoRoot)` against the repo root in production. The run folder (`<batchDir>/runs/<rowID>/`) keeps `run.json`, `run.log`, `run.sock`, and the per-row `review-state.json`; the review body belongs to the worktree, not the run folder. The agent writes the file via `os.WriteFile` and the daemon reads it back at post time. The file is the canonical hand-off: the daemon never sees the agent's stdout, never parses the agent's run log, and never asks the LLM to call `gh pr comment` itself. The agent's only daemon-visible side effect is the file; the daemon owns everything after.
 
 ### Redactor: `RedactBody`
 
-The daemon reads `<runDir>/decision.md`, runs the body through `RedactBody` (S1, `internal/review/redactor.go:21`), and posts the redacted body via `gh pr comment`. `RedactBody` applies the regex `(?i)/sandman` → `sandman` — every `/sandman` substring, case-insensitive, is replaced with the bare word `sandman`. The regex is deliberately narrow: it only strips the leading-slash form (`/sandman`), and only the bot's own review body. Quote markers, paths, and prose that mentions the word `sandman` without the leading slash are untouched (`sandman/review-1234` stays as-is). The cross-reference to S1's `RedactBody` is the implementation source of truth.
+The daemon reads `<worktree>/decision.md`, runs the body through `RedactBody` (S1, `internal/review/redactor.go:21`), and posts the redacted body via `gh pr comment`. `RedactBody` applies the regex `(?i)/sandman` → `sandman` — every `/sandman` substring, case-insensitive, is replaced with the bare word `sandman`. The regex is deliberately narrow: it only strips the leading-slash form (`/sandman`), and only the bot's own review body. Quote markers, paths, and prose that mentions the word `sandman` without the leading slash are untouched (`sandman/review-1234` stays as-is). The cross-reference to S1's `RedactBody` is the implementation source of truth.
+
+Issue #1953 also removes the `SANDMAN_RUN_DIR` env-var fallback that previously carried the artifact path on the agent's environment. The prompt's `{{RUN_DIR}}` is the single source of truth for the write path; the env-var contract is intentionally gone (the prompt's fallback-discovery section was deleted alongside it) so the two surfaces cannot drift.
 
 ### Why the redactor is the load-bearing safety net
 
@@ -96,7 +98,7 @@ Tests:
 
 ## Rehydrate-on-startup (issue #1847, S4)
 
-A review that wrote `decision.md` but failed to post (daemon crash, transient `gh` failure, kill -9 between the agent exit and the post) leaves the file on disk for the next daemon restart to discover. The in-memory `pendingPost` map (`internal/review/daemon.go:138`) is the rehydrate-on-startup index: on `Daemon.New`, the daemon walks every review-kind batch's `runs/<rowID>/run.log` and `decision.md`, registers a `pendingPostEntry` for each unreviewed (PR, comment) pair, and queues the post step on the first tick after restart. The rehydrate path is best-effort: a missing `run.json`, a non-review kind, an unreadable `decision.md`, or a partial write is logged and skipped, never fatal — a transient read error on one batch does not block startup. The atomic-rename property of `decision.md` (the agent writes the file via temp-file + `os.Rename`) is what makes the rehydrate safe: the daemon only ever sees a fully-formed body, never a half-written one.
+A review that wrote `decision.md` but failed to post (daemon crash, transient `gh` failure, kill -9 between the agent exit and the post) leaves the file on disk for the next daemon restart to discover. The in-memory `pendingPost` map (`internal/review/daemon.go:138`) is the rehydrate-on-startup index: on `Daemon.New`, the daemon walks every review-kind batch's `runs/<rowID>/run.log` and the per-row worktree's `decision.md` (issue #1953), registers a `pendingPostEntry` for each unreviewed (PR, comment) pair, and queues the post step on the first tick after restart. The rehydrate path is best-effort: a missing `run.json`, a non-review kind, an unreadable `decision.md`, or a partial write is logged and skipped, never fatal — a transient read error on one batch does not block startup. The atomic-rename property of `decision.md` (the agent writes the file via temp-file + `os.Rename`) is what makes the rehydrate safe: the daemon only ever sees a fully-formed body, never a half-written one.
 
 ## Bounded-retry grace (issues #1759, #1845)
 

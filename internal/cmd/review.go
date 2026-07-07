@@ -204,7 +204,10 @@ func runReviewOneShot(cmd *cobra.Command, deps Dependencies, cfg *config.Config,
 	// decision.md directly to the daemon-readable location.
 	reviewBranch := fmt.Sprintf("sandman/review-%d-%d", pr.Number, time.Now().UnixNano())
 	worktreeDir := strings.TrimSpace(cfg.WorktreeDir)
-	absWorktreeDir := filepath.Join(repoRoot, worktreeDir)
+	if worktreeDir != "" && !filepath.IsAbs(worktreeDir) {
+		worktreeDir = filepath.Join(repoRoot, worktreeDir)
+	}
+	absWorktreeDir := worktreeDir
 	absWorktreePath := filepath.Join(absWorktreeDir, reviewBranch)
 
 	priorReviewExists, err := computePriorReviewExists(cmd.Context(), deps.GitHubClient, pr.Number)
@@ -248,7 +251,7 @@ func runReviewOneShot(cmd *cobra.Command, deps Dependencies, cfg *config.Config,
 		RunID:        perRowRunID,
 		OutputWriter: rs.Broadcaster(),
 		RunDir:       absRunDir,
-		WorktreeDir:  absWorktreePath,
+		WorktreeDir:  absWorktreeDir,
 	}); err != nil {
 		return fmt.Errorf("run review batch: %w", err)
 	}

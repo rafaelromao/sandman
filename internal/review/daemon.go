@@ -1203,19 +1203,23 @@ func reviewBranchName(prNumber int, commentID string) string {
 	return fmt.Sprintf("sandman/review-%d-%s", prNumber, commentID)
 }
 
-// reviewWorktreePath returns the host-absolute path of the per-row
-// review worktree, computed deterministically from
-// (prNumber, commentID, d.Config.WorktreeDir). The worktree layout
-// is fixed: <WorktreeDir>/<reviewBranchName(pr, commentID)>. The
-// sandbox creation path in the container runtime creates the
-// directory at this exact location; both the daemon and the agent
-// can therefore compute the same path without coordination.
+// reviewWorktreeBase returns the host-absolute path of the
+// per-row review worktree base directory. The worktree itself is
+// <reviewWorktreeBase>/<reviewBranchName(pr, commentID)>.
 //
-// A relative WorktreeDir resolves against the daemon's BaseDir
-// (the .sandman layout root), so the same default value works in
-// both production (BaseDir = <repo>/.sandman) and tests
-// (BaseDir = t.TempDir()).
-func (d *Daemon) reviewWorktreePath(prNumber int, commentID string) string {
+// In production (cmd/review.go) the daemon's Layout is set by
+// paths.NewLayout(cfg, repoRoot), which already resolves a
+// relative cfg.WorktreeDir against repoRoot. We use that resolved
+// path as the source of truth so the daemon and the orchestrator
+// (which creates the worktree via NewSandbox) agree on the exact
+// location. For the test fixture path (newDaemonForTest) where
+// Layout is the zero value, we fall back to resolving
+// cfg.WorktreeDir against d.BaseDir to keep the existing tests
+// working.
+func (d *Daemon) reviewWorktreeBase() string {
+	if d.Layout.RepoRoot != "" {
+		return d.Layout.WorktreeDir
+	}
 	worktreeDir := ""
 	if d.Config != nil {
 		worktreeDir = strings.TrimSpace(d.Config.WorktreeDir)
@@ -1223,7 +1227,17 @@ func (d *Daemon) reviewWorktreePath(prNumber int, commentID string) string {
 	if worktreeDir != "" && !filepath.IsAbs(worktreeDir) {
 		worktreeDir = filepath.Join(d.BaseDir, worktreeDir)
 	}
-	return filepath.Join(worktreeDir, reviewBranchName(prNumber, commentID))
+	return worktreeDir
+}
+
+// reviewWorktreePath returns the host-absolute path of the per-row
+// review worktree (issue #1953). The worktree layout is fixed:
+// <reviewWorktreeBase>/<reviewBranchName(pr, commentID)>. The
+// sandbox creation path in the container runtime creates the
+// directory at this exact location; both the daemon and the agent
+// can therefore compute the same path without coordination.
+func (d *Daemon) reviewWorktreePath(prNumber int, commentID string) string {
+	return filepath.Join(d.reviewWorktreeBase(), reviewBranchName(prNumber, commentID))
 }
 
 // reviewDecisionPath returns the host-absolute path of the
@@ -1393,7 +1407,7 @@ func (d *Daemon) launchReview(ctx context.Context, prNumber int, focus, commentI
 		ReviewFocus:  focus,
 		RunID:        perRowRunID,
 		RunDir:       reviewRunFolder,
-		WorktreeDir:  d.reviewWorktreePath(prNumber, commentID),
+		WorktreeDir:  d.reviewWorktreeBase(),
 	}
 	if _, err := d.Runner.RunBatch(ctx, req); err != nil {
 		return d.recordLaunchFailure(ctx, commentID, state, fmt.Errorf("run batch: %w", err))
