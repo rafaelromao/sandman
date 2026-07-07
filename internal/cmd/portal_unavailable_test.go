@@ -55,7 +55,7 @@ func TestPortalRunsView_UnavailableFlagFromBatchIndex(t *testing.T) {
 	// must go through BatchKey → sourceDirID to find the match.
 	batchIdx := &batchindex.Index{
 		Version: batchindex.IndexVersion,
-		Entries: []batchindex.Entry{
+		Batches: []batchindex.Batch{
 			{
 				ID:        batchID,
 				Path:      batchDir,
@@ -169,7 +169,7 @@ func TestPortalRunsView_IssueRunLogFromCorrectRunFolder(t *testing.T) {
 
 	batchIdx := &batchindex.Index{
 		Version: batchindex.IndexVersion,
-		Entries: []batchindex.Entry{
+		Batches: []batchindex.Batch{
 			{
 				ID:        batchID,
 				Path:      batchDir,
@@ -262,7 +262,7 @@ func TestPortalRunsView_IssueRunLogDownload(t *testing.T) {
 
 	batchIdx := &batchindex.Index{
 		Version: batchindex.IndexVersion,
-		Entries: []batchindex.Entry{
+		Batches: []batchindex.Batch{
 			{
 				ID:        batchID,
 				Path:      batchDir,

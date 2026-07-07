@@ -17,9 +17,9 @@ import (
 	"github.com/rafaelromao/sandman/internal/events"
 )
 
-func writeBatchIndexForArchive(t *testing.T, baseDir string, entries []batchindex.Entry) {
+func writeBatchIndexForArchive(t *testing.T, baseDir string, entries []batchindex.Batch) {
 	t.Helper()
-	idx := batchindex.Index{Version: batchindex.IndexVersion, Entries: entries}
+	idx := batchindex.Index{Version: batchindex.IndexVersion, Batches: entries}
 	if err := idx.Save(filepath.Join(baseDir, ".sandman", "batches.json")); err != nil {
 		t.Fatalf("save batches.json: %v", err)
 	}
@@ -144,7 +144,7 @@ func TestArchiveRun_LiveRunReturnsError(t *testing.T) {
 		CreatedAt: now,
 		Status:    batchindex.RunManifestStatusActive,
 	})
-	writeBatchIndexForArchive(t, dir, []batchindex.Entry{
+	writeBatchIndexForArchive(t, dir, []batchindex.Batch{
 		{ID: "live-1", Path: batchDir, Kind: batchindex.KindIssue, Status: batchindex.StatusActive, CreatedAt: now},
 	})
 
@@ -185,7 +185,7 @@ func TestArchiveRun_DeadRunMovesDirectory(t *testing.T) {
 		CreatedAt: now,
 		Status:    batchindex.RunManifestStatusActive,
 	})
-	writeBatchIndexForArchive(t, dir, []batchindex.Entry{
+	writeBatchIndexForArchive(t, dir, []batchindex.Batch{
 		{ID: "dead-1", Path: batchDir, Kind: batchindex.KindIssue, Status: batchindex.StatusActive, CreatedAt: now, Issues: []int{42}},
 	})
 
@@ -225,7 +225,7 @@ func TestArchiveRun_DeadRunMovesDirectory(t *testing.T) {
 	}
 
 	idx := loadBatchIndexForArchive(t, dir)
-	entry := idx.Resolve("dead-1")
+	entry := idx.ResolveBatch("dead-1")
 	if entry == nil {
 		t.Fatal("expected archived entry in batches index")
 	}
@@ -254,7 +254,7 @@ func TestArchiveRun_NoSocketsInArchive(t *testing.T) {
 		CreatedAt: now,
 		Status:    batchindex.RunManifestStatusActive,
 	})
-	writeBatchIndexForArchive(t, dir, []batchindex.Entry{
+	writeBatchIndexForArchive(t, dir, []batchindex.Batch{
 		{ID: "socket-test", Path: batchDir, Kind: batchindex.KindIssue, Status: batchindex.StatusActive, CreatedAt: now, Issues: []int{99}},
 	})
 
@@ -341,7 +341,7 @@ func TestArchiveBatch_LiveBatchReturnsError(t *testing.T) {
 		CreatedAt: now,
 		Status:    batchindex.RunManifestStatusActive,
 	})
-	writeBatchIndexForArchive(t, dir, []batchindex.Entry{
+	writeBatchIndexForArchive(t, dir, []batchindex.Batch{
 		{ID: "live-1", Path: batchDir, Kind: batchindex.KindIssue, Status: batchindex.StatusActive, CreatedAt: now},
 	})
 
@@ -382,7 +382,7 @@ func TestArchiveBatch_DeadBatchMovesDirectory(t *testing.T) {
 		CreatedAt: now,
 		Status:    batchindex.RunManifestStatusActive,
 	})
-	writeBatchIndexForArchive(t, dir, []batchindex.Entry{
+	writeBatchIndexForArchive(t, dir, []batchindex.Batch{
 		{ID: "dead-1", Path: batchDir, Kind: batchindex.KindIssue, Status: batchindex.StatusActive, CreatedAt: now, Issues: []int{42}},
 	})
 
@@ -419,7 +419,7 @@ func TestArchiveBatch_DeadBatchMovesDirectory(t *testing.T) {
 	}
 
 	idx := loadBatchIndexForArchive(t, dir)
-	entry := idx.Resolve("dead-1")
+	entry := idx.ResolveBatch("dead-1")
 	if entry == nil {
 		t.Fatal("expected archived entry in batches index")
 	}
@@ -447,7 +447,7 @@ func TestArchiveBatch_CollisionWithExistingArchiveDirReturnsError(t *testing.T) 
 		CreatedAt: now,
 		Status:    batchindex.RunManifestStatusActive,
 	})
-	writeBatchIndexForArchive(t, dir, []batchindex.Entry{
+	writeBatchIndexForArchive(t, dir, []batchindex.Batch{
 		{ID: "dead-2", Path: batchDir, Kind: batchindex.KindIssue, Status: batchindex.StatusActive, CreatedAt: now},
 	})
 
@@ -493,7 +493,7 @@ func TestArchiveRun_CollisionWithExistingArchiveDirReturnsError(t *testing.T) {
 		CreatedAt: now,
 		Status:    batchindex.RunManifestStatusActive,
 	})
-	writeBatchIndexForArchive(t, dir, []batchindex.Entry{
+	writeBatchIndexForArchive(t, dir, []batchindex.Batch{
 		{ID: "dead-2", Path: batchDir, Kind: batchindex.KindIssue, Status: batchindex.StatusActive, CreatedAt: now},
 	})
 
@@ -566,7 +566,7 @@ func TestArchiveOlderThan_ArchivesOldDeadBatch(t *testing.T) {
 		CreatedAt: old,
 		Status:    batchindex.RunManifestStatusActive,
 	})
-	writeBatchIndexForArchive(t, dir, []batchindex.Entry{
+	writeBatchIndexForArchive(t, dir, []batchindex.Batch{
 		{ID: "old-dead", Path: batchDir, Kind: batchindex.KindIssue, Status: batchindex.StatusActive, CreatedAt: old, Issues: []int{42}},
 	})
 
@@ -602,7 +602,7 @@ func TestArchiveOlderThan_SkipsYoungDeadBatch(t *testing.T) {
 		CreatedAt: young,
 		Status:    batchindex.RunManifestStatusActive,
 	})
-	writeBatchIndexForArchive(t, dir, []batchindex.Entry{
+	writeBatchIndexForArchive(t, dir, []batchindex.Batch{
 		{ID: "young-dead", Path: batchDir, Kind: batchindex.KindIssue, Status: batchindex.StatusActive, CreatedAt: young, Issues: []int{7}},
 	})
 
@@ -637,7 +637,7 @@ func TestArchiveOlderThan_SkipsLiveBatch(t *testing.T) {
 		CreatedAt: old,
 		Status:    batchindex.RunManifestStatusActive,
 	})
-	writeBatchIndexForArchive(t, dir, []batchindex.Entry{
+	writeBatchIndexForArchive(t, dir, []batchindex.Batch{
 		{ID: "old-live", Path: batchDir, Kind: batchindex.KindIssue, Status: batchindex.StatusActive, CreatedAt: old, Issues: []int{99}},
 	})
 
@@ -688,7 +688,7 @@ func TestArchiveOlderThan_MixedBatchArchivesOnlyEligible(t *testing.T) {
 	writeBatchDirForArchive(t, youngDeadDir, batchindex.RunManifest{BatchID: "young-dead", Issue: 3, Kind: batchindex.KindIssue, CreatedAt: youngTs, Status: batchindex.RunManifestStatusActive})
 	writeBatchDirForArchive(t, youngLiveDir, batchindex.RunManifest{BatchID: "young-live", Issue: 4, Kind: batchindex.KindIssue, CreatedAt: youngTs, Status: batchindex.RunManifestStatusActive})
 
-	writeBatchIndexForArchive(t, dir, []batchindex.Entry{
+	writeBatchIndexForArchive(t, dir, []batchindex.Batch{
 		{ID: "old-dead", Path: oldDeadDir, Kind: batchindex.KindIssue, Status: batchindex.StatusActive, CreatedAt: oldTs, Issues: []int{1}},
 		{ID: "old-live", Path: oldLiveDir, Kind: batchindex.KindIssue, Status: batchindex.StatusActive, CreatedAt: oldTs, Issues: []int{2}},
 		{ID: "young-dead", Path: youngDeadDir, Kind: batchindex.KindIssue, Status: batchindex.StatusActive, CreatedAt: youngTs, Issues: []int{3}},
@@ -832,7 +832,7 @@ func TestArchiveOlderThan_ZeroDaysArchivesAllDead(t *testing.T) {
 		CreatedAt: oneSecAgo,
 		Status:    batchindex.RunManifestStatusActive,
 	})
-	writeBatchIndexForArchive(t, dir, []batchindex.Entry{
+	writeBatchIndexForArchive(t, dir, []batchindex.Batch{
 		{ID: "just-now", Path: batchDir, Kind: batchindex.KindIssue, Status: batchindex.StatusActive, CreatedAt: oneSecAgo, Issues: []int{1}},
 	})
 
@@ -883,7 +883,7 @@ func TestArchiveStale_CollisionWithExistingArchivePreservesBoth(t *testing.T) {
 		CreatedAt: createdAt,
 		Status:    batchindex.RunManifestStatusActive,
 	})
-	writeBatchIndexForArchive(t, dir, []batchindex.Entry{
+	writeBatchIndexForArchive(t, dir, []batchindex.Batch{
 		{ID: "dead-collision", Path: batchDir, Kind: batchindex.KindIssue, Status: batchindex.StatusActive, CreatedAt: createdAt, Issues: []int{42}},
 	})
 
@@ -940,7 +940,7 @@ func TestArchiveStale_MixedStatusDeadBatchEmitsAbortedAndArchives(t *testing.T) 
 		CreatedAt: createdAt,
 		Status:    batchindex.RunManifestStatusActive,
 	})
-	writeBatchIndexForArchive(t, dir, []batchindex.Entry{
+	writeBatchIndexForArchive(t, dir, []batchindex.Batch{
 		{ID: "dead-mixed", Path: batchDir, Kind: batchindex.KindIssue, Status: batchindex.StatusActive, CreatedAt: createdAt, Issues: []int{42, 43}},
 	})
 
@@ -1006,7 +1006,7 @@ func TestArchiveStale_AllTerminatedDeadBatchIsArchived(t *testing.T) {
 		CreatedAt: createdAt,
 		Status:    batchindex.RunManifestStatusActive,
 	})
-	writeBatchIndexForArchive(t, dir, []batchindex.Entry{
+	writeBatchIndexForArchive(t, dir, []batchindex.Batch{
 		{ID: "dead-done", Path: batchDir, Kind: batchindex.KindIssue, Status: batchindex.StatusActive, CreatedAt: createdAt, Issues: []int{42}},
 	})
 
@@ -1056,7 +1056,7 @@ func TestArchiveStale_LiveBatchIsNoop(t *testing.T) {
 		CreatedAt: createdAt,
 		Status:    batchindex.RunManifestStatusActive,
 	})
-	writeBatchIndexForArchive(t, dir, []batchindex.Entry{
+	writeBatchIndexForArchive(t, dir, []batchindex.Batch{
 		{ID: "live-1", Path: batchDir, Kind: batchindex.KindIssue, Status: batchindex.StatusActive, CreatedAt: createdAt, Issues: []int{42}},
 	})
 
@@ -1105,7 +1105,7 @@ func TestArchiveOlderThan_YoungMtimeKeepsUnmanifestedBatch(t *testing.T) {
 		t.Fatalf("mkdir batch dir: %v", err)
 	}
 
-	writeBatchIndexForArchive(t, dir, []batchindex.Entry{
+	writeBatchIndexForArchive(t, dir, []batchindex.Batch{
 		{ID: "no-manifest-young", Path: batchDir, Kind: batchindex.KindIssue, Status: batchindex.StatusActive, CreatedAt: time.Now()},
 	})
 
@@ -1140,7 +1140,7 @@ func TestArchiveOlderThan_ArchivesUnmanifestedBatchByDirMtime(t *testing.T) {
 		t.Fatalf("chtimes batch dir: %v", err)
 	}
 
-	writeBatchIndexForArchive(t, dir, []batchindex.Entry{
+	writeBatchIndexForArchive(t, dir, []batchindex.Batch{
 		{ID: "no-manifest-old", Path: batchDir, Kind: batchindex.KindIssue, Status: batchindex.StatusActive, CreatedAt: time.Now(), Issues: []int{8}},
 	})
 

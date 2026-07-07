@@ -95,7 +95,7 @@ func seedPriorReviewEntry(t *testing.T, baseDir, batchID string, prNumber int, c
 	if err != nil {
 		t.Fatalf("load batches index: %v", err)
 	}
-	idx.Add(batchindex.Entry{
+	idx.AddBatch(batchindex.Batch{
 		ID:   batchID,
 		Path: batchPath,
 		Kind: batchindex.KindReview,

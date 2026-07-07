@@ -294,7 +294,7 @@ func TestRunSession_Prepare_AppendsToBatchesIndex(t *testing.T) {
 		t.Fatalf("Load batches index: %v", err)
 	}
 
-	entry := idx.Resolve("index-test-run-1")
+	entry := idx.ResolveBatch("index-test-run-1")
 	if entry == nil {
 		t.Fatal("batches index must contain entry for index-test-run-1")
 	}
@@ -330,7 +330,7 @@ func TestRunSession_IdxAddOnlyCalledFromPrepare(t *testing.T) {
 		"--exclude-dir=worktrees",
 		"--exclude-dir=node_modules",
 		"--exclude-dir=.git",
-		`\.Add(batchindex\.Entry{`, ".")
+		`\.AddBatch(batchindex\.Batch{`, ".")
 	cmd.Dir = findRepoRoot(t)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -345,10 +345,10 @@ func TestRunSession_IdxAddOnlyCalledFromPrepare(t *testing.T) {
 		hits = append(hits, line)
 	}
 	if len(hits) != 1 {
-		t.Errorf("expected exactly 1 production idx.Add site (daemon.RunSession.Prepare), got %d:\n%s", len(hits), strings.Join(hits, "\n"))
+		t.Errorf("expected exactly 1 production idx.AddBatch site (daemon.RunSession.Prepare), got %d:\n%s", len(hits), strings.Join(hits, "\n"))
 	}
 	if len(hits) == 1 && !strings.Contains(hits[0], "internal/daemon/run_session.go") {
-		t.Errorf("idx.Add call site moved to %q; update ADR-0036 contract", hits[0])
+		t.Errorf("idx.AddBatch call site moved to %q; update ADR-0036 contract", hits[0])
 	}
 }
 
