@@ -12,13 +12,7 @@ After a batch completes with at least one merged `sandman/*` PR, Sandman's post-
 
 The PR is created by an agent — the same agent infrastructure used for issue-driven runs — not by hardcoded Go logic. The agent reads or scaffolds the README, inserts the badge, pushes the branch, and opens the PR.
 
-## The control file (fast path)
-
-When the badge sidecar successfully creates the PR, it writes an empty sentinel file at `.sandman/.built_with_sandman` (atomically, via temp-file + rename). The post-batch hook checks for this file **before** running the expensive `gh pr list --state all --limit 100` scan: if the file is present, the hook treats the badge as already proposed and exits silently.
-
-The file is gitignored (it lives under `.sandman/`), is per-checkout, and is intentionally empty — its mere existence is the signal. Removing it has no harmful effect: the next batch just pays the `gh pr list` cost once and the sidecar re-writes the file if the marker comment is still found.
-
-## The marker comment (fallback)
+## The marker comment (source of truth)
 
 The PR body starts with:
 
@@ -26,11 +20,19 @@ The PR body starts with:
 <!-- sandman-badge-pr -->
 ```
 
-This marker is the single source of truth for idempotency. Any PR (open, closed, or merged) whose body contains this marker suppresses re-creation of the badge PR. The marker lives in the PR body, not the README or the commit message, so users can edit either without re-triggering the flow.
+This marker is the single source of truth for idempotency and applies in any PR state — open, closed, or merged. The post-batch hook consults the marker first, before any local state, so a marker-bearing PR in any state suppresses re-creation of the badge PR.
+
+The marker lives in the PR body, not the README or the commit message, so users can edit either without re-triggering the flow. Because the query runs against `gh pr list --state all --limit 1000`, a closed or merged badge PR cannot be truncated off the page on a busy repo.
+
+## The control file (perf optimization)
+
+When the badge sidecar successfully creates the PR, it writes an empty sentinel file at `.sandman/state/.built_with_sandman` (atomically, via temp-file + rename). The post-batch hook only checks for this file **after** the marker-comment query has returned no result: if the marker is absent and the file is present, the hook trusts the file as an optimistic fast-path signal and exits silently without re-running the expensive PR scan.
+
+The file is gitignored (it lives under `.sandman/state/`), is per-checkout, and is intentionally empty — its mere existence is the signal that the marker-bearing PR was previously found in this checkout. Removing it is safe: the next batch just pays the marker-comment query cost once and the sidecar re-writes the file if the marker is still found on a fresh scan. The control file is never consulted on its own — it is always subordinate to the marker-comment result.
 
 ## How to opt out
 
-Close the badge PR unmerged. Sandman respects that decision forever — the marker in the closed PR's body signals that the user has already been prompted and declined.
+Close the badge PR unmerged. Sandman respects that decision forever — the marker in the closed PR's body is what the post-batch hook reads first, so the user has already been prompted and declined.
 
 ## README placement rules
 
