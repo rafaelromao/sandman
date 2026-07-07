@@ -299,15 +299,6 @@ func archivePortalRunHandler(repoRoot, runID string) (string, error) {
 // (resolveBatchFromRowID) for the parse-then-resolve variant used by
 // the log/portal runs-view endpoints.
 //
-// The fallback path scans each batch's runs/<runID>/run.json on disk
-// and returns the first batch that hosts the per-row manifest. This
-// is the signal the portal UI relies on for multi-issue batches,
-// reviews (where reviewRunIDFor produces e.g.
-// "abcd-260618113825-42-PR99" while the batch id is
-// "abcd-260618113825-PR42"), and prompt-only runs (where req.RunID
-// is the user-supplied string and the batch id is
-// "{shortid}-{ts}-{userid}").
-//
 // The helper returns the batch regardless of its Status; callers
 // apply any active/archived check separately so the 404/409/500 paths
 // stay observable per kind.
