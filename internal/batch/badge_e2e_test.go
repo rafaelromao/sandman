@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -284,5 +285,57 @@ func TestBadgeE2E_PRCreateFailure_WarnsAndStaysSilent(t *testing.T) {
 	}
 	if strings.Contains(stderr.String(), "Sandman suggested a Built with Sandman badge PR:") {
 		t.Errorf("expected no success summary line when child runner fails, got stderr: %s", stderr.String())
+	}
+}
+
+// TestBadgeE2E_ControlFileAbsent_MarkerPRFound_NoSpawn exercises the
+// cold-start checkout path where the local control file has not been
+// written yet but a previously-proposed marker PR is still visible on
+// the remote. Under the new hook ordering, HasBadgePR is the
+// authoritative gate and runs before the control-file fast path, so
+// the runner must be skipped even with no sentinel file on disk.
+//
+// The fakePRLister seam models the marker-found outcome as a boolean
+// (it does not carry per-PR state). The state-aggregation behavior
+// (open / closed / merged marker PRs all suppress the spawn) is
+// already pinned by the unit test
+// TestMaybeSuggestBadge_HasBadgePR_AnyState_SkipsSpawn in
+// badge_hook_test.go, which uses the production defaultPRLister over
+// a wrappingPRLister + fakeGhCommander. This e2e focuses on the
+// orchestrator seam and the absent-on-disk invariant.
+//
+// See https://github.com/rafaelromao/sandman/issues/1929.
+func TestBadgeE2E_ControlFileAbsent_MarkerPRFound_NoSpawn(t *testing.T) {
+	if !testenv.E2EGateAllowed(testenv.E2EScenarioBadge) {
+		t.Skip("set SANDMAN_E2E_GATES=badge (or all) to run badge e2e tests")
+	}
+
+	repoDir := badgeE2EPrimeRepo(t)
+
+	controlPath := filepath.Join(repoDir, ".sandman", "state", ".built_with_sandman")
+	if _, err := os.Stat(controlPath); !os.IsNotExist(err) {
+		t.Fatalf("expected control file to be absent on fresh checkout, got stat err=%v", err)
+	}
+
+	stderr := &bytes.Buffer{}
+	seedPRs := []MergedSandmanPR{{Number: 1, HeadRefName: "sandman/1-fix-bug", Title: "Fix failing test"}}
+	lister := &fakePRLister{mergedPRs: seedPRs, hasBadge: true}
+	runner := &fakeSandmanRunner{prURL: "https://github.com/owner/repo/pull/99"}
+
+	o := badgeE2EBuildOrchestrator(t, lister, runner, stderr, badgeE2ESuccessResults())
+
+	_, _ = o.RunBatch(context.Background(), Request{Issues: []int{1}, Sandbox: "worktree"})
+
+	if lister.hasBadgeCallCount != 1 {
+		t.Errorf("expected HasBadgePR to be invoked exactly once (authoritative gate runs before control-file fast path), got %d call(s)", lister.hasBadgeCallCount)
+	}
+	if runner.capturedPrompt != "" {
+		t.Errorf("expected no spawn when control file is absent but marker PR is present, got prompt=%q", runner.capturedPrompt)
+	}
+	if strings.Contains(stderr.String(), "Sandman suggested a Built with Sandman badge PR") {
+		t.Errorf("expected no summary line on stderr when marker PR is present, got: %s", stderr.String())
+	}
+	if strings.Contains(stderr.String(), "Badge PR suggestion skipped") {
+		t.Errorf("expected no warn-line on stderr when marker PR is present, got: %s", stderr.String())
 	}
 }

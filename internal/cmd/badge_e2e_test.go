@@ -112,9 +112,15 @@ func TestBadge_E2E_HappyPath(t *testing.T) {
 
 // TestBadge_E2E_ControlFilePresent_ShortCircuitsBadgeHook shares the
 // same fake-BatchRunner wiring as TestBadge_E2E_HappyPath and verifies
-// that the control-file short-circuit skips the badge hook without
-// shelling out to the agent
-// (https://github.com/rafaelromao/sandman/issues/1772).
+// that the marker-comment PR check is the authoritative short-circuit:
+// under the new ordering (see internal/batch/badge_hook.go), HasBadgePR
+// is always called and the runner is skipped because the marker is
+// found. The test seeds the marker PR via the fake lister and does not
+// touch the .built_with_sandman control file, so it pins the new
+// contract and prevents regressions to the old "control file first,
+// never call lister" ordering
+// (https://github.com/rafaelromao/sandman/issues/1772,
+// https://github.com/rafaelromao/sandman/issues/1929).
 func TestBadge_E2E_ControlFilePresent_ShortCircuitsBadgeHook(t *testing.T) {
 	if !testenv.E2EGateAllowed(testenv.E2EScenarioBadge) {
 		t.Skip("set SANDMAN_E2E_GATES=badge (or all) to run badge e2e tests")
@@ -126,19 +132,13 @@ func TestBadge_E2E_ControlFilePresent_ShortCircuitsBadgeHook(t *testing.T) {
 	seedBadgeTestRepo(t, repoDir)
 
 	rec := &cmdBadgeRunner{branch: "sandman/built-with-sandman", prURL: "https://example.test/badge/pull/99"}
-	lister := &cmdBadgeLister{mergedPRs: []batch.MergedSandmanPR{{Number: 1, HeadRefName: "sandman/1-fix", Title: "Fix failing test"}}, hasBadge: false}
+	lister := &cmdBadgeLister{mergedPRs: []batch.MergedSandmanPR{{Number: 1, HeadRefName: "sandman/1-fix", Title: "Fix failing test"}}, hasBadge: true}
 	stderr := &bytes.Buffer{}
 	badgeHook := batch.NewBadgeHookerWith(stderr, rec, lister)
 
 	deps := badgeTestDeps(repoDir, badgeHook)
 	runRootCommand(t, deps, "init", "--agent", "opencode")
 	runRootCommand(t, deps, "config", "set", "review_command", "/oc review")
-
-	sandmanDir := filepath.Join(repoDir, ".sandman")
-	controlPath := filepath.Join(sandmanDir, "state", ".built_with_sandman")
-	if err := os.WriteFile(controlPath, nil, 0o644); err != nil {
-		t.Fatalf("seed control file: %v", err)
-	}
 
 	out, err := runRootCommand(t, deps, "run", "--agent", "opencode", "--sandbox", "worktree", "1")
 	t.Logf("sandman run returned err=%v output=%s", err, out)
@@ -147,14 +147,17 @@ func TestBadge_E2E_ControlFilePresent_ShortCircuitsBadgeHook(t *testing.T) {
 		t.Fatalf("sandman run failed: %v output=%s", err, out)
 	}
 
-	if lister.hasBadgeCallCount != 0 {
-		t.Errorf("expected HasBadgePR NOT to be invoked when control file is present, got %d call(s)", lister.hasBadgeCallCount)
+	if lister.hasBadgeCallCount != 1 {
+		t.Errorf("expected HasBadgePR to be invoked exactly once under the new ordering (authoritative gate), got %d call(s)", lister.hasBadgeCallCount)
 	}
 	if rec.capturedPrompt != "" {
-		t.Errorf("expected badge hook NOT to spawn when control file is present, got prompt=%q", rec.capturedPrompt)
+		t.Errorf("expected badge hook NOT to spawn when marker PR is present, got prompt=%q", rec.capturedPrompt)
 	}
 	if strings.Contains(stderr.String(), "Sandman suggested a Built with Sandman badge PR") {
-		t.Errorf("expected no summary line on stderr when control file is present, got: %s", stderr.String())
+		t.Errorf("expected no summary line on stderr when marker PR is present, got: %s", stderr.String())
+	}
+	if strings.Contains(stderr.String(), "Badge PR suggestion skipped") {
+		t.Errorf("expected no warn-line on stderr when marker PR is present, got: %s", stderr.String())
 	}
 }
 
