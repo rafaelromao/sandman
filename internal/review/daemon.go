@@ -394,7 +394,7 @@ func (d *Daemon) loadSeenCache() error {
 	if idx == nil {
 		return nil
 	}
-	for _, entry := range idx.Entries {
+	for _, entry := range idx.Batches {
 		if entry.Kind != batchindex.KindReview {
 			continue
 		}
@@ -532,7 +532,7 @@ func (d *Daemon) loadPendingPosts() error {
 	if idx == nil {
 		return nil
 	}
-	for _, entry := range idx.Entries {
+	for _, entry := range idx.Batches {
 		if entry.Kind != batchindex.KindReview {
 			continue
 		}

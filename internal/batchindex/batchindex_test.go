@@ -20,7 +20,7 @@ func TestLoad_ValidIndex(t *testing.T) {
 	indexPath := filepath.Join(repoRoot, ".sandman", "batches.json")
 	idx := &Index{
 		Version: IndexVersion,
-		Entries: []Entry{
+		Batches: []Batch{
 			{
 				ID:        "abc123",
 				Path:      filepath.Join(batchesDir, "abc123"),
@@ -46,11 +46,11 @@ func TestLoad_ValidIndex(t *testing.T) {
 	if loaded.Version != IndexVersion {
 		t.Errorf("Version = %d, want %d", loaded.Version, IndexVersion)
 	}
-	if len(loaded.Entries) != 1 {
-		t.Fatalf("Entries len = %d, want 1", len(loaded.Entries))
+	if len(loaded.Batches) != 1 {
+		t.Fatalf("Batches len = %d, want 1", len(loaded.Batches))
 	}
-	if loaded.Entries[0].ID != "abc123" {
-		t.Errorf("Entry[0].ID = %q, want %q", loaded.Entries[0].ID, "abc123")
+	if loaded.Batches[0].ID != "abc123" {
+		t.Errorf("Batch[0].ID = %q, want %q", loaded.Batches[0].ID, "abc123")
 	}
 }
 
@@ -65,8 +65,8 @@ func TestLoad_AbsentFile_ReturnsZeroIndex(t *testing.T) {
 	if idx.Version != IndexVersion {
 		t.Errorf("Version = %d, want %d", idx.Version, IndexVersion)
 	}
-	if idx.Entries != nil {
-		t.Errorf("Entries = %v, want nil", idx.Entries)
+	if idx.Batches != nil {
+		t.Errorf("Batches = %v, want nil", idx.Batches)
 	}
 }
 
@@ -98,7 +98,7 @@ func TestSave_AtomicRename(t *testing.T) {
 	indexPath := filepath.Join(repoRoot, ".sandman", "batches.json")
 	idx := &Index{
 		Version: IndexVersion,
-		Entries: []Entry{
+		Batches: []Batch{
 			{
 				ID:        "abc123",
 				Path:      filepath.Join(batchesDir, "abc123"),
@@ -108,7 +108,6 @@ func TestSave_AtomicRename(t *testing.T) {
 			},
 		},
 	}
-
 	if err := idx.Save(indexPath); err != nil {
 		t.Fatalf("Save failed: %v", err)
 	}
@@ -132,13 +131,13 @@ func TestSave_KeepsBackup(t *testing.T) {
 
 	indexPath := filepath.Join(repoRoot, ".sandman", "batches.json")
 
-	idx1 := &Index{Version: IndexVersion, Entries: []Entry{{ID: "first", Path: "/first", Kind: KindIssue, Status: StatusActive}}}
+	idx1 := &Index{Version: IndexVersion, Batches: []Batch{{ID: "first", Path: "/first", Kind: KindIssue, Status: StatusActive}}}
 	data1, _ := json.Marshal(idx1)
 	if err := os.WriteFile(indexPath, data1, 0644); err != nil {
 		t.Fatalf("write initial index: %v", err)
 	}
 
-	idx2 := &Index{Version: IndexVersion, Entries: []Entry{{ID: "second", Path: "/second", Kind: KindReview, Status: StatusActive}}}
+	idx2 := &Index{Version: IndexVersion, Batches: []Batch{{ID: "second", Path: "/second", Kind: KindReview, Status: StatusActive}}}
 	if err := idx2.Save(indexPath); err != nil {
 		t.Fatalf("Save failed: %v", err)
 	}
@@ -149,35 +148,35 @@ func TestSave_KeepsBackup(t *testing.T) {
 	}
 }
 
-func TestResolve_FindsEntry(t *testing.T) {
+func TestResolveBatch_FindsByBatchID(t *testing.T) {
 	idx := &Index{
 		Version: IndexVersion,
-		Entries: []Entry{
+		Batches: []Batch{
 			{ID: "abc123", Path: "/path/abc123", Kind: KindIssue, Status: StatusActive},
 			{ID: "def456", Path: "/path/def456", Kind: KindReview, Status: StatusActive},
 		},
 	}
 
-	entry := idx.Resolve("abc123")
-	if entry == nil {
-		t.Fatal("Resolve returned nil, want entry")
+	batch := idx.ResolveBatch("abc123")
+	if batch == nil {
+		t.Fatal("ResolveBatch returned nil, want batch")
 	}
-	if entry.ID != "abc123" {
-		t.Errorf("entry.ID = %q, want %q", entry.ID, "abc123")
+	if batch.ID != "abc123" {
+		t.Errorf("batch.ID = %q, want %q", batch.ID, "abc123")
 	}
 }
 
-func TestResolve_NotFound(t *testing.T) {
+func TestResolveBatch_NotFound(t *testing.T) {
 	idx := &Index{
 		Version: IndexVersion,
-		Entries: []Entry{
+		Batches: []Batch{
 			{ID: "abc123", Path: "/path/abc123", Kind: KindIssue, Status: StatusActive},
 		},
 	}
 
-	entry := idx.Resolve("nonexistent")
-	if entry != nil {
-		t.Errorf("entry = %v, want nil", entry)
+	batch := idx.ResolveBatch("nonexistent")
+	if batch != nil {
+		t.Errorf("batch = %v, want nil", batch)
 	}
 }
 
@@ -191,7 +190,7 @@ func TestProbeStatus_ENOENT_SetsUnavailable(t *testing.T) {
 	indexPath := filepath.Join(repoRoot, ".sandman", "batches.json")
 	idx := &Index{
 		Version: IndexVersion,
-		Entries: []Entry{
+		Batches: []Batch{
 			{ID: "abc123", Path: filepath.Join(batchesDir, "nonexistent"), Kind: KindIssue, Status: StatusActive},
 		},
 	}
@@ -207,8 +206,8 @@ func TestProbeStatus_ENOENT_SetsUnavailable(t *testing.T) {
 	if err := loaded.EnsureStatus(); err != nil {
 		t.Fatalf("EnsureStatus failed: %v", err)
 	}
-	if loaded.Entries[0].Status != StatusUnavailable {
-		t.Errorf("Status = %q, want %q", loaded.Entries[0].Status, StatusUnavailable)
+	if loaded.Batches[0].Status != StatusUnavailable {
+		t.Errorf("Status = %q, want %q", loaded.Batches[0].Status, StatusUnavailable)
 	}
 }
 
@@ -227,7 +226,7 @@ func TestProbeStatus_NonENOENT_LeavesStatus(t *testing.T) {
 	indexPath := filepath.Join(repoRoot, ".sandman", "batches.json")
 	idx := &Index{
 		Version: IndexVersion,
-		Entries: []Entry{
+		Batches: []Batch{
 			{ID: "realbatch", Path: realBatchDir, Kind: KindIssue, Status: StatusActive},
 			{ID: "missing", Path: filepath.Join(batchesDir, "missing"), Kind: KindIssue, Status: StatusArchived},
 		},
@@ -245,12 +244,12 @@ func TestProbeStatus_NonENOENT_LeavesStatus(t *testing.T) {
 		t.Fatalf("EnsureStatus failed: %v", err)
 	}
 
-	for _, e := range loaded.Entries {
-		if e.ID == "realbatch" && e.Status != StatusActive {
-			t.Errorf("realbatch Status = %q, want %q", e.Status, StatusActive)
+	for _, b := range loaded.Batches {
+		if b.ID == "realbatch" && b.Status != StatusActive {
+			t.Errorf("realbatch Status = %q, want %q", b.Status, StatusActive)
 		}
-		if e.ID == "missing" && e.Status != StatusUnavailable {
-			t.Errorf("missing Status = %q, want %q", e.Status, StatusUnavailable)
+		if b.ID == "missing" && b.Status != StatusUnavailable {
+			t.Errorf("missing Status = %q, want %q", b.Status, StatusUnavailable)
 		}
 	}
 }
@@ -359,9 +358,9 @@ func TestReviewState_JSONSchema(t *testing.T) {
 	}
 }
 
-func TestEntry_JSONSchema(t *testing.T) {
+func TestBatch_JSONSchema(t *testing.T) {
 	now := time.Now().Truncate(time.Second)
-	entry := Entry{
+	batch := Batch{
 		ID:         "abc123",
 		Path:       ".sandman/batches/abc123",
 		Kind:       KindIssue,
@@ -371,24 +370,24 @@ func TestEntry_JSONSchema(t *testing.T) {
 		ArchivedAt: nil,
 	}
 
-	data, err := json.Marshal(entry)
+	data, err := json.Marshal(batch)
 	if err != nil {
 		t.Fatalf("Marshal failed: %v", err)
 	}
 
-	var decoded Entry
+	var decoded Batch
 	if err := json.Unmarshal(data, &decoded); err != nil {
 		t.Fatalf("Unmarshal failed: %v", err)
 	}
 
-	if decoded.ID != entry.ID {
-		t.Errorf("ID = %q, want %q", decoded.ID, entry.ID)
+	if decoded.ID != batch.ID {
+		t.Errorf("ID = %q, want %q", decoded.ID, batch.ID)
 	}
-	if decoded.Kind != entry.Kind {
-		t.Errorf("Kind = %q, want %q", decoded.Kind, entry.Kind)
+	if decoded.Kind != batch.Kind {
+		t.Errorf("Kind = %q, want %q", decoded.Kind, batch.Kind)
 	}
-	if decoded.Status != entry.Status {
-		t.Errorf("Status = %q, want %q", decoded.Status, entry.Status)
+	if decoded.Status != batch.Status {
+		t.Errorf("Status = %q, want %q", decoded.Status, batch.Status)
 	}
 	if len(decoded.Issues) != 2 {
 		t.Errorf("Issues len = %d, want 2", len(decoded.Issues))
@@ -398,7 +397,7 @@ func TestEntry_JSONSchema(t *testing.T) {
 func TestIndex_JSONSchema_PromptOnlyIssuesAreExplicitEmptyArray(t *testing.T) {
 	idx := Index{
 		Version: IndexVersion,
-		Entries: []Entry{{
+		Batches: []Batch{{
 			ID:        "prompt-only-abc123",
 			Path:      ".sandman/batches/prompt-only-abc123",
 			Kind:      KindPromptOnly,
@@ -441,7 +440,7 @@ func TestIndex_JSONSchema_PromptOnlyIssuesAreExplicitEmptyArray(t *testing.T) {
 func TestIndex_JSONSchema_PromptOnlyIssuesIgnoreStaleValues(t *testing.T) {
 	idx := Index{
 		Version: IndexVersion,
-		Entries: []Entry{{
+		Batches: []Batch{{
 			ID:        "prompt-only-abc123",
 			Path:      ".sandman/batches/prompt-only-abc123",
 			Kind:      KindPromptOnly,
@@ -482,105 +481,105 @@ func TestIndex_JSONSchema_PromptOnlyIssuesIgnoreStaleValues(t *testing.T) {
 	}
 }
 
-func TestAddEntry_New(t *testing.T) {
+func TestAddBatch_New(t *testing.T) {
 	idx := &Index{Version: IndexVersion}
-	entry := Entry{ID: "abc123", Kind: KindIssue}
-	idx.Add(entry)
-	if len(idx.Entries) != 1 {
-		t.Fatalf("Entries len = %d, want 1", len(idx.Entries))
+	batch := Batch{ID: "abc123", Kind: KindIssue}
+	idx.AddBatch(batch)
+	if len(idx.Batches) != 1 {
+		t.Fatalf("Batches len = %d, want 1", len(idx.Batches))
 	}
-	if idx.Entries[0].ID != "abc123" {
-		t.Errorf("Entries[0].ID = %q, want %q", idx.Entries[0].ID, "abc123")
+	if idx.Batches[0].ID != "abc123" {
+		t.Errorf("Batches[0].ID = %q, want %q", idx.Batches[0].ID, "abc123")
 	}
-	if idx.Entries[0].Status != StatusActive {
-		t.Errorf("Entries[0].Status = %q, want %q", idx.Entries[0].Status, StatusActive)
+	if idx.Batches[0].Status != StatusActive {
+		t.Errorf("Batches[0].Status = %q, want %q", idx.Batches[0].Status, StatusActive)
 	}
 }
 
-func TestAddEntry_Existing(t *testing.T) {
+func TestAddBatch_Existing(t *testing.T) {
 	idx := &Index{
 		Version: IndexVersion,
-		Entries: []Entry{
+		Batches: []Batch{
 			{ID: "abc123", Kind: KindIssue, Status: StatusActive},
 		},
 	}
-	newEntry := Entry{ID: "abc123", Kind: KindReview}
-	idx.Add(newEntry)
-	if len(idx.Entries) != 1 {
-		t.Fatalf("Entries len = %d, want 1", len(idx.Entries))
+	newBatch := Batch{ID: "abc123", Kind: KindReview}
+	idx.AddBatch(newBatch)
+	if len(idx.Batches) != 1 {
+		t.Fatalf("Batches len = %d, want 1", len(idx.Batches))
 	}
-	if idx.Entries[0].Kind != KindReview {
-		t.Errorf("Entries[0].Kind = %q, want %q", idx.Entries[0].Kind, KindReview)
+	if idx.Batches[0].Kind != KindReview {
+		t.Errorf("Batches[0].Kind = %q, want %q", idx.Batches[0].Kind, KindReview)
 	}
-	if idx.Entries[0].Status != StatusActive {
-		t.Errorf("Entries[0].Status = %q, want %q", idx.Entries[0].Status, StatusActive)
+	if idx.Batches[0].Status != StatusActive {
+		t.Errorf("Batches[0].Status = %q, want %q", idx.Batches[0].Status, StatusActive)
 	}
 }
 
-func TestAddEntry_EmptyID_BackfilledFromPathBasename(t *testing.T) {
+func TestAddBatch_EmptyID_BackfilledFromPathBasename(t *testing.T) {
 	idx := &Index{Version: IndexVersion}
-	entry := Entry{
+	batch := Batch{
 		ID:     "",
 		Path:   "/tmp/sandman/.sandman/batches/abc123",
 		Kind:   KindIssue,
 		Status: StatusActive,
 	}
-	idx.Add(entry)
+	idx.AddBatch(batch)
 
-	if len(idx.Entries) != 1 {
-		t.Fatalf("Entries len = %d, want 1", len(idx.Entries))
+	if len(idx.Batches) != 1 {
+		t.Fatalf("Batches len = %d, want 1", len(idx.Batches))
 	}
-	if idx.Entries[0].ID != "abc123" {
-		t.Errorf("Entries[0].ID = %q, want %q (backfilled from path basename)", idx.Entries[0].ID, "abc123")
+	if idx.Batches[0].ID != "abc123" {
+		t.Errorf("Batches[0].ID = %q, want %q (backfilled from path basename)", idx.Batches[0].ID, "abc123")
 	}
 }
 
-func TestAddEntry_EmptyID_NoPathBasename_FallsBackToPath(t *testing.T) {
+func TestAddBatch_EmptyID_NoPathBasename_FallsBackToPath(t *testing.T) {
 	// When the path has no usable basename (rare — only happens for
-	// an empty path), Add must still produce an addressable entry to
+	// an empty path), AddBatch must still produce an addressable batch to
 	// avoid dropping it on the floor. The resulting ID is the literal
 	// path or a stable placeholder.
 	idx := &Index{Version: IndexVersion}
-	idx.Add(Entry{ID: "", Path: ".", Kind: KindIssue})
+	idx.AddBatch(Batch{ID: "", Path: ".", Kind: KindIssue})
 
-	if len(idx.Entries) != 1 {
-		t.Fatalf("Entries len = %d, want 1", len(idx.Entries))
+	if len(idx.Batches) != 1 {
+		t.Fatalf("Batches len = %d, want 1", len(idx.Batches))
 	}
-	if idx.Entries[0].ID == "" {
-		t.Error("Entries[0].ID is still empty; Add must not produce an unidentified entry")
+	if idx.Batches[0].ID == "" {
+		t.Error("Batches[0].ID is still empty; AddBatch must not produce an unidentified batch")
 	}
 }
 
-func TestAddEntry_TwoEmptyIDs_DoNotEvict(t *testing.T) {
-	// Regression for issue #1464: a second empty-id Add used to
+func TestAddBatch_TwoEmptyIDs_DoNotEvict(t *testing.T) {
+	// Regression for issue #1464: a second empty-id AddBatch used to
 	// overwrite the previous one in place (same "" key in the lookup),
 	// silently evicting the prior batch from the index. After the fix
-	// both entries must be addressable and persisted.
+	// both batches must be addressable and persisted.
 	idx := &Index{Version: IndexVersion}
-	idx.Add(Entry{
+	idx.AddBatch(Batch{
 		ID:   "",
 		Path: "/tmp/sandman/.sandman/batches/first-001",
 		Kind: KindIssue,
 	})
-	idx.Add(Entry{
+	idx.AddBatch(Batch{
 		ID:   "",
 		Path: "/tmp/sandman/.sandman/batches/second-002",
 		Kind: KindIssue,
 	})
 
-	if len(idx.Entries) != 2 {
-		t.Fatalf("Entries len = %d, want 2 (empty-id must not collide)", len(idx.Entries))
+	if len(idx.Batches) != 2 {
+		t.Fatalf("Batches len = %d, want 2 (empty-id must not collide)", len(idx.Batches))
 	}
 
-	paths := make(map[string]bool, len(idx.Entries))
-	for i, e := range idx.Entries {
-		if e.ID == "" {
-			t.Errorf("Entries[%d].ID is empty; expected backfill from path basename", i)
+	paths := make(map[string]bool, len(idx.Batches))
+	for i, b := range idx.Batches {
+		if b.ID == "" {
+			t.Errorf("Batches[%d].ID is empty; expected backfill from path basename", i)
 		}
-		if paths[e.Path] {
-			t.Errorf("Entries[%d].Path %q duplicated in index", i, e.Path)
+		if paths[b.Path] {
+			t.Errorf("Batches[%d].Path %q duplicated in index", i, b.Path)
 		}
-		paths[e.Path] = true
+		paths[b.Path] = true
 	}
 }
 
@@ -593,7 +592,7 @@ func TestSave_RoundTrip_EmptyIDIsBackfilled(t *testing.T) {
 
 	idx := &Index{
 		Version: IndexVersion,
-		Entries: []Entry{
+		Batches: []Batch{
 			{
 				ID:        "",
 				Path:      filepath.Join(repoRoot, ".sandman", "batches", "abc123"),
@@ -612,11 +611,11 @@ func TestSave_RoundTrip_EmptyIDIsBackfilled(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if len(loaded.Entries) != 1 {
-		t.Fatalf("Entries len = %d, want 1", len(loaded.Entries))
+	if len(loaded.Batches) != 1 {
+		t.Fatalf("Batches len = %d, want 1", len(loaded.Batches))
 	}
-	if loaded.Entries[0].ID == "" {
-		t.Fatalf("Entries[0].ID is empty after round-trip; expected backfill from path basename")
+	if loaded.Batches[0].ID == "" {
+		t.Fatalf("Batches[0].ID is empty after round-trip; expected backfill from path basename")
 	}
 }
 
@@ -658,7 +657,7 @@ func TestSave_ConcurrentWriters(t *testing.T) {
 	}
 
 	indexPath := filepath.Join(repoRoot, ".sandman", "batches.json")
-	initialIdx := &Index{Version: IndexVersion, Entries: nil}
+	initialIdx := &Index{Version: IndexVersion, Batches: nil}
 	initialData, _ := json.Marshal(initialIdx)
 	if err := os.WriteFile(indexPath, initialData, 0644); err != nil {
 		t.Fatalf("write initial index: %v", err)
@@ -677,9 +676,9 @@ func TestSave_ConcurrentWriters(t *testing.T) {
 				t.Errorf("goroutine %d: Load failed: %v", i, err)
 				return
 			}
-			idx.Add(Entry{
-				ID:        fmt.Sprintf("entry-%d", i),
-				Path:      filepath.Join(batchesDir, fmt.Sprintf("entry-%d", i)),
+			idx.AddBatch(Batch{
+				ID:        fmt.Sprintf("batch-%d", i),
+				Path:      filepath.Join(batchesDir, fmt.Sprintf("batch-%d", i)),
 				Kind:      KindIssue,
 				Status:    StatusActive,
 				CreatedAt: time.Now(),
@@ -697,13 +696,13 @@ func TestSave_ConcurrentWriters(t *testing.T) {
 		t.Fatalf("final Load failed: %v", err)
 	}
 
-	if len(loaded.Entries) == 0 {
-		t.Fatalf("final index has 0 entries, want at least 1 (last-writer-wins is acceptable)")
+	if len(loaded.Batches) == 0 {
+		t.Fatalf("final index has 0 batches, want at least 1 (last-writer-wins is acceptable)")
 	}
 
-	for _, e := range loaded.Entries {
-		if e.ID == "" {
-			t.Errorf("entry has empty ID")
+	for _, b := range loaded.Batches {
+		if b.ID == "" {
+			t.Errorf("batch has empty ID")
 		}
 	}
 
@@ -731,7 +730,7 @@ func TestProbeStatus_StatFnPermissionError_LeavesStatus(t *testing.T) {
 	indexPath := filepath.Join(repoRoot, ".sandman", "batches.json")
 	idx := &Index{
 		Version: IndexVersion,
-		Entries: []Entry{
+		Batches: []Batch{
 			{ID: "realbatch", Path: realBatchDir, Kind: KindIssue, Status: StatusActive},
 		},
 		StatFn: func(path string) (os.FileInfo, error) {
@@ -751,9 +750,9 @@ func TestProbeStatus_StatFnPermissionError_LeavesStatus(t *testing.T) {
 		t.Fatalf("EnsureStatus failed: %v", err)
 	}
 
-	for _, e := range loaded.Entries {
-		if e.ID == "realbatch" && e.Status != StatusActive {
-			t.Errorf("realbatch Status = %q, want %q (non-ENOENT error should not flip status)", e.Status, StatusActive)
+	for _, b := range loaded.Batches {
+		if b.ID == "realbatch" && b.Status != StatusActive {
+			t.Errorf("realbatch Status = %q, want %q (non-ENOENT error should not flip status)", b.Status, StatusActive)
 		}
 	}
 }
@@ -770,8 +769,8 @@ func TestLoad_BakFallback_CorruptMain(t *testing.T) {
 
 	goodIdx := &Index{
 		Version: IndexVersion,
-		Entries: []Entry{
-			{ID: "recovered-entry", Path: "/recovered", Kind: KindIssue, Status: StatusActive},
+		Batches: []Batch{
+			{ID: "recovered-batch", Path: "/recovered", Kind: KindIssue, Status: StatusActive},
 		},
 	}
 	goodData, _ := json.Marshal(goodIdx)
@@ -787,11 +786,11 @@ func TestLoad_BakFallback_CorruptMain(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load failed: %v", err)
 	}
-	if len(loaded.Entries) != 1 {
-		t.Errorf("Entries len = %d, want 1 (recovered from .bak)", len(loaded.Entries))
+	if len(loaded.Batches) != 1 {
+		t.Errorf("Batches len = %d, want 1 (recovered from .bak)", len(loaded.Batches))
 	}
-	if loaded.Entries[0].ID != "recovered-entry" {
-		t.Errorf("Entry ID = %q, want %q", loaded.Entries[0].ID, "recovered-entry")
+	if loaded.Batches[0].ID != "recovered-batch" {
+		t.Errorf("Batch ID = %q, want %q", loaded.Batches[0].ID, "recovered-batch")
 	}
 }
 
@@ -807,8 +806,8 @@ func TestLoad_BakFallback_MissingMain_ValidBak(t *testing.T) {
 
 	goodIdx := &Index{
 		Version: IndexVersion,
-		Entries: []Entry{
-			{ID: "bak-only-entry", Path: "/bakonly", Kind: KindIssue, Status: StatusActive},
+		Batches: []Batch{
+			{ID: "bak-only-batch", Path: "/bakonly", Kind: KindIssue, Status: StatusActive},
 		},
 	}
 	goodData, _ := json.Marshal(goodIdx)
@@ -820,8 +819,8 @@ func TestLoad_BakFallback_MissingMain_ValidBak(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load with missing main but valid bak failed: %v", err)
 	}
-	if len(loaded.Entries) != 1 {
-		t.Errorf("Entries len = %d, want 1 (recovered from .bak)", len(loaded.Entries))
+	if len(loaded.Batches) != 1 {
+		t.Errorf("Batches len = %d, want 1 (recovered from .bak)", len(loaded.Batches))
 	}
 }
 
@@ -837,7 +836,7 @@ func TestLoad_CrashRecovery(t *testing.T) {
 
 	preCrashIdx := &Index{
 		Version: IndexVersion,
-		Entries: []Entry{
+		Batches: []Batch{
 			{ID: "pre-crash", Path: "/precrash", Kind: KindIssue, Status: StatusActive},
 		},
 	}
@@ -854,11 +853,11 @@ func TestLoad_CrashRecovery(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load recovered from bak failed: %v", err)
 	}
-	if len(loaded.Entries) != 1 {
-		t.Errorf("Entries len = %d, want 1 (recovered from .bak after crash)", len(loaded.Entries))
+	if len(loaded.Batches) != 1 {
+		t.Errorf("Batches len = %d, want 1 (recovered from .bak after crash)", len(loaded.Batches))
 	}
-	if loaded.Entries[0].ID != "pre-crash" {
-		t.Errorf("Entry ID = %q, want %q", loaded.Entries[0].ID, "pre-crash")
+	if loaded.Batches[0].ID != "pre-crash" {
+		t.Errorf("Batch ID = %q, want %q", loaded.Batches[0].ID, "pre-crash")
 	}
 }
 

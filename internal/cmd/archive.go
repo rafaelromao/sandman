@@ -111,7 +111,7 @@ func runArchiveStale(cmd *cobra.Command, deps Dependencies) error {
 
 	var archived int
 	now := time.Now().UTC()
-	for _, entry := range idx.Entries {
+	for _, entry := range idx.Batches {
 		if entry.Status != batchindex.StatusActive {
 			continue
 		}
@@ -159,7 +159,7 @@ func runArchiveRun(cmd *cobra.Command, id string, probe runActivityProbe, repoRo
 		return fmt.Errorf("load batches index: %w", err)
 	}
 
-	entry := idx.Resolve(id)
+	entry := idx.ResolveBatch(id)
 	if entry == nil {
 		return fmt.Errorf("batch %q not found in index", id)
 	}
@@ -211,7 +211,7 @@ func archivePortalRun(repoRoot, runID string) error {
 		return fmt.Errorf("load batches index: %w", err)
 	}
 
-	entry := idx.Resolve(runID)
+	entry := idx.ResolveBatch(runID)
 	if entry == nil {
 		return fmt.Errorf("batch %q not found in index", runID)
 	}
@@ -282,7 +282,7 @@ func runArchiveOlderThan(cmd *cobra.Command, daysArg string, repoRoot string) er
 
 	var archived int
 	now := time.Now().UTC()
-	for _, entry := range idx.Entries {
+	for _, entry := range idx.Batches {
 		if entry.Status != batchindex.StatusActive {
 			continue
 		}
@@ -323,7 +323,7 @@ func runArchiveOlderThan(cmd *cobra.Command, daysArg string, repoRoot string) er
 	return nil
 }
 
-func archiveBatchCreatedAt(entry batchindex.Entry) (time.Time, error) {
+func archiveBatchCreatedAt(entry batchindex.Batch) (time.Time, error) {
 	manifest, err := batchindex.ReadManifest(entry.Path)
 	if err == nil && !manifest.CreatedAt.IsZero() {
 		return manifest.CreatedAt.UTC(), nil

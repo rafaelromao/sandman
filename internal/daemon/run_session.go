@@ -150,7 +150,7 @@ func (s *RunSession) Prepare(manifest BatchManifest) error {
 	if manifest.PR != nil {
 		pr = *manifest.PR
 	}
-	idx.Add(batchindex.Entry{
+	idx.AddBatch(batchindex.Batch{
 		ID:        manifest.BatchId,
 		Path:      s.runDir,
 		Kind:      batchindex.Kind(manifest.RunKind),

@@ -526,10 +526,10 @@ func TestRunSelectionPhaseWithEvents_AutoSelectEntryIDMatchesOrchestratorRunID(t
 	if err != nil {
 		t.Fatalf("load batches index: %v", err)
 	}
-	if len(idx.Entries) != 1 {
-		t.Fatalf("expected exactly 1 batch index entry, got %d (entries=%v)", len(idx.Entries), idx.Entries)
+	if len(idx.Batches) != 1 {
+		t.Fatalf("expected exactly 1 batch index entry, got %d (entries=%v)", len(idx.Batches), idx.Batches)
 	}
-	if got := idx.Entries[0].ID; got != started.RunID {
+	if got := idx.Batches[0].ID; got != started.RunID {
 		t.Errorf("entry ID = %q, want orchestrator's RunID %q", got, started.RunID)
 	}
 }

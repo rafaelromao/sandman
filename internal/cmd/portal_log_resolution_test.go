@@ -64,7 +64,7 @@ func TestPortalRunsView_CompletedBatchCountLogDownload(t *testing.T) {
 
 	idx := &batchindex.Index{
 		Version: batchindex.IndexVersion,
-		Entries: []batchindex.Entry{
+		Batches: []batchindex.Batch{
 			{
 				ID:        batchID,
 				Path:      batchDir,
@@ -174,7 +174,7 @@ func TestPortalRunsView_ArchivedBatchCountLogDownload(t *testing.T) {
 
 	idx := &batchindex.Index{
 		Version: batchindex.IndexVersion,
-		Entries: []batchindex.Entry{
+		Batches: []batchindex.Batch{
 			{
 				ID:         batchID,
 				Path:       archiveDir,
@@ -339,7 +339,7 @@ func TestPortalRunsView_CompletedRunLogResolvesFromSavedFile(t *testing.T) {
 
 	idx := &batchindex.Index{
 		Version: batchindex.IndexVersion,
-		Entries: []batchindex.Entry{
+		Batches: []batchindex.Batch{
 			{
 				ID:        batchID,
 				Path:      batchDir,

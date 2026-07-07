@@ -19,7 +19,7 @@ import (
 // TestPortal_ResolveReviewRunFromCanonicalFolder_Active pins the canonical
 // portal behavior for an ACTIVE review run: the active row's RunID must
 // equal the per-row RunID written to runs/<rowID>/run.json by the review
-// daemon (issue #1551), not the batches-index Entry.ID (the batch dir name).
+// daemon (issue #1551), not the batches-index Batch.ID (the batch dir name).
 //
 // The previous portal behavior collapsed both onto the batch id, which broke
 // the eventsByRun lookup for the canonical review RunID and made the log
@@ -79,7 +79,7 @@ func TestPortal_ResolveReviewRunFromCanonicalFolder_Active(t *testing.T) {
 	layout := paths.NewLayout(nil, repoRoot)
 	batchesIdx := &batchindex.Index{
 		Version: batchindex.IndexVersion,
-		Entries: []batchindex.Entry{
+		Batches: []batchindex.Batch{
 			{
 				ID:        batchID,
 				Path:      batchDir,
@@ -177,7 +177,7 @@ func TestPortal_ResolveReviewRunFromCanonicalFolder_Completed(t *testing.T) {
 	layout := paths.NewLayout(nil, repoRoot)
 	batchesIdx := &batchindex.Index{
 		Version: batchindex.IndexVersion,
-		Entries: []batchindex.Entry{
+		Batches: []batchindex.Batch{
 			{
 				ID:        batchID,
 				Path:      batchDir,
@@ -729,7 +729,7 @@ func TestPortal_ReviewAggregation_LiveReviewSocketPreservesIssueIdentity(t *test
 	layout := paths.NewLayout(nil, repoRoot)
 	batchesIdx := &batchindex.Index{
 		Version: batchindex.IndexVersion,
-		Entries: []batchindex.Entry{{
+		Batches: []batchindex.Batch{{
 			ID:        batchID,
 			Path:      batchDir,
 			Kind:      batchindex.KindReview,
@@ -851,7 +851,7 @@ func TestPortal_DiscoverActiveRuns_ReviewRunFolderPreservesIssueIdentity(t *test
 	layout := paths.NewLayout(nil, repoRoot)
 	batchesIdx := &batchindex.Index{
 		Version: batchindex.IndexVersion,
-		Entries: []batchindex.Entry{{
+		Batches: []batchindex.Batch{{
 			ID:        batchID,
 			Path:      batchDir,
 			Kind:      batchindex.KindReview,
@@ -916,7 +916,7 @@ func TestPortal_DiscoverActiveRuns_ReviewIdentitySurvivesMissingManifest(t *test
 	layout := paths.NewLayout(nil, repoRoot)
 	batchesIdx := &batchindex.Index{
 		Version: batchindex.IndexVersion,
-		Entries: []batchindex.Entry{{
+		Batches: []batchindex.Batch{{
 			ID:        batchID,
 			Path:      batchDir,
 			Kind:      batchindex.KindReview,
@@ -981,7 +981,7 @@ func TestPortal_DiscoverActiveRuns_ReviewIdentityFromBatchDirPreservesIssueIdent
 	layout := paths.NewLayout(nil, repoRoot)
 	batchesIdx := &batchindex.Index{
 		Version: batchindex.IndexVersion,
-		Entries: []batchindex.Entry{{
+		Batches: []batchindex.Batch{{
 			ID:        batchID,
 			Path:      batchDir,
 			Kind:      batchindex.KindReview,
@@ -1150,7 +1150,7 @@ func TestPortal_ReviewRun_ShowsReviewingBeforeRunStarted(t *testing.T) {
 	layout := paths.NewLayout(nil, repoRoot)
 	batchesIdx := &batchindex.Index{
 		Version: batchindex.IndexVersion,
-		Entries: []batchindex.Entry{{
+		Batches: []batchindex.Batch{{
 			ID:        batchID,
 			Path:      batchDir,
 			Kind:      batchindex.KindReview,
@@ -1264,7 +1264,7 @@ func TestPortal_Compute_ActiveReviewDoesNotDuplicateParentCount(t *testing.T) {
 	layout := paths.NewLayout(nil, repoRoot)
 	batchesIdx := &batchindex.Index{
 		Version: batchindex.IndexVersion,
-		Entries: []batchindex.Entry{{
+		Batches: []batchindex.Batch{{
 			ID:        batchID,
 			Path:      batchDir,
 			Kind:      batchindex.KindReview,
@@ -1385,7 +1385,7 @@ func TestPortal_Compute_ActiveReviewStatusFollowsEventLog(t *testing.T) {
 	layout := paths.NewLayout(nil, repoRoot)
 	batchesIdx := &batchindex.Index{
 		Version: batchindex.IndexVersion,
-		Entries: []batchindex.Entry{{
+		Batches: []batchindex.Batch{{
 			ID:        batchID,
 			Path:      batchDir,
 			Kind:      batchindex.KindReview,
