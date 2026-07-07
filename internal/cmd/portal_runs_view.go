@@ -2235,11 +2235,12 @@ func (v *portalRunsView) loadBatchesIndex(repoRoot string) *batchindex.Index {
 	return idx
 }
 
-// isRunArchived reports whether the batch's directory currently lives under
-// .sandman/archive instead of .sandman/batches/<batch-id>/. A non-empty batchID that does
-// not resolve to an index entry returns false; otherwise, archived-ness
-// is reported from the entry's Status field, so transient or half-moved
-// state never lights up the flag.
+// isRunArchived reports whether the row is currently archived. A
+// row is archived when either (a) its batch entry's Status is
+// archived (whole-batch archive path) or (b) its per-row Runs[]
+// record carries Status: archived (per-row archive path). The
+// fallback to entry-level Status keeps legacy entries without Runs
+// records visible in the same way as before slice 8.
 func (v *portalRunsView) isRunArchived(idx *batchindex.Index, locator runLocator) bool {
 	if locator.batchID == "" || idx == nil {
 		return false
@@ -2248,7 +2249,15 @@ func (v *portalRunsView) isRunArchived(idx *batchindex.Index, locator runLocator
 	if entry == nil {
 		return false
 	}
-	return entry.Status == batchindex.StatusArchived
+	if entry.Status == batchindex.StatusArchived {
+		return true
+	}
+	if locator.runID != "" {
+		if rec := idx.RunRecordFor(locator.batchID, locator.runID); rec != nil && rec.Status == batchindex.RunRecordStatusArchived {
+			return true
+		}
+	}
+	return false
 }
 
 func (v *portalRunsView) sourceDirID(idx *batchindex.Index, run portalRun) runLocator {
