@@ -94,7 +94,7 @@ func TestPortal_ArchiveEndpointMovesCompletedRunToArchiveDirectory(t *testing.T)
 		t.Fatal(err)
 	}
 
-	idx := batchindex.Index{Version: batchindex.IndexVersion, Entries: []batchindex.Entry{
+	idx := batchindex.Index{Version: batchindex.IndexVersion, Batches: []batchindex.Batch{
 		{ID: runID, Path: batchDir, Kind: batchindex.KindIssue, Status: batchindex.StatusActive, CreatedAt: time.Now()},
 	}}
 	data, _ := json.Marshal(idx)
@@ -173,7 +173,7 @@ func TestPortal_ArchiveEndpoint_RejectsActiveRun(t *testing.T) {
 	if err := batchindex.WriteManifest(batchDir, batchManifest); err != nil {
 		t.Fatal(err)
 	}
-	idx := batchindex.Index{Version: batchindex.IndexVersion, Entries: []batchindex.Entry{
+	idx := batchindex.Index{Version: batchindex.IndexVersion, Batches: []batchindex.Batch{
 		{ID: runID, Path: batchDir, Kind: batchindex.KindIssue, Status: batchindex.StatusActive, CreatedAt: time.Now()},
 	}}
 	data, _ := json.Marshal(idx)
@@ -241,7 +241,7 @@ func TestPortal_ArchiveEndpoint_RejectsAlreadyArchivedRun(t *testing.T) {
 	if err := batchindex.WriteManifest(batchDir, batchManifest); err != nil {
 		t.Fatal(err)
 	}
-	idx := batchindex.Index{Version: batchindex.IndexVersion, Entries: []batchindex.Entry{
+	idx := batchindex.Index{Version: batchindex.IndexVersion, Batches: []batchindex.Batch{
 		{ID: runID, Path: batchDir, Kind: batchindex.KindIssue, Status: batchindex.StatusActive, CreatedAt: time.Now()},
 	}}
 	data, _ := json.Marshal(idx)
@@ -393,7 +393,7 @@ func TestPortal_ArchiveEndpoint_SurfaceArchivedFlagInRunsAPI(t *testing.T) {
 	if err := batchindex.WriteManifest(batchDir, batchManifest); err != nil {
 		t.Fatal(err)
 	}
-	idx := batchindex.Index{Version: batchindex.IndexVersion, Entries: []batchindex.Entry{
+	idx := batchindex.Index{Version: batchindex.IndexVersion, Batches: []batchindex.Batch{
 		{ID: runID, Path: batchDir, Kind: batchindex.KindIssue, Status: batchindex.StatusActive, CreatedAt: started, Issues: []int{42}},
 	}}
 	data, _ := json.Marshal(idx)
@@ -523,7 +523,7 @@ func TestPortal_ArchiveEndpoint_EndToEndRealRunIDToDirName(t *testing.T) {
 	if err := batchindex.WriteManifest(perRowDir, perRowManifest); err != nil {
 		t.Fatal(err)
 	}
-	idx := batchindex.Index{Version: batchindex.IndexVersion, Entries: []batchindex.Entry{
+	idx := batchindex.Index{Version: batchindex.IndexVersion, Batches: []batchindex.Batch{
 		{ID: batchEntryID, Path: batchDir, Kind: batchindex.KindIssue, Status: batchindex.StatusActive, CreatedAt: started, Issues: []int{42}},
 	}}
 	data, _ := json.Marshal(idx)
@@ -635,7 +635,7 @@ func TestPortal_ArchiveEndpoint_ResolvesPerRowRunIDToBatchEntryID(t *testing.T) 
 		t.Fatal(err)
 	}
 
-	idx := batchindex.Index{Version: batchindex.IndexVersion, Entries: []batchindex.Entry{
+	idx := batchindex.Index{Version: batchindex.IndexVersion, Batches: []batchindex.Batch{
 		{ID: batchEntryID, Path: batchDir, Kind: batchindex.KindIssue, Status: batchindex.StatusActive, CreatedAt: time.Now(), Issues: []int{42, 43}},
 	}}
 	data, _ := json.Marshal(idx)
@@ -754,7 +754,7 @@ func TestPortal_ArchiveEndpoint_MultiIssuePerRowIDsResolveToSameEntry(t *testing
 				t.Fatal(err)
 			}
 
-			idx := batchindex.Index{Version: batchindex.IndexVersion, Entries: []batchindex.Entry{
+			idx := batchindex.Index{Version: batchindex.IndexVersion, Batches: []batchindex.Batch{
 				{ID: batchEntryID, Path: batchDir, Kind: batchindex.KindIssue, Status: batchindex.StatusActive, CreatedAt: time.Now(), Issues: []int{42, 43}},
 			}}
 			data, _ := json.Marshal(idx)
@@ -859,7 +859,7 @@ func TestPortal_ArchiveEndpoint_ContinueReview(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	idx := batchindex.Index{Version: batchindex.IndexVersion, Entries: []batchindex.Entry{
+	idx := batchindex.Index{Version: batchindex.IndexVersion, Batches: []batchindex.Batch{
 		{ID: batchEntryID, Path: batchDir, Kind: batchindex.KindReview, Status: batchindex.StatusActive, CreatedAt: time.Now(), PR: 99},
 	}}
 	data, _ := json.Marshal(idx)
@@ -947,7 +947,7 @@ func TestPortal_ArchiveEndpoint_OrphanReview(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	idx := batchindex.Index{Version: batchindex.IndexVersion, Entries: []batchindex.Entry{
+	idx := batchindex.Index{Version: batchindex.IndexVersion, Batches: []batchindex.Batch{
 		{ID: batchEntryID, Path: batchDir, Kind: batchindex.KindReview, Status: batchindex.StatusActive, CreatedAt: time.Now(), PR: 100},
 	}}
 	data, _ := json.Marshal(idx)
@@ -1019,7 +1019,7 @@ func TestPortal_ArchiveEndpoint_SingleIssueRun(t *testing.T) {
 	if err := batchindex.WriteManifest(batchDir, batchManifest); err != nil {
 		t.Fatal(err)
 	}
-	idx := batchindex.Index{Version: batchindex.IndexVersion, Entries: []batchindex.Entry{
+	idx := batchindex.Index{Version: batchindex.IndexVersion, Batches: []batchindex.Batch{
 		{ID: batchEntryID, Path: batchDir, Kind: batchindex.KindIssue, Status: batchindex.StatusActive, CreatedAt: time.Now(), Issues: []int{42}},
 	}}
 	data, _ := json.Marshal(idx)
@@ -1042,9 +1042,9 @@ func TestPortal_ArchiveEndpoint_SingleIssueRun(t *testing.T) {
 
 // TestPortal_ArchiveEndpoint_ContinueIssueRun covers the --continue flag
 // path on a multi-issue issue run: the orchestrator resumes the existing
-// batch dir, so the per-row id matches the batch entry id (the
+// batch dir, so the per-row id matches the public BatchId (the
 // orchestrator picks the first subject as the resume row). The fast
-// path (idx.Resolve) resolves either id form to the same entry.
+// path (idx.ResolveBatch) resolves either id form to the same batch.
 func TestPortal_ArchiveEndpoint_ContinueIssueRun(t *testing.T) {
 	repoRoot, err := os.MkdirTemp("/tmp", "sm-archive-cissue-")
 	if err != nil {
@@ -1079,7 +1079,7 @@ func TestPortal_ArchiveEndpoint_ContinueIssueRun(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	idx := batchindex.Index{Version: batchindex.IndexVersion, Entries: []batchindex.Entry{
+	idx := batchindex.Index{Version: batchindex.IndexVersion, Batches: []batchindex.Batch{
 		{ID: batchEntryID, Path: batchDir, Kind: batchindex.KindIssue, Status: batchindex.StatusActive, CreatedAt: time.Now(), Issues: []int{42, 43}},
 	}}
 	data, _ := json.Marshal(idx)
@@ -1135,7 +1135,7 @@ func TestPortal_ArchiveEndpoint_AutoSelectRun(t *testing.T) {
 	if err := batchindex.WriteManifest(batchDir, batchManifest); err != nil {
 		t.Fatal(err)
 	}
-	idx := batchindex.Index{Version: batchindex.IndexVersion, Entries: []batchindex.Entry{
+	idx := batchindex.Index{Version: batchindex.IndexVersion, Batches: []batchindex.Batch{
 		{ID: batchEntryID, Path: batchDir, Kind: batchindex.KindAutoSelect, Status: batchindex.StatusActive, CreatedAt: time.Now()},
 	}}
 	data, _ := json.Marshal(idx)
@@ -1215,7 +1215,7 @@ func TestPortal_ArchiveEndpoint_PromptOnlyRun(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	idx := batchindex.Index{Version: batchindex.IndexVersion, Entries: []batchindex.Entry{
+	idx := batchindex.Index{Version: batchindex.IndexVersion, Batches: []batchindex.Batch{
 		{ID: publicBatchID, Path: batchDir, Kind: batchindex.KindPromptOnly, Status: batchindex.StatusActive, CreatedAt: time.Now()},
 	}}
 	data, _ := json.Marshal(idx)
@@ -1312,7 +1312,7 @@ func TestPortal_ArchiveEndpoint_PerRowIDPreservesErrorStatuses(t *testing.T) {
 		if err := batchindex.WriteManifest(perRowDir, perRowManifest); err != nil {
 			t.Fatal(err)
 		}
-		idx := batchindex.Index{Version: batchindex.IndexVersion, Entries: []batchindex.Entry{
+		idx := batchindex.Index{Version: batchindex.IndexVersion, Batches: []batchindex.Batch{
 			{ID: batchEntryID, Path: batchDir, Kind: batchindex.KindIssue, Status: batchindex.StatusActive, CreatedAt: time.Now(), Issues: []int{42, 43}},
 		}}
 		data, _ := json.Marshal(idx)
@@ -1384,7 +1384,7 @@ func TestPortal_ArchiveEndpoint_PerRowIDPreservesErrorStatuses(t *testing.T) {
 		if err := batchindex.WriteManifest(perRowDir, perRowManifest); err != nil {
 			t.Fatal(err)
 		}
-		idx := batchindex.Index{Version: batchindex.IndexVersion, Entries: []batchindex.Entry{
+		idx := batchindex.Index{Version: batchindex.IndexVersion, Batches: []batchindex.Batch{
 			{ID: batchEntryID, Path: batchDir, Kind: batchindex.KindIssue, Status: batchindex.StatusActive, CreatedAt: time.Now(), Issues: []int{42, 43}},
 		}}
 		data, _ := json.Marshal(idx)
@@ -1463,7 +1463,7 @@ func TestPortal_ArchiveEndpoint_PerRowIDPreservesErrorStatuses(t *testing.T) {
 		if err := batchindex.WriteManifest(perRowDir, perRowManifest); err != nil {
 			t.Fatal(err)
 		}
-		idx := batchindex.Index{Version: batchindex.IndexVersion, Entries: []batchindex.Entry{
+		idx := batchindex.Index{Version: batchindex.IndexVersion, Batches: []batchindex.Batch{
 			{ID: batchEntryID, Path: batchDir, Kind: batchindex.KindIssue, Status: batchindex.StatusActive, CreatedAt: time.Now(), Issues: []int{42, 43}},
 		}}
 		data, _ := json.Marshal(idx)

@@ -30,7 +30,7 @@ const (
 )
 
 // RunManifestStatus is the lifecycle status of a single run as recorded in
-// run.json. It is deliberately separate from the index Entry Status enum
+// run.json. It is deliberately separate from the index Batch Status enum
 // (active/archived/unavailable).
 type RunManifestStatus string
 
@@ -44,12 +44,17 @@ const (
 
 type Index struct {
 	Version   int                                    `json:"version"`
-	Entries   []Entry                                `json:"entries"`
+	Batches   []Batch                                `json:"entries"`
 	StatFn    func(path string) (os.FileInfo, error) `json:"-"`
 	indexPath string
 }
 
-type Entry struct {
+// Batch is one row of the batches index. Each Batch corresponds to a
+// folder under .sandman/batches/<id>/; its ID is the public BatchId —
+// the batch folder basename — used by portal/archive/clean endpoints
+// to address the row. Per-row identities are scoped inside a Batch
+// under runs/<runID>/ and are NOT represented in the index.
+type Batch struct {
 	ID         string     `json:"id"`
 	Path       string     `json:"path"`
 	Kind       Kind       `json:"kind"`
@@ -60,10 +65,10 @@ type Entry struct {
 	ArchivedAt *time.Time `json:"archivedAt,omitempty"`
 }
 
-// MarshalJSON writes the batches index with prompt-only entries carrying an
+// MarshalJSON writes the batches index with prompt-only batches carrying an
 // explicit empty issues array, matching ADR-0032's index schema.
 func (i Index) MarshalJSON() ([]byte, error) {
-	type entryJSON struct {
+	type batchJSON struct {
 		ID         string     `json:"id"`
 		Path       string     `json:"path"`
 		Kind       Kind       `json:"kind"`
@@ -74,21 +79,21 @@ func (i Index) MarshalJSON() ([]byte, error) {
 		ArchivedAt *time.Time `json:"archivedAt,omitempty"`
 	}
 
-	entries := make([]any, 0, len(i.Entries))
-	for _, e := range i.Entries {
-		issues := e.Issues
-		if e.Kind == KindPromptOnly || issues == nil {
+	batches := make([]any, 0, len(i.Batches))
+	for _, b := range i.Batches {
+		issues := b.Issues
+		if b.Kind == KindPromptOnly || issues == nil {
 			issues = []int{}
 		}
-		entries = append(entries, entryJSON{
-			ID:         e.ID,
-			Path:       e.Path,
-			Kind:       e.Kind,
-			Status:     e.Status,
-			CreatedAt:  e.CreatedAt,
+		batches = append(batches, batchJSON{
+			ID:         b.ID,
+			Path:       b.Path,
+			Kind:       b.Kind,
+			Status:     b.Status,
+			CreatedAt:  b.CreatedAt,
 			Issues:     issues,
-			PR:         e.PR,
-			ArchivedAt: e.ArchivedAt,
+			PR:         b.PR,
+			ArchivedAt: b.ArchivedAt,
 		})
 	}
 
@@ -97,7 +102,7 @@ func (i Index) MarshalJSON() ([]byte, error) {
 		Entries []any `json:"entries"`
 	}{
 		Version: i.Version,
-		Entries: entries,
+		Entries: batches,
 	})
 }
 
@@ -161,7 +166,7 @@ func Load(path string) (*Index, error) {
 	}
 
 	if os.IsNotExist(err) {
-		return &Index{Version: IndexVersion, Entries: nil, StatFn: os.Stat, indexPath: path}, nil
+		return &Index{Version: IndexVersion, Batches: nil, StatFn: os.Stat, indexPath: path}, nil
 	}
 
 	return nil, fmt.Errorf("read batches index: %w", err)
@@ -196,12 +201,12 @@ func (idx *Index) MarkUnavailable() bool {
 		statFn = os.Stat
 	}
 	dirty := false
-	for i := range idx.Entries {
-		e := &idx.Entries[i]
-		if e.Status == StatusActive || e.Status == StatusArchived {
-			if _, err := statFn(e.Path); err != nil {
+	for i := range idx.Batches {
+		b := &idx.Batches[i]
+		if b.Status == StatusActive || b.Status == StatusArchived {
+			if _, err := statFn(b.Path); err != nil {
 				if os.IsNotExist(err) {
-					e.Status = StatusUnavailable
+					b.Status = StatusUnavailable
 					dirty = true
 				}
 			}
@@ -216,8 +221,8 @@ func (idx *Index) EnsureStatus() error {
 }
 
 func (idx *Index) Save(indexPath string) error {
-	for i := range idx.Entries {
-		idx.Entries[i].ID = canonicalizeEntryID(idx.Entries[i].ID, idx.Entries[i].Path)
+	for i := range idx.Batches {
+		idx.Batches[i].ID = canonicalizeBatchID(idx.Batches[i].ID, idx.Batches[i].Path)
 	}
 
 	prev, err := os.ReadFile(indexPath)
@@ -239,44 +244,50 @@ func (idx *Index) Save(indexPath string) error {
 	return nil
 }
 
-func (idx *Index) Resolve(id string) *Entry {
-	for i := range idx.Entries {
-		if idx.Entries[i].ID == id {
-			return &idx.Entries[i]
+// ResolveBatch returns the index Batch whose ID equals the supplied
+// public BatchId, or nil when no batch matches. The id is the public
+// BatchId (== Batch folder basename) — see ADR-0032 §"Identity
+// table". Per-row RunIDs are intentionally NOT in scope here; they
+// are resolved through ResolveBatchFromRowID at the portal layer
+// because they need an on-disk manifest fallback.
+func (idx *Index) ResolveBatch(batchID string) *Batch {
+	for i := range idx.Batches {
+		if idx.Batches[i].ID == batchID {
+			return &idx.Batches[i]
 		}
 	}
 	return nil
 }
 
-func (idx *Index) Add(entry Entry) {
-	entry.ID = canonicalizeEntryID(entry.ID, entry.Path)
-	for i, e := range idx.Entries {
-		if e.ID == entry.ID {
-			entry.CreatedAt = e.CreatedAt
-			if e.Status == StatusArchived {
-				entry.Status = StatusArchived
-				entry.ArchivedAt = e.ArchivedAt
+func (idx *Index) AddBatch(batch Batch) {
+	batch.ID = canonicalizeBatchID(batch.ID, batch.Path)
+	for i, b := range idx.Batches {
+		if b.ID == batch.ID {
+			batch.CreatedAt = b.CreatedAt
+			if b.Status == StatusArchived {
+				batch.Status = StatusArchived
+				batch.ArchivedAt = b.ArchivedAt
 			} else {
-				entry.Status = StatusActive
+				batch.Status = StatusActive
 			}
-			idx.Entries[i] = entry
+			idx.Batches[i] = batch
 			return
 		}
 	}
-	entry.Status = StatusActive
-	idx.Entries = append(idx.Entries, entry)
+	batch.Status = StatusActive
+	idx.Batches = append(idx.Batches, batch)
 }
 
-// canonicalizeEntryID returns a non-empty entry ID derived from the
+// canonicalizeBatchID returns a non-empty batch id derived from the
 // supplied ID, falling back to the on-disk path basename when ID is
 // empty. The path-basename fallback exists to stop two distinct batches
 // from silently colliding on "" in the index's id-keyed lookup, which
-// would overwrite the first entry's row in place (issue #1464). When
+// would overwrite the first batch's row in place (issue #1464). When
 // both the ID and the path basename are unusable (rare — only an
-// empty path fits this), the literal path is returned so the entry is
+// empty path fits this), the literal path is returned so the batch is
 // still addressable; the operator can repair the malformed id
 // separately.
-func canonicalizeEntryID(id, path string) string {
+func canonicalizeBatchID(id, path string) string {
 	if id != "" {
 		return id
 	}
@@ -289,11 +300,11 @@ func canonicalizeEntryID(id, path string) string {
 }
 
 func (idx *Index) SetArchived(id, archivePath string, archivedAt time.Time) error {
-	for i := range idx.Entries {
-		if idx.Entries[i].ID == id {
-			idx.Entries[i].Status = StatusArchived
-			idx.Entries[i].Path = archivePath
-			idx.Entries[i].ArchivedAt = &archivedAt
+	for i := range idx.Batches {
+		if idx.Batches[i].ID == id {
+			idx.Batches[i].Status = StatusArchived
+			idx.Batches[i].Path = archivePath
+			idx.Batches[i].ArchivedAt = &archivedAt
 			return nil
 		}
 	}
@@ -301,9 +312,9 @@ func (idx *Index) SetArchived(id, archivePath string, archivedAt time.Time) erro
 }
 
 func (idx *Index) RemoveBatch(id string) error {
-	for i := range idx.Entries {
-		if idx.Entries[i].ID == id {
-			idx.Entries = append(idx.Entries[:i], idx.Entries[i+1:]...)
+	for i := range idx.Batches {
+		if idx.Batches[i].ID == id {
+			idx.Batches = append(idx.Batches[:i], idx.Batches[i+1:]...)
 			return idx.Save(idx.indexPath)
 		}
 	}

@@ -8084,7 +8084,7 @@ func TestClearIssueArtifacts_RemovesWorktree(t *testing.T) {
 	}
 
 	batchesIndexPath := filepath.Join(".sandman", "batches", "index.json")
-	idx := batchindex.Index{Version: batchindex.IndexVersion, Entries: []batchindex.Entry{{
+	idx := batchindex.Index{Version: batchindex.IndexVersion, Batches: []batchindex.Batch{{
 		ID:     batchID,
 		Path:   batchPath,
 		Kind:   batchindex.KindIssue,
@@ -8178,7 +8178,7 @@ func TestClearIssueArtifacts_RemovesOrphanWorktreeDirectory(t *testing.T) {
 	}
 
 	batchesIndexPath := filepath.Join(".sandman", "batches", "index.json")
-	idx := batchindex.Index{Version: batchindex.IndexVersion, Entries: []batchindex.Entry{{
+	idx := batchindex.Index{Version: batchindex.IndexVersion, Batches: []batchindex.Batch{{
 		ID:     batchID,
 		Path:   batchPath,
 		Kind:   batchindex.KindIssue,

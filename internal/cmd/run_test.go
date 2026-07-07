@@ -1745,10 +1745,10 @@ func TestRun_PromptOnlyWithRunIDRegistersOrchestratorRunIDInBatchesIndex(t *test
 		t.Fatalf("load batches index: %v", err)
 	}
 
-	if len(idx.Entries) != 1 {
-		t.Fatalf("expected exactly 1 batch index entry, got %d (entries=%v)", len(idx.Entries), idx.Entries)
+	if len(idx.Batches) != 1 {
+		t.Fatalf("expected exactly 1 batch index entry, got %d (entries=%v)", len(idx.Batches), idx.Batches)
 	}
-	got := idx.Entries[0]
+	got := idx.Batches[0]
 	// Pin the full public BatchId: <sid>-<ts>-prompt-myid. We assert
 	// the literal segment that hard-codes the `prompt` discriminator
 	// (issue #1920) — that is the load-bearing assertion this test
@@ -1804,10 +1804,10 @@ func TestRun_PromptOnlyWithoutRunIDRegistersCanonicalBatchIdInBatchesIndex(t *te
 		t.Fatalf("load batches index: %v", err)
 	}
 
-	if len(idx.Entries) != 1 {
-		t.Fatalf("expected exactly 1 batch index entry, got %d (entries=%v)", len(idx.Entries), idx.Entries)
+	if len(idx.Batches) != 1 {
+		t.Fatalf("expected exactly 1 batch index entry, got %d (entries=%v)", len(idx.Batches), idx.Batches)
 	}
-	got := idx.Entries[0]
+	got := idx.Batches[0]
 	// Pin the full public BatchId: <sid>-<ts>-prompt. The entry id
 	// must end with `-prompt` (the canonical discriminator) and must
 	// NOT have a trailing userid segment (since --run-id was empty).
@@ -4679,10 +4679,10 @@ func TestRun_SingleIssueRegistersPublicBatchIdInBatchesIndex(t *testing.T) {
 	}
 
 	wantPublicBatchID := spy.req.RunShortID + "-" + spy.req.RunTS + "-42"
-	if len(idx.Entries) != 1 {
-		t.Fatalf("expected exactly 1 batch index entry, got %d (entries=%v)", len(idx.Entries), idx.Entries)
+	if len(idx.Batches) != 1 {
+		t.Fatalf("expected exactly 1 batch index entry, got %d (entries=%v)", len(idx.Batches), idx.Batches)
 	}
-	got := idx.Entries[0]
+	got := idx.Batches[0]
 	if got.ID != wantPublicBatchID {
 		t.Errorf("entry ID = %q, want %q (public BatchId)", got.ID, wantPublicBatchID)
 	}
@@ -4743,20 +4743,20 @@ func TestRun_MultiIssueRegistersPublicBatchIdInBatchesIndex(t *testing.T) {
 	wantPublicBatchID := spy.req.RunShortID + "-" + spy.req.RunTS + "-42+1"
 	wantFirstRowID := spy.req.RunShortID + "-" + spy.req.RunTS + "-42"
 	wantSecondRowID := spy.req.RunShortID + "-" + spy.req.RunTS + "-43"
-	if len(idx.Entries) != 1 {
-		t.Fatalf("expected exactly 1 batch index entry for multi-issue run, got %d (entries=%v)", len(idx.Entries), idx.Entries)
+	if len(idx.Batches) != 1 {
+		t.Fatalf("expected exactly 1 batch index entry for multi-issue run, got %d (entries=%v)", len(idx.Batches), idx.Batches)
 	}
-	got := idx.Entries[0]
+	got := idx.Batches[0]
 	if got.ID != wantPublicBatchID {
 		t.Errorf("entry ID = %q, want %q (public BatchId)", got.ID, wantPublicBatchID)
 	}
 	// Per-row RunIDs are NOT separate index entries; they live in
 	// runs/<sid>-<ts>-<num>/run.json. Only the public BatchId is keyed
 	// in the index.
-	if idx.Resolve(wantFirstRowID) != nil {
+	if idx.ResolveBatch(wantFirstRowID) != nil {
 		t.Errorf("first row's per-row RunID %q must NOT have a separate index entry", wantFirstRowID)
 	}
-	if idx.Resolve(wantSecondRowID) != nil {
+	if idx.ResolveBatch(wantSecondRowID) != nil {
 		t.Errorf("second row's per-row RunID %q must NOT have a separate index entry", wantSecondRowID)
 	}
 	// Path is the public BatchId (= batch dir basename).
@@ -4812,11 +4812,11 @@ func TestRun_ContinueRegistersPerRowRunIDInBatchesIndex(t *testing.T) {
 	}
 
 	wantPublicBatchID := spy.req.RunShortID + "-" + spy.req.RunTS + "-42"
-	if len(idx.Entries) != 1 {
+	if len(idx.Batches) != 1 {
 		t.Logf("buf: %s", buf.String())
-		t.Fatalf("expected exactly 1 batch index entry, got %d (entries=%v)", len(idx.Entries), idx.Entries)
+		t.Fatalf("expected exactly 1 batch index entry, got %d (entries=%v)", len(idx.Batches), idx.Batches)
 	}
-	if got := idx.Entries[0].ID; got != wantPublicBatchID {
+	if got := idx.Batches[0].ID; got != wantPublicBatchID {
 		t.Errorf("entry ID = %q, want %q (public BatchId for single issue)", got, wantPublicBatchID)
 	}
 }

@@ -329,10 +329,10 @@ func TestLaunchReview_CleansUpWorktreeAndBranchOnSuccess(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load batches index from %s: %v", idxPath, err)
 	}
-	if len(idx.Entries) != 1 {
-		t.Fatalf("expected exactly 1 batch index entry, got %d (entries=%v)", len(idx.Entries), idx.Entries)
+	if len(idx.Batches) != 1 {
+		t.Fatalf("expected exactly 1 batch index entry, got %d (entries=%v)", len(idx.Batches), idx.Batches)
 	}
-	if got := idx.Entries[0].ID; got != perRowRunID {
+	if got := idx.Batches[0].ID; got != perRowRunID {
 		t.Errorf("entry ID = %q, want perRowRunID %q", got, perRowRunID)
 	}
 }
@@ -379,10 +379,10 @@ func TestPrepareReviewRun_LinkedIssueRegistersPerRowRunID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load batches index: %v", err)
 	}
-	if len(idx.Entries) != 1 {
-		t.Fatalf("expected exactly 1 batch index entry, got %d (entries=%v)", len(idx.Entries), idx.Entries)
+	if len(idx.Batches) != 1 {
+		t.Fatalf("expected exactly 1 batch index entry, got %d (entries=%v)", len(idx.Batches), idx.Batches)
 	}
-	if got := idx.Entries[0].ID; got != perRowRunID {
+	if got := idx.Batches[0].ID; got != perRowRunID {
 		t.Errorf("entry ID = %q, want perRowRunID %q", got, perRowRunID)
 	}
 }

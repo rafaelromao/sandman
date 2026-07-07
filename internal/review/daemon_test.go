@@ -791,7 +791,7 @@ func TestDaemon_TickSkipsSeenComment(t *testing.T) {
 	}
 	idxPath := daemon.BatchesIndexPath(d.BaseDir)
 	idx := &batchindex.Index{Version: batchindex.IndexVersion}
-	idx.Add(batchindex.Entry{
+	idx.AddBatch(batchindex.Batch{
 		ID:        priorBatchID,
 		Path:      priorBatchPath,
 		Kind:      batchindex.KindReview,
@@ -906,7 +906,7 @@ func TestDaemon_MixedSeenAndUnseenTriggers(t *testing.T) {
 	// loadSeenCache discovers it.
 	indexPath := filepath.Join(d.BaseDir, "batches", "batches.json")
 	idx, _ := batchindex.Load(indexPath)
-	idx.Add(batchindex.Entry{
+	idx.AddBatch(batchindex.Batch{
 		ID:   priorBatchID,
 		Path: priorBatchDir,
 		Kind: batchindex.KindReview,
@@ -1692,7 +1692,7 @@ func TestDaemon_OnlyNewestTriggerIgnoredWhenAllStale(t *testing.T) {
 	}
 	idxPath := daemon.BatchesIndexPath(d.BaseDir)
 	idx := &batchindex.Index{Version: batchindex.IndexVersion, StatFn: nil}
-	idx.Add(batchindex.Entry{
+	idx.AddBatch(batchindex.Batch{
 		ID:        priorBatchID,
 		Path:      priorBatchPath,
 		Kind:      batchindex.KindReview,
@@ -1808,7 +1808,7 @@ func TestDaemon_ClaimFailureSkipsComment(t *testing.T) {
 	}
 	idxPath := daemon.BatchesIndexPath(d.BaseDir)
 	idx := &batchindex.Index{Version: batchindex.IndexVersion}
-	idx.Add(batchindex.Entry{
+	idx.AddBatch(batchindex.Batch{
 		ID:        priorBatchID,
 		Path:      priorBatchPath,
 		Kind:      batchindex.KindReview,
@@ -2267,7 +2267,7 @@ func TestDaemon_AbortedReviewRetriesOnNextTick(t *testing.T) {
 	}
 	indexPath := filepath.Join(d.BaseDir, "batches", "batches.json")
 	idx, _ := batchindex.Load(indexPath)
-	idx.Add(batchindex.Entry{
+	idx.AddBatch(batchindex.Batch{
 		ID:   priorBatchID,
 		Path: priorBatchDir,
 		Kind: batchindex.KindReview,

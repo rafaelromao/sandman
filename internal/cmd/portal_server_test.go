@@ -710,7 +710,7 @@ func TestAbortPortalRunSendsAbortRequestAndReturnsSuccess(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(runFolder, "run.json"), runManifestData, 0644); err != nil {
 		t.Fatal(err)
 	}
-	idx := &batchindex.Index{Version: batchindex.IndexVersion, Entries: []batchindex.Entry{
+	idx := &batchindex.Index{Version: batchindex.IndexVersion, Batches: []batchindex.Batch{
 		{ID: "run-42-1", Path: batchDir, Kind: "batch", Status: "active", CreatedAt: startedAt, Issues: []int{42}},
 	}}
 	idxPath := filepath.Join(repoRoot, ".sandman", "batches.json")
@@ -833,7 +833,7 @@ func TestAbortPortalRun_ReturnsHTTPStatusCodes(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		idx := &batchindex.Index{Version: batchindex.IndexVersion, Entries: []batchindex.Entry{
+		idx := &batchindex.Index{Version: batchindex.IndexVersion, Batches: []batchindex.Batch{
 			{ID: runID, Path: batchDir, Kind: "batch", Status: "active", Issues: []int{42}},
 		}}
 		idxPath := filepath.Join(repoRoot, ".sandman", "batches.json")
@@ -990,7 +990,7 @@ func TestAbortPortalRun_QueuedRunEmitsRunAborted(t *testing.T) {
 		{Type: "run.queued", Timestamp: startedAt, RunID: "run-42-1", Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix", "blocked_by": []any{41}}},
 	})
 
-	idx := &batchindex.Index{Version: batchindex.IndexVersion, Entries: []batchindex.Entry{
+	idx := &batchindex.Index{Version: batchindex.IndexVersion, Batches: []batchindex.Batch{
 		{ID: batchKey, Path: batchDir, Kind: "batch", Status: "active", CreatedAt: startedAt, Issues: []int{42}},
 	}}
 	idxPath := filepath.Join(repoRoot, ".sandman", "batches.json")
@@ -1057,7 +1057,7 @@ func TestAbortPortalRun_BlockedRunEmitsRunAborted(t *testing.T) {
 		{Type: "run.blocked", Timestamp: startedAt, RunID: "run-42-1", Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix", "blocked_by": []any{41}}},
 	})
 
-	idx := &batchindex.Index{Version: batchindex.IndexVersion, Entries: []batchindex.Entry{
+	idx := &batchindex.Index{Version: batchindex.IndexVersion, Batches: []batchindex.Batch{
 		{ID: batchKey, Path: batchDir, Kind: "batch", Status: "active", CreatedAt: startedAt, Issues: []int{42}},
 	}}
 	idxPath := filepath.Join(repoRoot, ".sandman", "batches.json")
@@ -2155,7 +2155,7 @@ func addBatchToIndex(t *testing.T, repoRoot, batchID, batchPath string, issues [
 	if err != nil {
 		t.Fatal(err)
 	}
-	idx.Add(batchindex.Entry{
+	idx.AddBatch(batchindex.Batch{
 		ID:        batchID,
 		Path:      batchPath,
 		Kind:      batchindex.KindIssue,
@@ -2174,7 +2174,7 @@ func addArchivedBatchToIndex(t *testing.T, repoRoot, batchID, archivePath string
 	if err != nil {
 		t.Fatal(err)
 	}
-	idx.Add(batchindex.Entry{
+	idx.AddBatch(batchindex.Batch{
 		ID:        batchID,
 		Path:      archivePath,
 		Kind:      batchindex.KindIssue,
@@ -3497,7 +3497,7 @@ func TestPortal_RunsSummary(t *testing.T) {
 
 	idx := &batchindex.Index{
 		Version: batchindex.IndexVersion,
-		Entries: []batchindex.Entry{
+		Batches: []batchindex.Batch{
 			{
 				ID:        batchID,
 				Path:      filepath.Join(layout.BatchesDir, batchID),
@@ -3758,7 +3758,7 @@ func TestPortal_RunsRunKey(t *testing.T) {
 
 	idx := &batchindex.Index{
 		Version: batchindex.IndexVersion,
-		Entries: []batchindex.Entry{
+		Batches: []batchindex.Batch{
 			{
 				ID:        batchID,
 				Path:      filepath.Join(layout.BatchesDir, batchID),
@@ -4101,7 +4101,7 @@ func TestPortal_MatchRunState_FallbackDoesNotBindOrphanIssueToPromptOnly(t *test
 //
 // The empty "id" is the pre-#1657 shape that exercises the
 // activeKeyForActive fallback chain. Writing the JSON directly via
-// os.WriteFile bypasses batchindex.Index.Add's canonicalizeEntryID,
+// os.WriteFile bypasses batchindex.Index.Add's canonicalizeBatchID,
 // which would otherwise backfill the id from the path basename and
 // hide the bug. Only the index id is empty; path and status="active"
 // are set so discoverPortalInstances still finds the entry by socket

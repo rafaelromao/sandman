@@ -76,7 +76,7 @@ func TestDiscoverPortalInstances_IndexFirstDiscovery(t *testing.T) {
 	indexPath := layout.BatchesIndexPath
 	idx := &batchindex.Index{
 		Version: batchindex.IndexVersion,
-		Entries: []batchindex.Entry{
+		Batches: []batchindex.Batch{
 			{
 				ID:        activeBatchID,
 				Path:      activeBatchPath,
@@ -130,7 +130,7 @@ func TestDiscoverPortalInstances_IndexFirstDiscovery(t *testing.T) {
 		t.Fatalf("load index: %v", err)
 	}
 
-	unavailableEntry := loadedIdx.Resolve(unavailableBatchID)
+	unavailableEntry := loadedIdx.ResolveBatch(unavailableBatchID)
 	if unavailableEntry == nil {
 		t.Fatal("unavailable entry not found in index")
 	}
@@ -139,7 +139,7 @@ func TestDiscoverPortalInstances_IndexFirstDiscovery(t *testing.T) {
 	}
 
 	// Verify other entries are not affected
-	activeEntry := loadedIdx.Resolve(activeBatchID)
+	activeEntry := loadedIdx.ResolveBatch(activeBatchID)
 	if activeEntry == nil {
 		t.Fatal("active entry not found in index")
 	}
@@ -147,7 +147,7 @@ func TestDiscoverPortalInstances_IndexFirstDiscovery(t *testing.T) {
 		t.Fatalf("expected active status %q, got %q", batchindex.StatusActive, activeEntry.Status)
 	}
 
-	archivedEntry := loadedIdx.Resolve(archivedBatchID)
+	archivedEntry := loadedIdx.ResolveBatch(archivedBatchID)
 	if archivedEntry == nil {
 		t.Fatal("archived entry not found in index")
 	}
@@ -174,7 +174,7 @@ func TestDiscoverPortalInstances_NoSaveWhenClean(t *testing.T) {
 	indexPath := layout.BatchesIndexPath
 	idx := &batchindex.Index{
 		Version: batchindex.IndexVersion,
-		Entries: []batchindex.Entry{
+		Batches: []batchindex.Batch{
 			{
 				ID:        activeBatchID,
 				Path:      activeBatchPath,
@@ -229,7 +229,7 @@ func TestMarkUnavailable_OnlyFlipsENOENT(t *testing.T) {
 
 	idx := &batchindex.Index{
 		Version: batchindex.IndexVersion,
-		Entries: []batchindex.Entry{
+		Batches: []batchindex.Batch{
 			{
 				ID:     existingID,
 				Path:   existingPath,
@@ -248,12 +248,12 @@ func TestMarkUnavailable_OnlyFlipsENOENT(t *testing.T) {
 		t.Fatal("expected dirty=true when an entry is flipped")
 	}
 
-	existing := idx.Resolve(existingID)
+	existing := idx.ResolveBatch(existingID)
 	if existing.Status != batchindex.StatusActive {
 		t.Fatalf("existing entry should remain active, got %q", existing.Status)
 	}
 
-	missing := idx.Resolve(missingID)
+	missing := idx.ResolveBatch(missingID)
 	if missing.Status != batchindex.StatusUnavailable {
 		t.Fatalf("missing entry should be unavailable, got %q", missing.Status)
 	}
@@ -276,7 +276,7 @@ func TestMarkUnavailable_NoSaveWhenNothingChanges(t *testing.T) {
 
 	idx := &batchindex.Index{
 		Version: batchindex.IndexVersion,
-		Entries: []batchindex.Entry{
+		Batches: []batchindex.Batch{
 			{
 				ID:     alreadyUnavailableID,
 				Path:   alreadyUnavailablePath,
