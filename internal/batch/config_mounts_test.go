@@ -8,17 +8,17 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/rafaelromao/sandman/internal/paths"
 	"github.com/rafaelromao/sandman/internal/sandbox"
 )
 
-func TestPrepareContainerConfigMounts_StoresSnapshotUnderBatchConfigDir(t *testing.T) {
+func TestPrepareContainerConfigMounts_StoresSnapshotUnderRunDir(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
-	repoRoot := t.TempDir()
-	batchID := "test-batch-42"
-	snapshotRoot := paths.NewLayout(nil, repoRoot).BatchConfigSnapshotDir(batchID)
+	runDir := filepath.Join(t.TempDir(), "runs", "run-42-1")
+	if err := os.MkdirAll(runDir, 0755); err != nil {
+		t.Fatalf("mkdir run dir: %v", err)
+	}
 
 	opencodeDir := filepath.Join(home, ".config", "opencode")
 	if err := os.MkdirAll(opencodeDir, 0755); err != nil {
@@ -34,7 +34,7 @@ func TestPrepareContainerConfigMounts_StoresSnapshotUnderBatchConfigDir(t *testi
 		AgentConfigDirs: []string{opencodeDir},
 	}
 
-	cleanup, err := PrepareContainerConfigMounts(context.Background(), repoRoot, batchID, &opts, lookup)
+	cleanup, err := PrepareContainerConfigMounts(context.Background(), t.TempDir(), runDir, &opts, lookup)
 	if err != nil {
 		t.Fatalf("prepare container config mounts: %v", err)
 	}
@@ -44,11 +44,12 @@ func TestPrepareContainerConfigMounts_StoresSnapshotUnderBatchConfigDir(t *testi
 		t.Fatalf("expected 1 mount, got %d", len(opts.ConfigMounts))
 	}
 	source := opts.ConfigMounts[0].Source
-	if !strings.HasPrefix(source, snapshotRoot) {
-		t.Errorf("expected mount source %q to live under batch-owned snapshot root %q", source, snapshotRoot)
+	expectedRoot := filepath.Join(runDir, "config")
+	if !strings.HasPrefix(source, expectedRoot) {
+		t.Errorf("expected mount source %q to live under run-owned snapshot root %q", source, expectedRoot)
 	}
-	if info, err := os.Stat(snapshotRoot); err != nil || !info.IsDir() {
-		t.Errorf("expected batch-owned snapshot root to exist as a directory: %v", err)
+	if info, err := os.Stat(expectedRoot); err != nil || !info.IsDir() {
+		t.Errorf("expected run-owned snapshot root to exist as a directory: %v", err)
 	}
 }
 
@@ -493,13 +494,14 @@ func TestConfigMounts_ExcludesAndLiveMountsDirectories(t *testing.T) {
 	}
 }
 
-func TestPrepareContainerConfigMounts_BatchOwnedSnapshotUnderBatchConfigDir(t *testing.T) {
+func TestPrepareContainerConfigMounts_RunOwnedSnapshotUnderRunDir(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
-	repoRoot := t.TempDir()
-	batchID := "test-batch-42"
-	expectedRoot := paths.NewLayout(nil, repoRoot).BatchConfigSnapshotDir(batchID)
+	runDir := filepath.Join(t.TempDir(), "runs", "run-42-1")
+	if err := os.MkdirAll(runDir, 0755); err != nil {
+		t.Fatalf("mkdir run dir: %v", err)
+	}
 
 	configDir := filepath.Join(home, ".config", "test")
 	if err := os.MkdirAll(configDir, 0755); err != nil {
@@ -512,19 +514,20 @@ func TestPrepareContainerConfigMounts_BatchOwnedSnapshotUnderBatchConfigDir(t *t
 	opts := sandbox.StartOptions{
 		AgentConfigDirs: []string{configDir},
 	}
-	cleanup, err := PrepareContainerConfigMounts(context.Background(), repoRoot, batchID, &opts, func(context.Context) (string, error) { return "", nil })
+	cleanup, err := PrepareContainerConfigMounts(context.Background(), t.TempDir(), runDir, &opts, func(context.Context) (string, error) { return "", nil })
 	if err != nil {
 		t.Fatalf("prepare container config mounts: %v", err)
 	}
 	defer cleanup()
 
+	expectedRoot := filepath.Join(runDir, "config")
 	if info, err := os.Stat(expectedRoot); err != nil || !info.IsDir() {
-		t.Errorf("expected batch-owned snapshot root %q to exist as directory: %v", expectedRoot, err)
+		t.Errorf("expected run-owned snapshot root %q to exist as directory: %v", expectedRoot, err)
 	}
 
 	for _, mount := range opts.ConfigMounts {
 		if !strings.HasPrefix(mount.Source, expectedRoot) {
-			t.Errorf("expected mount source %q to be under batch-owned snapshot root %q", mount.Source, expectedRoot)
+			t.Errorf("expected mount source %q to be under run-owned snapshot root %q", mount.Source, expectedRoot)
 		}
 	}
 }

@@ -9,26 +9,22 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/rafaelromao/sandman/internal/paths"
 	"github.com/rafaelromao/sandman/internal/sandbox"
 	"gopkg.in/yaml.v3"
 )
 
 // prepareSnapshotParent returns the parent directory under which the
 // container config snapshot should be stored, plus a cleanup that
-// removes the parent when no run owns it. When batchID is non-empty,
-// the snapshot lives at paths.Layout.BatchConfigSnapshotDir(batchID)
-// (the per-batch `config/` directory). When batchID is empty, the
-// caller is producing a snapshot outside any batch (a pre-flight
-// check) and the snapshot lives in a MkdirTemp directory the returned
-// cleanup removes.
-func prepareSnapshotParent(layout paths.Layout, batchID string) (string, func(), error) {
-	if batchID != "" {
-		snapshotDir := layout.BatchConfigSnapshotDir(batchID)
-		if err := os.MkdirAll(snapshotDir, 0755); err != nil {
-			return "", nil, fmt.Errorf("prepare batch config snapshot dir: %w", err)
+// removes the parent when no run owns it. When runDir is set, the
+// caller is expected to remove runDir at end of run, so this cleanup is
+// a no-op for the parent itself but still removes the `config/` subtree
+// (handled by sandbox.ResolveConfigMounts cleanup).
+func prepareSnapshotParent(runDir string) (string, func(), error) {
+	if runDir != "" {
+		if err := os.MkdirAll(runDir, 0755); err != nil {
+			return "", nil, fmt.Errorf("prepare run dir for config snapshot: %w", err)
 		}
-		return snapshotDir, func() {}, nil
+		return runDir, func() {}, nil
 	}
 	tmpDir, err := os.MkdirTemp("", "sandman-config-*")
 	if err != nil {
@@ -38,10 +34,9 @@ func prepareSnapshotParent(layout paths.Layout, batchID string) (string, func(),
 }
 
 // PrepareContainerConfigMounts resolves git, gh, ssh, and agent config paths
-// into ConfigMounts copied under the batch's `config/` snapshot directory
-// (paths.Layout.BatchConfigSnapshotDir) so container runs do not bind host
-// paths directly and can safely follow symlinked config trees. When
-// batchID is empty (callers without a batch-owned parent), a temp dir is
+// into ConfigMounts copied under `<runDir>/config/` so container runs do not
+// bind host paths directly and can safely follow symlinked config trees.
+// When runDir is empty (callers without a run-owned parent), a temp dir is
 // created and the snapshot is removed by the returned cleanup.
 //
 // Paths in opts.AgentConfigExcludes are skipped during the snapshot copy.
@@ -56,7 +51,7 @@ func prepareSnapshotParent(layout paths.Layout, batchID string) (string, func(),
 // function that shells out to `gh auth token`, tests pass a fake. Takes
 // a context so the spawned `gh auth token` invocation honours the
 // caller's cancellation (issue #1780).
-func PrepareContainerConfigMounts(ctx context.Context, repoPath, batchID string, opts *sandbox.StartOptions, lookupGHToken func(context.Context) (string, error)) (func(), error) {
+func PrepareContainerConfigMounts(ctx context.Context, repoPath, runDir string, opts *sandbox.StartOptions, lookupGHToken func(context.Context) (string, error)) (func(), error) {
 	dirs := append([]string(nil), opts.AgentConfigDirs...)
 	files := append([]string(nil), opts.AgentConfigFiles...)
 	excludes := append([]string(nil), opts.AgentConfigExcludes...)
@@ -91,8 +86,7 @@ func PrepareContainerConfigMounts(ctx context.Context, repoPath, batchID string,
 		return func() {}, nil
 	}
 
-	layout := paths.NewLayout(nil, repoPath)
-	snapshotParent, snapshotCleanup, err := prepareSnapshotParent(layout, batchID)
+	snapshotParent, snapshotCleanup, err := prepareSnapshotParent(runDir)
 	if err != nil {
 		return nil, err
 	}

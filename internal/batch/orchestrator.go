@@ -1323,7 +1323,7 @@ func (o *Orchestrator) resolveSandboxExecutionPolicy(ctx context.Context, cfg *c
 		return nil, fmt.Errorf("max_containers must be 0 or greater")
 	}
 
-	cleanup, err := PrepareContainerConfigMounts(ctx, ".", issueBatchIDForRequest(req), &startOpts, o.lookupGHToken)
+	cleanup, err := PrepareContainerConfigMounts(ctx, ".", req.RunDir, &startOpts, o.lookupGHToken)
 	if err != nil {
 		return nil, fmt.Errorf("prepare container config mounts: %w", err)
 	}
