@@ -180,19 +180,40 @@ func (l *lockedBuffer) Bytes() []byte {
 }
 
 // decisionCapturingRunner wraps a capturedRequest so the fake agent
-// writes a deterministic <runDir>/decision.md before RunBatch
+// writes a deterministic <worktree>/decision.md before RunBatch
 // returns. Issue #1846 changed launchReview so a review run is not
 // considered "complete" until decision.md is read and posted; this
 // shim lets the pre-S3 test fixtures (slice C, slice D, daemon_test)
 // continue to drive the launch path without each test having to
 // fabricate the file inline.
+//
+// Issue #1953: decision.md lives in the per-row worktree, not the
+// run folder. The worktree path is derived from the branch the
+// prompt ran under (req.PromptConfig.Branch) and the worktree base
+// directory the daemon computes (cfg.WorktreeDir, defaulting to
+// ".sandman/worktrees" to match cmd/review.go's production wiring).
 type decisionCapturingRunner struct {
 	*capturedRequest
-	body string
+	body        string
+	worktreeDir string
 }
 
 func (d *decisionCapturingRunner) RunBatch(ctx context.Context, req batch.Request) (*batch.Result, error) {
-	path := filepath.Join(req.RunDir, "decision.md")
+	// Issue #1953: decision.md lives in the per-row worktree. The
+	// daemon passes the resolved worktree path on req.WorktreeDir
+	// (host-absolute). Fall back to the legacy default for tests
+	// that pre-date the field.
+	worktreeDir := req.WorktreeDir
+	if worktreeDir == "" {
+		worktreeDir = filepath.Join(d.worktreeDir, req.PromptConfig.Branch)
+		if d.worktreeDir == "" {
+			worktreeDir = filepath.Join(".sandman", "worktrees", req.PromptConfig.Branch)
+		}
+	}
+	if err := os.MkdirAll(worktreeDir, 0755); err != nil {
+		return nil, fmt.Errorf("mkdir worktree: %w", err)
+	}
+	path := filepath.Join(worktreeDir, "decision.md")
 	if err := os.WriteFile(path, []byte(d.body), 0644); err != nil {
 		return nil, fmt.Errorf("write decision.md: %w", err)
 	}
@@ -200,7 +221,7 @@ func (d *decisionCapturingRunner) RunBatch(ctx context.Context, req batch.Reques
 }
 
 func newDecisionRunner() *decisionCapturingRunner {
-	return &decisionCapturingRunner{capturedRequest: &capturedRequest{}, body: "ok"}
+	return &decisionCapturingRunner{capturedRequest: &capturedRequest{}, body: "ok", worktreeDir: ".sandman/worktrees"}
 }
 
 func newDaemonForTest(t *testing.T, gh GitHubClient, runner BatchRunner, cfg *config.Config) (*Daemon, *lockedBuffer, string) {
@@ -1387,12 +1408,11 @@ func TestDaemon_LaunchReviewPropagatesAgentModelOverrides(t *testing.T) {
 }
 
 func TestDaemon_LaunchReviewPropagatesRunDirToRenderedPrompt(t *testing.T) {
-	// Slice 3 of issue #1845: launchReview must pass the per-row run
-	// folder path on the PRData that RenderReview substitutes into
-	// {{RUN_DIR}}. The rendered prompt captured by the test runner
-	// must contain the same absolute path the daemon stored in
-	// Request.RunDir so the agent can locate decision.md regardless
-	// of its sandbox CWD.
+	// Issue #1953: launchReview must pass the per-row worktree path on
+	// the PRData that RenderReview substitutes into {{RUN_DIR}}. The
+	// worktree IS the canonical review artifact location; the agent's
+	// CWD is the worktree, so the prompt's <RUN_DIR> resolves to the
+	// path the daemon reads back from.
 	gh := &fakeGH{
 		prs: []github.PR{{Number: 42, State: "open"}},
 		comments: map[int][]github.PRComment{
@@ -1412,12 +1432,9 @@ func TestDaemon_LaunchReviewPropagatesRunDirToRenderedPrompt(t *testing.T) {
 	if runner.calls != 1 {
 		t.Fatalf("expected 1 batch run, got %d", runner.calls)
 	}
-	runDir := runner.last.RunDir
-	if runDir == "" {
-		t.Fatalf("expected non-empty RunDir in batch request, got empty")
-	}
-	if !strings.Contains(runner.last.PromptConfig.PromptFlag, "RunDir: "+runDir) {
-		t.Errorf("rendered prompt must contain `RunDir: %s` substituted from PRData.RunDir, got prompt:\n%s", runDir, runner.last.PromptConfig.PromptFlag)
+	wantWorktreeDir := d.reviewWorktreePath(42, "c-rundir")
+	if !strings.Contains(runner.last.PromptConfig.PromptFlag, "RunDir: "+wantWorktreeDir) {
+		t.Errorf("rendered prompt must contain `RunDir: %s` (per-row worktree, issue #1953), got prompt:\n%s", wantWorktreeDir, runner.last.PromptConfig.PromptFlag)
 	}
 	if strings.Contains(runner.last.PromptConfig.PromptFlag, "{{RUN_DIR}}") {
 		t.Errorf("rendered prompt must not retain the unfilled {{RUN_DIR}} placeholder, got prompt:\n%s", runner.last.PromptConfig.PromptFlag)
@@ -1425,14 +1442,18 @@ func TestDaemon_LaunchReviewPropagatesRunDirToRenderedPrompt(t *testing.T) {
 }
 
 // TestDaemon_LaunchReviewRebasesRunDirForContainerSandbox pins the
-// issue #1902 fix: when the daemon is wired in production shape
-// (BaseDir = <repoRoot>/.sandman, matching cmd/review.go) and the
-// sandbox mode is container-style (podman/docker), the prompt's
-// {{RUN_DIR}} substitution MUST be the container-visible form
-// (/workspace/<rel>) so the agent writes decision.md to a path that
+// issue #1902 + issue #1953 contract: when the daemon is wired in
+// production shape (BaseDir = <repoRoot>/.sandman, matching
+// cmd/review.go) and the sandbox mode is container-style
+// (podman/docker), the prompt's {{RUN_DIR}} substitution MUST be
+// the container-visible form (/workspace/<rel>) of the per-row
+// worktree path so the agent writes decision.md to a path that
 // lands on the bind-mounted host filesystem the daemon reads back.
-// req.RunDir stays host-absolute: postDecision reads decision.md from
-// the host path, not the container path.
+//
+// Issue #1953 changed the canonical artifact path from the run
+// folder to the worktree; the prompt's <RUN_DIR> follows the
+// worktree. req.RunDir stays on the run folder (used by the
+// orchestrator to place run.log and run.json).
 //
 // Pre-fix this test would fail: the prompt would contain
 // `RunDir: <host-absolute>` and the agent's mkdir + write would land
@@ -1477,22 +1498,21 @@ func TestDaemon_LaunchReviewRebasesRunDirForContainerSandbox(t *testing.T) {
 			if hostRunDir == "" {
 				t.Fatalf("expected non-empty RunDir in batch request, got empty")
 			}
-			// req.RunDir MUST stay host-absolute — postDecision
-			// reads decision.md from the host path.
+			// req.RunDir stays on the run folder — orchestrator
+			// uses it to place run.log and run.json.
 			if !strings.HasPrefix(hostRunDir, repoRoot) {
 				t.Errorf("req.RunDir must stay host-absolute (%s...), got %q", repoRoot, hostRunDir)
 			}
 			prompt := runner.last.PromptConfig.PromptFlag
-			// The prompt MUST contain the container-visible form.
-			// /workspace prefix is the bind-mount target.
-			containerForm := strings.Replace(hostRunDir, repoRoot, sandbox.ContainerWorkspaceMount, 1)
+			// The prompt MUST contain the container-visible form of
+			// the worktree path (issue #1953). The worktree lives
+			// under .sandman/worktrees/ on the host, so the
+			// container-visible form starts with
+			// /workspace/.sandman/worktrees/.
+			wantWorktree := d.reviewWorktreePath(42, "c-cpath")
+			containerForm := strings.Replace(wantWorktree, repoRoot, sandbox.ContainerWorkspaceMount, 1)
 			if !strings.Contains(prompt, "RunDir: "+containerForm) {
-				t.Errorf("rendered prompt must contain `RunDir: %s` (container-visible form), got prompt:\n%s", containerForm, prompt)
-			}
-			// The prompt MUST NOT contain the host-absolute path as
-			// the RunDir: prefix — that was the pre-fix bug.
-			if strings.Contains(prompt, "RunDir: "+hostRunDir) {
-				t.Errorf("rendered prompt must NOT contain host-absolute `RunDir: %s` (issue #1902 regression: agent would write to an in-container phantom path), got prompt:\n%s", hostRunDir, prompt)
+				t.Errorf("rendered prompt must contain `RunDir: %s` (container-visible worktree form, issue #1953), got prompt:\n%s", containerForm, prompt)
 			}
 			if strings.Contains(prompt, "{{RUN_DIR}}") {
 				t.Errorf("rendered prompt must not retain the unfilled {{RUN_DIR}} placeholder, got prompt:\n%s", prompt)
@@ -1507,7 +1527,7 @@ func TestDaemon_LaunchReviewRebasesRunDirForContainerSandbox(t *testing.T) {
 // the translation is a no-op even under a container sandbox mode.
 // This preserves the existing contract pinned by
 // TestDaemon_LaunchReviewPropagatesRunDirToRenderedPrompt: the prompt
-// contains the host-absolute RunDir verbatim. The guard exists so a
+// contains the worktree path verbatim. The guard exists so a
 // misconfigured daemon (no .sandman layout to compute the repo root
 // from) degrades to the legacy host-path behaviour rather than guessing.
 func TestDaemon_LaunchReviewNoOpRunDirWhenBaseDirNotSandman(t *testing.T) {
@@ -1531,17 +1551,14 @@ func TestDaemon_LaunchReviewNoOpRunDirWhenBaseDirNotSandman(t *testing.T) {
 	if runner.calls != 1 {
 		t.Fatalf("expected 1 batch run, got %d", runner.calls)
 	}
-	hostRunDir := runner.last.RunDir
-	if hostRunDir == "" {
-		t.Fatalf("expected non-empty RunDir in batch request, got empty")
-	}
 	// When BaseDir does not end in ".sandman", the translation must
-	// no-op: the prompt contains the host-absolute RunDir verbatim.
-	// This is the guard's safety property — a test fixture without
-	// the .sandman layout degrades to legacy behaviour rather than
-	// silently producing /workspace paths against an unknown root.
-	if !strings.Contains(runner.last.PromptConfig.PromptFlag, "RunDir: "+hostRunDir) {
-		t.Errorf("rendered prompt must contain host-absolute `RunDir: %s` when BaseDir guard does not match, got prompt:\n%s", hostRunDir, runner.last.PromptConfig.PromptFlag)
+	// no-op: the prompt contains the host-absolute worktree path
+	// verbatim. This is the guard's safety property — a test fixture
+	// without the .sandman layout degrades to legacy behaviour rather
+	// than silently producing /workspace paths against an unknown root.
+	wantWorktree := d.reviewWorktreePath(42, "c-noop")
+	if !strings.Contains(runner.last.PromptConfig.PromptFlag, "RunDir: "+wantWorktree) {
+		t.Errorf("rendered prompt must contain host-absolute `RunDir: %s` (worktree, issue #1953) when BaseDir guard does not match, got prompt:\n%s", wantWorktree, runner.last.PromptConfig.PromptFlag)
 	}
 	if strings.Contains(runner.last.PromptConfig.PromptFlag, sandbox.ContainerWorkspaceMount) {
 		t.Errorf("rendered prompt must NOT contain %q when BaseDir guard does not match, got prompt:\n%s", sandbox.ContainerWorkspaceMount, runner.last.PromptConfig.PromptFlag)
@@ -1879,6 +1896,7 @@ func TestDaemon_LaunchReviewCreatesControlSocketAndManifest(t *testing.T) {
 	cfg := &config.Config{
 		DefaultReviewAgent: "opencode",
 		DefaultReviewModel: "m",
+		WorktreeDir:        ".sandman/worktrees",
 	}
 	cfg.AgentProviders = map[string]config.Agent{
 		"opencode": {Preset: "opencode", Command: "opencode"},
@@ -1888,10 +1906,15 @@ func TestDaemon_LaunchReviewCreatesControlSocketAndManifest(t *testing.T) {
 	runner := batchFunc(func(ctx context.Context, req batch.Request) (*batch.Result, error) {
 		capturedRunDir = req.RunDir
 
-		// Issue #1846 (S3): write decision.md so the post step
+		// Issue #1846 (S3) + issue #1953: write decision.md to the
+		// per-row worktree (the agent's CWD) so the post step
 		// succeeds; this test asserts on socket/manifest creation,
 		// not on the post step itself.
-		if err := os.WriteFile(filepath.Join(req.RunDir, "decision.md"), []byte("ok"), 0644); err != nil {
+		worktreePath := filepath.Join(".sandman", "worktrees", req.PromptConfig.Branch)
+		if err := os.MkdirAll(worktreePath, 0755); err != nil {
+			return nil, err
+		}
+		if err := os.WriteFile(filepath.Join(worktreePath, "decision.md"), []byte("ok"), 0644); err != nil {
 			return nil, err
 		}
 
@@ -2029,7 +2052,12 @@ func TestDaemon_LaunchReviewReplacesStaleSocket(t *testing.T) {
 	if prepErr != nil {
 		t.Fatalf("prepareReviewRun: %v", prepErr)
 	}
-	if err := os.WriteFile(filepath.Join(reviewRunFolder, "decision.md"), []byte("ok"), 0644); err != nil {
+	// Issue #1953: decision.md lives in the per-row worktree.
+	worktreePath := d.reviewWorktreePath(1, "c1")
+	if err := os.MkdirAll(worktreePath, 0755); err != nil {
+		t.Fatalf("mkdir worktree: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(worktreePath, "decision.md"), []byte("ok"), 0644); err != nil {
 		t.Fatalf("write decision.md: %v", err)
 	}
 	if err := d.launchReview(context.Background(), 1, "", "c1", "", "", reviewRunFolder, perRowRunID, rs, state, false); err != nil {
@@ -2087,7 +2115,12 @@ func TestDaemon_LaunchReviewRoutesOutputToPerPRSock(t *testing.T) {
 	if prepErr != nil {
 		t.Fatalf("prepareReviewRun: %v", prepErr)
 	}
-	if err := os.WriteFile(filepath.Join(reviewRunFolder, "decision.md"), []byte("ok"), 0644); err != nil {
+	// Issue #1953: decision.md lives in the per-row worktree.
+	worktreePath := d.reviewWorktreePath(1, "c1")
+	if err := os.MkdirAll(worktreePath, 0755); err != nil {
+		t.Fatalf("mkdir worktree: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(worktreePath, "decision.md"), []byte("ok"), 0644); err != nil {
 		t.Fatalf("write decision.md: %v", err)
 	}
 	if err := d.launchReview(context.Background(), 1, "", "c1", "", "", reviewRunFolder, perRowRunID, rs, state, false); err != nil {

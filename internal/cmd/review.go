@@ -19,6 +19,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/prompt"
 	"github.com/rafaelromao/sandman/internal/review"
 	"github.com/rafaelromao/sandman/internal/runid"
+	"github.com/rafaelromao/sandman/internal/sandbox"
 	"github.com/spf13/cobra"
 )
 
@@ -148,6 +149,12 @@ func runReviewOneShot(cmd *cobra.Command, deps Dependencies, cfg *config.Config,
 			return fmt.Errorf("resolve repo root: %w", err)
 		}
 	}
+	// Resolve repoRoot to an absolute path so the per-row worktree
+	// path (issue #1953) is absolute regardless of how the caller
+	// configured deps.RepoRoot.
+	if abs, absErr := filepath.Abs(repoRoot); absErr == nil {
+		repoRoot = abs
+	}
 	sandmanDir := paths.NewLayout(cfg, repoRoot).SandmanDir
 
 	ts, shortid, err := runid.NewBatch()
@@ -188,16 +195,33 @@ func runReviewOneShot(cmd *cobra.Command, deps Dependencies, cfg *config.Config,
 		return fmt.Errorf("create per-row run folder: %w", err)
 	}
 
+	// Issue #1953: the canonical review artifact path is the per-row
+	// worktree (the agent's CWD), not the run folder. Compute the
+	// worktree path deterministically from the branch the agent will
+	// create (review-<pr>-<unixnano> for one-shot, review-<pr>-<commentID>
+	// for daemon-launched) and the configured worktree directory. The
+	// prompt's {{RUN_DIR}} resolves to this path so the agent writes
+	// decision.md directly to the daemon-readable location.
+	reviewBranch := fmt.Sprintf("sandman/review-%d-%d", pr.Number, time.Now().UnixNano())
+	worktreeDir := strings.TrimSpace(cfg.WorktreeDir)
+	absWorktreeDir := filepath.Join(repoRoot, worktreeDir)
+	absWorktreePath := filepath.Join(absWorktreeDir, reviewBranch)
+
 	priorReviewExists, err := computePriorReviewExists(cmd.Context(), deps.GitHubClient, pr.Number)
 	if err != nil {
 		return fmt.Errorf("compute prior review flag: %w", err)
 	}
 
+	// Translate the worktree path to the container-visible form so
+	// the agent inside a podman/docker sandbox sees the same path
+	// the daemon writes from on the host (issue #1902).
+	promptRunDir := sandbox.ContainerVisiblePath(absWorktreePath, repoRoot, sandboxMode)
+
 	rendered, err := deps.Renderer.RenderReview(prompt.RenderConfig{}, prompt.PRData{
 		Number:            pr.Number,
 		Title:             pr.Title,
 		Body:              pr.Body,
-		RunDir:            absRunDir,
+		RunDir:            promptRunDir,
 		PriorReviewExists: priorReviewExists,
 	})
 	if err != nil {
@@ -216,7 +240,7 @@ func runReviewOneShot(cmd *cobra.Command, deps Dependencies, cfg *config.Config,
 		MaxContainersSet:     cmd.Flags().Changed("max-containers"),
 		PromptConfig: prompt.RenderConfig{
 			PromptFlag: rendered,
-			Branch:     fmt.Sprintf("sandman/review-%d-%d", pr.Number, time.Now().UnixNano()),
+			Branch:     reviewBranch,
 		},
 		Review:       true,
 		PRNumber:     pr.Number,
@@ -224,6 +248,7 @@ func runReviewOneShot(cmd *cobra.Command, deps Dependencies, cfg *config.Config,
 		RunID:        perRowRunID,
 		OutputWriter: rs.Broadcaster(),
 		RunDir:       absRunDir,
+		WorktreeDir:  absWorktreePath,
 	}); err != nil {
 		return fmt.Errorf("run review batch: %w", err)
 	}

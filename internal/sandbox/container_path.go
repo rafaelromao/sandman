@@ -12,14 +12,13 @@ import (
 // the containerWorkDir helper in container_sandbox.go).
 //
 // Code that hands host-side repo-rooted paths across the container
-// boundary — review prompt substitutions for <RUN_DIR>/decision.md, the
-// SANDMAN_RUN_DIR env var exported to the agent, etc. — must rebase
-// those paths onto this prefix so the agent process (running inside the
-// container) resolves them. The host mount target is the single source of
-// truth for that translation; a constant in this package (rather than a
-// threaded config field) keeps the mount authoritatively co-located with
-// the mount flag, so the two cannot drift on a config change without a
-// compile-breaking rename here.
+// boundary — review prompt substitutions for <RUN_DIR>/decision.md,
+// etc. — must rebase those paths onto this prefix so the agent
+// process (running inside the container) resolves them. The host mount
+// target is the single source of truth for that translation; a constant
+// in this package (rather than a threaded config field) keeps the mount
+// authoritatively co-located with the mount flag, so the two cannot drift
+// on a config change without a compile-breaking rename here.
 const ContainerWorkspaceMount = "/workspace"
 
 // ContainerVisiblePath rewrites a host-side repo-rooted path to the form
@@ -41,16 +40,15 @@ const ContainerWorkspaceMount = "/workspace"
 //     semantics, including a relative result with a leading "..").
 //
 // Review runs are the canonical caller (issue #1902). Pre-fix, the
-// review prompt's {{RUN_DIR}} substitution and the SANDMAN_RUN_DIR env
-// var both leaked the host-absolute path; the agent wrote decision.md to
-// an ephemeral in-container mkdir under the host path, which never
-// existed in the container's filesystem view, so the file landed in the
-// container's writable layer and was discarded on exit. postDecision
-// then os.Stat'd the host path, saw ENOENT, and marked the review as
-// failure. See internal/review/daemon.go::launchReview (prompt
-// substitution) and internal/batch/orchestrator.go (SANDMAN_RUN_DIR env
-// injection); ADR-0014 §"Daemon posts the review comment" pins the
-// decision.md hand-off contract this translation protects.
+// review prompt's {{RUN_DIR}} substitution leaked the host-absolute
+// path; the agent wrote decision.md to an ephemeral in-container mkdir
+// under the host path, which never existed in the container's filesystem
+// view, so the file landed in the container's writable layer and was
+// discarded on exit. postDecision then os.Stat'd the host path, saw
+// ENOENT, and marked the review as failure. See
+// internal/review/daemon.go::launchReview (prompt substitution);
+// ADR-0014 §"Daemon posts the review comment" pins the decision.md
+// hand-off contract this translation protects.
 func ContainerVisiblePath(hostPath, repoRoot, sandboxMode string) string {
 	if hostPath == "" || repoRoot == "" {
 		return hostPath

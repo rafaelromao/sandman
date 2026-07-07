@@ -297,11 +297,16 @@ func TestLaunchReview_CleansUpWorktreeAndBranchOnSuccess(t *testing.T) {
 		t.Fatalf("prepareReviewRun: %v", prepErr)
 	}
 
-	// Issue #1846 (S3): launchReview now reads and posts
-	// decision.md. Pre-create one so the post step (which the
-	// review-daemon test fixtures above wire to nopCommentPoster)
-	// can complete and MarkSeen("success") can fire.
-	if err := os.WriteFile(filepath.Join(reviewRunFolder, "decision.md"), []byte("ok"), 0644); err != nil {
+	// Issue #1846 (S3) + issue #1953: launchReview now reads and posts
+	// decision.md from the per-row worktree (the agent's CWD).
+	// Pre-create one so the post step (which the review-daemon
+	// test fixtures above wire to nopCommentPoster) can complete
+	// and MarkSeen("success") can fire.
+	worktreePath := d.reviewWorktreePath(42, "c1")
+	if err := os.MkdirAll(worktreePath, 0755); err != nil {
+		t.Fatalf("mkdir worktree: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(worktreePath, "decision.md"), []byte("ok"), 0644); err != nil {
 		t.Fatalf("write decision.md: %v", err)
 	}
 
@@ -363,7 +368,7 @@ func TestPrepareReviewRun_LinkedIssueRegistersPerRowRunID(t *testing.T) {
 	if prepErr != nil {
 		t.Fatalf("prepareReviewRun: %v", prepErr)
 	}
-	if err := os.WriteFile(filepath.Join(reviewRunFolder, "decision.md"), []byte("ok"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(d.reviewWorktreePath(42, "c1"), "decision.md"), []byte("ok"), 0644); err != nil {
 		t.Fatalf("write decision.md: %v", err)
 	}
 	if err := d.launchReview(context.Background(), 42, "", "c1", "", "", reviewRunFolder, perRowRunID, rs, state, false); err != nil {

@@ -268,6 +268,7 @@ func TestReviewCmd_OneShotRendersPromptAndInvokesBatch(t *testing.T) {
 		DefaultReviewModel: "openai/gpt-5",
 		Agent:              "opencode",
 		Sandbox:            "podman",
+		WorktreeDir:        ".sandman/worktrees",
 		Agents:             map[string]config.Agent{},
 		AgentProviders: map[string]config.Agent{
 			"opencode": {Preset: "opencode", Command: "opencode"},
@@ -359,10 +360,27 @@ func TestReviewCmd_OneShotRendersPromptAndInvokesBatch(t *testing.T) {
 		t.Errorf("expected one-shot review RunDir to be the per-row folder under <batchDir>/runs/<runID>, got %q (runID=%q)", runner.captured.RunDir, runner.captured.RunID)
 	}
 	// The rendered prompt's {{RUN_DIR}} substitution must match the
-	// per-row folder, not the batch dir, so the agent's
-	// <RUN_DIR>/decision.md lands in the right place.
-	if !strings.Contains(runner.captured.PromptConfig.PromptFlag, "RunDir: "+runner.captured.RunDir) {
-		t.Errorf("rendered prompt's {{RUN_DIR}} substitution must equal the per-row RunDir, got prompt:\n%s\nRunDir: %q", runner.captured.PromptConfig.PromptFlag, runner.captured.RunDir)
+	// per-row worktree (issue #1953), not the run folder, so the
+	// agent's <RUN_DIR>/decision.md lands in the daemon-readable
+	// worktree path. For container sandboxes the path is
+	// translated to /workspace/<rel>; for host sandboxes it stays
+	// host-absolute.
+	wantWorktree := runner.captured.WorktreeDir
+	if wantWorktree == "" {
+		t.Fatalf("expected WorktreeDir to be set on one-shot review batch request, got empty")
+	}
+	wantPromptRunDir := wantWorktree
+	if runner.captured.Sandbox == "podman" || runner.captured.Sandbox == "docker" {
+		// Container sandbox: the cmd resolves repoRoot to an
+		// absolute path and ContainerVisiblePath rebases to
+		// /workspace. We don't have repoRoot here; assert the
+		// prompt contains the worktree basename and the
+		// /workspace prefix instead.
+		if !strings.Contains(runner.captured.PromptConfig.PromptFlag, "/workspace/.sandman/worktrees/") {
+			t.Errorf("rendered prompt's {{RUN_DIR}} must use /workspace prefix for container sandbox %q, got prompt:\n%s", runner.captured.Sandbox, runner.captured.PromptConfig.PromptFlag)
+		}
+	} else if !strings.Contains(runner.captured.PromptConfig.PromptFlag, "RunDir: "+wantPromptRunDir) {
+		t.Errorf("rendered prompt's {{RUN_DIR}} substitution must equal the per-row worktree, got prompt:\n%s\nWorktreeDir: %q", runner.captured.PromptConfig.PromptFlag, wantPromptRunDir)
 	}
 	if runner.captured.Parallel != 1 {
 		t.Errorf("expected default review parallel 1, got %d", runner.captured.Parallel)

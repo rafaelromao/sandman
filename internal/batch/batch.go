@@ -76,6 +76,15 @@ type Request struct {
 	// under which container config snapshots are stored for the lifetime of
 	// the batch. When empty, snapshots fall back to a temp directory.
 	RunDir string
+	// WorktreeDir is the host-absolute path of the per-row review
+	// worktree base directory (issue #1953). The daemon computes
+	// this from cfg.WorktreeDir (resolving relative paths against
+	// its BaseDir) and the worktree itself is
+	// <WorktreeDir>/<PromptConfig.Branch>. The agent writes
+	// decision.md to <WorktreeDir>/<PromptConfig.Branch>/decision.md;
+	// the daemon reads from the same path on the post step. Empty
+	// for non-review runs.
+	WorktreeDir string
 	// Review marks this batch as a review-agent run (one-shot or daemon).
 	// The orchestrator surfaces it as `payload.review = true` on
 	// `run.started` and `run.finished` events so the event log and portal
