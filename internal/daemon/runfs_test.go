@@ -112,6 +112,59 @@ func TestWriteRunManifest(t *testing.T) {
 	}
 }
 
+// TestWriteRunManifest_PublicBatchIdRoundTrip pins the public BatchId
+// round-trip for issue batches (issue #1917 slice 1):
+//
+//   - run.json.batchId equals the public BatchId (= batch folder
+//     basename = batch.json.batchId = event payload batch_id) for both
+//     single-issue (no +N) and multi-issue (+<additionalCount>) batches.
+//
+// The orchestrator writes run.json with BatchID = s.batchID (= public
+// BatchId); this test exercises the on-disk round-trip directly so a
+// future regression that overwrites the field with the per-row RunID is
+// caught without needing to run the orchestrator.
+func TestWriteRunManifest_PublicBatchIdRoundTrip(t *testing.T) {
+	tests := []struct {
+		name     string
+		publicID string
+		runID    string
+	}{
+		{name: "single issue", publicID: "abcd-260618113825-42", runID: "abcd-260618113825-42"},
+		{name: "two issues", publicID: "abcd-260618113825-42+1", runID: "abcd-260618113825-42"},
+		{name: "nine issues", publicID: "abcd-260618113825-42+8", runID: "abcd-260618113825-42"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmp := t.TempDir()
+			batchDir := filepath.Join(tmp, tt.publicID)
+			manifest := batchindex.RunManifest{
+				RunID:     tt.runID,
+				BatchID:   tt.publicID,
+				Issue:     42,
+				Branch:    "sandman/42-fix",
+				CreatedAt: time.Now(),
+				Status:    batchindex.RunManifestStatusActive,
+			}
+			if err := WriteRunManifest(batchDir, tt.runID, manifest); err != nil {
+				t.Fatalf("WriteRunManifest: %v", err)
+			}
+			got, err := ReadRunManifest(batchDir, tt.runID)
+			if err != nil {
+				t.Fatalf("ReadRunManifest: %v", err)
+			}
+			if got.BatchID != tt.publicID {
+				t.Errorf("run.json.batchId = %q, want %q (public BatchId)", got.BatchID, tt.publicID)
+			}
+			// Saved log path remains <batchId>/runs/<runId>/run.log.
+			logPath := filepath.Join(batchDir, "runs", tt.runID, "run.log")
+			expectedDir := filepath.Join(tmp, tt.publicID, "runs", tt.runID)
+			if filepath.Dir(logPath) != expectedDir {
+				t.Errorf("log path dir = %q, want %q", filepath.Dir(logPath), expectedDir)
+			}
+		})
+	}
+}
+
 func TestReadRunManifest_NotFound(t *testing.T) {
 	tmp := t.TempDir()
 	batchDir := filepath.Join(tmp, "batch123")

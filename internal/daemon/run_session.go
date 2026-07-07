@@ -111,8 +111,8 @@ func (s *RunSession) Broadcaster() *Broadcaster {
 //
 // The public BatchId rules (per #1917):
 //
-//   - Issue single:    "<sid>-<ts>-<num>"               (no +N suffix)
-//   - Issue multi:     "<sid>-<ts>-<firstIssue>+<n-1>"   (+<additionalCount>)
+//   - Issue single:    "<sid>-<ts>-<num>"                    (no +N suffix)
+//   - Issue multi:     "<sid>-<ts>-<firstIssue>+<additionalCount>"
 //   - Review:          "<sid>-<ts>-PR<pr>" or "<sid>-<ts>-<issue>-PR<pr>"
 //   - Auto-select:     "<sid>-<ts>-auto-<N>"
 //   - Prompt-only:     "<sid>-<ts>-prompt[-<userid>]"
