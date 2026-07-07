@@ -112,6 +112,7 @@ func buildContinuationRequest(ctx context.Context, cmd *cobra.Command, deps Depe
 		} else if !info.IsDir() {
 			return batch.Request{}, fmt.Errorf("worktree %q is missing for prompt-only run; use \"sandman run\" instead", worktreePath)
 		}
+
 		taskPath := filepath.Join(worktreePath, ".sandman", "task.md")
 		content, err := readTaskPrompt(cmd, taskPath)
 		if err != nil {

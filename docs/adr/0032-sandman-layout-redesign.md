@@ -145,6 +145,14 @@ The "no" row in the table is the only production case where the row-action resol
 
 Multi-issue batch row actions target the selected row, not a sibling row. Each per-row RunID is a distinct string, and the resolver's on-disk scan picks the entry whose `runs/<runID>/run.json` exists; two sibling rows in the same batch produce two distinct `runs/<runID>/run.json` files, so the resolver always returns the entry that owns the selected row. The archive endpoint then walks the per-run folder, the abort endpoint dials `<batchDir>/runs/<perRowRunID>/run.sock`, and the log endpoint serves `<batchDir>/runs/<perRowRunID>/run.log` — three independent code paths that all key on the same per-row RunID.
 
+#### Continuation runs
+
+`sandman run --continue` creates a new batch and new per-row RunIDs. It reuses the previous run's branch and worktree path, but it does not reuse the previous public BatchId or previous per-row RunID. The new batch is a sibling of the previous batch under `.sandman/batches/`, and the previous batch directory, run folder, manifest, and event log remain unchanged.
+
+The continuation row emits `run.continued` using the new per-row RunID. Its event payload includes `previous_run_id`, pointing to the immediate prior per-row RunID. The event fold treats `run.continued` as the start event for a fresh `RunState` keyed by the new RunID, so the continuation can be archived, aborted, and viewed independently from the previous row.
+
+The continuation prompt is rendered from the previous worktree's `.sandman/task.md` through the normal task prompt path. The original task file is not modified as part of constructing the continuation request.
+
 Error semantics are preserved: archive returns 404 when no entry hosts the per-row manifest, 409 when the resolved batch is not active or the daemon socket is still live, and 500 only on filesystem failure. Abort returns 404 when the per-run socket does not exist, 409 when the daemon is no longer live or the orchestrator rejects the abort, and 502 only on dial / read / write failure. The 404/409 paths are observable per kind and per row, not collapsed to a single batch-level status.
 
 ### Index writer

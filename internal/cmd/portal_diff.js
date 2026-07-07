@@ -591,6 +591,17 @@
     return parents[0];
   }
 
+  function previousRunIDForContinuation(run) {
+    const events = Array.isArray(run && run.events) ? run.events : [];
+    for (const event of events) {
+      if (!event || event.type !== 'run.continued') continue;
+      const payload = event.payload || {};
+      const previous = String(payload.previous_run_id || '').trim();
+      if (previous) return previous;
+    }
+    return '';
+  }
+
   function subjectRunsFor(run, opts) {
     const visible = Array.isArray(opts && opts.runs) ? opts.runs : [];
     // Strict positive-integer guard: a missing/undefined/non-integer
@@ -613,7 +624,19 @@
     }
     const canonicalParent = pickCanonicalParent(parents, run);
     const related = [];
-    if (canonicalParent) related.push(canonicalParent);
+    const relatedSeen = new Set();
+    const pushRelated = (candidate) => {
+      const value = subjectRunValue(candidate);
+      if (!value || relatedSeen.has(value)) return;
+      relatedSeen.add(value);
+      related.push(candidate);
+    };
+    if (canonicalParent) pushRelated(canonicalParent);
+    const previousRunID = previousRunIDForContinuation(run);
+    const previousRun = previousRunID ? findRunByIdentity(previousRunID, opts) : null;
+    if (previousRun && previousRun.issueNumber === run.issueNumber && !previousRun.review) {
+      pushRelated(previousRun);
+    }
     reviews.sort((a, b) => {
       const aStarted = a.startedAt ? new Date(a.startedAt).getTime() : 0;
       const bStarted = b.startedAt ? new Date(b.startedAt).getTime() : 0;
@@ -621,7 +644,7 @@
       return subjectRunValue(a).localeCompare(subjectRunValue(b));
     });
     for (const candidate of reviews) {
-      related.push(candidate);
+      pushRelated(candidate);
     }
     return related;
   }

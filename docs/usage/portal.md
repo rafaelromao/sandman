@@ -60,6 +60,12 @@ The portal surfaces two distinct identifiers per the slice-1 contract ([ADR-0030
 
 For multi-issue batches the two diverge: the public BatchId carries the `+N` additional count suffix and the per-row RunID does not. For every other kind (single-issue, prompt-only, review, auto-select) the two are identical. See [ADR-0032](../adr/0032-sandman-layout-redesign.md) §Row-level action resolution for the full kind-by-kind identity table.
 
+### Continuation history
+
+Continuation runs started with `sandman run --continue` appear as separate rows with their own RunID and Batch label. The continued row keeps a `previous_run_id` link in its events, and the expanded-row subject picker includes that previous run as a selectable sibling when it is present in the portal data.
+
+Use the picker to switch between the continuation and the previous run without changing the table row. Selecting the previous run shows its own log, events, and details, so lineage stays navigable while each run remains independently addressable for row-level actions.
+
 ### Existing `.sandman` migration is out of scope
 
 **Existing `.sandman` migration is out of scope.** The slice-1 contract change (issue #1917) and the identity alignment that followed (slices 2–6 of parent PRD #1916) rename the public BatchId surface and the per-row RunID templates. Batches provisioned before the contract change carry old id shapes (legacy `+1` single-issue, total-count `+N`, prompt-only without the `prompt` segment, etc.) and are not rewritten in place. After upgrading, the operator should delete `.sandman` and rebuild; no migration tool ships for the old layout.
