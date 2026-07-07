@@ -370,8 +370,18 @@ func TestReviewStateStore_AtomicRenameLeavesPreviousIntact(t *testing.T) {
 	if _, err := os.Stat(path); err != nil {
 		t.Fatalf("destination file should exist after Save: %v", err)
 	}
-	if _, err := os.Stat(tmpPath); !os.IsNotExist(err) {
-		t.Errorf("stale .tmp should be gone after Save, got: %v", err)
+	// The atomic-rename writer uses a unique temp suffix (".tmp.NNN"),
+	// so the stale fixed-name .tmp is preserved untouched and the new
+	// Save never leaves any .tmp* sibling behind.
+	matches, err := filepath.Glob(filepath.Join(dir, "review-state.json.tmp*"))
+	if err != nil {
+		t.Fatalf("glob tmp files: %v", err)
+	}
+	for _, m := range matches {
+		if m == tmpPath {
+			continue
+		}
+		t.Errorf("stale .tmp should be gone after Save, got: %s", m)
 	}
 }
 

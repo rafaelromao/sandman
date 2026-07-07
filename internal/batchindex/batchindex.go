@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/rafaelromao/sandman/internal/atomicfs"
 )
 
 const IndexVersion = 1
@@ -217,44 +219,19 @@ func (idx *Index) Save(indexPath string) error {
 	for i := range idx.Entries {
 		idx.Entries[i].ID = canonicalizeEntryID(idx.Entries[i].ID, idx.Entries[i].Path)
 	}
-	data, err := json.MarshalIndent(idx, "", "  ")
-	if err != nil {
-		return fmt.Errorf("marshal index: %w", err)
-	}
-
-	dir := filepath.Dir(indexPath)
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return err
-	}
 
 	prev, err := os.ReadFile(indexPath)
 	if err != nil && !os.IsNotExist(err) {
 		return err
 	}
 
-	tmpFile, err := os.CreateTemp(dir, filepath.Base(indexPath)+".tmp.")
-	if err != nil {
-		return fmt.Errorf("create index tmp: %w", err)
-	}
-	tmpPath := tmpFile.Name()
-	if _, err := tmpFile.Write(data); err != nil {
-		tmpFile.Close()
-		os.Remove(tmpPath)
-		return fmt.Errorf("write index tmp: %w", err)
-	}
-	if err := tmpFile.Close(); err != nil {
-		os.Remove(tmpPath)
-		return fmt.Errorf("close index tmp: %w", err)
-	}
-
-	if err := os.Rename(tmpPath, indexPath); err != nil {
-		os.Remove(tmpPath)
-		return fmt.Errorf("rename index tmp: %w", err)
+	if err := atomicfs.WriteAtomicJSON(indexPath, idx, 0644); err != nil {
+		return err
 	}
 
 	if prev != nil {
 		bakPath := indexPath + ".bak"
-		if err := os.WriteFile(bakPath, prev, 0644); err != nil {
+		if err := atomicfs.WriteAtomic(bakPath, prev, 0644); err != nil {
 			return fmt.Errorf("write index bak: %w", err)
 		}
 	}
@@ -334,35 +311,8 @@ func (idx *Index) RemoveBatch(id string) error {
 }
 
 func WriteManifest(runDir string, manifest RunManifest) error {
-	data, err := json.MarshalIndent(manifest, "", "  ")
-	if err != nil {
-		return fmt.Errorf("marshal run manifest: %w", err)
-	}
 	runManifestPath := filepath.Join(runDir, "run.json")
-	dir := filepath.Dir(runManifestPath)
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return fmt.Errorf("create run manifest dir: %w", err)
-	}
-
-	tmpFile, err := os.CreateTemp(dir, filepath.Base(runManifestPath)+".tmp.")
-	if err != nil {
-		return fmt.Errorf("create run manifest tmp: %w", err)
-	}
-	tmpPath := tmpFile.Name()
-	if _, err := tmpFile.Write(data); err != nil {
-		tmpFile.Close()
-		os.Remove(tmpPath)
-		return fmt.Errorf("write run manifest tmp: %w", err)
-	}
-	if err := tmpFile.Close(); err != nil {
-		os.Remove(tmpPath)
-		return fmt.Errorf("close run manifest tmp: %w", err)
-	}
-	if err := os.Rename(tmpPath, runManifestPath); err != nil {
-		os.Remove(tmpPath)
-		return fmt.Errorf("rename run manifest tmp: %w", err)
-	}
-	return nil
+	return atomicfs.WriteAtomicJSON(runManifestPath, manifest, 0644)
 }
 
 func ReadManifest(runDir string) (RunManifest, error) {
@@ -379,44 +329,8 @@ func ReadManifest(runDir string) (RunManifest, error) {
 }
 
 func WriteReviewState(runDir string, state ReviewState) error {
-	data, err := json.MarshalIndent(state, "", "  ")
-	if err != nil {
-		return fmt.Errorf("marshal review state: %w", err)
-	}
 	statePath := filepath.Join(runDir, "review-state.json")
-	dir := filepath.Dir(statePath)
-
-	// Reachable only from tests in the current codebase (the production
-	// writer is ReviewStateStore.saveLocked in internal/review/state.go),
-	// but still atomic so the tests that exercise it cannot leave a torn
-	// file if they crash mid-call. We deliberately use os.CreateTemp
-	// with a random suffix rather than a fixed-name .tmp to close the
-	// concurrency window the production writer still has.
-	tmpFile, err := os.CreateTemp(dir, filepath.Base(statePath)+".tmp.")
-	if err != nil {
-		return fmt.Errorf("create review state tmp: %w", err)
-	}
-	tmpPath := tmpFile.Name()
-	renamed := false
-	defer func() {
-		if !renamed {
-			os.Remove(tmpPath)
-		}
-	}()
-
-	if _, err := tmpFile.Write(data); err != nil {
-		tmpFile.Close()
-		return fmt.Errorf("write review state tmp: %w", err)
-	}
-	if err := tmpFile.Close(); err != nil {
-		return fmt.Errorf("close review state tmp: %w", err)
-	}
-
-	if err := os.Rename(tmpPath, statePath); err != nil {
-		return fmt.Errorf("rename review state tmp: %w", err)
-	}
-	renamed = true
-	return nil
+	return atomicfs.WriteAtomicJSON(statePath, state, 0644)
 }
 
 func ReadReviewState(runDir string) (ReviewState, error) {

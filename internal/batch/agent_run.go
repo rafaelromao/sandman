@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/rafaelromao/sandman/internal/atomicfs"
 	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/github"
 	"github.com/rafaelromao/sandman/internal/paths"
@@ -93,7 +94,7 @@ func (r *AgentRun) Execute(ctx context.Context, command string, stdout, stderr i
 		return fmt.Errorf("create run folder: %w", err)
 	}
 	logPath := filepath.Join(runFolder, "run.log")
-	logFile, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	logFile, err := atomicfs.OpenAppend(logPath, 0644)
 	if err != nil {
 		return fmt.Errorf("create log file: %w", err)
 	}
