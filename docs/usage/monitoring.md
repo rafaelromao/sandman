@@ -203,3 +203,18 @@ Summary: 1 succeeded, 1 aborted
 ```
 
 Prompt-only runs show the same summary with `prompt-only` in the issue column.
+
+## Archive
+
+`sandman archive` ships four subcommands and every one of them is per-row aware.
+
+| Subcommand | Behaviour |
+|------------|-----------|
+| `sandman archive run <runId>` | Move `runs/<runId>/` from `.sandman/batches/<batchId>/` to `.sandman/archive/<batchId>/runs/<runId>/`. The targeted row's `run.json.Status` must be terminal; sibling rows and the batch daemon stay untouched. Persists a per-row `Runs[]` record carrying `status: "archived"` and `archivePath` for crash recovery. |
+| `sandman archive batch <batchId>` | Move the whole batch dir from `.sandman/batches/<batchId>/` to `.sandman/archive/<batchId>/`. The batch daemon must be gone. Flips the entry-level `status` to `archived`. CLI-only — not exposed via HTTP. |
+| `sandman archive older-than <days>` | Walk every `runs/<runID>/run.json` across all batches and archive each terminal row older than the cutoff. Already-archived rows are skipped via the per-row `Runs[]` record. |
+| `sandman archive stale` | Run the same stale-recovery pass as `clean --stale` (emit `run.aborted` for unterminated runs in dead batches), then walk every `runs/<runID>/run.json` and archive each terminal row. |
+
+Per-row archive does not edit `events.jsonl` and does not touch `.sandman/worktrees/`. The HTTP `POST /api/runs/archive` endpoint shares the `archive run` contract: per-row, empty `200` on success, structured `409` (with `archivePath`) on collision or non-terminal, `404` when the row id is unknown.
+
+Bulk commands process each row individually; a batch with multiple terminal rows archives them one at a time and leaves any still-active row live. Whole-batch archive is the only path that moves the batch root.

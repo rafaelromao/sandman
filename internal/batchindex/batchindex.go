@@ -50,14 +50,14 @@ type Index struct {
 }
 
 type Entry struct {
-	ID         string     `json:"id"`
-	Path       string     `json:"path"`
-	Kind       Kind       `json:"kind"`
-	Status     Status     `json:"status"`
-	CreatedAt  time.Time  `json:"createdAt"`
-	Issues     []int      `json:"issues,omitempty"`
-	PR         int        `json:"pr,omitempty"`
-	ArchivedAt *time.Time `json:"archivedAt,omitempty"`
+	ID         string      `json:"id"`
+	Path       string      `json:"path"`
+	Kind       Kind        `json:"kind"`
+	Status     Status      `json:"status"`
+	CreatedAt  time.Time   `json:"createdAt"`
+	Issues     []int       `json:"issues,omitempty"`
+	PR         int         `json:"pr,omitempty"`
+	ArchivedAt *time.Time  `json:"archivedAt,omitempty"`
 	Runs       []RunRecord `json:"runs,omitempty"`
 }
 

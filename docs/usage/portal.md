@@ -83,6 +83,24 @@ Special states return fixed messages:
 | `blocked` | `Blocked. Waiting on unresolved blockers.` (or listed blocker issue numbers) |
 | `queued` | `Queued. Waiting to start.` |
 
+## Archive
+
+Use the **Archive** button on a completed row to move that single run to `.sandman/archive/<batchId>/runs/<runId>/`. The portal calls:
+
+```
+POST /api/runs/archive
+{"runId": "<per-row RunID>"}
+```
+
+The endpoint is strictly per-row: it accepts only the row RunID, validates the row's `run.json.Status` is terminal (success / failure / aborted / blocked), and returns:
+
+- empty `200` on success — the next `/api/runs` poll re-renders the row with the `Archived` chip and updates the log download URL to point at `.sandman/archive/<batchId>/runs/<runId>/run.log`
+- `409` with `{"error": "...", "archivePath": "..."}` when the row is already archived; the body echoes the existing archive path so the operator can inspect it
+- `409` with a non-terminal message when the row's `run.json.Status` is still `active`
+- `404` when the row id does not resolve on disk or in the index
+
+The portal does not dispatch per-row vs whole-batch — the HTTP surface only exposes per-row archive. Whole-batch archive (`sandman archive batch <batchId>`) is a CLI-only subcommand.
+
 ## Notes
 
 - Run it from inside the repository you want to inspect.

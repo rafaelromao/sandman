@@ -1111,10 +1111,10 @@ func TestIndex_MarkRunArchived_UpdatesRecord(t *testing.T) {
 		Version: IndexVersion,
 		Entries: []Entry{
 			{
-				ID:    "batch-1",
-				Path:  "/tmp/.sandman/batches/batch-1",
-				Kind:  KindIssue,
-				Runs:  []RunRecord{{RunID: "row-1", Status: RunRecordStatusActive}, {RunID: "row-2", Status: RunRecordStatusActive}},
+				ID:   "batch-1",
+				Path: "/tmp/.sandman/batches/batch-1",
+				Kind: KindIssue,
+				Runs: []RunRecord{{RunID: "row-1", Status: RunRecordStatusActive}, {RunID: "row-2", Status: RunRecordStatusActive}},
 			},
 		},
 	}
@@ -1157,10 +1157,10 @@ func TestIndex_ReconcileRuns_ArchivedMissingLive(t *testing.T) {
 		Version: IndexVersion,
 		Entries: []Entry{
 			{
-				ID:    "batch-1",
-				Path:  batchDir,
-				Kind:  KindIssue,
-				Runs:  []RunRecord{{RunID: "row-1", Status: RunRecordStatusArchived, ArchivePath: ".sandman/archive/batch-1/runs/row-1"}},
+				ID:   "batch-1",
+				Path: batchDir,
+				Kind: KindIssue,
+				Runs: []RunRecord{{RunID: "row-1", Status: RunRecordStatusArchived, ArchivePath: ".sandman/archive/batch-1/runs/row-1"}},
 			},
 		},
 		StatFn: os.Stat,

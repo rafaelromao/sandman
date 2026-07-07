@@ -288,9 +288,9 @@ func archivePortalRunHandler(repoRoot, runID string) (string, error) {
 
 	if rec := idx.RunRecordFor(entry.ID, runID); rec != nil && rec.Status == batchindex.RunRecordStatusArchived && rec.ArchivePath != "" {
 		return entry.ID, &portalArchiveError{
-			status: http.StatusConflict,
+			status:  http.StatusConflict,
 			message: fmt.Sprintf("run %q is already archived at %q", runID, rec.ArchivePath),
-			path:   rec.ArchivePath,
+			path:    rec.ArchivePath,
 		}
 	}
 
