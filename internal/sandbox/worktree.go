@@ -10,6 +10,9 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+
+	"github.com/rafaelromao/sandman/internal/config"
+	"github.com/rafaelromao/sandman/internal/paths"
 )
 
 // WorktreeSandbox provides isolation via git worktree only.
@@ -458,7 +461,7 @@ func (s *WorktreeSandbox) Stop() error {
 
 // WritePrompt writes the prompt content to .sandman/task.md in the worktree.
 func (s *WorktreeSandbox) WritePrompt(content string) error {
-	promptPath := filepath.Join(s.workDir, ".sandman", "task.md")
+	promptPath := paths.NewLayout(&config.Config{}, s.workDir).SandmanDir + "/task.md"
 	if err := os.MkdirAll(filepath.Dir(promptPath), 0755); err != nil {
 		return fmt.Errorf("create prompt dir: %w", err)
 	}

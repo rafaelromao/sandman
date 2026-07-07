@@ -17,6 +17,7 @@ import (
 
 	"github.com/rafaelromao/sandman/internal/atomicfs"
 	"github.com/rafaelromao/sandman/internal/config"
+	"github.com/rafaelromao/sandman/internal/paths"
 	"github.com/rafaelromao/sandman/internal/prompt"
 )
 
@@ -305,7 +306,8 @@ type Scaffolder struct{}
 
 // Scaffold writes config.yaml, Dockerfile, and prompt.md into .sandman/.
 func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
-	sandmanDir := filepath.Join(repoRoot, ".sandman")
+	layout := paths.NewLayout(&config.Config{}, repoRoot)
+	sandmanDir := layout.SandmanDir
 
 	if info, err := os.Stat(sandmanDir); err == nil && info.IsDir() {
 		ok, err := p.Confirm("Directory .sandman/ already exists. Overwrite?")
@@ -430,23 +432,23 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 		},
 	}
 
-	configPath := filepath.Join(sandmanDir, "config.yaml")
+	configPath := layout.ConfigPath()
 	if err := config.Save(configPath, cfg); err != nil {
 		return fmt.Errorf("save config: %w", err)
 	}
 
 	dockerfile := s.renderBuildToolsDockerfile(preset, defaultAgent, goVersion, dotnetVersion, nodeVersion, pythonVersion, elixirVersion, erlangVersion, rubyVersion, rustVersion, javaVersion)
-	dockerfilePath := filepath.Join(sandmanDir, "Dockerfile")
+	dockerfilePath := layout.DockerfilePath()
 	if err := atomicfs.WriteAtomic(dockerfilePath, []byte(dockerfile), 0644); err != nil {
 		return fmt.Errorf("write Dockerfile: %w", err)
 	}
 
-	promptPath := filepath.Join(sandmanDir, "prompt.md")
+	promptPath := layout.PromptPath()
 	if err := atomicfs.WriteAtomic(promptPath, []byte(prompt.DefaultPrompt()), 0644); err != nil {
 		return fmt.Errorf("write prompt.md: %w", err)
 	}
 
-	autoPromptPath := filepath.Join(sandmanDir, "auto-selection-prompt.md")
+	autoPromptPath := layout.AutoSelectionPromptPath()
 	legacyPromptPath := filepath.Join(sandmanDir, "priority-selection-prompt.md")
 	if _, err := os.Stat(autoPromptPath); os.IsNotExist(err) {
 		if legacyData, err := os.ReadFile(legacyPromptPath); err == nil {
@@ -460,7 +462,7 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 		}
 	}
 
-	if err := s.materializeReviewPrompts(sandmanDir); err != nil {
+	if err := s.materializeReviewPrompts(layout); err != nil {
 		return err
 	}
 
@@ -472,15 +474,15 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 // time (not on first daemon use) so the user can edit them before any
 // review runs. Existing files are left untouched to respect user edits
 // across re-inits.
-func (s *Scaffolder) materializeReviewPrompts(sandmanDir string) error {
-	reviewsDir := filepath.Join(sandmanDir, "reviews")
+func (s *Scaffolder) materializeReviewPrompts(layout paths.Layout) error {
+	reviewsDir := layout.ReviewsDir()
 	if err := os.MkdirAll(reviewsDir, 0755); err != nil {
 		return fmt.Errorf("create reviews dir: %w", err)
 	}
-	if err := writeIfMissing(filepath.Join(reviewsDir, "review-prompt.md"), []byte(prompt.DefaultPRReviewPrompt())); err != nil {
+	if err := writeIfMissing(layout.ReviewPromptPath(), []byte(prompt.DefaultPRReviewPrompt())); err != nil {
 		return err
 	}
-	if err := writeIfMissing(filepath.Join(reviewsDir, "quality-rules.md"), []byte(prompt.DefaultQualityRules())); err != nil {
+	if err := writeIfMissing(layout.QualityRulesPath(), []byte(prompt.DefaultQualityRules())); err != nil {
 		return err
 	}
 	return nil
@@ -2087,7 +2089,7 @@ func ValidateDockerfileMetadata(repoRoot, expectedBuildTools, expectedDefaultAge
 	if strings.TrimSpace(expectedDefaultAgent) == "" {
 		expectedDefaultAgent = config.DefaultAgent
 	}
-	dockerfilePath := filepath.Join(repoRoot, ".sandman", "Dockerfile")
+	dockerfilePath := paths.NewLayout(&config.Config{}, repoRoot).DockerfilePath()
 	meta, found, err := readDockerfileMetadata(dockerfilePath)
 	if err != nil {
 		return err

@@ -2360,7 +2360,7 @@ func (v *portalRunsView) portalLogPathForRun(repoRoot string, locator runLocator
 		return ""
 	}
 	layout := paths.NewLayout(nil, repoRoot)
-	return filepath.Join(layout.RunFolder(locator.batchID, locator.runID), "run.log")
+	return layout.RunLogPath(locator.batchID, locator.runID)
 }
 
 func (v *portalRunsView) portalLogDownloadURLForRun(repoRoot string, locator runLocator) string {

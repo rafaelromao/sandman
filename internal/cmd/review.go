@@ -15,6 +15,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/daemon"
 	ghcli "github.com/rafaelromao/sandman/internal/github"
+	"github.com/rafaelromao/sandman/internal/paths"
 	"github.com/rafaelromao/sandman/internal/prompt"
 	"github.com/rafaelromao/sandman/internal/review"
 	"github.com/rafaelromao/sandman/internal/runid"
@@ -147,7 +148,7 @@ func runReviewOneShot(cmd *cobra.Command, deps Dependencies, cfg *config.Config,
 			return fmt.Errorf("resolve repo root: %w", err)
 		}
 	}
-	sandmanDir := filepath.Join(repoRoot, ".sandman")
+	sandmanDir := paths.NewLayout(cfg, repoRoot).SandmanDir
 
 	ts, shortid, err := runid.NewBatch()
 	if err != nil {
@@ -311,8 +312,9 @@ func runReviewDaemon(parent context.Context, deps Dependencies, cfg *config.Conf
 	if err != nil {
 		return fmt.Errorf("resolve repo root: %w", err)
 	}
-	sandmanDir := filepath.Join(repoRoot, ".sandman")
-	socketDir := filepath.Join(sandmanDir, "reviews")
+	layout := paths.NewLayout(cfg, repoRoot)
+	sandmanDir := layout.SandmanDir
+	socketDir := layout.ReviewsDir()
 	broadcaster := daemon.NewBroadcaster()
 	ctlSocket := daemon.NewControlSocketWithName(socketDir, "review.sock", broadcaster)
 	poster := deps.CommentPoster

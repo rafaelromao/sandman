@@ -18,6 +18,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/daemon"
 	"github.com/rafaelromao/sandman/internal/events"
 	"github.com/rafaelromao/sandman/internal/github"
+	"github.com/rafaelromao/sandman/internal/paths"
 	"github.com/rafaelromao/sandman/internal/prompt"
 	"github.com/rafaelromao/sandman/internal/runid"
 	"github.com/spf13/cobra"
@@ -105,7 +106,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 					return fmt.Errorf("resolve repo root: %w", err)
 				}
 			}
-			sandmanDir := filepath.Join(repoRoot, ".sandman")
+			sandmanDir := paths.NewLayout(cfg, repoRoot).SandmanDir
 
 			overrideFlag, _ := cmd.Flags().GetBool("override")
 			continueFlag, _ := cmd.Flags().GetBool("continue")
