@@ -13,7 +13,7 @@ import (
 // phrases checked here MUST be present (verbatim) for the slice
 // 6 contract to remain documented.
 func TestADR0030_DocumentsIssuePlusNSemantics(t *testing.T) {
-	adrPath := filepath.Join(mustRepoRoot(t), "docs", "adr", "0030-standardize-run-id-and-run-dir.md")
+	adrPath := filepath.Join(repoRoot(t), "docs", "adr", "0030-standardize-run-id-and-run-dir.md")
 	body := mustReadFile(t, adrPath)
 
 	required := []string{
@@ -40,7 +40,7 @@ func TestADR0030_DocumentsIssuePlusNSemantics(t *testing.T) {
 // out of scope. The phrases checked here MUST be present
 // (verbatim) for the slice 6 contract to remain documented.
 func TestADR0032_DocumentsPublicBatchIdAsFolderBasename(t *testing.T) {
-	adrPath := filepath.Join(mustRepoRoot(t), "docs", "adr", "0032-sandman-layout-redesign.md")
+	adrPath := filepath.Join(repoRoot(t), "docs", "adr", "0032-sandman-layout-redesign.md")
 	body := mustReadFile(t, adrPath)
 
 	required := []string{
@@ -65,7 +65,7 @@ func TestADR0032_DocumentsPublicBatchIdAsFolderBasename(t *testing.T) {
 // body MUST contain a redirect that names the new contract
 // (public BatchId == batch folder basename).
 func TestADR0036_NoLongerDefinesPublicBatchIdAsPerRowRunID(t *testing.T) {
-	adrPath := filepath.Join(mustRepoRoot(t), "docs", "adr", "0036-batches-index-entry-id-equals-per-row-run-id.md")
+	adrPath := filepath.Join(repoRoot(t), "docs", "adr", "0036-batches-index-entry-id-equals-per-row-run-id.md")
 	body := mustReadFile(t, adrPath)
 
 	required := []string{
@@ -100,7 +100,7 @@ func TestADR0036_NoLongerDefinesPublicBatchIdAsPerRowRunID(t *testing.T) {
 // checked here MUST be present (verbatim) for the slice 6 contract
 // to remain documented.
 func TestPortalMD_ReferencesNewPublicIdentityModel(t *testing.T) {
-	docPath := filepath.Join(mustRepoRoot(t), "docs", "usage", "portal.md")
+	docPath := filepath.Join(repoRoot(t), "docs", "usage", "portal.md")
 	body := mustReadFile(t, docPath)
 
 	required := []string{
@@ -124,7 +124,7 @@ func TestPortalMD_ReferencesNewPublicIdentityModel(t *testing.T) {
 // of scope. The phrases checked here MUST be present (verbatim)
 // for the slice 6 contract to remain documented.
 func TestMonitoringMD_ReferencesNewPublicIdentityModel(t *testing.T) {
-	docPath := filepath.Join(mustRepoRoot(t), "docs", "usage", "monitoring.md")
+	docPath := filepath.Join(repoRoot(t), "docs", "usage", "monitoring.md")
 	body := mustReadFile(t, docPath)
 
 	required := []string{
@@ -151,7 +151,10 @@ func mustReadFile(t *testing.T, path string) string {
 	return string(data)
 }
 
-func mustRepoRoot(t *testing.T) string {
+// repoRoot reuses findRepoRoot from the sibling adr0030_slice2_test.go
+// in the same package, so the slice 6 helpers do not duplicate the
+// path-walk logic. fail-fast on error to keep the test bodies terse.
+func repoRoot(t *testing.T) string {
 	t.Helper()
 	root, err := findRepoRoot(t)
 	if err != nil {

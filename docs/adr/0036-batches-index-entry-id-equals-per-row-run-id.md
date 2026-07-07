@@ -45,7 +45,17 @@ The four batch-kind registration paths in `cmd/run.go`, `cmd/review.go`, `cmd/se
 
 ## Decision (historical — superseded)
 
-**The batches index entry id MUST equal the per-row RunID the orchestrator will emit in `run.started` / `run.continued` and store in `run.json`'s `RunID` field, for every batch kind.**
+> **The text under this heading is preserved verbatim for historical
+> audit only.** The bolded "MUST" rule below was the contract this
+> ADR defended at adoption time; it has been replaced by the
+> slice-1 contract (`public BatchId == batch folder basename`), as
+> described in ADR-0030 §RunDir naming templates and ADR-0032
+> §`batch.json` schema. Do not implement from this section.
+
+> **Historical rule (no longer current):** The batches index entry id
+> MUST equal the per-row RunID the orchestrator will emit in
+> `run.started` / `run.continued` and store in `run.json`'s `RunID`
+> field, for every batch kind.
 
 This rule is the historical artifact preserved for audit. It is **no longer the public BatchId contract**: public BatchId is the batch folder basename (see ADR-0030 §RunDir naming templates and ADR-0032 §`batch.json` schema). The five registration sites below computed the entry id by mirroring the orchestrator's per-row RunID formula:
 
