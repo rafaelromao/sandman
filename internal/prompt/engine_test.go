@@ -440,7 +440,7 @@ func TestMaterializePromptFile_EmptyPromptFileIsNoOp(t *testing.T) {
 func TestMaterializePromptFile_ExistingFileWithoutVersionSidecar_Overwritten(t *testing.T) {
 	dir := t.TempDir()
 	promptPath := filepath.Join(dir, ".sandman", "prompt.md")
-	versionPath := filepath.Join(dir, ".sandman", promptVersionFile)
+	versionPath := filepath.Join(dir, ".sandman", "state", ".prompt-version")
 	if err := os.MkdirAll(filepath.Dir(promptPath), 0755); err != nil {
 		t.Fatalf("create dir: %v", err)
 	}
@@ -512,7 +512,7 @@ func TestMaterializePromptFile_NoCreateWhenPromptFlagSet(t *testing.T) {
 func TestMaterializePromptFile_CreatesMissingFile(t *testing.T) {
 	dir := t.TempDir()
 	promptPath := filepath.Join(dir, ".sandman", "prompt.md")
-	versionPath := filepath.Join(dir, ".sandman", promptVersionFile)
+	versionPath := filepath.Join(dir, ".sandman", "state", ".prompt-version")
 	cfg := RenderConfig{PromptFile: promptPath}
 
 	err := MaterializePromptFile(cfg)
@@ -540,9 +540,12 @@ func TestMaterializePromptFile_CreatesMissingFile(t *testing.T) {
 func TestMaterializePromptFile_ExistingFileWithMatchingVersion_Preserved(t *testing.T) {
 	dir := t.TempDir()
 	promptPath := filepath.Join(dir, ".sandman", "prompt.md")
-	versionPath := filepath.Join(dir, ".sandman", promptVersionFile)
+	versionPath := filepath.Join(dir, ".sandman", "state", ".prompt-version")
 	if err := os.MkdirAll(filepath.Dir(promptPath), 0755); err != nil {
 		t.Fatalf("create dir: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(versionPath), 0755); err != nil {
+		t.Fatalf("create state dir: %v", err)
 	}
 	existingContent := "existing content"
 	if err := os.WriteFile(promptPath, []byte(existingContent), 0644); err != nil {
@@ -571,9 +574,12 @@ func TestMaterializePromptFile_ExistingFileWithMatchingVersion_Preserved(t *test
 func TestMaterializePromptFile_ExistingFileWithMismatchedVersion_Overwritten(t *testing.T) {
 	dir := t.TempDir()
 	promptPath := filepath.Join(dir, ".sandman", "prompt.md")
-	versionPath := filepath.Join(dir, ".sandman", promptVersionFile)
+	versionPath := filepath.Join(dir, ".sandman", "state", ".prompt-version")
 	if err := os.MkdirAll(filepath.Dir(promptPath), 0755); err != nil {
 		t.Fatalf("create dir: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(versionPath), 0755); err != nil {
+		t.Fatalf("create state dir: %v", err)
 	}
 	existingContent := "existing content"
 	if err := os.WriteFile(promptPath, []byte(existingContent), 0644); err != nil {
