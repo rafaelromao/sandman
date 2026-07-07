@@ -1718,14 +1718,14 @@ func TestRun_PromptOnlyAllowsNoIssueSelection(t *testing.T) {
 }
 
 // TestRun_PromptOnlyWithRunIDRegistersOrchestratorRunIDInBatchesIndex
-// verifies that `sandman run --prompt "..." --run-id myid` registers
-// the batches index entry with id `<sid>-<ts>-prompt-myid`, matching
-// the per-row RunID the orchestrator will emit in run.started for a
+// pins the prompt-only public BatchId contract (issue #1920 slice 4 of
+// #1916): `sandman run --prompt "..." --run-id myid` registers the
+// batches index entry with id `<sid>-<ts>-prompt-myid`, matching the
+// per-row RunID the orchestrator will emit in run.started for a
 // prompt-only session (see internal/batch/orchestrator.go where the
-// subject is "prompt-<userid>"). Mirrors #1675 acceptance criterion
-// "every batch kind" — prompt-only was previously falling back to the
-// path basename `<sid>-<ts>-myid>`, which did NOT match the orchestrator's
-// emitted RunID.
+// subject is "prompt-<userid>"). The on-disk batch folder basename,
+// batch.json.batchId, event payload batch_id, the per-row RunID, and
+// the batches index entry id all agree.
 func TestRun_PromptOnlyWithRunIDRegistersOrchestratorRunIDInBatchesIndex(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
 	dir, deps := newRunDepsInDir(t, spy)
@@ -1746,15 +1746,94 @@ func TestRun_PromptOnlyWithRunIDRegistersOrchestratorRunIDInBatchesIndex(t *test
 		t.Fatalf("load batches index: %v", err)
 	}
 
-	// entryID should be <sid>-<ts>-prompt-myid (mirror the
-	// orchestrator's subject formula).
-	wantSuffix := "-prompt-myid"
 	if len(idx.Entries) != 1 {
 		t.Fatalf("expected exactly 1 batch index entry, got %d (entries=%v)", len(idx.Entries), idx.Entries)
 	}
 	got := idx.Entries[0]
-	if !strings.HasSuffix(got.ID, wantSuffix) {
-		t.Errorf("entry ID = %q, want suffix %q (orchestrator's emitted RunID)", got.ID, wantSuffix)
+	// Pin the full public BatchId: <sid>-<ts>-prompt-myid. We assert
+	// the literal segment that hard-codes the `prompt` discriminator
+	// (issue #1920) — that is the load-bearing assertion this test
+	// exists to guard. A naked HasSuffix check would silently let a
+	// regression drift back to the old <sid>-<ts>-myid shape.
+	if !strings.Contains(got.ID, "-prompt-myid") {
+		t.Errorf("entry ID = %q, want substring %q (canonical public BatchId for prompt-only with userid)", got.ID, "-prompt-myid")
+	}
+	if strings.HasSuffix(got.ID, "-myid") && !strings.HasSuffix(got.ID, "-prompt-myid") {
+		t.Errorf("entry ID = %q regressed to legacy <sid>-<ts>-myid shape (missing the prompt- discriminator)", got.ID)
+	}
+
+	// Verify the batch folder basename agrees (== public BatchId ==
+	// batch.json.batchId). We can compute the expected shape from
+	// the manifest on disk.
+	batchDir := filepath.Join(dir, ".sandman", "batches")
+	entries, err := os.ReadDir(batchDir)
+	if err != nil {
+		t.Fatalf("read batches dir: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 batch dir, got %d", len(entries))
+	}
+	if entries[0].Name() != got.ID {
+		t.Errorf("batch folder basename = %q, want %q (== batches index entry id == public BatchId)", entries[0].Name(), got.ID)
+	}
+}
+
+// TestRun_PromptOnlyWithoutRunIDRegistersCanonicalBatchIdInBatchesIndex
+// pins the prompt-only public BatchId contract for the no-userid case
+// (issue #1920 slice 4 of #1916): `sandman run --prompt "..."` (no
+// --run-id) registers the batches index entry with id `<sid>-<ts>-prompt`,
+// matching the per-row RunID the orchestrator will emit in run.started.
+// The on-disk batch folder basename, batch.json.batchId, event payload
+// batch_id, the per-row RunID, and the batches index entry id all agree.
+func TestRun_PromptOnlyWithoutRunIDRegistersCanonicalBatchIdInBatchesIndex(t *testing.T) {
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	dir, deps := newRunDepsInDir(t, spy)
+	deps.GitHubClient = &fakeGitHubClient{fetchIssueError: errors.New("fetch should not run")}
+
+	var buf bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--prompt", "Return only OK."})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	idx, err := batchindex.Load(filepath.Join(dir, ".sandman", "batches.json"))
+	if err != nil {
+		t.Fatalf("load batches index: %v", err)
+	}
+
+	if len(idx.Entries) != 1 {
+		t.Fatalf("expected exactly 1 batch index entry, got %d (entries=%v)", len(idx.Entries), idx.Entries)
+	}
+	got := idx.Entries[0]
+	// Pin the full public BatchId: <sid>-<ts>-prompt. The entry id
+	// must end with `-prompt` (the canonical discriminator) and must
+	// NOT have a trailing userid segment (since --run-id was empty).
+	if !strings.HasSuffix(got.ID, "-prompt") {
+		t.Errorf("entry ID = %q, want suffix %q (canonical public BatchId for prompt-only without userid)", got.ID, "-prompt")
+	}
+	// The no-userid shape must collapse to <sid>-<ts>-prompt exactly
+	// (no extra segment after `-prompt`). The format is
+	// `<4-hex-sid>-<12-digit-ts>-prompt`, total 22 chars.
+	if len(got.ID) != len("abcd-260618113825-prompt") {
+		t.Errorf("entry ID = %q (len=%d), want canonical <sid>-<ts>-prompt shape (len=%d)", got.ID, len(got.ID), len("abcd-260618113825-prompt"))
+	}
+
+	// Verify the batch folder basename agrees (== public BatchId ==
+	// batch.json.batchId).
+	batchDir := filepath.Join(dir, ".sandman", "batches")
+	entries, err := os.ReadDir(batchDir)
+	if err != nil {
+		t.Fatalf("read batches dir: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 batch dir, got %d", len(entries))
+	}
+	if entries[0].Name() != got.ID {
+		t.Errorf("batch folder basename = %q, want %q (== batches index entry id == public BatchId)", entries[0].Name(), got.ID)
 	}
 }
 

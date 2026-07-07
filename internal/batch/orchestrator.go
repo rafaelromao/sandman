@@ -2577,24 +2577,29 @@ func (s *runSession) executePromptOnly(ctx context.Context) (AgentRunResult, boo
 
 	runID := s.runID
 	if s.batchTS != "" && s.batchShortID != "" {
-		subject := "prompt"
-		if s.userProvidedRunID != "" {
-			subject = "prompt-" + s.userProvidedRunID
-		}
-		runID = runid.NewRunID(runid.KindPromptOnly, subject, s.batchTS, s.batchShortID)
+		// runid.NewRunID(KindPromptOnly, …) hard-codes the `prompt`
+		// segment (issue #1920 slice 4 of #1916), so passing the
+		// user-supplied --run-id as `subject` (or "" for the no-userid
+		// case) produces the canonical per-row RunID that doubles as
+		// the public BatchId.
+		runID = runid.NewRunID(runid.KindPromptOnly, s.userProvidedRunID, s.batchTS, s.batchShortID)
 	} else if runID == "" {
 		runID = fmt.Sprintf("run-0-%d", time.Now().UnixNano())
 	}
-	if s.runID == "" && s.batchID == "" {
+	// For prompt-only batches the public BatchId equals the per-row
+	// RunID (issue #1920 slice 4). The cmd layer pre-seeds s.batchID
+	// from the same runid.NewBatchID call, but the one-shot review
+	// path sets s.batchID by walking runDir; if neither path
+	// populated it (legacy callers), fall back to deriving it from
+	// the new runID shape. With the new shape the prefix
+	// `<sid>-<ts>-prompt[<rest>]` collapses to the same prefix
+	// batchIDFromRunID already returns, so the helper still works.
+	if s.batchID == "" {
 		s.batchID = batchIDFromRunID(runID)
 	}
 
 	batchDir := s.o.layout.BatchDir(s.batchID)
 	manifestBatchID := s.batchID
-	if s.batchID == "" {
-		batchDir = s.o.layout.BatchesDir
-		manifestBatchID = batchIDFromRunID(runID)
-	}
 	var runKind batchindex.Kind
 	if s.review {
 		runKind = batchindex.KindReview

@@ -146,3 +146,32 @@ func TestNewLayout_ResolvesStateDir(t *testing.T) {
 		t.Errorf("NewLayout StateDir = %q, want %q", got, want)
 	}
 }
+
+// TestLayout_PromptOnlyRunLogPath pins the prompt-only saved log path
+// shape (issue #1920 slice 4 of #1916). For prompt-only batches the
+// public BatchId equals the per-row RunID, so the saved log path
+// collapses to `<batchesDir>/<promptBatchId>/runs/<promptBatchId>/run.log`.
+// With userid the batchid has a `-prompt-<userid>` segment; without
+// userid it terminates in `-prompt`.
+func TestLayout_PromptOnlyRunLogPath(t *testing.T) {
+	l := Layout{RepoRoot: "/r", BatchesDir: filepath.Join("/r", ".sandman", "batches")}
+
+	cases := []struct {
+		name    string
+		batchID string
+		runID   string
+	}{
+		{name: "with userid", batchID: "abcd-260618113825-prompt-myid", runID: "abcd-260618113825-prompt-myid"},
+		{name: "without userid", batchID: "abcd-260618113825-prompt", runID: "abcd-260618113825-prompt"},
+		{name: "with numeric userid", batchID: "abcd-260618113825-prompt-42", runID: "abcd-260618113825-prompt-42"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := l.RunLogPath(tc.batchID, tc.runID)
+			want := filepath.Join(l.BatchesDir, tc.batchID, "runs", tc.runID, "run.log")
+			if got != want {
+				t.Errorf("RunLogPath = %q, want %q", got, want)
+			}
+		})
+	}
+}

@@ -1157,9 +1157,11 @@ func TestPortal_ArchiveEndpoint_AutoSelectRun(t *testing.T) {
 }
 
 // TestPortal_ArchiveEndpoint_PromptOnlyRun covers sandman run --prompt:
-// the per-row id is the user-supplied runID (no shortid/ts prefix),
-// while the batch entry id is "{shortid}-{ts}-{userid}". The on-disk
-// probe resolves the per-row id through runs/<userid>/run.json.
+// per issue #1920 (slice 4 of #1916), the per-row RunID equals the
+// public BatchId, which is "<shortid>-<ts>-prompt-<userid>" (or
+// "<shortid>-<ts>-prompt" without a userid). The on-disk probe resolves
+// the per-row id through runs/<runID>/run.json, so the per-row dir
+// basename is the same canonical id the batch folder uses.
 func TestPortal_ArchiveEndpoint_PromptOnlyRun(t *testing.T) {
 	repoRoot, err := os.MkdirTemp("/tmp", "sm-archive-prompt-")
 	if err != nil {
@@ -1173,13 +1175,14 @@ func TestPortal_ArchiveEndpoint_PromptOnlyRun(t *testing.T) {
 	ts := "260618113825"
 	shortid := "abcd"
 	userID := "my-fix-task"
-	batchEntryID := runid.NewBatchID(runid.KindPromptOnly, 1, userID, ts, shortid)
-	perRowID := userID
-	if perRowID == batchEntryID {
-		t.Fatalf("fixture invariant: perRowID %q must differ from batchEntryID %q", perRowID, batchEntryID)
+	publicBatchID := runid.NewBatchID(runid.KindPromptOnly, 1, userID, ts, shortid)
+	perRowID := runid.NewRunID(runid.KindPromptOnly, userID, ts, shortid)
+	// RunID == public BatchId for prompt-only (issue #1920 slice 4).
+	if perRowID != publicBatchID {
+		t.Fatalf("fixture invariant: perRowID %q must equal publicBatchID %q (RunID == public BatchId for prompt-only)", perRowID, publicBatchID)
 	}
 
-	batchDir := filepath.Join(repoRoot, ".sandman", "batches", batchEntryID)
+	batchDir := filepath.Join(repoRoot, ".sandman", "batches", publicBatchID)
 	if err := os.MkdirAll(batchDir, 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -1193,7 +1196,7 @@ func TestPortal_ArchiveEndpoint_PromptOnlyRun(t *testing.T) {
 	}
 	perRowManifest := batchindex.RunManifest{
 		RunID:     perRowID,
-		BatchID:   batchEntryID,
+		BatchID:   publicBatchID,
 		Kind:      batchindex.KindPromptOnly,
 		CreatedAt: time.Now(),
 		Status:    batchindex.RunManifestStatusSuccess,
@@ -1203,7 +1206,7 @@ func TestPortal_ArchiveEndpoint_PromptOnlyRun(t *testing.T) {
 	}
 
 	batchManifest := batchindex.RunManifest{
-		BatchID:   batchEntryID,
+		BatchID:   publicBatchID,
 		Kind:      batchindex.KindPromptOnly,
 		CreatedAt: time.Now(),
 		Status:    batchindex.RunManifestStatusActive,
@@ -1213,7 +1216,7 @@ func TestPortal_ArchiveEndpoint_PromptOnlyRun(t *testing.T) {
 	}
 
 	idx := batchindex.Index{Version: batchindex.IndexVersion, Entries: []batchindex.Entry{
-		{ID: batchEntryID, Path: batchDir, Kind: batchindex.KindPromptOnly, Status: batchindex.StatusActive, CreatedAt: time.Now()},
+		{ID: publicBatchID, Path: batchDir, Kind: batchindex.KindPromptOnly, Status: batchindex.StatusActive, CreatedAt: time.Now()},
 	}}
 	data, _ := json.Marshal(idx)
 	if err := os.WriteFile(filepath.Join(repoRoot, ".sandman", "batches.json"), data, 0644); err != nil {
@@ -1229,10 +1232,10 @@ func TestPortal_ArchiveEndpoint_PromptOnlyRun(t *testing.T) {
 		t.Fatalf("expected 200 for per-row id %q, got %d: %s", perRowID, resp.StatusCode, body)
 	}
 
-	if _, err := os.Stat(filepath.Join(repoRoot, ".sandman", "archive", batchEntryID)); err != nil {
-		t.Fatalf("expected archive dir %q to exist, stat err = %v", batchEntryID, err)
+	if _, err := os.Stat(filepath.Join(repoRoot, ".sandman", "archive", publicBatchID)); err != nil {
+		t.Fatalf("expected archive dir %q to exist, stat err = %v", publicBatchID, err)
 	}
-	marker, err := os.ReadFile(filepath.Join(repoRoot, ".sandman", "archive", batchEntryID, "marker.txt"))
+	marker, err := os.ReadFile(filepath.Join(repoRoot, ".sandman", "archive", publicBatchID, "marker.txt"))
 	if err != nil {
 		t.Fatalf("expected marker file to follow the move: %v", err)
 	}
