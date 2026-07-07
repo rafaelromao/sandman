@@ -97,11 +97,15 @@ func (s *ContainerSandbox) SetStrandedReconcile(enabled bool) {
 
 func (s *ContainerSandbox) containerWorkDir() string {
 	wd := s.worktree.WorkDir()
-	rel, err := filepath.Rel(s.repoPath, wd)
+	absRepo, err := filepath.Abs(s.repoPath)
 	if err != nil {
 		return wd
 	}
-	return filepath.Join("/workspace", rel)
+	rel, err := filepath.Rel(absRepo, wd)
+	if err != nil || rel == "" || strings.HasPrefix(rel, "..") {
+		return wd
+	}
+	return filepath.Join(ContainerWorkspaceMount, rel)
 }
 
 // Start initializes the worktree and rewrites paths so git commands
