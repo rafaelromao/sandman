@@ -2588,12 +2588,14 @@ func (s *runSession) executePromptOnly(ctx context.Context) (AgentRunResult, boo
 	}
 	// For prompt-only batches the public BatchId equals the per-row
 	// RunID (issue #1920 slice 4). The cmd layer pre-seeds s.batchID
-	// from the same runid.NewBatchID call, but the one-shot review
+	// from the same runid.NewBatchID call, and the one-shot review
 	// path sets s.batchID by walking runDir; if neither path
-	// populated it (legacy callers), fall back to deriving it from
-	// the new runID shape. With the new shape the prefix
-	// `<sid>-<ts>-prompt[<rest>]` collapses to the same prefix
-	// batchIDFromRunID already returns, so the helper still works.
+	// populated it (legacy callers), the legacy batchIDFromRunID
+	// fallback below returns the `<sid>-<ts>` prefix — which is the
+	// historical contract that the on-disk dir resolver already
+	// understood, so the manifest writes still land at a coherent
+	// (if legacy-shaped) path. The cmd and review paths pre-seed
+	// s.batchID today, so this fallback is best-effort.
 	if s.batchID == "" {
 		s.batchID = batchIDFromRunID(runID)
 	}

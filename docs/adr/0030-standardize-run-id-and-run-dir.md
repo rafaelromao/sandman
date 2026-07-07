@@ -135,6 +135,17 @@ The four arguments are positional and named here for clarity: `KindIssue` select
 
 For review (PR) batches, the portal uses `runid.NewRunID(runid.KindReview, …)` with the same `(RunTS, RunShortID)` arguments — see the per-row RunID templates above for the PR subject shape. This is included here so consumers do not have to re-derive it independently, but the issue-driven contract above is the canonical entry point called out by the issue body.
 
+For prompt-only batches (issue #1920 slice 4), the per-row RunID is derived from the user-supplied `--run-id` (or `""` if absent) plus the `(RunTS, RunShortID)` primitives:
+
+```go
+// With --run-id <userid>: <sid>-<ts>-prompt-<userid>
+runid.NewRunID(runid.KindPromptOnly, userRunID, manifest.RunTS, manifest.RunShortID)
+// Without --run-id:        <sid>-<ts>-prompt
+runid.NewRunID(runid.KindPromptOnly, "", manifest.RunTS, manifest.RunShortID)
+```
+
+For prompt-only the per-row RunID equals the public BatchId, so the on-disk batch folder basename, `batch.json.batchId`, the event payload `batch_id`, and the per-row RunID all carry the same string. The manifest's `RunKind` field is `"prompt-only"` for these batches.
+
 When either manifest field is absent, callers should fall back to the queued event's `RunID` if one is available, or return the empty string. The portal implements both paths through `perRowRunIDForManifest(runTS, runShortID, prNumber, issueNumber, queued)` (pure helper) and its active-batch wrapper `perRowRunIDForActive(active, issueNumber, queued)`.
 
 ## Consequences

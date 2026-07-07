@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/rafaelromao/sandman/internal/batch"
+	"github.com/rafaelromao/sandman/internal/batchindex"
 	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/daemon"
 	"github.com/rafaelromao/sandman/internal/events"
@@ -698,9 +699,9 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 			// longer stamped into batch.json; it lives in run.json.RunID
 			// and the per-run folder name.
 			batchIDForManifest := sessionRunID
-			manifestRunKind := "issue"
+			manifestRunKind := string(batchindex.KindIssue)
 			if len(req.Issues) == 0 {
-				manifestRunKind = "prompt-only"
+				manifestRunKind = string(batchindex.KindPromptOnly)
 			}
 			manifest := daemon.BatchManifest{Issues: append([]int(nil), req.Issues...), CreatedAt: time.Now(), BatchId: batchIDForManifest, RunKind: manifestRunKind, RunTS: req.RunTS, RunShortID: req.RunShortID}
 			if err := rs.Prepare(manifest); err != nil {
