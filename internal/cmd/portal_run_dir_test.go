@@ -146,3 +146,62 @@ func TestPortal_RunDir_TerminalRowUnresolvableBatchLeavesRunDirEmpty(t *testing.
 		t.Errorf("terminal row RunDir = %q, want empty (unresolvable batch must leave RunDir empty so caller renders Unclear)", got)
 	}
 }
+
+// TestPortal_RunDir_SynthesizedDeadBatchRowStampsBatchRunDir pins slice
+// 0d: when a dead batch has issues missing from the event log, the
+// synthesized aborted row carries RunDir equal to
+// `<deadBatch.RunDir>/runs/<runID>`. The DeadBatch.RunDir is already
+// known to the synthesize path (it comes from the index entry's Path),
+// so RunDir stamps directly without re-resolving through the index.
+func TestPortal_RunDir_SynthesizedDeadBatchRowStampsBatchRunDir(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	batchID := "dead-rundir"
+	runTS := "260101120000"
+	runShortID := "abcd"
+	batchDir := filepath.Join(repoRoot, ".sandman", "batches", batchID)
+	if err := os.MkdirAll(batchDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := daemon.WriteManifest(batchDir, daemon.BatchManifest{
+		Issues:     []int{55, 66},
+		CreatedAt:  time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC),
+		BatchId:    batchID,
+		RunTS:      runTS,
+		RunShortID: runShortID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// Issue 55 ran to completion via the event log; issue 66 did NOT,
+	// so synthesizedDeadBatchRows will produce a row for issue 66 only.
+	runID55 := "abcd-260101120000-55"
+	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
+		{Type: "run.started", Timestamp: time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC), RunID: runID55, Issue: 55, Payload: map[string]any{"branch": "sandman/55-fix", "batch_id": batchID}},
+		{Type: "run.finished", Timestamp: time.Date(2025, 1, 1, 12, 5, 0, 0, time.UTC), RunID: runID55, Issue: 55, Payload: map[string]any{"status": "success", "branch": "sandman/55-fix", "batch_id": batchID}},
+	})
+	addBatchToIndex(t, repoRoot, batchID, batchDir, []int{55, 66})
+
+	runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")})
+	if err != nil {
+		t.Fatalf("compute: %v", err)
+	}
+
+	var synth *portalRun
+	for i := range runs {
+		if runs[i].IssueNumber == 66 && runs[i].Kind == "completed" && runs[i].Status == "aborted" {
+			synth = &runs[i]
+			break
+		}
+	}
+	if synth == nil {
+		t.Fatalf("expected synthesized dead-batch row for issue 66, got %#v", runs)
+	}
+
+	want := filepath.Join(batchDir, "runs", synth.RunID)
+	if got := synth.RunDir; got != want {
+		t.Errorf("synthesized row RunDir = %q, want %q (batch.RunDir + runs/<runID>)", got, want)
+	}
+}

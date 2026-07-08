@@ -779,6 +779,12 @@ func (v *portalRunsView) synthesizedDeadBatchRows(deadBatches []daemon.DeadBatch
 				FinishedAt:  &finishedAt,
 				Duration:    "0s",
 				BatchKey:    batchKey,
+				// Synthesized dead-batch rows already know their
+				// per-row folder location via the DeadBatch.RunDir the
+				// scanner produced; stamp RunDir directly from there
+				// without re-resolving through the Batches index
+				// (issue #1937 slice 0d).
+				RunDir: filepath.Join(batch.RunDir, "runs", runID),
 			}
 			if len(batch.Manifest.Issues) > 1 {
 				run.BatchIssues = append([]int(nil), batch.Manifest.Issues...)
