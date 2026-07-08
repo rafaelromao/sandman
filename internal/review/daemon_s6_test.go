@@ -13,28 +13,18 @@ import (
 	"github.com/rafaelromao/sandman/internal/github"
 )
 
-// TestDaemon_S6_MissingDecision_DoesNotRelaunchForever pins the S6
-// bounded-retry contract via seen-cache short-circuit. The lazy-verify
-// walker is gone (issue #1849), so the bounded-retry escape must be
-// expressed by postDecision's MarkSeen("failure") writing the
-// terminal-seen entry on the in-memory seen cache directly. The
-// next tick's processPR short-circuits the trigger via IsTerminalSeen
-// and does NOT call RunBatch again.
-//
-// Pre-S6 the bounded-retry escape was multi-cycle: promotePendingReviews
-// ran at the start of every tick, observed no review comment on the PR,
-// incremented the cycle counter, and only after `pendingMaxCycles` ticks
-// promoted the entry to failure and called MarkTerminalSeen. With the
-// walker gone, the contract collapses to a single-shot at launch-end:
-// postDecision records MarkSeen("failure") and the launch goroutine
-// fires MarkTerminalSeen so the next tick short-circuits.
-//
-// Issue #1891 NOTE: this contract is preserved for the missing-decision.md
-// and decision.md-is-a-directory branches. Those branches represent "the
-// agent did not produce a review" and remain terminal-seen. Only the
-// post-failure branch (PostComment returned a non-ctx error) is amended
-// to retry-then-pending under issue #1891.
-func TestDaemon_S6_MissingDecision_DoesNotRelaunchForever(t *testing.T) {
+// TestDaemon_1949_S6_MissingDecision_RetriesAcrossTicks pins the
+// issue #1949 contract for the missing-decision.md branch of
+// postDecision. Pre-#1949 this test was
+// TestDaemon_S6_MissingDecision_DoesNotRelaunchForever and pinned
+// the S6 bounded-retry contract via seen-cache short-circuit. Issue
+// #1949 supersedes that carve-out: the missing-decision.md outcome
+// is retryable, not terminal. The daemon writes `pending` to
+// review-state.json and registers a pendingPost entry, so the next
+// tick's rehydrate walker drops the stale entry (decision.md still
+// missing) and falls through to the launch path, re-running the
+// agent.
+func TestDaemon_1949_S6_MissingDecision_RetriesAcrossTicks(t *testing.T) {
 	const (
 		prNumber  = 7070
 		commentID = "c-s6-1"
@@ -70,32 +60,107 @@ func TestDaemon_S6_MissingDecision_DoesNotRelaunchForever(t *testing.T) {
 	if err := json.Unmarshal(stateBytes, &state); err != nil {
 		t.Fatalf("unmarshal review-state.json: %v", err)
 	}
-	foundFailure := false
+	foundPending := false
 	for _, sc := range state.SeenComments {
-		if sc.CommentID == commentID && sc.Status == "failure" {
-			foundFailure = true
+		if sc.CommentID == commentID && sc.Status == "pending" {
+			foundPending = true
 			break
 		}
 	}
-	if !foundFailure {
-		t.Errorf("expected MarkSeen(failure) for %s at launch-end, got %+v", commentID, state.SeenComments)
+	if !foundPending {
+		t.Errorf("expected MarkSeen(pending) for %s at launch-end (issue #1949), got %+v", commentID, state.SeenComments)
+	}
+	if d.IsTerminalSeen(prNumber, commentID) {
+		t.Errorf("seenCache must NOT mark (%d, %s) terminal-seen under issue #1949, got cache %+v", prNumber, commentID, d.seenCache)
 	}
 
-	if err := d.tick(context.Background()); err != nil {
-		t.Fatalf("second tick: %v", err)
+	tickAndWait(t, d, context.Background())
+	if runner.Calls() != 2 {
+		t.Errorf("second tick should re-launch the agent via rehydrate fallthrough (issue #1949), got %d total RunBatch calls", runner.Calls())
 	}
+	if d.IsTerminalSeen(prNumber, commentID) {
+		t.Errorf("seenCache must remain clean for (%d, %s) across rehydrate retries, got cache %+v", prNumber, commentID, d.seenCache)
+	}
+}
+
+// TestDaemon_1949_MissingDecision_RetriesAcrossTicks pins the issue
+// #1949 contract for the missing-decision.md branch of postDecision:
+// when the agent fails to write decision.md after RunBatch returns,
+// the daemon must NOT mark the comment terminal-seen. It writes
+// `pending` to review-state.json and registers a pendingPost entry,
+// so the next tick's rehydrate walker drops the stale entry
+// (decision.md still missing) and falls through to the launch path,
+// re-running the agent.
+//
+// Pre-#1949 this branch was terminal-seen via MarkSeen("failure") +
+// MarkTerminalSeen, which short-circuited subsequent ticks. The fix
+// treats "agent failed to produce a review" as retryable from the
+// daemon's perspective: the next tick re-launches the agent and the
+// trigger is not lost.
+func TestDaemon_1949_MissingDecision_RetriesAcrossTicks(t *testing.T) {
+	const (
+		prNumber  = 19490
+		commentID = "c-1949-missing"
+	)
+	now := time.Date(2026, 7, 7, 10, 0, 0, 0, time.UTC)
+	gh := &fakeGH{
+		prs: []github.PR{{Number: prNumber, State: "open"}},
+		comments: map[int][]github.PRComment{
+			prNumber: {{ID: commentID, Body: "/sandman review", CreatedAt: now}},
+		},
+		prFetch: map[int]*github.PR{prNumber: {Number: prNumber, Title: "PR 1949", Body: "Body"}},
+	}
+	runner := &capturedRequest{} // never writes decision.md
+	d, _, dir := newDaemonForTest(t, gh, runner, &config.Config{
+		DefaultReviewAgent: "opencode",
+		DefaultReviewModel: "opencode/foo",
+	})
+
+	tickAndWait(t, d, context.Background())
 	if runner.Calls() != 1 {
-		t.Errorf("second tick must not re-launch the trigger (bounded-retry via seen-cache short-circuit), got %d total RunBatch calls", runner.Calls())
-	}
-	if !d.IsTerminalSeen(prNumber, commentID) {
-		t.Errorf("seenCache should mark (%d, %s) terminal-seen after launch-end failure, got cache %+v", prNumber, commentID, d.seenCache)
+		t.Fatalf("first tick should launch exactly 1 batch, got %d", runner.Calls())
 	}
 
-	if err := d.tick(context.Background()); err != nil {
-		t.Fatalf("third tick: %v", err)
+	statePath := locateReviewStatePath(t, dir)
+	if statePath == "" {
+		t.Fatalf("expected review-state.json to exist after launch, got none in %s", dir)
 	}
-	if runner.Calls() != 1 {
-		t.Errorf("third tick must not re-launch the trigger (single-shot bounded retry), got %d total RunBatch calls", runner.Calls())
+	stateBytes, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatalf("read review-state.json: %v", err)
+	}
+	var state batchindex.ReviewState
+	if err := json.Unmarshal(stateBytes, &state); err != nil {
+		t.Fatalf("unmarshal review-state.json: %v", err)
+	}
+	foundPending := false
+	for _, sc := range state.SeenComments {
+		if sc.CommentID == commentID && sc.Status == "pending" {
+			foundPending = true
+			break
+		}
+	}
+	if !foundPending {
+		t.Errorf("expected MarkSeen(pending) for %s after missing-decision.md outcome (issue #1949), got %+v", commentID, state.SeenComments)
+	}
+	if d.IsTerminalSeen(prNumber, commentID) {
+		t.Errorf("seenCache must NOT mark (%d, %s) terminal-seen under issue #1949, got cache %+v", prNumber, commentID, d.seenCache)
+	}
+	d.pendingPostMu.Lock()
+	_, hasPending := d.pendingPost[prNumber][commentID]
+	d.pendingPostMu.Unlock()
+	if !hasPending {
+		t.Errorf("pendingPost should register an entry for (%d, %s) under issue #1949, got map %+v", prNumber, commentID, d.pendingPost)
+	}
+
+	// Second tick: rehydrate walker drops the stale pending entry
+	// (decision.md still missing) and falls through to launch path.
+	tickAndWait(t, d, context.Background())
+	if runner.Calls() != 2 {
+		t.Errorf("second tick should re-launch the agent (rehydrate fallthrough), got %d total RunBatch calls", runner.Calls())
+	}
+	if d.IsTerminalSeen(prNumber, commentID) {
+		t.Errorf("seenCache must remain clean for (%d, %s) across rehydrate retries, got cache %+v", prNumber, commentID, d.seenCache)
 	}
 }
 

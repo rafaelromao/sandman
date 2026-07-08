@@ -22,6 +22,26 @@ func waitIdle(t *testing.T, d *Daemon) {
 	}
 }
 
+// writeDecisionToWorktree writes decision.md to the per-row worktree
+// path the daemon's post step reads from (issue #1953). When the
+// daemon populates req.WorktreeDir the runner writes there; otherwise
+// it falls back to req.RunDir (the legacy pre-#1953 location).
+// Issue #1949 makes the missing-decision.md outcome retryable, so
+// slice C fixtures must land decision.md on the path the daemon
+// actually reads from — otherwise the post step fires the
+// pending-and-rehydrate fallback and re-launches the agent, breaking
+// the slot-table invariants the test is pinning.
+func writeDecisionToWorktree(req batch.Request, body string) error {
+	if req.WorktreeDir != "" {
+		worktreePath := filepath.Join(req.WorktreeDir, req.PromptConfig.Branch)
+		if err := os.MkdirAll(worktreePath, 0755); err != nil {
+			return err
+		}
+		return os.WriteFile(filepath.Join(worktreePath, "decision.md"), []byte(body), 0644)
+	}
+	return os.WriteFile(filepath.Join(req.RunDir, "decision.md"), []byte(body), 0644)
+}
+
 // TestDaemon_PerPRSlotTable_AllowsCrossPRConcurrency pins the slice-C
 // behavior: with parallel_reviews=2 and three PRs, exactly two PRs
 // acquire slots and run concurrently; the third PR's processPR
@@ -70,11 +90,11 @@ func TestDaemon_PerPRSlotTable_AllowsCrossPRConcurrency(t *testing.T) {
 		startedCount++
 		countMu.Unlock()
 		started <- req.PRNumber
-		// Issue #1846 (S3): write decision.md so the post step
-		// succeeds after the runner unblocks, instead of failing
-		// on missing decision.md. Concurrency invariants are
+		// Issue #1846 (S3) + #1953: write decision.md to the
+		// per-row worktree path so the post step succeeds after
+		// the runner unblocks. Concurrency invariants are
 		// unaffected by the post step.
-		if err := os.WriteFile(filepath.Join(req.RunDir, "decision.md"), []byte("ok"), 0644); err != nil {
+		if err := writeDecisionToWorktree(req, "ok"); err != nil {
 			return nil, err
 		}
 		<-release[req.PRNumber]
@@ -84,6 +104,7 @@ func TestDaemon_PerPRSlotTable_AllowsCrossPRConcurrency(t *testing.T) {
 		DefaultReviewAgent:    "opencode",
 		DefaultReviewModel:    "opencode/foo",
 		DefaultReviewParallel: 2,
+		WorktreeDir:           ".sandman/worktrees",
 	})
 	d.Clock = func() time.Time { return now.Add(-1 * time.Minute) }
 
@@ -198,10 +219,11 @@ func TestDaemon_PerPRSlotTable_ReleasesOnCompletion(t *testing.T) {
 	}
 	runner := batchFunc(func(ctx context.Context, req batch.Request) (*batch.Result, error) {
 		started <- req.PRNumber
-		// Issue #1846 (S3): write decision.md before unblocking so
-		// the post step succeeds after release. Concurrency invariants
-		// are unaffected.
-		if err := os.WriteFile(filepath.Join(req.RunDir, "decision.md"), []byte("ok"), 0644); err != nil {
+		// Issue #1846 (S3) + #1953 + #1949: write decision.md to
+		// the per-row worktree path the daemon's post step reads
+		// from, so the post step succeeds after release.
+		// Concurrency invariants are unaffected.
+		if err := writeDecisionToWorktree(req, "ok"); err != nil {
 			return nil, err
 		}
 		<-release[req.PRNumber]
@@ -211,6 +233,7 @@ func TestDaemon_PerPRSlotTable_ReleasesOnCompletion(t *testing.T) {
 		DefaultReviewAgent:    "opencode",
 		DefaultReviewModel:    "opencode/foo",
 		DefaultReviewParallel: 2,
+		WorktreeDir:           ".sandman/worktrees",
 	})
 	d.Clock = func() time.Time { return now.Add(-1 * time.Minute) }
 
@@ -272,10 +295,11 @@ func TestDaemon_PerPRSlotTable_NewTriggerMidFlight_IsNotDropped(t *testing.T) {
 		cid := req.PromptConfig.Branch
 		calls = append(calls, cid)
 		callsMu.Unlock()
-		// Issue #1846 (S3): write decision.md so the post step
-		// can complete after the runner unblocks. Concurrency
-		// invariants tested below are unaffected by the post step.
-		if err := os.WriteFile(filepath.Join(req.RunDir, "decision.md"), []byte("ok"), 0644); err != nil {
+		// Issue #1846 (S3) + #1953 + #1949: write decision.md to
+		// the per-row worktree path the daemon's post step reads
+		// from, so the post step succeeds after release.
+		// Concurrency invariants tested below are unaffected.
+		if err := writeDecisionToWorktree(req, "ok"); err != nil {
 			return nil, err
 		}
 		if cid == "sandman/review-7-first" {
@@ -299,6 +323,7 @@ func TestDaemon_PerPRSlotTable_NewTriggerMidFlight_IsNotDropped(t *testing.T) {
 		DefaultReviewAgent:    "opencode",
 		DefaultReviewModel:    "opencode/foo",
 		DefaultReviewParallel: 1,
+		WorktreeDir:           ".sandman/worktrees",
 	})
 	d.Clock = func() time.Time { return now.Add(-1 * time.Minute) }
 
@@ -426,11 +451,12 @@ func TestDaemon_PerPRSlotTable_HeldSlotReturnsSilently(t *testing.T) {
 		case started <- struct{}{}:
 		default:
 		}
-		// Issue #1846 (S3): write decision.md so the post step
-		// can complete after release. The dedicated HeldSlot
-		// test below still exercises the in-flight slot-held
-		// invariant.
-		if err := os.WriteFile(filepath.Join(req.RunDir, "decision.md"), []byte("ok"), 0644); err != nil {
+		// Issue #1846 (S3) + #1953 + #1949: write decision.md to the
+		// per-row worktree path the daemon's post step reads from,
+		// so the post step succeeds after release. The dedicated
+		// HeldSlot test below still exercises the in-flight
+		// slot-held invariant.
+		if err := writeDecisionToWorktree(req, "ok"); err != nil {
 			return nil, err
 		}
 		<-release
@@ -440,6 +466,7 @@ func TestDaemon_PerPRSlotTable_HeldSlotReturnsSilently(t *testing.T) {
 		DefaultReviewAgent:    "opencode",
 		DefaultReviewModel:    "opencode/foo",
 		DefaultReviewParallel: 1,
+		WorktreeDir:           ".sandman/worktrees",
 	})
 	d.Clock = func() time.Time { return now.Add(-1 * time.Minute) }
 
