@@ -2999,11 +2999,7 @@ const renderRunMeta = (run) => {
   if (Number(run.reviewCount || 0) > 0) {
     const count = Number(run.reviewCount || 0);
     const reviewPart = count + ' review' + (count === 1 ? '' : 's');
-    if (run.reviewVerdict) {
-      counterParts.push(reviewPart + ' - ' + run.reviewVerdict);
-    } else {
-      counterParts.push(reviewPart);
-    }
+    counterParts.push(reviewPart + ' - ' + (run.reviewVerdict || 'Unclear'));
   }
   if (run.runId && String(run.status || '').toLowerCase() !== 'queued' && String(run.status || '').toLowerCase() !== 'blocked') lines.push('Run: ' + run.runId);
   if (counterParts.length) lines.push(counterParts.join(' - '));
@@ -5644,17 +5640,40 @@ console.log('PASS');
 	runPortalHTMLScript(t, js)
 }
 
-// TestRenderRunMeta_ParentWithTwoReviewsNoVerdictSuppressesDash is AC 2
-// (no marker recoverable): the meta line for reviewCount=2 with empty
-// reviewVerdict must render "2 reviews" with no trailing dash.
-func TestRenderRunMeta_ParentWithTwoReviewsNoVerdictSuppressesDash(t *testing.T) {
+// TestRenderRunMeta_ParentWithTwoReviewsNoVerdictRendersUnclear pins AC 2
+// (no marker recoverable) after issue #1939 slice 2 flipped the empty
+// verdict contract: the meta line for reviewCount=2 with empty
+// reviewVerdict must render "2 reviews - Unclear" — the server stamp for
+// "decision.md was missing or unparseable" surfaces explicitly rather
+// than dropping the suffix.
+func TestRenderRunMeta_ParentWithTwoReviewsNoVerdictRendersUnclear(t *testing.T) {
 	js := `const run = {
   key: 'impl-3', runId: 'impl-3', batchKey: 'parent-batch',
   kind: 'completed', status: 'success', reviewCount: 2, reviewVerdict: '',
 };
 const meta = helpers.renderRunMeta(run);
-if (meta.indexOf('2 reviews -') >= 0) throw new Error('expected no trailing dash in meta when reviewVerdict empty, got ' + JSON.stringify(meta));
-if (meta.indexOf('2 reviews') < 0) throw new Error('expected "2 reviews" in meta, got ' + JSON.stringify(meta));
+if (meta.indexOf('2 reviews - Unclear') < 0) throw new Error('expected "2 reviews - Unclear" in meta when reviewVerdict empty, got ' + JSON.stringify(meta));
+console.log('PASS');
+`
+	runPortalHTMLScript(t, js)
+}
+
+// TestRenderRunMeta_ParentWithOneReviewEmptyVerdictRendersUnclear pins
+// issue #1939 slice 2: when the Go server stamps reviewVerdict=” on a
+// review row (because decision.md was missing or unparseable), the JS
+// renderRunMeta projection must render "Unclear" on the counter line
+// instead of dropping the verdict suffix. The orphan path can still
+// surface ” to renderRunMeta today (when the review's saved run.log has
+// no ## Decision marker), so this projection step is the front-end
+// contract that closes the gap.
+func TestRenderRunMeta_ParentWithOneReviewEmptyVerdictRendersUnclear(t *testing.T) {
+	js := `const run = {
+  key: 'impl-8', runId: 'impl-8', batchKey: 'parent-batch',
+  kind: 'completed', status: 'success', reviewCount: 1, reviewVerdict: '',
+};
+const meta = helpers.renderRunMeta(run);
+if (meta.indexOf('1 review - Unclear') < 0) throw new Error('expected "1 review - Unclear" in meta when reviewVerdict is empty (server stamp for missing decision.md), got ' + JSON.stringify(meta));
+if (meta.indexOf('1 reviews') >= 0) throw new Error('expected no plural "1 reviews" in meta, got ' + JSON.stringify(meta));
 console.log('PASS');
 `
 	runPortalHTMLScript(t, js)
