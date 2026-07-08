@@ -840,8 +840,8 @@ func TestPortal_ReviewAggregation_LiveReviewSocketPreservesIssueIdentity(t *test
 	if !parent.StartedAt.Equal(parentStarted) {
 		t.Fatalf("expected canonical parent StartedAt %s, got %s", parentStarted, parent.StartedAt)
 	}
-	if parent.Status != "reviewing" {
-		t.Fatalf("expected canonical parent status to be reviewing (flipped by aggregateReviewChildren for live review child), got %q", parent.Status)
+	if parent.Status != "success" {
+		t.Fatalf("expected canonical parent status success (terminal parent status preserved per #1825 contract; live review child does not flip terminal badge), got %q", parent.Status)
 	}
 	if parent.ReviewCount != 1 {
 		t.Fatalf("expected canonical parent ReviewCount 1, got %d", parent.ReviewCount)
