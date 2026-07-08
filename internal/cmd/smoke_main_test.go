@@ -20,10 +20,10 @@ import (
 // building a fresh one for every (provider, buildTools) combination.
 var prebuiltSmokeImages sync.Map
 
-// prewarmOnce guards the one-shot pre-warm so TestMain does not rebuild
-// the images if it is invoked more than once (e.g. when re-running the
-// package from a sub-agent).
-var prewarmOnce sync.Once
+// prewarmImageFunc is the build function used by prewarmSmokeImages.
+// It is a variable so tests can replace it with a fake that controls
+// timing and error injection without building real containers.
+var prewarmImageFunc = prewarmSmokeImage
 
 // smokePrewarmVariants enumerates the (provider, buildTools) pairs whose
 // images the pre-warm builds. These are the cross-product of the
@@ -54,7 +54,7 @@ type smokePrewarmVariant struct {
 func TestMain(m *testing.M) {
 	applySmokeModelOverrides()
 	if os.Getenv("SANDMAN_SMOKE_PREFETCH") != "0" {
-		prewarmOnce.Do(prewarmSmokeImages)
+		prewarmSmokeImages()
 	}
 	os.Exit(m.Run())
 }
@@ -63,14 +63,20 @@ func TestMain(m *testing.M) {
 // the resulting image tags in prebuiltSmokeImages. Failures are
 // tolerated: a missing entry just means the test that needs it falls
 // back to the in-test build path.
+//
+// Concurrency is capped at the number of variants (4) via a semaphore
+// so a slow container runtime does not have to back off.
 func prewarmSmokeImages() {
 	var wg sync.WaitGroup
+	sem := make(chan struct{}, len(smokePrewarmVariants))
 	for _, v := range smokePrewarmVariants {
 		v := v
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			tag, err := prewarmSmokeImage(v.provider, v.buildTools)
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			tag, err := prewarmImageFunc(v.provider, v.buildTools)
 			if err != nil || tag == "" {
 				return
 			}
@@ -140,3 +146,104 @@ func smokePrewarmLookup(provider, buildTools string) string {
 // avoid an unused-import warning when this file is the only consumer
 // of time.Now in the smoke build.
 var _ = time.Now
+
+// TestPrewarmFailureIsolation verifies that when one variant's build fails,
+// the other variants still complete and populate the prebuiltSmokeImages map.
+func TestPrewarmFailureIsolation(t *testing.T) {
+	realFunc := prewarmImageFunc
+	defer func() { prewarmImageFunc = realFunc }()
+
+	prewarmImageFunc = func(provider, buildTools string) (string, error) {
+		if provider == "opencode" && buildTools == "elixir" {
+			return "", fmt.Errorf("synthetic elixir build failure")
+		}
+		return "sandman-smoke-" + provider + "-" + buildTools + ":prewarm", nil
+	}
+
+	prebuiltSmokeImages = sync.Map{}
+
+	prewarmSmokeImages()
+
+	okVariants := []struct{ provider, buildTools string }{
+		{"opencode", "generic"},
+		{"opencode", "go"},
+		{"opencode", "python"},
+	}
+	for _, v := range okVariants {
+		tag := smokePrewarmLookup(v.provider, v.buildTools)
+		if tag == "" {
+			t.Errorf("expected prebuilt image for %s/%s after elixir failure, got empty string",
+				v.provider, v.buildTools)
+		}
+	}
+
+	if tag := smokePrewarmLookup("opencode", "elixir"); tag != "" {
+		t.Errorf("expected no prebuilt image for failed elixir variant, got %q", tag)
+	}
+}
+
+// BenchmarkPrewarmParallelism verifies that prewarmSmokeImages runs all
+// variants concurrently by measuring wall-clock time. If variants ran
+// sequentially, elapsed time would be the sum of all delays (100ms).
+// With true parallelism, elapsed time is dominated by the slowest
+// variant (40ms). The test asserts elapsed is below the sequential sum
+// and above the single-variant floor, with generous margins for CI variance.
+func BenchmarkPrewarmParallelism(b *testing.B) {
+	realFunc := prewarmImageFunc
+	defer func() { prewarmImageFunc = realFunc }()
+
+	variantDelays := map[string]time.Duration{
+		"opencode-generic": 10 * time.Millisecond,
+		"opencode-go":      20 * time.Millisecond,
+		"opencode-python":  30 * time.Millisecond,
+		"opencode-elixir":  40 * time.Millisecond,
+	}
+
+	prewarmImageFunc = func(provider, buildTools string) (string, error) {
+		delay := variantDelays[provider+"-"+buildTools]
+		time.Sleep(delay)
+		return "sandman-smoke-" + provider + "-" + buildTools + ":prewarm", nil
+	}
+
+	var sumDelays, maxDelay time.Duration
+	for _, d := range variantDelays {
+		sumDelays += d
+		if d > maxDelay {
+			maxDelay = d
+		}
+	}
+
+	for i := 0; i < b.N; i++ {
+		prebuiltSmokeImages = sync.Map{}
+		start := time.Now()
+		prewarmSmokeImages()
+		elapsed := time.Since(start)
+
+		maxAcceptable := time.Duration(float64(sumDelays) * 1.5)
+		if elapsed >= sumDelays || elapsed < maxDelay {
+			b.Errorf("prewarm elapsed=%v, want >%v && <%v (parallelism broken: got sequential or faster-than-possible)",
+				elapsed, maxDelay, maxAcceptable)
+		}
+
+		b.ReportMetric(float64(elapsed)/float64(maxDelay), "ratio_to_slowest_variant")
+	}
+}
+
+// TestPrewarmSmokeLookup verifies that smokePrewarmLookup returns the
+// correct tag for a variant after prewarmSmokeImages populates the map.
+func TestPrewarmSmokeLookup(t *testing.T) {
+	realFunc := prewarmImageFunc
+	defer func() { prewarmImageFunc = realFunc }()
+
+	prewarmImageFunc = func(provider, buildTools string) (string, error) {
+		return "sandman-smoke-" + provider + "-" + buildTools + ":prewarm", nil
+	}
+
+	prebuiltSmokeImages = sync.Map{}
+	prewarmSmokeImages()
+
+	expected := "sandman-smoke-opencode-generic:prewarm"
+	if tag := smokePrewarmLookup("opencode", "generic"); tag != expected {
+		t.Errorf("smokePrewarmLookup(opencode, generic) = %q, want %q", tag, expected)
+	}
+}

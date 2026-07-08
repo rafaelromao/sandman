@@ -12,6 +12,18 @@ SANDMAN_TEST_PROVIDERS=opencode go test -tags smoke ./internal/cmd -run Smoke
 
 `SANDMAN_TEST_PROVIDERS` is an allowlist: comma-separated provider names, `all`, or `*`. When unset, smoke tests skip themselves.
 
+### Smoke image prewarm
+
+On first invocation of any smoke test, `TestMain` runs the prewarm phase: it scaffolds a throwaway repository for each of the four `(provider, buildTools)` variants (`opencode/generic`, `opencode/go`, `opencode/python`, `opencode/elixir`) and builds a container image for each one. The image tags are stored in a package-level map so subsequent smoke test invocations reuse the cached images instead of rebuilding on every test.
+
+The prewarm builds all four variants **concurrently** using goroutines with a semaphore-capped fan-out. Wall-clock time for a fresh prewarm is therefore bounded by the slowest single variant rather than the sum of all four. A per-variant build failure is tolerated: the failing variant falls back to the per-test build path and does not block the others.
+
+To disable the prewarm and force every smoke test to build its own image (useful when iterating on the Dockerfile or when you want each test to be hermetic):
+
+```bash
+SANDMAN_SMOKE_PREFETCH=0 SANDMAN_TEST_PROVIDERS=opencode go test -tags smoke ./internal/cmd -run Smoke
+```
+
 ## E2E tests
 
 E2E tests exercise multi-session scenarios such as continuing from a previous run, batch orchestration, and subagent permission boundaries. They require the `-tags e2e` build tag and are slower than smoke tests.
