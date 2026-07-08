@@ -76,7 +76,7 @@ func TestArchiveRow_MovesRunFolder(t *testing.T) {
 		Status:    batchindex.RunManifestStatusSuccess,
 	})
 
-	entry := &batchindex.Entry{
+	entry := &batchindex.Batch{
 		ID:   batchID,
 		Path: filepath.Join(repoRoot, ".sandman", "batches", batchID),
 		Kind: batchindex.KindIssue,
@@ -130,7 +130,7 @@ func TestArchiveRow_StripsSocketsFromMovedFolder(t *testing.T) {
 	createUnixSocketAt(t, filepath.Join(runDir, "run.sock"))
 	createUnixSocketAt(t, filepath.Join(runDir, "nested", "deep.sock"))
 
-	entry := &batchindex.Entry{
+	entry := &batchindex.Batch{
 		ID:   batchID,
 		Path: filepath.Join(repoRoot, ".sandman", "batches", batchID),
 		Kind: batchindex.KindIssue,
@@ -175,7 +175,7 @@ func TestArchiveRow_RefusesNonTerminalRow(t *testing.T) {
 		Status:  batchindex.RunManifestStatusActive,
 	})
 
-	entry := &batchindex.Entry{
+	entry := &batchindex.Batch{
 		ID:   batchID,
 		Path: filepath.Join(repoRoot, ".sandman", "batches", batchID),
 		Kind: batchindex.KindIssue,
@@ -224,7 +224,7 @@ func TestArchiveRow_DoesNotTouchWorktreesOrEvents(t *testing.T) {
 		t.Fatalf("write events: %v", err)
 	}
 
-	entry := &batchindex.Entry{
+	entry := &batchindex.Batch{
 		ID:   batchID,
 		Path: filepath.Join(repoRoot, ".sandman", "batches", batchID),
 		Kind: batchindex.KindIssue,
@@ -267,7 +267,7 @@ func TestArchiveRow_AlreadyArchivedReturnsError(t *testing.T) {
 		t.Fatalf("write sentinel: %v", err)
 	}
 
-	entry := &batchindex.Entry{
+	entry := &batchindex.Batch{
 		ID:   batchID,
 		Path: filepath.Join(repoRoot, ".sandman", "batches", batchID),
 		Kind: batchindex.KindIssue,
@@ -326,7 +326,7 @@ func TestArchiveRow_LeavesSiblingRowsAlive(t *testing.T) {
 	}
 	createUnixSocketAt(t, filepath.Join(row2Dir, "run.sock"))
 
-	entry := &batchindex.Entry{
+	entry := &batchindex.Batch{
 		ID:   batchID,
 		Path: filepath.Join(repoRoot, ".sandman", "batches", batchID),
 		Kind: batchindex.KindIssue,

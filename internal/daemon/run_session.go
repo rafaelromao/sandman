@@ -126,7 +126,7 @@ func (s *RunSession) Broadcaster() *Broadcaster {
 // for the per-run folder).
 //
 // Tests in `internal/daemon/run_session_test.go` (TestRunSession_IdxAddOnlyCalledFromPrepare)
-// pin the invariant that `idx.Add` is only called from `Prepare`,
+// pin the invariant that `idx.AddBatch` is only called from `Prepare`,
 // which is preserved across the #1917 contract change.
 func (s *RunSession) Prepare(manifest BatchManifest) error {
 	s.runDir = s.RunDir()

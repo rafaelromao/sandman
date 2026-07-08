@@ -28,7 +28,7 @@ The new layout is organized around three ideas:
 
 **1. Batches own runs.** A batch is a folder (`.sandman/batches/<batch-id>/`) containing N run folders. The daemon, the control socket (`batch.sock`), the `batch.json` manifest, and the `config/` host snapshot live at the batch root. Each run folder (`.sandman/batches/<batch-id>/runs/<run-id>/`) holds its own `run.json`, `run.log`, per-run command socket (`run.sock`), and (for review runs) `review-state.json`.
 
-**2. A master index with paths as data.** `.sandman/batches.json` records every batch ever created with its on-disk path frozen at write time. Renaming `.sandman/` or `batches/` requires only a batched index rewrite — no code changes. Entries carry `status` (`active` / `archived` / `unavailable`) and lifecycle is driven by `archive`, `clean`, and lazy on-read filesystem probes.
+**2. A master index with paths as data.** `.sandman/batches.json` records every batch ever created with its on-disk path frozen at write time. Renaming `.sandman/` or `batches/` requires only a batched index rewrite — no code changes. Batches carry `status` (`active` / `archived` / `unavailable`) and lifecycle is driven by `archive`, `clean`, and lazy on-read filesystem probes.
 
 **3. Explicit lifecycle.** Runs do not delete their artifacts on close. `sandman archive` moves a batch folder to `.sandman/archive/<id>/` (mirroring `batches/` 1:1). `sandman clean` deletes active batches; `sandman clean --archived` deletes archived batches; both reap `unavailable` entries. The portal reads the index first and only probes the filesystem for live-socket state.
 
@@ -46,8 +46,8 @@ The new layout is organized around three ideas:
       "createdAt":  "<RFC3339>",
       "issues":     [1213, 1214],          // issue/auto-select/review; empty for prompt-only
       "pr":         1217,                   // review only
-      "archivedAt": "<RFC3339>",            // present when entry-level status == "archived"
-      "runs": [                              // per-row state; absent on legacy entries
+      "archivedAt": "<RFC3339>",            // present when batch-level status == "archived"
+      "runs": [                              // per-row state; absent on legacy batches
         {
           "runId":       "<per-row RunID>",
           "status":      "active" | "archived" | "unavailable",
@@ -59,7 +59,7 @@ The new layout is organized around three ideas:
 }
 ```
 
-`version: 1` reserves a hook for future schema migrations. `path` is frozen at write time. Renaming folders requires only a batched index rewrite. The `runs` array is the per-row projection of the entry: each row carries its own `status` and `archivePath` so multi-row batches can archive one row at a time without flipping the entry-level state. Per-row archive moves `runs/<runID>/` to `.sandman/archive/<batchId>/runs/<runID>/` and writes a `runs[runID]` record carrying `status: "archived"` and the new `archivePath`; the entry-level `status` stays `active` until every row is archived AND the batch daemon is gone.
+`version: 1` reserves a hook for future schema migrations. `path` is frozen at write time. Renaming folders requires only a batched index rewrite. The `runs` array is the per-row projection of the batch: each row carries its own `status` and `archivePath` so multi-row batches can archive one row at a time without flipping the batch-level state. Per-row archive moves `runs/<runID>/` to `.sandman/archive/<batchId>/runs/<runID>/` and writes a `runs[runID]` record carrying `status: "archived"` and the new `archivePath`; the batch-level `status` stays `active` until every row is archived AND the batch daemon is gone.
 
 ### `batch.json` schema
 
@@ -106,13 +106,13 @@ The legacy `BatchManifest.RunID` field is renamed to `BatchId`. **`BatchId` is t
 | Batch creation | Write `batch.json` at batch root, write index entry, create `runs/` directory, start daemon |
 | Run start | Create `<batch>/runs/<run>/`, open `run.sock` inside run folder, open `run.log` with `O_APPEND`, write `run.json` via `WriteRunManifest` |
 | Run end | Update `run.json.status` to the terminal status, close sockets, close log file. **No deletion.** Folder persists |
-| Per-row archive | `os.Rename(<batch>/runs/<runID>/, archive/<batchId>/runs/<runID>/)` first, then append/update `runs[runID]` record to `status:"archived"` with `archivePath`. Entry-level `status` stays `active` until every row is archived |
+| Per-row archive | `os.Rename(<batch>/runs/<runID>/, archive/<batchId>/runs/<runID>/)` first, then append/update `runs[runID]` record to `status:"archived"` with `archivePath`. Batch-level `status` stays `active` until every row is archived |
 | Whole-batch archive | `os.Rename(<batch>/, archive/<id>/)` first, then update index entry to `status:"archived"`. The existing `archive batch <batchId>` CLI subcommand |
 | Clean (no flag) | Remove `active` and `unavailable` entries + their folders |
 | Clean `--archived` | Remove `archived` and `unavailable` entries + their folders |
 | Clean `--dry-run` | Preview deletions without removing; same targeting as `clean` or `clean --archived` |
 | Clean `--stale` | Recover stale runs as `aborted` via event log; no index change |
-| Lazy unavailable | Any code reading the index stats each entry path; only `ENOENT` flips status to `unavailable` |
+| Lazy unavailable | Any code reading the index stats each batch path; only `ENOENT` flips status to `unavailable` |
 | Lazy per-row reconcile | After `MarkUnavailable`, `ReconcileRuns` walks every `runs[]` record; a row whose `archivePath` is non-empty but whose live folder is gone AND whose archive folder is gone flips to `status:"unavailable"` |
 
 Folder rename always happens before the index update during archive (both per-row and whole-batch). If the index write fails, the inconsistency is detectable on next read: the live folder is gone, the archive folder exists, and the per-row record still carries the path.
@@ -137,7 +137,7 @@ The fast path succeeds for every batch kind in production except multi-issue iss
 
 The per-run folder is the canonical target for every row action. The archive directory is named after the batch entry id (the public BatchId), so the on-disk tree after per-row archive mirrors the active tree 1:1 (`archive/<batch-id>/runs/<perRowRunID>/run.json` corresponds to `batches/<batch-id>/runs/<perRowRunID>/run.json`). Per-row archive moves ONLY `runs/<perRowRunID>/`, leaves sibling rows and the batch daemon live, and writes a `Runs[runID]` record carrying `status: "archived"` and the relative `archivePath` so the row survives crash recovery. The portal archive endpoint returns empty `200` on success and `409` with `archivePath` echoed in the body when the row is already archived.
 
-Whole-batch archive (CLI `archive batch <batchId>` only - not exposed via HTTP) moves the entire batch dir to `.sandman/archive/<batchId>/` and flips the entry-level `Status` to `archived`. The daemon control socket must be gone for whole-batch archive to succeed; per-row archive has no daemon liveness requirement because the targeted row is terminal by contract.
+Whole-batch archive (CLI `archive batch <batchId>` only - not exposed via HTTP) moves the entire batch dir to `.sandman/archive/<batchId>/` and flips the batch-level `Status` to `archived`. The daemon control socket must be gone for whole-batch archive to succeed; per-row archive has no daemon liveness requirement because the targeted row is terminal by contract.
 
 #### Identity table: when per-row RunID equals the public BatchId
 

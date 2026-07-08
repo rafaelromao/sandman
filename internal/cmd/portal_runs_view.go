@@ -2501,15 +2501,15 @@ func (e *portalBatchNotFoundError) Error() string {
 // to http.StatusNotFound. The returned entry has Path populated on
 // either success path so downstream log path resolution and archive
 // moves work without a second index lookup.
-func (v *portalRunsView) resolveBatchFromRowID(idx *batchindex.Index, runID string) (*batchindex.Entry, error) {
+func (v *portalRunsView) resolveBatchFromRowID(idx *batchindex.Index, runID string) (*batchindex.Batch, error) {
 	if idx == nil || runID == "" {
 		return nil, &portalBatchNotFoundError{runID: runID}
 	}
 	if entry := idx.Resolve(runID); entry != nil {
 		return entry, nil
 	}
-	for i := range idx.Entries {
-		entry := &idx.Entries[i]
+	for i := range idx.Batches {
+		entry := &idx.Batches[i]
 		if entry.Path == "" {
 			continue
 		}

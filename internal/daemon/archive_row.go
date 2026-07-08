@@ -68,15 +68,15 @@ func StripSockets(dir string) error {
 // destination already exists, ArchiveRow returns *AlreadyArchivedError
 // with the existing ArchivePath populated, so callers can surface it
 // in error bodies without re-walking the filesystem.
-func ArchiveRow(repoRoot string, entry *batchindex.Entry, runID string) (batchindex.RunRecord, error) {
-	if entry == nil {
-		return batchindex.RunRecord{}, errors.New("nil entry")
+func ArchiveRow(repoRoot string, batch *batchindex.Batch, runID string) (batchindex.RunRecord, error) {
+	if batch == nil {
+		return batchindex.RunRecord{}, errors.New("nil batch")
 	}
 	if runID == "" {
 		return batchindex.RunRecord{}, errors.New("empty run id")
 	}
 
-	liveRunDir := filepath.Join(repoRoot, ".sandman", "batches", entry.ID, "runs", runID)
+	liveRunDir := filepath.Join(repoRoot, ".sandman", "batches", batch.ID, "runs", runID)
 	liveManifest := filepath.Join(liveRunDir, "run.json")
 	data, err := os.ReadFile(liveManifest)
 	if err != nil {
@@ -90,7 +90,7 @@ func ArchiveRow(repoRoot string, entry *batchindex.Entry, runID string) (batchin
 		return batchindex.RunRecord{}, &NonTerminalRowError{RunID: runID}
 	}
 
-	relArchive := filepath.Join(".sandman", "archive", entry.ID, "runs", runID)
+	relArchive := filepath.Join(".sandman", "archive", batch.ID, "runs", runID)
 	archiveRunDir := filepath.Join(repoRoot, relArchive)
 	if info, statErr := os.Stat(archiveRunDir); statErr == nil {
 		if info.IsDir() {
@@ -101,7 +101,7 @@ func ArchiveRow(repoRoot string, entry *batchindex.Entry, runID string) (batchin
 		return batchindex.RunRecord{}, fmt.Errorf("stat archive target %q: %w", archiveRunDir, statErr)
 	}
 
-	if err := os.MkdirAll(filepath.Join(repoRoot, ".sandman", "archive", entry.ID, "runs"), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Join(repoRoot, ".sandman", "archive", batch.ID, "runs"), 0755); err != nil {
 		return batchindex.RunRecord{}, fmt.Errorf("create archive parent: %w", err)
 	}
 

@@ -270,7 +270,7 @@ func executeClean(actions []cleanAction, gr gitRunner, idx *batchindex.Index, la
 		}
 	}
 	idx.Batches = kept
-	idx.Entries = kept
+	idx.Batches = kept
 
 	if err := idx.Save(layout.BatchesIndexPath); err != nil {
 		return 0, fmt.Errorf("save batches index: %w", err)
@@ -324,7 +324,7 @@ func runCleanOrphaned(cmd *cobra.Command, deps Dependencies, layout paths.Layout
 		kept = append(kept, entry)
 	}
 	idx.Batches = kept
-	idx.Entries = kept
+	idx.Batches = kept
 
 	if err := idx.Save(layout.BatchesIndexPath); err != nil {
 		return fmt.Errorf("save batches index: %w", err)

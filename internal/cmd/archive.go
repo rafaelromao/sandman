@@ -151,8 +151,8 @@ func runArchiveStale(cmd *cobra.Command, deps Dependencies) error {
 // honours per-row Runs records (already-archived rows are skipped)
 // and skips live batches entirely. The counter is updated in place.
 func archiveAllTerminalRows(cmd *cobra.Command, idx *batchindex.Index, layout paths.Layout, repoRoot string, archived *int) error {
-	for i := range idx.Entries {
-		entry := &idx.Entries[i]
+	for i := range idx.Batches {
+		entry := &idx.Batches[i]
 		if daemon.IsRunActive(entry.Path) {
 			continue
 		}
@@ -373,8 +373,8 @@ func runArchiveOlderThan(cmd *cobra.Command, daysArg string, repoRoot string) er
 	}
 
 	var archived int
-	for i := range idx.Entries {
-		entry := &idx.Entries[i]
+	for i := range idx.Batches {
+		entry := &idx.Batches[i]
 		if daemon.IsRunActive(entry.Path) {
 			continue
 		}

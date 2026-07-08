@@ -44,13 +44,15 @@ const (
 
 type Index struct {
 	Version   int                                    `json:"version"`
-	Entries   []Entry                                `json:"entries"`
 	Batches   []Batch                                `json:"-"`
 	StatFn    func(path string) (os.FileInfo, error) `json:"-"`
 	indexPath string
 }
 
-type Entry struct {
+// Batch is the canonical record in the batches index. It was
+// formerly named Entry; the rename (slice 7 of #1916) makes the
+// canonical slice field `Batches` reflect what it holds.
+type Batch struct {
 	ID         string      `json:"id"`
 	Path       string      `json:"path"`
 	Kind       Kind        `json:"kind"`
@@ -62,10 +64,8 @@ type Entry struct {
 	Runs       []RunRecord `json:"runs,omitempty"`
 }
 
-type Batch = Entry
-
 // RunRecordStatus is the lifecycle status of a single row as recorded
-// in the per-row index. It mirrors the entry-level Status enum but is
+// in the per-row index. It mirrors the batch-level Status enum but is
 // kept independent so callers do not have to thread both into the same
 // decision.
 type RunRecordStatus string
@@ -76,9 +76,9 @@ const (
 	RunRecordStatusUnavailable RunRecordStatus = "unavailable"
 )
 
-// RunRecord is the per-row projection of an Entry. It is appended to
-// Entry.Runs so each row's lifecycle is observable independently of the
-// entry-level Status (which stays active until every row is archived
+// RunRecord is the per-row projection of a Batch. It is appended to
+// Batch.Runs so each row's lifecycle is observable independently of the
+// batch-level Status (which stays active until every row is archived
 // and the batch daemon is gone).
 type RunRecord struct {
 	RunID       string          `json:"runId"`
@@ -88,8 +88,12 @@ type RunRecord struct {
 
 // MarshalJSON writes the batches index with prompt-only batches carrying an
 // explicit empty issues array, matching ADR-0032's index schema.
+//
+// The on-disk JSON key remains "entries" (NOT "batches") so existing
+// operator batches.json files continue to round-trip after the
+// slice-7 rename of the Go field from Entries to Batches.
 func (i Index) MarshalJSON() ([]byte, error) {
-	type entryJSON struct {
+	type batchJSON struct {
 		ID         string      `json:"id"`
 		Path       string      `json:"path"`
 		Kind       Kind        `json:"kind"`
@@ -101,17 +105,13 @@ func (i Index) MarshalJSON() ([]byte, error) {
 		Runs       []RunRecord `json:"runs,omitempty"`
 	}
 
-	entries := i.Entries
-	if len(entries) == 0 && len(i.Batches) > 0 {
-		entries = i.Batches
-	}
-	batches := make([]any, 0, len(entries))
-	for _, b := range entries {
+	rows := make([]any, 0, len(i.Batches))
+	for _, b := range i.Batches {
 		issues := b.Issues
 		if b.Kind == KindPromptOnly || issues == nil {
 			issues = []int{}
 		}
-		batches = append(batches, entryJSON{
+		rows = append(rows, batchJSON{
 			ID:         b.ID,
 			Path:       b.Path,
 			Kind:       b.Kind,
@@ -129,21 +129,23 @@ func (i Index) MarshalJSON() ([]byte, error) {
 		Entries []any `json:"entries"`
 	}{
 		Version: i.Version,
-		Entries: batches,
+		Entries: rows,
 	})
 }
 
+// UnmarshalJSON decodes a batches index, accepting the historical
+// "entries" JSON key (the on-disk wire format is pinned by ADR-0032
+// and by existing operator batches.json files).
 func (idx *Index) UnmarshalJSON(data []byte) error {
 	type rawIndex struct {
 		Version int     `json:"version"`
-		Entries []Entry `json:"entries"`
+		Entries []Batch `json:"entries"`
 	}
 	var raw rawIndex
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return err
 	}
 	idx.Version = raw.Version
-	idx.Entries = raw.Entries
 	idx.Batches = raw.Entries
 	return nil
 }
@@ -199,7 +201,6 @@ func Load(path string) (*Index, error) {
 		if idx.StatFn == nil {
 			idx.StatFn = os.Stat
 		}
-		idx.syncSlices()
 		idx.indexPath = path
 		return &idx, nil
 	}
@@ -209,7 +210,7 @@ func Load(path string) (*Index, error) {
 	}
 
 	if os.IsNotExist(err) {
-		return &Index{Version: IndexVersion, Entries: nil, Batches: nil, StatFn: os.Stat, indexPath: path}, nil
+		return &Index{Version: IndexVersion, Batches: nil, StatFn: os.Stat, indexPath: path}, nil
 	}
 
 	return nil, fmt.Errorf("read batches index: %w", err)
@@ -234,25 +235,11 @@ func loadBak(path string) *Index {
 	if idx.StatFn == nil {
 		idx.StatFn = os.Stat
 	}
-	idx.syncSlices()
 	idx.indexPath = path
 	return &idx
 }
 
-func (idx *Index) syncSlices() {
-	if idx == nil {
-		return
-	}
-	switch {
-	case len(idx.Entries) == 0 && len(idx.Batches) > 0:
-		idx.Entries = idx.Batches
-	case len(idx.Batches) == 0 && len(idx.Entries) > 0:
-		idx.Batches = idx.Entries
-	}
-}
-
 func (idx *Index) MarkUnavailable() bool {
-	idx.syncSlices()
 	statFn := idx.StatFn
 	if statFn == nil {
 		statFn = os.Stat
@@ -269,7 +256,6 @@ func (idx *Index) MarkUnavailable() bool {
 			}
 		}
 	}
-	idx.Entries = idx.Batches
 	return dirty
 }
 
@@ -278,7 +264,7 @@ func (idx *Index) EnsureStatus() error {
 	return nil
 }
 
-// EnsureStatusWithLayout reconciles both entry-level unavailable
+// EnsureStatusWithLayout reconciles both batch-level unavailable
 // detection (MarkUnavailable) and per-row reconciliation
 // (ReconcileRuns). The layout parameter is the repo root used to
 // resolve on-disk paths for per-row reconciliation.
@@ -289,17 +275,9 @@ func (idx *Index) EnsureStatusWithLayout(repoRoot string) error {
 }
 
 func (idx *Index) Save(indexPath string) error {
-	idx.syncSlices()
-	if len(idx.Batches) > 0 {
-		idx.Entries = idx.Batches
+	for i := range idx.Batches {
+		idx.Batches[i].ID = canonicalizeBatchID(idx.Batches[i].ID, idx.Batches[i].Path)
 	}
-	if len(idx.Entries) > 0 {
-		idx.Batches = idx.Entries
-	}
-	for i := range idx.Entries {
-		idx.Entries[i].ID = canonicalizeBatchID(idx.Entries[i].ID, idx.Entries[i].Path)
-	}
-	idx.Batches = idx.Entries
 
 	prev, err := os.ReadFile(indexPath)
 	if err != nil && !os.IsNotExist(err) {
@@ -327,23 +305,21 @@ func (idx *Index) Save(indexPath string) error {
 // are resolved through ResolveBatchFromRowID at the portal layer
 // because they need an on-disk manifest fallback.
 func (idx *Index) ResolveBatch(batchID string) *Batch {
-	idx.syncSlices()
-	for i := range idx.Entries {
-		if idx.Entries[i].ID == batchID {
-			return &idx.Entries[i]
+	for i := range idx.Batches {
+		if idx.Batches[i].ID == batchID {
+			return &idx.Batches[i]
 		}
 	}
 	return nil
 }
 
-func (idx *Index) Resolve(batchID string) *Entry {
+func (idx *Index) Resolve(batchID string) *Batch {
 	return idx.ResolveBatch(batchID)
 }
 
 func (idx *Index) AddBatch(batch Batch) {
-	idx.syncSlices()
 	batch.ID = canonicalizeBatchID(batch.ID, batch.Path)
-	for i, b := range idx.Entries {
+	for i, b := range idx.Batches {
 		if b.ID == batch.ID {
 			batch.CreatedAt = b.CreatedAt
 			if b.Status == StatusArchived {
@@ -352,18 +328,12 @@ func (idx *Index) AddBatch(batch Batch) {
 			} else {
 				batch.Status = StatusActive
 			}
-			idx.Entries[i] = batch
-			idx.Batches = idx.Entries
+			idx.Batches[i] = batch
 			return
 		}
 	}
 	batch.Status = StatusActive
-	idx.Entries = append(idx.Entries, batch)
-	idx.Batches = idx.Entries
-}
-
-func (idx *Index) Add(entry Entry) {
-	idx.AddBatch(entry)
+	idx.Batches = append(idx.Batches, batch)
 }
 
 // canonicalizeBatchID returns a non-empty batch id derived from the
@@ -388,75 +358,68 @@ func canonicalizeBatchID(id, path string) string {
 }
 
 func (idx *Index) SetArchived(id, archivePath string, archivedAt time.Time) error {
-	idx.syncSlices()
-	for i := range idx.Entries {
-		if idx.Entries[i].ID == id {
-			idx.Entries[i].Status = StatusArchived
-			idx.Entries[i].Path = archivePath
-			idx.Entries[i].ArchivedAt = &archivedAt
-			idx.Batches = idx.Entries
+	for i := range idx.Batches {
+		if idx.Batches[i].ID == id {
+			idx.Batches[i].Status = StatusArchived
+			idx.Batches[i].Path = archivePath
+			idx.Batches[i].ArchivedAt = &archivedAt
 			return nil
 		}
 	}
 	return fmt.Errorf("batch not found: %s", id)
 }
 
-// AddRun records a per-row RunRecord against the named entry. If a
+// AddRun records a per-row RunRecord against the named batch. If a
 // record with the same RunID already exists, it is replaced (so the
 // caller can re-record an updated status without duplicating rows).
-func (idx *Index) AddRun(entryID string, rec RunRecord) {
-	idx.syncSlices()
-	for i := range idx.Entries {
-		if idx.Entries[i].ID != entryID {
+func (idx *Index) AddRun(batchID string, rec RunRecord) {
+	for i := range idx.Batches {
+		if idx.Batches[i].ID != batchID {
 			continue
 		}
-		for j := range idx.Entries[i].Runs {
-			if idx.Entries[i].Runs[j].RunID == rec.RunID {
-				idx.Entries[i].Runs[j] = rec
+		for j := range idx.Batches[i].Runs {
+			if idx.Batches[i].Runs[j].RunID == rec.RunID {
+				idx.Batches[i].Runs[j] = rec
 				return
 			}
 		}
-		idx.Entries[i].Runs = append(idx.Entries[i].Runs, rec)
-		idx.Batches = idx.Entries
+		idx.Batches[i].Runs = append(idx.Batches[i].Runs, rec)
 		return
 	}
 }
 
 // MarkRunArchived flips the named row's record to archived and sets
-// its ArchivePath. It returns an error when the entry or the row does
+// its ArchivePath. It returns an error when the batch or the row does
 // not exist so callers can fail loudly instead of silently losing the
 // archive marker.
-func (idx *Index) MarkRunArchived(entryID, runID, archivePath string) error {
-	idx.syncSlices()
-	for i := range idx.Entries {
-		if idx.Entries[i].ID != entryID {
+func (idx *Index) MarkRunArchived(batchID, runID, archivePath string) error {
+	for i := range idx.Batches {
+		if idx.Batches[i].ID != batchID {
 			continue
 		}
-		for j := range idx.Entries[i].Runs {
-			if idx.Entries[i].Runs[j].RunID != runID {
+		for j := range idx.Batches[i].Runs {
+			if idx.Batches[i].Runs[j].RunID != runID {
 				continue
 			}
-			idx.Entries[i].Runs[j].Status = RunRecordStatusArchived
-			idx.Entries[i].Runs[j].ArchivePath = archivePath
-			idx.Batches = idx.Entries
+			idx.Batches[i].Runs[j].Status = RunRecordStatusArchived
+			idx.Batches[i].Runs[j].ArchivePath = archivePath
 			return nil
 		}
-		return fmt.Errorf("run %q not found in entry %q", runID, entryID)
+		return fmt.Errorf("run %q not found in batch %q", runID, batchID)
 	}
-	return fmt.Errorf("batch not found: %s", entryID)
+	return fmt.Errorf("batch not found: %s", batchID)
 }
 
-// RunRecordFor returns the per-row RunRecord for the given entry id
-// and run id, or nil when neither the entry nor the row is recorded.
-func (idx *Index) RunRecordFor(entryID, runID string) *RunRecord {
-	idx.syncSlices()
-	for i := range idx.Entries {
-		if idx.Entries[i].ID != entryID {
+// RunRecordFor returns the per-row RunRecord for the given batch id
+// and run id, or nil when neither the batch nor the row is recorded.
+func (idx *Index) RunRecordFor(batchID, runID string) *RunRecord {
+	for i := range idx.Batches {
+		if idx.Batches[i].ID != batchID {
 			continue
 		}
-		for j := range idx.Entries[i].Runs {
-			if idx.Entries[i].Runs[j].RunID == runID {
-				return &idx.Entries[i].Runs[j]
+		for j := range idx.Batches[i].Runs {
+			if idx.Batches[i].Runs[j].RunID == runID {
+				return &idx.Batches[i].Runs[j]
 			}
 		}
 		return nil
@@ -475,23 +438,22 @@ func (idx *Index) RunRecordFor(entryID, runID string) *RunRecord {
 //     clear ArchivePath so subsequent renders do not echo a phantom
 //     archive path
 //
-// ReconcileRuns is safe to call on entries that have no Runs records
-// (legacy entries); it is a no-op for them. It does not flip the
-// entry-level Status — that decision belongs to EnsureStatus/MarkUnavailable.
+// ReconcileRuns is safe to call on batches that have no Runs records
+// (legacy batches); it is a no-op for them. It does not flip the
+// batch-level Status — that decision belongs to EnsureStatus/MarkUnavailable.
 func (idx *Index) ReconcileRuns(repoRoot string) {
-	idx.syncSlices()
 	statFn := idx.StatFn
 	if statFn == nil {
 		statFn = os.Stat
 	}
-	for i := range idx.Entries {
-		entry := &idx.Entries[i]
-		for j := range entry.Runs {
-			rec := &entry.Runs[j]
+	for i := range idx.Batches {
+		batch := &idx.Batches[i]
+		for j := range batch.Runs {
+			rec := &batch.Runs[j]
 			if rec.ArchivePath == "" {
 				continue
 			}
-			livePath := filepath.Join(repoRoot, ".sandman", "batches", entry.ID, "runs", rec.RunID)
+			livePath := filepath.Join(repoRoot, ".sandman", "batches", batch.ID, "runs", rec.RunID)
 			if _, err := statFn(livePath); err == nil {
 				continue
 			}
@@ -503,15 +465,12 @@ func (idx *Index) ReconcileRuns(repoRoot string) {
 			rec.ArchivePath = ""
 		}
 	}
-	idx.Batches = idx.Entries
 }
 
 func (idx *Index) RemoveBatch(id string) error {
-	idx.syncSlices()
-	for i := range idx.Entries {
-		if idx.Entries[i].ID == id {
-			idx.Entries = append(idx.Entries[:i], idx.Entries[i+1:]...)
-			idx.Batches = idx.Entries
+	for i := range idx.Batches {
+		if idx.Batches[i].ID == id {
+			idx.Batches = append(idx.Batches[:i], idx.Batches[i+1:]...)
 			return idx.Save(idx.indexPath)
 		}
 	}
@@ -531,7 +490,7 @@ func ReadManifest(runDir string) (RunManifest, error) {
 	}
 	var manifest RunManifest
 	if err := json.Unmarshal(data, &manifest); err != nil {
-		return RunManifest{}, fmt.Errorf("decode run manifest: %w", err)
+		return manifest, fmt.Errorf("decode run manifest: %w", err)
 	}
 	return manifest, nil
 }
@@ -549,7 +508,7 @@ func ReadReviewState(runDir string) (ReviewState, error) {
 	}
 	var state ReviewState
 	if err := json.Unmarshal(data, &state); err != nil {
-		return ReviewState{}, fmt.Errorf("decode review state: %w", err)
+		return state, fmt.Errorf("decode review state: %w", err)
 	}
 	return state, nil
 }
