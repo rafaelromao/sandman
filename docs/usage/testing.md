@@ -117,6 +117,53 @@ For container-based shims, mount the wakeup directory into the container at the 
 
 Platform helpers for Unix-socket path length (`MkdirShort`) and capability gates are documented in [`docs/agents/testenv.md`](../agents/testenv.md). Do not duplicate that content here; link to it instead.
 
+## GH shim contract
+
+E2E tests use a hermetic `gh` shim (written by `writeFakeGHShim` or `writeFakeGHShimParallel`) to avoid calling the real GitHub API. The shim is a shell script that responds to specific `gh` subcommands with canned JSON.
+
+### Required subcommands
+
+| Subcommand | Purpose | Required response fields |
+|------------|---------|-------------------------|
+| `gh repo view` | Resolve repo owner/name | `owner.login`, `name` |
+| `gh api repos/{owner}/{repo}/issues/{n}` | Fetch issue data | `number`, `title`, `body`, `labels`, `blocked_by` |
+| `gh api repos/{owner}/{repo}/issues/{n}/events` | Fetch dependency events | Array of event objects (can be `[]`) |
+| `gh pr list` | List PRs | Array of PR objects with `number`, `state`, `mergedAt`, `headRefName`, `headRefOid` |
+| `gh pr create` | Create PR | Writes args/body to state files, outputs PR URL |
+| `gh pr checks` | PR check status | Text output (used to simulate passing checks) |
+| `gh pr comment` | Post PR comment | Text output |
+| `gh auth token` | Fake auth token | A token string |
+| `gh auth status` | Auth status | Text output showing logged-in state |
+
+### Issue JSON response fields
+
+When returning issue data via `gh api repos/.../issues/{n}`, the JSON must include:
+
+```json
+{
+  "number": 152,
+  "title": "Fix 152",
+  "body": "Description with blocked-by references if applicable",
+  "labels": [{"name": "ready-for-agent"}],
+  "blocked_by": [{"number": 150}]
+}
+```
+
+The `blocked_by` field is required when an issue has in-batch dependency relationships. The value is an array of objects, each with a `number` field referencing the blocking issue. If the issue has no blockers, omit the field entirely (not an empty array).
+
+### Dependency surface
+
+The orchestrator uses two sources to build the `BlockedBy` set for each issue:
+
+1. **Body text parsing** — `parseBlockedBy` extracts references from issue body text using patterns like `blocked by #150`, `depends on #150`, or `blocked-by: #150` in a `## Blocked by` heading section with bullet points.
+2. **`blocked_by` JSON field** — the `gh api` response includes a `blocked_by` array that `fetchIssueDependencies` reads directly.
+
+When writing a gh shim for a test that involves `BlockedBy` relationships, ensure the shim returns the dependency through the `blocked_by` JSON field (not only through body text) to guarantee the orchestrator detects it correctly.
+
+### Container shim variants
+
+For container-based tests, `writeFakeGHShimForContainer` and `writeFakeGHShimForContainerParallel` write the same shim script but use `containerShimDir` (e.g., `/workspace/.sandman/bin`) instead of a host temp path. Both variants must implement the same contract.
+
 ## Side effects and cleanup
 
 E2E and smoke tests create real sandbox resources (worktrees, containers, batch directories) and use real temp directories under `/tmp/`. When a test is interrupted or fails before its cleanup runs, residue can accumulate on disk and in the `.sandman/` state directory.

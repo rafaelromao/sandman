@@ -1979,7 +1979,7 @@ JSON
         ;;
       repos/example/sandbox/issues/152)
         cat <<'JSON'
-{"number":152,"title":"Fix 152","body":"Run go test -run TestDoubleFor152 ./... Make Double(2) return 9. This issue is blocked by issue 150.","labels":[{"name":"ready-for-agent"}]}
+{"number":152,"title":"Fix 152","body":"Run go test -run TestDoubleFor152 ./... Make Double(2) return 9. This issue is blocked by issue 150.","labels":[{"name":"ready-for-agent"}],"blocked_by":[{"number":150}]}
 JSON
         exit 0
         ;;
@@ -2017,6 +2017,39 @@ exit 1
 	ghPath := filepath.Join(dir, "gh")
 	if err := os.WriteFile(ghPath, []byte(script), 0755); err != nil {
 		t.Fatalf("write gh shim: %v", err)
+	}
+}
+
+func TestGHShimParallel_BlockedByResponse(t *testing.T) {
+	shimDir := t.TempDir()
+	writeFakeGHShimParallel(t, shimDir)
+	shimPath := filepath.Join(shimDir, "gh")
+
+	out, err := exec.Command(shimPath, "api", "repos/example/sandbox/issues/152").Output()
+	if err != nil {
+		t.Fatalf("gh shim api call failed: %v\noutput: %s", err, out)
+	}
+
+	var issue map[string]any
+	if err := json.Unmarshal(out, &issue); err != nil {
+		t.Fatalf("parse shim JSON output: %v", err)
+	}
+
+	blockedBy, ok := issue["blocked_by"]
+	if !ok {
+		t.Fatal("issue 152 JSON missing blocked_by field")
+	}
+	blockedBySlice, ok := blockedBy.([]any)
+	if !ok || len(blockedBySlice) == 0 {
+		t.Fatalf("blocked_by should be non-empty array, got: %v", blockedBy)
+	}
+	firstBlocker, ok := blockedBySlice[0].(map[string]any)
+	if !ok {
+		t.Fatalf("blocked_by[0] should be object with number field, got: %v", blockedBySlice[0])
+	}
+	blockerNum, ok := firstBlocker["number"].(float64)
+	if !ok || int(blockerNum) != 150 {
+		t.Fatalf("expected blocked_by[0].number=150, got: %v", firstBlocker["number"])
 	}
 }
 
@@ -2129,7 +2162,7 @@ JSON
         ;;
       repos/example/sandbox/issues/152)
         cat <<'JSON'
-{"number":152,"title":"Fix 152","body":"Run go test -run TestDoubleFor152 ./... Make Double(2) return 9. This issue is blocked by issue 150.","labels":[{"name":"ready-for-agent"}]}
+{"number":152,"title":"Fix 152","body":"Run go test -run TestDoubleFor152 ./... Make Double(2) return 9. This issue is blocked by issue 150.","labels":[{"name":"ready-for-agent"}],"blocked_by":[{"number":150}]}
 JSON
         exit 0
         ;;
