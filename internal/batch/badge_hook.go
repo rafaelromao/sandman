@@ -101,7 +101,6 @@ func (d *defaultPRLister) findBadgeMarkerPR(ctx context.Context) (found bool, to
 		if err != nil {
 			return false, totalSeen, fmt.Errorf("badge marker scan page %d: %w", page, err)
 		}
-		fmt.Fprintf(os.Stderr, "badge marker scan: page %d, total_seen %d\n", page, totalSeen)
 
 		trimmed := bytes.TrimSuffix(combinedOut, []byte("\n"))
 		jsonOut := trimmed
