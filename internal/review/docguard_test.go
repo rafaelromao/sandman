@@ -30,7 +30,6 @@ func TestDocGuard_ReviewRunPositivePhrasing(t *testing.T) {
 		{filepath.Join(root, "CONTEXT.md"), "<ts>-<sid>-<linkedIssue>-PR<pr>"},
 		{filepath.Join(root, "docs/usage/portal.md"), "ADR-0030"},
 		{filepath.Join(root, "internal/review", "runid.go"), "ADR-0030"},
-		{filepath.Join(root, "internal/review", "runid.go"), "reviewRunIDFor"},
 		{filepath.Join(root, "internal/review", "runid.go"), "ReviewRunIDFor"},
 	}
 

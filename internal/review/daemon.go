@@ -379,7 +379,7 @@ func (d *Daemon) peekPendingPost(prNumber int, commentID string) (pendingPostEnt
 // on-disk batches index and the canonical run folders for every
 // review batch. Per ADR-0030 §Per-row RunID templates (issue #1551)
 // review runs are first-class rows, so each batch's run.json lives
-// under `<batch>/runs/<runID>/run.json` (see reviewRunIDFor for the
+// under `<batch>/runs/<runID>/run.json` (see ReviewRunIDFor for the
 // exact per-row shape) and its review-state.json lives one folder up
 // next to it. Existing entries are replaced.
 func (d *Daemon) loadSeenCache() error {
@@ -438,7 +438,7 @@ func (d *Daemon) loadSeenCache() error {
 // batches always launch a single row, so there is exactly one
 // run.json — and returns its `RunID` field. The folder name matches
 // the canonical per-row RunID from ADR-0030 §Per-row RunID templates
-// (see reviewRunIDFor for the exact shape). The legacy
+// (see ReviewRunIDFor for the exact shape). The legacy
 // `runs/review/run.json` is intentionally NOT consulted: the daemon
 // must not read the literal "review" alias as a run folder name.
 func readReviewRowID(runsDir string) (string, error) {
@@ -727,7 +727,7 @@ func (d *Daemon) initPromptTemplate() error {
 // Per ADR-0030 §Per-row RunID templates (issue #1551) review runs are
 // first-class rows, so the review-state file lives next to its row's
 // run.json under the canonical per-row folder:
-// `<batch>/runs/<runID>/review-state.json` (see reviewRunIDFor). The
+// `<batch>/runs/<runID>/review-state.json` (see ReviewRunIDFor). The
 // folder name is NOT the legacy `runs/review` alias. Callers pass the
 // run folder path in; this helper joins the state filename.
 func (d *Daemon) ReviewStatePath(runDir string) string {
@@ -1137,7 +1137,7 @@ func shouldSkipDedupStatus(status string) bool {
 //
 // The PR is fetched once (via the GitHub client) so the linked issue number
 // can fold into the per-row RunID. The per-row RunID is minted by
-// reviewRunIDFor below per ADR-0030 §Per-row RunID templates; the run
+// ReviewRunIDFor below per ADR-0030 §Per-row RunID templates; the run
 // folder is named after that per-row RunID (not the legacy `runs/review`
 // alias). This replaces the legacy literal `RunID: "review"` alias —
 // issue #1551 makes the review run a first-class row like every other
@@ -1159,7 +1159,7 @@ func (d *Daemon) prepareReviewRun(ctx context.Context, prNumber int, commentID s
 		d.logf("fetch PR #%d for linked issue resolution: %v", prNumber, fetchErr)
 	}
 
-	perRowRunID := reviewRunIDFor(prNumber, linkedIssue, ts, shortid)
+	perRowRunID := ReviewRunIDFor(prNumber, linkedIssue, ts, shortid)
 
 	rs := daemon.NewRunSession(d.BaseDir, perRowRunID)
 	// Issue #1919 slice 3: the on-disk batch directory name and the

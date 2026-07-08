@@ -16,10 +16,10 @@ import (
 // folder, run.json, run.log, run.sock, and review-state.json all
 // live under a folder whose name matches the RowID.
 func TestReviewRunIDFor_PRBare(t *testing.T) {
-	got := reviewRunIDFor(42, 0, "260625120000", "abcd")
+	got := ReviewRunIDFor(42, 0, "260625120000", "abcd")
 	want := "260625120000-abcd-PR42"
 	if got != want {
-		t.Errorf("reviewRunIDFor(42, 0, ...) = %q, want %q", got, want)
+		t.Errorf("ReviewRunIDFor(42, 0, ...) = %q, want %q", got, want)
 	}
 }
 
@@ -30,10 +30,10 @@ func TestReviewRunIDFor_PRBare(t *testing.T) {
 // review daemon must mint when the PR body or its native
 // closingIssuesReferences carries a linked issue number.
 func TestReviewRunIDFor_PRWithLinkedIssue(t *testing.T) {
-	got := reviewRunIDFor(42, 1551, "260625120000", "abcd")
+	got := ReviewRunIDFor(42, 1551, "260625120000", "abcd")
 	want := "260625120000-abcd-1551-PR42"
 	if got != want {
-		t.Errorf("reviewRunIDFor(42, 1551, ...) = %q, want %q", got, want)
+		t.Errorf("ReviewRunIDFor(42, 1551, ...) = %q, want %q", got, want)
 	}
 }
 
@@ -44,14 +44,14 @@ func TestReviewRunIDFor_PRWithLinkedIssue(t *testing.T) {
 // `run.json`". The canonical mint must always include the
 // `<ts>-<sid>` prefix and the `PR<pr>` suffix.
 func TestReviewRunIDFor_NoLiteralReview(t *testing.T) {
-	got := reviewRunIDFor(1, 0, "260625120000", "0001")
+	got := ReviewRunIDFor(1, 0, "260625120000", "0001")
 	if got == "review" {
-		t.Fatalf("reviewRunIDFor must never return the literal %q, got %q", "review", got)
+		t.Fatalf("ReviewRunIDFor must never return the literal %q, got %q", "review", got)
 	}
 	if !strings.HasPrefix(got, "260625120000-0001-") {
-		t.Errorf("reviewRunIDFor must include <ts>-<sid>- prefix, got %q", got)
+		t.Errorf("ReviewRunIDFor must include <ts>-<sid>- prefix, got %q", got)
 	}
 	if !strings.HasSuffix(got, "-PR1") {
-		t.Errorf("reviewRunIDFor must end with -PR<pr>, got %q", got)
+		t.Errorf("ReviewRunIDFor must end with -PR<pr>, got %q", got)
 	}
 }
