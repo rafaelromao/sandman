@@ -21,7 +21,7 @@ func TestDiscoverPortalInstances_IndexFirstDiscovery(t *testing.T) {
 	}
 
 	// Create batch directories
-	activeBatchID := "abcd-260622105532-42"
+	activeBatchID := "260622105532-abcd-42"
 	archivedBatchID := "efgh-260622105633-99"
 	unavailableBatchID := "ijkl-260622105734-100"
 
@@ -165,7 +165,7 @@ func TestDiscoverPortalInstances_NoSaveWhenClean(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	activeBatchID := "aaaa-260622105532-1"
+	activeBatchID := "260622105532-aaaa-1"
 	activeBatchPath := filepath.Join(batchesDir, activeBatchID)
 	if err := os.MkdirAll(activeBatchPath, 0755); err != nil {
 		t.Fatal(err)
@@ -220,8 +220,8 @@ func TestMarkUnavailable_OnlyFlipsENOENT(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	existingID := "bbbb-260622105532-1"
-	missingID := "cccc-260622105532-2"
+	existingID := "260622105532-bbbb-1"
+	missingID := "260622105532-cccc-2"
 	existingPath := filepath.Join(batchesDir, existingID)
 	if err := os.MkdirAll(existingPath, 0755); err != nil {
 		t.Fatal(err)
@@ -268,7 +268,7 @@ func TestMarkUnavailable_NoSaveWhenNothingChanges(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	alreadyUnavailableID := "dddd-260622105532-1"
+	alreadyUnavailableID := "260622105532-dddd-1"
 	alreadyUnavailablePath := filepath.Join(batchesDir, alreadyUnavailableID)
 	if err := os.MkdirAll(alreadyUnavailablePath, 0755); err != nil {
 		t.Fatal(err)

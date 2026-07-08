@@ -18,22 +18,22 @@ func TestPortalRunsView_ReasonFromStartedPayload_NoAutoMarkerForIssue(t *testing
 	}{
 		{
 			name:    "issue single",
-			payload: map[string]any{"run_kind": "issue", "batch_id": "abcd-260618113825-42", "issues": []int{42}},
+			payload: map[string]any{"run_kind": "issue", "batch_id": "260618113825-abcd-42", "issues": []int{42}},
 			want:    "",
 		},
 		{
 			name:    "issue multi",
-			payload: map[string]any{"run_kind": "issue", "batch_id": "abcd-260618113825-42+1", "issues": []int{42, 43}},
+			payload: map[string]any{"run_kind": "issue", "batch_id": "260618113825-abcd-42+1", "issues": []int{42, 43}},
 			want:    "",
 		},
 		{
 			name:    "auto-select",
-			payload: map[string]any{"run_kind": "auto-select", "batch_id": "abcd-260618113825-auto-5"},
+			payload: map[string]any{"run_kind": "auto-select", "batch_id": "260618113825-abcd-auto-5"},
 			want:    "auto-select",
 		},
 		{
 			name:    "review",
-			payload: map[string]any{"review": true, "pr_number": 42, "batch_id": "abcd-260618113825-PR42"},
+			payload: map[string]any{"review": true, "pr_number": 42, "batch_id": "260618113825-abcd-PR42"},
 			want:    "review",
 		},
 		{

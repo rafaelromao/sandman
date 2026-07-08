@@ -290,7 +290,7 @@ var (
 	// else, so a stray character rendered the verdict "Unclear".
 	// Issue #1767 broadened the trailing to `"?\s*$` to tolerate
 	// the bash closing quote from `gh pr comment --body "..."`,
-	// but production log captures (d9f0-260704185852-1779-PR1789)
+	// but production log captures (260704185852-d9f0-1779-PR1789)
 	// showed the shell frequently also leaves a redirect-and-pipe
 	// trailer on the same line — e.g. a marker line ending in
 	// `" 2>&1 | tail -5` — which the narrower regex still

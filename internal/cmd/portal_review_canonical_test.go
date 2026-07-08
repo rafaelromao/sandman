@@ -902,7 +902,7 @@ func TestPortal_DiscoverActiveRuns_ReviewIdentitySurvivesMissingManifest(t *test
 	}
 
 	const issueNumber = 135
-	const batchID = "d42a-260702121324-135-PR1636"
+	const batchID = "260702121324-d42a-135-PR1636"
 
 	batchDir := filepath.Join(repoRoot, ".sandman", "batches", batchID)
 	if err := os.MkdirAll(batchDir, 0755); err != nil {
@@ -955,11 +955,11 @@ func TestPortal_DiscoverActiveRuns_ReviewIdentityFromBatchDirPreservesIssueIdent
 	}
 
 	// The batch directory itself encodes the issue+PR (matching the live
-	// shape observed in the wild, e.g. `d42a-260701172902-137-PR1614`).
+	// shape observed in the wild, e.g. `260701172902-d42a-137-PR1614`).
 	// There is intentionally NO `runs/<...>-137-PR1614/` child folder, so
 	// the folder-based recovery path cannot fire.
 	const issueNumber = 137
-	const batchID = "d42a-260701172902-137-PR1614"
+	const batchID = "260701172902-d42a-137-PR1614"
 
 	batchDir := filepath.Join(repoRoot, ".sandman", "batches", batchID)
 	if err := os.MkdirAll(batchDir, 0755); err != nil {
@@ -1110,8 +1110,8 @@ func TestPortal_ReviewRun_ShowsReviewingBeforeRunStarted(t *testing.T) {
 
 	const issueNumber = 1846
 	const prNumber = 1858
-	const batchID = "e1dd-260706100650-1846-PR1858"
-	const canonicalReviewRowID = "e1dd-260706100650-1846-PR1858"
+	const batchID = "260706100650-e1dd-1846-PR1858"
+	const canonicalReviewRowID = "260706100650-e1dd-1846-PR1858"
 	const runTS = "260706100650"
 	const runShortID = "e1dd"
 
@@ -1222,8 +1222,8 @@ func TestPortal_Compute_ActiveReviewDoesNotDuplicateParentCount(t *testing.T) {
 
 	const issueNumber = 1863
 	const prNumber = 1912
-	const batchID = "b822-260707091520-PR1912"
-	const canonicalReviewRowID = "b822-260707091520-1863-PR1912"
+	const batchID = "260707091520-b822-PR1912"
+	const canonicalReviewRowID = "260707091520-b822-1863-PR1912"
 	const runTS = "260707091520"
 	const runShortID = "b822"
 
@@ -1281,10 +1281,10 @@ func TestPortal_Compute_ActiveReviewDoesNotDuplicateParentCount(t *testing.T) {
 	// parent row to stamp. Starts well before batch.json.createdAt, so
 	// stateStartsInBatch filters it out of the review's
 	// latestRunStateForIssue lookup.
-	implRunID := "516b-260707064710-1863"
+	implRunID := "260707064710-516b-1863"
 	implStart := time.Now().Add(-2 * time.Hour)
 	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
-		{Type: "run.started", Timestamp: implStart, RunID: implRunID, Issue: issueNumber, Payload: map[string]any{"branch": "sandman/1863-fix", "batch_id": "516b-260707064710-1860+9"}},
+		{Type: "run.started", Timestamp: implStart, RunID: implRunID, Issue: issueNumber, Payload: map[string]any{"branch": "sandman/1863-fix", "batch_id": "260707064710-516b-1860+9"}},
 		{Type: "run.started", Timestamp: runStartedAt, RunID: canonicalReviewRowID, Payload: map[string]any{"review": true, "pr_number": prNumber, "branch": "sandman/review-1912", "batch_id": batchID}},
 	})
 
@@ -1348,8 +1348,8 @@ func TestPortal_Compute_ActiveReviewStatusFollowsEventLog(t *testing.T) {
 	}
 
 	const prNumber = 1912
-	const batchID = "b822-260707091520-PR1912"
-	const canonicalReviewRowID = "b822-260707091520-1863-PR1912"
+	const batchID = "260707091520-b822-PR1912"
+	const canonicalReviewRowID = "260707091520-b822-1863-PR1912"
 	const runTS = "260707091520"
 	const runShortID = "b822"
 
@@ -1460,7 +1460,7 @@ func TestPortal_ReviewGrouping_OrphanReviewStaysOrphan(t *testing.T) {
 	const (
 		ts      = "260618113825"
 		shortid = "abcd"
-		rowID   = "abcd-260618113825-PR17"
+		rowID   = "260618113825-abcd-PR17"
 	)
 	startedAt := time.Now().Add(-3 * time.Minute)
 	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
@@ -1512,7 +1512,7 @@ func TestPortal_ReviewGrouping_LinkedReviewGroupsUnderIssue(t *testing.T) {
 		linkedIssue = 1066
 		ts          = "260618113825"
 		shortid     = "abcd"
-		rowID       = "abcd-260618113825-1066-PR42"
+		rowID       = "260618113825-abcd-1066-PR42"
 		parentRowID = "impl-1066"
 	)
 	startedAt := time.Now().Add(-10 * time.Minute)
@@ -1573,7 +1573,7 @@ func TestPortal_ReviewLogResolution_TerminalPrefersSavedLog(t *testing.T) {
 	const (
 		ts      = "260618113825"
 		shortid = "abcd"
-		rowID   = "abcd-260618113825-PR42"
+		rowID   = "260618113825-abcd-PR42"
 	)
 	startedAt := time.Now().Add(-5 * time.Minute)
 	finishedAt := startedAt.Add(2 * time.Minute)

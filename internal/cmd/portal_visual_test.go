@@ -64,10 +64,10 @@ const visualFixtureRowsJS = `
   }
 
   const rows = [
-    { issueLabel: '#960', key: 'a', metaText: 'ID abcd-260618113825-960', status: 'success', started: 'Jun 15, 11:40:40 AM', duration: '37m46s', issueTitle: '[slice 1] Add internal/shellenv with key-validation + value-quoting', batchIssues: [960, 961, 962, 963, 964, 965, 966, 967, 968] },
-    { issueLabel: '#961', key: 'b', metaText: 'ID abcd-260618113825-961', status: 'running', started: 'Jun 15, 12:18:30 PM', duration: '17s', issueTitle: '[slice 2] Add internal/prompt.Renderer with body-insert substitution', batchIssues: null },
-    { issueLabel: '#962', key: 'c', metaText: 'ID abcd-260618113825-962', status: 'queued', started: 'Jun 15, 11:38:51 AM', duration: '\u2014', issueTitle: '[slice 3] Add internal/orchestrator dependencies path', batchIssues: [960, 961, 962, 963, 964, 965, 966, 967, 968] },
-    { issueLabel: '#963', key: 'd', metaText: 'ID abcd-260618113825-963', status: 'success', started: 'Jun 15, 11:40:40 AM', duration: '12m00s', issueTitle: '[slice 4] Wire internal/orchestrator dependencies into the slice-3 runnable so the new shellenv renderer is exercised end-to-end on a 500px mobile viewport', batchIssues: null },
+    { issueLabel: '#960', key: 'a', metaText: 'ID 260618113825-abcd-960', status: 'success', started: 'Jun 15, 11:40:40 AM', duration: '37m46s', issueTitle: '[slice 1] Add internal/shellenv with key-validation + value-quoting', batchIssues: [960, 961, 962, 963, 964, 965, 966, 967, 968] },
+    { issueLabel: '#961', key: 'b', metaText: 'ID 260618113825-abcd-961', status: 'running', started: 'Jun 15, 12:18:30 PM', duration: '17s', issueTitle: '[slice 2] Add internal/prompt.Renderer with body-insert substitution', batchIssues: null },
+    { issueLabel: '#962', key: 'c', metaText: 'ID 260618113825-abcd-962', status: 'queued', started: 'Jun 15, 11:38:51 AM', duration: '\u2014', issueTitle: '[slice 3] Add internal/orchestrator dependencies path', batchIssues: [960, 961, 962, 963, 964, 965, 966, 967, 968] },
+    { issueLabel: '#963', key: 'd', metaText: 'ID 260618113825-abcd-963', status: 'success', started: 'Jun 15, 11:40:40 AM', duration: '12m00s', issueTitle: '[slice 4] Wire internal/orchestrator dependencies into the slice-3 runnable so the new shellenv renderer is exercised end-to-end on a 500px mobile viewport', batchIssues: null },
   ];
   const body = document.getElementById('runs-body');
   rows.forEach(r => body.appendChild(buildRow(r)));

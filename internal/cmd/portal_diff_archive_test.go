@@ -12,7 +12,7 @@ const run = {
   kind: 'completed',
   status: 'success',
   issueLabel: '#42',
-  runId: 'abcd-260618113825-archive-1',
+  runId: '260618113825-abcd-archive-1',
   archived: false,
 };
 const stopGroups = new Set();
@@ -24,7 +24,7 @@ if (!actionsCell) throw new Error('expected actions cell');
 const btn = actionsCell.querySelector('button[data-action="archive-run"]');
 if (!btn) throw new Error('expected archive-run button on completed non-archived run');
 if (btn.textContent.trim() !== 'Archive') throw new Error('expected label "Archive", got ' + JSON.stringify(btn.textContent));
-if (btn.getAttribute('data-run-id') !== 'abcd-260618113825-archive-1') throw new Error('expected data-run-id="abcd-260618113825-archive-1", got ' + btn.getAttribute('data-run-id'));
+if (btn.getAttribute('data-run-id') !== '260618113825-abcd-archive-1') throw new Error('expected data-run-id="260618113825-abcd-archive-1", got ' + btn.getAttribute('data-run-id'));
 console.log('PASS');
 `
 	runNodeScript(t, js)
@@ -40,7 +40,7 @@ const run = {
   kind: 'completed',
   status: 'success',
   issueLabel: '#42',
-  runId: 'abcd-260618113825-archive-stale',
+  runId: '260618113825-abcd-archive-stale',
   archived: false,
   sourceExists: false,
 };
@@ -66,10 +66,10 @@ const run = {
   kind: 'active',
   status: 'running',
   issueLabel: '#42',
-  runId: 'abcd-260618113825-archive-2',
+  runId: '260618113825-abcd-archive-2',
   archived: false,
   sourceExists: true,
-  batchKey: 'abcd-260618113825-42',
+  batchKey: '260618113825-abcd-42',
 };
 const stopGroups = new Set();
 const opts = { helpers, stopGroups, expandedKey: null };
@@ -94,7 +94,7 @@ const run = {
   kind: 'completed',
   status: 'success',
   issueLabel: '#42',
-  runId: 'abcd-260618113825-archive-3',
+  runId: '260618113825-abcd-archive-3',
   archived: true,
   sourceExists: false,
 };
@@ -121,7 +121,7 @@ const runOld = {
   kind: 'completed',
   status: 'success',
   issueLabel: '#42',
-  runId: 'abcd-260618113825-archive-4',
+  runId: '260618113825-abcd-archive-4',
   archived: false,
   sourceExists: true,
 };
@@ -152,7 +152,7 @@ const runOld = {
   kind: 'completed',
   status: 'success',
   issueLabel: '#42',
-  runId: 'abcd-260618113825-archive-5',
+  runId: '260618113825-abcd-archive-5',
   archived: true,
   sourceExists: true,
 };
@@ -182,7 +182,7 @@ const run = {
   kind: 'completed',
   status: 'success',
   issueLabel: '#42',
-  runId: 'abcd-260618113825-archive-6',
+  runId: '260618113825-abcd-archive-6',
   archived: false,
   sourceExists: true,
 };

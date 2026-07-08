@@ -115,9 +115,9 @@ func deriveReviewRowID(batchID string, prNumber int) string {
 	if len(parts) < 3 {
 		return batchID
 	}
-	sid := parts[0]
-	ts := parts[1]
-	return fmt.Sprintf("%s-%s-PR%d", sid, ts, prNumber)
+	ts := parts[0]
+	sid := parts[1]
+	return fmt.Sprintf("%s-%s-PR%d", ts, sid, prNumber)
 }
 
 // TestDaemon_SeenCacheHydratedAtConstruction pins the slice-A behavior

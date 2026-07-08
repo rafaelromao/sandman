@@ -128,8 +128,8 @@ func TestPortal_Compute_ReasonTableForAllRunKinds(t *testing.T) {
 		{
 			name: "regular issue-driven run",
 			events: []events.Event{
-				{Type: "run.started", Timestamp: time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC), RunID: "abcd-260618113825-42", Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
-				{Type: "run.finished", Timestamp: time.Date(2025, 1, 1, 12, 5, 0, 0, time.UTC), RunID: "abcd-260618113825-42", Issue: 42, Payload: map[string]any{"status": "success", "branch": "sandman/42-fix"}},
+				{Type: "run.started", Timestamp: time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC), RunID: "260618113825-abcd-42", Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
+				{Type: "run.finished", Timestamp: time.Date(2025, 1, 1, 12, 5, 0, 0, time.UTC), RunID: "260618113825-abcd-42", Issue: 42, Payload: map[string]any{"status": "success", "branch": "sandman/42-fix"}},
 			},
 			want: want{reason: "", status: "success", kind: "completed", label: "#42"},
 		},
@@ -229,8 +229,8 @@ func TestPortal_Compute_AggregatesChildReviewsOntoIssueRow(t *testing.T) {
 	}
 	addBatchToIndex(t, repoRoot, "PR42-live", reviewRunDir, []int{1})
 	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
-		{Type: "run.started", Timestamp: startedAt, RunID: "abcd-260618113825-1", Issue: 1, Payload: map[string]any{"branch": "sandman/1-fix"}},
-		{Type: "run.finished", Timestamp: startedAt.Add(1 * time.Minute), RunID: "abcd-260618113825-1", Issue: 1, Payload: map[string]any{"branch": "sandman/1-fix", "status": "success"}},
+		{Type: "run.started", Timestamp: startedAt, RunID: "260618113825-abcd-1", Issue: 1, Payload: map[string]any{"branch": "sandman/1-fix"}},
+		{Type: "run.finished", Timestamp: startedAt.Add(1 * time.Minute), RunID: "260618113825-abcd-1", Issue: 1, Payload: map[string]any{"branch": "sandman/1-fix", "status": "success"}},
 		{Type: "run.started", Timestamp: startedAt.Add(30 * time.Second), RunID: "PR42-live", Issue: 1, Payload: map[string]any{"review": true, "pr_number": 42, "branch": "sandman/review-PR42"}},
 		{Type: "run.started", Timestamp: startedAt.Add(90 * time.Second), RunID: "PR43-done", Issue: 1, Payload: map[string]any{"review": true, "pr_number": 43, "branch": "sandman/review-PR43"}},
 		{Type: "run.finished", Timestamp: terminalReviewAt, RunID: "PR43-done", Issue: 1, Payload: map[string]any{"review": true, "pr_number": 43, "branch": "sandman/review-PR43", "status": "success"}},
@@ -257,7 +257,7 @@ func TestPortal_Compute_AggregatesChildReviewsOntoIssueRow(t *testing.T) {
 	if issueRow == nil {
 		t.Fatalf("expected issue row for #1, got %#v", runs)
 	}
-	if issueRow.RunID != "abcd-260618113825-1" {
+	if issueRow.RunID != "260618113825-abcd-1" {
 		t.Fatalf("expected canonical issue row runID issue-1, got %q", issueRow.RunID)
 	}
 	if issueRow.Status != "reviewing" {
@@ -288,8 +288,8 @@ func TestPortal_Compute_TerminalReviewWithApprovedMarker_PreservesParentStatus(t
 	finishedAt := startedAt.Add(2 * time.Minute)
 
 	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
-		{Type: "run.started", Timestamp: startedAt, RunID: "abcd-260618113825-99", Issue: 99, Payload: map[string]any{"branch": "sandman/99-fix"}},
-		{Type: "run.finished", Timestamp: startedAt.Add(1 * time.Minute), RunID: "abcd-260618113825-99", Issue: 99, Payload: map[string]any{"branch": "sandman/99-fix", "status": "success"}},
+		{Type: "run.started", Timestamp: startedAt, RunID: "260618113825-abcd-99", Issue: 99, Payload: map[string]any{"branch": "sandman/99-fix"}},
+		{Type: "run.finished", Timestamp: startedAt.Add(1 * time.Minute), RunID: "260618113825-abcd-99", Issue: 99, Payload: map[string]any{"branch": "sandman/99-fix", "status": "success"}},
 		{Type: "run.started", Timestamp: startedAt.Add(30 * time.Second), RunID: "PR99-review", Issue: 99, Payload: map[string]any{"review": true, "pr_number": 99, "branch": "sandman/review-PR99"}},
 		{Type: "run.finished", Timestamp: finishedAt, RunID: "PR99-review", Issue: 99, Payload: map[string]any{"review": true, "pr_number": 99, "branch": "sandman/review-PR99", "status": "success"}},
 	})
@@ -344,8 +344,8 @@ func TestPortal_Compute_TerminalReviewWithApprovedMarker_PreservesParentStatus(t
 // TestPortal_ReviewVerdictFromRunLog below.
 //
 // The reproduction here mirrors the exact log tail captured locally
-// from `4f35-260704130316-1755-PR1763/run.log` (work item
-// 18dc-260704125005-1755 / issue #1755 "Embed sandman-index as a
+// from `260704130316-4f35-1755-PR1763/run.log` (work item
+// 260704125005-18dc-1755 / issue #1755 "Embed sandman-index as a
 // sub-skill of sandman"). The test asserts that with the trailing `"`
 // tolerated, the parent row surfaces "Approved"; without the fix, the
 // helper falls through and the parent row stays "Unclear".
@@ -355,10 +355,10 @@ func TestPortal_Compute_PreservesParentStatusWithTrailingQuoteRunLogShape(t *tes
 		t.Fatal(err)
 	}
 
-	implRunID := "18dc-260704125005-1755"
-	implBatchID := "18dc-260704125005-1755"
-	reviewRunID := "4f35-260704130316-1755-PR1763"
-	reviewBatchID := "4f35-260704130316-1755-PR1763"
+	implRunID := "260704125005-18dc-1755"
+	implBatchID := "260704125005-18dc-1755"
+	reviewRunID := "260704130316-4f35-1755-PR1763"
+	reviewBatchID := "260704130316-4f35-1755-PR1763"
 
 	startedAt := time.Date(2026, 7, 4, 12, 50, 5, 0, time.UTC)
 	reviewFinishedAt := startedAt.Add(1*time.Hour + 3*time.Minute + 11*time.Second)
@@ -392,16 +392,16 @@ func TestPortal_Compute_PreservesParentStatusWithTrailingQuoteRunLogShape(t *tes
 	})
 
 	// Saved run.log for the review run, mirroring the actual
-	// production log captured at 4f35-260704130316-1755-PR1763/run.log.
+	// production log captured at 260704130316-4f35-1755-PR1763/run.log.
 	// The final line is `**APPROVED**"` — the trailing `"` is the
 	// bash closing quote that `gh pr comment --body "..."` leaves
 	// behind on the marker line.
-	reviewLog := "[4f35-260704130316-1755-PR1763] 13:02:40 ## Summary\r\n" +
-		"[4f35-260704130316-1755-PR1763] 13:02:40 LGTM.\r\n" +
-		"[4f35-260704130316-1755-PR1763] 13:03:10 ## Findings\r\n" +
-		"[4f35-260704130316-1755-PR1763] 13:03:10 None.\r\n" +
-		"[4f35-260704130316-1755-PR1763] 13:03:16 ## Decision\r\n" +
-		"[4f35-260704130316-1755-PR1763] 13:03:16 **APPROVED**\"\r\n"
+	reviewLog := "[260704130316-4f35-1755-PR1763] 13:02:40 ## Summary\r\n" +
+		"[260704130316-4f35-1755-PR1763] 13:02:40 LGTM.\r\n" +
+		"[260704130316-4f35-1755-PR1763] 13:03:10 ## Findings\r\n" +
+		"[260704130316-4f35-1755-PR1763] 13:03:10 None.\r\n" +
+		"[260704130316-4f35-1755-PR1763] 13:03:16 ## Decision\r\n" +
+		"[260704130316-4f35-1755-PR1763] 13:03:16 **APPROVED**\"\r\n"
 	reviewRunDir := filepath.Join(repoRoot, ".sandman", "batches", reviewBatchID, "runs", reviewRunID)
 	if err := os.MkdirAll(reviewRunDir, 0755); err != nil {
 		t.Fatalf("mkdir review run dir: %v", err)
@@ -454,8 +454,8 @@ func TestPortal_Compute_PreservesParentStatusWithTrailingQuoteRunLogShape(t *tes
 // in TestPortal_ReviewVerdictFromRunLog below.
 //
 // The reproduction here mirrors the actual log tail captured locally
-// from `d9f0-260704185852-1779-PR1789/run.log` (work item
-// a9d3-260704183525-1779 "[slice 0] e2e gate hygiene" / issue #1779 /
+// from `260704185852-d9f0-1779-PR1789/run.log` (work item
+// 260704183525-a9d3-1779 "[slice 0] e2e gate hygiene" / issue #1779 /
 // PR #1789). The test asserts that with the broader marker rule in
 // place, the parent row surfaces "Approved"; without it, the helper
 // falls through and the parent row stays "Unclear".
@@ -465,10 +465,10 @@ func TestPortal_Compute_PreservesParentStatusWithTrailingQuoteAndPipeRunLogShape
 		t.Fatal(err)
 	}
 
-	implRunID := "a9d3-260704183525-1779"
-	implBatchID := "a9d3-260704183525-1779"
-	reviewRunID := "d9f0-260704185852-1779-PR1789"
-	reviewBatchID := "d9f0-260704185852-1779-PR1789"
+	implRunID := "260704183525-a9d3-1779"
+	implBatchID := "260704183525-a9d3-1779"
+	reviewRunID := "260704185852-d9f0-1779-PR1789"
+	reviewBatchID := "260704185852-d9f0-1779-PR1789"
 
 	startedAt := time.Date(2026, 7, 4, 18, 35, 25, 0, time.UTC)
 	reviewFinishedAt := startedAt.Add(26*time.Minute + 35*time.Second)
@@ -502,19 +502,19 @@ func TestPortal_Compute_PreservesParentStatusWithTrailingQuoteAndPipeRunLogShape
 	})
 
 	// Saved run.log for the review run, mirroring the actual
-	// production log captured at d9f0-260704185852-1779-PR1789/run.log.
+	// production log captured at 260704185852-d9f0-1779-PR1789/run.log.
 	// The final line is `**APPROVED**" 2>&1 | tail -5` — the trailing
 	// `"` is the bash closing quote of `gh pr comment --body "..."`
 	// and the `2>&1 | tail -5` is the redirect-and-pipe trailer the
 	// agent (or the operator) chained onto the same `gh pr comment`
 	// invocation. Both pieces of debris must be tolerated by the
 	// marker rule for the parent issue row to surface "Approved".
-	reviewLog := "[d9f0-260704185852-1779-PR1789] 18:58:30 ## Summary\r\n" +
-		"[d9f0-260704185852-1779-PR1789] 18:58:30 Reviewed the e2e gate hygiene slice.\r\n" +
-		"[d9f0-260704185852-1779-PR1789] 18:59:50 ## Findings\r\n" +
-		"[d9f0-260704185852-1779-PR1789] 18:59:50 None — slice is clean and the helper is in place.\r\n" +
-		"[d9f0-260704185852-1779-PR1789] 19:00:55 ## Decision\r\n" +
-		"[d9f0-260704185852-1779-PR1789] 19:01:06 **APPROVED**\" 2>&1 | tail -5\r\n"
+	reviewLog := "[260704185852-d9f0-1779-PR1789] 18:58:30 ## Summary\r\n" +
+		"[260704185852-d9f0-1779-PR1789] 18:58:30 Reviewed the e2e gate hygiene slice.\r\n" +
+		"[260704185852-d9f0-1779-PR1789] 18:59:50 ## Findings\r\n" +
+		"[260704185852-d9f0-1779-PR1789] 18:59:50 None — slice is clean and the helper is in place.\r\n" +
+		"[260704185852-d9f0-1779-PR1789] 19:00:55 ## Decision\r\n" +
+		"[260704185852-d9f0-1779-PR1789] 19:01:06 **APPROVED**\" 2>&1 | tail -5\r\n"
 	reviewRunDir := filepath.Join(repoRoot, ".sandman", "batches", reviewBatchID, "runs", reviewRunID)
 	if err := os.MkdirAll(reviewRunDir, 0755); err != nil {
 		t.Fatalf("mkdir review run dir: %v", err)
@@ -593,7 +593,7 @@ func TestPortal_Compute_CanonicalParentIdentityPreservedWithReviewChildren(t *te
 		{
 			Type:      "run.started",
 			Timestamp: startedAt,
-			RunID:     "abcd-260618113825-1",
+			RunID:     "260618113825-abcd-1",
 			Issue:     1,
 			Payload: map[string]any{
 				"branch":      parentBranch,
@@ -603,7 +603,7 @@ func TestPortal_Compute_CanonicalParentIdentityPreservedWithReviewChildren(t *te
 		{
 			Type:      "run.finished",
 			Timestamp: startedAt.Add(1 * time.Minute),
-			RunID:     "abcd-260618113825-1",
+			RunID:     "260618113825-abcd-1",
 			Issue:     1,
 			Payload: map[string]any{
 				"branch": parentBranch,
@@ -660,7 +660,7 @@ func TestPortal_Compute_CanonicalParentIdentityPreservedWithReviewChildren(t *te
 	if reviewChildCount != 2 {
 		t.Fatalf("expected 2 review child rows, got %d from %#v", reviewChildCount, runs)
 	}
-	if parentRow.RunID != "abcd-260618113825-1" {
+	if parentRow.RunID != "260618113825-abcd-1" {
 		t.Fatalf("expected canonical parent RunID issue-1, got %q", parentRow.RunID)
 	}
 	if parentRow.IssueTitle != "Fix login bug" {
@@ -712,7 +712,7 @@ func TestPortal_TerminalReviewChild_ParentNotStuck(t *testing.T) {
 	addBatchToIndex(t, repoRoot, "PR42", runDir, []int{})
 
 	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
-		{Type: "run.started", Timestamp: startedAt, RunID: "abcd-260618113825-1", Issue: 1, Payload: map[string]any{"branch": "sandman/1-fix"}},
+		{Type: "run.started", Timestamp: startedAt, RunID: "260618113825-abcd-1", Issue: 1, Payload: map[string]any{"branch": "sandman/1-fix"}},
 		{Type: "run.started", Timestamp: startedAt.Add(30 * time.Second), RunID: "PR42", Issue: 1, Payload: map[string]any{"review": true, "pr_number": 42, "branch": "sandman/review-PR42"}},
 		{Type: "run.finished", Timestamp: reviewFinishedAt, RunID: "PR42", Issue: 1, Payload: map[string]any{"review": true, "pr_number": 42, "branch": "sandman/review-PR42", "status": "success"}},
 	})
@@ -817,8 +817,8 @@ func TestPortal_ParentSuccWithLiveChild_FlipsToReviewing(t *testing.T) {
 	addBatchToIndex(t, repoRoot, "PR42", runDir, []int{1})
 
 	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
-		{Type: "run.started", Timestamp: startedAt, RunID: "abcd-260618113825-1", Issue: 1, Payload: map[string]any{"branch": "sandman/1-fix"}},
-		{Type: "run.finished", Timestamp: startedAt.Add(1 * time.Minute), RunID: "abcd-260618113825-1", Issue: 1, Payload: map[string]any{"branch": "sandman/1-fix", "status": "success"}},
+		{Type: "run.started", Timestamp: startedAt, RunID: "260618113825-abcd-1", Issue: 1, Payload: map[string]any{"branch": "sandman/1-fix"}},
+		{Type: "run.finished", Timestamp: startedAt.Add(1 * time.Minute), RunID: "260618113825-abcd-1", Issue: 1, Payload: map[string]any{"branch": "sandman/1-fix", "status": "success"}},
 		{Type: "run.started", Timestamp: startedAt.Add(30 * time.Second), RunID: "PR42", Issue: 1, Payload: map[string]any{"review": true, "pr_number": 42, "branch": "sandman/review-PR42"}},
 	})
 
@@ -863,7 +863,7 @@ func TestPortal_KindForRun_TerminalAutoSelectAndReviewClassifiedAsCompleted(t *t
 	}{
 		{
 			name:     "active run is active",
-			runState: events.RunState{RunID: "abcd-260618113825-active", Started: events.Event{Timestamp: startedAt}},
+			runState: events.RunState{RunID: "260618113825-abcd-active", Started: events.Event{Timestamp: startedAt}},
 			want:     "active",
 		},
 		{
@@ -887,7 +887,7 @@ func TestPortal_KindForRun_TerminalAutoSelectAndReviewClassifiedAsCompleted(t *t
 		{
 			name: "terminal issue is completed",
 			runState: events.RunState{
-				RunID:    "abcd-260618113825-42",
+				RunID:    "260618113825-abcd-42",
 				Started:  events.Event{Timestamp: startedAt},
 				Finished: makeFinished(map[string]any{"status": "success"}),
 			},
@@ -1296,7 +1296,7 @@ func TestPortal_Compute_CompletedRunUnderArchiveDir_MarksArchived(t *testing.T) 
 		t.Fatal(err)
 	}
 
-	const runID = "abcd-260618113825-id-1-archived"
+	const runID = "260618113825-abcd-id-1-archived"
 	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
 	finishedAt := startedAt.Add(2 * time.Minute)
 
@@ -1345,7 +1345,7 @@ func TestPortal_Compute_CompletedRunWithoutArchiveDir_NotArchived(t *testing.T) 
 		t.Fatal(err)
 	}
 
-	const runID = "abcd-260618113825-id-2-not-archived"
+	const runID = "260618113825-abcd-id-2-not-archived"
 	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
 	finishedAt := startedAt.Add(2 * time.Minute)
 
@@ -1398,7 +1398,7 @@ func TestPortal_Compute_CompletedRunWithBatchDir_DoesNotCountAsSourceExists(t *t
 		t.Fatal(err)
 	}
 
-	const runID = "abcd-260618113825-42"
+	const runID = "260618113825-abcd-42"
 	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
 	finishedAt := startedAt.Add(2 * time.Minute)
 	runDir := filepath.Join(repoRoot, ".sandman", "batches", "batch-42")
@@ -1443,7 +1443,7 @@ func TestPortal_Compute_CompletedRunWithDeadBatchDir_ReportsSourceExists(t *test
 		t.Fatal(err)
 	}
 
-	const runID = "abcd-260618113825-42"
+	const runID = "260618113825-abcd-42"
 	runDir := filepath.Join(repoRoot, ".sandman", "batches", "batch-42")
 	if err := os.MkdirAll(filepath.Join(runDir, "runs", runID), 0755); err != nil {
 		t.Fatal(err)
@@ -1488,7 +1488,7 @@ func TestPortal_Compute_CompletedRunWithSourceDirOnly_DoesNotCountAsSourceExists
 		t.Fatal(err)
 	}
 
-	const runID = "abcd-260618113825-archive-source-present"
+	const runID = "260618113825-abcd-archive-source-present"
 	runDir := filepath.Join(repoRoot, ".sandman", "batches", runID)
 	if err := os.MkdirAll(runDir, 0755); err != nil {
 		t.Fatal(err)
@@ -1599,7 +1599,7 @@ func TestPortal_Compute_ActiveIndexEntryWithArchiveDir_NotArchived(t *testing.T)
 		t.Fatal(err)
 	}
 
-	const runID = "abcd-260618113825-id-active-with-archive-dir"
+	const runID = "260618113825-abcd-id-active-with-archive-dir"
 	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
 	finishedAt := startedAt.Add(2 * time.Minute)
 
@@ -1641,8 +1641,8 @@ func TestPortal_Compute_OrphanedActiveRunFromDeadBatch_Demoted(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	runID := "abcd-260618113825-42"
-	batchID := "abcd-260618113825-999-1"
+	runID := "260618113825-abcd-42"
+	batchID := "260618113825-abcd-999-1"
 	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
 
 	batchDir := filepath.Join(repoRoot, ".sandman", "batches", batchID)
@@ -1704,8 +1704,8 @@ func TestPortal_Compute_DeadBatchWithStaleRunSock_StillDemoted(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	runID := "abcd-260618113825-42"
-	batchID := "abcd-260618113825-999-1"
+	runID := "260618113825-abcd-42"
+	batchID := "260618113825-abcd-999-1"
 	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
 
 	batchDir := filepath.Join(repoRoot, ".sandman", "batches", batchID)
@@ -1985,10 +1985,10 @@ func TestPortal_Compute_ReviewVerdictFromDecisionMarkerOnSavedRunLog(t *testing.
 	startedAt := time.Date(2026, 7, 3, 13, 50, 0, 0, time.UTC)
 	finishedAt := startedAt.Add(2 * time.Minute)
 
-	reviewRunID := "556c-260703135044-1719-PR1726"
-	reviewBatchID := "556c-260703135044-1719-PR1726"
-	implRunID := "c5ed-260703133706-1719"
-	implBatchID := "c5ed-260703133706-1719"
+	reviewRunID := "260703135044-556c-1719-PR1726"
+	reviewBatchID := "260703135044-556c-1719-PR1726"
+	implRunID := "260703133706-c5ed-1719"
+	implBatchID := "260703133706-c5ed-1719"
 
 	// Implementation run for issue #1719. The review is launched
 	// against the PR that this implementation produced, so the review's
@@ -2028,10 +2028,10 @@ func TestPortal_Compute_ReviewVerdictFromDecisionMarkerOnSavedRunLog(t *testing.
 	// but the agent wrote `**CHANGES_REQUESTED**` inside the
 	// `## Decision` section of the posted comment before exiting).
 	// The slice-1 fix must read THIS, not the status.
-	reviewLog := "[556c-260703135044-1719-PR1726] 13:51:47 ## Findings\r\n" +
-		"[556c-260703135044-1719-PR1726] 13:51:47 - macOS job is red on this PR.\r\n" +
-		"[556c-260703135044-1719-PR1726] 13:52:10 ## Decision\r\n" +
-		"[556c-260703135044-1719-PR1726] 13:52:11 **CHANGES_REQUESTED**\r\n"
+	reviewLog := "[260703135044-556c-1719-PR1726] 13:51:47 ## Findings\r\n" +
+		"[260703135044-556c-1719-PR1726] 13:51:47 - macOS job is red on this PR.\r\n" +
+		"[260703135044-556c-1719-PR1726] 13:52:10 ## Decision\r\n" +
+		"[260703135044-556c-1719-PR1726] 13:52:11 **CHANGES_REQUESTED**\r\n"
 	reviewRunDir := filepath.Join(repoRoot, ".sandman", "batches", reviewBatchID, "runs", reviewRunID)
 	if err := os.MkdirAll(reviewRunDir, 0755); err != nil {
 		t.Fatalf("mkdir review run dir: %v", err)
@@ -2186,7 +2186,7 @@ func TestPortal_ReviewVerdictFromRunLog(t *testing.T) {
 		},
 		{
 			name:    "log with timestamps and runID prefix is parsed",
-			logText: "[abcd-260618113825-PR42] 13:52:10 ## Decision\n[abcd-260618113825-PR42] 13:52:11 **CHANGES_REQUESTED**\n",
+			logText: "[260618113825-abcd-PR42] 13:52:10 ## Decision\n[260618113825-abcd-PR42] 13:52:11 **CHANGES_REQUESTED**\n",
 			want:    "Changes requested",
 			wantOK:  true,
 		},
@@ -2204,13 +2204,13 @@ func TestPortal_ReviewVerdictFromRunLog(t *testing.T) {
 		},
 		{
 			name:    "runID-prefixed APPROVED with trailing double-quote is recognised",
-			logText: "[4f35-260704130316-1755-PR1763] 13:03:16 ## Decision\n[4f35-260704130316-1755-PR1763] 13:03:16 **APPROVED**\"\n",
+			logText: "[260704130316-4f35-1755-PR1763] 13:03:16 ## Decision\n[260704130316-4f35-1755-PR1763] 13:03:16 **APPROVED**\"\n",
 			want:    "Approved",
 			wantOK:  true,
 		},
 		{
 			// Issue #1792: production log line at 19:01:06 in
-			// d9f0-260704185852-1779-PR1789/run.log is
+			// 260704185852-d9f0-1779-PR1789/run.log is
 			// `**APPROVED**" 2>&1 | tail -5` — the bash shell left
 			// the closing quote of `gh pr comment --body "..."`
 			// AND the redirect-and-pipe trailer on the same line
@@ -2233,7 +2233,7 @@ func TestPortal_ReviewVerdictFromRunLog(t *testing.T) {
 			// Full d9f0-…-PR1789 log-line shape: the runID timestamp
 			// prefix is on the same line as the marker.
 			name:    "runID-prefixed APPROVED with trailing shell-pipe debris is recognised",
-			logText: "[d9f0-260704185852-1779-PR1789] 19:01:06 ## Decision\n[d9f0-260704185852-1779-PR1789] 19:01:06 **APPROVED**\" 2>&1 | tail -5\n",
+			logText: "[260704185852-d9f0-1779-PR1789] 19:01:06 ## Decision\n[260704185852-d9f0-1779-PR1789] 19:01:06 **APPROVED**\" 2>&1 | tail -5\n",
 			want:    "Approved",
 			wantOK:  true,
 		},

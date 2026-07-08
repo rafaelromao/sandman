@@ -16,7 +16,7 @@ import (
 // on its own.
 func TestPortalRunsView_RunFromState_ReviewWithoutIssueNumberUsesReviewOfPRLabel(t *testing.T) {
 	v := &portalRunsView{}
-	runID := "a0c19-260622193226-PR1508"
+	runID := "260622193226-a0c19-PR1508"
 	state := events.RunState{
 		RunID: runID,
 		Started: events.Event{
@@ -55,7 +55,7 @@ func TestPortalRunsView_RunFromState_ReviewWithoutIssueNumberUsesReviewOfPRLabel
 // don't fabricate PR=<none>.
 func TestPortalRunsView_RunFromState_ReviewWithoutIssueOrPRFallsBackToRunID(t *testing.T) {
 	v := &portalRunsView{}
-	runID := "a0c19-260622193226-review"
+	runID := "260622193226-a0c19-review"
 	state := events.RunState{
 		RunID: runID,
 		Started: events.Event{

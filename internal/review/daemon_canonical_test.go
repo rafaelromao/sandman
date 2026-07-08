@@ -66,17 +66,17 @@ func TestDaemon_ReviewRunIDAndFolder_AreCanonical(t *testing.T) {
 	if !strings.HasSuffix(rowID, "-PR42") {
 		t.Errorf("RunID must end with -PR<pr>, got %q", rowID)
 	}
-	// Canonical shape: <sid>-<ts>-<rest>. <sid> is exactly four
-	// lowercase hex chars and <ts> is twelve digits (060102150405).
+	// Canonical shape: <ts>-<sid>-<rest>. <ts> is twelve digits
+	// (060102150405) and <sid> is exactly four lowercase hex chars.
 	parts := strings.SplitN(rowID, "-", 3)
 	if len(parts) < 3 {
 		t.Fatalf("RunID must contain at least 3 dash-separated parts, got %q", rowID)
 	}
-	if l := len(parts[0]); l != 4 {
-		t.Errorf("RunID <sid> segment length = %d, want 4 (hex), got %q", l, rowID)
-	}
-	if l := len(parts[1]); l != 12 {
+	if l := len(parts[0]); l != 12 {
 		t.Errorf("RunID <ts> segment length = %d, want 12, got %q", l, rowID)
+	}
+	if l := len(parts[1]); l != 4 {
+		t.Errorf("RunID <sid> segment length = %d, want 4 (hex), got %q", l, rowID)
 	}
 
 	// Acceptance #2: run.json.RunID matches the canonical review run ID.
@@ -332,10 +332,10 @@ func TestDaemon_LoadSeenCache_ReadsCanonicalRunFolder(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
 	batchesDir := filepath.Join(dir, "batches")
-	batchID := "abcd-260625120000-PR42"
+	batchID := "260625120000-abcd-PR42"
 	batchPath := filepath.Join(batchesDir, batchID)
 	// Canonical rowID for this prior batch's review (no linked issue).
-	rowID := "abcd-260625120000-PR42"
+	rowID := "260625120000-abcd-PR42"
 	runDir := filepath.Join(batchPath, "runs", rowID)
 	if err := os.MkdirAll(runDir, 0o755); err != nil {
 		t.Fatalf("create canonical run dir: %v", err)
@@ -400,7 +400,7 @@ func TestDaemon_LoadSeenCache_IgnoresLegacyRunsReviewFolder(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
 	batchesDir := filepath.Join(dir, "batches")
-	batchID := "abcd-260625120000-PR42"
+	batchID := "260625120000-abcd-PR42"
 	batchPath := filepath.Join(batchesDir, batchID)
 	legacyRunDir := filepath.Join(batchPath, "runs", "review")
 	if err := os.MkdirAll(legacyRunDir, 0o755); err != nil {

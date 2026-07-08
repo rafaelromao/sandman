@@ -87,9 +87,9 @@ func TestPortal_RunFromState_MultiIssueBatchActive_LogPathUsesOnDiskDirSuffix(t 
 		t.Fatal(err)
 	}
 
-	const perRowRunID = "fde2-260703095305-1704"
-	const onDiskDir = "fde2-260703095305-1699+6"
-	const indexEntryID = "fde2-260703095305-1699"
+	const perRowRunID = "260703095305-fde2-1704"
+	const onDiskDir = "260703095305-fde2-1699+6"
+	const indexEntryID = "260703095305-fde2-1699"
 
 	// Build the per-row log at the on-disk (+N) path. This is the file
 	// the agent writes via O_APPEND during AgentRun.Execute; its mtime
@@ -155,8 +155,8 @@ func TestPortal_RunFromState_ActiveNil_MultiIssueBatch_LogPathFromEventPayload(t
 		t.Fatal(err)
 	}
 
-	const perRowRunID = "fde2-260703095305-1704"
-	const onDiskDir = "fde2-260703095305-1699+6"
+	const perRowRunID = "260703095305-fde2-1704"
+	const onDiskDir = "260703095305-fde2-1699+6"
 
 	logPath := filepath.Join(repoRoot, ".sandman", "batches", onDiskDir, "runs", perRowRunID, "run.log")
 	if err := os.MkdirAll(filepath.Dir(logPath), 0755); err != nil {
@@ -211,8 +211,8 @@ func TestPortal_DiscoverActiveRuns_IssueMultiBatch_RunIDIsPerRow(t *testing.T) {
 
 	const firstIssue = 1699
 	const issueN = 6
-	const perRowRunID = "fde2-260703095305-1704"
-	const onDiskDir = "fde2-260703095305-1699+6"
+	const perRowRunID = "260703095305-fde2-1704"
+	const onDiskDir = "260703095305-fde2-1699+6"
 
 	batchDir := filepath.Join(repoRoot, ".sandman", "batches", onDiskDir)
 	batchSockPath := filepath.Join(batchDir, "batch.sock")
@@ -297,9 +297,9 @@ func TestPortal_RunFromActiveBatchIssue_StateLessMultiBatch_LogPathFromActiveDir
 		t.Fatal(err)
 	}
 
-	const perRowRunID = "fde2-260703095305-1704"
-	const onDiskDir = "fde2-260703095305-1699+6"
-	const indexEntryID = "fde2-260703095305-1699"
+	const perRowRunID = "260703095305-fde2-1704"
+	const onDiskDir = "260703095305-fde2-1699+6"
+	const indexEntryID = "260703095305-fde2-1699"
 
 	batchDir := filepath.Join(repoRoot, ".sandman", "batches", onDiskDir)
 	logPath := filepath.Join(batchDir, "runs", perRowRunID, "run.log")
@@ -345,8 +345,8 @@ func TestPortal_Compute_LeavesLastOutputAtNilForCompletedRows(t *testing.T) {
 	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
 	finishedAt := startedAt.Add(2 * time.Minute)
 	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
-		{Type: "run.started", Timestamp: startedAt, RunID: "abcd-260618113825-42", Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
-		{Type: "run.finished", Timestamp: finishedAt, RunID: "abcd-260618113825-42", Issue: 42, Payload: map[string]any{"status": "success", "branch": "sandman/42-fix"}},
+		{Type: "run.started", Timestamp: startedAt, RunID: "260618113825-abcd-42", Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
+		{Type: "run.finished", Timestamp: finishedAt, RunID: "260618113825-abcd-42", Issue: 42, Payload: map[string]any{"status": "success", "branch": "sandman/42-fix"}},
 	})
 
 	runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")})

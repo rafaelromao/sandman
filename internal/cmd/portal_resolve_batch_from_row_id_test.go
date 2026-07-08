@@ -21,8 +21,8 @@ func TestPortalRunsView_ResolveFromRowID_BothMiss(t *testing.T) {
 		runID string
 	}{
 		{name: "empty index and run id", idx: idx, runID: ""},
-		{name: "nil index", idx: nil, runID: "abcd-260618113825-42"},
-		{name: "empty index with run id", idx: &batchindex.Index{Version: batchindex.IndexVersion}, runID: "abcd-260618113825-42"},
+		{name: "nil index", idx: nil, runID: "260618113825-abcd-42"},
+		{name: "empty index with run id", idx: &batchindex.Index{Version: batchindex.IndexVersion}, runID: "260618113825-abcd-42"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -46,7 +46,7 @@ func TestPortalRunsView_ResolveFromRowID_BothMiss(t *testing.T) {
 
 // Exact match returns the index batch with Path populated.
 func TestPortalRunsView_ResolveFromRowID_ExactMatch(t *testing.T) {
-	runID := "abcd-260618113825-42"
+	runID := "260618113825-abcd-42"
 	batchDir := filepath.Join(t.TempDir(), runID)
 	idx := &batchindex.Index{
 		Version: batchindex.IndexVersion,
@@ -77,8 +77,8 @@ func TestPortalRunsView_ResolveFromRowID_FallbackByRunManifest(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	publicBatchID := "abcd-260618113825-42+1"
-	perRowID := "abcd-260618113825-42"
+	publicBatchID := "260618113825-abcd-42+1"
+	perRowID := "260618113825-abcd-42"
 	batchDir := filepath.Join(repoRoot, ".sandman", "batches", publicBatchID)
 	if err := os.MkdirAll(filepath.Join(batchDir, "runs", perRowID), 0755); err != nil {
 		t.Fatal(err)
@@ -124,9 +124,9 @@ func TestPortalRunsView_ResolveFromRowID_FallbackBatchIdNotInIndex(t *testing.T)
 		t.Fatal(err)
 	}
 
-	publicBatchID := "abcd-260618113825-42+1"
-	perRowID := "abcd-260618113825-42"
-	staleBatchID := "abcd-260618113825-42+1-stale-evicted"
+	publicBatchID := "260618113825-abcd-42+1"
+	perRowID := "260618113825-abcd-42"
+	staleBatchID := "260618113825-abcd-42+1-stale-evicted"
 	batchDir := filepath.Join(repoRoot, ".sandman", "batches", publicBatchID)
 	if err := os.MkdirAll(filepath.Join(batchDir, "runs", perRowID), 0755); err != nil {
 		t.Fatal(err)

@@ -165,7 +165,7 @@ func TestSlice10_SingleIssueBatchIdentity(t *testing.T) {
 		t.Fatalf("unexpected error: %v\noutput:\n%s", err, buf.String())
 	}
 
-	wantPublicBatchID := spy.req.RunShortID + "-" + spy.req.RunTS + "-42"
+	wantPublicBatchID := spy.req.RunTS + "-" + spy.req.RunShortID + "-42"
 
 	idx, err := batchindex.Load(filepath.Join(dir, ".sandman", "batches.json"))
 	if err != nil {
@@ -226,9 +226,9 @@ func TestSlice10_MultiIssueBatchIdentity(t *testing.T) {
 		t.Fatalf("unexpected error: %v\noutput:\n%s", err, buf.String())
 	}
 
-	wantPublicBatchID := spy.req.RunShortID + "-" + spy.req.RunTS + "-42+1"
-	wantFirstRowID := spy.req.RunShortID + "-" + spy.req.RunTS + "-42"
-	wantSecondRowID := spy.req.RunShortID + "-" + spy.req.RunTS + "-43"
+	wantPublicBatchID := spy.req.RunTS + "-" + spy.req.RunShortID + "-42+1"
+	wantFirstRowID := spy.req.RunTS + "-" + spy.req.RunShortID + "-42"
+	wantSecondRowID := spy.req.RunTS + "-" + spy.req.RunShortID + "-43"
 
 	idx, err := batchindex.Load(filepath.Join(dir, ".sandman", "batches.json"))
 	if err != nil {
@@ -280,7 +280,7 @@ func TestSlice10_AutoSelectAndPostSelectionIdentity(t *testing.T) {
 		t.Fatalf("unexpected error: %v\noutput:\n%s", err, buf.String())
 	}
 
-	wantPost := spy.req.RunShortID + "-" + spy.req.RunTS + "-42"
+	wantPost := spy.req.RunTS + "-" + spy.req.RunShortID + "-42"
 
 	idx, err := batchindex.Load(filepath.Join(dir, ".sandman", "batches.json"))
 	if err != nil {
@@ -1270,7 +1270,7 @@ func TestSlice10_ContinueMintsFreshBatchAndRunIDs(t *testing.T) {
 	if spy.req.RunTS == "" || spy.req.RunShortID == "" {
 		t.Fatalf("expected fresh batch identity, got ts=%q shortid=%q", spy.req.RunTS, spy.req.RunShortID)
 	}
-	wantFreshBatchID := spy.req.RunShortID + "-" + spy.req.RunTS + "-42"
+	wantFreshBatchID := spy.req.RunTS + "-" + spy.req.RunShortID + "-42"
 	if spy.req.RunID == "prev-ts-abcd-42" {
 		t.Fatalf("expected fresh RunID, got prior %q", spy.req.RunID)
 	}

@@ -82,7 +82,7 @@ console.log('PASS');
 
 func TestPortalDiffCreateRunRow_RendersRetryAndReviewSummaryAndDropsGroupedChips(t *testing.T) {
 	js := `const body = makeMockBody();
-const parentRun = { key: 'abcd-260618113825-1', kind: 'active', status: 'reviewing', issueLabel: '#1', runId: 'abcd-260618113825-1', issueNumber: 1, retriesDone: 3, retriesTotal: 3, reviewCount: 2, reviewVerdict: 'Approved', batchIssues: [1, 2, 3] };
+const parentRun = { key: '260618113825-abcd-1', kind: 'active', status: 'reviewing', issueLabel: '#1', runId: '260618113825-abcd-1', issueNumber: 1, retriesDone: 3, retriesTotal: 3, reviewCount: 2, reviewVerdict: 'Approved', batchIssues: [1, 2, 3] };
 const groupedReview = { key: 'PR42', kind: 'active', status: 'reviewing', review: true, issueLabel: 'PR42', runId: 'PR42', issueNumber: 1, prNumber: 42, reason: 'review', groupedReview: true };
 const stopGroups = new Set();
 const opts = { helpers, stopGroups, expandedKey: null };
@@ -98,9 +98,9 @@ if (body.querySelector('tr.context-row[data-context-for="PR42"]')) throw new Err
 const groupedTitle = createdGrouped.row.querySelector('[data-cell="title"]').children[0];
 if (groupedTitle.children.length !== 2) throw new Error('expected grouped review title to keep label and meta only');
 
-const singularRun = { key: 'abcd-260618113825-2', kind: 'active', status: 'reviewing', issueLabel: '#2', runId: 'abcd-260618113825-2', issueNumber: 2, retriesDone: 1, retriesTotal: 1 };
+const singularRun = { key: '260618113825-abcd-2', kind: 'active', status: 'reviewing', issueLabel: '#2', runId: '260618113825-abcd-2', issueNumber: 2, retriesDone: 1, retriesTotal: 1 };
 SandmanPortalDiff.insertRunRow(body, singularRun, opts);
-const singularMeta = body.querySelector('tr[data-run-key="abcd-260618113825-2"]').querySelector('[data-cell="title"]').children[0].children[1];
+const singularMeta = body.querySelector('tr[data-run-key="260618113825-abcd-2"]').querySelector('[data-cell="title"]').children[0].children[1];
 if (!singularMeta.textContent.includes('1 retry')) throw new Error('expected singular retry label, got ' + singularMeta.textContent);
 if (singularMeta.textContent.includes('retriy')) throw new Error('misspelling "retriy" must not appear, got ' + singularMeta.textContent);
 console.log('PASS');
@@ -531,28 +531,28 @@ console.log('PASS');
 
 func TestPortalDiffCreateRunRow_DetailRowWhenExpanded(t *testing.T) {
 	js := `const body = makeMockBody();
-const parentRun = { key: 'abcd-260618113825-1', kind: 'active', status: 'reviewing', issueLabel: '#1', runId: 'abcd-260618113825-1', issueNumber: 1, reviewCount: 1 };
+const parentRun = { key: '260618113825-abcd-1', kind: 'active', status: 'reviewing', issueLabel: '#1', runId: '260618113825-abcd-1', issueNumber: 1, reviewCount: 1 };
 const childReview = { key: 'PR42', kind: 'completed', status: 'success', review: true, issueLabel: 'PR42', runId: 'PR42', issueNumber: 1, prNumber: 42 };
 const retryRun = { key: 'retry-1', kind: 'active', status: 'running', issueLabel: 'Issue 1 retry', runId: 'retry-1', issueNumber: 1 };
 const run = parentRun;
 const stopGroups = new Set();
-const opts = { helpers, stopGroups, expandedKey: 'abcd-260618113825-1', runs: [parentRun, retryRun, childReview] };
+const opts = { helpers, stopGroups, expandedKey: '260618113825-abcd-1', runs: [parentRun, retryRun, childReview] };
 const created = SandmanPortalDiff.insertRunRow(body, run, opts);
 if (!created.row) throw new Error('expected data row');
 if (!created.detailRow) throw new Error('expected detail row when expandedKey matches');
-if (created.detailRow.getAttribute('data-detail-for') !== 'abcd-260618113825-1') throw new Error('detail row has wrong data-detail-for');
-if (created.row.getAttribute('id') !== 'run-row-abcd-260618113825-1') throw new Error('expected stable row id, got ' + created.row.getAttribute('id'));
-if (created.row.getAttribute('aria-controls') !== 'run-detail-abcd-260618113825-1') throw new Error('expected aria-controls=run-detail-issue-1, got ' + created.row.getAttribute('aria-controls'));
-if (created.detailRow.getAttribute('id') !== 'run-detail-abcd-260618113825-1') throw new Error('expected stable detail id, got ' + created.detailRow.getAttribute('id'));
+if (created.detailRow.getAttribute('data-detail-for') !== '260618113825-abcd-1') throw new Error('detail row has wrong data-detail-for');
+if (created.row.getAttribute('id') !== 'run-row-260618113825-abcd-1') throw new Error('expected stable row id, got ' + created.row.getAttribute('id'));
+if (created.row.getAttribute('aria-controls') !== 'run-detail-260618113825-abcd-1') throw new Error('expected aria-controls=run-detail-issue-1, got ' + created.row.getAttribute('aria-controls'));
+if (created.detailRow.getAttribute('id') !== 'run-detail-260618113825-abcd-1') throw new Error('expected stable detail id, got ' + created.detailRow.getAttribute('id'));
 if (created.detailRow.getAttribute('role') !== 'region') throw new Error('expected detail row role=region');
-if (created.detailRow.getAttribute('aria-labelledby') !== 'run-row-abcd-260618113825-1') throw new Error('expected detail row aria-labelledby run-row-issue-1, got ' + created.detailRow.getAttribute('aria-labelledby'));
+if (created.detailRow.getAttribute('aria-labelledby') !== 'run-row-260618113825-abcd-1') throw new Error('expected detail row aria-labelledby run-row-issue-1, got ' + created.detailRow.getAttribute('aria-labelledby'));
 if (body.children.length !== 2) throw new Error('expected body to have 2 children, got ' + body.children.length);
 const subjectSelect = created.detailRow.querySelector('select[data-action="set-subject"]');
 if (!subjectSelect) throw new Error('expected subject selector in detail row');
 if (subjectSelect.children.length !== 2) throw new Error('expected selector for parent and one child review, got ' + subjectSelect.children.length);
-if (subjectSelect.children[0].getAttribute('value') !== 'abcd-260618113825-1') throw new Error('expected parent option value to use run ID, got ' + subjectSelect.children[0].getAttribute('value'));
+if (subjectSelect.children[0].getAttribute('value') !== '260618113825-abcd-1') throw new Error('expected parent option value to use run ID, got ' + subjectSelect.children[0].getAttribute('value'));
 if (subjectSelect.children[1].getAttribute('value') !== 'PR42') throw new Error('expected child review option value to use run ID, got ' + subjectSelect.children[1].getAttribute('value'));
-if (subjectSelect.children[0].textContent !== 'abcd-260618113825-1') throw new Error('expected parent label to be run ID only, got ' + subjectSelect.children[0].textContent);
+if (subjectSelect.children[0].textContent !== '260618113825-abcd-1') throw new Error('expected parent label to be run ID only, got ' + subjectSelect.children[0].textContent);
 if (subjectSelect.children[1].textContent !== 'PR42') throw new Error('expected review label to be run ID only, got ' + subjectSelect.children[1].textContent);
 const tabButtons = created.detailRow.querySelectorAll('button[data-action="set-tab"]');
 if (tabButtons.length !== 3) throw new Error('expected 3 tab buttons, got ' + tabButtons.length);
@@ -567,14 +567,14 @@ console.log('PASS');
 
 func TestPortalDiffCreateRunRow_ExpandedChildReviewKeepsVisibleParentRow(t *testing.T) {
 	js := `const body = makeMockBody();
-const parentRun = { key: 'abcd-260618113825-1', kind: 'active', status: 'reviewing', issueLabel: '#1', runId: 'abcd-260618113825-1', issueNumber: 1, reviewCount: 1 };
+const parentRun = { key: '260618113825-abcd-1', kind: 'active', status: 'reviewing', issueLabel: '#1', runId: '260618113825-abcd-1', issueNumber: 1, reviewCount: 1 };
 const childReview = { key: 'PR42', kind: 'completed', status: 'success', review: true, issueLabel: 'PR42', runId: 'PR42', issueNumber: 1, prNumber: 42 };
 const stopGroups = new Set();
 const opts = { helpers, stopGroups, expandedKey: 'PR42', runs: [parentRun, childReview], visibleRuns: [parentRun] };
 const created = SandmanPortalDiff.insertRunRow(body, parentRun, opts);
 if (!created.detailRow) throw new Error('expected detail row when child review is expanded');
 if (body.querySelector('tr[data-run-key="PR42"]')) throw new Error('expected hidden child review row not to render');
-if (body.querySelector('tr[data-run-key="abcd-260618113825-1"]') !== created.row) throw new Error('expected visible parent row to remain rendered');
+if (body.querySelector('tr[data-run-key="260618113825-abcd-1"]') !== created.row) throw new Error('expected visible parent row to remain rendered');
 const subjectSelect = created.detailRow.querySelector('select[data-action="set-subject"]');
 if (!subjectSelect || subjectSelect.children.length !== 2) throw new Error('expected parent row detail selector to include child review');
 console.log('PASS');
@@ -636,18 +636,18 @@ console.log('PASS');
 
 func TestPortalDiffDiffRuns_SubjectSelectorIncludesDistinctParentAndReview(t *testing.T) {
 	js := `const body = makeMockBody();
-const parentRun = { key: 'abcd-260618113825-1', kind: 'active', status: 'reviewing', review: false, issueLabel: '#1', runId: 'abcd-260618113825-1', issueNumber: 1, reviewCount: 1 };
+const parentRun = { key: '260618113825-abcd-1', kind: 'active', status: 'reviewing', review: false, issueLabel: '#1', runId: '260618113825-abcd-1', issueNumber: 1, reviewCount: 1 };
 const review = { key: 'PR42', kind: 'completed', status: 'success', review: true, issueLabel: 'PR42', runId: 'PR42', issueNumber: 1, prNumber: 42 };
 const stopGroups = new Set();
-const opts = { helpers, stopGroups, expandedKey: 'abcd-260618113825-1', runs: [parentRun, review], visibleRuns: [parentRun] };
+const opts = { helpers, stopGroups, expandedKey: '260618113825-abcd-1', runs: [parentRun, review], visibleRuns: [parentRun] };
 const result = SandmanPortalDiff.diffRuns(body, [parentRun, review], opts);
 if (result.inserted < 1) throw new Error('expected rows to be inserted, got ' + JSON.stringify(result));
-const detailRow = body.querySelector('tr.detail-row[data-detail-for="abcd-260618113825-1"]');
+const detailRow = body.querySelector('tr.detail-row[data-detail-for="260618113825-abcd-1"]');
 if (!detailRow) throw new Error('expected detail row for parent run');
 const subjectSelect = detailRow.querySelector('select[data-action="set-subject"]');
 if (!subjectSelect) throw new Error('expected subject selector for parent run');
 if (subjectSelect.children.length !== 2) throw new Error('expected parent and review options, got ' + subjectSelect.children.length);
-if (subjectSelect.children[0].getAttribute('value') !== 'abcd-260618113825-1') throw new Error('expected parent option to use the parent run id, got ' + subjectSelect.children[0].getAttribute('value'));
+if (subjectSelect.children[0].getAttribute('value') !== '260618113825-abcd-1') throw new Error('expected parent option to use the parent run id, got ' + subjectSelect.children[0].getAttribute('value'));
 if (subjectSelect.children[1].getAttribute('value') !== 'PR42') throw new Error('expected review option to use the review run id, got ' + subjectSelect.children[1].getAttribute('value'));
 console.log('PASS');
 `
@@ -656,21 +656,21 @@ console.log('PASS');
 
 func TestPortalDiffDiffRuns_SubjectSelectorSkipsQueuedAndBlockedPlaceholders(t *testing.T) {
 	js := `const body = makeMockBody();
-const parentRun = { key: 'abcd-260618113825-1', kind: 'active', status: 'reviewing', review: false, issueLabel: '#1', runId: 'abcd-260618113825-1', issueNumber: 1, reviewCount: 1 };
+const parentRun = { key: '260618113825-abcd-1', kind: 'active', status: 'reviewing', review: false, issueLabel: '#1', runId: '260618113825-abcd-1', issueNumber: 1, reviewCount: 1 };
 const review = { key: 'PR42', kind: 'completed', status: 'success', review: true, issueLabel: 'PR42', runId: 'PR42', issueNumber: 1, prNumber: 42 };
 const queued = { key: 'queued-1', kind: 'active', status: 'queued', review: false, issueLabel: '#1 queued', runId: 'queued-1', issueNumber: 1 };
 const blocked = { key: 'blocked-1', kind: 'active', status: 'blocked', review: false, issueLabel: '#1 blocked', runId: 'blocked-1', issueNumber: 1 };
 const stopGroups = new Set();
-const opts = { helpers, stopGroups, expandedKey: 'abcd-260618113825-1', runs: [parentRun, review, queued, blocked], visibleRuns: [parentRun] };
+const opts = { helpers, stopGroups, expandedKey: '260618113825-abcd-1', runs: [parentRun, review, queued, blocked], visibleRuns: [parentRun] };
 const result = SandmanPortalDiff.diffRuns(body, [parentRun], opts);
 if (result.inserted < 1) throw new Error('expected rows to be inserted, got ' + JSON.stringify(result));
-const detailRow = body.querySelector('tr.detail-row[data-detail-for="abcd-260618113825-1"]');
+const detailRow = body.querySelector('tr.detail-row[data-detail-for="260618113825-abcd-1"]');
 if (!detailRow) throw new Error('expected detail row for parent run');
 const subjectSelect = detailRow.querySelector('select[data-action="set-subject"]');
 if (!subjectSelect) throw new Error('expected subject selector for parent run');
 if (subjectSelect.children.length !== 2) throw new Error('expected parent and review options only, got ' + subjectSelect.children.length);
 const values = Array.from(subjectSelect.children).map((opt) => opt.getAttribute('value'));
-if (values.indexOf('abcd-260618113825-1') < 0 || values.indexOf('PR42') < 0) throw new Error('expected parent and review subjects, got ' + JSON.stringify(values));
+if (values.indexOf('260618113825-abcd-1') < 0 || values.indexOf('PR42') < 0) throw new Error('expected parent and review subjects, got ' + JSON.stringify(values));
 if (values.indexOf('queued-1') >= 0 || values.indexOf('blocked-1') >= 0) throw new Error('expected queued/blocked placeholders to be filtered, got ' + JSON.stringify(values));
 console.log('PASS');
 `
@@ -679,15 +679,15 @@ console.log('PASS');
 
 func TestPortalDiffUpdateCells_RefreshesSubjectSelectorWhenChildReviewAppears(t *testing.T) {
 	js := `const body = makeMockBody();
-const parentRun = { key: 'abcd-260618113825-1', kind: 'active', status: 'reviewing', issueLabel: '#1', runId: 'abcd-260618113825-1', issueNumber: 1, reviewCount: 1 };
+const parentRun = { key: '260618113825-abcd-1', kind: 'active', status: 'reviewing', issueLabel: '#1', runId: '260618113825-abcd-1', issueNumber: 1, reviewCount: 1 };
 const childReview = { key: 'PR42', kind: 'completed', status: 'success', review: true, issueLabel: 'PR42', runId: 'PR42', issueNumber: 1, prNumber: 42 };
 const stopGroups = new Set();
-const opts1 = { helpers, stopGroups, expandedKey: 'abcd-260618113825-1', runs: [parentRun] };
+const opts1 = { helpers, stopGroups, expandedKey: '260618113825-abcd-1', runs: [parentRun] };
 const created = SandmanPortalDiff.insertRunRow(body, parentRun, opts1);
 const subjectSelectBefore = created.detailRow.querySelector('select[data-action="set-subject"]');
 if (subjectSelectBefore) throw new Error('expected no subject selector before a child review appears (nothing to switch between), got ' + subjectSelectBefore.children.length + ' options');
 SandmanPortalDiff.resetCounters();
-const opts2 = { helpers, stopGroups, expandedKey: 'abcd-260618113825-1', runs: [parentRun, childReview] };
+const opts2 = { helpers, stopGroups, expandedKey: '260618113825-abcd-1', runs: [parentRun, childReview] };
 SandmanPortalDiff.diffRuns(body, [parentRun], opts2);
 const subjectSelectAfter = created.detailRow.querySelector('select[data-action="set-subject"]');
 if (!subjectSelectAfter) throw new Error('expected subject selector after refresh');
@@ -1828,10 +1828,10 @@ console.log('PASS');
 
 func TestPortalDiffUpdateDetail_SwitchingSubjectRestoresPlaceholder(t *testing.T) {
 	js := `const body = makeMockBody();
-const parentRun = { key: 'abcd-260618113825-1', kind: 'active', status: 'reviewing', issueLabel: '#1', runId: 'abcd-260618113825-1', issueNumber: 1, reviewCount: 1, log: '' };
+const parentRun = { key: '260618113825-abcd-1', kind: 'active', status: 'reviewing', issueLabel: '#1', runId: '260618113825-abcd-1', issueNumber: 1, reviewCount: 1, log: '' };
 const childReview = { key: 'PR42', kind: 'completed', status: 'success', review: true, issueLabel: 'PR42', runId: 'PR42', issueNumber: 1, prNumber: 42, log: 'review log' };
 const stopGroups = new Set();
-const opts1 = { helpers, stopGroups, expandedKey: 'abcd-260618113825-1', tabs: { 'abcd-260618113825-1': 'log' }, runs: [parentRun, childReview], visibleRuns: [parentRun] };
+const opts1 = { helpers, stopGroups, expandedKey: '260618113825-abcd-1', tabs: { '260618113825-abcd-1': 'log' }, runs: [parentRun, childReview], visibleRuns: [parentRun] };
 SandmanPortalDiff.diffRuns(body, [parentRun], opts1);
 const detailRow = body.children[1];
 const pre1 = detailRow.querySelector('pre[data-scroll-key]');
@@ -1946,17 +1946,17 @@ console.log('PASS');
 
 func TestPortalDiffUpdateDetailEvents_IgnoresSubjectPickerChurn(t *testing.T) {
 	js := `const body = makeMockBody();
-const parentRun = { key: 'abcd-260618113825-1', kind: 'active', status: 'reviewing', issueLabel: '#1', runId: 'abcd-260618113825-1', issueNumber: 1, reviewCount: 1, events: [{ type: 'start', timestamp: 1700000000000, payload: { ok: true } }] };
+const parentRun = { key: '260618113825-abcd-1', kind: 'active', status: 'reviewing', issueLabel: '#1', runId: '260618113825-abcd-1', issueNumber: 1, reviewCount: 1, events: [{ type: 'start', timestamp: 1700000000000, payload: { ok: true } }] };
 const reviewRun = { key: 'PR42', kind: 'completed', status: 'success', review: true, issueLabel: 'PR42', runId: 'PR42', issueNumber: 1, prNumber: 42 };
 const reviewRun2 = { key: 'PR43', kind: 'completed', status: 'success', review: true, issueLabel: 'PR43', runId: 'PR43', issueNumber: 1, prNumber: 43 };
 const stopGroups = new Set();
-const opts1 = { helpers, stopGroups, expandedKey: 'abcd-260618113825-1', tabs: { 'abcd-260618113825-1': 'events' }, runs: [parentRun, reviewRun], visibleRuns: [parentRun] };
+const opts1 = { helpers, stopGroups, expandedKey: '260618113825-abcd-1', tabs: { '260618113825-abcd-1': 'events' }, runs: [parentRun, reviewRun], visibleRuns: [parentRun] };
 SandmanPortalDiff.diffRuns(body, [parentRun], opts1);
 const detailRow = body.children[1];
 const content1 = detailRow.querySelector('.detail-content');
 const pre1 = detailRow.querySelector('pre[data-rendered-json]');
 if (!content1 || !pre1) throw new Error('expected initial events content');
-const opts2 = { helpers, stopGroups, expandedKey: 'abcd-260618113825-1', tabs: { 'abcd-260618113825-1': 'events' }, runs: [parentRun, reviewRun, reviewRun2], visibleRuns: [parentRun] };
+const opts2 = { helpers, stopGroups, expandedKey: '260618113825-abcd-1', tabs: { '260618113825-abcd-1': 'events' }, runs: [parentRun, reviewRun, reviewRun2], visibleRuns: [parentRun] };
 SandmanPortalDiff.resetCounters();
 SandmanPortalDiff.diffRuns(body, [parentRun], opts2);
 const counters = SandmanPortalDiff.getCounters();
@@ -2019,17 +2019,17 @@ console.log('PASS');
 
 func TestPortalDiffUpdateDetailDetails_IgnoresSubjectPickerChurn(t *testing.T) {
 	js := `const body = makeMockBody();
-const parentRun = { key: 'abcd-260618113825-1', kind: 'completed', status: 'success', issueLabel: '#1', runId: 'abcd-260618113825-1', issueNumber: 1, reviewCount: 1, startedAt: 1000, finishedAt: 2000, duration: 1, branch: 'main', logPath: '/tmp/run.log' };
+const parentRun = { key: '260618113825-abcd-1', kind: 'completed', status: 'success', issueLabel: '#1', runId: '260618113825-abcd-1', issueNumber: 1, reviewCount: 1, startedAt: 1000, finishedAt: 2000, duration: 1, branch: 'main', logPath: '/tmp/run.log' };
 const reviewRun = { key: 'PR42', kind: 'completed', status: 'success', review: true, issueLabel: 'PR42', runId: 'PR42', issueNumber: 1, prNumber: 42 };
 const reviewRun2 = { key: 'PR43', kind: 'completed', status: 'success', review: true, issueLabel: 'PR43', runId: 'PR43', issueNumber: 1, prNumber: 43 };
 const stopGroups = new Set();
-const opts1 = { helpers, stopGroups, expandedKey: 'abcd-260618113825-1', tabs: { 'abcd-260618113825-1': 'details' }, runs: [parentRun, reviewRun], visibleRuns: [parentRun] };
+const opts1 = { helpers, stopGroups, expandedKey: '260618113825-abcd-1', tabs: { '260618113825-abcd-1': 'details' }, runs: [parentRun, reviewRun], visibleRuns: [parentRun] };
 SandmanPortalDiff.diffRuns(body, [parentRun], opts1);
 const detailRow = body.children[1];
 const content1 = detailRow.querySelector('.detail-content');
 const pre1 = detailRow.querySelector('pre[data-rendered-json]');
 if (!content1 || !pre1) throw new Error('expected initial details content');
-const opts2 = { helpers, stopGroups, expandedKey: 'abcd-260618113825-1', tabs: { 'abcd-260618113825-1': 'details' }, runs: [parentRun, reviewRun, reviewRun2], visibleRuns: [parentRun] };
+const opts2 = { helpers, stopGroups, expandedKey: '260618113825-abcd-1', tabs: { '260618113825-abcd-1': 'details' }, runs: [parentRun, reviewRun, reviewRun2], visibleRuns: [parentRun] };
 SandmanPortalDiff.resetCounters();
 SandmanPortalDiff.diffRuns(body, [parentRun], opts2);
 const counters = SandmanPortalDiff.getCounters();
@@ -2226,10 +2226,10 @@ console.log('PASS');
 
 func TestPortalDiffUpdateDetail_SwitchingSubjectPreservesContent(t *testing.T) {
 	js := `const body = makeMockBody();
-const parentRun = { key: 'abcd-260618113825-1', kind: 'active', status: 'reviewing', issueLabel: '#1', runId: 'abcd-260618113825-1', issueNumber: 1, reviewCount: 1, log: 'parent log' };
+const parentRun = { key: '260618113825-abcd-1', kind: 'active', status: 'reviewing', issueLabel: '#1', runId: '260618113825-abcd-1', issueNumber: 1, reviewCount: 1, log: 'parent log' };
 const childReview = { key: 'PR42', kind: 'completed', status: 'success', review: true, issueLabel: 'PR42', runId: 'PR42', issueNumber: 1, prNumber: 42, log: 'review log' };
 const stopGroups = new Set();
-const opts1 = { helpers, stopGroups, expandedKey: 'abcd-260618113825-1', tabs: { 'abcd-260618113825-1': 'log' }, runs: [parentRun, childReview], visibleRuns: [parentRun] };
+const opts1 = { helpers, stopGroups, expandedKey: '260618113825-abcd-1', tabs: { '260618113825-abcd-1': 'log' }, runs: [parentRun, childReview], visibleRuns: [parentRun] };
 SandmanPortalDiff.diffRuns(body, [parentRun], opts1);
 const detailRow = body.children[1];
 const pre1 = detailRow.querySelector('pre[data-scroll-key]');
@@ -2258,10 +2258,10 @@ console.log('PASS');
 
 func TestPortalDiffUpdateDetail_SwitchingSubjectMutationsAndContent(t *testing.T) {
 	js := `const body = makeMockBody();
-const parentRun = { key: 'abcd-260618113825-1', kind: 'active', status: 'reviewing', issueLabel: '#1', runId: 'abcd-260618113825-1', issueNumber: 1, reviewCount: 1, log: 'parent log', socketPath: '/tmp/sock' };
+const parentRun = { key: '260618113825-abcd-1', kind: 'active', status: 'reviewing', issueLabel: '#1', runId: '260618113825-abcd-1', issueNumber: 1, reviewCount: 1, log: 'parent log', socketPath: '/tmp/sock' };
 const childReview = { key: 'PR42', kind: 'completed', status: 'success', review: true, issueLabel: 'PR42', runId: 'PR42', issueNumber: 1, prNumber: 42, log: 'review log' };
 const stopGroups = new Set();
-const opts1 = { helpers, stopGroups, expandedKey: 'abcd-260618113825-1', tabs: { 'abcd-260618113825-1': 'log' }, runs: [parentRun, childReview], visibleRuns: [parentRun] };
+const opts1 = { helpers, stopGroups, expandedKey: '260618113825-abcd-1', tabs: { '260618113825-abcd-1': 'log' }, runs: [parentRun, childReview], visibleRuns: [parentRun] };
 SandmanPortalDiff.diffRuns(body, [parentRun], opts1);
 const detailRow = body.children[1];
 const pre1 = detailRow.querySelector('pre[data-scroll-key]');
@@ -2286,10 +2286,10 @@ console.log('PASS');
 
 func TestPortalDiffUpdateDetail_SwitchingSubjectRoundTripReusesCachedPane(t *testing.T) {
 	js := `const body = makeMockBody();
-const parentRun = { key: 'abcd-260618113825-1', kind: 'active', status: 'reviewing', issueLabel: '#1', runId: 'abcd-260618113825-1', issueNumber: 1, reviewCount: 1, log: 'parent log' };
+const parentRun = { key: '260618113825-abcd-1', kind: 'active', status: 'reviewing', issueLabel: '#1', runId: '260618113825-abcd-1', issueNumber: 1, reviewCount: 1, log: 'parent log' };
 const childReview = { key: 'PR42', kind: 'completed', status: 'success', review: true, issueLabel: 'PR42', runId: 'PR42', issueNumber: 1, prNumber: 42, log: 'review log' };
 const stopGroups = new Set();
-const optsParent = { helpers, stopGroups, expandedKey: 'abcd-260618113825-1', tabs: { 'abcd-260618113825-1': 'log' }, runs: [parentRun, childReview], visibleRuns: [parentRun] };
+const optsParent = { helpers, stopGroups, expandedKey: '260618113825-abcd-1', tabs: { '260618113825-abcd-1': 'log' }, runs: [parentRun, childReview], visibleRuns: [parentRun] };
 const optsChild = { helpers, stopGroups, expandedKey: 'PR42', tabs: { 'PR42': 'log' }, runs: [parentRun, childReview], visibleRuns: [parentRun] };
 SandmanPortalDiff.diffRuns(body, [parentRun], optsParent);
 const detailRow = body.children[1];
@@ -4144,11 +4144,11 @@ console.log('PASS');
 }
 
 func TestPortalRunsView_VisibleRunForIssueGroup_PreservesReviewRunID(t *testing.T) {
-	js := `const review = { key: 'a0c19-260622193226-1227', kind: 'active', status: 'reviewing', review: true, issueLabel: '#1223', runId: 'a0c19-260622193226-1227', issueNumber: 1223, prNumber: 5 };
+	js := `const review = { key: '260622193226-a0c19-1227', kind: 'active', status: 'reviewing', review: true, issueLabel: '#1223', runId: '260622193226-a0c19-1227', issueNumber: 1223, prNumber: 5 };
 const stub = visibleRunForIssueGroup(1223, [review]);
 if (!stub) throw new Error('expected stub row for review-only issue group');
-if (stub.runId !== 'a0c19-260622193226-1227') throw new Error('expected stub.runId to preserve source RunID, got ' + JSON.stringify(stub.runId));
-if (stub.key !== 'a0c19-260622193226-1227') throw new Error('expected stub.key to preserve source RunID, got ' + JSON.stringify(stub.key));
+if (stub.runId !== '260622193226-a0c19-1227') throw new Error('expected stub.runId to preserve source RunID, got ' + JSON.stringify(stub.runId));
+if (stub.key !== '260622193226-a0c19-1227') throw new Error('expected stub.key to preserve source RunID, got ' + JSON.stringify(stub.key));
 console.log('PASS');
 `
 	runPortalHTMLScript(t, js)
@@ -4157,13 +4157,13 @@ console.log('PASS');
 // TestPortalRunsView_VisibleRunForIssueGroup_ReviewOnlyReturnsSourceRowWithReviewTrue
 // is the tracer bullet for issue #1489.
 func TestPortalRunsView_VisibleRunForIssueGroup_ReviewOnlyReturnsSourceRowWithReviewTrue(t *testing.T) {
-	js := `const review = { key: 'a0c19-260622193226-1227', kind: 'active', status: 'reviewing', review: true, issueLabel: '#1223', runId: 'a0c19-260622193226-1227', issueNumber: 1223, prNumber: 5 };
+	js := `const review = { key: '260622193226-a0c19-1227', kind: 'active', status: 'reviewing', review: true, issueLabel: '#1223', runId: '260622193226-a0c19-1227', issueNumber: 1223, prNumber: 5 };
 const stub = visibleRunForIssueGroup(1223, [review]);
 if (!stub) throw new Error('expected visible row for review-only issue group');
 if (stub.review !== true) throw new Error('expected visible row to keep review=true for review-only issue group, got ' + JSON.stringify(stub.review));
 if (stub.groupedReview !== false) throw new Error('expected groupedReview=false on review-only visible row, got ' + JSON.stringify(stub.groupedReview));
-if (stub.runId !== 'a0c19-260622193226-1227') throw new Error('expected visible row runId to match source, got ' + JSON.stringify(stub.runId));
-if (stub.key !== 'a0c19-260622193226-1227') throw new Error('expected visible row key to match source, got ' + JSON.stringify(stub.key));
+if (stub.runId !== '260622193226-a0c19-1227') throw new Error('expected visible row runId to match source, got ' + JSON.stringify(stub.runId));
+if (stub.key !== '260622193226-a0c19-1227') throw new Error('expected visible row key to match source, got ' + JSON.stringify(stub.key));
 console.log('PASS');
 `
 	runPortalHTMLScript(t, js)
@@ -4234,10 +4234,10 @@ console.log('PASS');
 // the Go projection set — here the explicit "Review of PR <N>" we now
 // construct server-side for this case.
 func TestPortalRunsView_VisibleRunsForTable_OrphanReviewWithoutIssueNumberPassesThrough(t *testing.T) {
-	js := `const review = { key: 'a0c19-260622193226-PR1508', kind: 'active', status: 'reviewing', review: true, issueLabel: 'Review of PR 1508', runId: 'a0c19-260622193226-PR1508', prNumber: 1508, startedAt: '2026-06-30T12:00:00Z' };
+	js := `const review = { key: '260622193226-a0c19-PR1508', kind: 'active', status: 'reviewing', review: true, issueLabel: 'Review of PR 1508', runId: '260622193226-a0c19-PR1508', prNumber: 1508, startedAt: '2026-06-30T12:00:00Z' };
 const visible = visibleRunsForTable([review]);
 if (visible.length !== 1) throw new Error('expected exactly one visible row, got ' + JSON.stringify(visible.length));
-if (visible[0].key !== 'a0c19-260622193226-PR1508') throw new Error('expected visible row key to match source runId, got ' + JSON.stringify(visible[0].key));
+if (visible[0].key !== '260622193226-a0c19-PR1508') throw new Error('expected visible row key to match source runId, got ' + JSON.stringify(visible[0].key));
 if (visible[0].issueLabel !== 'Review of PR 1508') throw new Error('expected visible row label to use the Review of PR <n> form, got ' + JSON.stringify(visible[0].issueLabel));
 console.log('PASS');
 `
@@ -4252,7 +4252,7 @@ console.log('PASS');
 // ADR-0029 §Review-only orphan label).
 func TestPortalDiffCreateRunRow_OrphanReviewWithoutIssueNumberRendersReviewOfPRLabel(t *testing.T) {
 	js := `const body = makeMockBody();
-const review = { key: 'a0c19-260622193226-PR1508', kind: 'active', status: 'reviewing', review: true, issueLabel: 'Review of PR 1508', runId: 'a0c19-260622193226-PR1508', prNumber: 1508, startedAt: '2026-06-30T12:00:00Z' };
+const review = { key: '260622193226-a0c19-PR1508', kind: 'active', status: 'reviewing', review: true, issueLabel: 'Review of PR 1508', runId: '260622193226-a0c19-PR1508', prNumber: 1508, startedAt: '2026-06-30T12:00:00Z' };
 const stopGroups = new Set();
 const opts = { helpers, stopGroups, expandedKey: null };
 const created = SandmanPortalDiff.insertRunRow(body, review, opts);
@@ -4328,7 +4328,7 @@ console.log('PASS');
 }
 
 func TestPortalRunsView_VisibleRunForIssueGroup_TerminalReviewWinsOverActiveKind(t *testing.T) {
-	js := `const review = { key: 'a0c19-260622193226-1227', kind: 'active', status: 'success', review: true, issueLabel: '#1223', runId: 'a0c19-260622193226-1227', issueNumber: 1223, prNumber: 5 };
+	js := `const review = { key: '260622193226-a0c19-1227', kind: 'active', status: 'success', review: true, issueLabel: '#1223', runId: '260622193226-a0c19-1227', issueNumber: 1223, prNumber: 5 };
 const stub = visibleRunForIssueGroup(1223, [review]);
 if (!stub) throw new Error('expected stub row for terminal review group');
 if (stub.kind !== 'completed') throw new Error('expected completed kind once terminal status is present, got ' + JSON.stringify(stub.kind));
@@ -4346,11 +4346,11 @@ console.log('PASS');
 }
 
 func TestPortalRunsView_VisibleRunForIssueGroup_PrefersLiveActiveOverCompletedParent(t *testing.T) {
-	js := `const parent = { key: 'abcd-260618113825-1-parent', kind: 'completed', status: 'success', review: false, issueLabel: '#1', runId: 'abcd-260618113825-1-parent', issueNumber: 1, batchKey: 'batch-1' };
-const active = { key: 'abcd-260618113825-1-active', kind: 'active', status: 'running', review: false, issueLabel: '#1', runId: 'abcd-260618113825-1-active', issueNumber: 1, batchKey: 'batch-1' };
+	js := `const parent = { key: '260618113825-abcd-1-parent', kind: 'completed', status: 'success', review: false, issueLabel: '#1', runId: '260618113825-abcd-1-parent', issueNumber: 1, batchKey: 'batch-1' };
+const active = { key: '260618113825-abcd-1-active', kind: 'active', status: 'running', review: false, issueLabel: '#1', runId: '260618113825-abcd-1-active', issueNumber: 1, batchKey: 'batch-1' };
 const result = visibleRunForIssueGroup(1, [parent, active]);
 if (!result) throw new Error('expected visible row');
-if (result.key !== 'abcd-260618113825-1-active') throw new Error('expected live active child as visible row, got ' + JSON.stringify(result.key));
+if (result.key !== '260618113825-abcd-1-active') throw new Error('expected live active child as visible row, got ' + JSON.stringify(result.key));
 if (result.kind !== 'active') throw new Error('expected active kind for visible row, got ' + JSON.stringify(result.kind));
 if (!helpers.isRunAbortable(result, new Set())) throw new Error('expected live active visible row to keep Abort control');
 console.log('PASS');
@@ -4359,10 +4359,10 @@ console.log('PASS');
 }
 
 func TestPortalRunsView_VisibleRunForIssueGroup_CompletedOnlyStillUsesCompletedRow(t *testing.T) {
-	js := `const parent = { key: 'abcd-260618113825-2-parent', kind: 'completed', status: 'success', review: false, issueLabel: '#2', runId: 'abcd-260618113825-2-parent', issueNumber: 2, reviewCount: 3, reviewVerdict: 'Approved' };
+	js := `const parent = { key: '260618113825-abcd-2-parent', kind: 'completed', status: 'success', review: false, issueLabel: '#2', runId: '260618113825-abcd-2-parent', issueNumber: 2, reviewCount: 3, reviewVerdict: 'Approved' };
 const result = visibleRunForIssueGroup(2, [parent]);
 if (!result) throw new Error('expected visible row');
-if (result.key !== 'abcd-260618113825-2-parent') throw new Error('expected completed row to stay visible, got ' + JSON.stringify(result.key));
+if (result.key !== '260618113825-abcd-2-parent') throw new Error('expected completed row to stay visible, got ' + JSON.stringify(result.key));
 if (result.kind !== 'completed') throw new Error('expected completed kind to stay visible, got ' + JSON.stringify(result.kind));
 if (result.status !== 'success') throw new Error('expected completed status to stay visible, got ' + JSON.stringify(result.status));
 if (result.reviewVerdict !== 'Approved') throw new Error('expected existing completed summary verdict to stay visible, got ' + JSON.stringify(result.reviewVerdict));
@@ -4392,11 +4392,11 @@ console.log('PASS');
 // parent, not the live child. The review child must remain accessible in the
 // expanded selector.
 func TestPortalRunsView_VisibleRunForIssueGroup_TerminalParentWinsOverLiveChild(t *testing.T) {
-	js := `const parent = { key: 'abcd-260618113825-1', kind: 'completed', status: 'success', review: false, issueLabel: '#1', runId: 'abcd-260618113825-1', issueNumber: 1 };
+	js := `const parent = { key: '260618113825-abcd-1', kind: 'completed', status: 'success', review: false, issueLabel: '#1', runId: '260618113825-abcd-1', issueNumber: 1 };
 const liveChild = { key: 'PR42', kind: 'active', status: 'reviewing', review: true, issueLabel: 'PR42', runId: 'PR42', issueNumber: 1, prNumber: 42 };
 const result = visibleRunForIssueGroup(1, [parent, liveChild]);
 if (!result) throw new Error('expected visible row');
-if (result.key !== 'abcd-260618113825-1') throw new Error('expected parent as visible row, got ' + JSON.stringify(result.key));
+if (result.key !== '260618113825-abcd-1') throw new Error('expected parent as visible row, got ' + JSON.stringify(result.key));
 if (result.status !== 'success') throw new Error('expected visible badge to be parent status (no live review flip), got ' + JSON.stringify(result.status));
 if (result.kind !== 'completed') throw new Error('expected completed kind, got ' + JSON.stringify(result.kind));
 if (result.review) throw new Error('expected review flag false for parent row, got ' + JSON.stringify(result.review));
@@ -4443,14 +4443,14 @@ console.log('PASS');
 
 func TestPortalRunsView_VisibleRunsForTable_SortsByStartedDesc(t *testing.T) {
 	js := `const runs = [
-  { key: 'abcd-260618113825-1014', kind: 'completed', status: 'failure', issueLabel: '#1014', runId: 'abcd-260618113825-1014', issueNumber: 1014, startedAt: '2026-06-29T04:34:39Z' },
-  { key: 'abcd-260618113825-1401', kind: 'completed', status: 'failure', issueLabel: '#1401', runId: 'abcd-260618113825-1401', issueNumber: 1401, startedAt: '2026-06-26T19:47:13Z' },
-  { key: 'abcd-260618113825-1402', kind: 'completed', status: 'failure', issueLabel: '#1402', runId: 'abcd-260618113825-1402', issueNumber: 1402, startedAt: '2026-06-27T00:12:51Z' },
-  { key: 'abcd-260618113825-1467', kind: 'active', status: 'running', issueLabel: '#1467', runId: 'abcd-260618113825-1467', issueNumber: 1467, startedAt: '2026-06-29T14:29:12Z' },
+  { key: '260618113825-abcd-1014', kind: 'completed', status: 'failure', issueLabel: '#1014', runId: '260618113825-abcd-1014', issueNumber: 1014, startedAt: '2026-06-29T04:34:39Z' },
+  { key: '260618113825-abcd-1401', kind: 'completed', status: 'failure', issueLabel: '#1401', runId: '260618113825-abcd-1401', issueNumber: 1401, startedAt: '2026-06-26T19:47:13Z' },
+  { key: '260618113825-abcd-1402', kind: 'completed', status: 'failure', issueLabel: '#1402', runId: '260618113825-abcd-1402', issueNumber: 1402, startedAt: '2026-06-27T00:12:51Z' },
+  { key: '260618113825-abcd-1467', kind: 'active', status: 'running', issueLabel: '#1467', runId: '260618113825-abcd-1467', issueNumber: 1467, startedAt: '2026-06-29T14:29:12Z' },
 ];
 const visible = visibleRunsForTable(runs);
 const order = visible.map((run) => run.key).join(',');
-if (order !== 'abcd-260618113825-1467,abcd-260618113825-1014,abcd-260618113825-1402,abcd-260618113825-1401') throw new Error('expected newest started rows first, got ' + JSON.stringify(order));
+if (order !== '260618113825-abcd-1467,260618113825-abcd-1014,260618113825-abcd-1402,260618113825-abcd-1401') throw new Error('expected newest started rows first, got ' + JSON.stringify(order));
 console.log('PASS');
 `
 	runPortalHTMLScript(t, js)
@@ -4463,13 +4463,13 @@ console.log('PASS');
 // "issue-N" instead of the real run identifier. This test asserts on the
 // post-table run shape the renderer actually receives.
 func TestPortalRunsView_VisibleRunsForTable_ReviewMetaLineShowsRealRunID(t *testing.T) {
-	js := `const review = { key: 'a0c19-260622193226-1227', kind: 'active', status: 'reviewing', review: true, issueLabel: '#1223', runId: 'a0c19-260622193226-1227', issueNumber: 1223, prNumber: 5 };
+	js := `const review = { key: '260622193226-a0c19-1227', kind: 'active', status: 'reviewing', review: true, issueLabel: '#1223', runId: '260622193226-a0c19-1227', issueNumber: 1223, prNumber: 5 };
 const visible = visibleRunsForTable([review]);
 if (visible.length !== 1) throw new Error('expected 1 visible row, got ' + visible.length);
 const rendered = visible[0];
-if (rendered.runId !== 'a0c19-260622193226-1227') throw new Error('expected visible[0].runId to preserve source RunID for meta-line rendering, got ' + JSON.stringify(rendered.runId));
+if (rendered.runId !== '260622193226-a0c19-1227') throw new Error('expected visible[0].runId to preserve source RunID for meta-line rendering, got ' + JSON.stringify(rendered.runId));
 const meta = helpers.renderRunMeta(rendered);
-if (!meta.includes('a0c19-260622193226-1227')) throw new Error('expected renderRunMeta to surface real run identifier, got ' + JSON.stringify(meta));
+if (!meta.includes('260622193226-a0c19-1227')) throw new Error('expected renderRunMeta to surface real run identifier, got ' + JSON.stringify(meta));
 if (meta.startsWith('issue-')) throw new Error('expected renderRunMeta not to start with synthetic "issue-" stub, got ' + JSON.stringify(meta));
 console.log('PASS');
 `
@@ -4484,8 +4484,8 @@ console.log('PASS');
 // must equal the parent's key.
 func TestPortalRunsView_VisibleRunForIssueGroup_CanonicalParentIdentityStaysPut(t *testing.T) {
 	js := `const parent = {
-  key: 'abcd-260618113825-1', kind: 'completed', status: 'success', review: false,
-  issueLabel: '#1', runId: 'abcd-260618113825-1', issueNumber: 1,
+  key: '260618113825-abcd-1', kind: 'completed', status: 'success', review: false,
+  issueLabel: '#1', runId: '260618113825-abcd-1', issueNumber: 1,
   batchKey: 'parent-batch', issueTitle: 'Fix login bug',
   startedAt: '2025-01-01T00:00:00Z',
 };
@@ -4497,8 +4497,8 @@ const review = {
 };
 const result = visibleRunForIssueGroup(1, [parent, review]);
 if (!result) throw new Error('expected visible row');
-if (result.key !== 'abcd-260618113825-1') throw new Error('expected canonical parent key issue-1, got ' + JSON.stringify(result.key));
-if (result.runId !== 'abcd-260618113825-1') throw new Error('expected canonical parent runId, got ' + JSON.stringify(result.runId));
+if (result.key !== '260618113825-abcd-1') throw new Error('expected canonical parent key issue-1, got ' + JSON.stringify(result.key));
+if (result.runId !== '260618113825-abcd-1') throw new Error('expected canonical parent runId, got ' + JSON.stringify(result.runId));
 if (result.batchKey !== 'parent-batch') throw new Error('expected canonical parent batchKey parent-batch, got ' + JSON.stringify(result.batchKey));
 if (result.issueTitle !== 'Fix login bug') throw new Error('expected canonical parent issueTitle, got ' + JSON.stringify(result.issueTitle));
 if (result.startedAt !== '2025-01-01T00:00:00Z') throw new Error('expected canonical parent startedAt, got ' + JSON.stringify(result.startedAt));
@@ -4514,8 +4514,8 @@ console.log('PASS');
 // canonical parent, the visible row for the group must remain the parent.
 func TestPortalRunsView_VisibleRunsForTable_KeepsParentIssueVisible(t *testing.T) {
 	js := `const parent = {
-  key: 'abcd-260618113825-1', kind: 'completed', status: 'success', review: false,
-  issueLabel: '#1', runId: 'abcd-260618113825-1', issueNumber: 1,
+  key: '260618113825-abcd-1', kind: 'completed', status: 'success', review: false,
+  issueLabel: '#1', runId: '260618113825-abcd-1', issueNumber: 1,
   batchKey: 'parent-batch', issueTitle: 'Fix login bug',
   startedAt: '2025-01-01T00:00:00Z',
 };
@@ -4527,7 +4527,7 @@ const review = {
 };
 const visible = visibleRunsForTable([parent, review]);
 if (visible.length !== 1) throw new Error('expected one visible row, got ' + visible.length);
-if (visible[0].key !== 'abcd-260618113825-1') throw new Error('expected visible row key issue-1, got ' + JSON.stringify(visible[0].key));
+if (visible[0].key !== '260618113825-abcd-1') throw new Error('expected visible row key issue-1, got ' + JSON.stringify(visible[0].key));
 if (visible[0].batchKey !== 'parent-batch') throw new Error('expected visible row batchKey from parent, got ' + JSON.stringify(visible[0].batchKey));
 if (visible[0].issueTitle !== 'Fix login bug') throw new Error('expected visible row issueTitle from parent, got ' + JSON.stringify(visible[0].issueTitle));
 console.log('PASS');
@@ -4543,7 +4543,7 @@ console.log('PASS');
 // reachable as its own subject option.
 func TestPortalDiff_SubjectRunsFor_KeepsCanonicalParentFirst(t *testing.T) {
 	js := `const opts = { helpers, runs: [
-  { key: 'abcd-260618113825-1', runId: 'abcd-260618113825-1', kind: 'completed', status: 'success', review: false, issueNumber: 1, issueLabel: '#1' },
+  { key: '260618113825-abcd-1', runId: '260618113825-abcd-1', kind: 'completed', status: 'success', review: false, issueNumber: 1, issueLabel: '#1' },
   { key: 'PR42', runId: 'PR42', kind: 'active', status: 'reviewing', review: true, issueNumber: 1, issueLabel: 'PR42', prNumber: 42 },
   { key: 'PR43', runId: 'PR43', kind: 'completed', status: 'success', review: true, issueNumber: 1, issueLabel: 'PR43', prNumber: 43 },
 ] };
@@ -4551,7 +4551,7 @@ const rowRun = opts.runs[0];
 const related = SandmanPortalDiff.subjectRunsFor(rowRun, opts);
 if (!Array.isArray(related) || related.length !== 3) throw new Error('expected 3 related subjects (parent + 2 reviews), got ' + JSON.stringify(related.length));
 if (related[0].review) throw new Error('expected first related subject to be the canonical parent, got review row first');
-if (related[0].runId !== 'abcd-260618113825-1') throw new Error('expected first related subject runId issue-1, got ' + JSON.stringify(related[0].runId));
+if (related[0].runId !== '260618113825-abcd-1') throw new Error('expected first related subject runId issue-1, got ' + JSON.stringify(related[0].runId));
 const reviewIds = related.slice(1).map((r) => r.runId).sort();
 if (reviewIds[0] !== 'PR42' || reviewIds[1] !== 'PR43') throw new Error('expected review children PR42 and PR43 in related subjects, got ' + JSON.stringify(reviewIds));
 console.log('PASS');
@@ -4595,18 +4595,18 @@ console.log('PASS');
 // which is exactly the #1825 cross-batch guard's contract.
 func TestPortalDiff_SubjectRunsFor_MultipleParentsPicksCanonical(t *testing.T) {
 	js := `const opts = { helpers, runs: [
-  { key: '1058-260706140827-1855-PR1875', runId: '1058-260706140827-1855-PR1875', kind: 'completed', status: 'success', review: true, issueNumber: 1855, issueLabel: 'PR1875', prNumber: 1875, startedAt: '2026-07-06T14:08:32Z' },
-  { key: 'e39d-260706134357-1855-PR1875', runId: 'e39d-260706134357-1855-PR1875', kind: 'completed', status: 'success', review: true, issueNumber: 1855, issueLabel: 'PR1875', prNumber: 1875, startedAt: '2026-07-06T13:44:02Z' },
-  { key: 'fb4a-260706132041-1855', runId: 'fb4a-260706132041-1855', kind: 'completed', status: 'success', review: false, issueNumber: 1855, issueLabel: '#1855', startedAt: '2026-07-06T13:20:48Z' },
-  { key: '2569-260706132006-1855', runId: '2569-260706132006-1855', kind: 'completed', status: 'aborted', review: false, issueNumber: 1855, issueLabel: '#1855', startedAt: '2026-07-06T12:00:00Z' },
+  { key: '260706140827-1058-1855-PR1875', runId: '260706140827-1058-1855-PR1875', kind: 'completed', status: 'success', review: true, issueNumber: 1855, issueLabel: 'PR1875', prNumber: 1875, startedAt: '2026-07-06T14:08:32Z' },
+  { key: '260706134357-e39d-1855-PR1875', runId: '260706134357-e39d-1855-PR1875', kind: 'completed', status: 'success', review: true, issueNumber: 1855, issueLabel: 'PR1875', prNumber: 1875, startedAt: '2026-07-06T13:44:02Z' },
+  { key: '260706132041-fb4a-1855', runId: '260706132041-fb4a-1855', kind: 'completed', status: 'success', review: false, issueNumber: 1855, issueLabel: '#1855', startedAt: '2026-07-06T13:20:48Z' },
+  { key: '260706132006-2569-1855', runId: '260706132006-2569-1855', kind: 'completed', status: 'aborted', review: false, issueNumber: 1855, issueLabel: '#1855', startedAt: '2026-07-06T12:00:00Z' },
 ] };
 const rowRun = opts.runs[0];
 const related = SandmanPortalDiff.subjectRunsFor(rowRun, opts);
 if (!Array.isArray(related) || related.length !== 3) throw new Error('expected 3 related subjects (parent + 2 reviews), got ' + JSON.stringify(related.length));
 if (related[0].review) throw new Error('expected first related subject to be the canonical parent, got review row first');
-if (related[0].runId !== 'fb4a-260706132041-1855') throw new Error('expected canonical parent fb4a-260706132041-1855 (caller-order), got ' + JSON.stringify(related[0].runId));
+if (related[0].runId !== '260706132041-fb4a-1855') throw new Error('expected canonical parent 260706132041-fb4a-1855 (caller-order), got ' + JSON.stringify(related[0].runId));
 const reviewIds = related.slice(1).map((r) => r.runId).sort();
-if (reviewIds[0] !== '1058-260706140827-1855-PR1875' || reviewIds[1] !== 'e39d-260706134357-1855-PR1875') throw new Error('expected both reviews in related subjects, got ' + JSON.stringify(reviewIds));
+if (reviewIds[0] !== '260706134357-e39d-1855-PR1875' || reviewIds[1] !== '260706140827-1058-1855-PR1875') throw new Error('expected both reviews in related subjects, got ' + JSON.stringify(reviewIds));
 console.log('PASS');
 `
 	runNodeScript(t, js)
@@ -4640,8 +4640,8 @@ console.log('PASS');
 // projection; the frontend passes it through without re-deriving.
 func TestPortalRunsView_VisibleRunForIssueGroup_LiveActiveParentKeepsIdentity(t *testing.T) {
 	js := `const liveParent = {
-  key: 'abcd-260618113825-1', kind: 'active', status: 'reviewing', review: false,
-  issueLabel: '#1', runId: 'abcd-260618113825-1', issueNumber: 1,
+  key: '260618113825-abcd-1', kind: 'active', status: 'reviewing', review: false,
+  issueLabel: '#1', runId: '260618113825-abcd-1', issueNumber: 1,
   batchKey: 'parent-batch', issueTitle: 'Fix login bug',
   startedAt: '2025-01-15T00:00:00Z',
 };
@@ -4653,7 +4653,7 @@ const review = {
 };
 const result = visibleRunForIssueGroup(1, [liveParent, review]);
 if (!result) throw new Error('expected visible row');
-if (result.key !== 'abcd-260618113825-1') throw new Error('expected live parent as visible row, got ' + JSON.stringify(result.key));
+if (result.key !== '260618113825-abcd-1') throw new Error('expected live parent as visible row, got ' + JSON.stringify(result.key));
 if (result.kind !== 'active') throw new Error('expected active kind, got ' + JSON.stringify(result.kind));
 if (result.status !== 'reviewing') throw new Error('expected visible badge to be reviewing (backend-provided), got ' + JSON.stringify(result.status));
 if (result.batchKey !== 'parent-batch') throw new Error('expected parent batchKey, got ' + JSON.stringify(result.batchKey));
@@ -4671,8 +4671,8 @@ console.log('PASS');
 // child's identity.
 func TestPortalRunsView_VisibleRunForIssueGroup_ArchivedParentKeepsIdentity(t *testing.T) {
 	js := `const archivedParent = {
-  key: 'abcd-260618113825-1', kind: 'completed', status: 'success', review: false,
-  issueLabel: '#1', runId: 'abcd-260618113825-1', issueNumber: 1,
+  key: '260618113825-abcd-1', kind: 'completed', status: 'success', review: false,
+  issueLabel: '#1', runId: '260618113825-abcd-1', issueNumber: 1,
   batchKey: 'parent-batch', issueTitle: 'Fix login bug',
   startedAt: '2024-12-01T00:00:00Z', archived: true,
 };
@@ -4684,7 +4684,7 @@ const review = {
 };
 const result = visibleRunForIssueGroup(1, [archivedParent, review]);
 if (!result) throw new Error('expected visible row');
-if (result.key !== 'abcd-260618113825-1') throw new Error('expected archived parent as visible row, got ' + JSON.stringify(result.key));
+if (result.key !== '260618113825-abcd-1') throw new Error('expected archived parent as visible row, got ' + JSON.stringify(result.key));
 if (result.batchKey !== 'parent-batch') throw new Error('expected parent batchKey, got ' + JSON.stringify(result.batchKey));
 if (result.issueTitle !== 'Fix login bug') throw new Error('expected parent issueTitle, got ' + JSON.stringify(result.issueTitle));
 if (result.startedAt !== '2024-12-01T00:00:00Z') throw new Error('expected parent startedAt, got ' + JSON.stringify(result.startedAt));
@@ -4702,8 +4702,8 @@ console.log('PASS');
 // summary, not as a substitution for the parent's own data.
 func TestPortalRunsView_VisibleRunForIssueGroup_CompletedParentWithVerdict(t *testing.T) {
 	js := `const parent = {
-  key: 'abcd-260618113825-1', kind: 'completed', status: 'success', review: false,
-  issueLabel: '#1', runId: 'abcd-260618113825-1', issueNumber: 1,
+  key: '260618113825-abcd-1', kind: 'completed', status: 'success', review: false,
+  issueLabel: '#1', runId: '260618113825-abcd-1', issueNumber: 1,
   batchKey: 'parent-batch', issueTitle: 'Fix login bug',
   startedAt: '2025-01-01T00:00:00Z',
   reviewCount: 2, reviewVerdict: 'Approved',
@@ -4716,10 +4716,10 @@ const review = {
 };
 const result = visibleRunForIssueGroup(1, [parent, review]);
 if (!result) throw new Error('expected visible row');
-if (result.key !== 'abcd-260618113825-1') throw new Error('expected completed parent as visible row, got ' + JSON.stringify(result.key));
+if (result.key !== '260618113825-abcd-1') throw new Error('expected completed parent as visible row, got ' + JSON.stringify(result.key));
 if (result.batchKey !== 'parent-batch') throw new Error('expected parent batchKey, got ' + JSON.stringify(result.batchKey));
 if (result.issueTitle !== 'Fix login bug') throw new Error('expected parent issueTitle, got ' + JSON.stringify(result.issueTitle));
-if (result.runId !== 'abcd-260618113825-1') throw new Error('expected parent runId, got ' + JSON.stringify(result.runId));
+if (result.runId !== '260618113825-abcd-1') throw new Error('expected parent runId, got ' + JSON.stringify(result.runId));
 if (result.startedAt !== '2025-01-01T00:00:00Z') throw new Error('expected parent startedAt, got ' + JSON.stringify(result.startedAt));
 console.log('PASS');
 `
@@ -4734,8 +4734,8 @@ console.log('PASS');
 // independent selections.
 func TestPortalRunsView_VisibleRunForIssueGroup_ReviewSubjectDoesNotChangeVisible(t *testing.T) {
 	js := `const parent = {
-  key: 'abcd-260618113825-1', kind: 'completed', status: 'success', review: false,
-  issueLabel: '#1', runId: 'abcd-260618113825-1', issueNumber: 1,
+  key: '260618113825-abcd-1', kind: 'completed', status: 'success', review: false,
+  issueLabel: '#1', runId: '260618113825-abcd-1', issueNumber: 1,
   batchKey: 'parent-batch', issueTitle: 'Fix login bug',
   startedAt: '2025-01-01T00:00:00Z',
 };
@@ -4753,12 +4753,12 @@ const review2 = {
 };
 // Visible row before any subject selection: parent.
 const before = visibleRunForIssueGroup(1, [parent, review1, review2]);
-if (!before || before.key !== 'abcd-260618113825-1') throw new Error('expected visible row to be parent before subject switch, got ' + JSON.stringify(before && before.key));
+if (!before || before.key !== '260618113825-abcd-1') throw new Error('expected visible row to be parent before subject switch, got ' + JSON.stringify(before && before.key));
 // Switching the subject selector to a review child must not influence
 // which row is visible — visibleRunForIssueGroup still picks the parent.
 const after = visibleRunForIssueGroup(1, [parent, review1, review2]);
-if (!after || after.key !== 'abcd-260618113825-1') throw new Error('expected visible row to stay parent after subject switch, got ' + JSON.stringify(after && after.key));
-if (after.runId !== 'abcd-260618113825-1' || after.batchKey !== 'parent-batch') throw new Error('expected parent identity to stay intact, got ' + JSON.stringify({ runId: after.runId, batchKey: after.batchKey }));
+if (!after || after.key !== '260618113825-abcd-1') throw new Error('expected visible row to stay parent after subject switch, got ' + JSON.stringify(after && after.key));
+if (after.runId !== '260618113825-abcd-1' || after.batchKey !== 'parent-batch') throw new Error('expected parent identity to stay intact, got ' + JSON.stringify({ runId: after.runId, batchKey: after.batchKey }));
 console.log('PASS');
 `
 	runPortalHTMLScript(t, js)
@@ -4784,12 +4784,12 @@ console.log('PASS');
 }
 
 func TestRenderRunMeta_ActiveFreshBatchRow_RendersBothBatchAndRunLabels(t *testing.T) {
-	js := `const run = { key: 'abcd-260618113825-42', runId: 'abcd-260618113825-42', batchKey: 'abcd-260618113825', kind: 'active', status: 'running' };
+	js := `const run = { key: '260618113825-abcd-42', runId: '260618113825-abcd-42', batchKey: '260618113825-abcd', kind: 'active', status: 'running' };
 const meta = helpers.renderRunMeta(run);
 if (meta.indexOf('Batch:') < 0) throw new Error('expected Batch: in meta for active fresh batch row, got ' + JSON.stringify(meta));
 if (meta.indexOf('Run:') < 0) throw new Error('expected Run: in meta for active fresh batch row, got ' + JSON.stringify(meta));
-if (meta.indexOf('abcd-260618113825') < 0) throw new Error('expected batchKey value in Batch: label, got ' + JSON.stringify(meta));
-if (meta.indexOf('abcd-260618113825-42') < 0) throw new Error('expected runId value in Run: label, got ' + JSON.stringify(meta));
+if (meta.indexOf('260618113825-abcd') < 0) throw new Error('expected batchKey value in Batch: label, got ' + JSON.stringify(meta));
+if (meta.indexOf('260618113825-abcd-42') < 0) throw new Error('expected runId value in Run: label, got ' + JSON.stringify(meta));
 const batchPos = meta.indexOf('Batch:');
 const runPos = meta.indexOf('Run:');
 if (batchPos > runPos) throw new Error('expected Batch: to appear before Run:, got Batch: at ' + batchPos + ', Run: at ' + runPos + ' in ' + JSON.stringify(meta));
@@ -4799,10 +4799,10 @@ console.log('PASS');
 }
 
 func TestRenderRunMeta_QueuedRow_SuppressesRunLabel(t *testing.T) {
-	js := `const run = { key: 'abcd-260618113825-42', runId: '', batchKey: 'abcd-260618113825', kind: 'active', status: 'queued' };
+	js := `const run = { key: '260618113825-abcd-42', runId: '', batchKey: '260618113825-abcd', kind: 'active', status: 'queued' };
 const meta = helpers.renderRunMeta(run);
 if (meta.indexOf('Batch:') < 0) throw new Error('expected Batch: in meta for queued row, got ' + JSON.stringify(meta));
-if (meta.indexOf('abcd-260618113825') < 0) throw new Error('expected batchKey value in Batch: label, got ' + JSON.stringify(meta));
+if (meta.indexOf('260618113825-abcd') < 0) throw new Error('expected batchKey value in Batch: label, got ' + JSON.stringify(meta));
 if (meta.indexOf('Run:') >= 0) throw new Error('expected no Run: in meta for queued row, got ' + JSON.stringify(meta));
 console.log('PASS');
 `
@@ -4811,14 +4811,14 @@ console.log('PASS');
 
 func TestRenderRunMeta_QueuedAndBlockedRows_SuppressRunLabelForSyntheticRunID(t *testing.T) {
 	js := `const cases = [
-  { status: 'queued', runId: 'abcd-260618113825-42' },
-  { status: 'blocked', runId: 'abcd-260618113825-43' },
+  { status: 'queued', runId: '260618113825-abcd-42' },
+  { status: 'blocked', runId: '260618113825-abcd-43' },
 ];
 for (const tc of cases) {
-  const run = { key: tc.runId, runId: tc.runId, batchKey: 'abcd-260618113825', kind: 'active', status: tc.status };
+  const run = { key: tc.runId, runId: tc.runId, batchKey: '260618113825-abcd', kind: 'active', status: tc.status };
   const meta = helpers.renderRunMeta(run);
   if (meta.indexOf('Batch:') < 0) throw new Error('expected Batch: in meta for ' + tc.status + ' row, got ' + JSON.stringify(meta));
-  if (meta.indexOf('abcd-260618113825') < 0) throw new Error('expected batchKey value in Batch: label for ' + tc.status + ' row, got ' + JSON.stringify(meta));
+  if (meta.indexOf('260618113825-abcd') < 0) throw new Error('expected batchKey value in Batch: label for ' + tc.status + ' row, got ' + JSON.stringify(meta));
   if (meta.indexOf('Run:') >= 0) throw new Error('expected no Run: in meta for ' + tc.status + ' row with synthetic RunID, got ' + JSON.stringify(meta));
 }
 console.log('PASS');
@@ -4828,11 +4828,11 @@ console.log('PASS');
 
 func TestPortalDiffSubjectRunValue_QueuedAndBlockedRowsReturnEmptyForSyntheticRunID(t *testing.T) {
 	js := `const cases = [
-  { status: 'queued', runId: 'abcd-260618113825-42' },
-  { status: 'blocked', runId: 'abcd-260618113825-43' },
+  { status: 'queued', runId: '260618113825-abcd-42' },
+  { status: 'blocked', runId: '260618113825-abcd-43' },
 ];
 for (const tc of cases) {
-  const run = { key: tc.runId, runId: tc.runId, batchKey: 'abcd-260618113825', kind: 'active', status: tc.status };
+  const run = { key: tc.runId, runId: tc.runId, batchKey: '260618113825-abcd', kind: 'active', status: tc.status };
   const value = SandmanPortalDiff.subjectRunValue(run);
   if (value !== '') throw new Error('expected empty subjectRunValue for ' + tc.status + ' row with synthetic RunID, got ' + JSON.stringify(value));
 }
@@ -4850,8 +4850,8 @@ console.log('PASS');
 // removal in issue #1825).
 func TestPortalRunsView_VisibleRunForIssueGroup_LiveReviewFlipsParentStatusToReviewing(t *testing.T) {
 	js := `const parent = {
-  key: 'abcd-260618113825-1', kind: 'completed', status: 'reviewing', review: false,
-  issueLabel: '#1', runId: 'abcd-260618113825-1', issueNumber: 1,
+  key: '260618113825-abcd-1', kind: 'completed', status: 'reviewing', review: false,
+  issueLabel: '#1', runId: '260618113825-abcd-1', issueNumber: 1,
   batchKey: 'parent-batch', issueTitle: 'Fix login bug',
   startedAt: '2025-01-01T00:00:00Z',
 };
@@ -4863,8 +4863,8 @@ const liveReview = {
 };
 const result = visibleRunForIssueGroup(1, [parent, liveReview]);
 if (!result) throw new Error('expected visible row');
-if (result.key !== 'abcd-260618113825-1') throw new Error('expected canonical parent key issue-1, got ' + JSON.stringify(result.key));
-if (result.runId !== 'abcd-260618113825-1') throw new Error('expected canonical parent runId, got ' + JSON.stringify(result.runId));
+if (result.key !== '260618113825-abcd-1') throw new Error('expected canonical parent key issue-1, got ' + JSON.stringify(result.key));
+if (result.runId !== '260618113825-abcd-1') throw new Error('expected canonical parent runId, got ' + JSON.stringify(result.runId));
 if (result.batchKey !== 'parent-batch') throw new Error('expected canonical parent batchKey parent-batch, got ' + JSON.stringify(result.batchKey));
 if (result.issueTitle !== 'Fix login bug') throw new Error('expected canonical parent issueTitle, got ' + JSON.stringify(result.issueTitle));
 if (result.startedAt !== '2025-01-01T00:00:00Z') throw new Error('expected canonical parent startedAt, got ' + JSON.stringify(result.startedAt));
@@ -4881,8 +4881,8 @@ console.log('PASS');
 // revert to the canonical parent's own status — the badge does not flip.
 func TestPortalRunsView_VisibleRunForIssueGroup_CompletedReviewKeepsParentBadge(t *testing.T) {
 	js := `const parent = {
-  key: 'abcd-260618113825-1', kind: 'completed', status: 'success', review: false,
-  issueLabel: '#1', runId: 'abcd-260618113825-1', issueNumber: 1,
+  key: '260618113825-abcd-1', kind: 'completed', status: 'success', review: false,
+  issueLabel: '#1', runId: '260618113825-abcd-1', issueNumber: 1,
   batchKey: 'parent-batch', issueTitle: 'Fix login bug',
   startedAt: '2025-01-01T00:00:00Z',
 };
@@ -4894,7 +4894,7 @@ const completedReview = {
 };
 const result = visibleRunForIssueGroup(1, [parent, completedReview]);
 if (!result) throw new Error('expected visible row');
-if (result.key !== 'abcd-260618113825-1') throw new Error('expected canonical parent key issue-1, got ' + JSON.stringify(result.key));
+if (result.key !== '260618113825-abcd-1') throw new Error('expected canonical parent key issue-1, got ' + JSON.stringify(result.key));
 if (result.status !== 'success') throw new Error('expected visible status=success (no live review child → no flip), got ' + JSON.stringify(result.status));
 if (result.liveReview) throw new Error('expected liveReview=false (no live review child), got ' + JSON.stringify(result.liveReview));
 console.log('PASS');
@@ -4908,8 +4908,8 @@ console.log('PASS');
 // parent's own status, no badge flip.
 func TestPortalRunsView_VisibleRunForIssueGroup_NoReviewChildrenKeepsParentBadge(t *testing.T) {
 	js := `const parent = {
-  key: 'abcd-260618113825-1', kind: 'completed', status: 'success', review: false,
-  issueLabel: '#1', runId: 'abcd-260618113825-1', issueNumber: 1,
+  key: '260618113825-abcd-1', kind: 'completed', status: 'success', review: false,
+  issueLabel: '#1', runId: '260618113825-abcd-1', issueNumber: 1,
   batchKey: 'parent-batch', issueTitle: 'Fix login bug',
   startedAt: '2025-01-01T00:00:00Z',
 };
@@ -4927,8 +4927,8 @@ console.log('PASS');
 // badge status from the backend projection passes through unchanged.
 func TestPortalRunsView_VisibleRunForIssueGroup_LiveActiveParentFlipsBadgeViaChild(t *testing.T) {
 	js := `const parent = {
-  key: 'abcd-260618113825-1', kind: 'active', status: 'reviewing', review: false,
-  issueLabel: '#1', runId: 'abcd-260618113825-1', issueNumber: 1,
+  key: '260618113825-abcd-1', kind: 'active', status: 'reviewing', review: false,
+  issueLabel: '#1', runId: '260618113825-abcd-1', issueNumber: 1,
   batchKey: 'parent-batch', issueTitle: 'Fix login bug',
   startedAt: '2025-01-15T00:00:00Z',
 };
@@ -4940,7 +4940,7 @@ const liveReview = {
 };
 const result = visibleRunForIssueGroup(1, [parent, liveReview]);
 if (!result) throw new Error('expected visible row');
-if (result.key !== 'abcd-260618113825-1') throw new Error('expected canonical parent key, got ' + JSON.stringify(result.key));
+if (result.key !== '260618113825-abcd-1') throw new Error('expected canonical parent key, got ' + JSON.stringify(result.key));
 if (result.status !== 'reviewing') throw new Error('expected visible status=reviewing (backend-provided), got ' + JSON.stringify(result.status));
 if (result.batchKey !== 'parent-batch') throw new Error('expected parent batchKey, got ' + JSON.stringify(result.batchKey));
 console.log('PASS');
@@ -4955,8 +4955,8 @@ console.log('PASS');
 // terminal verdict status honestly.
 func TestPortalRunsView_VisibleRunForIssueGroup_OrphanReviewOnlyHasItsOwnStatus(t *testing.T) {
 	js := `const liveReview = {
-  key: 'a0c19-260622193226-1227', kind: 'active', status: 'reviewing', review: true,
-  issueLabel: '#1223', runId: 'a0c19-260622193226-1227', issueNumber: 1223, prNumber: 5,
+  key: '260622193226-a0c19-1227', kind: 'active', status: 'reviewing', review: true,
+  issueLabel: '#1223', runId: '260622193226-a0c19-1227', issueNumber: 1223, prNumber: 5,
 };
 const result = visibleRunForIssueGroup(1223, [liveReview]);
 if (!result) throw new Error('expected visible row');

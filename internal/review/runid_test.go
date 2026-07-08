@@ -17,7 +17,7 @@ import (
 // live under a folder whose name matches the RowID.
 func TestReviewRunIDFor_PRBare(t *testing.T) {
 	got := reviewRunIDFor(42, 0, "260625120000", "abcd")
-	want := "abcd-260625120000-PR42"
+	want := "260625120000-abcd-PR42"
 	if got != want {
 		t.Errorf("reviewRunIDFor(42, 0, ...) = %q, want %q", got, want)
 	}
@@ -31,7 +31,7 @@ func TestReviewRunIDFor_PRBare(t *testing.T) {
 // closingIssuesReferences carries a linked issue number.
 func TestReviewRunIDFor_PRWithLinkedIssue(t *testing.T) {
 	got := reviewRunIDFor(42, 1551, "260625120000", "abcd")
-	want := "abcd-260625120000-1551-PR42"
+	want := "260625120000-abcd-1551-PR42"
 	if got != want {
 		t.Errorf("reviewRunIDFor(42, 1551, ...) = %q, want %q", got, want)
 	}
@@ -48,7 +48,7 @@ func TestReviewRunIDFor_NoLiteralReview(t *testing.T) {
 	if got == "review" {
 		t.Fatalf("reviewRunIDFor must never return the literal %q, got %q", "review", got)
 	}
-	if !strings.HasPrefix(got, "0001-260625120000-") {
+	if !strings.HasPrefix(got, "260625120000-0001-") {
 		t.Errorf("reviewRunIDFor must include <sid>-<ts>- prefix, got %q", got)
 	}
 	if !strings.HasSuffix(got, "-PR1") {

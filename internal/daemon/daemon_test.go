@@ -10,15 +10,15 @@ import (
 )
 
 func TestBatchDir_JoinsBaseBatchesAndDirID(t *testing.T) {
-	dir := BatchDir("base", "abcd-260618113825-42+2")
-	want := filepath.Join("base", "batches", "abcd-260618113825-42+2")
+	dir := BatchDir("base", "260618113825-abcd-42+2")
+	want := filepath.Join("base", "batches", "260618113825-abcd-42+2")
 	if dir != want {
 		t.Fatalf("expected %q, got %q", want, dir)
 	}
 }
 
 func TestBatchDir_PreservesDirIDVerbatim(t *testing.T) {
-	dirID := "abcd-260618113825-42+2"
+	dirID := "260618113825-abcd-42+2"
 	dir := BatchDir("base", dirID)
 	if !strings.HasSuffix(dir, dirID) {
 		t.Fatalf("expected path to end with %q, got %q", dirID, dir)

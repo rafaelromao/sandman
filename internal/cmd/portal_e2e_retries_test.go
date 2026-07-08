@@ -33,7 +33,7 @@ func TestPortal_E2E_RetriesContract_RetryRunCarriesCountsAndEvents(t *testing.T)
 		t.Fatal(err)
 	}
 
-	const runID = "abcd-260618113825-retry"
+	const runID = "260618113825-abcd-retry"
 	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
 	finishedAt := startedAt.Add(10 * time.Minute)
 	retryPayload := map[string]any{
@@ -149,7 +149,7 @@ func TestPortal_E2E_RetriesContract_CleanRunOmitsFields(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	const runID = "abcd-260618113825-clean"
+	const runID = "260618113825-abcd-clean"
 	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
 	finishedAt := startedAt.Add(2 * time.Minute)
 
@@ -214,7 +214,7 @@ func TestPortal_E2E_RetriesContract_LegacyFinishedRunDefaultsToZero(t *testing.T
 		t.Fatal(err)
 	}
 
-	const runID = "abcd-260618113825-legacy"
+	const runID = "260618113825-abcd-legacy"
 	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
 	finishedAt := startedAt.Add(2 * time.Minute)
 
@@ -289,7 +289,7 @@ func TestPortal_E2E_RowCarriesLiveAttemptAndRetryReason(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	const runID = "abcd-260618113825-active-retry"
+	const runID = "260618113825-abcd-active-retry"
 	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
 	retryAt := startedAt.Add(2 * time.Minute)
 
@@ -383,7 +383,7 @@ func TestPortal_E2E_CleanRunOmitsAttemptsAndLastRetryReason(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	const runID = "abcd-260618113825-clean-1499"
+	const runID = "260618113825-abcd-clean-1499"
 	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
 	finishedAt := startedAt.Add(2 * time.Minute)
 
@@ -431,8 +431,8 @@ func TestPortal_E2E_ParentSuccWithLiveChild(t *testing.T) {
 	addBatchToIndex(t, repoRoot, "PR42-live", batchDir, []int{1})
 
 	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
-		{Type: "run.started", Timestamp: startedAt, RunID: "abcd-260618113825-1", Issue: 1, Payload: map[string]any{"branch": "sandman/1-fix"}},
-		{Type: "run.finished", Timestamp: startedAt.Add(1 * time.Minute), RunID: "abcd-260618113825-1", Issue: 1, Payload: map[string]any{"branch": "sandman/1-fix", "status": "success"}},
+		{Type: "run.started", Timestamp: startedAt, RunID: "260618113825-abcd-1", Issue: 1, Payload: map[string]any{"branch": "sandman/1-fix"}},
+		{Type: "run.finished", Timestamp: startedAt.Add(1 * time.Minute), RunID: "260618113825-abcd-1", Issue: 1, Payload: map[string]any{"branch": "sandman/1-fix", "status": "success"}},
 		{Type: "run.started", Timestamp: startedAt.Add(30 * time.Second), RunID: "PR42-live", Issue: 1, Payload: map[string]any{"review": true, "pr_number": 42, "branch": "sandman/review-PR42"}},
 	})
 

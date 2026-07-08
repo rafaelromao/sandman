@@ -142,7 +142,7 @@ func TestPortalRunsView_IssueRunLogFromCorrectRunFolder(t *testing.T) {
 
 	ts := "20250101T100000Z"
 	shortid := "abcd"
-	batchID := shortid + "-" + ts
+	batchID := ts + "-" + shortid
 	rowRunID := runid.NewRunID(runid.KindIssue, "42", ts, shortid)
 
 	rawLogContent := "[issue-42] 10:01:00 Test output line 1\n[issue-42] 10:01:05 Test output line 2\n"
@@ -236,7 +236,7 @@ func TestPortalRunsView_IssueRunLogDownload(t *testing.T) {
 
 	ts := "20250101T100000Z"
 	shortid := "abcd"
-	batchID := shortid + "-" + ts
+	batchID := ts + "-" + shortid
 	rowRunID := runid.NewRunID(runid.KindIssue, "42", ts, shortid)
 
 	rawLogContent := "[issue-42] 10:01:00 Test output line 1\n[issue-42] 10:01:05 Test output line 2\n"

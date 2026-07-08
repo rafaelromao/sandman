@@ -253,8 +253,8 @@ func portalArchiveDir(repoRoot, runID string) string {
 // itself is only invoked on the happy path.
 //
 // The supplied runID may be either the batch index batch id (e.g.
-// "abcd-260618113825-42+1") or the per-row run id the portal UI sends
-// (e.g. "abcd-260618113825-43"). resolveBatchFromRunIDFastOrScan
+// "260618113825-abcd-42+1") or the per-row run id the portal UI sends
+// (e.g. "260618113825-abcd-43"). resolveBatchFromRunIDFastOrScan
 // resolves either form to the batch index batch; the rest of the
 // handler then uses batch.ID so the archive directory name and the
 // response payload are coherent across both forms. The first return
@@ -419,8 +419,8 @@ func archivePortalRowArchiver(repoRoot string, entryID, runID string) error {
 // The final fallback path scans each entry's runs/<runID>/run.json
 // on disk and returns the first entry that hosts the per-row manifest.
 // This is the signal the portal UI relies on for multi-issue batches,
-// reviews (where reviewRunIDFor produces e.g. "abcd-260618113825-42-PR99"
-// while the batch entry id is "abcd-260618113825-PR42"), and
+// reviews (where reviewRunIDFor produces e.g. "260618113825-abcd-42-PR99"
+// while the batch entry id is "260618113825-abcd-PR42"), and
 // prompt-only runs (where req.RunID is the user-supplied string and
 // the batch entry id is "{shortid}-{ts}-{userid}").
 //

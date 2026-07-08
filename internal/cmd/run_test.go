@@ -41,9 +41,9 @@ const (
 	testRunTS      = "260618113825"
 	testRunShortID = "abcd"
 
-	testRunID42First  = testRunShortID + "-" + testRunTS + "-42-1"
-	testRunID42Second = testRunShortID + "-" + testRunTS + "-42-2"
-	testRunID42Prev   = testRunShortID + "-" + testRunTS + "-42-prev"
+	testRunID42First  = testRunTS + "-" + testRunShortID + "-42-1"
+	testRunID42Second = testRunTS + "-" + testRunShortID + "-42-2"
+	testRunID42Prev   = testRunTS + "-" + testRunShortID + "-42-prev"
 )
 
 func (s *spyBatchRunner) RunBatch(ctx context.Context, req batch.Request) (*batch.Result, error) {
@@ -1817,8 +1817,8 @@ func TestRun_PromptOnlyWithoutRunIDRegistersCanonicalBatchIdInBatchesIndex(t *te
 	// The no-userid shape must collapse to <sid>-<ts>-prompt exactly
 	// (no extra segment after `-prompt`). The format is
 	// `<4-hex-sid>-<12-digit-ts>-prompt`, total 22 chars.
-	if len(got.ID) != len("abcd-260618113825-prompt") {
-		t.Errorf("entry ID = %q (len=%d), want canonical <sid>-<ts>-prompt shape (len=%d)", got.ID, len(got.ID), len("abcd-260618113825-prompt"))
+	if len(got.ID) != len("260618113825-abcd-prompt") {
+		t.Errorf("entry ID = %q (len=%d), want canonical <sid>-<ts>-prompt shape (len=%d)", got.ID, len(got.ID), len("260618113825-abcd-prompt"))
 	}
 
 	// Verify the batch folder basename agrees (== public BatchId ==
@@ -3497,11 +3497,11 @@ func TestRun_AutoFlag_PostSelectionIssueBatchIdentity(t *testing.T) {
 	if spy.req.RunTS == "" || spy.req.RunShortID == "" {
 		t.Fatalf("batch runner received empty RunTS/RunShortID: ts=%q shortid=%q", spy.req.RunTS, spy.req.RunShortID)
 	}
-	wantBatchID := spy.req.RunShortID + "-" + spy.req.RunTS + "-1+1"
+	wantBatchID := spy.req.RunTS + "-" + spy.req.RunShortID + "-1+1"
 	if batchID != wantBatchID {
 		t.Errorf("post-selection batch_id = %q, want public issue BatchId %q (multi-issue, from batch.RunTS/RunShortID)", batchID, wantBatchID)
 	}
-	wantPerRowRunID := spy.req.RunShortID + "-" + spy.req.RunTS + "-1"
+	wantPerRowRunID := spy.req.RunTS + "-" + spy.req.RunShortID + "-1"
 	if issueStarted.RunID != wantPerRowRunID {
 		t.Errorf("post-selection issue RunID = %q, want per-row issue RunID %q", issueStarted.RunID, wantPerRowRunID)
 	}
@@ -4678,7 +4678,7 @@ func TestRun_SingleIssueRegistersPublicBatchIdInBatchesIndex(t *testing.T) {
 		t.Fatalf("load batches index: %v", err)
 	}
 
-	wantPublicBatchID := spy.req.RunShortID + "-" + spy.req.RunTS + "-42"
+	wantPublicBatchID := spy.req.RunTS + "-" + spy.req.RunShortID + "-42"
 	if len(idx.Batches) != 1 {
 		t.Fatalf("expected exactly 1 batch index entry, got %d (entries=%v)", len(idx.Batches), idx.Batches)
 	}
@@ -4740,9 +4740,9 @@ func TestRun_MultiIssueRegistersPublicBatchIdInBatchesIndex(t *testing.T) {
 		t.Fatalf("load batches index: %v", err)
 	}
 
-	wantPublicBatchID := spy.req.RunShortID + "-" + spy.req.RunTS + "-42+1"
-	wantFirstRowID := spy.req.RunShortID + "-" + spy.req.RunTS + "-42"
-	wantSecondRowID := spy.req.RunShortID + "-" + spy.req.RunTS + "-43"
+	wantPublicBatchID := spy.req.RunTS + "-" + spy.req.RunShortID + "-42+1"
+	wantFirstRowID := spy.req.RunTS + "-" + spy.req.RunShortID + "-42"
+	wantSecondRowID := spy.req.RunTS + "-" + spy.req.RunShortID + "-43"
 	if len(idx.Batches) != 1 {
 		t.Fatalf("expected exactly 1 batch index entry for multi-issue run, got %d (entries=%v)", len(idx.Batches), idx.Batches)
 	}
@@ -4811,7 +4811,7 @@ func TestRun_ContinueRegistersPerRowRunIDInBatchesIndex(t *testing.T) {
 		t.Fatalf("load batches index: %v", err)
 	}
 
-	wantPublicBatchID := spy.req.RunShortID + "-" + spy.req.RunTS + "-42"
+	wantPublicBatchID := spy.req.RunTS + "-" + spy.req.RunShortID + "-42"
 	if len(idx.Batches) != 1 {
 		t.Logf("buf: %s", buf.String())
 		t.Fatalf("expected exactly 1 batch index entry, got %d (entries=%v)", len(idx.Batches), idx.Batches)
@@ -4879,7 +4879,7 @@ func TestRun_Continue_MultiIssueFreshBatchAndRunIDs(t *testing.T) {
 		t.Logf("buf: %s", buf.String())
 		t.Fatalf("expected exactly 1 batch index entry for the continuation, got %d (batches=%v)", len(idx.Batches), idx.Batches)
 	}
-	wantPublicBatchID := spy.req.RunShortID + "-" + spy.req.RunTS + "-42+1"
+	wantPublicBatchID := spy.req.RunTS + "-" + spy.req.RunShortID + "-42+1"
 	if got := idx.Batches[0].ID; got != wantPublicBatchID {
 		t.Errorf("continuation entry ID = %q, want %q (fresh public BatchId for multi-issue)", got, wantPublicBatchID)
 	}

@@ -15,7 +15,7 @@ const run = {
   kind: 'completed',
   status: 'success',
   issueLabel: '#42',
-  runId: 'abcd-260618113825-unavail-1',
+  runId: '260618113825-abcd-unavail-1',
   archived: false,
   unavailable: true,
   sourceExists: false,
@@ -48,7 +48,7 @@ const run = {
   kind: 'completed',
   status: 'success',
   issueLabel: '#42',
-  runId: 'abcd-260618113825-unavail-2',
+  runId: '260618113825-abcd-unavail-2',
   archived: true,
   unavailable: false,
   sourceExists: false,
@@ -84,8 +84,8 @@ const run = {
   kind: 'active',
   status: 'running',
   issueLabel: '#42',
-  runId: 'abcd-260618113825-unavail-3',
-  batchKey: 'abcd-260618113825-42',
+  runId: '260618113825-abcd-unavail-3',
+  batchKey: '260618113825-abcd-42',
 };
 const stopGroups = new Set();
 const opts = { helpers, stopGroups, expandedKey: null };
