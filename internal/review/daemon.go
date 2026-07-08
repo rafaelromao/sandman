@@ -114,7 +114,7 @@ type pendingPostEntry struct {
 }
 
 // Daemon polls the repo for /sandman review comments and launches review
-// agents serially.
+// agents up to the configured parallel_reviews limit.
 type Daemon struct {
 	BaseDir              string
 	Layout               paths.Layout
