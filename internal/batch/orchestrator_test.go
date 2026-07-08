@@ -2039,61 +2039,7 @@ func TestRunSingle_LogsIssueTitleOnRunStarted(t *testing.T) {
 	t.Fatal("expected run.started event")
 }
 
-func TestRunSingle_ContinuesWhenRunMarkerWriteFails(t *testing.T) {
-	workDir := t.TempDir()
-	oldWD, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("get wd: %v", err)
-	}
-	if err := os.Chdir(workDir); err != nil {
-		t.Fatalf("chdir: %v", err)
-	}
-	t.Cleanup(func() { _ = os.Chdir(oldWD) })
-
-	branch := "sandman/42-fix-bug"
-	currentHead := "current-sha"
-	rtSandbox := &fakeSandbox{workDir: filepath.Join(workDir, "worktree"), execStdout: "hello from agent\n"}
-	var markerPath string
-	oldMarkerFn := logRunMarkerFn
-	logRunMarkerFn = func(path string, attempt, maxRetries int) error {
-		markerPath = path
-		return errors.New("marker write failed")
-	}
-	t.Cleanup(func() { logRunMarkerFn = oldMarkerFn })
-	oldHeadFn := currentBranchHeadFn
-	currentBranchHeadFn = func(string) (string, error) { return currentHead, nil }
-	t.Cleanup(func() { currentBranchHeadFn = oldHeadFn })
-
-	o := &Orchestrator{
-		githubClient: &fakeGitHubClient{
-			issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}},
-			prs: map[string]*github.PR{
-				branch: mergedPR(branch, currentHead),
-			},
-		},
-		renderer: &spyPromptRenderer{result: "rendered prompt"},
-		errorLog: io.Discard,
-		layout:   paths.NewLayout(&config.Config{}, workDir),
-		sandboxFactory: &fakeSandboxFactory{
-			sandbox: rtSandbox,
-		},
-	}
-
-	cfg := &config.Config{WorktreeDir: "worktree", Git: config.GitConfig{BaseBranch: "main"}}
-	result, started := o.runSingle(context.Background(), context.Background(), 42, cfg, "opencode", config.Agent{Command: "opencode run {{.PromptFile}}"}, false, nil, noopIdentityResolver(), map[int]string{42: branch}, prompt.RenderConfig{}, nil, &fakeSandboxFactory{sandbox: rtSandbox}, nil, false, "main", nil, 0, 0, 1, 0, "", 0, false, 0, false, false, false, "260622105532", "68cb")
-	if !started {
-		t.Fatal("expected run to start")
-	}
-	if result.Status != "success" {
-		t.Fatalf("status = %q, want success", result.Status)
-	}
-	wantLogPath := filepath.Join(workDir, ".sandman", "batches", "260622105532-68cb", "runs", "260622105532-68cb-42", "run.log")
-	if markerPath != wantLogPath {
-		t.Fatalf("marker path = %q, want %q", markerPath, wantLogPath)
-	}
-}
-
-func TestRunPromptOnlySingle_LogsRunMarkerInWorktreePath(t *testing.T) {
+func TestRunPromptOnlySingle_ContinuesWhenRetryMarkerWriteFails(t *testing.T) {
 	workDir := t.TempDir()
 	oldWD, err := os.Getwd()
 	if err != nil {
@@ -2106,12 +2052,15 @@ func TestRunPromptOnlySingle_LogsRunMarkerInWorktreePath(t *testing.T) {
 
 	rtSandbox := &fakeSandbox{workDir: filepath.Join(workDir, "worktree")}
 	var markerPath string
-	oldMarkerFn := logRunMarkerFn
-	logRunMarkerFn = func(path string, attempt, maxRetries int) error {
+	oldMarkerFn := logRetryMarkerFn
+	logRetryMarkerFn = func(path string, attempt, maxRetries int) error {
 		markerPath = path
-		return nil
+		return errors.New("marker write failed")
 	}
-	t.Cleanup(func() { logRunMarkerFn = oldMarkerFn })
+	t.Cleanup(func() { logRetryMarkerFn = oldMarkerFn })
+	oldHeadFn := currentBranchHeadFn
+	currentBranchHeadFn = func(string) (string, error) { return "current-sha", nil }
+	t.Cleanup(func() { currentBranchHeadFn = oldHeadFn })
 
 	o := &Orchestrator{
 		renderer:       &noopRenderer{},
@@ -2119,17 +2068,70 @@ func TestRunPromptOnlySingle_LogsRunMarkerInWorktreePath(t *testing.T) {
 		layout:         paths.NewLayout(&config.Config{}, workDir),
 		sandboxFactory: &fakeSandboxFactory{sandbox: rtSandbox},
 		runnableFactory: &promptOnlyRunnableFactory{hook: func(issue *github.Issue, branch string) AgentRunResult {
-			return AgentRunResult{Status: "success", Branch: branch, WorktreePath: rtSandbox.WorkDir()}
+			return AgentRunResult{Status: "failure", Branch: branch, WorktreePath: rtSandbox.WorkDir()}
 		}},
+	}
+	o.runSessionOpts.retryReset = func(ctx context.Context, sb sandbox.Sandbox, branch, baseBranch string) error {
+		return nil
 	}
 
 	cfg := &config.Config{WorktreeDir: "worktree", Git: config.GitConfig{BaseBranch: "main"}}
-	result, started := o.runPromptOnlySingle(context.Background(), cfg, "opencode", config.Agent{Command: "echo hi"}, noopIdentityResolver(), "prompt-only", prompt.RenderConfig{}, nil, &fakeSandboxFactory{sandbox: rtSandbox}, nil, ModeFresh, "main", 0, 0, 0, "", 0, false, 0, false, false, false, false, 0, "", "prompt-run-123", nil, 0, "", "", "")
+	result, started := o.runPromptOnlySingle(context.Background(), cfg, "opencode", config.Agent{Command: "echo hi"}, noopIdentityResolver(), "prompt-only", prompt.RenderConfig{}, nil, &fakeSandboxFactory{sandbox: rtSandbox}, nil, ModeFresh, "main", 0, 0, 1, "", 0, false, 0, false, false, false, false, 0, "", "prompt-run-marker-fail", nil, 0, "", "", "")
 	if !started {
 		t.Fatal("expected prompt-only run to start")
 	}
-	if result.Status != "success" {
-		t.Fatalf("status = %q, want success", result.Status)
+	if result.Status != "failure" {
+		t.Fatalf("status = %q, want failure (retry-marker write failure must not abort the run; the run's status must still come from the agent's result)", result.Status)
+	}
+	wantLogPath := filepath.Join(workDir, ".sandman", "batches", "prompt-run-marker-fail", "runs", "prompt-run-marker-fail", "run.log")
+	if markerPath != wantLogPath {
+		t.Fatalf("marker path = %q, want %q", markerPath, wantLogPath)
+	}
+}
+
+func TestRunPromptOnlySingle_LogsRetryMarkerInWorktreePath(t *testing.T) {
+	workDir := t.TempDir()
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get wd: %v", err)
+	}
+	if err := os.Chdir(workDir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(oldWD) })
+
+	rtSandbox := &fakeSandbox{workDir: filepath.Join(workDir, "worktree")}
+	var markerPath string
+	oldMarkerFn := logRetryMarkerFn
+	logRetryMarkerFn = func(path string, attempt, maxRetries int) error {
+		markerPath = path
+		return nil
+	}
+	t.Cleanup(func() { logRetryMarkerFn = oldMarkerFn })
+	oldHeadFn := currentBranchHeadFn
+	currentBranchHeadFn = func(string) (string, error) { return "current-sha", nil }
+	t.Cleanup(func() { currentBranchHeadFn = oldHeadFn })
+
+	o := &Orchestrator{
+		renderer:       &noopRenderer{},
+		errorLog:       io.Discard,
+		layout:         paths.NewLayout(&config.Config{}, workDir),
+		sandboxFactory: &fakeSandboxFactory{sandbox: rtSandbox},
+		runnableFactory: &promptOnlyRunnableFactory{hook: func(issue *github.Issue, branch string) AgentRunResult {
+			return AgentRunResult{Status: "failure", Branch: branch, WorktreePath: rtSandbox.WorkDir()}
+		}},
+	}
+	o.runSessionOpts.retryReset = func(ctx context.Context, sb sandbox.Sandbox, branch, baseBranch string) error {
+		return nil
+	}
+
+	cfg := &config.Config{WorktreeDir: "worktree", Git: config.GitConfig{BaseBranch: "main"}}
+	result, started := o.runPromptOnlySingle(context.Background(), cfg, "opencode", config.Agent{Command: "echo hi"}, noopIdentityResolver(), "prompt-only", prompt.RenderConfig{}, nil, &fakeSandboxFactory{sandbox: rtSandbox}, nil, ModeFresh, "main", 0, 0, 1, "", 0, false, 0, false, false, false, false, 0, "", "prompt-run-123", nil, 0, "", "", "")
+	if !started {
+		t.Fatal("expected prompt-only run to start")
+	}
+	if result.Status != "failure" {
+		t.Fatalf("status = %q, want failure (first attempt fails, no retry budget to recover)", result.Status)
 	}
 	wantLogPath := filepath.Join(workDir, ".sandman", "batches", "prompt-run-123", "runs", "prompt-run-123", "run.log")
 	if markerPath != wantLogPath {
