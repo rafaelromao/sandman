@@ -2541,11 +2541,11 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
       // stamping for parent impl rows (aggregateReviewChildren), so
       // this helper is no longer used to enrich the parent row — only
       // the orphan synthetic row below. The verdict scan uses the same
-      // ## Decision marker rule the Go side reviewVerdictFromDecisionFile uses
-      // (reviewVerdictMarkerLineBare only; the controlled decision.md
-      // artefact is never prefixed or suffixed with shell debris, so
-      // the lenient "with-debris" regex the run.log parser used to
-      // require is no longer present):
+      // ## Decision marker rule the Go-side verdict reader uses (bare
+      // `**MARKER**` only; the controlled decision.md artefact is never
+      // prefixed or suffixed with shell debris, so the lenient
+      // "with-debris" regex the run.log parser used to require is no
+      // longer present):
       // APPROVED -> "Approved", CHANGES_REQUESTED -> "Changes requested".
       // The scan reads each review's already-loaded `log` field; when no
       // log content is available (the common case: the summary endpoint
@@ -2599,11 +2599,11 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
     }
 
     // extractReviewVerdictFromLog scans a single review run's log text
-    // for the ## Decision marker, mirroring the legacy Go-side
-    // reviewVerdictFromRunLog helper that the orphan path still relies
-    // on for compatibility (the Go server-side helper for parent rows
-    // is reviewVerdictFromDecisionFile, which reads decision.md). Returns
-    // the user-facing verdict string ("Approved" / "Changes requested") or
+    // for the ## Decision marker. The Go server-side reader for parent
+    // rows reads decision.md (the controlled artefact), so the JS
+    // orphan path keeps this lenient log scan only as a fallback when
+    // a sibling review.log is already in memory. Returns the
+    // user-facing verdict string ("Approved" / "Changes requested") or
     // '' when no marker is recoverable. Tolerates missing or empty log
     // (returns ''), the "[<runID>] HH:MM:SS " line prefix added by the
     // agent output stream, and the with-debris shell-piped shape

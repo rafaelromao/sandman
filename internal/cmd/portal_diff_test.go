@@ -5237,18 +5237,18 @@ console.log('PASS');
 }
 
 // TestSummarizeReviewGroup_Verdict_GoRegexParityBare pins Go-side parity
-// for the bare marker line shape (reviewVerdictMarkerLineBare). Slice 1
-// of issue #1938 retargeted the server-side verdict reader from run.log
-// to decision.md; the bare marker rule is the only rule the new Go
-// helper accepts (decision.md is a controlled artefact with no shell
-// prefix and no trailing debris).
+// for the bare marker line shape. Slice 1 of issue #1938 retargeted
+// the server-side verdict reader from run.log to decision.md; the bare
+// marker rule is the only rule the new Go helper accepts (decision.md
+// is a controlled artefact with no shell prefix and no trailing
+// debris).
 func TestSummarizeReviewGroup_Verdict_GoRegexParityBare(t *testing.T) {
 	js := `const NL = String.fromCharCode(10);
 const reviews = [
   { key: 'r1', runId: 'r1', review: true, status: 'success', startedAt: '2026-07-01T00:00:00Z', log: '## Decision' + NL + '**APPROVED**' + NL },
 ];
 const summary = summarizeReviewGroup(reviews);
-if (summary.verdict !== 'Approved') throw new Error('bare marker must match (Go reviewVerdictMarkerLineBare), got ' + JSON.stringify(summary.verdict));
+if (summary.verdict !== 'Approved') throw new Error('bare marker must match the Go-side bare marker rule, got ' + JSON.stringify(summary.verdict));
 console.log('PASS');
 `
 	runPortalHTMLScript(t, js)
