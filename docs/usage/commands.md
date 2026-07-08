@@ -72,6 +72,10 @@ Positional arguments (numbers and ranges) can be combined with `--label` and `--
 | `--model` | `model` from config | Override the model passed to the agent for built-in presets |
 | `--agent` | `agent` from config (`opencode`) | Built-in agent preset for this run |
 | `--run-id` | — | Batch-level identifier for prompt-only runs; must start with a letter and contain only alphanumeric characters, hyphens, and underscores; cannot be combined with issue selection |
+| `--run-idle-timeout` | `0` | Treat an AgentRun as stuck if it produces no output for N seconds; `0` disables the timeout |
+| `--branch` | `""` | Branch name for prompt-only runs; overrides the default `sandman/<slug>-<timestamp>` shape (prompt-only mode only) |
+| `--reconcile-stranded` | `true` | Auto-recover stranded worktrees when the main repo is checked out on a `sandman/N-…` branch (see ADR-0027) |
+| `--no-reconcile-stranded` | `false` | Opt out of stranded-worktree auto-recovery (negative form of `--reconcile-stranded`) |
 
 ### Flag interactions
 
@@ -92,6 +96,7 @@ Positional arguments (numbers and ranges) can be combined with `--label` and `--
 - `--agent` selects which built-in preset to use for this run; if omitted, Sandman uses `agent` from config
 - `--continue` cannot be combined with `--override`
 - When `--max-containers` and `--container-capacity` together constrain concurrency below `--parallel`, the tighter limit wins
+- `--reconcile-stranded` auto-recovers stranded worktrees when the main repo is checked out on a `sandman/N-…` branch (ADR-0027); `--no-reconcile-stranded` opts out of this auto-recovery
 
 ## `sandman status`
 
@@ -129,6 +134,7 @@ Reuses the previously created branch and recorded agent and review command from 
 | `--agent` | prior run's agent | Override the agent preset for the continued run |
 | `--run-id` | — | Continue the most recent prompt-only run by its batch-level identifier; must start with a letter and contain only alphanumeric characters, hyphens, and underscores; cannot be combined with issue numbers. Reads the prior task file from the existing worktree and reuses the same branch for the continued run. When the most recent Issue-0 event is a review run (not a prompt-only run), `sandman run --continue` skips it and selects the prior prompt-only run instead — or errors if none exists. |
 | `--dangerously-skip-permissions` | `true` for container runs, `false` for worktree runs | Skip permission checks for the continued run |
+| `--run-idle-timeout` | `0` | Treat an AgentRun as stuck if it produces no output for N seconds; `0` disables the timeout |
 
 ## `sandman clean`
 
@@ -149,24 +155,21 @@ sandman clean [flags]
 
 ## `sandman archive`
 
-Move a completed batch directory from `.sandman/batches/<batch-id>` to `.sandman/archive/<batch-id>`.
+Archive completed run directories. `archive run` and `archive batch` are distinct subcommands with different contracts.
 
 ```bash
-sandman archive run <id>
+sandman archive run <runId>
+sandman archive batch <batchId>
 sandman archive older-than <days>
+sandman archive stale
 ```
-
-`batch` is registered as an alias of `run` (they share the same handler) and is interchangeable from the command line.
 
 | Subcommand | Description |
 |------------|-------------|
-| `run <id>` | Move `.sandman/batches/<id>` to `.sandman/archive/<id>` |
-| `older-than <days>` | Move every dead batch whose manifest `CreatedAt` (or directory mtime when the manifest is missing) is older than `<days>` days to `.sandman/archive/<id>` |
-| `stale` | Recover unterminated runs in dead batches by emitting `run.aborted` events, then archive every dead-and-terminal batch directory |
-
-The batch's daemon must not be live. `sandman archive run` calls `daemon.IsRunActive` on the batch directory and returns an error if the `batch.sock` is still accepting connections. The archive directory is created on first use. If `.sandman/archive/<id>` already exists, the command refuses and leaves both the source and the existing archive directory untouched.
-
-`sandman archive older-than <days>` scans every batch directory under `.sandman/batches/`, archives those whose daemon is dead and whose timestamp is at or before the `<days>`-day cutoff, and skips the rest. A batch whose daemon is still live is never archived regardless of its age. If the destination `.sandman/archive/<id>` already exists, the batch is skipped (with a `skip` message on stderr) and the existing archive entry is left untouched. `<days>` must be a non-negative integer; `0` archives every dead batch.
+| `run <runId>` | Move `runs/<runId>/` from `.sandman/batches/<batchId>/` to `.sandman/archive/<batchId>/runs/<runId>/`. The targeted row's `run.json.Status` must be terminal; sibling rows and the batch daemon stay untouched. The HTTP `POST /api/runs/archive` endpoint shares this per-row contract. |
+| `batch <batchId>` | Move the whole batch directory from `.sandman/batches/<batchId>/` to `.sandman/archive/<batchId>/`. The batch daemon must be gone; sibling rows are not applicable. Flips the entry-level `status` to `archived`. CLI-only — not exposed via HTTP. |
+| `older-than <days>` | Walk every `run.json` across all batches and archive each terminal row older than the cutoff. Already-archived rows are skipped. Sibling rows and live batch daemons stay untouched. `<days>` must be a non-negative integer; `0` archives every dead batch. |
+| `stale` | Chain the same status-fix logic as `clean --stale` (emit `run.aborted` for unterminated runs in dead batches), then walk every `run.json` and archive each terminal row. Live batches are skipped entirely.
 
 ## `sandman attach`
 
@@ -204,16 +207,28 @@ Use it when you want a browser view of multiple runs in the same repo.
 Run a Sandman agent to review a pull request.
 
 ```bash
-sandman review [flags]
+sandman review [pr-numbers...]
 ```
 
-With `--pr`, posts a single review comment and exits. Without `--pr`, starts the review daemon that polls open PRs every 60s for `/sandman review` comments and launches review agents.
+When one or more PR numbers are given as positional arguments, posts a single review comment for each PR and exits. With no arguments, starts the review daemon that polls open PRs every 60s for `/sandman review` comments and launches review agents.
+
+Examples:
+```bash
+sandman review 42
+sandman review 42 43
+sandman review 42:45
+sandman review 42:
+sandman review :45
+sandman review 42 --agent opencode --model opencode/big-pickle
+```
 
 The daemon's review path is **daemon-as-poster**: the reviewer agent writes its body to `<runDir>/decision.md`, and the daemon reads the file, runs it through the `RedactBody` redactor (S1, `internal/review/redactor.go`) which applies the regex `(?i)/sandman` → `sandman` to strip every leading-slash `sandman` substring, and posts the redacted body via `gh pr comment`. The redactor is the load-bearing safety net for the no-self-loop invariant — it runs out-of-band of the LLM, so the bot's body can never contain the trigger substring regardless of what the prompt rule says. The `processPR` self-defence sniff `LooksLikeBotReviewBody` survives as a belt-and-braces backstop: a body that structurally looks like a previous bot review (carries the `## Previous review progress` markdown heading AND the literal `/sandman review` trigger substring) is dropped before `ParseTrigger` runs — no batch run, no eyes reaction. The redactor is the primary defence; the sniff is defence-in-depth. See [ADR-0014 §Daemon-side redaction](../adr/0014-sandman-review-daemon-and-guard.md#daemon-side-redaction) for the full rationale.
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--pr` | `0` | Pull request number to review (omit to start the review daemon) |
+| `--parallel` | `0` | Override parallel_reviews for this run; `0` uses the configured value |
+| `--container-capacity` | `0` | Maximum concurrent agent runs per container; `0` means unlimited |
+| `--max-containers` | `0` | Maximum number of containers to run at once; `0` means no cap (unbounded pool) |
 | `--agent` | `""` | Override `default_review_agent` for this run |
 | `--model` | `""` | Override `default_review_model` for this run |
 | `--sandbox` | `"worktree"` | Sandbox mode for the review run |
