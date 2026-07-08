@@ -102,6 +102,6 @@ sandman clean
 
 `--orphaned` targets test batch directories that have no live daemon socket and no corresponding `run.started` event — the exact residue a failed or interrupted e2e run leaves behind.
 
-The `--stale` path calls `daemon.CleanupStaleRunSnapshots` (ADR-0015), which removes `sandman-config-*` temp snapshots left after a crash, and also emits `run.aborted` events for runs in dead batches to correct the event log.
+The `--stale` path sweeps stale config snapshots left after a crash (the `sandman-config-*` temp directories introduced by ADR-0008) and also emits `run.aborted` events for runs in dead batches to correct the event log. See ADR-0008 and ADR-0015 for the underlying cleanup mechanism.
 
 For stranded worktrees (a worktree whose HEAD does not match its directory name), see [`sandman stranded`](commands.md#sandman-stranded) or use [`sandman clean`](commands.md#sandman-clean).
