@@ -2745,15 +2745,12 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
       if (Number(run.reviewCount || 0) > 0) {
         const count = Number(run.reviewCount || 0);
         const reviewPart = count + ' review' + (count === 1 ? '' : 's');
-        // Empty reviewVerdict intentionally skips the trailing dash so
-        // orphan review-only groups (which the JS summarizeReviewGroup
-        // path at line ~2508 cannot populate without an async log fetch)
-        // render cleanly (issue #1729).
-        if (run.reviewVerdict) {
-          counterParts.push(reviewPart + ' - ' + run.reviewVerdict);
-        } else {
-          counterParts.push(reviewPart);
-        }
+        // Empty reviewVerdict is the server stamp for "decision.md was
+        // missing or unparseable" (issue #1939 slice 2) — render the
+        // explicit "Unclear" suffix so the user can see the server saw
+        // the row but could not read a verdict from decision.md. A
+        // populated reviewVerdict overrides the fallback.
+        counterParts.push(reviewPart + ' - ' + (run.reviewVerdict || 'Unclear'));
       }
       const status = String(run.status || '').toLowerCase();
       if (run.runId && status !== 'queued' && status !== 'blocked') lines.push('Run: ' + run.runId);
