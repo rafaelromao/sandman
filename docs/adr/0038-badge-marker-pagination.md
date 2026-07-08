@@ -21,7 +21,7 @@ Replace the one-shot `--limit 1000` call with a paginating scan that walks every
 - `gh pr list --state all --limit 100 --json number,body` is called per page.
 - The `Link: <url>; rel="next"` header (written to stderr in combined output) is parsed to extract the `&after=<cursor>` cursor for the next page.
 - Pagination stops when: (a) the marker `<!-- sandman-badge-pr -->` is found in any page, (b) the API returns no `rel="next"` link, or (c) an error is raised.
-- Per-page log line: `badge marker scan: page N, total_seen M` is emitted to standard error so operators can see how deep the scan went.
+- The scan is silent on success: no per-page log lines are emitted so that the operator-visible stdout from `sandman run` is not polluted with pagination progress. Failures still surface through the existing `Badge PR suggestion skipped: ...` warn-line on the hook writer.
 
 ### Marker check stays authoritative
 
@@ -48,13 +48,13 @@ The `--limit 100` check in `internal/prompt/badge_prompt.md:7` is unchanged. It 
 ### Positive
 
 - The marker-comment idempotency check can no longer be truncated by repository size. The documented contract is upheld.
-- Operators can observe how deep the scan went via the per-page log line.
+- The hook stays quiet on the success path; only the operator-visible summary line (`Sandman suggested a Built with Sandman badge PR: ...`) or the existing warn-lines appear on the writer.
 - The pagination boundary (`--limit 100`) is explicit and auditable.
 
 ### Negative
 
 - A repository with very many PRs will take longer to scan on first badge check. The scan is bounded by the marker or by the API's last page.
-- The per-page `os.Stderr` logging is coarse — no structured logging. This is consistent with the existing `fmt.Fprintf(h.writer, ...)` pattern in the hook.
+- Operators lose the in-progress `page N, total_seen M` trace. Mid-scan errors are still surfaced via the existing `Badge PR suggestion skipped: ...` warn-line, which is sufficient for diagnosing the failure.
 
 ### Neutral
 
