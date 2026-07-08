@@ -80,3 +80,69 @@ func TestPortal_RunDir_FieldHasNoJSONTag(t *testing.T) {
 		}
 	}
 }
+
+// TestPortal_RunDir_TerminalRowStampsBatchesIndexPath pins slice 0c:
+// a terminal event-log row whose batch is in the Batches index carries
+// RunDir equal to `<idx.Resolve(batchID).Path>/runs/<runID>`. The
+// Batches index is the source of truth for the on-disk location because
+// the per-row manifest's path is the index entry's Path at archive time
+// (the run folder itself can be relocated between batch and archive).
+func TestPortal_RunDir_TerminalRowStampsBatchesIndexPath(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	batchID := "abcd-260101120000-99"
+	batchDir := filepath.Join(repoRoot, ".sandman", "batches", batchID)
+	runID := "abcd-260101120000-99"
+	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
+		{Type: "run.started", Timestamp: time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC), RunID: runID, Issue: 99, Payload: map[string]any{"branch": "sandman/99-fix", "batch_id": batchID}},
+		{Type: "run.finished", Timestamp: time.Date(2025, 1, 1, 12, 5, 0, 0, time.UTC), RunID: runID, Issue: 99, Payload: map[string]any{"status": "success", "branch": "sandman/99-fix", "batch_id": batchID}},
+	})
+	addBatchToIndex(t, repoRoot, batchID, batchDir, []int{99})
+
+	runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")})
+	if err != nil {
+		t.Fatalf("compute: %v", err)
+	}
+	if len(runs) != 1 {
+		t.Fatalf("expected 1 row, got %d: %#v", len(runs), runs)
+	}
+
+	want := filepath.Join(batchDir, "runs", runID)
+	if got := runs[0].RunDir; got != want {
+		t.Errorf("terminal row RunDir = %q, want %q (idx.Resolve(batchID).Path + runs/<runID>)", got, want)
+	}
+}
+
+// TestPortal_RunDir_TerminalRowUnresolvableBatchLeavesRunDirEmpty pins
+// the negative side of slice 0c: when the terminal row's batch cannot
+// be resolved in the Batches index, RunDir stays empty. The caller
+// treats empty as Unclear (per the issue brief), so a missing index
+// entry must not fabricate a directory the verdict reader can't stat.
+func TestPortal_RunDir_TerminalRowUnresolvableBatchLeavesRunDirEmpty(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	runID := "abcd-260101120000-77"
+	// No addBatchToIndex call — the batch is unknown to the Batches
+	// index. The terminal row survives via the event log alone.
+	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
+		{Type: "run.started", Timestamp: time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC), RunID: runID, Issue: 77, Payload: map[string]any{"branch": "sandman/77-fix", "batch_id": "ghost-batch"}},
+		{Type: "run.finished", Timestamp: time.Date(2025, 1, 1, 12, 5, 0, 0, time.UTC), RunID: runID, Issue: 77, Payload: map[string]any{"status": "success", "branch": "sandman/77-fix", "batch_id": "ghost-batch"}},
+	})
+
+	runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")})
+	if err != nil {
+		t.Fatalf("compute: %v", err)
+	}
+	if len(runs) != 1 {
+		t.Fatalf("expected 1 row, got %d: %#v", len(runs), runs)
+	}
+	if got := runs[0].RunDir; got != "" {
+		t.Errorf("terminal row RunDir = %q, want empty (unresolvable batch must leave RunDir empty so caller renders Unclear)", got)
+	}
+}

@@ -456,7 +456,7 @@ func (v *portalRunsView) computeWithActiveRunsAndIndex(repoRoot string, eventLis
 		if runState.Status() == "queued" && !activeBatchStart.IsZero() && v.eventBelongsToBatch(runState.Started.Timestamp, activeBatchStart) {
 			continue
 		}
-		runs = append(runs, v.runFromState(repoRoot, runState, nil, eventsByRun, deadBatches))
+		runs = append(runs, v.runFromState(repoRoot, runState, nil, eventsByRun, deadBatches, idx))
 	}
 	runs = append(runs, v.synthesizedDeadBatchRows(deadBatches, runStates)...)
 
@@ -1520,7 +1520,7 @@ func (v *portalRunsView) runFromActiveBatchIssue(repoRoot string, active portalA
 	if state != nil {
 		activeWithOutput := active
 		activeWithOutput.LiveOutput = liveOutput
-		run = v.runFromState(repoRoot, *state, &activeWithOutput, eventsByRun, deadBatches)
+		run = v.runFromState(repoRoot, *state, &activeWithOutput, eventsByRun, deadBatches, nil)
 		run.BatchKey = batchKey
 		if len(active.IssueNumbers) > 1 {
 			run.BatchIssues = append([]int(nil), active.IssueNumbers...)
@@ -1659,7 +1659,7 @@ func (v *portalRunsView) matchRunState(instance portalActiveRun, states []events
 func (v *portalRunsView) runFromActiveMatch(repoRoot string, match portalRunMatch, eventsByRun map[string][]portalEvent, deadBatches []daemon.DeadBatch) portalRun {
 	runID := match.instance.Key
 	if match.state != nil {
-		run := v.runFromState(repoRoot, *match.state, &match.instance, eventsByRun, deadBatches)
+		run := v.runFromState(repoRoot, *match.state, &match.instance, eventsByRun, deadBatches, nil)
 		run.BatchKey = batchKeyForActive(match.instance)
 		if match.state.Finished != nil {
 			if strings.TrimSpace(run.Log) == "" {
@@ -1745,7 +1745,7 @@ func (v *portalRunsView) runFromActiveMatch(repoRoot string, match portalRunMatc
 	return run
 }
 
-func (v *portalRunsView) runFromState(repoRoot string, runState events.RunState, active *portalActiveRun, eventsByRun map[string][]portalEvent, deadBatches []daemon.DeadBatch) portalRun {
+func (v *portalRunsView) runFromState(repoRoot string, runState events.RunState, active *portalActiveRun, eventsByRun map[string][]portalEvent, deadBatches []daemon.DeadBatch, idx *batchindex.Index) portalRun {
 	runID := runState.RunID
 
 	// Resolve batchID from the event payload's batch_id (with "+N" on-disk
@@ -1890,6 +1890,17 @@ func (v *portalRunsView) runFromState(repoRoot string, runState events.RunState,
 					v.markCompletedIfSocketDead(&portalRun, sockPath)
 				}
 			}
+		}
+	}
+	// Terminal rows (active==nil AND kind=="completed"): stamp RunDir
+	// from the Batches index, which is the source of truth for the
+	// on-disk location of the run folder (issue #1937 slice 0c). When
+	// the batch cannot be resolved (e.g. an evicted index entry or an
+	// event-log-only run with no surviving batch), leave RunDir empty
+	// so the verdict reader treats the row as Unclear.
+	if active == nil && portalRun.Kind == "completed" && idx != nil {
+		if entry := idx.Resolve(batchID); entry != nil && entry.Path != "" {
+			portalRun.RunDir = filepath.Join(entry.Path, "runs", runID)
 		}
 	}
 	return portalRun
