@@ -79,9 +79,12 @@ func issueBatchIDForRequest(req Request) string {
 // `<ts>-<sid>-<linkedIssue>-PR<pr>` diverged from the legacy batch
 // dir `<ts>-<sid>-PR<pr>` that `prepareReviewRun` mints).
 //
-// When runDir is empty, fall back to the historical contract: the
-// user-provided runID is preferred; otherwise the (ts, shortid) pair
-// is used.
+// When runDir is empty, fall back to the user-provided runID; when
+// that is also empty, route the (ts, shortid) pair through the
+// shared identity engine so the output is `<ts>-<sid>-prompt`.
+// Routing through `runid.NewBatchID` keeps the prompt-only BatchId
+// shape aligned with every other prompt-only mint surface (cleanup
+// of #1943, see issue #2042).
 func batchIDForPromptOnly(ts, shortid, userRunID, runDir string) string {
 	if runDir != "" {
 		// runDir = <batchesDir>/<batchID>/runs/<runID>; the batchID
@@ -101,7 +104,7 @@ func batchIDForPromptOnly(ts, shortid, userRunID, runDir string) string {
 	if shortid == "" && ts == "" {
 		return ""
 	}
-	return shortid + "-" + ts
+	return runid.NewBatchID(runid.KindPromptOnly, 1, "", ts, shortid)
 }
 
 func issueRef(num int) *int {

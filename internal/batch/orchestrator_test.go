@@ -10336,3 +10336,37 @@ func TestLogAborted_EventLogWriteErrorIsSurfacedOnErrorLog(t *testing.T) {
 		t.Errorf("expected errorLog line to mention run.aborted, got:\n%s", errBuf.String())
 	}
 }
+
+// TestBatchIDForPromptOnly_EmptyRunIDAndRunDir_EmitsTsSid pins the
+// segment order of the prompt-only BatchId fallback so the cleanup of
+// #1943 (issue #2042) cannot regress to the legacy shortid-first
+// shape. With runDir == "" and userRunID == "" the function still
+// receives a non-empty (ts, shortid) pair from the orchestrator and
+// must emit the timestamp segment BEFORE the short-id segment via the
+// shared identity engine.
+func TestBatchIDForPromptOnly_EmptyRunIDAndRunDir_EmitsTsSid(t *testing.T) {
+	want := runid.NewBatchID(runid.KindPromptOnly, 1, "", orchTestRunTS, orchTestRunShortID)
+
+	got := batchIDForPromptOnly(orchTestRunTS, orchTestRunShortID, "", "")
+
+	if got != want {
+		t.Fatalf("batchIDForPromptOnly(%q, %q, \"\", \"\") = %q, want %q (must route through runid.NewBatchID for ts-sid shape)",
+			orchTestRunTS, orchTestRunShortID, got, want)
+	}
+
+	// Pin the segment order: the timestamp segment (12 digits) must
+	// precede the short-id segment (4 hex chars). This is the
+	// regression net for #1943 — if a future refactor reintroduces
+	// the legacy shortid-first concat, this assertion fails.
+	parts := strings.SplitN(got, "-", 3)
+	if len(parts) < 2 {
+		t.Fatalf("batchIDForPromptOnly output %q is not a hyphen-separated id", got)
+	}
+	if parts[0] != orchTestRunTS {
+		t.Errorf("expected timestamp segment %q as the first segment, got %q (regression to legacy shortid-first shape)",
+			orchTestRunTS, parts[0])
+	}
+	if parts[1] != orchTestRunShortID {
+		t.Errorf("expected short-id segment %q as the second segment, got %q", orchTestRunShortID, parts[1])
+	}
+}
