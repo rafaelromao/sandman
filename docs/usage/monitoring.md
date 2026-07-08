@@ -214,7 +214,7 @@ Prompt-only runs show the same summary with `prompt-only` in the issue column.
 | Subcommand | Behaviour |
 |------------|-----------|
 | `sandman archive run <runId>` | Move `runs/<runId>/` from `.sandman/batches/<batchId>/` to `.sandman/archive/<batchId>/runs/<runId>/`. The targeted row's `run.json.Status` must be terminal; sibling rows and the batch daemon stay untouched. Persists a per-row `Runs[]` record carrying `status: "archived"` and `archivePath` for crash recovery. |
-| `sandman archive batch <batchId>` | Move the whole batch dir from `.sandman/batches/<batchId>/` to `.sandman/archive/<batchId>/`. The batch daemon must be gone. Flips the entry-level `status` to `archived`. CLI-only — not exposed via HTTP. |
+| `sandman archive batch <batchId>` | Move the whole batch dir from `.sandman/batches/<batchId>/` to `.sandman/archive/<batchId>/`. The batch daemon must be gone. Flips the batch-level `status` to `archived`. CLI-only — not exposed via HTTP. |
 | `sandman archive older-than <days>` | Walk every `runs/<runID>/run.json` across all batches and archive each terminal row older than the cutoff. Already-archived rows are skipped via the per-row `Runs[]` record. |
 | `sandman archive stale` | Run the same stale-recovery pass as `clean --stale` (emit `run.aborted` for unterminated runs in dead batches), then walk every `runs/<runID>/run.json` and archive each terminal row. |
 

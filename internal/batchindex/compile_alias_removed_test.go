@@ -1,20 +1,23 @@
 package batchindex_test
 
-// This file is the slice-7 compile-time guard. It is intentionally
-// placed in the external `batchindex_test` package so it can refer
-// to `batchindex.Entry` from outside the production package. The
-// slice-7 acceptance criterion is that `batchindex.Entry` no longer
-// resolves as a type name. After the rename:
+// This file is the slice-7 compile-time guard. It is placed in the
+// external `batchindex_test` package so it can refer to
+// `batchindex.Entry` from outside the production package.
 //
-//   - the production code drops `type Entry` and `type Batch = Entry`,
-//     so `batchindex.Entry` becomes unresolvable;
-//   - this file's `_ entryTypeName = "Entry"` line (it does NOT
-//     instantiate the type — it asserts that the *identifier* is
-//     gone) is checked by the build.
+// The slice-7 acceptance criterion is that `batchindex.Entry` no
+// longer resolves as a type name. The regression net is the
+// `var _ batchindex.Batch` line below — any caller that still tries
+// to use `batchindex.Entry` will fail to build the package that
+// imports it (e.g. `internal/cmd/portal_runs_view.go`'s
+// `*batchindex.Entry` return type). That build break IS the
+// regression net; this test file just pins the positive invariant
+// (Batch is the canonical type).
 //
-// We use a string identifier rather than a type literal because
-// Go's `go test` treats compile failures of `*_test.go` files as
-// test failures, which is the desired regression-net behavior.
+// To verify the negative invariant manually, uncomment the
+// `var _ batchindex.Entry` line below and run `go test
+// ./internal/batchindex/`. The build must fail with
+// "undefined: batchindex.Entry". Re-comment after the manual
+// verification — the test file must compile in normal operation.
 
 import (
 	"testing"
@@ -22,22 +25,20 @@ import (
 	"github.com/rafaelromao/sandman/internal/batchindex"
 )
 
-// Sanity guard for the new canonical type.
+// Live guard for the new canonical type — this resolves today and
+// must keep resolving. If `type Batch` is ever removed, this line
+// breaks the build, which `go test` reports as a test failure.
 var _ batchindex.Batch
 
-// The following line is commented out by design. If anyone
-// reintroduces `type Entry` or `type Batch = Entry`, the production
-// callers' compile errors will surface first; this file documents
-// the invariant. Uncomment to verify the guard fires when Entry
-// reappears:
+// Negative-invocation probe — intentionally commented out so the
+// test file compiles in the steady state. Uncomment to verify the
+// guard fires when `type Entry` is reintroduced.
 //
-//   var _ batchindex.Entry // <-- must fail to compile after slice 7.
+// var _ batchindex.Entry // <-- must fail to compile after slice 7.
 
 func TestSlice7_BatchIsPrimaryType(t *testing.T) {
 	// Build a zero value through Add to confirm the type is the
-	// canonical insertion target. The body is intentionally minimal:
-	// the compile-time reference to `batchindex.Batch` (above) is the
-	// primary guard for the rename.
+	// canonical insertion target.
 	idx := &batchindex.Index{Version: batchindex.IndexVersion}
 	idx.AddBatch(batchindex.Batch{ID: "guard"})
 	if len(idx.Batches) != 1 || idx.Batches[0].ID != "guard" {
