@@ -11,6 +11,7 @@ import (
 )
 
 func TestIsPRD_AcceptsCanonicalBody(t *testing.T) {
+	t.Parallel()
 	body := "## Problem Statement\n\nSome problem.\n\n## Solution\n\nSome solution.\n\n## User Stories\n\n1. Story one.\n"
 
 	r := NewPRDResolver(nil, nil)
@@ -20,6 +21,7 @@ func TestIsPRD_AcceptsCanonicalBody(t *testing.T) {
 }
 
 func TestIsPRD_RejectsMissingSection(t *testing.T) {
+	t.Parallel()
 	body := "## Problem Statement\n\nSome problem.\n\n## Solution\n\nSome solution.\n"
 	r := NewPRDResolver(nil, nil)
 	if r.IsPRD(body) {
@@ -28,6 +30,7 @@ func TestIsPRD_RejectsMissingSection(t *testing.T) {
 }
 
 func TestIsPRD_RejectsH3Section(t *testing.T) {
+	t.Parallel()
 	body := "## Solution\n\nSome solution.\n\n### User Stories\n\n1. Story.\n\n### Problem Statement\n\nSome problem.\n"
 	r := NewPRDResolver(nil, nil)
 	if r.IsPRD(body) {
@@ -36,6 +39,7 @@ func TestIsPRD_RejectsH3Section(t *testing.T) {
 }
 
 func TestIsPRD_IsCaseInsensitive(t *testing.T) {
+	t.Parallel()
 	body := "## problem statement\n\nSome problem.\n\n## SOLUTION\n\nSome solution.\n\n## User Stories\n\n1. Story.\n"
 	r := NewPRDResolver(nil, nil)
 	if !r.IsPRD(body) {
@@ -44,6 +48,7 @@ func TestIsPRD_IsCaseInsensitive(t *testing.T) {
 }
 
 func TestExtractIssueReferences(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		text string
@@ -104,6 +109,7 @@ func equalInts(a, b []int) bool {
 }
 
 func TestExtractParentReference(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name   string
 		body   string

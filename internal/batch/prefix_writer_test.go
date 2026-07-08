@@ -7,6 +7,7 @@ import (
 )
 
 func TestLinePrefixWriterConcurrent(t *testing.T) {
+	t.Parallel()
 	var buf bytes.Buffer
 	lp := NewLinePrefixWriter("test", &buf)
 

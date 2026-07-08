@@ -3,6 +3,7 @@ package events
 import "testing"
 
 func TestRunStatus(t *testing.T) {
+	t.Parallel()
 	t.Run("String returns lower-case name for each named constant", func(t *testing.T) {
 		cases := []struct {
 			status RunStatus
