@@ -124,7 +124,7 @@ func TestPortal_RunFromState_MultiIssueBatchActive_LogPathUsesOnDiskDirSuffix(t 
 		RunID:      perRowRunID,
 	}
 
-	run := (&portalRunsView{}).runFromState(repoRoot, runState, active, nil, nil)
+	run := (&portalRunsView{}).runFromState(repoRoot, runState, active, nil, nil, nil)
 
 	if run.LogPath != logPath {
 		t.Fatalf("LogPath=%q, want %q (the on-disk per-row log under %s)", run.LogPath, logPath, onDiskDir)
@@ -180,7 +180,7 @@ func TestPortal_RunFromState_ActiveNil_MultiIssueBatch_LogPathFromEventPayload(t
 		Finished: &events.Event{Timestamp: finishedAt, Payload: map[string]any{"status": "success"}},
 	}
 
-	run := (&portalRunsView{}).runFromState(repoRoot, runState, nil, nil, nil)
+	run := (&portalRunsView{}).runFromState(repoRoot, runState, nil, nil, nil, nil)
 
 	if run.LogPath != logPath {
 		t.Fatalf("LogPath=%q, want %q (active==nil path must keep using state.BatchID())", run.LogPath, logPath)

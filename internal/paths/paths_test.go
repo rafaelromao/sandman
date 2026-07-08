@@ -175,3 +175,22 @@ func TestLayout_PromptOnlyRunLogPath(t *testing.T) {
 		})
 	}
 }
+
+// TestLayout_DecisionFile pins issue #1937 slice 0: the per-run
+// decision file lives at `<batchesDir>/<batchID>/runs/<runID>/decision.md`.
+// This is the run-folder location used by slice-1 verdict readers that
+// read `<portalRun.RunDir>/decision.md`. Note that this is NOT the
+// review worktree's decision.md path (issue #1953 deliberately keeps
+// review decision.md in the per-row worktree, not in the run folder);
+// this helper is intended for non-review verdict readers.
+func TestLayout_DecisionFile(t *testing.T) {
+	l := Layout{RepoRoot: "/r", BatchesDir: filepath.Join("/r", ".sandman", "batches")}
+	const (
+		batchID = "b1"
+		runID   = "r1"
+	)
+	runDir := filepath.Join(l.BatchesDir, batchID, "runs", runID)
+	if got, want := l.DecisionFile(batchID, runID), filepath.Join(runDir, "decision.md"); got != want {
+		t.Errorf("DecisionFile = %q, want %q", got, want)
+	}
+}

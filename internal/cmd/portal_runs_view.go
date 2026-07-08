@@ -153,6 +153,21 @@ type portalRun struct {
 	// to avoid showing Archive actions for stale historical rows whose
 	// source directory is already gone.
 	SourceExists bool `json:"sourceExists"`
+	// RunDir is the host-absolute path to the per-row run folder, used
+	// by slice-1 verdict readers that locate the decision file at
+	// `<runDir>/decision.md` (issue #1937). Server-only: tagged `json:"-"`
+	// so json.Marshal never serializes it and the front-end never sees
+	// it. (The issue brief described this as "no JSON tag"; the literal
+	// reading — an absent tag — would still serialize the field under
+	// its Go name, so the server-only contract requires `json:"-"`.)
+	// Populated for every row whose batch is in the Batches index:
+	//   - Active rows: filepath.Dir(active.SocketPath)
+	//   - Terminal rows: filepath.Join(idx.Resolve(batchID).Path, "runs", runID)
+	//   - Synthesized dead-batch rows: the DeadBatch.RunDir already known
+	//     to the synthesize path.
+	// Empty when the batch cannot be resolved (the caller treats empty as
+	// Unclear).
+	RunDir string `json:"-"`
 }
 
 type portalActiveRun struct {
@@ -441,7 +456,7 @@ func (v *portalRunsView) computeWithActiveRunsAndIndex(repoRoot string, eventLis
 		if runState.Status() == "queued" && !activeBatchStart.IsZero() && v.eventBelongsToBatch(runState.Started.Timestamp, activeBatchStart) {
 			continue
 		}
-		runs = append(runs, v.runFromState(repoRoot, runState, nil, eventsByRun, deadBatches))
+		runs = append(runs, v.runFromState(repoRoot, runState, nil, eventsByRun, deadBatches, idx))
 	}
 	runs = append(runs, v.synthesizedDeadBatchRows(deadBatches, runStates)...)
 
@@ -764,6 +779,12 @@ func (v *portalRunsView) synthesizedDeadBatchRows(deadBatches []daemon.DeadBatch
 				FinishedAt:  &finishedAt,
 				Duration:    "0s",
 				BatchKey:    batchKey,
+				// Synthesized dead-batch rows already know their
+				// per-row folder location via the DeadBatch.RunDir the
+				// scanner produced; stamp RunDir directly from there
+				// without re-resolving through the Batches index
+				// (issue #1937 slice 0d).
+				RunDir: filepath.Join(batch.RunDir, "runs", runID),
 			}
 			if len(batch.Manifest.Issues) > 1 {
 				run.BatchIssues = append([]int(nil), batch.Manifest.Issues...)
@@ -1495,6 +1516,7 @@ func (v *portalRunsView) runFromActiveBatchIssue(repoRoot string, active portalA
 		LogURL:      logURL,
 		Log:         "Queued. Waiting to start.",
 		BatchKey:    batchKey,
+		RunDir:      activeRunDir(active),
 	}
 	// Only surface batch membership for mixed batches. A single-issue
 	// batch is not interesting to surface and would add payload noise.
@@ -1504,7 +1526,7 @@ func (v *portalRunsView) runFromActiveBatchIssue(repoRoot string, active portalA
 	if state != nil {
 		activeWithOutput := active
 		activeWithOutput.LiveOutput = liveOutput
-		run = v.runFromState(repoRoot, *state, &activeWithOutput, eventsByRun, deadBatches)
+		run = v.runFromState(repoRoot, *state, &activeWithOutput, eventsByRun, deadBatches, nil)
 		run.BatchKey = batchKey
 		if len(active.IssueNumbers) > 1 {
 			run.BatchIssues = append([]int(nil), active.IssueNumbers...)
@@ -1643,7 +1665,7 @@ func (v *portalRunsView) matchRunState(instance portalActiveRun, states []events
 func (v *portalRunsView) runFromActiveMatch(repoRoot string, match portalRunMatch, eventsByRun map[string][]portalEvent, deadBatches []daemon.DeadBatch) portalRun {
 	runID := match.instance.Key
 	if match.state != nil {
-		run := v.runFromState(repoRoot, *match.state, &match.instance, eventsByRun, deadBatches)
+		run := v.runFromState(repoRoot, *match.state, &match.instance, eventsByRun, deadBatches, nil)
 		run.BatchKey = batchKeyForActive(match.instance)
 		if match.state.Finished != nil {
 			if strings.TrimSpace(run.Log) == "" {
@@ -1712,6 +1734,7 @@ func (v *portalRunsView) runFromActiveMatch(repoRoot string, match portalRunMatc
 		Log:         stripLogLabels(match.instance.LiveOutput),
 		Events:      eventsByRun[eventKey],
 		BatchKey:    batchKeyForActive(match.instance),
+		RunDir:      activeRunDir(match.instance),
 	}
 	// Populate the live attempt signals from the raw event list when
 	// there is no matched RunState to query (the state-absent branch of
@@ -1728,7 +1751,7 @@ func (v *portalRunsView) runFromActiveMatch(repoRoot string, match portalRunMatc
 	return run
 }
 
-func (v *portalRunsView) runFromState(repoRoot string, runState events.RunState, active *portalActiveRun, eventsByRun map[string][]portalEvent, deadBatches []daemon.DeadBatch) portalRun {
+func (v *portalRunsView) runFromState(repoRoot string, runState events.RunState, active *portalActiveRun, eventsByRun map[string][]portalEvent, deadBatches []daemon.DeadBatch, idx *batchindex.Index) portalRun {
 	runID := runState.RunID
 
 	// Resolve batchID from the event payload's batch_id (with "+N" on-disk
@@ -1846,6 +1869,18 @@ func (v *portalRunsView) runFromState(repoRoot string, runState events.RunState,
 	}
 	if active != nil {
 		portalRun.SocketPath = active.SocketPath
+		// Active rows: RunDir is the per-row run folder (matches the
+		// runFromActiveBatchIssue / runFromActiveMatch initial literal
+		// and keeps the per-row field consistent across the
+		// state-present and state-absent code paths). The brief's
+		// naive `filepath.Dir(active.SocketPath)` would yield the
+		// batch directory for issue-driven batches (whose SocketPath
+		// is `<batchDir>/batch.sock`), not the per-row folder at
+		// `<batchDir>/runs/<runID>`; `activeRunDir` collapses both
+		// shapes (issue-driven batches and review batches whose
+		// SocketPath is `<batchDir>/runs/<runID>/run.sock`) into the
+		// single canonical per-row folder path (issue #1937).
+		portalRun.RunDir = activeRunDir(*active)
 		v.markCompletedIfSocketDead(&portalRun, active.SocketPath)
 		if portalRun.Kind == "completed" && runState.Finished != nil && activeSocket && (runState.IsReview() || runState.IsAutoSelect()) {
 			portalRun.Kind = "active"
@@ -1868,6 +1903,17 @@ func (v *portalRunsView) runFromState(repoRoot string, runState events.RunState,
 					v.markCompletedIfSocketDead(&portalRun, sockPath)
 				}
 			}
+		}
+	}
+	// Terminal rows (active==nil AND kind=="completed"): stamp RunDir
+	// from the Batches index, which is the source of truth for the
+	// on-disk location of the run folder (issue #1937 slice 0c). When
+	// the batch cannot be resolved (e.g. an evicted index entry or an
+	// event-log-only run with no surviving batch), leave RunDir empty
+	// so the verdict reader treats the row as Unclear.
+	if active == nil && portalRun.Kind == "completed" && idx != nil {
+		if entry := idx.Resolve(batchID); entry != nil && entry.Path != "" {
+			portalRun.RunDir = filepath.Join(entry.Path, "runs", runID)
 		}
 	}
 	return portalRun
@@ -2465,6 +2511,23 @@ func (v *portalRunsView) activeRunLogPathAndURL(repoRoot string, active portalAc
 	logPath := filepath.Join(active.Dir, "runs", active.RunID, "run.log")
 	logURL := v.portalLogDownloadURLForPath(repoRoot, logPath)
 	return logPath, logURL
+}
+
+// activeRunDir returns the per-row run folder for an active row.
+// For issue-driven batches, active.SocketPath is the batch's command
+// socket (<batchDir>/batch.sock) so `filepath.Dir(SocketPath)` is
+// the batch directory, not the per-row folder at
+// <batchDir>/runs/<runID>. For review batches, SocketPath is the
+// per-row run socket (<batchDir>/runs/<reviewRunID>/run.sock) so
+// `filepath.Dir(SocketPath)` already is the per-row folder.
+// Collapsing both shapes through active.Dir + active.RunID keeps the
+// per-row RunDir consistent regardless of which socket is the live
+// one (issue #1937 slice 0b).
+func activeRunDir(active portalActiveRun) string {
+	if active.Dir == "" || active.RunID == "" {
+		return ""
+	}
+	return filepath.Join(active.Dir, "runs", active.RunID)
 }
 
 // portalLogDownloadURLForPath turns any sandman-relative log file path into

@@ -239,7 +239,7 @@ func TestPortal_RunFromStateSetsCompletedWhenActiveButSocketDead(t *testing.T) {
 		SocketPath: sockPath,
 	}
 
-	run := (&portalRunsView{}).runFromState(repoRoot, runState, active, nil, nil)
+	run := (&portalRunsView{}).runFromState(repoRoot, runState, active, nil, nil, nil)
 
 	if run.Kind != "completed" {
 		t.Fatalf("expected kind 'completed' for active run with dead socket, got %q", run.Kind)
@@ -357,7 +357,7 @@ func TestPortal_RunFromStateKeepsActiveWhenSocketAlive(t *testing.T) {
 		SocketPath: sockPath,
 	}
 
-	run := (&portalRunsView{}).runFromState(repoRoot, runState, active, nil, nil)
+	run := (&portalRunsView{}).runFromState(repoRoot, runState, active, nil, nil, nil)
 
 	if run.Kind != "active" {
 		t.Fatalf("expected kind 'active' for active run with live socket, got %q", run.Kind)
@@ -397,7 +397,7 @@ func TestPortal_RunFromStateSetsCompletedWhenUnmatchedActiveHasDeadSocket(t *tes
 		},
 	}
 
-	run := (&portalRunsView{}).runFromState(repoRoot, runState, nil, nil, nil)
+	run := (&portalRunsView{}).runFromState(repoRoot, runState, nil, nil, nil, nil)
 
 	if run.Kind != "active" {
 		t.Fatalf("expected kind 'active' for unmatched active state with dead socket and no batch dir, got %q", run.Kind)
@@ -422,7 +422,7 @@ func TestPortal_RunFromState_StaysActiveWhenBatchDirMissing(t *testing.T) {
 		},
 	}
 
-	run := (&portalRunsView{}).runFromState(repoRoot, runState, nil, nil, nil)
+	run := (&portalRunsView{}).runFromState(repoRoot, runState, nil, nil, nil, nil)
 
 	if run.Kind != "active" {
 		t.Fatalf("expected kind 'active' for unmatched active state with missing run dir, got %q", run.Kind)
@@ -451,7 +451,7 @@ func TestPortal_RunFromState_StaysActiveWhenSocketMissing(t *testing.T) {
 		},
 	}
 
-	run := (&portalRunsView{}).runFromState(repoRoot, runState, nil, nil, nil)
+	run := (&portalRunsView{}).runFromState(repoRoot, runState, nil, nil, nil, nil)
 
 	if run.Kind != "active" {
 		t.Fatalf("expected kind 'active' for unmatched active state with present run dir but missing socket, got %q", run.Kind)
@@ -608,7 +608,7 @@ func TestPortal_RunFromState_PopulatesIssueTitle(t *testing.T) {
 		},
 	}
 
-	run := (&portalRunsView{}).runFromState(repoRoot, runState, nil, nil, nil)
+	run := (&portalRunsView{}).runFromState(repoRoot, runState, nil, nil, nil, nil)
 
 	if run.IssueTitle != "Add dark mode toggle" {
 		t.Fatalf("expected IssueTitle %q, got %q", "Add dark mode toggle", run.IssueTitle)
@@ -629,7 +629,7 @@ func TestPortal_RunFromState_EmptyIssueTitleWhenMissing(t *testing.T) {
 		},
 	}
 
-	run := (&portalRunsView{}).runFromState(repoRoot, runState, nil, nil, nil)
+	run := (&portalRunsView{}).runFromState(repoRoot, runState, nil, nil, nil, nil)
 
 	if run.IssueTitle != "" {
 		t.Fatalf("expected empty IssueTitle, got %q", run.IssueTitle)
@@ -715,7 +715,7 @@ func TestPortal_RunFromState_PopulatesRetriesFromFinishedPayload(t *testing.T) {
 		},
 	}
 
-	run := (&portalRunsView{}).runFromState(repoRoot, runState, nil, nil, nil)
+	run := (&portalRunsView{}).runFromState(repoRoot, runState, nil, nil, nil, nil)
 
 	if run.RetriesTotal != 3 {
 		t.Fatalf("expected RetriesTotal=3, got %d", run.RetriesTotal)
@@ -739,7 +739,7 @@ func TestPortal_RunFromState_LeavesRetriesZeroWhenActive(t *testing.T) {
 		},
 	}
 
-	run := (&portalRunsView{}).runFromState(repoRoot, runState, nil, nil, nil)
+	run := (&portalRunsView{}).runFromState(repoRoot, runState, nil, nil, nil, nil)
 
 	if run.RetriesTotal != 0 {
 		t.Fatalf("expected RetriesTotal=0 for active run, got %d", run.RetriesTotal)
@@ -794,7 +794,7 @@ func TestPortal_RunFromState_ActiveRunPopulatesAttemptsAndLastRetryReason(t *tes
 		}},
 	})[0]
 
-	run := (&portalRunsView{}).runFromState(repoRoot, runState, nil, nil, nil)
+	run := (&portalRunsView{}).runFromState(repoRoot, runState, nil, nil, nil, nil)
 
 	if run.Attempts != 1 {
 		t.Fatalf("expected Attempts=1 (retry count) for active retried run, got %d", run.Attempts)
@@ -829,7 +829,7 @@ func TestPortal_RunFromState_FinishedRunUsesRetriesDoneForAttempts(t *testing.T)
 		}},
 	})[0]
 
-	run := (&portalRunsView{}).runFromState(repoRoot, runState, nil, nil, nil)
+	run := (&portalRunsView{}).runFromState(repoRoot, runState, nil, nil, nil, nil)
 
 	if run.Attempts != 2 {
 		t.Fatalf("expected Attempts=2 (from retries_done) for finished run, got %d", run.Attempts)
@@ -852,7 +852,7 @@ func TestPortal_RunFromState_ActiveCleanRunOmitsBoth(t *testing.T) {
 		{Type: "run.started", Timestamp: time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC), RunID: "260618113825-abcd-clean", Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
 	})[0]
 
-	run := (&portalRunsView{}).runFromState(repoRoot, runState, nil, nil, nil)
+	run := (&portalRunsView{}).runFromState(repoRoot, runState, nil, nil, nil, nil)
 
 	if run.Attempts != 0 {
 		t.Fatalf("expected Attempts=0 for clean active run, got %d", run.Attempts)
@@ -947,7 +947,7 @@ func TestPortal_RunFromState_UsesRunStateRunIDDirectly(t *testing.T) {
 		SocketPath:  "",
 	}
 
-	run := (&portalRunsView{}).runFromState(repoRoot, runState, active, nil, nil)
+	run := (&portalRunsView{}).runFromState(repoRoot, runState, active, nil, nil, nil)
 
 	if run.Key != "260618113825-abcd-42" {
 		t.Fatalf("expected Key %q, got %q", "260618113825-abcd-42", run.Key)
@@ -1406,7 +1406,7 @@ func TestPortal_RunFromState_CompletedKeepsSavedLogWhenBatchSocketAlive(t *testi
 		LiveOutput:   liveOutput,
 	}
 
-	run := (&portalRunsView{}).runFromState(repoRoot, runState, active, nil, nil)
+	run := (&portalRunsView{}).runFromState(repoRoot, runState, active, nil, nil, nil)
 
 	if run.Kind != "completed" {
 		t.Fatalf("PRIMARY: expected Kind %q for terminal completed row, got %q", "completed", run.Kind)
@@ -1741,7 +1741,7 @@ func TestPortal_RunFromState_ActiveFreshBatchCarriesBatchKey(t *testing.T) {
 		},
 	}
 
-	run := (&portalRunsView{}).runFromState(repoRoot, state, &active, nil, nil)
+	run := (&portalRunsView{}).runFromState(repoRoot, state, &active, nil, nil, nil)
 
 	if run.BatchKey != active.Key {
 		t.Fatalf("expected BatchKey %q, got %q", active.Key, run.BatchKey)
@@ -2385,7 +2385,7 @@ func TestPortal_ReasonField_PopulatedFromRunKind(t *testing.T) {
 				Payload:   map[string]any{"run_kind": "auto-select", "status": "success", "selected": []int{42, 43}},
 			},
 		}
-		run := (&portalRunsView{}).runFromState(repoRoot(t), state, nil, nil, nil)
+		run := (&portalRunsView{}).runFromState(repoRoot(t), state, nil, nil, nil, nil)
 		if run.Reason != "auto-select" {
 			t.Fatalf("expected Reason 'auto-select', got %q", run.Reason)
 		}
@@ -2407,7 +2407,7 @@ func TestPortal_ReasonField_PopulatedFromRunKind(t *testing.T) {
 				Payload:   map[string]any{"run_kind": "auto-select", "status": "failure", "reason": "no candidates"},
 			},
 		}
-		run := (&portalRunsView{}).runFromState(repoRoot(t), state, nil, nil, nil)
+		run := (&portalRunsView{}).runFromState(repoRoot(t), state, nil, nil, nil, nil)
 		if run.Reason != "auto-select" {
 			t.Fatalf("expected Reason 'auto-select', got %q", run.Reason)
 		}
@@ -2444,7 +2444,7 @@ func TestPortal_ReasonField_PopulatedFromRunKind(t *testing.T) {
 		if err := os.Symlink(extSock, filepath.Join(runDir, "batch.sock")); err != nil {
 			t.Fatal(err)
 		}
-		run := (&portalRunsView{}).runFromState(root, state, nil, nil, nil)
+		run := (&portalRunsView{}).runFromState(root, state, nil, nil, nil, nil)
 		if run.Reason != "review" {
 			t.Fatalf("expected Reason 'review', got %q", run.Reason)
 		}
@@ -2469,7 +2469,7 @@ func TestPortal_ReasonField_PopulatedFromRunKind(t *testing.T) {
 				Payload:   map[string]any{"review": true, "status": "success", "branch": "sandman/review-PR42"},
 			},
 		}
-		run := (&portalRunsView{}).runFromState(repoRoot(t), state, nil, nil, nil)
+		run := (&portalRunsView{}).runFromState(repoRoot(t), state, nil, nil, nil, nil)
 		if run.Reason != "review" {
 			t.Fatalf("expected Reason 'review', got %q", run.Reason)
 		}
@@ -2494,7 +2494,7 @@ func TestPortal_ReasonField_PopulatedFromRunKind(t *testing.T) {
 				Payload:   map[string]any{"review": true, "status": "failure", "branch": "sandman/review-PR42"},
 			},
 		}
-		run := (&portalRunsView{}).runFromState(repoRoot(t), state, nil, nil, nil)
+		run := (&portalRunsView{}).runFromState(repoRoot(t), state, nil, nil, nil, nil)
 		if run.Reason != "review" {
 			t.Fatalf("expected Reason 'review', got %q", run.Reason)
 		}
@@ -2524,7 +2524,7 @@ func TestPortal_ReasonField_PopulatedFromRunKind(t *testing.T) {
 		// run.cancelled event as terminal aborted.
 		aborted := events.Event{Type: "run.aborted", Timestamp: startedAt.Add(3 * time.Minute), RunID: "PR42", Payload: map[string]any{"review": true, "pr_number": 42}}
 		state.Finished = &aborted
-		run := (&portalRunsView{}).runFromState(repoRoot(t), state, nil, nil, nil)
+		run := (&portalRunsView{}).runFromState(repoRoot(t), state, nil, nil, nil, nil)
 		if run.Reason != "review" {
 			t.Fatalf("expected Reason 'review' for aborted review run, got %q", run.Reason)
 		}
@@ -2551,7 +2551,7 @@ func TestPortal_ReasonField_PopulatedFromRunKind(t *testing.T) {
 				Payload:   map[string]any{"branch": "sandman/issue-42", "status": "success"},
 			},
 		}
-		run := (&portalRunsView{}).runFromState(repoRoot(t), state, nil, nil, nil)
+		run := (&portalRunsView{}).runFromState(repoRoot(t), state, nil, nil, nil, nil)
 		if run.Reason != "" {
 			t.Fatalf("expected empty Reason for issue-driven run, got %q", run.Reason)
 		}
@@ -2569,7 +2569,7 @@ func TestPortal_ReasonField_PopulatedFromRunKind(t *testing.T) {
 				Payload:   map[string]any{"branch": "sandman/prompt"},
 			},
 		}
-		run := (&portalRunsView{}).runFromState(repoRoot(t), state, nil, nil, nil)
+		run := (&portalRunsView{}).runFromState(repoRoot(t), state, nil, nil, nil, nil)
 		if run.Reason != "" {
 			t.Fatalf("expected empty Reason for prompt-only run, got %q", run.Reason)
 		}
@@ -2592,7 +2592,7 @@ func TestPortal_ReasonField_PopulatedFromRunKind(t *testing.T) {
 				Payload:   map[string]any{"branch": "sandman/issue-42"},
 			},
 		}
-		run := (&portalRunsView{}).runFromState(repoRoot(t), state, nil, nil, nil)
+		run := (&portalRunsView{}).runFromState(repoRoot(t), state, nil, nil, nil, nil)
 		if run.Reason != "" {
 			t.Fatalf("expected empty Reason for continuation run, got %q", run.Reason)
 		}
@@ -2884,7 +2884,7 @@ func TestPortal_RunFromState_ActiveEmptyKeyUsesHelperFallback(t *testing.T) {
 		},
 	}
 
-	run := (&portalRunsView{}).runFromState(repoRoot, state, active, nil, nil)
+	run := (&portalRunsView{}).runFromState(repoRoot, state, active, nil, nil, nil)
 
 	if run.BatchKey == "" {
 		t.Fatalf("expected non-empty BatchKey from helper fallback, got empty")

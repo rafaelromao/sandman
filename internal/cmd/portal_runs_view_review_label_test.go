@@ -33,7 +33,7 @@ func TestPortalRunsView_RunFromState_ReviewWithoutIssueNumberUsesReviewOfPRLabel
 		},
 	}
 
-	run := v.runFromState("/tmp", state, nil, nil, nil)
+	run := v.runFromState("/tmp", state, nil, nil, nil, nil)
 
 	if run.IssueLabel != "Review of PR 1508" {
 		t.Fatalf("IssueLabel=%q, want %q", run.IssueLabel, "Review of PR 1508")
@@ -70,7 +70,7 @@ func TestPortalRunsView_RunFromState_ReviewWithoutIssueOrPRFallsBackToRunID(t *t
 		},
 	}
 
-	run := v.runFromState("/tmp", state, nil, nil, nil)
+	run := v.runFromState("/tmp", state, nil, nil, nil, nil)
 
 	if run.IssueLabel != runID {
 		t.Fatalf("IssueLabel=%q, want %q (raw runID fallback when no PR and no issue)", run.IssueLabel, runID)
