@@ -1,6 +1,7 @@
 package batch
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -17,6 +18,7 @@ import (
 var sandmanBranchRE = regexp.MustCompile(`^sandman/`)
 var badgeMarkerRE = regexp.MustCompile(`<!-- sandman-badge-pr -->`)
 var prURLRE = regexp.MustCompile(`https://github\.com/[^/]+/[^/]+/pull/\d+`)
+var linkNextRE = regexp.MustCompile(`<(https://[^>]+)>; rel="next"`)
 
 type ghCommander interface {
 	runGh(ctx context.Context, args ...string) ([]byte, error)
@@ -82,20 +84,52 @@ func (d *defaultPRLister) ListMergedSandmanPRs(ctx context.Context) ([]MergedSan
 }
 
 func (d *defaultPRLister) HasBadgePR(ctx context.Context) (bool, error) {
-	out, err := d.gh.runGh(ctx, "pr", "list", "--state", "all", "--limit", "1000", "--json", "number,body")
-	if err != nil {
-		return false, err
-	}
-	var payloads []prPayloadBody
-	if err := json.Unmarshal(out, &payloads); err != nil {
-		return false, fmt.Errorf("parse all prs: %w", err)
-	}
-	for _, p := range payloads {
-		if badgeMarkerRE.MatchString(p.Body) {
-			return true, nil
+	found, _, err := d.findBadgeMarkerPR(ctx)
+	return found, err
+}
+
+func (d *defaultPRLister) findBadgeMarkerPR(ctx context.Context) (found bool, totalSeen int, err error) {
+	page := 0
+	var cursor string
+	for {
+		page++
+		args := []string{"pr", "list", "--state", "all", "--limit", "100", "--json", "number,body"}
+		if cursor != "" {
+			args = append(args, "--after", cursor)
+		}
+		combinedOut, err := d.gh.runGh(ctx, args...)
+		if err != nil {
+			return false, totalSeen, fmt.Errorf("badge marker scan page %d: %w", page, err)
+		}
+		fmt.Fprintf(os.Stderr, "badge marker scan: page %d, total_seen %d\n", page, totalSeen)
+
+		trimmed := bytes.TrimSuffix(combinedOut, []byte("\n"))
+		jsonOut := trimmed
+		if idx := bytes.Index(trimmed, []byte("\n<")); idx >= 0 {
+			jsonOut = bytes.TrimSpace(trimmed[:idx])
+		}
+
+		var payloads []prPayloadBody
+		if err := json.Unmarshal(jsonOut, &payloads); err != nil {
+			return false, totalSeen, fmt.Errorf("badge marker scan page %d: parse prs: %w", page, err)
+		}
+		totalSeen += len(payloads)
+		for _, p := range payloads {
+			if badgeMarkerRE.MatchString(p.Body) {
+				return true, totalSeen, nil
+			}
+		}
+		if m := linkNextRE.FindSubmatch(combinedOut); len(m) > 1 {
+			uri := string(m[1])
+			if afterIdx := strings.Index(uri, "&after="); afterIdx >= 0 {
+				cursor = uri[afterIdx+len("&after="):]
+			} else {
+				return false, totalSeen, nil
+			}
+		} else {
+			return false, totalSeen, nil
 		}
 	}
-	return false, nil
 }
 
 // badgeControlFilePath returns the absolute path to the badge control

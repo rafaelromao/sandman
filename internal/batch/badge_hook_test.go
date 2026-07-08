@@ -1,6 +1,7 @@
 package batch
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -65,6 +66,35 @@ func (f *fakeGhCommander) runGh(ctx context.Context, args ...string) ([]byte, er
 		return nil, f.err
 	}
 	return f.payload, nil
+}
+
+type fakeGhCall struct {
+	payload  []byte
+	err      error
+	linkNext string
+}
+
+type sequencedFakeGhCommander struct {
+	calls []fakeGhCall
+	idx   int
+	args  []string
+}
+
+func (f *sequencedFakeGhCommander) runGh(ctx context.Context, args ...string) ([]byte, error) {
+	f.args = append([]string(nil), args...)
+	if f.idx >= len(f.calls) {
+		return []byte("[]"), nil
+	}
+	c := f.calls[f.idx]
+	f.idx++
+	if c.err != nil {
+		return nil, c.err
+	}
+	out := c.payload
+	if c.linkNext != "" {
+		out = append(out, []byte(fmt.Sprintf("\n<%s>; rel=\"next\"", c.linkNext))...)
+	}
+	return out, nil
 }
 
 func intToString(n int) string { return strconv.Itoa(n) }
@@ -328,7 +358,7 @@ func TestMaybeSuggestBadge_ControlFileAbsent_NoMarkerPR_SpawnsSidecar(t *testing
 // marker path without re-implementing defaultPRLister's JSON parsing.
 type wrappingPRLister struct {
 	mergedGh *fakeGhCommander
-	badgeGh  *fakeGhCommander
+	badgeGh  ghCommander
 }
 
 func (w *wrappingPRLister) ListMergedSandmanPRs(ctx context.Context) ([]MergedSandmanPR, error) {
@@ -354,25 +384,48 @@ func (w *wrappingPRLister) ListMergedSandmanPRs(ctx context.Context) ([]MergedSa
 }
 
 func (w *wrappingPRLister) HasBadgePR(ctx context.Context) (bool, error) {
-	out, err := w.badgeGh.runGh(ctx, "pr", "list", "--state", "all", "--limit", "1000", "--json", "number,body")
-	if err != nil {
-		return false, err
-	}
-	var payloads []prPayloadBody
-	if err := json.Unmarshal(out, &payloads); err != nil {
-		return false, err
-	}
-	for _, p := range payloads {
-		if badgeMarkerRE.MatchString(p.Body) {
-			return true, nil
+	page := 0
+	var cursor string
+	for {
+		page++
+		args := []string{"pr", "list", "--state", "all", "--limit", "100", "--json", "number,body"}
+		if cursor != "" {
+			args = append(args, "--after", cursor)
+		}
+		combinedOut, err := w.badgeGh.runGh(ctx, args...)
+		if err != nil {
+			return false, err
+		}
+		trimmed := bytes.TrimSuffix(combinedOut, []byte("\n"))
+		jsonOut := trimmed
+		if idx := bytes.Index(trimmed, []byte("\n<")); idx >= 0 {
+			jsonOut = bytes.TrimSpace(trimmed[:idx])
+		}
+		var payloads []prPayloadBody
+		if err := json.Unmarshal(jsonOut, &payloads); err != nil {
+			return false, err
+		}
+		for _, p := range payloads {
+			if badgeMarkerRE.MatchString(p.Body) {
+				return true, nil
+			}
+		}
+		if m := linkNextRE.FindSubmatch(combinedOut); len(m) > 1 {
+			uri := string(m[1])
+			if afterIdx := strings.Index(uri, "&after="); afterIdx >= 0 {
+				cursor = uri[afterIdx+len("&after="):]
+			} else {
+				return false, nil
+			}
+		} else {
+			return false, nil
 		}
 	}
-	return false, nil
 }
 
 func TestMaybeSuggestBadge_HasBadgePR_AnyState_SkipsSpawn(t *testing.T) {
 	// The hook delegates the marker-comment PR check to defaultPRLister,
-	// which calls `gh pr list --state all --limit 1000 --json number,body`.
+	// which calls `gh pr list --state all --limit 100 --json number,body` (paginated).
 	// The test drives the production parsing through a wrappingPRLister
 	// so we can assert both (a) the call uses `--state all` (so open,
 	// closed, and merged PRs are all candidates) and (b) the hook
@@ -579,8 +632,18 @@ func fakePRPayload(nonMarker, markerNumber int) []byte {
 	return out
 }
 
-func TestHasBadgePR_FindsMarkerBeyondDefaultPage(t *testing.T) {
-	fakeGh := &fakeGhCommander{payload: fakePRPayload(500, 501)}
+func TestHasBadgePR_FindsMarkerOnSecondPage(t *testing.T) {
+	fakeGh := &sequencedFakeGhCommander{
+		calls: []fakeGhCall{
+			{
+				payload:  fakePRPayload(100, 0),
+				linkNext: "https://github.com/owner/repo/pulls?state=all&limit=100&after=PAGE1",
+			},
+			{
+				payload: fakePRPayload(0, 101),
+			},
+		},
+	}
 	lister := &defaultPRLister{gh: fakeGh}
 
 	got, err := lister.HasBadgePR(context.Background())
@@ -588,7 +651,7 @@ func TestHasBadgePR_FindsMarkerBeyondDefaultPage(t *testing.T) {
 		t.Fatalf("unexpected error from HasBadgePR: %v", err)
 	}
 	if !got {
-		t.Fatalf("expected HasBadgePR to find the marker PR located at position 500 (beyond the 100-PR page); got false")
+		t.Fatalf("expected HasBadgePR to find the marker PR located on page 2 (beyond the first 100-PR page); got false")
 	}
 
 	limitIdx := -1
@@ -601,7 +664,156 @@ func TestHasBadgePR_FindsMarkerBeyondDefaultPage(t *testing.T) {
 	if limitIdx < 0 || limitIdx+1 >= len(fakeGh.args) {
 		t.Fatalf("expected --limit flag in gh args, got: %v", fakeGh.args)
 	}
-	if fakeGh.args[limitIdx+1] != "1000" {
-		t.Errorf("expected default HasBadgePR query to use --limit 1000, got --limit %s", fakeGh.args[limitIdx+1])
+	if fakeGh.args[limitIdx+1] != "100" {
+		t.Errorf("expected HasBadgePR query to use --limit 100 (paginated), got --limit %s", fakeGh.args[limitIdx+1])
+	}
+}
+
+func TestFindBadgeMarkerPR_FindsMarkerOnPage1(t *testing.T) {
+	fakeGh := &sequencedFakeGhCommander{
+		calls: []fakeGhCall{
+			{
+				payload: []byte(`[{"number":5,"body":"<!-- sandman-badge-pr -->\nbadge body"}]`),
+			},
+		},
+	}
+	lister := &defaultPRLister{gh: fakeGh}
+
+	found, totalSeen, err := lister.findBadgeMarkerPR(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error from findBadgeMarkerPR: %v", err)
+	}
+	if !found {
+		t.Errorf("expected found=true when marker is on page 1")
+	}
+	if totalSeen != 1 {
+		t.Errorf("expected totalSeen=1, got %d", totalSeen)
+	}
+	if fakeGh.idx != 1 {
+		t.Errorf("expected exactly 1 gh call, got %d", fakeGh.idx)
+	}
+}
+
+func TestFindBadgeMarkerPR_FindsMarkerOnPage3(t *testing.T) {
+	fakeGh := &sequencedFakeGhCommander{
+		calls: []fakeGhCall{
+			{
+				payload:  []byte(`[{"number":1,"body":"plain pr"}]`),
+				linkNext: "https://github.com/owner/repo/pulls?state=all&limit=100&after=AAA",
+			},
+			{
+				payload:  []byte(`[{"number":2,"body":"another plain pr"}]`),
+				linkNext: "https://github.com/owner/repo/pulls?state=all&limit=100&after=BBB",
+			},
+			{
+				payload: []byte(`[{"number":3,"body":"<!-- sandman-badge-pr -->\nbadge"}]`),
+			},
+		},
+	}
+	lister := &defaultPRLister{gh: fakeGh}
+
+	found, totalSeen, err := lister.findBadgeMarkerPR(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error from findBadgeMarkerPR: %v", err)
+	}
+	if !found {
+		t.Errorf("expected found=true when marker is on page 3")
+	}
+	if totalSeen != 3 {
+		t.Errorf("expected totalSeen=3, got %d", totalSeen)
+	}
+	if fakeGh.idx != 3 {
+		t.Errorf("expected exactly 3 gh calls, got %d", fakeGh.idx)
+	}
+}
+
+func TestFindBadgeMarkerPR_MarkerAbsent_ExhaustsPages(t *testing.T) {
+	fakeGh := &sequencedFakeGhCommander{
+		calls: []fakeGhCall{
+			{
+				payload:  []byte(`[{"number":1,"body":"plain pr"}]`),
+				linkNext: "https://github.com/owner/repo/pulls?state=all&limit=100&after=AAA",
+			},
+			{
+				payload: []byte(`[{"number":2,"body":"another plain"}]`),
+			},
+		},
+	}
+	lister := &defaultPRLister{gh: fakeGh}
+
+	found, totalSeen, err := lister.findBadgeMarkerPR(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error from findBadgeMarkerPR: %v", err)
+	}
+	if found {
+		t.Errorf("expected found=false when marker is absent")
+	}
+	if totalSeen != 2 {
+		t.Errorf("expected totalSeen=2, got %d", totalSeen)
+	}
+	if fakeGh.idx != 2 {
+		t.Errorf("expected exactly 2 gh calls, got %d", fakeGh.idx)
+	}
+}
+
+func TestFindBadgeMarkerPR_ErrorMidScan(t *testing.T) {
+	fakeGh := &sequencedFakeGhCommander{
+		calls: []fakeGhCall{
+			{
+				payload:  []byte(`[{"number":1,"body":"plain pr"}]`),
+				linkNext: "https://github.com/owner/repo/pulls?state=all&limit=100&after=AAA",
+			},
+			{
+				err: fmt.Errorf("network error"),
+			},
+		},
+	}
+	lister := &defaultPRLister{gh: fakeGh}
+
+	found, totalSeen, err := lister.findBadgeMarkerPR(context.Background())
+	if err == nil {
+		t.Errorf("expected error from findBadgeMarkerPR on page 2, got nil")
+	}
+	if found {
+		t.Errorf("expected found=false when error mid-scan")
+	}
+	if totalSeen != 1 {
+		t.Errorf("expected totalSeen=1 (page 1 before error), got %d", totalSeen)
+	}
+	if fakeGh.idx != 2 {
+		t.Errorf("expected exactly 2 gh calls (error on 2nd), got %d", fakeGh.idx)
+	}
+}
+
+func TestFindBadgeMarkerPR_EmptyPageMidPagination(t *testing.T) {
+	fakeGh := &sequencedFakeGhCommander{
+		calls: []fakeGhCall{
+			{
+				payload:  []byte(`[{"number":1,"body":"plain"}]`),
+				linkNext: "https://github.com/owner/repo/pulls?state=all&limit=100&after=AAA",
+			},
+			{
+				payload:  []byte(`[]`),
+				linkNext: "https://github.com/owner/repo/pulls?state=all&limit=100&after=BBB",
+			},
+			{
+				payload: []byte(`[{"number":3,"body":"<!-- sandman-badge-pr -->\nbadge"}]`),
+			},
+		},
+	}
+	lister := &defaultPRLister{gh: fakeGh}
+
+	found, totalSeen, err := lister.findBadgeMarkerPR(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error from findBadgeMarkerPR: %v", err)
+	}
+	if !found {
+		t.Errorf("expected found=true (marker on page 3 after empty page 2)")
+	}
+	if totalSeen != 2 {
+		t.Errorf("expected totalSeen=2 (item from page 1 + item from page 3; empty page contributes 0), got %d", totalSeen)
+	}
+	if fakeGh.idx != 3 {
+		t.Errorf("expected exactly 3 gh calls, got %d", fakeGh.idx)
 	}
 }

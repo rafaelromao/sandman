@@ -22,7 +22,7 @@ The PR body starts with:
 
 This marker is the single source of truth for idempotency and applies in any PR state — open, closed, or merged. The post-batch hook consults the marker first, before any local state, so a marker-bearing PR in any state suppresses re-creation of the badge PR.
 
-The marker lives in the PR body, not the README or the commit message, so users can edit either without re-triggering the flow. Because the query runs against `gh pr list --state all --limit 1000`, a closed or merged badge PR cannot be truncated off the page on a busy repo.
+The marker lives in the PR body, not the README or the commit message, so users can edit either without re-triggering the flow. Because the query pages through `gh pr list --state all --limit 100` until the marker is found or results are exhausted, a closed or merged badge PR cannot be truncated regardless of repo activity.
 
 ## The control file (perf optimization)
 
