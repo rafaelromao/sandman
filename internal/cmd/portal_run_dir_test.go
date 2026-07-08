@@ -14,6 +14,7 @@ import (
 
 	"github.com/rafaelromao/sandman/internal/daemon"
 	"github.com/rafaelromao/sandman/internal/events"
+	"github.com/rafaelromao/sandman/internal/testenv"
 )
 
 // TestPortal_RunDir_ActiveRowStampsPerRowFolder pins slice 0b: every active
@@ -26,7 +27,7 @@ import (
 // reader's `<RunDir>/decision.md` lookup hits the same location as
 // `paths.Layout.DecisionFile(batchID, runID)` for terminal rows.
 func TestPortal_RunDir_ActiveRowStampsPerRowFolder(t *testing.T) {
-	repoRoot := t.TempDir()
+	repoRoot := testenv.MkdirShort(t, "sm-rundir-")
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -91,7 +92,7 @@ func TestPortal_RunDir_FieldHasNoJSONTag(t *testing.T) {
 // the per-row manifest's path is the index entry's Path at archive time
 // (the run folder itself can be relocated between batch and archive).
 func TestPortal_RunDir_TerminalRowStampsBatchesIndexPath(t *testing.T) {
-	repoRoot := t.TempDir()
+	repoRoot := testenv.MkdirShort(t, "sm-rundir-")
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -125,7 +126,7 @@ func TestPortal_RunDir_TerminalRowStampsBatchesIndexPath(t *testing.T) {
 // treats empty as Unclear (per the issue brief), so a missing index
 // entry must not fabricate a directory the verdict reader can't stat.
 func TestPortal_RunDir_TerminalRowUnresolvableBatchLeavesRunDirEmpty(t *testing.T) {
-	repoRoot := t.TempDir()
+	repoRoot := testenv.MkdirShort(t, "sm-rundir-")
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -157,7 +158,7 @@ func TestPortal_RunDir_TerminalRowUnresolvableBatchLeavesRunDirEmpty(t *testing.
 // known to the synthesize path (it comes from the index entry's Path),
 // so RunDir stamps directly without re-resolving through the index.
 func TestPortal_RunDir_SynthesizedDeadBatchRowStampsBatchRunDir(t *testing.T) {
-	repoRoot := t.TempDir()
+	repoRoot := testenv.MkdirShort(t, "sm-rundir-")
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
