@@ -169,6 +169,8 @@ Returns the current run table for the portal UI. Supports three variants via que
 
 **Response** `200 OK` — `application/json`
 
+Full snapshot and summary variants return `runs` as an array:
+
 ```json
 {
   "repoRoot": "/path/to/repo",
@@ -192,6 +194,15 @@ Returns the current run table for the portal UI. Supports three variants via que
       "reviewCount": 0
     }
   ]
+}
+```
+
+The single-row keyed lookup returns `run` (singular) instead of `runs`:
+
+```json
+{
+  "repoRoot": "/path/to/repo",
+  "run": { ... }
 }
 ```
 
