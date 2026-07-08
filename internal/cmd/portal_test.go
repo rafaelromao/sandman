@@ -32,7 +32,7 @@ func TestPortal_LiveOutputReturnsTailForLongStream(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	runDir := filepath.Join(repoRoot, ".sandman", "batches", "abcd-260618113825-1-1")
+	runDir := filepath.Join(repoRoot, ".sandman", "batches", "260618113825-abcd-1-1")
 	sockPath := filepath.Join(runDir, "batch.sock")
 	if err := os.MkdirAll(runDir, 0755); err != nil {
 		t.Fatal(err)
@@ -146,7 +146,7 @@ func TestPortal_RunFromActiveBatchIssueSetsCompletedWhenSocketDead(t *testing.T)
 	ln.Close()
 
 	active := portalActiveRun{
-		Key:          "abcd-260618113825-42",
+		Key:          "260618113825-abcd-42",
 		Dir:          sockDir,
 		SocketPath:   sockPath,
 		IssueNumbers: []int{42},
@@ -155,7 +155,7 @@ func TestPortal_RunFromActiveBatchIssueSetsCompletedWhenSocketDead(t *testing.T)
 
 	started := time.Now().Add(-1 * time.Minute)
 	state := &events.RunState{
-		RunID: "abcd-260618113825-42",
+		RunID: "260618113825-abcd-42",
 		Started: events.Event{
 			Timestamp: started,
 			Payload:   map[string]any{},
@@ -191,7 +191,7 @@ func TestPortal_RunFromActiveMatchSetsCompletedWhenSocketDead(t *testing.T) {
 
 	match := portalRunMatch{
 		instance: portalActiveRun{
-			Key:         "abcd-260618113825-prompt",
+			Key:         "260618113825-abcd-prompt",
 			SocketPath:  sockPath,
 			IssueNumber: 0,
 			ModTime:     time.Now().Add(-1 * time.Minute),
@@ -227,7 +227,7 @@ func TestPortal_RunFromStateSetsCompletedWhenActiveButSocketDead(t *testing.T) {
 
 	started := time.Now().Add(-1 * time.Minute)
 	runState := events.RunState{
-		RunID: "abcd-260618113825-active-1",
+		RunID: "260618113825-abcd-active-1",
 		Started: events.Event{
 			Timestamp: started,
 			Payload:   map[string]any{},
@@ -235,7 +235,7 @@ func TestPortal_RunFromStateSetsCompletedWhenActiveButSocketDead(t *testing.T) {
 	}
 
 	active := &portalActiveRun{
-		Key:        "abcd-260618113825-active-1",
+		Key:        "260618113825-abcd-active-1",
 		SocketPath: sockPath,
 	}
 
@@ -264,7 +264,7 @@ func TestPortal_RunFromActiveBatchIssueKeepsActiveWhenSocketAlive(t *testing.T) 
 	t.Cleanup(func() { _ = ln.Close() })
 
 	active := portalActiveRun{
-		Key:          "abcd-260618113825-42",
+		Key:          "260618113825-abcd-42",
 		Dir:          sockDir,
 		SocketPath:   sockPath,
 		IssueNumbers: []int{42},
@@ -273,7 +273,7 @@ func TestPortal_RunFromActiveBatchIssueKeepsActiveWhenSocketAlive(t *testing.T) 
 
 	started := time.Now().Add(-1 * time.Minute)
 	state := &events.RunState{
-		RunID: "abcd-260618113825-42",
+		RunID: "260618113825-abcd-42",
 		Started: events.Event{
 			Timestamp: started,
 			Payload:   map[string]any{},
@@ -309,7 +309,7 @@ func TestPortal_RunFromActiveMatchKeepsActiveWhenSocketAlive(t *testing.T) {
 
 	match := portalRunMatch{
 		instance: portalActiveRun{
-			Key:         "abcd-260618113825-prompt",
+			Key:         "260618113825-abcd-prompt",
 			SocketPath:  sockPath,
 			IssueNumber: 0,
 			ModTime:     time.Now().Add(-1 * time.Minute),
@@ -345,7 +345,7 @@ func TestPortal_RunFromStateKeepsActiveWhenSocketAlive(t *testing.T) {
 
 	started := time.Now().Add(-1 * time.Minute)
 	runState := events.RunState{
-		RunID: "abcd-260618113825-active-1",
+		RunID: "260618113825-abcd-active-1",
 		Started: events.Event{
 			Timestamp: started,
 			Payload:   map[string]any{},
@@ -353,7 +353,7 @@ func TestPortal_RunFromStateKeepsActiveWhenSocketAlive(t *testing.T) {
 	}
 
 	active := &portalActiveRun{
-		Key:        "abcd-260618113825-active-1",
+		Key:        "260618113825-abcd-active-1",
 		SocketPath: sockPath,
 	}
 
@@ -380,7 +380,7 @@ func TestPortal_RunFromStateSetsCompletedWhenUnmatchedActiveHasDeadSocket(t *tes
 	if err := os.MkdirAll(filepath.Join(repoRoot, ".sandman", "logs"), 0755); err != nil {
 		t.Fatal(err)
 	}
-	runsDir := filepath.Join(repoRoot, ".sandman", "batches", "abcd-260618113825-gone-1")
+	runsDir := filepath.Join(repoRoot, ".sandman", "batches", "260618113825-abcd-gone-1")
 	if err := os.MkdirAll(runsDir, 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -390,7 +390,7 @@ func TestPortal_RunFromStateSetsCompletedWhenUnmatchedActiveHasDeadSocket(t *tes
 
 	started := time.Now().Add(-1 * time.Minute)
 	runState := events.RunState{
-		RunID: "abcd-260618113825-gone-1",
+		RunID: "260618113825-abcd-gone-1",
 		Started: events.Event{
 			Timestamp: started,
 			Payload:   map[string]any{},
@@ -415,7 +415,7 @@ func TestPortal_RunFromState_StaysActiveWhenBatchDirMissing(t *testing.T) {
 
 	started := time.Now().Add(-1 * time.Minute)
 	runState := events.RunState{
-		RunID: "abcd-260618113825-missing-1",
+		RunID: "260618113825-abcd-missing-1",
 		Started: events.Event{
 			Timestamp: started,
 			Payload:   map[string]any{},
@@ -437,14 +437,14 @@ func TestPortal_RunFromState_StaysActiveWhenSocketMissing(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(repoRoot, ".sandman", "logs"), 0755); err != nil {
 		t.Fatal(err)
 	}
-	runsDir := filepath.Join(repoRoot, ".sandman", "batches", "abcd-260618113825-missing-sock-1")
+	runsDir := filepath.Join(repoRoot, ".sandman", "batches", "260618113825-abcd-missing-sock-1")
 	if err := os.MkdirAll(runsDir, 0755); err != nil {
 		t.Fatal(err)
 	}
 
 	started := time.Now().Add(-1 * time.Minute)
 	runState := events.RunState{
-		RunID: "abcd-260618113825-missing-sock-1",
+		RunID: "260618113825-abcd-missing-sock-1",
 		Started: events.Event{
 			Timestamp: started,
 			Payload:   map[string]any{},
@@ -599,7 +599,7 @@ func TestPortal_RunFromState_PopulatesIssueTitle(t *testing.T) {
 	}
 
 	runState := events.RunState{
-		RunID: "abcd-260618113825-1-1",
+		RunID: "260618113825-abcd-1-1",
 		Started: events.Event{
 			Timestamp: time.Now().Add(-1 * time.Minute),
 			Payload: map[string]any{
@@ -622,7 +622,7 @@ func TestPortal_RunFromState_EmptyIssueTitleWhenMissing(t *testing.T) {
 	}
 
 	runState := events.RunState{
-		RunID: "abcd-260618113825-1-1",
+		RunID: "260618113825-abcd-1-1",
 		Started: events.Event{
 			Timestamp: time.Now().Add(-1 * time.Minute),
 			Payload:   map[string]any{},
@@ -638,8 +638,8 @@ func TestPortal_RunFromState_EmptyIssueTitleWhenMissing(t *testing.T) {
 
 func TestPortal_PortalRunJSONIncludesRetriesFieldsWhenFinished(t *testing.T) {
 	run := portalRun{
-		Key:          "abcd-260618113825-1-1",
-		RunID:        "abcd-260618113825-1-1",
+		Key:          "260618113825-abcd-1-1",
+		RunID:        "260618113825-abcd-1-1",
 		Kind:         "completed",
 		Status:       "success",
 		IssueLabel:   "#42",
@@ -668,8 +668,8 @@ func TestPortal_PortalRunJSONIncludesRetriesFieldsWhenFinished(t *testing.T) {
 
 func TestPortal_PortalRunJSONOmitsRetriesFieldsWhenZero(t *testing.T) {
 	run := portalRun{
-		Key:         "abcd-260618113825-1-1",
-		RunID:       "abcd-260618113825-1-1",
+		Key:         "260618113825-abcd-1-1",
+		RunID:       "260618113825-abcd-1-1",
 		Kind:        "completed",
 		Status:      "success",
 		IssueLabel:  "#42",
@@ -699,7 +699,7 @@ func TestPortal_RunFromState_PopulatesRetriesFromFinishedPayload(t *testing.T) {
 	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
 	finishedAt := startedAt.Add(2 * time.Minute)
 	runState := events.RunState{
-		RunID: "abcd-260618113825-1",
+		RunID: "260618113825-abcd-1",
 		Started: events.Event{
 			Timestamp: startedAt,
 			Payload:   map[string]any{"branch": "sandman/42-fix"},
@@ -732,7 +732,7 @@ func TestPortal_RunFromState_LeavesRetriesZeroWhenActive(t *testing.T) {
 	}
 
 	runState := events.RunState{
-		RunID: "abcd-260618113825-active",
+		RunID: "260618113825-abcd-active",
 		Started: events.Event{
 			Timestamp: time.Now().Add(-30 * time.Second),
 			Payload:   map[string]any{"branch": "sandman/42-fix"},
@@ -751,8 +751,8 @@ func TestPortal_RunFromState_LeavesRetriesZeroWhenActive(t *testing.T) {
 
 func TestPortal_PortalRunJSONOmitsAttemptsAndLastRetryReasonWhenZero(t *testing.T) {
 	run := portalRun{
-		Key:         "abcd-260618113825-1-1",
-		RunID:       "abcd-260618113825-1-1",
+		Key:         "260618113825-abcd-1-1",
+		RunID:       "260618113825-abcd-1-1",
 		Kind:        "completed",
 		Status:      "success",
 		IssueLabel:  "#42",
@@ -784,8 +784,8 @@ func TestPortal_RunFromState_ActiveRunPopulatesAttemptsAndLastRetryReason(t *tes
 
 	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
 	runState := events.ProjectRunStates([]events.Event{
-		{Type: "run.started", Timestamp: startedAt, RunID: "abcd-260618113825-active-retry", Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
-		{Type: "run.retry", Timestamp: startedAt.Add(2 * time.Minute), RunID: "abcd-260618113825-active-retry", Issue: 42, Payload: map[string]any{
+		{Type: "run.started", Timestamp: startedAt, RunID: "260618113825-abcd-active-retry", Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
+		{Type: "run.retry", Timestamp: startedAt.Add(2 * time.Minute), RunID: "260618113825-abcd-active-retry", Issue: 42, Payload: map[string]any{
 			"attempt":         2,
 			"max_attempts":    3,
 			"previous_status": "failure",
@@ -813,15 +813,15 @@ func TestPortal_RunFromState_FinishedRunUsesRetriesDoneForAttempts(t *testing.T)
 	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
 	finishedAt := startedAt.Add(10 * time.Minute)
 	runState := events.ProjectRunStates([]events.Event{
-		{Type: "run.started", Timestamp: startedAt, RunID: "abcd-260618113825-finished-retry", Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
-		{Type: "run.retry", Timestamp: startedAt.Add(2 * time.Minute), RunID: "abcd-260618113825-finished-retry", Issue: 42, Payload: map[string]any{
+		{Type: "run.started", Timestamp: startedAt, RunID: "260618113825-abcd-finished-retry", Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
+		{Type: "run.retry", Timestamp: startedAt.Add(2 * time.Minute), RunID: "260618113825-abcd-finished-retry", Issue: 42, Payload: map[string]any{
 			"attempt":         2,
 			"max_attempts":    3,
 			"previous_status": "failure",
 			"reason":          "agent-stalled",
 			"branch":          "sandman/42-fix",
 		}},
-		{Type: "run.finished", Timestamp: finishedAt, RunID: "abcd-260618113825-finished-retry", Issue: 42, Payload: map[string]any{
+		{Type: "run.finished", Timestamp: finishedAt, RunID: "260618113825-abcd-finished-retry", Issue: 42, Payload: map[string]any{
 			"status":        "success",
 			"branch":        "sandman/42-fix",
 			"retries_total": 3,
@@ -849,7 +849,7 @@ func TestPortal_RunFromState_ActiveCleanRunOmitsBoth(t *testing.T) {
 	}
 
 	runState := events.ProjectRunStates([]events.Event{
-		{Type: "run.started", Timestamp: time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC), RunID: "abcd-260618113825-clean", Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
+		{Type: "run.started", Timestamp: time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC), RunID: "260618113825-abcd-clean", Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
 	})[0]
 
 	run := (&portalRunsView{}).runFromState(repoRoot, runState, nil, nil, nil)
@@ -895,14 +895,14 @@ func TestPortal_RunFromActiveMatch_StateAbsentPopulatesAttemptsAndLastRetryReaso
 	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
 	match := portalRunMatch{
 		instance: portalActiveRun{
-			Key:         "abcd-260618113825-prompt-retry",
+			Key:         "260618113825-abcd-prompt-retry",
 			SocketPath:  sockPath,
 			IssueNumber: 0,
 			ModTime:     startedAt,
 		},
 	}
 	eventsByRun := map[string][]portalEvent{
-		"abcd-260618113825-prompt-retry": {
+		"260618113825-abcd-prompt-retry": {
 			{Type: "run.started", Timestamp: startedAt, Payload: map[string]any{"branch": "sandman/42-fix"}},
 			{Type: "run.retry", Timestamp: startedAt.Add(2 * time.Minute), Payload: map[string]any{
 				"attempt":         2,
@@ -934,7 +934,7 @@ func TestPortal_RunFromState_UsesRunStateRunIDDirectly(t *testing.T) {
 	}
 
 	runState := events.RunState{
-		RunID: "abcd-260618113825-42",
+		RunID: "260618113825-abcd-42",
 		Started: events.Event{
 			Timestamp: time.Now().Add(-1 * time.Minute),
 			Payload:   map[string]any{},
@@ -942,24 +942,24 @@ func TestPortal_RunFromState_UsesRunStateRunIDDirectly(t *testing.T) {
 	}
 
 	active := &portalActiveRun{
-		Key:         "abcd-260618113825",
+		Key:         "260618113825-abcd",
 		IssueNumber: 42,
 		SocketPath:  "",
 	}
 
 	run := (&portalRunsView{}).runFromState(repoRoot, runState, active, nil, nil)
 
-	if run.Key != "abcd-260618113825-42" {
-		t.Fatalf("expected Key %q, got %q", "abcd-260618113825-42", run.Key)
+	if run.Key != "260618113825-abcd-42" {
+		t.Fatalf("expected Key %q, got %q", "260618113825-abcd-42", run.Key)
 	}
-	if run.RunID != "abcd-260618113825-42" {
-		t.Fatalf("expected RunID %q, got %q", "abcd-260618113825-42", run.RunID)
+	if run.RunID != "260618113825-abcd-42" {
+		t.Fatalf("expected RunID %q, got %q", "260618113825-abcd-42", run.RunID)
 	}
 }
 
 func TestPerRowRunIDForManifest_IssueDriven(t *testing.T) {
 	got := perRowRunIDForManifest("260618113825", "abcd", 0, 42, nil)
-	want := "abcd-260618113825-42"
+	want := "260618113825-abcd-42"
 	if got != want {
 		t.Fatalf("perRowRunIDForManifest issue-driven = %q, want %q", got, want)
 	}
@@ -967,7 +967,7 @@ func TestPerRowRunIDForManifest_IssueDriven(t *testing.T) {
 
 func TestPerRowRunIDForManifest_ReviewWithLinkedIssue(t *testing.T) {
 	got := perRowRunIDForManifest("260618113825", "abcd", 7, 42, nil)
-	want := "abcd-260618113825-42-PR7"
+	want := "260618113825-abcd-42-PR7"
 	if got != want {
 		t.Fatalf("perRowRunIDForManifest review+linked issue = %q, want %q", got, want)
 	}
@@ -975,16 +975,16 @@ func TestPerRowRunIDForManifest_ReviewWithLinkedIssue(t *testing.T) {
 
 func TestPerRowRunIDForManifest_OrphanReview(t *testing.T) {
 	got := perRowRunIDForManifest("260618113825", "abcd", 7, 0, nil)
-	want := "abcd-260618113825-PR7"
+	want := "260618113825-abcd-PR7"
 	if got != want {
 		t.Fatalf("perRowRunIDForManifest orphan review = %q, want %q", got, want)
 	}
 }
 
 func TestPerRowRunIDForManifest_FallsBackToQueuedRunID(t *testing.T) {
-	queued := &events.Event{RunID: "abcd-260618113825-42"}
+	queued := &events.Event{RunID: "260618113825-abcd-42"}
 	got := perRowRunIDForManifest("", "", 0, 42, queued)
-	if got != "abcd-260618113825-42" {
+	if got != "260618113825-abcd-42" {
 		t.Fatalf("perRowRunIDForManifest fallback = %q, want queued RunID", got)
 	}
 }
@@ -1010,7 +1010,7 @@ func TestPerRowRunIDForActive_PropagatesFields(t *testing.T) {
 		PRNumber:   0,
 	}
 	got := perRowRunIDForActive(active, 1793, nil)
-	want := "abcd-260618113825-1793"
+	want := "260618113825-abcd-1793"
 	if got != want {
 		t.Fatalf("perRowRunIDForActive = %q, want %q", got, want)
 	}
@@ -1026,17 +1026,17 @@ func TestPortal_RunFromActiveBatchIssue_DerivesPerRowRunIDFromManifest(t *testin
 	}
 
 	active := portalActiveRun{
-		Key:         "abcd-260618113825-1793+1",
+		Key:         "260618113825-abcd-1793+1",
 		Dir:         "/tmp/batch",
 		IssueNumber: 1793,
-		BatchID:     "abcd-260618113825-1793+1",
+		BatchID:     "260618113825-abcd-1793+1",
 		RunTS:       "260618113825",
 		RunShortID:  "abcd",
 	}
 
 	run := (&portalRunsView{}).runFromActiveBatchIssue(repoRoot, active, 1793, nil, nil, nil, "", nil, nil)
 
-	wantRunID := "abcd-260618113825-1793"
+	wantRunID := "260618113825-abcd-1793"
 	if run.Key != wantRunID {
 		t.Fatalf("expected Key %q (derived per-row RunID), got %q", wantRunID, run.Key)
 	}
@@ -1055,10 +1055,10 @@ func TestPortal_RunFromActiveBatchIssue_DoesNotEmitIssueN(t *testing.T) {
 	}
 
 	active := portalActiveRun{
-		Key:         "abcd-260618113825-1793+1",
+		Key:         "260618113825-abcd-1793+1",
 		Dir:         "/tmp/batch",
 		IssueNumber: 1793,
-		BatchID:     "abcd-260618113825-1793+1",
+		BatchID:     "260618113825-abcd-1793+1",
 		RunTS:       "260618113825",
 		RunShortID:  "abcd",
 	}
@@ -1091,7 +1091,7 @@ func TestPortal_RunFromActiveBatchIssue_PopulatesIssueTitle(t *testing.T) {
 	t.Cleanup(func() { _ = ln.Close() })
 
 	active := portalActiveRun{
-		Key:          "abcd-260618113825-42",
+		Key:          "260618113825-abcd-42",
 		Dir:          sockDir,
 		SocketPath:   sockPath,
 		IssueNumbers: []int{42},
@@ -1099,7 +1099,7 @@ func TestPortal_RunFromActiveBatchIssue_PopulatesIssueTitle(t *testing.T) {
 	}
 
 	state := &events.RunState{
-		RunID: "abcd-260618113825-42",
+		RunID: "260618113825-abcd-42",
 		Started: events.Event{
 			Timestamp: time.Now().Add(-1 * time.Minute),
 			Payload: map[string]any{
@@ -1134,7 +1134,7 @@ func TestPortal_RunFromActiveBatchIssue_PopulatesIssueTitleForQueued(t *testing.
 
 	queuedAt := time.Now().Add(-2 * time.Minute)
 	active := portalActiveRun{
-		Key:          "abcd-260618113825-962-1",
+		Key:          "260618113825-abcd-962-1",
 		Dir:          sockDir,
 		SocketPath:   sockPath,
 		IssueNumbers: []int{962, 960, 961},
@@ -1143,7 +1143,7 @@ func TestPortal_RunFromActiveBatchIssue_PopulatesIssueTitleForQueued(t *testing.
 	queued := &events.Event{
 		Type:      "run.queued",
 		Timestamp: queuedAt,
-		RunID:     "abcd-260618113825-962-1",
+		RunID:     "260618113825-abcd-962-1",
 		Issue:     962,
 		Payload: map[string]any{
 			"blocked_by":  []int{960, 961},
@@ -1181,7 +1181,7 @@ func TestPortal_RunFromActiveBatchIssue_PopulatesIssueTitleForBlocked(t *testing
 	queuedAt := time.Now().Add(-2 * time.Minute)
 	blockedAt := time.Now().Add(-1 * time.Minute)
 	active := portalActiveRun{
-		Key:          "abcd-260618113825-962-1",
+		Key:          "260618113825-abcd-962-1",
 		Dir:          sockDir,
 		SocketPath:   sockPath,
 		IssueNumbers: []int{962, 960, 961},
@@ -1190,7 +1190,7 @@ func TestPortal_RunFromActiveBatchIssue_PopulatesIssueTitleForBlocked(t *testing
 	queued := &events.Event{
 		Type:      "run.queued",
 		Timestamp: queuedAt,
-		RunID:     "abcd-260618113825-962-1",
+		RunID:     "260618113825-abcd-962-1",
 		Issue:     962,
 		Payload: map[string]any{
 			"blocked_by":  []int{960, 961},
@@ -1200,7 +1200,7 @@ func TestPortal_RunFromActiveBatchIssue_PopulatesIssueTitleForBlocked(t *testing
 	blocked := &events.Event{
 		Type:      "run.blocked",
 		Timestamp: blockedAt,
-		RunID:     "abcd-260618113825-962-1",
+		RunID:     "260618113825-abcd-962-1",
 		Issue:     962,
 		Payload: map[string]any{
 			"blocked_by": []int{960, 961},
@@ -1543,7 +1543,7 @@ func TestPortal_RunFromActiveBatchIssue_MixedBatchCarriesBatchIssues(t *testing.
 
 	startedAt := time.Now().Add(-2 * time.Minute)
 	active := portalActiveRun{
-		Key:          "abcd-260618113825-860-123",
+		Key:          "260618113825-abcd-860-123",
 		Dir:          sockDir,
 		SocketPath:   sockPath,
 		IssueNumbers: []int{860, 854},
@@ -1579,17 +1579,17 @@ func TestPortal_RunFromActiveBatchIssue_LiveMixedBatchFiltersSiblingLogs(t *test
 
 	startedAt := time.Now().Add(-2 * time.Minute)
 	active := portalActiveRun{
-		Key:          "abcd-260618113825-860-123",
+		Key:          "260618113825-abcd-860-123",
 		Dir:          sockDir,
 		SocketPath:   sockPath,
 		IssueNumbers: []int{860, 854},
 		StartedAt:    startedAt,
 	}
-	liveOutput := "[abcd-260618113825-860-123-860] 18:51:00 working on PR\n[abcd-260618113825-860-123-854] 18:51:04 sibling work\n"
+	liveOutput := "[260618113825-abcd-860-123-860] 18:51:00 working on PR\n[260618113825-abcd-860-123-854] 18:51:04 sibling work\n"
 
 	for _, issue := range []int{860, 854} {
 		issue := issue
-		runID := fmt.Sprintf("abcd-260618113825-860-123-%d", issue)
+		runID := fmt.Sprintf("260618113825-abcd-860-123-%d", issue)
 		state := &events.RunState{
 			RunID: runID,
 			Started: events.Event{
@@ -1688,7 +1688,7 @@ func TestPortal_RunFromActiveBatchIssue_SingleIssueOmitsBatchIssues(t *testing.T
 
 	startedAt := time.Now().Add(-1 * time.Minute)
 	active := portalActiveRun{
-		Key:          "abcd-260618113825-42",
+		Key:          "260618113825-abcd-42",
 		Dir:          sockDir,
 		SocketPath:   sockPath,
 		IssueNumbers: []int{42},
@@ -1721,8 +1721,8 @@ func TestPortal_RunFromState_ActiveFreshBatchCarriesBatchKey(t *testing.T) {
 
 	startedAt := time.Now().Add(-1 * time.Minute)
 	active := portalActiveRun{
-		Key:          "abcd-260618113825",
-		BatchID:      "abcd-260618113825",
+		Key:          "260618113825-abcd",
+		BatchID:      "260618113825-abcd",
 		SocketPath:   sockPath,
 		IssueNumber:  42,
 		IssueNumbers: []int{42},
@@ -1730,11 +1730,11 @@ func TestPortal_RunFromState_ActiveFreshBatchCarriesBatchKey(t *testing.T) {
 	}
 
 	state := events.RunState{
-		RunID: "abcd-260618113825-42",
+		RunID: "260618113825-abcd-42",
 		Started: events.Event{
 			Type:      "run.started",
 			Timestamp: startedAt,
-			RunID:     "abcd-260618113825-42",
+			RunID:     "260618113825-abcd-42",
 			Payload: map[string]any{
 				"issue": float64(42),
 			},
@@ -1763,7 +1763,7 @@ func TestPortal_DiscoverActiveRuns_ManifestWins(t *testing.T) {
 
 	// Dir name implies issue 999, but the manifest lists [42, 43] —
 	// the portal must take issue identity from the manifest.
-	runDir := filepath.Join(repoRoot, ".sandman", "batches", "abcd-260618113825-999-1")
+	runDir := filepath.Join(repoRoot, ".sandman", "batches", "260618113825-abcd-999-1")
 	sockPath := filepath.Join(runDir, "batch.sock")
 	if err := os.MkdirAll(runDir, 0755); err != nil {
 		t.Fatal(err)
@@ -1777,7 +1777,7 @@ func TestPortal_DiscoverActiveRuns_ManifestWins(t *testing.T) {
 	if err := daemon.WriteManifest(runDir, daemon.BatchManifest{Issues: []int{42, 43}, CreatedAt: time.Now().Add(-2 * time.Minute)}); err != nil {
 		t.Fatalf("write manifest: %v", err)
 	}
-	addBatchToIndex(t, repoRoot, "abcd-260618113825-999-1", runDir, []int{42, 43})
+	addBatchToIndex(t, repoRoot, "260618113825-abcd-999-1", runDir, []int{42, 43})
 
 	active, err := (&portalRunsView{}).discoverActiveRuns(repoRoot, nil)
 	if err != nil {
@@ -1807,7 +1807,7 @@ func TestPortal_DiscoverActiveRuns_NoInferenceFromDirName(t *testing.T) {
 	// Run dir name implies issue 999, but no manifest exists.
 	// The portal must NOT infer issue 999 from the dir name; the
 	// instance is treated as manifest-less (prompt-only routing).
-	runDir := filepath.Join(repoRoot, ".sandman", "batches", "abcd-260618113825-999-1")
+	runDir := filepath.Join(repoRoot, ".sandman", "batches", "260618113825-abcd-999-1")
 	sockPath := filepath.Join(runDir, "batch.sock")
 	if err := os.MkdirAll(runDir, 0755); err != nil {
 		t.Fatal(err)
@@ -1817,7 +1817,7 @@ func TestPortal_DiscoverActiveRuns_NoInferenceFromDirName(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = ln.Close() })
-	addBatchToIndex(t, repoRoot, "abcd-260618113825-999-1", runDir, []int{})
+	addBatchToIndex(t, repoRoot, "260618113825-abcd-999-1", runDir, []int{})
 
 	active, err := (&portalRunsView{}).discoverActiveRuns(repoRoot, nil)
 	if err != nil {
@@ -1850,7 +1850,7 @@ func TestPortal_DiscoverActiveRuns_SkipsDeadSocketFromFinishedBatch(t *testing.T
 	// one issue. The listener exists only so the socket file persists
 	// on disk with the socket bit set; the liveness probe is stubbed
 	// to false so the listener's actual dialability is irrelevant.
-	runDir := filepath.Join(repoRoot, ".sandman", "batches", "abcd-260618113825-42-1")
+	runDir := filepath.Join(repoRoot, ".sandman", "batches", "260618113825-abcd-42-1")
 	sockPath := filepath.Join(runDir, "batch.sock")
 	if err := os.MkdirAll(runDir, 0755); err != nil {
 		t.Fatal(err)
@@ -2005,7 +2005,7 @@ func TestPortal_Compute_MixedBatchRowsCarryBatchIssuesInJSON(t *testing.T) {
 
 	// Dir name suggests issue 999, but the manifest lists [860, 854] —
 	// the JSON payload for the portal must reflect the manifest.
-	runDir := filepath.Join(repoRoot, ".sandman", "batches", "abcd-260618113825-999-1")
+	runDir := filepath.Join(repoRoot, ".sandman", "batches", "260618113825-abcd-999-1")
 	sockPath := filepath.Join(runDir, "batch.sock")
 	if err := os.MkdirAll(runDir, 0755); err != nil {
 		t.Fatal(err)
@@ -2018,7 +2018,7 @@ func TestPortal_Compute_MixedBatchRowsCarryBatchIssuesInJSON(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = ln.Close() })
-	addBatchToIndex(t, repoRoot, "abcd-260618113825-999-1", runDir, []int{860, 854})
+	addBatchToIndex(t, repoRoot, "260618113825-abcd-999-1", runDir, []int{860, 854})
 
 	runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")})
 	if err != nil {
@@ -2247,7 +2247,7 @@ func TestPortal_ReviewRunLifecycle(t *testing.T) {
 		// run-<ts> dir with live socket and no event log entries —
 		// the portal must keep treating it as an in-flight prompt-only
 		// run, not confuse it with a review run.
-		runDir := filepath.Join(repoRoot, ".sandman", "batches", "abcd-260618113825-999-1")
+		runDir := filepath.Join(repoRoot, ".sandman", "batches", "260618113825-abcd-999-1")
 		sockPath := filepath.Join(runDir, "batch.sock")
 		if err := os.MkdirAll(runDir, 0755); err != nil {
 			t.Fatal(err)
@@ -2257,7 +2257,7 @@ func TestPortal_ReviewRunLifecycle(t *testing.T) {
 			t.Fatal(err)
 		}
 		t.Cleanup(func() { _ = ln.Close() })
-		addBatchToIndex(t, repoRoot, "abcd-260618113825-999-1", runDir, []int{})
+		addBatchToIndex(t, repoRoot, "260618113825-abcd-999-1", runDir, []int{})
 
 		runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")})
 		if err != nil {
@@ -2539,7 +2539,7 @@ func TestPortal_ReasonField_PopulatedFromRunKind(t *testing.T) {
 	t.Run("regular issue-driven run has empty Reason", func(t *testing.T) {
 		startedAt := time.Now().Add(-3 * time.Minute)
 		state := events.RunState{
-			RunID: "abcd-260618113825-42-1",
+			RunID: "260618113825-abcd-42-1",
 			Started: events.Event{
 				Timestamp: startedAt,
 				Issue:     42,
@@ -2563,7 +2563,7 @@ func TestPortal_ReasonField_PopulatedFromRunKind(t *testing.T) {
 	t.Run("prompt-only run has empty Reason", func(t *testing.T) {
 		startedAt := time.Now().Add(-1 * time.Minute)
 		state := events.RunState{
-			RunID: "abcd-260618113825-prompt",
+			RunID: "260618113825-abcd-prompt",
 			Started: events.Event{
 				Timestamp: startedAt,
 				Payload:   map[string]any{"branch": "sandman/prompt"},
@@ -2585,7 +2585,7 @@ func TestPortal_ReasonField_PopulatedFromRunKind(t *testing.T) {
 		// "issue" and Reason must be "".
 		startedAt := time.Now().Add(-10 * time.Minute)
 		state := events.RunState{
-			RunID: "abcd-260618113825-42-2",
+			RunID: "260618113825-abcd-42-2",
 			Started: events.Event{
 				Timestamp: startedAt,
 				Issue:     42,
@@ -2649,7 +2649,7 @@ func TestPortal_ActiveMatch_ReasonDerivedFromSocket(t *testing.T) {
 
 		match := portalRunMatch{
 			instance: portalActiveRun{
-				Key:        "abcd-260618113825-99-1",
+				Key:        "260618113825-abcd-99-1",
 				SocketPath: sockPath,
 				ModTime:    time.Now().Add(-1 * time.Minute),
 			},
@@ -2811,8 +2811,8 @@ func TestPortalRuns_ReviewAndImplRowsSeparateForSameIssue(t *testing.T) {
 		// production shape where the first attempt was aborted
 		// and the second attempt is mid-flight, leaving an
 		// aborted row in the event log.
-		{Type: "run.started", Timestamp: startedAt, RunID: "abcd-260618113825-1066-impl", Issue: 1066, Payload: map[string]any{"branch": "sandman/1066-impl"}},
-		{Type: "run.aborted", Timestamp: abortedAt, RunID: "abcd-260618113825-1066-impl", Issue: 1066, Payload: map[string]any{"branch": "sandman/1066-impl", "status": "aborted"}},
+		{Type: "run.started", Timestamp: startedAt, RunID: "260618113825-abcd-1066-impl", Issue: 1066, Payload: map[string]any{"branch": "sandman/1066-impl"}},
+		{Type: "run.aborted", Timestamp: abortedAt, RunID: "260618113825-abcd-1066-impl", Issue: 1066, Payload: map[string]any{"branch": "sandman/1066-impl", "status": "aborted"}},
 		// Review run for PR 1075 of issue 1066 — finished. The
 		// orchestrator stamps `issue: 1066` on the finished event
 		// (and `issue_number: 1066` in the payload), so both the
@@ -2831,7 +2831,7 @@ func TestPortalRuns_ReviewAndImplRowsSeparateForSameIssue(t *testing.T) {
 	var implRun, reviewRun *portalRun
 	for i := range runs {
 		switch runs[i].RunID {
-		case "abcd-260618113825-1066-impl":
+		case "260618113825-abcd-1066-impl":
 			implRun = &runs[i]
 		case "PR1075":
 			reviewRun = &runs[i]
@@ -3113,15 +3113,15 @@ func TestPortal_BatchKeyForActive_FallbackChain(t *testing.T) {
 func TestPortal_ResolveRunLog_PrefersLiveForNonTerminal(t *testing.T) {
 	startedAt := time.Now().Add(-1 * time.Minute)
 	runState := events.RunState{
-		RunID: "abcd-260618113825-active-1",
+		RunID: "260618113825-abcd-active-1",
 		Started: events.Event{
 			Timestamp: startedAt,
 			Payload:   map[string]any{},
 		},
 	}
 	active := &portalActiveRun{
-		Key:        "abcd-260618113825-active-1",
-		LiveOutput: "[abcd-260618113825-active-1] 12:00:00 live line\n",
+		Key:        "260618113825-abcd-active-1",
+		LiveOutput: "[260618113825-abcd-active-1] 12:00:00 live line\n",
 	}
 	savedLog := "12:00:00 saved line\n"
 
@@ -3144,7 +3144,7 @@ func TestPortal_ResolveRunLog_SavedWinsForTerminalIssueRow(t *testing.T) {
 	startedAt := time.Now().Add(-5 * time.Minute)
 	finishedAt := startedAt.Add(2 * time.Minute)
 	runState := events.RunState{
-		RunID: "abcd-260618113825-42",
+		RunID: "260618113825-abcd-42",
 		Started: events.Event{
 			Timestamp: startedAt,
 			Payload:   map[string]any{"branch": "sandman/42-fix"},
@@ -3156,9 +3156,9 @@ func TestPortal_ResolveRunLog_SavedWinsForTerminalIssueRow(t *testing.T) {
 		},
 	}
 	active := &portalActiveRun{
-		Key:        "abcd-260618113825",
-		BatchID:    "abcd-260618113825",
-		RunID:      "abcd-260618113825-42",
+		Key:        "260618113825-abcd",
+		BatchID:    "260618113825-abcd",
+		RunID:      "260618113825-abcd-42",
 		LiveOutput: "[different-run] 12:34:56 unrelated live line\n",
 	}
 	savedLog := "12:34:00 saved completion line\n12:34:30 saved final line\n"
@@ -3184,7 +3184,7 @@ func TestPortal_ResolveRunLog_LiveWinsForTerminalReview(t *testing.T) {
 	startedAt := time.Now().Add(-5 * time.Minute)
 	finishedAt := startedAt.Add(2 * time.Minute)
 	runState := events.RunState{
-		RunID: "abcd-260618113825-review-PR99",
+		RunID: "260618113825-abcd-review-PR99",
 		Started: events.Event{
 			Timestamp: startedAt,
 			Payload: map[string]any{
@@ -3205,9 +3205,9 @@ func TestPortal_ResolveRunLog_LiveWinsForTerminalReview(t *testing.T) {
 		},
 	}
 	active := &portalActiveRun{
-		Key:        "abcd-260618113825",
-		BatchID:    "abcd-260618113825",
-		RunID:      "abcd-260618113825-review-PR99",
+		Key:        "260618113825-abcd",
+		BatchID:    "260618113825-abcd",
+		RunID:      "260618113825-abcd-review-PR99",
 		LiveOutput: "12:34:56 review live line\n",
 	}
 	savedLog := "12:34:00 saved review line\n"
@@ -3232,7 +3232,7 @@ func TestPortal_ResolveRunLog_TerminalReviewPrefersSavedLog(t *testing.T) {
 	startedAt := time.Now().Add(-15 * time.Minute)
 	finishedAt := startedAt.Add(13 * time.Minute)
 	runState := events.RunState{
-		RunID: "556c-260703135044-1719-PR1726",
+		RunID: "260703135044-556c-1719-PR1726",
 		Started: events.Event{
 			Timestamp: startedAt,
 			Payload: map[string]any{
@@ -3257,15 +3257,15 @@ func TestPortal_ResolveRunLog_TerminalReviewPrefersSavedLog(t *testing.T) {
 	// purpose, mirroring the bug scenario where the socket has not
 	// been recycled.
 	active := &portalActiveRun{
-		Key:        "556c-260703135044",
-		BatchID:    "556c-260703135044",
-		RunID:      "556c-260703135044-1719-PR1726",
-		LiveOutput: "[556c-260703135044-1719-PR1726] 13:52:00 socket tail line\n",
+		Key:        "260703135044-556c",
+		BatchID:    "260703135044-556c",
+		RunID:      "260703135044-556c-1719-PR1726",
+		LiveOutput: "[260703135044-556c-1719-PR1726] 13:52:00 socket tail line\n",
 	}
 	// The saved log is the full 707-line record, including the
 	// trailing `**Decision: CHANGES_REQUESTED**` line at 13:52:15.
-	savedLog := "[556c-260703135044-1719-PR1726] 12:00:00 first saved line\n" +
-		"[556c-260703135044-1719-PR1726] 13:52:10 final saved line\n" +
+	savedLog := "[260703135044-556c-1719-PR1726] 12:00:00 first saved line\n" +
+		"[260703135044-556c-1719-PR1726] 13:52:10 final saved line\n" +
 		"**Decision: CHANGES_REQUESTED**\n"
 
 	got := (&portalRunsView{}).resolveRunLog(func() string { return savedLog }, runState, active)
@@ -3287,7 +3287,7 @@ func TestPortal_ResolveRunLog_TerminalAutoSelectPrefersSavedLog(t *testing.T) {
 	startedAt := time.Now().Add(-10 * time.Minute)
 	finishedAt := startedAt.Add(8 * time.Minute)
 	runState := events.RunState{
-		RunID: "abcd-260703135044-1719-auto",
+		RunID: "260703135044-abcd-1719-auto",
 		Started: events.Event{
 			Timestamp: startedAt,
 			Payload: map[string]any{
@@ -3306,13 +3306,13 @@ func TestPortal_ResolveRunLog_TerminalAutoSelectPrefersSavedLog(t *testing.T) {
 		},
 	}
 	active := &portalActiveRun{
-		Key:        "abcd-260703135044",
-		BatchID:    "abcd-260703135044",
-		RunID:      "abcd-260703135044-1719-auto",
-		LiveOutput: "[abcd-260703135044-1719-auto] 13:00:00 socket tail line\n",
+		Key:        "260703135044-abcd",
+		BatchID:    "260703135044-abcd",
+		RunID:      "260703135044-abcd-1719-auto",
+		LiveOutput: "[260703135044-abcd-1719-auto] 13:00:00 socket tail line\n",
 	}
-	savedLog := "[abcd-260703135044-1719-auto] 12:30:00 saved line\n" +
-		"[abcd-260703135044-1719-auto] 13:00:10 final saved line\n"
+	savedLog := "[260703135044-abcd-1719-auto] 12:30:00 saved line\n" +
+		"[260703135044-abcd-1719-auto] 13:00:10 final saved line\n"
 
 	got := (&portalRunsView{}).resolveRunLog(func() string { return savedLog }, runState, active)
 	if got != savedLog {
@@ -3329,7 +3329,7 @@ func TestPortal_ResolveRunLog_TerminalAutoSelectPrefersSavedLog(t *testing.T) {
 func TestPortal_ResolveRunLog_ActiveReviewPrefersLive(t *testing.T) {
 	startedAt := time.Now().Add(-1 * time.Minute)
 	runState := events.RunState{
-		RunID: "abcd-260618113825-active-review",
+		RunID: "260618113825-abcd-active-review",
 		Started: events.Event{
 			Timestamp: startedAt,
 			Payload: map[string]any{
@@ -3339,8 +3339,8 @@ func TestPortal_ResolveRunLog_ActiveReviewPrefersLive(t *testing.T) {
 		},
 	}
 	active := &portalActiveRun{
-		Key:        "abcd-260618113825-active-review",
-		LiveOutput: "[abcd-260618113825-active-review] 12:00:00 live review line\n",
+		Key:        "260618113825-abcd-active-review",
+		LiveOutput: "[260618113825-abcd-active-review] 12:00:00 live review line\n",
 	}
 	savedLog := "12:00:00 saved review line\n"
 
@@ -3359,7 +3359,7 @@ func TestPortal_ResolveRunLog_ActiveReviewPrefersLive(t *testing.T) {
 func TestPortal_ResolveRunLog_ActiveAutoSelectPrefersLive(t *testing.T) {
 	startedAt := time.Now().Add(-1 * time.Minute)
 	runState := events.RunState{
-		RunID: "abcd-260618113825-active-auto",
+		RunID: "260618113825-abcd-active-auto",
 		Started: events.Event{
 			Timestamp: startedAt,
 			Payload: map[string]any{
@@ -3368,8 +3368,8 @@ func TestPortal_ResolveRunLog_ActiveAutoSelectPrefersLive(t *testing.T) {
 		},
 	}
 	active := &portalActiveRun{
-		Key:        "abcd-260618113825-active-auto",
-		LiveOutput: "[abcd-260618113825-active-auto] 12:00:00 live auto-select line\n",
+		Key:        "260618113825-abcd-active-auto",
+		LiveOutput: "[260618113825-abcd-active-auto] 12:00:00 live auto-select line\n",
 	}
 	savedLog := "12:00:00 saved auto-select line\n"
 
@@ -3391,7 +3391,7 @@ func TestPortal_ResolveRunLog_TerminalReviewEmptySavedFallsBackToLive(t *testing
 	startedAt := time.Now().Add(-5 * time.Minute)
 	finishedAt := startedAt.Add(2 * time.Minute)
 	runState := events.RunState{
-		RunID: "abcd-260618113825-review-empty-saved",
+		RunID: "260618113825-abcd-review-empty-saved",
 		Started: events.Event{
 			Timestamp: startedAt,
 			Payload: map[string]any{
@@ -3410,9 +3410,9 @@ func TestPortal_ResolveRunLog_TerminalReviewEmptySavedFallsBackToLive(t *testing
 		},
 	}
 	active := &portalActiveRun{
-		Key:        "abcd-260618113825",
-		BatchID:    "abcd-260618113825",
-		RunID:      "abcd-260618113825-review-empty-saved",
+		Key:        "260618113825-abcd",
+		BatchID:    "260618113825-abcd",
+		RunID:      "260618113825-abcd-review-empty-saved",
 		LiveOutput: "12:34:56 review live line\n",
 	}
 
@@ -3431,14 +3431,14 @@ func TestPortal_ResolveRunLog_TerminalReviewEmptySavedFallsBackToLive(t *testing
 func TestPortal_ResolveRunLog_EmptySavedFallsBackToLive(t *testing.T) {
 	startedAt := time.Now().Add(-1 * time.Minute)
 	runState := events.RunState{
-		RunID: "abcd-260618113825-active-1",
+		RunID: "260618113825-abcd-active-1",
 		Started: events.Event{
 			Timestamp: startedAt,
 			Payload:   map[string]any{},
 		},
 	}
 	active := &portalActiveRun{
-		Key:        "abcd-260618113825-active-1",
+		Key:        "260618113825-abcd-active-1",
 		LiveOutput: "12:00:00 live only line\n",
 	}
 
@@ -3456,7 +3456,7 @@ func TestPortal_ResolveRunLog_NoActiveReturnsSaved(t *testing.T) {
 	startedAt := time.Now().Add(-5 * time.Minute)
 	finishedAt := startedAt.Add(2 * time.Minute)
 	runState := events.RunState{
-		RunID: "abcd-260618113825-42",
+		RunID: "260618113825-abcd-42",
 		Started: events.Event{
 			Timestamp: startedAt,
 			Payload:   map[string]any{},
@@ -3536,8 +3536,8 @@ func TestPortal_ActiveKeyForActive_FallbackChain(t *testing.T) {
 //     tab "batch" field) MUST equal the public BatchId (== batch folder
 //     basename == batch.json.batchId == event payload batch_id).
 //
-// For single-issue issue batches the public BatchId is `<sid>-<ts>-<num>`
-// (no +N suffix); for multi-issue it is `<sid>-<ts>-<first>+<additionalCount>`.
+// For single-issue issue batches the public BatchId is `<ts>-<sid>-<num>`
+// (no +N suffix); for multi-issue it is `<ts>-<sid>-<first>+<additionalCount>`.
 // In both cases the active row's BatchKey matches the public BatchId, so
 // the portal Batch label and Details tab render the same string the user
 // sees on disk.
@@ -3606,9 +3606,9 @@ func TestPortal_EventPayloadBatchId_EqualsPublicBatchId(t *testing.T) {
 		issues    []int
 		wantBatch string
 	}{
-		{name: "single issue", issues: []int{42}, wantBatch: "abcd-260618113825-42"},
-		{name: "two issues", issues: []int{42, 43}, wantBatch: "abcd-260618113825-42+1"},
-		{name: "nine issues", issues: []int{42, 43, 44, 45, 46, 47, 48, 49, 50}, wantBatch: "abcd-260618113825-42+8"},
+		{name: "single issue", issues: []int{42}, wantBatch: "260618113825-abcd-42"},
+		{name: "two issues", issues: []int{42, 43}, wantBatch: "260618113825-abcd-42+1"},
+		{name: "nine issues", issues: []int{42, 43, 44, 45, 46, 47, 48, 49, 50}, wantBatch: "260618113825-abcd-42+8"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -3667,20 +3667,20 @@ func TestPortal_RunsAPI_BatchKeyEqualsPublicBatchId(t *testing.T) {
 		{
 			name:      "single issue",
 			issues:    []int{42},
-			wantBatch: "abcd-260618113825-42",
-			rowRunID:  "abcd-260618113825-42",
+			wantBatch: "260618113825-abcd-42",
+			rowRunID:  "260618113825-abcd-42",
 		},
 		{
 			name:      "two issues",
 			issues:    []int{42, 43},
-			wantBatch: "abcd-260618113825-42+1",
-			rowRunID:  "abcd-260618113825-42",
+			wantBatch: "260618113825-abcd-42+1",
+			rowRunID:  "260618113825-abcd-42",
 		},
 		{
 			name:      "nine issues",
 			issues:    []int{42, 43, 44, 45, 46, 47, 48, 49, 50},
-			wantBatch: "abcd-260618113825-42+8",
-			rowRunID:  "abcd-260618113825-42",
+			wantBatch: "260618113825-abcd-42+8",
+			rowRunID:  "260618113825-abcd-42",
 		},
 	}
 	for _, tt := range tests {
@@ -3773,10 +3773,10 @@ func TestPortal_RunsAPI_BatchKeyEqualsPublicBatchId(t *testing.T) {
 //     tab "batch" field) MUST equal the public BatchId (== batch folder
 //     basename == batch.json.batchId == event payload batch_id).
 //   - For prompt-only with userid the public BatchId is
-//     `<sid>-<ts>-prompt-<userid>` and the per-row RunID equals the
+//     `<ts>-<sid>-prompt-<userid>` and the per-row RunID equals the
 //     public BatchId (RunID == BatchId for prompt-only).
 //   - For prompt-only without userid the public BatchId is
-//     `<sid>-<ts>-prompt` and the per-row RunID equals the public
+//     `<ts>-<sid>-prompt` and the per-row RunID equals the public
 //     BatchId.
 //
 // In both cases the active row's BatchKey matches the public BatchId,
@@ -3790,9 +3790,9 @@ func TestPortal_ActiveBatchKey_EqualsPublicBatchId_PromptOnly(t *testing.T) {
 		firstSub string
 		wantID   string
 	}{
-		{name: "with userid", firstSub: "myid", wantID: "abcd-260618113825-prompt-myid"},
-		{name: "without userid", firstSub: "", wantID: "abcd-260618113825-prompt"},
-		{name: "with numeric userid", firstSub: "42", wantID: "abcd-260618113825-prompt-42"},
+		{name: "with userid", firstSub: "myid", wantID: "260618113825-abcd-prompt-myid"},
+		{name: "without userid", firstSub: "", wantID: "260618113825-abcd-prompt"},
+		{name: "with numeric userid", firstSub: "42", wantID: "260618113825-abcd-prompt-42"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -3860,20 +3860,20 @@ func TestPortal_RunsAPI_BatchKeyEqualsPublicBatchId_PromptOnly(t *testing.T) {
 		{
 			name:      "with userid",
 			firstSub:  "myid",
-			wantBatch: "abcd-260618113825-prompt-myid",
-			rowRunID:  "abcd-260618113825-prompt-myid",
+			wantBatch: "260618113825-abcd-prompt-myid",
+			rowRunID:  "260618113825-abcd-prompt-myid",
 		},
 		{
 			name:      "without userid",
 			firstSub:  "",
-			wantBatch: "abcd-260618113825-prompt",
-			rowRunID:  "abcd-260618113825-prompt",
+			wantBatch: "260618113825-abcd-prompt",
+			rowRunID:  "260618113825-abcd-prompt",
 		},
 		{
 			name:      "with numeric userid",
 			firstSub:  "42",
-			wantBatch: "abcd-260618113825-prompt-42",
-			rowRunID:  "abcd-260618113825-prompt-42",
+			wantBatch: "260618113825-abcd-prompt-42",
+			rowRunID:  "260618113825-abcd-prompt-42",
 		},
 	}
 	for _, tt := range tests {

@@ -68,7 +68,7 @@ This rule is the historical artifact preserved for audit. It is **no longer the 
 | `sandman run <issues...>` (multi) | `runid.NewRunID(KindIssue, fmt.Sprintf("%d", firstIssue), ts, shortid)` (canonical row = first row) |
 | `sandman run --continue <issue>` | same as `run <issue>` (first issue's per-row RunID) |
 | `sandman review` (orphan) | `perRowRunID` from `internal/cmd/review.go` (unchanged — already equal) |
-| `sandman review` (linked issue) | `perRowRunID` = `<sid>-<ts>-<issue>-PR<pr>` |
+| `sandman review` (linked issue) | `perRowRunID` = `<ts>-<sid>-<issue>-PR<pr>` |
 | `review` daemon | `reviewRunIDFor(prNumber, linkedIssue, ts, shortid)` |
 | `selection.go` auto-select | unchanged (already correct by coincidence) |
 
@@ -84,7 +84,7 @@ The discriminator at `internal/cmd/portal.go:357-361` (the abort handler's "runI
 
 ### Why the rule no longer holds
 
-The slice-1 contract change (issue #1917) deliberately re-separated the per-row RunID from the public BatchId for multi-issue batches: the public BatchId is `<sid>-<ts>-<firstIssue>+<N>` (carrying the additional count) and the per-row RunID is `<sid>-<ts>-<firstIssue>` (no suffix). Re-asserting `Entry.ID == perRowRunID` after slice 1 would re-introduce the mismatch this ADR was originally written to fix, but now in the opposite direction (the batch folder basename would no longer match `Entry.ID`). The slice-1 + slice-6 model is:
+The slice-1 contract change (issue #1917) deliberately re-separated the per-row RunID from the public BatchId for multi-issue batches: the public BatchId is `<ts>-<sid>-<firstIssue>+<N>` (carrying the additional count) and the per-row RunID is `<ts>-<sid>-<firstIssue>` (no suffix). Re-asserting `Entry.ID == perRowRunID` after slice 1 would re-introduce the mismatch this ADR was originally written to fix, but now in the opposite direction (the batch folder basename would no longer match `Entry.ID`). The slice-1 + slice-6 model is:
 
 - Public BatchId == batch folder basename (`batches/<id>/`'s last path segment).
 - Per-row RunID == row identity surfaced in the portal (`run.json.runID`).

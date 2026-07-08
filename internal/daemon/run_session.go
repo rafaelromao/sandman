@@ -111,12 +111,12 @@ func (s *RunSession) Broadcaster() *Broadcaster {
 //
 // The public BatchId rules (per #1917, refined for review by #1919 slice 3):
 //
-//   - Issue single:    "<sid>-<ts>-<num>"                    (no +N suffix)
-//   - Issue multi:     "<sid>-<ts>-<firstIssue>+<additionalCount>"
-//   - Review (orphan):  "<sid>-<ts>-PR<pr>"
-//   - Review (linked):  "<sid>-<ts>-<linkedIssue>-PR<pr>"
-//   - Auto-select:     "<sid>-<ts>-auto-<N>"
-//   - Prompt-only:     "<sid>-<ts>-prompt[-<userid>]"
+//   - Issue single:    "<ts>-<sid>-<num>"                    (no +N suffix)
+//   - Issue multi:     "<ts>-<sid>-<firstIssue>+<additionalCount>"
+//   - Review (orphan):  "<ts>-<sid>-PR<pr>"
+//   - Review (linked):  "<ts>-<sid>-<linkedIssue>-PR<pr>"
+//   - Auto-select:     "<ts>-<sid>-auto-<N>"
+//   - Prompt-only:     "<ts>-<sid>-prompt[-<userid>]"
 //
 // The per-row RunID is no longer stamped into batch.json. It lives in
 // run.json.RunID and the per-run folder name `<batch>/runs/<runID>/`.

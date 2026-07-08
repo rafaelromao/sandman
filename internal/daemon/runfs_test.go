@@ -129,9 +129,9 @@ func TestWriteRunManifest_PublicBatchIdRoundTrip(t *testing.T) {
 		publicID string
 		runID    string
 	}{
-		{name: "single issue", publicID: "abcd-260618113825-42", runID: "abcd-260618113825-42"},
-		{name: "two issues", publicID: "abcd-260618113825-42+1", runID: "abcd-260618113825-42"},
-		{name: "nine issues", publicID: "abcd-260618113825-42+8", runID: "abcd-260618113825-42"},
+		{name: "single issue", publicID: "260618113825-abcd-42", runID: "260618113825-abcd-42"},
+		{name: "two issues", publicID: "260618113825-abcd-42+1", runID: "260618113825-abcd-42"},
+		{name: "nine issues", publicID: "260618113825-abcd-42+8", runID: "260618113825-abcd-42"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -245,7 +245,7 @@ func TestBatchManifest_RunTSAndRunShortIDRoundTrip(t *testing.T) {
 		Issues:     []int{7, 8},
 		CreatedAt:  time.Date(2026, 6, 18, 11, 38, 25, 0, time.UTC),
 		RunKind:    "issue",
-		BatchId:    "abcd-260618113825-7+2",
+		BatchId:    "260618113825-abcd-7+2",
 		RunTS:      "260618113825",
 		RunShortID: "abcd",
 		PR:         &pr,
@@ -264,7 +264,7 @@ func TestBatchManifest_RunTSAndRunShortIDRoundTrip(t *testing.T) {
 	if got.RunShortID != "abcd" {
 		t.Errorf("RunShortID = %q, want %q", got.RunShortID, "abcd")
 	}
-	if got.BatchId != "abcd-260618113825-7+2" {
+	if got.BatchId != "260618113825-abcd-7+2" {
 		t.Errorf("BatchId = %q, want preserved value", got.BatchId)
 	}
 	if got.RunKind != "issue" {

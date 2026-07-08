@@ -1001,7 +1001,7 @@ func TestWriteReviewState_AtomicRenameNoLeftoverTmp(t *testing.T) {
 // produce the same struct.
 func TestRunRecord_JSONRoundTrip(t *testing.T) {
 	t.Run("active row omits archivePath", func(t *testing.T) {
-		rec := RunRecord{RunID: "abcd-260618113825-42", Status: RunRecordStatusActive}
+		rec := RunRecord{RunID: "260618113825-abcd-42", Status: RunRecordStatusActive}
 		data, err := json.Marshal(rec)
 		if err != nil {
 			t.Fatalf("marshal: %v", err)
@@ -1010,8 +1010,8 @@ func TestRunRecord_JSONRoundTrip(t *testing.T) {
 		if err := json.Unmarshal(data, &decoded); err != nil {
 			t.Fatalf("unmarshal: %v", err)
 		}
-		if got := decoded["runId"]; got != "abcd-260618113825-42" {
-			t.Errorf("runId = %v, want %q", got, "abcd-260618113825-42")
+		if got := decoded["runId"]; got != "260618113825-abcd-42" {
+			t.Errorf("runId = %v, want %q", got, "260618113825-abcd-42")
 		}
 		if got := decoded["status"]; got != "active" {
 			t.Errorf("status = %v, want %q", got, "active")
@@ -1031,9 +1031,9 @@ func TestRunRecord_JSONRoundTrip(t *testing.T) {
 
 	t.Run("archived row includes archivePath", func(t *testing.T) {
 		rec := RunRecord{
-			RunID:       "abcd-260618113825-42",
+			RunID:       "260618113825-abcd-42",
 			Status:      RunRecordStatusArchived,
-			ArchivePath: "archive/abcd-260618113825-42/runs/abcd-260618113825-42",
+			ArchivePath: "archive/260618113825-abcd-42/runs/260618113825-abcd-42",
 		}
 		data, err := json.Marshal(rec)
 		if err != nil {
@@ -1043,7 +1043,7 @@ func TestRunRecord_JSONRoundTrip(t *testing.T) {
 		if err := json.Unmarshal(data, &decoded); err != nil {
 			t.Fatalf("unmarshal: %v", err)
 		}
-		if got := decoded["archivePath"]; got != "archive/abcd-260618113825-42/runs/abcd-260618113825-42" {
+		if got := decoded["archivePath"]; got != "archive/260618113825-abcd-42/runs/260618113825-abcd-42" {
 			t.Errorf("archivePath = %v, want archived path", got)
 		}
 

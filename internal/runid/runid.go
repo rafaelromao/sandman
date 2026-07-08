@@ -57,7 +57,7 @@ func NewBatchIn(baseBatchesDir string) (ts, shortid string, err error) {
 		}
 		collision := false
 		for _, entry := range entries {
-			if entry.IsDir() && strings.HasPrefix(entry.Name(), shortid+"-"+ts) {
+			if entry.IsDir() && strings.HasPrefix(entry.Name(), ts+"-"+shortid) {
 				collision = true
 				break
 			}
@@ -73,18 +73,18 @@ func NewBatchID(kind Kind, n int, firstSubject string, ts, shortid string) strin
 	switch kind {
 	case KindIssue:
 		if n <= 1 {
-			return fmt.Sprintf("%s-%s-%s", shortid, ts, firstSubject)
+			return fmt.Sprintf("%s-%s-%s", ts, shortid, firstSubject)
 		}
-		return fmt.Sprintf("%s-%s-%s+%d", shortid, ts, firstSubject, n-1)
+		return fmt.Sprintf("%s-%s-%s+%d", ts, shortid, firstSubject, n-1)
 	case KindReview:
-		return fmt.Sprintf("%s-%s-PR%s", shortid, ts, firstSubject)
+		return fmt.Sprintf("%s-%s-PR%s", ts, shortid, firstSubject)
 	case KindAutoSelect:
-		return fmt.Sprintf("%s-%s-auto-%d", shortid, ts, n)
+		return fmt.Sprintf("%s-%s-auto-%d", ts, shortid, n)
 	case KindPromptOnly:
 		if firstSubject == "" {
-			return fmt.Sprintf("%s-%s-prompt", shortid, ts)
+			return fmt.Sprintf("%s-%s-prompt", ts, shortid)
 		}
-		return fmt.Sprintf("%s-%s-prompt-%s", shortid, ts, firstSubject)
+		return fmt.Sprintf("%s-%s-prompt-%s", ts, shortid, firstSubject)
 	default:
 		return ""
 	}
@@ -93,14 +93,14 @@ func NewBatchID(kind Kind, n int, firstSubject string, ts, shortid string) strin
 func NewRunID(kind Kind, subject string, ts, shortid string) string {
 	if kind == KindPromptOnly {
 		if subject == "" {
-			return fmt.Sprintf("%s-%s-prompt", shortid, ts)
+			return fmt.Sprintf("%s-%s-prompt", ts, shortid)
 		}
-		return fmt.Sprintf("%s-%s-prompt-%s", shortid, ts, subject)
+		return fmt.Sprintf("%s-%s-prompt-%s", ts, shortid, subject)
 	}
 	if subject == "" {
-		return fmt.Sprintf("%s-%s", shortid, ts)
+		return fmt.Sprintf("%s-%s", ts, shortid)
 	}
-	return fmt.Sprintf("%s-%s-%s", shortid, ts, subject)
+	return fmt.Sprintf("%s-%s-%s", ts, shortid, subject)
 }
 
 var userRunIDRe = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,64}$`)
@@ -118,52 +118,33 @@ func IsValidUserRunID(s string) error {
 	return nil
 }
 
-var newFormatRe = regexp.MustCompile(`^[0-9a-f]{4}-\d{12}`)
-var numericIssueTailRe = regexp.MustCompile(`^[0-9a-f]{4}-\d{12}-\d+$`)
-var promptOnlySegmentRe = regexp.MustCompile(`^([0-9a-f]{4})-(\d{12})-prompt(-|$)`)
+var canonicalPrefixRe = regexp.MustCompile(`^\d{12}-[0-9a-f]{4}($|-)`)
+var canonicalAutoSelectRe = regexp.MustCompile(`^\d{12}-[0-9a-f]{4}-auto-\d+$`)
+var canonicalReviewRe = regexp.MustCompile(`^\d{12}-[0-9a-f]{4}(-\d+-)?-PR\d+$`)
+var canonicalMultiIssueRe = regexp.MustCompile(`^\d{12}-[0-9a-f]{4}-\d+\+\d+$`)
+var canonicalSingleIssueRe = regexp.MustCompile(`^\d{12}-[0-9a-f]{4}-\d+$`)
+var canonicalPromptOnlySegmentRe = regexp.MustCompile(`^\d{12}-[0-9a-f]{4}-prompt(-|$)`)
 
 func KindFromDirName(name string) (Kind, bool) {
-	// New format: {sid}-{ts}-{rest}
-	if strings.Contains(name, "-auto-") {
+	// Canonical format only: every classified name must start with the
+	// <ts>-<sid> prefix. Anything that doesn't is rejected, so legacy
+	// <ts>-<sid> and {ts}-{sid}-issues-first/... shapes return (0, false).
+	if !canonicalPrefixRe.MatchString(name) {
+		return 0, false
+	}
+	switch {
+	case canonicalAutoSelectRe.MatchString(name):
 		return KindAutoSelect, true
-	}
-	if strings.Contains(name, "-PR") {
+	case canonicalReviewRe.MatchString(name):
 		return KindReview, true
-	}
-	// New format issue batch: {sid}-{ts}-{n}+{count} (contains "+")
-	if strings.Contains(name, "+") {
+	case canonicalMultiIssueRe.MatchString(name):
+		return KindIssue, true
+	case canonicalPromptOnlySegmentRe.MatchString(name):
+		return KindPromptOnly, true
+	case canonicalSingleIssueRe.MatchString(name):
 		return KindIssue, true
 	}
-	// New format prompt-only batch: {sid}-{ts}-prompt or {sid}-{ts}-prompt-{userid}.
-	// Match the literal "prompt" segment before falling through to the
-	// numeric-issue-tail check below, so a numeric userid (e.g. --run-id 42)
-	// is not misclassified as a single-issue batch ({sid}-{ts}-42).
-	if promptOnlySegmentRe.MatchString(name) {
-		return KindPromptOnly, true
-	}
-	// New format single-issue batch: {sid}-{ts}-{num} (numeric tail, no +N).
-	// Disambiguate from prompt-only-with-userid ({sid}-{ts}-{userid}) by
-	// checking that the trailing token is purely digits.
-	if numericIssueTailRe.MatchString(name) {
-		return KindIssue, true
-	}
-	// Old format: {ts}-{sid}-{rest}
-	if strings.Contains(name, "-issues-first-") {
-		return KindIssue, true
-	}
-	if strings.Contains(name, "-review-") {
-		return KindReview, true
-	}
-	if strings.Contains(name, "-auto-select-") && strings.HasSuffix(name, "-candidates") {
-		return KindAutoSelect, true
-	}
-	if strings.Contains(name, "-prompt-only") {
-		return KindPromptOnly, true
-	}
-	// New format PromptOnly: {sid}-{ts} or {sid}-{ts}-{userid}
-	// Only when name matches new format prefix and no other marker found.
-	if newFormatRe.MatchString(name) {
-		return KindPromptOnly, true
-	}
-	return 0, false
+	// Canonical <ts>-<sid> with no other marker: treat as prompt-only
+	// (with no subject / userid) so the same fallback applies.
+	return KindPromptOnly, true
 }

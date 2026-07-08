@@ -290,7 +290,7 @@ var (
 	// else, so a stray character rendered the verdict "Unclear".
 	// Issue #1767 broadened the trailing to `"?\s*$` to tolerate
 	// the bash closing quote from `gh pr comment --body "..."`,
-	// but production log captures (d9f0-260704185852-1779-PR1789)
+	// but production log captures (260704185852-d9f0-1779-PR1789)
 	// showed the shell frequently also leaves a redirect-and-pipe
 	// trailer on the same line — e.g. a marker line ending in
 	// `" 2>&1 | tail -5` — which the narrower regex still
@@ -1825,7 +1825,7 @@ func (v *portalRunsView) runFromState(repoRoot string, runState events.RunState,
 			// The review command stamps only pr_number on the
 			// run.started payload, never issue_number. The linked
 			// issue is encoded solely in the review identity
-			// (`<sid>-<ts>-<issue>-PR<n>`), on both the per-row RunID
+			// (`<ts>-<sid>-<issue>-PR<n>`), on both the per-row RunID
 			// and the batch_id. Recover it here so a historical review
 			// row groups under the canonical implementation row instead
 			// of escaping as a standalone passthrough row (residual

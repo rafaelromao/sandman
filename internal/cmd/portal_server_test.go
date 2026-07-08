@@ -3183,7 +3183,7 @@ func TestPortal_BlockedRunInDeadBatch_KindIsCompleted(t *testing.T) {
 	}
 	batchStartedAt := time.Now().Add(-10 * time.Minute)
 
-	batchID := "b7cf-260702214402-1640+13"
+	batchID := "260702214402-b7cf-1640+13"
 	batchDir := filepath.Join(repoRoot, ".sandman", "batches", batchID)
 	if err := os.MkdirAll(batchDir, 0755); err != nil {
 		t.Fatalf("mkdir batch dir: %v", err)
@@ -4066,20 +4066,20 @@ func TestPortal_MatchRunState_FallbackDoesNotBindOrphanIssueToPromptOnly(t *test
 	v := &portalRunsView{}
 
 	promptOnly := portalActiveRun{
-		Key:          "abc1-260101000000-auto-1",
+		Key:          "260101000000-abc1-auto-1",
 		IssueNumber:  0,
 		IssueNumbers: []int{},
-		BatchID:      "abc1-260101000000-auto-1",
-		RunID:        "abc1-260101000000-auto-1",
+		BatchID:      "260101000000-abc1-auto-1",
+		RunID:        "260101000000-abc1-auto-1",
 		StartedAt:    time.Now(),
 	}
 
 	issueState := events.RunState{
-		RunID: "abc2-260101000500-1014",
+		RunID: "260101000500-abc2-1014",
 		Started: events.Event{
 			Type:      "run.started",
 			Timestamp: time.Now().Add(-1 * time.Minute),
-			RunID:     "abc2-260101000500-1014",
+			RunID:     "260101000500-abc2-1014",
 			Issue:     1014,
 			Payload:   map[string]any{"branch": "sandman/1014-fix"},
 		},

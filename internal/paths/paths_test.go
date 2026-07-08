@@ -161,9 +161,9 @@ func TestLayout_PromptOnlyRunLogPath(t *testing.T) {
 		batchID string
 		runID   string
 	}{
-		{name: "with userid", batchID: "abcd-260618113825-prompt-myid", runID: "abcd-260618113825-prompt-myid"},
-		{name: "without userid", batchID: "abcd-260618113825-prompt", runID: "abcd-260618113825-prompt"},
-		{name: "with numeric userid", batchID: "abcd-260618113825-prompt-42", runID: "abcd-260618113825-prompt-42"},
+		{name: "with userid", batchID: "260618113825-abcd-prompt-myid", runID: "260618113825-abcd-prompt-myid"},
+		{name: "without userid", batchID: "260618113825-abcd-prompt", runID: "260618113825-abcd-prompt"},
+		{name: "with numeric userid", batchID: "260618113825-abcd-prompt-42", runID: "260618113825-abcd-prompt-42"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -27,7 +27,7 @@ func TestADR0030_DocumentsAutoSelectSelectorIdAndPostSelectionIssueBatch(t *test
 
 	required := []string{
 		// Auto-select selector id is documented.
-		"<shortid>-<ts>-auto-<N>",
+		"<ts>-<shortid>-auto-<N>",
 		// Post-selection phase is explicitly called a normal issue batch.
 		"post-selection",
 		"normal issue batch",

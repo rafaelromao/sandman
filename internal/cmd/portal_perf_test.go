@@ -86,8 +86,8 @@ func TestPortalPerf_AsyncLargeReviewLogRoundTrip(t *testing.T) {
 	const body = makeMockBody();
 	const log = bigLog('review-async', 2000); // ~220KB
 	const run = {
-	  key: 'd8b9-260629182613-1479',
-	  runId: 'd8b9-260629182613-1479',
+	  key: '260629182613-d8b9-1479',
+	  runId: '260629182613-d8b9-1479',
 	  kind: 'active',
 	  status: 'reviewing',
 	  issueLabel: '#1479',
@@ -100,7 +100,7 @@ func TestPortalPerf_AsyncLargeReviewLogRoundTrip(t *testing.T) {
 	  duration: 1,
 	  branch: 'sandman/1479-slice-b',
 	  log: log,
-	  logPath: '/tmp/d8b9-260629182613-1479/run.log',
+	  logPath: '/tmp/260629182613-d8b9-1479/run.log',
 	  logUrl: '/api/logs?path=.sandman%2Fbatches%2Fd8b9-260629182613-1479%2B5%2Fruns%2Fd8b9-260629182613-1479%2Frun.log',
 	};
 	const stopGroups = new Set();

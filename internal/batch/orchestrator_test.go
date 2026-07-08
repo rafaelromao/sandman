@@ -789,9 +789,9 @@ func TestReadTailLines_TrailingNewline(t *testing.T) {
 // TestBatchIDForIssue_PublicBatchIdShape pins the public BatchId contract
 // for issue batches (issue #1917 slice 1):
 //
-//   - single issue (n=1): "<sid>-<ts>-<num>" (no +N suffix)
-//   - two issues    (n=2): "<sid>-<ts>-<firstIssue>+1"
-//   - nine issues   (n=9): "<sid>-<ts>-<firstIssue>+8"
+//   - single issue (n=1): "<ts>-<sid>-<num>" (no +N suffix)
+//   - two issues    (n=2): "<ts>-<sid>-<firstIssue>+1"
+//   - nine issues   (n=9): "<ts>-<sid>-<firstIssue>+8"
 //
 // The public BatchId is what the portal Batch label, Details tab, batch
 // folder basename, batch.json.batchId, run.json.BatchID, and event payload
@@ -804,9 +804,9 @@ func TestBatchIDForIssue_PublicBatchIdShape(t *testing.T) {
 		n           int
 		wantBatchID string
 	}{
-		{name: "single issue omits +N", firstIssue: 42, n: 1, wantBatchID: "abcd-260618113825-42"},
-		{name: "two issues uses +1", firstIssue: 42, n: 2, wantBatchID: "abcd-260618113825-42+1"},
-		{name: "nine issues uses +8", firstIssue: 42, n: 9, wantBatchID: "abcd-260618113825-42+8"},
+		{name: "single issue omits +N", firstIssue: 42, n: 1, wantBatchID: "260618113825-abcd-42"},
+		{name: "two issues uses +1", firstIssue: 42, n: 2, wantBatchID: "260618113825-abcd-42+1"},
+		{name: "nine issues uses +8", firstIssue: 42, n: 9, wantBatchID: "260618113825-abcd-42+8"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -830,9 +830,9 @@ func TestIssueBatchIDForRequest_UsesPublicBatchIdShape(t *testing.T) {
 		issues    []int
 		wantBatch string
 	}{
-		{name: "single issue", issues: []int{42}, wantBatch: "abcd-260618113825-42"},
-		{name: "two issues", issues: []int{42, 43}, wantBatch: "abcd-260618113825-42+1"},
-		{name: "nine issues", issues: []int{42, 43, 44, 45, 46, 47, 48, 49, 50}, wantBatch: "abcd-260618113825-42+8"},
+		{name: "single issue", issues: []int{42}, wantBatch: "260618113825-abcd-42"},
+		{name: "two issues", issues: []int{42, 43}, wantBatch: "260618113825-abcd-42+1"},
+		{name: "nine issues", issues: []int{42, 43, 44, 45, 46, 47, 48, 49, 50}, wantBatch: "260618113825-abcd-42+8"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -2073,7 +2073,7 @@ func TestRunSingle_ContinuesWhenRunMarkerWriteFails(t *testing.T) {
 	if result.Status != "success" {
 		t.Fatalf("status = %q, want success", result.Status)
 	}
-	wantLogPath := filepath.Join(workDir, ".sandman", "batches", "68cb-260622105532", "runs", "68cb-260622105532-42", "run.log")
+	wantLogPath := filepath.Join(workDir, ".sandman", "batches", "260622105532-68cb", "runs", "260622105532-68cb-42", "run.log")
 	if markerPath != wantLogPath {
 		t.Fatalf("marker path = %q, want %q", markerPath, wantLogPath)
 	}
@@ -4843,8 +4843,8 @@ func keysOf(m map[string]string) []string {
 // exactly. Otherwise the reviewer bot writes `decision.md` to a path
 // the daemon never reads and the review comment is silently dropped
 // (issue discovered on PR #1875 where the per-row RunID
-// `<sid>-<ts>-<linkedIssue>-PR<pr>` diverged from the legacy batch
-// dir `<sid>-<ts>-PR<pr>` that `prepareReviewRun` uses as the
+// `<ts>-<sid>-<linkedIssue>-PR<pr>` diverged from the legacy batch
+// dir `<ts>-<sid>-PR<pr>` that `prepareReviewRun` uses as the
 // batch-level parent).
 func TestRunBatch_ReviewRunFolderHonorsReqRunDir(t *testing.T) {
 	dir := testenv.MkdirShort(t, "sm-orch-")
@@ -4867,12 +4867,12 @@ func TestRunBatch_ReviewRunFolderHonorsReqRunDir(t *testing.T) {
 	o.runnableFactory = &capturingAgentRunFactory{agentRunCh: agentRunCh}
 
 	// PR 17 with linked issue 1855: the per-row RunID
-	// `<sid>-<ts>-<linkedIssue>-PR<pr>` diverges from the legacy
-	// batch dir `<sid>-<ts>-PR<pr>` that cmd/review.go's
+	// `<ts>-<sid>-<linkedIssue>-PR<pr>` diverges from the legacy
+	// batch dir `<ts>-<sid>-PR<pr>` that cmd/review.go's
 	// prepareReviewRun mints. This divergence is what made
 	// `decision.md` orphan on PR #1875.
-	const perRowRunID = "abcd-260618113825-1855-PR17"
-	const legacyBatchDir = "abcd-260618113825-PR17"
+	const perRowRunID = "260618113825-abcd-1855-PR17"
+	const legacyBatchDir = "260618113825-abcd-PR17"
 	runDir := filepath.Join(dir, ".sandman", "batches", legacyBatchDir, "runs", perRowRunID)
 
 	_, err := o.RunBatch(context.Background(), Request{
@@ -4900,8 +4900,8 @@ func TestRunBatch_ReviewRunFolderHonorsReqRunDir(t *testing.T) {
 // orchestrator ↔ daemon agreement for review runs that close an
 // issue. The cmd layer sets `Request.RunDir` to
 // `<batchesDir>/<legacyBatchDir>/runs/<perRowRunID>`, where
-// `legacyBatchDir = <sid>-<ts>-PR<pr>` and
-// `perRowRunID = <sid>-<ts>-<linkedIssue>-PR<pr>`. The orchestrator's
+// `legacyBatchDir = <ts>-<sid>-PR<pr>` and
+// `perRowRunID = <ts>-<sid>-<linkedIssue>-PR<pr>`. The orchestrator's
 // `agentRun.runFolder` MUST equal `req.RunDir` exactly, otherwise
 // the reviewer bot writes `decision.md` to a path the daemon never
 // reads and the post step silently marks the review as failure
@@ -9984,7 +9984,7 @@ func TestRunBatch_PerRowRunIDsShareBatchPrefix(t *testing.T) {
 		}
 	}
 	// All three RunIDs share the <shortid>-<ts> prefix.
-	prefix := orchTestRunShortID + "-" + orchTestRunTS
+	prefix := orchTestRunTS + "-" + orchTestRunShortID
 	for issue, rid := range gotRunIDs {
 		if !strings.HasPrefix(rid, prefix) {
 			t.Errorf("issue %d RunID %q does not start with shared prefix %q", issue, rid, prefix)

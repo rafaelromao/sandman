@@ -1640,7 +1640,7 @@ func (e *testError) Error() string { return e.msg }
 
 // TestReviewCmd_OneShotWithLinkedIssueRegistersPerRowRunID verifies that
 // `sandman review 42` for a PR with linked issue #42 registers the
-// batches index entry with id `<sid>-<ts>-42-PR42`, matching the
+// batches index entry with id `<ts>-<sid>-42-PR42`, matching the
 // orchestrator's emitted per-row RunID for the review (acceptance
 // criterion #1675 §review with linked issue).
 func TestReviewCmd_OneShotWithLinkedIssueRegistersPerRowRunID(t *testing.T) {
@@ -1697,7 +1697,7 @@ func TestReviewCmd_OneShotWithLinkedIssueRegistersPerRowRunID(t *testing.T) {
 
 // TestReviewCmd_OneShotOrphanRegistersPerRowRunID verifies that
 // `sandman review 17` for an orphan PR (no linked issue) registers the
-// batches index entry with id `<sid>-<ts>-PR17` — the same form the
+// batches index entry with id `<ts>-<sid>-PR17` — the same form the
 // orchestrator emits in its review run event (acceptance criterion
 // #1675 §orphan review).
 func TestReviewCmd_OneShotOrphanRegistersPerRowRunID(t *testing.T) {

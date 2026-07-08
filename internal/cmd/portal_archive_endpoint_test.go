@@ -109,7 +109,7 @@ func TestPortal_ArchiveEndpointMovesCompletedRunToArchiveDirectory(t *testing.T)
 		t.Fatal(err)
 	}
 
-	runID := "abcd-260618113825-archive-ok"
+	runID := "260618113825-abcd-archive-ok"
 	batchDir := filepath.Join(repoRoot, ".sandman", "batches", runID)
 	liveRunDir := filepath.Join(batchDir, "runs", runID)
 	if err := os.MkdirAll(liveRunDir, 0755); err != nil {
@@ -186,7 +186,7 @@ func TestPortal_ArchiveEndpoint_RejectsActiveRun(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	runID := "abcd-260618113825-archive-active"
+	runID := "260618113825-abcd-archive-active"
 	batchDir := filepath.Join(repoRoot, ".sandman", "batches", runID)
 	if err := os.MkdirAll(batchDir, 0755); err != nil {
 		t.Fatal(err)
@@ -255,7 +255,7 @@ func TestPortal_ArchiveEndpoint_RejectsAlreadyArchivedRun(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	runID := "abcd-260618113825-archive-dup"
+	runID := "260618113825-abcd-archive-dup"
 	batchDir := filepath.Join(repoRoot, ".sandman", "batches", runID)
 	if err := os.MkdirAll(batchDir, 0755); err != nil {
 		t.Fatal(err)
@@ -337,7 +337,7 @@ func TestPortal_ArchiveEndpoint_Returns404ForMissingRun(t *testing.T) {
 	}
 	t.Cleanup(func() { portalRunArchiver = originalArchiver })
 
-	resp, body := postPortalArchive(t, newPortalArchiveHandlerForTest(t, repoRoot), "abcd-260618113825-archive-missing")
+	resp, body := postPortalArchive(t, newPortalArchiveHandlerForTest(t, repoRoot), "260618113825-abcd-archive-missing")
 	if resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("expected 404 for missing run, got %d: %s", resp.StatusCode, body)
 	}
@@ -405,7 +405,7 @@ func TestPortal_ArchiveEndpoint_SurfaceArchivedFlagInRunsAPI(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	runID := "abcd-260618113825-archive-flag"
+	runID := "260618113825-abcd-archive-flag"
 	batchDir := filepath.Join(repoRoot, ".sandman", "batches", runID)
 	if err := os.MkdirAll(batchDir, 0755); err != nil {
 		t.Fatal(err)

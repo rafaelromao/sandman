@@ -133,7 +133,7 @@ Two distinct helpers resolve row-action inputs because their fallback contracts 
 - `resolveBatchEntryForRunID` (package-level, `internal/cmd/portal.go`) is the archive-endpoint hot path. The fast path is `idx.Resolve(runID)`, which matches the batch entry id directly; the second path walks each entry's `Runs[]` records so already-archived rows resolve from the index without an on-disk probe; the final fallback is a stat-only scan that returns the first entry whose `runs/<runID>/run.json` exists on disk.
 - `resolveBatchFromRowID` (method, `internal/cmd/portal_runs_view.go`) is the log/portal runs-view path. Its fast path is also `idx.Resolve(runID)`, but the fallback parses each `runs/<runID>/run.json`, reads `run.json.batchId`, and re-resolves that id in the index so the log path follows the manifest's declared owner.
 
-The fast path succeeds for every batch kind in production except multi-issue issue runs (`<sid>-<ts>-<firstIssue>+<N>` vs `<sid>-<ts>-<firstIssue>`); the fallback path covers multi-issue batches and any legacy batches provisioned before the #1917 slice-1 contract change pinned `manifest.BatchId == public BatchId`. The resolver contract is "accept either form, return the right entry" - operators do not need to know which kind they are working against, and each helper hides that detail behind its own focused fallback contract.
+The fast path succeeds for every batch kind in production except multi-issue issue runs (`<ts>-<sid>-<firstIssue>+<N>` vs `<ts>-<sid>-<firstIssue>`); the fallback path covers multi-issue batches, where the public BatchId and the per-row RunID differ. The resolver contract is "accept either form, return the right entry" — operators do not need to know which kind they are working against, and each helper hides that detail behind its own focused fallback contract. Per issue #1944, only the canonical `<ts>-<sid>-...` shape is recognised; legacy `<sid>-<ts>-...` on-disk batches are no longer resolvable and must be re-provisioned after upgrade.
 
 The per-run folder is the canonical target for every row action. The archive directory is named after the batch entry id (the public BatchId), so the on-disk tree after per-row archive mirrors the active tree 1:1 (`archive/<batch-id>/runs/<perRowRunID>/run.json` corresponds to `batches/<batch-id>/runs/<perRowRunID>/run.json`). Per-row archive moves ONLY `runs/<perRowRunID>/`, leaves sibling rows and the batch daemon live, and writes a `Runs[runID]` record carrying `status: "archived"` and the relative `archivePath` so the row survives crash recovery. The portal archive endpoint returns empty `200` on success and `409` with `archivePath` echoed in the body when the row is already archived.
 
@@ -145,13 +145,13 @@ The slice-1 contract (`manifest.BatchId == public BatchId == batch folder basena
 
 | Batch kind | Public BatchId (== batch folder basename) | Per-row RunID (== `run.json.runID`) | Equal? |
 |------------|-------------------------------------------|-------------------------------------|--------|
-| Issue single | `<sid>-<ts>-<num>` | `<sid>-<ts>-<num>` | yes (no `+N` suffix on single-issue) |
-| Issue multi (canonical row = first issue) | `<sid>-<ts>-<firstIssue>+<N>` | `<sid>-<ts>-<firstIssue>` | no (carries `+<N>`) |
-| Review (orphan) | `<sid>-<ts>-PR<pr>` | `<sid>-<ts>-PR<pr>` | yes |
-| Review (linked to issue) | `<sid>-<ts>-<linkedIssue>-PR<pr>` | `<sid>-<ts>-<linkedIssue>-PR<pr>` | yes |
-| Auto-select | `<sid>-<ts>-auto-<N>` | `<sid>-<ts>-auto-<N>` | yes |
-| Prompt-only (no user id) | `<sid>-<ts>-prompt` | `<sid>-<ts>-prompt` | yes |
-| Prompt-only (with user id) | `<sid>-<ts>-prompt-<userid>` | `<sid>-<ts>-prompt-<userid>` | yes |
+| Issue single | `<ts>-<sid>-<num>` | `<ts>-<sid>-<num>` | yes (no `+N` suffix on single-issue) |
+| Issue multi (canonical row = first issue) | `<ts>-<sid>-<firstIssue>+<N>` | `<ts>-<sid>-<firstIssue>` | no (carries `+<N>`) |
+| Review (orphan) | `<ts>-<sid>-PR<pr>` | `<ts>-<sid>-PR<pr>` | yes |
+| Review (linked to issue) | `<ts>-<sid>-<linkedIssue>-PR<pr>` | `<ts>-<sid>-<linkedIssue>-PR<pr>` | yes |
+| Auto-select | `<ts>-<sid>-auto-<N>` | `<ts>-<sid>-auto-<N>` | yes |
+| Prompt-only (no user id) | `<ts>-<sid>-prompt` | `<ts>-<sid>-prompt` | yes |
+| Prompt-only (with user id) | `<ts>-<sid>-prompt-<userid>` | `<ts>-<sid>-prompt-<userid>` | yes |
 
 The "no" row in the table is the only production case where the row-action resolver MUST exercise its fallback path. The fast path (`idx.ResolveBatch(runID)`) succeeds for every other kind in production: single-issue, orphan review, linked review, auto-select, and prompt-only all produce identical strings for the per-row RunID and the public BatchId, so the public BatchId is enough. The fallback path (`runs/<runID>/run.json` scan — stat-only for `resolveBatchFromRunIDFastOrScan`, parse-then-resolve for `resolveBatchFromRowID`) is automatic and exists to cover multi-issue batches and any legacy batches provisioned before the #1917 slice-1 contract change pinned `manifest.BatchId == public BatchId`. The resolver's contract is "accept either form, return the right batch" — operators do not need to know which kind they are working against, and the resolver hides that detail.
 

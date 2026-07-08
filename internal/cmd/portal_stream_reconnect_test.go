@@ -21,7 +21,7 @@ import (
 // TCP connection stays warm and intermediate proxies do not close it
 // during a quiet agent.
 func TestPortalStream_PreservesReconnectOnTransientError(t *testing.T) {
-	batchID := "abcd-260618113825"
+	batchID := "260618113825-abcd"
 	runID := batchID + "-42"
 	initialRun := map[string]any{
 		"key":         runID,

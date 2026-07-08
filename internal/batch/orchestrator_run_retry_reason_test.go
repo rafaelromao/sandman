@@ -155,7 +155,7 @@ func TestRunSingle_EmitsRunRetryWithAgentStalledReason(t *testing.T) {
 	sb := &fakeSandbox{workDir: worktreePath, process: proc}
 	factory := &fakeSandboxFactory{sandbox: sb}
 
-	logPath := filepath.Join(workDir, ".sandman", "batches", "68cb-260622105532", "runs", "68cb-260622105532-42", "run.log")
+	logPath := filepath.Join(workDir, ".sandman", "batches", "260622105532-68cb", "runs", "260622105532-68cb-42", "run.log")
 	stall := &heartbeatStallRunnable{logPath: logPath, proc: proc}
 	success := &fakeRunnable{result: AgentRunResult{IssueNumber: heartbeatTestIssueNum, Status: "success", Branch: branch}}
 	runFactory := &heartbeatDualRunnableFactory{first: stall, second: success}

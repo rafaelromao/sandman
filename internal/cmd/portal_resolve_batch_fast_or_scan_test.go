@@ -43,31 +43,31 @@ func TestResolveBatchFromRunIDFastOrScan_FastPathMatchesBatchID(t *testing.T) {
 // contracts preserved by the slice 7 renaming.
 func TestResolveBatchFromRunIDFastOrScan_FallbackStatOnly(t *testing.T) {
 	baseDir := t.TempDir()
-	batchDir := filepath.Join(baseDir, "batches", "abc-260618113825-42+2")
+	batchDir := filepath.Join(baseDir, "batches", "260618113825-abc-42+2")
 	// Create the per-row folder AND its run.json so the stat-only
 	// fallback finds the file. The body of run.json is intentionally
 	// arbitrary; the stat-only path never parses it.
-	runDir := filepath.Join(batchDir, "runs", "abc-260618113825-43")
+	runDir := filepath.Join(batchDir, "runs", "260618113825-abc-43")
 	if err := os.MkdirAll(runDir, 0755); err != nil {
 		t.Fatalf("mkdir run dir: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(runDir, "run.json"), []byte(`{"runID":"abc-260618113825-43","batchId":"abc-260618113825-42+2","kind":"issue","status":"success"}`), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(runDir, "run.json"), []byte(`{"runID":"260618113825-abc-43","batchId":"260618113825-abc-42+2","kind":"issue","status":"success"}`), 0644); err != nil {
 		t.Fatalf("write run.json: %v", err)
 	}
 
 	idx := &batchindex.Index{
 		Version: batchindex.IndexVersion,
 		Batches: []batchindex.Batch{
-			{ID: "abc-260618113825-42+2", Path: batchDir, Kind: batchindex.KindIssue, Status: batchindex.StatusActive, CreatedAt: time.Now()},
+			{ID: "260618113825-abc-42+2", Path: batchDir, Kind: batchindex.KindIssue, Status: batchindex.StatusActive, CreatedAt: time.Now()},
 		},
 	}
 
-	batch := resolveBatchFromRunIDFastOrScan(idx, "abc-260618113825-43")
+	batch := resolveBatchFromRunIDFastOrScan(idx, "260618113825-abc-43")
 	if batch == nil {
 		t.Fatal("expected the batch that owns the per-row run folder; got nil")
 	}
-	if batch.ID != "abc-260618113825-42+2" {
-		t.Errorf("batch.ID = %q, want %q", batch.ID, "abc-260618113825-42+2")
+	if batch.ID != "260618113825-abc-42+2" {
+		t.Errorf("batch.ID = %q, want %q", batch.ID, "260618113825-abc-42+2")
 	}
 }
 

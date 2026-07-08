@@ -781,7 +781,7 @@ func TestDaemon_TickSkipsSeenComment(t *testing.T) {
 	d.Clock = func() time.Time { return now }
 
 	batchesDir := filepath.Join(d.BaseDir, "batches")
-	priorBatchID := "abcd-260625120000-PR42"
+	priorBatchID := "260625120000-abcd-PR42"
 	priorBatchPath := filepath.Join(batchesDir, priorBatchID)
 	priorRowID := deriveReviewRowID(priorBatchID, 42)
 	priorRunDir := filepath.Join(priorBatchPath, "runs", priorRowID)
@@ -1681,7 +1681,7 @@ func TestDaemon_OnlyNewestTriggerIgnoredWhenAllStale(t *testing.T) {
 	// per-row review-state.json AND registering the batch in
 	// batches.json so the daemon's loadSeenCache picks it up.
 	batchesDir := filepath.Join(d.BaseDir, "batches")
-	priorBatchID := "abcd-260610100000-PR1"
+	priorBatchID := "260610100000-abcd-PR1"
 	priorBatchPath := filepath.Join(batchesDir, priorBatchID)
 	priorRowID := deriveReviewRowID(priorBatchID, 1)
 	priorRunDir := filepath.Join(priorBatchPath, "runs", priorRowID)
@@ -1797,7 +1797,7 @@ func TestDaemon_ClaimFailureSkipsComment(t *testing.T) {
 	// locks inline in review-state.json instead of as separate lock
 	// files under .sandman/reviews/<PR>/claims/.
 	batchesDir := filepath.Join(d.BaseDir, "batches")
-	priorBatchID := "abcd-260624100000-PR1"
+	priorBatchID := "260624100000-abcd-PR1"
 	priorBatchPath := filepath.Join(batchesDir, priorBatchID)
 	priorRowID := deriveReviewRowID(priorBatchID, 1)
 	priorRunDir := filepath.Join(priorBatchPath, "runs", priorRowID)

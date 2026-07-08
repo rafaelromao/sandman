@@ -403,7 +403,7 @@ const rawRuns = [
   { key: 'abc4-blocked-42', runId: 'abc4-blocked-42', issueNumber: 42, status: 'blocked' },
 ];
 
-storage.set(api.storageKey, JSON.stringify({ expandedRunKey: 'abcd-260618113825-42', tabs: {} }));
+storage.set(api.storageKey, JSON.stringify({ expandedRunKey: '260618113825-abcd-42', tabs: {} }));
 const loaded1 = api.load();
 const norm1 = api.normalize(loaded1, rawRuns, rawRuns);
 if (norm1.state.expandedRunKey !== null) {

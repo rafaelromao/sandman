@@ -36,7 +36,7 @@ func TestPortalRunsIndex_ReadEvents_AppendsJSONLTail(t *testing.T) {
 	}
 	logPath := filepath.Join(repoRoot, ".sandman", "events.jsonl")
 	firstTS := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
-	writePortalLog(t, logPath, []events.Event{{Type: "run.started", Timestamp: firstTS, RunID: "abcd-260618113825-42", Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}}})
+	writePortalLog(t, logPath, []events.Event{{Type: "run.started", Timestamp: firstTS, RunID: "260618113825-abcd-42", Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}}})
 
 	idx := getPortalRunsIndex(repoRoot)
 	first, err := idx.readEvents()
@@ -55,7 +55,7 @@ func TestPortalRunsIndex_ReadEvents_AppendsJSONLTail(t *testing.T) {
 	}
 
 	secondTS := firstTS.Add(2 * time.Minute)
-	writePortalLog(t, logPath, []events.Event{{Type: "run.finished", Timestamp: secondTS, RunID: "abcd-260618113825-42", Issue: 42, Payload: map[string]any{"status": "success", "branch": "sandman/42-fix"}}})
+	writePortalLog(t, logPath, []events.Event{{Type: "run.finished", Timestamp: secondTS, RunID: "260618113825-abcd-42", Issue: 42, Payload: map[string]any{"status": "success", "branch": "sandman/42-fix"}}})
 	second, err := idx.readEvents()
 	if err != nil {
 		t.Fatalf("readEvents second: %v", err)
@@ -83,14 +83,14 @@ func TestPortalRunForKey_UsesSharedRunsIndex(t *testing.T) {
 	idx := getPortalRunsIndex(repoRoot)
 	idx.mu.Lock()
 	idx.snapshotAt = time.Now()
-	idx.snapshotCache = []portalRun{{Key: "abcd-260618113825-1", RunID: "abcd-260618113825-1", Kind: "completed", Status: "success", IssueLabel: "#1"}}
+	idx.snapshotCache = []portalRun{{Key: "260618113825-abcd-1", RunID: "260618113825-abcd-1", Kind: "completed", Status: "success", IssueLabel: "#1"}}
 	idx.mu.Unlock()
 
-	run, err := portalRunForKey(repoRoot, "abcd-260618113825-1")
+	run, err := portalRunForKey(repoRoot, "260618113825-abcd-1")
 	if err != nil {
 		t.Fatalf("portalRunForKey: %v", err)
 	}
-	if run.Key != "abcd-260618113825-1" || run.RunID != "abcd-260618113825-1" {
+	if run.Key != "260618113825-abcd-1" || run.RunID != "260618113825-abcd-1" {
 		t.Fatalf("unexpected run from shared index: %#v", run)
 	}
 }
@@ -103,7 +103,7 @@ func TestPortalHandler_RunsServesSharedRunsIndexSnapshot(t *testing.T) {
 	idx := getPortalRunsIndex(repoRoot)
 	idx.mu.Lock()
 	idx.snapshotAt = time.Now()
-	idx.snapshotCache = []portalRun{{Key: "abcd-260618113825-99", RunID: "abcd-260618113825-99", Kind: "completed", Status: "success", IssueLabel: "#99"}}
+	idx.snapshotCache = []portalRun{{Key: "260618113825-abcd-99", RunID: "260618113825-abcd-99", Kind: "completed", Status: "success", IssueLabel: "#99"}}
 	idx.mu.Unlock()
 
 	handler := newPortalHandler(repoRoot)
@@ -114,7 +114,7 @@ func TestPortalHandler_RunsServesSharedRunsIndexSnapshot(t *testing.T) {
 	if len(runs) != 1 {
 		t.Fatalf("expected 1 run from shared index snapshot, got %#v", runs)
 	}
-	if runs[0].Key != "abcd-260618113825-99" {
+	if runs[0].Key != "260618113825-abcd-99" {
 		t.Fatalf("unexpected run key %q from /api/runs shared index snapshot", runs[0].Key)
 	}
 }
@@ -128,7 +128,7 @@ func TestPortalRunsIndex_DiscoverActiveRuns_RefreshesManifestCacheOnChange(t *te
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	runDir := filepath.Join(repoRoot, ".sandman", "batches", "abcd-260618113825-1")
+	runDir := filepath.Join(repoRoot, ".sandman", "batches", "260618113825-abcd-1")
 	if err := os.MkdirAll(runDir, 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -143,7 +143,7 @@ func TestPortalRunsIndex_DiscoverActiveRuns_RefreshesManifestCacheOnChange(t *te
 		Version: batchindex.IndexVersion,
 		Batches: []batchindex.Batch{
 			{
-				ID:        "abcd-260618113825-1",
+				ID:        "260618113825-abcd-1",
 				Path:      runDir,
 				Kind:      batchindex.KindIssue,
 				Status:    batchindex.StatusActive,

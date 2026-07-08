@@ -115,18 +115,18 @@ func findIssueStartedEvent(log *recordingEventLog) *events.Event {
 // BatchRunner.RunBatch MUST carry:
 //   - run_kind == "issue"
 //   - no auto-select marker in the payload
-//   - batch_id equal to the public issue BatchId (<sid>-<ts>-<firstIssue>
-//     for single, <sid>-<ts>-<firstIssue>+N-1 for multi), NOT the
-//     selector's <sid>-<ts>-auto-N
+//   - batch_id equal to the public issue BatchId (<ts>-<sid>-<firstIssue>
+//     for single, <ts>-<sid>-<firstIssue>+N-1 for multi), NOT the
+//     selector's <ts>-<sid>-auto-N
 //   - RunID equal to the per-row issue RunID, NOT the selector's
-//     <sid>-<ts>-auto-N
+//     <ts>-<sid>-auto-N
 //
-// The post-selection (sid, ts) is the batch session's freshly minted
-// pair, not the auto-select selector's (sid, ts) — these are two
+// The post-selection (ts, sid) is the batch session's freshly minted
+// pair, not the auto-select selector's (ts, sid) — these are two
 // distinct batch identities. The test pins that the post-selection
 // forms a self-consistent normal issue batch (RunID and batch_id share
-// the same (sid, ts) prefix and the per-row RunID follows the
-// <sid>-<ts>-<firstIssue> pattern).
+// the same (ts, sid) prefix and the per-row RunID follows the
+// <ts>-<sid>-<firstIssue> pattern).
 func TestRun_AutoFlag_PostSelectionIssueBatchHasIssueIdentity(t *testing.T) {
 	sandmanDir := testenv.MkdirShort(t, "sm-auto-")
 	t.Chdir(sandmanDir)
@@ -195,7 +195,7 @@ func TestRun_AutoFlag_PostSelectionIssueBatchHasIssueIdentity(t *testing.T) {
 		t.Errorf("post-selection issue RunID %q must not carry the auto marker", issueStarted.RunID)
 	}
 	if !issuePerRowRunIDRe.MatchString(issueStarted.RunID) {
-		t.Errorf("post-selection issue RunID %q does not match <sid>-<ts>-<num> pattern", issueStarted.RunID)
+		t.Errorf("post-selection issue RunID %q does not match <ts>-<sid>-<num> pattern", issueStarted.RunID)
 	}
 
 	if kind, _ := issueStarted.Payload["run_kind"].(string); kind != "issue" {
@@ -209,10 +209,10 @@ func TestRun_AutoFlag_PostSelectionIssueBatchHasIssueIdentity(t *testing.T) {
 		t.Errorf("post-selection batch_id %q must not carry the auto marker", batchID)
 	}
 
-	batchPrefix := runidSidTsPrefix(t, batchID)
-	runIDPrefix := runidSidTsPrefix(t, issueStarted.RunID)
+	batchPrefix := runidTsSidPrefix(t, batchID)
+	runIDPrefix := runidTsSidPrefix(t, issueStarted.RunID)
 	if batchPrefix != runIDPrefix {
-		t.Errorf("post-selection batch_id %q and RunID %q do not share a (sid, ts) prefix (got %q vs %q)",
+		t.Errorf("post-selection batch_id %q and RunID %q do not share a (ts, sid) prefix (got %q vs %q)",
 			batchID, issueStarted.RunID, batchPrefix, runIDPrefix)
 	}
 
@@ -235,17 +235,17 @@ func TestRun_AutoFlag_PostSelectionIssueBatchHasIssueIdentity(t *testing.T) {
 }
 
 // issuePerRowRunIDRe matches a per-row issue RunID of the form
-// <sid>-<ts>-<num>. The (sid, ts) is the batch's freshly minted pair,
+// <ts>-<sid>-<num>. The (ts, sid) is the batch's freshly minted pair,
 // not the auto-select selector's.
-var issuePerRowRunIDRe = regexp.MustCompile(`^[0-9a-f]{4}-\d{12}-\d+(\+\d+)?$`)
+var issuePerRowRunIDRe = regexp.MustCompile(`^\d{12}-[0-9a-f]{4}-\d+(\+\d+)?$`)
 
-// runidSidTsPrefix returns the <sid>-<ts> prefix of any RunID / BatchId
-// that follows the new <sid>-<ts>-<rest> format.
-func runidSidTsPrefix(t *testing.T, runID string) string {
+// runidTsSidPrefix returns the <ts>-<sid> prefix of any RunID / BatchId
+// that follows the new <ts>-<sid>-<rest> format.
+func runidTsSidPrefix(t *testing.T, runID string) string {
 	t.Helper()
 	parts := strings.SplitN(runID, "-", 3)
 	if len(parts) < 3 {
-		t.Fatalf("RunID %q does not match <sid>-<ts>-... pattern", runID)
+		t.Fatalf("RunID %q does not match <ts>-<sid>-... pattern", runID)
 	}
 	return parts[0] + "-" + parts[1]
 }

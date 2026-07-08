@@ -402,7 +402,7 @@ func (d *Daemon) loadSeenCache() error {
 		// canonical rowID is the value persisted on the
 		// batch's run.json by prepareReviewRun — by reading it
 		// here we are version-independent of the exact
-		// `<sid>-<ts>-<linkedIssue?>-PR<pr>` shape.
+		// `<ts>-<sid>-<linkedIssue?>-PR<pr>` shape.
 		rowID, err := readReviewRowID(filepath.Join(entry.Path, "runs"))
 		if err != nil {
 			if os.IsNotExist(err) {
@@ -1156,8 +1156,8 @@ func (d *Daemon) prepareReviewRun(ctx context.Context, prNumber int, commentID s
 	rs := daemon.NewRunSession(d.BaseDir, perRowRunID)
 	// Issue #1919 slice 3: the on-disk batch directory name and the
 	// per-row RunID MUST agree for both orphan and linked reviews.
-	// For orphan reviews both are `<sid>-<ts>-PR<pr>`; for linked
-	// reviews both are `<sid>-<ts>-<linkedIssue>-PR<pr>`. ADR-0030
+	// For orphan reviews both are `<ts>-<sid>-PR<pr>`; for linked
+	// reviews both are `<ts>-<sid>-<linkedIssue>-PR<pr>`. ADR-0030
 	// pins the same invariant on batch.json.batchId, run.json.BatchID,
 	// and the run.started payload's batch_id field.
 	manifest := daemon.BatchManifest{BatchId: perRowRunID, CreatedAt: time.Now(), RunKind: "review", RunTS: ts, RunShortID: shortid, Issues: []int{}, PR: &prNumber}
