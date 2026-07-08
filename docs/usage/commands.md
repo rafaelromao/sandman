@@ -72,6 +72,10 @@ Positional arguments (numbers and ranges) can be combined with `--label` and `--
 | `--model` | `model` from config | Override the model passed to the agent for built-in presets |
 | `--agent` | `agent` from config (`opencode`) | Built-in agent preset for this run |
 | `--run-id` | — | Batch-level identifier for prompt-only runs; must start with a letter and contain only alphanumeric characters, hyphens, and underscores; cannot be combined with issue selection |
+| `--run-idle-timeout` | `0` | Treat an AgentRun as stuck if it produces no output for N seconds; `0` disables the timeout |
+| `--branch` | `""` | Branch name for prompt-only runs; overrides the default `sandman/<slug>-<timestamp>` shape (prompt-only mode only) |
+| `--reconcile-stranded` | `true` | Auto-recover stranded worktrees when the main repo is checked out on a `sandman/N-…` branch (see ADR-0027) |
+| `--no-reconcile-stranded` | `false` | Opt out of stranded-worktree auto-recovery (negative form of `--reconcile-stranded`) |
 
 ### Flag interactions
 
@@ -92,6 +96,7 @@ Positional arguments (numbers and ranges) can be combined with `--label` and `--
 - `--agent` selects which built-in preset to use for this run; if omitted, Sandman uses `agent` from config
 - `--continue` cannot be combined with `--override`
 - When `--max-containers` and `--container-capacity` together constrain concurrency below `--parallel`, the tighter limit wins
+- `--reconcile-stranded` auto-recovers stranded worktrees when the main repo is checked out on a `sandman/N-…` branch (ADR-0027); `--no-reconcile-stranded` opts out of this auto-recovery
 
 ## `sandman status`
 
@@ -129,6 +134,7 @@ Reuses the previously created branch and recorded agent and review command from 
 | `--agent` | prior run's agent | Override the agent preset for the continued run |
 | `--run-id` | — | Continue the most recent prompt-only run by its batch-level identifier; must start with a letter and contain only alphanumeric characters, hyphens, and underscores; cannot be combined with issue numbers. Reads the prior task file from the existing worktree and reuses the same branch for the continued run. When the most recent Issue-0 event is a review run (not a prompt-only run), `sandman run --continue` skips it and selects the prior prompt-only run instead — or errors if none exists. |
 | `--dangerously-skip-permissions` | `true` for container runs, `false` for worktree runs | Skip permission checks for the continued run |
+| `--run-idle-timeout` | `0` | Treat an AgentRun as stuck if it produces no output for N seconds; `0` disables the timeout |
 
 ## `sandman clean`
 
