@@ -97,6 +97,7 @@ Reuses the previously created branch for issue #42 and feeds the agent the store
 ```bash
 sandman clean --archived    # Remove archived batches
 sandman clean --stale       # Recover stale runs and archive dead batches
+sandman clean --orphaned    # Remove orphaned batch directories
 sandman clean --dry-run     # Preview what would be removed
 ```
 

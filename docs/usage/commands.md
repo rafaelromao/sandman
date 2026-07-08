@@ -143,8 +143,9 @@ sandman clean [flags]
 | `--archived` | Remove archived batches |
 | `--dry-run` | Print intended deletions without performing I/O |
 | `--stale` | Recover stale runs in dead batches by emitting `run.aborted` events |
+| `--orphaned` | Remove orphaned test batch directories (no matching run.started event and no live daemon socket) |
 
-Exactly one flag is required.
+`--stale` is mutually exclusive with `--archived`, `--dry-run`, and `--orphaned`. `--orphaned` is mutually exclusive with `--archived` and `--stale`. `--archived` and `--dry-run` can be combined.
 
 ## `sandman archive`
 
