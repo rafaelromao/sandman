@@ -270,19 +270,15 @@ sandman config set <key> <value>
 
 Agent commits use your host Git identity, not Sandman config keys. Sandman resolves `user.name` and `user.email` from `~/.gitconfig`, then host global/XDG config, then repo-local `.git/config`.
 
-## Troubleshooting
+## `sandman stranded`
 
-### Stranded worktrees
-
-A *stranded worktree* is a sandman-managed worktree whose HEAD points to a different branch than its directory name expects. This can happen when a previous run was interrupted after creating the worktree but before checking out the correct branch.
-
-To detect stranded worktrees and print remediation commands, run:
+Detect sandman-managed worktrees whose HEAD points to a different branch than their directory name expects.
 
 ```bash
-sandman stranded
+sandman stranded [--json]
 ```
 
-`sandman stranded` works from the main repo root or from inside any sandman worktree. It reads the configured `worktree_dir` from `.sandman/config.yaml` and resolves the path to match `git worktree list` output correctly, including absolute, tilde-prefixed, and relative `worktree_dir` values.
+A *stranded worktree* is a sandman-managed worktree whose HEAD points to a different branch than its directory name expects. This can happen when a previous run was interrupted after creating the worktree but before checking out the correct branch.
 
 The command parses `git worktree list --porcelain`, reads the configured `worktree_dir` from `.sandman/config.yaml` (defaults to `.sandman/worktrees`), matches worktrees under that directory whose directory name follows the `sandman/<number>-<slug>` pattern, and compares the actual branch against the expected branch derived from the directory name. For each mismatch it prints a one-line remediation command:
 
@@ -298,8 +294,12 @@ For machine-readable output, pass `--json` to print the structured result list i
 sandman stranded --json
 ```
 
-> **Warning:** The printed `git checkout -f` command will discard uncommitted changes in the worktree. Commit or stash any worktree-local changes before running the remediation command.
+`--reconcile-stranded` (enabled by default) auto-recovers stranded worktrees when the main repo is checked out on a `sandman/N-…` branch (ADR-0027); `--no-reconcile-stranded` opts out.
 
-> **Note:** `sandman stranded` only detects stranded worktrees for issue-driven branches (`sandman/<number>-<slug>`). Prompt-only worktrees (timestamp-based branch names) are not checked, as their directory name does not map to a predictable expected branch. When a prompt-only branch's slug starts with a digit (e.g. `sandman/4-eyes-1700000000`), the command may flag it as stranded and report the branch as missing — this is a false positive. `sandman run --override` reconciles stranded worktrees before a run starts, regardless of naming pattern.
+For details on false positives with prompt-only branches and the `git checkout -f` warning, see [Troubleshooting > Stranded worktrees](#troubleshooting-stranded-worktrees).
 
-> **Note:** The `--override` flag on `sandman run` performs the same reconciliation automatically at the start of a new run. `sandman stranded` is useful for inspecting or fixing worktrees outside of a run.
+## Troubleshooting
+
+### Stranded worktrees
+
+For the full `sandman stranded` command reference, see [`sandman stranded`](#sandman-stranded) above.
