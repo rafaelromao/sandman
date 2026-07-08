@@ -9916,12 +9916,7 @@ func TestBatchIDFromRunID_StripsSubjectFromNewShape(t *testing.T) {
 		wantBatchID string
 	}{
 		{
-			name:        "issue single",
-			runID:       runid.NewRunID(runid.KindIssue, "42", ts, sid),
-			wantBatchID: wantPrefix,
-		},
-		{
-			name:        "issue multi first row",
+			name:        "issue",
 			runID:       runid.NewRunID(runid.KindIssue, "42", ts, sid),
 			wantBatchID: wantPrefix,
 		},

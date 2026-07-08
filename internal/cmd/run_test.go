@@ -10,7 +10,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
-	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -4893,7 +4892,7 @@ func TestRun_Continue_MultiIssueFreshBatchAndRunIDs(t *testing.T) {
 	}
 }
 
-// TestIssueDrivenRun_EndToEnd_TimestampFirstIdentity is the end-to-end
+// TestRun_IssueBatch_EndToEnd_TimestampFirstIdentity is the end-to-end
 // regression for issue #1945: from the cmd layer to the index entry,
 // the manifest, and the portal layer's per-row RunID derivation, every
 // identity that surfaces for an issue-driven batch must use the
@@ -4907,7 +4906,7 @@ func TestRun_Continue_MultiIssueFreshBatchAndRunIDs(t *testing.T) {
 // The test exercises both the single-issue shape (`<ts>-<sid>-<num>`, no
 // +N suffix) and the multi-issue shape (`<ts>-<sid>-<firstIssue>+<n-1>`)
 // so the cross-check covers both branches of BatchIDForIssue.
-func TestIssueDrivenRun_EndToEnd_TimestampFirstIdentity(t *testing.T) {
+func TestRun_IssueBatch_EndToEnd_TimestampFirstIdentity(t *testing.T) {
 	t.Run("single issue", func(t *testing.T) {
 		spy := &spyBatchRunner{result: &batch.Result{}}
 		dir, deps := newRunDepsInDir(t, spy)
@@ -4928,15 +4927,13 @@ func TestIssueDrivenRun_EndToEnd_TimestampFirstIdentity(t *testing.T) {
 
 		// (ts, sid) mint: shape must be the canonical timestamp-first
 		// 12-digit timestamp + 4-hex shortid, never the legacy
-		// <shortid>-<ts> order.
-		if !issuePerRowRunIDReOrBatchIDLike(t, spy.req.RunTS, spy.req.RunShortID) {
-			t.Fatalf("RunTS=%q RunShortID=%q do not match the <ts>-<sid> mint", spy.req.RunTS, spy.req.RunShortID)
-		}
-		if !regexp.MustCompile(`^\d{12}$`).MatchString(spy.req.RunTS) {
-			t.Errorf("RunTS = %q, want 12-digit canonical timestamp", spy.req.RunTS)
-		}
-		if !regexp.MustCompile(`^[0-9a-f]{4}$`).MatchString(spy.req.RunShortID) {
-			t.Errorf("RunShortID = %q, want 4-hex shortid", spy.req.RunShortID)
+		// <shortid>-<ts> order. The canonical prefix regex lives in
+		// the runid package; reuse it instead of re-asserting the
+		// shape.
+		prefix := spy.req.RunTS + "-" + spy.req.RunShortID
+		if _, ok := runid.KindFromDirName(prefix); !ok {
+			t.Fatalf("RunTS=%q RunShortID=%q mint %q does not match the <ts>-<sid> canonical prefix",
+				spy.req.RunTS, spy.req.RunShortID, prefix)
 		}
 
 		wantPublicBatchID := spy.req.RunTS + "-" + spy.req.RunShortID + "-42"
@@ -4976,13 +4973,17 @@ func TestIssueDrivenRun_EndToEnd_TimestampFirstIdentity(t *testing.T) {
 		// Portal layer derives the per-row RunID from the same
 		// (RunTS, RunShortID) the orchestrator will use, so the
 		// event-log-less portal can render the same id the
-		// orchestrator will emit in run.started.
+		// orchestrator will emit in run.started. For a single
+		// issue the per-row RunID equals the public BatchId
+		// (ADR-0032 §Identity table: "no +N suffix on
+		// single-issue").
 		derived := perRowRunIDForManifest(spy.req.RunTS, spy.req.RunShortID, 0, 42, nil)
 		if derived != wantPerRowRunID {
 			t.Errorf("portal-derived per-row RunID = %q, want %q", derived, wantPerRowRunID)
 		}
 		if derived != wantPublicBatchID {
-			t.Errorf("single-issue per-row RunID %q must equal the public BatchId %q (no +N suffix)", derived, wantPublicBatchID)
+			t.Errorf("single-issue per-row RunID %q must equal the public BatchId %q (no +N suffix per ADR-0032)",
+				derived, wantPublicBatchID)
 		}
 
 		// On-disk layout under <batchesDir>/<publicBatchID>/ must
@@ -5067,14 +5068,4 @@ func TestIssueDrivenRun_EndToEnd_TimestampFirstIdentity(t *testing.T) {
 			t.Errorf("per-row RunID %q must start with RunTS %q (timestamp-first)", derived42, spy.req.RunTS)
 		}
 	})
-}
-
-// issuePerRowRunIDLike is a structural guard that the (RunTS,
-// RunShortID) pair together form a well-formed <ts>-<sid> prefix that
-// matches the canonical timestamp-first shape. It deliberately does
-// NOT use the per-row RunID regex (which is for full per-row ids) so
-// the test can fail with a clear message if the order is reversed.
-func issuePerRowRunIDReOrBatchIDLike(t *testing.T, ts, sid string) bool {
-	t.Helper()
-	return regexp.MustCompile(`^\d{12}-[0-9a-f]{4}$`).MatchString(ts + "-" + sid)
 }
