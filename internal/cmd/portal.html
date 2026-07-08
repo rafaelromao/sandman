@@ -2541,8 +2541,11 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
       // stamping for parent impl rows (aggregateReviewChildren), so
       // this helper is no longer used to enrich the parent row — only
       // the orphan synthetic row below. The verdict scan uses the same
-      // ## Decision marker rule the Go side reviewVerdictFromRunLog uses
-      // (reviewVerdictMarkerLineBare + reviewVerdictMarkerLineWithDebris):
+      // ## Decision marker rule the Go side reviewVerdictFromDecisionFile uses
+      // (reviewVerdictMarkerLineBare only; the controlled decision.md
+      // artefact is never prefixed or suffixed with shell debris, so
+      // the lenient "with-debris" regex the run.log parser used to
+      // require is no longer present):
       // APPROVED -> "Approved", CHANGES_REQUESTED -> "Changes requested".
       // The scan reads each review's already-loaded `log` field; when no
       // log content is available (the common case: the summary endpoint
@@ -2577,10 +2580,14 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
           summary.kind = 'completed';
         }
       }
-      // Verdict extraction: walk the ordered reviews, scan each one's
-      // `log` for the ## Decision marker. Mirrors Go's
-      // reviewVerdictFromRunLog (portal_runs_view.go:819) and accepts
-      // the same bare and with-debris shapes.
+    // Verdict extraction: walk the ordered reviews, scan each one's
+    // `log` for the ## Decision marker. Mirrors Go's
+    // reviewVerdictFromDecisionFile (portal_runs_view.go) but reads
+    // the orphan fallback path: a server-stamped parent row already
+    // carries reviewVerdict via aggregateReviewChildren, so the JS
+    // helper only matters for the orphan synthetic row. We accept the
+    // same shapes the legacy lenient run.log parser did, because
+    // orphan reviews still surface the saved log content.
       for (const review of ordered) {
         const verdict = extractReviewVerdictFromLog(review && review.log);
         if (verdict) {
@@ -2592,13 +2599,15 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
     }
 
     // extractReviewVerdictFromLog scans a single review run's log text
-    // for the ## Decision marker, mirroring the Go-side
-    // reviewVerdictFromRunLog helper (portal_runs_view.go). Returns the
-    // user-facing verdict string ("Approved" / "Changes requested") or
+    // for the ## Decision marker, mirroring the legacy Go-side
+    // reviewVerdictFromRunLog helper that the orphan path still relies
+    // on for compatibility (the Go server-side helper for parent rows
+    // is reviewVerdictFromDecisionFile, which reads decision.md). Returns
+    // the user-facing verdict string ("Approved" / "Changes requested") or
     // '' when no marker is recoverable. Tolerates missing or empty log
     // (returns ''), the "[<runID>] HH:MM:SS " line prefix added by the
     // agent output stream, and the with-debris shell-piped shape
-    // ("**APPROVED**" 2>&1 | tail -5).
+    // ("**APPROVED**" 2>&1 | tail -5) for legacy run.log content.
     function extractReviewVerdictFromLog(logText) {
       if (!logText) return '';
       const text = String(logText);

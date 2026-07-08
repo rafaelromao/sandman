@@ -69,12 +69,14 @@ type portalRun struct {
 	// ReviewVerdict carries latest terminal child-review status for canonical
 	// issue rows. Stamped by aggregateReviewChildren during compute (restored
 	// in #1897): the verdict is read from each terminal review child's saved
-	// run.log `## Decision` marker via reviewVerdictFromRunLog before
-	// portalSummaryRuns blanks Log for transport, so it survives the summary
-	// endpoint. The latest-finished review wins. The orphan review-only JS
-	// path (visibleRunForIssueGroup, portal.html) opportunistically recovers
+	// <runDir>/decision.md `## Decision` marker via reviewVerdictFromDecisionFile
+	// before portalSummaryRuns blanks Log for transport, so it survives the
+	// summary endpoint. The latest-finished review wins. The orphan review-only
+	// JS path (visibleRunForIssueGroup, portal.html) opportunistically recovers
 	// a verdict from an already-loaded sibling review.log, but the server
-	// stamp is the canonical source for parent rows.
+	// stamp is the canonical source for parent rows. Slice 1 of issue #1938
+	// retargeted the projection from run.log (which had to tolerate shell
+	// debris) to decision.md (the controlled artefact).
 	ReviewVerdict string `json:"reviewVerdict,omitempty"`
 	// GroupedReview marks review rows that are owned by an issue-parent row.
 	// Set by aggregateReviewChildren during compute (restored in #1897) for
@@ -297,34 +299,24 @@ var (
 	// whitespace). The match is anchored to the whole line so headings
 	// like "## Decisions" or "## Decision Tree" do not collide with
 	// this section's verdict scan (issue #1729 review feedback).
-	reviewSectionDecisionHeading = regexp.MustCompile(`(?i)^## decision\s*$`)
-	// reviewVerdictMarkerLine matches a whole line whose only content
-	// is the literal **MARKER** form. The original narrow
-	// `^\*\*([A-Z_]+)\*\*$` (issue #1729) anchored the whole line
-	// and rejected any line whose marker was followed by anything
-	// else, so a stray character rendered the verdict "Unclear".
-	// Issue #1767 broadened the trailing to `"?\s*$` to tolerate
-	// the bash closing quote from `gh pr comment --body "..."`,
-	// but production log captures (260704185852-d9f0-1779-PR1789)
-	// showed the shell frequently also leaves a redirect-and-pipe
-	// trailer on the same line — e.g. a marker line ending in
-	// `" 2>&1 | tail -5` — which the narrower regex still
-	// rejected. The current rules therefore:
 	//
-	//  1. Accept the bare marker line (no trailing characters).
-	//  2. Accept a marker followed by a non-whitespace sentinel
-	//     (closing quote, backtick, period, dash, ampersand, pipe,
-	//     or single quote) and then any characters to end-of-line.
-	//     The sentinel rules out mid-line prose such as
-	//     `**APPROVED** is unrelated prose` (which would start
-	//     with a space) without rejecting the production shell
-	//     debris shapes. Issue #1792 (follow-up to #1767, itself
-	//     a follow-up to #1729).
-	reviewVerdictMarkerLineBare       = regexp.MustCompile(`^\*\*([A-Z_]+)\*\*$`)
-	reviewVerdictMarkerLineWithDebris = regexp.MustCompile("^\\*\\*([A-Z_]+)\\*\\*[\"'`\\.\\-|&][^\\n]*$")
-	// reviewLogTimestampPrefix strips the "[<runID>] HH:MM:SS " log
-	// prefix that the agent output stream adds to each line.
-	reviewLogTimestampPrefix = regexp.MustCompile(`^\d{2}:\d{2}:\d{2}\s+`)
+	// Slice 1 (issue #1938) narrowed the source artefact from
+	// run.log (with shell-prefixed `[<runID>] HH:MM:SS ` lines) to
+	// decision.md (a controlled artefact without any line prefix),
+	// so the helper no longer needs the timestamp-stripper regex the
+	// old log-based parser maintained next to this one.
+	reviewSectionDecisionHeading = regexp.MustCompile(`(?i)^## decision\s*$`)
+	// reviewVerdictMarkerLineBare matches a whole line whose only
+	// content is the literal **MARKER** form, anchored end-to-end.
+	// The narrow `^\*\*([A-Z_]+)\*\*$` shape (issue #1729) is the
+	// only rule now: decision.md is a controlled artefact with no
+	// shell prefix and no trailing debris, so the lenient debris
+	// forms previously accepted by the run.log parser (issues
+	// #1767, #1792) are deliberately no longer tolerated here. Any
+	// non-matching line — lowercase marker, space-inside-asterisks,
+	// trailing quote, trailing pipe, mid-line prose — is rejected
+	// and renders the verdict "Unclear".
+	reviewVerdictMarkerLineBare = regexp.MustCompile(`^\*\*([A-Z_]+)\*\*$`)
 )
 
 // logPortalViewDegrade rate-limits repeated portal-view degradation logs per
@@ -369,6 +361,21 @@ func (v *portalRunsView) computeWithActiveRuns(repoRoot string, eventList []even
 }
 
 func (v *portalRunsView) computeWithActiveRunsAndIndex(repoRoot string, eventList []events.Event, eventsByRun map[string][]portalEvent, activeInstances []portalActiveRun, idx *batchindex.Index) ([]portalRun, error) {
+	// Slice 1 (issue #1938): build the layout once per compute() and
+	// thread it through to aggregateReviewChildren so the verdict reader
+	// locates <runDir>/decision.md via the canonical paths.Layout seam
+	// rather than re-shipping run.log content.
+	layout := paths.NewLayout(nil, repoRoot)
+	return v.computeWithActiveRunsLayoutAndIndex(layout, repoRoot, eventList, eventsByRun, activeInstances, idx)
+}
+
+// computeWithActiveRunsLayoutAndIndex is the layout-plumbed tail of
+// computeWithActiveRunsAndIndex. Split out so the layout value is
+// scoped to the loop where aggregateReviewChildren needs it; the
+// public computeWithActiveRunsAndIndex signature is preserved for
+// the portal server test seam (issue #1937 slice 0 still exercises
+// the index-only path).
+func (v *portalRunsView) computeWithActiveRunsLayoutAndIndex(layout paths.Layout, repoRoot string, eventList []events.Event, eventsByRun map[string][]portalEvent, activeInstances []portalActiveRun, idx *batchindex.Index) ([]portalRun, error) {
 	runStates := events.ProjectRunStates(eventList)
 	activeStates := make([]events.RunState, 0, len(runStates))
 	activeBatchStart := time.Time{}
@@ -548,7 +555,7 @@ func (v *portalRunsView) computeWithActiveRunsAndIndex(repoRoot string, eventLis
 
 	runs = v.dedupRuns(runs)
 	runs = v.demoteOrphanedActiveRunsFromDeadBatches(repoRoot, runs)
-	runs = v.aggregateReviewChildren(runs)
+	runs = v.aggregateReviewChildren(layout, runs)
 	for i := range runs {
 		// Active runs are never marked archived, even if a directory
 		// matching the run ID happens to exist under .sandman/archive.
@@ -898,12 +905,19 @@ func (v *portalRunsView) demoteOrphanedActiveRunsFromDeadBatches(repoRoot string
 // aggregateReviewChildren stamps ReviewCount, ReviewVerdict, and the live
 // "reviewing" badge-flip onto the canonical parent implementation row for
 // each issue that has sibling review-only children. The verdict is read from
-// each terminal review child's saved run.log via reviewVerdictFromRunLog
-// during compute, before portalSummaryRuns blanks Log for transport — so the
-// verdict survives the summary endpoint. Restored per issue #1897 after #1825
-// deleted it; the parent pick mirrors the JS pickCanonicalParent (see
-// portal.html) so the stamp lands on the row the portal actually displays.
-func (v *portalRunsView) aggregateReviewChildren(runs []portalRun) []portalRun {
+// each terminal review child's saved decision.md via
+// reviewVerdictFromDecisionFile during compute, before portalSummaryRuns
+// blanks Log for transport — so the verdict survives the summary endpoint.
+// Restored per issue #1897 after #1825 deleted it (and retargeted to the
+// decision.md artefact by slice 1 of issue #1938); the parent pick mirrors
+// the JS pickCanonicalParent (see portal.html) so the stamp lands on the
+// row the portal actually displays.
+//
+// Rows without a BatchKey (orphan historical rows) or without a RunDir
+// (the row never resolved to a backing folder) yield ("", false) from the
+// helper and the verdict surfaces as "Unclear" — same fallback the
+// previous log-based parser produced for an empty log.
+func (v *portalRunsView) aggregateReviewChildren(layout paths.Layout, runs []portalRun) []portalRun {
 	if len(runs) == 0 {
 		return runs
 	}
@@ -935,8 +949,10 @@ func (v *portalRunsView) aggregateReviewChildren(runs []portalRun) []portalRun {
 			// review has no final "## Decision" yet (issue #1729, slice 3).
 			if run.FinishedAt != nil {
 				verdict := "Unclear"
-				if vv, ok := reviewVerdictFromRunLog(run.Log); ok {
-					verdict = vv
+				if run.BatchKey != "" && run.RunDir != "" {
+					if vv, ok := reviewVerdictFromDecisionFile(layout, run.BatchKey, run.RunID); ok {
+						verdict = vv
+					}
 				}
 				finishedAt := *run.FinishedAt
 				if summary.verdict == "" || finishedAt.After(summary.finishedAt) || (finishedAt.Equal(summary.finishedAt) && run.StartedAt.After(summary.startedAt)) {
@@ -1011,33 +1027,46 @@ func finishedAtOrZero(run portalRun) time.Time {
 	return time.Time{}
 }
 
-func reviewVerdictFromRunLog(logText string) (string, bool) {
-	// Scan the log for a "## Decision" heading; the first non-empty
-	// line inside that section must be the verdict marker. This
-	// matches the prompt convention at internal/prompt/default_pr_review_prompt.md
-	// step "Posting the Review" (issue #1729).
-	//
-	// Each line is prefixed with "[<runID>] HH:MM:SS " by the agent
-	// output streaming (see CONTEXT.md Saved Run Log), so we strip
-	// everything up to and including the timestamp before matching
-	// the section heading or the marker. The marker match is anchored
-	// to the entire line (after stripping the prefix and trimming
-	// whitespace) — see reviewVerdictMarkerLineBare and
-	// reviewVerdictMarkerLineWithDebris for the exact rule. The
-	// with-debris regex requires a non-whitespace sentinel
-	// immediately after the closing `**` so that mid-line prose
-	// such as `**APPROVED** is unrelated prose` is still rejected
-	// while the production shell-piped shape
-	// `**APPROVED**" 2>&1 | tail -5` is accepted. Lowercase markers
-	// and the space-inside-asterisks variant are still rejected
-	// by both regexes; trailing periods and trailing quotes
-	// individually are now accepted (issues #1767, #1792).
-	lines := strings.Split(logText, "\n")
+// reviewVerdictFromDecisionFile reads the per-run decision file
+// (<layout.RunFolder(batchID, runID)>/decision.md) and returns the
+// review verdict it advertises. The decision file is the controlled
+// artefact published by the review agent's "## Decision" section;
+// reading it replaces the previous run.log scan, which had to
+// tolerate shell debris (gh pr comment quoting, `2>&1 | tail -5`,
+// etc.) and produced false positives whenever run.log happened to
+// reference the marker string outside the section.
+//
+// The scan is heading-gated: the helper enters a section at a bare
+// `(?i)^## decision\s*$` line and exits that section at the next
+// `^## ` heading. When the file contains multiple `## Decision`
+// sections the latest section's marker wins — an intermediate draft
+// is overwritten by the final decision before the agent posts its
+// comment, so the file can legitimately carry more than one. Inside
+// each section, only the narrow bare marker `^\*\*([A-Z_]+)\*\*$`
+// is accepted — lowercase marker, space-inside-asterisks, mid-line
+// prose, and any trailing debris are all rejected (the controlled
+// artefact never carries debris, so the previous lenient regex is
+// unnecessary).
+//
+// On any os.ReadFile error (missing file, unreadable, permission
+// denied) the helper returns ("", false) so the caller can map the
+// verdict to "Unclear" without surfacing a parse-side error to the
+// portal row.
+//
+// Issue #1938 slice 1. Slice 0 (issue #1937) introduced
+// paths.Layout.DecisionFile and portalRun.RunDir plumbing; this
+// helper is the consumer of both seams.
+func reviewVerdictFromDecisionFile(layout paths.Layout, batchID, runID string) (string, bool) {
+	data, err := os.ReadFile(layout.DecisionFile(batchID, runID))
+	if err != nil {
+		return "", false
+	}
+	lines := strings.Split(string(data), "\n")
 	inDecision := false
+	lastVerdict := ""
+	lastOK := false
 	for _, raw := range lines {
-		payload := stripLogLabel(raw)
-		line := strings.TrimSpace(payload)
-		line = reviewLogTimestampPrefix.ReplaceAllString(line, "")
+		line := strings.TrimSpace(raw)
 		if !inDecision && reviewSectionDecisionHeading.MatchString(line) {
 			inDecision = true
 			continue
@@ -1045,27 +1074,38 @@ func reviewVerdictFromRunLog(logText string) (string, bool) {
 		if !inDecision {
 			continue
 		}
+		// Re-entering a Decision section (or hitting any other heading)
+		// closes the current section. The next Decision heading will
+		// re-open it; non-Decision headings end the scan for this
+		// section and cannot re-enter.
 		if strings.HasPrefix(line, "## ") {
-			return "", false
+			// Close the current Decision section. The most recent
+			// marker captured in this section stays as `lastVerdict`;
+			// if the file later opens another Decision section, its
+			// marker can still overwrite it.
+			inDecision = reviewSectionDecisionHeading.MatchString(line)
+			if !inDecision {
+				continue
+			}
+			continue
 		}
 		if line == "" {
 			continue
 		}
 		matches := reviewVerdictMarkerLineBare.FindStringSubmatch(line)
 		if matches == nil {
-			matches = reviewVerdictMarkerLineWithDebris.FindStringSubmatch(line)
-		}
-		if matches == nil {
 			continue
 		}
 		switch matches[1] {
 		case "APPROVED":
-			return "Approved", true
+			lastVerdict = "Approved"
+			lastOK = true
 		case "CHANGES_REQUESTED":
-			return "Changes requested", true
+			lastVerdict = "Changes requested"
+			lastOK = true
 		}
 	}
-	return "", false
+	return lastVerdict, lastOK
 }
 
 // dedupRunGroup collapses duplicate rows for one issue within one batch.
