@@ -41,49 +41,49 @@ func TestNewBatchID(t *testing.T) {
 			kind:         KindIssue,
 			n:            1,
 			firstSubject: "42",
-			want:         "abcd-260618113825-42",
+			want:         "260618113825-abcd-42",
 		},
 		{
 			name:         "KindIssue two uses +1",
 			kind:         KindIssue,
 			n:            2,
 			firstSubject: "42",
-			want:         "abcd-260618113825-42+1",
+			want:         "260618113825-abcd-42+1",
 		},
 		{
 			name:         "KindIssue nine uses +8",
 			kind:         KindIssue,
 			n:            9,
 			firstSubject: "42",
-			want:         "abcd-260618113825-42+8",
+			want:         "260618113825-abcd-42+8",
 		},
 		{
 			name:         "KindReview",
 			kind:         KindReview,
 			n:            1,
 			firstSubject: "42",
-			want:         "abcd-260618113825-PR42",
+			want:         "260618113825-abcd-PR42",
 		},
 		{
 			name:         "KindAutoSelect",
 			kind:         KindAutoSelect,
 			n:            50,
 			firstSubject: "",
-			want:         "abcd-260618113825-auto-50",
+			want:         "260618113825-abcd-auto-50",
 		},
 		{
 			name:         "KindPromptOnly with userid",
 			kind:         KindPromptOnly,
 			n:            1,
 			firstSubject: "myid",
-			want:         "abcd-260618113825-prompt-myid",
+			want:         "260618113825-abcd-prompt-myid",
 		},
 		{
 			name:         "KindPromptOnly without userid",
 			kind:         KindPromptOnly,
 			n:            1,
 			firstSubject: "",
-			want:         "abcd-260618113825-prompt",
+			want:         "260618113825-abcd-prompt",
 		},
 	}
 	for _, tt := range tests {
@@ -109,37 +109,37 @@ func TestNewRunID(t *testing.T) {
 			name:    "KindIssue",
 			kind:    KindIssue,
 			subject: "42",
-			want:    "abcd-260618113825-42",
+			want:    "260618113825-abcd-42",
 		},
 		{
 			name:    "KindReview with linked issue",
 			kind:    KindReview,
 			subject: "42-PR42",
-			want:    "abcd-260618113825-42-PR42",
+			want:    "260618113825-abcd-42-PR42",
 		},
 		{
 			name:    "KindReview without linked issue",
 			kind:    KindReview,
 			subject: "PR42",
-			want:    "abcd-260618113825-PR42",
+			want:    "260618113825-abcd-PR42",
 		},
 		{
 			name:    "KindAutoSelect",
 			kind:    KindAutoSelect,
 			subject: "auto-50",
-			want:    "abcd-260618113825-auto-50",
+			want:    "260618113825-abcd-auto-50",
 		},
 		{
 			name:    "KindPromptOnly with userid",
 			kind:    KindPromptOnly,
 			subject: "myid",
-			want:    "abcd-260618113825-prompt-myid",
+			want:    "260618113825-abcd-prompt-myid",
 		},
 		{
 			name:    "KindPromptOnly without userid",
 			kind:    KindPromptOnly,
 			subject: "",
-			want:    "abcd-260618113825-prompt",
+			want:    "260618113825-abcd-prompt",
 		},
 	}
 	for _, tt := range tests {
@@ -156,7 +156,7 @@ func TestNewRunID(t *testing.T) {
 // contract that the auto-select selector BatchId and RunID are the
 // same value: NewBatchID(KindAutoSelect, N, "", ts, shortid) ==
 // NewRunID(KindAutoSelect, "auto-N", ts, shortid). Both must produce
-// the canonical <sid>-<ts>-auto-<N> string.
+// the canonical <ts>-<sid>-auto-<N> string.
 func TestAutoSelect_BatchIDEqualsRunID(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -176,7 +176,7 @@ func TestAutoSelect_BatchIDEqualsRunID(t *testing.T) {
 			if batchID != runID {
 				t.Errorf("selector BatchId and RunID diverged: BatchId=%q RunID=%q", batchID, runID)
 			}
-			wantPrefix := tc.shortid + "-" + tc.ts + "-auto-"
+			wantPrefix := tc.ts + "-" + tc.shortid + "-auto-"
 			if !strings.HasPrefix(batchID, wantPrefix) {
 				t.Errorf("selector BatchId %q does not start with %q", batchID, wantPrefix)
 			}
@@ -223,76 +223,82 @@ func TestKindFromDirName(t *testing.T) {
 		wantFound bool
 	}{
 		{
-			name:      "New format KindIssue batch dir",
+			name:      "Canonical KindIssue batch dir",
+			input:     "260618113825-abcd-42+2",
+			wantKind:  KindIssue,
+			wantFound: true,
+		},
+		{
+			name:      "Canonical KindIssue single-issue batch dir (no +N)",
+			input:     "260618113825-abcd-42",
+			wantKind:  KindIssue,
+			wantFound: true,
+		},
+		{
+			name:      "Canonical KindReview batch dir",
+			input:     "260618113825-abcd-PR42",
+			wantKind:  KindReview,
+			wantFound: true,
+		},
+		{
+			name:      "Canonical KindAutoSelect batch dir",
+			input:     "260618113825-abcd-auto-50",
+			wantKind:  KindAutoSelect,
+			wantFound: true,
+		},
+		{
+			name:      "Canonical KindPromptOnly with ID",
+			input:     "260618113825-abcd-prompt-myid",
+			wantKind:  KindPromptOnly,
+			wantFound: true,
+		},
+		{
+			name:      "Canonical KindPromptOnly without ID",
+			input:     "260618113825-abcd-prompt",
+			wantKind:  KindPromptOnly,
+			wantFound: true,
+		},
+		{
+			name:      "Canonical KindPromptOnly with numeric userid",
+			input:     "260618113825-abcd-prompt-42",
+			wantKind:  KindPromptOnly,
+			wantFound: true,
+		},
+		{
+			name:      "Old {sid}-{ts} format KindIssue batch dir is rejected",
 			input:     "abcd-260618113825-42+2",
-			wantKind:  KindIssue,
-			wantFound: true,
+			wantKind:  0,
+			wantFound: false,
 		},
 		{
-			name:      "New format KindIssue single-issue batch dir (no +N)",
-			input:     "abcd-260618113825-42",
-			wantKind:  KindIssue,
-			wantFound: true,
-		},
-		{
-			name:      "New format KindReview batch dir",
+			name:      "Old {sid}-{ts} format KindReview batch dir is rejected",
 			input:     "abcd-260618113825-PR42",
-			wantKind:  KindReview,
-			wantFound: true,
+			wantKind:  0,
+			wantFound: false,
 		},
 		{
-			name:      "New format KindAutoSelect batch dir",
-			input:     "abcd-260618113825-auto-50",
-			wantKind:  KindAutoSelect,
-			wantFound: true,
-		},
-		{
-			name:      "New format KindPromptOnly with ID",
-			input:     "abcd-260618113825-prompt-myid",
-			wantKind:  KindPromptOnly,
-			wantFound: true,
-		},
-		{
-			name:      "New format KindPromptOnly without ID",
-			input:     "abcd-260618113825-prompt",
-			wantKind:  KindPromptOnly,
-			wantFound: true,
-		},
-		{
-			name:      "New format KindPromptOnly with numeric userid",
-			input:     "abcd-260618113825-prompt-42",
-			wantKind:  KindPromptOnly,
-			wantFound: true,
-		},
-		{
-			name:      "Old format KindIssue batch dir",
+			name:      "Legacy {ts}-{sid}-issues-first format is rejected",
 			input:     "20250617-143052-abcd-3-issues-first-42",
-			wantKind:  KindIssue,
-			wantFound: true,
+			wantKind:  0,
+			wantFound: false,
 		},
 		{
-			name:      "Old format KindReview batch dir",
+			name:      "Legacy {ts}-{sid}-review format is rejected",
 			input:     "20250617-143052-abcd-review-PR42",
-			wantKind:  KindReview,
-			wantFound: true,
+			wantKind:  0,
+			wantFound: false,
 		},
 		{
-			name:      "Old format KindAutoSelect batch dir",
+			name:      "Legacy {ts}-{sid}-auto-select-candidates format is rejected",
 			input:     "20250617-143052-abcd-auto-select-50-candidates",
-			wantKind:  KindAutoSelect,
-			wantFound: true,
+			wantKind:  0,
+			wantFound: false,
 		},
 		{
-			name:      "Old format KindPromptOnly with ID",
-			input:     "20250617-143052-abcd-prompt-only-ID-myid",
-			wantKind:  KindPromptOnly,
-			wantFound: true,
-		},
-		{
-			name:      "Old format KindPromptOnly without ID",
+			name:      "Legacy {ts}-{sid}-prompt-only format is rejected",
 			input:     "20250617-143052-abcd-prompt-only",
-			wantKind:  KindPromptOnly,
-			wantFound: true,
+			wantKind:  0,
+			wantFound: false,
 		},
 		{
 			name:      "non-matching string",
@@ -346,7 +352,7 @@ func TestNewBatch_CollisionGuard_RetriesOnCollision(t *testing.T) {
 	fixedTime := time.Date(2026, 6, 18, 11, 38, 25, 0, time.Local)
 	timeFunc = func() time.Time { return fixedTime }
 
-	if err := os.MkdirAll(filepath.Join(batchesDir, "0000-260618113825-PR1"), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Join(batchesDir, "260618113825-0000-PR1"), 0755); err != nil {
 		t.Fatalf("failed to create collision dir: %v", err)
 	}
 
@@ -380,7 +386,7 @@ func TestNewBatch_CollisionGuard_AllCollisionsExhausted(t *testing.T) {
 	ts := "260618113825"
 	for i := 0; i < 16; i++ {
 		sid := fmt.Sprintf("%04x", i)
-		collisionDir := filepath.Join(batchesDir, sid+"-"+ts+"-PR1")
+		collisionDir := filepath.Join(batchesDir, ts+"-"+sid+"-PR1")
 		os.MkdirAll(collisionDir, 0755)
 	}
 
