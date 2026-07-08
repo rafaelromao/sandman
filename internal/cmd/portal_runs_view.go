@@ -311,6 +311,15 @@ var (
 	// `[<runID>] HH:MM:SS ` line prefix) is no longer needed
 	// (issues #1938, #1940).
 	reviewSectionDecisionHeading = regexp.MustCompile(`(?i)^## decision\s*$`)
+	// decisionVerdictMarkerBare accepts only the narrow `**MARKER**`
+	// shape on a whole line. decision.md is a controlled artefact
+	// with no shell prefix and no trailing debris, so the lenient
+	// debris forms previously accepted by the run.log parser (issues
+	// #1767, #1792) are deliberately not tolerated here. Any
+	// non-matching line — lowercase marker, space-inside-asterisks,
+	// mid-line prose, or trailing debris — renders the verdict
+	// "Unclear".
+	decisionVerdictMarkerBare = regexp.MustCompile(`^\*\*([A-Z_]+)\*\*$`)
 )
 
 // logPortalViewDegrade rate-limits repeated portal-view degradation logs per
@@ -1047,14 +1056,6 @@ func finishedAtOrZero(run portalRun) time.Time {
 // paths.Layout.DecisionFile and portalRun.RunDir plumbing; this
 // helper is the consumer of both seams.
 func reviewVerdictFromDecisionFile(layout paths.Layout, batchID, runID string) (string, bool) {
-	// bareMarkerRegex accepts only the narrow `**MARKER**` shape on a
-	// whole line. decision.md is a controlled artefact with no shell
-	// prefix and no trailing debris, so the lenient debris forms
-	// previously accepted by the run.log parser (issues #1767, #1792)
-	// are deliberately not tolerated here. Any non-matching line —
-	// lowercase marker, space-inside-asterisks, mid-line prose, or
-	// trailing debris — renders the verdict "Unclear".
-	bareMarkerRegex := regexp.MustCompile(`^\*\*([A-Z_]+)\*\*$`)
 	data, err := os.ReadFile(layout.DecisionFile(batchID, runID))
 	if err != nil {
 		return "", false
@@ -1097,7 +1098,7 @@ func reviewVerdictFromDecisionFile(layout paths.Layout, batchID, runID string) (
 		if line == "" {
 			continue
 		}
-		matches := bareMarkerRegex.FindStringSubmatch(line)
+		matches := decisionVerdictMarkerBare.FindStringSubmatch(line)
 		if matches == nil {
 			continue
 		}
