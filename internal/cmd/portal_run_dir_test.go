@@ -1,8 +1,8 @@
 // Tests for issue #1937 slice 0: portalRun.RunDir plumbing. The RunDir
 // field is the host-absolute path to the per-row run folder, used by
-// slice-1 verdict readers that locate the decision file at
-// <runDir>/decision.md. The field is server-only — tagged json:"-",
-// so it never reaches the front-end.
+// review verdict readers that use the run folder to find run.json and
+// recover the review worktree path for decision.md. The field is
+// server-only — tagged json:"-", so it never reaches the front-end.
 package cmd
 
 import (
@@ -23,9 +23,8 @@ import (
 // issue-driven batches whose live socket is `<batchDir>/batch.sock`,
 // `filepath.Dir(SocketPath)` yields the batch directory, not the per-row
 // folder; `activeRunDir` collapses both shapes (issue-driven and review
-// batches) into the single canonical per-row folder so the verdict
-// reader's `<RunDir>/decision.md` lookup hits the same location as
-// `paths.Layout.DecisionFile(batchID, runID)` for terminal rows.
+// batches) into the single canonical per-row folder so portal log and
+// manifest lookups stay consistent.
 func TestPortal_RunDir_ActiveRowStampsPerRowFolder(t *testing.T) {
 	repoRoot := testenv.MkdirShort(t, "sm-rundir-")
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {

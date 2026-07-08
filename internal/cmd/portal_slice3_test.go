@@ -2386,12 +2386,23 @@ func TestPortal_ReviewVerdictFromDecisionFile(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			repoRoot := t.TempDir()
+			runDir := filepath.Join(repoRoot, ".sandman", "batches", tc.batchID, "runs", tc.runID)
+			if err := os.MkdirAll(runDir, 0755); err != nil {
+				t.Fatalf("mkdir run dir: %v", err)
+			}
+			worktreeDir := filepath.Join(repoRoot, ".sandman", "worktrees", fmt.Sprintf("%s-worktree", tc.runID))
+			if err := os.MkdirAll(worktreeDir, 0755); err != nil {
+				t.Fatalf("mkdir worktree: %v", err)
+			}
+			manifestBytes, err := json.Marshal(batchindex.RunManifest{WorktreePath: worktreeDir})
+			if err != nil {
+				t.Fatalf("marshal run manifest: %v", err)
+			}
+			if err := os.WriteFile(filepath.Join(runDir, "run.json"), manifestBytes, 0644); err != nil {
+				t.Fatalf("write run.json: %v", err)
+			}
 			if tc.writeFile {
-				runDir := filepath.Join(repoRoot, ".sandman", "batches", tc.batchID, "runs", tc.runID)
-				if err := os.MkdirAll(runDir, 0755); err != nil {
-					t.Fatalf("mkdir run dir: %v", err)
-				}
-				if err := os.WriteFile(filepath.Join(runDir, "decision.md"), []byte(tc.contents), 0644); err != nil {
+				if err := os.WriteFile(filepath.Join(worktreeDir, "decision.md"), []byte(tc.contents), 0644); err != nil {
 					t.Fatalf("write decision.md: %v", err)
 				}
 			}
