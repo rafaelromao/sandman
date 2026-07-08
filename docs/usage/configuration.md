@@ -150,6 +150,8 @@ The following built-in substitution keys are available in prompt templates:
 | `{{BASE_BRANCH}}` | Branch the agent will rebase/PR against |
 | `{{BRANCH}}` | Alias for `{{SOURCE_BRANCH}}` |
 | `{{REVIEW_COMMAND}}` | Review command from project config |
+| `{{CANDIDATE_ISSUES}}` | Candidate issue list the auto-select agent uses to choose from (cfg.CandidateIssues) |
+| `{{MAX_COUNT}}` | Maximum number of candidates the auto-select prompt will consider (cfg.MaxCount) |
 
 Custom keys can be passed at runtime using the `--prompt-arg KEY=VALUE` flag on `sandman run` and referenced as `{{KEY}}` in the template.
 
