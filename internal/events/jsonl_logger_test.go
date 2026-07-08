@@ -15,6 +15,7 @@ import (
 )
 
 func TestJSONLLogger_LogWritesValidJSONLine(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "events.jsonl")
 	logger := &JSONLLogger{Path: path}
@@ -62,6 +63,7 @@ func TestJSONLLogger_LogWritesValidJSONLine(t *testing.T) {
 }
 
 func TestJSONLLogger_LogWritesNullIssue(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "events.jsonl")
 	logger := &JSONLLogger{Path: path}
@@ -102,6 +104,7 @@ func TestJSONLLogger_LogWritesNullIssue(t *testing.T) {
 }
 
 func TestJSONLLogger_ReadParsesEvents(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "events.jsonl")
 	logger := &JSONLLogger{Path: path}
@@ -138,6 +141,7 @@ func TestJSONLLogger_ReadParsesEvents(t *testing.T) {
 }
 
 func TestJSONLLogger_ReadEmptyFile(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "events.jsonl")
 	logger := &JSONLLogger{Path: path}
@@ -152,6 +156,7 @@ func TestJSONLLogger_ReadEmptyFile(t *testing.T) {
 }
 
 func TestJSONLLogger_ReadSkipsMalformedLine(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "events.jsonl")
 
@@ -210,6 +215,7 @@ func TestJSONLLogger_ReadSkipsMalformedLine(t *testing.T) {
 // RemoveEventsByIssue, which truncates the existing in-process file
 // descriptor.
 func TestJSONLLogger_ReadQuarantinesMalformedLines(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "events.jsonl")
 
@@ -305,6 +311,7 @@ func TestJSONLLogger_ReadQuarantinesMalformedLines(t *testing.T) {
 // idempotent on a second pass: the sidecar does not grow and the
 // main log stays the same size.
 func TestJSONLLogger_RemoveQuarantinesMalformedLines(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "events.jsonl")
 
@@ -373,6 +380,7 @@ func TestJSONLLogger_RemoveQuarantinesMalformedLines(t *testing.T) {
 }
 
 func TestJSONLLogger_ConcurrentAppendIsAtomic(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "events.jsonl")
 	logger := &JSONLLogger{Path: path}
@@ -412,6 +420,7 @@ func TestJSONLLogger_ConcurrentAppendIsAtomic(t *testing.T) {
 }
 
 func TestJSONLLogger_RemoveEventsByIssue_FiltersByIssueRef(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "events.jsonl")
 	logger := &JSONLLogger{Path: path}
@@ -455,6 +464,7 @@ func TestJSONLLogger_RemoveEventsByIssue_FiltersByIssueRef(t *testing.T) {
 // concurrent Log calls run in parallel with one RemoveEventsByIssue
 // and no non-matching event is lost.
 func TestJSONLLogger_LogVsRemoveRace(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "events.jsonl")
 	logger := &JSONLLogger{Path: path}
@@ -562,6 +572,7 @@ func TestJSONLLogger_LogVsRemoveRace(t *testing.T) {
 const jsonlCrossProcessChildFlag = "SANDMAN_JSONL_CROSS_PROCESS_CHILD"
 
 func TestJSONLLogger_CrossProcessConcurrentAppendIsAtomic(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "events.jsonl")
 
@@ -678,6 +689,7 @@ func TestJSONLLogger_CrossProcessConcurrentAppendIsAtomic(t *testing.T) {
 // hidden from the regular test run by its leading TestJSONL prefix
 // gate; exec.Command invokes it directly.
 func TestJSONLLogger_CrossProcessChild(t *testing.T) {
+	t.Parallel()
 	if os.Getenv(jsonlCrossProcessChildFlag) != "1" {
 		t.Skip("cross-process worker; only runs when " + jsonlCrossProcessChildFlag + "=1")
 	}

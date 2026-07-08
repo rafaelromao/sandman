@@ -22,6 +22,7 @@ func initRepoWithIdentity(t *testing.T, repoDir, name, email string) {
 }
 
 func TestNoopIdentityResolver(t *testing.T) {
+	t.Parallel()
 	r := noopIdentityResolver()
 	identity, err := r.resolve()
 	if err != nil {
@@ -165,6 +166,7 @@ func TestResolveConcurrentEnablesWorktreeConfigOnce(t *testing.T) {
 }
 
 func TestSkipResolveShortCircuits(t *testing.T) {
+	t.Parallel()
 	r := &gitIdentityResolver{skipResolve: true}
 	identity, err := r.resolve()
 	if err != nil {
@@ -176,6 +178,7 @@ func TestSkipResolveShortCircuits(t *testing.T) {
 }
 
 func TestNewBatchIdentityResolverSkipsWithSandboxFactory(t *testing.T) {
+	t.Parallel()
 	o := &Orchestrator{sandboxFactory: &fakeSandboxFactory{}}
 	r := newBatchIdentityResolver(o, ".")
 	if !r.skipResolve {
@@ -184,6 +187,7 @@ func TestNewBatchIdentityResolverSkipsWithSandboxFactory(t *testing.T) {
 }
 
 func TestNewBatchIdentityResolverSkipsWithRunnableFactory(t *testing.T) {
+	t.Parallel()
 	o := &Orchestrator{runnableFactory: &fakeRunnableFactory{}}
 	r := newBatchIdentityResolver(o, ".")
 	if !r.skipResolve {
@@ -192,6 +196,7 @@ func TestNewBatchIdentityResolverSkipsWithRunnableFactory(t *testing.T) {
 }
 
 func TestNewBatchIdentityResolverSkipsWithContainerRuntimeFactory(t *testing.T) {
+	t.Parallel()
 	o := &Orchestrator{containerRuntimeFactory: &fakeContainerRuntimeFactory{}}
 	r := newBatchIdentityResolver(o, ".")
 	if !r.skipResolve {
@@ -200,6 +205,7 @@ func TestNewBatchIdentityResolverSkipsWithContainerRuntimeFactory(t *testing.T) 
 }
 
 func TestNewBatchIdentityResolverRealWithoutFactories(t *testing.T) {
+	t.Parallel()
 	o := &Orchestrator{}
 	r := newBatchIdentityResolver(o, "/some/repo")
 	if r.skipResolve {
@@ -211,6 +217,7 @@ func TestNewBatchIdentityResolverRealWithoutFactories(t *testing.T) {
 }
 
 func TestNewPromptOnlyIdentityResolver(t *testing.T) {
+	t.Parallel()
 	r := newPromptOnlyIdentityResolver("/some/repo")
 	if r.skipResolve {
 		t.Fatal("expected skipResolve=false for prompt-only resolver")

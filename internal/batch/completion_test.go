@@ -10,6 +10,7 @@ import (
 )
 
 func TestReadTaskContent(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	taskPath := filepath.Join(dir, "task.md")
 	content := `## Stage: plan-approved
@@ -37,6 +38,7 @@ Continue the work.`
 }
 
 func TestReadTaskContent_MissingFile_DefaultsToDefaultPrompt(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	taskPath := filepath.Join(dir, "nonexistent", "task.md")
 

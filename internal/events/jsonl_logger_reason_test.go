@@ -22,6 +22,7 @@ import (
 // which orchestrator version wrote them, and both must round-trip
 // without the logger backfilling or rewriting the line.
 func TestJSONLLogger_PreservesHistoricalRunRetryEventsWithoutReason(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "events.jsonl")
 

@@ -86,6 +86,7 @@ func waitForSIGTERM(t *testing.T, proc *fakeSuperviseProcess, deadline time.Dura
 }
 
 func TestSuperviseShutdown(t *testing.T) {
+	t.Parallel()
 	t.Run("exits_on_SIGTERM", func(t *testing.T) {
 		proc := newFakeSuperviseProcess()
 
