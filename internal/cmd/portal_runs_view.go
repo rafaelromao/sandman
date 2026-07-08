@@ -1516,7 +1516,7 @@ func (v *portalRunsView) runFromActiveBatchIssue(repoRoot string, active portalA
 		LogURL:      logURL,
 		Log:         "Queued. Waiting to start.",
 		BatchKey:    batchKey,
-		RunDir:      filepath.Dir(active.SocketPath),
+		RunDir:      activeRunDir(active),
 	}
 	// Only surface batch membership for mixed batches. A single-issue
 	// batch is not interesting to surface and would add payload noise.
@@ -1734,7 +1734,7 @@ func (v *portalRunsView) runFromActiveMatch(repoRoot string, match portalRunMatc
 		Log:         stripLogLabels(match.instance.LiveOutput),
 		Events:      eventsByRun[eventKey],
 		BatchKey:    batchKeyForActive(match.instance),
-		RunDir:      filepath.Dir(match.instance.SocketPath),
+		RunDir:      activeRunDir(match.instance),
 	}
 	// Populate the live attempt signals from the raw event list when
 	// there is no matched RunState to query (the state-absent branch of
@@ -1869,11 +1869,18 @@ func (v *portalRunsView) runFromState(repoRoot string, runState events.RunState,
 	}
 	if active != nil {
 		portalRun.SocketPath = active.SocketPath
-		// Active rows: RunDir is the directory holding the live socket.
-		// This matches the runFromActiveBatchIssue / runFromActiveMatch
-		// initial literal and keeps the per-row field consistent across
-		// the state-present and state-absent code paths (issue #1937).
-		portalRun.RunDir = filepath.Dir(active.SocketPath)
+		// Active rows: RunDir is the per-row run folder (matches the
+		// runFromActiveBatchIssue / runFromActiveMatch initial literal
+		// and keeps the per-row field consistent across the
+		// state-present and state-absent code paths). The brief's
+		// naive `filepath.Dir(active.SocketPath)` would yield the
+		// batch directory for issue-driven batches (whose SocketPath
+		// is `<batchDir>/batch.sock`), not the per-row folder at
+		// `<batchDir>/runs/<runID>`; `activeRunDir` collapses both
+		// shapes (issue-driven batches and review batches whose
+		// SocketPath is `<batchDir>/runs/<runID>/run.sock`) into the
+		// single canonical per-row folder path (issue #1937).
+		portalRun.RunDir = activeRunDir(*active)
 		v.markCompletedIfSocketDead(&portalRun, active.SocketPath)
 		if portalRun.Kind == "completed" && runState.Finished != nil && activeSocket && (runState.IsReview() || runState.IsAutoSelect()) {
 			portalRun.Kind = "active"
@@ -2504,6 +2511,23 @@ func (v *portalRunsView) activeRunLogPathAndURL(repoRoot string, active portalAc
 	logPath := filepath.Join(active.Dir, "runs", active.RunID, "run.log")
 	logURL := v.portalLogDownloadURLForPath(repoRoot, logPath)
 	return logPath, logURL
+}
+
+// activeRunDir returns the per-row run folder for an active row.
+// For issue-driven batches, active.SocketPath is the batch's command
+// socket (<batchDir>/batch.sock) so `filepath.Dir(SocketPath)` is
+// the batch directory, not the per-row folder at
+// <batchDir>/runs/<runID>. For review batches, SocketPath is the
+// per-row run socket (<batchDir>/runs/<reviewRunID>/run.sock) so
+// `filepath.Dir(SocketPath)` already is the per-row folder.
+// Collapsing both shapes through active.Dir + active.RunID keeps the
+// per-row RunDir consistent regardless of which socket is the live
+// one (issue #1937 slice 0b).
+func activeRunDir(active portalActiveRun) string {
+	if active.Dir == "" || active.RunID == "" {
+		return ""
+	}
+	return filepath.Join(active.Dir, "runs", active.RunID)
 }
 
 // portalLogDownloadURLForPath turns any sandman-relative log file path into

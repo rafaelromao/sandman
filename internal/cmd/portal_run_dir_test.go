@@ -16,13 +16,16 @@ import (
 	"github.com/rafaelromao/sandman/internal/events"
 )
 
-// TestPortal_RunDir_ActiveRowStampsSocketDir pins slice 0b: every active
+// TestPortal_RunDir_ActiveRowStampsPerRowFolder pins slice 0b: every active
 // row produced from a live portalActiveRun carries RunDir equal to the
-// directory holding the active instance's socket (i.e. the batch
-// directory on disk for issue-driven batches, or the per-row folder
-// for review batches). The value is the same path the daemon would
-// hand to os.Stat when looking for decision.md / run.log / run.sock.
-func TestPortal_RunDir_ActiveRowStampsSocketDir(t *testing.T) {
+// per-row run folder on disk — `<batchDir>/runs/<runID>`. For
+// issue-driven batches whose live socket is `<batchDir>/batch.sock`,
+// `filepath.Dir(SocketPath)` yields the batch directory, not the per-row
+// folder; `activeRunDir` collapses both shapes (issue-driven and review
+// batches) into the single canonical per-row folder so the verdict
+// reader's `<RunDir>/decision.md` lookup hits the same location as
+// `paths.Layout.DecisionFile(batchID, runID)` for terminal rows.
+func TestPortal_RunDir_ActiveRowStampsPerRowFolder(t *testing.T) {
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
 		t.Fatal(err)
@@ -50,9 +53,9 @@ func TestPortal_RunDir_ActiveRowStampsSocketDir(t *testing.T) {
 		t.Fatalf("expected 1 row, got %d: %#v", len(runs), runs)
 	}
 
-	want := batchDir // filepath.Dir(batch.sock) == batchDir
+	want := filepath.Join(batchDir, "runs", "live-rundir")
 	if got := runs[0].RunDir; got != want {
-		t.Errorf("active row RunDir = %q, want %q (filepath.Dir(SocketPath))", got, want)
+		t.Errorf("active row RunDir = %q, want %q (per-row folder under batchDir/runs/<active.RunID>)", got, want)
 	}
 }
 
