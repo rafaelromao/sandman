@@ -871,7 +871,7 @@ func TestParseLogForCompletion_UsesLastTodosSection(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "42.log")
-	content := "--- run 1/3 ---\n# Todos\n- [✓] done\n\n# Notes\nignored\n\n--- retry 2/3 ---\n# Todos\n- [ ] still open\n"
+	content := "--- retry 1/3 ---\n# Todos\n- [✓] done\n\n# Notes\nignored\n\n--- retry 2/3 ---\n# Todos\n- [ ] still open\n"
 	if err := os.WriteFile(logPath, []byte(content), 0644); err != nil {
 		t.Fatalf("write log: %v", err)
 	}
@@ -885,7 +885,7 @@ func TestParseLogForCompletion_ReturnsTrueForCheckedTodos(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "42.log")
-	content := "--- run 1/3 ---\npreamble\n# Todos\n- [✓] done\n- [✓] done too\n"
+	content := "--- retry 1/3 ---\npreamble\n# Todos\n- [✓] done\n- [✓] done too\n"
 	if err := os.WriteFile(logPath, []byte(content), 0644); err != nil {
 		t.Fatalf("write log: %v", err)
 	}
@@ -908,17 +908,17 @@ func TestParseLogForCompletion_ReturnsFalseWithoutTodos(t *testing.T) {
 	}
 }
 
-func TestParseLogForCompletion_IgnoresEarlierRunSections(t *testing.T) {
+func TestParseLogForCompletion_IgnoresEarlierRetrySections(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "42.log")
-	content := "--- run 1/3 ---\n# Todos\n- [✓] old done\n--- retry 2/3 ---\n# Todos\n- [ ] current open\n"
+	content := "--- retry 1/3 ---\n# Todos\n- [✓] old done\n--- retry 2/3 ---\n# Todos\n- [ ] current open\n"
 	if err := os.WriteFile(logPath, []byte(content), 0644); err != nil {
 		t.Fatalf("write log: %v", err)
 	}
 
 	if parseLogForCompletion(logPath) {
-		t.Fatal("expected current run section to control completion")
+		t.Fatal("expected current retry section to control completion")
 	}
 }
 
@@ -926,7 +926,7 @@ func TestParseLogForCompletion_AcceptsGFMCheckboxSyntax(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "42.log")
-	content := "--- run 1/3 ---\n# Todos\n- [x] done\n- [X] done too\n"
+	content := "--- retry 1/3 ---\n# Todos\n- [x] done\n- [X] done too\n"
 	if err := os.WriteFile(logPath, []byte(content), 0644); err != nil {
 		t.Fatalf("write log: %v", err)
 	}
@@ -1039,10 +1039,10 @@ func TestRunSingle_RetriesResetBranchAndRerender(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read log: %v", err)
 	}
-	if !strings.Contains(string(data), "--- run 1/3 ---") {
-		t.Fatalf("expected run marker in log, got:\n%s", data)
+	if strings.Contains(string(data), "--- run 1/3 ---") {
+		t.Fatalf("did not expect run marker in log, got:\n%s", data)
 	}
-	if !strings.Contains(string(data), "--- retry 2/3 ---") {
+	if !strings.Contains(string(data), "--- retry 1/2 ---") {
 		t.Fatalf("expected retry marker in log, got:\n%s", data)
 	}
 }
