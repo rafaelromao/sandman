@@ -638,7 +638,7 @@ func TestProjectRunStates_RetriesTotalAndDone_AbortedFinishedPayload(t *testing.
 	}
 }
 
-func TestProjectRunStates_LiveAttempt_ReturnsHighestRetryAttempt(t *testing.T) {
+func TestProjectRunStates_LiveAttempt_ReturnsRetryCount(t *testing.T) {
 	t.Parallel()
 	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
 
