@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/rafaelromao/sandman/internal/atomicfs"
 	"github.com/rafaelromao/sandman/internal/batch"
 	"github.com/rafaelromao/sandman/internal/batchindex"
 	"github.com/rafaelromao/sandman/internal/config"
@@ -691,29 +692,23 @@ func (d *Daemon) QualityRulesPath() string {
 // Files materialised by `sandman init` (or by a previous daemon start)
 // are left untouched so user edits survive restarts. It is safe to call
 // from multiple goroutines and from both StartSocket and launchReview.
+//
+// Both writes go through atomicfs.WriteAtomic, which uses a unique
+// temp-file suffix (".tmp.<random>") rather than a fixed "<path>.tmp",
+// so two concurrent callers (across processes or goroutines) cannot
+// collide on the same temp name. The pre-check os.Stat + os.IsNotExist
+// guard is preserved so user-edited files are not clobbered.
 func (d *Daemon) initPromptTemplate() error {
 	var err error
 	d.promptOnce.Do(func() {
-		dir := filepath.Dir(d.PromptTemplatePath())
-		if err = os.MkdirAll(dir, 0755); err != nil {
-			return
-		}
 		if _, statErr := os.Stat(d.PromptTemplatePath()); os.IsNotExist(statErr) {
-			tmp := d.PromptTemplatePath() + ".tmp"
-			if err = os.WriteFile(tmp, []byte(prompt.DefaultPRReviewPrompt()), 0644); err != nil {
-				return
-			}
-			if err = os.Rename(tmp, d.PromptTemplatePath()); err != nil {
+			if err = atomicfs.WriteAtomic(d.PromptTemplatePath(), []byte(prompt.DefaultPRReviewPrompt()), 0644); err != nil {
 				return
 			}
 		}
 		qualityRulesPath := d.QualityRulesPath()
 		if _, statErr := os.Stat(qualityRulesPath); os.IsNotExist(statErr) {
-			tmp := qualityRulesPath + ".tmp"
-			if err = os.WriteFile(tmp, []byte(prompt.DefaultQualityRules()), 0644); err != nil {
-				return
-			}
-			if err = os.Rename(tmp, qualityRulesPath); err != nil {
+			if err = atomicfs.WriteAtomic(qualityRulesPath, []byte(prompt.DefaultQualityRules()), 0644); err != nil {
 				return
 			}
 		}
