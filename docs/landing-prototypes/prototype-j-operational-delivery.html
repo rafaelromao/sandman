@@ -1,0 +1,1000 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Sandman - Operational Delivery Prototype</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --canvas: oklch(94% 0.022 82);
+        --canvas-2: oklch(88% 0.035 78);
+        --paper: oklch(98% 0.012 82);
+        --paper-2: oklch(93% 0.026 78);
+        --ink: oklch(19% 0.034 58);
+        --muted: oklch(38% 0.032 61);
+        --line: oklch(70% 0.045 75);
+        --gold: oklch(76% 0.126 78);
+        --gold-strong: oklch(59% 0.13 75);
+        --night: oklch(17% 0.047 265);
+        --night-2: oklch(21% 0.052 264);
+        --night-3: oklch(26% 0.058 263);
+        --night-line: oklch(36% 0.06 263);
+        --night-text: oklch(92% 0.018 255);
+        --night-muted: oklch(78% 0.048 255);
+        --green: oklch(70% 0.18 145);
+        --blue: oklch(76% 0.13 226);
+        --violet: oklch(75% 0.13 302);
+        --orange: oklch(73% 0.15 55);
+      }
+
+      * { box-sizing: border-box; }
+
+      html { scroll-behavior: smooth; }
+
+      body {
+        margin: 0;
+        color: var(--ink);
+        background:
+          radial-gradient(circle at 8% 3%, oklch(82% 0.12 78 / 0.38), transparent 28rem),
+          radial-gradient(circle at 92% 12%, oklch(74% 0.1 226 / 0.15), transparent 34rem),
+          linear-gradient(180deg, var(--canvas), var(--canvas-2) 52%, var(--night) 52%, var(--night));
+        font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        line-height: 1.5;
+      }
+
+      a { color: inherit; }
+
+      code,
+      .mono,
+      .navlinks,
+      .slogan-bar,
+      .kicker,
+      .step-label,
+      .command,
+      .status,
+      .phase-label,
+      .receipt-list b,
+      .fine-print {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+      }
+
+      .wrap {
+        width: min(1220px, calc(100% - 32px));
+        margin: 0 auto;
+      }
+
+      .slogan-bar {
+        color: var(--gold-strong);
+        border-bottom: 1px solid var(--line);
+        font-size: 12px;
+        font-weight: 900;
+        letter-spacing: 0.16em;
+        padding: 12px 0;
+        text-transform: uppercase;
+      }
+
+      nav {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 24px;
+        padding: 22px 0;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .brand-logo {
+        display: block;
+        width: min(235px, 54vw);
+        height: auto;
+        border-radius: 16px;
+        background: var(--night);
+      }
+
+      .navlinks {
+        display: flex;
+        gap: 18px;
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      .navlinks a {
+        text-decoration: none;
+      }
+
+      .hero {
+        min-height: calc(100svh - 128px);
+        display: grid;
+        grid-template-columns: 0.95fr 1.05fr;
+        gap: clamp(28px, 5vw, 64px);
+        align-items: center;
+        padding: clamp(44px, 7vw, 86px) 0 clamp(58px, 8vw, 108px);
+      }
+
+      h1,
+      h2,
+      h3,
+      p { margin-top: 0; }
+
+      .kicker {
+        color: var(--gold-strong);
+        font-size: 12px;
+        font-weight: 900;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+      }
+
+      h1 {
+        max-width: 850px;
+        margin: 16px 0 22px;
+        font-size: clamp(56px, 9.2vw, 118px);
+        line-height: 0.86;
+        letter-spacing: -0.095em;
+      }
+
+      .lead {
+        max-width: 760px;
+        color: var(--muted);
+        font-size: clamp(19px, 2.25vw, 25px);
+        line-height: 1.42;
+      }
+
+      .cta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 14px;
+        margin-top: 32px;
+      }
+
+      .button {
+        min-height: 52px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0 20px;
+        border-radius: 999px;
+        text-decoration: none;
+        font-weight: 850;
+      }
+
+      .button.primary {
+        color: var(--paper);
+        background: var(--ink);
+      }
+
+      .button.secondary {
+        color: var(--ink);
+        border: 1px solid var(--line);
+        background: oklch(98% 0.012 82 / 0.72);
+      }
+
+      .proof-line {
+        max-width: 770px;
+        margin-top: 34px;
+        display: grid;
+        grid-template-columns: 1.1fr 0.9fr 1fr;
+        gap: 10px;
+      }
+
+      .proof-line div {
+        min-height: 118px;
+        border: 1px solid var(--line);
+        border-radius: 22px;
+        padding: 16px;
+        background: oklch(98% 0.012 82 / 0.78);
+      }
+
+      .proof-line strong {
+        display: block;
+        margin-bottom: 7px;
+        line-height: 1.1;
+      }
+
+      .proof-line span {
+        display: block;
+        color: var(--muted);
+        font-size: 14px;
+      }
+
+      .hero-art {
+        display: grid;
+        gap: 18px;
+      }
+
+      .official-banner {
+        display: block;
+        width: 100%;
+        height: auto;
+        border-radius: 24px;
+        box-shadow: 0 34px 95px oklch(18% 0.035 65 / 0.22);
+      }
+
+      .terminal-card {
+        border: 1px solid var(--night-line);
+        border-radius: 28px;
+        overflow: hidden;
+        background: var(--night);
+        box-shadow: 0 28px 80px oklch(18% 0.035 65 / 0.22);
+      }
+
+      .terminal-top,
+      .portal-top {
+        display: flex;
+        justify-content: space-between;
+        gap: 14px;
+        padding: 15px 18px;
+        color: var(--night-muted);
+        border-bottom: 1px solid var(--night-line);
+        font-size: 13px;
+      }
+
+      .live { color: var(--green); }
+
+      .terminal-body {
+        padding: 20px;
+      }
+
+      .command {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        color: var(--green);
+        font-size: clamp(18px, 2.2vw, 24px);
+        font-weight: 850;
+      }
+
+      .prompt { color: var(--gold); }
+
+      .run-log {
+        margin: 18px 0 0;
+        padding: 0;
+        list-style: none;
+        display: grid;
+        gap: 10px;
+      }
+
+      .run-log li {
+        display: grid;
+        grid-template-columns: 112px 1fr auto;
+        gap: 12px;
+        align-items: center;
+        padding: 12px;
+        border: 1px solid var(--night-line);
+        border-radius: 16px;
+        color: var(--night-text);
+        background: var(--night-2);
+      }
+
+      .run-log small {
+        color: var(--night-muted);
+      }
+
+      .status {
+        border: 1px solid var(--night-line);
+        border-radius: 999px;
+        padding: 4px 8px;
+        color: var(--night-muted);
+        font-size: 12px;
+      }
+
+      section {
+        padding: clamp(66px, 9vw, 108px) 0;
+        border-top: 1px solid oklch(76% 0.04 76 / 0.9);
+      }
+
+      section.dark {
+        color: var(--night-text);
+        border-top-color: var(--night-line);
+      }
+
+      h2 {
+        max-width: 940px;
+        margin-bottom: 16px;
+        font-size: clamp(40px, 5.8vw, 76px);
+        line-height: 0.92;
+        letter-spacing: -0.082em;
+      }
+
+      .intro {
+        max-width: 840px;
+        color: var(--muted);
+        font-size: 20px;
+      }
+
+      .dark .intro {
+        color: var(--night-muted);
+      }
+
+      .handoff-grid {
+        margin-top: 36px;
+        display: grid;
+        grid-template-columns: 0.8fr 1.2fr;
+        gap: 22px;
+      }
+
+      .contract {
+        border: 1px solid var(--line);
+        border-radius: 30px;
+        padding: 28px;
+        background: var(--paper);
+      }
+
+      .contract h3 {
+        font-size: 31px;
+        line-height: 1;
+        letter-spacing: -0.055em;
+      }
+
+      .contract p,
+      .smart-row span,
+      .handoff-step p {
+        color: var(--muted);
+      }
+
+      .smart-list {
+        margin-top: 20px;
+        display: grid;
+        gap: 10px;
+      }
+
+      .smart-row {
+        display: grid;
+        grid-template-columns: 42px 1fr;
+        gap: 12px;
+        align-items: start;
+        padding: 12px;
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        background: var(--paper-2);
+      }
+
+      .smart-row b {
+        width: 34px;
+        height: 34px;
+        display: grid;
+        place-items: center;
+        border-radius: 50%;
+        background: var(--gold);
+        color: oklch(22% 0.035 58);
+      }
+
+      .handoff-steps {
+        display: grid;
+        gap: 12px;
+        border: 1px solid var(--line);
+        border-radius: 30px;
+        padding: 18px;
+        background: var(--paper);
+      }
+
+      .handoff-step {
+        display: grid;
+        grid-template-columns: 132px 1fr;
+        gap: 16px;
+        padding: 18px;
+        border: 1px solid var(--line);
+        border-radius: 22px;
+        background: var(--paper-2);
+      }
+
+      .handoff-step.sandman {
+        color: var(--night-text);
+        border-color: var(--night-line);
+        background: var(--night);
+      }
+
+      .handoff-step.sandman p { color: var(--night-muted); }
+
+      .phase-label {
+        color: var(--gold-strong);
+        font-size: 12px;
+        font-weight: 900;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+      }
+
+      .handoff-step.sandman .phase-label { color: var(--gold); }
+
+      .handoff-step h3 {
+        margin-bottom: 6px;
+        font-size: 22px;
+        letter-spacing: -0.04em;
+      }
+
+      .delivery-map {
+        margin-top: 38px;
+        border: 1px solid var(--night-line);
+        border-radius: 34px;
+        overflow: hidden;
+        background: oklch(14% 0.045 263);
+      }
+
+      .map-header {
+        display: flex;
+        justify-content: space-between;
+        gap: 16px;
+        align-items: center;
+        padding: 18px 20px;
+        border-bottom: 1px solid var(--night-line);
+      }
+
+      .map-header strong {
+        font-size: 18px;
+      }
+
+      .map-header code {
+        color: var(--green);
+      }
+
+      .map-scroll {
+        overflow-x: auto;
+      }
+
+      .map-grid {
+        min-width: 1180px;
+        display: grid;
+        grid-template-columns: 1.05fr 1.05fr 0.95fr repeat(6, 1fr) 1.1fr;
+      }
+
+      .flow-node {
+        position: relative;
+        min-height: 236px;
+        padding: 20px 17px;
+        border-right: 1px solid var(--night-line);
+        background: linear-gradient(180deg, var(--night-2), oklch(18% 0.048 263));
+      }
+
+      .flow-node:last-child { border-right: 0; }
+
+      .flow-node:not(:last-child)::after {
+        content: "";
+        position: absolute;
+        right: -9px;
+        top: 50%;
+        z-index: 2;
+        width: 18px;
+        height: 18px;
+        border-top: 1px solid var(--night-line);
+        border-right: 1px solid var(--night-line);
+        background: var(--night-2);
+        transform: translateY(-50%) rotate(45deg);
+      }
+
+      .flow-node.before {
+        background: linear-gradient(180deg, oklch(28% 0.062 240), oklch(21% 0.052 250));
+      }
+
+      .flow-node.trigger {
+        background: linear-gradient(180deg, oklch(31% 0.07 145), oklch(21% 0.055 160));
+      }
+
+      .flow-node.after {
+        background: linear-gradient(180deg, oklch(30% 0.065 55), oklch(22% 0.052 64));
+      }
+
+      .icon {
+        width: 42px;
+        height: 42px;
+        margin-bottom: 17px;
+        display: grid;
+        place-items: center;
+        color: var(--gold);
+        border: 1px solid var(--night-line);
+        border-radius: 14px;
+        background: oklch(98% 0.012 82 / 0.04);
+      }
+
+      .icon svg {
+        width: 22px;
+        height: 22px;
+        fill: none;
+        stroke: currentColor;
+        stroke-width: 1.8;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+      }
+
+      .step-label {
+        display: block;
+        margin-bottom: 8px;
+        color: var(--gold);
+        font-size: 12px;
+        font-weight: 900;
+      }
+
+      .flow-node h3 {
+        color: var(--night-text);
+        margin-bottom: 9px;
+        font-size: 19px;
+        line-height: 1.08;
+        letter-spacing: -0.035em;
+      }
+
+      .flow-node p {
+        margin: 0;
+        color: var(--night-muted);
+        font-size: 14px;
+      }
+
+      .map-notes {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 14px;
+        padding: 18px;
+        border-top: 1px solid var(--night-line);
+      }
+
+      .map-notes article {
+        border: 1px solid var(--night-line);
+        border-radius: 20px;
+        padding: 16px;
+        background: var(--night-2);
+      }
+
+      .map-notes h3 {
+        color: var(--night-text);
+        margin-bottom: 8px;
+        font-size: 19px;
+      }
+
+      .map-notes p {
+        color: var(--night-muted);
+        margin-bottom: 0;
+      }
+
+      .ops-grid {
+        display: grid;
+        grid-template-columns: 1.05fr 0.95fr;
+        gap: 22px;
+        margin-top: 34px;
+      }
+
+      .portal-shot,
+      .receipt-card,
+      .method-table,
+      .method-note,
+      .validation-card,
+      .dependency-card {
+        border: 1px solid var(--night-line);
+        border-radius: 30px;
+        background: var(--night-2);
+      }
+
+      .portal-shot { overflow: hidden; }
+
+      .portal-body {
+        padding: 16px;
+        display: grid;
+        grid-template-columns: 1fr 0.76fr;
+        gap: 12px;
+      }
+
+      .portal-panel {
+        border: 1px solid var(--night-line);
+        border-radius: 20px;
+        padding: 16px;
+        background: oklch(18% 0.048 263);
+      }
+
+      .portal-panel h3 {
+        color: var(--gold);
+        font-size: 14px;
+        letter-spacing: 0.05em;
+      }
+
+      .run-row,
+      .metric-row {
+        display: grid;
+        grid-template-columns: 86px 1fr auto;
+        gap: 10px;
+        padding: 12px 0;
+        border-top: 1px solid var(--night-line);
+      }
+
+      .metric-row { grid-template-columns: 1fr auto; }
+      .run-row:first-of-type,
+      .metric-row:first-of-type { border-top: 0; }
+
+      .run-row b,
+      .metric-row strong { color: var(--night-text); }
+
+      .run-row small,
+      .metric-row span { color: var(--night-muted); }
+
+      .receipt-card,
+      .validation-card,
+      .dependency-card,
+      .method-note { padding: 28px; }
+
+      .receipt-card h3,
+      .validation-card h3,
+      .dependency-card h3,
+      .method-note h3 {
+        color: var(--night-text);
+        font-size: 33px;
+        line-height: 1;
+        letter-spacing: -0.06em;
+      }
+
+      .receipt-card p,
+      .validation-card p,
+      .dependency-card p,
+      .method-note p { color: var(--night-muted); }
+
+      .receipt-list {
+        display: grid;
+        gap: 10px;
+        padding: 0;
+        margin: 18px 0 0;
+        list-style: none;
+      }
+
+      .receipt-list li {
+        display: grid;
+        grid-template-columns: 118px 1fr;
+        gap: 10px;
+        border: 1px solid var(--night-line);
+        border-radius: 16px;
+        padding: 12px;
+        background: oklch(18% 0.048 263);
+        color: var(--night-muted);
+      }
+
+      .receipt-list b { color: var(--gold); }
+
+      .validation-grid,
+      .methods-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 20px;
+        margin-top: 34px;
+      }
+
+      .check-list {
+        padding: 0;
+        margin: 18px 0 0;
+        display: grid;
+        gap: 10px;
+        list-style: none;
+      }
+
+      .check-list li {
+        color: var(--night-text);
+        border: 1px solid var(--night-line);
+        border-radius: 16px;
+        padding: 12px;
+        background: oklch(18% 0.048 263);
+      }
+
+      .check-list span {
+        color: var(--green);
+        font-weight: 900;
+        margin-right: 8px;
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+      }
+
+      th,
+      td {
+        padding: 16px;
+        text-align: left;
+        vertical-align: top;
+        border-bottom: 1px solid var(--night-line);
+      }
+
+      th {
+        color: var(--gold);
+        background: var(--night-3);
+      }
+
+      td {
+        color: var(--night-muted);
+      }
+
+      tr:last-child td { border-bottom: 0; }
+
+      .method-note code,
+      .dependency-card code { color: var(--gold); }
+
+      .final {
+        text-align: center;
+        padding-bottom: 118px;
+      }
+
+      .final h2,
+      .final .intro {
+        margin-left: auto;
+        margin-right: auto;
+      }
+
+      .dark .button.primary {
+        color: var(--night);
+        background: var(--gold);
+      }
+
+      .dark .button.secondary {
+        color: var(--night-text);
+        border-color: var(--night-line);
+        background: oklch(98% 0.012 82 / 0.05);
+      }
+
+      .fine-print {
+        margin-top: 22px;
+        color: var(--night-muted);
+        font-size: 13px;
+      }
+
+      @media (max-width: 1060px) {
+        .hero,
+        .handoff-grid,
+        .ops-grid,
+        .validation-grid,
+        .methods-grid,
+        .map-notes {
+          grid-template-columns: 1fr;
+        }
+
+        .navlinks { display: none; }
+      }
+
+      @media (max-width: 720px) {
+        .proof-line,
+        .portal-body {
+          grid-template-columns: 1fr;
+        }
+
+        .handoff-step,
+        .run-log li,
+        .run-row,
+        .receipt-list li {
+          grid-template-columns: 1fr;
+        }
+
+        .map-header {
+          align-items: flex-start;
+          flex-direction: column;
+        }
+
+        .official-banner {
+          border-radius: 18px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="slogan-bar"><div class="wrap">Sleep while your agents code.</div></div>
+    <div class="wrap">
+      <nav aria-label="Primary navigation">
+        <a href="index.html" aria-label="Back to prototype index"><img class="brand-logo" src="../../assets/sandman-logo-horizontal.svg" alt="Sandman" /></a>
+        <div class="navlinks"><a href="#handoff">Handoff</a><a href="#map">Flow</a><a href="#operate">Operate</a><a href="#validate">Validate</a><a href="#methods">Methods</a></div>
+      </nav>
+
+      <main>
+        <section class="hero">
+          <div>
+            <div class="kicker">Autonomous delivery for coding agents</div>
+            <h1>Sleep while your agents code.</h1>
+            <p class="lead">Sandman turns one clear GitHub issue into an observable delivery loop: plan the implementation, run the agent in an isolated sandbox, preserve progress in <code>task.md</code>, drive review, and merge when the gates pass.</p>
+            <div class="cta"><a class="button primary" href="#map">Trace the delivery loop</a><a class="button secondary" href="#handoff">Define the handoff</a></div>
+            <div class="proof-line" aria-label="Sandman proof points">
+              <div><strong>Before Sandman</strong><span>A spec, bug report, or planning method produces a SMART GitHub issue.</span></div>
+              <div><strong>Inside Sandman</strong><span><code>sandman run 1234</code> launches the AFK implementation and review loop.</span></div>
+              <div><strong>After Sandman</strong><span>Validate the merged reference branch with smoke, e2e, QA, or release checks.</span></div>
+            </div>
+          </div>
+
+          <aside class="hero-art" aria-label="Sandman official artwork and command preview">
+            <img class="official-banner" src="../../assets/sandman-banner.svg" alt="Sandman banner showing AFK coding agents orchestration in isolated sandboxes" />
+            <div class="terminal-card">
+              <div class="terminal-top"><strong>delivery loop</strong><span class="live">live: running unattended</span></div>
+              <div class="terminal-body">
+                <div class="command"><span class="prompt">$</span><span>sandman run 1234</span></div>
+                <ul class="run-log" aria-label="Run state preview">
+                  <li><small>task.md</small><span>progress recorded for resumability</span><span class="status">open</span></li>
+                  <li><small>sandbox</small><span>agent edits isolated from your checkout</span><span class="status">live</span></li>
+                  <li><small>review</small><span>PR feedback loop continues until green</span><span class="status">queued</span></li>
+                </ul>
+              </div>
+            </div>
+          </aside>
+        </section>
+
+        <section id="handoff">
+          <div class="kicker">The handoff contract</div>
+          <h2>Sandman starts after intent is clear enough to delegate.</h2>
+          <p class="intro">Sandman is workflow-agnostic. A staff engineer, SDD flow, Matt Pocock skills, bug diagnosis session, or your own planning ritual can produce the issue. Sandman only needs a well-described GitHub issue and a repository it can work in.</p>
+          <div class="handoff-grid">
+            <article class="contract">
+              <h3>Agent-ready issues are SMART enough to run while you are away.</h3>
+              <p>SMART is the minimum viable contract between human intent and an AFK coding agent.</p>
+              <div class="smart-list">
+                <div class="smart-row"><b>S</b><span>Specific: behavior, scope, and non-goals are concrete.</span></div>
+                <div class="smart-row"><b>M</b><span>Measurable: acceptance criteria or checks define done.</span></div>
+                <div class="smart-row"><b>A</b><span>Achievable: small enough for one focused run.</span></div>
+                <div class="smart-row"><b>R</b><span>Relevant: tied to a spec, bug, architecture decision, or user value.</span></div>
+                <div class="smart-row"><b>T</b><span>Time-bounded: constrained by run budget, retry limit, or slice size.</span></div>
+              </div>
+            </article>
+            <div class="handoff-steps" aria-label="Before Sandman, inside Sandman, after Sandman">
+              <div class="handoff-step"><div class="phase-label">before</div><div><h3>Write the spec and slice the work.</h3><p>Use the upstream method you trust. The important output is a GitHub issue with clear behavior and verification.</p></div></div>
+              <div class="handoff-step sandman"><div class="phase-label">sandman</div><div><h3>Run the AFK delivery loop.</h3><p>Sandman plans, sandboxes, builds, tests, self-reviews, opens the PR, drives review, applies feedback, and merges.</p></div></div>
+              <div class="handoff-step"><div class="phase-label">after</div><div><h3>Validate the reference branch.</h3><p>The merge is not the end of engineering judgment. Treat it like human work: smoke it, run broader tests, QA it, then promote.</p></div></div>
+            </div>
+          </div>
+        </section>
+
+        <section id="map" class="dark">
+          <div class="kicker">Operational flow chart</div>
+          <h2>From spec to validated branch, with Sandman owning the middle.</h2>
+          <p class="intro">The flow makes the boundary explicit. Humans and upstream tools shape intent before Sandman. Sandman owns implementation through merged PR. Your validation practice proves the merged reference branch is ready for the next environment.</p>
+
+          <div class="delivery-map">
+            <div class="map-header"><strong>Full delivery path</strong><code>$ sandman run 1234</code></div>
+            <div class="map-scroll" aria-label="Spec to validation workflow chart">
+              <div class="map-grid">
+                <article class="flow-node before">
+                  <div class="icon"><svg viewBox="0 0 24 24"><path d="M6 4h12v16H6z"/><path d="M9 8h6M9 12h6M9 16h3"/></svg></div>
+                  <span class="step-label">Before Sandman</span>
+                  <h3>Spec or bug context</h3>
+                  <p>Intent is captured before the AFK run: product spec, diagnosis notes, architecture decision, or task brief.</p>
+                </article>
+                <article class="flow-node before">
+                  <div class="icon"><svg viewBox="0 0 24 24"><path d="M5 7h14M5 12h10M5 17h7"/><path d="M17 15l2 2l-2 2"/></svg></div>
+                  <span class="step-label">Ready input</span>
+                  <h3>SMART GitHub issue</h3>
+                  <p>A well-described issue gives Sandman the behavior, boundaries, and checks it needs.</p>
+                </article>
+                <article class="flow-node trigger">
+                  <div class="icon"><svg viewBox="0 0 24 24"><path d="M4 6h16v12H4z"/><path d="M7 10l3 2l-3 2M12 15h5"/></svg></div>
+                  <span class="step-label">User starts</span>
+                  <h3><code>sandman run 1234</code></h3>
+                  <p>You select the issue explicitly. Interrupted work can continue with <code>sandman run 1234 --continue</code>.</p>
+                </article>
+                <article class="flow-node">
+                  <div class="icon"><svg viewBox="0 0 24 24"><path d="M7 4h10v16H7z"/><path d="M9 8h6M9 12h6M9 16h3"/></svg></div>
+                  <span class="step-label">01 Sandman</span>
+                  <h3>Render task.md</h3>
+                  <p>Sandman stores the task and progress so the run can be audited and resumed.</p>
+                </article>
+                <article class="flow-node">
+                  <div class="icon"><svg viewBox="0 0 24 24"><path d="M12 3l8 4.5v9L12 21l-8-4.5v-9L12 3z"/><path d="M4 7.5l8 4.5l8-4.5M12 12v9"/></svg></div>
+                  <span class="step-label">02 Sandman</span>
+                  <h3>Create sandbox</h3>
+                  <p>Work happens in an isolated worktree or container instead of your active checkout.</p>
+                </article>
+                <article class="flow-node">
+                  <div class="icon"><svg viewBox="0 0 24 24"><path d="M8 5h8M8 19h8M12 5v14"/><path d="M5 9h14v6H5z"/></svg></div>
+                  <span class="step-label">03 Sandman</span>
+                  <h3>Plan implementation</h3>
+                  <p>The agent grounds the plan in the repo before making edits.</p>
+                </article>
+                <article class="flow-node">
+                  <div class="icon"><svg viewBox="0 0 24 24"><path d="M8 8l-4 4l4 4M16 8l4 4l-4 4M13 5l-2 14"/></svg></div>
+                  <span class="step-label">04 Sandman</span>
+                  <h3>Build with checks</h3>
+                  <p>TDD, targeted tests, type checks, and repair loops keep cheap code from becoming expensive review.</p>
+                </article>
+                <article class="flow-node">
+                  <div class="icon"><svg viewBox="0 0 24 24"><path d="M12 3l7 4v5c0 4-3 7-7 9c-4-2-7-5-7-9V7l7-4z"/><path d="M9 12l2 2l4-5"/></svg></div>
+                  <span class="step-label">05 Sandman</span>
+                  <h3>Self-review and PR</h3>
+                  <p>Standards and spec fit are reviewed before the pull request goes out.</p>
+                </article>
+                <article class="flow-node">
+                  <div class="icon"><svg viewBox="0 0 24 24"><path d="M7 7h10v7H9l-4 4V9a2 2 0 0 1 2-2z"/><path d="M9 10h6M9 13h4"/></svg></div>
+                  <span class="step-label">06 Sandman</span>
+                  <h3>Review to merge</h3>
+                  <p>Sandman requests review, applies feedback, back-merges if needed, waits for green checks, and merges.</p>
+                </article>
+                <article class="flow-node after">
+                  <div class="icon"><svg viewBox="0 0 24 24"><path d="M5 13l4 4L19 7"/><path d="M4 20h16"/></svg></div>
+                  <span class="step-label">After Sandman</span>
+                  <h3>Validate before release</h3>
+                  <p>Run smoke, e2e, QA, or broader suite checks against the reference branch before production promotion.</p>
+                </article>
+              </div>
+            </div>
+            <div class="map-notes">
+              <article><h3>The middle is Sandman-owned.</h3><p>Sandman is not a code generator. It is the delivery loop from selected issue to reviewed, merged PR.</p></article>
+              <article><h3>Review is the new bottleneck.</h3><p>AI makes code cheap. Sandman makes review and verification explicit gates instead of afterthoughts.</p></article>
+              <article><h3>Reference branch is not production.</h3><p>Merge into a branch you can validate. Production promotion should remain a deliberate release step.</p></article>
+            </div>
+          </div>
+        </section>
+
+        <section id="operate" class="dark">
+          <div class="kicker">Operate the loop</div>
+          <h2>Autonomous work still needs visible state.</h2>
+          <p class="intro">Sandman gives you receipts instead of vibes: run state, task files, logs, branches, PR links, review turns, CI outcomes, and merge decisions. You do not babysit the agent, but you can inspect the loop at any time.</p>
+          <div class="ops-grid">
+            <aside class="portal-shot" aria-label="Portal monitoring concept">
+              <div class="portal-top"><strong>Sandman Portal</strong><span class="live">live: polling 1s ago</span></div>
+              <div class="portal-body">
+                <div class="portal-panel">
+                  <h3>RUNS</h3>
+                  <div class="run-row"><b>#1234</b><div><b>Queue dependency state</b><small>running targeted tests</small></div><span class="status">build</span></div>
+                  <div class="run-row"><b>#1235</b><div><b>PR review retry</b><small>waiting for review agent</small></div><span class="status">review</span></div>
+                  <div class="run-row"><b>#1236</b><div><b>Portal settings overlay</b><small>merged into reference</small></div><span class="status">merged</span></div>
+                </div>
+                <div class="portal-panel">
+                  <h3>FLEET</h3>
+                  <div class="metric-row"><span>Active</span><strong>4</strong></div>
+                  <div class="metric-row"><span>Queued</span><strong>7</strong></div>
+                  <div class="metric-row"><span>Reviewing</span><strong>3</strong></div>
+                  <div class="metric-row"><span>Needs validation</span><strong>2</strong></div>
+                </div>
+              </div>
+            </aside>
+            <article class="receipt-card">
+              <h3>Every run leaves a trail.</h3>
+              <p>That trail matters because autonomous coding is only trustworthy when it can be reconstructed after the fact.</p>
+              <ul class="receipt-list">
+                <li><b>task.md</b><span>Rendered task, progress notes, and continuation point.</span></li>
+                <li><b>logs</b><span>Agent output, checks, repair loops, and review responses.</span></li>
+                <li><b>PR</b><span>Code diff, review thread, green checks, merge decision, and linked issue.</span></li>
+              </ul>
+            </article>
+          </div>
+        </section>
+
+        <section id="validate" class="dark">
+          <div class="kicker">After merge</div>
+          <h2>Sandman should feed validation, not bypass it.</h2>
+          <p class="intro">Treat Sandman output the way you would treat fast human output. The implementation loop can merge to a reference branch, but release confidence comes from recurring validation across multiple changes.</p>
+          <div class="validation-grid">
+            <article class="validation-card">
+              <h3>Good engineering still applies.</h3>
+              <p>TDD is not an AI novelty. It is a traditional control that helps agents work in smaller safe loops. Keep it, then add broader validation where the risk demands it.</p>
+              <ul class="check-list">
+                <li><span>OK</span>Targeted tests during implementation.</li>
+                <li><span>OK</span>Self-review before PR creation.</li>
+                <li><span>OK</span>Green CI before merge.</li>
+                <li><span>OK</span>Smoke, e2e, QA, or wider suites after groups of merged work.</li>
+              </ul>
+            </article>
+            <article class="dependency-card">
+              <h3>Current dependencies are explicit.</h3>
+              <p>Today, Sandman expects GitHub for source control and issue workflow, and OpenCode as the implementation agent. That is a current integration boundary, not the eternal product category.</p>
+              <p>The durable idea is workflow-agnostic AFK delivery: any process can feed Sandman clear issues, and Sandman can evolve to support more agents and forges later.</p>
+            </article>
+          </div>
+        </section>
+
+        <section id="methods" class="dark">
+          <div class="kicker">Methodology, correctly placed</div>
+          <h2>Use the upstream method that creates the clearest issues.</h2>
+          <p class="intro">Sandman should lead the marketing story because it owns the autonomous delivery loop. Other skills and disciplines help around it: before the run to create better work, and between runs to keep the codebase healthy.</p>
+          <div class="methods-grid">
+            <div class="method-table">
+              <table>
+                <thead><tr><th>Layer</th><th>Precise role</th><th>Relationship to Sandman</th></tr></thead>
+                <tbody>
+                  <tr><td>Matt Pocock skills</td><td>Alignment, domain language, specs, ticket slicing, TDD, review, and architecture maintenance.</td><td>Optional upstream and surrounding helpers. v1 used <code>to-prd</code> / <code>to-issues</code>; v1.1 uses <code>to-spec</code> / <code>to-tickets</code>.</td></tr>
+                  <tr><td>Spec-driven development</td><td>Specs become the source of truth that tasks are derived from.</td><td>Optional source of agent-ready GitHub issues. Sandman does not need to own the spec layer.</td></tr>
+                  <tr><td>Loop Engineering</td><td>Designing recurring agent systems with triggers, state, verification, budgets, and exits.</td><td>The broader discipline. Sandman is one concrete loop: GitHub issue to merged PR.</td></tr>
+                  <tr><td>Architecture and bug skills</td><td>Periodic investigation, root-cause diagnosis, and codebase health work.</td><td>Recurring inputs that prevent the AFK loop from accelerating codebase rot.</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <article class="method-note">
+              <h3>The handoff stays stable.</h3>
+              <p>Upstream methods can change. The Sandman boundary remains simple: <code>SMART GitHub issue -> sandman run 1234 -> reviewed, merged PR -> validation</code>.</p>
+              <p>That is the marketing spine: Sleep while your agents code. Wake up to reviewable delivery, not a mystery diff.</p>
+            </article>
+          </div>
+        </section>
+
+        <section class="dark final">
+          <div class="kicker">The main page candidate</div>
+          <h2>Wake up to merged PRs, then validate like an engineer.</h2>
+          <p class="intro">Sandman makes AFK coding operational: explicit input, isolated execution, durable progress, review gates, merge discipline, and a clear post-merge validation step.</p>
+          <div class="cta" style="justify-content: center"><a class="button primary" href="../usage/getting-started.md">Run one issue</a><a class="button secondary" href="index.html">Back to prototypes</a></div>
+          <p class="fine-print">Current integrations: GitHub and OpenCode. Product category: autonomous delivery loop for coding agents.</p>
+        </section>
+      </main>
+    </div>
+  </body>
+</html>

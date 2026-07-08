@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Sandman Landing Prototypes</title>
+    <style>
+      :root {
+        --bg: #f2eee3;
+        --panel: #fbf6ea;
+        --ink: #302922;
+        --muted: #6f6559;
+        --line: #cbbda7;
+        --gold: #d8b26e;
+        --brown: #5b4736;
+        --night: #0b1228;
+      }
+
+      * { box-sizing: border-box; }
+
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--ink);
+        font-family: "Space Mono", ui-monospace, SFMono-Regular, Consolas, monospace;
+      }
+
+      main {
+        width: min(1120px, calc(100% - 32px));
+        margin: 0 auto;
+        padding: 54px 0 80px;
+      }
+
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        margin-bottom: 34px;
+      }
+
+      .mark {
+        width: 42px;
+        height: 42px;
+        border-radius: 12px;
+        display: grid;
+        place-items: center;
+        background: var(--gold);
+        color: white;
+        font-weight: 900;
+      }
+
+      h1 {
+        margin: 0 0 10px;
+        font-size: clamp(42px, 7vw, 76px);
+        line-height: 0.95;
+        letter-spacing: -0.08em;
+      }
+
+      .lead {
+        max-width: 780px;
+        color: var(--muted);
+        font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+        font-size: 20px;
+        line-height: 1.5;
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 16px;
+        margin-top: 36px;
+      }
+
+      a.card {
+        display: block;
+        min-height: 230px;
+        text-decoration: none;
+        color: inherit;
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 24px;
+        padding: 24px;
+        box-shadow: 0 18px 50px rgba(91, 71, 54, 0.1);
+      }
+
+      .new { border-color: var(--gold); }
+
+      .tag {
+        display: inline-flex;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        padding: 5px 9px;
+        color: var(--muted);
+        font-size: 12px;
+        margin-bottom: 18px;
+      }
+
+      .new .tag {
+        color: var(--brown);
+        border-color: var(--gold);
+        background: rgba(216, 178, 110, 0.18);
+      }
+
+      h2 {
+        margin: 0 0 10px;
+        font-size: 24px;
+        letter-spacing: -0.05em;
+      }
+
+      p {
+        color: var(--muted);
+        font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+      }
+
+      @media (max-width: 900px) {
+        .grid { grid-template-columns: 1fr; }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div class="brand"><span class="mark">S</span><strong>SANDMAN</strong></div>
+      <h1>Landing page prototypes.</h1>
+      <p class="lead">Eleven directions for presenting Sandman: from early control-plane concepts to the current CLI-owned delivery candidate using official Sandman artwork, a full spec-to-validation flow, and clearer review gates.</p>
+
+      <section class="grid" aria-label="Prototype links">
+        <a class="card" href="prototype-a-control-plane.html"><span class="tag">Prototype A</span><h2>Control Plane</h2><p>Sandman as the control plane for AFK coding agents.</p></a>
+        <a class="card" href="prototype-b-issue-to-merge.html"><span class="tag">Prototype B</span><h2>Issue To Merge</h2><p>Practical issue-to-reviewed-PR workflow narrative.</p></a>
+        <a class="card" href="prototype-c-agent-ops.html"><span class="tag">Prototype C</span><h2>Agent Ops</h2><p>Market-aware execution layer for specs, issues, and agents.</p></a>
+        <a class="card new" href="prototype-d-sleep-workflow.html"><span class="tag">Prototype D</span><h2>Sleep Workflow</h2><p>Slogan-forward page showing grill-with-docs, to-spec, to-tickets, Sandman, review, merge, and Portal.</p></a>
+        <a class="card new" href="prototype-e-engineering-fundamentals.html"><span class="tag">Prototype E</span><h2>Engineering Fundamentals</h2><p>Traditional engineering methodology applied to AI agents instead of reinvented process.</p></a>
+        <a class="card new" href="prototype-f-portal-command-center.html"><span class="tag">Prototype F</span><h2>Portal Command Center</h2><p>Product-surface direction centered on monitoring AFK agent fleets.</p></a>
+        <a class="card new" href="prototype-g-workflow-agnostic-afk-delivery.html"><span class="tag">Prototype G</span><h2>Workflow Agnostic AFK Delivery</h2><p>Any upstream workflow creates SMART GitHub issues; Sandman owns implementation planning through merged PR.</p></a>
+        <a class="card new" href="prototype-h-delivery-loop-champion.html"><span class="tag">Prototype H</span><h2>Delivery Loop Champion</h2><p>Flagship direction: Sandman as the autonomous delivery loop from agent-ready issue to reviewed, merged PR.</p></a>
+        <a class="card new" href="prototype-i-delivery-flowchart.html"><span class="tag">Prototype I</span><h2>Delivery Flowchart</h2><p>Iteration on H: slogan-first hero plus a clearer Sandman-owned workflow chart starting with `sandman run 1234`.</p></a>
+        <a class="card new" href="prototype-j-operational-delivery.html"><span class="tag">Prototype J</span><h2>Operational Delivery</h2><p>Official logo/banner, higher contrast, spec before Sandman, Sandman-owned delivery, and validation after merge.</p></a>
+        <a class="card new" href="prototype-k-operational-delivery.html"><span class="tag">Prototype K</span><h2>Operational Delivery v2</h2><p>Simpler page: banner-first hero, simple mark logo, real Portal screenshot, rounded Sandman workflow box, and a separate Comparison session.</p></a>
+        <a class="card new" href="prototype-l-cli-owned-delivery.html"><span class="tag">Prototype L</span><h2>CLI-Owned Delivery</h2><p>Iteration on K: CLI screenshot, stronger CLI rationale, Matt Pocock workflow, GitHub/OpenCode boundary, Comparison, OpenCode integration, and Sandman Review.</p></a>
+        <a class="card new" href="session-sandman-sdd-loop-engineering.md"><span class="tag">Session</span><h2>Comparison</h2><p>Short positioning note for Sandman, SDD, and Loop Engineering.</p></a>
+        <a class="card new" href="session-sandman-opencode-integration.md"><span class="tag">Session</span><h2>OpenCode Integration</h2><p>How Sandman uses OpenCode and the host OpenCode database so sessions remain inspectable in OpenCode.</p></a>
+        <a class="card new" href="session-sandman-review-module.md"><span class="tag">Session</span><h2>Sandman Review</h2><p>The review module that keeps PR review inside the AFK delivery gate.</p></a>
+      </section>
+    </main>
+  </body>
+</html>

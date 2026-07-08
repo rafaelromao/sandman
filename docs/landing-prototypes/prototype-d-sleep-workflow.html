@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Sandman - Sleep Workflow Prototype</title>
+    <style>
+      :root {
+        --paper: #f2eee3;
+        --paper-2: #fbf6ea;
+        --sand: #eadcc5;
+        --ink: #302922;
+        --muted: #70675d;
+        --line: #cbbda7;
+        --gold: #d8b26e;
+        --gold-dark: #bf8f32;
+        --brown: #5b4736;
+        --green: #45a857;
+        --purple: #6f5fd6;
+        --night: #0b1228;
+      }
+
+      * { box-sizing: border-box; }
+
+      body {
+        margin: 0;
+        background:
+          radial-gradient(circle at 0% 0%, rgba(216, 178, 110, 0.28), transparent 34rem),
+          linear-gradient(180deg, var(--paper) 0%, #eee3d1 100%);
+        color: var(--ink);
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        line-height: 1.5;
+      }
+
+      .wrap { width: min(1160px, calc(100% - 32px)); margin: 0 auto; }
+
+      nav {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 24px 0;
+        border-bottom: 1px solid var(--line);
+        font-family: "Space Mono", ui-monospace, monospace;
+      }
+
+      .brand { display: flex; align-items: center; gap: 12px; letter-spacing: 0.25em; font-weight: 800; }
+      .mark { width: 38px; height: 38px; border-radius: 10px; display: grid; place-items: center; background: var(--gold); color: white; letter-spacing: 0; }
+      .navlinks { display: flex; gap: 18px; }
+      .navlinks a { color: var(--muted); text-decoration: none; font-size: 13px; letter-spacing: 0; }
+
+      .hero { display: grid; grid-template-columns: 1.02fr 0.98fr; gap: 42px; align-items: center; padding: 66px 0 58px; }
+      .eyebrow { color: var(--gold-dark); font: 800 13px "Space Mono", ui-monospace, monospace; letter-spacing: 0.12em; text-transform: uppercase; }
+      h1, h2, h3, p { margin-top: 0; }
+      h1 { margin: 16px 0 18px; font-size: clamp(48px, 8vw, 90px); line-height: 0.9; letter-spacing: -0.085em; }
+      .lead { color: var(--muted); font-size: clamp(18px, 2.2vw, 22px); max-width: 680px; }
+      .cta { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 28px; }
+      .button { min-height: 48px; display: inline-flex; align-items: center; justify-content: center; padding: 0 18px; border-radius: 999px; text-decoration: none; font-weight: 800; }
+      .primary { background: var(--ink); color: var(--paper); }
+      .secondary { color: var(--ink); border: 1px solid var(--line); background: rgba(255, 255, 255, 0.25); }
+
+      .portal {
+        border: 1px solid var(--line);
+        border-radius: 26px;
+        overflow: hidden;
+        background: var(--paper-2);
+        box-shadow: 0 28px 70px rgba(91, 71, 54, 0.18);
+      }
+
+      .portal-top { padding: 18px; border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; gap: 10px; font-family: "Space Mono", ui-monospace, monospace; }
+      .poll { border: 1px solid var(--line); border-radius: 999px; padding: 8px 12px; color: var(--muted); font-size: 12px; }
+      .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--green); margin-right: 6px; }
+      .portal-body { padding: 18px; }
+      .filters { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 16px; }
+      .chip { border: 1px solid var(--line); border-radius: 999px; padding: 8px 13px; color: var(--muted); }
+      .chip.active { background: var(--gold); border-color: var(--gold); color: #1d1711; font-weight: 800; }
+      .run { display: grid; grid-template-columns: 1fr auto; gap: 12px; padding: 16px 0; border-top: 1px solid var(--line); }
+      .run:first-of-type { border-top: 0; }
+      .run strong { display: block; }
+      .run small { color: var(--muted); }
+      .status { align-self: start; border: 1px solid var(--line); border-radius: 999px; padding: 5px 10px; font-size: 12px; color: var(--muted); }
+      .status.running { color: #895f10; background: #faecd1; }
+      .status.reviewing { color: var(--purple); background: #e9e6ff; }
+
+      section { padding: 72px 0; border-top: 1px solid rgba(203, 189, 167, 0.8); }
+      h2 { font-size: clamp(34px, 5vw, 60px); line-height: 0.95; letter-spacing: -0.07em; margin-bottom: 14px; }
+      .intro { max-width: 760px; color: var(--muted); font-size: 19px; }
+
+      .workflow { display: grid; grid-template-columns: repeat(8, 1fr); gap: 10px; margin-top: 28px; }
+      .step { min-height: 190px; border: 1px solid var(--line); border-radius: 22px; background: var(--paper-2); padding: 18px; box-shadow: 0 14px 34px rgba(91, 71, 54, 0.08); }
+      .num { display: inline-grid; place-items: center; width: 38px; height: 38px; border-radius: 50%; color: white; font: 900 16px "Space Mono", ui-monospace, monospace; margin-bottom: 18px; }
+      .green { background: #3fcf5f; }
+      .yellow { background: #f4c542; color: #21180a; }
+      .red { background: #dc2746; }
+      .violet { background: #a832c7; }
+      .blue { background: #4aa8f0; }
+      .gold { background: var(--gold-dark); }
+      .step h3 { font-size: 18px; line-height: 1.1; margin-bottom: 10px; }
+      .step p { color: var(--muted); font-size: 14px; margin-bottom: 0; }
+
+      .map { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-top: 28px; }
+      .panel { border: 1px solid var(--line); border-radius: 24px; padding: 24px; background: var(--paper-2); }
+      .panel.dark { background: var(--night); color: #f2eee3; border-color: #222b45; }
+      .panel p, td { color: var(--muted); }
+      .panel.dark p { color: #aeb8ca; }
+      code, pre { font-family: "Space Mono", ui-monospace, monospace; }
+      pre { margin: 16px 0 0; padding: 18px; border-radius: 16px; overflow: auto; background: #21180f; color: #f2eee3; font-size: 13px; }
+      .panel.dark pre { background: #070b17; }
+
+      table { width: 100%; border-collapse: collapse; margin-top: 28px; background: var(--paper-2); border: 1px solid var(--line); border-radius: 22px; overflow: hidden; }
+      th, td { padding: 16px; text-align: left; vertical-align: top; border-bottom: 1px solid var(--line); }
+      th { color: var(--ink); background: var(--sand); }
+      tr:last-child td { border-bottom: 0; }
+
+      .final { text-align: center; padding-bottom: 100px; }
+      .final .intro { margin: 0 auto; }
+
+      @media (max-width: 1000px) { .hero, .map { grid-template-columns: 1fr; } .workflow { grid-template-columns: repeat(2, 1fr); } .navlinks { display: none; } }
+      @media (max-width: 620px) { .workflow { grid-template-columns: 1fr; } }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <nav>
+        <div class="brand"><span class="mark">S</span>SANDMAN</div>
+        <div class="navlinks"><a href="#workflow">Workflow</a><a href="#mapping">Matt v1.1</a><a href="#compare">Compare</a><a href="#start">Start</a></div>
+      </nav>
+
+      <main>
+        <section class="hero">
+          <div>
+            <div class="eyebrow">Sleep while your agents code.</div>
+            <h1>Turn prepared issues into reviewed PRs while you are AFK.</h1>
+            <p class="lead">Use human-centered engineering skills to sharpen the spec and slice the work. Then hand the ready GitHub issues to Sandman, where agents plan, test, implement, self-review, request review, and merge behind visible gates.</p>
+            <div class="cta"><a class="button primary" href="#workflow">See the full loop</a><a class="button secondary" href="#mapping">Map v1.0 to v1.1</a></div>
+          </div>
+          <aside class="portal" aria-label="Sandman Portal preview">
+            <div class="portal-top"><strong>SANDMAN</strong><span class="poll"><span class="dot"></span>Polling - 1s ago</span></div>
+            <div class="portal-body">
+              <div class="filters"><span class="chip active">All</span><span class="chip">Running</span><span class="chip">Reviewing</span><span class="chip">Queued</span><span class="chip">Completed</span></div>
+              <div class="run"><div><strong>#42 Refactor portal settings overlay</strong><small>issue -> plan -> tdd -> self-review</small></div><span class="status running">running</span></div>
+              <div class="run"><div><strong>#43 Add light theme tokens</strong><small>PR open, waiting for delegated review</small></div><span class="status reviewing">reviewing</span></div>
+              <div class="run"><div><strong>#44 Surface queue dependency state</strong><small>blocked until #42 completes</small></div><span class="status">queued</span></div>
+            </div>
+          </aside>
+        </section>
+
+        <section id="workflow">
+          <div class="eyebrow">The workflow you actually use</div>
+          <h2>From foggy idea to merged PR fleet.</h2>
+          <p class="intro">Sandman is not the whole process. It is the AFK execution half of a larger engineering loop: clarify the work like you would with humans, publish the spec, break it into slices, then let agents execute those slices in isolated sandboxes.</p>
+          <div class="workflow">
+            <article class="step"><span class="num green">1</span><h3>grill-with-docs or wayfinder</h3><p>Resolve uncertainty, sharpen vocabulary, write ADRs and domain terms.</p></article>
+            <article class="step"><span class="num yellow">2</span><h3>to-spec</h3><p>Publish the PRD/spec: problem, solution, user stories, decisions, testing seams.</p></article>
+            <article class="step"><span class="num red">3</span><h3>to-tickets</h3><p>Break the spec into tracer-bullet GitHub issues with blocking edges.</p></article>
+            <article class="step"><span class="num violet">4</span><h3>sandman run</h3><p>Run ready issues in worktree or container sandboxes, often in parallel.</p></article>
+            <article class="step"><span class="num blue">5</span><h3>plan + TDD</h3><p>The agent plans the issue and drives red-green work at agreed seams.</p></article>
+            <article class="step"><span class="num gold">6</span><h3>self-review + PR</h3><p>Review against standards and spec, then open a durable pull request.</p></article>
+            <article class="step"><span class="num blue">7</span><h3>review daemon</h3><p>`sandman review`, OpenCode, Codex, or another review agent responds to PR comments.</p></article>
+            <article class="step"><span class="num green">8</span><h3>merge gate + Portal</h3><p>Monitor progress, require green checks and approval, then merge.</p></article>
+          </div>
+        </section>
+
+        <section id="mapping">
+          <div class="eyebrow">Matt Pocock skills v1.1 mapping</div>
+          <h2>Sandman plugs into the new names without depending on the package.</h2>
+          <div class="map">
+            <article class="panel">
+              <h3>Your v1.0 muscle memory</h3>
+              <p>The older flow used `grill-with-docs -> to-prd -> to-issues`, then Sandman handled implementation and review.</p>
+              <pre>/grill-with-docs
+/to-prd
+/to-issues
+sandman run label:ready-for-agent</pre>
+            </article>
+            <article class="panel dark">
+              <h3>v1.1 vocabulary</h3>
+              <p>The same intent maps cleanly to `grill-with-docs or wayfinder -> to-spec -> to-tickets`. Sandman consumes the resulting GitHub tickets.</p>
+              <pre>/grill-with-docs
+# or /wayfinder for foggy multi-session work
+/to-spec
+/to-tickets
+sandman run label:ready-for-agent --parallel 4</pre>
+            </article>
+          </div>
+          <table>
+            <thead><tr><th>v1.1 skill</th><th>Role before Sandman</th><th>Sandman handoff</th></tr></thead>
+            <tbody>
+              <tr><td>`grill-with-docs`</td><td>Build shared understanding, domain language, and ADRs.</td><td>Creates the context agents need so AFK work does not drift.</td></tr>
+              <tr><td>`wayfinder`</td><td>Maps huge foggy efforts into investigation tickets until the way is clear.</td><td>Useful upstream when the work is too large to spec in one sitting.</td></tr>
+              <tr><td>`to-spec`</td><td>Publishes the PRD/spec with problem, solution, user stories, decisions, and seams.</td><td>The parent context issue agents refer back to while implementing slices.</td></tr>
+              <tr><td>`to-tickets`</td><td>Publishes tracer-bullet tickets with blocking edges.</td><td>Sandman runs the ready frontier of those tickets in parallel.</td></tr>
+              <tr><td>`implement`</td><td>Manual agent implementation loop using TDD and code-review.</td><td>Sandman automates the same implementation discipline across AFK runs.</td></tr>
+              <tr><td>`code-review`</td><td>Two-axis review: standards and spec.</td><td>Sandman self-review and PR review keep that review discipline in the delivery gate.</td></tr>
+            </tbody>
+          </table>
+        </section>
+
+        <section id="compare">
+          <div class="eyebrow">SDD, Loop Engineering, and Sandman</div>
+          <h2>Specs prepare the work. Sandman operates the work.</h2>
+          <table>
+            <thead><tr><th>Approach</th><th>Best at</th><th>Where Sandman fits</th></tr></thead>
+            <tbody>
+              <tr><td>Spec-driven development</td><td>Executable intent, requirements, plans, and tasks before code.</td><td>Take the approved spec/tasks and execute them as sandboxed agent runs with review gates.</td></tr>
+              <tr><td>Matt's Loop Engineering flow</td><td>Small composable skills, human alignment, domain language, tracer bullets, TDD, code-review.</td><td>Use the upstream skills to create high-quality GitHub tickets, then Sandman runs them AFK.</td></tr>
+              <tr><td>Sandman</td><td>Parallel execution, isolation, status, retries, PR review loops, merge gates, portal monitoring.</td><td>The execution layer after the spec and ticket frontier are ready.</td></tr>
+            </tbody>
+          </table>
+        </section>
+
+        <section id="start" class="final">
+          <div class="eyebrow">The promise</div>
+          <h2>Do the thinking awake. Let Sandman run the loop asleep.</h2>
+          <p class="intro">A good spec tells the agent what matters. Good tickets make the work sliceable. Sandman makes the execution observable, isolated, reviewable, and mergeable while you are away.</p>
+          <div class="cta" style="justify-content: center"><a class="button primary" href="../usage/getting-started.md">Set up Sandman</a><a class="button secondary" href="prototype-f-portal-command-center.html">See the Portal concept</a></div>
+        </section>
+      </main>
+    </div>
+  </body>
+</html>

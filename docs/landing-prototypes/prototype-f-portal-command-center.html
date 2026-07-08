@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Sandman - Portal Command Center Prototype</title>
+    <style>
+      :root {
+        --night: #0b1228;
+        --night-2: #0d1530;
+        --line: #222b45;
+        --ink: #f2eee3;
+        --muted: #94a3b8;
+        --gold: #d8b26e;
+        --gold-2: #e9c98a;
+        --green: #22c55e;
+        --blue: #4cc9f0;
+        --purple: #a78bfa;
+        --paper: #f2eee3;
+      }
+
+      * { box-sizing: border-box; }
+      body { margin: 0; background: radial-gradient(circle at 80% 0%, rgba(216,178,110,0.18), transparent 34rem), var(--night); color: var(--ink); font-family: Inter, ui-sans-serif, system-ui, sans-serif; line-height: 1.5; }
+      .wrap { width: min(1200px, calc(100% - 32px)); margin: 0 auto; }
+      nav { display: flex; justify-content: space-between; align-items: center; padding: 24px 0; font-family: "Space Mono", ui-monospace, monospace; border-bottom: 1px solid var(--line); }
+      .brand { display: flex; align-items: center; gap: 12px; letter-spacing: 0.22em; font-weight: 800; }
+      .mark { width: 38px; height: 38px; border-radius: 10px; display: grid; place-items: center; background: var(--gold); color: white; letter-spacing: 0; }
+      nav a { color: var(--muted); text-decoration: none; margin-left: 16px; font-size: 13px; letter-spacing: 0; }
+      .hero { padding: 62px 0 54px; display: grid; grid-template-columns: 0.9fr 1.1fr; gap: 40px; align-items: center; }
+      .kicker { color: var(--gold-2); font: 900 12px "Space Mono", ui-monospace, monospace; letter-spacing: 0.12em; text-transform: uppercase; }
+      h1, h2, h3, p { margin-top: 0; }
+      h1 { margin: 18px 0; font-size: clamp(46px, 7.6vw, 90px); line-height: 0.9; letter-spacing: -0.085em; }
+      .lead { color: #c9d2e4; font-size: clamp(18px, 2.2vw, 23px); max-width: 690px; }
+      .actions { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 28px; }
+      .btn { min-height: 48px; display: inline-flex; align-items: center; justify-content: center; border-radius: 12px; padding: 0 18px; text-decoration: none; font-weight: 850; }
+      .btn.primary { background: var(--gold); color: #111827; }
+      .btn.secondary { color: var(--ink); border: 1px solid var(--line); background: rgba(255,255,255,0.04); }
+
+      .dashboard { border: 1px solid var(--line); border-radius: 28px; overflow: hidden; background: #081025; box-shadow: 0 30px 90px rgba(0,0,0,0.35); }
+      .dash-top { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 16px; border-bottom: 1px solid var(--line); font-family: "Space Mono", ui-monospace, monospace; color: var(--muted); }
+      .pulse { color: var(--green); }
+      .dash-grid { display: grid; grid-template-columns: 1.1fr 0.9fr; gap: 14px; padding: 16px; }
+      .box { border: 1px solid var(--line); border-radius: 18px; background: var(--night-2); padding: 16px; }
+      .box h3 { margin-bottom: 12px; font-size: 16px; font-family: "Space Mono", ui-monospace, monospace; color: var(--gold-2); }
+      .run { display: grid; grid-template-columns: 52px 1fr auto; gap: 12px; padding: 12px 0; border-top: 1px solid var(--line); }
+      .run:first-of-type { border-top: 0; }
+      .run small { color: var(--muted); }
+      .pill { align-self: start; border-radius: 999px; padding: 5px 9px; font-size: 12px; border: 1px solid var(--line); color: var(--muted); }
+      .running { color: var(--green); } .reviewing { color: var(--purple); } .queued { color: var(--gold-2); }
+      .metric { display: grid; grid-template-columns: 1fr auto; gap: 10px; padding: 12px 0; border-top: 1px solid var(--line); }
+      .metric:first-of-type { border-top: 0; }
+      .metric span { color: var(--muted); } .metric strong { color: var(--ink); }
+      .timeline { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px; }
+      .node { border: 1px solid var(--line); border-radius: 14px; padding: 12px; min-height: 94px; background: rgba(255,255,255,0.025); }
+      .node b { display: block; color: var(--ink); font-size: 13px; } .node span { color: var(--muted); font-size: 12px; }
+
+      section { padding: 76px 0; border-top: 1px solid var(--line); }
+      h2 { font-size: clamp(34px, 5.2vw, 64px); line-height: 0.95; letter-spacing: -0.075em; margin-bottom: 14px; }
+      .intro { max-width: 780px; color: #c9d2e4; font-size: 19px; }
+      .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-top: 30px; }
+      .card { border: 1px solid var(--line); border-radius: 24px; padding: 24px; background: rgba(255,255,255,0.035); }
+      .card h3 { color: var(--ink); font-size: 24px; letter-spacing: -0.04em; }
+      .card p, td { color: var(--muted); }
+      table { width: 100%; border-collapse: collapse; margin-top: 30px; border: 1px solid var(--line); border-radius: 24px; overflow: hidden; background: rgba(255,255,255,0.035); }
+      th, td { padding: 17px; text-align: left; vertical-align: top; border-bottom: 1px solid var(--line); }
+      th { background: rgba(216,178,110,0.12); color: var(--gold-2); }
+      tr:last-child td { border-bottom: 0; }
+      .paper { background: var(--paper); color: #302922; border-radius: 32px; padding: 42px; }
+      .paper h2 { color: #302922; } .paper p { color: #70675d; }
+      .final { text-align: center; padding-bottom: 110px; }
+      .final .intro { margin: 0 auto; }
+      @media (max-width: 1000px) { .hero, .dash-grid, .cards { grid-template-columns: 1fr; } .timeline { grid-template-columns: 1fr 1fr; } nav div:last-child { display: none; } }
+      @media (max-width: 620px) { .timeline { grid-template-columns: 1fr; } .run { grid-template-columns: 1fr; } }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <nav><div class="brand"><span class="mark">S</span>SANDMAN</div><div><a href="#portal">Portal</a><a href="#review">Review</a><a href="#compare">Compare</a><a href="#start">Start</a></div></nav>
+
+      <main>
+        <section class="hero">
+          <div>
+            <div class="kicker">The AFK command center</div>
+            <h1>Monitor the work while your agents code.</h1>
+            <p class="lead">Sandman Portal turns background agent work into a visible operations board: runs, queues, blockers, reviews, logs, and merge readiness in one place.</p>
+            <div class="actions"><a class="btn primary" href="#portal">Explore the command center</a><a class="btn secondary" href="prototype-d-sleep-workflow.html">See the full workflow</a></div>
+          </div>
+          <aside class="dashboard" aria-label="Portal dashboard concept">
+            <div class="dash-top"><strong>Sandman Portal</strong><span class="pulse">● polling - 1s ago</span></div>
+            <div class="dash-grid">
+              <div class="box"><h3>Runs</h3><div class="run"><strong>#42</strong><div><b>Portal settings overlay</b><small>plan -> tdd -> self-review</small></div><span class="pill running">running</span></div><div class="run"><strong>#43</strong><div><b>Light theme tokens</b><small>PR open, review requested</small></div><span class="pill reviewing">reviewing</span></div><div class="run"><strong>#44</strong><div><b>Queue dependency state</b><small>blocked by #42</small></div><span class="pill queued">queued</span></div></div>
+              <div class="box"><h3>Fleet</h3><div class="metric"><span>Active sandboxes</span><strong>4</strong></div><div class="metric"><span>Queued issues</span><strong>8</strong></div><div class="metric"><span>PRs in review</span><strong>3</strong></div><div class="metric"><span>Mergeable</span><strong>2</strong></div></div>
+              <div class="timeline"><div class="node"><b>Spec</b><span>Parent context published</span></div><div class="node"><b>Tickets</b><span>Tracer bullets with blockers</span></div><div class="node"><b>Sandbox</b><span>Worktree or container</span></div><div class="node"><b>Code</b><span>Plan and TDD</span></div><div class="node"><b>Review</b><span>CI plus review agent</span></div><div class="node"><b>Merge</b><span>Approved gate</span></div></div>
+            </div>
+          </aside>
+        </section>
+
+        <section id="portal">
+          <div class="kicker">What the Portal proves</div>
+          <h2>AFK does not mean invisible.</h2>
+          <p class="intro">The product promise only works if developers can see what happened. Sandman records durable state and exposes it through CLI commands and the Portal, so sleeping through the run does not mean losing control of the work.</p>
+          <div class="cards">
+            <article class="card"><h3>Status without chat scrollback</h3><p>Runs move through queued, running, reviewing, completed, failed, and archived states.</p></article>
+            <article class="card"><h3>Blockers stay explicit</h3><p>Tickets created from `to-tickets` keep their blocking edges. Sandman can run the ready frontier instead of guessing order.</p></article>
+            <article class="card"><h3>Logs stay attached</h3><p>When an agent fails or stalls, the run leaves logs, branches, task files, and events behind.</p></article>
+          </div>
+        </section>
+
+        <section id="review">
+          <div class="paper">
+            <div class="kicker">Review modes</div>
+            <h2>Use Sandman's review daemon, or bring your own reviewer.</h2>
+            <p>Sandman can run `sandman review` as a daemon that responds to review requests. Or you can use OpenCode, Codex, Copilot, CodeRabbit, or any review agent that attends to comments on the PR. The important part is not the reviewer brand. The important part is that PR review is a gate, not an afterthought.</p>
+          </div>
+          <table>
+            <thead><tr><th>Review option</th><th>How it fits</th><th>Why it matters</th></tr></thead>
+            <tbody>
+              <tr><td>`sandman review` daemon</td><td>Listens for review requests and runs the configured review workflow.</td><td>Integrated with Sandman's AFK operating model.</td></tr>
+              <tr><td>OpenCode or Codex reviewer</td><td>Responds to PR comments such as a configured review trigger.</td><td>Lets teams use their preferred review agent.</td></tr>
+              <tr><td>Human reviewer</td><td>Reviews the PR like normal, with logs and spec links available.</td><td>Preserves the same accountability as traditional development.</td></tr>
+            </tbody>
+          </table>
+        </section>
+
+        <section id="compare">
+          <div class="kicker">Compared with SDD and Loop Engineering</div>
+          <h2>The Portal is where upstream planning becomes live delivery.</h2>
+          <p class="intro">SDD and Matt's v1.1 skill loop help create the right artifacts. The Portal shows those artifacts turning into running jobs, review requests, and mergeable pull requests.</p>
+          <div class="cards">
+            <article class="card"><h3>Spec-driven development</h3><p>Great for turning intent into structured specs and task lists. Sandman shows the execution state of those tasks.</p></article>
+            <article class="card"><h3>Loop Engineering</h3><p>Great for alignment, vocabulary, tracer bullets, TDD, and code-review. Sandman runs the ticket frontier AFK.</p></article>
+            <article class="card"><h3>Sandman Portal</h3><p>Great for monitoring many isolated agent runs and making review/merge state visible.</p></article>
+          </div>
+        </section>
+
+        <section id="start" class="final">
+          <div class="kicker">Close the loop</div>
+          <h2>Sleep while your agents code. Watch when you want. Review when ready.</h2>
+          <p class="intro">Sandman makes AFK work visible enough to trust and structured enough to merge.</p>
+          <div class="actions" style="justify-content: center"><a class="btn primary" href="../usage/portal.md">Read Portal docs</a><a class="btn secondary" href="prototype-e-engineering-fundamentals.html">See the engineering-method page</a></div>
+        </section>
+      </main>
+    </div>
+  </body>
+</html>

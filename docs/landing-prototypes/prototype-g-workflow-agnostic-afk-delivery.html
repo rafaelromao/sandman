@@ -1,0 +1,307 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Sandman - Workflow Agnostic AFK Delivery Prototype</title>
+    <style>
+      :root {
+        --paper: #f2eee3;
+        --paper-2: #fbf6ea;
+        --sand: #eadcc5;
+        --ink: #302922;
+        --muted: #70675d;
+        --line: #cbbda7;
+        --gold: #d8b26e;
+        --gold-dark: #b98425;
+        --brown: #5b4736;
+        --night: #0b1228;
+        --night-2: #0d1530;
+        --steel: #94a3b8;
+        --green: #22c55e;
+        --blue: #4cc9f0;
+        --purple: #a78bfa;
+        --red: #dc2746;
+      }
+
+      * { box-sizing: border-box; }
+
+      html { scroll-behavior: smooth; }
+
+      body {
+        margin: 0;
+        background:
+          radial-gradient(circle at 10% 0%, rgba(216, 178, 110, 0.32), transparent 32rem),
+          linear-gradient(180deg, var(--paper) 0%, #eee3d1 56%, var(--night) 56%, var(--night) 100%);
+        color: var(--ink);
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        line-height: 1.5;
+      }
+
+      .wrap { width: min(1180px, calc(100% - 32px)); margin: 0 auto; }
+
+      nav {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 24px 0;
+        border-bottom: 1px solid var(--line);
+        font-family: "Space Mono", ui-monospace, SFMono-Regular, Consolas, monospace;
+      }
+
+      .brand { display: flex; align-items: center; gap: 12px; font-weight: 800; letter-spacing: 0.24em; }
+      .mark { width: 38px; height: 38px; border-radius: 10px; display: grid; place-items: center; background: var(--gold); color: white; letter-spacing: 0; }
+      .navlinks { display: flex; gap: 16px; }
+      .navlinks a { color: var(--muted); text-decoration: none; font-size: 13px; letter-spacing: 0; }
+
+      .hero {
+        display: grid;
+        grid-template-columns: 1.04fr 0.96fr;
+        gap: 42px;
+        align-items: center;
+        padding: 66px 0 58px;
+      }
+
+      .eyebrow { color: var(--gold-dark); font: 900 12px "Space Mono", ui-monospace, monospace; letter-spacing: 0.12em; text-transform: uppercase; }
+      h1, h2, h3, p { margin-top: 0; }
+      h1 { margin: 16px 0 18px; font-size: clamp(48px, 8vw, 92px); line-height: 0.9; letter-spacing: -0.085em; }
+      .lead { color: var(--muted); font-size: clamp(18px, 2.2vw, 23px); max-width: 730px; }
+      .cta { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 28px; }
+      .button { min-height: 48px; display: inline-flex; justify-content: center; align-items: center; padding: 0 18px; border-radius: 999px; text-decoration: none; font-weight: 850; }
+      .button.primary { background: var(--ink); color: var(--paper); }
+      .button.secondary { border: 1px solid var(--line); color: var(--ink); background: rgba(255,255,255,0.26); }
+
+      .handoff-card {
+        border: 1px solid var(--line);
+        border-radius: 30px;
+        background: var(--paper-2);
+        box-shadow: 0 28px 70px rgba(91, 71, 54, 0.18);
+        overflow: hidden;
+      }
+
+      .handoff-top { padding: 18px; border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; gap: 12px; font-family: "Space Mono", ui-monospace, monospace; color: var(--muted); }
+      .handoff-body { padding: 18px; }
+      .rail { display: grid; gap: 10px; }
+      .rail-row { display: grid; grid-template-columns: 120px 1fr; gap: 12px; align-items: start; padding: 14px; border: 1px solid var(--line); border-radius: 18px; background: rgba(255,255,255,0.28); }
+      .rail-row strong { display: block; }
+      .rail-row span { color: var(--muted); font-size: 14px; }
+      .pill { display: inline-flex; justify-content: center; border-radius: 999px; padding: 5px 9px; font: 800 12px "Space Mono", ui-monospace, monospace; }
+      .upstream { color: var(--brown); background: #eadcc5; }
+      .sandman { color: #111827; background: var(--gold); }
+      .output { color: white; background: var(--green); }
+
+      section { padding: 76px 0; border-top: 1px solid rgba(203, 189, 167, 0.8); }
+      section.dark { color: var(--paper); border-top-color: var(--line); }
+      h2 { font-size: clamp(34px, 5vw, 64px); line-height: 0.95; letter-spacing: -0.075em; margin-bottom: 14px; }
+      .intro { max-width: 800px; color: var(--muted); font-size: 19px; }
+      .dark .intro { color: #c9d2e4; }
+
+      .boundary { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-top: 30px; }
+      .zone { border: 1px solid var(--line); border-radius: 26px; padding: 24px; background: var(--paper-2); min-height: 310px; }
+      .zone.dark-zone { background: var(--night); color: var(--paper); border-color: #222b45; }
+      .zone h3 { font-size: 26px; letter-spacing: -0.05em; margin-bottom: 12px; }
+      .zone p, .zone li { color: var(--muted); }
+      .zone.dark-zone p, .zone.dark-zone li { color: #c9d2e4; }
+      ul { padding-left: 20px; }
+      li { margin: 8px 0; }
+
+      .smart-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; margin-top: 28px; }
+      .smart { border: 1px solid var(--line); border-radius: 22px; padding: 18px; background: var(--paper-2); min-height: 210px; }
+      .smart b { display: grid; place-items: center; width: 42px; height: 42px; border-radius: 50%; background: var(--gold); margin-bottom: 18px; font: 900 20px "Space Mono", ui-monospace, monospace; }
+      .smart h3 { font-size: 20px; margin-bottom: 8px; }
+      .smart p { color: var(--muted); font-size: 14px; }
+
+      .source-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-top: 28px; }
+      .source { border: 1px solid var(--line); border-radius: 24px; padding: 22px; background: rgba(255,255,255,0.035); }
+      .source h3 { font-size: 22px; color: var(--paper); }
+      .source p { color: #c9d2e4; }
+      .source code { color: var(--gold-2, #e9c98a); }
+
+      .execution { display: grid; grid-template-columns: repeat(7, 1fr); gap: 10px; margin-top: 28px; }
+      .exec-step { border: 1px solid #222b45; border-radius: 18px; background: var(--night-2); min-height: 172px; padding: 16px; }
+      .exec-step span { color: var(--gold); font: 800 12px "Space Mono", ui-monospace, monospace; }
+      .exec-step h3 { color: var(--paper); font-size: 18px; line-height: 1.1; margin: 14px 0 10px; }
+      .exec-step p { color: var(--steel); font-size: 14px; margin: 0; }
+
+      .portal { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-top: 30px; }
+      .screen { border: 1px solid #222b45; border-radius: 26px; background: #081025; overflow: hidden; }
+      .screen-top { display: flex; justify-content: space-between; gap: 12px; padding: 15px; border-bottom: 1px solid #222b45; font-family: "Space Mono", ui-monospace, monospace; color: var(--steel); }
+      .pulse { color: var(--green); }
+      .screen-body { padding: 15px; }
+      .run { display: grid; grid-template-columns: 54px 1fr auto; gap: 12px; align-items: start; padding: 13px 0; border-top: 1px solid #222b45; }
+      .run:first-child { border-top: 0; }
+      .run b { color: var(--paper); }
+      .run small { color: var(--steel); display: block; }
+      .state { border: 1px solid #222b45; border-radius: 999px; padding: 5px 8px; font-size: 12px; color: var(--steel); }
+      .running { color: var(--green); } .reviewing { color: var(--purple); } .merged { color: var(--gold); }
+      .callout { border: 1px solid #222b45; border-radius: 26px; padding: 26px; background: rgba(255,255,255,0.035); }
+      .callout h3 { color: var(--paper); font-size: 28px; letter-spacing: -0.05em; }
+      .callout p { color: #c9d2e4; }
+
+      table { width: 100%; border-collapse: collapse; margin-top: 30px; border: 1px solid #222b45; border-radius: 24px; overflow: hidden; background: rgba(255,255,255,0.035); }
+      th, td { padding: 17px; text-align: left; vertical-align: top; border-bottom: 1px solid #222b45; }
+      th { background: rgba(216,178,110,0.12); color: var(--gold); }
+      td { color: #c9d2e4; }
+      tr:last-child td { border-bottom: 0; }
+
+      .final { text-align: center; padding-bottom: 110px; }
+      .final .intro { margin: 0 auto; }
+      .final .button.secondary { color: var(--paper); border-color: #222b45; background: rgba(255,255,255,0.04); }
+
+      @media (max-width: 1020px) {
+        .hero, .boundary, .portal { grid-template-columns: 1fr; }
+        .smart-grid { grid-template-columns: repeat(2, 1fr); }
+        .source-grid { grid-template-columns: 1fr 1fr; }
+        .execution { grid-template-columns: repeat(2, 1fr); }
+        .navlinks { display: none; }
+      }
+
+      @media (max-width: 640px) {
+        .smart-grid, .source-grid, .execution { grid-template-columns: 1fr; }
+        .rail-row, .run { grid-template-columns: 1fr; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <nav aria-label="Primary navigation">
+        <div class="brand"><span class="mark">S</span>SANDMAN</div>
+        <div class="navlinks"><a href="#boundary">Boundary</a><a href="#smart">SMART Issues</a><a href="#sandman">Sandman</a><a href="#compare">Compare</a></div>
+      </nav>
+
+      <main>
+        <section class="hero">
+          <div>
+            <div class="eyebrow">Sleep while your agents code.</div>
+            <h1>Plug Sandman into any workflow that creates good GitHub issues.</h1>
+            <p class="lead">Sandman does not depend on Matt Pocock skills, SDD, Loop Engineering, or any planning religion. Once your GitHub issues are SMART and agent-ready, Sandman takes over the AFK implementation loop from implementation planning to reviewed and merged PR.</p>
+            <div class="cta"><a class="button primary" href="#boundary">See the boundary</a><a class="button secondary" href="#smart">Define agent-ready</a></div>
+          </div>
+
+          <aside class="handoff-card" aria-label="Workflow handoff preview">
+            <div class="handoff-top"><strong>handoff contract</strong><span>GitHub issue -> merged PR</span></div>
+            <div class="handoff-body">
+              <div class="rail">
+                <div class="rail-row"><span class="pill upstream">before</span><div><strong>Any upstream workflow</strong><span>Matt v1, Matt v1.1, SDD, Loop Engineering, your PM, or a senior engineer writes the issues.</span></div></div>
+                <div class="rail-row"><span class="pill sandman">sandman</span><div><strong>AFK implementation</strong><span>Plan, TDD, self-review, PR creation, PR review, back-merge, and merge gate.</span></div></div>
+                <div class="rail-row"><span class="pill output">output</span><div><strong>Merged pull request</strong><span>Not just generated code. Not just a review. A completed issue with a merged PR and durable run trail.</span></div></div>
+              </div>
+            </div>
+          </aside>
+        </section>
+
+        <section id="boundary">
+          <div class="eyebrow">Product boundary</div>
+          <h2>Sandman starts after the issue is ready.</h2>
+          <p class="intro">The clearest way to explain Sandman is by separating responsibility. Other workflows can discover, debate, specify, and slice work. Sandman replaces the AFK implementation phase once there is a well-described GitHub issue to execute.</p>
+          <div class="boundary">
+            <article class="zone">
+              <h3>Before Sandman</h3>
+              <p>Create the work item however your team likes.</p>
+              <ul>
+                <li>Matt Pocock v1: `grill-with-docs -> to-prd -> to-issues`.</li>
+                <li>Matt Pocock v1.1: `grill-with-docs` or `wayfinder -> to-spec -> to-tickets`.</li>
+                <li>Spec-driven development, Kiro, Spec Kit, Linear, Jira, or a human-written issue.</li>
+              </ul>
+            </article>
+            <article class="zone dark-zone">
+              <h3>Sandman</h3>
+              <p>Run the implementation loop while you are away.</p>
+              <ul>
+                <li>Select ready GitHub issues and respect blockers.</li>
+                <li>Create isolated worktrees or containers.</li>
+                <li>Drive plan, TDD, self-review, PR creation, PR review, and merge.</li>
+                <li>Show progress in Sandman Portal.</li>
+              </ul>
+            </article>
+            <article class="zone">
+              <h3>After Sandman</h3>
+              <p>You return to auditable delivery artifacts.</p>
+              <ul>
+                <li>Merged pull requests, not loose patches.</li>
+                <li>Logs, run state, task prompts, branches, review history, and issue links.</li>
+                <li>Human oversight where product or architecture judgment is still needed.</li>
+              </ul>
+            </article>
+          </div>
+        </section>
+
+        <section id="smart">
+          <div class="eyebrow">The input contract</div>
+          <h2>Agent-ready means SMART enough to run AFK.</h2>
+          <p class="intro">Sandman is workflow-agnostic, but it is not ambiguity-proof. The handoff works best when GitHub issues are written as SMART implementation slices: specific, measurable, achievable, relevant, and time-bounded enough for one agent run.</p>
+          <div class="smart-grid">
+            <article class="smart"><b>S</b><h3>Specific</h3><p>The issue names the concrete behavior to change, the user or operator outcome, and what is out of scope.</p></article>
+            <article class="smart"><b>M</b><h3>Measurable</h3><p>Acceptance criteria, tests, commands, screenshots, or review checks make completion observable.</p></article>
+            <article class="smart"><b>A</b><h3>Achievable</h3><p>The slice is small enough for a fresh context window and does not require unresolved product judgment.</p></article>
+            <article class="smart"><b>R</b><h3>Relevant</h3><p>The issue links back to the parent spec, PRD, bug, business goal, or technical decision it advances.</p></article>
+            <article class="smart"><b>T</b><h3>Time-bounded</h3><p>For Sandman, this means bounded by one run or a clear retry budget, not necessarily a calendar deadline.</p></article>
+          </div>
+        </section>
+
+        <section class="dark">
+          <div class="eyebrow">Workflow agnostic by design</div>
+          <h2>Bring your own way of creating the issues.</h2>
+          <p class="intro">Sandman is not a spec tool, a methodology, or a replacement for product thinking. It is the AFK delivery harness that begins when your issue tracker has the next ready frontier.</p>
+          <div class="source-grid">
+            <article class="source"><h3>Matt Pocock skills v1</h3><p>Use `grill-with-docs`, `to-prd`, and `to-issues` if that is your current muscle memory. Sandman does not care about the names. It cares that GitHub issues are ready.</p></article>
+            <article class="source"><h3>Matt Pocock skills v1.1</h3><p>Use `grill-with-docs` or `wayfinder`, then `to-spec` and `to-tickets`. Sandman runs the ticket frontier after publication.</p></article>
+            <article class="source"><h3>Spec-driven development</h3><p>Use Spec Kit, Kiro, or another SDD process to define intent and tasks. Sandman executes the resulting GitHub issues.</p></article>
+            <article class="source"><h3>Your own process</h3><p>Use PM-written issues, tech-lead breakdowns, Jira-to-GitHub sync, or hand-authored tasks. If they are SMART, Sandman can run them.</p></article>
+          </div>
+        </section>
+
+        <section id="sandman" class="dark">
+          <div class="eyebrow">What Sandman owns</div>
+          <h2>AFK implementation, from planning to merge.</h2>
+          <p class="intro">The Sandman promise is not “an agent wrote code.” The promise is a completed delivery loop: implementation plan, tested changes, self-review, pull request, review loop, and merge gate, with monitoring throughout.</p>
+          <div class="execution">
+            <article class="exec-step"><span>01</span><h3>Select issue</h3><p>Pick ready GitHub issues, ranges, labels, queries, or the current unblocked frontier.</p></article>
+            <article class="exec-step"><span>02</span><h3>Sandbox</h3><p>Create an isolated worktree or container so the agent does not touch your checkout.</p></article>
+            <article class="exec-step"><span>03</span><h3>Plan</h3><p>Turn the issue into an implementation plan grounded in the repo.</p></article>
+            <article class="exec-step"><span>04</span><h3>TDD</h3><p>Use tests and validation loops where possible before broad implementation.</p></article>
+            <article class="exec-step"><span>05</span><h3>Self-review</h3><p>Review against standards and the originating issue/spec before asking others.</p></article>
+            <article class="exec-step"><span>06</span><h3>PR review</h3><p>Use `sandman review` or any review agent that responds to PR comments.</p></article>
+            <article class="exec-step"><span>07</span><h3>Merge</h3><p>Back-merge if needed, require green checks and approval, then merge the PR.</p></article>
+          </div>
+
+          <div class="portal">
+            <aside class="screen" aria-label="Sandman Portal preview">
+              <div class="screen-top"><strong>Sandman Portal</strong><span class="pulse">● polling - 1s ago</span></div>
+              <div class="screen-body">
+                <div class="run"><strong>#42</strong><div><b>Refactor portal settings overlay</b><small>plan -> tdd -> self-review</small></div><span class="state running">running</span></div>
+                <div class="run"><strong>#43</strong><div><b>Add light theme tokens</b><small>PR open, review requested</small></div><span class="state reviewing">reviewing</span></div>
+                <div class="run"><strong>#44</strong><div><b>Surface queue dependency state</b><small>checks green, approved, merging</small></div><span class="state merged">merge gate</span></div>
+              </div>
+            </aside>
+            <article class="callout">
+              <h3>Monitor without babysitting.</h3>
+              <p>Sandman Portal is not the workflow creator. It is the operations surface for the work already in motion: statuses, queues, logs, blockers, reviews, and merge readiness while the agents work.</p>
+            </article>
+          </div>
+        </section>
+
+        <section id="compare" class="dark">
+          <div class="eyebrow">Comparison</div>
+          <h2>SDD, Loop Engineering, Matt's skills, and Sandman are different layers.</h2>
+          <table>
+            <thead><tr><th>Layer</th><th>What it is best at</th><th>Where it stops</th><th>How Sandman relates</th></tr></thead>
+            <tbody>
+              <tr><td>Matt Pocock skills</td><td>Human-agent alignment, domain language, specs, tracer-bullet tickets, TDD discipline, and code-review skill vocabulary.</td><td>They can implement directly, but they are not Sandman's required dependency or fleet runner.</td><td>Excellent upstream issue generator. Sandman can consume the resulting GitHub issues and run them AFK.</td></tr>
+              <tr><td>Spec-driven development</td><td>Turning intent into requirements, design, plans, and executable task artifacts.</td><td>It still needs an execution and delivery harness if agents are going to run unattended through PR merge.</td><td>Sandman is the downstream implementation and merge loop for the spec's GitHub issues.</td></tr>
+              <tr><td>Loop Engineering</td><td>Designing recurring agent systems that discover work, delegate, verify, persist state, decide next actions, and rerun on triggers.</td><td>It is a broader discipline, not one specific tool or one issue-to-merge workflow.</td><td>Sandman is a concrete loop implementation for AFK GitHub issue delivery.</td></tr>
+              <tr><td>Sandman</td><td>Running the agent implementation lifecycle in isolated sandboxes with monitoring, reviews, and merge gates.</td><td>It expects sufficiently clear GitHub issues. It does not prescribe how your team writes them.</td><td>It replaces the AFK implementation phase, from planning to merged PR.</td></tr>
+            </tbody>
+          </table>
+        </section>
+
+        <section class="dark final">
+          <div class="eyebrow">The sharp one-liner</div>
+          <h2>Write the issues your way. Let Sandman merge them while you sleep.</h2>
+          <p class="intro">Sandman is the workflow-agnostic AFK implementation layer for teams that already know how to describe work. Give it SMART GitHub issues. It gives you merged PRs.</p>
+          <div class="cta" style="justify-content: center"><a class="button primary" href="../usage/getting-started.md">Start with one issue</a><a class="button secondary" href="index.html">Back to all prototypes</a></div>
+        </section>
+      </main>
+    </div>
+  </body>
+</html>

@@ -1,0 +1,527 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Sandman - Control Plane Prototype</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #07100c;
+        --panel: #0d1b14;
+        --panel-2: #12251b;
+        --ink: #ecfff4;
+        --muted: #9ab9a7;
+        --line: rgba(181, 255, 206, 0.18);
+        --green: #72ff9f;
+        --yellow: #e7ff72;
+        --orange: #ffb86b;
+        --shadow: rgba(0, 0, 0, 0.38);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        background:
+          radial-gradient(circle at 10% 0%, rgba(114, 255, 159, 0.2), transparent 32rem),
+          radial-gradient(circle at 90% 10%, rgba(231, 255, 114, 0.14), transparent 30rem),
+          linear-gradient(180deg, #08120d 0%, var(--bg) 45%, #030604 100%);
+        color: var(--ink);
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        line-height: 1.5;
+      }
+
+      a {
+        color: inherit;
+      }
+
+      .shell {
+        width: min(1160px, calc(100% - 32px));
+        margin: 0 auto;
+      }
+
+      .nav {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 28px 0;
+      }
+
+      .brand {
+        display: flex;
+        gap: 12px;
+        align-items: center;
+        font-weight: 800;
+        letter-spacing: -0.03em;
+      }
+
+      .mark {
+        width: 36px;
+        height: 36px;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        display: grid;
+        place-items: center;
+        background: linear-gradient(135deg, rgba(114, 255, 159, 0.2), rgba(231, 255, 114, 0.08));
+        box-shadow: 0 16px 50px var(--shadow);
+      }
+
+      .links {
+        display: flex;
+        gap: 22px;
+        color: var(--muted);
+        font-size: 14px;
+      }
+
+      .hero {
+        display: grid;
+        grid-template-columns: 1.05fr 0.95fr;
+        gap: 42px;
+        align-items: center;
+        padding: 58px 0 42px;
+      }
+
+      .eyebrow {
+        display: inline-flex;
+        gap: 8px;
+        align-items: center;
+        color: var(--green);
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        padding: 8px 12px;
+        background: rgba(114, 255, 159, 0.06);
+        font-size: 13px;
+        font-weight: 700;
+      }
+
+      h1,
+      h2,
+      h3,
+      p {
+        margin-top: 0;
+      }
+
+      h1 {
+        margin: 22px 0 20px;
+        font-size: clamp(44px, 8vw, 84px);
+        line-height: 0.93;
+        letter-spacing: -0.075em;
+      }
+
+      .lead {
+        max-width: 680px;
+        color: #c8e8d2;
+        font-size: clamp(18px, 2.4vw, 22px);
+      }
+
+      .cta-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 14px;
+        margin-top: 30px;
+      }
+
+      .button {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 48px;
+        border-radius: 14px;
+        padding: 0 18px;
+        text-decoration: none;
+        font-weight: 800;
+      }
+
+      .button.primary {
+        background: var(--green);
+        color: #06100b;
+        box-shadow: 0 20px 70px rgba(114, 255, 159, 0.28);
+      }
+
+      .button.secondary {
+        border: 1px solid var(--line);
+        color: var(--ink);
+        background: rgba(255, 255, 255, 0.03);
+      }
+
+      .proof {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 12px;
+        margin-top: 32px;
+      }
+
+      .proof div,
+      .card,
+      .terminal,
+      .matrix,
+      .workflow-card {
+        border: 1px solid var(--line);
+        background: rgba(13, 27, 20, 0.74);
+        box-shadow: 0 20px 80px var(--shadow);
+        backdrop-filter: blur(18px);
+      }
+
+      .proof div {
+        border-radius: 16px;
+        padding: 14px;
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      .proof strong {
+        display: block;
+        color: var(--ink);
+        font-size: 20px;
+      }
+
+      .terminal {
+        border-radius: 24px;
+        overflow: hidden;
+      }
+
+      .terminal-bar {
+        display: flex;
+        justify-content: space-between;
+        gap: 14px;
+        padding: 14px 16px;
+        background: rgba(255, 255, 255, 0.04);
+        border-bottom: 1px solid var(--line);
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      pre {
+        margin: 0;
+        padding: 22px;
+        overflow: auto;
+        color: #d9ffe3;
+        font: 14px/1.65 "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      }
+
+      .ok {
+        color: var(--green);
+      }
+
+      .warn {
+        color: var(--yellow);
+      }
+
+      section {
+        padding: 72px 0;
+      }
+
+      .section-head {
+        max-width: 780px;
+        margin-bottom: 28px;
+      }
+
+      h2 {
+        font-size: clamp(32px, 5vw, 54px);
+        line-height: 1;
+        letter-spacing: -0.055em;
+        margin-bottom: 14px;
+      }
+
+      .section-head p,
+      .card p,
+      td,
+      .workflow-card p {
+        color: var(--muted);
+      }
+
+      .grid-3 {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 16px;
+      }
+
+      .card {
+        border-radius: 22px;
+        padding: 24px;
+      }
+
+      .card h3 {
+        margin-bottom: 10px;
+        font-size: 21px;
+      }
+
+      .pipeline {
+        display: grid;
+        grid-template-columns: repeat(7, 1fr);
+        gap: 10px;
+      }
+
+      .step {
+        min-height: 130px;
+        border-radius: 18px;
+        padding: 16px;
+        border: 1px solid var(--line);
+        background: linear-gradient(180deg, rgba(114, 255, 159, 0.11), rgba(255, 255, 255, 0.025));
+      }
+
+      .step span {
+        display: block;
+        color: var(--green);
+        font: 12px "SFMono-Regular", Consolas, monospace;
+        margin-bottom: 12px;
+      }
+
+      .step strong {
+        display: block;
+        line-height: 1.1;
+      }
+
+      .matrix {
+        border-radius: 24px;
+        overflow: hidden;
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+      }
+
+      th,
+      td {
+        text-align: left;
+        padding: 18px;
+        vertical-align: top;
+        border-bottom: 1px solid var(--line);
+      }
+
+      th {
+        color: var(--ink);
+        background: rgba(255, 255, 255, 0.04);
+      }
+
+      tr:last-child td {
+        border-bottom: 0;
+      }
+
+      .quote {
+        border-left: 4px solid var(--green);
+        padding-left: 18px;
+        color: #d8ffe2;
+        font-size: 24px;
+        letter-spacing: -0.03em;
+      }
+
+      .final {
+        text-align: center;
+        padding: 90px 0 110px;
+      }
+
+      .final p {
+        color: var(--muted);
+        max-width: 680px;
+        margin: 0 auto 28px;
+      }
+
+      @media (max-width: 900px) {
+        .hero,
+        .grid-3 {
+          grid-template-columns: 1fr;
+        }
+
+        .links {
+          display: none;
+        }
+
+        .proof,
+        .pipeline {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <nav class="nav" aria-label="Primary navigation">
+        <div class="brand"><span class="mark">S</span> Sandman</div>
+        <div class="links">
+          <a href="#how">How it works</a>
+          <a href="#workflow">Workflow</a>
+          <a href="#compare">Compare</a>
+          <a href="#start">Start</a>
+        </div>
+      </nav>
+
+      <main>
+        <section class="hero">
+          <div>
+            <div class="eyebrow">AFK coding agents, contained</div>
+            <h1>Put coding agents to work without letting them loose.</h1>
+            <p class="lead">Sandman is the CLI control plane for AFK software development. It runs coding agents in isolated sandboxes, guides them through your workflow, and brings back reviewed, auditable pull requests.</p>
+            <div class="cta-row">
+              <a class="button primary" href="#start">Run your first sandbox</a>
+              <a class="button secondary" href="#compare">See why Sandman exists</a>
+            </div>
+            <div class="proof" aria-label="Key proof points">
+              <div><strong>1 task, 1 sandbox</strong> Worktree or container per run.</div>
+              <div><strong>Parallel by design</strong> Queue issues, respect blockers, retry failures.</div>
+              <div><strong>Review gated</strong> Plan, test, self-review, CI, PR review, merge.</div>
+            </div>
+          </div>
+
+          <div class="terminal" aria-label="Sandman terminal preview">
+            <div class="terminal-bar"><span>.sandman/control-plane</span><span>live</span></div>
+            <pre><span class="ok">$</span> sandman run label:agent-ready --parallel 4 --include-dependencies
+
+<span class="ok">run 1948</span> create worktree       sandman/1948
+<span class="ok">run 1949</span> start container       opencode:latest
+<span class="warn">run 1950</span> waiting for blocker   #1948
+<span class="ok">run 1951</span> executing skill chain  plan -> tdd -> review
+
+portal      http://localhost:7331
+review      waits for green CI before /sandman review
+merge gate  approved PR only</pre>
+          </div>
+        </section>
+
+        <section id="how">
+          <div class="section-head">
+            <h2>Sandman is not another coding agent.</h2>
+            <p>It is the operating layer around the agents you already use. The agent writes code. Sandman gives that work a sandbox, a task file, a status trail, a review loop, and a merge discipline.</p>
+          </div>
+          <div class="grid-3">
+            <article class="card">
+              <h3>What it is</h3>
+              <p>A CLI that turns prompts, issues, or prepared implementation plans into isolated agent runs. Each run writes logs and events under `.sandman/` so progress can be inspected instead of guessed.</p>
+            </article>
+            <article class="card">
+              <h3>What it is for</h3>
+              <p>Routine backlog work, test generation, refactors, docs, bug fixes, review iterations, and any issue that is clear enough to hand to an agent while you go AFK.</p>
+            </article>
+            <article class="card">
+              <h3>How it works</h3>
+              <p>Sandman selects work, creates a worktree or container sandbox, renders the task prompt, runs the configured agent, tracks events, exposes logs, and keeps the run inside workflow rails.</p>
+            </article>
+          </div>
+        </section>
+
+        <section id="workflow">
+          <div class="section-head">
+            <h2>The recommended workflow is the product.</h2>
+            <p>Sandman was built around the pattern that kept recurring in real sessions: shape the intent, plan behavior-first, implement a tracer bullet, review against standards and spec, then ask the PR review agent to keep pushing until approval.</p>
+          </div>
+          <div class="pipeline" aria-label="Recommended workflow">
+            <div class="step"><span>01</span><strong>Shape intent</strong><p>Use a PRD, issue, or spec.</p></div>
+            <div class="step"><span>02</span><strong>Plan</strong><p>Behavior-first, execution-ready.</p></div>
+            <div class="step"><span>03</span><strong>TDD</strong><p>Tracer bullet first.</p></div>
+            <div class="step"><span>04</span><strong>Implement</strong><p>Small vertical slices.</p></div>
+            <div class="step"><span>05</span><strong>Self-review</strong><p>Standards and spec axes.</p></div>
+            <div class="step"><span>06</span><strong>PR review</strong><p>Wait for CI, request review, iterate.</p></div>
+            <div class="step"><span>07</span><strong>Merge gate</strong><p>Approved and green only.</p></div>
+          </div>
+        </section>
+
+        <section>
+          <div class="section-head">
+            <h2>Use it like a senior engineer delegates work.</h2>
+            <p>Sandman works best when you give agents clear boundaries and then let the workflow run without babysitting.</p>
+          </div>
+          <div class="grid-3">
+            <article class="card">
+              <h3>For one issue</h3>
+              <p>Run a single tracked task in its own branch, inspect the portal, and pick up the PR when the review loop is done.</p>
+              <pre>sandman run 42</pre>
+            </article>
+            <article class="card">
+              <h3>For a backlog slice</h3>
+              <p>Run independent issues in parallel while blockers wait their turn. Come back to logs, branches, and PRs rather than chat scrollback.</p>
+              <pre>sandman run label:agent-ready --parallel 4</pre>
+            </article>
+            <article class="card">
+              <h3>For prepared specs</h3>
+              <p>Use spec-driven tools or planning skills to create intent, then let Sandman execute each implementation slice in isolation.</p>
+              <pre>sandman run --prompt "Implement the next task"</pre>
+            </article>
+          </div>
+        </section>
+
+        <section id="compare">
+          <div class="section-head">
+            <h2>Traditional development keeps judgment. Sandman removes waiting.</h2>
+            <p>Sandman does not replace human engineering judgment. It removes the serial glue work around routine implementation: branch setup, task prompting, retries, logs, review requests, and merge gates.</p>
+          </div>
+          <div class="matrix">
+            <table>
+              <thead>
+                <tr>
+                  <th>Approach</th>
+                  <th>What it gives you</th>
+                  <th>What still hurts</th>
+                  <th>Sandman's role</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Traditional software development</td>
+                  <td>Human judgment, mature review culture, traceability.</td>
+                  <td>Routine work is slow, serial, and interruption-heavy.</td>
+                  <td>Keep the judgment. Delegate the execution.</td>
+                </tr>
+                <tr>
+                  <td>IDE assistants</td>
+                  <td>Fast synchronous pair-programming.</td>
+                  <td>The developer still drives branch, PR, review, CI, and merge steps.</td>
+                  <td>Move agent work out of the editor and into isolated background runs.</td>
+                </tr>
+                <tr>
+                  <td>Spec-driven development</td>
+                  <td>Clearer intent, better planning, less vibe coding.</td>
+                  <td>Specs still need disciplined execution and review.</td>
+                  <td>Use specs as input, then execute them through sandboxes and gates.</td>
+                </tr>
+                <tr>
+                  <td>Cloud coding agents</td>
+                  <td>Background PR creation.</td>
+                  <td>Vendor workflow, limited process control, another place to govern.</td>
+                  <td>Provide your own CLI-native operating model around agent work.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section>
+          <div class="section-head">
+            <h2>Competitors give you agents. Sandman gives you rails.</h2>
+            <p>Devin, Copilot cloud agent, Codex, Jules, Cursor, Kiro, and Factory are moving coding into the background. Sandman focuses on the missing layer: how to contain, observe, review, and merge the work reliably.</p>
+          </div>
+          <div class="grid-3">
+            <article class="card">
+              <h3>Agent agnostic</h3>
+              <p>Start with OpenCode today. The product idea is broader: do not bet your engineering process on one vendor's agent surface.</p>
+            </article>
+            <article class="card">
+              <h3>Local and explicit</h3>
+              <p>Sandman uses repo-visible prompts, worktrees, logs, events, and review gates. The process is inspectable.</p>
+            </article>
+            <article class="card">
+              <h3>AFK by design</h3>
+              <p>The workflow assumes the developer is away. Agents must proceed, recover when possible, and leave auditable work behind.</p>
+            </article>
+          </div>
+        </section>
+
+        <section>
+          <p class="quote">"The job is not to make agents more magical. The job is to make their work boring enough to trust."</p>
+        </section>
+
+        <section id="start" class="final">
+          <h2>Queue the work. Close the laptop. Review the results.</h2>
+          <p>Initialize Sandman in a repository, prepare one clear issue, and run your first contained agent workflow.</p>
+          <div class="cta-row" style="justify-content: center">
+            <a class="button primary" href="../usage/getting-started.md">Read the getting started guide</a>
+            <a class="button secondary" href="https://github.com/rafaelromao/sandman">View the repository</a>
+          </div>
+        </section>
+      </main>
+    </div>
+  </body>
+</html>

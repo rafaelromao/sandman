@@ -1,0 +1,491 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Sandman - Issue To Merge Prototype</title>
+    <style>
+      :root {
+        --paper: #f7f1e6;
+        --ink: #17140f;
+        --muted: #665f54;
+        --line: #ded3bf;
+        --accent: #d9542b;
+        --accent-2: #203d2a;
+        --panel: #fffaf0;
+        --blue: #233b59;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        background: var(--paper);
+        color: var(--ink);
+        font-family: ui-serif, Georgia, Cambria, "Times New Roman", Times, serif;
+        line-height: 1.55;
+      }
+
+      .wrap {
+        width: min(1180px, calc(100% - 32px));
+        margin: 0 auto;
+      }
+
+      .nav {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 20px;
+        padding: 22px 0;
+        border-bottom: 1px solid var(--line);
+        font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+      }
+
+      .brand {
+        font-weight: 900;
+        letter-spacing: -0.04em;
+      }
+
+      .nav a {
+        color: var(--muted);
+        text-decoration: none;
+        margin-left: 18px;
+        font-size: 14px;
+      }
+
+      .hero {
+        display: grid;
+        grid-template-columns: 0.95fr 1.05fr;
+        gap: 42px;
+        align-items: center;
+        padding: 62px 0 50px;
+      }
+
+      .stamp {
+        display: inline-block;
+        border: 2px solid var(--accent);
+        color: var(--accent);
+        padding: 7px 11px;
+        transform: rotate(-2deg);
+        text-transform: uppercase;
+        letter-spacing: 0.1em;
+        font: 800 12px Inter, ui-sans-serif, system-ui, sans-serif;
+      }
+
+      h1,
+      h2,
+      h3,
+      p {
+        margin-top: 0;
+      }
+
+      h1 {
+        margin: 24px 0 20px;
+        font-size: clamp(44px, 7vw, 82px);
+        line-height: 0.95;
+        letter-spacing: -0.06em;
+      }
+
+      .lead {
+        color: var(--muted);
+        font-size: clamp(18px, 2.2vw, 23px);
+        max-width: 660px;
+      }
+
+      .cta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 14px;
+        margin-top: 28px;
+        font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+      }
+
+      .btn {
+        min-height: 48px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0 18px;
+        border-radius: 999px;
+        text-decoration: none;
+        font-weight: 800;
+      }
+
+      .btn.primary {
+        background: var(--ink);
+        color: var(--paper);
+      }
+
+      .btn.secondary {
+        border: 1px solid var(--ink);
+        color: var(--ink);
+      }
+
+      .board {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        box-shadow: 18px 18px 0 #e5d8bf;
+        padding: 18px;
+        transform: rotate(1deg);
+      }
+
+      .ticket {
+        border: 1px solid var(--line);
+        background: #fffdf8;
+        padding: 16px;
+        margin-bottom: 12px;
+        font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+      }
+
+      .ticket small {
+        color: var(--accent);
+        font-weight: 800;
+      }
+
+      .ticket strong {
+        display: block;
+        margin: 5px 0;
+        font-size: 18px;
+      }
+
+      .ticket span {
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      section {
+        padding: 70px 0;
+        border-top: 1px solid var(--line);
+      }
+
+      .section-kicker {
+        color: var(--accent);
+        font: 800 12px Inter, ui-sans-serif, system-ui, sans-serif;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        margin-bottom: 12px;
+      }
+
+      h2 {
+        font-size: clamp(34px, 5vw, 58px);
+        line-height: 1;
+        letter-spacing: -0.055em;
+        margin-bottom: 16px;
+      }
+
+      .section-copy {
+        max-width: 780px;
+        color: var(--muted);
+        font-size: 19px;
+      }
+
+      .steps {
+        margin-top: 34px;
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 14px;
+      }
+
+      .step {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        padding: 22px;
+        min-height: 220px;
+      }
+
+      .step .num {
+        display: inline-grid;
+        place-items: center;
+        width: 36px;
+        height: 36px;
+        border-radius: 999px;
+        background: var(--accent);
+        color: white;
+        font: 900 14px Inter, ui-sans-serif, system-ui, sans-serif;
+        margin-bottom: 24px;
+      }
+
+      .step h3 {
+        font-size: 24px;
+        line-height: 1.05;
+      }
+
+      .step p,
+      .tile p,
+      td {
+        color: var(--muted);
+      }
+
+      .split {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 18px;
+        align-items: stretch;
+      }
+
+      .tile {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        padding: 26px;
+      }
+
+      .tile.dark {
+        background: var(--accent-2);
+        color: #f8f0df;
+        border-color: var(--accent-2);
+      }
+
+      .tile.dark p {
+        color: #d9decf;
+      }
+
+      code,
+      pre {
+        font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      }
+
+      pre {
+        overflow: auto;
+        margin: 18px 0 0;
+        padding: 18px;
+        background: #17140f;
+        color: #f8f0df;
+        border-radius: 14px;
+        font-size: 13px;
+      }
+
+      .comparison {
+        background: #fffdf8;
+        border: 1px solid var(--line);
+        overflow: hidden;
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+      }
+
+      th,
+      td {
+        text-align: left;
+        padding: 18px;
+        border-bottom: 1px solid var(--line);
+        vertical-align: top;
+      }
+
+      th {
+        color: var(--ink);
+        background: #f1e5cf;
+      }
+
+      tr:last-child td {
+        border-bottom: 0;
+      }
+
+      .quote-band {
+        background: var(--blue);
+        color: #fff6e8;
+        padding: 42px;
+        font-size: clamp(28px, 4vw, 48px);
+        line-height: 1.05;
+        letter-spacing: -0.05em;
+      }
+
+      .final {
+        text-align: center;
+        padding-bottom: 100px;
+      }
+
+      .final .section-copy {
+        margin: 0 auto;
+      }
+
+      @media (max-width: 900px) {
+        .hero,
+        .steps,
+        .split {
+          grid-template-columns: 1fr;
+        }
+
+        .nav .menu {
+          display: none;
+        }
+
+        .board {
+          transform: none;
+          box-shadow: 8px 8px 0 #e5d8bf;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <nav class="nav" aria-label="Primary navigation">
+        <div class="brand">Sandman</div>
+        <div class="menu">
+          <a href="#use">How developers use it</a>
+          <a href="#flows">Workflows</a>
+          <a href="#compare">Compare</a>
+          <a href="#start">Start</a>
+        </div>
+      </nav>
+
+      <main>
+        <section class="hero">
+          <div>
+            <span class="stamp">Issue to reviewed PR</span>
+            <h1>Give Sandman the backlog before you go AFK.</h1>
+            <p class="lead">Sandman turns GitHub issues, implementation plans, and structured prompts into contained coding-agent runs. You come back to branches, logs, review state, and pull requests that followed your process.</p>
+            <div class="cta">
+              <a class="btn primary" href="#start">Start with one issue</a>
+              <a class="btn secondary" href="#flows">See the workflow</a>
+            </div>
+          </div>
+          <aside class="board" aria-label="Issue board preview">
+            <div class="ticket"><small>READY</small><strong>#1948 Fix review daemon polling</strong><span>container sandbox, CI gate, PR review loop</span></div>
+            <div class="ticket"><small>BLOCKED</small><strong>#1950 Clean up old worktree state</strong><span>waits for #1948, then resumes automatically</span></div>
+            <div class="ticket"><small>RUNNING</small><strong>#1951 Reduce e2e test wait time</strong><span>plan -> tracer bullet -> self-review</span></div>
+            <div class="ticket"><small>MERGEABLE</small><strong>#1952 Document AFK workflow</strong><span>approved, green checks, ready for merge gate</span></div>
+          </aside>
+        </section>
+
+        <section id="use">
+          <p class="section-kicker">What it is</p>
+          <h2>A practical harness for agentic software development.</h2>
+          <p class="section-copy">Sandman is for developers who already know that coding agents can do useful work, but do not want to babysit every shell command, branch, pull request, review request, and retry. It gives agents a place to work and gives developers a way to inspect what happened.</p>
+          <div class="steps">
+            <article class="step">
+              <span class="num">1</span>
+              <h3>Pick work that is ready</h3>
+              <p>Use a single issue, a label query, a prompt, or a prepared spec. Clear acceptance criteria beat vague prompting.</p>
+            </article>
+            <article class="step">
+              <span class="num">2</span>
+              <h3>Run it in isolation</h3>
+              <p>Sandman creates a worktree or container so the agent does not touch your active working tree.</p>
+            </article>
+            <article class="step">
+              <span class="num">3</span>
+              <h3>Follow workflow rails</h3>
+              <p>Planning, TDD, implementation, self-review, back-merge, PR review, and merge gates are encoded as skills.</p>
+            </article>
+            <article class="step">
+              <span class="num">4</span>
+              <h3>Review real artifacts</h3>
+              <p>Use status, history, attach, portal, logs, events, branches, commits, and PRs instead of trusting a chat transcript.</p>
+            </article>
+          </div>
+        </section>
+
+        <section id="flows">
+          <p class="section-kicker">Recommended workflows</p>
+          <h2>Use Sandman after intent is clear, before execution gets tedious.</h2>
+          <div class="split">
+            <article class="tile dark">
+              <h3>The behavior-first workflow</h3>
+              <p>Use planning and issue-shaping skills to turn an idea into agent-ready work. The language from real sessions is direct: grill the plan, create tracer-bullet slices, define testability seams, then hand execution to Sandman.</p>
+              <pre>/to-prd
+/to-issues
+/grill-me
+sandman run label:agent-ready --parallel 4</pre>
+            </article>
+            <article class="tile">
+              <h3>The PR review workflow</h3>
+              <p>Sandman shines after the first PR exists. The review loop waits for CI, requests delegated review, polls feedback, applies changes, pushes, and repeats until approved or exhausted.</p>
+              <pre>sandman-pr-review
+
+wait for checks
+post /sandman review
+apply feedback
+repeat until approved</pre>
+            </article>
+            <article class="tile">
+              <h3>The batch workflow</h3>
+              <p>Queue multiple issues, respect blockers, and let independent tasks run at once. Failed blockers skip dependents instead of creating confused follow-on work.</p>
+              <pre>sandman run 42:48 --include-dependencies --parallel 4</pre>
+            </article>
+            <article class="tile dark">
+              <h3>The recovery workflow</h3>
+              <p>When a run fails, you do not start from nothing. Continue on the existing branch, inspect logs, attach to the run, or use history to understand the last durable state.</p>
+              <pre>sandman status
+sandman attach 42
+sandman run --continue 42</pre>
+            </article>
+          </div>
+        </section>
+
+        <section>
+          <div class="quote-band">The developer stays responsible for judgment. Sandman takes responsibility for the boring loop.</div>
+        </section>
+
+        <section id="compare">
+          <p class="section-kicker">Compare development modes</p>
+          <h2>From hand-driven development to supervised agent execution.</h2>
+          <div class="comparison">
+            <table>
+              <thead>
+                <tr>
+                  <th>Mode</th>
+                  <th>Developer experience</th>
+                  <th>Failure mode</th>
+                  <th>What Sandman changes</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Traditional</td>
+                  <td>You manually plan, branch, code, test, push, request review, and merge.</td>
+                  <td>High quality, but routine work competes with deep work.</td>
+                  <td>Preserves review culture while moving routine execution into background runs.</td>
+                </tr>
+                <tr>
+                  <td>Prompt-driven agent work</td>
+                  <td>You ask an assistant to modify code in the current context.</td>
+                  <td>Fast, but decisions and commands are hard to audit later.</td>
+                  <td>Creates durable runs with branch, logs, task prompts, events, and review state.</td>
+                </tr>
+                <tr>
+                  <td>Spec-driven development</td>
+                  <td>You specify what and why before implementation starts.</td>
+                  <td>Better intent, but implementation still needs orchestration.</td>
+                  <td>Turns specs or task lists into sandboxed runs and mergeable slices.</td>
+                </tr>
+                <tr>
+                  <td>Cloud agent platforms</td>
+                  <td>You delegate work to a hosted agent product.</td>
+                  <td>Convenient, but workflow control belongs to the platform.</td>
+                  <td>Keeps orchestration local, CLI-native, explicit, and adaptable.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section>
+          <p class="section-kicker">Current competitors</p>
+          <h2>Sandman sits beside the agents, not in front of them.</h2>
+          <p class="section-copy">Devin, Copilot cloud agent, Codex, Jules, Cursor, Kiro, Factory, CodeRabbit, and Spec Kit all prove the market is moving toward asynchronous agentic development. Sandman differentiates by focusing narrowly on the developer-owned execution harness: isolation, batches, workflow skills, status, review loops, and merge gates.</p>
+          <div class="steps">
+            <article class="step"><span class="num">A</span><h3>Against Devin or Jules</h3><p>Do not buy a black-box worker when you mainly need orchestration around your own repo, agent, and workflow.</p></article>
+            <article class="step"><span class="num">B</span><h3>Against Copilot or Codex</h3><p>Those are powerful agents and surfaces. Sandman is the process harness that can wrap agent work.</p></article>
+            <article class="step"><span class="num">C</span><h3>Against Kiro or Spec Kit</h3><p>Specs are excellent inputs. Sandman is the execution and review system after the spec is ready.</p></article>
+            <article class="step"><span class="num">D</span><h3>Against review bots</h3><p>Review bots inspect changes. Sandman coordinates the agent that creates, fixes, reviews, and merges them.</p></article>
+          </div>
+        </section>
+
+        <section id="start" class="final">
+          <p class="section-kicker">Start small</p>
+          <h2>Run one clear issue while you are away.</h2>
+          <p class="section-copy">Pick a bug fix, test improvement, documentation update, or constrained refactor. Let Sandman run it in a sandbox. Inspect the result from the portal and PR.</p>
+          <div class="cta" style="justify-content: center">
+            <a class="btn primary" href="../usage/getting-started.md">Get started</a>
+            <a class="btn secondary" href="../usage/workflows.md">Read workflows</a>
+          </div>
+        </section>
+      </main>
+    </div>
+  </body>
+</html>
