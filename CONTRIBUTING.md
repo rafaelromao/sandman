@@ -122,7 +122,7 @@ internal/
   atomicfs/                  # Atomic-write helpers: WriteAtomic, WriteAtomicJSON, OpenAppend
   batch/                     # Core domain: Orchestrator, AgentRun, DependencyResolver
   batchindex/                # Batch index types and persistence (Index, Entry, Batch, RunManifest, ReviewState)
-  cmd/                       # Cobra CLI commands (run, init, status, history, continue, clean, config)
+  cmd/                       # Cobra CLI commands (init, run, status, history, clean, config, attach, portal, review, archive, stranded)
   config/                    # Config model, file store, built-in agent presets
   daemon/                    # Per-batch and per-run control sockets (command_server.go, socket.go)
   events/                    # Event log interface + JSONL implementation
