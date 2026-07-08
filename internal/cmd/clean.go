@@ -97,7 +97,7 @@ type cleanAction struct {
 func NewCleanCmd(deps Dependencies) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "clean",
-		Short: "Clean up sandbox resources and stale worktrees",
+		Short: "Clean up sandbox resources, stale worktrees, and temp files",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			archived, _ := cmd.Flags().GetBool("archived")
 			dryRun, _ := cmd.Flags().GetBool("dry-run")
@@ -148,6 +148,7 @@ func NewCleanCmd(deps Dependencies) *cobra.Command {
 				}
 				_ = staleRemoved
 				fmt.Fprintf(cmd.OutOrStdout(), "Recovered %d stale runs as aborted across %d dead directories.\n", recovered, deadDirs)
+				runCleanTemps(cmd, deps, layout, false)
 				return nil
 			}
 
@@ -175,6 +176,7 @@ func NewCleanCmd(deps Dependencies) *cobra.Command {
 
 			if dryRun {
 				printDryRun(cmd, actions)
+				runCleanTemps(cmd, deps, layout, true)
 				return nil
 			}
 
@@ -184,6 +186,7 @@ func NewCleanCmd(deps Dependencies) *cobra.Command {
 			}
 
 			fmt.Fprintf(cmd.OutOrStdout(), "Removed %d batch entries.\n", removed)
+			runCleanTemps(cmd, deps, layout, false)
 
 			return nil
 		},
@@ -192,6 +195,7 @@ func NewCleanCmd(deps Dependencies) *cobra.Command {
 	cmd.Flags().Bool("dry-run", false, "Print intended deletions without performing I/O")
 	cmd.Flags().Bool("stale", false, "Recover stale runs in dead batches by emitting run.aborted events")
 	cmd.Flags().Bool("orphaned", false, "Remove orphaned test batch directories (no matching run.started event and no live daemon socket)")
+	cmd.Long = "Clean up sandbox resources, stale worktrees, and Sandman-owned temp files.\n\nAlso removes temp directories under the system temp dir (e.g. /tmp/) that were created\nby Sandman and are no longer in use, as well as container images tagged with the\nsandman-smoke-* prefix. Only Sandman-owned paths are removed; unrelated temp content\nis never touched."
 	return cmd
 }
 
@@ -292,12 +296,14 @@ func runCleanOrphaned(cmd *cobra.Command, deps Dependencies, layout paths.Layout
 	if dryRun {
 		if len(plan) == 0 {
 			fmt.Fprintln(cmd.OutOrStdout(), "No orphaned batch directories found.")
+			runCleanTemps(cmd, deps, layout, true)
 			return nil
 		}
 		fmt.Fprintf(cmd.OutOrStdout(), "Would remove %d orphaned batch director(ies):\n", len(plan))
 		for _, p := range plan {
 			fmt.Fprintf(cmd.OutOrStdout(), "  - %s\n", p)
 		}
+		runCleanTemps(cmd, deps, layout, true)
 		return nil
 	}
 
@@ -331,11 +337,82 @@ func runCleanOrphaned(cmd *cobra.Command, deps Dependencies, layout paths.Layout
 
 	if len(removed) == 0 {
 		fmt.Fprintln(cmd.OutOrStdout(), "No orphaned batch directories found.")
-		return nil
+	} else {
+		fmt.Fprintf(cmd.OutOrStdout(), "Removed %d orphaned batch director(ies):\n", len(removed))
+		for _, p := range removed {
+			fmt.Fprintf(cmd.OutOrStdout(), "  - %s\n", p)
+		}
 	}
-	fmt.Fprintf(cmd.OutOrStdout(), "Removed %d orphaned batch director(ies):\n", len(removed))
-	for _, p := range removed {
-		fmt.Fprintf(cmd.OutOrStdout(), "  - %s\n", p)
-	}
+
+	runCleanTemps(cmd, deps, layout, false)
 	return nil
+}
+
+func runCleanTemps(cmd *cobra.Command, deps Dependencies, layout paths.Layout, dryRun bool) {
+	tc := deps.TempCleaner
+	if tc == nil {
+		tc = &realTempCleaner{}
+	}
+
+	tempDir := os.TempDir()
+	dirs, err := tc.ScanTempDirs(tempDir)
+	if err != nil {
+		fmt.Fprintf(cmd.ErrOrStderr(), "warning: scan temp dirs: %v\n", err)
+		return
+	}
+
+	runtime := resolveContainerRuntime()
+	var images []string
+	if runtime != "" {
+		images, err = tc.ListContainerImages(runtime)
+		if err != nil {
+			fmt.Fprintf(cmd.ErrOrStderr(), "warning: list container images: %v\n", err)
+		}
+	}
+
+	if dryRun {
+		if len(dirs) == 0 && len(images) == 0 {
+			fmt.Fprintln(cmd.OutOrStdout(), "No temp files or Sandman-owned images to clean.")
+			return
+		}
+		if len(dirs) > 0 {
+			fmt.Fprintf(cmd.OutOrStdout(), "Would remove %d temp director(ies):\n", len(dirs))
+			for _, d := range dirs {
+				fmt.Fprintf(cmd.OutOrStdout(), "  - %s\n", d)
+			}
+		}
+		if len(images) > 0 {
+			fmt.Fprintf(cmd.OutOrStdout(), "Would remove %d container image(s):\n", len(images))
+			for _, img := range images {
+				fmt.Fprintf(cmd.OutOrStdout(), "  - %s\n", img)
+			}
+		}
+		return
+	}
+
+	var removedDirs, removedImgs int
+	for _, d := range dirs {
+		if err := tc.RemoveTempDir(d); err != nil {
+			fmt.Fprintf(cmd.ErrOrStderr(), "warning: remove temp dir %s: %v\n", d, err)
+		} else {
+			removedDirs++
+		}
+	}
+	for _, img := range images {
+		if err := tc.RemoveContainerImage(runtime, img); err != nil {
+			fmt.Fprintf(cmd.ErrOrStderr(), "warning: remove image %s: %v\n", img, err)
+		} else {
+			removedImgs++
+		}
+	}
+	if removedDirs > 0 || removedImgs > 0 {
+		var msg []string
+		if removedDirs > 0 {
+			msg = append(msg, fmt.Sprintf("%d temp director(y/ies)", removedDirs))
+		}
+		if removedImgs > 0 {
+			msg = append(msg, fmt.Sprintf("%d container image(s)", removedImgs))
+		}
+		fmt.Fprintf(cmd.OutOrStdout(), "Removed %s.\n", strings.Join(msg, ", "))
+	}
 }

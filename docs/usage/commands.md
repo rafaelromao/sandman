@@ -138,11 +138,18 @@ Reuses the previously created branch and recorded agent and review command from 
 
 ## `sandman clean`
 
-Clean up sandbox resources and stale worktrees.
+Clean up sandbox resources, stale worktrees, and Sandman-owned temp files.
 
 ```bash
 sandman clean [flags]
 ```
+
+In addition to cleaning batch entries and worktrees, `sandman clean` also removes:
+
+- **Temp directories** under the system temp directory (e.g., `/tmp/`) that were created by Sandman and are no longer in use (e.g., `sandman-smoke-prewarm-*` directories left behind if smoke tests crash or are interrupted)
+- **Container images** tagged with the `sandman-smoke-*` prefix when a container runtime (`podman` or `docker`) is available
+
+Only Sandman-owned paths are removed. The clean command never touches unrelated temp content.
 
 | Flag | Description |
 |------|-------------|
