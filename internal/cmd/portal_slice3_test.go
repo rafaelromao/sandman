@@ -10,8 +10,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/rafaelromao/sandman/internal/batchindex"
 	"github.com/rafaelromao/sandman/internal/daemon"
 	"github.com/rafaelromao/sandman/internal/events"
+	"github.com/rafaelromao/sandman/internal/paths"
 	"github.com/rafaelromao/sandman/internal/testenv"
 )
 
@@ -272,12 +274,16 @@ func TestPortal_Compute_AggregatesChildReviewsOntoIssueRow(t *testing.T) {
 }
 
 // TestPortal_Compute_TerminalReviewWithApprovedMarker_PreservesParentStatus
-// pins the restored #1897 behavior for a terminal review child whose saved
-// run.log carries the **APPROVED** marker: aggregateReviewChildren stamps
-// ReviewVerdict="Approved" onto the parent row from the saved log (during
-// compute, before the summary endpoint strips Log). The parent's own
-// terminal run.finished status ("success") is preserved because the sibling
-// review is terminal, not live — no badge-flip fires.
+// pins the restored #1897 + slice-1-of-#1938 behavior for a terminal review
+// child whose <runDir>/decision.md carries the **APPROVED** marker:
+// aggregateReviewChildren stamps ReviewVerdict="Approved" onto the parent
+// row from decision.md (during compute, before the summary endpoint strips
+// Log). The parent's own terminal run.finished status ("success") is
+// preserved because the sibling review is terminal, not live — no
+// badge-flip fires. Slice 1 retargeted the projection source from run.log
+// (which had to tolerate shell debris) to decision.md (the controlled
+// artefact), so the verified fixture writes a bare **APPROVED** marker
+// directly.
 func TestPortal_Compute_TerminalReviewWithApprovedMarker_PreservesParentStatus(t *testing.T) {
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
@@ -294,16 +300,32 @@ func TestPortal_Compute_TerminalReviewWithApprovedMarker_PreservesParentStatus(t
 		{Type: "run.finished", Timestamp: finishedAt, RunID: "PR99-review", Issue: 99, Payload: map[string]any{"review": true, "pr_number": 99, "branch": "sandman/review-PR99", "status": "success"}},
 	})
 
-	reviewRunDir := filepath.Join(repoRoot, ".sandman", "batches", "PR99-review", "runs", "PR99-review")
+	// Register the review batch in the Batches index so runFromState
+	// can stamp RunDir from the index entry (slice 0 plumbing).
+	reviewBatchDir := filepath.Join(repoRoot, ".sandman", "batches", "PR99-review")
+	reviewRunDir := filepath.Join(reviewBatchDir, "runs", "PR99-review")
 	if err := os.MkdirAll(reviewRunDir, 0755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	reviewLog := "[PR99-review] 12:01:00 ## Summary\r\n" +
-		"[PR99-review] 12:01:00 LGTM.\r\n" +
-		"[PR99-review] 12:01:30 ## Decision\r\n" +
-		"[PR99-review] 12:01:30 **APPROVED**\r\n"
-	if err := os.WriteFile(filepath.Join(reviewRunDir, "run.log"), []byte(reviewLog), 0644); err != nil {
-		t.Fatalf("write log: %v", err)
+	if err := os.WriteFile(filepath.Join(reviewRunDir, "decision.md"), []byte("## Decision\n**APPROVED**\n"), 0644); err != nil {
+		t.Fatalf("write decision.md: %v", err)
+	}
+	sliceLayout := paths.NewLayout(nil, repoRoot)
+	sliceIdx := &batchindex.Index{
+		Version: batchindex.IndexVersion,
+		Batches: []batchindex.Batch{
+			{
+				ID:        "PR99-review",
+				Path:      reviewBatchDir,
+				Kind:      batchindex.KindReview,
+				Status:    batchindex.StatusArchived,
+				CreatedAt: startedAt,
+				PR:        99,
+			},
+		},
+	}
+	if err := sliceIdx.Save(sliceLayout.BatchesIndexPath); err != nil {
+		t.Fatalf("save batches index: %v", err)
 	}
 
 	runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")})
@@ -333,22 +355,25 @@ func TestPortal_Compute_TerminalReviewWithApprovedMarker_PreservesParentStatus(t
 }
 
 // TestPortal_Compute_PreservesParentStatusWithTrailingQuoteRunLogShape
-// is the post-#1825 regression for issue #1767's saved-log shape. The
-// bug was the portal's verdict projection anchoring the marker line
-// and missing the **APPROVED** marker when a trailing `"` followed it
-// (the `gh pr comment --body "..."` shell artifact). After the
-// cross-batch aggregation removal, the parent row's own terminal
-// status is preserved regardless of any review verdict projection.
-// The reviewVerdictFromRunLog helper is kept as forward-compat and
-// tolerates the trailing `"`; its direct unit-test coverage lives in
-// TestPortal_ReviewVerdictFromRunLog below.
+// is the post-#1825 regression for issue #1767's saved-log shape, retargeted
+// to decision.md by slice 1 of #1938. The previous run.log-parser
+// (#1767) anchored the marker line and missed the **APPROVED** marker
+// when a trailing `"` followed it (the `gh pr comment --body "..."`
+// shell artifact). After the cross-batch aggregation removal, the
+// parent row's own terminal status is preserved regardless of any
+// review verdict projection.
 //
-// The reproduction here mirrors the exact log tail captured locally
+// Slice 1: decision.md is the controlled artefact and does not carry
+// shell debris. The bare **APPROVED** marker without the trailing `"`
+// now drives the verdict. The previous lenient "trailing `"`" shape
+// moves to the negative-case row in TestPortal_ReviewVerdictFromDecisionFile
+// as a deliberate behaviour change (debris is now rejected).
+//
+// The reproduction mirrors the actual production log tail captured
 // from `260704130316-4f35-1755-PR1763/run.log` (work item
 // 260704125005-18dc-1755 / issue #1755 "Embed sandman-index as a
-// sub-skill of sandman"). The test asserts that with the trailing `"`
-// tolerated, the parent row surfaces "Approved"; without the fix, the
-// helper falls through and the parent row stays "Unclear".
+// sub-skill of sandman"); only the verdict-carrying artefact
+// changed in slice 1.
 func TestPortal_Compute_PreservesParentStatusWithTrailingQuoteRunLogShape(t *testing.T) {
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
@@ -391,23 +416,37 @@ func TestPortal_Compute_PreservesParentStatusWithTrailingQuoteRunLogShape(t *tes
 		}},
 	})
 
-	// Saved run.log for the review run, mirroring the actual
-	// production log captured at 260704130316-4f35-1755-PR1763/run.log.
-	// The final line is `**APPROVED**"` — the trailing `"` is the
-	// bash closing quote that `gh pr comment --body "..."` leaves
-	// behind on the marker line.
-	reviewLog := "[260704130316-4f35-1755-PR1763] 13:02:40 ## Summary\r\n" +
-		"[260704130316-4f35-1755-PR1763] 13:02:40 LGTM.\r\n" +
-		"[260704130316-4f35-1755-PR1763] 13:03:10 ## Findings\r\n" +
-		"[260704130316-4f35-1755-PR1763] 13:03:10 None.\r\n" +
-		"[260704130316-4f35-1755-PR1763] 13:03:16 ## Decision\r\n" +
-		"[260704130316-4f35-1755-PR1763] 13:03:16 **APPROVED**\"\r\n"
-	reviewRunDir := filepath.Join(repoRoot, ".sandman", "batches", reviewBatchID, "runs", reviewRunID)
+	// Slice 1: the verdict is read from <runDir>/decision.md (the
+	// controlled artefact), not from run.log. We seed a bare
+	// **APPROVED** marker — the previous "trailing-quote" lenient
+	// shape is no longer tolerated (see
+	// TestPortal_ReviewVerdictFromDecisionFile's negative-case row).
+	// The review batch is also registered in the Batches index so
+	// runFromState can stamp RunDir from the index entry.
+	reviewBatchDir := filepath.Join(repoRoot, ".sandman", "batches", reviewBatchID)
+	reviewRunDir := filepath.Join(reviewBatchDir, "runs", reviewRunID)
 	if err := os.MkdirAll(reviewRunDir, 0755); err != nil {
 		t.Fatalf("mkdir review run dir: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(reviewRunDir, "run.log"), []byte(reviewLog), 0644); err != nil {
-		t.Fatalf("write review run.log: %v", err)
+	if err := os.WriteFile(filepath.Join(reviewRunDir, "decision.md"), []byte("## Decision\n**APPROVED**\n"), 0644); err != nil {
+		t.Fatalf("write review decision.md: %v", err)
+	}
+	sliceLayout := paths.NewLayout(nil, repoRoot)
+	sliceIdx := &batchindex.Index{
+		Version: batchindex.IndexVersion,
+		Batches: []batchindex.Batch{
+			{
+				ID:        reviewBatchID,
+				Path:      reviewBatchDir,
+				Kind:      batchindex.KindReview,
+				Status:    batchindex.StatusArchived,
+				CreatedAt: startedAt,
+				PR:        1763,
+			},
+		},
+	}
+	if err := sliceIdx.Save(sliceLayout.BatchesIndexPath); err != nil {
+		t.Fatalf("save review batches index: %v", err)
 	}
 
 	runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")})
@@ -431,8 +470,8 @@ func TestPortal_Compute_PreservesParentStatusWithTrailingQuoteRunLogShape(t *tes
 	if reviewRow == nil {
 		t.Fatalf("expected review row %q, got %#v", reviewRunID, runs)
 	}
-	if !strings.Contains(reviewRow.Log, "**APPROVED**\"") {
-		t.Fatalf("review row Log missing the trailing-quote marker: %q", reviewRow.Log)
+	if implRow.ReviewVerdict != "Approved" {
+		t.Fatalf("impl row ReviewVerdict=%q, want %q (verdict sourced from <runDir>/decision.md, slice 1 of #1938)", implRow.ReviewVerdict, "Approved")
 	}
 	if reviewRow.Status != "success" {
 		t.Fatalf("review row Status=%q, want success (the agent exits 0 even when it approved)", reviewRow.Status)
@@ -443,22 +482,24 @@ func TestPortal_Compute_PreservesParentStatusWithTrailingQuoteRunLogShape(t *tes
 }
 
 // TestPortal_Compute_PreservesParentStatusWithTrailingQuoteAndPipeRunLogShape
-// is the post-#1825 regression for issue #1792's saved-log shape. The
-// bug was the portal's verdict projection (as of #1767) anchoring the
-// marker line to `"?\s*$` and missing the **APPROVED** marker when a
-// trailing `" 2>&1 | tail -5` followed it. After the cross-batch
-// aggregation removal, the parent row's own terminal status is
-// preserved regardless of any review verdict projection. The
-// reviewVerdictFromRunLog helper is kept as forward-compat and
-// tolerates the broader debris; its direct unit-test coverage lives
-// in TestPortal_ReviewVerdictFromRunLog below.
+// is the post-#1825 regression for issue #1792's saved-log shape, retargeted
+// to decision.md by slice 1 of #1938. The previous run.log parser (#1792)
+// anchored the marker line to `"?\s*$` and missed the **APPROVED** marker
+// when a trailing `" 2>&1 | tail -5` followed it. After the cross-batch
+// aggregation removal, the parent row's own terminal status is preserved
+// regardless of any review verdict projection.
 //
-// The reproduction here mirrors the actual log tail captured locally
-// from `260704185852-d9f0-1779-PR1789/run.log` (work item
+// Slice 1: decision.md is the controlled artefact and does not carry
+// shell debris. The bare **APPROVED** marker without the trailing
+// `" 2>&1 | tail -5` now drives the verdict. The previous lenient
+// shell-debris shape moves to the negative-case rows in
+// TestPortal_ReviewVerdictFromDecisionFile as a deliberate behaviour
+// change.
+//
+// The reproduction mirrors the actual log tail captured locally from
+// `260704185852-d9f0-1779-PR1789/run.log` (work item
 // 260704183525-a9d3-1779 "[slice 0] e2e gate hygiene" / issue #1779 /
-// PR #1789). The test asserts that with the broader marker rule in
-// place, the parent row surfaces "Approved"; without it, the helper
-// falls through and the parent row stays "Unclear".
+// PR #1789); only the verdict-carrying artefact changed in slice 1.
 func TestPortal_Compute_PreservesParentStatusWithTrailingQuoteAndPipeRunLogShape(t *testing.T) {
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
@@ -501,26 +542,37 @@ func TestPortal_Compute_PreservesParentStatusWithTrailingQuoteAndPipeRunLogShape
 		}},
 	})
 
-	// Saved run.log for the review run, mirroring the actual
-	// production log captured at 260704185852-d9f0-1779-PR1789/run.log.
-	// The final line is `**APPROVED**" 2>&1 | tail -5` — the trailing
-	// `"` is the bash closing quote of `gh pr comment --body "..."`
-	// and the `2>&1 | tail -5` is the redirect-and-pipe trailer the
-	// agent (or the operator) chained onto the same `gh pr comment`
-	// invocation. Both pieces of debris must be tolerated by the
-	// marker rule for the parent issue row to surface "Approved".
-	reviewLog := "[260704185852-d9f0-1779-PR1789] 18:58:30 ## Summary\r\n" +
-		"[260704185852-d9f0-1779-PR1789] 18:58:30 Reviewed the e2e gate hygiene slice.\r\n" +
-		"[260704185852-d9f0-1779-PR1789] 18:59:50 ## Findings\r\n" +
-		"[260704185852-d9f0-1779-PR1789] 18:59:50 None — slice is clean and the helper is in place.\r\n" +
-		"[260704185852-d9f0-1779-PR1789] 19:00:55 ## Decision\r\n" +
-		"[260704185852-d9f0-1779-PR1789] 19:01:06 **APPROVED**\" 2>&1 | tail -5\r\n"
-	reviewRunDir := filepath.Join(repoRoot, ".sandman", "batches", reviewBatchID, "runs", reviewRunID)
+	// Slice 1 (#1938): the verdict is read from
+	// <runDir>/decision.md (the controlled artefact), not from
+	// run.log. We seed a bare **APPROVED** marker — the previous
+	// "trailing-quote+pipe" lenient shape is no longer tolerated
+	// (see TestPortal_ReviewVerdictFromDecisionFile's negative-case
+	// row). The review batch is also registered in the Batches
+	// index so runFromState can stamp RunDir from the index entry.
+	reviewBatchDir := filepath.Join(repoRoot, ".sandman", "batches", reviewBatchID)
+	reviewRunDir := filepath.Join(reviewBatchDir, "runs", reviewRunID)
 	if err := os.MkdirAll(reviewRunDir, 0755); err != nil {
 		t.Fatalf("mkdir review run dir: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(reviewRunDir, "run.log"), []byte(reviewLog), 0644); err != nil {
-		t.Fatalf("write review run.log: %v", err)
+	if err := os.WriteFile(filepath.Join(reviewRunDir, "decision.md"), []byte("## Decision\n**APPROVED**\n"), 0644); err != nil {
+		t.Fatalf("write review decision.md: %v", err)
+	}
+	sliceLayout := paths.NewLayout(nil, repoRoot)
+	sliceIdx := &batchindex.Index{
+		Version: batchindex.IndexVersion,
+		Batches: []batchindex.Batch{
+			{
+				ID:        reviewBatchID,
+				Path:      reviewBatchDir,
+				Kind:      batchindex.KindReview,
+				Status:    batchindex.StatusArchived,
+				CreatedAt: startedAt,
+				PR:        1789,
+			},
+		},
+	}
+	if err := sliceIdx.Save(sliceLayout.BatchesIndexPath); err != nil {
+		t.Fatalf("save review batches index: %v", err)
 	}
 
 	runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")})
@@ -544,8 +596,8 @@ func TestPortal_Compute_PreservesParentStatusWithTrailingQuoteAndPipeRunLogShape
 	if reviewRow == nil {
 		t.Fatalf("expected review row %q, got %#v", reviewRunID, runs)
 	}
-	if !strings.Contains(reviewRow.Log, `**APPROVED**" 2>&1 | tail -5`) {
-		t.Fatalf("review row Log missing the trailing-quote+pipe marker: %q", reviewRow.Log)
+	if implRow.ReviewVerdict != "Approved" {
+		t.Fatalf("impl row ReviewVerdict=%q, want %q (verdict sourced from <runDir>/decision.md, slice 1 of #1938)", implRow.ReviewVerdict, "Approved")
 	}
 	if reviewRow.Status != "success" {
 		t.Fatalf("review row Status=%q, want success (the agent exits 0 even when it approved)", reviewRow.Status)
@@ -1963,20 +2015,23 @@ func TestPortal_Compute_MultipleDeadBatches_IndependentIssueSets(t *testing.T) {
 	}
 }
 
-// TestPortal_Compute_ReviewVerdictFromDecisionMarkerOnSavedRunLog
-// is the slice-1 tracer bullet for issue #1729. The bug: today's
-// portal infers the parent row's review verdict from the review run's
-// exit status ("success" → "Approved"). But the review agent always
-// exits 0 because it posts a single `gh pr comment` and exits cleanly,
+// TestPortal_Compute_ReviewVerdictFromDecisionFileOnDisk pins the
+// slice-1 contract for the parent row's ReviewVerdict under issue
+// #1729 + #1938. The bug prior to #1897: the portal inferred the
+// parent row's review verdict from the review run's exit status
+// ("success" → "Approved"). But the review agent always exits 0
+// because it posts a single `gh pr comment` and exits cleanly,
 // regardless of what it decided. The actual reviewer decision lives
-// only in the posted comment body, written to the saved run.log as a
-// "## Decision" section with a literal marker.
+// in the artefact published by the agent: <runDir>/decision.md (slice 1
+// of #1938), which contains a `## Decision` section with a literal
+// marker.
 //
-// This test pins the new behaviour: when the saved run.log for a
-// review run contains the `**CHANGES_REQUESTED**` marker in its
-// `## Decision` section, the parent issue row's ReviewVerdict must be
-// the literal string "Changes requested" — not "Approved".
-func TestPortal_Compute_ReviewVerdictFromDecisionMarkerOnSavedRunLog(t *testing.T) {
+// This test pins the new behaviour: when the per-row decision.md
+// carries the `**CHANGES_REQUESTED**` marker, the parent issue row's
+// ReviewVerdict must be the literal string "Changes requested" —
+// not "Approved". run.log content is irrelevant to the verdict
+// projection.
+func TestPortal_Compute_ReviewVerdictFromDecisionFileOnDisk(t *testing.T) {
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
 		t.Fatal(err)
@@ -2023,21 +2078,37 @@ func TestPortal_Compute_ReviewVerdictFromDecisionMarkerOnSavedRunLog(t *testing.
 		}},
 	})
 
-	// Saved run.log for the review run, mirroring the actual
-	// production log (events.jsonl:181 → run.finished status="success",
-	// but the agent wrote `**CHANGES_REQUESTED**` inside the
-	// `## Decision` section of the posted comment before exiting).
-	// The slice-1 fix must read THIS, not the status.
-	reviewLog := "[260703135044-556c-1719-PR1726] 13:51:47 ## Findings\r\n" +
-		"[260703135044-556c-1719-PR1726] 13:51:47 - macOS job is red on this PR.\r\n" +
-		"[260703135044-556c-1719-PR1726] 13:52:10 ## Decision\r\n" +
-		"[260703135044-556c-1719-PR1726] 13:52:11 **CHANGES_REQUESTED**\r\n"
-	reviewRunDir := filepath.Join(repoRoot, ".sandman", "batches", reviewBatchID, "runs", reviewRunID)
+	// Slice 1 (#1938): the verdict is read from
+	// <runDir>/decision.md. The agent wrote `**CHANGES_REQUESTED**`
+	// inside the `## Decision` section; run.finished is "success",
+	// so without the slice-1 verdict projection the parent row would
+	// surface "Approved" instead of "Changes requested". The review
+	// batch is registered in the Batches index so runFromState can
+	// stamp RunDir from the index entry (slice 0 plumbing).
+	reviewBatchDir := filepath.Join(repoRoot, ".sandman", "batches", reviewBatchID)
+	reviewRunDir := filepath.Join(reviewBatchDir, "runs", reviewRunID)
 	if err := os.MkdirAll(reviewRunDir, 0755); err != nil {
 		t.Fatalf("mkdir review run dir: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(reviewRunDir, "run.log"), []byte(reviewLog), 0644); err != nil {
-		t.Fatalf("write review run.log: %v", err)
+	if err := os.WriteFile(filepath.Join(reviewRunDir, "decision.md"), []byte("## Decision\n**CHANGES_REQUESTED**\n"), 0644); err != nil {
+		t.Fatalf("write review decision.md: %v", err)
+	}
+	sliceLayout := paths.NewLayout(nil, repoRoot)
+	sliceIdx := &batchindex.Index{
+		Version: batchindex.IndexVersion,
+		Batches: []batchindex.Batch{
+			{
+				ID:        reviewBatchID,
+				Path:      reviewBatchDir,
+				Kind:      batchindex.KindReview,
+				Status:    batchindex.StatusArchived,
+				CreatedAt: startedAt,
+				PR:        1726,
+			},
+		},
+	}
+	if err := sliceIdx.Save(sliceLayout.BatchesIndexPath); err != nil {
+		t.Fatalf("save review batches index: %v", err)
 	}
 
 	runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")})
@@ -2061,220 +2132,273 @@ func TestPortal_Compute_ReviewVerdictFromDecisionMarkerOnSavedRunLog(t *testing.
 	if reviewRow == nil {
 		t.Fatalf("expected review row %q, got %#v", reviewRunID, runs)
 	}
-	if !strings.Contains(reviewRow.Log, "CHANGES_REQUESTED") {
-		t.Fatalf("review row Log missing CHANGES_REQUESTED marker: %q", reviewRow.Log)
+	if implRow.ReviewVerdict != "Changes requested" {
+		t.Fatalf("impl row ReviewVerdict=%q, want %q (verdict sourced from <runDir>/decision.md, slice 1 of #1938)", implRow.ReviewVerdict, "Changes requested")
 	}
 	if reviewRow.Status != "success" {
 		t.Fatalf("review row Status=%q, want success (the agent exits 0 even when it requested changes)", reviewRow.Status)
 	}
 	if implRow.Status != "success" {
-		t.Fatalf("impl row Status=%q, want success (terminal run.finished preserved after aggregateReviewChildren removal)", implRow.Status)
+		t.Fatalf("impl row Status=%q, want success (terminal run.finished preserved)", implRow.Status)
 	}
 }
 
-// TestPortal_ReviewVerdictFromRunLog pins the boundary of the
-// reviewVerdictFromRunLog helper directly (slice-1 extraction test).
-// It exercises the markers the prompt today produces and the
+// TestPortal_ReviewVerdictFromDecisionFile pins the boundary of the
+// reviewVerdictFromDecisionFile helper (issue #1938 slice 1). Each
+// case writes a real decision.md file into a t.TempDir-backed
+// <repoRoot>/.sandman/batches/<batchID>/runs/<runID> folder and
+// asserts the helper's verdict + ok flag. The cases cover the
+// production marker shapes the prompt produces plus the
 // out-of-scope spelling variants that must NOT be coerced. The
 // integration tests above already assert the projection flows through
 // compute(); this test pins the helper's behaviour so that future
 // prompt-edits that introduce new marker spellings fail loudly
 // instead of silently disagreeing with production.
-func TestPortal_ReviewVerdictFromRunLog(t *testing.T) {
+func TestPortal_ReviewVerdictFromDecisionFile(t *testing.T) {
 	cases := []struct {
-		name    string
-		logText string
-		want    string
-		wantOK  bool
+		name      string
+		batchID   string
+		runID     string
+		contents  string
+		writeFile bool
+		want      string
+		wantOK    bool
 	}{
 		{
-			name:    "CHANGES_REQUESTED inside ## Decision is recognised",
-			logText: "13:52:10 ## Decision\n13:52:11 **CHANGES_REQUESTED**\n",
-			want:    "Changes requested",
-			wantOK:  true,
+			name:      "APPROVED inside ## Decision is recognised",
+			batchID:   "batch-1",
+			runID:     "run-1",
+			contents:  "## Decision\n**APPROVED**\n",
+			writeFile: true,
+			want:      "Approved",
+			wantOK:    true,
 		},
 		{
-			name:    "APPROVED inside ## Decision is recognised",
-			logText: "13:52:10 ## Decision\n13:52:11 **APPROVED**\n",
-			want:    "Approved",
-			wantOK:  true,
+			name:      "CHANGES_REQUESTED inside ## Decision is recognised",
+			batchID:   "batch-1",
+			runID:     "run-1",
+			contents:  "## Decision\n**CHANGES_REQUESTED**\n",
+			writeFile: true,
+			want:      "Changes requested",
+			wantOK:    true,
 		},
 		{
-			name:    "marker outside Decision section is ignored",
-			logText: "13:50:00 ## Summary\n13:50:01 **CHANGES_REQUESTED** is unrelated prose\n13:51:00 ## Decision\n13:51:01 **APPROVED**\n",
-			want:    "Approved",
-			wantOK:  true,
+			name:    "missing decision.md yields no verdict",
+			batchID: "batch-1",
+			runID:   "run-1",
+			// writeFile=false: do not create the file
+			want:   "",
+			wantOK: false,
 		},
 		{
-			name:    "no Decision section yields no verdict",
-			logText: "13:50:00 ## Summary\n13:50:01 LGTM\n",
-			want:    "",
-			wantOK:  false,
+			name:      "no Decision section yields no verdict",
+			batchID:   "batch-1",
+			runID:     "run-1",
+			contents:  "## Summary\nLGTM\n",
+			writeFile: true,
+			want:      "",
+			wantOK:    false,
 		},
 		{
-			name:    "Decision section with no marker yields no verdict",
-			logText: "13:50:00 ## Decision\n13:50:01 the author will iterate\n",
-			want:    "",
-			wantOK:  false,
+			name:      "Decision section with no marker yields no verdict",
+			batchID:   "batch-1",
+			runID:     "run-1",
+			contents:  "## Decision\nthe author will iterate\n",
+			writeFile: true,
+			want:      "",
+			wantOK:    false,
 		},
 		{
-			name:    "spelling variant with space (CHANGES REQUESTED) is not coerced",
-			logText: "13:50:00 ## Decision\n13:50:01 **CHANGES REQUESTED**\n",
-			want:    "",
-			wantOK:  false,
+			name:      "lowercase marker is not coerced",
+			batchID:   "batch-1",
+			runID:     "run-1",
+			contents:  "## Decision\n**changes_requested**\n",
+			writeFile: true,
+			want:      "",
+			wantOK:    false,
 		},
 		{
-			// Issue #1792: the lenient marker rule intentionally
-			// accepts a trailing period, so this spelling variant
-			// is no longer rejected. The remaining safety net
-			// against "mid-line prose" is the alphanum guard
-			// (see "marker inside Decision followed by prose" below),
-			// not the trailing-period rule. The case stays in the
-			// table to pin the flip explicitly.
-			name:    "spelling variant with trailing period is recognised (lenient regex flip)",
-			logText: "13:50:00 ## Decision\n13:50:01 **CHANGES_REQUESTED**.\n",
-			want:    "Changes requested",
-			wantOK:  true,
+			name:      "space-inside-asterisks variant is not coerced",
+			batchID:   "batch-1",
+			runID:     "run-1",
+			contents:  "## Decision\n**CHANGES REQUESTED**\n",
+			writeFile: true,
+			want:      "",
+			wantOK:    false,
 		},
 		{
-			name:    "lowercase spelling is not coerced",
-			logText: "13:50:00 ## Decision\n13:50:01 **changes_requested**\n",
-			want:    "",
-			wantOK:  false,
+			name:      "mid-line prose marker is not coerced",
+			batchID:   "batch-1",
+			runID:     "run-1",
+			contents:  "## Decision\n**APPROVED** is unrelated prose\n",
+			writeFile: true,
+			want:      "",
+			wantOK:    false,
 		},
 		{
-			name: "## Decisions (plural heading) does not match the bare Decision section",
-			logText: "13:50:00 ## Decisions\n" +
-				"13:50:01 **APPROVED**\n" +
-				"13:51:00 ## Decision\n" +
-				"13:51:01 **CHANGES_REQUESTED**\n",
-			want:   "Changes requested",
-			wantOK: true,
+			name:      "marker outside Decision section is ignored",
+			batchID:   "batch-1",
+			runID:     "run-1",
+			contents:  "## Summary\n**CHANGES_REQUESTED** is unrelated prose\n## Decision\n**APPROVED**\n",
+			writeFile: true,
+			want:      "Approved",
+			wantOK:    true,
 		},
 		{
-			name: "## Decision Tree heading does not match",
-			logText: "13:50:00 ## Decision Tree\n" +
-				"13:50:01 **APPROVED**\n" +
-				"13:51:00 ## Decision\n" +
-				"13:51:01 **APPROVED**\n",
-			want:   "Approved",
-			wantOK: true,
+			name:      "## Decisions (plural heading) does not match the bare Decision section",
+			batchID:   "batch-1",
+			runID:     "run-1",
+			contents:  "## Decisions\n**APPROVED**\n## Decision\n**CHANGES_REQUESTED**\n",
+			writeFile: true,
+			want:      "Changes requested",
+			wantOK:    true,
 		},
 		{
-			name:    "## Decision Summary heading does not match",
-			logText: "13:50:00 ## Decision Summary\n13:50:01 **APPROVED**\n13:51:00 ## Decision\n13:51:01 **CHANGES_REQUESTED**\n",
-			want:    "Changes requested",
-			wantOK:  true,
+			name:      "## Decision Tree heading does not match",
+			batchID:   "batch-1",
+			runID:     "run-1",
+			contents:  "## Decision Tree\n**APPROVED**\n## Decision\n**APPROVED**\n",
+			writeFile: true,
+			want:      "Approved",
+			wantOK:    true,
 		},
 		{
-			name:    "## Decisionmid-sentence does not match",
-			logText: "13:50:00 some prose mentioning ## Decision in a sentence\n13:50:01 **APPROVED**\n",
-			want:    "",
-			wantOK:  false,
+			name:      "## Decision Summary heading does not match",
+			batchID:   "batch-1",
+			runID:     "run-1",
+			contents:  "## Decision Summary\n**APPROVED**\n## Decision\n**CHANGES_REQUESTED**\n",
+			writeFile: true,
+			want:      "Changes requested",
+			wantOK:    true,
 		},
 		{
-			name:    "case-insensitive Decision heading match",
-			logText: "13:50:00 ## decision\n13:50:01 **APPROVED**\n",
-			want:    "Approved",
-			wantOK:  true,
+			name:      "## Decisionmid-sentence does not match",
+			batchID:   "batch-1",
+			runID:     "run-1",
+			contents:  "some prose mentioning ## Decision in a sentence\n**APPROVED**\n",
+			writeFile: true,
+			want:      "",
+			wantOK:    false,
 		},
 		{
-			name:    "empty log yields no verdict",
-			logText: "",
-			want:    "",
-			wantOK:  false,
+			name:      "case-insensitive Decision heading matches",
+			batchID:   "batch-1",
+			runID:     "run-1",
+			contents:  "## decision\n**APPROVED**\n",
+			writeFile: true,
+			want:      "Approved",
+			wantOK:    true,
 		},
 		{
-			name:    "log with timestamps and runID prefix is parsed",
-			logText: "[260618113825-abcd-PR42] 13:52:10 ## Decision\n[260618113825-abcd-PR42] 13:52:11 **CHANGES_REQUESTED**\n",
-			want:    "Changes requested",
-			wantOK:  true,
+			name:      "empty decision.md yields no verdict",
+			batchID:   "batch-1",
+			runID:     "run-1",
+			contents:  "",
+			writeFile: true,
+			want:      "",
+			wantOK:    false,
 		},
 		{
-			name:    "APPROVED with trailing double-quote (gh pr comment --body) is recognised",
-			logText: "13:52:10 ## Decision\n13:52:11 **APPROVED**\"\n",
-			want:    "Approved",
-			wantOK:  true,
+			name:      "multiple Decision sections — latest section's marker wins",
+			batchID:   "batch-1",
+			runID:     "run-1",
+			contents:  "## Decision\n**CHANGES_REQUESTED**\n## Decision\n**APPROVED**\n",
+			writeFile: true,
+			want:      "Approved",
+			wantOK:    true,
 		},
 		{
-			name:    "CHANGES_REQUESTED with trailing double-quote (gh pr comment --body) is recognised",
-			logText: "13:52:10 ## Decision\n13:52:11 **CHANGES_REQUESTED**\"\n",
-			want:    "Changes requested",
-			wantOK:  true,
+			// Empty latest Decision section: the verdict must
+			// surface as Unclear rather than carrying forward the
+			// prior section's marker. Each fresh Decision section
+			// resets the verdict accumulator so a later blank
+			// section can overrule an earlier filled one (a draft
+			// the agent cleared before posting).
+			name:      "latest Decision section is empty — verdict is Unclear (no carry-forward)",
+			batchID:   "batch-1",
+			runID:     "run-1",
+			contents:  "## Decision\n**CHANGES_REQUESTED**\n## Decision\n",
+			writeFile: true,
+			want:      "",
+			wantOK:    false,
 		},
 		{
-			name:    "runID-prefixed APPROVED with trailing double-quote is recognised",
-			logText: "[260704130316-4f35-1755-PR1763] 13:03:16 ## Decision\n[260704130316-4f35-1755-PR1763] 13:03:16 **APPROVED**\"\n",
-			want:    "Approved",
-			wantOK:  true,
+			name:      "Decision section exits at next heading before marker",
+			batchID:   "batch-1",
+			runID:     "run-1",
+			contents:  "## Decision\n## Summary\n**APPROVED**\n",
+			writeFile: true,
+			want:      "",
+			wantOK:    false,
 		},
 		{
-			// Issue #1792: production log line at 19:01:06 in
-			// 260704185852-d9f0-1779-PR1789/run.log is
-			// `**APPROVED**" 2>&1 | tail -5` — the bash shell left
-			// the closing quote of `gh pr comment --body "..."`
-			// AND the redirect-and-pipe trailer on the same line
-			// as the marker. The lenient regex `[^a-zA-Z]*$`
-			// tolerates both as trailing non-letter garbage.
-			name:    "APPROVED with trailing shell-pipe debris (2>&1 | tail -5) is recognised",
-			logText: "13:50:00 ## Decision\n13:50:01 **APPROVED**\" 2>&1 | tail -5\n",
-			want:    "Approved",
-			wantOK:  true,
+			// Slice 1 hardening: the previous run.log parser tolerated
+			// shell-debris trailers (`gh pr comment --body "..."`,
+			// `2>&1 | tail -5`). decision.md is a controlled artefact
+			// with no shell prefix and no trailing debris, so these
+			// shapes are now rejected.
+			name:      "APPROVED with trailing double-quote is rejected (debris not tolerated on controlled artefact)",
+			batchID:   "batch-1",
+			runID:     "run-1",
+			contents:  "## Decision\n**APPROVED**\"\n",
+			writeFile: true,
+			want:      "",
+			wantOK:    false,
 		},
 		{
-			// Single-quote trailer — also a frequent shell artifact
-			// when the operator hand-types the gh invocation.
-			name:    "APPROVED with trailing single quote is recognised",
-			logText: "13:50:00 ## Decision\n13:50:01 **APPROVED**'\n",
-			want:    "Approved",
-			wantOK:  true,
+			name:      "APPROVED with trailing shell-pipe debris is rejected (debris not tolerated on controlled artefact)",
+			batchID:   "batch-1",
+			runID:     "run-1",
+			contents:  "## Decision\n**APPROVED**\" 2>&1 | tail -5\n",
+			writeFile: true,
+			want:      "",
+			wantOK:    false,
 		},
 		{
-			// Full d9f0-…-PR1789 log-line shape: the runID timestamp
-			// prefix is on the same line as the marker.
-			name:    "runID-prefixed APPROVED with trailing shell-pipe debris is recognised",
-			logText: "[260704185852-d9f0-1779-PR1789] 19:01:06 ## Decision\n[260704185852-d9f0-1779-PR1789] 19:01:06 **APPROVED**\" 2>&1 | tail -5\n",
-			want:    "Approved",
-			wantOK:  true,
+			name:      "APPROVED with trailing period is rejected (debris not tolerated on controlled artefact)",
+			batchID:   "batch-1",
+			runID:     "run-1",
+			contents:  "## Decision\n**APPROVED**.\n",
+			writeFile: true,
+			want:      "",
+			wantOK:    false,
 		},
 		{
-			// Issue #1792: with the lenient regex, the second `"` is
-			// just more trailing non-letter garbage, so the marker
-			// is accepted. Pinning this so a future tightening of
-			// the regex back to `"?\s*$` would have to update this
-			// case explicitly.
-			name:    "APPROVED with double trailing quote is recognised (lenient regex flips)",
-			logText: "13:50:00 ## Decision\n13:50:01 **APPROVED**\"\"\n",
-			want:    "Approved",
-			wantOK:  true,
+			name:      "APPROVED with trailing single quote is rejected (debris not tolerated on controlled artefact)",
+			batchID:   "batch-1",
+			runID:     "run-1",
+			contents:  "## Decision\n**APPROVED**'\n",
+			writeFile: true,
+			want:      "",
+			wantOK:    false,
 		},
 		{
-			// Issue #1792: trailing period-after-quote — both chars
-			// are non-letters, so the lenient regex accepts. Pinning
-			// this for the same reason as the previous case.
-			name:    "APPROVED with quote+period trailer is recognised (lenient regex flips)",
-			logText: "13:50:00 ## Decision\n13:50:01 **APPROVED**\".\n",
-			want:    "Approved",
-			wantOK:  true,
-		},
-		{
-			// Issue #1792: the alphanum rule is the only remaining
-			// safety net for "mid-line prose" once the lenient regex
-			// accepts trailing non-letters. A letter immediately
-			// after the marker is still rejected, so the helper
-			// keeps ignoring a Decision-line marker that is part of
-			// a larger prose sentence.
-			name:    "marker inside Decision followed by prose is not coerced (alphanum guard)",
-			logText: "13:50:00 ## Decision\n13:50:01 **APPROVED** is unrelated prose\n",
-			want:    "",
-			wantOK:  false,
+			name:      "marker is a line by itself (whitespace-only line between heading and marker is OK)",
+			batchID:   "batch-1",
+			runID:     "run-1",
+			contents:  "## Decision\n\n**APPROVED**\n",
+			writeFile: true,
+			want:      "Approved",
+			wantOK:    true,
 		},
 	}
+
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, ok := reviewVerdictFromRunLog(tc.logText)
+			repoRoot := t.TempDir()
+			if tc.writeFile {
+				runDir := filepath.Join(repoRoot, ".sandman", "batches", tc.batchID, "runs", tc.runID)
+				if err := os.MkdirAll(runDir, 0755); err != nil {
+					t.Fatalf("mkdir run dir: %v", err)
+				}
+				if err := os.WriteFile(filepath.Join(runDir, "decision.md"), []byte(tc.contents), 0644); err != nil {
+					t.Fatalf("write decision.md: %v", err)
+				}
+			}
+			layout := paths.NewLayout(nil, repoRoot)
+			got, ok := reviewVerdictFromDecisionFile(layout, tc.batchID, tc.runID)
 			if ok != tc.wantOK {
-				t.Fatalf("ok = %v, want %v", ok, tc.wantOK)
+				t.Fatalf("ok = %v, want %v (got verdict=%q)", ok, tc.wantOK, got)
 			}
 			if got != tc.want {
 				t.Fatalf("verdict = %q, want %q", got, tc.want)

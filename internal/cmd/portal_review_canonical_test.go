@@ -359,8 +359,8 @@ func TestPortal_DocComments_DescribeServerSideStampingAndOrphanJSPath(t *testing
 		{
 			field: "ReviewVerdict",
 			required: []string{
-				"aggregateReviewChildren", // canonical Go writer (parent rows)
-				"reviewVerdictFromRunLog", // verdict extraction helper
+				"aggregateReviewChildren",       // canonical Go writer (parent rows)
+				"reviewVerdictFromDecisionFile", // verdict extraction helper (slice 1, #1938)
 			},
 		},
 		{
@@ -466,18 +466,38 @@ func TestPortal_ReviewAggregation_HonorsCanonicalRowID(t *testing.T) {
 		{Type: "run.finished", Timestamp: startedAt.Add(7 * time.Minute), RunID: canonicalReviewRowID, Payload: map[string]any{"status": "success", "branch": "sandman/review-PR42", "review": true, "pr_number": 42, "issue_number": issueNumber, "batch_id": "sid-2606181138-PR42"}},
 	})
 
-	// Issue #1729: parent ReviewVerdict flows from the saved review
-	// run.log's ## Decision marker, not from run.finished.status. Seed
-	// an APPROVED marker so the verdict projection has a real value to
-	// surface.
-	reviewRunDir := filepath.Join(repoRoot, ".sandman", "batches", "sid-2606181138-PR42", "runs", canonicalReviewRowID)
+	// Issue #1729 + #1938 slice 1: parent ReviewVerdict flows from
+	// <runDir>/decision.md (the controlled artefact), not from
+	// run.finished.status. The verdict reader is
+	// reviewVerdictFromDecisionFile. Seed an APPROVED marker in a
+	// real decision.md so the projection has a real value to
+	// surface. run.log is left as irrelevant chat noise. The review
+	// batch is registered in the Batches index so runFromState can
+	// stamp RunDir from the index entry (slice 0 plumbing).
+	reviewBatchDir := filepath.Join(repoRoot, ".sandman", "batches", "sid-2606181138-PR42")
+	reviewRunDir := filepath.Join(reviewBatchDir, "runs", canonicalReviewRowID)
 	if err := os.MkdirAll(reviewRunDir, 0755); err != nil {
 		t.Fatalf("mkdir review run dir: %v", err)
 	}
-	reviewLog := "[" + canonicalReviewRowID + "] 12:00:00 ## Decision\r\n" +
-		"[" + canonicalReviewRowID + "] 12:00:30 **APPROVED**\r\n"
-	if err := os.WriteFile(filepath.Join(reviewRunDir, "run.log"), []byte(reviewLog), 0644); err != nil {
-		t.Fatalf("write review run.log: %v", err)
+	if err := os.WriteFile(filepath.Join(reviewRunDir, "decision.md"), []byte("## Decision\n**APPROVED**\n"), 0644); err != nil {
+		t.Fatalf("write review decision.md: %v", err)
+	}
+	reviewLayout := paths.NewLayout(nil, repoRoot)
+	reviewIdx := &batchindex.Index{
+		Version: batchindex.IndexVersion,
+		Batches: []batchindex.Batch{
+			{
+				ID:        "sid-2606181138-PR42",
+				Path:      reviewBatchDir,
+				Kind:      batchindex.KindReview,
+				Status:    batchindex.StatusArchived,
+				CreatedAt: time.Now().Add(-9 * time.Minute),
+				PR:        42,
+			},
+		},
+	}
+	if err := reviewIdx.Save(reviewLayout.BatchesIndexPath); err != nil {
+		t.Fatalf("save review batches index: %v", err)
 	}
 
 	runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")})
@@ -548,14 +568,35 @@ func TestPortal_ParentImplRow_ReviewCountAndVerdictSurviveSummaryStrip(t *testin
 		{Type: "run.finished", Timestamp: startedAt.Add(7 * time.Minute), RunID: canonicalReviewRowID, Payload: map[string]any{"status": "success", "branch": "sandman/review-PR42", "review": true, "pr_number": 42, "issue_number": issueNumber, "batch_id": "sid-2606181138-PR42"}},
 	})
 
-	reviewRunDir := filepath.Join(repoRoot, ".sandman", "batches", "sid-2606181138-PR42", "runs", canonicalReviewRowID)
+	// Issue #1938 slice 1: write the verdict-bearing content into
+	// decision.md (the controlled artefact); run.log is left as chat
+	// noise for the verdict projection. The review batch is also
+	// registered in the Batches index so runFromState can stamp
+	// RunDir from the index entry (slice 0 plumbing).
+	reviewBatchDir := filepath.Join(repoRoot, ".sandman", "batches", "sid-2606181138-PR42")
+	reviewRunDir := filepath.Join(reviewBatchDir, "runs", canonicalReviewRowID)
 	if err := os.MkdirAll(reviewRunDir, 0755); err != nil {
 		t.Fatalf("mkdir review run dir: %v", err)
 	}
-	reviewLog := "[" + canonicalReviewRowID + "] 12:00:00 ## Decision\r\n" +
-		"[" + canonicalReviewRowID + "] 12:00:30 **APPROVED**\r\n"
-	if err := os.WriteFile(filepath.Join(reviewRunDir, "run.log"), []byte(reviewLog), 0644); err != nil {
-		t.Fatalf("write review run.log: %v", err)
+	if err := os.WriteFile(filepath.Join(reviewRunDir, "decision.md"), []byte("## Decision\n**APPROVED**\n"), 0644); err != nil {
+		t.Fatalf("write review decision.md: %v", err)
+	}
+	reviewLayout := paths.NewLayout(nil, repoRoot)
+	reviewIdx := &batchindex.Index{
+		Version: batchindex.IndexVersion,
+		Batches: []batchindex.Batch{
+			{
+				ID:        "sid-2606181138-PR42",
+				Path:      reviewBatchDir,
+				Kind:      batchindex.KindReview,
+				Status:    batchindex.StatusArchived,
+				CreatedAt: time.Now().Add(-9 * time.Minute),
+				PR:        42,
+			},
+		},
+	}
+	if err := reviewIdx.Save(reviewLayout.BatchesIndexPath); err != nil {
+		t.Fatalf("save review batches index: %v", err)
 	}
 
 	runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")})
@@ -596,15 +637,32 @@ func TestPortal_ParentImplRow_ReviewCountAndVerdictSurviveSummaryStrip(t *testin
 // (newer successful run wins over older aborted run with review children) while
 // restoring server-side stamping: the older aborted parent stays clean and the
 // newer successful parent carries the aggregated review metadata.
+//
+// Slice 1 (issue #1938): the verdict is read from
+// <runDir>/decision.md (the controlled artefact), not from run.log. Each
+// test below writes a real decision.md file into a t.TempDir-backed
+// <batchDir>/runs/<runID> folder and sets the review row's RunDir to
+// match. Run.log content is irrelevant to the verdict projection —
+// decision.md is the source of truth.
 func TestAggregateReviewChildren_StampLandsOnCanonicalParent(t *testing.T) {
+	repoRoot := t.TempDir()
 	reviewStarted := time.Date(2026, 7, 4, 12, 0, 0, 0, time.UTC)
 	reviewFinished := time.Date(2026, 7, 4, 12, 5, 0, 0, time.UTC)
-	reviewLog := "## Decision\n**APPROVED**\n"
+	const reviewBatchID = "rev-1-batch"
+	const reviewRunID = "rev-1"
+	reviewRunDir := filepath.Join(repoRoot, ".sandman", "batches", reviewBatchID, "runs", reviewRunID)
+	if err := os.MkdirAll(reviewRunDir, 0755); err != nil {
+		t.Fatalf("mkdir review run dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(reviewRunDir, "decision.md"), []byte("## Decision\n**APPROVED**\n"), 0644); err != nil {
+		t.Fatalf("write decision.md: %v", err)
+	}
+	layout := paths.NewLayout(nil, repoRoot)
 	makeReview := func() portalRun {
 		return portalRun{
-			IssueNumber: 1793, Review: true, RunID: "rev-1", Key: "rev-1",
+			IssueNumber: 1793, Review: true, RunID: reviewRunID, Key: reviewRunID, BatchKey: reviewBatchID, RunDir: reviewRunDir,
 			Kind: "completed", Status: "success",
-			StartedAt: reviewStarted, FinishedAt: &reviewFinished, Log: reviewLog,
+			StartedAt: reviewStarted, FinishedAt: &reviewFinished,
 		}
 	}
 
@@ -613,7 +671,7 @@ func TestAggregateReviewChildren_StampLandsOnCanonicalParent(t *testing.T) {
 		newFinished := time.Date(2026, 7, 5, 0, 30, 0, 0, time.UTC)
 		old := portalRun{IssueNumber: 1793, RunID: "impl-2bf9", Key: "impl-2bf9", Kind: "completed", Status: "aborted", StartedAt: reviewStarted.Add(-time.Hour), FinishedAt: &oldFinished}
 		new := portalRun{IssueNumber: 1793, RunID: "impl-9744", Key: "impl-9744", Kind: "completed", Status: "success", StartedAt: reviewStarted, FinishedAt: &newFinished}
-		runs := (&portalRunsView{}).aggregateReviewChildren([]portalRun{old, new, makeReview()})
+		runs := (&portalRunsView{}).aggregateReviewChildren(layout, []portalRun{old, new, makeReview()})
 		var oldP, newP *portalRun
 		for i := range runs {
 			switch runs[i].RunID {
@@ -627,7 +685,7 @@ func TestAggregateReviewChildren_StampLandsOnCanonicalParent(t *testing.T) {
 			t.Fatalf("newer successful parent ReviewCount=%d, want 1 (stamp lands on canonical parent)", newP.ReviewCount)
 		}
 		if newP.ReviewVerdict != "Approved" {
-			t.Fatalf("newer successful parent ReviewVerdict=%q, want Approved", newP.ReviewVerdict)
+			t.Fatalf("newer successful parent ReviewVerdict=%q, want Approved (verdict sourced from <runDir>/decision.md)", newP.ReviewVerdict)
 		}
 		if oldP.ReviewCount != 0 {
 			t.Fatalf("older aborted parent ReviewCount=%d, want 0 (stamp must not land on hidden parent)", oldP.ReviewCount)
@@ -642,7 +700,7 @@ func TestAggregateReviewChildren_StampLandsOnCanonicalParent(t *testing.T) {
 		activeStarted := time.Date(2026, 7, 5, 1, 0, 0, 0, time.UTC)
 		term := portalRun{IssueNumber: 1793, RunID: "impl-old", Key: "impl-old", Kind: "completed", Status: "success", StartedAt: reviewStarted, FinishedAt: &termFinished}
 		active := portalRun{IssueNumber: 1793, RunID: "impl-live", Key: "impl-live", Kind: "active", Status: "running", StartedAt: activeStarted}
-		runs := (&portalRunsView{}).aggregateReviewChildren([]portalRun{term, active, makeReview()})
+		runs := (&portalRunsView{}).aggregateReviewChildren(layout, []portalRun{term, active, makeReview()})
 		var activeP, termP *portalRun
 		for i := range runs {
 			switch runs[i].RunID {
@@ -671,7 +729,7 @@ func TestAggregateReviewChildren_StampLandsOnCanonicalParent(t *testing.T) {
 		later := time.Date(2026, 7, 5, 1, 0, 0, 0, time.UTC)
 		a := portalRun{IssueNumber: 1793, RunID: "impl-a", Key: "impl-a", Kind: "active", Status: "running", StartedAt: earlier}
 		b := portalRun{IssueNumber: 1793, RunID: "impl-b", Key: "impl-b", Kind: "active", Status: "running", StartedAt: later}
-		runs := (&portalRunsView{}).aggregateReviewChildren([]portalRun{a, b, makeReview()})
+		runs := (&portalRunsView{}).aggregateReviewChildren(layout, []portalRun{a, b, makeReview()})
 		var aP, bP *portalRun
 		for i := range runs {
 			switch runs[i].RunID {
