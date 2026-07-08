@@ -41,8 +41,8 @@ func TestPortal_ResolveReviewRunFromCanonicalFolder_Active(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	batchID := "sid-2606181138-PR42"
-	canonicalRowID := "sid-2606181138-1066-PR42"
+	batchID := "2606181138-abcd-PR42"
+	canonicalRowID := "2606181138-abcd-1066-PR42"
 
 	batchDir := filepath.Join(repoRoot, ".sandman", "batches", batchID)
 	batchSockPath := filepath.Join(batchDir, "batch.sock")
@@ -141,8 +141,8 @@ func TestPortal_ResolveReviewRunFromCanonicalFolder_Completed(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	batchID := "sid-2606181138-PR42"
-	canonicalRowID := "sid-2606181138-1066-PR42"
+	batchID := "2606181138-abcd-PR42"
+	canonicalRowID := "2606181138-abcd-1066-PR42"
 
 	batchDir := filepath.Join(repoRoot, ".sandman", "batches", batchID)
 	runDir := filepath.Join(batchDir, "runs", canonicalRowID)
@@ -248,7 +248,7 @@ func TestPortal_ResolveReviewRunFromCanonicalFolder_EventLogOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	canonicalRowID := "sid-2606181138-PR42"
+	canonicalRowID := "2606181138-abcd-PR42"
 	startedAt := time.Now().Add(-5 * time.Minute)
 
 	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
@@ -453,7 +453,7 @@ func TestPortal_ReviewAggregation_HonorsCanonicalRowID(t *testing.T) {
 	}
 
 	const issueNumber = 1066
-	canonicalReviewRowID := "sid-2606181138-1066-PR42"
+	canonicalReviewRowID := "2606181138-abcd-1066-PR42"
 	startedAt := time.Now().Add(-10 * time.Minute)
 
 	// Parent impl row for the linked issue + child review row in the
@@ -462,8 +462,8 @@ func TestPortal_ReviewAggregation_HonorsCanonicalRowID(t *testing.T) {
 	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
 		{Type: "run.started", Timestamp: startedAt, RunID: "impl-1066", Issue: issueNumber, Payload: map[string]any{"branch": "sandman/1066-fix", "issue_number": issueNumber, "batch_id": "impl-1066"}},
 		{Type: "run.finished", Timestamp: startedAt.Add(8 * time.Minute), RunID: "impl-1066", Issue: issueNumber, Payload: map[string]any{"status": "success", "branch": "sandman/1066-fix", "issue_number": issueNumber, "batch_id": "impl-1066"}},
-		{Type: "run.started", Timestamp: startedAt.Add(2 * time.Minute), RunID: canonicalReviewRowID, Payload: map[string]any{"branch": "sandman/review-PR42", "review": true, "pr_number": 42, "issue_number": issueNumber, "batch_id": "sid-2606181138-PR42"}},
-		{Type: "run.finished", Timestamp: startedAt.Add(7 * time.Minute), RunID: canonicalReviewRowID, Payload: map[string]any{"status": "success", "branch": "sandman/review-PR42", "review": true, "pr_number": 42, "issue_number": issueNumber, "batch_id": "sid-2606181138-PR42"}},
+		{Type: "run.started", Timestamp: startedAt.Add(2 * time.Minute), RunID: canonicalReviewRowID, Payload: map[string]any{"branch": "sandman/review-PR42", "review": true, "pr_number": 42, "issue_number": issueNumber, "batch_id": "2606181138-abcd-PR42"}},
+		{Type: "run.finished", Timestamp: startedAt.Add(7 * time.Minute), RunID: canonicalReviewRowID, Payload: map[string]any{"status": "success", "branch": "sandman/review-PR42", "review": true, "pr_number": 42, "issue_number": issueNumber, "batch_id": "2606181138-abcd-PR42"}},
 	})
 
 	// Issue #1729 + #1938 slice 1: parent ReviewVerdict flows from
@@ -474,7 +474,7 @@ func TestPortal_ReviewAggregation_HonorsCanonicalRowID(t *testing.T) {
 	// surface. run.log is left as irrelevant chat noise. The review
 	// batch is registered in the Batches index so runFromState can
 	// stamp RunDir from the index entry (slice 0 plumbing).
-	reviewBatchDir := filepath.Join(repoRoot, ".sandman", "batches", "sid-2606181138-PR42")
+	reviewBatchDir := filepath.Join(repoRoot, ".sandman", "batches", "2606181138-abcd-PR42")
 	reviewRunDir := filepath.Join(reviewBatchDir, "runs", canonicalReviewRowID)
 	if err := os.MkdirAll(reviewRunDir, 0755); err != nil {
 		t.Fatalf("mkdir review run dir: %v", err)
@@ -487,7 +487,7 @@ func TestPortal_ReviewAggregation_HonorsCanonicalRowID(t *testing.T) {
 		Version: batchindex.IndexVersion,
 		Batches: []batchindex.Batch{
 			{
-				ID:        "sid-2606181138-PR42",
+				ID:        "2606181138-abcd-PR42",
 				Path:      reviewBatchDir,
 				Kind:      batchindex.KindReview,
 				Status:    batchindex.StatusArchived,
@@ -558,14 +558,14 @@ func TestPortal_ParentImplRow_ReviewCountAndVerdictSurviveSummaryStrip(t *testin
 	}
 
 	const issueNumber = 1066
-	canonicalReviewRowID := "sid-2606181138-1066-PR42"
+	canonicalReviewRowID := "2606181138-abcd-1066-PR42"
 	startedAt := time.Now().Add(-10 * time.Minute)
 
 	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
 		{Type: "run.started", Timestamp: startedAt, RunID: "impl-1066", Issue: issueNumber, Payload: map[string]any{"branch": "sandman/1066-fix", "issue_number": issueNumber, "batch_id": "impl-1066"}},
 		{Type: "run.finished", Timestamp: startedAt.Add(8 * time.Minute), RunID: "impl-1066", Issue: issueNumber, Payload: map[string]any{"status": "success", "branch": "sandman/1066-fix", "issue_number": issueNumber, "batch_id": "impl-1066"}},
-		{Type: "run.started", Timestamp: startedAt.Add(2 * time.Minute), RunID: canonicalReviewRowID, Payload: map[string]any{"branch": "sandman/review-PR42", "review": true, "pr_number": 42, "issue_number": issueNumber, "batch_id": "sid-2606181138-PR42"}},
-		{Type: "run.finished", Timestamp: startedAt.Add(7 * time.Minute), RunID: canonicalReviewRowID, Payload: map[string]any{"status": "success", "branch": "sandman/review-PR42", "review": true, "pr_number": 42, "issue_number": issueNumber, "batch_id": "sid-2606181138-PR42"}},
+		{Type: "run.started", Timestamp: startedAt.Add(2 * time.Minute), RunID: canonicalReviewRowID, Payload: map[string]any{"branch": "sandman/review-PR42", "review": true, "pr_number": 42, "issue_number": issueNumber, "batch_id": "2606181138-abcd-PR42"}},
+		{Type: "run.finished", Timestamp: startedAt.Add(7 * time.Minute), RunID: canonicalReviewRowID, Payload: map[string]any{"status": "success", "branch": "sandman/review-PR42", "review": true, "pr_number": 42, "issue_number": issueNumber, "batch_id": "2606181138-abcd-PR42"}},
 	})
 
 	// Issue #1938 slice 1: write the verdict-bearing content into
@@ -573,7 +573,7 @@ func TestPortal_ParentImplRow_ReviewCountAndVerdictSurviveSummaryStrip(t *testin
 	// noise for the verdict projection. The review batch is also
 	// registered in the Batches index so runFromState can stamp
 	// RunDir from the index entry (slice 0 plumbing).
-	reviewBatchDir := filepath.Join(repoRoot, ".sandman", "batches", "sid-2606181138-PR42")
+	reviewBatchDir := filepath.Join(repoRoot, ".sandman", "batches", "2606181138-abcd-PR42")
 	reviewRunDir := filepath.Join(reviewBatchDir, "runs", canonicalReviewRowID)
 	if err := os.MkdirAll(reviewRunDir, 0755); err != nil {
 		t.Fatalf("mkdir review run dir: %v", err)
@@ -586,7 +586,7 @@ func TestPortal_ParentImplRow_ReviewCountAndVerdictSurviveSummaryStrip(t *testin
 		Version: batchindex.IndexVersion,
 		Batches: []batchindex.Batch{
 			{
-				ID:        "sid-2606181138-PR42",
+				ID:        "2606181138-abcd-PR42",
 				Path:      reviewBatchDir,
 				Kind:      batchindex.KindReview,
 				Status:    batchindex.StatusArchived,
@@ -764,8 +764,8 @@ func TestPortal_ReviewAggregation_LiveReviewSocketPreservesIssueIdentity(t *test
 	}
 
 	const issueNumber = 139
-	const batchID = "sid-2606181138-PR42"
-	const canonicalReviewRowID = "sid-2606181138-139-PR42"
+	const batchID = "2606181138-abcd-PR42"
+	const canonicalReviewRowID = "2606181138-abcd-139-PR42"
 
 	batchDir := filepath.Join(repoRoot, ".sandman", "batches", batchID)
 	if err := os.MkdirAll(batchDir, 0755); err != nil {
@@ -876,8 +876,8 @@ func TestPortal_DiscoverActiveRuns_ReviewRunFolderPreservesIssueIdentity(t *test
 	}
 
 	const issueNumber = 139
-	const batchID = "sid-2606181138-PR42"
-	const canonicalReviewRowID = "sid-2606181138-139-PR42"
+	const batchID = "2606181138-abcd-PR42"
+	const canonicalReviewRowID = "2606181138-abcd-139-PR42"
 
 	batchDir := filepath.Join(repoRoot, ".sandman", "batches", batchID)
 	if err := os.MkdirAll(batchDir, 0755); err != nil {
@@ -1097,10 +1097,10 @@ func TestPortal_ReviewAggregation_HistoricalReviewRecoversIssueFromIdentity(t *t
 	const issueNumber = 135
 	// NewBatchID(KindReview) shape: the batch dir / batch_id carry only
 	// the PR, never the linked issue.
-	const batchID = "sid-260702121324-PR1636"
+	const batchID = "260702121324-abcd-PR1636"
 	// The per-row RunID (ADR-0030) encodes the linked issue:
 	// `<ts>-<sid>-<issue>-PR<n>`.
-	const canonicalReviewRowID = "sid-260702121324-135-PR1636"
+	const canonicalReviewRowID = "260702121324-abcd-135-PR1636"
 	startedAt := time.Now().Add(-10 * time.Minute)
 
 	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
