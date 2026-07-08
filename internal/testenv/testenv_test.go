@@ -331,6 +331,7 @@ func TestMkdirShort_PathFitsUnixSunPath(t *testing.T) {
 }
 
 func TestE2EScenarioReferenceTableCoversAllConstants(t *testing.T) {
+	t.Parallel()
 	docPath := filepath.Join("..", "..", "docs", "usage", "testing.md")
 	raw, err := os.ReadFile(docPath)
 	if err != nil {
