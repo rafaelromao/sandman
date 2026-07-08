@@ -18,6 +18,10 @@
 //     SANDMAN_TEST_MODEL_OPENCODE, SANDMAN_TEST_MODEL_PI). Overrides the
 //     model the smoke and e2e tests target for that agent. When unset,
 //     the test falls back to the literal model baked into the test case.
+//   - SANDMAN_TEST_FAST           — when set to "1", enables fast-mode test
+//     harness behavior. Blocking agent shims poll a wakeup file instead of
+//     sleeping, shortening e2e test runs from minutes to seconds. The caller
+//     must set WAKEUP_DIR to a directory the shim can poll.
 //
 // When the gate vars are unset, helpers return the skip-friendly default
 // (nil allowlist / false gate) and tests skip themselves. The model
@@ -49,6 +53,7 @@ const (
 const (
 	CanonicalE2EGatesEnvVar     = "SANDMAN_E2E_GATES"
 	CanonicalProviderListEnvVar = "SANDMAN_TEST_PROVIDERS"
+	CanonicalTestFastEnvVar     = "SANDMAN_TEST_FAST"
 )
 
 // TestModelEnvVar returns the canonical env var name that overrides the
@@ -153,6 +158,13 @@ func E2EGateListAllowed(scenario, raw string, known []string) bool {
 //	}
 func E2EGateAllowed(scenario string) bool {
 	return E2EGateListAllowed(scenario, os.Getenv(CanonicalE2EGatesEnvVar), allE2EScenarios)
+}
+
+// IsTestFastEnabled reports whether the fast-mode test harness is active.
+// When true, blocking shims poll a wakeup file instead of sleeping, and the
+// caller should set WAKEUP_DIR to a directory the shim can poll.
+func IsTestFastEnabled() bool {
+	return strings.TrimSpace(os.Getenv(CanonicalTestFastEnvVar)) == "1"
 }
 
 // MkdirShort returns a per-test directory rooted at /tmp/ (not the

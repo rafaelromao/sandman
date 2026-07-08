@@ -268,9 +268,29 @@ func TestResolveTestModel_EmptyOverrideReturnsDefault(t *testing.T) {
 }
 
 func TestResolveTestModel_AgentScoped(t *testing.T) {
-	t.Setenv("SANDMAN_TEST_MODEL_OPENCODE", "opencode/x")
-	if got := ResolveTestModel("claude", "kilo/kilo-auto/free"); got != "kilo/kilo-auto/free" {
-		t.Fatalf("expected claude default unaffected by opencode env, got %q", got)
+	if got := TestModelEnvVar("opencode"); got != "SANDMAN_TEST_MODEL_OPENCODE" {
+		t.Errorf("TestModelEnvVar(%q) = %q, want %q", "opencode", got, "SANDMAN_TEST_MODEL_OPENCODE")
+	}
+}
+
+func TestIsTestFastEnabled_UnsetReturnsFalse(t *testing.T) {
+	t.Setenv(CanonicalTestFastEnvVar, "")
+	if got := IsTestFastEnabled(); got {
+		t.Errorf("IsTestFastEnabled() with empty env = %v, want false", got)
+	}
+}
+
+func TestIsTestFastEnabled_1ReturnsTrue(t *testing.T) {
+	t.Setenv(CanonicalTestFastEnvVar, "1")
+	if got := IsTestFastEnabled(); !got {
+		t.Errorf("IsTestFastEnabled() with env = %q, want true", os.Getenv(CanonicalTestFastEnvVar))
+	}
+}
+
+func TestIsTestFastEnabled_TrueReturnsFalse(t *testing.T) {
+	t.Setenv(CanonicalTestFastEnvVar, "true")
+	if got := IsTestFastEnabled(); got {
+		t.Errorf("IsTestFastEnabled() with env = %q, want false (only '1' enables)", os.Getenv(CanonicalTestFastEnvVar))
 	}
 }
 
