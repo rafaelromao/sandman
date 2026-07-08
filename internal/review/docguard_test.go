@@ -12,7 +12,7 @@ import (
 
 // TestDocGuard_ReviewRunPositivePhrasing is the positive side of the
 // docguard: it asserts that key canonical phrasing exists in
-// CONTEXT.md, docs/usage/portal.md, and the in-package reviewRunIDFor
+// CONTEXT.md, docs/usage/portal.md, and the in-package ReviewRunIDFor
 // doc comment. A future drift that removes these phrases will fail
 // the build even if no forbidden wording has been added.
 func TestDocGuard_ReviewRunPositivePhrasing(t *testing.T) {
@@ -30,7 +30,6 @@ func TestDocGuard_ReviewRunPositivePhrasing(t *testing.T) {
 		{filepath.Join(root, "CONTEXT.md"), "<ts>-<sid>-<linkedIssue>-PR<pr>"},
 		{filepath.Join(root, "docs/usage/portal.md"), "ADR-0030"},
 		{filepath.Join(root, "internal/review", "runid.go"), "ADR-0030"},
-		{filepath.Join(root, "internal/review", "runid.go"), "reviewRunIDFor"},
 		{filepath.Join(root, "internal/review", "runid.go"), "ReviewRunIDFor"},
 	}
 
