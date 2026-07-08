@@ -26,6 +26,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/daemon"
 	"github.com/rafaelromao/sandman/internal/events"
 	"github.com/rafaelromao/sandman/internal/paths"
+	"github.com/rafaelromao/sandman/internal/runid"
 	"github.com/rafaelromao/sandman/internal/testenv"
 )
 
@@ -4293,5 +4294,158 @@ func TestPortal_ActiveMixedBatch_AllIssuesRenderedAcrossStatuses(t *testing.T) {
 		if row.Status != wantStatus {
 			t.Errorf("issue %d: Status=%q want %q (row=%#v)", issue, row.Status, wantStatus, row)
 		}
+	}
+}
+
+// TestPortal_ActiveMixedBatch_WithLiveReviewKeepsQueuedIssuesActive pins the
+// overlap where a live review starts for one issue that is also part of the
+// active batch. The queued siblings must remain active.
+func TestPortal_ActiveMixedBatch_WithLiveReviewKeepsQueuedIssuesActive(t *testing.T) {
+	repoRoot := shortTempDir(t)
+	portalRunsIndexes.Delete(repoRoot)
+
+	prevStale := portalStaleCleaner
+	portalStaleCleaner = func(string) error { return nil }
+	t.Cleanup(func() { portalStaleCleaner = prevStale })
+
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	const batchRunName = "mixed-active-1"
+	const reviewPR = 1963
+	const reviewIssue = 1949
+	issues := []int{1944, 1945, 1946, 1947, 1949}
+	queued := []int{1945, 1946, 1947}
+	started := []int{1944}
+
+	seedMixedActiveBatchIndex(t, repoRoot, batchRunName, issues)
+	batchID := batchRunName
+
+	reviewTS := "260707205758"
+	reviewShortID := "24aa"
+	reviewBatchID := runid.NewBatchID(runid.KindReview, 1, strconv.Itoa(reviewIssue), reviewTS, reviewShortID)
+	reviewRowID := runid.NewRunID(runid.KindReview, fmt.Sprintf("%d-PR%d", reviewIssue, reviewPR), reviewTS, reviewShortID)
+	reviewPRNumber := reviewPR
+	reviewDir := filepath.Join(repoRoot, ".sandman", "batches", reviewBatchID)
+	if err := os.MkdirAll(reviewDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	createUnixRunSocket(t, filepath.Join(reviewDir, "batch.sock"))
+	if err := daemon.WriteManifest(reviewDir, daemon.BatchManifest{
+		BatchId:    reviewBatchID,
+		RunKind:    "review",
+		PR:         &reviewPRNumber,
+		Issues:     []int{},
+		RunTS:      reviewTS,
+		RunShortID: reviewShortID,
+		CreatedAt:  time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+	}); err != nil {
+		t.Fatalf("write review manifest: %v", err)
+	}
+	if err := daemon.WriteRunManifest(reviewDir, reviewRowID, batchindex.RunManifest{
+		RunID:     reviewRowID,
+		BatchID:   reviewBatchID,
+		PR:        reviewPR,
+		Kind:      batchindex.KindReview,
+		CreatedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+		Status:    batchindex.RunManifestStatusActive,
+	}); err != nil {
+		t.Fatalf("write review run manifest: %v", err)
+	}
+	idxPath := paths.NewLayout(nil, repoRoot).BatchesIndexPath
+	reviewIdx, err := batchindex.Load(idxPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reviewIdx.AddBatch(batchindex.Batch{
+		ID:        reviewBatchID,
+		Path:      reviewDir,
+		Kind:      batchindex.KindReview,
+		Status:    batchindex.StatusActive,
+		CreatedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+		PR:        reviewPR,
+	})
+	if err := reviewIdx.Save(idxPath); err != nil {
+		t.Fatalf("save review batches index: %v", err)
+	}
+
+	pinnedTime := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	var ev []events.Event
+	for i, issue := range queued {
+		ev = append(ev, events.Event{
+			Type:      "run.queued",
+			Timestamp: pinnedTime.Add(time.Duration(i) * time.Second),
+			RunID:     "",
+			Issue:     issue,
+			Payload:   map[string]any{"batch_id": batchID},
+		})
+	}
+	for i, issue := range started {
+		ev = append(ev, events.Event{
+			Type:      "run.started",
+			Timestamp: pinnedTime.Add(time.Duration(len(queued)+i) * time.Second),
+			RunID:     fmt.Sprintf("%s-%d", batchRunName, issue),
+			Issue:     issue,
+			Payload: map[string]any{
+				"branch":   fmt.Sprintf("sandman/%d-fix", issue),
+				"batch_id": batchID,
+			},
+		})
+	}
+	ev = append(ev, events.Event{
+		Type:      "run.started",
+		Timestamp: pinnedTime.Add(30 * time.Second),
+		RunID:     reviewRowID,
+		Issue:     reviewIssue,
+		Payload: map[string]any{
+			"branch":    fmt.Sprintf("sandman/%d-review", reviewIssue),
+			"batch_id":  reviewBatchID,
+			"review":    true,
+			"pr_number": reviewPR,
+		},
+	})
+	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), ev)
+
+	handler := newPortalHandler(repoRoot)
+	server := startPortalHTTPServer(t, handler)
+	defer server.Close()
+
+	runs := readPortalRuns(t, server.URL)
+
+	byIssue := make(map[int]portalRun, len(runs))
+	var implReviewIssue *portalRun
+	var reviewReviewIssue *portalRun
+	for _, r := range runs {
+		if r.IssueNumber > 0 {
+			byIssue[r.IssueNumber] = r
+			if r.IssueNumber == reviewIssue {
+				copy := r
+				if r.Review {
+					reviewReviewIssue = &copy
+				} else {
+					implReviewIssue = &copy
+				}
+			}
+		}
+	}
+
+	for _, issue := range queued {
+		row, ok := byIssue[issue]
+		if !ok {
+			t.Fatalf("issue %d: no portal row returned; runs=%#v", issue, runs)
+		}
+		if row.Kind != "active" {
+			t.Fatalf("issue %d: Kind=%q want active (row=%#v)", issue, row.Kind, row)
+		}
+		if row.Status != "queued" {
+			t.Fatalf("issue %d: Status=%q want queued (row=%#v)", issue, row.Status, row)
+		}
+	}
+	if row, ok := byIssue[started[0]]; !ok || row.Kind != "active" || row.Status != "running" {
+		t.Fatalf("started issue row missing or wrong: %#v", row)
+	}
+	if reviewReviewIssue == nil || reviewReviewIssue.RunID != reviewRowID || reviewReviewIssue.Status != "reviewing" || !reviewReviewIssue.Review {
+		t.Fatalf("review row missing or wrong: impl=%#v review=%#v runs=%#v", implReviewIssue, reviewReviewIssue, runs)
 	}
 }

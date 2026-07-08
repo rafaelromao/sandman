@@ -937,7 +937,7 @@ func (v *portalRunsView) aggregateReviewChildren(runs []portalRun) []portalRun {
 		}
 		runs[idx].ReviewCount = summary.count
 		runs[idx].ReviewVerdict = summary.verdict
-		if summary.live {
+		if summary.live && runs[idx].Status != "queued" && runs[idx].Status != "blocked" {
 			runs[idx].Status = "reviewing"
 		}
 	}
