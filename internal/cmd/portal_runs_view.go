@@ -361,21 +361,13 @@ func (v *portalRunsView) computeWithActiveRuns(repoRoot string, eventList []even
 }
 
 func (v *portalRunsView) computeWithActiveRunsAndIndex(repoRoot string, eventList []events.Event, eventsByRun map[string][]portalEvent, activeInstances []portalActiveRun, idx *batchindex.Index) ([]portalRun, error) {
-	// Slice 1 (issue #1938): build the layout once per compute() and
-	// thread it through to aggregateReviewChildren so the verdict reader
-	// locates <runDir>/decision.md via the canonical paths.Layout seam
-	// rather than re-shipping run.log content.
+	// Slice 1 (issue #1938): build the paths.Layout once per
+	// compute() so aggregateReviewChildren can locate each terminal
+	// review child's <runDir>/decision.md via the canonical seam
+	// from slice 0 (#1937). The pointer is reused for every verdict
+	// read in the loop below; one paths.NewLayout call per compute
+	// pass, no per-row work.
 	layout := paths.NewLayout(nil, repoRoot)
-	return v.computeWithActiveRunsLayoutAndIndex(layout, repoRoot, eventList, eventsByRun, activeInstances, idx)
-}
-
-// computeWithActiveRunsLayoutAndIndex is the layout-plumbed tail of
-// computeWithActiveRunsAndIndex. Split out so the layout value is
-// scoped to the loop where aggregateReviewChildren needs it; the
-// public computeWithActiveRunsAndIndex signature is preserved for
-// the portal server test seam (issue #1937 slice 0 still exercises
-// the index-only path).
-func (v *portalRunsView) computeWithActiveRunsLayoutAndIndex(layout paths.Layout, repoRoot string, eventList []events.Event, eventsByRun map[string][]portalEvent, activeInstances []portalActiveRun, idx *batchindex.Index) ([]portalRun, error) {
 	runStates := events.ProjectRunStates(eventList)
 	activeStates := make([]events.RunState, 0, len(runStates))
 	activeBatchStart := time.Time{}
@@ -1041,12 +1033,16 @@ func finishedAtOrZero(run portalRun) time.Time {
 // `^## ` heading. When the file contains multiple `## Decision`
 // sections the latest section's marker wins — an intermediate draft
 // is overwritten by the final decision before the agent posts its
-// comment, so the file can legitimately carry more than one. Inside
-// each section, only the narrow bare marker `^\*\*([A-Z_]+)\*\*$`
-// is accepted — lowercase marker, space-inside-asterisks, mid-line
-// prose, and any trailing debris are all rejected (the controlled
-// artefact never carries debris, so the previous lenient regex is
-// unnecessary).
+// comment, so the file can legitimately carry more than one. Each
+// fresh Decision section re-opens the scan with the verdict
+// accumulator reset; a marker captured in an earlier section is
+// discarded in favour of the latest section's verdict, and a section
+// that ends without a marker yields ("", false) rather than carrying
+// forward the prior section's marker. Inside each section, only the
+// narrow bare marker `^\*\*([A-Z_]+)\*\*$` is accepted — lowercase
+// marker, space-inside-asterisks, mid-line prose, and any trailing
+// debris are all rejected (the controlled artefact never carries
+// debris, so the previous lenient regex is unnecessary).
 //
 // On any os.ReadFile error (missing file, unreadable, permission
 // denied) the helper returns ("", false) so the caller can map the
@@ -1069,6 +1065,12 @@ func reviewVerdictFromDecisionFile(layout paths.Layout, batchID, runID string) (
 		line := strings.TrimSpace(raw)
 		if !inDecision && reviewSectionDecisionHeading.MatchString(line) {
 			inDecision = true
+			// Each fresh Decision section starts with the verdict
+			// accumulator reset. A marker captured by an earlier
+			// section is discarded so the latest section's marker
+			// (or its absence) wins.
+			lastVerdict = ""
+			lastOK = false
 			continue
 		}
 		if !inDecision {
@@ -1079,13 +1081,14 @@ func reviewVerdictFromDecisionFile(layout paths.Layout, batchID, runID string) (
 		// re-open it; non-Decision headings end the scan for this
 		// section and cannot re-enter.
 		if strings.HasPrefix(line, "## ") {
-			// Close the current Decision section. The most recent
-			// marker captured in this section stays as `lastVerdict`;
-			// if the file later opens another Decision section, its
-			// marker can still overwrite it.
 			inDecision = reviewSectionDecisionHeading.MatchString(line)
-			if !inDecision {
-				continue
+			if inDecision {
+				// Re-opened Decision section: reset the verdict
+				// accumulator so the new section's marker wins over
+				// (or absence of marker overrides) any prior
+				// section's marker.
+				lastVerdict = ""
+				lastOK = false
 			}
 			continue
 		}

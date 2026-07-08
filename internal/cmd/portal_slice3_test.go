@@ -2308,6 +2308,21 @@ func TestPortal_ReviewVerdictFromDecisionFile(t *testing.T) {
 			wantOK:    true,
 		},
 		{
+			// Empty latest Decision section: the verdict must
+			// surface as Unclear rather than carrying forward the
+			// prior section's marker. Each fresh Decision section
+			// resets the verdict accumulator so a later blank
+			// section can overrule an earlier filled one (a draft
+			// the agent cleared before posting).
+			name:      "latest Decision section is empty — verdict is Unclear (no carry-forward)",
+			batchID:   "batch-1",
+			runID:     "run-1",
+			contents:  "## Decision\n**CHANGES_REQUESTED**\n## Decision\n",
+			writeFile: true,
+			want:      "",
+			wantOK:    false,
+		},
+		{
 			name:      "Decision section exits at next heading before marker",
 			batchID:   "batch-1",
 			runID:     "run-1",
