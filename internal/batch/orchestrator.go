@@ -76,8 +76,8 @@ func issueBatchIDForRequest(req Request) string {
 // path. Otherwise the reviewer bot writes `decision.md` to a path
 // the daemon never reads and the review comment is silently dropped
 // (issue discovered on PR #1875: per-row RunID
-// `<sid>-<ts>-<linkedIssue>-PR<pr>` diverged from the legacy batch
-// dir `<sid>-<ts>-PR<pr>` that `prepareReviewRun` mints).
+// `<ts>-<sid>-<linkedIssue>-PR<pr>` diverged from the legacy batch
+// dir `<ts>-<sid>-PR<pr>` that `prepareReviewRun` mints).
 //
 // When runDir is empty, fall back to the historical contract: the
 // user-provided runID is preferred; otherwise the (ts, shortid) pair
@@ -2640,7 +2640,7 @@ func (s *runSession) executePromptOnly(ctx context.Context) (AgentRunResult, boo
 	// from the same runid.NewBatchID call, and the one-shot review
 	// path sets s.batchID by walking runDir; if neither path
 	// populated it (legacy callers), the legacy batchIDFromRunID
-	// fallback below returns the `<sid>-<ts>` prefix — which is the
+	// fallback below returns the `<ts>-<sid>` prefix — which is the
 	// historical contract that the on-disk dir resolver already
 	// understood, so the manifest writes still land at a coherent
 	// (if legacy-shaped) path. The cmd and review paths pre-seed

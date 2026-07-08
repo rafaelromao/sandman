@@ -8,7 +8,7 @@ import (
 // TestReviewRunIDFor_PRBare pins the canonical row RunID shape from
 // ADR-0030 §Per-row RunID templates for a review that does NOT link
 // an issue. The subject is `PR<pr>` and the row RunID is
-// `<sid>-<ts>-PR<pr>`. This is the headline shape that the review
+// `<ts>-<sid>-PR<pr>`. This is the headline shape that the review
 // daemon's prepareReviewRun must mint and persist in `run.json`.
 //
 // Issue #1551: review daemon must emit a canonical per-row RunID —
@@ -26,7 +26,7 @@ func TestReviewRunIDFor_PRBare(t *testing.T) {
 // TestReviewRunIDFor_PRWithLinkedIssue pins the with-linked-issue
 // shape from ADR-0030 §Per-row RunID templates: the subject becomes
 // `<linkedIssue>-PR<pr>` so the per-row RunID is
-// `<sid>-<ts>-<linkedIssue>-PR<pr>`. This is the new shape the
+// `<ts>-<sid>-<linkedIssue>-PR<pr>`. This is the new shape the
 // review daemon must mint when the PR body or its native
 // closingIssuesReferences carries a linked issue number.
 func TestReviewRunIDFor_PRWithLinkedIssue(t *testing.T) {
@@ -42,14 +42,14 @@ func TestReviewRunIDFor_PRWithLinkedIssue(t *testing.T) {
 // used as a folder name and as the `RunID` field on `run.json`.
 // Acceptance criterion: "No code path writes `RunID: \"review\"` into
 // `run.json`". The canonical mint must always include the
-// `<sid>-<ts>` prefix and the `PR<pr>` suffix.
+// `<ts>-<sid>` prefix and the `PR<pr>` suffix.
 func TestReviewRunIDFor_NoLiteralReview(t *testing.T) {
 	got := reviewRunIDFor(1, 0, "260625120000", "0001")
 	if got == "review" {
 		t.Fatalf("reviewRunIDFor must never return the literal %q, got %q", "review", got)
 	}
 	if !strings.HasPrefix(got, "260625120000-0001-") {
-		t.Errorf("reviewRunIDFor must include <sid>-<ts>- prefix, got %q", got)
+		t.Errorf("reviewRunIDFor must include <ts>-<sid>- prefix, got %q", got)
 	}
 	if !strings.HasSuffix(got, "-PR1") {
 		t.Errorf("reviewRunIDFor must end with -PR<pr>, got %q", got)

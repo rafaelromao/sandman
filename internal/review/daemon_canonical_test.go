@@ -26,7 +26,7 @@ import (
 // This test drives a single tick against a /sandman review comment
 // on a PR that does NOT link an issue, then asserts:
 //   - `batch.Request.RunID` ends with `-PR<pr>` and matches the
-//     canonical `<sid>-<ts>-PR<pr>` shape (acceptance #2).
+//     canonical `<ts>-<sid>-PR<pr>` shape (acceptance #2).
 //   - The persisted `run.json` under the canonical run folder has
 //     `runID == rowID` (no literal `"review"`).
 //   - `review-state.json` lives at
@@ -126,9 +126,9 @@ func TestDaemon_ReviewRunIDAndFolder_AreCanonical(t *testing.T) {
 
 // TestDaemon_ReviewRunIDAndFolder_AreCanonicalWithLinkedIssue pins
 // the linked-issue half of the canonical template:
-// `<sid>-<ts>-<linkedIssue>-PR<pr>`. The PR body carries
+// `<ts>-<sid>-<linkedIssue>-PR<pr>`. The PR body carries
 // "Fixes #1551" so the daemon must mint a per-row RunID that
-// includes the linked issue number between `<sid>-<ts>-` and
+// includes the linked issue number between `<ts>-<sid>-` and
 // `-PR<pr>`. This is the new shape introduced by ADR-0030 and
 // required by acceptance criterion #1 of issue #1551.
 func TestDaemon_ReviewRunIDAndFolder_AreCanonicalWithLinkedIssue(t *testing.T) {
@@ -161,7 +161,7 @@ func TestDaemon_ReviewRunIDAndFolder_AreCanonicalWithLinkedIssue(t *testing.T) {
 		t.Fatalf("captured batch.Request.RunID is empty")
 	}
 	// Must include the linked issue number between the canonical
-	// <sid>-<ts>- prefix and the -PR42 suffix.
+	// <ts>-<sid>- prefix and the -PR42 suffix.
 	if !strings.HasPrefix(rowID, "0000-") {
 		// timestamp drift between NewBatch and Clock is possible
 		// (we don't freeze runid's clock); we therefore only
@@ -200,12 +200,12 @@ func TestDaemon_ReviewRunIDAndFolder_AreCanonicalWithLinkedIssue(t *testing.T) {
 // TestDaemon_ReviewBatchDirName_MatchesPerRowRunID pins the
 // slice-3 invariant of issue #1919: the on-disk batch directory name
 // equals the per-row RunID for both orphan and linked reviews. The
-// orphan form already agrees (both are `<sid>-<ts>-PR<pr>`); the
+// orphan form already agrees (both are `<ts>-<sid>-PR<pr>`); the
 // linked form is the regression to fix. Without this invariant, the
 // portal's per-row locator (<batch>/runs/<runID>) cannot be derived
 // from a known batchID, and the per-row run folder lives at
-// `<sid>-<ts>-PR<pr>/runs/<sid>-<ts>-<linkedIssue>-PR<pr>/` instead
-// of the canonical `<sid>-<ts>-<linkedIssue>-PR<pr>/runs/<sid>-<ts>-<linkedIssue>-PR<pr>/`.
+// `<ts>-<sid>-PR<pr>/runs/<ts>-<sid>-<linkedIssue>-PR<pr>/` instead
+// of the canonical `<ts>-<sid>-<linkedIssue>-PR<pr>/runs/<ts>-<sid>-<linkedIssue>-PR<pr>/`.
 func TestDaemon_ReviewBatchDirName_MatchesPerRowRunID(t *testing.T) {
 	now := time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC)
 	tests := []struct {

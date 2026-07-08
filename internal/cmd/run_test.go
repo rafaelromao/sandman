@@ -1719,7 +1719,7 @@ func TestRun_PromptOnlyAllowsNoIssueSelection(t *testing.T) {
 // TestRun_PromptOnlyWithRunIDRegistersOrchestratorRunIDInBatchesIndex
 // pins the prompt-only public BatchId contract (issue #1920 slice 4 of
 // #1916): `sandman run --prompt "..." --run-id myid` registers the
-// batches index entry with id `<sid>-<ts>-prompt-myid`, matching the
+// batches index entry with id `<ts>-<sid>-prompt-myid`, matching the
 // per-row RunID the orchestrator will emit in run.started for a
 // prompt-only session (see internal/batch/orchestrator.go where the
 // subject is "prompt-<userid>"). The on-disk batch folder basename,
@@ -1749,16 +1749,16 @@ func TestRun_PromptOnlyWithRunIDRegistersOrchestratorRunIDInBatchesIndex(t *test
 		t.Fatalf("expected exactly 1 batch index entry, got %d (entries=%v)", len(idx.Batches), idx.Batches)
 	}
 	got := idx.Batches[0]
-	// Pin the full public BatchId: <sid>-<ts>-prompt-myid. We assert
+	// Pin the full public BatchId: <ts>-<sid>-prompt-myid. We assert
 	// the literal segment that hard-codes the `prompt` discriminator
 	// (issue #1920) — that is the load-bearing assertion this test
 	// exists to guard. A naked HasSuffix check would silently let a
-	// regression drift back to the old <sid>-<ts>-myid shape.
+	// regression drift back to the old <ts>-<sid>-myid shape.
 	if !strings.Contains(got.ID, "-prompt-myid") {
 		t.Errorf("entry ID = %q, want substring %q (canonical public BatchId for prompt-only with userid)", got.ID, "-prompt-myid")
 	}
 	if strings.HasSuffix(got.ID, "-myid") && !strings.HasSuffix(got.ID, "-prompt-myid") {
-		t.Errorf("entry ID = %q regressed to legacy <sid>-<ts>-myid shape (missing the prompt- discriminator)", got.ID)
+		t.Errorf("entry ID = %q regressed to legacy <ts>-<sid>-myid shape (missing the prompt- discriminator)", got.ID)
 	}
 
 	// Verify the batch folder basename agrees (== public BatchId ==
@@ -1780,7 +1780,7 @@ func TestRun_PromptOnlyWithRunIDRegistersOrchestratorRunIDInBatchesIndex(t *test
 // TestRun_PromptOnlyWithoutRunIDRegistersCanonicalBatchIdInBatchesIndex
 // pins the prompt-only public BatchId contract for the no-userid case
 // (issue #1920 slice 4 of #1916): `sandman run --prompt "..."` (no
-// --run-id) registers the batches index entry with id `<sid>-<ts>-prompt`,
+// --run-id) registers the batches index entry with id `<ts>-<sid>-prompt`,
 // matching the per-row RunID the orchestrator will emit in run.started.
 // The on-disk batch folder basename, batch.json.batchId, event payload
 // batch_id, the per-row RunID, and the batches index entry id all agree.
@@ -1808,17 +1808,17 @@ func TestRun_PromptOnlyWithoutRunIDRegistersCanonicalBatchIdInBatchesIndex(t *te
 		t.Fatalf("expected exactly 1 batch index entry, got %d (entries=%v)", len(idx.Batches), idx.Batches)
 	}
 	got := idx.Batches[0]
-	// Pin the full public BatchId: <sid>-<ts>-prompt. The entry id
+	// Pin the full public BatchId: <ts>-<sid>-prompt. The entry id
 	// must end with `-prompt` (the canonical discriminator) and must
 	// NOT have a trailing userid segment (since --run-id was empty).
 	if !strings.HasSuffix(got.ID, "-prompt") {
 		t.Errorf("entry ID = %q, want suffix %q (canonical public BatchId for prompt-only without userid)", got.ID, "-prompt")
 	}
-	// The no-userid shape must collapse to <sid>-<ts>-prompt exactly
+	// The no-userid shape must collapse to <ts>-<sid>-prompt exactly
 	// (no extra segment after `-prompt`). The format is
 	// `<4-hex-sid>-<12-digit-ts>-prompt`, total 22 chars.
 	if len(got.ID) != len("260618113825-abcd-prompt") {
-		t.Errorf("entry ID = %q (len=%d), want canonical <sid>-<ts>-prompt shape (len=%d)", got.ID, len(got.ID), len("260618113825-abcd-prompt"))
+		t.Errorf("entry ID = %q (len=%d), want canonical <ts>-<sid>-prompt shape (len=%d)", got.ID, len(got.ID), len("260618113825-abcd-prompt"))
 	}
 
 	// Verify the batch folder basename agrees (== public BatchId ==
@@ -4652,7 +4652,7 @@ func TestRun_PromptAndTemplateFlagsCombined(t *testing.T) {
 
 // TestRun_SingleIssueRegistersPublicBatchIdInBatchesIndex verifies that
 // `sandman run 42` registers a SINGLE batch index entry whose id and
-// path equal the public BatchId `<sid>-<ts>-42` (issue #1917 slice 1).
+// path equal the public BatchId `<ts>-<sid>-42` (issue #1917 slice 1).
 // For single-issue batches, the public BatchId (== per-row RunID ==
 // batch folder basename) carries no +N suffix.
 func TestRun_SingleIssueRegistersPublicBatchIdInBatchesIndex(t *testing.T) {
@@ -4709,9 +4709,9 @@ func TestRun_SingleIssueRegistersPublicBatchIdInBatchesIndex(t *testing.T) {
 
 // TestRun_MultiIssueRegistersPublicBatchIdInBatchesIndex verifies that
 // `sandman run 42 43` registers a SINGLE batch index entry whose id and
-// path equal the public BatchId `<sid>-<ts>-42+1` (issue #1917 slice 1).
+// path equal the public BatchId `<ts>-<sid>-42+1` (issue #1917 slice 1).
 // Per-row addressability is via the per-run folders under
-// `runs/<sid>-<ts>-<num>/`, not via additional index entries. The
+// `runs/<ts>-<sid>-<num>/`, not via additional index entries. The
 // batch.json.batchId stored on disk MUST equal the public BatchId
 // (== entry id == batch folder basename).
 func TestRun_MultiIssueRegistersPublicBatchIdInBatchesIndex(t *testing.T) {
@@ -4751,7 +4751,7 @@ func TestRun_MultiIssueRegistersPublicBatchIdInBatchesIndex(t *testing.T) {
 		t.Errorf("entry ID = %q, want %q (public BatchId)", got.ID, wantPublicBatchID)
 	}
 	// Per-row RunIDs are NOT separate index entries; they live in
-	// runs/<sid>-<ts>-<num>/run.json. Only the public BatchId is keyed
+	// runs/<ts>-<sid>-<num>/run.json. Only the public BatchId is keyed
 	// in the index.
 	if idx.ResolveBatch(wantFirstRowID) != nil {
 		t.Errorf("first row's per-row RunID %q must NOT have a separate index entry", wantFirstRowID)
@@ -4775,7 +4775,7 @@ func TestRun_MultiIssueRegistersPublicBatchIdInBatchesIndex(t *testing.T) {
 
 // TestRun_ContinueRegistersPerRowRunIDInBatchesIndex verifies that
 // `sandman run --continue 42` registers the batches index entry with id
-// `<sid>-<ts>-42` (the per-row RunID the orchestrator will emit in
+// `<ts>-<sid>-42` (the per-row RunID the orchestrator will emit in
 // run.continued). Mirrors #1675's `sandman run --continue <issue>`
 // acceptance criterion and pins the structural-ordering invariant that
 // `req.RunTS`/`RunShortID` must be minted before `Prepare` is called.

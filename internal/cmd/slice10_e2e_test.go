@@ -14,7 +14,7 @@
 // --------------------------
 // These tests assume a greenfield .sandman layout. The slice 8 archive
 // flow and the slice 9 --continue flow both operate on the
-// `.sandman/batches/<sid>-<ts>-<rest>/` (and `.sandman/archive/...`)
+// `.sandman/batches/<ts>-<sid>-<rest>/` (and `.sandman/archive/...`)
 // shapes introduced by ADR-0032, with no legacy `.sandman/runs/` paths
 // or pre-#1917 batch ids present at suite start. See
 // docs/adr/0032-sandman-layout-redesign.md, "Migration out of scope":
@@ -70,13 +70,13 @@ const (
 )
 
 // slice10SingleIssueBatchID returns the canonical public BatchId for a
-// single-issue batch (`<sid>-<ts>-42`).
+// single-issue batch (`<ts>-<sid>-42`).
 func slice10SingleIssueBatchID() string {
 	return runid.NewBatchID(runid.KindIssue, 1, "42", slice10TS, slice10ShortID)
 }
 
 // slice10MultiIssueBatchID returns the canonical public BatchId for a
-// 2-issue batch (`<sid>-<ts>-42+1`).
+// 2-issue batch (`<ts>-<sid>-42+1`).
 func slice10MultiIssueBatchID() string {
 	return runid.NewBatchID(runid.KindIssue, 2, "42", slice10TS, slice10ShortID)
 }
@@ -139,7 +139,7 @@ func idxContinueLookup(t *testing.T, dir, batchID string) int {
 // --- Behavior 1: single issue batch identity -----------------------------
 
 // TestSlice10_SingleIssueBatchIdentity covers behavior 1: `sandman run
-// 42` mints `<sid>-<ts>-42` as both the public BatchId and the per-row
+// 42` mints `<ts>-<sid>-42` as both the public BatchId and the per-row
 // RunID; the on-disk batch folder basename, batch.json.batchId, the
 // events.jsonl batch_id payload, and the batches index entry id all
 // agree.
@@ -195,8 +195,8 @@ func TestSlice10_SingleIssueBatchIdentity(t *testing.T) {
 // --- Behavior 2: multi-issue batch identity -----------------------------
 
 // TestSlice10_MultiIssueBatchIdentity covers behavior 2: `sandman run
-// 42 43` mints `<sid>-<ts>-42+1` as the public BatchId (one index
-// entry) with per-row RunIDs `<sid>-<ts>-42` and `<sid>-<ts>-43`. The
+// 42 43` mints `<ts>-<sid>-42+1` as the public BatchId (one index
+// entry) with per-row RunIDs `<ts>-<sid>-42` and `<ts>-<sid>-43`. The
 // per-row RunIDs do not have their own index entries.
 func TestSlice10_MultiIssueBatchIdentity(t *testing.T) {
 	slice10RequireGate(t)
@@ -254,9 +254,9 @@ func TestSlice10_MultiIssueBatchIdentity(t *testing.T) {
 // --- Behavior 3: auto-select selector and post-selection identity -------
 
 // TestSlice10_AutoSelectAndPostSelectionIdentity covers behavior 3:
-// `sandman run --auto` mints `<sid>-<ts>-auto-<n>`; after the selector
+// `sandman run --auto` mints `<ts>-<sid>-auto-<n>`; after the selector
 // picks issue 42 the public BatchId and per-row RunID become
-// `<sid>-<ts>-42` (no `auto` segment in the post-selection identity).
+// `<ts>-<sid>-42` (no `auto` segment in the post-selection identity).
 func TestSlice10_AutoSelectAndPostSelectionIdentity(t *testing.T) {
 	slice10RequireGate(t)
 	spy := &spyBatchRunner{result: &batch.Result{
@@ -300,7 +300,7 @@ func TestSlice10_AutoSelectAndPostSelectionIdentity(t *testing.T) {
 
 // TestSlice10_LinkedReviewBatchIdentity covers the linked-review
 // half of behavior 4: a review run associated with PR 42 mints
-// `<sid>-<ts>-42-PR42`. The on-disk batch folder agrees with the
+// `<ts>-<sid>-42-PR42`. The on-disk batch folder agrees with the
 // index entry id and the manifest's BatchId.
 func TestSlice10_LinkedReviewBatchIdentity(t *testing.T) {
 	slice10RequireGate(t)
@@ -406,9 +406,9 @@ func TestSlice10_OrphanReviewBatchIdentity(t *testing.T) {
 
 // TestSlice10_PromptOnlyBatchIdentity covers behavior 5 for both the
 // no-userid and with-userid prompt-only shapes:
-//   - `sandman run --prompt "..."` mints `<sid>-<ts>-prompt`.
+//   - `sandman run --prompt "..."` mints `<ts>-<sid>-prompt`.
 //   - `sandman run --prompt "..." --run-id myid` mints
-//     `<sid>-<ts>-prompt-myid`.
+//     `<ts>-<sid>-prompt-myid`.
 func TestSlice10_PromptOnlyBatchIdentity(t *testing.T) {
 	slice10RequireGate(t)
 	spyNoID := &spyBatchRunner{result: &batch.Result{}}

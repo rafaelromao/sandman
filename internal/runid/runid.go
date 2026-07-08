@@ -128,7 +128,7 @@ var canonicalPromptOnlySegmentRe = regexp.MustCompile(`^\d{12}-[0-9a-f]{4}-promp
 func KindFromDirName(name string) (Kind, bool) {
 	// Canonical format only: every classified name must start with the
 	// <ts>-<sid> prefix. Anything that doesn't is rejected, so legacy
-	// <sid>-<ts> and {ts}-{sid}-issues-first/... shapes return (0, false).
+	// <ts>-<sid> and {ts}-{sid}-issues-first/... shapes return (0, false).
 	if !canonicalPrefixRe.MatchString(name) {
 		return 0, false
 	}

@@ -3536,8 +3536,8 @@ func TestPortal_ActiveKeyForActive_FallbackChain(t *testing.T) {
 //     tab "batch" field) MUST equal the public BatchId (== batch folder
 //     basename == batch.json.batchId == event payload batch_id).
 //
-// For single-issue issue batches the public BatchId is `<sid>-<ts>-<num>`
-// (no +N suffix); for multi-issue it is `<sid>-<ts>-<first>+<additionalCount>`.
+// For single-issue issue batches the public BatchId is `<ts>-<sid>-<num>`
+// (no +N suffix); for multi-issue it is `<ts>-<sid>-<first>+<additionalCount>`.
 // In both cases the active row's BatchKey matches the public BatchId, so
 // the portal Batch label and Details tab render the same string the user
 // sees on disk.
@@ -3773,10 +3773,10 @@ func TestPortal_RunsAPI_BatchKeyEqualsPublicBatchId(t *testing.T) {
 //     tab "batch" field) MUST equal the public BatchId (== batch folder
 //     basename == batch.json.batchId == event payload batch_id).
 //   - For prompt-only with userid the public BatchId is
-//     `<sid>-<ts>-prompt-<userid>` and the per-row RunID equals the
+//     `<ts>-<sid>-prompt-<userid>` and the per-row RunID equals the
 //     public BatchId (RunID == BatchId for prompt-only).
 //   - For prompt-only without userid the public BatchId is
-//     `<sid>-<ts>-prompt` and the per-row RunID equals the public
+//     `<ts>-<sid>-prompt` and the per-row RunID equals the public
 //     BatchId.
 //
 // In both cases the active row's BatchKey matches the public BatchId,

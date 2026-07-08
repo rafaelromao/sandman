@@ -131,7 +131,7 @@ func TestPortalRunsView_UnavailableFlagFromBatchIndex(t *testing.T) {
 // The batch directory is named shortid-ts (e.g. abcd-20250101T100000Z) while
 // per-run folders are shortid-ts-subject (e.g. abcd-20250101T100000Z-42).
 // This matches the structure proven in orchestrator_test.go:1983:
-// batches/<sid>-<ts>/runs/<sid>-<ts>-42/run.log
+// batches/<ts>-<sid>/runs/<ts>-<sid>-42/run.log
 func TestPortalRunsView_IssueRunLogFromCorrectRunFolder(t *testing.T) {
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {

@@ -220,11 +220,11 @@ func newReviewLaunchTestConfig() *config.Config {
 // TestPrepareReviewRun_BatchDirName_MatchesPerRowRunIDForLinkedIssue
 // pins the slice-3 invariant of issue #1919: the on-disk batch
 // directory name equals the per-row RunID for a PR that closes an
-// issue. The per-row RunID is `<sid>-<ts>-<issue>-PR<pr>` and the
+// issue. The per-row RunID is `<ts>-<sid>-<issue>-PR<pr>` and the
 // batch dir must share that exact name, so the per-row run folder
-// is `<sid>-<ts>-<issue>-PR<pr>/runs/<sid>-<ts>-<issue>-PR<pr>/`.
+// is `<ts>-<sid>-<issue>-PR<pr>/runs/<ts>-<sid>-<issue>-PR<pr>/`.
 // This shape is what `decision.md` lookup relies on for the
-// reviewer bot; the legacy `<sid>-<ts>-PR<pr>` batch dir would
+// reviewer bot; the legacy `<ts>-<sid>-PR<pr>` batch dir would
 // orphan the post step.
 func TestPrepareReviewRun_BatchDirName_MatchesPerRowRunIDForLinkedIssue(t *testing.T) {
 	now := time.Date(2026, 7, 6, 13, 43, 57, 0, time.UTC)
@@ -251,7 +251,7 @@ func TestPrepareReviewRun_BatchDirName_MatchesPerRowRunIDForLinkedIssue(t *testi
 	}
 
 	// Issue #1919 slice 3: the batch-level parent MUST equal the
-	// per-row RunID, not the legacy `<sid>-<ts>-PR<pr>` form. The
+	// per-row RunID, not the legacy `<ts>-<sid>-PR<pr>` form. The
 	// per-row run folder is therefore `<perRowRunID>/runs/<perRowRunID>/`,
 	// keeping `decision.md` and the daemon's read path on the same
 	// branch.
@@ -345,7 +345,7 @@ func TestLaunchReview_CleansUpWorktreeAndBranchOnSuccess(t *testing.T) {
 // TestPrepareReviewRun_LinkedIssueRegistersPerRowRunID verifies that
 // when the review daemon prepares a run for a PR with a linked issue,
 // the batches index entry id equals the per-row RunID
-// `<sid>-<ts>-<issue>-PR<pr>` (subject derived from the PR body's
+// `<ts>-<sid>-<issue>-PR<pr>` (subject derived from the PR body's
 // "Fixes #N" keyword). Mirrors #1675 §review with linked issue.
 func TestPrepareReviewRun_LinkedIssueRegistersPerRowRunID(t *testing.T) {
 	now := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)

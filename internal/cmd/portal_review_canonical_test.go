@@ -1019,7 +1019,7 @@ func TestPortal_DiscoverActiveRuns_ReviewIdentityFromBatchDirPreservesIssueIdent
 // (historical) review run whose run.started payload carries no
 // `issue_number` — the real production shape, since the review command
 // stamps only `pr_number` and leaves `issue` null — must still recover its
-// linked issue from the canonical review RunID (`<sid>-<ts>-<issue>-PR<n>`)
+// linked issue from the canonical review RunID (`<ts>-<sid>-<issue>-PR<n>`)
 // so it groups under the canonical implementation row. PR #1616 added
 // identity recovery only to the active-socket discovery path
 // (discoverActiveRuns); the historical runFromState path still read
@@ -1041,7 +1041,7 @@ func TestPortal_ReviewAggregation_HistoricalReviewRecoversIssueFromIdentity(t *t
 	// the PR, never the linked issue.
 	const batchID = "sid-260702121324-PR1636"
 	// The per-row RunID (ADR-0030) encodes the linked issue:
-	// `<sid>-<ts>-<issue>-PR<n>`.
+	// `<ts>-<sid>-<issue>-PR<n>`.
 	const canonicalReviewRowID = "sid-260702121324-135-PR1636"
 	startedAt := time.Now().Add(-10 * time.Minute)
 
@@ -1455,7 +1455,7 @@ func TestPortal_ReviewGrouping_OrphanReviewStaysOrphan(t *testing.T) {
 	}
 
 	// Per slice 3: batch_id == per-row RunID. For an orphan review
-	// the per-row RunID is `<sid>-<ts>-PR<pr>`, so batch_id is the
+	// the per-row RunID is `<ts>-<sid>-PR<pr>`, so batch_id is the
 	// same value. No `issue_number` in the payload (orphan).
 	const (
 		ts      = "260618113825"
@@ -1495,7 +1495,7 @@ func TestPortal_ReviewGrouping_OrphanReviewStaysOrphan(t *testing.T) {
 // "Fixes #<n>") must surface as a child of the linked issue, with
 // GroupedReview=true and IssueNumber equal to the linked issue. The
 // per-row RunID carries the linked issue in the
-// `<sid>-<ts>-<issue>-PR<pr>` shape and reviewIssueNumberFromIdentity
+// `<ts>-<sid>-<issue>-PR<pr>` shape and reviewIssueNumberFromIdentity
 // recovers the issue from the per-row identity (both runID and
 // batch_id agree post-slice-3).
 func TestPortal_ReviewGrouping_LinkedReviewGroupsUnderIssue(t *testing.T) {

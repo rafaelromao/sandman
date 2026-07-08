@@ -1825,7 +1825,7 @@ func (v *portalRunsView) runFromState(repoRoot string, runState events.RunState,
 			// The review command stamps only pr_number on the
 			// run.started payload, never issue_number. The linked
 			// issue is encoded solely in the review identity
-			// (`<sid>-<ts>-<issue>-PR<n>`), on both the per-row RunID
+			// (`<ts>-<sid>-<issue>-PR<n>`), on both the per-row RunID
 			// and the batch_id. Recover it here so a historical review
 			// row groups under the canonical implementation row instead
 			// of escaping as a standalone passthrough row (residual

@@ -198,7 +198,7 @@ func TestPortal_RunFromState_ActiveNil_MultiIssueBatch_LogPathFromEventPayload(t
 // falls back to startedAt (issue #1715). Issue #1954 (slice 11) pins
 // the public BatchId contract: the manifest BatchId must equal the
 // on-disk directory basename (with "+N"), so the portal Batch label
-// and Details tab render `<sid>-<ts>-<first>+<additionalCount>`.
+// and Details tab render `<ts>-<sid>-<first>+<additionalCount>`.
 func TestPortal_DiscoverActiveRuns_IssueMultiBatch_RunIDIsPerRow(t *testing.T) {
 	repoRoot, err := os.MkdirTemp("/tmp", "pda")
 	if err != nil {

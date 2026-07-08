@@ -167,8 +167,8 @@ func runReviewOneShot(cmd *cobra.Command, deps Dependencies, cfg *config.Config,
 	rs := daemon.NewRunSession(sandmanDir, perRowRunID)
 	// Issue #1919 slice 3: the on-disk batch directory name and the
 	// per-row RunID MUST agree for both orphan and linked reviews.
-	// For orphan reviews both are `<sid>-<ts>-PR<pr>`; for linked
-	// reviews both are `<sid>-<ts>-<linkedIssue>-PR<pr>`. ADR-0030
+	// For orphan reviews both are `<ts>-<sid>-PR<pr>`; for linked
+	// reviews both are `<ts>-<sid>-<linkedIssue>-PR<pr>`. ADR-0030
 	// pins the same invariant on batch.json.batchId, run.json.BatchID,
 	// and the run.started payload's batch_id field.
 	manifest := daemon.BatchManifest{BatchId: perRowRunID, CreatedAt: time.Now(), RunKind: "review", RunTS: ts, RunShortID: shortid, PR: &pr.Number}

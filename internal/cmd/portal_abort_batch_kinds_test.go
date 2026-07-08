@@ -245,7 +245,7 @@ type portalAbortBatchKindsOpts struct {
 // TestPortal_AbortEndpoint_SingleIssueRunRow_ResolvesPerRunSocket is
 // the tracer bullet for the slice: a single-issue `sandman run` row
 // where n=1. Per issue #1917 (slice 1), the public BatchId for
-// single-issue batches is `<sid>-<ts>-<num>` with no +N suffix, which
+// single-issue batches is `<ts>-<sid>-<num>` with no +N suffix, which
 // is identical to the per-row RunID. The abort handler's fast path
 // (`idx.ResolveBatch(runID)` at portal.go:307) matches the batch entry id
 // directly. The orchestrator must receive `Issue=42`.
@@ -372,8 +372,8 @@ func TestPortal_AbortEndpoint_ContinueReviewRow_ResolvesPerRunSocket(t *testing.
 
 // TestPortal_AbortEndpoint_ContinueIssueRunRow_ResolvesPerRunSocket
 // covers a `--continue` issue run on a multi-issue batch. After #1675
-// the per-row RunID is `<sid>-<ts>-<num>` (NOT the batch dir name
-// `<sid>-<ts>-<num>+N`). The batch index entry id is the per-row RunID
+// the per-row RunID is `<ts>-<sid>-<num>` (NOT the batch dir name
+// `<ts>-<sid>-<num>+N`). The batch index entry id is the per-row RunID
 // of the canonical row (first issue), so `run.RunID == run.BatchKey ==
 // perRowID` (both equal the per-row RunID). The abort handler takes
 // the `runID == batchKey` branch at portal.go:357; the discriminator

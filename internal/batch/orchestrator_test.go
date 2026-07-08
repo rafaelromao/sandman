@@ -4843,8 +4843,8 @@ func keysOf(m map[string]string) []string {
 // exactly. Otherwise the reviewer bot writes `decision.md` to a path
 // the daemon never reads and the review comment is silently dropped
 // (issue discovered on PR #1875 where the per-row RunID
-// `<sid>-<ts>-<linkedIssue>-PR<pr>` diverged from the legacy batch
-// dir `<sid>-<ts>-PR<pr>` that `prepareReviewRun` uses as the
+// `<ts>-<sid>-<linkedIssue>-PR<pr>` diverged from the legacy batch
+// dir `<ts>-<sid>-PR<pr>` that `prepareReviewRun` uses as the
 // batch-level parent).
 func TestRunBatch_ReviewRunFolderHonorsReqRunDir(t *testing.T) {
 	dir := testenv.MkdirShort(t, "sm-orch-")
@@ -4867,8 +4867,8 @@ func TestRunBatch_ReviewRunFolderHonorsReqRunDir(t *testing.T) {
 	o.runnableFactory = &capturingAgentRunFactory{agentRunCh: agentRunCh}
 
 	// PR 17 with linked issue 1855: the per-row RunID
-	// `<sid>-<ts>-<linkedIssue>-PR<pr>` diverges from the legacy
-	// batch dir `<sid>-<ts>-PR<pr>` that cmd/review.go's
+	// `<ts>-<sid>-<linkedIssue>-PR<pr>` diverges from the legacy
+	// batch dir `<ts>-<sid>-PR<pr>` that cmd/review.go's
 	// prepareReviewRun mints. This divergence is what made
 	// `decision.md` orphan on PR #1875.
 	const perRowRunID = "260618113825-abcd-1855-PR17"
@@ -4901,7 +4901,7 @@ func TestRunBatch_ReviewRunFolderHonorsReqRunDir(t *testing.T) {
 // issue. The cmd layer sets `Request.RunDir` to
 // `<batchesDir>/<legacyBatchDir>/runs/<perRowRunID>`, where
 // `legacyBatchDir = <ts>-<sid>-PR<pr>` and
-// `perRowRunID = <sid>-<ts>-<linkedIssue>-PR<pr>`. The orchestrator's
+// `perRowRunID = <ts>-<sid>-<linkedIssue>-PR<pr>`. The orchestrator's
 // `agentRun.runFolder` MUST equal `req.RunDir` exactly, otherwise
 // the reviewer bot writes `decision.md` to a path the daemon never
 // reads and the post step silently marks the review as failure

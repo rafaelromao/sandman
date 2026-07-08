@@ -487,7 +487,7 @@ func TestRunSelectionPhaseWithEvents_LeavesRunDirOnFailure(t *testing.T) {
 // batches index entry id MUST equal the per-row RunID the orchestrator
 // emits in run.started. For auto-select both `runid.NewBatchID(KindAutoSelect, N, "", ts, shortid)`
 // (the batch dir name / batch id) and `runid.NewRunID(KindAutoSelect, "auto-N", ts, shortid)`
-// (the per-row RunID) happen to produce the same `<sid>-<ts>-auto-N` string.
+// (the per-row RunID) happen to produce the same `<ts>-<sid>-auto-N` string.
 // This test pins both forms so a future refactor of NewBatchID vs
 // NewRunID for KindAutoSelect can't silently diverge the index entry id
 // from the orchestrator's emitted RunID.
