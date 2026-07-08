@@ -75,3 +75,4 @@ ADRs are numbered sequentially starting from `0001`. The template ADR (`0000`) i
 | 0033 | Per-run command sockets for command and abort | accepted |
 | 0034 | Review daemon — stateless on age, stateful on comment | accepted |
 | 0035 | `run.retry` payload schema and closed `reason` vocabulary | accepted |
+| 0038 | Badge marker — paginated idempotency check | proposed |
