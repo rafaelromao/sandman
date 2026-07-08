@@ -153,6 +153,21 @@ type portalRun struct {
 	// to avoid showing Archive actions for stale historical rows whose
 	// source directory is already gone.
 	SourceExists bool `json:"sourceExists"`
+	// RunDir is the host-absolute path to the per-row run folder, used
+	// by slice-1 verdict readers that locate the decision file at
+	// `<runDir>/decision.md` (issue #1937). Server-only: tagged `json:"-"`
+	// so json.Marshal never serializes it and the front-end never sees
+	// it. (The issue brief described this as "no JSON tag"; the literal
+	// reading — an absent tag — would still serialize the field under
+	// its Go name, so the server-only contract requires `json:"-"`.)
+	// Populated for every row whose batch is in the Batches index:
+	//   - Active rows: filepath.Dir(active.SocketPath)
+	//   - Terminal rows: filepath.Join(idx.Resolve(batchID).Path, "runs", runID)
+	//   - Synthesized dead-batch rows: the DeadBatch.RunDir already known
+	//     to the synthesize path.
+	// Empty when the batch cannot be resolved (the caller treats empty as
+	// Unclear).
+	RunDir string `json:"-"`
 }
 
 type portalActiveRun struct {
@@ -1495,6 +1510,7 @@ func (v *portalRunsView) runFromActiveBatchIssue(repoRoot string, active portalA
 		LogURL:      logURL,
 		Log:         "Queued. Waiting to start.",
 		BatchKey:    batchKey,
+		RunDir:      filepath.Dir(active.SocketPath),
 	}
 	// Only surface batch membership for mixed batches. A single-issue
 	// batch is not interesting to surface and would add payload noise.
@@ -1712,6 +1728,7 @@ func (v *portalRunsView) runFromActiveMatch(repoRoot string, match portalRunMatc
 		Log:         stripLogLabels(match.instance.LiveOutput),
 		Events:      eventsByRun[eventKey],
 		BatchKey:    batchKeyForActive(match.instance),
+		RunDir:      filepath.Dir(match.instance.SocketPath),
 	}
 	// Populate the live attempt signals from the raw event list when
 	// there is no matched RunState to query (the state-absent branch of
@@ -1846,6 +1863,11 @@ func (v *portalRunsView) runFromState(repoRoot string, runState events.RunState,
 	}
 	if active != nil {
 		portalRun.SocketPath = active.SocketPath
+		// Active rows: RunDir is the directory holding the live socket.
+		// This matches the runFromActiveBatchIssue / runFromActiveMatch
+		// initial literal and keeps the per-row field consistent across
+		// the state-present and state-absent code paths (issue #1937).
+		portalRun.RunDir = filepath.Dir(active.SocketPath)
 		v.markCompletedIfSocketDead(&portalRun, active.SocketPath)
 		if portalRun.Kind == "completed" && runState.Finished != nil && activeSocket && (runState.IsReview() || runState.IsAutoSelect()) {
 			portalRun.Kind = "active"
