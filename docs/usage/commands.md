@@ -155,7 +155,7 @@ sandman clean [flags]
 
 ## `sandman archive`
 
-Archive completed run directories. `archive run` and `archive batch` are distinct subcommands with different contracts.
+Archive completed run directories. Every subcommand is per-row aware. `archive run` and `archive batch` are distinct subcommands with different contracts.
 
 ```bash
 sandman archive run <runId>
@@ -166,10 +166,12 @@ sandman archive stale
 
 | Subcommand | Description |
 |------------|-------------|
-| `run <runId>` | Move `runs/<runId>/` from `.sandman/batches/<batchId>/` to `.sandman/archive/<batchId>/runs/<runId>/`. The targeted row's `run.json.Status` must be terminal; sibling rows and the batch daemon stay untouched. The HTTP `POST /api/runs/archive` endpoint shares this per-row contract. |
+| `run <runId>` | Move `runs/<runId>/` from `.sandman/batches/<batchId>/` to `.sandman/archive/<batchId>/runs/<runId>/`. The targeted row's `run.json.Status` must be terminal; sibling rows and the batch daemon stay untouched. Persists an `archivePath` recovery record for crash recovery. The HTTP `POST /api/runs/archive` endpoint shares this per-row contract. |
 | `batch <batchId>` | Move the whole batch directory from `.sandman/batches/<batchId>/` to `.sandman/archive/<batchId>/`. The batch daemon must be gone; sibling rows are not applicable. Flips the entry-level `status` to `archived`. CLI-only — not exposed via HTTP. |
 | `older-than <days>` | Walk every `run.json` across all batches and archive each terminal row older than the cutoff. Already-archived rows are skipped. Sibling rows and live batch daemons stay untouched. `<days>` must be a non-negative integer; `0` archives every dead batch. |
 | `stale` | Chain the same status-fix logic as `clean --stale` (emit `run.aborted` for unterminated runs in dead batches), then walk every `run.json` and archive each terminal row. Live batches are skipped entirely.
+
+See the [Archive section in `monitoring.md`](monitoring.md#archive) for detailed semantics including the per-row `Runs[]` record and the whole-batch archive invariant.
 
 ## `sandman attach`
 
