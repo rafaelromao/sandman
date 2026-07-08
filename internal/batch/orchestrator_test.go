@@ -9894,10 +9894,101 @@ func TestBuildRunID_IssueKind(t *testing.T) {
 	}
 }
 
+// TestBatchIDFromRunID_StripsSubjectFromNewShape pins the helper that
+// the orchestrator uses to derive a stable batch directory name from a
+// per-row RunID. The new shape is <ts>-<sid>-<subject> (runid.NewRunID);
+// the helper strips the subject suffix and returns the <ts>-<sid>
+// prefix so the per-run folder can still be scoped under the per-batch
+// directory when the caller did not pre-compute a batchID.
+//
+// Issue #1945: this is the reverse-derivation that lets the orchestrator
+// route a per-row runID back to its batchID without trusting the
+// (legacy) segment order. The test covers issue-driven, review (linked
+// and orphan), auto-select, and prompt-only RunIDs and asserts the
+// helper never returns the legacy <shortid>-<ts>-... prefix.
+func TestBatchIDFromRunID_StripsSubjectFromNewShape(t *testing.T) {
+	ts, sid := orchTestRunTS, orchTestRunShortID
+	wantPrefix := ts + "-" + sid
+
+	tests := []struct {
+		name        string
+		runID       string
+		wantBatchID string
+	}{
+		{
+			name:        "issue",
+			runID:       runid.NewRunID(runid.KindIssue, "42", ts, sid),
+			wantBatchID: wantPrefix,
+		},
+		{
+			name:        "review orphan",
+			runID:       runid.NewRunID(runid.KindReview, "PR42", ts, sid),
+			wantBatchID: wantPrefix,
+		},
+		{
+			name:        "review linked",
+			runID:       runid.NewRunID(runid.KindReview, "1551-PR42", ts, sid),
+			wantBatchID: wantPrefix,
+		},
+		{
+			name:        "auto-select",
+			runID:       runid.NewRunID(runid.KindAutoSelect, "auto-50", ts, sid),
+			wantBatchID: wantPrefix,
+		},
+		{
+			name:        "prompt-only with userid",
+			runID:       runid.NewRunID(runid.KindPromptOnly, "myid", ts, sid),
+			wantBatchID: wantPrefix,
+		},
+		{
+			name:        "prompt-only without userid",
+			runID:       runid.NewRunID(runid.KindPromptOnly, "", ts, sid),
+			wantBatchID: wantPrefix,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := batchIDFromRunID(tt.runID)
+			if got != tt.wantBatchID {
+				t.Errorf("batchIDFromRunID(%q) = %q, want %q (timestamp-first <ts>-<sid> prefix)",
+					tt.runID, got, tt.wantBatchID)
+			}
+			if !strings.HasPrefix(got, ts) {
+				t.Errorf("batchIDFromRunID(%q) = %q, must start with RunTS %q (timestamp-first order)",
+					tt.runID, got, ts)
+			}
+		})
+	}
+}
+
+// TestBatchIDFromRunID_LegacyAndEmptyInputs is the safety net: the
+// helper must not panic on empty input, and for inputs that lack the
+// canonical two-dash shape it must fall back to returning the full
+// runID so the path still has a batchID segment rather than dropping
+// the directory scoping entirely. Issue #1945 AC#2: batch and run
+// folders follow the new order, so any reverse-derivation must land in
+// the new <ts>-<sid> shape — never the legacy <sid>-<ts>.
+func TestBatchIDFromRunID_LegacyAndEmptyInputs(t *testing.T) {
+	if got := batchIDFromRunID(""); got != "" {
+		t.Errorf("batchIDFromRunID(\"\") = %q, want empty string", got)
+	}
+	// No-dash input: the helper cannot split, so it returns the full
+	// string (no batchID segment). This is the documented legacy
+	// fallback and must not regress.
+	if got := batchIDFromRunID("nodash"); got != "nodash" {
+		t.Errorf("batchIDFromRunID(\"nodash\") = %q, want %q", got, "nodash")
+	}
+	// Single-dash input: only one dash, so the helper returns the
+	// full string (legacy fallback).
+	if got := batchIDFromRunID("ts-abcd"); got != "ts-abcd" {
+		t.Errorf("batchIDFromRunID(\"ts-abcd\") = %q, want %q", got, "ts-abcd")
+	}
+}
+
 // TestRunBatch_PerRowRunIDsShareBatchPrefix verifies that when an
 // issue-driven batch is run with explicit RunTS/RunShortID, every per-row
 // run.started / run.finished event carries the new-shape RunID
-// <shortid>-<ts>-issue-<num> and that all rows share the batch prefix.
+// <ts>-<sid>-<num> and that all rows share the batch prefix.
 // This is acceptance criterion #3 for slice 2 (`sandman run 42 43 44`).
 func TestRunBatch_PerRowRunIDsShareBatchPrefix(t *testing.T) {
 	workDir := t.TempDir()

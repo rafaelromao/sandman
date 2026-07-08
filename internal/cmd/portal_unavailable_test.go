@@ -128,8 +128,8 @@ func TestPortalRunsView_UnavailableFlagFromBatchIndex(t *testing.T) {
 // The portal previously used the same string for both path segments, causing
 // log-loss and flag inconsistencies for issue batches.
 //
-// The batch directory is named shortid-ts (e.g. abcd-20250101T100000Z) while
-// per-run folders are shortid-ts-subject (e.g. abcd-20250101T100000Z-42).
+// The batch directory is named <ts>-<sid> (e.g. 20250101T100000Z-abcd) while
+// per-run folders are <ts>-<sid>-<subject> (e.g. 20250101T100000Z-abcd-42).
 // This matches the structure proven in orchestrator_test.go:1983:
 // batches/<ts>-<sid>/runs/<ts>-<sid>-42/run.log
 func TestPortalRunsView_IssueRunLogFromCorrectRunFolder(t *testing.T) {
