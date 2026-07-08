@@ -4394,8 +4394,15 @@ func TestPortal_ActiveMixedBatch_WithLiveReviewKeepsQueuedIssuesActive(t *testin
 		})
 	}
 	ev = append(ev, events.Event{
+		Type:      "run.queued",
+		Timestamp: pinnedTime.Add(time.Duration(len(queued)+len(started)) * time.Second),
+		RunID:     fmt.Sprintf("%s-%d", batchRunName, reviewIssue),
+		Issue:     reviewIssue,
+		Payload:   map[string]any{"batch_id": batchID},
+	})
+	ev = append(ev, events.Event{
 		Type:      "run.started",
-		Timestamp: pinnedTime.Add(30 * time.Second),
+		Timestamp: pinnedTime.Add(-30 * time.Second),
 		RunID:     reviewRowID,
 		Issue:     reviewIssue,
 		Payload: map[string]any{
@@ -4444,6 +4451,15 @@ func TestPortal_ActiveMixedBatch_WithLiveReviewKeepsQueuedIssuesActive(t *testin
 	}
 	if row, ok := byIssue[started[0]]; !ok || row.Kind != "active" || row.Status != "running" {
 		t.Fatalf("started issue row missing or wrong: %#v", row)
+	}
+	if implReviewIssue == nil {
+		t.Fatalf("expected implementation row for reviewed issue %d, got %#v", reviewIssue, runs)
+	}
+	if implReviewIssue.Kind != "active" || implReviewIssue.Review {
+		t.Fatalf("expected reviewed issue implementation row to stay on the active impl path, got %#v", implReviewIssue)
+	}
+	if implReviewIssue.Status != "queued" {
+		t.Fatalf("expected reviewed issue implementation row to stay queued, got %#v", implReviewIssue)
 	}
 	if reviewReviewIssue == nil || reviewReviewIssue.RunID != reviewRowID || reviewReviewIssue.Status != "reviewing" || !reviewReviewIssue.Review {
 		t.Fatalf("review row missing or wrong: impl=%#v review=%#v runs=%#v", implReviewIssue, reviewReviewIssue, runs)
