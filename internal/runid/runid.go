@@ -120,7 +120,7 @@ func IsValidUserRunID(s string) error {
 
 var canonicalPrefixRe = regexp.MustCompile(`^\d{12}-[0-9a-f]{4}($|-)`)
 var canonicalAutoSelectRe = regexp.MustCompile(`^\d{12}-[0-9a-f]{4}-auto-\d+$`)
-var canonicalReviewRe = regexp.MustCompile(`^\d{12}-[0-9a-f]{4}(-\d+-)?-PR\d+$`)
+var canonicalReviewRe = regexp.MustCompile(`^\d{12}-[0-9a-f]{4}(-\d+)?-?PR\d+$`)
 var canonicalMultiIssueRe = regexp.MustCompile(`^\d{12}-[0-9a-f]{4}-\d+\+\d+$`)
 var canonicalSingleIssueRe = regexp.MustCompile(`^\d{12}-[0-9a-f]{4}-\d+$`)
 var canonicalPromptOnlySegmentRe = regexp.MustCompile(`^\d{12}-[0-9a-f]{4}-prompt(-|$)`)

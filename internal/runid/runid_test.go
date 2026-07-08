@@ -241,6 +241,12 @@ func TestKindFromDirName(t *testing.T) {
 			wantFound: true,
 		},
 		{
+			name:      "Canonical KindReview linked review dir",
+			input:     "260618113825-abcd-42-PR42",
+			wantKind:  KindReview,
+			wantFound: true,
+		},
+		{
 			name:      "Canonical KindAutoSelect batch dir",
 			input:     "260618113825-abcd-auto-50",
 			wantKind:  KindAutoSelect,
