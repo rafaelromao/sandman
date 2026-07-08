@@ -975,3 +975,64 @@ func TestRunSingle_RetryBannersUseRetriesBudgetAsDenominator(t *testing.T) {
 		}
 	}
 }
+
+// TestRunSingle_InitialAttemptOnlyHasNoBanner pins AC1 (initial
+// attempt does not show a retry label) and AC5 (initial-attempt
+// coverage) directly: a run with retries=0 produces a run log file
+// that contains no `--- run ---` and no `--- retry ---` banner at
+// all — the agent's own output is the only content.
+func TestRunSingle_InitialAttemptOnlyHasNoBanner(t *testing.T) {
+	workDir := t.TempDir()
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get wd: %v", err)
+	}
+	if err := os.Chdir(workDir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(oldWD) })
+
+	branch := "sandman/42-fix-bug"
+	// Use a real fakeSandbox (not retrySandbox) so the agent
+	// writes the run log via execStdout; retrySandbox returns
+	// execErrors and does not write to the log file.
+	rtSandbox := &fakeSandbox{workDir: filepath.Join(workDir, "worktree"), execStdout: "agent output\n"}
+	oldHeadFn := currentBranchHeadFn
+	currentBranchHeadFn = func(string) (string, error) { return "current-sha", nil }
+	t.Cleanup(func() { currentBranchHeadFn = oldHeadFn })
+	pr := &github.PR{Number: 17, State: "open", Merged: false, HeadRefName: branch}
+	o := &Orchestrator{
+		githubClient: &fakeGitHubClient{
+			issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}},
+			prs:    map[string]*github.PR{branch: pr},
+		},
+		renderer: &retryRenderer{result: "rendered prompt"},
+		errorLog: io.Discard,
+		layout:   paths.NewLayout(&config.Config{}, workDir),
+		sandboxFactory: &fakeSandboxFactory{
+			sandbox: rtSandbox,
+		},
+	}
+
+	cfg := &config.Config{WorktreeDir: "worktree", Git: config.GitConfig{BaseBranch: "main"}}
+	result, started := o.runSingle(context.Background(), context.Background(), 42, cfg, "opencode", config.Agent{Command: "opencode run {{.PromptFile}}"}, false, nil, noopIdentityResolver(), map[int]string{42: branch}, prompt.RenderConfig{}, nil, &fakeSandboxFactory{sandbox: rtSandbox}, nil, false, "main", nil, 0, 0, 0, 0, "", 0, false, 0, false, false, false, "260622105532", "68cb")
+	if !started {
+		t.Fatal("expected run to start")
+	}
+	if result.Status != "failure" {
+		t.Fatalf("status = %q, want failure (unmerged PR forces failure regardless of agent exit)", result.Status)
+	}
+
+	logPath := filepath.Join(workDir, ".sandman", "batches", "260622105532-68cb", "runs", "260622105532-68cb-42", "run.log")
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read log: %v", err)
+	}
+	content := string(data)
+	if strings.Contains(content, "--- run ") {
+		t.Errorf("log must not contain a '--- run ' banner for the initial attempt, got:\n%s", content)
+	}
+	if strings.Contains(content, "--- retry ") {
+		t.Errorf("log must not contain a '--- retry ' banner when no retries are budgeted, got:\n%s", content)
+	}
+}

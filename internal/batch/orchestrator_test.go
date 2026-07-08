@@ -2039,6 +2039,72 @@ func TestRunSingle_LogsIssueTitleOnRunStarted(t *testing.T) {
 	t.Fatal("expected run.started event")
 }
 
+func TestRunSingle_ContinuesWhenRetryMarkerWriteFails(t *testing.T) {
+	workDir := t.TempDir()
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get wd: %v", err)
+	}
+	if err := os.Chdir(workDir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(oldWD) })
+
+	branch := "sandman/42-fix-bug"
+	rtSandbox := &fakeSandbox{workDir: filepath.Join(workDir, "worktree"), execStdout: "hello from agent\n"}
+	var markerPath string
+	var markerCalls int
+	oldMarkerFn := logRetryMarkerFn
+	logRetryMarkerFn = func(path string, attempt, maxRetries int) error {
+		markerPath = path
+		markerCalls++
+		return errors.New("marker write failed")
+	}
+	t.Cleanup(func() { logRetryMarkerFn = oldMarkerFn })
+	oldHeadFn := currentBranchHeadFn
+	currentBranchHeadFn = func(string) (string, error) { return "current-sha", nil }
+	t.Cleanup(func() { currentBranchHeadFn = oldHeadFn })
+
+	o := &Orchestrator{
+		githubClient: &fakeGitHubClient{
+			issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}},
+			// Unmerged PR so the pre-retry guard on attempt > 0
+			// does NOT short-circuit the run to success, and the
+			// orchestrator actually executes attempt 1 (the first
+			// retry) and calls logRetryMarkerFn on that path.
+			prs: map[string]*github.PR{
+				branch: {Number: 17, State: "open", Merged: false, HeadRefName: branch},
+			},
+		},
+		renderer: &spyPromptRenderer{result: "rendered prompt"},
+		errorLog: io.Discard,
+		layout:   paths.NewLayout(&config.Config{}, workDir),
+		sandboxFactory: &fakeSandboxFactory{
+			sandbox: rtSandbox,
+		},
+		runnableFactory: &fakeRunnableFactory{results: []AgentRunResult{
+			{IssueNumber: 42, Status: "failure", Branch: branch},
+			{IssueNumber: 42, Status: "success", Branch: branch},
+		}},
+	}
+	o.runSessionOpts.retryReset = func(ctx context.Context, sb sandbox.Sandbox, branch, baseBranch string) error {
+		return nil
+	}
+
+	cfg := &config.Config{WorktreeDir: "worktree", Git: config.GitConfig{BaseBranch: "main"}}
+	_, started := o.runSingle(context.Background(), context.Background(), 42, cfg, "opencode", config.Agent{Command: "opencode run {{.PromptFile}}"}, false, nil, noopIdentityResolver(), map[int]string{42: branch}, prompt.RenderConfig{}, nil, &fakeSandboxFactory{sandbox: rtSandbox}, nil, false, "main", nil, 0, 0, 1, 0, "", 0, false, 0, false, false, false, "260622105532", "68cb")
+	if !started {
+		t.Fatal("expected run to start")
+	}
+	if markerCalls != 1 {
+		t.Fatalf("logRetryMarkerFn was called %d times, want 1 (the retry on attempt 1)", markerCalls)
+	}
+	wantLogPath := filepath.Join(workDir, ".sandman", "batches", "260622105532-68cb", "runs", "260622105532-68cb-42", "run.log")
+	if markerPath != wantLogPath {
+		t.Fatalf("marker path = %q, want %q (retry-marker write failure must not abort the run; the run reaches the end of the loop regardless)", markerPath, wantLogPath)
+	}
+}
+
 func TestRunPromptOnlySingle_ContinuesWhenRetryMarkerWriteFails(t *testing.T) {
 	workDir := t.TempDir()
 	oldWD, err := os.Getwd()
