@@ -85,3 +85,28 @@ func TestReadTaskContent_ReadError(t *testing.T) {
 		t.Fatal("expected error for unreadable path, got nil")
 	}
 }
+
+func TestLogRetryMarker_FormatsByRetryIndexOverRetriesBudget(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "run.log")
+
+	if err := logRetryMarker(logPath, 1, 3); err != nil {
+		t.Fatalf("logRetryMarker(1, 3): %v", err)
+	}
+	if err := logRetryMarker(logPath, 2, 3); err != nil {
+		t.Fatalf("logRetryMarker(2, 3): %v", err)
+	}
+	if err := logRetryMarker(logPath, 3, 3); err != nil {
+		t.Fatalf("logRetryMarker(3, 3): %v", err)
+	}
+
+	got, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read log: %v", err)
+	}
+	want := "--- retry 1/3 ---\n--- retry 2/3 ---\n--- retry 3/3 ---\n"
+	if string(got) != want {
+		t.Fatalf("log content = %q, want %q", string(got), want)
+	}
+}

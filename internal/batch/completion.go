@@ -22,7 +22,7 @@ func parseLogForCompletion(logPath string) bool {
 	start := -1
 	for i := len(lines) - 1; i >= 0; i-- {
 		line := strings.TrimSpace(lines[i])
-		if strings.HasPrefix(line, "--- run ") || strings.HasPrefix(line, "--- retry ") {
+		if strings.HasPrefix(line, "--- retry ") {
 			start = i + 1
 			break
 		}
@@ -145,7 +145,7 @@ func logRetryMarker(logPath string, attempt, maxRetries int) error {
 		return fmt.Errorf("open log file: %w", err)
 	}
 	defer file.Close()
-	if _, err := fmt.Fprintf(file, "--- retry %d/%d ---\n", attempt+1, maxRetries+1); err != nil {
+	if _, err := fmt.Fprintf(file, "--- retry %d/%d ---\n", attempt, maxRetries); err != nil {
 		return fmt.Errorf("write retry marker: %w", err)
 	}
 	return nil
@@ -161,20 +161,3 @@ func currentBranchHead(workDir string) (string, error) {
 }
 
 var currentBranchHeadFn = currentBranchHead
-
-func logRunMarker(logPath string, attempt, maxRetries int) error {
-	if err := os.MkdirAll(filepath.Dir(logPath), 0755); err != nil {
-		return fmt.Errorf("create log dir: %w", err)
-	}
-	file, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		return fmt.Errorf("open log file: %w", err)
-	}
-	defer file.Close()
-	if _, err := fmt.Fprintf(file, "--- run %d/%d ---\n", attempt+1, maxRetries+1); err != nil {
-		return fmt.Errorf("write run marker: %w", err)
-	}
-	return nil
-}
-
-var logRunMarkerFn = logRunMarker

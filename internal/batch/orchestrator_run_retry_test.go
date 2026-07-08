@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -125,9 +126,11 @@ func TestRunSingle_EmitsRunRetryBetweenAttemptsOnFailure(t *testing.T) {
 	if got0.Payload["branch"] != branch {
 		t.Errorf("run.retry[0] branch = %v, want %q", got0.Payload["branch"], branch)
 	}
-	// Last 2 log lines at the 1→2 transition: --- run 1/3 ---, --- retry 2/3 ---
+	// Last 3 log lines at the 1→2 transition: just the first retry
+	// marker (--- retry 1/2 ---). The initial attempt no longer
+	// writes a run marker.
 	lines0, _ := got0.Payload["last_log_lines"].([]any)
-	wantLines0 := []string{"--- run 1/3 ---", "--- retry 2/3 ---"}
+	wantLines0 := []string{"--- retry 1/2 ---"}
 	if len(lines0) != len(wantLines0) {
 		t.Errorf("run.retry[0] last_log_lines = %v (len=%d), want %v", lines0, len(lines0), wantLines0)
 	} else {
@@ -152,11 +155,12 @@ func TestRunSingle_EmitsRunRetryBetweenAttemptsOnFailure(t *testing.T) {
 	if got1.Payload["previous_status"] != "failure" {
 		t.Errorf("run.retry[1] previous_status = %v, want \"failure\"", got1.Payload["previous_status"])
 	}
-	// At the 2→3 transition the log has 3 lines: the run marker from
-	// attempt 0 and the two retry markers from attempts 1 and 2.
-	// readTailLines keeps the last 3 lines, so all three are returned.
+	// At the 2→3 transition the log has 2 lines: the two retry
+	// markers from attempts 1 and 2 (the initial attempt no longer
+	// writes a run marker). readTailLines keeps the last 3 lines,
+	// so both are returned.
 	lines1, _ := got1.Payload["last_log_lines"].([]any)
-	wantLines1 := []string{"--- run 1/3 ---", "--- retry 2/3 ---", "--- retry 3/3 ---"}
+	wantLines1 := []string{"--- retry 1/2 ---", "--- retry 2/2 ---"}
 	if len(lines1) != len(wantLines1) {
 		t.Errorf("run.retry[1] last_log_lines = %v (len=%d), want %v", lines1, len(lines1), wantLines1)
 	} else {
@@ -585,14 +589,13 @@ func TestRunSingle_EmitsRunRetryWithAbortedStatusAfterHeartbeatKill(t *testing.T
 	if maxAttempts, _ := got.Payload["max_attempts"].(float64); maxAttempts != 2 {
 		t.Errorf("run.retry max_attempts = %v, want 2", got.Payload["max_attempts"])
 	}
-	// At retry time the log contains --- run 1/2 --- (from attempt 0's
-	// logRunMarkerFn), the 3 lines the stalled runnable wrote before
-	// being killed, and --- retry 2/2 --- (from attempt 1's
-	// logRetryMarkerFn in prepareAttempt). readTailLines keeps the
-	// last 3 lines, so the expected payload is the 2 trailing stall
-	// lines plus the retry marker.
+	// At retry time the log contains the 3 lines the stalled runnable
+	// wrote before being killed, followed by --- retry 1/1 --- (from
+	// attempt 1's logRetryMarkerFn in prepareAttempt). readTailLines
+	// keeps the last 3 lines, so the expected payload is the 2
+	// trailing stall lines plus the retry marker.
 	lines, _ := got.Payload["last_log_lines"].([]any)
-	wantLines := []string{"processing step 1", "processing step 2", "--- retry 2/2 ---"}
+	wantLines := []string{"processing step 1", "processing step 2", "--- retry 1/1 ---"}
 	if len(lines) != len(wantLines) {
 		t.Errorf("run.retry last_log_lines = %v (len=%d), want %v", lines, len(lines), wantLines)
 	} else {
@@ -863,5 +866,173 @@ func TestRunSingle_ClosedIssueNoPRReturnsSuccess(t *testing.T) {
 	}
 	if len(resultFactory.created) != 1 {
 		t.Fatalf("created runnables = %d, want 1 (closed issue with no PR should succeed without retry)", len(resultFactory.created))
+	}
+}
+
+// TestRunSingle_RetryBannersUseRetriesBudgetAsDenominator pins the
+// issue #1961 contract end-to-end: a run with a 3-retry budget that
+// exhausts all 3 retries writes the three retry markers
+// "--- retry 1/3 ---", "--- retry 2/3 ---", "--- retry 3/3 ---" to
+// the run log, and the initial attempt writes no banner. The
+// denominator is the retry budget (3), not the total attempt count
+// (4). Acceptance criteria 1–4 from issue #1961.
+func TestRunSingle_RetryBannersUseRetriesBudgetAsDenominator(t *testing.T) {
+	workDir := t.TempDir()
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get wd: %v", err)
+	}
+	if err := os.Chdir(workDir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(oldWD) })
+
+	branch := "sandman/42-fix-bug"
+	rtSandbox := &retrySandbox{
+		workDir: filepath.Join(workDir, "worktree"),
+	}
+	oldHeadFn := currentBranchHeadFn
+	currentBranchHeadFn = func(string) (string, error) { return "current-sha", nil }
+	t.Cleanup(func() { currentBranchHeadFn = oldHeadFn })
+
+	// Closed PR + unmerged: every attempt's status flips to
+	// "failure" in the post-attempt check, so the orchestrator
+	// actually executes all 4 attempts (1 initial + 3 retries).
+	pr := &github.PR{Number: 17, State: "closed", Merged: false, HeadRefName: branch}
+	eventsPath := filepath.Join(t.TempDir(), "events.jsonl")
+	eventLog := &events.JSONLLogger{Path: eventsPath}
+	o := &Orchestrator{
+		githubClient: &fakeGitHubClient{
+			issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}},
+			prs:    map[string]*github.PR{branch: pr},
+		},
+		renderer: &retryRenderer{result: "rendered prompt"},
+		errorLog: io.Discard,
+		layout:   paths.NewLayout(&config.Config{}, workDir),
+		eventLog: eventLog,
+		sandboxFactory: &retrySandboxFactory{
+			sandbox: rtSandbox,
+		},
+		runnableFactory: &fakeRunnableFactory{results: []AgentRunResult{
+			{IssueNumber: 42, Status: "failure", Branch: branch},
+			{IssueNumber: 42, Status: "failure", Branch: branch},
+			{IssueNumber: 42, Status: "failure", Branch: branch},
+			{IssueNumber: 42, Status: "failure", Branch: branch},
+		}},
+	}
+	o.runSessionOpts.retryReset = func(ctx context.Context, sb sandbox.Sandbox, branch, baseBranch string) error {
+		return nil
+	}
+
+	cfg := &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}}
+	resultFactory := o.runnableFactory.(*fakeRunnableFactory)
+	// retries=3 → 4 attempts total.
+	result, started := o.runSingle(context.Background(), context.Background(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, false, nil, noopIdentityResolver(), map[int]string{42: branch}, prompt.RenderConfig{}, nil, &retrySandboxFactory{sandbox: rtSandbox}, nil, false, "main", nil, 0, 0, 3, 0, "", 0, false, 0, false, false, false, "", "")
+	if !started {
+		t.Fatalf("expected run to start, result.Status=%q, created=%d", result.Status, len(resultFactory.created))
+	}
+	if result.Status != "failure" {
+		t.Fatalf("status = %q, want failure (unmerged PR forces failure)", result.Status)
+	}
+	if result.RetriesTotal != 4 {
+		t.Fatalf("RetriesTotal = %d, want 4 (1 initial + 3 retries)", result.RetriesTotal)
+	}
+	if len(resultFactory.created) != 4 {
+		t.Fatalf("created runnables = %d, want 4 (1 initial + 3 retries)", len(resultFactory.created))
+	}
+
+	logs, err := eventLog.Read()
+	if err != nil {
+		t.Fatalf("read events: %v", err)
+	}
+	var retryEvents []events.Event
+	for _, e := range logs {
+		if e.Type == "run.retry" {
+			retryEvents = append(retryEvents, e)
+		}
+	}
+	if len(retryEvents) != 3 {
+		t.Fatalf("expected exactly 3 run.retry events (1→2, 2→3, 3→4 for a 4-attempt run), got %d (events: %v)", len(retryEvents), logs)
+	}
+
+	logPath := filepath.Join(workDir, ".sandman", "batches", "-", "runs", "--42", "run.log")
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read log: %v", err)
+	}
+	content := string(data)
+	if strings.Contains(content, "--- run ") {
+		t.Errorf("log must not contain a '--- run ' banner for the initial attempt, got:\n%s", content)
+	}
+	for _, want := range []string{"--- retry 1/3 ---", "--- retry 2/3 ---", "--- retry 3/3 ---"} {
+		if !strings.Contains(content, want) {
+			t.Errorf("log missing %q, got:\n%s", want, content)
+		}
+	}
+	for _, unwanted := range []string{"--- retry 1/4 ---", "--- retry 2/4 ---", "--- retry 3/4 ---", "--- retry 4/4 ---"} {
+		if strings.Contains(content, unwanted) {
+			t.Errorf("log must not use total-attempt denominator %q, got:\n%s", unwanted, content)
+		}
+	}
+}
+
+// TestRunSingle_InitialAttemptOnlyHasNoBanner pins AC1 (initial
+// attempt does not show a retry label) and AC5 (initial-attempt
+// coverage) directly: a run with retries=0 produces a run log file
+// that contains no `--- run ---` and no `--- retry ---` banner at
+// all — the agent's own output is the only content.
+func TestRunSingle_InitialAttemptOnlyHasNoBanner(t *testing.T) {
+	workDir := t.TempDir()
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get wd: %v", err)
+	}
+	if err := os.Chdir(workDir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(oldWD) })
+
+	branch := "sandman/42-fix-bug"
+	// Use a real fakeSandbox (not retrySandbox) so the agent
+	// writes the run log via execStdout; retrySandbox returns
+	// execErrors and does not write to the log file.
+	rtSandbox := &fakeSandbox{workDir: filepath.Join(workDir, "worktree"), execStdout: "agent output\n"}
+	oldHeadFn := currentBranchHeadFn
+	currentBranchHeadFn = func(string) (string, error) { return "current-sha", nil }
+	t.Cleanup(func() { currentBranchHeadFn = oldHeadFn })
+	pr := &github.PR{Number: 17, State: "open", Merged: false, HeadRefName: branch}
+	o := &Orchestrator{
+		githubClient: &fakeGitHubClient{
+			issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}},
+			prs:    map[string]*github.PR{branch: pr},
+		},
+		renderer: &retryRenderer{result: "rendered prompt"},
+		errorLog: io.Discard,
+		layout:   paths.NewLayout(&config.Config{}, workDir),
+		sandboxFactory: &fakeSandboxFactory{
+			sandbox: rtSandbox,
+		},
+	}
+
+	cfg := &config.Config{WorktreeDir: "worktree", Git: config.GitConfig{BaseBranch: "main"}}
+	result, started := o.runSingle(context.Background(), context.Background(), 42, cfg, "opencode", config.Agent{Command: "opencode run {{.PromptFile}}"}, false, nil, noopIdentityResolver(), map[int]string{42: branch}, prompt.RenderConfig{}, nil, &fakeSandboxFactory{sandbox: rtSandbox}, nil, false, "main", nil, 0, 0, 0, 0, "", 0, false, 0, false, false, false, "260622105532", "68cb")
+	if !started {
+		t.Fatal("expected run to start")
+	}
+	if result.Status != "failure" {
+		t.Fatalf("status = %q, want failure (unmerged PR forces failure regardless of agent exit)", result.Status)
+	}
+
+	logPath := filepath.Join(workDir, ".sandman", "batches", "260622105532-68cb", "runs", "260622105532-68cb-42", "run.log")
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read log: %v", err)
+	}
+	content := string(data)
+	if strings.Contains(content, "--- run ") {
+		t.Errorf("log must not contain a '--- run ' banner for the initial attempt, got:\n%s", content)
+	}
+	if strings.Contains(content, "--- retry ") {
+		t.Errorf("log must not contain a '--- retry ' banner when no retries are budgeted, got:\n%s", content)
 	}
 }

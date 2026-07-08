@@ -2412,10 +2412,6 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 					fmt.Fprintf(o.errorLog, "warning: write retry marker for issue %d: %v\n", s.issueNumber, err)
 				}
 			}
-		} else if err := logRunMarkerFn(logPath, attempt, s.retries); err != nil {
-			if o.errorLog != nil {
-				fmt.Fprintf(o.errorLog, "warning: write run marker for issue %d: %v\n", s.issueNumber, err)
-			}
 		}
 		return attemptRenderCfg, nil
 	})
@@ -2734,10 +2730,6 @@ func (s *runSession) executePromptOnly(ctx context.Context) (AgentRunResult, boo
 				if o.errorLog != nil {
 					fmt.Fprintf(o.errorLog, "warning: write retry marker for prompt-only run: %v\n", err)
 				}
-			}
-		} else if err := logRunMarkerFn(logPath, attempt, s.retries); err != nil {
-			if o.errorLog != nil {
-				fmt.Fprintf(o.errorLog, "warning: write run marker for prompt-only run: %v\n", err)
 			}
 		}
 		return s.renderCfg, nil
