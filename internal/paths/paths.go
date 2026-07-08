@@ -117,6 +117,25 @@ func (l Layout) ReviewStatePath(batchID, runID string) string {
 	return filepath.Join(l.RunFolder(batchID, runID), "review-state.json")
 }
 
+// DecisionFile returns the per-run decision file:
+// <batchesDir>/<batchID>/runs/<runID>/decision.md.
+//
+// This is the run-folder location, the canonical home for the
+// decision file consumed by slice-1 verdict readers that locate
+// the file via `<portalRun.RunDir>/decision.md` (issue #1937).
+//
+// Note: this is NOT the review worktree's decision.md path. Issue
+// #1953 deliberately moved the *review* decision.md into the
+// per-row worktree (the agent's CWD), so review-side readers must
+// continue to use the worktree-derived path computed by
+// `Daemon.reviewDecisionPath` in `internal/review/daemon.go`. This
+// helper exists for non-review verdict readers and for any future
+// callers that want a single artifact-path constructor for the
+// run-folder location.
+func (l Layout) DecisionFile(batchID, runID string) string {
+	return filepath.Join(l.RunFolder(batchID, runID), "decision.md")
+}
+
 // RunConfigSnapshotDir returns the per-run config snapshot directory: <batchesDir>/<batchID>/runs/<runID>/config
 func (l Layout) RunConfigSnapshotDir(batchID, runID string) string {
 	return filepath.Join(l.RunFolder(batchID, runID), "config")
