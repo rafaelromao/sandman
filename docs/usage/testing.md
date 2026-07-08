@@ -137,6 +137,10 @@ These side effects are most problematic in:
 - **Shared or constrained `/tmp`** — environments where `/tmp` is a tmpfs with a quota (common in containerised CI) are especially affected by `sm-*` temp dir accumulation
 - **Repeated test runs without cleanup between runs** — residue compounds across runs, increasing the risk of hitting disk or state conflicts
 
+### Smoke test auth layout copy policy
+
+Smoke tests copy the opencode auth directory (`~/.config/opencode`, `~/.local/share/opencode`) into the test temp directory, but exclude the opencode SQLite database (`opencode.db`, `opencode.db-shm`, `opencode.db-wal`) to avoid exhausting disk quotas on constrained CI runners. This mirrors the snapshot-exclude behavior described in ADR-0016.
+
 ### Cleaning up
 
 Run `sandman clean` after any interrupted or failed e2e run:
