@@ -235,7 +235,11 @@ func TestDaemon_S3_HappyPath_PostsRedactedDecision(t *testing.T) {
 
 // TestDaemon_S3_MissingDecision_FailsClosed asserts the missing-file
 // branch: when decision.md is absent after RunBatch returns, the
-// daemon records MarkSeen("failure") and returns an error.
+// daemon records MarkSeen("pending") and registers a pendingPost
+// entry so the trigger is retryable on the next tick (issue #1949).
+// PostComment is not called because there is no decision.md to post.
+// Pre-#1949 this test pinned the terminal-seen contract
+// (MarkSeen("failure") + MarkTerminalSeen).
 func TestDaemon_S3_MissingDecision_FailsClosed(t *testing.T) {
 	const prNumber = 4243
 
@@ -270,13 +274,22 @@ func TestDaemon_S3_MissingDecision_FailsClosed(t *testing.T) {
 	}
 	found := false
 	for _, sc := range state.SeenComments {
-		if sc.CommentID == "c-s3-2" && sc.Status == "failure" {
+		if sc.CommentID == "c-s3-2" && sc.Status == "pending" {
 			found = true
 			break
 		}
 	}
 	if !found {
-		t.Errorf("review-state.json missing MarkSeen(failure) for c-s3-2: %s", string(stateBytes))
+		t.Errorf("review-state.json missing MarkSeen(pending) for c-s3-2 (issue #1949): %s", string(stateBytes))
+	}
+	if d.IsTerminalSeen(prNumber, "c-s3-2") {
+		t.Errorf("seenCache must NOT mark (pr=%d, comment=c-s3-2) terminal-seen under issue #1949, got cache %+v", prNumber, d.seenCache)
+	}
+	d.pendingPostMu.Lock()
+	_, hasPending := d.pendingPost[prNumber]["c-s3-2"]
+	d.pendingPostMu.Unlock()
+	if !hasPending {
+		t.Errorf("pendingPost should register an entry for (pr=%d, comment=c-s3-2) under issue #1949, got map %+v", prNumber, d.pendingPost)
 	}
 }
 

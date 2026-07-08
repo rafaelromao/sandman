@@ -559,7 +559,11 @@ func (d *Daemon) loadPendingPosts() error {
 				continue
 			}
 			// Source-of-truth gate: a row is rehydrate-eligible
-			// only when decision.md actually exists on disk.
+			// only when decision.md actually exists on disk as a
+			// regular file (issue #1949: a directory at that path
+			// is treated as missing so the next tick falls through
+			// to the launch path which clears the worktree via
+			// ClearReviewArtifacts).
 			// Issue #1953: decision.md lives in the per-row
 			// worktree (the agent's CWD), not the run folder.
 			// The worktree path is derived from (prNumber,
@@ -567,10 +571,14 @@ func (d *Daemon) loadPendingPosts() error {
 			// coordination with the orchestrator.
 			worktreePath := d.reviewWorktreePath(entry.PR, sc.CommentID)
 			decisionPath := filepath.Join(worktreePath, "decision.md")
-			if _, statErr := os.Stat(decisionPath); statErr != nil {
+			info, statErr := os.Stat(decisionPath)
+			if statErr != nil {
 				if !os.IsNotExist(statErr) {
 					d.logf("stat %s: %v", decisionPath, statErr)
 				}
+				continue
+			}
+			if !info.Mode().IsRegular() {
 				continue
 			}
 			if _, ok := d.pendingPost[entry.PR]; !ok {
@@ -1428,9 +1436,15 @@ func (d *Daemon) launchReview(ctx context.Context, prNumber int, focus, commentI
 
 // postDecision implements the S3 post step (issue #1846):
 //
-//   - If <worktree>/decision.md is missing: MarkSeen("failure") and
-//     call MarkTerminalSeen (issue #1849 S6) so the next tick's
-//     processPR drops the trigger via the seen-cache short-circuit.
+//   - If <worktree>/decision.md is missing: MarkSeen("pending") and
+//     register a pendingPost entry (issue #1949) so the next tick's
+//     rehydrate walker drops the stale entry (decision.md still
+//     missing) and falls through to the launch path. The trigger is
+//     NOT marked terminal-seen — failure here means "the agent did
+//     not write a review", which the daemon treats as retryable:
+//     the next tick re-launches the agent and re-runs the post step.
+//   - If <worktree>/decision.md is a directory: same contract as the
+//     missing branch (issue #1949).
 //   - If present: read it, run RedactBody, call
 //     d.CommentPoster.PostComment(ctx, prNumber, redacted).
 //   - On successful post: MarkSeen("success"). The SeenCacheInvalidator
@@ -1453,37 +1467,33 @@ func (d *Daemon) postDecision(ctx context.Context, prNumber int, commentID, revi
 	info, err := os.Stat(decisionPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			d.logf("PR #%d: missing %s after RunBatch; marking failure (issue #1846)", prNumber, decisionPath)
+			d.logf("PR #%d: missing %s after RunBatch; marking pending for retry (issue #1949)", prNumber, decisionPath)
 			if state != nil {
-				if markErr := state.MarkSeen(commentID, "failure"); markErr != nil {
-					d.logf("PR #%d: mark %s failure: %v", prNumber, commentID, markErr)
+				if markErr := state.MarkSeen(commentID, "pending"); markErr != nil {
+					d.logf("PR #%d: mark %s pending: %v", prNumber, commentID, markErr)
 				}
 			}
-			// Issue #1849 (S6): the lazy-verify multi-cycle
-			// bounded-retry escape is gone; the bounded-retry
-			// contract is now a single-shot at launch-end via the
-			// seen-cache short-circuit. MarkSeen("failure") does
-			// not fire the SeenCacheInvalidator hook (slice A),
-			// so postDecision explicitly records the pair as
-			// terminal-seen so the next tick's processPR drops
-			// the trigger via IsTerminalSeen and does not call
-			// RunBatch again. The on-disk state remains
-			// "failure" (retryable per shouldSkipDedupStatus), so
-			// an operator-driven recovery (re-post
-			// `/sandman review`) still works.
-			d.MarkTerminalSeen(prNumber, commentID)
+			// Issue #1949: the missing-decision.md outcome is
+			// retryable, not terminal. The next tick's rehydrate
+			// walker drops the stale pendingPost entry (the
+			// source-of-truth gate at daemon.go rehydrateStale
+			// fails because decision.md is still missing) and
+			// falls through to the launch path. The seen cache
+			// is NOT marked terminal-seen so the trigger stays
+			// visible to subsequent ticks.
+			d.registerPendingPost(prNumber, commentID, d.reviewWorktreePath(prNumber, commentID), reviewRunFolder)
 			return fmt.Errorf("missing %s: %w", decisionPath, err)
 		}
 		return fmt.Errorf("stat %s: %w", decisionPath, err)
 	}
 	if info.IsDir() {
-		d.logf("PR #%d: %s is a directory, not a file; marking failure (issue #1846)", prNumber, decisionPath)
+		d.logf("PR #%d: %s is a directory, not a file; marking pending for retry (issue #1949)", prNumber, decisionPath)
 		if state != nil {
-			if markErr := state.MarkSeen(commentID, "failure"); markErr != nil {
-				d.logf("PR #%d: mark %s failure: %v", prNumber, commentID, markErr)
+			if markErr := state.MarkSeen(commentID, "pending"); markErr != nil {
+				d.logf("PR #%d: mark %s pending: %v", prNumber, commentID, markErr)
 			}
 		}
-		d.MarkTerminalSeen(prNumber, commentID)
+		d.registerPendingPost(prNumber, commentID, d.reviewWorktreePath(prNumber, commentID), reviewRunFolder)
 		return fmt.Errorf("%s is a directory", decisionPath)
 	}
 
@@ -1646,9 +1656,9 @@ func (d *Daemon) tryRehydratePost(ctx context.Context, prNumber int, comment git
 	d.pendingPostMu.Unlock()
 
 	decisionPath := filepath.Join(entry.runDir, "decision.md")
-	body, err := os.ReadFile(decisionPath)
-	if err != nil {
-		if os.IsNotExist(err) {
+	info, statErr := os.Stat(decisionPath)
+	if statErr != nil {
+		if os.IsNotExist(statErr) {
 			// Stale entry: drop and fall through to launch.
 			d.logf("PR #%d comment %s: rehydrate entry stale, decision.md missing at tick time, falling through to launch (issue #1847)", prNumber, comment.ID)
 			d.pendingPostMu.Lock()
@@ -1659,6 +1669,31 @@ func (d *Daemon) tryRehydratePost(ctx context.Context, prNumber int, comment git
 			d.pendingPostMu.Unlock()
 			return false
 		}
+		// Read failed for some other reason (perm denied, IO).
+		// Keep the entry; the next tick retries. Do NOT proceed
+		// to launch because the existing post is still better
+		// than re-running the agent.
+		d.logf("PR #%d comment %s: rehydrate post stat %s failed: %v; keeping entry for retry (issue #1847)", prNumber, comment.ID, decisionPath, statErr)
+		return true
+	}
+	if !info.Mode().IsRegular() {
+		// Issue #1949: a directory at decision.md is treated as
+		// missing. The launch path's ClearReviewArtifacts defer
+		// will remove the worktree directory and the next
+		// postDecision observes a clean slate. Keep the entry
+		// drop-and-fallthrough to launch, mirroring the missing
+		// branch.
+		d.logf("PR #%d comment %s: rehydrate entry stale, decision.md is not a regular file at tick time, falling through to launch (issue #1949)", prNumber, comment.ID)
+		d.pendingPostMu.Lock()
+		delete(d.pendingPost[prNumber], comment.ID)
+		if len(d.pendingPost[prNumber]) == 0 {
+			delete(d.pendingPost, prNumber)
+		}
+		d.pendingPostMu.Unlock()
+		return false
+	}
+	body, err := os.ReadFile(decisionPath)
+	if err != nil {
 		// Read failed for some other reason (perm denied, IO).
 		// Keep the entry; the next tick retries. Do NOT proceed
 		// to launch because the existing post is still better

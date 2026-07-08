@@ -402,6 +402,7 @@ func TestDaemon_ReviewStateStore_MarkSeenInvalidatesCacheMidProcess(t *testing.T
 	d, _, _ := newDaemonForTest(t, gh, runner, &config.Config{
 		DefaultReviewAgent: "opencode",
 		DefaultReviewModel: "opencode/foo",
+		WorktreeDir:        ".sandman/worktrees",
 	})
 	d.Clock = func() time.Time { return time.Now().Add(-1 * time.Minute) }
 
