@@ -50,7 +50,7 @@ func TestPortalRunsView_ResolveFromRowID_ExactMatch(t *testing.T) {
 	batchDir := filepath.Join(t.TempDir(), runID)
 	idx := &batchindex.Index{
 		Version: batchindex.IndexVersion,
-		Entries: []batchindex.Entry{
+		Batches: []batchindex.Batch{
 			{ID: runID, Path: batchDir, Kind: batchindex.KindIssue, Status: batchindex.StatusActive, CreatedAt: time.Now(), Issues: []int{42}},
 		},
 	}
@@ -97,7 +97,7 @@ func TestPortalRunsView_ResolveFromRowID_FallbackByRunManifest(t *testing.T) {
 
 	idx := &batchindex.Index{
 		Version: batchindex.IndexVersion,
-		Entries: []batchindex.Entry{
+		Batches: []batchindex.Batch{
 			{ID: publicBatchID, Path: batchDir, Kind: batchindex.KindIssue, Status: batchindex.StatusActive, CreatedAt: time.Now(), Issues: []int{42}},
 		},
 	}
@@ -145,7 +145,7 @@ func TestPortalRunsView_ResolveFromRowID_FallbackBatchIdNotInIndex(t *testing.T)
 
 	idx := &batchindex.Index{
 		Version: batchindex.IndexVersion,
-		Entries: []batchindex.Entry{
+		Batches: []batchindex.Batch{
 			{ID: publicBatchID, Path: batchDir, Kind: batchindex.KindIssue, Status: batchindex.StatusActive, CreatedAt: time.Now(), Issues: []int{42}},
 		},
 	}

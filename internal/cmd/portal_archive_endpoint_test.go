@@ -1539,7 +1539,7 @@ func TestPortal_ArchiveEndpoint_PerRowEmpty200(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	idx := batchindex.Index{Version: batchindex.IndexVersion, Entries: []batchindex.Entry{
+	idx := batchindex.Index{Version: batchindex.IndexVersion, Batches: []batchindex.Batch{
 		{ID: batchID, Path: batchDir, Kind: batchindex.KindIssue, Status: batchindex.StatusActive, CreatedAt: time.Now()},
 	}}
 	if err := idx.Save(filepath.Join(repoRoot, ".sandman", "batches.json")); err != nil {
@@ -1618,7 +1618,7 @@ func TestPortal_ArchiveEndpoint_409NonTerminal(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	idx := batchindex.Index{Version: batchindex.IndexVersion, Entries: []batchindex.Entry{
+	idx := batchindex.Index{Version: batchindex.IndexVersion, Batches: []batchindex.Batch{
 		{ID: batchID, Path: batchDir, Kind: batchindex.KindIssue, Status: batchindex.StatusActive, CreatedAt: time.Now()},
 	}}
 	if err := idx.Save(filepath.Join(repoRoot, ".sandman", "batches.json")); err != nil {
@@ -1686,7 +1686,7 @@ func TestPortal_ArchiveEndpoint_409AlreadyArchived_EchoesArchivePath(t *testing.
 		t.Fatal(err)
 	}
 
-	idx := batchindex.Index{Version: batchindex.IndexVersion, Entries: []batchindex.Entry{
+	idx := batchindex.Index{Version: batchindex.IndexVersion, Batches: []batchindex.Batch{
 		{ID: batchID, Path: batchDir, Kind: batchindex.KindIssue, Status: batchindex.StatusActive, CreatedAt: time.Now()},
 	}}
 	if err := idx.Save(filepath.Join(repoRoot, ".sandman", "batches.json")); err != nil {
@@ -1753,7 +1753,7 @@ func TestPortal_ArchiveEndpoint_LeavesSiblingsAlive(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	idx := batchindex.Index{Version: batchindex.IndexVersion, Entries: []batchindex.Entry{
+	idx := batchindex.Index{Version: batchindex.IndexVersion, Batches: []batchindex.Batch{
 		{ID: batchID, Path: batchDir, Kind: batchindex.KindIssue, Status: batchindex.StatusActive, CreatedAt: time.Now()},
 	}}
 	if err := idx.Save(filepath.Join(repoRoot, ".sandman", "batches.json")); err != nil {

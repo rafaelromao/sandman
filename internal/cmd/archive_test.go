@@ -649,7 +649,7 @@ func TestArchiveOlderThan_SkipsLiveBatch(t *testing.T) {
 		CreatedAt: old,
 		Status:    batchindex.RunManifestStatusSuccess,
 	})
-	writeBatchIndexForArchive(t, dir, []batchindex.Entry{
+	writeBatchIndexForArchive(t, dir, []batchindex.Batch{
 		{ID: "old-live", Path: batchDir, Kind: batchindex.KindIssue, Status: batchindex.StatusActive, CreatedAt: old, Issues: []int{99}},
 	})
 

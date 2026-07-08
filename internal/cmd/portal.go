@@ -434,16 +434,16 @@ func resolveBatchFromRunIDFastOrScan(idx *batchindex.Index, runID string) *batch
 	if batch := idx.ResolveBatch(runID); batch != nil {
 		return batch
 	}
-	for i := range idx.Entries {
-		entry := &idx.Entries[i]
+	for i := range idx.Batches {
+		entry := &idx.Batches[i]
 		for j := range entry.Runs {
 			if entry.Runs[j].RunID == runID {
 				return entry
 			}
 		}
 	}
-	for i := range idx.Entries {
-		entry := &idx.Entries[i]
+	for i := range idx.Batches {
+		entry := &idx.Batches[i]
 		if entry.Path == "" {
 			continue
 		}
