@@ -148,24 +148,21 @@ Exactly one flag is required.
 
 ## `sandman archive`
 
-Move a completed batch directory from `.sandman/batches/<batch-id>` to `.sandman/archive/<batch-id>`.
+Archive completed run directories. `archive run` and `archive batch` are distinct subcommands with different contracts.
 
 ```bash
-sandman archive run <id>
+sandman archive run <runId>
+sandman archive batch <batchId>
 sandman archive older-than <days>
+sandman archive stale
 ```
-
-`batch` is registered as an alias of `run` (they share the same handler) and is interchangeable from the command line.
 
 | Subcommand | Description |
 |------------|-------------|
-| `run <id>` | Move `.sandman/batches/<id>` to `.sandman/archive/<id>` |
-| `older-than <days>` | Move every dead batch whose manifest `CreatedAt` (or directory mtime when the manifest is missing) is older than `<days>` days to `.sandman/archive/<id>` |
-| `stale` | Recover unterminated runs in dead batches by emitting `run.aborted` events, then archive every dead-and-terminal batch directory |
-
-The batch's daemon must not be live. `sandman archive run` calls `daemon.IsRunActive` on the batch directory and returns an error if the `batch.sock` is still accepting connections. The archive directory is created on first use. If `.sandman/archive/<id>` already exists, the command refuses and leaves both the source and the existing archive directory untouched.
-
-`sandman archive older-than <days>` scans every batch directory under `.sandman/batches/`, archives those whose daemon is dead and whose timestamp is at or before the `<days>`-day cutoff, and skips the rest. A batch whose daemon is still live is never archived regardless of its age. If the destination `.sandman/archive/<id>` already exists, the batch is skipped (with a `skip` message on stderr) and the existing archive entry is left untouched. `<days>` must be a non-negative integer; `0` archives every dead batch.
+| `run <runId>` | Move `runs/<runId>/` from `.sandman/batches/<batchId>/` to `.sandman/archive/<batchId>/runs/<runId>/`. The targeted row's `run.json.Status` must be terminal; sibling rows and the batch daemon stay untouched. Persists a per-row `Runs[]` record carrying `status: "archived"` and `archivePath` for crash recovery. CLI and HTTP `POST /api/runs/archive` share this per-row contract. |
+| `batch <batchId>` | Move the whole batch directory from `.sandman/batches/<batchId>/` to `.sandman/archive/<batchId>/`. The batch daemon must be gone; sibling rows are not applicable. Flips the entry-level `status` to `archived`. CLI-only — not exposed via HTTP. |
+| `older-than <days>` | Walk every `run.json` across all batches and archive each terminal row older than the cutoff. Already-archived rows are skipped via the per-row `Runs[]` record. Sibling rows and live batch daemons stay untouched. `<days>` must be a non-negative integer; `0` archives every dead batch. |
+| `stale` | Chain the same status-fix logic as `clean --stale` (emit `run.aborted` for unterminated runs in dead batches), then walk every `run.json` and archive each terminal row. Live batches are skipped entirely.
 
 ## `sandman attach`
 
