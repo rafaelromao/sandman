@@ -438,6 +438,9 @@ func copySmokeDir(src, dst string) error {
 		return err
 	}
 	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), "opencode.db") {
+			continue
+		}
 		srcPath := filepath.Join(src, entry.Name())
 		dstPath := filepath.Join(dst, entry.Name())
 		if err := copySmokePath(srcPath, dstPath); err != nil {
@@ -662,5 +665,41 @@ func preflightSmokeWorktree(t *testing.T, repoDir, branch string) {
 	_ = wt.Stop()
 	if out, err := exec.Command("git", "branch", "-D", preflightBranch).CombinedOutput(); err != nil {
 		t.Skipf("skip smoke: worktree cleanup unavailable: %v\n%s", err, out)
+	}
+}
+
+func TestCopySmokeAuthLayout_SkipsOpencodeDB(t *testing.T) {
+	realHome := t.TempDir()
+	tempHome := t.TempDir()
+
+	opencodeDir := filepath.Join(realHome, ".local", "share", "opencode")
+	if err := os.MkdirAll(opencodeDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(opencodeDir, "auth.json"), []byte(`{"token":"test"}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	dbPath := filepath.Join(opencodeDir, "opencode.db")
+	if err := os.WriteFile(dbPath, make([]byte, 1024*100), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dbPath+"-shm", make([]byte, 1024*10), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dbPath+"-wal", make([]byte, 1024*10), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	copySmokeAuthLayout(t, realHome, tempHome, []string{"~/.local/share/opencode"})
+
+	for _, name := range []string{"opencode.db", "opencode.db-shm", "opencode.db-wal"} {
+		path := filepath.Join(tempHome, ".local", "share", "opencode", name)
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Errorf("expected %s to be absent from copied auth layout, found it at %s", name, path)
+		}
+	}
+	authPath := filepath.Join(tempHome, ".local", "share", "opencode", "auth.json")
+	if _, err := os.Stat(authPath); err != nil {
+		t.Errorf("expected auth.json to be copied, got error: %v", err)
 	}
 }
