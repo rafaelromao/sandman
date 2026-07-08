@@ -26,11 +26,12 @@ func TestDocGuard_ReviewRunPositivePhrasing(t *testing.T) {
 		needle string
 	}{
 		{filepath.Join(root, "CONTEXT.md"), "ADR-0030"},
-		{filepath.Join(root, "CONTEXT.md"), "<shortid>-<ts>-PR<pr>"},
-		{filepath.Join(root, "CONTEXT.md"), "<shortid>-<ts>-<linkedIssue>-PR<pr>"},
+		{filepath.Join(root, "CONTEXT.md"), "<ts>-<sid>-PR<pr>"},
+		{filepath.Join(root, "CONTEXT.md"), "<ts>-<sid>-<linkedIssue>-PR<pr>"},
 		{filepath.Join(root, "docs/usage/portal.md"), "ADR-0030"},
 		{filepath.Join(root, "internal/review", "runid.go"), "ADR-0030"},
 		{filepath.Join(root, "internal/review", "runid.go"), "reviewRunIDFor"},
+		{filepath.Join(root, "internal/review", "runid.go"), "ReviewRunIDFor"},
 	}
 
 	for _, c := range checks {
@@ -260,8 +261,8 @@ func TestDocGuard_ReviewRunGlossaryExists(t *testing.T) {
 	text := string(body)
 	mustContain(t, text, "**Review run**:")
 	mustContain(t, text, "ADR-0030")
-	mustContain(t, text, "<shortid>-<ts>-PR<pr>")
-	mustContain(t, text, "<shortid>-<ts>-<linkedIssue>-PR<pr>")
+	mustContain(t, text, "<ts>-<sid>-PR<pr>")
+	mustContain(t, text, "<ts>-<sid>-<linkedIssue>-PR<pr>")
 }
 
 func mustContain(t *testing.T, haystack, needle string) {

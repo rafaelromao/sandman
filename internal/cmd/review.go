@@ -156,13 +156,12 @@ func runReviewOneShot(cmd *cobra.Command, deps Dependencies, cfg *config.Config,
 		return fmt.Errorf("generate batch ID: %w", err)
 	}
 
-	var subject string
-	if pr.LinkedIssueNumber() > 0 {
-		subject = fmt.Sprintf("%d-PR%d", pr.LinkedIssueNumber(), pr.Number)
-	} else {
-		subject = fmt.Sprintf("PR%d", pr.Number)
-	}
-	perRowRunID := runid.NewRunID(runid.KindReview, subject, ts, shortid)
+	// Issue #1946: route through review.ReviewRunIDFor so the cmd
+	// one-shot path and the review daemon's prepareReviewRun mint
+	// the same per-row RunID from the same helper. ADR-0030
+	// §Per-row RunID templates pins the orphan/linked shapes
+	// (`<ts>-<sid>-PR<pr>` and `<ts>-<sid>-<linkedIssue>-PR<pr>`).
+	perRowRunID := review.ReviewRunIDFor(pr.Number, pr.LinkedIssueNumber(), ts, shortid)
 
 	rs := daemon.NewRunSession(sandmanDir, perRowRunID)
 	// Issue #1919 slice 3: the on-disk batch directory name and the
