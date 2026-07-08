@@ -133,6 +133,130 @@ The endpoint is strictly per-row: it accepts only the row RunID, validates the r
 
 The portal does not dispatch per-row vs whole-batch — the HTTP surface only exposes per-row archive. Whole-batch archive (`sandman archive batch <batchId>`) is a CLI-only subcommand.
 
+## HTTP API
+
+The portal serves six HTTP endpoints under `/api/`. Two are documented in dedicated sections above; all six are summarised here for reference.
+
+### `GET /api/instances`
+
+Returns the list of live Sandman daemon instances currently active in the repository.
+
+**Response** `200 OK` — `application/json`
+
+```json
+{
+  "repoRoot": "/path/to/repo",
+  "instances": [
+    {
+      "name": "<batch-id>",
+      "socketPath": "/path/to/batch.sock"
+    }
+  ]
+}
+```
+
+`instances` is sorted alphabetically by batch id. Entries with inactive sockets are excluded.
+
+### `GET /api/runs`
+
+Returns the current run table for the portal UI. Supports three variants via query parameters:
+
+| Parameter | Behaviour |
+|-----------|-----------|
+| (none) | Full snapshot of all runs |
+| `?runKey=<per-row RunID>` | Single-row keyed lookup; see [ADR-0032](../adr/0032-sandman-layout-redesign.md) §Row-level action resolution identity |
+| `?summary=1` | Condensed snapshot for the portal table; includes `ETag` / `304 Not Modified` caching |
+
+**Response** `200 OK` — `application/json`
+
+Full snapshot and summary variants return `runs` as an array:
+
+```json
+{
+  "repoRoot": "/path/to/repo",
+  "runs": [
+    {
+      "key": "<per-row RunID>",
+      "runId": "<per-row RunID>",
+      "kind": "issue|review|prompt",
+      "status": "active|success|failure|blocked|aborted|archived|queued",
+      "issueLabel": "#1234",
+      "issueNumber": 1234,
+      "branch": "feature-branch",
+      "startedAt": "2025-06-25T12:00:00Z",
+      "finishedAt": "2025-06-25T12:34:56Z",
+      "duration": "34m56s",
+      "lastOutputAt": "2025-06-25T12:34:00Z",
+      "socketPath": "/path/to/run.sock",
+      "logPath": ".sandman/batches/<batchId>/runs/<runId>/run.log",
+      "logUrl": "/api/logs?path=.sandman/batches/<batchId>/runs/<runId>/run.log",
+      "review": false,
+      "reviewCount": 0
+    }
+  ]
+}
+```
+
+The single-row keyed lookup returns `run` (singular) instead of `runs`:
+
+```json
+{
+  "repoRoot": "/path/to/repo",
+  "run": { ... }
+}
+```
+
+Not all fields appear in every row. `lastOutputAt`, `socketPath`, and `logUrl` are omitted for terminal rows. `review`, `reviewCount`, and `reviewVerdict` are only present for rows that own child review runs.
+
+### `GET /api/runs/stream`
+
+Server-Sent Events stream of live run output. Used by the portal UI for real-time updates without polling.
+
+**Query parameter**: `?runKey=<per-row RunID>` (required)
+
+**Response** `200 OK` — `text/event-stream`
+
+Each output line from the run's control socket is emitted as a separate SSE `data:` event:
+
+```
+data: <cleaned line>\n\n
+```
+
+Lines are cleaned server-side (ANSI escapes stripped, control bytes removed) to match the `run.log` contract. A `:` keepalive comment is sent every 15 seconds when no output has flowed. The stream ends when the client disconnects or the daemon closes the control socket.
+
+Errors return JSON with an appropriate HTTP status:
+
+| Status | Meaning |
+|--------|---------|
+| `400` | Missing `runKey` |
+| `409` | Run is not active |
+| `502` | Cannot connect to the run's control socket |
+
+### `GET /api/logs`
+
+Serves the run log file at the requested path. Used by the portal UI to download or view run output.
+
+**Query parameter**: `?path=<relative-path>` (required)
+
+The path must be inside `.sandman/` and match the permitted pattern (`batches/<batchId>/runs/<runId>/run.log` or `archive/<batchId>/runs/<runId>/run.log`). See [ADR-0032](../adr/0032-sandman-layout-redesign.md) §Row-level action resolution identity for how `path` is derived from a per-row RunID lookup.
+
+**Response** `200 OK` — `application/octet-stream`
+
+The log file is served as an attachment with `Content-Disposition: attachment; filename="run.log"`.
+
+| Status | Meaning |
+|--------|---------|
+| `400` | Missing or invalid `path` |
+| `404` | File not found |
+
+### `POST /api/runs/abort`
+
+Signals a running issue to abort. See [## Stop (Abort)](#stop-abort) above.
+
+### `POST /api/runs/archive`
+
+Archives a single completed row. See [## Archive](#archive) above.
+
 ## Notes
 
 - Run it from inside the repository you want to inspect.
