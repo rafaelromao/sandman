@@ -254,6 +254,9 @@ sandman config set <key> <value>
 | `parallel` | int | `1` |
 | `parallel_reviews` | int | `1` |
 | `start_delay` | int | `0` |
+| `run_idle_timeout` | int | `1800` |
+| `retries` | int | `3` |
+| `auto_max_count` | int | `50` |
 | `review_command` | string | `/sandman review` |
 | `container_capacity` | int | `4` |
 | `max_containers` | int | `0` |
