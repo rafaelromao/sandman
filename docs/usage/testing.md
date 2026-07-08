@@ -59,3 +59,49 @@ SANDMAN_TEST_MODEL_OPENCODE=opencode/gpt-5-nano \
 ## Test infrastructure
 
 Platform helpers for Unix-socket path length (`MkdirShort`) and capability gates are documented in [`docs/agents/testenv.md`](../agents/testenv.md). Do not duplicate that content here; link to it instead.
+
+## Side effects and cleanup
+
+E2E and smoke tests create real sandbox resources (worktrees, containers, batch directories) and use real temp directories under `/tmp/`. When a test is interrupted or fails before its cleanup runs, residue can accumulate on disk and in the `.sandman/` state directory.
+
+### What accumulates after an interrupted run
+
+- **Worktrees** under `.sandman/worktrees/` — each test that creates a worktree leaves it behind if the test is killed mid-flight
+- **Orphaned batch directories** under `.sandman/batches/<ts>-<sid>-.../` — per-test batch dirs with no matching `run.started` event and no live daemon socket; these are not removed by normal batch cleanup
+- **Temp directories** — tests use Sandman-prefixed temp paths (`sm-*`, `sandman-config-*`) under `/tmp/`; when a test process is killed before `t.Cleanup` fires, these directories are left behind
+- **GH shim state and opencode session DB rows** — the hermetic `gh` shim directory and any opencode session state written during a test can persist after the test exits
+
+### Environments most likely to hit failures
+
+These side effects are most problematic in:
+
+- **CI environments with disk quotas** — repeated e2e runs accumulate temp directories and orphaned batches that can exhaust the quota, causing subsequent runs to fail
+- **Worktree-based sandboxes** — the worktree-per-run model means interrupted runs leave worktrees on disk that accumulate over time
+- **Shared or constrained `/tmp`** — environments where `/tmp` is a tmpfs with a quota (common in containerised CI) are especially affected by `sm-*` temp dir accumulation
+- **Repeated test runs without cleanup between runs** — residue compounds across runs, increasing the risk of hitting disk or state conflicts
+
+### Cleaning up
+
+Run `sandman clean` after any interrupted or failed e2e run:
+
+```bash
+# Preview what would be removed
+sandman clean --dry-run --orphaned
+
+# Remove orphaned test batch directories (no live socket, no run.started event)
+sandman clean --orphaned
+
+# Remove active batches and their worktrees; also recover stale run state
+# and sweep stale config snapshots (ADR-0015)
+sandman clean --stale
+
+# Full cleanup: active batches + orphaned test dirs + stale snapshots
+# (--stale is mutually exclusive with --orphaned)
+sandman clean
+```
+
+`--orphaned` targets test batch directories that have no live daemon socket and no corresponding `run.started` event — the exact residue a failed or interrupted e2e run leaves behind.
+
+The `--stale` path calls `daemon.CleanupStaleRunSnapshots` (ADR-0015), which removes `sandman-config-*` temp snapshots left after a crash, and also emits `run.aborted` events for runs in dead batches to correct the event log.
+
+For stranded worktrees (a worktree whose HEAD does not match its directory name), see [`sandman stranded`](commands.md#sandman-stranded) or use [`sandman clean`](commands.md#sandman-clean).
