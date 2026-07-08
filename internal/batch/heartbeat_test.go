@@ -51,6 +51,7 @@ func (s *statStub) Calls() int {
 }
 
 func TestHeartbeat_DisabledWhenIdleTimeoutZero(t *testing.T) {
+	t.Parallel()
 	stat := &statStub{mtime: time.Now()}
 	hb := &Heartbeat{
 		LogPath:      "/tmp/log",
@@ -72,6 +73,7 @@ func TestHeartbeat_DisabledWhenIdleTimeoutZero(t *testing.T) {
 }
 
 func TestHeartbeat_DisabledWhenLogPathEmpty(t *testing.T) {
+	t.Parallel()
 	hb := &Heartbeat{
 		LogPath:      "",
 		IdleTimeout:  50 * time.Millisecond,
@@ -88,6 +90,7 @@ func TestHeartbeat_DisabledWhenLogPathEmpty(t *testing.T) {
 }
 
 func TestHeartbeat_FiresAfterIdle(t *testing.T) {
+	t.Parallel()
 	stat := &statStub{mtime: time.Now().Add(-time.Hour)}
 	hb := &Heartbeat{
 		LogPath:      "/tmp/log",
@@ -133,6 +136,7 @@ func TestHeartbeat_FiresAfterIdle(t *testing.T) {
 }
 
 func TestHeartbeat_DoesNotFireWhenLogAdvances(t *testing.T) {
+	t.Parallel()
 	mtime := time.Now().Add(-time.Hour)
 	stat := &statStub{
 		advancer: func() time.Time {
@@ -160,6 +164,7 @@ func TestHeartbeat_DoesNotFireWhenLogAdvances(t *testing.T) {
 }
 
 func TestHeartbeat_StopsOnContextCancel(t *testing.T) {
+	t.Parallel()
 	stat := &statStub{mtime: time.Now().Add(-time.Hour)}
 	hb := &Heartbeat{
 		LogPath:      "/tmp/log",
@@ -190,6 +195,7 @@ func TestHeartbeat_StopsOnContextCancel(t *testing.T) {
 }
 
 func TestHeartbeat_ResetsLastMtimeOnEachRun(t *testing.T) {
+	t.Parallel()
 	stat := &statStub{mtime: time.Now().Add(-time.Hour)}
 	hb := &Heartbeat{
 		LogPath:      "/tmp/log",
@@ -211,6 +217,7 @@ func TestHeartbeat_ResetsLastMtimeOnEachRun(t *testing.T) {
 }
 
 func TestHeartbeat_StatErrorTreatedAsNoAdvance(t *testing.T) {
+	t.Parallel()
 	stat := &statStub{err: errors.New("stat boom")}
 	hb := &Heartbeat{
 		LogPath:      "/tmp/log",
@@ -229,6 +236,7 @@ func TestHeartbeat_StatErrorTreatedAsNoAdvance(t *testing.T) {
 }
 
 func TestHeartbeat_RealLogFileInTempDir(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "agent.log")
 	if err := os.WriteFile(logPath, []byte("first line\n"), 0644); err != nil {
@@ -254,6 +262,7 @@ func TestHeartbeat_RealLogFileInTempDir(t *testing.T) {
 }
 
 func TestHeartbeat_RealLogAdvancesSuppressesKill(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "agent.log")
 	if err := os.WriteFile(logPath, []byte("first line\n"), 0644); err != nil {

@@ -8,6 +8,7 @@ import (
 )
 
 func TestProjectRunStates_PreservesPromptOnlyRun(t *testing.T) {
+	t.Parallel()
 	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
 	finishedAt := startedAt.Add(2 * time.Minute)
 
@@ -36,6 +37,7 @@ func TestProjectRunStates_PreservesPromptOnlyRun(t *testing.T) {
 }
 
 func TestProjectRunStates_IncludesContinuedRun(t *testing.T) {
+	t.Parallel()
 	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
 	continuedAt := startedAt.Add(5 * time.Minute)
 	finishedAt := continuedAt.Add(2 * time.Minute)
@@ -74,6 +76,7 @@ func TestProjectRunStates_IncludesContinuedRun(t *testing.T) {
 }
 
 func TestProjectRunStates_TreatsBlockedRunAsTerminal(t *testing.T) {
+	t.Parallel()
 	blockedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
 
 	runs := ProjectRunStates([]Event{
@@ -97,6 +100,7 @@ func TestProjectRunStates_TreatsBlockedRunAsTerminal(t *testing.T) {
 }
 
 func TestProjectRunStates_TreatsAbortedRunAsTerminalAborted(t *testing.T) {
+	t.Parallel()
 	abortedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
 
 	runs := ProjectRunStates([]Event{
@@ -121,6 +125,7 @@ func TestProjectRunStates_TreatsAbortedRunAsTerminalAborted(t *testing.T) {
 }
 
 func TestProjectRunStates_LegacyCancelledEventStillProjectsAsAborted(t *testing.T) {
+	t.Parallel()
 	legacyAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
 
 	runs := ProjectRunStates([]Event{
@@ -145,6 +150,7 @@ func TestProjectRunStates_LegacyCancelledEventStillProjectsAsAborted(t *testing.
 }
 
 func TestProjectRunStates_UnfinishedRunHasEmptyStatus(t *testing.T) {
+	t.Parallel()
 	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
 
 	runs := ProjectRunStates([]Event{
@@ -165,6 +171,7 @@ func TestProjectRunStates_UnfinishedRunHasEmptyStatus(t *testing.T) {
 }
 
 func TestProjectRunStates_QueuedThenStartedRunIsActive(t *testing.T) {
+	t.Parallel()
 	queuedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
 	startedAt := queuedAt.Add(30 * time.Second)
 
@@ -187,6 +194,7 @@ func TestProjectRunStates_QueuedThenStartedRunIsActive(t *testing.T) {
 }
 
 func TestProjectRunStates_QueuedThenContinuedRunIsActive(t *testing.T) {
+	t.Parallel()
 	queuedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
 	continuedAt := queuedAt.Add(30 * time.Second)
 
@@ -209,6 +217,7 @@ func TestProjectRunStates_QueuedThenContinuedRunIsActive(t *testing.T) {
 }
 
 func TestProjectRunStates_UnknownPayloadStatusRoundTripsThroughStatus(t *testing.T) {
+	t.Parallel()
 	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
 	finishedAt := startedAt.Add(2 * time.Minute)
 
@@ -242,6 +251,7 @@ func TestProjectRunStates_UnknownPayloadStatusRoundTripsThroughStatus(t *testing
 }
 
 func TestProjectRunStates_ReviewRunLabel(t *testing.T) {
+	t.Parallel()
 	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
 	finishedAt := startedAt.Add(2 * time.Minute)
 
@@ -270,6 +280,7 @@ func TestProjectRunStates_ReviewRunLabel(t *testing.T) {
 }
 
 func TestRunState_IsAutoSelect(t *testing.T) {
+	t.Parallel()
 	t.Run("auto-select RunID is auto-select kind", func(t *testing.T) {
 		startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
 		finishedAt := startedAt.Add(2 * time.Minute)
@@ -350,6 +361,7 @@ func TestRunState_IsAutoSelect(t *testing.T) {
 }
 
 func TestProjectRunStates_AutoSelectRunIsNotLabeledPromptOnly(t *testing.T) {
+	t.Parallel()
 	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
 	finishedAt := startedAt.Add(2 * time.Minute)
 
@@ -372,6 +384,7 @@ func TestProjectRunStates_AutoSelectRunIsNotLabeledPromptOnly(t *testing.T) {
 }
 
 func TestProjectRunStates_IdleTimeoutEventDoesNotBreakProjection(t *testing.T) {
+	t.Parallel()
 	idleTimeoutAt := time.Date(2025, 1, 1, 12, 5, 0, 0, time.UTC)
 	abortedAt := time.Date(2025, 1, 1, 12, 6, 0, 0, time.UTC)
 
@@ -406,6 +419,7 @@ func TestProjectRunStates_IdleTimeoutEventDoesNotBreakProjection(t *testing.T) {
 }
 
 func TestPayloadInt_CoercesAcceptedShapes(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name    string
 		payload map[string]any
@@ -513,6 +527,7 @@ func TestPayloadInt_CoercesAcceptedShapes(t *testing.T) {
 }
 
 func TestProjectRunStates_RetriesTotalAndDone_ReadFromFinishedPayload(t *testing.T) {
+	t.Parallel()
 	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
 	finishedAt := startedAt.Add(2 * time.Minute)
 
@@ -540,6 +555,7 @@ func TestProjectRunStates_RetriesTotalAndDone_ReadFromFinishedPayload(t *testing
 }
 
 func TestProjectRunStates_RetriesTotalAndDone_ActiveRunReturnsZero(t *testing.T) {
+	t.Parallel()
 	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
 
 	runs := ProjectRunStates([]Event{
@@ -563,6 +579,7 @@ func TestProjectRunStates_RetriesTotalAndDone_ActiveRunReturnsZero(t *testing.T)
 }
 
 func TestProjectRunStates_RetriesTotalAndDone_LegacyFinishedWithoutRetryKeys(t *testing.T) {
+	t.Parallel()
 	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
 	finishedAt := startedAt.Add(2 * time.Minute)
 
@@ -591,6 +608,7 @@ func TestProjectRunStates_RetriesTotalAndDone_LegacyFinishedWithoutRetryKeys(t *
 }
 
 func TestProjectRunStates_RetriesTotalAndDone_AbortedFinishedPayload(t *testing.T) {
+	t.Parallel()
 	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
 	abortedAt := startedAt.Add(2 * time.Minute)
 
@@ -621,6 +639,7 @@ func TestProjectRunStates_RetriesTotalAndDone_AbortedFinishedPayload(t *testing.
 }
 
 func TestProjectRunStates_LiveAttempt_ReturnsHighestRetryAttempt(t *testing.T) {
+	t.Parallel()
 	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
 
 	runs := ProjectRunStates([]Event{
@@ -649,6 +668,7 @@ func TestProjectRunStates_LiveAttempt_ReturnsHighestRetryAttempt(t *testing.T) {
 }
 
 func TestProjectRunStates_LiveAttempt_SingleRetryReturnsOne(t *testing.T) {
+	t.Parallel()
 	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
 
 	runs := ProjectRunStates([]Event{
@@ -671,6 +691,7 @@ func TestProjectRunStates_LiveAttempt_SingleRetryReturnsOne(t *testing.T) {
 }
 
 func TestProjectRunStates_LiveAttempt_NoRetriesReturnsZero(t *testing.T) {
+	t.Parallel()
 	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
 
 	runs := ProjectRunStates([]Event{
@@ -687,6 +708,7 @@ func TestProjectRunStates_LiveAttempt_NoRetriesReturnsZero(t *testing.T) {
 }
 
 func TestProjectRunStates_LiveAttempt_MalformedZeroAttemptClampsAtZero(t *testing.T) {
+	t.Parallel()
 	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
 
 	runs := ProjectRunStates([]Event{
@@ -709,6 +731,7 @@ func TestProjectRunStates_LiveAttempt_MalformedZeroAttemptClampsAtZero(t *testin
 }
 
 func TestProjectRunStates_LiveAttempt_FinishedRunStillReturnsRetryAttempt(t *testing.T) {
+	t.Parallel()
 	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
 	finishedAt := startedAt.Add(10 * time.Minute)
 
@@ -741,6 +764,7 @@ func TestProjectRunStates_LiveAttempt_FinishedRunStillReturnsRetryAttempt(t *tes
 }
 
 func TestProjectRunStates_LastRetryReason_ReturnsMostRecentReason(t *testing.T) {
+	t.Parallel()
 	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
 
 	runs := ProjectRunStates([]Event{
@@ -771,6 +795,7 @@ func TestProjectRunStates_LastRetryReason_ReturnsMostRecentReason(t *testing.T) 
 }
 
 func TestProjectRunStates_LastRetryReason_NoRetriesReturnsEmpty(t *testing.T) {
+	t.Parallel()
 	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
 
 	runs := ProjectRunStates([]Event{
@@ -787,6 +812,7 @@ func TestProjectRunStates_LastRetryReason_NoRetriesReturnsEmpty(t *testing.T) {
 }
 
 func TestProjectRunStates_LastRetryReason_MostRecentRetryWithoutReasonReturnsEmpty(t *testing.T) {
+	t.Parallel()
 	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
 
 	runs := ProjectRunStates([]Event{
@@ -809,6 +835,7 @@ func TestProjectRunStates_LastRetryReason_MostRecentRetryWithoutReasonReturnsEmp
 }
 
 func TestProjectRunStates_LastRetryReason_FinishedRunStillReturnsRetryReason(t *testing.T) {
+	t.Parallel()
 	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
 	finishedAt := startedAt.Add(10 * time.Minute)
 
@@ -842,6 +869,7 @@ func TestProjectRunStates_LastRetryReason_FinishedRunStillReturnsRetryReason(t *
 }
 
 func TestProjectRunStates_RetainsRetryEvents(t *testing.T) {
+	t.Parallel()
 	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
 	firstRetryAt := startedAt.Add(2 * time.Minute)
 	secondRetryAt := startedAt.Add(5 * time.Minute)
@@ -903,6 +931,7 @@ func TestProjectRunStates_RetainsRetryEvents(t *testing.T) {
 }
 
 func TestProjectRunStates_Retries_AreAppendOnlyAcrossRunContinued(t *testing.T) {
+	t.Parallel()
 	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
 	continuedAt := startedAt.Add(7 * time.Minute)
 	firstRetryAt := startedAt.Add(2 * time.Minute)

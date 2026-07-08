@@ -726,6 +726,7 @@ func containsInt(values []int, want int) bool {
 }
 
 func TestReadTailLines_MoreThanN(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "test.log")
 	content := "line1\nline2\nline3\nline4\nline5\n"
@@ -740,6 +741,7 @@ func TestReadTailLines_MoreThanN(t *testing.T) {
 }
 
 func TestReadTailLines_EmptyFile(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "empty.log")
 	if err := os.WriteFile(path, []byte(""), 0644); err != nil {
@@ -752,6 +754,7 @@ func TestReadTailLines_EmptyFile(t *testing.T) {
 }
 
 func TestReadTailLines_FewerThanN(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "few.log")
 	content := "only1\nonly2\n"
@@ -766,6 +769,7 @@ func TestReadTailLines_FewerThanN(t *testing.T) {
 }
 
 func TestReadTailLines_NonexistentFile(t *testing.T) {
+	t.Parallel()
 	got := readTailLines("/nonexistent/path.log", 3)
 	if len(got) != 0 {
 		t.Fatalf("got %v, want empty", got)
@@ -773,6 +777,7 @@ func TestReadTailLines_NonexistentFile(t *testing.T) {
 }
 
 func TestReadTailLines_TrailingNewline(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "trailing.log")
 	content := "line1\nline2\nline3\n"
@@ -797,6 +802,7 @@ func TestReadTailLines_TrailingNewline(t *testing.T) {
 // folder basename, batch.json.batchId, run.json.BatchID, and event payload
 // batch_id all must agree on.
 func TestBatchIDForIssue_PublicBatchIdShape(t *testing.T) {
+	t.Parallel()
 	const ts, sid = "260618113825", "abcd"
 	tests := []struct {
 		name        string
@@ -824,6 +830,7 @@ func TestBatchIDForIssue_PublicBatchIdShape(t *testing.T) {
 // run.json.BatchID for fresh issue batches, returns the public BatchId
 // shape (no +1 for single, +<additionalCount> for multi).
 func TestIssueBatchIDForRequest_UsesPublicBatchIdShape(t *testing.T) {
+	t.Parallel()
 	const ts, sid = "260618113825", "abcd"
 	tests := []struct {
 		name      string
@@ -846,6 +853,7 @@ func TestIssueBatchIDForRequest_UsesPublicBatchIdShape(t *testing.T) {
 }
 
 func TestResolveRetries(t *testing.T) {
+	t.Parallel()
 	cfg := &config.Config{Retries: 3}
 
 	if got := resolveRetries(Request{Retries: -1}, cfg); got != 3 {
@@ -860,6 +868,7 @@ func TestResolveRetries(t *testing.T) {
 }
 
 func TestParseLogForCompletion_UsesLastTodosSection(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "42.log")
 	content := "--- run 1/3 ---\n# Todos\n- [✓] done\n\n# Notes\nignored\n\n--- retry 2/3 ---\n# Todos\n- [ ] still open\n"
@@ -873,6 +882,7 @@ func TestParseLogForCompletion_UsesLastTodosSection(t *testing.T) {
 }
 
 func TestParseLogForCompletion_ReturnsTrueForCheckedTodos(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "42.log")
 	content := "--- run 1/3 ---\npreamble\n# Todos\n- [✓] done\n- [✓] done too\n"
@@ -886,6 +896,7 @@ func TestParseLogForCompletion_ReturnsTrueForCheckedTodos(t *testing.T) {
 }
 
 func TestParseLogForCompletion_ReturnsFalseWithoutTodos(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "42.log")
 	if err := os.WriteFile(logPath, []byte("no todos here\n"), 0644); err != nil {
@@ -898,6 +909,7 @@ func TestParseLogForCompletion_ReturnsFalseWithoutTodos(t *testing.T) {
 }
 
 func TestParseLogForCompletion_IgnoresEarlierRunSections(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "42.log")
 	content := "--- run 1/3 ---\n# Todos\n- [✓] old done\n--- retry 2/3 ---\n# Todos\n- [ ] current open\n"
@@ -911,6 +923,7 @@ func TestParseLogForCompletion_IgnoresEarlierRunSections(t *testing.T) {
 }
 
 func TestParseLogForCompletion_AcceptsGFMCheckboxSyntax(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "42.log")
 	content := "--- run 1/3 ---\n# Todos\n- [x] done\n- [X] done too\n"
@@ -924,6 +937,7 @@ func TestParseLogForCompletion_AcceptsGFMCheckboxSyntax(t *testing.T) {
 }
 
 func TestCheckPRMergedAtHead(t *testing.T) {
+	t.Parallel()
 	client := &fakeGitHubClient{prs: map[string]*github.PR{
 		"open":     {Number: 1, State: "open", Merged: false, HeadRefName: "open", HeadRefOid: "open-sha"},
 		"merged":   {Number: 2, State: "open", Merged: true, HeadRefName: "merged", HeadRefOid: "merged-sha"},
