@@ -118,7 +118,7 @@ Sandman follows a ports-and-adapters (hexagonal) architecture. The core domain l
 ```
 cmd/sandman/main.go          # Composition root — wires interfaces to concrete adapters
 internal/
-  cmd/                       # Cobra CLI commands (run, init, status, history, continue, clean, config)
+  cmd/                       # Cobra CLI commands (init, run, status, history, clean, config, attach, portal, review, archive, stranded)
   batch/                     # Core domain: Orchestrator, AgentRun, DependencyResolver
   sandbox/                   # Sandbox interface + WorktreeSandbox and ContainerSandbox adapters
   config/                    # Config model, file store, built-in agent presets
