@@ -912,6 +912,15 @@ func (v *portalRunsView) demoteOrphanedActiveRunsFromDeadBatches(repoRoot string
 // (the row never resolved to a backing folder) yield ("", false) from the
 // helper and the verdict surfaces as "Unclear" — same fallback the
 // previous log-based parser produced for an empty log.
+//
+// LIVE-RUN ATOMICITY INVARIANT (issue #1981): when a parent run is terminal
+// (success/failure/aborted), its Status must NOT be overwritten to
+// "reviewing" even when a live review child exists. The portal's compute
+// path (Snapshot -> loadSummaryState -> discoverActiveRuns) must observe a
+// consistent snapshot of the event log and active run state; a parent's
+// terminal Status and a child's live=true must not be observed in the wrong
+// order. This is enforced by isTerminalStatus: only non-terminal parents
+// have their Status promoted to "reviewing" when a live child is present.
 func (v *portalRunsView) aggregateReviewChildren(layout paths.Layout, runs []portalRun) []portalRun {
 	if len(runs) == 0 {
 		return runs
@@ -969,7 +978,7 @@ func (v *portalRunsView) aggregateReviewChildren(layout paths.Layout, runs []por
 		}
 		runs[idx].ReviewCount = summary.count
 		runs[idx].ReviewVerdict = summary.verdict
-		if summary.live {
+		if summary.live && !isTerminalStatus(runs[idx].Status) {
 			runs[idx].Status = "reviewing"
 		}
 	}
@@ -1020,6 +1029,10 @@ func finishedAtOrZero(run portalRun) time.Time {
 		return *run.FinishedAt
 	}
 	return time.Time{}
+}
+
+func isTerminalStatus(status string) bool {
+	return status == "success" || status == "failure" || status == "aborted"
 }
 
 // reviewVerdictFromDecisionFile reads the review run's decision file and
@@ -1553,8 +1566,12 @@ func (v *portalRunsView) runFromActiveBatchIssue(repoRoot string, active portalA
 	if active.PRNumber > 0 {
 		batchKey = filepath.Base(active.Dir)
 	}
+	key := derivedRunID
+	if key == "" {
+		key = active.Key
+	}
 	run := portalRun{
-		Key:         derivedRunID,
+		Key:         key,
 		RunID:       derivedRunID,
 		Kind:        "active",
 		Status:      "queued",
