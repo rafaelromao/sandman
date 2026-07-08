@@ -5241,7 +5241,11 @@ console.log('PASS');
 }
 
 // TestSummarizeReviewGroup_Verdict_GoRegexParityBare pins Go-side parity
-// for the bare marker line shape (reviewVerdictMarkerLineBare).
+// for the bare marker line shape (reviewVerdictMarkerLineBare). Slice 1
+// of issue #1938 retargeted the server-side verdict reader from run.log
+// to decision.md; the bare marker rule is the only rule the new Go
+// helper accepts (decision.md is a controlled artefact with no shell
+// prefix and no trailing debris).
 func TestSummarizeReviewGroup_Verdict_GoRegexParityBare(t *testing.T) {
 	js := `const NL = String.fromCharCode(10);
 const reviews = [
@@ -5254,16 +5258,23 @@ console.log('PASS');
 	runPortalHTMLScript(t, js)
 }
 
-// TestSummarizeReviewGroup_Verdict_GoRegexParityWithDebris pins Go-side
-// parity for the with-debris shape (reviewVerdictMarkerLineWithDebris):
-// the shell-piped marker line **APPROVED**" 2>&1 | tail -5 is accepted.
-func TestSummarizeReviewGroup_Verdict_GoRegexParityWithDebris(t *testing.T) {
+// TestSummarizeReviewGroup_Verdict_JSOrphanDebrisStillTolerated pins the
+// JS-side orphan helper's tolerance of shell-debris shapes
+// (`**APPROVED**" 2>&1 | tail -5`). Issue #1938 slice 1 retargeted the
+// Go server-side verdict reader to decision.md (no debris tolerated),
+// but the JS orphan-fallback path still reads each review's saved
+// run.log, where the same debris rule remains in place — the JS-side
+// debris regex must continue to accept these lines so orphan rows in
+// flight before slice 1 still surface a verdict. This test gates that
+// behaviour so a future JS tidy-up does not silently drop orphan
+// verdicts for legacy runs.
+func TestSummarizeReviewGroup_Verdict_JSOrphanDebrisStillTolerated(t *testing.T) {
 	js := `const NL = String.fromCharCode(10);
 const reviews = [
   { key: 'r1', runId: 'r1', review: true, status: 'success', startedAt: '2026-07-01T00:00:00Z', log: '## Decision' + NL + '**APPROVED**" 2>&1 | tail -5' + NL },
 ];
 const summary = summarizeReviewGroup(reviews);
-if (summary.verdict !== 'Approved') throw new Error('with-debris marker must match (Go reviewVerdictMarkerLineWithDebris), got ' + JSON.stringify(summary.verdict));
+if (summary.verdict !== 'Approved') throw new Error('with-debris marker must still match (JS orphan helper retains debris tolerance for legacy run.log), got ' + JSON.stringify(summary.verdict));
 console.log('PASS');
 `
 	runPortalHTMLScript(t, js)
