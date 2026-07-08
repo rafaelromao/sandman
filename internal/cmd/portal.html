@@ -71,28 +71,23 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
     }
     html[data-theme="sandman-light"] {
       color-scheme: light;
-      --bg: oklch(0.97 0.008 260);
-      --surface: oklch(0.95 0.008 260);
-      --surface-2: oklch(0.92 0.008 260);
-      --surface-3: oklch(0.88 0.008 260);
-      --border: oklch(0.80 0.01 260);
-      --text: oklch(0.30 0.02 260);
-      --muted: oklch(0.50 0.02 260);
-      /* Border-tinted palette retune (issue #1744): the existing
-         tokens now carry the border-tinted values from prototype
-         variant 4. accent-weak = the soft tinted badge background;
-         accent = the saturated dot colour. success / danger / warning
-         carry the per-state tint that the global .badge.* rules
-         consume via color-mix. */
-      --accent: oklch(0.65 0.110 75);
-      --accent-weak: oklch(0.93 0.040 75);
-      --accent-ink: oklch(0.22 0.03 260);
-      --success: oklch(0.55 0.115 145);
-      --danger: oklch(0.55 0.155 28);
-      --warning: oklch(0.62 0.130 80);
-      --shadow: 0 1px 0 oklch(0.30 0.02 260 / 0.05), 0 24px 48px oklch(0.30 0.02 260 / 0.12);
-      --page-top: oklch(0.99 0.008 260);
-      --page-bottom: oklch(0.95 0.008 260);
+      --bg: oklch(0.94 0.018 82);
+      --surface: oklch(0.97 0.015 82);
+      --surface-2: oklch(0.95 0.019 82);
+      --surface-3: oklch(0.90 0.034 79);
+      --border: oklch(0.78 0.035 76);
+      --text: oklch(0.18 0.030 58);
+      --muted: oklch(0.38 0.026 61);
+      --accent: oklch(0.56 0.145 75);
+      --accent-weak: oklch(0.92 0.045 75);
+      --accent-ink: oklch(0.98 0.006 80);
+      --reviewing-accent: oklch(0.52 0.13 302);
+      --success: oklch(0.46 0.14 145);
+      --danger: oklch(0.48 0.18 22);
+      --warning: oklch(0.52 0.145 75);
+      --shadow: 0 1px 0 oklch(0.99 0.006 80 / 0.65), 0 24px 54px oklch(0.30 0.028 58 / 0.13);
+      --page-top: oklch(0.97 0.015 82);
+      --page-bottom: oklch(0.90 0.034 79);
     }
     html[data-theme="catppuccin"] {
       color-scheme: dark;
@@ -177,6 +172,11 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
       font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
       color: var(--text);
       background: var(--bg);
+    }
+    html[data-theme="sandman-light"] body {
+      background:
+        radial-gradient(circle at 14% -10%, oklch(0.79 0.12 78 / 0.34), transparent 30rem),
+        linear-gradient(180deg, var(--page-top) 0%, var(--bg) 56%, var(--page-bottom) 100%);
     }
 
     a { color: inherit; }
