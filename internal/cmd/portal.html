@@ -2163,13 +2163,13 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
       const tab = state.tabs[subjectKey] || state.tabs[key] || 'log';
       const pre = streamPreFor(runKey);
       const renderingLog = pre ? pre.getAttribute('data-rendering-log') || '' : '';
-      streamCoalescer.setBlocked(runKey, !!renderingLog);
-      // While a refreshed snapshot is rendering, keep the socket open but
-      // buffer incoming lines so the async log rebuild finishes first. Once the
-      // render completes, the buffered tail is flushed in order onto the new
-      // snapshot instead of racing ahead of it.
       const detailLoading = loadingDetailKeys.has(subjectKey);
-      const wantStream = run && tab === 'log' && run.kind === 'active' && run.socketPath && !detailLoading;
+      streamCoalescer.setBlocked(runKey, detailLoading || !!renderingLog);
+      // Keep the socket open across refreshes, but hold back live appends while
+      // either the detail fetch or the async render is in flight. That preserves
+      // the daemon tail in order without forcing a reconnect that can race the
+      // refreshed snapshot.
+      const wantStream = run && tab === 'log' && run.kind === 'active' && run.socketPath;
       for (const openKey of Object.keys(streamSources)) {
         if (openKey !== runKey) {
           // Subject switch: any buffered (not-yet-flushed) lines for the
@@ -2183,7 +2183,7 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
       } else {
         stopRunStream(runKey);
       }
-      if (!renderingLog && streamSources[runKey]) {
+      if (!detailLoading && !renderingLog && streamSources[runKey]) {
         const renderedLog = pre ? pre.getAttribute('data-rendered-log') || '' : '';
         streamCoalescer.seedKnownLines(runKey, renderedLog.split('\n').filter(Boolean));
         streamCoalescer.flushPending(runKey);

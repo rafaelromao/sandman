@@ -121,12 +121,11 @@ if (typeof sandbox.loadRunDetail !== 'function') throw new Error('loadRunDetail 
 	}
 }
 
-// TestPortalReconcileRunStreams_GatesStreamWhileDetailLoading pins the second
-// half of the gap fix: the live stream must not attach while a fresh detail
-// snapshot is being fetched, otherwise the daemon's tail replay would be
-// appended onto a stale cached pane and leave a gap in the middle. Once the
-// detail load completes (loadingDetailKeys cleared), the stream may attach.
-func TestPortalReconcileRunStreams_GatesStreamWhileDetailLoading(t *testing.T) {
+// TestPortalReconcileRunStreams_KeepsStreamOpenWhileDetailLoading pins the
+// second half of the gap fix: the live stream stays attached while a fresh
+// detail snapshot is being fetched, but the coalescer must hold its output
+// until the refreshed pane is ready.
+func TestPortalReconcileRunStreams_KeepsStreamOpenWhileDetailLoading(t *testing.T) {
 	if _, err := exec.LookPath("node"); err != nil {
 		t.Skip("node is required for portal stream gate test")
 	}
@@ -186,7 +185,7 @@ if (typeof sandbox.reconcileRunStreams !== 'function') throw new Error('reconcil
 sandbox.reconcileRunStreams();
 const startedWhenIdle = events.some(function (e) { return e[0] === 'new'; });
 
-// Case B: detail load in flight -> stream gated, no attach.
+// Case B: detail load in flight -> stream still attaches, but stays blocked.
 sandbox.streamSources = {};
 sandbox.streamingKeys = new Set();
 events.length = 0;
@@ -211,7 +210,7 @@ process.stdout.write(JSON.stringify({ startedWhenIdle: startedWhenIdle, startedW
 	if !got.StartedWhenIdle {
 		t.Fatalf("expected stream to attach when no detail load is in flight, got %v", got)
 	}
-	if got.StartedWhenLoading {
-		t.Fatalf("expected stream to be gated while a detail load is in flight, got %v", got)
+	if !got.StartedWhenLoading {
+		t.Fatalf("expected stream to stay attached while a detail load is in flight, got %v", got)
 	}
 }
