@@ -5,11 +5,11 @@ import (
 	"strings"
 )
 
-// Body neutralisation sentinels. The body is the only string that
-// arrives from outside the operator trust boundary, so it is the only
-// input that can carry an injected {{KEY}} literal. The substitution
-// pass must therefore treat the body's {{ and }} differently from the
-// template's. We pre-escape the body's {{ and }} to HTML numeric
+// Body neutralisation sentinels. Strings that arrive from outside the
+// operator trust boundary (issue body, PR title, PR body, review focus)
+// are the only inputs that can carry an injected {{KEY}} literal. The
+// substitution pass must therefore treat their {{ and }} differently
+// from the template's. We pre-escape those substrings to HTML numeric
 // character references (&#123;&#123; / &#125;&#125;) before the body
 // pass, which:
 //
@@ -30,6 +30,20 @@ const (
 	bodyOpenEscape  = "&#123;&#123;"
 	bodyCloseEscape = "&#125;&#125;"
 )
+
+// NeutraliseBodyPlaceholders escapes {{ and }} substrings in s to HTML
+// numeric character references so the result cannot match the
+// \{\{[^{}]+\}\} placeholder regex. It is the body-inert rule shared
+// by both the issue render path (issue body) and the review render
+// path (PR title, PR body, review focus — issue #2023). The escape is
+// non-reversible from inside the prompt — operators see the literal
+// characters in the rendered prompt — but it is the only safe shape
+// because the unfilled-key check runs after all body substitution.
+func NeutraliseBodyPlaceholders(s string) string {
+	s = strings.ReplaceAll(s, bodyOpenSource, bodyOpenEscape)
+	s = strings.ReplaceAll(s, bodyCloseSource, bodyCloseEscape)
+	return s
+}
 
 // Renderer is a pure substitution function with no I/O, no global
 // state, and no side effects. It is the single owner of the two-phase
@@ -53,8 +67,7 @@ func (r *Renderer) Render(template, body string, mapping map[string]string) (str
 		intermediate = strings.ReplaceAll(intermediate, "{{"+k+"}}", v)
 	}
 
-	neutralisedBody := strings.ReplaceAll(body, bodyOpenSource, bodyOpenEscape)
-	neutralisedBody = strings.ReplaceAll(neutralisedBody, bodyCloseSource, bodyCloseEscape)
+	neutralisedBody := NeutraliseBodyPlaceholders(body)
 	result := strings.ReplaceAll(intermediate, "{{ISSUE_BODY}}", neutralisedBody)
 
 	unfilled := keyPattern.FindAllString(result, -1)

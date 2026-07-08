@@ -155,12 +155,20 @@ func ApplySubstitutions(template string, cfg RenderConfig) string {
 // block reads the token verbatim and treats NO as authoritative — when
 // NO is rendered the review agent must omit the conditional section
 // entirely.
+//
+// Body-inert rule (issue #2023): PR title, PR body, and review focus
+// arrive from outside the operator trust boundary. Their {{ and }}
+// substrings are neutralised via NeutraliseBodyPlaceholders before
+// substitution so a PR that legitimately documents another placeholder
+// (e.g. "docs: prompt template keys — add {{CANDIDATE_ISSUES}} and
+// {{MAX_COUNT}}") does not produce a false-positive "missing
+// substitution keys" error from the unfilled-key check that follows.
 func ApplyPRSubstitutions(template string, data PRData) string {
 	result := template
 	result = strings.ReplaceAll(result, "{{PR_NUMBER}}", fmt.Sprintf("%d", data.Number))
-	result = strings.ReplaceAll(result, "{{PR_TITLE}}", data.Title)
-	result = strings.ReplaceAll(result, "{{PR_BODY}}", data.Body)
-	result = strings.ReplaceAll(result, "{{REVIEW_FOCUS}}", data.ReviewFocus)
+	result = strings.ReplaceAll(result, "{{PR_TITLE}}", NeutraliseBodyPlaceholders(data.Title))
+	result = strings.ReplaceAll(result, "{{PR_BODY}}", NeutraliseBodyPlaceholders(data.Body))
+	result = strings.ReplaceAll(result, "{{REVIEW_FOCUS}}", NeutraliseBodyPlaceholders(data.ReviewFocus))
 	result = strings.ReplaceAll(result, "{{RUN_DIR}}", data.RunDir)
 	result = strings.ReplaceAll(result, "{{PRIOR_REVIEW_EXISTS}}", priorReviewExistsToken(data.PriorReviewExists))
 	return result

@@ -1000,3 +1000,112 @@ func TestDefaultPRReviewPrompt_ContainsPriorReviewExistsKey(t *testing.T) {
 		t.Errorf("review prompt must include {{PRIOR_REVIEW_EXISTS}} placeholder (issue #1892)")
 	}
 }
+
+// TestApplyPRSubstitutions_NeutralisesBodyPlaceholdersInTitle is the
+// regression test for issue #2023: a PR whose title contains a
+// literal {{KEY}} substring (e.g. "docs: prompt template keys — add
+// {{CANDIDATE_ISSUES}} and {{MAX_COUNT}}") must not produce an
+// unfilled-key false positive. The title substring is escaped to
+// &#123;&#123;...&#125;&#125; so the unfilled-key check cannot match
+// it, while the visible text is preserved for the review agent.
+func TestApplyPRSubstitutions_NeutralisesBodyPlaceholdersInTitle(t *testing.T) {
+	template := "#{{PR_NUMBER}} {{PR_TITLE}}"
+	data := PRData{
+		Number: 2011,
+		Title:  "docs: prompt template keys — add {{CANDIDATE_ISSUES}} and {{MAX_COUNT}}",
+	}
+
+	got := ApplyPRSubstitutions(template, data)
+	if strings.Contains(got, "{{CANDIDATE_ISSUES}}") || strings.Contains(got, "{{MAX_COUNT}}") {
+		t.Fatalf("title {{...}} placeholders must be neutralised, got:\n%s", got)
+	}
+	if !strings.Contains(got, "&#123;&#123;CANDIDATE_ISSUES&#125;&#125;") {
+		t.Errorf("expected neutralised {{CANDIDATE_ISSUES}} in output, got:\n%s", got)
+	}
+	if !strings.Contains(got, "&#123;&#123;MAX_COUNT&#125;&#125;") {
+		t.Errorf("expected neutralised {{MAX_COUNT}} in output, got:\n%s", got)
+	}
+}
+
+// TestApplyPRSubstitutions_NeutralisesBodyPlaceholdersInBody covers
+// the body-inert rule for the PR body as well as the title.
+func TestApplyPRSubstitutions_NeutralisesBodyPlaceholdersInBody(t *testing.T) {
+	template := "body={{PR_BODY}}"
+	data := PRData{
+		Number: 1,
+		Body:   "This PR documents {{NEW_KEY}} and {{OTHER_KEY}} placeholders.",
+	}
+
+	got := ApplyPRSubstitutions(template, data)
+	if strings.Contains(got, "{{NEW_KEY}}") || strings.Contains(got, "{{OTHER_KEY}}") {
+		t.Fatalf("body {{...}} placeholders must be neutralised, got:\n%s", got)
+	}
+	if !strings.Contains(got, "&#123;&#123;NEW_KEY&#125;&#125;") {
+		t.Errorf("expected neutralised {{NEW_KEY}} in output, got:\n%s", got)
+	}
+}
+
+// TestApplyPRSubstitutions_NeutralisesBodyPlaceholdersInFocus covers
+// the same rule for the operator-supplied review focus string.
+func TestApplyPRSubstitutions_NeutralisesBodyPlaceholdersInFocus(t *testing.T) {
+	template := "focus={{REVIEW_FOCUS}}"
+	data := PRData{
+		ReviewFocus: "audit the {{FOO}} path",
+	}
+
+	got := ApplyPRSubstitutions(template, data)
+	if strings.Contains(got, "{{FOO}}") {
+		t.Fatalf("focus {{...}} placeholders must be neutralised, got:\n%s", got)
+	}
+	if !strings.Contains(got, "&#123;&#123;FOO&#125;&#125;") {
+		t.Errorf("expected neutralised {{FOO}} in output, got:\n%s", got)
+	}
+}
+
+// TestRenderReview_AcceptsLiteralPlaceholdersInPRTitle is the
+// end-to-end regression test for issue #2023. PR 2011 (the case that
+// surfaced the bug) carries a title that includes literal
+// {{CANDIDATE_ISSUES}} and {{MAX_COUNT}} — RenderReview must not
+// return a "missing substitution keys" error for that PR.
+func TestRenderReview_AcceptsLiteralPlaceholdersInPRTitle(t *testing.T) {
+	engine := &Engine{}
+	data := PRData{
+		Number: 2011,
+		Title:  "docs: prompt template keys — add {{CANDIDATE_ISSUES}} and {{MAX_COUNT}}",
+		Body:   "Fixes #1992",
+	}
+
+	result, err := engine.RenderReview(RenderConfig{}, data)
+	if err != nil {
+		t.Fatalf("RenderReview returned an error for a PR with literal {{...}} in title: %v", err)
+	}
+	// The title's literal placeholders must still appear (in
+	// neutralised form) so the review agent can read them.
+	if !strings.Contains(result, "&#123;&#123;CANDIDATE_ISSUES&#125;&#125;") {
+		t.Errorf("expected neutralised {{CANDIDATE_ISSUES}} in rendered review prompt, got:\n%s", result)
+	}
+	if !strings.Contains(result, "&#123;&#123;MAX_COUNT&#125;&#125;") {
+		t.Errorf("expected neutralised {{MAX_COUNT}} in rendered review prompt, got:\n%s", result)
+	}
+}
+
+// TestRenderReview_StillErrorsOnUnknownTemplateKey guards the
+// pre-existing typo-detection contract: a real {{UNKNOWN}} in the
+// template (not in the title/body) must still produce the
+// "missing substitution keys" error so a misspelt key is not silently
+// swallowed by the new neutralisation rule.
+func TestRenderReview_StillErrorsOnUnknownTemplateKey(t *testing.T) {
+	engine := &Engine{}
+	cfg := RenderConfig{
+		PromptFlag: "PR #{{PR_NUMBER}} unknown={{NOPE}}",
+	}
+	data := PRData{Number: 1, Title: "Plain title"}
+
+	_, err := engine.RenderReview(cfg, data)
+	if err == nil {
+		t.Fatal("expected error for unknown template key")
+	}
+	if !strings.Contains(err.Error(), "NOPE") {
+		t.Errorf("error should mention NOPE, got: %v", err)
+	}
+}
