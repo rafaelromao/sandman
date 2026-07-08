@@ -162,11 +162,3 @@ func currentBranchHead(workDir string) (string, error) {
 
 var currentBranchHeadFn = currentBranchHead
 
-func logRunMarker(logPath string, attempt, maxRetries int) error {
-	_ = logPath
-	_ = attempt
-	_ = maxRetries
-	return nil
-}
-
-var logRunMarkerFn = logRunMarker
