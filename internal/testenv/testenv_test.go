@@ -329,3 +329,74 @@ func TestMkdirShort_PathFitsUnixSunPath(t *testing.T) {
 		t.Fatalf("MkdirShort returned %q (len=%d) plus /batch.sock exceeds macOS sun_path limit %d", got, len(got), sunPathLimit)
 	}
 }
+
+func TestE2EScenarioReferenceTableCoversAllConstants(t *testing.T) {
+	docPath := filepath.Join("..", "..", "docs", "usage", "testing.md")
+	raw, err := os.ReadFile(docPath)
+	if err != nil {
+		t.Fatalf("read %s: %v", docPath, err)
+	}
+	rows := parseScenarioReferenceRows(string(raw))
+	if len(rows) != len(allE2EScenarios) {
+		t.Fatalf("Scenario reference row count = %d, want %d (one per E2EScenario* constant)", len(rows), len(allE2EScenarios))
+	}
+	documented := make(map[string]bool, len(rows))
+	for _, r := range rows {
+		documented[r] = true
+	}
+	var missing []string
+	for _, s := range allE2EScenarios {
+		if !documented[s] {
+			missing = append(missing, s)
+		}
+	}
+	if len(missing) > 0 {
+		t.Fatalf("Scenario reference table in docs/usage/testing.md is missing E2EScenario* constants: %v", missing)
+	}
+}
+
+func parseScenarioReferenceRows(doc string) []string {
+	const heading = "### Scenario reference"
+	start := strings.Index(doc, heading)
+	if start < 0 {
+		return nil
+	}
+	after := doc[start+len(heading):]
+	end := len(after)
+	for _, marker := range []string{"\n### ", "\n## "} {
+		if i := strings.Index(after, marker); i >= 0 && i < end {
+			end = i
+		}
+	}
+	section := after[:end]
+	var rows []string
+	for _, line := range strings.Split(section, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "|") {
+			continue
+		}
+		cells := strings.Split(line, "|")
+		if len(cells) < 3 {
+			continue
+		}
+		first := strings.TrimSpace(cells[1])
+		if first == "" || first == "Scenario" || strings.HasPrefix(first, "---") {
+			continue
+		}
+		token := first
+		if i := strings.Index(token, "`"); i >= 0 {
+			token = token[i+1:]
+			if j := strings.Index(token, "`"); j >= 0 {
+				token = token[:j]
+			} else {
+				token = ""
+			}
+		}
+		token = strings.TrimSpace(token)
+		if token == "" {
+			continue
+		}
+		rows = append(rows, token)
+	}
+	return rows
+}
