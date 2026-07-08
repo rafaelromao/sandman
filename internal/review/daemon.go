@@ -559,7 +559,11 @@ func (d *Daemon) loadPendingPosts() error {
 				continue
 			}
 			// Source-of-truth gate: a row is rehydrate-eligible
-			// only when decision.md actually exists on disk.
+			// only when decision.md actually exists on disk as a
+			// regular file (issue #1949: a directory at that path
+			// is treated as missing so the next tick falls through
+			// to the launch path which clears the worktree via
+			// ClearReviewArtifacts).
 			// Issue #1953: decision.md lives in the per-row
 			// worktree (the agent's CWD), not the run folder.
 			// The worktree path is derived from (prNumber,
@@ -567,10 +571,14 @@ func (d *Daemon) loadPendingPosts() error {
 			// coordination with the orchestrator.
 			worktreePath := d.reviewWorktreePath(entry.PR, sc.CommentID)
 			decisionPath := filepath.Join(worktreePath, "decision.md")
-			if _, statErr := os.Stat(decisionPath); statErr != nil {
+			info, statErr := os.Stat(decisionPath)
+			if statErr != nil {
 				if !os.IsNotExist(statErr) {
 					d.logf("stat %s: %v", decisionPath, statErr)
 				}
+				continue
+			}
+			if !info.Mode().IsRegular() {
 				continue
 			}
 			if _, ok := d.pendingPost[entry.PR]; !ok {
@@ -1648,9 +1656,9 @@ func (d *Daemon) tryRehydratePost(ctx context.Context, prNumber int, comment git
 	d.pendingPostMu.Unlock()
 
 	decisionPath := filepath.Join(entry.runDir, "decision.md")
-	body, err := os.ReadFile(decisionPath)
-	if err != nil {
-		if os.IsNotExist(err) {
+	info, statErr := os.Stat(decisionPath)
+	if statErr != nil {
+		if os.IsNotExist(statErr) {
 			// Stale entry: drop and fall through to launch.
 			d.logf("PR #%d comment %s: rehydrate entry stale, decision.md missing at tick time, falling through to launch (issue #1847)", prNumber, comment.ID)
 			d.pendingPostMu.Lock()
@@ -1661,6 +1669,31 @@ func (d *Daemon) tryRehydratePost(ctx context.Context, prNumber int, comment git
 			d.pendingPostMu.Unlock()
 			return false
 		}
+		// Read failed for some other reason (perm denied, IO).
+		// Keep the entry; the next tick retries. Do NOT proceed
+		// to launch because the existing post is still better
+		// than re-running the agent.
+		d.logf("PR #%d comment %s: rehydrate post stat %s failed: %v; keeping entry for retry (issue #1847)", prNumber, comment.ID, decisionPath, statErr)
+		return true
+	}
+	if !info.Mode().IsRegular() {
+		// Issue #1949: a directory at decision.md is treated as
+		// missing. The launch path's ClearReviewArtifacts defer
+		// will remove the worktree directory and the next
+		// postDecision observes a clean slate. Keep the entry
+		// drop-and-fallthrough to launch, mirroring the missing
+		// branch.
+		d.logf("PR #%d comment %s: rehydrate entry stale, decision.md is not a regular file at tick time, falling through to launch (issue #1949)", prNumber, comment.ID)
+		d.pendingPostMu.Lock()
+		delete(d.pendingPost[prNumber], comment.ID)
+		if len(d.pendingPost[prNumber]) == 0 {
+			delete(d.pendingPost, prNumber)
+		}
+		d.pendingPostMu.Unlock()
+		return false
+	}
+	body, err := os.ReadFile(decisionPath)
+	if err != nil {
 		// Read failed for some other reason (perm denied, IO).
 		// Keep the entry; the next tick retries. Do NOT proceed
 		// to launch because the existing post is still better
