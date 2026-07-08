@@ -34,7 +34,7 @@ Sandman writes structured events to `.sandman/events.jsonl` in newline-delimited
 |-------|-------------|
 | `type` | Event type (`run.started`, `run.continued`, `run.queued`, `run.blocked`, `run.retry`, `run.idle_timeout`, `run.warning`, `run.finished`, `run.aborted`) |
 | `timestamp` | ISO 8601 timestamp |
-| `run_id` | Per-row RunID per [ADR-0030](../adr/0030-standardize-run-id-and-run-dir.md) §Per-row RunID templates. For review runs the shape is `<shortid>-<ts>-<linkedIssue?>-PR<pr>` — never the legacy literal `"review"` alias. This is the row-level identifier; the batch-level identifier (== public BatchId == batch folder basename) is the `batch_id` field on the run.started/run.finished payloads, not this row. |
+| `run_id` | Per-row RunID per [ADR-0030](../adr/0030-standardize-run-id-and-run-dir.md) §Per-row RunID templates. For review runs the shape is `<ts>-<sid>-<linkedIssue?>-PR<pr>` — never the legacy literal `"review"` alias. This is the row-level identifier; the batch-level identifier (== public BatchId == batch folder basename) is the `batch_id` field on the run.started/run.finished payloads, not this row. |
 | `issue` | GitHub issue number, or `null` for prompt-only runs |
 | `payload` | Event-specific data (see below) |
 

@@ -36,8 +36,8 @@ superseded
 
 For issue-driven batches, ADR-0030 distinguished two identifiers:
 
-- The **batch dir name** `<shortid>-<ts>-<firstIssue>+<N>`, e.g. `abcd-260618113825-42+1`. This is the on-disk `<batch>/` directory under `.sandman/batches/` that holds `batch.json`, `batch.sock`, and `runs/<runID>/`.
-- The **per-row RunID** `<shortid>-<ts>-<issueNum>`, e.g. `abcd-260618113825-42`. This is the `run_id` the orchestrator emitted in `run.started` / `run.continued`, stored in `run.json`'s `RunID` field, and used as the per-run folder name `<batch>/runs/<runID>/`.
+- The **batch dir name** `<ts>-<sid>-<firstIssue>+<N>`, e.g. `260618113825-abcd-42+1`. This is the on-disk `<batch>/` directory under `.sandman/batches/` that holds `batch.json`, `batch.sock`, and `runs/<runID>/`.
+- The **per-row RunID** `<ts>-<sid>-<issueNum>`, e.g. `260618113825-abcd-42`. This is the `run_id` the orchestrator emitted in `run.started` / `run.continued`, stored in `run.json`'s `RunID` field, and used as the per-run folder name `<batch>/runs/<runID>/`.
 
 These two values were distinct for issue-driven batches: the batch dir carried the `+<N>` count suffix; the per-row RunID did not.
 
