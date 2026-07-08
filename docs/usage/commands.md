@@ -312,3 +312,9 @@ For details on false positives with prompt-only branches and the `git checkout -
 ### Stranded worktrees
 
 For the full `sandman stranded` command reference, see [`sandman stranded`](#sandman-stranded) above.
+
+### E2E test side effects
+
+Interrupted or failed e2e runs leave behind worktrees, orphaned batch directories, and temp directories that can accumulate and cause subsequent runs to fail (especially in quota-constrained CI and worktree-based sandboxes).
+
+For a full description of what accumulates and how to clean it up, see [Testing > Side effects and cleanup](testing.md#side-effects-and-cleanup).

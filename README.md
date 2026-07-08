@@ -85,38 +85,7 @@ make build    # Build binary
 make install  # Install to $GOPATH/bin
 ```
 
-Smoke tests (opt-in):
-
-```bash
-SANDMAN_TEST_PROVIDERS=opencode go test -tags smoke ./internal/cmd -run Smoke
-```
-
-E2E tests (opt-in):
-
-```bash
-SANDMAN_TEST_PROVIDERS=opencode go test -tags e2e ./internal/cmd -run PRFlow
-```
-
-Gated end-to-end scenarios (opt-in, no build tag required):
-
-```bash
-SANDMAN_E2E_GATES=batch go test -run TestRunBatch_EndToEnd ./internal/batch
-SANDMAN_E2E_GATES=continue_multi go test -tags e2e -run TestContinueFlow_PodmanSandboxBinarySupportsMultipleIssues ./internal/cmd
-SANDMAN_E2E_GATES=opencode_subagent go test -tags e2e -run TestOpencodeSubagentPermissionAllowAll ./internal/cmd
-SANDMAN_E2E_GATES=all go test ./...
-```
-
-`SANDMAN_TEST_PROVIDERS` and `SANDMAN_E2E_GATES` accept a comma list, `all`, or `*`.
-
-Override the model the smoke and e2e tests target per agent with
-`SANDMAN_TEST_MODEL_<AGENT>` (one var per supported agent, e.g.
-`SANDMAN_TEST_MODEL_OPENCODE`). When unset, the
-literal model baked into the test cases is used.
-
-```bash
-SANDMAN_TEST_MODEL_OPENCODE=opencode/gpt-5-nano \
-  SANDMAN_TEST_PROVIDERS=opencode go test -tags smoke ./internal/cmd -run Smoke
-```
+See [Running smoke and e2e tests](docs/usage/testing.md) for the full gate list, the per-agent model override, and how to run targeted scenarios.
 
 ## License
 
