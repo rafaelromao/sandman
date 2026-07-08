@@ -118,15 +118,24 @@ Sandman follows a ports-and-adapters (hexagonal) architecture. The core domain l
 ```
 cmd/sandman/main.go          # Composition root — wires interfaces to concrete adapters
 internal/
-  cmd/                       # Cobra CLI commands (init, run, status, history, clean, config, attach, portal, review, archive, stranded)
+  adr/                       # ADR test utilities (adr0030_slice2_test.go, adr_slice6_test.go)
+  atomicfs/                  # Atomic-write helpers: WriteAtomic, WriteAtomicJSON, OpenAppend
   batch/                     # Core domain: Orchestrator, AgentRun, DependencyResolver
-  sandbox/                   # Sandbox interface + WorktreeSandbox and ContainerSandbox adapters
+  batchindex/                # Batch index types and persistence (Index, Entry, Batch, RunManifest, ReviewState)
+  cmd/                       # Cobra CLI commands (init, run, status, history, clean, config, attach, portal, review, archive, stranded)
   config/                    # Config model, file store, built-in agent presets
-  github/                    # GitHub client interface + gh CLI implementation
-  prompt/                    # Prompt template engine and renderers
+  daemon/                    # Per-batch and per-run control sockets (command_server.go, socket.go)
   events/                    # Event log interface + JSONL implementation
-  shellenv/                  # Validated, single-quoted `sh -c` env-prefix builder
+  github/                    # GitHub client interface + gh CLI implementation
+  paths/                     # Layout struct for all on-disk path resolution
+  prompt/                    # Prompt template engine and renderers
+  review/                    # Daemon-side redaction layer (RedactBody) and review daemon
+  runid/                     # NewRunID, Kind, batch/run ID generation
+  sandbox/                   # Sandbox interface + WorktreeSandbox and ContainerSandbox adapters
   scaffold/                  # sandman init scaffolding logic
+  shellenv/                  # Validated, single-quoted `sh -c` env-prefix builder
+  skill/                     # Sync function for embedded sandman skill
+  testenv/                   # MkdirShort and canonical env-var helpers
 ```
 
 ### Key interfaces
