@@ -166,3 +166,19 @@ sandman clean
 The `--stale` path sweeps stale config snapshots left after a crash (the `sandman-config-*` temp directories introduced by ADR-0008) and also emits `run.aborted` events for runs in dead batches to correct the event log. See ADR-0008 and ADR-0015 for the underlying cleanup mechanism.
 
 For stranded worktrees (a worktree whose HEAD does not match its directory name), see [`sandman stranded`](commands.md#sandman-stranded) or use [`sandman clean`](commands.md#sandman-clean).
+
+## Portal live-run atomicity invariant
+
+Portal e2e tests that exercise concurrent or parent-child run scenarios rely on a specific atomicity invariant in the portal's live-run refresh path:
+
+**The portal must observe a consistent snapshot of event log state and active run discovery.** When `handleRuns` serves `/api/runs`, the `Snapshot` -> `loadSummaryState` -> `discoverActiveRuns` chain must produce a single coherent view of runs, not two separate reads that can interleave with concurrent state changes.
+
+Two specific behaviors depend on this invariant:
+
+1. **Parent with live review child (issue #1825, stabilized in #1981):** When an issue has a terminal implementation run (success/failure/aborted) AND a live review child, the parent row's `Status` must preserve the terminal value — it must NOT be overwritten to "reviewing". The review child row still surfaces with `Review=true` and `PRNumber`, but the parent's terminal status is preserved.
+
+2. **Two concurrent live runs (issue #1981):** When two runs are live concurrently, the portal's snapshot must include both runs with distinct keys. The portal must not lose run identity between the event-log read and the active-run discovery, even when the batch manifest lacks `RunTS`/`RunShortID` fields (prompt-only socket runs).
+
+These invariants are enforced by:
+- `aggregateReviewChildren` in `portal_runs_view.go`: only promotes a parent's Status to "reviewing" when `!isTerminalStatus(parent.Status)` — terminal parents keep their status.
+- `runFromActiveBatchIssue` in `portal_runs_view.go`: uses `derivedRunID` (from manifest) when available, but falls back to `active.Key` (set by `activeKeyForActive`) when the manifest-derived ID is empty.
