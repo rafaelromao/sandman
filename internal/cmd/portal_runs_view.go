@@ -1453,8 +1453,8 @@ func (v *portalRunsView) stateStartsInBatch(timestamp, batchStart time.Time) boo
 // perRowRunIDForActive derives the per-row RunID for an issue within an
 // active batch, before run.started lands in the event log. It uses the
 // batch manifest's (RunTS, RunShortID) pair to construct the canonical
-// ADR-0030 per-row RunID (<shortid>-<ts>-<issueNum> for issue-driven
-// runs, <shortid>-<ts>-<linkedIssue>-PR<pr> for review runs with a
+// ADR-0030 per-row RunID (<ts>-<shortid>-<issueNum> for issue-driven
+// runs, <ts>-<shortid>-<linkedIssue>-PR<pr> for review runs with a
 // linked issue), falling back to the run.queued event's RunID when
 // manifest fields are absent.
 func perRowRunIDForActive(active portalActiveRun, issueNumber int, queued *events.Event) string {

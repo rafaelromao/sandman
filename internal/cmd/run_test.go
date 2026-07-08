@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -22,6 +23,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/events"
 	"github.com/rafaelromao/sandman/internal/github"
 	"github.com/rafaelromao/sandman/internal/paths"
+	"github.com/rafaelromao/sandman/internal/runid"
 	"github.com/spf13/cobra"
 )
 
@@ -4889,4 +4891,190 @@ func TestRun_Continue_MultiIssueFreshBatchAndRunIDs(t *testing.T) {
 	if got := filepath.Base(idx.Batches[0].Path); got != wantPublicBatchID {
 		t.Errorf("continuation entry path basename = %q, want fresh public BatchId %q", got, wantPublicBatchID)
 	}
+}
+
+// TestIssueDrivenRun_EndToEnd_TimestampFirstIdentity is the end-to-end
+// regression for issue #1945: from the cmd layer to the index entry,
+// the manifest, and the portal layer's per-row RunID derivation, every
+// identity that surfaces for an issue-driven batch must use the
+// canonical <ts>-<sid>-... shape. The cmd layer mints a fresh (ts, sid)
+// pair on each run, the batches index entry id equals the public
+// BatchId, the on-disk batch.json.batchId agrees, the on-disk batch
+// folder basename matches, and the per-row RunID derived by the portal
+// layer from the manifest's (RunTS, RunShortID) matches the value the
+// orchestrator will emit in run.started for the same issue.
+//
+// The test exercises both the single-issue shape (`<ts>-<sid>-<num>`, no
+// +N suffix) and the multi-issue shape (`<ts>-<sid>-<firstIssue>+<n-1>`)
+// so the cross-check covers both branches of BatchIDForIssue.
+func TestIssueDrivenRun_EndToEnd_TimestampFirstIdentity(t *testing.T) {
+	t.Run("single issue", func(t *testing.T) {
+		spy := &spyBatchRunner{result: &batch.Result{}}
+		dir, deps := newRunDepsInDir(t, spy)
+		deps.GitHubClient = &fakeGitHubClient{
+			issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug", State: "open"}},
+			prs:    map[string]*github.PR{},
+		}
+
+		var buf bytes.Buffer
+		cmd := NewRunCmd(deps)
+		cmd.SetOut(&buf)
+		cmd.SetErr(&buf)
+		cmd.SetArgs([]string{"42"})
+
+		if err := cmd.Execute(); err != nil {
+			t.Fatalf("unexpected error: %v\noutput: %s", err, buf.String())
+		}
+
+		// (ts, sid) mint: shape must be the canonical timestamp-first
+		// 12-digit timestamp + 4-hex shortid, never the legacy
+		// <shortid>-<ts> order.
+		if !issuePerRowRunIDReOrBatchIDLike(t, spy.req.RunTS, spy.req.RunShortID) {
+			t.Fatalf("RunTS=%q RunShortID=%q do not match the <ts>-<sid> mint", spy.req.RunTS, spy.req.RunShortID)
+		}
+		if !regexp.MustCompile(`^\d{12}$`).MatchString(spy.req.RunTS) {
+			t.Errorf("RunTS = %q, want 12-digit canonical timestamp", spy.req.RunTS)
+		}
+		if !regexp.MustCompile(`^[0-9a-f]{4}$`).MatchString(spy.req.RunShortID) {
+			t.Errorf("RunShortID = %q, want 4-hex shortid", spy.req.RunShortID)
+		}
+
+		wantPublicBatchID := spy.req.RunTS + "-" + spy.req.RunShortID + "-42"
+		wantPerRowRunID := runid.NewRunID(runid.KindIssue, "42", spy.req.RunTS, spy.req.RunShortID)
+
+		// Index entry id and path agree on the public BatchId.
+		idx, err := batchindex.Load(filepath.Join(dir, ".sandman", "batches.json"))
+		if err != nil {
+			t.Fatalf("load batches index: %v", err)
+		}
+		if len(idx.Batches) != 1 {
+			t.Fatalf("expected exactly 1 batch index entry, got %d", len(idx.Batches))
+		}
+		if got := idx.Batches[0].ID; got != wantPublicBatchID {
+			t.Errorf("index entry id = %q, want %q", got, wantPublicBatchID)
+		}
+		if got := filepath.Base(idx.Batches[0].Path); got != wantPublicBatchID {
+			t.Errorf("index entry path basename = %q, want %q", got, wantPublicBatchID)
+		}
+
+		// Manifest on disk carries the same public BatchId and the
+		// canonical (RunTS, RunShortID) primitives.
+		manifest, err := daemon.ReadManifest(filepath.Join(dir, ".sandman", "batches", wantPublicBatchID))
+		if err != nil {
+			t.Fatalf("read manifest: %v", err)
+		}
+		if manifest.BatchId != wantPublicBatchID {
+			t.Errorf("batch.json.batchId = %q, want %q", manifest.BatchId, wantPublicBatchID)
+		}
+		if manifest.RunTS != spy.req.RunTS {
+			t.Errorf("batch.json.runTs = %q, want %q", manifest.RunTS, spy.req.RunTS)
+		}
+		if manifest.RunShortID != spy.req.RunShortID {
+			t.Errorf("batch.json.runShortId = %q, want %q", manifest.RunShortID, spy.req.RunShortID)
+		}
+
+		// Portal layer derives the per-row RunID from the same
+		// (RunTS, RunShortID) the orchestrator will use, so the
+		// event-log-less portal can render the same id the
+		// orchestrator will emit in run.started.
+		derived := perRowRunIDForManifest(spy.req.RunTS, spy.req.RunShortID, 0, 42, nil)
+		if derived != wantPerRowRunID {
+			t.Errorf("portal-derived per-row RunID = %q, want %q", derived, wantPerRowRunID)
+		}
+		if derived != wantPublicBatchID {
+			t.Errorf("single-issue per-row RunID %q must equal the public BatchId %q (no +N suffix)", derived, wantPublicBatchID)
+		}
+
+		// On-disk layout under <batchesDir>/<publicBatchID>/ must
+		// use the new order, not a leftover legacy <sid>-<ts> name.
+		if !strings.HasPrefix(wantPublicBatchID, spy.req.RunTS) {
+			t.Errorf("public BatchId %q must start with RunTS %q", wantPublicBatchID, spy.req.RunTS)
+		}
+	})
+
+	t.Run("multi issue", func(t *testing.T) {
+		spy := &spyBatchRunner{result: &batch.Result{}}
+		dir, deps := newRunDepsInDir(t, spy)
+		deps.GitHubClient = &fakeGitHubClient{
+			issues: map[int]*github.Issue{
+				42: {Number: 42, Title: "First", State: "open"},
+				43: {Number: 43, Title: "Second", State: "open"},
+			},
+			prs: map[string]*github.PR{},
+		}
+
+		var buf bytes.Buffer
+		cmd := NewRunCmd(deps)
+		cmd.SetOut(&buf)
+		cmd.SetErr(&buf)
+		cmd.SetArgs([]string{"42", "43"})
+
+		if err := cmd.Execute(); err != nil {
+			t.Fatalf("unexpected error: %v\noutput: %s", err, buf.String())
+		}
+
+		wantPublicBatchID := spy.req.RunTS + "-" + spy.req.RunShortID + "-42+1"
+		wantPerRow42 := runid.NewRunID(runid.KindIssue, "42", spy.req.RunTS, spy.req.RunShortID)
+		wantPerRow43 := runid.NewRunID(runid.KindIssue, "43", spy.req.RunTS, spy.req.RunShortID)
+
+		idx, err := batchindex.Load(filepath.Join(dir, ".sandman", "batches.json"))
+		if err != nil {
+			t.Fatalf("load batches index: %v", err)
+		}
+		if len(idx.Batches) != 1 {
+			t.Fatalf("expected exactly 1 batch index entry, got %d", len(idx.Batches))
+		}
+		if got := idx.Batches[0].ID; got != wantPublicBatchID {
+			t.Errorf("index entry id = %q, want %q (multi-issue +<n-1> suffix)", got, wantPublicBatchID)
+		}
+		if got := filepath.Base(idx.Batches[0].Path); got != wantPublicBatchID {
+			t.Errorf("index entry path basename = %q, want %q", got, wantPublicBatchID)
+		}
+
+		manifest, err := daemon.ReadManifest(filepath.Join(dir, ".sandman", "batches", wantPublicBatchID))
+		if err != nil {
+			t.Fatalf("read manifest: %v", err)
+		}
+		if manifest.BatchId != wantPublicBatchID {
+			t.Errorf("batch.json.batchId = %q, want %q", manifest.BatchId, wantPublicBatchID)
+		}
+
+		// Per-row RunIDs: the multi-issue public BatchId carries the
+		// +<n-1> suffix, but the per-row RunIDs are plain
+		// <ts>-<sid>-<num> (no +N). Cross-check that the portal
+		// layer derives the same string for both rows.
+		derived42 := perRowRunIDForManifest(spy.req.RunTS, spy.req.RunShortID, 0, 42, nil)
+		derived43 := perRowRunIDForManifest(spy.req.RunTS, spy.req.RunShortID, 0, 43, nil)
+		if derived42 != wantPerRow42 {
+			t.Errorf("portal-derived per-row RunID for #42 = %q, want %q", derived42, wantPerRow42)
+		}
+		if derived43 != wantPerRow43 {
+			t.Errorf("portal-derived per-row RunID for #43 = %q, want %q", derived43, wantPerRow43)
+		}
+		if derived42 == wantPublicBatchID {
+			t.Errorf("multi-issue per-row RunID for #42 (%q) must NOT equal the public BatchId %q (the latter carries the +<n-1> suffix)", derived42, wantPublicBatchID)
+		}
+		if strings.Contains(derived42, "+1") {
+			t.Errorf("per-row RunID for #42 %q must not carry the +N suffix", derived42)
+		}
+
+		// Sanity: per-row RunIDs differ from the public BatchId by
+		// exactly the +1 segment, never the segment order.
+		if !strings.HasSuffix(wantPublicBatchID, "+1") {
+			t.Errorf("multi-issue public BatchId %q must carry the +<n-1> suffix", wantPublicBatchID)
+		}
+		if !strings.HasPrefix(derived42, spy.req.RunTS) {
+			t.Errorf("per-row RunID %q must start with RunTS %q (timestamp-first)", derived42, spy.req.RunTS)
+		}
+	})
+}
+
+// issuePerRowRunIDLike is a structural guard that the (RunTS,
+// RunShortID) pair together form a well-formed <ts>-<sid> prefix that
+// matches the canonical timestamp-first shape. It deliberately does
+// NOT use the per-row RunID regex (which is for full per-row ids) so
+// the test can fail with a clear message if the order is reversed.
+func issuePerRowRunIDReOrBatchIDLike(t *testing.T, ts, sid string) bool {
+	t.Helper()
+	return regexp.MustCompile(`^\d{12}-[0-9a-f]{4}$`).MatchString(ts + "-" + sid)
 }

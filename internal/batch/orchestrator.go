@@ -1711,7 +1711,7 @@ func (s *runSession) runLogPathFor(runID string) string {
 }
 
 // batchIDFromRunID derives a stable batch directory name from a
-// per-row runID. The new runID format is `<shortid>-<ts>-<subject>`
+// per-row runID. The new runID format is `<ts>-<shortid>-<subject>`
 // (runid.NewRunID); we strip the subject suffix to recover the batch
 // prefix. For legacy runIDs without that prefix, the whole runID is
 // returned so the path still has a batchID segment.
