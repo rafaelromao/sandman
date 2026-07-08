@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Sandman Documentation</title>
+    <link rel="icon" type="image/svg+xml" href="assets/sandman-favicon.svg" />
+    <link rel="stylesheet" href="documentation.css" />
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  </head>
+  <body>
+    <header id="topbar">
+      <div class="topbar-left">
+        <button id="sidebar-toggle" aria-label="Toggle navigation">&#9776;</button>
+        <a class="brand" href="index.html">
+          <img src="assets/sandman-mark.svg" alt="Sandman" />
+          <strong>SANDMAN</strong>
+        </a>
+      </div>
+      <div class="topbar-right">
+        <a class="btn-home" href="index.html">&#8962; Landing</a>
+      </div>
+    </header>
+
+    <div id="layout">
+      <aside id="sidebar">
+        <nav id="file-nav"></nav>
+      </aside>
+      <main id="content-area">
+        <div id="toc-bar">
+          <span class="toc-label">On this page</span>
+          <nav id="toc"></nav>
+        </div>
+        <article id="content">
+          <p class="loading-msg">Loading documentation...</p>
+        </article>
+      </main>
+    </div>
+
+    <script src="documentation.js"></script>
+  </body>
+</html>
