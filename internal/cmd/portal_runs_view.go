@@ -1022,41 +1022,45 @@ func finishedAtOrZero(run portalRun) time.Time {
 	return time.Time{}
 }
 
-// reviewVerdictFromDecisionFile reads the per-run decision file
-// (<layout.RunFolder(batchID, runID)>/decision.md) and returns the
-// review verdict it advertises. The decision file is the controlled
-// artefact published by the review agent's "## Decision" section;
-// reading it replaces the previous run.log scan, which had to
-// tolerate shell debris (gh pr comment quoting, `2>&1 | tail -5`,
-// etc.) and produced false positives whenever run.log happened to
-// reference the marker string outside the section.
-//
-// The scan is heading-gated: the helper enters a section at a bare
-// `(?i)^## decision\s*$` line and exits that section at the next
-// `^## ` heading. When the file contains multiple `## Decision`
-// sections the latest section's marker wins — an intermediate draft
-// is overwritten by the final decision before the agent posts its
-// comment, so the file can legitimately carry more than one. Each
-// fresh Decision section re-opens the scan with the verdict
-// accumulator reset; a marker captured in an earlier section is
-// discarded in favour of the latest section's verdict, and a section
-// that ends without a marker yields ("", false) rather than carrying
-// forward the prior section's marker. Inside each section, only the
-// narrow bare marker `^\*\*([A-Z_]+)\*\*$` is accepted — lowercase
-// marker, space-inside-asterisks, mid-line prose, and any trailing
-// debris are all rejected (the controlled artefact never carries
-// debris, so the previous lenient regex is unnecessary).
-//
-// On any os.ReadFile error (missing file, unreadable, permission
-// denied) the helper returns ("", false) so the caller can map the
-// verdict to "Unclear" without surfacing a parse-side error to the
-// portal row.
-//
-// Issue #1938 slice 1. Slice 0 (issue #1937) introduced
-// paths.Layout.DecisionFile and portalRun.RunDir plumbing; this
-// helper is the consumer of both seams.
+// reviewVerdictFromDecisionFile reads the review run's decision file and
+// returns the verdict it advertises. Review runs now write decision.md into
+// the per-row worktree, and the run manifest records that worktree path.
+// Older rows that predate the manifest field still fall back to the legacy
+// <runDir>/decision.md location.
 func reviewVerdictFromDecisionFile(layout paths.Layout, batchID, runID string) (string, bool) {
-	data, err := os.ReadFile(layout.DecisionFile(batchID, runID))
+	runDir := layout.RunFolder(batchID, runID)
+	if runDir == "" {
+		return "", false
+	}
+	if worktreePath, ok := reviewWorktreePathFromRunManifest(runDir); ok {
+		if verdict, ok := reviewVerdictFromPath(filepath.Join(worktreePath, "decision.md")); ok {
+			return verdict, true
+		}
+		return "", false
+	}
+	return reviewVerdictFromPath(filepath.Join(runDir, "decision.md"))
+}
+
+func reviewWorktreePathFromRunManifest(runDir string) (string, bool) {
+	data, err := os.ReadFile(filepath.Join(runDir, "run.json"))
+	if err != nil {
+		return "", false
+	}
+	var manifest batchindex.RunManifest
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		return "", false
+	}
+	worktreePath := strings.TrimSpace(manifest.WorktreePath)
+	if worktreePath == "" {
+		return "", false
+	}
+	return worktreePath, true
+}
+
+// reviewVerdictFromPath parses a review decision file and extracts the latest
+// verdict advertised in the bare "## Decision" section.
+func reviewVerdictFromPath(path string) (string, bool) {
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return "", false
 	}
