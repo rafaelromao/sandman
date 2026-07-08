@@ -19,6 +19,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/daemon"
 	"github.com/rafaelromao/sandman/internal/github"
 	"github.com/rafaelromao/sandman/internal/prompt"
+	"github.com/rafaelromao/sandman/internal/runid"
 )
 
 // fakePRGitHubClient is a test double that satisfies the FetchPR
@@ -388,6 +389,210 @@ func TestReviewCmd_OneShotRendersPromptAndInvokesBatch(t *testing.T) {
 	if runner.captured.OutputWriter == nil {
 		t.Error("expected OutputWriter to be set (non-nil) for one-shot review batch request")
 	}
+}
+
+// TestReviewRun_EndToEnd_TimestampFirstIdentity is the end-to-end
+// regression for issue #1946: from the cmd layer to the on-disk
+// manifest and per-row folder, every identity that surfaces for a
+// review batch must use the canonical `<ts>-<sid>-...` shape. The cmd
+// layer routes through review.ReviewRunIDFor (the shared helper) so
+// the daemon and one-shot paths mint the same identity. The captured
+// `batch.Request.RunID` is the canonical row RunID, the on-disk
+// `batch.json.batchId` agrees with it, the per-row folder under
+// `.sandman/batches/<batchID>/runs/<runID>/` matches, and the manifest
+// carries the canonical (RunTS, RunShortID) primitives.
+//
+// The test exercises both the orphan shape (`<ts>-<sid>-PR<pr>`,
+// no linked issue) and the linked shape (`<ts>-<sid>-<linkedIssue>-PR<pr>`,
+// PR body closes `#<n>`) so both branches of review.ReviewRunIDFor
+// are pinned end to end (acceptance criterion "Tests cover orphan and
+// linked-issue review flows with the new shape").
+func TestReviewRun_EndToEnd_TimestampFirstIdentity(t *testing.T) {
+	t.Run("orphan review", func(t *testing.T) {
+		runner := &spyBatchRunnerWithCapture{spyBatchRunner: spyBatchRunner{result: &batch.Result{}}}
+		gh := &fakePRGitHubClient{
+			fakeGitHubClient: &fakeGitHubClient{},
+			pr: &github.PR{
+				Number: 17,
+				Title:  "Refactor daemon",
+				Body:   "No linked issue here.",
+			},
+		}
+		deps := newReviewDeps(t, gh, &config.Config{
+			DefaultAgent:       "opencode",
+			DefaultModel:       "opencode/big-pickle",
+			DefaultReviewAgent: "opencode",
+			DefaultReviewModel: "openai/gpt-5",
+			Agent:              "opencode",
+			Sandbox:            "podman",
+			WorktreeDir:        ".sandman/worktrees",
+			Agents:             map[string]config.Agent{},
+			AgentProviders: map[string]config.Agent{
+				"opencode": {Preset: "opencode", Command: "opencode"},
+			},
+		}, runner)
+
+		var buf bytes.Buffer
+		cmd := NewReviewCmd(deps)
+		cmd.SetOut(&buf)
+		cmd.SetErr(&buf)
+		cmd.SetArgs([]string{"17"})
+
+		if err := cmd.Execute(); err != nil {
+			t.Fatalf("unexpected error: %v\noutput: %s", err, buf.String())
+		}
+
+		// Canonical (ts, sid) mint: the cmd layer routes through
+		// review.ReviewRunIDFor so the (ts, sid) pair and the
+		// subject are stitched in one helper.
+		_, _, err := runidFromRequest(t, runner.captured, "PR17")
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		rowID := runner.captured.RunID
+		wantPublicBatchID := rowID // orphan review is single-row, BatchId == RunID
+
+		// On-disk batch.json manifest agrees: BatchId == per-row
+		// RunID, and RunTS / RunShortID round-trip through
+		// runid.NewRunID. Same shape as the issue-driven
+		// regression test (TestRun_IssueBatch_EndToEnd_...).
+		manifest, err := daemon.ReadManifest(filepath.Join(deps.RepoRoot, ".sandman", "batches", wantPublicBatchID))
+		if err != nil {
+			t.Fatalf("read manifest: %v", err)
+		}
+		if manifest.BatchId != wantPublicBatchID {
+			t.Errorf("batch.json.batchId = %q, want %q", manifest.BatchId, wantPublicBatchID)
+		}
+		if manifest.RunTS != runner.captured.RunTS {
+			t.Errorf("batch.json.runTs = %q, want %q", manifest.RunTS, runner.captured.RunTS)
+		}
+		if manifest.RunShortID != runner.captured.RunShortID {
+			t.Errorf("batch.json.runShortId = %q, want %q", manifest.RunShortID, runner.captured.RunShortID)
+		}
+
+		// Timestamp-first shape: per-row RunID begins with RunTS.
+		if !strings.HasPrefix(rowID, runner.captured.RunTS) {
+			t.Errorf("per-row RunID %q must start with RunTS %q (timestamp-first)", rowID, runner.captured.RunTS)
+		}
+
+		// Per-row folder under <batchesDir>/<batchID>/runs/<runID>/
+		// is exactly the captured RunDir.
+		wantRunDir, err := filepath.Abs(filepath.Join(deps.RepoRoot, ".sandman", "batches", wantPublicBatchID, "runs", rowID))
+		if err != nil {
+			t.Fatalf("abs run dir: %v", err)
+		}
+		if runner.captured.RunDir != wantRunDir {
+			t.Errorf("captured RunDir = %q, want %q (per-row folder under public BatchId)", runner.captured.RunDir, wantRunDir)
+		}
+	})
+
+	t.Run("linked review", func(t *testing.T) {
+		const linkedIssue = 1066
+		runner := &spyBatchRunnerWithCapture{spyBatchRunner: spyBatchRunner{result: &batch.Result{}}}
+		gh := &fakePRGitHubClient{
+			fakeGitHubClient: &fakeGitHubClient{},
+			pr: &github.PR{
+				Number: 42,
+				Title:  "Linked review",
+				Body:   "This PR fixes #1066.",
+			},
+		}
+		deps := newReviewDeps(t, gh, &config.Config{
+			DefaultAgent:       "opencode",
+			DefaultModel:       "opencode/big-pickle",
+			DefaultReviewAgent: "opencode",
+			DefaultReviewModel: "openai/gpt-5",
+			Agent:              "opencode",
+			Sandbox:            "podman",
+			WorktreeDir:        ".sandman/worktrees",
+			Agents:             map[string]config.Agent{},
+			AgentProviders: map[string]config.Agent{
+				"opencode": {Preset: "opencode", Command: "opencode"},
+			},
+		}, runner)
+
+		var buf bytes.Buffer
+		cmd := NewReviewCmd(deps)
+		cmd.SetOut(&buf)
+		cmd.SetErr(&buf)
+		cmd.SetArgs([]string{"42"})
+
+		if err := cmd.Execute(); err != nil {
+			t.Fatalf("unexpected error: %v\noutput: %s", err, buf.String())
+		}
+
+		// Linked subject: <linkedIssue>-PR<pr>. The cmd layer must
+		// hand the linked issue to review.ReviewRunIDFor so the
+		// per-row RunID carries the segment.
+		_, _, err := runidFromRequest(t, runner.captured, "1066-PR42")
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		rowID := runner.captured.RunID
+		wantPublicBatchID := rowID
+
+		// On-disk batch.json manifest agrees.
+		manifest, err := daemon.ReadManifest(filepath.Join(deps.RepoRoot, ".sandman", "batches", wantPublicBatchID))
+		if err != nil {
+			t.Fatalf("read manifest: %v", err)
+		}
+		if manifest.BatchId != wantPublicBatchID {
+			t.Errorf("batch.json.batchId = %q, want %q (linked per-row RunID)", manifest.BatchId, wantPublicBatchID)
+		}
+		if manifest.RunTS != runner.captured.RunTS {
+			t.Errorf("batch.json.runTs = %q, want %q", manifest.RunTS, runner.captured.RunTS)
+		}
+		if manifest.RunShortID != runner.captured.RunShortID {
+			t.Errorf("batch.json.runShortId = %q, want %q", manifest.RunShortID, runner.captured.RunShortID)
+		}
+
+		// Segments are stitched in the canonical timestamp-first
+		// order. The PR-42 tail must come after the linked-issue
+		// segment; a regression that drops the linked issue from
+		// the subject would surface here.
+		if !strings.HasPrefix(rowID, runner.captured.RunTS) {
+			t.Errorf("RunID = %q, must start with RunTS %q (timestamp-first)", rowID, runner.captured.RunTS)
+		}
+		if !strings.HasSuffix(rowID, "-PR42") {
+			t.Errorf("RunID = %q, want -PR42 suffix", rowID)
+		}
+		if !strings.Contains(rowID, "-1066-PR42") {
+			t.Errorf("RunID = %q, want -1066-PR42 segment for linked issue", rowID)
+		}
+		if strings.Contains(rowID, "PR42-1066") {
+			t.Errorf("RunID = %q, must not permute linked issue and PR (legacy shape)", rowID)
+		}
+
+		// Per-row folder under <batchesDir>/<batchID>/runs/<runID>/
+		// is exactly the captured RunDir.
+		wantRunDir, err := filepath.Abs(filepath.Join(deps.RepoRoot, ".sandman", "batches", wantPublicBatchID, "runs", rowID))
+		if err != nil {
+			t.Fatalf("abs run dir: %v", err)
+		}
+		if runner.captured.RunDir != wantRunDir {
+			t.Errorf("captured RunDir = %q, want %q (per-row folder under public BatchId)", runner.captured.RunDir, wantRunDir)
+		}
+	})
+}
+
+// runidFromRequest verifies that the captured batch.Request
+// round-trips through runid.NewRunID(KindReview, ...) using the
+// expected subject, and returns the resolved (ts, sid) pair for
+// downstream helpers.
+func runidFromRequest(t *testing.T, req batch.Request, wantSubject string) (ts, sid string, err error) {
+	t.Helper()
+	ts = req.RunTS
+	sid = req.RunShortID
+	if ts == "" || sid == "" {
+		return "", "", fmt.Errorf("captured request is missing RunTS=%q or RunShortID=%q", ts, sid)
+	}
+	wantRunID := runid.NewRunID(runid.KindReview, wantSubject, ts, sid)
+	if req.RunID != wantRunID {
+		return "", "", fmt.Errorf("captured RunID = %q, want %q (canonical <ts>-<sid>-%s)", req.RunID, wantRunID, wantSubject)
+	}
+	return ts, sid, nil
 }
 
 func TestReviewCmd_OneShotParallelFlagOverridesConfig(t *testing.T) {
