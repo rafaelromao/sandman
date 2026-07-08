@@ -2160,6 +2160,95 @@ func TestRunPromptOnlySingle_PrefixesOutputWithRunID(t *testing.T) {
 	}
 }
 
+// TestRunPromptOnlySingle_ReviewRunIDIsCanonical pins the regression
+// gate for issue #1946: the orchestrator's executePromptOnly path
+// must NOT mangle a review per-row RunID that flows through it. The
+// cmd/review.go one-shot path used to populate both BatchTS and
+// BatchShortID on the batch.Request, which triggered the prompt-only
+// override inside runPromptOnlySingle and emitted a divergent
+// `…-prompt-…-<full_review_runid>` instead of the canonical
+// `<ts>-<sid>-PR<n>` / `<ts>-<sid>-<linkedIssue>-PR<n>` shape. The
+// daemon-launched review path (review/daemon.go) already avoids
+// setting those fields; this test makes sure the orchestrator does
+// not regress when both paths go through runPromptOnlySingle.
+//
+// The test calls runPromptOnlySingle directly with the same
+// parameter shape that a cmd/daemon review pass-through would use
+// (runID == the canonical review RunID, batchTS/BatchShortID empty
+// to model the cmd/daemon review call sites after the fix) and
+// asserts the resulting run.json path uses the canonical RunID —
+// so any future change that re-pops the BatchTS/BatchShortID
+// fields on the review request is caught here.
+func TestRunPromptOnlySingle_ReviewRunIDIsCanonical(t *testing.T) {
+	workDir := t.TempDir()
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get wd: %v", err)
+	}
+	if err := os.Chdir(workDir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(oldWD) })
+
+	rtSandbox := &fakeSandbox{workDir: filepath.Join(workDir, "worktree"), execStdout: "hello from agent\n"}
+
+	o := &Orchestrator{
+		renderer:       &noopRenderer{},
+		errorLog:       io.Discard,
+		layout:         paths.NewLayout(&config.Config{}, workDir),
+		sandboxFactory: &fakeSandboxFactory{sandbox: rtSandbox},
+		runnableFactory: &promptOnlyRunnableFactory{hook: func(issue *github.Issue, branch string) AgentRunResult {
+			return AgentRunResult{Status: "success", Branch: branch, WorktreePath: rtSandbox.WorkDir()}
+		}},
+	}
+
+	const (
+		ts       = "260625120000"
+		sid      = "abcd"
+		prNumber = 17
+		// Canonical orphan review per-row RunID (no linked issue),
+		// per ADR-0030 §Per-row RunID templates.
+		rowID = "260625120000-abcd-PR17"
+	)
+
+	cfg := &config.Config{WorktreeDir: "worktree", Git: config.GitConfig{BaseBranch: "main"}}
+	// batchTS / batchShortID passed as empty strings to model the
+	// cmd/review.go and internal/review/daemon.go review call sites
+	// (neither sets those fields, to avoid the prompt-only override).
+	result, started := o.runPromptOnlySingle(
+		context.Background(), cfg, "opencode", config.Agent{Command: "echo hi"},
+		noopIdentityResolver(), "sandman/review-17-1",
+		prompt.RenderConfig{}, nil, &fakeSandboxFactory{sandbox: rtSandbox}, nil,
+		ModeFresh, "main", 0, 0, 0, "",
+		0, false, 0, false, false, false,
+		true, prNumber, "check tests", rowID, // review=true, runID=rowID (canonical review shape)
+		nil, 0, "", "", // batchTS, batchShortID both empty
+		"",
+	)
+	if !started {
+		t.Fatal("expected review run to start")
+	}
+	if result.RunID != rowID {
+		t.Errorf("result.RunID = %q, want %q (canonical review RunID must round-trip through orchestrator)", result.RunID, rowID)
+	}
+
+	// The on-disk manifest path must use the canonical rowID as both
+	// the batch folder basename and the per-row folder segment.
+	manifestPath := filepath.Join(workDir, ".sandman", "batches", rowID, "runs", rowID, "run.json")
+	if _, err := os.Stat(manifestPath); err != nil {
+		t.Fatalf("expected run.json at canonical review path %q, got %v", manifestPath, err)
+	}
+	// And the divergent `…-prompt-…-<full_review_runid>` shape must
+	// NOT exist anywhere under the batches dir.
+	batchesDir := filepath.Join(workDir, ".sandman", "batches")
+	entries, _ := os.ReadDir(batchesDir)
+	for _, e := range entries {
+		if strings.Contains(e.Name(), "-prompt-") {
+			t.Errorf("orchestrator emitted divergent prompt-only override at %q; review RunIDs must not be rewritten to …-prompt-…-%s", filepath.Join(batchesDir, e.Name()), rowID)
+		}
+	}
+}
+
 func TestRunPromptOnlySingle_PrefixesOutputPromptOnlyWhenNotReview(t *testing.T) {
 	workDir := t.TempDir()
 	oldWD, err := os.Getwd()

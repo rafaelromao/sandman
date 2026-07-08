@@ -456,7 +456,7 @@ func TestReviewRun_EndToEnd_TimestampFirstIdentity(t *testing.T) {
 		// Canonical (ts, sid) mint: the cmd layer routes through
 		// review.ReviewRunIDFor so the (ts, sid) pair and the
 		// subject are stitched in one helper.
-		_, _, err := runidFromRequest(t, runner.captured, "PR17")
+		wantTS, wantSID, err := runidFromRequest(t, runner.captured, "PR17")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -472,7 +472,7 @@ func TestReviewRun_EndToEnd_TimestampFirstIdentity(t *testing.T) {
 		// agree on the canonical <ts>-<sid>-PR<n> string
 		// (acceptance criterion "Manifest and portal consumers
 		// resolve review runs correctly").
-		portalDerived := runid.NewRunID(runid.KindReview, "PR17", runner.captured.RunTS, runner.captured.RunShortID)
+		portalDerived := runid.NewRunID(runid.KindReview, "PR17", wantTS, wantSID)
 		if portalDerived != rowID {
 			t.Errorf("portal-derived per-row RunID = %q, want %q (must agree with cmd-minted RunID)", portalDerived, rowID)
 		}
@@ -488,16 +488,16 @@ func TestReviewRun_EndToEnd_TimestampFirstIdentity(t *testing.T) {
 		if manifest.BatchId != wantPublicBatchID {
 			t.Errorf("batch.json.batchId = %q, want %q", manifest.BatchId, wantPublicBatchID)
 		}
-		if manifest.RunTS != runner.captured.RunTS {
-			t.Errorf("batch.json.runTs = %q, want %q", manifest.RunTS, runner.captured.RunTS)
+		if manifest.RunTS != wantTS {
+			t.Errorf("batch.json.runTs = %q, want %q", manifest.RunTS, wantTS)
 		}
-		if manifest.RunShortID != runner.captured.RunShortID {
-			t.Errorf("batch.json.runShortId = %q, want %q", manifest.RunShortID, runner.captured.RunShortID)
+		if manifest.RunShortID != wantSID {
+			t.Errorf("batch.json.runShortId = %q, want %q", manifest.RunShortID, wantSID)
 		}
 
 		// Timestamp-first shape: per-row RunID begins with RunTS.
-		if !strings.HasPrefix(rowID, runner.captured.RunTS) {
-			t.Errorf("per-row RunID %q must start with RunTS %q (timestamp-first)", rowID, runner.captured.RunTS)
+		if !strings.HasPrefix(rowID, wantTS) {
+			t.Errorf("per-row RunID %q must start with RunTS %q (timestamp-first)", rowID, wantTS)
 		}
 
 		// Per-row folder under <batchesDir>/<batchID>/runs/<runID>/
@@ -549,7 +549,7 @@ func TestReviewRun_EndToEnd_TimestampFirstIdentity(t *testing.T) {
 		// Linked subject: <linkedIssue>-PR<pr>. The cmd layer must
 		// hand the linked issue to review.ReviewRunIDFor so the
 		// per-row RunID carries the segment.
-		_, _, err := runidFromRequest(t, runner.captured, "1066-PR42")
+		wantTS, wantSID, err := runidFromRequest(t, runner.captured, "1066-PR42")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -563,7 +563,7 @@ func TestReviewRun_EndToEnd_TimestampFirstIdentity(t *testing.T) {
 		// perRowRunIDForManifest folds in the linked issue between
 		// the prefix and the -PR<n> tail, so mirror the call sites
 		// here.
-		portalDerivedLinked := runid.NewRunID(runid.KindReview, "1066-PR42", runner.captured.RunTS, runner.captured.RunShortID)
+		portalDerivedLinked := runid.NewRunID(runid.KindReview, "1066-PR42", wantTS, wantSID)
 		if portalDerivedLinked != rowID {
 			t.Errorf("portal-derived per-row RunID (linked) = %q, want %q (must agree with cmd-minted RunID)", portalDerivedLinked, rowID)
 		}
@@ -576,19 +576,19 @@ func TestReviewRun_EndToEnd_TimestampFirstIdentity(t *testing.T) {
 		if manifest.BatchId != wantPublicBatchID {
 			t.Errorf("batch.json.batchId = %q, want %q (linked per-row RunID)", manifest.BatchId, wantPublicBatchID)
 		}
-		if manifest.RunTS != runner.captured.RunTS {
-			t.Errorf("batch.json.runTs = %q, want %q", manifest.RunTS, runner.captured.RunTS)
+		if manifest.RunTS != wantTS {
+			t.Errorf("batch.json.runTs = %q, want %q", manifest.RunTS, wantTS)
 		}
-		if manifest.RunShortID != runner.captured.RunShortID {
-			t.Errorf("batch.json.runShortId = %q, want %q", manifest.RunShortID, runner.captured.RunShortID)
+		if manifest.RunShortID != wantSID {
+			t.Errorf("batch.json.runShortId = %q, want %q", manifest.RunShortID, wantSID)
 		}
 
 		// Segments are stitched in the canonical timestamp-first
 		// order. The PR-42 tail must come after the linked-issue
 		// segment; a regression that drops the linked issue from
 		// the subject would surface here.
-		if !strings.HasPrefix(rowID, runner.captured.RunTS) {
-			t.Errorf("RunID = %q, must start with RunTS %q (timestamp-first)", rowID, runner.captured.RunTS)
+		if !strings.HasPrefix(rowID, wantTS) {
+			t.Errorf("RunID = %q, must start with RunTS %q (timestamp-first)", rowID, wantTS)
 		}
 		if !strings.HasSuffix(rowID, "-PR42") {
 			t.Errorf("RunID = %q, want -PR42 suffix", rowID)
@@ -612,20 +612,38 @@ func TestReviewRun_EndToEnd_TimestampFirstIdentity(t *testing.T) {
 	})
 }
 
-// runidFromRequest verifies that the captured batch.Request
-// round-trips through runid.NewRunID(KindReview, ...) using the
-// expected subject, and returns the resolved (ts, sid) pair for
-// downstream helpers.
+// runidFromRequest verifies that the captured batch.Request's RunID
+// is the canonical review RunID for the given subject, and returns
+// the (ts, sid) prefix pair it carries so downstream helpers can
+// re-derive the same id without trusting the segment order. The
+// canonical `<ts>-<sid>-...` shape is enforced via runid's
+// KindFromDirName prefix regex; the recovered (ts, sid) is the
+// RunID's leading two dash-separated segments after stripping the
+// trailing subject.
 func runidFromRequest(t *testing.T, req batch.Request, wantSubject string) (ts, sid string, err error) {
 	t.Helper()
-	ts = req.RunTS
-	sid = req.RunShortID
-	if ts == "" || sid == "" {
-		return "", "", fmt.Errorf("captured request is missing RunTS=%q or RunShortID=%q", ts, sid)
+	rowID := req.RunID
+	if rowID == "" {
+		return "", "", fmt.Errorf("captured batch.Request is missing RunID")
 	}
-	wantRunID := runid.NewRunID(runid.KindReview, wantSubject, ts, sid)
-	if req.RunID != wantRunID {
-		return "", "", fmt.Errorf("captured RunID = %q, want %q (canonical <ts>-<sid>-%s)", req.RunID, wantRunID, wantSubject)
+	if !strings.HasSuffix(rowID, "-"+wantSubject) {
+		return "", "", fmt.Errorf("captured RunID %q does not carry the expected subject %q", rowID, wantSubject)
+	}
+	prefix := strings.TrimSuffix(rowID, "-"+wantSubject)
+	if _, ok := runid.KindFromDirName(prefix + "-marker"); !ok {
+		return "", "", fmt.Errorf("captured RunID prefix %q does not match the canonical <ts>-<sid> shape", prefix)
+	}
+	parts := strings.SplitN(prefix, "-", 2)
+	if len(parts) != 2 || len(parts[0]) != 12 || len(parts[1]) != 4 {
+		return "", "", fmt.Errorf("captured RunID prefix %q does not have the canonical <ts>-<sid> shape", prefix)
+	}
+	ts = parts[0]
+	sid = parts[1]
+	// Cross-check against runid.NewRunID so any drift in the helper
+	// is caught at this seam.
+	got := runid.NewRunID(runid.KindReview, wantSubject, ts, sid)
+	if got != rowID {
+		return "", "", fmt.Errorf("captured RunID = %q, want %q (canonical <ts>-<sid>-%s)", rowID, got, wantSubject)
 	}
 	return ts, sid, nil
 }
