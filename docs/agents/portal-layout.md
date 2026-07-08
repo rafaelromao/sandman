@@ -49,13 +49,13 @@ The runs table has 7 columns (matching 7 `<th>` headers in `<thead>`):
 | 6 | Branch |
 | 7 | Actions |
 
-## Planned Changes
+## Completed Changes
 
-Issue #996 defines the done-condition for subsequent slices:
+Issue #996 defined the done-condition for this layout:
 - `<colgroup>` with explicit `<col id="...">` for each column
 - `table-layout: fixed` on `<table>` for predictable column sizing
 
-The regression test `TestPortal_RunsTableHasColgroupAndFixedLayout` captures this expected structure and currently fails on `main`.
+The regression test `TestPortal_RunsTableHasColgroupAndFixedLayout` verifies this structure in `internal/cmd/portal_server_test.go:3439`.
 
 ## Active-row attempts chip (slice 4)
 
