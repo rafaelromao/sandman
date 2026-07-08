@@ -17,6 +17,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/batchindex"
 	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/daemon"
+	"github.com/rafaelromao/sandman/internal/events"
 	"github.com/rafaelromao/sandman/internal/github"
 	"github.com/rafaelromao/sandman/internal/prompt"
 	"github.com/rafaelromao/sandman/internal/runid"
@@ -74,6 +75,71 @@ func (s *spyBatchRunnerMultiCapture) RunBatch(ctx context.Context, req batch.Req
 
 func (s *spyBatchRunnerMultiCapture) requests() []batch.Request {
 	return s.captured
+}
+
+type reviewEventCapturingRunner struct {
+	spyBatchRunner
+	captured batch.Request
+	eventLog events.EventLog
+}
+
+func (r *reviewEventCapturingRunner) RunBatch(ctx context.Context, req batch.Request) (*batch.Result, error) {
+	r.captured = req
+
+	batchID := req.RunID
+	if req.RunDir != "" {
+		parent := filepath.Dir(req.RunDir)
+		if filepath.Base(parent) == "runs" {
+			batchID = filepath.Base(filepath.Dir(parent))
+		}
+	}
+
+	startedPayload := map[string]any{
+		"branch":             req.PromptConfig.Branch,
+		"base_branch":        "main",
+		"prompt_source_type": "prompt",
+		"agent":              req.Agent,
+		"model":              req.Model,
+		"batch_id":           batchID,
+		"review":             true,
+		"pr_number":          req.PRNumber,
+		"review_focus":       req.ReviewFocus,
+	}
+	if req.IssueNumber > 0 {
+		startedPayload["issue_number"] = req.IssueNumber
+	}
+	_ = r.eventLog.Log(events.Event{
+		Type:      "run.started",
+		Timestamp: time.Now(),
+		RunID:     req.RunID,
+		Issue:     0,
+		IssueRef:  nil,
+		Payload:   startedPayload,
+	})
+
+	finishedPayload := map[string]any{
+		"status":         "success",
+		"branch":         req.PromptConfig.Branch,
+		"base_branch":    "main",
+		"worktree_state": "preserved",
+		"retries_total":  req.Retries,
+		"retries_done":   0,
+		"review":         true,
+		"pr_number":      req.PRNumber,
+		"review_focus":   req.ReviewFocus,
+	}
+	if req.IssueNumber > 0 {
+		finishedPayload["issue_number"] = req.IssueNumber
+	}
+	_ = r.eventLog.Log(events.Event{
+		Type:      "run.finished",
+		Timestamp: time.Now(),
+		RunID:     req.RunID,
+		Issue:     req.IssueNumber,
+		Payload:   finishedPayload,
+	})
+
+	return r.result, r.err
 }
 
 // newReviewDeps returns Dependencies for a review command test, isolated
@@ -420,7 +486,11 @@ func TestReviewCmd_OneShotRendersPromptAndInvokesBatch(t *testing.T) {
 // linked-issue review flows with the new shape").
 func TestReviewRun_EndToEnd_TimestampFirstIdentity(t *testing.T) {
 	t.Run("orphan review", func(t *testing.T) {
-		runner := &spyBatchRunnerWithCapture{spyBatchRunner: spyBatchRunner{result: &batch.Result{}}}
+		evLog := &fakeEventLog{}
+		runner := &reviewEventCapturingRunner{
+			spyBatchRunner: spyBatchRunner{result: &batch.Result{}},
+			eventLog:       evLog,
+		}
 		gh := &fakePRGitHubClient{
 			fakeGitHubClient: &fakeGitHubClient{},
 			pr: &github.PR{
@@ -509,11 +579,70 @@ func TestReviewRun_EndToEnd_TimestampFirstIdentity(t *testing.T) {
 		if runner.captured.RunDir != wantRunDir {
 			t.Errorf("captured RunDir = %q, want %q (per-row folder under public BatchId)", runner.captured.RunDir, wantRunDir)
 		}
+
+		// run.started event emitted with correct canonical fields.
+		var started, finished events.Event
+		for _, e := range evLog.logged {
+			if e.Type == "run.started" {
+				started = e
+			}
+			if e.Type == "run.finished" {
+				finished = e
+			}
+		}
+		if started.Type == "" {
+			t.Fatal("run.started event was not emitted")
+		}
+		if finished.Type == "" {
+			t.Fatal("run.finished event was not emitted")
+		}
+
+		// RunID is canonical <ts>-<sid>-PR<n> and matches the captured request.
+		if started.RunID != rowID {
+			t.Errorf("run.started.RunID = %q, want %q (canonical orphan shape)", started.RunID, rowID)
+		}
+		if !strings.HasPrefix(started.RunID, wantTS) {
+			t.Errorf("run.started.RunID %q must start with RunTS %q (timestamp-first)", started.RunID, wantTS)
+		}
+
+		// batch_id in event matches the on-disk manifest BatchId.
+		if started.Payload["batch_id"] != manifest.BatchId {
+			t.Errorf("run.started.payload.batch_id = %v, want %q (must match manifest.BatchId)", started.Payload["batch_id"], manifest.BatchId)
+		}
+
+		// review fields are present, issue_number is absent for orphan.
+		if started.Payload["review"] != true {
+			t.Errorf("run.started.payload.review = %v, want true", started.Payload["review"])
+		}
+		if started.Payload["pr_number"] != 17 {
+			t.Errorf("run.started.payload.pr_number = %v, want 17", started.Payload["pr_number"])
+		}
+		if _, ok := started.Payload["issue_number"]; ok {
+			t.Errorf("run.started.payload.issue_number must not be present for orphan review")
+		}
+
+		// run.finished matches run.started RunID and has correct fields.
+		if finished.RunID != started.RunID {
+			t.Errorf("run.finished.RunID = %q, want %q (must match run.started.RunID)", finished.RunID, started.RunID)
+		}
+		if finished.Payload["status"] != "success" {
+			t.Errorf("run.finished.payload.status = %v, want success", finished.Payload["status"])
+		}
+		if finished.Payload["review"] != true {
+			t.Errorf("run.finished.payload.review = %v, want true", finished.Payload["review"])
+		}
+		if finished.Payload["pr_number"] != 17 {
+			t.Errorf("run.finished.payload.pr_number = %v, want 17", finished.Payload["pr_number"])
+		}
 	})
 
 	t.Run("linked review", func(t *testing.T) {
 		const linkedIssue = 1066
-		runner := &spyBatchRunnerWithCapture{spyBatchRunner: spyBatchRunner{result: &batch.Result{}}}
+		evLog := &fakeEventLog{}
+		runner := &reviewEventCapturingRunner{
+			spyBatchRunner: spyBatchRunner{result: &batch.Result{}},
+			eventLog:       evLog,
+		}
 		gh := &fakePRGitHubClient{
 			fakeGitHubClient: &fakeGitHubClient{},
 			pr: &github.PR{
@@ -608,6 +737,64 @@ func TestReviewRun_EndToEnd_TimestampFirstIdentity(t *testing.T) {
 		}
 		if runner.captured.RunDir != wantRunDir {
 			t.Errorf("captured RunDir = %q, want %q (per-row folder under public BatchId)", runner.captured.RunDir, wantRunDir)
+		}
+
+		// run.started event emitted with correct canonical fields and issue_number.
+		var started, finished events.Event
+		for _, e := range evLog.logged {
+			if e.Type == "run.started" {
+				started = e
+			}
+			if e.Type == "run.finished" {
+				finished = e
+			}
+		}
+		if started.Type == "" {
+			t.Fatal("run.started event was not emitted")
+		}
+		if finished.Type == "" {
+			t.Fatal("run.finished event was not emitted")
+		}
+
+		// RunID is canonical <ts>-<sid>-<linkedIssue>-PR<n> and matches the captured request.
+		if started.RunID != rowID {
+			t.Errorf("run.started.RunID = %q, want %q (canonical linked shape)", started.RunID, rowID)
+		}
+		if !strings.HasPrefix(started.RunID, wantTS) {
+			t.Errorf("run.started.RunID %q must start with RunTS %q (timestamp-first)", started.RunID, wantTS)
+		}
+
+		// batch_id in event matches the on-disk manifest BatchId.
+		if started.Payload["batch_id"] != manifest.BatchId {
+			t.Errorf("run.started.payload.batch_id = %v, want %q (must match manifest.BatchId)", started.Payload["batch_id"], manifest.BatchId)
+		}
+
+		// review fields are present, issue_number is present for linked.
+		if started.Payload["review"] != true {
+			t.Errorf("run.started.payload.review = %v, want true", started.Payload["review"])
+		}
+		if started.Payload["pr_number"] != 42 {
+			t.Errorf("run.started.payload.pr_number = %v, want 42", started.Payload["pr_number"])
+		}
+		if started.Payload["issue_number"] != linkedIssue {
+			t.Errorf("run.started.payload.issue_number = %v, want %d", started.Payload["issue_number"], linkedIssue)
+		}
+
+		// run.finished matches run.started RunID and has correct fields.
+		if finished.RunID != started.RunID {
+			t.Errorf("run.finished.RunID = %q, want %q (must match run.started.RunID)", finished.RunID, started.RunID)
+		}
+		if finished.Payload["status"] != "success" {
+			t.Errorf("run.finished.payload.status = %v, want success", finished.Payload["status"])
+		}
+		if finished.Payload["review"] != true {
+			t.Errorf("run.finished.payload.review = %v, want true", finished.Payload["review"])
+		}
+		if finished.Payload["pr_number"] != 42 {
+			t.Errorf("run.finished.payload.pr_number = %v, want 42", finished.Payload["pr_number"])
+		}
+		if finished.Payload["issue_number"] != linkedIssue {
+			t.Errorf("run.finished.payload.issue_number = %v, want %d", finished.Payload["issue_number"], linkedIssue)
 		}
 	})
 }
