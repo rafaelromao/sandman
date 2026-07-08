@@ -361,7 +361,7 @@ func runCleanTemps(cmd *cobra.Command, deps Dependencies, layout paths.Layout, d
 		return
 	}
 
-	runtime := resolveContainerRuntime()
+	runtime := tc.ResolveRuntime()
 	var images []string
 	if runtime != "" {
 		images, err = tc.ListContainerImages(runtime)

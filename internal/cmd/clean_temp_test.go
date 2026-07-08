@@ -111,6 +111,7 @@ func TestTempCleaner_RemoveTempDir_NonExistent(t *testing.T) {
 }
 
 type fakeTempCleaner struct {
+	resolveRuntimeReturn string
 	scanTempDirsCalled   bool
 	scanTempDirsTempDir  string
 	scanTempDirsReturn   []string
@@ -126,6 +127,10 @@ type fakeTempCleaner struct {
 	removeImageRuntime   string
 	removeImageTag       string
 	removeImageErr       error
+}
+
+func (f *fakeTempCleaner) ResolveRuntime() string {
+	return f.resolveRuntimeReturn
 }
 
 func (f *fakeTempCleaner) ScanTempDirs(tempDir string) ([]string, error) {
@@ -313,6 +318,76 @@ func TestClean_DryRun_Orphaned_PrintsTempRemovals(t *testing.T) {
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
 	cmd.SetArgs([]string{"--orphaned", "--dry-run"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !fakeTC.scanTempDirsCalled {
+		t.Errorf("expected ScanTempDirs to be called")
+	}
+	if fakeTC.removeTempDirCalled {
+		t.Errorf("expected RemoveTempDir NOT to be called in dry-run mode")
+	}
+	output := buf.String()
+	if output == "" {
+		t.Errorf("expected output to contain temp cleanup info")
+	}
+}
+
+func TestClean_Archived_CleansTemps(t *testing.T) {
+	deps := newRunDepsAuto(t, &fakeBatchRunner{})
+	dir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("os.Getwd: %v", err)
+	}
+	deps.ConfigStore = &fakeStore{config: &config.Config{WorktreeDir: filepath.Join(dir, ".sandman", "worktrees")}}
+	deps.EventLog = &fakeEventLog{}
+	deps.GitRunner = &fakeGitRunner{}
+
+	fakeTC := &fakeTempCleaner{
+		scanTempDirsReturn: []string{"/tmp/sandman-smoke-prewarm-archived"},
+	}
+	deps.TempCleaner = fakeTC
+
+	var buf bytes.Buffer
+	cmd := NewCleanCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--archived"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !fakeTC.scanTempDirsCalled {
+		t.Errorf("expected ScanTempDirs to be called in archived mode")
+	}
+	if fakeTC.removeTempDirPath == "" {
+		t.Errorf("expected RemoveTempDir to be called in archived mode")
+	}
+}
+
+func TestClean_Archived_DryRun_PrintsTempRemovals(t *testing.T) {
+	deps := newRunDepsAuto(t, &fakeBatchRunner{})
+	dir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("os.Getwd: %v", err)
+	}
+	deps.ConfigStore = &fakeStore{config: &config.Config{WorktreeDir: filepath.Join(dir, ".sandman", "worktrees")}}
+	deps.EventLog = &fakeEventLog{}
+	deps.GitRunner = &fakeGitRunner{}
+
+	fakeTC := &fakeTempCleaner{
+		scanTempDirsReturn: []string{"/tmp/sandman-smoke-prewarm-archived"},
+	}
+	deps.TempCleaner = fakeTC
+
+	var buf bytes.Buffer
+	cmd := NewCleanCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--archived", "--dry-run"})
 
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("unexpected error: %v", err)

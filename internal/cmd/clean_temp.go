@@ -12,6 +12,7 @@ var tempDirPrefixes = []string{"sandman-smoke-prewarm-"}
 var containerImagePrefix = "sandman-smoke-"
 
 type TempCleaner interface {
+	ResolveRuntime() string
 	ScanTempDirs(tempDir string) ([]string, error)
 	RemoveTempDir(path string) error
 	ListContainerImages(runtime string) ([]string, error)
@@ -19,6 +20,15 @@ type TempCleaner interface {
 }
 
 type realTempCleaner struct{}
+
+func (tc *realTempCleaner) ResolveRuntime() string {
+	for _, candidate := range []string{"podman", "docker"} {
+		if _, err := exec.LookPath(candidate); err == nil {
+			return candidate
+		}
+	}
+	return ""
+}
 
 func (tc *realTempCleaner) ScanTempDirs(tempDir string) ([]string, error) {
 	entries, err := os.ReadDir(tempDir)
@@ -71,13 +81,4 @@ func (tc *realTempCleaner) RemoveContainerImage(runtime, tag string) error {
 		return fmt.Errorf("remove image %s: %w: %s", tag, err, out)
 	}
 	return nil
-}
-
-func resolveContainerRuntime() string {
-	for _, candidate := range []string{"podman", "docker"} {
-		if _, err := exec.LookPath(candidate); err == nil {
-			return candidate
-		}
-	}
-	return ""
 }
