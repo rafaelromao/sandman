@@ -6,13 +6,12 @@
   var DOCS_PREFIX = "docs/";
 
   var GROUP_LABELS = {
-    "usage": "Usage",
-    "adr": "Architecture Decision Records",
-    "agents": "Agent Guidelines",
+    "usage": "Guides",
     "architecture": "Architecture",
+    "agents": "Agent Guidelines",
   };
 
-  var GROUP_ORDER = ["usage", "architecture", "agents", "adr"];
+  var GROUP_ORDER = ["usage", "architecture", "agents"];
 
   var FALLBACK_FILES = [
     "usage/getting-started.md",
@@ -35,53 +34,12 @@
     "agents/quality-rules.md",
     "agents/testenv.md",
     "agents/triage-labels.md",
-    "adr/README.md",
-    "adr/0000-use-adr-template.md",
-    "adr/0001-remove-pr-creation-from-agent-workflow.md",
-    "adr/0002-make-shared-container-the-default-sandbox.md",
-    "adr/0003-dependency-aware-batch-execution.md",
-    "adr/0004-use-rest-gh-api-for-native-dependencies.md",
-    "adr/0005-replace-isolated-container-toggle-with-container-capacity.md",
-    "adr/0006-built-in-agent-presets-and-claude-code-naming.md",
-    "adr/0007-buildtoolspreset-and-pinned-init-scaffolding.md",
-    "adr/0008-config-mount-resolution-via-temp-copy.md",
-    "adr/0009-stabilize-container-backed-smoke-and-e2e-tests-postmortem.md",
-    "adr/0010-local-portal-command-and-repo-scoped-run-scan.md",
-    "adr/0011-remove-interactive-agent-mode.md",
-    "adr/0012-ralph-loop-agent-driven-issue-selection.md",
-    "adr/0013-rename-delegate-review-to-pr-review.md",
-    "adr/0014-sandman-review-daemon-and-guard.md",
-    "adr/0015-store-container-config-snapshots-under-run-dir.md",
-    "adr/0016-split-opencode-config-snapshot-from-mutable-state.md",
-    "adr/0017-split-pi-config-snapshot-from-mutable-state.md",
-    "adr/0018-unblock-dependents-from-same-batch-success.md",
-    "adr/0019-canonical-test-env-vars-for-provider-allowlists-and-e2e-gates.md",
-    "adr/0020-per-agent-env-vars-to-parameterize-the-model-used-by-smoke-and-e2e-tests.md",
-    "adr/0021-portal-auto-runs-clean-stale-on-startup.md",
-    "adr/0022-replace-end-of-session-continuation-with-checkpointed-handoffs.md",
-    "adr/0023-handoff-points-to-rendered-prompt-and-captures-last-skill.md",
-    "adr/0024-remove-pi-agent-support.md",
-    "adr/0025-prd-expansion-to-child-issues.md",
-    "adr/0026-rename-ralph-to-auto-mode.md",
-    "adr/0027-reconcile-stranded-worktrees-auto-recovery.md",
-    "adr/0028-pr-review-prompt-omit-previous-review-progress.md",
-    "adr/0029-portal-secondary-row-chips-for-run-context.md",
-    "adr/0030-standardize-run-id-and-run-dir.md",
-    "adr/0031-portal-read-only-commands-panel-removed.md",
-    "adr/0032-sandman-layout-redesign.md",
-    "adr/0033-per-run-sockets-for-command-abort.md",
-    "adr/0034-review-daemon-stateless-on-age-stateful-on-comment.md",
-    "adr/0035-run-retry-payload-schema-and-reason-vocabulary.md",
-    "adr/0036-batches-index-entry-id-equals-per-row-run-id.md",
-    "adr/0037-hermetic-gh-in-prflow-e2e.md",
-    "adr/0038-badge-marker-pagination.md",
   ];
 
   var sidebar = document.getElementById("sidebar");
   var sidebarToggle = document.getElementById("sidebar-toggle");
   var fileNav = document.getElementById("file-nav");
   var contentDiv = document.getElementById("content");
-  var tocNav = document.getElementById("toc");
   var isMobile = window.matchMedia("(max-width: 768px)").matches;
 
   // ── File discovery ──
@@ -90,8 +48,7 @@
     try {
       var raw = localStorage.getItem("sandman-docs-tree");
       if (!raw) return null;
-      var parsed = JSON.parse(raw);
-      return parsed;
+      return JSON.parse(raw);
     } catch (e) {
       return null;
     }
@@ -108,38 +65,40 @@
 
   async function discoverFiles() {
     var cached = getCachedTree();
-    var cacheMaxAge = 3600000; // 1 hour
+    var cacheMaxAge = 3600000;
 
-    if (cached && (Date.now() - cached.timestamp) < cacheMaxAge) {
-      return cached.files;
+    if (cached && Date.now() - cached.timestamp < cacheMaxAge) {
+      return filterFiles(cached.files);
     }
 
     try {
       var resp = await fetch(
         "https://api.github.com/repos/" + REPO + "/git/trees/" + BRANCH + "?recursive=1"
       );
-      if (!resp.ok) throw new Error("API error " + resp.status);
+      if (!resp.ok) throw new Error("API " + resp.status);
       var data = await resp.json();
       var files = data.tree
         .filter(function (item) {
-          return (
-            item.type === "blob" &&
+          return item.type === "blob" &&
             item.path.startsWith(DOCS_PREFIX) &&
             item.path.endsWith(".md") &&
-            item.path.indexOf("landing-prototypes") === -1
-          );
+            item.path.indexOf("landing-prototypes") === -1;
         })
-        .map(function (item) {
-          return item.path.substring(DOCS_PREFIX.length);
-        })
+        .map(function (item) { return item.path.substring(DOCS_PREFIX.length); })
         .sort();
 
       setCachedTree(files);
-      return files;
+      return filterFiles(files);
     } catch (e) {
-      if (cached && cached.files) return cached.files;
-      return FALLBACK_FILES;
+      if (cached && cached.files) return filterFiles(cached.files);
+      return filterFiles(FALLBACK_FILES);
     }
+  }
+
+  function filterFiles(files) {
+    return files.filter(function (f) {
+      return f.indexOf("adr/") === -1;
+    });
   }
 
   // ── Title derivation ──
@@ -149,9 +108,6 @@
     if (name === "README") {
       var dir = path.includes("/") ? path.split("/")[0] : "";
       return dir.charAt(0).toUpperCase() + dir.slice(1) + " Overview";
-    }
-    if (/^\d{4}/.test(name)) {
-      return name.substring(5).replace(/-/g, " ");
     }
     return name.replace(/-/g, " ");
   }
@@ -187,9 +143,6 @@
       var items = groups[dir].sort(function (a, b) {
         var ta = deriveTitle(a).toLowerCase();
         var tb = deriveTitle(b).toLowerCase();
-        if (dir === "adr" && a !== "adr/README.md" && b !== "adr/README.md") {
-          return a < b ? -1 : 1;
-        }
         var ra = titleRank(ta), rb = titleRank(tb);
         if (ra !== rb) return ra - rb;
         return ta < tb ? -1 : 1;
@@ -201,31 +154,20 @@
         var title = deriveTitle(f);
         var display = title.charAt(0).toUpperCase() + title.slice(1);
         html +=
-          '<a class="nav-item" data-file="' +
-          escapeHtml(f) +
-          '" href="#/' +
-          escapeHtml(f) +
-          '">' +
-          escapeHtml(display) +
-          "</a>";
+          '<a class="nav-item" data-file="' + escapeHtml(f) +
+          '" href="#/' + escapeHtml(f) + '">' +
+          escapeHtml(display) + "</a>";
       });
       html += "</div>";
     });
 
     fileNav.innerHTML = html;
-
-    fileNav.querySelectorAll(".nav-item").forEach(function (el) {
-      el.addEventListener("click", function (e) {
-        if (isMobile) sidebar.classList.remove("mobile-open");
-      });
-    });
   }
 
   // ── Markdown loading and rendering ──
 
   async function loadFile(path) {
     contentDiv.innerHTML = '<p class="loading-msg">Loading...</p>';
-    tocNav.innerHTML = "";
 
     document.querySelectorAll(".nav-item").forEach(function (el) {
       el.classList.toggle("active", el.getAttribute("data-file") === path);
@@ -238,62 +180,28 @@
       renderMarkdown(text, path);
     } catch (e) {
       contentDiv.innerHTML =
-        '<p class="loading-msg">Could not load ' +
-        escapeHtml(path) +
-        ". " +
-        escapeHtml(e.message) +
-        "</p>";
+        '<h1>Not found</h1><p>Could not load <code>' + escapeHtml(path) +
+        "</code>.</p>";
     }
   }
 
   function renderMarkdown(text, path) {
-    contentDiv.innerHTML = marked.parse(text);
+    var firstH1Match = text.match(/^#\s+(.+)$/m);
+    var bodyHtml = marked.parse(text);
 
-    var firstH1 = contentDiv.querySelector("h1");
-    if (firstH1) {
-      document.title = firstH1.textContent + " - Sandman";
+    if (firstH1Match) {
+      var title = firstH1Match[1];
+      document.title = title + " - Sandman Docs";
+      bodyHtml = bodyHtml.replace(/^<h1[^>]*>.*?<\/h1>/, "");
+
+      var dir = path.includes("/") ? path.split("/")[0] : "";
+      var groupLabel = GROUP_LABELS[dir] || dir;
+      var metaHtml = '<div class="doc-meta">' + escapeHtml(groupLabel) + '</div>';
+
+      contentDiv.innerHTML = "<h1>" + escapeHtml(title) + "</h1>" + metaHtml + bodyHtml;
+    } else {
+      contentDiv.innerHTML = bodyHtml;
     }
-
-    var headings = contentDiv.querySelectorAll("h1, h2, h3");
-    var tocHtml = "";
-    var usedIds = {};
-
-    headings.forEach(function (h) {
-      var slug = slugify(h.textContent);
-      if (usedIds[slug]) {
-        usedIds[slug]++;
-        slug = slug + "-" + usedIds[slug];
-      } else {
-        usedIds[slug] = 1;
-      }
-      h.id = slug;
-
-      var level = parseInt(h.tagName.substring(1), 10);
-      var cls = level === 1 ? "" : " level-" + level;
-      if (level === 1) return;
-
-      tocHtml +=
-        '<li><a class="' +
-        cls.trim() +
-        '" href="#' +
-        slug +
-        '">' +
-        escapeHtml(h.textContent) +
-        "</a></li>";
-    });
-
-    tocNav.innerHTML = tocHtml ? "<ul>" + tocHtml + "</ul>" : "";
-
-    tocNav.querySelectorAll("a").forEach(function (a) {
-      a.addEventListener("click", function (e) {
-        e.preventDefault();
-        var target = document.getElementById(this.getAttribute("href").substring(1));
-        if (target) {
-          var offset = target.getBoundingClientRect().top + window.pageYOffset - 70;
-          window.scrollTo({ top: offset, behavior: "smooth" });
-        }
-      });
-    });
 
     interceptLinks(path);
     window.scrollTo(0, 0);
@@ -317,12 +225,6 @@
           e.preventDefault();
           var resolved = resolvePath(href, currentDir);
           location.hash = "#/" + resolved;
-        });
-      } else if (href.startsWith("../") || (!href.startsWith("http") && href.includes("/"))) {
-        a.addEventListener("click", function (e) {
-          e.preventDefault();
-          var resolved = resolvePath(href, currentDir);
-          window.open(resolved, "_blank");
         });
       }
     });
@@ -356,8 +258,7 @@
     if (firstItem) {
       loadFile(firstItem.getAttribute("data-file"));
     } else {
-      contentDiv.innerHTML =
-        '<h1>Sandman Documentation</h1><p>Select a document from the sidebar.</p>';
+      contentDiv.innerHTML = "<h1>Sandman Documentation</h1><p>Select a document from the sidebar.</p>";
     }
   }
 
@@ -370,45 +271,24 @@
     } else {
       sidebar.classList.toggle("collapsed");
       var area = document.getElementById("content-area");
-      if (sidebar.classList.contains("collapsed")) {
-        area.style.marginLeft = "0";
-      } else {
-        area.style.marginLeft = "";
-      }
+      area.style.marginLeft = sidebar.classList.contains("collapsed") ? "0" : "";
     }
   });
 
-  if (!isMobile) {
+  if (isMobile) {
     document.addEventListener("click", function (e) {
-      if (
-        !sidebar.contains(e.target) &&
-        !sidebarToggle.contains(e.target) &&
-        !sidebar.classList.contains("collapsed")
-      ) {
-        sidebar.classList.add("collapsed");
-        document.getElementById("content-area").style.marginLeft = "0";
+      if (!sidebar.contains(e.target) && !sidebarToggle.contains(e.target)) {
+        sidebar.classList.remove("mobile-open");
       }
     });
   }
 
   window.matchMedia("(max-width: 768px)").addEventListener("change", function (e) {
     isMobile = e.matches;
-    if (!isMobile) {
-      sidebar.classList.remove("mobile-open");
-    }
+    if (!isMobile) sidebar.classList.remove("mobile-open");
   });
 
   // ── Utils ──
-
-  function slugify(text) {
-    return text
-      .toLowerCase()
-      .trim()
-      .replace(/[^\w\s-]/g, "")
-      .replace(/[\s_]+/g, "-")
-      .replace(/-+/g, "-")
-      .replace(/^-|-$/g, "");
-  }
 
   function escapeHtml(str) {
     var div = document.createElement("div");

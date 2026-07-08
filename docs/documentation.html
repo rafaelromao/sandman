@@ -10,15 +10,23 @@
   </head>
   <body>
     <header id="topbar">
-      <div class="topbar-left">
-        <button id="sidebar-toggle" aria-label="Toggle navigation">&#9776;</button>
-        <a class="brand" href="index.html">
-          <img src="assets/sandman-mark.svg" alt="Sandman" />
-          <strong>SANDMAN</strong>
-        </a>
-      </div>
-      <div class="topbar-right">
-        <a class="btn-home" href="index.html">&#8962; Landing</a>
+      <div class="topbar-inner">
+        <div class="topbar-left">
+          <button id="sidebar-toggle" aria-label="Toggle navigation">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+          </button>
+          <a class="brand" href="index.html">
+            <img src="assets/sandman-mark.svg" alt="Sandman" />
+            <strong>SANDMAN</strong>
+            <span class="docs-label">Docs</span>
+          </a>
+        </div>
+        <div class="topbar-right">
+          <a class="btn-landing" href="index.html">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/></svg>
+            <span>Landing</span>
+          </a>
+        </div>
       </div>
     </header>
 
@@ -27,10 +35,6 @@
         <nav id="file-nav"></nav>
       </aside>
       <main id="content-area">
-        <div id="toc-bar">
-          <span class="toc-label">On this page</span>
-          <nav id="toc"></nav>
-        </div>
         <article id="content">
           <p class="loading-msg">Loading documentation...</p>
         </article>
