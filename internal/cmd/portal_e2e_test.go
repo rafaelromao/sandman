@@ -403,19 +403,34 @@ set -eu
 
 repo_root=$(dirname "$(dirname "$(dirname "$(dirname "$PWD")")")")
 
+fast_test_wait() {
+    _duration="$1"
+    _wakeup_dir="${WAKEUP_DIR:-}"
+    if [ "${SANDMAN_TEST_FAST:-}" = "1" ] && [ -n "$_wakeup_dir" ] && [ -d "$_wakeup_dir" ]; then
+        _deadline=$(($(date +%s) + _duration))
+        while [ $(date +%s) -lt $_deadline ]; do
+            if [ -f "$_wakeup_dir/wakeup" ]; then
+                return 0
+            fi
+            sleep 0.1
+        done
+    fi
+    sleep "$_duration"
+}
+
 case "$*" in
   *"Implement GitHub issue #1"*)
     child=0
     trap 'if [ "$child" -ne 0 ]; then kill "$child" >/dev/null 2>&1 || true; fi; exit 130' INT
-    sleep 600 &
+    fast_test_wait 600 &
     child=$!
     wait "$child"
     ;;
   *"Implement GitHub issue #2"*)
-    exec sleep 600
+    fast_test_wait 600
     ;;
   *)
-    exec sleep 600
+    fast_test_wait 600
     ;;
 esac
 `
@@ -437,19 +452,34 @@ set -eu
 
 repo_root=$(dirname "$(dirname "$(dirname "$(dirname "$PWD")")")")
 
+fast_test_wait() {
+    _duration="$1"
+    _wakeup_dir="${WAKEUP_DIR:-}"
+    if [ "${SANDMAN_TEST_FAST:-}" = "1" ] && [ -n "$_wakeup_dir" ] && [ -d "$_wakeup_dir" ]; then
+        _deadline=$(($(date +%s) + _duration))
+        while [ $(date +%s) -lt $_deadline ]; do
+            if [ -f "$_wakeup_dir/wakeup" ]; then
+                return 0
+            fi
+            sleep 0.1
+        done
+    fi
+    sleep "$_duration"
+}
+
 case "$*" in
   *"Implement GitHub issue #1"*)
     child=0
     trap 'if [ "$child" -ne 0 ]; then kill "$child" >/dev/null 2>&1 || true; fi; exit 130' INT
-    sleep 600 &
+    fast_test_wait 600 &
     child=$!
     wait "$child"
     ;;
   *"Implement GitHub issue #2"*)
-    exec sleep 600
+    fast_test_wait 600
     ;;
   *)
-    exec sleep 600
+    fast_test_wait 600
     ;;
 esac
 `

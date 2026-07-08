@@ -125,7 +125,14 @@ if [ "${` + subagentMarkerEnv + `:-}" = "1" ]; then
       # the subagent's external_directory tool call emits permission.asked and
       # the host CLI's auto-reply handler ignores it, hanging the tool call.
       echo "fake-opencode: subagent hanging (OPENCODE_PERMISSION not allow-all)"
-      sleep 600
+      _wakeup_dir="${WAKEUP_DIR:-}"
+      if [ "${SANDMAN_TEST_FAST:-}" = "1" ] && [ -n "$_wakeup_dir" ] && [ -d "$_wakeup_dir" ]; then
+        while [ ! -f "$_wakeup_dir/wakeup" ]; do
+          sleep 0.1
+        done
+      else
+        sleep 600
+      fi
       exit 124
       ;;
   esac
