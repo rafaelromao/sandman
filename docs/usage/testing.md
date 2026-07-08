@@ -45,6 +45,7 @@ Gated scenarios (`SANDMAN_E2E_GATES`) run without a build tag and select individ
 | `opencode_subagent` | `internal/cmd` | `TestOpencodeSubagentPermissionAllowAll` |
 | `badge` | `internal/cmd` | badge scenario tests |
 | `pathlen` | `internal/cmd` | path-length scenario tests |
+| `batch_id_rules` | `internal/cmd` | `TestSlice10` |
 
 ```bash
 # Single scenario
@@ -57,7 +58,7 @@ SANDMAN_E2E_GATES=batch,continue_multi,opencode_subagent go test ./...
 SANDMAN_E2E_GATES=all go test ./...
 ```
 
-The canonical list of supported scenario identifiers is in [`internal/testenv/testenv.go:39-47`](../../internal/testenv/testenv.go).
+The canonical list of supported scenario identifiers is in [`internal/testenv/testenv.go:43-50`](../../internal/testenv/testenv.go).
 
 ## Per-agent model override
 
