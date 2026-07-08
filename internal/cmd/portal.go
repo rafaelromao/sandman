@@ -422,7 +422,7 @@ func archivePortalRowArchiver(repoRoot string, entryID, runID string) error {
 // reviews (where reviewRunIDFor produces e.g. "260618113825-abcd-42-PR99"
 // while the batch entry id is "260618113825-abcd-PR42"), and
 // prompt-only runs (where req.RunID is the user-supplied string and
-// the batch entry id is "{shortid}-{ts}-{userid}").
+// the batch entry id is "{ts}-{shortid}-{userid}").
 //
 // The helper returns the batch regardless of its Status; callers
 // apply any active/archived check separately so the 404/409/500 paths

@@ -19,7 +19,7 @@ Four batch kinds exist: regular issue, review, auto-select, and prompt-only. Eac
 
 ### Timestamp + shortid collision guard
 
-Every RunID and RunDir begins with a `<shortid>-<ts>` prefix:
+Every RunID and RunDir begins with a `<ts>-<shortid>` prefix:
 
 - `<shortid>` is 4 lowercase hex characters derived from `unixNano % 0xFFFF`.
 - `<ts>` is `time.Now().Format("060102150405")` (local time, 12 characters, 2-digit year).
@@ -115,7 +115,7 @@ The `BatchManifest` persisted at `<batchDir>/batch.json` carries the batch's `<t
 
 - `RunTS` — the timestamp from "Timestamp + shortid collision guard" above, repeated here for self-containment. Format: `time.Now().Format("060102150405")` (12 chars, local time, 2-digit year).
 - `RunShortID` — the collision guard from "Timestamp + shortid collision guard" above, repeated here for self-containment. Format: `%04x` of `unixNano % 0xFFFF` (4 lowercase hex chars).
-- `BatchId` — the full assembled batch identifier (`<ts>-<shortid>-<kindSuffix>`), retained for backward compatibility.
+- `BatchId` — the full assembled batch identifier (`<ts>-<shortid>-<kindSuffix>`), derived from `RunTS` and `RunShortID` via `runid.NewBatchID`.
 
 The manifest's JSON schema is therefore:
 
@@ -162,16 +162,16 @@ Auto mode is a two-phase flow: an auto-select selector run that picks the issues
 
 The auto-select selector run uses the auto-select naming template:
 
-- BatchId: `<shortid>-<ts>-auto-<N>` where `<N>` is the candidate count
-- RunID: the same string (`<shortid>-<ts>-auto-<N>`)
+- BatchId: `<ts>-<shortid>-auto-<N>` where `<N>` is the candidate count
+- RunID: the same string (`<ts>-<shortid>-auto-<N>`)
 - batch_id in the run.started and run.finished event payloads: the selector BatchId
 
-The post-selection phase is a **normal issue batch** and follows the regular issue rules above. It does **not** inherit the auto-select selector's `<shortid>-<ts>` pair, does **not** carry an `-auto-` marker in its BatchId or RunID, and does **not** have `run_kind: "auto-select"` in any of its event payloads. The post-selection issue batch's per-row RunIDs are issue-specific (per the regular issue template), not auto-select RunIDs.
+The post-selection phase is a **normal issue batch** and follows the regular issue rules above. It does **not** inherit the auto-select selector's `<ts>-<shortid>` pair, does **not** carry an `-auto-` marker in its BatchId or RunID, and does **not** have `run_kind: "auto-select"` in any of its event payloads. The post-selection issue batch's per-row RunIDs are issue-specific (per the regular issue template), not auto-select RunIDs.
 
 Concretely, when `--auto` runs to completion, two batch directories appear under `.sandman/batches/`:
 
-1. `<sid1>-<ts1>-auto-N` (the auto-select selector)
-2. `<sid2>-<ts2>-<firstIssue>[+<additionalCount>]` (the post-selection issue batch)
+1. `<ts1>-<sid1>-auto-N` (the auto-select selector)
+2. `<ts2>-<sid2>-<firstIssue>[+<additionalCount>]` (the post-selection issue batch)
 
 with `<sid1>` ≠ `<sid2>` and `<ts1>` ≠ `<ts2>` in general. The portal renders the selector as an "auto-selecting" row (one row per selector run) and the post-selection issue batch as a normal "running" row (one row per issue), and never shows the auto-selecting chip on the post-selection rows.
 
@@ -181,7 +181,7 @@ with `<sid1>` ≠ `<sid2>` and `<ts1>` ≠ `<ts2>` in general. The portal render
 
 - Single source of truth for RunID and RunDir generation. All four batch kinds share the same `internal/runid` package.
 - Collision guard eliminates race conditions when multiple runs start within the same second.
-- Shortid-first ordering maximises collision resistance within the same timestamp.
+- Timestamp-first ordering puts the chronological segment at the front of the on-disk path; the shortid provides per-second collision resistance.
 - Pattern-based `KindFromDirName` enables the portal to recover batch kind from directory names alone.
 - Validation is loosened to accept the full range of identifiers users are likely to choose.
 - Carrying `RunTS` and `RunShortID` on the manifest lets event-log-less consumers (the portal, before `run.started` lands) derive canonical per-row RunIDs without synthesizing ad-hoc formats.
