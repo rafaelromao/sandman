@@ -69,7 +69,7 @@ This rule is the historical artifact preserved for audit. It is **no longer the 
 | `sandman run --continue <issue>` | same as `run <issue>` (first issue's per-row RunID) |
 | `sandman review` (orphan) | `perRowRunID` from `internal/cmd/review.go` (unchanged — already equal) |
 | `sandman review` (linked issue) | `perRowRunID` = `<ts>-<sid>-<issue>-PR<pr>` |
-| `review` daemon | `reviewRunIDFor(prNumber, linkedIssue, ts, shortid)` |
+| `review` daemon | `ReviewRunIDFor(prNumber, linkedIssue, ts, shortid)` |
 | `selection.go` auto-select | unchanged (already correct by coincidence) |
 
 The discriminator at `internal/cmd/portal.go:357-361` (the abort handler's "runID might actually be the batchID" fallback) was removed once `manifest.BatchId == perRowRunID` was true. After the slice-1 contract change (issue #1917), `manifest.BatchId` returned to meaning "public BatchId == batch folder basename," so the discriminator no longer applies.

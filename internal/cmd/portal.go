@@ -419,7 +419,7 @@ func archivePortalRowArchiver(repoRoot string, entryID, runID string) error {
 // The final fallback path scans each entry's runs/<runID>/run.json
 // on disk and returns the first entry that hosts the per-row manifest.
 // This is the signal the portal UI relies on for multi-issue batches,
-// reviews (where reviewRunIDFor produces e.g. "260618113825-abcd-42-PR99"
+// reviews (where ReviewRunIDFor produces e.g. "260618113825-abcd-42-PR99"
 // while the batch entry id is "260618113825-abcd-PR42"), and
 // prompt-only runs (where req.RunID is the user-supplied string and
 // the batch entry id is "{ts}-{shortid}-{userid}").
