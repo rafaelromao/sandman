@@ -43,6 +43,9 @@ func TestEffectiveParallel_CapCalculation(t *testing.T) {
 		{"parallel=8 capacity=2 max=0 auto", 8, 2, 0, 8},
 		{"parallel=1 capacity=100 max=0 auto", 1, 100, 0, 1},
 		{"parallel=6 capacity=1 max=0 auto", 6, 1, 0, 6},
+		{"parallel=4 capacity=1 max=1 explicit caps to 1", 4, 1, 1, 1},
+		{"parallel=4 capacity=2 max=1 explicit caps to 2", 4, 2, 1, 2},
+		{"parallel=4 capacity=1 max=4 explicit caps to 4", 4, 1, 4, 4},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
