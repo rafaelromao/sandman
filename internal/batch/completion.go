@@ -161,4 +161,3 @@ func currentBranchHead(workDir string) (string, error) {
 }
 
 var currentBranchHeadFn = currentBranchHead
-
