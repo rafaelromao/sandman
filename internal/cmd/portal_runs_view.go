@@ -68,15 +68,17 @@ type portalRun struct {
 	ReviewCount int `json:"reviewCount,omitempty"`
 	// ReviewVerdict carries latest terminal child-review status for canonical
 	// issue rows. Stamped by aggregateReviewChildren during compute (restored
-	// in #1897): the verdict is read from each terminal review child's saved
-	// <runDir>/decision.md `## Decision` marker via reviewVerdictFromDecisionFile
-	// before portalSummaryRuns blanks Log for transport, so it survives the
-	// summary endpoint. The latest-finished review wins. The orphan review-only
-	// JS path (visibleRunForIssueGroup, portal.html) opportunistically recovers
-	// a verdict from an already-loaded sibling review.log, but the server
-	// stamp is the canonical source for parent rows. Slice 1 of issue #1938
-	// retargeted the projection from run.log (which had to tolerate shell
-	// debris) to decision.md (the controlled artefact).
+	// in #1897). Sourced from `<runDir>/decision.md` — the controlled
+	// artefact the review agent publishes by writing to that path before
+	// exiting (see internal/prompt/default_pr_review_prompt.md:124).
+	// reviewVerdictFromDecisionFile reads the bare `## Decision` marker
+	// from each terminal review child's decision.md before
+	// portalSummaryRuns blanks Log for transport, so the verdict survives
+	// the summary endpoint. The latest-finished review wins. The orphan
+	// review-only JS path (visibleRunForIssueGroup, portal.html)
+	// opportunistically recovers a verdict from an already-loaded sibling
+	// review.log, but the server stamp is the canonical source for
+	// parent rows.
 	ReviewVerdict string `json:"reviewVerdict,omitempty"`
 	// GroupedReview marks review rows that are owned by an issue-parent row.
 	// Set by aggregateReviewChildren during compute (restored in #1897) for
@@ -300,23 +302,24 @@ var (
 	// like "## Decisions" or "## Decision Tree" do not collide with
 	// this section's verdict scan (issue #1729 review feedback).
 	//
-	// Slice 1 (issue #1938) narrowed the source artefact from
-	// run.log (with shell-prefixed `[<runID>] HH:MM:SS ` lines) to
-	// decision.md (a controlled artefact without any line prefix),
-	// so the helper no longer needs the timestamp-stripper regex the
-	// old log-based parser maintained next to this one.
+	// The verdict is sourced from `<runDir>/decision.md` — the
+	// controlled artefact the review agent publishes by writing to
+	// that path before exiting (see
+	// internal/prompt/default_pr_review_prompt.md:124). decision.md
+	// has no shell prefix and no trailing debris, so the previous
+	// run.log scan (which had to tolerate shell debris and a
+	// `[<runID>] HH:MM:SS ` line prefix) is no longer needed
+	// (issues #1938, #1940).
 	reviewSectionDecisionHeading = regexp.MustCompile(`(?i)^## decision\s*$`)
-	// reviewVerdictMarkerLineBare matches a whole line whose only
-	// content is the literal **MARKER** form, anchored end-to-end.
-	// The narrow `^\*\*([A-Z_]+)\*\*$` shape (issue #1729) is the
-	// only rule now: decision.md is a controlled artefact with no
-	// shell prefix and no trailing debris, so the lenient debris
-	// forms previously accepted by the run.log parser (issues
-	// #1767, #1792) are deliberately no longer tolerated here. Any
+	// decisionVerdictMarkerBare accepts only the narrow `**MARKER**`
+	// shape on a whole line. decision.md is a controlled artefact
+	// with no shell prefix and no trailing debris, so the lenient
+	// debris forms previously accepted by the run.log parser (issues
+	// #1767, #1792) are deliberately not tolerated here. Any
 	// non-matching line — lowercase marker, space-inside-asterisks,
-	// trailing quote, trailing pipe, mid-line prose — is rejected
-	// and renders the verdict "Unclear".
-	reviewVerdictMarkerLineBare = regexp.MustCompile(`^\*\*([A-Z_]+)\*\*$`)
+	// mid-line prose, or trailing debris — renders the verdict
+	// "Unclear".
+	decisionVerdictMarkerBare = regexp.MustCompile(`^\*\*([A-Z_]+)\*\*$`)
 )
 
 // logPortalViewDegrade rate-limits repeated portal-view degradation logs per
@@ -1095,7 +1098,7 @@ func reviewVerdictFromDecisionFile(layout paths.Layout, batchID, runID string) (
 		if line == "" {
 			continue
 		}
-		matches := reviewVerdictMarkerLineBare.FindStringSubmatch(line)
+		matches := decisionVerdictMarkerBare.FindStringSubmatch(line)
 		if matches == nil {
 			continue
 		}
