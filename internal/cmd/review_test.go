@@ -402,6 +402,17 @@ func TestReviewCmd_OneShotRendersPromptAndInvokesBatch(t *testing.T) {
 // `.sandman/batches/<batchID>/runs/<runID>/` matches, and the manifest
 // carries the canonical (RunTS, RunShortID) primitives.
 //
+// The daemon launch path (review/daemon.go::prepareReviewRun →
+// reviewLaunchRequest.RunID) is covered separately in
+// internal/review/daemon_canonical_test.go (TestDaemon_ReviewRunIDAndFolder_AreCanonical
+// for orphan reviews, TestDaemon_ReviewRunIDAndFolder_AreCanonicalWithLinkedIssue
+// for linked). The portal layer's per-row RunID derivation is covered
+// in internal/cmd/portal_review_canonical_test.go (TestPortal_ReviewGrouping_OrphanReviewStaysOrphan,
+// TestPortal_ReviewGrouping_LinkedReviewGroupsUnderIssue). This test
+// is the cmd-side end-to-end piece that closes the loop with
+// acceptance criterion "Review launch paths should derive the same
+// names from the shared identity helpers" (issue #1946).
+//
 // The test exercises both the orphan shape (`<ts>-<sid>-PR<pr>`,
 // no linked issue) and the linked shape (`<ts>-<sid>-<linkedIssue>-PR<pr>`,
 // PR body closes `#<n>`) so both branches of review.ReviewRunIDFor
@@ -452,6 +463,19 @@ func TestReviewRun_EndToEnd_TimestampFirstIdentity(t *testing.T) {
 
 		rowID := runner.captured.RunID
 		wantPublicBatchID := rowID // orphan review is single-row, BatchId == RunID
+
+		// Portal-side derivation cross-check. The portal derives the
+		// per-row RunID from the manifest primitives (RunTS,
+		// RunShortID, PRNumber) via perRowRunIDForManifest at
+		// internal/cmd/portal_runs_view.go. Mirror that derivation
+		// here so the cmd-side mint and the portal-side derivation
+		// agree on the canonical <ts>-<sid>-PR<n> string
+		// (acceptance criterion "Manifest and portal consumers
+		// resolve review runs correctly").
+		portalDerived := runid.NewRunID(runid.KindReview, "PR17", runner.captured.RunTS, runner.captured.RunShortID)
+		if portalDerived != rowID {
+			t.Errorf("portal-derived per-row RunID = %q, want %q (must agree with cmd-minted RunID)", portalDerived, rowID)
+		}
 
 		// On-disk batch.json manifest agrees: BatchId == per-row
 		// RunID, and RunTS / RunShortID round-trip through
@@ -532,6 +556,17 @@ func TestReviewRun_EndToEnd_TimestampFirstIdentity(t *testing.T) {
 
 		rowID := runner.captured.RunID
 		wantPublicBatchID := rowID
+
+		// Portal-side derivation cross-check (acceptance criterion
+		// "Manifest and portal consumers resolve review runs
+		// correctly"). For a linked review the portal's
+		// perRowRunIDForManifest folds in the linked issue between
+		// the prefix and the -PR<n> tail, so mirror the call sites
+		// here.
+		portalDerivedLinked := runid.NewRunID(runid.KindReview, "1066-PR42", runner.captured.RunTS, runner.captured.RunShortID)
+		if portalDerivedLinked != rowID {
+			t.Errorf("portal-derived per-row RunID (linked) = %q, want %q (must agree with cmd-minted RunID)", portalDerivedLinked, rowID)
+		}
 
 		// On-disk batch.json manifest agrees.
 		manifest, err := daemon.ReadManifest(filepath.Join(deps.RepoRoot, ".sandman", "batches", wantPublicBatchID))
