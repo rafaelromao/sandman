@@ -306,6 +306,13 @@ var bundledRubyVersionCatalog = map[string]string{
 	"3.1":    "3.1.7",
 }
 
+func BundledRubyVersion(selector string) string {
+	if v, ok := bundledRubyVersionCatalog[strings.ToLower(selector)]; ok {
+		return v
+	}
+	return ""
+}
+
 var bundledRustVersionCatalog = map[string]string{
 	"latest":  "1.96.1",
 	"lts":     "1.95.0",
