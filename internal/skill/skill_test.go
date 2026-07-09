@@ -63,10 +63,10 @@ func TestSyncInstallsExactIssueClosingGuardInImplementSkill(t *testing.T) {
 	}
 	text := string(data)
 	checks := []string{
-		"set `body` to exactly the closing-reference string",
-		"Verify the final `body` string is exactly that closing-reference string",
-		"If the body is wrong",
-		"report the exact wrong body to the user and stop",
+		"Build the closing-reference body",
+		"Verify the body that landed on the PR",
+		"If the body still cannot be made to match",
+		"report the exact wrong body to the user",
 	}
 	for _, want := range checks {
 		if !strings.Contains(text, want) {
