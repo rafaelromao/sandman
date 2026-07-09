@@ -324,6 +324,105 @@ func TestClean_All_RunsEveryPass(t *testing.T) {
 	}
 }
 
+func TestClean_All_DryRun_PrintsAllPasses(t *testing.T) {
+	deps := newRunDepsAuto(t, &fakeBatchRunner{})
+	dir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("os.Getwd: %v", err)
+	}
+
+	createdAt := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
+	started := createdAt.Add(5 * time.Minute)
+	writeBatchManifest(t, dir, "run-dead-1", []int{42}, createdAt)
+
+	batchActive := filepath.Join(dir, ".sandman", "batches", "batch-active")
+	batchArchived := filepath.Join(dir, ".sandman", "batches", "batch-archived")
+	worktreeActive := filepath.Join(dir, ".sandman", "worktrees", "sandman", "42-fix")
+	worktreeArchived := filepath.Join(dir, ".sandman", "worktrees", "sandman", "43-fix")
+	if err := os.MkdirAll(worktreeActive, 0755); err != nil {
+		t.Fatalf("create active worktree: %v", err)
+	}
+	if err := os.MkdirAll(worktreeArchived, 0755); err != nil {
+		t.Fatalf("create archived worktree: %v", err)
+	}
+	writeRunManifest(t, batchActive, batchindex.RunManifest{
+		RunID:        "batch-active",
+		BatchID:      "batch-active",
+		Issue:        42,
+		Branch:       "sandman/42-fix",
+		WorktreePath: worktreeActive,
+		Kind:         batchindex.KindIssue,
+		Status:       batchindex.RunManifestStatusActive,
+	})
+	writeRunManifest(t, batchArchived, batchindex.RunManifest{
+		RunID:        "batch-archived",
+		BatchID:      "batch-archived",
+		Issue:        43,
+		Branch:       "sandman/43-fix",
+		WorktreePath: worktreeArchived,
+		Kind:         batchindex.KindIssue,
+		Status:       batchindex.RunManifestStatusActive,
+	})
+	now := time.Now()
+	writeBatchIndex(t, dir, []batchindex.Batch{
+		{ID: "batch-active", Path: batchActive, Kind: batchindex.KindIssue, Status: batchindex.StatusActive, CreatedAt: now},
+		{ID: "batch-archived", Path: batchArchived, Kind: batchindex.KindIssue, Status: batchindex.StatusArchived, CreatedAt: now},
+	})
+
+	log := &fakeEventLog{events: []events.Event{
+		{Type: "run.started", RunID: "run-42", Issue: 42, Timestamp: started, Payload: map[string]any{"branch": "sandman/42-fix"}},
+	}}
+	gr := &fakeGitRunner{}
+	deps.ConfigStore = &fakeStore{config: &config.Config{WorktreeDir: filepath.Join(dir, ".sandman", "worktrees")}}
+	deps.EventLog = log
+	deps.GitRunner = gr
+	fakeTC := &fakeTempCleaner{
+		scanTempDirsReturn: []string{"/tmp/sandman-smoke-prewarm-dryrun-all"},
+	}
+	deps.TempCleaner = fakeTC
+
+	var buf bytes.Buffer
+	cmd := NewCleanCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--all", "--dry-run"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	out := buf.String()
+	if !strings.Contains(out, "Recovered 1 stale runs") {
+		t.Errorf("expected stale summary in dry-run output, got: %s", out)
+	}
+	if !strings.Contains(out, "Would remove") {
+		t.Errorf("expected 'Would remove' phrasing for archived pass in dry-run output, got: %s", out)
+	}
+	if !strings.Contains(out, "batch-archived") {
+		t.Errorf("expected batch-archived mentioned in dry-run report, got: %s", out)
+	}
+
+	if fakeTC.removeTempDirCalled {
+		t.Errorf("expected RemoveTempDir NOT to be called in dry-run mode")
+	}
+	if len(gr.removeWorktreeCalls) != 0 {
+		t.Errorf("expected no removeWorktree calls in dry-run mode, got %d", len(gr.removeWorktreeCalls))
+	}
+	if _, err := os.Stat(worktreeActive); os.IsNotExist(err) {
+		t.Errorf("active worktree should NOT be removed by --dry-run")
+	}
+	if _, err := os.Stat(worktreeArchived); os.IsNotExist(err) {
+		t.Errorf("archived worktree should NOT be removed by --dry-run")
+	}
+
+	var idx batchindex.Index
+	data, _ := os.ReadFile(filepath.Join(dir, ".sandman", "batches.json"))
+	json.Unmarshal(data, &idx)
+	if len(idx.Batches) != 2 {
+		t.Errorf("expected batches index to be unchanged by --dry-run, got %d entries", len(idx.Batches))
+	}
+}
+
 func TestClean_Archived_RemovesArchivedAndUnavailableEntries(t *testing.T) {
 	deps := newRunDepsAuto(t, &fakeBatchRunner{})
 	dir, err := os.Getwd()
