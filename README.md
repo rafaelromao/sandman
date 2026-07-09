@@ -47,16 +47,25 @@ Sandman manages the lifecycle of automated coding workflows:
 | Guide | Description |
 |-------|-------------|
 | [Getting Started](docs/usage/getting-started.md) | Prerequisites, installation, and first project setup |
+| [Concepts](docs/usage/concepts.md) | The Batch / AgentRun / Sandbox / PRD model in prose |
 | [Commands Reference](docs/usage/commands.md) | All CLI commands, flags, and issue selection modes |
 | [Configuration](docs/usage/configuration.md) | Full config schema, default agent, and CLI config |
+| [Workflows](docs/usage/workflows.md) | Running agents, dependency-aware execution, continue and cleanup |
+| [Sandbox Modes](docs/usage/sandbox-modes.md) | Worktree vs container-backed sandboxing |
 | [Portal](docs/usage/portal.md) | Local browser dashboard for repo-scoped Sandman runs |
 | [Default Task Prompt](docs/usage/default-task-prompt.md) | Bootstrap task prompt, lifecycle, and task file |
 | [Skills](docs/usage/skills.md) | Shared Sandman skill installation and workflow |
-| [Sandbox Modes](docs/usage/sandbox-modes.md) | Worktree vs container-backed sandboxing |
-| [Workflows](docs/usage/workflows.md) | Running agents, dependency-aware execution, continue and cleanup |
 | [Badge](docs/usage/badge.md) | Built with Sandman badge — trigger, idempotency, and opt-out |
-| [Monitoring and Debugging](docs/usage/monitoring.md) | Status, history, event log, and troubleshooting |
+| [Monitoring and Debugging](docs/usage/monitoring.md) | Status, history, event log, and idle timeout |
+| [Troubleshooting](docs/usage/troubleshooting.md) | Common failure modes and the first thing to try for each |
 | [Agent Compatibility](docs/usage/agent-compatibility.md) | Built-in agent presets and container auth model |
+| [FAQ](docs/usage/faq.md) | Questions people ask before installing |
+
+Other:
+
+- [Architecture Overview](docs/architecture/overview.md) and [Disk Layout](docs/architecture/disk-layout.md)
+- [Positioning](docs/POSITIONING.md) — what Sandman is and isn't, in plain language
+- The browser-rendered docs portal at [`docs/documentation.html`](docs/documentation.html) wraps every guide plus the ADRs.
 
 ## Config Overview
 

@@ -6,27 +6,36 @@
   var DOCS_PREFIX = "docs/";
 
   var GROUP_LABELS = {
+    "root": "Positioning",
     "usage": "Guides",
     "architecture": "Architecture",
     "agents": "Agent Guidelines",
   };
 
-  var GROUP_ORDER = ["usage", "architecture", "agents"];
+  var GROUP_ORDER = ["root", "usage", "architecture", "agents"];
 
   var FALLBACK_FILES = [
+    "usage/README.md",
     "usage/getting-started.md",
+    "usage/concepts.md",
     "usage/commands.md",
     "usage/configuration.md",
     "usage/workflows.md",
     "usage/portal.md",
     "usage/monitoring.md",
+    "usage/troubleshooting.md",
     "usage/skills.md",
     "usage/sandbox-modes.md",
     "usage/testing.md",
     "usage/badge.md",
     "usage/default-task-prompt.md",
     "usage/agent-compatibility.md",
+    "usage/faq.md",
+    "architecture/README.md",
+    "architecture/overview.md",
     "architecture/disk-layout.md",
+    "POSITIONING.md",
+    "agents/README.md",
     "agents/codeindex-strategy.md",
     "agents/domain.md",
     "agents/issue-tracker.md",
@@ -166,8 +175,8 @@
 
   // ── Markdown loading and rendering ──
 
-  async function loadFile(path) {
-    contentDiv.innerHTML = '<p class="loading-msg">Loading...</p>';
+  async   function loadFile(path) {
+    contentDiv.innerHTML = '<p class="loading-msg">Loading documentation</p>';
 
     document.querySelectorAll(".nav-item").forEach(function (el) {
       el.classList.toggle("active", el.getAttribute("data-file") === path);
@@ -180,8 +189,12 @@
       renderMarkdown(text, path);
     } catch (e) {
       contentDiv.innerHTML =
-        '<h1>Not found</h1><p>Could not load <code>' + escapeHtml(path) +
-        "</code>.</p>";
+        '<div class="doc-blank">' +
+        '<span class="doc-kicker">Not found</span>' +
+        "<h1>Could not load this page.</h1>" +
+        '<p>The file <code>' + escapeHtml(path) +
+        "</code> is unreachable. Pick a document from the sidebar or return to the landing page.</p>" +
+        "</div>";
     }
   }
 
@@ -258,7 +271,12 @@
     if (firstItem) {
       loadFile(firstItem.getAttribute("data-file"));
     } else {
-      contentDiv.innerHTML = "<h1>Sandman Documentation</h1><p>Select a document from the sidebar.</p>";
+      contentDiv.innerHTML =
+        '<div class="doc-blank">' +
+        '<span class="doc-kicker">Documentation</span>' +
+        '<h1>Sandman Documentation</h1>' +
+        '<p>Select a document from the sidebar to begin. The same articles power the in-repo <code>docs/</code> folder.</p>' +
+        "</div>";
     }
   }
 
