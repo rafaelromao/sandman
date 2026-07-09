@@ -165,6 +165,31 @@ func NewCleanCmd(deps Dependencies) *cobra.Command {
 				return runCleanOrphaned(cmd, deps, layout, dryRun)
 			}
 
+			if all {
+				idx, err := batchindex.Load(layout.BatchesIndexPath)
+				if err != nil {
+					return fmt.Errorf("load batches index: %w", err)
+				}
+				if err := idx.EnsureStatus(); err != nil {
+					return fmt.Errorf("ensure status: %w", err)
+				}
+
+				actions := collectCleanActions(idx, batchindex.StatusArchived)
+				if actions == nil {
+					actions = []cleanAction{}
+				}
+
+				if !dryRun {
+					if _, err := executeClean(actions, gr, idx, layout); err != nil {
+						return fmt.Errorf("execute clean: %w", err)
+					}
+				}
+
+				tempDirs, images := runCleanTemps(cmd, deps, layout, dryRun)
+				printCleanReport(cmd, actions, nil, tempDirs, images, dryRun)
+				return nil
+			}
+
 			idx, err := batchindex.Load(layout.BatchesIndexPath)
 			if err != nil {
 				return fmt.Errorf("load batches index: %w", err)
@@ -200,7 +225,7 @@ func NewCleanCmd(deps Dependencies) *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().Bool("all", false, "Remove active batches (combined with unavailable)")
+	cmd.Flags().Bool("all", false, "Run every cleanup pass in sequence without touching active batches or their worktrees")
 	cmd.Flags().Bool("archived", false, "Remove archived batches (combined with unavailable)")
 	cmd.Flags().Bool("dry-run", false, "Print intended deletions without performing I/O")
 	cmd.Flags().Bool("stale", false, "Recover stale runs in dead batches by emitting run.aborted events")

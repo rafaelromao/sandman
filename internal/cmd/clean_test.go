@@ -163,12 +163,9 @@ func TestClean_DryRun_ProducesNoIO(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dir, ".sandman", "batches", "batch-1")); os.IsNotExist(err) {
 		t.Errorf("batch dir should NOT be removed by --dry-run")
 	}
-	if !strings.Contains(buf.String(), "batch-1") {
-		t.Errorf("expected dry-run output to mention batch-1, got: %s", buf.String())
-	}
 }
 
-func TestClean_RemovesActiveAndUnavailableEntries(t *testing.T) {
+func TestClean_All_PreservesActiveEntries(t *testing.T) {
 	deps := newRunDepsAuto(t, &fakeBatchRunner{})
 	dir, err := os.Getwd()
 	if err != nil {
@@ -228,27 +225,27 @@ func TestClean_RemovesActiveAndUnavailableEntries(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if _, err := os.Stat(worktreeActive); !os.IsNotExist(err) {
-		t.Errorf("expected active worktree to be removed")
+	if _, err := os.Stat(worktreeActive); os.IsNotExist(err) {
+		t.Errorf("expected active worktree to be PRESERVED by --all, but it was removed")
 	}
-	if _, err := os.Stat(worktreeArchived); os.IsNotExist(err) {
-		t.Errorf("expected archived worktree to be preserved")
+	if _, err := os.Stat(worktreeArchived); !os.IsNotExist(err) {
+		t.Errorf("expected archived worktree to be removed")
 	}
 	if len(gr.removeWorktreeCalls) != 1 {
-		t.Fatalf("expected 1 removeWorktree call, got %d", len(gr.removeWorktreeCalls))
+		t.Fatalf("expected 1 removeWorktree call (archived only), got %d", len(gr.removeWorktreeCalls))
 	}
-	if gr.removeWorktreeCalls[0] != worktreeActive {
-		t.Errorf("expected removeWorktree(%q), got %q", worktreeActive, gr.removeWorktreeCalls[0])
+	if gr.removeWorktreeCalls[0] != worktreeArchived {
+		t.Errorf("expected removeWorktree(%q), got %q", worktreeArchived, gr.removeWorktreeCalls[0])
 	}
 
 	var idx batchindex.Index
 	data, _ := os.ReadFile(filepath.Join(dir, ".sandman", "batches.json"))
 	json.Unmarshal(data, &idx)
 	if len(idx.Batches) != 1 {
-		t.Errorf("expected 1 entry remaining (archived), got %d", len(idx.Batches))
+		t.Fatalf("expected 1 entry remaining (active), got %d", len(idx.Batches))
 	}
-	if idx.Batches[0].ID != "batch-archived" {
-		t.Errorf("expected remaining entry to be batch-archived, got %s", idx.Batches[0].ID)
+	if idx.Batches[0].ID != "batch-active" {
+		t.Errorf("expected remaining entry to be batch-active, got %s", idx.Batches[0].ID)
 	}
 }
 
