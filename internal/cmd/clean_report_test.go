@@ -46,7 +46,7 @@ func TestCleanReport_DefaultDryRun_PrintsWouldRemoveBatchEntries(t *testing.T) {
 	cmd := NewCleanCmd(deps)
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
-	cmd.SetArgs([]string{"--dry-run"})
+	cmd.SetArgs([]string{"--all", "--dry-run"})
 
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -98,7 +98,7 @@ func TestCleanReport_DefaultRealRun_PrintsRemovedBatchEntries(t *testing.T) {
 	cmd := NewCleanCmd(deps)
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
-	cmd.SetArgs([]string{})
+	cmd.SetArgs([]string{"--all"})
 
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -338,7 +338,7 @@ func TestCleanReport_NoBatches_PrintsNoBatchesMessage(t *testing.T) {
 	cmd := NewCleanCmd(deps)
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
-	cmd.SetArgs([]string{"--dry-run"})
+	cmd.SetArgs([]string{"--all", "--dry-run"})
 
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("unexpected error: %v", err)

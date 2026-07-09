@@ -99,16 +99,24 @@ func NewCleanCmd(deps Dependencies) *cobra.Command {
 		Use:   "clean",
 		Short: "Clean up sandbox resources, stale worktrees, and temp files",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			all, _ := cmd.Flags().GetBool("all")
 			archived, _ := cmd.Flags().GetBool("archived")
 			dryRun, _ := cmd.Flags().GetBool("dry-run")
 			stale, _ := cmd.Flags().GetBool("stale")
 			orphaned, _ := cmd.Flags().GetBool("orphaned")
 
+			if !all && !archived && !stale && !orphaned {
+				return MarkUsage(fmt.Errorf("clean requires an explicit mode flag: --all, --archived, --stale, or --orphaned"))
+			}
+
 			if stale && (archived || dryRun || orphaned) {
 				return fmt.Errorf("--stale is mutually exclusive with --archived, --dry-run, and --orphaned")
 			}
-			if orphaned && (archived || stale) {
-				return fmt.Errorf("--orphaned is mutually exclusive with --archived and --stale")
+			if orphaned && (archived || stale || all) {
+				return fmt.Errorf("--orphaned is mutually exclusive with --archived, --stale, and --all")
+			}
+			if all && (archived || stale || orphaned) {
+				return fmt.Errorf("--all is mutually exclusive with --archived, --stale, and --orphaned")
 			}
 
 			cfg, err := deps.ConfigStore.Load()
@@ -194,6 +202,7 @@ func NewCleanCmd(deps Dependencies) *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().Bool("all", false, "Remove active batches (combined with unavailable)")
 	cmd.Flags().Bool("archived", false, "Remove archived batches (combined with unavailable)")
 	cmd.Flags().Bool("dry-run", false, "Print intended deletions without performing I/O")
 	cmd.Flags().Bool("stale", false, "Recover stale runs in dead batches by emitting run.aborted events")
