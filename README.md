@@ -29,8 +29,6 @@ sandman history
 sandman portal
 ```
 
-OpenCode needs the `opencode-shell-strategy` plugin before Sandman can use the `opencode` preset.
-
 ## Overview
 
 Sandman manages the lifecycle of automated coding workflows:
@@ -72,32 +70,7 @@ Other:
 - [Development docs](docs/development/README.md) — contributor setup, project structure, architecture guidance, testing, and docs/skill guidance
 - The browser-rendered docs portal at [`docs/documentation.html`](docs/documentation.html) wraps these guides with a sidebar.
 
-## Config Overview
-
-Sandman reads from `.sandman/config.yaml`. Key fields:
-
-```yaml
-agent: opencode
-parallel: 1
-review_command: /sandman review
-sandbox: podman              # podman, docker, or worktree
-container_capacity: 4        # agent runs per container; 0 = unlimited (no per-container cap)
-max_containers: 0            # auto mode; or set a fixed limit
-git:
-  base_branch: main
-```
-
-Sandman uses your host Git identity for agent commits. It resolves `user.name` and `user.email` from `~/.gitconfig`, then the host global/XDG Git config, then repo-local `.git/config`, and fails early if either value is missing.
-
-See [Configuration](docs/usage/configuration.md) for the full schema.
-
 ## Development
-
-```bash
-make check    # Format, vet, test
-make build    # Build binary
-make install  # Install to $GOPATH/bin
-```
 
 Contributing to Sandman? See the [Development docs](docs/development/README.md), including [Testing](docs/development/testing.md) for smoke and e2e gates.
 
