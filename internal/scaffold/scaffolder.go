@@ -2094,8 +2094,8 @@ func renderRustInstallCommand(version string) string {
 
 func renderJavaInstallCommand(version string) string {
 	installVersion := version
-	if strings.HasPrefix(version, "17.0.10") {
-		installVersion = "17"
+	if ltsPin := bundledJavaVersionCatalog["lts"]; strings.HasPrefix(version, ltsPin) {
+		installVersion = strings.Split(ltsPin, ".")[0]
 	}
 	return fmt.Sprintf("RUN mise use -g --pin java@%s\n", installVersion)
 }
