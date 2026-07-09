@@ -85,7 +85,7 @@ Positional arguments (numbers and ranges) can be combined with `--label` and `--
 - Positional arguments (numbers and ranges) can be combined with `--label` or `--query` — finite selections are resolved locally; open-ended ranges and unsupported queries still use GitHub search
 - If `--prompt` or `--template` is used with no issue arguments, `--label`, `--query`, or `--auto`, and the final selected prompt omits `{{ISSUE_NUMBER}}`, `{{ISSUE_TITLE}}`, and `{{ISSUE_BODY}}`, Sandman enters prompt-only mode and skips GitHub issue lookup
 - If any issue selection is provided, Sandman stays in issue-driven mode even when `--prompt` or `--template` is set
-- `run` preserves worktrees by default; use `sandman clean` to delete them
+- `run` preserves worktrees by default; use `sandman clean --all` (or a specific mode like `--archived`) to delete them
 - `--parallel` limits total concurrent `AgentRun`s across all sandboxes
 - `--start-delay` is batch-local pacing; it waits after any `AgentRun` finishes before the next start, and `0` disables the delay
 - `--base-branch` controls which branch Sandman fetches from origin before each `AgentRun` starts and which branch new worktrees are cut from
@@ -144,21 +144,24 @@ Clean up sandbox resources, stale worktrees, and Sandman-owned temp files.
 sandman clean [flags]
 ```
 
-In addition to cleaning batch entries and worktrees, `sandman clean` also removes:
+`sandman clean` always requires an explicit mode flag. Running bare `sandman clean` (no mode) is a hard error: the command prints `clean requires an explicit mode flag: --all, --archived, --stale, or --orphaned` and exits non-zero.
+
+In addition to cleaning batch entries and worktrees, every mode also runs the shared sweep, which removes:
 
 - **Temp directories** under the system temp directory (e.g., `/tmp/`) that were created by Sandman and are no longer in use (e.g., `sandman-smoke-prewarm-*` directories left behind if smoke tests crash or are interrupted)
 - **Container images** tagged with the `sandman-smoke-*` prefix when a container runtime (`podman` or `docker`) is available
 
-Only Sandman-owned paths are removed. The clean command never touches unrelated temp content.
+The temp-dir and `sandman-smoke-*` image sweep runs in every mode — `--all`, `--archived`, `--stale`, and `--orphaned`. Only Sandman-owned paths are removed. The clean command never touches unrelated temp content.
 
 | Flag | Description |
 |------|-------------|
+| `--all` | Run the full cleanup sequence: recover stale runs, remove orphaned test batches, remove archived batches, then sweep Sandman-owned temp dirs and `sandman-smoke-*` images. Does not touch active batches or their worktrees. |
 | `--archived` | Remove archived batches |
 | `--dry-run` | Print intended deletions without performing I/O |
 | `--stale` | Recover stale runs in dead batches by emitting `run.aborted` events |
 | `--orphaned` | Remove orphaned test batch directories (no matching run.started event and no live daemon socket) |
 
-`--stale` is mutually exclusive with `--archived`, `--dry-run`, and `--orphaned`. `--orphaned` is mutually exclusive with `--archived` and `--stale`. `--archived` and `--dry-run` can be combined.
+`--all` is mutually exclusive with `--archived`, `--stale`, and `--orphaned` (it is the umbrella flag, not a combiner). `--stale` is mutually exclusive with `--archived`, `--dry-run`, and `--orphaned`. `--orphaned` is mutually exclusive with `--archived`, `--stale`, and `--all`. `--archived` and `--dry-run` can be combined.
 
 ## `sandman archive`
 
