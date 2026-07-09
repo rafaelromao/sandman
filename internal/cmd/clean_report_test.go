@@ -12,107 +12,6 @@ import (
 	"github.com/rafaelromao/sandman/internal/config"
 )
 
-func TestCleanReport_DefaultDryRun_PrintsWouldRemoveBatchEntries(t *testing.T) {
-	deps := newRunDepsAuto(t, &fakeBatchRunner{})
-	dir, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("os.Getwd: %v", err)
-	}
-
-	batchDir := filepath.Join(dir, ".sandman", "batches", "batch-default-dry")
-	worktreeDir := filepath.Join(dir, ".sandman", "worktrees", "sandman", "11-default-dry")
-	if err := os.MkdirAll(worktreeDir, 0755); err != nil {
-		t.Fatalf("create worktree: %v", err)
-	}
-	writeRunManifest(t, batchDir, batchindex.RunManifest{
-		RunID:        "batch-default-dry",
-		BatchID:      "batch-default-dry",
-		Issue:        11,
-		Branch:       "sandman/11-default-dry",
-		WorktreePath: worktreeDir,
-		Kind:         batchindex.KindIssue,
-		Status:       batchindex.RunManifestStatusActive,
-	})
-	now := time.Now()
-	writeBatchIndex(t, dir, []batchindex.Batch{
-		{ID: "batch-default-dry", Path: batchDir, Kind: batchindex.KindIssue, Status: batchindex.StatusActive, CreatedAt: now},
-	})
-
-	deps.ConfigStore = &fakeStore{config: &config.Config{WorktreeDir: filepath.Join(dir, ".sandman", "worktrees")}}
-	deps.EventLog = &fakeEventLog{}
-	deps.GitRunner = &fakeGitRunner{}
-
-	var buf bytes.Buffer
-	cmd := NewCleanCmd(deps)
-	cmd.SetOut(&buf)
-	cmd.SetErr(&buf)
-	cmd.SetArgs([]string{"--all", "--dry-run"})
-
-	if err := cmd.Execute(); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	out := buf.String()
-	if !strings.Contains(out, "Would remove 1 batch entries:") {
-		t.Errorf("expected 'Would remove 1 batch entries:' header, got: %s", out)
-	}
-	if !strings.Contains(out, "batch-default-dry") {
-		t.Errorf("expected per-line to include batch ID, got: %s", out)
-	}
-	if !strings.Contains(out, "path:") {
-		t.Errorf("expected per-line to include path, got: %s", out)
-	}
-}
-
-func TestCleanReport_DefaultRealRun_PrintsRemovedBatchEntries(t *testing.T) {
-	deps := newRunDepsAuto(t, &fakeBatchRunner{})
-	dir, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("os.Getwd: %v", err)
-	}
-
-	batchDir := filepath.Join(dir, ".sandman", "batches", "batch-default-real")
-	worktreeDir := filepath.Join(dir, ".sandman", "worktrees", "sandman", "12-default-real")
-	if err := os.MkdirAll(worktreeDir, 0755); err != nil {
-		t.Fatalf("create worktree: %v", err)
-	}
-	writeRunManifest(t, batchDir, batchindex.RunManifest{
-		RunID:        "batch-default-real",
-		BatchID:      "batch-default-real",
-		Issue:        12,
-		Branch:       "sandman/12-default-real",
-		WorktreePath: worktreeDir,
-		Kind:         batchindex.KindIssue,
-		Status:       batchindex.RunManifestStatusActive,
-	})
-	now := time.Now()
-	writeBatchIndex(t, dir, []batchindex.Batch{
-		{ID: "batch-default-real", Path: batchDir, Kind: batchindex.KindIssue, Status: batchindex.StatusActive, CreatedAt: now},
-	})
-
-	deps.ConfigStore = &fakeStore{config: &config.Config{WorktreeDir: filepath.Join(dir, ".sandman", "worktrees")}}
-	deps.EventLog = &fakeEventLog{}
-	deps.GitRunner = &fakeGitRunner{}
-
-	var buf bytes.Buffer
-	cmd := NewCleanCmd(deps)
-	cmd.SetOut(&buf)
-	cmd.SetErr(&buf)
-	cmd.SetArgs([]string{"--all"})
-
-	if err := cmd.Execute(); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	out := buf.String()
-	if !strings.Contains(out, "Removed 1 batch entries:") {
-		t.Errorf("expected 'Removed 1 batch entries:' header, got: %s", out)
-	}
-	if !strings.Contains(out, "batch-default-real") {
-		t.Errorf("expected per-line to include batch ID, got: %s", out)
-	}
-}
-
 func TestCleanReport_ArchivedDryRun_PrintsWouldRemoveBatchEntries(t *testing.T) {
 	deps := newRunDepsAuto(t, &fakeBatchRunner{})
 	dir, err := os.Getwd()
@@ -404,6 +303,56 @@ func TestClean_All_MutuallyExclusiveWithArchived(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "all") {
 		t.Errorf("expected error to mention --all, got: %v", err)
+	}
+}
+
+func TestClean_All_MutuallyExclusiveWithOtherModes(t *testing.T) {
+	cases := []struct {
+		name string
+		args []string
+	}{
+		{"--all --archived", []string{"--all", "--archived"}},
+		{"--all --stale", []string{"--all", "--stale"}},
+		{"--all --orphaned", []string{"--all", "--orphaned"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			deps := newTestDeps(t)
+			var buf bytes.Buffer
+			cmd := NewCleanCmd(deps)
+			cmd.SetOut(&buf)
+			cmd.SetErr(&buf)
+			cmd.SetArgs(tc.args)
+
+			err := cmd.Execute()
+			if err == nil {
+				t.Fatalf("expected error for %v, got nil", tc.args)
+			}
+			if !strings.Contains(err.Error(), "--all") {
+				t.Errorf("expected error to mention --all, got: %v", err)
+			}
+		})
+	}
+}
+
+func TestClean_All_DryRun_NotMutuallyExclusive(t *testing.T) {
+	deps := newRunDepsAuto(t, &fakeBatchRunner{})
+	dir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("os.Getwd: %v", err)
+	}
+	deps.ConfigStore = &fakeStore{config: &config.Config{WorktreeDir: filepath.Join(dir, ".sandman", "worktrees")}}
+	deps.EventLog = &fakeEventLog{}
+	deps.GitRunner = &fakeGitRunner{}
+
+	var buf bytes.Buffer
+	cmd := NewCleanCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--all", "--dry-run"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("--all --dry-run should be accepted, got: %v", err)
 	}
 }
 

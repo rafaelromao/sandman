@@ -165,6 +165,65 @@ func NewCleanCmd(deps Dependencies) *cobra.Command {
 				return runCleanOrphaned(cmd, deps, layout, dryRun)
 			}
 
+			if all {
+				eventsList, err := deps.EventLog.Read()
+				if err != nil {
+					return fmt.Errorf("read event log: %w", err)
+				}
+				if _, staleErr := daemon.CleanupStaleRunSnapshots(layout.SandmanDir); staleErr != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "warning: cleanup stale run snapshots: %v\n", staleErr)
+				}
+				recovered, deadDirs, err := runCleanStale(layout, eventsList, deps.EventLog)
+				if err != nil {
+					return fmt.Errorf("recover stale runs: %w", err)
+				}
+				fmt.Fprintf(cmd.OutOrStdout(), "Recovered %d stale runs as aborted across %d dead directories.\n", recovered, deadDirs)
+
+				probe := deps.RunActivityProbe
+				if probe == nil {
+					probe = daemon.IsRunActive
+				}
+				orphanPlan, err := daemon.PlanOrphanedTestBatches(layout.SandmanDir, deps.EventLog, probe)
+				if err != nil {
+					return fmt.Errorf("plan orphaned batches: %w", err)
+				}
+				if !dryRun {
+					if err := pruneBatchesIndexByOrphanPlan(layout.BatchesIndexPath, orphanPlan); err != nil {
+						return err
+					}
+				}
+
+				idx, err := batchindex.Load(layout.BatchesIndexPath)
+				if err != nil {
+					return fmt.Errorf("load batches index: %w", err)
+				}
+				if err := idx.EnsureStatus(); err != nil {
+					return fmt.Errorf("ensure status: %w", err)
+				}
+
+				actions := collectCleanActions(idx, batchindex.StatusArchived)
+				if actions == nil {
+					actions = []cleanAction{}
+				}
+
+				var orphanRemoved []string
+				if !dryRun {
+					if _, err := executeClean(actions, gr, idx, layout); err != nil {
+						return fmt.Errorf("execute clean: %w", err)
+					}
+					orphanRemoved, err = daemon.CleanupOrphanedTestBatches(layout.SandmanDir, deps.EventLog, probe)
+					if err != nil {
+						return fmt.Errorf("cleanup orphaned batches: %w", err)
+					}
+				} else {
+					orphanRemoved = orphanPlan
+				}
+
+				tempDirs, images := runCleanTemps(cmd, deps, layout, dryRun)
+				printCleanReport(cmd, actions, orphanRemoved, tempDirs, images, dryRun)
+				return nil
+			}
+
 			idx, err := batchindex.Load(layout.BatchesIndexPath)
 			if err != nil {
 				return fmt.Errorf("load batches index: %w", err)
@@ -200,7 +259,7 @@ func NewCleanCmd(deps Dependencies) *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().Bool("all", false, "Remove active batches (combined with unavailable)")
+	cmd.Flags().Bool("all", false, "Run every cleanup pass in sequence without touching active batches or their worktrees")
 	cmd.Flags().Bool("archived", false, "Remove archived batches (combined with unavailable)")
 	cmd.Flags().Bool("dry-run", false, "Print intended deletions without performing I/O")
 	cmd.Flags().Bool("stale", false, "Recover stale runs in dead batches by emitting run.aborted events")
@@ -354,7 +413,30 @@ func runCleanOrphaned(cmd *cobra.Command, deps Dependencies, layout paths.Layout
 		return nil
 	}
 
-	idx, err := batchindex.Load(layout.BatchesIndexPath)
+	if err := pruneBatchesIndexByOrphanPlan(layout.BatchesIndexPath, plan); err != nil {
+		return err
+	}
+
+	removed, err := daemon.CleanupOrphanedTestBatches(layout.SandmanDir, deps.EventLog, probe)
+	if err != nil {
+		return fmt.Errorf("cleanup orphaned batches: %w", err)
+	}
+
+	tempDirs, images := runCleanTemps(cmd, deps, layout, false)
+	if len(removed) == 0 && len(tempDirs) == 0 && len(images) == 0 {
+		fmt.Fprintln(cmd.OutOrStdout(), "Nothing to remove.")
+		return nil
+	}
+	printCleanReport(cmd, nil, removed, tempDirs, images, false)
+	return nil
+}
+
+// pruneBatchesIndexByOrphanPlan removes the index entries whose BatchID matches
+// the basename of any path in plan, then atomically saves the index. It is the
+// shared prune step used by both the standalone --orphaned mode and the --all
+// umbrella flag.
+func pruneBatchesIndexByOrphanPlan(indexPath string, plan []string) error {
+	idx, err := batchindex.Load(indexPath)
 	if err != nil {
 		return fmt.Errorf("load batches index: %w", err)
 	}
@@ -372,21 +454,9 @@ func runCleanOrphaned(cmd *cobra.Command, deps Dependencies, layout paths.Layout
 	}
 	idx.Batches = kept
 
-	if err := idx.Save(layout.BatchesIndexPath); err != nil {
+	if err := idx.Save(indexPath); err != nil {
 		return fmt.Errorf("save batches index: %w", err)
 	}
-
-	removed, err := daemon.CleanupOrphanedTestBatches(layout.SandmanDir, deps.EventLog, probe)
-	if err != nil {
-		return fmt.Errorf("cleanup orphaned batches: %w", err)
-	}
-
-	tempDirs, images := runCleanTemps(cmd, deps, layout, false)
-	if len(removed) == 0 && len(tempDirs) == 0 && len(images) == 0 {
-		fmt.Fprintln(cmd.OutOrStdout(), "Nothing to remove.")
-		return nil
-	}
-	printCleanReport(cmd, nil, removed, tempDirs, images, false)
 	return nil
 }
 
