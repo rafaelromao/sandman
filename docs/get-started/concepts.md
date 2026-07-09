@@ -65,7 +65,7 @@ For multi-issue batches they diverge (the BatchId carries the `+N` additional-co
 
 ## See also
 
-- [Overview](get-started-overview.md) — what Sandman is and the delivery loop
+- [Overview](overview.md) — what Sandman is and the delivery loop
 - [Architecture](../architecture/overview.md) — event-sourced state, DI seams, factory model
 - [Disk Layout](../architecture/disk-layout.md) — canonical on-disk tree
 - [Commands](../usage/commands.md) — every CLI flag

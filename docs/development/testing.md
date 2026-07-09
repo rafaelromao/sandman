@@ -62,7 +62,6 @@ Some expensive scenarios run without a build tag and are selected with `SANDMAN_
 | `badge` | `internal/cmd` | badge scenario tests |
 | `pathlen` | `internal/cmd` | path-length scenario tests |
 | `batch_id_rules` | `internal/cmd` | `TestSlice10` |
-| `preset_matrix` | `internal/cmd` | `TestPresetMatrixHarness_GenericRunProducesFakeArtifact` |
 
 ```bash
 # Single scenario

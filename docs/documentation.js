@@ -4,7 +4,7 @@
   var REPO = "rafaelromao/sandman";
   var DEFAULT_REF = "HEAD";
   var DOCS_PREFIX = "docs/";
-  var CACHE_KEY = "sandman-docs-tree-v3";
+  var CACHE_KEY = "sandman-docs-tree-v4";
   var CACHE_TTL_MS = 60 * 1000;
 
   function api(path) {
@@ -27,7 +27,7 @@
   var FALLBACK_FILES = [
     "README.md",
     "get-started/README.md",
-    "get-started/get-started-overview.md",
+    "get-started/overview.md",
     "get-started/quickstart.md",
     "get-started/install.md",
     "get-started/concepts.md",
@@ -77,7 +77,7 @@
 
   function purgeStaleCacheKeys() {
     try {
-      var legacy = ["sandman-docs-tree-v1", "sandman-docs-tree-v2"];
+      var legacy = ["sandman-docs-tree-v1", "sandman-docs-tree-v2", "sandman-docs-tree-v3"];
       var toRemove = [];
       for (var i = 0; i < localStorage.length; i++) {
         var k = localStorage.key(i);
@@ -250,12 +250,6 @@
   }
 
   async function discoverFiles() {
-    if (isLocalPreview()) {
-      var localFiles = filterFiles(FALLBACK_FILES);
-      emitFiles(localFiles);
-      return localFiles;
-    }
-
     var cached = getCachedTree();
 
     if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS && cached.files) {
@@ -295,8 +289,15 @@
   }
 
   function filterFiles(files) {
+    var legacy = new Set([
+      "get-started/overview.md",
+      "docs/get-started/overview.md",
+      "get-started/getting-started.md",
+      "docs/get-started/getting-started.md",
+    ]);
     return files.filter(function (f) {
       var top = f.split("/")[0];
+      if (legacy.has(f)) return false;
       return top !== "adr" && top !== "agents" && top !== "landing-prototypes";
     });
   }
@@ -308,9 +309,10 @@
     if (name === "README") {
       var dir = path.includes("/") ? path.split("/")[0] : "";
       if (!dir) return "Documentation";
-      return dir.charAt(0).toUpperCase() + dir.slice(1) + " Overview";
+      var dirTitle = dir.split("-").map(function (w) { return w.charAt(0).toUpperCase() + w.slice(1); }).join(" ");
+      return dirTitle + " Overview";
     }
-    return name.split("-").map(function (w) { return w.charAt(0).toUpperCase() + w.slice(1); }).join(" ");
+    return name.replace(/-/g, " ");
   }
 
   function titleRank(title) {

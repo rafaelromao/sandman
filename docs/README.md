@@ -14,7 +14,7 @@ Developer documentation for Sandman, a CLI tool that orchestrates AFK coding age
 
 ## Start here
 
-New to Sandman? Read [Overview](get-started/get-started-overview.md) first, then [Quick Start](get-started/quickstart.md).
+New to Sandman? Read [Overview](get-started/overview.md) first, then [Quick Start](get-started/quickstart.md).
 
 ## Other resources
 

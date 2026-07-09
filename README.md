@@ -46,7 +46,7 @@ Sandman manages the lifecycle of automated coding workflows:
 
 | Guide | Description |
 |-------|-------------|
-| [Overview](docs/get-started/get-started-overview.md) | What Sandman is, the delivery loop, and what it is not |
+| [Overview](docs/get-started/overview.md) | What Sandman is, the delivery loop, and what it is not |
 | [Quick Start](docs/get-started/quickstart.md) | The five-minute path from install to first run |
 | [Installation](docs/get-started/install.md) | Prerequisites, installation, OpenCode setup, and project setup |
 | [Concepts](docs/get-started/concepts.md) | The Batch / AgentRun / Sandbox / PRD model in prose |

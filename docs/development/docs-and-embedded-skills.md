@@ -32,7 +32,6 @@ The public sidebar should not list:
 
 - `docs/adr/`
 - `docs/agents/`
-- `docs/landing-prototypes/`
 
 When adding a public markdown file, update the fallback file list in `docs/documentation.js` so local previews still work if the GitHub tree API is unavailable.
 

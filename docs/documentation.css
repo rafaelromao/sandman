@@ -496,7 +496,6 @@ article#content {
   #sidebar.mobile-open ~ #sidebar-overlay { display: block; }
   #content-area { margin-left: 0; }
   article#content { padding: 32px 20px 80px; }
-  .brand strong { display: none; }
   .docs-label { display: none; }
   .btn-landing span { display: none; }
 }

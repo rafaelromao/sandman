@@ -50,7 +50,7 @@
 
       .topline {
         display: grid;
-        grid-template-columns: auto minmax(180px, 1fr);
+        grid-template-columns: auto minmax(180px, 1fr) auto;
         align-items: center;
         gap: 18px;
         padding: 18px 0 22px;
@@ -69,6 +69,28 @@
         letter-spacing: 0.16em;
         text-transform: uppercase;
       }
+
+      .topline-actions { display: inline-flex; align-items: center; gap: 8px; }
+      .topline-actions .btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        padding: 7px 14px;
+        min-height: 0;
+        border-radius: 999px;
+        font-size: 13px;
+        font-weight: 700;
+        line-height: 1.7;
+        text-decoration: none;
+        font-family: inherit;
+        cursor: pointer;
+        border: 1px solid var(--line);
+        background: transparent;
+        color: var(--ink-strong);
+        transition: background 0.15s, border-color 0.15s;
+      }
+      .topline-actions .btn:hover { background: var(--canvas-2); border-color: var(--gold); }
+      .topline-actions .btn svg { width: 15px; height: 15px; }
 
       .text-link { color: var(--ink-strong); text-decoration-color: var(--gold); text-underline-offset: 0.14em; }
 
@@ -338,14 +360,18 @@
         .portal-layout, .smart-panel, .grid-2 { grid-template-columns: 1fr; }
         .smart-grid, .cli-reasons { grid-template-columns: 1fr; }
         .portal-shot { max-width: 420px; margin: 0 auto; }
-        .topline { grid-template-columns: auto 1fr; }
+        .topline { grid-template-columns: auto 1fr auto; }
         .methods-table { table-layout: auto; }
         .methods-table th:first-child, .methods-table td:first-child { width: auto; }
         .handoff-line code { white-space: normal; }
       }
 
       @media (max-width: 760px) {
-        .topline { gap: 12px; }
+        .topline { display: flex; align-items: center; gap: 10px; }
+        .topline .slogan { display: none; }
+        .topline-actions { margin-left: auto; }
+        .topline-actions .btn { padding: 7px 10px; gap: 0; }
+        .topline-actions .btn span { display: none; }
         .brand { gap: 9px; }
         .brand img.mark { width: 30px; height: 30px; }
         .brand strong { font-size: 16px; letter-spacing: 0.14em; }
@@ -413,6 +439,16 @@
       <div class="topline">
         <a class="brand" href="index.html"><img class="mark" src="assets/sandman-mark.svg" alt="Sandman mark" /><strong>SANDMAN</strong></a>
         <div class="slogan">Sleep while your agents code</div>
+        <div class="topline-actions">
+          <a class="btn" href="https://github.com/rafaelromao/sandman" target="_blank" rel="noopener noreferrer">
+            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .5C5.65.5.5 5.65.5 12c0 5.08 3.29 9.39 7.86 10.91.58.11.79-.25.79-.55v-1.93c-3.2.7-3.88-1.54-3.88-1.54-.52-1.33-1.27-1.68-1.27-1.68-1.04-.71.08-.7.08-.7 1.15.08 1.76 1.18 1.76 1.18 1.02 1.75 2.69 1.24 3.34.95.1-.74.4-1.24.72-1.53-2.55-.29-5.24-1.28-5.24-5.7 0-1.26.45-2.29 1.18-3.1-.12-.29-.51-1.46.11-3.05 0 0 .96-.31 3.15 1.18.92-.26 1.9-.39 2.88-.39.98 0 1.96.13 2.88.39 2.18-1.49 3.14-1.18 3.14-1.18.63 1.59.24 2.76.12 3.05.74.81 1.18 1.84 1.18 3.1 0 4.43-2.7 5.4-5.27 5.69.41.36.78 1.07.78 2.16v3.2c0 .31.21.67.79.55C20.21 21.39 23.5 17.08 23.5 12 23.5 5.65 18.35.5 12 .5z"/></svg>
+            <span>GitHub</span>
+          </a>
+          <a class="btn" href="documentation.html">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h12a4 4 0 014 4v12H8a4 4 0 01-4-4V4z"/><path d="M4 16a4 4 0 014-4h12"/></svg>
+            <span>Documentation</span>
+          </a>
+        </div>
       </div>
 
       <img class="banner" src="assets/sandman-banner.svg" alt="Sandman: AFK coding agents orchestration in isolated sandboxes" />
@@ -499,10 +535,6 @@
                 <div class="reason"><b>It leaves receipts.</b><span><code>task.md</code>, events, logs, PRs, and review state remain inspectable after the agent stops.</span></div>
               </div>
             </div>
-            <figure class="portal-figure">
-              <img class="portal-shot" src="landing-prototypes/portal-screenshot-light.png" alt="Sandman Portal screenshot showing live runs, a selected run, and the Log tab" />
-              <figcaption class="portal-caption">Real Sandman Portal, captured from this repository's current run state (Sandman Light theme).</figcaption>
-            </figure>
           </div>
         </section>
 
