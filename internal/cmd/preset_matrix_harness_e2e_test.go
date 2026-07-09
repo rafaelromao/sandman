@@ -132,6 +132,95 @@ func TestPresetMatrixHarness_GenericRunWithEditedDockerfile(t *testing.T) {
 	assertRunStartedAndFinished(t, repoDir, 1)
 }
 
+// TestPresetMatrixHarness_GoScaffolds pins the scaffold-only slice
+// of the Go preset: running `sandman init --build-tools go` through
+// the real binary with `--tool-version latest` produces
+// `.sandman/{config.yaml,Dockerfile}` with the go-version header
+// set to the bundled catalog's latest. This proves the Go preset
+// scaffold path works end to end and that the version is resolved
+// from the catalog rather than hardcoded.
+func TestPresetMatrixHarness_GoScaffolds(t *testing.T) {
+	containerRuntimeAvailable(t)
+
+	binPath := buildSandmanBinary(t)
+
+	repoDir := t.TempDir()
+	t.Chdir(repoDir)
+	initRunIntegrationRepo(t, repoDir)
+
+	out, err := runSandmanBinary(t, binPath, repoDir, "init", "--build-tools", "go", "--tool-version", "latest")
+	if err != nil {
+		t.Fatalf("sandman init --build-tools go failed: %v\noutput:\n%s", err, out)
+	}
+	for _, rel := range []string{".sandman/config.yaml", ".sandman/Dockerfile", ".sandman/prompt.md"} {
+		if _, err := os.Stat(filepath.Join(repoDir, rel)); err != nil {
+			t.Fatalf("expected scaffolded %s: %v", rel, err)
+		}
+	}
+
+	dockerfile, err := os.ReadFile(filepath.Join(repoDir, ".sandman", "Dockerfile"))
+	if err != nil {
+		t.Fatalf("read Dockerfile: %v", err)
+	}
+	want := "# sandman go-version: " + scaffold.BundledGoVersionLatest()
+	if !strings.Contains(string(dockerfile), want) {
+		t.Fatalf("scaffolded Dockerfile missing %q (version must be resolved from catalog, not hardcoded):\n%s", want, dockerfile)
+	}
+}
+
+// TestPresetMatrixHarness_GoRunProducesFakeArtifact pins the end-to-end
+// `go` CLI-options path: scaffold with bare go.mod → fake opencode shim
+// installed → `podman build` → `sandman run 1` → the per-issue run log
+// carries the canonical fake-task marker, and the events log has exactly
+// one `run.started` and one `run.finished` for the fake issue.
+//
+// This mirrors TestPresetMatrixHarness_GenericRunProducesFakeArtifact
+// but for the Go preset instead of generic.
+func TestPresetMatrixHarness_GoRunProducesFakeArtifact(t *testing.T) {
+	binPath, repoDir := runE2EScaffoldWithGoMod(t, "go", "")
+	runE2ERun(t, binPath, repoDir)
+	assertFakeTaskMarkerInRunLog(t, repoDir, 1)
+	assertRunStartedAndFinished(t, repoDir, 1)
+}
+
+// TestPresetMatrixHarness_GoRunWithEditedDockerfile pins the end-to-end
+// `go` edited-Dockerfile path: scaffold with bare go.mod → append a
+// known `RUN` line to `.sandman/Dockerfile` → fake opencode shim
+// installed → `podman build` (which must still succeed) → `sandman
+// run 1` → the per-issue run log carries the canonical fake-task
+// marker and the events log has the expected events.
+//
+// This mirrors TestPresetMatrixHarness_GenericRunWithEditedDockerfile
+// but for the Go preset instead of generic.
+func TestPresetMatrixHarness_GoRunWithEditedDockerfile(t *testing.T) {
+	binPath, repoDir := runE2EScaffoldWithGoMod(t, "go", "RUN touch /etc/sandman-preset-matrix-edited")
+	runE2ERun(t, binPath, repoDir)
+	assertFakeTaskMarkerInRunLog(t, repoDir, 1)
+	assertRunStartedAndFinished(t, repoDir, 1)
+}
+
+// runE2EScaffoldWithGoMod is like runE2EScaffold but writes a
+// go.mod with a go 1.24 directive before scaffolding so the Go
+// preset has a version hint to resolve from.
+func runE2EScaffoldWithGoMod(t *testing.T, preset, dockerfileAppend string) (string, string) {
+	t.Helper()
+	containerRuntimeAvailable(t)
+	binPath := buildSandmanBinary(t)
+	repoDir := t.TempDir()
+	t.Chdir(repoDir)
+	initRunIntegrationRepoWithRemote(t, repoDir)
+
+	os.WriteFile(filepath.Join(repoDir, "go.mod"), []byte("module example.com/hello\n\ngo 1.24\n"), 0644)
+
+	runRootCommand(t, prFlowDepsForPresetMatrix(t, repoDir), "init", "--build-tools", preset)
+	forcePodmanSandbox(t, repoDir)
+	runRootCommand(t, prFlowDepsForPresetMatrix(t, repoDir), "config", "set", "review_command", "/oc review")
+	if dockerfileAppend != "" {
+		appendDockerfileRun(t, repoDir, dockerfileAppend)
+	}
+	return binPath, repoDir
+}
+
 // presetMatrixHarnessFakeTaskMarker is the canonical fake-task
 // marker string the shim prints to stdout. The orchestrator
 // captures the agent's stdout into the per-issue run log under
