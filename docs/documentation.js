@@ -4,7 +4,7 @@
   var REPO = "rafaelromao/sandman";
   var DEFAULT_REF = "HEAD";
   var DOCS_PREFIX = "docs/";
-  var CACHE_KEY = "sandman-docs-tree-v3";
+  var CACHE_KEY = "sandman-docs-tree-v4";
   var CACHE_TTL_MS = 60 * 1000;
 
   function api(path) {
@@ -69,15 +69,9 @@
   var activeRef = null;
   var refReady = discoverRef().then(function (r) { activeRef = r; writeCachedRef(r); return r; });
 
-  function isLocalPreview() {
-    return location.hostname === "localhost" ||
-      location.hostname === "127.0.0.1" ||
-      location.hostname === "0.0.0.0";
-  }
-
   function purgeStaleCacheKeys() {
     try {
-      var legacy = ["sandman-docs-tree-v1", "sandman-docs-tree-v2"];
+      var legacy = ["sandman-docs-tree-v1", "sandman-docs-tree-v2", "sandman-docs-tree-v3"];
       var toRemove = [];
       for (var i = 0; i < localStorage.length; i++) {
         var k = localStorage.key(i);
@@ -250,12 +244,6 @@
   }
 
   async function discoverFiles() {
-    if (isLocalPreview()) {
-      var localFiles = filterFiles(FALLBACK_FILES);
-      emitFiles(localFiles);
-      return localFiles;
-    }
-
     var cached = getCachedTree();
 
     if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS && cached.files) {
