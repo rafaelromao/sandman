@@ -407,6 +407,56 @@ func TestClean_All_MutuallyExclusiveWithArchived(t *testing.T) {
 	}
 }
 
+func TestClean_All_MutuallyExclusiveWithOtherModes(t *testing.T) {
+	cases := []struct {
+		name string
+		args []string
+	}{
+		{"--all --archived", []string{"--all", "--archived"}},
+		{"--all --stale", []string{"--all", "--stale"}},
+		{"--all --orphaned", []string{"--all", "--orphaned"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			deps := newTestDeps(t)
+			var buf bytes.Buffer
+			cmd := NewCleanCmd(deps)
+			cmd.SetOut(&buf)
+			cmd.SetErr(&buf)
+			cmd.SetArgs(tc.args)
+
+			err := cmd.Execute()
+			if err == nil {
+				t.Fatalf("expected error for %v, got nil", tc.args)
+			}
+			if !strings.Contains(err.Error(), "--all") {
+				t.Errorf("expected error to mention --all, got: %v", err)
+			}
+		})
+	}
+}
+
+func TestClean_All_DryRun_NotMutuallyExclusive(t *testing.T) {
+	deps := newRunDepsAuto(t, &fakeBatchRunner{})
+	dir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("os.Getwd: %v", err)
+	}
+	deps.ConfigStore = &fakeStore{config: &config.Config{WorktreeDir: filepath.Join(dir, ".sandman", "worktrees")}}
+	deps.EventLog = &fakeEventLog{}
+	deps.GitRunner = &fakeGitRunner{}
+
+	var buf bytes.Buffer
+	cmd := NewCleanCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--all", "--dry-run"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("--all --dry-run should be accepted, got: %v", err)
+	}
+}
+
 func TestClean_Archived_TempsAndImages_AppearInSameReportBlock(t *testing.T) {
 	deps := newRunDepsAuto(t, &fakeBatchRunner{})
 	dir, err := os.Getwd()
