@@ -402,6 +402,8 @@ func findRunLogUnderBatches(t *testing.T, repoDir string, issue int) string {
 		}
 	}
 	t.Fatalf("run log for issue %d not found under %s", issue, batchesDir)
+	// Unreachable: t.Fatalf calls runtime.Goexit, so the compiler
+	// requires a return for the function signature.
 	return ""
 }
 
