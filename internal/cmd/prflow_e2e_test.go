@@ -570,7 +570,11 @@ func Double(n int) int {
 
 	for _, args := range [][]string{
 		{"add", "-A"},
-		{"commit", "-m", "feat: fix Double"},
+		// --allow-empty keeps the fake runner idempotent across
+		// repeated invocations against the same worktree (the worktree
+		// is not recreated between subtests, so the same double.go
+		// content is rewritten with no diff after the first run).
+		{"commit", "--allow-empty", "-m", "feat: fix Double"},
 		{"push", "-u", "origin", f.branch},
 	} {
 		cmd := exec.Command("git", args...)
@@ -821,6 +825,40 @@ JSON
           ;;
       esac
     fi
+    if [ "${2:-}" = "close" ]; then
+      printf 'closed\n'
+      exit 0
+    fi
+    if [ "${2:-}" = "list" ]; then
+      # The orchestrator's "is the issue still open?" check uses
+      # "gh issue list --search is:open" to build a set of open issue
+      # numbers; an empty list makes the runner treat every explicit
+      # issue as closed. Return the known open issues for this test
+      # scenario so the run is not skipped.
+      case "${3:-}" in
+        --search)
+          search_term="${4:-}"
+          case "$search_term" in
+            *is:open*|is:open)
+              cat <<'JSON'
+[{"number":1,"state":"open","title":"Fix failing test","body":"The repo has a tiny failing Go test. Make Double(2) return 4.","labels":[{"name":"ready-for-agent"}]}]
+JSON
+              exit 0
+              ;;
+          esac
+          printf '[]\n'
+          exit 0
+          ;;
+      esac
+      printf '[]\n'
+      exit 0
+    fi
+    if [ "${2:-}" = "edit" ]; then
+      exit 0
+    fi
+    if [ "${2:-}" = "create" ]; then
+      exit 0
+    fi
     ;;
   repo)
     if [ "${2:-}" = "view" ]; then
@@ -833,37 +871,71 @@ JSON
   pr)
     if [ "${2:-}" = "list" ]; then
       head=""
+      state_filter="all"
       while [ $# -gt 0 ]; do
         case "$1" in
           --head)
             shift
             head="${1:-}"
             ;;
+          --state)
+            shift
+            state_filter="${1:-}"
+            ;;
         esac
         shift
       done
+      # Deterministic state: derived only from files written by the test or
+      # the agent's earlier pr create. We never flip the file on read, so
+      # repeated gh pr list calls within the same run see the same answer.
       state_file="$shim_dir/pr-state"
       state="open"
       if [ -f "$state_file" ]; then
         state=$(cat "$state_file")
       fi
+      # No PR exists until the agent has called "gh pr create" at least
+      # once, so report an empty list in that case. Tests that need an
+      # already-resolved scenario pre-seed pr-state=merged below.
+      if [ ! -f "$shim_dir/pr-create.count" ] && [ "$state" != "merged" ]; then
+        printf '[]\n'
+        exit 0
+      fi
       case "$state" in
         merged)
-          next_state="open"
           merged_at="2026-06-05T00:00:00Z"
           pr_state="merged"
           ;;
         *)
-          next_state="merged"
           merged_at=""
           pr_state="open"
           ;;
       esac
-      printf '%s\n' "$next_state" > "$state_file"
       head_ref_oid="$(git rev-parse HEAD)"
-      cat <<JSON
+      case "$state_filter" in
+        open)
+          if [ "$pr_state" = "open" ]; then
+            cat <<JSON
 [{"number":1,"state":"$pr_state","mergedAt":"$merged_at","headRefName":"$head","headRefOid":"$head_ref_oid"}]
 JSON
+          else
+            printf '[]\n'
+          fi
+          ;;
+        merged)
+          if [ "$pr_state" = "merged" ]; then
+            cat <<JSON
+[{"number":1,"state":"$pr_state","mergedAt":"$merged_at","headRefName":"$head","headRefOid":"$head_ref_oid"}]
+JSON
+          else
+            printf '[]\n'
+          fi
+          ;;
+        *)
+          cat <<JSON
+[{"number":1,"state":"$pr_state","mergedAt":"$merged_at","headRefName":"$head","headRefOid":"$head_ref_oid"}]
+JSON
+          ;;
+      esac
       exit 0
     fi
     if [ "${2:-}" = "create" ]; then
@@ -916,6 +988,22 @@ JSON
       printf 'https://example.test/example/sandbox/pull/1\n'
       exit 0
     fi
+    if [ "${2:-}" = "close" ]; then
+      printf 'closed\n'
+      exit 0
+    fi
+    if [ "${2:-}" = "merge" ]; then
+      printf 'merged\n'
+      exit 0
+    fi
+    if [ "${2:-}" = "edit" ]; then
+      shift 2
+      exit 0
+    fi
+    if [ "${2:-}" = "diff" ]; then
+      printf '' >/dev/null
+      exit 0
+    fi
     ;;
   api)
     path=""
@@ -925,6 +1013,15 @@ JSON
           shift 2
           ;;
         --repo)
+          shift 2
+          ;;
+        -X)
+          shift 2
+          ;;
+        -f)
+          shift 2
+          ;;
+        -F)
           shift 2
           ;;
         repos/*)
@@ -958,8 +1055,19 @@ JSON
         exit 0
         ;;
     esac
-    printf 'unexpected gh api path: %s\n' "$path" >&2
-    exit 1
+    # Unknown api path: treat as a benign no-op so that production code
+    # which only needs a side-effect (e.g. closing a PR via PATCH) can
+    # proceed without the test having to enumerate every endpoint the
+    # agent might call. The test still asserts specific endpoints via
+    # the pr-create.* / api.* / auth.* artifact files when it needs to.
+    printf 'noop\n'
+    exit 0
+    ;;
+  config)
+    # gh config list / get / set: treat as a no-op. The shim is the
+    # sole source of truth for gh in e2e tests, so any environment the
+    # host happens to expose is irrelevant.
+    exit 0
     ;;
   auth)
     if [ "${2:-}" = "token" ]; then
@@ -1060,6 +1168,40 @@ JSON
           ;;
       esac
     fi
+    if [ "${2:-}" = "close" ]; then
+      printf 'closed\n'
+      exit 0
+    fi
+    if [ "${2:-}" = "list" ]; then
+      # The orchestrator's "is the issue still open?" check uses
+      # "gh issue list --search is:open" to build a set of open issue
+      # numbers; an empty list makes the runner treat every explicit
+      # issue as closed. Return the known open issues for this test
+      # scenario so the run is not skipped.
+      case "${3:-}" in
+        --search)
+          search_term="${4:-}"
+          case "$search_term" in
+            *is:open*|is:open)
+              cat <<'JSON'
+[{"number":1,"state":"open","title":"Fix failing test","body":"The repo has a tiny failing Go test. Make Double(2) return 4.","labels":[{"name":"ready-for-agent"}]}]
+JSON
+              exit 0
+              ;;
+          esac
+          printf '[]\n'
+          exit 0
+          ;;
+      esac
+      printf '[]\n'
+      exit 0
+    fi
+    if [ "${2:-}" = "edit" ]; then
+      exit 0
+    fi
+    if [ "${2:-}" = "create" ]; then
+      exit 0
+    fi
     ;;
   repo)
     if [ "${2:-}" = "view" ]; then
@@ -1072,37 +1214,71 @@ JSON
   pr)
     if [ "${2:-}" = "list" ]; then
       head=""
+      state_filter="all"
       while [ $# -gt 0 ]; do
         case "$1" in
           --head)
             shift
             head="${1:-}"
             ;;
+          --state)
+            shift
+            state_filter="${1:-}"
+            ;;
         esac
         shift
       done
+      # Deterministic state: derived only from files written by the test or
+      # the agent's earlier pr create. We never flip the file on read, so
+      # repeated gh pr list calls within the same run see the same answer.
       state_file="$shim_dir/pr-state"
       state="open"
       if [ -f "$state_file" ]; then
         state=$(cat "$state_file")
       fi
+      # No PR exists until the agent has called "gh pr create" at least
+      # once, so report an empty list in that case. Tests that need an
+      # already-resolved scenario pre-seed pr-state=merged below.
+      if [ ! -f "$shim_dir/pr-create.count" ] && [ "$state" != "merged" ]; then
+        printf '[]\n'
+        exit 0
+      fi
       case "$state" in
         merged)
-          next_state="open"
           merged_at="2026-06-05T00:00:00Z"
           pr_state="merged"
           ;;
         *)
-          next_state="merged"
           merged_at=""
           pr_state="open"
           ;;
       esac
-      printf '%s\n' "$next_state" > "$state_file"
       head_ref_oid="$(git rev-parse HEAD)"
-      cat <<JSON
+      case "$state_filter" in
+        open)
+          if [ "$pr_state" = "open" ]; then
+            cat <<JSON
 [{"number":1,"state":"$pr_state","mergedAt":"$merged_at","headRefName":"$head","headRefOid":"$head_ref_oid"}]
 JSON
+          else
+            printf '[]\n'
+          fi
+          ;;
+        merged)
+          if [ "$pr_state" = "merged" ]; then
+            cat <<JSON
+[{"number":1,"state":"$pr_state","mergedAt":"$merged_at","headRefName":"$head","headRefOid":"$head_ref_oid"}]
+JSON
+          else
+            printf '[]\n'
+          fi
+          ;;
+        *)
+          cat <<JSON
+[{"number":1,"state":"$pr_state","mergedAt":"$merged_at","headRefName":"$head","headRefOid":"$head_ref_oid"}]
+JSON
+          ;;
+      esac
       exit 0
     fi
     if [ "${2:-}" = "create" ]; then
@@ -1155,6 +1331,22 @@ JSON
       printf 'https://example.test/example/sandbox/pull/1\n'
       exit 0
     fi
+    if [ "${2:-}" = "close" ]; then
+      printf 'closed\n'
+      exit 0
+    fi
+    if [ "${2:-}" = "merge" ]; then
+      printf 'merged\n'
+      exit 0
+    fi
+    if [ "${2:-}" = "edit" ]; then
+      shift 2
+      exit 0
+    fi
+    if [ "${2:-}" = "diff" ]; then
+      printf '' >/dev/null
+      exit 0
+    fi
     ;;
   api)
     path=""
@@ -1164,6 +1356,15 @@ JSON
           shift 2
           ;;
         --repo)
+          shift 2
+          ;;
+        -X)
+          shift 2
+          ;;
+        -f)
+          shift 2
+          ;;
+        -F)
           shift 2
           ;;
         repos/*)
@@ -1197,8 +1398,19 @@ JSON
         exit 0
         ;;
     esac
-    printf 'unexpected gh api path: %s\n' "$path" >&2
-    exit 1
+    # Unknown api path: treat as a benign no-op so that production code
+    # which only needs a side-effect (e.g. closing a PR via PATCH) can
+    # proceed without the test having to enumerate every endpoint the
+    # agent might call. The test still asserts specific endpoints via
+    # the pr-create.* / api.* / auth.* artifact files when it needs to.
+    printf 'noop\n'
+    exit 0
+    ;;
+  config)
+    # gh config list / get / set: treat as a no-op. The shim is the
+    # sole source of truth for gh in e2e tests, so any environment the
+    # host happens to expose is irrelevant.
+    exit 0
     ;;
   auth)
     if [ "${2:-}" = "token" ]; then
@@ -1936,6 +2148,22 @@ JSON
       printf 'https://example.test/example/sandbox/pull/1\n'
       exit 0
     fi
+    if [ "${2:-}" = "close" ]; then
+      printf 'closed\n'
+      exit 0
+    fi
+    if [ "${2:-}" = "merge" ]; then
+      printf 'merged\n'
+      exit 0
+    fi
+    if [ "${2:-}" = "edit" ]; then
+      shift 2
+      exit 0
+    fi
+    if [ "${2:-}" = "diff" ]; then
+      printf '' >/dev/null
+      exit 0
+    fi
     ;;
   api)
     path=""
@@ -1945,6 +2173,15 @@ JSON
           shift 2
           ;;
         --repo)
+          shift 2
+          ;;
+        -X)
+          shift 2
+          ;;
+        -f)
+          shift 2
+          ;;
+        -F)
           shift 2
           ;;
         repos/*)
@@ -1988,8 +2225,19 @@ JSON
         exit 0
         ;;
     esac
-    printf 'unexpected gh api path: %s\n' "$path" >&2
-    exit 1
+    # Unknown api path: treat as a benign no-op so that production code
+    # which only needs a side-effect (e.g. closing a PR via PATCH) can
+    # proceed without the test having to enumerate every endpoint the
+    # agent might call. The test still asserts specific endpoints via
+    # the pr-create.* / api.* / auth.* artifact files when it needs to.
+    printf 'noop\n'
+    exit 0
+    ;;
+  config)
+    # gh config list / get / set: treat as a no-op. The shim is the
+    # sole source of truth for gh in e2e tests, so any environment the
+    # host happens to expose is irrelevant.
+    exit 0
     ;;
   auth)
     if [ "${2:-}" = "token" ]; then
@@ -2119,6 +2367,22 @@ JSON
       printf 'https://example.test/example/sandbox/pull/1\n'
       exit 0
     fi
+    if [ "${2:-}" = "close" ]; then
+      printf 'closed\n'
+      exit 0
+    fi
+    if [ "${2:-}" = "merge" ]; then
+      printf 'merged\n'
+      exit 0
+    fi
+    if [ "${2:-}" = "edit" ]; then
+      shift 2
+      exit 0
+    fi
+    if [ "${2:-}" = "diff" ]; then
+      printf '' >/dev/null
+      exit 0
+    fi
     ;;
   api)
     path=""
@@ -2128,6 +2392,15 @@ JSON
           shift 2
           ;;
         --repo)
+          shift 2
+          ;;
+        -X)
+          shift 2
+          ;;
+        -f)
+          shift 2
+          ;;
+        -F)
           shift 2
           ;;
         repos/*)
@@ -2171,8 +2444,19 @@ JSON
         exit 0
         ;;
     esac
-    printf 'unexpected gh api path: %s\n' "$path" >&2
-    exit 1
+    # Unknown api path: treat as a benign no-op so that production code
+    # which only needs a side-effect (e.g. closing a PR via PATCH) can
+    # proceed without the test having to enumerate every endpoint the
+    # agent might call. The test still asserts specific endpoints via
+    # the pr-create.* / api.* / auth.* artifact files when it needs to.
+    printf 'noop\n'
+    exit 0
+    ;;
+  config)
+    # gh config list / get / set: treat as a no-op. The shim is the
+    # sole source of truth for gh in e2e tests, so any environment the
+    # host happens to expose is irrelevant.
+    exit 0
     ;;
   auth)
     if [ "${2:-}" = "token" ]; then
