@@ -229,10 +229,12 @@ func BundledPythonVersion(selector string) string {
 }
 
 func DefaultPythonLTSVersion() string {
-	latest := bundledPythonVersionCatalog["latest"]
-	if latest == "" {
+	cmd := exec.Command("mise", "latest", "python")
+	out, err := cmd.Output()
+	if err != nil {
 		return ""
 	}
+	latest := strings.TrimSpace(string(out))
 	parts := strings.Split(latest, ".")
 	if len(parts) < 2 {
 		return ""
@@ -247,7 +249,12 @@ func DefaultPythonLTSVersion() string {
 		return ""
 	}
 	ltsSelector := fmt.Sprintf("%s.%d", major, minor)
-	return bundledPythonVersionCatalog[ltsSelector]
+	cmd = exec.Command("mise", "latest", "python@"+ltsSelector)
+	out, err = cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
 }
 
 var bundledDotnetVersionCatalog = map[string]string{
