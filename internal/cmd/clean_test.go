@@ -401,6 +401,9 @@ func TestClean_All_DryRun_PrintsAllPasses(t *testing.T) {
 	if !strings.Contains(out, "batch-archived") {
 		t.Errorf("expected batch-archived mentioned in dry-run report, got: %s", out)
 	}
+	if !strings.Contains(out, "temp director") {
+		t.Errorf("expected temp sweep section in dry-run report, got: %s", out)
+	}
 
 	if fakeTC.removeTempDirCalled {
 		t.Errorf("expected RemoveTempDir NOT to be called in dry-run mode")
