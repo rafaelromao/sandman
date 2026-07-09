@@ -875,3 +875,126 @@ func TestRecoverStaleRuns_EmitsNonZeroTimestamp(t *testing.T) {
 		t.Errorf("recovered run.aborted timestamp %v not within recovery window [%v, %v]", e.Timestamp, before, after)
 	}
 }
+
+// TestRecoverStaleRuns_DoesNotRecoverRunFromDifferentBatch reproduces the
+// 2026-07-09 incident: a dead previous batch and a live current batch
+// share an issue number. The current run's run.started/run.continued
+// carries batch_id pointing at the live batch. The dead batch's
+// recovery sweep must NOT emit run.aborted for the live run. Without
+// batch-identity scoping in the recovery loop (runfs.go:378), the
+// dead batch's byIssue[2062] walk pulls in the live run from a
+// different batch and falsely recovers it, locking the portal's
+// event-log fold on a run the live orchestrator is currently driving.
+func TestRecoverStaleRuns_DoesNotRecoverRunFromDifferentBatch(t *testing.T) {
+	baseDir := testenv.MkdirShort(t, "recover-")
+	deadCreatedAt := time.Date(2026, 7, 9, 11, 58, 49, 0, time.FixedZone("BRT", -3*3600))
+	liveCreatedAt := time.Date(2026, 7, 9, 16, 5, 2, 0, time.FixedZone("BRT", -3*3600))
+
+	deadRunID := "260709115849-c76d-2062"
+	liveRunID := "260709160502-82d5-2062"
+	liveBatchID := "260709160502-82d5-2062+2"
+	deadBatchName := "260709115849-c76d-2058+4"
+
+	deadRunDir := filepath.Join(baseDir, "batches", deadBatchName)
+	writeManifestFile(t, deadRunDir, BatchManifest{
+		Issues:    []int{2058, 2061, 2062, 2063, 2066},
+		CreatedAt: deadCreatedAt,
+		BatchId:   deadBatchName,
+	})
+
+	// The live batch directory must exist, carry a manifest with
+	// the issue, and be live (control socket binding), mirroring the
+	// real incident where the current batch's daemon was already
+	// running while the previous batch's recovery sweep ran. This
+	// isolates the test to the cross-batch contamination in the main
+	// dead-batch loop: the orphan sweep (recoverOrphanActiveRuns)
+	// identifies a live covering batch via manifest+IsRunActive, so
+	// with the live dir in place, the only path that can recover the
+	// live run is the main dead-batch loop — which is where the fix
+	// belongs.
+	liveRunDir := filepath.Join(baseDir, "batches", liveBatchID)
+	writeManifestFile(t, liveRunDir, BatchManifest{
+		Issues:    []int{2062, 2063, 2066},
+		CreatedAt: liveCreatedAt,
+		BatchId:   liveBatchID,
+	})
+	ctlSocket := NewControlSocket(liveRunDir, NewBroadcaster())
+	if err := ctlSocket.Start(); err != nil {
+		t.Fatalf("start live control socket: %v", err)
+	}
+	defer ctlSocket.Stop()
+
+	eventLog := &recordingEventLog{}
+	deadStarted := deadCreatedAt.Add(2 * time.Minute)
+	deadFinished := deadCreatedAt.Add(3*time.Hour + 12*time.Minute + 40*time.Second)
+	liveContinued := liveCreatedAt.Add(4 * time.Second)
+
+	existing := []events.Event{
+		// Dead batch's own run for issue 2062 — already terminal,
+		// so the recovery loop skips it (not an active candidate).
+		{Type: "run.started", RunID: deadRunID, Issue: 2062, Timestamp: deadStarted,
+			Payload: map[string]any{"batch_id": deadBatchName}},
+		{Type: "run.finished", RunID: deadRunID, Issue: 2062,
+			Timestamp: deadFinished, Payload: map[string]any{
+				"batch_id": deadBatchName,
+				"status":   "success",
+			}},
+		// Live current run for issue 2062, owned by a different
+		// batch. The payload batch_id is the on-disk live batch
+		// directory basename (with +N suffix), NOT the dead batch.
+		// Recovery must recognize this and refuse to recover it
+		// while sweeping the dead batch.
+		{Type: "run.continued", RunID: liveRunID, Issue: 2062, Timestamp: liveContinued,
+			Payload: map[string]any{
+				"batch_id":        liveBatchID,
+				"previous_run_id": deadRunID,
+			}},
+	}
+
+	recovered, dirs, err := RecoverStaleRuns(baseDir, existing, eventLog)
+	if err != nil {
+		t.Fatalf("RecoverStaleRuns: %v", err)
+	}
+	if recovered != 0 {
+		t.Errorf("expected 0 recovered (live run's batch_id mismatches dead batch), got %d", recovered)
+	}
+	if dirs != 1 {
+		t.Errorf("expected 1 dead dir, got %d", dirs)
+	}
+	for _, e := range eventLog.logged {
+		if e.RunID == liveRunID {
+			t.Errorf("recovery falsely emitted run.aborted for live run %q (owned by batch %q, not dead batch %q); the live RunID must not appear in recovered events",
+				liveRunID, liveBatchID, deadBatchName)
+		}
+	}
+
+	// Issue #2083 AC3: with no false run.aborted written for the live
+	// run, the portal's event-log fold must still see it as active so
+	// the rendered row keeps kind=active, status=running. Project the
+	// post-recovery event log and assert the RunState for the live
+	// RunID is still active. The portal suite exercises the
+	// active→portal projection independently; here we only need to
+	// confirm the fold itself is not poisoned by a spurious terminal
+	// event. (RecoverStaleRuns returned a deduplicated count of 0, so
+	// the recorded events list is what the portal would observe.)
+	finalEvents := append([]events.Event(nil), existing...)
+	for _, e := range eventLog.logged {
+		finalEvents = append(finalEvents, e)
+	}
+	finalRuns := events.ProjectRunStates(finalEvents)
+	var liveState *events.RunState
+	for i := range finalRuns {
+		if finalRuns[i].RunID == liveRunID {
+			s := finalRuns[i]
+			liveState = &s
+			break
+		}
+	}
+	if liveState == nil {
+		t.Fatalf("post-recovery fold has no RunState for live run %q; expected it to remain active and un-poisoned", liveRunID)
+	}
+	if !liveState.IsActive() {
+		t.Errorf("post-recovery fold rendered live run %q as inactive (%s); the portal would then show kind=completed, status=aborted and a recovered-only run would be mis-classified",
+			liveRunID, liveState.Status())
+	}
+}

@@ -384,6 +384,25 @@ func RecoverStaleRuns(baseDir string, eventsList []events.Event, log events.Even
 				if !run.IsActive() && run.Status() != "queued" && run.Status() != "blocked" {
 					continue
 				}
+				// Batch-identity guard: when the candidate run was
+				// started/continued under a known batch_id (the
+				// on-disk batch directory basename stamped by the
+				// orchestrator on run.started/run.continued), only
+				// recover it for the dead batch it actually belongs
+				// to. Without this check the byIssue walk above
+				// pulls in runs from unrelated live batches that
+				// happen to share an issue number, falsely emits
+				// run.aborted recovered:true for them, and locks
+				// the portal's event-log fold on a run the next
+				// orchestrator is about to (or is already)
+				// resuming — issue #2083. Legacy runs without
+				// batch_id fall through to the CreatedAt /
+				// latestTerminal heuristics below; that path is
+				// exercised by every existing fixture in
+				// recover_stale_test.go.
+				if bid := run.BatchID(); bid != "" && bid != filepath.Base(batch.RunDir) {
+					continue
+				}
 				if !batch.Manifest.CreatedAt.IsZero() && run.Started.Timestamp.Before(batch.Manifest.CreatedAt) {
 					continue
 				}
