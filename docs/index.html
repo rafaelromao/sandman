@@ -350,6 +350,61 @@
         .brand img.mark { width: 30px; height: 30px; }
         .brand strong { font-size: 16px; letter-spacing: 0.14em; }
         .slogan { font-size: 12px; letter-spacing: 0.06em; white-space: nowrap; }
+        .methods-table {
+          display: block;
+          border: 0;
+          border-radius: 0;
+          overflow: visible;
+        }
+        .methods-table thead {
+          position: absolute;
+          width: 1px;
+          height: 1px;
+          padding: 0;
+          margin: -1px;
+          overflow: hidden;
+          clip: rect(0 0 0 0);
+          white-space: nowrap;
+          border: 0;
+        }
+        .methods-table tbody {
+          display: grid;
+          gap: 12px;
+        }
+        .methods-table tr {
+          display: block;
+          width: 100%;
+          border: 1px solid var(--line);
+          border-radius: 18px;
+          overflow: hidden;
+          background: var(--paper);
+        }
+        .methods-table td {
+          display: block;
+          width: 100% !important;
+          padding: 13px 14px;
+          border-right: 0;
+          border-bottom: 1px solid var(--line);
+          overflow-wrap: anywhere;
+        }
+        .methods-table td:last-child { border-bottom: 0; }
+        .methods-table td::before {
+          content: attr(data-label);
+          display: block;
+          margin-bottom: 5px;
+          color: var(--gold-strong);
+          font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+          font-size: 11px;
+          font-weight: 900;
+          letter-spacing: 0.08em;
+          text-transform: uppercase;
+        }
+        .methods-table .skill-chain { max-width: 100%; }
+        .methods-table .skill-chain span {
+          min-width: 0;
+          white-space: normal;
+          overflow-wrap: anywhere;
+        }
       }
     </style>
   </head>
@@ -490,10 +545,10 @@
           <h2>Sandman owns the delivery loop.</h2>
           <p class="lead">Use the upstream method that produces the clearest issues. Sandman should lead the story because it owns the autonomous path from selected issue to reviewed, merged PR.</p>
           <table class="methods-table">
-            <thead><tr><th>Layer</th><th>Precise role</th><th>Relationship to Sandman</th></tr></thead>
+            <thead><tr><th scope="col">Layer</th><th scope="col">Precise role</th><th scope="col">Relationship to Sandman</th></tr></thead>
             <tbody>
-              <tr><td>Matt Pocock workflow</td><td><span class="skill-chain"><span>grill-with-docs</span><span>/</span><span>wayfinder</span><span>-&gt;</span><span>to-spec</span><span>-&gt;</span><span>to-tickets</span><span>-&gt;</span><span>Sandman</span><span>-&gt;</span><span>Validation.</span><span>Plus diagnosing-bugs, improve-codebase-architecture and others.</span></span></td><td>Use the skills to resolve uncertainty, publish the spec, and slice GitHub tickets. Sandman runs the ready ticket frontier AFK.</td></tr>
-              <tr><td>Spec-Driven Development</td><td>Executable specifications become the source of truth that tasks are derived from, for example GitHub Spec Kit or Kiro specs.</td><td>Optional upstream source of agent-ready issues. Sandman does not need to own the spec layer.</td></tr>
+              <tr><td data-label="Layer">Matt Pocock workflow</td><td data-label="Precise role"><span class="skill-chain"><span>grill-with-docs</span><span>/</span><span>wayfinder</span><span>-&gt;</span><span>to-spec</span><span>-&gt;</span><span>to-tickets</span><span>-&gt;</span><span>Sandman</span><span>-&gt;</span><span>Validation.</span><span>Plus diagnosing-bugs, improve-codebase-architecture and others.</span></span></td><td data-label="Relationship to Sandman">Use the skills to resolve uncertainty, publish the spec, and slice GitHub tickets. Sandman runs the ready ticket frontier AFK.</td></tr>
+              <tr><td data-label="Layer">Spec-Driven Development</td><td data-label="Precise role">Executable specifications become the source of truth that tasks are derived from, for example GitHub Spec Kit or Kiro specs.</td><td data-label="Relationship to Sandman">Optional upstream source of agent-ready issues. Sandman does not need to own the spec layer.</td></tr>
             </tbody>
           </table>
           <p class="lead wide handoff-line">The handoff stays stable regardless of method: <code>Specification -&gt; Sandman -&gt; Validation.</code></p>
