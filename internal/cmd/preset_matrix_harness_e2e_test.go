@@ -221,36 +221,68 @@ func runE2EScaffoldWithGoMod(t *testing.T, preset, dockerfileAppend string) (str
 	return binPath, repoDir
 }
 
+// TestPresetMatrixHarness_NodeScaffolds pins the scaffold-only
+// slice of the node harness: running `sandman init --build-tools
+// node --tool-version lts` through the real binary produces
+// `.sandman/{config.yaml,Dockerfile}` in the test repo and the
+// Dockerfile contains the pinned node version from the catalog.
+func TestPresetMatrixHarness_NodeScaffolds(t *testing.T) {
+	containerRuntimeAvailable(t)
+
+	binPath := buildSandmanBinary(t)
+
+	repoDir := t.TempDir()
+	t.Chdir(repoDir)
+	initRunIntegrationRepo(t, repoDir)
+
+	out, err := runSandmanBinary(t, binPath, repoDir, "init", "--build-tools", "node", "--tool-version", "lts")
+	if err != nil {
+		t.Fatalf("sandman init --build-tools node --tool-version lts failed: %v\noutput:\n%s", err, out)
+	}
+	for _, rel := range []string{".sandman/config.yaml", ".sandman/Dockerfile", ".sandman/prompt.md"} {
+		if _, err := os.Stat(filepath.Join(repoDir, rel)); err != nil {
+			t.Fatalf("expected scaffolded %s: %v", rel, err)
+		}
+	}
+
+	dockerfile, err := os.ReadFile(filepath.Join(repoDir, ".sandman", "Dockerfile"))
+	if err != nil {
+		t.Fatalf("read Dockerfile: %v", err)
+	}
+	wantVersion := scaffold.DefaultNodeLTSVersion()
+	if wantVersion == "" {
+		t.Fatalf("DefaultNodeLTSVersion() returned empty; catalog may have drifted")
+	}
+	want := "# sandman node-version: " + wantVersion
+	if !strings.Contains(string(dockerfile), want) {
+		t.Fatalf("scaffolded Dockerfile missing %q (the toolchain-version-from-catalog AC):\n%s", want, dockerfile)
+	}
+}
+
 // TestPresetMatrixHarness_NodeRunProducesFakeArtifact pins the
-// end-to-end `node` CLI-options path: scaffold with `--build-tools
-// node --tool-version lts` → run fake task → assert marker in run
-// log + run.started/finished events + node version pinned in
-// Dockerfile matches catalog lts pin.
-//
-// This reuses the generic harness via runE2EScaffoldNode, which
-// calls init with --tool-version lts so the scaffolder resolves the
-// version through the catalog.
+// end-to-end `node` CLI-options path: scaffold with node+lts,
+// fake opencode shim installed → podman build → sandman run 1
+// → per-issue run log carries the canonical fake-task marker,
+// and the events log has exactly one run.started and one
+// run.finished for the fake issue.
 func TestPresetMatrixHarness_NodeRunProducesFakeArtifact(t *testing.T) {
 	binPath, repoDir := runE2EScaffoldNode(t, "node", "")
 	runE2ERun(t, binPath, repoDir)
 	assertFakeTaskMarkerInRunLog(t, repoDir, 1)
 	assertRunStartedAndFinished(t, repoDir, 1)
-	assertNodeVersionInDockerfile(t, repoDir)
 }
 
 // TestPresetMatrixHarness_NodeRunWithEditedDockerfile pins the
 // end-to-end `node` edited-Dockerfile path: scaffold with
-// `--build-tools node --tool-version lts` → append a RUN line to
-// Dockerfile → run fake task → assert marker + events + version pin.
-//
-// This follows the same pattern as the generic edited-Dockerfile
-// variant but uses the node preset and validates the node version.
+// node+lts, append a RUN line to the Dockerfile, fake opencode
+// shim installed → podman build → sandman run 1 → per-issue run
+// log carries the canonical fake-task marker and the events log
+// has the expected events.
 func TestPresetMatrixHarness_NodeRunWithEditedDockerfile(t *testing.T) {
 	binPath, repoDir := runE2EScaffoldNode(t, "node", "RUN touch /etc/sandman-preset-matrix-node-edited")
 	runE2ERun(t, binPath, repoDir)
 	assertFakeTaskMarkerInRunLog(t, repoDir, 1)
 	assertRunStartedAndFinished(t, repoDir, 1)
-	assertNodeVersionInDockerfile(t, repoDir)
 }
 
 // runE2EScaffoldNode scaffolds a repo for the node preset with
@@ -271,24 +303,6 @@ func runE2EScaffoldNode(t *testing.T, preset, dockerfileAppend string) (string, 
 		appendDockerfileRun(t, repoDir, dockerfileAppend)
 	}
 	return binPath, repoDir
-}
-
-// assertNodeVersionInDockerfile asserts the scaffolded Dockerfile's
-// node-version header matches the bundled catalog lts pin, proving
-// the version was resolved through the scaffold resolver (not a
-// literal in the test). Uses scaffold.DefaultNodeLTSVersion() to
-// avoid hardcoding the version.
-func assertNodeVersionInDockerfile(t *testing.T, repoDir string) {
-	t.Helper()
-	dockerfilePath := filepath.Join(repoDir, ".sandman", "Dockerfile")
-	dockerfile, err := os.ReadFile(dockerfilePath)
-	if err != nil {
-		t.Fatalf("read Dockerfile: %v", err)
-	}
-	want := "# sandman node-version: " + scaffold.DefaultNodeLTSVersion()
-	if !strings.Contains(string(dockerfile), want) {
-		t.Fatalf("scaffolded Dockerfile missing node-version %q:\n%s", want, dockerfile)
-	}
 }
 
 // presetMatrixHarnessFakeTaskMarker is the canonical fake-task
@@ -683,24 +697,6 @@ end
 	return binPath, repoDir
 }
 
-// assertElixirVersionInDockerfile asserts the scaffolded Dockerfile's
-// elixir-version header matches the bundled catalog lts pin, proving
-// the version was resolved through the scaffold resolver (not a
-// literal in the test). Uses scaffold.BundledElixirVersion("lts") to
-// avoid hardcoding the version.
-func assertElixirVersionInDockerfile(t *testing.T, repoDir string) {
-	t.Helper()
-	dockerfilePath := filepath.Join(repoDir, ".sandman", "Dockerfile")
-	dockerfile, err := os.ReadFile(dockerfilePath)
-	if err != nil {
-		t.Fatalf("read Dockerfile: %v", err)
-	}
-	want := "# sandman elixir-version: " + scaffold.BundledElixirVersion("lts")
-	if !strings.Contains(string(dockerfile), want) {
-		t.Fatalf("scaffolded Dockerfile missing elixir-version %q:\n%s", want, dockerfile)
-	}
-}
-
 // TestPresetMatrixHarness_ElixirScaffolds pins the scaffold-only
 // slice of the elixir harness: running `sandman init --build-tools
 // elixir --tool-version lts` through the real binary produces
@@ -829,7 +825,6 @@ func TestPresetMatrixHarness_RustRunProducesFakeArtifact(t *testing.T) {
 	runE2ERun(t, binPath, repoDir)
 	assertFakeTaskMarkerInRunLog(t, repoDir, 1)
 	assertRunStartedAndFinished(t, repoDir, 1)
-	assertRustVersionInDockerfile(t, repoDir)
 }
 
 // TestPresetMatrixHarness_RustRunWithEditedDockerfile pins the
@@ -843,7 +838,6 @@ func TestPresetMatrixHarness_RustRunWithEditedDockerfile(t *testing.T) {
 	runE2ERun(t, binPath, repoDir)
 	assertFakeTaskMarkerInRunLog(t, repoDir, 1)
 	assertRunStartedAndFinished(t, repoDir, 1)
-	assertRustVersionInDockerfile(t, repoDir)
 }
 
 // runE2EScaffoldRust scaffolds a repo for the rust preset with
@@ -867,24 +861,6 @@ func runE2EScaffoldRust(t *testing.T, preset, dockerfileAppend string) (string, 
 		appendDockerfileRun(t, repoDir, dockerfileAppend)
 	}
 	return binPath, repoDir
-}
-
-// assertRustVersionInDockerfile asserts the scaffolded Dockerfile's
-// rust-version header matches the bundled catalog lts pin, proving
-// the version was resolved through the scaffold resolver (not a
-// literal in the test). Uses scaffold.BundledRustVersion("lts") to
-// avoid hardcoding the version.
-func assertRustVersionInDockerfile(t *testing.T, repoDir string) {
-	t.Helper()
-	dockerfilePath := filepath.Join(repoDir, ".sandman", "Dockerfile")
-	dockerfile, err := os.ReadFile(dockerfilePath)
-	if err != nil {
-		t.Fatalf("read Dockerfile: %v", err)
-	}
-	want := "# sandman rust-version: " + scaffold.BundledRustVersion("lts")
-	if !strings.Contains(string(dockerfile), want) {
-		t.Fatalf("scaffolded Dockerfile missing rust-version %q:\n%s", want, dockerfile)
-	}
 }
 
 // TestPresetMatrixHarness_JavaScaffolds pins the scaffold-only
@@ -940,7 +916,6 @@ func TestPresetMatrixHarness_JavaRunProducesFakeArtifact(t *testing.T) {
 	runE2ERun(t, binPath, repoDir)
 	assertFakeTaskMarkerInRunLog(t, repoDir, 1)
 	assertRunStartedAndFinished(t, repoDir, 1)
-	assertJavaVersionInDockerfile(t, repoDir)
 }
 
 // TestPresetMatrixHarness_JavaRunWithEditedDockerfile pins the
@@ -954,7 +929,6 @@ func TestPresetMatrixHarness_JavaRunWithEditedDockerfile(t *testing.T) {
 	runE2ERun(t, binPath, repoDir)
 	assertFakeTaskMarkerInRunLog(t, repoDir, 1)
 	assertRunStartedAndFinished(t, repoDir, 1)
-	assertJavaVersionInDockerfile(t, repoDir)
 }
 
 // runE2EScaffoldJava scaffolds a repo for the java preset with
@@ -978,24 +952,6 @@ func runE2EScaffoldJava(t *testing.T, preset, dockerfileAppend string) (string, 
 		appendDockerfileRun(t, repoDir, dockerfileAppend)
 	}
 	return binPath, repoDir
-}
-
-// assertJavaVersionInDockerfile asserts the scaffolded Dockerfile's
-// java-version header matches the bundled catalog lts pin, proving
-// the version was resolved through the scaffold resolver (not a
-// literal in the test). Uses scaffold.BundledJavaVersion("lts") to
-// avoid hardcoding the version.
-func assertJavaVersionInDockerfile(t *testing.T, repoDir string) {
-	t.Helper()
-	dockerfilePath := filepath.Join(repoDir, ".sandman", "Dockerfile")
-	dockerfile, err := os.ReadFile(dockerfilePath)
-	if err != nil {
-		t.Fatalf("read Dockerfile: %v", err)
-	}
-	want := "# sandman java-version: " + scaffold.BundledJavaVersion("lts")
-	if !strings.Contains(string(dockerfile), want) {
-		t.Fatalf("scaffolded Dockerfile missing java-version %q:\n%s", want, dockerfile)
-	}
 }
 
 // TestPresetMatrixHarness_RubyScaffolds pins the scaffold-only slice
@@ -1051,7 +1007,6 @@ func TestPresetMatrixHarness_RubyRunProducesFakeArtifact(t *testing.T) {
 	runE2ERun(t, binPath, repoDir)
 	assertFakeTaskMarkerInRunLog(t, repoDir, 1)
 	assertRunStartedAndFinished(t, repoDir, 1)
-	assertRubyVersionInDockerfile(t, repoDir)
 }
 
 // TestPresetMatrixHarness_RubyRunWithEditedDockerfile pins the
@@ -1065,7 +1020,6 @@ func TestPresetMatrixHarness_RubyRunWithEditedDockerfile(t *testing.T) {
 	runE2ERun(t, binPath, repoDir)
 	assertFakeTaskMarkerInRunLog(t, repoDir, 1)
 	assertRunStartedAndFinished(t, repoDir, 1)
-	assertRubyVersionInDockerfile(t, repoDir)
 }
 
 // runE2EScaffoldRuby scaffolds a repo for the ruby preset with
@@ -1089,24 +1043,6 @@ func runE2EScaffoldRuby(t *testing.T, preset, dockerfileAppend string) (string, 
 		appendDockerfileRun(t, repoDir, dockerfileAppend)
 	}
 	return binPath, repoDir
-}
-
-// assertRubyVersionInDockerfile asserts the scaffolded Dockerfile's
-// ruby-version header matches the bundled catalog lts pin, proving
-// the version was resolved through the scaffold resolver (not a
-// literal in the test). Uses scaffold.BundledRubyVersion("lts") to
-// avoid hardcoding the version.
-func assertRubyVersionInDockerfile(t *testing.T, repoDir string) {
-	t.Helper()
-	dockerfilePath := filepath.Join(repoDir, ".sandman", "Dockerfile")
-	dockerfile, err := os.ReadFile(dockerfilePath)
-	if err != nil {
-		t.Fatalf("read Dockerfile: %v", err)
-	}
-	want := "# sandman ruby-version: " + scaffold.BundledRubyVersion("lts")
-	if !strings.Contains(string(dockerfile), want) {
-		t.Fatalf("scaffolded Dockerfile missing ruby-version %q:\n%s", want, dockerfile)
-	}
 }
 
 // TestPresetMatrixHarness_PythonScaffolds pins the scaffold-only
