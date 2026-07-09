@@ -297,7 +297,7 @@
   function filterFiles(files) {
     return files.filter(function (f) {
       var top = f.split("/")[0];
-      return top !== "adr" && top !== "agents" && top !== "landing-prototypes";
+      return top !== "adr" && top !== "landing-prototypes";
     });
   }
 
