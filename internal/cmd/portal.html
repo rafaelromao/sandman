@@ -178,6 +178,23 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
         radial-gradient(circle at 14% -10%, oklch(0.79 0.12 78 / 0.34), transparent 30rem),
         linear-gradient(180deg, var(--page-top) 0%, var(--bg) 56%, var(--page-bottom) 100%);
     }
+    html[data-theme="sandman-light"] .toolbar {
+      background: color-mix(in oklch, var(--surface) 90%, var(--bg));
+    }
+    html[data-theme="sandman-light"] .toolbar .fchip {
+      background: color-mix(in oklch, var(--surface) 90%, var(--bg));
+    }
+    @media (max-width: 760px) {
+      html[data-theme="sandman-light"] .toolbar {
+        background: var(--bg);
+      }
+      html[data-theme="sandman-light"] .toolbar .fchip {
+        background: var(--bg);
+      }
+      html[data-theme="sandman-light"] .poll-health {
+        background: var(--bg);
+      }
+    }
 
     a { color: inherit; }
     code, pre, .mono {
@@ -264,6 +281,7 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
       overflow: hidden;
       text-overflow: ellipsis;
     }
+    .masthead-repo-base { display: none; }
     .masthead-repo code {
       font-family: inherit;
       font-size: inherit;
@@ -1544,6 +1562,8 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
         padding: 10px 12px 12px;
         gap: 8px;
       }
+      .masthead-repo-full { display: none; }
+      .masthead-repo-base { display: inline; }
       .masthead-brand svg {
         width: 16px;
         height: 16px;
@@ -1623,7 +1643,8 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
           </div>
         </div>
         <span class="masthead-divider" aria-hidden="true"></span>
-        <code class="masthead-repo">{{.RepoRoot}}</code>
+        <code class="masthead-repo masthead-repo-full">{{.RepoRoot}}</code>
+        <code class="masthead-repo masthead-repo-base">{{baseDir .RepoRoot}}</code>
       </div>
       <div class="topbar-right">
         <span class="poll-health" id="poll-health" title="Portal poll health" role="status" aria-live="polite">

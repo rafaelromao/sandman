@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"html/template"
+	"path/filepath"
+	"strings"
 )
 
 //go:embed portal.html portal_themes.json portal_state.js portal_scroll.js portal_diff.js
@@ -23,8 +25,21 @@ var (
 	portalStateJS             template.JS
 	portalScrollJS            template.JS
 	portalDiffJS              template.JS
-	portalPageTemplate        = template.Must(template.New("portal.html").ParseFS(portalAssets, "portal.html"))
+	portalPageTemplate        = template.Must(template.New("portal.html").Funcs(template.FuncMap{
+		"baseDir": baseDir,
+	}).ParseFS(portalAssets, "portal.html"))
 )
+
+func baseDir(path string) string {
+	if path == "" {
+		return ""
+	}
+	cleaned := filepath.ToSlash(path)
+	if idx := strings.LastIndex(cleaned, "/"); idx >= 0 {
+		return cleaned[idx:]
+	}
+	return cleaned
+}
 
 func init() {
 	data, err := portalAssets.ReadFile("portal_themes.json")
