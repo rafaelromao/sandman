@@ -14,10 +14,10 @@ CLI tool for orchestrating AFK coding agents in isolated sandboxes.
 # 1. Initialize a project
 cd my-repo && sandman init
 
-# 2. Run the review daemon
+# 2. Run the review daemon (optional)
 sandman review
 
-# 3. Open the browser portal
+# 3. Open the browser portal (optional)
 sandman portal
 
 # 4. Implement your GitHub issues AFK
