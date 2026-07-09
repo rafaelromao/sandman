@@ -27,7 +27,7 @@ You need to follow all steps in this workflow. Make sure you have gone through a
 
 2. **You must commit at meaningful milestones, not only at the very end.** Within a single vertical slice, accumulate the slice's RED→GREEN cycles as uncommitted work — committing after every test produces noisy, undebuggable history. The slice ends with a single commit once the slice is fully green. Across slices, commit one commit per vertical slice. Commit before any step where you might be interrupted — before delegating review, before requesting review, before any action that hands control to another agent. Uncommitted work in the working tree is at risk: if the run is interrupted, retried, or reset, anything that has not been committed is lost. Commits are your durable checkpoint.
 
-3. **You must reach the PR-created state in every run, even with partial implementation.** Only a merged PR counts as success; an open PR is the durable artifact that lets the next run pick up where this one left off. If you cannot complete all vertical slices in the plan within the run's context window, that is not a reason to keep iterating on TDD — it is a reason to commit what you have, create the PR with `Fixes #<issue_number>`, and let the review loop surface the gaps. An open PR with partial implementation is recoverable: the next run continues from the same branch. No PR at all means the work lives only in the local working tree, and the next run starts over from a clean branch.
+3. **You must reach the PR-created state in every run, even with partial implementation.** Only a merged PR counts as success; an open PR is the durable artifact that lets the next run pick up where this one left off. If you cannot complete all vertical slices in the plan within the run's context window, that is not a reason to keep iterating on TDD — it is a reason to commit what you have, create the PR with `Closes #<issue_number>`, and let the review loop surface the gaps. An open PR with partial implementation is recoverable: the next run continues from the same branch. No PR at all means the work lives only in the local working tree, and the next run starts over from a clean branch.
 
 4. **You must use `codeindex` before `grep` or `glob` when looking for symbols, blast radius, dependencies, or other broad code locations.** Load the `sandman-index` sub-skill first — it encapsulates all codeindex guidance including the hard rule, command reference, query refinement strategies, and read discipline.
 
@@ -130,7 +130,7 @@ git commit -m "refactor: self-review fixes"
 
 ```bash
 git push -u origin <branch>
-gh pr create --title "<issue title>" --body "Fixes #<issue_number>"
+gh pr create --title "<issue title>" --body "Closes #<issue_number>"
 ```
 
 Before running the platform's "create change request" CLI, set `body` to exactly the closing-reference string (the one that links the change request back to the implementor's open work item so the tracker auto-closes it on merge).
