@@ -68,7 +68,6 @@ Other:
 - [Architecture Overview](docs/architecture/overview.md) and [Disk Layout](docs/architecture/disk-layout.md)
 - [Positioning](docs/help/positioning.md) — what Sandman is and isn't, in plain language
 - [Development docs](docs/development/README.md) — contributor setup, project structure, architecture guidance, testing, and docs/skill guidance
-- The browser-rendered docs portal at [`docs/documentation.html`](docs/documentation.html) wraps these guides with a sidebar.
 
 ## Development
 
