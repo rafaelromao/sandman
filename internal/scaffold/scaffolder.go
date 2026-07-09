@@ -272,6 +272,13 @@ func BundledDotnetVersion(selector string) string {
 	return ""
 }
 
+func BundledRustVersion(selector string) string {
+	if v, ok := bundledRustVersionCatalog[strings.ToLower(selector)]; ok {
+		return v
+	}
+	return ""
+}
+
 var bundledElixirVersionCatalog = map[string]string{
 	"latest": "1.20.2-otp-29",
 	"lts":    "1.18.4-otp-28",
