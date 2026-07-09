@@ -198,6 +198,10 @@ var bundledGoVersionCatalog = map[string]string{
 	"prefix:1.20": "1.20.14",
 }
 
+func BundledGoVersionLatest() string {
+	return bundledGoVersionCatalog["latest"]
+}
+
 var bundledNodeVersionCatalog = map[string]string{
 	"latest": "24.2.0",
 	"lts":    "22.16.0",
