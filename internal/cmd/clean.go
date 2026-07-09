@@ -100,15 +100,19 @@ func NewCleanCmd(deps Dependencies) *cobra.Command {
 		Short: "Clean up sandbox resources, stale worktrees, and temp files",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			archived, _ := cmd.Flags().GetBool("archived")
+			all, _ := cmd.Flags().GetBool("all")
 			dryRun, _ := cmd.Flags().GetBool("dry-run")
 			stale, _ := cmd.Flags().GetBool("stale")
 			orphaned, _ := cmd.Flags().GetBool("orphaned")
 
-			if stale && (archived || dryRun || orphaned) {
-				return fmt.Errorf("--stale is mutually exclusive with --archived, --dry-run, and --orphaned")
+			if stale && (archived || dryRun || orphaned || all) {
+				return fmt.Errorf("--stale is mutually exclusive with --archived, --all, --dry-run, and --orphaned")
 			}
-			if orphaned && (archived || stale) {
-				return fmt.Errorf("--orphaned is mutually exclusive with --archived and --stale")
+			if orphaned && (archived || stale || all) {
+				return fmt.Errorf("--orphaned is mutually exclusive with --all, --archived, and --stale")
+			}
+			if all && archived {
+				return fmt.Errorf("--all is mutually exclusive with --archived")
 			}
 
 			cfg, err := deps.ConfigStore.Load()
@@ -166,10 +170,8 @@ func NewCleanCmd(deps Dependencies) *cobra.Command {
 				return fmt.Errorf("ensure status: %w", err)
 			}
 
-			var targetStatus batchindex.Status
-			if archived {
-				targetStatus = batchindex.StatusArchived
-			} else {
+			targetStatus := batchindex.StatusArchived
+			if !archived && !all {
 				targetStatus = batchindex.StatusActive
 			}
 
@@ -195,6 +197,7 @@ func NewCleanCmd(deps Dependencies) *cobra.Command {
 		},
 	}
 	cmd.Flags().Bool("archived", false, "Remove archived batches (combined with unavailable)")
+	cmd.Flags().Bool("all", false, "Run every cleanup pass (alias for --archived in this slice)")
 	cmd.Flags().Bool("dry-run", false, "Print intended deletions without performing I/O")
 	cmd.Flags().Bool("stale", false, "Recover stale runs in dead batches by emitting run.aborted events")
 	cmd.Flags().Bool("orphaned", false, "Remove orphaned test batch directories (no matching run.started event and no live daemon socket)")
@@ -227,26 +230,27 @@ func collectCleanActions(idx *batchindex.Index, targetStatus batchindex.Status) 
 func printCleanReport(cmd *cobra.Command, actions []cleanAction, orphanPaths []string, tempDirs []string, images []string, dryRun bool) {
 	out := cmd.OutOrStdout()
 
-	if actions != nil {
-		if len(actions) == 0 {
-			fmt.Fprintln(out, "No batches to clean.")
+	if actions != nil && len(actions) == 0 && len(orphanPaths) == 0 && len(tempDirs) == 0 && len(images) == 0 {
+		fmt.Fprintln(out, "Nothing to remove.")
+		return
+	}
+
+	if len(actions) > 0 {
+		if dryRun {
+			fmt.Fprintf(out, "Would remove %d batch entries:\n", len(actions))
 		} else {
-			if dryRun {
-				fmt.Fprintf(out, "Would remove %d batch entries:\n", len(actions))
-			} else {
-				fmt.Fprintf(out, "Removed %d batch entries.\n", len(actions))
+			fmt.Fprintf(out, "Removed %d batch entries:\n", len(actions))
+		}
+		for _, a := range actions {
+			what := "batch"
+			if a.Kind != "" {
+				what = string(a.Kind)
 			}
-			for _, a := range actions {
-				what := "batch"
-				if a.Kind != "" {
-					what = string(a.Kind)
-				}
-				fmt.Fprintf(out, "  - [%s] %s (path: %s", what, a.BatchID, a.BatchPath)
-				if a.Worktree != "" {
-					fmt.Fprintf(out, ", worktree: %s", a.Worktree)
-				}
-				fmt.Fprintln(out, ")")
+			fmt.Fprintf(out, "  - [%s] %s (path: %s", what, a.BatchID, a.BatchPath)
+			if a.Worktree != "" {
+				fmt.Fprintf(out, ", worktree: %s", a.Worktree)
 			}
+			fmt.Fprintln(out, ")")
 		}
 	}
 
@@ -261,35 +265,26 @@ func printCleanReport(cmd *cobra.Command, actions []cleanAction, orphanPaths []s
 		}
 	}
 
-	if dryRun {
-		if len(tempDirs) == 0 && len(images) == 0 {
-			fmt.Fprintln(out, "No temp files or Sandman-owned images to clean.")
-			return
-		}
-		if len(tempDirs) > 0 {
+	if len(tempDirs) > 0 {
+		if dryRun {
 			fmt.Fprintf(out, "Would remove %d temp director(ies):\n", len(tempDirs))
-			for _, d := range tempDirs {
-				fmt.Fprintf(out, "  - %s\n", d)
-			}
+		} else {
+			fmt.Fprintf(out, "Removed %d temp director(ies):\n", len(tempDirs))
 		}
-		if len(images) > 0 {
-			fmt.Fprintf(out, "Would remove %d container image(s):\n", len(images))
-			for _, img := range images {
-				fmt.Fprintf(out, "  - %s\n", img)
-			}
+		for _, d := range tempDirs {
+			fmt.Fprintf(out, "  - %s\n", d)
 		}
-		return
 	}
 
-	if len(tempDirs) > 0 || len(images) > 0 {
-		var msg []string
-		if len(tempDirs) > 0 {
-			msg = append(msg, fmt.Sprintf("%d temp director(y/ies)", len(tempDirs)))
+	if len(images) > 0 {
+		if dryRun {
+			fmt.Fprintf(out, "Would remove %d container image(s):\n", len(images))
+		} else {
+			fmt.Fprintf(out, "Removed %d container image(s):\n", len(images))
 		}
-		if len(images) > 0 {
-			msg = append(msg, fmt.Sprintf("%d container image(s)", len(images)))
+		for _, img := range images {
+			fmt.Fprintf(out, "  - %s\n", img)
 		}
-		fmt.Fprintf(out, "Removed %s.\n", strings.Join(msg, ", "))
 	}
 }
 
@@ -346,10 +341,11 @@ func runCleanOrphaned(cmd *cobra.Command, deps Dependencies, layout paths.Layout
 	}
 
 	if dryRun {
-		if len(plan) == 0 {
-			fmt.Fprintln(cmd.OutOrStdout(), "No orphaned batch directories found.")
-		}
 		tempDirs, images := runCleanTemps(cmd, deps, layout, true)
+		if len(plan) == 0 && len(tempDirs) == 0 && len(images) == 0 {
+			fmt.Fprintln(cmd.OutOrStdout(), "Nothing to remove.")
+			return nil
+		}
 		printCleanReport(cmd, nil, plan, tempDirs, images, true)
 		return nil
 	}
@@ -381,11 +377,11 @@ func runCleanOrphaned(cmd *cobra.Command, deps Dependencies, layout paths.Layout
 		return fmt.Errorf("cleanup orphaned batches: %w", err)
 	}
 
-	if len(removed) == 0 {
-		fmt.Fprintln(cmd.OutOrStdout(), "No orphaned batch directories found.")
-	}
-
 	tempDirs, images := runCleanTemps(cmd, deps, layout, false)
+	if len(removed) == 0 && len(tempDirs) == 0 && len(images) == 0 {
+		fmt.Fprintln(cmd.OutOrStdout(), "Nothing to remove.")
+		return nil
+	}
 	printCleanReport(cmd, nil, removed, tempDirs, images, false)
 	return nil
 }
