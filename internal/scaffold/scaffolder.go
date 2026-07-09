@@ -221,6 +221,42 @@ var bundledPythonVersionCatalog = map[string]string{
 	"3.9":    "3.9.21",
 }
 
+func BundledPythonVersion(selector string) string {
+	if v, ok := bundledPythonVersionCatalog[strings.ToLower(selector)]; ok {
+		return v
+	}
+	return ""
+}
+
+func DefaultPythonLTSVersion() string {
+	cmd := exec.Command("mise", "latest", "python")
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	latest := strings.TrimSpace(string(out))
+	parts := strings.Split(latest, ".")
+	if len(parts) < 2 {
+		return ""
+	}
+	major := parts[0]
+	minor, err := strconv.Atoi(parts[1])
+	if err != nil {
+		return ""
+	}
+	minor--
+	if minor < 0 {
+		return ""
+	}
+	ltsSelector := fmt.Sprintf("%s.%d", major, minor)
+	cmd = exec.Command("mise", "latest", "python@"+ltsSelector)
+	out, err = cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
 var bundledDotnetVersionCatalog = map[string]string{
 	"latest": "10.0.100",
 	"lts":    "8.0.416",
@@ -275,6 +311,13 @@ var bundledRubyVersionCatalog = map[string]string{
 	"3.3":    "3.3.8",
 	"3.2":    "3.2.8",
 	"3.1":    "3.1.7",
+}
+
+func BundledRubyVersion(selector string) string {
+	if v, ok := bundledRubyVersionCatalog[strings.ToLower(selector)]; ok {
+		return v
+	}
+	return ""
 }
 
 var bundledRustVersionCatalog = map[string]string{

@@ -872,3 +872,179 @@ func assertJavaVersionInDockerfile(t *testing.T, repoDir string) {
 		t.Fatalf("scaffolded Dockerfile missing java-version %q:\n%s", want, dockerfile)
 	}
 }
+
+// TestPresetMatrixHarness_RubyScaffolds pins the scaffold-only slice
+// of the Ruby preset: running `sandman init --build-tools ruby` through
+// the real binary with `--tool-version lts` produces
+// `.sandman/{config.yaml,Dockerfile}` with the ruby-version header
+// set to the bundled catalog's lts. This proves the Ruby preset
+// scaffold path works end to end and that the version is resolved
+// from the catalog rather than hardcoded.
+func TestPresetMatrixHarness_RubyScaffolds(t *testing.T) {
+	containerRuntimeAvailable(t)
+
+	binPath := buildSandmanBinary(t)
+
+	repoDir := t.TempDir()
+	t.Chdir(repoDir)
+	initRunIntegrationRepo(t, repoDir)
+
+	os.WriteFile(filepath.Join(repoDir, "Gemfile"), []byte("source 'https://rubygems.org'\ngem 'rails'\n"), 0644)
+
+	out, err := runSandmanBinary(t, binPath, repoDir, "init", "--build-tools", "ruby", "--tool-version", "lts")
+	if err != nil {
+		t.Fatalf("sandman init --build-tools ruby failed: %v\noutput:\n%s", err, out)
+	}
+	for _, rel := range []string{".sandman/config.yaml", ".sandman/Dockerfile", ".sandman/prompt.md"} {
+		if _, err := os.Stat(filepath.Join(repoDir, rel)); err != nil {
+			t.Fatalf("expected scaffolded %s: %v", rel, err)
+		}
+	}
+
+	dockerfile, err := os.ReadFile(filepath.Join(repoDir, ".sandman", "Dockerfile"))
+	if err != nil {
+		t.Fatalf("read Dockerfile: %v", err)
+	}
+	wantVersion := scaffold.BundledRubyVersion("lts")
+	if wantVersion == "" {
+		t.Fatalf("BundledRubyVersion(\"lts\") returned empty; catalog may have drifted")
+	}
+	want := "# sandman ruby-version: " + wantVersion
+	if !strings.Contains(string(dockerfile), want) {
+		t.Fatalf("scaffolded Dockerfile missing %q (the toolchain-version-from-catalog AC):\n%s", want, dockerfile)
+	}
+}
+
+// TestPresetMatrixHarness_RubyRunProducesFakeArtifact pins the
+// end-to-end `ruby` CLI-options path: scaffold with Gemfile,
+// fake opencode shim installed → podman build → sandman run 1
+// → per-issue run log carries the canonical fake-task marker,
+// and the events log has exactly one run.started and one
+// run.finished for the fake issue.
+func TestPresetMatrixHarness_RubyRunProducesFakeArtifact(t *testing.T) {
+	binPath, repoDir := runE2EScaffoldRuby(t, "ruby", "")
+	runE2ERun(t, binPath, repoDir)
+	assertFakeTaskMarkerInRunLog(t, repoDir, 1)
+	assertRunStartedAndFinished(t, repoDir, 1)
+	assertRubyVersionInDockerfile(t, repoDir)
+}
+
+// TestPresetMatrixHarness_RubyRunWithEditedDockerfile pins the
+// end-to-end `ruby` edited-Dockerfile path: scaffold with Gemfile,
+// append a RUN line to the Dockerfile, fake opencode shim installed
+// → podman build → sandman run 1 → per-issue run log carries the
+// canonical fake-task marker and the events log has the expected
+// events.
+func TestPresetMatrixHarness_RubyRunWithEditedDockerfile(t *testing.T) {
+	binPath, repoDir := runE2EScaffoldRuby(t, "ruby", "RUN touch /etc/sandman-preset-matrix-ruby-edited")
+	runE2ERun(t, binPath, repoDir)
+	assertFakeTaskMarkerInRunLog(t, repoDir, 1)
+	assertRunStartedAndFinished(t, repoDir, 1)
+	assertRubyVersionInDockerfile(t, repoDir)
+}
+
+// runE2EScaffoldRuby scaffolds a repo for the ruby preset with
+// --tool-version lts. It follows the same pattern as runE2EScaffoldNode
+// but writes a Gemfile fixture before init so the scaffolder detects
+// the repo as a Ruby project and activates the ruby preset.
+func runE2EScaffoldRuby(t *testing.T, preset, dockerfileAppend string) (string, string) {
+	t.Helper()
+	containerRuntimeAvailable(t)
+	binPath := buildSandmanBinary(t)
+	repoDir := t.TempDir()
+	t.Chdir(repoDir)
+	initRunIntegrationRepoWithRemote(t, repoDir)
+	if err := os.WriteFile(filepath.Join(repoDir, "Gemfile"), []byte("source 'https://rubygems.org'\ngem 'rails'\n"), 0644); err != nil {
+		t.Fatalf("write Gemfile: %v", err)
+	}
+	runRootCommand(t, prFlowDepsForPresetMatrix(t, repoDir), "init", "--build-tools", preset, "--tool-version", "lts")
+	forcePodmanSandbox(t, repoDir)
+	runRootCommand(t, prFlowDepsForPresetMatrix(t, repoDir), "config", "set", "review_command", "/oc review")
+	if dockerfileAppend != "" {
+		appendDockerfileRun(t, repoDir, dockerfileAppend)
+	}
+	return binPath, repoDir
+}
+
+// assertRubyVersionInDockerfile asserts the scaffolded Dockerfile's
+// ruby-version header matches the bundled catalog lts pin, proving
+// the version was resolved through the scaffold resolver (not a
+// literal in the test). Uses scaffold.BundledRubyVersion("lts") to
+// avoid hardcoding the version.
+func assertRubyVersionInDockerfile(t *testing.T, repoDir string) {
+	t.Helper()
+	dockerfilePath := filepath.Join(repoDir, ".sandman", "Dockerfile")
+	dockerfile, err := os.ReadFile(dockerfilePath)
+	if err != nil {
+		t.Fatalf("read Dockerfile: %v", err)
+	}
+	want := "# sandman ruby-version: " + scaffold.BundledRubyVersion("lts")
+	if !strings.Contains(string(dockerfile), want) {
+		t.Fatalf("scaffolded Dockerfile missing ruby-version %q:\n%s", want, dockerfile)
+	}
+}
+
+// TestPresetMatrixHarness_PythonScaffolds pins the scaffold-only
+// slice of the python harness: running `sandman init --build-tools
+// python --tool-version lts` through the real binary produces
+// `.sandman/{config.yaml,Dockerfile}` in the test repo and the
+// Dockerfile contains the pinned python version from the catalog,
+// resolved via the ltsFromLatest hook (one minor back from latest).
+func TestPresetMatrixHarness_PythonScaffolds(t *testing.T) {
+	containerRuntimeAvailable(t)
+
+	binPath := buildSandmanBinary(t)
+
+	repoDir := t.TempDir()
+	t.Chdir(repoDir)
+	initRunIntegrationRepo(t, repoDir)
+
+	out, err := runSandmanBinary(t, binPath, repoDir, "init", "--build-tools", "python", "--tool-version", "lts")
+	if err != nil {
+		t.Fatalf("sandman init --build-tools python --tool-version lts failed: %v\noutput:\n%s", err, out)
+	}
+	for _, rel := range []string{".sandman/config.yaml", ".sandman/Dockerfile", ".sandman/prompt.md"} {
+		if _, err := os.Stat(filepath.Join(repoDir, rel)); err != nil {
+			t.Fatalf("expected scaffolded %s: %v", rel, err)
+		}
+	}
+
+	dockerfile, err := os.ReadFile(filepath.Join(repoDir, ".sandman", "Dockerfile"))
+	if err != nil {
+		t.Fatalf("read Dockerfile: %v", err)
+	}
+	wantVersion := scaffold.DefaultPythonLTSVersion()
+	if wantVersion == "" {
+		t.Fatalf("DefaultPythonLTSVersion() returned empty; catalog may have drifted")
+	}
+	want := "# sandman python-version: " + wantVersion
+	if !strings.Contains(string(dockerfile), want) {
+		t.Fatalf("scaffolded Dockerfile missing %q (the toolchain-version-from-catalog AC):\n%s", want, dockerfile)
+	}
+}
+
+// TestPresetMatrixHarness_PythonRunProducesFakeArtifact pins the
+// end-to-end `python` CLI-options path: scaffold with python+lts,
+// fake opencode shim installed → podman build → sandman run 1
+// → per-issue run log carries the canonical fake-task marker,
+// and the events log has exactly one run.started and one
+// run.finished for the fake issue.
+func TestPresetMatrixHarness_PythonRunProducesFakeArtifact(t *testing.T) {
+	binPath, repoDir := runE2EScaffold(t, "python", "lts", "")
+	runE2ERun(t, binPath, repoDir)
+	assertFakeTaskMarkerInRunLog(t, repoDir, 1)
+	assertRunStartedAndFinished(t, repoDir, 1)
+}
+
+// TestPresetMatrixHarness_PythonRunWithEditedDockerfile pins the
+// end-to-end `python` edited-Dockerfile path: scaffold with
+// python+lts, append a RUN line to the Dockerfile, fake opencode
+// shim installed → podman build → sandman run 1 → per-issue run
+// log carries the canonical fake-task marker and the events log
+// has the expected events.
+func TestPresetMatrixHarness_PythonRunWithEditedDockerfile(t *testing.T) {
+	binPath, repoDir := runE2EScaffold(t, "python", "lts", "RUN touch /etc/sandman-preset-matrix-python-edited")
+	runE2ERun(t, binPath, repoDir)
+	assertFakeTaskMarkerInRunLog(t, repoDir, 1)
+	assertRunStartedAndFinished(t, repoDir, 1)
+}
