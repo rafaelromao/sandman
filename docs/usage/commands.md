@@ -74,7 +74,7 @@ Positional arguments (numbers and ranges) can be combined with `--label` and `--
 | `--run-id` | — | Batch-level identifier for prompt-only runs; must start with a letter and contain only alphanumeric characters, hyphens, and underscores; cannot be combined with issue selection |
 | `--run-idle-timeout` | `0` | Treat an AgentRun as stuck if it produces no output for N seconds; `0` disables the timeout |
 | `--branch` | `""` | Branch name for prompt-only runs; overrides the default `sandman/<slug>-<timestamp>` shape (prompt-only mode only) |
-| `--reconcile-stranded` | `true` | Auto-recover stranded worktrees when the main repo is checked out on a `sandman/N-…` branch (see ADR-0027) |
+| `--reconcile-stranded` | `true` | Auto-recover stranded worktrees when the main repo is checked out on a `sandman/N-…` branch |
 | `--no-reconcile-stranded` | `false` | Opt out of stranded-worktree auto-recovery (negative form of `--reconcile-stranded`) |
 
 ### Flag interactions
@@ -96,7 +96,7 @@ Positional arguments (numbers and ranges) can be combined with `--label` and `--
 - `--agent` selects which built-in preset to use for this run; if omitted, Sandman uses `agent` from config
 - `--continue` cannot be combined with `--override`
 - When `--max-containers` and `--container-capacity` together constrain concurrency below `--parallel`, the tighter limit wins
-- `--reconcile-stranded` auto-recovers stranded worktrees when the main repo is checked out on a `sandman/N-…` branch (ADR-0027); `--no-reconcile-stranded` opts out of this auto-recovery
+- `--reconcile-stranded` auto-recovers stranded worktrees when the main repo is checked out on a `sandman/N-…` branch; `--no-reconcile-stranded` opts out of this auto-recovery
 
 ## `sandman status`
 
@@ -231,7 +231,7 @@ sandman review :45
 sandman review 42 --agent opencode --model opencode/big-pickle
 ```
 
-The daemon's review path is **daemon-as-poster**: the reviewer agent writes its body to `<runDir>/decision.md`, and the daemon reads the file, runs it through the `RedactBody` redactor (S1, `internal/review/redactor.go`) which applies the regex `(?i)/sandman` → `sandman` to strip every leading-slash `sandman` substring, and posts the redacted body via `gh pr comment`. The redactor is the load-bearing safety net for the no-self-loop invariant — it runs out-of-band of the LLM, so the bot's body can never contain the trigger substring regardless of what the prompt rule says. The `processPR` self-defence sniff `LooksLikeBotReviewBody` survives as a belt-and-braces backstop: a body that structurally looks like a previous bot review (carries the `## Previous review progress` markdown heading AND the literal `/sandman review` trigger substring) is dropped before `ParseTrigger` runs — no batch run, no eyes reaction. The redactor is the primary defence; the sniff is defence-in-depth. See [ADR-0014 §Daemon-side redaction](../adr/0014-sandman-review-daemon-and-guard.md#daemon-side-redaction) for the full rationale.
+The daemon's review path is **daemon-as-poster**: the reviewer agent writes its body to `<runDir>/decision.md`, and the daemon reads the file, runs it through the `RedactBody` redactor (`(?i)/sandman` → `sandman`) to strip every leading-slash `sandman` substring, and posts the redacted body via `gh pr comment`. The redactor is the load-bearing safety net for the no-self-loop invariant — it runs out-of-band of the LLM, so the bot's body can never contain the trigger substring regardless of what the prompt rule says. The `LooksLikeBotReviewBody` structural sniff is defence-in-depth: a body that structurally looks like a previous bot review is dropped before `ParseTrigger` runs.
 
 | Flag | Default | Description |
 |------|---------|-------------|
@@ -303,7 +303,7 @@ For machine-readable output, pass `--json` to print the structured result list i
 sandman stranded --json
 ```
 
-`--reconcile-stranded` (enabled by default) auto-recovers stranded worktrees when the main repo is checked out on a `sandman/N-…` branch (ADR-0027); `--no-reconcile-stranded` opts out.
+`--reconcile-stranded` (enabled by default) auto-recovers stranded worktrees when the main repo is checked out on a `sandman/N-…` branch; `--no-reconcile-stranded` opts out.
 
 For details on false positives with prompt-only branches and the `git checkout -f` warning, see [Troubleshooting > Stranded worktrees](#troubleshooting-stranded-worktrees).
 
@@ -317,4 +317,4 @@ For the full `sandman stranded` command reference, see [`sandman stranded`](#san
 
 Interrupted or failed e2e runs leave behind worktrees, orphaned batch directories, and temp directories that can accumulate and cause subsequent runs to fail (especially in quota-constrained CI and worktree-based sandboxes).
 
-For a full description of what accumulates and how to clean it up, see [Testing > Side effects and cleanup](testing.md#side-effects-and-cleanup).
+For a full description of what accumulates and how to clean it up, see [Testing > Side effects and cleanup](../development/testing.md#side-effects-and-cleanup).

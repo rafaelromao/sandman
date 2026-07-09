@@ -332,7 +332,7 @@ func TestMkdirShort_PathFitsUnixSunPath(t *testing.T) {
 
 func TestE2EScenarioReferenceTableCoversAllConstants(t *testing.T) {
 	t.Parallel()
-	docPath := filepath.Join("..", "..", "docs", "usage", "testing.md")
+	docPath := filepath.Join("..", "..", "docs", "development", "testing.md")
 	raw, err := os.ReadFile(docPath)
 	if err != nil {
 		t.Fatalf("read %s: %v", docPath, err)
@@ -352,7 +352,7 @@ func TestE2EScenarioReferenceTableCoversAllConstants(t *testing.T) {
 		}
 	}
 	if len(missing) > 0 {
-		t.Fatalf("Scenario reference table in docs/usage/testing.md is missing E2EScenario* constants: %v", missing)
+		t.Fatalf("Scenario reference table in docs/development/testing.md is missing E2EScenario* constants: %v", missing)
 	}
 }
 
