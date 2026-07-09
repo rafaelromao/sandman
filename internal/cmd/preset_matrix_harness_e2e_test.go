@@ -761,3 +761,67 @@ func assertRustVersionInDockerfile(t *testing.T, repoDir string) {
 		t.Fatalf("scaffolded Dockerfile missing rust-version %q:\n%s", want, dockerfile)
 	}
 }
+// TestPresetMatrixHarness_PythonScaffolds pins the scaffold-only
+// slice of the python harness: running `sandman init --build-tools
+// python --tool-version lts` through the real binary produces
+// `.sandman/{config.yaml,Dockerfile}` in the test repo and the
+// Dockerfile contains the pinned python version from the catalog,
+// resolved via the ltsFromLatest hook (one minor back from latest).
+func TestPresetMatrixHarness_PythonScaffolds(t *testing.T) {
+	containerRuntimeAvailable(t)
+
+	binPath := buildSandmanBinary(t)
+
+	repoDir := t.TempDir()
+	t.Chdir(repoDir)
+	initRunIntegrationRepo(t, repoDir)
+
+	out, err := runSandmanBinary(t, binPath, repoDir, "init", "--build-tools", "python", "--tool-version", "lts")
+	if err != nil {
+		t.Fatalf("sandman init --build-tools python --tool-version lts failed: %v\noutput:\n%s", err, out)
+	}
+	for _, rel := range []string{".sandman/config.yaml", ".sandman/Dockerfile", ".sandman/prompt.md"} {
+		if _, err := os.Stat(filepath.Join(repoDir, rel)); err != nil {
+			t.Fatalf("expected scaffolded %s: %v", rel, err)
+		}
+	}
+
+	dockerfile, err := os.ReadFile(filepath.Join(repoDir, ".sandman", "Dockerfile"))
+	if err != nil {
+		t.Fatalf("read Dockerfile: %v", err)
+	}
+	wantVersion := scaffold.DefaultPythonLTSVersion()
+	if wantVersion == "" {
+		t.Fatalf("DefaultPythonLTSVersion() returned empty; catalog may have drifted")
+	}
+	want := "# sandman python-version: " + wantVersion
+	if !strings.Contains(string(dockerfile), want) {
+		t.Fatalf("scaffolded Dockerfile missing %q (the toolchain-version-from-catalog AC):\n%s", want, dockerfile)
+	}
+}
+
+// TestPresetMatrixHarness_PythonRunProducesFakeArtifact pins the
+// end-to-end `python` CLI-options path: scaffold with python+lts,
+// fake opencode shim installed → podman build → sandman run 1
+// → per-issue run log carries the canonical fake-task marker,
+// and the events log has exactly one run.started and one
+// run.finished for the fake issue.
+func TestPresetMatrixHarness_PythonRunProducesFakeArtifact(t *testing.T) {
+	binPath, repoDir := runE2EScaffold(t, "python", "lts", "")
+	runE2ERun(t, binPath, repoDir)
+	assertFakeTaskMarkerInRunLog(t, repoDir, 1)
+	assertRunStartedAndFinished(t, repoDir, 1)
+}
+
+// TestPresetMatrixHarness_PythonRunWithEditedDockerfile pins the
+// end-to-end `python` edited-Dockerfile path: scaffold with
+// python+lts, append a RUN line to the Dockerfile, fake opencode
+// shim installed → podman build → sandman run 1 → per-issue run
+// log carries the canonical fake-task marker and the events log
+// has the expected events.
+func TestPresetMatrixHarness_PythonRunWithEditedDockerfile(t *testing.T) {
+	binPath, repoDir := runE2EScaffold(t, "python", "lts", "RUN touch /etc/sandman-preset-matrix-python-edited")
+	runE2ERun(t, binPath, repoDir)
+	assertFakeTaskMarkerInRunLog(t, repoDir, 1)
+	assertRunStartedAndFinished(t, repoDir, 1)
+}
