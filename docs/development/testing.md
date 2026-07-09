@@ -62,6 +62,7 @@ Some expensive scenarios run without a build tag and are selected with `SANDMAN_
 | `badge` | `internal/cmd` | badge scenario tests |
 | `pathlen` | `internal/cmd` | path-length scenario tests |
 | `batch_id_rules` | `internal/cmd` | `TestSlice10` |
+| `preset_matrix` | `internal/cmd` | preset-matrix scenario tests |
 
 ```bash
 # Single scenario
@@ -85,7 +86,7 @@ SANDMAN_TEST_MODEL_OPENCODE=opencode/gpt-5-nano \
 
 ## Cleanup after interrupted tests
 
-Smoke and e2e tests can create worktrees, containers, batch directories, temp directories, and shim state. If a run is interrupted before cleanup executes, remove residue with `sandman clean`.
+Smoke and e2e tests can create worktrees, containers, batch directories, temp directories, and shim state. If a run is interrupted before cleanup executes, remove residue with `sandman clean --all` (or pick a specific mode flag from the recipes below — bare `sandman clean` is a hard error).
 
 ```bash
 # Preview what would be removed
@@ -98,10 +99,10 @@ sandman clean --orphaned
 sandman clean --stale
 
 # Full cleanup
-sandman clean
+sandman clean --all
 ```
 
-For stranded worktrees, see [`sandman stranded`](../usage/commands.md#sandman-stranded) or use [`sandman clean`](../usage/commands.md#sandman-clean).
+For stranded worktrees, see [`sandman stranded`](../usage/commands.md#sandman-stranded) or use [`sandman clean --all`](../usage/commands.md#sandman-clean) (or a specific mode flag).
 
 ## Deeper test infrastructure
 

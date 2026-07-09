@@ -99,16 +99,24 @@ func NewCleanCmd(deps Dependencies) *cobra.Command {
 		Use:   "clean",
 		Short: "Clean up sandbox resources, stale worktrees, and temp files",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			all, _ := cmd.Flags().GetBool("all")
 			archived, _ := cmd.Flags().GetBool("archived")
 			dryRun, _ := cmd.Flags().GetBool("dry-run")
 			stale, _ := cmd.Flags().GetBool("stale")
 			orphaned, _ := cmd.Flags().GetBool("orphaned")
 
+			if !all && !archived && !stale && !orphaned {
+				return MarkUsage(fmt.Errorf("clean requires an explicit mode flag: --all, --archived, --stale, or --orphaned"))
+			}
+
 			if stale && (archived || dryRun || orphaned) {
 				return fmt.Errorf("--stale is mutually exclusive with --archived, --dry-run, and --orphaned")
 			}
-			if orphaned && (archived || stale) {
-				return fmt.Errorf("--orphaned is mutually exclusive with --archived and --stale")
+			if orphaned && (archived || stale || all) {
+				return fmt.Errorf("--orphaned is mutually exclusive with --archived, --stale, and --all")
+			}
+			if all && (archived || stale || orphaned) {
+				return fmt.Errorf("--all is mutually exclusive with --archived, --stale, and --orphaned")
 			}
 
 			cfg, err := deps.ConfigStore.Load()
@@ -148,12 +156,72 @@ func NewCleanCmd(deps Dependencies) *cobra.Command {
 				}
 				_ = staleRemoved
 				fmt.Fprintf(cmd.OutOrStdout(), "Recovered %d stale runs as aborted across %d dead directories.\n", recovered, deadDirs)
-				runCleanTemps(cmd, deps, layout, false)
+				tempDirs, images := runCleanTemps(cmd, deps, layout, false)
+				printCleanReport(cmd, nil, nil, tempDirs, images, false)
 				return nil
 			}
 
 			if orphaned {
 				return runCleanOrphaned(cmd, deps, layout, dryRun)
+			}
+
+			if all {
+				eventsList, err := deps.EventLog.Read()
+				if err != nil {
+					return fmt.Errorf("read event log: %w", err)
+				}
+				if _, staleErr := daemon.CleanupStaleRunSnapshots(layout.SandmanDir); staleErr != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "warning: cleanup stale run snapshots: %v\n", staleErr)
+				}
+				recovered, deadDirs, err := runCleanStale(layout, eventsList, deps.EventLog)
+				if err != nil {
+					return fmt.Errorf("recover stale runs: %w", err)
+				}
+				fmt.Fprintf(cmd.OutOrStdout(), "Recovered %d stale runs as aborted across %d dead directories.\n", recovered, deadDirs)
+
+				probe := deps.RunActivityProbe
+				if probe == nil {
+					probe = daemon.IsRunActive
+				}
+				orphanPlan, err := daemon.PlanOrphanedTestBatches(layout.SandmanDir, deps.EventLog, probe)
+				if err != nil {
+					return fmt.Errorf("plan orphaned batches: %w", err)
+				}
+				if !dryRun {
+					if err := pruneBatchesIndexByOrphanPlan(layout.BatchesIndexPath, orphanPlan); err != nil {
+						return err
+					}
+				}
+
+				idx, err := batchindex.Load(layout.BatchesIndexPath)
+				if err != nil {
+					return fmt.Errorf("load batches index: %w", err)
+				}
+				if err := idx.EnsureStatus(); err != nil {
+					return fmt.Errorf("ensure status: %w", err)
+				}
+
+				actions := collectCleanActions(idx, batchindex.StatusArchived)
+				if actions == nil {
+					actions = []cleanAction{}
+				}
+
+				var orphanRemoved []string
+				if !dryRun {
+					if _, err := executeClean(actions, gr, idx, layout); err != nil {
+						return fmt.Errorf("execute clean: %w", err)
+					}
+					orphanRemoved, err = daemon.CleanupOrphanedTestBatches(layout.SandmanDir, deps.EventLog, probe)
+					if err != nil {
+						return fmt.Errorf("cleanup orphaned batches: %w", err)
+					}
+				} else {
+					orphanRemoved = orphanPlan
+				}
+
+				tempDirs, images := runCleanTemps(cmd, deps, layout, dryRun)
+				printCleanReport(cmd, actions, orphanRemoved, tempDirs, images, dryRun)
+				return nil
 			}
 
 			idx, err := batchindex.Load(layout.BatchesIndexPath)
@@ -165,32 +233,33 @@ func NewCleanCmd(deps Dependencies) *cobra.Command {
 				return fmt.Errorf("ensure status: %w", err)
 			}
 
-			var targetStatus batchindex.Status
-			if archived {
-				targetStatus = batchindex.StatusArchived
-			} else {
+			targetStatus := batchindex.StatusArchived
+			if !archived {
 				targetStatus = batchindex.StatusActive
 			}
 
 			actions := collectCleanActions(idx, targetStatus)
+			if actions == nil {
+				actions = []cleanAction{}
+			}
 
 			if dryRun {
-				printDryRun(cmd, actions)
-				runCleanTemps(cmd, deps, layout, true)
+				tempDirs, images := runCleanTemps(cmd, deps, layout, true)
+				printCleanReport(cmd, actions, nil, tempDirs, images, true)
 				return nil
 			}
 
-			removed, err := executeClean(actions, gr, idx, layout)
-			if err != nil {
+			if _, err := executeClean(actions, gr, idx, layout); err != nil {
 				return fmt.Errorf("execute clean: %w", err)
 			}
 
-			fmt.Fprintf(cmd.OutOrStdout(), "Removed %d batch entries.\n", removed)
-			runCleanTemps(cmd, deps, layout, false)
+			tempDirs, images := runCleanTemps(cmd, deps, layout, false)
+			printCleanReport(cmd, actions, nil, tempDirs, images, false)
 
 			return nil
 		},
 	}
+	cmd.Flags().Bool("all", false, "Run every cleanup pass in sequence without touching active batches or their worktrees")
 	cmd.Flags().Bool("archived", false, "Remove archived batches (combined with unavailable)")
 	cmd.Flags().Bool("dry-run", false, "Print intended deletions without performing I/O")
 	cmd.Flags().Bool("stale", false, "Recover stale runs in dead batches by emitting run.aborted events")
@@ -221,22 +290,64 @@ func collectCleanActions(idx *batchindex.Index, targetStatus batchindex.Status) 
 	return actions
 }
 
-func printDryRun(cmd *cobra.Command, actions []cleanAction) {
-	if len(actions) == 0 {
-		fmt.Fprintf(cmd.OutOrStdout(), "No batches to clean.\n")
+func printCleanReport(cmd *cobra.Command, actions []cleanAction, orphanPaths []string, tempDirs []string, images []string, dryRun bool) {
+	out := cmd.OutOrStdout()
+
+	if actions != nil && len(actions) == 0 && len(orphanPaths) == 0 && len(tempDirs) == 0 && len(images) == 0 {
+		fmt.Fprintln(out, "Nothing to remove.")
 		return
 	}
-	fmt.Fprintf(cmd.OutOrStdout(), "Would remove %d batch entries:\n", len(actions))
-	for _, a := range actions {
-		what := "batch"
-		if a.Kind != "" {
-			what = string(a.Kind)
+
+	if len(actions) > 0 {
+		if dryRun {
+			fmt.Fprintf(out, "Would remove %d batch entries:\n", len(actions))
+		} else {
+			fmt.Fprintf(out, "Removed %d batch entries:\n", len(actions))
 		}
-		fmt.Fprintf(cmd.OutOrStdout(), "  - [%s] %s (path: %s", what, a.BatchID, a.BatchPath)
-		if a.Worktree != "" {
-			fmt.Fprintf(cmd.OutOrStdout(), ", worktree: %s", a.Worktree)
+		for _, a := range actions {
+			what := "batch"
+			if a.Kind != "" {
+				what = string(a.Kind)
+			}
+			fmt.Fprintf(out, "  - [%s] %s (path: %s", what, a.BatchID, a.BatchPath)
+			if a.Worktree != "" {
+				fmt.Fprintf(out, ", worktree: %s", a.Worktree)
+			}
+			fmt.Fprintln(out, ")")
 		}
-		fmt.Fprintf(cmd.OutOrStdout(), ")\n")
+	}
+
+	if len(orphanPaths) > 0 {
+		if dryRun {
+			fmt.Fprintf(out, "Would remove %d orphaned batch director(ies):\n", len(orphanPaths))
+		} else {
+			fmt.Fprintf(out, "Removed %d orphaned batch director(ies):\n", len(orphanPaths))
+		}
+		for _, p := range orphanPaths {
+			fmt.Fprintf(out, "  - %s\n", p)
+		}
+	}
+
+	if len(tempDirs) > 0 {
+		if dryRun {
+			fmt.Fprintf(out, "Would remove %d temp director(ies):\n", len(tempDirs))
+		} else {
+			fmt.Fprintf(out, "Removed %d temp director(ies):\n", len(tempDirs))
+		}
+		for _, d := range tempDirs {
+			fmt.Fprintf(out, "  - %s\n", d)
+		}
+	}
+
+	if len(images) > 0 {
+		if dryRun {
+			fmt.Fprintf(out, "Would remove %d container image(s):\n", len(images))
+		} else {
+			fmt.Fprintf(out, "Removed %d container image(s):\n", len(images))
+		}
+		for _, img := range images {
+			fmt.Fprintf(out, "  - %s\n", img)
+		}
 	}
 }
 
@@ -270,7 +381,6 @@ func executeClean(actions []cleanAction, gr gitRunner, idx *batchindex.Index, la
 		}
 	}
 	idx.Batches = kept
-	idx.Batches = kept
 
 	if err := idx.Save(layout.BatchesIndexPath); err != nil {
 		return 0, fmt.Errorf("save batches index: %w", err)
@@ -294,20 +404,39 @@ func runCleanOrphaned(cmd *cobra.Command, deps Dependencies, layout paths.Layout
 	}
 
 	if dryRun {
-		if len(plan) == 0 {
-			fmt.Fprintln(cmd.OutOrStdout(), "No orphaned batch directories found.")
-			runCleanTemps(cmd, deps, layout, true)
+		tempDirs, images := runCleanTemps(cmd, deps, layout, true)
+		if len(plan) == 0 && len(tempDirs) == 0 && len(images) == 0 {
+			fmt.Fprintln(cmd.OutOrStdout(), "Nothing to remove.")
 			return nil
 		}
-		fmt.Fprintf(cmd.OutOrStdout(), "Would remove %d orphaned batch director(ies):\n", len(plan))
-		for _, p := range plan {
-			fmt.Fprintf(cmd.OutOrStdout(), "  - %s\n", p)
-		}
-		runCleanTemps(cmd, deps, layout, true)
+		printCleanReport(cmd, nil, plan, tempDirs, images, true)
 		return nil
 	}
 
-	idx, err := batchindex.Load(layout.BatchesIndexPath)
+	if err := pruneBatchesIndexByOrphanPlan(layout.BatchesIndexPath, plan); err != nil {
+		return err
+	}
+
+	removed, err := daemon.CleanupOrphanedTestBatches(layout.SandmanDir, deps.EventLog, probe)
+	if err != nil {
+		return fmt.Errorf("cleanup orphaned batches: %w", err)
+	}
+
+	tempDirs, images := runCleanTemps(cmd, deps, layout, false)
+	if len(removed) == 0 && len(tempDirs) == 0 && len(images) == 0 {
+		fmt.Fprintln(cmd.OutOrStdout(), "Nothing to remove.")
+		return nil
+	}
+	printCleanReport(cmd, nil, removed, tempDirs, images, false)
+	return nil
+}
+
+// pruneBatchesIndexByOrphanPlan removes the index entries whose BatchID matches
+// the basename of any path in plan, then atomically saves the index. It is the
+// shared prune step used by both the standalone --orphaned mode and the --all
+// umbrella flag.
+func pruneBatchesIndexByOrphanPlan(indexPath string, plan []string) error {
+	idx, err := batchindex.Load(indexPath)
 	if err != nil {
 		return fmt.Errorf("load batches index: %w", err)
 	}
@@ -324,31 +453,14 @@ func runCleanOrphaned(cmd *cobra.Command, deps Dependencies, layout paths.Layout
 		kept = append(kept, entry)
 	}
 	idx.Batches = kept
-	idx.Batches = kept
 
-	if err := idx.Save(layout.BatchesIndexPath); err != nil {
+	if err := idx.Save(indexPath); err != nil {
 		return fmt.Errorf("save batches index: %w", err)
 	}
-
-	removed, err := daemon.CleanupOrphanedTestBatches(layout.SandmanDir, deps.EventLog, probe)
-	if err != nil {
-		return fmt.Errorf("cleanup orphaned batches: %w", err)
-	}
-
-	if len(removed) == 0 {
-		fmt.Fprintln(cmd.OutOrStdout(), "No orphaned batch directories found.")
-	} else {
-		fmt.Fprintf(cmd.OutOrStdout(), "Removed %d orphaned batch director(ies):\n", len(removed))
-		for _, p := range removed {
-			fmt.Fprintf(cmd.OutOrStdout(), "  - %s\n", p)
-		}
-	}
-
-	runCleanTemps(cmd, deps, layout, false)
 	return nil
 }
 
-func runCleanTemps(cmd *cobra.Command, deps Dependencies, layout paths.Layout, dryRun bool) {
+func runCleanTemps(cmd *cobra.Command, deps Dependencies, layout paths.Layout, dryRun bool) (tempDirs []string, images []string) {
 	tc := deps.TempCleaner
 	if tc == nil {
 		tc = &realTempCleaner{}
@@ -358,11 +470,10 @@ func runCleanTemps(cmd *cobra.Command, deps Dependencies, layout paths.Layout, d
 	dirs, err := tc.ScanTempDirs(tempDir)
 	if err != nil {
 		fmt.Fprintf(cmd.ErrOrStderr(), "warning: scan temp dirs: %v\n", err)
-		return
+		return nil, nil
 	}
 
 	runtime := tc.ResolveRuntime()
-	var images []string
 	if runtime != "" {
 		images, err = tc.ListContainerImages(runtime)
 		if err != nil {
@@ -371,23 +482,7 @@ func runCleanTemps(cmd *cobra.Command, deps Dependencies, layout paths.Layout, d
 	}
 
 	if dryRun {
-		if len(dirs) == 0 && len(images) == 0 {
-			fmt.Fprintln(cmd.OutOrStdout(), "No temp files or Sandman-owned images to clean.")
-			return
-		}
-		if len(dirs) > 0 {
-			fmt.Fprintf(cmd.OutOrStdout(), "Would remove %d temp director(ies):\n", len(dirs))
-			for _, d := range dirs {
-				fmt.Fprintf(cmd.OutOrStdout(), "  - %s\n", d)
-			}
-		}
-		if len(images) > 0 {
-			fmt.Fprintf(cmd.OutOrStdout(), "Would remove %d container image(s):\n", len(images))
-			for _, img := range images {
-				fmt.Fprintf(cmd.OutOrStdout(), "  - %s\n", img)
-			}
-		}
-		return
+		return dirs, images
 	}
 
 	var removedDirs, removedImgs int
@@ -405,14 +500,5 @@ func runCleanTemps(cmd *cobra.Command, deps Dependencies, layout paths.Layout, d
 			removedImgs++
 		}
 	}
-	if removedDirs > 0 || removedImgs > 0 {
-		var msg []string
-		if removedDirs > 0 {
-			msg = append(msg, fmt.Sprintf("%d temp director(y/ies)", removedDirs))
-		}
-		if removedImgs > 0 {
-			msg = append(msg, fmt.Sprintf("%d container image(s)", removedImgs))
-		}
-		fmt.Fprintf(cmd.OutOrStdout(), "Removed %s.\n", strings.Join(msg, ", "))
-	}
+	return dirs[:removedDirs], images[:removedImgs]
 }
