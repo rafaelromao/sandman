@@ -9,27 +9,20 @@ CLI tool for orchestrating AFK coding agents in isolated sandboxes.
 ## Quick Start
 
 ```bash
-# Prerequisites: Go 1.24+, Git, gh CLI, and an AI agent (OpenCode)
-# 1. Install
-go install github.com/rafaelromao/sandman/cmd/sandman@latest
+# Prerequisites: Git, gh and OpenCode properly configured
 
-# 2. Initialize a project
+# 1. Initialize a project
 cd my-repo && sandman init
 
-# 3. Run agents for GitHub issues
-sandman run 42 43
-sandman run 42:45
-sandman run 42:45 --label bug
+# 2. Run the review daemon (optional)
+sandman review
 
-# 4. Check progress
-sandman status
-sandman history
-
-# 5. Open the browser portal for current repo runs
+# 3. Open the browser portal (optional)
 sandman portal
-```
 
-OpenCode needs the `opencode-shell-strategy` plugin before Sandman can use the `opencode` preset.
+# 4. Implement your GitHub issues AFK
+sandman run 42 43
+```
 
 ## Overview
 
@@ -70,36 +63,10 @@ Other:
 - [Architecture Overview](docs/architecture/overview.md) and [Disk Layout](docs/architecture/disk-layout.md)
 - [Positioning](docs/help/positioning.md) — what Sandman is and isn't, in plain language
 - [Development docs](docs/development/README.md) — contributor setup, project structure, architecture guidance, testing, and docs/skill guidance
-- The browser-rendered docs portal at [`docs/documentation.html`](docs/documentation.html) wraps these guides with a sidebar.
-
-## Config Overview
-
-Sandman reads from `.sandman/config.yaml`. Key fields:
-
-```yaml
-agent: opencode
-parallel: 1
-review_command: /sandman review
-sandbox: podman              # podman, docker, or worktree
-container_capacity: 4        # agent runs per container; 0 = unlimited (no per-container cap)
-max_containers: 0            # auto mode; or set a fixed limit
-git:
-  base_branch: main
-```
-
-Sandman uses your host Git identity for agent commits. It resolves `user.name` and `user.email` from `~/.gitconfig`, then the host global/XDG Git config, then repo-local `.git/config`, and fails early if either value is missing.
-
-See [Configuration](docs/usage/configuration.md) for the full schema.
 
 ## Development
 
-```bash
-make check    # Format, vet, test
-make build    # Build binary
-make install  # Install to $GOPATH/bin
-```
-
-Contributing to Sandman? See the [Development docs](docs/development/README.md), including [Testing](docs/development/testing.md) for smoke and e2e gates.
+Contributing to Sandman? See the [Development docs](docs/development/README.md).
 
 ## License
 
