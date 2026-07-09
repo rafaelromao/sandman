@@ -166,6 +166,54 @@ func NewCleanCmd(deps Dependencies) *cobra.Command {
 			}
 
 			if all {
+				eventsList, err := deps.EventLog.Read()
+				if err != nil {
+					return fmt.Errorf("read event log: %w", err)
+				}
+				if _, staleErr := daemon.CleanupStaleRunSnapshots(layout.SandmanDir); staleErr != nil {
+					fmt.Fprintf(cmd.ErrOrStderr(), "warning: cleanup stale run snapshots: %v\n", staleErr)
+				}
+				recovered, deadDirs, err := runCleanStale(layout, eventsList, deps.EventLog)
+				if err != nil {
+					return fmt.Errorf("recover stale runs: %w", err)
+				}
+				fmt.Fprintf(cmd.OutOrStdout(), "Recovered %d stale runs as aborted across %d dead directories.\n", recovered, deadDirs)
+
+				probe := deps.RunActivityProbe
+				if probe == nil {
+					probe = daemon.IsRunActive
+				}
+				orphanPlan, err := daemon.PlanOrphanedTestBatches(layout.SandmanDir, deps.EventLog, probe)
+				if err != nil {
+					return fmt.Errorf("plan orphaned batches: %w", err)
+				}
+				orphanRemoved := orphanPlan
+				if !dryRun {
+					idxForOrphan, err := batchindex.Load(layout.BatchesIndexPath)
+					if err != nil {
+						return fmt.Errorf("load batches index: %w", err)
+					}
+					pruned := make(map[string]struct{}, len(orphanPlan))
+					for _, p := range orphanPlan {
+						pruned[filepath.Base(p)] = struct{}{}
+					}
+					var kept []batchindex.Batch
+					for _, entry := range idxForOrphan.Batches {
+						if _, drop := pruned[entry.ID]; drop {
+							continue
+						}
+						kept = append(kept, entry)
+					}
+					idxForOrphan.Batches = kept
+					if err := idxForOrphan.Save(layout.BatchesIndexPath); err != nil {
+						return fmt.Errorf("save batches index: %w", err)
+					}
+					orphanRemoved, err = daemon.CleanupOrphanedTestBatches(layout.SandmanDir, deps.EventLog, probe)
+					if err != nil {
+						return fmt.Errorf("cleanup orphaned batches: %w", err)
+					}
+				}
+
 				idx, err := batchindex.Load(layout.BatchesIndexPath)
 				if err != nil {
 					return fmt.Errorf("load batches index: %w", err)
@@ -186,7 +234,7 @@ func NewCleanCmd(deps Dependencies) *cobra.Command {
 				}
 
 				tempDirs, images := runCleanTemps(cmd, deps, layout, dryRun)
-				printCleanReport(cmd, actions, nil, tempDirs, images, dryRun)
+				printCleanReport(cmd, actions, orphanRemoved, tempDirs, images, dryRun)
 				return nil
 			}
 

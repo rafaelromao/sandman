@@ -249,6 +249,81 @@ func TestClean_All_PreservesActiveEntries(t *testing.T) {
 	}
 }
 
+func TestClean_All_RunsEveryPass(t *testing.T) {
+	deps := newRunDepsAuto(t, &fakeBatchRunner{})
+	dir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("os.Getwd: %v", err)
+	}
+
+	createdAt := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
+	started := createdAt.Add(5 * time.Minute)
+	writeBatchManifest(t, dir, "run-dead-1", []int{42}, createdAt)
+
+	batchArchived := filepath.Join(dir, ".sandman", "batches", "batch-archived")
+	worktreeArchived := filepath.Join(dir, ".sandman", "worktrees", "sandman", "43-fix")
+	if err := os.MkdirAll(worktreeArchived, 0755); err != nil {
+		t.Fatalf("create worktree: %v", err)
+	}
+	writeRunManifest(t, batchArchived, batchindex.RunManifest{
+		RunID:        "batch-archived",
+		BatchID:      "batch-archived",
+		Issue:        43,
+		Branch:       "sandman/43-fix",
+		WorktreePath: worktreeArchived,
+		Kind:         batchindex.KindIssue,
+		Status:       batchindex.RunManifestStatusActive,
+	})
+	now := time.Now()
+	writeBatchIndex(t, dir, []batchindex.Batch{
+		{ID: "batch-archived", Path: batchArchived, Kind: batchindex.KindIssue, Status: batchindex.StatusArchived, CreatedAt: now},
+	})
+
+	log := &fakeEventLog{events: []events.Event{
+		{Type: "run.started", RunID: "run-42", Issue: 42, Timestamp: started, Payload: map[string]any{"branch": "sandman/42-fix"}},
+	}}
+	gr := &fakeGitRunner{}
+	deps.ConfigStore = &fakeStore{config: &config.Config{WorktreeDir: filepath.Join(dir, ".sandman", "worktrees")}}
+	deps.EventLog = log
+	deps.GitRunner = gr
+	fakeTC := &fakeTempCleaner{
+		scanTempDirsReturn: []string{"/tmp/sandman-smoke-prewarm-allpass"},
+	}
+	deps.TempCleaner = fakeTC
+
+	var buf bytes.Buffer
+	cmd := NewCleanCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--all"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !fakeTC.scanTempDirsCalled {
+		t.Errorf("expected temp sweep to run as part of --all")
+	}
+
+	if len(gr.removeWorktreeCalls) != 1 {
+		t.Errorf("expected archived worktree to be removed by --all, got %d removeWorktree calls", len(gr.removeWorktreeCalls))
+	}
+
+	var aborted int
+	for _, e := range log.logged {
+		if e.Type == "run.aborted" {
+			aborted++
+		}
+	}
+	if aborted != 1 {
+		t.Errorf("expected 1 run.aborted event from stale pass, got %d", aborted)
+	}
+
+	if !strings.Contains(buf.String(), "Recovered 1 stale runs") {
+		t.Errorf("expected stale summary in --all output, got: %s", buf.String())
+	}
+}
+
 func TestClean_Archived_RemovesArchivedAndUnavailableEntries(t *testing.T) {
 	deps := newRunDepsAuto(t, &fakeBatchRunner{})
 	dir, err := os.Getwd()
