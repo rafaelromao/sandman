@@ -9,7 +9,8 @@ CLI tool for orchestrating AFK coding agents in isolated sandboxes.
 ## Quick Start
 
 ```bash
-# Prerequisites: Go 1.24+, Git, gh CLI, and an AI agent (OpenCode)
+# Prerequisites: Go 1.24+, Git, gh CLI, and OpenCode
+
 # 1. Install
 go install github.com/rafaelromao/sandman/cmd/sandman@latest
 
