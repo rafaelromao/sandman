@@ -225,6 +225,13 @@ var bundledDotnetVersionCatalog = map[string]string{
 	"6.0":    "6.0.428",
 }
 
+func BundledDotnetVersion(selector string) string {
+	if v, ok := bundledDotnetVersionCatalog[strings.ToLower(selector)]; ok {
+		return v
+	}
+	return ""
+}
+
 var bundledElixirVersionCatalog = map[string]string{
 	"latest": "1.20.2-otp-29",
 	"lts":    "1.18.4-otp-28",
