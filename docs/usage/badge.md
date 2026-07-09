@@ -6,6 +6,8 @@ When a project has merged its first `sandman/*` branch, Sandman can suggest addi
 
 The badge is a self-hosted SVG pill that links to the [Sandman repo](https://github.com/rafaelromao/sandman). It is inserted directly into the project's `README.md` rather than hosted on an external badge service.
 
+<img src="../assets/badge-built-with-sandman.svg" alt="Built with Sandman" width="154" />
+
 ## How it gets there
 
 After a batch completes with at least one merged `sandman/*` PR, Sandman's post-batch sidecar checks whether a badge has already been proposed. If not, it dispatches a child `sandman run --prompt` that opens a PR titled `chore: add Built with Sandman badge`.
