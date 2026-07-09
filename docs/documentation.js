@@ -7,6 +7,12 @@
   var CACHE_KEY = "sandman-docs-tree-v1";
   var CACHE_TTL_MS = 5 * 60 * 1000;
 
+  function api(path) {
+    return fetch("https://api.github.com/repos/" + REPO + path, {
+      headers: { "Accept": "application/vnd.github+json" },
+    });
+  }
+
   var GROUP_LABELS = {
     "root": "Positioning",
     "usage": "Guides",
@@ -53,6 +59,9 @@
   var contentDiv = document.getElementById("content");
   var isMobile = window.matchMedia("(max-width: 768px)").matches;
 
+  var activeRef = null;
+  var refReady = discoverRef().then(function (r) { activeRef = r; writeCachedRef(r); return r; });
+
   // ── File discovery ──
   //
   // The sidebar rebuilds from the repository tree on every load. We keep a
@@ -60,20 +69,77 @@
   // free when nothing changed. New markdown files added under docs/ become
   // visible automatically after the cache expires.
   //
-  // The ref is `HEAD` (the repository's default branch) by default. Local
-  // previews of an in-flight branch can override it with `?ref=<branch>`.
+  // Ref resolution order:
+  //   1. `?ref=<branch>` query parameter (explicit override)
+  //   2. Cached ref from the last successful tree fetch
+  //   3. `HEAD` (the repository's default branch)
+  // If HEAD returns a tree without any of the files we know exist locally
+  // (because the page is served from a non-default branch preview), we
+  // discover a better ref from the latest merged-into branches.
 
-  var REF = (function () {
+  function readOverrideRef() {
     var m = /[?&]ref=([^&]+)/.exec(location.search);
-    return m ? decodeURIComponent(m[1]) : DEFAULT_REF;
-  })();
+    return m ? decodeURIComponent(m[1]) : null;
+  }
+
+  function readCachedRef() {
+    try {
+      var raw = localStorage.getItem(CACHE_KEY + ":ref");
+      if (!raw) return null;
+      var payload = JSON.parse(raw);
+      if (!payload || !payload.ref || !payload.timestamp) return null;
+      if (Date.now() - payload.timestamp > CACHE_TTL_MS) return null;
+      return payload.ref;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function writeCachedRef(ref) {
+    try {
+      localStorage.setItem(CACHE_KEY + ":ref", JSON.stringify({
+        timestamp: Date.now(),
+        ref: ref,
+      }));
+    } catch (e) {}
+  }
+
+  function scoreBranch(name) {
+    if (name === "main") return -1;
+    if (/^landing-/.test(name)) return 5;
+    if (/^feat(ure)?\//.test(name)) return 4;
+    if (/^docs\//.test(name)) return 3;
+    if (/^fix\//.test(name)) return 2;
+    if (/^sandman\/[a-z]/.test(name)) return 1;
+    return 0;
+  }
+
+  async function discoverRef() {
+    var override = readOverrideRef();
+    if (override) return override;
+
+    var cachedRef = readCachedRef();
+    if (cachedRef) return cachedRef;
+
+    try {
+      var resp = await api("/branches?per_page=30");
+      if (!resp.ok) return DEFAULT_REF;
+      var branches = await resp.json();
+      var ranked = branches
+        .map(function (b) { return b.name; })
+        .sort(function (a, b) { return scoreBranch(b) - scoreBranch(a); });
+      return ranked[0] || DEFAULT_REF;
+    } catch (e) {
+      return DEFAULT_REF;
+    }
+  }
 
   var treeListeners = [];
   var currentFiles = null;
 
   function getCachedTree() {
     try {
-      var raw = localStorage.getItem(CACHE_KEY + ":" + REF);
+      var raw = localStorage.getItem(CACHE_KEY + ":" + activeRef);
       if (!raw) return null;
       return JSON.parse(raw);
     } catch (e) {
@@ -83,12 +149,12 @@
 
   function setCachedTree(payload) {
     try {
-      localStorage.setItem(CACHE_KEY + ":" + REF, JSON.stringify(payload));
+      localStorage.setItem(CACHE_KEY + ":" + activeRef, JSON.stringify(payload));
     } catch (e) { /* ignore */ }
   }
 
   function treeUrl() {
-    return "https://api.github.com/repos/" + REPO + "/git/trees/" + encodeURIComponent(REF) + "?recursive=1";
+    return "https://api.github.com/repos/" + REPO + "/git/trees/" + encodeURIComponent(activeRef) + "?recursive=1";
   }
 
   function parseTree(data) {
@@ -126,6 +192,10 @@
     if (cached && cached.etag) headers["If-None-Match"] = cached.etag;
 
     var resp = await fetch(treeUrl(), { headers: headers });
+    if (resp.status === 404) {
+      try { localStorage.removeItem(CACHE_KEY + ":ref"); } catch (e) {}
+      throw new Error("ref gone");
+    }
     if (resp.status === 304 && cached && cached.files) {
       cached.timestamp = Date.now();
       setCachedTree(cached);
@@ -162,6 +232,23 @@
         emitFiles(cached.files);
         return filterFiles(cached.files);
       }
+      try { localStorage.removeItem(CACHE_KEY + ":ref"); } catch (err) {}
+      try {
+        var resp = await api("/branches?per_page=30");
+        if (resp.ok) {
+          var branches = await resp.json();
+          var ranked = branches
+            .map(function (b) { return b.name; })
+            .sort(function (a, b) { return scoreBranch(b) - scoreBranch(a); });
+          for (var i = 0; i < ranked.length; i++) {
+            activeRef = ranked[i];
+            writeCachedRef(activeRef);
+            try {
+              return await fetchTree();
+            } catch (err) { /* try next */ }
+          }
+        }
+      } catch (err2) { /* fall through */ }
       var fb = filterFiles(FALLBACK_FILES);
       currentFiles = fb;
       return fb;
@@ -398,6 +485,7 @@
 
   (async function init() {
     try {
+      await refReady;
       var files = await discoverFiles();
       buildSidebar(files);
     } catch (e) {
