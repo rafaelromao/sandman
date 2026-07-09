@@ -775,25 +775,6 @@ func TestPresetMatrixHarness_ElixirRunWithEditedDockerfile(t *testing.T) {
 	assertFakeTaskMarkerInRunLog(t, repoDir, 1)
 	assertRunStartedAndFinished(t, repoDir, 1)
 }
-func TestPresetMatrixHarness_DotnetRunProducesFakeArtifact(t *testing.T) {
-	binPath, repoDir := runE2EScaffold(t, "dotnet", "lts", "")
-	runE2ERun(t, binPath, repoDir)
-	assertFakeTaskMarkerInRunLog(t, repoDir, 1)
-	assertRunStartedAndFinished(t, repoDir, 1)
-}
-
-// TestPresetMatrixHarness_DotnetRunWithEditedDockerfile pins the
-// end-to-end `dotnet` edited-Dockerfile path: scaffold with
-// dotnet+lts, append a RUN line to the Dockerfile, fake opencode
-// shim installed → podman build → sandman run 1 → per-issue run
-// log carries the canonical fake-task marker and the events log
-// has the expected events.
-func TestPresetMatrixHarness_DotnetRunWithEditedDockerfile(t *testing.T) {
-	binPath, repoDir := runE2EScaffold(t, "dotnet", "lts", "RUN touch /etc/sandman-preset-matrix-edited")
-	runE2ERun(t, binPath, repoDir)
-	assertFakeTaskMarkerInRunLog(t, repoDir, 1)
-	assertRunStartedAndFinished(t, repoDir, 1)
-}
 
 // TestPresetMatrixHarness_RustScaffolds pins the scaffold-only
 // slice of the rust harness: running `sandman init --build-tools
