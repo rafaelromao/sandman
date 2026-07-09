@@ -27,7 +27,9 @@ You need to follow all steps in this workflow. Make sure you have gone through a
 
 2. **You must commit at meaningful milestones, not only at the very end.** Within a single vertical slice, accumulate the slice's RED→GREEN cycles as uncommitted work — committing after every test produces noisy, undebuggable history. The slice ends with a single commit once the slice is fully green. Across slices, commit one commit per vertical slice. Commit before any step where you might be interrupted — before delegating review, before requesting review, before any action that hands control to another agent. Uncommitted work in the working tree is at risk: if the run is interrupted, retried, or reset, anything that has not been committed is lost. Commits are your durable checkpoint.
 
-3. **You must reach the PR-created state in every run, even with partial implementation.** Only a merged PR counts as success; an open PR is the durable artifact that lets the next run pick up where this one left off. If you cannot complete all vertical slices in the plan within the run's context window, that is not a reason to keep iterating on TDD — it is a reason to commit what you have, create the PR with `Closes #<issue_number>`, and let the review loop surface the gaps. An open PR with partial implementation is recoverable: the next run continues from the same branch. No PR at all means the work lives only in the local working tree, and the next run starts over from a clean branch.
+3. **You must reach the PR-created state in every run, even with partial implementation.** Only a merged PR counts as success; an open PR is the durable artifact that lets the next run pick up where this one left off. If you cannot complete all vertical slices in the plan within the run's context window, that is not a reason to keep iterating on TDD — it is a reason to commit what you have, create the PR with a closing-reference body that links back to the implementor's open work item (one of `Closes #<issue_number>`, `Fixes #<issue_number>`, or `Resolves #<issue_number>`), and let the review loop surface the gaps. An open PR with partial implementation is recoverable: the next run continues from the same branch. No PR at all means the work lives only in the local working tree, and the next run starts over from a clean branch.
+
+    **Closing-reference body is mandatory.** The PR body MUST contain a line of the exact shape `(Closes|Fixes|Resolves) #<issue_number>` so the tracker auto-closes the linked work item when the change request merges. Phrases like `issue #<n>` buried in prose, `Refs #<n>`, `See #<n>`, `Related to #<n>`, or `Part of #<n>` are NOT closing references — they leave the work item open after merge. A change request whose body does not match the closing-reference shape is not acceptable and must not be created.
 
 4. **You must use `codeindex` before `grep` or `glob` when looking for symbols, blast radius, dependencies, or other broad code locations.** Load the `sandman-index` sub-skill first — it encapsulates all codeindex guidance including the hard rule, command reference, query refinement strategies, and read discipline.
 
@@ -128,16 +130,31 @@ git commit -m "refactor: self-review fixes"
 
 ### 7. Push & create PR
 
-```bash
-git push -u origin <branch>
-gh pr create --title "<issue title>" --body "Closes #<issue_number>"
-```
+1. Push the branch.
 
-Before running the platform's "create change request" CLI, set `body` to exactly the closing-reference string (the one that links the change request back to the implementor's open work item so the tracker auto-closes it on merge).
-Verify the final `body` string is exactly that closing-reference string and contains no other work-item references or extra text.
-If the body is wrong, do NOT create the PR. Instead, report the exact wrong body to the user and stop.
+   ```bash
+   git push -u origin <branch>
+   ```
+2. Build the closing-reference body. The body MUST contain a line of the exact shape `(Closes|Fixes|Resolves) #<issue_number>` so the tracker auto-closes the linked work item on merge. The recommended body is exactly that single line:
 
-Capture the PR URL and number.
+   ```bash
+   BODY="Closes #<issue_number>"
+   ```
+
+   `Closes`, `Fixes`, and `Resolves` are all accepted closing keywords on GitHub. Do NOT use `Refs`, `See`, `Related to`, `Part of`, or any other phrasing — those do not auto-close the issue, and a change request that does not auto-close its work item is not acceptable.
+3. Create the change request with that body.
+
+   ```bash
+   gh pr create --title "<issue title>" --body "$BODY"
+   ```
+4. Verify the body that landed on the PR. Pull it back from the tracker and confirm it matches the closing-reference shape — do not trust that the create call succeeded, because the API may accept variants silently.
+
+   ```bash
+   gh pr view <new-pr-number> --json body --jq -r .body
+   ```
+
+   The first non-empty line of the returned body MUST match `^(Closes|Fixes|Resolves) #<issue_number>\s*$`. If it does not — for example, the body is a long description with only `issue #<n>` buried in prose — STOP. Update the body in place so it is exactly `Closes #<issue_number>` (or `Fixes` / `Resolves`), then re-verify. If the body still cannot be made to match after one re-edit attempt, stop without delegating review and report the exact wrong body to the user.
+5. Capture the PR URL and number.
 
 ### 8. Delegate review
 
@@ -157,5 +174,5 @@ Capture the PR URL and number.
 - [ ] Implementation committed
 - [ ] Self-review performed and fixes committed
 - [ ] Base branch merged into current branch with `sandman-back-merge`
-- [ ] PR created with the closing-reference body that links back to the implementor's open work item (Hard Rule 3 — even with partial implementation)
+- [ ] PR created with a closing-reference body that links back to the implementor's open work item, and verified post-create that the body matches `^(Closes|Fixes|Resolves) #<issue_number>\s*$` (Hard Rule 3 — even with partial implementation)
 - [ ] Delegate review completed
