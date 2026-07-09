@@ -19,7 +19,7 @@ review_agent: opencode
 # Falls back to model if empty.
 review_model: opencode/big-pickle
 
-# Build tools preset for the container image (generic, go, node, python, elixir, ruby, java).
+# Build tools preset for the container image (generic, dotnet, go, node, python, elixir, ruby, rust, java).
 build_tools: generic
 
 # Review command injected into the prompt template and shared skill install.
@@ -214,3 +214,5 @@ Sandman does not store a separate commit identity in project config. Agent commi
 If `user.name` or `user.email` is still missing after that lookup, `sandman run` fails before the agent starts.
 
 See [Commands Reference](commands.md) for the full list of supported dot-notation keys.
+
+For build-tool preset detection and language version selectors, see [Scaffolding and Supported Languages](scaffolding.md).
