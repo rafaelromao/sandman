@@ -72,7 +72,7 @@ Other:
 
 ## Development
 
-Contributing to Sandman? See the [Development docs](docs/development/README.md), including [Testing](docs/development/testing.md) for smoke and e2e gates.
+Contributing to Sandman? See the [Development docs](docs/development/README.md).
 
 ## License
 
