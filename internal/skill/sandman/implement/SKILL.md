@@ -135,7 +135,7 @@ git commit -m "refactor: self-review fixes"
    ```bash
    git push -u origin <branch>
    ```
-2. Build the closing-reference body. The body MUST contain a line of the exact shape `(Closes|Fixes|Resolves) #<issue_number>` so the tracker auto-closes the linked work item on merge. The recommended body is exactly that single line:
+2. Build the closing-reference body. set `body` to exactly the closing-reference string so the tracker auto-closes the linked work item on merge. The recommended body is exactly that single line:
 
    ```bash
    BODY="Closes #<issue_number>"
@@ -147,13 +147,13 @@ git commit -m "refactor: self-review fixes"
    ```bash
    gh pr create --title "<issue title>" --body "$BODY"
    ```
-4. Verify the body that landed on the PR. Pull it back from the tracker and confirm it matches the closing-reference shape — do not trust that the create call succeeded, because the API may accept variants silently.
+4. Verify the body that landed on the PR. Pull it back from the tracker and Verify the final `body` string is exactly that closing-reference string — do not trust that the create call succeeded, because the API may accept variants silently.
 
    ```bash
    gh pr view <new-pr-number> --json body --jq -r .body
    ```
 
-   The first non-empty line of the returned body MUST match `^(Closes|Fixes|Resolves) #<issue_number>\s*$`. If it does not — for example, the body is a long description with only `issue #<n>` buried in prose — STOP. Update the body in place so it is exactly `Closes #<issue_number>` (or `Fixes` / `Resolves`), then re-verify. If the body still cannot be made to match after one re-edit attempt, stop without delegating review and report the exact wrong body to the user.
+   The first non-empty line of the returned body MUST match `^(Closes|Fixes|Resolves) #<issue_number>\s*$`. If it does not — for example, the body is a long description with only `issue #<n>` buried in prose — STOP. Update the body in place so it is exactly `Closes #<issue_number>` (or `Fixes` / `Resolves`), then re-verify.    If the body still cannot be made to match after one re-edit attempt, stop without delegating review. If the body is wrong, report the exact wrong body to the user and stop.
 5. Capture the PR URL and number.
 
 ### 8. Delegate review
