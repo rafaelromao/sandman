@@ -46,8 +46,10 @@ Sandman manages the lifecycle of automated coding workflows:
 
 | Guide | Description |
 |-------|-------------|
-| [Getting Started](docs/usage/getting-started.md) | Prerequisites, installation, and first project setup |
-| [Concepts](docs/usage/concepts.md) | The Batch / AgentRun / Sandbox / PRD model in prose |
+| [Overview](docs/get-started/overview.md) | What Sandman is, the delivery loop, and what it is not |
+| [Quick Start](docs/get-started/quickstart.md) | The five-minute path from install to first run |
+| [Installation](docs/get-started/install.md) | Prerequisites, installation, OpenCode setup, and project setup |
+| [Concepts](docs/get-started/concepts.md) | The Batch / AgentRun / Sandbox / PRD model in prose |
 | [Commands Reference](docs/usage/commands.md) | All CLI commands, flags, and issue selection modes |
 | [Configuration](docs/usage/configuration.md) | Full config schema, default agent, and CLI config |
 | [Workflows](docs/usage/workflows.md) | Running agents, dependency-aware execution, continue and cleanup |
@@ -57,15 +59,15 @@ Sandman manages the lifecycle of automated coding workflows:
 | [Skills](docs/usage/skills.md) | Shared Sandman skill installation and workflow |
 | [Badge](docs/usage/badge.md) | Built with Sandman badge — trigger, idempotency, and opt-out |
 | [Monitoring and Debugging](docs/usage/monitoring.md) | Status, history, event log, and idle timeout |
-| [Troubleshooting](docs/usage/troubleshooting.md) | Common failure modes and the first thing to try for each |
+| [Troubleshooting](docs/help/troubleshooting.md) | Common failure modes and the first thing to try for each |
 | [Agent Compatibility](docs/usage/agent-compatibility.md) | Built-in agent presets and container auth model |
-| [FAQ](docs/usage/faq.md) | Questions people ask before installing |
+| [FAQ](docs/help/faq.md) | Questions people ask before installing |
 
 Other:
 
 - [Architecture Overview](docs/architecture/overview.md) and [Disk Layout](docs/architecture/disk-layout.md)
-- [Positioning](docs/POSITIONING.md) — what Sandman is and isn't, in plain language
-- The browser-rendered docs portal at [`docs/documentation.html`](docs/documentation.html) wraps every guide plus the ADRs.
+- [Positioning](docs/help/positioning.md) — what Sandman is and isn't, in plain language
+- The browser-rendered docs portal at [`docs/documentation.html`](docs/documentation.html) wraps these guides with a sidebar.
 
 ## Config Overview
 
@@ -94,7 +96,7 @@ make build    # Build binary
 make install  # Install to $GOPATH/bin
 ```
 
-See [Running smoke and e2e tests](docs/usage/testing.md) for the full gate list, the per-agent model override, and how to run targeted scenarios.
+See [Running smoke and e2e tests](docs/development/testing.md) for the full gate list, the per-agent model override, and how to run targeted scenarios.
 
 ## License
 

@@ -44,21 +44,21 @@ The portal rescans the repository on each poll, so new `sandman run` processes a
 
 ### Review run identity in the portal
 
-Review runs are ordinary AgentRuns. Each row in the runs table — including review runs — is keyed by a canonical per-row RunID minted per [ADR-0030](../adr/0030-standardize-run-id-and-run-dir.md) §Per-row RunID templates:
+Review runs are ordinary AgentRuns. Each row in the runs table — including review runs — is keyed by a canonical per-row RunID:
 
 - **Review without a linked issue:** the row RunID is `<ts>-<sid>-PR<pr>` (e.g. `260625120000-abcd-PR42`).
 - **Review with a linked issue:** the row RunID is `<ts>-<sid>-<linkedIssue>-PR<pr>` (e.g. `260625120000-abcd-1551-PR42`).
 
-The row folder under `.sandman/batches/<batch-id>/runs/<runID>/` is named after that per-row RunID — never after a `runs/review` alias — so logs, sockets, and `review-state.json` live under a folder whose name matches the row identity surfaced in the UI. `.sandman/reviews/` is reserved for the review daemon's own files (`review.sock`, `review-prompt.md`) and never holds per-row run folders. See `CONTEXT.md` §Review run for the canonical glossary entry.
+The row folder under `.sandman/batches/<batch-id>/runs/<runID>/` is named after that per-row RunID, so logs, sockets, and `review-state.json` live under a folder whose name matches the row identity surfaced in the UI. `.sandman/reviews/` is reserved for the review daemon's own files (`review.sock`, `review-prompt.md`) and never holds per-row run folders.
 
 ### Public BatchId vs per-row RunID
 
-The portal surfaces two distinct identifiers per the slice-1 contract ([ADR-0030](../adr/0030-standardize-run-id-and-run-dir.md) and [ADR-0032](../adr/0032-sandman-layout-redesign.md) §`batch.json` schema and §Row-level action resolution identity table):
+The portal surfaces two distinct identifiers:
 
 - **Public BatchId** — the batch-level identifier rendered in the Batch label and Details tab. Equals the batch folder basename (`batches/<id>/`'s last segment), `batch.json.batchId`, `run.json.BatchID`, and the event payload `batch_id`.
 - **Per-row RunID** — the row-level identifier rendered per row and used by row-level actions (archive, abort, log download). Equals `run.json.runID` and the event payload `run_id`.
 
-For multi-issue batches the two diverge: the public BatchId carries the `+N` additional count suffix and the per-row RunID does not. For every other kind (single-issue, prompt-only, review, auto-select) the two are identical. See [ADR-0032](../adr/0032-sandman-layout-redesign.md) §Row-level action resolution for the full kind-by-kind identity table.
+For multi-issue batches the two diverge: the public BatchId carries the `+N` additional count suffix and the per-row RunID does not. For every other kind (single-issue, prompt-only, review, auto-select) the two are identical.
 
 ### Continuation history
 
@@ -66,13 +66,9 @@ Continuation runs started with `sandman run --continue` appear as separate rows 
 
 Use the picker to switch between the continuation and the previous run without changing the table row. Selecting the previous run shows its own log, events, and details, so lineage stays navigable while each run remains independently addressable for row-level actions.
 
-### Existing `.sandman` migration is out of scope
+### Upgrades
 
-**Existing `.sandman` migration is out of scope.** The slice-1 contract change (issue #1917) and the identity alignment that followed (slices 2–6 of parent PRD #1916) rename the public BatchId surface and the per-row RunID templates. Batches provisioned before the contract change carry old id shapes (legacy `+1` single-issue, total-count `+N`, prompt-only without the `prompt` segment, etc.) and are not rewritten in place. After upgrading, the operator should delete `.sandman` and rebuild; no migration tool ships for the old layout.
-
-See [Public BatchId vs per-row RunID](#public-batchid-vs-per-row-runid) above.
-
-See [Existing `.sandman` migration is out of scope](#existing-sandman-migration-is-out-of-scope) above.
+Sandman does not migrate on-disk state across version upgrades. Clear `.sandman/` and re-run `sandman init` after upgrading. See [Troubleshooting](../help/troubleshooting.md#portal-shows-unknown-rows-after-upgrading-sandman) if the portal shows unknown rows.
 
 ## Stop (Abort)
 
@@ -155,7 +151,7 @@ Returns the current run table for the portal UI. Supports three variants via que
 | Parameter | Behaviour |
 |-----------|-----------|
 | (none) | Full snapshot of all runs |
-| `?runKey=<per-row RunID>` | Single-row keyed lookup; see [ADR-0032](../adr/0032-sandman-layout-redesign.md) §Row-level action resolution identity |
+| `?runKey=<per-row RunID>` | Single-row keyed lookup |
 | `?summary=1` | Condensed snapshot for the portal table; includes `ETag` / `304 Not Modified` caching |
 
 **Response** `200 OK` — `application/json`
@@ -229,7 +225,7 @@ Serves the run log file at the requested path. Used by the portal UI to download
 
 **Query parameter**: `?path=<relative-path>` (required)
 
-The path must be inside `.sandman/` and match the permitted pattern (`batches/<batchId>/runs/<runId>/run.log` or `archive/<batchId>/runs/<runId>/run.log`). See [ADR-0032](../adr/0032-sandman-layout-redesign.md) §Row-level action resolution identity for how `path` is derived from a per-row RunID lookup.
+The path must be inside `.sandman/` and match the permitted pattern (`batches/<batchId>/runs/<runId>/run.log` or `archive/<batchId>/runs/<runId>/run.log`).
 
 **Response** `200 OK` — `application/octet-stream`
 

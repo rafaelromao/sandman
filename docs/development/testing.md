@@ -187,7 +187,7 @@ These side effects are most problematic in:
 
 ### Smoke test auth layout copy policy
 
-Smoke tests copy the opencode auth directory (`~/.config/opencode`, `~/.local/share/opencode`) into the test temp directory, but exclude the opencode SQLite database (`opencode.db`, `opencode.db-shm`, `opencode.db-wal`) to avoid exhausting disk quotas on constrained CI runners. This mirrors the snapshot-exclude behavior described in ADR-0016.
+Smoke tests copy the opencode auth directory (`~/.config/opencode`, `~/.local/share/opencode`) into the test temp directory, but exclude the opencode SQLite database (`opencode.db`, `opencode.db-shm`, `opencode.db-wal`) to avoid exhausting disk quotas on constrained CI runners.
 
 ### Cleaning up
 
@@ -201,7 +201,7 @@ sandman clean --dry-run --orphaned
 sandman clean --orphaned
 
 # Remove active batches and their worktrees; also recover stale run state
-# and sweep stale config snapshots (ADR-0015)
+# and sweep stale config snapshots
 sandman clean --stale
 
 # Full cleanup: active batches + orphaned test dirs + stale snapshots
@@ -211,9 +211,9 @@ sandman clean
 
 `--orphaned` targets test batch directories that have no live daemon socket and no corresponding `run.started` event — the exact residue a failed or interrupted e2e run leaves behind.
 
-The `--stale` path sweeps stale config snapshots left after a crash (the `sandman-config-*` temp directories introduced by ADR-0008) and also emits `run.aborted` events for runs in dead batches to correct the event log. See ADR-0008 and ADR-0015 for the underlying cleanup mechanism.
+The `--stale` path sweeps stale config snapshots left after a crash (the `sandman-config-*` temp directories) and also emits `run.aborted` events for runs in dead batches to correct the event log.
 
-For stranded worktrees (a worktree whose HEAD does not match its directory name), see [`sandman stranded`](commands.md#sandman-stranded) or use [`sandman clean`](commands.md#sandman-clean).
+For stranded worktrees (a worktree whose HEAD does not match its directory name), see [`sandman stranded`](../usage/commands.md#sandman-stranded) or use [`sandman clean`](../usage/commands.md#sandman-clean).
 
 ## Portal live-run atomicity invariant
 
@@ -223,9 +223,9 @@ Portal e2e tests that exercise concurrent or parent-child run scenarios rely on 
 
 Two specific behaviors depend on this invariant:
 
-1. **Parent with live review child (issue #1825, stabilized in #1981):** When an issue has a terminal implementation run (success/failure/aborted) AND a live review child, the parent row's `Status` must preserve the terminal value — it must NOT be overwritten to "reviewing". The review child row still surfaces with `Review=true` and `PRNumber`, but the parent's terminal status is preserved.
+1. **Parent with live review child:** When an issue has a terminal implementation run (success/failure/aborted) AND a live review child, the parent row's `Status` must preserve the terminal value — it must NOT be overwritten to "reviewing". The review child row still surfaces with `Review=true` and `PRNumber`, but the parent's terminal status is preserved.
 
-2. **Two concurrent live runs (issue #1981):** When two runs are live concurrently, the portal's snapshot must include both runs with distinct keys. The portal must not lose run identity between the event-log read and the active-run discovery, even when the batch manifest lacks `RunTS`/`RunShortID` fields (prompt-only socket runs).
+2. **Two concurrent live runs:** When two runs are live concurrently, the portal's snapshot must include both runs with distinct keys. The portal must not lose run identity between the event-log read and the active-run discovery, even when the batch manifest lacks `RunTS`/`RunShortID` fields (prompt-only socket runs).
 
 These invariants are enforced by:
 - `aggregateReviewChildren` in `portal_runs_view.go`: only promotes a parent's Status to "reviewing" when `!isTerminalStatus(parent.Status)` — terminal parents keep their status.

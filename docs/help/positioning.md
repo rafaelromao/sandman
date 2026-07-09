@@ -63,6 +63,6 @@ The same wording is intentionally reused in:
 
 - The landing page (`docs/index.html`)
 - The landing prototypes directory, as the surviving session notes
-- The FAQ entry [Concepts > Where the upstream method fits](../usage/concepts.md#the-durable-handoff)
+- [Concepts](../get-started/concepts.md)
 
 If you update one, update all of them.

@@ -1,33 +1,33 @@
-# Sandman Guides
+# Using Sandman
 
-How to install, configure, run, and operate Sandman end to end.
+Reference for running, configuring, and operating Sandman day to day.
 
-## First time here
+## Commands and workflows
 
-- [Getting Started](getting-started.md) — prerequisites, install, init, first run
-- [Concepts](concepts.md) — the Batch / AgentRun / Sandbox / Prompt-only model in prose
-- [Workflows](workflows.md) — by issue, label, query, range, auto, prompt-only
+| Page | Description |
+|------|-------------|
+| [Commands](commands.md) | Every CLI command, flag, and issue selection mode |
+| [Workflows](workflows.md) | Recipes: by issue, label, range, auto mode, continue, prompt-only |
+| [Configuration](configuration.md) | Full config schema and `config get/set` |
 
-## Run a batch
+## Sandbox and execution
 
-- [Commands Reference](commands.md) — every CLI flag and subcommand
-- [Configuration](configuration.md) — full config schema and `config get` / `config set`
-- [Sandbox Modes](sandbox-modes.md) — worktree vs podman vs docker
+| Page | Description |
+|------|-------------|
+| [Sandbox Modes](sandbox-modes.md) | Worktree vs container-backed sandboxing |
+| [Agent Compatibility](agent-compatibility.md) | Built-in agent presets, container auth, OpenCode setup |
 
-## Watch and debug
+## Observation
 
-- [Portal](portal.md) — repo-scoped browser dashboard and its HTTP API
-- [Monitoring and Debugging](monitoring.md) — `status`, `history`, `events.jsonl`, idle timeout
-- [Troubleshooting](troubleshooting.md) — common failure modes and first thing to try
-- [Smoke and E2E Tests](testing.md) — opt-in integration tiers
+| Page | Description |
+|------|-------------|
+| [Portal](portal.md) | Local browser dashboard and HTTP API |
+| [Monitoring](monitoring.md) | Status, history, event log, idle timeout, graceful shutdown |
 
-## Customize
+## Customization
 
-- [Default Task Prompt](default-task-prompt.md) — bootstrap template and the human-prose companion to `internal/prompt/default-task-prompt.md`
-- [Sandman Skills](skills.md) — the installed workflow skills under `~/.agents/skills/sandman/`
-- [Agent Compatibility](agent-compatibility.md) — the `opencode` preset and the `opencode-shell-strategy` plugin
-
-## Operations
-
-- [Badge](badge.md) — the "Built with Sandman" badge sidecar
-- [FAQ](faq.md) — questions people ask before installing
+| Page | Description |
+|------|-------------|
+| [Skills](skills.md) | Shared Sandman skill installation and workflow |
+| [Default Task Prompt](default-task-prompt.md) | Bootstrap task prompt reference and lifecycle |
+| [Badge](badge.md) | Built with Sandman badge — trigger, idempotency, and opt-out |

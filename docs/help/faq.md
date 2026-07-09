@@ -18,7 +18,7 @@ Yes. As long as the host `gh` CLI is authenticated and has the `repo` scope on t
 
 ## Why is the portal loopback by default?
 
-The default bind host is `127.0.0.1` so the portal is not reachable from other machines. If you want to expose it (for example, on a Mac Mini or a remote VM), pass `sandman portal --host 0.0.0.0` or set `SANDMAN_PORTAL_HOST=0.0.0.0` before launching. See [Portal > Expose the portal on another interface](portal.md#expose-the-portal-on-another-interface).
+The default bind host is `127.0.0.1` so the portal is not reachable from other machines. If you want to expose it (for example, on a Mac Mini or a remote VM), pass `sandman portal --host 0.0.0.0` or set `SANDMAN_PORTAL_HOST=0.0.0.0` before launching. See [Portal > Expose the portal on another interface](../usage/portal.md#expose-the-portal-on-another-interface).
 
 ## Does Sandman work in monorepos?
 
@@ -30,7 +30,7 @@ By design. Sandman scaffolds `.sandman/Dockerfile` from your selected BuildTools
 
 ## Why does Sandman need OpenCode's `opencode-shell-strategy` plugin?
 
-Sandman runs OpenCode headlessly (no TTY/PTY). The plugin teaches OpenCode to avoid interactive shell commands that would hang indefinitely in that environment — package manager prompts, `git commit` without `-m`, editors, pagers. OpenCode subagents inherit the same instructions, so the plugin is a per-installation prerequisite, not a per-run flag. See [Getting Started > OpenCode setup](getting-started.md#opencode-setup).
+Sandman runs OpenCode headlessly (no TTY/PTY). The plugin teaches OpenCode to avoid interactive shell commands that would hang indefinitely in that environment — package manager prompts, `git commit` without `-m`, editors, pagers. OpenCode subagents inherit the same instructions, so the plugin is a per-installation prerequisite, not a per-run flag. See [Installation > OpenCode setup](../get-started/install.md#opencode-setup).
 
 ## Does Sandman commit on my behalf?
 
@@ -42,7 +42,7 @@ Everything. Worktrees stay under `.sandman/worktrees/` until you remove them wit
 
 ## Can I stop a run mid-flight?
 
-Yes — via the portal's Stop button (`POST /api/runs/abort`) or by sending SIGINT/SIGTERM to the `sandman run` process. The AgentRun is emitted as `run.aborted`, the control socket closes, and partial results and events are preserved. See [Monitoring and Debugging > Graceful shutdown](monitoring.md#graceful-shutdown).
+Yes — via the portal's Stop button (`POST /api/runs/abort`) or by sending SIGINT/SIGTERM to the `sandman run` process. The AgentRun is emitted as `run.aborted`, the control socket closes, and partial results and events are preserved. See [Monitoring > Graceful shutdown](../usage/monitoring.md#graceful-shutdown).
 
 ## What happens to a run if my laptop sleeps?
 
@@ -54,7 +54,7 @@ No. Sandman is the *delivery loop*; the agent does the implementation work. The 
 
 ## What's the relationship to Spec-Driven Development and Loop Engineering?
 
-SDD describes the work. Sandman delivers it. The clearest reference for SDD is GitHub's [Spec-driven development with AI](https://github.blog/ai-and-ml/generative-ai/spec-driven-development-with-ai-get-started-with-a-new-open-source-toolkit/) article. Loop Engineering describes the broader operating model; Addy Osmani's [Loop Engineering](https://addyosmani.com/blog/loop-engineering/) article frames agent systems as prompt, state, verify, judge loops. Sandman is one concrete loop inside that discipline — CLI-owned AFK delivery from GitHub issue to reviewed, merged PR. See [POSITIONING.md](../POSITIONING.md) for the canonical framing.
+SDD describes the work. Sandman delivers it. The clearest reference for SDD is GitHub's [Spec-driven development with AI](https://github.blog/ai-and-ml/generative-ai/spec-driven-development-with-ai-get-started-with-a-new-open-source-toolkit/) article. Loop Engineering describes the broader operating model; Addy Osmani's [Loop Engineering](https://addyosmani.com/blog/loop-engineering/) article frames agent systems as prompt, state, verify, judge loops. Sandman is one concrete loop inside that discipline — CLI-owned AFK delivery from GitHub issue to reviewed, merged PR. See [Positioning](positioning.md) for the canonical framing.
 
 ## Is Sandman production-ready?
 

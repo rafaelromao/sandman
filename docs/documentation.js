@@ -14,43 +14,43 @@
   }
 
   var GROUP_LABELS = {
-    "root": "Positioning",
+    "root": "Documentation",
+    "get-started": "Get Started",
     "usage": "Guides",
     "architecture": "Architecture",
-    "agents": "Agent Guidelines",
+    "help": "Help",
+    "development": "Development",
   };
 
-  var GROUP_ORDER = ["root", "usage", "architecture", "agents"];
+  var GROUP_ORDER = ["root", "get-started", "usage", "architecture", "help", "development"];
 
   var FALLBACK_FILES = [
+    "README.md",
+    "get-started/README.md",
+    "get-started/overview.md",
+    "get-started/quickstart.md",
+    "get-started/install.md",
+    "get-started/concepts.md",
     "usage/README.md",
-    "usage/getting-started.md",
-    "usage/concepts.md",
     "usage/commands.md",
     "usage/configuration.md",
     "usage/workflows.md",
     "usage/portal.md",
     "usage/monitoring.md",
-    "usage/troubleshooting.md",
     "usage/skills.md",
     "usage/sandbox-modes.md",
-    "usage/testing.md",
     "usage/badge.md",
     "usage/default-task-prompt.md",
     "usage/agent-compatibility.md",
-    "usage/faq.md",
     "architecture/README.md",
     "architecture/overview.md",
     "architecture/disk-layout.md",
-    "POSITIONING.md",
-    "agents/README.md",
-    "agents/codeindex-strategy.md",
-    "agents/domain.md",
-    "agents/issue-tracker.md",
-    "agents/portal-layout.md",
-    "agents/quality-rules.md",
-    "agents/testenv.md",
-    "agents/triage-labels.md",
+    "help/README.md",
+    "help/troubleshooting.md",
+    "help/faq.md",
+    "help/positioning.md",
+    "development/README.md",
+    "development/testing.md",
   ];
 
   var sidebar = document.getElementById("sidebar");
@@ -258,7 +258,7 @@
   function filterFiles(files) {
     return files.filter(function (f) {
       var top = f.split("/")[0];
-      return top !== "adr" && top !== "landing-prototypes";
+      return top !== "adr" && top !== "agents" && top !== "landing-prototypes";
     });
   }
 
@@ -268,6 +268,7 @@
     var name = path.split("/").pop().replace(/\.md$/, "");
     if (name === "README") {
       var dir = path.includes("/") ? path.split("/")[0] : "";
+      if (!dir) return "Documentation";
       return dir.charAt(0).toUpperCase() + dir.slice(1) + " Overview";
     }
     return name.replace(/-/g, " ");
@@ -275,9 +276,12 @@
 
   function titleRank(title) {
     var lower = title.toLowerCase();
-    if (lower.indexOf("getting started") !== -1) return 0;
+    if (lower === "documentation") return 0;
     if (lower.indexOf("overview") !== -1) return 1;
-    return 2;
+    if (lower.indexOf("quick start") !== -1) return 2;
+    if (lower.indexOf("installation") !== -1) return 3;
+    if (lower.indexOf("concepts") !== -1) return 4;
+    return 5;
   }
 
   // ── Sidebar building ──
