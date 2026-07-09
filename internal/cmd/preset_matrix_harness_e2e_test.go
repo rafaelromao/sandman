@@ -561,3 +561,114 @@ func TestPresetMatrixHarness_DotnetRunWithEditedDockerfile(t *testing.T) {
 	assertFakeTaskMarkerInRunLog(t, repoDir, 1)
 	assertRunStartedAndFinished(t, repoDir, 1)
 }
+
+// TestPresetMatrixHarness_RustScaffolds pins the scaffold-only
+// slice of the rust harness: running `sandman init --build-tools
+// rust --tool-version lts` through the real binary produces
+// `.sandman/{config.yaml,Dockerfile}` in the test repo and the
+// Dockerfile contains the pinned rust version from the catalog.
+func TestPresetMatrixHarness_RustScaffolds(t *testing.T) {
+	containerRuntimeAvailable(t)
+
+	binPath := buildSandmanBinary(t)
+
+	repoDir := t.TempDir()
+	t.Chdir(repoDir)
+	initRunIntegrationRepo(t, repoDir)
+
+	if err := os.WriteFile(filepath.Join(repoDir, "Cargo.toml"), []byte("[package]\nname = \"demo\"\nversion = \"0.1.0\"\n"), 0644); err != nil {
+		t.Fatalf("write Cargo.toml: %v", err)
+	}
+
+	out, err := runSandmanBinary(t, binPath, repoDir, "init", "--build-tools", "rust", "--tool-version", "lts")
+	if err != nil {
+		t.Fatalf("sandman init --build-tools rust --tool-version lts failed: %v\noutput:\n%s", err, out)
+	}
+	for _, rel := range []string{".sandman/config.yaml", ".sandman/Dockerfile", ".sandman/prompt.md"} {
+		if _, err := os.Stat(filepath.Join(repoDir, rel)); err != nil {
+			t.Fatalf("expected scaffolded %s: %v", rel, err)
+		}
+	}
+
+	dockerfile, err := os.ReadFile(filepath.Join(repoDir, ".sandman", "Dockerfile"))
+	if err != nil {
+		t.Fatalf("read Dockerfile: %v", err)
+	}
+	wantVersion := scaffold.BundledRustVersion("lts")
+	if wantVersion == "" {
+		t.Fatalf("BundledRustVersion(\"lts\") returned empty; catalog may have drifted")
+	}
+	want := "# sandman rust-version: " + wantVersion
+	if !strings.Contains(string(dockerfile), want) {
+		t.Fatalf("scaffolded Dockerfile missing %q (the toolchain-version-from-catalog AC):\n%s", want, dockerfile)
+	}
+}
+
+// TestPresetMatrixHarness_RustRunProducesFakeArtifact pins the
+// end-to-end `rust` CLI-options path: scaffold with rust+lts,
+// fake opencode shim installed → podman build → sandman run 1
+// → per-issue run log carries the canonical fake-task marker,
+// and the events log has exactly one run.started and one
+// run.finished for the fake issue.
+func TestPresetMatrixHarness_RustRunProducesFakeArtifact(t *testing.T) {
+	binPath, repoDir := runE2EScaffoldRust(t, "rust", "")
+	runE2ERun(t, binPath, repoDir)
+	assertFakeTaskMarkerInRunLog(t, repoDir, 1)
+	assertRunStartedAndFinished(t, repoDir, 1)
+	assertRustVersionInDockerfile(t, repoDir)
+}
+
+// TestPresetMatrixHarness_RustRunWithEditedDockerfile pins the
+// end-to-end `rust` edited-Dockerfile path: scaffold with
+// rust+lts, append a RUN line to the Dockerfile, fake opencode
+// shim installed → podman build → sandman run 1 → per-issue run
+// log carries the canonical fake-task marker and the events log
+// has the expected events.
+func TestPresetMatrixHarness_RustRunWithEditedDockerfile(t *testing.T) {
+	binPath, repoDir := runE2EScaffoldRust(t, "rust", "RUN touch /etc/sandman-preset-matrix-rust-edited")
+	runE2ERun(t, binPath, repoDir)
+	assertFakeTaskMarkerInRunLog(t, repoDir, 1)
+	assertRunStartedAndFinished(t, repoDir, 1)
+	assertRustVersionInDockerfile(t, repoDir)
+}
+
+// runE2EScaffoldRust scaffolds a repo for the rust preset with
+// --tool-version lts. It follows the same pattern as runE2EScaffoldNode
+// but writes a Cargo.toml fixture before init so the scaffolder
+// detects the repo as a Rust project and activates the rust preset.
+func runE2EScaffoldRust(t *testing.T, preset, dockerfileAppend string) (string, string) {
+	t.Helper()
+	containerRuntimeAvailable(t)
+	binPath := buildSandmanBinary(t)
+	repoDir := t.TempDir()
+	t.Chdir(repoDir)
+	initRunIntegrationRepoWithRemote(t, repoDir)
+	if err := os.WriteFile(filepath.Join(repoDir, "Cargo.toml"), []byte("[package]\nname = \"demo\"\nversion = \"0.1.0\"\n"), 0644); err != nil {
+		t.Fatalf("write Cargo.toml: %v", err)
+	}
+	runRootCommand(t, prFlowDepsForPresetMatrix(t, repoDir), "init", "--build-tools", preset, "--tool-version", "lts")
+	forcePodmanSandbox(t, repoDir)
+	runRootCommand(t, prFlowDepsForPresetMatrix(t, repoDir), "config", "set", "review_command", "/oc review")
+	if dockerfileAppend != "" {
+		appendDockerfileRun(t, repoDir, dockerfileAppend)
+	}
+	return binPath, repoDir
+}
+
+// assertRustVersionInDockerfile asserts the scaffolded Dockerfile's
+// rust-version header matches the bundled catalog lts pin, proving
+// the version was resolved through the scaffold resolver (not a
+// literal in the test). Uses scaffold.BundledRustVersion("lts") to
+// avoid hardcoding the version.
+func assertRustVersionInDockerfile(t *testing.T, repoDir string) {
+	t.Helper()
+	dockerfilePath := filepath.Join(repoDir, ".sandman", "Dockerfile")
+	dockerfile, err := os.ReadFile(dockerfilePath)
+	if err != nil {
+		t.Fatalf("read Dockerfile: %v", err)
+	}
+	want := "# sandman rust-version: " + scaffold.BundledRustVersion("lts")
+	if !strings.Contains(string(dockerfile), want) {
+		t.Fatalf("scaffolded Dockerfile missing rust-version %q:\n%s", want, dockerfile)
+	}
+}
