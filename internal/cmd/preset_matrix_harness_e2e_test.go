@@ -103,7 +103,7 @@ func TestPresetMatrixHarness_GenericScaffolds(t *testing.T) {
 // (issue #2056 user story 12). The edited-Dockerfile variant is
 // pinned by `TestPresetMatrixHarness_GenericRunWithEditedDockerfile`.
 func TestPresetMatrixHarness_GenericRunProducesFakeArtifact(t *testing.T) {
-	binPath, repoDir := runE2EScaffold(t, "generic", "")
+	binPath, repoDir := runE2EScaffold(t, "generic", "", "")
 	runE2ERun(t, binPath, repoDir)
 	assertFakeTaskMarkerInRunLog(t, repoDir, 1)
 	assertRunStartedAndFinished(t, repoDir, 1)
@@ -126,7 +126,7 @@ func TestPresetMatrixHarness_GenericRunWithEditedDockerfile(t *testing.T) {
 	// list already installs the most common tools; the harness
 	// is exercising the "edited Dockerfile still builds" path,
 	// not the network).
-	binPath, repoDir := runE2EScaffold(t, "generic", "RUN touch /etc/sandman-preset-matrix-edited")
+	binPath, repoDir := runE2EScaffold(t, "generic", "", "RUN touch /etc/sandman-preset-matrix-edited")
 	runE2ERun(t, binPath, repoDir)
 	assertFakeTaskMarkerInRunLog(t, repoDir, 1)
 	assertRunStartedAndFinished(t, repoDir, 1)
@@ -219,6 +219,76 @@ func runE2EScaffoldWithGoMod(t *testing.T, preset, dockerfileAppend string) (str
 		appendDockerfileRun(t, repoDir, dockerfileAppend)
 	}
 	return binPath, repoDir
+}
+
+// TestPresetMatrixHarness_NodeRunProducesFakeArtifact pins the
+// end-to-end `node` CLI-options path: scaffold with `--build-tools
+// node --tool-version lts` → run fake task → assert marker in run
+// log + run.started/finished events + node version pinned in
+// Dockerfile matches catalog lts pin.
+//
+// This reuses the generic harness via runE2EScaffoldNode, which
+// calls init with --tool-version lts so the scaffolder resolves the
+// version through the catalog.
+func TestPresetMatrixHarness_NodeRunProducesFakeArtifact(t *testing.T) {
+	binPath, repoDir := runE2EScaffoldNode(t, "node", "")
+	runE2ERun(t, binPath, repoDir)
+	assertFakeTaskMarkerInRunLog(t, repoDir, 1)
+	assertRunStartedAndFinished(t, repoDir, 1)
+	assertNodeVersionInDockerfile(t, repoDir)
+}
+
+// TestPresetMatrixHarness_NodeRunWithEditedDockerfile pins the
+// end-to-end `node` edited-Dockerfile path: scaffold with
+// `--build-tools node --tool-version lts` → append a RUN line to
+// Dockerfile → run fake task → assert marker + events + version pin.
+//
+// This follows the same pattern as the generic edited-Dockerfile
+// variant but uses the node preset and validates the node version.
+func TestPresetMatrixHarness_NodeRunWithEditedDockerfile(t *testing.T) {
+	binPath, repoDir := runE2EScaffoldNode(t, "node", "RUN touch /etc/sandman-preset-matrix-node-edited")
+	runE2ERun(t, binPath, repoDir)
+	assertFakeTaskMarkerInRunLog(t, repoDir, 1)
+	assertRunStartedAndFinished(t, repoDir, 1)
+	assertNodeVersionInDockerfile(t, repoDir)
+}
+
+// runE2EScaffoldNode scaffolds a repo for the node preset with
+// --tool-version lts. It follows the same pattern as runE2EScaffold
+// but adds the tool-version flag so the scaffolder resolves the node
+// version through the catalog rather than prompting.
+func runE2EScaffoldNode(t *testing.T, preset, dockerfileAppend string) (string, string) {
+	t.Helper()
+	containerRuntimeAvailable(t)
+	binPath := buildSandmanBinary(t)
+	repoDir := t.TempDir()
+	t.Chdir(repoDir)
+	initRunIntegrationRepoWithRemote(t, repoDir)
+	runRootCommand(t, prFlowDepsForPresetMatrix(t, repoDir), "init", "--build-tools", preset, "--tool-version", "lts")
+	forcePodmanSandbox(t, repoDir)
+	runRootCommand(t, prFlowDepsForPresetMatrix(t, repoDir), "config", "set", "review_command", "/oc review")
+	if dockerfileAppend != "" {
+		appendDockerfileRun(t, repoDir, dockerfileAppend)
+	}
+	return binPath, repoDir
+}
+
+// assertNodeVersionInDockerfile asserts the scaffolded Dockerfile's
+// node-version header matches the bundled catalog lts pin, proving
+// the version was resolved through the scaffold resolver (not a
+// literal in the test). Uses scaffold.DefaultNodeLTSVersion() to
+// avoid hardcoding the version.
+func assertNodeVersionInDockerfile(t *testing.T, repoDir string) {
+	t.Helper()
+	dockerfilePath := filepath.Join(repoDir, ".sandman", "Dockerfile")
+	dockerfile, err := os.ReadFile(dockerfilePath)
+	if err != nil {
+		t.Fatalf("read Dockerfile: %v", err)
+	}
+	want := "# sandman node-version: " + scaffold.DefaultNodeLTSVersion()
+	if !strings.Contains(string(dockerfile), want) {
+		t.Fatalf("scaffolded Dockerfile missing node-version %q:\n%s", want, dockerfile)
+	}
 }
 
 // presetMatrixHarnessFakeTaskMarker is the canonical fake-task
@@ -398,21 +468,24 @@ func runSandmanBinaryWithEnv(t *testing.T, binPath, workDir, ghBinDir string, ar
 
 // runE2EScaffold sets up a fresh e2e repo for the preset matrix:
 // it inits the integration repo, runs `sandman init --build-tools
-// <preset>`, forces `sandbox: podman`, and sets the review daemon
-// guard the way prflow_e2e_test.go does it. The returned dir is the
-// repo root on disk. The CLI-options path passes an empty
-// dockerfileAppend; the edited-Dockerfile path passes a single
-// `RUN ...` line to append after scaffolding (slice 6: the
-// scaffold helper is the seam the language-specific children reuse
-// to opt into the edited-Dockerfile path).
-func runE2EScaffold(t *testing.T, preset, dockerfileAppend string) (string, string) {
+// <preset> --tool-version <toolVersion>`, forces `sandbox: podman`,
+// and sets the review daemon guard the way prflow_e2e_test.go does
+// it. The returned dir is the repo root on disk. The CLI-options
+// path passes an empty dockerfileAppend; the edited-Dockerfile path
+// passes a single `RUN ...` line to append after scaffolding. The
+// toolVersion param is passed as --tool-version when non-empty.
+func runE2EScaffold(t *testing.T, preset, toolVersion, dockerfileAppend string) (string, string) {
 	t.Helper()
 	containerRuntimeAvailable(t)
 	binPath := buildSandmanBinary(t)
 	repoDir := t.TempDir()
 	t.Chdir(repoDir)
 	initRunIntegrationRepoWithRemote(t, repoDir)
-	runRootCommand(t, prFlowDepsForPresetMatrix(t, repoDir), "init", "--build-tools", preset)
+	initArgs := []string{"init", "--build-tools", preset}
+	if toolVersion != "" {
+		initArgs = append(initArgs, "--tool-version", toolVersion)
+	}
+	runRootCommand(t, prFlowDepsForPresetMatrix(t, repoDir), initArgs...)
 	forcePodmanSandbox(t, repoDir)
 	runRootCommand(t, prFlowDepsForPresetMatrix(t, repoDir), "config", "set", "review_command", "/oc review")
 	if dockerfileAppend != "" {
@@ -512,4 +585,68 @@ func assertFakeTaskMarkerInRunLog(t *testing.T, repoDir string, issue int) {
 	if !strings.Contains(string(logData), presetMatrixHarnessFakeTaskMarker) {
 		t.Fatalf("per-run log %s missing canonical fake-task marker, got:\n%s", logPath, string(logData))
 	}
+}
+
+// TestPresetMatrixHarness_DotnetScaffolds pins the scaffold-only
+// slice of the dotnet harness: running `sandman init --build-tools
+// dotnet --tool-version lts` through the real binary produces
+// `.sandman/{config.yaml,Dockerfile}` in the test repo and the
+// Dockerfile contains the pinned dotnet version from the catalog.
+func TestPresetMatrixHarness_DotnetScaffolds(t *testing.T) {
+	containerRuntimeAvailable(t)
+
+	binPath := buildSandmanBinary(t)
+
+	repoDir := t.TempDir()
+	t.Chdir(repoDir)
+	initRunIntegrationRepo(t, repoDir)
+
+	out, err := runSandmanBinary(t, binPath, repoDir, "init", "--build-tools", "dotnet", "--tool-version", "lts")
+	if err != nil {
+		t.Fatalf("sandman init --build-tools dotnet --tool-version lts failed: %v\noutput:\n%s", err, out)
+	}
+	for _, rel := range []string{".sandman/config.yaml", ".sandman/Dockerfile", ".sandman/prompt.md"} {
+		if _, err := os.Stat(filepath.Join(repoDir, rel)); err != nil {
+			t.Fatalf("expected scaffolded %s: %v", rel, err)
+		}
+	}
+
+	dockerfile, err := os.ReadFile(filepath.Join(repoDir, ".sandman", "Dockerfile"))
+	if err != nil {
+		t.Fatalf("read Dockerfile: %v", err)
+	}
+	wantVersion := scaffold.BundledDotnetVersion("lts")
+	if wantVersion == "" {
+		t.Fatalf("BundledDotnetVersion(\"lts\") returned empty; catalog may have drifted")
+	}
+	want := "# sandman dotnet-version: " + wantVersion
+	if !strings.Contains(string(dockerfile), want) {
+		t.Fatalf("scaffolded Dockerfile missing %q (the toolchain-version-from-catalog AC):\n%s", want, dockerfile)
+	}
+}
+
+// TestPresetMatrixHarness_DotnetRunProducesFakeArtifact pins the
+// end-to-end `dotnet` CLI-options path: scaffold with dotnet+lts,
+// fake opencode shim installed → podman build → sandman run 1
+// → per-issue run log carries the canonical fake-task marker,
+// and the events log has exactly one run.started and one
+// run.finished for the fake issue.
+func TestPresetMatrixHarness_DotnetRunProducesFakeArtifact(t *testing.T) {
+	binPath, repoDir := runE2EScaffold(t, "dotnet", "lts", "")
+	runE2ERun(t, binPath, repoDir)
+	assertFakeTaskMarkerInRunLog(t, repoDir, 1)
+	assertRunStartedAndFinished(t, repoDir, 1)
+}
+
+// TestPresetMatrixHarness_DotnetRunWithEditedDockerfile pins the
+// end-to-end `dotnet` edited-Dockerfile path: scaffold with
+// dotnet+lts, append a RUN line to the Dockerfile, fake opencode
+// shim installed → podman build → sandman run 1 → per-issue run
+// log carries the canonical fake-task marker and the events log
+// has the expected events.
+func TestPresetMatrixHarness_DotnetRunWithEditedDockerfile(t *testing.T) {
+	binPath, repoDir := runE2EScaffold(t, "dotnet", "lts", "RUN touch /etc/sandman-preset-matrix-edited")
+	runE2ERun(t, binPath, repoDir)
+	assertFakeTaskMarkerInRunLog(t, repoDir, 1)
+	assertRunStartedAndFinished(t, repoDir, 1)
 }
