@@ -887,6 +887,117 @@ func assertRustVersionInDockerfile(t *testing.T, repoDir string) {
 	}
 }
 
+// TestPresetMatrixHarness_JavaScaffolds pins the scaffold-only
+// slice of the java harness: running `sandman init --build-tools
+// java --tool-version lts` through the real binary produces
+// `.sandman/{config.yaml,Dockerfile}` in the test repo and the
+// Dockerfile contains the pinned java version from the catalog.
+func TestPresetMatrixHarness_JavaScaffolds(t *testing.T) {
+	containerRuntimeAvailable(t)
+
+	binPath := buildSandmanBinary(t)
+
+	repoDir := t.TempDir()
+	t.Chdir(repoDir)
+	initRunIntegrationRepo(t, repoDir)
+
+	if err := os.WriteFile(filepath.Join(repoDir, "pom.xml"), []byte("<project></project>\n"), 0644); err != nil {
+		t.Fatalf("write pom.xml: %v", err)
+	}
+
+	out, err := runSandmanBinary(t, binPath, repoDir, "init", "--build-tools", "java", "--tool-version", "lts")
+	if err != nil {
+		t.Fatalf("sandman init --build-tools java --tool-version lts failed: %v\noutput:\n%s", err, out)
+	}
+	for _, rel := range []string{".sandman/config.yaml", ".sandman/Dockerfile", ".sandman/prompt.md"} {
+		if _, err := os.Stat(filepath.Join(repoDir, rel)); err != nil {
+			t.Fatalf("expected scaffolded %s: %v", rel, err)
+		}
+	}
+
+	dockerfile, err := os.ReadFile(filepath.Join(repoDir, ".sandman", "Dockerfile"))
+	if err != nil {
+		t.Fatalf("read Dockerfile: %v", err)
+	}
+	wantVersion := scaffold.BundledJavaVersion("lts")
+	if wantVersion == "" {
+		t.Fatalf("BundledJavaVersion(\"lts\") returned empty; catalog may have drifted")
+	}
+	want := "# sandman java-version: " + wantVersion
+	if !strings.Contains(string(dockerfile), want) {
+		t.Fatalf("scaffolded Dockerfile missing %q (the toolchain-version-from-catalog AC):\n%s", want, dockerfile)
+	}
+}
+
+// TestPresetMatrixHarness_JavaRunProducesFakeArtifact pins the
+// end-to-end `java` CLI-options path: scaffold with pom.xml+lts,
+// fake opencode shim installed → podman build → sandman run 1
+// → per-issue run log carries the canonical fake-task marker,
+// and the events log has exactly one run.started and one
+// run.finished for the fake issue.
+func TestPresetMatrixHarness_JavaRunProducesFakeArtifact(t *testing.T) {
+	binPath, repoDir := runE2EScaffoldJava(t, "java", "")
+	runE2ERun(t, binPath, repoDir)
+	assertFakeTaskMarkerInRunLog(t, repoDir, 1)
+	assertRunStartedAndFinished(t, repoDir, 1)
+	assertJavaVersionInDockerfile(t, repoDir)
+}
+
+// TestPresetMatrixHarness_JavaRunWithEditedDockerfile pins the
+// end-to-end `java` edited-Dockerfile path: scaffold with
+// pom.xml+lts, append a RUN line to the Dockerfile, fake opencode
+// shim installed → podman build → sandman run 1 → per-issue run
+// log carries the canonical fake-task marker and the events log
+// has the expected events.
+func TestPresetMatrixHarness_JavaRunWithEditedDockerfile(t *testing.T) {
+	binPath, repoDir := runE2EScaffoldJava(t, "java", "RUN touch /etc/sandman-preset-matrix-java-edited")
+	runE2ERun(t, binPath, repoDir)
+	assertFakeTaskMarkerInRunLog(t, repoDir, 1)
+	assertRunStartedAndFinished(t, repoDir, 1)
+	assertJavaVersionInDockerfile(t, repoDir)
+}
+
+// runE2EScaffoldJava scaffolds a repo for the java preset with
+// --tool-version lts. It follows the same pattern as runE2EScaffoldRust
+// but writes a pom.xml fixture before init so the scaffolder
+// detects the repo as a Java project and activates the java preset.
+func runE2EScaffoldJava(t *testing.T, preset, dockerfileAppend string) (string, string) {
+	t.Helper()
+	containerRuntimeAvailable(t)
+	binPath := buildSandmanBinary(t)
+	repoDir := t.TempDir()
+	t.Chdir(repoDir)
+	initRunIntegrationRepoWithRemote(t, repoDir)
+	if err := os.WriteFile(filepath.Join(repoDir, "pom.xml"), []byte("<project></project>\n"), 0644); err != nil {
+		t.Fatalf("write pom.xml: %v", err)
+	}
+	runRootCommand(t, prFlowDepsForPresetMatrix(t, repoDir), "init", "--build-tools", preset, "--tool-version", "lts")
+	forcePodmanSandbox(t, repoDir)
+	runRootCommand(t, prFlowDepsForPresetMatrix(t, repoDir), "config", "set", "review_command", "/oc review")
+	if dockerfileAppend != "" {
+		appendDockerfileRun(t, repoDir, dockerfileAppend)
+	}
+	return binPath, repoDir
+}
+
+// assertJavaVersionInDockerfile asserts the scaffolded Dockerfile's
+// java-version header matches the bundled catalog lts pin, proving
+// the version was resolved through the scaffold resolver (not a
+// literal in the test). Uses scaffold.BundledJavaVersion("lts") to
+// avoid hardcoding the version.
+func assertJavaVersionInDockerfile(t *testing.T, repoDir string) {
+	t.Helper()
+	dockerfilePath := filepath.Join(repoDir, ".sandman", "Dockerfile")
+	dockerfile, err := os.ReadFile(dockerfilePath)
+	if err != nil {
+		t.Fatalf("read Dockerfile: %v", err)
+	}
+	want := "# sandman java-version: " + scaffold.BundledJavaVersion("lts")
+	if !strings.Contains(string(dockerfile), want) {
+		t.Fatalf("scaffolded Dockerfile missing java-version %q:\n%s", want, dockerfile)
+	}
+}
+
 // TestPresetMatrixHarness_RubyScaffolds pins the scaffold-only slice
 // of the Ruby preset: running `sandman init --build-tools ruby` through
 // the real binary with `--tool-version lts` produces
