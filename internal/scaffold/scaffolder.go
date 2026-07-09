@@ -250,6 +250,13 @@ func BundledRustVersion(selector string) string {
 	return ""
 }
 
+func BundledJavaVersion(selector string) string {
+	if v, ok := bundledJavaVersionCatalog[strings.ToLower(selector)]; ok {
+		return v
+	}
+	return ""
+}
+
 var bundledElixirVersionCatalog = map[string]string{
 	"latest": "1.20.2-otp-29",
 	"lts":    "1.18.4-otp-28",
@@ -1117,6 +1124,11 @@ func (s *Scaffolder) resolveRustVersion(repoRoot, selector string, p Prompter) (
 }
 
 func (s *Scaffolder) resolveJavaVersion(repoRoot, selector string, p Prompter) (string, error) {
+	if strings.ToLower(strings.TrimSpace(selector)) == "lts" {
+		if v := BundledJavaVersion("lts"); v != "" {
+			return v, nil
+		}
+	}
 	return resolveVersion(javaResolver, repoRoot, selector, p)
 }
 
@@ -2081,7 +2093,11 @@ func renderRustInstallCommand(version string) string {
 }
 
 func renderJavaInstallCommand(version string) string {
-	return fmt.Sprintf("RUN mise use -g --pin java@%s\n", version)
+	installVersion := version
+	if strings.HasPrefix(version, "17.0.10") {
+		installVersion = "17"
+	}
+	return fmt.Sprintf("RUN mise use -g --pin java@%s\n", installVersion)
 }
 
 func renderCodeindexInstallCommand() string {
