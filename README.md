@@ -16,17 +16,14 @@ go install github.com/rafaelromao/sandman/cmd/sandman@latest
 # 2. Initialize a project
 cd my-repo && sandman init
 
-# 3. Run agents for GitHub issues
-sandman run 42 43
-sandman run 42:45
-sandman run 42:45 --label bug
+# 3. Run the review daemon
+sandman review
 
-# 4. Check progress
-sandman status
-sandman history
-
-# 5. Open the browser portal for current repo runs
+# 4. Open the browser portal
 sandman portal
+
+# 5. Implement your GitHub issues AFK
+sandman run 42 43
 ```
 
 ## Overview
