@@ -651,6 +651,131 @@ func TestPresetMatrixHarness_DotnetRunWithEditedDockerfile(t *testing.T) {
 	assertRunStartedAndFinished(t, repoDir, 1)
 }
 
+// runE2EScaffoldElixir scaffolds a repo for the elixir preset with
+// --tool-version lts. It follows the same pattern as runE2EScaffoldNode
+// but writes a mix.exs fixture before scaffolding so the elixir
+// preset has a version hint to resolve from.
+func runE2EScaffoldElixir(t *testing.T, preset, dockerfileAppend string) (string, string) {
+	t.Helper()
+	containerRuntimeAvailable(t)
+	binPath := buildSandmanBinary(t)
+	repoDir := t.TempDir()
+	t.Chdir(repoDir)
+	initRunIntegrationRepoWithRemote(t, repoDir)
+
+	mixExs := `defmodule Demo.MixProject do
+  use Mix.Project
+  def project do
+    [app: :demo, version: "0.1.0", elixir: "~> 1.18"]
+  end
+end
+`
+	if err := os.WriteFile(filepath.Join(repoDir, "mix.exs"), []byte(mixExs), 0644); err != nil {
+		t.Fatalf("write mix.exs: %v", err)
+	}
+
+	runRootCommand(t, prFlowDepsForPresetMatrix(t, repoDir), "init", "--build-tools", preset, "--tool-version", "lts")
+	forcePodmanSandbox(t, repoDir)
+	runRootCommand(t, prFlowDepsForPresetMatrix(t, repoDir), "config", "set", "review_command", "/oc review")
+	if dockerfileAppend != "" {
+		appendDockerfileRun(t, repoDir, dockerfileAppend)
+	}
+	return binPath, repoDir
+}
+
+// assertElixirVersionInDockerfile asserts the scaffolded Dockerfile's
+// elixir-version header matches the bundled catalog lts pin, proving
+// the version was resolved through the scaffold resolver (not a
+// literal in the test). Uses scaffold.BundledElixirVersion("lts") to
+// avoid hardcoding the version.
+func assertElixirVersionInDockerfile(t *testing.T, repoDir string) {
+	t.Helper()
+	dockerfilePath := filepath.Join(repoDir, ".sandman", "Dockerfile")
+	dockerfile, err := os.ReadFile(dockerfilePath)
+	if err != nil {
+		t.Fatalf("read Dockerfile: %v", err)
+	}
+	want := "# sandman elixir-version: " + scaffold.BundledElixirVersion("lts")
+	if !strings.Contains(string(dockerfile), want) {
+		t.Fatalf("scaffolded Dockerfile missing elixir-version %q:\n%s", want, dockerfile)
+	}
+}
+
+// TestPresetMatrixHarness_ElixirScaffolds pins the scaffold-only
+// slice of the elixir harness: running `sandman init --build-tools
+// elixir --tool-version lts` through the real binary produces
+// `.sandman/{config.yaml,Dockerfile}` in the test repo and the
+// Dockerfile contains the pinned elixir version from the catalog.
+func TestPresetMatrixHarness_ElixirScaffolds(t *testing.T) {
+	containerRuntimeAvailable(t)
+
+	binPath := buildSandmanBinary(t)
+
+	repoDir := t.TempDir()
+	t.Chdir(repoDir)
+	initRunIntegrationRepo(t, repoDir)
+
+	mixExs := `defmodule Demo.MixProject do
+  use Mix.Project
+  def project do
+    [app: :demo, version: "0.1.0", elixir: "~> 1.18"]
+  end
+end
+`
+	if err := os.WriteFile(filepath.Join(repoDir, "mix.exs"), []byte(mixExs), 0644); err != nil {
+		t.Fatalf("write mix.exs: %v", err)
+	}
+
+	out, err := runSandmanBinary(t, binPath, repoDir, "init", "--build-tools", "elixir", "--tool-version", "lts")
+	if err != nil {
+		t.Fatalf("sandman init --build-tools elixir --tool-version lts failed: %v\noutput:\n%s", err, out)
+	}
+	for _, rel := range []string{".sandman/config.yaml", ".sandman/Dockerfile", ".sandman/prompt.md"} {
+		if _, err := os.Stat(filepath.Join(repoDir, rel)); err != nil {
+			t.Fatalf("expected scaffolded %s: %v", rel, err)
+		}
+	}
+
+	dockerfile, err := os.ReadFile(filepath.Join(repoDir, ".sandman", "Dockerfile"))
+	if err != nil {
+		t.Fatalf("read Dockerfile: %v", err)
+	}
+	wantVersion := scaffold.BundledElixirVersion("lts")
+	if wantVersion == "" {
+		t.Fatalf("BundledElixirVersion(\"lts\") returned empty; catalog may have drifted")
+	}
+	want := "# sandman elixir-version: " + wantVersion
+	if !strings.Contains(string(dockerfile), want) {
+		t.Fatalf("scaffolded Dockerfile missing %q (the toolchain-version-from-catalog AC):\n%s", want, dockerfile)
+	}
+}
+
+// TestPresetMatrixHarness_ElixirRunProducesFakeArtifact pins the
+// end-to-end `elixir` CLI-options path: scaffold with elixir+lts,
+// fake opencode shim installed → podman build → sandman run 1
+// → per-issue run log carries the canonical fake-task marker,
+// and the events log has exactly one run.started and one
+// run.finished for the fake issue.
+func TestPresetMatrixHarness_ElixirRunProducesFakeArtifact(t *testing.T) {
+	binPath, repoDir := runE2EScaffoldElixir(t, "elixir", "")
+	runE2ERun(t, binPath, repoDir)
+	assertFakeTaskMarkerInRunLog(t, repoDir, 1)
+	assertRunStartedAndFinished(t, repoDir, 1)
+}
+
+// TestPresetMatrixHarness_ElixirRunWithEditedDockerfile pins the
+// end-to-end `elixir` edited-Dockerfile path: scaffold with
+// elixir+lts, append a RUN line to the Dockerfile, fake opencode
+// shim installed → podman build → sandman run 1 → per-issue run
+// log carries the canonical fake-task marker and the events log
+// has the expected events.
+func TestPresetMatrixHarness_ElixirRunWithEditedDockerfile(t *testing.T) {
+	binPath, repoDir := runE2EScaffoldElixir(t, "elixir", "RUN touch /etc/sandman-preset-matrix-elixir-edited")
+	runE2ERun(t, binPath, repoDir)
+	assertFakeTaskMarkerInRunLog(t, repoDir, 1)
+	assertRunStartedAndFinished(t, repoDir, 1)
+}
+
 // TestPresetMatrixHarness_RustScaffolds pins the scaffold-only
 // slice of the rust harness: running `sandman init --build-tools
 // rust --tool-version lts` through the real binary produces
