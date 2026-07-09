@@ -35,6 +35,8 @@ description: Automates the GitHub PR review loop with the PR Review Agent. Waits
     - When posting a clarification request, a follow-up after a stalled poll, or any other reviewer-facing message, the body must begin with the review command and may include additional freeform text afterwards (e.g. `{{REVIEW_COMMAND}} — please clarify which file you mean`). The leading review-command substring is what the daemon's trigger filter matches on; the trailing freeform text is read by the reviewer but ignored by the trigger filter.
     - When posting the bot's own review-body, do NOT prefix it with the review command. The review-body is the substance the reviewer writes back to you — prefixing it would cause the daemon to mis-classify the body as a duplicate trigger on the next tick and drop the actual review content.
 
+11. **You must NOT dismiss a review-shaped response based on who posted it, and you must NOT investigate how the reviewer is hosted.** Any comment that arrives after your review request and contains review content — a summary, findings, an approval, change requests, or substantive feedback on the diff — is a valid reviewer response. Accept it, classify it per Step 6, and act on it. Do not filter it out because the author shares your GitHub login, because `viewerDidAuthor` is true, or because you cannot identify a separate reviewer account. Do not inspect `.github/workflows/`, branch protection rules, collaborator lists, or any repository configuration to determine who will respond to the review request — the reviewer may be a local process, a CI action, a bot, a separate user, or the same operator under the same credentials. The skill does not assume any of these, and neither should you.
+
 ## Workflow
 
 ### Prerequisites
