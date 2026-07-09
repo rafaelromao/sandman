@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 140 20" role="img" aria-label="Built with Sandman">
+  <title>Built with Sandman</title>
+  <a href="https://github.com/rafaelromao/sandman">
+    <defs>
+      <clipPath id="c">
+        <rect width="140" height="20" rx="3"/>
+      </clipPath>
+    </defs>
+    <g clip-path="url(#c)">
+      <rect width="140" height="20" rx="3" fill="#5B4736"/>
+      <rect x="1" y="1" width="138" height="18" rx="2" fill="#F2EEE3"/>
+      <rect x="1" y="1" width="20" height="18" rx="2" fill="#D8B26E"/>
+      <svg x="2" y="2" width="16" height="16" viewBox="-0.5 0 21 28" preserveAspectRatio="xMidYMid meet" aria-hidden="true">
+        <g stroke="#FFFFFF" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" fill="none">
+          <path d="M 18 1.5 L 7 1.5 A 7.5 7.5 0 0 0 -0.5 9 A 7.5 7.5 0 0 0 7 16.5 L 13 16.5 A 2.5 2.5 0 0 1 15.5 19 A 2.5 2.5 0 0 1 13 21.5 L 2 21.5"/>
+          <path d="M 18 4 L 7 4 A 5 5 0 0 0 2 9 A 5 5 0 0 0 7 14 L 13 14 A 5 5 0 0 1 18 19 A 5 5 0 0 1 13 24 L 2 24"/>
+          <path d="M 18 6.5 L 7 6.5 A 2.5 2.5 0 0 0 4.5 9 A 2.5 2.5 0 0 0 7 11.5 L 13 11.5 A 7.5 7.5 0 0 1 20.5 19 A 7.5 7.5 0 0 1 13 26.5 L 2 26.5"/>
+        </g>
+      </svg>
+      <text x="80" y="13.1" font-family="'Helvetica Neue','Segoe UI',Arial,sans-serif" font-size="10.8" font-weight="600" fill="#444444" text-anchor="middle">Built with Sandman</text>
+    </g>
+  </a>
+</svg>
