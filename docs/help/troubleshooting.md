@@ -68,8 +68,10 @@ Sandman shells out to `gh` for every issue fetch, PR check, and review comment.
 Interrupted or failed e2e runs leave worktrees, orphaned batch directories, and temp directories under `/tmp/`. The accumulation is most painful in CI with disk quotas and in worktree-based sandboxes.
 
 - Preview: `sandman clean --dry-run --orphaned`.
+- Full cleanup: `sandman clean --all` — runs stale recovery, orphaned removal, archived removal, and the shared temp-dir / `sandman-smoke-*` image sweep in one pass.
 - Remove orphaned test batch dirs: `sandman clean --orphaned`.
 - Recover stale runs in dead batches: `sandman clean --stale` — emits `run.aborted` events so the event log matches the on-disk state.
+- Bare `sandman clean` is a hard error: every invocation needs an explicit mode flag (`--all`, `--archived`, `--stale`, or `--orphaned`).
 - Combinations and mutual exclusion rules are documented in [Commands > `sandman clean`](../usage/commands.md#sandman-clean) and [Testing > Side effects and cleanup](../development/testing.md#side-effects-and-cleanup).
 
 ## The portal binds but nothing loads
