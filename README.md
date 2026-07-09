@@ -9,7 +9,7 @@ CLI tool for orchestrating AFK coding agents in isolated sandboxes.
 ## Quick Start
 
 ```bash
-# Prerequisites: Git, gh and OpenCode
+# Prerequisites: Git, gh and OpenCode properly configured
 
 # 1. Initialize a project
 cd my-repo && sandman init
