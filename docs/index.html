@@ -1,0 +1,619 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Sandman - AFK coding agents orchestration in isolated sandboxes</title>
+    <link rel="icon" type="image/svg+xml" href="assets/sandman-favicon.svg" />
+    <style>
+      :root {
+        color-scheme: light;
+        --canvas: oklch(96% 0.014 82);
+        --canvas-2: oklch(92% 0.026 79);
+        --paper: oklch(99% 0.008 82);
+        --ink: oklch(18% 0.024 58);
+        --ink-strong: oklch(12% 0.02 58);
+        --muted: oklch(36% 0.028 61);
+        --line: oklch(72% 0.04 76);
+        --gold: oklch(72% 0.13 78);
+        --gold-strong: oklch(52% 0.13 75);
+        --night: oklch(16% 0.045 265);
+        --night-2: oklch(20% 0.05 264);
+        --night-line: oklch(34% 0.058 263);
+        --night-text: oklch(93% 0.016 255);
+        --night-muted: oklch(74% 0.045 255);
+        --green: oklch(64% 0.18 145);
+        --blue: oklch(60% 0.16 240);
+      }
+
+      * { box-sizing: border-box; }
+      html { scroll-behavior: smooth; }
+
+      body {
+        margin: 0;
+        color: var(--ink);
+        background:
+          radial-gradient(circle at 6% 0%, oklch(80% 0.1 78 / 0.22), transparent 24rem),
+          var(--canvas);
+        font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        line-height: 1.55;
+      }
+
+      a { color: inherit; }
+
+      code, pre, .mono,
+      .topline, .slogan, .kicker, .cli-shot, .methods-table code {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+      }
+
+      .wrap { width: min(1180px, calc(100% - 32px)); margin: 0 auto; }
+
+      .topline {
+        display: grid;
+        grid-template-columns: auto minmax(180px, 1fr);
+        align-items: center;
+        gap: 18px;
+        padding: 18px 0 22px;
+        margin-bottom: 20px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .brand { display: inline-flex; align-items: center; gap: 10px; text-decoration: none; color: var(--ink-strong); }
+      .brand img.mark { width: 30px; height: 30px; display: block; }
+      .brand strong { font-size: 16px; letter-spacing: 0.18em; font-weight: 800; }
+
+      .slogan {
+        color: var(--gold-strong);
+        font-size: 12px;
+        font-weight: 900;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+      }
+
+      .text-link { color: var(--ink-strong); text-decoration-color: var(--gold); text-underline-offset: 0.14em; }
+
+      .banner {
+        display: block;
+        width: 100%;
+        height: auto;
+        border-radius: 20px;
+        margin: 0;
+      }
+
+      section { padding: clamp(60px, 8vw, 96px) 0; }
+      section + section { border-top: 1px solid var(--line); }
+      h1, h2, h3, p { margin-top: 0; }
+
+      .kicker {
+        display: block;
+        color: var(--gold-strong);
+        font-size: 12px;
+        font-weight: 900;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        margin-bottom: 14px;
+      }
+
+      h1 {
+        font-size: clamp(46px, 7.4vw, 92px);
+        line-height: 0.92;
+        letter-spacing: -0.082em;
+        margin: 0 0 20px;
+        color: var(--ink-strong);
+      }
+
+      h2 {
+        font-size: clamp(34px, 4.8vw, 58px);
+        line-height: 0.98;
+        letter-spacing: -0.06em;
+        margin-bottom: 16px;
+        color: var(--ink-strong);
+      }
+
+      .lead { max-width: 64ch; color: var(--muted); font-size: clamp(18px, 2vw, 21px); }
+      .lead.wide { max-width: 100%; }
+
+      .cta { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 26px; }
+
+      .btn {
+        min-height: 50px;
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 0 18px;
+        border-radius: 999px;
+        text-decoration: none;
+        font-weight: 800;
+        font-size: 15px;
+      }
+      .btn.primary { background: var(--ink-strong); color: var(--paper); }
+      .btn.ghost { color: var(--ink-strong); border: 1px solid var(--line); background: var(--paper); }
+
+      .workflow {
+        margin-top: 36px;
+        display: grid;
+        grid-template-columns: 1fr auto 1fr;
+        gap: 18px;
+        align-items: stretch;
+      }
+
+      .stage {
+        border: 1px solid var(--line);
+        border-radius: 22px;
+        padding: 20px;
+        background: var(--paper);
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+
+      .stage h3 { font-size: 20px; letter-spacing: -0.03em; color: var(--ink-strong); margin-bottom: 4px; }
+      .stage p { margin: 0; color: var(--muted); font-size: 15px; }
+
+      .sandman-box {
+        border: 2px solid var(--night-line);
+        border-radius: 26px;
+        background: var(--night);
+        color: var(--night-text);
+        padding: 22px;
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+        min-width: 280px;
+      }
+
+      .sandman-box .box-head {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding-bottom: 12px;
+        border-bottom: 1px solid var(--night-line);
+      }
+      .sandman-box .box-head img { width: 26px; height: 26px; }
+      .sandman-box .box-head strong { color: var(--night-text); letter-spacing: 0.14em; font-size: 14px; }
+
+      .sandman-steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+      .sandman-steps li {
+        display: grid;
+        grid-template-columns: 22px 1fr;
+        gap: 10px;
+        align-items: baseline;
+        color: var(--night-muted);
+        font-size: 14px;
+      }
+      .sandman-steps li b { color: var(--gold); font-size: 12px; }
+
+      .smart-panel {
+        display: grid;
+        grid-template-columns: 0.75fr 1.25fr;
+        gap: 18px;
+        margin-top: 22px;
+        border: 1px solid var(--line);
+        border-radius: 22px;
+        padding: 20px;
+        background: var(--paper);
+      }
+
+      .smart-panel h3 {
+        margin-bottom: 8px;
+        color: var(--ink-strong);
+        font-size: 24px;
+        letter-spacing: -0.04em;
+      }
+
+      .smart-panel p { margin: 0; color: var(--muted); }
+      .smart-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; }
+      .smart-card { border: 1px solid var(--line); border-radius: 14px; padding: 13px 12px; background: var(--canvas); }
+      .smart-card b { display: block; color: var(--gold-strong); font-size: 18px; line-height: 1; margin-bottom: 10px; font-weight: 900; }
+      .smart-card span { display: block; color: var(--ink); font-size: 14px; line-height: 1.35; letter-spacing: -0.01em; }
+
+      .portal-layout {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(260px, 360px);
+        gap: 30px;
+        align-items: start;
+      }
+
+      .cli-shot {
+        margin: 22px 0 18px;
+        border-radius: 8px;
+        overflow: hidden;
+        border: 1px solid var(--night-line);
+        background: var(--night);
+        color: var(--night-text);
+        box-shadow: 0 22px 60px oklch(18% 0.03 65 / 0.16);
+        position: relative;
+      }
+
+      .cli-scrollbar {
+        position: absolute;
+        top: 8px;
+        right: 5px;
+        width: 3px;
+        height: 34px;
+        border-radius: 999px;
+        background: oklch(75% 0.05 255 / 0.45);
+      }
+
+      .cli-shot pre {
+        margin: 0;
+        padding: 18px;
+        white-space: pre-wrap;
+        color: var(--night-text);
+        font-size: 11.8px;
+        line-height: 1.45;
+      }
+
+      .cli-shot .branch { color: oklch(78% 0.16 164); font-weight: 800; }
+      .cli-shot .prompt { color: oklch(76% 0.16 165); font-weight: 800; }
+      .cli-shot .cmd { color: var(--night-text); }
+      .cli-shot .ok { color: oklch(74% 0.14 152); }
+      .cli-shot .dim { color: var(--night-muted); }
+
+      .cli-reasons {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 10px;
+        margin-top: 16px;
+      }
+
+      .reason {
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        padding: 14px;
+        background: var(--paper);
+      }
+
+      .reason b { display: block; color: var(--ink-strong); margin-bottom: 4px; }
+      .reason span { display: block; color: var(--muted); font-size: 14px; }
+
+      .portal-shot {
+        display: block;
+        width: 100%;
+        max-width: 360px;
+        height: auto;
+        border: 1px solid var(--line);
+        border-radius: 22px;
+        box-shadow: 0 24px 70px oklch(18% 0.03 65 / 0.16);
+      }
+      .portal-figure { margin: 0; }
+      .portal-caption { margin-top: 14px; color: var(--muted); font-size: 14px; }
+
+      .receipts { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; margin-top: 30px; }
+      .receipt {
+        border: 1px solid var(--line);
+        border-radius: 18px;
+        padding: 18px;
+        background: var(--paper);
+      }
+      .receipt h3 { font-size: 17px; color: var(--ink-strong); margin-bottom: 4px; }
+      .receipt p { margin: 0; color: var(--muted); font-size: 14px; }
+      .receipt code { color: var(--gold-strong); }
+
+      .methods-table { width: 100%; border-collapse: separate; border-spacing: 0; margin-top: 28px; border: 1px solid var(--line); border-radius: 20px; overflow: hidden; table-layout: fixed; }
+      .methods-table th, .methods-table td { padding: 14px 16px; text-align: left; vertical-align: top; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); overflow-wrap: normal; word-break: normal; }
+      .methods-table th { background: var(--canvas-2); color: var(--ink-strong); font-size: 13px; text-transform: uppercase; letter-spacing: 0.08em; }
+      .methods-table td { color: var(--muted); font-size: 15px; }
+      .methods-table tr:last-child td { border-bottom: 0; }
+      .methods-table th:last-child, .methods-table td:last-child { border-right: 0; }
+      .methods-table th:first-child, .methods-table td:first-child { width: 18%; }
+      .methods-table th:nth-child(2), .methods-table td:nth-child(2) { width: 42%; }
+      .methods-table code { color: var(--gold-strong); font-size: 14px; }
+      .skill-chain { display: inline-flex; flex-wrap: wrap; gap: 0 6px; color: inherit; font-family: inherit; font-size: inherit; }
+      .skill-chain span { white-space: nowrap; }
+
+      .handoff-line { margin-top: 22px; max-width: none; }
+      .handoff-line code { white-space: nowrap; font-size: 0.92em; }
+
+      .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; margin-top: 28px; align-items: start; }
+      .note-card { border: 1px solid var(--line); border-radius: 22px; padding: 26px; background: var(--paper); }
+      .note-card h3 { font-size: 24px; letter-spacing: -0.04em; color: var(--ink-strong); margin-bottom: 8px; }
+      .note-card p { margin: 0 0 12px; color: var(--muted); }
+      .note-card p:last-child { margin-bottom: 0; }
+      .note-card code { color: var(--gold-strong); }
+
+      .check-list { list-style: none; padding: 0; margin: 12px 0 0; display: grid; gap: 8px; }
+      .check-list li { color: var(--ink); font-size: 15px; padding-left: 26px; position: relative; }
+      .check-list li::before { content: "+"; position: absolute; left: 0; color: var(--green); font-weight: 900; }
+
+      .final { text-align: center; }
+      .final h2 { max-width: 24ch; margin: 0 auto 14px; }
+      .final .lead { margin: 0 auto; }
+      .final .cta { justify-content: center; }
+
+      footer.site {
+        border-top: 1px solid var(--line);
+        padding: 26px 0 40px;
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        justify-content: center;
+        gap: 16px;
+      }
+      footer.site .foot-brand { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 14px; }
+      footer.site .foot-brand img { width: 22px; height: 22px; }
+
+      @media (max-width: 980px) {
+        .workflow { grid-template-columns: 1fr; }
+        .portal-layout, .smart-panel, .grid-2 { grid-template-columns: 1fr; }
+        .smart-grid, .cli-reasons { grid-template-columns: 1fr; }
+        .portal-shot { max-width: 420px; margin: 0 auto; }
+        .topline { grid-template-columns: auto 1fr; }
+        .methods-table { table-layout: auto; }
+        .methods-table th:first-child, .methods-table td:first-child { width: auto; }
+        .handoff-line code { white-space: normal; }
+      }
+
+      @media (max-width: 760px) {
+        .topline { gap: 12px; }
+        .brand { gap: 9px; }
+        .brand img.mark { width: 30px; height: 30px; }
+        .brand strong { font-size: 16px; letter-spacing: 0.14em; }
+        .slogan { font-size: 12px; letter-spacing: 0.06em; white-space: nowrap; }
+        .methods-table {
+          display: block;
+          border: 0;
+          border-radius: 0;
+          overflow: visible;
+        }
+        .methods-table thead {
+          position: absolute;
+          width: 1px;
+          height: 1px;
+          padding: 0;
+          margin: -1px;
+          overflow: hidden;
+          clip: rect(0 0 0 0);
+          white-space: nowrap;
+          border: 0;
+        }
+        .methods-table tbody {
+          display: grid;
+          gap: 12px;
+        }
+        .methods-table tr {
+          display: block;
+          width: 100%;
+          border: 1px solid var(--line);
+          border-radius: 18px;
+          overflow: hidden;
+          background: var(--paper);
+        }
+        .methods-table td {
+          display: block;
+          width: 100% !important;
+          padding: 13px 14px;
+          border-right: 0;
+          border-bottom: 1px solid var(--line);
+          overflow-wrap: anywhere;
+        }
+        .methods-table td:last-child { border-bottom: 0; }
+        .methods-table td::before {
+          content: attr(data-label);
+          display: block;
+          margin-bottom: 5px;
+          color: var(--gold-strong);
+          font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+          font-size: 11px;
+          font-weight: 900;
+          letter-spacing: 0.08em;
+          text-transform: uppercase;
+        }
+        .methods-table .skill-chain { max-width: 100%; }
+        .methods-table .skill-chain span {
+          min-width: 0;
+          white-space: normal;
+          overflow-wrap: anywhere;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="topline">
+        <a class="brand" href="index.html"><img class="mark" src="assets/sandman-mark.svg" alt="Sandman mark" /><strong>SANDMAN</strong></a>
+        <div class="slogan">Sleep while your agents code</div>
+      </div>
+
+      <img class="banner" src="assets/sandman-banner.svg" alt="Sandman: AFK coding agents orchestration in isolated sandboxes" />
+
+      <main>
+        <section id="flow">
+          <div class="kicker">Autonomous delivery for coding agents</div>
+          <h1>AFK coding agents orchestration in isolated sandboxes</h1>
+          <p class="lead">Sandman turns one clear GitHub issue into an autonomous delivery loop. It plans the implementation, runs the agent in an isolated environment, stores progress in <code>task.md</code>, drives review, and merges the PR when the gates pass.</p>
+
+          <div class="workflow" aria-label="Simplified delivery workflow">
+            <article class="stage">
+              <div class="kicker" style="margin-bottom: 6px;">Specification</div>
+              <h3>Clear intent and checks</h3>
+              <p>A spec, SDD flow, or bug brief produces a well-described GitHub issue. Sandman only needs the work to be precise enough to run.</p>
+            </article>
+
+            <article class="sandman-box" aria-label="Sandman-owned loop">
+              <div class="box-head"><img src="assets/sandman-mark.svg" alt="" /><strong>SANDMAN</strong></div>
+              <ol class="sandman-steps">
+                <li><b>01</b><span>Create isolated environment</span></li>
+                <li><b>02</b><span>Render <code>task.md</code></span></li>
+                <li><b>03</b><span>Plan the implementation</span></li>
+                <li><b>04</b><span>Build with TDD and checks</span></li>
+                <li><b>05</b><span>Self-review and open PR</span></li>
+                <li><b>06</b><span>Drive review to merge</span></li>
+              </ol>
+            </article>
+
+            <article class="stage">
+              <div class="kicker" style="margin-bottom: 6px;">Validation</div>
+              <h3>Validate before release</h3>
+              <p>Merge lands on a reference branch. Run smoke, e2e, and QA before promoting to production, just like fast human work.</p>
+            </article>
+          </div>
+
+          <div class="smart-panel" aria-label="SMART checklist">
+            <div>
+              <div class="kicker" style="margin-bottom: 6px;">Issue quality</div>
+              <h3>Good input is still the unlock.</h3>
+              <p>Sandman can run while you sleep when the issue has crisp intent, bounded scope, and visible checks.</p>
+            </div>
+            <div class="smart-grid">
+              <div class="smart-card"><b>S</b><span>Specific outcome</span></div>
+              <div class="smart-card"><b>M</b><span>Measurable checks</span></div>
+              <div class="smart-card"><b>A</b><span>Achievable slice</span></div>
+              <div class="smart-card"><b>R</b><span>Relevant context</span></div>
+              <div class="smart-card"><b>T</b><span>Time-bounded scope</span></div>
+            </div>
+          </div>
+        </section>
+
+        <section id="portal">
+          <div class="kicker">Operate the loop</div>
+          <div class="portal-layout">
+            <div>
+              <h2>Autonomous does not mean invisible.</h2>
+              <p class="lead">Sandman is a CLI application. Portal is a visualization layer for current runs, queued issues, blockers, review state, logs, and merge readiness.</p>
+              <p class="lead">You do not babysit the agent, but you can inspect the loop at any time.</p>
+
+              <div class="cli-shot" aria-label="Sandman CLI screenshot">
+                <span class="cli-scrollbar" aria-hidden="true"></span>
+                <pre><span class="branch">sandman main ?</span> <span class="prompt">❯</span> <span class="cmd">./sandman run 2042:</span>
+[260708175122-5395-2042] 17:51:39
+[260708175122-5395-2042] 17:51:39 &gt; build · MiniMax-M3
+[260708175122-5395-2042] 17:51:39
+[260708175122-5395-2045] 17:51:39
+[260708175122-5395-2045] 17:51:39 &gt; build · MiniMax-M3
+[260708175122-5395-2045] 17:51:39
+[260708175122-5395-2045] 17:51:40
+[260708175122-5395-2043] 17:51:40 &gt; build · MiniMax-M3
+[260708175122-5395-2043] 17:51:40
+[260708175122-5395-2045] 17:51:42 I'll start by loading the sandman skill and following the mandatory execution contract.
+[260708175122-5395-2045] 17:51:42
+[260708175122-5395-2045] 17:51:42 → Skill "sandman"
+[260708175122-5395-2042] 17:51:42 I'll start by loading the sandman skill and checking the current state of the worktree.
+[260708175122-5395-2042] 17:51:42</pre>
+              </div>
+
+              <div class="cli-reasons" aria-label="Why CLI-owned orchestration fits Sandman">
+                <div class="reason"><b>It stays repo-native.</b><span>The run starts where the code, branches, config, logs, and agent context already live.</span></div>
+                <div class="reason"><b>It is scriptable.</b><span>Teams can compose Sandman with shell scripts, CI, cron, hooks, and their existing release process.</span></div>
+                <div class="reason"><b>It keeps ownership local.</b><span>Sandman does not require the delivery loop to move into another SaaS control plane.</span></div>
+                <div class="reason"><b>It leaves receipts.</b><span><code>task.md</code>, events, logs, PRs, and review state remain inspectable after the agent stops.</span></div>
+              </div>
+            </div>
+            <figure class="portal-figure">
+              <img class="portal-shot" src="landing-prototypes/portal-screenshot-light.png" alt="Sandman Portal screenshot showing live runs, a selected run, and the Log tab" />
+              <figcaption class="portal-caption">Real Sandman Portal, captured from this repository's current run state (Sandman Light theme).</figcaption>
+            </figure>
+          </div>
+        </section>
+
+        <section id="receipts">
+          <div class="kicker">Receipts, not vibes</div>
+          <h2>Every run leaves an auditable trail.</h2>
+          <div class="receipts">
+            <div class="receipt"><h3>task.md</h3><p>Rendered task, progress notes, and the continuation point for <code>sandman run 1234 --continue</code>.</p></div>
+            <div class="receipt"><h3>Logs and events</h3><p>Agent output, targeted checks, repair loops, and review responses.</p></div>
+            <div class="receipt"><h3>Pull request</h3><p>Code diff, review thread, green CI, merge decision, and linked issue.</p></div>
+            <div class="receipt"><h3>Run state</h3><p>Active, queued, reviewing, merged, or needs validation, projected from events.</p></div>
+          </div>
+        </section>
+
+        <section id="validate">
+          <div class="kicker">Validation</div>
+          <h2>Sandman feeds validation, never skips it.</h2>
+          <p class="lead">Treat agent output the way you treat fast human output: the loop can merge to a reference branch, but release confidence comes from recurring validation across changes.</p>
+          <div class="grid-2">
+            <div class="note-card">
+              <h3>Good engineering still applies.</h3>
+              <p>TDD is not an AI novelty. It is a traditional control that helps agents work in smaller, safer loops. Keep it, then add broader validation where risk demands it.</p>
+              <ul class="check-list">
+                <li>Targeted tests during implementation</li>
+                <li>Self-review before PR creation</li>
+                <li>Green CI before merge</li>
+                <li>Smoke, e2e, QA, or wider suites after groups of merged work</li>
+              </ul>
+            </div>
+            <div class="note-card">
+              <h3>Reference branch is not production.</h3>
+              <p>The reference branch Sandman merges into should be a branch you can validate, not a direct production promotion.</p>
+              <p>Today Sandman integrates with GitHub for source control and issues, and OpenCode as the implementation agent. That boundary may broaden over time, but the durable idea is the same: workflow-agnostic AFK delivery.</p>
+            </div>
+          </div>
+        </section>
+
+        <section id="methods">
+          <div class="kicker">Methodology, correctly placed</div>
+          <h2>Sandman owns the delivery loop.</h2>
+          <p class="lead">Use the upstream method that produces the clearest issues. Sandman should lead the story because it owns the autonomous path from selected issue to reviewed, merged PR.</p>
+          <table class="methods-table">
+            <thead><tr><th scope="col">Layer</th><th scope="col">Precise role</th><th scope="col">Relationship to Sandman</th></tr></thead>
+            <tbody>
+              <tr><td data-label="Layer">Matt Pocock workflow</td><td data-label="Precise role"><span class="skill-chain"><span>grill-with-docs</span><span>/</span><span>wayfinder</span><span>-&gt;</span><span>to-spec</span><span>-&gt;</span><span>to-tickets</span><span>-&gt;</span><span>Sandman</span><span>-&gt;</span><span>Validation.</span><span>Plus diagnosing-bugs, improve-codebase-architecture and others.</span></span></td><td data-label="Relationship to Sandman">Use the skills to resolve uncertainty, publish the spec, and slice GitHub tickets. Sandman runs the ready ticket frontier AFK.</td></tr>
+              <tr><td data-label="Layer">Spec-Driven Development</td><td data-label="Precise role">Executable specifications become the source of truth that tasks are derived from, for example GitHub Spec Kit or Kiro specs.</td><td data-label="Relationship to Sandman">Optional upstream source of agent-ready issues. Sandman does not need to own the spec layer.</td></tr>
+            </tbody>
+          </table>
+          <p class="lead wide handoff-line">The handoff stays stable regardless of method: <code>Specification -&gt; Sandman -&gt; Validation.</code></p>
+        </section>
+
+        <section id="opencode-integration">
+          <div class="kicker">OpenCode integration</div>
+          <h2>Sandman runs OpenCode without hiding it.</h2>
+          <p class="lead">Sandman uses OpenCode as implementation agent.</p>
+          <div class="grid-2">
+            <div class="note-card">
+              <h3>Host sessions stay inspectable.</h3>
+              <p>Sandman live-mounts the host OpenCode database, so runs created by Sandman remain visible as native OpenCode sessions.</p>
+            </div>
+            <div class="note-card">
+              <h3>Debug in the right surface.</h3>
+              <p>Use Portal for delivery state: run status, logs, review gates, and merge readiness. Use OpenCode for the agent transcript when you need to inspect what the model saw or did.</p>
+            </div>
+          </div>
+        </section>
+
+        <section id="sandman-review">
+          <div class="kicker">Sandman Review</div>
+          <h2>Review stays inside the AFK gate.</h2>
+          <p class="lead">Sandman Review is the local review module for PR feedback. It follows the same idea as OpenCode's GitHub <a class="text-link" href="https://opencode.ai/docs/github/">/oc</a> integration: a PR comment triggers agent work. In Sandman, the trigger is <code>/sandman review</code> and the review runs locally.</p>
+          <div class="grid-2">
+            <div class="note-card">
+              <h3>Comment-driven review.</h3>
+              <p>Sandman Review listens for review request comments in repository PRs, reviews it, and posts feedback requesting changes or approving.</p>
+            </div>
+            <div class="note-card">
+              <h3>Not an afterthought.</h3>
+              <p>The implementation agent builds and self-reviews first. Sandman Review then handles feedback, repair, green checks, and merge readiness as part of the gate.</p>
+            </div>
+          </div>
+        </section>
+
+        <section id="comparison-session">
+          <div class="kicker">Comparison</div>
+          <h2>Sandman, SDD, and Loop Engineering occupy different layers.</h2>
+          <p class="lead">Sandman is the operational delivery layer. SDD is the upstream specification layer; GitHub's <a class="text-link" href="https://github.blog/ai-and-ml/generative-ai/spec-driven-development-with-ai-get-started-with-a-new-open-source-toolkit/">Spec Kit article</a> is the clearest reference. Loop Engineering is the broader discipline of designing agent loops; Addy Osmani's <a class="text-link" href="https://addyosmani.com/blog/loop-engineering/">Loop Engineering article</a> is the reference.</p>
+          <div class="grid-2">
+            <div class="note-card">
+              <h3>SDD describes. Sandman delivers.</h3>
+              <p>SDD helps teams describe the work. Sandman helps teams leave the keyboard while the described work gets implemented, reviewed, and merged.</p>
+            </div>
+            <div class="note-card">
+              <h3>Sandman applies Loop Engineering.</h3>
+              <p>Loop Engineering frames the management system around agentic work. Sandman applies those principles to one concrete loop: CLI-owned AFK delivery from GitHub issue to merged PR.</p>
+              <p>Careful wording matters. Sandman is not all of Loop Engineering; it is a concrete loop inside that discipline.</p>
+            </div>
+          </div>
+        </section>
+
+        <section class="final">
+          <div class="kicker">Ready for implementation</div>
+          <h2>Wake up to merged PRs, then validate like an engineer.</h2>
+          <p class="lead">Sandman makes AFK coding operational: explicit input, isolated environment, durable progress, review gates, merge discipline, and a clear post-merge validation step.</p>
+          <div class="cta"><a class="btn primary" href="https://github.com/rafaelromao/sandman">GitHub Page</a><a class="btn ghost" href="documentation.html">Documentation</a></div>
+        </section>
+      </main>
+
+      <footer class="site">
+        <div class="foot-brand"><img src="assets/sandman-mark.svg" alt="" /><span>Sandman &middot; autonomous delivery loop for coding agents</span></div>
+      </footer>
+    </div>
+  </body>
+</html>
