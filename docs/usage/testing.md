@@ -46,6 +46,7 @@ Gated scenarios (`SANDMAN_E2E_GATES`) run without a build tag and select individ
 | `badge` | `internal/cmd` | badge scenario tests |
 | `pathlen` | `internal/cmd` | path-length scenario tests |
 | `batch_id_rules` | `internal/cmd` | `TestSlice10` |
+| `preset_matrix` | `internal/cmd` | `TestPresetMatrixHarness_GenericRunProducesFakeArtifact` |
 
 ```bash
 # Single scenario
