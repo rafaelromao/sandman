@@ -2,8 +2,10 @@
   "use strict";
 
   var REPO = "rafaelromao/sandman";
-  var BRANCH = "main";
+  var REF = "HEAD";
   var DOCS_PREFIX = "docs/";
+  var CACHE_KEY = "sandman-docs-tree-v1";
+  var CACHE_TTL_MS = 5 * 60 * 1000;
 
   var GROUP_LABELS = {
     "root": "Positioning",
@@ -52,10 +54,19 @@
   var isMobile = window.matchMedia("(max-width: 768px)").matches;
 
   // ── File discovery ──
+  //
+  // The sidebar rebuilds from the repository tree on every load. We keep a
+  // short-TTL cache in localStorage and use GitHub's ETag so revalidation is
+  // free when nothing changed. New markdown files added under docs/ become
+  // visible automatically after the cache expires (or sooner via the
+  // "Refresh tree" action).
+
+  var treeListeners = [];
+  var currentFiles = null;
 
   function getCachedTree() {
     try {
-      var raw = localStorage.getItem("sandman-docs-tree");
+      var raw = localStorage.getItem(CACHE_KEY);
       if (!raw) return null;
       return JSON.parse(raw);
     } catch (e) {
@@ -63,45 +74,101 @@
     }
   }
 
-  function setCachedTree(files) {
+  function setCachedTree(payload) {
     try {
-      localStorage.setItem("sandman-docs-tree", JSON.stringify({
-        timestamp: Date.now(),
-        files: files,
-      }));
+      localStorage.setItem(CACHE_KEY, JSON.stringify(payload));
     } catch (e) { /* ignore */ }
   }
 
-  async function discoverFiles() {
-    var cached = getCachedTree();
-    var cacheMaxAge = 3600000;
+  function treeUrl() {
+    return "https://api.github.com/repos/" + REPO + "/git/trees/" + REF + "?recursive=1";
+  }
 
-    if (cached && Date.now() - cached.timestamp < cacheMaxAge) {
+  function parseTree(data) {
+    return data.tree
+      .filter(function (item) {
+        return item.type === "blob" &&
+          item.path.startsWith(DOCS_PREFIX) &&
+          item.path.endsWith(".md") &&
+          item.path.indexOf("landing-prototypes") === -1;
+      })
+      .map(function (item) { return item.path.substring(DOCS_PREFIX.length); })
+      .sort();
+  }
+
+  function emitFiles(files) {
+    var filtered = filterFiles(files);
+    if (currentFiles && currentFiles.length === filtered.length &&
+        currentFiles.every(function (f, i) { return f === filtered[i]; })) {
+      return;
+    }
+    currentFiles = filtered;
+    treeListeners.forEach(function (fn) { try { fn(filtered); } catch (e) {} });
+  }
+
+  function subscribeTree(fn) {
+    treeListeners.push(fn);
+    if (currentFiles) {
+      try { fn(currentFiles); } catch (e) {}
+    }
+  }
+
+  async function fetchTree() {
+    var cached = getCachedTree();
+    var headers = { "Accept": "application/vnd.github+json" };
+    if (cached && cached.etag) headers["If-None-Match"] = cached.etag;
+
+    var resp = await fetch(treeUrl(), { headers: headers });
+    if (resp.status === 304 && cached && cached.files) {
+      cached.timestamp = Date.now();
+      setCachedTree(cached);
+      emitFiles(cached.files);
+      return cached.files;
+    }
+    if (!resp.ok) throw new Error("API " + resp.status);
+
+    var data = await resp.json();
+    var files = parseTree(data);
+    setCachedTree({
+      timestamp: Date.now(),
+      etag: resp.headers.get("ETag"),
+      sha: data.sha,
+      files: files,
+    });
+    emitFiles(files);
+    return files;
+  }
+
+  async function discoverFiles(opts) {
+    var force = opts && opts.force;
+    var cached = getCachedTree();
+
+    if (!force && cached && Date.now() - cached.timestamp < CACHE_TTL_MS && cached.files) {
+      emitFiles(cached.files);
+      fetchTree().catch(function () {});
       return filterFiles(cached.files);
     }
 
     try {
-      var resp = await fetch(
-        "https://api.github.com/repos/" + REPO + "/git/trees/" + BRANCH + "?recursive=1"
-      );
-      if (!resp.ok) throw new Error("API " + resp.status);
-      var data = await resp.json();
-      var files = data.tree
-        .filter(function (item) {
-          return item.type === "blob" &&
-            item.path.startsWith(DOCS_PREFIX) &&
-            item.path.endsWith(".md") &&
-            item.path.indexOf("landing-prototypes") === -1;
-        })
-        .map(function (item) { return item.path.substring(DOCS_PREFIX.length); })
-        .sort();
-
-      setCachedTree(files);
-      return filterFiles(files);
+      return await fetchTree();
     } catch (e) {
-      if (cached && cached.files) return filterFiles(cached.files);
-      return filterFiles(FALLBACK_FILES);
+      if (cached && cached.files) {
+        emitFiles(cached.files);
+        return filterFiles(cached.files);
+      }
+      var fb = filterFiles(FALLBACK_FILES);
+      currentFiles = fb;
+      return fb;
     }
+  }
+
+  function refreshTree() {
+    var cached = getCachedTree();
+    if (cached) {
+      cached.timestamp = 0;
+      setCachedTree(cached);
+    }
+    return discoverFiles({ force: true });
   }
 
   function filterFiles(files) {
@@ -293,6 +360,19 @@
     }
   });
 
+  var refreshBtn = document.getElementById("tree-refresh");
+  if (refreshBtn) {
+    refreshBtn.addEventListener("click", function (e) {
+      e.stopPropagation();
+      refreshBtn.classList.add("is-loading");
+      refreshBtn.disabled = true;
+      refreshTree().finally(function () {
+        refreshBtn.classList.remove("is-loading");
+        refreshBtn.disabled = false;
+      });
+    });
+  }
+
   if (isMobile) {
     document.addEventListener("click", function (e) {
       if (!sidebar.contains(e.target) && !sidebarToggle.contains(e.target)) {
@@ -318,9 +398,24 @@
 
   window.addEventListener("hashchange", handleHashChange);
 
-  (async function init() {
-    var files = await discoverFiles();
+  subscribeTree(function (files) {
     buildSidebar(files);
+    var active = document.querySelector(".nav-item.active");
+    if (!active) {
+      var first = document.querySelector(".nav-item");
+      if (first && !location.hash.startsWith("#/")) {
+        location.hash = "#/" + first.getAttribute("data-file");
+      }
+    }
+  });
+
+  (async function init() {
+    try {
+      var files = await discoverFiles();
+      buildSidebar(files);
+    } catch (e) {
+      fileNav.innerHTML = '<div class="nav-group-title">Could not load docs</div>';
+    }
     handleHashChange();
   })();
 })();

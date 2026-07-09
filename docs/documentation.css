@@ -105,7 +105,7 @@ code, pre {
     margin-left: 6px;
   }
 
-.topbar-right { display: flex; align-items: center; }
+.topbar-right { display: flex; align-items: center; gap: 8px; }
 
 .btn-landing {
   display: inline-flex;
@@ -120,6 +120,14 @@ code, pre {
   font-weight: 700;
   text-decoration: none;
   transition: background 0.15s, color 0.15s, border-color 0.15s;
+  font-family: inherit;
+  cursor: pointer;
+}
+button.btn-landing { line-height: 1; }
+#tree-refresh.is-loading svg { animation: spin 0.7s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  #tree-refresh.is-loading svg { animation: none; }
 }
 .btn-landing:hover { background: var(--canvas); color: var(--ink-strong); border-color: var(--gold); text-decoration: none; }
 
