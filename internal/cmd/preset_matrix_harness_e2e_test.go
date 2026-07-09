@@ -146,11 +146,13 @@ const presetMatrixHarnessFakeTaskMarker = "fake-task-ok: canonical fake task bod
 // available in the container at /usr/local/bin/opencode. The shim
 // honors SANDMAN_TEST_FAST=1 + WAKEUP_DIR to short-circuit in fast
 // mode (matching the existing `opencode_subagent_e2e_test.go`
-// pattern), prints the canonical fake-task marker to stdout (which
-// the orchestrator captures into the per-issue run log) and writes
-// the marker to a host-visible cache path under the agent's config
-// directory before exiting 0. The run log is host-visible after the
-// run completes and the harness asserts the marker string there.
+// pattern), prints the canonical fake-task marker to stdout, and
+// writes the canonical artifact to /workspace/ (bind-mounted to
+// the worktree on the host) before exiting 0. The harness
+// asserts the marker in the host-visible per-run log; the
+// worktree file is the canonical "fake task's artifact" the
+// spec asks for but is transient because the orchestrator cleans
+// up the worktree after the run.
 func installFakeTaskOpenCodeForContainer(t *testing.T, repoDir string) {
 	t.Helper()
 
@@ -163,9 +165,10 @@ func installFakeTaskOpenCodeForContainer(t *testing.T, repoDir string) {
 # Canonical fake opencode shim for the e2e preset matrix.
 # Honors SANDMAN_TEST_FAST=1 + WAKEUP_DIR to short-circuit in fast
 # mode (otherwise it would sleep 600s like the real blocking shim).
-# Prints the canonical fake-task marker to stdout (captured by the
-# orchestrator into the per-issue run log, which the harness reads
-# back) and exits 0.
+# Writes the canonical fake-task artifact to /workspace/ (bind-mounted
+# to the worktree on the host) and prints the canonical fake-task
+# marker to stdout (captured by the orchestrator into the per-run
+# log, which the harness asserts against).
 
 _wakeup_dir="${WAKEUP_DIR:-}"
 if [ "${SANDMAN_TEST_FAST:-}" = "1" ] && [ -n "$_wakeup_dir" ] && [ -d "$_wakeup_dir" ]; then
@@ -174,6 +177,7 @@ if [ "${SANDMAN_TEST_FAST:-}" = "1" ] && [ -n "$_wakeup_dir" ] && [ -d "$_wakeup
     done
 fi
 
+printf 'fake-task-ok\n' > /workspace/sandman-fake-task-marker
 echo "` + presetMatrixHarnessFakeTaskMarker + `"
 exit 0
 `
@@ -262,18 +266,19 @@ func summarizeEvents(all []events.Event, issue int) string {
 	return string(data)
 }
 
-// prFlowDepsForPresetMatrix returns a Dependencies wired the way
-// prFlowDeps() does in prflow_e2e_test.go, but using a fake GitHub
-// client pre-seeded with the canonical fake-task body for the
-// fake issue. The harness owns this helper so the children can
-// swap the GitHub seed without affecting the rest of the test
-// surface.
-//
-// The fake issue body is inlined so the production prompt engine
-// still sees a real issue body when it derives the agent prompt;
-// the canonical fake task body lives in the in-container shim,
-// which the production engine never sees — the shim ignores the
-// prompt and runs the canonical body verbatim.
+// prFlowDepsForPresetMatrix returns the Dependencies wired the way
+// prflow_e2e_test.go wires its prflow e2e surface: the real
+// `github.CLIClient` (no new fake), the real `events.JSONLLogger`,
+// and the real `prompt.Engine`. The fake GitHub surface comes
+// from the `gh` shim that `runE2ERun` installs on PATH before
+// driving `sandman` through the public CLI binary, so the
+// orchestrator's `FetchIssue` path goes through the shim and the
+// harness never has to pre-seed a fake GitHub client. The
+// canonical fake task body lives in the in-container shim, which
+// the production prompt engine never sees — the shim ignores the
+// derived prompt and runs the canonical body verbatim, so the
+// prompt engine still exercises the real seam with the issue body
+// the `gh` shim returns.
 func prFlowDepsForPresetMatrix(t *testing.T, repoDir string) Dependencies {
 	t.Helper()
 	return prFlowDeps(repoDir)
