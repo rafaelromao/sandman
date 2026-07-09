@@ -254,6 +254,13 @@ var bundledElixirVersionCatalog = map[string]string{
 	"1.15":   "1.15.8-otp-26",
 }
 
+func BundledElixirVersion(selector string) string {
+	if v, ok := bundledElixirVersionCatalog[strings.ToLower(selector)]; ok {
+		return v
+	}
+	return ""
+}
+
 var bundledRubyVersionCatalog = map[string]string{
 	"latest": "3.4.5",
 	"lts":    "3.3.8",
