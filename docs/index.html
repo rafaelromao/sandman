@@ -85,7 +85,7 @@
         font-family: inherit;
         cursor: pointer;
         border: 1px solid var(--line);
-        background: var(--paper);
+        background: transparent;
         color: var(--ink-strong);
         transition: background 0.15s, border-color 0.15s;
       }
@@ -367,8 +367,9 @@
       }
 
       @media (max-width: 760px) {
-        .topline { grid-template-columns: auto auto; gap: 10px; }
+        .topline { display: flex; align-items: center; gap: 10px; }
         .topline .slogan { display: none; }
+        .topline-actions { margin-left: auto; }
         .topline-actions .btn { padding: 7px 10px; gap: 0; }
         .topline-actions .btn span { display: none; }
         .brand { gap: 9px; }
@@ -534,10 +535,6 @@
                 <div class="reason"><b>It leaves receipts.</b><span><code>task.md</code>, events, logs, PRs, and review state remain inspectable after the agent stops.</span></div>
               </div>
             </div>
-            <figure class="portal-figure">
-              <img class="portal-shot" src="landing-prototypes/portal-screenshot-light.png" alt="Sandman Portal screenshot showing live runs, a selected run, and the Log tab" />
-              <figcaption class="portal-caption">Real Sandman Portal, captured from this repository's current run state (Sandman Light theme).</figcaption>
-            </figure>
           </div>
         </section>
 
