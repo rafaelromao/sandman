@@ -4,8 +4,8 @@
   var REPO = "rafaelromao/sandman";
   var DEFAULT_REF = "HEAD";
   var DOCS_PREFIX = "docs/";
-  var CACHE_KEY = "sandman-docs-tree-v1";
-  var CACHE_TTL_MS = 5 * 60 * 1000;
+  var CACHE_KEY = "sandman-docs-tree-v2";
+  var CACHE_TTL_MS = 60 * 1000;
 
   function api(path) {
     return fetch("https://api.github.com/repos/" + REPO + path, {
