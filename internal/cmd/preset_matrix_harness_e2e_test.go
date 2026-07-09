@@ -25,11 +25,17 @@
 package cmd
 
 import (
+	"context"
+	"encoding/json"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/rafaelromao/sandman/internal/events"
 	"github.com/rafaelromao/sandman/internal/scaffold"
 )
 
@@ -81,5 +87,333 @@ func TestPresetMatrixHarness_GenericScaffolds(t *testing.T) {
 	want := "# sandman mise-version: " + scaffold.DefaultMISEVersion
 	if !strings.Contains(string(dockerfile), want) {
 		t.Fatalf("scaffolded Dockerfile missing %q (the toolchain-version-from-catalog AC):\n%s", want, dockerfile)
+	}
+}
+
+// TestPresetMatrixHarness_GenericRunProducesFakeArtifact pins the
+// end-to-end `generic` CLI-options path: scaffold → fake opencode
+// shim installed into `.sandman/bin/opencode` and COPY'd into the
+// container → `podman build` → `sandman run 1` with a fake GitHub
+// issue whose body is the canonical fake task body → the per-issue
+// run log carries the canonical fake-task marker, and the events
+// log has exactly one `run.started` and one `run.finished` for the
+// fake issue.
+//
+// This is the canonical carrier for the CLI-options tool-add path
+// (issue #2056 user story 12). The edited-Dockerfile variant is
+// pinned by `TestPresetMatrixHarness_GenericRunWithEditedDockerfile`.
+func TestPresetMatrixHarness_GenericRunProducesFakeArtifact(t *testing.T) {
+	binPath, repoDir := runE2EScaffold(t, "generic", "")
+	runE2ERun(t, binPath, repoDir)
+	assertFakeTaskMarkerInRunLog(t, repoDir, 1)
+	assertRunStartedAndFinished(t, repoDir, 1)
+}
+
+// TestPresetMatrixHarness_GenericRunWithEditedDockerfile pins the
+// end-to-end `generic` edited-Dockerfile path: scaffold → append a
+// known `RUN` line to `.sandman/Dockerfile` → fake opencode shim
+// installed → `podman build` (which must still succeed) → `sandman
+// run 1` → the per-issue run log carries the canonical fake-task
+// marker and the events log has the expected events.
+//
+// This is the canonical carrier for the edited-Dockerfile tool-add
+// path (issue #2056 user story 11). The CLI-options variant is
+// pinned by `TestPresetMatrixHarness_GenericRunProducesFakeArtifact`.
+func TestPresetMatrixHarness_GenericRunWithEditedDockerfile(t *testing.T) {
+	// The harness uses a touch marker so the edit is observably
+	// present in the built image without dragging in a
+	// network-dependent apt-get install (the shared packages
+	// list already installs the most common tools; the harness
+	// is exercising the "edited Dockerfile still builds" path,
+	// not the network).
+	binPath, repoDir := runE2EScaffold(t, "generic", "RUN touch /etc/sandman-preset-matrix-edited")
+	runE2ERun(t, binPath, repoDir)
+	assertFakeTaskMarkerInRunLog(t, repoDir, 1)
+	assertRunStartedAndFinished(t, repoDir, 1)
+}
+
+// presetMatrixHarnessFakeTaskMarker is the canonical fake-task
+// marker string the shim prints to stdout. The orchestrator
+// captures the agent's stdout into the per-issue run log under
+// `.sandman/logs/<n>.log`, so the marker ends up host-visible
+// regardless of worktree cleanup. Every preset child reuses the
+// same marker string so the harness assertions stay uniform.
+const presetMatrixHarnessFakeTaskMarker = "fake-task-ok: canonical fake task body executed"
+
+// installFakeTaskOpenCodeForContainer writes the canonical fake
+// `opencode` shim into `<repo>/.sandman/bin/opencode` and appends
+// the COPY/ENV block to the scaffolded Dockerfile so the shim is
+// available in the container at /usr/local/bin/opencode. The shim
+// honors SANDMAN_TEST_FAST=1 + WAKEUP_DIR to short-circuit in fast
+// mode (matching the existing `opencode_subagent_e2e_test.go`
+// pattern), prints the canonical fake-task marker to stdout (which
+// the orchestrator captures into the per-issue run log) and writes
+// the marker to a host-visible cache path under the agent's config
+// directory before exiting 0. The run log is host-visible after the
+// run completes and the harness asserts the marker string there.
+func installFakeTaskOpenCodeForContainer(t *testing.T, repoDir string) {
+	t.Helper()
+
+	binDir := filepath.Join(repoDir, ".sandman", "bin")
+	if err := os.MkdirAll(binDir, 0755); err != nil {
+		t.Fatalf("create fake opencode dir: %v", err)
+	}
+
+	script := `#!/bin/sh
+# Canonical fake opencode shim for the e2e preset matrix.
+# Honors SANDMAN_TEST_FAST=1 + WAKEUP_DIR to short-circuit in fast
+# mode (otherwise it would sleep 600s like the real blocking shim).
+# Prints the canonical fake-task marker to stdout (captured by the
+# orchestrator into the per-issue run log, which the harness reads
+# back) and exits 0.
+
+_wakeup_dir="${WAKEUP_DIR:-}"
+if [ "${SANDMAN_TEST_FAST:-}" = "1" ] && [ -n "$_wakeup_dir" ] && [ -d "$_wakeup_dir" ]; then
+    while [ ! -f "$_wakeup_dir/wakeup" ]; do
+        sleep 0.1
+    done
+fi
+
+echo "` + presetMatrixHarnessFakeTaskMarker + `"
+exit 0
+`
+
+	if err := os.WriteFile(filepath.Join(binDir, "opencode"), []byte(script), 0755); err != nil {
+		t.Fatalf("write fake opencode: %v", err)
+	}
+
+	dockerfilePath := filepath.Join(repoDir, ".sandman", "Dockerfile")
+	dockerfile, err := os.ReadFile(dockerfilePath)
+	if err != nil {
+		t.Fatalf("read Dockerfile: %v", err)
+	}
+	appendOpencode := "\nCOPY .sandman/bin/opencode /usr/local/bin/opencode\nRUN chmod +x /usr/local/bin/opencode\nENV PATH=\"/usr/local/bin:$PATH\"\n"
+	if err := os.WriteFile(dockerfilePath, append(dockerfile, []byte(appendOpencode)...), 0644); err != nil {
+		t.Fatalf("append fake opencode to Dockerfile: %v", err)
+	}
+}
+
+// appendDockerfileRun appends a single RUN line to the scaffolded
+// Dockerfile. The text is appended verbatim with a leading newline so
+// it always lands on its own line.
+func appendDockerfileRun(t *testing.T, repoDir, runLine string) {
+	t.Helper()
+	dockerfilePath := filepath.Join(repoDir, ".sandman", "Dockerfile")
+	body, err := os.ReadFile(dockerfilePath)
+	if err != nil {
+		t.Fatalf("read Dockerfile: %v", err)
+	}
+	appendLine := "\n" + strings.TrimSpace(runLine) + "\n"
+	if err := os.WriteFile(dockerfilePath, append(body, []byte(appendLine)...), 0644); err != nil {
+		t.Fatalf("append RUN to Dockerfile: %v", err)
+	}
+}
+
+// assertRunStartedAndFinished reads <repo>/.sandman/events.jsonl and
+// asserts it contains exactly one `run.started` and one `run.finished`
+// for the given issue. No internal payload assertions: only
+// externally observable events, per the issue AC.
+func assertRunStartedAndFinished(t *testing.T, repoDir string, issue int) {
+	t.Helper()
+	logPath := filepath.Join(repoDir, ".sandman", "events.jsonl")
+	logger := &events.JSONLLogger{Path: logPath}
+	written, err := logger.Read()
+	if err != nil {
+		t.Fatalf("read events log %s: %v", logPath, err)
+	}
+	var started, finished int
+	for _, e := range written {
+		if e.Issue != issue {
+			continue
+		}
+		switch e.Type {
+		case "run.started":
+			started++
+		case "run.finished":
+			finished++
+		}
+	}
+	if started != 1 {
+		t.Fatalf("expected exactly 1 run.started event for issue %d, got %d (events=%s)", issue, started, summarizeEvents(written, issue))
+	}
+	if finished != 1 {
+		t.Fatalf("expected exactly 1 run.finished event for issue %d, got %d (events=%s)", issue, finished, summarizeEvents(written, issue))
+	}
+}
+
+// summarizeEvents returns a short, human-readable summary of the
+// events the test saw for the given issue. Used in failure messages
+// so the operator can see what was emitted without dumping the full
+// event log.
+func summarizeEvents(all []events.Event, issue int) string {
+	type minimal struct {
+		Type      string `json:"type"`
+		Timestamp string `json:"ts"`
+		RunID     string `json:"run_id"`
+	}
+	var kept []minimal
+	for _, e := range all {
+		if e.Issue != issue {
+			continue
+		}
+		kept = append(kept, minimal{Type: e.Type, Timestamp: e.Timestamp.Format(time.RFC3339Nano), RunID: e.RunID})
+	}
+	data, _ := json.Marshal(kept)
+	return string(data)
+}
+
+// prFlowDepsForPresetMatrix returns a Dependencies wired the way
+// prFlowDeps() does in prflow_e2e_test.go, but using a fake GitHub
+// client pre-seeded with the canonical fake-task body for the
+// fake issue. The harness owns this helper so the children can
+// swap the GitHub seed without affecting the rest of the test
+// surface.
+//
+// The fake issue body is inlined so the production prompt engine
+// still sees a real issue body when it derives the agent prompt;
+// the canonical fake task body lives in the in-container shim,
+// which the production engine never sees — the shim ignores the
+// prompt and runs the canonical body verbatim.
+func prFlowDepsForPresetMatrix(t *testing.T, repoDir string) Dependencies {
+	t.Helper()
+	return prFlowDeps(repoDir)
+}
+
+// runSandmanBinaryWithEnv is runSandmanBinary plus a per-call env
+// override (PATH, GH_TOKEN, GITHUB_TOKEN). It is the same shape as
+// runSandmanBinary in prflow_e2e_test.go but exposes the env so the
+// harness can prepend its gh shim without mutating the process env
+// for the whole test binary.
+func runSandmanBinaryWithEnv(t *testing.T, binPath, workDir, ghBinDir string, args []string) (string, error) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, binPath, args...)
+	cmd.Dir = workDir
+	cmd.Env = append(os.Environ(),
+		"PATH="+ghBinDir+string(os.PathListSeparator)+os.Getenv("PATH"),
+		"GH_TOKEN=fake",
+		"GITHUB_TOKEN=fake",
+	)
+	out, err := cmd.CombinedOutput()
+	if ctx.Err() == context.DeadlineExceeded {
+		return string(out), context.DeadlineExceeded
+	}
+	return string(out), err
+}
+
+// runE2EScaffold sets up a fresh e2e repo for the preset matrix:
+// it inits the integration repo, runs `sandman init --build-tools
+// <preset>`, forces `sandbox: podman`, and sets the review daemon
+// guard the way prflow_e2e_test.go does it. The returned dir is the
+// repo root on disk. The CLI-options path passes an empty
+// dockerfileAppend; the edited-Dockerfile path passes a single
+// `RUN ...` line to append after scaffolding (slice 6: the
+// scaffold helper is the seam the language-specific children reuse
+// to opt into the edited-Dockerfile path).
+func runE2EScaffold(t *testing.T, preset, dockerfileAppend string) (string, string) {
+	t.Helper()
+	containerRuntimeAvailable(t)
+	binPath := buildSandmanBinary(t)
+	repoDir := t.TempDir()
+	t.Chdir(repoDir)
+	initRunIntegrationRepoWithRemote(t, repoDir)
+	runRootCommand(t, prFlowDepsForPresetMatrix(t, repoDir), "init", "--build-tools", preset)
+	forcePodmanSandbox(t, repoDir)
+	runRootCommand(t, prFlowDepsForPresetMatrix(t, repoDir), "config", "set", "review_command", "/oc review")
+	if dockerfileAppend != "" {
+		appendDockerfileRun(t, repoDir, dockerfileAppend)
+	}
+	return binPath, repoDir
+}
+
+// runE2ERun installs the fake opencode + gh shims, builds the image
+// explicitly (so the test fails fast on a broken Dockerfile before
+// the orchestrator gets involved), and runs `sandman run 1` in
+// container mode. It is the seam the language-specific children
+// reuse to drive the orchestrator end to end. Returns the gh shim
+// dir and the run output for callers that need to inspect the
+// summary or the per-issue log.
+func runE2ERun(t *testing.T, binPath, repoDir string) {
+	t.Helper()
+	installFakeTaskOpenCodeForContainer(t, repoDir)
+	ghShimDir := t.TempDir()
+	writeFakeGHShim(t, ghShimDir)
+	writeFakeGHShimForContainer(t, filepath.Join(repoDir, ".sandman", "bin"))
+	prependPath(t, ghShimDir)
+	imageTag := "sandman-preset-matrix-" + strings.ToLower(t.Name())
+	t.Cleanup(func() { _ = exec.Command("podman", "rmi", "-f", imageTag).Run() })
+	buildCmd := exec.Command("podman", "build", "-t", imageTag, "-f",
+		filepath.Join(repoDir, ".sandman", "Dockerfile"), repoDir)
+	if out, err := buildCmd.CombinedOutput(); err != nil {
+		t.Fatalf("build image %q: %v\n%s", imageTag, err, out)
+	}
+	wakeupDir := t.TempDir()
+	t.Setenv("SANDMAN_TEST_FAST", "1")
+	t.Setenv("WAKEUP_DIR", wakeupDir)
+	t.Cleanup(func() { _ = os.WriteFile(filepath.Join(wakeupDir, "wakeup"), []byte("ok"), 0644) })
+	runArgs := []string{"run", "--sandbox", "podman", "--agent", "opencode", "1"}
+	out, err := runSandmanBinaryWithEnv(t, binPath, repoDir, ghShimDir, runArgs)
+	if err != nil {
+		t.Fatalf("sandman run failed: %v\noutput:\n%s", err, out)
+	}
+	t.Logf("sandman run output:\n%s", out)
+}
+
+// findRunLogUnderBatches walks `.sandman/batches/` for the run.log
+// of a single run for issue <issue>. The orchestrator places each
+// run's log at `.sandman/batches/<batchID>/runs/<runID>/run.log`.
+// The harness returns the path of the first matching run.log so
+// callers can assert the agent actually emitted the expected
+// output. It is fatal if no run log is found.
+func findRunLogUnderBatches(t *testing.T, repoDir string, issue int) string {
+	t.Helper()
+	batchesDir := filepath.Join(repoDir, ".sandman", "batches")
+	entries, err := os.ReadDir(batchesDir)
+	if err != nil {
+		t.Fatalf("read batches dir %s: %v", batchesDir, err)
+	}
+	suffix := fmt.Sprintf("-%d", issue)
+	for _, batch := range entries {
+		if !batch.IsDir() {
+			continue
+		}
+		runsDir := filepath.Join(batchesDir, batch.Name(), "runs")
+		runs, err := os.ReadDir(runsDir)
+		if err != nil {
+			continue
+		}
+		for _, run := range runs {
+			if !run.IsDir() {
+				continue
+			}
+			if !strings.HasSuffix(run.Name(), suffix) {
+				continue
+			}
+			logPath := filepath.Join(runsDir, run.Name(), "run.log")
+			if _, err := os.Stat(logPath); err == nil {
+				return logPath
+			}
+		}
+	}
+	t.Fatalf("run log for issue %d not found under %s", issue, batchesDir)
+	return ""
+}
+
+// assertFakeTaskMarkerInRunLog asserts the per-run log for issue 1
+// contains the canonical fake-task marker string. The orchestrator
+// captures the agent's stdout into `.sandman/batches/<batchID>/runs/
+// <runID>/run.log`, which is host-visible after the run completes
+// (the orchestrator does not delete the run folder, only the
+// worktree at `.sandman/worktrees/<branch>`).
+func assertFakeTaskMarkerInRunLog(t *testing.T, repoDir string, issue int) {
+	t.Helper()
+	logPath := findRunLogUnderBatches(t, repoDir, issue)
+	logData, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read per-run log %s: %v", logPath, err)
+	}
+	if !strings.Contains(string(logData), presetMatrixHarnessFakeTaskMarker) {
+		t.Fatalf("per-run log %s missing canonical fake-task marker, got:\n%s", logPath, string(logData))
 	}
 }
