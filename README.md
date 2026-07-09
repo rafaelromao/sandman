@@ -11,19 +11,16 @@ CLI tool for orchestrating AFK coding agents in isolated sandboxes.
 ```bash
 # Prerequisites: Git, gh and OpenCode
 
-# 1. Install
-go install github.com/rafaelromao/sandman/cmd/sandman@latest
-
-# 2. Initialize a project
+# 1. Initialize a project
 cd my-repo && sandman init
 
-# 3. Run the review daemon
+# 2. Run the review daemon
 sandman review
 
-# 4. Open the browser portal
+# 3. Open the browser portal
 sandman portal
 
-# 5. Implement your GitHub issues AFK
+# 4. Implement your GitHub issues AFK
 sandman run 42 43
 ```
 
