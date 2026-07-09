@@ -150,7 +150,7 @@ func TestClean_DryRun_ProducesNoIO(t *testing.T) {
 	cmd := NewCleanCmd(deps)
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
-	cmd.SetArgs([]string{"--dry-run"})
+	cmd.SetArgs([]string{"--all", "--dry-run"})
 
 	err = cmd.Execute()
 	if err != nil {
@@ -221,7 +221,7 @@ func TestClean_RemovesActiveAndUnavailableEntries(t *testing.T) {
 	cmd := NewCleanCmd(deps)
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
-	cmd.SetArgs([]string{})
+	cmd.SetArgs([]string{"--all"})
 
 	err = cmd.Execute()
 	if err != nil {
@@ -350,7 +350,7 @@ func TestClean_Unavailable_ReapedByBothCleanAndArchived(t *testing.T) {
 	cmd := NewCleanCmd(deps)
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
-	cmd.SetArgs([]string{})
+	cmd.SetArgs([]string{"--all"})
 
 	err = cmd.Execute()
 	if err != nil {
