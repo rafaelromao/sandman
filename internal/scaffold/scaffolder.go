@@ -43,6 +43,13 @@ const DefaultMISEVersion = "v2026.5.8"
 
 const DefaultRTKVersion = "v0.42.0"
 
+// DefaultNodeLTSVersion returns the Node.js LTS version from the bundled version catalog.
+// This is used by e2e tests to assert the resolved version matches the catalog pin
+// without hardcoding a version literal in the test.
+func DefaultNodeLTSVersion() string {
+	return bundledNodeVersionCatalog["lts"]
+}
+
 // Options configures the scaffolding behavior.
 type Options struct {
 	BuildTools      string // --build-tools override
