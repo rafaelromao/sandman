@@ -174,6 +174,9 @@ func NewCleanCmd(deps Dependencies) *cobra.Command {
 			}
 
 			actions := collectCleanActions(idx, targetStatus)
+			if actions == nil {
+				actions = []cleanAction{}
+			}
 
 			if dryRun {
 				tempDirs, images := runCleanTemps(cmd, deps, layout, true)
@@ -224,24 +227,26 @@ func collectCleanActions(idx *batchindex.Index, targetStatus batchindex.Status) 
 func printCleanReport(cmd *cobra.Command, actions []cleanAction, orphanPaths []string, tempDirs []string, images []string, dryRun bool) {
 	out := cmd.OutOrStdout()
 
-	if len(actions) == 0 {
-		fmt.Fprintln(out, "No batches to clean.")
-	} else {
-		if dryRun {
-			fmt.Fprintf(out, "Would remove %d batch entries:\n", len(actions))
+	if actions != nil {
+		if len(actions) == 0 {
+			fmt.Fprintln(out, "No batches to clean.")
 		} else {
-			fmt.Fprintf(out, "Removed %d batch entries.\n", len(actions))
-		}
-		for _, a := range actions {
-			what := "batch"
-			if a.Kind != "" {
-				what = string(a.Kind)
+			if dryRun {
+				fmt.Fprintf(out, "Would remove %d batch entries:\n", len(actions))
+			} else {
+				fmt.Fprintf(out, "Removed %d batch entries.\n", len(actions))
 			}
-			fmt.Fprintf(out, "  - [%s] %s (path: %s", what, a.BatchID, a.BatchPath)
-			if a.Worktree != "" {
-				fmt.Fprintf(out, ", worktree: %s", a.Worktree)
+			for _, a := range actions {
+				what := "batch"
+				if a.Kind != "" {
+					what = string(a.Kind)
+				}
+				fmt.Fprintf(out, "  - [%s] %s (path: %s", what, a.BatchID, a.BatchPath)
+				if a.Worktree != "" {
+					fmt.Fprintf(out, ", worktree: %s", a.Worktree)
+				}
+				fmt.Fprintln(out, ")")
 			}
-			fmt.Fprintln(out, ")")
 		}
 	}
 

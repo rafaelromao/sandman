@@ -316,6 +316,9 @@ func TestCleanReport_StaleBody_HasNoBatchEntriesHeader(t *testing.T) {
 	if strings.Contains(out, "Removed ") && strings.Contains(out, "batch entries") {
 		t.Errorf("stale body should NOT print 'Removed N batch entries.' line, got: %s", out)
 	}
+	if strings.Contains(out, "No batches to clean.") {
+		t.Errorf("stale body should NOT print 'No batches to clean.' (helper handles nil actions gracefully), got: %s", out)
+	}
 }
 
 func TestCleanReport_NoBatches_PrintsNoBatchesMessage(t *testing.T) {
