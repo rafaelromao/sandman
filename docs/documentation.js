@@ -2,7 +2,7 @@
   "use strict";
 
   var REPO = "rafaelromao/sandman";
-  var REF = "HEAD";
+  var DEFAULT_REF = "HEAD";
   var DOCS_PREFIX = "docs/";
   var CACHE_KEY = "sandman-docs-tree-v1";
   var CACHE_TTL_MS = 5 * 60 * 1000;
@@ -58,15 +58,22 @@
   // The sidebar rebuilds from the repository tree on every load. We keep a
   // short-TTL cache in localStorage and use GitHub's ETag so revalidation is
   // free when nothing changed. New markdown files added under docs/ become
-  // visible automatically after the cache expires (or sooner via the
-  // "Refresh tree" action).
+  // visible automatically after the cache expires.
+  //
+  // The ref is `HEAD` (the repository's default branch) by default. Local
+  // previews of an in-flight branch can override it with `?ref=<branch>`.
+
+  var REF = (function () {
+    var m = /[?&]ref=([^&]+)/.exec(location.search);
+    return m ? decodeURIComponent(m[1]) : DEFAULT_REF;
+  })();
 
   var treeListeners = [];
   var currentFiles = null;
 
   function getCachedTree() {
     try {
-      var raw = localStorage.getItem(CACHE_KEY);
+      var raw = localStorage.getItem(CACHE_KEY + ":" + REF);
       if (!raw) return null;
       return JSON.parse(raw);
     } catch (e) {
@@ -76,12 +83,12 @@
 
   function setCachedTree(payload) {
     try {
-      localStorage.setItem(CACHE_KEY, JSON.stringify(payload));
+      localStorage.setItem(CACHE_KEY + ":" + REF, JSON.stringify(payload));
     } catch (e) { /* ignore */ }
   }
 
   function treeUrl() {
-    return "https://api.github.com/repos/" + REPO + "/git/trees/" + REF + "?recursive=1";
+    return "https://api.github.com/repos/" + REPO + "/git/trees/" + encodeURIComponent(REF) + "?recursive=1";
   }
 
   function parseTree(data) {
@@ -139,11 +146,10 @@
     return files;
   }
 
-  async function discoverFiles(opts) {
-    var force = opts && opts.force;
+  async function discoverFiles() {
     var cached = getCachedTree();
 
-    if (!force && cached && Date.now() - cached.timestamp < CACHE_TTL_MS && cached.files) {
+    if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS && cached.files) {
       emitFiles(cached.files);
       fetchTree().catch(function () {});
       return filterFiles(cached.files);
@@ -162,18 +168,10 @@
     }
   }
 
-  function refreshTree() {
-    var cached = getCachedTree();
-    if (cached) {
-      cached.timestamp = 0;
-      setCachedTree(cached);
-    }
-    return discoverFiles({ force: true });
-  }
-
   function filterFiles(files) {
     return files.filter(function (f) {
-      return f.indexOf("adr/") === -1;
+      var top = f.split("/")[0];
+      return top !== "adr" && top !== "landing-prototypes";
     });
   }
 
@@ -360,18 +358,7 @@
     }
   });
 
-  var refreshBtn = document.getElementById("tree-refresh");
-  if (refreshBtn) {
-    refreshBtn.addEventListener("click", function (e) {
-      e.stopPropagation();
-      refreshBtn.classList.add("is-loading");
-      refreshBtn.disabled = true;
-      refreshTree().finally(function () {
-        refreshBtn.classList.remove("is-loading");
-        refreshBtn.disabled = false;
-      });
-    });
-  }
+  var refreshBtn = null;
 
   if (isMobile) {
     document.addEventListener("click", function (e) {
