@@ -197,7 +197,7 @@ func NewCleanCmd(deps Dependencies) *cobra.Command {
 		},
 	}
 	cmd.Flags().Bool("archived", false, "Remove archived batches (combined with unavailable)")
-	cmd.Flags().Bool("all", false, "Run every cleanup pass (alias for --archived in this slice)")
+	cmd.Flags().Bool("all", false, "Run the archived cleanup pass; will chain every pass once --all is fully wired (#2063)")
 	cmd.Flags().Bool("dry-run", false, "Print intended deletions without performing I/O")
 	cmd.Flags().Bool("stale", false, "Recover stale runs in dead batches by emitting run.aborted events")
 	cmd.Flags().Bool("orphaned", false, "Remove orphaned test batch directories (no matching run.started event and no live daemon socket)")
