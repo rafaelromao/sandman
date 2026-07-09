@@ -967,4 +967,34 @@ func TestRecoverStaleRuns_DoesNotRecoverRunFromDifferentBatch(t *testing.T) {
 				liveRunID, liveBatchID, deadBatchName)
 		}
 	}
+
+	// Issue #2083 AC3: with no false run.aborted written for the live
+	// run, the portal's event-log fold must still see it as active so
+	// the rendered row keeps kind=active, status=running. Project the
+	// post-recovery event log and assert the RunState for the live
+	// RunID is still active. The portal suite exercises the
+	// active→portal projection independently; here we only need to
+	// confirm the fold itself is not poisoned by a spurious terminal
+	// event. (RecoverStaleRuns returned a deduplicated count of 0, so
+	// the recorded events list is what the portal would observe.)
+	finalEvents := append([]events.Event(nil), existing...)
+	for _, e := range eventLog.logged {
+		finalEvents = append(finalEvents, e)
+	}
+	finalRuns := events.ProjectRunStates(finalEvents)
+	var liveState *events.RunState
+	for i := range finalRuns {
+		if finalRuns[i].RunID == liveRunID {
+			s := finalRuns[i]
+			liveState = &s
+			break
+		}
+	}
+	if liveState == nil {
+		t.Fatalf("post-recovery fold has no RunState for live run %q; expected it to remain active and un-poisoned", liveRunID)
+	}
+	if !liveState.IsActive() {
+		t.Errorf("post-recovery fold rendered live run %q as inactive (%s); the portal would then show kind=completed, status=aborted and a recovered-only run would be mis-classified",
+			liveRunID, liveState.Status())
+	}
 }
