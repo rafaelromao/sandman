@@ -161,7 +161,7 @@ The temp-dir and `sandman-smoke-*` image sweep runs in every mode — `--all`, `
 | `--stale` | Recover stale runs in dead batches by emitting `run.aborted` events |
 | `--orphaned` | Remove orphaned test batch directories (no matching run.started event and no live daemon socket) |
 
-`--all` is mutually exclusive with `--archived`, `--stale`, and `--orphaned` (it is the umbrella flag, not a combiner). `--stale` is mutually exclusive with `--archived`, `--dry-run`, and `--orphaned`. `--orphaned` is mutually exclusive with `--archived` and `--stale`. `--archived` and `--dry-run` can be combined.
+`--all` is mutually exclusive with `--archived`, `--stale`, and `--orphaned` (it is the umbrella flag, not a combiner). `--stale` is mutually exclusive with `--archived`, `--dry-run`, and `--orphaned`. `--orphaned` is mutually exclusive with `--archived`, `--stale`, and `--all`. `--archived` and `--dry-run` can be combined.
 
 ## `sandman archive`
 
