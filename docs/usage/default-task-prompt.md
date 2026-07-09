@@ -2,9 +2,9 @@
 
 Sandman's canonical task prompt lives in `internal/prompt/default-task-prompt.md`. `sandman init` copies it to `.sandman/prompt.md`, which becomes the Project Prompt Template you customize per repo. Sandman then renders that template into `.sandman/task.md` and passes the rendered Task to the agent.
 
-The long workflow now lives in the shared Sandman skill. This page describes the bootstrap prompt that passes issue context and runtime values to that skill. See [Sandman Skills](skills.md) for the shared workflow itself.
+The shared Sandman skill owns the detailed workflow. This page describes the bootstrap prompt that passes issue context and runtime values to that skill. See [Sandman Skills](skills.md) for the shared workflow itself.
 
-## Canonical prompt
+## Default Task Prompt
 
 <!-- default-task-prompt:start -->
     # Task
@@ -41,7 +41,7 @@ The long workflow now lives in the shared Sandman skill. This page describes the
 
     The registered next step is the first unchecked item in the Execution Checklist.
 
-## Already Resolved
+    ## Already Resolved
     
     If the issue is already implemented on `{{BASE_BRANCH}}`, after fetching and checking the current `origin/{{BASE_BRANCH}}` HEAD against the issue acceptance criteria, update `.sandman/task.md` so it contains the exact line `## Status: already resolved`.
     
@@ -166,9 +166,9 @@ The long workflow now lives in the shared Sandman skill. This page describes the
 - `Task` names the work and injects the issue number/title.
 - `Issue Context` passes the raw issue body through unchanged.
 - `Runtime Context` passes branch, base, and review metadata into the shared workflow.
-- `Execution Checklist` now tells the agent to skip already-complete items and keep the registered `## Next Step` aligned with the next unchecked item.
+- `Execution Checklist` tells the agent to skip already-complete items and keep the registered `## Next Step` aligned with the next unchecked item.
 - `Mandatory Execution Contract` forces the agent to load and obey the Sandman skill chain.
-- `Already Resolved` now requires checking the fetched `origin/{{BASE_BRANCH}}` HEAD against acceptance criteria and forbids using issue closure, local branch state, or unmerged worktree changes as proof.
+- `Already Resolved` defines the terminal shortcut for issues already implemented on `{{BASE_BRANCH}}`; the agent must verify `origin/{{BASE_BRANCH}}` against the acceptance criteria and must not use issue closure, local branch state, or unmerged worktree changes as proof.
 - `AFK Rule — Absolute` replaces human approval with subagent consensus for plan approval, and bans subagent use for PR review (must use `sandman-pr-review` skill). Self-review uses `sandman-self-review` skill.
 - `Search Scope Restriction` keeps recursive search (grep, rg, find) bounded to the working directory and explicitly named sub-paths, so agent context is not flooded by scans of system folders. It also requires `codeindex` first for symbol lookup, dependency lookup, and blast-radius discovery when `codeindex.json` exists. The rule propagates: the agent must forward it to every subagent it spawns or hands work off to, including subagents launched by Sandman or other loaded skills.
 - `Required Skill Chain` names the mandatory subskills the agent must follow.

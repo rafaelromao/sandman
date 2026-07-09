@@ -46,17 +46,31 @@ Sandman manages the lifecycle of automated coding workflows:
 
 | Guide | Description |
 |-------|-------------|
-| [Getting Started](docs/usage/getting-started.md) | Prerequisites, installation, and first project setup |
+| [Overview](docs/get-started/overview.md) | What Sandman is, the delivery loop, and what it is not |
+| [Quick Start](docs/get-started/quickstart.md) | The five-minute path from install to first run |
+| [Installation](docs/get-started/install.md) | Prerequisites, installation, OpenCode setup, and project setup |
+| [Concepts](docs/get-started/concepts.md) | The Batch / AgentRun / Sandbox / PRD model in prose |
 | [Commands Reference](docs/usage/commands.md) | All CLI commands, flags, and issue selection modes |
+| [Scaffolding and Supported Languages](docs/usage/scaffolding.md) | `sandman init`, generated files, build-tool presets, and language version selection |
 | [Configuration](docs/usage/configuration.md) | Full config schema, default agent, and CLI config |
+| [Workflows](docs/usage/workflows.md) | Running agents, dependency-aware execution, continue and cleanup |
+| [Sandbox Modes](docs/usage/sandbox-modes.md) | Worktree vs container-backed sandboxing |
 | [Portal](docs/usage/portal.md) | Local browser dashboard for repo-scoped Sandman runs |
+| [Reviews](docs/usage/reviews.md) | Direct reviews, the review daemon, and review-run output |
 | [Default Task Prompt](docs/usage/default-task-prompt.md) | Bootstrap task prompt, lifecycle, and task file |
 | [Skills](docs/usage/skills.md) | Shared Sandman skill installation and workflow |
-| [Sandbox Modes](docs/usage/sandbox-modes.md) | Worktree vs container-backed sandboxing |
-| [Workflows](docs/usage/workflows.md) | Running agents, dependency-aware execution, continue and cleanup |
 | [Badge](docs/usage/badge.md) | Built with Sandman badge — trigger, idempotency, and opt-out |
-| [Monitoring and Debugging](docs/usage/monitoring.md) | Status, history, event log, and troubleshooting |
+| [Monitoring and Debugging](docs/usage/monitoring.md) | Status, history, event log, and idle timeout |
+| [Troubleshooting](docs/help/troubleshooting.md) | Common failure modes and the first thing to try for each |
 | [Agent Compatibility](docs/usage/agent-compatibility.md) | Built-in agent presets and container auth model |
+| [FAQ](docs/help/faq.md) | Questions people ask before installing |
+
+Other:
+
+- [Architecture Overview](docs/architecture/overview.md) and [Disk Layout](docs/architecture/disk-layout.md)
+- [Positioning](docs/help/positioning.md) — what Sandman is and isn't, in plain language
+- [Development docs](docs/development/README.md) — contributor setup, project structure, architecture guidance, testing, and docs/skill guidance
+- The browser-rendered docs portal at [`docs/documentation.html`](docs/documentation.html) wraps these guides with a sidebar.
 
 ## Config Overview
 
@@ -85,7 +99,7 @@ make build    # Build binary
 make install  # Install to $GOPATH/bin
 ```
 
-See [Running smoke and e2e tests](docs/usage/testing.md) for the full gate list, the per-agent model override, and how to run targeted scenarios.
+Contributing to Sandman? See the [Development docs](docs/development/README.md), including [Testing](docs/development/testing.md) for smoke and e2e gates.
 
 ## License
 
