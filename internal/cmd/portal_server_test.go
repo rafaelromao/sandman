@@ -1378,7 +1378,7 @@ func TestPortal_PageMastheadShowsRepoAndUpdatedChip(t *testing.T) {
 	}
 	content := string(body)
 
-	if !strings.Contains(content, `class="masthead-repo"`) {
+	if !strings.Contains(content, `masthead-repo-full`) || !strings.Contains(content, `masthead-repo-base`) {
 		t.Fatalf("page is missing masthead repo path\n%s", content[:min(800, len(content))])
 	}
 	if !strings.Contains(content, `id="last-updated"`) {
