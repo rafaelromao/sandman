@@ -84,7 +84,7 @@ To use an agent inside a container:
 
 1. Disable OS keychain integration for the agent CLI
 2. Use file-based authentication (e.g., API keys stored in config files)
-3. Sandman resolves config files and directories into the container via a temporary copy (see ADR-0008)
+3. Sandman resolves config files and directories into the container via a temporary copy
 
 OpenCode reads `CLAUDE.md` and `.claude/skills/` if they exist. Sandman resolves `~/.claude` into the container automatically so those files are available to the agent.
 

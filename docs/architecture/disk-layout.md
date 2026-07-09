@@ -4,8 +4,6 @@
 
 Every persisted Sandman artifact lives under `<repo>/.sandman/` (with two documented exceptions: out-of-repo tempdirs used as fallback parents for config snapshots, and the shared `~/.agents/skills/sandman/**` skill tree installed into the user's home).
 
-This document captures the canonical on-disk layout that every slice of the on-disk-rename PRD is converging toward. It reflects the post-#1848 end state — `SelfPostStore` and `.sandman/reviews/self-posted.json` are gone — and lists the runtime sidecars that this slice introduces under `state/`.
-
 ## Canonical tree
 
 ```
@@ -83,23 +81,10 @@ This document captures the canonical on-disk layout that every slice of the on-d
 
 The following artefacts do **not** live under `<repo>/.sandman/` and are documented here for completeness. They are out-of-layout by design — they are either shared across repos (skills) or out-of-repo tempdirs (config-snapshot fallback).
 
-- **`os.MkdirTemp("", "sandman-config-*")`** (in `internal/batch/config_mounts.go:29`) — the **config-snapshot parent tempdir**, used by `PrepareContainerConfigMounts` when the caller passes an empty `runDir`. This is an out-of-repo tempdir because the agent's `ConfigDirs` / `ConfigFiles` mount resolution (ADR-0008) needs a parent to host the resolved snapshot tree when no run-owned parent is available. The directory is removed by the cleanup function returned from `prepareSnapshotParent`.
+- **`os.MkdirTemp("", "sandman-config-*")`** (in `internal/batch/config_mounts.go:29`) — the **config-snapshot parent tempdir**, used by `PrepareContainerConfigMounts` when the caller passes an empty `runDir`. This is an out-of-repo tempdir because the agent's `ConfigDirs` / `ConfigFiles` mount resolution needs a parent to host the resolved snapshot tree when no run-owned parent is available. The directory is removed by the cleanup function returned from `prepareSnapshotParent`.
 - **`os.MkdirTemp(parentDir, ".config-*")`** (in `internal/sandbox/container.go:310`) — the **config-snapshot subdir**, atomically renamed to `<parentDir>/config/` immediately after creation. When `parentDir` is a run-owned path, this lands back under `.sandman/batches/<batchID>/runs/<runID>/config/` and is on-layout; when `parentDir` is the tempdir parent above, this is the out-of-layout half of the same pair.
 - **`~/.agents/skills/sandman/**`** — the **shared Sandman skill tree**, installed by `sandman init` into the user's home directory. This is repo-scoped *content* but not repo-scoped *location*: it is a single installed tree shared across every repo on the host, so it is intentionally out of the per-repo `.sandman/` layout. See `CONTEXT.md` §Sandman Skill.
 
-## Migration note
+## Upgrades
 
-Existing repos that predate this layout carry legacy files at the old paths and must move them manually per the CHANGELOG. This is not an automated migration — the rename is one-way and operator-driven because the source paths and target paths both exist on disk during the transition window.
-
-At minimum, the following legacy paths must be moved (or removed if already retired):
-
-- `.sandman/reviews/self-posted.json` — removed by #1848 (S5: SelfPostStore deletion). Repos that still carry this file from before #1848 must delete it; there is no successor location.
-- `.sandman/reviews/self-posted.json.ignore-*.bak` rotations — removed alongside `self-posted.json` by #1848. Repos that still carry these `.bak` rotations must delete them.
-- `.sandman/.prompt-version` — moved to `.sandman/state/.prompt-version` by slice 5 (#1865). Repos upgrading across slice 5 must `mv .sandman/.prompt-version .sandman/state/.prompt-version` (creating `state/` if needed).
-- `.sandman/.built_with_sandman` — moved to `.sandman/state/.built_with_sandman` by slice 6 (#1866).
-- `.sandman/selected-issues.json` — moved to `.sandman/state/selected-issues.json` by slice 6 (#1866).
-- `.sandman/<N>.head_sha` and `.sandman/<N>.addressed_comments` — moved to `.sandman/state/<N>.head_sha` and `.sandman/state/<N>.addressed_comments` by slice 7 (#1867).
-
-After the move, `git status` must show no `.sandman/` entries — slice 7's gitignore update covers the new `state/` subdir, so the moved files are untracked and never committed.
-
-See `CHANGELOG.md` for the slice-by-slice migration timeline and any later moves.
+Sandman does not migrate on-disk state across version upgrades. After upgrading, clear `.sandman/` and re-run `sandman init`. See [Troubleshooting](../help/troubleshooting.md#portal-shows-unknown-rows-after-upgrading-sandman) for the symptom and fix.
