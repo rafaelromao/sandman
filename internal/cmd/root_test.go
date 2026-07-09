@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"errors"
 	"net"
 	"os"
 	"path/filepath"
@@ -282,7 +283,7 @@ func TestContinue_IsUnknownCommand(t *testing.T) {
 	}
 }
 
-func TestClean_NoFlagsAccepted(t *testing.T) {
+func TestClean_NoFlags_ReturnsError(t *testing.T) {
 	dir := newSandmanDir(t)
 	t.Chdir(dir)
 
@@ -300,8 +301,20 @@ func TestClean_NoFlagsAccepted(t *testing.T) {
 	cmd.SetArgs([]string{})
 
 	err := cmd.Execute()
-	if err != nil {
-		t.Fatalf("expected clean without flags to be accepted, got: %v", err)
+	if err == nil {
+		t.Fatal("expected clean without flags to return a usage error")
+	}
+
+	var ue *UsageError
+	if !errors.As(err, &ue) {
+		t.Fatalf("expected *UsageError, got %T: %v", err, err)
+	}
+
+	msg := err.Error()
+	for _, name := range []string{"--all", "--archived", "--stale", "--orphaned"} {
+		if !strings.Contains(msg, name) {
+			t.Errorf("expected error to mention %s, got: %s", name, msg)
+		}
 	}
 }
 

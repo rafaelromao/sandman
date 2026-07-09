@@ -178,7 +178,7 @@ func TestClean_Default_CleansTemps(t *testing.T) {
 	cmd := NewCleanCmd(deps)
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
-	cmd.SetArgs([]string{})
+	cmd.SetArgs([]string{"--all"})
 
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -212,7 +212,7 @@ func TestClean_DryRun_PrintsTempRemovals(t *testing.T) {
 	cmd := NewCleanCmd(deps)
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
-	cmd.SetArgs([]string{"--dry-run"})
+	cmd.SetArgs([]string{"--all", "--dry-run"})
 
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("unexpected error: %v", err)
