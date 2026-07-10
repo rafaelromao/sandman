@@ -153,6 +153,7 @@ var builtInBuildToolsPresets = map[string]BuildToolsPreset{
 		Name:           rubyBuildToolsPreset,
 		BaseImage:      "debian:bookworm-slim",
 		SharedPackages: sharedPackages,
+		ExtraPackages:  []string{"libffi-dev", "libssl-dev", "libyaml-dev", "zlib1g-dev"},
 		MiseVersion:    DefaultMISEVersion,
 	},
 	rustBuildToolsPreset: {
@@ -229,12 +230,10 @@ func BundledPythonVersion(selector string) string {
 }
 
 func DefaultPythonLTSVersion() string {
-	cmd := exec.Command("mise", "latest", "python")
-	out, err := cmd.Output()
-	if err != nil {
+	latest := BundledPythonVersion("latest")
+	if latest == "" {
 		return ""
 	}
-	latest := strings.TrimSpace(string(out))
 	parts := strings.Split(latest, ".")
 	if len(parts) < 2 {
 		return ""
@@ -249,12 +248,7 @@ func DefaultPythonLTSVersion() string {
 		return ""
 	}
 	ltsSelector := fmt.Sprintf("%s.%d", major, minor)
-	cmd = exec.Command("mise", "latest", "python@"+ltsSelector)
-	out, err = cmd.Output()
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(out))
+	return BundledPythonVersion(ltsSelector)
 }
 
 var bundledDotnetVersionCatalog = map[string]string{

@@ -638,6 +638,12 @@ func TestPortalRefresh_LocksRowIdentityAcrossMixedBatchPayloads(t *testing.T) {
       { runs: `+string(runsJSON)+` },
       { runs: `+string(refreshedRunsJSON)+` }
     ];
+    window.setInterval = function (cb) {
+      if (cb && cb.name === 'refresh') {
+        window.__portalQueuedRefresh = cb;
+      }
+      return 1;
+    };
     window.__portalFetchCalls = 0;
     window.fetch = async function () {
       window.__portalFetchCalls += 1;
@@ -658,6 +664,15 @@ func TestPortalRefresh_LocksRowIdentityAcrossMixedBatchPayloads(t *testing.T) {
         window.__portalInitialRow = row;
         window.__portalInitialDetail = detail;
         window.__portalInitialDetailText = pre.innerText;
+        if (!window.__portalRefreshStarted) {
+          window.__portalRefreshStarted = true;
+          setTimeout(function () {
+            if (window.__portalQueuedRefresh) {
+              window.__portalRefreshCalls += 1;
+              window.__portalQueuedRefresh();
+            }
+          }, 50);
+        }
         return;
       }
       if (performance.now() >= deadline) {
