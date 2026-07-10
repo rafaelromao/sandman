@@ -391,8 +391,6 @@ func writePresetMatrixTaskTemplate(t *testing.T, repoDir string) string {
 	templatePath := filepath.Join(repoDir, ".sandman", "preset-matrix-task.md")
 	prompt := `# Task
 
-Issue #{{ISSUE_NUMBER}}: {{ISSUE_TITLE}}
-
 This repository's main language has a source file that currently contains the wrong value (0). Change it so it uses 42 instead.
 
 Then create a file named answer.txt at the root of the repository whose entire contents are exactly 42 (just those two digits, no newline, no other text).
