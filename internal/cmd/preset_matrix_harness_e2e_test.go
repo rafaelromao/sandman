@@ -175,7 +175,7 @@ func TestPresetMatrixHarness_GoScaffolds(t *testing.T) {
 }
 
 // TestPresetMatrixHarness_GoRunExecutesRealTask pins the end-to-end
-// `go` CLI-options path: scaffold with a bare go.mod → `podman build` →
+// `go` CLI-options path: scaffold with the Go preset container → `podman build` →
 // `sandman run 1` driving the REAL opencode agent against the canonical
 // task. The agent branch advances beyond baseline and the events log has
 // exactly one run.started and one run.finished. Only `gh` is faked.
@@ -183,14 +183,14 @@ func TestPresetMatrixHarness_GoScaffolds(t *testing.T) {
 // This mirrors TestPresetMatrixHarness_GenericRunExecutesRealTask but for
 // the Go preset instead of generic.
 func TestPresetMatrixHarness_GoRunExecutesRealTask(t *testing.T) {
-	binPath, repoDir := runE2EScaffoldWithGoMod(t, "go", "")
+	binPath, repoDir := runE2EScaffoldGo(t, "go", "")
 	baseline := runE2ERun(t, binPath, repoDir, "go")
 	assertRunStartedAndFinished(t, repoDir, 1)
 	assertPresetMatrixAgentWorked(t, repoDir, baseline)
 }
 
 // TestPresetMatrixHarness_GoRunWithEditedDockerfile pins the end-to-end
-// `go` edited-Dockerfile path: scaffold with a bare go.mod → append a
+// `go` edited-Dockerfile path: scaffold with the Go preset container → append a
 // `RUN` line to `.sandman/Dockerfile` → `podman build` (still succeeds)
 // → `sandman run 1` with the REAL opencode agent → the agent branch
 // advances and the events log has the expected events.
@@ -198,16 +198,17 @@ func TestPresetMatrixHarness_GoRunExecutesRealTask(t *testing.T) {
 // This mirrors TestPresetMatrixHarness_GenericRunWithEditedDockerfile
 // but for the Go preset instead of generic.
 func TestPresetMatrixHarness_GoRunWithEditedDockerfile(t *testing.T) {
-	binPath, repoDir := runE2EScaffoldWithGoMod(t, "go", "RUN touch /etc/sandman-preset-matrix-edited")
+	binPath, repoDir := runE2EScaffoldGo(t, "go", "RUN touch /etc/sandman-preset-matrix-edited")
 	baseline := runE2ERun(t, binPath, repoDir, "go")
 	assertRunStartedAndFinished(t, repoDir, 1)
 	assertPresetMatrixAgentWorked(t, repoDir, baseline)
 }
 
-// runE2EScaffoldWithGoMod is like runE2EScaffold but writes a
-// go.mod with a go 1.24 directive before scaffolding so the Go
-// preset has a version hint to resolve from.
-func runE2EScaffoldWithGoMod(t *testing.T, preset, dockerfileAppend string) (string, string) {
+// runE2EScaffoldGo scaffolds a repo for the Go preset without leaving a
+// module file in the runtime repo. The scaffold uses `--tool-version latest`
+// to pin the Go toolchain in the image while the agent sees the smallest Go
+// project surface when it runs.
+func runE2EScaffoldGo(t *testing.T, preset, dockerfileAppend string) (string, string) {
 	t.Helper()
 	containerRuntimeAvailable(t)
 	binPath := buildSandmanBinary(t)
@@ -215,9 +216,7 @@ func runE2EScaffoldWithGoMod(t *testing.T, preset, dockerfileAppend string) (str
 	t.Chdir(repoDir)
 	initRunIntegrationRepoWithRemote(t, repoDir)
 
-	os.WriteFile(filepath.Join(repoDir, "go.mod"), []byte("module example.com/hello\n\ngo 1.24\n"), 0644)
-
-	runRootCommand(t, prFlowDepsForPresetMatrix(t, repoDir), "init", "--build-tools", preset)
+	runRootCommand(t, prFlowDepsForPresetMatrix(t, repoDir), "init", "--build-tools", preset, "--tool-version", "latest")
 	forcePodmanSandbox(t, repoDir)
 	runRootCommand(t, prFlowDepsForPresetMatrix(t, repoDir), "config", "set", "review_command", "/oc review")
 	if dockerfileAppend != "" {
@@ -593,6 +592,14 @@ func runE2ERun(t *testing.T, binPath, repoDir, preset string) string {
 	t.Helper()
 	requirePresetMatrixE2E(t)
 	seedPresetMatrixProject(t, repoDir, preset)
+	seedCommit := exec.Command("git", "-C", repoDir, "add", ".")
+	if out, err := seedCommit.CombinedOutput(); err != nil {
+		t.Fatalf("stage preset seed: %v\n%s", err, out)
+	}
+	seedCommit = exec.Command("git", "-C", repoDir, "commit", "-m", "Seed preset matrix task")
+	if out, err := seedCommit.CombinedOutput(); err != nil {
+		t.Fatalf("commit preset seed: %v\n%s", err, out)
+	}
 	customizePresetMatrixOpencodeAgent(t, repoDir)
 	taskTemplate := writePresetMatrixTaskTemplate(t, repoDir)
 
