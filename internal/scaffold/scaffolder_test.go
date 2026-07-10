@@ -1,6 +1,7 @@
 package scaffold
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"os/exec"
@@ -3308,5 +3309,41 @@ func TestScaffold_IgnoresLegacyPrioritySelectionPrompt(t *testing.T) {
 	}
 	if strings.Contains(got, string(legacyContent)) {
 		t.Errorf("auto-selection-prompt.md must not contain the legacy prompt bytes; the soft migration is end-of-life\ngot:\n%s", got)
+	}
+}
+
+func TestScaffold_InitMessageWritten(t *testing.T) {
+	dir := t.TempDir()
+	s := &Scaffolder{}
+	buf := &bytes.Buffer{}
+
+	if err := s.Scaffold(dir, Options{BuildTools: "generic", Writer: buf}, &fakePrompter{confirm: true}); err != nil {
+		t.Fatalf("scaffold: %v", err)
+	}
+
+	got := buf.String()
+	if got == "" {
+		t.Fatal("expected init summary message to be written to writer, got empty string")
+	}
+	if !strings.Contains(got, "Scaffold complete") {
+		t.Errorf("expected message to contain %q", "Scaffold complete")
+	}
+	if !strings.Contains(got, "Preset:") {
+		t.Errorf("expected message to contain %q", "Preset:")
+	}
+	if !strings.Contains(got, "generic") {
+		t.Errorf("expected message to contain preset name %q", "generic")
+	}
+	if !strings.Contains(got, "opencode-ai@") {
+		t.Errorf("expected message to contain agent pin %q", "opencode-ai@")
+	}
+	if !strings.Contains(got, "~/.agents/skills/sandman/") {
+		t.Errorf("expected message to contain skill folder path %q", "~/.agents/skills/sandman/")
+	}
+	if !strings.Contains(got, ".sandman/Dockerfile") {
+		t.Errorf("expected message to contain %q", ".sandman/Dockerfile")
+	}
+	if !strings.Contains(got, "minimal BuildToolsPreset") {
+		t.Errorf("expected message to contain %q", "minimal BuildToolsPreset")
 	}
 }
