@@ -398,7 +398,7 @@ func TestResolveVersion_RustResolver_Selectors(t *testing.T) {
 		want     string
 	}{
 		{name: "repo", selector: "repo", want: "1.77.0"},
-		{name: "latest", selector: "latest", want: "1.97.0"},
+		{name: "catalogPin", selector: "1.96", want: "1.96.1"},
 		{name: "lts", selector: "lts", want: "1.95.0"},
 		{name: "shorthand", selector: "1.95", want: "1.95.0"},
 	}
@@ -409,10 +409,7 @@ func TestResolveVersion_RustResolver_Selectors(t *testing.T) {
 			if err != nil {
 				t.Fatalf("resolveVersion %s: %v", tt.selector, err)
 			}
-			if tt.selector == "latest" && got != "1.96.1" && got != "1.97.0" {
-				t.Fatalf("resolveVersion %s: got %q, want one of %q or %q", tt.selector, got, "1.96.1", "1.97.0")
-			}
-			if tt.selector != "latest" && got != tt.want {
+			if got != tt.want {
 				t.Fatalf("resolveVersion %s: got %q, want %q", tt.selector, got, tt.want)
 			}
 		})
@@ -445,18 +442,18 @@ func TestResolveVersion_RustResolver_UsesRustToolchainTomlHint(t *testing.T) {
 	}
 }
 
-func TestResolveVersion_RustResolver_StableChannelPinsExactVersion(t *testing.T) {
+func TestResolveVersion_RustResolver_PinnedChannelPinsExactVersion(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "rust-toolchain.toml"), []byte("[toolchain]\nchannel = \"stable\"\n"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "rust-toolchain.toml"), []byte("[toolchain]\nchannel = \"1.96.1\"\n"), 0644); err != nil {
 		t.Fatalf("write rust-toolchain.toml: %v", err)
 	}
 
 	got, err := resolveVersion(rustResolver, dir, "repo", &fakePrompter{confirm: true})
 	if err != nil {
-		t.Fatalf("resolveVersion stable rust-toolchain.toml: %v", err)
+		t.Fatalf("resolveVersion pinned rust-toolchain.toml: %v", err)
 	}
 	if got != "1.96.1" {
-		t.Fatalf("resolveVersion stable rust-toolchain.toml: got %q, want %q", got, "1.96.1")
+		t.Fatalf("resolveVersion pinned rust-toolchain.toml: got %q, want %q", got, "1.96.1")
 	}
 }
 
