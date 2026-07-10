@@ -3347,3 +3347,87 @@ func TestScaffold_InitMessageWritten(t *testing.T) {
 		t.Errorf("expected message to contain %q", "minimal BuildToolsPreset")
 	}
 }
+
+func TestScaffold_InitMessage_GenericPreset_AllFieldsPresent(t *testing.T) {
+	dir := t.TempDir()
+	s := &Scaffolder{}
+	buf := &bytes.Buffer{}
+
+	if err := s.Scaffold(dir, Options{BuildTools: "generic", Writer: buf}, &fakePrompter{confirm: true}); err != nil {
+		t.Fatalf("scaffold: %v", err)
+	}
+
+	got := buf.String()
+	if got == "" {
+		t.Fatal("expected init summary message to be written to writer, got empty string")
+	}
+
+	for _, want := range []string{
+		"Scaffold complete",
+		"Preset:",
+		"generic",
+		"opencode-ai@",
+		"~/.agents/skills/sandman/",
+		"minimal BuildToolsPreset",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("expected message to contain %q", want)
+		}
+	}
+
+	scaffoldedFiles := []string{
+		".sandman/config.yaml",
+		".sandman/Dockerfile",
+		".sandman/prompt.md",
+		".sandman/auto-selection-prompt.md",
+		".sandman/reviews/review-prompt.md",
+		".sandman/reviews/quality-rules.md",
+	}
+	for _, f := range scaffoldedFiles {
+		if !strings.Contains(got, f) {
+			t.Errorf("expected message to contain scaffolded file %q", f)
+		}
+	}
+
+	ti := strings.Index(got, "  Toolchain:\n")
+	if ti == -1 {
+		t.Errorf("expected message to contain %q", "  Toolchain:\n")
+	} else {
+		end := ti + len("  Toolchain:\n")
+		agentIdx := strings.Index(got[end:], "  Agent:")
+		if agentIdx == -1 {
+			t.Errorf("toolchain section not followed by Agent: line")
+		} else {
+			toolchainContent := got[end : end+agentIdx]
+			if strings.TrimSpace(toolchainContent) != "" {
+				t.Errorf("expected empty toolchain section for generic preset (shared baseline only), got %q", toolchainContent)
+			}
+		}
+	}
+}
+
+func TestScaffold_InitMessage_GoPreset_WithPopulatedPin(t *testing.T) {
+	dir := t.TempDir()
+	s := &Scaffolder{}
+	buf := &bytes.Buffer{}
+
+	if err := s.Scaffold(dir, Options{BuildTools: "go", ToolVersion: "1.24", Writer: buf}, &fakePrompter{confirm: true}); err != nil {
+		t.Fatalf("scaffold: %v", err)
+	}
+
+	got := buf.String()
+	if got == "" {
+		t.Fatal("expected init summary message to be written to writer, got empty string")
+	}
+
+	if !strings.Contains(got, "go:      ") {
+		t.Errorf("expected message to contain %q (go pin with correct spacing)", "go:      ")
+	}
+
+	unrelated := []string{"dotnet:", "node:", "python:", "ruby:", "rust:", "java:", "elixir:", "erlang:"}
+	for _, lang := range unrelated {
+		if strings.Contains(got, lang) {
+			t.Errorf("expected message NOT to contain %q (unrelated language pin)", lang)
+		}
+	}
+}
