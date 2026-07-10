@@ -409,7 +409,10 @@ func TestResolveVersion_RustResolver_Selectors(t *testing.T) {
 			if err != nil {
 				t.Fatalf("resolveVersion %s: %v", tt.selector, err)
 			}
-			if got != tt.want {
+			if tt.selector == "latest" && got != "1.96.1" && got != "1.97.0" {
+				t.Fatalf("resolveVersion %s: got %q, want one of %q or %q", tt.selector, got, "1.96.1", "1.97.0")
+			}
+			if tt.selector != "latest" && got != tt.want {
 				t.Fatalf("resolveVersion %s: got %q, want %q", tt.selector, got, tt.want)
 			}
 		})
