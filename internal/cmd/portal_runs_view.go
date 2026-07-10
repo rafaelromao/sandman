@@ -80,6 +80,18 @@ type portalRun struct {
 	// review.log, but the server stamp is the canonical source for
 	// parent rows.
 	ReviewVerdict string `json:"reviewVerdict,omitempty"`
+	// ReviewLive is the server stamp that tells the JS counter line a
+	// review child is currently in flight (status "reviewing", no
+	// FinishedAt). Stamped by aggregateReviewChildren when at least one
+	// sibling review row has Status == "reviewing"; omitted from JSON
+	// (zero value) when every sibling review is terminal. The field is
+	// purely additive: it does NOT mutate the parent's Status field, so
+	// the existing isTerminalStatus badge-flip invariant is preserved.
+	// The JS renderRunMeta helper uses this signal to render
+	// "N review(s) - In Progress" while a review is in flight, switching
+	// to "Approved" / "Changes requested" / "Unclear" once the review
+	// finishes (issue #2109).
+	ReviewLive bool `json:"reviewLive,omitempty"`
 	// GroupedReview marks review rows that are owned by an issue-parent row.
 	// Set by aggregateReviewChildren during compute (restored in #1897) for
 	// every review row that has a resolved linked issue (IssueNumber > 0) so
@@ -978,6 +990,7 @@ func (v *portalRunsView) aggregateReviewChildren(layout paths.Layout, runs []por
 		}
 		runs[idx].ReviewCount = summary.count
 		runs[idx].ReviewVerdict = summary.verdict
+		runs[idx].ReviewLive = summary.live
 		if summary.live && !isTerminalStatus(runs[idx].Status) {
 			runs[idx].Status = "reviewing"
 		}
