@@ -11,8 +11,6 @@
 #   scripts/run-preset-matrix.sh             # all presets
 #
 # The preset names are the same as those accepted by `sandman init --build-tools`.
-#
-# Issue: #2118.
 
 set -euo pipefail
 
@@ -41,7 +39,7 @@ build_filter() {
     local presets=("$@")
     local filters=()
     for preset in "${presets[@]}"; do
-        filters+=("TestPresetMatrixHarness_$(tr '[:lower:]' '[:upper:]' <<< "${preset:0:1}" | head -c 1)${preset:1}")
+        filters+=("TestPresetMatrixHarness_$(tr '[:lower:]' '[:upper:]' <<< "${preset:0:1}")${preset:1}")
     done
     local joined
     joined=$(IFS='|'; echo "${filters[*]}")
