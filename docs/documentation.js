@@ -232,8 +232,9 @@
     if (resp.status === 304 && cached && cached.files) {
       cached.timestamp = Date.now();
       setCachedTree(cached);
-      emitFiles(cached.files);
-      return cached.files;
+      var cachedFiltered = filterFiles(cached.files);
+      emitFiles(cachedFiltered);
+      return cachedFiltered;
     }
     if (!resp.ok) throw new Error("API " + resp.status);
 
@@ -245,15 +246,16 @@
       sha: data.sha,
       files: files,
     });
-    emitFiles(files);
-    return files;
+    var filtered = filterFiles(files);
+    emitFiles(filtered);
+    return filtered;
   }
 
   async function discoverFiles() {
     var cached = getCachedTree();
 
     if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS && cached.files) {
-      emitFiles(cached.files);
+      emitFiles(filterFiles(cached.files));
       fetchTree().catch(function () {});
       return filterFiles(cached.files);
     }
@@ -262,7 +264,7 @@
       return await fetchTree();
     } catch (e) {
       if (cached && cached.files) {
-        emitFiles(cached.files);
+        emitFiles(filterFiles(cached.files));
         return filterFiles(cached.files);
       }
       try { localStorage.removeItem(CACHE_KEY + ":ref"); } catch (err) {}

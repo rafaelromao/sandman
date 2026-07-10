@@ -89,6 +89,7 @@ func NewInitCmd() *cobra.Command {
 				ReviewCommand:   reviewCommand,
 				Retries:         retriesOverride,
 				RunIdleTimeout:  runIdleTimeoutOverride,
+				Writer:          cmd.OutOrStdout(),
 			}, prompter); err != nil {
 				return err
 			}
