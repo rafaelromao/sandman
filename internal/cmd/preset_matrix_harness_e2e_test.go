@@ -22,12 +22,15 @@
 //     observable in the branch tree) and wrote the expected
 //     run.started/run.finished events.
 //
-// The real-agent tests are gated by `//go:build agent` (so `go test
-// -tags e2e` does not compile them) AND by the `SANDMAN_RUN_AGENT_E2E=1`
-// env var (so CI never runs them even with the agent tag). The edited-
-// Dockerfile path is pinned by a build-only test that runs `podman build`
-// and exits without driving an agent, satisfying the "still builds" contract
-// without burning an agent invocation.
+// The real-agent tests are gated by `SANDMAN_RUN_AGENT_E2E=1`; without it
+// they skip at runtime so no live opencode provider is needed to run the
+// suite with `go test -tags e2e`. (Per Go's build-constraint system,
+// per-function `//go:build` lines are absorbed into the file-level OR list,
+// so a compile-time `//go:build agent` gate is not applied to individual
+// functions; the runtime skip is the effective gate.) The edited-Dockerfile
+// path is pinned by a build-only test that runs `podman build` and exits
+// without driving an agent, satisfying the "still builds" contract without
+// burning an agent invocation.
 //
 // Only `gh` is faked (host + in-container shims); no real GitHub repo,
 // issue, or PR is ever created. The `generic` preset is the canonical
