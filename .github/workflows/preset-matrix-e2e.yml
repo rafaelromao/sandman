@@ -1,0 +1,49 @@
+name: preset-matrix-e2e
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  preset-matrix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        preset:
+          - generic
+          - go
+          - node
+          - dotnet
+          - elixir
+          - rust
+          - java
+          - ruby
+          - python
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Install Podman
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y podman
+
+      - name: Validate Podman
+        run: podman info
+
+      - name: Run preset-matrix e2e (${{ matrix.preset }})
+        run: |
+          go test -tags e2e ./internal/cmd \
+            -run "TestPresetMatrixHarness_$(tr '[:lower:]' '[:upper:]' <<< "${MATRIX_PRESET:0:1}")${MATRIX_PRESET:1}" \
+            -count=1
+        env:
+          CI: "true"
+          MATRIX_PRESET: ${{ matrix.preset }}
