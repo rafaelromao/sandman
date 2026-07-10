@@ -528,7 +528,6 @@ expanded PRD #2102 to 3 accepted children
 <span class="dim">[260710093543-0142-2103] 09:36:48</span> <span class="arrow">→</span> Read .sandman/task.md
 <span class="dim">[260710093543-0142-2103] 09:36:49</span>
 <span class="dim">[260710093543-0142-2103] 09:36:49</span> <span class="shell">$</span> <span class="cmd">gh issue view 2103 --json title,number,state,body --jq '{title, number, state, body}'</span>
-<span class="dim">[260710093543-0142-2103] 09:36:49</span> <span class="json">{"body":"### Parent\n\n#2102\n\n### What to build\n\nMake `sandman init` end with a single composed message on stdout that explains what the scaffold included and that the scaffolded Dockerfile is only a minimal BuildToolsPreset for the detected project type.\n\nThe message should:\n\n- name the resolved preset,\n- list the populated toolchain pins,\n- include the built-in agent install pin,\n- list the scaffolded files,\n- mention the shared Sandman skill folder path, and\n- tell the operator to review and extend .sandman/Dockerfile with the project-specific tools, runtimes, and system packages needed before starting work with Sandman.\n\nKeep the print seam at the scaffolder layer via a new output writer in scaffold options. The writer should default safety when unset so existing callers do not churn. The CLI should pass its stdout writer through to the scaffolder.</span></pre>
               </div>
             </div>
             <figure class="portal-figure">
