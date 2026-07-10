@@ -642,6 +642,14 @@ func referenceGoVersionChoice(choice, hint string, hintFound bool) (string, erro
 
 func referenceGoMiseVersion(selector string) (string, error) {
 	selector = referenceNormalizeGoVersionSelector(selector)
+	if version, ok := bundledGoVersionCatalog[selector]; ok {
+		return version, nil
+	}
+	if selector == "" || strings.EqualFold(selector, "latest") {
+		if version, ok := bundledGoVersionCatalog["latest"]; ok {
+			return version, nil
+		}
+	}
 	args := []string{"latest"}
 	if selector == "" || strings.EqualFold(selector, "latest") {
 		args = append(args, "go")
@@ -658,14 +666,6 @@ func referenceGoMiseVersion(selector string) (string, error) {
 		}
 	}
 
-	if version, ok := bundledGoVersionCatalog[selector]; ok {
-		return version, nil
-	}
-	if selector == "" || strings.EqualFold(selector, "latest") {
-		if version, ok := bundledGoVersionCatalog["latest"]; ok {
-			return version, nil
-		}
-	}
 	if err != nil {
 		return "", fmt.Errorf("resolve go version %q: %w", selector, err)
 	}
@@ -863,6 +863,19 @@ func referenceDotnetVersionChoice(choice, hint string, hintFound bool) (string, 
 
 func referenceDotnetMiseVersion(selector string) (string, error) {
 	selector = referenceNormalizeDotnetVersionSelector(selector)
+	if version, ok := bundledDotnetVersionCatalog[selector]; ok {
+		return version, nil
+	}
+	if selector == "" || strings.EqualFold(selector, "latest") {
+		if version, ok := bundledDotnetVersionCatalog["latest"]; ok {
+			return version, nil
+		}
+	}
+	if strings.EqualFold(selector, "lts") {
+		if version, ok := bundledDotnetVersionCatalog["lts"]; ok {
+			return version, nil
+		}
+	}
 	args := []string{"latest"}
 	switch strings.ToLower(selector) {
 	case "", "latest":
@@ -882,19 +895,6 @@ func referenceDotnetMiseVersion(selector string) (string, error) {
 		}
 	}
 
-	if version, ok := bundledDotnetVersionCatalog[selector]; ok {
-		return version, nil
-	}
-	if selector == "" || strings.EqualFold(selector, "latest") {
-		if version, ok := bundledDotnetVersionCatalog["latest"]; ok {
-			return version, nil
-		}
-	}
-	if strings.EqualFold(selector, "lts") {
-		if version, ok := bundledDotnetVersionCatalog["lts"]; ok {
-			return version, nil
-		}
-	}
 	if selector != "" && selector != "latest" && selector != "lts" {
 		return selector, nil
 	}
@@ -975,6 +975,19 @@ func referenceNodeVersionChoice(choice, hint string, hintFound bool) (string, er
 
 func referenceNodeMiseVersion(selector string) (string, error) {
 	selector = referenceNormalizeNodeVersionSelector(selector)
+	if version, ok := bundledNodeVersionCatalog[selector]; ok {
+		return version, nil
+	}
+	if selector == "" || strings.EqualFold(selector, "latest") {
+		if version, ok := bundledNodeVersionCatalog["latest"]; ok {
+			return version, nil
+		}
+	}
+	if strings.EqualFold(selector, "lts") {
+		if version, ok := bundledNodeVersionCatalog["lts"]; ok {
+			return version, nil
+		}
+	}
 	args := []string{"latest"}
 	switch strings.ToLower(selector) {
 	case "", "latest":
@@ -994,19 +1007,6 @@ func referenceNodeMiseVersion(selector string) (string, error) {
 		}
 	}
 
-	if version, ok := bundledNodeVersionCatalog[selector]; ok {
-		return version, nil
-	}
-	if selector == "" || strings.EqualFold(selector, "latest") {
-		if version, ok := bundledNodeVersionCatalog["latest"]; ok {
-			return version, nil
-		}
-	}
-	if strings.EqualFold(selector, "lts") {
-		if version, ok := bundledNodeVersionCatalog["lts"]; ok {
-			return version, nil
-		}
-	}
 	if selector != "" && selector != "latest" && selector != "lts" && nodeVersionSelectorPattern.MatchString(selector) {
 		return selector, nil
 	}
@@ -1110,6 +1110,14 @@ func referencePythonVersionChoice(choice, hint string, hintFound bool) (string, 
 
 func referencePythonMiseVersion(selector string) (string, error) {
 	selector = referenceNormalizePythonVersionSelector(selector)
+	if version, ok := bundledPythonVersionCatalog[selector]; ok {
+		return version, nil
+	}
+	if selector == "" || strings.EqualFold(selector, "latest") {
+		if version, ok := bundledPythonVersionCatalog["latest"]; ok {
+			return version, nil
+		}
+	}
 	args := []string{"latest"}
 	if selector == "" || strings.EqualFold(selector, "latest") {
 		args = append(args, "python")
@@ -1126,14 +1134,6 @@ func referencePythonMiseVersion(selector string) (string, error) {
 		}
 	}
 
-	if version, ok := bundledPythonVersionCatalog[selector]; ok {
-		return version, nil
-	}
-	if selector == "" || strings.EqualFold(selector, "latest") {
-		if version, ok := bundledPythonVersionCatalog["latest"]; ok {
-			return version, nil
-		}
-	}
 	if err != nil {
 		return "", fmt.Errorf("resolve python version %q: %w", selector, err)
 	}

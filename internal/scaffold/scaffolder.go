@@ -1657,6 +1657,20 @@ func resolveMiseVersionChoice(r versionResolver, choice, hint string, hintFound 
 // an error.
 func resolveMiseVersion(r versionResolver, selector string) (string, error) {
 	selector = r.normalize(selector)
+	if version, ok := r.catalog[selector]; ok {
+		return version, nil
+	}
+	if selector == "" || strings.EqualFold(selector, "latest") {
+		if version, ok := r.catalog["latest"]; ok {
+			return version, nil
+		}
+	}
+	if strings.EqualFold(selector, "lts") {
+		if version, ok := r.catalog["lts"]; ok {
+			return version, nil
+		}
+	}
+
 	args := []string{"latest"}
 	switch strings.ToLower(selector) {
 	case "", "latest":
@@ -1684,19 +1698,6 @@ func resolveMiseVersion(r versionResolver, selector string) (string, error) {
 		}
 	}
 
-	if version, ok := r.catalog[selector]; ok {
-		return version, nil
-	}
-	if selector == "" || strings.EqualFold(selector, "latest") {
-		if version, ok := r.catalog["latest"]; ok {
-			return version, nil
-		}
-	}
-	if strings.EqualFold(selector, "lts") {
-		if version, ok := r.catalog["lts"]; ok {
-			return version, nil
-		}
-	}
 	if r.passThroughValid != nil && r.passThroughValid(selector) {
 		return selector, nil
 	}
