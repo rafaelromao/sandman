@@ -271,6 +271,9 @@
       .cli-shot .cmd { color: var(--night-text); }
       .cli-shot .ok { color: oklch(74% 0.14 152); }
       .cli-shot .dim { color: var(--night-muted); }
+      .cli-shot .arrow { color: oklch(78% 0.14 195); }
+      .cli-shot .shell { color: oklch(74% 0.18 350); font-weight: 800; }
+      .cli-shot .json { color: var(--night-muted); }
 
       .cli-reasons {
         display: grid;
@@ -511,28 +514,21 @@
 
               <div class="cli-shot" aria-label="Sandman CLI screenshot">
                 <span class="cli-scrollbar" aria-hidden="true"></span>
-                <pre><span class="branch">sandman main ?</span> <span class="prompt">❯</span> <span class="cmd">./sandman run 2042:</span>
-[260708175122-5395-2042] 17:51:39
-[260708175122-5395-2042] 17:51:39 &gt; build · MiniMax-M3
-[260708175122-5395-2042] 17:51:39
-[260708175122-5395-2045] 17:51:39
-[260708175122-5395-2045] 17:51:39 &gt; build · MiniMax-M3
-[260708175122-5395-2045] 17:51:39
-[260708175122-5395-2045] 17:51:40
-[260708175122-5395-2043] 17:51:40 &gt; build · MiniMax-M3
-[260708175122-5395-2043] 17:51:40
-[260708175122-5395-2045] 17:51:42 I'll start by loading the sandman skill and following the mandatory execution contract.
-[260708175122-5395-2045] 17:51:42
-[260708175122-5395-2045] 17:51:42 → Skill "sandman"
-[260708175122-5395-2042] 17:51:42 I'll start by loading the sandman skill and checking the current state of the worktree.
-[260708175122-5395-2042] 17:51:42</pre>
-              </div>
-
-              <div class="cli-reasons" aria-label="Why CLI-owned orchestration fits Sandman">
-                <div class="reason"><b>It stays repo-native.</b><span>The run starts where the code, branches, config, logs, and agent context already live.</span></div>
-                <div class="reason"><b>It is scriptable.</b><span>Teams can compose Sandman with shell scripts, CI, cron, hooks, and their existing release process.</span></div>
-                <div class="reason"><b>It keeps ownership local.</b><span>Sandman does not require the delivery loop to move into another SaaS control plane.</span></div>
-                <div class="reason"><b>It leaves receipts.</b><span><code>task.md</code>, events, logs, PRs, and review state remain inspectable after the agent stops.</span></div>
+                <pre><span class="branch">sandman main ?</span> <span class="prompt">❯</span> <span class="cmd">./sandman run 2102</span>
+expanded PRD #2102 to 3 accepted children
+<span class="dim">[260710093543-0142-2103] 09:36:34</span>
+<span class="dim">[260710093543-0142-2103] 09:36:34</span> <span class="arrow">→</span> build · MiniMax-M2.7
+<span class="dim">[260710093543-0142-2103] 09:36:34</span>
+<span class="dim">[260710093543-0142-2105] 09:36:35</span> <span class="arrow">→</span> build · MiniMax-M2.7
+<span class="dim">[260710093543-0142-2105] 09:36:35</span>
+<span class="dim">[260710093543-0142-2105] 09:36:39</span> <span class="arrow">→</span> Skill "sandman"
+<span class="dim">[260710093543-0142-2105] 09:36:40</span> <span class="arrow">→</span> Skill "sandman"
+<span class="dim">[260710093543-0142-2105] 09:36:40</span> <span class="arrow">→</span> Read .sandman/task.md
+<span class="dim">[260710093543-0142-2105] 09:36:42</span> <span class="arrow">→</span> Skill "sandman-implement"
+<span class="dim">[260710093543-0142-2103] 09:36:48</span> <span class="arrow">→</span> Read .sandman/task.md
+<span class="dim">[260710093543-0142-2103] 09:36:49</span>
+<span class="dim">[260710093543-0142-2103] 09:36:49</span> <span class="shell">$</span> <span class="cmd">gh issue view 2103 --json title,number,state,body --jq '{title, number, state, body}'</span>
+<span class="dim">[260710093543-0142-2103] 09:36:49</span> <span class="json">{"body":"### Parent\n\n#2102\n\n### What to build\n\nMake `sandman init` end with a single composed message on stdout that explains what the scaffold included and that the scaffolded Dockerfile is only a minimal BuildToolsPreset for the detected project type.\n\nThe message should:\n\n- name the resolved preset,\n- list the populated toolchain pins,\n- include the built-in agent install pin,\n- list the scaffolded files,\n- mention the shared Sandman skill folder path, and\n- tell the operator to review and extend .sandman/Dockerfile with the project-specific tools, runtimes, and system packages needed before starting work with Sandman.\n\nKeep the print seam at the scaffolder layer via a new output writer in scaffold options. The writer should default safety when unset so existing callers do not churn. The CLI should pass its stdout writer through to the scaffolder.</span></pre>
               </div>
             </div>
             <figure class="portal-figure">
