@@ -19,6 +19,8 @@ Creates or updates:
 | `.sandman/reviews/prompt.md` | Review-agent prompt used by `sandman review` |
 | `.sandman/reviews/quality-rules.md` | Review quality rules used by the review prompt |
 
+The scaffolded `.sandman/Dockerfile` is a **minimal BuildToolsPreset** for the detected project type. It includes the shared baseline packages and the preset-specific toolchain, but it is intentionally lightweight. Before starting work with Sandman, **review and extend `.sandman/Dockerfile`** with the project-specific tools, runtimes, and system packages you need — then rebuild the container image so the sandbox has everything your work requires.
+
 It also installs the shared Sandman skill folder into `~/.agents/skills/sandman/` when needed.
 
 ## Re-running init
