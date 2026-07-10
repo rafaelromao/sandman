@@ -2701,13 +2701,14 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
       const issueLabel = sourcePR > 0
         ? 'Review of PR ' + sourcePR + ' (#' + String(issueNumber) + ')'
         : 'Review of #' + String(issueNumber);
-      return {
+        return {
         key: source.key,
         runId: source.runId,
         review: true,
         groupedReview: false,
         reviewCount: summary.count,
         reviewVerdict: summary.verdict,
+        reviewLive: summary.live,
         status: summary.status || String(source.status || '').trim(),
         kind: summary.kind,
         issueNumber: issueNumber,
@@ -2780,7 +2781,7 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
         //      verdict (issue #1939 slice 2).
         let verdictSuffix;
         if (run.reviewVerdict) {
-          verdictSuffix = run.reviewVerdict;
+          verdictSuffix = run.reviewVerdict === 'Changes requested' ? 'Changes Requested' : run.reviewVerdict;
         } else if (run.reviewLive) {
           verdictSuffix = 'In Progress';
         } else {

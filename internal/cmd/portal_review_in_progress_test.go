@@ -44,7 +44,7 @@ console.log('PASS');
 // (B4): when the server carries both reviewLive=true and a terminal
 // reviewVerdict (defensive case: the parent projection ran before all live
 // reviews had settled), the verdict wins and "Approved" / "Changes
-// requested" renders — NOT "In Progress". This guards the existing
+// Requested" renders — NOT "In Progress". This guards the existing
 // test-pinned behaviour for AC2 and AC3 even when the live flag rides
 // alongside.
 func TestRenderRunMeta_TerminalVerdictWinsOverLive(t *testing.T) {
@@ -61,7 +61,7 @@ const runChanges = {
   kind: 'active', status: 'reviewing', reviewCount: 1, reviewVerdict: 'Changes requested', reviewLive: true,
 };
 const metaChanges = helpers.renderRunMeta(runChanges);
-if (metaChanges.indexOf('1 review - Changes requested') < 0) throw new Error('expected "1 review - Changes requested" when reviewVerdict="Changes requested", got ' + JSON.stringify(metaChanges));
+if (metaChanges.indexOf('1 review - Changes Requested') < 0) throw new Error('expected "1 review - Changes Requested" when reviewVerdict="Changes requested", got ' + JSON.stringify(metaChanges));
 if (metaChanges.indexOf('In Progress') >= 0) throw new Error('expected no "In Progress" when reviewVerdict is set, got ' + JSON.stringify(metaChanges));
 console.log('PASS');
 `
