@@ -603,8 +603,30 @@ func runE2ERun(t *testing.T, binPath, repoDir, preset string) string {
 	writeFakeGHShimForContainer(t, filepath.Join(repoDir, ".sandman", "bin"))
 	prependPath(t, ghShimDir)
 
+	// Podman stores its image layers under the user's container store, but its
+	// build temp (blob extraction) follows TMPDIR — which defaults to /tmp, a
+	// small tmpfs on most dev machines. Big toolchain images (rust, java,
+	// dotnet) overflow it with "disk quota exceeded". Relocate TMPDIR onto a
+	// larger filesystem for this test so both the harness build and the
+	// orchestrator's build (sandman run inherits the env) have room.
+	if home, err := os.UserHomeDir(); err == nil {
+		largeTemp := filepath.Join(home, ".cache", "sandman-e2e-podman")
+		if os.MkdirAll(largeTemp, 0755) == nil {
+			t.Setenv("TMPDIR", largeTemp)
+		}
+	}
+
 	imageTag := "sandman-preset-matrix-" + strings.ToLower(t.Name())
-	t.Cleanup(func() { _ = exec.Command("podman", "rmi", "-f", imageTag).Run() })
+	// Each preset image carries a full language toolchain (rust/java/dotnet
+	// images are multiple GB), and the matrix builds one per test. Reclaim all
+	// unused images before each build so the 18-image matrix does not exhaust
+	// podman's storage mid-suite (observed as "disk quota exceeded" on the
+	// rust preset). The just-built image is removed by the cleanup below.
+	_ = exec.Command("podman", "image", "prune", "-f").Run()
+	t.Cleanup(func() {
+		_ = exec.Command("podman", "rmi", "-f", imageTag).Run()
+		_ = exec.Command("podman", "image", "prune", "-f").Run()
+	})
 	buildCmd := exec.Command("podman", "build", "-t", imageTag, "-f",
 		filepath.Join(repoDir, ".sandman", "Dockerfile"), repoDir)
 	if out, err := buildCmd.CombinedOutput(); err != nil {
