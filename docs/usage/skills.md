@@ -17,6 +17,10 @@ The installed folder mirrors the local Sandman skill and includes routed subskil
 
 `docs/usage/default-task-prompt.md` now acts as a bootstrap that passes issue context, branch context, and the configured review command into the installed `sandman` skill.
 
+## Using the skills directly
+
+You can also load `sandman-implement` and `sandman-pr-review` directly in OpenCode when you want an interactive Sandman-guided session instead of a fully AFK `sandman run`. That gives you the same Sandman workflow and guardrails, but with a conversational loop where you can inspect progress, answer questions, and steer the work in real time.
+
 ## Container access
 
 Sandman mounts `~/.agents` into built-in agent containers so the shared skill is visible in container-backed runs.

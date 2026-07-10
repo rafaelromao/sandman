@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -61,6 +62,7 @@ type Options struct {
 	ReviewCommand   string // --review-command override
 	Retries         *int   // --retries override; nil = use config.DefaultRetries
 	RunIdleTimeout  *int   // --run-idle-timeout override; nil = use config.DefaultRunIdleTimeout
+	Writer          io.Writer
 }
 
 // BuildToolsPreset describes a scaffold-time recipe for the container image.
@@ -153,6 +155,7 @@ var builtInBuildToolsPresets = map[string]BuildToolsPreset{
 		Name:           rubyBuildToolsPreset,
 		BaseImage:      "debian:bookworm-slim",
 		SharedPackages: sharedPackages,
+		ExtraPackages:  []string{"libffi-dev", "libssl-dev", "libyaml-dev", "zlib1g-dev"},
 		MiseVersion:    DefaultMISEVersion,
 	},
 	rustBuildToolsPreset: {
@@ -229,12 +232,10 @@ func BundledPythonVersion(selector string) string {
 }
 
 func DefaultPythonLTSVersion() string {
-	cmd := exec.Command("mise", "latest", "python")
-	out, err := cmd.Output()
-	if err != nil {
+	latest := BundledPythonVersion("latest")
+	if latest == "" {
 		return ""
 	}
-	latest := strings.TrimSpace(string(out))
 	parts := strings.Split(latest, ".")
 	if len(parts) < 2 {
 		return ""
@@ -249,12 +250,7 @@ func DefaultPythonLTSVersion() string {
 		return ""
 	}
 	ltsSelector := fmt.Sprintf("%s.%d", major, minor)
-	cmd = exec.Command("mise", "latest", "python@"+ltsSelector)
-	out, err = cmd.Output()
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(out))
+	return BundledPythonVersion(ltsSelector)
 }
 
 var bundledDotnetVersionCatalog = map[string]string{
@@ -545,6 +541,36 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 	if err := s.materializeReviewPrompts(layout); err != nil {
 		return err
 	}
+
+	scaffoldedFiles := []string{
+		".sandman/config.yaml",
+		".sandman/Dockerfile",
+		".sandman/prompt.md",
+		".sandman/auto-selection-prompt.md",
+		".sandman/reviews/review-prompt.md",
+		".sandman/reviews/quality-rules.md",
+	}
+	summary := s.formatInitSummary(
+		preset.Name,
+		defaultAgent,
+		DefaultBuiltInAgentVersion(defaultAgent),
+		goVersion,
+		dotnetVersion,
+		nodeVersion,
+		pythonVersion,
+		elixirVersion,
+		erlangVersion,
+		rubyVersion,
+		rustVersion,
+		javaVersion,
+		scaffoldedFiles,
+		"~/.agents/skills/sandman/",
+	)
+	w := opts.Writer
+	if w == nil {
+		w = io.Discard
+	}
+	fmt.Fprint(w, summary)
 
 	return nil
 }
@@ -1657,6 +1683,20 @@ func resolveMiseVersionChoice(r versionResolver, choice, hint string, hintFound 
 // an error.
 func resolveMiseVersion(r versionResolver, selector string) (string, error) {
 	selector = r.normalize(selector)
+	if version, ok := r.catalog[selector]; ok {
+		return version, nil
+	}
+	if selector == "" || strings.EqualFold(selector, "latest") {
+		if version, ok := r.catalog["latest"]; ok {
+			return version, nil
+		}
+	}
+	if strings.EqualFold(selector, "lts") {
+		if version, ok := r.catalog["lts"]; ok {
+			return version, nil
+		}
+	}
+
 	args := []string{"latest"}
 	switch strings.ToLower(selector) {
 	case "", "latest":
@@ -1684,19 +1724,6 @@ func resolveMiseVersion(r versionResolver, selector string) (string, error) {
 		}
 	}
 
-	if version, ok := r.catalog[selector]; ok {
-		return version, nil
-	}
-	if selector == "" || strings.EqualFold(selector, "latest") {
-		if version, ok := r.catalog["latest"]; ok {
-			return version, nil
-		}
-	}
-	if strings.EqualFold(selector, "lts") {
-		if version, ok := r.catalog["lts"]; ok {
-			return version, nil
-		}
-	}
 	if r.passThroughValid != nil && r.passThroughValid(selector) {
 		return selector, nil
 	}
@@ -2163,8 +2190,59 @@ func renderAgentInstallCommand(agent, version string) string {
 	}
 }
 
+func agentInstallName(agent string) string {
+	switch agent {
+	case "opencode":
+		return "opencode-ai"
+	default:
+		return agent
+	}
+}
+
 func renderRTKInstallCommand() string {
 	return fmt.Sprintf("RUN curl -fsSL https://github.com/rtk-ai/rtk/releases/download/%s/rtk-x86_64-unknown-linux-musl.tar.gz | tar -xz -C /usr/local/bin\n", DefaultRTKVersion)
+}
+
+func (s *Scaffolder) formatInitSummary(presetName, defaultAgent, defaultAgentVersion string, goVersion, dotnetVersion, nodeVersion, pythonVersion, elixirVersion, erlangVersion, rubyVersion, rustVersion, javaVersion string, scaffoldedFiles []string, skillFolderPath string) string {
+	var b strings.Builder
+	b.WriteString("Scaffold complete.\n\n")
+	b.WriteString(fmt.Sprintf("  Preset:   %s\n", presetName))
+	b.WriteString("  Toolchain:\n")
+	if goVersion != "" {
+		b.WriteString(fmt.Sprintf("    go:      %s\n", goVersion))
+	}
+	if dotnetVersion != "" {
+		b.WriteString(fmt.Sprintf("    dotnet:  %s\n", dotnetVersion))
+	}
+	if nodeVersion != "" {
+		b.WriteString(fmt.Sprintf("    node:    %s\n", nodeVersion))
+	}
+	if pythonVersion != "" {
+		b.WriteString(fmt.Sprintf("    python:  %s\n", pythonVersion))
+	}
+	if elixirVersion != "" {
+		b.WriteString(fmt.Sprintf("    elixir:  %s\n", elixirVersion))
+	}
+	if erlangVersion != "" {
+		b.WriteString(fmt.Sprintf("    erlang:  %s\n", erlangVersion))
+	}
+	if rubyVersion != "" {
+		b.WriteString(fmt.Sprintf("    ruby:    %s\n", rubyVersion))
+	}
+	if rustVersion != "" {
+		b.WriteString(fmt.Sprintf("    rust:    %s\n", rustVersion))
+	}
+	if javaVersion != "" {
+		b.WriteString(fmt.Sprintf("    java:    %s\n", javaVersion))
+	}
+	b.WriteString(fmt.Sprintf("  Agent:    %s@%s\n", agentInstallName(defaultAgent), defaultAgentVersion))
+	b.WriteString(fmt.Sprintf("  Files:    %s\n", strings.Join(scaffoldedFiles, ", ")))
+	b.WriteString(fmt.Sprintf("  Skills:   %s\n", skillFolderPath))
+	b.WriteString("\n")
+	b.WriteString("WARNING: .sandman/Dockerfile is a minimal BuildToolsPreset.\n")
+	b.WriteString("Before starting work with Sandman, review and extend it with the\n")
+	b.WriteString("project-specific tools, runtimes, and system packages needed.\n")
+	return b.String()
 }
 
 // ValidateDockerfileMetadata fails when scaffold metadata drift is detected.

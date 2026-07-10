@@ -4958,6 +4958,7 @@ const result = visibleRunForIssueGroup(1223, [liveReview]);
 if (!result) throw new Error('expected visible row');
 if (result.status !== 'reviewing') throw new Error('expected orphan review-only visible status=reviewing (the review is live), got ' + JSON.stringify(result.status));
 if (result.review !== true) throw new Error('expected orphan review-only stub review=true, got ' + JSON.stringify(result.review));
+if (result.reviewLive !== true) throw new Error('expected orphan review-only stub reviewLive=true, got ' + JSON.stringify(result.reviewLive));
 console.log('PASS');
 `
 	runPortalHTMLScript(t, js)

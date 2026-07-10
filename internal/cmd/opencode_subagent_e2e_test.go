@@ -4,6 +4,7 @@ package cmd
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -66,7 +67,7 @@ func TestOpencodeSubagentPermissionAllowAll(t *testing.T) {
 		t.Fatalf("expected run success summary, got:\n%s", out)
 	}
 
-	logPath := filepath.Join(repoDir, ".sandman", "logs", "1.log")
+	logPath := findIssueRunLogUnderBatches(t, repoDir, 1)
 	logData, err := os.ReadFile(logPath)
 	if err != nil {
 		t.Fatalf("read log: %v", err)
@@ -94,6 +95,37 @@ func TestOpencodeSubagentPermissionAllowAll(t *testing.T) {
 	if !strings.Contains(string(envData), `"external_directory":"allow"`) {
 		t.Fatalf("expected subagent to observe OPENCODE_PERMISSION with external_directory:allow, got:\n%s", envData)
 	}
+}
+
+func findIssueRunLogUnderBatches(t *testing.T, repoDir string, issue int) string {
+	t.Helper()
+	batchesDir := filepath.Join(repoDir, ".sandman", "batches")
+	entries, err := os.ReadDir(batchesDir)
+	if err != nil {
+		t.Fatalf("read batches dir %s: %v", batchesDir, err)
+	}
+	suffix := fmt.Sprintf("-%d", issue)
+	for _, batch := range entries {
+		if !batch.IsDir() {
+			continue
+		}
+		runsDir := filepath.Join(batchesDir, batch.Name(), "runs")
+		runs, err := os.ReadDir(runsDir)
+		if err != nil {
+			continue
+		}
+		for _, run := range runs {
+			if !run.IsDir() || !strings.HasSuffix(run.Name(), suffix) {
+				continue
+			}
+			logPath := filepath.Join(runsDir, run.Name(), "run.log")
+			if _, err := os.Stat(logPath); err == nil {
+				return logPath
+			}
+		}
+	}
+	t.Fatalf("run log for issue %d not found under %s", issue, batchesDir)
+	return ""
 }
 
 func installPermissionFakeOpenCodeForContainer(t *testing.T, repoDir string) {
@@ -170,8 +202,19 @@ func writeMergedFakeGHShim(t *testing.T, dir string) {
 
 func writeMergedFakeGHShimForContainer(t *testing.T, dir string) {
 	t.Helper()
-
-	writeMergedFakeGHShim(t, dir)
+	writeFakeGHShimForContainer(t, dir)
+	ghPath := filepath.Join(dir, "gh")
+	body, err := os.ReadFile(ghPath)
+	if err != nil {
+		t.Fatalf("read container gh shim: %v", err)
+	}
+	patched := strings.Replace(string(body), `state="open"`, `state="merged"`, 1)
+	if patched == string(body) {
+		t.Fatalf("patch container gh shim: merged-state marker not found")
+	}
+	if err := os.WriteFile(ghPath, []byte(patched), 0755); err != nil {
+		t.Fatalf("write patched container gh shim: %v", err)
+	}
 }
 
 func forcePodmanSandbox(t *testing.T, repoDir string) {
@@ -198,7 +241,12 @@ func runSandmanBinaryWithTimeout(t *testing.T, binPath, workDir string, timeout 
 	cmd := exec.CommandContext(ctx, binPath, args...)
 	cmd.Dir = workDir
 	cmd.Env = append(os.Environ(),
-		"PATH="+ghBin+string(os.PathListSeparator)+os.Getenv("PATH"),
+		// Host-side sandman should resolve the dedicated host gh shim first.
+		// The container-only gh shim under .sandman/bin is copied into the image
+		// separately, and prepending it here makes the host process try to use a
+		// script whose shim_dir is /workspace/.sandman/bin (container path), which
+		// fails before the container even starts.
+		"PATH="+os.Getenv("PATH")+string(os.PathListSeparator)+ghBin,
 		"GH_TOKEN=fake",
 		"GITHUB_TOKEN=fake",
 	)
