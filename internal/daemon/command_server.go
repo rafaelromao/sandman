@@ -92,7 +92,7 @@ func (s *CommandServer) Start() error {
 	listener, err := net.Listen("unix", sockPath)
 	if err != nil {
 		if shouldFallbackToAbstractSocket(sockPath, err) {
-			listener, err = net.Listen("unix", abstractSocketName(s.dir))
+			listener, err = net.Listen("unix", abstractCommandSocketName(s.dir))
 			if err != nil {
 				return fmt.Errorf("create abstract command socket: %w", err)
 			}
@@ -116,8 +116,7 @@ func (s *CommandServer) Start() error {
 }
 
 func (s *CommandServer) startWithShortSockName() error {
-	serverName := filepath.Base(s.dir)
-	abstractName := "@sandman-" + fmt.Sprintf("%x", hashString(serverName))
+	abstractName := abstractCommandSocketName(s.dir)
 	listener, err := net.Listen("unix", abstractName)
 	if err != nil {
 		return fmt.Errorf("create abstract command socket: %w", err)
@@ -126,6 +125,10 @@ func (s *CommandServer) startWithShortSockName() error {
 	s.isAbstract = true
 	go s.acceptLoop()
 	return nil
+}
+
+func abstractCommandSocketName(dir string) string {
+	return "@sandman-cmd-" + fmt.Sprintf("%x", hashString(filepath.Base(dir)))
 }
 
 // Stop closes the listener and removes the socket file. It is safe to

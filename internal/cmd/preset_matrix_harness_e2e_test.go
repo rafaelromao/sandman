@@ -393,7 +393,7 @@ func writePresetMatrixTaskTemplate(t *testing.T, repoDir string) string {
 
 Issue #{{ISSUE_NUMBER}}: {{ISSUE_TITLE}}
 
-This repository's main language has a source file that currently prints the wrong value (0). Change it so it prints 42 instead.
+This repository's main language has a source file that currently contains the wrong value (0). Change it so it uses 42 instead.
 
 Then create a file named answer.txt at the root of the repository whose entire contents are exactly 42 (just those two digits, no newline, no other text).
 
@@ -423,7 +423,7 @@ func seedPresetMatrixProject(t *testing.T, repoDir, preset string) {
 	case "generic":
 		path, body = "answer.sh", "#!/bin/sh\necho 0\n"
 	case "go":
-		path, body = "answer.go", "package main\n\nimport \"fmt\"\n\nfunc main() { fmt.Println(0) }\n"
+		path, body = "answer.go", "package answer\n\nconst Answer = 0\n"
 	case "node":
 		path, body = "answer.js", "console.log(0)\n"
 	case "dotnet":
