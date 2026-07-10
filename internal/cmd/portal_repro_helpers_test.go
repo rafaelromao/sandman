@@ -377,3 +377,77 @@ console.log('PASS');
 `
 	runReproNodeScript(t, js)
 }
+
+func TestReproRenderRunMeta_ReviewCountOneReview(t *testing.T) {
+	js := `
+const run = { runId: 'r1', status: 'reviewing', reviewCount: 1, reviewVerdict: '' };
+const result = helpers.renderRunMeta(run);
+if (result.indexOf('1 review - Unclear') === -1) throw new Error('expected 1 review - Unclear for empty verdict, got ' + JSON.stringify(result));
+console.log('PASS');
+`
+	runReproNodeScript(t, js)
+}
+
+func TestReproRenderRunMeta_NoBatchKeyOmitsBatchLine(t *testing.T) {
+	js := `
+const run = { runId: 'r1', status: 'running' };
+const result = helpers.renderRunMeta(run);
+if (result.indexOf('Batch:') !== -1) throw new Error('expected no Batch: line without batchKey, got ' + JSON.stringify(result));
+if (result.indexOf('Run: r1') === -1) throw new Error('expected Run: r1, got ' + JSON.stringify(result));
+console.log('PASS');
+`
+	runReproNodeScript(t, js)
+}
+
+func TestReproNormalize_CanonicalKeyNotOverwrittenByLegacyMigration(t *testing.T) {
+	js := `
+const state = { expandedRunKey: null, tabs: { 'legacy-key': 'events' }, commandFormCollapsed: false, showArchived: false, activeBatches: false, sortBy: 'started', sortDir: 'desc' };
+const runs = [{ key: 'legacy-key', runId: 'canonical-key', kind: 'active', status: 'running' }];
+const allRuns = runs;
+const result = SandmanPortalState.normalize(state, runs, allRuns);
+if (result.state.tabs['canonical-key'] !== 'events') throw new Error('expected tab migrated to canonical key, got ' + JSON.stringify(result.state.tabs));
+if (!result.changed) throw new Error('expected changed=true after migration, got ' + result.changed);
+console.log('PASS');
+`
+	runReproNodeScript(t, js)
+}
+
+func TestReproNormalize_RunWithNoIssueNumberRetainsExpanded(t *testing.T) {
+	js := `
+const state = { expandedRunKey: 'r1', tabs: { 'r1': 'log' }, commandFormCollapsed: false, showArchived: false, activeBatches: false, sortBy: 'started', sortDir: 'desc' };
+const runs = [{ key: 'r1', runId: 'r1', kind: 'active', status: 'running' }];
+const allRuns = runs;
+const result = SandmanPortalState.normalize(state, runs, allRuns);
+if (result.state.expandedRunKey !== 'r1') throw new Error('expected expandedRunKey retained for run with no issueNumber, got ' + JSON.stringify(result.state.expandedRunKey));
+if (!result.changed) throw new Error('expected changed=true (tab added) for stable run, got ' + result.changed);
+console.log('PASS');
+`
+	runReproNodeScript(t, js)
+}
+
+func TestReproNormalize_HasVisibleSiblingPreservesExpanded(t *testing.T) {
+	js := `
+const state = { expandedRunKey: 'child-run', tabs: { 'child-run': 'log', 'parent-run': 'log' }, commandFormCollapsed: false, showArchived: false, activeBatches: false, sortBy: 'started', sortDir: 'desc' };
+const runs = [
+  { key: 'child-run', runId: 'child-run', kind: 'active', status: 'running', issueNumber: 42 },
+  { key: 'parent-run', runId: 'parent-run', kind: 'completed', status: 'success', issueNumber: 42 },
+];
+const allRuns = runs;
+const result = SandmanPortalState.normalize(state, runs, allRuns);
+if (result.state.expandedRunKey !== 'child-run') throw new Error('expected expandedRunKey preserved for run with visible sibling, got ' + JSON.stringify(result.state.expandedRunKey));
+if (!result.changed) throw new Error('expected changed=true (key migration runs even when key=runId), got ' + result.changed);
+console.log('PASS');
+`
+	runReproNodeScript(t, js)
+}
+
+func TestReproRenderRunMeta_ActiveWithNoRunIdShowsOnlyCounter(t *testing.T) {
+	js := `
+const run = { kind: 'active', status: 'running', reviewCount: 1, reviewVerdict: 'Approved' };
+const result = helpers.renderRunMeta(run);
+if (result.indexOf('1 review - Approved') === -1) throw new Error('expected review line, got ' + JSON.stringify(result));
+if (result.indexOf('Run:') !== -1) throw new Error('expected no Run: line without runId, got ' + JSON.stringify(result));
+console.log('PASS');
+`
+	runReproNodeScript(t, js)
+}
