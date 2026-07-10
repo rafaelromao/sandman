@@ -621,21 +621,36 @@ func runE2ERun(t *testing.T, binPath, repoDir, preset string) string {
 		}
 	}
 
-	imageTag := "sandman-preset-matrix-" + strings.ToLower(t.Name())
+	imageTag := "sandman-preset-matrix-" + strings.ToLower(preset)
 	// Each preset image carries a full language toolchain (rust/java/dotnet
-	// images are multiple GB), and the matrix builds one per test. Reclaim all
-	// unused images before each build so the 18-image matrix does not exhaust
-	// podman's storage mid-suite (observed as "disk quota exceeded" on the
-	// rust preset). The just-built image is removed by the cleanup below.
+	// images are multiple GB), and the matrix builds one per preset.
+	// The full preset-matrix run tests should build at most one image per
+	// preset (issue #2115). Use a preset-level tag so the CLI-options and
+	// edited-Dockerfile variants for the same preset pool the same image.
+	// Check if the preset image already exists before building.
+	imageExists := func(tag string) bool {
+		inspect := exec.Command("podman", "image", "inspect", tag)
+		inspect.Stdout = nil
+		inspect.Run()
+		return inspect.ProcessState.ExitCode() == 0
+	}
+	existedBefore := imageExists(imageTag)
+	if existedBefore {
+		t.Logf("pooled image %q already exists; skipping build", imageTag)
+	} else {
+		t.Logf("building pooled image %q", imageTag)
+	}
 	_ = exec.Command("podman", "image", "prune", "-f").Run()
-	t.Cleanup(func() {
-		_ = exec.Command("podman", "rmi", "-f", imageTag).Run()
-		_ = exec.Command("podman", "image", "prune", "-f").Run()
-	})
-	buildCmd := exec.Command("podman", "build", "-t", imageTag, "-f",
-		filepath.Join(repoDir, ".sandman", "Dockerfile"), repoDir)
-	if out, err := buildCmd.CombinedOutput(); err != nil {
-		t.Fatalf("build image %q: %v\n%s", imageTag, err, out)
+	if !existedBefore {
+		t.Cleanup(func() {
+			_ = exec.Command("podman", "rmi", "-f", imageTag).Run()
+			_ = exec.Command("podman", "image", "prune", "-f").Run()
+		})
+		buildCmd := exec.Command("podman", "build", "-t", imageTag, "-f",
+			filepath.Join(repoDir, ".sandman", "Dockerfile"), repoDir)
+		if out, err := buildCmd.CombinedOutput(); err != nil {
+			t.Fatalf("build image %q: %v\n%s", imageTag, err, out)
+		}
 	}
 
 	baselineOut, err := exec.Command("git", "-C", repoDir, "rev-parse", "HEAD").Output()
