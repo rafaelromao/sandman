@@ -326,17 +326,13 @@ func Save(path string, cfg *Config) error {
 func (c *Config) ResolveAgentProvider(name string) (Agent, error) {
 	if c != nil && c.AgentProviders != nil {
 		if agent, ok := c.AgentProviders[name]; ok {
-			if preset := agent.Preset; preset != "" {
-				if builtin, ok := BuiltInAgentPresets[preset]; ok {
-					return builtin.AgentWithOverrides(preset, agent), nil
-				}
-			}
-			if builtin, ok := BuiltInAgentPresets[name]; ok {
-				return builtin.AgentWithOverrides(name, agent), nil
-			}
-			if agent.Command != "" {
-				return agent, nil
-			}
+			return resolveAgentOverride(name, agent)
+		}
+	}
+
+	if c != nil && c.Agents != nil {
+		if agent, ok := c.Agents[name]; ok {
+			return resolveAgentOverride(name, agent)
 		}
 	}
 
@@ -344,6 +340,21 @@ func (c *Config) ResolveAgentProvider(name string) (Agent, error) {
 		return preset.Agent(name), nil
 	}
 
+	return Agent{}, fmt.Errorf("agent %q not found in config", name)
+}
+
+func resolveAgentOverride(name string, agent Agent) (Agent, error) {
+	if preset := agent.Preset; preset != "" {
+		if builtin, ok := BuiltInAgentPresets[preset]; ok {
+			return builtin.AgentWithOverrides(preset, agent), nil
+		}
+	}
+	if builtin, ok := BuiltInAgentPresets[name]; ok {
+		return builtin.AgentWithOverrides(name, agent), nil
+	}
+	if agent.Command != "" {
+		return agent, nil
+	}
 	return Agent{}, fmt.Errorf("agent %q not found in config", name)
 }
 

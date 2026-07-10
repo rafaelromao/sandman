@@ -798,6 +798,7 @@ func writeFakeGHShimForContainer(t *testing.T, hostDir string) {
 set -eu
 
 shim_dir="__SHIM_DIR__"
+mkdir -p "$shim_dir"
 
 case "$1" in
   issue)
@@ -1037,6 +1038,7 @@ func writeFakeGHShim(t *testing.T, dir string) {
 set -eu
 
 shim_dir="__SHIM_DIR__"
+mkdir -p "$shim_dir"
 
 case "$1" in
   issue)

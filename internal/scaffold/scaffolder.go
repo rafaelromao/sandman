@@ -155,6 +155,7 @@ var builtInBuildToolsPresets = map[string]BuildToolsPreset{
 		Name:           rubyBuildToolsPreset,
 		BaseImage:      "debian:bookworm-slim",
 		SharedPackages: sharedPackages,
+		ExtraPackages:  []string{"libffi-dev", "libssl-dev", "libyaml-dev", "zlib1g-dev"},
 		MiseVersion:    DefaultMISEVersion,
 	},
 	rustBuildToolsPreset: {
@@ -231,12 +232,10 @@ func BundledPythonVersion(selector string) string {
 }
 
 func DefaultPythonLTSVersion() string {
-	cmd := exec.Command("mise", "latest", "python")
-	out, err := cmd.Output()
-	if err != nil {
+	latest := BundledPythonVersion("latest")
+	if latest == "" {
 		return ""
 	}
-	latest := strings.TrimSpace(string(out))
 	parts := strings.Split(latest, ".")
 	if len(parts) < 2 {
 		return ""
@@ -251,12 +250,7 @@ func DefaultPythonLTSVersion() string {
 		return ""
 	}
 	ltsSelector := fmt.Sprintf("%s.%d", major, minor)
-	cmd = exec.Command("mise", "latest", "python@"+ltsSelector)
-	out, err = cmd.Output()
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(out))
+	return BundledPythonVersion(ltsSelector)
 }
 
 var bundledDotnetVersionCatalog = map[string]string{
@@ -1689,6 +1683,20 @@ func resolveMiseVersionChoice(r versionResolver, choice, hint string, hintFound 
 // an error.
 func resolveMiseVersion(r versionResolver, selector string) (string, error) {
 	selector = r.normalize(selector)
+	if version, ok := r.catalog[selector]; ok {
+		return version, nil
+	}
+	if selector == "" || strings.EqualFold(selector, "latest") {
+		if version, ok := r.catalog["latest"]; ok {
+			return version, nil
+		}
+	}
+	if strings.EqualFold(selector, "lts") {
+		if version, ok := r.catalog["lts"]; ok {
+			return version, nil
+		}
+	}
+
 	args := []string{"latest"}
 	switch strings.ToLower(selector) {
 	case "", "latest":
@@ -1716,19 +1724,6 @@ func resolveMiseVersion(r versionResolver, selector string) (string, error) {
 		}
 	}
 
-	if version, ok := r.catalog[selector]; ok {
-		return version, nil
-	}
-	if selector == "" || strings.EqualFold(selector, "latest") {
-		if version, ok := r.catalog["latest"]; ok {
-			return version, nil
-		}
-	}
-	if strings.EqualFold(selector, "lts") {
-		if version, ok := r.catalog["lts"]; ok {
-			return version, nil
-		}
-	}
 	if r.passThroughValid != nil && r.passThroughValid(selector) {
 		return selector, nil
 	}
