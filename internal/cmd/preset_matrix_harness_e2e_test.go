@@ -375,18 +375,20 @@ func customizePresetMatrixOpencodeAgent(t *testing.T, repoDir string) {
 	}
 }
 
-// writePresetMatrixPrompt overwrites the scaffolded .sandman/prompt.md with
-// the canonical language-agnostic task the real opencode agent executes for
-// EVERY preset. The task body lives in the prompt (not the faked gh issue
-// body) so it is identical across presets regardless of language; the faked
-// gh issue only supplies the title/number the prompt engine substitutes. The
-// prompt tells the agent to commit its work on the current branch (so the
-// harness can assert the branch advanced) and explicitly forbids pushing or
-// opening a PR — the gh shim is faked and no real GitHub side effect is
-// wanted.
-func writePresetMatrixPrompt(t *testing.T, repoDir string) {
+// writePresetMatrixTaskTemplate writes the canonical language-agnostic task
+// the REAL opencode agent executes for EVERY preset to a dedicated template
+// file and returns its absolute path. runE2ERun passes it via `sandman run
+// --template`, which the prompt engine reads directly (prompt/engine.go) and
+// which makes MaterializePromptFile a no-op — so the lean task template is
+// used verbatim regardless of the scaffolded .sandman/prompt.md (which the
+// orchestrator would otherwise re-materialize with the heavy default
+// workflow). The task body is identical across presets; the faked gh issue
+// only supplies the title/number the prompt engine substitutes. The prompt
+// tells the agent to commit on the current branch (so the harness can assert
+// the branch advanced) and forbids pushing or opening a PR.
+func writePresetMatrixTaskTemplate(t *testing.T, repoDir string) string {
 	t.Helper()
-	promptPath := filepath.Join(repoDir, ".sandman", "prompt.md")
+	templatePath := filepath.Join(repoDir, ".sandman", "preset-matrix-task.md")
 	prompt := `# Task
 
 Issue #{{ISSUE_NUMBER}}: {{ISSUE_TITLE}}
@@ -397,9 +399,14 @@ Then create a file named answer.txt at the root of the repository whose entire c
 
 When you are done, stage every change and create exactly one commit on the current branch. Do not push, do not run gh, and do not open a pull request.
 `
-	if err := os.WriteFile(promptPath, []byte(prompt), 0644); err != nil {
-		t.Fatalf("write prompt: %v", err)
+	if err := os.WriteFile(templatePath, []byte(prompt), 0644); err != nil {
+		t.Fatalf("write task template: %v", err)
 	}
+	abs, err := filepath.Abs(templatePath)
+	if err != nil {
+		t.Fatalf("resolve task template path: %v", err)
+	}
+	return abs
 }
 
 // seedPresetMatrixProject writes a single source file in the preset's language
@@ -589,7 +596,7 @@ func runE2ERun(t *testing.T, binPath, repoDir, preset string) string {
 	requirePresetMatrixE2E(t)
 	seedPresetMatrixProject(t, repoDir, preset)
 	customizePresetMatrixOpencodeAgent(t, repoDir)
-	writePresetMatrixPrompt(t, repoDir)
+	taskTemplate := writePresetMatrixTaskTemplate(t, repoDir)
 
 	ghShimDir := t.TempDir()
 	writeFakeGHShim(t, ghShimDir)
@@ -610,7 +617,7 @@ func runE2ERun(t *testing.T, binPath, repoDir, preset string) string {
 	}
 	baseline := strings.TrimSpace(string(baselineOut))
 
-	runArgs := []string{"run", "--sandbox", "podman", "--agent", "opencode", "1"}
+	runArgs := []string{"run", "--sandbox", "podman", "--agent", "opencode", "--template", taskTemplate, "1"}
 	out, err := runSandmanBinaryWithEnv(t, binPath, repoDir, ghShimDir, runArgs)
 	t.Logf("sandman run returned err=%v\noutput:\n%s", err, out)
 	if err != nil {
