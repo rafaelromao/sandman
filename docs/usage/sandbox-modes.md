@@ -82,7 +82,7 @@ Each container hosts exactly one `AgentRun`. This is the most constrained per-co
 
 - Podman or Docker installed on the host
 - The sandbox user must have permission to run containers
-- Container images are built from `.sandman/Dockerfile` (created by `sandman init`)
+- Container images are built from `.sandman/Dockerfile` (created by `sandman init`). See [Scaffolding](scaffolding.md) for guidance on reviewing and extending the scaffolded BuildToolsPreset container image.
 
 ### Trade-offs
 
