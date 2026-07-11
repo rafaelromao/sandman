@@ -24,7 +24,7 @@ const DefaultCallTimeout = 30 * time.Second
 
 var blockedByPattern = regexp.MustCompile(`(?i)\b(?:blocked by|depends on|blocked-by)[:\s]+(?:\[#(\d+)\](?:\([^)]+\))?|#(\d+)\b)`)
 var blockedByHeadingPattern = regexp.MustCompile(`(?im)^\s*##\s+(?:blocked by|depends on|blocked-by)\s*$`)
-var bulletIssuePattern = regexp.MustCompile(`(?m)^\s*-\s*(?:\[#(\d+)\]|#(\d+))`)
+var bulletIssuePattern = regexp.MustCompile(`(?m)^\s*-\s*(?:\[#(\d+)\]|#(\d+)|\[(?:[^\]]*)\]\([^()]*?/issues/(\d+)\))`)
 var nextHeadingPattern = regexp.MustCompile(`(?m)^\s*##\s`)
 
 // execRunner abstracts os/exec for testability. The context is threaded
@@ -610,7 +610,7 @@ func parseBlockedByHeading(body string) []int {
 	blockedBy := make([]int, 0, len(matches))
 	seen := make(map[int]struct{}, len(matches))
 	for _, match := range matches {
-		number, ok := issueNumberFromMatch(match[1], match[2])
+		number, ok := issueNumberFromMatch(match[1], match[2], match[3])
 		if !ok {
 			continue
 		}

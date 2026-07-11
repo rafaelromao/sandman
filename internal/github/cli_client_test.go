@@ -577,6 +577,26 @@ func TestParseBlockedBy(t *testing.T) {
 			body: "## What to build\n\nSome description\n\n## Blocked by\n\n- #382\n- #60\n\n## Runtime Context",
 			want: []int{382, 60},
 		},
+		{
+			name: "heading bullets with full GitHub URL and title text",
+			body: "## Blocked by\n\n- [Provision app shell, auth, and Postgres bootstrap](https://github.com/rafaelromao/slotmerge/issues/20)\n- [Provision GCP project and deployment foundation](https://github.com/rafaelromao/slotmerge/issues/132)\n",
+			want: []int{20, 132},
+		},
+		{
+			name: "heading bullets with full GitHub URL and title text mixed with bare #N",
+			body: "## Blocked by\n\n- [Provision app shell](https://github.com/rafaelromao/slotmerge/issues/20)\n- #99\n- [Provision GCP foundation](https://github.com/rafaelromao/slotmerge/issues/132)\n",
+			want: []int{20, 99, 132},
+		},
+		{
+			name: "heading bullets ignore non-issue URLs",
+			body: "## Blocked by\n\n- [Some doc](https://example.com/page)\n- [Real issue](https://github.com/rafaelromao/slotmerge/issues/42)\n",
+			want: []int{42},
+		},
+		{
+			name: "matches the actual slotmerge issue 133 body",
+			body: "## Parent\n\nPRD link.\n\n## What to build\n\nSome build description.\n\n## Blocked by\n\n- [Provision app shell, auth, and Postgres bootstrap](https://github.com/rafaelromao/slotmerge/issues/20)\n- [Provision GCP project and deployment foundation](https://github.com/rafaelromao/slotmerge/issues/132)\n",
+			want: []int{20, 132},
+		},
 	}
 
 	for _, tt := range tests {
