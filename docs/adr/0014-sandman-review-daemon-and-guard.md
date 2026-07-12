@@ -30,7 +30,7 @@ Rationale: the daemon-side redaction is the load-bearing safety net for the no-s
 
 ### Control-socket guard
 
-When the configured `review_command` contains `/sandman`, the `sandman run`, `sandman run --continue`, and `--auto` selection commands check for a control socket at `.sandman/review.sock` **before** executing. If the socket is missing, the command fails with a clear message.
+When the configured `review_command` contains `/sandman`, the `sandman run` and `sandman run --continue` commands check for a control socket at `.sandman/review.sock` **before** executing. If the socket is missing, the command fails with a clear message.
 
 This prevents the following failure mode:
 1. User runs `sandman run` with default config
@@ -131,4 +131,3 @@ None - can start immediately
 - Source branch: `sandman/380-adr-0013-sandman-review-daemon-and-guard`
 - Base branch: `main`
 - Review command: `/oc review`
-

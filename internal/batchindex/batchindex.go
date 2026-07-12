@@ -17,7 +17,6 @@ type Kind string
 const (
 	KindIssue      Kind = "issue"
 	KindReview     Kind = "review"
-	KindAutoSelect Kind = "auto-select"
 	KindPromptOnly Kind = "prompt-only"
 )
 

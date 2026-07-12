@@ -2372,50 +2372,6 @@ func TestPortal_ReasonField_PopulatedFromRunKind(t *testing.T) {
 		return dir
 	}
 
-	t.Run("auto-select success run", func(t *testing.T) {
-		startedAt := time.Now().Add(-2 * time.Minute)
-		state := events.RunState{
-			RunID: "auto-select-1700000000000",
-			Started: events.Event{
-				Timestamp: startedAt,
-				Payload:   map[string]any{"run_kind": "auto-select", "branch": "sandman/auto-select"},
-			},
-			Finished: &events.Event{
-				Timestamp: startedAt.Add(1 * time.Minute),
-				Payload:   map[string]any{"run_kind": "auto-select", "status": "success", "selected": []int{42, 43}},
-			},
-		}
-		run := (&portalRunsView{}).runFromState(repoRoot(t), state, nil, nil, nil, nil)
-		if run.Reason != "auto-select" {
-			t.Fatalf("expected Reason 'auto-select', got %q", run.Reason)
-		}
-		if run.Status != "success" {
-			t.Fatalf("expected Status 'success', got %q", run.Status)
-		}
-	})
-
-	t.Run("auto-select failure run", func(t *testing.T) {
-		startedAt := time.Now().Add(-2 * time.Minute)
-		state := events.RunState{
-			RunID: "auto-select-1700000001000",
-			Started: events.Event{
-				Timestamp: startedAt,
-				Payload:   map[string]any{"run_kind": "auto-select", "branch": "sandman/auto-select"},
-			},
-			Finished: &events.Event{
-				Timestamp: startedAt.Add(1 * time.Minute),
-				Payload:   map[string]any{"run_kind": "auto-select", "status": "failure", "reason": "no candidates"},
-			},
-		}
-		run := (&portalRunsView{}).runFromState(repoRoot(t), state, nil, nil, nil, nil)
-		if run.Reason != "auto-select" {
-			t.Fatalf("expected Reason 'auto-select', got %q", run.Reason)
-		}
-		if run.Status != "failure" {
-			t.Fatalf("expected Status 'failure', got %q", run.Status)
-		}
-	})
-
 	t.Run("in-flight review run", func(t *testing.T) {
 		startedAt := time.Now().Add(-1 * time.Minute)
 		state := events.RunState{
@@ -2661,90 +2617,12 @@ func TestPortal_ActiveMatch_ReasonDerivedFromSocket(t *testing.T) {
 		}
 	})
 
-	t.Run("unmatched active auto-select socket recovers reason status and candidates from run.started event", func(t *testing.T) {
-		repoRoot := t.TempDir()
-		if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
-			t.Fatal(err)
-		}
-		_, sockPath := shortSock(t)
-
-		match := portalRunMatch{
-			instance: portalActiveRun{
-				Key:        "auto-select-1700000000000",
-				RunID:      "auto-select-1700000000000",
-				SocketPath: sockPath,
-				ModTime:    time.Now().Add(-1 * time.Minute),
-			},
-		}
-		eventsByRun := map[string][]portalEvent{
-			"auto-select-1700000000000": {{
-				Type:      "run.started",
-				Timestamp: time.Now().Add(-1 * time.Minute),
-				Payload:   map[string]any{"run_kind": "auto-select", "candidates": []int{42, 43}},
-			}},
-		}
-
-		run := (&portalRunsView{}).runFromActiveMatch(repoRoot, match, eventsByRun, nil)
-		if run.Reason != "auto-select" {
-			t.Fatalf("expected Reason 'auto-select' for unmatched active auto-select socket, got %q", run.Reason)
-		}
-		if run.Status != "auto-select" {
-			t.Fatalf("expected Status 'auto-select' for unmatched active auto-select socket, got %q", run.Status)
-		}
-		if !reflect.DeepEqual(run.Candidates, []int{42, 43}) {
-			t.Fatalf("expected Candidates [42 43], got %#v", run.Candidates)
-		}
-	})
 }
 
 func TestPortal_ActiveBatchIssue_ReasonFromState(t *testing.T) {
-	t.Run("active batch row with auto-select state has Reason auto-select", func(t *testing.T) {
-		repoRoot := t.TempDir()
-		if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
-			t.Fatal(err)
-		}
-
-		sockDir, sockPath := func() (string, string) {
-			d, err := os.MkdirTemp("", "s")
-			if err != nil {
-				t.Fatal(err)
-			}
-			sp := filepath.Join(d, "s.sock")
-			ln, err := net.Listen("unix", sp)
-			if err != nil {
-				t.Fatal(err)
-			}
-			t.Cleanup(func() { _ = ln.Close() })
-			return d, sp
-		}()
-
-		active := portalActiveRun{
-			Key:        "auto-select-1700000000000",
-			Dir:        sockDir,
-			SocketPath: sockPath,
-			StartedAt:  time.Now().Add(-1 * time.Minute),
-		}
-
-		startedAt := time.Now().Add(-1 * time.Minute)
-		state := &events.RunState{
-			RunID: "auto-select-1700000000000",
-			Started: events.Event{
-				Timestamp: startedAt,
-				Payload:   map[string]any{"run_kind": "auto-select", "branch": "sandman/auto-select"},
-			},
-		}
-
-		// Active batch issue path requires an issue number; pass 0 to
-		// surface the auto-select run whose only event is the auto-select
-		// run itself. The row's Key/RunID are taken from the state.
-		run := (&portalRunsView{}).runFromActiveBatchIssue(repoRoot, active, 0, state, nil, nil, "", nil, nil)
-		if run.Reason != "auto-select" {
-			t.Fatalf("expected Reason 'auto-select', got %q", run.Reason)
-		}
-	})
 }
 
-func TestPortal_ReasonChipCSS_DefinesAutoSelectAndReviewVariants(t *testing.T) {
+func TestPortal_ReasonChipCSS_DefinesReviewVariant(t *testing.T) {
 	_, currentFile, _, ok := runtime.Caller(0)
 	if !ok {
 		t.Fatal("locate test file")
@@ -2756,7 +2634,7 @@ func TestPortal_ReasonChipCSS_DefinesAutoSelectAndReviewVariants(t *testing.T) {
 	}
 	html := string(data)
 
-	for _, sel := range []string{".badge.auto-select", ".badge.review"} {
+	for _, sel := range []string{".badge.review"} {
 		idx := strings.Index(html, sel)
 		if idx < 0 {
 			t.Fatalf("could not find %s selector in %s", sel, htmlPath)
@@ -2954,7 +2832,7 @@ func TestPortal_RunFromActiveBatchIssue_EmptyKeyStillHasBatchIdentity(t *testing
 }
 
 // TestPortal_RunFromActiveMatch_NormalizesBatchIdentity pins issue
-// #1541 for the prompt-only / auto-select path: an active instance
+// #1541 for the prompt-only path: an active instance
 // whose Key is empty must still reach dedup with a non-empty BatchKey.
 func TestPortal_RunFromActiveMatch_NormalizesBatchIdentity(t *testing.T) {
 	repoRoot := t.TempDir()
@@ -3134,12 +3012,12 @@ func TestPortal_ResolveRunLog_PrefersLiveForNonTerminal(t *testing.T) {
 
 // TestPortal_ResolveRunLog_SavedWinsForTerminalIssueRow pins the
 // slice-2 contract for portalRunsView.resolveRunLog: a terminal state
-// (status=success, runState.Finished != nil) for a non-review,
-// non-auto-select row returns the saved log, NOT the live output.
+// (status=success, runState.Finished != nil) for a non-review row
+// returns the saved log, NOT the live output.
 // This is the heart of issue #1637: the Saved Run Log is authoritative
 // for finished runs, even when the batch daemon socket is still
-// connectable. Companion tests cover the carve-out (review/auto-select
-// rows on live sockets) and the no-active path.
+// connectable. Companion tests cover the review carve-out and the
+// no-active path.
 func TestPortal_ResolveRunLog_SavedWinsForTerminalIssueRow(t *testing.T) {
 	startedAt := time.Now().Add(-5 * time.Minute)
 	finishedAt := startedAt.Add(2 * time.Minute)
@@ -3173,8 +3051,8 @@ func TestPortal_ResolveRunLog_SavedWinsForTerminalIssueRow(t *testing.T) {
 // slice-2 carve-out under the old (buggy) contract: terminal review
 // rows on a still-alive socket received live output. Issue #1730
 // flipped the precedence: the saved run.log is authoritative for any
-// terminal row (Finished != nil), regardless of review/auto-select
-// flavour or whether the batch daemon socket is still connectable.
+// terminal row (Finished != nil), regardless of review flavour or
+// whether the batch daemon socket is still connectable.
 // See TestPortal_ResolveRunLog_TerminalReviewPrefersSavedLog below for
 // the corrected contract. The body of this test was rewritten in
 // place to assert the corrected precedence rather than deleted, per
@@ -3277,49 +3155,6 @@ func TestPortal_ResolveRunLog_TerminalReviewPrefersSavedLog(t *testing.T) {
 	}
 }
 
-// TestPortal_ResolveRunLog_TerminalAutoSelectPrefersSavedLog pins the
-// issue #1730 contract for the auto-select flavour: a terminal
-// auto-select row (runState.Finished != nil, IsAutoSelect() == true)
-// returns the saved log verbatim, NOT the live socket output. Mirrors
-// TestPortal_ResolveRunLog_TerminalReviewPrefersSavedLog for the
-// run_kind=auto-select branch.
-func TestPortal_ResolveRunLog_TerminalAutoSelectPrefersSavedLog(t *testing.T) {
-	startedAt := time.Now().Add(-10 * time.Minute)
-	finishedAt := startedAt.Add(8 * time.Minute)
-	runState := events.RunState{
-		RunID: "260703135044-abcd-1719-auto",
-		Started: events.Event{
-			Timestamp: startedAt,
-			Payload: map[string]any{
-				"branch":   "sandman/auto-1719",
-				"run_kind": "auto-select",
-			},
-		},
-		Finished: &events.Event{
-			Type:      "run.finished",
-			Timestamp: finishedAt,
-			Payload: map[string]any{
-				"status":   "success",
-				"branch":   "sandman/auto-1719",
-				"run_kind": "auto-select",
-			},
-		},
-	}
-	active := &portalActiveRun{
-		Key:        "260703135044-abcd",
-		BatchID:    "260703135044-abcd",
-		RunID:      "260703135044-abcd-1719-auto",
-		LiveOutput: "[260703135044-abcd-1719-auto] 13:00:00 socket tail line\n",
-	}
-	savedLog := "[260703135044-abcd-1719-auto] 12:30:00 saved line\n" +
-		"[260703135044-abcd-1719-auto] 13:00:10 final saved line\n"
-
-	got := (&portalRunsView{}).resolveRunLog(func() string { return savedLog }, runState, active)
-	if got != savedLog {
-		t.Fatalf("resolveRunLog for terminal auto-select = %q, want full saved log (issue #1730)", got)
-	}
-}
-
 // TestPortal_ResolveRunLog_ActiveReviewPrefersLive pins the streaming
 // contract for non-terminal review rows: an active review row
 // (runState.Finished == nil) with a non-empty live socket returns the
@@ -3348,35 +3183,6 @@ func TestPortal_ResolveRunLog_ActiveReviewPrefersLive(t *testing.T) {
 	wantLive := strings.TrimSpace(stripLogLabels(active.LiveOutput))
 	if got != wantLive {
 		t.Fatalf("resolveRunLog for active review = %q, want stripped live output %q (issue #1730 must preserve active streaming)", got, wantLive)
-	}
-}
-
-// TestPortal_ResolveRunLog_ActiveAutoSelectPrefersLive pins the
-// streaming contract for non-terminal auto-select rows: an active
-// auto-select row (runState.Finished == nil) with a non-empty live
-// socket returns the live output. Mirrors the active-review case for
-// the run_kind=auto-select branch.
-func TestPortal_ResolveRunLog_ActiveAutoSelectPrefersLive(t *testing.T) {
-	startedAt := time.Now().Add(-1 * time.Minute)
-	runState := events.RunState{
-		RunID: "260618113825-abcd-active-auto",
-		Started: events.Event{
-			Timestamp: startedAt,
-			Payload: map[string]any{
-				"run_kind": "auto-select",
-			},
-		},
-	}
-	active := &portalActiveRun{
-		Key:        "260618113825-abcd-active-auto",
-		LiveOutput: "[260618113825-abcd-active-auto] 12:00:00 live auto-select line\n",
-	}
-	savedLog := "12:00:00 saved auto-select line\n"
-
-	got := (&portalRunsView{}).resolveRunLog(func() string { return savedLog }, runState, active)
-	wantLive := strings.TrimSpace(stripLogLabels(active.LiveOutput))
-	if got != wantLive {
-		t.Fatalf("resolveRunLog for active auto-select = %q, want stripped live output %q (issue #1730 must preserve active streaming)", got, wantLive)
 	}
 }
 

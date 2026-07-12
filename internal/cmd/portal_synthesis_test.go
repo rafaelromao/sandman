@@ -27,7 +27,7 @@ func TestMissingManifestIssues_ReturnsAllIssuesAndSkipsExcludedKinds(t *testing.
 	if got := missingManifestIssues(daemon.BatchManifest{Issues: []int{4, 5}}, nil); !reflect.DeepEqual(got, []int{4, 5}) {
 		t.Fatalf("missingManifestIssues() with no seen issues = %v, want %v", got, []int{4, 5})
 	}
-	for _, runKind := range []string{"auto-select", "review"} {
+	for _, runKind := range []string{"review"} {
 		if got := missingManifestIssues(daemon.BatchManifest{Issues: []int{4, 5}, RunKind: runKind}, nil); len(got) != 0 {
 			t.Fatalf("missingManifestIssues() for runKind %q = %v, want empty", runKind, got)
 		}

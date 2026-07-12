@@ -102,7 +102,6 @@ func TestLayout_AgentControlledPaths(t *testing.T) {
 		{"ReviewsDir", l.ReviewsDir(), filepath.Join(l.SandmanDir, "reviews")},
 		{"PromptVersionPath", l.PromptVersionPath(), filepath.Join(l.StateDir, ".prompt-version")},
 		{"BadgeControlFilePath", l.BadgeControlFilePath(), filepath.Join(l.StateDir, ".built_with_sandman")},
-		{"SelectedIssuesPath", l.SelectedIssuesPath(), filepath.Join(l.StateDir, "selected-issues.json")},
 		{"PRHeadShaPath", l.PRHeadShaPath(42), filepath.Join(l.StateDir, "42.head_sha")},
 		{"PRAddressedCommentsPath", l.PRAddressedCommentsPath(42), filepath.Join(l.StateDir, "42.addressed_comments")},
 	}
@@ -127,7 +126,6 @@ func TestLayout_ScaffoldAndReviewPaths(t *testing.T) {
 		{"DockerfilePath", l.DockerfilePath(), filepath.Join(l.SandmanDir, "Dockerfile")},
 		{"ConfigPath", l.ConfigPath(), filepath.Join(l.SandmanDir, "config.yaml")},
 		{"PromptPath", l.PromptPath(), filepath.Join(l.SandmanDir, "prompt.md")},
-		{"AutoSelectionPromptPath", l.AutoSelectionPromptPath(), filepath.Join(l.SandmanDir, "auto-selection-prompt.md")},
 		{"ReviewPromptPath", l.ReviewPromptPath(), filepath.Join(l.ReviewsDir(), "review-prompt.md")},
 		{"QualityRulesPath", l.QualityRulesPath(), filepath.Join(l.ReviewsDir(), "quality-rules.md")},
 		{"ReviewSocketPath", l.ReviewSocketPath(), filepath.Join(l.ReviewsDir(), "review.sock")},

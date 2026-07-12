@@ -46,10 +46,6 @@ A **PRD** (Product Requirements Document) is a GitHub issue whose body contains 
 
 The review daemon listens for `/sandman review` comments on open PRs and launches a reviewer AgentRun against each. The reviewer agent writes its body to `<runDir>/decision.md`; the daemon reads the file, strips every leading-slash `sandman` substring via `RedactBody` (so the bot's body cannot re-trigger itself), and posts the redacted body via `gh pr comment`. The trust boundary is the daemon transform, not the prompt.
 
-## Auto Mode
-
-`sandman run --auto --count 3` lets a selection agent choose which of the eligible issues to run, up to the cap (default 50, configurable via `auto_max_count`). Conservative defaults apply silently: `--retries=3`, `--parallel=1`, `--container-capacity=1`, `--max-containers=1`.
-
 ## Events as the source of truth
 
 Run status is a projection over the append-only `.sandman/events.jsonl`. There is no mutable `Status` field anywhere on disk. The portal, the `status` command, the `history` command, and the per-row HTTP endpoints all derive state by folding event types through `events.RunState`. If a run's status looks wrong, start by tracing its events.
@@ -61,7 +57,7 @@ Every run carries two identifiers:
 - **Public BatchId** — the batch-level identifier. Equals the batch folder basename.
 - **Per-row RunID** — the row-level identifier used by row-level actions (archive, abort, log download).
 
-For multi-issue batches they diverge (the BatchId carries the `+N` additional-count suffix, the RunID does not). For single-issue, prompt-only, review, and auto-select batches they are identical.
+For multi-issue batches they diverge (the BatchId carries the `+N` additional-count suffix, the RunID does not). For single-issue, prompt-only, and review batches they are identical.
 
 ## See also
 

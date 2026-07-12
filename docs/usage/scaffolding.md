@@ -15,7 +15,6 @@ Creates or updates:
 | `.sandman/config.yaml` | Project configuration: agent, model, sandbox, build tools, concurrency, retries, idle timeout, and git base branch |
 | `.sandman/Dockerfile` | Container image recipe used by Podman/Docker sandboxes |
 | `.sandman/prompt.md` | Project Prompt Template used to render each agent task |
-| `.sandman/auto-selection-prompt.md` | Auto Mode selection prompt used by `sandman run --auto` |
 | `.sandman/reviews/prompt.md` | Review-agent prompt used by `sandman review` |
 | `.sandman/reviews/quality-rules.md` | Review quality rules used by the review prompt |
 

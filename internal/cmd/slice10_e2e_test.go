@@ -251,51 +251,6 @@ func TestSlice10_MultiIssueBatchIdentity(t *testing.T) {
 	}
 }
 
-// --- Behavior 3: auto-select selector and post-selection identity -------
-
-// TestSlice10_AutoSelectAndPostSelectionIdentity covers behavior 3:
-// `sandman run --auto` mints `<ts>-<sid>-auto-<n>`; after the selector
-// picks issue 42 the public BatchId and per-row RunID become
-// `<ts>-<sid>-42` (no `auto` segment in the post-selection identity).
-func TestSlice10_AutoSelectAndPostSelectionIdentity(t *testing.T) {
-	slice10RequireGate(t)
-	spy := &spyBatchRunner{result: &batch.Result{
-		Runs: []batch.AgentRunResult{{IssueNumber: 42, Status: "success", Branch: "sandman/42-fix-bug"}},
-	}}
-	deps := newRunDepsAuto(t, spy)
-	deps.GitHubClient = &fakeGitHubClient{
-		issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug", State: "open"}},
-		prs:    map[string]*github.PR{},
-	}
-	deps.IssuePicker = &fakeIssuePicker{issues: []int{42}}
-	dir := slice10FreshSandmanDir(t)
-
-	var buf bytes.Buffer
-	cmd := NewRunCmd(deps)
-	cmd.SetOut(&buf)
-	cmd.SetErr(&buf)
-	cmd.SetArgs([]string{"--auto"})
-
-	if err := cmd.Execute(); err != nil {
-		t.Fatalf("unexpected error: %v\noutput:\n%s", err, buf.String())
-	}
-
-	wantPost := spy.req.RunTS + "-" + spy.req.RunShortID + "-42"
-
-	idx, err := batchindex.Load(filepath.Join(dir, ".sandman", "batches.json"))
-	if err != nil {
-		t.Fatalf("load batches index: %v", err)
-	}
-
-	if len(idx.Batches) != 1 {
-		t.Fatalf("expected exactly 1 batch index entry after auto picker, got %d (entries=%v)", len(idx.Batches), idx.Batches)
-	}
-	got := idx.Batches[0]
-	if got.ID != wantPost {
-		t.Errorf("post-selection BatchId = %q, want %q (must drop auto segment)", got.ID, wantPost)
-	}
-}
-
 // --- Behavior 4: orphan review and linked review identity ----------------
 
 // TestSlice10_LinkedReviewBatchIdentity covers the linked-review

@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 )
@@ -16,7 +15,6 @@ func TestKind_String(t *testing.T) {
 	}{
 		{KindIssue, "issue"},
 		{KindReview, "review"},
-		{KindAutoSelect, "auto-select"},
 		{KindPromptOnly, "prompt-only"},
 	}
 	for _, tt := range tests {
@@ -63,13 +61,6 @@ func TestNewBatchID(t *testing.T) {
 			n:            1,
 			firstSubject: "42",
 			want:         "260618113825-abcd-PR42",
-		},
-		{
-			name:         "KindAutoSelect",
-			kind:         KindAutoSelect,
-			n:            50,
-			firstSubject: "",
-			want:         "260618113825-abcd-auto-50",
 		},
 		{
 			name:         "KindPromptOnly with userid",
@@ -124,12 +115,6 @@ func TestNewRunID(t *testing.T) {
 			want:    "260618113825-abcd-PR42",
 		},
 		{
-			name:    "KindAutoSelect",
-			kind:    KindAutoSelect,
-			subject: "auto-50",
-			want:    "260618113825-abcd-auto-50",
-		},
-		{
 			name:    "KindPromptOnly with userid",
 			kind:    KindPromptOnly,
 			subject: "myid",
@@ -147,41 +132,6 @@ func TestNewRunID(t *testing.T) {
 			got := NewRunID(tt.kind, tt.subject, ts, shortid)
 			if got != tt.want {
 				t.Errorf("NewRunID() = %q, want %q", got, tt.want)
-			}
-		})
-	}
-}
-
-// TestAutoSelect_BatchIDEqualsRunID pins the issue #1918 slice 2
-// contract that the auto-select selector BatchId and RunID are the
-// same value: NewBatchID(KindAutoSelect, N, "", ts, shortid) ==
-// NewRunID(KindAutoSelect, "auto-N", ts, shortid). Both must produce
-// the canonical <ts>-<sid>-auto-<N> string.
-func TestAutoSelect_BatchIDEqualsRunID(t *testing.T) {
-	cases := []struct {
-		name    string
-		ts      string
-		shortid string
-		n       int
-	}{
-		{"single candidate", "260618113825", "abcd", 1},
-		{"five candidates", "260618113825", "abcd", 5},
-		{"fifty candidates", "260618113825", "abcd", 50},
-		{"max shortid", "260618113825", "ffff", 12},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			batchID := NewBatchID(KindAutoSelect, tc.n, "", tc.ts, tc.shortid)
-			runID := NewRunID(KindAutoSelect, fmt.Sprintf("auto-%d", tc.n), tc.ts, tc.shortid)
-			if batchID != runID {
-				t.Errorf("selector BatchId and RunID diverged: BatchId=%q RunID=%q", batchID, runID)
-			}
-			wantPrefix := tc.ts + "-" + tc.shortid + "-auto-"
-			if !strings.HasPrefix(batchID, wantPrefix) {
-				t.Errorf("selector BatchId %q does not start with %q", batchID, wantPrefix)
-			}
-			if !strings.HasSuffix(batchID, fmt.Sprintf("-%d", tc.n)) {
-				t.Errorf("selector BatchId %q does not end with -%d", batchID, tc.n)
 			}
 		})
 	}
@@ -247,12 +197,6 @@ func TestKindFromDirName(t *testing.T) {
 			wantFound: true,
 		},
 		{
-			name:      "Canonical KindAutoSelect batch dir",
-			input:     "260618113825-abcd-auto-50",
-			wantKind:  KindAutoSelect,
-			wantFound: true,
-		},
-		{
 			name:      "Canonical KindPromptOnly with ID",
 			input:     "260618113825-abcd-prompt-myid",
 			wantKind:  KindPromptOnly,
@@ -291,12 +235,6 @@ func TestKindFromDirName(t *testing.T) {
 		{
 			name:      "Legacy {ts}-{sid}-review format is rejected",
 			input:     "20250617-143052-abcd-review-PR42",
-			wantKind:  0,
-			wantFound: false,
-		},
-		{
-			name:      "Legacy {ts}-{sid}-auto-select-candidates format is rejected",
-			input:     "20250617-143052-abcd-auto-select-50-candidates",
 			wantKind:  0,
 			wantFound: false,
 		},

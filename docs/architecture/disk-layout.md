@@ -11,7 +11,6 @@ Every persisted Sandman artifact lives under `<repo>/.sandman/` (with two docume
 ├── Dockerfile                          # scaffold (init only)
 ├── config.yaml                         # scaffold (init only)
 ├── prompt.md                           # scaffold (init only)
-├── auto-selection-prompt.md            # scaffold (init only)
 ├── events.jsonl                        # runtime, multi-writer (O_APPEND)
 ├── events.jsonl.malformed              # runtime sidecar (quarantined torn lines)
 ├── batches.json                        # runtime, atomic-rename
@@ -37,7 +36,6 @@ Every persisted Sandman artifact lives under `<repo>/.sandman/` (with two docume
 └── state/                              # runtime sidecars (NEW in this PRD)
     ├── .prompt-version                 # SHA-256 of materialized prompt template
     ├── .built_with_sandman             # empty control file (badge sidecar)
-    ├── selected-issues.json            # auto-select output
     ├── <N>.head_sha                    # per-PR head SHA tracker
     └── <N>.addressed_comments          # per-PR addressed-comment list
 ```
@@ -49,7 +47,6 @@ Every persisted Sandman artifact lives under `<repo>/.sandman/` (with two docume
 | `Dockerfile` | scaffold | `sandman init` | container runtime | repo (manual) | init only |
 | `config.yaml` | scaffold | `sandman init` | Sandman (config load) | repo (manual) | init only |
 | `prompt.md` | scaffold | `sandman init` | prompt renderer | repo (manual) | init only |
-| `auto-selection-prompt.md` | scaffold | `sandman init` | auto-select agent | repo (manual) | init only |
 | `events.jsonl` | runtime, O_APPEND | orchestrator / run loop | `events.RunState` projection, portal, CLI status | never (append-only log) | continuous |
 | `events.jsonl.malformed` | runtime sidecar | event writer (on torn line) | human / log triage | `sandman clean` (optional) | per torn line |
 | `batches.json` | runtime, atomic-rename | orchestrator (on batch start, status change, archive) | portal, `sandman archive`, orchestrator | never (master index) | continuous |
@@ -73,7 +70,6 @@ Every persisted Sandman artifact lives under `<repo>/.sandman/` (with two docume
 | `worktrees/<branch>/.sandman/task.md` | runtime, atomic-rename | prompt renderer (or `--continue` skips render and reads existing) | agent | orchestrator (on run completion) | per AgentRun |
 | `state/.prompt-version` | runtime, atomic-rename | prompt materializer | prompt materializer (cache check) | `sandman clean` (optional) | per prompt template change |
 | `state/.built_with_sandman` | runtime, empty control file | badge sidecar (post-batch) | portal / status badge | `sandman clean` (optional) | per post-batch badge |
-| `state/selected-issues.json` | runtime, atomic-rename | auto-select agent output | orchestrator (consumes selection) | `sandman clean` (optional) | per auto-select run |
 | `state/<N>.head_sha` | runtime, atomic-rename | review daemon (per-PR head SHA tracker) | review daemon (dedup gate) | review daemon (rotates on PR close) | per PR |
 | `state/<N>.addressed_comments` | runtime, atomic-rename | review daemon (per-PR addressed-comment list) | review daemon (dedup gate) | review daemon (rotates on PR close) | per PR |
 

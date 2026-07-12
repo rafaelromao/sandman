@@ -10075,7 +10075,7 @@ func TestBuildRunID_IssueKind(t *testing.T) {
 // Issue #1945: this is the reverse-derivation that lets the orchestrator
 // route a per-row runID back to its batchID without trusting the
 // (legacy) segment order. The test covers issue-driven, review (linked
-// and orphan), auto-select, and prompt-only RunIDs and asserts the
+// and orphan), and prompt-only RunIDs and asserts the
 // helper never returns the legacy <shortid>-<ts>-... prefix.
 func TestBatchIDFromRunID_StripsSubjectFromNewShape(t *testing.T) {
 	ts, sid := orchTestRunTS, orchTestRunShortID
@@ -10099,11 +10099,6 @@ func TestBatchIDFromRunID_StripsSubjectFromNewShape(t *testing.T) {
 		{
 			name:        "review linked",
 			runID:       runid.NewRunID(runid.KindReview, "1551-PR42", ts, sid),
-			wantBatchID: wantPrefix,
-		},
-		{
-			name:        "auto-select",
-			runID:       runid.NewRunID(runid.KindAutoSelect, "auto-50", ts, sid),
 			wantBatchID: wantPrefix,
 		},
 		{

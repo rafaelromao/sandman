@@ -76,9 +76,6 @@ func (r RunState) IssueLabel() string {
 	if r.IsReview() && r.RunID != "" {
 		return r.RunID
 	}
-	if r.IsAutoSelect() && r.RunID != "" {
-		return r.RunID
-	}
 	if r.IsPromptOnly() {
 		return "prompt-only"
 	}
@@ -123,30 +120,11 @@ func (r RunState) IsReview() bool {
 	return false
 }
 
-// IsAutoSelect reports whether the run was tagged as an auto-select phase run.
-// The orchestrator sets payload["run_kind"] = "auto-select" on the run.started
-// (and run.finished) event when the run captures `sandman run --auto`'s
-// selection phase. Other run kinds leave the key absent.
-func (r RunState) IsAutoSelect() bool {
-	if kind, ok := payloadString(r.Started.Payload, "run_kind"); ok && kind == "auto-select" {
-		return true
-	}
-	if r.Finished != nil {
-		if kind, ok := payloadString(r.Finished.Payload, "run_kind"); ok && kind == "auto-select" {
-			return true
-		}
-	}
-	return false
-}
-
 // RunKind returns the taxonomy tag for the run as a string. It is the
-// canonical reader for the run's kind ("auto-select", "review",
-// "prompt-only", or "issue"). It mirrors the IsReview / IsPromptOnly /
-// IsAutoSelect predicates so each branch matches the corresponding helper.
+// canonical reader for the run's kind ("review", "prompt-only", or
+// "issue"). It mirrors the IsReview / IsPromptOnly predicates so each
+// branch matches the corresponding helper.
 func (r RunState) RunKind() string {
-	if r.IsAutoSelect() {
-		return "auto-select"
-	}
 	if r.IsReview() {
 		return "review"
 	}

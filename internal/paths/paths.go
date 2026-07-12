@@ -92,11 +92,6 @@ func (l Layout) PromptPath() string {
 	return filepath.Join(l.SandmanDir, "prompt.md")
 }
 
-// AutoSelectionPromptPath returns the auto-selection prompt file: <repo>/.sandman/auto-selection-prompt.md
-func (l Layout) AutoSelectionPromptPath() string {
-	return filepath.Join(l.SandmanDir, "auto-selection-prompt.md")
-}
-
 // RunLogPath returns the run log file: <batchesDir>/<batchID>/runs/<runID>/run.log
 func (l Layout) RunLogPath(batchID, runID string) string {
 	return filepath.Join(l.RunFolder(batchID, runID), "run.log")
@@ -164,11 +159,6 @@ func (l Layout) PromptVersionPath() string {
 // BadgeControlFilePath returns the badge hook control file: <repo>/.sandman/state/.built_with_sandman
 func (l Layout) BadgeControlFilePath() string {
 	return filepath.Join(l.StateDir, ".built_with_sandman")
-}
-
-// SelectedIssuesPath returns the auto-selection output file: <repo>/.sandman/state/selected-issues.json
-func (l Layout) SelectedIssuesPath() string {
-	return filepath.Join(l.StateDir, "selected-issues.json")
 }
 
 // PRHeadShaPath returns the cached PR head sha file: <repo>/.sandman/state/<N>.head_sha

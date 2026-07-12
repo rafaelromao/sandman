@@ -3279,39 +3279,6 @@ func TestScaffold_ReInitPreservesUserEditedReviewFiles(t *testing.T) {
 	}
 }
 
-func TestScaffold_IgnoresLegacyPrioritySelectionPrompt(t *testing.T) {
-	dir := t.TempDir()
-	sandmanDir := filepath.Join(dir, ".sandman")
-	if err := os.MkdirAll(sandmanDir, 0755); err != nil {
-		t.Fatalf("create .sandman: %v", err)
-	}
-
-	legacyPromptPath := filepath.Join(sandmanDir, "priority-selection-prompt.md")
-	legacyContent := []byte("# legacy prompt content that must not leak into auto-selection-prompt.md\n")
-	if err := os.WriteFile(legacyPromptPath, legacyContent, 0644); err != nil {
-		t.Fatalf("seed legacy prompt: %v", err)
-	}
-
-	s := &Scaffolder{}
-	if err := s.Scaffold(dir, Options{BuildTools: "generic"}, &fakePrompter{confirm: true}); err != nil {
-		t.Fatalf("scaffold: %v", err)
-	}
-
-	autoPromptPath := filepath.Join(sandmanDir, "auto-selection-prompt.md")
-	data, err := os.ReadFile(autoPromptPath)
-	if err != nil {
-		t.Fatalf("read auto-selection-prompt.md: %v", err)
-	}
-
-	got := string(data)
-	if got != prompt.DefaultPriorityPrompt() {
-		t.Errorf("auto-selection-prompt.md should equal the embedded default\ngot:\n%s\nwant:\n%s", got, prompt.DefaultPriorityPrompt())
-	}
-	if strings.Contains(got, string(legacyContent)) {
-		t.Errorf("auto-selection-prompt.md must not contain the legacy prompt bytes; the soft migration is end-of-life\ngot:\n%s", got)
-	}
-}
-
 func TestScaffold_InitMessageWritten(t *testing.T) {
 	dir := t.TempDir()
 	s := &Scaffolder{}
@@ -3379,7 +3346,6 @@ func TestScaffold_InitMessage_GenericPreset_AllFieldsPresent(t *testing.T) {
 		".sandman/config.yaml",
 		".sandman/Dockerfile",
 		".sandman/prompt.md",
-		".sandman/auto-selection-prompt.md",
 		".sandman/reviews/review-prompt.md",
 		".sandman/reviews/quality-rules.md",
 	}

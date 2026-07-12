@@ -154,12 +154,3 @@ client mirrors the existing `ListPRComments` pattern.
   parallel to `PRComment`.
 - `CONTEXT.md` gains entries for `PRD`, `PRDResolver`, and the
   `## Parent` body convention.
-- A subsequent change (#898) will run Auto Mode on the
-  PRD-expanded candidate pool; this ADR does not introduce Auto Mode.
-  As of #898, the auto branch (`--auto`) is the one exception to
-  "PRD expansion runs after issue selection" (§7 above): the auto
-  branch expands PRDs in the candidate pool *before* the auto
-  selection phase so the agent (or numeric-sort fallback) chooses
-  among real child issues rather than the umbrella PRD. The
-  non-auto branches keep the post-selection expansion described
-  in §7.

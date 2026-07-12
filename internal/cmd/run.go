@@ -15,7 +15,6 @@ import (
 
 	"github.com/rafaelromao/sandman/internal/batch"
 	"github.com/rafaelromao/sandman/internal/batchindex"
-	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/daemon"
 	"github.com/rafaelromao/sandman/internal/events"
 	"github.com/rafaelromao/sandman/internal/github"
@@ -164,23 +163,10 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 			query, _ := cmd.Flags().GetString("query")
 
 			includeDependencies, _ := cmd.Flags().GetBool("include-dependencies")
-			autoFlag := cmd.Flags().Lookup("auto")
-			autoProvided := autoFlag != nil && autoFlag.Changed
-			countFlag := cmd.Flags().Lookup("count")
-			countProvided := countFlag != nil && countFlag.Changed
-			autoCount, _ := cmd.Flags().GetInt("count")
-			issueSelectionProvided := len(args) > 0 || autoProvided || label != "" || query != ""
+			issueSelectionProvided := len(args) > 0 || label != "" || query != ""
 
 			if runID != "" && issueSelectionProvided {
-				return MarkUsage(fmt.Errorf("--run-id cannot be combined with issue selection, --auto, --label, or --query"))
-			}
-
-			if countProvided && autoCount < 0 {
-				return MarkUsage(fmt.Errorf("--count must be 0 or greater"))
-			}
-
-			if autoProvided {
-				includeDependencies = true
+				return MarkUsage(fmt.Errorf("--run-id cannot be combined with issue selection, --label, or --query"))
 			}
 
 			agentName := strings.TrimSpace(agentFlag)
@@ -201,25 +187,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 					return MarkUsage(fmt.Errorf("prompt requires issue selection but no issue selection was provided"))
 				}
 			} else {
-				if autoProvided {
-					if label != "" && query != "" {
-						return MarkUsage(fmt.Errorf("cannot combine --label with --query"))
-					}
-					effectiveCount := effectiveAutoCount(autoCount, countProvided, cfg.AutoMaxCount)
-					candidates, err := resolveAutoCandidates(cmd.Context(), githubClient, args, label, query, cmd.ErrOrStderr())
-					if err != nil {
-						return err
-					}
-					candidates, err = expandPRDs(cmd.Context(), githubClient, candidates, cmd.ErrOrStderr())
-					if err != nil {
-						return err
-					}
-					resolvedQuery := resolveAutoQuery(label, query)
-					issues, _, _, err = resolveAutoIssues(cmd.Context(), githubClient, effectiveCount, candidates, sandmanDir, agentName, modelFlag, cfg, resolvedQuery, deps.EventLog)
-					if err != nil {
-						return err
-					}
-				} else if len(args) > 0 {
+				if len(args) > 0 {
 					selection, orderedIssues, _, hasUnboundedEnd, err := parseIssueSelection(args)
 					if err != nil {
 						return MarkUsage(err)
@@ -393,23 +361,6 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 			}
 			if !retriesSet {
 				retries = -1
-			}
-
-			if autoProvided {
-				if !parallelSet {
-					parallel = 1
-				}
-				if !containerCapacitySet {
-					containerCapacity = 1
-					containerCapacitySet = true
-				}
-				if !maxContainersSet {
-					maxContainers = 1
-					maxContainersSet = true
-				}
-				if !retriesSet {
-					retries = 3
-				}
 			}
 
 			dangerouslySkipPermFlag := cmd.Flags().Lookup("dangerously-skip-permissions")
@@ -619,25 +570,6 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 				// For single-issue this equals the per-row RunID for the first
 				// issue; for multi-issue it carries the +<n-1> suffix.
 				sessionRunID = batch.BatchIDForIssue(firstIssueNum, len(issues), ts, shortid)
-				if deps.EventLog != nil && autoProvided {
-					issueRunID := runid.NewRunID(runid.KindIssue, fmt.Sprintf("%d", firstIssueNum), ts, shortid)
-					if err := deps.EventLog.Log(events.Event{
-						Type:      "run.started",
-						Timestamp: time.Now(),
-						RunID:     issueRunID,
-						Issue:     firstIssueNum,
-						Payload: map[string]any{
-							"run_kind": "issue",
-							"issues":   append([]int(nil), issues...),
-							"batch_id": sessionRunID,
-						},
-					}); err != nil {
-						return fmt.Errorf("log issue run.started: %w", err)
-					}
-				}
-				if autoProvided {
-					runID = sessionRunID
-				}
 			} else if overridePrompt {
 				ts, shortid, err := runid.NewBatch()
 				if err != nil {
@@ -735,7 +667,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 	cmd.Flags().Int("run-idle-timeout", 0, "Treat an AgentRun as stuck if it produces no output for N seconds; 0 disables the timeout")
 	cmd.Flags().String("sandbox", "", "Sandbox mode: podman (default), docker, or worktree")
 	cmd.Flags().Int("container-capacity", 0, "Maximum concurrent agent runs per container; 0 means unlimited")
-	cmd.Flags().Int("max-containers", 0, "Maximum number of containers to run at once; 0 means auto mode")
+	cmd.Flags().Int("max-containers", 0, "Maximum number of containers to run at once; 0 means no cap")
 	cmd.Flags().Bool("include-dependencies", false, "Expand the batch to include transitive blockers")
 	cmd.Flags().String("label", "", "Select issues by label")
 	cmd.Flags().String("query", "", "Select issues by GitHub search query")
@@ -747,9 +679,6 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 	cmd.Flags().String("agent", "", "Built-in agent preset (opencode)")
 	cmd.Flags().String("base-branch", "", "Base branch to fetch from origin before each AgentRun starts")
 	cmd.Flags().StringArray("prompt-arg", nil, "Custom template substitution KEY=VALUE (repeatable)")
-
-	cmd.Flags().Bool("auto", false, "Auto Mode — let Sandman choose which issues to run, capped to --count or auto_max_count from config")
-	cmd.Flags().Int("count", 0, "Candidate cap for Auto Mode; 0 means unlimited (use auto_max_count from config when not set on the CLI)")
 
 	cmd.Flags().Bool("dangerously-skip-permissions", false, "Skip opencode permission prompts (auto-approves non-denied actions); default is true for container runs, false for worktree runs")
 
@@ -1126,115 +1055,6 @@ func expandPRDs(ctx context.Context, client github.Client, issues []int, stderr 
 		return nil, fmt.Errorf("resolve PRDs: %w", err)
 	}
 	return expanded, nil
-}
-
-// effectiveAutoCount resolves the candidate cap for Auto Mode.
-//
-// Precedence: explicit --count > cfg.AutoMaxCount (0 means unlimited) > DefaultAutoMaxCount.
-// A return value of 0 means "no cap". Negative values cannot reach this helper
-// because --count validation and Load() reject them.
-func effectiveAutoCount(cliCount int, cliCountProvided bool, cfgAutoMaxCount int) int {
-	if cliCountProvided {
-		return cliCount
-	}
-	if cfgAutoMaxCount > 0 {
-		return cfgAutoMaxCount
-	}
-	if cfgAutoMaxCount == 0 {
-		return 0
-	}
-	return config.DefaultAutoMaxCount
-}
-
-// resolveAutoCandidates returns the ordered candidate set for Auto Mode.
-//
-// Args + filter: filter the args against the label/query.
-// Args alone: filter the args to drop closed issues.
-// Filter alone: search GitHub and return the issue numbers.
-// Neither: search GitHub for ready-for-agent (the default).
-func resolveAutoCandidates(ctx context.Context, client github.Client, args []string, label, query string, stderr io.Writer) ([]int, error) {
-	if len(args) > 0 {
-		selection, orderedIssues, _, hasUnboundedEnd, err := parseIssueSelection(args)
-		if err != nil {
-			return nil, err
-		}
-		if label == "" && query == "" {
-			numbersForFilter := orderedIssues
-			if hasUnboundedEnd {
-				numbersForFilter = explicitIssueNumbers(selection)
-			}
-			candidates, err := filterClosedIssues(ctx, numbersForFilter, client.SearchIssues, client.FetchIssue, stderr)
-			if err != nil {
-				if hasUnboundedEnd && errors.Is(err, errAllExplicitClosed) {
-					return nil, nil
-				}
-				return nil, err
-			}
-			if hasUnboundedEnd {
-				seen := make(map[int]struct{}, len(candidates))
-				for _, n := range candidates {
-					seen[n] = struct{}{}
-				}
-				searchResults, err := searchIssues(ctx, client, "is:open")
-				if err != nil {
-					return nil, err
-				}
-				if len(searchResults) >= 1000 {
-					return nil, fmt.Errorf("issue selection exceeds search result limit")
-				}
-				for _, issue := range searchResults {
-					if !selection.matches(issue.Number) {
-						continue
-					}
-					if _, ok := seen[issue.Number]; ok {
-						continue
-					}
-					seen[issue.Number] = struct{}{}
-					candidates = append(candidates, issue.Number)
-				}
-			}
-			return candidates, nil
-		}
-		if querySupportsLocalFiltering(query) {
-			resolved, err := resolveIssuesLocally(ctx, client, orderedIssues, label, query)
-			if err != nil {
-				return nil, err
-			}
-			if hasUnboundedEnd {
-				searchResults, err := searchIssues(ctx, client, buildIssueQuery(label, query))
-				if err != nil {
-					return nil, err
-				}
-				if len(searchResults) >= 1000 {
-					return nil, fmt.Errorf("issue selection exceeds search result limit")
-				}
-				for _, issue := range searchResults {
-					if !selection.matches(issue.Number) || !issueMatchesFilters(&issue, label, query) {
-						continue
-					}
-					if !containsIssue(resolved, issue.Number) {
-						resolved = append(resolved, issue.Number)
-					}
-				}
-			}
-			return resolved, nil
-		}
-		searchQuery := buildIssueQuery(label, query)
-		searchResults, err := searchIssues(ctx, client, searchQuery)
-		if err != nil {
-			return nil, err
-		}
-		if len(searchResults) >= 1000 {
-			return nil, fmt.Errorf("issue selection exceeds search result limit")
-		}
-		return filterIssuesBySelection(searchResults, selection, orderedIssues, hasUnboundedEnd), nil
-	}
-	searchQuery := resolveAutoQuery(label, query)
-	searchResults, err := searchIssues(ctx, client, searchQuery)
-	if err != nil {
-		return nil, fmt.Errorf("search issues: %w", err)
-	}
-	return extractIssueNumbers(searchResults), nil
 }
 
 func printSummary(cmd *cobra.Command, result *batch.Result) {

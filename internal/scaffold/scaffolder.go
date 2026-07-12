@@ -383,11 +383,6 @@ var elixirVersionPattern = regexp.MustCompile(`(\d+)\.(\d+)`)
 type Scaffolder struct{}
 
 // Scaffold writes config.yaml, Dockerfile, and prompt.md into .sandman/.
-//
-// The soft migration that copied a pre-existing
-// `.sandman/priority-selection-prompt.md` to `.sandman/auto-selection-prompt.md`
-// is no longer performed; operators with a customized legacy file must rename
-// it to `.sandman/auto-selection-prompt.md` manually before re-running `init`.
 func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 	layout := paths.NewLayout(&config.Config{}, repoRoot)
 	sandmanDir := layout.SandmanDir
@@ -531,13 +526,6 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 		return fmt.Errorf("write prompt.md: %w", err)
 	}
 
-	autoPromptPath := layout.AutoSelectionPromptPath()
-	if _, err := os.Stat(autoPromptPath); os.IsNotExist(err) {
-		if err := atomicfs.WriteAtomic(autoPromptPath, []byte(prompt.DefaultPriorityPrompt()), 0644); err != nil {
-			return fmt.Errorf("write auto-selection-prompt.md: %w", err)
-		}
-	}
-
 	if err := s.materializeReviewPrompts(layout); err != nil {
 		return err
 	}
@@ -546,7 +534,6 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 		".sandman/config.yaml",
 		".sandman/Dockerfile",
 		".sandman/prompt.md",
-		".sandman/auto-selection-prompt.md",
 		".sandman/reviews/review-prompt.md",
 		".sandman/reviews/quality-rules.md",
 	}
