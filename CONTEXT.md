@@ -69,7 +69,7 @@ One folder under `.sandman/batches/<batch-id>/runs/<run-id>/` containing `run.js
 _Avoid_: run folder, run directory.
 
 **Run retry**:
-The orchestrator writes a `run.retry` event to `.sandman/events.jsonl` at the top of every retry iteration — between two attempts that are both actually about to run — to mark the cause of the restart and the state the previous iteration left behind. The event payload carries six fields: `attempt` (1-indexed, the about-to-start attempt), `max_attempts` (total attempts the run was budgeted for, equal to `retries + 1`), `previous_status` (the `result.Status` of the prior iteration, verbatim — `failure` or `aborted` in practice), `last_log_lines` (up to 3 trailing lines from the per-run agent log at retry time), `branch` (the run's branch), and `reason` (a closed-vocabulary string identifying why the retry fired). The `reason` vocabulary is fixed to `agent-stalled`, `agent-failed`, `sandbox-timeout`, `kill-timeout`, and `manual`; new values are added only by amending [ADR-0035](docs/adr/0035-run-retry-payload-schema-and-reason-vocabulary.md). Projection rule for `attempts`: when the run has finished, source it from `Finished.Payload["retries_done"]` (the orchestrator pre-computes the value at finish time as `result.RetriesTotal - 1`, and `events.RunState.RetriesDone()` reads it back verbatim); when the run is still active (no `run.finished` yet), source it from the count of retries that have actually occurred (initial run excluded) — which equals `max(attempt - 1)` across the run's `run.retry` events, with each candidate clamped at 0 so a malformed payload cannot produce a negative count, and `0` if no retries have been recorded. Slice 1's `LiveAttempt()` helper is the canonical implementation, and slice 2's `Retries []Event` projection feeds it. The closed vocabulary, the schema, and the consumers are recorded in [ADR-0035](docs/adr/0035-run-retry-payload-schema-and-reason-vocabulary.md) (slice-5 deliverable for PRD #1498). Slice 1's `events.RunState.LiveAttempt()` / `LastRetryReason()` helpers and slice 4's portal `attempts N retries` chip consume this schema; the `docs/usage/monitoring.md` `run.retry` payload block will gain a `reason` row once slice 3 lands.
+The orchestrator writes a `run.retry` event to `.sandman/events.jsonl` at the top of every retry iteration — between two attempts that are both actually about to run — to mark the cause of the restart and the state the previous iteration left behind. The event payload carries six fields: `attempt` (1-indexed, the about-to-start attempt), `max_attempts` (total attempts the run was budgeted for, equal to `retries + 1`), `previous_status` (the `result.Status` of the prior iteration, verbatim — `failure` or `aborted` in practice), `last_log_lines` (up to 3 trailing lines from the per-run agent log at retry time), `branch` (the run's branch), and `reason` (a closed-vocabulary string identifying why the retry fired). The `reason` vocabulary is fixed to `agent-stalled`, `agent-failed`, `sandbox-timeout`, `kill-timeout`, and `manual`; new values are added only by amending [ADR-0035](docs/adr/0035-run-retry-payload-schema-and-reason-vocabulary.md). Projection rule for `attempts`: when the run has finished, source it from `Finished.Payload["retries_done"]` (the orchestrator pre-computes the value at finish time as `result.RetriesTotal - 1`, and `events.RunState.RetriesDone()` reads it back verbatim); when the run is still active (no `run.finished` yet), source it from the count of retries that have actually occurred (initial run excluded) — which equals `max(attempt - 1)` across the run's `run.retry` events, with each candidate clamped at 0 so a malformed payload cannot produce a negative count, and `0` if no retries have been recorded. Slice 1's `LiveAttempt()` helper is the canonical implementation, and slice 2's `Retries []Event` projection feeds it. The closed vocabulary, the schema, and the consumers are recorded in [ADR-0035](docs/adr/0035-run-retry-payload-schema-and-reason-vocabulary.md). Slice 1's `events.RunState.LiveAttempt()` / `LastRetryReason()` helpers and slice 4's portal `attempts N retries` chip consume this schema; the `docs/usage/monitoring.md` `run.retry` payload block will gain a `reason` row once slice 3 lands.
 _Avoid_: retry event (the schema lives here), retry marker (the on-disk log marker is a different concept — see `internal/batch/completion.go::LogRetryMarker`).
 _See_: Event, Run, Branch.
 
@@ -79,14 +79,14 @@ A review run is an ordinary AgentRun that the review daemon launches in response
 - **Review without a linked issue:** `<ts>-<sid>-PR<pr>` (subject is `PR<pr>`).
 - **Review with a linked issue:** `<ts>-<sid>-<linkedIssue>-PR<pr>` (subject is `<linkedIssue>-PR<pr>`).
 
-The `<ts>-<sid>` prefix is owned by `runid.NewBatch()`; the per-row subject is composed by `internal/review.ReviewRunIDFor`. The legacy literal `RunID: "review"` alias and the `runs/review/` folder name are not canonical — older review launches predating issue #1551 used them as both the row RunID and the run folder name, but every review run now lands under a folder whose name is exactly its per-row RunID. The `<ts>-<sid>-<linkedIssue?>-PR<pr>` shape is the only source of truth for review run identity (issue #1946). References ADR-0030 and ADR-0034.
+The `<ts>-<sid>` prefix is owned by `runid.NewBatch()`; the per-row subject is composed by `internal/review.ReviewRunIDFor`. The `<ts>-<sid>-<linkedIssue?>-PR<pr>` shape is the canonical per-row RunID. Every review run lands under a folder whose name is exactly its per-row RunID. References ADR-0030 and ADR-0034.
 _Avoid_: review-only RunID, special review alias, `runs/review`.
 _See_: Run, RunID, Review daemon state.
 
 **Review daemon state**:
-Flat files under `.sandman/reviews/` for daemon-level state only: `review.sock` (daemon command socket), `review-prompt.md` (shared prompt template), and `quality-rules.md` (materialised alongside the prompt). The folder holds **no** per-PR subdirectories, **no** per-row RunID folders, and **no** body-hash tracker. Per-run review state (`review-state.json` with seen comments and claim locks) lives inside the batch run folder at `.sandman/batches/<batch-id>/runs/<runID>/review-state.json`, where `<runID>` is the canonical per-row RunID for the review run (see `Review run`), NOT the legacy `runs/review` alias. Dedup key is `(prNumber, commentID)`.
+Flat files under `.sandman/reviews/` for daemon-level state only: `review.sock` (daemon command socket), `review-prompt.md` (shared prompt template), and `quality-rules.md` (materialised alongside the prompt). The folder holds **no** per-PR subdirectories, **no** per-row RunID folders, and **no** body-hash tracker. Per-run review state (`review-state.json` with seen comments and claim locks) lives inside the batch run folder at `.sandman/batches/<batch-id>/runs/<runID>/review-state.json`, where `<runID>` is the canonical per-row RunID for the review run (see `Review run`). Dedup key is `(prNumber, commentID)`.
 
-Post-#1845 the bot's review body cannot re-trigger the daemon because the daemon-side redaction layer (issue #1845) strips every `/sandman` substring from the review worktree's `decision.md` (see `Review decision`) before posting via `gh pr comment`, and the structural sniff `LooksLikeBotReviewBody` (issue #1821) drops bodies that structurally look like a previous bot review (carrying both the `## Previous review progress` heading AND the literal `/sandman review` substring) before `ParseTrigger` runs. The redactor is the primary defence; the structural sniff is the belt-and-braces backstop.
+Post-redaction the bot's review body cannot re-trigger the daemon because the daemon-side redaction layer strips every `/sandman` substring from the review worktree's `decision.md` (see `Review decision`) before posting via `gh pr comment`, and the structural sniff `LooksLikeBotReviewBody` drops bodies that structurally look like a previous bot review (carrying both the `## Previous review progress` heading AND the literal `/sandman review` substring) before `ParseTrigger` runs. The redactor is the primary defence; the structural sniff is the belt-and-braces backstop.
 _Avoid_: review state, PR state.
 
 **Review daemon slot**:
@@ -156,7 +156,7 @@ A single structured log entry in the append-only JSONL event log (`.sandman/even
 _Avoid_: Log line, record.
 
 **Aborted**:
-A first-class terminal AgentRun status indicating the run was interrupted by context cancellation (e.g. SIGINT/SIGTERM) before it could finish on its own merits. Emitted as a `run.aborted` event with `status: aborted`. `RunState.Status()` returns `"aborted"` for any `run.aborted` event and, for backwards compatibility, for legacy `run.cancelled` events in older `events.jsonl` files.
+A first-class terminal AgentRun status indicating the run was interrupted by context cancellation (e.g. SIGINT/SIGTERM) before it could finish on its own merits. Emitted as a `run.aborted` event with `status: aborted`. `RunState.Status()` returns `"aborted"` for any `run.aborted` event.
 _Avoid_: cancelled, killed, terminated.
 
 **Issue**:
@@ -230,7 +230,7 @@ A Unix domain socket at `<batch>/batch.sock` that accepts attach client connecti
 _Avoid_: IPC socket, management socket.
 
 **Saved Run Log**:
-The persisted twin of the live attach stream, written to `.sandman/batches/<batch-id>/runs/<run-id>/run.log` for each AgentRun. Each line carries the same `[<runID>] HH:MM:SS ` prefix as the live stream, where `<runID>` is the per-run identifier produced by `runid.NewRunID`. The file is opened with `O_APPEND` during `AgentRun.Execute` and is read by `readPortalTextFile` in the portal; it is never truncated mid-run. Pre-change log files may contain un-prefixed lines or the older `[issue-<N>]`/`[prompt-only]` labels. References ADR-0032.
+The persisted twin of the live attach stream, written to `.sandman/batches/<batch-id>/runs/<run-id>/run.log` for each AgentRun. Each line carries the same `[<runID>] HH:MM:SS ` prefix as the live stream, where `<runID>` is the per-run identifier produced by `runid.NewRunID`. The file is opened with `O_APPEND` during `AgentRun.Execute` and is read by `readPortalTextFile` in the portal; it is never truncated mid-run. References ADR-0032.
 _Avoid_: Log file.
 
 **Review run log**:
@@ -259,11 +259,11 @@ The in-flight portal status for an active review run (a run whose `run.started` 
 _Avoid_: reviewing status, review-in-progress. No secondary-row review chip.
 
 **Review-only (orphan)**:
-A portal issue group that contains only review child rows and no canonical implementation row. The portal renders the visible row with the explicit label `Review of PR <prNumber> (#<issueNumber>)` (e.g. `Review of PR 1508 (#1472)`) — the PR the review targeted is surfaced first, the linked issue is shown as a parenthesised reference. The row uses the review run's own `run_id` as the row identity (`data-run-key`) and does not fabricate implementation-run metadata such as `batchKey` or `issueTitle`. The row is expandable; the subject selector lists the real review runs so the user can inspect each one's log/events/details tabs. References issue #1526 and ADR-0029 §Review-only orphan label.
+A portal issue group that contains only review child rows and no canonical implementation row. The portal renders the visible row with the explicit label `Review of PR <prNumber> (#<issueNumber>)` (e.g. `Review of PR 1508 (#1472)`) — the PR the review targeted is surfaced first, the linked issue is shown as a parenthesised reference. The row uses the review run's own `run_id` as the row identity (`data-run-key`) and does not fabricate implementation-run metadata such as `batchKey` or `issueTitle`. The row is expandable; the subject selector lists the real review runs so the user can inspect each one's log/events/details tabs. References ADR-0029 §Review-only orphan label.
 _Avoid_: fake parent row, synthesized issue row, fake implementation-like row, "Review of #N" without the PR prefix.
 
 **Review-only (orphan, no issue)**:
-A portal review row whose PR cannot be resolved to an issue — typically older event logs predating the `issue_number` payload field, or a live review whose PR-to-issue resolution failed. The Go-side projection renders the same shape without the parenthesised issue reference: `Review of PR <prNumber>` (e.g. `Review of PR 1508`). The cell label never contains the raw RunID; if even the PR number is missing, the label degrades to the RunID. References issue #1667 and ADR-0029 §Review-only orphan label.
+A portal review row whose PR cannot be resolved to an issue — a live review whose PR-to-issue resolution failed. The Go-side projection renders the same shape without the parenthesised issue reference: `Review of PR <prNumber>` (e.g. `Review of PR 1508`). The cell label never contains the raw RunID; if even the PR number is missing, the label degrades to the RunID. References ADR-0029 §Review-only orphan label.
 _Avoid_: PR42, raw runID in cell, a0c19-...-PR<n>, "Review of #N" without the PR prefix.
 
 **Continue**:
@@ -279,8 +279,8 @@ The `--override` flag on `sandman run`. Clears prior run artifacts before starti
 _Avoid_: Clean reset, manual checkout.
 
 **Handoff**:
-Deprecated: use `Task` (`.sandman/task.md`) instead. The task checklist now carries the checkpointed workflow state that used to live in the separate handoff file.
-_Avoid_: Continuation context (legacy filename), continuation file.
+Deprecated: use `Task` (`.sandman/task.md`) instead. The task checklist carries the workflow state that lives in the task file.
+_Avoid_: Continuation context, continuation file.
 
 ## Relationships
 

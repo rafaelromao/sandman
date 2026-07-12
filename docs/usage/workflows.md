@@ -82,7 +82,7 @@ sandman portal
 sandman run --continue 42 --prompt "finish the tests"
 ```
 
-Reuses the previously created branch for issue #42 and feeds the agent the stored task file plus any new prompt text. Useful when the original prompt stalled or drifted.
+Reuses the existing branch for issue #42 and feeds the agent the stored task file plus any new prompt text. Useful when the original prompt stalled or drifted.
 
 ## Cleaning up
 
