@@ -509,3 +509,21 @@ func TestDaemon_PostRetry_CtxCancelStopsRetrying(t *testing.T) {
 		t.Errorf("seenCache must NOT mark terminal-seen on ctx cancel (issue #1846), got cache %+v", d.seenCache)
 	}
 }
+
+// TestDaemon_ProductionPostBackoffs_SchedulePins verifies the real
+// production backoff schedule (used when d.postBackoffs is not set)
+// matches the 1s/2s/4s/8s/16s contract from issue #1891 without
+// actually sleeping through it.
+func TestDaemon_ProductionPostBackoffs_SchedulePins(t *testing.T) {
+	d := &Daemon{}
+	got := d.effectivePostBackoffs()
+	if len(got) != PostStepMaxAttempts {
+		t.Fatalf("expected %d backoff durations, got %d", PostStepMaxAttempts, len(got))
+	}
+	want := []time.Duration{1 * time.Second, 2 * time.Second, 4 * time.Second, 8 * time.Second, 16 * time.Second}
+	for i, w := range want {
+		if got[i] != w {
+			t.Errorf("backoff[%d] = %v, want %v", i, got[i], w)
+		}
+	}
+}

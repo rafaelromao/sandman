@@ -843,6 +843,16 @@ func TestApplyPRSubstitutions_RunDirSubstituted(t *testing.T) {
 	}
 }
 
+func TestApplyPRSubstitutions_DefaultReviewPromptHasNoRawRunDirToken(t *testing.T) {
+	rendered := ApplyPRSubstitutions(DefaultPRReviewPrompt(), PRData{RunDir: "/abs/path/to/worktree"})
+	if strings.Contains(rendered, "<RUN_DIR>") {
+		t.Errorf("rendered review prompt must not contain literal `<RUN_DIR>` after substitution, got it in:\n%s", rendered)
+	}
+	if !strings.Contains(rendered, "/abs/path/to/worktree/decision.md") {
+		t.Errorf("rendered review prompt must contain the substituted run dir path in decision.md instructions")
+	}
+}
+
 func TestApplyPRSubstitutions_EmptyRunDirBecomesEmpty(t *testing.T) {
 	template := "RunDir: {{RUN_DIR}}"
 	data := PRData{RunDir: ""}

@@ -1589,6 +1589,9 @@ func postWithRetry(ctx context.Context, d *Daemon, prNumber int, body string) er
 // effectivePostBackoffs returns the backoff schedule used by
 // postWithRetry. When d.postBackoffs is set (by tests), it wins;
 // otherwise the package-level postStepBackoffs is used (production).
+// Tests that want zero-cost retries must set a non-nil, non-empty
+// slice (e.g. []time.Duration{0,0,0,0,0}) — a nil or empty slice
+// falls back to the real 31s schedule.
 func (d *Daemon) effectivePostBackoffs() []time.Duration {
 	if len(d.postBackoffs) > 0 {
 		return d.postBackoffs
