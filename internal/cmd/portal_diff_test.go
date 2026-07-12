@@ -3776,20 +3776,6 @@ console.log('PASS');
 	runNodeScript(t, js)
 }
 
-func TestPortalDiffCreateRunRow_SuppressesBatchAndContextRowWhenReasonIsAutoSelect(t *testing.T) {
-	js := `const body = makeMockBody();
-const run = { key: 'a', runId: 'r1', kind: 'completed', status: 'success', issueLabel: 'auto-select', candidates: [1, 2, 3], batchIssues: [1, 2, 3], reason: 'auto-select' };
-const stopGroups = new Set();
-const opts = { helpers, stopGroups, expandedKey: null };
-const created = SandmanPortalDiff.insertRunRow(body, run, opts);
-if (body.querySelector('tr.batch-row[data-batch-for="a"]')) throw new Error('expected no batch-row for auto-select run with batchIssues');
-const ctx = body.querySelector('tr.context-row[data-context-for="a"]');
-if (ctx) throw new Error('auto-select context row must not render once the candidates chip is dropped');
-console.log('PASS');
-`
-	runNodeScript(t, js)
-}
-
 func TestPortalDiffDiffRuns_NoInsertBeforeForStableRuns(t *testing.T) {
 	js := `const body = makeMockBody();
 const runs = [

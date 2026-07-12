@@ -51,9 +51,6 @@ func TestInit_CreatesSandmanFiles(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dir, ".sandman", "prompt.md")); err != nil {
 		t.Errorf("prompt.md not created: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(dir, ".sandman", "auto-selection-prompt.md")); err != nil {
-		t.Errorf("auto-selection-prompt.md not created: %v", err)
-	}
 }
 
 func TestInit_ReviewCommandFlagStoredInConfig(t *testing.T) {
@@ -767,55 +764,6 @@ func TestInit_RubyBuildToolsFlagHelpTextMentionsRuby(t *testing.T) {
 	}
 	if !strings.Contains(flag.Usage, "ruby") {
 		t.Fatalf("--build-tools help text missing ruby, got: %q", flag.Usage)
-	}
-}
-
-func TestInit_PrioritySelectionPromptNotOverwrittenOnSecondRun(t *testing.T) {
-	dir := t.TempDir()
-	t.Chdir(dir)
-
-	oldInstall := syncSandmanSkill
-	syncSandmanSkill = func(skill.SyncOptions) error { return nil }
-	t.Cleanup(func() { syncSandmanSkill = oldInstall })
-
-	var out bytes.Buffer
-	cmd := NewInitCmd()
-	cmd.SetOut(&out)
-	cmd.SetIn(strings.NewReader(""))
-	cmd.SetArgs([]string{"--build-tools", "generic"})
-
-	if err := cmd.Execute(); err != nil {
-		t.Fatalf("first init: %v", err)
-	}
-
-	autoPath := filepath.Join(dir, ".sandman", "auto-selection-prompt.md")
-	originalData, err := os.ReadFile(autoPath)
-	if err != nil {
-		t.Fatalf("read auto-selection-prompt.md: %v", err)
-	}
-
-	customContent := string(originalData) + "\n# Custom modification\n"
-	if err := os.WriteFile(autoPath, []byte(customContent), 0644); err != nil {
-		t.Fatalf("modify auto-selection-prompt.md: %v", err)
-	}
-
-	var out2 bytes.Buffer
-	cmd2 := NewInitCmd()
-	cmd2.SetOut(&out2)
-	cmd2.SetIn(strings.NewReader("n\n"))
-	cmd2.SetArgs([]string{"--build-tools", "generic"})
-
-	err = cmd2.Execute()
-	if err == nil {
-		t.Fatal("expected error when declining overwrite")
-	}
-
-	dataAfter, err := os.ReadFile(autoPath)
-	if err != nil {
-		t.Fatalf("read auto-selection-prompt.md after: %v", err)
-	}
-	if got := string(dataAfter); got != customContent {
-		t.Fatalf("auto-selection-prompt.md was overwritten\nwant:\n%s\ngot:\n%s", customContent, got)
 	}
 }
 

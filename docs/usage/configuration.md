@@ -24,7 +24,7 @@ build_tools: generic
 
 # Review command injected into the prompt template and shared skill install.
 # Defaults to /sandman review, which requires `sandman review` to be
-# running before `sandman run`/`continue`/`--auto` will start. Set
+# running before `sandman run`/`continue` will start. Set
 # to /oc review (or any command that does not contain /sandman) to
 # opt out of the review daemon guard.
 review_command: /sandman review
@@ -42,8 +42,7 @@ parallel_reviews: 1
 run_idle_timeout: 1800
 
 # Number of times to retry a failed AgentRun before recording it as failed.
-# 0 disables retries. `sandman run --auto` silently sets this to 3 for the
-# invocation if you do not pass `--retries` on the CLI.
+# 0 disables retries.
 # Default: 3.
 retries: 3
 
@@ -58,12 +57,6 @@ start_delay: 0
 # Maximum number of ContainerSandbox instances.
 # 0 = no cap (unbounded pool growth — Sandman creates as many containers as needed for active runs).
 max_containers: 0
-
-# Candidate cap for Auto Mode (`sandman run --auto`). Sandman considers at
-# most this many issues from the candidate pool before choosing which to run.
-# 0 disables the cap (consider the full candidate set).
-# Default: 50.
-auto_max_count: 50
 
 # Directory for git worktrees.
 worktree_dir: .sandman/worktrees
@@ -150,8 +143,6 @@ The following built-in substitution keys are available in prompt templates:
 | `{{BASE_BRANCH}}` | Branch the agent will rebase/PR against |
 | `{{BRANCH}}` | Alias for `{{SOURCE_BRANCH}}` |
 | `{{REVIEW_COMMAND}}` | Review command from project config |
-| `{{CANDIDATE_ISSUES}}` | Candidate issue list the auto-select agent uses to choose from (cfg.CandidateIssues) |
-| `{{MAX_COUNT}}` | Maximum number of candidates the auto-select prompt will consider (cfg.MaxCount) |
 
 Custom keys can be passed at runtime using the `--prompt-arg KEY=VALUE` flag on `sandman run` and referenced as `{{KEY}}` in the template.
 

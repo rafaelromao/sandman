@@ -61,7 +61,6 @@ This scaffolds `.sandman/` with:
 - **`.sandman/config.yaml`** — Sandman configuration with the selected default agent preset
 - **`.sandman/Dockerfile`** — container image definition for container-backed sandboxing
 - **`.sandman/prompt.md`** — Project Prompt Template seeded from the Default Task Prompt
-- **`.sandman/auto-selection-prompt.md`** — Auto Mode selection prompt used when `--auto` is enabled
 
 Sandman also installs the shared `sandman` skill folder into `~/.agents/skills/sandman/` if it does not already exist.
 

@@ -10102,11 +10102,6 @@ func TestBatchIDFromRunID_StripsSubjectFromNewShape(t *testing.T) {
 			wantBatchID: wantPrefix,
 		},
 		{
-			name:        "auto-select",
-			runID:       runid.NewRunID(runid.KindAutoSelect, "auto-50", ts, sid),
-			wantBatchID: wantPrefix,
-		},
-		{
 			name:        "prompt-only with userid",
 			runID:       runid.NewRunID(runid.KindPromptOnly, "myid", ts, sid),
 			wantBatchID: wantPrefix,

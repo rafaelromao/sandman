@@ -58,7 +58,7 @@ The portal surfaces two distinct identifiers (per-row RunID shapes are pinned by
 - **Public BatchId** — the batch-level identifier rendered in the Batch label and Details tab. Equals the batch folder basename (`batches/<id>/`'s last segment), `batch.json.batchId`, `run.json.BatchID`, and the event payload `batch_id`.
 - **Per-row RunID** — the row-level identifier rendered per row and used by row-level actions (archive, abort, log download). Equals `run.json.runID` and the event payload `run_id`.
 
-For multi-issue batches the two diverge: the public BatchId carries the `+N` additional count suffix and the per-row RunID does not. For every other kind (single-issue, prompt-only, review, auto-select) the two are identical.
+For multi-issue batches the two diverge: the public BatchId carries the `+N` additional count suffix and the per-row RunID does not. For every other kind (single-issue, prompt-only, review) the two are identical.
 
 ### Existing `.sandman` migration is out of scope
 

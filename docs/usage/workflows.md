@@ -60,14 +60,6 @@ sandman run --query "label:bug is:open"
 
 Selects issues matching a GitHub search query. Any valid GitHub issue search query works.
 
-## Running the next N issues
-
-```bash
-sandman run --auto --count 3
-```
-
-Auto Mode: Sandman selects up to 3 issues from the candidate pool (default `ready-for-agent` label) and runs them. Use `--label X` or `--query "..."` to scope the candidate set, or pass explicit issue numbers as the candidate pool. `auto_max_count` in config controls the default cap (50); set to `0` for unlimited.
-
 ## Running without an issue
 
 ```bash

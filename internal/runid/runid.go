@@ -21,7 +21,6 @@ type Kind int
 const (
 	KindIssue Kind = iota
 	KindReview
-	KindAutoSelect
 	KindPromptOnly
 )
 
@@ -31,8 +30,6 @@ func (k Kind) String() string {
 		return "issue"
 	case KindReview:
 		return "review"
-	case KindAutoSelect:
-		return "auto-select"
 	case KindPromptOnly:
 		return "prompt-only"
 	default:
@@ -78,8 +75,6 @@ func NewBatchID(kind Kind, n int, firstSubject string, ts, shortid string) strin
 		return fmt.Sprintf("%s-%s-%s+%d", ts, shortid, firstSubject, n-1)
 	case KindReview:
 		return fmt.Sprintf("%s-%s-PR%s", ts, shortid, firstSubject)
-	case KindAutoSelect:
-		return fmt.Sprintf("%s-%s-auto-%d", ts, shortid, n)
 	case KindPromptOnly:
 		if firstSubject == "" {
 			return fmt.Sprintf("%s-%s-prompt", ts, shortid)
@@ -119,7 +114,6 @@ func IsValidUserRunID(s string) error {
 }
 
 var canonicalPrefixRe = regexp.MustCompile(`^\d{12}-[0-9a-f]{4}($|-)`)
-var canonicalAutoSelectRe = regexp.MustCompile(`^\d{12}-[0-9a-f]{4}-auto-\d+$`)
 var canonicalReviewRe = regexp.MustCompile(`^\d{12}-[0-9a-f]{4}(-\d+)?-?PR\d+$`)
 var canonicalMultiIssueRe = regexp.MustCompile(`^\d{12}-[0-9a-f]{4}-\d+\+\d+$`)
 var canonicalSingleIssueRe = regexp.MustCompile(`^\d{12}-[0-9a-f]{4}-\d+$`)
@@ -133,8 +127,6 @@ func KindFromDirName(name string) (Kind, bool) {
 		return 0, false
 	}
 	switch {
-	case canonicalAutoSelectRe.MatchString(name):
-		return KindAutoSelect, true
 	case canonicalReviewRe.MatchString(name):
 		return KindReview, true
 	case canonicalMultiIssueRe.MatchString(name):

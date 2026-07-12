@@ -17,57 +17,6 @@ import (
 	"github.com/rafaelromao/sandman/internal/testenv"
 )
 
-// TestPortal_Compute_AutoSelectSuccessRow_PopulatesReasonAndKeepsTerminalStatus
-// is the slice-3 tracer bullet. It drives a real JSONL log through
-// compute() and asserts the resulting row carries Reason, Kind, and
-// Status that match the terminal event. This is the smallest vertical
-// slice that exercises discovery + projection + JSON encoding together.
-func TestPortal_Compute_AutoSelectSuccessRow_PopulatesReasonAndKeepsTerminalStatus(t *testing.T) {
-	repoRoot := t.TempDir()
-	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
-	finishedAt := startedAt.Add(2 * time.Minute)
-	autoSelectRunID := "auto-select-1700000000000"
-
-	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
-		{Type: "run.started", Timestamp: startedAt, RunID: autoSelectRunID, Payload: map[string]any{
-			"run_kind":   "auto-select",
-			"count":      5,
-			"query":      "label:ready-for-agent is:open",
-			"candidates": []int{1, 2, 3},
-		}},
-		{Type: "run.finished", Timestamp: finishedAt, RunID: autoSelectRunID, Payload: map[string]any{
-			"run_kind": "auto-select",
-			"status":   "success",
-			"selected": []int{1, 2},
-		}},
-	})
-
-	runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")})
-	if err != nil {
-		t.Fatalf("compute: %v", err)
-	}
-	if len(runs) != 1 {
-		t.Fatalf("expected 1 row, got %d: %#v", len(runs), runs)
-	}
-	got := runs[0]
-	if got.RunID != autoSelectRunID {
-		t.Fatalf("expected RunID %q, got %q", autoSelectRunID, got.RunID)
-	}
-	if got.Reason != "auto-select" {
-		t.Fatalf("expected Reason %q, got %q", "auto-select", got.Reason)
-	}
-	if got.Status != "success" {
-		t.Fatalf("expected Status %q, got %q", "success", got.Status)
-	}
-	if got.Kind != "completed" {
-		t.Fatalf("expected Kind %q, got %q", "completed", got.Kind)
-	}
-}
-
 // TestPortal_Compute_ReasonTableForAllRunKinds pins the Reason field
 // for every run kind through compute(). The empty-string case for a
 // regular issue-driven run is the negative side of the contract: those
@@ -87,22 +36,6 @@ func TestPortal_Compute_ReasonTableForAllRunKinds(t *testing.T) {
 		events []events.Event
 		want   want
 	}{
-		{
-			name: "auto-select success",
-			events: []events.Event{
-				{Type: "run.started", Timestamp: time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC), RunID: "auto-select-1", Payload: map[string]any{"run_kind": "auto-select", "candidates": []int{1, 2}}},
-				{Type: "run.finished", Timestamp: time.Date(2025, 1, 1, 12, 1, 0, 0, time.UTC), RunID: "auto-select-1", Payload: map[string]any{"run_kind": "auto-select", "status": "success", "selected": []int{1, 2}}},
-			},
-			want: want{reason: "auto-select", status: "success", kind: "completed", label: "auto-select-1"},
-		},
-		{
-			name: "auto-select failure",
-			events: []events.Event{
-				{Type: "run.started", Timestamp: time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC), RunID: "auto-select-2", Payload: map[string]any{"run_kind": "auto-select", "candidates": []int{1}}},
-				{Type: "run.finished", Timestamp: time.Date(2025, 1, 1, 12, 1, 0, 0, time.UTC), RunID: "auto-select-2", Payload: map[string]any{"run_kind": "auto-select", "status": "failure", "reason": "agent exited 1"}},
-			},
-			want: want{reason: "auto-select", status: "failure", kind: "completed", label: "auto-select-2"},
-		},
 		{
 			name: "review success",
 			events: []events.Event{
@@ -180,33 +113,29 @@ func TestPortal_Compute_ReasonTableForAllRunKinds(t *testing.T) {
 func TestPortal_StatusOrDefault_PreservesTerminalStatusesForAutoSelectAndReview(t *testing.T) {
 	v := &portalRunsView{}
 	cases := []struct {
-		name         string
-		status       string
-		active       bool
-		isReview     bool
-		isAutoSelect bool
-		want         string
+		name     string
+		status   string
+		active   bool
+		isReview bool
+		want     string
 	}{
-		{"auto-select success stays success", "success", false, false, false, "success"},
-		{"auto-select failure stays failure", "failure", false, false, false, "failure"},
-		{"review success stays success", "success", false, true, false, "success"},
-		{"review failure stays failure", "failure", false, true, false, "failure"},
-		{"aborted stays aborted", "aborted", false, false, false, "aborted"},
+		{"review success stays success", "success", false, true, "success"},
+		{"review failure stays failure", "failure", false, true, "failure"},
+		{"aborted stays aborted", "aborted", false, false, "aborted"},
 
 		// The fallback path still has to work for the genuine "no
 		// status key on the finished event" case.
-		{"empty status falls back to completed", "", false, false, false, "completed"},
+		{"empty status falls back to completed", "", false, false, "completed"},
 
 		// Active-run override takes precedence over the status string.
-		{"active review stays reviewing", "", true, true, false, "reviewing"},
-		{"active auto-select stays auto-select", "", true, false, true, "auto-select"},
-		{"active non-review stays running", "ignored", true, false, false, "running"},
+		{"active review stays reviewing", "", true, true, "reviewing"},
+		{"active non-review stays running", "ignored", true, false, "running"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := v.statusOrDefault(tc.status, tc.active, tc.isReview, tc.isAutoSelect)
+			got := v.statusOrDefault(tc.status, tc.active, tc.isReview)
 			if got != tc.want {
-				t.Fatalf("statusOrDefault(%q, %v, %v, %v) = %q, want %q", tc.status, tc.active, tc.isReview, tc.isAutoSelect, got, tc.want)
+				t.Fatalf("statusOrDefault(%q, %v, %v) = %q, want %q", tc.status, tc.active, tc.isReview, got, tc.want)
 			}
 		})
 	}
@@ -896,65 +825,6 @@ func TestPortal_ParentSuccWithLiveChild_PreservesTerminalStatus(t *testing.T) {
 	}
 }
 
-// TestPortal_KindForRun_TerminalAutoSelectAndReviewClassifiedAsCompleted
-// pins kindForRun. A finished run is "completed" regardless of run kind.
-func TestPortal_KindForRun_TerminalAutoSelectAndReviewClassifiedAsCompleted(t *testing.T) {
-	v := &portalRunsView{}
-	finishedAt := time.Date(2025, 1, 1, 12, 1, 0, 0, time.UTC)
-	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
-	makeFinished := func(payload map[string]any) *events.Event {
-		e := events.Event{Timestamp: finishedAt, Payload: payload}
-		return &e
-	}
-
-	cases := []struct {
-		name     string
-		runState events.RunState
-		want     string
-	}{
-		{
-			name:     "active run is active",
-			runState: events.RunState{RunID: "260618113825-abcd-active", Started: events.Event{Timestamp: startedAt}},
-			want:     "active",
-		},
-		{
-			name: "terminal auto-select is completed",
-			runState: events.RunState{
-				RunID:    "auto-select-1",
-				Started:  events.Event{Timestamp: startedAt, Payload: map[string]any{"run_kind": "auto-select"}},
-				Finished: makeFinished(map[string]any{"run_kind": "auto-select", "status": "success"}),
-			},
-			want: "completed",
-		},
-		{
-			name: "terminal review is completed",
-			runState: events.RunState{
-				RunID:    "PR42",
-				Started:  events.Event{Timestamp: startedAt, Payload: map[string]any{"review": true}},
-				Finished: makeFinished(map[string]any{"review": true, "status": "success"}),
-			},
-			want: "completed",
-		},
-		{
-			name: "terminal issue is completed",
-			runState: events.RunState{
-				RunID:    "260618113825-abcd-42",
-				Started:  events.Event{Timestamp: startedAt},
-				Finished: makeFinished(map[string]any{"status": "success"}),
-			},
-			want: "completed",
-		},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			got := v.kindForRun(tc.runState)
-			if got != tc.want {
-				t.Fatalf("kindForRun = %q, want %q", got, tc.want)
-			}
-		})
-	}
-}
-
 // TestPortal_KindForRun_BlockedStateReturnsCompleted pins the unit-level
 // behavior for issue #1699: a wait-state run whose event-fold
 // projection lands on Status() == "blocked" must be classified as
@@ -1067,144 +937,6 @@ func TestPortal_DedupRunGroup_PreservesZeroPriorityTerminalRows(t *testing.T) {
 
 	if len(result) != 2 {
 		t.Fatalf("expected 2 surviving rows (unrelated terminal runs), got %d: %#v", len(result), result)
-	}
-}
-
-// TestPortal_Polling_AutoSelectSuccessPersistsAcrossRunsDirRemoval is
-// the slice-3 polling-style integration test for auto-select. It writes
-// real JSONL events to a temp file, polls compute() four times (empty,
-// after run.started, after run.finished, after daemon exit) and asserts
-// the row's terminal status persists.
-func TestPortal_Polling_AutoSelectSuccessPersistsAcrossRunsDirRemoval(t *testing.T) {
-	repoRoot := t.TempDir()
-	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	autoSelectRunID := "auto-select-1700000000000"
-
-	// JSONLLogger keeps the file handle open between calls; using a
-	// single instance across the polling sequence mirrors what a real
-	// portal does (it constructs the logger once and calls Log as the
-	// orchestrator emits events).
-	if err := os.MkdirAll(filepath.Join(repoRoot, ".sandman"), 0755); err != nil {
-		t.Fatal(err)
-	}
-	logPath := filepath.Join(repoRoot, ".sandman", "events.jsonl")
-	log := &events.JSONLLogger{Path: logPath}
-
-	// Poll 1: empty event log.
-	first, err := (&portalRunsView{}).compute(repoRoot, log)
-	if err != nil {
-		t.Fatalf("poll 1: %v", err)
-	}
-	if len(first) != 0 {
-		t.Fatalf("poll 1: expected 0 rows, got %d", len(first))
-	}
-
-	// Selection phase emits run.started.
-	startedAt := time.Now().Add(-5 * time.Minute)
-	if err := log.Log(events.Event{Type: "run.started", Timestamp: startedAt, RunID: autoSelectRunID, Payload: map[string]any{
-		"run_kind":   "auto-select",
-		"count":      5,
-		"query":      "label:ready-for-agent is:open",
-		"candidates": []int{1, 2, 3},
-	}}); err != nil {
-		t.Fatalf("log started: %v", err)
-	}
-
-	// Poll 2: row exists with the auto-select reason.
-	second, err := (&portalRunsView{}).compute(repoRoot, log)
-	if err != nil {
-		t.Fatalf("poll 2: %v", err)
-	}
-	if len(second) != 1 {
-		t.Fatalf("poll 2: expected 1 row, got %d: %#v", len(second), second)
-	}
-	if second[0].Reason != "auto-select" {
-		t.Fatalf("poll 2: Reason = %q, want %q", second[0].Reason, "auto-select")
-	}
-
-	// Selection phase emits run.finished with status=success.
-	finishedAt := startedAt.Add(2 * time.Minute)
-	if err := log.Log(events.Event{Type: "run.finished", Timestamp: finishedAt, RunID: autoSelectRunID, Payload: map[string]any{
-		"run_kind": "auto-select",
-		"status":   "success",
-		"selected": []int{1, 2},
-	}}); err != nil {
-		t.Fatalf("log finished: %v", err)
-	}
-
-	// Poll 3: terminal success, auto-select reason.
-	third, err := (&portalRunsView{}).compute(repoRoot, log)
-	if err != nil {
-		t.Fatalf("poll 3: %v", err)
-	}
-	if len(third) != 1 {
-		t.Fatalf("poll 3: expected 1 row, got %d: %#v", len(third), third)
-	}
-	if third[0].Status != "success" {
-		t.Fatalf("poll 3: Status = %q, want %q", third[0].Status, "success")
-	}
-	if third[0].Reason != "auto-select" {
-		t.Fatalf("poll 3: Reason = %q, want %q", third[0].Reason, "auto-select")
-	}
-	if third[0].Kind != "completed" {
-		t.Fatalf("poll 3: Kind = %q, want %q", third[0].Kind, "completed")
-	}
-
-	// Poll 4: terminal success persists after the daemon exits and
-	// the run dir is gone — the row is reconstructed from the event
-	// log alone.
-	fourth, err := (&portalRunsView{}).compute(repoRoot, log)
-	if err != nil {
-		t.Fatalf("poll 4: %v", err)
-	}
-	if len(fourth) != 1 {
-		t.Fatalf("poll 4: expected 1 row, got %d: %#v", len(fourth), fourth)
-	}
-	if fourth[0].Status != "success" {
-		t.Fatalf("poll 4: Status = %q, want %q", fourth[0].Status, "success")
-	}
-	if fourth[0].Reason != "auto-select" {
-		t.Fatalf("poll 4: Reason = %q, want %q", fourth[0].Reason, "auto-select")
-	}
-}
-
-// TestPortal_Polling_AutoSelectFailureIsNotRewritten is the negative
-// path of the auto-select persistence contract. A real "failure"
-// terminal status must not be silently rewritten to "success" or
-// "completed".
-func TestPortal_Polling_AutoSelectFailureIsNotRewritten(t *testing.T) {
-	repoRoot := t.TempDir()
-	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	autoSelectRunID := "auto-select-1700000000000-fail"
-	startedAt := time.Now().Add(-5 * time.Minute)
-	finishedAt := startedAt.Add(2 * time.Minute)
-
-	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
-		{Type: "run.started", Timestamp: startedAt, RunID: autoSelectRunID, Payload: map[string]any{
-			"run_kind": "auto-select", "candidates": []int{1},
-		}},
-		{Type: "run.finished", Timestamp: finishedAt, RunID: autoSelectRunID, Payload: map[string]any{
-			"run_kind": "auto-select", "status": "failure", "reason": "agent exited 1",
-		}},
-	})
-
-	runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")})
-	if err != nil {
-		t.Fatalf("compute: %v", err)
-	}
-	if len(runs) != 1 {
-		t.Fatalf("expected 1 row, got %d: %#v", len(runs), runs)
-	}
-	got := runs[0]
-	if got.Status != "failure" {
-		t.Fatalf("Status = %q, want %q (must not be rewritten to success or completed)", got.Status, "failure")
-	}
-	if got.Reason != "auto-select" {
-		t.Fatalf("Reason = %q, want %q", got.Reason, "auto-select")
 	}
 }
 

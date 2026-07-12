@@ -150,29 +150,6 @@ func TestRun_GuardBypassedWhenReviewCommandHasNoSandmanSubstring(t *testing.T) {
 	}
 }
 
-func TestRun_AutoGuardFiresWhenReviewCommandContainsSandmanAndNoSocket(t *testing.T) {
-	spy := &spyBatchRunner{result: &batch.Result{}}
-	cfg := &config.Config{Agent: "opencode", ReviewCommand: "/sandman review"}
-	deps := runGuardDeps(t, spy, cfg)
-
-	var buf bytes.Buffer
-	cmd := NewRunCmd(deps)
-	cmd.SetOut(&buf)
-	cmd.SetErr(&buf)
-	cmd.SetArgs([]string{"--auto"})
-
-	err := cmd.Execute()
-	if err == nil {
-		t.Fatal("expected error from review guard, got nil")
-	}
-	if err.Error() != reviewGuardMessage {
-		t.Errorf("unexpected error message\nwant:\n%s\ngot:\n%s", reviewGuardMessage, err.Error())
-	}
-	if spy.called {
-		t.Errorf("expected batch runner NOT to be called for --auto, but it was")
-	}
-}
-
 func TestResolveReviewDaemonDialTimeout_DefaultWhenEnvUnset(t *testing.T) {
 	t.Setenv("SANDMAN_REVIEW_DIAL_TIMEOUT", "")
 	got := resolveReviewDaemonDialTimeout()

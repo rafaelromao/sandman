@@ -343,38 +343,6 @@ func RecoverStaleRuns(baseDir string, eventsList []events.Event, log events.Even
 		return nil
 	}
 	for _, batch := range dead {
-		if batch.Manifest.RunKind == "auto-select" {
-			autoSelectRunID := batch.Manifest.BatchId
-			run, ok := runsByID[autoSelectRunID]
-			if !ok || !run.IsAutoSelect() {
-				continue
-			}
-			if _, ok := recoveredRunIDs[run.RunID]; ok {
-				continue
-			}
-			if !run.IsActive() && run.Status() != "queued" && run.Status() != "blocked" {
-				continue
-			}
-			if !batch.Manifest.CreatedAt.IsZero() && run.Started.Timestamp.Before(batch.Manifest.CreatedAt) {
-				continue
-			}
-			event := events.Event{
-				Type:      "run.aborted",
-				Timestamp: recoveredAt,
-				RunID:     run.RunID,
-				Payload: map[string]any{
-					"recovered": true,
-					"run_kind":  "auto-select",
-				},
-			}
-			if err := log.Log(event); err != nil {
-				return recovered, len(dead), fmt.Errorf("log run.aborted for auto-select run %s: %w", run.RunID, err)
-			}
-			recovered++
-			recoveredRunIDs[run.RunID] = struct{}{}
-			_ = UpdateRunManifestStatus(batch.RunDir, run.RunID, batchindex.RunManifestStatusAborted)
-			continue
-		}
 		latestTerminal := latestTerminalForIssues(batch.Manifest.Issues, byIssue)
 		for _, issueNumber := range batch.Manifest.Issues {
 			for _, run := range byIssue[issueNumber] {

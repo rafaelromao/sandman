@@ -39,7 +39,7 @@ Sandman writes structured events to `.sandman/events.jsonl` in newline-delimited
 | `issue` | GitHub issue number, or `null` for prompt-only runs |
 | `payload` | Event-specific data (see below) |
 
-The `run_id` (per-row RunID) and the `payload.batch_id` (public BatchId) identify different things. For multi-issue batches the two diverge — the public BatchId carries the `+N` additional count suffix and the per-row RunID does not. For every other kind (single-issue, prompt-only, review, auto-select) the two are identical.
+The `run_id` (per-row RunID) and the `payload.batch_id` (public BatchId) identify different things. For multi-issue batches the two diverge — the public BatchId carries the `+N` additional count suffix and the per-row RunID does not. For every other kind (single-issue, prompt-only, review) the two are identical.
 
 ## Existing `.sandman` migration is out of scope
 
@@ -53,10 +53,7 @@ Emitted when an agent run begins. `run.continued` replays stored `agent`, `model
 | Field | Description |
 |-------|-------------|
 | `batch_id` | Public BatchId. Equals the batch folder basename and is the batch-level identifier (not the per-row `run_id` above). |
-| `run_kind` | Optional taxonomy tag. `"auto-select"` for the auto-select selection phase driven by `sandman run --auto` (and the portal "Auto Mode" preset); `"review"` is signalled via the boolean `review` field. Issue-driven and prompt-only runs leave it absent. |
-| `count` | Optional candidate cap for `run_kind: "auto-select"` runs. |
-| `query` | Resolved GitHub search query used to find candidates for `run_kind: "auto-select"` runs. Defaults to `label:ready-for-agent is:open` when no `--label` or `--query` flag was provided. |
-| `candidates` | Optional list of issue numbers considered for `run_kind: "auto-select"` runs. |
+| `run_kind` | Optional taxonomy tag. `"review"` is signalled via the boolean `review` field. Issue-driven and prompt-only runs leave it absent. |
 
 #### `run.queued`
 Emitted when an issue enters the wait queue due to unresolved blockers or parallel capacity constraints.
@@ -114,9 +111,8 @@ Emitted when an agent run completes.
 | `worktree_state` | Always `preserved` |
 | `retries_total` | Total retry attempts configured |
 | `retries_done` | Actual retries performed |
-| `run_kind` | Mirrors the `run.started` payload so projection sees a consistent kind on both events. Currently only emitted as `"auto-select"`. |
-| `selected` | For `run_kind: "auto-select"` success runs: the issue numbers the selection agent chose. |
-| `reason` | For `run_kind: "auto-select"` failure runs: a short string built from the error returned by the selection phase. |
+| `run_kind` | Mirrors the `run.started` payload so projection sees a consistent kind on both events. |
+| `reason` | Short string built from the error returned by the selection phase. |
 
 #### `run.aborted`
 Emitted when a run is aborted via context cancellation (e.g. SIGINT/SIGTERM). Also emitted for runs that were still queued (waiting on the turn gate or the start gate) when the batch was cancelled, and cascaded to dependents whose in-batch blocker finished with status `aborted` (instead of `run.blocked`). For queued/cascaded runs, the `RunID` matches the prior `run.queued` event so projection collapses to a single `RunState`.

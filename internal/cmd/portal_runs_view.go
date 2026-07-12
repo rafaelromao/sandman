@@ -1899,7 +1899,7 @@ func (v *portalRunsView) runFromState(repoRoot string, runState events.RunState,
 		Key:             runID,
 		RunID:           runID,
 		Kind:            v.kindForRun(runState),
-		Status:          v.statusOrDefault(status, runState.IsActive() || (status == "" && activeSocket), runState.IsReview(), runState.IsAutoSelect()),
+		Status:          v.statusOrDefault(status, runState.IsActive() || (status == "" && activeSocket), runState.IsReview()),
 		IssueLabel:      issueLabel,
 		IssueNumber:     issueNumber,
 		IssueTitle:      v.issueTitleFromPayload(runState.Started.Payload),
@@ -1962,7 +1962,7 @@ func (v *portalRunsView) runFromState(repoRoot string, runState events.RunState,
 		// single canonical per-row folder path (issue #1937).
 		portalRun.RunDir = activeRunDir(*active)
 		v.markCompletedIfSocketDead(&portalRun, active.SocketPath)
-		if portalRun.Kind == "completed" && runState.Finished != nil && activeSocket && (runState.IsReview() || runState.IsAutoSelect()) {
+		if portalRun.Kind == "completed" && runState.Finished != nil && activeSocket && runState.IsReview() {
 			portalRun.Kind = "active"
 		}
 	} else if portalRun.Kind == "active" {
@@ -2079,13 +2079,8 @@ func (v *portalRunsView) kindForRun(runState events.RunState) string {
 }
 
 // reasonForRun returns the run-kind label rendered by the slice-2 chip
-// column; an empty string means "no chip". Auto-select wins over review
-// when both predicates match (defensive; the event log keeps them
-// disjoint in practice).
+// column; an empty string means "no chip".
 func reasonForRun(runState events.RunState) string {
-	if runState.IsAutoSelect() {
-		return "auto-select"
-	}
 	if runState.IsReview() {
 		return "review"
 	}
@@ -2116,22 +2111,16 @@ func (v *portalRunsView) reasonFromStartedPayload(payload map[string]any) string
 	if payload == nil {
 		return ""
 	}
-	if kind, ok := payload["run_kind"].(string); ok && strings.EqualFold(strings.TrimSpace(kind), "auto-select") {
-		return "auto-select"
-	}
 	if review, ok := payload["review"].(bool); ok && review {
 		return "review"
 	}
 	return ""
 }
 
-func (v *portalRunsView) statusOrDefault(status string, active bool, isReview bool, isAutoSelect bool) string {
+func (v *portalRunsView) statusOrDefault(status string, active bool, isReview bool) string {
 	status = strings.TrimSpace(status)
 	if active && isReview {
 		return "reviewing"
-	}
-	if active && isAutoSelect {
-		return "auto-select"
 	}
 	if active {
 		return "running"

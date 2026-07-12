@@ -400,35 +400,6 @@ func TestRender_CandidateIssuesAndMaxCountBothSubstituted(t *testing.T) {
 	}
 }
 
-func TestDefaultPriorityPrompt_EmbeddedTemplate(t *testing.T) {
-	data, err := os.ReadFile("auto_selection_prompt.md")
-	if err != nil {
-		t.Fatalf("read auto selection prompt template: %v", err)
-	}
-
-	want := strings.TrimSpace(string(data))
-	got := strings.TrimSpace(DefaultPriorityPrompt())
-	if got != want {
-		t.Fatalf("auto prompt drifted\nwant:\n%s\ngot:\n%s", want, got)
-	}
-}
-
-func TestDefaultPriorityPrompt_ContainsRequiredKeys(t *testing.T) {
-	prompt := DefaultPriorityPrompt()
-	if !strings.Contains(prompt, "{{CANDIDATE_ISSUES}}") {
-		t.Error("auto prompt missing {{CANDIDATE_ISSUES}} key")
-	}
-	if !strings.Contains(prompt, "{{MAX_COUNT}}") {
-		t.Error("auto prompt missing {{MAX_COUNT}} key")
-	}
-	if !strings.Contains(prompt, ".sandman/state/selected-issues.json") {
-		t.Error("auto prompt missing .sandman/state/selected-issues.json output path")
-	}
-	if !strings.Contains(prompt, "Auto Mode") {
-		t.Error("auto prompt header should mention Auto Mode")
-	}
-}
-
 func TestMaterializePromptFile_EmptyPromptFileIsNoOp(t *testing.T) {
 	cfg := RenderConfig{}
 	err := MaterializePromptFile(cfg)

@@ -1106,62 +1106,6 @@ func TestPortal_ArchiveEndpoint_ContinueIssueRun(t *testing.T) {
 	}
 }
 
-// TestPortal_ArchiveEndpoint_AutoSelectRun covers sandman run --auto:
-// the per-row id equals the batch entry id (no +N suffix for the auto
-// template) and the exact-match path resolves it.
-func TestPortal_ArchiveEndpoint_AutoSelectRun(t *testing.T) {
-	repoRoot, err := os.MkdirTemp("/tmp", "sm-archive-auto-")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(repoRoot) })
-	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	ts := "260618113825"
-	shortid := "abcd"
-	batchEntryID := runid.NewBatchID(runid.KindAutoSelect, 3, "", ts, shortid)
-	perRowID := runid.NewRunID(runid.KindAutoSelect, "auto-3", ts, shortid)
-	if perRowID != batchEntryID {
-		t.Fatalf("fixture invariant: perRowID %q must equal batchEntryID %q for auto-select", perRowID, batchEntryID)
-	}
-
-	batchDir := filepath.Join(repoRoot, ".sandman", "batches", batchEntryID)
-	if err := os.MkdirAll(batchDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-
-	batchManifest := batchindex.RunManifest{
-		BatchID:   batchEntryID,
-		Kind:      batchindex.KindAutoSelect,
-		CreatedAt: time.Now(),
-		Status:    batchindex.RunManifestStatusSuccess,
-	}
-	if err := writeManifestForArchive(t, batchDir, batchManifest); err != nil {
-		t.Fatal(err)
-	}
-	idx := batchindex.Index{Version: batchindex.IndexVersion, Batches: []batchindex.Batch{
-		{ID: batchEntryID, Path: batchDir, Kind: batchindex.KindAutoSelect, Status: batchindex.StatusActive, CreatedAt: time.Now()},
-	}}
-	data, _ := json.Marshal(idx)
-	if err := os.WriteFile(filepath.Join(repoRoot, ".sandman", "batches.json"), data, 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	originalProbe := portalRunLivenessProbe
-	portalRunLivenessProbe = func(string) bool { return false }
-	t.Cleanup(func() { portalRunLivenessProbe = originalProbe })
-
-	resp, body := postPortalArchive(t, newPortalArchiveHandlerForTest(t, repoRoot), perRowID)
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", resp.StatusCode, body)
-	}
-	if _, err := os.Stat(filepath.Join(repoRoot, ".sandman", "archive", batchEntryID)); err != nil {
-		t.Fatalf("expected archive dir %q to exist, stat err = %v", batchEntryID, err)
-	}
-}
-
 // TestPortal_ArchiveEndpoint_PromptOnlyRun covers sandman run --prompt:
 // per issue #1920 (slice 4 of #1916), the per-row RunID equals the
 // public BatchId, which is "<shortid>-<ts>-prompt-<userid>" (or
