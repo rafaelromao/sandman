@@ -1917,6 +1917,47 @@ func (s *runSession) emitTerminal(ctx context.Context, runID string, result Agen
 	return terminalStatus
 }
 
+// emitEarlyFailure logs a terminal run.finished event (status "failure") for
+// an early-return path in execute() that exits before run.started is emitted.
+// Without this event, the portal keeps the run in its last projected state
+// (typically "queued"), and dependent runs see a silently-set failure status
+// with no corresponding event in the log. See issue #2136.
+//
+// The error detail is already written to errorLog (stderr) by the caller;
+// this event makes the failure visible in the event log, the portal, and the
+// RunState projection consumed by dependent issues' blocker-wait loops.
+//
+// This does NOT emit run.started — the run never started the agent — so
+// ProjectRunStates folds run.finished directly, transitioning the run from
+// "queued" to a terminal "failure" status. Safe to call when no run manifest
+// exists yet (the manifest is written later in execute()).
+//
+// reason should be a short diagnostic string identifying the failure point
+// (e.g. "fetch issue", "start sandbox"). The full error is already on stderr.
+func (s *runSession) emitEarlyFailure(reason, branch string) {
+	o := s.o
+	if o.eventLog == nil {
+		return
+	}
+	runID := buildRunID(s.issueNumber, s.runTS, s.runShortID)
+	_ = o.eventLog.Log(events.Event{
+		Type:      "run.finished",
+		Timestamp: time.Now(),
+		RunID:     runID,
+		Issue:     s.issueNumber,
+		IssueRef:  issueRef(s.issueNumber),
+		Payload: map[string]any{
+			"status":        "failure",
+			"branch":        branch,
+			"base_branch":   s.baseBranch,
+			"retries_total": s.retries,
+			"retries_done":  0,
+			"early_failure": true,
+			"error":         reason,
+		},
+	})
+}
+
 // detectConflictingPR inspects the branch's open PR and, when its mergeable
 // state is `CONFLICTING`, returns a payload extras map with
 // `merge_conflict: true` and `pr_number` set, plus a `true` ok flag.
@@ -2209,6 +2250,7 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 	issue, err := o.githubClient.FetchIssue(ctx, s.issueNumber)
 	if err != nil {
 		fmt.Fprintf(o.errorLog, "error: fetch issue %d: %v\n", s.issueNumber, err)
+		s.emitEarlyFailure("fetch issue", s.branches[s.issueNumber])
 		return AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "failure"}, false
 	}
 
@@ -2219,6 +2261,7 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 	if s.mode != ModeContinue {
 		if err := o.syncBaseBranch(".", s.baseBranch); err != nil {
 			fmt.Fprintf(o.errorLog, "error: sync base branch for issue %d: %v\n", s.issueNumber, err)
+			s.emitEarlyFailure("sync base branch", branch)
 			return AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "failure", Branch: branch}, false
 		}
 	}
@@ -2227,6 +2270,7 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 		lease, err := s.containerAlloc.Acquire()
 		if err != nil {
 			fmt.Fprintf(o.errorLog, "error: acquire container for issue %d: %v\n", s.issueNumber, err)
+			s.emitEarlyFailure("acquire container", branch)
 			return AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "failure", Branch: branch}, false
 		}
 		container = lease.container
@@ -2235,10 +2279,12 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 
 	wt := s.sbFactory.NewSandbox(".", s.worktreeDir(), branch, s.baseBranch, container)
 	if errResult, ok := s.applyOverrideAndIdentity(wt, branch); !ok {
+		s.emitEarlyFailure("resolve git identity", branch)
 		return errResult, false
 	}
 	if err := wt.Start(); err != nil {
 		fmt.Fprintf(o.errorLog, "error: start sandbox for issue %d: %v\n", s.issueNumber, err)
+		s.emitEarlyFailure("start sandbox", branch)
 		return AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "failure", Branch: branch}, false
 	}
 
@@ -2246,6 +2292,7 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 	if err != nil {
 		fmt.Fprintf(o.errorLog, "error: recheck blockers for issue %d: %v\n", s.issueNumber, err)
 		_ = wt.Stop()
+		s.emitEarlyFailure("recheck blockers", branch)
 		return AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "failure", Branch: branch}, false
 	}
 	runID := buildRunID(s.issueNumber, s.runTS, s.runShortID)
@@ -2279,6 +2326,7 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 	if err := daemon.WriteRunManifest(batchDir, runID, runManifest); err != nil {
 		fmt.Fprintf(o.errorLog, "error: write run manifest for issue %d: %v\n", s.issueNumber, err)
 		_ = wt.Stop()
+		s.emitEarlyFailure("write run manifest", branch)
 		return AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "failure", Branch: branch}, false
 	}
 	cmdServer := daemon.NewCommandServer(daemon.RunFolder(batchDir, runID), s.o)
