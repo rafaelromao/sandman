@@ -427,6 +427,9 @@ func TestDefaultPriorityPrompt_ContainsRequiredKeys(t *testing.T) {
 	if !strings.Contains(prompt, "Auto Mode") {
 		t.Error("auto prompt header should mention Auto Mode")
 	}
+	if !strings.Contains(prompt, "blocked by") {
+		t.Error("auto prompt must instruct the agent to consider the 'blocked by' column")
+	}
 }
 
 func TestMaterializePromptFile_EmptyPromptFileIsNoOp(t *testing.T) {

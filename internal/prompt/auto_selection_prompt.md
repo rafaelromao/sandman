@@ -12,7 +12,7 @@ Select up to **{{MAX_COUNT}}** issues from the candidates below.
 
 Choose issues that maximize value. Consider:
 - **Business value**: Which issues deliver the most impact?
-- **Dependencies**: Prefer issues that unblock others
+- **Dependencies**: Prefer issues that unblock others. Each candidate row includes a `blocked by: …` column listing the issue numbers it depends on. **Skip a candidate when every issue in its `blocked by` list is still open** — picking it would force the runner to wait or fail. If only some blockers are open, prefer a candidate whose blockers are already closed or out of scope.
 - **Scope**: Favor focused, self-contained issues over sprawling ones
 - **Risk**: Balance quick wins with important-but-complex work
 

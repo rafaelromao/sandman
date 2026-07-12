@@ -923,3 +923,90 @@ func TestResolveAutoIssues_UnlimitedCap(t *testing.T) {
 		t.Fatalf("expected 1 issue (unlimited cap), got %d: %v", len(issues), issues)
 	}
 }
+
+func TestResolveAutoIssues_FallbackSkipsCandidatesBlockedByOpenCandidate(t *testing.T) {
+	sandmanDir := t.TempDir()
+	gh := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			1: {Number: 1, Title: "Standalone", State: "open"},
+			2: {Number: 2, Title: "Gated by 1", State: "open", BlockedBy: []int{1}},
+			3: {Number: 3, Title: "Also gated by 1", State: "open", BlockedBy: []int{1}},
+			4: {Number: 4, Title: "Gated by closed candidate", State: "open", BlockedBy: []int{99}},
+		},
+	}
+
+	issues, _, _, err := resolveAutoIssues(context.Background(), gh, 0, []int{4, 3, 2, 1}, sandmanDir, "", "", &config.Config{}, "", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := []int{1, 4}
+	if len(issues) != len(want) {
+		t.Fatalf("expected %v, got %v", want, issues)
+	}
+	for i, v := range want {
+		if issues[i] != v {
+			t.Errorf("at index %d: want %d, got %d", i, v, issues[i])
+		}
+	}
+}
+
+func TestResolveAutoIssues_FallbackKeepsCandidateWhenBlockerIsClosed(t *testing.T) {
+	sandmanDir := t.TempDir()
+	gh := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			1: {Number: 1, Title: "Already done", State: "closed"},
+			2: {Number: 2, Title: "Was blocked by 1", State: "open", BlockedBy: []int{1}},
+		},
+	}
+
+	issues, _, _, err := resolveAutoIssues(context.Background(), gh, 0, []int{2, 1}, sandmanDir, "", "", &config.Config{}, "", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := []int{1, 2}
+	if len(issues) != len(want) {
+		t.Fatalf("expected %v, got %v", want, issues)
+	}
+	for i, v := range want {
+		if issues[i] != v {
+			t.Errorf("at index %d: want %d, got %d", i, v, issues[i])
+		}
+	}
+}
+
+func TestResolveAutoIssues_FallbackAllBlockedReturnsError(t *testing.T) {
+	sandmanDir := t.TempDir()
+	gh := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			2: {Number: 2, Title: "Circular A", State: "open", BlockedBy: []int{3}},
+			3: {Number: 3, Title: "Circular B", State: "open", BlockedBy: []int{2}},
+		},
+	}
+
+	_, _, _, err := resolveAutoIssues(context.Background(), gh, 1, []int{2, 3}, sandmanDir, "", "", &config.Config{}, "", nil)
+	if err == nil {
+		t.Fatal("expected error when every candidate is blocked")
+	}
+	if !strings.Contains(err.Error(), "no issues ready for agent") {
+		t.Errorf("expected 'no issues ready for agent' error, got: %v", err)
+	}
+}
+
+func TestResolveAutoIssues_FallbackFetchFailureReturnsCandidatesUnfiltered(t *testing.T) {
+	sandmanDir := t.TempDir()
+	gh := &fakeGitHubClient{fetchIssueError: fmt.Errorf("boom")}
+
+	issues, _, _, err := resolveAutoIssues(context.Background(), gh, 0, []int{3, 1}, sandmanDir, "", "", &config.Config{}, "", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := []int{1, 3}
+	if len(issues) != len(want) {
+		t.Fatalf("expected %v, got %v", want, issues)
+	}
+	for i, v := range want {
+		if issues[i] != v {
+			t.Errorf("at index %d: want %d, got %d", i, v, issues[i])
+		}
+	}
+}

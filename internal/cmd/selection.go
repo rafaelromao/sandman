@@ -298,14 +298,62 @@ func resolveAutoIssues(ctx context.Context, client github.Client, count int, can
 		return nil, "", "", fmt.Errorf("no issues ready for agent")
 	}
 
-	sort.Slice(candidates, func(i, j int) bool {
-		return candidates[i] < candidates[j]
+	sorted := append([]int(nil), candidates...)
+	sort.Slice(sorted, func(i, j int) bool {
+		return sorted[i] < sorted[j]
 	})
 
-	if count > 0 && count < len(candidates) {
-		candidates = candidates[:count]
+	runnable := filterRunnableCandidates(ctx, client, sorted)
+	if len(runnable) == 0 {
+		return nil, "", "", fmt.Errorf("no issues ready for agent")
 	}
-	return candidates, "", "", nil
+
+	if count > 0 && count < len(runnable) {
+		runnable = runnable[:count]
+	}
+	return runnable, "", "", nil
+}
+
+// filterRunnableCandidates drops issues whose BlockedBy list references
+// another open candidate. A blocked issue is excluded only when its
+// blocker is also in the candidate set and remains open — this matches
+// the prompt-fed path's intent (do not pick something that cannot
+// proceed without first picking its dependency).
+func filterRunnableCandidates(ctx context.Context, client github.Client, candidates []int) []int {
+	if len(candidates) == 0 {
+		return nil
+	}
+	issues, err := fetchCandidateIssues(ctx, client, candidates)
+	if err != nil || len(issues) == 0 {
+		return append([]int(nil), candidates...)
+	}
+
+	stateByNumber := make(map[int]string, len(issues))
+	blockedBy := make(map[int][]int, len(issues))
+	for i := range issues {
+		stateByNumber[issues[i].Number] = issues[i].State
+		blockedBy[issues[i].Number] = issues[i].BlockedBy
+	}
+
+	open := func(n int) bool {
+		s, ok := stateByNumber[n]
+		return !ok || strings.EqualFold(s, "open")
+	}
+
+	runnable := make([]int, 0, len(issues))
+	for _, issue := range issues {
+		hasOpenInSetBlocker := false
+		for _, blocker := range blockedBy[issue.Number] {
+			if _, inSet := stateByNumber[blocker]; inSet && open(blocker) {
+				hasOpenInSetBlocker = true
+				break
+			}
+		}
+		if !hasOpenInSetBlocker {
+			runnable = append(runnable, issue.Number)
+		}
+	}
+	return runnable
 }
 
 func resolveModelFlag(modelFlag, preset string) string {
@@ -333,7 +381,24 @@ func formatCandidateIssues(issues []github.Issue) string {
 		for i, l := range issue.Labels {
 			labelStrs[i] = l
 		}
-		b.WriteString(fmt.Sprintf("#%d | %s | [%s] | %s\n", issue.Number, issue.Title, strings.Join(labelStrs, ", "), body))
+		b.WriteString(fmt.Sprintf("#%d | %s | [%s] | blocked by: %s | %s\n",
+			issue.Number,
+			issue.Title,
+			strings.Join(labelStrs, ", "),
+			formatBlockedBy(issue.BlockedBy),
+			body,
+		))
 	}
 	return b.String()
+}
+
+func formatBlockedBy(blockedBy []int) string {
+	if len(blockedBy) == 0 {
+		return "none"
+	}
+	parts := make([]string, 0, len(blockedBy))
+	for _, n := range blockedBy {
+		parts = append(parts, fmt.Sprintf("#%d", n))
+	}
+	return strings.Join(parts, ", ")
 }

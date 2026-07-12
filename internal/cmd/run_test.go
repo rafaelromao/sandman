@@ -4006,7 +4006,7 @@ func TestRunSelectionPhase_GuardFiresWhenReviewCommandContainsSandmanAndNoSocket
 func TestSelectionPhase_FormatCandidateIssues(t *testing.T) {
 	issues := []github.Issue{
 		{Number: 1, Title: "Bug", Body: "Fix this bug", Labels: []string{"bug"}},
-		{Number: 2, Title: "Feature", Body: "Add new feature", Labels: []string{"enhancement"}},
+		{Number: 2, Title: "Feature", Body: "Add new feature", Labels: []string{"enhancement"}, BlockedBy: []int{42, 7}},
 	}
 
 	result := formatCandidateIssues(issues)
@@ -4021,6 +4021,12 @@ func TestSelectionPhase_FormatCandidateIssues(t *testing.T) {
 	}
 	if !strings.Contains(result, "Fix this bug") {
 		t.Error("expected body in formatted output")
+	}
+	if !strings.Contains(result, "blocked by: none") {
+		t.Errorf("expected unblocked issue to render as 'blocked by: none', got:\n%s", result)
+	}
+	if !strings.Contains(result, "blocked by: #42, #7") {
+		t.Errorf("expected blocked issue to render its blockers, got:\n%s", result)
 	}
 }
 
