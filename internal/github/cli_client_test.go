@@ -553,6 +553,11 @@ func TestParseBlockedBy(t *testing.T) {
 			want: []int{66, 65, 67},
 		},
 		{
+			name: "heading plain-link line ignores trailing prose",
+			body: "## Blocked by\n\n[Ephemeral PostgreSQL database with per-test reset](https://github.com/rafaelromao/slotmerge/issues/65) with extra text\n",
+			want: nil,
+		},
+		{
 			name: "heading with multiple bullets",
 			body: "## Blocked by\n- #1\n- #2\n- #3",
 			want: []int{1, 2, 3},
