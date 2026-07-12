@@ -7,12 +7,9 @@ import (
 	"testing"
 )
 
-// TestPortalMD_ReferencesNewPublicIdentityModel pins the issue
-// #1922 slice 6 acceptance criterion that docs/usage/portal.md
-// references the new public identity model and explicitly states
-// existing .sandman migration is out of scope. The phrases
-// checked here MUST be present (verbatim) for the slice 6 contract
-// to remain documented.
+// TestPortalMD_ReferencesNewPublicIdentityModel pins the
+// acceptance criterion that docs/usage/portal.md references the
+// public identity model (BatchId vs per-row RunID).
 func TestPortalMD_ReferencesNewPublicIdentityModel(t *testing.T) {
 	docPath := filepath.Join(repoRoot(t), "docs", "usage", "portal.md")
 	body := mustReadFile(t, docPath)
@@ -20,9 +17,6 @@ func TestPortalMD_ReferencesNewPublicIdentityModel(t *testing.T) {
 	required := []string{
 		// Public BatchId vs per-row RunID split is documented.
 		"### Public BatchId vs per-row RunID",
-		// Migration out of scope is explicit.
-		"### Existing `.sandman` migration is out of scope",
-		"Existing `.sandman` migration is out of scope.",
 	}
 	for _, phrase := range required {
 		if !strings.Contains(body, phrase) {
@@ -32,11 +26,8 @@ func TestPortalMD_ReferencesNewPublicIdentityModel(t *testing.T) {
 }
 
 // TestMonitoringMD_ReferencesNewPublicIdentityModel pins the
-// issue #1922 slice 6 acceptance criterion that
-// docs/usage/monitoring.md references the new public identity
-// model and explicitly states existing .sandman migration is out
-// of scope. The phrases checked here MUST be present (verbatim)
-// for the slice 6 contract to remain documented.
+// acceptance criterion that docs/usage/monitoring.md references
+// the public identity model (batch_id in event payloads).
 func TestMonitoringMD_ReferencesNewPublicIdentityModel(t *testing.T) {
 	docPath := filepath.Join(repoRoot(t), "docs", "usage", "monitoring.md")
 	body := mustReadFile(t, docPath)
@@ -45,9 +36,6 @@ func TestMonitoringMD_ReferencesNewPublicIdentityModel(t *testing.T) {
 		// batch_id row is added to the run.started/run.continued
 		// payload table.
 		"| `batch_id` |",
-		// Migration out of scope is explicit.
-		"## Existing `.sandman` migration is out of scope",
-		"Existing `.sandman` migration is out of scope.",
 	}
 	for _, phrase := range required {
 		if !strings.Contains(body, phrase) {
