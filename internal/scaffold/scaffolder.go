@@ -383,11 +383,6 @@ var elixirVersionPattern = regexp.MustCompile(`(\d+)\.(\d+)`)
 type Scaffolder struct{}
 
 // Scaffold writes config.yaml, Dockerfile, and prompt.md into .sandman/.
-//
-// The soft migration that copied a pre-existing
-// `.sandman/priority-selection-prompt.md` to `.sandman/auto-selection-prompt.md`
-// is no longer performed; operators with a customized legacy file must rename
-// it to `.sandman/auto-selection-prompt.md` manually before re-running `init`.
 func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 	layout := paths.NewLayout(&config.Config{}, repoRoot)
 	sandmanDir := layout.SandmanDir

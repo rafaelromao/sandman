@@ -1057,10 +1057,6 @@ func expandPRDs(ctx context.Context, client github.Client, issues []int, stderr 
 	return expanded, nil
 }
 
-func resolveAutoCandidates(ctx context.Context, client github.Client, args []string, label, query string, stderr io.Writer) ([]int, error) {
-	return nil, nil
-}
-
 func printSummary(cmd *cobra.Command, result *batch.Result) {
 	var successCount, failureCount, abortedCount, blockedCount int
 	for _, run := range result.Runs {

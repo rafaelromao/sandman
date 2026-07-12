@@ -120,13 +120,8 @@ type portalRun struct {
 	// payload. Empty for historical or prompt-only runs.
 	IssueTitle string `json:"issueTitle,omitempty"`
 	// Reason is the run-kind label rendered in the chip column for
-	// auto-select and review runs; empty for issue-driven and prompt-only
-	// runs.
+	// review runs; empty for issue-driven and prompt-only runs.
 	Reason string `json:"reason,omitempty"`
-	// Candidates carries the issue numbers considered by the auto-select
-	// agent during the selection phase. Populated from run.started
-	// payload.candidates; omitted for non-auto-select runs.
-	Candidates []int `json:"candidates,omitempty"`
 	// RetriesTotal is the number of retry attempts the orchestrator allowed
 	// for the run. Omitted when the run has not finished.
 	RetriesTotal int `json:"retriesTotal,omitempty"`
@@ -436,7 +431,7 @@ func (v *portalRunsView) computeWithActiveRunsAndIndex(repoRoot string, eventLis
 	// Unmatched prompt-only instances whose RunID has a terminal state in
 	// the event log adopt that state, so the dedup below collapses the
 	// active and terminal rows into one. Without this pass, an
-	// auto-select or review daemon that emits run.finished while its
+	// review daemon that emits run.finished while its
 	// socket is still alive would leave the row stuck on "running" /
 	// "reviewing" forever.
 	for i := range matchedActive {
@@ -727,7 +722,7 @@ func issueBatchKey(issue int, batch string) string {
 }
 
 func missingManifestIssues(manifest daemon.BatchManifest, seen map[int]struct{}) []int {
-	if manifest.RunKind == "auto-select" || manifest.RunKind == "review" {
+	if manifest.RunKind == "review" {
 		return nil
 	}
 	missing := make([]int, 0, len(manifest.Issues))
@@ -881,7 +876,7 @@ func (v *portalRunsView) demoteOrphanedActiveRunsFromDeadBatches(repoRoot string
 		if runs[i].Kind != "active" || runs[i].SocketPath != "" || runs[i].BatchKey == "" {
 			continue
 		}
-		if runs[i].Status != "running" && runs[i].Status != "reviewing" && runs[i].Status != "auto-select" {
+		if runs[i].Status != "running" && runs[i].Status != "reviewing" {
 			continue
 		}
 		var db *daemon.DeadBatch
@@ -1711,12 +1706,12 @@ func (v *portalRunsView) matchRunState(instance portalActiveRun, states []events
 		return bestIdx
 	}
 
-	// Time-proximity fallback: refuse to bind a prompt-only /
-	// auto-select instance (IssueNumber == 0) to a state tied to a
+	// Time-proximity fallback: refuse to bind a prompt-only instance
+	// (IssueNumber == 0) to a state tied to a
 	// concrete issue, even on timestamp proximity. The strict loops
 	// above already filter strictly on IssueNumber; the fallback
 	// below was the path that swallowed orphan issue-run states
-	// into the closest unrelated auto-select / prompt-only instance
+	// into the closest unrelated prompt-only instance
 	// when the issue-run's own batch dir was missing from the
 	// batches index (issue #1464). Return -1 so the state falls
 	// through to the event-backed branch in compute() instead.
@@ -1793,9 +1788,6 @@ func (v *portalRunsView) runFromActiveMatch(repoRoot string, match portalRunMatc
 	if payloadReason := v.reasonFromStartedPayload(startedPayload); payloadReason != "" {
 		reason = payloadReason
 	}
-	if reason == "auto-select" {
-		status = "auto-select"
-	}
 	run := portalRun{
 		Key:         activeKeyForActive(match.instance),
 		RunID:       runID,
@@ -1823,9 +1815,6 @@ func (v *portalRunsView) runFromActiveMatch(repoRoot string, match portalRunMatc
 	run.Attempts, run.LastRetryReason = attemptsAndLastRetryReasonFromEvents(eventsByRun[eventKey])
 	if startedPayload != nil {
 		run.IssueTitle = v.issueTitleFromPayload(startedPayload)
-		if candidates := v.candidatesFromPayload(startedPayload); len(candidates) > 0 {
-			run.Candidates = candidates
-		}
 	}
 	v.markCompletedIfSocketDead(&run, run.SocketPath)
 	return run
@@ -1937,9 +1926,6 @@ func (v *portalRunsView) runFromState(repoRoot string, runState events.RunState,
 			portalRun.IssueNumber = issueNum
 			portalRun.IssueLabel = fmt.Sprintf("#%d", issueNum)
 		}
-	}
-	if candidates := v.candidatesFromPayload(runState.Started.Payload); len(candidates) > 0 {
-		portalRun.Candidates = candidates
 	}
 	if status == "blocked" {
 		portalRun.Log = v.portalBlockedMessage(runState.Finished.Payload)
@@ -2168,8 +2154,8 @@ func (v *portalRunsView) filterPortalLogByRunID(text string, runID string) strin
 //     broadcasting a different run's content (issue #1637) and is
 //     also capped at portalReadLimit (64 KiB), so the trailing
 //     verdict line of a long review would otherwise be silently
-//     dropped (issue #1730). This applies uniformly to review,
-//     auto-select, and issue flavours. The kind=active promotion of
+//     dropped (issue #1730). This applies uniformly to review and
+//     issue flavours. The kind=active promotion of
 //     terminal review rows at lines 1593-1595 is orthogonal — it
 //     affects the table-cell chip, not the Log tab content.
 //   - Degraded fallback: a terminal row whose saved log is empty
@@ -2181,7 +2167,7 @@ func (v *portalRunsView) filterPortalLogByRunID(text string, runID string) strin
 // it on the saved-wins path so the live-wins branch avoids a needless
 // filesystem read on every poll. `runState` carries the event-fold
 // information needed to know whether the row is terminal and whether
-// it is a review/auto-select. `active` is nil for the historical /
+// it is a review. `active` is nil for the historical /
 // event-only path, non-nil when an active batch is matched.
 func (v *portalRunsView) resolveRunLog(loadSaved func() string, runState events.RunState, active *portalActiveRun) string {
 	if active == nil {
@@ -2284,31 +2270,6 @@ func (v *portalRunsView) prNumberFromEvent(events []portalEvent) int {
 func (v *portalRunsView) reviewIssueNumber(payload map[string]any) int {
 	n, _ := payloadInt(payload, "issue_number")
 	return n
-}
-
-// candidatesFromPayload reads the candidates field from an auto-select
-// run's payload. Returns nil when the field is absent.
-func (v *portalRunsView) candidatesFromPayload(payload map[string]any) []int {
-	if payload == nil {
-		return nil
-	}
-	raw, ok := payload["candidates"]
-	if !ok {
-		return nil
-	}
-	switch values := raw.(type) {
-	case []int:
-		return append([]int(nil), values...)
-	case []any:
-		candidates := make([]int, 0, len(values))
-		for _, value := range values {
-			if n, ok := payloadIntValue(value); ok {
-				candidates = append(candidates, n)
-			}
-		}
-		return candidates
-	}
-	return nil
 }
 
 // issueTitleFromPayload reads the issue_title field from a payload.

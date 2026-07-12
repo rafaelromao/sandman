@@ -239,12 +239,6 @@ func TestKindFromDirName(t *testing.T) {
 			wantFound: false,
 		},
 		{
-			name:      "Legacy {ts}-{sid}-auto-select-candidates format is rejected",
-			input:     "20250617-143052-abcd-auto-select-50-candidates",
-			wantKind:  0,
-			wantFound: false,
-		},
-		{
 			name:      "Legacy {ts}-{sid}-prompt-only format is rejected",
 			input:     "20250617-143052-abcd-prompt-only",
 			wantKind:  0,

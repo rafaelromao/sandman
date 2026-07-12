@@ -2832,7 +2832,7 @@ func TestPortal_RunFromActiveBatchIssue_EmptyKeyStillHasBatchIdentity(t *testing
 }
 
 // TestPortal_RunFromActiveMatch_NormalizesBatchIdentity pins issue
-// #1541 for the prompt-only / auto-select path: an active instance
+// #1541 for the prompt-only path: an active instance
 // whose Key is empty must still reach dedup with a non-empty BatchKey.
 func TestPortal_RunFromActiveMatch_NormalizesBatchIdentity(t *testing.T) {
 	repoRoot := t.TempDir()
@@ -3012,12 +3012,12 @@ func TestPortal_ResolveRunLog_PrefersLiveForNonTerminal(t *testing.T) {
 
 // TestPortal_ResolveRunLog_SavedWinsForTerminalIssueRow pins the
 // slice-2 contract for portalRunsView.resolveRunLog: a terminal state
-// (status=success, runState.Finished != nil) for a non-review,
-// non-auto-select row returns the saved log, NOT the live output.
+// (status=success, runState.Finished != nil) for a non-review row
+// returns the saved log, NOT the live output.
 // This is the heart of issue #1637: the Saved Run Log is authoritative
 // for finished runs, even when the batch daemon socket is still
-// connectable. Companion tests cover the carve-out (review/auto-select
-// rows on live sockets) and the no-active path.
+// connectable. Companion tests cover the review carve-out and the
+// no-active path.
 func TestPortal_ResolveRunLog_SavedWinsForTerminalIssueRow(t *testing.T) {
 	startedAt := time.Now().Add(-5 * time.Minute)
 	finishedAt := startedAt.Add(2 * time.Minute)
@@ -3051,8 +3051,8 @@ func TestPortal_ResolveRunLog_SavedWinsForTerminalIssueRow(t *testing.T) {
 // slice-2 carve-out under the old (buggy) contract: terminal review
 // rows on a still-alive socket received live output. Issue #1730
 // flipped the precedence: the saved run.log is authoritative for any
-// terminal row (Finished != nil), regardless of review/auto-select
-// flavour or whether the batch daemon socket is still connectable.
+// terminal row (Finished != nil), regardless of review flavour or
+// whether the batch daemon socket is still connectable.
 // See TestPortal_ResolveRunLog_TerminalReviewPrefersSavedLog below for
 // the corrected contract. The body of this test was rewritten in
 // place to assert the corrected precedence rather than deleted, per

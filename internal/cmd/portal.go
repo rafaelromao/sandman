@@ -406,7 +406,7 @@ func archivePortalRowArchiver(repoRoot string, entryID, runID string) error {
 //
 // The fast path is idx.ResolveBatch(runID), which matches the public
 // batch id directly and is the only signal for batches whose per-row
-// run id equals their batch id (auto-select, single-issue issue runs,
+// run id equals their batch id (single-issue issue runs,
 // the first row of a multi-issue batch when the first subject happens
 // to match, --continue issue runs that resume the existing batch dir).
 //

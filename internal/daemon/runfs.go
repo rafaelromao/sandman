@@ -156,9 +156,6 @@ type BatchManifest struct {
 	RunTS      string    `json:"runTs,omitempty"`
 	RunShortID string    `json:"runShortId,omitempty"`
 	PR         *int      `json:"pr,omitempty"`
-	Candidates []int     `json:"candidates,omitempty"`
-	Query      string    `json:"query,omitempty"`
-	Count      int       `json:"count,omitempty"`
 }
 
 // BatchDir returns a batch directory path under baseDir/batches/. The dirID

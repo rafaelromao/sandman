@@ -150,7 +150,7 @@
       metaText: h.renderRunMeta(run),
       badgeClass: h.statusClass(run),
       badgeLabel: run.status || (run.kind === 'active' ? 'running' : 'completed'),
-      reason: (run.reason === 'auto-select' || run.reason === 'review') ? run.reason : '',
+      reason: run.reason === 'review' ? run.reason : '',
       contextText: contextText(run),
       startedText: h.formatTime(run.startedAt),
       durationText: h.formatDuration(run.duration),
@@ -282,7 +282,7 @@
   // threshold; no new color is introduced.
   function stalenessOf(run) {
     if (!run || run.kind !== 'active' || !run.lastOutputAt) return null;
-    if (run.status !== 'running' && run.status !== 'reviewing' && run.status !== 'auto-select') return null;
+    if (run.status !== 'running' && run.status !== 'reviewing') return null;
     const ts = Date.parse(run.lastOutputAt);
     if (!Number.isFinite(ts)) return null;
     const seconds = Math.max(0, Math.floor((Date.now() - ts) / 1000));

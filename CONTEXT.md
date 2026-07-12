@@ -266,14 +266,6 @@ _Avoid_: fake parent row, synthesized issue row, fake implementation-like row, "
 A portal review row whose PR cannot be resolved to an issue — typically older event logs predating the `issue_number` payload field, or a live review whose PR-to-issue resolution failed. The Go-side projection renders the same shape without the parenthesised issue reference: `Review of PR <prNumber>` (e.g. `Review of PR 1508`). The cell label never contains the raw RunID; if even the PR number is missing, the label degrades to the RunID. References issue #1667 and ADR-0029 §Review-only orphan label.
 _Avoid_: PR42, raw runID in cell, a0c19-...-PR<n>, "Review of #N" without the PR prefix.
 
-**Auto-select**:
-The in-flight portal status for an active auto-select run (a run whose `run.started` event carried `payload.run_kind = "auto-select"`). Displayed in the status badge as `● auto-select`. The `Status` field is set to `"auto-select"` by `statusOrDefault` when `active && isAutoSelect` is true. Terminal auto-select runs use `success`, `failure`, or `aborted` like any other run.
-_Avoid_: auto-selecting, selecting.
-
-**Candidates**:
-The list of issue numbers considered by the auto-select agent during the selection phase. Emitted in `run.started` as `payload.candidates` and projected into `portalRun.Candidates`. The final *selected* subset is emitted in `run.finished.payload.selected` and surfaced in the agent log. The portal deliberately does not render an inline candidates chip — the active badge already labels the row kind, and a long scroll of `#N` adds noise without informing the user.
-_Avoid_: candidate chip, auto-select candidates row.
-
 **Continue**:
 The `--continue` flag on `sandman run` re-runs the latest AgentRun for one or more issues while reusing each issue's prior branch, base branch, agent, and review command. Continuation reads the existing `.sandman/task.md` directly rather than rendering a fresh prompt. Multi-issue `sandman run --continue <issue>...` submits a single Batch with per-issue `Branches`, `BaseBranch`, and `PreviousRunIDs` maps so the orchestrator parallelizes across issues. `--continue` keeps branch checkout unchanged, resolves the model from `--model` or `model`, and uses the stored base branch for prompt rendering and event metadata only. Per-issue prompt rendering is built on top of this surface by #443. When `.sandman/task.md` is present in the worktree, the resumed run consumes it instead of starting from a blank prompt.
 _Avoid_: Retry.
