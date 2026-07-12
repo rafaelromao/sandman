@@ -3344,6 +3344,158 @@ func TestRunBatch_SandboxStartErrorPrintedToStderr(t *testing.T) {
 	}
 }
 
+func TestRunBatch_EmitsTerminalEventOnFetchIssueFailure(t *testing.T) {
+	dir := testenv.MkdirShort(t, "sm-orch-")
+	t.Chdir(dir)
+	initGitRepo(t, dir)
+
+	client := &fakeGitHubClient{err: errors.New("github api error")}
+	spyLog := &spyEventLog{}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog)
+	o.errorLog = io.Discard
+
+	_, _ = o.RunBatch(context.Background(), Request{Issues: []int{42}, Parallel: 1})
+
+	finished := findEvent(spyLog.events, "run.finished")
+	if finished == nil {
+		t.Fatal("expected run.finished event for issue that failed to fetch, got nil")
+	}
+	if finished.Issue != 42 {
+		t.Fatalf("expected run.finished for issue 42, got %d", finished.Issue)
+	}
+	status, _ := finished.Payload["status"].(string)
+	if status != "failure" {
+		t.Fatalf("expected run.finished status failure, got %q", status)
+	}
+	earlyFailure, _ := finished.Payload["early_failure"].(bool)
+	if !earlyFailure {
+		t.Fatal("expected early_failure=true in run.finished payload")
+	}
+	if started := findEvent(spyLog.events, "run.started"); started != nil {
+		t.Fatal("expected no run.started event for an early-return failure")
+	}
+}
+
+func TestRunBatch_EmitsTerminalEventOnSandboxStartFailure(t *testing.T) {
+	dir := testenv.MkdirShort(t, "sm-orch-")
+	t.Chdir(dir)
+	initGitRepo(t, dir)
+
+	sb := &fakeSandbox{startErr: errors.New("sandbox start failure")}
+	factory := &fakeSandboxFactory{sandbox: sb}
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{42: {Number: 42, Title: "test", State: "closed"}},
+	}
+	spyLog := &spyEventLog{}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog)
+	o.sandboxFactory = factory
+	o.errorLog = io.Discard
+
+	_, _ = o.RunBatch(context.Background(), Request{Issues: []int{42}, Parallel: 1})
+
+	finished := findEvent(spyLog.events, "run.finished")
+	if finished == nil {
+		t.Fatal("expected run.finished event for issue whose sandbox failed to start")
+	}
+	if finished.Issue != 42 {
+		t.Fatalf("expected run.finished for issue 42, got %d", finished.Issue)
+	}
+	status, _ := finished.Payload["status"].(string)
+	if status != "failure" {
+		t.Fatalf("expected run.finished status failure, got %q", status)
+	}
+	earlyFailure, _ := finished.Payload["early_failure"].(bool)
+	if !earlyFailure {
+		t.Fatal("expected early_failure=true in run.finished payload")
+	}
+	if started := findEvent(spyLog.events, "run.started"); started != nil {
+		t.Fatal("expected no run.started event for an early-return failure")
+	}
+}
+
+func TestRunBatch_EarlyFailureDoesNotEmitDuplicateTerminalEvent(t *testing.T) {
+	dir := testenv.MkdirShort(t, "sm-orch-")
+	t.Chdir(dir)
+	initGitRepo(t, dir)
+
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{42: {Number: 42, Title: "test", State: "closed"}},
+	}
+	spyLog := &spyEventLog{}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog)
+	o.errorLog = io.Discard
+
+	_, _ = o.RunBatch(context.Background(), Request{Issues: []int{42}, Parallel: 1})
+
+	var finishedCount int
+	for _, e := range spyLog.events {
+		if e.Type == "run.finished" || e.Type == "run.aborted" {
+			finishedCount++
+		}
+	}
+	if finishedCount != 1 {
+		t.Fatalf("expected exactly 1 terminal event, got %d", finishedCount)
+	}
+}
+
+func TestRunBatch_EarlyFailureCascadesBlockedToDependents(t *testing.T) {
+	dir := testenv.MkdirShort(t, "sm-orch-")
+	t.Chdir(dir)
+	initGitRepo(t, dir)
+
+	sb := &fakeSandbox{startErr: errors.New("sandbox start failure")}
+	factory := &fakeSandboxFactory{sandbox: sb}
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			42:  {Number: 42, Title: "Blocker"},
+			100: {Number: 100, Title: "Dependent", BlockedBy: []int{42}},
+		},
+	}
+	spyLog := &spyEventLog{}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog)
+	o.sandboxFactory = factory
+	o.errorLog = io.Discard
+
+	result, _ := o.RunBatch(context.Background(), Request{
+		Issues:       []int{42, 100},
+		Dependencies: map[int][]int{100: {42}},
+		Parallel:     2,
+	})
+
+	statuses := make(map[int]string)
+	for _, run := range result.Runs {
+		statuses[run.IssueNumber] = run.Status
+	}
+	if statuses[42] != "failure" {
+		t.Fatalf("expected blocker status failure (early sandbox failure), got %q", statuses[42])
+	}
+	if statuses[100] != "blocked" {
+		t.Fatalf("expected dependent status blocked, got %q", statuses[100])
+	}
+
+	blockerFinished := findEventByIssue(spyLog.events, "run.finished", 42)
+	if blockerFinished == nil {
+		t.Fatal("expected run.finished for issue 42 (early failure)")
+	}
+	dependentBlocked := findEventByIssue(spyLog.events, "run.blocked", 100)
+	if dependentBlocked == nil {
+		t.Fatal("expected run.blocked for dependent issue 100")
+	}
+	blockedBy, _ := dependentBlocked.Payload["blocked_by"].([]int)
+	if len(blockedBy) != 1 || blockedBy[0] != 42 {
+		t.Fatalf("expected dependent blocked_by [42], got %v", blockedBy)
+	}
+}
+
+func findEventByIssue(events []events.Event, eventType string, issue int) *events.Event {
+	for i := range events {
+		if events[i].Type == eventType && events[i].Issue == issue {
+			return &events[i]
+		}
+	}
+	return nil
+}
+
 func TestRunBatch_NoIssues(t *testing.T) {
 	client := &fakeGitHubClient{}
 	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
