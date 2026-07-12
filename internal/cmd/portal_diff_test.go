@@ -1327,7 +1327,7 @@ console.log('PASS');
 	runNodeScript(t, js)
 }
 
-func TestPortalDiffBuildDurationCell_StaleLineStillAppearsForAutoSelectingStatus(t *testing.T) {
+func TestPortalDiffBuildDurationCell_StaleLineStillAppearsForAutoSelectStatus(t *testing.T) {
 	js := `const body = makeMockBody();
 const stale = new Date(Date.now() - 90*1000).toISOString();
 const run = { key: 'a', kind: 'active', status: 'auto-select', issueLabel: '#42', runId: 'r1', lastOutputAt: stale, duration: 1200 };

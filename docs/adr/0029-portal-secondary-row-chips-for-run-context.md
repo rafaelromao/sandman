@@ -11,9 +11,7 @@ Three mutually exclusive chips, each rendered in a secondary `tr.context-row` be
 | Issue in batch (>1 issues) | `Part of batch: #N, #N` | `portalRun.BatchIssues` *(inline in title cell for now; pending #1055)* |
 | Regular issue / prompt-only / continuation | *(no chip)* | — |
 
-(Subsequent change: the auto-select candidates chip was removed — see the slice notes below. The `Candidates` field on `portalRun` remains for downstream consumers; only its portal chip text goes away.)
-
-Chips are mutually exclusive: a row is in exactly one of these categories and shows at most one chip. The auto-select chip is intentionally absent — the active status badge already labels the row kind, and the long list of candidate issue numbers adds noise without informing the user.
+Chips are mutually exclusive: a row is in exactly one of these categories and shows at most one chip.
 
 The status vocabulary is extended:
 
