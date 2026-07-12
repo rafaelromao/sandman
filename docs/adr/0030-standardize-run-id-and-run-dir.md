@@ -173,7 +173,7 @@ Concretely, when `--auto` runs to completion, two batch directories appear under
 1. `<ts1>-<sid1>-auto-N` (the auto-select selector)
 2. `<ts2>-<sid2>-<firstIssue>[+<additionalCount>]` (the post-selection issue batch)
 
-with `<sid1>` ≠ `<sid2>` and `<ts1>` ≠ `<ts2>` in general. The portal renders the selector as an "auto-selecting" row (one row per selector run) and the post-selection issue batch as a normal "running" row (one row per issue), and never shows the auto-selecting chip on the post-selection rows.
+with `<sid1>` ≠ `<sid2>` and `<ts1>` ≠ `<ts2>` in general. The portal renders the selector as an "auto-select" row (one row per selector run) and the post-selection issue batch as a normal "running" row (one row per issue), and never shows the auto-select badge on the post-selection rows.
 
 ## Consequences
 
@@ -186,7 +186,7 @@ with `<sid1>` ≠ `<sid2>` and `<ts1>` ≠ `<ts2>` in general. The portal render
 - Validation is loosened to accept the full range of identifiers users are likely to choose.
 - Carrying `RunTS` and `RunShortID` on the manifest lets event-log-less consumers (the portal, before `run.started` lands) derive canonical per-row RunIDs without synthesizing ad-hoc formats.
 - The `runid.NewRunID` derivation contract pins the canonical call shape so future consumers cannot drift back to synthetic "issue-N" RunIDs.
-- The auto-select vs post-selection identity split (issue #1918 slice 2) prevents the portal from showing the auto-selecting chip on the post-selection issue batch rows, and lets downstream consumers resolve the selector's batch identity from the event stream without back-deriving it from the RunID.
+- The auto-select vs post-selection identity split (issue #1918 slice 2) prevents the portal from showing the auto-select badge on the post-selection issue batch rows, and lets downstream consumers resolve the selector's batch identity from the event stream without back-deriving it from the RunID.
 
 ### Negative
 

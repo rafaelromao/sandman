@@ -9,18 +9,19 @@ Three mutually exclusive chips, each rendered in a secondary `tr.context-row` be
 | Run kind | Secondary-row chip text | Data source |
 |---|---|---|
 | Issue in batch (>1 issues) | `Part of batch: #N, #N` | `portalRun.BatchIssues` *(inline in title cell for now; pending #1055)* |
-| Auto-select | `Auto-select candidates: #N, #N` | `portalRun.Candidates` (new field) |
 | Regular issue / prompt-only / continuation | *(no chip)* | — |
 
-Chips are mutually exclusive: a row is in exactly one of these categories and shows at most one chip. An auto-select run in a batch shows the auto-select chip, not the batch chip. This avoids stacking multiple muted blocks in the secondary row and keeps the chip's meaning unambiguous.
+(Subsequent change: the auto-select candidates chip was removed — see the slice notes below. The `Candidates` field on `portalRun` remains for downstream consumers; only its portal chip text goes away.)
+
+Chips are mutually exclusive: a row is in exactly one of these categories and shows at most one chip. The auto-select chip is intentionally absent — the active status badge already labels the row kind, and the long list of candidate issue numbers adds noise without informing the user.
 
 The status vocabulary is extended:
 
-- `statusOrDefault` adds: `active && isAutoSelect` → `"auto-selecting"`
+- `statusOrDefault` adds: `active && isAutoSelect` → `"auto-select"`
 - `statusOrDefault` keeps: `active && isReview` → `"reviewing"`
 - Terminal statuses stay `success` / `failure` / `aborted` for all run kinds (no kind-specific terminal statuses).
 
-The `portalRun` struct gains a `Candidates []int` field (`json:"candidates,omitempty"`), populated from `run.started.payload.candidates` in the event log.
+The `portalRun` struct retains the `Candidates []int` field (`json:"candidates,omitempty"`), populated from `run.started.payload.candidates` in the event log. The field stays on the wire so downstream consumers (e.g. the agent log filter, future external dashboards) can still inspect the candidate set; the portal's secondary-row chip no longer renders it.
 
 The `run.started` event for review runs gains an `issue_number` field in the payload (in addition to the existing `pr_number`). The review daemon resolves the issue from the PR before emitting the event. The portal reads `issue_number` from the payload and populates `portalRun.IssueNumber` and `portalRun.IssueLabel` (as `#N`) for review runs, replacing the current behavior of setting `IssueLabel` to the literal `PR42` and `IssueNumber` to 0.
 
@@ -35,8 +36,8 @@ The inline `.badge.kind-chip` chip in the title cell (introduced by #973 / PR #1
 ## Consequences
 
 - The `● review` / `● auto-select` inline chip (PR #1047) is deleted and replaced with the secondary-row pattern.
-- The secondary row now carries two possible chip types: batch membership and auto-select candidates. Each has a distinct label prefix (`Part of batch:`, `Auto-select candidates:`).
-- The `statusOrDefault` function gains a single special-case branch for `auto-selecting`, mirroring the existing `reviewing` branch.
-- The `Candidates []int` field is added to `portalRun` — a small, additive JSON contract change (omitted when empty, so no breakage for non-auto-select rows).
+- The secondary row currently carries one chip type: batch membership. The earlier auto-select candidates chip (label prefix `Auto-select candidates:`) was dropped in a subsequent slice because the long `#N, #N, ...` text overlaps information already conveyed by the active status badge.
+- The `statusOrDefault` function gains a single special-case branch for `auto-select`, mirroring the existing `reviewing` branch.
+- The `Candidates []int` field is added to `portalRun` — a small, additive JSON contract change (omitted when empty, so no breakage for non-auto-select rows). The field remains on the wire even though the portal no longer renders a chip for it.
 - The `run.started` event for review runs gains `issue_number` in the payload — a breaking change to the event contract for review runs only. Older event logs without this field will fall back to the current behavior (`IssueNumber = 0`, `IssueLabel = PR42`).
-- Selected items from a successful auto-select run are surfaced in the agent log, not in the chip. The chip shows candidates only, keeping the chip's information density stable across active and terminal states.
+- Selected items from a successful auto-select run are surfaced in the agent log; the long candidates list is not rendered anywhere in the row chrome.

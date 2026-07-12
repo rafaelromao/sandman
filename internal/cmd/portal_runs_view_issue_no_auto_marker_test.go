@@ -59,8 +59,8 @@ func TestPortalRunsView_ReasonFromStartedPayload_NoAutoMarkerForIssue(t *testing
 
 // TestPortalRunsView_StatusOrDefault_ActiveIssueIsNotAutoSelecting
 // pins that an active issue batch (post-selection or otherwise) is
-// not auto-selecting. Only an active run whose reason resolves to
-// "auto-select" should map to "auto-selecting".
+// not auto-select. Only an active run whose reason resolves to
+// "auto-select" should map to "auto-select".
 func TestPortalRunsView_StatusOrDefault_ActiveIssueIsNotAutoSelecting(t *testing.T) {
 	v := &portalRunsView{}
 
@@ -74,7 +74,7 @@ func TestPortalRunsView_StatusOrDefault_ActiveIssueIsNotAutoSelecting(t *testing
 	}{
 		{name: "active issue is running", status: "", active: true, isReview: false, isAuto: false, want: "running"},
 		{name: "active review is reviewing", status: "", active: true, isReview: true, isAuto: false, want: "reviewing"},
-		{name: "active auto-select is auto-selecting", status: "", active: true, isReview: false, isAuto: true, want: "auto-selecting"},
+		{name: "active auto-select is auto-select", status: "", active: true, isReview: false, isAuto: true, want: "auto-select"},
 		{name: "completed issue", status: "success", active: false, isReview: false, isAuto: false, want: "success"},
 	}
 	for _, tc := range cases {

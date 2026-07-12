@@ -881,7 +881,7 @@ func (v *portalRunsView) demoteOrphanedActiveRunsFromDeadBatches(repoRoot string
 		if runs[i].Kind != "active" || runs[i].SocketPath != "" || runs[i].BatchKey == "" {
 			continue
 		}
-		if runs[i].Status != "running" && runs[i].Status != "reviewing" && runs[i].Status != "auto-selecting" {
+		if runs[i].Status != "running" && runs[i].Status != "reviewing" && runs[i].Status != "auto-select" {
 			continue
 		}
 		var db *daemon.DeadBatch
@@ -1794,7 +1794,7 @@ func (v *portalRunsView) runFromActiveMatch(repoRoot string, match portalRunMatc
 		reason = payloadReason
 	}
 	if reason == "auto-select" {
-		status = "auto-selecting"
+		status = "auto-select"
 	}
 	run := portalRun{
 		Key:         activeKeyForActive(match.instance),
@@ -2131,7 +2131,7 @@ func (v *portalRunsView) statusOrDefault(status string, active bool, isReview bo
 		return "reviewing"
 	}
 	if active && isAutoSelect {
-		return "auto-selecting"
+		return "auto-select"
 	}
 	if active {
 		return "running"
