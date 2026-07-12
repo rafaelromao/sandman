@@ -199,7 +199,7 @@ func TestPortal_StatusOrDefault_PreservesTerminalStatusesForAutoSelectAndReview(
 
 		// Active-run override takes precedence over the status string.
 		{"active review stays reviewing", "", true, true, false, "reviewing"},
-		{"active auto-select stays auto-selecting", "", true, false, true, "auto-selecting"},
+		{"active auto-select stays auto-select", "", true, false, true, "auto-select"},
 		{"active non-review stays running", "ignored", true, false, false, "running"},
 	}
 	for _, tc := range cases {

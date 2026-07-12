@@ -227,65 +227,23 @@
   }
 
   function contextText(run) {
-    if (run.reason === 'auto-select' && Array.isArray(run.candidates) && run.candidates.length > 0) {
-      return 'Auto-select candidates: ' + run.candidates.map((n) => '#' + n).join(', ');
-    }
     return '';
   }
 
   function buildContextRow(run, opts) {
-    const text = contextText(run);
-    if (!text) return null;
-    const tr = global.document.createElement('tr');
-    tr.classList.add('context-row');
-    tr.setAttribute('data-context-for', run.key);
-    const td = global.document.createElement('td');
-    td.setAttribute('colspan', rowColspan(opts));
-    td.appendChild(buildContextChip(text));
-    tr.appendChild(td);
-    return tr;
+    return null;
   }
 
   function buildContextChip(text) {
-    const chip = global.document.createElement('span');
-    chip.classList.add('context-chip', 'mono');
-    chip.textContent = text;
-    return chip;
+    return global.document.createElement('span');
   }
 
   function contextRowOf(body, runKey) {
-    return body.querySelector('tr.context-row[data-context-for="' + runKey + '"]');
+    return null;
   }
 
   function reconcileContextRow(body, dataRow, oldRun, newRun, opts) {
-    const oldText = contextText(oldRun);
-    const newText = contextText(newRun);
-    if (oldText === newText) return;
-    const existing = contextRowOf(body, newRun.key);
-    if (!newText) {
-      if (existing) {
-        body.removeChild(existing);
-        mutationCount += 1;
-      }
-      return;
-    }
-    if (existing) {
-      const chip = existing.querySelector('.context-chip');
-      if (chip) {
-        setText(chip, newText);
-      }
-      setFirstCellColspan(existing, rowColspan(opts));
-      return;
-    }
-    const fresh = buildContextRow(newRun, opts);
-    if (!fresh) return;
-    const nextRow = dataRow.nextElementSibling;
-    if (nextRow && (nextRow.classList.contains('detail-row') || nextRow.classList.contains('context-row'))) {
-      body.insertBefore(fresh, nextRow);
-    } else {
-      body.insertBefore(fresh, dataRow.nextSibling);
-    }
-    mutationCount += 1;
+    return;
   }
 
   function buildBadgeCell(td, run, helpers) {
@@ -324,7 +282,7 @@
   // threshold; no new color is introduced.
   function stalenessOf(run) {
     if (!run || run.kind !== 'active' || !run.lastOutputAt) return null;
-    if (run.status !== 'running' && run.status !== 'reviewing' && run.status !== 'auto-selecting') return null;
+    if (run.status !== 'running' && run.status !== 'reviewing' && run.status !== 'auto-select') return null;
     const ts = Date.parse(run.lastOutputAt);
     if (!Number.isFinite(ts)) return null;
     const seconds = Math.max(0, Math.floor((Date.now() - ts) / 1000));

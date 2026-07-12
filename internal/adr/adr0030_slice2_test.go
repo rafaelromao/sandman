@@ -34,9 +34,9 @@ func TestADR0030_DocumentsAutoSelectSelectorIdAndPostSelectionIssueBatch(t *test
 		// The auto marker is explicitly forbidden on the post-selection
 		// phase.
 		"does **not** carry an `-auto-` marker",
-		// The portal must not show the auto-selecting chip on the
+		// The portal must not show the auto-select badge on the
 		// post-selection rows.
-		"never shows the auto-selecting chip",
+		"never shows the auto-select badge",
 	}
 	for _, phrase := range required {
 		if !strings.Contains(body, phrase) {

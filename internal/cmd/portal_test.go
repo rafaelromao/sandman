@@ -2688,8 +2688,8 @@ func TestPortal_ActiveMatch_ReasonDerivedFromSocket(t *testing.T) {
 		if run.Reason != "auto-select" {
 			t.Fatalf("expected Reason 'auto-select' for unmatched active auto-select socket, got %q", run.Reason)
 		}
-		if run.Status != "auto-selecting" {
-			t.Fatalf("expected Status 'auto-selecting' for unmatched active auto-select socket, got %q", run.Status)
+		if run.Status != "auto-select" {
+			t.Fatalf("expected Status 'auto-select' for unmatched active auto-select socket, got %q", run.Status)
 		}
 		if !reflect.DeepEqual(run.Candidates, []int{42, 43}) {
 			t.Fatalf("expected Candidates [42 43], got %#v", run.Candidates)

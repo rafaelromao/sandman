@@ -57,7 +57,7 @@ console.log('PASS');
 	runNodeScript(t, js)
 }
 
-func TestPortalDiffUpdateCells_AddsAutoSelectContextRowWhenReasonAppears(t *testing.T) {
+func TestPortalDiffUpdateCells_NoAutoSelectContextRowWhenReasonAppears(t *testing.T) {
 	js := `const body = makeMockBody();
 const runOld = { key: 'a', kind: 'active', status: 'running', issueLabel: 'Issue 1', runId: 'r1' };
 const runNew = Object.assign({}, runOld, { issueLabel: 'Issue 1 updated', reason: 'auto-select', candidates: [42] });
@@ -69,10 +69,7 @@ SandmanPortalDiff.resetCounters();
 const result = SandmanPortalDiff.updateRunRowCells(created.row, runOld, runNew, opts);
 if (!result.mutated) throw new Error('expected mutated=true');
 const ctxRow = body.querySelector('tr.context-row[data-context-for="a"]');
-if (!ctxRow) throw new Error('expected context row when reason becomes auto-select');
-const chip = ctxRow.querySelector('.context-chip');
-if (!chip) throw new Error('expected context chip');
-if (!chip.textContent.includes('Auto-select candidates: #42')) throw new Error('expected auto-select chip text');
+if (ctxRow) throw new Error('auto-select context row must not render once the candidates chip is dropped');
 const titleWrap = created.row.querySelector('[data-cell="title"]').children[0];
 if (titleWrap.children[0].textContent !== 'Issue 1 updated') throw new Error('expected updated issue label');
 console.log('PASS');
@@ -1330,17 +1327,17 @@ console.log('PASS');
 	runNodeScript(t, js)
 }
 
-func TestPortalDiffBuildDurationCell_StaleLineStillAppearsForAutoSelectingStatus(t *testing.T) {
+func TestPortalDiffBuildDurationCell_StaleLineStillAppearsForAutoSelectStatus(t *testing.T) {
 	js := `const body = makeMockBody();
 const stale = new Date(Date.now() - 90*1000).toISOString();
-const run = { key: 'a', kind: 'active', status: 'auto-selecting', issueLabel: '#42', runId: 'r1', lastOutputAt: stale, duration: 1200 };
+const run = { key: 'a', kind: 'active', status: 'auto-select', issueLabel: '#42', runId: 'r1', lastOutputAt: stale, duration: 1200 };
 const stopGroups = new Set();
 const opts = { helpers, stopGroups, expandedKey: null };
 SandmanPortalDiff.insertRunRow(body, run, opts);
 const row = body.children[0];
 const durationCell = row.querySelector('[data-cell="duration"]');
 const line = durationCell.querySelector('.stale-line');
-if (!line) throw new Error('expected .stale-line for auto-selecting status when lastOutputAt is stale');
+if (!line) throw new Error('expected .stale-line for auto-select status when lastOutputAt is stale');
 console.log('PASS');
 `
 	runNodeScript(t, js)
@@ -2949,10 +2946,7 @@ SandmanPortalDiff.updateRunRowCells(created.row, runOld, runNew, opts);
 const titleCell = created.row.querySelector('[data-cell="title"]');
 if (titleCell.querySelector('.batch-membership')) throw new Error('batch-membership should not be in title cell for auto-select runs');
 const ctxRow = body.querySelector('tr.context-row[data-context-for="a"]');
-if (!ctxRow) throw new Error('expected context row for auto-select');
-const chip = ctxRow.querySelector('.context-chip');
-if (!chip) throw new Error('expected context chip');
-if (!chip.textContent.includes('Auto-select candidates:')) throw new Error('expected auto-select candidates text');
+if (ctxRow) throw new Error('auto-select context row must not render after the candidates chip is dropped');
 console.log('PASS');
 `
 	runNodeScript(t, js)
@@ -3480,7 +3474,7 @@ console.log('PASS');
 	runNodeScript(t, js)
 }
 
-func TestPortalDiffCreateRunRow_RendersAutoSelectChipInTitle(t *testing.T) {
+func TestPortalDiffCreateRunRow_OmitsAutoSelectCandidatesContextRow(t *testing.T) {
 	js := `const body = makeMockBody();
 const run = {
   key: 'auto-select-1700000000000',
@@ -3495,12 +3489,11 @@ const stopGroups = new Set();
 const opts = { helpers, stopGroups, expandedKey: null };
 const created = SandmanPortalDiff.insertRunRow(body, run, opts);
 const ctxRow = body.querySelector('tr.context-row[data-context-for="auto-select-1700000000000"]');
-if (!ctxRow) throw new Error('expected context row for auto-select run');
-const chip = ctxRow.querySelector('.context-chip');
-if (!chip) throw new Error('expected .context-chip in context row');
-const text = chip.textContent || '';
-if (!text.includes('Auto-select candidates: #1, #2, #3')) {
-  throw new Error('expected chip text "Auto-select candidates: #1, #2, #3", got ' + JSON.stringify(text));
+if (ctxRow) throw new Error('auto-select context row must not render once the candidates chip is dropped');
+for (const child of body.children) {
+  if (child.textContent && child.textContent.includes('Auto-select candidates:')) {
+    throw new Error('auto-select candidates text must not appear anywhere in the rendered DOM');
+  }
 }
 console.log('PASS');
 `
@@ -3567,10 +3560,7 @@ if (body.querySelector('tr.context-row[data-context-for="a"]')) throw new Error(
 SandmanPortalDiff.resetCounters();
 SandmanPortalDiff.updateRunRowCells(created.row, runOld, runNew, opts);
 const ctxRow = body.querySelector('tr.context-row[data-context-for="a"]');
-if (!ctxRow) throw new Error('expected context row added after reason change to auto-select');
-const chip = ctxRow.querySelector('.context-chip');
-if (!chip) throw new Error('expected context chip in context row');
-if (!chip.textContent.includes('Auto-select candidates: #42')) throw new Error('expected chip text auto-select candidates, got ' + chip.textContent);
+if (ctxRow) throw new Error('auto-select context row must not render after the candidates chip is dropped');
 if (wrap.children[0].textContent !== 'auto-select') throw new Error('expected name updated to auto-select');
 if (wrap.children[1].textContent.indexOf('r1') < 0) throw new Error('expected meta-line to retain run id');
 const runNew2 = Object.assign({}, runNew, { reason: '' });
@@ -3603,16 +3593,13 @@ if (created.row.querySelector('[data-cell="title"]').querySelector('.batch-membe
   throw new Error('batch-membership must not live inside the title cell for auto-select runs');
 }
 const ctxRow = body.querySelector('tr.context-row[data-context-for="a"]');
-if (!ctxRow) throw new Error('expected context row for auto-select');
-const chip = ctxRow.querySelector('.context-chip');
-if (!chip) throw new Error('expected context chip');
-if (!chip.textContent.includes('Auto-select candidates:')) throw new Error('expected auto-select candidates text');
+if (ctxRow) throw new Error('auto-select context row must not render once the candidates chip is dropped');
 console.log('PASS');
 `
 	runNodeScript(t, js)
 }
 
-func TestPortalDiffUpdateCells_ReasonChangeAddsAutoSelectContextRow(t *testing.T) {
+func TestPortalDiffUpdateCells_ReasonChangeOmitsAutoSelectContextRow(t *testing.T) {
 	js := `const body = makeMockBody();
 const runOld = { key: 'a', runId: 'r1', kind: 'completed', status: 'success', issueLabel: 'PR42' };
 const runNew = Object.assign({}, runOld, { reason: 'auto-select', candidates: [1, 2] });
@@ -3623,16 +3610,13 @@ if (body.querySelector('tr.context-row[data-context-for="a"]')) throw new Error(
 SandmanPortalDiff.resetCounters();
 SandmanPortalDiff.updateRunRowCells(created.row, runOld, runNew, opts);
 const after = body.querySelector('tr.context-row[data-context-for="a"]');
-if (!after) throw new Error('expected context row after update');
-const afterChip = after.querySelector('.context-chip');
-if (!afterChip) throw new Error('expected context chip after update');
-if (!afterChip.textContent.includes('Auto-select candidates:')) throw new Error('expected chip to switch to auto-select');
+if (after) throw new Error('auto-select context row must not render after the candidates chip is dropped');
 console.log('PASS');
 `
 	runNodeScript(t, js)
 }
 
-func TestPortalDiffDiffRuns_RendersAutoSelectChipFromPortalRunJSON(t *testing.T) {
+func TestPortalDiffDiffRuns_OmitsAutoSelectCandidatesContextRowFromPortalRunJSON(t *testing.T) {
 	// This test exercises the full JSON->DOM path the portal page uses
 	// for /api/runs: a portalRun-shaped JSON object (the wire format
 	// produced by the Go portalRunsView.compute pipeline and serialized
@@ -3651,18 +3635,21 @@ const stopGroups = new Set();
 const opts = { helpers, stopGroups, expandedKey: null };
 SandmanPortalDiff.diffRuns(body, runs, opts);
 
-if (body.children.length !== 4) throw new Error('expected 4 rows (3 data + 1 context), got ' + body.children.length);
+if (body.children.length !== 3) throw new Error('expected 3 data rows (no context row), got ' + body.children.length);
 
 const autoCtx = body.querySelector('tr.context-row[data-context-for="auto-select-1700000000000"]');
-if (!autoCtx) throw new Error('expected auto-select context row');
-const autoChip = autoCtx.querySelector('.context-chip');
-if (!autoChip) throw new Error('expected auto-select context chip');
-if (!autoChip.textContent.includes('Auto-select candidates: #1, #2, #3')) throw new Error('expected auto-select candidates text, got ' + autoChip.textContent);
+if (autoCtx) throw new Error('auto-select context row must not render once the candidates chip is dropped');
 
-  if (body.querySelector('tr.context-row[data-context-for="PR42"]')) throw new Error('expected no review context row');
+if (body.querySelector('tr.context-row[data-context-for="PR42"]')) throw new Error('expected no review context row');
 
 const issueCtx = body.querySelector('tr.context-row[data-context-for="a"]');
 if (issueCtx) throw new Error('issue row should not have context row');
+
+for (const child of body.children) {
+  if (child.textContent && child.textContent.includes('Auto-select candidates:')) {
+    throw new Error('auto-select candidates text must not appear anywhere in the rendered DOM');
+  }
+}
 console.log('PASS');
 `
 	runNodeScript(t, js)
@@ -3789,7 +3776,7 @@ console.log('PASS');
 	runNodeScript(t, js)
 }
 
-func TestPortalDiffCreateRunRow_SuppressesBatchRowWhenReasonIsAutoSelect(t *testing.T) {
+func TestPortalDiffCreateRunRow_SuppressesBatchAndContextRowWhenReasonIsAutoSelect(t *testing.T) {
 	js := `const body = makeMockBody();
 const run = { key: 'a', runId: 'r1', kind: 'completed', status: 'success', issueLabel: 'auto-select', candidates: [1, 2, 3], batchIssues: [1, 2, 3], reason: 'auto-select' };
 const stopGroups = new Set();
@@ -3797,10 +3784,7 @@ const opts = { helpers, stopGroups, expandedKey: null };
 const created = SandmanPortalDiff.insertRunRow(body, run, opts);
 if (body.querySelector('tr.batch-row[data-batch-for="a"]')) throw new Error('expected no batch-row for auto-select run with batchIssues');
 const ctx = body.querySelector('tr.context-row[data-context-for="a"]');
-if (!ctx) throw new Error('expected context-row for auto-select run');
-const chip = ctx.querySelector('.context-chip');
-if (!chip) throw new Error('expected context chip');
-if (!chip.textContent.includes('Auto-select candidates:')) throw new Error('expected auto-select text');
+if (ctx) throw new Error('auto-select context row must not render once the candidates chip is dropped');
 console.log('PASS');
 `
 	runNodeScript(t, js)
