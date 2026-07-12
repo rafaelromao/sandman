@@ -24,7 +24,7 @@ const DefaultCallTimeout = 30 * time.Second
 
 var blockedByPattern = regexp.MustCompile(`(?i)\b(?:blocked by|depends on|blocked-by)[:\s]+(?:\[#(\d+)\](?:\([^)]+\))?|#(\d+)\b)`)
 var blockedByHeadingPattern = regexp.MustCompile(`(?im)^\s*##\s+(?:blocked by|depends on|blocked-by)\s*$`)
-var bulletIssuePattern = regexp.MustCompile(`(?m)^\s*-\s*(?:\[#(\d+)\]|#(\d+)|\[(?:[^\]]*)\]\([^()]*?/issues/(\d+)\))`)
+var bulletIssuePattern = regexp.MustCompile(`(?m)^\s*(?:-\s*)?(?:\[#(\d+)\]|#(\d+)|\[(?:[^\]]*)\]\([^()]*?/issues/(\d+)\))\s*$`)
 var nextHeadingPattern = regexp.MustCompile(`(?m)^\s*##\s`)
 
 // execRunner abstracts os/exec for testability. The context is threaded
