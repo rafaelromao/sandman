@@ -2365,10 +2365,6 @@ func TestRunPromptOnlySingle_PrefixesOutputPromptOnlyWhenNotReview(t *testing.T)
 	}
 }
 
-func TestRunPromptOnlySingle_ReviewRunUsesBranchLogPath(t *testing.T) {
-	t.Skip("Skipping: review run log path uses new batch/run folder layout, SafeLogFilename removed")
-}
-
 func TestBatchStartGate_HonoursEffectiveParallel(t *testing.T) {
 	client := &fakeGitHubClient{
 		issues: map[int]*github.Issue{

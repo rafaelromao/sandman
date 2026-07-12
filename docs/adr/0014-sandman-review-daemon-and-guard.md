@@ -18,7 +18,7 @@ Sandman needs a PR review workflow: when someone posts `/sandman review [focus]`
 
 ### Two modes: daemon (default) and one-shot
 
-`sandman review` defaults to **daemon mode** - it polls the repo every 60 seconds for new PRs with `/sandman review` comments. PR numbers passed as positional arguments run in **one-shot mode** for manual or CI-driven review invocation. One-shot mode accepts bare numbers, closed ranges (`N:M`), and unbounded ranges (`N:`, `:M`).
+`sandman review` defaults to **daemon mode** - it polls the repo every 30 seconds for new PRs with `/sandman review` comments. PR numbers passed as positional arguments run in **one-shot mode** for manual or CI-driven review invocation. One-shot mode accepts bare numbers, closed ranges (`N:M`), and unbounded ranges (`N:`, `:M`).
 
 Rationale: the daemon enables the full automated workflow (AFK agent finishes work, posts `/sandman review`, daemon picks it up). The one-shot mode covers ad-hoc cases without running a background process.
 
@@ -114,7 +114,7 @@ A transient `gh pr comment` failure (network blip, rate limit, auth refresh) dur
 
 **Critical-path timing:** the launch goroutine holds the per-PR slot until `launchReview` returns, which now includes the full retry budget worst case (~31s). The busy semaphore (`busy=1`) has already been released when the goroutine launched, so the next `tick` runs unaffected and processes other PRs. The per-PR slot table (issue #1481 slice C) keeps the trigger from being re-launched while the post retries are in flight — `acquirePRSlot` returns false on the next tick for the same PR until the goroutine completes.
 
-**Operator escape:** a stuck pending entry (e.g. `gh` outage longer than 31s) can be cleared by removing `decision.md` from the run folder; the next tick observes the missing-decision.md condition via the S4 walker's stale-entry branch and falls through to the launch path. See `internal/review/daemon.go::tryRehydratePost` for the existing operator escape.
+**Operator escape:** a stuck pending entry (e.g. `gh` outage longer than 31s) can be cleared by removing `decision.md` from the per-row review worktree; the next tick observes the missing-decision.md condition via the S4 walker's stale-entry branch and falls through to the launch path. See `internal/review/daemon.go::tryRehydratePost` for the existing operator escape.
 
 **Why not longer backoff or more attempts?** 5 attempts × 16s = 31s, which already approaches the `PollingInterval` (30s). A larger budget would risk tripping the per-PR slot from being held past a tick boundary, complicating the launch path's invariants. The S4 rehydrate walker is the correct escape for sustained `gh` outages; the inline retry budget is sized for the typical transient case (single-digit second blips).
 

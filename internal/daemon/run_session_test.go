@@ -1,10 +1,11 @@
 package daemon
 
 import (
+	"bytes"
 	"errors"
+	"io/fs"
 	"net"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -321,28 +322,39 @@ func TestRunSession_Prepare_AppendsToBatchesIndex(t *testing.T) {
 // Go files because the batchindex tests legitimately construct Index
 // values directly to exercise the index schema.
 func TestRunSession_IdxAddOnlyCalledFromPrepare(t *testing.T) {
-	// Search from the repo root. The repo's layout is internal/ at the
-	// repo root; this test runs in a temp cwd (t.Chdir is used by
-	// sibling tests) so we resolve the repo root via the test's cwd
-	// plus the `internal/daemon` package's parent.
-	cmd := exec.Command("grep", "-rn", "--include=*.go", "--exclude=*_test.go",
-		"--exclude-dir=.sandman",
-		"--exclude-dir=worktrees",
-		"--exclude-dir=node_modules",
-		"--exclude-dir=.git",
-		`\.AddBatch(batchindex\.Batch{`, ".")
-	cmd.Dir = findRepoRoot(t)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("grep failed: %v\n%s", err, out)
-	}
-	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	// Walk the repo's own source tree (hermetic — no grep shell-out,
+	// no dependency on .worktrees/ or other sibling directories).
+	// Skip hidden dirs (.git, .worktrees, .sandman, etc.) and
+	// node_modules/vendor so only production .go files are scanned.
+	root := findRepoRoot(t)
+	pattern := []byte(".AddBatch(batchindex.Batch{")
 	var hits []string
-	for _, line := range lines {
-		if strings.TrimSpace(line) == "" {
-			continue
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
 		}
-		hits = append(hits, line)
+		if d.IsDir() {
+			name := d.Name()
+			if path != root && (strings.HasPrefix(name, ".") || name == "node_modules" || name == "vendor") {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		data, readErr := os.ReadFile(path)
+		if readErr != nil {
+			return readErr
+		}
+		if bytes.Contains(data, pattern) {
+			rel, _ := filepath.Rel(root, path)
+			hits = append(hits, rel)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk: %v", err)
 	}
 	if len(hits) != 1 {
 		t.Errorf("expected exactly 1 production idx.AddBatch site (daemon.RunSession.Prepare), got %d:\n%s", len(hits), strings.Join(hits, "\n"))

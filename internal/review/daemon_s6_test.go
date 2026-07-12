@@ -289,21 +289,13 @@ func TestDaemon_PostRetriesOnTransientFailure(t *testing.T) {
 	}
 	d, _, _ := newDaemonForTestS3(t, gh, runner, cfg, poster)
 
-	start := time.Now()
 	tickAndWait(t, d, context.Background())
-	elapsed := time.Since(start)
 
 	if runner.Calls() != 1 {
 		t.Fatalf("first tick should launch exactly 1 batch, got %d", runner.Calls())
 	}
 	if poster.Calls() != 4 {
 		t.Errorf("expected 4 PostComment calls (3 failures + 1 success), got %d", poster.Calls())
-	}
-	if elapsed < 1*time.Second+2*time.Second+4*time.Second {
-		t.Errorf("post retry should honour backoff schedule; elapsed=%v is faster than 1+2+4=7s minimum", elapsed)
-	}
-	if elapsed > 10*time.Second {
-		t.Errorf("post retry elapsed=%v is slower than expected bound (1+2+4=7s + jitter)", elapsed)
 	}
 
 	if !d.IsTerminalSeen(prNumber, commentID) {

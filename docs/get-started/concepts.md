@@ -44,7 +44,7 @@ A **PRD** (Product Requirements Document) is a GitHub issue whose body contains 
 
 ## Sandman Review
 
-The review daemon listens for `/sandman review` comments on open PRs and launches a reviewer AgentRun against each. The reviewer agent writes its body to `<runDir>/decision.md`; the daemon reads the file, strips every leading-slash `sandman` substring via `RedactBody` (so the bot's body cannot re-trigger itself), and posts the redacted body via `gh pr comment`. The trust boundary is the daemon transform, not the prompt.
+The review daemon listens for `/sandman review` comments on open PRs and launches a reviewer AgentRun against each. The reviewer agent writes its body to the review worktree's `decision.md`; the daemon reads the file, strips every leading-slash `sandman` substring via `RedactBody` (so the bot's body cannot re-trigger itself), and posts the redacted body via `gh pr comment`. The trust boundary is the daemon transform, not the prompt.
 
 ## Events as the source of truth
 

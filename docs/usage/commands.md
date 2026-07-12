@@ -216,7 +216,7 @@ Run a Sandman agent to review a pull request.
 sandman review [pr-numbers...]
 ```
 
-When one or more PR numbers are given as positional arguments, posts a single review comment for each PR and exits. With no arguments, starts the review daemon that polls open PRs every 60s for `/sandman review` comments and launches review agents.
+When one or more PR numbers are given as positional arguments, posts a single review comment for each PR and exits. With no arguments, starts the review daemon that polls open PRs every 30s for `/sandman review` comments and launches review agents.
 
 Examples:
 ```bash
@@ -228,7 +228,7 @@ sandman review :45
 sandman review 42 --agent opencode --model opencode/big-pickle
 ```
 
-The daemon's review path is **daemon-as-poster**: the reviewer agent writes its body to `<runDir>/decision.md`, and the daemon reads the file, runs it through the `RedactBody` redactor (`(?i)/sandman` → `sandman`) to strip every leading-slash `sandman` substring, and posts the redacted body via `gh pr comment`. The redactor is the load-bearing safety net for the no-self-loop invariant — it runs out-of-band of the LLM, so the bot's body can never contain the trigger substring regardless of what the prompt rule says. The `LooksLikeBotReviewBody` structural sniff is defence-in-depth: a body that structurally looks like a previous bot review is dropped before `ParseTrigger` runs.
+The daemon's review path is **daemon-as-poster**: the reviewer agent writes its body to the review worktree's `decision.md`, and the daemon reads the file, runs it through the `RedactBody` redactor (`(?i)/sandman` → `sandman`) to strip every leading-slash `sandman` substring, and posts the redacted body via `gh pr comment`. The redactor is the load-bearing safety net for the no-self-loop invariant — it runs out-of-band of the LLM, so the bot's body can never contain the trigger substring regardless of what the prompt rule says. The `LooksLikeBotReviewBody` structural sniff is defence-in-depth: a body that structurally looks like a previous bot review is dropped before `ParseTrigger` runs.
 
 | Flag | Default | Description |
 |------|---------|-------------|
@@ -237,7 +237,7 @@ The daemon's review path is **daemon-as-poster**: the reviewer agent writes its 
 | `--max-containers` | `0` | Maximum number of containers to run at once; `0` means no cap (unbounded pool) |
 | `--agent` | `""` | Override `default_review_agent` for this run |
 | `--model` | `""` | Override `default_review_model` for this run |
-| `--sandbox` | `"worktree"` | Sandbox mode for the review run |
+| `--sandbox` | `""` (config default: `podman`) | Sandbox mode for the review run |
 
 ## `sandman config`
 

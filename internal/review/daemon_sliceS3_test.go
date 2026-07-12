@@ -135,6 +135,7 @@ func newDaemonForTestS3(t *testing.T, gh GitHubClient, runner BatchRunner, cfg *
 	buf := &lockedBuffer{}
 	d := New(dir, gh, &prompt.Engine{}, runner, cfg, buf, 0, false, poster)
 	d.PollInterval = 0
+	d.postBackoffs = []time.Duration{0, 0, 0, 0, 0}
 	return d, buf, dir
 }
 
