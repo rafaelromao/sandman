@@ -543,6 +543,16 @@ func TestParseBlockedBy(t *testing.T) {
 			want: []int{382, 60},
 		},
 		{
+			name: "heading plain-link line extracts numbers",
+			body: "## Blocked by\n\n[Ephemeral PostgreSQL database with per-test reset](https://github.com/rafaelromao/slotmerge/issues/65)\n",
+			want: []int{65},
+		},
+		{
+			name: "heading plain-link line mixes with existing bullet forms",
+			body: "## Blocked by\n\n[Mock email delivery adapter records sends, delivery state, and retries](https://github.com/rafaelromao/slotmerge/issues/66)\n- #65\n- [#67](https://github.com/rafaelromao/slotmerge/issues/67)\n",
+			want: []int{66, 65, 67},
+		},
+		{
 			name: "heading with multiple bullets",
 			body: "## Blocked by\n- #1\n- #2\n- #3",
 			want: []int{1, 2, 3},
