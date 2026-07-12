@@ -229,6 +229,7 @@ func newDaemonForTest(t *testing.T, gh GitHubClient, runner BatchRunner, cfg *co
 	buf := &lockedBuffer{}
 	d := New(dir, gh, &prompt.Engine{}, runner, cfg, buf, 0, false, nil)
 	d.PollInterval = 0
+	d.postBackoffs = []time.Duration{0, 0, 0, 0, 0}
 	return d, buf, dir
 }
 
@@ -241,11 +242,7 @@ func tickAndWait(t *testing.T, d *Daemon, ctx context.Context) {
 	if err := d.tick(ctx); err != nil {
 		t.Fatalf("tick: %v", err)
 	}
-	// WaitForIdle bounds the in-flight review goroutines. The launch
-	// goroutine holds the per-PR slot until launchReview returns, which
-	// for a post-failure path includes the full PostStepMaxAttempts ×
-	// postStepBackoffs worst-case window (~31s). Issue #1891.
-	idleCtx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	idleCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := d.WaitForIdle(idleCtx); err != nil {
 		t.Fatalf("WaitForIdle: %v", err)
@@ -259,6 +256,7 @@ func newDaemonForTestWithParallel(t *testing.T, gh GitHubClient, runner BatchRun
 	buf := &lockedBuffer{}
 	d := New(dir, gh, &prompt.Engine{}, runner, cfg, buf, parallel, parallelSet, nil)
 	d.PollInterval = 0
+	d.postBackoffs = []time.Duration{0, 0, 0, 0, 0}
 	return d, buf, dir
 }
 
@@ -2139,47 +2137,6 @@ func TestDaemon_LaunchReviewRoutesOutputToPerPRSock(t *testing.T) {
 	if capturedRunDir == "" {
 		t.Error("RunDir should not be empty")
 	}
-}
-
-// TestDaemon_VerifyReviewPosted_FailsWhenNoNewComments has been
-// refactored into TestDaemon_PromotePendingComment_ReturnsErrorWhenMissing
-// in daemon_sliceD_test.go (issue #1482 slice D): the synchronous
-// verifyReviewPosted primitive was removed in favor of lazy verify.
-// The negative-case assertion (no review comment found) is preserved
-// at the same line count in the new test.
-func TestDaemon_VerifyReviewPosted_FailsWhenNoNewComments(t *testing.T) {
-	t.Skip("refactored into TestDaemon_PromotePendingComment_ReturnsErrorWhenMissing (slice D)")
-}
-
-// TestDaemon_VerifyReviewPosted_PassesWhenNewCommentFound has been
-// refactored into TestDaemon_PromotePendingComment_ReturnsSuccessWhenReviewFound
-// in daemon_sliceD_test.go (issue #1482 slice D): the synchronous
-// verifyReviewPosted primitive was removed in favor of lazy verify.
-// The positive-case assertion (review comment found) is preserved at
-// the same line count in the new test.
-func TestDaemon_VerifyReviewPosted_PassesWhenNewCommentFound(t *testing.T) {
-	t.Skip("refactored into TestDaemon_PromotePendingComment_ReturnsSuccessWhenReviewFound (slice D)")
-}
-
-// TestDaemon_LaunchReviewFailsWhenVerificationFails has been
-// refactored into TestDaemon_LaunchReviewReturnsFastAndRecordsPending
-// and TestDaemon_NextTickRejectsPendingCommentToFailureAfterBound in
-// daemon_sliceD_test.go (issue #1482 slice D): the synchronous
-// verify-on-error path was removed in favor of the bounded lazy
-// promote/fail path. The trigger-comment-not-marked-seen assertion is
-// preserved at the corresponding test site.
-func TestDaemon_LaunchReviewFailsWhenVerificationFails(t *testing.T) {
-	t.Skip("refactored into TestDaemon_NextTickRejectsPendingCommentToFailureAfterBound (slice D)")
-}
-
-// TestDaemon_LaunchReviewSucceedsWhenVerificationPasses has been
-// refactored into TestDaemon_LaunchReviewReturnsFastAndRecordsPending
-// and TestDaemon_NextTickPromotesPendingCommentToSuccess in
-// daemon_sliceD_test.go (issue #1482 slice D): under the new contract
-// launchReview always succeeds as long as RunBatch returns; the
-// lazy-verify promotion is the consumer of the review comment.
-func TestDaemon_LaunchReviewSucceedsWhenVerificationPasses(t *testing.T) {
-	t.Skip("refactored into TestDaemon_LaunchReviewReturnsFastAndRecordsPending + TestDaemon_NextTickPromotesPendingCommentToSuccess (slice D)")
 }
 
 // TestDaemon_TickFailingReviewRecordsFailure verifies that when a review

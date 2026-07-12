@@ -43,7 +43,7 @@ Today the boundary is OpenCode for source control and issues (via `gh`) and Open
 
 ## Sandman Review
 
-Sandman Review is the local review module for PR feedback. The idea mirrors OpenCode's GitHub `/oc` integration: a PR comment triggers agent work. In Sandman the trigger is `/sandman review` and the review runs locally — the agent posts its body to `<runDir>/decision.md`, the daemon reads the file, runs the `RedactBody` redactor over it, and posts the redacted comment via `gh pr comment`. The trust boundary is the daemon transform, not the prompt rule.
+Sandman Review is the local review module for PR feedback. The idea mirrors OpenCode's GitHub `/oc` integration: a PR comment triggers agent work. In Sandman the trigger is `/sandman review` and the review runs locally — the agent posts its body to the review worktree's `decision.md`, the daemon reads the file, runs the `RedactBody` redactor over it, and posts the redacted comment via `gh pr comment`. The trust boundary is the daemon transform, not the prompt rule.
 
 ## The category is "AFK delivery system," not "AI coding assistant"
 

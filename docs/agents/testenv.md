@@ -50,7 +50,7 @@ includes nested directories.
 
 The Unix `sun_path` limit is 108 chars on Linux and 104 on macOS.
 Tests that bind a socket from a `t.TempDir()`-rooted directory get
-runtime errors on macOS, and historically the workaround has been to
+runtime errors on macOS, and the workaround is to
 add `if runtime.GOOS != "linux" { t.Skip(...) }` guards — skipping
 ~109 tests on the macOS build of the matrix.
 
@@ -78,10 +78,10 @@ gate rather than `runtime.GOOS != "linux"`:
 
 The stranded worktree detector's macOS `--force` semantics are
 intentionally out of scope for `MkdirShort`-based migration
-(tracked by issue #1736 in `internal/cmd/stranded_test.go` and the
+(tracked in `internal/cmd/stranded_test.go` and the
 `skipIfNotStrandedSupported` helper in `internal/sandbox/stranded_test.go`).
 The skip itself stays until the detector is re-implemented; the
-tracker string now points at #1736 instead of "follow-up work".
+tracker string names the tracking file instead of "follow-up work".
 
 ## SANDMAN canonical env vars
 

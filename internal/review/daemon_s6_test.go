@@ -289,21 +289,13 @@ func TestDaemon_PostRetriesOnTransientFailure(t *testing.T) {
 	}
 	d, _, _ := newDaemonForTestS3(t, gh, runner, cfg, poster)
 
-	start := time.Now()
 	tickAndWait(t, d, context.Background())
-	elapsed := time.Since(start)
 
 	if runner.Calls() != 1 {
 		t.Fatalf("first tick should launch exactly 1 batch, got %d", runner.Calls())
 	}
 	if poster.Calls() != 4 {
 		t.Errorf("expected 4 PostComment calls (3 failures + 1 success), got %d", poster.Calls())
-	}
-	if elapsed < 1*time.Second+2*time.Second+4*time.Second {
-		t.Errorf("post retry should honour backoff schedule; elapsed=%v is faster than 1+2+4=7s minimum", elapsed)
-	}
-	if elapsed > 10*time.Second {
-		t.Errorf("post retry elapsed=%v is slower than expected bound (1+2+4=7s + jitter)", elapsed)
 	}
 
 	if !d.IsTerminalSeen(prNumber, commentID) {
@@ -515,5 +507,23 @@ func TestDaemon_PostRetry_CtxCancelStopsRetrying(t *testing.T) {
 
 	if d.IsTerminalSeen(prNumber, commentID) {
 		t.Errorf("seenCache must NOT mark terminal-seen on ctx cancel (issue #1846), got cache %+v", d.seenCache)
+	}
+}
+
+// TestDaemon_ProductionPostBackoffs_SchedulePins verifies the real
+// production backoff schedule (used when d.postBackoffs is not set)
+// matches the 1s/2s/4s/8s/16s contract from issue #1891 without
+// actually sleeping through it.
+func TestDaemon_ProductionPostBackoffs_SchedulePins(t *testing.T) {
+	d := &Daemon{}
+	got := d.effectivePostBackoffs()
+	if len(got) != PostStepMaxAttempts {
+		t.Fatalf("expected %d backoff durations, got %d", PostStepMaxAttempts, len(got))
+	}
+	want := []time.Duration{1 * time.Second, 2 * time.Second, 4 * time.Second, 8 * time.Second, 16 * time.Second}
+	for i, w := range want {
+		if got[i] != w {
+			t.Errorf("backoff[%d] = %v, want %v", i, got[i], w)
+		}
 	}
 }

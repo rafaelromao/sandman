@@ -651,7 +651,10 @@ func TestDefaultPRReviewPrompt_ContainsRequiredKeys(t *testing.T) {
 		t.Error("review prompt must instruct agent to read the diff via gh pr diff with PR_NUMBER")
 	}
 	if strings.Contains(prompt, "gh pr comment {{PR_NUMBER}} --body") {
-		t.Error("review prompt must NOT instruct the agent to post via `gh pr comment {{PR_NUMBER}} --body`; the agent writes <RUN_DIR>/decision.md and the daemon posts (issue #1845)")
+		t.Error("review prompt must NOT instruct the agent to post via `gh pr comment {{PR_NUMBER}} --body`; the agent writes {{RUN_DIR}}/decision.md and the daemon posts (issue #1845)")
+	}
+	if strings.Contains(prompt, "<RUN_DIR>") {
+		t.Error("review prompt must not contain literal `<RUN_DIR>` — use `{{RUN_DIR}}` so the renderer substitutes the actual path")
 	}
 	required := []string{
 		"## Posting the Review",
@@ -694,8 +697,8 @@ func TestDefaultPRReviewPrompt_AFKRuleIsDecisionMdWrite(t *testing.T) {
 	}
 	prompt := string(data)
 
-	if !strings.Contains(prompt, "Write `<RUN_DIR>/decision.md`, then exit.") {
-		t.Error("default PR review prompt's AFK Rule must be `Write <RUN_DIR>/decision.md, then exit.` (issue #1845)")
+	if !strings.Contains(prompt, "Write `{{RUN_DIR}}/decision.md`, then exit.") {
+		t.Error("default PR review prompt's AFK Rule must be `Write {{RUN_DIR}}/decision.md, then exit.` (issue #1845)")
 	}
 	if strings.Contains(prompt, "Produce the comment, post it, and exit.") {
 		t.Error("default PR review prompt must not retain the old AFK Rule `Produce the comment, post it, and exit.` (issue #1845)")
@@ -837,6 +840,16 @@ func TestApplyPRSubstitutions_RunDirSubstituted(t *testing.T) {
 	want := "RunDir: /abs/path/to/run"
 	if got != want {
 		t.Errorf("got: %q, want: %q", got, want)
+	}
+}
+
+func TestApplyPRSubstitutions_DefaultReviewPromptHasNoRawRunDirToken(t *testing.T) {
+	rendered := ApplyPRSubstitutions(DefaultPRReviewPrompt(), PRData{RunDir: "/abs/path/to/worktree"})
+	if strings.Contains(rendered, "<RUN_DIR>") {
+		t.Errorf("rendered review prompt must not contain literal `<RUN_DIR>` after substitution, got it in:\n%s", rendered)
+	}
+	if !strings.Contains(rendered, "/abs/path/to/worktree/decision.md") {
+		t.Errorf("rendered review prompt must contain the substituted run dir path in decision.md instructions")
 	}
 }
 

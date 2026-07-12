@@ -38,7 +38,7 @@ When the server starts, it prints the URL to open in your browser.
 - Live Sandman instances in the current repository
 - Active and completed runs from `.sandman/events.jsonl`
 
-The runs table displays these columns: **Run**, **Status**, **Started**, **Duration**, **Issue Title**, **Branch**, and **Actions**. The Issue Title column shows the GitHub issue title for runs with that data available, or an em-dash for historical or prompt-only runs. Source information (socket and log file paths) remains visible in the Details tab when expanding a run.
+The runs table displays these columns: **Run**, **Status**, **Started**, **Duration**, **Issue Title**, **Branch**, and **Actions**. The Issue Title column shows the GitHub issue title for runs with that data available, or an em-dash for prompt-only runs. Source information (socket and log file paths) remains visible in the Details tab when expanding a run.
 
 The portal rescans the repository on each poll, so new `sandman run` processes appear without restarting it.
 
@@ -60,9 +60,9 @@ The portal surfaces two distinct identifiers (per-row RunID shapes are pinned by
 
 For multi-issue batches the two diverge: the public BatchId carries the `+N` additional count suffix and the per-row RunID does not. For every other kind (single-issue, prompt-only, review) the two are identical.
 
-### Existing `.sandman` migration is out of scope
+### Batch and Run identity
 
-Existing `.sandman` migration is out of scope. The portal continues to read legacy `.sandman/` layouts for compatibility, but new installs and tooling use the public BatchId / per-row RunID contract defined above.
+The portal reads the public BatchId / per-row RunID contract defined above.
 
 ### Continuation history
 

@@ -30,7 +30,7 @@ The marker lives in the PR body, not the README or the commit message, so users 
 
 When the badge sidecar successfully creates the PR, it writes an empty sentinel file at `.sandman/state/.built_with_sandman` (atomically, via temp-file + rename). The post-batch hook only checks for this file **after** the marker-comment query has returned no result: if the marker is absent and the file is present, the hook trusts the file as an optimistic fast-path signal and exits silently without re-running the expensive PR scan.
 
-The file is gitignored (it lives under `.sandman/state/`), is per-checkout, and is intentionally empty — its mere existence is the signal that the badge sidecar has previously created the marker-bearing PR in this checkout. Removing it is safe: the next batch just pays the marker-comment query cost once and the sidecar re-writes the file if the marker is still found on a fresh scan. The control file is never consulted on its own — it is always subordinate to the marker-comment result.
+The file is gitignored (it lives under `.sandman/state/`), is per-checkout, and is intentionally empty — its mere existence is the signal that the badge sidecar has created the marker-bearing PR in this checkout. Removing it is safe: the next batch just pays the marker-comment query cost once and the sidecar re-writes the file if the marker is still found on a fresh scan. The control file is never consulted on its own — it is always subordinate to the marker-comment result.
 
 ## How to opt out
 

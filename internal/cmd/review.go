@@ -31,7 +31,7 @@ var reviewDaemonRunner = runReviewDaemon
 // are provided as positional args the command runs in one-shot mode
 // (post a single review comment for each PR and exit). When no args
 // are provided, the command starts the review daemon: it polls open
-// PRs every 60s for `/sandman review` comments and launches review
+// PRs every 30s for `/sandman review` comments and launches review
 // agents up to parallel_reviews at a time. The daemon writes log lines to .sandman/review.sock
 // (exposed via `sandman attach`) and shuts down cleanly on SIGINT/SIGTERM.
 func NewReviewCmd(deps Dependencies) *cobra.Command {
@@ -40,7 +40,7 @@ func NewReviewCmd(deps Dependencies) *cobra.Command {
 		Short: "Run a Sandman agent to review a pull request",
 		Long: "Run a Sandman agent to review a pull request. With PR numbers as positional " +
 			"args, posts a single review comment for each and exits. Without args, starts " +
-			"the review daemon that polls open PRs every 60s for /sandman review comments " +
+			"the review daemon that polls open PRs every 30s for /sandman review comments " +
 			"and launches review agents.",
 		Example: `  sandman review 42
   sandman review 42 43

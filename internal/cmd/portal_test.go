@@ -2188,10 +2188,6 @@ func TestPortal_ReviewRunLifecycle(t *testing.T) {
 		}
 	})
 
-	t.Run("active review uses saved log when live output is empty", func(t *testing.T) {
-		t.Skip("Skipping: review run log handling with new batch/run folder layout needs redesign")
-	})
-
 	t.Run("event log only keeps review metadata", func(t *testing.T) {
 		repoRoot := t.TempDir()
 		if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {

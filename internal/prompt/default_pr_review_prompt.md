@@ -121,15 +121,15 @@ Before performing the review, ensure the PR is in a healthy state:
 
 ## Posting the Review
 
-Write your review body to `<RUN_DIR>/decision.md` and exit. The daemon reads that file, applies daemon-side redaction, and posts the result to the PR; you do not call `gh pr comment` yourself.
+Write your review body to `{{RUN_DIR}}/decision.md` and exit. The daemon reads that file, applies daemon-side redaction, and posts the result to the PR; you do not call `gh pr comment` yourself.
 
 Use an atomic write so a torn write never produces a half-posted review body:
 
 ```bash
-cat > "<RUN_DIR>/decision.md.tmp" <<'EOF'
+cat > "{{RUN_DIR}}/decision.md.tmp" <<'EOF'
 <full review body in Markdown>
 EOF
-mv "<RUN_DIR>/decision.md.tmp" "<RUN_DIR>/decision.md"
+mv "{{RUN_DIR}}/decision.md.tmp" "{{RUN_DIR}}/decision.md"
 ```
 
 This is the standard atomic-rename pattern (write to a temp file, then `os.Rename` the temp to the canonical path) used throughout Sandman for `run.json`, `review-state.json`, and other per-run artefacts. The daemon treats the file's presence (after the atomic rename) as "review is ready to post". If the rename fails for any reason, surface the error and exit non-zero so the daemon can record a failure.
@@ -147,7 +147,7 @@ Keep the body terse and actionable. Do not invoke `gh pr comment` from this prom
 
 ## AFK Rule
 
-This is an Away From Keyboard workflow. Do not ask the user for approval, confirmation, or decisions during execution. Write `<RUN_DIR>/decision.md`, then exit.
+This is an Away From Keyboard workflow. Do not ask the user for approval, confirmation, or decisions during execution. Write `{{RUN_DIR}}/decision.md`, then exit.
 
 ## Search Scope Restriction
 

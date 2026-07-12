@@ -41,9 +41,9 @@ Sandman writes structured events to `.sandman/events.jsonl` in newline-delimited
 
 The `run_id` (per-row RunID) and the `payload.batch_id` (public BatchId) identify different things. For multi-issue batches the two diverge — the public BatchId carries the `+N` additional count suffix and the per-row RunID does not. For every other kind (single-issue, prompt-only, review) the two are identical.
 
-## Existing `.sandman` migration is out of scope
+## Canonical identifiers
 
-Existing `.sandman` migration is out of scope. The event log continues to read legacy `.sandman/` layouts for compatibility, but new tooling treats `batch_id` (public BatchId) and `run_id` (per-row RunID) as the canonical identifiers.
+`batch_id` (public BatchId) and `run_id` (per-row RunID) are the canonical identifiers throughout the event log.
 
 ### Event payloads
 
@@ -121,8 +121,6 @@ Payload shape depends on the abort path:
 
 - **Active run cancelled** (same as `run.finished`): `status`, `branch`, `base_branch`, `worktree_state`, `retries_total`, `retries_done` with `status: aborted`.
 - **Queued/blocked run cancelled or cascaded**: minimal payload — `status: aborted`, plus optional `aborted_by` listing the upstream blocker(s) for the cascade case.
-
-Legacy `run.cancelled` events in older `events.jsonl` files project to the same `aborted` status.
 
 ## Run logs
 

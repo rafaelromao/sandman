@@ -163,6 +163,13 @@ type Daemon struct {
 	pendingPostMu sync.Mutex
 	pendingPost   map[int]map[string]pendingPostEntry
 	inFlight      sync.WaitGroup
+	// postBackoffs is the per-attempt sleep schedule used by
+	// postWithRetry. It defaults to the package-level
+	// postStepBackoffs when nil; tests inject a zero-length slice
+	// (or all-zero durations) so the retry loop completes in
+	// milliseconds instead of sleeping through the real 31s
+	// budget.
+	postBackoffs []time.Duration
 }
 
 // New returns a Daemon configured with the project defaults for the
@@ -1560,7 +1567,7 @@ func postWithRetry(ctx context.Context, d *Daemon, prNumber int, body string) er
 				return cerr
 			}
 			if attempt < PostStepMaxAttempts {
-				backoff := postStepBackoffs[attempt-1]
+				backoff := d.effectivePostBackoffs()[attempt-1]
 				d.logf("PR #%d: post attempt %d/%d failed: %v; retrying in %v", prNumber, attempt, PostStepMaxAttempts, err, backoff)
 				select {
 				case <-time.After(backoff):
@@ -1577,6 +1584,19 @@ func postWithRetry(ctx context.Context, d *Daemon, prNumber int, body string) er
 		return nil
 	}
 	return lastErr
+}
+
+// effectivePostBackoffs returns the backoff schedule used by
+// postWithRetry. When d.postBackoffs is set (by tests), it wins;
+// otherwise the package-level postStepBackoffs is used (production).
+// Tests that want zero-cost retries must set a non-nil, non-empty
+// slice (e.g. []time.Duration{0,0,0,0,0}) — a nil or empty slice
+// falls back to the real 31s schedule.
+func (d *Daemon) effectivePostBackoffs() []time.Duration {
+	if len(d.postBackoffs) > 0 {
+		return d.postBackoffs
+	}
+	return postStepBackoffs
 }
 
 // registerPendingPost registers (prNumber, commentID) in the

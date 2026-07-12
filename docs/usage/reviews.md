@@ -82,7 +82,7 @@ sandman review \
 
 ## Review output
 
-The review agent writes its response to the run's `decision.md`. The daemon reads that file, removes self-triggering review-command text, and posts the final body as a pull-request comment.
+The review agent writes its response to the review worktree's `decision.md`. The daemon reads that file, removes self-triggering review-command text, and posts the final body as a pull-request comment.
 
 Review runs appear in:
 
