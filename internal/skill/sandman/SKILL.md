@@ -28,10 +28,7 @@ sandman pr-merge
 - `pr-review` -> `sandman-pr-review`
 - `back-merge` -> `sandman-back-merge`
 - `pr-merge` -> `sandman-pr-merge`
-- `index` -> `sandman-index` (non-discoverable; load manually for codeindex guidance)
 
 ## Use
 
 Load the matching subskill for the requested mode and follow it end to end.
-
-For code discovery, load the `sandman-index` sub-skill for codeindex command reference, query refinement, and read discipline.
