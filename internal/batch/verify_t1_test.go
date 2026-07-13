@@ -37,9 +37,6 @@ func TestVerifyACTraceability_AllPassProducesVerified(t *testing.T) {
 	}
 }
 
-// verifySandbox is a per-call scripted sandbox used for retry tests. It
-// returns stdouts[attempt%len] and errs[attempt%len] for each Exec call,
-// allowing tests to vary output across attempts.
 type verifySandbox struct {
 	mu      sync.Mutex
 	stdouts []string
@@ -81,7 +78,6 @@ func (s *verifySandbox) SetOverride(override bool)                              
 func (s *verifySandbox) SetStrandedReconcile(enabled bool)                         {}
 func (s *verifySandbox) SetGitIdentity(name, email string)                         {}
 
-// Ensure verifySandbox satisfies sandbox.Sandbox.
 var _ sandbox.Sandbox = (*verifySandbox)(nil)
 
 func TestVerifyACTraceability_OneFailProducesFailed(t *testing.T) {
