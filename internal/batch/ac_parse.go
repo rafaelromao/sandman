@@ -16,7 +16,7 @@ var (
 	acSectionPattern = regexp.MustCompile(`(?im)^##\s+Acceptance criteria\s*$`)
 	nextSectionRe    = regexp.MustCompile(`(?m)^\s*##\s`)
 	goTestRunRe      = regexp.MustCompile(`(?m)^\s*-\s\[\s\]\s+(.+?)\s*$`)
-	runFlagRe        = regexp.MustCompile(`-run\s+(\S+)`)
+	runFlagRe        = regexp.MustCompile(`(?:^|\s)-run\s+(\S+)`)
 	packageRe        = regexp.MustCompile(`\./[A-Za-z0-9_\-/.]+`)
 )
 

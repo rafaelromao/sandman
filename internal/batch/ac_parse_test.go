@@ -73,3 +73,15 @@ func TestExtractAcceptanceCriteria_DropsCheckedAndMalformedLines(t *testing.T) {
 		t.Fatalf("expected nil for all-malformed section, got %v", got)
 	}
 }
+
+func TestExtractAcceptanceCriteria_RunFlagNotMatchedInsideOtherToken(t *testing.T) {
+	t.Parallel()
+	body := "## Acceptance criteria\n\n- [ ] `go test ./internal/foo-run TestBar/... -run TestFoo ./internal/batch/...`\n"
+	got := ExtractAcceptanceCriteria(body)
+	if len(got) != 1 {
+		t.Fatalf("expected 1 GoTestRun, got %d", len(got))
+	}
+	if got[0].TestName != "TestFoo" {
+		t.Errorf("TestName = %q, want TestFoo (must not match the substring inside 'foo-run')", got[0].TestName)
+	}
+}
