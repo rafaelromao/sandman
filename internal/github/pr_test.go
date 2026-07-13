@@ -48,3 +48,27 @@ func TestPR_LinkedIssueNumber_NativeTakesPrecedence(t *testing.T) {
 		t.Errorf("LinkedIssueNumber() = %d, want 99 (native should take precedence over body)", got)
 	}
 }
+
+// TestPR_ReviewFieldsRoundTrip verifies the slice-1 PR struct extension:
+// the three new fields (ReviewDecision, MergeStateStatus, StatusCheckRollup)
+// survive construction so the T4 cheap-gate oracle can read them off the
+// existing FindPRByBranch result without re-fetching.
+func TestPR_ReviewFieldsRoundTrip(t *testing.T) {
+	pr := PR{
+		Number:            17,
+		State:             "open",
+		HeadRefName:       "issue-2165/spec",
+		ReviewDecision:    "APPROVED",
+		MergeStateStatus:  "CLEAN",
+		StatusCheckRollup: "success",
+	}
+	if pr.ReviewDecision != "APPROVED" {
+		t.Errorf("ReviewDecision = %q, want APPROVED", pr.ReviewDecision)
+	}
+	if pr.MergeStateStatus != "CLEAN" {
+		t.Errorf("MergeStateStatus = %q, want CLEAN", pr.MergeStateStatus)
+	}
+	if pr.StatusCheckRollup != "success" {
+		t.Errorf("StatusCheckRollup = %q, want success", pr.StatusCheckRollup)
+	}
+}

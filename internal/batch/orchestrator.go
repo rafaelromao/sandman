@@ -309,6 +309,13 @@ type Orchestrator struct {
 	// injected behaviour.
 	runSessionOpts runSessionOptions
 
+	// verifyPath is the four-oracle chain invoked by the alreadyResolved
+	// short-circuit in runOnce. Production code leaves it nil; the
+	// orchestrator builds a default chain (T2 / T4 / T1 / T3) when
+	// verifyPath is unset. Tests inject a VerifyPathFunc to drive
+	// outcomes without touching real git or GitHub.
+	verifyPath VerifyPathFunc
+
 	issueCancelsMu sync.Mutex
 	issueCancels   map[int]context.CancelFunc
 
@@ -1985,6 +1992,65 @@ func (s *runSession) detectConflictingPR(branch string) (map[string]any, bool) {
 	return nil, false
 }
 
+// runVerifyPath is the seam the orchestrator uses to invoke the
+// four-oracle chain. Production code uses DefaultVerifyPath; tests
+// inject a VerifyPathFunc literal to drive outcomes without touching
+// real git or GitHub.
+func (o *Orchestrator) runVerifyPath(ctx context.Context, in VerifyInput) (VerifyOutcome, []OracleCheck) {
+	if o == nil {
+		return RunVerifyPath(in)
+	}
+	if o.verifyPath != nil {
+		return o.verifyPath(in)
+	}
+	return DefaultVerifyPath()(in)
+}
+
+// mergeVerificationExtras folds a verify outcome into the terminal
+// event payload. The keys are `verification.outcome` and
+// `verification.checks`; the function never overwrites an existing
+// `blocker` (the conservative-backstop payload takes precedence
+// because it is more specific). When called twice — once with
+// partial oracle checks and again with the conservative backstop —
+// the second call wins on `blocker` while preserving the
+// `verification` payload.
+func mergeVerificationExtras(existing map[string]any, outcome VerifyOutcome, checks []OracleCheck) map[string]any {
+	if len(checks) == 0 {
+		return existing
+	}
+	out := map[string]any{}
+	for k, v := range existing {
+		out[k] = v
+	}
+	outcomeStr := "NoSignal"
+	switch outcome {
+	case VerifyVerified:
+		outcomeStr = "Verified"
+	case VerifyFailed:
+		outcomeStr = "Failed"
+	}
+	verification := map[string]any{
+		"outcome": outcomeStr,
+		"checks":  oracleChecksToAny(checks),
+	}
+	out["verification"] = verification
+	return out
+}
+
+func oracleChecksToAny(checks []OracleCheck) []any {
+	out := make([]any, 0, len(checks))
+	for _, c := range checks {
+		entry := map[string]any{
+			"name": c.Name,
+		}
+		for k, v := range c.Details {
+			entry[k] = v
+		}
+		out = append(out, entry)
+	}
+	return out
+}
+
 // hasBlockingOpenPR returns true when the branch currently has an open PR
 // AND the run is being short-circuited to success via the `alreadyResolved`
 // marker. On hit, it returns a payload extras map with
@@ -2136,8 +2202,38 @@ func (s *runSession) runOnce(
 					break
 				}
 				if alreadyResolved {
+					outcome, checks := o.runVerifyPath(ctx, VerifyInput{Context: ctx, Issue: issue, Branch: branch, WorkDir: wt.WorkDir()})
+					if outcome != VerifyNoSignal {
+						terminalExtras = mergeVerificationExtras(terminalExtras, outcome, checks)
+						if outcome == VerifyFailed {
+							result.Status = "failure"
+							break
+						}
+						// VerifyVerified: drop the conservative backstop;
+						// the oracle proved the issue is already resolved.
+						result.Status = "success"
+						if issue != nil && !github.IsIssueClosed(issue) && o.githubClient != nil {
+							if err := o.githubClient.CloseIssue(ctx, issue.Number, "Closed by sandman — issue already completed."); err != nil {
+								fmt.Fprintf(o.errorLog, "error: close issue %d: %v\n", issue.Number, err)
+							}
+						}
+						break
+					}
+					// VerifyNoSignal: record the chain's checks (if any)
+					// so the operator can see why we abstained, then
+					// fall through to the conservative backstop. The
+					// blocker payload and pr_number fields are
+					// preserved verbatim.
+					if len(checks) > 0 {
+						terminalExtras = mergeVerificationExtras(terminalExtras, outcome, checks)
+					}
 					if extras, blocked := hasBlockingOpenPR(o, branch); blocked {
-						terminalExtras = extras
+						if terminalExtras == nil {
+							terminalExtras = map[string]any{}
+						}
+						for k, v := range extras {
+							terminalExtras[k] = v
+						}
 						result.Status = "failure"
 						break
 					}
@@ -2167,8 +2263,26 @@ func (s *runSession) runOnce(
 					prMerged := checkPRMerged(ctx, o.githubClient, branch)
 					if prMerged || alreadyResolved {
 						if alreadyResolved {
+							outcome, checks := o.runVerifyPath(ctx, VerifyInput{Context: ctx, Issue: issue, Branch: branch, WorkDir: wt.WorkDir()})
+							if outcome != VerifyNoSignal {
+								terminalExtras = mergeVerificationExtras(terminalExtras, outcome, checks)
+								if outcome == VerifyFailed {
+									result.Status = "failure"
+									break
+								}
+								result.Status = "success"
+								break
+							}
+							if len(checks) > 0 {
+								terminalExtras = mergeVerificationExtras(terminalExtras, outcome, checks)
+							}
 							if extras, blocked := hasBlockingOpenPR(o, branch); blocked {
-								terminalExtras = extras
+								if terminalExtras == nil {
+									terminalExtras = map[string]any{}
+								}
+								for k, v := range extras {
+									terminalExtras[k] = v
+								}
 								result.Status = "failure"
 								break
 							}
