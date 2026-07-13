@@ -43,14 +43,47 @@ func (r *SpecificationResolver) IsSpecification(body string) bool {
 	return true
 }
 
+// HasChildren reports whether the issue identified by `number` has at least one child
+// reference discovered in its comment bodies. It is the lazy probe that complements
+// IsSpecification for the broadened detector: callers that find IsSpecification(body) false
+// can use HasChildren to decide whether to expand the input anyway.
+//
+// HasChildren only scans comment bodies; body-shape references are discovered later in
+// the expanded path via collectCandidates. The cached GitHub client memoises
+// ListIssueComments per (run, number), so a re-entry on the same number within one run
+// pays zero additional REST requests.
+func (r *SpecificationResolver) HasChildren(ctx context.Context, number int) (bool, error) {
+	comments, err := r.client.ListIssueComments(ctx, number)
+	if err != nil {
+		return false, fmt.Errorf("list comments for #%d: %w", number, err)
+	}
+	for _, c := range comments {
+		for _, n := range ExtractIssueReferences(c.Body) {
+			if n != 0 {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
+}
+
 // Resolve is the entry point for Specification expansion. It walks the input list
 // and replaces each Specification with its accepted child issues, removing the Specification
 // itself and deduplicating across Specifications and explicit inputs. Non-Specification
 // issues pass through unchanged.
 //
+// Two detector branches feed a single recursive expansion path:
+//   - section-shape: IsSpecification(body) is true.
+//   - broadened: IsSpecification(body) is false, but HasChildren(ctx, n) is true.
+//   - neither: pass-through.
+//
+// Nested Specifications are flattened recursively (per T3 #2145 beat #4 as corrected):
+// any candidate that is itself a Specification is expanded in turn, and each recursive
+// expansion emits a per-flatten log line. Depth is bounded only by the unique-set dedupe
+// and the cachedGitHubClient comment cache.
+//
 // Errors:
 //   - `no child issues for specification #<n>` if a Specification has no accepted children
-//   - `nested specification detected: #<child>` if a candidate child is itself a Specification
 //   - any FetchIssue error encountered while loading a candidate child
 func (r *SpecificationResolver) Resolve(ctx context.Context, issues []int) ([]int, error) {
 	unique := uniqueIssues(issues)
@@ -72,30 +105,95 @@ func (r *SpecificationResolver) Resolve(ctx context.Context, issues []int) ([]in
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		issue, err := r.client.FetchIssue(ctx, num)
-		if err != nil {
-			return nil, fmt.Errorf("fetch issue #%d: %w", num, err)
-		}
-		if issue == nil {
-			return nil, fmt.Errorf("fetch issue #%d: not found", num)
-		}
-		if !r.IsSpecification(issue.Body) {
-			addUnique(num)
-			continue
-		}
-		children, err := r.resolveSpecificationChildren(ctx, num, issue.Body, userInputSet)
+		expanded, err := r.expandOne(ctx, num, 0, "-", userInputSet, seen, addUnique)
 		if err != nil {
 			return nil, err
 		}
-		for _, child := range children {
-			addUnique(child)
-		}
-		fmt.Fprintf(r.warningWriter, "expanded specification #%d to %d accepted children\n", num, len(children))
+		_ = expanded
 	}
 	return out, nil
 }
 
-func (r *SpecificationResolver) resolveSpecificationChildren(ctx context.Context, parent int, body string, userInputSet map[int]struct{}) ([]int, error) {
+// expandOne resolves a single input number into one-or-more child issues, mutating
+// the output buffer via addUnique. The recursive case flattens a nested Specification
+// in place; the depth parameter selects the top-level "expanded" verb vs the nested
+// "flattened" verb. parentLabel is used in the nested-flatten log line (the parent
+// spec number that triggered the recursive call); pass "-" at depth 0 to make that
+// distinction crisp in operator logs.
+//
+// The userInputSet is the original typed input set; candidates drawn from it bypass
+// the IsSpecification re-check and the ## Parent verification (the user owns the choice).
+// The seen+addUnique pair ensures every number is emitted exactly once.
+func (r *SpecificationResolver) expandOne(
+	ctx context.Context,
+	num int,
+	depth int,
+	parentLabel string,
+	userInputSet, seen map[int]struct{},
+	addUnique func(int) bool,
+) (children []int, err error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	issue, err := r.client.FetchIssue(ctx, num)
+	if err != nil {
+		return nil, fmt.Errorf("fetch issue #%d: %w", num, err)
+	}
+	if issue == nil {
+		return nil, fmt.Errorf("fetch issue #%d: not found", num)
+	}
+
+	if !r.IsSpecification(issue.Body) {
+		hasChildren, err := r.HasChildren(ctx, num)
+		if err != nil {
+			return nil, err
+		}
+		if !hasChildren {
+			addUnique(num)
+			return nil, nil
+		}
+	}
+
+	accepted, err := r.collectAcceptedChildren(ctx, num, issue.Body, userInputSet)
+	if err != nil {
+		return nil, err
+	}
+
+	if depth == 0 {
+		fmt.Fprintf(r.warningWriter, "expanded specification #%d to %d accepted children\n", num, len(accepted))
+	} else {
+		fmt.Fprintf(r.warningWriter, "flattened specification #%d inside %s to %d accepted children\n", num, parentLabel, len(accepted))
+	}
+
+	for _, child := range accepted {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if !addUnique(child) {
+			continue
+		}
+		// Recursively flatten if the child is itself a Specification.
+		childIssue, err := r.client.FetchIssue(ctx, child)
+		if err != nil {
+			return nil, fmt.Errorf("fetch child #%d: %w", child, err)
+		}
+		if childIssue == nil {
+			return nil, fmt.Errorf("fetch child #%d: not found", child)
+		}
+		if r.IsSpecification(childIssue.Body) {
+			if _, err := r.expandOne(ctx, child, depth+1, fmt.Sprintf("#%d", num), userInputSet, seen, addUnique); err != nil {
+				return nil, err
+			}
+		}
+	}
+	return accepted, nil
+}
+
+// collectAcceptedChildren runs the existing collectCandidates flow (body refs →
+// comments → search fallback) and applies the per-candidate ## Parent verification.
+// User-typed inputs bypass verification on the immediate acceptance step but are
+// still subject to recursive expansion in expandOne.
+func (r *SpecificationResolver) collectAcceptedChildren(ctx context.Context, parent int, body string, userInputSet map[int]struct{}) ([]int, error) {
 	candidates := r.collectCandidates(ctx, parent, body)
 	if len(candidates) == 0 {
 		return nil, fmt.Errorf("no child issues for specification #%d", parent)
@@ -115,9 +213,6 @@ func (r *SpecificationResolver) resolveSpecificationChildren(ctx context.Context
 		}
 		if childIssue == nil {
 			return nil, fmt.Errorf("fetch child #%d: not found", child)
-		}
-		if r.IsSpecification(childIssue.Body) {
-			return nil, fmt.Errorf("nested specification detected: #%d", child)
 		}
 		ref, ok := ExtractParentReference(childIssue.Body)
 		if !ok || ref != parent {
