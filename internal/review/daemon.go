@@ -1122,7 +1122,7 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) error {
 //     processPR loop drops the trigger before launch.
 //   - aborted is retryable (the run was interrupted before publishing a
 //     review, so the trigger should be retried)
-//   - superseded is treated as terminal (obsolete trigger, not in PRD set)
+//   - superseded is treated as terminal (obsolete trigger, not in the terminal-status set PRD #1218 specified)
 //   - success is terminal (the review comment was published)
 //   - pending is retryable: the S4 rehydrate walker (issue #1847) is
 //     the only mechanism that observes pending entries from disk;

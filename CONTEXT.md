@@ -44,16 +44,16 @@ _Avoid_: synthetic issue run.
 The component that fetches issues, extracts their BlockedBy relationships, validates the dependency graph (detecting cycles and missing blockers), and produces a topologically sorted ResolvedBatch.
 _Avoid_: scheduler, planner.
 
-**PRD** (Product Requirements Document):
-A GitHub issue whose body contains the H2 sections `## Problem Statement`, `## Solution`, and `## User Stories`. A PRD is a container for a set of vertical slices; Sandman recognizes it structurally and resolves it into its child issues before execution. Detection is body-based, not label-based.
-_Avoid_: spec, epic, umbrella issue.
+**Specification**:
+A GitHub issue whose body contains the H2 sections `## Problem Statement`, `## Solution`, and `## User Stories`. A Specification is a container for a set of vertical slices; Sandman recognizes it structurally and resolves it into its child issues before execution. Detection is body-based, not label-based.
+_Avoid_: PRD, Product Requirements Document, spec (lowercase, ambiguous with spec files), epic, umbrella issue.
 
-**PRDResolver**:
-The component that detects PRD issues, discovers their child issues (from the body, comments, and a fallback mention search), verifies each candidate by its `## Parent` backlink, and replaces the PRD with its accepted children in the input batch. Runs in `sandman run` after issue selection and before `DependencyResolver.Resolve`. A PRD with no accepted children fails the resolution; a harvested child that is itself a PRD (nested PRD) also fails. Candidates that are also in the user-typed input list bypass the `## Parent` and nested-PRD checks (the user owns the choice), as documented in ADR-0025 §3a. User-typed numbers are otherwise accepted unconditionally, except when the number is itself a PRD, in which case the resolver still runs its own expansion pass on it.
-_Avoid_: PRD expander, PRD flattener.
+**SpecificationResolver**:
+The component that detects Specification issues, discovers their child issues (from the body, comments, and a fallback mention search), verifies each candidate by its `## Parent` backlink, and replaces the Specification with its accepted children in the input batch. Runs in `sandman run` after issue selection and before `DependencyResolver.Resolve`. A Specification with no accepted children fails the resolution; a harvested child that is itself a Specification (nested Specification) also fails. Candidates that are also in the user-typed input list bypass the `## Parent` and nested-Specification checks (the user owns the choice), as documented in ADR-0025 §3a. User-typed numbers are otherwise accepted unconditionally, except when the number is itself a Specification, in which case the resolver still runs its own expansion pass on it.
+_Avoid_: Specification expander, Specification flattener, PRDResolver, spec resolver.
 
 **`## Parent` backlink**:
-A H2 section in an issue body of the form `## Parent` followed by either `#N` shorthand or a full GitHub issue URL (`https://github.com/<owner>/<repo>/issues/N`). A candidate child of PRD `#N` is accepted only when its `## Parent` section cites `#N`.
+A H2 section in an issue body of the form `## Parent` followed by either `#N` shorthand or a full GitHub issue URL (`https://github.com/<owner>/<repo>/issues/N`). A candidate child of Specification `#N` is accepted only when its `## Parent` section cites `#N`.
 _Avoid_: parent reference, parent link, parent header.
 
 **Batch**:
@@ -302,7 +302,7 @@ _Avoid_: Continuation context, continuation file.
 - An **Issue** may have **BlockedBy** relationships to other **Issues**
 - A **DependencyResolver** produces a **ResolvedBatch** from a set of **Issues**
 - An **Orchestrator** executes a **ResolvedBatch**, respecting **BlockedBy** ordering
-- A **PRDResolver** runs before a **DependencyResolver**, replacing any **PRD** in the input with its child **Issues** so the orchestrator never sees the PRD itself
+- A **SpecificationResolver** runs before a **DependencyResolver**, replacing any **Specification** in the input with its child **Issues** so the orchestrator never sees the Specification itself
 - An **AgentRun** may be **blocked** if any of its in-batch **BlockedBy** issues did not finish with status `success`, or if any of its external **BlockedBy** issues is still open on GitHub when the run is about to start
 - A **Sandbox** provides isolation for one or more **AgentRuns**
 - In `sandbox: worktree`, each **AgentRun** gets its own **Sandbox** (a **WorktreeSandbox**)
