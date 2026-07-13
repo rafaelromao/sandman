@@ -86,12 +86,11 @@ func (r *DependencyResolver) Resolve(ctx context.Context, issues []int, includeD
 				continue
 			}
 
-			if github.IsIssueClosed(blockerIssue) {
-				continue
-			}
-
 			if _, ok := known[blocker]; ok {
 				activeBlockers = append(activeBlockers, blocker)
+				continue
+			}
+			if github.IsIssueClosed(blockerIssue) {
 				continue
 			}
 			if !includeDeps {
