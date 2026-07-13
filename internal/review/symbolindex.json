@@ -1,0 +1,4795 @@
+{
+  "meta": {
+    "generated": "2026-07-05",
+    "repo": "review/",
+    "total_symbols": 339
+  },
+  "symbols": {
+    "extractBodiesFromLog": [
+      {
+        "line": 57,
+        "kind": "function",
+        "exported": false,
+        "file": "agentlog.go"
+      }
+    ],
+    "readBodyFile": [
+      {
+        "line": 133,
+        "kind": "function",
+        "exported": false,
+        "file": "agentlog.go"
+      }
+    ],
+    "isReviewRunLog": [
+      {
+        "line": 157,
+        "kind": "function",
+        "exported": false,
+        "file": "agentlog.go"
+      }
+    ],
+    "bodyAccumulator": [
+      {
+        "line": 176,
+        "kind": "struct",
+        "exported": false,
+        "file": "agentlog.go"
+      }
+    ],
+    "logLinePrefix": [
+      {
+        "line": 187,
+        "kind": "var",
+        "exported": false,
+        "file": "agentlog.go"
+      }
+    ],
+    "stripLogContinuationPrefix": [
+      {
+        "line": 192,
+        "kind": "function",
+        "exported": false,
+        "file": "agentlog.go"
+      }
+    ],
+    "parseGhPrCommentBody": [
+      {
+        "line": 216,
+        "kind": "function",
+        "exported": false,
+        "file": "agentlog.go"
+      }
+    ],
+    "indexOfGhPrComment": [
+      {
+        "line": 257,
+        "kind": "function",
+        "exported": false,
+        "file": "agentlog.go"
+      }
+    ],
+    "isShellPromptPosition": [
+      {
+        "line": 285,
+        "kind": "function",
+        "exported": false,
+        "file": "agentlog.go"
+      }
+    ],
+    "splitFirstToken": [
+      {
+        "line": 301,
+        "kind": "function",
+        "exported": false,
+        "file": "agentlog.go"
+      }
+    ],
+    "indexOfBodyFlag": [
+      {
+        "line": 337,
+        "kind": "function",
+        "exported": false,
+        "file": "agentlog.go"
+      }
+    ],
+    "isBoundary": [
+      {
+        "line": 383,
+        "kind": "function",
+        "exported": false,
+        "file": "agentlog.go"
+      }
+    ],
+    "parseSingleQuoted": [
+      {
+        "line": 392,
+        "kind": "function",
+        "exported": false,
+        "file": "agentlog.go"
+      }
+    ],
+    "parseDoubleQuoted": [
+      {
+        "line": 406,
+        "kind": "function",
+        "exported": false,
+        "file": "agentlog.go"
+      }
+    ],
+    "parseBodyContinuation": [
+      {
+        "line": 440,
+        "kind": "function",
+        "exported": false,
+        "file": "agentlog.go"
+      }
+    ],
+    "TestRegisterPendingReview_StoresRunLogPath": [
+      {
+        "line": 17,
+        "kind": "function",
+        "exported": true,
+        "file": "agentlog_slice3_test.go"
+      }
+    ],
+    "TestRegisterPendingReview_DefaultsRunLogPath": [
+      {
+        "line": 46,
+        "kind": "function",
+        "exported": true,
+        "file": "agentlog_slice3_test.go"
+      }
+    ],
+    "TestDaemon_PromotePendingComment_RecordsBotAuthoredBody_FromReviewLog": [
+      {
+        "line": 24,
+        "kind": "function",
+        "exported": true,
+        "file": "agentlog_slice4_test.go"
+      }
+    ],
+    "TestDaemon_PromotePendingComment_DoesNotRecordHumanAuthoredBody": [
+      {
+        "line": 73,
+        "kind": "function",
+        "exported": true,
+        "file": "agentlog_slice4_test.go"
+      }
+    ],
+    "TestDaemon_PromotePendingComment_RecordsMultipleBotBodies": [
+      {
+        "line": 126,
+        "kind": "function",
+        "exported": true,
+        "file": "agentlog_slice4_test.go"
+      }
+    ],
+    "mustSelfPostStore": [
+      {
+        "line": 215,
+        "kind": "function",
+        "exported": false,
+        "file": "agentlog_slice4_test.go"
+      }
+    ],
+    "TestDaemon_BoundedRetry_GrepsLogBeforeFailing": [
+      {
+        "line": 27,
+        "kind": "function",
+        "exported": true,
+        "file": "agentlog_slice5_test.go"
+      }
+    ],
+    "TestDaemon_BoundedRetry_FailsWhenLogIsEmpty": [
+      {
+        "line": 110,
+        "kind": "function",
+        "exported": true,
+        "file": "agentlog_slice5_test.go"
+      }
+    ],
+    "TestExtractBodiesFromLog_DoubleQuotedBody": [
+      {
+        "line": 16,
+        "kind": "function",
+        "exported": true,
+        "file": "agentlog_test.go"
+      }
+    ],
+    "TestExtractBodiesFromLog_SingleQuotedBody": [
+      {
+        "line": 40,
+        "kind": "function",
+        "exported": true,
+        "file": "agentlog_test.go"
+      }
+    ],
+    "TestExtractBodiesFromLog_NoGhComment": [
+      {
+        "line": 64,
+        "kind": "function",
+        "exported": true,
+        "file": "agentlog_test.go"
+      }
+    ],
+    "TestExtractBodiesFromLog_UnclosedQuoteReturnsError": [
+      {
+        "line": 86,
+        "kind": "function",
+        "exported": true,
+        "file": "agentlog_test.go"
+      }
+    ],
+    "TestExtractBodiesFromLog_MultiplePosts": [
+      {
+        "line": 109,
+        "kind": "function",
+        "exported": true,
+        "file": "agentlog_test.go"
+      }
+    ],
+    "TestExtractBodiesFromLog_MultilineBody": [
+      {
+        "line": 136,
+        "kind": "function",
+        "exported": true,
+        "file": "agentlog_test.go"
+      }
+    ],
+    "TestExtractBodiesFromLog_BodyFileAbsolute": [
+      {
+        "line": 163,
+        "kind": "function",
+        "exported": true,
+        "file": "agentlog_test.go"
+      }
+    ],
+    "TestExtractBodiesFromLog_CDAndRepoWrapped": [
+      {
+        "line": 194,
+        "kind": "function",
+        "exported": true,
+        "file": "agentlog_test.go"
+      }
+    ],
+    "TestExtractBodiesFromLog_IgnoresBodiesInImplementationRunLog": [
+      {
+        "line": 219,
+        "kind": "function",
+        "exported": true,
+        "file": "agentlog_test.go"
+      }
+    ],
+    "TestExtractBodiesFromLog_ReviewKind_ReturnsBodies": [
+      {
+        "line": 244,
+        "kind": "function",
+        "exported": true,
+        "file": "agentlog_test.go"
+      }
+    ],
+    "TestExtractBodiesFromLog_IgnoresGhPrCommentInsideBody": [
+      {
+        "line": 278,
+        "kind": "function",
+        "exported": true,
+        "file": "agentlog_test.go"
+      }
+    ],
+    "ClearReviewArtifacts": [
+      {
+        "line": 25,
+        "kind": "function",
+        "exported": true,
+        "file": "cleanup.go"
+      }
+    ],
+    "isMissingWorktreeErr": [
+      {
+        "line": 48,
+        "kind": "function",
+        "exported": false,
+        "file": "cleanup.go"
+      }
+    ],
+    "isMissingBranchErr": [
+      {
+        "line": 55,
+        "kind": "function",
+        "exported": false,
+        "file": "cleanup.go"
+      }
+    ],
+    "PollingInterval": [
+      {
+        "line": 28,
+        "kind": "const",
+        "exported": true,
+        "file": "daemon.go"
+      }
+    ],
+    "pendingMaxCycles": [
+      {
+        "line": 37,
+        "kind": "const",
+        "exported": false,
+        "file": "daemon.go"
+      }
+    ],
+    "Clock": [
+      {
+        "line": 41,
+        "kind": "type_alias",
+        "exported": true,
+        "file": "daemon.go"
+      }
+    ],
+    "Trigger": [
+      {
+        "line": 45,
+        "kind": "type_alias",
+        "exported": true,
+        "file": "daemon.go"
+      }
+    ],
+    "GitHubClient": [
+      {
+        "line": 51,
+        "kind": "interface",
+        "exported": true,
+        "file": "daemon.go"
+      }
+    ],
+    "BatchRunner": [
+      {
+        "line": 63,
+        "kind": "interface",
+        "exported": true,
+        "file": "daemon.go"
+      }
+    ],
+    "Renderer": [
+      {
+        "line": 68,
+        "kind": "interface",
+        "exported": true,
+        "file": "daemon.go"
+      }
+    ],
+    "pendingReviewEntry": [
+      {
+        "line": 84,
+        "kind": "struct",
+        "exported": false,
+        "file": "daemon.go"
+      }
+    ],
+    "Daemon": [
+      {
+        "line": 95,
+        "kind": "struct",
+        "exported": true,
+        "file": "daemon.go"
+      }
+    ],
+    "New": [
+      {
+        "line": 141,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon.go"
+      }
+    ],
+    "acquirePRSlot": [
+      {
+        "line": 204,
+        "kind": "function",
+        "exported": false,
+        "file": "daemon.go"
+      }
+    ],
+    "releasePRSlot": [
+      {
+        "line": 223,
+        "kind": "function",
+        "exported": false,
+        "file": "daemon.go"
+      }
+    ],
+    "IsSlotHeld": [
+      {
+        "line": 240,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon.go"
+      }
+    ],
+    "slotHeldCount": [
+      {
+        "line": 249,
+        "kind": "function",
+        "exported": false,
+        "file": "daemon.go"
+      }
+    ],
+    "WaitForIdle": [
+      {
+        "line": 260,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon.go"
+      }
+    ],
+    "IsTerminalSeen": [
+      {
+        "line": 279,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon.go"
+      }
+    ],
+    "MarkTerminalSeen": [
+      {
+        "line": 292,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon.go"
+      },
+      {
+        "line": 286,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon_sliceA_test.go"
+      },
+      {
+        "line": 29,
+        "kind": "function",
+        "exported": true,
+        "file": "state.go"
+      }
+    ],
+    "Forget": [
+      {
+        "line": 308,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon.go"
+      },
+      {
+        "line": 292,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon_sliceA_test.go"
+      },
+      {
+        "line": 30,
+        "kind": "function",
+        "exported": true,
+        "file": "state.go"
+      }
+    ],
+    "loadSeenCache": [
+      {
+        "line": 323,
+        "kind": "function",
+        "exported": false,
+        "file": "daemon.go"
+      }
+    ],
+    "readReviewRowID": [
+      {
+        "line": 382,
+        "kind": "function",
+        "exported": false,
+        "file": "daemon.go"
+      }
+    ],
+    "InvalidateSeenCache": [
+      {
+        "line": 414,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon.go"
+      }
+    ],
+    "loadPendingReviews": [
+      {
+        "line": 439,
+        "kind": "function",
+        "exported": false,
+        "file": "daemon.go"
+      }
+    ],
+    "InvalidatePendingReviews": [
+      {
+        "line": 505,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon.go"
+      }
+    ],
+    "SocketPath": [
+      {
+        "line": 513,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon.go"
+      }
+    ],
+    "effectiveAgent": [
+      {
+        "line": 521,
+        "kind": "function",
+        "exported": false,
+        "file": "daemon.go"
+      }
+    ],
+    "effectiveModel": [
+      {
+        "line": 535,
+        "kind": "function",
+        "exported": false,
+        "file": "daemon.go"
+      }
+    ],
+    "effectiveParallel": [
+      {
+        "line": 551,
+        "kind": "function",
+        "exported": false,
+        "file": "daemon.go"
+      }
+    ],
+    "PromptTemplatePath": [
+      {
+        "line": 569,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon.go"
+      }
+    ],
+    "QualityRulesPath": [
+      {
+        "line": 576,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon.go"
+      }
+    ],
+    "initPromptTemplate": [
+      {
+        "line": 586,
+        "kind": "function",
+        "exported": false,
+        "file": "daemon.go"
+      }
+    ],
+    "ReviewStatePath": [
+      {
+        "line": 625,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon.go"
+      }
+    ],
+    "SetSocket": [
+      {
+        "line": 632,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon.go"
+      }
+    ],
+    "StartSocket": [
+      {
+        "line": 639,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon.go"
+      }
+    ],
+    "Stop": [
+      {
+        "line": 653,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon.go"
+      }
+    ],
+    "Run": [
+      {
+        "line": 664,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon.go"
+      }
+    ],
+    "tick": [
+      {
+        "line": 718,
+        "kind": "function",
+        "exported": false,
+        "file": "daemon.go"
+      }
+    ],
+    "processPR": [
+      {
+        "line": 768,
+        "kind": "function",
+        "exported": false,
+        "file": "daemon.go"
+      }
+    ],
+    "shouldSkipDedupStatus": [
+      {
+        "line": 995,
+        "kind": "function",
+        "exported": false,
+        "file": "daemon.go"
+      }
+    ],
+    "prepareReviewRun": [
+      {
+        "line": 1012,
+        "kind": "function",
+        "exported": false,
+        "file": "daemon.go"
+      }
+    ],
+    "reviewBranchName": [
+      {
+        "line": 1076,
+        "kind": "function",
+        "exported": false,
+        "file": "daemon.go"
+      }
+    ],
+    "logWriterFor": [
+      {
+        "line": 1085,
+        "kind": "function",
+        "exported": false,
+        "file": "daemon.go"
+      }
+    ],
+    "launchReview": [
+      {
+        "line": 1110,
+        "kind": "function",
+        "exported": false,
+        "file": "daemon.go"
+      }
+    ],
+    "now": [
+      {
+        "line": 1213,
+        "kind": "function",
+        "exported": false,
+        "file": "daemon.go"
+      }
+    ],
+    "promotePendingComment": [
+      {
+        "line": 1258,
+        "kind": "function",
+        "exported": false,
+        "file": "daemon.go"
+      }
+    ],
+    "promotePendingReviews": [
+      {
+        "line": 1323,
+        "kind": "function",
+        "exported": false,
+        "file": "daemon.go"
+      }
+    ],
+    "registerPendingReview": [
+      {
+        "line": 1440,
+        "kind": "function",
+        "exported": false,
+        "file": "daemon.go"
+      }
+    ],
+    "logf": [
+      {
+        "line": 1457,
+        "kind": "function",
+        "exported": false,
+        "file": "daemon.go"
+      }
+    ],
+    "TestDaemon_AsyncLaunch_TickReturnsImmediately": [
+      {
+        "line": 20,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon_async_test.go"
+      }
+    ],
+    "TestDaemon_AsyncLaunch_CrossTickSlotAccumulation": [
+      {
+        "line": 93,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon_async_test.go"
+      }
+    ],
+    "TestDaemon_AsyncLaunch_CommandPickupDuringInFlight": [
+      {
+        "line": 192,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon_async_test.go"
+      }
+    ],
+    "TestDaemon_AsyncLaunch_RunBatchErrorRetryable": [
+      {
+        "line": 273,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon_async_test.go"
+      }
+    ],
+    "TestDaemon_AsyncLaunch_GracefulShutdown": [
+      {
+        "line": 327,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon_async_test.go"
+      }
+    ],
+    "waitForStarted": [
+      {
+        "line": 402,
+        "kind": "function",
+        "exported": false,
+        "file": "daemon_async_test.go"
+      }
+    ],
+    "TestDaemon_ReviewRunIDAndFolder_AreCanonical": [
+      {
+        "line": 36,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon_canonical_test.go"
+      }
+    ],
+    "TestDaemon_ReviewRunIDAndFolder_AreCanonicalWithLinkedIssue": [
+      {
+        "line": 134,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon_canonical_test.go"
+      }
+    ],
+    "TestDaemon_LoadSeenCache_ReadsCanonicalRunFolder": [
+      {
+        "line": 208,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon_canonical_test.go"
+      }
+    ],
+    "TestDaemon_LoadSeenCache_IgnoresLegacyRunsReviewFolder": [
+      {
+        "line": 276,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon_canonical_test.go"
+      }
+    ],
+    "initReviewTestGitRepo": [
+      {
+        "line": 23,
+        "kind": "function",
+        "exported": false,
+        "file": "daemon_cleanup_test.go"
+      }
+    ],
+    "stageReviewWorktree": [
+      {
+        "line": 54,
+        "kind": "function",
+        "exported": false,
+        "file": "daemon_cleanup_test.go"
+      }
+    ],
+    "gitWorktreeHasBranch": [
+      {
+        "line": 68,
+        "kind": "function",
+        "exported": false,
+        "file": "daemon_cleanup_test.go"
+      }
+    ],
+    "gitBranchExists": [
+      {
+        "line": 80,
+        "kind": "function",
+        "exported": false,
+        "file": "daemon_cleanup_test.go"
+      }
+    ],
+    "TestClearReviewArtifacts_HappyPath": [
+      {
+        "line": 90,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon_cleanup_test.go"
+      }
+    ],
+    "TestClearReviewArtifacts_Idempotent": [
+      {
+        "line": 120,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon_cleanup_test.go"
+      }
+    ],
+    "TestClearReviewArtifacts_EmptyBranchIsNoop": [
+      {
+        "line": 138,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon_cleanup_test.go"
+      }
+    ],
+    "TestClearReviewArtifacts_EmptyWorktreeDirIsNoop": [
+      {
+        "line": 151,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon_cleanup_test.go"
+      }
+    ],
+    "TestClearReviewArtifacts_OnlyTouchesTargetBranch": [
+      {
+        "line": 163,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon_cleanup_test.go"
+      }
+    ],
+    "newReviewLaunchTestDaemon": [
+      {
+        "line": 196,
+        "kind": "function",
+        "exported": false,
+        "file": "daemon_cleanup_test.go"
+      }
+    ],
+    "newReviewLaunchTestConfig": [
+      {
+        "line": 209,
+        "kind": "function",
+        "exported": false,
+        "file": "daemon_cleanup_test.go"
+      }
+    ],
+    "TestLaunchReview_CleansUpWorktreeAndBranchOnSuccess": [
+      {
+        "line": 224,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon_cleanup_test.go"
+      }
+    ],
+    "TestPrepareReviewRun_LinkedIssueRegistersPerRowRunID": [
+      {
+        "line": 286,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon_cleanup_test.go"
+      }
+    ],
+    "TestLaunchReview_CleansUpOnRunBatchFailure": [
+      {
+        "line": 330,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon_cleanup_test.go"
+      }
+    ],
+    "TestLaunchReview_CleansUpOnContextCancellation": [
+      {
+        "line": 369,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon_cleanup_test.go"
+      }
+    ],
+    "slowFakeGH": [
+      {
+        "line": 18,
+        "kind": "struct",
+        "exported": false,
+        "file": "daemon_ctx_cancel_test.go"
+      }
+    ],
+    "newSlowFakeGH": [
+      {
+        "line": 27,
+        "kind": "function",
+        "exported": false,
+        "file": "daemon_ctx_cancel_test.go"
+      }
+    ],
+    "ListOpenPRs": [
+      {
+        "line": 35,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon_ctx_cancel_test.go"
+      },
+      {
+        "line": 52,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon_test.go"
+      }
+    ],
+    "ListPRComments": [
+      {
+        "line": 47,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon_ctx_cancel_test.go"
+      },
+      {
+        "line": 59,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon_test.go"
+      }
+    ],
+    "TestDaemon_HungGhReleaseOnCancel": [
+      {
+        "line": 64,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon_ctx_cancel_test.go"
+      }
+    ],
+    "TestDaemon_RestartRecoversPendingFromDisk": [
+      {
+        "line": 31,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon_restart_test.go"
+      }
+    ],
+    "findPendingReviewState": [
+      {
+        "line": 122,
+        "kind": "function",
+        "exported": false,
+        "file": "daemon_restart_test.go"
+      }
+    ],
+    "TestDaemon_ReviewsDirContainsOnlySocketPromptAndSelfPosted": [
+      {
+        "line": 30,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon_slice2_test.go"
+      }
+    ],
+    "TestDaemon_ProcessPRWritesReviewStateToRunFolder": [
+      {
+        "line": 86,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon_slice2_test.go"
+      }
+    ],
+    "TestDaemon_ProcessPRDoesNotCreatePerPRDirectory": [
+      {
+        "line": 143,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon_slice2_test.go"
+      }
+    ],
+    "TestDaemon_SharedReviewPromptFileExists": [
+      {
+        "line": 179,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon_slice2_test.go"
+      }
+    ],
+    "TestDaemon_RespectsPreMaterialisedReviewFiles": [
+      {
+        "line": 231,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon_slice2_test.go"
+      }
+    ],
+    "TestDaemon_QualityRulesPathMatchesReviewsDir": [
+      {
+        "line": 268,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon_slice2_test.go"
+      }
+    ],
+    "_": [
+      {
+        "line": 278,
+        "kind": "var",
+        "exported": false,
+        "file": "daemon_slice2_test.go"
+      },
+      {
+        "line": 465,
+        "kind": "var",
+        "exported": false,
+        "file": "daemon_sliceD_test.go"
+      }
+    ],
+    "TestDaemon_ConcurrentTickOnlyLaunchesOnce": [
+      {
+        "line": 289,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon_slice2_test.go"
+      }
+    ],
+    "TestDaemon_FailedLaunchRetriesNextTick": [
+      {
+        "line": 354,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon_slice2_test.go"
+      }
+    ],
+    "sliceASeenLoader": [
+      {
+        "line": 23,
+        "kind": "struct",
+        "exported": false,
+        "file": "daemon_sliceA_test.go"
+      }
+    ],
+    "Install": [
+      {
+        "line": 28,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon_sliceA_test.go"
+      }
+    ],
+    "loadBatchesIndex": [
+      {
+        "line": 40,
+        "kind": "function",
+        "exported": false,
+        "file": "daemon_sliceA_test.go"
+      }
+    ],
+    "readReviewState": [
+      {
+        "line": 45,
+        "kind": "function",
+        "exported": false,
+        "file": "daemon_sliceA_test.go"
+      }
+    ],
+    "seedPriorReviewEntry": [
+      {
+        "line": 59,
+        "kind": "function",
+        "exported": false,
+        "file": "daemon_sliceA_test.go"
+      }
+    ],
+    "deriveReviewRowID": [
+      {
+        "line": 108,
+        "kind": "function",
+        "exported": false,
+        "file": "daemon_sliceA_test.go"
+      }
+    ],
+    "TestDaemon_SeenCacheHydratedAtConstruction": [
+      {
+        "line": 124,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon_sliceA_test.go"
+      }
+    ],
+    "TestDaemon_ProcessPRScalesConstantlyWithPriorBatches": [
+      {
+        "line": 179,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon_sliceA_test.go"
+      }
+    ],
+    "itoa": [
+      {
+        "line": 267,
+        "kind": "function",
+        "exported": false,
+        "file": "daemon_sliceA_test.go"
+      }
+    ],
+    "fakeInvalidator": [
+      {
+        "line": 281,
+        "kind": "struct",
+        "exported": false,
+        "file": "daemon_sliceA_test.go"
+      }
+    ],
+    "TestDaemon_SeenCacheConcurrentReadWriteSafe": [
+      {
+        "line": 305,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon_sliceA_test.go"
+      }
+    ],
+    "TestDaemon_ReleaseForgetsCacheEntry": [
+      {
+        "line": 357,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon_sliceA_test.go"
+      }
+    ],
+    "TestDaemon_ReviewStateStore_MarkSeenInvalidatesCacheMidProcess": [
+      {
+        "line": 381,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon_sliceA_test.go"
+      }
+    ],
+    "TestReviewStateStore_MarkSeenFiresCacheHook": [
+      {
+        "line": 458,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon_sliceA_test.go"
+      }
+    ],
+    "TestReviewStateStore_MarkSeenSaveErrorLeavesCacheUntouched": [
+      {
+        "line": 514,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon_sliceA_test.go"
+      }
+    ],
+    "waitIdle": [
+      {
+        "line": 14,
+        "kind": "function",
+        "exported": false,
+        "file": "daemon_sliceC_test.go"
+      }
+    ],
+    "TestDaemon_PerPRSlotTable_AllowsCrossPRConcurrency": [
+      {
+        "line": 29,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon_sliceC_test.go"
+      }
+    ],
+    "TestDaemon_PerPRSlotTable_ReleasesOnCompletion": [
+      {
+        "line": 162,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon_sliceC_test.go"
+      }
+    ],
+    "TestDaemon_PerPRSlotTable_NewTriggerMidFlight_IsNotDropped": [
+      {
+        "line": 237,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon_sliceC_test.go"
+      }
+    ],
+    "TestDaemon_PerPRSlotTable_HeldSlotReturnsSilently": [
+      {
+        "line": 384,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon_sliceC_test.go"
+      }
+    ],
+    "TestDaemon_PromotePendingComment_ReturnsSuccessWhenReviewFound": [
+      {
+        "line": 25,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon_sliceD_test.go"
+      }
+    ],
+    "TestDaemon_PromotePendingComment_ReturnsErrorWhenMissing": [
+      {
+        "line": 56,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon_sliceD_test.go"
+      }
+    ],
+    "TestDaemon_PromotePendingComment_IgnoresTriggerComment": [
+      {
+        "line": 85,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon_sliceD_test.go"
+      }
+    ],
+    "TestDaemon_LaunchReviewReturnsFastAndRecordsPending": [
+      {
+        "line": 125,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon_sliceD_test.go"
+      }
+    ],
+    "TestDaemon_NextTickPromotesPendingCommentToSuccess": [
+      {
+        "line": 194,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon_sliceD_test.go"
+      }
+    ],
+    "TestDaemon_NextTickRejectsPendingCommentToFailureAfterBound": [
+      {
+        "line": 254,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon_sliceD_test.go"
+      }
+    ],
+    "TestDaemon_PendingCommentIsNotRelaunchedMidCycle": [
+      {
+        "line": 311,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon_sliceD_test.go"
+      }
+    ],
+    "TestDaemon_NextTickRejectsPendingCommentTwiceNoOp": [
+      {
+        "line": 357,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon_sliceD_test.go"
+      }
+    ],
+    "TestDaemon_PendingNotTerminalInSeenCache": [
+      {
+        "line": 392,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon_sliceD_test.go"
+      }
+    ],
+    "TestDaemon_LaunchReviewReturnsFastOnRunBatchError": [
+      {
+        "line": 411,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon_sliceD_test.go"
+      }
+    ],
+    "reactionCall": [
+      {
+        "line": 28,
+        "kind": "struct",
+        "exported": false,
+        "file": "daemon_test.go"
+      }
+    ],
+    "fakeGH": [
+      {
+        "line": 38,
+        "kind": "struct",
+        "exported": false,
+        "file": "daemon_test.go"
+      }
+    ],
+    "FetchPR": [
+      {
+        "line": 77,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon_test.go"
+      }
+    ],
+    "RepoName": [
+      {
+        "line": 93,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon_test.go"
+      }
+    ],
+    "AddCommentReaction": [
+      {
+        "line": 97,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon_test.go"
+      }
+    ],
+    "AddIssueReaction": [
+      {
+        "line": 106,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon_test.go"
+      }
+    ],
+    "RemoveCommentReaction": [
+      {
+        "line": 115,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon_test.go"
+      }
+    ],
+    "RemoveIssueReaction": [
+      {
+        "line": 122,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon_test.go"
+      }
+    ],
+    "capturedRequest": [
+      {
+        "line": 129,
+        "kind": "struct",
+        "exported": false,
+        "file": "daemon_test.go"
+      }
+    ],
+    "RunBatch": [
+      {
+        "line": 135,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon_test.go"
+      },
+      {
+        "line": 73,
+        "kind": "function",
+        "exported": true,
+        "file": "review_full_loop_test.go"
+      }
+    ],
+    "Calls": [
+      {
+        "line": 147,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon_test.go"
+      },
+      {
+        "line": 92,
+        "kind": "function",
+        "exported": true,
+        "file": "review_full_loop_test.go"
+      }
+    ],
+    "lockedBuffer": [
+      {
+        "line": 158,
+        "kind": "struct",
+        "exported": false,
+        "file": "daemon_test.go"
+      }
+    ],
+    "Write": [
+      {
+        "line": 163,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon_test.go"
+      }
+    ],
+    "String": [
+      {
+        "line": 169,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon_test.go"
+      }
+    ],
+    "Bytes": [
+      {
+        "line": 175,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon_test.go"
+      }
+    ],
+    "newDaemonForTest": [
+      {
+        "line": 181,
+        "kind": "function",
+        "exported": false,
+        "file": "daemon_test.go"
+      }
+    ],
+    "tickAndWait": [
+      {
+        "line": 195,
+        "kind": "function",
+        "exported": false,
+        "file": "daemon_test.go"
+      }
+    ],
+    "newDaemonForTestWithParallel": [
+      {
+        "line": 207,
+        "kind": "function",
+        "exported": false,
+        "file": "daemon_test.go"
+      }
+    ],
+    "TestDaemon_ProcessPRCommentsSortedByCreatedAt": [
+      {
+        "line": 220,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon_test.go"
+      }
+    ],
+    "TestDaemon_OnlyNewestUnseenTriggerProcessed": [
+      {
+        "line": 257,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon_test.go"
+      }
+    ],
+    "TestDaemon_TickLaunchesReviewForTriggerComment": [
+      {
+        "line": 332,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon_test.go"
+      }
+    ],
+    "TestDaemon_TickLaunchesReviewsInParallel": [
+      {
+        "line": 405,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon_test.go"
+      }
+    ],
+    "TestDaemon_ParallelOverrideCapsSlotPool": [
+      {
+        "line": 470,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon_test.go"
+      }
+    ],
+    "TestDaemon_EffectiveParallelPrefersOverride": [
+      {
+        "line": 528,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon_test.go"
+      }
+    ],
+    "TestDaemon_EffectiveParallelFallsBackToConfig": [
+      {
+        "line": 553,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon_test.go"
+      }
+    ],
+    "TestDaemon_LaunchReviewPropagatesAgentModelParallelOverrides": [
+      {
+        "line": 577,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon_test.go"
+      }
+    ],
+    "TestDaemon_TickAddsReactionAndRemovesAfterReview": [
+      {
+        "line": 614,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon_test.go"
+      }
+    ],
+    "TestDaemon_ReactionRemovedOnRunBatchError": [
+      {
+        "line": 681,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon_test.go"
+      }
+    ],
+    "TestDaemon_TickSkipsSeenComment": [
+      {
+        "line": 720,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon_test.go"
+      }
+    ],
+    "TestDaemon_StaleTriggersLogged": [
+      {
+        "line": 789,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon_test.go"
+      }
+    ],
+    "TestDaemon_MixedSeenAndUnseenTriggers": [
+      {
+        "line": 826,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon_test.go"
+      }
+    ],
+    "TestDaemon_TickCaseInsensitive": [
+      {
+        "line": 911,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon_test.go"
+      }
+    ],
+    "TestDaemon_StartSocketCreatesReviewSock": [
+      {
+        "line": 930,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon_test.go"
+      }
+    ],
+    "TestDaemon_RunRespondsToTrigger": [
+      {
+        "line": 947,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon_test.go"
+      }
+    ],
+    "TestDaemon_StopCancelsInflightBatch": [
+      {
+        "line": 994,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon_test.go"
+      }
+    ],
+    "batchFunc": [
+      {
+        "line": 1034,
+        "kind": "type_alias",
+        "exported": false,
+        "file": "daemon_test.go"
+      }
+    ],
+    "TestDaemon_ListOpenPRsErrorIsLogged": [
+      {
+        "line": 1040,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon_test.go"
+      }
+    ],
+    "TestDaemon_BroadcasterFixtureIsSafeUnderRace": [
+      {
+        "line": 1080,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon_test.go"
+      }
+    ],
+    "TestLockedBuffer_ConcurrentWriteAndRead": [
+      {
+        "line": 1122,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon_test.go"
+      }
+    ],
+    "errList": [
+      {
+        "line": 1170,
+        "kind": "var",
+        "exported": false,
+        "file": "daemon_test.go"
+      }
+    ],
+    "jsonError": [
+      {
+        "line": 1172,
+        "kind": "type_alias",
+        "exported": false,
+        "file": "daemon_test.go"
+      }
+    ],
+    "Error": [
+      {
+        "line": 1174,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon_test.go"
+      },
+      {
+        "line": 175,
+        "kind": "function",
+        "exported": true,
+        "file": "docguard_test.go"
+      }
+    ],
+    "TestDaemon_RunFailsFastOnInvalidReviewAgent": [
+      {
+        "line": 1176,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon_test.go"
+      }
+    ],
+    "TestDaemon_RunFailsFastOnMissingReviewModel": [
+      {
+        "line": 1210,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon_test.go"
+      }
+    ],
+    "TestDaemon_RunHonorsAgentModelOverridesAtStartup": [
+      {
+        "line": 1247,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon_test.go"
+      }
+    ],
+    "TestDaemon_LaunchReviewPropagatesSandboxParams": [
+      {
+        "line": 1285,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon_test.go"
+      }
+    ],
+    "TestDaemon_LaunchReviewPropagatesAgentModelOverrides": [
+      {
+        "line": 1327,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon_test.go"
+      }
+    ],
+    "TestDaemon_LaunchReviewFallsBackToConfigForAgentModel": [
+      {
+        "line": 1360,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon_test.go"
+      }
+    ],
+    "TestDaemon_LaunchReviewFallsBackToConfigSandbox": [
+      {
+        "line": 1392,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon_test.go"
+      }
+    ],
+    "TestDaemon_ProcessPRLaunchesNewestTriggerOnly": [
+      {
+        "line": 1419,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon_test.go"
+      }
+    ],
+    "TestDaemon_OnlyNewestTriggerIgnoredWhenAllStale": [
+      {
+        "line": 1453,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon_test.go"
+      }
+    ],
+    "TestDaemon_ContextCancellationPropagates": [
+      {
+        "line": 1528,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon_test.go"
+      }
+    ],
+    "TestDaemon_ClaimFailureSkipsComment": [
+      {
+        "line": 1570,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon_test.go"
+      }
+    ],
+    "TestDaemon_LaunchReviewErrorsOnMissingModel": [
+      {
+        "line": 1648,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon_test.go"
+      }
+    ],
+    "TestDaemon_LaunchReviewCreatesControlSocketAndManifest": [
+      {
+        "line": 1679,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon_test.go"
+      }
+    ],
+    "TestDaemon_LaunchReviewCleansUpRunDirOnError": [
+      {
+        "line": 1746,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon_test.go"
+      }
+    ],
+    "TestDaemon_LaunchReviewReplacesStaleSocket": [
+      {
+        "line": 1781,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon_test.go"
+      }
+    ],
+    "TestDaemon_LaunchReviewRoutesOutputToPerPRSock": [
+      {
+        "line": 1849,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon_test.go"
+      }
+    ],
+    "TestDaemon_VerifyReviewPosted_FailsWhenNoNewComments": [
+      {
+        "line": 1912,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon_test.go"
+      }
+    ],
+    "TestDaemon_VerifyReviewPosted_PassesWhenNewCommentFound": [
+      {
+        "line": 1922,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon_test.go"
+      }
+    ],
+    "TestDaemon_LaunchReviewFailsWhenVerificationFails": [
+      {
+        "line": 1933,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon_test.go"
+      }
+    ],
+    "TestDaemon_LaunchReviewSucceedsWhenVerificationPasses": [
+      {
+        "line": 1943,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon_test.go"
+      }
+    ],
+    "TestDaemon_TickFailingReviewRecordsFailure": [
+      {
+        "line": 1952,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon_test.go"
+      }
+    ],
+    "TestDaemon_AbortedReviewRetriesOnNextTick": [
+      {
+        "line": 2012,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon_test.go"
+      }
+    ],
+    "TestDaemon_TickFailingReviewRetriesOnNextTick": [
+      {
+        "line": 2088,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon_test.go"
+      }
+    ],
+    "TestDaemon_ConcurrentPRsDoNotClobberSharedPrompt": [
+      {
+        "line": 2145,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon_test.go"
+      }
+    ],
+    "TestDaemon_TickSaturationDoesNotDropTriggers": [
+      {
+        "line": 2246,
+        "kind": "function",
+        "exported": true,
+        "file": "daemon_test.go"
+      }
+    ],
+    "TestDocGuard_ReviewRunPositivePhrasing": [
+      {
+        "line": 18,
+        "kind": "function",
+        "exported": true,
+        "file": "docguard_test.go"
+      }
+    ],
+    "TestDocGuard_ReviewRunIdentity": [
+      {
+        "line": 72,
+        "kind": "function",
+        "exported": true,
+        "file": "docguard_test.go"
+      }
+    ],
+    "forbiddenPhrase": [
+      {
+        "line": 111,
+        "kind": "struct",
+        "exported": false,
+        "file": "docguard_test.go"
+      }
+    ],
+    "checkFile": [
+      {
+        "line": 117,
+        "kind": "function",
+        "exported": false,
+        "file": "docguard_test.go"
+      }
+    ],
+    "docguardError": [
+      {
+        "line": 169,
+        "kind": "struct",
+        "exported": false,
+        "file": "docguard_test.go"
+      }
+    ],
+    "containsAny": [
+      {
+        "line": 179,
+        "kind": "function",
+        "exported": false,
+        "file": "docguard_test.go"
+      }
+    ],
+    "repoRoot": [
+      {
+        "line": 188,
+        "kind": "function",
+        "exported": false,
+        "file": "docguard_test.go"
+      }
+    ],
+    "scanPaths": [
+      {
+        "line": 207,
+        "kind": "function",
+        "exported": false,
+        "file": "docguard_test.go"
+      }
+    ],
+    "TestDocGuard_ReviewRunGlossaryExists": [
+      {
+        "line": 250,
+        "kind": "function",
+        "exported": true,
+        "file": "docguard_test.go"
+      }
+    ],
+    "mustContain": [
+      {
+        "line": 267,
+        "kind": "function",
+        "exported": false,
+        "file": "docguard_test.go"
+      }
+    ],
+    "TestADRSelfPostFilter_DocumentsNewModel": [
+      {
+        "line": 281,
+        "kind": "function",
+        "exported": true,
+        "file": "docguard_test.go"
+      }
+    ],
+    "TestADRSelfPostFilter_NoLongerReferencesWrapper": [
+      {
+        "line": 315,
+        "kind": "function",
+        "exported": true,
+        "file": "docguard_test.go"
+      }
+    ],
+    "TestADR_CrossReferencesConsistent": [
+      {
+        "line": 359,
+        "kind": "function",
+        "exported": true,
+        "file": "docguard_test.go"
+      }
+    ],
+    "TestCONTEXT_GlossaryHasNewTerms": [
+      {
+        "line": 432,
+        "kind": "function",
+        "exported": true,
+        "file": "docguard_test.go"
+      }
+    ],
+    "fullLoopInitGitRepo": [
+      {
+        "line": 31,
+        "kind": "function",
+        "exported": false,
+        "file": "review_full_loop_test.go"
+      }
+    ],
+    "fullLoopWriteRunLogRunner": [
+      {
+        "line": 66,
+        "kind": "struct",
+        "exported": false,
+        "file": "review_full_loop_test.go"
+      }
+    ],
+    "TestReviewDaemon_FullLoopPastLaunchReview": [
+      {
+        "line": 127,
+        "kind": "function",
+        "exported": true,
+        "file": "review_full_loop_test.go"
+      }
+    ],
+    "waitForPendingInReviewState": [
+      {
+        "line": 248,
+        "kind": "function",
+        "exported": false,
+        "file": "review_full_loop_test.go"
+      }
+    ],
+    "waitForRunDirAndPending": [
+      {
+        "line": 275,
+        "kind": "function",
+        "exported": false,
+        "file": "review_full_loop_test.go"
+      }
+    ],
+    "waitForReviewStateStatus": [
+      {
+        "line": 299,
+        "kind": "function",
+        "exported": false,
+        "file": "review_full_loop_test.go"
+      }
+    ],
+    "fullLoopSha256Hex": [
+      {
+        "line": 322,
+        "kind": "function",
+        "exported": false,
+        "file": "review_full_loop_test.go"
+      }
+    ],
+    "fullLoopMapKeys": [
+      {
+        "line": 328,
+        "kind": "function",
+        "exported": false,
+        "file": "review_full_loop_test.go"
+      }
+    ],
+    "reviewRunIDFor": [
+      {
+        "line": 30,
+        "kind": "function",
+        "exported": false,
+        "file": "runid.go"
+      }
+    ],
+    "TestReviewRunIDFor_PRBare": [
+      {
+        "line": 18,
+        "kind": "function",
+        "exported": true,
+        "file": "runid_test.go"
+      }
+    ],
+    "TestReviewRunIDFor_PRWithLinkedIssue": [
+      {
+        "line": 32,
+        "kind": "function",
+        "exported": true,
+        "file": "runid_test.go"
+      }
+    ],
+    "TestReviewRunIDFor_NoLiteralReview": [
+      {
+        "line": 46,
+        "kind": "function",
+        "exported": true,
+        "file": "runid_test.go"
+      }
+    ],
+    "seenCacheLoader": [
+      {
+        "line": 12,
+        "kind": "var",
+        "exported": false,
+        "file": "seen_cache.go"
+      }
+    ],
+    "seenStateReader": [
+      {
+        "line": 17,
+        "kind": "var",
+        "exported": false,
+        "file": "seen_cache.go"
+      }
+    ],
+    "selfPostEntry": [
+      {
+        "line": 27,
+        "kind": "struct",
+        "exported": false,
+        "file": "selfposted.go"
+      }
+    ],
+    "SelfPostStore": [
+      {
+        "line": 61,
+        "kind": "struct",
+        "exported": true,
+        "file": "selfposted.go"
+      }
+    ],
+    "NewSelfPostStore": [
+      {
+        "line": 86,
+        "kind": "function",
+        "exported": true,
+        "file": "selfposted.go"
+      }
+    ],
+    "hashBody": [
+      {
+        "line": 105,
+        "kind": "function",
+        "exported": false,
+        "file": "selfposted.go"
+      }
+    ],
+    "compositeKey": [
+      {
+        "line": 113,
+        "kind": "function",
+        "exported": false,
+        "file": "selfposted.go"
+      }
+    ],
+    "Record": [
+      {
+        "line": 130,
+        "kind": "function",
+        "exported": true,
+        "file": "selfposted.go"
+      }
+    ],
+    "IsSelfPosted": [
+      {
+        "line": 156,
+        "kind": "function",
+        "exported": true,
+        "file": "selfposted.go"
+      }
+    ],
+    "Hashes": [
+      {
+        "line": 172,
+        "kind": "function",
+        "exported": true,
+        "file": "selfposted.go"
+      }
+    ],
+    "saveLocked": [
+      {
+        "line": 188,
+        "kind": "function",
+        "exported": false,
+        "file": "selfposted.go"
+      },
+      {
+        "line": 245,
+        "kind": "function",
+        "exported": false,
+        "file": "state.go"
+      }
+    ],
+    "TestDaemon_ProcessPR_SelfPostedReviewBody_DoesNotTrigger": [
+      {
+        "line": 27,
+        "kind": "function",
+        "exported": true,
+        "file": "selfposted_daemon_test.go"
+      }
+    ],
+    "TestDaemon_ProcessPR_StillTriggersOnNonSelfComment": [
+      {
+        "line": 68,
+        "kind": "function",
+        "exported": true,
+        "file": "selfposted_daemon_test.go"
+      }
+    ],
+    "TestDaemon_ProcessPR_SkipsOnlySelfPostedAmongTriggers": [
+      {
+        "line": 99,
+        "kind": "function",
+        "exported": true,
+        "file": "selfposted_daemon_test.go"
+      }
+    ],
+    "TestDaemon_ProcessPR_RecordedReviewBody_DoesNotReTrigger": [
+      {
+        "line": 164,
+        "kind": "function",
+        "exported": true,
+        "file": "selfposted_daemon_test.go"
+      }
+    ],
+    "TestDaemon_PromotePendingComment_DoesNotRecordObservedComment": [
+      {
+        "line": 219,
+        "kind": "function",
+        "exported": true,
+        "file": "selfposted_daemon_test.go"
+      }
+    ],
+    "TestDaemon_PromotePendingComment_NoPoisoning_CrossTickSuccessSettlesWithoutLoop": [
+      {
+        "line": 299,
+        "kind": "function",
+        "exported": true,
+        "file": "selfposted_daemon_test.go"
+      }
+    ],
+    "TestDaemon_PromotePendingComment_CountsWrapperRecordedBotBodyAsSuccess": [
+      {
+        "line": 364,
+        "kind": "function",
+        "exported": true,
+        "file": "selfposted_daemon_test.go"
+      }
+    ],
+    "TestDaemon_ProcessPR_BotReviewBodyWithTriggerSubstring_DoesNotLoop": [
+      {
+        "line": 426,
+        "kind": "function",
+        "exported": true,
+        "file": "selfposted_daemon_test.go"
+      }
+    ],
+    "TestDaemon_ProcessPR_RecordsNonTriggerBotReviewBody": [
+      {
+        "line": 482,
+        "kind": "function",
+        "exported": true,
+        "file": "selfposted_daemon_test.go"
+      }
+    ],
+    "TestDaemon_ProcessPR_ImplementorTriggerStillLaunches_WhenTriggerHashNotRecorded": [
+      {
+        "line": 533,
+        "kind": "function",
+        "exported": true,
+        "file": "selfposted_daemon_test.go"
+      }
+    ],
+    "TestDaemon_NoBlindness_TriggerReRequestAfterPendingWindow_Launches": [
+      {
+        "line": 589,
+        "kind": "function",
+        "exported": true,
+        "file": "selfposted_daemon_test.go"
+      }
+    ],
+    "TestSelfPostStore_RecordAndLookup_PerPR": [
+      {
+        "line": 21,
+        "kind": "function",
+        "exported": true,
+        "file": "selfposted_perpr_test.go"
+      }
+    ],
+    "TestSelfPostStore_Normalization_PerPR": [
+      {
+        "line": 44,
+        "kind": "function",
+        "exported": true,
+        "file": "selfposted_perpr_test.go"
+      }
+    ],
+    "TestSelfPostStore_GreenfieldLoad_OldFileBackedUpAndIgnored": [
+      {
+        "line": 83,
+        "kind": "function",
+        "exported": true,
+        "file": "selfposted_perpr_test.go"
+      }
+    ],
+    "TestSelfPostStore_Record_WritesNewKeyFormat": [
+      {
+        "line": 133,
+        "kind": "function",
+        "exported": true,
+        "file": "selfposted_perpr_test.go"
+      }
+    ],
+    "TestSelfPostStore_NoCrossContamination_OnRealisticPoisonShape": [
+      {
+        "line": 174,
+        "kind": "function",
+        "exported": true,
+        "file": "selfposted_perpr_test.go"
+      }
+    ],
+    "TestSelfPostStore_RecordAndLookup": [
+      {
+        "line": 18,
+        "kind": "function",
+        "exported": true,
+        "file": "selfposted_test.go"
+      }
+    ],
+    "TestSelfPostStore_Normalization": [
+      {
+        "line": 56,
+        "kind": "function",
+        "exported": true,
+        "file": "selfposted_test.go"
+      }
+    ],
+    "TestSelfPostStore_MissingOrCorruptFile": [
+      {
+        "line": 85,
+        "kind": "function",
+        "exported": true,
+        "file": "selfposted_test.go"
+      }
+    ],
+    "TestSelfPostStore_StartsEmpty": [
+      {
+        "line": 134,
+        "kind": "function",
+        "exported": true,
+        "file": "selfposted_test.go"
+      }
+    ],
+    "TestSelfPostStore_CorruptFileDegradesToEmpty": [
+      {
+        "line": 155,
+        "kind": "function",
+        "exported": true,
+        "file": "selfposted_test.go"
+      }
+    ],
+    "TestSelfPostStore_PersistsRoundTrip": [
+      {
+        "line": 190,
+        "kind": "function",
+        "exported": true,
+        "file": "selfposted_test.go"
+      }
+    ],
+    "TestSelfPostStore_RecordIdempotent": [
+      {
+        "line": 233,
+        "kind": "function",
+        "exported": true,
+        "file": "selfposted_test.go"
+      }
+    ],
+    "TestSelfPostStore_AtomicWrite": [
+      {
+        "line": 259,
+        "kind": "function",
+        "exported": true,
+        "file": "selfposted_test.go"
+      }
+    ],
+    "TestSelfPostStore_ConcurrentRecord": [
+      {
+        "line": 296,
+        "kind": "function",
+        "exported": true,
+        "file": "selfposted_test.go"
+      }
+    ],
+    "TestSelfPostStore_AllowsEmptyBody": [
+      {
+        "line": 349,
+        "kind": "function",
+        "exported": true,
+        "file": "selfposted_test.go"
+      }
+    ],
+    "TestSelfPostStore_IgnoresLeadingSpaces": [
+      {
+        "line": 377,
+        "kind": "function",
+        "exported": true,
+        "file": "selfposted_test.go"
+      }
+    ],
+    "SeenCacheInvalidator": [
+      {
+        "line": 20,
+        "kind": "interface",
+        "exported": true,
+        "file": "state.go"
+      }
+    ],
+    "noopInvalidator": [
+      {
+        "line": 27,
+        "kind": "struct",
+        "exported": false,
+        "file": "state.go"
+      }
+    ],
+    "ReviewStateStore": [
+      {
+        "line": 53,
+        "kind": "struct",
+        "exported": true,
+        "file": "state.go"
+      }
+    ],
+    "NewReviewStateStore": [
+      {
+        "line": 70,
+        "kind": "function",
+        "exported": true,
+        "file": "state.go"
+      }
+    ],
+    "PR": [
+      {
+        "line": 105,
+        "kind": "function",
+        "exported": true,
+        "file": "state.go"
+      }
+    ],
+    "IsSeen": [
+      {
+        "line": 112,
+        "kind": "function",
+        "exported": true,
+        "file": "state.go"
+      }
+    ],
+    "isSeenLocked": [
+      {
+        "line": 118,
+        "kind": "function",
+        "exported": false,
+        "file": "state.go"
+      }
+    ],
+    "IsClaimed": [
+      {
+        "line": 129,
+        "kind": "function",
+        "exported": true,
+        "file": "state.go"
+      }
+    ],
+    "TryClaim": [
+      {
+        "line": 140,
+        "kind": "function",
+        "exported": true,
+        "file": "state.go"
+      }
+    ],
+    "Release": [
+      {
+        "line": 162,
+        "kind": "function",
+        "exported": true,
+        "file": "state.go"
+      }
+    ],
+    "MarkSeen": [
+      {
+        "line": 192,
+        "kind": "function",
+        "exported": true,
+        "file": "state.go"
+      }
+    ],
+    "reviewStateSave": [
+      {
+        "line": 230,
+        "kind": "var",
+        "exported": false,
+        "file": "state.go"
+      }
+    ],
+    "Save": [
+      {
+        "line": 237,
+        "kind": "function",
+        "exported": true,
+        "file": "state.go"
+      }
+    ],
+    "TestReviewStateStore_StartsEmpty": [
+      {
+        "line": 20,
+        "kind": "function",
+        "exported": true,
+        "file": "state_test.go"
+      }
+    ],
+    "TestReviewStateStore_LoadsExistingClaims": [
+      {
+        "line": 46,
+        "kind": "function",
+        "exported": true,
+        "file": "state_test.go"
+      }
+    ],
+    "TestReviewStateStore_MarkSeenPersists": [
+      {
+        "line": 84,
+        "kind": "function",
+        "exported": true,
+        "file": "state_test.go"
+      }
+    ],
+    "TestReviewStateStore_MarkSeenIdempotent": [
+      {
+        "line": 123,
+        "kind": "function",
+        "exported": true,
+        "file": "state_test.go"
+      }
+    ],
+    "TestReviewStateStore_RejectsEmptyKey": [
+      {
+        "line": 153,
+        "kind": "function",
+        "exported": true,
+        "file": "state_test.go"
+      }
+    ],
+    "TestReviewStateStore_TryClaimReturnsTrueForNewKey": [
+      {
+        "line": 172,
+        "kind": "function",
+        "exported": true,
+        "file": "state_test.go"
+      }
+    ],
+    "TestReviewStateStore_TryClaimReturnsFalseForClaimedKey": [
+      {
+        "line": 188,
+        "kind": "function",
+        "exported": true,
+        "file": "state_test.go"
+      }
+    ],
+    "TestReviewStateStore_TryClaimMakesIsClaimedReturnTrue": [
+      {
+        "line": 207,
+        "kind": "function",
+        "exported": true,
+        "file": "state_test.go"
+      }
+    ],
+    "TestReviewStateStore_TryClaimThenMarkSeenIsIdempotent": [
+      {
+        "line": 226,
+        "kind": "function",
+        "exported": true,
+        "file": "state_test.go"
+      }
+    ],
+    "TestReviewStateStore_ReleaseAllowsRetry": [
+      {
+        "line": 263,
+        "kind": "function",
+        "exported": true,
+        "file": "state_test.go"
+      }
+    ],
+    "TestReviewStateStore_TryClaimIsConcurrencySafe": [
+      {
+        "line": 287,
+        "kind": "function",
+        "exported": true,
+        "file": "state_test.go"
+      }
+    ],
+    "TestReviewStateStore_TryClaimAgainstLoadedIDs": [
+      {
+        "line": 316,
+        "kind": "function",
+        "exported": true,
+        "file": "state_test.go"
+      }
+    ],
+    "TestReviewStateStore_AtomicRenameLeavesPreviousIntact": [
+      {
+        "line": 353,
+        "kind": "function",
+        "exported": true,
+        "file": "state_test.go"
+      }
+    ],
+    "TestReviewStateStore_NoClaimsSubdirectoryOnDisk": [
+      {
+        "line": 383,
+        "kind": "function",
+        "exported": true,
+        "file": "state_test.go"
+      }
+    ],
+    "TestReviewStateStore_NoTimeBasedPurge": [
+      {
+        "line": 413,
+        "kind": "function",
+        "exported": true,
+        "file": "state_test.go"
+      }
+    ],
+    "TestReviewStateStore_ReleaseClearsClaim": [
+      {
+        "line": 448,
+        "kind": "function",
+        "exported": true,
+        "file": "state_test.go"
+      }
+    ],
+    "TestReviewStateStore_ReleaseIdempotent": [
+      {
+        "line": 472,
+        "kind": "function",
+        "exported": true,
+        "file": "state_test.go"
+      }
+    ],
+    "TestReviewStateStore_CommentIDWithSpecialChars": [
+      {
+        "line": 491,
+        "kind": "function",
+        "exported": true,
+        "file": "state_test.go"
+      }
+    ],
+    "TestReviewStateStore_RestartReadsPersistedClaims": [
+      {
+        "line": 511,
+        "kind": "function",
+        "exported": true,
+        "file": "state_test.go"
+      }
+    ],
+    "triggerPattern": [
+      {
+        "line": 13,
+        "kind": "var",
+        "exported": false,
+        "file": "trigger.go"
+      }
+    ],
+    "ParseTrigger": [
+      {
+        "line": 27,
+        "kind": "function",
+        "exported": true,
+        "file": "trigger.go"
+      }
+    ],
+    "stripLeadingBotMention": [
+      {
+        "line": 41,
+        "kind": "function",
+        "exported": false,
+        "file": "trigger.go"
+      }
+    ],
+    "TestParseTrigger_MatchSimple": [
+      {
+        "line": 5,
+        "kind": "function",
+        "exported": true,
+        "file": "trigger_test.go"
+      }
+    ],
+    "TestParseTrigger_MatchWithFocus": [
+      {
+        "line": 15,
+        "kind": "function",
+        "exported": true,
+        "file": "trigger_test.go"
+      }
+    ],
+    "TestParseTrigger_CaseInsensitive": [
+      {
+        "line": 25,
+        "kind": "function",
+        "exported": true,
+        "file": "trigger_test.go"
+      }
+    ],
+    "TestParseTrigger_MultipleSpaces": [
+      {
+        "line": 34,
+        "kind": "function",
+        "exported": true,
+        "file": "trigger_test.go"
+      }
+    ],
+    "TestParseTrigger_NoMatch": [
+      {
+        "line": 40,
+        "kind": "function",
+        "exported": true,
+        "file": "trigger_test.go"
+      }
+    ],
+    "TestParseTrigger_StripsBotMention": [
+      {
+        "line": 49,
+        "kind": "function",
+        "exported": true,
+        "file": "trigger_test.go"
+      }
+    ],
+    "TestParseTrigger_NewlineSeparated": [
+      {
+        "line": 59,
+        "kind": "function",
+        "exported": true,
+        "file": "trigger_test.go"
+      }
+    ]
+  },
+  "file_symbols": {
+    "agentlog.go": [
+      {
+        "name": "extractBodiesFromLog",
+        "line": 57,
+        "kind": "function",
+        "exported": false
+      },
+      {
+        "name": "readBodyFile",
+        "line": 133,
+        "kind": "function",
+        "exported": false
+      },
+      {
+        "name": "isReviewRunLog",
+        "line": 157,
+        "kind": "function",
+        "exported": false
+      },
+      {
+        "name": "bodyAccumulator",
+        "line": 176,
+        "kind": "struct",
+        "exported": false
+      },
+      {
+        "name": "logLinePrefix",
+        "line": 187,
+        "kind": "var",
+        "exported": false
+      },
+      {
+        "name": "stripLogContinuationPrefix",
+        "line": 192,
+        "kind": "function",
+        "exported": false
+      },
+      {
+        "name": "parseGhPrCommentBody",
+        "line": 216,
+        "kind": "function",
+        "exported": false
+      },
+      {
+        "name": "indexOfGhPrComment",
+        "line": 257,
+        "kind": "function",
+        "exported": false
+      },
+      {
+        "name": "isShellPromptPosition",
+        "line": 285,
+        "kind": "function",
+        "exported": false
+      },
+      {
+        "name": "splitFirstToken",
+        "line": 301,
+        "kind": "function",
+        "exported": false
+      },
+      {
+        "name": "indexOfBodyFlag",
+        "line": 337,
+        "kind": "function",
+        "exported": false
+      },
+      {
+        "name": "isBoundary",
+        "line": 383,
+        "kind": "function",
+        "exported": false
+      },
+      {
+        "name": "parseSingleQuoted",
+        "line": 392,
+        "kind": "function",
+        "exported": false
+      },
+      {
+        "name": "parseDoubleQuoted",
+        "line": 406,
+        "kind": "function",
+        "exported": false
+      },
+      {
+        "name": "parseBodyContinuation",
+        "line": 440,
+        "kind": "function",
+        "exported": false
+      }
+    ],
+    "agentlog_slice3_test.go": [
+      {
+        "name": "TestRegisterPendingReview_StoresRunLogPath",
+        "line": 17,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestRegisterPendingReview_DefaultsRunLogPath",
+        "line": 46,
+        "kind": "function",
+        "exported": true
+      }
+    ],
+    "agentlog_slice4_test.go": [
+      {
+        "name": "TestDaemon_PromotePendingComment_RecordsBotAuthoredBody_FromReviewLog",
+        "line": 24,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestDaemon_PromotePendingComment_DoesNotRecordHumanAuthoredBody",
+        "line": 73,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestDaemon_PromotePendingComment_RecordsMultipleBotBodies",
+        "line": 126,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "mustSelfPostStore",
+        "line": 215,
+        "kind": "function",
+        "exported": false
+      }
+    ],
+    "agentlog_slice5_test.go": [
+      {
+        "name": "TestDaemon_BoundedRetry_GrepsLogBeforeFailing",
+        "line": 27,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestDaemon_BoundedRetry_FailsWhenLogIsEmpty",
+        "line": 110,
+        "kind": "function",
+        "exported": true
+      }
+    ],
+    "agentlog_test.go": [
+      {
+        "name": "TestExtractBodiesFromLog_DoubleQuotedBody",
+        "line": 16,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestExtractBodiesFromLog_SingleQuotedBody",
+        "line": 40,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestExtractBodiesFromLog_NoGhComment",
+        "line": 64,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestExtractBodiesFromLog_UnclosedQuoteReturnsError",
+        "line": 86,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestExtractBodiesFromLog_MultiplePosts",
+        "line": 109,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestExtractBodiesFromLog_MultilineBody",
+        "line": 136,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestExtractBodiesFromLog_BodyFileAbsolute",
+        "line": 163,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestExtractBodiesFromLog_CDAndRepoWrapped",
+        "line": 194,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestExtractBodiesFromLog_IgnoresBodiesInImplementationRunLog",
+        "line": 219,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestExtractBodiesFromLog_ReviewKind_ReturnsBodies",
+        "line": 244,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestExtractBodiesFromLog_IgnoresGhPrCommentInsideBody",
+        "line": 278,
+        "kind": "function",
+        "exported": true
+      }
+    ],
+    "cleanup.go": [
+      {
+        "name": "ClearReviewArtifacts",
+        "line": 25,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "isMissingWorktreeErr",
+        "line": 48,
+        "kind": "function",
+        "exported": false
+      },
+      {
+        "name": "isMissingBranchErr",
+        "line": 55,
+        "kind": "function",
+        "exported": false
+      }
+    ],
+    "daemon.go": [
+      {
+        "name": "PollingInterval",
+        "line": 28,
+        "kind": "const",
+        "exported": true
+      },
+      {
+        "name": "pendingMaxCycles",
+        "line": 37,
+        "kind": "const",
+        "exported": false
+      },
+      {
+        "name": "Clock",
+        "line": 41,
+        "kind": "type_alias",
+        "exported": true
+      },
+      {
+        "name": "Trigger",
+        "line": 45,
+        "kind": "type_alias",
+        "exported": true
+      },
+      {
+        "name": "GitHubClient",
+        "line": 51,
+        "kind": "interface",
+        "exported": true
+      },
+      {
+        "name": "BatchRunner",
+        "line": 63,
+        "kind": "interface",
+        "exported": true
+      },
+      {
+        "name": "Renderer",
+        "line": 68,
+        "kind": "interface",
+        "exported": true
+      },
+      {
+        "name": "pendingReviewEntry",
+        "line": 84,
+        "kind": "struct",
+        "exported": false
+      },
+      {
+        "name": "Daemon",
+        "line": 95,
+        "kind": "struct",
+        "exported": true
+      },
+      {
+        "name": "New",
+        "line": 141,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "acquirePRSlot",
+        "line": 204,
+        "kind": "function",
+        "exported": false
+      },
+      {
+        "name": "releasePRSlot",
+        "line": 223,
+        "kind": "function",
+        "exported": false
+      },
+      {
+        "name": "IsSlotHeld",
+        "line": 240,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "slotHeldCount",
+        "line": 249,
+        "kind": "function",
+        "exported": false
+      },
+      {
+        "name": "WaitForIdle",
+        "line": 260,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "IsTerminalSeen",
+        "line": 279,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "MarkTerminalSeen",
+        "line": 292,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "Forget",
+        "line": 308,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "loadSeenCache",
+        "line": 323,
+        "kind": "function",
+        "exported": false
+      },
+      {
+        "name": "readReviewRowID",
+        "line": 382,
+        "kind": "function",
+        "exported": false
+      },
+      {
+        "name": "InvalidateSeenCache",
+        "line": 414,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "loadPendingReviews",
+        "line": 439,
+        "kind": "function",
+        "exported": false
+      },
+      {
+        "name": "InvalidatePendingReviews",
+        "line": 505,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "SocketPath",
+        "line": 513,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "effectiveAgent",
+        "line": 521,
+        "kind": "function",
+        "exported": false
+      },
+      {
+        "name": "effectiveModel",
+        "line": 535,
+        "kind": "function",
+        "exported": false
+      },
+      {
+        "name": "effectiveParallel",
+        "line": 551,
+        "kind": "function",
+        "exported": false
+      },
+      {
+        "name": "PromptTemplatePath",
+        "line": 569,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "QualityRulesPath",
+        "line": 576,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "initPromptTemplate",
+        "line": 586,
+        "kind": "function",
+        "exported": false
+      },
+      {
+        "name": "ReviewStatePath",
+        "line": 625,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "SetSocket",
+        "line": 632,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "StartSocket",
+        "line": 639,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "Stop",
+        "line": 653,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "Run",
+        "line": 664,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "tick",
+        "line": 718,
+        "kind": "function",
+        "exported": false
+      },
+      {
+        "name": "processPR",
+        "line": 768,
+        "kind": "function",
+        "exported": false
+      },
+      {
+        "name": "shouldSkipDedupStatus",
+        "line": 995,
+        "kind": "function",
+        "exported": false
+      },
+      {
+        "name": "prepareReviewRun",
+        "line": 1012,
+        "kind": "function",
+        "exported": false
+      },
+      {
+        "name": "reviewBranchName",
+        "line": 1076,
+        "kind": "function",
+        "exported": false
+      },
+      {
+        "name": "logWriterFor",
+        "line": 1085,
+        "kind": "function",
+        "exported": false
+      },
+      {
+        "name": "launchReview",
+        "line": 1110,
+        "kind": "function",
+        "exported": false
+      },
+      {
+        "name": "now",
+        "line": 1213,
+        "kind": "function",
+        "exported": false
+      },
+      {
+        "name": "promotePendingComment",
+        "line": 1258,
+        "kind": "function",
+        "exported": false
+      },
+      {
+        "name": "promotePendingReviews",
+        "line": 1323,
+        "kind": "function",
+        "exported": false
+      },
+      {
+        "name": "registerPendingReview",
+        "line": 1440,
+        "kind": "function",
+        "exported": false
+      },
+      {
+        "name": "logf",
+        "line": 1457,
+        "kind": "function",
+        "exported": false
+      }
+    ],
+    "daemon_async_test.go": [
+      {
+        "name": "TestDaemon_AsyncLaunch_TickReturnsImmediately",
+        "line": 20,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestDaemon_AsyncLaunch_CrossTickSlotAccumulation",
+        "line": 93,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestDaemon_AsyncLaunch_CommandPickupDuringInFlight",
+        "line": 192,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestDaemon_AsyncLaunch_RunBatchErrorRetryable",
+        "line": 273,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestDaemon_AsyncLaunch_GracefulShutdown",
+        "line": 327,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "waitForStarted",
+        "line": 402,
+        "kind": "function",
+        "exported": false
+      }
+    ],
+    "daemon_canonical_test.go": [
+      {
+        "name": "TestDaemon_ReviewRunIDAndFolder_AreCanonical",
+        "line": 36,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestDaemon_ReviewRunIDAndFolder_AreCanonicalWithLinkedIssue",
+        "line": 134,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestDaemon_LoadSeenCache_ReadsCanonicalRunFolder",
+        "line": 208,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestDaemon_LoadSeenCache_IgnoresLegacyRunsReviewFolder",
+        "line": 276,
+        "kind": "function",
+        "exported": true
+      }
+    ],
+    "daemon_cleanup_test.go": [
+      {
+        "name": "initReviewTestGitRepo",
+        "line": 23,
+        "kind": "function",
+        "exported": false
+      },
+      {
+        "name": "stageReviewWorktree",
+        "line": 54,
+        "kind": "function",
+        "exported": false
+      },
+      {
+        "name": "gitWorktreeHasBranch",
+        "line": 68,
+        "kind": "function",
+        "exported": false
+      },
+      {
+        "name": "gitBranchExists",
+        "line": 80,
+        "kind": "function",
+        "exported": false
+      },
+      {
+        "name": "TestClearReviewArtifacts_HappyPath",
+        "line": 90,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestClearReviewArtifacts_Idempotent",
+        "line": 120,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestClearReviewArtifacts_EmptyBranchIsNoop",
+        "line": 138,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestClearReviewArtifacts_EmptyWorktreeDirIsNoop",
+        "line": 151,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestClearReviewArtifacts_OnlyTouchesTargetBranch",
+        "line": 163,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "newReviewLaunchTestDaemon",
+        "line": 196,
+        "kind": "function",
+        "exported": false
+      },
+      {
+        "name": "newReviewLaunchTestConfig",
+        "line": 209,
+        "kind": "function",
+        "exported": false
+      },
+      {
+        "name": "TestLaunchReview_CleansUpWorktreeAndBranchOnSuccess",
+        "line": 224,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestPrepareReviewRun_LinkedIssueRegistersPerRowRunID",
+        "line": 286,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestLaunchReview_CleansUpOnRunBatchFailure",
+        "line": 330,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestLaunchReview_CleansUpOnContextCancellation",
+        "line": 369,
+        "kind": "function",
+        "exported": true
+      }
+    ],
+    "daemon_ctx_cancel_test.go": [
+      {
+        "name": "slowFakeGH",
+        "line": 18,
+        "kind": "struct",
+        "exported": false
+      },
+      {
+        "name": "newSlowFakeGH",
+        "line": 27,
+        "kind": "function",
+        "exported": false
+      },
+      {
+        "name": "ListOpenPRs",
+        "line": 35,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "ListPRComments",
+        "line": 47,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestDaemon_HungGhReleaseOnCancel",
+        "line": 64,
+        "kind": "function",
+        "exported": true
+      }
+    ],
+    "daemon_restart_test.go": [
+      {
+        "name": "TestDaemon_RestartRecoversPendingFromDisk",
+        "line": 31,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "findPendingReviewState",
+        "line": 122,
+        "kind": "function",
+        "exported": false
+      }
+    ],
+    "daemon_slice2_test.go": [
+      {
+        "name": "TestDaemon_ReviewsDirContainsOnlySocketPromptAndSelfPosted",
+        "line": 30,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestDaemon_ProcessPRWritesReviewStateToRunFolder",
+        "line": 86,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestDaemon_ProcessPRDoesNotCreatePerPRDirectory",
+        "line": 143,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestDaemon_SharedReviewPromptFileExists",
+        "line": 179,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestDaemon_RespectsPreMaterialisedReviewFiles",
+        "line": 231,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestDaemon_QualityRulesPathMatchesReviewsDir",
+        "line": 268,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "_",
+        "line": 278,
+        "kind": "var",
+        "exported": false
+      },
+      {
+        "name": "TestDaemon_ConcurrentTickOnlyLaunchesOnce",
+        "line": 289,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestDaemon_FailedLaunchRetriesNextTick",
+        "line": 354,
+        "kind": "function",
+        "exported": true
+      }
+    ],
+    "daemon_sliceA_test.go": [
+      {
+        "name": "sliceASeenLoader",
+        "line": 23,
+        "kind": "struct",
+        "exported": false
+      },
+      {
+        "name": "Install",
+        "line": 28,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "loadBatchesIndex",
+        "line": 40,
+        "kind": "function",
+        "exported": false
+      },
+      {
+        "name": "readReviewState",
+        "line": 45,
+        "kind": "function",
+        "exported": false
+      },
+      {
+        "name": "seedPriorReviewEntry",
+        "line": 59,
+        "kind": "function",
+        "exported": false
+      },
+      {
+        "name": "deriveReviewRowID",
+        "line": 108,
+        "kind": "function",
+        "exported": false
+      },
+      {
+        "name": "TestDaemon_SeenCacheHydratedAtConstruction",
+        "line": 124,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestDaemon_ProcessPRScalesConstantlyWithPriorBatches",
+        "line": 179,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "itoa",
+        "line": 267,
+        "kind": "function",
+        "exported": false
+      },
+      {
+        "name": "fakeInvalidator",
+        "line": 281,
+        "kind": "struct",
+        "exported": false
+      },
+      {
+        "name": "MarkTerminalSeen",
+        "line": 286,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "Forget",
+        "line": 292,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestDaemon_SeenCacheConcurrentReadWriteSafe",
+        "line": 305,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestDaemon_ReleaseForgetsCacheEntry",
+        "line": 357,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestDaemon_ReviewStateStore_MarkSeenInvalidatesCacheMidProcess",
+        "line": 381,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestReviewStateStore_MarkSeenFiresCacheHook",
+        "line": 458,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestReviewStateStore_MarkSeenSaveErrorLeavesCacheUntouched",
+        "line": 514,
+        "kind": "function",
+        "exported": true
+      }
+    ],
+    "daemon_sliceC_test.go": [
+      {
+        "name": "waitIdle",
+        "line": 14,
+        "kind": "function",
+        "exported": false
+      },
+      {
+        "name": "TestDaemon_PerPRSlotTable_AllowsCrossPRConcurrency",
+        "line": 29,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestDaemon_PerPRSlotTable_ReleasesOnCompletion",
+        "line": 162,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestDaemon_PerPRSlotTable_NewTriggerMidFlight_IsNotDropped",
+        "line": 237,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestDaemon_PerPRSlotTable_HeldSlotReturnsSilently",
+        "line": 384,
+        "kind": "function",
+        "exported": true
+      }
+    ],
+    "daemon_sliceD_test.go": [
+      {
+        "name": "TestDaemon_PromotePendingComment_ReturnsSuccessWhenReviewFound",
+        "line": 25,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestDaemon_PromotePendingComment_ReturnsErrorWhenMissing",
+        "line": 56,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestDaemon_PromotePendingComment_IgnoresTriggerComment",
+        "line": 85,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestDaemon_LaunchReviewReturnsFastAndRecordsPending",
+        "line": 125,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestDaemon_NextTickPromotesPendingCommentToSuccess",
+        "line": 194,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestDaemon_NextTickRejectsPendingCommentToFailureAfterBound",
+        "line": 254,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestDaemon_PendingCommentIsNotRelaunchedMidCycle",
+        "line": 311,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestDaemon_NextTickRejectsPendingCommentTwiceNoOp",
+        "line": 357,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestDaemon_PendingNotTerminalInSeenCache",
+        "line": 392,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestDaemon_LaunchReviewReturnsFastOnRunBatchError",
+        "line": 411,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "_",
+        "line": 465,
+        "kind": "var",
+        "exported": false
+      }
+    ],
+    "daemon_test.go": [
+      {
+        "name": "reactionCall",
+        "line": 28,
+        "kind": "struct",
+        "exported": false
+      },
+      {
+        "name": "fakeGH",
+        "line": 38,
+        "kind": "struct",
+        "exported": false
+      },
+      {
+        "name": "ListOpenPRs",
+        "line": 52,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "ListPRComments",
+        "line": 59,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "FetchPR",
+        "line": 77,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "RepoName",
+        "line": 93,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "AddCommentReaction",
+        "line": 97,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "AddIssueReaction",
+        "line": 106,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "RemoveCommentReaction",
+        "line": 115,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "RemoveIssueReaction",
+        "line": 122,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "capturedRequest",
+        "line": 129,
+        "kind": "struct",
+        "exported": false
+      },
+      {
+        "name": "RunBatch",
+        "line": 135,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "Calls",
+        "line": 147,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "lockedBuffer",
+        "line": 158,
+        "kind": "struct",
+        "exported": false
+      },
+      {
+        "name": "Write",
+        "line": 163,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "String",
+        "line": 169,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "Bytes",
+        "line": 175,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "newDaemonForTest",
+        "line": 181,
+        "kind": "function",
+        "exported": false
+      },
+      {
+        "name": "tickAndWait",
+        "line": 195,
+        "kind": "function",
+        "exported": false
+      },
+      {
+        "name": "newDaemonForTestWithParallel",
+        "line": 207,
+        "kind": "function",
+        "exported": false
+      },
+      {
+        "name": "TestDaemon_ProcessPRCommentsSortedByCreatedAt",
+        "line": 220,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestDaemon_OnlyNewestUnseenTriggerProcessed",
+        "line": 257,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestDaemon_TickLaunchesReviewForTriggerComment",
+        "line": 332,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestDaemon_TickLaunchesReviewsInParallel",
+        "line": 405,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestDaemon_ParallelOverrideCapsSlotPool",
+        "line": 470,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestDaemon_EffectiveParallelPrefersOverride",
+        "line": 528,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestDaemon_EffectiveParallelFallsBackToConfig",
+        "line": 553,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestDaemon_LaunchReviewPropagatesAgentModelParallelOverrides",
+        "line": 577,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestDaemon_TickAddsReactionAndRemovesAfterReview",
+        "line": 614,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestDaemon_ReactionRemovedOnRunBatchError",
+        "line": 681,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestDaemon_TickSkipsSeenComment",
+        "line": 720,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestDaemon_StaleTriggersLogged",
+        "line": 789,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestDaemon_MixedSeenAndUnseenTriggers",
+        "line": 826,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestDaemon_TickCaseInsensitive",
+        "line": 911,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestDaemon_StartSocketCreatesReviewSock",
+        "line": 930,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestDaemon_RunRespondsToTrigger",
+        "line": 947,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestDaemon_StopCancelsInflightBatch",
+        "line": 994,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "batchFunc",
+        "line": 1034,
+        "kind": "type_alias",
+        "exported": false
+      },
+      {
+        "name": "TestDaemon_ListOpenPRsErrorIsLogged",
+        "line": 1040,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestDaemon_BroadcasterFixtureIsSafeUnderRace",
+        "line": 1080,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestLockedBuffer_ConcurrentWriteAndRead",
+        "line": 1122,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "errList",
+        "line": 1170,
+        "kind": "var",
+        "exported": false
+      },
+      {
+        "name": "jsonError",
+        "line": 1172,
+        "kind": "type_alias",
+        "exported": false
+      },
+      {
+        "name": "Error",
+        "line": 1174,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestDaemon_RunFailsFastOnInvalidReviewAgent",
+        "line": 1176,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestDaemon_RunFailsFastOnMissingReviewModel",
+        "line": 1210,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestDaemon_RunHonorsAgentModelOverridesAtStartup",
+        "line": 1247,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestDaemon_LaunchReviewPropagatesSandboxParams",
+        "line": 1285,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestDaemon_LaunchReviewPropagatesAgentModelOverrides",
+        "line": 1327,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestDaemon_LaunchReviewFallsBackToConfigForAgentModel",
+        "line": 1360,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestDaemon_LaunchReviewFallsBackToConfigSandbox",
+        "line": 1392,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestDaemon_ProcessPRLaunchesNewestTriggerOnly",
+        "line": 1419,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestDaemon_OnlyNewestTriggerIgnoredWhenAllStale",
+        "line": 1453,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestDaemon_ContextCancellationPropagates",
+        "line": 1528,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestDaemon_ClaimFailureSkipsComment",
+        "line": 1570,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestDaemon_LaunchReviewErrorsOnMissingModel",
+        "line": 1648,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestDaemon_LaunchReviewCreatesControlSocketAndManifest",
+        "line": 1679,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestDaemon_LaunchReviewCleansUpRunDirOnError",
+        "line": 1746,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestDaemon_LaunchReviewReplacesStaleSocket",
+        "line": 1781,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestDaemon_LaunchReviewRoutesOutputToPerPRSock",
+        "line": 1849,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestDaemon_VerifyReviewPosted_FailsWhenNoNewComments",
+        "line": 1912,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestDaemon_VerifyReviewPosted_PassesWhenNewCommentFound",
+        "line": 1922,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestDaemon_LaunchReviewFailsWhenVerificationFails",
+        "line": 1933,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestDaemon_LaunchReviewSucceedsWhenVerificationPasses",
+        "line": 1943,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestDaemon_TickFailingReviewRecordsFailure",
+        "line": 1952,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestDaemon_AbortedReviewRetriesOnNextTick",
+        "line": 2012,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestDaemon_TickFailingReviewRetriesOnNextTick",
+        "line": 2088,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestDaemon_ConcurrentPRsDoNotClobberSharedPrompt",
+        "line": 2145,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestDaemon_TickSaturationDoesNotDropTriggers",
+        "line": 2246,
+        "kind": "function",
+        "exported": true
+      }
+    ],
+    "docguard_test.go": [
+      {
+        "name": "TestDocGuard_ReviewRunPositivePhrasing",
+        "line": 18,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestDocGuard_ReviewRunIdentity",
+        "line": 72,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "forbiddenPhrase",
+        "line": 111,
+        "kind": "struct",
+        "exported": false
+      },
+      {
+        "name": "checkFile",
+        "line": 117,
+        "kind": "function",
+        "exported": false
+      },
+      {
+        "name": "docguardError",
+        "line": 169,
+        "kind": "struct",
+        "exported": false
+      },
+      {
+        "name": "Error",
+        "line": 175,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "containsAny",
+        "line": 179,
+        "kind": "function",
+        "exported": false
+      },
+      {
+        "name": "repoRoot",
+        "line": 188,
+        "kind": "function",
+        "exported": false
+      },
+      {
+        "name": "scanPaths",
+        "line": 207,
+        "kind": "function",
+        "exported": false
+      },
+      {
+        "name": "TestDocGuard_ReviewRunGlossaryExists",
+        "line": 250,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "mustContain",
+        "line": 267,
+        "kind": "function",
+        "exported": false
+      },
+      {
+        "name": "TestADRSelfPostFilter_DocumentsNewModel",
+        "line": 281,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestADRSelfPostFilter_NoLongerReferencesWrapper",
+        "line": 315,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestADR_CrossReferencesConsistent",
+        "line": 359,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestCONTEXT_GlossaryHasNewTerms",
+        "line": 432,
+        "kind": "function",
+        "exported": true
+      }
+    ],
+    "review_full_loop_test.go": [
+      {
+        "name": "fullLoopInitGitRepo",
+        "line": 31,
+        "kind": "function",
+        "exported": false
+      },
+      {
+        "name": "fullLoopWriteRunLogRunner",
+        "line": 66,
+        "kind": "struct",
+        "exported": false
+      },
+      {
+        "name": "RunBatch",
+        "line": 73,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "Calls",
+        "line": 92,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestReviewDaemon_FullLoopPastLaunchReview",
+        "line": 127,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "waitForPendingInReviewState",
+        "line": 248,
+        "kind": "function",
+        "exported": false
+      },
+      {
+        "name": "waitForRunDirAndPending",
+        "line": 275,
+        "kind": "function",
+        "exported": false
+      },
+      {
+        "name": "waitForReviewStateStatus",
+        "line": 299,
+        "kind": "function",
+        "exported": false
+      },
+      {
+        "name": "fullLoopSha256Hex",
+        "line": 322,
+        "kind": "function",
+        "exported": false
+      },
+      {
+        "name": "fullLoopMapKeys",
+        "line": 328,
+        "kind": "function",
+        "exported": false
+      }
+    ],
+    "runid.go": [
+      {
+        "name": "reviewRunIDFor",
+        "line": 30,
+        "kind": "function",
+        "exported": false
+      }
+    ],
+    "runid_test.go": [
+      {
+        "name": "TestReviewRunIDFor_PRBare",
+        "line": 18,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestReviewRunIDFor_PRWithLinkedIssue",
+        "line": 32,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestReviewRunIDFor_NoLiteralReview",
+        "line": 46,
+        "kind": "function",
+        "exported": true
+      }
+    ],
+    "seen_cache.go": [
+      {
+        "name": "seenCacheLoader",
+        "line": 12,
+        "kind": "var",
+        "exported": false
+      },
+      {
+        "name": "seenStateReader",
+        "line": 17,
+        "kind": "var",
+        "exported": false
+      }
+    ],
+    "selfposted.go": [
+      {
+        "name": "selfPostEntry",
+        "line": 27,
+        "kind": "struct",
+        "exported": false
+      },
+      {
+        "name": "SelfPostStore",
+        "line": 61,
+        "kind": "struct",
+        "exported": true
+      },
+      {
+        "name": "NewSelfPostStore",
+        "line": 86,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "hashBody",
+        "line": 105,
+        "kind": "function",
+        "exported": false
+      },
+      {
+        "name": "compositeKey",
+        "line": 113,
+        "kind": "function",
+        "exported": false
+      },
+      {
+        "name": "Record",
+        "line": 130,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "IsSelfPosted",
+        "line": 156,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "Hashes",
+        "line": 172,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "saveLocked",
+        "line": 188,
+        "kind": "function",
+        "exported": false
+      }
+    ],
+    "selfposted_daemon_test.go": [
+      {
+        "name": "TestDaemon_ProcessPR_SelfPostedReviewBody_DoesNotTrigger",
+        "line": 27,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestDaemon_ProcessPR_StillTriggersOnNonSelfComment",
+        "line": 68,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestDaemon_ProcessPR_SkipsOnlySelfPostedAmongTriggers",
+        "line": 99,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestDaemon_ProcessPR_RecordedReviewBody_DoesNotReTrigger",
+        "line": 164,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestDaemon_PromotePendingComment_DoesNotRecordObservedComment",
+        "line": 219,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestDaemon_PromotePendingComment_NoPoisoning_CrossTickSuccessSettlesWithoutLoop",
+        "line": 299,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestDaemon_PromotePendingComment_CountsWrapperRecordedBotBodyAsSuccess",
+        "line": 364,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestDaemon_ProcessPR_BotReviewBodyWithTriggerSubstring_DoesNotLoop",
+        "line": 426,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestDaemon_ProcessPR_RecordsNonTriggerBotReviewBody",
+        "line": 482,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestDaemon_ProcessPR_ImplementorTriggerStillLaunches_WhenTriggerHashNotRecorded",
+        "line": 533,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestDaemon_NoBlindness_TriggerReRequestAfterPendingWindow_Launches",
+        "line": 589,
+        "kind": "function",
+        "exported": true
+      }
+    ],
+    "selfposted_perpr_test.go": [
+      {
+        "name": "TestSelfPostStore_RecordAndLookup_PerPR",
+        "line": 21,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestSelfPostStore_Normalization_PerPR",
+        "line": 44,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestSelfPostStore_GreenfieldLoad_OldFileBackedUpAndIgnored",
+        "line": 83,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestSelfPostStore_Record_WritesNewKeyFormat",
+        "line": 133,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestSelfPostStore_NoCrossContamination_OnRealisticPoisonShape",
+        "line": 174,
+        "kind": "function",
+        "exported": true
+      }
+    ],
+    "selfposted_test.go": [
+      {
+        "name": "TestSelfPostStore_RecordAndLookup",
+        "line": 18,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestSelfPostStore_Normalization",
+        "line": 56,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestSelfPostStore_MissingOrCorruptFile",
+        "line": 85,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestSelfPostStore_StartsEmpty",
+        "line": 134,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestSelfPostStore_CorruptFileDegradesToEmpty",
+        "line": 155,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestSelfPostStore_PersistsRoundTrip",
+        "line": 190,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestSelfPostStore_RecordIdempotent",
+        "line": 233,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestSelfPostStore_AtomicWrite",
+        "line": 259,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestSelfPostStore_ConcurrentRecord",
+        "line": 296,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestSelfPostStore_AllowsEmptyBody",
+        "line": 349,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestSelfPostStore_IgnoresLeadingSpaces",
+        "line": 377,
+        "kind": "function",
+        "exported": true
+      }
+    ],
+    "state.go": [
+      {
+        "name": "SeenCacheInvalidator",
+        "line": 20,
+        "kind": "interface",
+        "exported": true
+      },
+      {
+        "name": "noopInvalidator",
+        "line": 27,
+        "kind": "struct",
+        "exported": false
+      },
+      {
+        "name": "MarkTerminalSeen",
+        "line": 29,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "Forget",
+        "line": 30,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "ReviewStateStore",
+        "line": 53,
+        "kind": "struct",
+        "exported": true
+      },
+      {
+        "name": "NewReviewStateStore",
+        "line": 70,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "PR",
+        "line": 105,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "IsSeen",
+        "line": 112,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "isSeenLocked",
+        "line": 118,
+        "kind": "function",
+        "exported": false
+      },
+      {
+        "name": "IsClaimed",
+        "line": 129,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TryClaim",
+        "line": 140,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "Release",
+        "line": 162,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "MarkSeen",
+        "line": 192,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "reviewStateSave",
+        "line": 230,
+        "kind": "var",
+        "exported": false
+      },
+      {
+        "name": "Save",
+        "line": 237,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "saveLocked",
+        "line": 245,
+        "kind": "function",
+        "exported": false
+      }
+    ],
+    "state_test.go": [
+      {
+        "name": "TestReviewStateStore_StartsEmpty",
+        "line": 20,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestReviewStateStore_LoadsExistingClaims",
+        "line": 46,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestReviewStateStore_MarkSeenPersists",
+        "line": 84,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestReviewStateStore_MarkSeenIdempotent",
+        "line": 123,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestReviewStateStore_RejectsEmptyKey",
+        "line": 153,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestReviewStateStore_TryClaimReturnsTrueForNewKey",
+        "line": 172,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestReviewStateStore_TryClaimReturnsFalseForClaimedKey",
+        "line": 188,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestReviewStateStore_TryClaimMakesIsClaimedReturnTrue",
+        "line": 207,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestReviewStateStore_TryClaimThenMarkSeenIsIdempotent",
+        "line": 226,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestReviewStateStore_ReleaseAllowsRetry",
+        "line": 263,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestReviewStateStore_TryClaimIsConcurrencySafe",
+        "line": 287,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestReviewStateStore_TryClaimAgainstLoadedIDs",
+        "line": 316,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestReviewStateStore_AtomicRenameLeavesPreviousIntact",
+        "line": 353,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestReviewStateStore_NoClaimsSubdirectoryOnDisk",
+        "line": 383,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestReviewStateStore_NoTimeBasedPurge",
+        "line": 413,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestReviewStateStore_ReleaseClearsClaim",
+        "line": 448,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestReviewStateStore_ReleaseIdempotent",
+        "line": 472,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestReviewStateStore_CommentIDWithSpecialChars",
+        "line": 491,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestReviewStateStore_RestartReadsPersistedClaims",
+        "line": 511,
+        "kind": "function",
+        "exported": true
+      }
+    ],
+    "trigger.go": [
+      {
+        "name": "triggerPattern",
+        "line": 13,
+        "kind": "var",
+        "exported": false
+      },
+      {
+        "name": "ParseTrigger",
+        "line": 27,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "stripLeadingBotMention",
+        "line": 41,
+        "kind": "function",
+        "exported": false
+      }
+    ],
+    "trigger_test.go": [
+      {
+        "name": "TestParseTrigger_MatchSimple",
+        "line": 5,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestParseTrigger_MatchWithFocus",
+        "line": 15,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestParseTrigger_CaseInsensitive",
+        "line": 25,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestParseTrigger_MultipleSpaces",
+        "line": 34,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestParseTrigger_NoMatch",
+        "line": 40,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestParseTrigger_StripsBotMention",
+        "line": 49,
+        "kind": "function",
+        "exported": true
+      },
+      {
+        "name": "TestParseTrigger_NewlineSeparated",
+        "line": 59,
+        "kind": "function",
+        "exported": true
+      }
+    ]
+  }
+}

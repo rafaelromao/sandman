@@ -1,0 +1,3146 @@
+{
+  "meta": {
+    "root": "sandman/",
+    "total_files": 284,
+    "total_loc": 140433,
+    "languages": [
+      "python",
+      "javascript",
+      "css",
+      "go",
+      "docker",
+      "ci"
+    ],
+    "packageManager": "npm",
+    "indexed": true
+  },
+  "nodes": [
+    {
+      "id": "assets/generate_sandman_assets.py",
+      "type": "module",
+      "language": "python",
+      "size": 297,
+      "loc": 297,
+      "group": 0,
+      "imports": [
+        "math",
+        "random"
+      ],
+      "layer": "backend",
+      "direct_dependents": 0,
+      "transitive_dependents": 0,
+      "blast_score": 0.0,
+      "imported_by": []
+    },
+    {
+      "id": "math",
+      "type": "import",
+      "language": "python",
+      "size": 40,
+      "loc": 0,
+      "group": 9000,
+      "imports": [],
+      "layer": "backend",
+      "direct_dependents": 2,
+      "transitive_dependents": 4,
+      "blast_score": 4.0,
+      "imported_by": [
+        "assets/generate_sandman_assets.py",
+        "internal/events"
+      ]
+    },
+    {
+      "id": "random",
+      "type": "import",
+      "language": "python",
+      "size": 40,
+      "loc": 0,
+      "group": 9000,
+      "imports": [],
+      "layer": "backend",
+      "direct_dependents": 1,
+      "transitive_dependents": 0,
+      "blast_score": 1.0,
+      "imported_by": [
+        "assets/generate_sandman_assets.py"
+      ]
+    },
+    {
+      "id": "docs/documentation.js",
+      "type": "module",
+      "language": "javascript",
+      "framework": null,
+      "size": 950,
+      "loc": 950,
+      "group": 1,
+      "imports": [],
+      "layer": "frontend",
+      "direct_dependents": 0,
+      "transitive_dependents": 0,
+      "blast_score": 0.0,
+      "imported_by": []
+    },
+    {
+      "id": "internal/cmd/portal_diff.js",
+      "type": "module",
+      "language": "javascript",
+      "framework": null,
+      "size": 2030,
+      "loc": 2030,
+      "group": 2,
+      "imports": [],
+      "layer": "frontend",
+      "direct_dependents": 0,
+      "transitive_dependents": 0,
+      "blast_score": 0.0,
+      "imported_by": []
+    },
+    {
+      "id": "internal/cmd/portal_scroll.js",
+      "type": "module",
+      "language": "javascript",
+      "framework": null,
+      "size": 87,
+      "loc": 87,
+      "group": 2,
+      "imports": [],
+      "layer": "frontend",
+      "direct_dependents": 0,
+      "transitive_dependents": 0,
+      "blast_score": 0.0,
+      "imported_by": []
+    },
+    {
+      "id": "internal/cmd/portal_state.js",
+      "type": "module",
+      "language": "javascript",
+      "framework": null,
+      "size": 176,
+      "loc": 176,
+      "group": 2,
+      "imports": [],
+      "layer": "frontend",
+      "direct_dependents": 0,
+      "transitive_dependents": 0,
+      "blast_score": 0.0,
+      "imported_by": []
+    },
+    {
+      "id": "docs/documentation.css",
+      "type": "style",
+      "language": "css",
+      "size": 502,
+      "loc": 502,
+      "group": 1,
+      "imports": [],
+      "layer": "frontend",
+      "direct_dependents": 0,
+      "transitive_dependents": 0,
+      "blast_score": 0.0,
+      "imported_by": []
+    },
+    {
+      "id": "internal/adr",
+      "type": "module",
+      "language": "go",
+      "size": 293,
+      "loc": 293,
+      "group": 3,
+      "imports": [
+        "strings",
+        "testing",
+        "os",
+        "path"
+      ],
+      "layer": "backend",
+      "direct_dependents": 0,
+      "transitive_dependents": 0,
+      "blast_score": 0.0,
+      "imported_by": []
+    },
+    {
+      "id": "internal/atomicfs",
+      "type": "module",
+      "language": "go",
+      "size": 232,
+      "loc": 232,
+      "group": 3,
+      "imports": [
+        "path",
+        "encoding",
+        "strings",
+        "fmt",
+        "testing",
+        "os"
+      ],
+      "layer": "backend",
+      "direct_dependents": 9,
+      "transitive_dependents": 3,
+      "blast_score": 10.5,
+      "imported_by": [
+        "internal/batch",
+        "internal/batchindex",
+        "internal/config",
+        "internal/daemon",
+        "internal/events",
+        "internal/prompt",
+        "internal/review",
+        "internal/scaffold",
+        "internal/skill"
+      ]
+    },
+    {
+      "id": "internal/batch",
+      "type": "module",
+      "language": "go",
+      "size": 23506,
+      "loc": 23506,
+      "group": 3,
+      "imports": [
+        "internal/prompt",
+        "sync",
+        "path",
+        "encoding",
+        "gopkg.in",
+        "fmt",
+        "internal/events",
+        "internal/shellenv",
+        "testing",
+        "os",
+        "internal/testenv",
+        "regexp",
+        "unicode",
+        "context",
+        "bytes",
+        "strconv",
+        "internal/paths",
+        "io",
+        "time",
+        "internal/runid",
+        "internal/sandbox",
+        "sort",
+        "internal/batchindex",
+        "strings",
+        "internal/config",
+        "reflect",
+        "internal/daemon",
+        "text",
+        "syscall",
+        "internal/github",
+        "errors",
+        "internal/atomicfs",
+        "internal/scaffold",
+        "runtime"
+      ],
+      "layer": "backend",
+      "direct_dependents": 2,
+      "transitive_dependents": 0,
+      "blast_score": 2.0,
+      "imported_by": [
+        "internal/cmd",
+        "internal/review"
+      ]
+    },
+    {
+      "id": "internal/batchindex",
+      "type": "module",
+      "language": "go",
+      "size": 1857,
+      "loc": 1857,
+      "group": 3,
+      "imports": [
+        "internal/batchindex",
+        "path",
+        "encoding",
+        "internal/atomicfs",
+        "sync",
+        "reflect",
+        "fmt",
+        "time",
+        "testing",
+        "os"
+      ],
+      "layer": "backend",
+      "direct_dependents": 5,
+      "transitive_dependents": 0,
+      "blast_score": 5.0,
+      "imported_by": [
+        "internal/batch",
+        "internal/batchindex",
+        "internal/cmd",
+        "internal/daemon",
+        "internal/review"
+      ]
+    },
+    {
+      "id": "internal/cmd",
+      "type": "module",
+      "language": "go",
+      "size": 70244,
+      "loc": 70244,
+      "group": 3,
+      "imports": [
+        "github.com/spf13/pflag",
+        "internal/prompt",
+        "html",
+        "sync",
+        "path",
+        "encoding",
+        "internal/skill",
+        "image",
+        "os",
+        "fmt",
+        "internal/events",
+        "testing",
+        "log",
+        "net",
+        "internal/testenv",
+        "regexp",
+        "bytes",
+        "context",
+        "strconv",
+        "internal/paths",
+        "io",
+        "time",
+        "golang.org/x/sys",
+        "internal/runid",
+        "internal/sandbox",
+        "crypto",
+        "github.com/spf13/cobra",
+        "sort",
+        "internal/batchindex",
+        "strings",
+        "internal/config",
+        "reflect",
+        "internal/batch",
+        "internal/daemon",
+        "bufio",
+        "syscall",
+        "internal/github",
+        "errors",
+        "internal/scaffold",
+        "embed",
+        "runtime",
+        "internal/review"
+      ],
+      "layer": "backend",
+      "direct_dependents": 0,
+      "transitive_dependents": 0,
+      "blast_score": 0.0,
+      "imported_by": []
+    },
+    {
+      "id": "internal/config",
+      "type": "config",
+      "language": "go",
+      "size": 2060,
+      "loc": 2060,
+      "group": 3,
+      "imports": [
+        "slices",
+        "internal/atomicfs",
+        "strconv",
+        "encoding",
+        "path",
+        "strings",
+        "gopkg.in",
+        "reflect",
+        "fmt",
+        "testing",
+        "os",
+        "sort"
+      ],
+      "layer": "backend",
+      "direct_dependents": 7,
+      "transitive_dependents": 0,
+      "blast_score": 7.0,
+      "imported_by": [
+        "internal/batch",
+        "internal/cmd",
+        "internal/paths",
+        "internal/prompt",
+        "internal/review",
+        "internal/sandbox",
+        "internal/scaffold"
+      ]
+    },
+    {
+      "id": "internal/daemon",
+      "type": "module",
+      "language": "go",
+      "size": 5307,
+      "loc": 5307,
+      "group": 3,
+      "imports": [
+        "path",
+        "encoding",
+        "sync",
+        "fmt",
+        "internal/events",
+        "testing",
+        "os",
+        "internal/testenv",
+        "bytes",
+        "io",
+        "time",
+        "golang.org/x/sys",
+        "sort",
+        "internal/batchindex",
+        "strings",
+        "reflect",
+        "syscall",
+        "errors",
+        "internal/atomicfs",
+        "runtime",
+        "net"
+      ],
+      "layer": "backend",
+      "direct_dependents": 3,
+      "transitive_dependents": 0,
+      "blast_score": 3.0,
+      "imported_by": [
+        "internal/batch",
+        "internal/cmd",
+        "internal/review"
+      ]
+    },
+    {
+      "id": "internal/events",
+      "type": "module",
+      "language": "go",
+      "size": 2852,
+      "loc": 2852,
+      "group": 3,
+      "imports": [
+        "bytes",
+        "internal/atomicfs",
+        "encoding",
+        "sync",
+        "path",
+        "strings",
+        "strconv",
+        "fmt",
+        "io",
+        "time",
+        "math",
+        "testing",
+        "os",
+        "log"
+      ],
+      "layer": "backend",
+      "direct_dependents": 3,
+      "transitive_dependents": 1,
+      "blast_score": 3.5,
+      "imported_by": [
+        "internal/batch",
+        "internal/cmd",
+        "internal/daemon"
+      ]
+    },
+    {
+      "id": "internal/github",
+      "type": "module",
+      "language": "go",
+      "size": 2571,
+      "loc": 2571,
+      "group": 3,
+      "imports": [
+        "regexp",
+        "context",
+        "bytes",
+        "slices",
+        "errors",
+        "encoding",
+        "strconv",
+        "sync",
+        "strings",
+        "reflect",
+        "fmt",
+        "io",
+        "time",
+        "testing",
+        "syscall",
+        "os",
+        "sort"
+      ],
+      "layer": "backend",
+      "direct_dependents": 3,
+      "transitive_dependents": 0,
+      "blast_score": 3.0,
+      "imported_by": [
+        "internal/batch",
+        "internal/cmd",
+        "internal/review"
+      ]
+    },
+    {
+      "id": "internal/paths",
+      "type": "module",
+      "language": "go",
+      "size": 406,
+      "loc": 406,
+      "group": 3,
+      "imports": [
+        "path",
+        "strconv",
+        "strings",
+        "internal/config",
+        "testing"
+      ],
+      "layer": "backend",
+      "direct_dependents": 5,
+      "transitive_dependents": 0,
+      "blast_score": 5.0,
+      "imported_by": [
+        "internal/batch",
+        "internal/cmd",
+        "internal/review",
+        "internal/sandbox",
+        "internal/scaffold"
+      ]
+    },
+    {
+      "id": "internal/prompt",
+      "type": "module",
+      "language": "go",
+      "size": 2018,
+      "loc": 2018,
+      "group": 3,
+      "imports": [
+        "regexp",
+        "embed",
+        "path",
+        "internal/atomicfs",
+        "strings",
+        "internal/config",
+        "fmt",
+        "encoding",
+        "testing",
+        "os",
+        "crypto"
+      ],
+      "layer": "backend",
+      "direct_dependents": 4,
+      "transitive_dependents": 0,
+      "blast_score": 4.0,
+      "imported_by": [
+        "internal/batch",
+        "internal/cmd",
+        "internal/review",
+        "internal/scaffold"
+      ]
+    },
+    {
+      "id": "internal/review",
+      "type": "module",
+      "language": "go",
+      "size": 11565,
+      "loc": 11565,
+      "group": 3,
+      "imports": [
+        "internal/prompt",
+        "sync",
+        "path",
+        "encoding",
+        "fmt",
+        "testing",
+        "os",
+        "internal/testenv",
+        "regexp",
+        "bytes",
+        "context",
+        "strconv",
+        "internal/paths",
+        "io",
+        "time",
+        "internal/runid",
+        "internal/sandbox",
+        "sort",
+        "internal/batchindex",
+        "strings",
+        "internal/config",
+        "internal/batch",
+        "internal/daemon",
+        "bufio",
+        "internal/github",
+        "errors",
+        "internal/atomicfs",
+        "net"
+      ],
+      "layer": "backend",
+      "direct_dependents": 1,
+      "transitive_dependents": 0,
+      "blast_score": 1.0,
+      "imported_by": [
+        "internal/cmd"
+      ]
+    },
+    {
+      "id": "internal/runid",
+      "type": "module",
+      "language": "go",
+      "size": 562,
+      "loc": 562,
+      "group": 3,
+      "imports": [
+        "regexp",
+        "path",
+        "strings",
+        "fmt",
+        "time",
+        "testing",
+        "os"
+      ],
+      "layer": "backend",
+      "direct_dependents": 3,
+      "transitive_dependents": 0,
+      "blast_score": 3.0,
+      "imported_by": [
+        "internal/batch",
+        "internal/cmd",
+        "internal/review"
+      ]
+    },
+    {
+      "id": "internal/sandbox",
+      "type": "module",
+      "language": "go",
+      "size": 5677,
+      "loc": 5677,
+      "group": 3,
+      "imports": [
+        "path",
+        "sync",
+        "fmt",
+        "internal/shellenv",
+        "testing",
+        "os",
+        "internal/testenv",
+        "regexp",
+        "bytes",
+        "context",
+        "strconv",
+        "internal/paths",
+        "io",
+        "time",
+        "crypto",
+        "strings",
+        "internal/config",
+        "bufio",
+        "syscall",
+        "errors",
+        "net"
+      ],
+      "layer": "backend",
+      "direct_dependents": 3,
+      "transitive_dependents": 0,
+      "blast_score": 3.0,
+      "imported_by": [
+        "internal/batch",
+        "internal/cmd",
+        "internal/review"
+      ]
+    },
+    {
+      "id": "internal/scaffold",
+      "type": "module",
+      "language": "go",
+      "size": 5613,
+      "loc": 5613,
+      "group": 3,
+      "imports": [
+        "regexp",
+        "bytes",
+        "internal/prompt",
+        "path",
+        "encoding",
+        "strconv",
+        "internal/atomicfs",
+        "strings",
+        "io",
+        "reflect",
+        "fmt",
+        "internal/config",
+        "internal/paths",
+        "testing",
+        "bufio",
+        "os",
+        "sort"
+      ],
+      "layer": "backend",
+      "direct_dependents": 2,
+      "transitive_dependents": 1,
+      "blast_score": 2.5,
+      "imported_by": [
+        "internal/batch",
+        "internal/cmd"
+      ]
+    },
+    {
+      "id": "internal/shellenv",
+      "type": "module",
+      "language": "go",
+      "size": 310,
+      "loc": 310,
+      "group": 3,
+      "imports": [
+        "regexp",
+        "errors",
+        "strings",
+        "testing",
+        "os",
+        "sort"
+      ],
+      "layer": "backend",
+      "direct_dependents": 2,
+      "transitive_dependents": 2,
+      "blast_score": 3.0,
+      "imported_by": [
+        "internal/batch",
+        "internal/sandbox"
+      ]
+    },
+    {
+      "id": "internal/skill",
+      "type": "module",
+      "language": "go",
+      "size": 626,
+      "loc": 626,
+      "group": 3,
+      "imports": [
+        "bytes",
+        "embed",
+        "path",
+        "encoding",
+        "internal/atomicfs",
+        "strings",
+        "io",
+        "fmt",
+        "testing",
+        "bufio",
+        "os",
+        "crypto",
+        "sort"
+      ],
+      "layer": "backend",
+      "direct_dependents": 1,
+      "transitive_dependents": 0,
+      "blast_score": 1.0,
+      "imported_by": [
+        "internal/cmd"
+      ]
+    },
+    {
+      "id": "internal/testenv",
+      "type": "module",
+      "language": "go",
+      "size": 601,
+      "loc": 601,
+      "group": 3,
+      "imports": [
+        "path",
+        "strings",
+        "reflect",
+        "fmt",
+        "testing",
+        "os"
+      ],
+      "layer": "backend",
+      "direct_dependents": 5,
+      "transitive_dependents": 0,
+      "blast_score": 5.0,
+      "imported_by": [
+        "internal/batch",
+        "internal/cmd",
+        "internal/daemon",
+        "internal/review",
+        "internal/sandbox"
+      ]
+    },
+    {
+      "id": "strings",
+      "type": "import",
+      "language": "go",
+      "size": 40,
+      "loc": 0,
+      "group": 9000,
+      "imports": [],
+      "layer": "backend",
+      "direct_dependents": 17,
+      "transitive_dependents": 1,
+      "blast_score": 17.5,
+      "imported_by": [
+        "internal/adr",
+        "internal/atomicfs",
+        "internal/batch",
+        "internal/cmd",
+        "internal/config",
+        "internal/daemon",
+        "internal/events",
+        "internal/github",
+        "internal/paths",
+        "internal/prompt",
+        "internal/review",
+        "internal/runid",
+        "internal/sandbox",
+        "internal/scaffold",
+        "internal/shellenv",
+        "internal/skill",
+        "internal/testenv"
+      ]
+    },
+    {
+      "id": "testing",
+      "type": "import",
+      "language": "go",
+      "size": 40,
+      "loc": 0,
+      "group": 9000,
+      "imports": [],
+      "layer": "backend",
+      "direct_dependents": 18,
+      "transitive_dependents": 0,
+      "blast_score": 18.0,
+      "imported_by": [
+        "internal/adr",
+        "internal/atomicfs",
+        "internal/batch",
+        "internal/batchindex",
+        "internal/cmd",
+        "internal/config",
+        "internal/daemon",
+        "internal/events",
+        "internal/github",
+        "internal/paths",
+        "internal/prompt",
+        "internal/review",
+        "internal/runid",
+        "internal/sandbox",
+        "internal/scaffold",
+        "internal/shellenv",
+        "internal/skill",
+        "internal/testenv"
+      ]
+    },
+    {
+      "id": "os",
+      "type": "import",
+      "language": "go",
+      "size": 40,
+      "loc": 0,
+      "group": 9000,
+      "imports": [],
+      "layer": "backend",
+      "direct_dependents": 17,
+      "transitive_dependents": 1,
+      "blast_score": 17.5,
+      "imported_by": [
+        "internal/adr",
+        "internal/atomicfs",
+        "internal/batch",
+        "internal/batchindex",
+        "internal/cmd",
+        "internal/config",
+        "internal/daemon",
+        "internal/events",
+        "internal/github",
+        "internal/prompt",
+        "internal/review",
+        "internal/runid",
+        "internal/sandbox",
+        "internal/scaffold",
+        "internal/shellenv",
+        "internal/skill",
+        "internal/testenv"
+      ]
+    },
+    {
+      "id": "path",
+      "type": "import",
+      "language": "go",
+      "size": 40,
+      "loc": 0,
+      "group": 9000,
+      "imports": [],
+      "layer": "backend",
+      "direct_dependents": 16,
+      "transitive_dependents": 0,
+      "blast_score": 16.0,
+      "imported_by": [
+        "internal/adr",
+        "internal/atomicfs",
+        "internal/batch",
+        "internal/batchindex",
+        "internal/cmd",
+        "internal/config",
+        "internal/daemon",
+        "internal/events",
+        "internal/paths",
+        "internal/prompt",
+        "internal/review",
+        "internal/runid",
+        "internal/sandbox",
+        "internal/scaffold",
+        "internal/skill",
+        "internal/testenv"
+      ]
+    },
+    {
+      "id": "encoding",
+      "type": "import",
+      "language": "go",
+      "size": 40,
+      "loc": 0,
+      "group": 9000,
+      "imports": [],
+      "layer": "backend",
+      "direct_dependents": 12,
+      "transitive_dependents": 2,
+      "blast_score": 13.0,
+      "imported_by": [
+        "internal/atomicfs",
+        "internal/batch",
+        "internal/batchindex",
+        "internal/cmd",
+        "internal/config",
+        "internal/daemon",
+        "internal/events",
+        "internal/github",
+        "internal/prompt",
+        "internal/review",
+        "internal/scaffold",
+        "internal/skill"
+      ]
+    },
+    {
+      "id": "fmt",
+      "type": "import",
+      "language": "go",
+      "size": 40,
+      "loc": 0,
+      "group": 9000,
+      "imports": [],
+      "layer": "backend",
+      "direct_dependents": 15,
+      "transitive_dependents": 1,
+      "blast_score": 15.5,
+      "imported_by": [
+        "internal/atomicfs",
+        "internal/batch",
+        "internal/batchindex",
+        "internal/cmd",
+        "internal/config",
+        "internal/daemon",
+        "internal/events",
+        "internal/github",
+        "internal/prompt",
+        "internal/review",
+        "internal/runid",
+        "internal/sandbox",
+        "internal/scaffold",
+        "internal/skill",
+        "internal/testenv"
+      ]
+    },
+    {
+      "id": "sync",
+      "type": "import",
+      "language": "go",
+      "size": 40,
+      "loc": 0,
+      "group": 9000,
+      "imports": [],
+      "layer": "backend",
+      "direct_dependents": 8,
+      "transitive_dependents": 0,
+      "blast_score": 8.0,
+      "imported_by": [
+        "internal/batch",
+        "internal/batchindex",
+        "internal/cmd",
+        "internal/daemon",
+        "internal/events",
+        "internal/github",
+        "internal/review",
+        "internal/sandbox"
+      ]
+    },
+    {
+      "id": "gopkg.in",
+      "type": "import",
+      "language": "go",
+      "size": 40,
+      "loc": 0,
+      "group": 9000,
+      "imports": [],
+      "layer": "backend",
+      "direct_dependents": 2,
+      "transitive_dependents": 6,
+      "blast_score": 5.0,
+      "imported_by": [
+        "internal/batch",
+        "internal/config"
+      ]
+    },
+    {
+      "id": "regexp",
+      "type": "import",
+      "language": "go",
+      "size": 40,
+      "loc": 0,
+      "group": 9000,
+      "imports": [],
+      "layer": "backend",
+      "direct_dependents": 9,
+      "transitive_dependents": 0,
+      "blast_score": 9.0,
+      "imported_by": [
+        "internal/batch",
+        "internal/cmd",
+        "internal/github",
+        "internal/prompt",
+        "internal/review",
+        "internal/runid",
+        "internal/sandbox",
+        "internal/scaffold",
+        "internal/shellenv"
+      ]
+    },
+    {
+      "id": "unicode",
+      "type": "import",
+      "language": "go",
+      "size": 40,
+      "loc": 0,
+      "group": 9000,
+      "imports": [],
+      "layer": "backend",
+      "direct_dependents": 1,
+      "transitive_dependents": 2,
+      "blast_score": 2.0,
+      "imported_by": [
+        "internal/batch"
+      ]
+    },
+    {
+      "id": "context",
+      "type": "import",
+      "language": "go",
+      "size": 40,
+      "loc": 0,
+      "group": 9000,
+      "imports": [],
+      "layer": "backend",
+      "direct_dependents": 5,
+      "transitive_dependents": 0,
+      "blast_score": 5.0,
+      "imported_by": [
+        "internal/batch",
+        "internal/cmd",
+        "internal/github",
+        "internal/review",
+        "internal/sandbox"
+      ]
+    },
+    {
+      "id": "bytes",
+      "type": "import",
+      "language": "go",
+      "size": 40,
+      "loc": 0,
+      "group": 9000,
+      "imports": [],
+      "layer": "backend",
+      "direct_dependents": 9,
+      "transitive_dependents": 0,
+      "blast_score": 9.0,
+      "imported_by": [
+        "internal/batch",
+        "internal/cmd",
+        "internal/daemon",
+        "internal/events",
+        "internal/github",
+        "internal/review",
+        "internal/sandbox",
+        "internal/scaffold",
+        "internal/skill"
+      ]
+    },
+    {
+      "id": "strconv",
+      "type": "import",
+      "language": "go",
+      "size": 40,
+      "loc": 0,
+      "group": 9000,
+      "imports": [],
+      "layer": "backend",
+      "direct_dependents": 9,
+      "transitive_dependents": 2,
+      "blast_score": 10.0,
+      "imported_by": [
+        "internal/batch",
+        "internal/cmd",
+        "internal/config",
+        "internal/events",
+        "internal/github",
+        "internal/paths",
+        "internal/review",
+        "internal/sandbox",
+        "internal/scaffold"
+      ]
+    },
+    {
+      "id": "io",
+      "type": "import",
+      "language": "go",
+      "size": 40,
+      "loc": 0,
+      "group": 9000,
+      "imports": [],
+      "layer": "backend",
+      "direct_dependents": 9,
+      "transitive_dependents": 0,
+      "blast_score": 9.0,
+      "imported_by": [
+        "internal/batch",
+        "internal/cmd",
+        "internal/daemon",
+        "internal/events",
+        "internal/github",
+        "internal/review",
+        "internal/sandbox",
+        "internal/scaffold",
+        "internal/skill"
+      ]
+    },
+    {
+      "id": "time",
+      "type": "import",
+      "language": "go",
+      "size": 40,
+      "loc": 0,
+      "group": 9000,
+      "imports": [],
+      "layer": "backend",
+      "direct_dependents": 9,
+      "transitive_dependents": 0,
+      "blast_score": 9.0,
+      "imported_by": [
+        "internal/batch",
+        "internal/batchindex",
+        "internal/cmd",
+        "internal/daemon",
+        "internal/events",
+        "internal/github",
+        "internal/review",
+        "internal/runid",
+        "internal/sandbox"
+      ]
+    },
+    {
+      "id": "sort",
+      "type": "import",
+      "language": "go",
+      "size": 40,
+      "loc": 0,
+      "group": 9000,
+      "imports": [],
+      "layer": "backend",
+      "direct_dependents": 9,
+      "transitive_dependents": 3,
+      "blast_score": 10.5,
+      "imported_by": [
+        "internal/batch",
+        "internal/cmd",
+        "internal/config",
+        "internal/daemon",
+        "internal/github",
+        "internal/review",
+        "internal/scaffold",
+        "internal/shellenv",
+        "internal/skill"
+      ]
+    },
+    {
+      "id": "reflect",
+      "type": "import",
+      "language": "go",
+      "size": 40,
+      "loc": 0,
+      "group": 9000,
+      "imports": [],
+      "layer": "backend",
+      "direct_dependents": 8,
+      "transitive_dependents": 4,
+      "blast_score": 10.0,
+      "imported_by": [
+        "internal/batch",
+        "internal/batchindex",
+        "internal/cmd",
+        "internal/config",
+        "internal/daemon",
+        "internal/github",
+        "internal/scaffold",
+        "internal/testenv"
+      ]
+    },
+    {
+      "id": "text",
+      "type": "import",
+      "language": "go",
+      "size": 40,
+      "loc": 0,
+      "group": 9000,
+      "imports": [],
+      "layer": "backend",
+      "direct_dependents": 1,
+      "transitive_dependents": 2,
+      "blast_score": 2.0,
+      "imported_by": [
+        "internal/batch"
+      ]
+    },
+    {
+      "id": "syscall",
+      "type": "import",
+      "language": "go",
+      "size": 40,
+      "loc": 0,
+      "group": 9000,
+      "imports": [],
+      "layer": "backend",
+      "direct_dependents": 5,
+      "transitive_dependents": 1,
+      "blast_score": 5.5,
+      "imported_by": [
+        "internal/batch",
+        "internal/cmd",
+        "internal/daemon",
+        "internal/github",
+        "internal/sandbox"
+      ]
+    },
+    {
+      "id": "errors",
+      "type": "import",
+      "language": "go",
+      "size": 40,
+      "loc": 0,
+      "group": 9000,
+      "imports": [],
+      "layer": "backend",
+      "direct_dependents": 7,
+      "transitive_dependents": 0,
+      "blast_score": 7.0,
+      "imported_by": [
+        "internal/batch",
+        "internal/cmd",
+        "internal/daemon",
+        "internal/github",
+        "internal/review",
+        "internal/sandbox",
+        "internal/shellenv"
+      ]
+    },
+    {
+      "id": "runtime",
+      "type": "import",
+      "language": "go",
+      "size": 40,
+      "loc": 0,
+      "group": 9000,
+      "imports": [],
+      "layer": "backend",
+      "direct_dependents": 3,
+      "transitive_dependents": 1,
+      "blast_score": 3.5,
+      "imported_by": [
+        "internal/batch",
+        "internal/cmd",
+        "internal/daemon"
+      ]
+    },
+    {
+      "id": "github.com/spf13/pflag",
+      "type": "import",
+      "language": "go",
+      "size": 40,
+      "loc": 0,
+      "group": 9000,
+      "imports": [],
+      "layer": "backend",
+      "direct_dependents": 1,
+      "transitive_dependents": 0,
+      "blast_score": 1.0,
+      "imported_by": [
+        "internal/cmd"
+      ]
+    },
+    {
+      "id": "html",
+      "type": "import",
+      "language": "go",
+      "size": 40,
+      "loc": 0,
+      "group": 9000,
+      "imports": [],
+      "layer": "backend",
+      "direct_dependents": 1,
+      "transitive_dependents": 0,
+      "blast_score": 1.0,
+      "imported_by": [
+        "internal/cmd"
+      ]
+    },
+    {
+      "id": "image",
+      "type": "import",
+      "language": "go",
+      "size": 40,
+      "loc": 0,
+      "group": 9000,
+      "imports": [],
+      "layer": "backend",
+      "direct_dependents": 1,
+      "transitive_dependents": 0,
+      "blast_score": 1.0,
+      "imported_by": [
+        "internal/cmd"
+      ]
+    },
+    {
+      "id": "log",
+      "type": "import",
+      "language": "go",
+      "size": 40,
+      "loc": 0,
+      "group": 9000,
+      "imports": [],
+      "layer": "backend",
+      "direct_dependents": 2,
+      "transitive_dependents": 3,
+      "blast_score": 3.5,
+      "imported_by": [
+        "internal/cmd",
+        "internal/events"
+      ]
+    },
+    {
+      "id": "net",
+      "type": "import",
+      "language": "go",
+      "size": 40,
+      "loc": 0,
+      "group": 9000,
+      "imports": [],
+      "layer": "backend",
+      "direct_dependents": 4,
+      "transitive_dependents": 1,
+      "blast_score": 4.5,
+      "imported_by": [
+        "internal/cmd",
+        "internal/daemon",
+        "internal/review",
+        "internal/sandbox"
+      ]
+    },
+    {
+      "id": "golang.org/x/sys",
+      "type": "import",
+      "language": "go",
+      "size": 40,
+      "loc": 0,
+      "group": 9000,
+      "imports": [],
+      "layer": "backend",
+      "direct_dependents": 2,
+      "transitive_dependents": 2,
+      "blast_score": 3.0,
+      "imported_by": [
+        "internal/cmd",
+        "internal/daemon"
+      ]
+    },
+    {
+      "id": "crypto",
+      "type": "import",
+      "language": "go",
+      "size": 40,
+      "loc": 0,
+      "group": 9000,
+      "imports": [],
+      "layer": "backend",
+      "direct_dependents": 4,
+      "transitive_dependents": 3,
+      "blast_score": 5.5,
+      "imported_by": [
+        "internal/cmd",
+        "internal/prompt",
+        "internal/sandbox",
+        "internal/skill"
+      ]
+    },
+    {
+      "id": "github.com/spf13/cobra",
+      "type": "import",
+      "language": "go",
+      "size": 40,
+      "loc": 0,
+      "group": 9000,
+      "imports": [],
+      "layer": "backend",
+      "direct_dependents": 1,
+      "transitive_dependents": 0,
+      "blast_score": 1.0,
+      "imported_by": [
+        "internal/cmd"
+      ]
+    },
+    {
+      "id": "bufio",
+      "type": "import",
+      "language": "go",
+      "size": 40,
+      "loc": 0,
+      "group": 9000,
+      "imports": [],
+      "layer": "backend",
+      "direct_dependents": 5,
+      "transitive_dependents": 1,
+      "blast_score": 5.5,
+      "imported_by": [
+        "internal/cmd",
+        "internal/review",
+        "internal/sandbox",
+        "internal/scaffold",
+        "internal/skill"
+      ]
+    },
+    {
+      "id": "embed",
+      "type": "import",
+      "language": "go",
+      "size": 40,
+      "loc": 0,
+      "group": 9000,
+      "imports": [],
+      "layer": "backend",
+      "direct_dependents": 3,
+      "transitive_dependents": 3,
+      "blast_score": 4.5,
+      "imported_by": [
+        "internal/cmd",
+        "internal/prompt",
+        "internal/skill"
+      ]
+    },
+    {
+      "id": "slices",
+      "type": "import",
+      "language": "go",
+      "size": 40,
+      "loc": 0,
+      "group": 9000,
+      "imports": [],
+      "layer": "backend",
+      "direct_dependents": 2,
+      "transitive_dependents": 7,
+      "blast_score": 5.5,
+      "imported_by": [
+        "internal/config",
+        "internal/github"
+      ]
+    },
+    {
+      "id": "go/build",
+      "type": "pipeline",
+      "language": "github-actions",
+      "workflow": "Go",
+      "runs_on": "${{ matrix.os }}",
+      "size": 50,
+      "loc": 0,
+      "group": 4,
+      "imports": [],
+      "layer": "infrastructure",
+      "direct_dependents": 0,
+      "transitive_dependents": 0,
+      "blast_score": 0.0,
+      "imported_by": []
+    },
+    {
+      "id": "opencode/opencode",
+      "type": "pipeline",
+      "language": "github-actions",
+      "workflow": "opencode",
+      "runs_on": "ubuntu-latest",
+      "size": 50,
+      "loc": 0,
+      "group": 5,
+      "imports": [],
+      "layer": "infrastructure",
+      "direct_dependents": 0,
+      "transitive_dependents": 0,
+      "blast_score": 0.0,
+      "imported_by": []
+    }
+  ],
+  "links": [
+    {
+      "source": "assets/generate_sandman_assets.py",
+      "target": "math",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "assets/generate_sandman_assets.py",
+      "target": "random",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/adr",
+      "target": "strings",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/adr",
+      "target": "testing",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/adr",
+      "target": "os",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/adr",
+      "target": "path",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/atomicfs",
+      "target": "path",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/atomicfs",
+      "target": "encoding",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/atomicfs",
+      "target": "strings",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/atomicfs",
+      "target": "fmt",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/atomicfs",
+      "target": "testing",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/atomicfs",
+      "target": "os",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/batch",
+      "target": "internal/prompt",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/batch",
+      "target": "sync",
+      "weight": 2,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/batch",
+      "target": "path",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/batch",
+      "target": "encoding",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/batch",
+      "target": "gopkg.in",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/batch",
+      "target": "fmt",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/batch",
+      "target": "internal/events",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/batch",
+      "target": "internal/shellenv",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/batch",
+      "target": "testing",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/batch",
+      "target": "os",
+      "weight": 2,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/batch",
+      "target": "internal/testenv",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/batch",
+      "target": "regexp",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/batch",
+      "target": "unicode",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/batch",
+      "target": "context",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/batch",
+      "target": "bytes",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/batch",
+      "target": "strconv",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/batch",
+      "target": "internal/paths",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/batch",
+      "target": "io",
+      "weight": 2,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/batch",
+      "target": "time",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/batch",
+      "target": "internal/runid",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/batch",
+      "target": "internal/sandbox",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/batch",
+      "target": "sort",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/batch",
+      "target": "internal/batchindex",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/batch",
+      "target": "strings",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/batch",
+      "target": "internal/config",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/batch",
+      "target": "reflect",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/batch",
+      "target": "internal/daemon",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/batch",
+      "target": "text",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/batch",
+      "target": "syscall",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/batch",
+      "target": "internal/github",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/batch",
+      "target": "errors",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/batch",
+      "target": "internal/atomicfs",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/batch",
+      "target": "internal/scaffold",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/batch",
+      "target": "runtime",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/batchindex",
+      "target": "internal/batchindex",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/batchindex",
+      "target": "path",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/batchindex",
+      "target": "encoding",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/batchindex",
+      "target": "internal/atomicfs",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/batchindex",
+      "target": "sync",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/batchindex",
+      "target": "reflect",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/batchindex",
+      "target": "fmt",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/batchindex",
+      "target": "time",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/batchindex",
+      "target": "testing",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/batchindex",
+      "target": "os",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/cmd",
+      "target": "github.com/spf13/pflag",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/cmd",
+      "target": "internal/prompt",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/cmd",
+      "target": "html",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/cmd",
+      "target": "sync",
+      "weight": 2,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/cmd",
+      "target": "path",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/cmd",
+      "target": "encoding",
+      "weight": 2,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/cmd",
+      "target": "internal/skill",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/cmd",
+      "target": "image",
+      "weight": 3,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/cmd",
+      "target": "os",
+      "weight": 3,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/cmd",
+      "target": "fmt",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/cmd",
+      "target": "internal/events",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/cmd",
+      "target": "testing",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/cmd",
+      "target": "log",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/cmd",
+      "target": "net",
+      "weight": 4,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/cmd",
+      "target": "internal/testenv",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/cmd",
+      "target": "regexp",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/cmd",
+      "target": "bytes",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/cmd",
+      "target": "context",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/cmd",
+      "target": "strconv",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/cmd",
+      "target": "internal/paths",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/cmd",
+      "target": "io",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/cmd",
+      "target": "time",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/cmd",
+      "target": "golang.org/x/sys",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/cmd",
+      "target": "internal/runid",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/cmd",
+      "target": "internal/sandbox",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/cmd",
+      "target": "crypto",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/cmd",
+      "target": "github.com/spf13/cobra",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/cmd",
+      "target": "sort",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/cmd",
+      "target": "internal/batchindex",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/cmd",
+      "target": "strings",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/cmd",
+      "target": "internal/config",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/cmd",
+      "target": "reflect",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/cmd",
+      "target": "internal/batch",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/cmd",
+      "target": "internal/daemon",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/cmd",
+      "target": "bufio",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/cmd",
+      "target": "syscall",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/cmd",
+      "target": "internal/github",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/cmd",
+      "target": "errors",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/cmd",
+      "target": "internal/scaffold",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/cmd",
+      "target": "embed",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/cmd",
+      "target": "runtime",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/cmd",
+      "target": "internal/review",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/config",
+      "target": "slices",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/config",
+      "target": "internal/atomicfs",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/config",
+      "target": "strconv",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/config",
+      "target": "encoding",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/config",
+      "target": "path",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/config",
+      "target": "strings",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/config",
+      "target": "gopkg.in",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/config",
+      "target": "reflect",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/config",
+      "target": "fmt",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/config",
+      "target": "testing",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/config",
+      "target": "os",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/config",
+      "target": "sort",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/daemon",
+      "target": "path",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/daemon",
+      "target": "encoding",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/daemon",
+      "target": "sync",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/daemon",
+      "target": "fmt",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/daemon",
+      "target": "internal/events",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/daemon",
+      "target": "testing",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/daemon",
+      "target": "os",
+      "weight": 2,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/daemon",
+      "target": "internal/testenv",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/daemon",
+      "target": "bytes",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/daemon",
+      "target": "io",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/daemon",
+      "target": "time",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/daemon",
+      "target": "golang.org/x/sys",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/daemon",
+      "target": "sort",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/daemon",
+      "target": "internal/batchindex",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/daemon",
+      "target": "strings",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/daemon",
+      "target": "reflect",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/daemon",
+      "target": "syscall",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/daemon",
+      "target": "errors",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/daemon",
+      "target": "internal/atomicfs",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/daemon",
+      "target": "runtime",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/daemon",
+      "target": "net",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/events",
+      "target": "bytes",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/events",
+      "target": "internal/atomicfs",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/events",
+      "target": "encoding",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/events",
+      "target": "sync",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/events",
+      "target": "path",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/events",
+      "target": "strings",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/events",
+      "target": "strconv",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/events",
+      "target": "fmt",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/events",
+      "target": "io",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/events",
+      "target": "time",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/events",
+      "target": "math",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/events",
+      "target": "testing",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/events",
+      "target": "os",
+      "weight": 2,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/events",
+      "target": "log",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/github",
+      "target": "regexp",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/github",
+      "target": "context",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/github",
+      "target": "bytes",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/github",
+      "target": "slices",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/github",
+      "target": "errors",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/github",
+      "target": "encoding",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/github",
+      "target": "strconv",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/github",
+      "target": "sync",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/github",
+      "target": "strings",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/github",
+      "target": "reflect",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/github",
+      "target": "fmt",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/github",
+      "target": "io",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/github",
+      "target": "time",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/github",
+      "target": "testing",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/github",
+      "target": "syscall",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/github",
+      "target": "os",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/github",
+      "target": "sort",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/paths",
+      "target": "path",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/paths",
+      "target": "strconv",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/paths",
+      "target": "strings",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/paths",
+      "target": "internal/config",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/paths",
+      "target": "testing",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/prompt",
+      "target": "regexp",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/prompt",
+      "target": "embed",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/prompt",
+      "target": "path",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/prompt",
+      "target": "internal/atomicfs",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/prompt",
+      "target": "strings",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/prompt",
+      "target": "internal/config",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/prompt",
+      "target": "fmt",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/prompt",
+      "target": "encoding",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/prompt",
+      "target": "testing",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/prompt",
+      "target": "os",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/prompt",
+      "target": "crypto",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/review",
+      "target": "internal/prompt",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/review",
+      "target": "sync",
+      "weight": 2,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/review",
+      "target": "path",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/review",
+      "target": "encoding",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/review",
+      "target": "fmt",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/review",
+      "target": "testing",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/review",
+      "target": "os",
+      "weight": 2,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/review",
+      "target": "internal/testenv",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/review",
+      "target": "regexp",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/review",
+      "target": "bytes",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/review",
+      "target": "context",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/review",
+      "target": "strconv",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/review",
+      "target": "internal/paths",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/review",
+      "target": "io",
+      "weight": 2,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/review",
+      "target": "time",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/review",
+      "target": "internal/runid",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/review",
+      "target": "internal/sandbox",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/review",
+      "target": "sort",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/review",
+      "target": "internal/batchindex",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/review",
+      "target": "strings",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/review",
+      "target": "internal/config",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/review",
+      "target": "internal/batch",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/review",
+      "target": "internal/daemon",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/review",
+      "target": "bufio",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/review",
+      "target": "internal/github",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/review",
+      "target": "errors",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/review",
+      "target": "internal/atomicfs",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/review",
+      "target": "net",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/runid",
+      "target": "regexp",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/runid",
+      "target": "path",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/runid",
+      "target": "strings",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/runid",
+      "target": "fmt",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/runid",
+      "target": "time",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/runid",
+      "target": "testing",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/runid",
+      "target": "os",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/sandbox",
+      "target": "path",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/sandbox",
+      "target": "sync",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/sandbox",
+      "target": "fmt",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/sandbox",
+      "target": "internal/shellenv",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/sandbox",
+      "target": "testing",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/sandbox",
+      "target": "os",
+      "weight": 2,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/sandbox",
+      "target": "internal/testenv",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/sandbox",
+      "target": "regexp",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/sandbox",
+      "target": "bytes",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/sandbox",
+      "target": "context",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/sandbox",
+      "target": "strconv",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/sandbox",
+      "target": "internal/paths",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/sandbox",
+      "target": "io",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/sandbox",
+      "target": "time",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/sandbox",
+      "target": "crypto",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/sandbox",
+      "target": "strings",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/sandbox",
+      "target": "internal/config",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/sandbox",
+      "target": "bufio",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/sandbox",
+      "target": "syscall",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/sandbox",
+      "target": "errors",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/sandbox",
+      "target": "net",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/scaffold",
+      "target": "regexp",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/scaffold",
+      "target": "bytes",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/scaffold",
+      "target": "internal/prompt",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/scaffold",
+      "target": "path",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/scaffold",
+      "target": "encoding",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/scaffold",
+      "target": "strconv",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/scaffold",
+      "target": "internal/atomicfs",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/scaffold",
+      "target": "strings",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/scaffold",
+      "target": "io",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/scaffold",
+      "target": "reflect",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/scaffold",
+      "target": "fmt",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/scaffold",
+      "target": "internal/config",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/scaffold",
+      "target": "internal/paths",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/scaffold",
+      "target": "testing",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/scaffold",
+      "target": "bufio",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/scaffold",
+      "target": "os",
+      "weight": 2,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/scaffold",
+      "target": "sort",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/shellenv",
+      "target": "regexp",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/shellenv",
+      "target": "errors",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/shellenv",
+      "target": "strings",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/shellenv",
+      "target": "testing",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/shellenv",
+      "target": "os",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/shellenv",
+      "target": "sort",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/skill",
+      "target": "bytes",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/skill",
+      "target": "embed",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/skill",
+      "target": "path",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/skill",
+      "target": "encoding",
+      "weight": 2,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/skill",
+      "target": "internal/atomicfs",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/skill",
+      "target": "strings",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/skill",
+      "target": "io",
+      "weight": 2,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/skill",
+      "target": "fmt",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/skill",
+      "target": "testing",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/skill",
+      "target": "bufio",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/skill",
+      "target": "os",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/skill",
+      "target": "crypto",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/skill",
+      "target": "sort",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/testenv",
+      "target": "path",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/testenv",
+      "target": "strings",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/testenv",
+      "target": "reflect",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/testenv",
+      "target": "fmt",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/testenv",
+      "target": "testing",
+      "weight": 1,
+      "kind": "imports"
+    },
+    {
+      "source": "internal/testenv",
+      "target": "os",
+      "weight": 1,
+      "kind": "imports"
+    }
+  ]
+}

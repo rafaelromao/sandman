@@ -21,13 +21,22 @@ type Issue struct {
 
 // PR holds pull request metadata fetched from GitHub.
 type PR struct {
-	Number            int
-	State             string
-	Title             string
-	Body              string
-	Merged            bool
-	HeadRefName       string
-	HeadRefOid        string
+	Number      int
+	State       string
+	Title       string
+	Body        string
+	Merged      bool
+	HeadRefName string
+	HeadRefOid  string
+	// ReviewDecision, MergeStateStatus, and StatusCheckRollup are populated
+	// by FindPRByBranch when available; they are empty when the underlying
+	// `gh` invocation omits the columns (e.g. on PRs that never had a
+	// review submitted or where the merge state is still being computed).
+	// The T4 cheap-gate oracle reads these to decide whether to defer to T1
+	// (Approved + CLEAN + green checks) or abstain (any other state).
+	ReviewDecision    string
+	MergeStateStatus  string
+	StatusCheckRollup string
 	linkedIssueNumber int
 }
 
