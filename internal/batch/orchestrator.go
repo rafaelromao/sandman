@@ -2007,13 +2007,13 @@ func (o *Orchestrator) runVerifyPath(ctx context.Context, in VerifyInput) (Verif
 }
 
 // mergeVerificationExtras folds a verify outcome into the terminal
-// event payload. The keys are `verification.outcome` and
-// `verification.checks`; the function never overwrites an existing
-// `blocker` (the conservative-backstop payload takes precedence
-// because it is more specific). When called twice — once with
+// event payload under the `verification` key. The function only ever
+// writes `verification.outcome` and `verification.checks`; it does
+// not touch the `blocker` key (the conservative backstop writes
+// `blocker` directly into the same map, so the two layers compose
+// without overwriting each other). When called twice — once with
 // partial oracle checks and again with the conservative backstop —
-// the second call wins on `blocker` while preserving the
-// `verification` payload.
+// the resulting payload carries both `verification` and `blocker`.
 func mergeVerificationExtras(existing map[string]any, outcome VerifyOutcome, checks []OracleCheck) map[string]any {
 	if len(checks) == 0 {
 		return existing
@@ -2034,6 +2034,24 @@ func mergeVerificationExtras(existing map[string]any, outcome VerifyOutcome, che
 		"checks":  oracleChecksToAny(checks),
 	}
 	out["verification"] = verification
+	return out
+}
+
+// mergeBlockerExtras folds the conservative-backstop blocker payload
+// into the terminal event map. It is a small wrapper that allocates
+// a fresh map only when the caller hasn't yet, so it composes cleanly
+// with `mergeVerificationExtras` when both layers run.
+func mergeBlockerExtras(existing, blocker map[string]any) map[string]any {
+	if len(blocker) == 0 {
+		return existing
+	}
+	out := existing
+	if out == nil {
+		out = map[string]any{}
+	}
+	for k, v := range blocker {
+		out[k] = v
+	}
 	return out
 }
 
@@ -2228,12 +2246,7 @@ func (s *runSession) runOnce(
 						terminalExtras = mergeVerificationExtras(terminalExtras, outcome, checks)
 					}
 					if extras, blocked := hasBlockingOpenPR(o, branch); blocked {
-						if terminalExtras == nil {
-							terminalExtras = map[string]any{}
-						}
-						for k, v := range extras {
-							terminalExtras[k] = v
-						}
+						terminalExtras = mergeBlockerExtras(terminalExtras, extras)
 						result.Status = "failure"
 						break
 					}
@@ -2277,12 +2290,7 @@ func (s *runSession) runOnce(
 								terminalExtras = mergeVerificationExtras(terminalExtras, outcome, checks)
 							}
 							if extras, blocked := hasBlockingOpenPR(o, branch); blocked {
-								if terminalExtras == nil {
-									terminalExtras = map[string]any{}
-								}
-								for k, v := range extras {
-									terminalExtras[k] = v
-								}
+								terminalExtras = mergeBlockerExtras(terminalExtras, extras)
 								result.Status = "failure"
 								break
 							}

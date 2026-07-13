@@ -47,6 +47,7 @@ func diffSubsetFixture(t *testing.T) (repo string, a, b string) {
 // `git diff a..b` into a flat set of (file, hunkHeader) entries — the
 // shape T2's pre-filter compares against origin/main.
 func TestDiffSubset_BuildsFileHunkSet(t *testing.T) {
+	t.Parallel()
 	repo, a, b := diffSubsetFixture(t)
 	ds, err := DiffSubset(repo, a, b)
 	if err != nil {
@@ -67,6 +68,7 @@ func TestDiffSubset_BuildsFileHunkSet(t *testing.T) {
 // TestDiffSubset_EmptyWhenRefsEqual pins the trivial case: when the
 // two refs point at the same commit, the diff set is empty.
 func TestDiffSubset_EmptyWhenRefsEqual(t *testing.T) {
+	t.Parallel()
 	repo, a, _ := diffSubsetFixture(t)
 	ds, err := DiffSubset(repo, a, a)
 	if err != nil {

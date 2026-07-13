@@ -14,6 +14,7 @@ import (
 // `VerifyNoSignal` and a nil checks slice so the orchestrator knows
 // it must consult `hasBlockingOpenPR`.
 func TestRunVerifyPath_AllAbstainReturnsNoSignal(t *testing.T) {
+	t.Parallel()
 	out, checks := RunVerifyPath(VerifyInput{
 		Issue:   &github.Issue{Number: 42, Body: "No ACs, no evidence."},
 		Branch:  "sandman/42",
@@ -35,6 +36,7 @@ func TestRunVerifyPath_AllAbstainReturnsNoSignal(t *testing.T) {
 // that auto-closes the orphan PR + issue: T1 returns `Verified`. The
 // T2 / T4 / T3 oracles' abstains are ignored.
 func TestRunVerifyPath_T1VerifiedTriggersAutoClose(t *testing.T) {
+	t.Parallel()
 	out, checks := RunVerifyPath(VerifyInput{
 		Issue:   &github.Issue{Number: 42, Body: "## Acceptance criteria\n\n- [ ] go test -run TestX ./internal/x/...\n"},
 		Branch:  "sandman/42",
@@ -57,6 +59,7 @@ func TestRunVerifyPath_T1VerifiedTriggersAutoClose(t *testing.T) {
 // check in the payload. T3 never runs because T1 already gave a
 // signal.
 func TestRunVerifyPath_T1FailedReturnsFailed(t *testing.T) {
+	t.Parallel()
 	out, checks := RunVerifyPath(VerifyInput{
 		Issue:   &github.Issue{Number: 42},
 		Branch:  "sandman/42",
@@ -78,6 +81,7 @@ func TestRunVerifyPath_T1FailedReturnsFailed(t *testing.T) {
 // (APPROVED + CLEAN + green checks) is treated as OracleAbstain for
 // the run summary: T1 still runs and decides.
 func TestRunVerifyPath_T4DefersToT1(t *testing.T) {
+	t.Parallel()
 	out, _ := RunVerifyPath(VerifyInput{
 		Issue:   &github.Issue{Number: 42},
 		Branch:  "sandman/42",
@@ -98,6 +102,7 @@ func TestRunVerifyPath_T4DefersToT1(t *testing.T) {
 // of the chain is short-circuited because there is no point running
 // expensive oracles on a branch whose diff diverges from main.
 func TestRunVerifyPath_T2RejectsSkipsRest(t *testing.T) {
+	t.Parallel()
 	t1Called := false
 	out, checks := RunVerifyPath(VerifyInput{
 		Issue:   &github.Issue{Number: 42},
@@ -123,6 +128,7 @@ func TestRunVerifyPath_T2RejectsSkipsRest(t *testing.T) {
 // only when T1 abstains. When T1 produces a signal (verified or
 // failed), T3 is not consulted.
 func TestRunVerifyPath_T3FallsThroughWhenT1Abstains(t *testing.T) {
+	t.Parallel()
 	t3Called := false
 	out, checks := RunVerifyPath(VerifyInput{
 		Issue:   &github.Issue{Number: 42},
@@ -149,6 +155,7 @@ func TestRunVerifyPath_T3FallsThroughWhenT1Abstains(t *testing.T) {
 // them in the documented sequence so a slow T1 doesn't fire before
 // the cheap T4 gate.
 func TestRunVerifyPath_RunsOraclesInOrder(t *testing.T) {
+	t.Parallel()
 	order := []string{}
 	rec := func(name string) *fakeOracle {
 		return &fakeOracle{outcome: OracleAbstain, onCall: &order, name: name}
