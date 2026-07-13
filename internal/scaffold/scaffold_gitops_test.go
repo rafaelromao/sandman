@@ -1,7 +1,9 @@
 package scaffold
 
 import (
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/rafaelromao/sandman/internal/paths"
@@ -98,6 +100,39 @@ func TestScaffold_SkipsUntrackWhenNotInsideRepo(t *testing.T) {
 	}
 	if giSpy.ensureCalls != 1 {
 		t.Fatalf("expected Gitignore.EnsureRule to still run, got %d calls", giSpy.ensureCalls)
+	}
+}
+
+// TestScaffold_InstallsPreCommitHookThatBlocksSandmanPaths is the unit test
+// for slice 8 (issue #2148 acceptance criteria 3 and 4): after sandman init,
+// `git add -f .sandman/task.md && git commit` must be rejected by the
+// installed pre-commit hook, even though -f bypasses the .gitignore rule.
+func TestScaffold_InstallsPreCommitHookThatBlocksSandmanPaths(t *testing.T) {
+	tmp := t.TempDir()
+	hooksDir := filepath.Join(tmp, ".git", "hooks")
+
+	s := &Scaffolder{
+		Gitignore: &fakeGitignoreRuleWriter{},
+		GitOps:    &fakeGitOps{isRepo: true},
+		HooksDir:  hooksDir,
+	}
+
+	if err := s.Scaffold(tmp, Options{BuildTools: "generic", Writer: discardWriter{}}, stubPrompter{}); err != nil {
+		t.Fatalf("Scaffold returned error: %v", err)
+	}
+
+	hookPath := filepath.Join(hooksDir, "pre-commit")
+	contents, err := os.ReadFile(hookPath)
+	if err != nil {
+		t.Fatalf("pre-commit hook must be installed at %q: %v", hookPath, err)
+	}
+	if !strings.Contains(string(contents), ".sandman/") {
+		t.Fatalf("pre-commit hook must mention .sandman/ in its rejection check, got:\n%s", contents)
+	}
+	if info, err := os.Stat(hookPath); err != nil {
+		t.Fatalf("stat hook: %v", err)
+	} else if info.Mode()&0o111 == 0 {
+		t.Fatalf("pre-commit hook must be executable, got mode %v", info.Mode())
 	}
 }
 
