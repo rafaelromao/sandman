@@ -42,7 +42,7 @@ Sandman manages the lifecycle of automated coding workflows:
 | [Overview](docs/get-started/overview.md) | What Sandman is, the delivery loop, and what it is not |
 | [Quick Start](docs/get-started/quickstart.md) | The five-minute path from install to first run |
 | [Installation](docs/get-started/install.md) | Prerequisites, installation, OpenCode setup, and project setup |
-| [Concepts](docs/get-started/concepts.md) | The Batch / AgentRun / Sandbox / PRD model in prose |
+| [Concepts](docs/get-started/concepts.md) | The Batch / AgentRun / Sandbox / Specification model in prose |
 | [Commands Reference](docs/usage/commands.md) | All CLI commands, flags, and issue selection modes |
 | [Scaffolding and Supported Languages](docs/usage/scaffolding.md) | `sandman init`, generated files, build-tool presets, and language version selection |
 | [Configuration](docs/usage/configuration.md) | Full config schema, default agent, and CLI config |
