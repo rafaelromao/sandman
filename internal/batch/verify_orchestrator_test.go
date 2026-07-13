@@ -3,7 +3,6 @@ package batch
 import (
 	"io"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/rafaelromao/sandman/internal/config"
@@ -293,7 +292,82 @@ func TestRunSingle_AlreadyResolved_T1FailedFailsWithoutBackstop(t *testing.T) {
 	if payload["blocker"] != nil {
 		t.Errorf("expected no blocker on T1-failed path, got %v", payload["blocker"])
 	}
-	_ = strings.TrimSpace // keep imports tidy
+}
+
+// TestRunSingle_VerifyPathReceivesPRSnapshot pins the slice-1
+// integration: when the orchestrator's alreadyResolved arm runs the
+// four-oracle chain, the VerifyInput carries the PR snapshot fetched
+// via FindPRByBranch. Without this, the T4 cheap-gate oracle would
+// always abstain because T4's first guard is `if in.PR == nil`.
+func TestRunSingle_VerifyPathReceivesPRSnapshot(t *testing.T) {
+	workDir := t.TempDir()
+	branch := "sandman/42-fix-bug"
+	wtDir := filepath.Join(workDir, "worktree")
+	rtSandbox := &retrySandbox{workDir: wtDir}
+
+	oldHeadFn := currentBranchHeadFn
+	currentBranchHeadFn = func(string) (string, error) { return "current-sha", nil }
+	t.Cleanup(func() { currentBranchHeadFn = oldHeadFn })
+
+	oldLookup := lookupOpenPRFn
+	lookupOpenPRFn = func(string) (bool, int, string, error) {
+		return true, 17, "MERGEABLE", nil
+	}
+	t.Cleanup(func() { lookupOpenPRFn = oldLookup })
+
+	eventsPath := filepath.Join(t.TempDir(), "events.jsonl")
+	eventLog := &events.JSONLLogger{Path: eventsPath}
+	var seenPR *github.PR
+	o := &Orchestrator{
+		githubClient: &fakeGitHubClient{
+			issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}},
+			prs: map[string]*github.PR{
+				branch: {
+					Number:            17,
+					State:             "open",
+					Merged:            false,
+					HeadRefName:       branch,
+					ReviewDecision:    "APPROVED",
+					MergeStateStatus:  "CLEAN",
+					StatusCheckRollup: "success",
+				},
+			},
+		},
+		renderer: &retryRenderer{result: "rendered prompt"},
+		errorLog: io.Discard,
+		layout:   paths.NewLayout(&config.Config{}, workDir),
+		eventLog: eventLog,
+		sandboxFactory: &retrySandboxFactory{
+			sandbox: rtSandbox,
+		},
+		runnableFactory: &taskWritingRunnableFactory{
+			taskPath:    filepath.Join(wtDir, ".sandman", "task.md"),
+			result:      AgentRunResult{IssueNumber: 42, Status: "failure", Branch: branch},
+			taskContent: "## Status: already resolved",
+		},
+		verifyPath: VerifyPathFunc(func(in VerifyInput) (VerifyOutcome, []OracleCheck) {
+			seenPR = in.PR
+			return VerifyNoSignal, nil
+		}),
+	}
+
+	cfg := &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}}
+	_, started := o.runSingle(t.Context(), t.Context(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, false, nil, noopIdentityResolver(), map[int]string{42: branch}, prompt.RenderConfig{}, nil, &retrySandboxFactory{sandbox: rtSandbox}, nil, false, "main", nil, 0, 0, 3, 0, "", 0, false, 0, false, false, false, "", "")
+	if !started {
+		t.Fatal("expected run to start")
+	}
+	if seenPR == nil {
+		t.Fatal("verify path received nil PR — slice-1 fields never reach T4 in production")
+	}
+	if seenPR.ReviewDecision != "APPROVED" {
+		t.Errorf("PR ReviewDecision = %q, want APPROVED", seenPR.ReviewDecision)
+	}
+	if seenPR.MergeStateStatus != "CLEAN" {
+		t.Errorf("PR MergeStateStatus = %q, want CLEAN", seenPR.MergeStateStatus)
+	}
+	if seenPR.StatusCheckRollup != "success" {
+		t.Errorf("PR StatusCheckRollup = %q, want success", seenPR.StatusCheckRollup)
+	}
 }
 
 // TestRunSingle_AlreadyResolved_T2RejectFallsBackToBackstop pins

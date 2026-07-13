@@ -2006,6 +2006,27 @@ func (o *Orchestrator) runVerifyPath(ctx context.Context, in VerifyInput) (Verif
 	return DefaultVerifyPath()(in)
 }
 
+// lookupPRForVerify fetches the branch's open PR via the orchestrator's
+// GitHub client so the T4 cheap gate has a snapshot to read. The
+// fetched PR carries the slice-1 review fields (ReviewDecision,
+// MergeStateStatus, StatusCheckRollup). Failures are soft: a transient
+// `gh` error returns nil so the verify path falls through to T1 with
+// `T4 == abstain`, matching the "transient errors must not block
+// the run" contract used elsewhere in the orchestrator.
+func lookupPRForVerify(ctx context.Context, o *Orchestrator, branch string) *github.PR {
+	if o == nil || o.githubClient == nil || strings.TrimSpace(branch) == "" {
+		return nil
+	}
+	pr, err := o.githubClient.FindPRByBranch(ctx, branch)
+	if err != nil {
+		if o.errorLog != nil {
+			fmt.Fprintf(o.errorLog, "warning: lookup PR for verify path on branch %q: %v\n", branch, err)
+		}
+		return nil
+	}
+	return pr
+}
+
 // mergeVerificationExtras folds a verify outcome into the terminal
 // event payload under the `verification` key. The function only ever
 // writes `verification.outcome` and `verification.checks`; it does
@@ -2220,7 +2241,8 @@ func (s *runSession) runOnce(
 					break
 				}
 				if alreadyResolved {
-					outcome, checks := o.runVerifyPath(ctx, VerifyInput{Context: ctx, Issue: issue, Branch: branch, WorkDir: wt.WorkDir()})
+					pr := lookupPRForVerify(ctx, o, branch)
+					outcome, checks := o.runVerifyPath(ctx, VerifyInput{Context: ctx, Issue: issue, Branch: branch, WorkDir: wt.WorkDir(), PR: pr})
 					if outcome != VerifyNoSignal {
 						terminalExtras = mergeVerificationExtras(terminalExtras, outcome, checks)
 						if outcome == VerifyFailed {
@@ -2276,7 +2298,8 @@ func (s *runSession) runOnce(
 					prMerged := checkPRMerged(ctx, o.githubClient, branch)
 					if prMerged || alreadyResolved {
 						if alreadyResolved {
-							outcome, checks := o.runVerifyPath(ctx, VerifyInput{Context: ctx, Issue: issue, Branch: branch, WorkDir: wt.WorkDir()})
+							pr := lookupPRForVerify(ctx, o, branch)
+							outcome, checks := o.runVerifyPath(ctx, VerifyInput{Context: ctx, Issue: issue, Branch: branch, WorkDir: wt.WorkDir(), PR: pr})
 							if outcome != VerifyNoSignal {
 								terminalExtras = mergeVerificationExtras(terminalExtras, outcome, checks)
 								if outcome == VerifyFailed {
