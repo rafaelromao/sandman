@@ -249,7 +249,8 @@ func TestSpecificationResolver_CarveOutNestedSpecFlattens(t *testing.T) {
 	// #10 accepts #1 (carve-out) + #100 (verified leaf). Final:
 	// [10, 1, 100]. Asserts the recursive flatten fired and merged
 	// correctly; the previous behaviour (hard-error "nested specification
-	// detected: #10") is gone.
+	// detected: #10") is gone — see T4 / ADR-0025 §4 destination-aligned
+	// recursive-flatten invariant.
 	if !equalInts(got, []int{10, 1, 100}) {
 		t.Fatalf("expected [10 1 100], got %v", got)
 	}
@@ -598,7 +599,7 @@ func TestSpecificationResolver_HasChildrenReturnsTrueOnCommentReference(t *testi
 }
 
 func TestSpecificationResolver_ChildrenOnlyDetection(t *testing.T) {
-	// Body has no PRD sections; comment body references a child issue.
+	// Body has no Specification sections; comment body references a child issue.
 	// Broadened detector must fire on the lazy probe and expand the input.
 	parentBody := "## What\n\nJust a parent issue body, no PRD sections.\n"
 	childBody := "## Parent\n\n#1\n\n## What\n\nChild work goes here.\n"
@@ -629,7 +630,7 @@ func TestSpecificationResolver_ChildrenOnlyDetection(t *testing.T) {
 }
 
 func TestSpecificationResolver_LazyProbeSkipsWhenSectionShapePresent(t *testing.T) {
-	// Body has canonical PRD sections. The broadened lazy probe MUST NOT fire
+	// Body has canonical Specification sections. The broadened lazy probe MUST NOT fire
 	// (cheap path handles it), but the existing section-shape expansion DOES
 	// call ListIssueComments via collectCandidates. Net call count for the
 	// probe itself: zero extra calls beyond what the section-shape expansion
@@ -665,7 +666,7 @@ func TestSpecificationResolver_LazyProbeSkipsWhenSectionShapePresent(t *testing.
 }
 
 func TestSpecificationResolver_LazyProbeNoChildrenPassesThrough(t *testing.T) {
-	// Body has no PRD sections and no comments reference any issue.
+	// Body has no Specification sections and no comments reference any issue.
 	// HasChildren returns false; input passes through unchanged.
 	parentBody := "## What\n\nJust a regular issue with no Specification shape and no children.\n"
 	client := &fakeGitHubClient{
