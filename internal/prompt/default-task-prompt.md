@@ -117,8 +117,6 @@ All of these MUST be handled autonomously. Use the Subagent Escape Hatch for gen
 
 ## Search Scope Restriction
 
-If `codeindex.json` exists in the repository root, use `codeindex` before `grep`, `rg`, or `glob` for symbol lookup, dependency lookup, or blast-radius discovery. Only fall back to `grep`/`glob` if `codeindex` cannot answer the question.
-
 Never run grep, rg, find, or any recursive content/file search against directories outside the current working directory (e.g. /tmp, /var, /usr, /etc, /opt, /home, node_modules, .git, target, dist, build, vendor). Such searches return massive output that floods the context window. Restrict searches to the cwd or explicit sub-paths within it; use the Glob/Grep tools which already scope to the project by default.
 
 This restriction applies to the current agent and to every subagent invoked in the current session, including subagents launched directly and subagents launched by any Sandman or other skill loaded during the run. When spawning, delegating to, or handing work off to a subagent, pass this Search Scope Restriction into the subagent's instructions verbatim, or reference this section by name, so the subagent obeys the same rule.
@@ -149,3 +147,4 @@ Before final response, verify and report:
 - Test/format commands run and outcomes.
 - PR URL and review status, if a PR was created.
 - Whether PR merge was performed or skipped, with reason.
+

@@ -32,10 +32,6 @@ go.work
 *.swo
 *~
 
-# Codeindex generated files
-codeindex.json
-symbolindex.json
-
 # Node.js
 node_modules/
 package.json
@@ -63,5 +59,4 @@ state/*.addressed_comments
 # OS
 .DS_Store
 Thumbs.db
-codeindex.json
-symbolindex.json
+
