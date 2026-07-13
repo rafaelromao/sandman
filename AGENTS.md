@@ -2,23 +2,6 @@
 
 CLI tool for orchestrating AFK coding agents in isolated sandboxes.
 
-## Code discovery: two-layer system
-
-Codeindex discovery uses two complementary layers:
-
-| Layer | File | Scope | When |
-|-------|------|-------|------|
-| **Policy** | `docs/agents/codeindex-strategy.md` | Session init + grep/glob precondition | Every session, once (via opencode.json) |
-| **Reference** | `sandman-index` sub-skill (under `sandman`) | Command ref, refinement, discipline | On demand, loaded by agent |
-
-The policy says **when** and **whether**. The skill says **how**.
-
-**Load the `sandman-index` sub-skill before any broad exploration, grep, or file open for code discovery.** This skill encapsulates all codeindex guidance including the hard rule, command reference, query refinement strategies, and read discipline.
-
-The skill applies to the primary agent AND every sub-agent spawned via the `task` tool.
-
-**Violation consequence:** Wasted tokens, missed context, likely wrong file selection. If a session review catches a `sandman-index` violation, the work is considered incomplete.
-
 ## Purpose
 
 This file provides operating instructions for coding agents working in this repository. Follow the architecture notes and workflow rules below before making changes.
@@ -132,18 +115,15 @@ Use these repository-specific references when appropriate:
 - Triage labels: `docs/agents/triage-labels.md`
 - Domain vocabulary: `CONTEXT.md`
 - ADRs: `docs/adr/`
-- Codeindex strategy (policy): `docs/agents/codeindex-strategy.md`
 
 ## Preferred operating pattern
 
 For most non-trivial tasks, follow this order:
 
 1. Read this file.
-2. Load the `sandman-index` sub-skill and use codeindex to locate the relevant symbol, file, dependency set, or blast radius.
-3. Read only the narrowed code paths.
-4. Read `CONTEXT.md` or ADRs if domain or architectural intent matters.
-5. Make the smallest coherent change.
-6. Run formatting, vetting, and relevant tests.
-7. Summarize what changed, what was verified, and any remaining risk.
+2. Read only the narrowed code paths.
+3. Read `CONTEXT.md` or ADRs if domain or architectural intent matters.
+4. Make the smallest coherent change.
+5. Run formatting, vetting, and relevant tests.
+6. Summarize what changed, what was verified, and any remaining risk.
 
-**Sub-agent rule applies here too:** when step 2 or 3 requires spawning a sub-agent task, include the sandman-index sub-skill instruction verbatim per the skill's sub-agent rule.

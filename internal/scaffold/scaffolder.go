@@ -1907,7 +1907,6 @@ func (s *Scaffolder) renderBuildToolsDockerfile(preset BuildToolsPreset, default
 	if preset.Name == javaBuildToolsPreset {
 		out.WriteString(renderJavaInstallCommand(javaVersion))
 	}
-	out.WriteString(renderCodeindexInstallCommand())
 	out.WriteString(renderAgentInstallCommand("opencode", DefaultBuiltInAgentVersion("opencode")))
 	out.WriteString(renderRTKInstallCommand())
 	return out.String()
@@ -2162,10 +2161,6 @@ func renderJavaInstallCommand(version string) string {
 		installVersion = strings.Split(ltsPin, ".")[0]
 	}
 	return fmt.Sprintf("RUN mise use -g --pin java@%s\n", installVersion)
-}
-
-func renderCodeindexInstallCommand() string {
-	return "RUN git clone https://github.com/rafaelromao/codeindex /tmp/codeindex && pip3 install -e /tmp/codeindex --break-system-packages\n"
 }
 
 func renderAgentInstallCommand(agent, version string) string {

@@ -126,8 +126,6 @@ The shared Sandman skill owns the detailed workflow. This page describes the boo
     
     ## Search Scope Restriction
     
-    If `codeindex.json` exists in the repository root, use `codeindex` before `grep`, `rg`, or `glob` for symbol lookup, dependency lookup, or blast-radius discovery. Only fall back to `grep`/`glob` if `codeindex` cannot answer the question.
-    
     Never run grep, rg, find, or any recursive content/file search against directories outside the current working directory (e.g. /tmp, /var, /usr, /etc, /opt, /home, node_modules, .git, target, dist, build, vendor). Such searches return massive output that floods the context window. Restrict searches to the cwd or explicit sub-paths within it; use the Glob/Grep tools which already scope to the project by default.
     
     This restriction applies to the current agent and to every subagent invoked in the current session, including subagents launched directly and subagents launched by any Sandman or other skill loaded during the run. When spawning, delegating to, or handing work off to a subagent, pass this Search Scope Restriction into the subagent's instructions verbatim, or reference this section by name, so the subagent obeys the same rule.
@@ -170,7 +168,7 @@ The shared Sandman skill owns the detailed workflow. This page describes the boo
 - `Mandatory Execution Contract` forces the agent to load and obey the Sandman skill chain.
 - `Already Resolved` defines the terminal shortcut for issues already implemented on `{{BASE_BRANCH}}`; the agent must verify `origin/{{BASE_BRANCH}}` against the acceptance criteria and must not use issue closure, local branch state, or unmerged worktree changes as proof.
 - `AFK Rule — Absolute` replaces human approval with subagent consensus for plan approval, and bans subagent use for PR review (must use `sandman-pr-review` skill). Self-review uses `sandman-self-review` skill.
-- `Search Scope Restriction` keeps recursive search (grep, rg, find) bounded to the working directory and explicitly named sub-paths, so agent context is not flooded by scans of system folders. It also requires `codeindex` first for symbol lookup, dependency lookup, and blast-radius discovery when `codeindex.json` exists. The rule propagates: the agent must forward it to every subagent it spawns or hands work off to, including subagents launched by Sandman or other loaded skills.
+- `Search Scope Restriction` keeps recursive search (grep, rg, find) bounded to the working directory and explicitly named sub-paths, so agent context is not flooded by scans of system folders. The rule propagates: the agent must forward it to every subagent it spawns or hands work off to, including subagents launched by Sandman or other loaded skills.
 - `Required Skill Chain` names the mandatory subskills the agent must follow.
 - `Required Order` makes the sequence explicit, including continuation before exit and merge only when gates are true.
 - `Completion Requirements` define what the agent must report at the end.
@@ -182,3 +180,4 @@ The shared Sandman skill owns the detailed workflow. This page describes the boo
 - **Sandman Skill**: the shared skill folder installed into `~/.agents/skills/sandman/` by `sandman init`.
 - **Prompt**: `.sandman/task.md`, the rendered instruction file handed to the agent.
 - **Continue replay**: `sandman run --continue` reuses the stored branch, base branch, agent, and review command from the prior run. It reads the task file (`.sandman/task.md`) from the worktree and passes its contents verbatim as the agent's resume prompt. When no task file exists, an empty task template is used with a warning on stderr.
+

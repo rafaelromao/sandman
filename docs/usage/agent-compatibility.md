@@ -12,22 +12,6 @@ Sandman includes one built-in preset: `opencode`.
 
 Sandman uses OpenCode in a headless environment, so `opencode` must have the `opencode-shell-strategy` plugin installed before it is used with Sandman. The plugin teaches OpenCode to avoid interactive shell commands that would hang without a TTY/PTY. OpenCode subagents inherit the same instructions.
 
-Sandman container images also include [`codeindex`](https://github.com/rafaelromao/codeindex). Agents use it to answer repo-structure questions quickly, especially when a task needs symbol lookup or impact analysis across a large codebase. That keeps large source trees navigable without forcing the model to read or summarize every file first.
-
-To install `codeindex` on the host machine for local use:
-
-```bash
-git clone https://github.com/rafaelromao/codeindex /tmp/codeindex && pip3 install -e /tmp/codeindex --break-system-packages
-```
-
-After installing, generate the index files from the project root:
-
-```bash
-codeindex analyze . && codeindex symbols .
-```
-
-Re-run this whenever the codebase changes significantly to keep the index fresh.
-
 ### Install
 
 ```bash
@@ -107,3 +91,4 @@ Agents should work within the current directory and use standard git operations 
 - Config directories and files with `~` are expanded to the user's home directory on the host before being resolved into a temporary copy for the container
 - Missing config directories and files are silently skipped (no error if an optional config path does not exist)
 - Container images are built from `.sandman/Dockerfile` at project initialization
+
