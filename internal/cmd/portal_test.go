@@ -3182,14 +3182,15 @@ func TestPortal_ResolveRunLog_ActiveReviewPrefersLive(t *testing.T) {
 	}
 }
 
-// TestPortal_ResolveRunLog_TerminalReviewEmptySavedFallsBackToLive
-// pins the issue #1730 fallback: a terminal review row whose saved
-// log is empty (e.g. log file not yet flushed to disk) falls back to
-// the live socket output rather than rendering a blank Log tab. This
-// preserves the "show something meaningful" invariant the active path
-// already has. Without it, a terminal review with a missing log file
-// would surface nothing.
-func TestPortal_ResolveRunLog_TerminalReviewEmptySavedFallsBackToLive(t *testing.T) {
+// TestPortal_ResolveRunLog_TerminalReviewEmptySavedReturnsEmpty pins the
+// revised policy from issue #2140: a terminal review row whose saved log
+// is empty returns empty (so the caller substitutes a placeholder like
+// "No log file yet."), NOT the live socket output. The pre-#2140 behavior
+// fell back to active.LiveOutput to "show something meaningful", but when
+// `active` is the batch-level instance (as in runFromActiveBatchIssue)
+// its LiveOutput is the shared batch stream carrying sibling runs' content
+// — rendering the wrong run's log under the terminal row.
+func TestPortal_ResolveRunLog_TerminalReviewEmptySavedReturnsEmpty(t *testing.T) {
 	startedAt := time.Now().Add(-5 * time.Minute)
 	finishedAt := startedAt.Add(2 * time.Minute)
 	runState := events.RunState{
@@ -3219,9 +3220,59 @@ func TestPortal_ResolveRunLog_TerminalReviewEmptySavedFallsBackToLive(t *testing
 	}
 
 	got := (&portalRunsView{}).resolveRunLog(func() string { return "" }, runState, active)
-	wantLive := strings.TrimSpace(stripLogLabels(active.LiveOutput))
-	if got != wantLive {
-		t.Fatalf("resolveRunLog for terminal review with empty saved = %q, want live %q (degraded fallback)", got, wantLive)
+	if got != "" {
+		t.Fatalf("resolveRunLog for terminal review with empty saved = %q, want \"\" (issue #2140: do not render sibling-run live output under a terminal row)", got)
+	}
+}
+
+// TestPortal_ResolveRunLog_TerminalIssueRowIgnoresBatchLiveOutput pins
+// the regression guard for issue #2140: when `active` is the batch-level
+// instance whose LiveOutput contains sibling runs' lines (e.g. the run
+// is in a multi-issue batch where some other issue is still streaming),
+// a terminal run whose saved log is missing must NOT inherit that live
+// output. Reproduces the original failure shape: an early-failed run
+// (no run.log on disk) sharing a batch with active sibling runs.
+func TestPortal_ResolveRunLog_TerminalIssueRowIgnoresBatchLiveOutput(t *testing.T) {
+	startedAt := time.Now().Add(-5 * time.Minute)
+	finishedAt := startedAt.Add(4 * time.Second)
+	runState := events.RunState{
+		RunID: "260712210511-06fe-30",
+		Started: events.Event{
+			Type:      "run.queued",
+			Timestamp: startedAt,
+			Payload: map[string]any{
+				"batch_id":    "260712210511-06fe-24+9",
+				"issue_title": "View controlled Topic catalogue",
+			},
+		},
+		Finished: &events.Event{
+			Type:      "run.finished",
+			Timestamp: finishedAt,
+			Payload: map[string]any{
+				"base_branch":   "main",
+				"branch":        "sandman/30-view-controlled-topic-catalogue",
+				"early_failure": true,
+				"error":         "start sandbox",
+				"retries_done":  0,
+				"retries_total": 3,
+				"status":        "failure",
+			},
+		},
+	}
+	// `active` here is the batch-level instance (as constructed by
+	// runFromActiveBatchIssue). Its LiveOutput is the shared batch.sock
+	// stream carrying sibling runs' lines, not this terminal run's.
+	siblingLiveOutput := "[260712210511-06fe-50] 21:09:48 sibling run line\n"
+	active := &portalActiveRun{
+		Key:        "260712210511-06fe-50",
+		BatchID:    "260712210511-06fe-24+9",
+		RunID:      "260712210511-06fe-50",
+		LiveOutput: siblingLiveOutput,
+	}
+
+	got := (&portalRunsView{}).resolveRunLog(func() string { return "" }, runState, active)
+	if got != "" {
+		t.Fatalf("resolveRunLog for terminal issue row with batch live output = %q, want \"\" (issue #2140: batch sibling live output must not leak into a terminal row with no saved log)", got)
 	}
 }
 
