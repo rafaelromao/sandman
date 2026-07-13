@@ -1013,7 +1013,7 @@ func TestIsBranchCheckedOutError_OnlyMatchesCheckedOutOrWorktreeMessages(t *test
 // override path uses this helper to recover from `git branch -D` failures
 // caused by the branch being checked out in a foreign worktree. The
 // helper must extract the worktree path from both modern and legacy
-// error message formats so it can be passed to detachForeignWorktree.
+// error message formats so it can be passed to releaseBranchInWorktree.
 func TestParseCheckedOutPath_ExtractsWorktreePath(t *testing.T) {
 	cases := []struct {
 		name string
