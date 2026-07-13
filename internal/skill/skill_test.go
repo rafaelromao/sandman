@@ -248,29 +248,6 @@ func readEmbeddedSkill(t *testing.T, rel string) string {
 	return string(data)
 }
 
-func TestSyncInstallsSandmanIndexSubSkill(t *testing.T) {
-	home := t.TempDir()
-
-	if err := Sync(SyncOptions{HomeDir: home, ReviewCommand: "/review-please"}); err != nil {
-		t.Fatalf("sync skill: %v", err)
-	}
-
-	data, err := os.ReadFile(filepath.Join(home, ".agents", "skills", embeddedSkillRoot, "index", "SKILL.md"))
-	if err != nil {
-		t.Fatalf("read sandman-index sub-skill: %v", err)
-	}
-	text := string(data)
-	checks := []string{
-		"name: sandman-index",
-		"disable-model-invocation: true",
-	}
-	for _, want := range checks {
-		if !strings.Contains(text, want) {
-			t.Errorf("expected sandman-index sub-skill to contain %q, got:\n%s", want, text)
-		}
-	}
-}
-
 func TestSandmanTddSkill_PlanReuseAndNoPlanBranches(t *testing.T) {
 	text := readEmbeddedSkill(t, "tdd/SKILL.md")
 

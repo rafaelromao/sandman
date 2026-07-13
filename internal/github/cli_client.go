@@ -165,6 +165,9 @@ type prPayload struct {
 	MergedAt                string `json:"mergedAt"`
 	HeadRefName             string `json:"headRefName"`
 	HeadRefOid              string `json:"headRefOid"`
+	ReviewDecision          string `json:"reviewDecision"`
+	MergeStateStatus        string `json:"mergeStateStatus"`
+	StatusCheckRollup       string `json:"statusCheckRollup"`
 	ClosingIssuesReferences []struct {
 		Number int `json:"number"`
 	} `json:"closingIssuesReferences"`
@@ -348,7 +351,7 @@ func (c *CLIClient) FetchIssueDependencies(ctx context.Context, number int) ([]i
 func (c *CLIClient) FindPRByBranch(ctx context.Context, branch string) (*PR, error) {
 	callCtx, cancel := c.boundContext(ctx)
 	defer cancel()
-	cmd := c.command(callCtx, "gh", "pr", "list", "--head", branch, "--state", "all", "--json", "number,state,mergedAt,headRefName,headRefOid", "--limit", "1")
+	cmd := c.command(callCtx, "gh", "pr", "list", "--head", branch, "--state", "all", "--json", "number,state,mergedAt,headRefName,headRefOid,reviewDecision,mergeStateStatus,statusCheckRollup", "--limit", "1")
 	out, err := runCmd(callCtx, cmd, "gh pr list")
 	if err != nil {
 		return nil, fmt.Errorf("gh pr list: %w", err)
@@ -362,7 +365,16 @@ func (c *CLIClient) FindPRByBranch(ctx context.Context, branch string) (*PR, err
 		return nil, nil
 	}
 	payload := payloads[0]
-	return &PR{Number: payload.Number, State: payload.State, Merged: strings.TrimSpace(payload.MergedAt) != "", HeadRefName: payload.HeadRefName, HeadRefOid: payload.HeadRefOid}, nil
+	return &PR{
+		Number:            payload.Number,
+		State:             payload.State,
+		Merged:            strings.TrimSpace(payload.MergedAt) != "",
+		HeadRefName:       payload.HeadRefName,
+		HeadRefOid:        payload.HeadRefOid,
+		ReviewDecision:    payload.ReviewDecision,
+		MergeStateStatus:  payload.MergeStateStatus,
+		StatusCheckRollup: payload.StatusCheckRollup,
+	}, nil
 }
 
 // prListPageLimit caps the number of PRs fetched in a single `gh pr list`
