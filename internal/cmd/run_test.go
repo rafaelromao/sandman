@@ -467,7 +467,11 @@ func TestRun_ExpandsSpecificationBeforeBatchRunner(t *testing.T) {
 
 func TestRun_MixedSpecificationAndNonChildIssues(t *testing.T) {
 	// Regression for #1038 — see ADR-0025 §3a. The original failure
-	// mode was `resolve specifications: nested specification detected: #982` when running
+	// mode was the historical hard-error `nested specification detected: #982`
+	// emitted when two harvested specs cross-referenced each other. After T4,
+	// nested specifications are recursively flattened (per-flatten log line)
+	// instead of hard-erroring; this test now verifies the no-warning path
+	// of the mixed-batch expansion when running
 	// `sandman run 972:977 982 990 994:1001`.
 	spec982Body := "## Problem Statement\n\nProblem.\n\n## Solution\n\nSolution.\n\n## User Stories\n\n1. U.\n\nSlices tracked in #972, #973, #974.\n\n## Child Issues\n\n- #984 child\n- #985 child\n- #986 child\n- #987 child\n- #988 child\n- #989 child\n"
 	spec990Body := "## Problem Statement\n\nProblem.\n\n## Solution\n\nSolution.\n\n## User Stories\n\n1. U.\n\nSee parent #982.\n"
@@ -549,9 +553,12 @@ func TestRun_MixedSpecificationAndNonChildIssues(t *testing.T) {
 	if strings.Contains(buf.String(), "candidate #") && strings.Contains(buf.String(), "not a child") {
 		t.Errorf("expected no 'candidate not a child' warning on stderr, got: %q", buf.String())
 	}
-	// No nested-Specification error on stderr.
-	if strings.Contains(buf.String(), "nested specification") {
-		t.Errorf("expected no 'nested specification' warning on stderr, got: %q", buf.String())
+	// No nested-Specification hard-error on stderr (the historical
+	// `nested specification detected: #N` was replaced by recursive
+	// flattening with a per-flatten log line in T4; this test verifies
+	// the no-hard-error path on the mixed-batch expansion).
+	if strings.Contains(buf.String(), "nested specification detected") {
+		t.Errorf("expected no nested-specification hard-error on stderr, got: %q", buf.String())
 	}
 }
 
