@@ -1072,12 +1072,22 @@ func TestParseCheckedOutPath_ExtractsWorktreePath(t *testing.T) {
 }
 
 // TestWorktreeSandbox_OverrideReclaimsForeignStrandedWorktree pins the
-// regression guard for issue #2140: when a foreign live worktree (e.g.
-// a leftover review worktree) holds the target branch at a path that
-// differs from the canonical <worktreeBase>/<branch>, `Start()` with
-// --override must force-remove that worktree and proceed with the
-// fresh worktree creation. Without the fix, `git branch -D` would fail
-// because the branch is checked out elsewhere.
+// regression guard for issues #2140 and #2187: when a foreign live
+// worktree (e.g. a leftover review worktree) holds the target branch
+// at a path that differs from the canonical <worktreeBase>/<branch>,
+// `Start()` with --override must:
+//
+//  1. Detach HEAD in the foreign worktree so the branch becomes
+//     deletable. The foreign worktree's directory, `.git` gitlink,
+//     and `.git/worktrees/<dir>` registration all stay intact.
+//  2. Delete the branch from the main repo.
+//  3. Create a fresh canonical worktree holding the new branch on
+//     the source branch.
+//
+// The #2140 contract had `Start()` force-remove the foreign worktree
+// entirely. That destroyed sibling worktrees in parallel sandbox runs
+// because all runs share the same `.git` bind mount. The #2187
+// contract preserves the foreign worktree and only detaches its HEAD.
 func TestWorktreeSandbox_OverrideReclaimsForeignStrandedWorktree(t *testing.T) {
 	repoDir := t.TempDir()
 	initGitRepo(t, repoDir)
@@ -1100,8 +1110,9 @@ func TestWorktreeSandbox_OverrideReclaimsForeignStrandedWorktree(t *testing.T) {
 		t.Fatalf("precondition: expected ForeignStrandedWorktree to detect the foreign worktree at %q, got info=%+v", foreignPath, info)
 	}
 
-	// Override-start: must clear the foreign worktree and create a fresh
-	// worktree at the canonical path holding `branch`.
+	// Override-start: must release the branch from the foreign worktree
+	// (without destroying it) and create a fresh worktree at the
+	// canonical path.
 	sb := NewWorktreeSandbox(repoDir, worktreeBase, branch, "main")
 	sb.SetOverride(true)
 	if err := sb.Start(); err != nil {
@@ -1118,16 +1129,25 @@ func TestWorktreeSandbox_OverrideReclaimsForeignStrandedWorktree(t *testing.T) {
 		t.Errorf("expected canonical worktree HEAD on %q, got %q", branch, headRef)
 	}
 
-	// Foreign worktree must be removed (detach path) — the branch is no
-	// longer checked out there. Either the directory is gone OR the
-	// worktree registration is removed.
-	if _, err := os.Stat(foreignPath); err == nil {
-		// Directory still there — the worktree registration must at least
-		// be gone and the directory no longer a valid worktree.
-		gitPath := filepath.Join(foreignPath, ".git")
-		if _, statErr := os.Stat(gitPath); statErr == nil {
-			t.Errorf("foreign worktree at %q still has .git — override did not detach/remove it", foreignPath)
-		}
+	// Issue #2187: foreign worktree must still exist (scoped recovery).
+	if _, err := os.Stat(foreignPath); err != nil {
+		t.Errorf("expected foreign worktree dir to remain at %q under scoped recovery, got err=%v", foreignPath, err)
+	}
+	// Foreign worktree registration must still exist.
+	listAfter := runGit(t, repoDir, "worktree", "list", "--porcelain")
+	if !strings.Contains(listAfter, foreignPath) {
+		t.Errorf("expected foreign worktree registration at %q to remain, list after=\n%s", foreignPath, listAfter)
+	}
+	// Foreign worktree's HEAD must now be detached (the branch has been
+	// released from there). The branch is then re-created at the
+	// canonical path via `git worktree add -b <branch>` below, so we
+	// assert the foreign's HEAD is detached rather than asserting the
+	// branch is gone from the repo.
+	detachedCmd := exec.Command("git", "symbolic-ref", "--quiet", "HEAD")
+	detachedCmd.Dir = foreignPath
+	detachedOut, _ := detachedCmd.CombinedOutput()
+	if strings.TrimSpace(string(detachedOut)) != "" {
+		t.Errorf("expected foreign worktree HEAD to be detached after recovery, got %q", strings.TrimSpace(string(detachedOut)))
 	}
 }
 
@@ -1386,5 +1406,269 @@ func TestWorktreeSandbox_StartSkipsPrunableReattachWhenReconcileDisabled(t *test
 	}
 	if !strings.Contains(err.Error(), "already exists") {
 		t.Errorf("expected 'already exists' error, got: %v", err)
+	}
+}
+
+// TestReleaseBranchInWorktree_NoOpOnMissingPath pins acceptance criterion
+// #8: a missing path is a no-op (returns nil, writes nothing). This is
+// the safety guarantee that lets the recovery code call the helper
+// without checking whether a foreign worktree directory still exists.
+func TestReleaseBranchInWorktree_NoOpOnMissingPath(t *testing.T) {
+	dir := t.TempDir()
+	missing := filepath.Join(dir, "does-not-exist")
+
+	if err := releaseBranchInWorktree(missing); err != nil {
+		t.Fatalf("expected nil for missing path, got: %v", err)
+	}
+
+	if _, err := os.Stat(missing); !os.IsNotExist(err) {
+		t.Errorf("expected missing path to remain non-existent, got err=%v", err)
+	}
+}
+
+// TestReleaseBranchInWorktree_DetachesBranchWithoutRemovingWorktree
+// pins the core behaviour: calling releaseBranchInWorktree detaches
+// the worktree's HEAD so `git branch -D` becomes legal from the main
+// repo, while leaving the worktree directory, `.git` gitlink, and
+// `.git/worktrees/<dir>` registration intact.
+func TestReleaseBranchInWorktree_DetachesBranchWithoutRemovingWorktree(t *testing.T) {
+	repoDir := t.TempDir()
+	initGitRepo(t, repoDir)
+
+	const branch = "sandman/2187-release-target"
+	runGit(t, repoDir, "branch", branch)
+
+	worktreeBase := filepath.Join(repoDir, ".sandman", "worktrees")
+	if err := os.MkdirAll(worktreeBase, 0755); err != nil {
+		t.Fatalf("mkdir worktreeBase: %v", err)
+	}
+	wtPath := filepath.Join(worktreeBase, "foreign-2187-review")
+	runGit(t, repoDir, "worktree", "add", wtPath, branch)
+
+	listBefore := runGit(t, repoDir, "worktree", "list", "--porcelain")
+	if !strings.Contains(listBefore, wtPath) {
+		t.Fatalf("precondition: expected worktree list to include %q, got:\n%s", wtPath, listBefore)
+	}
+
+	if err := releaseBranchInWorktree(wtPath); err != nil {
+		t.Fatalf("releaseBranchInWorktree failed: %v", err)
+	}
+
+	if _, err := os.Stat(wtPath); err != nil {
+		t.Errorf("expected worktree directory to remain at %q, got: %v", wtPath, err)
+	}
+
+	listAfter := runGit(t, repoDir, "worktree", "list", "--porcelain")
+	if !strings.Contains(listAfter, wtPath) {
+		t.Errorf("expected worktree registration at %q to remain, list after=\n%s", wtPath, listAfter)
+	}
+
+	detachedCmd := exec.Command("git", "symbolic-ref", "--quiet", "HEAD")
+	detachedCmd.Dir = wtPath
+	detachedOut, _ := detachedCmd.CombinedOutput()
+	if strings.TrimSpace(string(detachedOut)) != "" {
+		t.Errorf("expected HEAD to be detached after release, got %q", strings.TrimSpace(string(detachedOut)))
+	}
+
+	deleteCmd := exec.Command("git", "branch", "-D", branch)
+	deleteCmd.Dir = repoDir
+	if out, err := deleteCmd.CombinedOutput(); err != nil {
+		t.Errorf("expected `git branch -D %s` to succeed after release, got: %v\n%s", branch, err, out)
+	}
+}
+
+// TestWorktreeSandbox_OverrideDoesNotDeleteForeignLiveWorktree pins
+// acceptance criterion #5 from issue #2187: a foreign live worktree
+// that holds the target branch on a NON-canonical path must NOT be
+// deleted by `WorktreeSandbox.Start(override)`. Only the branch needs
+// to be released from the foreign (via detached HEAD) so the canonical
+// worktree can be created.
+func TestWorktreeSandbox_OverrideDoesNotDeleteForeignLiveWorktree(t *testing.T) {
+	repoDir := t.TempDir()
+	initGitRepo(t, repoDir)
+
+	const branch = "sandman/2187-foreign-live"
+	runGit(t, repoDir, "branch", branch)
+
+	worktreeBase := filepath.Join(repoDir, ".sandman", "worktrees")
+	if err := os.MkdirAll(worktreeBase, 0755); err != nil {
+		t.Fatalf("mkdir worktreeBase: %v", err)
+	}
+
+	// Foreign live worktree at non-canonical path, holds the branch.
+	foreignPath := filepath.Join(worktreeBase, "review-2187-foreign-live")
+	runGit(t, repoDir, "worktree", "add", foreignPath, branch)
+
+	// Capture foreign worktree state to confirm it survives Start.
+	listBefore := runGit(t, repoDir, "worktree", "list", "--porcelain")
+	if !strings.Contains(listBefore, foreignPath) {
+		t.Fatalf("precondition: foreign worktree at %q must be registered, list=\n%s", foreignPath, listBefore)
+	}
+
+	// Override Start — this is the recovery path that previously
+	// destroyed the foreign worktree via `git worktree remove --force`.
+	sb := NewWorktreeSandbox(repoDir, worktreeBase, branch, "main")
+	sb.SetOverride(true)
+	if err := sb.Start(); err != nil {
+		t.Fatalf("Start with override failed: %v", err)
+	}
+	t.Cleanup(func() {
+		sb.Stop()
+		removeBranch(t, repoDir, branch)
+	})
+
+	// 1. Foreign worktree directory MUST still exist.
+	if _, err := os.Stat(foreignPath); err != nil {
+		t.Errorf("foreign worktree at %q must still exist after Start, got: %v", foreignPath, err)
+	}
+
+	// 2. Foreign worktree .git gitlink MUST still point to a valid dir.
+	gitPath := filepath.Join(foreignPath, ".git")
+	data, err := os.ReadFile(gitPath)
+	if err != nil {
+		t.Errorf("foreign worktree .git gitlink must still be readable at %q, got: %v", gitPath, err)
+	}
+	if !strings.HasPrefix(string(data), "gitdir: ") {
+		t.Errorf("foreign worktree .git content unexpected: %q", string(data))
+	}
+
+	// 3. Foreign worktree registration MUST still exist in
+	// .git/worktrees/<dir>.
+	wtName := filepath.Base(foreignPath)
+	regPath := filepath.Join(repoDir, ".git", "worktrees", wtName)
+	if _, err := os.Stat(regPath); err != nil {
+		t.Errorf("foreign worktree registration at %q must still exist, got: %v", regPath, err)
+	}
+
+	// 4. HEAD in foreign worktree MUST now be detached.
+	detachedCmd := exec.Command("git", "symbolic-ref", "--quiet", "HEAD")
+	detachedCmd.Dir = foreignPath
+	detachedOut, _ := detachedCmd.CombinedOutput()
+	if strings.TrimSpace(string(detachedOut)) != "" {
+		t.Errorf("expected foreign worktree HEAD to be detached, got %q", strings.TrimSpace(string(detachedOut)))
+	}
+}
+
+// TestWorktreeSandbox_OverrideDoesNotPruneUnrelatedWorktrees pins
+// acceptance criterion #6: a foreign worktree that holds a DIFFERENT
+// branch from `s.branch` must be left completely untouched by the
+// override recovery path. No reattach, no prune, no removal.
+func TestWorktreeSandbox_OverrideDoesNotPruneUnrelatedWorktrees(t *testing.T) {
+	repoDir := t.TempDir()
+	initGitRepo(t, repoDir)
+
+	runGit(t, repoDir, "branch", "sandman/2187-target")
+	runGit(t, repoDir, "branch", "sandman/2187-unrelated")
+
+	worktreeBase := filepath.Join(repoDir, ".sandman", "worktrees")
+	if err := os.MkdirAll(worktreeBase, 0755); err != nil {
+		t.Fatalf("mkdir worktreeBase: %v", err)
+	}
+
+	// Foreign worktree on an UNRELATED branch at non-canonical path.
+	foreignPath := filepath.Join(worktreeBase, "review-2187-unrelated")
+	runGit(t, repoDir, "worktree", "add", foreignPath, "sandman/2187-unrelated")
+
+	beforeDirInfo, err := os.Stat(foreignPath)
+	if err != nil {
+		t.Fatalf("foreign path missing: %v", err)
+	}
+	beforeList := runGit(t, repoDir, "worktree", "list", "--porcelain")
+	beforeBranch := runGit(t, foreignPath, "symbolic-ref", "HEAD")
+
+	// Override Start on the TARGET branch. The unrelated foreign
+	// worktree must be invisible to the recovery logic.
+	sb := NewWorktreeSandbox(repoDir, worktreeBase, "sandman/2187-target", "main")
+	sb.SetOverride(true)
+	if err := sb.Start(); err != nil {
+		t.Fatalf("Start with override failed: %v", err)
+	}
+	t.Cleanup(func() {
+		sb.Stop()
+		// Tear down the unrelated foreign worktree before removing
+		// its branch.
+		wtCmd := exec.Command("git", "worktree", "remove", "--force", foreignPath)
+		wtCmd.Dir = repoDir
+		_, _ = wtCmd.CombinedOutput()
+		removeBranch(t, repoDir, "sandman/2187-target")
+		removeBranch(t, repoDir, "sandman/2187-unrelated")
+	})
+
+	// Foreign worktree directory MUST be unchanged (mtime preserved).
+	afterDirInfo, err := os.Stat(foreignPath)
+	if err != nil {
+		t.Fatalf("foreign worktree disappeared: %v", err)
+	}
+	if beforeDirInfo.ModTime() != afterDirInfo.ModTime() {
+		t.Errorf("foreign worktree mtime changed: before=%v after=%v", beforeDirInfo.ModTime(), afterDirInfo.ModTime())
+	}
+
+	// Foreign worktree registration MUST be in the worktree list.
+	afterList := runGit(t, repoDir, "worktree", "list", "--porcelain")
+	if !strings.Contains(afterList, foreignPath) {
+		t.Errorf("foreign worktree at %q was removed from list:\nbefore:\n%s\nafter:\n%s", foreignPath, beforeList, afterList)
+	}
+
+	// HEAD ref MUST be unchanged.
+	afterBranch := runGit(t, foreignPath, "symbolic-ref", "HEAD")
+	if beforeBranch != afterBranch {
+		t.Errorf("foreign worktree HEAD changed: before=%q after=%q", beforeBranch, afterBranch)
+	}
+}
+
+// TestWorktreeSandbox_ParallelStartsDoNotDestroyEachOther pins the
+// regression guard for issue #2187: two parallel `WorktreeSandbox.Start`
+// cycles on different branches in the same repo must not destroy each
+// other's `.git/worktrees/<otherBranch>` registration. This is the
+// behavioural contract that protects batch `260713123820-89cd-2165+11`
+// and similar from the prunable-entry symptom.
+func TestWorktreeSandbox_ParallelStartsDoNotDestroyEachOther(t *testing.T) {
+	repoDir := t.TempDir()
+	initGitRepo(t, repoDir)
+
+	const branchA = "sandman/2187-parallel-a"
+	const branchB = "sandman/2187-parallel-b"
+	runGit(t, repoDir, "branch", branchA)
+	runGit(t, repoDir, "branch", branchB)
+
+	worktreeBase := filepath.Join(repoDir, ".sandman", "worktrees")
+
+	// Run A's Start on branchA with override. Assert worktree A is
+	// registered, then immediately run B's Start on branchB with
+	// override. Neither run should remove the other's registration.
+	sbA := NewWorktreeSandbox(repoDir, worktreeBase, branchA, "main")
+	sbA.SetOverride(true)
+	if err := sbA.Start(); err != nil {
+		t.Fatalf("Start A failed: %v", err)
+	}
+
+	wtAPath := sbA.WorkDir()
+	if _, err := os.Stat(filepath.Join(repoDir, ".git", "worktrees", filepath.Base(wtAPath))); err != nil {
+		t.Fatalf("expected A registration to exist after A.Start, got: %v", err)
+	}
+
+	sbB := NewWorktreeSandbox(repoDir, worktreeBase, branchB, "main")
+	sbB.SetOverride(true)
+	if err := sbB.Start(); err != nil {
+		t.Fatalf("Start B failed: %v", err)
+	}
+
+	wtBPath := sbB.WorkDir()
+
+	// A's registration must still be present after B's Start.
+	if _, err := os.Stat(filepath.Join(repoDir, ".git", "worktrees", filepath.Base(wtAPath))); err != nil {
+		t.Errorf("expected A registration at .git/worktrees/%s to survive B.Start, got: %v",
+			filepath.Base(wtAPath), err)
+	}
+	// B's registration must be present after B's Start.
+	if _, err := os.Stat(filepath.Join(repoDir, ".git", "worktrees", filepath.Base(wtBPath))); err != nil {
+		t.Errorf("expected B registration at .git/worktrees/%s after B.Start, got: %v",
+			filepath.Base(wtBPath), err)
+	}
+
+	// A's worktree HEAD must still point at branchA.
+	listAll := runGit(t, repoDir, "worktree", "list", "--porcelain")
+	if !strings.Contains(listAll, branchA) || !strings.Contains(listAll, branchB) {
+		t.Errorf("expected both branchA and branchB in worktree list, got:\n%s", listAll)
 	}
 }
