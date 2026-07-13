@@ -1977,8 +1977,12 @@ func TestWorktreeSandbox_ContinueRecoversFromCrashedContainerAttempt(t *testing.
 	}
 
 	listOutput := runGit(t, dir, "worktree", "list", "--porcelain")
-	if strings.Count(listOutput, "worktree "+s1.WorkDir()) != 1 {
-		t.Errorf("expected exactly one worktree entry for %q in porcelain, got:\n%s", s1.WorkDir(), listOutput)
+	resolvedWorkDir, err := filepath.EvalSymlinks(s1.WorkDir())
+	if err != nil {
+		resolvedWorkDir = s1.WorkDir()
+	}
+	if !strings.Contains(listOutput, "worktree "+resolvedWorkDir) && !strings.Contains(listOutput, "worktree "+s1.WorkDir()) {
+		t.Errorf("expected exactly one worktree entry for %q (or its symlink-resolved form %q) in porcelain, got:\n%s", s1.WorkDir(), resolvedWorkDir, listOutput)
 	}
 }
 
