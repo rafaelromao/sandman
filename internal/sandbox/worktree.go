@@ -22,6 +22,7 @@ type WorktreeSandbox struct {
 	branch            string
 	sourceBranch      string
 	override          bool
+	continueRun       bool
 	strandedReconcile bool
 	workDir           string
 	gitName           string
@@ -48,6 +49,24 @@ func (s *WorktreeSandbox) SetOverride(override bool) {
 	s.override = override
 }
 
+// SetContinue signals that this Start is a continuation of a previous run
+// that may have left a /workspace-visible gitlink behind in the preserved
+// worktree's .git file. When enabled, Start() rewrites the gitlink back to
+// the host-visible gitdir before validation so the preserved worktree can
+// be reused. Mirrors the SetOverride / SetStrandedReconcile pattern; must
+// be safe to call before Start. See issue #2189.
+func (s *WorktreeSandbox) SetContinue(c bool) {
+	s.continueRun = c
+}
+
+// RestoreHostPaths is a no-op on a worktree-only sandbox: there is no
+// /workspace-visible gitlink to restore. Container sandboxes override the
+// behavior to rewrite the preserved worktree's .git pointer back to host
+// paths. Issue #2189.
+func (s *WorktreeSandbox) RestoreHostPaths() error {
+	return nil
+}
+
 // SetStrandedReconcile enables or disables auto-recovery from stranded
 // worktrees during Start. When enabled (the default), a "git branch -D"
 // failure with the "checked out at" error is recovered by either
@@ -61,6 +80,16 @@ func (s *WorktreeSandbox) SetStrandedReconcile(enabled bool) {
 // Start initializes the worktree.
 func (s *WorktreeSandbox) Start() error {
 	s.workDir = filepath.Join(s.worktreeBase, s.branch)
+	if s.continueRun && !s.override {
+		if err := RestoreWorktreeGitPaths(s.repoPath, s.workDir); err != nil {
+			return fmt.Errorf("normalize preserved worktree gitlink for continuation: %w", err)
+		}
+		if state, actualRef := ContinuationWorktreeStatus(s.repoPath, s.worktreeBase, s.branch); state != ContinuationWorktreeReusable {
+			if err := s.refuseContinuation(state, actualRef); err != nil {
+				return err
+			}
+		}
+	}
 	overrideRecreate := false
 	if s.workDirIsValidWorktree() {
 		currentRef, err := CurrentBranchRef(s.workDir)
@@ -657,6 +686,25 @@ func (s *WorktreeSandbox) removePrunableWorktreeRegistration() error {
 	}
 	if err := os.RemoveAll(candidate); err != nil {
 		return fmt.Errorf("remove registration %q: %w", candidate, err)
+	}
+	return nil
+}
+
+// refuseContinuation returns a targeted error explaining why the preserved
+// worktree at s.workDir cannot be reused by a continue-mode Start. It runs
+// before any destructive reconciliation so the orchestrator can surface
+// the failure to the operator; --override remains the only recovery mode
+// that bypasses the early return. Issue #2189.
+func (s *WorktreeSandbox) refuseContinuation(state ContinuationWorktreeState, actualRef string) error {
+	switch state {
+	case ContinuationWorktreeMissing:
+		return fmt.Errorf("cannot continue: preserved worktree at %q has no live registration in the parent repo; re-run with --override to reconcile", s.workDir)
+	case ContinuationWorktreeDetached:
+		return fmt.Errorf("cannot continue: preserved worktree at %q has a detached HEAD; re-run with --override to reconcile", s.workDir)
+	case ContinuationWorktreeWrongBranch:
+		actualBranch := strings.TrimPrefix(actualRef, "refs/heads/")
+		return fmt.Errorf("cannot continue: preserved worktree at %q is checked out on branch %q, expected %q; re-run with --override to reconcile",
+			s.workDir, actualBranch, s.branch)
 	}
 	return nil
 }

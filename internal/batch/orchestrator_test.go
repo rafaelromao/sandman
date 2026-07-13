@@ -374,6 +374,8 @@ type retrySandbox struct {
 	setStrandedReconcileValue  bool
 	setIdentityName            string
 	setIdentityEmail           string
+	setContinueValue           bool
+	restoreHostPathsCalled     bool
 }
 
 func (s *retrySandbox) Start() error {
@@ -412,6 +414,13 @@ func (s *retrySandbox) SetStrandedReconcile(enabled bool) {
 func (s *retrySandbox) SetGitIdentity(name, email string) {
 	s.setIdentityName = name
 	s.setIdentityEmail = email
+}
+func (s *retrySandbox) SetContinue(c bool) {
+	s.setContinueValue = c
+}
+func (s *retrySandbox) RestoreHostPaths() error {
+	s.restoreHostPathsCalled = true
+	return nil
 }
 
 // Ensure retrySandbox satisfies sandbox.Sandbox.
@@ -9519,6 +9528,10 @@ func (f *fakeWorktreeForContainerAbortTest) SetStrandedReconcile(bool) {
 }
 func (f *fakeWorktreeForContainerAbortTest) SetGitIdentity(string, string) {
 }
+func (f *fakeWorktreeForContainerAbortTest) SetContinue(bool) {}
+func (f *fakeWorktreeForContainerAbortTest) RestoreHostPaths() error {
+	return nil
+}
 
 // fakeContainerForAbortTest is a minimal sandbox.Container used only by
 // TestOrchestrator_AbortIssue_ActiveRunContainer_ReachesAbortedTerminal. It
@@ -9838,6 +9851,86 @@ func TestRunSession_ApplyOverrideAndIdentity_PropagatesOverrideFalse(t *testing.
 	}
 	if wt.setOverrideValue {
 		t.Error("expected SetOverride(false) to forward the override value")
+	}
+}
+
+// TestRunSession_ApplyOverrideAndIdentity_PropagatesContinueTrue pins the
+// orchestrator's wiring of ModeContinue through applyOverrideAndIdentity
+// (issue #2189). ModeContinue must call SetContinue(true) on the sandbox
+// so its Start() normalizes the preserved worktree's .git pointer.
+func TestRunSession_ApplyOverrideAndIdentity_PropagatesContinueTrue(t *testing.T) {
+	wt := &fakeSandbox{}
+	s := &runSession{
+		o:                &Orchestrator{errorLog: io.Discard},
+		mode:             ModeContinue,
+		issueNumber:      42,
+		identityResolver: noopIdentityResolver(),
+	}
+
+	_, ok := s.applyOverrideAndIdentity(wt, "sandman/42-fix-bug")
+	if !ok {
+		t.Fatal("expected applyOverrideAndIdentity to succeed")
+	}
+
+	if !wt.setContinueValue {
+		t.Error("expected SetContinue(true) to be called for ModeContinue")
+	}
+}
+
+// TestRunSession_ApplyOverrideAndIdentity_PropagatesContinueFalse pins
+// that non-ModeContinue runs do not turn on the continue signal.
+func TestRunSession_ApplyOverrideAndIdentity_PropagatesContinueFalse(t *testing.T) {
+	wt := &fakeSandbox{}
+	s := &runSession{
+		o:                &Orchestrator{errorLog: io.Discard},
+		mode:             ModeFresh,
+		issueNumber:      7,
+		identityResolver: noopIdentityResolver(),
+	}
+
+	_, ok := s.applyOverrideAndIdentity(wt, "sandman/7-other")
+	if !ok {
+		t.Fatal("expected applyOverrideAndIdentity to succeed")
+	}
+
+	if wt.setContinueValue {
+		t.Error("expected SetContinue to be false for ModeFresh")
+	}
+}
+
+// TestRunBatch_CallsRestoreHostPathsAfterSuccessfulRun pins behavior 5
+// of issue #2189: the orchestrator must guarantee the sandbox's
+// RestoreHostPaths() runs at the end of every runSession.execute —
+// including normal completion — so container sandboxes normalize the
+// preserved worktree's .git pointer back to host paths on every exit.
+// The orchestrator must NOT call Stop() on success (the worktree is
+// preserved for --continue reuse); the cleanup is path-only.
+func TestRunBatch_CallsRestoreHostPathsAfterSuccessfulRun(t *testing.T) {
+	dir := testenv.MkdirShort(t, "sm-orch-")
+	t.Chdir(dir)
+	initGitRepo(t, dir)
+
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			42: {Number: 42, Title: "Fix bug", Body: "Users cannot log in."},
+		},
+		prs: map[string]*github.PR{"sandman/42-fix-bug": {Number: 42, State: "closed", Merged: true, HeadRefName: "sandman/42-fix-bug"}},
+	}
+	sb := &fakeSandbox{}
+	factory := &fakeSandboxFactory{sandbox: sb}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
+	o.sandboxFactory = factory
+
+	_, err := o.RunBatch(context.Background(), Request{Issues: []int{42}})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !sb.restoreHostPathsCalled {
+		t.Error("expected RestoreHostPaths to be called after successful run")
+	}
+	if sb.stopCalled {
+		t.Error("expected Stop NOT to be called after successful run (worktree preserved for --continue)")
 	}
 }
 

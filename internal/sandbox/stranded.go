@@ -159,6 +159,76 @@ func ReclaimableWorktree(repoPath, worktreeBase, branch string) (StrandedWorktre
 	return StrandedWorktreeInfo{}, false
 }
 
+// ContinuationWorktreeState describes whether the preserved worktree at
+// <worktreeBase>/<branch> is fit to be reused by a continue-mode run.
+// Issue #2189: the host-side validation must distinguish a missing
+// registration from a detached HEAD from a wrong-branch checkout so the
+// orchestrator can return a targeted error instead of dropping into
+// destructive reconciliation.
+type ContinuationWorktreeState int
+
+const (
+	// ContinuationWorktreeMissing indicates no live worktree-list entry
+	// exists at the canonical path. The worktree directory may still be
+	// on disk; the registration's gitdir is absent.
+	ContinuationWorktreeMissing ContinuationWorktreeState = iota
+	// ContinuationWorktreeDetached indicates the registration exists but
+	// the worktree's HEAD is detached (not on any local branch).
+	ContinuationWorktreeDetached
+	// ContinuationWorktreeWrongBranch indicates the registration exists
+	// but HEAD points at a different ref than refs/heads/<branch>.
+	ContinuationWorktreeWrongBranch
+	// ContinuationWorktreeReusable indicates the registration exists and
+	// HEAD points at refs/heads/<branch>; the continue-mode happy path
+	// may proceed without destructive reconciliation.
+	ContinuationWorktreeReusable
+)
+
+// ContinuationWorktreeStatus inspects the preserved worktree at
+// <worktreeBase>/<branch> and reports whether a continue-mode Start()
+// can reuse it. worktreeBase is resolved against repoPath when relative,
+// mirroring ReclaimableWorktree / StrandedWorktree.
+//
+// Returns ContinuationWorktreeMissing when no worktree-list entry exists
+// at the canonical path, the entry's detached flag is set, or the entry's
+// branch differs from the expected refs/heads/<branch>. The string
+// return value reports the actual branch ref when the worktree is in
+// the wrong-branch state; it is empty for the other states.
+func ContinuationWorktreeStatus(repoPath, worktreeBase, branch string) (ContinuationWorktreeState, string) {
+	if !filepath.IsAbs(worktreeBase) {
+		worktreeBase = filepath.Join(repoPath, worktreeBase)
+	}
+	if _, err := os.Stat(worktreeBase); err != nil {
+		return ContinuationWorktreeMissing, ""
+	}
+	worktreeBase = resolveBase(worktreeBase)
+
+	expectedRef := "refs/heads/" + branch
+	target := filepath.Join(worktreeBase, branch)
+
+	entries, err := listWorktrees(repoPath)
+	if err != nil {
+		return ContinuationWorktreeMissing, ""
+	}
+
+	for _, e := range entries {
+		if e.path != target {
+			continue
+		}
+		if e.prunable {
+			return ContinuationWorktreeMissing, ""
+		}
+		if e.detached {
+			return ContinuationWorktreeDetached, ""
+		}
+		if e.branch != expectedRef {
+			return ContinuationWorktreeWrongBranch, e.branch
+		}
+		return ContinuationWorktreeReusable, ""
+	}
+	return ContinuationWorktreeMissing, ""
+}
+
 // issueDrivenDir matches directory names that come from issue-driven
 // branches (e.g. "sandman/907-foo" stored as the worktree directory name).
 var issueDrivenDir = regexp.MustCompile(`^[0-9]+-`)

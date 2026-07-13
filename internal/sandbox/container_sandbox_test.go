@@ -34,6 +34,8 @@ type fakeWorktreeForContainer struct {
 	setStrandedReconcileValue  bool
 	setIdentityName            string
 	setIdentityEmail           string
+	setContinueValue           bool
+	restoreHostPathsCalled     bool
 }
 
 func (f *fakeWorktreeForContainer) Start() error {
@@ -89,6 +91,15 @@ func (f *fakeWorktreeForContainer) SetStrandedReconcile(enabled bool) {
 func (f *fakeWorktreeForContainer) SetGitIdentity(name, email string) {
 	f.setIdentityName = name
 	f.setIdentityEmail = email
+}
+
+func (f *fakeWorktreeForContainer) SetContinue(c bool) {
+	f.setContinueValue = c
+}
+
+func (f *fakeWorktreeForContainer) RestoreHostPaths() error {
+	f.restoreHostPathsCalled = true
+	return nil
 }
 
 // Ensure fakeWorktreeForContainer satisfies Sandbox.
@@ -418,6 +429,37 @@ func TestContainerSandbox_SetOverride_ForwardsToWorktree(t *testing.T) {
 	}
 	if !wt.setOverrideValue {
 		t.Error("expected SetOverride(true) to forward value true to worktree")
+	}
+}
+
+// TestContainerSandbox_SetContinue_ForwardsToWorktree pins the
+// ContainerSandbox forwarding for the SetContinue signal introduced by
+// issue #2189. SetContinue(true) on a container sandbox must reach the
+// underlying worktree so its Start() can normalize the preserved worktree's
+// .git pointer before validation.
+func TestContainerSandbox_SetContinue_ForwardsToWorktree(t *testing.T) {
+	wt := &fakeWorktreeForContainer{}
+	ctr := &fakeContainer{id: "abc123"}
+	sb := NewContainerSandbox(wt, ctr, "docker", "/host/repo")
+
+	sb.SetContinue(true)
+
+	if !wt.setContinueValue {
+		t.Error("expected SetContinue(true) to forward value true to worktree")
+	}
+}
+
+// TestSharedContainerSandbox_SetContinue_ForwardsToWorktree pins the
+// forwarding for the shared-container constructor variant.
+func TestSharedContainerSandbox_SetContinue_ForwardsToWorktree(t *testing.T) {
+	wt := &fakeWorktreeForContainer{}
+	ctr := &fakeContainer{id: "shared123"}
+	sb := NewSharedContainerSandbox(wt, ctr, "docker", "/host/repo")
+
+	sb.SetContinue(true)
+
+	if !wt.setContinueValue {
+		t.Error("expected SetContinue(true) to forward value true to worktree")
 	}
 }
 

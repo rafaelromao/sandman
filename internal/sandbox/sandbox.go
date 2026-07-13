@@ -53,6 +53,20 @@ type Sandbox interface {
 	// SetGitIdentity configures the identity Sandman should write to worktree-local git config.
 	// Must be safe to call before Start.
 	SetGitIdentity(name, email string)
+	// SetContinue signals that this Start is a continuation of a
+	// previous run that may have left a /workspace-visible gitlink
+	// behind. When enabled, Start normalizes the preserved worktree's
+	// .git pointer back to host-visible paths before validation and
+	// reuses the existing worktree. Must be safe to call before Start.
+	// Issue #2189.
+	SetContinue(c bool)
+	// RestoreHostPaths returns the sandbox to host-visible state without
+	// removing the worktree. For container sandboxes this rewrites the
+	// preserved worktree's .git pointer from /workspace/... back to the
+	// host repository path. For worktree-only sandboxes it is a no-op.
+	// It is safe to call any number of times; subsequent calls without
+	// intermediate rewriting are no-ops. Issue #2189.
+	RestoreHostPaths() error
 }
 
 // waitCmd waits for cmd to finish via its owning processWrapper's
