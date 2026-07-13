@@ -155,6 +155,20 @@ overrideCleanup:
 			}
 		}
 
+		// Issue #2140: also clear any foreign live worktree at a different
+		// path that currently holds s.branch. Without this, `git branch -D`
+		// at line 174 below fails with "checked out at '<path>'" and the
+		// fallback reconcileStrandedBranch cannot free the branch because
+		// it force-checks out sourceBranch in repoPath, not in the foreign
+		// worktree.
+		if s.strandedReconcile {
+			if info, foreign := ForeignStrandedWorktree(s.repoPath, s.worktreeBase, s.branch); foreign {
+				if err := detachForeignWorktree(info.Path, s.branch); err != nil {
+					s.warn("issue #2140: detach foreign worktree at %q: %v\n", info.Path, err)
+				}
+			}
+		}
+
 		if overrideRecreate {
 			removeCmd := exec.Command("git", "worktree", "remove", "--force", s.workDir)
 			removeCmd.Dir = s.repoPath
@@ -176,6 +190,27 @@ overrideCleanup:
 			delCmd.Dir = s.repoPath
 			if out, err := delCmd.CombinedOutput(); err != nil {
 				if s.strandedReconcile && isBranchCheckedOutError(out) {
+					// Issue #2140: parse the offending path from the error
+					// message and attempt to detach the foreign worktree
+					// directly before falling back to the main-repo
+					// force-checkout strategy. The fallback below only
+					// recovers the case where the branch is checked out
+					// in repoPath itself; foreign worktrees require the
+					// explicit detach.
+					if foreignPath, ok := parseCheckedOutPath(out); ok && foreignPath != "" {
+						if detachErr := detachForeignWorktree(foreignPath, s.branch); detachErr == nil {
+							retryCmd := exec.Command("git", "branch", "-D", s.branch)
+							retryCmd.Dir = s.repoPath
+							if retryOut, retryErr := retryCmd.CombinedOutput(); retryErr == nil {
+								goto afterBranchDelete
+							} else {
+								out = retryOut
+								err = retryErr
+							}
+						} else {
+							s.warn("issue #2140: detach foreign worktree at %q failed: %v\n", foreignPath, detachErr)
+						}
+					}
 					if recErr := s.reconcileStrandedBranch(); recErr != nil {
 						return fmt.Errorf("delete stale branch %q: %w\n%s", s.branch, recErr, out)
 					}
@@ -185,6 +220,7 @@ overrideCleanup:
 			}
 		}
 	}
+afterBranchDelete:
 	if s.workDirExists() {
 		// Directory exists on disk but is not a registered git worktree.
 		// This can happen when a previous run crashed after the directory
@@ -534,6 +570,76 @@ func defaultReconcileStrandedBranch(repoPath, worktreeBase, branch, sourceBranch
 func isBranchCheckedOutError(out []byte) bool {
 	msg := string(out)
 	return strings.Contains(msg, "checked out at") || strings.Contains(msg, "used by worktree at")
+}
+
+// parseCheckedOutPath extracts the absolute worktree path from a
+// `git branch -D` failure of the form
+//
+//	error: Cannot delete branch 'X' checked out at '<path>'
+//	error: cannot delete branch 'X' used by worktree at '<path>'
+//
+// Returns the parsed path and true on success; empty string and false
+// when the output does not match either form. The path is returned
+// verbatim (single quotes stripped) so callers can pass it directly to
+// `git worktree remove --force` or `git -C <path> checkout --detach`.
+//
+// Issue #2140: the override path uses this helper to recover from
+// foreign worktrees that hold the target branch.
+func parseCheckedOutPath(out []byte) (string, bool) {
+	msg := string(out)
+	for _, prefix := range []string{"checked out at '", "used by worktree at '"} {
+		idx := strings.Index(msg, prefix)
+		if idx < 0 {
+			continue
+		}
+		start := idx + len(prefix)
+		end := strings.IndexByte(msg[start:], '\'')
+		if end < 0 {
+			continue
+		}
+		return msg[start : start+end], true
+	}
+	return "", false
+}
+
+// detachForeignWorktree releases `branch` from a live worktree at `path` so
+// the branch becomes deletable from the main repo. Both `git worktree remove
+// --force` (the preferred, simpler path) and the fallback `git -C <path>
+// checkout --detach` are attempted in order; the first that succeeds wins.
+//
+// Returns nil on success or a non-nil error that wraps the underlying git
+// output from the last attempted strategy. The caller is expected to retry
+// `git branch -D <branch>` afterwards. Idempotent: a no-op when the worktree
+// at `path` no longer exists.
+//
+// Issue #2140.
+func detachForeignWorktree(path, branch string) error {
+	if path == "" {
+		return fmt.Errorf("detach foreign worktree: empty path")
+	}
+	if _, err := os.Stat(path); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("stat foreign worktree %q: %w", path, err)
+	}
+	removeCmd := exec.Command("git", "worktree", "remove", "--force", path)
+	removeCmd.Dir = filepath.Dir(path)
+	if out, err := removeCmd.CombinedOutput(); err == nil {
+		return nil
+	} else if !isBranchCheckedOutError(out) && !strings.Contains(string(out), "contains a repository") {
+		// Hard failure on remove — fall through to detach only when the
+		// error pattern suggests the worktree cannot be removed cleanly
+		// (e.g. untracked files would be lost) but the branch itself
+		// can still be freed via `checkout --detach`.
+		return fmt.Errorf("git worktree remove --force %q: %w\n%s", path, err, out)
+	}
+	detachCmd := exec.Command("git", "checkout", "--detach")
+	detachCmd.Dir = path
+	if out, err := detachCmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("detach HEAD in foreign worktree %q: %w\n%s", path, err, out)
+	}
+	return nil
 }
 
 // reconcileStrandedBranch attempts to remove the stale branch after the

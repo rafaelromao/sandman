@@ -2142,7 +2142,7 @@ func (v *portalRunsView) filterPortalLogByRunID(text string, runID string) strin
 // read via readPortalTextFile) or by the live attach stream coming off
 // the still-connectable batch.sock (read via readPortalSocketOutput).
 //
-// Policy (issue #1730):
+// Policy (issue #1730, revised in #2140):
 //   - No active batch matched (active == nil) → saved log.
 //   - Active row (runState is non-terminal, i.e. IsActive() true) →
 //     live wins if non-empty, else saved. The socket is the source of
@@ -2158,10 +2158,14 @@ func (v *portalRunsView) filterPortalLogByRunID(text string, runID string) strin
 //     issue flavours. The kind=active promotion of
 //     terminal review rows at lines 1593-1595 is orthogonal — it
 //     affects the table-cell chip, not the Log tab content.
-//   - Degraded fallback: a terminal row whose saved log is empty
-//     falls back to the live socket output so the Log tab still
-//     shows something meaningful when the log file has not yet been
-//     flushed.
+//   - Terminal row whose saved log is empty: return empty so the
+//     caller can substitute a placeholder (e.g. "No log file yet.").
+//     Previously this fell back to active.LiveOutput, but when
+//     `active` is the batch-level shared instance (as in
+//     runFromActiveBatchIssue) its LiveOutput carries sibling runs'
+//     content — not this terminal run's. An early-failed run that
+//     never wrote a run.log would then render the wrong run's live
+//     stream under its own row (issue #2140).
 //
 // `loadSaved` lazily reads the per-run run.log; the helper only invokes
 // it on the saved-wins path so the live-wins branch avoids a needless
@@ -2179,10 +2183,12 @@ func (v *portalRunsView) resolveRunLog(loadSaved func() string, runState events.
 		}
 		return loadSaved()
 	}
-	if saved := loadSaved(); saved != "" {
-		return saved
-	}
-	return strings.TrimSpace(stripLogLabels(active.LiveOutput))
+	// Terminal row: saved log is authoritative. Do NOT fall back to
+	// active.LiveOutput — when `active` is a batch-level instance its
+	// live stream belongs to sibling runs, not this terminal one (issue
+	// #2140). Return whatever the saved log contains (possibly empty) and
+	// let the caller substitute a placeholder.
+	return loadSaved()
 }
 
 func (v *portalRunsView) portalBlockedMessage(payload map[string]any) string {

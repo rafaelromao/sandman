@@ -419,3 +419,111 @@ func TestReclaimableWorktree_NonPrunableWorktreeAtPathReturnsTrue(t *testing.T) 
 		t.Errorf("ExpectedBranch: got %q, want %q", info.ExpectedBranch, "refs/heads/"+branch)
 	}
 }
+
+// TestForeignStrandedWorktree_DetectsBranchHeldElsewhere pins the
+// regression guard for issue #2140: a live (non-prunable) worktree at
+// a DIFFERENT path than the canonical <worktreeBase>/<branch> that
+// currently has `branch` checked out must be detected so the override
+// path can free it before retrying `git branch -D`.
+func TestForeignStrandedWorktree_DetectsBranchHeldElsewhere(t *testing.T) {
+	repoDir := t.TempDir()
+	initGitRepo(t, repoDir)
+
+	const branch = "sandman/30-foo"
+	runGit(t, repoDir, "branch", branch)
+
+	worktreeBase := filepath.Join(repoDir, ".sandman", "worktrees")
+	if err := os.MkdirAll(worktreeBase, 0755); err != nil {
+		t.Fatalf("mkdir worktreeBase: %v", err)
+	}
+	// Foreign worktree at a path that does NOT match worktreeBase/branch.
+	foreignPath := filepath.Join(worktreeBase, "review-148-foreign")
+	runGit(t, repoDir, "worktree", "add", foreignPath, branch)
+
+	info, ok := ForeignStrandedWorktree(repoDir, worktreeBase, branch)
+	if !ok {
+		t.Fatalf("expected foreign stranded=true for branch %q held at %q, got false (info=%+v)", branch, foreignPath, info)
+	}
+	if info.Path != resolveWorktreePath(foreignPath) {
+		t.Errorf("Path: got %q, want %q", info.Path, resolveWorktreePath(foreignPath))
+	}
+	if info.ActualBranch != "refs/heads/"+branch {
+		t.Errorf("ActualBranch: got %q, want %q", info.ActualBranch, "refs/heads/"+branch)
+	}
+	if info.ExpectedBranch != "refs/heads/"+branch {
+		t.Errorf("ExpectedBranch: got %q, want %q", info.ExpectedBranch, "refs/heads/"+branch)
+	}
+}
+
+// TestForeignStrandedWorktree_IgnoresWorktreeAtExpectedPath pins that
+// a worktree registered at the canonical <worktreeBase>/<branch> path
+// is NOT flagged as foreign (it's the expected location, handled by
+// StrandedWorktree instead).
+func TestForeignStrandedWorktree_IgnoresWorktreeAtExpectedPath(t *testing.T) {
+	repoDir := t.TempDir()
+	initGitRepo(t, repoDir)
+
+	const branch = "sandman/30-foo"
+	runGit(t, repoDir, "branch", branch)
+
+	worktreeBase := filepath.Join(repoDir, ".sandman", "worktrees")
+	if err := os.MkdirAll(worktreeBase, 0755); err != nil {
+		t.Fatalf("mkdir worktreeBase: %v", err)
+	}
+	wtPath := filepath.Join(worktreeBase, branch)
+	runGit(t, repoDir, "worktree", "add", wtPath, branch)
+
+	info, ok := ForeignStrandedWorktree(repoDir, worktreeBase, branch)
+	if ok {
+		t.Fatalf("expected foreign=false for worktree at canonical path, got info=%+v", info)
+	}
+	if info != (StrandedWorktreeInfo{}) {
+		t.Fatalf("expected zero-value StrandedWorktreeInfo, got %+v", info)
+	}
+}
+
+// TestForeignStrandedWorktree_IgnoresPrunableWorktree pins that prunable
+// worktrees are skipped — they will be cleaned up by `git worktree prune`,
+// not by the foreign-detach recovery path.
+func TestForeignStrandedWorktree_IgnoresPrunableWorktree(t *testing.T) {
+	repoDir := t.TempDir()
+	initGitRepo(t, repoDir)
+
+	const branch = "sandman/30-foo"
+	runGit(t, repoDir, "branch", branch)
+
+	worktreeBase := filepath.Join(repoDir, ".sandman", "worktrees")
+	if err := os.MkdirAll(worktreeBase, 0755); err != nil {
+		t.Fatalf("mkdir worktreeBase: %v", err)
+	}
+	foreignPath := filepath.Join(worktreeBase, "review-148-prunable")
+	runGit(t, repoDir, "worktree", "add", foreignPath, branch)
+	// Delete the directory so the worktree becomes prunable.
+	if err := os.RemoveAll(foreignPath); err != nil {
+		t.Fatalf("remove foreign worktree dir: %v", err)
+	}
+
+	info, ok := ForeignStrandedWorktree(repoDir, worktreeBase, branch)
+	if ok {
+		t.Fatalf("expected foreign=false for prunable worktree, got info=%+v", info)
+	}
+	if info != (StrandedWorktreeInfo{}) {
+		t.Fatalf("expected zero-value StrandedWorktreeInfo, got %+v", info)
+	}
+}
+
+// TestForeignStrandedWorktree_MissingBaseReturnsFalse pins the no-op
+// behavior when worktreeBase itself is missing.
+func TestForeignStrandedWorktree_MissingBaseReturnsFalse(t *testing.T) {
+	repoDir := t.TempDir()
+	initGitRepo(t, repoDir)
+
+	missingBase := filepath.Join(repoDir, "does-not-exist")
+	info, ok := ForeignStrandedWorktree(repoDir, missingBase, "sandman/30-foo")
+	if ok {
+		t.Fatalf("expected foreign=false when worktreeBase is missing, got info=%+v", info)
+	}
+	if info != (StrandedWorktreeInfo{}) {
+		t.Fatalf("expected zero-value StrandedWorktreeInfo, got %+v", info)
+	}
+}

@@ -1009,6 +1009,128 @@ func TestIsBranchCheckedOutError_OnlyMatchesCheckedOutOrWorktreeMessages(t *test
 	}
 }
 
+// TestParseCheckedOutPath_ExtractsWorktreePath pins issue #2140: the
+// override path uses this helper to recover from `git branch -D` failures
+// caused by the branch being checked out in a foreign worktree. The
+// helper must extract the worktree path from both modern and legacy
+// error message formats so it can be passed to detachForeignWorktree.
+func TestParseCheckedOutPath_ExtractsWorktreePath(t *testing.T) {
+	cases := []struct {
+		name string
+		out  string
+		want string
+		ok   bool
+	}{
+		{
+			name: "modern checked out message",
+			out:  "error: Cannot delete branch 'sandman/30-foo' checked out at '/tmp/repo/.sandman/worktrees/review-148'\n",
+			want: "/tmp/repo/.sandman/worktrees/review-148",
+			ok:   true,
+		},
+		{
+			name: "legacy used by worktree message",
+			out:  "error: cannot delete branch 'sandman/30-foo' used by worktree at '/tmp/repo/.sandman/worktrees/review-148'\n",
+			want: "/tmp/repo/.sandman/worktrees/review-148",
+			ok:   true,
+		},
+		{
+			name: "branch not found",
+			out:  "error: branch 'sandman/30-foo' not found.\n",
+			want: "",
+			ok:   false,
+		},
+		{
+			name: "permission denied",
+			out:  "error: cannot remove '.git/refs/heads/sandman/30-foo': Permission denied\n",
+			want: "",
+			ok:   false,
+		},
+		{
+			name: "empty output",
+			out:  "",
+			want: "",
+			ok:   false,
+		},
+		{
+			name: "path with spaces inside quotes",
+			out:  "error: Cannot delete branch 'sandman/30-foo' checked out at '/tmp/path with spaces/wt'\n",
+			want: "/tmp/path with spaces/wt",
+			ok:   true,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := parseCheckedOutPath([]byte(tc.out))
+			if ok != tc.ok {
+				t.Errorf("parseCheckedOutPath(%q) ok = %v, want %v", tc.out, ok, tc.ok)
+			}
+			if got != tc.want {
+				t.Errorf("parseCheckedOutPath(%q) = %q, want %q", tc.out, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestWorktreeSandbox_OverrideReclaimsForeignStrandedWorktree pins the
+// regression guard for issue #2140: when a foreign live worktree (e.g.
+// a leftover review worktree) holds the target branch at a path that
+// differs from the canonical <worktreeBase>/<branch>, `Start()` with
+// --override must force-remove that worktree and proceed with the
+// fresh worktree creation. Without the fix, `git branch -D` would fail
+// because the branch is checked out elsewhere.
+func TestWorktreeSandbox_OverrideReclaimsForeignStrandedWorktree(t *testing.T) {
+	repoDir := t.TempDir()
+	initGitRepo(t, repoDir)
+
+	const branch = "sandman/30-foo"
+	runGit(t, repoDir, "branch", branch)
+
+	worktreeBase := filepath.Join(repoDir, ".sandman", "worktrees")
+	if err := os.MkdirAll(worktreeBase, 0755); err != nil {
+		t.Fatalf("mkdir worktreeBase: %v", err)
+	}
+
+	// Foreign worktree at a path that does NOT match worktreeBase/branch.
+	foreignPath := filepath.Join(worktreeBase, "review-148-foreign")
+	runGit(t, repoDir, "worktree", "add", foreignPath, branch)
+
+	// Sanity: branch is currently held by the foreign worktree.
+	info, ok := ForeignStrandedWorktree(repoDir, worktreeBase, branch)
+	if !ok {
+		t.Fatalf("precondition: expected ForeignStrandedWorktree to detect the foreign worktree at %q, got info=%+v", foreignPath, info)
+	}
+
+	// Override-start: must clear the foreign worktree and create a fresh
+	// worktree at the canonical path holding `branch`.
+	sb := NewWorktreeSandbox(repoDir, worktreeBase, branch, "main")
+	sb.SetOverride(true)
+	if err := sb.Start(); err != nil {
+		t.Fatalf("Start with --override failed to reclaim foreign worktree: %v", err)
+	}
+
+	// After Start, the canonical worktree exists and points at branch.
+	canonicalPath := filepath.Join(worktreeBase, branch)
+	if _, err := os.Stat(canonicalPath); err != nil {
+		t.Fatalf("expected canonical worktree dir at %q after Start, got: %v", canonicalPath, err)
+	}
+	headRef := strings.TrimSpace(runGit(t, canonicalPath, "symbolic-ref", "--quiet", "HEAD"))
+	if !strings.HasSuffix(headRef, branch) {
+		t.Errorf("expected canonical worktree HEAD on %q, got %q", branch, headRef)
+	}
+
+	// Foreign worktree must be removed (detach path) — the branch is no
+	// longer checked out there. Either the directory is gone OR the
+	// worktree registration is removed.
+	if _, err := os.Stat(foreignPath); err == nil {
+		// Directory still there — the worktree registration must at least
+		// be gone and the directory no longer a valid worktree.
+		gitPath := filepath.Join(foreignPath, ".git")
+		if _, statErr := os.Stat(gitPath); statErr == nil {
+			t.Errorf("foreign worktree at %q still has .git — override did not detach/remove it", foreignPath)
+		}
+	}
+}
+
 func TestStrandedWorktree_ResolvesRelativeWorktreeBase(t *testing.T) {
 	// The StrandedWorktree helper resolves a relative worktreeBase
 	// against repoPath internally, so callers can pass the configured

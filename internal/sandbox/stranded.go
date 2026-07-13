@@ -73,6 +73,54 @@ func StrandedWorktree(repoPath, worktreeBase, branch string) (StrandedWorktreeIn
 	return StrandedWorktreeInfo{}, false
 }
 
+// ForeignStrandedWorktree scans all registered worktrees for any live
+// (non-prunable) worktree whose HEAD is on `branch` but whose path is NOT
+// the canonical `<worktreeBase>/<branch>`. Such a worktree blocks
+// `git branch -D <branch>` because the branch is checked out elsewhere, and
+// `StrandedWorktree` cannot detect it because that helper only inspects the
+// canonical path.
+//
+// Returns the foreign worktree's StrandedWorktreeInfo and true when one is
+// found, zero value and false otherwise. worktreeBase is resolved against
+// repoPath when relative, mirroring StrandedWorktree.
+//
+// Issue #2140: `sandman run --override` must be able to clear this state.
+func ForeignStrandedWorktree(repoPath, worktreeBase, branch string) (StrandedWorktreeInfo, bool) {
+	if !filepath.IsAbs(worktreeBase) {
+		worktreeBase = filepath.Join(repoPath, worktreeBase)
+	}
+	if _, err := os.Stat(worktreeBase); err != nil {
+		return StrandedWorktreeInfo{}, false
+	}
+	worktreeBase = resolveBase(worktreeBase)
+
+	expectedRef := "refs/heads/" + branch
+	target := filepath.Join(worktreeBase, branch)
+
+	entries, err := listWorktrees(repoPath)
+	if err != nil {
+		return StrandedWorktreeInfo{}, false
+	}
+
+	for _, e := range entries {
+		if e.detached || e.branch != expectedRef {
+			continue
+		}
+		if e.prunable {
+			continue
+		}
+		if e.path == target {
+			continue
+		}
+		return StrandedWorktreeInfo{
+			Path:           e.path,
+			ActualBranch:   e.branch,
+			ExpectedBranch: expectedRef,
+		}, true
+	}
+	return StrandedWorktreeInfo{}, false
+}
+
 // ReclaimableWorktree checks whether a git-worktree-list entry exists at
 // <worktreeBase>/<branch>, regardless of whether git considers it prunable.
 // Unlike StrandedWorktree, this helper does not filter on the prunable field;
