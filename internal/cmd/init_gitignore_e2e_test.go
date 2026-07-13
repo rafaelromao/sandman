@@ -91,15 +91,20 @@ func TestInit_GitignoreAndUntrackRegression(t *testing.T) {
 	if err != nil {
 		t.Fatalf("pre-commit hook must be installed at %s: %v", hookPath, err)
 	}
-	t.Logf("hook contents:\n%s", hookContent)
+	if !strings.Contains(string(hookContent), ".sandman/") {
+		t.Fatalf("pre-commit hook must mention .sandman/ in its rejection check, got:\n%s", hookContent)
+	}
 	hookInfo, err := os.Stat(hookPath)
 	if err != nil {
 		t.Fatalf("stat hook: %v", err)
 	}
-	t.Logf("hook perms: %v", hookInfo.Mode())
+	if hookInfo.Mode()&0o111 == 0 {
+		t.Fatalf("pre-commit hook must be executable for git to invoke it, got mode %v", hookInfo.Mode())
+	}
 
 	runGit(t, dir, "add", "--force", ".sandman/task.md")
 
+	headBefore := strings.TrimSpace(runGit(t, dir, "rev-parse", "HEAD"))
 	commitCmd := exec.Command("git", "commit", "-m", "force-add sandman task")
 	commitCmd.Dir = dir
 	commitOut, commitErr := commitCmd.CombinedOutput()
@@ -111,7 +116,8 @@ func TestInit_GitignoreAndUntrackRegression(t *testing.T) {
 		t.Fatalf("hook output must mention the blocked .sandman/ path, got:\n%s", commitOut)
 	}
 
-	if strings.TrimSpace(runGit(t, dir, "log", "-1", "--pretty=%s")) == "force-add sandman task" {
-		t.Fatalf("blocked commit must not appear in git log")
+	headAfter := strings.TrimSpace(runGit(t, dir, "rev-parse", "HEAD"))
+	if headBefore != headAfter {
+		t.Fatalf("blocked commit must not advance HEAD; before=%s after=%s", headBefore, headAfter)
 	}
 }

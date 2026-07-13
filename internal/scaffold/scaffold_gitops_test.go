@@ -56,7 +56,7 @@ func TestScaffold_UntracksSandmanDirWhenInsideRepo(t *testing.T) {
 		GitOps:    goSpy,
 	}
 
-	if err := s.Scaffold(dir, Options{BuildTools: "generic", Writer: discardWriter{}}, stubPrompter{}); err != nil {
+	if err := s.Scaffold(dir, Options{BuildTools: "generic"}, &fakePrompter{confirm: true}); err != nil {
 		t.Fatalf("Scaffold returned error: %v", err)
 	}
 
@@ -91,7 +91,7 @@ func TestScaffold_SkipsUntrackWhenNotInsideRepo(t *testing.T) {
 		GitOps:    goSpy,
 	}
 
-	if err := s.Scaffold(dir, Options{BuildTools: "generic", Writer: discardWriter{}}, stubPrompter{}); err != nil {
+	if err := s.Scaffold(dir, Options{BuildTools: "generic"}, &fakePrompter{confirm: true}); err != nil {
 		t.Fatalf("Scaffold returned error: %v", err)
 	}
 
@@ -117,7 +117,7 @@ func TestScaffold_InstallsPreCommitHookThatBlocksSandmanPaths(t *testing.T) {
 		HooksDir:  hooksDir,
 	}
 
-	if err := s.Scaffold(tmp, Options{BuildTools: "generic", Writer: discardWriter{}}, stubPrompter{}); err != nil {
+	if err := s.Scaffold(tmp, Options{BuildTools: "generic"}, &fakePrompter{confirm: true}); err != nil {
 		t.Fatalf("Scaffold returned error: %v", err)
 	}
 
@@ -136,12 +136,6 @@ func TestScaffold_InstallsPreCommitHookThatBlocksSandmanPaths(t *testing.T) {
 	}
 }
 
-// stubPrompter accepts any question with positive confirm / first option.
-type stubPrompter struct{}
-
-func (stubPrompter) Confirm(string) (bool, error)            { return true, nil }
-func (stubPrompter) Select(string, []string) (string, error) { return "", nil }
-
-type discardWriter struct{}
-
-func (discardWriter) Write(p []byte) (int, error) { return len(p), nil }
+// stubPrompter and discardWriter were removed in favor of the
+// package-local fakePrompter (scaffolder_test.go) and Options.Writer's
+// built-in io.Discard default respectively.

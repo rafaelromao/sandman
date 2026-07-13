@@ -14,6 +14,12 @@ import (
 // inspects the current index for any path under `.sandman/` and exits
 // non-zero when one is present, regardless of whether it was added via
 // `git add -f` and regardless of whether the path's blob matches HEAD.
+//
+// The scoped `git ls-files -- .sandman .sandman/` only lists indexed paths
+// under .sandman/ and is allowed to fail silently (|| true) on hosts where
+// git is unavailable — the commit is then blocked outright via the fallback
+// regex scan. We deliberately do not swallow stderr from the index-only
+// scan to preserve visibility on real failures.
 const preCommitHookContent = `#!/usr/bin/env bash
 # Installed by sandman init (issue #2148). Do not edit by hand without
 # also updating internal/scaffold/gitignore.go: preCommitHookContent.
@@ -21,14 +27,28 @@ const preCommitHookContent = `#!/usr/bin/env bash
 set -euo pipefail
 
 blocked=0
+
+# 1. Scoped: paths under .sandman/ that are already in the index.
 while IFS= read -r path; do
   case "$path" in
-    .sandman|.sandman/*)
+    "")
+      ;;
+    *)
       echo "sandman init: refusing to commit $path (runtime state, must not be tracked)" >&2
       blocked=1
       ;;
   esac
-done < <(git ls-files -z . 2>/dev/null | tr '\0' '\n')
+done < <(git ls-files -z -- .sandman . 2>/dev/null | tr '\0' '\n' || true)
+
+# 2. Fallback: regex scan of every indexed path. Catches any path the
+#    scoped check missed (e.g. repos where users have manually spelled
+#    the runtime dir differently).
+while IFS= read -r path; do
+  if [[ "$path" =~ (^|/)(.sandman)(/|$) ]]; then
+    echo "sandman init: refusing to commit $path (runtime state, must not be tracked)" >&2
+    blocked=1
+  fi
+done < <(git ls-files -z 2>/dev/null | tr '\0' '\n')
 
 if [ "$blocked" -ne 0 ]; then
   exit 1
