@@ -6,7 +6,7 @@
 
 | Path | Per-input-issue cost in the broadened-detector world |
 |---|---|
-| Section-shape present (canonical PRD body) | **0 extra calls** — the cheap path short-circuits before `ListIssueComments`. |
+| Section-shape present (canonical Specification body) | **0 extra calls** — the cheap path short-circuits before `ListIssueComments`. |
 | Section-shape absent, has children | **1–N REST requests**, where `N = ceil(comments_on_issue / 100)`, for one lazy `ListIssueComments` probe. |
 | Section-shape absent, no children | 1 REST request (cached after that) — the lazy probe that returns empty. |
 | Search fallback (unchanged from today) | 0 or 1 additional `gh issue list --search` request, only when body+comments yielded no candidates. |
@@ -50,7 +50,7 @@ with `prCommentPageSize = "100"` (`cli_client.go:414`).
 | 1001–5000 | 11–50 |
 | 5001–10000 | 51–100 |
 
-In practice, GitHub issues used as PRD-shaped specs in this repo carry tens, occasionally hundreds of comments. The lazy probe on a typical PRD likely lands at 1–2 REST requests. The 10k-comment long tail is improbable for this domain (real-world PRDs rarely attract that conversation volume).
+In practice, GitHub issues used as Specification-shaped specs in this repo carry tens, occasionally hundreds of comments. The lazy probe on a typical Specification likely lands at 1–2 REST requests. The 10k-comment long tail is improbable for this domain (real-world Specifications rarely attract that conversation volume).
 
 ### Primary rate limits (REST, doc-of-record)
 
