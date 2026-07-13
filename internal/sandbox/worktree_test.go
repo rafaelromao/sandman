@@ -1672,3 +1672,363 @@ func TestWorktreeSandbox_ParallelStartsDoNotDestroyEachOther(t *testing.T) {
 		t.Errorf("expected both branchA and branchB in worktree list, got:\n%s", listAll)
 	}
 }
+
+// TestWorktreeSandbox_ContinueNormalizesWorkspaceGitlink pins behavior 1 of
+// issue #2189: when a preserved worktree's `.git` file points at a
+// `/workspace/...` gitdir (left over from a container attempt that exited
+// before its RestoreHostPaths ran), a continue-mode Start() must rewrite
+// the pointer back to the host-visible gitdir before any other validation.
+func TestWorktreeSandbox_ContinueNormalizesWorkspaceGitlink(t *testing.T) {
+	dir := t.TempDir()
+	initGitRepoWithRemote(t, dir)
+	commitGitFile(t, dir, "tracked.txt", "base\n", "base")
+	runGit(t, dir, "push", "origin", "main")
+
+	worktreeBase := filepath.Join(dir, ".sandman", "worktrees")
+	branch := "sandman/42-fix-bug"
+
+	s1 := NewWorktreeSandbox(dir, worktreeBase, branch, "main")
+	if err := s1.Start(); err != nil {
+		t.Fatalf("create initial worktree: %v", err)
+	}
+	t.Cleanup(func() {
+		s1.Stop()
+		removeBranch(t, dir, branch)
+	})
+
+	absRepo, err := filepath.Abs(dir)
+	if err != nil {
+		t.Fatalf("resolve repo path: %v", err)
+	}
+	worktreePath := s1.WorkDir()
+	worktreeDirName := filepath.Base(worktreePath)
+	containerGitdir := "/workspace/.git/worktrees/" + worktreeDirName
+	hostGitdir := filepath.Join(absRepo, ".git", "worktrees", worktreeDirName)
+
+	gitlinkPath := filepath.Join(worktreePath, ".git")
+	if err := os.WriteFile(gitlinkPath, []byte("gitdir: "+containerGitdir+"\n"), 0644); err != nil {
+		t.Fatalf("rewrite .git to container-visible path: %v", err)
+	}
+
+	s2 := NewWorktreeSandbox(dir, worktreeBase, branch, "main")
+	s2.SetContinue(true)
+	if err := s2.Start(); err != nil {
+		t.Fatalf("continue-mode Start() should normalize and succeed, got: %v", err)
+	}
+	t.Cleanup(func() {
+		s2.Stop()
+	})
+
+	rewritten, err := os.ReadFile(gitlinkPath)
+	if err != nil {
+		t.Fatalf("read .git after continue Start: %v", err)
+	}
+	if !strings.Contains(string(rewritten), hostGitdir) {
+		t.Errorf("expected .git to point at host gitdir %q, got %q", hostGitdir, string(rewritten))
+	}
+	if strings.Contains(string(rewritten), "/workspace") {
+		t.Errorf("expected .git to no longer contain /workspace, got %q", string(rewritten))
+	}
+}
+
+// TestWorktreeSandbox_ContinueReusesPreservedWorktree pins behavior 2 of
+// issue #2189: when normalization succeeds, the continue-mode Start() must
+// reuse the existing worktree and branch without deleting the branch,
+// removing the worktree, pruning sibling registrations, or recreating the
+// worktree directory. A marker file written into the worktree before the
+// second Start() must survive untouched.
+func TestWorktreeSandbox_ContinueReusesPreservedWorktree(t *testing.T) {
+	dir := t.TempDir()
+	initGitRepoWithRemote(t, dir)
+	commitGitFile(t, dir, "tracked.txt", "base\n", "base")
+	runGit(t, dir, "push", "origin", "main")
+
+	worktreeBase := filepath.Join(dir, ".sandman", "worktrees")
+	branch := "sandman/42-fix-bug"
+
+	s1 := NewWorktreeSandbox(dir, worktreeBase, branch, "main")
+	if err := s1.Start(); err != nil {
+		t.Fatalf("create initial worktree: %v", err)
+	}
+
+	branchTipBefore := runGit(t, dir, "rev-parse", "refs/heads/"+branch)
+
+	markerPath := filepath.Join(s1.WorkDir(), "preserved-marker.txt")
+	if err := os.WriteFile(markerPath, []byte("untouched\n"), 0644); err != nil {
+		t.Fatalf("write marker: %v", err)
+	}
+
+	worktreeDirName := filepath.Base(s1.WorkDir())
+	containerGitdir := "/workspace/.git/worktrees/" + worktreeDirName
+	if err := os.WriteFile(filepath.Join(s1.WorkDir(), ".git"), []byte("gitdir: "+containerGitdir+"\n"), 0644); err != nil {
+		t.Fatalf("rewrite .git to /workspace: %v", err)
+	}
+
+	s2 := NewWorktreeSandbox(dir, worktreeBase, branch, "main")
+	s2.SetContinue(true)
+	if err := s2.Start(); err != nil {
+		t.Fatalf("continue-mode Start() should reuse preserved worktree, got: %v", err)
+	}
+	t.Cleanup(func() {
+		s2.Stop()
+		removeBranch(t, dir, branch)
+	})
+
+	if s2.WorkDir() != s1.WorkDir() {
+		t.Errorf("expected reused workdir %q, got %q", s1.WorkDir(), s2.WorkDir())
+	}
+
+	data, err := os.ReadFile(markerPath)
+	if err != nil {
+		t.Fatalf("expected preserved marker to survive, got: %v", err)
+	}
+	if string(data) != "untouched\n" {
+		t.Errorf("expected marker contents untouched, got %q", string(data))
+	}
+
+	branchTipAfter := runGit(t, dir, "rev-parse", "refs/heads/"+branch)
+	if branchTipAfter != branchTipBefore {
+		t.Errorf("expected branch tip unchanged (%q), got %q", branchTipBefore, branchTipAfter)
+	}
+
+	if _, err := os.Stat(filepath.Join(s2.WorkDir(), "tracked.txt")); err != nil {
+		t.Errorf("expected tracked.txt from preserved worktree, got: %v", err)
+	}
+
+	if _, reclaimable := ReclaimableWorktree(dir, worktreeBase, branch); !reclaimable {
+		t.Error("expected preserved worktree to remain registered after reuse")
+	}
+}
+
+// TestWorktreeSandbox_ContinueIsIdempotentOnHostVisibleGitlink pins behavior 4
+// of issue #2189: a continue-mode run whose preserved worktree already has a
+// host-visible `.git` pointer must not modify the file. The test must drive
+// WorktreeSandbox.Start() with SetContinue(true) (not call the free function
+// directly) so the assertion proves Start()'s routing is idempotent.
+func TestWorktreeSandbox_ContinueIsIdempotentOnHostVisibleGitlink(t *testing.T) {
+	dir := t.TempDir()
+	initGitRepoWithRemote(t, dir)
+	commitGitFile(t, dir, "tracked.txt", "base\n", "base")
+	runGit(t, dir, "push", "origin", "main")
+
+	worktreeBase := filepath.Join(dir, ".sandman", "worktrees")
+	branch := "sandman/42-fix-bug"
+
+	s1 := NewWorktreeSandbox(dir, worktreeBase, branch, "main")
+	if err := s1.Start(); err != nil {
+		t.Fatalf("create initial worktree: %v", err)
+	}
+	t.Cleanup(func() {
+		s1.Stop()
+		removeBranch(t, dir, branch)
+	})
+
+	gitlinkPath := filepath.Join(s1.WorkDir(), ".git")
+	beforeBytes, err := os.ReadFile(gitlinkPath)
+	if err != nil {
+		t.Fatalf("read .git: %v", err)
+	}
+	beforeInfo, err := os.Stat(gitlinkPath)
+	if err != nil {
+		t.Fatalf("stat .git: %v", err)
+	}
+	beforeMtime := beforeInfo.ModTime()
+
+	time.Sleep(20 * time.Millisecond)
+
+	s2 := NewWorktreeSandbox(dir, worktreeBase, branch, "main")
+	s2.SetContinue(true)
+	if err := s2.Start(); err != nil {
+		t.Fatalf("continue-mode Start() with host-visible pointer should succeed, got: %v", err)
+	}
+	t.Cleanup(func() {
+		s2.Stop()
+	})
+
+	afterBytes, err := os.ReadFile(gitlinkPath)
+	if err != nil {
+		t.Fatalf("read .git after Start: %v", err)
+	}
+	if string(beforeBytes) != string(afterBytes) {
+		t.Errorf("expected .git bytes unchanged, before=%q after=%q", string(beforeBytes), string(afterBytes))
+	}
+	afterInfo, err := os.Stat(gitlinkPath)
+	if err != nil {
+		t.Fatalf("stat .git after Start: %v", err)
+	}
+	if !afterInfo.ModTime().Equal(beforeMtime) {
+		t.Errorf("expected .git mtime unchanged, before=%v after=%v", beforeMtime, afterInfo.ModTime())
+	}
+}
+
+// TestWorktreeSandbox_ContinueRecoversFromCrashedContainerAttempt reproduces
+// the exact sequence observed for issues #2186 / #2187: a container attempt
+// rewrote the worktree's .git pointer to /workspace/... and exited before
+// its RestoreHostPaths ran. The next --continue run must reuse the existing
+// worktree and branch without invoking git branch -D, git worktree remove,
+// git worktree prune, or recreating the worktree directory.
+//
+// This is the end-to-end regression for behavior 6 of issue #2189.
+func TestWorktreeSandbox_ContinueRecoversFromCrashedContainerAttempt(t *testing.T) {
+	dir := t.TempDir()
+	initGitRepoWithRemote(t, dir)
+	commitGitFile(t, dir, "tracked.txt", "base\n", "base")
+	runGit(t, dir, "push", "origin", "main")
+
+	worktreeBase := filepath.Join(dir, ".sandman", "worktrees")
+	branch := "sandman/42-fix-bug"
+
+	s1 := NewWorktreeSandbox(dir, worktreeBase, branch, "main")
+	if err := s1.Start(); err != nil {
+		t.Fatalf("create initial worktree: %v", err)
+	}
+
+	branchTipBefore := runGit(t, dir, "rev-parse", "refs/heads/"+branch)
+
+	markerPath := filepath.Join(s1.WorkDir(), "agent-marker.txt")
+	if err := os.WriteFile(markerPath, []byte("agent was here\n"), 0644); err != nil {
+		t.Fatalf("write agent marker: %v", err)
+	}
+
+	absRepo, err := filepath.Abs(dir)
+	if err != nil {
+		t.Fatalf("resolve repo path: %v", err)
+	}
+	worktreeDirName := filepath.Base(s1.WorkDir())
+	containerGitdir := "/workspace/.git/worktrees/" + worktreeDirName
+	hostGitdir := filepath.Join(absRepo, ".git", "worktrees", worktreeDirName)
+
+	gitlinkPath := filepath.Join(s1.WorkDir(), ".git")
+	if err := os.WriteFile(gitlinkPath, []byte("gitdir: "+containerGitdir+"\n"), 0644); err != nil {
+		t.Fatalf("simulate crashed container rewrite of .git: %v", err)
+	}
+
+	s2 := NewWorktreeSandbox(dir, worktreeBase, branch, "main")
+	s2.SetContinue(true)
+	if err := s2.Start(); err != nil {
+		t.Fatalf("--continue Start() after crashed container must reuse worktree, got: %v", err)
+	}
+	t.Cleanup(func() {
+		s2.Stop()
+		removeBranch(t, dir, branch)
+	})
+
+	if s2.WorkDir() != s1.WorkDir() {
+		t.Errorf("expected reused workdir %q, got %q", s1.WorkDir(), s2.WorkDir())
+	}
+
+	afterGitlink, err := os.ReadFile(gitlinkPath)
+	if err != nil {
+		t.Fatalf("read .git after --continue: %v", err)
+	}
+	if !strings.Contains(string(afterGitlink), hostGitdir) {
+		t.Errorf("expected .git to point at host gitdir %q after --continue, got %q", hostGitdir, string(afterGitlink))
+	}
+	if strings.Contains(string(afterGitlink), "/workspace") {
+		t.Errorf("expected .git to no longer reference /workspace after --continue, got %q", string(afterGitlink))
+	}
+
+	markerData, err := os.ReadFile(markerPath)
+	if err != nil {
+		t.Fatalf("expected agent marker to survive --continue, got: %v", err)
+	}
+	if string(markerData) != "agent was here\n" {
+		t.Errorf("expected agent marker contents untouched, got %q", string(markerData))
+	}
+
+	branchTipAfter := runGit(t, dir, "rev-parse", "refs/heads/"+branch)
+	if branchTipAfter != branchTipBefore {
+		t.Errorf("expected branch tip unchanged after --continue, before=%q after=%q", branchTipBefore, branchTipAfter)
+	}
+
+	listOutput := runGit(t, dir, "worktree", "list", "--porcelain")
+	if strings.Count(listOutput, "worktree "+s1.WorkDir()) != 1 {
+		t.Errorf("expected exactly one worktree entry for %q in porcelain, got:\n%s", s1.WorkDir(), listOutput)
+	}
+}
+
+// TestWorktreeSandbox_ContinueReturnsTargetedErrorOnUncontinuableState pins
+// behavior 3 of issue #2189: when normalization succeeds but the preserved
+// worktree is uncontinuable, continue-mode Start() must return a targeted
+// error before running any destructive reconciliation. --override remains
+// the only recovery mode that bypasses the early return.
+func TestWorktreeSandbox_ContinueReturnsTargetedErrorOnUncontinuableState(t *testing.T) {
+	cases := []struct {
+		name          string
+		setup         func(t *testing.T, dir, worktreePath string)
+		wantErrSubstr string
+	}{
+		{
+			name: "missing registration",
+			setup: func(t *testing.T, dir, worktreePath string) {
+				name := filepath.Base(worktreePath)
+				if err := os.RemoveAll(filepath.Join(dir, ".git", "worktrees", name)); err != nil {
+					t.Fatalf("remove registration: %v", err)
+				}
+			},
+			wantErrSubstr: "no live registration",
+		},
+		{
+			name: "detached HEAD",
+			setup: func(t *testing.T, dir, worktreePath string) {
+				runGit(t, worktreePath, "checkout", "--detach")
+			},
+			wantErrSubstr: "detached HEAD",
+		},
+		{
+			name: "wrong branch",
+			setup: func(t *testing.T, dir, worktreePath string) {
+				runGit(t, worktreePath, "checkout", "-b", "sandman/other-branch")
+			},
+			wantErrSubstr: "is checked out on branch \"sandman/other-branch\"",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			initGitRepoWithRemote(t, dir)
+			commitGitFile(t, dir, "tracked.txt", "base\n", "base")
+			runGit(t, dir, "push", "origin", "main")
+
+			worktreeBase := filepath.Join(dir, ".sandman", "worktrees")
+			branch := "sandman/42-fix-bug"
+
+			s1 := NewWorktreeSandbox(dir, worktreeBase, branch, "main")
+			if err := s1.Start(); err != nil {
+				t.Fatalf("create initial worktree: %v", err)
+			}
+
+			branchTipBefore := runGit(t, dir, "rev-parse", "refs/heads/"+branch)
+
+			tc.setup(t, dir, s1.WorkDir())
+
+			worktreeDirName := filepath.Base(s1.WorkDir())
+			containerGitdir := "/workspace/.git/worktrees/" + worktreeDirName
+			if err := os.WriteFile(filepath.Join(s1.WorkDir(), ".git"), []byte("gitdir: "+containerGitdir+"\n"), 0644); err != nil {
+				t.Fatalf("rewrite .git to /workspace: %v", err)
+			}
+
+			s2 := NewWorktreeSandbox(dir, worktreeBase, branch, "main")
+			s2.SetContinue(true)
+			err := s2.Start()
+			if err == nil {
+				t.Fatalf("expected targeted error for %s, got nil", tc.name)
+			}
+			if !strings.Contains(err.Error(), tc.wantErrSubstr) {
+				t.Errorf("expected error to contain %q, got %q", tc.wantErrSubstr, err.Error())
+			}
+
+			branchTipAfter := runGit(t, dir, "rev-parse", "refs/heads/"+branch)
+			if branchTipAfter != branchTipBefore {
+				t.Errorf("expected branch tip unchanged in %s case (%q), got %q", tc.name, branchTipBefore, branchTipAfter)
+			}
+
+			t.Cleanup(func() {
+				s1.Stop()
+				removeBranch(t, dir, branch)
+				removeBranch(t, dir, "sandman/other-branch")
+			})
+		})
+	}
+}

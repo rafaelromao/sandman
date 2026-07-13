@@ -95,6 +95,13 @@ func (s *ContainerSandbox) SetStrandedReconcile(enabled bool) {
 	s.worktree.SetStrandedReconcile(enabled)
 }
 
+// SetContinue forwards continuation-mode signaling to the underlying
+// worktree so its Start() can normalize the preserved worktree's .git
+// pointer before validation. See issue #2189.
+func (s *ContainerSandbox) SetContinue(c bool) {
+	s.worktree.SetContinue(c)
+}
+
 func (s *ContainerSandbox) containerWorkDir() string {
 	wd := s.worktree.WorkDir()
 	absRepo, err := filepath.Abs(s.repoPath)

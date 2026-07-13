@@ -101,6 +101,8 @@ type fakeSandbox struct {
 	setStrandedReconcileValue  bool
 	setIdentityName            string
 	setIdentityEmail           string
+	setContinueValue           bool
+	restoreHostPathsCalled     bool
 }
 
 func (f *fakeSandbox) Start() error {
@@ -175,6 +177,17 @@ func (f *fakeSandbox) SetGitIdentity(name, email string) {
 	defer f.mu.Unlock()
 	f.setIdentityName = name
 	f.setIdentityEmail = email
+}
+func (f *fakeSandbox) SetContinue(c bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.setContinueValue = c
+}
+func (f *fakeSandbox) RestoreHostPaths() error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.restoreHostPathsCalled = true
+	return nil
 }
 
 // Ensure fakeSandbox satisfies sandbox.Sandbox.

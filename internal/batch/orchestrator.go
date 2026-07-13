@@ -1783,6 +1783,7 @@ func (s *runSession) applyOverrideAndIdentity(wt sandbox.Sandbox, branch string)
 	o := s.o
 	wt.SetOverride(s.mode == ModeOverride)
 	wt.SetStrandedReconcile(s.strandedReconcile)
+	wt.SetContinue(s.mode == ModeContinue)
 	identity, err := s.identityResolver.resolve()
 	if err != nil {
 		fmt.Fprintf(o.errorLog, "error: resolve git identity for issue %d: %v\n", s.issueNumber, err)
@@ -2432,6 +2433,13 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 		s.emitEarlyFailure("start sandbox", branch)
 		return AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "failure", Branch: branch}, false
 	}
+	// Guaranteed cleanup: defer wt.RestoreHostPaths() so container
+	// sandboxes normalize the preserved worktree's .git pointer back to
+	// host paths on every exit path including panic, cancellation,
+	// timeout, and normal completion. Worktree-only sandboxes no-op
+	// this. The defer does NOT call Stop() — the worktree is preserved
+	// on success for --continue reuse. Issue #2189.
+	defer func() { _ = wt.RestoreHostPaths() }()
 
 	blockedBy, err := o.recheckBlockedBy(ctx, s.externalBlockers)
 	if err != nil {
@@ -2788,6 +2796,12 @@ func (s *runSession) executePromptOnly(ctx context.Context) (AgentRunResult, boo
 		fmt.Fprintf(o.errorLog, "error: start sandbox for prompt-only run: %v\n", err)
 		return AgentRunResult{Status: "failure", Branch: branch, Review: s.review, RunID: s.runID}, false
 	}
+	// Guaranteed cleanup: defer wt.RestoreHostPaths() so container
+	// sandboxes normalize the preserved worktree's .git pointer back to
+	// host paths on every exit path. Worktree-only sandboxes no-op.
+	// executePromptOnly has no end-of-success cleanup otherwise; this
+	// defer is the only end-of-success cleanup here. Issue #2189.
+	defer func() { _ = wt.RestoreHostPaths() }()
 
 	o.registerActiveRun(0, wt)
 	defer o.unregisterActiveRun(0)
