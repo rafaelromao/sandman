@@ -480,9 +480,24 @@ func TestContainerSandbox_Exec_KillAgentFnCalledOnAbort(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	errCh := make(chan error, 1)
+	// doneCh signals full goroutine exit, not just the errCh-write.
+	// Closing it guarantees the production goroutine has stopped touching
+	// KillAgentFn — important on macOS-CI where signal-delivery latency
+	// can stretch past the 5s select ceiling, leaving waitCmd mid-flight
+	// when the test's t.Fatal unwinds. Without this barrier, the
+	// deferred `KillAgentFn = prevKill` reset races with the still-running
+	// onAbort() callback reading the same package-level variable
+	// (container_sandbox.go:185).
+	doneCh := make(chan struct{})
 	go func() {
+		defer close(doneCh)
 		errCh <- sb.Exec(ctx, "echo hello", io.Discard, io.Discard)
 	}()
+	// This defer runs BEFORE the restore-globals defer (LIFO order
+	// — this one was registered later). Waiting here ensures no further
+	// read of KillAgentFn from the production goroutine is in flight
+	// when the restore assigns the package-level variables.
+	defer func() { <-doneCh }()
 
 	waitForChildReadyTB(t, readyPath, 2*time.Second)
 	cancel()

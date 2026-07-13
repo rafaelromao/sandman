@@ -157,16 +157,17 @@ func (r *retryRenderer) RenderReview(cfg prompt.RenderConfig, data prompt.PRData
 }
 
 type fakeGitHubClient struct {
-	issues             map[int]*github.Issue
-	fetchRelease       map[int]<-chan struct{}
-	prs                map[string]*github.PR
-	err                error
-	findPRErr          error
-	findPRHook         func()
-	searchIssuesResult []github.Issue
-	searchIssuesError  error
-	searchCalls        []string
-	issueComments      map[int][]github.IssueComment
+	issues                 map[int]*github.Issue
+	fetchRelease           map[int]<-chan struct{}
+	prs                    map[string]*github.PR
+	err                    error
+	findPRErr              error
+	findPRHook             func()
+	searchIssuesResult     []github.Issue
+	searchIssuesError      error
+	searchCalls            []string
+	issueComments          map[int][]github.IssueComment
+	listIssueCommentsCalls []int
 }
 
 func (f *fakeGitHubClient) FetchIssue(ctx context.Context, number int) (*github.Issue, error) {
@@ -237,6 +238,7 @@ func (f *fakeGitHubClient) ListPRComments(ctx context.Context, number int) ([]gi
 }
 
 func (f *fakeGitHubClient) ListIssueComments(ctx context.Context, number int) ([]github.IssueComment, error) {
+	f.listIssueCommentsCalls = append(f.listIssueCommentsCalls, number)
 	if f.issueComments == nil {
 		return nil, nil
 	}

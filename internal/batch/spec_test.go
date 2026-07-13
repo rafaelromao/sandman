@@ -216,23 +216,42 @@ func TestSpecificationResolver_RejectsSpecificationWithNoChildren(t *testing.T) 
 	}
 }
 
-func TestSpecificationResolver_RejectsNestedSpecification(t *testing.T) {
+func TestSpecificationResolver_CarveOutNestedSpecFlattens(t *testing.T) {
+	// Per destination-aligned beat #4 (T3 #2145): harvested nested
+	// specs (not userInputSet) now flatten recursively instead of
+	// hard-erroring. This test supersedes the historical
+	// RejectsNestedSpecification behaviour.
+	//
+	// To exercise the harvested-flatten path without the userInputSet
+	// carve-out muddying the expected list, the inner Specification is
+	// parented to #2 (also a non-userInputSet Specification, but separately
+	// exercised by a chain we don't expand). Simpler: link #10 to #1 via
+	// the existing Parent convention and confirm the flatten over the
+	// harvested chain.
 	specBody := "## Problem Statement\n\nProblem.\n\n## Solution\n\nSolution.\n\n## User Stories\n\n1. Story.\n\n## Child Issues\n\n- #10 nested child\n"
-	childBody10 := "## Parent\n\n#1\n\n## Problem Statement\n\nInner problem.\n\n## Solution\n\nInner solution.\n\n## User Stories\n\n1. Inner story.\n"
+	innerBody := "## Parent\n\n#1\n\n## Problem Statement\n\nInner problem.\n\n## Solution\n\nInner solution.\n\n## User Stories\n\n1. Inner story.\n\n## Child Issues\n\n- #100 leaf\n"
+	leafBody := "## Parent\n\n#10\n\n## What\n\n"
 	client := &fakeGitHubClient{
 		issues: map[int]*github.Issue{
-			1:  {Number: 1, Title: "Outer Specification", Body: specBody},
-			10: {Number: 10, Title: "Inner Specification", Body: childBody10},
+			1:   {Number: 1, Title: "Outer Specification", Body: specBody},
+			10:  {Number: 10, Title: "Inner Specification", Body: innerBody},
+			100: {Number: 100, Title: "Leaf", Body: leafBody},
 		},
 	}
 
-	r := NewSpecificationResolver(client, nil)
-	_, err := r.Resolve(context.Background(), []int{1})
-	if err == nil {
-		t.Fatal("expected error for nested Specification, got nil")
+	r := NewSpecificationResolver(client, io.Discard)
+	got, err := r.Resolve(context.Background(), []int{1})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(err.Error(), "nested specification detected: #10") {
-		t.Fatalf("expected 'nested specification detected: #10' in error, got %q", err)
+	// #1 is userInputSet and is in #10's harvest too — the carve-out
+	// accepts it. Flat list: outer emits #10 (its child); recursion into
+	// #10 accepts #1 (carve-out) + #100 (verified leaf). Final:
+	// [10, 1, 100]. Asserts the recursive flatten fired and merged
+	// correctly; the previous behaviour (hard-error "nested specification
+	// detected: #10") is gone.
+	if !equalInts(got, []int{10, 1, 100}) {
+		t.Fatalf("expected [10 1 100], got %v", got)
 	}
 }
 
@@ -548,5 +567,249 @@ func TestSpecificationResolver_PreservesUserTypedNonSpecifications(t *testing.T)
 	want := []int{42, 984, 985, 986, 987, 988, 989, 43}
 	if !equalInts(got, want) {
 		t.Fatalf("expected %v, got %v", want, got)
+	}
+}
+
+func TestSpecificationResolver_HasChildrenReturnsFalseOnEmptyComments(t *testing.T) {
+	r := NewSpecificationResolver(&fakeGitHubClient{}, nil)
+	got, err := r.HasChildren(context.Background(), 42)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got {
+		t.Fatal("expected HasChildren to return false when no comments exist")
+	}
+}
+
+func TestSpecificationResolver_HasChildrenReturnsTrueOnCommentReference(t *testing.T) {
+	client := &fakeGitHubClient{
+		issueComments: map[int][]github.IssueComment{
+			1: {{Body: "Tracking #10 here."}},
+		},
+	}
+	r := NewSpecificationResolver(client, nil)
+	got, err := r.HasChildren(context.Background(), 1)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !got {
+		t.Fatal("expected HasChildren to return true when a comment references another issue")
+	}
+}
+
+func TestSpecificationResolver_ChildrenOnlyDetection(t *testing.T) {
+	// Body has no PRD sections; comment body references a child issue.
+	// Broadened detector must fire on the lazy probe and expand the input.
+	parentBody := "## What\n\nJust a parent issue body, no PRD sections.\n"
+	childBody := "## Parent\n\n#1\n\n## What\n\nChild work goes here.\n"
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			1:  {Number: 1, Title: "Parent with children in comments", Body: parentBody},
+			10: {Number: 10, Title: "Child", Body: childBody},
+		},
+		issueComments: map[int][]github.IssueComment{
+			1: {{Body: "Tracking #10 here."}},
+		},
+	}
+	var infoBuf bytes.Buffer
+	r := NewSpecificationResolver(client, &infoBuf)
+	got, err := r.Resolve(context.Background(), []int{1})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !equalInts(got, []int{10}) {
+		t.Fatalf("expected [10], got %v", got)
+	}
+	if !strings.Contains(infoBuf.String(), "expanded specification #1 to 1 accepted children") {
+		t.Errorf("expected top-level expanded-expansion log line, got: %q", infoBuf.String())
+	}
+	if strings.Contains(infoBuf.String(), "flattened specification") {
+		t.Errorf("did not expect a flattened log line at depth 0, got: %q", infoBuf.String())
+	}
+}
+
+func TestSpecificationResolver_LazyProbeSkipsWhenSectionShapePresent(t *testing.T) {
+	// Body has canonical PRD sections. The broadened lazy probe MUST NOT fire
+	// (cheap path handles it), but the existing section-shape expansion DOES
+	// call ListIssueComments via collectCandidates. Net call count for the
+	// probe itself: zero extra calls beyond what the section-shape expansion
+	// already pays.
+	specBody := "## Problem Statement\n\nP.\n\n## Solution\n\nS.\n\n## User Stories\n\n1. U.\n\n## Child Issues\n\n- #10\n"
+	childBody := "## Parent\n\n#1\n\n## What\n\n"
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			1:  {Number: 1, Title: "Canonical specification", Body: specBody},
+			10: {Number: 10, Title: "Child", Body: childBody},
+		},
+	}
+	r := NewSpecificationResolver(client, io.Discard)
+	got, err := r.Resolve(context.Background(), []int{1})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !equalInts(got, []int{10}) {
+		t.Fatalf("expected [10], got %v", got)
+	}
+	// Section-shape expansion already calls ListIssueComments once via
+	// collectCandidates. A second call would mean the broadened probe fired
+	// unnecessarily. Assert call count for #1 == 1 (no extra broadened probe).
+	callsForOne := 0
+	for _, n := range client.listIssueCommentsCalls {
+		if n == 1 {
+			callsForOne++
+		}
+	}
+	if callsForOne != 1 {
+		t.Fatalf("expected exactly 1 ListIssueComments call for issue #1 (section-shape only, no broadened probe); got %d (all calls: %v)", callsForOne, client.listIssueCommentsCalls)
+	}
+}
+
+func TestSpecificationResolver_LazyProbeNoChildrenPassesThrough(t *testing.T) {
+	// Body has no PRD sections and no comments reference any issue.
+	// HasChildren returns false; input passes through unchanged.
+	parentBody := "## What\n\nJust a regular issue with no Specification shape and no children.\n"
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			42: {Number: 42, Title: "Regular issue", Body: parentBody},
+		},
+		issueComments: map[int][]github.IssueComment{
+			42: {{Body: "Just a discussion, no refs."}},
+		},
+	}
+	r := NewSpecificationResolver(client, io.Discard)
+	got, err := r.Resolve(context.Background(), []int{42})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !equalInts(got, []int{42}) {
+		t.Fatalf("expected [42], got %v", got)
+	}
+}
+
+func TestSpecificationResolver_FlattensNestedSpecAtTwoLevels(t *testing.T) {
+	outerBody := "## Problem Statement\n\nP.\n\n## Solution\n\nS.\n\n## User Stories\n\n1. U.\n\n## Child Issues\n\n- #2 nested\n"
+	innerBody := "## Parent\n\n#1\n\n## Problem Statement\n\nInner problem.\n\n## Solution\n\nInner solution.\n\n## User Stories\n\n1. Inner story.\n\n## Child Issues\n\n- #20 leaf\n"
+	leafBody := "## Parent\n\n#2\n\n## What\n\n"
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			1:  {Number: 1, Title: "Outer Specification", Body: outerBody},
+			2:  {Number: 2, Title: "Inner Specification", Body: innerBody},
+			20: {Number: 20, Title: "Leaf", Body: leafBody},
+		},
+	}
+	var infoBuf bytes.Buffer
+	r := NewSpecificationResolver(client, &infoBuf)
+	// #1 expanded via the prose harvest (not userInputSet), so #2 should be
+	// rejected as a nested spec unless the recursive flatten handles it.
+	// Per T3 beat #4: harvested nested specs ARE expanded recursively (the
+	// previous hard-fail is removed for the broader detector).
+	got, err := r.Resolve(context.Background(), []int{1})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// Expected: outer expansion emits #2 (replacing #1's slot);
+	// within #2, userInputSet= {1}, so #1 is accepted into #2's harvest
+	// (carve-out); #20 is the parent-verified leaf.
+	// Per destination-aligned beat #4 from T3.
+	if !equalInts(got, []int{2, 1, 20}) {
+		t.Fatalf("expected [2 1 20], got %v", got)
+	}
+	// Per-flatten line for the inner Specification. Per destination-aligned beat #4,
+	// #1 (userInputSet) is accepted into #2's harvest unconditionally even
+	// though it doesn't carry `## Parent #2`, so #2's accepted-children set
+	// is [1, 20] (size 2). The per-flatten log mirrors that.
+	if !strings.Contains(infoBuf.String(), "flattened specification #2 inside #1 to 2 accepted children") {
+		t.Errorf("expected per-flatten log line for nested spec, got: %q", infoBuf.String())
+	}
+	// Top-level expansion line for the outer.
+	if !strings.Contains(infoBuf.String(), "expanded specification #1 to 1 accepted children") {
+		t.Errorf("expected top-level expansion line, got: %q", infoBuf.String())
+	}
+}
+
+func TestSpecificationResolver_FlattensNestedSpecAtThreeLevels(t *testing.T) {
+	l1Body := "## Problem Statement\n\nP.\n\n## Solution\n\nS.\n\n## User Stories\n\n1. U.\n\n## Child Issues\n\n- #2 spec\n"
+	l2Body := "## Parent\n\n#1\n\n## Problem Statement\n\nP.\n\n## Solution\n\nS.\n\n## User Stories\n\n1. U.\n\n## Child Issues\n\n- #3 spec\n"
+	l3Body := "## Parent\n\n#2\n\n## Problem Statement\n\nP.\n\n## Solution\n\nS.\n\n## User Stories\n\n1. U.\n\n## Child Issues\n\n- #30 leaf\n"
+	leafBody := "## Parent\n\n#3\n\n## What\n\n"
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			1:  {Number: 1, Title: "L1", Body: l1Body},
+			2:  {Number: 2, Title: "L2", Body: l2Body},
+			3:  {Number: 3, Title: "L3", Body: l3Body},
+			30: {Number: 30, Title: "Leaf", Body: leafBody},
+		},
+	}
+	var infoBuf bytes.Buffer
+	r := NewSpecificationResolver(client, &infoBuf)
+	got, err := r.Resolve(context.Background(), []int{1})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// Depth 0 emits #2 (top-level expand of #1); #1's userInputSet carve-out
+	// rides along when #2 is expanded (depth 1); #3 is the inner-spec
+	// expansion; #30 is the leaf at depth 2.
+	if !equalInts(got, []int{2, 1, 3, 30}) {
+		t.Fatalf("expected [2 1 3 30], got %v", got)
+	}
+	// Multi-level log assertion: one top-level "expanded" line and two
+	// per-flatten lines, emitted in depth order.
+	gotLog := infoBuf.String()
+	for _, want := range []string{
+		"expanded specification #1 to 1 accepted children",
+		"flattened specification #2 inside #1 to 2 accepted children",
+		"flattened specification #3 inside #2 to 1 accepted children",
+	} {
+		if !strings.Contains(gotLog, want) {
+			t.Errorf("missing log line %q in: %q", want, gotLog)
+		}
+	}
+}
+
+func TestSpecificationResolver_UserTypedNestedSpecCarveOutSurvivesFlatten(t *testing.T) {
+	// Replicates the regression for #1038 (ADR-0025 §3a) under the new
+	// recursive flatten: both #1 (outer) and #2 (inner) are user-typed.
+	// The resolver must accept both, expand them, and produce a flat list.
+	outerBody := "## Problem Statement\n\nP.\n\n## Solution\n\nS.\n\n## User Stories\n\n1. U.\n\n## Child Issues\n\n- #2 nested\n"
+	innerBody := "## Parent\n\n#1\n\n## Problem Statement\n\nP.\n\n## Solution\n\nS.\n\n## User Stories\n\n1. U.\n\n## Child Issues\n\n- #11 leaf\n"
+	leafBody := "## Parent\n\n#2\n\n## What\n\n"
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			1:  {Number: 1, Title: "Outer Specification", Body: outerBody},
+			2:  {Number: 2, Title: "Inner Specification", Body: innerBody},
+			11: {Number: 11, Title: "Leaf", Body: leafBody},
+		},
+	}
+	r := NewSpecificationResolver(client, io.Discard)
+	got, err := r.Resolve(context.Background(), []int{1, 2})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// Per destination-aligned beat #4 (T3 #2145): both #1 and #2 are
+	// user-typed so both bypass IsSpecification re-check / ## Parent
+	// verification. #1 expands: candidates include #2 (user-typed → accept
+	// unconditionally) and the recursion picks #2 as a child. Within the
+	// recursion #2 also accepts #1 (user-typed). Final flat list: #2 (top
+	// of #1's expansion), #1 (carve-out into #2), #11 (leaf of #2).
+	if !equalInts(got, []int{2, 1, 11}) {
+		t.Fatalf("expected [2 1 11], got %v", got)
+	}
+}
+
+func TestSpecificationResolver_HasChildrenReturnsFalseWhenCommentsLackRef(t *testing.T) {
+	// HasChildren is body-shape-agnostic — it only checks comments.
+	// (The caller decides whether to use it based on IsSpecification first.)
+	client := &fakeGitHubClient{
+		issueComments: map[int][]github.IssueComment{
+			1: {{Body: "No #N references here."}},
+		},
+	}
+	r := NewSpecificationResolver(client, nil)
+	got, err := r.HasChildren(context.Background(), 1)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got {
+		t.Fatal("expected HasChildren to return false when comments have no #N refs")
 	}
 }
