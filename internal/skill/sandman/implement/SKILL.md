@@ -62,7 +62,7 @@ A merged change request will, by the tracker's merge rules, automatically close 
    gh pr list --head <branch> --state open
    ```
 
-   If this prints one or more PR numbers, **do NOT write `## Status: already resolved` while an open PR exists for the current branch**. Pick one of:
+   If a PR is open for the current branch, the orchestrator will run an independent verification pass against `origin/main` before declaring the run successful. Write `## Status: already resolved` only if every AC has a corresponding test that exists on `origin/main`; otherwise the orchestrator cannot verify and the run will fail. Agents that prefer the explicit close path can pick one of:
    - **(a) Close the orphan PR** with the platform's "close change request" CLI, preserving the branch and commenting that the work is superseded by the new run, before writing the marker, OR
    - **(b) Stop without writing the marker** and let the existing PR drive the run — this is the safer default; the open PR is itself durable evidence of partial or pending work.
 4. Decision matrix (after branch freshness and open-PR checks pass):
