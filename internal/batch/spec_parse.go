@@ -34,11 +34,11 @@ func ExtractIssueReferences(text string) []int {
 	return out
 }
 
-// prdSearchToken returns the path-component form of the parent issue
+// specSearchToken returns the path-component form of the parent issue
 // reference that GitHub search reliably matches (verified empirically:
 // the full URL with scheme is tokenized into separate tokens and
 // `gh issue list --search "<url> in:body"` returns no results).
-func prdSearchToken(parent int) string {
+func specSearchToken(parent int) string {
 	return "issues/" + strconv.Itoa(parent)
 }
 

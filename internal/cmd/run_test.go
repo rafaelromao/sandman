@@ -425,12 +425,12 @@ func TestRun_SingleIssueInvokesBatchRunner(t *testing.T) {
 	}
 }
 
-func TestRun_ExpandsPRDBeforeBatchRunner(t *testing.T) {
-	prdBody := "## Problem Statement\n\nP.\n\n## Solution\n\nS.\n\n## User Stories\n\n1. U.\n\n## Child Issues\n\n- #10\n- #11\n"
+func TestRun_ExpandsSpecificationBeforeBatchRunner(t *testing.T) {
+	specBody := "## Problem Statement\n\nP.\n\n## Solution\n\nS.\n\n## User Stories\n\n1. U.\n\n## Child Issues\n\n- #10\n- #11\n"
 	childBody := "## Parent\n\n#1\n\n## What\n\n"
 	gh := &fakeGitHubClient{
 		issues: map[int]*github.Issue{
-			1:  {Number: 1, Title: "PRD", Body: prdBody},
+			1:  {Number: 1, Title: "Specification", Body: specBody},
 			10: {Number: 10, Title: "Child 1", Body: childBody},
 			11: {Number: 11, Title: "Child 2", Body: childBody},
 		},
@@ -460,17 +460,17 @@ func TestRun_ExpandsPRDBeforeBatchRunner(t *testing.T) {
 			t.Errorf("expected issue %d at index %d, got %d", v, i, spy.req.Issues[i])
 		}
 	}
-	if !strings.Contains(buf.String(), "expanded PRD #1 to 2 accepted children") {
-		t.Errorf("expected info log about PRD expansion, got: %q", buf.String())
+	if !strings.Contains(buf.String(), "expanded specification #1 to 2 accepted children") {
+		t.Errorf("expected info log about Specification expansion, got: %q", buf.String())
 	}
 }
 
-func TestRun_MixedPRDAndNonChildIssues(t *testing.T) {
+func TestRun_MixedSpecificationAndNonChildIssues(t *testing.T) {
 	// Regression for #1038 — see ADR-0025 §3a. The original failure
-	// mode was `resolve PRDs: nested PRD detected: #982` when running
+	// mode was `resolve specifications: nested specification detected: #982` when running
 	// `sandman run 972:977 982 990 994:1001`.
-	prd982Body := "## Problem Statement\n\nProblem.\n\n## Solution\n\nSolution.\n\n## User Stories\n\n1. U.\n\nSlices tracked in #972, #973, #974.\n\n## Child Issues\n\n- #984 child\n- #985 child\n- #986 child\n- #987 child\n- #988 child\n- #989 child\n"
-	prd990Body := "## Problem Statement\n\nProblem.\n\n## Solution\n\nSolution.\n\n## User Stories\n\n1. U.\n\nSee parent #982.\n"
+	spec982Body := "## Problem Statement\n\nProblem.\n\n## Solution\n\nSolution.\n\n## User Stories\n\n1. U.\n\nSlices tracked in #972, #973, #974.\n\n## Child Issues\n\n- #984 child\n- #985 child\n- #986 child\n- #987 child\n- #988 child\n- #989 child\n"
+	spec990Body := "## Problem Statement\n\nProblem.\n\n## Solution\n\nSolution.\n\n## User Stories\n\n1. U.\n\nSee parent #982.\n"
 	childBody := "## Parent\n\n#982\n\n## What\n\n"
 	sliceBody := "## What\n\nJust a slice.\n"
 	gh := &fakeGitHubClient{
@@ -482,14 +482,14 @@ func TestRun_MixedPRDAndNonChildIssues(t *testing.T) {
 			976:  {Number: 976, Title: "Slice 976", Body: sliceBody},
 			977:  {Number: 977, Title: "Slice 977", Body: sliceBody},
 			980:  {Number: 980, Title: "Slice 980", Body: sliceBody},
-			982:  {Number: 982, Title: "Outer PRD", Body: prd982Body},
+			982:  {Number: 982, Title: "Outer Specification", Body: spec982Body},
 			984:  {Number: 984, Title: "Child 984", Body: childBody},
 			985:  {Number: 985, Title: "Child 985", Body: childBody},
 			986:  {Number: 986, Title: "Child 986", Body: childBody},
 			987:  {Number: 987, Title: "Child 987", Body: childBody},
 			988:  {Number: 988, Title: "Child 988", Body: childBody},
 			989:  {Number: 989, Title: "Child 989", Body: childBody},
-			990:  {Number: 990, Title: "Cross-referencing PRD", Body: prd990Body},
+			990:  {Number: 990, Title: "Cross-referencing Specification", Body: spec990Body},
 			994:  {Number: 994, Title: "Issue 994", Body: sliceBody},
 			995:  {Number: 995, Title: "Issue 995", Body: sliceBody},
 			996:  {Number: 996, Title: "Issue 996", Body: sliceBody},
@@ -521,7 +521,7 @@ func TestRun_MixedPRDAndNonChildIssues(t *testing.T) {
 	for _, n := range spy.req.Issues {
 		gotSet[n] = struct{}{}
 	}
-	// Slices 972..977 are user-typed non-PRD issues; they pass through.
+	// Slices 972..977 are user-typed non-Specification issues; they pass through.
 	for _, n := range []int{972, 973, 974, 975, 976, 977} {
 		if _, ok := gotSet[n]; !ok {
 			t.Errorf("expected user-typed slice #%d in resolved list, got %v", n, spy.req.Issues)
@@ -532,7 +532,7 @@ func TestRun_MixedPRDAndNonChildIssues(t *testing.T) {
 	if _, ok := gotSet[982]; !ok {
 		t.Errorf("expected #982 in resolved list (via #990's expansion), got %v", spy.req.Issues)
 	}
-	// Issues 994..1001 are user-typed non-PRD issues; they pass through.
+	// Issues 994..1001 are user-typed non-Specification issues; they pass through.
 	for _, n := range []int{994, 995, 996, 997, 998, 999, 1000, 1001} {
 		if _, ok := gotSet[n]; !ok {
 			t.Errorf("expected user-typed #%d in resolved list, got %v", n, spy.req.Issues)
@@ -545,21 +545,21 @@ func TestRun_MixedPRDAndNonChildIssues(t *testing.T) {
 			t.Errorf("expected authored child #%d in resolved list, got %v", n, spy.req.Issues)
 		}
 	}
-	// No PRD candidate-mismatch warning on stderr.
+	// No Specification candidate-mismatch warning on stderr.
 	if strings.Contains(buf.String(), "candidate #") && strings.Contains(buf.String(), "not a child") {
 		t.Errorf("expected no 'candidate not a child' warning on stderr, got: %q", buf.String())
 	}
-	// No nested-PRD error on stderr.
-	if strings.Contains(buf.String(), "nested PRD") {
-		t.Errorf("expected no 'nested PRD' warning on stderr, got: %q", buf.String())
+	// No nested-Specification error on stderr.
+	if strings.Contains(buf.String(), "nested specification") {
+		t.Errorf("expected no 'nested specification' warning on stderr, got: %q", buf.String())
 	}
 }
 
-func TestRun_FailsWhenPRDHasNoChildren(t *testing.T) {
-	prdBody := "## Problem Statement\n\nP.\n\n## Solution\n\nS.\n\n## User Stories\n\n1. U.\n"
+func TestRun_FailsWhenSpecificationHasNoChildren(t *testing.T) {
+	specBody := "## Problem Statement\n\nP.\n\n## Solution\n\nS.\n\n## User Stories\n\n1. U.\n"
 	gh := &fakeGitHubClient{
 		issues: map[int]*github.Issue{
-			1: {Number: 1, Title: "Empty PRD", Body: prdBody},
+			1: {Number: 1, Title: "Empty Specification", Body: specBody},
 		},
 	}
 	spy := &spyBatchRunner{result: &batch.Result{}}
@@ -573,13 +573,13 @@ func TestRun_FailsWhenPRDHasNoChildren(t *testing.T) {
 
 	err := cmd.Execute()
 	if err == nil {
-		t.Fatal("expected error for PRD with no children, got nil")
+		t.Fatal("expected error for Specification with no children, got nil")
 	}
-	if !strings.Contains(err.Error(), "no child issues for PRD #1") {
-		t.Fatalf("expected 'no child issues for PRD #1' in error, got %q", err)
+	if !strings.Contains(err.Error(), "no child issues for specification #1") {
+		t.Fatalf("expected 'no child issues for specification #1' in error, got %q", err)
 	}
 	if spy.called {
-		t.Error("expected batch runner NOT to be called when PRD resolution fails")
+		t.Error("expected batch runner NOT to be called when Specification resolution fails")
 	}
 }
 

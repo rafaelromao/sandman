@@ -467,7 +467,7 @@ func (c *CLIClient) ListPRComments(ctx context.Context, number int) ([]PRComment
 
 // ListIssueComments fetches issue conversation comments for the given
 // issue number via the GitHub REST API. These are the comments posted on
-// the issue (not on a PR), used by PRD expansion to discover child issue
+// the issue (not on a PR), used by Specification expansion to discover child issue
 // references that live in the conversation rather than the issue body.
 func (c *CLIClient) ListIssueComments(ctx context.Context, number int) ([]IssueComment, error) {
 	owner, repo, err := c.resolveRepo(ctx)

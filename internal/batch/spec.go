@@ -10,17 +10,17 @@ import (
 	"github.com/rafaelromao/sandman/internal/github"
 )
 
-// PRDResolver resolves PRD issues to their child issues during batch preparation.
-type PRDResolver struct {
+// SpecificationResolver resolves Specification issues to their child issues during batch preparation.
+type SpecificationResolver struct {
 	client        github.Client
 	warningWriter io.Writer
 	sectionREs    []*regexp.Regexp
 }
 
-// NewPRDResolver returns a resolver that expands any PRD issues in the input
+// NewSpecificationResolver returns a resolver that expands any Specification issues in the input
 // into their child issues. The warning writer receives one line per expansion
 // or per dropped candidate.
-func NewPRDResolver(client github.Client, warningWriter io.Writer) *PRDResolver {
+func NewSpecificationResolver(client github.Client, warningWriter io.Writer) *SpecificationResolver {
 	if warningWriter == nil {
 		warningWriter = os.Stderr
 	}
@@ -29,12 +29,12 @@ func NewPRDResolver(client github.Client, warningWriter io.Writer) *PRDResolver 
 	for i, name := range required {
 		sectionREs[i] = regexp.MustCompile(`(?im)^##\s+` + regexp.QuoteMeta(name) + `\s*$`)
 	}
-	return &PRDResolver{client: client, warningWriter: warningWriter, sectionREs: sectionREs}
+	return &SpecificationResolver{client: client, warningWriter: warningWriter, sectionREs: sectionREs}
 }
 
-// IsPRD reports whether the body contains the three required PRD sections
+// IsSpecification reports whether the body contains the three required Specification sections
 // as H2 headings: Problem Statement, Solution, and User Stories.
-func (r *PRDResolver) IsPRD(body string) bool {
+func (r *SpecificationResolver) IsSpecification(body string) bool {
 	for _, re := range r.sectionREs {
 		if !re.MatchString(body) {
 			return false
@@ -43,16 +43,16 @@ func (r *PRDResolver) IsPRD(body string) bool {
 	return true
 }
 
-// Resolve is the entry point for PRD expansion. It walks the input list
-// and replaces each PRD with its accepted child issues, removing the PRD
-// itself and deduplicating across PRDs and explicit inputs. Non-PRD
+// Resolve is the entry point for Specification expansion. It walks the input list
+// and replaces each Specification with its accepted child issues, removing the Specification
+// itself and deduplicating across Specifications and explicit inputs. Non-Specification
 // issues pass through unchanged.
 //
 // Errors:
-//   - `no child issues for PRD #<n>` if a PRD has no accepted children
-//   - `nested PRD detected: #<child>` if a candidate child is itself a PRD
+//   - `no child issues for specification #<n>` if a Specification has no accepted children
+//   - `nested specification detected: #<child>` if a candidate child is itself a Specification
 //   - any FetchIssue error encountered while loading a candidate child
-func (r *PRDResolver) Resolve(ctx context.Context, issues []int) ([]int, error) {
+func (r *SpecificationResolver) Resolve(ctx context.Context, issues []int) ([]int, error) {
 	unique := uniqueIssues(issues)
 	userInputSet := make(map[int]struct{}, len(unique))
 	for _, num := range unique {
@@ -79,26 +79,26 @@ func (r *PRDResolver) Resolve(ctx context.Context, issues []int) ([]int, error) 
 		if issue == nil {
 			return nil, fmt.Errorf("fetch issue #%d: not found", num)
 		}
-		if !r.IsPRD(issue.Body) {
+		if !r.IsSpecification(issue.Body) {
 			addUnique(num)
 			continue
 		}
-		children, err := r.resolvePRDChildren(ctx, num, issue.Body, userInputSet)
+		children, err := r.resolveSpecificationChildren(ctx, num, issue.Body, userInputSet)
 		if err != nil {
 			return nil, err
 		}
 		for _, child := range children {
 			addUnique(child)
 		}
-		fmt.Fprintf(r.warningWriter, "expanded PRD #%d to %d accepted children\n", num, len(children))
+		fmt.Fprintf(r.warningWriter, "expanded specification #%d to %d accepted children\n", num, len(children))
 	}
 	return out, nil
 }
 
-func (r *PRDResolver) resolvePRDChildren(ctx context.Context, parent int, body string, userInputSet map[int]struct{}) ([]int, error) {
+func (r *SpecificationResolver) resolveSpecificationChildren(ctx context.Context, parent int, body string, userInputSet map[int]struct{}) ([]int, error) {
 	candidates := r.collectCandidates(ctx, parent, body)
 	if len(candidates) == 0 {
-		return nil, fmt.Errorf("no child issues for PRD #%d", parent)
+		return nil, fmt.Errorf("no child issues for specification #%d", parent)
 	}
 	accepted := make([]int, 0, len(candidates))
 	for _, child := range candidates {
@@ -116,8 +116,8 @@ func (r *PRDResolver) resolvePRDChildren(ctx context.Context, parent int, body s
 		if childIssue == nil {
 			return nil, fmt.Errorf("fetch child #%d: not found", child)
 		}
-		if r.IsPRD(childIssue.Body) {
-			return nil, fmt.Errorf("nested PRD detected: #%d", child)
+		if r.IsSpecification(childIssue.Body) {
+			return nil, fmt.Errorf("nested specification detected: #%d", child)
 		}
 		ref, ok := ExtractParentReference(childIssue.Body)
 		if !ok || ref != parent {
@@ -126,12 +126,12 @@ func (r *PRDResolver) resolvePRDChildren(ctx context.Context, parent int, body s
 		accepted = append(accepted, child)
 	}
 	if len(accepted) == 0 {
-		return nil, fmt.Errorf("no child issues for PRD #%d", parent)
+		return nil, fmt.Errorf("no child issues for specification #%d", parent)
 	}
 	return accepted, nil
 }
 
-func (r *PRDResolver) collectCandidates(ctx context.Context, parent int, body string) []int {
+func (r *SpecificationResolver) collectCandidates(ctx context.Context, parent int, body string) []int {
 	order := make([]int, 0)
 	seen := make(map[int]struct{})
 	add := func(nums []int) {
@@ -152,15 +152,15 @@ func (r *PRDResolver) collectCandidates(ctx context.Context, parent int, body st
 			add(ExtractIssueReferences(c.Body))
 		}
 	} else {
-		fmt.Fprintf(r.warningWriter, "warning: could not list comments for PRD #%d: %v\n", parent, err)
+		fmt.Fprintf(r.warningWriter, "warning: could not list comments for specification #%d: %v\n", parent, err)
 	}
 	if len(order) == 0 {
-		if results, err := r.client.SearchIssues(ctx, prdSearchToken(parent)); err == nil {
+		if results, err := r.client.SearchIssues(ctx, specSearchToken(parent)); err == nil {
 			for _, issue := range results {
 				add([]int{issue.Number})
 			}
 		} else {
-			fmt.Fprintf(r.warningWriter, "warning: mention search for PRD #%d failed: %v\n", parent, err)
+			fmt.Fprintf(r.warningWriter, "warning: mention search for specification #%d failed: %v\n", parent, err)
 		}
 	}
 	return order

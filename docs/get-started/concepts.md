@@ -38,9 +38,9 @@ For each issue, Sandman builds a `BlockedBy` set from two sources:
 
 Union, then validate. **Strict mode** (the default) errors if any in-batch blocker is missing. **Auto-expand mode** (`--include-dependencies`) recursively includes transitive blockers and errors on cycles. In-batch blocker success releases dependents immediately; external blockers must be closed on GitHub before the dependent starts.
 
-## PRDs
+## Specifications
 
-A **PRD** (Product Requirements Document) is a GitHub issue whose body contains the H2 sections `## Problem Statement`, `## Solution`, and `## User Stories`. Detection is structural, not label-based. Sandman resolves a PRD into its child issues before execution; children are accepted only when their bodies contain a `## Parent` backlink to the PRD. Nested PRDs are rejected. User-typed issue numbers skip the validation — the operator owns the choice.
+A **Specification** is a GitHub issue whose body contains the H2 sections `## Problem Statement`, `## Solution`, and `## User Stories`. Detection is structural, not label-based. Sandman resolves a Specification into its child issues before execution; children are accepted only when their bodies contain a `## Parent` backlink to the Specification. Nested Specifications are rejected. User-typed issue numbers skip the validation — the operator owns the choice.
 
 ## Sandman Review
 

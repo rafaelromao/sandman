@@ -60,7 +60,7 @@ type PRComment struct {
 
 // IssueComment holds an issue conversation comment fetched from the GitHub
 // REST API. These are the comments posted on an issue (not a PR), used by
-// PRD expansion to discover child references that live in the conversation
+// Specification expansion to discover child references that live in the conversation
 // rather than the issue body.
 type IssueComment struct {
 	ID        string
