@@ -380,7 +380,34 @@ var javaVersionSelectorPattern = regexp.MustCompile(`^\d+(\.\d+){0,2}(\+\d+)?$`)
 var elixirVersionPattern = regexp.MustCompile(`(\d+)\.(\d+)`)
 
 // Scaffolder creates the .sandman/ directory and its files.
-type Scaffolder struct{}
+//
+// Gitignore and GitOps are optional collaborators that issue #2148 routes
+// through. Zero values select the production defaults
+// (NewDefaultGitignoreRuleWriter, NewDefaultGitOps). Tests can substitute
+// fakes to assert behavior without touching disk or invoking a real git
+// binary.
+type Scaffolder struct {
+	Gitignore GitignoreRuleWriter
+	GitOps    GitOps
+}
+
+// resolveGitignore returns the configured GitignoreRuleWriter, falling
+// back to the production default.
+func (s *Scaffolder) resolveGitignore() GitignoreRuleWriter {
+	if s.Gitignore != nil {
+		return s.Gitignore
+	}
+	return NewDefaultGitignoreRuleWriter()
+}
+
+// resolveGitOps returns the configured GitOps, falling back to the
+// production default.
+func (s *Scaffolder) resolveGitOps() GitOps {
+	if s.GitOps != nil {
+		return s.GitOps
+	}
+	return NewDefaultGitOps()
+}
 
 // Scaffold writes config.yaml, Dockerfile, and prompt.md into .sandman/.
 func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
@@ -528,6 +555,17 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 
 	if err := s.materializeReviewPrompts(layout); err != nil {
 		return err
+	}
+
+	if err := s.resolveGitignore().EnsureRule(repoRoot, ".sandman/"); err != nil {
+		return fmt.Errorf("ensure .sandman/ in .gitignore: %w", err)
+	}
+
+	gitOps := s.resolveGitOps()
+	if gitOps.IsRepo(repoRoot) {
+		if err := gitOps.Untrack(repoRoot, layout.SandmanDir); err != nil {
+			return fmt.Errorf("untrack .sandman/ from index: %w", err)
+		}
 	}
 
 	scaffoldedFiles := []string{
