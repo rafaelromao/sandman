@@ -91,15 +91,19 @@ using the same `DependencyResolver`-style seam that already lives in
    authored `## Parent` body convention remains the contract for
    *authored* parent-child relationships; the relaxation applies only
    to numbers the user typed into the input.
-4. **Nested-Specification rejection** — For each harvested (non-user-typed)
+4. **Nested-Specification flatten** — For each harvested or user-typed
    candidate, the resolver re-applies `IsSpecification`. A candidate that is
-   itself a Specification fails the resolution with
-   `nested specification detected: #<child>`. The nested-Specification rejection applies
-   only to candidates harvested from a Specification's body, comments, or
-   search fallback; user-typed input numbers in a mixed batch bypass
-   the rejection. (A user-typed number that is itself a Specification is still
-   expanded on its own pass by step 6, not treated as a nested Specification
-   of another.)
+   itself a Specification is expanded recursively: the resolver collects its
+   own children via the same body → comments → search-fallback path and
+   applies the `## Parent` verification on its own candidates. Each recursive
+   expansion emits a `flattened specification #<child> inside #<parent> to <N>
+   accepted children` log line on stderr (the top-level expansion uses
+   `expanded specification #<n> to <N> accepted children`). Depth is bounded
+   by the per-run unique-set seen+addUnique pair: each issue number is
+   emitted at most once, so a Specification whose body references itself
+   (directly or transitively) recurses once and then short-circuits when
+   the already-seen number is re-encountered. The carve-out in step 3a
+   continues to apply at the immediate acceptance step on every pass.
 5. **No-children rejection** — A Specification whose accepted-child set is
    empty (no candidates, or every candidate dropped at step 3) fails
    the resolution with `no child issues for specification #<n>`.

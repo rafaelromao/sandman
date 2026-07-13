@@ -216,7 +216,7 @@ func TestSpecificationResolver_RejectsSpecificationWithNoChildren(t *testing.T) 
 	}
 }
 
-func TestSpecificationResolver_HarvestedNestedSpecFlattens(t *testing.T) {
+func TestSpecificationResolver_CarveOutNestedSpecFlattens(t *testing.T) {
 	// Per destination-aligned beat #4 (T3 #2145): harvested nested
 	// specs (not userInputSet) now flatten recursively instead of
 	// hard-erroring. This test supersedes the historical
@@ -620,9 +620,11 @@ func TestSpecificationResolver_ChildrenOnlyDetection(t *testing.T) {
 	if !equalInts(got, []int{10}) {
 		t.Fatalf("expected [10], got %v", got)
 	}
-	if !strings.Contains(infoBuf.String(), "flattened specification #1 inside - to 1 accepted children") &&
-		!strings.Contains(infoBuf.String(), "expanded specification #1 to 1 accepted children") {
-		t.Errorf("expected broadened-expansion log line, got: %q", infoBuf.String())
+	if !strings.Contains(infoBuf.String(), "expanded specification #1 to 1 accepted children") {
+		t.Errorf("expected top-level expanded-expansion log line, got: %q", infoBuf.String())
+	}
+	if strings.Contains(infoBuf.String(), "flattened specification") {
+		t.Errorf("did not expect a flattened log line at depth 0, got: %q", infoBuf.String())
 	}
 }
 

@@ -114,7 +114,7 @@ func (r *SpecificationResolver) Resolve(ctx context.Context, issues []int) ([]in
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		if err := r.expandOne(ctx, num, 0, "-", userInputSet, seen, addUnique); err != nil {
+		if err := r.expandOne(ctx, num, 0, "-", userInputSet, addUnique); err != nil {
 			return nil, err
 		}
 	}
@@ -130,13 +130,15 @@ func (r *SpecificationResolver) Resolve(ctx context.Context, issues []int) ([]in
 //
 // The userInputSet is the original typed input set; candidates drawn from it bypass
 // the IsSpecification re-check and the ## Parent verification (the user owns the choice).
-// The seen+addUnique pair ensures every number is emitted exactly once.
+// Dedupe runs through the addUnique closure: each number is emitted at most once, so
+// recursions that revisit a parent (e.g. two specs whose bodies reference each other)
+// short-circuit when addUnique returns false.
 func (r *SpecificationResolver) expandOne(
 	ctx context.Context,
 	num int,
 	depth int,
 	parentLabel string,
-	userInputSet, seen map[int]struct{},
+	userInputSet map[int]struct{},
 	addUnique func(int) bool,
 ) error {
 	if err := ctx.Err(); err != nil {
@@ -188,7 +190,7 @@ func (r *SpecificationResolver) expandOne(
 			return fmt.Errorf("fetch child #%d: not found", child)
 		}
 		if r.IsSpecification(childIssue.Body) {
-			if err := r.expandOne(ctx, child, depth+1, fmt.Sprintf("#%d", num), userInputSet, seen, addUnique); err != nil {
+			if err := r.expandOne(ctx, child, depth+1, fmt.Sprintf("#%d", num), userInputSet, addUnique); err != nil {
 				return err
 			}
 		}
