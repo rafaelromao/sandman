@@ -29,7 +29,15 @@ func TestSkillImplementSkill_ForbidsGitAddOnSandmanDir(t *testing.T) {
 		t.Fatalf("%s must mention `.sandman/`", target)
 	}
 
-	window := lower[max(0, sandmanIdx-200):min(len(lower), sandmanIdx+200)]
+	start := sandmanIdx - 200
+	if start < 0 {
+		start = 0
+	}
+	end := sandmanIdx + 200
+	if end > len(lower) {
+		end = len(lower)
+	}
+	window := lower[start:end]
 	if !strings.Contains(window, "git add") && !strings.Contains(window, "staging") && !strings.Contains(window, "stage") {
 		t.Fatalf("%s proximity window around `.sandman/` must mention `git add` or staging, got:\n---\n%s\n---", target, window)
 	}
@@ -37,18 +45,4 @@ func TestSkillImplementSkill_ForbidsGitAddOnSandmanDir(t *testing.T) {
 	if !strings.Contains(lower, "do not run `git add`") {
 		t.Fatalf("%s must contain an explicit sentence forbidding `git add` on `.sandman/` paths", target)
 	}
-}
-
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }
