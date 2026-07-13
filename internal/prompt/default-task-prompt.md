@@ -36,17 +36,17 @@ The registered next step is the first unchecked item in the Execution Checklist.
 
 If the issue is already implemented on `{{BASE_BRANCH}}`, after fetching and checking the current `origin/{{BASE_BRANCH}}` HEAD against the issue acceptance criteria, update `.sandman/task.md` so it contains the exact line `## Status: already resolved`.
 
-Do not use issue closure, a matching local branch, or unmerged worktree changes as proof that the issue is already resolved. If any acceptance criterion is missing or you are not certain, continue with Plan.
+Write `## Status: already resolved` only if every AC has a corresponding test that exists on `origin/{{BASE_BRANCH}}`; otherwise the orchestrator cannot verify and the run will fail.
 
 Do not paraphrase this line. Do not use `already implemented`, `no action required`, or any other wording for this marker.
 
-Before writing `## Status: already resolved`, the `sandman-implement` skill requires two pre-flight checks (see Step 1.5). Both must pass before the marker is written. If either fails, do NOT write the marker — fix the underlying condition first, or stop and let the existing PR drive the run.
+If a PR is open for the current branch, the orchestrator will run an independent verification pass against `origin/{{BASE_BRANCH}}` before declaring the run successful.
 
 ## Success-Blocking Conditions
 
 The run is NOT considered successful (and `## Status: already resolved` MUST NOT be written) while any of the following are true:
 
-- **Open PR with no approval** — `gh pr list --head <branch> --state open` returns one or more PRs that have not been approved (or the approval state is unknown).
+- **Open PR with no verification path** — An open PR exists for the branch AND the issue's ACs do not map to tests on `origin/{{BASE_BRANCH}}` (the orchestrator's verifier cannot decide the run).
 - **`mergeable: CONFLICTING`** — the branch's open PR is in a conflict state with the base branch.
 - **Unpushed commits** — `git log @{u}..HEAD` (or `git log origin/{{BASE_BRANCH}}..HEAD` for a new branch) is non-empty; the local branch has commits the remote does not.
 - **Unresolved AC blocker** — any acceptance criterion in the issue body is unmet, contested, or marked blocked by another open issue.

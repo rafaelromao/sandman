@@ -62,14 +62,14 @@ A merged change request will, by the tracker's merge rules, automatically close 
    gh pr list --head <branch> --state open
    ```
 
-   If this prints one or more PR numbers, **do NOT write `## Status: already resolved` while an open PR exists for the current branch**. Pick one of:
+   If a PR is open for the current branch, the orchestrator will run an independent verification pass against `origin/main` before declaring the run successful. Write `## Status: already resolved` only if every AC has a corresponding test that exists on `origin/main`; otherwise the orchestrator cannot verify and the run will fail. Agents that prefer the explicit close path can pick one of:
    - **(a) Close the orphan PR** with the platform's "close change request" CLI, preserving the branch and commenting that the work is superseded by the new run, before writing the marker, OR
    - **(b) Stop without writing the marker** and let the existing PR drive the run — this is the safer default; the open PR is itself durable evidence of partial or pending work.
 4. Decision matrix (after branch freshness and open-PR checks pass):
    - **Issue is closed** → verify the issue acceptance criteria against the current state of the base branch after fetching `origin/<base>`; only write `## Status: already resolved` and stop if the base branch actually satisfies every criterion. If the base branch does not satisfy every criterion, continue to step 2 (Plan) as normal.
    - **Issue is open** → read the issue acceptance criteria and compare against the current state of the base branch after fetching `origin/<base>`. If all acceptance criteria are already met in the base branch, write `## Status: already resolved` to `.sandman/task.md` and stop without running plan or TDD. Otherwise, proceed to step 2 (Plan) as normal.
 
-Writing `## Status: already resolved` while a PR is open fails the run, so step 3 is not optional.
+Writing `## Status: already resolved` while a PR is open without a verification path fails the run, so step 3 is not optional.
 
 ### 2. Plan
 
