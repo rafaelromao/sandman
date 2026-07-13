@@ -167,3 +167,4 @@ If `user.name` or `user.email` is still missing after that lookup, `sandman run`
 See [Commands Reference](commands.md) for the full list of supported dot-notation keys.
 
 For build-tool preset detection and language version selectors, see [Scaffolding and Supported Languages](scaffolding.md).
+

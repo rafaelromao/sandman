@@ -126,3 +126,4 @@ For most non-trivial tasks, follow this order:
 4. Make the smallest coherent change.
 5. Run formatting, vetting, and relevant tests.
 6. Summarize what changed, what was verified, and any remaining risk.
+

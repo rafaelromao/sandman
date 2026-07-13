@@ -15,3 +15,4 @@ Each page below is scoped to a narrow, durable responsibility that the agent nee
 - [`portal-layout.md`](portal-layout.md) — portal runs table CSS and column-width invariants
 - [`quality-rules.md`](quality-rules.md) — the PR reviewer's language-sensitivity rules and severity flow
 - [`testenv.md`](testenv.md) — `MkdirShort`, the canonical `SANDMAN_TEST_*` env vars, and parallel-test rules
+

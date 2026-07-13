@@ -91,3 +91,4 @@ Agents should work within the current directory and use standard git operations 
 - Config directories and files with `~` are expanded to the user's home directory on the host before being resolved into a temporary copy for the container
 - Missing config directories and files are silently skipped (no error if an optional config path does not exist)
 - Container images are built from `.sandman/Dockerfile` at project initialization
+
