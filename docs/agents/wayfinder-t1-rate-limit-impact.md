@@ -1,6 +1,6 @@
 # Wayfinder T1 — GitHub rate-limit impact of the lazy `ListIssueComments` probe
 
-> Research asset for [T1 of map #2142](https://github.com/rafaelromao/sandman/issues/2143). Captures the per-batch API cost ceiling for the broadened-spec detector, against GitHub's documented REST primary and search rate limits, so that the rename + detector broadening (T2, T3, T4) ship with a quantified budget rather than a guess.
+> Research asset for [T1 of map #2142](https://github.com/rafaelromao/sandman/issues/2143). Captures the per-batch API cost ceiling for the broadened-specification detector, against GitHub's documented REST primary and search rate limits, so that the rename + detector broadening (T2, T3, T4) ship with a quantified budget rather than a guess.
 
 ## TL;DR
 
@@ -50,7 +50,7 @@ with `prCommentPageSize = "100"` (`cli_client.go:414`).
 | 1001–5000 | 11–50 |
 | 5001–10000 | 51–100 |
 
-In practice, GitHub issues used as Specification-shaped specs in this repo carry tens, occasionally hundreds of comments. The lazy probe on a typical Specification likely lands at 1–2 REST requests. The 10k-comment long tail is improbable for this domain (real-world Specifications rarely attract that conversation volume).
+In practice, GitHub issues used as Specification-shaped issues in this repo carry tens, occasionally hundreds of comments. The lazy probe on a typical Specification likely lands at 1–2 REST requests. The 10k-comment long tail is improbable for this domain (real-world Specifications rarely attract that conversation volume).
 
 ### Primary rate limits (REST, doc-of-record)
 
