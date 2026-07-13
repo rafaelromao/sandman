@@ -80,7 +80,7 @@ func (s *WorktreeSandbox) SetStrandedReconcile(enabled bool) {
 // Start initializes the worktree.
 func (s *WorktreeSandbox) Start() error {
 	s.workDir = filepath.Join(s.worktreeBase, s.branch)
-	if s.continueRun {
+	if s.continueRun && !s.override {
 		if err := RestoreWorktreeGitPaths(s.repoPath, s.workDir); err != nil {
 			return fmt.Errorf("normalize preserved worktree gitlink for continuation: %w", err)
 		}

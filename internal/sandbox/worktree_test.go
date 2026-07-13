@@ -780,6 +780,41 @@ func TestWorktreeSandbox_OverrideReconcileWrongBranch(t *testing.T) {
 	}
 }
 
+// TestWorktreeSandbox_OverrideBypassesContinueRefusal pins that
+// --override combined with --continue still enters the override
+// reconciliation path. The continue-mode pre-validation is gated on
+// `continueRun && !override` so a user explicitly opting into override
+// can recover even from a preserved worktree that would otherwise be
+// refused by continue alone. Issue #2189.
+func TestWorktreeSandbox_OverrideBypassesContinueRefusal(t *testing.T) {
+	dir := t.TempDir()
+	_ = initGitRepoWithRemote(t, dir)
+	removeBranch(t, dir, "sandman/42-fix-bug")
+
+	s := NewWorktreeSandbox(dir, filepath.Join(dir, ".sandman", "worktrees"), "sandman/42-fix-bug", "main")
+	if err := s.Start(); err != nil {
+		t.Fatalf("create initial worktree: %v", err)
+	}
+
+	runGit(t, s.WorkDir(), "checkout", "-b", "wrong-branch")
+
+	s2 := NewWorktreeSandbox(dir, filepath.Join(dir, ".sandman", "worktrees"), "sandman/42-fix-bug", "main")
+	s2.SetContinue(true)
+	s2.SetOverride(true)
+	if err := s2.Start(); err != nil {
+		t.Fatalf("expected --continue --override to succeed via override reconciliation, got: %v", err)
+	}
+	t.Cleanup(func() {
+		s2.Stop()
+		removeBranch(t, dir, "sandman/42-fix-bug")
+	})
+
+	headRef := runGit(t, s2.WorkDir(), "symbolic-ref", "HEAD")
+	if !strings.Contains(headRef, "sandman/42-fix-bug") {
+		t.Errorf("expected HEAD to be on sandman/42-fix-bug after override reconciliation, got %q", headRef)
+	}
+}
+
 func TestWorktreeSandbox_OverrideReconcileMissingBranch(t *testing.T) {
 	dir := t.TempDir()
 	_ = initGitRepoWithRemote(t, dir)
