@@ -77,10 +77,19 @@ func (r *SpecificationResolver) HasChildren(ctx context.Context, number int) (bo
 //   - broadened: IsSpecification(body) is false, but HasChildren(ctx, n) is true.
 //   - neither: pass-through.
 //
-// Nested Specifications are flattened recursively (per T3 #2145 beat #4 as corrected):
-// any candidate that is itself a Specification is expanded in turn, and each recursive
-// expansion emits a per-flatten log line. Depth is bounded only by the unique-set dedupe
-// and the cachedGitHubClient comment cache.
+// Nested Specifications are flattened recursively (per the corrected invariant
+// documented on ADR-0025 §4 as the destination-aligned reading): any candidate
+// that is itself a Specification is expanded in turn, and each recursive
+// expansion emits a per-flatten log line.
+//
+// Cycle behaviour: depth is not capped by an explicit N. Cycles are bound
+// instead by the `seen`+`addUnique` pair in the per-run output buffer —
+// each number is emitted at most once, so a Specification that recurses
+// into itself (e.g. two specs whose bodies reference each other) emits
+// both numbers and then short-circuits when `addUnique` returns false on
+// re-entry. Depth at worst is `len(uniqueIssues(issues)) + len(accepted
+// descendants)` and terminates once every reachable number has been
+// emitted exactly once.
 //
 // Errors:
 //   - `no child issues for specification #<n>` if a Specification has no accepted children
@@ -105,11 +114,9 @@ func (r *SpecificationResolver) Resolve(ctx context.Context, issues []int) ([]in
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		expanded, err := r.expandOne(ctx, num, 0, "-", userInputSet, seen, addUnique)
-		if err != nil {
+		if err := r.expandOne(ctx, num, 0, "-", userInputSet, seen, addUnique); err != nil {
 			return nil, err
 		}
-		_ = expanded
 	}
 	return out, nil
 }
@@ -118,7 +125,7 @@ func (r *SpecificationResolver) Resolve(ctx context.Context, issues []int) ([]in
 // the output buffer via addUnique. The recursive case flattens a nested Specification
 // in place; the depth parameter selects the top-level "expanded" verb vs the nested
 // "flattened" verb. parentLabel is used in the nested-flatten log line (the parent
-// spec number that triggered the recursive call); pass "-" at depth 0 to make that
+// specification number that triggered the recursive call); pass "-" at depth 0 to make that
 // distinction crisp in operator logs.
 //
 // The userInputSet is the original typed input set; candidates drawn from it bypass
@@ -131,32 +138,32 @@ func (r *SpecificationResolver) expandOne(
 	parentLabel string,
 	userInputSet, seen map[int]struct{},
 	addUnique func(int) bool,
-) (children []int, err error) {
+) error {
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return err
 	}
 	issue, err := r.client.FetchIssue(ctx, num)
 	if err != nil {
-		return nil, fmt.Errorf("fetch issue #%d: %w", num, err)
+		return fmt.Errorf("fetch issue #%d: %w", num, err)
 	}
 	if issue == nil {
-		return nil, fmt.Errorf("fetch issue #%d: not found", num)
+		return fmt.Errorf("fetch issue #%d: not found", num)
 	}
 
 	if !r.IsSpecification(issue.Body) {
 		hasChildren, err := r.HasChildren(ctx, num)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		if !hasChildren {
 			addUnique(num)
-			return nil, nil
+			return nil
 		}
 	}
 
 	accepted, err := r.collectAcceptedChildren(ctx, num, issue.Body, userInputSet)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	if depth == 0 {
@@ -167,7 +174,7 @@ func (r *SpecificationResolver) expandOne(
 
 	for _, child := range accepted {
 		if err := ctx.Err(); err != nil {
-			return nil, err
+			return err
 		}
 		if !addUnique(child) {
 			continue
@@ -175,18 +182,18 @@ func (r *SpecificationResolver) expandOne(
 		// Recursively flatten if the child is itself a Specification.
 		childIssue, err := r.client.FetchIssue(ctx, child)
 		if err != nil {
-			return nil, fmt.Errorf("fetch child #%d: %w", child, err)
+			return fmt.Errorf("fetch child #%d: %w", child, err)
 		}
 		if childIssue == nil {
-			return nil, fmt.Errorf("fetch child #%d: not found", child)
+			return fmt.Errorf("fetch child #%d: not found", child)
 		}
 		if r.IsSpecification(childIssue.Body) {
-			if _, err := r.expandOne(ctx, child, depth+1, fmt.Sprintf("#%d", num), userInputSet, seen, addUnique); err != nil {
-				return nil, err
+			if err := r.expandOne(ctx, child, depth+1, fmt.Sprintf("#%d", num), userInputSet, seen, addUnique); err != nil {
+				return err
 			}
 		}
 	}
-	return accepted, nil
+	return nil
 }
 
 // collectAcceptedChildren runs the existing collectCandidates flow (body refs →

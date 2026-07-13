@@ -223,10 +223,11 @@ func TestSpecificationResolver_HarvestedNestedSpecFlattens(t *testing.T) {
 	// RejectsNestedSpecification behaviour.
 	//
 	// To exercise the harvested-flatten path without the userInputSet
-	// carve-out muddying the expected list, the inner spec is parented to
-	// #2 (also a non-userInputSet spec, but separately exercised by a
-	// chain we don't expand). Simpler: link #10 to #1 via the existing
-	// Parent convention and confirm the flatten over the harvested chain.
+	// carve-out muddying the expected list, the inner Specification is
+	// parented to #2 (also a non-userInputSet Specification, but separately
+	// exercised by a chain we don't expand). Simpler: link #10 to #1 via
+	// the existing Parent convention and confirm the flatten over the
+	// harvested chain.
 	specBody := "## Problem Statement\n\nProblem.\n\n## Solution\n\nSolution.\n\n## User Stories\n\n1. Story.\n\n## Child Issues\n\n- #10 nested child\n"
 	innerBody := "## Parent\n\n#1\n\n## Problem Statement\n\nInner problem.\n\n## Solution\n\nInner solution.\n\n## User Stories\n\n1. Inner story.\n\n## Child Issues\n\n- #100 leaf\n"
 	leafBody := "## Parent\n\n#10\n\n## What\n\n"
@@ -664,7 +665,7 @@ func TestSpecificationResolver_LazyProbeSkipsWhenSectionShapePresent(t *testing.
 func TestSpecificationResolver_LazyProbeNoChildrenPassesThrough(t *testing.T) {
 	// Body has no PRD sections and no comments reference any issue.
 	// HasChildren returns false; input passes through unchanged.
-	parentBody := "## What\n\nJust a regular issue with no spec shape and no children.\n"
+	parentBody := "## What\n\nJust a regular issue with no Specification shape and no children.\n"
 	client := &fakeGitHubClient{
 		issues: map[int]*github.Issue{
 			42: {Number: 42, Title: "Regular issue", Body: parentBody},
@@ -711,7 +712,7 @@ func TestSpecificationResolver_FlattensNestedSpecAtTwoLevels(t *testing.T) {
 	if !equalInts(got, []int{2, 1, 20}) {
 		t.Fatalf("expected [2 1 20], got %v", got)
 	}
-	// Per-flatten line for the inner spec. Per destination-aligned beat #4,
+	// Per-flatten line for the inner Specification. Per destination-aligned beat #4,
 	// #1 (userInputSet) is accepted into #2's harvest unconditionally even
 	// though it doesn't carry `## Parent #2`, so #2's accepted-children set
 	// is [1, 20] (size 2). The per-flatten log mirrors that.
@@ -737,7 +738,8 @@ func TestSpecificationResolver_FlattensNestedSpecAtThreeLevels(t *testing.T) {
 			30: {Number: 30, Title: "Leaf", Body: leafBody},
 		},
 	}
-	r := NewSpecificationResolver(client, io.Discard)
+	var infoBuf bytes.Buffer
+	r := NewSpecificationResolver(client, &infoBuf)
 	got, err := r.Resolve(context.Background(), []int{1})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -747,6 +749,18 @@ func TestSpecificationResolver_FlattensNestedSpecAtThreeLevels(t *testing.T) {
 	// expansion; #30 is the leaf at depth 2.
 	if !equalInts(got, []int{2, 1, 3, 30}) {
 		t.Fatalf("expected [2 1 3 30], got %v", got)
+	}
+	// Multi-level log assertion: one top-level "expanded" line and two
+	// per-flatten lines, emitted in depth order.
+	gotLog := infoBuf.String()
+	for _, want := range []string{
+		"expanded specification #1 to 1 accepted children",
+		"flattened specification #2 inside #1 to 2 accepted children",
+		"flattened specification #3 inside #2 to 1 accepted children",
+	} {
+		if !strings.Contains(gotLog, want) {
+			t.Errorf("missing log line %q in: %q", want, gotLog)
+		}
 	}
 }
 
@@ -780,7 +794,7 @@ func TestSpecificationResolver_UserTypedNestedSpecCarveOutSurvivesFlatten(t *tes
 	}
 }
 
-func TestHasChildren_LazyProbeSkipsCanonicalBody(t *testing.T) {
+func TestSpecificationResolver_HasChildrenReturnsFalseWhenCommentsLackRef(t *testing.T) {
 	// HasChildren is body-shape-agnostic — it only checks comments.
 	// (The caller decides whether to use it based on IsSpecification first.)
 	client := &fakeGitHubClient{
