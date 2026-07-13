@@ -1,91 +1,89 @@
 package batch
 
 import (
-	"bytes"
 	"context"
-	"io"
+	"errors"
 	"strings"
 	"testing"
 )
 
-type warnBuffer struct {
-	bytes.Buffer
-}
+// errFakeWriteFail is the sentinel returned by a fakeBadgeControlFileWriter
+// when the synchronous tracking-file write fails. The post-batch hook
+// must observe this and return silently — the next batch retries
+// harmlessly through the standard post-batch trigger.
+var errFakeWriteFail = errors.New("fake badge control file write failure")
 
-func (w *warnBuffer) Write(p []byte) (int, error) {
-	w.Buffer.Write(p)
-	return len(p), nil
-}
-
+// TestMaybeSuggestBadge_TriggerDecisions pins the trigger-decision
+// table documented in docs/usage/badge.md: every failure path is
+// silent (no spawn, no warning, no operator-visible output) and the
+// only path that writes the tracking file is the
+// spawn-and-PR-created path.
 func TestMaybeSuggestBadge_TriggerDecisions(t *testing.T) {
 	t.Parallel()
 
 	testCases := []struct {
-		name             string
-		mergedPRs        []MergedSandmanPR
-		hasBadge         bool
-		mergedErr        error
-		badgeErr         error
-		runnerErr        error
-		runnerPRURL      string
-		wantSpawn        bool
-		wantWarnLine     bool
-		wantWarnContains string
-		wantSilent       bool
+		name           string
+		mergedPRs      []MergedSandmanPR
+		hasBadge       bool
+		mergedErr      error
+		badgeErr       error
+		runnerErr      error
+		runnerPRURL    string
+		wantSpawn      bool
+		wantWriteFile  bool
+		controlPresent bool
 	}{
 		{
-			name:       "no merged sandman PRs → silent",
-			mergedPRs:  nil,
-			hasBadge:   false,
-			wantSilent: true,
+			name:      "no merged sandman PRs",
+			mergedPRs: nil,
+			hasBadge:  false,
 		},
 		{
-			name:       "merged PRs + badge PR open → silent",
-			mergedPRs:  []MergedSandmanPR{{Number: 1, HeadRefName: "sandman/feat", Title: "Feat"}},
-			hasBadge:   true,
-			wantSilent: true,
+			name:      "merged PRs + badge PR open",
+			mergedPRs: []MergedSandmanPR{{Number: 1, HeadRefName: "sandman/feat", Title: "Feat"}},
+			hasBadge:  true,
 		},
 		{
-			name:       "merged PRs + badge PR closed → silent",
-			mergedPRs:  []MergedSandmanPR{{Number: 1, HeadRefName: "sandman/feat", Title: "Feat"}},
-			hasBadge:   true,
-			wantSilent: true,
+			name:      "merged PRs + badge PR closed",
+			mergedPRs: []MergedSandmanPR{{Number: 1, HeadRefName: "sandman/feat", Title: "Feat"}},
+			hasBadge:  true,
 		},
 		{
-			name:       "merged PRs + badge PR merged → silent",
-			mergedPRs:  []MergedSandmanPR{{Number: 1, HeadRefName: "sandman/feat", Title: "Feat"}},
-			hasBadge:   true,
-			wantSilent: true,
+			name:      "merged PRs + badge PR merged",
+			mergedPRs: []MergedSandmanPR{{Number: 1, HeadRefName: "sandman/feat", Title: "Feat"}},
+			hasBadge:  true,
 		},
 		{
-			name:        "merged PRs + no badge PR → spawn",
-			mergedPRs:   []MergedSandmanPR{{Number: 1, HeadRefName: "sandman/feat", Title: "Feat"}},
-			hasBadge:    false,
-			runnerPRURL: "https://github.com/owner/repo/pull/99",
-			wantSpawn:   true,
-			wantSilent:  false,
+			name:          "merged PRs + no badge PR",
+			mergedPRs:     []MergedSandmanPR{{Number: 1, HeadRefName: "sandman/feat", Title: "Feat"}},
+			hasBadge:      false,
+			runnerPRURL:   "https://github.com/owner/repo/pull/99",
+			wantSpawn:     true,
+			wantWriteFile: true,
 		},
 		{
-			name:             "merged PRs + no badge PR + runner fails → spawn then warn",
-			mergedPRs:        []MergedSandmanPR{{Number: 1, HeadRefName: "sandman/feat", Title: "Feat"}},
-			hasBadge:         false,
-			runnerErr:        context.DeadlineExceeded,
-			wantSpawn:        true,
-			wantWarnLine:     true,
-			wantWarnContains: "Badge PR suggestion skipped",
+			name:          "merged PRs + no badge PR + runner fails",
+			mergedPRs:     []MergedSandmanPR{{Number: 1, HeadRefName: "sandman/feat", Title: "Feat"}},
+			hasBadge:      false,
+			runnerErr:     context.DeadlineExceeded,
+			wantSpawn:     true,
+			wantWriteFile: false,
 		},
 		{
-			name:             "gh pr list merged check fails → warn-line",
-			mergedErr:        context.DeadlineExceeded,
-			wantWarnLine:     true,
-			wantWarnContains: "Badge PR suggestion skipped",
+			name:      "gh pr list merged check fails",
+			mergedErr: context.DeadlineExceeded,
 		},
 		{
-			name:             "gh pr list badge check fails → warn-line",
-			mergedPRs:        []MergedSandmanPR{{Number: 1, HeadRefName: "sandman/feat", Title: "Feat"}},
-			badgeErr:         context.DeadlineExceeded,
-			wantWarnLine:     true,
-			wantWarnContains: "Badge PR suggestion skipped",
+			name:      "gh pr list badge check fails",
+			mergedPRs: []MergedSandmanPR{{Number: 1, HeadRefName: "sandman/feat", Title: "Feat"}},
+			badgeErr:  context.DeadlineExceeded,
+		},
+		{
+			name:           "control file present",
+			mergedPRs:      []MergedSandmanPR{{Number: 1, HeadRefName: "sandman/feat", Title: "Feat"}},
+			hasBadge:       false,
+			runnerPRURL:    "https://github.com/owner/repo/pull/99",
+			controlPresent: true,
 		},
 	}
 
@@ -104,51 +102,53 @@ func TestMaybeSuggestBadge_TriggerDecisions(t *testing.T) {
 				prURL: tc.runnerPRURL,
 				err:   tc.runnerErr,
 			}
-			var warnBuf warnBuffer
-			h := newTestBadgeHooker(fakeGh, fakeRunner, &warnBuf)
+			controlReader := &fakeBadgeControlFileReader{present: tc.controlPresent}
+			controlWriter := &fakeBadgeControlFileWriter{}
+			h := newDefaultBadgeHooker(fakeGh, controlReader, controlWriter, fakeRunner)
 
 			results := []AgentRunResult{{Status: "success"}}
 			h.MaybeSuggestBadge(context.Background(), results)
 
-			warnContent := warnBuf.String()
-
-			if tc.wantSilent {
-				if fakeRunner.capturedPrompt != "" {
-					t.Errorf("expected silent (no spawn), got prompt=%q", fakeRunner.capturedPrompt)
-				}
-				if warnContent != "" {
-					t.Errorf("expected silent (no warn), got warn=%q", warnContent)
-				}
-				return
+			if tc.wantSpawn && fakeRunner.capturedPrompt == "" {
+				t.Errorf("expected spawn, got no prompt")
 			}
-
-			if tc.wantWarnLine && tc.wantSpawn {
-				if !strings.Contains(warnContent, tc.wantWarnContains) {
-					t.Errorf("expected warn line containing %q, got warn=%q", tc.wantWarnContains, warnContent)
-				}
-				if fakeRunner.capturedPrompt == "" {
-					t.Errorf("expected spawn, got no prompt")
-				}
-				return
+			if !tc.wantSpawn && fakeRunner.capturedPrompt != "" {
+				t.Errorf("expected no spawn, got prompt=%q", fakeRunner.capturedPrompt)
 			}
-
-			if tc.wantWarnLine {
-				if !strings.Contains(warnContent, tc.wantWarnContains) {
-					t.Errorf("expected warn line containing %q, got warn=%q", tc.wantWarnContains, warnContent)
-				}
-				if fakeRunner.capturedPrompt != "" {
-					t.Errorf("expected no spawn after warn, got prompt=%q", fakeRunner.capturedPrompt)
-				}
-				return
+			if tc.wantWriteFile && controlWriter.calls != 1 {
+				t.Errorf("expected exactly one tracking-file write, got %d", controlWriter.calls)
 			}
-
-			if tc.wantSpawn {
-				if fakeRunner.capturedPrompt == "" {
-					t.Errorf("expected spawn, got no prompt")
-				}
+			if !tc.wantWriteFile && controlWriter.calls != 0 {
+				t.Errorf("expected no tracking-file write, got %d", controlWriter.calls)
 			}
 		})
 	}
+}
+
+// TestMaybeSuggestBadge_ControlFileWriteError_DoesNotCrash pins
+// invariant #4: if the sidecar cannot persist the tracking file
+// after a successful run, the hook returns silently and the next
+// batch retries harmlessly (the API scan will be triggered again,
+// not the spawn — the marker comment scan will short-circuit that).
+func TestMaybeSuggestBadge_ControlFileWriteError_DoesNotCrash(t *testing.T) {
+	fakeGh := &fakePRLister{
+		mergedPRs: []MergedSandmanPR{{Number: 1, HeadRefName: "sandman/feat", Title: "Feat"}},
+		hasBadge:  false,
+	}
+	fakeRunner := &fakeSandmanRunner{prURL: "https://github.com/owner/repo/pull/99"}
+	controlWriter := &fakeBadgeControlFileWriter{err: errFakeWriteFail}
+	h := newDefaultBadgeHooker(fakeGh, &fakeBadgeControlFileReader{present: false}, controlWriter, fakeRunner)
+
+	results := []AgentRunResult{{Status: "success"}}
+	h.MaybeSuggestBadge(context.Background(), results)
+
+	if fakeRunner.capturedPrompt == "" {
+		t.Errorf("expected spawn to be attempted, got no prompt")
+	}
+	if controlWriter.calls != 1 {
+		t.Errorf("expected exactly one Write attempt despite error, got %d", controlWriter.calls)
+	}
+	// Hook must not panic or short-circuit subsequent batches.
 }
 
 func TestMaybeSuggestBadge_MultipleMergedPRsPassedToPrompt(t *testing.T) {
@@ -160,7 +160,8 @@ func TestMaybeSuggestBadge_MultipleMergedPRsPassedToPrompt(t *testing.T) {
 		hasBadge: false,
 	}
 	fakeRunner := &fakeSandmanRunner{prURL: "https://github.com/owner/repo/pull/5"}
-	h := newTestBadgeHooker(fakeGh, fakeRunner, io.Discard)
+	controlWriter := &fakeBadgeControlFileWriter{}
+	h := newDefaultBadgeHooker(fakeGh, &fakeBadgeControlFileReader{present: false}, controlWriter, fakeRunner)
 
 	results := []AgentRunResult{{Status: "success"}}
 	h.MaybeSuggestBadge(context.Background(), results)
@@ -170,5 +171,8 @@ func TestMaybeSuggestBadge_MultipleMergedPRsPassedToPrompt(t *testing.T) {
 	}
 	if !strings.Contains(fakeRunner.capturedPrompt, "Fix logout (#20)") {
 		t.Errorf("expected prompt to contain 'Fix logout (#20)', got: %s", fakeRunner.capturedPrompt)
+	}
+	if controlWriter.calls != 1 {
+		t.Errorf("expected exactly one tracking-file write after PR creation, got %d", controlWriter.calls)
 	}
 }

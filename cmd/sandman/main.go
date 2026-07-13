@@ -66,7 +66,7 @@ func main() {
 	eventLog := &events.JSONLLogger{Path: ".sandman/events.jsonl"}
 
 	deps := cmd.Dependencies{
-		BatchRunner:   batch.NewOrchestrator(ghClient, renderer, cfgStore, eventLog, batch.WithBadgeHooker(batch.NewBadgeHooker(os.Stderr))),
+		BatchRunner:   batch.NewOrchestrator(ghClient, renderer, cfgStore, eventLog, batch.WithBadgeHooker(batch.NewBadgeHooker())),
 		ConfigStore:   cfgStore,
 		EventLog:      eventLog,
 		GitHubClient:  ghClient,
