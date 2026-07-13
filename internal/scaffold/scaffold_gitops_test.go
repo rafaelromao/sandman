@@ -13,11 +13,11 @@ import (
 // that Scaffolder routes Untrack through the injected seam rather than the
 // default implementation.
 type fakeGitOps struct {
-	isRepo        bool
-	untrackCalls  int
-	lastUntrackRoot  string
-	lastUntrackPath  string
-	untrackErr    error
+	isRepo          bool
+	untrackCalls    int
+	lastUntrackRoot string
+	lastUntrackPath string
+	untrackErr      error
 }
 
 func (f *fakeGitOps) IsRepo(repoRoot string) bool { return f.isRepo }
@@ -32,10 +32,10 @@ func (f *fakeGitOps) Untrack(repoRoot, path string) error {
 // fakeGitignoreRuleWriter records calls without touching disk and lets tests
 // assert that Scaffolder also routes gitignore edits through its seam.
 type fakeGitignoreRuleWriter struct {
-	ensureCalls int
+	ensureCalls  int
 	lastRepoRoot string
-	lastRule string
-	ensureErr error
+	lastRule     string
+	ensureErr    error
 }
 
 func (f *fakeGitignoreRuleWriter) EnsureRule(repoRoot, rule string) error {
@@ -139,7 +139,7 @@ func TestScaffold_InstallsPreCommitHookThatBlocksSandmanPaths(t *testing.T) {
 // stubPrompter accepts any question with positive confirm / first option.
 type stubPrompter struct{}
 
-func (stubPrompter) Confirm(string) (bool, error)             { return true, nil }
+func (stubPrompter) Confirm(string) (bool, error)            { return true, nil }
 func (stubPrompter) Select(string, []string) (string, error) { return "", nil }
 
 type discardWriter struct{}
