@@ -68,52 +68,12 @@ sandbox: podman
 git:
   base_branch: main
 
-# Sandman installs the built-in agent in scaffolded Dockerfiles, installs [`codeindex`](https://github.com/rafaelromao/codeindex) for fast symbol lookup, and mounts the shared skills directory.
+# Sandman installs the built-in agent in scaffolded Dockerfiles and mounts the shared skills directory.
 ```
 
 ## Built-in preset
 
 Sandman has one built-in preset: `opencode`. It is installed into scaffolded Dockerfiles and is the default `agent`.
-
-Sandman also installs [`codeindex`](https://github.com/rafaelromao/codeindex) in scaffolded container images. Sandman runs agents against real repositories, and `codeindex` gives the agent a fast way to find symbols, trace dependencies, and inspect impact without reading large source trees line by line.
-
-To install `codeindex` on the host machine for local use:
-
-```bash
-git clone https://github.com/rafaelromao/codeindex /tmp/codeindex && pip3 install -e /tmp/codeindex --break-system-packages
-```
-
-After installing, generate the index files from the project root:
-
-```bash
-codeindex analyze . && codeindex symbols .
-```
-
-Re-run this whenever the codebase changes significantly to keep the index fresh.
-
-### Pre-commit hook
-
-`codeindex install-hook` installs a pre-commit check that warns when staged files exceed the blast-score threshold.
-
-Sandman patches that hook in two ways:
-
-- It resolves the main repo root through `git rev-parse --git-common-dir`, so commits from `.sandman/worktrees/` still find the shared indexes.
-- It bootstraps missing `codeindex.json`, `symbolindex.json`, and `.codeindex/index.db` before the first warning check.
-
-The Sandman-specific additions are:
-
-```bash
-REPO_ROOT="$(cd "$(git rev-parse --git-common-dir)/.." && pwd)"
-INDEX="$REPO_ROOT/codeindex.json"
-DB="$REPO_ROOT/.codeindex/index.db"
-
-if [ ! -f "$INDEX" ] || [ ! -f "$DB" ]; then
-  codeindex analyze "$REPO_ROOT" >/dev/null 2>&1
-  codeindex symbols "$REPO_ROOT" >/dev/null 2>&1
-fi
-```
-
-That patch is required because Sandman commits from git worktrees, and a fresh checkout may not yet have generated the codeindex artifacts the hook depends on.
 
 When you use the `opencode` preset, install the `opencode-shell-strategy` plugin first. Sandman runs OpenCode without a TTY/PTY, so this plugin prevents interactive shell commands from hanging during runs. OpenCode subagents inherit the same instructions.
 
