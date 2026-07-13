@@ -249,7 +249,8 @@ func TestSpecificationResolver_CarveOutNestedSpecFlattens(t *testing.T) {
 	// #10 accepts #1 (carve-out) + #100 (verified leaf). Final:
 	// [10, 1, 100]. Asserts the recursive flatten fired and merged
 	// correctly; the previous behaviour (hard-error "nested specification
-	// detected: #10") is gone.
+	// detected: #10") is gone — see T4 / ADR-0025 §4 destination-aligned
+	// recursive-flatten invariant.
 	if !equalInts(got, []int{10, 1, 100}) {
 		t.Fatalf("expected [10 1 100], got %v", got)
 	}
