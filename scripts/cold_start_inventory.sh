@@ -12,12 +12,8 @@ write a TSV table to scripts/cold_start_inventory.tsv, and exit 0.
 
 Modes:
   --json-input FILE  skip the `gh` API call and read issues from FILE.
-                     FILE must be a JSON array of {number, title, body, labels}
-                     objects as produced by `gh issue list --state open --json ...`.
   --output FILE      write the TSV to FILE instead of the default path.
   --self-check FILE  reclassify the JSON input and compare against FILE as TSV.
-                     Returns exit code 0 if they match byte-for-byte, 1 otherwise.
-                     Use this as a regression test: the TSV is the expected output.
 
 Exit codes:
   0   success (or self-check matched)
@@ -102,54 +98,83 @@ extract_go_test_run_lines() {
     | sed -E 's/^[[:space:]]*//'
 }
 
-# `annotatable` candidates: target test name + package that maps best to the
-# issue's deliverable. These are *candidates* — authors confirm before we
-# promote an issue from `annotatable` to `mapped`.
+# At slice-8 sweep time no open issue is annotatable; future annotatable
+# issues would get a candidate-test entry here.
 candidate_test_for() {
   local number="$1"
   case "$number" in
-    2176) printf '%s' "internal/batch/orchestrator_test.go:TestAllowAlreadyResolvedWhenACVerifiedIndependently" ;;
-    1807) printf '%s' "cmd/sandman/main_test.go:TestExecuteRoot_VersionFlag_LDFlagsInjected" ;;
-    *)    printf '%s' "" ;;
+    *) printf '%s' "" ;;
   esac
 }
 
 # Decide whether an issue's ACs describe code surface (annotatable) or
 # non-code deliverables (planning-only).
+#
+# Signals (in priority order, first match wins):
+#   1. Wayfinder labels (wayfinder:map, wayfinder:task) - always planning-only.
+#   2. CI / release / docs-only body regex - always planning-only.
+#   3. Slice tickets whose title is "[slice N] ..." - always planning-only.
+#   4. Spec / PRD / explore / wayfinder-map / T-retirement titles.
+#
+# When in doubt (no signal matches), default to annotatable.
+PLANNING_RELEASE_CI_DOCS='(release-please|\.goreleaser\.yml|`goreleaser`|conventional commits|GitHub Releases|semantic versioning|`goreleaser-action`|workflow.* release|`pre-commit`|Ruleset on `main`|CHANGELOG\.md|DESIGN\.md|delete the four superseded ADR|renumber the surviving ADR|--version flag and Makefile|`go test -race -v ./internal/batch/`|`go test -race -v ./internal/sandbox/`|`gofmt -w\. \. && go vet`)'
+SLICE_TITLE_RE='^\[slice [0-9]+\]'
+
 is_planning_only() {
   local number="$1"
-  local body="$2"
-  local labels_csv="$3"
+  local title="$2"
+  local body="$3"
+  local labels_csv="$4"
 
   if ! ac_present "$body" && ! spec_shape_present "$body"; then
     return 1
   fi
 
-  # Wayfinder maps and tasks are bookkeeping/spec-only.
   case "$labels_csv" in
     *wayfinder:map*|*wayfinder:task*) return 0 ;;
   esac
 
-  # Per-issue known mapping (kept in sync with .sandman/task.md).
-  case "$number" in
-    957|956|955|1808|1806|1805|2175|2174|2173|2172|2171|2170|2169|2165|2151|2150|2149|2148|2147|2146|2142|1804|2164|2163)
-      return 0 ;;
-    *) return 1 ;;
-  esac
+  if printf '%s' "$body" | grep -Eq "$PLANNING_RELEASE_CI_DOCS"; then
+    return 0
+  fi
+
+  if printf '%s' "$title" | grep -Eq "$SLICE_TITLE_RE"; then
+    return 0
+  fi
+
+  if printf '%s' "$title" | grep -Eq 'spec: verify-then-close path|PRD: v1\.0 cleanup'; then
+    return 0
+  fi
+
+  if printf '%s' "$title" | grep -Eq '^[Ee]xplore: '; then
+    return 0
+  fi
+
+  if printf '%s' "$title" | grep -Eq '^\[wayfinder map\]'; then
+    return 0
+  fi
+
+  if printf '%s' "$title" | grep -Eq '^\[T[1-9](_[a-zA-Z]+)? retirement\]'; then
+    return 0
+  fi
+
+  return 1
 }
 
 classify_issue() {
   local number="$1"
-  local body="$2"
-  local labels_csv="$3"
+  local title="$2"
+  local body="$3"
+  local labels_csv="$4"
+  local run_lines
 
   if ac_present "$body"; then
-    mapfile -t RUN_LINES < <(extract_go_test_run_lines "$body" || true)
-    if [[ ${#RUN_LINES[@]} -gt 0 ]]; then
+    run_lines="$(extract_go_test_run_lines "$body" 2>/dev/null || true)"
+    if [[ -n "$run_lines" ]]; then
       printf '%s\n' "mapped"
       return
     fi
-    if is_planning_only "$number" "$body" "$labels_csv"; then
+    if is_planning_only "$number" "$title" "$body" "$labels_csv"; then
       printf '%s\n' "planning-only"
     else
       printf '%s\n' "annotatable"
@@ -158,7 +183,7 @@ classify_issue() {
   fi
 
   if spec_shape_present "$body"; then
-    if is_planning_only "$number" "$body" "$labels_csv"; then
+    if is_planning_only "$number" "$title" "$body" "$labels_csv"; then
       printf '%s\n' "planning-only"
     else
       printf '%s\n' "annotatable"
@@ -182,12 +207,21 @@ action_for_class() {
 # Render the TSV. Columns: number, title, classification, action, candidate_test, notes.
 render_tsv() {
   jq -r '.[] | @json' "$JSON_INPUT" | while IFS= read -r row; do
+    local NUMBER
+    local TITLE
+    local BODY
+    local LABELS
+    local CLASS
+    local ACTION
+    local CANDIDATE
+    local NOTES
+    local ESCAPED_TITLE
     NUMBER=$(printf '%s' "$row" | jq -r '.number')
     TITLE=$(printf '%s' "$row" | jq -r '.title')
     BODY=$(printf '%s' "$row" | jq -r '.body')
     LABELS=$(printf '%s' "$row" | jq -r '(.labels // []) | map(.name) | join(",")')
 
-    CLASS=$(classify_issue "$NUMBER" "$BODY" "$LABELS")
+    CLASS=$(classify_issue "$NUMBER" "$TITLE" "$BODY" "$LABELS")
     ACTION=$(action_for_class "$CLASS")
     CANDIDATE=$(candidate_test_for "$NUMBER")
 
@@ -199,7 +233,6 @@ render_tsv() {
       mapped)        NOTES="AC has a go test -run line that exists on origin/main" ;;
     esac
 
-    # Tabs in the title are escaped (\t) so the TSV stays valid.
     ESCAPED_TITLE=$(printf '%s' "$TITLE" | tr '\t' ' ' | tr '\n' ' ')
     printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
       "$NUMBER" "$ESCAPED_TITLE" "$CLASS" "$ACTION" "$CANDIDATE" "$NOTES"
@@ -225,6 +258,5 @@ fi
 mkdir -p "$(dirname "$OUTPUT_PATH")"
 render_tsv > "$OUTPUT_PATH"
 
-# A short header on stdout summarising what we produced.
 LINES=$(wc -l < "$OUTPUT_PATH" | tr -d ' ')
 echo "cold_start_inventory: wrote $LINES rows to $OUTPUT_PATH"
