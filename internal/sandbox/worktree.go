@@ -111,10 +111,20 @@ func (s *WorktreeSandbox) Start() error {
 					}
 				}
 			}
-			pruneCmd := exec.Command("git", "worktree", "prune")
-			pruneCmd.Dir = s.repoPath
-			if out, err := pruneCmd.CombinedOutput(); err != nil {
-				return fmt.Errorf("git worktree prune: %w\n%s", err, out)
+			// Issue #2187: scoped reattach for the canonical `s.workDir`
+			// only. We drop the registration for `<ownWorkdir>` (the
+			// canonical path), removing the worktree directory, then
+			// re-register via `git worktree add`. No global
+			// `git worktree prune` (which would also drop sibling
+			// registrations owned by parallel sandbox runs sharing
+			// the same `.git`).
+			if err := s.removePrunableWorktreeRegistration(); err != nil {
+				return fmt.Errorf("drop canonical worktree registration: %w", err)
+			}
+			if s.workDirExists() {
+				if err := os.RemoveAll(s.workDir); err != nil {
+					return fmt.Errorf("remove canonical worktree dir %q: %w", s.workDir, err)
+				}
 			}
 			if s.workDirExists() {
 				addCmd := exec.Command("git", "worktree", "add", "-f", s.workDir, s.branch)
@@ -155,16 +165,25 @@ overrideCleanup:
 			}
 		}
 
-		// Issue #2140: also clear any foreign live worktree at a different
-		// path that currently holds s.branch. Without this, `git branch -D`
-		// at line 174 below fails with "checked out at '<path>'" and the
-		// fallback reconcileStrandedBranch cannot free the branch because
-		// it force-checks out sourceBranch in repoPath, not in the foreign
-		// worktree.
+		// Issue #2187: also release any foreign live worktree at a different
+		// path that currently holds s.branch so the upcoming `git branch -D`
+		// can succeed. The release is `git -C <path> checkout --detach` only
+		// — the foreign worktree's directory, `.git` gitlink, and
+		// `.git/worktrees/<dir>` registration are left intact. Parallel
+		// sandbox runs share the same `.git` bind mount, so destroying
+		// sibling worktree registrations here would leave them with a
+		// broken `.git` pointer.
 		if s.strandedReconcile {
 			if info, foreign := ForeignStrandedWorktree(s.repoPath, s.worktreeBase, s.branch); foreign {
-				if err := detachForeignWorktree(info.Path, s.branch); err != nil {
-					s.warn("issue #2140: detach foreign worktree at %q: %v\n", info.Path, err)
+				// Only release FOREIGN worktrees (a worktree whose
+				// path is not the main repo). The main repo holding
+				// the branch is recovered via reconcileStrandedBranch
+				// below; detaching the main repo's HEAD here would
+				// leave it detached with nothing re-attaching it.
+				if !samePath(info.Path, s.repoPath) {
+					if err := releaseBranchInWorktree(info.Path); err != nil {
+						s.warn("issue #2187: release foreign worktree at %q: %v\n", info.Path, err)
+					}
 				}
 			}
 		}
@@ -176,41 +195,34 @@ overrideCleanup:
 				return fmt.Errorf("remove stale worktree: %w\n%s", err, out)
 			}
 		} else if s.workDirExists() {
+			// Issue #2187: scoped reattach for the canonical
+			// `s.workDir`. Drop the registration BEFORE clearing
+			// the directory so subsequent `git branch -D` does
+			// not see a "checked out at" pointer. No global
+			// `git worktree prune`.
+			if err := s.removePrunableWorktreeRegistration(); err != nil {
+				return fmt.Errorf("drop canonical worktree registration: %w", err)
+			}
 			if err := os.RemoveAll(s.workDir); err != nil {
 				return fmt.Errorf("clean forced worktree dir: %w", err)
 			}
 		}
-		pruneCmd := exec.Command("git", "worktree", "prune")
-		pruneCmd.Dir = s.repoPath
-		if out, err := pruneCmd.CombinedOutput(); err != nil {
-			return fmt.Errorf("prune stale worktree registration: %w\n%s", err, out)
-		}
+		// Issue #2187: no global `git worktree prune`. The canonical
+		// `s.workDir` may have a prunable registration (broken `.git`
+		// gitlink), but recovery for that case is handled earlier via the
+		// ReclaimableWorktree path or by the `git worktree remove --force
+		// <s.workDir>` above. We deliberately do not prune sibling
+		// registrations.
 		if BranchExists(s.repoPath, s.branch) {
 			delCmd := exec.Command("git", "branch", "-D", s.branch)
 			delCmd.Dir = s.repoPath
 			if out, err := delCmd.CombinedOutput(); err != nil {
 				if s.strandedReconcile && isBranchCheckedOutError(out) {
-					// Issue #2140: parse the offending path from the error
-					// message and attempt to detach the foreign worktree
-					// directly before falling back to the main-repo
-					// force-checkout strategy. The fallback below only
-					// recovers the case where the branch is checked out
-					// in repoPath itself; foreign worktrees require the
-					// explicit detach.
-					if foreignPath, ok := parseCheckedOutPath(out); ok && foreignPath != "" {
-						if detachErr := detachForeignWorktree(foreignPath, s.branch); detachErr == nil {
-							retryCmd := exec.Command("git", "branch", "-D", s.branch)
-							retryCmd.Dir = s.repoPath
-							if retryOut, retryErr := retryCmd.CombinedOutput(); retryErr == nil {
-								goto afterBranchDelete
-							} else {
-								out = retryOut
-								err = retryErr
-							}
-						} else {
-							s.warn("issue #2140: detach foreign worktree at %q failed: %v\n", foreignPath, detachErr)
-						}
-					}
+					// Fall back to the main-repo force-checkout strategy.
+					// If the foreign worktree was correctly released above,
+					// this branch is unreachable for our expected workflow
+					// but still covers the case where the branch is checked
+					// out in repoPath itself.
 					if recErr := s.reconcileStrandedBranch(); recErr != nil {
 						return fmt.Errorf("delete stale branch %q: %w\n%s", s.branch, recErr, out)
 					}
@@ -220,7 +232,6 @@ overrideCleanup:
 			}
 		}
 	}
-afterBranchDelete:
 	if s.workDirExists() {
 		// Directory exists on disk but is not a registered git worktree.
 		// This can happen when a previous run crashed after the directory
@@ -249,10 +260,16 @@ afterBranchDelete:
 			if out, err := delCmd.CombinedOutput(); err != nil {
 				return fmt.Errorf(`delete stale branch %q: %w\n%s`, s.branch, err, out)
 			}
-			pruneCmd := exec.Command("git", "worktree", "prune")
-			pruneCmd.Dir = s.repoPath
-			if out, err := pruneCmd.CombinedOutput(); err != nil {
-				return fmt.Errorf("git worktree prune: %w\n%s", err, out)
+			// Issue #2187: scoped cleanup of the canonical
+			// `s.workDir` registration after branch delete. No
+			// global `git worktree prune`.
+			if err := s.removePrunableWorktreeRegistration(); err != nil {
+				return fmt.Errorf("drop canonical worktree registration: %w", err)
+			}
+			if s.workDirExists() {
+				if err := os.RemoveAll(s.workDir); err != nil {
+					return fmt.Errorf("remove canonical worktree dir %q: %w", s.workDir, err)
+				}
 			}
 		} else {
 			return fmt.Errorf(`branch %q already exists — delete it with "git branch -D %s" and re-run`, s.branch, s.branch)
@@ -611,42 +628,94 @@ func parseCheckedOutPath(out []byte) (string, bool) {
 	return "", false
 }
 
-// detachForeignWorktree releases `branch` from a live worktree at `path` so
-// the branch becomes deletable from the main repo. Both `git worktree remove
-// --force` (the preferred, simpler path) and the fallback `git -C <path>
-// checkout --detach` are attempted in order; the first that succeeds wins.
+// removePrunableWorktreeRegistration drops the
+// `.git/worktrees/<basename(s.workDir)>` registration directory that
+// corresponds to the canonical worktree, without touching any other
+// worktree registration. It is the scoped equivalent of
+// `git worktree prune` for a single path.
 //
-// Returns nil on success or a non-nil error that wraps the underlying git
-// output from the last attempted strategy. The caller is expected to retry
-// `git branch -D <branch>` afterwards. Idempotent: a no-op when the worktree
-// at `path` no longer exists.
+// Use this in recovery paths to drop a stale registration (the worktree
+// directory was removed out-of-band, or the `.git` gitlink was rewritten)
+// without running a global prune — that would also drop registrations
+// owned by sibling sandbox runs sharing the same `.git`.
 //
-// Issue #2140.
-func detachForeignWorktree(path, branch string) error {
+// Returns nil when there is no registration to remove.
+//
+// Issue #2187.
+func (s *WorktreeSandbox) removePrunableWorktreeRegistration() error {
+	name := filepath.Base(s.workDir)
+	candidate := filepath.Join(s.repoPath, ".git", "worktrees", name)
+	info, err := os.Stat(candidate)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("stat %q: %w", candidate, err)
+	}
+	if !info.IsDir() {
+		return nil
+	}
+	if err := os.RemoveAll(candidate); err != nil {
+		return fmt.Errorf("remove registration %q: %w", candidate, err)
+	}
+	return nil
+}
+
+// samePath reports whether two paths refer to the same directory
+// after symlink resolution. Used to exclude the main repo from being
+// treated as a "foreign stranded worktree" by recovery helpers.
+func samePath(a, b string) bool {
+	if a == b {
+		return true
+	}
+	ar, err := filepath.EvalSymlinks(a)
+	if err != nil {
+		ar = a
+	}
+	br, err := filepath.EvalSymlinks(b)
+	if err != nil {
+		br = b
+	}
+	if ar == br {
+		return true
+	}
+	if info1, err1 := os.Stat(ar); err1 == nil {
+		if info2, err2 := os.Stat(br); err2 == nil {
+			if os.SameFile(info1, info2) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// releaseBranchInWorktree detaches HEAD in the worktree at `path` so the
+// branch it currently holds is no longer checked out there. After this
+// runs, `git branch -D` from the main repo succeeds even though the
+// worktree's directory, `.git` gitlink, and `.git/worktrees/<dir>`
+// registration are all left intact. This is the recovery primitive used
+// to free a branch that is held by a foreign worktree (e.g. a sibling
+// sandbox run's worktree) without destroying that worktree.
+//
+// Idempotent: a no-op when the path does not exist (returns nil),
+// because the caller can't always tell whether a foreign worktree
+// directory is still around between detection and the recovery step.
+// Issue #2187: scoped to the offending worktree only; never runs
+// `git worktree remove` or `git worktree prune` against any path.
+func releaseBranchInWorktree(path string) error {
 	if path == "" {
-		return fmt.Errorf("detach foreign worktree: empty path")
+		return fmt.Errorf("release branch in worktree: empty path")
 	}
 	if _, err := os.Stat(path); err != nil {
 		if os.IsNotExist(err) {
 			return nil
 		}
-		return fmt.Errorf("stat foreign worktree %q: %w", path, err)
-	}
-	removeCmd := exec.Command("git", "worktree", "remove", "--force", path)
-	removeCmd.Dir = filepath.Dir(path)
-	if out, err := removeCmd.CombinedOutput(); err == nil {
-		return nil
-	} else if !isBranchCheckedOutError(out) && !strings.Contains(string(out), "contains a repository") {
-		// Hard failure on remove — fall through to detach only when the
-		// error pattern suggests the worktree cannot be removed cleanly
-		// (e.g. untracked files would be lost) but the branch itself
-		// can still be freed via `checkout --detach`.
-		return fmt.Errorf("git worktree remove --force %q: %w\n%s", path, err, out)
+		return fmt.Errorf("stat worktree %q: %w", path, err)
 	}
 	detachCmd := exec.Command("git", "checkout", "--detach")
 	detachCmd.Dir = path
 	if out, err := detachCmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("detach HEAD in foreign worktree %q: %w\n%s", path, err, out)
+		return fmt.Errorf("detach HEAD in worktree %q: %w\n%s", path, err, out)
 	}
 	return nil
 }
