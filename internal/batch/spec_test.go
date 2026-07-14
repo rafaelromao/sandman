@@ -4,9 +4,12 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/rafaelromao/sandman/internal/github"
 )
@@ -941,5 +944,90 @@ func TestSpecificationResolver_ListSubIssuesFailureLogsAndContinues(t *testing.T
 	}
 	if !strings.Contains(infoBuf.String(), "could not list sub-issues for specification #1") {
 		t.Errorf("expected warning log line for sub-issue fetch failure, got: %q", infoBuf.String())
+	}
+}
+
+type specificationConcurrencyClient struct {
+	*fakeGitHubClient
+	mu     sync.Mutex
+	active int
+	max    int
+	calls  map[int]int
+	delay  time.Duration
+}
+
+func (c *specificationConcurrencyClient) FetchIssue(ctx context.Context, number int) (*github.Issue, error) {
+	c.mu.Lock()
+	c.calls[number]++
+	c.active++
+	if c.active > c.max {
+		c.max = c.active
+	}
+	c.mu.Unlock()
+	defer func() {
+		c.mu.Lock()
+		c.active--
+		c.mu.Unlock()
+	}()
+	select {
+	case <-time.After(c.delay):
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	return c.fakeGitHubClient.FetchIssue(ctx, number)
+}
+
+func TestSpecificationResolver_VerifiesChildrenBoundedAndInOrder(t *testing.T) {
+	const childCount = 32
+	issues := map[int]*github.Issue{
+		1: {Number: 1, Title: "Specification", Body: "## Problem Statement\n\nP\n\n## Solution\n\nS\n\n## User Stories\n\nU\n\n"},
+	}
+	var body strings.Builder
+	for n := 0; n < childCount; n++ {
+		number := 100 + n
+		fmt.Fprintf(&body, "- #%d\n", number)
+		issues[number] = &github.Issue{Number: number, Title: fmt.Sprintf("Child %d", number), Body: "## Parent\n\n#1\n"}
+	}
+	issues[1].Body += "## Child Issues\n\n" + body.String()
+	client := &specificationConcurrencyClient{
+		fakeGitHubClient: &fakeGitHubClient{issues: issues},
+		calls:            make(map[int]int),
+		delay:            time.Millisecond,
+	}
+	resolver := NewSpecificationResolver(client, io.Discard)
+	resolver.maxConcurrentFetches = 4
+
+	got, err := resolver.Resolve(context.Background(), []int{1})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := make([]int, childCount)
+	for n := range want {
+		want[n] = 100 + n
+	}
+	if !equalInts(got, want) {
+		t.Fatalf("expected children in discovery order, got %v", got)
+	}
+	if client.max > 4 {
+		t.Fatalf("expected at most 4 concurrent fetches, got %d", client.max)
+	}
+	for number, calls := range client.calls {
+		if number != 1 && calls != 1 {
+			t.Fatalf("expected one underlying fetch for child %d, got %d", number, calls)
+		}
+	}
+}
+
+func TestSpecificationResolver_ReturnsCancellationDuringVerification(t *testing.T) {
+	client := &fakeGitHubClient{issues: map[int]*github.Issue{
+		1:  {Number: 1, Body: "## Problem Statement\n\nP\n\n## Solution\n\nS\n\n## User Stories\n\nU\n\n- #10\n"},
+		10: {Number: 10, Body: "## Parent\n\n#1\n"},
+	}}
+	resolver := NewSpecificationResolver(client, io.Discard)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := resolver.Resolve(ctx, []int{1})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context cancellation, got %v", err)
 	}
 }
