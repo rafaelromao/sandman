@@ -166,7 +166,69 @@ func gitTopLevel(repoPath string) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
+type eventLogIndex struct {
+	priorRunByIssue map[int]bool
+	branchesByIssue map[int][]string
+}
+
+func readEventLogIndex(eventLog events.EventLog) eventLogIndex {
+	index := eventLogIndex{
+		priorRunByIssue: map[int]bool{},
+		branchesByIssue: map[int][]string{},
+	}
+	if eventLog == nil {
+		return index
+	}
+	logs, err := eventLog.Read()
+	if err != nil {
+		return index
+	}
+	seenBranches := make(map[int]map[string]struct{})
+	for _, e := range logs {
+		if e.Issue == 0 {
+			continue
+		}
+		if e.Type == "run.started" || e.Type == "run.continued" {
+			index.priorRunByIssue[e.Issue] = true
+		}
+		branch, ok := e.Payload["branch"].(string)
+		if !ok || branch == "" {
+			continue
+		}
+		if seenBranches[e.Issue] == nil {
+			seenBranches[e.Issue] = make(map[string]struct{})
+		}
+		if _, seen := seenBranches[e.Issue][branch]; seen {
+			continue
+		}
+		seenBranches[e.Issue][branch] = struct{}{}
+		index.branchesByIssue[e.Issue] = append(index.branchesByIssue[e.Issue], branch)
+	}
+	return index
+}
+
+func collectIssueBranchesFromIndex(issueNumber int, title string, recordedBranch string, index eventLogIndex) []string {
+	seen := map[string]bool{}
+	branches := make([]string, 0, len(index.branchesByIssue[issueNumber])+2)
+	add := func(branch string) {
+		if branch != "" && !seen[branch] {
+			seen[branch] = true
+			branches = append(branches, branch)
+		}
+	}
+	for _, branch := range index.branchesByIssue[issueNumber] {
+		add(branch)
+	}
+	add(recordedBranch)
+	add(BranchName(issueNumber, title))
+	return branches
+}
+
 func (o *Orchestrator) validateBatchBranches(ctx context.Context, req Request) error {
+	return o.validateBatchBranchesWithIndex(ctx, req, readEventLogIndex(o.eventLog))
+}
+
+func (o *Orchestrator) validateBatchBranchesWithIndex(ctx context.Context, req Request, index eventLogIndex) error {
 	if !branchValidationEnabled || len(req.Issues) == 0 {
 		return nil
 	}
@@ -176,7 +238,7 @@ func (o *Orchestrator) validateBatchBranches(ctx context.Context, req Request) e
 		return fmt.Errorf("resolve repo root for branch validation: %w", err)
 	}
 
-	priorRunByIssue := indexPriorRunsByIssue(o.eventLog)
+	priorRunByIssue := index.priorRunByIssue
 
 	var conflicts []branchConflict
 	seenConflict := make(map[string]struct{}, len(req.Issues))
@@ -184,15 +246,19 @@ func (o *Orchestrator) validateBatchBranches(ctx context.Context, req Request) e
 		if req.IssueMode(num) != ModeFresh {
 			continue
 		}
-		issue, err := o.githubClient.FetchIssue(ctx, num)
-		if err != nil {
-			if o.errorLog != nil {
-				fmt.Fprintf(o.errorLog, "error: fetch issue %d for branch validation: %v\n", num, err)
+		title, ok := req.IssueTitles[num]
+		if !ok || title == "" {
+			issue, err := o.githubClient.FetchIssue(ctx, num)
+			if err != nil {
+				if o.errorLog != nil {
+					fmt.Fprintf(o.errorLog, "error: fetch issue %d for branch validation: %v\n", num, err)
+				}
+				return fmt.Errorf("fetch issue %d for branch validation: %w", num, err)
 			}
-			return fmt.Errorf("fetch issue %d for branch validation: %w", num, err)
+			title = issue.Title
 		}
 
-		for _, branch := range collectIssueBranches(num, issue.Title, req.Branches[num], o.eventLog) {
+		for _, branch := range collectIssueBranchesFromIndex(num, title, req.Branches[num], index) {
 			if !branchExists(repoRoot, branch) {
 				continue
 			}
@@ -241,34 +307,6 @@ type branchConflict struct {
 	hasPrior bool
 }
 
-// indexPriorRunsByIssue returns a set of issue numbers that have at least
-// one run.started or run.continued event in the event log. Such events are
-// the canonical signal that a prior AgentRun reached the execution stage
-// for the issue; run.queued alone is not sufficient because it only marks
-// scheduling intent and the run may never have started. A nil event log
-// yields an empty set; a read error yields an empty set so the caller
-// biases toward --override (matching the long-standing behaviour of
-// collectIssueBranches on the same failure mode).
-func indexPriorRunsByIssue(eventLog events.EventLog) map[int]bool {
-	out := map[int]bool{}
-	if eventLog == nil {
-		return out
-	}
-	logs, err := eventLog.Read()
-	if err != nil {
-		return out
-	}
-	for _, e := range logs {
-		if e.Issue == 0 {
-			continue
-		}
-		if e.Type == "run.started" || e.Type == "run.continued" {
-			out[e.Issue] = true
-		}
-	}
-	return out
-}
-
 // Orchestrator coordinates parallel AgentRun execution.
 type Orchestrator struct {
 	githubClient            github.Client
@@ -287,6 +325,9 @@ type Orchestrator struct {
 	// Zero means use the default tick interval.
 	heartbeatTickInterval time.Duration
 	errorLog              io.Writer
+	phaseMu               sync.Mutex
+	phaseWriter           io.Writer
+	firstSandboxStartOnce func()
 
 	// lookupGHToken resolves the host GitHub auth token for hydrating the
 	// copied gh hosts.yml in container config snapshots. It runs once per
@@ -837,12 +878,28 @@ func (o *Orchestrator) unregisterActiveRun(key int) {
 	o.activeMu.Unlock()
 }
 
+func writePhase(w io.Writer, name string, started time.Time) {
+	if w == nil {
+		return
+	}
+	fmt.Fprintf(w, "phase %s duration=%s\n", name, time.Since(started))
+}
+
+func (o *Orchestrator) currentPhaseWriter() io.Writer {
+	o.phaseMu.Lock()
+	defer o.phaseMu.Unlock()
+	return o.phaseWriter
+}
+
 // RunBatch executes the requested AgentRuns in parallel.
 func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, error) {
 	cfg, err := o.configStore.Load()
 	if err != nil {
 		return nil, fmt.Errorf("load config: %w", err)
 	}
+	o.phaseMu.Lock()
+	o.phaseWriter = req.PhaseWriter
+	o.phaseMu.Unlock()
 	o.layout = paths.NewLayout(cfg, o.layout.RepoRoot)
 	retries := resolveRetries(req, cfg)
 	runIdleTimeout := resolveRunIdleTimeout(req, cfg)
@@ -887,10 +944,12 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 		baseBranch = "main"
 	}
 
+	phaseStarted := time.Now()
 	policy, err := o.resolveSandboxExecutionPolicy(ctx, cfg, agentCfg, req, sandboxMode)
 	if err != nil {
 		return nil, err
 	}
+	writePhase(o.currentPhaseWriter(), "sandbox-preflight", phaseStarted)
 	defer policy.Close()
 
 	isContainer := sandboxMode == "docker" || sandboxMode == "podman"
@@ -968,6 +1027,18 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 		}
 	}
 
+	overrideIndex := eventLogIndex{priorRunByIssue: map[int]bool{}, branchesByIssue: map[int][]string{}}
+	hasOverride := false
+	for _, num := range req.Issues {
+		if req.IssueMode(num) == ModeOverride {
+			hasOverride = true
+			break
+		}
+	}
+	if hasOverride {
+		overrideIndex = readEventLogIndex(o.eventLog)
+	}
+
 	for _, num := range req.Issues {
 		if req.IssueMode(num) != ModeOverride {
 			continue
@@ -977,15 +1048,22 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 			fmt.Fprintf(o.errorLog, "error: fetch issue %d for force-clean: %v\n", num, err)
 			continue
 		}
-		branches := collectIssueBranches(num, issue.Title, req.Branches[num], o.eventLog)
+		branches := collectIssueBranchesFromIndex(num, issue.Title, req.Branches[num], overrideIndex)
 		for _, branch := range branches {
 			ClearIssueArtifacts(num, branch, cfg.WorktreeDir, o.eventLog, o.errorLog, baseBranch, req.StrandedReconcile, o.layout.BatchesIndexPath)
 		}
 	}
 
-	if err := o.validateBatchBranches(ctx, req); err != nil {
+	eventIndex := eventLogIndex{priorRunByIssue: map[int]bool{}, branchesByIssue: map[int][]string{}}
+	if len(req.Issues) > 0 {
+		eventIndex = readEventLogIndex(o.eventLog)
+	}
+
+	phaseStarted = time.Now()
+	if err := o.validateBatchBranchesWithIndex(ctx, req, eventIndex); err != nil {
 		return nil, err
 	}
+	writePhase(o.currentPhaseWriter(), "branch-validation", phaseStarted)
 
 	dangerouslySkipPermissions := req.DangerouslySkipPermissions
 	if dangerouslySkipPermissions == nil {
@@ -1061,7 +1139,9 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 		runID := buildRunID(num, req.RunTS, req.RunShortID)
 		if o.eventLog != nil && (len(dependencies[num]) > 0 || (effectiveParallel > 0 && effectiveParallel < len(req.Issues))) {
 			queuedPayload := map[string]any{"blocked_by": dependencies[num]}
-			if issue, err := o.githubClient.FetchIssue(ctx, num); err == nil && issue != nil {
+			if title, ok := req.IssueTitles[num]; ok && title != "" {
+				queuedPayload["issue_title"] = title
+			} else if issue, err := o.githubClient.FetchIssue(ctx, num); err == nil && issue != nil {
 				queuedPayload["issue_title"] = issue.Title
 			}
 			if issueBatchID != "" {
@@ -2410,6 +2490,7 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 			return AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "failure", Branch: branch}, false
 		}
 	}
+	sandboxStarted := time.Now()
 	var container sandbox.Container
 	if s.containerAlloc != nil {
 		lease, err := s.containerAlloc.Acquire()
@@ -2432,6 +2513,15 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 		s.emitEarlyFailure("start sandbox", branch)
 		return AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "failure", Branch: branch}, false
 	}
+	sandboxStartOnce := func() {}
+	sandboxStartOnce = func() { writePhase(o.currentPhaseWriter(), "first-sandbox-start", sandboxStarted) }
+	o.phaseMu.Lock()
+	if o.firstSandboxStartOnce == nil {
+		o.firstSandboxStartOnce = func() { sandboxStartOnce() }
+	}
+	once := o.firstSandboxStartOnce
+	o.phaseMu.Unlock()
+	once()
 	// Guaranteed cleanup: defer wt.RestoreHostPaths() so container
 	// sandboxes normalize the preserved worktree's .git pointer back to
 	// host paths on every exit path including panic, cancellation,
@@ -3029,38 +3119,6 @@ func Slugify(title string) string {
 // BranchName returns the standard git branch name for an issue.
 func BranchName(issueNumber int, title string) string {
 	return fmt.Sprintf("sandman/%d-%s", issueNumber, Slugify(title))
-}
-
-// collectIssueBranches returns all unique branch names that should be cleaned
-// for an issue. It reads the event log for previously recorded branches and
-// combines them with the current title-derived branch.
-func collectIssueBranches(issueNumber int, title string, recordedBranch string, eventLog events.EventLog) []string {
-	seen := map[string]bool{}
-	var branches []string
-	add := func(b string) {
-		if b != "" && !seen[b] {
-			seen[b] = true
-			branches = append(branches, b)
-		}
-	}
-
-	// Read old branches from event log
-	if eventLog != nil {
-		events, err := eventLog.Read()
-		if err == nil {
-			for _, e := range events {
-				if e.Issue == issueNumber {
-					if b, ok := e.Payload["branch"].(string); ok {
-						add(b)
-					}
-				}
-			}
-		}
-	}
-
-	add(recordedBranch)
-	add(BranchName(issueNumber, title))
-	return branches
 }
 
 // isMissingWorktreeError returns true when the git worktree remove error is

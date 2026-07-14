@@ -6,15 +6,68 @@ import (
 	"io"
 	"os"
 	"regexp"
+	"sync"
 
 	"github.com/rafaelromao/sandman/internal/github"
 )
 
 // SpecificationResolver resolves Specification issues to their child issues during batch preparation.
 type SpecificationResolver struct {
-	client        github.Client
-	warningWriter io.Writer
-	sectionREs    []*regexp.Regexp
+	client               github.Client
+	warningWriter        io.Writer
+	sectionREs           []*regexp.Regexp
+	maxConcurrentFetches int
+}
+
+type issueFetchCall struct {
+	done  chan struct{}
+	issue *github.Issue
+	err   error
+}
+
+type issueFetchGroup struct {
+	mu       sync.Mutex
+	cache    map[int]*github.Issue
+	inFlight map[int]*issueFetchCall
+}
+
+func newIssueFetchGroup() *issueFetchGroup {
+	return &issueFetchGroup{
+		cache:    make(map[int]*github.Issue),
+		inFlight: make(map[int]*issueFetchCall),
+	}
+}
+
+func (g *issueFetchGroup) fetch(ctx context.Context, client github.Client, number int) (*github.Issue, error) {
+	g.mu.Lock()
+	if issue, ok := g.cache[number]; ok {
+		g.mu.Unlock()
+		return issue, nil
+	}
+	if call, ok := g.inFlight[number]; ok {
+		g.mu.Unlock()
+		select {
+		case <-call.done:
+			return call.issue, call.err
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	call := &issueFetchCall{done: make(chan struct{})}
+	g.inFlight[number] = call
+	g.mu.Unlock()
+
+	issue, err := client.FetchIssue(ctx, number)
+	g.mu.Lock()
+	call.issue = issue
+	call.err = err
+	if err == nil && issue != nil {
+		g.cache[number] = issue
+	}
+	delete(g.inFlight, number)
+	close(call.done)
+	g.mu.Unlock()
+	return issue, err
 }
 
 // NewSpecificationResolver returns a resolver that expands any Specification issues in the input
@@ -29,7 +82,7 @@ func NewSpecificationResolver(client github.Client, warningWriter io.Writer) *Sp
 	for i, name := range required {
 		sectionREs[i] = regexp.MustCompile(`(?im)^##\s+` + regexp.QuoteMeta(name) + `\s*$`)
 	}
-	return &SpecificationResolver{client: client, warningWriter: warningWriter, sectionREs: sectionREs}
+	return &SpecificationResolver{client: client, warningWriter: warningWriter, sectionREs: sectionREs, maxConcurrentFetches: 8}
 }
 
 // IsSpecification reports whether the body contains the three required Specification sections
@@ -111,11 +164,12 @@ func (r *SpecificationResolver) Resolve(ctx context.Context, issues []int) ([]in
 		out = append(out, n)
 		return true
 	}
+	fetches := newIssueFetchGroup()
 	for _, num := range unique {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		if err := r.expandOne(ctx, num, 0, "-", userInputSet, addUnique); err != nil {
+		if err := r.expandOne(ctx, num, 0, "-", userInputSet, addUnique, fetches); err != nil {
 			return nil, err
 		}
 	}
@@ -141,11 +195,12 @@ func (r *SpecificationResolver) expandOne(
 	parentLabel string,
 	userInputSet map[int]struct{},
 	addUnique func(int) bool,
+	fetches *issueFetchGroup,
 ) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	issue, err := r.client.FetchIssue(ctx, num)
+	issue, err := fetches.fetch(ctx, r.client, num)
 	if err != nil {
 		return fmt.Errorf("fetch issue #%d: %w", num, err)
 	}
@@ -175,7 +230,7 @@ func (r *SpecificationResolver) expandOne(
 		}
 	}
 
-	accepted, err := r.collectAcceptedChildren(ctx, num, issue.Body, subIssues, userInputSet)
+	accepted, err := r.collectAcceptedChildren(ctx, num, issue.Body, subIssues, userInputSet, fetches)
 	if err != nil {
 		return err
 	}
@@ -194,7 +249,7 @@ func (r *SpecificationResolver) expandOne(
 			continue
 		}
 		// Recursively flatten if the child is itself a Specification.
-		childIssue, err := r.client.FetchIssue(ctx, child)
+		childIssue, err := fetches.fetch(ctx, r.client, child)
 		if err != nil {
 			return fmt.Errorf("fetch child #%d: %w", child, err)
 		}
@@ -202,7 +257,7 @@ func (r *SpecificationResolver) expandOne(
 			return fmt.Errorf("fetch child #%d: not found", child)
 		}
 		if r.IsSpecification(childIssue.Body) {
-			if err := r.expandOne(ctx, child, depth+1, fmt.Sprintf("#%d", num), userInputSet, addUnique); err != nil {
+			if err := r.expandOne(ctx, child, depth+1, fmt.Sprintf("#%d", num), userInputSet, addUnique, fetches); err != nil {
 				return err
 			}
 		}
@@ -216,24 +271,70 @@ func (r *SpecificationResolver) expandOne(
 // per-candidate ## Parent verification. User-typed inputs bypass verification on
 // the immediate acceptance step but are still subject to recursive expansion in
 // expandOne.
-func (r *SpecificationResolver) collectAcceptedChildren(ctx context.Context, parent int, body string, subIssues []int, userInputSet map[int]struct{}) ([]int, error) {
+func (r *SpecificationResolver) collectAcceptedChildren(ctx context.Context, parent int, body string, subIssues []int, userInputSet map[int]struct{}, fetches *issueFetchGroup) ([]int, error) {
 	candidates := r.collectCandidates(ctx, parent, body, subIssues)
 	if len(candidates) == 0 {
 		return nil, fmt.Errorf("no child issues for specification #%d", parent)
 	}
-	accepted := make([]int, 0, len(candidates))
-	for _, child := range candidates {
-		if err := ctx.Err(); err != nil {
-			return nil, err
+	childIssues := make([]*github.Issue, len(candidates))
+	fetchErrors := make([]error, len(candidates))
+	pending := make([]int, 0, len(candidates))
+	for idx, child := range candidates {
+		if _, ok := userInputSet[child]; ok {
+			continue
 		}
+		pending = append(pending, idx)
+	}
+	workers := r.maxConcurrentFetches
+	if workers <= 0 {
+		workers = 1
+	}
+	if workers > len(pending) {
+		workers = len(pending)
+	}
+	jobs := make(chan int)
+	var wg sync.WaitGroup
+	for n := 0; n < workers; n++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case idx, ok := <-jobs:
+					if !ok {
+						return
+					}
+					child := candidates[idx]
+					childIssues[idx], fetchErrors[idx] = fetches.fetch(ctx, r.client, child)
+				}
+			}
+		}()
+	}
+sendLoop:
+	for _, idx := range pending {
+		select {
+		case <-ctx.Done():
+			break sendLoop
+		case jobs <- idx:
+		}
+	}
+	close(jobs)
+	wg.Wait()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	accepted := make([]int, 0, len(candidates))
+	for idx, child := range candidates {
 		if _, ok := userInputSet[child]; ok {
 			accepted = append(accepted, child)
 			continue
 		}
-		childIssue, err := r.client.FetchIssue(ctx, child)
-		if err != nil {
-			return nil, fmt.Errorf("fetch child #%d: %w", child, err)
+		if fetchErrors[idx] != nil {
+			return nil, fmt.Errorf("fetch child #%d: %w", child, fetchErrors[idx])
 		}
+		childIssue := childIssues[idx]
 		if childIssue == nil {
 			return nil, fmt.Errorf("fetch child #%d: not found", child)
 		}

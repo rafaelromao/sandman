@@ -30,6 +30,7 @@ type cachedGitHubClient struct {
 	issues    map[int]*github.Issue
 	comments  map[int][]github.IssueComment
 	subIssues map[int][]int
+	searches  map[string][]github.Issue
 }
 
 func newCachedGitHubClient(client github.Client) *cachedGitHubClient {
@@ -38,6 +39,7 @@ func newCachedGitHubClient(client github.Client) *cachedGitHubClient {
 		issues:    make(map[int]*github.Issue),
 		comments:  make(map[int][]github.IssueComment),
 		subIssues: make(map[int][]int),
+		searches:  make(map[string][]github.Issue),
 	}
 }
 
@@ -45,6 +47,51 @@ func (c *cachedGitHubClient) FetchIssue(ctx context.Context, number int) (*githu
 	return getOrFill(&c.mu, c.issues, number, func() (*github.Issue, error) {
 		return c.Client.FetchIssue(ctx, number)
 	})
+}
+
+func (c *cachedGitHubClient) SearchIssues(ctx context.Context, query string) ([]github.Issue, error) {
+	c.mu.Lock()
+	if issues, ok := c.searches[query]; ok {
+		out := append([]github.Issue(nil), issues...)
+		c.mu.Unlock()
+		return out, nil
+	}
+	c.mu.Unlock()
+
+	issues, err := c.Client.SearchIssues(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	cached := append([]github.Issue(nil), issues...)
+	c.mu.Lock()
+	c.searches[query] = cached
+	c.mu.Unlock()
+	return append([]github.Issue(nil), cached...), nil
+}
+
+func (c *cachedGitHubClient) TitlesFor(numbers []int) map[int]string {
+	titles := make(map[int]string, len(numbers))
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	wanted := make(map[int]struct{}, len(numbers))
+	for _, number := range numbers {
+		wanted[number] = struct{}{}
+	}
+	for _, issues := range c.searches {
+		for _, issue := range issues {
+			if _, ok := wanted[issue.Number]; ok {
+				titles[issue.Number] = issue.Title
+			}
+		}
+	}
+	for number, issue := range c.issues {
+		if _, ok := wanted[number]; ok && issue != nil {
+			if _, exists := titles[number]; !exists {
+				titles[number] = issue.Title
+			}
+		}
+	}
+	return titles
 }
 
 func (c *cachedGitHubClient) ListIssueComments(ctx context.Context, number int) ([]github.IssueComment, error) {
@@ -131,7 +178,8 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 			if err := requireReviewDaemon(cfg.EffectiveReviewCommand(), sandmanDir); err != nil {
 				return err
 			}
-			githubClient := newCachedGitHubClient(deps.GitHubClient)
+			liveGitHubClient := deps.GitHubClient
+			githubClient := newCachedGitHubClient(liveGitHubClient)
 
 			promptFlag, _ := cmd.Flags().GetString("prompt")
 			templateFlag, _ := cmd.Flags().GetString("template")
@@ -213,7 +261,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 						if hasUnboundedEnd {
 							numbersForFilter = explicitIssueNumbers(selection)
 						}
-						issues, err = filterClosedIssues(cmd.Context(), numbersForFilter, githubClient.SearchIssues, githubClient.FetchIssue, cmd.ErrOrStderr())
+						issues, err = filterClosedIssues(cmd.Context(), numbersForFilter, githubClient.SearchIssues, liveGitHubClient.FetchIssue, cmd.ErrOrStderr())
 						if err != nil {
 							if hasUnboundedEnd && errors.Is(err, errAllExplicitClosed) {
 								issues = nil
@@ -310,17 +358,19 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 			}
 
 			if len(issues) > 0 {
+				phaseStarted := time.Now()
 				userTyped := append([]int(nil), issues...)
 				issues, err = expandSpecifications(cmd.Context(), githubClient, issues, cmd.ErrOrStderr())
 				if err != nil {
 					return err
 				}
 				if len(issues) > 0 {
-					issues, err = filterClosedIssuesAfterExpansion(cmd.Context(), issues, userTyped, githubClient.SearchIssues, githubClient.FetchIssue, cmd.ErrOrStderr())
+					issues, err = filterClosedIssuesAfterExpansion(cmd.Context(), issues, userTyped, githubClient.SearchIssues, liveGitHubClient.FetchIssue, cmd.ErrOrStderr())
 					if err != nil {
 						return err
 					}
 				}
+				reportPhase(cmd.ErrOrStderr(), "specification-resolution", phaseStarted)
 			}
 
 			baseBranchFlag, _ := cmd.Flags().GetString("base-branch")
@@ -332,10 +382,12 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 				baseBranch = "main"
 			}
 
-			resolvedBatch, err := batch.NewDependencyResolver(githubClient).Resolve(cmd.Context(), issues, includeDependencies)
+			phaseStarted := time.Now()
+			resolvedBatch, err := batch.NewDependencyResolver(liveGitHubClient).Resolve(cmd.Context(), issues, includeDependencies)
 			if err != nil {
 				return fmt.Errorf("resolve dependencies: %w", err)
 			}
+			reportPhase(cmd.ErrOrStderr(), "dependency-resolution", phaseStarted)
 
 			parallelFlag := cmd.Flags().Lookup("parallel")
 			parallelSet := parallelFlag != nil && parallelFlag.Changed
@@ -478,8 +530,10 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 				}
 			}
 
+			issueTitles := githubClient.TitlesFor(resolvedBatch.Issues)
 			req := batch.Request{
 				Issues:                     resolvedBatch.Issues,
+				IssueTitles:                issueTitles,
 				Dependencies:               resolvedBatch.Deps,
 				Blocked:                    resolvedBatch.Blocked,
 				Agent:                      agentName,
@@ -504,6 +558,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 				MaxContainersSet:           maxContainersSet,
 				DangerouslySkipPermissions: dangerouslySkipPerm,
 				StrandedReconcile:          reconcileStranded,
+				PhaseWriter:                cmd.ErrOrStderr(),
 				PromptConfig: prompt.RenderConfig{
 					Branch:           strings.TrimSpace(branchFlag),
 					PromptFlag:       promptFlag,
@@ -556,6 +611,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 				}
 			}
 
+			req.PhaseWriter = cmd.ErrOrStderr()
 			ctx, cancel := context.WithCancel(cmd.Context())
 			defer cancel()
 
@@ -1126,6 +1182,13 @@ func expandSpecifications(ctx context.Context, client github.Client, issues []in
 		return nil, fmt.Errorf("resolve specifications: %w", err)
 	}
 	return expanded, nil
+}
+
+func reportPhase(w io.Writer, name string, started time.Time) {
+	if w == nil {
+		return
+	}
+	fmt.Fprintf(w, "phase %s duration=%s\n", name, time.Since(started))
 }
 
 func printSummary(cmd *cobra.Command, result *batch.Result) {
