@@ -508,11 +508,8 @@ type spyEventLog struct {
 	events                   []events.Event
 	removedIssueNumber       int
 	removeEventsByIssueCalls int
-	// err is the optional fixed error returned by Log. When nil, Log
-	// returns nil (the default for happy-path tests). Set to verify that
-	// the production code surfaces the write failure instead of silently
-	// discarding it.
-	err error
+	readCalls                int
+	err                      error
 }
 
 func (s *spyEventLog) Log(e events.Event) error {
@@ -525,6 +522,7 @@ func (s *spyEventLog) Log(e events.Event) error {
 func (s *spyEventLog) Read() ([]events.Event, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.readCalls++
 	out := make([]events.Event, len(s.events))
 	copy(out, s.events)
 	return out, nil
@@ -10620,5 +10618,75 @@ func TestBatchIDForPromptOnly_EmptyRunIDAndRunDir_EmitsTsSid(t *testing.T) {
 	}
 	if parts[1] != orchTestRunShortID {
 		t.Errorf("expected short-id segment %q as the second segment, got %q", orchTestRunShortID, parts[1])
+	}
+}
+
+func TestRunBatch_ReportsStartupPhases(t *testing.T) {
+	dir := testenv.MkdirShort(t, "sm-orch-")
+	t.Chdir(dir)
+	initGitRepo(t, dir)
+
+	branch := BranchName(42, "Fix bug")
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}},
+		prs:    map[string]*github.PR{branch: mergedPR(branch, "")},
+	}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
+	o.sandboxFactory = &fakeSandboxFactory{sandbox: &fakeSandbox{}}
+	o.runnableFactory = &byIssueRunnableFactory{results: map[int]AgentRunResult{42: {IssueNumber: 42, Status: "success"}}}
+	var output bytes.Buffer
+
+	if _, err := o.RunBatch(context.Background(), Request{Issues: []int{42}, PhaseWriter: &output}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for _, phase := range []string{"sandbox-preflight", "branch-validation", "first-sandbox-start"} {
+		if !strings.Contains(output.String(), "phase "+phase) {
+			t.Fatalf("expected phase timing for %s, got %q", phase, output.String())
+		}
+	}
+}
+
+func TestValidateBatchBranches_UsesPreparedTitleWithoutFetchingIssue(t *testing.T) {
+	dir := testenv.MkdirShort(t, "sm-orch-")
+	t.Chdir(dir)
+	initGitRepo(t, dir)
+
+	log := &spyEventLog{}
+	o := NewOrchestrator(&fakeGitHubClient{}, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, log)
+	oldBranchValidationEnabled := branchValidationEnabled
+	branchValidationEnabled = true
+	t.Cleanup(func() { branchValidationEnabled = oldBranchValidationEnabled })
+
+	if err := o.validateBatchBranches(context.Background(), Request{Issues: []int{42}, IssueTitles: map[int]string{42: "Prepared title"}}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestValidateBatchBranches_ReadsEventLogOnce(t *testing.T) {
+	dir := testenv.MkdirShort(t, "sm-orch-")
+	t.Chdir(dir)
+	initGitRepo(t, dir)
+
+	issues := make(map[int]*github.Issue)
+	titles := make(map[int]string)
+	numbers := make([]int, 5)
+	for idx := range numbers {
+		number := 100 + idx
+		numbers[idx] = number
+		title := fmt.Sprintf("Issue %d", number)
+		issues[number] = &github.Issue{Number: number, Title: title}
+		titles[number] = title
+	}
+	log := &spyEventLog{}
+	o := NewOrchestrator(&fakeGitHubClient{issues: issues}, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, log)
+	oldBranchValidationEnabled := branchValidationEnabled
+	branchValidationEnabled = true
+	t.Cleanup(func() { branchValidationEnabled = oldBranchValidationEnabled })
+
+	if err := o.validateBatchBranches(context.Background(), Request{Issues: numbers, IssueTitles: titles}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if log.readCalls != 1 {
+		t.Fatalf("expected one event-log read, got %d", log.readCalls)
 	}
 }

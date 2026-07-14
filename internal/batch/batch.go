@@ -29,7 +29,8 @@ const (
 
 // Request describes a batch of AgentRuns to execute.
 type Request struct {
-	Issues []int
+	Issues      []int
+	IssueTitles map[int]string
 	// Dependencies maps each issue to its resolved BlockedBy set.
 	Dependencies map[int][]int
 	// Blocked marks issues that should be skipped before submission.
@@ -72,6 +73,7 @@ type Request struct {
 	StrandedReconcile *bool
 	PromptConfig      prompt.RenderConfig
 	OutputWriter      io.Writer
+	PhaseWriter       io.Writer
 	// RunDir is the per-batch directory (typically `.sandman/batches/<batch-id>/`)
 	// under which container config snapshots are stored for the lifetime of
 	// the batch. When empty, snapshots fall back to a temp directory.

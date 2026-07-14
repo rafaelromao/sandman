@@ -554,3 +554,270 @@ func TestReviewStateStore_RestartReadsPersistedClaims(t *testing.T) {
 		t.Error("cs3 should claim after cs1 released")
 	}
 }
+
+// TestReviewStateStore_ReadFailureAttemptsZeroOnFresh pins the
+// "zero prior attempts" half of the issue #2209 AC: a freshly-opened
+// store returns 0 from ReadFailureAttempts for any commentID, and
+// empty / whitespace IDs are coerced to 0 without panicking.
+func TestReviewStateStore_ReadFailureAttemptsZeroOnFresh(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "review-state.json")
+	store, err := NewReviewStateStore(path, 42, nil)
+	if err != nil {
+		t.Fatalf("NewReviewStateStore: %v", err)
+	}
+
+	if got := ReadFailureAttempts(store, "never-seen"); got != 0 {
+		t.Errorf("ReadFailureAttempts on fresh store = %d, want 0", got)
+	}
+	if got := ReadFailureAttempts(store, "   "); got != 0 {
+		t.Errorf("ReadFailureAttempts on whitespace commentID = %d, want 0", got)
+	}
+}
+
+// TestReviewStateStore_MarkSeenWithAttemptsPersists covers the "fresh
+// write" half of the issue #2209 AC: MarkSeenWithAttempts creates a
+// SeenComment row carrying the recorded attempts count, persists it
+// via atomic-rename, and ReadFailureAttempts round-trips the value.
+func TestReviewStateStore_MarkSeenWithAttemptsPersists(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "review-state.json")
+	store, err := NewReviewStateStore(path, 42, nil)
+	if err != nil {
+		t.Fatalf("NewReviewStateStore: %v", err)
+	}
+
+	if err := store.MarkSeenWithAttempts("comment-1", "failure", 3); err != nil {
+		t.Fatalf("MarkSeenWithAttempts: %v", err)
+	}
+	if got := ReadFailureAttempts(store, "comment-1"); got != 3 {
+		t.Errorf("ReadFailureAttempts = %d, want 3", got)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read state file: %v", err)
+	}
+	var got batchindex.ReviewState
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("unmarshal state file: %v", err)
+	}
+	found := false
+	for _, sc := range got.SeenComments {
+		if sc.CommentID == "comment-1" {
+			found = true
+			if sc.Status != "failure" {
+				t.Errorf("Status = %q, want failure", sc.Status)
+			}
+			if sc.Attempts != 3 {
+				t.Errorf("Attempts = %d, want 3", sc.Attempts)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("file should contain comment-1 in seenComments, got %q", string(data))
+	}
+}
+
+// TestReviewStateStore_MarkSeenWithAttemptsOverwrites covers the
+// "overwrite" half of the issue #2209 AC: a second
+// MarkSeenWithAttempts on the same commentID updates the attempts
+// count in place rather than appending a second row.
+func TestReviewStateStore_MarkSeenWithAttemptsOverwrites(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "review-state.json")
+	store, err := NewReviewStateStore(path, 42, nil)
+	if err != nil {
+		t.Fatalf("NewReviewStateStore: %v", err)
+	}
+
+	if err := store.MarkSeenWithAttempts("comment-1", "failure", 1); err != nil {
+		t.Fatalf("first MarkSeenWithAttempts: %v", err)
+	}
+	if err := store.MarkSeenWithAttempts("comment-1", "failure", 5); err != nil {
+		t.Fatalf("second MarkSeenWithAttempts: %v", err)
+	}
+	if got := ReadFailureAttempts(store, "comment-1"); got != 5 {
+		t.Errorf("ReadFailureAttempts = %d, want 5", got)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read state file: %v", err)
+	}
+	var got batchindex.ReviewState
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("unmarshal state file: %v", err)
+	}
+	count := 0
+	for _, sc := range got.SeenComments {
+		if sc.CommentID == "comment-1" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Errorf("expected exactly 1 entry for comment-1, got %d in: %s", count, string(data))
+	}
+}
+
+// TestReviewStateStore_MarkSeenWithAttemptsPersistsAcrossReload covers
+// the "persistence" half of the issue #2209 AC: the attempts count
+// survives a daemon restart simulated by closing the store and
+// re-opening it from the same on-disk file.
+func TestReviewStateStore_MarkSeenWithAttemptsPersistsAcrossReload(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "review-state.json")
+
+	cs1, err := NewReviewStateStore(path, 42, nil)
+	if err != nil {
+		t.Fatalf("NewReviewStateStore 1: %v", err)
+	}
+	if err := cs1.MarkSeenWithAttempts("persistent", "failure", 7); err != nil {
+		t.Fatalf("MarkSeenWithAttempts: %v", err)
+	}
+
+	cs2, err := NewReviewStateStore(path, 42, nil)
+	if err != nil {
+		t.Fatalf("NewReviewStateStore 2: %v", err)
+	}
+	if got := ReadFailureAttempts(cs2, "persistent"); got != 7 {
+		t.Errorf("ReadFailureAttempts after reload = %d, want 7", got)
+	}
+	if !cs2.IsSeen("persistent") {
+		t.Error("IsSeen should still report persistent after reload")
+	}
+}
+
+// TestReviewStateStore_MarkSeenClearsAttemptsOnSuccess pins the
+// "cleared on the next success" invariant from issue #2209: a
+// standard MarkSeen("success") call resets Attempts to 0 even when
+// the commentID already carries a non-zero count.
+func TestReviewStateStore_MarkSeenClearsAttemptsOnSuccess(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "review-state.json")
+	store, err := NewReviewStateStore(path, 42, nil)
+	if err != nil {
+		t.Fatalf("NewReviewStateStore: %v", err)
+	}
+
+	if err := store.MarkSeenWithAttempts("comment-1", "failure", 4); err != nil {
+		t.Fatalf("MarkSeenWithAttempts: %v", err)
+	}
+	if got := ReadFailureAttempts(store, "comment-1"); got != 4 {
+		t.Fatalf("setup: ReadFailureAttempts = %d, want 4", got)
+	}
+
+	if err := store.MarkSeen("comment-1", "success"); err != nil {
+		t.Fatalf("MarkSeen: %v", err)
+	}
+	if got := ReadFailureAttempts(store, "comment-1"); got != 0 {
+		t.Errorf("ReadFailureAttempts after success = %d, want 0", got)
+	}
+}
+
+// TestReviewStateStore_MarkSeenPreservesAttemptsOnNonSuccess pins the
+// inverse half of the issue #2209 invariant: a MarkSeen call with a
+// non-success status preserves the existing attempts count so the
+// retry-budget evidence is not silently wiped when the launcher
+// transitions between failure states.
+func TestReviewStateStore_MarkSeenPreservesAttemptsOnNonSuccess(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "review-state.json")
+	store, err := NewReviewStateStore(path, 42, nil)
+	if err != nil {
+		t.Fatalf("NewReviewStateStore: %v", err)
+	}
+
+	if err := store.MarkSeenWithAttempts("comment-1", "failure", 2); err != nil {
+		t.Fatalf("MarkSeenWithAttempts: %v", err)
+	}
+
+	for _, status := range []string{"failure", "aborted", "superseded", "pending"} {
+		if err := store.MarkSeen("comment-1", status); err != nil {
+			t.Fatalf("MarkSeen(%s): %v", status, err)
+		}
+		if got := ReadFailureAttempts(store, "comment-1"); got != 2 {
+			t.Errorf("ReadFailureAttempts after MarkSeen(%s) = %d, want 2", status, got)
+		}
+	}
+}
+
+// TestReviewStateStore_PreIssue2209FilesLoadWithZeroAsserts the
+// backward-compatible-load half of the issue #2209 AC: a JSON file
+// written before the Attempts field existed decodes without error
+// and ReadFailureAttempts reports zero for every entry.
+func TestReviewStateStore_PreIssue2209FilesLoadWithZeroAsserts(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "review-state.json")
+
+	pre := batchindex.ReviewState{
+		PR: 42,
+		SeenComments: []batchindex.SeenComment{
+			{CommentID: "legacy", Status: "failure", Timestamp: time.Now()},
+		},
+		Claims: map[string]batchindex.Claim{},
+	}
+	data, err := json.Marshal(pre)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := NewReviewStateStore(path, 42, nil)
+	if err != nil {
+		t.Fatalf("NewReviewStateStore on legacy file: %v", err)
+	}
+	if !store.IsSeen("legacy") {
+		t.Error("legacy SeenComment should still load as terminal-seen")
+	}
+	if got := ReadFailureAttempts(store, "legacy"); got != 0 {
+		t.Errorf("ReadFailureAttempts on legacy file = %d, want 0", got)
+	}
+
+	roundTrip, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read state file: %v", err)
+	}
+	var got batchindex.ReviewState
+	if err := json.Unmarshal(roundTrip, &got); err != nil {
+		t.Fatalf("round-trip unmarshal: %v", err)
+	}
+	for _, sc := range got.SeenComments {
+		if sc.Attempts != 0 {
+			t.Errorf("legacy row should round-trip with Attempts = 0, got %d for %q", sc.Attempts, sc.CommentID)
+		}
+	}
+}
+
+// TestReviewStateStore_MarkSeenWithAttemptsRejectsEmptyKey mirrors
+// the existing MarkSeen empty-key contract for the new variant.
+func TestReviewStateStore_MarkSeenWithAttemptsRejectsEmptyKey(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "review-state.json")
+	store, err := NewReviewStateStore(path, 42, nil)
+	if err != nil {
+		t.Fatalf("NewReviewStateStore: %v", err)
+	}
+
+	if err := store.MarkSeenWithAttempts("   ", "failure", 1); err == nil {
+		t.Error("expected error when MarkSeenWithAttempts called with whitespace commentID")
+	}
+}
+
+// TestReviewStateStore_MarkSeenWithAttemptsRejectsNegativeAttempts
+// guards the invariant that attempts is a non-negative count; a
+// negative value would silently corrupt the retry-budget evidence.
+func TestReviewStateStore_MarkSeenWithAttemptsRejectsNegativeAttempts(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "review-state.json")
+	store, err := NewReviewStateStore(path, 42, nil)
+	if err != nil {
+		t.Fatalf("NewReviewStateStore: %v", err)
+	}
+
+	if err := store.MarkSeenWithAttempts("comment-1", "failure", -1); err == nil {
+		t.Error("expected error when MarkSeenWithAttempts called with negative attempts")
+	}
+}
