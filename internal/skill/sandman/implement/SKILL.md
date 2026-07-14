@@ -31,6 +31,8 @@ You need to follow all steps in this workflow. Make sure you have gone through a
 
     **Closing-reference body is mandatory.** The PR body MUST contain a line of the exact shape `(Closes|Fixes|Resolves) #<issue_number>` so the tracker auto-closes the linked work item when the change request merges. Phrases like `issue #<n>` buried in prose, `Refs #<n>`, `See #<n>`, `Related to #<n>`, or `Part of #<n>` are NOT closing references — they leave the work item open after merge. A change request whose body does not match the closing-reference shape is not acceptable and must not be created.
 
+4. **Never stage Sandman runtime state.** The `.sandman/` directory holds runtime files (config, prompt, Dockerfile, reviews, the per-run task board). It is intentionally gitignored and is untracked by `sandman init`'s pre-commit guard. Do not run `git add` (with or without `-f`) on any path under `.sandman/`, and do not commit changes that include such paths. The pre-commit hook installed by `sandman init` will reject any commit that attempts to put a `.sandman/` path back into the index, but treat that as a last line of defense: do not stage it in the first place. Other Sandman-managed worktrees may not yet have the hook installed, and a force-pushed history rewrite can resurrect ignored paths.
+
 ### 1. Setup branch
 
 ```bash
