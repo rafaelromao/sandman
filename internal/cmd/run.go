@@ -383,7 +383,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 			}
 
 			phaseStarted := time.Now()
-			resolvedBatch, err := batch.NewDependencyResolver(githubClient).Resolve(cmd.Context(), issues, includeDependencies)
+			resolvedBatch, err := batch.NewDependencyResolver(liveGitHubClient).Resolve(cmd.Context(), issues, includeDependencies)
 			if err != nil {
 				return fmt.Errorf("resolve dependencies: %w", err)
 			}

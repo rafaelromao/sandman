@@ -77,7 +77,13 @@ func (r *DependencyResolver) Resolve(ctx context.Context, issues []int, includeD
 			if blocker == issueNum {
 				continue
 			}
-			blockerIssue, err := fetchDependencyIssue(ctx, r.githubClient, issueCache, blocker)
+			var blockerIssue *github.Issue
+			var err error
+			if _, ok := known[blocker]; ok {
+				blockerIssue, err = fetchDependencyIssue(ctx, r.githubClient, issueCache, blocker)
+			} else {
+				blockerIssue, err = fetchDependencyIssueFresh(ctx, r.githubClient, blocker)
+			}
 			if err != nil {
 				if includeDeps {
 					return nil, fmt.Errorf("fetch issue #%d: %w", blocker, err)
@@ -145,6 +151,36 @@ func fetchDependencyIssue(ctx context.Context, client github.Client, cache map[i
 	}
 
 	cache[issueNum] = issue
+	return issue, nil
+}
+
+// shouldFetchBlockerFreshly reports whether the given blocker must be fetched
+// from the live client rather than from the resolver's per-call cache. Known
+// in-batch blockers keep their cached snapshot so repeated cycles do not fan
+// out into redundant GitHub traffic; external blockers and known entries are
+// refreshed so State and BlockedBy decisions reflect current GitHub state
+// immediately before dependency inclusion.
+func shouldFetchBlockerFreshly(blocker int, cache map[int]*github.Issue, known map[int]struct{}) bool {
+	if _, ok := known[blocker]; !ok {
+		return true
+	}
+	if _, ok := cache[blocker]; !ok {
+		return true
+	}
+	return false
+}
+
+func fetchDependencyIssueFresh(ctx context.Context, client github.Client, issueNum int) (*github.Issue, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	issue, err := client.FetchIssue(ctx, issueNum)
+	if err != nil {
+		return nil, err
+	}
+	if issue == nil {
+		return nil, fmt.Errorf("not found")
+	}
 	return issue, nil
 }
 

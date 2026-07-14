@@ -325,8 +325,9 @@ type Orchestrator struct {
 	// Zero means use the default tick interval.
 	heartbeatTickInterval time.Duration
 	errorLog              io.Writer
+	phaseMu               sync.Mutex
 	phaseWriter           io.Writer
-	firstSandboxStartOnce sync.Once
+	firstSandboxStartOnce func()
 
 	// lookupGHToken resolves the host GitHub auth token for hydrating the
 	// copied gh hosts.yml in container config snapshots. It runs once per
@@ -884,14 +885,21 @@ func writePhase(w io.Writer, name string, started time.Time) {
 	fmt.Fprintf(w, "phase %s duration=%s\n", name, time.Since(started))
 }
 
+func (o *Orchestrator) currentPhaseWriter() io.Writer {
+	o.phaseMu.Lock()
+	defer o.phaseMu.Unlock()
+	return o.phaseWriter
+}
+
 // RunBatch executes the requested AgentRuns in parallel.
 func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, error) {
 	cfg, err := o.configStore.Load()
 	if err != nil {
 		return nil, fmt.Errorf("load config: %w", err)
 	}
+	o.phaseMu.Lock()
 	o.phaseWriter = req.PhaseWriter
-	o.firstSandboxStartOnce = sync.Once{}
+	o.phaseMu.Unlock()
 	o.layout = paths.NewLayout(cfg, o.layout.RepoRoot)
 	retries := resolveRetries(req, cfg)
 	runIdleTimeout := resolveRunIdleTimeout(req, cfg)
@@ -941,7 +949,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 	if err != nil {
 		return nil, err
 	}
-	writePhase(req.PhaseWriter, "sandbox-preflight", phaseStarted)
+	writePhase(o.currentPhaseWriter(), "sandbox-preflight", phaseStarted)
 	defer policy.Close()
 
 	isContainer := sandboxMode == "docker" || sandboxMode == "podman"
@@ -1055,7 +1063,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 	if err := o.validateBatchBranchesWithIndex(ctx, req, eventIndex); err != nil {
 		return nil, err
 	}
-	writePhase(req.PhaseWriter, "branch-validation", phaseStarted)
+	writePhase(o.currentPhaseWriter(), "branch-validation", phaseStarted)
 
 	dangerouslySkipPermissions := req.DangerouslySkipPermissions
 	if dangerouslySkipPermissions == nil {
@@ -2505,7 +2513,15 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 		s.emitEarlyFailure("start sandbox", branch)
 		return AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "failure", Branch: branch}, false
 	}
-	o.firstSandboxStartOnce.Do(func() { writePhase(o.phaseWriter, "first-sandbox-start", sandboxStarted) })
+	sandboxStartOnce := func() {}
+	sandboxStartOnce = func() { writePhase(o.currentPhaseWriter(), "first-sandbox-start", sandboxStarted) }
+	o.phaseMu.Lock()
+	if o.firstSandboxStartOnce == nil {
+		o.firstSandboxStartOnce = func() { sandboxStartOnce() }
+	}
+	once := o.firstSandboxStartOnce
+	o.phaseMu.Unlock()
+	once()
 	// Guaranteed cleanup: defer wt.RestoreHostPaths() so container
 	// sandboxes normalize the preserved worktree's .git pointer back to
 	// host paths on every exit path including panic, cancellation,

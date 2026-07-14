@@ -949,17 +949,21 @@ func TestSpecificationResolver_ListSubIssuesFailureLogsAndContinues(t *testing.T
 
 type specificationConcurrencyClient struct {
 	*fakeGitHubClient
-	mu     sync.Mutex
-	active int
-	max    int
-	calls  map[int]int
-	delay  time.Duration
+	mu      sync.Mutex
+	active  int
+	max     int
+	overlap int
+	calls   map[int]int
+	delay   time.Duration
 }
 
 func (c *specificationConcurrencyClient) FetchIssue(ctx context.Context, number int) (*github.Issue, error) {
 	c.mu.Lock()
 	c.calls[number]++
 	c.active++
+	if c.active > 1 && c.active > c.overlap {
+		c.overlap = c.active
+	}
 	if c.active > c.max {
 		c.max = c.active
 	}
@@ -977,8 +981,8 @@ func (c *specificationConcurrencyClient) FetchIssue(ctx context.Context, number 
 	return c.fakeGitHubClient.FetchIssue(ctx, number)
 }
 
-func TestSpecificationResolver_VerifiesChildrenBoundedAndInOrder(t *testing.T) {
-	const childCount = 32
+func TestSpecificationResolver_Verifies63ChildrenBoundedAndInOrder(t *testing.T) {
+	const childCount = 63
 	issues := map[int]*github.Issue{
 		1: {Number: 1, Title: "Specification", Body: "## Problem Statement\n\nP\n\n## Solution\n\nS\n\n## User Stories\n\nU\n\n"},
 	}
@@ -1010,6 +1014,9 @@ func TestSpecificationResolver_VerifiesChildrenBoundedAndInOrder(t *testing.T) {
 	}
 	if client.max > 4 {
 		t.Fatalf("expected at most 4 concurrent fetches, got %d", client.max)
+	}
+	if client.overlap == 0 {
+		t.Fatalf("expected fetches to overlap across workers, got 0 (no concurrency observed)")
 	}
 	for number, calls := range client.calls {
 		if number != 1 && calls != 1 {

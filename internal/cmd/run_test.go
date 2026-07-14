@@ -604,7 +604,7 @@ func TestRun_FiltersClosedChildrenAfterSpecificationExpansion_NoUsageError(t *te
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
 	cmd.SilenceUsage = false
-	cmd.SetArgs([]string{"1"})
+	cmd.SetArgs([]string{"1", "10"})
 
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("expected no error from empty-batch path, got: %v", err)
@@ -3086,8 +3086,8 @@ func TestRun_CombinePlainArgsWithLabelUsesCombinedQuery(t *testing.T) {
 	if gh.searchIssuesQuery != "" {
 		t.Errorf("expected no search query for local label filtering, got %q", gh.searchIssuesQuery)
 	}
-	if gh.fetchCount[42] != 1 {
-		t.Errorf("expected issue 42 to be fetched once, got %d", gh.fetchCount[42])
+	if gh.fetchCount[42] != 2 {
+		t.Errorf("expected issue 42 to be fetched twice (local filter + dependency resolver), got %d", gh.fetchCount[42])
 	}
 }
 
@@ -3156,8 +3156,8 @@ func TestRun_CombinePlainArgsWithLabelIsCaseInsensitive(t *testing.T) {
 			t.Errorf("expected issue %d at index %d, got %d", v, i, spy.req.Issues[i])
 		}
 	}
-	if gh.fetchCount[42] != 1 {
-		t.Errorf("expected issue 42 to be fetched once, got %d", gh.fetchCount[42])
+	if gh.fetchCount[42] != 2 {
+		t.Errorf("expected issue 42 to be fetched twice (local filter + dependency resolver), got %d", gh.fetchCount[42])
 	}
 }
 
@@ -3191,8 +3191,8 @@ func TestRun_CombinePlainArgsWithQueryUsesCombinedQuery(t *testing.T) {
 	if gh.searchIssuesQuery != "" {
 		t.Errorf("expected no search query for local query filtering, got %q", gh.searchIssuesQuery)
 	}
-	if gh.fetchCount[42] != 1 {
-		t.Errorf("expected issue 42 to be fetched once, got %d", gh.fetchCount[42])
+	if gh.fetchCount[42] != 2 {
+		t.Errorf("expected issue 42 to be fetched twice (local filter + dependency resolver), got %d", gh.fetchCount[42])
 	}
 }
 
@@ -3270,8 +3270,8 @@ func TestRun_RangeArgWithLabelUsesCombinedQuery(t *testing.T) {
 		t.Errorf("expected no search query for local label filtering, got %q", gh.searchIssuesQuery)
 	}
 	for _, n := range want {
-		if gh.fetchCount[n] != 1 {
-			t.Errorf("expected issue %d to be fetched once, got %d", n, gh.fetchCount[n])
+		if gh.fetchCount[n] != 2 {
+			t.Errorf("expected issue %d to be fetched twice (local filter + dependency resolver), got %d", n, gh.fetchCount[n])
 		}
 	}
 }
@@ -3316,8 +3316,8 @@ func TestRun_RangeArgWithQueryUsesCombinedQuery(t *testing.T) {
 		t.Errorf("expected no search query for local query filtering, got %q", gh.searchIssuesQuery)
 	}
 	for _, n := range want {
-		if gh.fetchCount[n] != 1 {
-			t.Errorf("expected issue %d to be fetched once, got %d", n, gh.fetchCount[n])
+		if gh.fetchCount[n] != 2 {
+			t.Errorf("expected issue %d to be fetched twice (local filter + dependency resolver), got %d", n, gh.fetchCount[n])
 		}
 	}
 }
@@ -3360,8 +3360,8 @@ func TestRun_MixedArgsWithLabelUsesCombinedQuery(t *testing.T) {
 		t.Errorf("expected no search query for local label filtering, got %q", gh.searchIssuesQuery)
 	}
 	for _, n := range want {
-		if gh.fetchCount[n] != 1 {
-			t.Errorf("expected issue %d to be fetched once, got %d", n, gh.fetchCount[n])
+		if gh.fetchCount[n] != 2 {
+			t.Errorf("expected issue %d to be fetched twice (local filter + dependency resolver), got %d", n, gh.fetchCount[n])
 		}
 	}
 }
@@ -4546,6 +4546,62 @@ func (c *searchSequenceClient) SearchIssues(ctx context.Context, query string) (
 		return nil, c.errors[idx]
 	}
 	return c.fakeGitHubClient.SearchIssues(ctx, query)
+}
+
+type mutableStateClient struct {
+	*fakeGitHubClient
+	mu       sync.Mutex
+	override func(int) *github.Issue
+}
+
+func (c *mutableStateClient) FetchIssue(ctx context.Context, number int) (*github.Issue, error) {
+	c.mu.Lock()
+	override := c.override
+	c.mu.Unlock()
+	if override != nil {
+		if issue := override(number); issue != nil {
+			return issue, nil
+		}
+	}
+	return c.fakeGitHubClient.FetchIssue(ctx, number)
+}
+
+func TestRun_Freshness_DependencyResolverReadsCurrentState(t *testing.T) {
+	childBody := "## Parent\n\n#1\n"
+	var calls []int
+	var mu sync.Mutex
+	gh := &mutableStateClient{
+		fakeGitHubClient: &fakeGitHubClient{
+			searchIssuesResult: []github.Issue{{Number: 10, State: "open", Title: "Child", Body: childBody}},
+		},
+		override: func(n int) *github.Issue {
+			mu.Lock()
+			calls = append(calls, n)
+			mu.Unlock()
+			switch n {
+			case 10:
+				return &github.Issue{Number: 10, State: "open", Title: "Child", Body: childBody, BlockedBy: []int{99}}
+			case 99:
+				return &github.Issue{Number: 99, State: "open", Title: "Blocker"}
+			}
+			return nil
+		},
+	}
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	deps := newRunDeps(t, spy)
+	deps.GitHubClient = gh
+
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"10"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := spy.req.Blocked[10]; len(got) != 1 || got[0] != 99 {
+		mu.Lock()
+		t.Fatalf("expected fresh state to mark #10 blocked by #99, got %v (calls=%v)", got, calls)
+	}
 }
 
 func TestCachedGitHubClient_DoesNotCacheSearchErrors(t *testing.T) {
