@@ -730,9 +730,12 @@ func WithBadgeHooker(h BadgeHooker) OrchestratorOpt {
 }
 
 // NewBadgeHooker returns a BadgeHooker that suggests a Built with Sandman
-// badge PR after a batch with merged sandman/* PRs. It returns a nopBadgeHooker
-// if the sandman binary cannot be resolved.
-func NewBadgeHooker(w io.Writer) BadgeHooker {
+// badge PR after a batch with merged sandman/* PRs. The hook is silent
+// to the operator — it writes nothing to any user-visible stream and
+// only persists a marker under <sandmanDir>/state/ to gate future
+// batches (see issue #2195). It returns a nopBadgeHooker if the sandman
+// binary cannot be resolved.
+func NewBadgeHooker() BadgeHooker {
 	sandmanRunner, err := newDefaultSandmanRunner()
 	if err != nil {
 		return nopBadgeHooker{}
@@ -745,26 +748,22 @@ func NewBadgeHooker(w io.Writer) BadgeHooker {
 	return newDefaultBadgeHooker(
 		&defaultPRLister{gh: realGhCommander{}},
 		&defaultBadgeControlFileReader{layout: layout},
+		&defaultBadgeControlFileWriter{layout: layout},
 		sandmanRunner,
-		w,
 	)
 }
 
 // NewBadgeHookerWith returns a BadgeHooker that uses the provided
-// SandmanRunner and PRLister implementations. It exists so e2e tests can
+// SandmanRunner, PRLister, BadgeControlFileReader, and
+// BadgeControlFileWriter implementations. It exists so e2e tests can
 // drive the production defaultBadgeHooker end-to-end without shelling out
 // to the sandman binary resolved from os.Executable() (which inside a test
 // binary resolves to the test binary itself and is unusable as sandman).
 //
-// Production wiring continues to use NewBadgeHooker(io.Writer) — its nop
-// fallback when the sandman binary is unresolved is preserved.
-func NewBadgeHookerWith(w io.Writer, runner SandmanRunner, lister PRLister) BadgeHooker {
-	root, err := filepath.Abs(".")
-	if err != nil {
-		root = "."
-	}
-	layout := paths.NewLayout(nil, root)
-	return newDefaultBadgeHooker(lister, &defaultBadgeControlFileReader{layout: layout}, runner, w)
+// Production wiring continues to use NewBadgeHooker — its nop fallback
+// when the sandman binary is unresolved is preserved.
+func NewBadgeHookerWith(runner SandmanRunner, lister PRLister, controlReader BadgeControlFileReader, controlWriter BadgeControlFileWriter) BadgeHooker {
+	return newDefaultBadgeHooker(lister, controlReader, controlWriter, runner)
 }
 
 // trackShutdownSupervisor records a done channel returned by

@@ -3,7 +3,6 @@
 package cmd
 
 import (
-	"bytes"
 	"context"
 	"os"
 	"path/filepath"
@@ -54,6 +53,33 @@ func (l *cmdBadgeLister) HasBadgePR(_ context.Context) (bool, error) {
 	return l.hasBadge, nil
 }
 
+// cmdBadgeControlFileReader is the badge e2e test's
+// BadgeControlFileReader fake. It returns whatever presence flag the
+// test wants so the test can model both fresh-checkout and
+// already-marked-on-disk invocations of the badge hook.
+type cmdBadgeControlFileReader struct {
+	present bool
+}
+
+func (r *cmdBadgeControlFileReader) HasBadgeControlFile() bool {
+	return r.present
+}
+
+// cmdBadgeControlFileWriter is the badge e2e test's
+// BadgeControlFileWriter fake. It counts Write invocations and lets
+// the test pin whether the post-batch hook actually persisted the
+// "already proposed on this checkout" gate after a successful
+// RunPrompt (see issue #2195).
+type cmdBadgeControlFileWriter struct {
+	calls int
+	err   error
+}
+
+func (w *cmdBadgeControlFileWriter) Write() error {
+	w.calls++
+	return w.err
+}
+
 // TestBadge_E2E_HappyPath exercises the post-batch badge hook end-to-end
 // through the production BatchRunner wiring using a fake BatchRunner that
 // drives the badge hook directly from a synthetic AgentRunResult. This
@@ -79,8 +105,9 @@ func TestBadge_E2E_HappyPath(t *testing.T) {
 	// the production hook end-to-end without shelling out.
 	rec := &cmdBadgeRunner{branch: "sandman/built-with-sandman", prURL: "https://example.test/badge/pull/99"}
 	lister := &cmdBadgeLister{mergedPRs: []batch.MergedSandmanPR{{Number: 1, HeadRefName: "sandman/1-fix", Title: "Fix failing test"}}, hasBadge: false}
-	stderr := &bytes.Buffer{}
-	badgeHook := batch.NewBadgeHookerWith(stderr, rec, lister)
+	controlReader := &cmdBadgeControlFileReader{present: false}
+	controlWriter := &cmdBadgeControlFileWriter{}
+	badgeHook := batch.NewBadgeHookerWith(rec, lister, controlReader, controlWriter)
 
 	deps := badgeTestDeps(repoDir, badgeHook)
 	runRootCommand(t, deps, "init", "--agent", "opencode")
@@ -95,7 +122,8 @@ func TestBadge_E2E_HappyPath(t *testing.T) {
 
 	// Operator-visible assertions: the badge hook was invoked with the
 	// stable sidecar branch and a prompt that contains the marker
-	// comment, and the post-batch summary line was emitted on stderr.
+	// comment, and the tracking file was written exactly once after
+	// the child run reported success.
 	if rec.capturedBranch != "sandman/built-with-sandman" {
 		t.Errorf("expected badge hook branch=sandman/built-with-sandman, got %q", rec.capturedBranch)
 	}
@@ -105,8 +133,8 @@ func TestBadge_E2E_HappyPath(t *testing.T) {
 	if !strings.Contains(rec.capturedPrompt, "<!-- sandman-badge-pr -->") {
 		t.Errorf("expected rendered prompt to contain marker comment, got: %s", rec.capturedPrompt)
 	}
-	if !strings.Contains(stderr.String(), "Sandman suggested a Built with Sandman badge PR: https://example.test/badge/pull/99 (close it to dismiss)") {
-		t.Errorf("expected stderr to contain summary line, got: %s", stderr.String())
+	if controlWriter.calls != 1 {
+		t.Errorf("expected exactly one control-file write after PR creation (issue #2195), got %d", controlWriter.calls)
 	}
 }
 
@@ -133,8 +161,9 @@ func TestBadge_E2E_MarkerPRSeeded_ShortCircuitsBadgeHook(t *testing.T) {
 
 	rec := &cmdBadgeRunner{branch: "sandman/built-with-sandman", prURL: "https://example.test/badge/pull/99"}
 	lister := &cmdBadgeLister{mergedPRs: []batch.MergedSandmanPR{{Number: 1, HeadRefName: "sandman/1-fix", Title: "Fix failing test"}}, hasBadge: true}
-	stderr := &bytes.Buffer{}
-	badgeHook := batch.NewBadgeHookerWith(stderr, rec, lister)
+	controlReader := &cmdBadgeControlFileReader{present: false}
+	controlWriter := &cmdBadgeControlFileWriter{}
+	badgeHook := batch.NewBadgeHookerWith(rec, lister, controlReader, controlWriter)
 
 	deps := badgeTestDeps(repoDir, badgeHook)
 	runRootCommand(t, deps, "init", "--agent", "opencode")
@@ -153,11 +182,8 @@ func TestBadge_E2E_MarkerPRSeeded_ShortCircuitsBadgeHook(t *testing.T) {
 	if rec.capturedPrompt != "" {
 		t.Errorf("expected badge hook NOT to spawn when marker PR is present, got prompt=%q", rec.capturedPrompt)
 	}
-	if strings.Contains(stderr.String(), "Sandman suggested a Built with Sandman badge PR") {
-		t.Errorf("expected no summary line on stderr when marker PR is present, got: %s", stderr.String())
-	}
-	if strings.Contains(stderr.String(), "Badge PR suggestion skipped") {
-		t.Errorf("expected no warn-line on stderr when marker PR is present, got: %s", stderr.String())
+	if controlWriter.calls != 0 {
+		t.Errorf("expected no control-file write when marker PR is present, got %d write(s)", controlWriter.calls)
 	}
 }
 

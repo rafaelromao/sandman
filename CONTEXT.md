@@ -112,7 +112,7 @@ A git branch named `sandman/<issue-number>-<slugified-title>` for issue-driven A
 _Avoid_: Feature branch, PR branch.
 
 **SidecarBranch**:
-A git branch initiated by Sandman's own post-batch side effects rather than by a user-supplied issue or prompt. The badge branch `sandman/built-with-sandman` is the first such SidecarBranch. Unlike issue-driven branches (which carry a GitHub issue) or prompt-only branches (which carry a timestamp suffix for uniqueness), a SidecarBranch carries no issue and no timestamp — its shape is determined by the sidecar that created it.
+A git branch initiated by Sandman's own post-batch side effects rather than by a user-supplied issue or prompt. The badge branch `sandman/built-with-sandman` is the first such SidecarBranch. Unlike issue-driven branches (which carry a GitHub issue) or prompt-only branches (which carry a timestamp suffix for uniqueness), a SidecarBranch carries no issue and no timestamp — its shape is determined by the sidecar that created it. The sidecar's idempotency contract (what triggers it, what gates it, what it persists) lives in `docs/usage/badge.md` and the ADR alongside it.
 _Avoid_: Bot branch, auto branch.
 
 **BuildToolsPreset**:

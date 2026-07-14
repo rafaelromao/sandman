@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 
@@ -18,7 +19,6 @@ import (
 var sandmanBranchRE = regexp.MustCompile(`^sandman/`)
 var badgeMarkerRE = regexp.MustCompile(`<!-- sandman-badge-pr -->`)
 var prURLRE = regexp.MustCompile(`https://github\.com/[^/]+/[^/]+/pull/\d+`)
-var linkNextRE = regexp.MustCompile(`<(https://[^>]+)>; rel="next"`)
 
 type ghCommander interface {
 	runGh(ctx context.Context, args ...string) ([]byte, error)
@@ -43,12 +43,20 @@ type PRLister interface {
 // BadgeControlFileReader reports whether the local control file that
 // marks "the Built with Sandman badge PR has been proposed in this
 // checkout" is present. The post-batch BadgeHooker consults the
-// marker-comment PR check first and only reads this file as an
-// optimistic fast-path after HasBadgePR returns false, so the
-// interface lives next to the hook rather than on PRLister (which is
-// PR-focused).
+// tracking file as the first gate; on a hit, no API call is made.
 type BadgeControlFileReader interface {
 	HasBadgeControlFile() bool
+}
+
+// BadgeControlFileWriter writes the local control file that marks
+// "the Built with Sandman badge PR has been proposed in this
+// checkout". The post-batch BadgeHooker calls Write synchronously
+// after a successful prompt run so the next batch in this checkout
+// short-circuits at the read gate without invoking the API at all.
+// The default implementation writes the file atomically via
+// temp-file + os.Rename.
+type BadgeControlFileWriter interface {
+	Write() error
 }
 
 type MergedSandmanPR struct {
@@ -83,50 +91,38 @@ func (d *defaultPRLister) ListMergedSandmanPRs(ctx context.Context) ([]MergedSan
 	return result, nil
 }
 
+// HasBadgePR consults the GitHub REST pulls endpoint for the current
+// repository via `gh api --paginate`. The scan walks every page of
+// the response until the marker is found or end-of-results. Hand-rolled
+// cursor parsing was removed when issue #2195 surfaced that `gh pr
+// list --json` (which routes through GraphQL and has no usable
+// `Link: …; rel="next"` header) silently stopped paginating after
+// page 1 once a repo exceeded the most-recent 100 PRs. `gh api
+// --paginate` honours the REST `Link` header transparently and is
+// the supported pagination primitive.
+//
+// The endpoint is passed as a single positional argument and the
+// array response is flattened to JSON Lines via `-q '.[]'` so the
+// Go-side decoder can stream the body as one PR object per line —
+// matching the shape the in-agent prompt in
+// `internal/prompt/badge_prompt.md` already specifies.
 func (d *defaultPRLister) HasBadgePR(ctx context.Context) (bool, error) {
-	found, _, err := d.findBadgeMarkerPR(ctx)
-	return found, err
-}
-
-func (d *defaultPRLister) findBadgeMarkerPR(ctx context.Context) (found bool, totalSeen int, err error) {
-	page := 0
-	var cursor string
+	args := []string{"api", "--paginate", "-q", ".[]", "repos/{owner}/{repo}/pulls?state=all&per_page=100"}
+	out, err := d.gh.runGh(ctx, args...)
+	if err != nil {
+		return false, fmt.Errorf("badge marker scan: %w", err)
+	}
+	dec := json.NewDecoder(bytes.NewReader(out))
 	for {
-		page++
-		args := []string{"pr", "list", "--state", "all", "--limit", "100", "--json", "number,body"}
-		if cursor != "" {
-			args = append(args, "--after", cursor)
-		}
-		combinedOut, err := d.gh.runGh(ctx, args...)
-		if err != nil {
-			return false, totalSeen, fmt.Errorf("badge marker scan page %d: %w", page, err)
-		}
-
-		trimmed := bytes.TrimSuffix(combinedOut, []byte("\n"))
-		jsonOut := trimmed
-		if idx := bytes.Index(trimmed, []byte("\n<")); idx >= 0 {
-			jsonOut = bytes.TrimSpace(trimmed[:idx])
-		}
-
-		var payloads []prPayloadBody
-		if err := json.Unmarshal(jsonOut, &payloads); err != nil {
-			return false, totalSeen, fmt.Errorf("badge marker scan page %d: parse prs: %w", page, err)
-		}
-		totalSeen += len(payloads)
-		for _, p := range payloads {
-			if badgeMarkerRE.MatchString(p.Body) {
-				return true, totalSeen, nil
+		var p prPayloadBody
+		if err := dec.Decode(&p); err != nil {
+			if err == io.EOF {
+				return false, nil
 			}
+			return false, fmt.Errorf("badge marker scan: decode prs: %w", err)
 		}
-		if m := linkNextRE.FindSubmatch(combinedOut); len(m) > 1 {
-			uri := string(m[1])
-			if afterIdx := strings.Index(uri, "&after="); afterIdx >= 0 {
-				cursor = uri[afterIdx+len("&after="):]
-			} else {
-				return false, totalSeen, nil
-			}
-		} else {
-			return false, totalSeen, nil
+		if badgeMarkerRE.MatchString(p.Body) {
+			return true, nil
 		}
 	}
 }
@@ -149,15 +145,51 @@ type defaultBadgeControlFileReader struct {
 // HasBadgeControlFile reports whether the control file is present
 // under the resolved SandmanDir. Stat errors other than "not exist"
 // are swallowed and reported as "absent" — a transient filesystem
-// hiccup must never block the spawn path. The marker-comment PR check
-// runs first, so the file's presence is a fast-path trust signal
-// rather than an authoritative gate.
+// hiccup must never block the spawn path. The control file is the
+// first gate evaluated by the post-batch hook: when it returns true,
+// the marker-comment scan and the child-runner spawn are both
+// skipped entirely. The marker-comment query acts as the
+// authoritative fallback only on a fresh checkout where the file
+// does not yet exist.
 func (d *defaultBadgeControlFileReader) HasBadgeControlFile() bool {
 	_, err := os.Stat(badgeControlFilePath(d.layout))
 	if err != nil {
 		return false
 	}
 	return true
+}
+
+// defaultBadgeControlFileWriter is the production implementation of
+// BadgeControlFileWriter. It writes the control file under the
+// layout-resolved SandmanDir atomically via temp-file + os.Rename so
+// readers never observe a half-written file.
+type defaultBadgeControlFileWriter struct {
+	layout paths.Layout
+}
+
+// Write creates the control file at <sandmanDir>/state/.built_with_sandman
+// using the atomic temp-file + rename pattern. The file is intentionally
+// empty — its mere existence is the signal.
+func (d *defaultBadgeControlFileWriter) Write() error {
+	controlPath := badgeControlFilePath(d.layout)
+	dir := filepath.Dir(controlPath)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("mkdir for badge control file: %w", err)
+	}
+	tmp, err := os.CreateTemp(dir, ".built_with_sandman.XXXXXX")
+	if err != nil {
+		return fmt.Errorf("create temp file for badge control file: %w", err)
+	}
+	tmpName := tmp.Name()
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmpName)
+		return fmt.Errorf("close temp file for badge control file: %w", err)
+	}
+	if err := os.Rename(tmpName, controlPath); err != nil {
+		_ = os.Remove(tmpName)
+		return fmt.Errorf("rename badge control file: %w", err)
+	}
+	return nil
 }
 
 type prPayloadList struct {
@@ -225,16 +257,16 @@ func (n nopBadgeHooker) MaybeSuggestBadge(ctx context.Context, results []AgentRu
 type defaultBadgeHooker struct {
 	prLister      PRLister
 	controlReader BadgeControlFileReader
+	controlWriter BadgeControlFileWriter
 	sandmanRunner SandmanRunner
-	writer        io.Writer
 }
 
-func newDefaultBadgeHooker(prLister PRLister, controlReader BadgeControlFileReader, sandmanRunner SandmanRunner, writer io.Writer) *defaultBadgeHooker {
+func newDefaultBadgeHooker(prLister PRLister, controlReader BadgeControlFileReader, controlWriter BadgeControlFileWriter, sandmanRunner SandmanRunner) *defaultBadgeHooker {
 	return &defaultBadgeHooker{
 		prLister:      prLister,
 		controlReader: controlReader,
+		controlWriter: controlWriter,
 		sandmanRunner: sandmanRunner,
-		writer:        writer,
 	}
 }
 
@@ -250,9 +282,19 @@ func (h *defaultBadgeHooker) MaybeSuggestBadge(ctx context.Context, results []Ag
 		return
 	}
 
+	// Tracking file is the first gate. If a previous badge sidecar run
+	// already marked this checkout, neither the API scan nor the spawn
+	// runs. The marker-comment PR check below remains authoritative
+	// for fresh checkouts where the file does not yet exist on disk.
+	// (Issue #2195, slice 3.)
+	if h.controlReader.HasBadgeControlFile() {
+		return
+	}
+
 	sandmanPRs, err := h.prLister.ListMergedSandmanPRs(ctx)
 	if err != nil {
-		fmt.Fprintf(h.writer, "Badge PR suggestion skipped: %v\n", err)
+		// Silent on every failure path. The hook is fire-and-forget;
+		// the next batch retries harmlessly.
 		return
 	}
 	if len(sandmanPRs) == 0 {
@@ -261,15 +303,9 @@ func (h *defaultBadgeHooker) MaybeSuggestBadge(ctx context.Context, results []Ag
 
 	hasBadge, err := h.prLister.HasBadgePR(ctx)
 	if err != nil {
-		fmt.Fprintf(h.writer, "Badge PR suggestion skipped: %v\n", err)
 		return
 	}
 	if hasBadge {
-		return
-	}
-
-	controlFilePresent := h.controlReader.HasBadgeControlFile()
-	if controlFilePresent {
 		return
 	}
 
@@ -282,12 +318,12 @@ func (h *defaultBadgeHooker) MaybeSuggestBadge(ctx context.Context, results []Ag
 	badgePromptText := strings.ReplaceAll(badgePromptTemplate, "{{MERGED_PRS}}", mergedPRsText)
 
 	prURL, err := h.sandmanRunner.RunPrompt(ctx, badgePromptText, badgeBranchName)
-	if err != nil {
-		fmt.Fprintf(h.writer, "Badge PR suggestion skipped: %v\n", err)
+	if err != nil || prURL == "" {
 		return
 	}
 
-	if prURL != "" {
-		fmt.Fprintf(h.writer, "Sandman suggested a Built with Sandman badge PR: %s (close it to dismiss)\n", prURL)
-	}
+	// Synchronously write the tracking file so the next batch in this
+	// checkout short-circuits at the control-file gate without invoking
+	// the API at all. (Issue #2195, slice 4.)
+	_ = h.controlWriter.Write()
 }
