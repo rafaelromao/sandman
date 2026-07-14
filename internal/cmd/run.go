@@ -995,37 +995,20 @@ func filterClosedIssues(ctx context.Context, numbers []int, searchFn func(contex
 	return filtered, nil
 }
 
-// filterClosedIssuesAfterExpansion removes closed children that were
-// introduced by Specification expansion, while preserving user-typed
-// inputs that survived expansion.
+// filterClosedIssuesAfterExpansion re-applies filterClosedIssues to the
+// post-expansion list so children that were discovered during
+// Specification expansion get the same closed-state filter as the
+// user-typed input at the top of this function.
 //
-// userTyped is the pre-expansion snapshot of the issues list. A
-// user-typed number that is also present in the post-expansion list (a
-// non-Specification pass-through) is preserved without a closed check —
-// the user owns the choice. A user-typed number that the spec resolver
-// replaced (a Specification whose children are the post-expansion
-// entries) does not appear in the post-expansion list at all, so the
-// helper has nothing to preserve for it.
+// When the post-expansion list contains only numbers that were already
+// in the user-typed set (no expansion-introduced children), the input
+// is returned untouched — no is:open search is issued, so this helper
+// is a no-op for callers whose expansion produced only user-typed
+// pass-throughs.
 //
-// Anything else in the post-expansion list (children introduced by the
-// spec resolver) is subjected to the same closed-state check as the
-// initial user-typed filter, with the same "Issue #N is closed,
-// skipping" warning line for parity.
-//
-// Order is preserved: each retained number keeps its position from the
-// post-expansion list, matching the order invariant documented in
-// ADR-0025 §6 (first occurrence wins, no reshuffling).
-//
-// If every expansion-introduced child is closed and no user-typed
-// number survived, the returned slice is empty and the error is nil —
-// the batch becomes a no-op rather than a usage error, because the
-// operator's input was syntactically valid; only its expansion outcomes
-// were filtered out.
-//
-// When there are no expansion-introduced numbers to filter, the
-// post-expansion list is returned untouched — no is:open search is
-// issued, so this helper is a no-op for callers whose expansion produced
-// only user-typed survivors.
+// errAllExplicitClosed is swallowed: the user-typed input was
+// syntactically valid, only its expansion outcomes were filtered out.
+// The empty result makes the batch a no-op rather than a usage error.
 func filterClosedIssuesAfterExpansion(
 	ctx context.Context,
 	expanded []int,
@@ -1041,39 +1024,24 @@ func filterClosedIssuesAfterExpansion(
 	for _, n := range userTyped {
 		userSet[n] = struct{}{}
 	}
-	var expansionOnly []int
+	hasExpansionOnly := false
 	for _, n := range expanded {
-		if _, ok := userSet[n]; ok {
-			continue
+		if _, ok := userSet[n]; !ok {
+			hasExpansionOnly = true
+			break
 		}
-		expansionOnly = append(expansionOnly, n)
 	}
-	if len(expansionOnly) == 0 {
+	if !hasExpansionOnly {
 		return expanded, nil
 	}
-	filteredExpansion, err := filterClosedIssues(ctx, expansionOnly, searchFn, fetchFn, stderr)
+	filtered, err := filterClosedIssues(ctx, expanded, searchFn, fetchFn, stderr)
 	if err != nil {
 		if errors.Is(err, errAllExplicitClosed) {
-			filteredExpansion = nil
-		} else {
-			return nil, err
+			return nil, nil
 		}
+		return nil, err
 	}
-	filteredSet := make(map[int]struct{}, len(filteredExpansion))
-	for _, n := range filteredExpansion {
-		filteredSet[n] = struct{}{}
-	}
-	out := make([]int, 0, len(expanded))
-	for _, n := range expanded {
-		if _, isUserTyped := userSet[n]; isUserTyped {
-			out = append(out, n)
-			continue
-		}
-		if _, kept := filteredSet[n]; kept {
-			out = append(out, n)
-		}
-	}
-	return out, nil
+	return filtered, nil
 }
 
 // loadOpenIssueSet runs the repo-wide is:open search and returns a set

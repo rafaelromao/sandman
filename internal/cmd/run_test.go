@@ -412,47 +412,35 @@ func TestFilterClosedIssuesAfterExpansion_Helper(t *testing.T) {
 		wantStderr string
 	}{
 		{
-			name:      "no user-typed, all open preserved",
-			expanded:  []int{10, 11},
-			userTyped: nil,
-			openSet:   map[int]struct{}{10: {}, 11: {}},
-			want:      []int{10, 11},
+			name:     "all expansion-introduced children open",
+			expanded: []int{10, 11},
+			openSet:  map[int]struct{}{10: {}, 11: {}},
+			want:     []int{10, 11},
 		},
 		{
-			name:       "no user-typed, all closed become empty batch without error",
+			name:       "all expansion-introduced children closed yields empty batch",
 			expanded:   []int{10, 11},
-			userTyped:  nil,
 			openSet:    map[int]struct{}{},
 			want:       nil,
 			wantStderr: "Issue #10 is closed, skipping\nIssue #11 is closed, skipping\n",
 		},
 		{
-			name:      "user-typed open preserved alongside expansion open",
-			expanded:  []int{10, 11, 20},
+			name:      "all post-expansion numbers are user-typed — no is:open search",
+			expanded:  []int{20},
 			userTyped: []int{20},
-			openSet:   map[int]struct{}{10: {}, 11: {}, 20: {}},
-			want:      []int{10, 11, 20},
+			openSet:   map[int]struct{}{},
+			want:      []int{20},
 		},
 		{
-			name:       "user-typed closed preserved without warning, expansion closed filtered",
-			expanded:   []int{10, 20},
-			userTyped:  []int{20},
-			openSet:    map[int]struct{}{20: {}},
-			want:       []int{20},
-			wantStderr: "Issue #10 is closed, skipping\n",
+			name:     "order preserved from post-expansion list",
+			expanded: []int{11, 10},
+			openSet:  map[int]struct{}{10: {}, 11: {}},
+			want:     []int{11, 10},
 		},
 		{
-			name:      "order preserved from post-expansion list",
-			expanded:  []int{11, 10},
-			userTyped: nil,
-			openSet:   map[int]struct{}{10: {}, 11: {}},
-			want:      []int{11, 10},
-		},
-		{
-			name:      "empty expanded",
-			expanded:  nil,
-			userTyped: []int{1},
-			want:      nil,
+			name:     "empty expanded",
+			expanded: nil,
+			want:     nil,
 		},
 	}
 
@@ -632,10 +620,11 @@ func TestRun_KeepsOpenChildrenAfterSpecificationExpansion(t *testing.T) {
 	}
 }
 
-func TestRun_FiltersOnlyExpansionChildrenPreservingUserTypedOpen(t *testing.T) {
-	// User-typed open issues must NOT be filtered out by the post-expansion
-	// filter, even though they share the closed-state check with the
-	// expansion-introduced children. The user owns the choice.
+func TestRun_PostExpansionFilterKeepsOpenUserTypedAlongsideOpenChildren(t *testing.T) {
+	// Mixed batch: a Specification (#1) and a non-Specification user-typed
+	// issue (#20). Post-expansion the list is [#11, #20] (#10 is closed and
+	// filtered, #1 is replaced by its children). The post-expansion filter
+	// preserves both because they are open.
 	specBody := "## Problem Statement\n\nP.\n\n## Solution\n\nS.\n\n## User Stories\n\n1. U.\n\n## Child Issues\n\n- #10\n- #11\n"
 	childBody := "## Parent\n\n#1\n\n## What\n\n"
 	gh := &fakeGitHubClient{
