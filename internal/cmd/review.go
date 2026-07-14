@@ -73,6 +73,29 @@ func NewReviewCmd(deps Dependencies) *cobra.Command {
 				return MarkUsage(fmt.Errorf("max_containers must be 0 or greater"))
 			}
 
+			reviewAgentName := strings.TrimSpace(agentFlag)
+			if reviewAgentName == "" {
+				reviewAgentName = cfg.EffectiveReviewAgent()
+			}
+
+			repoRoot := deps.RepoRoot
+			if repoRoot == "" {
+				resolved, err := resolveRepoRoot()
+				if err != nil {
+					return fmt.Errorf("resolve repo root: %w", err)
+				}
+				repoRoot = resolved
+			}
+
+			// Issue #2212: warn once at startup if the opencode
+			// version pinned in the sandbox differs from the host.
+			// Fires for both one-shot (`sandman review <PR>`) and
+			// the daemon form (`sandman review`); the daemon only
+			// warns at process startup, not per tick, because the
+			// existing `d.busy` serializes per-tick scans and the
+			// warning is informational.
+			warnOpencodeVersionMismatch(cmd, reviewAgentName, sandboxFlag, repoRoot, cfg)
+
 			if len(args) > 0 {
 				return runReviewOneShotMulti(cmd, deps, cfg, args, parallelFlag)
 			}

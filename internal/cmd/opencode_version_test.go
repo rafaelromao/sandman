@@ -41,16 +41,20 @@ func withDockerfilePin(t *testing.T, dir, version string) {
 	}
 }
 
-// newWarningTestCmd returns a *cobra.Command and a buffer that
-// captures cmd.ErrOrStderr() output. Tests call orchestrator with
-// the command and read captured.String() to assert on the warning
-// text emitted (or its absence).
-func newWarningTestCmd(t *testing.T) (*cobra.Command, *bytes.Buffer) {
+// newWarningTestCmd returns a *cobra.Command, an errBuf that
+// captures cmd.ErrOrStderr() output, and a outBuf that captures
+// cmd.OutOrStdout() output. Tests call orchestrator with the
+// command and read captured.String() to assert on the warning
+// text emitted (or its absence), and check outBuf stays empty
+// to pin the non-interference contract (warning never leaks into
+// the batch's stdout / event log / batch payload).
+func newWarningTestCmd(t *testing.T) (*cobra.Command, *bytes.Buffer, *bytes.Buffer) {
 	t.Helper()
 	c := &cobra.Command{Use: "test"}
-	var buf bytes.Buffer
-	c.SetErr(&buf)
-	return c, &buf
+	var errBuf, outBuf bytes.Buffer
+	c.SetErr(&errBuf)
+	c.SetOut(&outBuf)
+	return c, &errBuf, &outBuf
 }
 
 // defaultCfgSandbox returns a *config.Config with Sandbox set to the
@@ -58,6 +62,27 @@ func newWarningTestCmd(t *testing.T) (*cobra.Command, *bytes.Buffer) {
 // CLI flag to cfg.Sandbox use this helper.
 func defaultCfgSandbox(value string) *config.Config {
 	return &config.Config{Sandbox: value}
+}
+
+// TestWarnOpencodeVersionMismatch_NeverTouchesStdout pins the
+// non-interference contract from Slice 4: the orchestrator only
+// writes to stderr. Touching OutOrStdout would pollute the batch's
+// stdout (which feeds into the event log / batch payload), changing
+// observable behavior beyond "advisory warning."
+func TestWarnOpencodeVersionMismatch_NeverTouchesStdout(t *testing.T) {
+	dir := t.TempDir()
+	withProbe(t, "1.17.19", nil)
+	withDockerfilePin(t, dir, "1.15.0")
+
+	cmd, errBuf, outBuf := newWarningTestCmd(t)
+	warnOpencodeVersionMismatch(cmd, "opencode", "podman", dir, defaultCfgSandbox(""))
+
+	if outBuf.Len() != 0 {
+		t.Errorf("orchestrator must not write to stdout; got %q", outBuf.String())
+	}
+	if errBuf.Len() == 0 {
+		t.Errorf("orchestrator must write to stderr when mismatch detected")
+	}
 }
 
 func TestParseOpencodePinFromDockerfile_ExtractsVersion(t *testing.T) {
@@ -141,7 +166,7 @@ func TestWarnOpencodeVersionMismatch_WarnsOnPodmanMismatch(t *testing.T) {
 	withProbe(t, "1.17.19", nil)
 	withDockerfilePin(t, dir, "1.15.0")
 
-	cmd, buf := newWarningTestCmd(t)
+	cmd, buf, _ := newWarningTestCmd(t)
 	warnOpencodeVersionMismatch(cmd, "opencode", "podman", dir, defaultCfgSandbox(""))
 
 	out := buf.String()
@@ -157,7 +182,7 @@ func TestWarnOpencodeVersionMismatch_SilentWhenAgentNotOpencode(t *testing.T) {
 	withProbe(t, "1.17.19", nil)
 	withDockerfilePin(t, dir, "1.15.0")
 
-	cmd, buf := newWarningTestCmd(t)
+	cmd, buf, _ := newWarningTestCmd(t)
 	warnOpencodeVersionMismatch(cmd, "pi", "podman", dir, defaultCfgSandbox(""))
 	if got := buf.String(); got != "" {
 		t.Errorf("non-opencode agent must be silent; got:\n%s", got)
@@ -169,7 +194,7 @@ func TestWarnOpencodeVersionMismatch_SilentWhenProbeFails(t *testing.T) {
 	withProbe(t, "", errProbe)
 	withDockerfilePin(t, dir, "1.15.0")
 
-	cmd, buf := newWarningTestCmd(t)
+	cmd, buf, _ := newWarningTestCmd(t)
 	warnOpencodeVersionMismatch(cmd, "opencode", "podman", dir, defaultCfgSandbox(""))
 	if got := buf.String(); got != "" {
 		t.Errorf("probe failure must be silent; got:\n%s", got)
@@ -181,7 +206,7 @@ func TestWarnOpencodeVersionMismatch_SilentWhenVersionsMatch(t *testing.T) {
 	withProbe(t, "1.17.19", nil)
 	withDockerfilePin(t, dir, "1.17.19")
 
-	cmd, buf := newWarningTestCmd(t)
+	cmd, buf, _ := newWarningTestCmd(t)
 	warnOpencodeVersionMismatch(cmd, "opencode", "podman", dir, defaultCfgSandbox(""))
 	if got := buf.String(); got != "" {
 		t.Errorf("matching versions must be silent; got:\n%s", got)
@@ -195,7 +220,7 @@ func TestWarnOpencodeVersionMismatch_SilentOnWorktreeMode(t *testing.T) {
 	withProbe(t, "1.17.19", nil)
 	withDockerfilePin(t, dir, "1.15.0")
 
-	cmd, buf := newWarningTestCmd(t)
+	cmd, buf, _ := newWarningTestCmd(t)
 	warnOpencodeVersionMismatch(cmd, "opencode", "worktree", dir, defaultCfgSandbox(""))
 	if got := buf.String(); got != "" {
 		t.Errorf("worktree mode must be silent (host IS sandbox); got:\n%s", got)
@@ -207,7 +232,7 @@ func TestWarnOpencodeVersionMismatch_FallsBackToCfgSandboxWhenFlagEmpty(t *testi
 	withProbe(t, "1.17.19", nil)
 	withDockerfilePin(t, dir, "1.15.0")
 
-	cmd, buf := newWarningTestCmd(t)
+	cmd, buf, _ := newWarningTestCmd(t)
 	warnOpencodeVersionMismatch(cmd, "opencode", "", dir, defaultCfgSandbox("podman"))
 	if got := buf.String(); !strings.Contains(got, "warning") {
 		t.Errorf("empty flag must fall back to cfg.Sandbox and warn; got:\n%s", got)
@@ -219,7 +244,7 @@ func TestWarnOpencodeVersionMismatch_UsesCatalogWhenNoDockerfile(t *testing.T) {
 	withProbe(t, "1.17.19", nil)
 	// No Dockerfile set up — catalog default (1.15.0 in
 	// builtInAgentVersionCatalog) should be the sandbox version.
-	cmd, buf := newWarningTestCmd(t)
+	cmd, buf, _ := newWarningTestCmd(t)
 	warnOpencodeVersionMismatch(cmd, "opencode", "podman", dir, defaultCfgSandbox(""))
 	if got := buf.String(); !strings.Contains(got, "warning") {
 		t.Errorf("missing Dockerfile must surface catalog pin; got:\n%s", got)
