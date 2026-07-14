@@ -202,7 +202,7 @@ The abstract isolation mechanism within which an AgentRun executes. Hides whethe
 _Avoid_: Environment, boundary, boundary context.
 
 **Sandbox.Exec contract (Setpgid invariant)**:
-The `Sandbox.Exec` method requires the spawned OS command to be its own process-group leader. Any new `Sandbox` implementation must set `Setpgid: true` on the spawned command, so that the shared `waitCmd` helper's `syscall.Kill(-cmd.Process.Pid, …)` lands on the right group on context cancel. Without this, the cancel silently no-ops and `cmd.Wait()` blocks forever, surfacing as a "no-op" abort in the portal. This invariant prevents a bug where an in-flight AgentRun in container mode stays `active` after the user clicks Abort, because the `kill(-PID, SIGKILL)` in `waitCmd` targets a non-existent PGID and returns `ESRCH`. A separate follow-up issue (#1113) addresses the remaining problem that killing the host-side `docker exec` / `podman exec` wrapper does not propagate to the in-container AgentRun.
+The `Sandbox.Exec` method requires the spawned OS command to be its own process-group leader. Any new `Sandbox` implementation must set `Setpgid: true` on the spawned command, so that the shared `waitCmd` helper's `syscall.Kill(-cmd.Process.Pid, …)` lands on the right group on context cancel. Without this, the cancel silently no-ops and `cmd.Wait()` blocks forever, surfacing as a "no-op" abort in the portal. This invariant prevents a bug where an in-flight AgentRun in container mode stays `active` after the user clicks Abort, because the `kill(-PID, SIGKILL)` in `waitCmd` targets a non-existent PGID and returns `ESRCH`. Killing the host-side `docker exec` / `podman exec` wrapper does not propagate to the in-container AgentRun; that is a separate concern tracked elsewhere.
 
 **Worktree**:
 A git worktree under `.sandman/worktrees/`, created per AgentRun, providing a dedicated checkout for the agent to modify. Not a sandbox on its own; a sandbox may contain one or more worktrees.
@@ -251,7 +251,7 @@ Connect a terminal to a running daemon via the control socket to stream its outp
 _Avoid_: Tail, follow.
 
 **Portal**:
-A repo-scoped local HTTP dashboard started by `sandman portal` that rescans the current repository's `.sandman/batches/` tree on each poll and shows active and recent Sandman instances. It does not manage daemon lifecycle. (Note: the preset launcher was removed in #1204.)
+A repo-scoped local HTTP dashboard started by `sandman portal` that rescans the current repository's `.sandman/batches/` tree on each poll and shows active and recent Sandman instances. It does not manage daemon lifecycle.
 _Avoid_: dashboard, monitor, control panel.
 
 **Reviewing**:
@@ -267,7 +267,7 @@ A portal review row whose PR cannot be resolved to an issue — a live review wh
 _Avoid_: PR42, raw runID in cell, a0c19-...-PR<n>, "Review of #N" without the PR prefix.
 
 **Continue**:
-The `--continue` flag on `sandman run` re-runs the latest AgentRun for one or more issues while reusing each issue's prior branch, base branch, agent, and review command. Continuation reads the existing `.sandman/task.md` directly rather than rendering a fresh prompt. Multi-issue `sandman run --continue <issue>...` submits a single Batch with per-issue `Branches`, `BaseBranch`, and `PreviousRunIDs` maps so the orchestrator parallelizes across issues. `--continue` keeps branch checkout unchanged, resolves the model from `--model` or `model`, and uses the stored base branch for prompt rendering and event metadata only. Per-issue prompt rendering is built on top of this surface by #443. When `.sandman/task.md` is present in the worktree, the resumed run consumes it instead of starting from a blank prompt.
+The `--continue` flag on `sandman run` re-runs the latest AgentRun for one or more issues while reusing each issue's prior branch, base branch, agent, and review command. Continuation reads the existing `.sandman/task.md` directly rather than rendering a fresh prompt. Multi-issue `sandman run --continue <issue>...` submits a single Batch with per-issue `Branches`, `BaseBranch`, and `PreviousRunIDs` maps so the orchestrator parallelizes across issues. `--continue` keeps branch checkout unchanged, resolves the model from `--model` or `model`, and uses the stored base branch for prompt rendering and event metadata only. When `.sandman/task.md` is present in the worktree, the resumed run consumes it instead of starting from a blank prompt.
 _Avoid_: Retry.
 
 **Continuation**:
