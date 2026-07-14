@@ -168,6 +168,9 @@ type fakeGitHubClient struct {
 	searchCalls            []string
 	issueComments          map[int][]github.IssueComment
 	listIssueCommentsCalls []int
+	subIssues              map[int][]int
+	listSubIssuesCalls     []int
+	listSubIssuesErr       error
 }
 
 func (f *fakeGitHubClient) FetchIssue(ctx context.Context, number int) (*github.Issue, error) {
@@ -243,6 +246,17 @@ func (f *fakeGitHubClient) ListIssueComments(ctx context.Context, number int) ([
 		return nil, nil
 	}
 	return f.issueComments[number], nil
+}
+
+func (f *fakeGitHubClient) ListSubIssues(ctx context.Context, parent int) ([]int, error) {
+	f.listSubIssuesCalls = append(f.listSubIssuesCalls, parent)
+	if f.listSubIssuesErr != nil {
+		return nil, f.listSubIssuesErr
+	}
+	if f.subIssues == nil {
+		return []int{}, nil
+	}
+	return f.subIssues[parent], nil
 }
 
 func (f *fakeGitHubClient) RepoName(ctx context.Context) (string, error) {

@@ -94,6 +94,64 @@ func TestCLIClient_ListIssueComments_Success(t *testing.T) {
 	}
 }
 
+func TestCLIClient_ListSubIssues_ReturnsIssueNumbers(t *testing.T) {
+	runner := &fakeRunner{responses: []fakeResponse{
+		{output: `{"name":"sandman","owner":{"login":"rafaelromao"}}`},
+		{output: `[{"number":42},{"number":43}]`},
+	}}
+	client := &CLIClient{runner: runner}
+
+	nums, err := client.ListSubIssues(context.Background(), 62)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !slices.Equal(nums, []int{42, 43}) {
+		t.Errorf("expected [42 43], got %v", nums)
+	}
+	apiArgs := runner.calls[1].args
+	found := false
+	for _, arg := range apiArgs {
+		if strings.Contains(arg, "issues/62/sub_issues") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("API args should target issues/62/sub_issues, got %v", apiArgs)
+	}
+}
+
+func TestCLIClient_ListSubIssues_EmptyResponse(t *testing.T) {
+	runner := &fakeRunner{responses: []fakeResponse{
+		{output: `{"name":"sandman","owner":{"login":"rafaelromao"}}`},
+		{output: `[]`},
+	}}
+	client := &CLIClient{runner: runner}
+
+	nums, err := client.ListSubIssues(context.Background(), 62)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if nums == nil {
+		t.Errorf("expected non-nil empty slice, got nil")
+	}
+	if len(nums) != 0 {
+		t.Errorf("expected empty slice, got %v", nums)
+	}
+}
+
+func TestCLIClient_ListSubIssues_TransientFailure(t *testing.T) {
+	runner := &fakeRunner{responses: []fakeResponse{
+		{output: `{"name":"sandman","owner":{"login":"rafaelromao"}}`},
+		{err: errors.New("gh api boom")},
+	}}
+	client := &CLIClient{runner: runner}
+
+	if _, err := client.ListSubIssues(context.Background(), 62); err == nil {
+		t.Fatal("expected error from transient gh failure, got nil")
+	}
+}
+
 func TestCLIClient_SearchIssues_Success(t *testing.T) {
 	runner := &fakeRunner{responses: []fakeResponse{{output: `[{"number":1,"state":"open","title":"Bug","body":"bug body","labels":[{"name":"bug"}]},{"number":2,"state":"closed","title":"Feature","body":"feat body","labels":[]}]`}}}
 	client := &CLIClient{runner: runner}

@@ -80,6 +80,9 @@ func (badgeE2EIssueGitHubClient) ListPRComments(_ context.Context, _ int) ([]git
 func (badgeE2EIssueGitHubClient) ListIssueComments(_ context.Context, _ int) ([]github.IssueComment, error) {
 	return nil, nil
 }
+func (badgeE2EIssueGitHubClient) ListSubIssues(_ context.Context, _ int) ([]int, error) {
+	return nil, nil
+}
 func (badgeE2EIssueGitHubClient) RepoName(_ context.Context) (string, error) {
 	return "owner/repo", nil
 }

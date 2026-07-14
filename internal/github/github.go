@@ -90,6 +90,7 @@ type Client interface {
 	ListOpenPRs(ctx context.Context) ([]PR, error)
 	ListPRComments(ctx context.Context, number int) ([]PRComment, error)
 	ListIssueComments(ctx context.Context, number int) ([]IssueComment, error)
+	ListSubIssues(ctx context.Context, parent int) ([]int, error)
 	RepoName(ctx context.Context) (string, error)
 	EditComment(ctx context.Context, commentID, body string) error
 	EditPRBody(ctx context.Context, prNumber int, body string) error

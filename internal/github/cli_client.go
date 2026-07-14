@@ -530,6 +530,53 @@ func (c *CLIClient) ListIssueComments(ctx context.Context, number int) ([]IssueC
 	return comments, nil
 }
 
+// ListSubIssues fetches the issue numbers of the given parent issue's native
+// GitHub sub-issues via the REST API. It returns a non-nil empty slice when
+// the parent has no sub-issues. The endpoint is
+// GET /repos/{owner}/{repo}/issues/{number}/sub_issues.
+func (c *CLIClient) ListSubIssues(ctx context.Context, parent int) ([]int, error) {
+	owner, repo, err := c.resolveRepo(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	path := fmt.Sprintf("repos/%s/%s/issues/%d/sub_issues?per_page=%s", owner, repo, parent, prCommentPageSize)
+	callCtx, cancel := c.boundContext(ctx)
+	defer cancel()
+	cmd := c.command(callCtx, "gh", "api", path, "--paginate")
+	out, err := runCmd(callCtx, cmd, "gh api sub issues")
+	if err != nil {
+		return nil, fmt.Errorf("gh api sub issues: %w", err)
+	}
+
+	if len(bytes.TrimSpace(out)) == 0 {
+		return []int{}, nil
+	}
+
+	var payloads []struct {
+		Number int `json:"number"`
+	}
+	dec := json.NewDecoder(bytes.NewReader(out))
+	for {
+		var page []struct {
+			Number int `json:"number"`
+		}
+		if err := dec.Decode(&page); err != nil {
+			if err == io.EOF {
+				break
+			}
+			return nil, fmt.Errorf("parse sub issues: %w", err)
+		}
+		payloads = append(payloads, page...)
+	}
+
+	nums := make([]int, 0, len(payloads))
+	for _, payload := range payloads {
+		nums = append(nums, payload.Number)
+	}
+	return nums, nil
+}
+
 func (c *CLIClient) fetchIssuePayload(ctx context.Context, owner, repo string, number int) (issuePayload, error) {
 	callCtx, cancel := c.boundContext(ctx)
 	defer cancel()

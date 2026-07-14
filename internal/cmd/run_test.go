@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -168,6 +169,10 @@ func (f *fakeGitHubClient) ListPRComments(ctx context.Context, number int) ([]gi
 }
 
 func (f *fakeGitHubClient) ListIssueComments(ctx context.Context, number int) ([]github.IssueComment, error) {
+	return nil, nil
+}
+
+func (f *fakeGitHubClient) ListSubIssues(ctx context.Context, parent int) ([]int, error) {
 	return nil, nil
 }
 
@@ -634,6 +639,72 @@ func (c *countingCommentsClient) ListIssueComments(ctx context.Context, number i
 		c.fetch()
 	}
 	return c.comments, nil
+}
+
+type countingSubIssuesClient struct {
+	github.Client
+	nums   map[int][]int
+	calls  map[int]int
+	fetchH func(int)
+}
+
+func (c *countingSubIssuesClient) ListSubIssues(ctx context.Context, parent int) ([]int, error) {
+	if c.calls == nil {
+		c.calls = map[int]int{}
+	}
+	c.calls[parent]++
+	if c.fetchH != nil {
+		c.fetchH(parent)
+	}
+	if c.nums == nil {
+		return []int{}, nil
+	}
+	return c.nums[parent], nil
+}
+
+func TestCachedGitHubClient_ListSubIssues_CachesResult(t *testing.T) {
+	delegate := &countingSubIssuesClient{nums: map[int][]int{62: {42, 43}}}
+
+	c := newCachedGitHubClient(delegate)
+
+	first, err := c.ListSubIssues(context.Background(), 62)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !slices.Equal(first, []int{42, 43}) {
+		t.Errorf("expected [42 43], got %v", first)
+	}
+	if delegate.calls[62] != 1 {
+		t.Fatalf("expected delegate to be called once, got %d", delegate.calls[62])
+	}
+
+	second, err := c.ListSubIssues(context.Background(), 62)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !slices.Equal(second, []int{42, 43}) {
+		t.Errorf("expected cached [42 43], got %v", second)
+	}
+	if delegate.calls[62] != 1 {
+		t.Fatalf("expected delegate to still have been called once, got %d", delegate.calls[62])
+	}
+}
+
+func TestCachedGitHubClient_ListSubIssues_EmptyResultIsNonNil(t *testing.T) {
+	delegate := &countingSubIssuesClient{nums: map[int][]int{99: {}}}
+
+	c := newCachedGitHubClient(delegate)
+
+	got, err := c.ListSubIssues(context.Background(), 99)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got == nil {
+		t.Fatal("expected non-nil empty slice, got nil")
+	}
+	if len(got) != 0 {
+		t.Errorf("expected empty slice, got %v", got)
+	}
 }
 
 func TestCachedGitHubClient_DelegatesNonCachedMethods(t *testing.T) {

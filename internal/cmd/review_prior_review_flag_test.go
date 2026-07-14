@@ -46,6 +46,9 @@ func (f *fakePRCommentsClient) SearchIssues(ctx context.Context, query string) (
 func (f *fakePRCommentsClient) ListIssueComments(ctx context.Context, number int) ([]github.IssueComment, error) {
 	return nil, errors.New("not implemented")
 }
+func (f *fakePRCommentsClient) ListSubIssues(ctx context.Context, parent int) ([]int, error) {
+	return nil, errors.New("not implemented")
+}
 func (f *fakePRCommentsClient) EditComment(ctx context.Context, commentID, body string) error {
 	return errors.New("not implemented")
 }

@@ -256,6 +256,10 @@ func (c *fetchIssueErrorClient) ListIssueComments(ctx context.Context, number in
 	return nil, nil
 }
 
+func (c *fetchIssueErrorClient) ListSubIssues(ctx context.Context, parent int) ([]int, error) {
+	return nil, nil
+}
+
 func (c *fetchIssueErrorClient) RepoName(ctx context.Context) (string, error) {
 	return "owner/repo", nil
 }
