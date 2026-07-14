@@ -52,6 +52,44 @@ var postStepBackoffs = []time.Duration{
 	16 * time.Second,
 }
 
+// failureBackoffBase is the floor of the launch-failure backoff
+// schedule. Doubled each attempt, capped at failureBackoffCap. The
+// schedule is exponential so a transient upstream failure (e.g. the
+// opencode SDK returning HTTP 500) does not drive a tight
+// re-launch loop that mints a new RunID every tick. Issue #2210.
+const failureBackoffBase = 10 * time.Second
+
+// failureBackoffCap is the ceiling of the launch-failure backoff
+// schedule. Once an attempt's computed backoff exceeds the cap, the
+// cap is used for that attempt and every subsequent attempt. Issue
+// #2210.
+const failureBackoffCap = 60 * time.Second
+
+// nextFailureBackoff returns the backoff duration to sleep before
+// the next launch attempt for a commentID that has failed `attempts`
+// times in this daemon lifetime. Schedule:
+//
+//	attempt 1 → 10s
+//	attempt 2 → 20s
+//	attempt 3 → 40s
+//	attempt 4 → 60s (cap reached)
+//	attempt 5+ → 60s
+//
+// attempts < 1 returns 0 so callers can pass raw counters without
+// pre-checking. The bit-shift overflow check (d <= 0) closes the
+// failure mode where an extreme attempt count would wrap the
+// int64-shifted duration to a non-positive value. Issue #2210.
+func nextFailureBackoff(attempts int) time.Duration {
+	if attempts < 1 {
+		return 0
+	}
+	d := failureBackoffBase << (attempts - 1)
+	if d <= 0 || d > failureBackoffCap {
+		return failureBackoffCap
+	}
+	return d
+}
+
 // Clock returns the current time. Inject a custom clock in tests to avoid
 // time-based dependencies.
 type Clock func() time.Time
@@ -170,6 +208,25 @@ type Daemon struct {
 	// milliseconds instead of sleeping through the real 31s
 	// budget.
 	postBackoffs []time.Duration
+	// launchBackoff is the per-attempts sleep schedule used by
+	// sleepLaunchFailureBackoff. It defaults to nextFailureBackoff
+	// when nil; tests inject a zero-cost function
+	// (func(int) time.Duration { return 0 }) so the launch
+	// goroutine returns immediately after recording a failure
+	// instead of sleeping through the real 10–60s budget. Issue
+	// #2210.
+	launchBackoff func(attempts int) time.Duration
+}
+
+// effectiveLaunchBackoff returns the launch-failure backoff for
+// `attempts` recorded failures. When d.launchBackoff is set (by
+// tests), it wins; otherwise the package-level nextFailureBackoff
+// is used. Issue #2210.
+func (d *Daemon) effectiveLaunchBackoff(attempts int) time.Duration {
+	if d.launchBackoff != nil {
+		return d.launchBackoff(attempts)
+	}
+	return nextFailureBackoff(attempts)
 }
 
 // New returns a Daemon configured with the project defaults for the
@@ -1092,10 +1149,17 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) error {
 				return
 			}
 			// All other errors (post-step or pre-batch):
-			// postDecision recorded MarkSeen("failure") and
-			// fired MarkTerminalSeen on the seen cache. The
-			// slot release runs via the defer; nothing else
-			// to do.
+			// recordLaunchFailure / postDecision recorded
+			// MarkSeen("failure") with the incremented
+			// attempts counter (issue #2209) but the seen
+			// cache was NOT marked terminal — the S6
+			// retryable contract holds. Sleep the
+			// launch-failure backoff (issue #2210) before
+			// releasing the slot so the next tick waits
+			// instead of relaunching immediately. The slot
+			// stays held during the sleep via the deferred
+			// releasePRSlot above.
+			d.sleepLaunchFailureBackoff(ctx, comment.ID, state)
 			return
 		}
 	}()
@@ -1780,8 +1844,15 @@ func (d *Daemon) now() time.Time {
 	return time.Now()
 }
 
-// recordLaunchFailure records MarkSeen("failure") for commentID
-// and returns the wrapped error so the caller can propagate it.
+// recordLaunchFailure records the launch failure for commentID and
+// returns the wrapped error so the caller can propagate it. The
+// attempt counter from the foundation ticket (#2209) is read,
+// incremented, and persisted via MarkSeenWithAttempts so the
+// launch-failure backoff schedule (#2210) and any future retry
+// gate (#2211) can read the same source of truth. The seen-cache
+// hook is NOT fired (failure is not in shouldSkipDedupStatus) so
+// the S6 retryable contract is preserved — the next tick's
+// processPR re-launches the trigger instead of short-circuiting.
 // Honours ctx cancellation observed before MarkSeen by leaving
 // the status untouched (matching the "stays pending on
 // cancellation" semantic pinned by issue #1846).
@@ -1793,10 +1864,34 @@ func (d *Daemon) recordLaunchFailure(ctx context.Context, commentID string, stat
 		d.logf("comment %s: ctx cancelled before launch failure recorded; leaving status untouched (issue #1846)", commentID)
 		return cerr
 	}
-	if err := state.MarkSeen(commentID, "failure"); err != nil {
-		d.logf("mark %s failure: %v", commentID, err)
+	attempts := ReadFailureAttempts(state, commentID) + 1
+	if err := state.MarkSeenWithAttempts(commentID, "failure", attempts); err != nil {
+		d.logf("mark %s failure (attempts=%d): %v", commentID, attempts, err)
 	}
 	return cause
+}
+
+// sleepLaunchFailureBackoff sleeps the nextFailureBackoff computed
+// for the attempts counter currently persisted on state. The per-PR
+// slot stays held during the sleep because the caller is the
+// launch goroutine and its deferred releasePRSlot only fires
+// after this returns. ctx cancellation interrupts the sleep
+// cleanly so a daemon shutdown does not hang on a 60s tail. Issue
+// #2210.
+func (d *Daemon) sleepLaunchFailureBackoff(ctx context.Context, commentID string, state *ReviewStateStore) {
+	if state == nil {
+		return
+	}
+	attempts := ReadFailureAttempts(state, commentID)
+	backoff := d.effectiveLaunchBackoff(attempts)
+	if backoff <= 0 {
+		return
+	}
+	d.logf("comment %s: launch failure backoff %v (attempts=%d, issue #2210)", commentID, backoff, attempts)
+	select {
+	case <-time.After(backoff):
+	case <-ctx.Done():
+	}
 }
 
 // logf writes a line to the broadcaster (or stderr when none is wired).

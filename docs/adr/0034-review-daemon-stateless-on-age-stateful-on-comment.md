@@ -147,6 +147,26 @@ Two helpers expose the counter to the launch path:
 
 The dedup invariants are unaffected: `shouldSkipDedupStatus` still returns true only for `success` / `superseded`, so a `failure` row with `attempts > 0` remains retryable. The seen-cache hydration walks `review-state.json` exactly as before; it never reads `attempts`. Downstream tickets consume the counter via `ReadFailureAttempts` and `MarkSeenWithAttempts`.
 
+### Launch-failure backoff (issue #2210)
+
+The launch goroutine's failure path applies an exponential backoff before returning the per-PR slot, so a transient upstream failure (e.g. the opencode SDK returning HTTP 500 — `anomalyco/opencode#33766`, `#36688`) cannot drive a tight re-launch loop that mints a new RunID every polling tick.
+
+Schedule:
+
+| attempt | sleep |
+|--------:|------:|
+| 1       | 10s   |
+| 2       | 20s   |
+| 3       | 40s   |
+| 4       | 60s (cap reached) |
+| 5+      | 60s   |
+
+The schedule is encoded by `nextFailureBackoff(attempts)` and pinned via `failureBackoffBase = 10s` and `failureBackoffCap = 60s`. Tests inject a zero-cost backoff through `Daemon.launchBackoff` (the test seam mirrors `Daemon.postBackoffs`); production never sets the seam.
+
+`recordLaunchFailure` reads the persisted counter via `ReadFailureAttempts`, increments it, and writes it back through `MarkSeenWithAttempts(commentID, "failure", n+1)`. The seen-cache hook is NOT fired (failure is not in `shouldSkipDedupStatus`), preserving the S6 retryable contract. The launch goroutine then calls `sleepLaunchFailureBackoff`, which selects on `time.After(backoff)` OR `ctx.Done()` so a daemon shutdown interrupts the sleep cleanly. The per-PR slot stays held throughout the sleep because the goroutine's deferred `releasePRSlot` only fires after the sleep returns.
+
+A successful post step (`postDecision` → `MarkSeen("success")`) clears `attempts` to 0 (per the "cleared on the next success" contract from #2209), so the schedule restarts at the floor after any successful launch.
+
 ## Consequences
 
 ### Positive
@@ -160,6 +180,7 @@ The dedup invariants are unaffected: `shouldSkipDedupStatus` still returns true 
 - Per-PR slot table (issue #1481 slice C) holds a slot for the in-flight review across ticks, so new `/sandman review` triggers on a busy PR are not silently dropped while the previous review is still running. Regression tests: `TestDaemon_ParallelReviews_HoldsPerPRSlotAcrossTicks`, `TestDaemon_ParallelReviews_HonorsGlobalCap`, `TestDaemon_MidFlightCommentOnBusyPR_IsProcessedAfterRelease`, `TestDaemon_HeldSlotLeavesSeenCacheNonTerminal` (in `internal/review/daemon_sliceC_test.go`).
 - Lazy verify (issue #1482 slice D) keeps `launchReview`'s critical path proportional to `RunBatch` and removes the ~15s inline retry window. Regression tests: `TestDaemon_PromotePendingComment_ReturnsSuccessWhenReviewFound`, `TestDaemon_PromotePendingComment_ReturnsErrorWhenMissing`, `TestDaemon_PromotePendingComment_IgnoresTriggerComment`, `TestDaemon_LaunchReviewReturnsFastAndRecordsPending`, `TestDaemon_NextTickPromotesPendingCommentToSuccess`, `TestDaemon_NextTickRejectsPendingCommentToFailureAfterBound`, `TestDaemon_NextTickRejectsPendingCommentTwiceNoOp`, `TestDaemon_PendingNotTerminalInSeenCache`, `TestDaemon_LaunchReviewReturnsFastOnRunBatchError` (in `internal/review/daemon_sliceD_test.go`).
 - Per-comment retry-attempt counter (issue #2209) survives daemon restarts and is queryable by the launch path. Regression tests: `TestReviewStateStore_ReadFailureAttemptsZeroOnFresh`, `TestReviewStateStore_MarkSeenWithAttemptsPersists`, `TestReviewStateStore_MarkSeenWithAttemptsOverwrites`, `TestReviewStateStore_MarkSeenClearsAttemptsOnSuccess`, `TestReviewStateStore_MarkSeenPreservesAttemptsOnNonSuccess`, `TestReviewStateStore_PreIssue2209FilesLoadWithZeroAttempts`, `TestReviewStateStore_MarkSeenWithAttemptsRejectsEmptyKey`, `TestReviewStateStore_MarkSeenWithAttemptsRejectsNegativeAttempts` (in `internal/review/state_test.go`).
+- Launch-failure backoff (issue #2210) sleeps an exponentially-capped schedule (10s/20s/40s/60s/60s/…) before returning the per-PR slot, with ctx cancellation interrupting the sleep cleanly. Regression tests: `TestNextFailureBackoff_Schedule`, `TestFailureBackoffConstants_Pinned`, `TestRecordLaunchFailure_IncrementsAttempts`, `TestRecordLaunchFailure_CtxCancelLeavesUntouched`, `TestRecordLaunchFailure_PreservesRetryableContract`, `TestSleepLaunchFailureBackoff_RespectsCtxCancel`, `TestSleepLaunchFailureBackoff_ZeroSeamReturnsImmediately`, `TestDaemon_LaunchFailureBackoff_RegressionFiveFailures`, `TestDaemon_LaunchFailureBackoff_SleepsInProductionSchedule`, `TestDaemon_LaunchFailureBackoff_SuccessResetsAttempts` (in `internal/review/daemon_issue_2210_test.go`).
 
 ### Negative
 
