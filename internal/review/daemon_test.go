@@ -230,6 +230,7 @@ func newDaemonForTest(t *testing.T, gh GitHubClient, runner BatchRunner, cfg *co
 	d := New(dir, gh, &prompt.Engine{}, runner, cfg, buf, 0, false, nil)
 	d.PollInterval = 0
 	d.postBackoffs = []time.Duration{0, 0, 0, 0, 0}
+	d.launchBackoff = func(int) time.Duration { return 0 } // issue #2210 zero-cost seam
 	return d, buf, dir
 }
 
@@ -257,6 +258,7 @@ func newDaemonForTestWithParallel(t *testing.T, gh GitHubClient, runner BatchRun
 	d := New(dir, gh, &prompt.Engine{}, runner, cfg, buf, parallel, parallelSet, nil)
 	d.PollInterval = 0
 	d.postBackoffs = []time.Duration{0, 0, 0, 0, 0}
+	d.launchBackoff = func(int) time.Duration { return 0 } // issue #2210 zero-cost seam
 	return d, buf, dir
 }
 
