@@ -187,9 +187,13 @@ func (s *ReviewStateStore) Release(commentID string) {
 //
 // When status == "success" the Attempts counter on the SeenComment
 // row is reset to zero — issue #2209 §"cleared on the next success".
-// Other statuses preserve any previously recorded Attempts so the
-// retry-budget evidence remains inspectable. Use MarkSeenWithAttempts
-// when the caller needs explicit control over the Attempts field.
+// The NextAttemptAt stamp (issue #2211) is also cleared on success
+// so the per-trigger retry-budget gate does not block the trigger
+// after a fresh launch. Other statuses preserve any previously
+// recorded Attempts and NextAttemptAt so the retry-budget evidence
+// remains inspectable. Use MarkSeenWithBudget when the caller needs
+// explicit control over the Attempts field or the NextAttemptAt
+// stamp.
 //
 // Cache side-effect: the SeenCacheInvalidator hook (slice A) fires
 // MarkTerminalSeen only when shouldSkipDedupStatus(status) is true
@@ -221,6 +225,7 @@ func (s *ReviewStateStore) MarkSeen(commentID, status string) error {
 				s.state.SeenComments[i].Timestamp = time.Now()
 				if status == "success" {
 					s.state.SeenComments[i].Attempts = 0
+					s.state.SeenComments[i].NextAttemptAt = nil
 				}
 				break
 			}
@@ -315,6 +320,87 @@ func ReadFailureAttempts(s *ReviewStateStore, commentID string) int {
 		}
 	}
 	return 0
+}
+
+// ReadNextAttemptAt returns the persisted NextAttemptAt stamp for
+// commentID in s, or the zero time.Time if no SeenComment entry
+// exists or if the entry has no gate. The daemon's per-trigger
+// retry-budget gate (#2211) reads this on every tick and skips a
+// trigger whose stamp is in the future. Callers must compare the
+// returned value against time.Now() and treat zero as "no gate".
+func ReadNextAttemptAt(s *ReviewStateStore, commentID string) time.Time {
+	commentID = strings.TrimSpace(commentID)
+	if commentID == "" {
+		return time.Time{}
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, sc := range s.state.SeenComments {
+		if sc.CommentID == commentID {
+			if sc.NextAttemptAt == nil {
+				return time.Time{}
+			}
+			return *sc.NextAttemptAt
+		}
+	}
+	return time.Time{}
+}
+
+// MarkSeenWithBudget is a MarkSeenWithAttempts variant that also
+// records a NextAttemptAt stamp on the SeenComment row. Pass nil
+// (or zero time.Time via toPtr) to leave the field unset
+// (matching MarkSeenWithAttempts). The launch-failure path
+// (recordLaunchFailure) passes now.Add(nextFailureBackoff(attempts))
+// so the per-trigger gate in processPR can skip re-launches whose
+// budget has not yet elapsed. MarkSeen ("success") clears
+// NextAttemptAt via the success-resets branch in MarkSeen — see
+// MarkSeen's "cleared on the next success" contract.
+func (s *ReviewStateStore) MarkSeenWithBudget(commentID, status string, attempts int, nextAttemptAt time.Time) error {
+	commentID = strings.TrimSpace(commentID)
+	if commentID == "" {
+		return fmt.Errorf("empty comment id")
+	}
+	if strings.TrimSpace(status) == "" {
+		return fmt.Errorf("empty status")
+	}
+	if attempts < 0 {
+		return fmt.Errorf("negative attempts: %d", attempts)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := time.Now()
+	var stampPtr *time.Time
+	if !nextAttemptAt.IsZero() {
+		stamp := nextAttemptAt
+		stampPtr = &stamp
+	}
+	if !s.isSeenLocked(commentID) {
+		s.state.SeenComments = append(s.state.SeenComments, batchindex.SeenComment{
+			CommentID:     commentID,
+			Status:        status,
+			Timestamp:     now,
+			Attempts:      attempts,
+			NextAttemptAt: stampPtr,
+		})
+	} else {
+		for i, sc := range s.state.SeenComments {
+			if sc.CommentID == commentID {
+				s.state.SeenComments[i].Status = status
+				s.state.SeenComments[i].Timestamp = now
+				s.state.SeenComments[i].Attempts = attempts
+				s.state.SeenComments[i].NextAttemptAt = stampPtr
+				break
+			}
+		}
+	}
+	delete(s.state.Claims, commentID)
+	if err := reviewStateSave(s); err != nil {
+		return err
+	}
+	if shouldSkipDedupStatus(status) {
+		s.invalidator.MarkTerminalSeen(s.prNumber, commentID)
+	}
+	return nil
 }
 
 // reviewStateSave is an internal seam so tests can intercept the

@@ -63,6 +63,18 @@ For review runs, the run folder (`.sandman/batches/<batch-id>/runs/<run-id>/`) c
 }
 ```
 
+After issue #2211, a `failure` row may also carry a `nextAttemptAt` stamp:
+
+```jsonc
+{
+  "commentID": 12345,
+  "status":    "failure",
+  "timestamp": "<RFC3339>",
+  "attempts":  3,
+  "nextAttemptAt": "<RFC3339 — earliest wall-clock time at which processPR may re-launch this trigger>"
+}
+```
+
 `seenComments` records which comments have been processed along with their terminal status (`success`/`failure`/`superseded`/`aborted`). `claims` tracks which comment is currently being worked on by which process. Claims are stored inline — **no separate `claims/` directory** — so claim state is atomic with the rest of the review state.
 
 ### Review daemon workflow
@@ -167,6 +179,18 @@ The schedule is encoded by `nextFailureBackoff(attempts)` and pinned via `failur
 
 A successful post step (`postDecision` → `MarkSeen("success")`) clears `attempts` to 0 (per the "cleared on the next success" contract from #2209), so the schedule restarts at the floor after any successful launch.
 
+### Per-trigger retry-budget gate (issue #2211)
+
+The launch-failure backoff (#2210) was a cascade-stopper, but it coupled the gate to the per-PR slot — while one trigger slept, all other triggers on the same PR were blocked too because the slot pool is keyed by PR number. Issue #2211 separates the gate from the slot.
+
+The daemon tracks, per `(prNumber, commentID)`, an `EarliestNextAttempt` time stamp persisted in `SeenComment.NextAttemptAt` (alongside the existing `attempts` counter from #2209). `processPR` reads it on every tick after the seen-cache dedup and skips a trigger whose stamp is in the future with `continue` — no slot acquisition, no log spam. The launch-failure path writes the stamp via `MarkSeenWithBudget(commentID, "failure", attempts, now + nextFailureBackoff(attempts))`; a successful post step (`MarkSeen("success")`) clears it.
+
+The map is persisted in the same per-PR `review-state.json` aggregate that feeds `loadSeenCache`, so a daemon restart resumes from the correct budget per comment — no comment ever reverts to "fresh first attempt" after a crash. `loadSeenCache` was extended to hydrate `nextAttempt` in parallel with `seenCache`; the same cache keys (no race with the launch path) and the same lock discipline.
+
+Issue #2210's sleep-in-goroutine is removed: the gate carries the timing forward into the next tick, and the launch goroutine returns immediately after `recordLaunchFailure`. The per-PR slot is released as soon as the launch outcome is recorded, freeing the PR for unrelated triggers on the same PR number.
+
+**Restart semantics:** a `nextAttemptAt` 5 minutes in the future at crash time is still honoured by the first tick after the daemon restarts (`loadSeenCache` rehydrates it from the on-disk `review-state.json`). Operators who want a brand-new launch budget after a stop can delete `.sandman/batches/<batch>/runs/<run>/review-state.json` before the next start — the next launch runs cold.
+
 ## Consequences
 
 ### Positive
@@ -180,7 +204,8 @@ A successful post step (`postDecision` → `MarkSeen("success")`) clears `attemp
 - Per-PR slot table (issue #1481 slice C) holds a slot for the in-flight review across ticks, so new `/sandman review` triggers on a busy PR are not silently dropped while the previous review is still running. Regression tests: `TestDaemon_ParallelReviews_HoldsPerPRSlotAcrossTicks`, `TestDaemon_ParallelReviews_HonorsGlobalCap`, `TestDaemon_MidFlightCommentOnBusyPR_IsProcessedAfterRelease`, `TestDaemon_HeldSlotLeavesSeenCacheNonTerminal` (in `internal/review/daemon_sliceC_test.go`).
 - Lazy verify (issue #1482 slice D) keeps `launchReview`'s critical path proportional to `RunBatch` and removes the ~15s inline retry window. Regression tests: `TestDaemon_PromotePendingComment_ReturnsSuccessWhenReviewFound`, `TestDaemon_PromotePendingComment_ReturnsErrorWhenMissing`, `TestDaemon_PromotePendingComment_IgnoresTriggerComment`, `TestDaemon_LaunchReviewReturnsFastAndRecordsPending`, `TestDaemon_NextTickPromotesPendingCommentToSuccess`, `TestDaemon_NextTickRejectsPendingCommentToFailureAfterBound`, `TestDaemon_NextTickRejectsPendingCommentTwiceNoOp`, `TestDaemon_PendingNotTerminalInSeenCache`, `TestDaemon_LaunchReviewReturnsFastOnRunBatchError` (in `internal/review/daemon_sliceD_test.go`).
 - Per-comment retry-attempt counter (issue #2209) survives daemon restarts and is queryable by the launch path. Regression tests: `TestReviewStateStore_ReadFailureAttemptsZeroOnFresh`, `TestReviewStateStore_MarkSeenWithAttemptsPersists`, `TestReviewStateStore_MarkSeenWithAttemptsOverwrites`, `TestReviewStateStore_MarkSeenClearsAttemptsOnSuccess`, `TestReviewStateStore_MarkSeenPreservesAttemptsOnNonSuccess`, `TestReviewStateStore_PreIssue2209FilesLoadWithZeroAttempts`, `TestReviewStateStore_MarkSeenWithAttemptsRejectsEmptyKey`, `TestReviewStateStore_MarkSeenWithAttemptsRejectsNegativeAttempts` (in `internal/review/state_test.go`).
-- Launch-failure backoff (issue #2210) sleeps an exponentially-capped schedule (10s/20s/40s/60s/60s/…) before returning the per-PR slot, with ctx cancellation interrupting the sleep cleanly. Regression tests: `TestNextFailureBackoff_Schedule`, `TestFailureBackoffConstants_Pinned`, `TestRecordLaunchFailure_IncrementsAttempts`, `TestRecordLaunchFailure_CtxCancelLeavesUntouched`, `TestRecordLaunchFailure_PreservesRetryableContract`, `TestSleepLaunchFailureBackoff_RespectsCtxCancel`, `TestSleepLaunchFailureBackoff_ZeroSeamReturnsImmediately`, `TestDaemon_LaunchFailureBackoff_RegressionFiveFailures`, `TestDaemon_LaunchFailureBackoff_SleepsInProductionSchedule`, `TestDaemon_LaunchFailureBackoff_SuccessResetsAttempts` (in `internal/review/daemon_issue_2210_test.go`).
+- Launch-failure backoff (issue #2210) sleeps an exponentially-capped schedule (10s/20s/40s/60s/60s/…) before returning the per-PR slot, with ctx cancellation interrupting the sleep cleanly. Regression tests: `TestNextFailureBackoff_Schedule`, `TestFailureBackoffConstants_Pinned`, `TestRecordLaunchFailure_IncrementsAttempts`, `TestRecordLaunchFailure_CtxCancelLeavesUntouched`, `TestRecordLaunchFailure_PreservesRetryableContract`, `TestRecordLaunchFailure_PersistsStamp`, `TestDaemon_LaunchFailureBackoff_RegressionFiveFailures`, `TestDaemon_LaunchFailureBackoff_SleepsInProductionSchedule`, `TestDaemon_LaunchFailureBackoff_SuccessResetsAttempts` (in `internal/review/daemon_issue_2210_test.go`).
+- Per-trigger retry-budget gate (issue #2211) moves the backoff from the launch goroutine to a per-`(prNumber, commentID)` stamp checked in `processPR` on every tick, with restart-survival via `loadSeenCache` rehydration. Regression tests: `TestRecordLaunchFailure_PersistsStamp_2211`, `TestRecordLaunchFailure_SuccessClearsStamp`, `TestDaemon_ProcessPRGate_SkipsStampInFuture`, `TestDaemon_StaggeredFailures_LaunchIndependently`, `TestDaemon_RestartSurvivesStamp`, `TestMarkSeenWithBudget_PersistsNextAttemptAt`, `TestMarkSeenWithBudget_ZeroStampOmitsField` (in `internal/review/daemon_issue_2211_test.go`).
 
 ### Negative
 

@@ -175,68 +175,29 @@ func TestRecordLaunchFailure_PreservesRetryableContract(t *testing.T) {
 	}
 }
 
-// TestSleepLaunchFailureBackoff_RespectsCtxCancel asserts AC #4:
-// ctx cancellation interrupts the sleep promptly so a daemon
-// shutdown does not hang on the 60s tail.
-func TestSleepLaunchFailureBackoff_RespectsCtxCancel(t *testing.T) {
-	d := &Daemon{}
-	// Production schedule would sleep 60s on attempts=4; the test
-	// seam injects a 60s sleeper so the test still proves the
-	// cancellation path without running for a minute.
-	d.launchBackoff = func(int) time.Duration { return 60 * time.Second }
-
-	dir := testenv.MkdirShort(t, "sm-sleep-cancel-")
+// TestRecordLaunchFailure_PersistsStamp asserts the issue #2211
+// half of recordLaunchFailure: the NextAttemptAt stamp computed
+// from the launch-failure backoff is persisted to review-state.json
+// (and the in-memory map mirrors it) so the per-trigger gate in
+// processPR can skip re-launches whose budget has not yet elapsed.
+func TestRecordLaunchFailure_PersistsStamp(t *testing.T) {
+	dir := testenv.MkdirShort(t, "sm-recordfail-stamp-")
 	t.Chdir(dir)
 	store, err := NewReviewStateStore(filepath.Join(dir, "review-state.json"), 4242, nil)
 	if err != nil {
 		t.Fatalf("NewReviewStateStore: %v", err)
 	}
+	d := &Daemon{launchBackoff: func(int) time.Duration { return 0 }}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan struct{})
-	start := time.Now()
-	go func() {
-		defer close(done)
-		d.sleepLaunchFailureBackoff(ctx, "c1", store)
-	}()
-	time.Sleep(20 * time.Millisecond)
-	cancel()
-
-	select {
-	case <-done:
-	case <-time.After(2 * time.Second):
-		t.Fatal("sleepLaunchFailureBackoff did not honour ctx cancellation")
+	if err := d.recordLaunchFailure(context.Background(), "c1", store, errors.New("upstream 500")); err == nil {
+		t.Error("recordLaunchFailure swallowed cause")
 	}
-	if elapsed := time.Since(start); elapsed > 1*time.Second {
-		t.Errorf("sleep honoured ctx cancel but took %v; expected sub-second", elapsed)
+	stamp := d.NextAttemptAt(4242, "c1")
+	if stamp.IsZero() {
+		t.Error("NextAttemptAt should be set after a launch failure, got zero")
 	}
-}
-
-// TestSleepLaunchFailureBackoff_ZeroSeamReturnsImmediately asserts
-// AC #6: the test seam returns 0 and the helper short-circuits
-// without entering the timer select — so test fixtures can chain
-// five consecutive failures without sleeping.
-func TestSleepLaunchFailureBackoff_ZeroSeamReturnsImmediately(t *testing.T) {
-	d := &Daemon{}
-	calls := 0
-	d.launchBackoff = func(int) time.Duration {
-		calls++
-		return 0
-	}
-	dir := testenv.MkdirShort(t, "sm-sleep-zero-")
-	t.Chdir(dir)
-	store, err := NewReviewStateStore(filepath.Join(dir, "review-state.json"), 4242, nil)
-	if err != nil {
-		t.Fatalf("NewReviewStateStore: %v", err)
-	}
-
-	start := time.Now()
-	d.sleepLaunchFailureBackoff(context.Background(), "c1", store)
-	if elapsed := time.Since(start); elapsed > 100*time.Millisecond {
-		t.Errorf("zero-cost seam should return immediately, took %v", elapsed)
-	}
-	if calls != 1 {
-		t.Errorf("launchBackoff seam should be called once, got %d", calls)
+	if got := ReadNextAttemptAt(store, "c1"); got.IsZero() {
+		t.Error("ReadNextAttemptAt should reflect the persisted stamp, got zero")
 	}
 }
 

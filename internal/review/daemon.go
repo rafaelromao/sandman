@@ -180,9 +180,19 @@ type Daemon struct {
 	promptOnce           sync.Once
 	seenCache            map[int]map[string]bool
 	seenCacheMu          sync.RWMutex
-	slotTable            map[int]struct{}
-	slotPool             chan struct{}
-	slotMu               sync.Mutex
+	// nextAttempt is the per-(prNumber, commentID) retry-budget
+	// stamp persisted in review-state.json (issue #2211). The
+	// processPR dedup loop consults it on every tick and skips
+	// triggers whose stamp is in the future — so a launch failure
+	// gates re-launches without holding the per-PR slot. Hydrated
+	// at construction by loadSeenCache alongside the seen cache;
+	// updated by recordLaunchFailure (write) and by MarkSeen
+	// "success" via the success-clears-stamp branch.
+	nextAttempt   map[int]map[string]time.Time
+	nextAttemptMu sync.RWMutex
+	slotTable     map[int]struct{}
+	slotPool      chan struct{}
+	slotMu        sync.Mutex
 	// pendingPost is the rehydrate-on-startup map (issue #1847 S4).
 	// Outer key is PR number; inner key is the trigger comment ID.
 	// Each entry remembers the absolute path of the per-row folder
@@ -398,7 +408,9 @@ func (d *Daemon) IsTerminalSeen(prNumber int, commentID string) bool {
 // MarkTerminalSeen records (prNumber, commentID) as terminal-seen in
 // the daemon's seen cache. It is invoked by ReviewStateStore via the
 // SeenCacheInvalidator seam after a successful MarkSeen whose status
-// passes shouldSkipDedupStatus.
+// passes shouldSkipDedupStatus. The per-trigger retry-budget stamp
+// (issue #2211) is also cleared so the gate in processPR does not
+// block a comment that has reached its terminal state.
 func (d *Daemon) MarkTerminalSeen(prNumber int, commentID string) {
 	d.seenCacheMu.Lock()
 	defer d.seenCacheMu.Unlock()
@@ -409,6 +421,7 @@ func (d *Daemon) MarkTerminalSeen(prNumber int, commentID string) {
 		d.seenCache[prNumber] = map[string]bool{}
 	}
 	d.seenCache[prNumber][commentID] = true
+	d.SetNextAttemptAt(prNumber, commentID, time.Time{})
 }
 
 // Forget removes (prNumber, commentID) from the daemon's seen cache.
@@ -421,6 +434,40 @@ func (d *Daemon) Forget(prNumber int, commentID string) {
 	if seen, ok := d.seenCache[prNumber]; ok {
 		delete(seen, commentID)
 	}
+}
+
+// NextAttemptAt reports the persisted retry-budget stamp for
+// (prNumber, commentID). Returns the zero time.Time when no gate is
+// set — callers compare against time.Now() and treat zero as
+// "launch immediately". Issue #2211.
+func (d *Daemon) NextAttemptAt(prNumber int, commentID string) time.Time {
+	d.nextAttemptMu.RLock()
+	defer d.nextAttemptMu.RUnlock()
+	if m, ok := d.nextAttempt[prNumber]; ok {
+		return m[commentID]
+	}
+	return time.Time{}
+}
+
+// SetNextAttemptAt records the retry-budget stamp for
+// (prNumber, commentID) in the daemon's in-memory map. Pass zero
+// time to clear the stamp. The on-disk source of truth lives in
+// review-state.json; this map is the per-process short-circuit the
+// processPR dedup loop consults on every tick. Issue #2211.
+func (d *Daemon) SetNextAttemptAt(prNumber int, commentID string, stamp time.Time) {
+	d.nextAttemptMu.Lock()
+	defer d.nextAttemptMu.Unlock()
+	if d.nextAttempt == nil {
+		d.nextAttempt = map[int]map[string]time.Time{}
+	}
+	if _, ok := d.nextAttempt[prNumber]; !ok {
+		d.nextAttempt[prNumber] = map[string]time.Time{}
+	}
+	if stamp.IsZero() {
+		delete(d.nextAttempt[prNumber], commentID)
+		return
+	}
+	d.nextAttempt[prNumber][commentID] = stamp
 }
 
 // peekPendingPost reports the rehydrate post entry for
@@ -451,6 +498,10 @@ func (d *Daemon) loadSeenCache() error {
 	d.seenCacheMu.Lock()
 	defer d.seenCacheMu.Unlock()
 	d.seenCache = map[int]map[string]bool{}
+
+	d.nextAttemptMu.Lock()
+	defer d.nextAttemptMu.Unlock()
+	d.nextAttempt = map[int]map[string]time.Time{}
 
 	idx, err := seenCacheLoader(d.BaseDir)
 	if err != nil {
@@ -486,13 +537,18 @@ func (d *Daemon) loadSeenCache() error {
 			continue
 		}
 		for _, sc := range state.SeenComments {
-			if !shouldSkipDedupStatus(sc.Status) {
-				continue
+			if shouldSkipDedupStatus(sc.Status) {
+				if _, ok := d.seenCache[entry.PR]; !ok {
+					d.seenCache[entry.PR] = map[string]bool{}
+				}
+				d.seenCache[entry.PR][sc.CommentID] = true
 			}
-			if _, ok := d.seenCache[entry.PR]; !ok {
-				d.seenCache[entry.PR] = map[string]bool{}
+			if sc.NextAttemptAt != nil && !sc.NextAttemptAt.IsZero() {
+				if _, ok := d.nextAttempt[entry.PR]; !ok {
+					d.nextAttempt[entry.PR] = map[string]time.Time{}
+				}
+				d.nextAttempt[entry.PR][sc.CommentID] = *sc.NextAttemptAt
 			}
-			d.seenCache[entry.PR][sc.CommentID] = true
 		}
 	}
 	return nil
@@ -1012,6 +1068,16 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) error {
 			d.logf("comment %s already terminal-seen, skipping", t.comment.ID)
 			continue
 		}
+		// Issue #2211: per-trigger retry-budget gate. Skips
+		// triggers whose persisted NextAttemptAt is in the
+		// future, without acquiring a slot and without log spam
+		// — the next tick after the stamp elapses will retry
+		// the launch. The stamp is per-(prNumber, commentID)
+		// so a fresh trigger on the same PR is not blocked by
+		// an older comment's stamp.
+		if stamp := d.NextAttemptAt(prNumber, t.comment.ID); !stamp.IsZero() && stamp.After(d.now()) {
+			continue
+		}
 		unprocessed = append(unprocessed, t)
 	}
 	d.seenCacheMu.RUnlock()
@@ -1151,15 +1217,15 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) error {
 			// All other errors (post-step or pre-batch):
 			// recordLaunchFailure / postDecision recorded
 			// MarkSeen("failure") with the incremented
-			// attempts counter (issue #2209) but the seen
+			// attempts counter AND the NextAttemptAt stamp
+			// (issue #2211). The per-PR slot is released
+			// immediately; the gate in processPR consults
+			// the stamp on the next tick and skips the
+			// trigger until the budget elapses. The seen
 			// cache was NOT marked terminal — the S6
-			// retryable contract holds. Sleep the
-			// launch-failure backoff (issue #2210) before
-			// releasing the slot so the next tick waits
-			// instead of relaunching immediately. The slot
-			// stays held during the sleep via the deferred
-			// releasePRSlot above.
-			d.sleepLaunchFailureBackoff(ctx, comment.ID, state)
+			// retryable contract holds. Issue #2210's
+			// sleep-in-goroutine is no longer required
+			// because the gate carries the timing forward.
 			return
 		}
 	}()
@@ -1847,15 +1913,19 @@ func (d *Daemon) now() time.Time {
 // recordLaunchFailure records the launch failure for commentID and
 // returns the wrapped error so the caller can propagate it. The
 // attempt counter from the foundation ticket (#2209) is read,
-// incremented, and persisted via MarkSeenWithAttempts so the
-// launch-failure backoff schedule (#2210) and any future retry
-// gate (#2211) can read the same source of truth. The seen-cache
-// hook is NOT fired (failure is not in shouldSkipDedupStatus) so
-// the S6 retryable contract is preserved — the next tick's
-// processPR re-launches the trigger instead of short-circuiting.
-// Honours ctx cancellation observed before MarkSeen by leaving
-// the status untouched (matching the "stays pending on
-// cancellation" semantic pinned by issue #1846).
+// incremented, and persisted alongside the per-trigger retry-budget
+// stamp (issue #2211) via MarkSeenWithBudget so the gate in
+// processPR can skip re-launches whose budget has not yet elapsed.
+// The launch-failure backoff schedule (#2210) provides the
+// duration; this ticket moves the gate from the launch goroutine
+// to processPR so the per-PR slot is no longer held across the
+// sleep. The seen-cache hook is NOT fired (failure is not in
+// shouldSkipDedupStatus) so the S6 retryable contract is
+// preserved — the next tick's processPR re-launches the trigger
+// after the stamp elapses. Honours ctx cancellation observed
+// before MarkSeen by leaving the status untouched (matching the
+// "stays pending on cancellation" semantic pinned by issue
+// #1846).
 func (d *Daemon) recordLaunchFailure(ctx context.Context, commentID string, state *ReviewStateStore, cause error) error {
 	if state == nil {
 		return cause
@@ -1865,33 +1935,13 @@ func (d *Daemon) recordLaunchFailure(ctx context.Context, commentID string, stat
 		return cerr
 	}
 	attempts := ReadFailureAttempts(state, commentID) + 1
-	if err := state.MarkSeenWithAttempts(commentID, "failure", attempts); err != nil {
-		d.logf("mark %s failure (attempts=%d): %v", commentID, attempts, err)
-	}
-	return cause
-}
-
-// sleepLaunchFailureBackoff sleeps the nextFailureBackoff computed
-// for the attempts counter currently persisted on state. The per-PR
-// slot stays held during the sleep because the caller is the
-// launch goroutine and its deferred releasePRSlot only fires
-// after this returns. ctx cancellation interrupts the sleep
-// cleanly so a daemon shutdown does not hang on a 60s tail. Issue
-// #2210.
-func (d *Daemon) sleepLaunchFailureBackoff(ctx context.Context, commentID string, state *ReviewStateStore) {
-	if state == nil {
-		return
-	}
-	attempts := ReadFailureAttempts(state, commentID)
 	backoff := d.effectiveLaunchBackoff(attempts)
-	if backoff <= 0 {
-		return
+	stamp := d.now().Add(backoff)
+	if err := state.MarkSeenWithBudget(commentID, "failure", attempts, stamp); err != nil {
+		d.logf("mark %s failure (attempts=%d, nextAttemptAt=%v): %v", commentID, attempts, stamp, err)
 	}
-	d.logf("comment %s: launch failure backoff %v (attempts=%d, issue #2210)", commentID, backoff, attempts)
-	select {
-	case <-time.After(backoff):
-	case <-ctx.Done():
-	}
+	d.SetNextAttemptAt(state.PR(), commentID, stamp)
+	return cause
 }
 
 // logf writes a line to the broadcaster (or stderr when none is wired).
