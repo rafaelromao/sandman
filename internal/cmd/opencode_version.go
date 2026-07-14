@@ -2,8 +2,15 @@ package cmd
 
 import (
 	"fmt"
+	"io"
+	"os"
 	"regexp"
 	"strings"
+
+	"github.com/rafaelromao/sandman/internal/config"
+	"github.com/rafaelromao/sandman/internal/opencode"
+	"github.com/rafaelromao/sandman/internal/scaffold"
+	"github.com/spf13/cobra"
 )
 
 var opencodeAIPinRe = regexp.MustCompile(`(?m)^RUN\s+npm install -g opencode-ai@([A-Za-z0-9._\-+]+)\s*$`)
@@ -52,4 +59,77 @@ func FormatMismatchWarning(hostVersion, sandboxVersion, repoRoot string) string 
 			"         Unexpected server error\" before producing a result.\n",
 		hostVersion, sandboxVersion,
 	)
+}
+
+// warnOpencodeVersionMismatch is the runtime helper invoked from the
+// `run` and `review` cmd entry points. It is non-fatal on every
+// branch: silent for non-opencode agents, missing probe, missing
+// Dockerfile, matched versions, or worktree mode (where host IS the
+// sandbox). It only emits the warning text when both sides have a
+// valid version and they disagree.
+//
+// The cmd parameter carries the cobra command whose Err stream is
+// where the warning is written. sandboxFlag mirrors the cmd flag
+// (empty means "fall back to cfg.Sandbox"). cfg supplies the
+// resolved default when sandboxFlag is empty. repoRoot is the
+// host-absolute repository path used to locate .sandman/Dockerfile.
+func warnOpencodeVersionMismatch(cmd *cobra.Command, agentName, sandboxFlag, repoRoot string, cfg *config.Config) {
+	if agentName != "opencode" {
+		return
+	}
+	sandboxMode := strings.TrimSpace(sandboxFlag)
+	if sandboxMode == "" && cfg != nil {
+		sandboxMode = strings.TrimSpace(cfg.Sandbox)
+	}
+	if sandboxMode == "" {
+		return
+	}
+	pin, _ := readDockerfilePin(repoRoot)
+	catalogDefault := scaffoldDefaultOpencodeVersion()
+	sandboxVersion := ResolveSandboxVersion(sandboxMode, "", pin, catalogDefault)
+	if sandboxVersion == "" {
+		return
+	}
+	hostVersion, err := opencode.VersionProbe()
+	if err != nil || hostVersion == "" {
+		return
+	}
+	// Worktree mode means the agent runs the host opencode directly
+	// (no separate pinned build). ResolveSandboxVersion already returns
+	// the hostVersion for worktree, so this comparison collapses to
+	// identity when versions match, but we still guard explicitly in
+	// case future catalog-default fallbacks drift.
+	if sandboxVersion == hostVersion {
+		return
+	}
+	writeWarning(cmd.ErrOrStderr(), FormatMismatchWarning(hostVersion, sandboxVersion, repoRoot))
+}
+
+func writeWarning(w io.Writer, msg string) {
+	if w == nil {
+		return
+	}
+	fmt.Fprint(w, msg)
+}
+
+// readDockerfilePin is the host-absolute path read for the opencode pin
+// produced by `sandman init`. Returns ("", false) when the file is
+// missing or unreadable; the caller falls back to the catalog default.
+func readDockerfilePin(repoRoot string) (string, bool) {
+	if repoRoot == "" {
+		return "", false
+	}
+	path := repoRoot + "/.sandman/Dockerfile"
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", false
+	}
+	return ParseOpencodePinFromDockerfile(string(data))
+}
+
+// scaffoldDefaultOpencodeVersion returns the catalog head pinned by
+// the scaffolder. Wraps scaffold.DefaultBuiltInAgentVersion so the
+// cmd package does not need to hardcode the agent name.
+func scaffoldDefaultOpencodeVersion() string {
+	return scaffold.DefaultBuiltInAgentVersion("opencode")
 }

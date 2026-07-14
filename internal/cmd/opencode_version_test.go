@@ -1,9 +1,64 @@
 package cmd
 
 import (
+	"bytes"
+	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/rafaelromao/sandman/internal/config"
+	"github.com/rafaelromao/sandman/internal/opencode"
+	"github.com/spf13/cobra"
 )
+
+// errProbe is a sentinel error used by withProbe to simulate a failed
+// shell-out to `opencode --version`.
+var errProbe = errors.New("probe failed")
+
+// withProbe installs a stub for opencode.VersionProbe that returns the
+// given version and error for the duration of t, restoring the
+// production seam when t finishes.
+func withProbe(t *testing.T, version string, err error) {
+	t.Helper()
+	prev := opencode.VersionProbe
+	t.Cleanup(func() { opencode.VersionProbe = prev })
+	opencode.VersionProbe = func() (string, error) { return version, err }
+}
+
+// withDockerfilePin writes a synthetic .sandman/Dockerfile at dir
+// that pins opencode-ai@version. dir is used as the repoRoot for the
+// orchestrator; the file lives at dir/.sandman/Dockerfile.
+func withDockerfilePin(t *testing.T, dir, version string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(dir, ".sandman"), 0755); err != nil {
+		t.Fatalf("mkdir .sandman: %v", err)
+	}
+	content := "# sandman build-tools: go\nFROM debian:bookworm-slim\nRUN npm install -g opencode-ai@" + version + "\n"
+	if err := os.WriteFile(filepath.Join(dir, ".sandman", "Dockerfile"), []byte(content), 0644); err != nil {
+		t.Fatalf("write Dockerfile: %v", err)
+	}
+}
+
+// newWarningTestCmd returns a *cobra.Command and a buffer that
+// captures cmd.ErrOrStderr() output. Tests call orchestrator with
+// the command and read captured.String() to assert on the warning
+// text emitted (or its absence).
+func newWarningTestCmd(t *testing.T) (*cobra.Command, *bytes.Buffer) {
+	t.Helper()
+	c := &cobra.Command{Use: "test"}
+	var buf bytes.Buffer
+	c.SetErr(&buf)
+	return c, &buf
+}
+
+// defaultCfgSandbox returns a *config.Config with Sandbox set to the
+// given value. Tests that exercise the fallback from a missing/empty
+// CLI flag to cfg.Sandbox use this helper.
+func defaultCfgSandbox(value string) *config.Config {
+	return &config.Config{Sandbox: value}
+}
 
 func TestParseOpencodePinFromDockerfile_ExtractsVersion(t *testing.T) {
 	content := `# sandman build-tools: go
@@ -78,5 +133,95 @@ func TestFormatMismatchWarning_EmptySideProducesNoWarning(t *testing.T) {
 	// intentionally.
 	if warning := FormatMismatchWarning("", "1.15.0", "/repo/path"); !strings.Contains(warning, "") {
 		t.Errorf("formatter does not gate empty host: %q", warning)
+	}
+}
+
+func TestWarnOpencodeVersionMismatch_WarnsOnPodmanMismatch(t *testing.T) {
+	dir := t.TempDir()
+	withProbe(t, "1.17.19", nil)
+	withDockerfilePin(t, dir, "1.15.0")
+
+	cmd, buf := newWarningTestCmd(t)
+	warnOpencodeVersionMismatch(cmd, "opencode", "podman", dir, defaultCfgSandbox(""))
+
+	out := buf.String()
+	for _, want := range []string{"warning", "1.17.19", "1.15.0", "UnknownError"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("expected stderr to contain %q; got:\n%s", want, out)
+		}
+	}
+}
+
+func TestWarnOpencodeVersionMismatch_SilentWhenAgentNotOpencode(t *testing.T) {
+	dir := t.TempDir()
+	withProbe(t, "1.17.19", nil)
+	withDockerfilePin(t, dir, "1.15.0")
+
+	cmd, buf := newWarningTestCmd(t)
+	warnOpencodeVersionMismatch(cmd, "pi", "podman", dir, defaultCfgSandbox(""))
+	if got := buf.String(); got != "" {
+		t.Errorf("non-opencode agent must be silent; got:\n%s", got)
+	}
+}
+
+func TestWarnOpencodeVersionMismatch_SilentWhenProbeFails(t *testing.T) {
+	dir := t.TempDir()
+	withProbe(t, "", errProbe)
+	withDockerfilePin(t, dir, "1.15.0")
+
+	cmd, buf := newWarningTestCmd(t)
+	warnOpencodeVersionMismatch(cmd, "opencode", "podman", dir, defaultCfgSandbox(""))
+	if got := buf.String(); got != "" {
+		t.Errorf("probe failure must be silent; got:\n%s", got)
+	}
+}
+
+func TestWarnOpencodeVersionMismatch_SilentWhenVersionsMatch(t *testing.T) {
+	dir := t.TempDir()
+	withProbe(t, "1.17.19", nil)
+	withDockerfilePin(t, dir, "1.17.19")
+
+	cmd, buf := newWarningTestCmd(t)
+	warnOpencodeVersionMismatch(cmd, "opencode", "podman", dir, defaultCfgSandbox(""))
+	if got := buf.String(); got != "" {
+		t.Errorf("matching versions must be silent; got:\n%s", got)
+	}
+}
+
+func TestWarnOpencodeVersionMismatch_SilentOnWorktreeMode(t *testing.T) {
+	dir := t.TempDir()
+	// Worktree mode: sandbox IS the host (no separate pinned build).
+	// Probe is irrelevant — there is nothing to compare.
+	withProbe(t, "1.17.19", nil)
+	withDockerfilePin(t, dir, "1.15.0")
+
+	cmd, buf := newWarningTestCmd(t)
+	warnOpencodeVersionMismatch(cmd, "opencode", "worktree", dir, defaultCfgSandbox(""))
+	if got := buf.String(); got != "" {
+		t.Errorf("worktree mode must be silent (host IS sandbox); got:\n%s", got)
+	}
+}
+
+func TestWarnOpencodeVersionMismatch_FallsBackToCfgSandboxWhenFlagEmpty(t *testing.T) {
+	dir := t.TempDir()
+	withProbe(t, "1.17.19", nil)
+	withDockerfilePin(t, dir, "1.15.0")
+
+	cmd, buf := newWarningTestCmd(t)
+	warnOpencodeVersionMismatch(cmd, "opencode", "", dir, defaultCfgSandbox("podman"))
+	if got := buf.String(); !strings.Contains(got, "warning") {
+		t.Errorf("empty flag must fall back to cfg.Sandbox and warn; got:\n%s", got)
+	}
+}
+
+func TestWarnOpencodeVersionMismatch_UsesCatalogWhenNoDockerfile(t *testing.T) {
+	dir := t.TempDir()
+	withProbe(t, "1.17.19", nil)
+	// No Dockerfile set up — catalog default (1.15.0 in
+	// builtInAgentVersionCatalog) should be the sandbox version.
+	cmd, buf := newWarningTestCmd(t)
+	warnOpencodeVersionMismatch(cmd, "opencode", "podman", dir, defaultCfgSandbox(""))
+	if got := buf.String(); !strings.Contains(got, "warning") {
+		t.Errorf("missing Dockerfile must surface catalog pin; got:\n%s", got)
 	}
 }
