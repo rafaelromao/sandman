@@ -720,6 +720,8 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 			req.OutputWriter = rs.Broadcaster()
 			req.RunDir = relRunDir
 
+			warnOpencodeVersionMismatch(cmd, agentName, sandboxMode, repoRoot, cfg)
+
 			result, err := deps.BatchRunner.RunBatch(ctx, req)
 			if result != nil {
 				printSummary(cmd, result)

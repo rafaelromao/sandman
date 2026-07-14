@@ -337,3 +337,20 @@ _Avoid_: Continuation context, continuation file.
 ## Test infrastructure
 
 Tests that bind a Unix domain socket should use `testenv.MkdirShort(t, dirHint)` instead of `t.TempDir()` — the latter resolves through macOS's long `$TMPDIR` and exceeds the 104-char `sun_path` limit on darwin. See `docs/agents/testenv.md` for the rationale and the per-platform capability gates that replace ad-hoc `runtime.GOOS != "linux"` guards.
+
+## Troubleshooting
+
+### Opencode host/sandbox version drift
+
+Symptom: agent runs exit 1 with stderr like
+```
+Error: {
+  "name": "UnknownError",
+  "data": { "message": "Unexpected server error. Check server logs for details.", "ref": "err_xxx" }
+}
+```
+The sandbox-image opencode (pinned in `.sandman/Dockerfile`) is too old; the in-process server throws during session boot.
+
+Cause: the catalog head (`builtInAgentVersionCatalog["opencode"]` in `internal/scaffold/scaffolder.go:193`) shipped with a stale opencode version. Operators with newer opencode installed on the host see the warning every `sandman run` / `sandman review`.
+
+Resolution: run `sandman init` against the repo. The scaffolder probes the host's installed opencode (via the shared `opencode.VersionProbe` seam in `internal/opencode/probe.go`) and pins that version in the new Dockerfile when present; otherwise it falls back to the catalog head so CI agents and fresh containers still produce a valid install command. Once the sandbox pin matches the host, the warning goes silent. The catalog head bump is a separate concern for operators without `opencode` installed; see `docs/adr/0039-*` for the warning + init contract.

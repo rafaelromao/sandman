@@ -2,6 +2,7 @@ package scaffold
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -3406,4 +3407,88 @@ func TestScaffold_InitMessage_GoPreset_WithPopulatedPin(t *testing.T) {
 			t.Errorf("expected message NOT to contain %q (unrelated language pin)", lang)
 		}
 	}
+}
+
+// TestScaffold_OpencodePinsHostVersionWhenInstalled verifies that
+// sandman init prefers the host-installed opencode version over the
+// catalog head. Stub probeOpencodeVersion to return 1.17.19, run the
+// scaffold, and assert the Dockerfile pins opencode-ai@1.17.19.
+func TestScaffold_OpencodePinsHostVersionWhenInstalled(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/test\n\ngo 1.25.0\n"), 0644); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+
+	prev := probeOpencodeVersion
+	probeOpencodeVersion = func() (string, error) { return "1.17.19", nil }
+	defer func() { probeOpencodeVersion = prev }()
+
+	s := &Scaffolder{}
+	err := s.Scaffold(dir, Options{BuildTools: "generic", Agent: "opencode"}, &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("scaffold: %v", err)
+	}
+
+	dockerfilePath := filepath.Join(dir, ".sandman", "Dockerfile")
+	data, err := os.ReadFile(dockerfilePath)
+	if err != nil {
+		t.Fatalf("read Dockerfile: %v", err)
+	}
+	if !strings.Contains(string(data), "RUN npm install -g opencode-ai@1.17.19") {
+		t.Errorf("expected Dockerfile to pin host-version 1.17.19, got:\n%s", string(data))
+	}
+	if strings.Contains(string(data), "opencode-ai@1.15.0") {
+		t.Errorf("Dockerfile must not pin catalog head when host version is present, got:\n%s", string(data))
+	}
+}
+
+// TestScaffold_OpencodeFallsBackToCatalogWhenProbeFails pins the
+// no-opencode-on-host branch: when the shell-out fails or returns
+// empty, sandman init falls back to the catalog head rather than
+// emitting a half-pinned Dockerfile.
+func TestScaffold_OpencodeFallsBackToCatalogWhenProbeFails(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/test\n\ngo 1.25.0\n"), 0644); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+
+	prev := probeOpencodeVersion
+	probeOpencodeVersion = func() (string, error) { return "", fmt.Errorf("opencode not on PATH") }
+	defer func() { probeOpencodeVersion = prev }()
+
+	s := &Scaffolder{}
+	err := s.Scaffold(dir, Options{BuildTools: "generic", Agent: "opencode"}, &fakePrompter{confirm: true})
+	if err != nil {
+		t.Fatalf("scaffold: %v", err)
+	}
+
+	dockerfilePath := filepath.Join(dir, ".sandman", "Dockerfile")
+	data, err := os.ReadFile(dockerfilePath)
+	if err != nil {
+		t.Fatalf("read Dockerfile: %v", err)
+	}
+	if !strings.Contains(string(data), "RUN npm install -g opencode-ai@"+DefaultBuiltInAgentVersion("opencode")) {
+		t.Errorf("expected Dockerfile to fall back to catalog head %q when probe fails, got:\n%s",
+			DefaultBuiltInAgentVersion("opencode"), string(data))
+	}
+}
+
+// TestMain installs a package-level default for probeOpencodeVersion
+// that returns an error. Tests that exercise the catalog fallback
+// path inherit this default and continue asserting
+// `DefaultBuiltInAgentVersion("opencode")` as they did before the
+// probe plumbing landed; tests that exercise the host-version branch
+// override the seam with their own stub (TestScaffold_
+// OpencodePinsHostVersionWhenInstalled demonstrates the override
+// pattern).
+func TestMain(m *testing.M) {
+	// Save the production seam so per-test overrides can restore
+	// it via t.Cleanup rather than chaining to whatever stub we
+	// install here.
+	production := probeOpencodeVersion
+	probeOpencodeVersion = func() (string, error) {
+		return "", errors.New("test env: opencode probe unavailable")
+	}
+	defer func() { probeOpencodeVersion = production }()
+	m.Run()
 }
