@@ -72,9 +72,9 @@ type Oracle interface {
 // VerifyInput is the per-run context every oracle reads. WorkDir is
 // the working tree to use for shell-out oracles (T1); the rest is
 // metadata fetched by the orchestrator before the chain runs. T1 /
-// T2 / T4 are the three oracles; a nil oracle is treated as
-// OracleAbstain so a test or partial deployment can elide
-// individual oracles.
+// T2 / T4 are the three oracles; eliding a slot requires passing
+// `&fakeOracle{outcome: OracleAbstain}` rather than nil, since the
+// RunVerifyPath chain slice hard-codes every position.
 type VerifyInput struct {
 	Context context.Context
 	Issue   *github.Issue
@@ -95,10 +95,10 @@ type VerifyInput struct {
 type VerifyPathFunc func(VerifyInput) (VerifyOutcome, []OracleCheck)
 
 // DefaultVerifyPath returns a VerifyPathFunc that wires the three
-// oracles with their default constructors. T1 needs a working tree;
-// the default runner uses the default T1 shell runner. Tests
-// that want to drive T1 in isolation build their own
-// VerifyPathFunc instead.
+// oracles with their default constructors in chain order (T2 → T4 →
+// T1). T1 needs a working tree; the default runner uses the default
+// T1 shell runner. Tests that want to drive the chain in isolation
+// build their own VerifyPathFunc instead.
 func DefaultVerifyPath() VerifyPathFunc {
 	return func(in VerifyInput) (VerifyOutcome, []OracleCheck) {
 		if in.T2 == nil {
