@@ -310,9 +310,16 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 			}
 
 			if len(issues) > 0 {
+				userTyped := append([]int(nil), issues...)
 				issues, err = expandSpecifications(cmd.Context(), githubClient, issues, cmd.ErrOrStderr())
 				if err != nil {
 					return err
+				}
+				if len(issues) > 0 {
+					issues, err = filterClosedIssuesAfterExpansion(cmd.Context(), issues, userTyped, githubClient.SearchIssues, githubClient.FetchIssue, cmd.ErrOrStderr())
+					if err != nil {
+						return err
+					}
 				}
 			}
 
@@ -984,6 +991,55 @@ func filterClosedIssues(ctx context.Context, numbers []int, searchFn func(contex
 	}
 	if len(filtered) == 0 && closedCount > 0 {
 		return nil, errAllExplicitClosed
+	}
+	return filtered, nil
+}
+
+// filterClosedIssuesAfterExpansion re-applies filterClosedIssues to the
+// post-expansion list so children that were discovered during
+// Specification expansion get the same closed-state filter as the
+// user-typed input at the top of this function.
+//
+// When the post-expansion list contains only numbers that were already
+// in the user-typed set (no expansion-introduced children), the input
+// is returned untouched — no is:open search is issued, so this helper
+// is a no-op for callers whose expansion produced only user-typed
+// pass-throughs.
+//
+// errAllExplicitClosed is swallowed: the user-typed input was
+// syntactically valid, only its expansion outcomes were filtered out.
+// The empty result makes the batch a no-op rather than a usage error.
+func filterClosedIssuesAfterExpansion(
+	ctx context.Context,
+	expanded []int,
+	userTyped []int,
+	searchFn func(context.Context, string) ([]github.Issue, error),
+	fetchFn func(context.Context, int) (*github.Issue, error),
+	stderr io.Writer,
+) ([]int, error) {
+	if len(expanded) == 0 {
+		return expanded, nil
+	}
+	userSet := make(map[int]struct{}, len(userTyped))
+	for _, n := range userTyped {
+		userSet[n] = struct{}{}
+	}
+	hasExpansionOnly := false
+	for _, n := range expanded {
+		if _, ok := userSet[n]; !ok {
+			hasExpansionOnly = true
+			break
+		}
+	}
+	if !hasExpansionOnly {
+		return expanded, nil
+	}
+	filtered, err := filterClosedIssues(ctx, expanded, searchFn, fetchFn, stderr)
+	if err != nil {
+		if errors.Is(err, errAllExplicitClosed) {
+			return nil, nil
+		}
+		return nil, err
 	}
 	return filtered, nil
 }

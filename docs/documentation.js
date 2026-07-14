@@ -4,7 +4,7 @@
   var REPO = "rafaelromao/sandman";
   var DEFAULT_REF = "HEAD";
   var DOCS_PREFIX = "docs/";
-  var CACHE_KEY = "sandman-docs-tree-v4";
+  var CACHE_KEY = "sandman-docs-tree-v10";
   var CACHE_TTL_MS = 60 * 1000;
 
   function api(path) {
@@ -14,18 +14,16 @@
   }
 
   var GROUP_LABELS = {
-    "root": "Documentation",
     "get-started": "Get Started",
-    "usage": "Guides",
+    "usage": "Usage",
     "architecture": "Architecture",
     "help": "Help",
     "development": "Development",
   };
 
-  var GROUP_ORDER = ["root", "get-started", "usage", "architecture", "help", "development"];
+  var GROUP_ORDER = ["get-started", "usage", "architecture", "help", "development"];
 
   var FALLBACK_FILES = [
-    "README.md",
     "get-started/README.md",
     "get-started/overview.md",
     "get-started/quickstart.md",
@@ -57,7 +55,7 @@
     "development/architecture-guidelines.md",
     "development/testing.md",
     "development/test-infrastructure.md",
-    "development/docs-and-embedded-skills.md",
+    "development/documentation.md",
   ];
 
   var sidebar = document.getElementById("sidebar");
@@ -65,6 +63,21 @@
   var fileNav = document.getElementById("file-nav");
   var contentDiv = document.getElementById("content");
   var isMobile = window.matchMedia("(max-width: 768px)").matches;
+
+  function renderPreviewBanner() {
+    var m = /[?&]ref=([^&]+)/.exec(location.search);
+    if (!m) return;
+    var ref = decodeURIComponent(m[1]);
+    if (!fileNav || !sidebar) return;
+    if (fileNav.previousElementSibling && fileNav.previousElementSibling.classList.contains("ref-banner")) return;
+    var banner = document.createElement("div");
+    banner.className = "ref-banner";
+    banner.innerHTML =
+      '<div class="ref-banner-label">Preview branch</div>' +
+      '<div class="ref-banner-ref">' + escapeHtml(ref) + '</div>' +
+      '<a class="ref-banner-clear" href="documentation.html">Back to default</a>';
+    sidebar.insertBefore(banner, fileNav);
+  }
 
   var activeRef = null;
   var refReady = discoverRef().then(function (r) { activeRef = r; writeCachedRef(r); return r; });
@@ -77,7 +90,7 @@
 
   function purgeStaleCacheKeys() {
     try {
-      var legacy = ["sandman-docs-tree-v1", "sandman-docs-tree-v2", "sandman-docs-tree-v3"];
+      var legacy = ["sandman-docs-tree-v1", "sandman-docs-tree-v2", "sandman-docs-tree-v3", "sandman-docs-tree-v4", "sandman-docs-tree-v5", "sandman-docs-tree-v6", "sandman-docs-tree-v7", "sandman-docs-tree-v8", "sandman-docs-tree-v9"];
       var toRemove = [];
       for (var i = 0; i < localStorage.length; i++) {
         var k = localStorage.key(i);
@@ -150,6 +163,8 @@
   async function discoverRef() {
     var override = readOverrideRef();
     if (override) return override;
+
+    if (isLocalPreview()) return "local";
 
     var cachedRef = readCachedRef();
     if (cachedRef) return cachedRef;
@@ -260,6 +275,16 @@
       return filterFiles(cached.files);
     }
 
+    // Local previews serve the page out of a specific snapshot checked out
+    // under docs/. Do not hit the GitHub tree API for them — use the
+    // FALLBACK_FILES list (which the same snapshot ships) and skip caching
+    // so different branches do not leak into each other via localStorage.
+    if (isLocalPreview()) {
+      var fbLocal = filterFiles(FALLBACK_FILES);
+      currentFiles = fbLocal;
+      return fbLocal;
+    }
+
     try {
       return await fetchTree();
     } catch (e) {
@@ -290,36 +315,39 @@
     }
   }
 
+  // The `legacy` set hides paths that no longer exist under docs/ but may
+  // still resolve against older versions of this page (e.g. local previews
+  // served from a stale snapshot). It must only contain paths that are NOT in
+  // the current tree — adding a current file here silently removes it from
+  // the sidebar.
   function filterFiles(files) {
     var legacy = new Set([
-      "get-started/overview.md",
-      "docs/get-started/overview.md",
-      "get-started/getting-started.md",
       "docs/get-started/getting-started.md",
     ]);
     return files.filter(function (f) {
       var top = f.split("/")[0];
       if (legacy.has(f)) return false;
+      if (!f.includes("/")) return false;
       return top !== "adr" && top !== "agents" && top !== "landing-prototypes";
     });
   }
 
   // ── Title derivation ──
 
+  // `<dir>/README.md` is rendered as the group's own dir title (e.g. "Get Started")
+  // so it doesn't collide with the sibling `overview.md` page in the same group.
   function deriveTitle(path) {
     var name = path.split("/").pop().replace(/\.md$/, "");
     if (name === "README") {
       var dir = path.includes("/") ? path.split("/")[0] : "";
-      if (!dir) return "Documentation";
-      var dirTitle = dir.split("-").map(function (w) { return w.charAt(0).toUpperCase() + w.slice(1); }).join(" ");
-      return dirTitle + " Overview";
+      if (!dir) return "Overview";
+      return dir.split("-").map(function (w) { return w.charAt(0).toUpperCase() + w.slice(1); }).join(" ");
     }
     return name.replace(/-/g, " ");
   }
 
   function titleRank(title) {
     var lower = title.toLowerCase();
-    if (lower === "documentation") return 0;
     if (lower.indexOf("overview") !== -1) return 1;
     if (lower.indexOf("quick start") !== -1) return 2;
     if (lower.indexOf("installation") !== -1) return 3;
@@ -341,7 +369,10 @@
     if (lower.indexOf("architecture guidelines") !== -1) return 8;
     if (lower === "testing") return 9;
     if (lower.indexOf("test infrastructure") !== -1) return 10;
-    if (lower.indexOf("docs and embedded skills") !== -1) return 11;
+    // The "Documentation" meta-page about the doc system itself sits last in
+    // its group so the actual contributor tasks (setup, structure, guidelines,
+    // testing, infrastructure) keep their topical reading order.
+    if (lower === "documentation") return 99;
     return 5;
   }
 
@@ -370,6 +401,8 @@
         var ta = deriveTitle(a).toLowerCase();
         var tb = deriveTitle(b).toLowerCase();
         var ra = titleRank(ta), rb = titleRank(tb);
+        if (a.endsWith("/README.md") && !b.endsWith("/README.md")) return -1;
+        if (!a.endsWith("/README.md") && b.endsWith("/README.md")) return 1;
         if (ra !== rb) return ra - rb;
         return ta < tb ? -1 : 1;
       });
@@ -946,6 +979,7 @@
     } catch (e) {
       fileNav.innerHTML = '<div class="nav-group-title">Could not load docs</div>';
     }
+    renderPreviewBanner();
     handleHashChange();
   })();
 })();

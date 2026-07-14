@@ -401,6 +401,85 @@ func TestFilterClosedIssues_FetchErrorIsSkipped(t *testing.T) {
 	}
 }
 
+func TestFilterClosedIssuesAfterExpansion_Helper(t *testing.T) {
+	tests := []struct {
+		name       string
+		expanded   []int
+		userTyped  []int
+		openSet    map[int]struct{}
+		states     map[int]string
+		want       []int
+		wantStderr string
+	}{
+		{
+			name:     "all expansion-introduced children open",
+			expanded: []int{10, 11},
+			openSet:  map[int]struct{}{10: {}, 11: {}},
+			want:     []int{10, 11},
+		},
+		{
+			name:       "all expansion-introduced children closed yields empty batch",
+			expanded:   []int{10, 11},
+			openSet:    map[int]struct{}{},
+			want:       nil,
+			wantStderr: "Issue #10 is closed, skipping\nIssue #11 is closed, skipping\n",
+		},
+		{
+			name:      "all post-expansion numbers are user-typed — no is:open search",
+			expanded:  []int{20},
+			userTyped: []int{20},
+			openSet:   map[int]struct{}{},
+			want:      []int{20},
+		},
+		{
+			name:     "order preserved from post-expansion list",
+			expanded: []int{11, 10},
+			openSet:  map[int]struct{}{10: {}, 11: {}},
+			want:     []int{11, 10},
+		},
+		{
+			name:     "empty expanded",
+			expanded: nil,
+			want:     nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			searchFn := func(ctx context.Context, query string) ([]github.Issue, error) {
+				results := make([]github.Issue, 0, len(tt.openSet))
+				for n := range tt.openSet {
+					results = append(results, github.Issue{Number: n, State: "open"})
+				}
+				return results, nil
+			}
+			fetchFn := func(ctx context.Context, n int) (*github.Issue, error) {
+				state, ok := tt.states[n]
+				if !ok {
+					state = "open"
+				}
+				return &github.Issue{Number: n, State: state}, nil
+			}
+			var stderr bytes.Buffer
+			got, err := filterClosedIssuesAfterExpansion(context.Background(), tt.expanded, tt.userTyped, searchFn, fetchFn, &stderr)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if len(got) != len(tt.want) {
+				t.Fatalf("expected %v, got %v (stderr=%q)", tt.want, got, stderr.String())
+			}
+			for i, v := range tt.want {
+				if got[i] != v {
+					t.Errorf("at index %d: expected %d, got %d", i, v, got[i])
+				}
+			}
+			if stderr.String() != tt.wantStderr {
+				t.Errorf("stderr:\n  got:  %q\n  want: %q", stderr.String(), tt.wantStderr)
+			}
+		})
+	}
+}
+
 func TestRun_SingleIssueInvokesBatchRunner(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
 	deps := newRunDeps(t, spy)
@@ -467,6 +546,122 @@ func TestRun_ExpandsSpecificationBeforeBatchRunner(t *testing.T) {
 	}
 	if !strings.Contains(buf.String(), "expanded specification #1 to 2 accepted children") {
 		t.Errorf("expected info log about Specification expansion, got: %q", buf.String())
+	}
+}
+
+func TestRun_FiltersClosedChildrenAfterSpecificationExpansion(t *testing.T) {
+	// Closed children discovered by Specification expansion must be skipped,
+	// mirroring the user-typed-input filtering at line 216.
+	specBody := "## Problem Statement\n\nP.\n\n## Solution\n\nS.\n\n## User Stories\n\n1. U.\n\n## Child Issues\n\n- #10\n- #11\n"
+	childBody := "## Parent\n\n#1\n\n## What\n\n"
+	gh := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			1:  {Number: 1, Title: "Specification", Body: specBody, State: "open"},
+			10: {Number: 10, Title: "Child 1", Body: childBody, State: "closed"},
+			11: {Number: 11, Title: "Child 2", Body: childBody, State: "closed"},
+		},
+	}
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	deps := newRunDeps(t, spy)
+	deps.GitHubClient = gh
+
+	var buf bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"1"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !spy.called {
+		t.Fatal("expected batch runner to be called (with empty issues after filtering)")
+	}
+	if len(spy.req.Issues) != 0 {
+		t.Fatalf("expected empty issues after closed children filter, got %v", spy.req.Issues)
+	}
+	if !strings.Contains(buf.String(), "Issue #10 is closed, skipping") {
+		t.Errorf("expected skip warning for #10, got: %q", buf.String())
+	}
+	if !strings.Contains(buf.String(), "Issue #11 is closed, skipping") {
+		t.Errorf("expected skip warning for #11, got: %q", buf.String())
+	}
+}
+
+func TestRun_KeepsOpenChildrenAfterSpecificationExpansion(t *testing.T) {
+	// Open children discovered by Specification expansion must be preserved.
+	specBody := "## Problem Statement\n\nP.\n\n## Solution\n\nS.\n\n## User Stories\n\n1. U.\n\n## Child Issues\n\n- #10\n- #11\n"
+	childBody := "## Parent\n\n#1\n\n## What\n\n"
+	gh := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			1:  {Number: 1, Title: "Specification", Body: specBody, State: "open"},
+			10: {Number: 10, Title: "Child 1", Body: childBody, State: "open"},
+			11: {Number: 11, Title: "Child 2", Body: childBody, State: "open"},
+		},
+	}
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	deps := newRunDeps(t, spy)
+	deps.GitHubClient = gh
+
+	var buf bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"1"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !spy.called {
+		t.Fatal("expected batch runner to be called")
+	}
+	if len(spy.req.Issues) != 2 {
+		t.Fatalf("expected 2 open children preserved, got %v", spy.req.Issues)
+	}
+}
+
+func TestRun_PostExpansionFilterKeepsOpenUserTypedAlongsideOpenChildren(t *testing.T) {
+	// Mixed batch: a Specification (#1) and a non-Specification user-typed
+	// issue (#20). Post-expansion the list is [#11, #20] (#10 is closed and
+	// filtered, #1 is replaced by its children). The post-expansion filter
+	// preserves both because they are open.
+	specBody := "## Problem Statement\n\nP.\n\n## Solution\n\nS.\n\n## User Stories\n\n1. U.\n\n## Child Issues\n\n- #10\n- #11\n"
+	childBody := "## Parent\n\n#1\n\n## What\n\n"
+	gh := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			1:  {Number: 1, Title: "Specification", Body: specBody, State: "open"},
+			10: {Number: 10, Title: "Child 1", Body: childBody, State: "closed"},
+			11: {Number: 11, Title: "Child 2", Body: childBody, State: "open"},
+			20: {Number: 20, Title: "User-typed", Body: "## What\n\n", State: "open"},
+		},
+	}
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	deps := newRunDeps(t, spy)
+	deps.GitHubClient = gh
+
+	var buf bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"1", "20"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !spy.called {
+		t.Fatal("expected batch runner to be called")
+	}
+	want := map[int]bool{11: true, 20: true}
+	if len(spy.req.Issues) != len(want) {
+		t.Fatalf("expected issues %v, got %v", want, spy.req.Issues)
+	}
+	for _, n := range spy.req.Issues {
+		if !want[n] {
+			t.Errorf("unexpected issue %d in batch", n)
+		}
+	}
+	if !strings.Contains(buf.String(), "Issue #10 is closed, skipping") {
+		t.Errorf("expected skip warning for #10, got: %q", buf.String())
 	}
 }
 
