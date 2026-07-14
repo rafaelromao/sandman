@@ -222,6 +222,7 @@ func fetchBlockersParallel(ctx context.Context, fetches *dependencyIssueFetchGro
 		workerCount = len(results)
 	}
 	var wg sync.WaitGroup
+	var resultsMu sync.Mutex
 	for n := 0; n < workerCount; n++ {
 		wg.Add(1)
 		go func() {
@@ -235,7 +236,9 @@ func fetchBlockersParallel(ctx context.Context, fetches *dependencyIssueFetchGro
 						return
 					}
 					issue, err := fetches.fetch(ctx, client, blocker)
+					resultsMu.Lock()
 					results[blocker] = fetchedBlocker{issue: issue, err: err}
+					resultsMu.Unlock()
 				}
 			}
 		}()
