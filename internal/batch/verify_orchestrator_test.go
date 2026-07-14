@@ -14,10 +14,10 @@ import (
 
 // TestRunSingle_AlreadyResolved_T1VerifiedAutoClosesAndClosesIssue
 // pins slice 5's headline behaviour: when the verify chain returns
-// VerifyVerified, the orchestrator flips the run to
-// `success`, closes the open PR if any (today's `hasBlockingOpenPR`
-// backstop is bypassed), and surfaces the `verification` payload in
-// the run.finished event.
+// VerifyVerified, the orchestrator flips the run to `success`,
+// closes the issue if open (bypassing the `hasBlockingOpenPR`
+// open-PR backstop on verified outcomes), and surfaces the
+// `verification` payload in the run.finished event.
 func TestRunSingle_AlreadyResolved_T1VerifiedAutoClosesAndClosesIssue(t *testing.T) {
 	workDir := t.TempDir()
 	branch := "sandman/42-fix-bug"

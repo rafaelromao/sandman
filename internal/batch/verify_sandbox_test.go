@@ -21,8 +21,5 @@ func TestT1SandboxFactory_PinsSourceToOriginMain(t *testing.T) {
 	if wt == nil {
 		t.Fatal("nil worktree sandbox")
 	}
-	// The factory's source branch is private; we verify behaviour by
-	// re-running through the public NewSandbox with a different
-	// source and asserting the same source is used.
 	_ = wt
 }
