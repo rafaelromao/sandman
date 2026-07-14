@@ -14,12 +14,6 @@ import (
 // passes a `*T1SandboxFactory` into the T1 oracle's `Runner`
 // callback when constructing a non-default chain. Tests pass a
 // literal VerifyPathFunc to bypass the factory entirely.
-//
-// Slice-8 / T3 retirement (#2181): the previous `ReplaySandboxFactory`
-// that pinned T3 evidence replays to the PR head ref is retired
-// together with `T3EvidenceOracle`; the cold-start migration
-// (#2176) makes every open issue planning-only, so no open issue
-// needs a replay sandbox.
 type T1SandboxFactory struct {
 	// RepoPath is the git working copy whose `origin/main` the
 	// oracle verifies against.

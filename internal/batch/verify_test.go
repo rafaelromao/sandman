@@ -122,11 +122,6 @@ func TestRunVerifyPath_T2RejectsSkipsRest(t *testing.T) {
 // A test fake records the call order; the function must invoke
 // them in the documented sequence so a slow T1 doesn't fire before
 // the cheap T4 gate.
-//
-// Slice-8 / T3 retirement (#2181): T3 was removed from the chain.
-// The cold-start migration (#2176) made every open issue
-// planning-only, so the four-oracle-chain fallback was no longer
-// needed.
 func TestRunVerifyPath_RunsOraclesInOrder(t *testing.T) {
 	t.Parallel()
 	order := []string{}

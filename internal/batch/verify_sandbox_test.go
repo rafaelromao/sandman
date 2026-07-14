@@ -10,11 +10,6 @@ import (
 // requirement: the T1 factory's NewSandbox returns a WorktreeSandbox
 // whose source branch is `origin/main`, regardless of what the
 // orchestrator's call site passed in.
-//
-// Slice-8 / T3 retirement (#2181): the previous ReplaySandboxFactory
-// used by the T3 evidence oracle is retired together with
-// T3EvidenceOracle; this test is the only post-retirement factory
-// test that remains.
 func TestT1SandboxFactory_PinsSourceToOriginMain(t *testing.T) {
 	t.Parallel()
 	f := &T1SandboxFactory{RepoPath: "/repo", WorktreeBase: "/wt", Branch: "verify-t1"}

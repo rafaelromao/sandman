@@ -65,12 +65,6 @@ const (
 // three oracles (T2 / T4 / T1) share the same shape; only their
 // implementation differs. Run is invoked at most once per RunVerifyPath
 // call.
-//
-// Slice-8 / T3 retirement (#2181): T3 (the four-oracle-layering
-// transitional fallback) is no longer part of the chain. Every
-// open issue is planning-only under the cold-start migration
-// (#2176), so a sandbox that replays a ` ```sandman-evidence `
-// block is no longer required.
 type Oracle interface {
 	Run(VerifyInput) (OracleResult, OracleCheck, error)
 }

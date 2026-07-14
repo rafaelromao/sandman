@@ -13,8 +13,8 @@ import (
 )
 
 // TestRunSingle_AlreadyResolved_T1VerifiedAutoClosesAndClosesIssue
-// pins slice 5's headline behaviour: when the four-oracle chain
-// returns VerifyVerified, the orchestrator flips the run to
+// pins slice 5's headline behaviour: when the verify chain returns
+// VerifyVerified, the orchestrator flips the run to
 // `success`, closes the open PR if any (today's `hasBlockingOpenPR`
 // backstop is bypassed), and surfaces the `verification` payload in
 // the run.finished event.
@@ -296,7 +296,7 @@ func TestRunSingle_AlreadyResolved_T1FailedFailsWithoutBackstop(t *testing.T) {
 
 // TestRunSingle_VerifyPathReceivesPRSnapshot pins the slice-1
 // integration: when the orchestrator's alreadyResolved arm runs the
-// four-oracle chain, the VerifyInput carries the PR snapshot fetched
+// verify chain, the VerifyInput carries the PR snapshot fetched
 // via FindPRByBranch. Without this, the T4 cheap-gate oracle would
 // always abstain because T4's first guard is `if in.PR == nil`.
 func TestRunSingle_VerifyPathReceivesPRSnapshot(t *testing.T) {
@@ -447,7 +447,7 @@ func TestRunSingle_AlreadyResolved_T2RejectFallsBackToBackstop(t *testing.T) {
 }
 
 // TestRunSingle_NonAlreadyResolvedPathUnchanged pins that the
-// four-oracle refactor does not change the non-alreadyResolved path.
+// verify refactor does not change the non-alreadyResolved path.
 // A run that finishes with `## Status: success` in task.md (not
 // `## Status: already resolved`) never invokes the verify path; the
 // orchestrator follows the existing branches untouched.

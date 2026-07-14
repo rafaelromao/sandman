@@ -15,14 +15,6 @@ import (
 // abstains. On L1-false it computes the DiffSubset between the branch
 // HEAD and origin/main; if the branch's diff is not a subset of
 // origin/main's, the oracle rejects. Sub-second, zero REST.
-//
-// The DiffSubset helper used here is the slice-2 L2 fallback
-// implementation that T2PreFilter consumes; it is NOT part of the
-// slice-8 T3 retirement list and is retained verbatim. T3 was the
-// four-oracle-layering's transitional fallback that ran on the
-// sandbox's ` ```sandman-evidence ` block; after the cold-start
-// migration (issue #2176) every open issue is planning-only, so T3
-// fell out of the chain and was retired in issue #2181.
 type T2PreFilter struct {
 	// RepoDir is the git working copy whose refs T2 queries. The
 	// orchestrator wires this to the same worktree the run executes
@@ -147,7 +139,7 @@ type T4CheapGate struct{}
 
 // Run executes the T4 cheap gate. It is pure: it does not shell out
 // and does not call any GitHub API; the orchestrator fetches the PR
-// once and reuses the result across the four oracles.
+// once and reuses the result across the oracles.
 func (t *T4CheapGate) Run(in VerifyInput) (OracleResult, OracleCheck, error) {
 	if in.PR == nil {
 		return OracleAbstain, OracleCheck{Name: "T4", Details: map[string]any{"reason": "no-pr"}}, nil
