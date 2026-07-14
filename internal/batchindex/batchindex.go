@@ -171,6 +171,15 @@ type SeenComment struct {
 	// terminal-success write (see review.MarkSeen). Files written
 	// before this field was introduced decode with Attempts = 0.
 	Attempts int `json:"attempts,omitempty"`
+	// NextAttemptAt is the earliest wall-clock time at which the
+	// daemon may re-launch this comment. Persisted by the
+	// launch-failure path (issue #2211) so the per-trigger retry
+	// budget survives daemon restarts. Nil means "no gate" —
+	// processPR treats nil as "launch immediately" and the JSON
+	// encoder omits the field for backward compatibility with
+	// pre-#2211 files. Pointer-typed so json:"omitempty" works
+	// (time.Time's zero value is not detected by encoding/json).
+	NextAttemptAt *time.Time `json:"nextAttemptAt,omitempty"`
 }
 
 type Claim struct {
