@@ -50,4 +50,4 @@ Pay special attention to:
 
 User-facing docs should explain current behavior and commands. Contributor docs can name packages and seams when that helps people change Sandman safely.
 
-Embedded skills are different: they should describe user-facing workflows and avoid unstable implementation details. See [Docs and Embedded Skills](docs-and-embedded-skills.md).
+Embedded skills are different: they should describe user-facing workflows and avoid unstable implementation details. See [Documentation](documentation.md).
