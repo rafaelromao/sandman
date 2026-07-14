@@ -18,9 +18,17 @@ import (
 
 	"github.com/rafaelromao/sandman/internal/atomicfs"
 	"github.com/rafaelromao/sandman/internal/config"
+	"github.com/rafaelromao/sandman/internal/opencode"
 	"github.com/rafaelromao/sandman/internal/paths"
 	"github.com/rafaelromao/sandman/internal/prompt"
 )
+
+// probeOpencodeVersion is a package-level seam for the opencode
+// host-version probe. Production wires it to opencode.VersionProbe,
+// which shells `opencode --version` at init time; tests override it
+// to assert the opencode host-pinning behavior without depending on
+// the user's actual installed opencode.
+var probeOpencodeVersion = opencode.VersionProbe
 
 const defaultBuildToolsPreset = "generic"
 
@@ -557,7 +565,8 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 		return fmt.Errorf("save config: %w", err)
 	}
 
-	dockerfile := s.renderBuildToolsDockerfile(preset, defaultAgent, goVersion, dotnetVersion, nodeVersion, pythonVersion, elixirVersion, erlangVersion, rubyVersion, rustVersion, javaVersion)
+	agentVersion := resolveAgentVersion(defaultAgent)
+	dockerfile := s.renderBuildToolsDockerfile(preset, defaultAgent, agentVersion, goVersion, dotnetVersion, nodeVersion, pythonVersion, elixirVersion, erlangVersion, rubyVersion, rustVersion, javaVersion)
 	dockerfilePath := layout.DockerfilePath()
 	if err := atomicfs.WriteAtomic(dockerfilePath, []byte(dockerfile), 0644); err != nil {
 		return fmt.Errorf("write Dockerfile: %w", err)
@@ -597,7 +606,7 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 	summary := s.formatInitSummary(
 		preset.Name,
 		defaultAgent,
-		DefaultBuiltInAgentVersion(defaultAgent),
+		agentVersion,
 		goVersion,
 		dotnetVersion,
 		nodeVersion,
@@ -1894,7 +1903,23 @@ func resolveVersionChoice(choice string, versions []string) (string, error) {
 	return "", fmt.Errorf("no version matching %q", choice)
 }
 
-func (s *Scaffolder) renderBuildToolsDockerfile(preset BuildToolsPreset, defaultAgent, goVersion, dotnetVersion, nodeVersion, pythonVersion, elixirVersion, erlangVersion, rubyVersion, rustVersion, javaVersion string) string {
+// resolveAgentVersion returns the opencode version that sandman init
+// should pin in the new .sandman/Dockerfile. For the opencode preset
+// the host-version probe (probeOpencodeVersion) wins when it returns
+// a non-empty string; otherwise we fall back to the catalog head. The
+// early return for non-opencode presets keeps the contract uniform
+// across future agent types (the function signature can stay open for
+// additional preset-specific probes later).
+func resolveAgentVersion(agent string) string {
+	if agent == "opencode" {
+		if v, err := probeOpencodeVersion(); err == nil && v != "" {
+			return v
+		}
+	}
+	return DefaultBuiltInAgentVersion(agent)
+}
+
+func (s *Scaffolder) renderBuildToolsDockerfile(preset BuildToolsPreset, defaultAgent, agentVersion, goVersion, dotnetVersion, nodeVersion, pythonVersion, elixirVersion, erlangVersion, rubyVersion, rustVersion, javaVersion string) string {
 	var out strings.Builder
 	fmt.Fprintf(&out, "# sandman build-tools: %s\n", preset.Name)
 	fmt.Fprintf(&out, "# sandman default-agent: %s\n", defaultAgent)
@@ -1964,7 +1989,7 @@ func (s *Scaffolder) renderBuildToolsDockerfile(preset BuildToolsPreset, default
 	if preset.Name == javaBuildToolsPreset {
 		out.WriteString(renderJavaInstallCommand(javaVersion))
 	}
-	out.WriteString(renderAgentInstallCommand("opencode", DefaultBuiltInAgentVersion("opencode")))
+	out.WriteString(renderAgentInstallCommand("opencode", agentVersion))
 	out.WriteString(renderRTKInstallCommand())
 	return out.String()
 }
