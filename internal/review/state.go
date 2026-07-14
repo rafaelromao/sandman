@@ -185,6 +185,12 @@ func (s *ReviewStateStore) Release(commentID string) {
 // Claims map is removed for that comment so a later worker does not
 // see it as merely claimed.
 //
+// When status == "success" the Attempts counter on the SeenComment
+// row is reset to zero — issue #2209 §"cleared on the next success".
+// Other statuses preserve any previously recorded Attempts so the
+// retry-budget evidence remains inspectable. Use MarkSeenWithAttempts
+// when the caller needs explicit control over the Attempts field.
+//
 // Cache side-effect: the SeenCacheInvalidator hook (slice A) fires
 // MarkTerminalSeen only when shouldSkipDedupStatus(status) is true
 // (success / superseded). A "failure" or "aborted" save does NOT
@@ -213,6 +219,9 @@ func (s *ReviewStateStore) MarkSeen(commentID, status string) error {
 			if sc.CommentID == commentID {
 				s.state.SeenComments[i].Status = status
 				s.state.SeenComments[i].Timestamp = time.Now()
+				if status == "success" {
+					s.state.SeenComments[i].Attempts = 0
+				}
 				break
 			}
 		}
@@ -225,6 +234,87 @@ func (s *ReviewStateStore) MarkSeen(commentID, status string) error {
 		s.invalidator.MarkTerminalSeen(s.prNumber, commentID)
 	}
 	return nil
+}
+
+// MarkSeenWithAttempts is a MarkSeen variant that records an
+// explicit attempts count alongside the terminal status. Use this
+// from the launch-failure path to preserve the post-increment retry
+// budget on the SeenComment row:
+//
+//	n := ReadFailureAttempts(s, commentID)
+//	_ = s.MarkSeenWithAttempts(commentID, "failure", n+1)
+//
+// The attempts count is stored verbatim — MarkSeenWithAttempts does
+// not auto-reset the counter on any status; only the success path
+// through MarkSeen clears Attempts. The same save + cache-hook
+// invariants as MarkSeen apply: invalidator.MarkTerminalSeen fires
+// only when shouldSkipDedupStatus(status) is true, and the hook is
+// skipped on save failure.
+func (s *ReviewStateStore) MarkSeenWithAttempts(commentID, status string, attempts int) error {
+	commentID = strings.TrimSpace(commentID)
+	if commentID == "" {
+		return fmt.Errorf("empty comment id")
+	}
+	if strings.TrimSpace(status) == "" {
+		return fmt.Errorf("empty status")
+	}
+	if attempts < 0 {
+		return fmt.Errorf("negative attempts: %d", attempts)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := time.Now()
+	if !s.isSeenLocked(commentID) {
+		s.state.SeenComments = append(s.state.SeenComments, batchindex.SeenComment{
+			CommentID: commentID,
+			Status:    status,
+			Timestamp: now,
+			Attempts:  attempts,
+		})
+	} else {
+		for i, sc := range s.state.SeenComments {
+			if sc.CommentID == commentID {
+				s.state.SeenComments[i].Status = status
+				s.state.SeenComments[i].Timestamp = now
+				s.state.SeenComments[i].Attempts = attempts
+				break
+			}
+		}
+	}
+	delete(s.state.Claims, commentID)
+	if err := reviewStateSave(s); err != nil {
+		return err
+	}
+	if shouldSkipDedupStatus(status) {
+		s.invalidator.MarkTerminalSeen(s.prNumber, commentID)
+	}
+	return nil
+}
+
+// ReadFailureAttempts returns the launch-retry attempt count
+// recorded for commentID in s, or 0 if no SeenComment entry exists
+// for that comment. On-disk files written before the Attempts
+// field was introduced decode with Attempts = 0, so this helper
+// never errors for a properly-loaded store.
+//
+// The read is taken under the store mutex so it is safe to call
+// concurrently with MarkSeen / MarkSeenWithAttempts. Callers must
+// not assume the returned value is stable across another writer;
+// re-read after a MarkSeenWithAttempts call if a follow-up write
+// could race.
+func ReadFailureAttempts(s *ReviewStateStore, commentID string) int {
+	commentID = strings.TrimSpace(commentID)
+	if commentID == "" {
+		return 0
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, sc := range s.state.SeenComments {
+		if sc.CommentID == commentID {
+			return sc.Attempts
+		}
+	}
+	return 0
 }
 
 // reviewStateSave is an internal seam so tests can intercept the

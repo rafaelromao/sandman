@@ -166,6 +166,11 @@ type SeenComment struct {
 	CommentID string    `json:"commentID"`
 	Status    string    `json:"status"`
 	Timestamp time.Time `json:"timestamp"`
+	// Attempts is the launch-retry attempt count observed for this
+	// comment. It survives daemon restarts and is reset to zero on a
+	// terminal-success write (see review.MarkSeen). Files written
+	// before this field was introduced decode with Attempts = 0.
+	Attempts int `json:"attempts,omitempty"`
 }
 
 type Claim struct {
