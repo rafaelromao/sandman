@@ -11,6 +11,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/rafaelromao/sandman/internal/atomicfs"
 	"github.com/rafaelromao/sandman/internal/shellenv"
 )
 
@@ -136,7 +137,7 @@ func (s *ContainerSandbox) rewriteGitPaths() error {
 	gitFile := filepath.Join(s.worktree.WorkDir(), ".git")
 	if data, readErr := os.ReadFile(gitFile); readErr == nil {
 		updated := strings.Replace(string(data), absRepo, "/workspace", 1)
-		if werr := os.WriteFile(gitFile, []byte(updated), 0644); werr != nil {
+		if werr := atomicfs.WriteAtomic(gitFile, []byte(updated), 0644); werr != nil {
 			return werr
 		}
 	}
@@ -169,7 +170,7 @@ func RestoreWorktreeGitPaths(repoPath, worktreePath string) error {
 	if updated == string(data) {
 		return nil
 	}
-	return os.WriteFile(gitFile, []byte(updated), 0644)
+	return atomicfs.WriteAtomic(gitFile, []byte(updated), 0644)
 }
 
 const execWrapperScript = `sh -c 'echo $$ > /tmp/agent-pgid; exec sh -c "$1"' _ %s

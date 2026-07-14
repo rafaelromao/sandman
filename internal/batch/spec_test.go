@@ -883,7 +883,7 @@ func TestSpecificationResolver_NativeSubIssueDroppedWithoutParentBacklink(t *tes
 	}
 }
 
-func TestSpecificationResolver_NonSpecWithoutChildrenSkipsListSubIssues(t *testing.T) {
+func TestSpecificationResolver_NonSpecWithoutChildrenCallsListSubIssuesOnce(t *testing.T) {
 	parentBody := "## What\n\nJust a regular issue.\n"
 	client := &fakeGitHubClient{
 		issues: map[int]*github.Issue{

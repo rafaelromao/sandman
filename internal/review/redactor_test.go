@@ -66,7 +66,7 @@ func TestRedactBody_NoLeadingSlashUntouched(t *testing.T) {
 		"sandman/review-1234",
 		"sandman-review-1234",
 		"see sandman-implement/SKILL.md",
-		"see sandman/index/SKILL.md",
+		"see sandman/pr-review/SKILL.md",
 	}
 	for _, in := range cases {
 		got := RedactBody(in)

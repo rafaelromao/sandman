@@ -1,6 +1,7 @@
 package scaffold
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -133,6 +134,57 @@ func TestScaffold_InstallsPreCommitHookThatBlocksSandmanPaths(t *testing.T) {
 		t.Fatalf("stat hook: %v", err)
 	} else if info.Mode()&0o111 == 0 {
 		t.Fatalf("pre-commit hook must be executable, got mode %v", info.Mode())
+	}
+}
+
+// TestScaffold_PreCommitHookExistsWarnsAndSkipsInstall pins the
+// no-destructive behavior (M2 in the post-24h review): when a
+// pre-commit hook already exists, installPreCommitHook returns nil
+// (preserves the user's hook) AND emits a warning to Options.Writer so
+// the operator is informed that AC3 may not be satisfied. Without the
+// warning, AC3 (rejecting `git add -f .sandman/task.md`) is silently
+// unmet when the user's existing hook does not include the sandman
+// guard.
+func TestScaffold_PreCommitHookExistsWarnsAndSkipsInstall(t *testing.T) {
+	tmp := t.TempDir()
+	hooksDir := filepath.Join(tmp, ".git", "hooks")
+	if err := os.MkdirAll(hooksDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+
+	// Pre-existing hook that does NOT include the sandman guard.
+	existingHook := "#!/usr/bin/env bash\necho 'user hook'\nexit 0\n"
+	existingPath := filepath.Join(hooksDir, "pre-commit")
+	if err := os.WriteFile(existingPath, []byte(existingHook), 0o755); err != nil {
+		t.Fatalf("seed pre-commit: %v", err)
+	}
+
+	var warn bytes.Buffer
+	s := &Scaffolder{
+		Gitignore: &fakeGitignoreRuleWriter{},
+		GitOps:    &fakeGitOps{isRepo: true},
+		HooksDir:  hooksDir,
+	}
+
+	if err := s.Scaffold(tmp, Options{BuildTools: "generic", Writer: &warn}, &fakePrompter{confirm: true}); err != nil {
+		t.Fatalf("Scaffold returned error: %v", err)
+	}
+
+	// Existing hook content must be preserved verbatim.
+	got, err := os.ReadFile(existingPath)
+	if err != nil {
+		t.Fatalf("read pre-commit: %v", err)
+	}
+	if string(got) != existingHook {
+		t.Errorf("existing pre-commit hook was modified: got %q, want %q", string(got), existingHook)
+	}
+
+	// Operator must be warned so they know AC3 may be unmet.
+	if !strings.Contains(warn.String(), "pre-commit hook already exists") {
+		t.Errorf("expected warning about pre-commit conflict, got: %q", warn.String())
+	}
+	if !strings.Contains(warn.String(), hooksDir) {
+		t.Errorf("warning should mention the hooks dir path %q, got: %q", hooksDir, warn.String())
 	}
 }
 
