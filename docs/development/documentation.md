@@ -1,4 +1,4 @@
-# Docs and Embedded Skills
+# Documentation
 
 This page is for contributors modifying Sandman itself. For using Sandman, see [Get Started](../get-started/README.md) and [Using Sandman](../usage/README.md).
 
@@ -20,7 +20,6 @@ When adding public docs:
 
 - Add a clear title and short opening paragraph.
 - Link from the nearest section `README.md`.
-- Update `docs/README.md` if the page is a major entry point.
 - Update the root `README.md` only for broadly useful pages.
 - Keep examples copy-pastable.
 
