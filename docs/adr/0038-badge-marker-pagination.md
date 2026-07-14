@@ -45,14 +45,20 @@ honoured by `gh` itself — the Go code never sees a cursor.
 ### Wire shape
 
 - The lister calls
-  `gh api --paginate /repos/{owner}/{repo}/pulls?state=all&per_page=100`
+  `gh api --paginate -q '.[]' repos/{owner}/{repo}/pulls?state=all&per_page=100`
   through the existing `ghCommander` seam.
-- `gh` issues one or more REST requests, parses the `Link: …;
-  rel="next"` headers transparently, and emits a single concatenated
-  JSON-Lines stream of `{number, body}` objects as stdout.
-- The Go code streams the concatenated payload through
-  `json.Decoder` and returns `true` on the first body that matches
-  `<!-- sandman-badge-pr -->`; otherwise `false` at EOF.
+- The endpoint is passed as a **single positional** argument after
+  `--paginate` and `-q '.[]'` — `gh` rejects multiple positionals
+  with `accepts 1 arg(s), received 2`, so the earlier `"/repos/…"`
+  prefix form fails outright. The `gh api` host (api.github.com) is
+  implicit.
+- The `-q '.[]'` flattens the per-page `[…]` response into one PR
+  object per line of stdout. Without it `gh` emits
+  `[…][…][…]` (concatenated JSON arrays) which the `json.Decoder`
+  rejects on the first page. The Go code streams the JSON-Lines
+  payload through `json.Decoder` and returns `true` on the first
+  body that matches `<!-- sandman-badge-pr -->`; otherwise `false`
+  at EOF.
 - `gh api --paginate` does not accept `--limit` — page size is fixed
   by `&per_page=100` in the query string, which matches the original
   ADR's per-page boundary.

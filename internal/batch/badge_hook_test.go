@@ -400,7 +400,7 @@ func (w *wrappingPRLister) HasBadgePR(ctx context.Context) (bool, error) {
 
 func TestMaybeSuggestBadge_HasBadgePR_AnyState_SkipsSpawn(t *testing.T) {
 	// The hook delegates the marker-comment PR check to defaultPRLister,
-	// which calls `gh api --paginate /repos/{owner}/{repo}/pulls?state=all&per_page=100`
+	// which calls `gh api --paginate -q '.[]' repos/{owner}/{repo}/pulls?state=all&per_page=100`
 	// and streams the response through json.Decoder. This test drives the
 	// production parsing through a wrappingPRLister so we can assert both
 	// (a) the call uses `state=all` in the query string (so open, closed,
@@ -444,7 +444,7 @@ func TestMaybeSuggestBadge_HasBadgePR_AnyState_SkipsSpawn(t *testing.T) {
 
 			hasStateAll := false
 			for _, a := range badgeGh.args {
-				if a == "pulls?state=all&per_page=100" {
+				if a == "repos/{owner}/{repo}/pulls?state=all&per_page=100" {
 					hasStateAll = true
 					break
 				}
@@ -634,7 +634,7 @@ func TestHasBadgePR_FindsMarkerOnSecondPage(t *testing.T) {
 		t.Fatalf("expected HasBadgePR to find the marker PR beyond the first 100 entries; got false")
 	}
 
-	wantArgs := []string{"api", "--paginate", "/repos/{owner}/{repo}/", "pulls?state=all&per_page=100"}
+	wantArgs := []string{"api", "--paginate", "-q", ".[]", "repos/{owner}/{repo}/pulls?state=all&per_page=100"}
 	if len(fakeGh.args) != len(wantArgs) {
 		t.Fatalf("expected gh args %v, got %v", wantArgs, fakeGh.args)
 	}
@@ -711,5 +711,31 @@ func TestHasBadgePR_MalformedJSON_PropagatesError(t *testing.T) {
 	}
 	if got {
 		t.Errorf("expected found=false on malformed JSON")
+	}
+}
+
+// TestHasBadgePR_RealWireShapeWithFlattenedJq pins the production
+// wire shape (issue #2195 follow-up): `gh api --paginate -q '.[]' …`
+// emits one `{number, body}` JSON object per line, *not* a wrapped
+// JSON array per page. The flattened-jq contract is what makes the
+// streaming decoder in HasBadgePR correct under the real CLI. This
+// test uses `gh api --paginate -q '.[]'` shape (one JSON Lines
+// object per line) end-to-end to make the regression visible if a
+// future refactor drops the `-q '.[]'` argument and the decoder
+// encounters a concatenated array per page instead.
+func TestHasBadgePR_RealWireShapeWithFlattenedJq(t *testing.T) {
+	// One PR object per line, simulating `gh api --paginate -q '.[]' …`.
+	entry := []byte(`{"number":7,"body":"plain"}` + "\n" +
+		`{"number":13,"body":"<!-- sandman-badge-pr -->"}` + "\n" +
+		`{"number":21,"body":"tail"}` + "\n")
+	fakeGh := &fakeGhCommander{payload: entry}
+	lister := &defaultPRLister{gh: fakeGh}
+
+	got, err := lister.HasBadgePR(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error from HasBadgePR against the flattened-jq wire shape: %v", err)
+	}
+	if !got {
+		t.Errorf("expected HasBadgePR to find the marker in the flattened-jq stream")
 	}
 }

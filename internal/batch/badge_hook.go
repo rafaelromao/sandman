@@ -100,12 +100,14 @@ func (d *defaultPRLister) ListMergedSandmanPRs(ctx context.Context) ([]MergedSan
 // page 1 once a repo exceeded the most-recent 100 PRs. `gh api
 // --paginate` honours the REST `Link` header transparently and is
 // the supported pagination primitive.
+//
+// The endpoint is passed as a single positional argument and the
+// array response is flattened to JSON Lines via `-q '.[]'` so the
+// Go-side decoder can stream the body as one PR object per line —
+// matching the shape the in-agent prompt in
+// `internal/prompt/badge_prompt.md` already specifies.
 func (d *defaultPRLister) HasBadgePR(ctx context.Context) (bool, error) {
-	args := []string{"api", "--paginate"}
-	for _, a := range d.apiOwnerRepoArgs() {
-		args = append(args, a)
-	}
-	args = append(args, "pulls?state=all&per_page=100")
+	args := []string{"api", "--paginate", "-q", ".[]", "repos/{owner}/{repo}/pulls?state=all&per_page=100"}
 	out, err := d.gh.runGh(ctx, args...)
 	if err != nil {
 		return false, fmt.Errorf("badge marker scan: %w", err)
@@ -123,17 +125,6 @@ func (d *defaultPRLister) HasBadgePR(ctx context.Context) (bool, error) {
 			return true, nil
 		}
 	}
-}
-
-// apiOwnerRepoArgs lets tests inject a sandbox owner/repo pair so the
-// production gh commander is never executed in unit tests. The
-// production constructor builds the args from the `gh` CLI's own
-// state (gh resolves the upstream via `git remote -v`); tests pass a
-// literal owner/repo instead. Empty-string owner or repo defaults to
-// `{owner}` / `{repo}` which `gh` then expands from the local git
-// config — same behaviour as the legacy `gh pr list` calls.
-func (d *defaultPRLister) apiOwnerRepoArgs() []string {
-	return []string{"/repos/{owner}/{repo}/"}
 }
 
 // badgeControlFilePath returns the absolute path to the badge control

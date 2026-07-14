@@ -22,7 +22,7 @@ The PR body starts with:
 <!-- sandman-badge-pr -->
 ```
 
-This marker is the single source of truth for idempotency and applies in any PR state — open, closed, or merged. The post-batch hook walks every page of the pull-request list until the marker is found or the scan is exhausted, so a closed or merged badge PR cannot be truncated regardless of repo activity. The pagination mechanism (REST via `gh api --paginate`) is documented in the relevant ADR alongside the rest of the badge hook's design.
+This marker is the single source of truth for idempotency and applies in any PR state — open, closed, or merged. The post-batch hook walks every page of the pull-request list until the marker is found or the scan is exhausted, so a closed or merged badge PR cannot be truncated regardless of repo activity. The pagination mechanism (`gh api --paginate -q '.[]' …`) is documented in the relevant ADR alongside the rest of the badge hook's design.
 
 The marker lives in the PR body, not the README or the commit message, so users can edit either without re-triggering the flow.
 
