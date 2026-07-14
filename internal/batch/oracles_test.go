@@ -10,7 +10,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/github"
 )
 
-// T2 / T1 / T3 / T4 use real git when no Runner / RepoDir override is
+// T2 / T1 / T4 use real git when no Runner / RepoDir override is
 // supplied. The fixtures below mirror the DiffSubset test's repo.
 
 func t2Fixture(t *testing.T) (repo string, a, b string) {
@@ -254,76 +254,6 @@ func TestT1DecisionOracle_NilIssueReturnsNoSignal(t *testing.T) {
 	}
 	if out != OracleNoSignal {
 		t.Errorf("outcome = %v, want OracleNoSignal", out)
-	}
-}
-
-// T3 evidence oracle: pure over the issue body + a Runner.
-
-func TestT3EvidenceOracle_NoBlockReturnsNoSignal(t *testing.T) {
-	t.Parallel()
-	oracle := &T3EvidenceOracle{Runner: func(_ context.Context, _, _ string) (string, error) {
-		t.Errorf("Runner should not be called when there is no evidence block")
-		return "", nil
-	}}
-	out, _, err := oracle.Run(VerifyInput{Issue: &github.Issue{Body: "no block"}})
-	if err != nil {
-		t.Fatalf("Run: %v", err)
-	}
-	if out != OracleNoSignal {
-		t.Errorf("outcome = %v, want OracleNoSignal", out)
-	}
-}
-
-func TestT3EvidenceOracle_AllSentinelsFoundReturnsVerified(t *testing.T) {
-	t.Parallel()
-	calls := 0
-	oracle := &T3EvidenceOracle{Runner: func(_ context.Context, _, _ string) (string, error) {
-		calls++
-		return "PASS", nil
-	}}
-	body := "```sandman-evidence\nok: go test ./... -> PASS\nok: go vet ./... -> PASS\n```\n"
-	out, check, err := oracle.Run(VerifyInput{Issue: &github.Issue{Body: body}, WorkDir: t.TempDir()})
-	if err != nil {
-		t.Fatalf("Run: %v", err)
-	}
-	if out != OracleVerified {
-		t.Errorf("outcome = %v, want OracleVerified", out)
-	}
-	if calls != 2 {
-		t.Errorf("Runner called %d times, want 2", calls)
-	}
-	if check.Details["count"] != 2 {
-		t.Errorf("count = %v, want 2", check.Details["count"])
-	}
-}
-
-func TestT3EvidenceOracle_MissingSentinelReturnsFailed(t *testing.T) {
-	t.Parallel()
-	oracle := &T3EvidenceOracle{Runner: func(_ context.Context, _, _ string) (string, error) {
-		return "no sentinel here", nil
-	}}
-	body := "```sandman-evidence\nok: go test ./... -> PASS\n```\n"
-	out, _, err := oracle.Run(VerifyInput{Issue: &github.Issue{Body: body}, WorkDir: t.TempDir()})
-	if err != nil {
-		t.Fatalf("Run: %v", err)
-	}
-	if out != OracleFailed {
-		t.Errorf("outcome = %v, want OracleFailed", out)
-	}
-}
-
-func TestT3EvidenceOracle_RunnerErrorReturnsFailed(t *testing.T) {
-	t.Parallel()
-	oracle := &T3EvidenceOracle{Runner: func(_ context.Context, _, _ string) (string, error) {
-		return "", errors.New("kaboom")
-	}}
-	body := "```sandman-evidence\nok: go test ./... -> PASS\n```\n"
-	out, _, err := oracle.Run(VerifyInput{Issue: &github.Issue{Body: body}, WorkDir: t.TempDir()})
-	if err != nil {
-		t.Fatalf("Run: %v", err)
-	}
-	if out != OracleFailed {
-		t.Errorf("outcome = %v, want OracleFailed", out)
 	}
 }
 

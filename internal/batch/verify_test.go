@@ -16,13 +16,12 @@ import (
 func TestRunVerifyPath_AllAbstainReturnsNoSignal(t *testing.T) {
 	t.Parallel()
 	out, checks := RunVerifyPath(VerifyInput{
-		Issue:   &github.Issue{Number: 42, Body: "No ACs, no evidence."},
+		Issue:   &github.Issue{Number: 42, Body: "No ACs."},
 		Branch:  "sandman/42",
 		WorkDir: t.TempDir(),
 		T2:      &fakeOracle{outcome: OracleAbstain},
 		T4:      &fakeOracle{outcome: OracleAbstain},
 		T1:      &fakeOracle{outcome: OracleAbstain},
-		T3:      &fakeOracle{outcome: OracleAbstain},
 	})
 	if out != VerifyNoSignal {
 		t.Errorf("VerifyOutcome = %v, want VerifyNoSignal", out)
@@ -34,7 +33,7 @@ func TestRunVerifyPath_AllAbstainReturnsNoSignal(t *testing.T) {
 
 // TestRunVerifyPath_T1VerifiedTriggersAutoClose pins the only path
 // that auto-closes the orphan PR + issue: T1 returns `Verified`. The
-// T2 / T4 / T3 oracles' abstains are ignored.
+// T2 / T4 oracles' abstains are ignored.
 func TestRunVerifyPath_T1VerifiedTriggersAutoClose(t *testing.T) {
 	t.Parallel()
 	out, checks := RunVerifyPath(VerifyInput{
@@ -44,7 +43,6 @@ func TestRunVerifyPath_T1VerifiedTriggersAutoClose(t *testing.T) {
 		T2:      &fakeOracle{outcome: OracleAbstain},
 		T4:      &fakeOracle{outcome: OracleAbstain},
 		T1:      &fakeOracle{outcome: OracleVerified, check: OracleCheck{Name: "T1", Details: map[string]any{"ran": 1}}},
-		T3:      &fakeOracle{outcome: OracleAbstain},
 	})
 	if out != VerifyVerified {
 		t.Errorf("VerifyOutcome = %v, want VerifyVerified", out)
@@ -56,8 +54,7 @@ func TestRunVerifyPath_T1VerifiedTriggersAutoClose(t *testing.T) {
 
 // TestRunVerifyPath_T1FailedReturnsFailed pins that a T1 `Failed`
 // outcome stops the chain with `VerifyFailed` and surfaces the T1
-// check in the payload. T3 never runs because T1 already gave a
-// signal.
+// check in the payload.
 func TestRunVerifyPath_T1FailedReturnsFailed(t *testing.T) {
 	t.Parallel()
 	out, checks := RunVerifyPath(VerifyInput{
@@ -67,7 +64,6 @@ func TestRunVerifyPath_T1FailedReturnsFailed(t *testing.T) {
 		T2:      &fakeOracle{outcome: OracleAbstain},
 		T4:      &fakeOracle{outcome: OracleAbstain},
 		T1:      &fakeOracle{outcome: OracleFailed, check: OracleCheck{Name: "T1", Details: map[string]any{"failed": 1}}},
-		T3:      &fakeOracle{outcome: OracleAbstain},
 	})
 	if out != VerifyFailed {
 		t.Errorf("VerifyOutcome = %v, want VerifyFailed", out)
@@ -89,7 +85,6 @@ func TestRunVerifyPath_T4DefersToT1(t *testing.T) {
 		T2:      &fakeOracle{outcome: OracleAbstain},
 		T4:      &fakeOracle{outcome: OracleDeferT1, check: OracleCheck{Name: "T4"}},
 		T1:      &fakeOracle{outcome: OracleVerified, check: OracleCheck{Name: "T1"}},
-		T3:      &fakeOracle{outcome: OracleAbstain},
 	})
 	if out != VerifyVerified {
 		t.Errorf("VerifyOutcome = %v, want VerifyVerified (T4 deferred to T1 which verified)", out)
@@ -111,7 +106,6 @@ func TestRunVerifyPath_T2RejectsSkipsRest(t *testing.T) {
 		T2:      &fakeOracle{outcome: OracleReject, check: OracleCheck{Name: "T2", Details: map[string]any{"reason": "diverged"}}},
 		T4:      &fakeOracle{outcome: OracleAbstain},
 		T1:      &fakeOracle{outcome: OracleVerified, onCallFlag: &t1Called},
-		T3:      &fakeOracle{outcome: OracleAbstain},
 	})
 	if out != VerifyNoSignal {
 		t.Errorf("VerifyOutcome = %v, want VerifyNoSignal (T2 reject means we cannot prove)", out)
@@ -124,36 +118,15 @@ func TestRunVerifyPath_T2RejectsSkipsRest(t *testing.T) {
 	}
 }
 
-// TestRunVerifyPath_T3FallsThroughWhenT1Abstains pins that T3 runs
-// only when T1 abstains. When T1 produces a signal (verified or
-// failed), T3 is not consulted.
-func TestRunVerifyPath_T3FallsThroughWhenT1Abstains(t *testing.T) {
-	t.Parallel()
-	t3Called := false
-	out, checks := RunVerifyPath(VerifyInput{
-		Issue:   &github.Issue{Number: 42},
-		Branch:  "sandman/42",
-		WorkDir: t.TempDir(),
-		T2:      &fakeOracle{outcome: OracleAbstain},
-		T4:      &fakeOracle{outcome: OracleAbstain},
-		T1:      &fakeOracle{outcome: OracleAbstain},
-		T3:      &fakeOracle{outcome: OracleVerified, onCallFlag: &t3Called, check: OracleCheck{Name: "T3"}},
-	})
-	if out != VerifyVerified {
-		t.Errorf("VerifyOutcome = %v, want VerifyVerified (T3 verified after T1 abstained)", out)
-	}
-	if !t3Called {
-		t.Errorf("T3 should have been called when T1 abstained")
-	}
-	if !reflect.DeepEqual(checks, []OracleCheck{{Name: "T3"}}) {
-		t.Errorf("checks = %+v, want T3-only", checks)
-	}
-}
-
-// TestRunVerifyPath_RunsOraclesInOrder pins the order: T2, T4, T1,
-// T3. A test fake records the call order; the function must invoke
+// TestRunVerifyPath_RunsOraclesInOrder pins the order: T2, T4, T1.
+// A test fake records the call order; the function must invoke
 // them in the documented sequence so a slow T1 doesn't fire before
 // the cheap T4 gate.
+//
+// Slice-8 / T3 retirement (#2181): T3 was removed from the chain.
+// The cold-start migration (#2176) made every open issue
+// planning-only, so the four-oracle-chain fallback was no longer
+// needed.
 func TestRunVerifyPath_RunsOraclesInOrder(t *testing.T) {
 	t.Parallel()
 	order := []string{}
@@ -167,9 +140,8 @@ func TestRunVerifyPath_RunsOraclesInOrder(t *testing.T) {
 		T2:      rec("T2"),
 		T4:      rec("T4"),
 		T1:      rec("T1"),
-		T3:      rec("T3"),
 	})
-	want := []string{"T2", "T4", "T1", "T3"}
+	want := []string{"T2", "T4", "T1"}
 	if !reflect.DeepEqual(order, want) {
 		t.Errorf("oracle order = %v, want %v", order, want)
 	}

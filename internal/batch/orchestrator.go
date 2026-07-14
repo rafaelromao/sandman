@@ -309,11 +309,12 @@ type Orchestrator struct {
 	// injected behaviour.
 	runSessionOpts runSessionOptions
 
-	// verifyPath is the four-oracle chain invoked by the alreadyResolved
+	// verifyPath is the three-oracle chain invoked by the alreadyResolved
 	// short-circuit in runOnce. Production code leaves it nil; the
-	// orchestrator builds a default chain (T2 / T4 / T1 / T3) when
+	// orchestrator builds a default chain (T2 / T4 / T1) when
 	// verifyPath is unset. Tests inject a VerifyPathFunc to drive
-	// outcomes without touching real git or GitHub.
+	// outcomes without touching real git or GitHub. T3 was retired
+	// in #2181 after the cold-start migration in #2176.
 	verifyPath VerifyPathFunc
 
 	issueCancelsMu sync.Mutex

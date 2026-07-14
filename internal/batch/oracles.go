@@ -15,6 +15,14 @@ import (
 // abstains. On L1-false it computes the DiffSubset between the branch
 // HEAD and origin/main; if the branch's diff is not a subset of
 // origin/main's, the oracle rejects. Sub-second, zero REST.
+//
+// The DiffSubset helper used here is the slice-2 L2 fallback
+// implementation that T2PreFilter consumes; it is NOT part of the
+// slice-8 T3 retirement list and is retained verbatim. T3 was the
+// four-oracle-layering's transitional fallback that ran on the
+// sandbox's ` ```sandman-evidence ` block; after the cold-start
+// migration (issue #2176) every open issue is planning-only, so T3
+// fell out of the chain and was retired in issue #2181.
 type T2PreFilter struct {
 	// RepoDir is the git working copy whose refs T2 queries. The
 	// orchestrator wires this to the same worktree the run executes
@@ -34,7 +42,7 @@ type T2PreFilter struct {
 //
 //   - L1 true (base is ancestor of head) → OracleAbstain (the change
 //     is exactly on main, so further verification is unnecessary; T1
-//     and T3 will abstain too because they only run on diffs).
+//     will abstain too because it only runs on diffs).
 //   - L1 false + subset of main → OracleAbstain (the change is part
 //     of main; no proof either way).
 //   - L1 false + not a subset → OracleReject (the branch has lines
@@ -220,44 +228,4 @@ func truncate(s string, max int) string {
 		return s
 	}
 	return s[:max] + "…"
-}
-
-// T3EvidenceOracle runs the structured ` ```sandman-evidence ` block
-// inside a replay sandbox. Each `ok: <cmd> -> <sentinel>` line is
-// executed; the oracle returns OracleVerified if every sentinel
-// appears in the output, OracleFailed if any is missing.
-type T3EvidenceOracle struct {
-	// Runner mirrors T1DecisionOracle.Runner; production wires it
-	// to a replay sandbox.
-	Runner func(ctx context.Context, dir, line string) (string, error)
-}
-
-// Run executes the T3 evidence oracle. The contract is:
-//
-//   - No ` ```sandman-evidence ` block → OracleNoSignal.
-//   - Block present but no `ok:` lines → OracleNoSignal.
-//   - All sentinels present in their command's output → OracleVerified.
-//   - Any sentinel missing → OracleFailed.
-func (t *T3EvidenceOracle) Run(in VerifyInput) (OracleResult, OracleCheck, error) {
-	if in.Issue == nil {
-		return OracleNoSignal, OracleCheck{Name: "T3", Details: map[string]any{"reason": "no-issue"}}, nil
-	}
-	lines := ParseSandmanEvidence(in.Issue.Body)
-	if len(lines) == 0 {
-		return OracleNoSignal, OracleCheck{Name: "T3", Details: map[string]any{"reason": "no-evidence"}}, nil
-	}
-	runner := t.Runner
-	if runner == nil {
-		runner = defaultT1Runner
-	}
-	for _, ev := range lines {
-		out, err := runner(in.Context, in.WorkDir, ev.Command)
-		if err != nil {
-			return OracleFailed, OracleCheck{Name: "T3", Details: map[string]any{"command": ev.Command, "sentinel": ev.Sentinel, "output": truncate(out, 512)}}, nil
-		}
-		if !strings.Contains(out, ev.Sentinel) {
-			return OracleFailed, OracleCheck{Name: "T3", Details: map[string]any{"command": ev.Command, "sentinel": ev.Sentinel, "output": truncate(out, 512)}}, nil
-		}
-	}
-	return OracleVerified, OracleCheck{Name: "T3", Details: map[string]any{"count": len(lines)}}, nil
 }

@@ -14,6 +14,12 @@ import (
 // passes a `*T1SandboxFactory` into the T1 oracle's `Runner`
 // callback when constructing a non-default chain. Tests pass a
 // literal VerifyPathFunc to bypass the factory entirely.
+//
+// Slice-8 / T3 retirement (#2181): the previous `ReplaySandboxFactory`
+// that pinned T3 evidence replays to the PR head ref is retired
+// together with `T3EvidenceOracle`; the cold-start migration
+// (#2176) makes every open issue planning-only, so no open issue
+// needs a replay sandbox.
 type T1SandboxFactory struct {
 	// RepoPath is the git working copy whose `origin/main` the
 	// oracle verifies against.
@@ -44,51 +50,4 @@ func (f *T1SandboxFactory) NewSandbox(repoPath, worktreeBase, branch, _ string, 
 		branchName = branch
 	}
 	return sandbox.NewWorktreeSandbox(repo, base, branchName, "origin/main")
-}
-
-// ReplaySandboxFactory is the slice-4 equivalent for T3: a
-// SandboxFactory whose source branch is pinned to the PR's head
-// (or the run's current branch when no PR exists). The T3
-// transitional fallback uses this factory so the
-// `ok: <cmd> -> <sentinel>` lines replay against the actual
-// change, not main.
-type ReplaySandboxFactory struct {
-	// RepoPath is the git working copy whose HEAD the oracle
-	// replays against.
-	RepoPath string
-	// WorktreeBase is the directory under which the replay
-	// worktree is created.
-	WorktreeBase string
-	// Branch is the local branch the replay worktree checks out.
-	Branch string
-	// SourceBranch overrides the worktree's source ref. When
-	// empty, the orchestrator's call-site source branch is used.
-	SourceBranch string
-}
-
-// NewSandbox implements the batch.SandboxFactory seam. Unlike the
-// T1 factory, the source branch defaults to the run's own branch
-// (so evidence replays see the change the user is verifying), with
-// an explicit override when the PR head ref is known.
-func (f *ReplaySandboxFactory) NewSandbox(repoPath, worktreeBase, branch, sourceBranch string, _ sandbox.Container) sandbox.Sandbox {
-	repo := f.RepoPath
-	if repo == "" {
-		repo = repoPath
-	}
-	base := f.WorktreeBase
-	if base == "" {
-		base = worktreeBase
-	}
-	branchName := f.Branch
-	if branchName == "" {
-		branchName = branch
-	}
-	src := f.SourceBranch
-	if src == "" {
-		src = sourceBranch
-	}
-	if src == "" {
-		src = "HEAD"
-	}
-	return sandbox.NewWorktreeSandbox(repo, base, branchName, src)
 }
