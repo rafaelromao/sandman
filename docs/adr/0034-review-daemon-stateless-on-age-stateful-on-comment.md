@@ -55,7 +55,7 @@ For review runs, the run folder (`.sandman/batches/<batch-id>/runs/<run-id>/`) c
 {
   "pr": 1217,
   "seenComments": [
-    { "commentID": 12345, "status": "success", "timestamp": "<RFC3339>" }
+    { "commentID": 12345, "status": "success", "timestamp": "<RFC3339>", "attempts": 0 }
   ],
   "claims": {
     "<commentID>": { "holder": "<pid>", "since": "<RFC3339>" }
@@ -122,6 +122,31 @@ The original implementation of `launchReview` ran `verifyReviewPosted` synchrono
 
 **Restart semantics:** `pendingPost` is in-memory only. A daemon restart drops the pending window — but `loadPendingPosts` rehydrates from on-disk `review-state.json` at construction, so a `pending` entry whose worktree still has `decision.md` is re-registered on the next start. Operators who want guaranteed lossless recovery across restarts during the post-failure pending window should re-post `/sandman review` on the PR after the daemon restarts. This trade-off is bounded (a 90s window at default `PollingInterval`) and acceptable for slice D.
 
+### Retry-attempt counter on `SeenComment` (issue #2209)
+
+The `SeenComment` row carries one new field:
+
+```jsonc
+{
+  "commentID": "<id>",
+  "status":    "failure",
+  "timestamp": "<RFC3339>",
+  "attempts":  3
+}
+```
+
+`attempts` is the launch-retry attempt count observed for this comment. The counter is incremented on every launch failure and reset to zero on a terminal-success write. Two on-disk invariants:
+
+- **Backward-compatible load**: `SeenComment` files written before this field was introduced decode with `attempts = 0` (zero value of `int`). The on-disk JSON omits the field via `omitempty`, so the file shape stays byte-identical when no failures have been recorded.
+- **Survives daemon restart**: the counter lives in the per-PR `review-state.json` aggregate that already feeds `loadSeenCache`. A daemon restart picks up the counter from disk on the next tick — no comment ever reverts to "fresh first attempt" after a crash.
+
+Two helpers expose the counter to the launch path:
+
+- `review.ReadFailureAttempts(store, commentID)` returns the recorded count, or 0 for unseen comments / pre-#2209 files.
+- `(*ReviewStateStore).MarkSeenWithAttempts(commentID, status, attempts)` is a `MarkSeen` variant that records the explicit count alongside the terminal status. The standard `MarkSeen` clears `attempts` to zero whenever the status is `"success"`, preserving the "cleared on the next success" contract.
+
+The dedup invariants are unaffected: `shouldSkipDedupStatus` still returns true only for `success` / `superseded`, so a `failure` row with `attempts > 0` remains retryable. The seen-cache hydration walks `review-state.json` exactly as before; it never reads `attempts`. Downstream tickets consume the counter via `ReadFailureAttempts` and `MarkSeenWithAttempts`.
+
 ## Consequences
 
 ### Positive
@@ -134,6 +159,7 @@ The original implementation of `launchReview` ran `verifyReviewPosted` synchrono
 - Per-PR seen cache (issue #1480 slice A) keeps tick latency constant as the number of historical review batches grows — `processPR` does not re-read `.sandman/batches.json` or any `review-state.json` for cached PRs. Regression tests: `TestDaemon_SeenCacheHydratedAtConstruction`, `TestDaemon_ProcessPRScalesConstantlyWithPriorBatches`, `TestDaemon_ReviewStateStore_MarkSeenInvalidatesCacheMidProcess`, `TestReviewStateStore_MarkSeenFiresCacheHook`, `TestReviewStateStore_MarkSeenSaveErrorLeavesCacheUntouched`, `TestDaemon_ReleaseForgetsCacheEntry` (in `internal/review/daemon_sliceA_test.go` and `internal/review/state_test.go`).
 - Per-PR slot table (issue #1481 slice C) holds a slot for the in-flight review across ticks, so new `/sandman review` triggers on a busy PR are not silently dropped while the previous review is still running. Regression tests: `TestDaemon_ParallelReviews_HoldsPerPRSlotAcrossTicks`, `TestDaemon_ParallelReviews_HonorsGlobalCap`, `TestDaemon_MidFlightCommentOnBusyPR_IsProcessedAfterRelease`, `TestDaemon_HeldSlotLeavesSeenCacheNonTerminal` (in `internal/review/daemon_sliceC_test.go`).
 - Lazy verify (issue #1482 slice D) keeps `launchReview`'s critical path proportional to `RunBatch` and removes the ~15s inline retry window. Regression tests: `TestDaemon_PromotePendingComment_ReturnsSuccessWhenReviewFound`, `TestDaemon_PromotePendingComment_ReturnsErrorWhenMissing`, `TestDaemon_PromotePendingComment_IgnoresTriggerComment`, `TestDaemon_LaunchReviewReturnsFastAndRecordsPending`, `TestDaemon_NextTickPromotesPendingCommentToSuccess`, `TestDaemon_NextTickRejectsPendingCommentToFailureAfterBound`, `TestDaemon_NextTickRejectsPendingCommentTwiceNoOp`, `TestDaemon_PendingNotTerminalInSeenCache`, `TestDaemon_LaunchReviewReturnsFastOnRunBatchError` (in `internal/review/daemon_sliceD_test.go`).
+- Per-comment retry-attempt counter (issue #2209) survives daemon restarts and is queryable by the launch path. Regression tests: `TestReviewStateStore_ReadFailureAttemptsZeroOnFresh`, `TestReviewStateStore_MarkSeenWithAttemptsPersists`, `TestReviewStateStore_MarkSeenWithAttemptsOverwrites`, `TestReviewStateStore_MarkSeenClearsAttemptsOnSuccess`, `TestReviewStateStore_MarkSeenPreservesAttemptsOnNonSuccess`, `TestReviewStateStore_PreIssue2209FilesLoadWithZeroAttempts`, `TestReviewStateStore_MarkSeenWithAttemptsRejectsEmptyKey`, `TestReviewStateStore_MarkSeenWithAttemptsRejectsNegativeAttempts` (in `internal/review/state_test.go`).
 
 ### Negative
 
