@@ -38,7 +38,7 @@ Neither is touched by #2198's diff; both fail identically at `92f5240e`.
 - The slice is **surgically clean**: every retired symbol (`T3EvidenceOracle`, `ParseSandmanEvidence`, `EvidenceLine`, `ReplaySandboxFactory`, `T3Oracle`, `VerifyInput.T3`) is fully removed from `internal/batch/` and `internal/sandbox/`. No orphan references.
 - All imports trimmed; no dead code. `t3_retirement_guards_test.go` adds a reflection-based regression net that catches future re-introductions of a `T3` field on `VerifyInput`.
 - Tests inject at the documented seams (`VerifyPathFunc`, `SandboxFactory`, `&fakeOracle{}`). No deep mocks introduced. Skill-hygiene preserved (zero references to retired symbols in `internal/skill/sandman/`).
-- **No blockers or majors.** All findings are documentation polish and one pre-existing structural duplication.
+- **No blockers or majors.** All findings are documentation polish and one pre-existing structural duplication. One optional defence-in-depth extension to the T3 retirement guard test (assert the chain slice contents) is listed in the table for completeness; it was explicitly framed as "review-only, accept or skip" in the tracking issue (#2202) and was not implemented.
 
 ### Findings table
 
@@ -50,8 +50,8 @@ Neither is touched by #2198's diff; both fail identically at `92f5240e`.
 | Minor | `internal/batch/t3_retirement_guards_test.go:8-21` | Test (cosmetic) | `TestRunVerifyPath_NoT3FieldReflectsStructShape` matches `TestRunVerifyPath` prefix but the function under test is the *type* `VerifyInput`. Other tests use `Test<Type>_<Field>` for struct-shape assertions. | Rename to `TestVerifyInput_HasNoT3Field`. Pure rename, zero behaviour risk. |
 | Nit | `internal/batch/verify.go:97-101` | Docs | `DefaultVerifyPath` doc lists T1/T2/T4 oracles but the chain literal at 117-118 is `T2 → T4 → T1`; the doc re-orders. | Reorder doc to `(T2 → T4 → T1)` and drop the redundant second listing. |
 | Nit | `internal/batch/verify.go:75-77` | Docs | `Oracle` doc says "a nil oracle is treated as OracleAbstain so a test or partial deployment can elide individual oracles", but `RunVerifyPath` chain at 125-132 hard-codes all three slots. Comment overpromises. | Reword to require `&fakeOracle{outcome: OracleAbstain}` to elide. |
-| Block | `internal/batch/verify.go` `RunVerifyPath` chain slice (post-#2198) | Correctness | The three-oracle chain is correct, but `t3_retirement_guards_test.go:TestRunVerifyPath_NoT3FieldReflectsStructShape` is the only thing preventing a future `T3` field from silently being added to `VerifyInput` without being wired into the chain. If a contributor adds a `T3` field to the struct and *also* adds it to the chain, the test still passes (because the test only inspects struct fields, not the chain). | Optional: extend the guard test to also assert the chain slice contains exactly `{T1, T2, T4}`. Defensive but the slice 8 PR is small enough to accept this gap. |
 | Block | (none) | — | — | — |
+| Optional | `internal/batch/verify.go` `RunVerifyPath` chain slice (post-#2198) | Correctness (defence-in-depth) | The three-oracle chain is correct, but `t3_retirement_guards_test.go:TestVerifyInput_HasNoT3Field` only prevents a future `T3` field from silently being added to `VerifyInput` *without* being wired into the chain. If a contributor adds a `T3` field to the struct and *also* adds it to the chain, the test still passes. | Optional: extend the guard test to also assert the chain slice contains exactly `{T1, T2, T4}`. Out of scope for #2198; tracked in #2202 as "review-only, accept or skip". |
 
 ### What I specifically checked and found clean
 
