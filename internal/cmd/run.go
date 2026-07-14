@@ -26,16 +26,18 @@ import (
 
 type cachedGitHubClient struct {
 	github.Client
-	mu       sync.Mutex
-	issues   map[int]*github.Issue
-	comments map[int][]github.IssueComment
+	mu        sync.Mutex
+	issues    map[int]*github.Issue
+	comments  map[int][]github.IssueComment
+	subIssues map[int][]int
 }
 
 func newCachedGitHubClient(client github.Client) *cachedGitHubClient {
 	return &cachedGitHubClient{
-		Client:   client,
-		issues:   make(map[int]*github.Issue),
-		comments: make(map[int][]github.IssueComment),
+		Client:    client,
+		issues:    make(map[int]*github.Issue),
+		comments:  make(map[int][]github.IssueComment),
+		subIssues: make(map[int][]int),
 	}
 }
 
@@ -55,6 +57,19 @@ func (c *cachedGitHubClient) ListIssueComments(ctx context.Context, number int) 
 			comments = []github.IssueComment{}
 		}
 		return comments, nil
+	})
+}
+
+func (c *cachedGitHubClient) ListSubIssues(ctx context.Context, parent int) ([]int, error) {
+	return getOrFill(&c.mu, c.subIssues, parent, func() ([]int, error) {
+		nums, err := c.Client.ListSubIssues(ctx, parent)
+		if err != nil {
+			return nil, err
+		}
+		if nums == nil {
+			nums = []int{}
+		}
+		return nums, nil
 	})
 }
 
