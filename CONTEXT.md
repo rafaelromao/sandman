@@ -45,7 +45,7 @@ The component that fetches issues, extracts their BlockedBy relationships, valid
 _Avoid_: scheduler, planner.
 
 **Specification**:
-A GitHub issue whose body contains the H2 sections `## Problem Statement`, `## Solution`, and `## User Stories`. A Specification is a container for a set of vertical slices; Sandman recognizes it structurally and resolves it into its child issues before execution. Detection is body-based, not label-based.
+A GitHub issue whose body contains the H2 sections `## Problem Statement`, `## Solution`, and `## User Stories`, OR whose only child references come from the broadened-detector path (comment refs or native GitHub sub-issues). A Specification is a container for a set of vertical slices; Sandman recognizes it structurally and resolves it into its child issues before execution. Detection is body-based, not label-based, and the broadened-detector path accepts native sub-issue linking as evidence of children.
 _Avoid_: PRD, Product Requirements Document, spec (lowercase, ambiguous with spec files), epic, umbrella issue.
 
 **SpecificationResolver**:

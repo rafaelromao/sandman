@@ -49,9 +49,10 @@ func (r *SpecificationResolver) IsSpecification(body string) bool {
 // can use HasChildren to decide whether to expand the input anyway.
 //
 // HasChildren only scans comment bodies; body-shape references and native sub-issues
-// are discovered later in the expanded path via collectCandidates. The cached GitHub
-// client memoises ListIssueComments per (run, number), so a re-entry on the same number
-// within one run pays zero additional REST requests.
+// are discovered later in the expanded path by collectCandidates and by the broadened
+// branch in expandOne respectively. The cached GitHub client memoises ListIssueComments
+// per (run, number), so a re-entry on the same number within one run pays zero additional
+// REST requests.
 func (r *SpecificationResolver) HasChildren(ctx context.Context, number int) (bool, error) {
 	comments, err := r.client.ListIssueComments(ctx, number)
 	if err != nil {
@@ -155,14 +156,14 @@ func (r *SpecificationResolver) expandOne(
 	broadened := !r.IsSpecification(issue.Body)
 	var subIssues []int
 	if broadened {
-		hasChildren, err := r.HasChildren(ctx, num)
-		if err != nil {
-			return err
+		hasChildren, hcErr := r.HasChildren(ctx, num)
+		if hcErr != nil {
+			fmt.Fprintf(r.warningWriter, "warning: could not list comments for #%d: %v\n", num, hcErr)
 		}
 		if !hasChildren {
 			nums, subErr := r.client.ListSubIssues(ctx, num)
 			if subErr != nil {
-				fmt.Fprintf(r.warningWriter, "warning: could not list sub issues for specification #%d: %v\n", num, subErr)
+				fmt.Fprintf(r.warningWriter, "warning: could not list sub-issues for specification #%d: %v\n", num, subErr)
 				addUnique(num)
 				return nil
 			}
@@ -271,7 +272,6 @@ func (r *SpecificationResolver) collectCandidates(ctx context.Context, parent in
 	} else {
 		fmt.Fprintf(r.warningWriter, "warning: could not list comments for specification #%d: %v\n", parent, err)
 	}
-	add(subIssues)
 	if len(order) == 0 {
 		if results, err := r.client.SearchIssues(ctx, specSearchToken(parent)); err == nil {
 			for _, issue := range results {
@@ -281,5 +281,6 @@ func (r *SpecificationResolver) collectCandidates(ctx context.Context, parent in
 			fmt.Fprintf(r.warningWriter, "warning: mention search for specification #%d failed: %v\n", parent, err)
 		}
 	}
+	add(subIssues)
 	return order
 }

@@ -843,6 +843,29 @@ func TestSpecificationResolver_ExpandNativeSubIssues(t *testing.T) {
 	}
 }
 
+func TestSpecificationResolver_NativeSubIssuesKeepsBodyRefOrder(t *testing.T) {
+	parentBody := "## What to build\n\nTracks #43 in body.\n"
+	childBody42 := "## Parent\n\n#1\n\n## What\n\n"
+	childBody43 := "## Parent\n\n#1\n\n## What\n\n"
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			1:  {Number: 1, Title: "Parent", Body: parentBody},
+			42: {Number: 42, Title: "Sub 42", Body: childBody42},
+			43: {Number: 43, Title: "Body 43", Body: childBody43},
+		},
+		subIssues: map[int][]int{1: {42}},
+	}
+
+	r := NewSpecificationResolver(client, io.Discard)
+	got, err := r.Resolve(context.Background(), []int{1})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !equalInts(got, []int{43, 42}) {
+		t.Fatalf("expected [43 42] (body ref first, sub-issue second), got %v", got)
+	}
+}
+
 func TestSpecificationResolver_NativeSubIssueDroppedWithoutParentBacklink(t *testing.T) {
 	parentBody := "## What to build\n\nNo PRD sections.\n"
 	strangerBody := "## What\n\nNo Parent backlink at all.\n"
@@ -898,28 +921,6 @@ func TestSpecificationResolver_SpecShapeExpansionDoesNotTriggerListSubIssues(t *
 	}
 }
 
-func TestSpecificationResolver_NativeSubIssuesShortCircuitSearchFallback(t *testing.T) {
-	parentBody := "## What to build\n\nNo PRD sections.\n"
-	childBody := "## Parent\n\n#1\n\n## What\n\n"
-	client := &fakeGitHubClient{
-		issues: map[int]*github.Issue{
-			1:  {Number: 1, Title: "Parent", Body: parentBody},
-			42: {Number: 42, Title: "Child", Body: childBody},
-		},
-		subIssues: map[int][]int{1: {42}},
-	}
-
-	r := NewSpecificationResolver(client, io.Discard)
-	if _, err := r.Resolve(context.Background(), []int{1}); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	for _, q := range client.searchCalls {
-		if strings.Contains(q, "issues/1") {
-			t.Errorf("expected SearchIssues NOT to fire when sub-issues already provide candidates, got search call %q", q)
-		}
-	}
-}
-
 func TestSpecificationResolver_ListSubIssuesFailureLogsAndContinues(t *testing.T) {
 	parentBody := "## What to build\n\nNo PRD sections.\n"
 	client := &fakeGitHubClient{
@@ -938,7 +939,7 @@ func TestSpecificationResolver_ListSubIssuesFailureLogsAndContinues(t *testing.T
 	if !equalInts(got, []int{1}) {
 		t.Fatalf("expected pass-through [1], got %v", got)
 	}
-	if !strings.Contains(infoBuf.String(), "could not list sub issues for specification #1") {
+	if !strings.Contains(infoBuf.String(), "could not list sub-issues for specification #1") {
 		t.Errorf("expected warning log line for sub-issue fetch failure, got: %q", infoBuf.String())
 	}
 }
