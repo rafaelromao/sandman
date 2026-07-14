@@ -310,9 +310,16 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 			}
 
 			if len(issues) > 0 {
+				userTyped := append([]int(nil), issues...)
 				issues, err = expandSpecifications(cmd.Context(), githubClient, issues, cmd.ErrOrStderr())
 				if err != nil {
 					return err
+				}
+				if len(issues) > 0 {
+					issues, err = filterClosedIssuesAfterExpansion(cmd.Context(), issues, userTyped, githubClient.SearchIssues, githubClient.FetchIssue, cmd.ErrOrStderr())
+					if err != nil {
+						return err
+					}
 				}
 			}
 
@@ -986,6 +993,82 @@ func filterClosedIssues(ctx context.Context, numbers []int, searchFn func(contex
 		return nil, errAllExplicitClosed
 	}
 	return filtered, nil
+}
+
+// filterClosedIssuesAfterExpansion removes closed children that were
+// introduced by Specification expansion, while preserving user-typed inputs
+// that survived expansion. The user already chose those numbers at the
+// command line; the spec resolver simply added more.
+//
+// userTyped is the pre-expansion snapshot of the issues list. A
+// user-typed number that is also present in the post-expansion list (e.g.
+// a non-Specification pass-through) is preserved without a closed check —
+// the user owns the choice. A user-typed number that the spec resolver
+// replaced (e.g. a Specification whose children are the post-expansion
+// entries) does not appear in the post-expansion list at all, so the
+// helper has nothing to preserve for it.
+//
+// Anything in the post-expansion list that is NOT also a user-typed
+// number (i.e. a child introduced by the spec resolver) is subjected to
+// the same closed-state check as the initial user-typed filter at line
+// 216, with the same "Issue #N is closed, skipping" warning line for
+// parity.
+//
+// The function never returns errAllExplicitClosed — at worst, every
+// expansion-introduced child is closed and the user-typed survivors still
+// pass through (a single issue is still a valid batch).
+func filterClosedIssuesAfterExpansion(
+	ctx context.Context,
+	expanded []int,
+	userTyped []int,
+	searchFn func(context.Context, string) ([]github.Issue, error),
+	fetchFn func(context.Context, int) (*github.Issue, error),
+	stderr io.Writer,
+) ([]int, error) {
+	if len(expanded) == 0 {
+		return expanded, nil
+	}
+	userSet := make(map[int]struct{}, len(userTyped))
+	for _, n := range userTyped {
+		userSet[n] = struct{}{}
+	}
+	preserved := make([]int, 0, len(expanded))
+	toFilter := make([]int, 0, len(expanded))
+	for _, n := range expanded {
+		if _, ok := userSet[n]; ok {
+			preserved = append(preserved, n)
+			continue
+		}
+		toFilter = append(toFilter, n)
+	}
+	if len(toFilter) == 0 {
+		return expanded, nil
+	}
+	filtered, err := filterClosedIssues(ctx, toFilter, searchFn, fetchFn, stderr)
+	if err != nil {
+		if errors.Is(err, errAllExplicitClosed) {
+			filtered = nil
+		} else {
+			return nil, err
+		}
+	}
+	out := make([]int, 0, len(preserved)+len(filtered))
+	seen := make(map[int]struct{}, len(expanded))
+	for _, n := range preserved {
+		if _, ok := seen[n]; ok {
+			continue
+		}
+		seen[n] = struct{}{}
+		out = append(out, n)
+	}
+	for _, n := range filtered {
+		if _, ok := seen[n]; ok {
+			continue
+		}
+		seen[n] = struct{}{}
+		out = append(out, n)
+	}
+	return out, nil
 }
 
 // loadOpenIssueSet runs the repo-wide is:open search and returns a set
