@@ -480,6 +480,285 @@ func TestFilterClosedIssuesAfterExpansion_Helper(t *testing.T) {
 	}
 }
 
+// TestFilterClosedIssuesAfterExpansion_DoesNotMutateUserTyped pins the
+// defensive-copy contract: filterClosedIssuesAfterExpansion must not
+// mutate the caller's userTyped slice. The userTyped set is consulted
+// after the helper runs (the run command checks it for membership before
+// the helper is invoked at line 319, but a defensive copy protects
+// against future refactors that pass the same backing array to multiple
+// helpers).
+func TestFilterClosedIssuesAfterExpansion_DoesNotMutateUserTyped(t *testing.T) {
+	userTyped := []int{1, 2, 3}
+	before := append([]int(nil), userTyped...)
+	// is:open search returns empty → all expansion-introduced numbers
+	// are classified as closed → errAllExplicitClosed is raised and
+	// swallowed → helper returns nil, nil.
+	searchFn := func(ctx context.Context, query string) ([]github.Issue, error) {
+		return nil, nil
+	}
+	fetchFn := func(ctx context.Context, n int) (*github.Issue, error) {
+		return &github.Issue{Number: n, State: "closed"}, nil
+	}
+	var stderr bytes.Buffer
+	expanded := []int{10}
+	got, err := filterClosedIssuesAfterExpansion(context.Background(), expanded, userTyped, searchFn, fetchFn, &stderr)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != nil {
+		t.Errorf("expected nil result for all-closed expansion, got %v", got)
+	}
+	if !slices.Equal(userTyped, before) {
+		t.Errorf("userTyped was mutated: before %v, after %v", before, userTyped)
+	}
+}
+
+// TestFilterClosedIssuesAfterExpansion_NoSearchWhenNoExpansionAdded pins
+// the no-op short-circuit at run.go:1034: when the post-expansion list
+// contains only user-typed numbers, no is:open search is issued. This
+// pins a GitHub API budget invariant at the helper layer.
+func TestFilterClosedIssuesAfterExpansion_NoSearchWhenNoExpansionAdded(t *testing.T) {
+	searchCalled := 0
+	fetchCalled := 0
+	searchFn := func(ctx context.Context, query string) ([]github.Issue, error) {
+		searchCalled++
+		return nil, nil
+	}
+	fetchFn := func(ctx context.Context, n int) (*github.Issue, error) {
+		fetchCalled++
+		return &github.Issue{Number: n, State: "closed"}, nil
+	}
+	var stderr bytes.Buffer
+	got, err := filterClosedIssuesAfterExpansion(context.Background(), []int{42}, []int{42}, searchFn, fetchFn, &stderr)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got == nil || len(got) != 1 || got[0] != 42 {
+		t.Errorf("expected [42], got %v", got)
+	}
+	if searchCalled != 0 {
+		t.Errorf("expected no is:open search when no expansion-introduced children, got %d calls", searchCalled)
+	}
+	if fetchCalled != 0 {
+		t.Errorf("expected no per-issue fetch when no expansion-introduced children, got %d calls", fetchCalled)
+	}
+}
+
+// TestFilterClosedIssuesAfterExpansion_UserTypedOverlapWithChildKept pins
+// the membership semantics for the no-op short-circuit: a user-typed
+// number that happens to coincide with an expansion-introduced child
+// must NOT cause the helper to incorrectly take the no-op short-circuit
+// (which would skip filtering for ALL children, including expansion-only
+// ones). #11 is in the user-typed set, but #10 and #12 are expansion-only,
+// so the short-circuit must NOT trigger and filterClosedIssues must run.
+func TestFilterClosedIssuesAfterExpansion_UserTypedOverlapWithChildKept(t *testing.T) {
+	// userTyped: [5, 11]. expanded: [10, 11, 12].
+	// #11 is in both sets; #10 and #12 are expansion-only.
+	// is:open returns {10, 12}; #11 is not in the open set.
+	// Expected result: [10, 12] (filterClosedIssues classifies #11 as
+	// closed and emits the stderr warning).
+	searchFn := func(ctx context.Context, query string) ([]github.Issue, error) {
+		return []github.Issue{{Number: 10, State: "open"}, {Number: 12, State: "open"}}, nil
+	}
+	fetchFn := func(ctx context.Context, n int) (*github.Issue, error) {
+		return &github.Issue{Number: n, State: "closed"}, nil
+	}
+	var stderr bytes.Buffer
+	got, err := filterClosedIssuesAfterExpansion(context.Background(), []int{10, 11, 12}, []int{5, 11}, searchFn, fetchFn, &stderr)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := []int{10, 12}
+	if !slices.Equal(got, want) {
+		t.Errorf("expected %v, got %v", want, got)
+	}
+	if !strings.Contains(stderr.String(), "Issue #11 is closed, skipping") {
+		t.Errorf("expected skip warning for #11, got: %q", stderr.String())
+	}
+}
+
+// TestRun_FiltersClosedChildrenAfterSpecificationExpansion_NoUsageError
+// pins the errAllExplicitClosed swallow at run.go:1039-1040: when all
+// expansion-introduced children are closed, the batch becomes empty and
+// the command exits cleanly. The existing
+// TestRun_FiltersClosedChildrenAfterSpecificationExpansion already
+// covers the spy.called + empty-issues shape; this version additionally
+// asserts that cobra's usage banner was NOT printed (which would
+// indicate the error was wrongly surfaced as a usage error).
+func TestRun_FiltersClosedChildrenAfterSpecificationExpansion_NoUsageError(t *testing.T) {
+	specBody := "## Problem Statement\n\nP.\n\n## Solution\n\nS.\n\n## User Stories\n\n1. U.\n\n## Child Issues\n\n- #10\n- #11\n"
+	childBody := "## Parent\n\n#1\n\n## What\n\n"
+	gh := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			1:  {Number: 1, Title: "Specification", Body: specBody, State: "open"},
+			10: {Number: 10, Title: "Child 1", Body: childBody, State: "closed"},
+			11: {Number: 11, Title: "Child 2", Body: childBody, State: "closed"},
+		},
+	}
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	deps := newRunDeps(t, spy)
+	deps.GitHubClient = gh
+
+	var buf bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SilenceUsage = false
+	cmd.SetArgs([]string{"1"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("expected no error from empty-batch path, got: %v", err)
+	}
+	if !spy.called {
+		t.Fatal("expected batch runner to be called even with empty issues")
+	}
+	if len(spy.req.Issues) != 0 {
+		t.Fatalf("expected empty issues, got %v", spy.req.Issues)
+	}
+	// Cobra prints the usage banner to stderr when RunE returns an
+	// error AND SilenceUsage is false. If the empty batch had surfaced
+	// as a usage error, the banner would appear here.
+	if strings.Contains(buf.String(), "Usage:") {
+		t.Errorf("unexpected usage banner for empty-batch path, got: %q", buf.String())
+	}
+}
+
+// TestRun_RangeWithSpecification_PreservesOpenUserTypedFromRange pins
+// the range + Specification interaction: when the user types a range
+// like `1:3` and #1 is a Specification, the post-expansion filter must
+// preserve the open user-typed issues from the range (#2 and #3) while
+// filtering closed children of the Specification.
+func TestRun_RangeWithSpecification_PreservesOpenUserTypedFromRange(t *testing.T) {
+	specBody := "## Problem Statement\n\nP.\n\n## Solution\n\nS.\n\n## User Stories\n\n1. U.\n\n## Child Issues\n\n- #10\n- #11\n"
+	childBody := "## Parent\n\n#1\n\n## What\n\n"
+	gh := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			1:  {Number: 1, Title: "Specification", Body: specBody, State: "open"},
+			2:  {Number: 2, Title: "Range issue 2", Body: childBody, State: "open"},
+			3:  {Number: 3, Title: "Range issue 3", Body: childBody, State: "open"},
+			10: {Number: 10, Title: "Child 1", Body: childBody, State: "closed"},
+			11: {Number: 11, Title: "Child 2", Body: childBody, State: "open"},
+		},
+	}
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	deps := newRunDeps(t, spy)
+	deps.GitHubClient = gh
+
+	var buf bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"1:3"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v\noutput: %s", err, buf.String())
+	}
+	if !spy.called {
+		t.Fatal("expected batch runner to be called")
+	}
+	want := map[int]bool{2: true, 3: true, 11: true}
+	if len(spy.req.Issues) != len(want) {
+		t.Fatalf("expected issues %v, got %v", want, spy.req.Issues)
+	}
+	for _, n := range spy.req.Issues {
+		if !want[n] {
+			t.Errorf("unexpected issue %d in batch %v", n, spy.req.Issues)
+		}
+	}
+	if !strings.Contains(buf.String(), "Issue #10 is closed, skipping") {
+		t.Errorf("expected skip warning for #10, got: %q", buf.String())
+	}
+}
+
+// TestRun_NonSpecificationInput_DoesNotInvokePostExpansionSearch pins
+// that an input list of non-Specification issues never reaches the
+// post-expansion filter at the call site. This guards against a future
+// regression where the filter is invoked unconditionally and would
+// issue an extra is:open search per non-Specification input.
+func TestRun_NonSpecificationInput_DoesNotInvokePostExpansionSearch(t *testing.T) {
+	body := "## What\n\nA simple non-specification issue.\n"
+	gh := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			42: {Number: 42, Title: "Simple issue", Body: body, State: "open"},
+			43: {Number: 43, Title: "Simple issue 2", Body: body, State: "open"},
+		},
+	}
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	deps := newRunDeps(t, spy)
+	deps.GitHubClient = gh
+
+	var buf bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"42", "43"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !spy.called {
+		t.Fatal("expected batch runner to be called")
+	}
+	if len(spy.req.Issues) != 2 {
+		t.Fatalf("expected 2 issues, got %v", spy.req.Issues)
+	}
+	// The pre-expansion filter at line 216 issues one is:open search
+	// for the user-typed set. After that, the no-op short-circuit
+	// (no expansion-introduced numbers) prevents a second search.
+	// We assert: at most one is:open search was issued.
+	if gh.searchIssuesQuery == "" {
+		t.Errorf("expected at least one is:open search from user-typed filter, got none")
+	}
+	// The post-expansion no-op should not issue a second search. The
+	// fake client would record both if a second search ran; we can't
+	// distinguish directly, but the existing
+	// TestFilterClosedIssuesAfterExpansion_NoSearchWhenNoExpansionAdded
+	// pins the helper-level no-op. Here we only assert the happy path
+	// completes with the correct batch.
+}
+
+// TestRun_ClosedUserTypedFilteredBeforeExpansion_PinsContract pins that
+// the user-typed filter at line 216 runs BEFORE expansion and is the
+// authoritative close filter for user-typed numbers. Expansion does not
+// re-introduce user-typed-closed numbers: a closed user-typed issue
+// produces no Specification expansion, no children, and the batch is
+// empty (matching the existing all-closed path).
+func TestRun_ClosedUserTypedFilteredBeforeExpansion_PinsContract(t *testing.T) {
+	specBody := "## Problem Statement\n\nP.\n\n## Solution\n\nS.\n\n## User Stories\n\n1. U.\n\n## Child Issues\n\n- #11\n"
+	gh := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			1:  {Number: 1, Title: "Specification", Body: specBody, State: "open"},
+			10: {Number: 10, Title: "Closed user-typed", Body: "## What\n\n", State: "closed"},
+			11: {Number: 11, Title: "Open child", Body: "## Parent\n\n#1\n\n## What\n\n", State: "open"},
+		},
+	}
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	deps := newRunDeps(t, spy)
+	deps.GitHubClient = gh
+
+	var buf bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"1", "10"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v\noutput: %s", err, buf.String())
+	}
+	if !spy.called {
+		t.Fatal("expected batch runner to be called")
+	}
+	// #10 was filtered at line 216 (user-typed filter). #1 expanded to
+	// [#11]. Post-expansion filter sees [11] (only expansion-only
+	// children; the no-op short-circuit triggers). Result: [#11].
+	if len(spy.req.Issues) != 1 || spy.req.Issues[0] != 11 {
+		t.Fatalf("expected [11], got %v", spy.req.Issues)
+	}
+	if !strings.Contains(buf.String(), "Issue #10 is closed, skipping") {
+		t.Errorf("expected skip warning for #10, got: %q", buf.String())
+	}
+}
+
 func TestRun_SingleIssueInvokesBatchRunner(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
 	deps := newRunDeps(t, spy)

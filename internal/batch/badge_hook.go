@@ -8,10 +8,10 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"regexp"
 	"strings"
 
+	"github.com/rafaelromao/sandman/internal/atomicfs"
 	"github.com/rafaelromao/sandman/internal/paths"
 	"github.com/rafaelromao/sandman/internal/prompt"
 )
@@ -161,7 +161,7 @@ func (d *defaultBadgeControlFileReader) HasBadgeControlFile() bool {
 
 // defaultBadgeControlFileWriter is the production implementation of
 // BadgeControlFileWriter. It writes the control file under the
-// layout-resolved SandmanDir atomically via temp-file + os.Rename so
+// layout-resolved SandmanDir atomically via atomicfs.WriteAtomic so
 // readers never observe a half-written file.
 type defaultBadgeControlFileWriter struct {
 	layout paths.Layout
@@ -172,22 +172,8 @@ type defaultBadgeControlFileWriter struct {
 // empty — its mere existence is the signal.
 func (d *defaultBadgeControlFileWriter) Write() error {
 	controlPath := badgeControlFilePath(d.layout)
-	dir := filepath.Dir(controlPath)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return fmt.Errorf("mkdir for badge control file: %w", err)
-	}
-	tmp, err := os.CreateTemp(dir, ".built_with_sandman.XXXXXX")
-	if err != nil {
-		return fmt.Errorf("create temp file for badge control file: %w", err)
-	}
-	tmpName := tmp.Name()
-	if err := tmp.Close(); err != nil {
-		_ = os.Remove(tmpName)
-		return fmt.Errorf("close temp file for badge control file: %w", err)
-	}
-	if err := os.Rename(tmpName, controlPath); err != nil {
-		_ = os.Remove(tmpName)
-		return fmt.Errorf("rename badge control file: %w", err)
+	if err := atomicfs.WriteAtomic(controlPath, nil, 0o644); err != nil {
+		return fmt.Errorf("write badge control file: %w", err)
 	}
 	return nil
 }

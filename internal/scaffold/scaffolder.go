@@ -576,7 +576,7 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 		return fmt.Errorf("ensure .sandman/ in .gitignore: %w", err)
 	}
 
-	if err := installPreCommitHook(s.resolveHooksDir(repoRoot)); err != nil {
+	if err := installPreCommitHook(s.resolveHooksDir(repoRoot), opts.Writer); err != nil {
 		return fmt.Errorf("install pre-commit hook: %w", err)
 	}
 

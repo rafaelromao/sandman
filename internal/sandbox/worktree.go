@@ -11,6 +11,7 @@ import (
 	"sync"
 	"syscall"
 
+	"github.com/rafaelromao/sandman/internal/atomicfs"
 	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/paths"
 )
@@ -131,7 +132,7 @@ func (s *WorktreeSandbox) Start() error {
 							worktreeDirName := filepath.Base(s.workDir)
 							correctGitdir := filepath.Join(s.repoPath, ".git", "worktrees", worktreeDirName)
 							if info, err := os.Stat(correctGitdir); err == nil && info.IsDir() {
-								if err := os.WriteFile(gitlinkPath, []byte("gitdir: "+correctGitdir+"\n"), 0644); err != nil {
+								if err := atomicfs.WriteAtomic(gitlinkPath, []byte("gitdir: "+correctGitdir+"\n"), 0644); err != nil {
 									return fmt.Errorf("fix broken gitlink: %w", err)
 								}
 								return s.configureGitIdentity()
@@ -556,7 +557,7 @@ func (s *WorktreeSandbox) WritePrompt(content string) error {
 	if err := os.MkdirAll(filepath.Dir(promptPath), 0755); err != nil {
 		return fmt.Errorf("create prompt dir: %w", err)
 	}
-	if err := os.WriteFile(promptPath, []byte(content), 0644); err != nil {
+	if err := atomicfs.WriteAtomic(promptPath, []byte(content), 0644); err != nil {
 		return fmt.Errorf("write prompt: %w", err)
 	}
 	return nil
