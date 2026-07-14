@@ -401,6 +401,97 @@ func TestFilterClosedIssues_FetchErrorIsSkipped(t *testing.T) {
 	}
 }
 
+func TestFilterClosedIssuesAfterExpansion_Helper(t *testing.T) {
+	tests := []struct {
+		name       string
+		expanded   []int
+		userTyped  []int
+		openSet    map[int]struct{}
+		states     map[int]string
+		want       []int
+		wantStderr string
+	}{
+		{
+			name:      "no user-typed, all open preserved",
+			expanded:  []int{10, 11},
+			userTyped: nil,
+			openSet:   map[int]struct{}{10: {}, 11: {}},
+			want:      []int{10, 11},
+		},
+		{
+			name:       "no user-typed, all closed become empty batch without error",
+			expanded:   []int{10, 11},
+			userTyped:  nil,
+			openSet:    map[int]struct{}{},
+			want:       nil,
+			wantStderr: "Issue #10 is closed, skipping\nIssue #11 is closed, skipping\n",
+		},
+		{
+			name:      "user-typed open preserved alongside expansion open",
+			expanded:  []int{10, 11, 20},
+			userTyped: []int{20},
+			openSet:   map[int]struct{}{10: {}, 11: {}, 20: {}},
+			want:      []int{10, 11, 20},
+		},
+		{
+			name:       "user-typed closed preserved without warning, expansion closed filtered",
+			expanded:   []int{10, 20},
+			userTyped:  []int{20},
+			openSet:    map[int]struct{}{20: {}},
+			want:       []int{20},
+			wantStderr: "Issue #10 is closed, skipping\n",
+		},
+		{
+			name:      "order preserved from post-expansion list",
+			expanded:  []int{11, 10},
+			userTyped: nil,
+			openSet:   map[int]struct{}{10: {}, 11: {}},
+			want:      []int{11, 10},
+		},
+		{
+			name:      "empty expanded",
+			expanded:  nil,
+			userTyped: []int{1},
+			want:      nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			searchFn := func(ctx context.Context, query string) ([]github.Issue, error) {
+				results := make([]github.Issue, 0, len(tt.openSet))
+				for n := range tt.openSet {
+					results = append(results, github.Issue{Number: n, State: "open"})
+				}
+				return results, nil
+			}
+			fetchFn := func(ctx context.Context, n int) (*github.Issue, error) {
+				state, ok := tt.states[n]
+				if !ok {
+					state = "open"
+				}
+				return &github.Issue{Number: n, State: state}, nil
+			}
+			var stderr bytes.Buffer
+			got, err := filterClosedIssuesAfterExpansion(context.Background(), tt.expanded, tt.userTyped, searchFn, fetchFn, &stderr)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if len(got) != len(tt.want) {
+				t.Fatalf("expected %v, got %v (stderr=%q)", tt.want, got, stderr.String())
+			}
+			for i, v := range tt.want {
+				if got[i] != v {
+					t.Errorf("at index %d: expected %d, got %d", i, v, got[i])
+				}
+			}
+			if stderr.String() != tt.wantStderr {
+				t.Errorf("stderr:\n  got:  %q\n  want: %q", stderr.String(), tt.wantStderr)
+			}
+		})
+	}
+}
+
 func TestRun_SingleIssueInvokesBatchRunner(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
 	deps := newRunDeps(t, spy)

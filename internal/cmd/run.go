@@ -996,27 +996,36 @@ func filterClosedIssues(ctx context.Context, numbers []int, searchFn func(contex
 }
 
 // filterClosedIssuesAfterExpansion removes closed children that were
-// introduced by Specification expansion, while preserving user-typed inputs
-// that survived expansion. The user already chose those numbers at the
-// command line; the spec resolver simply added more.
+// introduced by Specification expansion, while preserving user-typed
+// inputs that survived expansion.
 //
 // userTyped is the pre-expansion snapshot of the issues list. A
-// user-typed number that is also present in the post-expansion list (e.g.
-// a non-Specification pass-through) is preserved without a closed check —
+// user-typed number that is also present in the post-expansion list (a
+// non-Specification pass-through) is preserved without a closed check —
 // the user owns the choice. A user-typed number that the spec resolver
-// replaced (e.g. a Specification whose children are the post-expansion
+// replaced (a Specification whose children are the post-expansion
 // entries) does not appear in the post-expansion list at all, so the
 // helper has nothing to preserve for it.
 //
-// Anything in the post-expansion list that is NOT also a user-typed
-// number (i.e. a child introduced by the spec resolver) is subjected to
-// the same closed-state check as the initial user-typed filter at line
-// 216, with the same "Issue #N is closed, skipping" warning line for
-// parity.
+// Anything else in the post-expansion list (children introduced by the
+// spec resolver) is subjected to the same closed-state check as the
+// initial user-typed filter, with the same "Issue #N is closed,
+// skipping" warning line for parity.
 //
-// The function never returns errAllExplicitClosed — at worst, every
-// expansion-introduced child is closed and the user-typed survivors still
-// pass through (a single issue is still a valid batch).
+// Order is preserved: each retained number keeps its position from the
+// post-expansion list, matching the order invariant documented in
+// ADR-0025 §6 (first occurrence wins, no reshuffling).
+//
+// If every expansion-introduced child is closed and no user-typed
+// number survived, the returned slice is empty and the error is nil —
+// the batch becomes a no-op rather than a usage error, because the
+// operator's input was syntactically valid; only its expansion outcomes
+// were filtered out.
+//
+// When there are no expansion-introduced numbers to filter, the
+// post-expansion list is returned untouched — no is:open search is
+// issued, so this helper is a no-op for callers whose expansion produced
+// only user-typed survivors.
 func filterClosedIssuesAfterExpansion(
 	ctx context.Context,
 	expanded []int,
@@ -1032,41 +1041,37 @@ func filterClosedIssuesAfterExpansion(
 	for _, n := range userTyped {
 		userSet[n] = struct{}{}
 	}
-	preserved := make([]int, 0, len(expanded))
-	toFilter := make([]int, 0, len(expanded))
+	var expansionOnly []int
 	for _, n := range expanded {
 		if _, ok := userSet[n]; ok {
-			preserved = append(preserved, n)
 			continue
 		}
-		toFilter = append(toFilter, n)
+		expansionOnly = append(expansionOnly, n)
 	}
-	if len(toFilter) == 0 {
+	if len(expansionOnly) == 0 {
 		return expanded, nil
 	}
-	filtered, err := filterClosedIssues(ctx, toFilter, searchFn, fetchFn, stderr)
+	filteredExpansion, err := filterClosedIssues(ctx, expansionOnly, searchFn, fetchFn, stderr)
 	if err != nil {
 		if errors.Is(err, errAllExplicitClosed) {
-			filtered = nil
+			filteredExpansion = nil
 		} else {
 			return nil, err
 		}
 	}
-	out := make([]int, 0, len(preserved)+len(filtered))
-	seen := make(map[int]struct{}, len(expanded))
-	for _, n := range preserved {
-		if _, ok := seen[n]; ok {
-			continue
-		}
-		seen[n] = struct{}{}
-		out = append(out, n)
+	filteredSet := make(map[int]struct{}, len(filteredExpansion))
+	for _, n := range filteredExpansion {
+		filteredSet[n] = struct{}{}
 	}
-	for _, n := range filtered {
-		if _, ok := seen[n]; ok {
+	out := make([]int, 0, len(expanded))
+	for _, n := range expanded {
+		if _, isUserTyped := userSet[n]; isUserTyped {
+			out = append(out, n)
 			continue
 		}
-		seen[n] = struct{}{}
-		out = append(out, n)
+		if _, kept := filteredSet[n]; kept {
+			out = append(out, n)
+		}
 	}
 	return out, nil
 }
