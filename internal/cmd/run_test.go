@@ -60,6 +60,7 @@ type fakeGitHubClient struct {
 	fetchRelease       map[int]<-chan struct{}
 	fetchReleaseAfter  map[int]int
 	fetchCount         map[int]int
+	findPRCalls        map[string]int
 	mu                 sync.Mutex
 	fetchIssueError    error
 	searchIssuesQuery  string
@@ -151,6 +152,11 @@ func (f *fakeGitHubClient) SearchIssues(ctx context.Context, query string) ([]gi
 }
 
 func (f *fakeGitHubClient) FindPRByBranch(ctx context.Context, branch string) (*github.PR, error) {
+	if f.findPRCalls != nil {
+		f.mu.Lock()
+		f.findPRCalls[branch]++
+		f.mu.Unlock()
+	}
 	if f.prs != nil {
 		if pr, ok := f.prs[branch]; ok {
 			return pr, nil
@@ -4640,7 +4646,7 @@ func TestCachedGitHubClient_SearchCacheDoesNotCrossCommandWrappers(t *testing.T)
 	}
 }
 
-func TestRun_ReportsPreparationPhaseTiming(t *testing.T) {
+func TestRun_DoesNotEmitPreparationPhaseTiming(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
 	deps := newRunDeps(t, spy)
 	var output bytes.Buffer
@@ -4653,8 +4659,189 @@ func TestRun_ReportsPreparationPhaseTiming(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	for _, phase := range []string{"specification-resolution", "dependency-resolution"} {
-		if !strings.Contains(output.String(), "phase "+phase) {
-			t.Fatalf("expected phase timing for %s, got %q", phase, output.String())
+		if strings.Contains(output.String(), "phase "+phase+" duration=") {
+			t.Fatalf("unexpected phase timing for %s, got %q", phase, output.String())
 		}
+	}
+}
+
+// TestRun_ContinueFlag_SpecExpansion_StatusCheckRollupArray is the
+// regression test for #2218. The user ran
+// `sandman run <spec> --sandbox worktree --continue` after the
+// Specification expansion shipped; the spec's children included an issue
+// that had a prior run, so the continuation path called
+// batch.CheckPRMergedAtHead against `gh pr list --json ...`. gh CLI
+// ≥ 2.65 emits `statusCheckRollup` as an array of CheckRun objects
+// instead of a flat string — the legacy parser failed with
+// "json: cannot unmarshal array into Go struct field
+// prPayload.statusCheckRollup of type string" and the batch could
+// never start.
+//
+// The test wires a Specification with three children (#63 closed,
+// #64 closed, #65 with a prior run) plus a FindPRByBranch fake that
+// returns the new array shape, then asserts the command reaches the
+// batch runner (no parse error, no exit). It also pins that the
+// diagnostic `phase <name> duration=...` line is absent from the
+// default operator output.
+func TestRun_ContinueFlag_SpecExpansion_StatusCheckRollupArray(t *testing.T) {
+	specBody := "## Problem Statement\n\nP.\n\n## Solution\n\nS.\n\n## User Stories\n\n1. U.\n\n## Child Issues\n\n- #63\n- #64\n- #65\n"
+	childBody := "## Parent\n\n#62\n\n## What\n\n"
+	branch := batch.BranchName(65, "child-65")
+
+	gh := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			62: {Number: 62, Title: "Specification parent", Body: specBody, State: "open"},
+			63: {Number: 63, Title: "Child 63", Body: childBody, State: "closed"},
+			64: {Number: 64, Title: "Child 64", Body: childBody, State: "closed"},
+			65: {Number: 65, Title: "Child 65", Body: childBody, State: "open"},
+		},
+		searchIssuesResult: []github.Issue{
+			{Number: 62, Title: "Specification parent", State: "open"},
+			{Number: 65, Title: "Child 65", State: "open"},
+		},
+		prs: map[string]*github.PR{
+			branch: {
+				Number: 1234, State: "OPEN", Merged: false,
+				HeadRefName: branch, HeadRefOid: "abc123",
+				MergeStateStatus:  "CLEAN",
+				ReviewDecision:    "APPROVED",
+				StatusCheckRollup: "success",
+			},
+		},
+	}
+
+	dir := t.TempDir()
+	worktreePath := filepath.Join(dir, branch)
+	if err := os.MkdirAll(filepath.Join(worktreePath, ".sandman"), 0o755); err != nil {
+		t.Fatalf("mkdir worktree: %v", err)
+	}
+	taskContent := "## Stage: in-progress\n\nCarry on.\n"
+	if err := os.WriteFile(filepath.Join(worktreePath, ".sandman", "task.md"), []byte(taskContent), 0o644); err != nil {
+		t.Fatalf("write task: %v", err)
+	}
+
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	deps := newRunDeps(t, spy)
+	deps.GitHubClient = gh
+	deps.ConfigStore = &fakeStore{config: &config.Config{
+		Agent:         "opencode",
+		WorktreeDir:   dir,
+		ReviewCommand: "/oc review",
+		AgentProviders: map[string]config.Agent{
+			"opencode": {Preset: "opencode", Command: "true"},
+		},
+	}}
+	deps.EventLog = &fakeEventLog{events: []events.Event{
+		{Type: "run.started", RunID: "prior-65-1", Issue: 65, Payload: map[string]any{
+			"agent": "opencode", "branch": branch, "base_branch": "main",
+		}},
+	}}
+
+	var output bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&output)
+	cmd.SetErr(&output)
+	cmd.SetArgs([]string{"--continue", "--sandbox", "worktree", "62"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v\noutput:\n%s", err, output.String())
+	}
+	if !spy.called {
+		t.Fatalf("expected batch runner to be called, output:\n%s", output.String())
+	}
+	if len(spy.req.Issues) != 1 || spy.req.Issues[0] != 65 {
+		t.Fatalf("expected only #65 to be continued (open spec child), got %v", spy.req.Issues)
+	}
+	if mode := spy.req.IssueMode(65); mode != batch.ModeContinue {
+		t.Fatalf("expected #65 mode=continue, got %q", mode)
+	}
+	if !strings.Contains(output.String(), "Issue #63 is closed, skipping") {
+		t.Errorf("expected skip warning for closed child #63, got: %q", output.String())
+	}
+	for _, phase := range []string{"specification-resolution", "dependency-resolution"} {
+		if strings.Contains(output.String(), "phase "+phase+" duration=") {
+			t.Errorf("unexpected phase timing for %s, output: %q", phase, output.String())
+		}
+	}
+}
+
+// TestRun_ContinueFlag_NoPriorRunPromotesToOverrideWithoutAPICall
+// guards the spec-expansion + --continue path against an N² storm of
+// gh calls for issues that never had a prior run. When a child of a
+// Specification has no recorded run.started event,
+// continuation.go's lastRunPerIssue lookup short-circuits to override
+// mode; this test pins that short-circuit by counting FindPRByBranch
+// invocations and asserting FindPRByBranch fires at most once for the
+// only continuation-eligible issue (the one that did have a prior run).
+func TestRun_ContinueFlag_NoPriorRunPromotesToOverrideWithoutAPICall(t *testing.T) {
+	specBody := "## Problem Statement\n\nP.\n\n## Solution\n\nS.\n\n## User Stories\n\n1. U.\n\n## Child Issues\n\n- #200\n- #201\n- #202\n"
+	childBody := "## Parent\n\n#199\n\n## What\n\n"
+	onlyBranch := batch.BranchName(200, "child-200")
+
+	gh := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			199: {Number: 199, Title: "Specification parent", Body: specBody, State: "open"},
+			200: {Number: 200, Title: "Child 200", Body: childBody, State: "open"},
+			201: {Number: 201, Title: "Child 201", Body: childBody, State: "open"},
+			202: {Number: 202, Title: "Child 202", Body: childBody, State: "open"},
+		},
+		searchIssuesResult: []github.Issue{
+			{Number: 199, Title: "Specification parent", State: "open"},
+			{Number: 200, Title: "Child 200", State: "open"},
+			{Number: 201, Title: "Child 201", State: "open"},
+			{Number: 202, Title: "Child 202", State: "open"},
+		},
+		prs: map[string]*github.PR{
+			onlyBranch: {Number: 7777, State: "OPEN", Merged: false, HeadRefName: onlyBranch, HeadRefOid: "deadbeef"},
+		},
+		findPRCalls: map[string]int{},
+	}
+
+	dir := t.TempDir()
+	worktreePath := filepath.Join(dir, onlyBranch)
+	if err := os.MkdirAll(filepath.Join(worktreePath, ".sandman"), 0o755); err != nil {
+		t.Fatalf("mkdir worktree: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(worktreePath, ".sandman", "task.md"), []byte("## Stage: in-progress\n"), 0o644); err != nil {
+		t.Fatalf("write task: %v", err)
+	}
+
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	deps := newRunDeps(t, spy)
+	deps.GitHubClient = gh
+	deps.ConfigStore = &fakeStore{config: &config.Config{
+		Agent:         "opencode",
+		WorktreeDir:   dir,
+		ReviewCommand: "/oc review",
+		AgentProviders: map[string]config.Agent{
+			"opencode": {Preset: "opencode", Command: "true"},
+		},
+	}}
+	deps.EventLog = &fakeEventLog{events: []events.Event{
+		{Type: "run.started", RunID: "prior-200-1", Issue: 200, Payload: map[string]any{
+			"agent": "opencode", "branch": onlyBranch, "base_branch": "main",
+		}},
+	}}
+
+	var output bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&output)
+	cmd.SetErr(&output)
+	cmd.SetArgs([]string{"--continue", "--sandbox", "worktree", "199"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v\noutput:\n%s", err, output.String())
+	}
+	if !spy.called {
+		t.Fatalf("expected batch runner to be called, output:\n%s", output.String())
+	}
+	if calls := gh.findPRCalls[onlyBranch]; calls > 1 {
+		t.Fatalf("expected at most one FindPRByBranch call for the continued branch, got %d", calls)
+	}
+	if !strings.Contains(output.String(), "[--continue] promoting #201 to override") {
+		t.Errorf("expected override promotion log for #201, got: %q", output.String())
+	}
+	if !strings.Contains(output.String(), "[--continue] promoting #202 to override") {
+		t.Errorf("expected override promotion log for #202, got: %q", output.String())
 	}
 }

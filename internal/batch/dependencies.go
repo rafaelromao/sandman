@@ -7,11 +7,15 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/rafaelromao/sandman/internal/github"
 )
 
-const dependencyWarningThreshold = 50
+const (
+	dependencyWarningThreshold     = 50
+	dependencyMaxConcurrentFetches = 8
+)
 
 // ResolvedBatch contains a dependency-validated batch ready for execution.
 type ResolvedBatch struct {
@@ -22,15 +26,71 @@ type ResolvedBatch struct {
 
 // DependencyResolver fetches BlockedBy relationships and resolves execution order.
 type DependencyResolver struct {
-	githubClient  github.Client
-	warningWriter io.Writer
+	githubClient         github.Client
+	warningWriter        io.Writer
+	maxConcurrentFetches int
 }
 
 func NewDependencyResolver(githubClient github.Client) *DependencyResolver {
 	return &DependencyResolver{
-		githubClient:  githubClient,
-		warningWriter: os.Stderr,
+		githubClient:         githubClient,
+		warningWriter:        os.Stderr,
+		maxConcurrentFetches: dependencyMaxConcurrentFetches,
 	}
+}
+
+// dependencyIssueFetchGroup de-duplicates FetchIssue calls across the
+// resolver's workers: the first caller for a given number fetches,
+// subsequent callers wait on the same in-flight call.
+type dependencyIssueFetchGroup struct {
+	mu       sync.Mutex
+	cache    map[int]*github.Issue
+	inFlight map[int]*dependencyIssueFetchCall
+}
+
+type dependencyIssueFetchCall struct {
+	done  chan struct{}
+	issue *github.Issue
+	err   error
+}
+
+func newDependencyIssueFetchGroup() *dependencyIssueFetchGroup {
+	return &dependencyIssueFetchGroup{
+		cache:    make(map[int]*github.Issue),
+		inFlight: make(map[int]*dependencyIssueFetchCall),
+	}
+}
+
+func (g *dependencyIssueFetchGroup) fetch(ctx context.Context, client github.Client, number int) (*github.Issue, error) {
+	g.mu.Lock()
+	if issue, ok := g.cache[number]; ok {
+		g.mu.Unlock()
+		return issue, nil
+	}
+	if call, ok := g.inFlight[number]; ok {
+		g.mu.Unlock()
+		select {
+		case <-call.done:
+			return call.issue, call.err
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	call := &dependencyIssueFetchCall{done: make(chan struct{})}
+	g.inFlight[number] = call
+	g.mu.Unlock()
+
+	issue, err := client.FetchIssue(ctx, number)
+	g.mu.Lock()
+	call.issue = issue
+	call.err = err
+	if err == nil && issue != nil {
+		g.cache[number] = issue
+	}
+	delete(g.inFlight, number)
+	close(call.done)
+	g.mu.Unlock()
+	return issue, err
 }
 
 func (r *DependencyResolver) Resolve(ctx context.Context, issues []int, includeDeps bool) (*ResolvedBatch, error) {
@@ -44,7 +104,6 @@ func (r *DependencyResolver) Resolve(ctx context.Context, issues []int, includeD
 
 	deps := make(map[int][]int, len(requested))
 	blocked := make(map[int][]int)
-	issueCache := make(map[int]*github.Issue, len(requested))
 	known := make(map[int]struct{}, len(requested))
 	order := make([]int, 0, len(requested))
 	queue := append([]int(nil), requested...)
@@ -53,7 +112,9 @@ func (r *DependencyResolver) Resolve(ctx context.Context, issues []int, includeD
 		order = append(order, issue)
 	}
 
+	fetches := newDependencyIssueFetchGroup()
 	missing := map[int]struct{}{}
+
 	for len(queue) > 0 {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -61,33 +122,33 @@ func (r *DependencyResolver) Resolve(ctx context.Context, issues []int, includeD
 
 		issueNum := queue[0]
 		queue = queue[1:]
-		if _, fetched := deps[issueNum]; fetched {
+		if _, done := deps[issueNum]; done {
 			continue
 		}
 
-		issue, err := fetchDependencyIssue(ctx, r.githubClient, issueCache, issueNum)
+		issue, err := fetches.fetch(ctx, r.githubClient, issueNum)
 		if err != nil {
 			return nil, fmt.Errorf("fetch issue #%d: %w", issueNum, err)
 		}
 
 		blockers := uniqueSortedIssues(issue.BlockedBy)
+		blockerEntries := fetchBlockersParallel(ctx, fetches, r.githubClient, blockers, issueNum, r.maxConcurrentFetches)
 		activeBlockers := make([]int, 0, len(blockers))
 
 		for _, blocker := range blockers {
 			if blocker == issueNum {
 				continue
 			}
-			var blockerIssue *github.Issue
-			var err error
-			if _, ok := known[blocker]; ok {
-				blockerIssue, err = fetchDependencyIssue(ctx, r.githubClient, issueCache, blocker)
-			} else {
-				blockerIssue, err = fetchDependencyIssueFresh(ctx, r.githubClient, blocker)
-			}
-			if err != nil {
+			entry := blockerEntries[blocker]
+			if entry.err != nil {
 				if includeDeps {
-					return nil, fmt.Errorf("fetch issue #%d: %w", blocker, err)
+					return nil, fmt.Errorf("fetch issue #%d: %w", blocker, entry.err)
 				}
+				missing[blocker] = struct{}{}
+				continue
+			}
+			blockerIssue := entry.issue
+			if blockerIssue == nil {
 				missing[blocker] = struct{}{}
 				continue
 			}
@@ -133,55 +194,68 @@ func (r *DependencyResolver) Resolve(ctx context.Context, issues []int, includeD
 	return &ResolvedBatch{Issues: ordered, Deps: deps, Blocked: blocked}, nil
 }
 
-func fetchDependencyIssue(ctx context.Context, client github.Client, cache map[int]*github.Issue, issueNum int) (*github.Issue, error) {
-	if issue, ok := cache[issueNum]; ok {
-		return issue, nil
+// fetchBlockersParallel fans out FetchIssue calls across a bounded
+// pool sized by maxConcurrentFetches (capped at the work item count).
+// It returns a map keyed by blocker number holding either the fetched
+// issue, a per-blocker error, or both nil when the blocker was not
+// found at all. Callers are responsible for translating a per-key error
+// into a missing-blocker entry.
+func fetchBlockersParallel(ctx context.Context, fetches *dependencyIssueFetchGroup, client github.Client, blockers []int, exclude int, maxWorkers int) map[int]fetchedBlocker {
+	results := make(map[int]fetchedBlocker, len(blockers))
+	if len(blockers) == 0 {
+		return results
 	}
-
+	jobs := make(chan int, len(blockers))
+	for _, b := range blockers {
+		if b == exclude {
+			continue
+		}
+		results[b] = fetchedBlocker{}
+		jobs <- b
+	}
+	close(jobs)
+	workerCount := maxWorkers
+	if workerCount <= 0 {
+		workerCount = dependencyMaxConcurrentFetches
+	}
+	if workerCount > len(results) && len(results) > 0 {
+		workerCount = len(results)
+	}
+	var wg sync.WaitGroup
+	for n := 0; n < workerCount; n++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case blocker, ok := <-jobs:
+					if !ok {
+						return
+					}
+					issue, err := fetches.fetch(ctx, client, blocker)
+					results[blocker] = fetchedBlocker{issue: issue, err: err}
+				}
+			}
+		}()
+	}
+	wg.Wait()
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		for blocker := range results {
+			entry := results[blocker]
+			if entry.issue == nil && entry.err == nil {
+				entry.err = err
+				results[blocker] = entry
+			}
+		}
 	}
-
-	issue, err := client.FetchIssue(ctx, issueNum)
-	if err != nil {
-		return nil, err
-	}
-	if issue == nil {
-		return nil, fmt.Errorf("not found")
-	}
-
-	cache[issueNum] = issue
-	return issue, nil
+	return results
 }
 
-// shouldFetchBlockerFreshly reports whether the given blocker must be fetched
-// from the live client rather than from the resolver's per-call cache. Known
-// in-batch blockers keep their cached snapshot so repeated cycles do not fan
-// out into redundant GitHub traffic; external blockers and known entries are
-// refreshed so State and BlockedBy decisions reflect current GitHub state
-// immediately before dependency inclusion.
-func shouldFetchBlockerFreshly(blocker int, cache map[int]*github.Issue, known map[int]struct{}) bool {
-	if _, ok := known[blocker]; !ok {
-		return true
-	}
-	if _, ok := cache[blocker]; !ok {
-		return true
-	}
-	return false
-}
-
-func fetchDependencyIssueFresh(ctx context.Context, client github.Client, issueNum int) (*github.Issue, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	issue, err := client.FetchIssue(ctx, issueNum)
-	if err != nil {
-		return nil, err
-	}
-	if issue == nil {
-		return nil, fmt.Errorf("not found")
-	}
-	return issue, nil
+type fetchedBlocker struct {
+	issue *github.Issue
+	err   error
 }
 
 func (r *DependencyResolver) warnExpansion(issueCount int) {
