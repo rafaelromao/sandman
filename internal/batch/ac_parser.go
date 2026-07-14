@@ -59,35 +59,3 @@ func ParseAcceptanceCriteria(body string) []string {
 	}
 	return out
 }
-
-// ParseSandmanEvidence extracts `ok: <cmd> -> <sentinel>` lines from
-// a fenced ` ```sandman-evidence ` block in the issue body. It is the
-// T3 transitional fallback's input format. The block must use the
-// `sandman-evidence` info-string; any other info-string is ignored so
-// general code blocks are not consumed.
-func ParseSandmanEvidence(body string) []EvidenceLine {
-	fenceRe := regexp.MustCompile("(?s)```sandman-evidence\\s*\\n(.*?)```")
-	match := fenceRe.FindStringSubmatch(body)
-	if match == nil {
-		return nil
-	}
-	block := match[1]
-	okRe := regexp.MustCompile(`(?m)^\s*ok:\s*(.+?)\s*->\s*(.+?)\s*$`)
-	matches := okRe.FindAllStringSubmatch(block, -1)
-	if len(matches) == 0 {
-		return nil
-	}
-	out := make([]EvidenceLine, 0, len(matches))
-	for _, m := range matches {
-		out = append(out, EvidenceLine{Command: strings.TrimSpace(m[1]), Sentinel: strings.TrimSpace(m[2])})
-	}
-	return out
-}
-
-// EvidenceLine is one `ok: <cmd> -> <sentinel>` line from a
-// `sandman-evidence` block. The T3 oracle replays each Command inside
-// a sandbox and asserts the Sentinel appears in the combined output.
-type EvidenceLine struct {
-	Command  string
-	Sentinel string
-}

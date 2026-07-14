@@ -34,7 +34,7 @@ type T2PreFilter struct {
 //
 //   - L1 true (base is ancestor of head) → OracleAbstain (the change
 //     is exactly on main, so further verification is unnecessary; T1
-//     and T3 will abstain too because they only run on diffs).
+//     will abstain too because it only runs on diffs).
 //   - L1 false + subset of main → OracleAbstain (the change is part
 //     of main; no proof either way).
 //   - L1 false + not a subset → OracleReject (the branch has lines
@@ -139,7 +139,7 @@ type T4CheapGate struct{}
 
 // Run executes the T4 cheap gate. It is pure: it does not shell out
 // and does not call any GitHub API; the orchestrator fetches the PR
-// once and reuses the result across the four oracles.
+// once and reuses the result across the oracles.
 func (t *T4CheapGate) Run(in VerifyInput) (OracleResult, OracleCheck, error) {
 	if in.PR == nil {
 		return OracleAbstain, OracleCheck{Name: "T4", Details: map[string]any{"reason": "no-pr"}}, nil
@@ -220,44 +220,4 @@ func truncate(s string, max int) string {
 		return s
 	}
 	return s[:max] + "…"
-}
-
-// T3EvidenceOracle runs the structured ` ```sandman-evidence ` block
-// inside a replay sandbox. Each `ok: <cmd> -> <sentinel>` line is
-// executed; the oracle returns OracleVerified if every sentinel
-// appears in the output, OracleFailed if any is missing.
-type T3EvidenceOracle struct {
-	// Runner mirrors T1DecisionOracle.Runner; production wires it
-	// to a replay sandbox.
-	Runner func(ctx context.Context, dir, line string) (string, error)
-}
-
-// Run executes the T3 evidence oracle. The contract is:
-//
-//   - No ` ```sandman-evidence ` block → OracleNoSignal.
-//   - Block present but no `ok:` lines → OracleNoSignal.
-//   - All sentinels present in their command's output → OracleVerified.
-//   - Any sentinel missing → OracleFailed.
-func (t *T3EvidenceOracle) Run(in VerifyInput) (OracleResult, OracleCheck, error) {
-	if in.Issue == nil {
-		return OracleNoSignal, OracleCheck{Name: "T3", Details: map[string]any{"reason": "no-issue"}}, nil
-	}
-	lines := ParseSandmanEvidence(in.Issue.Body)
-	if len(lines) == 0 {
-		return OracleNoSignal, OracleCheck{Name: "T3", Details: map[string]any{"reason": "no-evidence"}}, nil
-	}
-	runner := t.Runner
-	if runner == nil {
-		runner = defaultT1Runner
-	}
-	for _, ev := range lines {
-		out, err := runner(in.Context, in.WorkDir, ev.Command)
-		if err != nil {
-			return OracleFailed, OracleCheck{Name: "T3", Details: map[string]any{"command": ev.Command, "sentinel": ev.Sentinel, "output": truncate(out, 512)}}, nil
-		}
-		if !strings.Contains(out, ev.Sentinel) {
-			return OracleFailed, OracleCheck{Name: "T3", Details: map[string]any{"command": ev.Command, "sentinel": ev.Sentinel, "output": truncate(out, 512)}}, nil
-		}
-	}
-	return OracleVerified, OracleCheck{Name: "T3", Details: map[string]any{"count": len(lines)}}, nil
 }

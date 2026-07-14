@@ -309,9 +309,9 @@ type Orchestrator struct {
 	// injected behaviour.
 	runSessionOpts runSessionOptions
 
-	// verifyPath is the four-oracle chain invoked by the alreadyResolved
+	// verifyPath is the verify chain invoked by the alreadyResolved
 	// short-circuit in runOnce. Production code leaves it nil; the
-	// orchestrator builds a default chain (T2 / T4 / T1 / T3) when
+	// orchestrator builds a default chain (T2 / T4 / T1) when
 	// verifyPath is unset. Tests inject a VerifyPathFunc to drive
 	// outcomes without touching real git or GitHub.
 	verifyPath VerifyPathFunc
@@ -1993,7 +1993,7 @@ func (s *runSession) detectConflictingPR(branch string) (map[string]any, bool) {
 }
 
 // runVerifyPath is the seam the orchestrator uses to invoke the
-// four-oracle chain. Production code uses DefaultVerifyPath; tests
+// verify chain. Production code uses DefaultVerifyPath; tests
 // inject a VerifyPathFunc literal to drive outcomes without touching
 // real git or GitHub.
 func (o *Orchestrator) runVerifyPath(ctx context.Context, in VerifyInput) (VerifyOutcome, []OracleCheck) {

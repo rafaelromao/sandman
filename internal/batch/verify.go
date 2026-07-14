@@ -6,7 +6,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/github"
 )
 
-// OracleResult is the per-oracle verdict. The four-oracle chain in
+// OracleResult is the per-oracle verdict. The three-oracle chain in
 // RunVerifyPath reduces these into a single VerifyOutcome plus the
 // collected OracleCheck slice.
 type OracleResult int
@@ -19,7 +19,7 @@ const (
 	// OracleDeferT1: T4's cheap gate sees APPROVED + CLEAN + green
 	// checks and wants the decision oracle to make the final call.
 	// The chain treats this like OracleAbstain for ordering: T1
-	// runs after T4, T3 is not consulted.
+	// runs after T4.
 	OracleDeferT1
 	// OracleVerified: the oracle produced a positive signal — the
 	// change is already on main. RunVerifyPath short-circuits with
@@ -61,8 +61,8 @@ const (
 	VerifyFailed
 )
 
-// Oracle is the contract every decision oracle implements. The four
-// oracles (T2 / T4 / T1 / T3) share the same shape; only their
+// Oracle is the contract every decision oracle implements. The
+// three oracles (T2 / T4 / T1) share the same shape; only their
 // implementation differs. Run is invoked at most once per RunVerifyPath
 // call.
 type Oracle interface {
@@ -70,10 +70,11 @@ type Oracle interface {
 }
 
 // VerifyInput is the per-run context every oracle reads. WorkDir is
-// the working tree to use for shell-out oracles (T1, T3); the rest is
-// metadata fetched by the orchestrator before the chain runs. T1 / T2
-// / T3 / T4 are the four oracles; a nil oracle is treated as OracleAbstain
-// so a test or partial deployment can elide individual oracles.
+// the working tree to use for shell-out oracles (T1); the rest is
+// metadata fetched by the orchestrator before the chain runs. T1 /
+// T2 / T4 are the three oracles; a nil oracle is treated as
+// OracleAbstain so a test or partial deployment can elide
+// individual oracles.
 type VerifyInput struct {
 	Context context.Context
 	Issue   *github.Issue
@@ -83,21 +84,20 @@ type VerifyInput struct {
 	T2      Oracle
 	T4      Oracle
 	T1      Oracle
-	T3      Oracle
 }
 
 // VerifyPathFunc is the seam the orchestrator uses to invoke the
-// four-oracle chain. Production wiring goes through RunVerifyPath
-// with the default T2 / T4 / T1 / T3 oracles; tests inject a
+// three-oracle chain. Production wiring goes through RunVerifyPath
+// with the default T2 / T4 / T1 oracles; tests inject a
 // VerifyPathFunc literal to drive the outcome without touching real
 // git or GitHub. The signature mirrors RunVerifyPath so the seam is
 // 1:1.
 type VerifyPathFunc func(VerifyInput) (VerifyOutcome, []OracleCheck)
 
-// DefaultVerifyPath returns a VerifyPathFunc that wires the four
-// oracles with their default constructors. T1 / T3 need a working
-// tree; the default runner uses the default T1 shell runner. Tests
-// that want to drive T1 / T3 in isolation build their own
+// DefaultVerifyPath returns a VerifyPathFunc that wires the three
+// oracles with their default constructors. T1 needs a working tree;
+// the default runner uses the default T1 shell runner. Tests
+// that want to drive T1 in isolation build their own
 // VerifyPathFunc instead.
 func DefaultVerifyPath() VerifyPathFunc {
 	return func(in VerifyInput) (VerifyOutcome, []OracleCheck) {
@@ -110,15 +110,12 @@ func DefaultVerifyPath() VerifyPathFunc {
 		if in.T1 == nil {
 			in.T1 = &T1DecisionOracle{}
 		}
-		if in.T3 == nil {
-			in.T3 = &T3EvidenceOracle{}
-		}
 		return RunVerifyPath(in)
 	}
 }
 
-// RunVerifyPath runs the four-oracle chain in order: T2 (pre-filter),
-// T4 (cheap gate), T1 (decision oracle), T3 (transitional fallback).
+// RunVerifyPath runs the three-oracle chain in order: T2 (pre-filter),
+// T4 (cheap gate), T1 (decision oracle).
 // The chain short-circuits on the first non-abstain outcome; otherwise
 // the conservative backstop is invoked by the orchestrator after this
 // function returns. The returned checks slice is nil when every oracle
@@ -132,7 +129,6 @@ func RunVerifyPath(in VerifyInput) (VerifyOutcome, []OracleCheck) {
 		{"T2", in.T2},
 		{"T4", in.T4},
 		{"T1", in.T1},
-		{"T3", in.T3},
 	}
 	for _, step := range chain {
 		if step.orc == nil {

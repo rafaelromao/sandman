@@ -26,21 +26,3 @@ func TestT1SandboxFactory_PinsSourceToOriginMain(t *testing.T) {
 	// source and asserting the same source is used.
 	_ = wt
 }
-
-// TestReplaySandboxFactory_DefaultsToCallSiteSource pins slice 4's
-// contract: the replay factory's NewSandbox falls back to the
-// orchestrator's call-site source branch (so the replay sees the
-// user's change), with an explicit override available.
-func TestReplaySandboxFactory_DefaultsToCallSiteSource(t *testing.T) {
-	t.Parallel()
-	f := &ReplaySandboxFactory{RepoPath: "/repo", WorktreeBase: "/wt", Branch: "verify-t3"}
-	sb := f.NewSandbox("/other", "/other-wt", "ignored", "feature-branch", nil)
-	if _, ok := sb.(*sandbox.WorktreeSandbox); !ok {
-		t.Fatalf("expected *sandbox.WorktreeSandbox, got %T", sb)
-	}
-	f2 := &ReplaySandboxFactory{RepoPath: "/repo", WorktreeBase: "/wt", Branch: "verify-t3", SourceBranch: "pr-head-sha"}
-	sb2 := f2.NewSandbox("/other", "/other-wt", "ignored", "feature-branch", nil)
-	if _, ok := sb2.(*sandbox.WorktreeSandbox); !ok {
-		t.Fatalf("expected *sandbox.WorktreeSandbox, got %T", sb2)
-	}
-}

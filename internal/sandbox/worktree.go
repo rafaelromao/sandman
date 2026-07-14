@@ -459,7 +459,7 @@ func gitMergeBaseIsAncestor(dir, a, b string) (bool, error) {
 }
 
 // GitMergeBaseIsAncestor is the exported wrapper around
-// gitMergeBaseIsAncestor. The four-oracle chain in `internal/batch`
+// gitMergeBaseIsAncestor. The verify chain in `internal/batch`
 // uses it from the T2 pre-filter; the original lowercase helper stays
 // for internal callers that already shell out from the sandbox
 // package.
