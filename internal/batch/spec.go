@@ -48,10 +48,10 @@ func (r *SpecificationResolver) IsSpecification(body string) bool {
 // IsSpecification for the broadened detector: callers that find IsSpecification(body) false
 // can use HasChildren to decide whether to expand the input anyway.
 //
-// HasChildren only scans comment bodies; body-shape references are discovered later in
-// the expanded path via collectCandidates. The cached GitHub client memoises
-// ListIssueComments per (run, number), so a re-entry on the same number within one run
-// pays zero additional REST requests.
+// HasChildren only scans comment bodies; body-shape references and native sub-issues
+// are discovered later in the expanded path via collectCandidates. The cached GitHub
+// client memoises ListIssueComments per (run, number), so a re-entry on the same number
+// within one run pays zero additional REST requests.
 func (r *SpecificationResolver) HasChildren(ctx context.Context, number int) (bool, error) {
 	comments, err := r.client.ListIssueComments(ctx, number)
 	if err != nil {
@@ -152,18 +152,29 @@ func (r *SpecificationResolver) expandOne(
 		return fmt.Errorf("fetch issue #%d: not found", num)
 	}
 
-	if !r.IsSpecification(issue.Body) {
+	broadened := !r.IsSpecification(issue.Body)
+	var subIssues []int
+	if broadened {
 		hasChildren, err := r.HasChildren(ctx, num)
 		if err != nil {
 			return err
 		}
 		if !hasChildren {
-			addUnique(num)
-			return nil
+			nums, subErr := r.client.ListSubIssues(ctx, num)
+			if subErr != nil {
+				fmt.Fprintf(r.warningWriter, "warning: could not list sub issues for specification #%d: %v\n", num, subErr)
+				addUnique(num)
+				return nil
+			}
+			if len(nums) == 0 {
+				addUnique(num)
+				return nil
+			}
+			subIssues = nums
 		}
 	}
 
-	accepted, err := r.collectAcceptedChildren(ctx, num, issue.Body, userInputSet)
+	accepted, err := r.collectAcceptedChildren(ctx, num, issue.Body, subIssues, userInputSet)
 	if err != nil {
 		return err
 	}
@@ -199,11 +210,13 @@ func (r *SpecificationResolver) expandOne(
 }
 
 // collectAcceptedChildren runs the existing collectCandidates flow (body refs →
-// comments → search fallback) and applies the per-candidate ## Parent verification.
-// User-typed inputs bypass verification on the immediate acceptance step but are
-// still subject to recursive expansion in expandOne.
-func (r *SpecificationResolver) collectAcceptedChildren(ctx context.Context, parent int, body string, userInputSet map[int]struct{}) ([]int, error) {
-	candidates := r.collectCandidates(ctx, parent, body)
+// comments → search fallback) merged with the pre-collected subIssue numbers
+// gathered by expandOne for broadened-detector candidates. It applies the
+// per-candidate ## Parent verification. User-typed inputs bypass verification on
+// the immediate acceptance step but are still subject to recursive expansion in
+// expandOne.
+func (r *SpecificationResolver) collectAcceptedChildren(ctx context.Context, parent int, body string, subIssues []int, userInputSet map[int]struct{}) ([]int, error) {
+	candidates := r.collectCandidates(ctx, parent, body, subIssues)
 	if len(candidates) == 0 {
 		return nil, fmt.Errorf("no child issues for specification #%d", parent)
 	}
@@ -235,7 +248,7 @@ func (r *SpecificationResolver) collectAcceptedChildren(ctx context.Context, par
 	return accepted, nil
 }
 
-func (r *SpecificationResolver) collectCandidates(ctx context.Context, parent int, body string) []int {
+func (r *SpecificationResolver) collectCandidates(ctx context.Context, parent int, body string, subIssues []int) []int {
 	order := make([]int, 0)
 	seen := make(map[int]struct{})
 	add := func(nums []int) {
@@ -258,6 +271,7 @@ func (r *SpecificationResolver) collectCandidates(ctx context.Context, parent in
 	} else {
 		fmt.Fprintf(r.warningWriter, "warning: could not list comments for specification #%d: %v\n", parent, err)
 	}
+	add(subIssues)
 	if len(order) == 0 {
 		if results, err := r.client.SearchIssues(ctx, specSearchToken(parent)); err == nil {
 			for _, issue := range results {

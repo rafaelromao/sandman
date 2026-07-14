@@ -3,6 +3,7 @@ package batch
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"strings"
 	"testing"
@@ -812,5 +813,132 @@ func TestSpecificationResolver_HasChildrenReturnsFalseWhenCommentsLackRef(t *tes
 	}
 	if got {
 		t.Fatal("expected HasChildren to return false when comments have no #N refs")
+	}
+}
+
+func TestSpecificationResolver_ExpandNativeSubIssues(t *testing.T) {
+	parentBody := "## What to build\n\nNo PRD sections here.\n"
+	childBody42 := "## Parent\n\n#1\n\n## What\n\nChild 42.\n"
+	childBody43 := "## Parent\n\n#1\n\n## What\n\nChild 43.\n"
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			1:  {Number: 1, Title: "E2E test plan", Body: parentBody},
+			42: {Number: 42, Title: "Child 42", Body: childBody42},
+			43: {Number: 43, Title: "Child 43", Body: childBody43},
+		},
+		subIssues: map[int][]int{1: {42, 43}},
+	}
+
+	var infoBuf bytes.Buffer
+	r := NewSpecificationResolver(client, &infoBuf)
+	got, err := r.Resolve(context.Background(), []int{1})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !equalInts(got, []int{42, 43}) {
+		t.Fatalf("expected [42 43], got %v", got)
+	}
+	if !strings.Contains(infoBuf.String(), "expanded specification #1 to 2 accepted children") {
+		t.Errorf("expected top-level expanded-expansion log line, got: %q", infoBuf.String())
+	}
+}
+
+func TestSpecificationResolver_NativeSubIssueDroppedWithoutParentBacklink(t *testing.T) {
+	parentBody := "## What to build\n\nNo PRD sections.\n"
+	strangerBody := "## What\n\nNo Parent backlink at all.\n"
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			1:  {Number: 1, Title: "Parent", Body: parentBody},
+			42: {Number: 42, Title: "Stranger", Body: strangerBody},
+		},
+		subIssues: map[int][]int{1: {42}},
+	}
+
+	r := NewSpecificationResolver(client, io.Discard)
+	if _, err := r.Resolve(context.Background(), []int{1}); err == nil {
+		t.Fatal("expected error when no candidates survive the ## Parent filter, got nil")
+	}
+}
+
+func TestSpecificationResolver_NonSpecWithoutChildrenSkipsListSubIssues(t *testing.T) {
+	parentBody := "## What\n\nJust a regular issue.\n"
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			42: {Number: 42, Title: "Regular", Body: parentBody},
+		},
+	}
+	r := NewSpecificationResolver(client, io.Discard)
+	got, err := r.Resolve(context.Background(), []int{42})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !equalInts(got, []int{42}) {
+		t.Fatalf("expected pass-through [42], got %v", got)
+	}
+	if len(client.listSubIssuesCalls) != 1 {
+		t.Errorf("expected exactly 1 ListSubIssues call for broadened-detector probe on non-spec input, got %v", client.listSubIssuesCalls)
+	}
+}
+
+func TestSpecificationResolver_SpecShapeExpansionDoesNotTriggerListSubIssues(t *testing.T) {
+	specBody := "## Problem Statement\n\nP.\n\n## Solution\n\nS.\n\n## User Stories\n\n1. U.\n\n## Child Issues\n\n- #10\n"
+	childBody := "## Parent\n\n#1\n\n## What\n\n"
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			1:  {Number: 1, Title: "Spec", Body: specBody},
+			10: {Number: 10, Title: "Child", Body: childBody},
+		},
+	}
+	r := NewSpecificationResolver(client, io.Discard)
+	if _, err := r.Resolve(context.Background(), []int{1}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(client.listSubIssuesCalls) != 0 {
+		t.Errorf("section-shape expansion must NOT trigger the broadened sub-issues probe, got %v", client.listSubIssuesCalls)
+	}
+}
+
+func TestSpecificationResolver_NativeSubIssuesShortCircuitSearchFallback(t *testing.T) {
+	parentBody := "## What to build\n\nNo PRD sections.\n"
+	childBody := "## Parent\n\n#1\n\n## What\n\n"
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			1:  {Number: 1, Title: "Parent", Body: parentBody},
+			42: {Number: 42, Title: "Child", Body: childBody},
+		},
+		subIssues: map[int][]int{1: {42}},
+	}
+
+	r := NewSpecificationResolver(client, io.Discard)
+	if _, err := r.Resolve(context.Background(), []int{1}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for _, q := range client.searchCalls {
+		if strings.Contains(q, "issues/1") {
+			t.Errorf("expected SearchIssues NOT to fire when sub-issues already provide candidates, got search call %q", q)
+		}
+	}
+}
+
+func TestSpecificationResolver_ListSubIssuesFailureLogsAndContinues(t *testing.T) {
+	parentBody := "## What to build\n\nNo PRD sections.\n"
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			1: {Number: 1, Title: "Parent", Body: parentBody},
+		},
+	}
+	client.listSubIssuesErr = errors.New("gh api boom")
+
+	var infoBuf bytes.Buffer
+	r := NewSpecificationResolver(client, &infoBuf)
+	got, err := r.Resolve(context.Background(), []int{1})
+	if err != nil {
+		t.Fatalf("expected error-free resolution on transient gh failure, got %v", err)
+	}
+	if !equalInts(got, []int{1}) {
+		t.Fatalf("expected pass-through [1], got %v", got)
+	}
+	if !strings.Contains(infoBuf.String(), "could not list sub issues for specification #1") {
+		t.Errorf("expected warning log line for sub-issue fetch failure, got: %q", infoBuf.String())
 	}
 }
