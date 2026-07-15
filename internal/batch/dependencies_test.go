@@ -6,7 +6,9 @@ import (
 	"errors"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/rafaelromao/sandman/internal/github"
 )
@@ -459,5 +461,127 @@ func TestDependencyResolverResolve_IgnoresSelfReferentialBlocker(t *testing.T) {
 
 	if !reflect.DeepEqual(resolved.Deps[1222], []int(nil)) {
 		t.Fatalf("expected no blockers for 1222, got %v", resolved.Deps[1222])
+	}
+}
+
+// dependencyConcurrencyClient mirrors specificationConcurrencyClient
+// and tracks the highest number of concurrent FetchIssue calls observed
+// during a single Resolve invocation. The dep resolver fans out
+// blocker fetches across a bounded worker pool (maxConcurrentFetches).
+type dependencyConcurrencyClient struct {
+	*fakeGitHubClient
+	mu      sync.Mutex
+	active  int
+	max     int
+	overlap int
+	calls   map[int]int
+	delay   time.Duration
+}
+
+func (c *dependencyConcurrencyClient) FetchIssue(ctx context.Context, number int) (*github.Issue, error) {
+	c.mu.Lock()
+	c.calls[number]++
+	c.active++
+	if c.active > 1 && c.active > c.overlap {
+		c.overlap = c.active
+	}
+	if c.active > c.max {
+		c.max = c.active
+	}
+	c.mu.Unlock()
+	defer func() {
+		c.mu.Lock()
+		c.active--
+		c.mu.Unlock()
+	}()
+	select {
+	case <-time.After(c.delay):
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	return c.fakeGitHubClient.FetchIssue(ctx, number)
+}
+
+// TestDependencyResolver_ParallelizesBlockerFetches asserts that the
+// dep resolver fans out blocker fetches instead of blocking on each in
+// turn. Each requested issue carries [blocker_a, blocker_b] so the
+// per-issue blocker fetch must run FetchIssue concurrently for those
+// two siblings; the worker cap (4) bounds the observed overlap.
+func TestDependencyResolver_ParallelizesBlockerFetches(t *testing.T) {
+	const (
+		requested        = 8
+		blockersPerIssue = 2
+	)
+	issues := make(map[int]*github.Issue, requested)
+	requestedList := make([]int, 0, requested)
+	for n := 1; n <= requested; n++ {
+		blockers := []int{1000 + 2*n, 1001 + 2*n}
+		for _, b := range blockers {
+			issues[b] = &github.Issue{Number: b, Title: "Blocker"}
+		}
+		issues[n] = &github.Issue{Number: n, Title: "Independent", BlockedBy: blockers}
+		requestedList = append(requestedList, n)
+	}
+	client := &dependencyConcurrencyClient{
+		fakeGitHubClient: &fakeGitHubClient{issues: issues},
+		calls:            make(map[int]int),
+		delay:            5 * time.Millisecond,
+	}
+	resolver := NewDependencyResolver(client)
+	resolver.warningWriter = &bytes.Buffer{}
+	resolver.maxConcurrentFetches = 4
+
+	start := time.Now()
+	resolved, err := resolver.Resolve(context.Background(), requestedList, false)
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(resolved.Issues) != requested {
+		t.Fatalf("expected %d resolved issues, got %d", requested, len(resolved.Issues))
+	}
+	if client.max > 4 {
+		t.Fatalf("expected at most 4 concurrent fetches, got %d", client.max)
+	}
+	if client.overlap == 0 {
+		t.Fatalf("expected overlapping fetches, got 0 (resolver ran sequentially)")
+	}
+	// 40 issues / 4 workers * 5ms each = ~50ms minimum. Sequential would
+	// take ~200ms. Allow generous headroom while catching a pure-rewrite
+	// regression.
+	if elapsed > 120*time.Millisecond {
+		t.Fatalf("expected parallelized fetch to stay under ~120ms, took %s with concurrency max=%d", elapsed, client.max)
+	}
+}
+
+// TestDependencyResolver_SingleFlightRepeatedBlockers asserts that two
+// issues sharing the same blocker result in exactly one FetchIssue for
+// the shared blocker, even when the resolver walks the request set in
+// parallel batches.
+func TestDependencyResolver_SingleFlightRepeatedBlockers(t *testing.T) {
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			200: {Number: 200, Title: "A", BlockedBy: []int{42}},
+			201: {Number: 201, Title: "B", BlockedBy: []int{42}},
+			202: {Number: 202, Title: "C", BlockedBy: []int{42}},
+			42:  {Number: 42, Title: "Shared blocker"},
+		},
+	}
+	tracker := &dependencyConcurrencyClient{
+		fakeGitHubClient: client,
+		calls:            make(map[int]int),
+	}
+	resolver := NewDependencyResolver(tracker)
+	resolver.warningWriter = &bytes.Buffer{}
+
+	resolved, err := resolver.Resolve(context.Background(), []int{200, 201, 202}, true)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(resolved.Issues) != 4 {
+		t.Fatalf("expected 4 resolved issues (200,201,202 + shared 42), got %v", resolved.Issues)
+	}
+	if calls := tracker.calls[42]; calls != 1 {
+		t.Fatalf("expected shared blocker #42 to be fetched once, got %d", calls)
 	}
 }

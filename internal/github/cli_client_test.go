@@ -268,6 +268,74 @@ func TestCLIClient_FindPRByBranch_Success(t *testing.T) {
 	}
 }
 
+// TestCLIClient_FindPRByBranch_StatusCheckRollupArrayAllSuccess asserts
+// that gh CLI ≥ 2.65's array-shaped statusCheckRollup with all SUCCESS
+// checks collapses to the canonical "success" rollup string the rest of
+// the codebase compares against in T4CheapGate.
+func TestCLIClient_FindPRByBranch_StatusCheckRollupArrayAllSuccess(t *testing.T) {
+	runner := &fakeRunner{responses: []fakeResponse{{output: `[{"number":17,"state":"open","mergedAt":null,"headRefName":"issue-65/make-orchestrator-execute-resolvedbatch","headRefOid":"abc123","reviewDecision":"APPROVED","mergeStateStatus":"CLEAN","statusCheckRollup":[{"__typename":"CheckRun","conclusion":"SUCCESS","status":"COMPLETED","name":"build"},{"__typename":"CheckRun","conclusion":"SUCCESS","status":"COMPLETED","name":"test"}]}]`}}}
+	client := &CLIClient{runner: runner}
+
+	pr, err := client.FindPRByBranch(context.Background(), "issue-65/make-orchestrator-execute-resolvedbatch")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if pr == nil {
+		t.Fatal("expected PR, got nil")
+	}
+	if pr.StatusCheckRollup != "success" {
+		t.Fatalf("StatusCheckRollup = %q, want success", pr.StatusCheckRollup)
+	}
+}
+
+func TestCLIClient_FindPRByBranch_StatusCheckRollupArrayWithFailure(t *testing.T) {
+	runner := &fakeRunner{responses: []fakeResponse{{output: `[{"number":18,"state":"open","mergedAt":null,"headRefName":"failure-branch","headRefOid":"def456","reviewDecision":"APPROVED","mergeStateStatus":"DIRTY","statusCheckRollup":[{"__typename":"CheckRun","conclusion":"SUCCESS","status":"COMPLETED","name":"build"},{"__typename":"CheckRun","conclusion":"FAILURE","status":"COMPLETED","name":"lint"}]}]`}}}
+	client := &CLIClient{runner: runner}
+
+	pr, err := client.FindPRByBranch(context.Background(), "failure-branch")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if pr == nil {
+		t.Fatal("expected PR, got nil")
+	}
+	if pr.StatusCheckRollup != "failure" {
+		t.Fatalf("StatusCheckRollup = %q, want failure", pr.StatusCheckRollup)
+	}
+}
+
+func TestCLIClient_FindPRByBranch_StatusCheckRollupArrayInProgress(t *testing.T) {
+	runner := &fakeRunner{responses: []fakeResponse{{output: `[{"number":19,"state":"open","mergedAt":null,"headRefName":"pending-branch","headRefOid":"ghi789","reviewDecision":"","mergeStateStatus":"BLOCKED","statusCheckRollup":[{"__typename":"CheckRun","conclusion":"","status":"IN_PROGRESS","name":"build"}]}]`}}}
+	client := &CLIClient{runner: runner}
+
+	pr, err := client.FindPRByBranch(context.Background(), "pending-branch")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if pr == nil {
+		t.Fatal("expected PR, got nil")
+	}
+	if pr.StatusCheckRollup != "pending" {
+		t.Fatalf("StatusCheckRollup = %q, want pending", pr.StatusCheckRollup)
+	}
+}
+
+func TestCLIClient_FindPRByBranch_StatusCheckRollupArrayEmpty(t *testing.T) {
+	runner := &fakeRunner{responses: []fakeResponse{{output: `[{"number":20,"state":"open","mergedAt":null,"headRefName":"empty-checks-branch","headRefOid":"jkl012","reviewDecision":"APPROVED","mergeStateStatus":"CLEAN","statusCheckRollup":[]}]`}}}
+	client := &CLIClient{runner: runner}
+
+	pr, err := client.FindPRByBranch(context.Background(), "empty-checks-branch")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if pr == nil {
+		t.Fatal("expected PR, got nil")
+	}
+	if pr.StatusCheckRollup != "" {
+		t.Fatalf("StatusCheckRollup = %q, want empty", pr.StatusCheckRollup)
+	}
+}
+
 func TestCLIClient_ResolveRepo_Success(t *testing.T) {
 	runner := &fakeRunner{responses: []fakeResponse{{output: `{"name":"sandman","owner":{"login":"rafaelromao"}}`}}}
 	client := &CLIClient{runner: runner}

@@ -358,7 +358,6 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 			}
 
 			if len(issues) > 0 {
-				phaseStarted := time.Now()
 				userTyped := append([]int(nil), issues...)
 				issues, err = expandSpecifications(cmd.Context(), githubClient, issues, cmd.ErrOrStderr())
 				if err != nil {
@@ -370,7 +369,6 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 						return err
 					}
 				}
-				reportPhase(cmd.ErrOrStderr(), "specification-resolution", phaseStarted)
 			}
 
 			baseBranchFlag, _ := cmd.Flags().GetString("base-branch")
@@ -382,12 +380,10 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 				baseBranch = "main"
 			}
 
-			phaseStarted := time.Now()
-			resolvedBatch, err := batch.NewDependencyResolver(liveGitHubClient).Resolve(cmd.Context(), issues, includeDependencies)
+			resolvedBatch, err := batch.NewDependencyResolver(githubClient).Resolve(cmd.Context(), issues, includeDependencies)
 			if err != nil {
 				return fmt.Errorf("resolve dependencies: %w", err)
 			}
-			reportPhase(cmd.ErrOrStderr(), "dependency-resolution", phaseStarted)
 
 			parallelFlag := cmd.Flags().Lookup("parallel")
 			parallelSet := parallelFlag != nil && parallelFlag.Changed
@@ -1184,13 +1180,6 @@ func expandSpecifications(ctx context.Context, client github.Client, issues []in
 		return nil, fmt.Errorf("resolve specifications: %w", err)
 	}
 	return expanded, nil
-}
-
-func reportPhase(w io.Writer, name string, started time.Time) {
-	if w == nil {
-		return
-	}
-	fmt.Fprintf(w, "phase %s duration=%s\n", name, time.Since(started))
 }
 
 func printSummary(cmd *cobra.Command, result *batch.Result) {

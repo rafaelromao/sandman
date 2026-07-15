@@ -158,19 +158,66 @@ type issueDependenciesPayload struct {
 }
 
 type prPayload struct {
-	Number                  int    `json:"number"`
-	State                   string `json:"state"`
-	Title                   string `json:"title"`
-	Body                    string `json:"body"`
-	MergedAt                string `json:"mergedAt"`
-	HeadRefName             string `json:"headRefName"`
-	HeadRefOid              string `json:"headRefOid"`
-	ReviewDecision          string `json:"reviewDecision"`
-	MergeStateStatus        string `json:"mergeStateStatus"`
-	StatusCheckRollup       string `json:"statusCheckRollup"`
+	Number                  int             `json:"number"`
+	State                   string          `json:"state"`
+	Title                   string          `json:"title"`
+	Body                    string          `json:"body"`
+	MergedAt                string          `json:"mergedAt"`
+	HeadRefName             string          `json:"headRefName"`
+	HeadRefOid              string          `json:"headRefOid"`
+	ReviewDecision          string          `json:"reviewDecision"`
+	MergeStateStatus        string          `json:"mergeStateStatus"`
+	StatusCheckRollup       json.RawMessage `json:"statusCheckRollup"`
 	ClosingIssuesReferences []struct {
 		Number int `json:"number"`
 	} `json:"closingIssuesReferences"`
+}
+
+// statusCheckRun mirrors the CheckRun shape that gh CLI ≥ 2.65 emits
+// for statusCheckRollup. Older versions emit a flat string like
+// "success"; the helper below tolerates both.
+type statusCheckRun struct {
+	Conclusion string `json:"conclusion"`
+	Status     string `json:"status"`
+}
+
+// rollupStateFromJSON converts the raw `gh pr list --json
+// statusCheckRollup` value into the canonical rollup string the rest of
+// the codebase compares against in T4CheapGate.
+//
+// Older gh versions emit the value as a flat string ("success",
+// "failure", "pending"); newer versions emit an array of CheckRun
+// objects whose Conclusion and Status fields must be folded. The
+// returned string is "success", "failure", "pending", or "" when the
+// value is absent / empty / unrecognised.
+func rollupStateFromJSON(raw json.RawMessage) string {
+	trimmed := strings.TrimSpace(string(raw))
+	if trimmed == "" || trimmed == "null" {
+		return ""
+	}
+	var legacy string
+	if err := json.Unmarshal(raw, &legacy); err == nil {
+		return legacy
+	}
+	var checks []statusCheckRun
+	if err := json.Unmarshal(raw, &checks); err != nil {
+		return ""
+	}
+	if len(checks) == 0 {
+		return ""
+	}
+	for _, run := range checks {
+		if !strings.EqualFold(run.Status, "COMPLETED") {
+			return "pending"
+		}
+	}
+	for _, run := range checks {
+		conclusion := strings.ToUpper(strings.TrimSpace(run.Conclusion))
+		if conclusion != "" && conclusion != "SUCCESS" && conclusion != "SKIPPED" && conclusion != "NEUTRAL" {
+			return "failure"
+		}
+	}
+	return "success"
 }
 
 type dependencySummary struct {
@@ -373,7 +420,7 @@ func (c *CLIClient) FindPRByBranch(ctx context.Context, branch string) (*PR, err
 		HeadRefOid:        payload.HeadRefOid,
 		ReviewDecision:    payload.ReviewDecision,
 		MergeStateStatus:  payload.MergeStateStatus,
-		StatusCheckRollup: payload.StatusCheckRollup,
+		StatusCheckRollup: rollupStateFromJSON(payload.StatusCheckRollup),
 	}, nil
 }
 
