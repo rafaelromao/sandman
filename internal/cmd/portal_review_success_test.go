@@ -87,3 +87,25 @@ console.log('PASS');
 `
 	runPortalHTMLScript(t, js)
 }
+
+// TestRenderRunMeta_ReviewingEmptyVerdictRendersInProgress pins the
+// fourth branch of the #2220 AC set: when the impl run is still in
+// flight (status='reviewing') and a live review child is active
+// (reviewLive=true, reviewVerdict empty), the counter must render
+// "In Progress" — NOT "Approved" (the success short-circuit must NOT
+// fire on a non-success status) and NOT "Unclear". This is the
+// issue #2109 behaviour, re-pinned here so the new file covers all
+// four branches the spec named.
+func TestRenderRunMeta_ReviewingEmptyVerdictRendersInProgress(t *testing.T) {
+	js := `const run = {
+  key: 'impl-2220-f', runId: 'impl-2220-f', batchKey: 'parent-batch',
+  kind: 'active', status: 'reviewing', reviewCount: 1, reviewVerdict: '', reviewLive: true,
+};
+const meta = helpers.renderRunMeta(run);
+if (meta.indexOf('1 review - In Progress') < 0) throw new Error('expected "1 review - In Progress" when status="reviewing" and reviewLive=true, got ' + JSON.stringify(meta));
+if (meta.indexOf('1 review - Approved') >= 0) throw new Error('Approved short-circuit must NOT fire when status="reviewing", got ' + JSON.stringify(meta));
+if (meta.indexOf('Unclear') >= 0) throw new Error('expected no "Unclear" while review is in flight, got ' + JSON.stringify(meta));
+console.log('PASS');
+`
+	runPortalHTMLScript(t, js)
+}

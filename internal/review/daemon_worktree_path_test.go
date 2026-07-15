@@ -78,16 +78,21 @@ func TestPrepareReviewRun_StampsWorktreePathOnManifest(t *testing.T) {
 }
 
 // TestPrepareReviewRun_ManifestEnablesVerdictFromWorktree is the
-// end-to-end regression for #2220 slice 2: the manifest written by
-// prepareReviewRun is the seam the portal's verdict reader relies on,
-// so this test seeds an APPROVED decision.md into the per-row worktree
-// and asserts the portal-side helper that consumes the manifest can
-// find the verdict.
+// daemon-side regression for #2220 slice 2: the manifest written by
+// prepareReviewRun advertises a WorktreePath that points at a real,
+// readable decision.md at the per-row worktree (the canonical artifact
+// location per #1953).
 //
-// This guards the contract between the daemon (writer of the manifest)
-// and the portal (reader of the manifest). If the daemon regresses
-// and drops WorktreePath, this test fails because the portal-side
-// helper falls back to the run-folder path and finds no decision.md.
+// This test lives in the `review` package because its job is to pin the
+// daemon's write contract: the manifest's WorktreePath must resolve to
+// the same path the agent writes decision.md to. The portal's verdict
+// reader (`reviewVerdictFromDecisionFile` in `internal/cmd`) consumes
+// that field and is pinned separately by
+// `TestPortal_ReviewVerdictFromDecisionFile` in
+// `internal/cmd/portal_slice3_test.go`; this test does not re-invoke
+// the cmd-package reader (it is unexported and lives in a different
+// package). The two tests together close the loop: daemon writes the
+// field (this test), portal reads it (existing test).
 func TestPrepareReviewRun_ManifestEnablesVerdictFromWorktree(t *testing.T) {
 	const (
 		prNumber  = 2220
