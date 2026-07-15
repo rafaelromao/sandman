@@ -1887,13 +1887,15 @@ func TestPortal_Compute_ReviewVerdictFromDecisionFileOnDisk(t *testing.T) {
 // instead of silently disagreeing with production.
 func TestPortal_ReviewVerdictFromDecisionFile(t *testing.T) {
 	cases := []struct {
-		name      string
-		batchID   string
-		runID     string
-		contents  string
-		writeFile bool
-		want      string
-		wantOK    bool
+		name            string
+		batchID         string
+		runID           string
+		contents        string
+		writeFile       bool
+		writeAtWorktree bool
+		writeAtRunDir   bool
+		want            string
+		wantOK          bool
 	}{
 		{
 			name:      "APPROVED inside ## Decision is recognised",
@@ -2112,6 +2114,49 @@ func TestPortal_ReviewVerdictFromDecisionFile(t *testing.T) {
 			want:      "Approved",
 			wantOK:    true,
 		},
+		{
+			// Issue #2224 slice 3b: when WorktreePath is set but the
+			// worktree's decision.md is missing (the worktree was
+			// cleaned up by ClearReviewArtifacts after the review),
+			// the reader must fall through to <runDir>/decision.md —
+			// the persistent copy postDecision writes (slice 3a).
+			// Before this fix the reader returned ("", false) when the
+			// worktree file was absent, surfacing every review as
+			// Unclear.
+			name:            "WorktreePath set, worktree decision.md missing, run-folder decision.md present — fallback finds it",
+			batchID:         "batch-1",
+			runID:           "run-1",
+			contents:        "## Decision\n**APPROVED**\n",
+			writeFile:       true,
+			writeAtWorktree: false,
+			writeAtRunDir:   true,
+			want:            "Approved",
+			wantOK:          true,
+		},
+		{
+			// Same fallback path, changes-requested verdict.
+			name:            "WorktreePath set, worktree decision.md missing, run-folder CHANGES_REQUESTED — fallback finds it",
+			batchID:         "batch-1",
+			runID:           "run-1",
+			contents:        "## Decision\n**CHANGES_REQUESTED**\n",
+			writeFile:       true,
+			writeAtWorktree: false,
+			writeAtRunDir:   true,
+			want:            "Changes requested",
+			wantOK:          true,
+		},
+		{
+			// Negative: both locations missing — still no verdict.
+			name:            "WorktreePath set, both locations missing — no verdict",
+			batchID:         "batch-1",
+			runID:           "run-1",
+			contents:        "",
+			writeFile:       false,
+			writeAtWorktree: false,
+			writeAtRunDir:   false,
+			want:            "",
+			wantOK:          false,
+		},
 	}
 
 	for _, tc := range cases {
@@ -2132,9 +2177,18 @@ func TestPortal_ReviewVerdictFromDecisionFile(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(runDir, "run.json"), manifestBytes, 0644); err != nil {
 				t.Fatalf("write run.json: %v", err)
 			}
-			if tc.writeFile {
+			// Default: writeFile seeds the worktree copy (legacy
+			// behaviour preserved). New fields writeAtWorktree /
+			// writeAtRunDir let slice 3b cases override the default
+			// and seed the run-folder copy instead.
+			if tc.writeFile && tc.writeAtWorktree == false && tc.writeAtRunDir == false {
 				if err := os.WriteFile(filepath.Join(worktreeDir, "decision.md"), []byte(tc.contents), 0644); err != nil {
 					t.Fatalf("write decision.md: %v", err)
+				}
+			}
+			if tc.writeAtRunDir {
+				if err := os.WriteFile(filepath.Join(runDir, "decision.md"), []byte(tc.contents), 0644); err != nil {
+					t.Fatalf("write run-folder decision.md: %v", err)
 				}
 			}
 			layout := paths.NewLayout(nil, repoRoot)

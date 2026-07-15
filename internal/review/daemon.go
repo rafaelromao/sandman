@@ -1645,6 +1645,22 @@ func (d *Daemon) postDecision(ctx context.Context, prNumber int, commentID, revi
 		return fmt.Errorf("read %s: %w", decisionPath, err)
 	}
 
+	// Issue #2224 slice 3a: persist decision.md to the run folder
+	// before the launchReview defer fires ClearReviewArtifacts and
+	// removes the worktree (which deletes the only copy of
+	// decision.md). The run folder copy is what the portal's verdict
+	// reader falls back to after the worktree is gone (slice 3b).
+	// Use atomicfs.WriteAtomic so the portal never observes a
+	// partially written file. If the write fails we log and
+	// continue — the post step is the critical path, and the
+	// worktree copy still exists at this point.
+	if reviewRunFolder != "" {
+		runDecisionPath := filepath.Join(reviewRunFolder, "decision.md")
+		if writeErr := atomicfs.WriteAtomic(runDecisionPath, body, 0644); writeErr != nil {
+			d.logf("PR #%d: persist decision.md to %s failed: %v (portal will still try the worktree copy until cleanup)", prNumber, runDecisionPath, writeErr)
+		}
+	}
+
 	// Honour ctx cancellation observed between RunBatch returning
 	// and the post step: do NOT call MarkSeen so the trigger
 	// stays in the prior on-disk state (the bounded-retry escape
