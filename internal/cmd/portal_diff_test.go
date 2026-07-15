@@ -5502,17 +5502,20 @@ console.log('PASS');
 
 // TestRenderRunMeta_ParentWithTwoReviewsNoVerdictRendersUnclear pins AC 2
 // (no marker recoverable) after issue #1939 slice 2 flipped the empty
-// verdict contract: the meta line for reviewCount=2 with empty
-// reviewVerdict must render "2 reviews - Unclear" — the server stamp for
-// "decision.md was missing or unparseable" surfaces explicitly rather
-// than dropping the suffix.
+// verdict contract: on a non-success parent, the meta line for
+// reviewCount=2 with empty reviewVerdict must render "2 reviews -
+// Unclear" — the server stamp for "decision.md was missing or
+// unparseable" surfaces explicitly rather than dropping the suffix. The
+// status="failure" (not "success") is deliberate: issue #2220 added a
+// short-circuit that renders "Approved" instead when the impl run
+// succeeded.
 func TestRenderRunMeta_ParentWithTwoReviewsNoVerdictRendersUnclear(t *testing.T) {
 	js := `const run = {
   key: 'impl-3', runId: 'impl-3', batchKey: 'parent-batch',
-  kind: 'completed', status: 'success', reviewCount: 2, reviewVerdict: '',
+  kind: 'completed', status: 'failure', reviewCount: 2, reviewVerdict: '',
 };
 const meta = helpers.renderRunMeta(run);
-if (meta.indexOf('2 reviews - Unclear') < 0) throw new Error('expected "2 reviews - Unclear" in meta when reviewVerdict empty, got ' + JSON.stringify(meta));
+if (meta.indexOf('2 reviews - Unclear') < 0) throw new Error('expected "2 reviews - Unclear" in meta when reviewVerdict empty on a failed parent, got ' + JSON.stringify(meta));
 console.log('PASS');
 `
 	runPortalHTMLScript(t, js)
@@ -5525,14 +5528,17 @@ console.log('PASS');
 // instead of dropping the verdict suffix. The orphan path can still
 // surface ” to renderRunMeta today (when the review's saved run.log has
 // no ## Decision marker), so this projection step is the front-end
-// contract that closes the gap.
+// contract that closes the gap. The status="failure" (not "success") is
+// deliberate: issue #2220 added a short-circuit that renders "Approved"
+// instead when the impl run succeeded (test pinned separately in
+// portal_review_success_test.go).
 func TestRenderRunMeta_ParentWithOneReviewEmptyVerdictRendersUnclear(t *testing.T) {
 	js := `const run = {
   key: 'impl-8', runId: 'impl-8', batchKey: 'parent-batch',
-  kind: 'completed', status: 'success', reviewCount: 1, reviewVerdict: '',
+  kind: 'completed', status: 'failure', reviewCount: 1, reviewVerdict: '',
 };
 const meta = helpers.renderRunMeta(run);
-if (meta.indexOf('1 review - Unclear') < 0) throw new Error('expected "1 review - Unclear" in meta when reviewVerdict is empty (server stamp for missing decision.md), got ' + JSON.stringify(meta));
+if (meta.indexOf('1 review - Unclear') < 0) throw new Error('expected "1 review - Unclear" in meta when reviewVerdict is empty on a failed parent, got ' + JSON.stringify(meta));
 if (meta.indexOf('1 reviews') >= 0) throw new Error('expected no plural "1 reviews" in meta, got ' + JSON.stringify(meta));
 console.log('PASS');
 `
