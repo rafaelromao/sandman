@@ -1314,12 +1314,23 @@ func (d *Daemon) prepareReviewRun(ctx context.Context, prNumber int, commentID s
 	}
 
 	runManifest := batchindex.RunManifest{
-		RunID:     perRowRunID,
-		BatchID:   perRowRunID,
-		PR:        prNumber,
-		Kind:      batchindex.KindReview,
-		CreatedAt: time.Now(),
-		Status:    batchindex.RunManifestStatusActive,
+		RunID:   perRowRunID,
+		BatchID: perRowRunID,
+		PR:      prNumber,
+		Kind:    batchindex.KindReview,
+		// Issue #2220 slice 2: WorktreePath must be stamped onto the
+		// review manifest so the portal's verdict reader
+		// (reviewVerdictFromDecisionFile) can locate decision.md at the
+		// per-row worktree, which is the canonical artifact path since
+		// #1953 made the worktree the agent's CWD. Without this field,
+		// the verdict reader falls back to <runDir>/decision.md, which
+		// no longer exists, and every review row surfaces as "Unclear"
+		// in the portal even when the agent wrote a parseable verdict.
+		// Implementation-run manifests (orchestrator.go:2557) already
+		// carry WorktreePath; this brings review manifests into parity.
+		WorktreePath: d.reviewWorktreePath(prNumber, commentID),
+		CreatedAt:    time.Now(),
+		Status:       batchindex.RunManifestStatusActive,
 	}
 	if err := daemon.WriteRunManifest(runDir, perRowRunID, runManifest); err != nil {
 		_ = rs.Close()

@@ -69,18 +69,22 @@ console.log('PASS');
 }
 
 // TestRenderRunMeta_NoLiveNoVerdictStillRendersUnclear pins issue #2109
-// slice 5 (B5): the existing fallback "N review(s) - Unclear" still fires
-// when both reviewVerdict is empty AND reviewLive is false — i.e. the
-// terminal-but-unparseable review path (AC4). This is a regression guard
-// that pins the new ordering: terminal verdict > live signal > Unclear.
+// slice 5 (B5) + issue #2220: the existing fallback "N review(s) - Unclear"
+// still fires when reviewVerdict is empty, reviewLive is false, AND the
+// impl run did not succeed — i.e. the terminal-but-unparseable review
+// path on a failed/aborted run (AC4). This is a regression guard that
+// pins the new ordering: terminal verdict > live signal > success
+// short-circuit > Unclear. Note the status='failure' (not 'success'):
+// issue #2220 upgraded the success branch to render "Approved".
 func TestRenderRunMeta_NoLiveNoVerdictStillRendersUnclear(t *testing.T) {
 	js := `const run = {
   key: 'impl-13', runId: 'impl-13', batchKey: 'parent-batch',
-  kind: 'completed', status: 'success', reviewCount: 1, reviewVerdict: '', reviewLive: false,
+  kind: 'completed', status: 'failure', reviewCount: 1, reviewVerdict: '', reviewLive: false,
 };
 const meta = helpers.renderRunMeta(run);
-if (meta.indexOf('1 review - Unclear') < 0) throw new Error('expected "1 review - Unclear" when reviewLive=false and reviewVerdict empty (AC4: terminal-but-unparseable review), got ' + JSON.stringify(meta));
+if (meta.indexOf('1 review - Unclear') < 0) throw new Error('expected "1 review - Unclear" when reviewLive=false and reviewVerdict empty on a failed run (AC4: terminal-but-unparseable review), got ' + JSON.stringify(meta));
 if (meta.indexOf('In Progress') >= 0) throw new Error('expected no "In Progress" when reviewLive=false, got ' + JSON.stringify(meta));
+if (meta.indexOf('1 review - Approved') >= 0) throw new Error('expected no "Approved" short-circuit on status="failure", got ' + JSON.stringify(meta));
 console.log('PASS');
 `
 	runPortalHTMLScript(t, js)

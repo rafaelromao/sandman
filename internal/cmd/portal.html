@@ -2765,7 +2765,7 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
       if (Number(run.reviewCount || 0) > 0) {
         const count = Number(run.reviewCount || 0);
         const reviewPart = count + ' review' + (count === 1 ? '' : 's');
-        // Order of preference (issue #2109):
+        // Order of preference (issue #2109 + issue #2220):
         //   1. A populated reviewVerdict (Approved / Changes requested)
         //      wins — the reviewer wrote a parseable ## Decision marker.
         //   2. reviewLive=true means a sibling review child still has
@@ -2773,15 +2773,25 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
         //      render "In Progress" instead of the misleading "Unclear"
         //      fallback that today only fires for terminal-but-unparseable
         //      reviews.
-        //   3. Otherwise (terminal review, decision.md missing or
-        //      unparseable) render the explicit "Unclear" suffix so the
-        //      user can see the server saw the row but could not read a
-        //      verdict (issue #1939 slice 2).
+        //   3. run.status === 'success' is a stronger signal than the
+        //      missing decision.md: in Sandman's flow the implementation
+        //      run can only finish with status=success when the PR was
+        //      merged, which only happens after GitHub reports
+        //      reviewDecision=APPROVED. When the verdict source is empty
+        //      but the run succeeded, render "Approved" so the operator
+        //      sees the outcome the orchestrator already proved (issue
+        //      #2220).
+        //   4. Otherwise (terminal review, decision.md missing or
+        //      unparseable, run not success) render the explicit "Unclear"
+        //      suffix so the user can see the server saw the row but could
+        //      not read a verdict (issue #1939 slice 2).
         let verdictSuffix;
         if (run.reviewVerdict) {
           verdictSuffix = run.reviewVerdict === 'Changes requested' ? 'Changes Requested' : run.reviewVerdict;
         } else if (run.reviewLive) {
           verdictSuffix = 'In Progress';
+        } else if (String(run.status || '').toLowerCase() === 'success') {
+          verdictSuffix = 'Approved';
         } else {
           verdictSuffix = 'Unclear';
         }
