@@ -1048,6 +1048,14 @@ func isTerminalStatus(status string) bool {
 // the per-row worktree, and the run manifest records that worktree path.
 // Older rows that predate the manifest field still fall back to the legacy
 // <runDir>/decision.md location.
+//
+// Issue #2224 slice 3b: when the manifest carries WorktreePath but the
+// worktree's decision.md is missing (the worktree was cleaned up by
+// ClearReviewArtifacts after the review), fall through to the run-folder
+// copy that postDecision persists (slice 3a). The worktree is the
+// preferred path because it is the canonical artifact location (per
+// #1953); the run-folder copy is a postDecision-managed backup that
+// survives cleanup.
 func reviewVerdictFromDecisionFile(layout paths.Layout, batchID, runID string) (string, bool) {
 	runDir := layout.RunFolder(batchID, runID)
 	if runDir == "" {
@@ -1055,6 +1063,11 @@ func reviewVerdictFromDecisionFile(layout paths.Layout, batchID, runID string) (
 	}
 	if worktreePath, ok := reviewWorktreePathFromRunManifest(runDir); ok {
 		if verdict, ok := reviewVerdictFromPath(filepath.Join(worktreePath, "decision.md")); ok {
+			return verdict, true
+		}
+		// Worktree path is set but the file is missing or unparseable.
+		// Fall through to the run-folder copy before giving up.
+		if verdict, ok := reviewVerdictFromPath(filepath.Join(runDir, "decision.md")); ok {
 			return verdict, true
 		}
 		return "", false
