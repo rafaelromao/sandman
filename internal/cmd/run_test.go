@@ -4661,7 +4661,13 @@ func TestRun_DoesNotEmitPreparationPhaseTiming(t *testing.T) {
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	for _, phase := range []string{"specification-resolution", "dependency-resolution"} {
+	for _, phase := range []string{
+		"specification-resolution",
+		"dependency-resolution",
+		"sandbox-preflight",
+		"branch-validation",
+		"first-sandbox-start",
+	} {
 		if strings.Contains(output.String(), "phase "+phase+" duration=") {
 			t.Fatalf("unexpected phase timing for %s, got %q", phase, output.String())
 		}
