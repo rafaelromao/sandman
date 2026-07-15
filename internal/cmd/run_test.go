@@ -4668,6 +4668,44 @@ func TestRun_DoesNotEmitPreparationPhaseTiming(t *testing.T) {
 	}
 }
 
+// TestRun_PhaseWriterGatedByVerbose pins the contract that diagnostic
+// `phase <name> duration=...` timing lines are only forwarded to a writer
+// when the operator opts in via --verbose/-v. By default the run command
+// leaves batch.Request.PhaseWriter nil so the orchestrator's writePhase
+// short-circuits and stderr stays quiet (#2222).
+func TestRun_PhaseWriterGatedByVerbose(t *testing.T) {
+	tests := []struct {
+		name    string
+		args    []string
+		wantNil bool
+	}{
+		{name: "default omits phase writer", args: []string{"42"}, wantNil: true},
+		{name: "verbose long sets phase writer", args: []string{"42", "--verbose"}, wantNil: false},
+		{name: "verbose short sets phase writer", args: []string{"42", "-v"}, wantNil: false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			spy := &spyBatchRunner{result: &batch.Result{}}
+			deps := newRunDeps(t, spy)
+			cmd := NewRunCmd(deps)
+			cmd.SetArgs(tc.args)
+
+			if err := cmd.Execute(); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if !spy.called {
+				t.Fatalf("batch runner not called")
+			}
+			if tc.wantNil && spy.req.PhaseWriter != nil {
+				t.Errorf("expected nil PhaseWriter, got non-nil %T", spy.req.PhaseWriter)
+			}
+			if !tc.wantNil && spy.req.PhaseWriter == nil {
+				t.Errorf("expected non-nil PhaseWriter, got nil")
+			}
+		})
+	}
+}
+
 // TestRun_ContinueFlag_SpecExpansion_StatusCheckRollupArray is the
 // regression test for #2218. The user ran
 // `sandman run <spec> --sandbox worktree --continue` after the

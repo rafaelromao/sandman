@@ -454,6 +454,11 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 				val = !val
 				reconcileStranded = &val
 			}
+			verbose, _ := cmd.Flags().GetBool("verbose")
+			var phaseWriter io.Writer
+			if verbose {
+				phaseWriter = cmd.ErrOrStderr()
+			}
 			modes := make(map[int]batch.IssueMode)
 			previousRunIDs := make(map[int]string)
 			branches := make(map[int]string)
@@ -554,7 +559,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 				MaxContainersSet:           maxContainersSet,
 				DangerouslySkipPermissions: dangerouslySkipPerm,
 				StrandedReconcile:          reconcileStranded,
-				PhaseWriter:                cmd.ErrOrStderr(),
+				PhaseWriter:                phaseWriter,
 				PromptConfig: prompt.RenderConfig{
 					Branch:           strings.TrimSpace(branchFlag),
 					PromptFlag:       promptFlag,
@@ -607,7 +612,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 				}
 			}
 
-			req.PhaseWriter = cmd.ErrOrStderr()
+			req.PhaseWriter = phaseWriter
 			ctx, cancel := context.WithCancel(cmd.Context())
 			defer cancel()
 
@@ -762,6 +767,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 	cmd.Flags().Bool("reconcile-stranded", true, "Auto-recover stranded worktrees when the main repo is checked out on a sandman/N-… branch (use --no-reconcile-stranded to disable)")
 	cmd.Flags().Bool("no-reconcile-stranded", false, "Opt out of stranded-worktree auto-recovery (negative form of --reconcile-stranded)")
 	cmd.Flags().Bool("continue", false, "Continue the latest AgentRun for each selected issue by reusing the prior handoff and stored settings")
+	cmd.Flags().BoolP("verbose", "v", false, "Print diagnostic phase timing to stderr")
 
 	return cmd
 }
