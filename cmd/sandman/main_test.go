@@ -4,12 +4,49 @@ import (
 	"bytes"
 	"errors"
 	"io"
+	"runtime/debug"
 	"strings"
 	"testing"
 
 	sandmancmd "github.com/rafaelromao/sandman/internal/cmd"
 	"github.com/spf13/cobra"
 )
+
+// withVersionFixtures swaps the package-level version and buildInfo vars for
+// the duration of a test, restoring the originals via t.Cleanup. Keeps the
+// tests that touch the global ldflags seam independent and parallel-safe.
+func withVersionFixtures(t *testing.T, v string, bi func() (*debug.BuildInfo, bool)) {
+	t.Helper()
+	prevV, prevBI := version, buildInfo
+	t.Cleanup(func() { version, buildInfo = prevV, prevBI })
+	version, buildInfo = v, bi
+}
+
+func TestVersion_LdflagsOverrideReturnsInjectedValue(t *testing.T) {
+	withVersionFixtures(t, "v1.0.0", func() (*debug.BuildInfo, bool) {
+		t.Error("buildInfo must not be called when ldflags-injected version is set")
+		return nil, false
+	})
+	if got := Version(); got != "v1.0.0" {
+		t.Errorf("Version() = %q, want %q", got, "v1.0.0")
+	}
+}
+
+func TestVersion_FallsBackToBuildInfoWhenLdflagsUnset(t *testing.T) {
+	withVersionFixtures(t, "", func() (*debug.BuildInfo, bool) {
+		return &debug.BuildInfo{Main: debug.Module{Version: "v0.0.0-20260716184825-0e018c21696d"}}, true
+	})
+	if got := Version(); got != "v0.0.0-20260716184825-0e018c21696d" {
+		t.Errorf("Version() = %q, want buildinfo pseudo-version", got)
+	}
+}
+
+func TestVersion_ReturnsDevWhenNeitherLdflagsNorBuildInfoProvidesValue(t *testing.T) {
+	withVersionFixtures(t, "", func() (*debug.BuildInfo, bool) { return nil, false })
+	if got := Version(); got != "dev" {
+		t.Errorf("Version() = %q, want %q", got, "dev")
+	}
+}
 
 func TestExecuteRoot_NoErrorNoOutput(t *testing.T) {
 	root := &cobra.Command{Use: "sandman", SilenceUsage: true, SilenceErrors: true, RunE: func(cmd *cobra.Command, args []string) error { return nil }}
