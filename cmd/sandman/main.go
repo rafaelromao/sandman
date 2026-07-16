@@ -103,6 +103,7 @@ func main() {
 		Renderer:      renderer,
 		IssuePicker:   &cmd.SimpleIssuePicker{},
 		IsTTY:         isStdoutTTY,
+		Version:       Version,
 		RepoRoot:      repoRoot,
 	}
 
