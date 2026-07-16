@@ -16,6 +16,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/events"
 	"github.com/rafaelromao/sandman/internal/github"
 	"github.com/rafaelromao/sandman/internal/prompt"
+	"github.com/rafaelromao/sandman/internal/sandbox"
 	"github.com/rafaelromao/sandman/internal/testenv"
 )
 
@@ -66,6 +67,7 @@ func TestCharacterizationNet(t *testing.T) {
 		{name: "issue-driven-abort-ErrAborted", setup: charNetIssueAbort},
 		{name: "prompt-only-success", setup: charNetPromptOnlySuccess},
 		{name: "prompt-only-abort-ErrAborted", setup: charNetPromptOnlyAbort},
+		{name: "issue-driven-retry-success-after-failure", setup: charNetIssueRetrySuccess},
 	}
 	for _, f := range fixtures {
 		t.Run(f.name, func(t *testing.T) {
@@ -243,6 +245,57 @@ func charNetPromptOnlyAbort(t *testing.T) (context.Context, Request, *Orchestrat
 		},
 	}
 	return ctx, req, o, el, dir
+}
+
+// charNetIssueRetrySuccess pins the post-elevation retry semantics on the
+// issue-driven path: fake runnable returns failure twice then success on
+// the third attempt (Request.Retries=2). retryReset is overridden so
+// resetRetryBranch does not try to `git reset --hard` on the fake sandbox
+// (whose Exec would error and short-circuit the loop with a failure
+// errResult). The PR is left unmerged so the post-attempt check after
+// each attempt does not flip a failure into a terminal success and
+// short-circuit the loop — the retry path is what we're pinning here.
+// Result.RetriesTotal reaches 3 (one initial attempt + two retries), the
+// event stream shows two run.retry events (attempt 1→2 and 2→3
+// transitions), and run.finished emits retries_total=2 (the configured
+// ceiling), retries_done=2 (the actual count, = RetriesTotal - 1), and
+// status "failure" because the agent's third-attempt success is not
+// corroborated by a merged PR (the issue-driven success signal).
+func charNetIssueRetrySuccess(t *testing.T) (context.Context, Request, *Orchestrator, *events.JSONLLogger, string) {
+	t.Helper()
+	dir := testenv.MkdirShort(t, "charnet-")
+	t.Chdir(dir)
+	initGitRepo(t, dir)
+
+	el := &events.JSONLLogger{Path: filepath.Join(dir, "events.jsonl")}
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			42: {Number: 42, Title: "Fix bug", Body: "Users cannot log in."},
+		},
+		prs: map[string]*github.PR{"sandman/42-fix-bug": {Number: 1, State: "open", Merged: false, HeadRefName: "sandman/42-fix-bug"}},
+	}
+	cfg := &config.Config{
+		Agent:       "test-agent",
+		Sandbox:     "worktree",
+		WorktreeDir: ".sandman/worktrees",
+		Git:         config.GitConfig{BaseBranch: "main"},
+		AgentProviders: map[string]config.Agent{
+			"test-agent": {Command: "true"},
+		},
+	}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: cfg}, el,
+		WithSandboxFactory(&fakeSandboxFactory{sandbox: &fakeSandbox{workDir: filepath.Join(dir, "wt", "42")}}),
+		WithRunnableFactory(&fakeRunnableFactory{results: []AgentRunResult{
+			{IssueNumber: 42, Status: "failure", Branch: "sandman/42-fix-bug"},
+			{IssueNumber: 42, Status: "failure", Branch: "sandman/42-fix-bug"},
+			{IssueNumber: 42, Status: "success", Branch: "sandman/42-fix-bug"},
+		}}),
+		WithRunSessionOpts(runSessionOptions{retryReset: func(ctx context.Context, sb sandbox.Sandbox, branch, baseBranch string) error {
+			return nil
+		}}),
+	)
+	req := Request{Issues: []int{42}, Retries: 2, RunTS: orchTestRunTS, RunShortID: orchTestRunShortID}
+	return context.Background(), req, o, el, dir
 }
 
 // --- capture + serialize ---
