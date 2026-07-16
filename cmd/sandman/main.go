@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"runtime/debug"
 	"syscall"
 
 	"github.com/rafaelromao/sandman/internal/batch"
@@ -15,6 +16,34 @@ import (
 	"github.com/rafaelromao/sandman/internal/prompt"
 	"github.com/spf13/cobra"
 )
+
+// version is the build-time version string, injected via
+// `go build -ldflags '-X main.version=<value>'` (see Makefile). The default
+// is "dev" — the literal sentinel meaning "no ldflags injection happened."
+var version = "dev"
+
+// buildInfo is the package-level seam the unit tests use to stub
+// runtime/debug.ReadBuildInfo. Production reads the linker-populated
+// buildinfo (set by `go build` / `go install`).
+var buildInfo = debug.ReadBuildInfo
+
+// Version returns the sandman version string via the three-layer fallback
+// chain: (1) the Makefile-injected ldflags value, when present; (2)
+// runtime/debug.ReadBuildInfo().Main.Version, the linker-populated
+// pseudo-version emitted by `go install ./cmd/sandman` without the Makefile;
+// (3) the literal "dev" as the final fallback. The empty string and "dev"
+// are both treated as "not yet injected" so `make build VERSION=dev` and a
+// bare `go install` both flow through to the buildinfo fallback.
+func Version() string {
+	if v := version; v != "" && v != "dev" {
+		return v
+	}
+	info, ok := buildInfo()
+	if ok && info != nil && info.Main.Version != "" {
+		return info.Main.Version
+	}
+	return "dev"
+}
 
 func isStdoutTTY() bool {
 	var st syscall.Stat_t
