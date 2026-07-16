@@ -23,6 +23,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/events"
 	"github.com/rafaelromao/sandman/internal/github"
 	"github.com/rafaelromao/sandman/internal/prompt"
+	"github.com/rafaelromao/sandman/internal/skill"
 	"github.com/rafaelromao/sandman/internal/testenv"
 )
 
@@ -634,7 +635,7 @@ go 1.24
 		"double.go": `package prflow
 
 func Double(n int) int {
-	return n * 2
+	return 0
 }
 `,
 		"double_test.go": `package prflow
@@ -702,6 +703,9 @@ func setupIsolatedPRFlowHome(t *testing.T, realHome, repoDir, prefix string, aut
 		t.Fatalf("write gitconfig: %v", err)
 	}
 	linkPRFlowAuthPaths(t, realHome, homeDir, authPaths)
+	if err := skill.Sync(skill.SyncOptions{HomeDir: homeDir, ReviewCommand: "/sandman review"}); err != nil {
+		t.Fatalf("sync skill to test home: %v", err)
+	}
 	t.Setenv("HOME", homeDir)
 	if out, err := exec.Command("podman", "run", "--rm", "alpine", "echo", "ok").CombinedOutput(); err != nil {
 		t.Fatalf("warm podman image for test home: %v: %s", err, out)
