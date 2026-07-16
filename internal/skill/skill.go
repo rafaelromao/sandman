@@ -20,6 +20,10 @@ import (
 
 const embeddedSkillRoot = "sandman"
 
+const sandboxSkillInstallTarget = "/root/.agents/skills/sandman"
+
+const sandboxSkillCopySource = ".sandman/skills/sandman"
+
 const manifestFileName = ".sandman-sync-manifest.json"
 
 //go:embed sandman/**
@@ -32,6 +36,37 @@ func DefaultSkill() string {
 		panic(fmt.Sprintf("read embedded skill: %v", err))
 	}
 	return string(data)
+}
+
+func RenderSandboxDockerfileLines() string {
+	return fmt.Sprintf("COPY %s/ %s/\n", sandboxSkillCopySource, sandboxSkillInstallTarget)
+}
+
+func MaterializeSandboxSkill(repoRoot, reviewCommand string) error {
+	destDir := filepath.Join(repoRoot, sandboxSkillCopySource)
+	if err := os.MkdirAll(destDir, 0755); err != nil {
+		return fmt.Errorf("create sandbox skill dir %q: %w", destDir, err)
+	}
+	return fs.WalkDir(embeddedSkills, embeddedSkillRoot, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return fmt.Errorf("walk embedded skill %q: %w", path, err)
+		}
+		rel := strings.TrimPrefix(path, embeddedSkillRoot)
+		rel = strings.TrimPrefix(rel, "/")
+		if rel == "" || strings.HasSuffix(rel, "_test.go") {
+			return nil
+		}
+		targetPath := filepath.Join(destDir, filepath.FromSlash(rel))
+		if d.IsDir() {
+			return os.MkdirAll(targetPath, 0755)
+		}
+		data, err := fs.ReadFile(embeddedSkills, path)
+		if err != nil {
+			return fmt.Errorf("read embedded skill file %q: %w", path, err)
+		}
+		data = bytes.ReplaceAll(data, []byte("{{REVIEW_COMMAND}}"), []byte(reviewCommand))
+		return atomicfs.WriteAtomic(targetPath, data, 0644)
+	})
 }
 
 type SyncOptions struct {

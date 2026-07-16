@@ -21,6 +21,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/opencode"
 	"github.com/rafaelromao/sandman/internal/paths"
 	"github.com/rafaelromao/sandman/internal/prompt"
+	"github.com/rafaelromao/sandman/internal/skill"
 )
 
 // probeOpencodeVersion is a package-level seam for the opencode
@@ -567,6 +568,10 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 
 	agentVersion := resolveAgentVersion(defaultAgent)
 	dockerfile := s.renderBuildToolsDockerfile(preset, defaultAgent, agentVersion, goVersion, dotnetVersion, nodeVersion, pythonVersion, elixirVersion, erlangVersion, rubyVersion, rustVersion, javaVersion)
+	if err := skill.MaterializeSandboxSkill(repoRoot, effectiveReviewCommand(opts.ReviewCommand)); err != nil {
+		return fmt.Errorf("materialize sandbox skill tree: %w", err)
+	}
+	dockerfile += skill.RenderSandboxDockerfileLines()
 	dockerfilePath := layout.DockerfilePath()
 	if err := atomicfs.WriteAtomic(dockerfilePath, []byte(dockerfile), 0644); err != nil {
 		return fmt.Errorf("write Dockerfile: %w", err)

@@ -239,6 +239,60 @@ func TestSyncPromptsBeforeOverwritingLocalEdits(t *testing.T) {
 	}
 }
 
+func TestRenderSandboxDockerfileLines_EmitsCopyFromBuildContext(t *testing.T) {
+	got := RenderSandboxDockerfileLines()
+	if !strings.Contains(got, sandboxSkillCopySource) {
+		t.Fatalf("expected COPY source %q in %q", sandboxSkillCopySource, got)
+	}
+	if !strings.Contains(got, sandboxSkillInstallTarget) {
+		t.Fatalf("expected COPY target %q in %q", sandboxSkillInstallTarget, got)
+	}
+}
+
+func TestMaterializeSandboxSkill_WritesSubstitutedFiles(t *testing.T) {
+	repoRoot := t.TempDir()
+	reviewCmd := "/my-review"
+
+	if err := MaterializeSandboxSkill(repoRoot, reviewCmd); err != nil {
+		t.Fatalf("materialize sandbox skill: %v", err)
+	}
+
+	skillDir := filepath.Join(repoRoot, sandboxSkillCopySource)
+	data, err := os.ReadFile(filepath.Join(skillDir, "pr-review", "SKILL.md"))
+	if err != nil {
+		t.Fatalf("read pr-review/SKILL.md: %v", err)
+	}
+	if strings.Contains(string(data), "{{REVIEW_COMMAND}}") {
+		t.Fatal("pr-review/SKILL.md should not contain unsubstituted {{REVIEW_COMMAND}}")
+	}
+	if !strings.Contains(string(data), reviewCmd) {
+		t.Fatalf("pr-review/SKILL.md should contain review command %q", reviewCmd)
+	}
+
+	var checked int
+	err = fs.WalkDir(embeddedSkills, embeddedSkillRoot, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		rel := strings.TrimPrefix(path, embeddedSkillRoot+"/")
+		installed, err := os.ReadFile(filepath.Join(skillDir, filepath.FromSlash(rel)))
+		if err != nil {
+			t.Fatalf("read installed file %s: %v", rel, err)
+		}
+		if bytes.Contains(installed, []byte("{{REVIEW_COMMAND}}")) {
+			t.Errorf("installed %s contains unsubstituted {{REVIEW_COMMAND}}", rel)
+		}
+		checked++
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk: %v", err)
+	}
+	if checked == 0 {
+		t.Fatal("expected at least one embedded file to be checked")
+	}
+}
+
 func readEmbeddedSkill(t *testing.T, rel string) string {
 	t.Helper()
 	data, err := fs.ReadFile(embeddedSkills, embeddedSkillRoot+"/"+rel)

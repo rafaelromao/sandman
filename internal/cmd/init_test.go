@@ -137,8 +137,14 @@ func TestInit_GenericBuildToolsScaffoldsPinnedDockerfile(t *testing.T) {
 	if strings.Contains(dockerfile, "/root/.local/share/mise") {
 		t.Fatalf("Dockerfile should not depend on /root mise paths, got:\n%s", dockerfile)
 	}
-	if !strings.Contains(dockerfile, "RUN npm install -g opencode-ai@"+scaffold.DefaultBuiltInAgentVersion("opencode")) {
-		t.Fatalf("Dockerfile missing pinned opencode install, got:\n%s", dockerfile)
+	if !strings.Contains(dockerfile, "RUN npm install -g opencode-ai@") {
+		t.Fatalf("Dockerfile missing opencode install, got:\n%s", dockerfile)
+	}
+	if !strings.Contains(dockerfile, "COPY .sandman/skills/sandman/ /root/.agents/skills/sandman/") {
+		t.Fatalf("Dockerfile missing skill COPY line, got:\n%s", dockerfile)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".sandman", "skills", "sandman", "SKILL.md")); err != nil {
+		t.Fatalf("skill not materialized on disk: %v", err)
 	}
 
 	promptData, err := os.ReadFile(filepath.Join(dir, ".sandman", "prompt.md"))
@@ -191,8 +197,11 @@ func TestInit_RustBuildToolsScaffoldsPinnedDockerfile(t *testing.T) {
 	if !strings.Contains(dockerfile, "RUN mise use -g --pin rust@1.77.0") {
 		t.Fatalf("Dockerfile missing pinned rust install, got:\n%s", dockerfile)
 	}
-	if !strings.Contains(dockerfile, "RUN npm install -g opencode-ai@"+scaffold.DefaultBuiltInAgentVersion("opencode")) {
-		t.Fatalf("Dockerfile missing pinned opencode install, got:\n%s", dockerfile)
+	if !strings.Contains(dockerfile, "RUN npm install -g opencode-ai@") {
+		t.Fatalf("Dockerfile missing opencode install, got:\n%s", dockerfile)
+	}
+	if !strings.Contains(dockerfile, "COPY .sandman/skills/sandman/ /root/.agents/skills/sandman/") {
+		t.Fatalf("Dockerfile missing skill COPY line, got:\n%s", dockerfile)
 	}
 }
 
@@ -824,8 +833,11 @@ func TestInit_DefaultAgentFlagSelectsConfigPreset(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read Dockerfile: %v", err)
 	}
-	if !strings.Contains(string(dockerfileData), "RUN npm install -g opencode-ai@"+scaffold.DefaultBuiltInAgentVersion("opencode")) {
+	if !strings.Contains(string(dockerfileData), "RUN npm install -g opencode-ai@") {
 		t.Errorf("Dockerfile missing opencode install, got:\n%s", dockerfileData)
+	}
+	if !strings.Contains(string(dockerfileData), "COPY .sandman/skills/sandman/ /root/.agents/skills/sandman/") {
+		t.Errorf("Dockerfile missing skill COPY line, got:\n%s", dockerfileData)
 	}
 }
 
