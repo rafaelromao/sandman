@@ -77,7 +77,7 @@ func TestCharacterizationNet(t *testing.T) {
 // charNetBase builds the shared per-fixture scaffolding: an isolated git repo
 // as CWD, a JSONL event log, an Orchestrator wired with fake sandbox/runnable
 // factories, and the canonical issue-42 client/config.
-func charNetBase(t *testing.T) (*Orchestrator, *events.JSONLLogger, string) {
+func charNetBase(t *testing.T, opts ...OrchestratorOpt) (*Orchestrator, *events.JSONLLogger, string) {
 	t.Helper()
 	dir := testenv.MkdirShort(t, "charnet-")
 	t.Chdir(dir)
@@ -99,25 +99,54 @@ func charNetBase(t *testing.T) (*Orchestrator, *events.JSONLLogger, string) {
 			"test-agent": {Command: "true"},
 		},
 	}
-	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: cfg}, el)
-	o.sandboxFactory = &fakeSandboxFactory{sandbox: &fakeSandbox{workDir: filepath.Join(dir, "wt", "42")}}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: cfg}, el,
+		append([]OrchestratorOpt{
+			WithSandboxFactory(&fakeSandboxFactory{sandbox: &fakeSandbox{workDir: filepath.Join(dir, "wt", "42")}}),
+		}, opts...)...,
+	)
 	return o, el, dir
 }
 
 func charNetIssueSuccess(t *testing.T) (context.Context, Request, *Orchestrator, *events.JSONLLogger, string) {
-	o, el, dir := charNetBase(t)
-	o.runnableFactory = &fakeRunnableFactory{results: []AgentRunResult{
+	o, el, dir := charNetBase(t, WithRunnableFactory(&fakeRunnableFactory{results: []AgentRunResult{
 		{IssueNumber: 42, Status: "success", Branch: "sandman/42-fix-bug"},
-	}}
+	}}))
 	req := Request{Issues: []int{42}, RunTS: orchTestRunTS, RunShortID: orchTestRunShortID}
 	return context.Background(), req, o, el, dir
 }
 
 func charNetIssueAbort(t *testing.T) (context.Context, Request, *Orchestrator, *events.JSONLLogger, string) {
-	o, el, dir := charNetBase(t)
-	// Abort path signals the sandbox process; give it a fake one.
-	o.sandboxFactory = &fakeSandboxFactory{sandbox: &fakeSandbox{process: makeFakeProcess(), workDir: filepath.Join(dir, "wt", "42")}}
-	o.runnableFactory = &blockingRunnableFactory{runnable: &blockingRunnable{delayAfterCancel: 100 * time.Millisecond}}
+	// charNetIssueAbort constructs its own NewOrchestrator (rather than
+	// reusing charNetBase) because its sandboxFactory override depends on
+	// the dir that charNetBase returns — and options are applied at
+	// construction, before dir is known. Building the orchestrator here
+	// keeps the override on the seam (no private-field poke) at the cost
+	// of duplicating charNetBase's small setup.
+	t.Helper()
+	dir := testenv.MkdirShort(t, "charnet-")
+	t.Chdir(dir)
+	initGitRepo(t, dir)
+
+	el := &events.JSONLLogger{Path: filepath.Join(dir, "events.jsonl")}
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			42: {Number: 42, Title: "Fix bug", Body: "Users cannot log in."},
+		},
+		prs: map[string]*github.PR{"sandman/42-fix-bug": mergedPR("sandman/42-fix-bug", "")},
+	}
+	cfg := &config.Config{
+		Agent:       "test-agent",
+		Sandbox:     "worktree",
+		WorktreeDir: ".sandman/worktrees",
+		Git:         config.GitConfig{BaseBranch: "main"},
+		AgentProviders: map[string]config.Agent{
+			"test-agent": {Command: "true"},
+		},
+	}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: cfg}, el,
+		WithSandboxFactory(&fakeSandboxFactory{sandbox: &fakeSandbox{process: makeFakeProcess(), workDir: filepath.Join(dir, "wt", "42")}}),
+		WithRunnableFactory(&blockingRunnableFactory{runnable: &blockingRunnable{delayAfterCancel: 100 * time.Millisecond}}),
+	)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {

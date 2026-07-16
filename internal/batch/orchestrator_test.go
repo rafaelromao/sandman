@@ -2421,9 +2421,10 @@ func TestBatchStartGate_HonoursEffectiveParallel(t *testing.T) {
 		MaxContainers:  2,
 		Git:            config.GitConfig{BaseBranch: "main"},
 		AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}},
-	}}, nil)
-	o.sandboxFactory = factory
-	o.runnableFactory = runnables
+	}}, nil,
+		WithSandboxFactory(factory),
+		WithRunnableFactory(runnables),
+	)
 
 	_, err := o.RunBatch(context.Background(), Request{
 		Issues:            []int{1, 2, 3, 4},
