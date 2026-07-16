@@ -429,10 +429,12 @@ func charNetNormalize(s, tmpRoot string) string {
 
 func charNetGolden(t *testing.T, pkgDir, name, captured string) {
 	t.Helper()
-	// Goldens live in a committed `characterization/` dir (NOT testdata/, which
-	// this repo gitignores — baselines there are run-generated, not committed).
-	// .golden files aren't Go source, so the dir is excluded from the build.
-	goldenPath := filepath.Join(pkgDir, "characterization", name)
+	// Goldens live in a committed `characterization_test/` dir (NOT testdata/,
+	// which this repo gitignores — baselines there are run-generated, not
+	// committed). The `_test` suffix is the Go-idiomatic signal for test-only
+	// data; it also future-proofs against someone adding a .go file to the
+	// directory (which would silently turn it into a separate package).
+	goldenPath := filepath.Join(pkgDir, "characterization_test", name)
 	if os.Getenv("SANDMAN_CHARNET_UPDATE") == "1" {
 		if mErr := os.MkdirAll(filepath.Dir(goldenPath), 0o755); mErr != nil {
 			t.Fatalf("mkdir golden dir: %v", mErr)
