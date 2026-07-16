@@ -1010,6 +1010,7 @@ func TestRunSingle_RetriesResetBranchAndRerender(t *testing.T) {
 	t.Cleanup(func() { currentBranchHeadFn = oldHeadFn })
 	branch := "sandman/42-fix-bug"
 	pr := &github.PR{Number: 17, State: "closed", Merged: false, HeadRefName: branch}
+	var resetCalls []struct{ worktreePath, branch, baseBranch string }
 	o := &Orchestrator{
 		githubClient: &fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}}, prs: map[string]*github.PR{branch: pr}},
 		renderer:     renderer,
@@ -1018,14 +1019,13 @@ func TestRunSingle_RetriesResetBranchAndRerender(t *testing.T) {
 		sandboxFactory: &retrySandboxFactory{
 			sandbox: rtSandbox,
 		},
-	}
-	var resetCalls []struct{ worktreePath, branch, baseBranch string }
-	o.runSessionOpts.retryReset = func(ctx context.Context, sb sandbox.Sandbox, branch, baseBranch string) error {
-		resetCalls = append(resetCalls, struct{ worktreePath, branch, baseBranch string }{sb.WorkDir(), branch, baseBranch})
-		if len(resetCalls) == 1 {
-			pr.Merged = true
-		}
-		return nil
+		runSessionOpts: runSessionOptions{retryReset: func(ctx context.Context, sb sandbox.Sandbox, branch, baseBranch string) error {
+			resetCalls = append(resetCalls, struct{ worktreePath, branch, baseBranch string }{sb.WorkDir(), branch, baseBranch})
+			if len(resetCalls) == 1 {
+				pr.Merged = true
+			}
+			return nil
+		}},
 	}
 
 	cfg := &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}}
@@ -1088,6 +1088,7 @@ func TestRunSingle_RetryClosedPRResetsBranch(t *testing.T) {
 	currentBranchHeadFn = func(string) (string, error) { return "current-sha", nil }
 	t.Cleanup(func() { currentBranchHeadFn = oldHeadFn })
 	pr := &github.PR{Number: 17, State: "closed", Merged: false, HeadRefName: branch}
+	var resetCalls int
 	o := &Orchestrator{
 		githubClient: &fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}}, prs: map[string]*github.PR{branch: pr}},
 		renderer:     renderer,
@@ -1095,12 +1096,11 @@ func TestRunSingle_RetryClosedPRResetsBranch(t *testing.T) {
 		sandboxFactory: &retrySandboxFactory{
 			sandbox: rtSandbox,
 		},
-	}
-	var resetCalls int
-	o.runSessionOpts.retryReset = func(ctx context.Context, sb sandbox.Sandbox, branch, baseBranch string) error {
-		resetCalls++
-		pr.Merged = true
-		return nil
+		runSessionOpts: runSessionOptions{retryReset: func(ctx context.Context, sb sandbox.Sandbox, branch, baseBranch string) error {
+			resetCalls++
+			pr.Merged = true
+			return nil
+		}},
 	}
 
 	cfg := &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}}
@@ -1132,6 +1132,7 @@ func TestRunSingle_RetryLookupErrorPreservesBranch(t *testing.T) {
 	oldHeadFn := currentBranchHeadFn
 	currentBranchHeadFn = func(string) (string, error) { return "current-sha", nil }
 	t.Cleanup(func() { currentBranchHeadFn = oldHeadFn })
+	var resetCalls int
 	o := &Orchestrator{
 		githubClient: &fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}}, findPRErr: errors.New("lookup failed")},
 		renderer:     renderer,
@@ -1140,11 +1141,10 @@ func TestRunSingle_RetryLookupErrorPreservesBranch(t *testing.T) {
 		sandboxFactory: &retrySandboxFactory{
 			sandbox: rtSandbox,
 		},
-	}
-	var resetCalls int
-	o.runSessionOpts.retryReset = func(ctx context.Context, sb sandbox.Sandbox, branch, baseBranch string) error {
-		resetCalls++
-		return nil
+		runSessionOpts: runSessionOptions{retryReset: func(ctx context.Context, sb sandbox.Sandbox, branch, baseBranch string) error {
+			resetCalls++
+			return nil
+		}},
 	}
 
 	cfg := &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}}
@@ -1189,6 +1189,7 @@ func TestRunSingle_RetryUsesContinuationContextWithoutOpenPR(t *testing.T) {
 	oldHeadFn := currentBranchHeadFn
 	currentBranchHeadFn = func(string) (string, error) { return "current-sha", nil }
 	t.Cleanup(func() { currentBranchHeadFn = oldHeadFn })
+	var resetCalls int
 	o := &Orchestrator{
 		githubClient: &fakeGitHubClient{
 			issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}},
@@ -1205,11 +1206,10 @@ func TestRunSingle_RetryUsesContinuationContextWithoutOpenPR(t *testing.T) {
 		sandboxFactory: &retrySandboxFactory{
 			sandbox: rtSandbox,
 		},
-	}
-	var resetCalls int
-	o.runSessionOpts.retryReset = func(ctx context.Context, sb sandbox.Sandbox, branch, baseBranch string) error {
-		resetCalls++
-		return nil
+		runSessionOpts: runSessionOptions{retryReset: func(ctx context.Context, sb sandbox.Sandbox, branch, baseBranch string) error {
+			resetCalls++
+			return nil
+		}},
 	}
 
 	cfg := &config.Config{WorktreeDir: "worktree", Git: config.GitConfig{BaseBranch: "main"}}
@@ -1287,6 +1287,7 @@ func TestRunSingle_RetryWithOpenPRFallsBackToEmptyTaskTemplate(t *testing.T) {
 	oldHeadFn := currentBranchHeadFn
 	currentBranchHeadFn = func(string) (string, error) { return "current-sha", nil }
 	t.Cleanup(func() { currentBranchHeadFn = oldHeadFn })
+	var resetCalls int
 	o := &Orchestrator{
 		githubClient: &fakeGitHubClient{
 			issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}},
@@ -1303,11 +1304,10 @@ func TestRunSingle_RetryWithOpenPRFallsBackToEmptyTaskTemplate(t *testing.T) {
 		sandboxFactory: &retrySandboxFactory{
 			sandbox: rtSandbox,
 		},
-	}
-	var resetCalls int
-	o.runSessionOpts.retryReset = func(ctx context.Context, sb sandbox.Sandbox, branch, baseBranch string) error {
-		resetCalls++
-		return nil
+		runSessionOpts: runSessionOptions{retryReset: func(ctx context.Context, sb sandbox.Sandbox, branch, baseBranch string) error {
+			resetCalls++
+			return nil
+		}},
 	}
 
 	cfg := &config.Config{WorktreeDir: "worktree", Git: config.GitConfig{BaseBranch: "main"}}
@@ -1645,10 +1645,10 @@ func TestRunSingle_PreRetryGuardShortCircuitsOnMergedPR(t *testing.T) {
 		sandboxFactory:  &fakeSandboxFactory{sandbox: &fakeSandbox{workDir: worktreePath}},
 		errorLog:        io.Discard,
 		runnableFactory: resultFactory,
-	}
-	o.runSessionOpts.retryReset = func(ctx context.Context, sb sandbox.Sandbox, branch, baseBranch string) error {
-		resetCalls++
-		return nil
+		runSessionOpts: runSessionOptions{retryReset: func(ctx context.Context, sb sandbox.Sandbox, branch, baseBranch string) error {
+			resetCalls++
+			return nil
+		}},
 	}
 
 	cfg := &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}}
@@ -1693,6 +1693,7 @@ func TestRunSingle_RetrySkipsClosedPRReview(t *testing.T) {
 	oldHeadFn := currentBranchHeadFn
 	currentBranchHeadFn = func(string) (string, error) { return "current-sha", nil }
 	t.Cleanup(func() { currentBranchHeadFn = oldHeadFn })
+	var resetCalls int
 	o := &Orchestrator{
 		githubClient: &fakeGitHubClient{
 			issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}},
@@ -1703,12 +1704,11 @@ func TestRunSingle_RetrySkipsClosedPRReview(t *testing.T) {
 		sandboxFactory: &retrySandboxFactory{
 			sandbox: rtSandbox,
 		},
-	}
-	var resetCalls int
-	o.runSessionOpts.retryReset = func(ctx context.Context, sb sandbox.Sandbox, branch, baseBranch string) error {
-		resetCalls++
-		pr.Merged = true
-		return nil
+		runSessionOpts: runSessionOptions{retryReset: func(ctx context.Context, sb sandbox.Sandbox, branch, baseBranch string) error {
+			resetCalls++
+			pr.Merged = true
+			return nil
+		}},
 	}
 
 	cfg := &config.Config{WorktreeDir: "worktree", Git: config.GitConfig{BaseBranch: "main"}}
@@ -1789,6 +1789,7 @@ func TestRunSingle_RetryUsesStageAwarePrompt(t *testing.T) {
 	oldHeadFn := currentBranchHeadFn
 	currentBranchHeadFn = func(string) (string, error) { return "current-sha", nil }
 	t.Cleanup(func() { currentBranchHeadFn = oldHeadFn })
+	var resetCalls int
 	o := &Orchestrator{
 		githubClient: &fakeGitHubClient{
 			issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}},
@@ -1805,11 +1806,10 @@ func TestRunSingle_RetryUsesStageAwarePrompt(t *testing.T) {
 		sandboxFactory: &retrySandboxFactory{
 			sandbox: rtSandbox,
 		},
-	}
-	var resetCalls int
-	o.runSessionOpts.retryReset = func(ctx context.Context, sb sandbox.Sandbox, branch, baseBranch string) error {
-		resetCalls++
-		return nil
+		runSessionOpts: runSessionOptions{retryReset: func(ctx context.Context, sb sandbox.Sandbox, branch, baseBranch string) error {
+			resetCalls++
+			return nil
+		}},
 	}
 
 	cfg := &config.Config{WorktreeDir: "worktree", Git: config.GitConfig{BaseBranch: "main"}}
@@ -1879,6 +1879,7 @@ func TestRunSingle_RetryUsesPRReviewTaskPrompt(t *testing.T) {
 	oldHeadFn := currentBranchHeadFn
 	currentBranchHeadFn = func(string) (string, error) { return "current-sha", nil }
 	t.Cleanup(func() { currentBranchHeadFn = oldHeadFn })
+	var resetCalls int
 	o := &Orchestrator{
 		githubClient: &fakeGitHubClient{
 			issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}},
@@ -1895,11 +1896,10 @@ func TestRunSingle_RetryUsesPRReviewTaskPrompt(t *testing.T) {
 		sandboxFactory: &retrySandboxFactory{
 			sandbox: rtSandbox,
 		},
-	}
-	var resetCalls int
-	o.runSessionOpts.retryReset = func(ctx context.Context, sb sandbox.Sandbox, branch, baseBranch string) error {
-		resetCalls++
-		return nil
+		runSessionOpts: runSessionOptions{retryReset: func(ctx context.Context, sb sandbox.Sandbox, branch, baseBranch string) error {
+			resetCalls++
+			return nil
+		}},
 	}
 
 	cfg := &config.Config{WorktreeDir: "worktree", Git: config.GitConfig{BaseBranch: "main"}}
@@ -2109,9 +2109,9 @@ func TestRunSingle_ContinuesWhenRetryMarkerWriteFails(t *testing.T) {
 			{IssueNumber: 42, Status: "failure", Branch: branch},
 			{IssueNumber: 42, Status: "success", Branch: branch},
 		}},
-	}
-	o.runSessionOpts.retryReset = func(ctx context.Context, sb sandbox.Sandbox, branch, baseBranch string) error {
-		return nil
+		runSessionOpts: runSessionOptions{retryReset: func(ctx context.Context, sb sandbox.Sandbox, branch, baseBranch string) error {
+			return nil
+		}},
 	}
 
 	cfg := &config.Config{WorktreeDir: "worktree", Git: config.GitConfig{BaseBranch: "main"}}
@@ -2159,9 +2159,9 @@ func TestRunPromptOnlySingle_ContinuesWhenRetryMarkerWriteFails(t *testing.T) {
 		runnableFactory: &promptOnlyRunnableFactory{hook: func(issue *github.Issue, branch string) AgentRunResult {
 			return AgentRunResult{Status: "failure", Branch: branch, WorktreePath: rtSandbox.WorkDir()}
 		}},
-	}
-	o.runSessionOpts.retryReset = func(ctx context.Context, sb sandbox.Sandbox, branch, baseBranch string) error {
-		return nil
+		runSessionOpts: runSessionOptions{retryReset: func(ctx context.Context, sb sandbox.Sandbox, branch, baseBranch string) error {
+			return nil
+		}},
 	}
 
 	cfg := &config.Config{WorktreeDir: "worktree", Git: config.GitConfig{BaseBranch: "main"}}
@@ -2209,9 +2209,9 @@ func TestRunPromptOnlySingle_LogsRetryMarkerInWorktreePath(t *testing.T) {
 		runnableFactory: &promptOnlyRunnableFactory{hook: func(issue *github.Issue, branch string) AgentRunResult {
 			return AgentRunResult{Status: "failure", Branch: branch, WorktreePath: rtSandbox.WorkDir()}
 		}},
-	}
-	o.runSessionOpts.retryReset = func(ctx context.Context, sb sandbox.Sandbox, branch, baseBranch string) error {
-		return nil
+		runSessionOpts: runSessionOptions{retryReset: func(ctx context.Context, sb sandbox.Sandbox, branch, baseBranch string) error {
+			return nil
+		}},
 	}
 
 	cfg := &config.Config{WorktreeDir: "worktree", Git: config.GitConfig{BaseBranch: "main"}}
@@ -2451,9 +2451,10 @@ func TestRunBatch_SendsSIGTERMOnCancel(t *testing.T) {
 	factory := &fakeSandboxFactory{sandbox: sb}
 	blockRunnable := &blockingRunnable{delayAfterCancel: 100 * time.Millisecond, running: make(chan struct{})}
 
-	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
-	o.sandboxFactory = factory
-	o.runnableFactory = &blockingRunnableFactory{runnable: blockRunnable}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil,
+		WithSandboxFactory(factory),
+		WithRunnableFactory(&blockingRunnableFactory{runnable: blockRunnable}),
+	)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
@@ -2485,9 +2486,10 @@ func TestRunBatch_LogsAbortedEventOnCancel(t *testing.T) {
 	blockRunnable := &blockingRunnable{delayAfterCancel: 100 * time.Millisecond}
 	spyLog := &spyEventLog{}
 
-	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog)
-	o.sandboxFactory = factory
-	o.runnableFactory = &blockingRunnableFactory{runnable: blockRunnable}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog,
+		WithSandboxFactory(factory),
+		WithRunnableFactory(&blockingRunnableFactory{runnable: blockRunnable}),
+	)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
@@ -2524,9 +2526,10 @@ func TestRunBatch_ReturnsAbortedStatusOnCancel(t *testing.T) {
 	factory := &fakeSandboxFactory{sandbox: sb}
 	blockRunnable := &blockingRunnable{delayAfterCancel: 100 * time.Millisecond}
 
-	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
-	o.sandboxFactory = factory
-	o.runnableFactory = &blockingRunnableFactory{runnable: blockRunnable}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil,
+		WithSandboxFactory(factory),
+		WithRunnableFactory(&blockingRunnableFactory{runnable: blockRunnable}),
+	)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
@@ -2559,9 +2562,10 @@ func TestRunBatch_PreservesSuccessfulRunWhenContextCancelsLate(t *testing.T) {
 	factory := &fakeSandboxFactory{sandbox: sb}
 	fastSuccess := &fakeRunnable{result: AgentRunResult{IssueNumber: 42, Status: "success"}, delay: 100 * time.Millisecond}
 
-	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
-	o.sandboxFactory = factory
-	o.runnableFactory = &fakeRunnableFactory{results: []AgentRunResult{{IssueNumber: 42, Status: "success"}}, delays: []time.Duration{100 * time.Millisecond}}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil,
+		WithSandboxFactory(factory),
+		WithRunnableFactory(&fakeRunnableFactory{results: []AgentRunResult{{IssueNumber: 42, Status: "success"}}, delays: []time.Duration{100 * time.Millisecond}}),
+	)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
@@ -2591,9 +2595,10 @@ func TestRunBatch_LogsAbortedEventOnPromptOnlyCancel(t *testing.T) {
 	blockRunnable := &blockingRunnable{delayAfterCancel: 100 * time.Millisecond}
 	spyLog := &spyEventLog{}
 
-	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog)
-	o.sandboxFactory = factory
-	o.runnableFactory = &blockingRunnableFactory{runnable: blockRunnable}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog,
+		WithSandboxFactory(factory),
+		WithRunnableFactory(&blockingRunnableFactory{runnable: blockRunnable}),
+	)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
@@ -2624,9 +2629,10 @@ func TestRunBatch_ReturnsAbortedStatusOnPromptOnlyCancel(t *testing.T) {
 	release := make(chan struct{})
 	signalSent := make(chan struct{})
 
-	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
-	o.sandboxFactory = factory
-	o.runnableFactory = &controlledRunnableFactory{runnables: map[int]Runnable{0: &controlledRunnable{result: AgentRunResult{Status: "failure"}, started: started, release: release}}}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil,
+		WithSandboxFactory(factory),
+		WithRunnableFactory(&controlledRunnableFactory{runnables: map[int]Runnable{0: &controlledRunnable{result: AgentRunResult{Status: "failure"}, started: started, release: release}}}),
+	)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -2668,9 +2674,10 @@ func TestRunBatch_PreservesWorktreeOnInterrupt(t *testing.T) {
 	factory := &fakeSandboxFactory{sandbox: sb}
 	blockRunnable := &blockingRunnable{delayAfterCancel: 100 * time.Millisecond}
 
-	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
-	o.sandboxFactory = factory
-	o.runnableFactory = &blockingRunnableFactory{runnable: blockRunnable}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil,
+		WithSandboxFactory(factory),
+		WithRunnableFactory(&blockingRunnableFactory{runnable: blockRunnable}),
+	)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
@@ -2722,8 +2729,9 @@ func TestRunBatch_DoesNotCallStopOnSuccess(t *testing.T) {
 	}
 	sb := &fakeSandbox{}
 	factory := &fakeSandboxFactory{sandbox: sb}
-	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
-	o.sandboxFactory = factory
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil,
+		WithSandboxFactory(factory),
+	)
 
 	_, err := o.RunBatch(context.Background(), Request{Issues: []int{42}})
 	if err != nil {
@@ -2747,8 +2755,9 @@ func TestRunBatch_LeavesWorktreeOnSuccess(t *testing.T) {
 	sb := &fakeSandbox{}
 	factory := &fakeSandboxFactory{sandbox: sb}
 
-	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
-	o.sandboxFactory = factory
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil,
+		WithSandboxFactory(factory),
+	)
 
 	_, err := o.RunBatch(context.Background(), Request{Issues: []int{42}})
 	if err != nil {
@@ -2805,8 +2814,9 @@ func TestRunBatch_ModelPrecedenceAndDefaultBehavior(t *testing.T) {
 				AgentProviders: map[string]config.Agent{
 					"opencode": {Preset: "opencode", Model: tt.cfgModel},
 				},
-			}}, nil)
-			o.sandboxFactory = &fakeSandboxFactory{sandbox: sb}
+			}}, nil,
+				WithSandboxFactory(&fakeSandboxFactory{sandbox: sb}),
+			)
 
 			_, err := o.RunBatch(context.Background(), Request{Issues: []int{42}, Model: tt.reqModel, RunTS: orchTestRunTS, RunShortID: orchTestRunShortID})
 			if err != nil {
@@ -2839,10 +2849,11 @@ func TestRunBatch_SendsSIGKILLAfterTimeout(t *testing.T) {
 	factory := &fakeSandboxFactory{sandbox: sb}
 	blockRunnable := &blockingRunnable{delayAfterCancel: 300 * time.Millisecond}
 
-	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
-	o.sandboxFactory = factory
-	o.runnableFactory = &blockingRunnableFactory{runnable: blockRunnable}
-	o.runSessionOpts.killTimeout = 100 * time.Millisecond
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil,
+		WithSandboxFactory(factory),
+		WithRunnableFactory(&blockingRunnableFactory{runnable: blockRunnable}),
+		WithRunSessionOpts(runSessionOptions{killTimeout: 100 * time.Millisecond}),
+	)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
@@ -2939,9 +2950,10 @@ func TestRunBatch_AbortsUpfrontWhenAnyBranchExists(t *testing.T) {
 			452: &controlledRunnable{result: AgentRunResult{IssueNumber: 452, Status: "success"}, started: make(chan struct{}), release: make(chan struct{})},
 		},
 	}
-	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
-	o.sandboxFactory = &fakeSandboxFactory{sandbox: &fakeSandbox{}}
-	o.runnableFactory = factory
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil,
+		WithSandboxFactory(&fakeSandboxFactory{sandbox: &fakeSandbox{}}),
+		WithRunnableFactory(factory),
+	)
 	oldBranchExists := branchExists
 	oldBranchValidationEnabled := branchValidationEnabled
 	branchExists = sandbox.BranchExists
@@ -2999,8 +3011,9 @@ func TestRunBatch_ContainerModeFailsBeforeAgentWhenDockerfileMissing(t *testing.
 	}
 	factory := &controlledRunnableFactory{}
 
-	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
-	o.runnableFactory = factory
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil,
+		WithRunnableFactory(factory),
+	)
 
 	_, err := o.RunBatch(context.Background(), Request{Issues: []int{42}, Sandbox: "podman", RequireDockerfile: true})
 	if err == nil {
@@ -3050,9 +3063,10 @@ func TestValidateBatchBranches_RecommendsCorrectFlagPerIssue(t *testing.T) {
 			{Type: "run.started", RunID: runIDFor(500), Issue: 500, IssueRef: issueRef(500)},
 		},
 	}
-	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog)
-	o.sandboxFactory = &fakeSandboxFactory{sandbox: &fakeSandbox{}}
-	o.runnableFactory = factory
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog,
+		WithSandboxFactory(&fakeSandboxFactory{sandbox: &fakeSandbox{}}),
+		WithRunnableFactory(factory),
+	)
 	oldBranchExists := branchExists
 	oldBranchValidationEnabled := branchValidationEnabled
 	branchExists = sandbox.BranchExists
@@ -3133,9 +3147,10 @@ func TestRunBatch_AllowsBatchWhenNoBranchExists(t *testing.T) {
 			452: &controlledRunnable{result: AgentRunResult{IssueNumber: 452, Status: "success"}, started: started[452], release: release[452]},
 		},
 	}
-	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
-	o.sandboxFactory = &fakeSandboxFactory{sandbox: &fakeSandbox{}}
-	o.runnableFactory = factory
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil,
+		WithSandboxFactory(&fakeSandboxFactory{sandbox: &fakeSandbox{}}),
+		WithRunnableFactory(factory),
+	)
 	oldBranchExists := branchExists
 	oldBranchValidationEnabled := branchValidationEnabled
 	branchExists = sandbox.BranchExists
@@ -3198,8 +3213,9 @@ func TestRunBatch_OverrideClearsExistingBranchesAndProceeds(t *testing.T) {
 		},
 	}
 	factory := &fakeRunnableFactory{results: []AgentRunResult{{IssueNumber: 441, Status: "success"}, {IssueNumber: 450, Status: "success"}, {IssueNumber: 452, Status: "success"}}}
-	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
-	o.runnableFactory = factory
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil,
+		WithRunnableFactory(factory),
+	)
 	oldBranchExists := branchExists
 	oldBranchValidationEnabled := branchValidationEnabled
 	branchExists = sandbox.BranchExists
@@ -3246,9 +3262,10 @@ func TestRunBatch_MixedContinueStillValidatesFreshBranches(t *testing.T) {
 			43: {Number: 43, Title: "Fresh issue"},
 		},
 	}
-	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
-	o.sandboxFactory = &fakeSandboxFactory{sandbox: &fakeSandbox{}}
-	o.runnableFactory = &fakeRunnableFactory{results: []AgentRunResult{{IssueNumber: 42, Status: "success"}, {IssueNumber: 43, Status: "success"}}}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil,
+		WithSandboxFactory(&fakeSandboxFactory{sandbox: &fakeSandbox{}}),
+		WithRunnableFactory(&fakeRunnableFactory{results: []AgentRunResult{{IssueNumber: 42, Status: "success"}, {IssueNumber: 43, Status: "success"}}}),
+	)
 	oldBranchExists := branchExists
 	oldBranchValidationEnabled := branchValidationEnabled
 	branchExists = sandbox.BranchExists
@@ -3287,12 +3304,13 @@ func TestRunBatch_MixedContinuePropagatesPerIssueModeMap(t *testing.T) {
 		},
 	}
 	spyLog := &spyEventLog{}
-	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog)
-	o.sandboxFactory = &fakeSandboxFactory{sandbox: &fakeSandbox{}}
-	o.runnableFactory = &controlledRunnableFactory{runnables: map[int]Runnable{
-		42: &controlledRunnable{result: AgentRunResult{IssueNumber: 42, Status: "success"}},
-		43: &controlledRunnable{result: AgentRunResult{IssueNumber: 43, Status: "success"}},
-	}}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog,
+		WithSandboxFactory(&fakeSandboxFactory{sandbox: &fakeSandbox{}}),
+		WithRunnableFactory(&controlledRunnableFactory{runnables: map[int]Runnable{
+			42: &controlledRunnable{result: AgentRunResult{IssueNumber: 42, Status: "success"}},
+			43: &controlledRunnable{result: AgentRunResult{IssueNumber: 43, Status: "success"}},
+		}}),
+	)
 
 	result, err := o.RunBatch(context.Background(), Request{
 		Issues:         []int{42, 43},
@@ -3341,8 +3359,9 @@ func TestRunBatch_FetchError(t *testing.T) {
 func TestRunBatch_LifecycleErrorsPrintedToStderr(t *testing.T) {
 	var buf bytes.Buffer
 	client := &fakeGitHubClient{err: errors.New("github api error")}
-	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
-	o.errorLog = &buf
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil,
+		WithErrorLog(&buf),
+	)
 	_, _ = o.RunBatch(context.Background(), Request{Issues: []int{42}})
 	if !strings.Contains(buf.String(), "github api error") {
 		t.Errorf("expected fetch error on stderr, got: %s", buf.String())
@@ -3355,9 +3374,10 @@ func TestRunBatch_SandboxStartErrorPrintedToStderr(t *testing.T) {
 	factory := &fakeSandboxFactory{sandbox: sb}
 
 	client := &fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, Title: "test", Body: "body"}}}
-	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
-	o.sandboxFactory = factory
-	o.errorLog = &buf
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil,
+		WithSandboxFactory(factory),
+		WithErrorLog(&buf),
+	)
 	_, _ = o.RunBatch(context.Background(), Request{Issues: []int{42}})
 	if !strings.Contains(buf.String(), "sandbox start failure") {
 		t.Errorf("expected sandbox start error on stderr, got: %s", buf.String())
@@ -3371,8 +3391,9 @@ func TestRunBatch_EmitsTerminalEventOnFetchIssueFailure(t *testing.T) {
 
 	client := &fakeGitHubClient{err: errors.New("github api error")}
 	spyLog := &spyEventLog{}
-	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog)
-	o.errorLog = io.Discard
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog,
+		WithErrorLog(io.Discard),
+	)
 
 	_, _ = o.RunBatch(context.Background(), Request{Issues: []int{42}, Parallel: 1})
 
@@ -3407,9 +3428,10 @@ func TestRunBatch_EmitsTerminalEventOnSandboxStartFailure(t *testing.T) {
 		issues: map[int]*github.Issue{42: {Number: 42, Title: "test", State: "closed"}},
 	}
 	spyLog := &spyEventLog{}
-	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog)
-	o.sandboxFactory = factory
-	o.errorLog = io.Discard
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog,
+		WithSandboxFactory(factory),
+		WithErrorLog(io.Discard),
+	)
 
 	_, _ = o.RunBatch(context.Background(), Request{Issues: []int{42}, Parallel: 1})
 
@@ -3442,8 +3464,9 @@ func TestRunBatch_EarlyFailureDoesNotEmitDuplicateTerminalEvent(t *testing.T) {
 		issues: map[int]*github.Issue{42: {Number: 42, Title: "test", State: "closed"}},
 	}
 	spyLog := &spyEventLog{}
-	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog)
-	o.errorLog = io.Discard
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog,
+		WithErrorLog(io.Discard),
+	)
 
 	_, _ = o.RunBatch(context.Background(), Request{Issues: []int{42}, Parallel: 1})
 
@@ -3472,9 +3495,10 @@ func TestRunBatch_EarlyFailureCascadesBlockedToDependents(t *testing.T) {
 		},
 	}
 	spyLog := &spyEventLog{}
-	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog)
-	o.sandboxFactory = factory
-	o.errorLog = io.Discard
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog,
+		WithSandboxFactory(factory),
+		WithErrorLog(io.Discard),
+	)
 
 	result, _ := o.RunBatch(context.Background(), Request{
 		Issues:       []int{42, 100},
@@ -3542,17 +3566,17 @@ func TestRunBatch_SyncsBaseBranchBeforeEachAgentRunStarts(t *testing.T) {
 		},
 	}
 	store := &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}
-	o := NewOrchestrator(client, &noopRenderer{}, store, nil)
-
 	tracker := &baseBranchSyncTracker{}
-	o.runSessionOpts.baseBranchSync = func(repoPath, sourceBranch string) error {
-		tracker.mu.Lock()
-		tracker.syncCalls++
-		tracker.mu.Unlock()
-		return nil
-	}
-	o.sandboxFactory = &syncAwareSandboxFactory{tracker: tracker}
-	o.runnableFactory = &fakeRunnableFactory{results: []AgentRunResult{{IssueNumber: 1, Status: "success"}, {IssueNumber: 2, Status: "success"}}}
+	o := NewOrchestrator(client, &noopRenderer{}, store, nil,
+		WithRunnableFactory(&fakeRunnableFactory{results: []AgentRunResult{{IssueNumber: 1, Status: "success"}, {IssueNumber: 2, Status: "success"}}}),
+		WithRunSessionOpts(runSessionOptions{baseBranchSync: func(repoPath, sourceBranch string) error {
+			tracker.mu.Lock()
+			tracker.syncCalls++
+			tracker.mu.Unlock()
+			return nil
+		}}),
+		WithSandboxFactory(&syncAwareSandboxFactory{tracker: tracker}),
+	)
 
 	_, err := o.RunBatch(context.Background(), Request{Issues: []int{1, 2}, Parallel: 2, BaseBranch: "trunk"})
 	if err != nil {
@@ -3843,10 +3867,11 @@ func TestRunBatch_RespectsParallelLimit(t *testing.T) {
 		delays: []time.Duration{50 * time.Millisecond, 50 * time.Millisecond, 50 * time.Millisecond, 50 * time.Millisecond},
 	}
 
-	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
-	o.runnableFactory = factory
-	o.sandboxFactory = &fakeSandboxFactory{sandbox: &fakeSandbox{}}
-	o.sandboxFactory = &freshSandboxFactory{}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil,
+		WithRunnableFactory(factory),
+		WithSandboxFactory(&fakeSandboxFactory{sandbox: &fakeSandbox{}}),
+		WithSandboxFactory(&freshSandboxFactory{}),
+	)
 
 	_, err := o.RunBatch(context.Background(), Request{Issues: []int{1, 2, 3, 4}, Parallel: 2})
 	if err != nil {
@@ -3881,9 +3906,10 @@ func TestRunBatch_OneFailureDoesNotAbortOthers(t *testing.T) {
 		3: {IssueNumber: 3, Status: "success"},
 	}}
 
-	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
-	o.runnableFactory = factory
-	o.sandboxFactory = &fakeSandboxFactory{sandbox: &fakeSandbox{}}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil,
+		WithRunnableFactory(factory),
+		WithSandboxFactory(&fakeSandboxFactory{sandbox: &fakeSandbox{}}),
+	)
 
 	result, err := o.RunBatch(context.Background(), Request{Issues: []int{1, 2, 3}, Parallel: 3})
 	if err == nil {
@@ -3944,10 +3970,11 @@ func TestRunBatch_ZeroParallelAllowsAllRunsToStart(t *testing.T) {
 	}
 	factory := &controlledRunnableFactory{runnables: runnables}
 
-	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
-	o.runnableFactory = factory
-	o.sandboxFactory = &fakeSandboxFactory{sandbox: &fakeSandbox{}}
-	o.sandboxFactory = &freshSandboxFactory{}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil,
+		WithRunnableFactory(factory),
+		WithSandboxFactory(&fakeSandboxFactory{sandbox: &fakeSandbox{}}),
+		WithSandboxFactory(&freshSandboxFactory{}),
+	)
 
 	errCh := make(chan error, 1)
 	go func() {
@@ -4023,8 +4050,9 @@ func TestRunBatch_WaitsForBlockersBeforeStartingDependents(t *testing.T) {
 		},
 	}
 
-	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
-	o.runnableFactory = factory
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil,
+		WithRunnableFactory(factory),
+	)
 
 	done := make(chan struct{})
 	go func() {
@@ -4070,8 +4098,9 @@ func TestRunBatch_SkipsDependentsWhenBlockerFails(t *testing.T) {
 		},
 	}
 
-	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog)
-	o.runnableFactory = factory
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog,
+		WithRunnableFactory(factory),
+	)
 
 	result, err := o.RunBatch(context.Background(), Request{
 		Issues:       []int{42, 100},
@@ -4149,8 +4178,9 @@ func TestRunBatch_SkipsIssuesBlockedByOpenExternalBlockers(t *testing.T) {
 		},
 	}
 
-	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog)
-	o.runnableFactory = factory
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog,
+		WithRunnableFactory(factory),
+	)
 
 	result, err := o.RunBatch(context.Background(), Request{
 		Issues:   []int{42, 100},
@@ -4220,8 +4250,9 @@ func TestRunBatch_InBatchBlockerSuccessKeepsDependentBlockedWhenIssueOpen(t *tes
 		},
 	}
 
-	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog)
-	o.runnableFactory = factory
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog,
+		WithRunnableFactory(factory),
+	)
 
 	done := make(chan struct{})
 	var result *Result
@@ -4296,8 +4327,9 @@ func TestRunBatch_InBatchBlockerWithEmptyStatusDoesNotBlockDependent(t *testing.
 		},
 	}
 
-	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog)
-	o.runnableFactory = factory
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog,
+		WithRunnableFactory(factory),
+	)
 
 	done := make(chan struct{})
 	var result *Result
@@ -4367,8 +4399,9 @@ func TestRunBatch_InBatchBlockerWithNonTerminalRawStatusDoesNotBlockDependent(t 
 		},
 	}
 
-	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog)
-	o.runnableFactory = factory
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog,
+		WithRunnableFactory(factory),
+	)
 
 	done := make(chan struct{})
 	var result *Result
@@ -4443,8 +4476,9 @@ func TestRunBatch_RechecksExternalBlockerStateBeforeDependentStart(t *testing.T)
 		},
 	}
 
-	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog)
-	o.runnableFactory = factory
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog,
+		WithRunnableFactory(factory),
+	)
 
 	done := make(chan struct{})
 	var result *Result
@@ -4539,8 +4573,9 @@ func TestRunBatch_PreservesParallelismWithinDependencyLevel(t *testing.T) {
 		},
 	}
 
-	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
-	o.runnableFactory = factory
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil,
+		WithRunnableFactory(factory),
+	)
 
 	done := make(chan struct{})
 	go func() {
@@ -4592,13 +4627,14 @@ func TestRunBatch_StartDelay_WaitsAfterRunFinishesBeforeNextStart(t *testing.T) 
 			2: &controlledRunnable{result: AgentRunResult{IssueNumber: 2, Status: "success"}, started: started2, release: release2},
 		},
 	}
-
-	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
-	o.runnableFactory = factory
 	sb := &fakeSandbox{}
-	o.sandboxFactory = &fakeSandboxFactory{sandbox: sb}
 	var errBuf bytes.Buffer
-	o.errorLog = &errBuf
+
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil,
+		WithRunnableFactory(factory),
+		WithSandboxFactory(&fakeSandboxFactory{sandbox: sb}),
+		WithErrorLog(&errBuf),
+	)
 
 	done := make(chan struct{})
 	errCh := make(chan error, 1)
@@ -4673,8 +4709,9 @@ func TestRunBatch_StartDelay_DoesNotStaggerSimultaneousReadyRuns(t *testing.T) {
 		},
 	}
 
-	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
-	o.runnableFactory = factory
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil,
+		WithRunnableFactory(factory),
+	)
 
 	done := make(chan struct{})
 	go func() {
@@ -4752,8 +4789,9 @@ func TestRunBatch_StartDelay_AbortsImmediatelyOnCancel(t *testing.T) {
 		},
 	}
 
-	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
-	o.runnableFactory = factory
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil,
+		WithRunnableFactory(factory),
+	)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
@@ -4892,9 +4930,10 @@ func TestRunBatch_LogsPromptMetadataOnStartedEvent(t *testing.T) {
 		prs: map[string]*github.PR{branch: {Number: 42, State: "closed", Merged: true, HeadRefName: branch}},
 	}
 	spyLog := &spyEventLog{}
-	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog)
-	o.sandboxFactory = &fakeSandboxFactory{sandbox: &fakeSandbox{}}
-	o.runnableFactory = &controlledRunnableFactory{runnables: map[int]Runnable{42: &controlledRunnable{result: AgentRunResult{IssueNumber: 42, Status: "success"}}}}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog,
+		WithSandboxFactory(&fakeSandboxFactory{sandbox: &fakeSandbox{}}),
+		WithRunnableFactory(&controlledRunnableFactory{runnables: map[int]Runnable{42: &controlledRunnable{result: AgentRunResult{IssueNumber: 42, Status: "success"}}}}),
+	)
 
 	_, err := o.RunBatch(context.Background(), Request{Issues: []int{42}, Parallel: 3, Retries: 4, StartDelay: 7 * time.Second, StartDelaySet: true, Sandbox: "worktree", ContainerCapacity: 2, ContainerCapacitySet: true, MaxContainers: 5, MaxContainersSet: true, PromptConfig: prompt.RenderConfig{PromptFlag: "inline", PromptArgs: map[string]string{"FOO": "bar"}, ReviewCommand: "/custom review", ReviewCommandSet: true}})
 	if err != nil {
@@ -4965,18 +5004,19 @@ func TestRunBatch_LogsPromptOnlyTemplateSource(t *testing.T) {
 
 	client := &fakeGitHubClient{err: errors.New("fetch should not run")}
 	spyLog := &spyEventLog{}
-	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog)
 	tracker := &baseBranchSyncTracker{}
-	o.runSessionOpts.baseBranchSync = func(repoPath, sourceBranch string) error {
-		tracker.mu.Lock()
-		tracker.syncCalls++
-		tracker.mu.Unlock()
-		return nil
-	}
-	o.sandboxFactory = &syncAwareSandboxFactory{tracker: tracker}
-	o.runnableFactory = &promptOnlyRunnableFactory{hook: func(issue *github.Issue, branch string) AgentRunResult {
-		return AgentRunResult{Status: "success", Branch: branch, WorktreePath: filepath.Join(".sandman", "worktrees", branch)}
-	}}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog,
+		WithRunnableFactory(&promptOnlyRunnableFactory{hook: func(issue *github.Issue, branch string) AgentRunResult {
+			return AgentRunResult{Status: "success", Branch: branch, WorktreePath: filepath.Join(".sandman", "worktrees", branch)}
+		}}),
+		WithRunSessionOpts(runSessionOptions{baseBranchSync: func(repoPath, sourceBranch string) error {
+			tracker.mu.Lock()
+			tracker.syncCalls++
+			tracker.mu.Unlock()
+			return nil
+		}}),
+		WithSandboxFactory(&syncAwareSandboxFactory{tracker: tracker}),
+	)
 
 	_, err := o.RunBatch(context.Background(), Request{PromptConfig: prompt.RenderConfig{TemplateFlag: templatePath}, BaseBranch: "trunk"})
 	if err != nil {
@@ -5018,12 +5058,13 @@ func TestRunBatch_LogsPromptOnlyTemplateSource(t *testing.T) {
 
 func TestRunBatch_PromptOnlyBaseBranchSyncFailureReturnsError(t *testing.T) {
 	client := &fakeGitHubClient{err: errors.New("fetch should not run")}
-	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
-	o.runSessionOpts.baseBranchSync = func(repoPath, sourceBranch string) error { return errors.New("sync failed") }
-	o.sandboxFactory = &fakeSandboxFactory{sandbox: &fakeSandbox{}}
-	o.runnableFactory = &promptOnlyRunnableFactory{hook: func(issue *github.Issue, branch string) AgentRunResult {
-		return AgentRunResult{Status: "success", Branch: branch}
-	}}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil,
+		WithSandboxFactory(&fakeSandboxFactory{sandbox: &fakeSandbox{}}),
+		WithRunnableFactory(&promptOnlyRunnableFactory{hook: func(issue *github.Issue, branch string) AgentRunResult {
+			return AgentRunResult{Status: "success", Branch: branch}
+		}}),
+		WithRunSessionOpts(runSessionOptions{baseBranchSync: func(repoPath, sourceBranch string) error { return errors.New("sync failed") }}),
+	)
 
 	_, err := o.RunBatch(context.Background(), Request{PromptConfig: prompt.RenderConfig{PromptFlag: "Return only OK."}, BaseBranch: "trunk"})
 	if err == nil {
@@ -5043,13 +5084,14 @@ func TestRunBatch_PromptOnlyRunSkipsIssueLookupAndUsesNullIssue(t *testing.T) {
 	spyLog := &spyEventLog{}
 	var sawIssueNil bool
 	var sawBranch string
-	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog)
-	o.sandboxFactory = &fakeSandboxFactory{sandbox: &fakeSandbox{workDir: filepath.Join(".sandman", "worktrees", "sandman", "return-only-ok-123")}}
-	o.runnableFactory = &promptOnlyRunnableFactory{hook: func(issue *github.Issue, branch string) AgentRunResult {
-		sawIssueNil = issue == nil
-		sawBranch = branch
-		return AgentRunResult{Status: "success", Branch: branch, WorktreePath: filepath.Join(".sandman", "worktrees", branch)}
-	}}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog,
+		WithSandboxFactory(&fakeSandboxFactory{sandbox: &fakeSandbox{workDir: filepath.Join(".sandman", "worktrees", "sandman", "return-only-ok-123")}}),
+		WithRunnableFactory(&promptOnlyRunnableFactory{hook: func(issue *github.Issue, branch string) AgentRunResult {
+			sawIssueNil = issue == nil
+			sawBranch = branch
+			return AgentRunResult{Status: "success", Branch: branch, WorktreePath: filepath.Join(".sandman", "worktrees", branch)}
+		}}),
+	)
 
 	result, err := o.RunBatch(context.Background(), Request{PromptConfig: prompt.RenderConfig{PromptFlag: "Return only OK."}})
 	if err != nil {
@@ -5087,11 +5129,12 @@ func TestRunBatch_PromptOnlyReviewRunEmitsReviewTag(t *testing.T) {
 
 	client := &fakeGitHubClient{err: errors.New("fetch should not run")}
 	spyLog := &spyEventLog{}
-	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog)
-	o.sandboxFactory = &fakeSandboxFactory{sandbox: &fakeSandbox{workDir: filepath.Join(".sandman", "worktrees", "sandman", "review-17-1")}}
-	o.runnableFactory = &promptOnlyRunnableFactory{hook: func(issue *github.Issue, branch string) AgentRunResult {
-		return AgentRunResult{Status: "success", Branch: branch, WorktreePath: filepath.Join(".sandman", "worktrees", branch)}
-	}}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog,
+		WithSandboxFactory(&fakeSandboxFactory{sandbox: &fakeSandbox{workDir: filepath.Join(".sandman", "worktrees", "sandman", "review-17-1")}}),
+		WithRunnableFactory(&promptOnlyRunnableFactory{hook: func(issue *github.Issue, branch string) AgentRunResult {
+			return AgentRunResult{Status: "success", Branch: branch, WorktreePath: filepath.Join(".sandman", "worktrees", branch)}
+		}}),
+	)
 
 	_, err := o.RunBatch(context.Background(), Request{
 		PromptConfig: prompt.RenderConfig{PromptFlag: "Review the PR."},
@@ -5127,11 +5170,12 @@ func TestRunBatch_PromptOnlyReviewRunResultCarriesReviewIdentity(t *testing.T) {
 
 	client := &fakeGitHubClient{err: errors.New("fetch should not run")}
 	spyLog := &spyEventLog{}
-	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog)
-	o.sandboxFactory = &fakeSandboxFactory{sandbox: &fakeSandbox{workDir: filepath.Join(".sandman", "worktrees", "sandman", "review-17-1")}}
-	o.runnableFactory = &promptOnlyRunnableFactory{hook: func(issue *github.Issue, branch string) AgentRunResult {
-		return AgentRunResult{Status: "success", Branch: branch, WorktreePath: filepath.Join(".sandman", "worktrees", branch)}
-	}}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog,
+		WithSandboxFactory(&fakeSandboxFactory{sandbox: &fakeSandbox{workDir: filepath.Join(".sandman", "worktrees", "sandman", "review-17-1")}}),
+		WithRunnableFactory(&promptOnlyRunnableFactory{hook: func(issue *github.Issue, branch string) AgentRunResult {
+			return AgentRunResult{Status: "success", Branch: branch, WorktreePath: filepath.Join(".sandman", "worktrees", branch)}
+		}}),
+	)
 
 	result, err := o.RunBatch(context.Background(), Request{
 		PromptConfig: prompt.RenderConfig{PromptFlag: "Review the PR."},
@@ -5196,6 +5240,7 @@ func TestRunBatch_ReviewRunFolderHonorsReqRunDir(t *testing.T) {
 
 	client := &fakeGitHubClient{err: errors.New("fetch should not run")}
 	spyLog := &spyEventLog{}
+	agentRunCh := make(chan *AgentRun, 1)
 	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{
 		Agent:       "test-agent",
 		Sandbox:     "worktree",
@@ -5204,10 +5249,10 @@ func TestRunBatch_ReviewRunFolderHonorsReqRunDir(t *testing.T) {
 		AgentProviders: map[string]config.Agent{
 			"test-agent": {Command: "true"},
 		},
-	}}, spyLog)
-	o.sandboxFactory = &fakeSandboxFactory{sandbox: &fakeSandbox{workDir: filepath.Join(".sandman", "worktrees", "sandman", "review-17-1855-1")}}
-	agentRunCh := make(chan *AgentRun, 1)
-	o.runnableFactory = &capturingAgentRunFactory{agentRunCh: agentRunCh}
+	}}, spyLog,
+		WithSandboxFactory(&fakeSandboxFactory{sandbox: &fakeSandbox{workDir: filepath.Join(".sandman", "worktrees", "sandman", "review-17-1855-1")}}),
+		WithRunnableFactory(&capturingAgentRunFactory{agentRunCh: agentRunCh}),
+	)
 
 	// PR 17 with linked issue 1855: the per-row RunID
 	// `<ts>-<sid>-<linkedIssue>-PR<pr>` diverges from the legacy
@@ -5261,6 +5306,7 @@ func TestRunBatch_ReviewRunFolderMatchesLegacyBatchDirFormula(t *testing.T) {
 
 	client := &fakeGitHubClient{err: errors.New("fetch should not run")}
 	spyLog := &spyEventLog{}
+	agentRunCh := make(chan *AgentRun, 1)
 	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{
 		Agent:       "test-agent",
 		Sandbox:     "worktree",
@@ -5269,10 +5315,10 @@ func TestRunBatch_ReviewRunFolderMatchesLegacyBatchDirFormula(t *testing.T) {
 		AgentProviders: map[string]config.Agent{
 			"test-agent": {Command: "true"},
 		},
-	}}, spyLog)
-	o.sandboxFactory = &fakeSandboxFactory{sandbox: &fakeSandbox{workDir: filepath.Join(".sandman", "worktrees", "sandman", "review-1875-1")}}
-	agentRunCh := make(chan *AgentRun, 1)
-	o.runnableFactory = &capturingAgentRunFactory{agentRunCh: agentRunCh}
+	}}, spyLog,
+		WithSandboxFactory(&fakeSandboxFactory{sandbox: &fakeSandbox{workDir: filepath.Join(".sandman", "worktrees", "sandman", "review-1875-1")}}),
+		WithRunnableFactory(&capturingAgentRunFactory{agentRunCh: agentRunCh}),
+	)
 
 	// Compose the run folder the same way cmd/review.go does:
 	// legacy batch dir as parent, per-row RunID as run folder. The
@@ -5314,11 +5360,12 @@ func TestRunBatch_PromptOnlyReviewRunWithEmptyFocus(t *testing.T) {
 
 	client := &fakeGitHubClient{err: errors.New("fetch should not run")}
 	spyLog := &spyEventLog{}
-	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog)
-	o.sandboxFactory = &fakeSandboxFactory{sandbox: &fakeSandbox{workDir: filepath.Join(".sandman", "worktrees", "sandman", "review-3-1")}}
-	o.runnableFactory = &promptOnlyRunnableFactory{hook: func(issue *github.Issue, branch string) AgentRunResult {
-		return AgentRunResult{Status: "success", Branch: branch, WorktreePath: filepath.Join(".sandman", "worktrees", branch)}
-	}}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog,
+		WithSandboxFactory(&fakeSandboxFactory{sandbox: &fakeSandbox{workDir: filepath.Join(".sandman", "worktrees", "sandman", "review-3-1")}}),
+		WithRunnableFactory(&promptOnlyRunnableFactory{hook: func(issue *github.Issue, branch string) AgentRunResult {
+			return AgentRunResult{Status: "success", Branch: branch, WorktreePath: filepath.Join(".sandman", "worktrees", branch)}
+		}}),
+	)
 
 	_, err := o.RunBatch(context.Background(), Request{
 		PromptConfig: prompt.RenderConfig{PromptFlag: "Review."},
@@ -5352,11 +5399,12 @@ func TestRunBatch_PromptOnlyImplementationRunOmitsReviewKey(t *testing.T) {
 
 	client := &fakeGitHubClient{err: errors.New("fetch should not run")}
 	spyLog := &spyEventLog{}
-	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog)
-	o.sandboxFactory = &fakeSandboxFactory{sandbox: &fakeSandbox{workDir: filepath.Join(".sandman", "worktrees", "sandman", "p-1")}}
-	o.runnableFactory = &promptOnlyRunnableFactory{hook: func(issue *github.Issue, branch string) AgentRunResult {
-		return AgentRunResult{Status: "success", Branch: branch, WorktreePath: filepath.Join(".sandman", "worktrees", branch)}
-	}}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog,
+		WithSandboxFactory(&fakeSandboxFactory{sandbox: &fakeSandbox{workDir: filepath.Join(".sandman", "worktrees", "sandman", "p-1")}}),
+		WithRunnableFactory(&promptOnlyRunnableFactory{hook: func(issue *github.Issue, branch string) AgentRunResult {
+			return AgentRunResult{Status: "success", Branch: branch, WorktreePath: filepath.Join(".sandman", "worktrees", branch)}
+		}}),
+	)
 
 	_, err := o.RunBatch(context.Background(), Request{PromptConfig: prompt.RenderConfig{PromptFlag: "Implement X."}})
 	if err != nil {
@@ -5384,9 +5432,10 @@ func TestRunBatch_IssueDrivenImplementationRunOmitsReviewKey(t *testing.T) {
 		prs: map[string]*github.PR{branch: {Number: 42, State: "closed", Merged: true, HeadRefName: branch}},
 	}
 	spyLog := &spyEventLog{}
-	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog)
-	o.sandboxFactory = &fakeSandboxFactory{sandbox: &fakeSandbox{}}
-	o.runnableFactory = &controlledRunnableFactory{runnables: map[int]Runnable{42: &controlledRunnable{result: AgentRunResult{IssueNumber: 42, Status: "success"}}}}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog,
+		WithSandboxFactory(&fakeSandboxFactory{sandbox: &fakeSandbox{}}),
+		WithRunnableFactory(&controlledRunnableFactory{runnables: map[int]Runnable{42: &controlledRunnable{result: AgentRunResult{IssueNumber: 42, Status: "success"}}}}),
+	)
 
 	_, err := o.RunBatch(context.Background(), Request{Issues: []int{42}})
 	if err != nil {
@@ -5421,9 +5470,10 @@ func TestRunBatch_LogsContinuedEventWithPreviousRunID(t *testing.T) {
 		prs: map[string]*github.PR{"sandman/42-fix-bug": mergedPR("sandman/42-fix-bug", "")},
 	}
 	spyLog := &spyEventLog{}
-	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog)
-	o.sandboxFactory = &fakeSandboxFactory{sandbox: &fakeSandbox{}}
-	o.runnableFactory = &controlledRunnableFactory{runnables: map[int]Runnable{42: &controlledRunnable{result: AgentRunResult{IssueNumber: 42, Status: "success"}}}}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog,
+		WithSandboxFactory(&fakeSandboxFactory{sandbox: &fakeSandbox{}}),
+		WithRunnableFactory(&controlledRunnableFactory{runnables: map[int]Runnable{42: &controlledRunnable{result: AgentRunResult{IssueNumber: 42, Status: "success"}}}}),
+	)
 
 	_, err := o.RunBatch(context.Background(), Request{Issues: []int{42}, Mode: map[int]IssueMode{42: ModeContinue}, PreviousRunIDs: map[int]string{42: runIDFor(42)}, BaseBranch: "main", Parallel: 2, Retries: 1, StartDelay: 5 * time.Second, StartDelaySet: true, Sandbox: "worktree", ContainerCapacity: 4, ContainerCapacitySet: true, MaxContainers: 6, MaxContainersSet: true, PromptConfig: prompt.RenderConfig{TaskPrompt: "finish the tests"}})
 	if err != nil {
@@ -5485,7 +5535,6 @@ func TestRunBatch_ContinuationUsesPerIssuePrompts(t *testing.T) {
 	}
 	spyLog := &spyEventLog{}
 	workDir := t.TempDir()
-	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: workDir, Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog)
 
 	type promptSandboxFactory struct {
 		mu        sync.Mutex
@@ -5500,7 +5549,9 @@ func TestRunBatch_ContinuationUsesPerIssuePrompts(t *testing.T) {
 		factory.mu.Unlock()
 		return sb
 	}
-	o.sandboxFactory = sandboxFactoryFunc(factoryNew)
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: workDir, Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog,
+		WithSandboxFactory(sandboxFactoryFunc(factoryNew)),
+	)
 
 	_, err := o.RunBatch(context.Background(), Request{
 		Issues:         []int{1, 2},
@@ -5548,12 +5599,13 @@ func TestRunBatch_PerIssuePreviousRunIDLookup(t *testing.T) {
 		},
 	}
 	spyLog := &threadSafeSpyEventLog{}
-	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog)
-	o.sandboxFactory = &fakeSandboxFactory{sandbox: &fakeSandbox{}}
-	o.runnableFactory = &controlledRunnableFactory{runnables: map[int]Runnable{
-		42: &controlledRunnable{result: AgentRunResult{IssueNumber: 42, Status: "success"}},
-		43: &controlledRunnable{result: AgentRunResult{IssueNumber: 43, Status: "success"}},
-	}}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog,
+		WithSandboxFactory(&fakeSandboxFactory{sandbox: &fakeSandbox{}}),
+		WithRunnableFactory(&controlledRunnableFactory{runnables: map[int]Runnable{
+			42: &controlledRunnable{result: AgentRunResult{IssueNumber: 42, Status: "success"}},
+			43: &controlledRunnable{result: AgentRunResult{IssueNumber: 43, Status: "success"}},
+		}}),
+	)
 
 	_, err := o.RunBatch(context.Background(), Request{
 		Issues:         []int{42, 43},
@@ -5596,12 +5648,13 @@ func TestRunBatch_MultiIssueContinuationLogsPerIssuePreviousRunID(t *testing.T) 
 		},
 	}
 	spyLog := &threadSafeSpyEventLog{}
-	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog)
-	o.sandboxFactory = &fakeSandboxFactory{sandbox: &fakeSandbox{}}
-	o.runnableFactory = &controlledRunnableFactory{runnables: map[int]Runnable{
-		42: &controlledRunnable{result: AgentRunResult{IssueNumber: 42, Status: "success"}},
-		99: &controlledRunnable{result: AgentRunResult{IssueNumber: 99, Status: "success"}},
-	}}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog,
+		WithSandboxFactory(&fakeSandboxFactory{sandbox: &fakeSandbox{}}),
+		WithRunnableFactory(&controlledRunnableFactory{runnables: map[int]Runnable{
+			42: &controlledRunnable{result: AgentRunResult{IssueNumber: 42, Status: "success"}},
+			99: &controlledRunnable{result: AgentRunResult{IssueNumber: 99, Status: "success"}},
+		}}),
+	)
 
 	_, err := o.RunBatch(context.Background(), Request{
 		Issues:         []int{42, 99},
@@ -5639,15 +5692,16 @@ func TestRunBatch_ContinuationSkipsBaseBranchSync(t *testing.T) {
 		prs: map[string]*github.PR{"sandman/42-fix-bug": mergedPR("sandman/42-fix-bug", "")},
 	}
 	tracker := &baseBranchSyncTracker{}
-	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "trunk"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
-	o.runSessionOpts.baseBranchSync = func(repoPath, sourceBranch string) error {
-		tracker.mu.Lock()
-		tracker.syncCalls++
-		tracker.mu.Unlock()
-		return nil
-	}
-	o.sandboxFactory = &syncAwareSandboxFactory{tracker: tracker}
-	o.runnableFactory = &controlledRunnableFactory{runnables: map[int]Runnable{42: &controlledRunnable{result: AgentRunResult{IssueNumber: 42, Status: "success"}}}}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "trunk"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil,
+		WithSandboxFactory(&syncAwareSandboxFactory{tracker: tracker}),
+		WithRunnableFactory(&controlledRunnableFactory{runnables: map[int]Runnable{42: &controlledRunnable{result: AgentRunResult{IssueNumber: 42, Status: "success"}}}}),
+		WithRunSessionOpts(runSessionOptions{baseBranchSync: func(repoPath, sourceBranch string) error {
+			tracker.mu.Lock()
+			tracker.syncCalls++
+			tracker.mu.Unlock()
+			return nil
+		}}),
+	)
 
 	worktreePath := filepath.Join(".sandman", "worktrees", "sandman", "42-fix-bug")
 	if err := os.MkdirAll(worktreePath, 0755); err != nil {
@@ -5685,9 +5739,10 @@ func TestRunBatch_ChainedContinuationFlow(t *testing.T) {
 		"## Completed\nSecond continue.\n",
 	}}
 	log := &spyEventLog{}
-	o := NewOrchestrator(&fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}}, prs: map[string]*github.PR{branch: {Merged: true, HeadRefName: branch}}}, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "opencode", Sandbox: "worktree", WorktreeDir: filepath.Join(".sandman", "worktrees"), Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"opencode": {Preset: "opencode", Command: "true"}}}}, log)
-	o.sandboxFactory = &fakeSandboxFactory{sandbox: &fakeSandbox{workDir: worktreePath}}
-	o.runnableFactory = &continuationFlowRunnableFactory{state: state}
+	o := NewOrchestrator(&fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}}, prs: map[string]*github.PR{branch: {Merged: true, HeadRefName: branch}}}, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "opencode", Sandbox: "worktree", WorktreeDir: filepath.Join(".sandman", "worktrees"), Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"opencode": {Preset: "opencode", Command: "true"}}}}, log,
+		WithSandboxFactory(&fakeSandboxFactory{sandbox: &fakeSandbox{workDir: worktreePath}}),
+		WithRunnableFactory(&continuationFlowRunnableFactory{state: state}),
+	)
 
 	_, err := o.RunBatch(context.Background(), Request{Issues: []int{42}})
 	if err != nil {
@@ -5761,11 +5816,12 @@ func TestRunBatch_ModeContinueAgentSuccessUnmergedPR(t *testing.T) {
 	o := NewOrchestrator(&fakeGitHubClient{
 		issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}},
 		prs:    map[string]*github.PR{branch: {Number: 1, State: "open", Merged: false, HeadRefName: branch}},
-	}, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "opencode", Sandbox: "worktree", WorktreeDir: filepath.Join(".sandman", "worktrees"), Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"opencode": {Preset: "opencode", Command: "true"}}}}, log)
-	o.sandboxFactory = &fakeSandboxFactory{sandbox: &fakeSandbox{workDir: worktreePath}}
-	o.runnableFactory = &controlledRunnableFactory{runnables: map[int]Runnable{
-		42: &controlledRunnable{result: AgentRunResult{IssueNumber: 42, Status: "success"}},
-	}}
+	}, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "opencode", Sandbox: "worktree", WorktreeDir: filepath.Join(".sandman", "worktrees"), Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"opencode": {Preset: "opencode", Command: "true"}}}}, log,
+		WithSandboxFactory(&fakeSandboxFactory{sandbox: &fakeSandbox{workDir: worktreePath}}),
+		WithRunnableFactory(&controlledRunnableFactory{runnables: map[int]Runnable{
+			42: &controlledRunnable{result: AgentRunResult{IssueNumber: 42, Status: "success"}},
+		}}),
+	)
 
 	_, err := o.RunBatch(context.Background(), Request{
 		Issues:         []int{42},
@@ -5823,9 +5879,10 @@ func TestRunBatch_LogsModelOnStartedEvent(t *testing.T) {
 				prs: map[string]*github.PR{branch: {Number: 42, State: "closed", Merged: true, HeadRefName: branch}},
 			}
 			spyLog := &spyEventLog{}
-			o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "opencode", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"opencode": {Preset: "opencode", Model: tt.cfgModel}}}}, spyLog)
-			o.sandboxFactory = &fakeSandboxFactory{sandbox: &fakeSandbox{}}
-			o.runnableFactory = &controlledRunnableFactory{runnables: map[int]Runnable{42: &controlledRunnable{result: AgentRunResult{IssueNumber: 42, Status: "success"}}}}
+			o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "opencode", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"opencode": {Preset: "opencode", Model: tt.cfgModel}}}}, spyLog,
+				WithSandboxFactory(&fakeSandboxFactory{sandbox: &fakeSandbox{}}),
+				WithRunnableFactory(&controlledRunnableFactory{runnables: map[int]Runnable{42: &controlledRunnable{result: AgentRunResult{IssueNumber: 42, Status: "success"}}}}),
+			)
 
 			_, err := o.RunBatch(context.Background(), Request{Issues: []int{42}, Model: tt.reqModel})
 			if err != nil {
@@ -5935,11 +5992,12 @@ func TestRunBatch_DebugPrintsWorktreePathOnFailure(t *testing.T) {
 	sb := &fakeSandbox{workDir: "/tmp/sandman/42-fix-bug"}
 	factory := &fakeSandboxFactory{sandbox: sb}
 
-	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
-	o.sandboxFactory = factory
-	o.runnableFactory = &fakeRunnableFactory{
-		results: []AgentRunResult{{IssueNumber: 42, Status: "failure"}},
-	}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil,
+		WithSandboxFactory(factory),
+		WithRunnableFactory(&fakeRunnableFactory{
+			results: []AgentRunResult{{IssueNumber: 42, Status: "failure"}},
+		}),
+	)
 
 	result, err := o.RunBatch(context.Background(), Request{Issues: []int{42}})
 	if err == nil {
@@ -5964,11 +6022,12 @@ func TestRunBatch_RecordsWorktreePathOnFailure(t *testing.T) {
 	sb := &fakeSandbox{workDir: "/tmp/sandman/42-fix-bug"}
 	factory := &fakeSandboxFactory{sandbox: sb}
 
-	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
-	o.sandboxFactory = factory
-	o.runnableFactory = &fakeRunnableFactory{
-		results: []AgentRunResult{{IssueNumber: 42, Status: "failure"}},
-	}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil,
+		WithSandboxFactory(factory),
+		WithRunnableFactory(&fakeRunnableFactory{
+			results: []AgentRunResult{{IssueNumber: 42, Status: "failure"}},
+		}),
+	)
 
 	result, err := o.RunBatch(context.Background(), Request{Issues: []int{42}})
 	if err == nil {
@@ -6137,9 +6196,10 @@ func TestOrchestrator_ContainerMetadataDriftFailsBeforeBuild(t *testing.T) {
 		AgentProviders: map[string]config.Agent{
 			"opencode": {Command: "true"},
 		},
-	}}, nil)
-	o.containerRuntimeFactory = &fakeContainerRuntimeFactory{starter: starter}
-	o.sandboxFactory = &fakeSandboxFactory{sandbox: &fakeSandbox{}}
+	}}, nil,
+		WithContainerRuntimeFactory(&fakeContainerRuntimeFactory{starter: starter}),
+		WithSandboxFactory(&fakeSandboxFactory{sandbox: &fakeSandbox{}}),
+	)
 
 	_, err := o.RunBatch(context.Background(), Request{Issues: []int{42}, Sandbox: "podman"})
 	if err == nil {
@@ -6177,9 +6237,10 @@ func TestOrchestrator_MetadataFreeDockerfileSkipsDriftValidation(t *testing.T) {
 		AgentProviders: map[string]config.Agent{
 			"opencode": {Command: "true"},
 		},
-	}}, nil)
-	o.containerRuntimeFactory = &fakeContainerRuntimeFactory{starter: starter}
-	o.sandboxFactory = &fakeSandboxFactory{sandbox: &fakeSandbox{}}
+	}}, nil,
+		WithContainerRuntimeFactory(&fakeContainerRuntimeFactory{starter: starter}),
+		WithSandboxFactory(&fakeSandboxFactory{sandbox: &fakeSandbox{}}),
+	)
 
 	_, err := o.RunBatch(context.Background(), Request{Sandbox: "podman"})
 	if err != nil {
@@ -6325,9 +6386,10 @@ func TestRunBatch_PassesStartOptionsToContainerRuntime(t *testing.T) {
 	starter := &fakeContainerStarter{container: &fakeContainerForOrchestrator{id: "shared123"}}
 	factory := &fakeContainerRuntimeFactory{starter: starter}
 
-	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true", ConfigDirs: []string{"~/.config/test"}, ConfigFiles: []string{"~/.config/test.json"}}}}}, nil)
-	o.sandboxFactory = &fakeSandboxFactory{sandbox: &fakeSandbox{}}
-	o.containerRuntimeFactory = factory
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true", ConfigDirs: []string{"~/.config/test"}, ConfigFiles: []string{"~/.config/test.json"}}}}}, nil,
+		WithSandboxFactory(&fakeSandboxFactory{sandbox: &fakeSandbox{}}),
+		WithContainerRuntimeFactory(factory),
+	)
 
 	_, _ = o.RunBatch(context.Background(), Request{Issues: []int{42}, Sandbox: "docker"})
 
@@ -6404,10 +6466,11 @@ func TestRunBatch_ReusesIdleContainerWithinBatchAndStopsItAtEnd(t *testing.T) {
 		2: {IssueNumber: 2, Status: "success"},
 	}}
 
-	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
-	o.containerRuntimeFactory = factory
-	o.runnableFactory = runnables
-	o.sandboxFactory = &trackingSandboxFactory{}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil,
+		WithContainerRuntimeFactory(factory),
+		WithRunnableFactory(runnables),
+		WithSandboxFactory(&trackingSandboxFactory{}),
+	)
 
 	_, err := o.RunBatch(context.Background(), Request{Issues: []int{1, 2}, Sandbox: "docker", Parallel: 1, ContainerCapacity: 2, ContainerCapacitySet: true, MaxContainers: 0, MaxContainersSet: true})
 	if err != nil {
@@ -6455,10 +6518,11 @@ func TestRunBatch_ReplacesDeadContainerBeforeNextRun(t *testing.T) {
 		issue2: AgentRunResult{IssueNumber: 2, Status: "success"},
 	}
 
-	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
-	o.containerRuntimeFactory = factory
-	o.runnableFactory = runnables
-	o.sandboxFactory = &trackingSandboxFactory{}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil,
+		WithContainerRuntimeFactory(factory),
+		WithRunnableFactory(runnables),
+		WithSandboxFactory(&trackingSandboxFactory{}),
+	)
 
 	_, err := o.RunBatch(context.Background(), Request{Issues: []int{1, 2}, Sandbox: "docker", Parallel: 1, ContainerCapacity: 1, ContainerCapacitySet: true, MaxContainers: 0, MaxContainersSet: true})
 	if err != nil {
@@ -6510,10 +6574,11 @@ func TestRunBatch_MaxContainersAutoDoesNotOverprovisionWhileContainerStarts(t *t
 		2: {IssueNumber: 2, Status: "success"},
 	}}
 
-	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
-	o.containerRuntimeFactory = factory
-	o.runnableFactory = runnables
-	o.sandboxFactory = &trackingSandboxFactory{}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil,
+		WithContainerRuntimeFactory(factory),
+		WithRunnableFactory(runnables),
+		WithSandboxFactory(&trackingSandboxFactory{}),
+	)
 
 	_, err := o.RunBatch(context.Background(), Request{Issues: []int{1, 2}, Sandbox: "docker", Parallel: 2, ContainerCapacity: 2, ContainerCapacitySet: true, MaxContainers: 0, MaxContainersSet: true})
 	if err != nil {
@@ -6573,10 +6638,11 @@ func TestRunBatch_PrefersLeastLoadedContainerWhenReusingIdleCapacity(t *testing.
 		4: &controlledRunnable{result: AgentRunResult{IssueNumber: 4, Status: "success"}, started: started4, release: release4},
 	}}
 
-	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
-	o.containerRuntimeFactory = factory
-	o.runnableFactory = runnables
-	o.sandboxFactory = &trackingSandboxFactory{}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil,
+		WithContainerRuntimeFactory(factory),
+		WithRunnableFactory(runnables),
+		WithSandboxFactory(&trackingSandboxFactory{}),
+	)
 
 	errCh := make(chan error, 1)
 	go func() {
@@ -6647,10 +6713,11 @@ func TestRunBatch_QueuesEligibleRunsWhenAllContainerSlotsAreOccupied(t *testing.
 		2: &controlledRunnable{result: AgentRunResult{IssueNumber: 2, Status: "success"}, started: started2, release: release2},
 	}}
 
-	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
-	o.containerRuntimeFactory = factory
-	o.runnableFactory = runnables
-	o.sandboxFactory = &trackingSandboxFactory{}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil,
+		WithContainerRuntimeFactory(factory),
+		WithRunnableFactory(runnables),
+		WithSandboxFactory(&trackingSandboxFactory{}),
+	)
 
 	errCh := make(chan error, 1)
 	go func() {
@@ -6720,10 +6787,11 @@ func TestRunBatch_PreservesStartOrderWhenStartCapacityIsOne(t *testing.T) {
 		4: &controlledRunnable{result: AgentRunResult{IssueNumber: 4, Status: "success"}, started: started[4], release: releases[4]},
 	}}
 
-	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
-	o.containerRuntimeFactory = factory
-	o.runnableFactory = runnables
-	o.sandboxFactory = &trackingSandboxFactory{}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil,
+		WithContainerRuntimeFactory(factory),
+		WithRunnableFactory(runnables),
+		WithSandboxFactory(&trackingSandboxFactory{}),
+	)
 
 	errCh := make(chan error, 1)
 	go func() {
@@ -6781,10 +6849,11 @@ func TestRunBatch_StartFailureWakesQueuedWaiters(t *testing.T) {
 	starter := &fakeContainerStarter{startDelay: 50 * time.Millisecond, err: errors.New("start failed")}
 	factory := &fakeContainerRuntimeFactory{starter: starter}
 
-	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
-	o.containerRuntimeFactory = factory
-	o.runnableFactory = &fakeRunnableFactory{results: []AgentRunResult{{IssueNumber: 1, Status: "success"}, {IssueNumber: 2, Status: "success"}, {IssueNumber: 3, Status: "success"}}}
-	o.sandboxFactory = &trackingSandboxFactory{}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil,
+		WithContainerRuntimeFactory(factory),
+		WithRunnableFactory(&fakeRunnableFactory{results: []AgentRunResult{{IssueNumber: 1, Status: "success"}, {IssueNumber: 2, Status: "success"}, {IssueNumber: 3, Status: "success"}}}),
+		WithSandboxFactory(&trackingSandboxFactory{}),
+	)
 
 	errCh := make(chan error, 1)
 	go func() {
@@ -6827,10 +6896,11 @@ func TestRunBatch_ContainerCapacityOneStartsOneContainerPerConcurrentRun(t *test
 		delays:  []time.Duration{50 * time.Millisecond, 50 * time.Millisecond},
 	}
 
-	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
-	o.containerRuntimeFactory = factory
-	o.runnableFactory = runnables
-	o.sandboxFactory = &freshSandboxFactory{}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil,
+		WithContainerRuntimeFactory(factory),
+		WithRunnableFactory(runnables),
+		WithSandboxFactory(&freshSandboxFactory{}),
+	)
 
 	_, err := o.RunBatch(context.Background(), Request{Issues: []int{1, 2}, Sandbox: "docker", Parallel: 2, ContainerCapacity: 1, ContainerCapacitySet: true})
 	if err != nil {
@@ -6961,10 +7031,11 @@ func TestRunBatch_PreservesStartOrderWhenSkippedDependency(t *testing.T) {
 	}}
 	runnables.runnables[42] = &controlledRunnable{result: AgentRunResult{IssueNumber: 42, Status: "failure"}, started: startedRoot, release: releaseRoot}
 
-	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
-	o.containerRuntimeFactory = factory
-	o.runnableFactory = runnables
-	o.sandboxFactory = &trackingSandboxFactory{}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil,
+		WithContainerRuntimeFactory(factory),
+		WithRunnableFactory(runnables),
+		WithSandboxFactory(&trackingSandboxFactory{}),
+	)
 
 	errCh := make(chan error, 1)
 	go func() {
@@ -7019,10 +7090,11 @@ func TestRunBatch_PreservesStartOrderWhenSkippedDependentHasHigherTurn(t *testin
 	}}
 	runnables.runnables[42] = &controlledRunnable{result: AgentRunResult{IssueNumber: 42, Status: "failure"}, started: startedRoot, release: releaseRoot}
 
-	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
-	o.containerRuntimeFactory = factory
-	o.runnableFactory = runnables
-	o.sandboxFactory = &trackingSandboxFactory{}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil,
+		WithContainerRuntimeFactory(factory),
+		WithRunnableFactory(runnables),
+		WithSandboxFactory(&trackingSandboxFactory{}),
+	)
 
 	errCh := make(chan error, 1)
 	go func() {
@@ -7079,10 +7151,11 @@ func TestRunBatch_PreservesStartOrderWhenOutOfOrderSkips(t *testing.T) {
 	}}
 	runnables.runnables[42] = &controlledRunnable{result: AgentRunResult{IssueNumber: 42, Status: "failure"}, started: startedRoot, release: releaseRoot}
 
-	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
-	o.containerRuntimeFactory = factory
-	o.runnableFactory = runnables
-	o.sandboxFactory = &trackingSandboxFactory{}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil,
+		WithContainerRuntimeFactory(factory),
+		WithRunnableFactory(runnables),
+		WithSandboxFactory(&trackingSandboxFactory{}),
+	)
 
 	errCh := make(chan error, 1)
 	go func() {
@@ -7144,10 +7217,11 @@ func TestRunBatch_MaxContainersLimitRestrictsSharedContainerConcurrency(t *testi
 		3: &controlledRunnable{result: AgentRunResult{IssueNumber: 3, Status: "success"}, started: started3, release: release3},
 	}}
 
-	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
-	o.containerRuntimeFactory = factory
-	o.runnableFactory = runnables
-	o.sandboxFactory = &trackingSandboxFactory{}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil,
+		WithContainerRuntimeFactory(factory),
+		WithRunnableFactory(runnables),
+		WithSandboxFactory(&trackingSandboxFactory{}),
+	)
 
 	errCh := make(chan error, 1)
 	go func() {
@@ -7228,10 +7302,11 @@ func TestRunBatch_MaxContainersAutoSpawnsContainersForCapacity(t *testing.T) {
 		delays:  []time.Duration{50 * time.Millisecond, 50 * time.Millisecond, 50 * time.Millisecond, 50 * time.Millisecond},
 	}
 
-	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
-	o.containerRuntimeFactory = factory
-	o.runnableFactory = runnables
-	o.sandboxFactory = &freshSandboxFactory{}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil,
+		WithContainerRuntimeFactory(factory),
+		WithRunnableFactory(runnables),
+		WithSandboxFactory(&freshSandboxFactory{}),
+	)
 
 	_, err := o.RunBatch(context.Background(), Request{Issues: []int{1, 2, 3, 4}, Sandbox: "docker", Parallel: 4, ContainerCapacity: 2, ContainerCapacitySet: true, MaxContainers: 0, MaxContainersSet: true})
 	if err != nil {
@@ -7272,10 +7347,11 @@ func TestRunBatch_UsesConfigContainerSettingsWhenRequestUnset(t *testing.T) {
 	}
 	store := &fakeConfigStore{config: &config.Config{Agent: "test-agent", ContainerCapacity: 1, MaxContainers: 0, Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}
 
-	o := NewOrchestrator(client, &noopRenderer{}, store, nil)
-	o.containerRuntimeFactory = factory
-	o.runnableFactory = runnables
-	o.sandboxFactory = &freshSandboxFactory{}
+	o := NewOrchestrator(client, &noopRenderer{}, store, nil,
+		WithContainerRuntimeFactory(factory),
+		WithRunnableFactory(runnables),
+		WithSandboxFactory(&freshSandboxFactory{}),
+	)
 
 	_, err := o.RunBatch(context.Background(), Request{Issues: []int{1, 2}, Sandbox: "docker", Parallel: 2})
 	if err != nil {
@@ -7322,10 +7398,11 @@ func TestEffectiveParallel_AutoContainerMode(t *testing.T) {
 		delays: []time.Duration{50 * time.Millisecond, 50 * time.Millisecond, 50 * time.Millisecond, 50 * time.Millisecond},
 	}
 
-	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
-	o.containerRuntimeFactory = &fakeContainerRuntimeFactory{starter: &fakeContainerStarter{}}
-	o.runnableFactory = factory
-	o.sandboxFactory = &freshSandboxFactory{}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil,
+		WithContainerRuntimeFactory(&fakeContainerRuntimeFactory{starter: &fakeContainerStarter{}}),
+		WithRunnableFactory(factory),
+		WithSandboxFactory(&freshSandboxFactory{}),
+	)
 
 	_, err := o.RunBatch(context.Background(), Request{Issues: []int{1, 2, 3, 4}, Sandbox: "docker", Parallel: 4, ContainerCapacity: 2, ContainerCapacitySet: true, MaxContainers: 0, MaxContainersSet: true})
 	if err != nil {
@@ -7372,10 +7449,11 @@ func TestEffectiveParallel_ExplicitMaxContainers(t *testing.T) {
 		delays: []time.Duration{50 * time.Millisecond, 50 * time.Millisecond, 50 * time.Millisecond, 50 * time.Millisecond},
 	}
 
-	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
-	o.containerRuntimeFactory = &fakeContainerRuntimeFactory{starter: &fakeContainerStarter{}}
-	o.runnableFactory = factory
-	o.sandboxFactory = &freshSandboxFactory{}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil,
+		WithContainerRuntimeFactory(&fakeContainerRuntimeFactory{starter: &fakeContainerStarter{}}),
+		WithRunnableFactory(factory),
+		WithSandboxFactory(&freshSandboxFactory{}),
+	)
 
 	_, err := o.RunBatch(context.Background(), Request{Issues: []int{1, 2, 3, 4}, Sandbox: "docker", Parallel: 4, ContainerCapacity: 2, ContainerCapacitySet: true, MaxContainers: 2, MaxContainersSet: true})
 	if err != nil {
@@ -7425,10 +7503,11 @@ func TestEffectiveParallel_UnlimitedParallel(t *testing.T) {
 	}
 	factory := &controlledRunnableFactory{runnables: runnables}
 
-	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
-	o.containerRuntimeFactory = &fakeContainerRuntimeFactory{starter: &fakeContainerStarter{}}
-	o.runnableFactory = factory
-	o.sandboxFactory = &freshSandboxFactory{}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil,
+		WithContainerRuntimeFactory(&fakeContainerRuntimeFactory{starter: &fakeContainerStarter{}}),
+		WithRunnableFactory(factory),
+		WithSandboxFactory(&freshSandboxFactory{}),
+	)
 
 	errCh := make(chan error, 1)
 	go func() {
@@ -7489,10 +7568,11 @@ func TestEffectiveParallel_NoRegressionWhenParallelEqualsCapacity(t *testing.T) 
 		delays: []time.Duration{50 * time.Millisecond, 50 * time.Millisecond, 50 * time.Millisecond, 50 * time.Millisecond},
 	}
 
-	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
-	o.containerRuntimeFactory = &fakeContainerRuntimeFactory{starter: &fakeContainerStarter{}}
-	o.runnableFactory = factory
-	o.sandboxFactory = &freshSandboxFactory{}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil,
+		WithContainerRuntimeFactory(&fakeContainerRuntimeFactory{starter: &fakeContainerStarter{}}),
+		WithRunnableFactory(factory),
+		WithSandboxFactory(&freshSandboxFactory{}),
+	)
 
 	_, err := o.RunBatch(context.Background(), Request{Issues: []int{1, 2, 3, 4}, Sandbox: "docker", Parallel: 4, ContainerCapacity: 4, ContainerCapacitySet: true, MaxContainers: 0, MaxContainersSet: true})
 	if err != nil {
@@ -7548,10 +7628,11 @@ func TestRunBatch_ContainerCapacityZeroInConfigMeansUnlimited(t *testing.T) {
 	}
 	store := &fakeConfigStore{config: &config.Config{Agent: "test-agent", ContainerCapacity: 0, MaxContainers: 0, Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}
 
-	o := NewOrchestrator(client, &noopRenderer{}, store, nil)
-	o.containerRuntimeFactory = factory
-	o.runnableFactory = runnables
-	o.sandboxFactory = &freshSandboxFactory{}
+	o := NewOrchestrator(client, &noopRenderer{}, store, nil,
+		WithContainerRuntimeFactory(factory),
+		WithRunnableFactory(runnables),
+		WithSandboxFactory(&freshSandboxFactory{}),
+	)
 
 	_, err := o.RunBatch(context.Background(), Request{Issues: []int{1, 2, 3, 4, 5}, Sandbox: "docker", Parallel: 5})
 	if err != nil {
@@ -7607,10 +7688,11 @@ func TestRunBatch_ContainerCapacityZeroRequestMeansUnlimited(t *testing.T) {
 	}
 	store := &fakeConfigStore{config: &config.Config{Agent: "test-agent", ContainerCapacity: 2, MaxContainers: 0, Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}
 
-	o := NewOrchestrator(client, &noopRenderer{}, store, nil)
-	o.containerRuntimeFactory = factory
-	o.runnableFactory = runnables
-	o.sandboxFactory = &freshSandboxFactory{}
+	o := NewOrchestrator(client, &noopRenderer{}, store, nil,
+		WithContainerRuntimeFactory(factory),
+		WithRunnableFactory(runnables),
+		WithSandboxFactory(&freshSandboxFactory{}),
+	)
 
 	_, err := o.RunBatch(context.Background(), Request{Issues: []int{1, 2, 3, 4, 5}, Sandbox: "docker", Parallel: 5, ContainerCapacity: 0, ContainerCapacitySet: true})
 	if err != nil {
@@ -7634,10 +7716,11 @@ func TestRunBatch_WorktreeSandboxIgnoresContainerSettings(t *testing.T) {
 	factory := &fakeContainerRuntimeFactory{starter: starter}
 	runnables := &fakeRunnableFactory{results: []AgentRunResult{{IssueNumber: 42, Status: "success"}}}
 
-	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
-	o.containerRuntimeFactory = factory
-	o.runnableFactory = runnables
-	o.sandboxFactory = &freshSandboxFactory{}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil,
+		WithContainerRuntimeFactory(factory),
+		WithRunnableFactory(runnables),
+		WithSandboxFactory(&freshSandboxFactory{}),
+	)
 
 	// Worktree mode should ignore container-only settings, even when those values
 	// would be invalid for a container-backed batch.
@@ -7692,8 +7775,9 @@ func TestRunBatch_UsesNonInteractiveRunPath(t *testing.T) {
 		},
 	}
 
-	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
-	o.runnableFactory = factory
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil,
+		WithRunnableFactory(factory),
+	)
 
 	_, err := o.RunBatch(context.Background(), Request{Issues: []int{42}})
 	if err != nil {
@@ -7742,9 +7826,10 @@ func TestRunBatch_DefaultSandbox_ResolvesToPodman(t *testing.T) {
 	starter := &fakeContainerStarter{container: &fakeContainerForOrchestrator{id: "shared123"}}
 	factory := &fakeContainerRuntimeFactory{starter: starter}
 
-	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
-	o.sandboxFactory = &fakeSandboxFactory{sandbox: &fakeSandbox{}}
-	o.containerRuntimeFactory = factory
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil,
+		WithSandboxFactory(&fakeSandboxFactory{sandbox: &fakeSandbox{}}),
+		WithContainerRuntimeFactory(factory),
+	)
 
 	_, _ = o.RunBatch(context.Background(), Request{Issues: []int{42}})
 
@@ -7769,9 +7854,10 @@ func TestRunBatch_PodmanMissingFallsBackToDocker(t *testing.T) {
 	starter := &fakeContainerStarter{container: &fakeContainerForOrchestrator{id: "shared123"}}
 	factory := &fakeContainerRuntimeFactory{starter: starter}
 
-	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
-	o.sandboxFactory = &fakeSandboxFactory{sandbox: &fakeSandbox{}}
-	o.containerRuntimeFactory = factory
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil,
+		WithSandboxFactory(&fakeSandboxFactory{sandbox: &fakeSandbox{}}),
+		WithContainerRuntimeFactory(factory),
+	)
 
 	_, _ = o.RunBatch(context.Background(), Request{Issues: []int{42}})
 
@@ -7826,9 +7912,10 @@ func TestRunBatch_ReturnsErrorWhenBuildImageFails(t *testing.T) {
 	starter := &fakeContainerStarter{buildImageErr: errors.New("build failed")}
 	factory := &fakeContainerRuntimeFactory{starter: starter}
 
-	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
-	o.containerRuntimeFactory = factory
-	o.sandboxFactory = &fakeSandboxFactory{sandbox: &fakeSandbox{}}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil,
+		WithContainerRuntimeFactory(factory),
+		WithSandboxFactory(&fakeSandboxFactory{sandbox: &fakeSandbox{}}),
+	)
 
 	_, err := o.RunBatch(context.Background(), Request{Issues: []int{42}, Sandbox: "docker"})
 	if err == nil {
@@ -8139,9 +8226,10 @@ func TestRunBatch_FailsWhenNoGitIdentityResolved(t *testing.T) {
 		},
 	}
 
-	o := NewOrchestrator(client, &noopRenderer{}, store, nil)
 	var errBuf bytes.Buffer
-	o.errorLog = &errBuf
+	o := NewOrchestrator(client, &noopRenderer{}, store, nil,
+		WithErrorLog(&errBuf),
+	)
 	_, err := o.RunBatch(context.Background(), Request{Issues: []int{42}})
 	if err == nil {
 		t.Fatal("expected git identity resolution error")
@@ -8682,8 +8770,9 @@ func TestOrchestrator_EmitsRunQueuedEventWhenBlocked(t *testing.T) {
 		},
 	}
 
-	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog)
-	o.runnableFactory = factory
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog,
+		WithRunnableFactory(factory),
+	)
 
 	done := make(chan struct{})
 	go func() {
@@ -8752,8 +8841,9 @@ func TestOrchestrator_QueuedEventCarriesIssueTitle(t *testing.T) {
 		},
 	}
 
-	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog)
-	o.runnableFactory = factory
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog,
+		WithRunnableFactory(factory),
+	)
 
 	done := make(chan struct{})
 	go func() {
@@ -8814,8 +8904,9 @@ func TestOrchestrator_RunQueuedOnlyForWaitingIssues(t *testing.T) {
 		},
 	}
 
-	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog)
-	o.runnableFactory = factory
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog,
+		WithRunnableFactory(factory),
+	)
 
 	done := make(chan struct{})
 	go func() {
@@ -8858,22 +8949,23 @@ func TestOrchestrator_RunQueuedOnlyForWaitingIssues(t *testing.T) {
 func TestSyncBaseBranchSerializesAcrossParallelCalls(t *testing.T) {
 	var inFlight atomic.Int32
 	var maxInFlight atomic.Int32
-	o := NewOrchestrator(nil, nil, nil, nil)
-	o.runSessionOpts.baseBranchSync = func(repoPath, sourceBranch string) error {
-		cur := inFlight.Add(1)
-		defer inFlight.Add(-1)
-		for {
-			mx := maxInFlight.Load()
-			if cur <= mx {
-				break
+	o := NewOrchestrator(nil, nil, nil, nil,
+		WithRunSessionOpts(runSessionOptions{baseBranchSync: func(repoPath, sourceBranch string) error {
+			cur := inFlight.Add(1)
+			defer inFlight.Add(-1)
+			for {
+				mx := maxInFlight.Load()
+				if cur <= mx {
+					break
+				}
+				if maxInFlight.CompareAndSwap(mx, cur) {
+					break
+				}
 			}
-			if maxInFlight.CompareAndSwap(mx, cur) {
-				break
-			}
-		}
-		time.Sleep(5 * time.Millisecond)
-		return nil
-	}
+			time.Sleep(5 * time.Millisecond)
+			return nil
+		}}),
+	)
 
 	const callers = 32
 	var wg sync.WaitGroup
@@ -8905,8 +8997,9 @@ func TestSyncBaseBranchSerializesAgainstRealGitFetch(t *testing.T) {
 		runGit(t, dir, "push", "origin", "main")
 	}
 
-	o := NewOrchestrator(nil, nil, nil, nil)
-	o.runSessionOpts.baseBranchSync = nil
+	o := NewOrchestrator(nil, nil, nil, nil,
+		WithRunSessionOpts(runSessionOptions{baseBranchSync: nil}),
+	)
 
 	const callers = 16
 	var wg sync.WaitGroup
@@ -8946,9 +9039,10 @@ func TestRunBatch_LogsAbortedForQueuedRunOnCancel(t *testing.T) {
 		blockRunnable := &blockingRunnable{delayAfterCancel: 50 * time.Millisecond, running: make(chan struct{})}
 		spyLog := &spyEventLog{}
 
-		o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog)
-		o.sandboxFactory = factory
-		o.runnableFactory = &blockingRunnableFactory{runnable: blockRunnable}
+		o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog,
+			WithSandboxFactory(factory),
+			WithRunnableFactory(&blockingRunnableFactory{runnable: blockRunnable}),
+		)
 
 		ctx, cancel := context.WithCancel(context.Background())
 		done := make(chan struct{})
@@ -8994,8 +9088,9 @@ func TestRunBatch_LogsAbortedForQueuedRunOnCancel(t *testing.T) {
 		}
 		spyLog := &spyEventLog{}
 
-		o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog)
-		o.runnableFactory = factory
+		o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog,
+			WithRunnableFactory(factory),
+		)
 
 		ctx, cancel := context.WithCancel(context.Background())
 		done := make(chan struct{})
@@ -9038,9 +9133,10 @@ func TestRunBatch_CascadesAbortFromBlockerToDependents(t *testing.T) {
 	blockRunnable := &blockingRunnable{delayAfterCancel: 50 * time.Millisecond, running: make(chan struct{})}
 	spyLog := &spyEventLog{}
 
-	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog)
-	o.sandboxFactory = factory
-	o.runnableFactory = &blockingRunnableFactory{runnable: blockRunnable}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog,
+		WithSandboxFactory(factory),
+		WithRunnableFactory(&blockingRunnableFactory{runnable: blockRunnable}),
+	)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
@@ -9162,9 +9258,10 @@ func TestOrchestrator_AbortIssue_AlreadyFinishedReturnsErrNoSuchIssue(t *testing
 	}
 	factory := &fakeRunnableFactory{results: []AgentRunResult{{IssueNumber: 42, Status: "success"}}}
 
-	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
-	o.runnableFactory = factory
-	o.sandboxFactory = &fakeSandboxFactory{sandbox: &fakeSandbox{}}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil,
+		WithRunnableFactory(factory),
+		WithSandboxFactory(&fakeSandboxFactory{sandbox: &fakeSandbox{}}),
+	)
 
 	if _, err := o.RunBatch(context.Background(), Request{Issues: []int{42}}); err != nil {
 		t.Fatalf("RunBatch returned error: %v", err)
@@ -9192,9 +9289,10 @@ func TestOrchestrator_AbortIssue_ActiveRun(t *testing.T) {
 	blockRunnable := &blockingRunnable{delayAfterCancel: 50 * time.Millisecond, running: make(chan struct{})}
 	spyLog := &spyEventLog{}
 
-	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog)
-	o.sandboxFactory = factory
-	o.runnableFactory = &blockingRunnableFactory{runnable: blockRunnable}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog,
+		WithSandboxFactory(factory),
+		WithRunnableFactory(&blockingRunnableFactory{runnable: blockRunnable}),
+	)
 
 	abortReturned := make(chan error, 1)
 	done := make(chan struct{})
@@ -9305,9 +9403,10 @@ func TestOrchestrator_AbortIssue_ActiveRunContainer_ReachesAbortedTerminal(t *te
 
 	spyLog := &spyEventLog{}
 
-	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "docker", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog)
-	o.containerRuntimeFactory = factory
-	o.sandboxFactory = sbFactory
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "docker", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog,
+		WithContainerRuntimeFactory(factory),
+		WithSandboxFactory(sbFactory),
+	)
 
 	done := make(chan struct{})
 	go func() {
@@ -9397,9 +9496,10 @@ func TestOrchestrator_AbortIssue_ActiveRunWorktree_KillsSleepChild(t *testing.T)
 
 	spyLog := &spyEventLog{}
 
-	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog)
-	o.sandboxFactory = sbFactory
-	o.runnableFactory = factory
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog,
+		WithSandboxFactory(sbFactory),
+		WithRunnableFactory(factory),
+	)
 
 	done := make(chan struct{})
 	go func() {
@@ -9603,9 +9703,10 @@ func TestOrchestrator_AbortIssue_SiblingIsNotSignalled(t *testing.T) {
 	}
 	spyLog := &spyEventLog{}
 
-	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog)
-	o.sandboxFactory = twoSandboxFactory
-	o.runnableFactory = runFactory
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog,
+		WithSandboxFactory(twoSandboxFactory),
+		WithRunnableFactory(runFactory),
+	)
 
 	done := make(chan struct{})
 	go func() {
@@ -9721,9 +9822,10 @@ func TestOrchestrator_AbortIssue_QueuedRun(t *testing.T) {
 	}
 	spyLog := &spyEventLog{}
 
-	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog)
-	o.sandboxFactory = &fakeSandboxFactory{sandbox: &fakeSandbox{}}
-	o.runnableFactory = factory
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog,
+		WithSandboxFactory(&fakeSandboxFactory{sandbox: &fakeSandbox{}}),
+		WithRunnableFactory(factory),
+	)
 
 	done := make(chan struct{})
 	go func() {
@@ -9775,9 +9877,10 @@ func TestOrchestrator_AbortIssue_BlockedRun(t *testing.T) {
 	}
 	spyLog := &spyEventLog{}
 
-	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog)
-	o.sandboxFactory = &fakeSandboxFactory{sandbox: &fakeSandbox{}}
-	o.runnableFactory = factory
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog,
+		WithSandboxFactory(&fakeSandboxFactory{sandbox: &fakeSandbox{}}),
+		WithRunnableFactory(factory),
+	)
 
 	done := make(chan struct{})
 	go func() {
@@ -9931,8 +10034,9 @@ func TestRunBatch_CallsRestoreHostPathsAfterSuccessfulRun(t *testing.T) {
 	}
 	sb := &fakeSandbox{}
 	factory := &fakeSandboxFactory{sandbox: sb}
-	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
-	o.sandboxFactory = factory
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil,
+		WithSandboxFactory(factory),
+	)
 
 	_, err := o.RunBatch(context.Background(), Request{Issues: []int{42}})
 	if err != nil {
@@ -10445,9 +10549,10 @@ func TestRunBatch_PerRowRunIDsShareBatchPrefix(t *testing.T) {
 		},
 	}
 	spyLog := &spyEventLog{}
-	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog)
-	o.sandboxFactory = factory
-	o.runnableFactory = runnables
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog,
+		WithSandboxFactory(factory),
+		WithRunnableFactory(runnables),
+	)
 	oldBranchExists := branchExists
 	oldBranchValidationEnabled := branchValidationEnabled
 	branchExists = sandbox.BranchExists
@@ -10535,9 +10640,10 @@ func TestRunBatch_ContinuedRunReplaysPreviousRunID(t *testing.T) {
 		WorktreeDir:    ".sandman/worktrees",
 		Git:            config.GitConfig{BaseBranch: "main"},
 		AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}},
-	}}, spyLog)
-	o.sandboxFactory = factory
-	o.runnableFactory = runnables
+	}}, spyLog,
+		WithSandboxFactory(factory),
+		WithRunnableFactory(runnables),
+	)
 
 	prev := runIDFor(42)
 	_, err = o.RunBatch(context.Background(), Request{
@@ -10632,9 +10738,10 @@ func TestRunBatch_ReportsStartupPhases(t *testing.T) {
 		issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}},
 		prs:    map[string]*github.PR{branch: mergedPR(branch, "")},
 	}
-	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil)
-	o.sandboxFactory = &fakeSandboxFactory{sandbox: &fakeSandbox{}}
-	o.runnableFactory = &byIssueRunnableFactory{results: map[int]AgentRunResult{42: {IssueNumber: 42, Status: "success"}}}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, nil,
+		WithSandboxFactory(&fakeSandboxFactory{sandbox: &fakeSandbox{}}),
+		WithRunnableFactory(&byIssueRunnableFactory{results: map[int]AgentRunResult{42: {IssueNumber: 42, Status: "success"}}}),
+	)
 	var output bytes.Buffer
 
 	if _, err := o.RunBatch(context.Background(), Request{Issues: []int{42}, PhaseWriter: &output}); err != nil {
