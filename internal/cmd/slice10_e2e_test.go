@@ -381,7 +381,7 @@ func TestSlice10_PromptOnlyBatchIdentity(t *testing.T) {
 		t.Fatalf("prompt-only no-userid error: %v\noutput:\n%s", err, buf.String())
 	}
 
-	wantNoID := spyNoID.req.BatchShortID + "-" + spyNoID.req.BatchTS + "-prompt"
+	wantNoID := spyNoID.req.BatchTS + "-" + spyNoID.req.BatchShortID + "-prompt"
 	idx, err := batchindex.Load(filepath.Join(dir, ".sandman", "batches.json"))
 	if err != nil {
 		t.Fatalf("load batches index: %v", err)
@@ -418,7 +418,7 @@ func TestSlice10_PromptOnlyBatchIdentity(t *testing.T) {
 		t.Fatalf("prompt-only with-userid error: %v\noutput:\n%s", err, buf2.String())
 	}
 
-	wantWithID := spyWithID.req.BatchShortID + "-" + spyWithID.req.BatchTS + "-prompt-myid"
+	wantWithID := spyWithID.req.BatchTS + "-" + spyWithID.req.BatchShortID + "-prompt-myid"
 	idx2, err := batchindex.Load(filepath.Join(dir, ".sandman", "batches.json"))
 	if err != nil {
 		t.Fatalf("load batches index: %v", err)
