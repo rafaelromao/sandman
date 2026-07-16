@@ -91,7 +91,7 @@ When writing or updating tests:
 
 Skills under `internal/skill/sandman/` describe how coding agents work with the **user-facing** concepts (`.sandman/` state files, public CLI, review commands, worktrees, ADRs). They must not reference Sandman's **internals** — Go package paths under `internal/`, Go type and function names like `processPR` / `MarkSeen` / `launchReview`, or other implementation details that may shift.
 
-Skills also must not mention the GitHub issue tracker directly (issue numbers, kanban labels, or triage vocabulary). When a skill needs to refer to a project decision, link to the relevant ADR (`docs/adr/`) or `CONTEXT.md` instead; when it needs to refer to the user's work item, describe it behaviorally ("the implementor's open work item") rather than by tracker coordinates.
+Skills also must not mention the GitHub issue tracker directly (issue numbers, kanban labels, or triage vocabulary). When a skill needs to refer to a project decision or when it needs to refer to the user's work item, describe it behaviorally ("the implementor's open work item") rather than by tracker coordinates or references to ADR (`docs/adr/`) or `CONTEXT.md`; These skills are also going to be used independently.
 
 Concretely: a contributor reviewing a skill should be able to read it without knowing Sandman's package layout or workflow automation. If a paragraph needs re-reading after the user-facing vocab is internalized, it shouldn't name internals.
 
