@@ -15,6 +15,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/events"
 	"github.com/rafaelromao/sandman/internal/github"
+	"github.com/rafaelromao/sandman/internal/prompt"
 	"github.com/rafaelromao/sandman/internal/testenv"
 )
 
@@ -63,6 +64,8 @@ func TestCharacterizationNet(t *testing.T) {
 	fixtures := []charNetFixture{
 		{name: "issue-driven-success", setup: charNetIssueSuccess},
 		{name: "issue-driven-abort-ErrAborted", setup: charNetIssueAbort},
+		{name: "prompt-only-success", setup: charNetPromptOnlySuccess},
+		{name: "prompt-only-abort-ErrAborted", setup: charNetPromptOnlyAbort},
 	}
 	for _, f := range fixtures {
 		t.Run(f.name, func(t *testing.T) {
@@ -154,6 +157,91 @@ func charNetIssueAbort(t *testing.T) (context.Context, Request, *Orchestrator, *
 		cancel()
 	}()
 	req := Request{Issues: []int{42}, RunTS: orchTestRunTS, RunShortID: orchTestRunShortID}
+	return ctx, req, o, el, dir
+}
+
+// charNetPromptOnlyBase builds the prompt-only half of the net: an isolated
+// git repo, a JSONL event log, an Orchestrator with a prompt-only fake
+// sandbox/runnable. Prompt-only fixtures reuse the prompt-only RunID minting
+// surface (BatchTS + BatchShortID) and force a fixed PromptConfig.Branch so
+// `promptOnlyBranch` does not fall through to `time.Now().UnixNano()`.
+func charNetPromptOnlyBase(t *testing.T, opts ...OrchestratorOpt) (*Orchestrator, *events.JSONLLogger, string) {
+	t.Helper()
+	dir := testenv.MkdirShort(t, "charnet-")
+	t.Chdir(dir)
+	initGitRepo(t, dir)
+
+	el := &events.JSONLLogger{Path: filepath.Join(dir, "events.jsonl")}
+	client := &fakeGitHubClient{}
+	cfg := &config.Config{
+		Agent:       "test-agent",
+		Sandbox:     "worktree",
+		WorktreeDir: ".sandman/worktrees",
+		Git:         config.GitConfig{BaseBranch: "main"},
+		AgentProviders: map[string]config.Agent{
+			"test-agent": {Command: "true"},
+		},
+	}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: cfg}, el,
+		append([]OrchestratorOpt{
+			WithSandboxFactory(&fakeSandboxFactory{sandbox: &fakeSandbox{workDir: filepath.Join(dir, "wt", "prompt-only")}}),
+		}, opts...)...,
+	)
+	return o, el, dir
+}
+
+func charNetPromptOnlySuccess(t *testing.T) (context.Context, Request, *Orchestrator, *events.JSONLLogger, string) {
+	o, el, dir := charNetPromptOnlyBase(t, WithRunnableFactory(&fakeRunnableFactory{results: []AgentRunResult{
+		{Status: "success"},
+	}}))
+	req := Request{
+		Issues:       nil,
+		BatchTS:      orchTestRunTS,
+		BatchShortID: orchTestRunShortID,
+		PromptConfig: prompt.RenderConfig{
+			Branch:     "sandman/test-prompt-only",
+			TaskPrompt: "charnet prompt-only success",
+		},
+	}
+	return context.Background(), req, o, el, dir
+}
+
+func charNetPromptOnlyAbort(t *testing.T) (context.Context, Request, *Orchestrator, *events.JSONLLogger, string) {
+	t.Helper()
+	dir := testenv.MkdirShort(t, "charnet-")
+	t.Chdir(dir)
+	initGitRepo(t, dir)
+
+	el := &events.JSONLLogger{Path: filepath.Join(dir, "events.jsonl")}
+	client := &fakeGitHubClient{}
+	cfg := &config.Config{
+		Agent:       "test-agent",
+		Sandbox:     "worktree",
+		WorktreeDir: ".sandman/worktrees",
+		Git:         config.GitConfig{BaseBranch: "main"},
+		AgentProviders: map[string]config.Agent{
+			"test-agent": {Command: "true"},
+		},
+	}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: cfg}, el,
+		WithSandboxFactory(&fakeSandboxFactory{sandbox: &fakeSandbox{process: makeFakeProcess(), workDir: filepath.Join(dir, "wt", "prompt-only")}}),
+		WithRunnableFactory(&blockingRunnableFactory{runnable: &blockingRunnable{delayAfterCancel: 100 * time.Millisecond}}),
+	)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		cancel()
+	}()
+	req := Request{
+		Issues:       nil,
+		BatchTS:      orchTestRunTS,
+		BatchShortID: orchTestRunShortID,
+		PromptConfig: prompt.RenderConfig{
+			Branch:     "sandman/test-prompt-only",
+			TaskPrompt: "charnet prompt-only abort",
+		},
+	}
 	return ctx, req, o, el, dir
 }
 
