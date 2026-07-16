@@ -31,6 +31,10 @@ type Dependencies struct {
 	GitRunner        gitRunner
 	RunActivityProbe runActivityProbe
 	TempCleaner      TempCleaner
+	// Version returns the build/version string for `sandman --version` and
+	// the `version` subcommand. Production wires the three-layer fallback
+	// chain from cmd/sandman/main.go; tests inject a deterministic value.
+	Version func() string
 	// RepoRoot is the repository root the CLI commands operate on. When
 	// empty, commands fall back to the current working directory, matching
 	// the pre-Layout behaviour for callers that have not migrated.
@@ -67,6 +71,12 @@ execution, and event logging for automated coding workflows.`,
 	root.AddCommand(NewReviewCmd(deps))
 	root.AddCommand(NewArchiveCmd(deps))
 	root.AddCommand(NewStrandedCmd(deps))
+
+	if deps.Version != nil {
+		root.Version = deps.Version()
+		root.SetVersionTemplate("sandman {{.Version}}\n")
+		root.AddCommand(NewVersionCmd(deps.Version))
+	}
 
 	return root
 }
