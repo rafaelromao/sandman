@@ -8880,7 +8880,7 @@ func TestSyncBaseBranchSerializesAcrossParallelCalls(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if err := o.syncBaseBranch(".", "main"); err != nil {
+			if err := syncBaseBranch(o.runSessionOpts, o.sandboxFactory, ".", "main"); err != nil {
 				t.Errorf("sync failed: %v", err)
 			}
 		}()
@@ -8914,7 +8914,7 @@ func TestSyncBaseBranchSerializesAgainstRealGitFetch(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if err := o.syncBaseBranch(".", "main"); err != nil {
+			if err := syncBaseBranch(o.runSessionOpts, o.sandboxFactory, ".", "main"); err != nil {
 				errs <- err
 			}
 		}()
@@ -9821,7 +9821,7 @@ func TestOrchestrator_AbortIssue_BlockedRun(t *testing.T) {
 func TestRunSession_ApplyOverrideAndIdentity_CallsMethodsDirectlyOnSandbox(t *testing.T) {
 	wt := &fakeSandbox{}
 	s := &runSession{
-		o:                &Orchestrator{errorLog: io.Discard},
+		deps:             runDeps{errorLog: io.Discard},
 		mode:             ModeOverride,
 		issueNumber:      42,
 		identityResolver: noopIdentityResolver(),
@@ -9847,7 +9847,7 @@ func TestRunSession_ApplyOverrideAndIdentity_CallsMethodsDirectlyOnSandbox(t *te
 func TestRunSession_ApplyOverrideAndIdentity_PropagatesOverrideFalse(t *testing.T) {
 	wt := &fakeSandbox{}
 	s := &runSession{
-		o:                &Orchestrator{errorLog: io.Discard},
+		deps:             runDeps{errorLog: io.Discard},
 		mode:             ModeFresh,
 		issueNumber:      7,
 		identityResolver: noopIdentityResolver(),
@@ -9873,7 +9873,7 @@ func TestRunSession_ApplyOverrideAndIdentity_PropagatesOverrideFalse(t *testing.
 func TestRunSession_ApplyOverrideAndIdentity_PropagatesContinueTrue(t *testing.T) {
 	wt := &fakeSandbox{}
 	s := &runSession{
-		o:                &Orchestrator{errorLog: io.Discard},
+		deps:             runDeps{errorLog: io.Discard},
 		mode:             ModeContinue,
 		issueNumber:      42,
 		identityResolver: noopIdentityResolver(),
@@ -9894,7 +9894,7 @@ func TestRunSession_ApplyOverrideAndIdentity_PropagatesContinueTrue(t *testing.T
 func TestRunSession_ApplyOverrideAndIdentity_PropagatesContinueFalse(t *testing.T) {
 	wt := &fakeSandbox{}
 	s := &runSession{
-		o:                &Orchestrator{errorLog: io.Discard},
+		deps:             runDeps{errorLog: io.Discard},
 		mode:             ModeFresh,
 		issueNumber:      7,
 		identityResolver: noopIdentityResolver(),
@@ -9951,7 +9951,7 @@ func TestOrchestrator_ResetRetryBranch_Command(t *testing.T) {
 	sb := &fakeSandbox{}
 	o := &Orchestrator{errorLog: io.Discard}
 
-	err := o.resetRetryBranch(ctx, sb, "sandman/42-fix-bug", "main")
+	err := resetRetryBranch(o.runSessionOpts, ctx, sb, "sandman/42-fix-bug", "main")
 	if err != nil {
 		t.Fatalf("resetRetryBranch returned error: %v", err)
 	}
@@ -10137,7 +10137,7 @@ func TestReconcileWorktreeBranch_NoOpWhenCorrect(t *testing.T) {
 
 	var errorBuf bytes.Buffer
 	s := &runSession{
-		o:        &Orchestrator{errorLog: &errorBuf},
+		deps:     runDeps{errorLog: &errorBuf},
 		branches: map[int]string{42: branch},
 	}
 
@@ -10164,7 +10164,7 @@ func TestReconcileWorktreeBranch_RestoresBranch(t *testing.T) {
 
 	var errorBuf bytes.Buffer
 	s := &runSession{
-		o:        &Orchestrator{errorLog: &errorBuf},
+		deps:     runDeps{errorLog: &errorBuf},
 		branches: map[int]string{42: branch},
 	}
 
@@ -10195,7 +10195,7 @@ func TestReconcileWorktreeBranch_LogsAndContinuesOnMissingBranch(t *testing.T) {
 
 	var errorBuf bytes.Buffer
 	s := &runSession{
-		o:        &Orchestrator{errorLog: &errorBuf},
+		deps:     runDeps{errorLog: &errorBuf},
 		branches: map[int]string{42: branch},
 	}
 
@@ -10229,7 +10229,7 @@ func TestReconcileWorktreeBranch_RestoresFromDetachedHead(t *testing.T) {
 
 	var errorBuf bytes.Buffer
 	s := &runSession{
-		o:        &Orchestrator{errorLog: &errorBuf},
+		deps:     runDeps{errorLog: &errorBuf},
 		branches: map[int]string{42: branch},
 	}
 
@@ -10265,7 +10265,7 @@ func TestReconcileWorktreeBranch_LogsAndContinuesOnFailure(t *testing.T) {
 
 	var errorBuf bytes.Buffer
 	s := &runSession{
-		o:        &Orchestrator{errorLog: &errorBuf},
+		deps:     runDeps{errorLog: &errorBuf},
 		branches: map[int]string{42: branch},
 	}
 
@@ -10297,7 +10297,7 @@ func TestReconcileWorktreeBranch_LogsAndSkipsOnBrokenWorktree(t *testing.T) {
 
 	var errorBuf bytes.Buffer
 	s := &runSession{
-		o:        &Orchestrator{errorLog: &errorBuf},
+		deps:     runDeps{errorLog: &errorBuf},
 		branches: map[int]string{42: branch},
 	}
 
