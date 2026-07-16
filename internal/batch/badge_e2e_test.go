@@ -136,9 +136,9 @@ func badgeE2EBuildOrchestrator(t *testing.T, lister PRLister, runner SandmanRunn
 		cfgStore,
 		nil,
 		WithBadgeHooker(NewBadgeHookerWith(runner, lister, controlReader, controlWriter)),
+		WithRunnableFactory(&fakeRunnableFactory{results: runResults}),
+		WithSandboxFactory(&fakeSandboxFactory{sandbox: &fakeSandbox{}}),
 	)
-	o.runnableFactory = &fakeRunnableFactory{results: runResults}
-	o.sandboxFactory = &fakeSandboxFactory{sandbox: &fakeSandbox{}}
 	return o
 }
 

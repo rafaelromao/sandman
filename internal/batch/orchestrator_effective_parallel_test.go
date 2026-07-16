@@ -175,10 +175,11 @@ func TestRunBatch_StartGateUsesEffectiveParallelNotRawParallel(t *testing.T) {
 		MaxContainers:     0,
 		Git:               config.GitConfig{BaseBranch: "main"},
 		AgentProviders:    map[string]config.Agent{"test-agent": {Command: "true"}},
-	}}, nil)
-	o.containerRuntimeFactory = &fakeContainerRuntimeFactory{starter: &fakeContainerStarter{}}
-	o.runnableFactory = factory
-	o.sandboxFactory = &freshSandboxFactory{}
+	}}, nil,
+		WithContainerRuntimeFactory(&fakeContainerRuntimeFactory{starter: &fakeContainerStarter{}}),
+		WithRunnableFactory(factory),
+		WithSandboxFactory(&freshSandboxFactory{}),
+	)
 
 	_, err := o.RunBatch(context.Background(), Request{
 		Issues:               []int{1, 2, 3, 4},
@@ -243,10 +244,11 @@ func TestRunBatch_ParallelEightCapacityFourAutoMode_PeakAndContainerCount(t *tes
 		MaxContainers:     0,
 		Git:               config.GitConfig{BaseBranch: "main"},
 		AgentProviders:    map[string]config.Agent{"test-agent": {Command: "true"}},
-	}}, nil)
-	o.containerRuntimeFactory = &fakeContainerRuntimeFactory{starter: starter}
-	o.runnableFactory = factory
-	o.sandboxFactory = &freshSandboxFactory{}
+	}}, nil,
+		WithContainerRuntimeFactory(&fakeContainerRuntimeFactory{starter: starter}),
+		WithRunnableFactory(factory),
+		WithSandboxFactory(&freshSandboxFactory{}),
+	)
 
 	_, err := o.RunBatch(context.Background(), Request{
 		Issues:               []int{1, 2, 3, 4, 5, 6, 7, 8},
@@ -442,10 +444,11 @@ func TestBatch_StartOrderPreservedWithSerialStart(t *testing.T) {
 		MaxContainers:     0,
 		Git:               config.GitConfig{BaseBranch: "main"},
 		AgentProviders:    map[string]config.Agent{"test-agent": {Command: "true"}},
-	}}, nil)
-	o.containerRuntimeFactory = &fakeContainerRuntimeFactory{starter: &fakeContainerStarter{}}
-	o.runnableFactory = factory
-	o.sandboxFactory = &freshSandboxFactory{}
+	}}, nil,
+		WithContainerRuntimeFactory(&fakeContainerRuntimeFactory{starter: &fakeContainerStarter{}}),
+		WithRunnableFactory(factory),
+		WithSandboxFactory(&freshSandboxFactory{}),
+	)
 
 	done := make(chan struct{})
 	go func() {
@@ -518,10 +521,11 @@ func TestBatch_StartOrderNotSerialisedWithParallelStart(t *testing.T) {
 		MaxContainers:     1,
 		Git:               config.GitConfig{BaseBranch: "main"},
 		AgentProviders:    map[string]config.Agent{"test-agent": {Command: "true"}},
-	}}, nil)
-	o.containerRuntimeFactory = &fakeContainerRuntimeFactory{starter: &fakeContainerStarter{}}
-	o.runnableFactory = factory
-	o.sandboxFactory = &freshSandboxFactory{}
+	}}, nil,
+		WithContainerRuntimeFactory(&fakeContainerRuntimeFactory{starter: &fakeContainerStarter{}}),
+		WithRunnableFactory(factory),
+		WithSandboxFactory(&freshSandboxFactory{}),
+	)
 
 	done := make(chan struct{})
 	go func() {

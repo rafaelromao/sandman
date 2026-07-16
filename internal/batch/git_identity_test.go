@@ -179,7 +179,7 @@ func TestSkipResolveShortCircuits(t *testing.T) {
 
 func TestNewBatchIdentityResolverSkipsWithSandboxFactory(t *testing.T) {
 	t.Parallel()
-	o := &Orchestrator{sandboxFactory: &fakeSandboxFactory{}}
+	o := NewOrchestrator(nil, nil, nil, nil, WithSandboxFactory(&fakeSandboxFactory{}))
 	r := newBatchIdentityResolver(o, ".")
 	if !r.skipResolve {
 		t.Fatal("expected skipResolve=true when sandboxFactory is set")
@@ -188,7 +188,7 @@ func TestNewBatchIdentityResolverSkipsWithSandboxFactory(t *testing.T) {
 
 func TestNewBatchIdentityResolverSkipsWithRunnableFactory(t *testing.T) {
 	t.Parallel()
-	o := &Orchestrator{runnableFactory: &fakeRunnableFactory{}}
+	o := NewOrchestrator(nil, nil, nil, nil, WithRunnableFactory(&fakeRunnableFactory{}))
 	r := newBatchIdentityResolver(o, ".")
 	if !r.skipResolve {
 		t.Fatal("expected skipResolve=true when runnableFactory is set")
@@ -197,7 +197,7 @@ func TestNewBatchIdentityResolverSkipsWithRunnableFactory(t *testing.T) {
 
 func TestNewBatchIdentityResolverSkipsWithContainerRuntimeFactory(t *testing.T) {
 	t.Parallel()
-	o := &Orchestrator{containerRuntimeFactory: &fakeContainerRuntimeFactory{}}
+	o := NewOrchestrator(nil, nil, nil, nil, WithContainerRuntimeFactory(&fakeContainerRuntimeFactory{}))
 	r := newBatchIdentityResolver(o, ".")
 	if !r.skipResolve {
 		t.Fatal("expected skipResolve=true when containerRuntimeFactory is set")
@@ -206,7 +206,7 @@ func TestNewBatchIdentityResolverSkipsWithContainerRuntimeFactory(t *testing.T) 
 
 func TestNewBatchIdentityResolverRealWithoutFactories(t *testing.T) {
 	t.Parallel()
-	o := &Orchestrator{}
+	o := NewOrchestrator(nil, nil, nil, nil)
 	r := newBatchIdentityResolver(o, "/some/repo")
 	if r.skipResolve {
 		t.Fatal("expected skipResolve=false when no factories are set")

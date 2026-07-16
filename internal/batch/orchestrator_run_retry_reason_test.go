@@ -11,7 +11,6 @@ import (
 	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/events"
 	"github.com/rafaelromao/sandman/internal/github"
-	"github.com/rafaelromao/sandman/internal/paths"
 	"github.com/rafaelromao/sandman/internal/prompt"
 	"github.com/rafaelromao/sandman/internal/sandbox"
 )
@@ -91,30 +90,41 @@ func TestRunSingle_EmitsRunRetryWithAgentFailedReason(t *testing.T) {
 	pr := &github.PR{Number: 17, State: "closed", Merged: false, HeadRefName: branch}
 	eventsPath := filepath.Join(t.TempDir(), "events.jsonl")
 	eventLog := &events.JSONLLogger{Path: eventsPath}
-	o := &Orchestrator{
-		githubClient: &fakeGitHubClient{
+	o := NewOrchestrator(
+		&fakeGitHubClient{
 			issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}},
 			prs:    map[string]*github.PR{branch: pr},
 		},
-		renderer: &retryRenderer{result: "rendered prompt"},
-		errorLog: io.Discard,
-		layout:   paths.NewLayout(&config.Config{}, workDir),
-		eventLog: eventLog,
-		sandboxFactory: &retrySandboxFactory{
-			sandbox: rtSandbox,
-		},
-		runnableFactory: &fakeRunnableFactory{results: []AgentRunResult{
+		&retryRenderer{result: "rendered prompt"},
+		nil,
+		eventLog,
+		WithErrorLog(io.Discard),
+		WithSandboxFactory(&retrySandboxFactory{sandbox: rtSandbox}),
+		WithRunnableFactory(&fakeRunnableFactory{results: []AgentRunResult{
 			{IssueNumber: 42, Status: "failure", Branch: branch},
 			{IssueNumber: 42, Status: "failure", Branch: branch},
 			{IssueNumber: 42, Status: "success", Branch: branch},
-		}},
-	}
-	o.runSessionOpts.retryReset = func(ctx context.Context, sb sandbox.Sandbox, branch, baseBranch string) error {
-		return nil
-	}
+		}}),
+		WithRunSessionOpts(runSessionOptions{retryReset: func(ctx context.Context, sb sandbox.Sandbox, branch, baseBranch string) error {
+			return nil
+		}}),
+	)
 
 	cfg := &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}}
-	_, started := o.runSingle(context.Background(), context.Background(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, false, nil, noopIdentityResolver(), map[int]string{42: branch}, prompt.RenderConfig{}, nil, &retrySandboxFactory{sandbox: rtSandbox}, nil, false, "main", nil, 0, 0, 2, 0, "", 0, false, 0, false, false, false, "", "")
+	bc := BatchConfig{
+		Cfg:              cfg,
+		AgentName:        "opencode",
+		AgentCfg:         config.Agent{Command: "echo hi"},
+		IdentityResolver: noopIdentityResolver(),
+		Retries:          2,
+	}
+	row := RowSpec{
+		IssueNumber: 42,
+		Mode:        ModeFresh,
+		Branches:    map[int]string{42: branch},
+		BaseBranch:  "main",
+	}
+	_, started := o.newRunExecutor(context.Background(), bc, &retrySandboxFactory{sandbox: rtSandbox}, nil).Execute(context.Background(), row)
 	if !started {
 		t.Fatal("expected run to start")
 	}
@@ -176,20 +186,35 @@ func TestRunSingle_EmitsRunRetryWithAgentStalledReason(t *testing.T) {
 		Git:            config.GitConfig{BaseBranch: "main"},
 		AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}},
 	}
-	o := &Orchestrator{
-		githubClient:          client,
-		renderer:              &noopRenderer{},
-		configStore:           &fakeConfigStore{config: cfg},
-		eventLog:              eventLog,
-		sandboxFactory:        factory,
-		runnableFactory:       runFactory,
-		heartbeatTickInterval: heartbeatTestTick,
-		errorLog:              io.Discard,
-		layout:                paths.NewLayout(cfg, workDir),
-	}
-	o.runSessionOpts.killTimeout = 50 * time.Millisecond
+	o := NewOrchestrator(
+		client,
+		&noopRenderer{},
+		&fakeConfigStore{config: cfg},
+		eventLog,
+		WithSandboxFactory(factory),
+		WithRunnableFactory(runFactory),
+		WithHeartbeatTickInterval(heartbeatTestTick),
+		WithErrorLog(io.Discard),
+		WithRunSessionOpts(runSessionOptions{killTimeout: 50 * time.Millisecond}),
+	)
 
-	_, started := o.runSingle(context.Background(), context.Background(), heartbeatTestIssueNum, cfg, "test-agent", config.Agent{Command: "true"}, false, nil, noopIdentityResolver(), map[int]string{heartbeatTestIssueNum: branch}, prompt.RenderConfig{}, nil, factory, nil, false, "main", nil, 0, 0, 1, heartbeatTestIdle, "", 0, false, 0, false, false, false, "260622105532", "68cb")
+	bc := BatchConfig{
+		Cfg:              cfg,
+		AgentName:        "test-agent",
+		AgentCfg:         config.Agent{Command: "true"},
+		IdentityResolver: noopIdentityResolver(),
+		Retries:          1,
+		RunIdleTimeout:   heartbeatTestIdle,
+	}
+	row := RowSpec{
+		IssueNumber: heartbeatTestIssueNum,
+		Mode:        ModeFresh,
+		Branches:    map[int]string{heartbeatTestIssueNum: branch},
+		BaseBranch:  "main",
+		RunTS:       "260622105532",
+		RunShortID:  "68cb",
+	}
+	_, started := o.newRunExecutor(context.Background(), bc, factory, nil).Execute(context.Background(), row)
 	if !started {
 		t.Fatal("expected run to start")
 	}
@@ -242,22 +267,21 @@ func TestRunSingle_EmitsRunRetryWithKillTimeoutReasonOnParentCtxCancel(t *testin
 		Git:            config.GitConfig{BaseBranch: "main"},
 		AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}},
 	}
-	o := &Orchestrator{
-		renderer: &retryRenderer{result: "rendered prompt"},
-		errorLog: io.Discard,
-		layout:   paths.NewLayout(cfg, workDir),
-		eventLog: eventLog,
-		sandboxFactory: &retrySandboxFactory{
-			sandbox: rtSandbox,
-		},
-	}
-	o.runSessionOpts.retryReset = func(ctx context.Context, sb sandbox.Sandbox, branch, baseBranch string) error {
-		return nil
-	}
 	// Override the process so the first runnable can be killed.
 	first := &ctxCancelRunnable{proc: proc}
 	second := &fakeRunnable{result: AgentRunResult{Status: "success", Branch: branch}}
-	o.runnableFactory = &dualRunnableFactory{first: first, second: second}
+	o := NewOrchestrator(
+		nil,
+		&retryRenderer{result: "rendered prompt"},
+		nil,
+		eventLog,
+		WithErrorLog(io.Discard),
+		WithSandboxFactory(&retrySandboxFactory{sandbox: rtSandbox}),
+		WithRunnableFactory(&dualRunnableFactory{first: first, second: second}),
+		WithRunSessionOpts(runSessionOptions{retryReset: func(ctx context.Context, sb sandbox.Sandbox, branch, baseBranch string) error {
+			return nil
+		}}),
+	)
 
 	parentCtx, cancelParent := context.WithCancel(context.Background())
 	runCtx, cancelRun := context.WithCancel(parentCtx)
@@ -272,7 +296,21 @@ func TestRunSingle_EmitsRunRetryWithKillTimeoutReasonOnParentCtxCancel(t *testin
 	var started bool
 	go func() {
 		defer close(done)
-		result, started = o.runPromptOnlySingle(runCtx, cfg, "opencode", config.Agent{Command: "echo hi"}, noopIdentityResolver(), branch, prompt.RenderConfig{}, nil, &retrySandboxFactory{sandbox: rtSandbox}, nil, ModeFresh, "main", 0, 0, 2, "", 0, false, 0, false, false, false, false, 0, "", "run-kill-timeout-1", nil, 0, "", "", "")
+		bc := BatchConfig{
+			Cfg:              cfg,
+			AgentName:        "opencode",
+			AgentCfg:         config.Agent{Command: "echo hi"},
+			IdentityResolver: noopIdentityResolver(),
+			Retries:          2,
+		}
+		row := RowSpec{
+			Mode:              ModeFresh,
+			Branches:          map[int]string{0: branch},
+			BaseBranch:        "main",
+			RunID:             "run-kill-timeout-1",
+			UserProvidedRunID: "run-kill-timeout-1",
+		}
+		result, started = o.newRunExecutor(runCtx, bc, &retrySandboxFactory{sandbox: rtSandbox}, nil).Execute(runCtx, row)
 	}()
 
 	// Give the first runnable time to start, then cancel the parent

@@ -2,7 +2,6 @@ package batch
 
 import (
 	"context"
-	"io"
 	"os"
 	"path/filepath"
 	"sync"
@@ -109,7 +108,7 @@ func heartbeatTestSetup(t *testing.T) (client *fakeGitHubClient, proc *fakeProce
 	return
 }
 
-func newHeartbeatOrchestrator(client *fakeGitHubClient, sbFactory *fakeSandboxFactory, runFactory RunnableFactory, cfgRunIdleTimeout int, eventLog events.EventLog) *Orchestrator {
+func newHeartbeatOrchestrator(client *fakeGitHubClient, sbFactory *fakeSandboxFactory, runFactory RunnableFactory, cfgRunIdleTimeout int, eventLog events.EventLog, opts ...OrchestratorOpt) *Orchestrator {
 	cfg := &config.Config{
 		Agent:          "test-agent",
 		Sandbox:        "worktree",
@@ -118,14 +117,13 @@ func newHeartbeatOrchestrator(client *fakeGitHubClient, sbFactory *fakeSandboxFa
 		RunIdleTimeout: cfgRunIdleTimeout,
 		AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}},
 	}
-	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: cfg}, eventLog)
-	o.sandboxFactory = sbFactory
-	o.runnableFactory = runFactory
-	o.heartbeatTickInterval = heartbeatTestTick
-	if o.errorLog == nil {
-		o.errorLog = io.Discard
-	}
-	return o
+	return NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: cfg}, eventLog,
+		append([]OrchestratorOpt{
+			WithSandboxFactory(sbFactory),
+			WithRunnableFactory(runFactory),
+			WithHeartbeatTickInterval(heartbeatTestTick),
+		}, opts...)...,
+	)
 }
 
 func countEventsByType(snapshot []events.Event, t string) int {
@@ -215,8 +213,7 @@ func TestRunBatch_IdleTimeoutRetriesAndSucceeds(t *testing.T) {
 	success := &fakeRunnable{result: AgentRunResult{IssueNumber: heartbeatTestIssueNum, Status: "success", Branch: heartbeatTestBranch}}
 	runFactory := &heartbeatDualRunnableFactory{first: stall, second: success}
 	spyLog := &spyEventLog{}
-	o := newHeartbeatOrchestrator(client, factory, runFactory, 0, spyLog)
-	o.runSessionOpts.killTimeout = 50 * time.Millisecond
+	o := newHeartbeatOrchestrator(client, factory, runFactory, 0, spyLog, WithRunSessionOpts(runSessionOptions{killTimeout: 50 * time.Millisecond}))
 
 	result, _ := o.RunBatch(context.Background(), Request{
 		Issues:            []int{heartbeatTestIssueNum},

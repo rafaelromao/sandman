@@ -757,6 +757,13 @@ func NewOrchestrator(githubClient github.Client, renderer prompt.IssueRenderer, 
 	for _, opt := range opts {
 		opt(o)
 	}
+	// Ensure the baseBranchSyncMu mutex survives option application —
+	// WithRunSessionOpts replaces the whole runSessionOptions struct, so
+	// the per-Orchestrator mutex must be re-established afterwards to
+	// keep syncBaseBranch's lock serialisation intact (wayfinder #2231).
+	if o.runSessionOpts.baseBranchSyncMu == nil {
+		o.runSessionOpts.baseBranchSyncMu = &sync.Mutex{}
+	}
 	return o
 }
 
@@ -768,6 +775,52 @@ func WithBadgeHooker(h BadgeHooker) OrchestratorOpt {
 	return func(o *Orchestrator) {
 		o.badgeHooker = h
 	}
+}
+
+// Test-injection options (wayfinder #2231). These are the public seam that
+// replaces the historical pattern of post-construction assignment to
+// Orchestrator private fields (`o.runnableFactory = ...`) and struct-literal
+// construction (`&Orchestrator{runnableFactory: ...}`). They feed NewOrchestrator
+// at construction time so tests stop reaching into unexported state.
+//
+// Every option below corresponds to a field the catalog (#2230) classified
+// as load-bearing (tests drive meaningful behaviour through it) or test-tunable
+// (tests adjust a production default). The 3 not-injected fields (lookupGHToken,
+// phaseWriter, firstSandboxStartOnce) intentionally have no options.
+//
+// NewOrchestrator restores o.runSessionOpts.baseBranchSyncMu after applying
+// options, so WithRunSessionOpts can safely replace the whole struct without
+// losing the per-Orchestrator serialisation mutex.
+
+func WithRunnableFactory(f RunnableFactory) OrchestratorOpt {
+	return func(o *Orchestrator) { o.runnableFactory = f }
+}
+
+func WithSandboxFactory(f SandboxFactory) OrchestratorOpt {
+	return func(o *Orchestrator) { o.sandboxFactory = f }
+}
+
+func WithContainerRuntimeFactory(f ContainerRuntimeFactory) OrchestratorOpt {
+	return func(o *Orchestrator) { o.containerRuntimeFactory = f }
+}
+
+func WithErrorLog(w io.Writer) OrchestratorOpt {
+	return func(o *Orchestrator) { o.errorLog = w }
+}
+
+// WithRunSessionOpts sets the whole runSessionOptions struct on the Orchestrator.
+// Note: NewOrchestrator restores the per-Orchestrator baseBranchSyncMu mutex
+// after this option is applied, so passing a fresh runSessionOptions{} is safe.
+func WithRunSessionOpts(opts runSessionOptions) OrchestratorOpt {
+	return func(o *Orchestrator) { o.runSessionOpts = opts }
+}
+
+func WithHeartbeatTickInterval(d time.Duration) OrchestratorOpt {
+	return func(o *Orchestrator) { o.heartbeatTickInterval = d }
+}
+
+func WithVerifyPath(v VerifyPathFunc) OrchestratorOpt {
+	return func(o *Orchestrator) { o.verifyPath = v }
 }
 
 // NewBadgeHooker returns a BadgeHooker that suggests a Built with Sandman

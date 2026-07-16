@@ -38,6 +38,9 @@ func TestRunBatch_ModeContinueCopiesOriginalTaskToRunFolder(t *testing.T) {
 	}
 
 	log := &spyEventLog{}
+	// Reuse fakeRunnableFactory with one success result per RunBatch
+	// call (initial run + continuation) so the Runnable does not
+	// overwrite the worktree's task.md before the snapshot block captures it.
 	o := NewOrchestrator(
 		&fakeGitHubClient{
 			issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}},
@@ -54,17 +57,14 @@ func TestRunBatch_ModeContinueCopiesOriginalTaskToRunFolder(t *testing.T) {
 			},
 		},
 		log,
+		WithSandboxFactory(&fakeSandboxFactory{sandbox: &fakeSandbox{workDir: worktreePath}}),
+		WithRunnableFactory(&fakeRunnableFactory{
+			results: []AgentRunResult{
+				{IssueNumber: 42, Status: "success", Branch: branch, WorktreePath: worktreePath},
+				{IssueNumber: 42, Status: "success", Branch: branch, WorktreePath: worktreePath},
+			},
+		}),
 	)
-	o.sandboxFactory = &fakeSandboxFactory{sandbox: &fakeSandbox{workDir: worktreePath}}
-	// Reuse fakeRunnableFactory with one success result per RunBatch
-	// call (initial run + continuation) so the Runnable does not
-	// overwrite the worktree's task.md before the snapshot block captures it.
-	o.runnableFactory = &fakeRunnableFactory{
-		results: []AgentRunResult{
-			{IssueNumber: 42, Status: "success", Branch: branch, WorktreePath: worktreePath},
-			{IssueNumber: 42, Status: "success", Branch: branch, WorktreePath: worktreePath},
-		},
-	}
 
 	if _, err := o.RunBatch(context.Background(), Request{Issues: []int{42}}); err != nil {
 		t.Fatalf("initial run failed: %v", err)
