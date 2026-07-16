@@ -8,12 +8,16 @@ CMD := ./cmd/sandman
 # is not provided on the command line, it defaults to a git-derived string
 # so every `make build` from a different commit produces a distinct value
 # (e.g. `3fb9a014`, `v0.0.0-3-g3fb9a014`, `3fb9a014-dirty` for a dirty
-# working tree). Release tooling (goreleaser #956, release-please #957)
-# overrides VERSION on the command line to inject the canonical SemVer
-# without touching Go code. The Go-code `Version()` fallback chain in
-# cmd/sandman/main.go covers `go install ./cmd/sandman` (no Makefile)
-# with the linker-populated buildinfo pseudo-version, falling back to the
-# literal `dev` when neither path provides a value.
+# working tree). External release tooling overrides VERSION on the command
+# line to inject the canonical SemVer without touching Go code. The Go-code
+# `Version()` fallback chain in cmd/sandman/main.go covers `go install
+# ./cmd/sandman` (no Makefile) with the linker-populated buildinfo
+# pseudo-version, falling back to the literal `dev` when neither path
+# provides a value. Worktree quirk: `git -C .` runs `git describe` in the
+# current worktree (so it reports the worktree's HEAD), whereas
+# `runtime/debug.ReadBuildInfo().Main.Version` uses the parent worktree's
+# HEAD when the worktree's `.git` is a file pointer — the Makefile path
+# therefore produces worktree-correct strings.
 VERSION ?= $(shell git -C . describe --tags --always --dirty 2>/dev/null || git -C . rev-parse --short HEAD 2>/dev/null || echo dev)
 
 LDFLAGS := -ldflags '-X main.version=$(VERSION)'
@@ -36,12 +40,12 @@ test:
 	go test -race -v ./...
 
 build:
-	@echo "Building $(BINARY) ($(VERSION))..."
+	@echo "Building $(BINARY)..."
 	go build $(LDFLAGS) -o $(BINARY) $(CMD)
 
 install:
-	@echo "Installing $(BINARY) ($(VERSION))..."
-	go install $(LDFLAGS) $(CMD)
+	@echo "Installing $(BINARY)..."
+	go install $(CMD)
 
 clean:
 	@echo "Cleaning build artifacts..."

@@ -70,9 +70,9 @@ func TestRoot_VersionFlagFallsThroughToDevWhenGetterReturnsDev(t *testing.T) {
 	}
 }
 
-// Compile-time guard: the version subcommand must be registered on the
-// root command so `sandman version` resolves as a subcommand rather than
-// being passed to the root RunE (which is nil for the root).
+// Registration test: the version subcommand must be wired into the root
+// command so `sandman version` resolves as a subcommand rather than
+// falling through to the root RunE.
 func TestRoot_VersionSubcommandRegistered(t *testing.T) {
 	deps := newTestDeps(t)
 	deps.Version = func() string { return "v1.0.0" }

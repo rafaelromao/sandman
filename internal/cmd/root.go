@@ -53,11 +53,6 @@ execution, and event logging for automated coding workflows.`,
 		SilenceErrors: true,
 	}
 
-	if deps.Version != nil {
-		root.Version = deps.Version()
-		root.SetVersionTemplate("sandman {{.Version}}\n")
-	}
-
 	root.SetFlagErrorFunc(func(cmd *cobra.Command, err error) error {
 		if errors.Is(err, pflag.ErrHelp) {
 			return err
@@ -76,7 +71,10 @@ execution, and event logging for automated coding workflows.`,
 	root.AddCommand(NewReviewCmd(deps))
 	root.AddCommand(NewArchiveCmd(deps))
 	root.AddCommand(NewStrandedCmd(deps))
+
 	if deps.Version != nil {
+		root.Version = deps.Version()
+		root.SetVersionTemplate("sandman {{.Version}}\n")
 		root.AddCommand(NewVersionCmd(deps.Version))
 	}
 
