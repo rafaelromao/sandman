@@ -3,6 +3,21 @@
 BINARY := sandman
 CMD := ./cmd/sandman
 
+# VERSION is the SemVer string injected into the sandman binary at build
+# time via `go build -ldflags '-X main.version=$(VERSION)'`. When VERSION
+# is not provided on the command line, it defaults to a git-derived string
+# so every `make build` from a different commit produces a distinct value
+# (e.g. `3fb9a014`, `v0.0.0-3-g3fb9a014`, `3fb9a014-dirty` for a dirty
+# working tree). Release tooling (goreleaser #956, release-please #957)
+# overrides VERSION on the command line to inject the canonical SemVer
+# without touching Go code. The Go-code `Version()` fallback chain in
+# cmd/sandman/main.go covers `go install ./cmd/sandman` (no Makefile)
+# with the linker-populated buildinfo pseudo-version, falling back to the
+# literal `dev` when neither path provides a value.
+VERSION ?= $(shell git -C . describe --tags --always --dirty 2>/dev/null || git -C . rev-parse --short HEAD 2>/dev/null || echo dev)
+
+LDFLAGS := -ldflags '-X main.version=$(VERSION)'
+
 .PHONY: check build install fmt test vet clean
 
 check: fmt vet test
@@ -21,12 +36,12 @@ test:
 	go test -race -v ./...
 
 build:
-	@echo "Building $(BINARY)..."
-	go build -o $(BINARY) $(CMD)
+	@echo "Building $(BINARY) ($(VERSION))..."
+	go build $(LDFLAGS) -o $(BINARY) $(CMD)
 
 install:
-	@echo "Installing $(BINARY)..."
-	go install $(CMD)
+	@echo "Installing $(BINARY) ($(VERSION))..."
+	go install $(LDFLAGS) $(CMD)
 
 clean:
 	@echo "Cleaning build artifacts..."
