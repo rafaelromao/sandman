@@ -47,7 +47,7 @@ func init() {
 func DefaultPrompt() string { return defaultPrompt }
 
 // DefaultPRReviewPrompt returns the built-in prompt template used by
-// `sandman review` (both one-shot and daemon modes).
+// `sandman review` daemon.
 func DefaultPRReviewPrompt() string { return defaultPRReviewPrompt }
 
 // DefaultQualityRules returns the built-in PR review quality rules template.

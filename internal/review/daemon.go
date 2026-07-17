@@ -1285,7 +1285,7 @@ func (d *Daemon) prepareReviewRun(ctx context.Context, prNumber int, commentID s
 		linkedIssue = pr.LinkedIssueNumber()
 	} else if fetchErr != nil {
 		// Non-fatal: a transient GitHub API failure must not block
-		// the launch path. The one-shot `cmd/review.go` calls
+		// the launch path. The command layer calls
 		// FetchPR anyway; if it failed once, it would fail again.
 		// We surface the failure in the daemon log instead.
 		d.logf("fetch PR #%d for linked issue resolution: %v", prNumber, fetchErr)

@@ -5,21 +5,14 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
-	"path/filepath"
-	"sort"
 	"strings"
 	"syscall"
-	"time"
 
-	"github.com/rafaelromao/sandman/internal/batch"
 	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/daemon"
 	ghcli "github.com/rafaelromao/sandman/internal/github"
 	"github.com/rafaelromao/sandman/internal/paths"
-	"github.com/rafaelromao/sandman/internal/prompt"
 	"github.com/rafaelromao/sandman/internal/review"
-	"github.com/rafaelromao/sandman/internal/runid"
-	"github.com/rafaelromao/sandman/internal/sandbox"
 	"github.com/spf13/cobra"
 )
 
@@ -27,27 +20,16 @@ import (
 // daemon. Tests override it to avoid actually polling GitHub.
 var reviewDaemonRunner = runReviewDaemon
 
-// NewReviewCmd creates the `sandman review` command. When PR numbers
-// are provided as positional args the command runs in one-shot mode
-// (post a single review comment for each PR and exit). When no args
-// are provided, the command starts the review daemon: it polls open
-// PRs every 30s for `/sandman review` comments and launches review
-// agents up to parallel_reviews at a time. The daemon writes log lines to .sandman/review.sock
+// NewReviewCmd creates the `sandman review` daemon command. It polls open PRs
+// every 30s for `/sandman review` comments and launches review agents up to
+// parallel_reviews at a time. The daemon writes log lines to .sandman/review.sock
 // (exposed via `sandman attach`) and shuts down cleanly on SIGINT/SIGTERM.
 func NewReviewCmd(deps Dependencies) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "review [pr-numbers...]",
-		Short: "Run a Sandman agent to review a pull request",
-		Long: "Run a Sandman agent to review a pull request. With PR numbers as positional " +
-			"args, posts a single review comment for each and exits. Without args, starts " +
-			"the review daemon that polls open PRs every 30s for /sandman review comments " +
-			"and launches review agents.",
-		Example: `  sandman review 42
-  sandman review 42 43
-  sandman review 42:45
-  sandman review 42:
-  sandman review :45
-  sandman review 42 --agent opencode --model opencode/big-pickle`,
+		Use:   "review",
+		Short: "Run the Sandman pull-request review daemon",
+		Long:  "Run the review daemon that polls open PRs every 30s for /sandman review comments and launches review agents.",
+		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := deps.ConfigStore.Load()
 			if err != nil {
@@ -87,18 +69,13 @@ func NewReviewCmd(deps Dependencies) *cobra.Command {
 				repoRoot = resolved
 			}
 
-			// Issue #2212: warn once at startup if the opencode
-			// version pinned in the sandbox differs from the host.
-			// Fires for both one-shot (`sandman review <PR>`) and
-			// the daemon form (`sandman review`); the daemon only
-			// warns at process startup, not per tick, because the
+			// Issue #2212: warn once at startup if the opencode version pinned
+			// in the sandbox differs from the host. The daemon only warns at
+			// process startup, not per tick, because the
 			// existing `d.busy` serializes per-tick scans and the
 			// warning is informational.
 			warnOpencodeVersionMismatch(cmd, reviewAgentName, sandboxFlag, repoRoot, cfg)
 
-			if len(args) > 0 {
-				return runReviewOneShotMulti(cmd, deps, cfg, args, parallelFlag)
-			}
 			parallelSet := cmd.Flags().Changed("parallel")
 			return reviewDaemonRunner(cmd.Context(), deps, cfg, sandboxFlag, ccFlag, ccSet, mcFlag, mcSet, agentFlag, modelFlag, parallelFlag, parallelSet)
 		},
@@ -112,223 +89,6 @@ func NewReviewCmd(deps Dependencies) *cobra.Command {
 	cmd.Flags().Int("max-containers", 0, "Maximum number of containers to run at once; 0 means no cap (unbounded pool)")
 
 	return cmd
-}
-
-// runReviewOneShot handles the one-shot review for a single PR number.
-// Kept as a separate function so the daemon and multi-PR branches can be
-// tested independently.
-func runReviewOneShot(cmd *cobra.Command, deps Dependencies, cfg *config.Config, prNumber int, parallelFlag int) error {
-	pr, err := deps.GitHubClient.FetchPR(cmd.Context(), prNumber)
-	if err != nil {
-		return fmt.Errorf("fetch PR #%d: %w", prNumber, err)
-	}
-
-	agentFlag, _ := cmd.Flags().GetString("agent")
-	modelFlag, _ := cmd.Flags().GetString("model")
-	sandboxFlag, _ := cmd.Flags().GetString("sandbox")
-	ccFlag, _ := cmd.Flags().GetInt("container-capacity")
-	mcFlag, _ := cmd.Flags().GetInt("max-containers")
-
-	reviewAgentName := strings.TrimSpace(agentFlag)
-	if reviewAgentName == "" {
-		reviewAgentName = cfg.EffectiveReviewAgent()
-	}
-	if reviewAgentName == "" {
-		return fmt.Errorf("review agent is not set; configure review_agent or agent in sandman config")
-	}
-	if _, err := cfg.ResolveAgentProvider(reviewAgentName); err != nil {
-		return err
-	}
-
-	reviewModel := strings.TrimSpace(modelFlag)
-	if reviewModel == "" {
-		reviewModel = cfg.EffectiveReviewModel()
-	}
-	if reviewModel == "" {
-		return fmt.Errorf("review model is not set; configure review_model or model in sandman config")
-	}
-
-	reviewParallel := parallelFlag
-	if reviewParallel <= 0 {
-		reviewParallel = cfg.EffectiveReviewParallel()
-	}
-
-	repoName, err := deps.GitHubClient.RepoName(cmd.Context())
-	if err != nil {
-		return fmt.Errorf("get repo name: %w", err)
-	}
-	fmt.Fprintf(cmd.OutOrStdout(), "repo=%s agent=%s model=%s\n", repoName, reviewAgentName, reviewModel)
-
-	sandboxMode := strings.TrimSpace(sandboxFlag)
-	if sandboxMode == "" {
-		sandboxMode = cfg.Sandbox
-	}
-
-	repoRoot := deps.RepoRoot
-	if repoRoot == "" {
-		var err error
-		repoRoot, err = resolveRepoRoot()
-		if err != nil {
-			return fmt.Errorf("resolve repo root: %w", err)
-		}
-	}
-	sandmanDir := paths.NewLayout(cfg, repoRoot).SandmanDir
-
-	ts, shortid, err := runid.NewBatch()
-	if err != nil {
-		return fmt.Errorf("generate batch ID: %w", err)
-	}
-
-	// Issue #1946: route through review.ReviewRunIDFor so the cmd
-	// one-shot path and the review daemon's prepareReviewRun mint
-	// the same per-row RunID from the same helper. ADR-0030
-	// §Per-row RunID templates pins the orphan/linked shapes
-	// (`<ts>-<sid>-PR<pr>` and `<ts>-<sid>-<linkedIssue>-PR<pr>`).
-	perRowRunID := review.ReviewRunIDFor(pr.Number, pr.LinkedIssueNumber(), ts, shortid)
-
-	rs := daemon.NewRunSession(sandmanDir, perRowRunID)
-	// Issue #1919 slice 3: the on-disk batch directory name and the
-	// per-row RunID MUST agree for both orphan and linked reviews.
-	// For orphan reviews both are `<ts>-<sid>-PR<pr>`; for linked
-	// reviews both are `<ts>-<sid>-<linkedIssue>-PR<pr>`. ADR-0030
-	// pins the same invariant on batch.json.batchId, run.json.BatchID,
-	// and the run.started payload's batch_id field.
-	manifest := daemon.BatchManifest{BatchId: perRowRunID, CreatedAt: time.Now(), RunKind: "review", RunTS: ts, RunShortID: shortid, PR: &pr.Number}
-	if err := rs.Prepare(manifest); err != nil {
-		_ = rs.Close()
-		return fmt.Errorf("bootstrap review session: %w", err)
-	}
-	defer rs.Close()
-
-	// Per-row run folder under <batchDir>/runs/<perRowRunID>/ — the
-	// agent writes <runDir>/decision.md and the daemon reads it back
-	// from the same path. Matches the daemon's prepareReviewRun.
-	absRunDir, err := filepath.Abs(filepath.Join(rs.RunDir(), "runs", perRowRunID))
-	if err != nil {
-		return fmt.Errorf("abs run dir: %w", err)
-	}
-	if err := os.MkdirAll(absRunDir, 0755); err != nil {
-		return fmt.Errorf("create per-row run folder: %w", err)
-	}
-
-	// Issue #1953: the canonical review artifact path is the per-row
-	// worktree (the agent's CWD), not the run folder. Compute the
-	// worktree path deterministically from the branch the agent will
-	// create (review-<pr>-<unixnano> for one-shot, review-<pr>-<commentID>
-	// for daemon-launched) and the configured worktree directory. The
-	// prompt's {{RUN_DIR}} resolves to this path so the agent writes
-	// decision.md directly to the daemon-readable location.
-	reviewBranch := fmt.Sprintf("sandman/review-%d-%d", pr.Number, time.Now().UnixNano())
-	worktreeDir := strings.TrimSpace(cfg.WorktreeDir)
-	if worktreeDir != "" && !filepath.IsAbs(worktreeDir) {
-		worktreeDir = filepath.Join(repoRoot, worktreeDir)
-	}
-	absWorktreeDir := worktreeDir
-	absWorktreePath := filepath.Join(absWorktreeDir, reviewBranch)
-
-	priorReviewExists, err := computePriorReviewExists(cmd.Context(), deps.GitHubClient, pr.Number)
-	if err != nil {
-		return fmt.Errorf("compute prior review flag: %w", err)
-	}
-
-	// Translate the worktree path to the container-visible form so
-	// the agent inside a podman/docker sandbox sees the same path
-	// the daemon writes from on the host (issue #1902).
-	promptRunDir := sandbox.ContainerVisiblePath(absWorktreePath, repoRoot, sandboxMode)
-
-	rendered, err := deps.Renderer.RenderReview(prompt.RenderConfig{}, prompt.PRData{
-		Number:            pr.Number,
-		Title:             pr.Title,
-		Body:              pr.Body,
-		RunDir:            promptRunDir,
-		PriorReviewExists: priorReviewExists,
-	})
-	if err != nil {
-		return fmt.Errorf("render review prompt: %w", err)
-	}
-
-	if _, err := deps.BatchRunner.RunBatch(cmd.Context(), batch.Request{
-		Agent:                reviewAgentName,
-		Model:                reviewModel,
-		Mode:                 map[int]batch.IssueMode{0: batch.ModeOverride},
-		Sandbox:              sandboxMode,
-		Parallel:             reviewParallel,
-		ContainerCapacity:    ccFlag,
-		ContainerCapacitySet: cmd.Flags().Changed("container-capacity"),
-		MaxContainers:        mcFlag,
-		MaxContainersSet:     cmd.Flags().Changed("max-containers"),
-		PromptConfig: prompt.RenderConfig{
-			PromptFlag: rendered,
-			Branch:     reviewBranch,
-		},
-		Review:       true,
-		PRNumber:     pr.Number,
-		IssueNumber:  pr.LinkedIssueNumber(),
-		RunID:        perRowRunID,
-		OutputWriter: rs.Broadcaster(),
-		RunDir:       absRunDir,
-		WorktreeDir:  absWorktreeDir,
-	}); err != nil {
-		return fmt.Errorf("run review batch: %w", err)
-	}
-	return nil
-}
-
-// runReviewOneShotMulti parses positional args (bare numbers, N:M, N:,
-// :M ranges) and runs a one-shot review for each resolved PR. For unbounded
-// ranges (N: or :M) it fetches open PRs via ListOpenPRs and filters by PR number.
-func runReviewOneShotMulti(cmd *cobra.Command, deps Dependencies, cfg *config.Config, args []string, parallelFlag int) error {
-	prSet := make(map[int]struct{})
-	hasUnbounded := false
-	sel := issueSelection{exact: make(map[int]struct{})}
-
-	for _, arg := range args {
-		start, end, isRange, err := parseIssueRange(arg)
-		if err != nil {
-			return fmt.Errorf("invalid PR number %q: %w", arg, err)
-		}
-		if isRange {
-			sel.ranges = append(sel.ranges, issueRangeSelection{start: start, end: end})
-			if end == 0 || strings.HasPrefix(arg, ":") {
-				hasUnbounded = true
-				continue
-			}
-			if end-start >= 1000 {
-				return fmt.Errorf("range %q expands to more than 1000 pull requests", arg)
-			}
-			for n := start; n <= end; n++ {
-				prSet[n] = struct{}{}
-			}
-		} else {
-			sel.exact[start] = struct{}{}
-			prSet[start] = struct{}{}
-		}
-	}
-
-	if hasUnbounded {
-		openPRs, err := deps.GitHubClient.ListOpenPRs(cmd.Context())
-		if err != nil {
-			return fmt.Errorf("list open PRs: %w", err)
-		}
-		for _, pr := range openPRs {
-			if sel.matches(pr.Number) {
-				prSet[pr.Number] = struct{}{}
-			}
-		}
-	}
-
-	prNumbers := make([]int, 0, len(prSet))
-	for n := range prSet {
-		prNumbers = append(prNumbers, n)
-	}
-	sort.Ints(prNumbers)
-
-	for _, prNumber := range prNumbers {
-		if err := runReviewOneShot(cmd, deps, cfg, prNumber, parallelFlag); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 // runReviewDaemon wires and runs the review daemon. The cmd layer owns
@@ -395,25 +155,4 @@ func ghCommentPosterFromDeps(deps Dependencies) review.CommentPoster {
 		return nil
 	}
 	return ghcli.NewGHCommentPoster(cli)
-}
-
-// computePriorReviewExists returns whether the PR has at least one prior
-// review comment (issue #1892). It mirrors the daemon's logic — exclude
-// review requests (implementor/mention-prefixed comments containing
-// "review") — so the `{{PRIOR_REVIEW_EXISTS}}` substitution is consistent
-// across the daemon and one-shot paths. Returns false on a list error so
-// the review agent renders the section safely; the daemon returns the
-// error and aborts because it must distinguish "no prior reviews" from
-// "couldn't fetch comments".
-func computePriorReviewExists(ctx context.Context, client review.GitHubClient, prNumber int) (bool, error) {
-	comments, err := client.ListPRComments(ctx, prNumber)
-	if err != nil {
-		return false, err
-	}
-	for _, c := range comments {
-		if !review.IsReviewRequest(c.Body) {
-			return true, nil
-		}
-	}
-	return false, nil
 }

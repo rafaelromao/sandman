@@ -88,7 +88,7 @@ type Request struct {
 	// reads from the same path on the post step. Empty for
 	// non-review runs.
 	WorktreeDir string
-	// Review marks this batch as a review-agent run (one-shot or daemon).
+	// Review marks this batch as a daemon-launched review-agent run.
 	// The orchestrator surfaces it as `payload.review = true` on
 	// `run.started` and `run.finished` events so the event log and portal
 	// can distinguish review runs from implementation runs.

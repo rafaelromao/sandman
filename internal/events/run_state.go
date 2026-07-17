@@ -107,7 +107,7 @@ func (r RunState) IsPromptOnly() bool {
 // IsReview reports whether the run was tagged as a review-agent run. The
 // orchestrator sets payload["review"] = true on the run.started (and
 // run.finished) event when the batch was issued by `sandman review`
-// (one-shot or daemon). Implementation runs leave the key absent.
+// (the review daemon). Implementation runs leave the key absent.
 func (r RunState) IsReview() bool {
 	if flag, ok := payloadBool(r.Started.Payload, "review"); ok && flag {
 		return true
