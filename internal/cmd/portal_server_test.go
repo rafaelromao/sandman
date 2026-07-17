@@ -4083,6 +4083,119 @@ func TestPortal_MatchRunState_FallbackDoesNotBindOrphanIssueToPromptOnly(t *test
 	}
 }
 
+// TestPortal_MatchRunState_BatchIDTiebreakerDisambiguatesImplAndReview
+// pins the fix for issue #2265: when an implementation batch and its child
+// review batch share the same linked IssueNumber, matchRunState must prefer
+// the state whose BatchID() matches the instance's BatchID, not the
+// closest-by-time state. Without the tiebreaker, the alphabetical iteration
+// order of discoverPortalInstances lets the review batch claim the
+// implementation RunState, cascading into wrong BatchKey / SocketPath on the
+// implementation row and an empty SSE pane (wrong line filter).
+func TestPortal_MatchRunState_BatchIDTiebreakerDisambiguatesImplAndReview(t *testing.T) {
+	v := &portalRunsView{}
+
+	implBatchID := "260717132351-b389"
+	reviewBatchID := "260717132345-74b4-106-PR247"
+
+	implInstance := portalActiveRun{
+		Key:          "260717132351-b389-106",
+		Dir:          filepath.Join(t.TempDir(), implBatchID),
+		BatchID:      implBatchID,
+		RunID:        "260717132351-b389-106",
+		IssueNumber:  106,
+		IssueNumbers: []int{106},
+		ModTime:      time.Now().Add(-5 * time.Second),
+	}
+	reviewInstance := portalActiveRun{
+		Key:          reviewBatchID,
+		Dir:          filepath.Join(t.TempDir(), reviewBatchID),
+		BatchID:      reviewBatchID,
+		RunID:        reviewBatchID,
+		IssueNumber:  106,
+		IssueNumbers: []int{106},
+		ModTime:      time.Now().Add(-3 * time.Second),
+	}
+
+	implState := events.RunState{
+		RunID: "260717132351-b389-106",
+		Started: events.Event{
+			Type:      "run.started",
+			Timestamp: time.Now().Add(-5 * time.Second),
+			RunID:     "260717132351-b389-106",
+			Issue:     106,
+			Payload:   map[string]any{"batch_id": implBatchID, "branch": "sandman/106-fix"},
+		},
+	}
+	reviewState := events.RunState{
+		RunID: reviewBatchID,
+		Started: events.Event{
+			Type:      "run.started",
+			Timestamp: time.Now().Add(-3 * time.Second),
+			RunID:     reviewBatchID,
+			Issue:     106,
+			Payload:   map[string]any{"batch_id": reviewBatchID, "branch": "sandman/review-247-x", "review": true},
+		},
+	}
+	// Order matters: place the review state first to simulate the
+	// alphabetical-by-batch-id iteration that previously let it claim the
+	// implementation state.
+	states := []events.RunState{reviewState, implState}
+
+	// Implementation instance must bind to the implementation state by
+	// BatchID tiebreaker, not to the time-closer review state.
+	used := []bool{false, false}
+	implIdx := v.matchRunState(implInstance, states, used)
+	if implIdx != 1 {
+		t.Fatalf("impl instance should bind to impl state (idx=1) via BatchID tiebreaker, got idx=%d (state BatchID=%q, Issue=%d)",
+			implIdx, states[implIdx].BatchID(), states[implIdx].IssueNumber())
+	}
+	used[implIdx] = true
+
+	// Review instance must then bind to the remaining review state.
+	reviewIdx := v.matchRunState(reviewInstance, states, used)
+	if reviewIdx != 0 {
+		t.Fatalf("review instance should bind to review state (idx=0), got idx=%d (state BatchID=%q)",
+			reviewIdx, states[reviewIdx].BatchID())
+	}
+}
+
+// TestPortal_MatchRunState_FallsBackToTimeProximityWhenBatchIDMissing
+// pins that the BatchID tiebreaker is opt-in: instances whose BatchID is
+// empty (e.g. a legacy or partial batches-index entry) still fall back to
+// the existing time-proximity match, preserving the pre-fix behavior for
+// single-batch scenarios.
+func TestPortal_MatchRunState_FallsBackToTimeProximityWhenBatchIDMissing(t *testing.T) {
+	v := &portalRunsView{}
+
+	instance := portalActiveRun{
+		Key:          "260717132351-b389-106",
+		Dir:          filepath.Join(t.TempDir(), "active-1"),
+		BatchID:      "", // empty: no BatchID tiebreaker available
+		RunID:        "260717132351-b389-106",
+		IssueNumber:  106,
+		IssueNumbers: []int{106},
+		ModTime:      time.Now().Add(-2 * time.Second),
+	}
+
+	state := events.RunState{
+		RunID: "260717132351-b389-106",
+		Started: events.Event{
+			Type:      "run.started",
+			Timestamp: time.Now().Add(-1 * time.Second),
+			RunID:     "260717132351-b389-106",
+			Issue:     106,
+			Payload:   map[string]any{"batch_id": "anything-else"},
+		},
+	}
+	states := []events.RunState{state}
+	used := []bool{false}
+
+	idx := v.matchRunState(instance, states, used)
+	if idx != 0 {
+		t.Fatalf("expected fallback to time-proximity match when BatchID is empty, got idx=%d", idx)
+	}
+}
+
 // seedMixedActiveBatchIndex mirrors the createMixedBatchRunSocket helper
 // pattern from portal_e2e_test.go (which lives behind //go:build e2e and
 // is not linkable from this package without the tag). It writes a batch
