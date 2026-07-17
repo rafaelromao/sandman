@@ -572,7 +572,7 @@ func TestWorktreeSandbox_Start_RecreatesOrphanWorktreeDirectory(t *testing.T) {
 	}
 
 	s := NewWorktreeSandbox(dir, worktreeBase, branch, "main")
-	if err := s.Start(SandboxStart{StrandedReconcile: true}); err != nil {
+	if err := s.Start(SandboxStart{Override: true, StrandedReconcile: true}); err != nil {
 		t.Fatalf("Start() failed on orphan dir: %v", err)
 	}
 	t.Cleanup(func() {
@@ -721,7 +721,7 @@ func TestWorktreeSandbox_StartSelfHealsBrokenWorktreeWithStaleDotGitFile(t *test
 
 	// Now try Start() with override, simulating the review daemon's behavior.
 	s2 := NewWorktreeSandbox(dir, worktreeBase, branch, "main")
-	err := s2.Start(SandboxStart{StrandedReconcile: true})
+	err := s2.Start(SandboxStart{Override: true, StrandedReconcile: true})
 	if err != nil {
 		t.Fatalf("Start() should self-heal stale gitlink, got: %v", err)
 	}
@@ -794,7 +794,7 @@ func TestWorktreeSandbox_OverrideBypassesContinueRefusal(t *testing.T) {
 	runGit(t, s.WorkDir(), "checkout", "-b", "wrong-branch")
 
 	s2 := NewWorktreeSandbox(dir, filepath.Join(dir, ".sandman", "worktrees"), "sandman/42-fix-bug", "main")
-	if err := s2.Start(SandboxStart{Override: true, StrandedReconcile: true}); err != nil {
+	if err := s2.Start(SandboxStart{Override: true, Continue: true, StrandedReconcile: true}); err != nil {
 		t.Fatalf("expected --continue --override to succeed via override reconciliation, got: %v", err)
 	}
 	t.Cleanup(func() {
@@ -1650,7 +1650,7 @@ func TestWorktreeSandbox_ParallelStartsDoNotDestroyEachOther(t *testing.T) {
 	// registered, then immediately run B's Start on branchB with
 	// override. Neither run should remove the other's registration.
 	sbA := NewWorktreeSandbox(repoDir, worktreeBase, branchA, "main")
-	if err := sbA.Start(SandboxStart{StrandedReconcile: true}); err != nil {
+	if err := sbA.Start(SandboxStart{Override: true, StrandedReconcile: true}); err != nil {
 		t.Fatalf("Start A failed: %v", err)
 	}
 
@@ -1660,7 +1660,7 @@ func TestWorktreeSandbox_ParallelStartsDoNotDestroyEachOther(t *testing.T) {
 	}
 
 	sbB := NewWorktreeSandbox(repoDir, worktreeBase, branchB, "main")
-	if err := sbB.Start(SandboxStart{StrandedReconcile: true}); err != nil {
+	if err := sbB.Start(SandboxStart{Override: true, StrandedReconcile: true}); err != nil {
 		t.Fatalf("Start B failed: %v", err)
 	}
 
