@@ -2962,6 +2962,7 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
           lastPollAt = Date.now();
           pollFailCount = 0;
           updatePollHealth();
+          portalDiff.refreshLiveTimeCells(runsBody, state.runs);
           return;
         }
         if (!res.ok) throw new Error('HTTP ' + res.status);
