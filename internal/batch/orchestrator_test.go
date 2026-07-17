@@ -375,25 +375,20 @@ func (f sandboxFactoryFunc) NewSandbox(repoPath, worktreeBase, branch, sourceBra
 }
 
 type retrySandbox struct {
-	startCalled                bool
-	writePromptCount           int
-	execCount                  int
-	execCommand                string
-	execErrors                 []error
-	workDir                    string
-	repoPath                   string
-	setOverrideCalled          bool
-	setOverrideValue           bool
-	setStrandedReconcileCalled bool
-	setStrandedReconcileValue  bool
-	setIdentityName            string
-	setIdentityEmail           string
-	setContinueValue           bool
-	restoreHostPathsCalled     bool
+	startCalled            bool
+	startOpts              sandbox.SandboxStart
+	writePromptCount       int
+	execCount              int
+	execCommand            string
+	execErrors             []error
+	workDir                string
+	repoPath               string
+	restoreHostPathsCalled bool
 }
 
-func (s *retrySandbox) Start() error {
+func (s *retrySandbox) Start(opts sandbox.SandboxStart) error {
 	s.startCalled = true
+	s.startOpts = opts
 	return nil
 }
 
@@ -417,21 +412,6 @@ func (s *retrySandbox) WritePrompt(content string) error {
 	return nil
 }
 func (s *retrySandbox) Process() sandbox.Process { return nil }
-func (s *retrySandbox) SetOverride(override bool) {
-	s.setOverrideCalled = true
-	s.setOverrideValue = override
-}
-func (s *retrySandbox) SetStrandedReconcile(enabled bool) {
-	s.setStrandedReconcileCalled = true
-	s.setStrandedReconcileValue = enabled
-}
-func (s *retrySandbox) SetGitIdentity(name, email string) {
-	s.setIdentityName = name
-	s.setIdentityEmail = email
-}
-func (s *retrySandbox) SetContinue(c bool) {
-	s.setContinueValue = c
-}
 func (s *retrySandbox) RestoreHostPaths() error {
 	s.restoreHostPathsCalled = true
 	return nil
@@ -487,14 +467,14 @@ type syncAwareSandbox struct {
 	tracker *baseBranchSyncTracker
 }
 
-func (s *syncAwareSandbox) Start() error {
+func (s *syncAwareSandbox) Start(opts sandbox.SandboxStart) error {
 	s.tracker.mu.Lock()
 	s.tracker.startCalls++
 	if s.tracker.syncCalls < s.tracker.startCalls {
 		s.tracker.beforeStart = true
 	}
 	s.tracker.mu.Unlock()
-	return s.fakeSandbox.Start()
+	return s.fakeSandbox.Start(opts)
 }
 
 type freshSandboxFactory struct{}
@@ -9622,10 +9602,10 @@ type fakeWorktreeForContainerAbortTest struct {
 	workDir string
 }
 
-func (f *fakeWorktreeForContainerAbortTest) Start() error     { return nil }
-func (f *fakeWorktreeForContainerAbortTest) Stop() error      { return nil }
-func (f *fakeWorktreeForContainerAbortTest) WorkDir() string  { return f.workDir }
-func (f *fakeWorktreeForContainerAbortTest) RepoPath() string { return "" }
+func (f *fakeWorktreeForContainerAbortTest) Start(sandbox.SandboxStart) error { return nil }
+func (f *fakeWorktreeForContainerAbortTest) Stop() error                      { return nil }
+func (f *fakeWorktreeForContainerAbortTest) WorkDir() string                  { return f.workDir }
+func (f *fakeWorktreeForContainerAbortTest) RepoPath() string                 { return "" }
 func (f *fakeWorktreeForContainerAbortTest) WritePrompt(string) error {
 	return nil
 }
@@ -9636,12 +9616,6 @@ func (f *fakeWorktreeForContainerAbortTest) ExecInteractive(_ context.Context, _
 	return nil
 }
 func (f *fakeWorktreeForContainerAbortTest) Process() sandbox.Process { return nil }
-func (f *fakeWorktreeForContainerAbortTest) SetOverride(bool)         {}
-func (f *fakeWorktreeForContainerAbortTest) SetStrandedReconcile(bool) {
-}
-func (f *fakeWorktreeForContainerAbortTest) SetGitIdentity(string, string) {
-}
-func (f *fakeWorktreeForContainerAbortTest) SetContinue(bool) {}
 func (f *fakeWorktreeForContainerAbortTest) RestoreHostPaths() error {
 	return nil
 }
@@ -9922,8 +9896,7 @@ func TestOrchestrator_AbortIssue_BlockedRun(t *testing.T) {
 	}
 }
 
-func TestRunSession_ApplyOverrideAndIdentity_CallsMethodsDirectlyOnSandbox(t *testing.T) {
-	wt := &fakeSandbox{}
+func TestRunSession_StartOptsFor_CapturesOverrideTrue(t *testing.T) {
 	s := &runSession{
 		deps:             runDeps{errorLog: io.Discard},
 		mode:             ModeOverride,
@@ -9931,25 +9904,21 @@ func TestRunSession_ApplyOverrideAndIdentity_CallsMethodsDirectlyOnSandbox(t *te
 		identityResolver: noopIdentityResolver(),
 	}
 
-	_, ok := s.applyOverrideAndIdentity(wt, "sandman/42-fix-bug")
+	opts, _, ok := s.startOptsFor("sandman/42-fix-bug")
 	if !ok {
-		t.Fatal("expected applyOverrideAndIdentity to succeed")
+		t.Fatal("expected startOptsFor to succeed")
 	}
 
-	if !wt.setOverrideCalled {
-		t.Fatal("expected sandbox.SetOverride to be called")
+	if !opts.Override {
+		t.Error("expected Override=true in SandboxStart for ModeOverride")
 	}
-	if !wt.setOverrideValue {
-		t.Error("expected SetOverride(true) to forward the override value")
-	}
-	if wt.setIdentityName != "" || wt.setIdentityEmail != "" {
+	if opts.Identity.Name != "" || opts.Identity.Email != "" {
 		t.Errorf("expected noop identity to leave name/email unset, got name=%q email=%q",
-			wt.setIdentityName, wt.setIdentityEmail)
+			opts.Identity.Name, opts.Identity.Email)
 	}
 }
 
-func TestRunSession_ApplyOverrideAndIdentity_PropagatesOverrideFalse(t *testing.T) {
-	wt := &fakeSandbox{}
+func TestRunSession_StartOptsFor_PropagatesOverrideFalse(t *testing.T) {
 	s := &runSession{
 		deps:             runDeps{errorLog: io.Discard},
 		mode:             ModeFresh,
@@ -9957,25 +9926,21 @@ func TestRunSession_ApplyOverrideAndIdentity_PropagatesOverrideFalse(t *testing.
 		identityResolver: noopIdentityResolver(),
 	}
 
-	_, ok := s.applyOverrideAndIdentity(wt, "sandman/7-other")
+	opts, _, ok := s.startOptsFor("sandman/7-other")
 	if !ok {
-		t.Fatal("expected applyOverrideAndIdentity to succeed")
+		t.Fatal("expected startOptsFor to succeed")
 	}
 
-	if !wt.setOverrideCalled {
-		t.Fatal("expected sandbox.SetOverride to be called")
-	}
-	if wt.setOverrideValue {
-		t.Error("expected SetOverride(false) to forward the override value")
+	if opts.Override {
+		t.Error("expected Override=false in SandboxStart for ModeFresh")
 	}
 }
 
-// TestRunSession_ApplyOverrideAndIdentity_PropagatesContinueTrue pins the
-// orchestrator's wiring of ModeContinue through applyOverrideAndIdentity
-// (issue #2189). ModeContinue must call SetContinue(true) on the sandbox
-// so its Start() normalizes the preserved worktree's .git pointer.
-func TestRunSession_ApplyOverrideAndIdentity_PropagatesContinueTrue(t *testing.T) {
-	wt := &fakeSandbox{}
+// TestRunSession_StartOptsFor_PropagatesContinueTrue pins the
+// orchestrator's wiring of ModeContinue (issue #2189). ModeContinue must
+// set Continue=true in the SandboxStart so WorktreeSandbox.Start() can
+// normalize the preserved worktree's .git pointer.
+func TestRunSession_StartOptsFor_PropagatesContinueTrue(t *testing.T) {
 	s := &runSession{
 		deps:             runDeps{errorLog: io.Discard},
 		mode:             ModeContinue,
@@ -9983,20 +9948,19 @@ func TestRunSession_ApplyOverrideAndIdentity_PropagatesContinueTrue(t *testing.T
 		identityResolver: noopIdentityResolver(),
 	}
 
-	_, ok := s.applyOverrideAndIdentity(wt, "sandman/42-fix-bug")
+	opts, _, ok := s.startOptsFor("sandman/42-fix-bug")
 	if !ok {
-		t.Fatal("expected applyOverrideAndIdentity to succeed")
+		t.Fatal("expected startOptsFor to succeed")
 	}
 
-	if !wt.setContinueValue {
-		t.Error("expected SetContinue(true) to be called for ModeContinue")
+	if !opts.Continue {
+		t.Error("expected Continue=true in SandboxStart for ModeContinue")
 	}
 }
 
-// TestRunSession_ApplyOverrideAndIdentity_PropagatesContinueFalse pins
-// that non-ModeContinue runs do not turn on the continue signal.
-func TestRunSession_ApplyOverrideAndIdentity_PropagatesContinueFalse(t *testing.T) {
-	wt := &fakeSandbox{}
+// TestRunSession_StartOptsFor_PropagatesContinueFalse pins that
+// non-ModeContinue runs do not turn on the continue signal.
+func TestRunSession_StartOptsFor_PropagatesContinueFalse(t *testing.T) {
 	s := &runSession{
 		deps:             runDeps{errorLog: io.Discard},
 		mode:             ModeFresh,
@@ -10004,13 +9968,13 @@ func TestRunSession_ApplyOverrideAndIdentity_PropagatesContinueFalse(t *testing.
 		identityResolver: noopIdentityResolver(),
 	}
 
-	_, ok := s.applyOverrideAndIdentity(wt, "sandman/7-other")
+	opts, _, ok := s.startOptsFor("sandman/7-other")
 	if !ok {
-		t.Fatal("expected applyOverrideAndIdentity to succeed")
+		t.Fatal("expected startOptsFor to succeed")
 	}
 
-	if wt.setContinueValue {
-		t.Error("expected SetContinue to be false for ModeFresh")
+	if opts.Continue {
+		t.Error("expected Continue=false in SandboxStart for ModeFresh")
 	}
 }
 
@@ -10197,7 +10161,7 @@ func stageReconcileWorktree(t *testing.T, issueBranch, wrongBranch string) (work
 	exec.Command("git", "branch", "-D", wrongBranch).Run()
 
 	sb = sandbox.NewWorktreeSandbox(repoPath, worktreeBase, issueBranch, "main")
-	if err := sb.Start(); err != nil {
+	if err := sb.Start(sandbox.SandboxStart{}); err != nil {
 		t.Fatalf("sandbox start: %v", err)
 	}
 	worktreePath = sb.WorkDir()

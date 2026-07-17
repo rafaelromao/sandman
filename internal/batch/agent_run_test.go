@@ -82,33 +82,28 @@ type fakeSandbox struct {
 
 	startCalled        bool
 	startErr           error
+	startOpts          sandbox.SandboxStart
 	writePromptCalled  bool
 	writePromptContent string
 	writePromptError   error
 
-	execCalled                 bool
-	execInteractiveCalled      bool
-	execCommand                string
-	execError                  error
-	execStdout                 string
-	execStderr                 string
-	process                    *fakeProcess
-	stopCalled                 bool
-	workDir                    string
-	setOverrideCalled          bool
-	setOverrideValue           bool
-	setStrandedReconcileCalled bool
-	setStrandedReconcileValue  bool
-	setIdentityName            string
-	setIdentityEmail           string
-	setContinueValue           bool
-	restoreHostPathsCalled     bool
+	execCalled             bool
+	execInteractiveCalled  bool
+	execCommand            string
+	execError              error
+	execStdout             string
+	execStderr             string
+	process                *fakeProcess
+	stopCalled             bool
+	workDir                string
+	restoreHostPathsCalled bool
 }
 
-func (f *fakeSandbox) Start() error {
+func (f *fakeSandbox) Start(opts sandbox.SandboxStart) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.startCalled = true
+	f.startOpts = opts
 	return f.startErr
 }
 func (f *fakeSandbox) Exec(ctx context.Context, command string, stdout, stderr io.Writer) error {
@@ -159,29 +154,6 @@ func (f *fakeSandbox) Process() sandbox.Process {
 		return makeFakeProcess()
 	}
 	return f.process
-}
-func (f *fakeSandbox) SetOverride(override bool) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.setOverrideCalled = true
-	f.setOverrideValue = override
-}
-func (f *fakeSandbox) SetStrandedReconcile(enabled bool) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.setStrandedReconcileCalled = true
-	f.setStrandedReconcileValue = enabled
-}
-func (f *fakeSandbox) SetGitIdentity(name, email string) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.setIdentityName = name
-	f.setIdentityEmail = email
-}
-func (f *fakeSandbox) SetContinue(c bool) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.setContinueValue = c
 }
 func (f *fakeSandbox) RestoreHostPaths() error {
 	f.mu.Lock()
