@@ -1657,6 +1657,37 @@
     reconcileStaleLine(cell, newSnap.staleText, newSnap.staleWarn);
   }
 
+  function liveDurationText(run) {
+    const startedAt = Date.parse(run && run.startedAt || '');
+    if (!Number.isFinite(startedAt)) return run && run.duration || '—';
+    let seconds = Math.max(0, Math.round((Date.now() - startedAt) / 1000));
+    const hours = Math.floor(seconds / 3600);
+    seconds %= 3600;
+    const minutes = Math.floor(seconds / 60);
+    seconds %= 60;
+    if (hours) return hours + 'h' + (minutes ? minutes + 'm' : '') + (seconds ? seconds + 's' : '');
+    if (minutes) return minutes + 'm' + (seconds ? seconds + 's' : '');
+    return seconds + 's';
+  }
+
+  // Summary 304s intentionally skip the full diff/render path. Refresh only
+  // the client-time-derived cells so live rows still advance on every poll.
+  function refreshLiveTimeCells(body, runs) {
+    if (!body || !Array.isArray(runs)) return;
+    const runsByKey = new Map(runs.filter(Boolean).map((run) => [run.key, run]));
+    for (const row of Array.from(body.children || [])) {
+      const key = row.getAttribute && row.getAttribute('data-run-key');
+      const run = key ? runsByKey.get(key) : null;
+      if (!run || run.kind !== 'active') continue;
+      const cell = cellOf(row, 'duration');
+      if (!cell) continue;
+      const value = cell.querySelector('.duration-value');
+      if (value) setText(value, liveDurationText(run));
+      const stale = stalenessOf(run);
+      reconcileStaleLine(cell, stale ? stale.text : '', stale ? stale.warn : false);
+    }
+  }
+
   function updateMonoCell(cell, newText) {
     if (cell.textContent !== newText) {
       setText(cell, newText);
@@ -1967,6 +1998,7 @@
     diffRuns,
     insertRunRow,
     updateRunRowCells,
+    refreshLiveTimeCells,
     removeRunRow,
     setEmpty,
     getRowData,

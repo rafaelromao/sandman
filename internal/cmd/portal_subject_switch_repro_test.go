@@ -477,7 +477,7 @@ func TestPortalSummaryPoll_UsesIfNoneMatchAndKeepsRowsOn304(t *testing.T) {
           status: 200,
           headers: { get: function (name) { return name === 'ETag' ? '"etag-1"' : ''; } },
           json: async function () {
-            return { runs: [{ key: 'r1', runId: 'r1', kind: 'completed', status: 'success', issueLabel: '#1', issueNumber: 1, archived: false, unavailable: false, sourceExists: true }] };
+            return { runs: [{ key: 'r1', runId: 'r1', kind: 'active', status: 'running', issueLabel: '#1', issueNumber: 1, startedAt: new Date(Date.now() - 61000).toISOString(), lastOutputAt: new Date().toISOString(), duration: '0s', archived: false, unavailable: false, sourceExists: true }] };
           },
           text: async function () { return ''; },
         };
@@ -492,6 +492,7 @@ func TestPortalSummaryPoll_UsesIfNoneMatchAndKeepsRowsOn304(t *testing.T) {
     };
     setTimeout(function () {
       var row = document.querySelector('tr[data-run-key="r1"]');
+      var duration = row && row.querySelector('.duration-value');
       var marker = document.createElement('pre');
       marker.id = 'portal-summary-etag';
       marker.textContent = JSON.stringify({
@@ -499,6 +500,7 @@ func TestPortalSummaryPoll_UsesIfNoneMatchAndKeepsRowsOn304(t *testing.T) {
         ifNoneMatch: window.__portalIfNoneMatch || [],
         renderCalls: window.__portalRenderCalls || 0,
         rowStillShown: !!row,
+        durationText: duration ? duration.textContent : '',
       });
       document.body.appendChild(marker);
     }, 2600);
@@ -511,6 +513,7 @@ func TestPortalSummaryPoll_UsesIfNoneMatchAndKeepsRowsOn304(t *testing.T) {
 		IfNoneMatch   []string `json:"ifNoneMatch"`
 		RenderCalls   int      `json:"renderCalls"`
 		RowStillShown bool     `json:"rowStillShown"`
+		DurationText  string   `json:"durationText"`
 	}
 	if err := json.Unmarshal([]byte(payload), &result); err != nil {
 		t.Fatalf("parse summary-etag payload: %v\nraw=%s", err, payload)
@@ -526,6 +529,9 @@ func TestPortalSummaryPoll_UsesIfNoneMatchAndKeepsRowsOn304(t *testing.T) {
 	}
 	if !result.RowStillShown {
 		t.Fatalf("expected row to stay visible after 304 refresh, got %#v", result)
+	}
+	if result.DurationText == "0s" || result.DurationText == "" {
+		t.Fatalf("expected 304 refresh to update the active duration without a full render, got %#v", result)
 	}
 }
 
