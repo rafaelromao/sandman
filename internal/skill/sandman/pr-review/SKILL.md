@@ -125,7 +125,7 @@ On CI failure, `continue` the outer loop to wait for the newly-triggered CI run 
 
 Read `.sandman/state/<N>.head_sha` if it exists and compare against the current head SHA from Step 1.
 
-- **SHA changed** (new commit landed since last request): mark all previous review state stale. Delete `.sandman/state/<N>.addressed_comments` if it exists, because inline comment IDs from the old commit are no longer relevant. A fresh review request is always permitted.
+- **SHA changed** (new commit landed since last request): mark all previous review state stale. Delete `.sandman/state/<N>.addressed_comments` if it exists, because inline comment IDs from the old commit are no longer relevant. A fresh review request is always permitted. The pass counter resets to 0 — a new commit is a new review cycle on a new diff, and any exhausted 10-pass budget against the prior SHA does not apply.
 - **SHA unchanged**: apply the "previous request still pending" logic before posting again.
 
 #### Step 4: Delegate review to the PR Review Agent (trigger post)
@@ -265,9 +265,9 @@ If an inline comment ID appears in 3+ consecutive passes without resolution, tre
 ## Never give up conditions
 
 Stop only when:
-- Formal approval (A or C)
+- Formal approval (A or C) — the **only** condition that completes the PR-Review phase. "Exhausted after 10 passes" or any other non-approval signal is **never** a reason to mark PR-Review complete; only Approval is.
 - User explicitly asks to stop
-- Max 10 passes reached with unresolved blockers
+- Max 10 passes reached with unresolved blockers AND no new commit has landed on the PR branch since the last `{{REVIEW_COMMAND}}` post (i.e., the prior exhausted budget is still on the latest SHA). This ends the loop with a `REVIEW_TIMEOUT`, not a completion — the run-level checklist item stays unchecked until Approval is observed.
 - **`REVIEW_CONFLICT_UNRESOLVED` — back-merge failed to resolve a DIRTY PR; not a `REVIEW_TIMEOUT`, never silent**
 
 Continue polling when:
@@ -279,7 +279,7 @@ Continue polling when:
 - Any `CHANGES_REQUESTED` review exists but is addressable
 - Only already-addressed inline comment IDs remain
 - Top-level PR conversation has new comments from non-agent author
-- **A new commit has landed (head SHA changed) — re-request always permitted regardless of prior response state**
+- **A new commit has landed (head SHA changed) — re-request always permitted regardless of prior response state, and the 10-pass counter resets to 0 for the new SHA (intra- or inter-session)**
 - **A `CHANGES_REQUESTED` review references the issue's acceptance criteria and you have not yet implemented the change OR obtained the reviewer's explicit agreement on the narrowed scope (Hard Rule 7)**
 
 ## Tips

@@ -50,6 +50,7 @@ The run is NOT considered successful (and `## Status: already resolved` MUST NOT
 - **`mergeable: CONFLICTING`** — the branch's open PR is in a conflict state with the base branch.
 - **Unpushed commits** — `git log @{u}..HEAD` (or `git log origin/{{BASE_BRANCH}}..HEAD` for a new branch) is non-empty; the local branch has commits the remote does not.
 - **Unresolved AC blocker** — any acceptance criterion in the issue body is unmet, contested, or marked blocked by another open issue.
+- **PR not approved** — an open PR exists for the branch AND the PR does not have Approval (`reviewDecision !== 'APPROVED'` AND no informal approval per `sandman-pr-review` Step 6 case C). The orchestrator must not declare the run successful while review is unresolved.
 
 Re-check this block immediately before writing `## Status: already resolved`. If any condition is true, abort the marker and address the underlying problem (close orphan PR, back-merge, push commits, or resolve the blocker).
 
@@ -136,8 +137,11 @@ During `sandman implement`, follow all delegated subskills it calls:
 1. Complete checklist items in order: Create branch, Plan, Implement, PR-Review, PR-Merge.
 2. For plan-approval, use subagent review. For self-review, use `sandman-self-review` skill. For PR-review, use `sandman-pr-review` skill — subagent review is banned there. Proceed after consensus/completion. Do not ask the user.
 3. **PR creation is not PR review.** A PR existing does not mean it has been reviewed or is ready to merge. Before loading `sandman-pr-merge`, the agent MUST confirm that `sandman-pr-review` was actually executed and produced a reviewed/approved state. If the last completed step is "PR Created" and the PR is not approved or not mergeable, the agent MUST call `sandman-pr-review` before `sandman-pr-merge` — do not skip the review step. If any merge gate is false or ambiguous, call `sandman-pr-review` and continue the review loop instead of reporting blockers to the user.
-4. If `PR-Review` completes with full approval and all merge gates are true, load and run `sandman-pr-merge`.
-5. If a `sandman-pr-review` pass times out or returns without approval, do not mark `PR-Review` complete and do not advance to `PR-Merge` on the next retry. Re-enter `sandman-pr-review` and keep the review loop open until approval is observed or a stop condition is reached.
+4. **PR-Review is `[x]` only when the PR has Approval.** `PR-Review` cannot be marked complete on the basis of exhausted review passes, timeouts, or zero reviewer responses. The check is a concrete signal: the PR has Approval (`reviewDecision === 'APPROVED'` OR informal approval per `sandman-pr-review` Step 6 case C). Until that signal is observed, leave the checkbox unchecked and keep the review loop open — even if every other item is checked. Marking `PR-Review` `[x]` without an Approval is the failure mode that strands a run at PR-Merge with no path forward.
+5. If `PR-Review` completes with full approval and all merge gates are true, load and run `sandman-pr-merge`.
+6. If a `sandman-pr-review` pass times out or returns without approval, do not mark `PR-Review` complete and do not advance to `PR-Merge` on the next retry. Re-enter `sandman-pr-review` and keep the review loop open until approval is observed or a stop condition is reached.
+7. **A new commit resets the review pass counter.** If the agent pushed a new commit to the PR branch (head SHA changed) after the last review post, the prior exhausted pass budget is stale — the reviewer is being asked to evaluate a new diff. Re-enter `sandman-pr-review` with a fresh 10-pass budget for the new SHA, regardless of how many passes the prior SHA consumed. This applies intra- and inter-session: any SHA change restarts the counter.
+8. **On retry, the prior pass budget does not carry over.** Each new agent session (e.g., `sandman run --continue` or any re-entry of the run) starts with a fresh 10-pass budget for `sandman-pr-review` — the in-session pass counter is not persisted across sessions. Treat any prior `[x] PR-Review` in `.sandman/task.md` as untrusted state from a prior session: re-verify the PR has Approval NOW before accepting the box as complete. If no Approval is observed, uncheck the box and re-enter `sandman-pr-review`.
 
 ## Completion Requirements
 
