@@ -27,17 +27,26 @@ For a faster targeted loop while editing one package, run the smallest relevant 
 Smoke tests run a single agent session end-to-end and verify the core run loop. They are fast compared with full e2e tests and are disabled unless a provider allowlist is set.
 
 ```bash
-SANDMAN_TEST_PROVIDERS=opencode go test -tags smoke ./internal/cmd -run Smoke
+SANDMAN_TEST_PROVIDERS=opencode \
+  go test -tags smoke -timeout 30m ./internal/cmd -run Smoke
 ```
 
 `SANDMAN_TEST_PROVIDERS` accepts a comma-separated list of provider names, `all`, or `*`. When unset, smoke tests skip themselves.
+
+The `-timeout 30m` budget is required because each smoke sub-test pays a real
+`podman build` of the per-provider / per-buildTools image plus a real
+`opencode run` agent invocation; the cumulative wall time of the smoke suite
+exceeds Go's 10-minute default timeout. For the full preset matrix (one
+sub-test per buildTools variant — `generic`, `go`, `python`, `elixir`),
+`-timeout 60m` is a safer budget.
 
 ### Smoke image prewarm
 
 Smoke tests prebuild the container images they need on first use, then reuse those images during the same test process. To force each smoke test to build its own image, disable prewarm:
 
 ```bash
-SANDMAN_SMOKE_PREFETCH=0 SANDMAN_TEST_PROVIDERS=opencode go test -tags smoke ./internal/cmd -run Smoke
+SANDMAN_SMOKE_PREFETCH=0 SANDMAN_TEST_PROVIDERS=opencode \
+  go test -tags smoke -timeout 30m ./internal/cmd -run Smoke
 ```
 
 ## E2E tests
@@ -45,8 +54,15 @@ SANDMAN_SMOKE_PREFETCH=0 SANDMAN_TEST_PROVIDERS=opencode go test -tags smoke ./i
 E2E tests exercise multi-session behavior such as continuing a previous run, batch orchestration, and subagent permission boundaries. They require the `e2e` build tag and are slower than smoke tests.
 
 ```bash
-SANDMAN_TEST_PROVIDERS=opencode go test -tags e2e ./internal/cmd -run PRFlow
+SANDMAN_TEST_PROVIDERS=opencode \
+  go test -tags e2e -timeout 30m ./internal/cmd -run PRFlow
 ```
+
+For the full `-run TestPresetMatrixHarness` suite (every scaffold preset —
+`go`, `node`, `dotnet`, `elixir`, `rust`, `java`, `ruby`, `python`,
+`generic`), use `-timeout 90m`: each preset pays a fresh `podman build`
+of the scaffolded image. The script `scripts/run-preset-matrix.sh` applies
+that budget automatically.
 
 ## Gated scenarios
 
@@ -66,13 +82,14 @@ Some expensive scenarios run without a build tag and are selected with `SANDMAN_
 
 ```bash
 # Single scenario
-SANDMAN_E2E_GATES=batch go test -run TestRunBatch_EndToEnd ./internal/batch
+SANDMAN_E2E_GATES=batch go test -timeout 30m -run TestRunBatch_EndToEnd ./internal/batch
 
 # Multiple scenarios
-SANDMAN_E2E_GATES=batch,continue_multi,opencode_subagent go test ./...
+SANDMAN_E2E_GATES=batch,continue_multi,opencode_subagent \
+  go test -timeout 30m ./...
 
 # All scenarios
-SANDMAN_E2E_GATES=all go test ./...
+SANDMAN_E2E_GATES=all go test -timeout 30m ./...
 ```
 
 ## Per-agent model override
@@ -81,8 +98,34 @@ By default, smoke and e2e tests use the model baked into each test case. To targ
 
 ```bash
 SANDMAN_TEST_MODEL_OPENCODE=opencode/gpt-5-nano \
-  SANDMAN_TEST_PROVIDERS=opencode go test -tags smoke ./internal/cmd -run Smoke
+  SANDMAN_TEST_PROVIDERS=opencode \
+  go test -tags smoke -timeout 30m ./internal/cmd -run Smoke
 ```
+
+## Real-agent opt-in (`SANDMAN_RUN_AGENT_E2E`)
+
+The preset-matrix harness (`TestPresetMatrixHarness_*RunExecutesRealTask`)
+runs the **real** opencode agent inside a real container against a real LLM
+provider. Those sub-tests are gated behind a runtime opt-in so the
+`-tags e2e` suite stays runnable on developer machines and CI without a
+live agent credentials:
+
+```bash
+# Default: agent sub-tests skip cleanly with a clear message.
+SANDMAN_TEST_PROVIDERS=all SANDMAN_E2E_GATES=all \
+  go test -tags e2e -timeout 30m ./internal/cmd
+
+# Opt in: agent sub-tests actually execute.
+SANDMAN_RUN_AGENT_E2E=1 SANDMAN_TEST_PROVIDERS=all SANDMAN_E2E_GATES=all \
+  go test -tags e2e -timeout 90m ./internal/cmd
+```
+
+`SANDMAN_RUN_AGENT_E2E=1` requires the host's opencode auth snapshot
+(`~/.local/share/opencode/auth.json`) and a working `podman` or `docker`
+runtime. With the opt-in set, the preset-matrix sub-tests are real-workflow
+and need the wider `-timeout 90m` budget. Without it, the same tests skip
+with the message `skip preset-matrix e2e agent smoke: SANDMAN_RUN_AGENT_E2E=1
+not set` and the rest of the suite runs as normal.
 
 ## Cleanup after interrupted tests
 

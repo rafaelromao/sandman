@@ -11,6 +11,10 @@
 #   scripts/run-preset-matrix.sh             # all presets
 #
 # The preset names are the same as those accepted by `sandman init --build-tools`.
+#
+# The real-agent sub-tests (*RunExecutesRealTask) need a live opencode
+# install with auth; without SANDMAN_RUN_AGENT_E2E=1 they skip cleanly and
+# only the build-only tests run.
 
 set -euo pipefail
 
@@ -19,10 +23,19 @@ TESTDIR="${ROOT}/internal/cmd"
 
 VALID_PRESETS="generic go node dotnet elixir rust java ruby python"
 
+# Per-preset podman builds dominate the wall time. 90m covers the full
+# 9-preset matrix with comfortable headroom for slower hosts.
+DEFAULT_TIMEOUT="90m"
+
 usage() {
     echo "Usage: $0 [preset...]
 
 Valid presets: ${VALID_PRESETS}
+
+Env vars:
+  SANDMAN_TEST_TIMEOUT   Per-test timeout passed to go test as -timeout.
+                         Defaults to ${DEFAULT_TIMEOUT}.
+  SANDMAN_RUN_AGENT_E2E  Set to 1 to opt the real-agent sub-tests in.
 " >&2
     exit 1
 }
@@ -56,5 +69,6 @@ else
 fi
 
 filter=$(build_filter "${presets[@]}")
+timeout="${SANDMAN_TEST_TIMEOUT:-${DEFAULT_TIMEOUT}}"
 
-exec go test -tags e2e "${TESTDIR}" -run "${filter}" -count=1
+exec go test -tags e2e -timeout "${timeout}" "${TESTDIR}" -run "${filter}" -count=1
