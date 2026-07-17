@@ -3302,7 +3302,7 @@ var _ Runner = (*Orchestrator)(nil)
 // Production usage:
 //
 //	resolver := newBatchIdentityResolver(o, ".")
-//	// later, from (*runSession).applyOverrideAndIdentity:
+//	// later, from (*runSession).startOptsFor (renamed from applyOverrideAndIdentity in #2264):
 //	identity, err := s.identityResolver.resolve()
 //
 // Test usage (no real git invocation, no worktree-config side effect):
