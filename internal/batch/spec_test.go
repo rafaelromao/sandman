@@ -84,6 +84,16 @@ func TestExtractIssueReferences(t *testing.T) {
 			want: []int{7, 42},
 		},
 		{
+			name: "full issue URLs and shorthand preserve source order",
+			text: "[First](https://github.com/owner/repo/issues/7) then #42 then [#7](https://github.com/owner/repo/issues/7)",
+			want: []int{7, 42},
+		},
+		{
+			name: "URL fragment is not a separate shorthand reference",
+			text: "https://github.com/owner/repo/issues/7#42",
+			want: []int{7},
+		},
+		{
 			name: "ignores issue numbers without #",
 			text: "no hashes here 42 7",
 			want: nil,
@@ -199,6 +209,29 @@ func TestSpecificationResolver_ReplacesSpecificationWithChildrenFromBody(t *test
 	}
 	if !equalInts(got, []int{10, 11}) {
 		t.Fatalf("expected [10 11], got %v", got)
+	}
+}
+
+func TestSpecificationResolver_ReplacesSpecificationWithChildrenFromNamedFullURLs(t *testing.T) {
+	specBody := "## Problem Statement\n\nProblem.\n\n## Solution\n\nSolution.\n\n## User Stories\n\n1. Story.\n\nSee closed map #250.\n\n## Children\n\n- [First child](https://github.com/owner/repo/issues/10)\n- [Second child](https://github.com/owner/repo/issues/11)\n"
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			1:   {Number: 1, Title: "Specification", Body: specBody},
+			10:  {Number: 10, Title: "First child", Body: "## Parent\n\nhttps://github.com/owner/repo/issues/1\n"},
+			11:  {Number: 11, Title: "Second child", Body: "## Parent\n\nhttps://github.com/owner/repo/issues/1\n"},
+			250: {Number: 250, Title: "Unrelated", Body: "## Parent\n\n#999\n"},
+		},
+	}
+
+	got, err := NewSpecificationResolver(client, io.Discard).Resolve(context.Background(), []int{1})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !equalInts(got, []int{10, 11}) {
+		t.Fatalf("expected [10 11], got %v", got)
+	}
+	if len(client.searchCalls) != 0 {
+		t.Fatalf("expected URL children to avoid fallback search, got %v", client.searchCalls)
 	}
 }
 
@@ -633,6 +666,31 @@ func TestSpecificationResolver_ChildrenOnlyDetection(t *testing.T) {
 	}
 }
 
+func TestSpecificationResolver_ChildrenOnlyDetectionFromNamedURLComment(t *testing.T) {
+	parentBody := "## What\n\nParent issue without Specification sections.\n"
+	childBody := "## Parent\n\nhttps://github.com/owner/repo/issues/1\n\n## What\n\nChild work.\n"
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			1:  {Number: 1, Title: "Parent with linked child", Body: parentBody},
+			10: {Number: 10, Title: "Child", Body: childBody},
+		},
+		issueComments: map[int][]github.IssueComment{
+			1: {{Body: "Tracking [the child](https://github.com/owner/repo/issues/10)."}},
+		},
+	}
+
+	got, err := NewSpecificationResolver(client, io.Discard).Resolve(context.Background(), []int{1})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !equalInts(got, []int{10}) {
+		t.Fatalf("expected [10], got %v", got)
+	}
+	if len(client.listSubIssuesCalls) != 0 {
+		t.Fatalf("comment child discovery must preserve the existing no-native-probe path, got %v", client.listSubIssuesCalls)
+	}
+}
+
 func TestSpecificationResolver_LazyProbeSkipsWhenSectionShapePresent(t *testing.T) {
 	// Body has canonical Specification sections. The broadened lazy probe MUST NOT fire
 	// (cheap path handles it), but the existing section-shape expansion DOES
@@ -846,6 +904,29 @@ func TestSpecificationResolver_ExpandNativeSubIssues(t *testing.T) {
 	}
 }
 
+func TestSpecificationResolver_ExpandsNativeSubIssuesForCanonicalSpecification(t *testing.T) {
+	specBody := "## Problem Statement\n\nProblem.\n\n## Solution\n\nSolution.\n\n## User Stories\n\n1. Story.\n"
+	childBody := "## Parent\n\n#1\n\n## What\n\nChild work.\n"
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			1:  {Number: 1, Title: "Specification", Body: specBody},
+			42: {Number: 42, Title: "Native child", Body: childBody},
+		},
+		subIssues: map[int][]int{1: {42}},
+	}
+
+	got, err := NewSpecificationResolver(client, io.Discard).Resolve(context.Background(), []int{1})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !equalInts(got, []int{42}) {
+		t.Fatalf("expected [42], got %v", got)
+	}
+	if !equalInts(client.listSubIssuesCalls, []int{1}) {
+		t.Fatalf("expected native child lookup for canonical Specification, got %v", client.listSubIssuesCalls)
+	}
+}
+
 func TestSpecificationResolver_NativeSubIssuesKeepsBodyRefOrder(t *testing.T) {
 	parentBody := "## What to build\n\nTracks #43 in body.\n"
 	childBody42 := "## Parent\n\n#1\n\n## What\n\n"
@@ -906,7 +987,7 @@ func TestSpecificationResolver_NonSpecWithoutChildrenCallsListSubIssuesOnce(t *t
 	}
 }
 
-func TestSpecificationResolver_SpecShapeExpansionDoesNotTriggerListSubIssues(t *testing.T) {
+func TestSpecificationResolver_SpecShapeExpansionCallsListSubIssues(t *testing.T) {
 	specBody := "## Problem Statement\n\nP.\n\n## Solution\n\nS.\n\n## User Stories\n\n1. U.\n\n## Child Issues\n\n- #10\n"
 	childBody := "## Parent\n\n#1\n\n## What\n\n"
 	client := &fakeGitHubClient{
@@ -919,8 +1000,8 @@ func TestSpecificationResolver_SpecShapeExpansionDoesNotTriggerListSubIssues(t *
 	if _, err := r.Resolve(context.Background(), []int{1}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(client.listSubIssuesCalls) != 0 {
-		t.Errorf("section-shape expansion must NOT trigger the broadened sub-issues probe, got %v", client.listSubIssuesCalls)
+	if !equalInts(client.listSubIssuesCalls, []int{1}) {
+		t.Errorf("canonical Specification expansion must check native sub-issues, got %v", client.listSubIssuesCalls)
 	}
 }
 

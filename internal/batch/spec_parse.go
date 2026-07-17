@@ -6,10 +6,11 @@ import (
 	"strings"
 )
 
-var issueRefPattern = regexp.MustCompile(`#(\d+)\b`)
+var issueRefPattern = regexp.MustCompile(`(?:/issues/(\d+)(?:#[^\s)\]]*)?|#(\d+)\b)`)
 
 // ExtractIssueReferences returns the unique issue numbers referenced in the
-// given text via `#N` shorthand, preserving the order of first occurrence.
+// given text via `#N` shorthand or full issue URLs, preserving the order of
+// first occurrence.
 func ExtractIssueReferences(text string) []int {
 	matches := issueRefPattern.FindAllStringSubmatch(text, -1)
 	if len(matches) == 0 {
@@ -18,7 +19,11 @@ func ExtractIssueReferences(text string) []int {
 	seen := make(map[int]struct{}, len(matches))
 	var out []int
 	for _, match := range matches {
-		number, err := strconv.Atoi(match[1])
+		numberText := match[1]
+		if numberText == "" {
+			numberText = match[2]
+		}
+		number, err := strconv.Atoi(numberText)
 		if err != nil {
 			continue
 		}

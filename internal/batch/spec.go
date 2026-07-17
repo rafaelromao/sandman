@@ -228,6 +228,13 @@ func (r *SpecificationResolver) expandOne(
 			}
 			subIssues = nums
 		}
+	} else {
+		nums, subErr := r.client.ListSubIssues(ctx, num)
+		if subErr != nil {
+			fmt.Fprintf(r.warningWriter, "warning: could not list sub-issues for specification #%d: %v\n", num, subErr)
+		} else {
+			subIssues = nums
+		}
 	}
 
 	accepted, err := r.collectAcceptedChildren(ctx, num, issue.Body, subIssues, userInputSet, fetches)
