@@ -55,8 +55,11 @@ type SandboxStart struct {
 
 // Sandbox provides isolation for one or more AgentRuns.
 type Sandbox interface {
-	// Start initializes the sandbox environment.
-	Start() error
+	// Start initializes the sandbox environment. opts carries the
+	// pre-Start configuration (override / continue / stranded-reconcile /
+	// git-identity) that previously lived as four independent setters
+	// on the interface. Start is the only configuration entry point.
+	Start(opts SandboxStart) error
 	// Exec runs a command inside the sandbox, writing stdout and stderr to the given writers.
 	Exec(ctx context.Context, command string, stdout, stderr io.Writer) error
 	// ExecInteractive runs a command inside the sandbox attached to the user's terminal.
@@ -73,23 +76,6 @@ type Sandbox interface {
 	WritePrompt(content string) error
 	// Process returns the running OS process, or nil if no process is active.
 	Process() Process
-	// SetOverride enables override behavior for orphan worktree recovery.
-	// Must be safe to call before Start.
-	SetOverride(override bool)
-	// SetStrandedReconcile enables or disables auto-recovery from a
-	// stranded worktree or a "branch used by worktree at" error during
-	// Start. Must be safe to call before Start.
-	SetStrandedReconcile(enabled bool)
-	// SetGitIdentity configures the identity Sandman should write to worktree-local git config.
-	// Must be safe to call before Start.
-	SetGitIdentity(name, email string)
-	// SetContinue signals that this Start is a continuation of a
-	// previous run that may have left a /workspace-visible gitlink
-	// behind. When enabled, Start normalizes the preserved worktree's
-	// .git pointer back to host-visible paths before validation and
-	// reuses the existing worktree. Must be safe to call before Start.
-	// Issue #2189.
-	SetContinue(c bool)
 	// RestoreHostPaths returns the sandbox to host-visible state without
 	// removing the worktree. For container sandboxes this rewrites the
 	// preserved worktree's .git pointer from /workspace/... back to the
