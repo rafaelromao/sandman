@@ -757,6 +757,13 @@ func NewOrchestrator(githubClient github.Client, renderer prompt.IssueRenderer, 
 	for _, opt := range opts {
 		opt(o)
 	}
+	// Ensure the baseBranchSyncMu mutex survives option application —
+	// WithRunSessionOpts replaces the whole runSessionOptions struct, so
+	// the per-Orchestrator mutex must be re-established afterwards to
+	// keep syncBaseBranch's lock serialisation intact (wayfinder #2231).
+	if o.runSessionOpts.baseBranchSyncMu == nil {
+		o.runSessionOpts.baseBranchSyncMu = &sync.Mutex{}
+	}
 	return o
 }
 
@@ -768,6 +775,52 @@ func WithBadgeHooker(h BadgeHooker) OrchestratorOpt {
 	return func(o *Orchestrator) {
 		o.badgeHooker = h
 	}
+}
+
+// Test-injection options (wayfinder #2231). These are the public seam that
+// replaces the historical pattern of post-construction assignment to
+// Orchestrator private fields (`o.runnableFactory = ...`) and struct-literal
+// construction (`&Orchestrator{runnableFactory: ...}`). They feed NewOrchestrator
+// at construction time so tests stop reaching into unexported state.
+//
+// Every option below corresponds to a field the catalog (#2230) classified
+// as load-bearing (tests drive meaningful behaviour through it) or test-tunable
+// (tests adjust a production default). The 3 not-injected fields (lookupGHToken,
+// phaseWriter, firstSandboxStartOnce) intentionally have no options.
+//
+// NewOrchestrator restores o.runSessionOpts.baseBranchSyncMu after applying
+// options, so WithRunSessionOpts can safely replace the whole struct without
+// losing the per-Orchestrator serialisation mutex.
+
+func WithRunnableFactory(f RunnableFactory) OrchestratorOpt {
+	return func(o *Orchestrator) { o.runnableFactory = f }
+}
+
+func WithSandboxFactory(f SandboxFactory) OrchestratorOpt {
+	return func(o *Orchestrator) { o.sandboxFactory = f }
+}
+
+func WithContainerRuntimeFactory(f ContainerRuntimeFactory) OrchestratorOpt {
+	return func(o *Orchestrator) { o.containerRuntimeFactory = f }
+}
+
+func WithErrorLog(w io.Writer) OrchestratorOpt {
+	return func(o *Orchestrator) { o.errorLog = w }
+}
+
+// WithRunSessionOpts sets the whole runSessionOptions struct on the Orchestrator.
+// Note: NewOrchestrator restores the per-Orchestrator baseBranchSyncMu mutex
+// after this option is applied, so passing a fresh runSessionOptions{} is safe.
+func WithRunSessionOpts(opts runSessionOptions) OrchestratorOpt {
+	return func(o *Orchestrator) { o.runSessionOpts = opts }
+}
+
+func WithHeartbeatTickInterval(d time.Duration) OrchestratorOpt {
+	return func(o *Orchestrator) { o.heartbeatTickInterval = d }
+}
+
+func WithVerifyPath(v VerifyPathFunc) OrchestratorOpt {
+	return func(o *Orchestrator) { o.verifyPath = v }
 }
 
 // NewBadgeHooker returns a BadgeHooker that suggests a Built with Sandman
@@ -889,6 +942,22 @@ func (o *Orchestrator) currentPhaseWriter() io.Writer {
 	o.phaseMu.Lock()
 	defer o.phaseMu.Unlock()
 	return o.phaseWriter
+}
+
+// firstSandboxStart emits the "first-sandbox-start" phase exactly the way the
+// inline block that previously lived in (*runSession).execute did: the
+// one-time closure is installed lazily under phaseMu (capturing the first
+// caller's sandboxStarted), and every caller invokes it. The closure reads the
+// phase writer at invocation time via currentPhaseWriter. Behaviour-preserving
+// extraction onto the runCoordination seam (wayfinder #2234).
+func (o *Orchestrator) firstSandboxStart(sandboxStarted time.Time) {
+	o.phaseMu.Lock()
+	if o.firstSandboxStartOnce == nil {
+		o.firstSandboxStartOnce = func() { writePhase(o.currentPhaseWriter(), "first-sandbox-start", sandboxStarted) }
+	}
+	once := o.firstSandboxStartOnce
+	o.phaseMu.Unlock()
+	once()
 }
 
 // RunBatch executes the requested AgentRuns in parallel.
@@ -1226,7 +1295,6 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 			if len(abortedBy) > 0 {
 				res := AgentRunResult{IssueNumber: issueNum, Issue: issueRef(issueNum), Status: "aborted", Branch: req.Branches[issueNum]}
 				o.logAborted(issueNum, runID, abortedBy)
-
 				mu.Lock()
 				results[idx] = res
 				statuses[issueNum] = res.Status
@@ -1236,7 +1304,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 			}
 			if len(stillBlockedBy) > 0 {
 				res := AgentRunResult{IssueNumber: issueNum, Issue: issueRef(issueNum), Status: "blocked", Branch: req.Branches[issueNum]}
-				o.logBlocked(issueNum, stillBlockedBy, runID, issueBatchID)
+				logBlocked(o.eventLog, issueNum, stillBlockedBy, runID, issueBatchID)
 
 				mu.Lock()
 				results[idx] = res
@@ -1301,7 +1369,37 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				}
 			}
 
-			res, started := o.runSingle(issueCtx, parentCtx, issueNum, cfg, agentName, agentCfg, mode == ModeContinue, req.PreviousRunIDs, batchIdentityResolver, req.Branches, renderCfg, req.OutputWriter, policy.sandboxFactory, policy.containerAlloc, mode == ModeOverride, issueBaseBranch, req.Blocked[issueNum], parallel, startDelay, retries, runIdleTimeout, sandboxMode, containerCapacityForLog, req.ContainerCapacitySet, maxContainersForLog, req.MaxContainersSet, *dangerouslySkipPermissions, strandedReconcile, req.RunTS, req.RunShortID, issueBatchID)
+			row := RowSpec{
+				IssueNumber:      issueNum,
+				Mode:             mode,
+				Branches:         req.Branches,
+				PreviousRunIDs:   req.PreviousRunIDs,
+				BaseBranch:       issueBaseBranch,
+				ExternalBlockers: req.Blocked[issueNum],
+				RenderCfg:        renderCfg,
+				OutputWriter:     req.OutputWriter,
+				RunTS:            req.RunTS,
+				RunShortID:       req.RunShortID,
+				BatchID:          issueBatchID,
+			}
+			bc := BatchConfig{
+				Cfg:                        cfg,
+				AgentName:                  agentName,
+				AgentCfg:                   agentCfg,
+				IdentityResolver:           batchIdentityResolver,
+				Parallel:                   parallel,
+				StartDelay:                 startDelay,
+				Retries:                    retries,
+				RunIdleTimeout:             runIdleTimeout,
+				SandboxMode:                sandboxMode,
+				ContainerCapacity:          containerCapacityForLog,
+				ContainerCapacitySet:       req.ContainerCapacitySet,
+				MaxContainers:              maxContainersForLog,
+				MaxContainersSet:           req.MaxContainersSet,
+				DangerouslySkipPermissions: *dangerouslySkipPermissions,
+				StrandedReconcile:          strandedReconcile,
+			}
+			res, started := o.runSingleRow(issueCtx, parentCtx, row, bc, policy.sandboxFactory, policy.containerAlloc)
 			if started {
 				defer startGate.Release()
 			} else {
@@ -1445,15 +1543,15 @@ func (o *Orchestrator) resolveSandboxExecutionPolicy(ctx context.Context, cfg *c
 	}, nil
 }
 
-func (o *Orchestrator) logBlocked(issueNum int, blockers []int, runID string, batchID string) {
-	if o.eventLog == nil {
+func logBlocked(eventLog events.EventLog, issueNum int, blockers []int, runID string, batchID string) {
+	if eventLog == nil {
 		return
 	}
 	payload := map[string]any{"blocked_by": blockers}
 	if batchID != "" {
 		payload["batch_id"] = batchID
 	}
-	_ = o.eventLog.Log(events.Event{
+	_ = eventLog.Log(events.Event{
 		Type:      "run.blocked",
 		Timestamp: time.Now(),
 		RunID:     runID,
@@ -1515,8 +1613,8 @@ func mapRetryReason(previousStatus string, abortedByHeartbeat bool, parentCtx co
 // event both tail. issueNumber == 0 denotes a prompt-only run, matching the
 // existing prompt-only convention (issue: 0 in the JSON payload). No-op when
 // the orchestrator has no event log.
-func (o *Orchestrator) logRetry(runID, branch string, attempt, maxAttempts int, previousStatus, reason, logPath string, issueNumber int) {
-	if o.eventLog == nil {
+func logRetry(eventLog events.EventLog, runID, branch string, attempt, maxAttempts int, previousStatus, reason, logPath string, issueNumber int) {
+	if eventLog == nil {
 		return
 	}
 	event := events.Event{
@@ -1536,7 +1634,7 @@ func (o *Orchestrator) logRetry(runID, branch string, attempt, maxAttempts int, 
 	if issueNumber > 0 {
 		event.IssueRef = issueRef(issueNumber)
 	}
-	_ = o.eventLog.Log(event)
+	_ = eventLog.Log(event)
 }
 
 func buildStartOptions(agentCfg config.Agent) (sandbox.StartOptions, error) {
@@ -1652,7 +1750,9 @@ type runSessionOptions struct {
 // is built by runSingle / runPromptOnlySingle. A session is short-lived: it
 // lives for one execute call and is discarded on return.
 type runSession struct {
-	o *Orchestrator
+	deps      runDeps
+	coord     runCoordination
+	commander daemon.IssueCommander
 
 	// Inputs captured from the runSingle / runPromptOnlySingle call site.
 	issueNumber                int
@@ -1746,8 +1846,8 @@ type runSession struct {
 // directly without calling NewOrchestrator) fall back to
 // cfg.WorktreeDir.
 func (s *runSession) worktreeDir() string {
-	if s.o.layout.RepoRoot != "" {
-		return s.o.layout.WorktreeDir
+	if s.deps.layout.RepoRoot != "" {
+		return s.deps.layout.WorktreeDir
 	}
 	if s.cfg != nil {
 		return strings.TrimSpace(s.cfg.WorktreeDir)
@@ -1781,9 +1881,9 @@ func (s *runSession) runFolderFor(runID string) string {
 		batchID = batchIDFromRunID(runID)
 	}
 	if batchID == "" {
-		return filepath.Join(s.o.layout.BatchesDir, "runs", runID)
+		return filepath.Join(s.deps.layout.BatchesDir, "runs", runID)
 	}
-	return s.o.layout.RunFolder(batchID, runID)
+	return s.deps.layout.RunFolder(batchID, runID)
 }
 
 // runLogPathFor returns the per-row run.log path. Mirrors runFolderFor
@@ -1794,9 +1894,9 @@ func (s *runSession) runLogPathFor(runID string) string {
 		batchID = batchIDFromRunID(runID)
 	}
 	if batchID == "" {
-		return filepath.Join(s.o.layout.BatchesDir, "runs", runID, "run.log")
+		return filepath.Join(s.deps.layout.BatchesDir, "runs", runID, "run.log")
 	}
-	return s.o.layout.RunLogPath(batchID, runID)
+	return s.deps.layout.RunLogPath(batchID, runID)
 }
 
 // batchIDFromRunID derives a stable batch directory name from a
@@ -1859,13 +1959,12 @@ func hasExactTaskStatus(taskContent, status string) bool {
 }
 
 func (s *runSession) applyOverrideAndIdentity(wt sandbox.Sandbox, branch string) (AgentRunResult, bool) {
-	o := s.o
 	wt.SetOverride(s.mode == ModeOverride)
 	wt.SetStrandedReconcile(s.strandedReconcile)
 	wt.SetContinue(s.mode == ModeContinue)
 	identity, err := s.identityResolver.resolve()
 	if err != nil {
-		fmt.Fprintf(o.errorLog, "error: resolve git identity for issue %d: %v\n", s.issueNumber, err)
+		fmt.Fprintf(s.deps.errorLog, "error: resolve git identity for issue %d: %v\n", s.issueNumber, err)
 		result := AgentRunResult{Status: "failure", Branch: branch}
 		if s.issueNumber > 0 {
 			result.IssueNumber = s.issueNumber
@@ -1880,7 +1979,6 @@ func (s *runSession) applyOverrideAndIdentity(wt sandbox.Sandbox, branch string)
 // withHeartbeat runs fn under the run-idle-timeout watchdog when
 // s.runIdleTimeout > 0; any non-success result is rewritten to "aborted".
 func (s *runSession) withHeartbeat(ctx context.Context, runID string, attempt int, logPath string, wt sandbox.Sandbox, fn func() AgentRunResult) (AgentRunResult, bool) {
-	o := s.o
 	if s.runIdleTimeout <= 0 {
 		return fn(), false
 	}
@@ -1892,12 +1990,12 @@ func (s *runSession) withHeartbeat(ctx context.Context, runID string, attempt in
 	heartbeat := &Heartbeat{
 		LogPath:      logPath,
 		IdleTimeout:  time.Duration(s.runIdleTimeout) * time.Second,
-		TickInterval: o.heartbeatTickInterval,
+		TickInterval: s.deps.heartbeatTickInterval,
 	}
 	heartbeat.OnIdle = func(idle time.Duration) {
 		abortedByHeartbeat = true
-		if o.eventLog != nil {
-			_ = o.eventLog.Log(events.Event{
+		if s.deps.eventLog != nil {
+			_ = s.deps.eventLog.Log(events.Event{
 				Type:      "run.idle_timeout",
 				Timestamp: time.Now(),
 				RunID:     runID,
@@ -1953,7 +2051,6 @@ func (s *runSession) withHeartbeat(ctx context.Context, runID string, attempt in
 // defence-in-depth against skill regressions that forget to flag the DIRTY
 // PR case; see issue #1684.
 func (s *runSession) emitTerminal(ctx context.Context, runID string, result AgentRunResult, extras map[string]any) string {
-	o := s.o
 	if conflictExtras, ok := s.detectConflictingPR(result.Branch); ok {
 		result.Status = "failure"
 		if extras == nil {
@@ -1965,7 +2062,7 @@ func (s *runSession) emitTerminal(ctx context.Context, runID string, result Agen
 	}
 	terminalEventType, terminalStatus := terminalRunEvent(ctx, result.Status)
 	s.updateRunManifestStatus(runID, batchindex.RunManifestStatus(terminalStatus))
-	if o.eventLog == nil {
+	if s.deps.eventLog == nil {
 		return terminalStatus
 	}
 	retriesDone := result.RetriesTotal - 1
@@ -2000,7 +2097,7 @@ func (s *runSession) emitTerminal(ctx context.Context, runID string, result Agen
 	for k, v := range extras {
 		event.Payload[k] = v
 	}
-	_ = o.eventLog.Log(event)
+	_ = s.deps.eventLog.Log(event)
 	return terminalStatus
 }
 
@@ -2022,12 +2119,11 @@ func (s *runSession) emitTerminal(ctx context.Context, runID string, result Agen
 // reason should be a short diagnostic string identifying the failure point
 // (e.g. "fetch issue", "start sandbox"). The full error is already on stderr.
 func (s *runSession) emitEarlyFailure(reason, branch string) {
-	o := s.o
-	if o.eventLog == nil {
+	if s.deps.eventLog == nil {
 		return
 	}
 	runID := buildRunID(s.issueNumber, s.runTS, s.runShortID)
-	_ = o.eventLog.Log(events.Event{
+	_ = s.deps.eventLog.Log(events.Event{
 		Type:      "run.finished",
 		Timestamp: time.Now(),
 		RunID:     runID,
@@ -2053,20 +2149,19 @@ func (s *runSession) emitEarlyFailure(reason, branch string) {
 // but treated as a soft pass-through: a transient gh failure must not
 // silently flip a real success into a fake failure. See issue #1684.
 func (s *runSession) detectConflictingPR(branch string) (map[string]any, bool) {
-	o := s.o
 	if strings.TrimSpace(branch) == "" {
 		return nil, false
 	}
 	exists, prNumber, mergeable, err := LookupOpenPR(branch)
 	if err != nil {
-		fmt.Fprintf(o.errorLog, "warning: lookup open PR for branch %q: %v\n", branch, err)
+		fmt.Fprintf(s.deps.errorLog, "warning: lookup open PR for branch %q: %v\n", branch, err)
 		return nil, false
 	}
 	if !exists {
 		return nil, false
 	}
 	if strings.EqualFold(mergeable, "CONFLICTING") {
-		fmt.Fprintf(o.errorLog, "error: branch %q has CONFLICTING open PR #%d, overriding run status to failure\n", branch, prNumber)
+		fmt.Fprintf(s.deps.errorLog, "error: branch %q has CONFLICTING open PR #%d, overriding run status to failure\n", branch, prNumber)
 		return map[string]any{"merge_conflict": true, "pr_number": prNumber}, true
 	}
 	return nil, false
@@ -2076,12 +2171,9 @@ func (s *runSession) detectConflictingPR(branch string) (map[string]any, bool) {
 // verify chain. Production code uses DefaultVerifyPath; tests
 // inject a VerifyPathFunc literal to drive outcomes without touching
 // real git or GitHub.
-func (o *Orchestrator) runVerifyPath(ctx context.Context, in VerifyInput) (VerifyOutcome, []OracleCheck) {
-	if o == nil {
-		return RunVerifyPath(in)
-	}
-	if o.verifyPath != nil {
-		return o.verifyPath(in)
+func runVerifyPath(verifyPath VerifyPathFunc, in VerifyInput) (VerifyOutcome, []OracleCheck) {
+	if verifyPath != nil {
+		return verifyPath(in)
 	}
 	return DefaultVerifyPath()(in)
 }
@@ -2093,14 +2185,14 @@ func (o *Orchestrator) runVerifyPath(ctx context.Context, in VerifyInput) (Verif
 // `gh` error returns nil so the verify path falls through to T1 with
 // `T4 == abstain`, matching the "transient errors must not block
 // the run" contract used elsewhere in the orchestrator.
-func lookupPRForVerify(ctx context.Context, o *Orchestrator, branch string) *github.PR {
-	if o == nil || o.githubClient == nil || strings.TrimSpace(branch) == "" {
+func lookupPRForVerify(ctx context.Context, githubClient github.Client, errorLog io.Writer, branch string) *github.PR {
+	if githubClient == nil || strings.TrimSpace(branch) == "" {
 		return nil
 	}
-	pr, err := o.githubClient.FindPRByBranch(ctx, branch)
+	pr, err := githubClient.FindPRByBranch(ctx, branch)
 	if err != nil {
-		if o.errorLog != nil {
-			fmt.Fprintf(o.errorLog, "warning: lookup PR for verify path on branch %q: %v\n", branch, err)
+		if errorLog != nil {
+			fmt.Fprintf(errorLog, "warning: lookup PR for verify path on branch %q: %v\n", branch, err)
 		}
 		return nil
 	}
@@ -2178,19 +2270,19 @@ func oracleChecksToAny(checks []OracleCheck) []any {
 //
 // Errors from `gh pr list` are logged but treated as a soft pass: a
 // transient failure should not flip a real success into a fake failure.
-func hasBlockingOpenPR(o *Orchestrator, branch string) (map[string]any, bool) {
-	if o == nil || strings.TrimSpace(branch) == "" {
+func hasBlockingOpenPR(errorLog io.Writer, branch string) (map[string]any, bool) {
+	if strings.TrimSpace(branch) == "" {
 		return nil, false
 	}
 	exists, prNumber, _, err := LookupOpenPR(branch)
 	if err != nil {
-		fmt.Fprintf(o.errorLog, "warning: lookup open PR for branch %q: %v\n", branch, err)
+		fmt.Fprintf(errorLog, "warning: lookup open PR for branch %q: %v\n", branch, err)
 		return nil, false
 	}
 	if !exists {
 		return nil, false
 	}
-	fmt.Fprintf(o.errorLog, "error: branch %q has open PR #%d blocking alreadyResolved short-circuit; overriding run status to failure\n", branch, prNumber)
+	fmt.Fprintf(errorLog, "error: branch %q has open PR #%d blocking alreadyResolved short-circuit; overriding run status to failure\n", branch, prNumber)
 	return map[string]any{"blocker": "open-pr-blocks-already-resolved", "pr_number": prNumber}, true
 }
 
@@ -2198,13 +2290,12 @@ func hasBlockingOpenPR(o *Orchestrator, branch string) (map[string]any, bool) {
 // status. Failures are logged to errorLog and ignored; the event log remains
 // authoritative.
 func (s *runSession) updateRunManifestStatus(runID string, status batchindex.RunManifestStatus) {
-	o := s.o
-	batchDir := o.layout.BatchDir(s.batchID)
+	batchDir := s.deps.layout.BatchDir(s.batchID)
 	if s.batchID == "" {
-		batchDir = o.layout.BatchesDir
+		batchDir = s.deps.layout.BatchesDir
 	}
 	if err := daemon.UpdateRunManifestStatus(batchDir, runID, status); err != nil {
-		fmt.Fprintf(o.errorLog, "error: update run manifest status for run %s: %v\n", runID, err)
+		fmt.Fprintf(s.deps.errorLog, "error: update run manifest status for run %s: %v\n", runID, err)
 	}
 }
 
@@ -2230,7 +2321,6 @@ func (s *runSession) runOnce(
 	mergeRequired bool,
 	prepareAttempt func(attempt int) (prompt.RenderConfig, *AgentRunResult),
 ) (AgentRunResult, map[string]any, bool) {
-	o := s.o
 	if s.renderCfg.PromptFile == "" {
 		s.renderCfg.PromptFile = filepath.Join(".", ".sandman", "prompt.md")
 	}
@@ -2242,7 +2332,7 @@ func (s *runSession) runOnce(
 	var result AgentRunResult
 	var abortedByHeartbeat bool
 
-	factory := o.runnableFactory
+	factory := s.deps.runnableFactory
 	if factory == nil {
 		factory = defaultRunnableFactory{}
 	}
@@ -2256,7 +2346,7 @@ func (s *runSession) runOnce(
 
 		if attempt > 0 {
 			reason := mapRetryReason(result.Status, abortedByHeartbeat, s.parentCtx)
-			o.logRetry(runID, branch, attempt+1, attempts, result.Status, reason, logPath, s.issueNumber)
+			logRetry(s.deps.eventLog, runID, branch, attempt+1, attempts, result.Status, reason, logPath, s.issueNumber)
 		}
 
 		runnable := factory.NewRunnable(issue, branch, wt)
@@ -2277,7 +2367,7 @@ func (s *runSession) runOnce(
 			runFolder := s.runFolderFor(runID)
 			if runFolder != "" {
 				if err := snapshotOriginalTask(wt.WorkDir(), runFolder); err != nil {
-					fmt.Fprintf(o.errorLog, "warning: snapshot task.md for continuation run %s: %v\n", runID, err)
+					fmt.Fprintf(s.deps.errorLog, "warning: snapshot task.md for continuation run %s: %v\n", runID, err)
 				}
 			}
 		}
@@ -2298,7 +2388,7 @@ func (s *runSession) runOnce(
 		}
 
 		result, abortedByHeartbeat = s.withHeartbeat(ctx, runID, attempt, logPath, wt, func() AgentRunResult {
-			return runnable.Run(ctx, o.renderer, s.agentCfg.Command, attemptRenderCfg)
+			return runnable.Run(ctx, s.deps.renderer, s.agentCfg.Command, attemptRenderCfg)
 		})
 		if result.Issue == nil && s.issueNumber > 0 {
 			result.Issue = issueRef(s.issueNumber)
@@ -2312,7 +2402,7 @@ func (s *runSession) runOnce(
 		taskContent, _, _ := ReadTaskContent(taskPath)
 		alreadyResolved := hasExactTaskStatus(taskContent, "## Status: already resolved")
 		if mergeRequired {
-			prMerged := checkPRMerged(ctx, o.githubClient, branch)
+			prMerged := checkPRMerged(ctx, s.deps.githubClient, branch)
 			if events.RunStatusFromPayload(result.Status).IsAborted() {
 				continue
 			}
@@ -2321,8 +2411,8 @@ func (s *runSession) runOnce(
 					break
 				}
 				if alreadyResolved {
-					pr := lookupPRForVerify(ctx, o, branch)
-					outcome, checks := o.runVerifyPath(ctx, VerifyInput{Context: ctx, Issue: issue, Branch: branch, WorkDir: wt.WorkDir(), PR: pr})
+					pr := lookupPRForVerify(ctx, s.deps.githubClient, s.deps.errorLog, branch)
+					outcome, checks := runVerifyPath(s.deps.verifyPath, VerifyInput{Context: ctx, Issue: issue, Branch: branch, WorkDir: wt.WorkDir(), PR: pr})
 					if outcome != VerifyNoSignal {
 						terminalExtras = mergeVerificationExtras(terminalExtras, outcome, checks)
 						if outcome == VerifyFailed {
@@ -2332,9 +2422,9 @@ func (s *runSession) runOnce(
 						// VerifyVerified: drop the conservative backstop;
 						// the oracle proved the issue is already resolved.
 						result.Status = "success"
-						if issue != nil && !github.IsIssueClosed(issue) && o.githubClient != nil {
-							if err := o.githubClient.CloseIssue(ctx, issue.Number, "Closed by sandman — issue already completed."); err != nil {
-								fmt.Fprintf(o.errorLog, "error: close issue %d: %v\n", issue.Number, err)
+						if issue != nil && !github.IsIssueClosed(issue) && s.deps.githubClient != nil {
+							if err := s.deps.githubClient.CloseIssue(ctx, issue.Number, "Closed by sandman — issue already completed."); err != nil {
+								fmt.Fprintf(s.deps.errorLog, "error: close issue %d: %v\n", issue.Number, err)
 							}
 						}
 						break
@@ -2347,16 +2437,16 @@ func (s *runSession) runOnce(
 					if len(checks) > 0 {
 						terminalExtras = mergeVerificationExtras(terminalExtras, outcome, checks)
 					}
-					if extras, blocked := hasBlockingOpenPR(o, branch); blocked {
+					if extras, blocked := hasBlockingOpenPR(s.deps.errorLog, branch); blocked {
 						terminalExtras = mergeBlockerExtras(terminalExtras, extras)
 						result.Status = "failure"
 						break
 					}
 				}
 				result.Status = "success"
-				if alreadyResolved && issue != nil && !github.IsIssueClosed(issue) && o.githubClient != nil {
-					if err := o.githubClient.CloseIssue(ctx, issue.Number, "Closed by sandman — issue already completed."); err != nil {
-						fmt.Fprintf(o.errorLog, "error: close issue %d: %v\n", issue.Number, err)
+				if alreadyResolved && issue != nil && !github.IsIssueClosed(issue) && s.deps.githubClient != nil {
+					if err := s.deps.githubClient.CloseIssue(ctx, issue.Number, "Closed by sandman — issue already completed."); err != nil {
+						fmt.Fprintf(s.deps.errorLog, "error: close issue %d: %v\n", issue.Number, err)
 					}
 				}
 				break
@@ -2368,18 +2458,18 @@ func (s *runSession) runOnce(
 			}
 			result.Status = "failure"
 		} else {
-			if alreadyResolved && issue != nil && !github.IsIssueClosed(issue) && o.githubClient != nil {
-				if err := o.githubClient.CloseIssue(ctx, issue.Number, "Closed by sandman — issue already completed."); err != nil {
-					fmt.Fprintf(o.errorLog, "error: close issue %d: %v\n", issue.Number, err)
+			if alreadyResolved && issue != nil && !github.IsIssueClosed(issue) && s.deps.githubClient != nil {
+				if err := s.deps.githubClient.CloseIssue(ctx, issue.Number, "Closed by sandman — issue already completed."); err != nil {
+					fmt.Fprintf(s.deps.errorLog, "error: close issue %d: %v\n", issue.Number, err)
 				}
 			}
 			if events.RunStatusFromPayload(result.Status).IsSuccess() || alreadyResolved {
-				if issue != nil && o.githubClient != nil {
-					prMerged := checkPRMerged(ctx, o.githubClient, branch)
+				if issue != nil && s.deps.githubClient != nil {
+					prMerged := checkPRMerged(ctx, s.deps.githubClient, branch)
 					if prMerged || alreadyResolved {
 						if alreadyResolved {
-							pr := lookupPRForVerify(ctx, o, branch)
-							outcome, checks := o.runVerifyPath(ctx, VerifyInput{Context: ctx, Issue: issue, Branch: branch, WorkDir: wt.WorkDir(), PR: pr})
+							pr := lookupPRForVerify(ctx, s.deps.githubClient, s.deps.errorLog, branch)
+							outcome, checks := runVerifyPath(s.deps.verifyPath, VerifyInput{Context: ctx, Issue: issue, Branch: branch, WorkDir: wt.WorkDir(), PR: pr})
 							if outcome != VerifyNoSignal {
 								terminalExtras = mergeVerificationExtras(terminalExtras, outcome, checks)
 								if outcome == VerifyFailed {
@@ -2392,7 +2482,7 @@ func (s *runSession) runOnce(
 							if len(checks) > 0 {
 								terminalExtras = mergeVerificationExtras(terminalExtras, outcome, checks)
 							}
-							if extras, blocked := hasBlockingOpenPR(o, branch); blocked {
+							if extras, blocked := hasBlockingOpenPR(s.deps.errorLog, branch); blocked {
 								terminalExtras = mergeBlockerExtras(terminalExtras, extras)
 								result.Status = "failure"
 								break
@@ -2412,69 +2502,23 @@ func (s *runSession) runOnce(
 	return result, terminalExtras, true
 }
 
-// runSingle runs a single issue-driven AgentRun. It builds a runSession and
-// delegates to (*runSession).execute. parentCtx is the RunBatch ctx
-// (the ctx that owns this whole batch); the supervisor uses it to
-// distinguish external aborts from normal session end.
-func (o *Orchestrator) runSingle(ctx context.Context, parentCtx context.Context, num int, cfg *config.Config, agentName string, agentCfg config.Agent, continuation bool, previousRunIDs map[int]string, identityResolver *gitIdentityResolver, branches map[int]string, renderCfg prompt.RenderConfig, outputWriter io.Writer, sbFactory SandboxFactory, containerAlloc containerAllocator, override bool, baseBranch string, externalBlockers []int, parallel int, startDelay time.Duration, retries int, runIdleTimeout int, sandboxMode string, containerCapacity int, containerCapacitySet bool, maxContainers int, maxContainersSet bool, dangerouslySkipPermissions bool, strandedReconcile bool, runTS string, runShortID string, batchID ...string) (AgentRunResult, bool) {
-	issueBatchID := ""
-	if len(batchID) > 0 {
-		issueBatchID = strings.TrimSpace(batchID[0])
-	}
-	if issueBatchID == "" && (runTS != "" || runShortID != "") {
-		issueBatchID = batchIDFromRunID(buildRunID(num, runTS, runShortID))
-	}
-	s := &runSession{
-		o:           o,
-		issueNumber: num,
-		cfg:         cfg,
-		agentName:   agentName,
-		agentCfg:    agentCfg,
-		mode: func() IssueMode {
-			if continuation {
-				return ModeContinue
-			}
-			if override {
-				return ModeOverride
-			}
-			return ModeFresh
-		}(),
-		previousRunIDs:             previousRunIDs,
-		identityResolver:           identityResolver,
-		branches:                   branches,
-		renderCfg:                  renderCfg,
-		outputWriter:               outputWriter,
-		sbFactory:                  sbFactory,
-		containerAlloc:             containerAlloc,
-		baseBranch:                 baseBranch,
-		externalBlockers:           externalBlockers,
-		parallel:                   parallel,
-		startDelay:                 startDelay,
-		retries:                    retries,
-		runIdleTimeout:             runIdleTimeout,
-		sandboxMode:                sandboxMode,
-		containerCapacity:          containerCapacity,
-		containerCapacitySet:       containerCapacitySet,
-		maxContainers:              maxContainers,
-		maxContainersSet:           maxContainersSet,
-		dangerouslySkipPermissions: dangerouslySkipPermissions,
-		strandedReconcile:          strandedReconcile,
-		runTS:                      runTS,
-		runShortID:                 runShortID,
-		batchID:                    issueBatchID,
-		parentCtx:                  parentCtx,
-		opts:                       o.runSessionOpts,
-	}
-	return s.execute(ctx)
+// runSingleRow is the elevated seam for one issue-driven AgentRun. It builds a
+// runExecutor (the E2-decoupled constructor/test seam) and delegates to
+// Execute, which discriminates on IssueNumber>0 and runs the issue-driven
+// lifecycle. parentCtx is the RunBatch ctx (the ctx that owns this whole
+// batch); the supervisor uses it to distinguish external abort from normal
+// session end. Retained as a thin wrapper so the test call sites that still
+// cross the positional shim (#2231) keep compiling unchanged.
+func (o *Orchestrator) runSingleRow(ctx context.Context, parentCtx context.Context, row RowSpec, bc BatchConfig, sbFactory SandboxFactory, containerAlloc containerAllocator) (AgentRunResult, bool) {
+	return o.newRunExecutor(parentCtx, bc, sbFactory, containerAlloc).Execute(ctx, row)
 }
 
 // execute runs the issue-driven AgentRun lifecycle owned by this session. It
 // contains the body that previously lived in (*Orchestrator).runSingle.
 func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
-	o := s.o
-	issue, err := o.githubClient.FetchIssue(ctx, s.issueNumber)
+	issue, err := s.deps.githubClient.FetchIssue(ctx, s.issueNumber)
 	if err != nil {
-		fmt.Fprintf(o.errorLog, "error: fetch issue %d: %v\n", s.issueNumber, err)
+		fmt.Fprintf(s.deps.errorLog, "error: fetch issue %d: %v\n", s.issueNumber, err)
 		s.emitEarlyFailure("fetch issue", s.branches[s.issueNumber])
 		return AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "failure"}, false
 	}
@@ -2484,8 +2528,8 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 		branch = BranchName(issue.Number, issue.Title)
 	}
 	if s.mode != ModeContinue {
-		if err := o.syncBaseBranch(".", s.baseBranch); err != nil {
-			fmt.Fprintf(o.errorLog, "error: sync base branch for issue %d: %v\n", s.issueNumber, err)
+		if err := syncBaseBranch(s.deps.runSessionOpts, s.deps.sandboxFactory, ".", s.baseBranch); err != nil {
+			fmt.Fprintf(s.deps.errorLog, "error: sync base branch for issue %d: %v\n", s.issueNumber, err)
 			s.emitEarlyFailure("sync base branch", branch)
 			return AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "failure", Branch: branch}, false
 		}
@@ -2495,7 +2539,7 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 	if s.containerAlloc != nil {
 		lease, err := s.containerAlloc.Acquire()
 		if err != nil {
-			fmt.Fprintf(o.errorLog, "error: acquire container for issue %d: %v\n", s.issueNumber, err)
+			fmt.Fprintf(s.deps.errorLog, "error: acquire container for issue %d: %v\n", s.issueNumber, err)
 			s.emitEarlyFailure("acquire container", branch)
 			return AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "failure", Branch: branch}, false
 		}
@@ -2509,19 +2553,11 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 		return errResult, false
 	}
 	if err := wt.Start(); err != nil {
-		fmt.Fprintf(o.errorLog, "error: start sandbox for issue %d: %v\n", s.issueNumber, err)
+		fmt.Fprintf(s.deps.errorLog, "error: start sandbox for issue %d: %v\n", s.issueNumber, err)
 		s.emitEarlyFailure("start sandbox", branch)
 		return AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "failure", Branch: branch}, false
 	}
-	sandboxStartOnce := func() {}
-	sandboxStartOnce = func() { writePhase(o.currentPhaseWriter(), "first-sandbox-start", sandboxStarted) }
-	o.phaseMu.Lock()
-	if o.firstSandboxStartOnce == nil {
-		o.firstSandboxStartOnce = func() { sandboxStartOnce() }
-	}
-	once := o.firstSandboxStartOnce
-	o.phaseMu.Unlock()
-	once()
+	s.coord.firstSandboxStart(sandboxStarted)
 	// Guaranteed cleanup: defer wt.RestoreHostPaths() so container
 	// sandboxes normalize the preserved worktree's .git pointer back to
 	// host paths on every exit path including panic, cancellation,
@@ -2530,9 +2566,9 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 	// on success for --continue reuse. Issue #2189.
 	defer func() { _ = wt.RestoreHostPaths() }()
 
-	blockedBy, err := o.recheckBlockedBy(ctx, s.externalBlockers)
+	blockedBy, err := recheckBlockedBy(ctx, s.deps.githubClient, s.externalBlockers)
 	if err != nil {
-		fmt.Fprintf(o.errorLog, "error: recheck blockers for issue %d: %v\n", s.issueNumber, err)
+		fmt.Fprintf(s.deps.errorLog, "error: recheck blockers for issue %d: %v\n", s.issueNumber, err)
 		_ = wt.Stop()
 		s.emitEarlyFailure("recheck blockers", branch)
 		return AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "failure", Branch: branch}, false
@@ -2540,18 +2576,18 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 	runID := buildRunID(s.issueNumber, s.runTS, s.runShortID)
 	if len(blockedBy) > 0 {
 		res := AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "blocked", Branch: branch}
-		o.logBlocked(s.issueNumber, blockedBy, runID, s.batchID)
+		logBlocked(s.deps.eventLog, s.issueNumber, blockedBy, runID, s.batchID)
 		_ = wt.Stop()
 		return res, false
 	}
 
-	o.registerActiveRun(s.issueNumber, wt)
-	defer o.unregisterActiveRun(s.issueNumber)
+	s.coord.registerActiveRun(s.issueNumber, wt)
+	defer s.coord.unregisterActiveRun(s.issueNumber)
 
-	batchDir := s.o.layout.BatchDir(s.batchID)
+	batchDir := s.deps.layout.BatchDir(s.batchID)
 	manifestBatchID := s.batchID
 	if s.batchID == "" {
-		batchDir = s.o.layout.BatchesDir
+		batchDir = s.deps.layout.BatchesDir
 		manifestBatchID = batchIDFromRunID(runID)
 	}
 	runManifest := batchindex.RunManifest{
@@ -2566,14 +2602,14 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 		Status:       batchindex.RunManifestStatusActive,
 	}
 	if err := daemon.WriteRunManifest(batchDir, runID, runManifest); err != nil {
-		fmt.Fprintf(o.errorLog, "error: write run manifest for issue %d: %v\n", s.issueNumber, err)
+		fmt.Fprintf(s.deps.errorLog, "error: write run manifest for issue %d: %v\n", s.issueNumber, err)
 		_ = wt.Stop()
 		s.emitEarlyFailure("write run manifest", branch)
 		return AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "failure", Branch: branch}, false
 	}
-	cmdServer := daemon.NewCommandServer(daemon.RunFolder(batchDir, runID), s.o)
+	cmdServer := daemon.NewCommandServer(daemon.RunFolder(batchDir, runID), s.commander)
 	if err := cmdServer.Start(); err != nil {
-		fmt.Fprintf(o.errorLog, "error: start command server for issue %d: %v\n", s.issueNumber, err)
+		fmt.Fprintf(s.deps.errorLog, "error: start command server for issue %d: %v\n", s.issueNumber, err)
 	} else {
 		defer cmdServer.Stop()
 	}
@@ -2583,7 +2619,7 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 	// started just before ctx fired cannot race the snapshot taken
 	// by RunBatch's fan-in goroutine.
 	supervisorDone := make(chan struct{})
-	o.trackShutdownSupervisor(supervisorDone)
+	s.coord.trackShutdownSupervisor(supervisorDone)
 	sessionCtx, cancelSession := context.WithCancel(ctx)
 	go func() {
 		defer close(supervisorDone)
@@ -2600,7 +2636,7 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 		<-supervisorDone
 	}()
 
-	if o.eventLog != nil {
+	if s.deps.eventLog != nil {
 		promptSourceType := "current"
 		promptSourceValue := ""
 		switch {
@@ -2651,7 +2687,7 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 		if s.mode == ModeContinue {
 			eventType = "run.continued"
 		}
-		_ = o.eventLog.Log(events.Event{
+		_ = s.deps.eventLog.Log(events.Event{
 			Type:      eventType,
 			Timestamp: time.Now(),
 			RunID:     runID,
@@ -2673,11 +2709,11 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 			// issue-driven runs (see #860). ModeContinue uses a different
 			// `prepareAttempt` closure (the prompt-only one) that does not
 			// contain this guard, so continuation replays are unaffected.
-			if checkPRMerged(ctx, o.githubClient, branch) {
+			if checkPRMerged(ctx, s.deps.githubClient, branch) {
 				return attemptRenderCfg, &AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "success", Branch: branch, RetriesTotal: attempt}
 			}
 			taskPath := filepath.Join(wt.WorkDir(), ".sandman", "task.md")
-			openPR, prLookupErr := findOpenPRByBranch(ctx, o.githubClient, branch)
+			openPR, prLookupErr := findOpenPRByBranch(ctx, s.deps.githubClient, branch)
 			// Always pass the task content verbatim (or empty template if
 			// missing). The agent reads its next instruction from the task
 			// document's ## Next Step field directly. The openPR value is only
@@ -2685,24 +2721,24 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 			// receives the same task content regardless of open-PR state.
 			taskContent, taskExists, err := ReadTaskContent(taskPath)
 			if err != nil {
-				fmt.Fprintf(o.errorLog, "error: read task for issue %d: %v\n", s.issueNumber, err)
+				fmt.Fprintf(s.deps.errorLog, "error: read task for issue %d: %v\n", s.issueNumber, err)
 				return attemptRenderCfg, &AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "failure", Branch: branch, RetriesTotal: attempt}
 			}
 			attemptRenderCfg.TaskPrompt = prompt.ContinuationTaskPrompt(taskContent)
 			attemptRenderCfg.RenderedPromptFile = filepath.Join(".", ".sandman", "task.md")
 			if !taskExists && openPR == nil {
 				if prLookupErr != nil {
-					fmt.Fprintf(o.errorLog, "error: lookup PR for issue %d: %v\n", s.issueNumber, prLookupErr)
+					fmt.Fprintf(s.deps.errorLog, "error: lookup PR for issue %d: %v\n", s.issueNumber, prLookupErr)
 					return attemptRenderCfg, &AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "failure", Branch: branch, RetriesTotal: attempt}
 				}
-				if err := o.resetRetryBranch(ctx, wt, branch, s.baseBranch); err != nil {
-					fmt.Fprintf(o.errorLog, "error: reset retry branch for issue %d: %v\n", s.issueNumber, err)
+				if err := resetRetryBranch(s.deps.runSessionOpts, ctx, wt, branch, s.baseBranch); err != nil {
+					fmt.Fprintf(s.deps.errorLog, "error: reset retry branch for issue %d: %v\n", s.issueNumber, err)
 					return attemptRenderCfg, &AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "failure", Branch: branch, RetriesTotal: attempt}
 				}
 			}
 			if err := logRetryMarkerFn(logPath, attempt, s.retries); err != nil {
-				if o.errorLog != nil {
-					fmt.Fprintf(o.errorLog, "warning: write retry marker for issue %d: %v\n", s.issueNumber, err)
+				if s.deps.errorLog != nil {
+					fmt.Fprintf(s.deps.errorLog, "warning: write retry marker for issue %d: %v\n", s.issueNumber, err)
 				}
 			}
 		}
@@ -2728,7 +2764,6 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 // on GitHub, so any failure here is logged as a warning and the run still
 // returns success.
 func (s *runSession) reconcileWorktreeBranch(wt sandbox.Sandbox, branch string) {
-	o := s.o
 	workDir := wt.WorkDir()
 	if workDir == "" {
 		return
@@ -2738,7 +2773,7 @@ func (s *runSession) reconcileWorktreeBranch(wt sandbox.Sandbox, branch string) 
 	// registration), skip the checkout to avoid the
 	// "not a git repository: (null)" error. See #1189.
 	if !sandbox.IsGitDir(workDir) {
-		fmt.Fprintf(o.errorLog, "warning: reconcile worktree branch: worktree at %q is not a valid git directory; skipping checkout\n", workDir)
+		fmt.Fprintf(s.deps.errorLog, "warning: reconcile worktree branch: worktree at %q is not a valid git directory; skipping checkout\n", workDir)
 		return
 	}
 	expectedRef := "refs/heads/" + branch
@@ -2746,18 +2781,18 @@ func (s *runSession) reconcileWorktreeBranch(wt sandbox.Sandbox, branch string) 
 		return
 	}
 	if !sandbox.BranchExists(wt.RepoPath(), branch) {
-		fmt.Fprintf(o.errorLog, "warning: reconcile worktree branch: branch %q was deleted; next run will recreate it\n", branch)
+		fmt.Fprintf(s.deps.errorLog, "warning: reconcile worktree branch: branch %q was deleted; next run will recreate it\n", branch)
 		return
 	}
 	cmd := exec.Command("git", "-C", workDir, "checkout", "-f", branch)
 	cmd.Dir = wt.RepoPath()
 	if out, err := cmd.CombinedOutput(); err != nil {
-		fmt.Fprintf(o.errorLog, "warning: reconcile worktree branch: git checkout -f %s: %v\n%s\n", branch, err, out)
+		fmt.Fprintf(s.deps.errorLog, "warning: reconcile worktree branch: git checkout -f %s: %v\n%s\n", branch, err, out)
 		return
 	}
 }
 
-func (o *Orchestrator) recheckBlockedBy(ctx context.Context, blockers []int) ([]int, error) {
+func recheckBlockedBy(ctx context.Context, githubClient github.Client, blockers []int) ([]int, error) {
 	blockers = uniqueIssues(blockers)
 	if len(blockers) == 0 {
 		return nil, nil
@@ -2769,7 +2804,7 @@ func (o *Orchestrator) recheckBlockedBy(ctx context.Context, blockers []int) ([]
 			return nil, err
 		}
 
-		issue, err := o.githubClient.FetchIssue(ctx, blocker)
+		issue, err := githubClient.FetchIssue(ctx, blocker)
 		if err != nil {
 			return nil, fmt.Errorf("fetch blocker issue %d: %w", blocker, err)
 		}
@@ -2781,9 +2816,9 @@ func (o *Orchestrator) recheckBlockedBy(ctx context.Context, blockers []int) ([]
 	return blockedBy, nil
 }
 
-func (o *Orchestrator) resetRetryBranch(ctx context.Context, sb sandbox.Sandbox, branch, baseBranch string) error {
-	if o.runSessionOpts.retryReset != nil {
-		return o.runSessionOpts.retryReset(ctx, sb, branch, baseBranch)
+func resetRetryBranch(opts runSessionOptions, ctx context.Context, sb sandbox.Sandbox, branch, baseBranch string) error {
+	if opts.retryReset != nil {
+		return opts.retryReset(ctx, sb, branch, baseBranch)
 	}
 
 	var output bytes.Buffer
@@ -2796,7 +2831,40 @@ func (o *Orchestrator) resetRetryBranch(ctx context.Context, sb sandbox.Sandbox,
 
 func (o *Orchestrator) runPromptOnly(ctx context.Context, cfg *config.Config, agentName string, agentCfg config.Agent, identityResolver *gitIdentityResolver, sbFactory SandboxFactory, containerAlloc containerAllocator, req Request, baseBranch string, startDelay time.Duration, parallel int, retries int, sandboxMode string, containerCapacity int, containerCapacitySet bool, maxContainers int, maxContainersSet bool, dangerouslySkipPermissions bool, strandedReconcile bool) (*Result, error) {
 	branch := promptOnlyBranch(req.PromptConfig)
-	result, started := o.runPromptOnlySingle(ctx, cfg, agentName, agentCfg, identityResolver, branch, req.PromptConfig, req.OutputWriter, sbFactory, containerAlloc, req.IssueMode(0), baseBranch, startDelay, parallel, retries, sandboxMode, containerCapacity, containerCapacitySet, maxContainers, maxContainersSet, dangerouslySkipPermissions, strandedReconcile, req.Review, req.PRNumber, req.ReviewFocus, req.RunID, req.PreviousRunIDs, req.IssueNumber, req.BatchTS, req.BatchShortID, req.RunDir)
+	row := RowSpec{
+		IssueNumber:       req.IssueNumber,
+		Mode:              req.IssueMode(0),
+		Branches:          map[int]string{0: branch},
+		PreviousRunIDs:    req.PreviousRunIDs,
+		BaseBranch:        baseBranch,
+		RenderCfg:         req.PromptConfig,
+		OutputWriter:      req.OutputWriter,
+		BatchID:           batchIDForPromptOnly(req.BatchTS, req.BatchShortID, req.RunID, req.RunDir),
+		BatchTS:           req.BatchTS,
+		BatchShortID:      req.BatchShortID,
+		RunID:             req.RunID,
+		UserProvidedRunID: req.RunID,
+		Review:            req.Review,
+		PRNumber:          req.PRNumber,
+		ReviewFocus:       req.ReviewFocus,
+	}
+	bc := BatchConfig{
+		Cfg:                        cfg,
+		AgentName:                  agentName,
+		AgentCfg:                   agentCfg,
+		IdentityResolver:           identityResolver,
+		Parallel:                   parallel,
+		StartDelay:                 startDelay,
+		Retries:                    retries,
+		SandboxMode:                sandboxMode,
+		ContainerCapacity:          containerCapacity,
+		ContainerCapacitySet:       containerCapacitySet,
+		MaxContainers:              maxContainers,
+		MaxContainersSet:           maxContainersSet,
+		DangerouslySkipPermissions: dangerouslySkipPermissions,
+		StrandedReconcile:          strandedReconcile,
+	}
+	result, started := o.runPromptOnlyRow(ctx, row, bc, sbFactory, containerAlloc)
 	if !started {
 		return &Result{Runs: []AgentRunResult{result}}, fmt.Errorf("prompt-only run failed")
 	}
@@ -2810,46 +2878,14 @@ func (o *Orchestrator) runPromptOnly(ctx context.Context, cfg *config.Config, ag
 	return &Result{Runs: []AgentRunResult{result}}, nil
 }
 
-// runPromptOnlySingle runs a single prompt-only AgentRun. It builds a
-// runSession and delegates to (*runSession).executePromptOnly.
-func (o *Orchestrator) runPromptOnlySingle(ctx context.Context, cfg *config.Config, agentName string, agentCfg config.Agent, identityResolver *gitIdentityResolver, branch string, renderCfg prompt.RenderConfig, outputWriter io.Writer, sbFactory SandboxFactory, containerAlloc containerAllocator, mode IssueMode, baseBranch string, startDelay time.Duration, parallel int, retries int, sandboxMode string, containerCapacity int, containerCapacitySet bool, maxContainers int, maxContainersSet bool, dangerouslySkipPermissions bool, strandedReconcile bool, review bool, prNumber int, reviewFocus string, runID string, previousRunIDs map[int]string, reviewIssueNumber int, batchTS string, batchShortID string, runDir string) (AgentRunResult, bool) {
-	s := &runSession{
-		o:                          o,
-		cfg:                        cfg,
-		agentName:                  agentName,
-		agentCfg:                   agentCfg,
-		identityResolver:           identityResolver,
-		branches:                   map[int]string{0: branch},
-		renderCfg:                  renderCfg,
-		outputWriter:               outputWriter,
-		sbFactory:                  sbFactory,
-		containerAlloc:             containerAlloc,
-		mode:                       mode,
-		baseBranch:                 baseBranch,
-		parallel:                   parallel,
-		startDelay:                 startDelay,
-		retries:                    retries,
-		sandboxMode:                sandboxMode,
-		containerCapacity:          containerCapacity,
-		containerCapacitySet:       containerCapacitySet,
-		maxContainers:              maxContainers,
-		maxContainersSet:           maxContainersSet,
-		dangerouslySkipPermissions: dangerouslySkipPermissions,
-		strandedReconcile:          strandedReconcile,
-		previousRunIDs:             previousRunIDs,
-		review:                     review,
-		prNumber:                   prNumber,
-		reviewFocus:                reviewFocus,
-		issueNumber:                reviewIssueNumber,
-		runID:                      runID,
-		batchTS:                    batchTS,
-		batchShortID:               batchShortID,
-		batchID:                    batchIDForPromptOnly(batchTS, batchShortID, runID, runDir),
-		userProvidedRunID:          runID,
-		parentCtx:                  ctx,
-		opts:                       o.runSessionOpts,
-	}
-	return s.executePromptOnly(ctx)
+// runPromptOnlyRow is the elevated seam for one prompt-only AgentRun. It builds
+// a runExecutor (the E2-decoupled constructor/test seam) and delegates to
+// Execute. parentCtx is ctx itself for prompt-only runs (they share the
+// RunBatch ctx — there is no per-issue fan-out), matching the prior
+// newRunSession(..., ctx) wiring. Retained as a thin wrapper so the test call
+// sites that still cross the positional shim (#2231) keep compiling unchanged.
+func (o *Orchestrator) runPromptOnlyRow(ctx context.Context, row RowSpec, bc BatchConfig, sbFactory SandboxFactory, containerAlloc containerAllocator) (AgentRunResult, bool) {
+	return o.newRunExecutor(ctx, bc, sbFactory, containerAlloc).Execute(ctx, row)
 }
 
 // executePromptOnly runs the prompt-only AgentRun lifecycle owned by this
@@ -2858,11 +2894,10 @@ func (o *Orchestrator) runPromptOnlySingle(ctx context.Context, cfg *config.Conf
 // flavor owns its own local active-runs map because it does not share the
 // per-issue active-run bookkeeping that RunBatch uses.
 func (s *runSession) executePromptOnly(ctx context.Context) (AgentRunResult, bool) {
-	o := s.o
 	branch := s.branches[0]
 	if s.mode != ModeContinue {
-		if err := o.syncBaseBranch(".", s.baseBranch); err != nil {
-			fmt.Fprintf(o.errorLog, "error: sync base branch for prompt-only run: %v\n", err)
+		if err := syncBaseBranch(s.deps.runSessionOpts, s.deps.sandboxFactory, ".", s.baseBranch); err != nil {
+			fmt.Fprintf(s.deps.errorLog, "error: sync base branch for prompt-only run: %v\n", err)
 			return AgentRunResult{Status: "failure", Branch: branch, Review: s.review, RunID: s.runID}, false
 		}
 	}
@@ -2870,7 +2905,7 @@ func (s *runSession) executePromptOnly(ctx context.Context) (AgentRunResult, boo
 	if s.containerAlloc != nil {
 		lease, err := s.containerAlloc.Acquire()
 		if err != nil {
-			fmt.Fprintf(o.errorLog, "error: acquire container for prompt-only run: %v\n", err)
+			fmt.Fprintf(s.deps.errorLog, "error: acquire container for prompt-only run: %v\n", err)
 			return AgentRunResult{Status: "failure", Branch: branch, Review: s.review, RunID: s.runID}, false
 		}
 		container = lease.container
@@ -2882,7 +2917,7 @@ func (s *runSession) executePromptOnly(ctx context.Context) (AgentRunResult, boo
 		return errResult, false
 	}
 	if err := wt.Start(); err != nil {
-		fmt.Fprintf(o.errorLog, "error: start sandbox for prompt-only run: %v\n", err)
+		fmt.Fprintf(s.deps.errorLog, "error: start sandbox for prompt-only run: %v\n", err)
 		return AgentRunResult{Status: "failure", Branch: branch, Review: s.review, RunID: s.runID}, false
 	}
 	// Guaranteed cleanup: defer wt.RestoreHostPaths() so container
@@ -2892,8 +2927,8 @@ func (s *runSession) executePromptOnly(ctx context.Context) (AgentRunResult, boo
 	// defer is the only end-of-success cleanup here. Issue #2189.
 	defer func() { _ = wt.RestoreHostPaths() }()
 
-	o.registerActiveRun(0, wt)
-	defer o.unregisterActiveRun(0)
+	s.coord.registerActiveRun(0, wt)
+	defer s.coord.unregisterActiveRun(0)
 
 	// Pre-register the supervisor's done channel with the batch-wide
 	// fan-in BEFORE spawning the supervisor, so a session that
@@ -2902,7 +2937,7 @@ func (s *runSession) executePromptOnly(ctx context.Context) (AgentRunResult, boo
 	// this executePromptOnly call returns, regardless of how it
 	// returns, so the supervisor can exit promptly.
 	supervisorDone := make(chan struct{})
-	o.trackShutdownSupervisor(supervisorDone)
+	s.coord.trackShutdownSupervisor(supervisorDone)
 	sessionCtx, cancelSession := context.WithCancel(ctx)
 	go func() {
 		defer close(supervisorDone)
@@ -2944,7 +2979,7 @@ func (s *runSession) executePromptOnly(ctx context.Context) (AgentRunResult, boo
 		s.batchID = batchIDFromRunID(runID)
 	}
 
-	batchDir := s.o.layout.BatchDir(s.batchID)
+	batchDir := s.deps.layout.BatchDir(s.batchID)
 	manifestBatchID := s.batchID
 	var runKind batchindex.Kind
 	if s.review {
@@ -2965,18 +3000,18 @@ func (s *runSession) executePromptOnly(ctx context.Context) (AgentRunResult, boo
 		Status:       batchindex.RunManifestStatusActive,
 	}
 	if err := daemon.WriteRunManifest(batchDir, runID, runManifest); err != nil {
-		fmt.Fprintf(o.errorLog, "error: write run manifest for prompt-only run: %v\n", err)
+		fmt.Fprintf(s.deps.errorLog, "error: write run manifest for prompt-only run: %v\n", err)
 		_ = wt.Stop()
 		return AgentRunResult{Status: "failure", Branch: branch, Review: s.review, RunID: runID}, false
 	}
-	cmdServer := daemon.NewCommandServer(daemon.RunFolder(batchDir, runID), s.o)
+	cmdServer := daemon.NewCommandServer(daemon.RunFolder(batchDir, runID), s.commander)
 	if err := cmdServer.Start(); err != nil {
-		fmt.Fprintf(o.errorLog, "error: start command server for prompt-only run: %v\n", err)
+		fmt.Fprintf(s.deps.errorLog, "error: start command server for prompt-only run: %v\n", err)
 	} else {
 		defer cmdServer.Stop()
 	}
 
-	if o.eventLog != nil {
+	if s.deps.eventLog != nil {
 		promptSourceType := "current"
 		payload := map[string]any{"branch": branch, "base_branch": s.baseBranch, "prompt_source_type": "prompt", "parallel": s.parallel, "start_delay": int(s.startDelay / time.Second), "retries": s.retries, "sandbox": s.sandboxMode, "container_capacity": s.containerCapacity, "container_capacity_set": s.containerCapacitySet, "max_containers": s.maxContainers, "max_containers_set": s.maxContainersSet}
 		if s.renderCfg.PromptFlag != "" {
@@ -3015,19 +3050,19 @@ func (s *runSession) executePromptOnly(ctx context.Context) (AgentRunResult, boo
 		if s.mode == ModeContinue {
 			eventType = "run.continued"
 		}
-		_ = o.eventLog.Log(events.Event{Type: eventType, Timestamp: time.Now(), RunID: runID, Issue: 0, IssueRef: nil, Payload: payload})
+		_ = s.deps.eventLog.Log(events.Event{Type: eventType, Timestamp: time.Now(), RunID: runID, Issue: 0, IssueRef: nil, Payload: payload})
 	}
 
 	logPath := s.runLogPathFor(runID)
 	result, terminalExtras, started := s.runOnce(ctx, nil, branch, wt, logPath, runID, false, func(attempt int) (prompt.RenderConfig, *AgentRunResult) {
 		if attempt > 0 {
-			if err := o.resetRetryBranch(ctx, wt, branch, s.baseBranch); err != nil {
-				fmt.Fprintf(o.errorLog, "error: reset retry branch for prompt-only run: %v\n", err)
+			if err := resetRetryBranch(s.deps.runSessionOpts, ctx, wt, branch, s.baseBranch); err != nil {
+				fmt.Fprintf(s.deps.errorLog, "error: reset retry branch for prompt-only run: %v\n", err)
 				return prompt.RenderConfig{}, &AgentRunResult{Status: "failure", Branch: branch, RetriesTotal: attempt, Review: s.review, RunID: s.runID}
 			}
 			if err := logRetryMarkerFn(logPath, attempt, s.retries); err != nil {
-				if o.errorLog != nil {
-					fmt.Fprintf(o.errorLog, "warning: write retry marker for prompt-only run: %v\n", err)
+				if s.deps.errorLog != nil {
+					fmt.Fprintf(s.deps.errorLog, "warning: write retry marker for prompt-only run: %v\n", err)
 				}
 			}
 		}
@@ -3078,20 +3113,20 @@ func terminalRunEvent(ctx context.Context, status string) (string, string) {
 	return eventType, terminalStatus
 }
 
-func (o *Orchestrator) syncBaseBranch(repoPath, baseBranch string) error {
+func syncBaseBranch(opts runSessionOptions, sandboxFactory SandboxFactory, repoPath, baseBranch string) error {
 	baseBranch = strings.TrimSpace(baseBranch)
 	if baseBranch == "" {
 		return nil
 	}
-	mu := o.runSessionOpts.baseBranchSyncMu
+	mu := opts.baseBranchSyncMu
 	if mu == nil {
 		return nil
 	}
 	mu.Lock()
 	defer mu.Unlock()
-	syncFn := o.runSessionOpts.baseBranchSync
+	syncFn := opts.baseBranchSync
 	if syncFn == nil {
-		if o.sandboxFactory != nil {
+		if sandboxFactory != nil {
 			return nil
 		}
 		syncFn = sandbox.SyncBaseBranch

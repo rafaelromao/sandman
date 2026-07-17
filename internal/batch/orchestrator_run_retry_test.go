@@ -13,7 +13,6 @@ import (
 	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/events"
 	"github.com/rafaelromao/sandman/internal/github"
-	"github.com/rafaelromao/sandman/internal/paths"
 	"github.com/rafaelromao/sandman/internal/prompt"
 	"github.com/rafaelromao/sandman/internal/sandbox"
 )
@@ -46,35 +45,45 @@ func TestRunSingle_EmitsRunRetryBetweenAttemptsOnFailure(t *testing.T) {
 	pr := &github.PR{Number: 17, State: "closed", Merged: false, HeadRefName: branch}
 	eventsPath := filepath.Join(t.TempDir(), "events.jsonl")
 	eventLog := &events.JSONLLogger{Path: eventsPath}
-	o := &Orchestrator{
-		githubClient: &fakeGitHubClient{
+	resultFactory := &fakeRunnableFactory{results: []AgentRunResult{
+		{IssueNumber: 42, Status: "failure", Branch: branch},
+		{IssueNumber: 42, Status: "failure", Branch: branch},
+		{IssueNumber: 42, Status: "success", Branch: branch},
+	}}
+	o := NewOrchestrator(
+		&fakeGitHubClient{
 			issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}},
 			prs:    map[string]*github.PR{branch: pr},
 		},
-		renderer: &retryRenderer{result: "rendered prompt"},
-		errorLog: io.Discard,
-		layout:   paths.NewLayout(&config.Config{}, workDir),
-		eventLog: eventLog,
-		sandboxFactory: &retrySandboxFactory{
-			sandbox: rtSandbox,
-		},
-		runnableFactory: &fakeRunnableFactory{results: []AgentRunResult{
-			{IssueNumber: 42, Status: "failure", Branch: branch},
-			{IssueNumber: 42, Status: "failure", Branch: branch},
-			{IssueNumber: 42, Status: "success", Branch: branch},
-		}},
-	}
-	// Override retryReset so the orchestrator's resetRetryBranch does not
-	// try to run `git reset --hard` on the retrySandbox (which would
-	// return an error from its execErrors slice and short-circuit the
-	// loop with a failure errResult).
-	o.runSessionOpts.retryReset = func(ctx context.Context, sb sandbox.Sandbox, branch, baseBranch string) error {
-		return nil
-	}
+		&retryRenderer{result: "rendered prompt"},
+		nil,
+		eventLog,
+		WithErrorLog(io.Discard),
+		WithSandboxFactory(&retrySandboxFactory{sandbox: rtSandbox}),
+		WithRunnableFactory(resultFactory),
+		// Override retryReset so the orchestrator's resetRetryBranch does not
+		// try to run `git reset --hard` on the retrySandbox (which would
+		// return an error from its execErrors slice and short-circuit the
+		// loop with a failure errResult).
+		WithRunSessionOpts(runSessionOptions{retryReset: func(ctx context.Context, sb sandbox.Sandbox, branch, baseBranch string) error {
+			return nil
+		}}),
+	)
 
 	cfg := &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}}
-	resultFactory := o.runnableFactory.(*fakeRunnableFactory)
-	result, started := o.runSingle(context.Background(), context.Background(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, false, nil, noopIdentityResolver(), map[int]string{42: branch}, prompt.RenderConfig{}, nil, &retrySandboxFactory{sandbox: rtSandbox}, nil, false, "main", nil, 0, 0, 2, 0, "", 0, false, 0, false, false, false, "", "")
+	bc := BatchConfig{
+		Cfg:              cfg,
+		AgentName:        "opencode",
+		AgentCfg:         config.Agent{Command: "echo hi"},
+		IdentityResolver: noopIdentityResolver(),
+		Retries:          2,
+	}
+	row := RowSpec{
+		IssueNumber: 42,
+		Branches:    map[int]string{42: branch},
+		BaseBranch:  "main",
+	}
+	result, started := o.newRunExecutor(context.Background(), bc, &retrySandboxFactory{sandbox: rtSandbox}, nil).Execute(context.Background(), row)
 	if !started {
 		t.Fatalf("expected run to start, result.Status=%q, created=%d", result.Status, len(resultFactory.created))
 	}
@@ -216,27 +225,38 @@ func TestRunSingle_AlreadyResolvedTaskMarkerShortCircuitsToSuccess(t *testing.T)
 
 	eventsPath := filepath.Join(t.TempDir(), "events.jsonl")
 	eventLog := &events.JSONLLogger{Path: eventsPath}
-	o := &Orchestrator{
-		githubClient: &fakeGitHubClient{
+	resultFactory := &taskWritingRunnableFactory{
+		taskPath:    filepath.Join(workDir, "worktree", ".sandman", "task.md"),
+		result:      AgentRunResult{IssueNumber: 42, Status: "failure", Branch: branch},
+		taskContent: "## Status: already resolved",
+	}
+	o := NewOrchestrator(
+		&fakeGitHubClient{
 			issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}},
 			prs:    map[string]*github.PR{},
 		},
-		renderer: &retryRenderer{result: "rendered prompt"},
-		errorLog: io.Discard,
-		layout:   paths.NewLayout(&config.Config{}, workDir),
-		eventLog: eventLog,
-		sandboxFactory: &retrySandboxFactory{
-			sandbox: rtSandbox,
-		},
-		runnableFactory: &taskWritingRunnableFactory{
-			taskPath:    filepath.Join(workDir, "worktree", ".sandman", "task.md"),
-			result:      AgentRunResult{IssueNumber: 42, Status: "failure", Branch: branch},
-			taskContent: "## Status: already resolved",
-		},
-	}
+		&retryRenderer{result: "rendered prompt"},
+		nil,
+		eventLog,
+		WithErrorLog(io.Discard),
+		WithSandboxFactory(&retrySandboxFactory{sandbox: rtSandbox}),
+		WithRunnableFactory(resultFactory),
+	)
 
 	cfg := &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}}
-	result, started := o.runSingle(context.Background(), context.Background(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, false, nil, noopIdentityResolver(), map[int]string{42: branch}, prompt.RenderConfig{}, nil, &retrySandboxFactory{sandbox: rtSandbox}, nil, false, "main", nil, 0, 0, 3, 0, "", 0, false, 0, false, false, false, "", "")
+	bc := BatchConfig{
+		Cfg:              cfg,
+		AgentName:        "opencode",
+		AgentCfg:         config.Agent{Command: "echo hi"},
+		IdentityResolver: noopIdentityResolver(),
+		Retries:          3,
+	}
+	row := RowSpec{
+		IssueNumber: 42,
+		Branches:    map[int]string{42: branch},
+		BaseBranch:  "main",
+	}
+	result, started := o.newRunExecutor(context.Background(), bc, &retrySandboxFactory{sandbox: rtSandbox}, nil).Execute(context.Background(), row)
 	if !started {
 		t.Fatal("expected run to start")
 	}
@@ -246,7 +266,7 @@ func TestRunSingle_AlreadyResolvedTaskMarkerShortCircuitsToSuccess(t *testing.T)
 	if result.RetriesTotal != 1 {
 		t.Fatalf("retries total = %d, want 1", result.RetriesTotal)
 	}
-	if got := o.runnableFactory.(*taskWritingRunnableFactory).created; got != 1 {
+	if got := resultFactory.created; got != 1 {
 		t.Fatalf("runnable launches = %d, want 1", got)
 	}
 }
@@ -278,27 +298,37 @@ func TestRunSingle_AlreadyResolvedOpenPREndsFailure(t *testing.T) {
 
 	eventsPath := filepath.Join(t.TempDir(), "events.jsonl")
 	eventLog := &events.JSONLLogger{Path: eventsPath}
-	o := &Orchestrator{
-		githubClient: &fakeGitHubClient{
+	o := NewOrchestrator(
+		&fakeGitHubClient{
 			issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}},
 			prs:    map[string]*github.PR{branch: {Number: 17, State: "open", Merged: false, HeadRefName: branch}},
 		},
-		renderer: &retryRenderer{result: "rendered prompt"},
-		errorLog: io.Discard,
-		layout:   paths.NewLayout(&config.Config{}, workDir),
-		eventLog: eventLog,
-		sandboxFactory: &retrySandboxFactory{
-			sandbox: rtSandbox,
-		},
-		runnableFactory: &taskWritingRunnableFactory{
+		&retryRenderer{result: "rendered prompt"},
+		nil,
+		eventLog,
+		WithErrorLog(io.Discard),
+		WithSandboxFactory(&retrySandboxFactory{sandbox: rtSandbox}),
+		WithRunnableFactory(&taskWritingRunnableFactory{
 			taskPath:    filepath.Join(workDir, "worktree", ".sandman", "task.md"),
 			result:      AgentRunResult{IssueNumber: 42, Status: "failure", Branch: branch},
 			taskContent: "## Status: already resolved",
-		},
-	}
+		}),
+	)
 
 	cfg := &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}}
-	result, started := o.runSingle(context.Background(), context.Background(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, false, nil, noopIdentityResolver(), map[int]string{42: branch}, prompt.RenderConfig{}, nil, &retrySandboxFactory{sandbox: rtSandbox}, nil, false, "main", nil, 0, 0, 3, 0, "", 0, false, 0, false, false, false, "", "")
+	bc := BatchConfig{
+		Cfg:              cfg,
+		AgentName:        "opencode",
+		AgentCfg:         config.Agent{Command: "echo hi"},
+		IdentityResolver: noopIdentityResolver(),
+		Retries:          3,
+	}
+	row := RowSpec{
+		IssueNumber: 42,
+		Branches:    map[int]string{42: branch},
+		BaseBranch:  "main",
+	}
+	result, started := o.newRunExecutor(context.Background(), bc, &retrySandboxFactory{sandbox: rtSandbox}, nil).Execute(context.Background(), row)
 	if !started {
 		t.Fatal("expected run to start")
 	}
@@ -363,27 +393,37 @@ func TestRunSingle_AlreadyResolvedConflictingPREndsFailure(t *testing.T) {
 
 	eventsPath := filepath.Join(t.TempDir(), "events.jsonl")
 	eventLog := &events.JSONLLogger{Path: eventsPath}
-	o := &Orchestrator{
-		githubClient: &fakeGitHubClient{
+	o := NewOrchestrator(
+		&fakeGitHubClient{
 			issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}},
 			prs:    map[string]*github.PR{branch: {Number: 17, State: "open", Merged: false, HeadRefName: branch}},
 		},
-		renderer: &retryRenderer{result: "rendered prompt"},
-		errorLog: io.Discard,
-		layout:   paths.NewLayout(&config.Config{}, workDir),
-		eventLog: eventLog,
-		sandboxFactory: &retrySandboxFactory{
-			sandbox: rtSandbox,
-		},
-		runnableFactory: &taskWritingRunnableFactory{
+		&retryRenderer{result: "rendered prompt"},
+		nil,
+		eventLog,
+		WithErrorLog(io.Discard),
+		WithSandboxFactory(&retrySandboxFactory{sandbox: rtSandbox}),
+		WithRunnableFactory(&taskWritingRunnableFactory{
 			taskPath:    filepath.Join(workDir, "worktree", ".sandman", "task.md"),
 			result:      AgentRunResult{IssueNumber: 42, Status: "failure", Branch: branch},
 			taskContent: "## Status: already resolved",
-		},
-	}
+		}),
+	)
 
 	cfg := &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}}
-	result, started := o.runSingle(context.Background(), context.Background(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, false, nil, noopIdentityResolver(), map[int]string{42: branch}, prompt.RenderConfig{}, nil, &retrySandboxFactory{sandbox: rtSandbox}, nil, false, "main", nil, 0, 0, 3, 0, "", 0, false, 0, false, false, false, "", "")
+	bc := BatchConfig{
+		Cfg:              cfg,
+		AgentName:        "opencode",
+		AgentCfg:         config.Agent{Command: "echo hi"},
+		IdentityResolver: noopIdentityResolver(),
+		Retries:          3,
+	}
+	row := RowSpec{
+		IssueNumber: 42,
+		Branches:    map[int]string{42: branch},
+		BaseBranch:  "main",
+	}
+	result, started := o.newRunExecutor(context.Background(), bc, &retrySandboxFactory{sandbox: rtSandbox}, nil).Execute(context.Background(), row)
 	if !started {
 		t.Fatal("expected run to start")
 	}
@@ -442,27 +482,37 @@ func TestRunSingle_AlreadyResolvedMergedPRStillSuccess(t *testing.T) {
 
 	eventsPath := filepath.Join(t.TempDir(), "events.jsonl")
 	eventLog := &events.JSONLLogger{Path: eventsPath}
-	o := &Orchestrator{
-		githubClient: &fakeGitHubClient{
+	o := NewOrchestrator(
+		&fakeGitHubClient{
 			issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}},
 			prs:    map[string]*github.PR{branch: {Number: 17, State: "merged", Merged: true, HeadRefName: branch}},
 		},
-		renderer: &retryRenderer{result: "rendered prompt"},
-		errorLog: io.Discard,
-		layout:   paths.NewLayout(&config.Config{}, workDir),
-		eventLog: eventLog,
-		sandboxFactory: &retrySandboxFactory{
-			sandbox: rtSandbox,
-		},
-		runnableFactory: &taskWritingRunnableFactory{
+		&retryRenderer{result: "rendered prompt"},
+		nil,
+		eventLog,
+		WithErrorLog(io.Discard),
+		WithSandboxFactory(&retrySandboxFactory{sandbox: rtSandbox}),
+		WithRunnableFactory(&taskWritingRunnableFactory{
 			taskPath:    filepath.Join(workDir, "worktree", ".sandman", "task.md"),
 			result:      AgentRunResult{IssueNumber: 42, Status: "failure", Branch: branch},
 			taskContent: "## Status: already resolved",
-		},
-	}
+		}),
+	)
 
 	cfg := &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}}
-	result, started := o.runSingle(context.Background(), context.Background(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, false, nil, noopIdentityResolver(), map[int]string{42: branch}, prompt.RenderConfig{}, nil, &retrySandboxFactory{sandbox: rtSandbox}, nil, false, "main", nil, 0, 0, 3, 0, "", 0, false, 0, false, false, false, "", "")
+	bc := BatchConfig{
+		Cfg:              cfg,
+		AgentName:        "opencode",
+		AgentCfg:         config.Agent{Command: "echo hi"},
+		IdentityResolver: noopIdentityResolver(),
+		Retries:          3,
+	}
+	row := RowSpec{
+		IssueNumber: 42,
+		Branches:    map[int]string{42: branch},
+		BaseBranch:  "main",
+	}
+	result, started := o.newRunExecutor(context.Background(), bc, &retrySandboxFactory{sandbox: rtSandbox}, nil).Execute(context.Background(), row)
 	if !started {
 		t.Fatal("expected run to start")
 	}
@@ -542,20 +592,34 @@ func TestRunSingle_EmitsRunRetryWithAbortedStatusAfterHeartbeatKill(t *testing.T
 		Git:            config.GitConfig{BaseBranch: "main"},
 		AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}},
 	}
-	o := &Orchestrator{
-		githubClient:          client,
-		renderer:              &noopRenderer{},
-		configStore:           &fakeConfigStore{config: cfg},
-		eventLog:              eventLog,
-		sandboxFactory:        factory,
-		runnableFactory:       runFactory,
-		heartbeatTickInterval: heartbeatTestTick,
-		errorLog:              io.Discard,
-		layout:                paths.NewLayout(cfg, workDir),
-	}
-	o.runSessionOpts.killTimeout = 50 * time.Millisecond
+	o := NewOrchestrator(
+		client,
+		&noopRenderer{},
+		&fakeConfigStore{config: cfg},
+		eventLog,
+		WithSandboxFactory(factory),
+		WithRunnableFactory(runFactory),
+		WithHeartbeatTickInterval(heartbeatTestTick),
+		WithErrorLog(io.Discard),
+		WithRunSessionOpts(runSessionOptions{killTimeout: 50 * time.Millisecond}),
+	)
 
-	result, started := o.runSingle(context.Background(), context.Background(), heartbeatTestIssueNum, cfg, "test-agent", config.Agent{Command: "true"}, false, nil, noopIdentityResolver(), map[int]string{heartbeatTestIssueNum: branch}, prompt.RenderConfig{}, nil, factory, nil, false, "main", nil, 0, 0, 1, heartbeatTestIdle, "", 0, false, 0, false, false, false, "260622105532", "68cb")
+	bc := BatchConfig{
+		Cfg:              cfg,
+		AgentName:        "test-agent",
+		AgentCfg:         config.Agent{Command: "true"},
+		IdentityResolver: noopIdentityResolver(),
+		Retries:          1,
+		RunIdleTimeout:   heartbeatTestIdle,
+	}
+	row := RowSpec{
+		IssueNumber: heartbeatTestIssueNum,
+		Branches:    map[int]string{heartbeatTestIssueNum: branch},
+		BaseBranch:  "main",
+		RunTS:       "260622105532",
+		RunShortID:  "68cb",
+	}
+	result, started := o.newRunExecutor(context.Background(), bc, factory, nil).Execute(context.Background(), row)
 	if !started {
 		t.Fatal("expected run to start")
 	}
@@ -629,25 +693,34 @@ func TestRunSingle_EmitsZeroRunRetryEventsOnSingleAttempt(t *testing.T) {
 	pr := &github.PR{Number: 17, State: "open", Merged: false, HeadRefName: branch}
 	eventsPath := filepath.Join(t.TempDir(), "events.jsonl")
 	eventLog := &events.JSONLLogger{Path: eventsPath}
-	o := &Orchestrator{
-		githubClient: &fakeGitHubClient{
+	o := NewOrchestrator(
+		&fakeGitHubClient{
 			issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}},
 			prs:    map[string]*github.PR{branch: pr},
 		},
-		renderer: &retryRenderer{result: "rendered prompt"},
-		errorLog: io.Discard,
-		layout:   paths.NewLayout(&config.Config{}, workDir),
-		eventLog: eventLog,
-		sandboxFactory: &retrySandboxFactory{
-			sandbox: rtSandbox,
-		},
-		runnableFactory: &fakeRunnableFactory{results: []AgentRunResult{
+		&retryRenderer{result: "rendered prompt"},
+		nil,
+		eventLog,
+		WithErrorLog(io.Discard),
+		WithSandboxFactory(&retrySandboxFactory{sandbox: rtSandbox}),
+		WithRunnableFactory(&fakeRunnableFactory{results: []AgentRunResult{
 			{IssueNumber: 42, Status: "failure", Branch: branch},
-		}},
-	}
+		}}),
+	)
 
 	cfg := &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}}
-	result, started := o.runSingle(context.Background(), context.Background(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, false, nil, noopIdentityResolver(), map[int]string{42: branch}, prompt.RenderConfig{}, nil, &retrySandboxFactory{sandbox: rtSandbox}, nil, false, "main", nil, 0, 0, 0, 0, "", 0, false, 0, false, false, false, "", "")
+	bc := BatchConfig{
+		Cfg:              cfg,
+		AgentName:        "opencode",
+		AgentCfg:         config.Agent{Command: "echo hi"},
+		IdentityResolver: noopIdentityResolver(),
+	}
+	row := RowSpec{
+		IssueNumber: 42,
+		Branches:    map[int]string{42: branch},
+		BaseBranch:  "main",
+	}
+	result, started := o.newRunExecutor(context.Background(), bc, &retrySandboxFactory{sandbox: rtSandbox}, nil).Execute(context.Background(), row)
 	if !started {
 		t.Fatal("expected run to start")
 	}
@@ -695,21 +768,35 @@ func TestRunPromptOnly_EmitsRunRetryBetweenAttemptsOnFailure(t *testing.T) {
 	rtSandbox := &retrySandbox{workDir: filepath.Join(workDir, "worktree"), execErrors: []error{errors.New("exit 1"), nil}}
 	eventsPath := filepath.Join(t.TempDir(), "events.jsonl")
 	eventLog := &events.JSONLLogger{Path: eventsPath}
-	o := &Orchestrator{
-		renderer: &retryRenderer{result: "rendered prompt"},
-		errorLog: io.Discard,
-		layout:   paths.NewLayout(&config.Config{}, workDir),
-		eventLog: eventLog,
-		sandboxFactory: &retrySandboxFactory{
-			sandbox: rtSandbox,
-		},
-	}
-	o.runSessionOpts.retryReset = func(ctx context.Context, sb sandbox.Sandbox, branch, baseBranch string) error {
-		return nil
-	}
+	o := NewOrchestrator(
+		nil,
+		&retryRenderer{result: "rendered prompt"},
+		nil,
+		eventLog,
+		WithErrorLog(io.Discard),
+		WithSandboxFactory(&retrySandboxFactory{sandbox: rtSandbox}),
+		WithRunSessionOpts(runSessionOptions{retryReset: func(ctx context.Context, sb sandbox.Sandbox, branch, baseBranch string) error {
+			return nil
+		}}),
+	)
 
 	cfg := &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}}
-	result, started := o.runPromptOnlySingle(context.Background(), cfg, "opencode", config.Agent{Command: "echo hi"}, noopIdentityResolver(), branch, prompt.RenderConfig{}, nil, &retrySandboxFactory{sandbox: rtSandbox}, nil, ModeFresh, "main", 0, 0, 2, "", 0, false, 0, false, false, false, false, 0, "", "run-prompt-123", nil, 0, "", "", "")
+	bc := BatchConfig{
+		Cfg:              cfg,
+		AgentName:        "opencode",
+		AgentCfg:         config.Agent{Command: "echo hi"},
+		IdentityResolver: noopIdentityResolver(),
+		Retries:          2,
+	}
+	row := RowSpec{
+		Mode:              ModeFresh,
+		Branches:          map[int]string{0: branch},
+		BaseBranch:        "main",
+		BatchID:           batchIDForPromptOnly("", "", "run-prompt-123", ""),
+		RunID:             "run-prompt-123",
+		UserProvidedRunID: "run-prompt-123",
+	}
+	result, started := o.newRunExecutor(context.Background(), bc, &retrySandboxFactory{sandbox: rtSandbox}, nil).Execute(context.Background(), row)
 	if !started {
 		t.Fatal("expected run to start")
 	}
@@ -766,21 +853,34 @@ func TestRunPromptOnly_EmitsZeroRunRetryEventsOnSingleAttempt(t *testing.T) {
 	rtSandbox := &retrySandbox{workDir: filepath.Join(workDir, "worktree")}
 	eventsPath := filepath.Join(t.TempDir(), "events.jsonl")
 	eventLog := &events.JSONLLogger{Path: eventsPath}
-	o := &Orchestrator{
-		renderer: &retryRenderer{result: "rendered prompt"},
-		errorLog: io.Discard,
-		layout:   paths.NewLayout(&config.Config{}, workDir),
-		eventLog: eventLog,
-		sandboxFactory: &retrySandboxFactory{
-			sandbox: rtSandbox,
-		},
-		runnableFactory: &fakeRunnableFactory{results: []AgentRunResult{
+	o := NewOrchestrator(
+		nil,
+		&retryRenderer{result: "rendered prompt"},
+		nil,
+		eventLog,
+		WithErrorLog(io.Discard),
+		WithSandboxFactory(&retrySandboxFactory{sandbox: rtSandbox}),
+		WithRunnableFactory(&fakeRunnableFactory{results: []AgentRunResult{
 			{IssueNumber: 0, Status: "failure", Branch: branch},
-		}},
-	}
+		}}),
+	)
 
 	cfg := &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}}
-	result, started := o.runPromptOnlySingle(context.Background(), cfg, "opencode", config.Agent{Command: "echo hi"}, noopIdentityResolver(), branch, prompt.RenderConfig{}, nil, &retrySandboxFactory{sandbox: rtSandbox}, nil, ModeFresh, "main", 0, 0, 0, "", 0, false, 0, false, false, false, false, 0, "", "run-prompt-456", nil, 0, "", "", "")
+	bc := BatchConfig{
+		Cfg:              cfg,
+		AgentName:        "opencode",
+		AgentCfg:         config.Agent{Command: "echo hi"},
+		IdentityResolver: noopIdentityResolver(),
+	}
+	row := RowSpec{
+		Mode:              ModeFresh,
+		Branches:          map[int]string{0: branch},
+		BaseBranch:        "main",
+		BatchID:           batchIDForPromptOnly("", "", "run-prompt-456", ""),
+		RunID:             "run-prompt-456",
+		UserProvidedRunID: "run-prompt-456",
+	}
+	result, started := o.newRunExecutor(context.Background(), bc, &retrySandboxFactory{sandbox: rtSandbox}, nil).Execute(context.Background(), row)
 	if !started {
 		t.Fatal("expected run to start")
 	}
@@ -831,30 +931,40 @@ func TestRunSingle_ClosedIssueNoPRReturnsSuccess(t *testing.T) {
 
 	eventsPath := filepath.Join(t.TempDir(), "events.jsonl")
 	eventLog := &events.JSONLLogger{Path: eventsPath}
-	o := &Orchestrator{
-		githubClient: &fakeGitHubClient{
+	resultFactory := &fakeRunnableFactory{results: []AgentRunResult{
+		{IssueNumber: 42, Status: "success", Branch: branch},
+		{IssueNumber: 42, Status: "failure", Branch: branch},
+	}}
+	o := NewOrchestrator(
+		&fakeGitHubClient{
 			issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug", State: "closed"}},
 			prs:    map[string]*github.PR{},
 		},
-		renderer: &retryRenderer{result: "rendered prompt"},
-		errorLog: io.Discard,
-		layout:   paths.NewLayout(&config.Config{}, workDir),
-		eventLog: eventLog,
-		sandboxFactory: &retrySandboxFactory{
-			sandbox: rtSandbox,
-		},
-		runnableFactory: &fakeRunnableFactory{results: []AgentRunResult{
-			{IssueNumber: 42, Status: "success", Branch: branch},
-			{IssueNumber: 42, Status: "failure", Branch: branch},
-		}},
-	}
-	o.runSessionOpts.retryReset = func(ctx context.Context, sb sandbox.Sandbox, branch, baseBranch string) error {
-		return nil
-	}
+		&retryRenderer{result: "rendered prompt"},
+		nil,
+		eventLog,
+		WithErrorLog(io.Discard),
+		WithSandboxFactory(&retrySandboxFactory{sandbox: rtSandbox}),
+		WithRunnableFactory(resultFactory),
+		WithRunSessionOpts(runSessionOptions{retryReset: func(ctx context.Context, sb sandbox.Sandbox, branch, baseBranch string) error {
+			return nil
+		}}),
+	)
 
 	cfg := &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}}
-	resultFactory := o.runnableFactory.(*fakeRunnableFactory)
-	result, started := o.runSingle(context.Background(), context.Background(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, false, nil, noopIdentityResolver(), map[int]string{42: branch}, prompt.RenderConfig{}, nil, &retrySandboxFactory{sandbox: rtSandbox}, nil, false, "main", nil, 0, 0, 1, 0, "", 0, false, 0, false, false, false, "", "")
+	bc := BatchConfig{
+		Cfg:              cfg,
+		AgentName:        "opencode",
+		AgentCfg:         config.Agent{Command: "echo hi"},
+		IdentityResolver: noopIdentityResolver(),
+		Retries:          1,
+	}
+	row := RowSpec{
+		IssueNumber: 42,
+		Branches:    map[int]string{42: branch},
+		BaseBranch:  "main",
+	}
+	result, started := o.newRunExecutor(context.Background(), bc, &retrySandboxFactory{sandbox: rtSandbox}, nil).Execute(context.Background(), row)
 	if !started {
 		t.Fatalf("expected run to start, result.Status=%q, created=%d", result.Status, len(resultFactory.created))
 	}
@@ -901,33 +1011,43 @@ func TestRunSingle_RetryBannersUseRetriesBudgetAsDenominator(t *testing.T) {
 	pr := &github.PR{Number: 17, State: "closed", Merged: false, HeadRefName: branch}
 	eventsPath := filepath.Join(t.TempDir(), "events.jsonl")
 	eventLog := &events.JSONLLogger{Path: eventsPath}
-	o := &Orchestrator{
-		githubClient: &fakeGitHubClient{
+	resultFactory := &fakeRunnableFactory{results: []AgentRunResult{
+		{IssueNumber: 42, Status: "failure", Branch: branch},
+		{IssueNumber: 42, Status: "failure", Branch: branch},
+		{IssueNumber: 42, Status: "failure", Branch: branch},
+		{IssueNumber: 42, Status: "failure", Branch: branch},
+	}}
+	o := NewOrchestrator(
+		&fakeGitHubClient{
 			issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}},
 			prs:    map[string]*github.PR{branch: pr},
 		},
-		renderer: &retryRenderer{result: "rendered prompt"},
-		errorLog: io.Discard,
-		layout:   paths.NewLayout(&config.Config{}, workDir),
-		eventLog: eventLog,
-		sandboxFactory: &retrySandboxFactory{
-			sandbox: rtSandbox,
-		},
-		runnableFactory: &fakeRunnableFactory{results: []AgentRunResult{
-			{IssueNumber: 42, Status: "failure", Branch: branch},
-			{IssueNumber: 42, Status: "failure", Branch: branch},
-			{IssueNumber: 42, Status: "failure", Branch: branch},
-			{IssueNumber: 42, Status: "failure", Branch: branch},
-		}},
-	}
-	o.runSessionOpts.retryReset = func(ctx context.Context, sb sandbox.Sandbox, branch, baseBranch string) error {
-		return nil
-	}
+		&retryRenderer{result: "rendered prompt"},
+		nil,
+		eventLog,
+		WithErrorLog(io.Discard),
+		WithSandboxFactory(&retrySandboxFactory{sandbox: rtSandbox}),
+		WithRunnableFactory(resultFactory),
+		WithRunSessionOpts(runSessionOptions{retryReset: func(ctx context.Context, sb sandbox.Sandbox, branch, baseBranch string) error {
+			return nil
+		}}),
+	)
 
 	cfg := &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}}
-	resultFactory := o.runnableFactory.(*fakeRunnableFactory)
 	// retries=3 → 4 attempts total.
-	result, started := o.runSingle(context.Background(), context.Background(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, false, nil, noopIdentityResolver(), map[int]string{42: branch}, prompt.RenderConfig{}, nil, &retrySandboxFactory{sandbox: rtSandbox}, nil, false, "main", nil, 0, 0, 3, 0, "", 0, false, 0, false, false, false, "", "")
+	bc := BatchConfig{
+		Cfg:              cfg,
+		AgentName:        "opencode",
+		AgentCfg:         config.Agent{Command: "echo hi"},
+		IdentityResolver: noopIdentityResolver(),
+		Retries:          3,
+	}
+	row := RowSpec{
+		IssueNumber: 42,
+		Branches:    map[int]string{42: branch},
+		BaseBranch:  "main",
+	}
+	result, started := o.newRunExecutor(context.Background(), bc, &retrySandboxFactory{sandbox: rtSandbox}, nil).Execute(context.Background(), row)
 	if !started {
 		t.Fatalf("expected run to start, result.Status=%q, created=%d", result.Status, len(resultFactory.created))
 	}
@@ -1001,21 +1121,33 @@ func TestRunSingle_InitialAttemptOnlyHasNoBanner(t *testing.T) {
 	currentBranchHeadFn = func(string) (string, error) { return "current-sha", nil }
 	t.Cleanup(func() { currentBranchHeadFn = oldHeadFn })
 	pr := &github.PR{Number: 17, State: "open", Merged: false, HeadRefName: branch}
-	o := &Orchestrator{
-		githubClient: &fakeGitHubClient{
+	o := NewOrchestrator(
+		&fakeGitHubClient{
 			issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}},
 			prs:    map[string]*github.PR{branch: pr},
 		},
-		renderer: &retryRenderer{result: "rendered prompt"},
-		errorLog: io.Discard,
-		layout:   paths.NewLayout(&config.Config{}, workDir),
-		sandboxFactory: &fakeSandboxFactory{
-			sandbox: rtSandbox,
-		},
-	}
+		&retryRenderer{result: "rendered prompt"},
+		nil,
+		nil,
+		WithErrorLog(io.Discard),
+		WithSandboxFactory(&fakeSandboxFactory{sandbox: rtSandbox}),
+	)
 
 	cfg := &config.Config{WorktreeDir: "worktree", Git: config.GitConfig{BaseBranch: "main"}}
-	result, started := o.runSingle(context.Background(), context.Background(), 42, cfg, "opencode", config.Agent{Command: "opencode run {{.PromptFile}}"}, false, nil, noopIdentityResolver(), map[int]string{42: branch}, prompt.RenderConfig{}, nil, &fakeSandboxFactory{sandbox: rtSandbox}, nil, false, "main", nil, 0, 0, 0, 0, "", 0, false, 0, false, false, false, "260622105532", "68cb")
+	bc := BatchConfig{
+		Cfg:              cfg,
+		AgentName:        "opencode",
+		AgentCfg:         config.Agent{Command: "opencode run {{.PromptFile}}"},
+		IdentityResolver: noopIdentityResolver(),
+	}
+	row := RowSpec{
+		IssueNumber: 42,
+		Branches:    map[int]string{42: branch},
+		BaseBranch:  "main",
+		RunTS:       "260622105532",
+		RunShortID:  "68cb",
+	}
+	result, started := o.newRunExecutor(context.Background(), bc, &fakeSandboxFactory{sandbox: rtSandbox}, nil).Execute(context.Background(), row)
 	if !started {
 		t.Fatal("expected run to start")
 	}

@@ -1,0 +1,21 @@
+=== error ===
+prompt-only run aborted: batch aborted by context cancellation
+
+=== results (1) ===
+--- result[0] ---
+IssueNumber: 42
+Issue: <nil>
+Status: aborted
+RetriesTotal: 1
+Branch: 
+WorktreePath: 
+Review: false
+RunID: 
+
+=== events (partitioned by RunID, emission order) ===
+## RunID: 260618113825-abcd-prompt
+<ts>	run.started	{"agent":"test-agent","base_branch":"main","batch_id":"260618113825-abcd-prompt","branch":"sandman/test-prompt-only","container_capacity":0,"container_capacity_set":false,"max_containers":0,"max_containers_set":false,"parallel":0,"prompt_source_type":"current","retries":0,"sandbox":"worktree","start_delay":0}
+<ts>	run.aborted	{"base_branch":"main","branch":"","retries_done":0,"retries_total":0,"status":"aborted","worktree_state":"preserved"}
+
+=== run.log ===
+<none>

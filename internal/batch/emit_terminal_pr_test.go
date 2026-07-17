@@ -14,7 +14,7 @@ import (
 
 func TestEmitTerminal_PROpenConflictingOverridesStatus(t *testing.T) {
 	s := &runSession{
-		o: &Orchestrator{
+		deps: runDeps{
 			githubClient: &fakeGitHubClient{},
 			renderer:     &retryRenderer{result: "rendered prompt"},
 			errorLog:     io.Discard,
@@ -29,7 +29,7 @@ func TestEmitTerminal_PROpenConflictingOverridesStatus(t *testing.T) {
 	t.Cleanup(func() { lookupOpenPRFn = oldLookup })
 
 	eventsPath := filepath.Join(t.TempDir(), "events.jsonl")
-	s.o.eventLog = &events.JSONLLogger{Path: eventsPath}
+	s.deps.eventLog = &events.JSONLLogger{Path: eventsPath}
 
 	result := AgentRunResult{IssueNumber: 42, Branch: "sandman/42-fix-bug", Status: "success", RetriesTotal: 1}
 	got := s.emitTerminal(context.Background(), "run-id", result, nil)
@@ -37,7 +37,7 @@ func TestEmitTerminal_PROpenConflictingOverridesStatus(t *testing.T) {
 		t.Fatalf("emitTerminal returned %q, want failure (CONFLICTING PR overrides success)", got)
 	}
 
-	logs, err := s.o.eventLog.Read()
+	logs, err := s.deps.eventLog.Read()
 	if err != nil {
 		t.Fatalf("read events: %v", err)
 	}
@@ -64,7 +64,7 @@ func TestEmitTerminal_PROpenConflictingOverridesStatus(t *testing.T) {
 
 func TestEmitTerminal_PROpenCleanLeavesStatusUnchanged(t *testing.T) {
 	s := &runSession{
-		o: &Orchestrator{
+		deps: runDeps{
 			githubClient: &fakeGitHubClient{},
 			renderer:     &retryRenderer{result: "rendered prompt"},
 			errorLog:     io.Discard,
@@ -79,7 +79,7 @@ func TestEmitTerminal_PROpenCleanLeavesStatusUnchanged(t *testing.T) {
 	t.Cleanup(func() { lookupOpenPRFn = oldLookup })
 
 	eventsPath := filepath.Join(t.TempDir(), "events.jsonl")
-	s.o.eventLog = &events.JSONLLogger{Path: eventsPath}
+	s.deps.eventLog = &events.JSONLLogger{Path: eventsPath}
 
 	result := AgentRunResult{IssueNumber: 42, Branch: "sandman/42-fix-bug", Status: "success", RetriesTotal: 1}
 	got := s.emitTerminal(context.Background(), "run-id", result, nil)
@@ -87,7 +87,7 @@ func TestEmitTerminal_PROpenCleanLeavesStatusUnchanged(t *testing.T) {
 		t.Fatalf("emitTerminal returned %q, want success (MERGEABLE PR should not override)", got)
 	}
 
-	logs, err := s.o.eventLog.Read()
+	logs, err := s.deps.eventLog.Read()
 	if err != nil {
 		t.Fatalf("read events: %v", err)
 	}
@@ -102,7 +102,7 @@ func TestEmitTerminal_PROpenCleanLeavesStatusUnchanged(t *testing.T) {
 
 func TestEmitTerminal_NoOpenPRLeavesStatusUnchanged(t *testing.T) {
 	s := &runSession{
-		o: &Orchestrator{
+		deps: runDeps{
 			githubClient: &fakeGitHubClient{},
 			renderer:     &retryRenderer{result: "rendered prompt"},
 			errorLog:     io.Discard,
@@ -117,7 +117,7 @@ func TestEmitTerminal_NoOpenPRLeavesStatusUnchanged(t *testing.T) {
 	t.Cleanup(func() { lookupOpenPRFn = oldLookup })
 
 	eventsPath := filepath.Join(t.TempDir(), "events.jsonl")
-	s.o.eventLog = &events.JSONLLogger{Path: eventsPath}
+	s.deps.eventLog = &events.JSONLLogger{Path: eventsPath}
 
 	result := AgentRunResult{IssueNumber: 42, Branch: "sandman/42-fix-bug", Status: "success", RetriesTotal: 1}
 	got := s.emitTerminal(context.Background(), "run-id", result, nil)
@@ -125,7 +125,7 @@ func TestEmitTerminal_NoOpenPRLeavesStatusUnchanged(t *testing.T) {
 		t.Fatalf("emitTerminal returned %q, want success (no PR should not change status)", got)
 	}
 
-	logs, err := s.o.eventLog.Read()
+	logs, err := s.deps.eventLog.Read()
 	if err != nil {
 		t.Fatalf("read events: %v", err)
 	}
@@ -140,7 +140,7 @@ func TestEmitTerminal_NoOpenPRLeavesStatusUnchanged(t *testing.T) {
 
 func TestEmitTerminal_GHLookupErrorLeavesStatusUnchanged(t *testing.T) {
 	s := &runSession{
-		o: &Orchestrator{
+		deps: runDeps{
 			githubClient: &fakeGitHubClient{},
 			renderer:     &retryRenderer{result: "rendered prompt"},
 			errorLog:     io.Discard,
@@ -155,7 +155,7 @@ func TestEmitTerminal_GHLookupErrorLeavesStatusUnchanged(t *testing.T) {
 	t.Cleanup(func() { lookupOpenPRFn = oldLookup })
 
 	eventsPath := filepath.Join(t.TempDir(), "events.jsonl")
-	s.o.eventLog = &events.JSONLLogger{Path: eventsPath}
+	s.deps.eventLog = &events.JSONLLogger{Path: eventsPath}
 
 	result := AgentRunResult{IssueNumber: 42, Branch: "sandman/42-fix-bug", Status: "success", RetriesTotal: 1}
 	got := s.emitTerminal(context.Background(), "run-id", result, nil)

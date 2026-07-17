@@ -8,8 +8,6 @@ import (
 	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/events"
 	"github.com/rafaelromao/sandman/internal/github"
-	"github.com/rafaelromao/sandman/internal/paths"
-	"github.com/rafaelromao/sandman/internal/prompt"
 )
 
 // TestRunSingle_AlreadyResolved_T1VerifiedAutoClosesAndClosesIssue
@@ -20,6 +18,7 @@ import (
 // `verification` payload in the run.finished event.
 func TestRunSingle_AlreadyResolved_T1VerifiedAutoClosesAndClosesIssue(t *testing.T) {
 	workDir := t.TempDir()
+	t.Chdir(workDir)
 	branch := "sandman/42-fix-bug"
 	wtDir := filepath.Join(workDir, "worktree")
 	rtSandbox := &retrySandbox{workDir: wtDir}
@@ -36,30 +35,40 @@ func TestRunSingle_AlreadyResolved_T1VerifiedAutoClosesAndClosesIssue(t *testing
 
 	eventsPath := filepath.Join(t.TempDir(), "events.jsonl")
 	eventLog := &events.JSONLLogger{Path: eventsPath}
-	o := &Orchestrator{
-		githubClient: &fakeGitHubClient{
+	o := NewOrchestrator(
+		&fakeGitHubClient{
 			issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}},
 			prs:    map[string]*github.PR{branch: {Number: 17, State: "open", Merged: false, HeadRefName: branch}},
 		},
-		renderer: &retryRenderer{result: "rendered prompt"},
-		errorLog: io.Discard,
-		layout:   paths.NewLayout(&config.Config{}, workDir),
-		eventLog: eventLog,
-		sandboxFactory: &retrySandboxFactory{
-			sandbox: rtSandbox,
-		},
-		runnableFactory: &taskWritingRunnableFactory{
+		&retryRenderer{result: "rendered prompt"},
+		nil,
+		eventLog,
+		WithErrorLog(io.Discard),
+		WithSandboxFactory(&retrySandboxFactory{sandbox: rtSandbox}),
+		WithRunnableFactory(&taskWritingRunnableFactory{
 			taskPath:    filepath.Join(wtDir, ".sandman", "task.md"),
 			result:      AgentRunResult{IssueNumber: 42, Status: "failure", Branch: branch},
 			taskContent: "## Status: already resolved",
-		},
-		verifyPath: VerifyPathFunc(func(in VerifyInput) (VerifyOutcome, []OracleCheck) {
-			return VerifyVerified, []OracleCheck{{Name: "T1", Details: map[string]any{"ran": 3}}}
 		}),
-	}
+		WithVerifyPath(VerifyPathFunc(func(in VerifyInput) (VerifyOutcome, []OracleCheck) {
+			return VerifyVerified, []OracleCheck{{Name: "T1", Details: map[string]any{"ran": 3}}}
+		})),
+	)
 
 	cfg := &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}}
-	result, started := o.runSingle(t.Context(), t.Context(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, false, nil, noopIdentityResolver(), map[int]string{42: branch}, prompt.RenderConfig{}, nil, &retrySandboxFactory{sandbox: rtSandbox}, nil, false, "main", nil, 0, 0, 3, 0, "", 0, false, 0, false, false, false, "", "")
+	bc := BatchConfig{
+		Cfg:              cfg,
+		AgentName:        "opencode",
+		AgentCfg:         config.Agent{Command: "echo hi"},
+		IdentityResolver: noopIdentityResolver(),
+		Retries:          3,
+	}
+	row := RowSpec{
+		IssueNumber: 42,
+		Branches:    map[int]string{42: branch},
+		BaseBranch:  "main",
+	}
+	result, started := o.newRunExecutor(t.Context(), bc, &retrySandboxFactory{sandbox: rtSandbox}, nil).Execute(t.Context(), row)
 	if !started {
 		t.Fatal("expected run to start")
 	}
@@ -103,6 +112,7 @@ func TestRunSingle_AlreadyResolved_T1VerifiedAutoClosesAndClosesIssue(t *testing
 // oracle reported).
 func TestRunSingle_AlreadyResolved_AllAbstainFallsBackToBackstop(t *testing.T) {
 	workDir := t.TempDir()
+	t.Chdir(workDir)
 	branch := "sandman/42-fix-bug"
 	wtDir := filepath.Join(workDir, "worktree")
 	rtSandbox := &retrySandbox{workDir: wtDir}
@@ -119,30 +129,40 @@ func TestRunSingle_AlreadyResolved_AllAbstainFallsBackToBackstop(t *testing.T) {
 
 	eventsPath := filepath.Join(t.TempDir(), "events.jsonl")
 	eventLog := &events.JSONLLogger{Path: eventsPath}
-	o := &Orchestrator{
-		githubClient: &fakeGitHubClient{
+	o := NewOrchestrator(
+		&fakeGitHubClient{
 			issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}},
 			prs:    map[string]*github.PR{branch: {Number: 17, State: "open", Merged: false, HeadRefName: branch}},
 		},
-		renderer: &retryRenderer{result: "rendered prompt"},
-		errorLog: io.Discard,
-		layout:   paths.NewLayout(&config.Config{}, workDir),
-		eventLog: eventLog,
-		sandboxFactory: &retrySandboxFactory{
-			sandbox: rtSandbox,
-		},
-		runnableFactory: &taskWritingRunnableFactory{
+		&retryRenderer{result: "rendered prompt"},
+		nil,
+		eventLog,
+		WithErrorLog(io.Discard),
+		WithSandboxFactory(&retrySandboxFactory{sandbox: rtSandbox}),
+		WithRunnableFactory(&taskWritingRunnableFactory{
 			taskPath:    filepath.Join(wtDir, ".sandman", "task.md"),
 			result:      AgentRunResult{IssueNumber: 42, Status: "failure", Branch: branch},
 			taskContent: "## Status: already resolved",
-		},
-		verifyPath: VerifyPathFunc(func(in VerifyInput) (VerifyOutcome, []OracleCheck) {
-			return VerifyNoSignal, nil
 		}),
-	}
+		WithVerifyPath(VerifyPathFunc(func(in VerifyInput) (VerifyOutcome, []OracleCheck) {
+			return VerifyNoSignal, nil
+		})),
+	)
 
 	cfg := &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}}
-	result, started := o.runSingle(t.Context(), t.Context(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, false, nil, noopIdentityResolver(), map[int]string{42: branch}, prompt.RenderConfig{}, nil, &retrySandboxFactory{sandbox: rtSandbox}, nil, false, "main", nil, 0, 0, 3, 0, "", 0, false, 0, false, false, false, "", "")
+	bc := BatchConfig{
+		Cfg:              cfg,
+		AgentName:        "opencode",
+		AgentCfg:         config.Agent{Command: "echo hi"},
+		IdentityResolver: noopIdentityResolver(),
+		Retries:          3,
+	}
+	row := RowSpec{
+		IssueNumber: 42,
+		Branches:    map[int]string{42: branch},
+		BaseBranch:  "main",
+	}
+	result, started := o.newRunExecutor(t.Context(), bc, &retrySandboxFactory{sandbox: rtSandbox}, nil).Execute(t.Context(), row)
 	if !started {
 		t.Fatal("expected run to start")
 	}
@@ -176,6 +196,7 @@ func TestRunSingle_AlreadyResolved_AllAbstainFallsBackToBackstop(t *testing.T) {
 // backstop has nothing to block on).
 func TestRunSingle_AlreadyResolved_AllAbstainNoOpenPRSucceeds(t *testing.T) {
 	workDir := t.TempDir()
+	t.Chdir(workDir)
 	branch := "sandman/42-fix-bug"
 	wtDir := filepath.Join(workDir, "worktree")
 	rtSandbox := &retrySandbox{workDir: wtDir}
@@ -192,29 +213,39 @@ func TestRunSingle_AlreadyResolved_AllAbstainNoOpenPRSucceeds(t *testing.T) {
 
 	eventsPath := filepath.Join(t.TempDir(), "events.jsonl")
 	eventLog := &events.JSONLLogger{Path: eventsPath}
-	o := &Orchestrator{
-		githubClient: &fakeGitHubClient{
+	o := NewOrchestrator(
+		&fakeGitHubClient{
 			issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}},
 		},
-		renderer: &retryRenderer{result: "rendered prompt"},
-		errorLog: io.Discard,
-		layout:   paths.NewLayout(&config.Config{}, workDir),
-		eventLog: eventLog,
-		sandboxFactory: &retrySandboxFactory{
-			sandbox: rtSandbox,
-		},
-		runnableFactory: &taskWritingRunnableFactory{
+		&retryRenderer{result: "rendered prompt"},
+		nil,
+		eventLog,
+		WithErrorLog(io.Discard),
+		WithSandboxFactory(&retrySandboxFactory{sandbox: rtSandbox}),
+		WithRunnableFactory(&taskWritingRunnableFactory{
 			taskPath:    filepath.Join(wtDir, ".sandman", "task.md"),
 			result:      AgentRunResult{IssueNumber: 42, Status: "failure", Branch: branch},
 			taskContent: "## Status: already resolved",
-		},
-		verifyPath: VerifyPathFunc(func(in VerifyInput) (VerifyOutcome, []OracleCheck) {
-			return VerifyNoSignal, nil
 		}),
-	}
+		WithVerifyPath(VerifyPathFunc(func(in VerifyInput) (VerifyOutcome, []OracleCheck) {
+			return VerifyNoSignal, nil
+		})),
+	)
 
 	cfg := &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}}
-	result, started := o.runSingle(t.Context(), t.Context(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, false, nil, noopIdentityResolver(), map[int]string{42: branch}, prompt.RenderConfig{}, nil, &retrySandboxFactory{sandbox: rtSandbox}, nil, false, "main", nil, 0, 0, 3, 0, "", 0, false, 0, false, false, false, "", "")
+	bc := BatchConfig{
+		Cfg:              cfg,
+		AgentName:        "opencode",
+		AgentCfg:         config.Agent{Command: "echo hi"},
+		IdentityResolver: noopIdentityResolver(),
+		Retries:          3,
+	}
+	row := RowSpec{
+		IssueNumber: 42,
+		Branches:    map[int]string{42: branch},
+		BaseBranch:  "main",
+	}
+	result, started := o.newRunExecutor(t.Context(), bc, &retrySandboxFactory{sandbox: rtSandbox}, nil).Execute(t.Context(), row)
 	if !started {
 		t.Fatal("expected run to start")
 	}
@@ -230,6 +261,7 @@ func TestRunSingle_AlreadyResolved_AllAbstainNoOpenPRSucceeds(t *testing.T) {
 // no `blocker` (the blocker is reserved for the open-PR backstop).
 func TestRunSingle_AlreadyResolved_T1FailedFailsWithoutBackstop(t *testing.T) {
 	workDir := t.TempDir()
+	t.Chdir(workDir)
 	branch := "sandman/42-fix-bug"
 	wtDir := filepath.Join(workDir, "worktree")
 	rtSandbox := &retrySandbox{workDir: wtDir}
@@ -246,30 +278,40 @@ func TestRunSingle_AlreadyResolved_T1FailedFailsWithoutBackstop(t *testing.T) {
 
 	eventsPath := filepath.Join(t.TempDir(), "events.jsonl")
 	eventLog := &events.JSONLLogger{Path: eventsPath}
-	o := &Orchestrator{
-		githubClient: &fakeGitHubClient{
+	o := NewOrchestrator(
+		&fakeGitHubClient{
 			issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}},
 			prs:    map[string]*github.PR{branch: {Number: 17, State: "open", Merged: false, HeadRefName: branch}},
 		},
-		renderer: &retryRenderer{result: "rendered prompt"},
-		errorLog: io.Discard,
-		layout:   paths.NewLayout(&config.Config{}, workDir),
-		eventLog: eventLog,
-		sandboxFactory: &retrySandboxFactory{
-			sandbox: rtSandbox,
-		},
-		runnableFactory: &taskWritingRunnableFactory{
+		&retryRenderer{result: "rendered prompt"},
+		nil,
+		eventLog,
+		WithErrorLog(io.Discard),
+		WithSandboxFactory(&retrySandboxFactory{sandbox: rtSandbox}),
+		WithRunnableFactory(&taskWritingRunnableFactory{
 			taskPath:    filepath.Join(wtDir, ".sandman", "task.md"),
 			result:      AgentRunResult{IssueNumber: 42, Status: "failure", Branch: branch},
 			taskContent: "## Status: already resolved",
-		},
-		verifyPath: VerifyPathFunc(func(in VerifyInput) (VerifyOutcome, []OracleCheck) {
-			return VerifyFailed, []OracleCheck{{Name: "T1", Details: map[string]any{"failed": 1}}}
 		}),
-	}
+		WithVerifyPath(VerifyPathFunc(func(in VerifyInput) (VerifyOutcome, []OracleCheck) {
+			return VerifyFailed, []OracleCheck{{Name: "T1", Details: map[string]any{"failed": 1}}}
+		})),
+	)
 
 	cfg := &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}}
-	result, started := o.runSingle(t.Context(), t.Context(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, false, nil, noopIdentityResolver(), map[int]string{42: branch}, prompt.RenderConfig{}, nil, &retrySandboxFactory{sandbox: rtSandbox}, nil, false, "main", nil, 0, 0, 3, 0, "", 0, false, 0, false, false, false, "", "")
+	bc := BatchConfig{
+		Cfg:              cfg,
+		AgentName:        "opencode",
+		AgentCfg:         config.Agent{Command: "echo hi"},
+		IdentityResolver: noopIdentityResolver(),
+		Retries:          3,
+	}
+	row := RowSpec{
+		IssueNumber: 42,
+		Branches:    map[int]string{42: branch},
+		BaseBranch:  "main",
+	}
+	result, started := o.newRunExecutor(t.Context(), bc, &retrySandboxFactory{sandbox: rtSandbox}, nil).Execute(t.Context(), row)
 	if !started {
 		t.Fatal("expected run to start")
 	}
@@ -301,6 +343,7 @@ func TestRunSingle_AlreadyResolved_T1FailedFailsWithoutBackstop(t *testing.T) {
 // always abstain because T4's first guard is `if in.PR == nil`.
 func TestRunSingle_VerifyPathReceivesPRSnapshot(t *testing.T) {
 	workDir := t.TempDir()
+	t.Chdir(workDir)
 	branch := "sandman/42-fix-bug"
 	wtDir := filepath.Join(workDir, "worktree")
 	rtSandbox := &retrySandbox{workDir: wtDir}
@@ -318,8 +361,8 @@ func TestRunSingle_VerifyPathReceivesPRSnapshot(t *testing.T) {
 	eventsPath := filepath.Join(t.TempDir(), "events.jsonl")
 	eventLog := &events.JSONLLogger{Path: eventsPath}
 	var seenPR *github.PR
-	o := &Orchestrator{
-		githubClient: &fakeGitHubClient{
+	o := NewOrchestrator(
+		&fakeGitHubClient{
 			issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}},
 			prs: map[string]*github.PR{
 				branch: {
@@ -333,26 +376,36 @@ func TestRunSingle_VerifyPathReceivesPRSnapshot(t *testing.T) {
 				},
 			},
 		},
-		renderer: &retryRenderer{result: "rendered prompt"},
-		errorLog: io.Discard,
-		layout:   paths.NewLayout(&config.Config{}, workDir),
-		eventLog: eventLog,
-		sandboxFactory: &retrySandboxFactory{
-			sandbox: rtSandbox,
-		},
-		runnableFactory: &taskWritingRunnableFactory{
+		&retryRenderer{result: "rendered prompt"},
+		nil,
+		eventLog,
+		WithErrorLog(io.Discard),
+		WithSandboxFactory(&retrySandboxFactory{sandbox: rtSandbox}),
+		WithRunnableFactory(&taskWritingRunnableFactory{
 			taskPath:    filepath.Join(wtDir, ".sandman", "task.md"),
 			result:      AgentRunResult{IssueNumber: 42, Status: "failure", Branch: branch},
 			taskContent: "## Status: already resolved",
-		},
-		verifyPath: VerifyPathFunc(func(in VerifyInput) (VerifyOutcome, []OracleCheck) {
+		}),
+		WithVerifyPath(VerifyPathFunc(func(in VerifyInput) (VerifyOutcome, []OracleCheck) {
 			seenPR = in.PR
 			return VerifyNoSignal, nil
-		}),
-	}
+		})),
+	)
 
 	cfg := &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}}
-	_, started := o.runSingle(t.Context(), t.Context(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, false, nil, noopIdentityResolver(), map[int]string{42: branch}, prompt.RenderConfig{}, nil, &retrySandboxFactory{sandbox: rtSandbox}, nil, false, "main", nil, 0, 0, 3, 0, "", 0, false, 0, false, false, false, "", "")
+	bc := BatchConfig{
+		Cfg:              cfg,
+		AgentName:        "opencode",
+		AgentCfg:         config.Agent{Command: "echo hi"},
+		IdentityResolver: noopIdentityResolver(),
+		Retries:          3,
+	}
+	row := RowSpec{
+		IssueNumber: 42,
+		Branches:    map[int]string{42: branch},
+		BaseBranch:  "main",
+	}
+	_, started := o.newRunExecutor(t.Context(), bc, &retrySandboxFactory{sandbox: rtSandbox}, nil).Execute(t.Context(), row)
 	if !started {
 		t.Fatal("expected run to start")
 	}
@@ -376,6 +429,7 @@ func TestRunSingle_VerifyPathReceivesPRSnapshot(t *testing.T) {
 // payload so the operator can see why we abstained.
 func TestRunSingle_AlreadyResolved_T2RejectFallsBackToBackstop(t *testing.T) {
 	workDir := t.TempDir()
+	t.Chdir(workDir)
 	branch := "sandman/42-fix-bug"
 	wtDir := filepath.Join(workDir, "worktree")
 	rtSandbox := &retrySandbox{workDir: wtDir}
@@ -392,30 +446,40 @@ func TestRunSingle_AlreadyResolved_T2RejectFallsBackToBackstop(t *testing.T) {
 
 	eventsPath := filepath.Join(t.TempDir(), "events.jsonl")
 	eventLog := &events.JSONLLogger{Path: eventsPath}
-	o := &Orchestrator{
-		githubClient: &fakeGitHubClient{
+	o := NewOrchestrator(
+		&fakeGitHubClient{
 			issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}},
 			prs:    map[string]*github.PR{branch: {Number: 17, State: "open", Merged: false, HeadRefName: branch}},
 		},
-		renderer: &retryRenderer{result: "rendered prompt"},
-		errorLog: io.Discard,
-		layout:   paths.NewLayout(&config.Config{}, workDir),
-		eventLog: eventLog,
-		sandboxFactory: &retrySandboxFactory{
-			sandbox: rtSandbox,
-		},
-		runnableFactory: &taskWritingRunnableFactory{
+		&retryRenderer{result: "rendered prompt"},
+		nil,
+		eventLog,
+		WithErrorLog(io.Discard),
+		WithSandboxFactory(&retrySandboxFactory{sandbox: rtSandbox}),
+		WithRunnableFactory(&taskWritingRunnableFactory{
 			taskPath:    filepath.Join(wtDir, ".sandman", "task.md"),
 			result:      AgentRunResult{IssueNumber: 42, Status: "failure", Branch: branch},
 			taskContent: "## Status: already resolved",
-		},
-		verifyPath: VerifyPathFunc(func(in VerifyInput) (VerifyOutcome, []OracleCheck) {
-			return VerifyNoSignal, []OracleCheck{{Name: "T2", Details: map[string]any{"l1": false, "subset": false}}}
 		}),
-	}
+		WithVerifyPath(VerifyPathFunc(func(in VerifyInput) (VerifyOutcome, []OracleCheck) {
+			return VerifyNoSignal, []OracleCheck{{Name: "T2", Details: map[string]any{"l1": false, "subset": false}}}
+		})),
+	)
 
 	cfg := &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}}
-	result, started := o.runSingle(t.Context(), t.Context(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, false, nil, noopIdentityResolver(), map[int]string{42: branch}, prompt.RenderConfig{}, nil, &retrySandboxFactory{sandbox: rtSandbox}, nil, false, "main", nil, 0, 0, 3, 0, "", 0, false, 0, false, false, false, "", "")
+	bc := BatchConfig{
+		Cfg:              cfg,
+		AgentName:        "opencode",
+		AgentCfg:         config.Agent{Command: "echo hi"},
+		IdentityResolver: noopIdentityResolver(),
+		Retries:          3,
+	}
+	row := RowSpec{
+		IssueNumber: 42,
+		Branches:    map[int]string{42: branch},
+		BaseBranch:  "main",
+	}
+	result, started := o.newRunExecutor(t.Context(), bc, &retrySandboxFactory{sandbox: rtSandbox}, nil).Execute(t.Context(), row)
 	if !started {
 		t.Fatal("expected run to start")
 	}
@@ -453,6 +517,7 @@ func TestRunSingle_AlreadyResolved_T2RejectFallsBackToBackstop(t *testing.T) {
 // orchestrator follows the existing branches untouched.
 func TestRunSingle_NonAlreadyResolvedPathUnchanged(t *testing.T) {
 	workDir := t.TempDir()
+	t.Chdir(workDir)
 	branch := "sandman/42-fix-bug"
 	wtDir := filepath.Join(workDir, "worktree")
 	rtSandbox := &retrySandbox{workDir: wtDir}
@@ -470,31 +535,41 @@ func TestRunSingle_NonAlreadyResolvedPathUnchanged(t *testing.T) {
 	eventsPath := filepath.Join(t.TempDir(), "events.jsonl")
 	eventLog := &events.JSONLLogger{Path: eventsPath}
 	verifyCalled := false
-	o := &Orchestrator{
-		githubClient: &fakeGitHubClient{
+	o := NewOrchestrator(
+		&fakeGitHubClient{
 			issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}},
 			prs:    map[string]*github.PR{branch: {Number: 17, State: "merged", Merged: true, HeadRefName: branch}},
 		},
-		renderer: &retryRenderer{result: "rendered prompt"},
-		errorLog: io.Discard,
-		layout:   paths.NewLayout(&config.Config{}, workDir),
-		eventLog: eventLog,
-		sandboxFactory: &retrySandboxFactory{
-			sandbox: rtSandbox,
-		},
-		runnableFactory: &taskWritingRunnableFactory{
+		&retryRenderer{result: "rendered prompt"},
+		nil,
+		eventLog,
+		WithErrorLog(io.Discard),
+		WithSandboxFactory(&retrySandboxFactory{sandbox: rtSandbox}),
+		WithRunnableFactory(&taskWritingRunnableFactory{
 			taskPath:    filepath.Join(wtDir, ".sandman", "task.md"),
 			result:      AgentRunResult{IssueNumber: 42, Status: "success", Branch: branch},
 			taskContent: "## Status: success", // NOT already resolved; PR is merged
-		},
-		verifyPath: VerifyPathFunc(func(in VerifyInput) (VerifyOutcome, []OracleCheck) {
+		}),
+		WithVerifyPath(VerifyPathFunc(func(in VerifyInput) (VerifyOutcome, []OracleCheck) {
 			verifyCalled = true
 			return VerifyNoSignal, nil
-		}),
-	}
+		})),
+	)
 
 	cfg := &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}}
-	result, started := o.runSingle(t.Context(), t.Context(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, false, nil, noopIdentityResolver(), map[int]string{42: branch}, prompt.RenderConfig{}, nil, &retrySandboxFactory{sandbox: rtSandbox}, nil, false, "main", nil, 0, 0, 3, 0, "", 0, false, 0, false, false, false, "", "")
+	bc := BatchConfig{
+		Cfg:              cfg,
+		AgentName:        "opencode",
+		AgentCfg:         config.Agent{Command: "echo hi"},
+		IdentityResolver: noopIdentityResolver(),
+		Retries:          3,
+	}
+	row := RowSpec{
+		IssueNumber: 42,
+		Branches:    map[int]string{42: branch},
+		BaseBranch:  "main",
+	}
+	result, started := o.newRunExecutor(t.Context(), bc, &retrySandboxFactory{sandbox: rtSandbox}, nil).Execute(t.Context(), row)
 	if !started {
 		t.Fatal("expected run to start")
 	}

@@ -9,7 +9,7 @@ This file provides operating instructions for coding agents working in this repo
 ## Architecture
 
 - **Event-sourced state**: Run status is a projection over the append-only `.sandman/events.jsonl`, not mutable records. `events.RunState` folds events into current state. If a status looks wrong, start by tracing the relevant event types and the fold/projection logic rather than searching for mutable status fields.
-- **Factory seams**: `cmd.Dependencies` (`internal/cmd/root.go`) is the top-level dependency injection struct. `batch.Request` accepts `RunnableFactory` and `SandboxFactory` interfaces. In tests, inject fakes at these seams rather than mocking deep concrete types.
+- **Factory seams**: `cmd.Dependencies` (`internal/cmd/root.go`) is the top-level dependency injection struct. The per-run seam is `RunExecutor{Execute(ctx, row RowSpec)}` (`internal/batch/row_spec.go`); its implementation holds a `runDeps` struct (github.Client, prompt.IssueRenderer, events.EventLog, RunnableFactory, SandboxFactory, paths.Layout, heartbeatTickInterval, errorLog, runSessionOptions, verifyPath) and a narrow `runCoordination` interface (`*Orchestrator` implements it; RunBatch owns the state). Test injection of the orchestrator's behavior goes through `OrchestratorOpt` options on `NewOrchestrator` — `WithRunnableFactory`, `WithSandboxFactory`, `WithContainerRuntimeFactory`, `WithErrorLog`, `WithRunSessionOpts`, `WithHeartbeatTickInterval`, `WithVerifyPath` (and `WithBadgeHooker` for production). `batch.Request` is the public batch input (issues, config, flags) — it does **not** carry factories. Inject fakes at the `runDeps`/`OrchestratorOpt` seams rather than mocking deep concrete types.
 - **Filesystem as data store**: There is no database. State lives in flat files under `.sandman/` (manifests, logs, review state), written atomically via temp-file + `os.Rename`. IPC uses Unix domain sockets.
 
 ## Sandman task routing
@@ -36,11 +36,11 @@ If the task involves CLI wiring, root command setup, or substitution in tests:
 
 ### Batch and sandbox orchestration
 
-If the task involves execution flow, runners, or sandbox lifecycle:
+If a task involves execution flow, runners, or sandbox lifecycle:
 
-- Start with `batch.Request`.
-- Trace `RunnableFactory` and `SandboxFactory`.
-- Keep orchestration logic testable by preserving interface seams.
+- Start with `RunExecutor` and `RowSpec` (`internal/batch/row_spec.go`); the per-run seam is `Execute(ctx, row RowSpec)`. `batch.Request` is the public batch input that feeds it.
+- Trace `runDeps` for the test/constructor seam and `OrchestratorOpt` (`WithRunnableFactory`, `WithSandboxFactory`, `WithContainerRuntimeFactory`, `WithErrorLog`, `WithRunSessionOpts`, ...) for test injection. `RunnableFactory` and `SandboxFactory` are the factory interface types inside `runDeps`.
+- Keep orchestration logic testable by preserving the `RunExecutor`/`runDeps`/`OrchestratorOpt` interface seams.
 
 ### Persistence and file safety
 
@@ -65,7 +65,8 @@ Always run dependency or blast-radius checks before changing:
 
 - Event definitions or event-fold/projection logic.
 - Shared command wiring or `cmd.Dependencies`.
-- `RunnableFactory` or `SandboxFactory` interfaces and implementations.
+- The per-run seam: `RunExecutor` interface, `RowSpec`/`BatchConfig`, `runDeps` (incl. `RunnableFactory`/`SandboxFactory` and their implementations), and `runCoordination`.
+- `OrchestratorOpt` options on `NewOrchestrator` (`WithRunnableFactory`, `WithSandboxFactory`, `WithContainerRuntimeFactory`, `WithErrorLog`, `WithRunSessionOpts`, `WithHeartbeatTickInterval`, `WithVerifyPath`, `WithBadgeHooker`).
 - Files with high blast radius.
 - Persistence code under `.sandman/`.
 - IPC or socket lifecycle code.
@@ -76,7 +77,7 @@ If a file has high blast radius, prefer the smallest safe change and inspect dep
 
 When writing or updating tests:
 
-- Mock or fake at the documented seams: `cmd.Dependencies`, `RunnableFactory`, and `SandboxFactory`.
+- Mock or fake at the documented seams: `cmd.Dependencies` (top level); `runDeps` fields and `OrchestratorOpt` options (`WithRunnableFactory`, `WithSandboxFactory`, `WithContainerRuntimeFactory`, `WithErrorLog`, `WithRunSessionOpts`, `WithHeartbeatTickInterval`, `WithVerifyPath`) for orchestrator-level injection; `RunnableFactory`/`SandboxFactory` fakes that satisfy the factory interfaces.
 - Do not mock deep concrete internals when an interface seam already exists.
 - Preserve event-sourced behavior in tests; verify projections/folds rather than inventing alternate mutable-state shortcuts.
 
