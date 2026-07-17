@@ -1174,6 +1174,77 @@ console.log('PASS');
 	runNodeScript(t, js)
 }
 
+// TestPortalDiffUpdateDetailContent_ReviewSubjectStreamShieldsPane extends the
+// contract pinned by TestPortalDiffUpdateDetailContent_StreamedLogIsShieldedFromPoll
+// to the grouped-review subject case. While a review run is the streaming subject
+// (streamingKeys holds the review key), the poll path must not overwrite its
+// <pre>. Once the key is removed, the poll resumes and reconciles normally.
+func TestPortalDiffUpdateDetailContent_ReviewSubjectStreamShieldsPane(t *testing.T) {
+	js := `const body = makeMockBody();
+const parent = { key: 'impl-1', runId: 'impl-1', kind: 'active', status: 'running', issueLabel: '#1', issueNumber: 1, log: 'impl line 1' };
+const review = { key: 'PR42', runId: 'PR42', kind: 'active', status: 'reviewing', issueLabel: 'PR42', issueNumber: 1, prNumber: 42, review: true, log: 'review line 1' };
+const streamingKeys = new Set();
+const opts = { helpers, stopGroups: new Set(), runs: [parent, review], visibleRuns: [parent], expandedKey: 'PR42', tabs: { PR42: 'log' }, streamingKeys };
+SandmanPortalDiff.diffRuns(body, [parent], opts);
+const parentDetail = body.querySelector('tr.detail-row[data-detail-for="impl-1"]');
+if (!parentDetail) throw new Error('expected detail row keyed by parent impl-1');
+const reviewPre = parentDetail.querySelector('pre[data-scroll-key="PR42"]');
+if (!reviewPre) throw new Error('expected review pane keyed by data-scroll-key=PR42');
+const before = reviewPre.getAttribute('data-rendered-log') || '';
+if (before !== 'review line 1') throw new Error('initial review pane wrong, got: ' + JSON.stringify(before));
+
+// Stream takes ownership; a poll with a longer review.log must NOT clobber the pre.
+streamingKeys.add('PR42');
+SandmanPortalDiff.resetCounters();
+SandmanPortalDiff.diffRuns(body, [parent], Object.assign({}, opts, { runs: [parent, Object.assign({}, review, { log: 'review line 1\nreview line 2' })] }));
+const guarded = reviewPre.getAttribute('data-rendered-log') || '';
+if (guarded !== before) throw new Error('streamed review pane was clobbered by poll (before=' + JSON.stringify(before) + ', after=' + JSON.stringify(guarded) + ')');
+
+// Stream releases; the poll resumes and appends the new line.
+streamingKeys.delete('PR42');
+SandmanPortalDiff.diffRuns(body, [parent], Object.assign({}, opts, { runs: [parent, Object.assign({}, review, { log: 'review line 1\nreview line 2' })] }));
+const resumed = reviewPre.getAttribute('data-rendered-log') || '';
+if (resumed === before) throw new Error('poll did not resume updating the review log after the stream released it');
+if (!/review line 2/.test(resumed)) throw new Error('resumed log missing the new line, got ' + JSON.stringify(resumed));
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+// TestPortalDiff_DetailRowKeying_SubjectScrollKeyVsParentDetailFor pins the
+// DOM shape that the streamPreFor fix relies on: for a grouped review subject,
+// the detail row is keyed by the parent (data-detail-for=parent key) but the
+// <pre> inside it is keyed by the subject (data-scroll-key=review key). This
+// means a lookup via data-detail-for=<reviewKey> finds nothing, which is why
+// the old streamPreFor returned null and dropped every streamed line.
+func TestPortalDiff_DetailRowKeying_SubjectScrollKeyVsParentDetailFor(t *testing.T) {
+	js := `const body = makeMockBody();
+const parent = { key: 'impl-1', runId: 'impl-1', kind: 'active', status: 'running', issueLabel: '#1', issueNumber: 1, log: 'p' };
+const review = { key: 'PR42', runId: 'PR42', kind: 'active', status: 'reviewing', issueLabel: 'PR42', issueNumber: 1, prNumber: 42, review: true, log: 'r' };
+const opts = { helpers, stopGroups: new Set(), runs: [parent, review], visibleRuns: [parent], expandedKey: 'PR42', tabs: { PR42: 'log' } };
+SandmanPortalDiff.diffRuns(body, [parent], opts);
+
+// The detail row is keyed by the PARENT, not the review subject.
+const parentDetail = body.querySelector('tr.detail-row[data-detail-for="impl-1"]');
+if (!parentDetail) throw new Error('expected detail row keyed by parent impl-1');
+// There is no detail row keyed by the review — this is why the old streamPreFor
+// returned null for review subjects and the SSE coalescer dropped every line.
+const reviewDetail = body.querySelector('tr.detail-row[data-detail-for="PR42"]');
+if (reviewDetail) throw new Error('review must NOT own a detail row (it borrows the parent row)');
+
+// The review pane is mounted inside the parent detail row, keyed by the SUBJECT's
+// data-scroll-key. The fixed streamPreFor resolves it via
+// runsBody.querySelector('pre[data-scroll-key="PR42"]').
+const reviewPane = parentDetail.querySelector('pre[data-scroll-key="PR42"]');
+if (!reviewPane) throw new Error('expected review pane keyed by data-scroll-key=PR42 inside parent detail');
+if (reviewPane.getAttribute('data-rendered-log') !== 'r') {
+  throw new Error('review pane did not render the review log, got: ' + JSON.stringify(reviewPane.getAttribute('data-rendered-log')));
+}
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
 func TestPortalDiffBuildDurationCell_StaleLineWarnPast180s(t *testing.T) {
 	js := `const body = makeMockBody();
 const lastOutputAt = new Date(Date.now() - 200*1000).toISOString();

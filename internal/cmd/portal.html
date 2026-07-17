@@ -1957,8 +1957,14 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
     }
 
     function streamPreFor(runKey) {
-      const detail = runsBody.querySelector('tr.detail-row[data-detail-for="' + CSS.escape(runKey) + '"]');
-      return detail ? detail.querySelector('pre[data-scroll-key]') : null;
+      // Resolve the mounted log pane by the SUBJECT's data-scroll-key, not by
+      // the parent visible row's data-detail-for. A grouped review subject
+      // borrows its parent impl's detail row, so data-detail-for=<reviewKey>
+      // does not exist and the old lookup returned null — silently dropping
+      // every streamed line. data-scroll-key is stamped by buildLogPre using
+      // the subject's key (portal_diff.js buildLogPre), and for the impl case
+      // it coincides with data-detail-for, so this is backward-compatible.
+      return runsBody.querySelector('pre[data-scroll-key="' + CSS.escape(runKey) + '"]');
     }
 
     // createStreamCoalescer buffers SSE lines per run, deduplicates against
