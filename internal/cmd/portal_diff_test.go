@@ -36,6 +36,36 @@ console.log('PASS');
 	runNodeScript(t, js)
 }
 
+func TestPortalDiffRefreshLiveTimeCells_UpdatesDurationAndStalenessWithoutFullRender(t *testing.T) {
+	js := `const body = makeMockBody();
+const realNow = Date.now;
+try {
+  Date.now = () => 1700000050000;
+  const run = {
+    key: 'active', kind: 'active', status: 'running', issueLabel: 'Issue 1', runId: 'r1',
+    startedAt: new Date(1700000000000).toISOString(),
+    lastOutputAt: new Date(1700000000000).toISOString(),
+    duration: '50s',
+  };
+  const created = SandmanPortalDiff.insertRunRow(body, run, { helpers, expandedKey: null });
+  const durationCell = created.row.querySelector('[data-cell="duration"]');
+  if (durationCell.querySelector('.duration-value').textContent !== '50s') throw new Error('expected initial server duration');
+  if (durationCell.querySelector('.stale-line')) throw new Error('run should not be stale at 50s');
+
+  Date.now = () => 1700000130000;
+  SandmanPortalDiff.refreshLiveTimeCells(body, [run]);
+
+  if (durationCell.querySelector('.duration-value').textContent !== '2m10s') throw new Error('expected duration to advance on an unchanged summary poll');
+  const stale = durationCell.querySelector('.stale-line');
+  if (!stale || stale.textContent !== 'stale · 2m 10s') throw new Error('expected stale time to advance on an unchanged summary poll');
+  console.log('PASS');
+} finally {
+  Date.now = realNow;
+}
+`
+	runNodeScript(t, js)
+}
+
 func TestPortalDiffCreateRunRow_DoesNotRenderReviewBadgeInTitle(t *testing.T) {
 	js := `const body = makeMockBody();
 const run = { key: 'a', kind: 'active', status: 'reviewing', review: true, issueLabel: 'Issue 1', runId: 'r1' };
@@ -3408,7 +3438,7 @@ const fs = require('fs');
 const vm = require('vm');
 const helperPath = ` + "`" + helperPath + "`" + `;
 const source = fs.readFileSync(helperPath, 'utf8');
-	const sandbox = { window: {}, globalThis: {}, Set, Map, WeakMap, JSON, console, setTimeout: setTimeout, requestIdleCallback: function(cb) { var impl = sandbox.requestIdleCallbackImpl || sandbox.__requestIdleCallbackDefault; return impl.call(sandbox, cb); } };
+	const sandbox = { window: {}, globalThis: {}, Date, Set, Map, WeakMap, JSON, console, setTimeout: setTimeout, requestIdleCallback: function(cb) { var impl = sandbox.requestIdleCallbackImpl || sandbox.__requestIdleCallbackDefault; return impl.call(sandbox, cb); } };
 	// Tests can replace sandbox.requestIdleCallbackImpl before any code
 	// pulls window.requestIdleCallback (portal.html's prewarm path uses
 	// the browser API directly). The shim above consults the override on
