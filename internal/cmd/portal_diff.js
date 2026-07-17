@@ -1428,7 +1428,10 @@
       // While the Log tab is being fed by a live SSE stream
       // (opts.streamingKeys), the stream owns this <pre>; the poll path
       // must not overwrite it with its 64KB socket snapshot every 2s.
-      if (opts.streamingKeys && opts.streamingKeys.has(run.key) && content.querySelector('pre[data-scroll-key]')) {
+      // Shield by the SUBJECT key: streamingKeys holds the subject (the
+      // entity whose pane is mounted), which for a grouped review differs
+      // from the parent visible row's key (run.key).
+      if (opts.streamingKeys && opts.streamingKeys.has(subjectRun.key) && content.querySelector('pre[data-scroll-key]')) {
         return;
       }
       const newLog = subjectRun.log && String(subjectRun.log).trim() ? subjectRun.log : '';
