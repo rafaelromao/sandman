@@ -1693,6 +1693,7 @@ func (v *portalRunsView) matchActiveRuns(instances []portalActiveRun, activeStat
 func (v *portalRunsView) matchRunState(instance portalActiveRun, states []events.RunState, used []bool) int {
 	bestIdx := -1
 	bestDelta := time.Duration(1<<63 - 1)
+	instanceBatchID := instance.BatchID
 
 	for i := range states {
 		if used[i] {
@@ -1704,6 +1705,16 @@ func (v *portalRunsView) matchRunState(instance portalActiveRun, states []events
 		}
 		if instance.IssueNumber == 0 && state.IssueNumber() != 0 {
 			continue
+		}
+		// Disambiguate when an implementation batch and its child review
+		// batch share the same linked IssueNumber. Each state carries the
+		// batch_id it was emitted from, so an exact BatchID match wins
+		// over time-proximity. Without this, the alphabetical iteration
+		// order of discoverPortalInstances can let the review batch claim
+		// the implementation RunState (or vice versa), which cascades into
+		// wrong BatchKey / SocketPath / SSE line filter on the row.
+		if instanceBatchID != "" && state.BatchID() == instanceBatchID {
+			return i
 		}
 		delta := instance.ModTime.Sub(state.Started.Timestamp)
 		if delta < 0 {
