@@ -55,8 +55,9 @@ using the same `DependencyResolver`-style seam that already lives in
    contains the three required H2 sections, case-insensitive on the
    section text. H3 or deeper sections do not count. The section text
    is anchored to the line start with optional whitespace.
-2. **Child discovery** — In order: (a) `#N` references in the Specification body,
-   (b) `#N` references in each Specification comment in chronological order,
+2. **Child discovery** — In order: (a) `#N` references and full issue URLs in the
+   Specification body, (b) `#N` references and full issue URLs in each Specification
+   comment in chronological order,
    (c) a single `gh issue list --search` against the path token
    `issues/<n>` (the only form GitHub search reliably matches;
    verified empirically, see test
