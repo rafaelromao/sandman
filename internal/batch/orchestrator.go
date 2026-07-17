@@ -1837,14 +1837,6 @@ type runSession struct {
 	opts runSessionOptions
 }
 
-// applyOverrideAndIdentity applies the session mode override and the resolved git identity to wt.
-// On identity failure returns (_, false) so the caller can short-circuit.
-// worktreeDir returns the resolved per-row worktree base
-// directory. The layout (set by NewOrchestrator via
-// paths.NewLayout) is the source of truth; sessions that don't
-// have an initialised layout (tests that construct Orchestrator
-// directly without calling NewOrchestrator) fall back to
-// cfg.WorktreeDir.
 func (s *runSession) worktreeDir() string {
 	if s.deps.layout.RepoRoot != "" {
 		return s.deps.layout.WorktreeDir

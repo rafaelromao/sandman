@@ -1384,9 +1384,9 @@ func TestWorktreeSandbox_StartReattachesPrunableWorktree_DirGone(t *testing.T) {
 func TestWorktreeSandbox_StartSkipsPrunableReattachWhenReconcileDisabled(t *testing.T) {
 	// A worktree exists and is registered, but its .git gitlink points to a
 	// non-existent gitdir, making it show as "prunable" in git worktree list.
-	// With SetStrandedReconcile(false), Start() must NOT attempt reattach;
-	// instead it must fall through to the "branch already exists" error,
-	// preserving the fail-loudly contract for operators who pass
+	// With SandboxStart{StrandedReconcile: false}, Start() must NOT attempt
+	// reattach; instead it must fall through to the "branch already exists"
+	// error, preserving the fail-loudly contract for operators who pass
 	// --no-reconcile-stranded.
 	dir := t.TempDir()
 	initGitRepoWithRemote(t, dir)
@@ -1722,7 +1722,7 @@ func TestWorktreeSandbox_ContinueNormalizesWorkspaceGitlink(t *testing.T) {
 	}
 
 	s2 := NewWorktreeSandbox(dir, worktreeBase, branch, "main")
-	if err := s2.Start(SandboxStart{StrandedReconcile: true}); err != nil {
+	if err := s2.Start(SandboxStart{StrandedReconcile: true, Continue: true}); err != nil {
 		t.Fatalf("continue-mode Start() should normalize and succeed, got: %v", err)
 	}
 	t.Cleanup(func() {
@@ -1775,7 +1775,7 @@ func TestWorktreeSandbox_ContinueReusesPreservedWorktree(t *testing.T) {
 	}
 
 	s2 := NewWorktreeSandbox(dir, worktreeBase, branch, "main")
-	if err := s2.Start(SandboxStart{StrandedReconcile: true}); err != nil {
+	if err := s2.Start(SandboxStart{StrandedReconcile: true, Continue: true}); err != nil {
 		t.Fatalf("continue-mode Start() should reuse preserved worktree, got: %v", err)
 	}
 	t.Cleanup(func() {
@@ -1812,8 +1812,8 @@ func TestWorktreeSandbox_ContinueReusesPreservedWorktree(t *testing.T) {
 // TestWorktreeSandbox_ContinueIsIdempotentOnHostVisibleGitlink pins behavior 4
 // of issue #2189: a continue-mode run whose preserved worktree already has a
 // host-visible `.git` pointer must not modify the file. The test must drive
-// WorktreeSandbox.Start() with SetContinue(true) (not call the free function
-// directly) so the assertion proves Start()'s routing is idempotent.
+// WorktreeSandbox.Start(SandboxStart{Continue: true}) (not call the free
+// function directly) so the assertion proves Start()'s routing is idempotent.
 func TestWorktreeSandbox_ContinueIsIdempotentOnHostVisibleGitlink(t *testing.T) {
 	dir := t.TempDir()
 	initGitRepoWithRemote(t, dir)
@@ -1846,7 +1846,7 @@ func TestWorktreeSandbox_ContinueIsIdempotentOnHostVisibleGitlink(t *testing.T) 
 	time.Sleep(20 * time.Millisecond)
 
 	s2 := NewWorktreeSandbox(dir, worktreeBase, branch, "main")
-	if err := s2.Start(SandboxStart{StrandedReconcile: true}); err != nil {
+	if err := s2.Start(SandboxStart{StrandedReconcile: true, Continue: true}); err != nil {
 		t.Fatalf("continue-mode Start() with host-visible pointer should succeed, got: %v", err)
 	}
 	t.Cleanup(func() {
@@ -1912,7 +1912,7 @@ func TestWorktreeSandbox_ContinueRecoversFromCrashedContainerAttempt(t *testing.
 	}
 
 	s2 := NewWorktreeSandbox(dir, worktreeBase, branch, "main")
-	if err := s2.Start(SandboxStart{StrandedReconcile: true}); err != nil {
+	if err := s2.Start(SandboxStart{StrandedReconcile: true, Continue: true}); err != nil {
 		t.Fatalf("--continue Start() after crashed container must reuse worktree, got: %v", err)
 	}
 	t.Cleanup(func() {
