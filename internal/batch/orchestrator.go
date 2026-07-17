@@ -1837,14 +1837,6 @@ type runSession struct {
 	opts runSessionOptions
 }
 
-// applyOverrideAndIdentity applies the session mode override and the resolved git identity to wt.
-// On identity failure returns (_, false) so the caller can short-circuit.
-// worktreeDir returns the resolved per-row worktree base
-// directory. The layout (set by NewOrchestrator via
-// paths.NewLayout) is the source of truth; sessions that don't
-// have an initialised layout (tests that construct Orchestrator
-// directly without calling NewOrchestrator) fall back to
-// cfg.WorktreeDir.
 func (s *runSession) worktreeDir() string {
 	if s.deps.layout.RepoRoot != "" {
 		return s.deps.layout.WorktreeDir
@@ -1958,10 +1950,17 @@ func hasExactTaskStatus(taskContent, status string) bool {
 	return false
 }
 
-func (s *runSession) applyOverrideAndIdentity(wt sandbox.Sandbox, branch string) (AgentRunResult, bool) {
-	wt.SetOverride(s.mode == ModeOverride)
-	wt.SetStrandedReconcile(s.strandedReconcile)
-	wt.SetContinue(s.mode == ModeContinue)
+// startOptsFor builds the SandboxStart value for one row's Start(opts),
+// resolving the row-specific git identity and packaging it with the
+// per-row mode flags plus the batch-constant stranded-reconcile.
+//
+// On identity-resolution failure, returns (SandboxStart{}, AgentRunResult{
+// Status:"failure", Branch: branch, [IssueNumber/Issue if applicable]}, false).
+// The 2 call sites each handle the !ok branch by emitting the result
+// before calling wt.Start(opts), preserving the existing failure
+// semantics (was orchestrator.go:1965-1974 in the applyOverrideAndIdentity
+// era; byte-identical in the characterization net).
+func (s *runSession) startOptsFor(branch string) (sandbox.SandboxStart, AgentRunResult, bool) {
 	identity, err := s.identityResolver.resolve()
 	if err != nil {
 		fmt.Fprintf(s.deps.errorLog, "error: resolve git identity for issue %d: %v\n", s.issueNumber, err)
@@ -1970,10 +1969,14 @@ func (s *runSession) applyOverrideAndIdentity(wt sandbox.Sandbox, branch string)
 			result.IssueNumber = s.issueNumber
 			result.Issue = issueRef(s.issueNumber)
 		}
-		return result, false
+		return sandbox.SandboxStart{}, result, false
 	}
-	wt.SetGitIdentity(identity.Name, identity.Email)
-	return AgentRunResult{}, true
+	return sandbox.SandboxStart{
+		Override:          s.mode == ModeOverride,
+		Continue:          s.mode == ModeContinue,
+		StrandedReconcile: s.strandedReconcile,
+		Identity:          sandbox.SandboxIdentity{Name: identity.Name, Email: identity.Email},
+	}, AgentRunResult{}, true
 }
 
 // withHeartbeat runs fn under the run-idle-timeout watchdog when
@@ -2548,11 +2551,12 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 	}
 
 	wt := s.sbFactory.NewSandbox(".", s.worktreeDir(), branch, s.baseBranch, container)
-	if errResult, ok := s.applyOverrideAndIdentity(wt, branch); !ok {
+	opts, errResult, ok := s.startOptsFor(branch)
+	if !ok {
 		s.emitEarlyFailure("resolve git identity", branch)
 		return errResult, false
 	}
-	if err := wt.Start(); err != nil {
+	if err := wt.Start(opts); err != nil {
 		fmt.Fprintf(s.deps.errorLog, "error: start sandbox for issue %d: %v\n", s.issueNumber, err)
 		s.emitEarlyFailure("start sandbox", branch)
 		return AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "failure", Branch: branch}, false
@@ -2913,10 +2917,11 @@ func (s *runSession) executePromptOnly(ctx context.Context) (AgentRunResult, boo
 	}
 
 	wt := s.sbFactory.NewSandbox(".", s.worktreeDir(), branch, s.baseBranch, container)
-	if errResult, ok := s.applyOverrideAndIdentity(wt, branch); !ok {
+	opts, errResult, ok := s.startOptsFor(branch)
+	if !ok {
 		return errResult, false
 	}
-	if err := wt.Start(); err != nil {
+	if err := wt.Start(opts); err != nil {
 		fmt.Fprintf(s.deps.errorLog, "error: start sandbox for prompt-only run: %v\n", err)
 		return AgentRunResult{Status: "failure", Branch: branch, Review: s.review, RunID: s.runID}, false
 	}
@@ -3297,7 +3302,7 @@ var _ Runner = (*Orchestrator)(nil)
 // Production usage:
 //
 //	resolver := newBatchIdentityResolver(o, ".")
-//	// later, from (*runSession).applyOverrideAndIdentity:
+//	// later, from (*runSession).startOptsFor (renamed from applyOverrideAndIdentity in #2264):
 //	identity, err := s.identityResolver.resolve()
 //
 // Test usage (no real git invocation, no worktree-config side effect):

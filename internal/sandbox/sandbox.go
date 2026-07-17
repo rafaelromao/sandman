@@ -23,10 +23,43 @@ type Process interface {
 	WaitDone() <-chan struct{}
 }
 
+// SandboxIdentity pairs the git author identity that a WorktreeSandbox
+// writes to the worktree-local git config during Start. Name and Email
+// travel together everywhere; this named sub-struct mirrors the shape
+// returned by the per-row git-identity resolve in internal/batch.
+type SandboxIdentity struct {
+	Name  string
+	Email string
+}
+
+// SandboxStart carries the configuration absorbed from the pre-Start Set*
+// protocol that used to live as four independent setters on the Sandbox
+// interface. Constructed per-row by the runSession helper in internal/batch
+// and handed to Sandbox.Start(opts) at the seam. The zero value
+// SandboxStart{} is a safe "configure nothing" — production always sets
+// all four fields explicitly, but tests that want a partial configure
+// (e.g. only Identity) can rely on zero-default behaviour for the others.
+type SandboxStart struct {
+	// Override enables override behaviour for orphan worktree recovery.
+	Override bool
+	// Continue signals that this Start is a continuation of a previous run
+	// that may have left a /workspace-visible gitlink behind in the
+	// preserved worktree's .git file.
+	Continue bool
+	// StrandedReconcile enables or disables auto-recovery from stranded
+	// worktrees during Start.
+	StrandedReconcile bool
+	// Identity is the worktree-local git identity to write during Start.
+	Identity SandboxIdentity
+}
+
 // Sandbox provides isolation for one or more AgentRuns.
 type Sandbox interface {
-	// Start initializes the sandbox environment.
-	Start() error
+	// Start initializes the sandbox environment. opts carries the
+	// pre-Start configuration (override / continue / stranded-reconcile /
+	// git-identity) that previously lived as four independent setters
+	// on the interface. Start is the only configuration entry point.
+	Start(opts SandboxStart) error
 	// Exec runs a command inside the sandbox, writing stdout and stderr to the given writers.
 	Exec(ctx context.Context, command string, stdout, stderr io.Writer) error
 	// ExecInteractive runs a command inside the sandbox attached to the user's terminal.
@@ -43,23 +76,6 @@ type Sandbox interface {
 	WritePrompt(content string) error
 	// Process returns the running OS process, or nil if no process is active.
 	Process() Process
-	// SetOverride enables override behavior for orphan worktree recovery.
-	// Must be safe to call before Start.
-	SetOverride(override bool)
-	// SetStrandedReconcile enables or disables auto-recovery from a
-	// stranded worktree or a "branch used by worktree at" error during
-	// Start. Must be safe to call before Start.
-	SetStrandedReconcile(enabled bool)
-	// SetGitIdentity configures the identity Sandman should write to worktree-local git config.
-	// Must be safe to call before Start.
-	SetGitIdentity(name, email string)
-	// SetContinue signals that this Start is a continuation of a
-	// previous run that may have left a /workspace-visible gitlink
-	// behind. When enabled, Start normalizes the preserved worktree's
-	// .git pointer back to host-visible paths before validation and
-	// reuses the existing worktree. Must be safe to call before Start.
-	// Issue #2189.
-	SetContinue(c bool)
 	// RestoreHostPaths returns the sandbox to host-visible state without
 	// removing the worktree. For container sandboxes this rewrites the
 	// preserved worktree's .git pointer from /workspace/... back to the

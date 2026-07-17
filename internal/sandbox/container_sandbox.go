@@ -81,26 +81,15 @@ func NewSharedContainerSandbox(worktree Sandbox, container Container, binary, re
 	}
 }
 
-// SetGitIdentity forwards worktree-local git identity configuration to the underlying worktree.
-func (s *ContainerSandbox) SetGitIdentity(name, email string) {
-	s.worktree.SetGitIdentity(name, email)
-}
-
-// SetOverride forwards override behavior to the underlying worktree.
-func (s *ContainerSandbox) SetOverride(override bool) {
-	s.worktree.SetOverride(override)
-}
-
-// SetStrandedReconcile forwards stranded-worktree auto-recovery to the underlying worktree.
-func (s *ContainerSandbox) SetStrandedReconcile(enabled bool) {
-	s.worktree.SetStrandedReconcile(enabled)
-}
-
-// SetContinue forwards continuation-mode signaling to the underlying
-// worktree so its Start() can normalize the preserved worktree's .git
-// pointer before validation. See issue #2189.
-func (s *ContainerSandbox) SetContinue(c bool) {
-	s.worktree.SetContinue(c)
+// Start initializes the underlying worktree with the given options, then
+// rewrites paths so git commands issued inside the container resolve
+// correctly. The 4 pre-Start Set* forwarding methods that used to live
+// here are gone — opts travels through Start directly to the worktree.
+func (s *ContainerSandbox) Start(opts SandboxStart) error {
+	if err := s.worktree.Start(opts); err != nil {
+		return err
+	}
+	return s.rewriteGitPaths()
 }
 
 func (s *ContainerSandbox) containerWorkDir() string {
@@ -114,15 +103,6 @@ func (s *ContainerSandbox) containerWorkDir() string {
 		return wd
 	}
 	return filepath.Join(ContainerWorkspaceMount, rel)
-}
-
-// Start initializes the worktree and rewrites paths so git commands
-// issued inside the container resolve correctly.
-func (s *ContainerSandbox) Start() error {
-	if err := s.worktree.Start(); err != nil {
-		return err
-	}
-	return s.rewriteGitPaths()
 }
 
 // rewriteGitPaths rewrites the worktree's .git pointer so paths resolve

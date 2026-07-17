@@ -16,30 +16,25 @@ import (
 )
 
 type fakeWorktreeForContainer struct {
-	startCalled                bool
-	startError                 error
-	stopCalled                 bool
-	stopError                  error
-	workDir                    string
-	writePromptCalled          bool
-	writePromptContent         string
-	writePromptError           error
-	execCalled                 bool
-	execCommand                string
-	execError                  error
-	process                    Process
-	setOverrideCalled          bool
-	setOverrideValue           bool
-	setStrandedReconcileCalled bool
-	setStrandedReconcileValue  bool
-	setIdentityName            string
-	setIdentityEmail           string
-	setContinueValue           bool
-	restoreHostPathsCalled     bool
+	startCalled            bool
+	startOpts              SandboxStart
+	startError             error
+	stopCalled             bool
+	stopError              error
+	workDir                string
+	writePromptCalled      bool
+	writePromptContent     string
+	writePromptError       error
+	execCalled             bool
+	execCommand            string
+	execError              error
+	process                Process
+	restoreHostPathsCalled bool
 }
 
-func (f *fakeWorktreeForContainer) Start() error {
+func (f *fakeWorktreeForContainer) Start(opts SandboxStart) error {
 	f.startCalled = true
+	f.startOpts = opts
 	return f.startError
 }
 
@@ -78,25 +73,6 @@ func (f *fakeWorktreeForContainer) Process() Process {
 	return f.process
 }
 
-func (f *fakeWorktreeForContainer) SetOverride(override bool) {
-	f.setOverrideCalled = true
-	f.setOverrideValue = override
-}
-
-func (f *fakeWorktreeForContainer) SetStrandedReconcile(enabled bool) {
-	f.setStrandedReconcileCalled = true
-	f.setStrandedReconcileValue = enabled
-}
-
-func (f *fakeWorktreeForContainer) SetGitIdentity(name, email string) {
-	f.setIdentityName = name
-	f.setIdentityEmail = email
-}
-
-func (f *fakeWorktreeForContainer) SetContinue(c bool) {
-	f.setContinueValue = c
-}
-
 func (f *fakeWorktreeForContainer) RestoreHostPaths() error {
 	f.restoreHostPathsCalled = true
 	return nil
@@ -125,7 +101,7 @@ func TestContainerSandbox_Start_DelegatesToWorktree(t *testing.T) {
 	ctr := &fakeContainer{id: "abc123"}
 	sb := NewContainerSandbox(wt, ctr, "docker", "/host/repo")
 
-	if err := sb.Start(); err != nil {
+	if err := sb.Start(SandboxStart{}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if !wt.startCalled {
@@ -138,7 +114,7 @@ func TestContainerSandbox_Start_ReturnsWorktreeError(t *testing.T) {
 	ctr := &fakeContainer{id: "abc123"}
 	sb := NewContainerSandbox(wt, ctr, "docker", "/host/repo")
 
-	if err := sb.Start(); err == nil {
+	if err := sb.Start(SandboxStart{}); err == nil {
 		t.Fatal("expected error when worktree.Start fails")
 	}
 }
@@ -293,7 +269,7 @@ func TestSharedContainerSandbox_Start_DelegatesToWorktree(t *testing.T) {
 	ctr := &fakeContainer{id: "shared123"}
 	sb := NewSharedContainerSandbox(wt, ctr, "docker", "/host/repo")
 
-	if err := sb.Start(); err != nil {
+	if err := sb.Start(SandboxStart{}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if !wt.startCalled {
@@ -306,7 +282,7 @@ func TestSharedContainerSandbox_Start_ReturnsWorktreeError(t *testing.T) {
 	ctr := &fakeContainer{id: "shared123"}
 	sb := NewSharedContainerSandbox(wt, ctr, "docker", "/host/repo")
 
-	if err := sb.Start(); err == nil {
+	if err := sb.Start(SandboxStart{}); err == nil {
 		t.Fatal("expected error when worktree.Start fails")
 	}
 }
@@ -414,82 +390,6 @@ func TestSharedContainerSandbox_Exec_RunsContainerExec(t *testing.T) {
 	}
 	if captured[5] != "shared123" {
 		t.Errorf("expected container id shared123, got %q", captured[5])
-	}
-}
-
-func TestContainerSandbox_SetOverride_ForwardsToWorktree(t *testing.T) {
-	wt := &fakeWorktreeForContainer{}
-	ctr := &fakeContainer{id: "abc123"}
-	sb := NewContainerSandbox(wt, ctr, "docker", "/host/repo")
-
-	sb.SetOverride(true)
-
-	if !wt.setOverrideCalled {
-		t.Fatal("expected worktree.SetOverride to be called")
-	}
-	if !wt.setOverrideValue {
-		t.Error("expected SetOverride(true) to forward value true to worktree")
-	}
-}
-
-// TestContainerSandbox_SetContinue_ForwardsToWorktree pins the
-// ContainerSandbox forwarding for the SetContinue signal introduced by
-// issue #2189. SetContinue(true) on a container sandbox must reach the
-// underlying worktree so its Start() can normalize the preserved worktree's
-// .git pointer before validation.
-func TestContainerSandbox_SetContinue_ForwardsToWorktree(t *testing.T) {
-	wt := &fakeWorktreeForContainer{}
-	ctr := &fakeContainer{id: "abc123"}
-	sb := NewContainerSandbox(wt, ctr, "docker", "/host/repo")
-
-	sb.SetContinue(true)
-
-	if !wt.setContinueValue {
-		t.Error("expected SetContinue(true) to forward value true to worktree")
-	}
-}
-
-// TestSharedContainerSandbox_SetContinue_ForwardsToWorktree pins the
-// forwarding for the shared-container constructor variant.
-func TestSharedContainerSandbox_SetContinue_ForwardsToWorktree(t *testing.T) {
-	wt := &fakeWorktreeForContainer{}
-	ctr := &fakeContainer{id: "shared123"}
-	sb := NewSharedContainerSandbox(wt, ctr, "docker", "/host/repo")
-
-	sb.SetContinue(true)
-
-	if !wt.setContinueValue {
-		t.Error("expected SetContinue(true) to forward value true to worktree")
-	}
-}
-
-func TestContainerSandbox_SetGitIdentity_ForwardsToWorktree(t *testing.T) {
-	wt := &fakeWorktreeForContainer{}
-	ctr := &fakeContainer{id: "abc123"}
-	sb := NewContainerSandbox(wt, ctr, "docker", "/host/repo")
-
-	sb.SetGitIdentity("Sandman", "[email protected]")
-
-	if wt.setIdentityName != "Sandman" {
-		t.Errorf("expected worktree name %q, got %q", "Sandman", wt.setIdentityName)
-	}
-	if wt.setIdentityEmail != "[email protected]" {
-		t.Errorf("expected worktree email %q, got %q", "[email protected]", wt.setIdentityEmail)
-	}
-}
-
-func TestSharedContainerSandbox_SetOverride_ForwardsToWorktree(t *testing.T) {
-	wt := &fakeWorktreeForContainer{}
-	ctr := &fakeContainer{id: "shared123"}
-	sb := NewSharedContainerSandbox(wt, ctr, "docker", "/host/repo")
-
-	sb.SetOverride(false)
-
-	if !wt.setOverrideCalled {
-		t.Fatal("expected worktree.SetOverride to be called")
-	}
-	if wt.setOverrideValue {
-		t.Error("expected SetOverride(false) to forward value false to worktree")
 	}
 }
 
@@ -667,20 +567,5 @@ func waitForChildReadyTB(t *testing.T, path string, timeout time.Duration) {
 			t.Fatalf("timed out waiting for child readiness marker %s", path)
 		}
 		time.Sleep(20 * time.Millisecond)
-	}
-}
-
-func TestContainerSandbox_SetOverride_FalseAlsoForwardsToWorktree(t *testing.T) {
-	wt := &fakeWorktreeForContainer{}
-	ctr := &fakeContainer{id: "abc123"}
-	sb := NewContainerSandbox(wt, ctr, "docker", "/host/repo")
-
-	sb.SetOverride(false)
-
-	if !wt.setOverrideCalled {
-		t.Fatal("expected worktree.SetOverride to be called")
-	}
-	if wt.setOverrideValue {
-		t.Error("expected SetOverride(false) to forward value false to worktree")
 	}
 }

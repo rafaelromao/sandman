@@ -659,7 +659,7 @@ func preflightSmokeWorktree(t *testing.T, repoDir, branch string) {
 	}
 
 	wt := sandbox.NewWorktreeSandbox(repoDir, filepath.Join(repoDir, ".sandman", "worktrees"), preflightBranch, "main")
-	if err := wt.Start(); err != nil {
+	if err := wt.Start(sandbox.SandboxStart{StrandedReconcile: true}); err != nil {
 		t.Skipf("skip smoke: worktree start unavailable: %v", err)
 	}
 	_ = wt.Stop()

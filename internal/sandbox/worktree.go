@@ -45,21 +45,6 @@ func NewWorktreeSandbox(repoPath, worktreeBase, branch, sourceBranch string) *Wo
 	}
 }
 
-// SetOverride enables override behavior for orphan worktree recovery.
-func (s *WorktreeSandbox) SetOverride(override bool) {
-	s.override = override
-}
-
-// SetContinue signals that this Start is a continuation of a previous run
-// that may have left a /workspace-visible gitlink behind in the preserved
-// worktree's .git file. When enabled, Start() rewrites the gitlink back to
-// the host-visible gitdir before validation so the preserved worktree can
-// be reused. Mirrors the SetOverride / SetStrandedReconcile pattern; must
-// be safe to call before Start. See issue #2189.
-func (s *WorktreeSandbox) SetContinue(c bool) {
-	s.continueRun = c
-}
-
 // RestoreHostPaths is a no-op on a worktree-only sandbox: there is no
 // /workspace-visible gitlink to restore. Container sandboxes override the
 // behavior to rewrite the preserved worktree's .git pointer back to host
@@ -68,18 +53,16 @@ func (s *WorktreeSandbox) RestoreHostPaths() error {
 	return nil
 }
 
-// SetStrandedReconcile enables or disables auto-recovery from stranded
-// worktrees during Start. When enabled (the default), a "git branch -D"
-// failure with the "checked out at" error is recovered by either
-// deleting the branch from a stranded worktree's cwd or by force-checking
-// out the base branch in the main repo. When disabled, the original
-// error surfaces unchanged.
-func (s *WorktreeSandbox) SetStrandedReconcile(enabled bool) {
-	s.strandedReconcile = enabled
-}
-
-// Start initializes the worktree.
-func (s *WorktreeSandbox) Start() error {
+// Start initializes the worktree. opts carries the pre-Start configuration
+// (override / continue / stranded-reconcile / git-identity) that used to
+// ride on four independent setters; this method is the only configuration
+// entry point.
+func (s *WorktreeSandbox) Start(opts SandboxStart) error {
+	s.override = opts.Override
+	s.continueRun = opts.Continue
+	s.strandedReconcile = opts.StrandedReconcile
+	s.gitName = opts.Identity.Name
+	s.gitEmail = opts.Identity.Email
 	s.workDir = filepath.Join(s.worktreeBase, s.branch)
 	if s.continueRun && !s.override {
 		if err := RestoreWorktreeGitPaths(s.repoPath, s.workDir); err != nil {
@@ -382,12 +365,8 @@ func (s *WorktreeSandbox) workDirExists() bool {
 	return err == nil && info.IsDir()
 }
 
-// SetGitIdentity configures the identity Sandman should write to worktree-local git config.
-func (s *WorktreeSandbox) SetGitIdentity(name, email string) {
-	s.gitName = name
-	s.gitEmail = email
-}
-
+// configureGitIdentity writes the identity captured during Start() to the
+// worktree-local git config. Called from Start once the worktree is in place.
 func (s *WorktreeSandbox) configureGitIdentity() error {
 	if strings.TrimSpace(s.gitName) == "" || strings.TrimSpace(s.gitEmail) == "" {
 		return nil
