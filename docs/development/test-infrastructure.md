@@ -12,8 +12,30 @@ This is the advanced reference for Sandman's test harness. For the common comman
 | `SANDMAN_E2E_GATES` | Stable e2e scenario identifiers |
 | `SANDMAN_TEST_MODEL_<AGENT>` | Per-agent model override for smoke and e2e tests |
 | `SANDMAN_TEST_FAST` | Enables fast-mode behavior for blocking shims |
+| `SANDMAN_RUN_AGENT_E2E` | Opt-in for real-agent preset-matrix sub-tests |
+| `SANDMAN_TEST_TIMEOUT` | Override `-timeout` for the preset-matrix runner script |
 
 When gate vars are unset, expensive tests should skip themselves instead of doing real work.
+
+## Test-process timeout
+
+Go's default `-timeout` is 10 minutes. Real-agent smoke and e2e sub-tests
+each pay a real `podman build` of the per-preset image plus a real `opencode
+run` invocation; the cumulative wall time of any one suite exceeds that
+default. Always pass an explicit `-timeout`:
+
+| Suite | Suggested `-timeout` |
+|-------|----------------------|
+| Default unit tests (`make test`) | 10m (Go default) |
+| Smoke (single provider) | 30m |
+| Smoke (full preset matrix) | 60m |
+| E2E (single gate) | 30m |
+| E2E preset-matrix runner (`scripts/run-preset-matrix.sh`) | 90m (default, override with `SANDMAN_TEST_TIMEOUT`) |
+
+Without an explicit `-timeout`, a sub-test that exceeds the budget is killed
+mid-run; the orchestrator surfaces this as `batch.ErrAborted` → exit code
+130 "batch aborted by operator", which looks like an orchestrator bug but is
+actually a test-harness timeout.
 
 ## Fast-mode blocking shims
 

@@ -81,6 +81,32 @@ When writing or updating tests:
 - Do not mock deep concrete internals when an interface seam already exists.
 - Preserve event-sourced behavior in tests; verify projections/folds rather than inventing alternate mutable-state shortcuts.
 
+### User command: "run full regression suite"
+
+Trigger phrases: `run full regression suite`, `run all tests`, `run the full suite`, `run regression tests`. When the user asks for any of these, do **not** fall through to `make check` (the default unit suite). Run every test tier — unit, smoke, e2e — with the canonical env vars and timeouts from `docs/development/testing.md`:
+
+```bash
+# 1. Default unit + race (matches `make test`)
+go test -race -v ./...
+
+# 2. Smoke — every provider, every buildTools preset, full timeout
+SANDMAN_TEST_PROVIDERS=all \
+  go test -tags smoke -timeout 60m ./internal/cmd -run Smoke
+
+# 3. E2E — every scenario gate, no real-agent sub-tests
+SANDMAN_TEST_PROVIDERS=all SANDMAN_E2E_GATES=all \
+  go test -tags e2e -timeout 30m ./...
+
+# 4. Real-agent preset matrix (opt-in; needs host opencode auth +
+#    a working podman/docker. SKIP if either is unavailable.)
+if [ -f "$HOME/.local/share/opencode/auth.json" ] && command -v podman >/dev/null 2>&1; then
+  SANDMAN_RUN_AGENT_E2E=1 SANDMAN_TEST_PROVIDERS=all SANDMAN_E2E_GATES=all \
+    go test -tags e2e -timeout 90m ./internal/cmd -run TestPresetMatrixHarness
+fi
+```
+
+Skip a tier with a one-line note (e.g. `skipping tier 4: no opencode auth at $HOME/.local/share/opencode/auth.json`) rather than blocking on it. Aggregate the per-tier PASS/FAIL/SKIP counts and surface a final summary, never silently swallow a failure. Timeouts are tuned per tier — do not lower them; lowering reintroduces the `batch aborted by operator` false-positive from under-budgeted test processes.
+
 ## Implementation constraints
 
 - Preserve event-sourced reasoning. Do not add mutable status fields as shortcuts if status should be derived from events.
