@@ -4,7 +4,7 @@
   var REPO = "rafaelromao/sandman";
   var DEFAULT_REF = "HEAD";
   var DOCS_PREFIX = "docs/";
-  var CACHE_KEY = "sandman-docs-tree-v10";
+  var CACHE_KEY = "sandman-docs-tree";
   var CACHE_TTL_MS = 60 * 1000;
 
   function api(path) {
@@ -88,26 +88,6 @@
       location.hostname === "0.0.0.0";
   }
 
-  function purgeStaleCacheKeys() {
-    try {
-      var legacy = ["sandman-docs-tree-v1", "sandman-docs-tree-v2", "sandman-docs-tree-v3", "sandman-docs-tree-v4", "sandman-docs-tree-v5", "sandman-docs-tree-v6", "sandman-docs-tree-v7", "sandman-docs-tree-v8", "sandman-docs-tree-v9"];
-      var toRemove = [];
-      for (var i = 0; i < localStorage.length; i++) {
-        var k = localStorage.key(i);
-        if (!k) continue;
-        for (var j = 0; j < legacy.length; j++) {
-          if (k === legacy[j] || k.indexOf(legacy[j] + ":") === 0) {
-            toRemove.push(k);
-          }
-        }
-      }
-      for (var i2 = 0; i2 < toRemove.length; i2++) {
-        localStorage.removeItem(toRemove[i2]);
-      }
-    } catch (err) { /* ignore */ }
-  }
-  purgeStaleCacheKeys();
-
   // ── File discovery ──
   //
   // The sidebar rebuilds from the repository tree on every load. We keep a
@@ -151,7 +131,7 @@
   }
 
   function scoreBranch(name) {
-    if (name === "main") return -1;
+    if (name === "main") return 10;
     if (/^landing-/.test(name)) return 5;
     if (/^feat(ure)?\//.test(name)) return 4;
     if (/^docs\//.test(name)) return 3;
@@ -169,17 +149,7 @@
     var cachedRef = readCachedRef();
     if (cachedRef) return cachedRef;
 
-    try {
-      var resp = await api("/branches?per_page=30");
-      if (!resp.ok) return DEFAULT_REF;
-      var branches = await resp.json();
-      var ranked = branches
-        .map(function (b) { return b.name; })
-        .sort(function (a, b) { return scoreBranch(b) - scoreBranch(a); });
-      return ranked[0] || DEFAULT_REF;
-    } catch (e) {
-      return DEFAULT_REF;
-    }
+    return DEFAULT_REF;
   }
 
   var treeListeners = [];
