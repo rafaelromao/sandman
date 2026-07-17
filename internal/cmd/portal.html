@@ -3001,7 +3001,20 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
 	      updatePollHealth();
 	      normalizePortalViewState();
 	      if (state.expandedRunKey) {
-	        loadRunDetail(state.expandedRunKey);
+	        const expandedKey = state.expandedRunKey;
+	        const prevExpanded = prevRuns.find((r) => r && (r.key === expandedKey || r.runId === expandedKey));
+	        const nextExpanded = state.runs.find((r) => r && (r.key === expandedKey || r.runId === expandedKey));
+	        // Detect an active->completed transition for the expanded run and
+	        // force-fetch the detail. The summary endpoint blanks Log for
+	        // transport (portalSummaryRuns) and the poll merge above preserves
+	        // the streamed content, so without forceFetch the loadRunDetail
+	        // early-return at the hasLog guard would skip the detail call and
+	        // the final saved run.log (which may contain lines written after
+	        // the SSE socket closed) would never replace the stale snapshot.
+	        const justFinished = !!(prevExpanded && nextExpanded
+	          && prevExpanded.kind === 'active'
+	          && nextExpanded.kind !== 'active');
+	        loadRunDetail(expandedKey, { forceFetch: justFinished });
 	      }
 	      scheduleRender();
 	      scheduleLogPanePrewarm();
