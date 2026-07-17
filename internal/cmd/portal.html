@@ -2152,6 +2152,11 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
         // source is fully closed.
         if (src.readyState === 2) {
           stopRunStream(run.key);
+          // A 304 summary poll does not render, so without this explicit
+          // render there is no path back through reconcileRunStreams() to
+          // replace a source closed by the bridge. Reconciliation rechecks
+          // the active subject and selected tab before opening anything.
+          scheduleRender();
         }
       };
       streamSources[run.key] = src;

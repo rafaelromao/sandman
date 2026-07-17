@@ -2,6 +2,10 @@ package cmd
 
 import (
 	"encoding/json"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -140,5 +144,83 @@ func TestPortalStream_PreservesReconnectOnTransientError(t *testing.T) {
 	}
 	if result.AllClosed {
 		t.Fatalf("all EventSources are closed after a transient error; auto-reconnect was suppressed")
+	}
+}
+
+// TestPortalStream_ClosedSourceSchedulesReconcile pins recovery from a
+// terminal EventSource error. A broadcaster can evict a portal client during
+// a burst, which closes the bridge response and can leave EventSource in the
+// CLOSED state. Removing that source without scheduling a render leaves no
+// path to reconcileRunStreams and create its replacement when summary polling
+// returns 304.
+func TestPortalStream_ClosedSourceSchedulesReconcile(t *testing.T) {
+	if _, err := exec.LookPath("node"); err != nil {
+		t.Skip("node not on PATH; skipping portal stream lifecycle test")
+	}
+	_, currentFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("locate test file")
+	}
+	htmlPath := filepath.Join(filepath.Dir(currentFile), "portal.html")
+	prefix := `
+const fs = require('fs');
+const vm = require('vm');
+const src = fs.readFileSync(` + "`" + htmlPath + "`" + `, 'utf8');
+const startMatch = src.match(/function startRunStream\(run\) \{[\s\S]*?^\s{4}\}/m);
+const stopMatch = src.match(/function stopRunStream\(runKey\) \{[\s\S]*?^\s{4}\}/m);
+const reconcileMatch = src.match(/function reconcileRunStreams\(\) \{[\s\S]*?^\s{4}\}/m);
+if (!startMatch || !stopMatch || !reconcileMatch) throw new Error('stream lifecycle functions not found');
+let scheduleCalls = 0;
+let sourceCount = 0;
+const streamSources = {};
+const streamingKeys = new Set();
+const streamPath = '/api/runs/stream';
+const state = {
+  expandedRunKey: 'review-1',
+  tabs: { 'review-1': 'log' },
+  runs: [{ key: 'review-1', runId: 'review-1', kind: 'active', socketPath: '/tmp/review.sock' }]
+};
+const loadingDetailKeys = new Set();
+const streamCoalescer = { seedKnownLines() {}, clearBuffer() {}, scheduleLine() {}, setBlocked() {}, flushPending() {} };
+function streamPreFor() { return null; }
+function findRunByIdentity(key) { return state.runs.find(function(run) { return run.key === key || run.runId === key; }) || null; }
+function isWaitStateRun() { return false; }
+function subjectRunIdentity(run) { return run ? (run.runId || run.key || '') : ''; }
+function scheduleRender() { scheduleCalls++; reconcileRunStreams(); }
+function EventSource() {
+  const self = this;
+  sourceCount++;
+  this.readyState = 1;
+  this.closed = false;
+  this.close = function() { self.closed = true; self.readyState = 2; };
+  Object.defineProperty(this, 'onerror', {
+    configurable: true,
+    set: function(fn) {
+      self._onerror = fn;
+      if (sourceCount !== 1) return;
+      setTimeout(function() {
+        self.readyState = 2;
+        fn(new Error('bridge EOF'));
+      }, 0);
+    }
+  });
+}
+vm.runInThisContext(startMatch[0] + '\n' + stopMatch[0] + '\n' + reconcileMatch[0], { filename: 'portal.html' });
+startRunStream({ key: 'review-1', kind: 'active', socketPath: '/tmp/review.sock' });
+setTimeout(function() {
+  if (scheduleCalls === 0) throw new Error('closed source did not schedule a render to reconcile a replacement stream');
+  if (sourceCount !== 2) throw new Error('expected replacement EventSource after CLOSED error, got ' + sourceCount);
+  if (!streamSources['review-1']) throw new Error('replacement source was not retained');
+  if (!streamingKeys.has('review-1')) throw new Error('replacement source was not marked as streaming');
+  console.log('PASS');
+}, 20);
+`
+	cmd := exec.Command("node", "-e", prefix)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("script failed: %v\n%s", err, out)
+	}
+	if !strings.Contains(string(out), "PASS") {
+		t.Fatalf("script did not emit PASS: %s", out)
 	}
 }
