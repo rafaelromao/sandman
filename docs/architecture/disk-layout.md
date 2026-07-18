@@ -13,6 +13,9 @@ Every persisted Sandman artifact lives under `<repo>/.sandman/` (with two docume
 ├── prompt.md                           # scaffold (init only)
 ├── events.jsonl                        # runtime, multi-writer (O_APPEND)
 ├── events.jsonl.malformed              # runtime sidecar (quarantined torn lines)
+├── events.jsonl.lock                   # runtime coordination lock (persistent)
+├── events.jsonl.recovery               # runtime filter rollback snapshot (transient)
+├── events.jsonl.txn                    # runtime filter recovery marker (transient)
 ├── batches.json                        # runtime, atomic-rename
 ├── batches.json.bak                    # runtime sidecar (previous-good backup)
 ├── archive/                            # archived batches (after `sandman archive`)
@@ -49,6 +52,9 @@ Every persisted Sandman artifact lives under `<repo>/.sandman/` (with two docume
 | `prompt.md` | scaffold | `sandman init` | prompt renderer | repo (manual) | init only |
 | `events.jsonl` | runtime, O_APPEND | orchestrator / run loop | `events.RunState` projection, portal, CLI status | never (append-only log) | continuous |
 | `events.jsonl.malformed` | runtime sidecar | event writer (on torn line) | human / log triage | `sandman clean` (optional) | per torn line |
+| `events.jsonl.lock` | runtime coordination | event logger | event logger | never (stable advisory-lock inode) | continuous |
+| `events.jsonl.recovery` | runtime rollback snapshot, atomic-rename | event logger before issue filtering | event logger recovery | event logger (after commit or recovery) | per issue filter |
+| `events.jsonl.txn` | runtime transaction marker, atomic-rename | event logger before issue filtering | event logger recovery | event logger (after commit or recovery) | per issue filter |
 | `batches.json` | runtime, atomic-rename | orchestrator (on batch start, status change, archive) | portal, `sandman archive`, orchestrator | never (master index) | continuous |
 | `batches.json.bak` | runtime sidecar | atomic-rename writer (previous-good backup) | human / disaster recovery | never (rotated on next atomic-rename) | per rewrite |
 | `archive/` | runtime | `sandman archive` | portal, orchestrator (read-only) | `sandman archive` (move source), `sandman clean` (delete archived) | per archived batch |

@@ -735,6 +735,7 @@ func TestJSONLLogger_CrossProcessChild(t *testing.T) {
 }
 
 func TestJSONLLogger_RemoveFailureRestoresAndNextOperationRecovers(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "events.jsonl")
 	seed := &JSONLLogger{Path: path}
@@ -750,8 +751,8 @@ func TestJSONLLogger_RemoveFailureRestoresAndNextOperationRecovers(t *testing.T)
 	logger := &JSONLLogger{
 		Path: path,
 		hooks: &jsonlLoggerHooks{fail: func(stage string) error {
-			if stage == "truncate" {
-				return fmt.Errorf("injected truncate failure")
+			if stage == "write" {
+				return fmt.Errorf("injected write failure")
 			}
 			return nil
 		}},
@@ -782,6 +783,7 @@ func TestJSONLLogger_RemoveFailureRestoresAndNextOperationRecovers(t *testing.T)
 }
 
 func TestJSONLLogger_InterruptedTransactionRecoversBeforeLog(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "events.jsonl")
 	original := []byte(`{"type":"run.started","timestamp":"2025-01-01T00:00:00Z","run_id":"old","issue":1}` + "\n")
@@ -808,6 +810,7 @@ func TestJSONLLogger_InterruptedTransactionRecoversBeforeLog(t *testing.T) {
 }
 
 func TestJSONLLogger_QuarantineFailureDoesNotRewriteMainLog(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "events.jsonl")
 	raw := []byte(`{"type":"run.started","timestamp":"2025-01-01T00:00:00Z","run_id":"keep","issue":2}` + "\nnot json\n")
@@ -833,6 +836,7 @@ func TestJSONLLogger_QuarantineFailureDoesNotRewriteMainLog(t *testing.T) {
 }
 
 func TestJSONLLogger_LockBlocksOtherInstancesAndReleasesAfterFailure(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "events.jsonl")
 	lock, err := os.OpenFile(path+".lock", os.O_CREATE|os.O_RDWR, 0644)
@@ -874,6 +878,7 @@ func TestJSONLLogger_LockBlocksOtherInstancesAndReleasesAfterFailure(t *testing.
 }
 
 func TestJSONLLogger_RemovalPreservesRemainingRunStateProjection(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	logger := &JSONLLogger{Path: filepath.Join(dir, "events.jsonl")}
 	for _, event := range []Event{
@@ -896,6 +901,123 @@ func TestJSONLLogger_RemovalPreservesRemainingRunStateProjection(t *testing.T) {
 	states := ProjectRunStates(got)
 	if len(states) != 1 || states[0].RunID != "keep" || states[0].Status() != "failure" {
 		t.Fatalf("remaining projection changed: %+v", states)
+	}
+}
+
+const jsonlRemoveChildFlag = "SANDMAN_JSONL_REMOVE_CHILD"
+
+func TestJSONLLogger_CrossProcessLogWaitsForRemoveAndSurvivesFilter(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "events.jsonl")
+	ready := filepath.Join(dir, "ready")
+	release := filepath.Join(dir, "release")
+	const removedIssue = 7
+	issueRef := removedIssue
+	logger := &JSONLLogger{Path: path}
+	for _, event := range []Event{
+		{Type: "run.started", RunID: "remove-issue", Issue: removedIssue},
+		{Type: "run.finished", RunID: "remove-ref", IssueRef: &issueRef},
+		{Type: "run.started", RunID: "keep-existing", Issue: 8},
+	} {
+		if err := logger.Log(event); err != nil {
+			t.Fatalf("seed %q: %v", event.RunID, err)
+		}
+	}
+
+	cmd := exec.Command(os.Args[0], "-test.run=^TestJSONLLogger_CrossProcessRemoveChild$")
+	cmd.Env = append(os.Environ(),
+		jsonlRemoveChildFlag+"=1",
+		"SANDMAN_JSONL_PATH="+path,
+		"SANDMAN_JSONL_ISSUE="+strconv.Itoa(removedIssue),
+		"SANDMAN_JSONL_READY="+ready,
+		"SANDMAN_JSONL_RELEASE="+release,
+	)
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if cmd.ProcessState == nil {
+			_ = cmd.Process.Kill()
+			_ = cmd.Wait()
+		}
+	}()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(ready); err == nil {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if _, err := os.Stat(ready); err != nil {
+		t.Fatalf("remove worker did not become ready: %v", err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		done <- (&JSONLLogger{Path: path}).Log(Event{Type: "run.started", RunID: "keep-appended", Issue: 8})
+	}()
+	select {
+	case err := <-done:
+		t.Fatalf("Log ran while RemoveEventsByIssue was still active: %v", err)
+	case <-time.After(30 * time.Millisecond):
+	}
+	if err := os.WriteFile(release, []byte("go"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Wait(); err != nil {
+		t.Fatalf("remove child: %v", err)
+	}
+	got, err := (&JSONLLogger{Path: path}).Read()
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := make(map[string]int, len(got))
+	for _, event := range got {
+		seen[event.RunID]++
+		if event.Issue == removedIssue || (event.IssueRef != nil && *event.IssueRef == removedIssue) {
+			t.Errorf("matching event survived removal: %+v", event)
+		}
+	}
+	for _, runID := range []string{"keep-existing", "keep-appended"} {
+		if seen[runID] != 1 {
+			t.Errorf("expected non-matching event %q exactly once, got %d", runID, seen[runID])
+		}
+	}
+	if len(got) != 2 {
+		t.Fatalf("expected two non-matching events after removal, got %+v", got)
+	}
+}
+
+func TestJSONLLogger_CrossProcessRemoveChild(t *testing.T) {
+	if os.Getenv(jsonlRemoveChildFlag) != "1" {
+		t.Skip("cross-process remove worker")
+	}
+	path := os.Getenv("SANDMAN_JSONL_PATH")
+	issue, err := strconv.Atoi(os.Getenv("SANDMAN_JSONL_ISSUE"))
+	if err != nil {
+		t.Fatalf("issue: %v", err)
+	}
+	logger := &JSONLLogger{Path: path, hooks: &jsonlLoggerHooks{fail: func(stage string) error {
+		if stage != "truncate" {
+			return nil
+		}
+		if err := os.WriteFile(os.Getenv("SANDMAN_JSONL_READY"), []byte("ready"), 0644); err != nil {
+			return err
+		}
+		deadline := time.Now().Add(5 * time.Second)
+		for time.Now().Before(deadline) {
+			if info, err := os.Stat(os.Getenv("SANDMAN_JSONL_RELEASE")); err == nil && info.Size() > 0 {
+				return nil
+			}
+			time.Sleep(time.Millisecond)
+		}
+		return fmt.Errorf("parent did not release remove worker")
+	}}}
+	if err := logger.RemoveEventsByIssue(issue); err != nil {
+		t.Fatal(err)
 	}
 }
 

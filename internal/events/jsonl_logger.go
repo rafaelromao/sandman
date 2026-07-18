@@ -47,9 +47,6 @@ func (l *JSONLLogger) Log(event Event) error {
 		if _, err := f.Write(data); err != nil {
 			return fmt.Errorf("write event: %w", err)
 		}
-		if err := f.Sync(); err != nil {
-			return fmt.Errorf("sync event log: %w", err)
-		}
 		return nil
 	})
 }
@@ -207,6 +204,9 @@ func (l *JSONLLogger) finishTransaction() error {
 	if err := os.Remove(l.markerPath()); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("remove recovery marker: %w", err)
 	}
+	if err := syncDir(filepath.Dir(l.Path)); err != nil {
+		return fmt.Errorf("sync recovery marker removal: %w", err)
+	}
 	if err := l.hit("cleanup-snapshot"); err != nil {
 		return err
 	}
@@ -280,8 +280,14 @@ func (l *JSONLLogger) restore(raw []byte) error {
 }
 
 func (l *JSONLLogger) writeSynced(path string, data []byte) error {
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	f, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".tmp-")
 	if err != nil {
+		return err
+	}
+	temp := f.Name()
+	defer os.Remove(temp)
+	if err := f.Chmod(0644); err != nil {
+		_ = f.Close()
 		return err
 	}
 	if _, err := f.Write(data); err != nil {
@@ -293,6 +299,9 @@ func (l *JSONLLogger) writeSynced(path string, data []byte) error {
 		return err
 	}
 	if err := f.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(temp, path); err != nil {
 		return err
 	}
 	return syncDir(filepath.Dir(path))
