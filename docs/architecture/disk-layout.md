@@ -57,6 +57,7 @@ Every persisted Sandman artifact lives under `<repo>/.sandman/` (with two docume
 | `events.jsonl.txn` | runtime transaction marker, atomic-rename | event logger before issue filtering | event logger recovery | event logger (after commit or recovery) | per issue filter |
 | `batches.json` | runtime, atomic-rename | orchestrator (on batch start, status change, archive) | portal, `sandman archive`, orchestrator | never (master index) | continuous |
 | `batches.json.bak` | runtime sidecar | atomic-rename writer (previous-good backup) | human / disaster recovery | never (rotated on next atomic-rename) | per rewrite |
+| `batches.json.lock` | runtime coordination sidecar | batch-index transaction writer | batch-index transaction writer | never (advisory lock; OS releases held lock on writer exit) | continuous |
 | `archive/` | runtime | `sandman archive` | portal, orchestrator (read-only) | `sandman archive` (move source), `sandman clean` (delete archived) | per archived batch |
 | `archive/<batchID>/...` | runtime | `sandman archive run` / `sandman archive older-than` | portal, orchestrator (read-only after archive) | `sandman clean` | retired batch |
 | `batches/<batchID>/` | runtime | orchestrator (batch start) | orchestrator, portal, attach client | orchestrator (on batch completion) | per batch |

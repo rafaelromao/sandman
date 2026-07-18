@@ -4,16 +4,9 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"sync"
 
 	"github.com/rafaelromao/sandman/internal/batchindex"
 )
-
-// batchesIndexMu serialises read-modify-write cycles on the shared
-// batches index (batches.json). Without this, concurrent Prepare calls
-// (e.g. from the review daemon processing multiple PRs in parallel)
-// race on Load → Add → Save, causing lost entries.
-var batchesIndexMu sync.Mutex
 
 // RunSession owns the on-disk artifacts and the batch-level control socket
 // that must exist *before* the daemon emits a run.started event and before
@@ -139,31 +132,24 @@ func (s *RunSession) Prepare(manifest BatchManifest) error {
 		return fmt.Errorf("%w: %v", ErrStepManifest, err)
 	}
 
-	batchesIndexMu.Lock()
-	idx, err := batchindex.Load(BatchesIndexPath(s.baseDir))
-	if err != nil {
-		batchesIndexMu.Unlock()
-		return fmt.Errorf("%w: %v", ErrStepBatchesIndex, err)
-	}
-
 	pr := 0
 	if manifest.PR != nil {
 		pr = *manifest.PR
 	}
-	idx.AddBatch(batchindex.Batch{
-		ID:        manifest.BatchId,
-		Path:      s.runDir,
-		Kind:      batchindex.Kind(manifest.RunKind),
-		Status:    batchindex.StatusActive,
-		CreatedAt: manifest.CreatedAt,
-		Issues:    manifest.Issues,
-		PR:        pr,
-	})
-	if err := idx.Save(BatchesIndexPath(s.baseDir)); err != nil {
-		batchesIndexMu.Unlock()
+	if err := batchindex.Update(BatchesIndexPath(s.baseDir), func(idx *batchindex.Index) error {
+		idx.AddBatch(batchindex.Batch{
+			ID:        manifest.BatchId,
+			Path:      s.runDir,
+			Kind:      batchindex.Kind(manifest.RunKind),
+			Status:    batchindex.StatusActive,
+			CreatedAt: manifest.CreatedAt,
+			Issues:    manifest.Issues,
+			PR:        pr,
+		})
+		return nil
+	}); err != nil {
 		return fmt.Errorf("%w: %v", ErrStepBatchesIndex, err)
 	}
-	batchesIndexMu.Unlock()
 
 	s.ctlSocket = NewControlSocket(s.runDir, s.broadcaster)
 	if err := s.ctlSocket.Start(); err != nil {

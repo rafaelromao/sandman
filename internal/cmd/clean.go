@@ -91,6 +91,7 @@ type cleanAction struct {
 	BatchPath string
 	Worktree  string
 	Kind      batchindex.Kind
+	Status    batchindex.Status
 	IsUnavail bool
 }
 
@@ -187,12 +188,6 @@ func NewCleanCmd(deps Dependencies) *cobra.Command {
 				if err != nil {
 					return fmt.Errorf("plan orphaned batches: %w", err)
 				}
-				if !dryRun {
-					if err := pruneBatchesIndexByOrphanPlan(layout.BatchesIndexPath, orphanPlan); err != nil {
-						return err
-					}
-				}
-
 				idx, err := batchindex.Load(layout.BatchesIndexPath)
 				if err != nil {
 					return fmt.Errorf("load batches index: %w", err)
@@ -211,9 +206,9 @@ func NewCleanCmd(deps Dependencies) *cobra.Command {
 					if _, err := executeClean(actions, gr, idx, layout); err != nil {
 						return fmt.Errorf("execute clean: %w", err)
 					}
-					orphanRemoved, err = daemon.CleanupOrphanedTestBatches(layout.SandmanDir, deps.EventLog, probe)
+					orphanRemoved, err = cleanupOrphanedBatches(layout, deps.EventLog, probe)
 					if err != nil {
-						return fmt.Errorf("cleanup orphaned batches: %w", err)
+						return err
 					}
 				} else {
 					orphanRemoved = orphanPlan
@@ -276,6 +271,7 @@ func collectCleanActions(idx *batchindex.Index, targetStatus batchindex.Status) 
 				BatchID:   entry.ID,
 				BatchPath: entry.Path,
 				Kind:      entry.Kind,
+				Status:    entry.Status,
 				IsUnavail: entry.Status == batchindex.StatusUnavailable,
 			}
 			if !action.IsUnavail && entry.Path != "" {
@@ -356,33 +352,34 @@ func executeClean(actions []cleanAction, gr gitRunner, idx *batchindex.Index, la
 		return 0, nil
 	}
 
-	actionIDs := make(map[string]bool)
-	for _, a := range actions {
-		actionIDs[a.BatchID] = true
-	}
-
 	var removed int
-	for _, a := range actions {
-		if a.Worktree != "" {
-			if err := gr.removeWorktree(a.Worktree); err != nil {
-				_ = gr.pruneAndDeleteBranch(filepath.Base(a.Worktree))
+	if err := batchindex.Update(layout.BatchesIndexPath, func(current *batchindex.Index) error {
+		removedIDs := make(map[string]bool)
+		for _, a := range actions {
+			entry := current.Resolve(a.BatchID)
+			if entry == nil || entry.Path != a.BatchPath || entry.Status != a.Status {
+				continue
+			}
+			if a.Worktree != "" {
+				if err := gr.removeWorktree(a.Worktree); err != nil {
+					_ = gr.pruneAndDeleteBranch(filepath.Base(a.Worktree))
+				}
+			}
+			if a.BatchPath != "" && !a.IsUnavail {
+				_ = os.RemoveAll(a.BatchPath)
+			}
+			removed++
+			removedIDs[a.BatchID] = true
+		}
+		var kept []batchindex.Batch
+		for _, entry := range current.Batches {
+			if !removedIDs[entry.ID] {
+				kept = append(kept, entry)
 			}
 		}
-		if a.BatchPath != "" && !a.IsUnavail {
-			_ = os.RemoveAll(a.BatchPath)
-		}
-		removed++
-	}
-
-	var kept []batchindex.Batch
-	for _, entry := range idx.Batches {
-		if !actionIDs[entry.ID] {
-			kept = append(kept, entry)
-		}
-	}
-	idx.Batches = kept
-
-	if err := idx.Save(layout.BatchesIndexPath); err != nil {
+		current.Batches = kept
+		return nil
+	}); err != nil {
 		return 0, fmt.Errorf("save batches index: %w", err)
 	}
 
@@ -413,13 +410,9 @@ func runCleanOrphaned(cmd *cobra.Command, deps Dependencies, layout paths.Layout
 		return nil
 	}
 
-	if err := pruneBatchesIndexByOrphanPlan(layout.BatchesIndexPath, plan); err != nil {
-		return err
-	}
-
-	removed, err := daemon.CleanupOrphanedTestBatches(layout.SandmanDir, deps.EventLog, probe)
+	removed, err := cleanupOrphanedBatches(layout, deps.EventLog, probe)
 	if err != nil {
-		return fmt.Errorf("cleanup orphaned batches: %w", err)
+		return err
 	}
 
 	tempDirs, images := runCleanTemps(cmd, deps, layout, false)
@@ -431,33 +424,61 @@ func runCleanOrphaned(cmd *cobra.Command, deps Dependencies, layout paths.Layout
 	return nil
 }
 
+func cleanupOrphanedBatches(layout paths.Layout, log events.EventLog, probe func(string) bool) ([]string, error) {
+	var removed []string
+	err := batchindex.Update(layout.BatchesIndexPath, func(idx *batchindex.Index) error {
+		var err error
+		removed, err = daemon.CleanupOrphanedTestBatches(layout.SandmanDir, log, probe)
+		if err != nil {
+			return fmt.Errorf("cleanup orphaned batches: %w", err)
+		}
+		removedByID := make(map[string]string, len(removed))
+		for _, path := range removed {
+			absolute, err := filepath.Abs(path)
+			if err != nil {
+				return fmt.Errorf("resolve removed orphan path %q: %w", path, err)
+			}
+			removedByID[filepath.Base(path)] = absolute
+		}
+		kept := idx.Batches[:0]
+		for _, entry := range idx.Batches {
+			if path, ok := removedByID[entry.ID]; ok && filepath.Clean(entry.Path) == filepath.Clean(path) {
+				continue
+			}
+			kept = append(kept, entry)
+		}
+		idx.Batches = kept
+		return nil
+	})
+	return removed, err
+}
+
 // pruneBatchesIndexByOrphanPlan removes the index entries whose BatchID matches
 // the basename of any path in plan, then atomically saves the index. It is the
 // shared prune step used by both the standalone --orphaned mode and the --all
 // umbrella flag.
 func pruneBatchesIndexByOrphanPlan(indexPath string, plan []string) error {
-	idx, err := batchindex.Load(indexPath)
-	if err != nil {
-		return fmt.Errorf("load batches index: %w", err)
-	}
-
-	pruned := make(map[string]struct{}, len(plan))
+	pruned := make(map[string]string, len(plan))
 	for _, p := range plan {
-		pruned[filepath.Base(p)] = struct{}{}
-	}
-	var kept []batchindex.Batch
-	for _, entry := range idx.Batches {
-		if _, drop := pruned[entry.ID]; drop {
-			continue
+		absolutePath, err := filepath.Abs(p)
+		if err != nil {
+			return fmt.Errorf("resolve orphan plan path %q: %w", p, err)
 		}
-		kept = append(kept, entry)
+		pruned[filepath.Base(p)] = absolutePath
 	}
-	idx.Batches = kept
-
-	if err := idx.Save(indexPath); err != nil {
-		return fmt.Errorf("save batches index: %w", err)
-	}
-	return nil
+	return batchindex.Update(indexPath, func(idx *batchindex.Index) error {
+		var kept []batchindex.Batch
+		for _, entry := range idx.Batches {
+			if plannedPath, drop := pruned[entry.ID]; drop && filepath.Clean(entry.Path) == filepath.Clean(plannedPath) {
+				if _, err := os.Stat(entry.Path); os.IsNotExist(err) {
+					continue
+				}
+			}
+			kept = append(kept, entry)
+		}
+		idx.Batches = kept
+		return nil
+	})
 }
 
 func runCleanTemps(cmd *cobra.Command, deps Dependencies, layout paths.Layout, dryRun bool) (tempDirs []string, images []string) {

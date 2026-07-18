@@ -120,26 +120,17 @@ func runArchiveStale(cmd *cobra.Command, deps Dependencies) error {
 		return fmt.Errorf("recover stale runs: %w", err)
 	}
 
-	idx, err := batchindex.Load(layout.BatchesIndexPath)
-	if err != nil {
-		return fmt.Errorf("load batches index: %w", err)
-	}
-
-	if err := idx.EnsureStatusWithLayout(repoRoot); err != nil {
-		return fmt.Errorf("ensure status: %w", err)
-	}
-
-	if err := os.MkdirAll(layout.ArchiveDir, 0755); err != nil {
-		return fmt.Errorf("create archive dir: %w", err)
-	}
-
 	var archived int
-	if err := archiveAllTerminalRows(cmd, idx, layout, repoRoot, &archived); err != nil {
-		return err
-	}
-
-	if err := idx.Save(layout.BatchesIndexPath); err != nil {
-		return fmt.Errorf("save batches index: %w", err)
+	if err := batchindex.Update(layout.BatchesIndexPath, func(idx *batchindex.Index) error {
+		if err := idx.EnsureStatusWithLayout(repoRoot); err != nil {
+			return fmt.Errorf("ensure status: %w", err)
+		}
+		if err := os.MkdirAll(layout.ArchiveDir, 0755); err != nil {
+			return fmt.Errorf("create archive dir: %w", err)
+		}
+		return archiveAllTerminalRows(cmd, idx, layout, repoRoot, &archived)
+	}); err != nil {
+		return fmt.Errorf("update batches index: %w", err)
 	}
 
 	fmt.Fprintf(cmd.OutOrStdout(), "Recovered %d stale runs and archived %d terminal rows.\n", recovered, archived)
@@ -245,42 +236,35 @@ func runArchiveRun(cmd *cobra.Command, runID string, repoRoot string) error {
 	}
 	layout := paths.NewLayout(&config.Config{}, repoRoot)
 
-	idx, err := batchindex.Load(layout.BatchesIndexPath)
-	if err != nil {
-		return fmt.Errorf("load batches index: %w", err)
+	var batchID, archivePath string
+	if err := batchindex.Update(layout.BatchesIndexPath, func(idx *batchindex.Index) error {
+		entry := resolveBatchFromRunIDFastOrScan(idx, runID)
+		if entry == nil {
+			return fmt.Errorf("run %q not found in index", runID)
+		}
+		if entry.Status == batchindex.StatusArchived {
+			return fmt.Errorf("batch %q is already archived", entry.ID)
+		}
+		if rec := idx.RunRecordFor(entry.ID, runID); rec != nil && rec.Status == batchindex.RunRecordStatusArchived && rec.ArchivePath != "" {
+			return fmt.Errorf("run %q is already archived at %q", runID, rec.ArchivePath)
+		}
+		if idx.RunRecordFor(entry.ID, runID) == nil {
+			idx.AddRun(entry.ID, batchindex.RunRecord{RunID: runID, Status: batchindex.RunRecordStatusActive})
+		}
+		rec, err := daemon.ArchiveRow(repoRoot, entry, runID)
+		if err != nil {
+			return err
+		}
+		if err := idx.MarkRunArchived(entry.ID, runID, rec.ArchivePath); err != nil {
+			return fmt.Errorf("mark run archived: %w", err)
+		}
+		batchID, archivePath = entry.ID, rec.ArchivePath
+		return nil
+	}); err != nil {
+		return fmt.Errorf("archive run: %w", err)
 	}
 
-	entry := resolveBatchFromRunIDFastOrScan(idx, runID)
-	if entry == nil {
-		return fmt.Errorf("run %q not found in index", runID)
-	}
-
-	if entry.Status == batchindex.StatusArchived {
-		return fmt.Errorf("batch %q is already archived", entry.ID)
-	}
-
-	if rec := idx.RunRecordFor(entry.ID, runID); rec != nil && rec.Status == batchindex.RunRecordStatusArchived && rec.ArchivePath != "" {
-		return fmt.Errorf("run %q is already archived at %q", runID, rec.ArchivePath)
-	}
-
-	if idx.RunRecordFor(entry.ID, runID) == nil {
-		idx.AddRun(entry.ID, batchindex.RunRecord{RunID: runID, Status: batchindex.RunRecordStatusActive})
-	}
-
-	rec, err := daemon.ArchiveRow(repoRoot, entry, runID)
-	if err != nil {
-		return err
-	}
-
-	if err := idx.MarkRunArchived(entry.ID, runID, rec.ArchivePath); err != nil {
-		return fmt.Errorf("mark run archived: %w", err)
-	}
-
-	if err := idx.Save(layout.BatchesIndexPath); err != nil {
-		return fmt.Errorf("save batches index: %w", err)
-	}
-
-	fmt.Fprintf(cmd.OutOrStdout(), "Archived run %q in batch %q at %s\n", runID, entry.ID, rec.ArchivePath)
+	fmt.Fprintf(cmd.OutOrStdout(), "Archived run %q in batch %q at %s\n", runID, batchID, archivePath)
 	return nil
 }
 
@@ -293,49 +277,38 @@ func runArchiveBatch(cmd *cobra.Command, batchID string, probe runActivityProbe,
 	}
 	layout := paths.NewLayout(&config.Config{}, repoRoot)
 
-	idx, err := batchindex.Load(layout.BatchesIndexPath)
-	if err != nil {
-		return fmt.Errorf("load batches index: %w", err)
-	}
-
-	entry := idx.Resolve(batchID)
-	if entry == nil {
-		return fmt.Errorf("batch %q not found in index", batchID)
-	}
-
-	if entry.Status != batchindex.StatusActive {
-		return fmt.Errorf("batch %q is not active (status=%s); refusing to archive", batchID, entry.Status)
-	}
-
-	if probe != nil && probe(entry.Path) {
-		return fmt.Errorf("batch %q is still active; stop the daemon before archiving", batchID)
-	}
-
 	archivePath := filepath.Join(layout.ArchiveDir, batchID)
-	if _, err := os.Stat(archivePath); err == nil {
-		return fmt.Errorf("archive %q already exists", batchID)
-	} else if !os.IsNotExist(err) {
-		return fmt.Errorf("stat archive target: %w", err)
-	}
-
-	if err := os.MkdirAll(layout.ArchiveDir, 0755); err != nil {
-		return fmt.Errorf("create archive dir: %w", err)
-	}
-
-	if err := os.Rename(entry.Path, archivePath); err != nil {
-		return fmt.Errorf("move batch dir: %w", err)
-	}
-	if err := stripSockets(archivePath); err != nil {
-		return fmt.Errorf("strip sockets from archived batch %q: %w", batchID, err)
-	}
-
-	now := time.Now().UTC()
-	if err := idx.SetArchived(batchID, archivePath, now); err != nil {
-		return fmt.Errorf("set archived in index: %w", err)
-	}
-
-	if err := idx.Save(layout.BatchesIndexPath); err != nil {
-		return fmt.Errorf("save batches index: %w", err)
+	if err := batchindex.Update(layout.BatchesIndexPath, func(idx *batchindex.Index) error {
+		entry := idx.Resolve(batchID)
+		if entry == nil {
+			return fmt.Errorf("batch %q not found in index", batchID)
+		}
+		if entry.Status != batchindex.StatusActive {
+			return fmt.Errorf("batch %q is not active (status=%s); refusing to archive", batchID, entry.Status)
+		}
+		if probe != nil && probe(entry.Path) {
+			return fmt.Errorf("batch %q is still active; stop the daemon before archiving", batchID)
+		}
+		if _, err := os.Stat(archivePath); err == nil {
+			return fmt.Errorf("archive %q already exists", batchID)
+		} else if !os.IsNotExist(err) {
+			return fmt.Errorf("stat archive target: %w", err)
+		}
+		if err := os.MkdirAll(layout.ArchiveDir, 0755); err != nil {
+			return fmt.Errorf("create archive dir: %w", err)
+		}
+		if err := os.Rename(entry.Path, archivePath); err != nil {
+			return fmt.Errorf("move batch dir: %w", err)
+		}
+		if err := stripSockets(archivePath); err != nil {
+			return fmt.Errorf("strip sockets from archived batch %q: %w", batchID, err)
+		}
+		if err := idx.SetArchived(batchID, archivePath, time.Now().UTC()); err != nil {
+			return fmt.Errorf("set archived in index: %w", err)
+		}
+		return nil
+	}); err != nil {
+		return fmt.Errorf("archive batch: %w", err)
 	}
 
 	fmt.Fprintf(cmd.OutOrStdout(), "Archived batch %q\n", batchID)
@@ -359,75 +332,66 @@ func runArchiveOlderThan(cmd *cobra.Command, daysArg string, repoRoot string) er
 
 	layout := paths.NewLayout(&config.Config{}, repoRoot)
 
-	idx, err := batchindex.Load(layout.BatchesIndexPath)
-	if err != nil {
-		return fmt.Errorf("load batches index: %w", err)
-	}
-
-	if err := idx.EnsureStatusWithLayout(repoRoot); err != nil {
-		return fmt.Errorf("ensure status: %w", err)
-	}
-
-	if err := os.MkdirAll(layout.ArchiveDir, 0755); err != nil {
-		return fmt.Errorf("create archive dir: %w", err)
-	}
-
 	var archived int
-	for i := range idx.Batches {
-		entry := &idx.Batches[i]
-		if daemon.IsRunActive(entry.Path) {
-			continue
+	if err := batchindex.Update(layout.BatchesIndexPath, func(idx *batchindex.Index) error {
+		if err := idx.EnsureStatusWithLayout(repoRoot); err != nil {
+			return fmt.Errorf("ensure status: %w", err)
 		}
-		runDirs, err := listRunDirs(entry.Path)
-		if err != nil {
-			return err
+		if err := os.MkdirAll(layout.ArchiveDir, 0755); err != nil {
+			return fmt.Errorf("create archive dir: %w", err)
 		}
-		for _, runID := range runDirs {
-			if rec := idx.RunRecordFor(entry.ID, runID); rec != nil && rec.Status == batchindex.RunRecordStatusArchived {
+		for i := range idx.Batches {
+			entry := &idx.Batches[i]
+			if daemon.IsRunActive(entry.Path) {
 				continue
 			}
-			manifestPath := filepath.Join(entry.Path, "runs", runID, "run.json")
-			info, err := os.Stat(manifestPath)
+			runDirs, err := listRunDirs(entry.Path)
 			if err != nil {
-				continue
+				return err
 			}
-			manifest, err := batchindex.ReadManifest(filepath.Dir(manifestPath))
-			if err != nil {
-				continue
-			}
-			createdAt := manifest.CreatedAt
-			if createdAt.IsZero() {
-				createdAt = info.ModTime()
-			}
-			if !createdAt.UTC().Before(cutoff) {
-				continue
-			}
-			if !isTerminalRunManifestStatusLocal(manifest.Status) {
-				continue
-			}
-			if idx.RunRecordFor(entry.ID, runID) == nil {
-				idx.AddRun(entry.ID, batchindex.RunRecord{RunID: runID, Status: batchindex.RunRecordStatusActive})
-			}
-			rec, err := daemon.ArchiveRow(repoRoot, entry, runID)
-			if err != nil {
-				var alreadyArchived *daemon.AlreadyArchivedError
-				if errors.As(err, &alreadyArchived) {
-					if markErr := idx.MarkRunArchived(entry.ID, runID, alreadyArchived.ArchivePath); markErr != nil {
-						return fmt.Errorf("mark run archived: %w", markErr)
-					}
+			for _, runID := range runDirs {
+				if rec := idx.RunRecordFor(entry.ID, runID); rec != nil && rec.Status == batchindex.RunRecordStatusArchived {
 					continue
 				}
-				return fmt.Errorf("archive run %q in batch %q: %w", runID, entry.ID, err)
+				manifestPath := filepath.Join(entry.Path, "runs", runID, "run.json")
+				info, err := os.Stat(manifestPath)
+				if err != nil {
+					continue
+				}
+				manifest, err := batchindex.ReadManifest(filepath.Dir(manifestPath))
+				if err != nil {
+					continue
+				}
+				createdAt := manifest.CreatedAt
+				if createdAt.IsZero() {
+					createdAt = info.ModTime()
+				}
+				if !createdAt.UTC().Before(cutoff) || !isTerminalRunManifestStatusLocal(manifest.Status) {
+					continue
+				}
+				if idx.RunRecordFor(entry.ID, runID) == nil {
+					idx.AddRun(entry.ID, batchindex.RunRecord{RunID: runID, Status: batchindex.RunRecordStatusActive})
+				}
+				rec, err := daemon.ArchiveRow(repoRoot, entry, runID)
+				if err != nil {
+					var alreadyArchived *daemon.AlreadyArchivedError
+					if errors.As(err, &alreadyArchived) {
+						if markErr := idx.MarkRunArchived(entry.ID, runID, alreadyArchived.ArchivePath); markErr != nil {
+							return fmt.Errorf("mark run archived: %w", markErr)
+						}
+						continue
+					}
+					return fmt.Errorf("archive run %q in batch %q: %w", runID, entry.ID, err)
+				}
+				if err := idx.MarkRunArchived(entry.ID, runID, rec.ArchivePath); err != nil {
+					return fmt.Errorf("mark run archived: %w", err)
+				}
+				archived++
 			}
-			if err := idx.MarkRunArchived(entry.ID, runID, rec.ArchivePath); err != nil {
-				return fmt.Errorf("mark run archived: %w", err)
-			}
-			archived++
 		}
-	}
-
-	if err := idx.Save(layout.BatchesIndexPath); err != nil {
-		return fmt.Errorf("save batches index: %w", err)
+		return nil
+	}); err != nil {
+		return fmt.Errorf("update batches index: %w", err)
 	}
 
 	fmt.Fprintf(cmd.OutOrStdout(), "Archived %d terminal row(s) older than %d day(s)\n", archived, days)

@@ -5,12 +5,18 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/rafaelromao/sandman/internal/atomicfs"
+	"golang.org/x/sys/unix"
 )
 
 const IndexVersion = 1
+
+const indexLockTimeout = 5 * time.Second
+
+var indexUpdateMu sync.Mutex
 
 type Kind string
 
@@ -296,6 +302,14 @@ func (idx *Index) Save(indexPath string) error {
 	if err != nil && !os.IsNotExist(err) {
 		return err
 	}
+	if len(prev) > 0 {
+		var previous Index
+		if err := json.Unmarshal(prev, &previous); err != nil || previous.Version != IndexVersion {
+			// A recovery update must not replace a known-good backup with the
+			// corrupt primary that caused Load to fall back to it.
+			prev = nil
+		}
+	}
 
 	if err := atomicfs.WriteAtomicJSON(indexPath, idx, 0644); err != nil {
 		return err
@@ -309,6 +323,48 @@ func (idx *Index) Save(indexPath string) error {
 	}
 
 	return nil
+}
+
+// Update applies mutate to the latest persisted index while holding an
+// index-scoped advisory lock. The operating system releases the lock if the
+// writer exits unexpectedly, so an abandoned process cannot block later work.
+func Update(indexPath string, mutate func(*Index) error) error {
+	indexUpdateMu.Lock()
+	defer indexUpdateMu.Unlock()
+
+	if err := os.MkdirAll(filepath.Dir(indexPath), 0755); err != nil {
+		return fmt.Errorf("create batches index directory %q: %w", filepath.Dir(indexPath), err)
+	}
+	lock, err := os.OpenFile(indexPath+".lock", os.O_CREATE|os.O_RDWR, 0600)
+	if err != nil {
+		return fmt.Errorf("open batches index lock %q: %w", indexPath, err)
+	}
+	defer lock.Close()
+
+	deadline := time.Now().Add(indexLockTimeout)
+	for {
+		err = unix.Flock(int(lock.Fd()), unix.LOCK_EX|unix.LOCK_NB)
+		if err == nil {
+			break
+		}
+		if err != unix.EWOULDBLOCK && err != unix.EAGAIN {
+			return fmt.Errorf("lock batches index %q: %w", indexPath, err)
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("lock batches index %q: timed out after %s", indexPath, indexLockTimeout)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	defer unix.Flock(int(lock.Fd()), unix.LOCK_UN)
+
+	idx, err := Load(indexPath)
+	if err != nil {
+		return err
+	}
+	if err := mutate(idx); err != nil {
+		return err
+	}
+	return idx.Save(indexPath)
 }
 
 // ResolveBatch returns the index Batch whose ID equals the supplied
@@ -481,6 +537,17 @@ func (idx *Index) ReconcileRuns(repoRoot string) {
 }
 
 func (idx *Index) RemoveBatch(id string) error {
+	if idx.indexPath != "" {
+		return Update(idx.indexPath, func(current *Index) error {
+			for i := range current.Batches {
+				if current.Batches[i].ID == id {
+					current.Batches = append(current.Batches[:i], current.Batches[i+1:]...)
+					return nil
+				}
+			}
+			return fmt.Errorf("batch not found: %s", id)
+		})
+	}
 	for i := range idx.Batches {
 		if idx.Batches[i].ID == id {
 			idx.Batches = append(idx.Batches[:i], idx.Batches[i+1:]...)
