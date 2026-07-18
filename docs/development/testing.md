@@ -104,11 +104,11 @@ SANDMAN_TEST_MODEL_OPENCODE=opencode/gpt-5-nano \
 
 ## Real-agent opt-in (`SANDMAN_RUN_AGENT_E2E`)
 
-The preset-matrix harness (`TestPresetMatrixHarness_*RunExecutesRealTask`)
-runs the **real** opencode agent inside a real container against a real LLM
-provider. Those sub-tests are gated behind a runtime opt-in so the
-`-tags e2e` suite stays runnable on developer machines and CI without a
-live agent credentials:
+Real-agent E2E sub-tests, including PR-flow and preset-matrix scenarios, run
+the **real** opencode agent inside a real container against a real LLM
+provider. Those sub-tests are gated behind a runtime opt-in so the `-tags e2e`
+suite stays runnable on developer machines and CI without live agent
+credentials:
 
 ```bash
 # Default: agent sub-tests skip cleanly with a clear message.
@@ -123,9 +123,9 @@ SANDMAN_RUN_AGENT_E2E=1 SANDMAN_TEST_PROVIDERS=all SANDMAN_E2E_GATES=all \
 `SANDMAN_RUN_AGENT_E2E=1` requires the host's opencode auth snapshot
 (`~/.local/share/opencode/auth.json`) and a working `podman` or `docker`
 runtime. With the opt-in set, the preset-matrix sub-tests are real-workflow
-and need the wider `-timeout 90m` budget. Without it, the same tests skip
-with the message `skip preset-matrix e2e agent smoke: SANDMAN_RUN_AGENT_E2E=1
-not set` and the rest of the suite runs as normal.
+and need the wider `-timeout 90m` budget. Without it, the same tests skip with
+a message naming the skipped provider and the missing opt-in, and the rest of
+the suite runs as normal.
 
 ## Cleanup after interrupted tests
 
