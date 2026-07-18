@@ -52,6 +52,7 @@ case "${1:-}" in
     path=""
     for a do [ -z "$path" ] && case "$a" in --*) ;; *) path="$a" ;; esac; done
     case "$path" in
+	  user) echo '{"login":"user1"}' ;;
       *repos*issues*comments*)
         cat <<JSON
 [{"id":` + triggerCommentID + `,"body":"` + triggerBody + `","user":{"login":"user1"}}]
@@ -89,7 +90,7 @@ func writeParallelReviewDaemonGHShim(t *testing.T, dir string, prs []int) {
 	var commentCases strings.Builder
 	for _, pr := range prs {
 		fmt.Fprintf(&viewCases, "      %d) echo '{\"number\":%d,\"title\":\"PR %d\",\"body\":\"Body %d\",\"state\":\"open\",\"mergedAt\":null,\"headRefName\":\"feature-%d\",\"headRefOid\":\"0000000000000000000000000000000000000000\"}' ; exit 0 ;;\n", pr, pr, pr, pr, pr)
-		fmt.Fprintf(&commentCases, "      *issues/%d/comments*) echo '[{\"id\":%d00,\"body\":\"/sandman review parallel %d\",\"created_at\":\"2026-07-08T12:00:00Z\",\"user\":{\"login\":\"user%d\"}}]' ; exit 0 ;;\n", pr, pr, pr, pr)
+		fmt.Fprintf(&commentCases, "      *issues/%d/comments*) echo '[{\"id\":%d00,\"body\":\"/sandman review parallel %d\",\"created_at\":\"2026-07-08T12:00:00Z\",\"user\":{\"login\":\"user1\"}}]' ; exit 0 ;;\n", pr, pr, pr)
 	}
 
 	script := `#!/bin/sh
@@ -124,6 +125,7 @@ case "${1:-}" in
       shift
     done
     case "$method:$path" in
+	  GET:user) echo '{"login":"user1"}'; exit 0 ;;
       POST:*reactions) echo '1'; exit 0 ;;
       DELETE:*reactions*) exit 0 ;;
       GET:*)
