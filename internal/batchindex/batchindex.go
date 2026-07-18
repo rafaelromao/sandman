@@ -324,6 +324,9 @@ func Update(indexPath string, mutate func(*Index) error) error {
 	indexUpdateMu.Lock()
 	defer indexUpdateMu.Unlock()
 
+	if err := os.MkdirAll(filepath.Dir(indexPath), 0755); err != nil {
+		return fmt.Errorf("create batches index directory %q: %w", filepath.Dir(indexPath), err)
+	}
 	lock, err := os.OpenFile(indexPath+".lock", os.O_CREATE|os.O_RDWR, 0600)
 	if err != nil {
 		return fmt.Errorf("open batches index lock %q: %w", indexPath, err)

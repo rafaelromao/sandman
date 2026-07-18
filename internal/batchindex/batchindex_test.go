@@ -748,6 +748,51 @@ func TestUpdate_ConcurrentMutationsPreserveEveryBatch(t *testing.T) {
 	}
 }
 
+func TestUpdate_PreservesConcurrentArchiveAndRemoval(t *testing.T) {
+	indexPath := filepath.Join(t.TempDir(), ".sandman", "batches.json")
+	if err := Update(indexPath, func(idx *Index) error {
+		idx.AddBatch(Batch{ID: "archive", Path: "/archive", Kind: KindIssue})
+		idx.AddBatch(Batch{ID: "remove", Path: "/remove", Kind: KindIssue})
+		return nil
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	var wg sync.WaitGroup
+	for _, mutate := range []func(*Index) error{
+		func(idx *Index) error { return idx.SetArchived("archive", "/archived", time.Now()) },
+		func(idx *Index) error {
+			for i, batch := range idx.Batches {
+				if batch.ID == "remove" {
+					idx.Batches = append(idx.Batches[:i], idx.Batches[i+1:]...)
+					return nil
+				}
+			}
+			return fmt.Errorf("remove batch missing")
+		},
+	} {
+		wg.Add(1)
+		go func(mutate func(*Index) error) {
+			defer wg.Done()
+			if err := Update(indexPath, mutate); err != nil {
+				t.Errorf("Update: %v", err)
+			}
+		}(mutate)
+	}
+	wg.Wait()
+
+	idx, err := Load(indexPath)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if batch := idx.Resolve("archive"); batch == nil || batch.Status != StatusArchived {
+		t.Errorf("archive batch = %+v, want archived", batch)
+	}
+	if batch := idx.Resolve("remove"); batch != nil {
+		t.Errorf("removed batch = %+v, want nil", batch)
+	}
+}
+
 func TestUpdate_ConcurrentProcessesPreserveEveryBatch(t *testing.T) {
 	indexPath := filepath.Join(t.TempDir(), ".sandman", "batches.json")
 	if err := os.MkdirAll(filepath.Dir(indexPath), 0755); err != nil {
