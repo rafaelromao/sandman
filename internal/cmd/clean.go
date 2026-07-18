@@ -188,12 +188,6 @@ func NewCleanCmd(deps Dependencies) *cobra.Command {
 				if err != nil {
 					return fmt.Errorf("plan orphaned batches: %w", err)
 				}
-				if !dryRun {
-					if err := pruneBatchesIndexByOrphanPlan(layout.BatchesIndexPath, orphanPlan); err != nil {
-						return err
-					}
-				}
-
 				idx, err := batchindex.Load(layout.BatchesIndexPath)
 				if err != nil {
 					return fmt.Errorf("load batches index: %w", err)
@@ -215,6 +209,9 @@ func NewCleanCmd(deps Dependencies) *cobra.Command {
 					orphanRemoved, err = daemon.CleanupOrphanedTestBatches(layout.SandmanDir, deps.EventLog, probe)
 					if err != nil {
 						return fmt.Errorf("cleanup orphaned batches: %w", err)
+					}
+					if err := pruneBatchesIndexByOrphanPlan(layout.BatchesIndexPath, orphanRemoved); err != nil {
+						return err
 					}
 				} else {
 					orphanRemoved = orphanPlan
@@ -416,13 +413,12 @@ func runCleanOrphaned(cmd *cobra.Command, deps Dependencies, layout paths.Layout
 		return nil
 	}
 
-	if err := pruneBatchesIndexByOrphanPlan(layout.BatchesIndexPath, plan); err != nil {
-		return err
-	}
-
 	removed, err := daemon.CleanupOrphanedTestBatches(layout.SandmanDir, deps.EventLog, probe)
 	if err != nil {
 		return fmt.Errorf("cleanup orphaned batches: %w", err)
+	}
+	if err := pruneBatchesIndexByOrphanPlan(layout.BatchesIndexPath, removed); err != nil {
+		return err
 	}
 
 	tempDirs, images := runCleanTemps(cmd, deps, layout, false)
