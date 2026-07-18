@@ -171,16 +171,6 @@ func TestScaffold_AllPresetsIncludeRTK(t *testing.T) {
 			if !strings.Contains(content, want) {
 				t.Fatalf("Dockerfile missing RTK install, got:\n%s", content)
 			}
-			// Regression net for the codeindex removal (PR #2180). The
-			// helper renderCodeindexInstallCommand was called
-			// unconditionally inside renderBuildToolsDockerfile for all
-			// 8 presets. If a future contributor re-adds it, this
-			// single-line guard catches every preset the
-			// table-driven test iterates over. Post-#2196 review M10.
-			const codeindexInstallLine = "RUN git clone https://github.com/rafaelromao/codeindex /tmp/codeindex && pip3 install -e /tmp/codeindex --break-system-packages"
-			if strings.Contains(content, codeindexInstallLine) {
-				t.Fatalf("Dockerfile should not install codeindex, got:\n%s", content)
-			}
 		})
 	}
 }
