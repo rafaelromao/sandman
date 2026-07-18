@@ -18,6 +18,10 @@ type IssuePicker interface {
 	Select(issues []github.Issue) ([]int, error)
 }
 
+type CleanupRemover interface {
+	RemoveAll(path string) error
+}
+
 // Dependencies holds the domain adapters injected into CLI commands.
 type Dependencies struct {
 	BatchRunner      batch.Runner
@@ -31,6 +35,7 @@ type Dependencies struct {
 	GitRunner        gitRunner
 	RunActivityProbe runActivityProbe
 	TempCleaner      TempCleaner
+	CleanupRemover   CleanupRemover
 	// Version returns the build/version string for `sandman --version` and
 	// the `version` subcommand. Production wires the three-layer fallback
 	// chain from cmd/sandman/main.go; tests inject a deterministic value.

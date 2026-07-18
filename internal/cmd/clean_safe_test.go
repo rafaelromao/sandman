@@ -58,14 +58,7 @@ func TestExecuteClean_RetainsFailedAndRemovesSuccessfulEntries(t *testing.T) {
 		{ID: "bad", Path: bad, Status: batchindex.StatusArchived},
 	})
 
-	oldRemove := removeCleanPath
-	removeCleanPath = func(path string) error {
-		if path == bad {
-			return errors.New("permission denied")
-		}
-		return os.RemoveAll(path)
-	}
-	t.Cleanup(func() { removeCleanPath = oldRemove })
+	remover := &fakeCleanupRemover{failPath: bad}
 
 	actions := collectCleanActions(&batchindex.Index{Batches: []batchindex.Batch{
 		{ID: "good", Path: good, Status: batchindex.StatusArchived},
@@ -76,7 +69,7 @@ func TestExecuteClean_RetainsFailedAndRemovesSuccessfulEntries(t *testing.T) {
 	for i := range actions {
 		actions[i].Err = nil
 	}
-	outcomes, err := executeClean(actions, &fakeGitRunner{}, layout)
+	outcomes, err := executeClean(actions, &fakeGitRunner{}, layout, remover)
 	if err == nil || len(outcomes) != 2 {
 		t.Fatalf("expected one action error and two outcomes, outcomes=%v err=%v", outcomes, err)
 	}
@@ -87,4 +80,99 @@ func TestExecuteClean_RetainsFailedAndRemovesSuccessfulEntries(t *testing.T) {
 	if idx.Resolve("good") != nil || idx.Resolve("bad") == nil {
 		t.Fatalf("expected good removed and bad retained: %+v", idx.Batches)
 	}
+}
+
+func TestExecuteClean_AbsentWorktreeStillDeletesManifestBranch(t *testing.T) {
+	repo := t.TempDir()
+	layout := paths.NewLayout(&config.Config{}, repo)
+	batchPath := filepath.Join(layout.BatchesDir, "batch")
+	if err := os.MkdirAll(batchPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(layout.WorktreeDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeBatchIndex(t, repo, []batchindex.Batch{{ID: "batch", Path: batchPath, Status: batchindex.StatusArchived}})
+	branch := "sandman/2278-batch"
+	gr := &fakeGitRunner{}
+	actions := []cleanAction{{
+		BatchID: "batch", BatchPath: batchPath, Worktree: filepath.Join(layout.WorktreeDir, "missing"),
+		Branch: branch, Status: batchindex.StatusArchived,
+	}}
+	if _, err := executeClean(actions, gr, layout, &fakeCleanupRemover{}); err != nil {
+		t.Fatal(err)
+	}
+	if len(gr.pruneAndDeleteBranchCalls) != 1 || gr.pruneAndDeleteBranchCalls[0] != branch {
+		t.Fatalf("expected branch cleanup for absent worktree, calls=%v", gr.pruneAndDeleteBranchCalls)
+	}
+	idx, err := batchindex.Load(layout.BatchesIndexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if idx.Resolve("batch") != nil {
+		t.Fatal("successful cleanup should remove index entry")
+	}
+}
+
+func TestExecuteClean_BranchFailureRetainsEntry(t *testing.T) {
+	repo := t.TempDir()
+	layout := paths.NewLayout(&config.Config{}, repo)
+	batchPath := filepath.Join(layout.BatchesDir, "batch")
+	if err := os.MkdirAll(batchPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeBatchIndex(t, repo, []batchindex.Batch{{ID: "batch", Path: batchPath, Status: batchindex.StatusArchived}})
+	gr := &fakeGitRunner{pruneAndDeleteBranchErr: errors.New("branch locked")}
+	actions := []cleanAction{{BatchID: "batch", BatchPath: batchPath, Branch: "sandman/batch", Status: batchindex.StatusArchived}}
+	if _, err := executeClean(actions, gr, layout, &fakeCleanupRemover{}); err == nil {
+		t.Fatal("expected branch cleanup error")
+	}
+	idx, err := batchindex.Load(layout.BatchesIndexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if idx.Resolve("batch") == nil {
+		t.Fatal("branch failure must retain index entry")
+	}
+}
+
+func TestCleanupOrphanedBatches_PartialFailureKeepsFailedIndexEntry(t *testing.T) {
+	repo := t.TempDir()
+	layout := paths.NewLayout(&config.Config{}, repo)
+	good := filepath.Join(layout.BatchesDir, "good")
+	bad := filepath.Join(layout.BatchesDir, "bad")
+	for _, path := range []string{good, bad} {
+		if err := os.MkdirAll(path, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(path, "batch.json"), []byte(`{}`), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeBatchIndex(t, repo, []batchindex.Batch{
+		{ID: "good", Path: good}, {ID: "bad", Path: bad},
+	})
+	remover := &fakeCleanupRemover{failPath: bad}
+	removed, err := cleanupOrphanedBatches(layout, &fakeEventLog{}, func(string) bool { return false }, remover)
+	if err == nil || len(removed) != 1 || removed[0] != good {
+		t.Fatalf("expected partial orphan cleanup, removed=%v err=%v", removed, err)
+	}
+	idx, err := batchindex.Load(layout.BatchesIndexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if idx.Resolve("good") != nil || idx.Resolve("bad") == nil {
+		t.Fatalf("unexpected index after partial cleanup: %+v", idx.Batches)
+	}
+}
+
+type fakeCleanupRemover struct {
+	failPath string
+}
+
+func (f *fakeCleanupRemover) RemoveAll(path string) error {
+	if path == f.failPath {
+		return errors.New("permission denied")
+	}
+	return os.RemoveAll(path)
 }
