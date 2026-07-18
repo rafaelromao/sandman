@@ -54,6 +54,15 @@ func (l *JSONLLogger) Log(event Event) error {
 // Read returns all valid events from the log, quarantining malformed lines
 // without rewriting the main file.
 func (l *JSONLLogger) Read() ([]Event, error) {
+	// A repository without .sandman has no event log yet. Preserve Read's
+	// historical empty result instead of creating runtime state for a probe.
+	if _, err := os.Stat(l.Path); err != nil {
+		if os.IsNotExist(err) {
+			return []Event{}, nil
+		}
+		return nil, fmt.Errorf("stat event log: %w", err)
+	}
+
 	var events []Event
 	err := l.withLock(func() error {
 		f, err := l.ensureOpen()
