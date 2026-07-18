@@ -42,10 +42,10 @@ sub-test per buildTools variant — `generic`, `go`, `python`, `elixir`),
 
 ### Smoke image prewarm
 
-Smoke tests prebuild the container images they need on first use, then reuse those images during the same test process. To force each smoke test to build its own image, disable prewarm:
+Smoke tests skip the expensive real-agent cases unless `SANDMAN_RUN_SMOKE_E2E=1` is set. When enabled, they build the container images they need on first use, then reuse those images during the same test process. To enable the upfront prewarm fan-out instead of on-demand builds, set:
 
 ```bash
-SANDMAN_SMOKE_PREFETCH=0 SANDMAN_TEST_PROVIDERS=opencode \
+SANDMAN_RUN_SMOKE_E2E=1 SANDMAN_SMOKE_PREFETCH=1 SANDMAN_TEST_PROVIDERS=opencode \
   go test -tags smoke -timeout 30m ./internal/cmd -run Smoke
 ```
 

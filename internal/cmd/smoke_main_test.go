@@ -48,12 +48,14 @@ type smokePrewarmVariant struct {
 // the per-test preflight can reuse it instead of paying the cold build
 // cost on every test invocation.
 //
-// Set SANDMAN_SMOKE_PREFETCH=0 to skip the pre-warm and fall back to the
-// per-test in-test build (useful when iterating on the Dockerfile or
-// when you want every test to be hermetic).
+// Set SANDMAN_RUN_SMOKE_E2E=1 to enable the expensive real-agent smoke cases.
+// When that gate is unset, TestMain skips the pre-warm entirely so the smoke
+// package starts quickly and only runs the lightweight helper tests.
+// When the gate is enabled, SANDMAN_SMOKE_PREFETCH=1 turns on the optional
+// pre-warm fan-out before the real-agent cases execute.
 func TestMain(m *testing.M) {
 	applySmokeModelOverrides()
-	if os.Getenv("SANDMAN_SMOKE_PREFETCH") != "0" {
+	if os.Getenv("SANDMAN_RUN_SMOKE_E2E") == "1" && os.Getenv("SANDMAN_SMOKE_PREFETCH") == "1" {
 		prewarmSmokeImages()
 	}
 	os.Exit(m.Run())
@@ -122,12 +124,7 @@ func prewarmSmokeImage(provider, buildTools string) (string, error) {
 // pre-warm builds. Mirrors sandbox.ResolveRuntime but is duplicated
 // here to keep this file self-contained under the smoke build tag.
 func resolvePrewarmRuntime() (string, error) {
-	for _, candidate := range []string{"podman", "docker"} {
-		if _, err := exec.LookPath(candidate); err == nil {
-			return candidate, nil
-		}
-	}
-	return "", fmt.Errorf("no container runtime (podman or docker) found in PATH")
+	return cachedContainerRuntime()
 }
 
 // smokePrewarmLookup returns the prebuilt image tag for the given
