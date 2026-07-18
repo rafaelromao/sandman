@@ -439,14 +439,18 @@ func runCleanOrphaned(cmd *cobra.Command, deps Dependencies, layout paths.Layout
 // shared prune step used by both the standalone --orphaned mode and the --all
 // umbrella flag.
 func pruneBatchesIndexByOrphanPlan(indexPath string, plan []string) error {
-	pruned := make(map[string]struct{}, len(plan))
+	pruned := make(map[string]string, len(plan))
 	for _, p := range plan {
-		pruned[filepath.Base(p)] = struct{}{}
+		absolutePath, err := filepath.Abs(p)
+		if err != nil {
+			return fmt.Errorf("resolve orphan plan path %q: %w", p, err)
+		}
+		pruned[filepath.Base(p)] = absolutePath
 	}
 	return batchindex.Update(indexPath, func(idx *batchindex.Index) error {
 		var kept []batchindex.Batch
 		for _, entry := range idx.Batches {
-			if _, drop := pruned[entry.ID]; drop {
+			if plannedPath, drop := pruned[entry.ID]; drop && filepath.Clean(entry.Path) == filepath.Clean(plannedPath) {
 				continue
 			}
 			kept = append(kept, entry)
