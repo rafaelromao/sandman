@@ -325,9 +325,6 @@ type Orchestrator struct {
 	// Zero means use the default tick interval.
 	heartbeatTickInterval time.Duration
 	errorLog              io.Writer
-	phaseMu               sync.Mutex
-	phaseWriter           io.Writer
-	firstSandboxStartOnce func()
 
 	// lookupGHToken resolves the host GitHub auth token for hydrating the
 	// copied gh hosts.yml in container config snapshots. It runs once per
@@ -355,23 +352,94 @@ type Orchestrator struct {
 	// orchestrator builds a default chain (T2 / T4 / T1) when
 	// verifyPath is unset. Tests inject a VerifyPathFunc to drive
 	// outcomes without touching real git or GitHub.
-	verifyPath VerifyPathFunc
-
-	issueCancelsMu sync.Mutex
-	issueCancels   map[int]context.CancelFunc
-
-	// activeMu guards activeRuns and the supervisor done-channel
-	// slice. activeRuns maps the issue number (or 0 for prompt-only
-	// runs) to the sandbox currently running it. The supervisor slice
-	// captures the done channels of the per-session superviseShutdown
-	// goroutines so RunBatch can fan in on real process exit. Both
-	// fields are shared by every execute and executePromptOnly call
-	// and share a single mutex.
-	activeMu               sync.Mutex
-	activeRuns             map[int]sandbox.Sandbox
-	shutdownSupervisorDone []<-chan struct{}
+	verifyPath     VerifyPathFunc
+	coordinatorsMu sync.Mutex
+	coordinators   map[*batchCoordinator]struct{}
 
 	badgeHooker BadgeHooker
+}
+
+// batchCoordinator owns mutable state for exactly one RunBatch invocation.
+// Its command server is run-scoped, so issue numbers need only be unique
+// within this coordinator rather than across every concurrently running batch.
+type batchCoordinator struct {
+	mu                     sync.Mutex
+	phaseWriter            io.Writer
+	firstSandboxStartOnce  sync.Once
+	activeRuns             map[int]sandbox.Sandbox
+	issueCancels           map[int]context.CancelFunc
+	shutdownSupervisorDone []<-chan struct{}
+}
+
+func newBatchCoordinator(phaseWriter io.Writer) *batchCoordinator {
+	return &batchCoordinator{
+		phaseWriter:  phaseWriter,
+		activeRuns:   make(map[int]sandbox.Sandbox),
+		issueCancels: make(map[int]context.CancelFunc),
+	}
+}
+
+func (c *batchCoordinator) AbortIssue(issueNumber int) error {
+	c.mu.Lock()
+	cancel, ok := c.issueCancels[issueNumber]
+	c.mu.Unlock()
+	if !ok {
+		return ErrNoSuchIssue
+	}
+	cancel()
+	return nil
+}
+
+func (c *batchCoordinator) abortIfPresent(issueNumber int) bool {
+	c.mu.Lock()
+	cancel, ok := c.issueCancels[issueNumber]
+	c.mu.Unlock()
+	if ok {
+		cancel()
+	}
+	return ok
+}
+
+func (c *batchCoordinator) registerIssueCancel(issueNumber int, cancel context.CancelFunc) {
+	c.mu.Lock()
+	c.issueCancels[issueNumber] = cancel
+	c.mu.Unlock()
+}
+
+func (c *batchCoordinator) unregisterIssueCancel(issueNumber int) {
+	c.mu.Lock()
+	delete(c.issueCancels, issueNumber)
+	c.mu.Unlock()
+}
+
+func (c *batchCoordinator) registerActiveRun(key int, sb sandbox.Sandbox) {
+	c.mu.Lock()
+	c.activeRuns[key] = sb
+	c.mu.Unlock()
+}
+
+func (c *batchCoordinator) unregisterActiveRun(key int) {
+	c.mu.Lock()
+	delete(c.activeRuns, key)
+	c.mu.Unlock()
+}
+
+func (c *batchCoordinator) trackShutdownSupervisor(done <-chan struct{}) {
+	c.mu.Lock()
+	c.shutdownSupervisorDone = append(c.shutdownSupervisorDone, done)
+	c.mu.Unlock()
+}
+
+func (c *batchCoordinator) snapshotShutdownSupervisors() []<-chan struct{} {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]<-chan struct{}(nil), c.shutdownSupervisorDone...)
+}
+
+func (c *batchCoordinator) currentPhaseWriter() io.Writer { return c.phaseWriter }
+
+func (c *batchCoordinator) firstSandboxStart(sandboxStarted time.Time) {
+	c.firstSandboxStartOnce.Do(func() { writePhase(c.phaseWriter, "first-sandbox-start", sandboxStarted) })
 }
 
 // defaultLookupGHToken shells out to `gh auth token` and returns the
@@ -749,10 +817,8 @@ func NewOrchestrator(githubClient github.Client, renderer prompt.IssueRenderer, 
 		runSessionOpts: runSessionOptions{
 			baseBranchSyncMu: &sync.Mutex{},
 		},
-		issueCancels:           make(map[int]context.CancelFunc),
-		activeRuns:             make(map[int]sandbox.Sandbox),
-		shutdownSupervisorDone: nil,
-		badgeHooker:            nopBadgeHooker{},
+		badgeHooker:  nopBadgeHooker{},
+		coordinators: make(map[*batchCoordinator]struct{}),
 	}
 	for _, opt := range opts {
 		opt(o)
@@ -860,75 +926,34 @@ func NewBadgeHookerWith(runner SandmanRunner, lister PRLister, controlReader Bad
 	return newDefaultBadgeHooker(lister, controlReader, controlWriter, runner)
 }
 
-// trackShutdownSupervisor records a done channel returned by
-// superviseShutdown so RunBatch can fan in on the actual process exit.
-func (o *Orchestrator) trackShutdownSupervisor(done <-chan struct{}) {
-	o.activeMu.Lock()
-	o.shutdownSupervisorDone = append(o.shutdownSupervisorDone, done)
-	o.activeMu.Unlock()
-}
-
-// snapshotShutdownSupervisors returns a copy of the current supervisor
-// done-channel list. RunBatch calls this when ctx fires so it can
-// wait on a fixed snapshot of the in-flight runs.
-func (o *Orchestrator) snapshotShutdownSupervisors() []<-chan struct{} {
-	o.activeMu.Lock()
-	defer o.activeMu.Unlock()
-	if len(o.shutdownSupervisorDone) == 0 {
-		return nil
-	}
-	out := make([]<-chan struct{}, len(o.shutdownSupervisorDone))
-	copy(out, o.shutdownSupervisorDone)
-	return out
-}
-
 // AbortIssue cancels the context of a single in-flight AgentRun, leaving
 // siblings untouched. If the issue is not currently tracked (already finished
 // or never started), it returns ErrNoSuchIssue. AbortIssue is safe to call
 // concurrently with RunBatch.
 func (o *Orchestrator) AbortIssue(issueNumber int) error {
-	o.issueCancelsMu.Lock()
-	cancel, ok := o.issueCancels[issueNumber]
-	o.issueCancelsMu.Unlock()
-	if !ok {
-		return ErrNoSuchIssue
+	o.coordinatorsMu.Lock()
+	coordinators := make([]*batchCoordinator, 0, len(o.coordinators))
+	for coord := range o.coordinators {
+		coordinators = append(coordinators, coord)
 	}
-	// The issue may unregister between lookup and cancel; cancel is still safe.
-	cancel()
-	return nil
-}
-
-func (o *Orchestrator) registerIssueCancel(issueNumber int, cancel context.CancelFunc) {
-	o.issueCancelsMu.Lock()
-	o.issueCancels[issueNumber] = cancel
-	o.issueCancelsMu.Unlock()
-}
-
-func (o *Orchestrator) unregisterIssueCancel(issueNumber int) {
-	o.issueCancelsMu.Lock()
-	delete(o.issueCancels, issueNumber)
-	o.issueCancelsMu.Unlock()
-}
-
-// registerActiveRun stores sb under the given key in the shared
-// activeRuns map. The shutdownSupervisorDone channel is captured by
-// RunBatch's fan-in goroutine so the batch-wide wait completes only
-// after every per-session supervisor has reported the real exit.
-func (o *Orchestrator) registerActiveRun(key int, sb sandbox.Sandbox) {
-	o.activeMu.Lock()
-	if o.activeRuns == nil {
-		o.activeRuns = make(map[int]sandbox.Sandbox)
+	o.coordinatorsMu.Unlock()
+	var target *batchCoordinator
+	for _, coord := range coordinators {
+		coord.mu.Lock()
+		_, active := coord.issueCancels[issueNumber]
+		coord.mu.Unlock()
+		if !active {
+			continue
+		}
+		if target != nil {
+			return ErrNoSuchIssue
+		}
+		target = coord
 	}
-	o.activeRuns[key] = sb
-	o.activeMu.Unlock()
-}
-
-func (o *Orchestrator) unregisterActiveRun(key int) {
-	o.activeMu.Lock()
-	if o.activeRuns != nil {
-		delete(o.activeRuns, key)
+	if target != nil && target.abortIfPresent(issueNumber) {
+		return nil
 	}
-	o.activeMu.Unlock()
+	return ErrNoSuchIssue
 }
 
 func writePhase(w io.Writer, name string, started time.Time) {
@@ -938,38 +963,22 @@ func writePhase(w io.Writer, name string, started time.Time) {
 	fmt.Fprintf(w, "phase %s duration=%s\n", name, time.Since(started))
 }
 
-func (o *Orchestrator) currentPhaseWriter() io.Writer {
-	o.phaseMu.Lock()
-	defer o.phaseMu.Unlock()
-	return o.phaseWriter
-}
-
-// firstSandboxStart emits the "first-sandbox-start" phase exactly the way the
-// inline block that previously lived in (*runSession).execute did: the
-// one-time closure is installed lazily under phaseMu (capturing the first
-// caller's sandboxStarted), and every caller invokes it. The closure reads the
-// phase writer at invocation time via currentPhaseWriter. Behaviour-preserving
-// extraction onto the runCoordination seam (wayfinder #2234).
-func (o *Orchestrator) firstSandboxStart(sandboxStarted time.Time) {
-	o.phaseMu.Lock()
-	if o.firstSandboxStartOnce == nil {
-		o.firstSandboxStartOnce = func() { writePhase(o.currentPhaseWriter(), "first-sandbox-start", sandboxStarted) }
-	}
-	once := o.firstSandboxStartOnce
-	o.phaseMu.Unlock()
-	once()
-}
-
 // RunBatch executes the requested AgentRuns in parallel.
 func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, error) {
 	cfg, err := o.configStore.Load()
 	if err != nil {
 		return nil, fmt.Errorf("load config: %w", err)
 	}
-	o.phaseMu.Lock()
-	o.phaseWriter = req.PhaseWriter
-	o.phaseMu.Unlock()
-	o.layout = paths.NewLayout(cfg, o.layout.RepoRoot)
+	coord := newBatchCoordinator(req.PhaseWriter)
+	o.coordinatorsMu.Lock()
+	o.coordinators[coord] = struct{}{}
+	o.coordinatorsMu.Unlock()
+	defer func() {
+		o.coordinatorsMu.Lock()
+		delete(o.coordinators, coord)
+		o.coordinatorsMu.Unlock()
+	}()
+	layout := paths.NewLayout(cfg, o.layout.RepoRoot)
 	retries := resolveRetries(req, cfg)
 	runIdleTimeout := resolveRunIdleTimeout(req, cfg)
 
@@ -1018,7 +1027,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 	if err != nil {
 		return nil, err
 	}
-	writePhase(o.currentPhaseWriter(), "sandbox-preflight", phaseStarted)
+	writePhase(coord.currentPhaseWriter(), "sandbox-preflight", phaseStarted)
 	defer policy.Close()
 
 	isContainer := sandboxMode == "docker" || sandboxMode == "podman"
@@ -1132,7 +1141,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 	if err := o.validateBatchBranchesWithIndex(ctx, req, eventIndex); err != nil {
 		return nil, err
 	}
-	writePhase(o.currentPhaseWriter(), "branch-validation", phaseStarted)
+	writePhase(coord.currentPhaseWriter(), "branch-validation", phaseStarted)
 
 	dangerouslySkipPermissions := req.DangerouslySkipPermissions
 	if dangerouslySkipPermissions == nil {
@@ -1145,7 +1154,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 	}
 
 	if len(req.Issues) == 0 && (req.PromptConfig.PromptFlag != "" || req.PromptConfig.TemplateFlag != "" || req.PromptConfig.TaskPrompt != "") {
-		return o.runPromptOnly(ctx, cfg, agentName, agentCfg, newBatchIdentityResolver(o, "."), policy.sandboxFactory, policy.containerAlloc, req, baseBranch, startDelay, parallel, retries, sandboxMode, containerCapacityForLog, req.ContainerCapacitySet, maxContainersForLog, req.MaxContainersSet, *dangerouslySkipPermissions, strandedReconcile)
+		return o.runPromptOnly(ctx, cfg, agentName, agentCfg, newBatchIdentityResolver(o, "."), policy.sandboxFactory, policy.containerAlloc, req, baseBranch, startDelay, parallel, retries, sandboxMode, containerCapacityForLog, req.ContainerCapacitySet, maxContainersForLog, req.MaxContainersSet, *dangerouslySkipPermissions, strandedReconcile, coord, layout)
 	}
 
 	startGate := newBatchStartGate(effectiveParallel, startDelay)
@@ -1163,13 +1172,6 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 	batchIdentityResolver := newBatchIdentityResolver(o, ".")
 	issueBatchID := issueBatchIDForRequest(req)
 
-	// Reset the per-batch supervisor set so leftover entries from a
-	// previous RunBatch call on the same orchestrator do not stall
-	// this batch's fan-in.
-	o.activeMu.Lock()
-	o.shutdownSupervisorDone = nil
-	o.activeMu.Unlock()
-
 	// Graceful shutdown: each per-session supervisor (spawned in
 	// execute / executePromptOnly) owns the signal/kill of its own
 	// process. This batch-wide goroutine only fans in: once ctx
@@ -1186,7 +1188,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 			return
 		}
 
-		for _, done := range o.snapshotShutdownSupervisors() {
+		for _, done := range coord.snapshotShutdownSupervisors() {
 			<-done
 		}
 	}()
@@ -1230,8 +1232,8 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 			defer close(completed[issueNum])
 
 			issueCtx, issueCancel := context.WithCancel(ctx)
-			o.registerIssueCancel(issueNum, issueCancel)
-			defer o.unregisterIssueCancel(issueNum)
+			coord.registerIssueCancel(issueNum, issueCancel)
+			defer coord.unregisterIssueCancel(issueNum)
 			defer issueCancel()
 
 			// parentCtx is the RunBatch ctx — it is only
@@ -1399,7 +1401,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				DangerouslySkipPermissions: *dangerouslySkipPermissions,
 				StrandedReconcile:          strandedReconcile,
 			}
-			res, started := o.runSingleRow(issueCtx, parentCtx, row, bc, policy.sandboxFactory, policy.containerAlloc)
+			res, started := o.newRunExecutorWith(parentCtx, bc, policy.sandboxFactory, policy.containerAlloc, coord, coord, layout).Execute(issueCtx, row)
 			if started {
 				defer startGate.Release()
 			} else {
@@ -2513,7 +2515,8 @@ func (s *runSession) runOnce(
 // session end. Retained as a thin wrapper so the test call sites that still
 // cross the positional shim (#2231) keep compiling unchanged.
 func (o *Orchestrator) runSingleRow(ctx context.Context, parentCtx context.Context, row RowSpec, bc BatchConfig, sbFactory SandboxFactory, containerAlloc containerAllocator) (AgentRunResult, bool) {
-	return o.newRunExecutor(parentCtx, bc, sbFactory, containerAlloc).Execute(ctx, row)
+	coord := newBatchCoordinator(nil)
+	return o.newRunExecutorWith(parentCtx, bc, sbFactory, containerAlloc, coord, coord, o.layout).Execute(ctx, row)
 }
 
 // execute runs the issue-driven AgentRun lifecycle owned by this session. It
@@ -2833,7 +2836,7 @@ func resetRetryBranch(opts runSessionOptions, ctx context.Context, sb sandbox.Sa
 	return nil
 }
 
-func (o *Orchestrator) runPromptOnly(ctx context.Context, cfg *config.Config, agentName string, agentCfg config.Agent, identityResolver *gitIdentityResolver, sbFactory SandboxFactory, containerAlloc containerAllocator, req Request, baseBranch string, startDelay time.Duration, parallel int, retries int, sandboxMode string, containerCapacity int, containerCapacitySet bool, maxContainers int, maxContainersSet bool, dangerouslySkipPermissions bool, strandedReconcile bool) (*Result, error) {
+func (o *Orchestrator) runPromptOnly(ctx context.Context, cfg *config.Config, agentName string, agentCfg config.Agent, identityResolver *gitIdentityResolver, sbFactory SandboxFactory, containerAlloc containerAllocator, req Request, baseBranch string, startDelay time.Duration, parallel int, retries int, sandboxMode string, containerCapacity int, containerCapacitySet bool, maxContainers int, maxContainersSet bool, dangerouslySkipPermissions bool, strandedReconcile bool, coord runCoordination, layout paths.Layout) (*Result, error) {
 	branch := promptOnlyBranch(req.PromptConfig)
 	row := RowSpec{
 		IssueNumber:       req.IssueNumber,
@@ -2868,7 +2871,11 @@ func (o *Orchestrator) runPromptOnly(ctx context.Context, cfg *config.Config, ag
 		DangerouslySkipPermissions: dangerouslySkipPermissions,
 		StrandedReconcile:          strandedReconcile,
 	}
-	result, started := o.runPromptOnlyRow(ctx, row, bc, sbFactory, containerAlloc)
+	commander, ok := coord.(daemon.IssueCommander)
+	if !ok {
+		return nil, fmt.Errorf("batch coordination does not support commands")
+	}
+	result, started := o.newRunExecutorWith(ctx, bc, sbFactory, containerAlloc, coord, commander, layout).Execute(ctx, row)
 	if !started {
 		return &Result{Runs: []AgentRunResult{result}}, fmt.Errorf("prompt-only run failed")
 	}
@@ -2889,7 +2896,8 @@ func (o *Orchestrator) runPromptOnly(ctx context.Context, cfg *config.Config, ag
 // newRunSession(..., ctx) wiring. Retained as a thin wrapper so the test call
 // sites that still cross the positional shim (#2231) keep compiling unchanged.
 func (o *Orchestrator) runPromptOnlyRow(ctx context.Context, row RowSpec, bc BatchConfig, sbFactory SandboxFactory, containerAlloc containerAllocator) (AgentRunResult, bool) {
-	return o.newRunExecutor(ctx, bc, sbFactory, containerAlloc).Execute(ctx, row)
+	coord := newBatchCoordinator(nil)
+	return o.newRunExecutorWith(ctx, bc, sbFactory, containerAlloc, coord, coord, o.layout).Execute(ctx, row)
 }
 
 // executePromptOnly runs the prompt-only AgentRun lifecycle owned by this

@@ -130,6 +130,11 @@ type runExecutor struct {
 // coordination state and implements runCoordination / IssueCommander) and
 // freezes them on the returned executor.
 func (o *Orchestrator) newRunExecutor(parentCtx context.Context, bc BatchConfig, sbFactory SandboxFactory, containerAlloc containerAllocator) *runExecutor {
+	coord := newBatchCoordinator(nil)
+	return o.newRunExecutorWith(parentCtx, bc, sbFactory, containerAlloc, coord, coord, o.layout)
+}
+
+func (o *Orchestrator) newRunExecutorWith(parentCtx context.Context, bc BatchConfig, sbFactory SandboxFactory, containerAlloc containerAllocator, coord runCoordination, commander daemon.IssueCommander, layout paths.Layout) *runExecutor {
 	return &runExecutor{
 		deps: runDeps{
 			githubClient:          o.githubClient,
@@ -137,14 +142,14 @@ func (o *Orchestrator) newRunExecutor(parentCtx context.Context, bc BatchConfig,
 			eventLog:              o.eventLog,
 			runnableFactory:       o.runnableFactory,
 			sandboxFactory:        o.sandboxFactory,
-			layout:                o.layout,
+			layout:                layout,
 			heartbeatTickInterval: o.heartbeatTickInterval,
 			errorLog:              o.errorLog,
 			runSessionOpts:        o.runSessionOpts,
 			verifyPath:            o.verifyPath,
 		},
-		coord:          o,
-		commander:      o,
+		coord:          coord,
+		commander:      commander,
 		bc:             bc,
 		sbFactory:      sbFactory,
 		containerAlloc: containerAlloc,
