@@ -202,6 +202,47 @@ func TestRunCleanTemps_ReturnsOnlySuccessfulResourcesAndAggregateError(t *testin
 	}
 }
 
+func TestRunCleanTemps_PropagatesScanErrorWithoutRemovingResources(t *testing.T) {
+	scanErr := errors.New("scan failed")
+	tc := &fakeTempCleaner{
+		scanTempDirsErr:      scanErr,
+		resolveRuntimeReturn: "podman",
+	}
+	deps := Dependencies{TempCleaner: tc}
+	cmd := NewCleanCmd(deps)
+
+	dirs, images, err := runCleanTemps(cmd, deps, paths.Layout{}, false)
+	if err == nil || !errors.Is(err, scanErr) {
+		t.Fatalf("expected scan error, dirs=%v images=%v err=%v", dirs, images, err)
+	}
+	if tc.listContainerCalled || tc.removeTempDirCalled || tc.removeImageCalled {
+		t.Fatalf("scan failure should stop the temp cleanup pass: %+v", tc)
+	}
+}
+
+func TestRunCleanTemps_PropagatesImageListingErrorAndPreservesDryRun(t *testing.T) {
+	listErr := errors.New("list failed")
+	dir := "/tmp/sandman-smoke-prewarm-test"
+	tc := &fakeTempCleaner{
+		resolveRuntimeReturn: "podman",
+		scanTempDirsReturn:   []string{dir},
+		listContainerErr:     listErr,
+	}
+	deps := Dependencies{TempCleaner: tc}
+	cmd := NewCleanCmd(deps)
+
+	dirs, images, err := runCleanTemps(cmd, deps, paths.Layout{}, true)
+	if err == nil || !errors.Is(err, listErr) {
+		t.Fatalf("expected image listing error, dirs=%v images=%v err=%v", dirs, images, err)
+	}
+	if !equalStrings(dirs, []string{dir}) || len(images) != 0 {
+		t.Fatalf("unexpected dry-run resources: dirs=%v images=%v", dirs, images)
+	}
+	if tc.removeTempDirCalled || tc.removeImageCalled {
+		t.Fatal("dry-run must not remove resources after image listing failure")
+	}
+}
+
 func equalStrings(got, want []string) bool {
 	if len(got) != len(want) {
 		return false

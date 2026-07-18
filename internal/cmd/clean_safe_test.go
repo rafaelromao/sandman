@@ -174,6 +174,35 @@ func TestExecuteClean_BranchFailureRetainsEntry(t *testing.T) {
 	}
 }
 
+func TestExecuteClean_UnavailablePlanDoesNotDeleteChangedEntry(t *testing.T) {
+	for _, status := range []batchindex.Status{batchindex.StatusActive, batchindex.StatusArchived} {
+		t.Run(string(status), func(t *testing.T) {
+			repo := t.TempDir()
+			layout := paths.NewLayout(&config.Config{}, repo)
+			batchPath := filepath.Join(layout.BatchesDir, "batch")
+			if err := os.MkdirAll(batchPath, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			writeBatchIndex(t, repo, []batchindex.Batch{{ID: "batch", Path: batchPath, Status: status}})
+
+			remover := &fakeCleanupRemover{failPath: batchPath}
+			actions := []cleanAction{{
+				BatchID: "batch", BatchPath: batchPath, Status: batchindex.StatusUnavailable, IsUnavail: true,
+			}}
+			if outcomes, err := executeClean(actions, &fakeGitRunner{}, layout, remover); err != nil || len(outcomes) != 0 {
+				t.Fatalf("changed entry should be skipped, outcomes=%v err=%v", outcomes, err)
+			}
+			idx, err := batchindex.Load(layout.BatchesIndexPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if idx.Resolve("batch") == nil {
+				t.Fatal("changed entry must remain in the index")
+			}
+		})
+	}
+}
+
 func TestExecuteClean_RejectsUnownedBranchBeforeGit(t *testing.T) {
 	repo := t.TempDir()
 	layout := paths.NewLayout(&config.Config{}, repo)

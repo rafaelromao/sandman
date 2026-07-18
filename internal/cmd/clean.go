@@ -409,7 +409,7 @@ func executeClean(actions []cleanAction, gr gitRunner, layout paths.Layout, remo
 	if err := batchindex.Update(layout.BatchesIndexPath, func(current *batchindex.Index) error {
 		for _, a := range actions {
 			entry := current.Resolve(a.BatchID)
-			if entry == nil || entry.Path != a.BatchPath || (entry.Status != a.Status && !a.IsUnavail && entry.Status != batchindex.StatusUnavailable) {
+			if entry == nil || entry.Path != a.BatchPath || !cleanStatusCompatible(a.Status, a.IsUnavail, entry.Status) {
 				continue
 			}
 			if a.Err != nil {
@@ -482,6 +482,13 @@ func executeClean(actions []cleanAction, gr gitRunner, layout paths.Layout, remo
 		return outcomes, fmt.Errorf("save batches index: %w", err)
 	}
 	return outcomes, errors.Join(actionErrs...)
+}
+
+func cleanStatusCompatible(planned batchindex.Status, plannedUnavailable bool, current batchindex.Status) bool {
+	if plannedUnavailable {
+		return current == batchindex.StatusUnavailable
+	}
+	return current == planned || current == batchindex.StatusUnavailable
 }
 
 func successfulActions(outcomes []cleanOutcome) []cleanAction {
@@ -753,20 +760,20 @@ func runCleanTemps(cmd *cobra.Command, deps Dependencies, layout paths.Layout, d
 	tempDir := os.TempDir()
 	dirs, err := tc.ScanTempDirs(tempDir)
 	if err != nil {
-		fmt.Fprintf(cmd.ErrOrStderr(), "warning: scan temp dirs: %v\n", err)
-		return nil, nil, nil
+		return nil, nil, fmt.Errorf("scan temp dirs: %w", err)
 	}
 
 	runtime := tc.ResolveRuntime()
 	if runtime != "" {
 		images, err = tc.ListContainerImages(runtime)
 		if err != nil {
-			fmt.Fprintf(cmd.ErrOrStderr(), "warning: list container images: %v\n", err)
+			cleanupErr = fmt.Errorf("list container images: %w", err)
+			images = nil
 		}
 	}
 
 	if dryRun {
-		return dirs, images, nil
+		return dirs, images, cleanupErr
 	}
 
 	var removalErrs []error
@@ -788,5 +795,5 @@ func runCleanTemps(cmd *cobra.Command, deps Dependencies, layout paths.Layout, d
 			images = append(images, img)
 		}
 	}
-	return tempDirs, images, errors.Join(removalErrs...)
+	return tempDirs, images, errors.Join(cleanupErr, errors.Join(removalErrs...))
 }
