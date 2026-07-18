@@ -664,6 +664,10 @@ func TestDouble(t *testing.T) {
 func requirePRFlowProvider(t *testing.T, tc prFlowProviderCase) string {
 	t.Helper()
 
+	if os.Getenv("SANDMAN_RUN_AGENT_E2E") != "1" {
+		t.Skipf("skip %s real-agent e2e: SANDMAN_RUN_AGENT_E2E=1 not set", tc.name)
+	}
+
 	realHome, err := os.UserHomeDir()
 	if err != nil {
 		t.Fatalf("resolve home dir: %v", err)

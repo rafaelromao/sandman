@@ -49,7 +49,7 @@ Sandman manages the lifecycle of automated coding workflows:
 | [Workflows](docs/usage/workflows.md) | Running agents, dependency-aware execution, continue and cleanup |
 | [Sandbox Modes](docs/usage/sandbox-modes.md) | Worktree vs container-backed sandboxing |
 | [Portal](docs/usage/portal.md) | Local browser dashboard for repo-scoped Sandman runs |
-| [Reviews](docs/usage/reviews.md) | Direct reviews, the review daemon, and review-run output |
+| [Reviews](docs/usage/reviews.md) | Review daemon and review-run output |
 | [Default Task Prompt](docs/usage/default-task-prompt.md) | Bootstrap task prompt, lifecycle, and task file |
 | [Skills](docs/usage/skills.md) | Shared Sandman skill installation and workflow |
 | [Badge](docs/usage/badge.md) | Built with Sandman badge — trigger, idempotency, and opt-out |

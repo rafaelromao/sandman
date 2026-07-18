@@ -50,7 +50,6 @@ import (
 
 	"github.com/rafaelromao/sandman/internal/batch"
 	"github.com/rafaelromao/sandman/internal/batchindex"
-	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/daemon"
 	"github.com/rafaelromao/sandman/internal/events"
 	"github.com/rafaelromao/sandman/internal/github"
@@ -251,64 +250,7 @@ func TestSlice10_MultiIssueBatchIdentity(t *testing.T) {
 	}
 }
 
-// --- Behavior 4: orphan review and linked review identity ----------------
-
-// TestSlice10_LinkedReviewBatchIdentity covers the linked-review
-// half of behavior 4: a review run associated with PR 42 mints
-// `<ts>-<sid>-42-PR42`. The on-disk batch folder agrees with the
-// index entry id and the manifest's BatchId.
-func TestSlice10_LinkedReviewBatchIdentity(t *testing.T) {
-	slice10RequireGate(t)
-	cfg := &config.Config{
-		DefaultAgent:       "opencode",
-		DefaultModel:       "opencode/big-pickle",
-		DefaultReviewAgent: "opencode",
-		DefaultReviewModel: "openai/gpt-5",
-		Agent:              "opencode",
-		Sandbox:            "podman",
-		AgentProviders: map[string]config.Agent{
-			"opencode": {Preset: "opencode", Command: "opencode"},
-		},
-	}
-	// Body contains "Fixes #42" so github.PR.LinkedIssueNumber() returns 42
-	// via the body-fallback regex (issue #1675: subject `<issue>-PR<pr>`).
-	gh := &fakePRGitHubClient{
-		fakeGitHubClient: &fakeGitHubClient{},
-		pr: &github.PR{
-			Number: 42,
-			Title:  "Implement feature",
-			Body:   "Fixes #42",
-		},
-	}
-	runner := &spyBatchRunner{result: &batch.Result{}}
-	deps := newReviewDeps(t, gh, cfg, runner)
-	dir := slice10FreshSandmanDir(t)
-
-	var buf bytes.Buffer
-	cmd := NewReviewCmd(deps)
-	cmd.SetOut(&buf)
-	cmd.SetErr(&buf)
-	cmd.SetArgs([]string{"42"})
-
-	if err := cmd.Execute(); err != nil {
-		t.Fatalf("unexpected error: %v\noutput:\n%s", err, buf.String())
-	}
-
-	idx, err := batchindex.Load(filepath.Join(dir, ".sandman", "batches.json"))
-	if err != nil {
-		t.Fatalf("load batches index: %v", err)
-	}
-	if len(idx.Batches) != 1 {
-		t.Fatalf("expected 1 batch index entry for linked review, got %d (entries=%v)", len(idx.Batches), idx.Batches)
-	}
-	got := idx.Batches[0]
-	if !strings.Contains(got.ID, "-PR42") {
-		t.Errorf("linked review BatchId = %q, want substring %q (canonical review id with PR42 discriminator)", got.ID, "-PR42")
-	}
-	if filepath.Base(got.Path) != got.ID {
-		t.Errorf("linked review path basename = %q, want %q", filepath.Base(got.Path), got.ID)
-	}
-}
+// --- Behavior 4: orphan review identity ----------------------------------
 
 // TestSlice10_OrphanReviewBatchIdentity pins the orphan-review path:
 // when the review daemon picks up an open PR but no linked issue, the
