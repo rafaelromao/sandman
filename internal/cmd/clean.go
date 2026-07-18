@@ -420,6 +420,12 @@ func executeClean(actions []cleanAction, gr gitRunner, layout paths.Layout, remo
 				if branch == "" {
 					branch = filepath.Base(a.Worktree)
 				}
+				if branchErr := validateOwnedBranch(branch); branchErr != nil {
+					err := fmt.Errorf("validate branch %s: %w", branch, branchErr)
+					outcomes = append(outcomes, cleanOutcome{Action: a, Err: err})
+					actionErrs = append(actionErrs, err)
+					continue
+				}
 				if err := gr.pruneAndDeleteBranch(branch); err != nil {
 					err = fmt.Errorf("delete branch %s: %w", branch, err)
 					outcomes = append(outcomes, cleanOutcome{Action: a, Err: err})
@@ -518,7 +524,7 @@ func validateOwnedPath(candidate string, roots ...string) error {
 		if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 			continue
 		}
-		resolvedRoot, err := filepath.EvalSymlinks(root)
+		resolvedRoot, err := existingResolvedPath(root)
 		if err != nil {
 			continue
 		}
@@ -532,6 +538,22 @@ func validateOwnedPath(candidate string, roots ...string) error {
 		}
 	}
 	return fmt.Errorf("path is outside trusted roots")
+}
+
+func validateOwnedBranch(branch string) error {
+	if branch == "" {
+		return fmt.Errorf("branch must be non-empty")
+	}
+	if filepath.IsAbs(branch) || filepath.Clean(branch) != branch || strings.ContainsAny(branch, `\`) {
+		return fmt.Errorf("branch name is unsafe")
+	}
+	if !strings.HasPrefix(branch, "sandman/") || len(branch) == len("sandman/") {
+		return fmt.Errorf("branch is not Sandman-owned")
+	}
+	if strings.Contains(branch, "//") || strings.Contains(branch, "..") || strings.ContainsAny(branch, "~^:?*[\x00") || strings.HasSuffix(branch, ".") || strings.HasSuffix(branch, "/") {
+		return fmt.Errorf("branch name is unsafe")
+	}
+	return nil
 }
 
 func existingResolvedPath(path string) (string, error) {
@@ -565,6 +587,9 @@ func runCleanOrphaned(cmd *cobra.Command, deps Dependencies, layout paths.Layout
 		return fmt.Errorf("plan orphaned batches: %w", err)
 	}
 	if dryRun {
+		if orphanErr := validateOrphanPaths(plan, layout); orphanErr != nil {
+			return fmt.Errorf("validate orphan paths: %w", orphanErr)
+		}
 		tempDirs, images := runCleanTemps(cmd, deps, layout, true)
 		if len(plan) == 0 && len(tempDirs) == 0 && len(images) == 0 {
 			fmt.Fprintln(cmd.OutOrStdout(), "Nothing to remove.")

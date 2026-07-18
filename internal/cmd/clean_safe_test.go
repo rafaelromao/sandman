@@ -42,6 +42,22 @@ func TestValidateOwnedPath_RejectsUnsafeCandidates(t *testing.T) {
 	}
 }
 
+func TestValidateOwnedPath_AllowsAbsentTrustedRoot(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "missing", "owned")
+	candidate := filepath.Join(root, "batch")
+	if err := validateOwnedPath(candidate, root); err != nil {
+		t.Fatalf("absent trusted root rejected: %v", err)
+	}
+}
+
+func TestValidateOrphanPaths_RejectsOutsideRoot(t *testing.T) {
+	repo := t.TempDir()
+	layout := paths.NewLayout(&config.Config{}, repo)
+	if err := validateOrphanPaths([]string{filepath.Join(t.TempDir(), "orphan")}, layout); err == nil {
+		t.Fatal("outside orphan path was accepted")
+	}
+}
+
 func TestExecuteClean_RetainsFailedAndRemovesSuccessfulEntries(t *testing.T) {
 	repo := t.TempDir()
 	layout := paths.NewLayout(&config.Config{}, repo)
@@ -133,6 +149,31 @@ func TestExecuteClean_BranchFailureRetainsEntry(t *testing.T) {
 	}
 	if idx.Resolve("batch") == nil {
 		t.Fatal("branch failure must retain index entry")
+	}
+}
+
+func TestExecuteClean_RejectsUnownedBranchBeforeGit(t *testing.T) {
+	repo := t.TempDir()
+	layout := paths.NewLayout(&config.Config{}, repo)
+	batchPath := filepath.Join(layout.BatchesDir, "batch")
+	if err := os.MkdirAll(batchPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeBatchIndex(t, repo, []batchindex.Batch{{ID: "batch", Path: batchPath, Status: batchindex.StatusArchived}})
+	gr := &fakeGitRunner{}
+	actions := []cleanAction{{BatchID: "batch", BatchPath: batchPath, Branch: "main", Status: batchindex.StatusArchived}}
+	if _, err := executeClean(actions, gr, layout, &fakeCleanupRemover{}); err == nil {
+		t.Fatal("expected unowned branch validation error")
+	}
+	if len(gr.pruneAndDeleteBranchCalls) != 0 {
+		t.Fatalf("unowned branch should not invoke git, calls=%v", gr.pruneAndDeleteBranchCalls)
+	}
+	idx, err := batchindex.Load(layout.BatchesIndexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if idx.Resolve("batch") == nil {
+		t.Fatal("branch validation failure must retain index entry")
 	}
 }
 
