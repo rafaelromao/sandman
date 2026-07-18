@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -93,7 +94,16 @@ type cleanAction struct {
 	Kind      batchindex.Kind
 	Status    batchindex.Status
 	IsUnavail bool
+	Branch    string
+	Err       error
 }
+
+type cleanOutcome struct {
+	Action cleanAction
+	Err    error
+}
+
+var removeCleanPath = os.RemoveAll
 
 func NewCleanCmd(deps Dependencies) *cobra.Command {
 	cmd := &cobra.Command{
@@ -188,6 +198,9 @@ func NewCleanCmd(deps Dependencies) *cobra.Command {
 				if err != nil {
 					return fmt.Errorf("plan orphaned batches: %w", err)
 				}
+				if err := validateOrphanPaths(orphanPlan, layout); err != nil {
+					return fmt.Errorf("validate orphaned batches: %w", err)
+				}
 				idx, err := batchindex.Load(layout.BatchesIndexPath)
 				if err != nil {
 					return fmt.Errorf("load batches index: %w", err)
@@ -202,20 +215,28 @@ func NewCleanCmd(deps Dependencies) *cobra.Command {
 				}
 
 				var orphanRemoved []string
+				var outcomes []cleanOutcome
+				var cleanErr error
 				if !dryRun {
-					if _, err := executeClean(actions, gr, idx, layout); err != nil {
-						return fmt.Errorf("execute clean: %w", err)
-					}
+					outcomes, cleanErr = executeClean(actions, gr, layout)
 					orphanRemoved, err = cleanupOrphanedBatches(layout, deps.EventLog, probe)
 					if err != nil {
 						return err
 					}
 				} else {
+					outcomes, cleanErr = validateCleanActions(actions, layout)
+					if orphanErr := validateOrphanPaths(orphanPlan, layout); orphanErr != nil {
+						cleanErr = errors.Join(cleanErr, orphanErr)
+					}
 					orphanRemoved = orphanPlan
 				}
 
 				tempDirs, images := runCleanTemps(cmd, deps, layout, dryRun)
-				printCleanReport(cmd, actions, orphanRemoved, tempDirs, images, dryRun)
+				reportActions := successfulActions(outcomes)
+				printCleanReport(cmd, reportActions, orphanRemoved, tempDirs, images, dryRun)
+				if cleanErr != nil {
+					return fmt.Errorf("execute clean: %w", cleanErr)
+				}
 				return nil
 			}
 
@@ -239,17 +260,22 @@ func NewCleanCmd(deps Dependencies) *cobra.Command {
 			}
 
 			if dryRun {
+				outcomes, cleanErr := validateCleanActions(actions, layout)
 				tempDirs, images := runCleanTemps(cmd, deps, layout, true)
-				printCleanReport(cmd, actions, nil, tempDirs, images, true)
+				printCleanReport(cmd, successfulActions(outcomes), nil, tempDirs, images, true)
+				if cleanErr != nil {
+					return fmt.Errorf("validate clean: %w", cleanErr)
+				}
 				return nil
 			}
 
-			if _, err := executeClean(actions, gr, idx, layout); err != nil {
-				return fmt.Errorf("execute clean: %w", err)
-			}
+			outcomes, cleanErr := executeClean(actions, gr, layout)
 
 			tempDirs, images := runCleanTemps(cmd, deps, layout, false)
-			printCleanReport(cmd, actions, nil, tempDirs, images, false)
+			printCleanReport(cmd, successfulActions(outcomes), nil, tempDirs, images, false)
+			if cleanErr != nil {
+				return fmt.Errorf("execute clean: %w", cleanErr)
+			}
 
 			return nil
 		},
@@ -276,8 +302,11 @@ func collectCleanActions(idx *batchindex.Index, targetStatus batchindex.Status) 
 			}
 			if !action.IsUnavail && entry.Path != "" {
 				manifest, err := batchindex.ReadManifest(entry.Path)
-				if err == nil && manifest.WorktreePath != "" {
+				if err != nil {
+					action.Err = fmt.Errorf("read manifest for %s: %w", entry.ID, err)
+				} else {
 					action.Worktree = manifest.WorktreePath
+					action.Branch = manifest.Branch
 				}
 			}
 			actions = append(actions, action)
@@ -347,43 +376,170 @@ func printCleanReport(cmd *cobra.Command, actions []cleanAction, orphanPaths []s
 	}
 }
 
-func executeClean(actions []cleanAction, gr gitRunner, idx *batchindex.Index, layout paths.Layout) (int, error) {
+func executeClean(actions []cleanAction, gr gitRunner, layout paths.Layout) ([]cleanOutcome, error) {
 	if len(actions) == 0 {
-		return 0, nil
+		return nil, nil
 	}
 
-	var removed int
+	var outcomes []cleanOutcome
+	var actionErrs []error
 	if err := batchindex.Update(layout.BatchesIndexPath, func(current *batchindex.Index) error {
-		removedIDs := make(map[string]bool)
 		for _, a := range actions {
 			entry := current.Resolve(a.BatchID)
-			if entry == nil || entry.Path != a.BatchPath || entry.Status != a.Status {
+			if entry == nil || entry.Path != a.BatchPath || (entry.Status != a.Status && !a.IsUnavail && entry.Status != batchindex.StatusUnavailable) {
+				continue
+			}
+			if a.Err != nil {
+				outcomes = append(outcomes, cleanOutcome{Action: a, Err: a.Err})
+				actionErrs = append(actionErrs, a.Err)
+				continue
+			}
+			if err := validateCleanAction(a, layout); err != nil {
+				outcomes = append(outcomes, cleanOutcome{Action: a, Err: err})
+				actionErrs = append(actionErrs, err)
 				continue
 			}
 			if a.Worktree != "" {
-				if err := gr.removeWorktree(a.Worktree); err != nil {
-					_ = gr.pruneAndDeleteBranch(filepath.Base(a.Worktree))
+				if _, statErr := os.Stat(a.Worktree); statErr == nil {
+					if err := gr.removeWorktree(a.Worktree); err != nil {
+						err = fmt.Errorf("remove worktree %s: %w", a.Worktree, err)
+						outcomes = append(outcomes, cleanOutcome{Action: a, Err: err})
+						actionErrs = append(actionErrs, err)
+						continue
+					}
+					branch := a.Branch
+					if branch == "" {
+						branch = filepath.Base(a.Worktree)
+					}
+					if err := gr.pruneAndDeleteBranch(branch); err != nil {
+						err = fmt.Errorf("delete branch %s: %w", branch, err)
+						outcomes = append(outcomes, cleanOutcome{Action: a, Err: err})
+						actionErrs = append(actionErrs, err)
+						continue
+					}
+				} else if !os.IsNotExist(statErr) {
+					err := fmt.Errorf("stat worktree %s: %w", a.Worktree, statErr)
+					outcomes = append(outcomes, cleanOutcome{Action: a, Err: err})
+					actionErrs = append(actionErrs, err)
+					continue
 				}
 			}
 			if a.BatchPath != "" && !a.IsUnavail {
-				_ = os.RemoveAll(a.BatchPath)
+				if err := removeCleanPath(a.BatchPath); err != nil {
+					err = fmt.Errorf("remove batch %s: %w", a.BatchPath, err)
+					outcomes = append(outcomes, cleanOutcome{Action: a, Err: err})
+					actionErrs = append(actionErrs, err)
+					continue
+				}
 			}
-			removed++
-			removedIDs[a.BatchID] = true
-		}
-		var kept []batchindex.Batch
-		for _, entry := range current.Batches {
-			if !removedIDs[entry.ID] {
-				kept = append(kept, entry)
+			outcomes = append(outcomes, cleanOutcome{Action: a})
+			for i := range current.Batches {
+				if current.Batches[i].ID == a.BatchID {
+					current.Batches = append(current.Batches[:i], current.Batches[i+1:]...)
+					break
+				}
 			}
 		}
-		current.Batches = kept
 		return nil
 	}); err != nil {
-		return 0, fmt.Errorf("save batches index: %w", err)
+		return outcomes, fmt.Errorf("save batches index: %w", err)
 	}
+	return outcomes, errors.Join(actionErrs...)
+}
 
-	return removed, nil
+func successfulActions(outcomes []cleanOutcome) []cleanAction {
+	actions := make([]cleanAction, 0, len(outcomes))
+	for _, outcome := range outcomes {
+		if outcome.Err == nil {
+			actions = append(actions, outcome.Action)
+		}
+	}
+	return actions
+}
+
+func validateCleanActions(actions []cleanAction, layout paths.Layout) ([]cleanOutcome, error) {
+	outcomes := make([]cleanOutcome, 0, len(actions))
+	var errs []error
+	for _, action := range actions {
+		if action.Err != nil {
+			outcomes = append(outcomes, cleanOutcome{Action: action, Err: action.Err})
+			errs = append(errs, action.Err)
+			continue
+		}
+		if err := validateCleanAction(action, layout); err != nil {
+			outcomes = append(outcomes, cleanOutcome{Action: action, Err: err})
+			errs = append(errs, err)
+			continue
+		}
+		outcomes = append(outcomes, cleanOutcome{Action: action})
+	}
+	return outcomes, errors.Join(errs...)
+}
+
+func validateCleanAction(action cleanAction, layout paths.Layout) error {
+	if action.BatchPath != "" && !action.IsUnavail {
+		if err := validateOwnedPath(action.BatchPath, layout.BatchesDir, layout.ArchiveDir); err != nil {
+			return fmt.Errorf("validate batch %s: %w", action.BatchID, err)
+		}
+	}
+	if action.Worktree != "" {
+		if err := validateOwnedPath(action.Worktree, layout.WorktreeDir); err != nil {
+			return fmt.Errorf("validate worktree %s: %w", action.BatchID, err)
+		}
+	}
+	return nil
+}
+
+func validateOwnedPath(candidate string, roots ...string) error {
+	candidate = strings.TrimSpace(candidate)
+	if candidate == "" || !filepath.IsAbs(candidate) {
+		return fmt.Errorf("path must be absolute and non-empty")
+	}
+	candidate = filepath.Clean(candidate)
+	if candidate == string(filepath.Separator) {
+		return fmt.Errorf("path must not be filesystem root")
+	}
+	for _, root := range roots {
+		root, err := filepath.Abs(root)
+		if err != nil {
+			continue
+		}
+		root = filepath.Clean(root)
+		rel, err := filepath.Rel(root, candidate)
+		if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			continue
+		}
+		resolvedRoot, err := filepath.EvalSymlinks(root)
+		if err != nil {
+			continue
+		}
+		resolvedCandidate, err := existingResolvedPath(candidate)
+		if err != nil {
+			continue
+		}
+		resolvedRel, err := filepath.Rel(resolvedRoot, resolvedCandidate)
+		if err == nil && resolvedRel != "." && resolvedRel != ".." && !strings.HasPrefix(resolvedRel, ".."+string(filepath.Separator)) {
+			return nil
+		}
+	}
+	return fmt.Errorf("path is outside trusted roots")
+}
+
+func existingResolvedPath(path string) (string, error) {
+	for current := path; ; current = filepath.Dir(current) {
+		resolved, err := filepath.EvalSymlinks(current)
+		if err == nil {
+			rel, relErr := filepath.Rel(current, path)
+			if relErr != nil {
+				return "", relErr
+			}
+			return filepath.Join(resolved, rel), nil
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return "", err
+		}
+	}
 }
 
 func runCleanStale(layout paths.Layout, eventsList []events.Event, log events.EventLog) (recovered, deadDirs int, err error) {
@@ -398,6 +554,9 @@ func runCleanOrphaned(cmd *cobra.Command, deps Dependencies, layout paths.Layout
 	plan, err := daemon.PlanOrphanedTestBatches(layout.SandmanDir, deps.EventLog, probe)
 	if err != nil {
 		return fmt.Errorf("plan orphaned batches: %w", err)
+	}
+	if err := validateOrphanPaths(plan, layout); err != nil {
+		return fmt.Errorf("validate orphaned batches: %w", err)
 	}
 
 	if dryRun {
@@ -422,6 +581,21 @@ func runCleanOrphaned(cmd *cobra.Command, deps Dependencies, layout paths.Layout
 	}
 	printCleanReport(cmd, nil, removed, tempDirs, images, false)
 	return nil
+}
+
+func validateOrphanPaths(pathsToCheck []string, layout paths.Layout) error {
+	var errs []error
+	for _, path := range pathsToCheck {
+		absolute, err := filepath.Abs(path)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("resolve orphan path %q: %w", path, err))
+			continue
+		}
+		if err := validateOwnedPath(absolute, layout.BatchesDir); err != nil {
+			errs = append(errs, fmt.Errorf("validate orphan path %q: %w", path, err))
+		}
+	}
+	return errors.Join(errs...)
 }
 
 func cleanupOrphanedBatches(layout paths.Layout, log events.EventLog, probe func(string) bool) ([]string, error) {
