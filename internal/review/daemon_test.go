@@ -2087,6 +2087,120 @@ func TestDaemon_LaunchReviewCreatesControlSocketAndManifest(t *testing.T) {
 	}
 }
 
+func TestDaemon_LaunchReview_ConcurrentBatchesShareOrchestrator(t *testing.T) {
+	gh := &fakeGH{
+		prFetch: map[int]*github.PR{
+			1: {Number: 1, Title: "First", Body: "first body"},
+			2: {Number: 2, Title: "Second", Body: "second body"},
+		},
+	}
+	cfg := &config.Config{
+		DefaultReviewAgent: "opencode",
+		DefaultReviewModel: "m",
+		Sandbox:            "worktree",
+		WorktreeDir:        filepath.Join(t.TempDir(), "worktrees"),
+		AgentProviders: map[string]config.Agent{
+			"opencode": {Preset: "opencode", Command: "opencode"},
+		},
+	}
+	runnables := &concurrentReviewRunnableFactory{started: make(chan struct{}, 2), release: make(chan struct{})}
+	orchestrator := batch.NewOrchestrator(nil, &prompt.Engine{}, reviewConfigStore{cfg: cfg}, nil,
+		batch.WithSandboxFactory(concurrentReviewSandboxFactory{}),
+		batch.WithRunnableFactory(runnables),
+	)
+	d, _, _ := newDaemonForTest(t, gh, orchestrator, cfg)
+
+	type reviewRun struct {
+		pr            int
+		folder, runID string
+		runSession    *daemon.RunSession
+		state         *ReviewStateStore
+	}
+	runs := make([]reviewRun, 2)
+	for i, pr := range []int{1, 2} {
+		folder, runID, session, state, err := d.prepareReviewRun(context.Background(), pr, fmt.Sprintf("comment-%d", pr))
+		if err != nil {
+			t.Fatalf("prepare review %d: %v", pr, err)
+		}
+		runs[i] = reviewRun{pr: pr, folder: folder, runID: runID, runSession: session, state: state}
+	}
+
+	errs := make(chan error, len(runs))
+	for _, run := range runs {
+		go func(run reviewRun) {
+			errs <- d.launchReview(context.Background(), run.pr, "", fmt.Sprintf("comment-%d", run.pr), "", "", run.folder, run.runID, run.runSession, run.state, false)
+		}(run)
+	}
+	for range runs {
+		select {
+		case <-runnables.started:
+		case <-time.After(5 * time.Second):
+			t.Fatal("timed out waiting for concurrent review batches")
+		}
+	}
+	close(runnables.release)
+	for range runs {
+		if err := <-errs; err != nil {
+			t.Fatalf("launch review: %v", err)
+		}
+	}
+}
+
+type reviewConfigStore struct{ cfg *config.Config }
+
+func (s reviewConfigStore) Load() (*config.Config, error) { return s.cfg, nil }
+func (reviewConfigStore) Save(*config.Config) error       { return nil }
+
+type concurrentReviewSandboxFactory struct{}
+
+func (concurrentReviewSandboxFactory) NewSandbox(_ string, worktreeBase, branch, _ string, _ sandbox.Container) sandbox.Sandbox {
+	return &concurrentReviewSandbox{workDir: filepath.Join(worktreeBase, branch)}
+}
+
+type concurrentReviewSandbox struct{ workDir string }
+
+func (s *concurrentReviewSandbox) Start(sandbox.SandboxStart) error {
+	return os.MkdirAll(s.workDir, 0755)
+}
+func (*concurrentReviewSandbox) Exec(context.Context, string, io.Writer, io.Writer) error {
+	return nil
+}
+func (*concurrentReviewSandbox) ExecInteractive(context.Context, string) error { return nil }
+func (*concurrentReviewSandbox) Stop() error                                   { return nil }
+func (s *concurrentReviewSandbox) WorkDir() string                             { return s.workDir }
+func (*concurrentReviewSandbox) RepoPath() string                              { return "." }
+func (*concurrentReviewSandbox) WritePrompt(string) error                      { return nil }
+func (*concurrentReviewSandbox) Process() sandbox.Process                      { return nil }
+func (*concurrentReviewSandbox) RestoreHostPaths() error                       { return nil }
+
+type concurrentReviewRunnableFactory struct {
+	started chan struct{}
+	release chan struct{}
+}
+
+func (f *concurrentReviewRunnableFactory) NewRunnable(_ *github.Issue, _ string, sb sandbox.Sandbox) batch.Runnable {
+	return concurrentReviewRunnable{started: f.started, release: f.release, workDir: sb.WorkDir()}
+}
+
+type concurrentReviewRunnable struct {
+	started chan struct{}
+	release chan struct{}
+	workDir string
+}
+
+func (r concurrentReviewRunnable) Run(ctx context.Context, _ prompt.IssueRenderer, _ string, _ prompt.RenderConfig) batch.AgentRunResult {
+	r.started <- struct{}{}
+	select {
+	case <-r.release:
+		if err := os.WriteFile(filepath.Join(r.workDir, "decision.md"), []byte("LGTM"), 0644); err != nil {
+			return batch.AgentRunResult{Status: "failure"}
+		}
+		return batch.AgentRunResult{Status: "success"}
+	case <-ctx.Done():
+		return batch.AgentRunResult{Status: "aborted"}
+	}
+}
+
 func TestDaemon_LaunchReviewCleansUpRunDirOnError(t *testing.T) {
 	gh := &fakeGH{
 		prFetch: map[int]*github.PR{1: {Number: 1, Title: "T", Body: "B"}},

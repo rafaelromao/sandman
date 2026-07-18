@@ -9328,6 +9328,74 @@ func TestOrchestrator_AbortIssue_ActiveRun(t *testing.T) {
 	}
 }
 
+func TestOrchestrator_ConcurrentBatchesKeepPhaseOutputIsolated(t *testing.T) {
+	dir := testenv.MkdirShort(t, "sm-orch-")
+	t.Chdir(dir)
+	initGitRepo(t, dir)
+
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}},
+		prs:    map[string]*github.PR{"sandman/42-fix-bug": mergedPR("sandman/42-fix-bug", "")},
+	}
+	runnables := &concurrentBatchRunnableFactory{started: make(chan struct{}, 2), release: make(chan struct{})}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{
+		Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees",
+		Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}},
+	}}, nil, WithSandboxFactory(&freshSandboxFactory{}), WithRunnableFactory(runnables))
+
+	var first, second bytes.Buffer
+	done := make(chan error, 2)
+	go func() {
+		_, err := o.RunBatch(context.Background(), Request{Issues: []int{42}, RunTS: "20260101T000001Z", RunShortID: "first", PhaseWriter: &first})
+		done <- err
+	}()
+	go func() {
+		_, err := o.RunBatch(context.Background(), Request{Issues: []int{42}, RunTS: "20260101T000002Z", RunShortID: "second", PhaseWriter: &second})
+		done <- err
+	}()
+
+	for range 2 {
+		waitForSignal(t, runnables.started, "expected concurrent batch runnable to start")
+	}
+	close(runnables.release)
+	for range 2 {
+		if err := <-done; err != nil {
+			t.Fatalf("RunBatch returned error: %v", err)
+		}
+	}
+
+	for name, output := range map[string]string{"first": first.String(), "second": second.String()} {
+		if !strings.Contains(output, "phase first-sandbox-start") {
+			t.Fatalf("%s batch did not retain its first-sandbox phase output: %q", name, output)
+		}
+	}
+}
+
+type concurrentBatchRunnableFactory struct {
+	started chan struct{}
+	release chan struct{}
+}
+
+func (f *concurrentBatchRunnableFactory) NewRunnable(issue *github.Issue, branch string, sb sandbox.Sandbox) Runnable {
+	return &concurrentBatchRunnable{started: f.started, release: f.release, issueNumber: issue.Number}
+}
+
+type concurrentBatchRunnable struct {
+	started     chan struct{}
+	release     chan struct{}
+	issueNumber int
+}
+
+func (r *concurrentBatchRunnable) Run(ctx context.Context, renderer prompt.IssueRenderer, command string, renderCfg prompt.RenderConfig) AgentRunResult {
+	r.started <- struct{}{}
+	select {
+	case <-r.release:
+		return AgentRunResult{IssueNumber: r.issueNumber, Status: "success"}
+	case <-ctx.Done():
+		return AgentRunResult{IssueNumber: r.issueNumber, Status: "aborted"}
+	}
+}
+
 // TestOrchestrator_AbortIssue_ActiveRunContainer_ReachesAbortedTerminal
 // wires a REAL *sandbox.ContainerSandbox into runSingle so the production
 // waitCmd path (negative-PGID SIGKILL via the Setpgid: true cmd.SysProcAttr
