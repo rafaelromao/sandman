@@ -62,9 +62,10 @@ func (pr *PR) LinkedIssueNumber() int {
 
 // PRComment holds a PR conversation comment fetched from the GitHub REST API.
 type PRComment struct {
-	ID        string
-	Body      string
-	CreatedAt time.Time
+	ID          string
+	Body        string
+	AuthorLogin string
+	CreatedAt   time.Time
 }
 
 // IssueComment holds an issue conversation comment fetched from the GitHub
@@ -89,6 +90,7 @@ type Client interface {
 	SearchIssues(ctx context.Context, query string) ([]Issue, error)
 	ListOpenPRs(ctx context.Context) ([]PR, error)
 	ListPRComments(ctx context.Context, number int) ([]PRComment, error)
+	AuthenticatedLogin(ctx context.Context) (string, error)
 	ListIssueComments(ctx context.Context, number int) ([]IssueComment, error)
 	ListSubIssues(ctx context.Context, parent int) ([]int, error)
 	RepoName(ctx context.Context) (string, error)

@@ -254,6 +254,10 @@ func (c *fetchIssueErrorClient) ListPRComments(ctx context.Context, number int) 
 	return nil, nil
 }
 
+func (c *fetchIssueErrorClient) AuthenticatedLogin(ctx context.Context) (string, error) {
+	return "sandman", nil
+}
+
 func (c *fetchIssueErrorClient) ListIssueComments(ctx context.Context, number int) ([]github.IssueComment, error) {
 	return nil, nil
 }

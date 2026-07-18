@@ -934,8 +934,49 @@ func TestCLIClient_ListPRComments_Success(t *testing.T) {
 	if comments[0].Body != "/sandman review focus on tests" {
 		t.Errorf("unexpected body: %q", comments[0].Body)
 	}
+	if comments[0].AuthorLogin != "alice" {
+		t.Errorf("author login = %q, want alice", comments[0].AuthorLogin)
+	}
 	if runner.calls[1].name != "gh" {
 		t.Errorf("expected second call to gh, got %q", runner.calls[1].name)
+	}
+}
+
+func TestCLIClient_AuthenticatedLogin(t *testing.T) {
+	tests := []struct {
+		name     string
+		response fakeResponse
+		want     string
+		wantErr  string
+	}{
+		{name: "success", response: fakeResponse{output: `{"login":"sandman"}`}, want: "sandman"},
+		{name: "command failure", response: fakeResponse{err: exec.ErrNotFound}, wantErr: "gh api authenticated user"},
+		{name: "malformed response", response: fakeResponse{output: `{`}, wantErr: "parse authenticated user"},
+		{name: "empty login", response: fakeResponse{output: `{"login":" "}`}, wantErr: "empty login"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			runner := &fakeRunner{responses: []fakeResponse{tt.response}}
+			client := &CLIClient{runner: runner}
+
+			got, err := client.AuthenticatedLogin(context.Background())
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("AuthenticatedLogin error = %v, want %q", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("AuthenticatedLogin: %v", err)
+			}
+			if got != tt.want {
+				t.Fatalf("AuthenticatedLogin = %q, want %q", got, tt.want)
+			}
+			if len(runner.calls) != 1 || !reflect.DeepEqual(runner.calls[0].args, []string{"api", "user"}) {
+				t.Fatalf("gh args = %#v, want [api user]", runner.calls)
+			}
+		})
 	}
 }
 

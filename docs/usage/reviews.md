@@ -16,7 +16,7 @@ The daemon polls open pull requests for the configured review command, which def
 /sandman review
 ```
 
-When it sees a matching comment, it launches a review AgentRun and posts the result back to the pull request.
+When it sees a matching comment authored by the GitHub user authenticated to the daemon, it launches a review AgentRun and posts the result back to the pull request. Requests from other users are ignored. Use direct review for manual or CI-driven reviews that should not be tied to the daemon's authenticated user.
 
 ## Review command guard
 

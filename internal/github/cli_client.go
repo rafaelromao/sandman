@@ -468,6 +468,32 @@ type prCommentPayload struct {
 	} `json:"user"`
 }
 
+type authenticatedUserPayload struct {
+	Login string `json:"login"`
+}
+
+// AuthenticatedLogin returns the login for the GitHub user authenticated to
+// the gh CLI. A blank login is rejected so callers can fail closed.
+func (c *CLIClient) AuthenticatedLogin(ctx context.Context) (string, error) {
+	callCtx, cancel := c.boundContext(ctx)
+	defer cancel()
+	cmd := c.command(callCtx, "gh", "api", "user")
+	out, err := runCmd(callCtx, cmd, "gh api authenticated user")
+	if err != nil {
+		return "", fmt.Errorf("gh api authenticated user: %w", err)
+	}
+
+	var user authenticatedUserPayload
+	if err := json.Unmarshal(out, &user); err != nil {
+		return "", fmt.Errorf("parse authenticated user: %w", err)
+	}
+	login := strings.TrimSpace(user.Login)
+	if login == "" {
+		return "", fmt.Errorf("parse authenticated user: empty login")
+	}
+	return login, nil
+}
+
 // prCommentPageSize is the per-page count for `gh api` paginated calls.
 // 100 is the largest value GitHub accepts.
 const prCommentPageSize = "100"
@@ -516,9 +542,10 @@ func (c *CLIClient) ListPRComments(ctx context.Context, number int) ([]PRComment
 			}
 		}
 		comments = append(comments, PRComment{
-			ID:        strconv.FormatInt(payload.ID, 10),
-			Body:      payload.Body,
-			CreatedAt: createdAt,
+			ID:          strconv.FormatInt(payload.ID, 10),
+			Body:        payload.Body,
+			AuthorLogin: payload.User.Login,
+			CreatedAt:   createdAt,
 		})
 	}
 	return comments, nil

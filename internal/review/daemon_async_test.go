@@ -331,7 +331,7 @@ func TestDaemon_AsyncLaunch_GracefulShutdown(t *testing.T) {
 		prs: []github.PR{{Number: 13, State: "open"}},
 		comments: map[int][]github.PRComment{
 			13: {
-				{ID: "c13", Body: "/sandman review", CreatedAt: now},
+				{ID: "c13", AuthorLogin: "sandman", Body: "/sandman review", CreatedAt: now},
 				{ID: "c13-reply", Body: "## Summary\nLGTM", CreatedAt: afterReview},
 			},
 		},

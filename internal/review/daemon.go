@@ -105,6 +105,7 @@ type Trigger <-chan struct{}
 type GitHubClient interface {
 	ListOpenPRs(ctx context.Context) ([]github.PR, error)
 	ListPRComments(ctx context.Context, number int) ([]github.PRComment, error)
+	AuthenticatedLogin(ctx context.Context) (string, error)
 	FetchPR(ctx context.Context, number int) (*github.PR, error)
 	RepoName(ctx context.Context) (string, error)
 	AddCommentReaction(ctx context.Context, commentID, content string) (string, error)
@@ -217,7 +218,8 @@ type Daemon struct {
 	// (or all-zero durations) so the retry loop completes in
 	// milliseconds instead of sleeping through the real 31s
 	// budget.
-	postBackoffs []time.Duration
+	postBackoffs       []time.Duration
+	authenticatedLogin string
 	// launchBackoff is the per-attempts sleep schedule used by
 	// sleepLaunchFailureBackoff. It defaults to nextFailureBackoff
 	// when nil; tests inject a zero-cost function
@@ -885,6 +887,15 @@ func (d *Daemon) Stop() error {
 // any in-flight RunBatch call. When a Trigger channel is wired, the
 // initial scan is skipped so tests can drive ticks explicitly.
 func (d *Daemon) Run(ctx context.Context) error {
+	login, err := d.GitHub.AuthenticatedLogin(ctx)
+	if err != nil {
+		return fmt.Errorf("authenticated GitHub login: %w", err)
+	}
+	d.authenticatedLogin = strings.TrimSpace(login)
+	if d.authenticatedLogin == "" {
+		return fmt.Errorf("authenticated GitHub login is empty")
+	}
+
 	if err := d.StartSocket(); err != nil {
 		return err
 	}
@@ -1016,6 +1027,9 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) error {
 	}
 	var triggers []unseenTrigger
 	for _, comment := range comments {
+		if d.authenticatedLogin != "" && (strings.TrimSpace(comment.AuthorLogin) == "" || !strings.EqualFold(comment.AuthorLogin, d.authenticatedLogin)) {
+			continue
+		}
 		// Self-post filter (issue #1648, ordering fixed by #1702):
 		// runs BEFORE ParseTrigger so a comment whose body matches
 		// a hash the bot has previously posted is dropped before its

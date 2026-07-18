@@ -18,9 +18,15 @@ Sandman needs a PR review workflow: when someone posts `/sandman review [focus]`
 
 ### Two modes: daemon (default) and one-shot
 
-`sandman review` defaults to **daemon mode** - it polls the repo every 30 seconds for new PRs with `/sandman review` comments. PR numbers passed as positional arguments run in **one-shot mode** for manual or CI-driven review invocation. One-shot mode accepts bare numbers, closed ranges (`N:M`), and unbounded ranges (`N:`, `:M`).
+`sandman review` defaults to **daemon mode** - it polls the repo every 30 seconds for new PRs with `/sandman review` comments authored by the GitHub user authenticated to the daemon. PR numbers passed as positional arguments run in **one-shot mode** for manual or CI-driven review invocation. One-shot mode accepts bare numbers, closed ranges (`N:M`), and unbounded ranges (`N:`, `:M`).
 
 Rationale: the daemon enables the full automated workflow (AFK agent finishes work, posts `/sandman review`, daemon picks it up). The one-shot mode covers ad-hoc cases without running a background process.
+
+### Authenticated trigger author
+
+The daemon resolves its authenticated GitHub login at startup and only accepts review commands authored by that login. It rejects an unavailable or blank login before opening its socket or polling, and ignores commands from every other user.
+
+Rationale: the review command launches local agents with repository access. Restricting daemon-triggered reviews to its authenticated account prevents another GitHub user from consuming that local capability. One-shot mode remains available for manual or CI-driven reviews that use a different invocation path.
 
 ### Daemon posts the review comment
 
