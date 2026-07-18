@@ -926,10 +926,9 @@ func NewBadgeHookerWith(runner SandmanRunner, lister PRLister, controlReader Bad
 	return newDefaultBadgeHooker(lister, controlReader, controlWriter, runner)
 }
 
-// AbortIssue cancels the context of a single in-flight AgentRun, leaving
-// siblings untouched. If the issue is not currently tracked (already finished
-// or never started), it returns ErrNoSuchIssue. AbortIssue is safe to call
-// concurrently with RunBatch.
+// AbortIssue cancels a uniquely identified in-flight issue. The per-run command
+// server uses its batch coordinator directly; this compatibility method returns
+// ErrNoSuchIssue when concurrent batches make an issue number ambiguous.
 func (o *Orchestrator) AbortIssue(issueNumber int) error {
 	o.coordinatorsMu.Lock()
 	coordinators := make([]*batchCoordinator, 0, len(o.coordinators))
@@ -1128,7 +1127,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 		}
 		branches := collectIssueBranchesFromIndex(num, issue.Title, req.Branches[num], overrideIndex)
 		for _, branch := range branches {
-			ClearIssueArtifacts(num, branch, cfg.WorktreeDir, o.eventLog, o.errorLog, baseBranch, req.StrandedReconcile, o.layout.BatchesIndexPath)
+			ClearIssueArtifacts(num, branch, layout.WorktreeDir, o.eventLog, o.errorLog, baseBranch, req.StrandedReconcile, layout.BatchesIndexPath)
 		}
 	}
 
@@ -1428,7 +1427,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 			if strings.TrimSpace(result.Branch) == "" {
 				continue
 			}
-			worktreePath := filepath.Join(o.orchestratorWorktreeDir(cfg), result.Branch)
+			worktreePath := filepath.Join(layout.WorktreeDir, result.Branch)
 			if err := sandbox.RestoreWorktreeGitPaths(".", worktreePath); err != nil && o.eventLog != nil {
 				_ = o.eventLog.Log(events.Event{
 					Type:      "run.warning",
