@@ -69,9 +69,9 @@ func issueBatchIDForRequest(req Request) string {
 // prompt-only session. When runDir is non-empty, the batch ID is
 // derived from the directory two levels above runDir (so
 // `<batchesDir>/<batchID>/runs/<runID>` round-trips). This pins the
-// orchestrator ↔ daemon agreement: the cmd layer's `Request.RunDir`
-// (e.g. cmd/review.go's one-shot path) is the authoritative path
-// the daemon's `prepareReviewRun` will read `decision.md` from, so
+// orchestrator ↔ daemon agreement: the review daemon's `Request.RunDir`
+// is the authoritative path the daemon's `prepareReviewRun` will read
+// `decision.md` from, so
 // the orchestrator must place `agentRun.runFolder` at the same
 // path. Otherwise the reviewer bot writes `decision.md` to a path
 // the daemon never reads and the review comment is silently dropped
@@ -2972,8 +2972,8 @@ func (s *runSession) executePromptOnly(ctx context.Context) (AgentRunResult, boo
 	}
 	// For prompt-only batches the public BatchId equals the per-row
 	// RunID (issue #1920 slice 4). The cmd layer pre-seeds s.batchID
-	// from the same runid.NewBatchID call, and the one-shot review
-	// path sets s.batchID by walking runDir; if neither path
+	// from the same runid.NewBatchID call, and the review daemon sets
+	// s.batchID by walking runDir; if neither path
 	// populated it (legacy callers), the legacy batchIDFromRunID
 	// fallback below returns the `<ts>-<sid>` prefix — which is the
 	// historical contract that the on-disk dir resolver already

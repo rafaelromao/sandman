@@ -2252,7 +2252,7 @@ func TestRunPromptOnlySingle_PrefixesOutputWithRunID(t *testing.T) {
 // TestRunPromptOnlySingle_ReviewRunIDIsCanonical pins the regression
 // gate for issue #1946: the orchestrator's executePromptOnly path
 // must NOT mangle a review per-row RunID that flows through it. The
-// cmd/review.go one-shot path used to populate both BatchTS and
+// review daemon launch paths populate both BatchTS and
 // BatchShortID on the batch.Request, which triggered the prompt-only
 // override inside runPromptOnlySingle and emitted a divergent
 // `…-prompt-…-<full_review_runid>` instead of the canonical
@@ -5208,7 +5208,7 @@ func keysOf(m map[string]string) []string {
 
 // TestRunBatch_ReviewRunFolderHonorsReqRunDir pins the orchestrator ↔
 // daemon contract for review runs: when the caller sets
-// `Request.RunDir` (which the cmd/review.go one-shot path does, as
+// `Request.RunDir` (which the review daemon does, as
 // the daemon's `prepareReviewRun` lookup target for `decision.md`),
 // the orchestrator's AgentRun.runFolder MUST equal `req.RunDir`
 // exactly. Otherwise the reviewer bot writes `decision.md` to a path

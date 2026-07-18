@@ -1,31 +1,10 @@
 # Reviews
 
-Sandman can run review agents against open pull requests. You can trigger reviews directly from the CLI or keep a daemon running that watches for the configured review command.
-
-## Direct review
-
-Run one review and exit:
-
-```bash
-sandman review 42
-```
-
-Review several pull requests:
-
-```bash
-sandman review 42 43
-sandman review 42:45
-```
-
-Override the review agent or model for one invocation:
-
-```bash
-sandman review 42 --agent opencode --model opencode/big-pickle
-```
+Sandman runs review agents through a daemon that watches open pull requests for the configured review command.
 
 ## Review daemon
 
-Run without positional arguments to start the daemon:
+Run this command to start the daemon:
 
 ```bash
 sandman review
@@ -65,7 +44,7 @@ Review runs have their own concurrency setting:
 sandman config set parallel_reviews 2
 ```
 
-Or override it for one daemon/direct invocation:
+Or override it for the daemon invocation:
 
 ```bash
 sandman review --parallel 2

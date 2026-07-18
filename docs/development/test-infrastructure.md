@@ -12,7 +12,7 @@ This is the advanced reference for Sandman's test harness. For the common comman
 | `SANDMAN_E2E_GATES` | Stable e2e scenario identifiers |
 | `SANDMAN_TEST_MODEL_<AGENT>` | Per-agent model override for smoke and e2e tests |
 | `SANDMAN_TEST_FAST` | Enables fast-mode behavior for blocking shims |
-| `SANDMAN_RUN_AGENT_E2E` | Opt-in for real-agent preset-matrix sub-tests |
+| `SANDMAN_RUN_AGENT_E2E` | Opt-in for real-agent E2E sub-tests |
 | `SANDMAN_TEST_TIMEOUT` | Override `-timeout` for the preset-matrix runner script |
 
 When gate vars are unset, expensive tests should skip themselves instead of doing real work.

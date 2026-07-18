@@ -10,7 +10,7 @@ Reference for running, configuring, and operating Sandman day to day.
 | [Workflows](workflows.md) | Recipes: by issue, label, range, auto mode, continue, prompt-only |
 | [Scaffolding and Supported Languages](scaffolding.md) | `sandman init`, generated files, build-tool presets, and language version selection |
 | [Configuration](configuration.md) | Full config schema and `config get/set` |
-| [Reviews](reviews.md) | Direct reviews, the review daemon, review command guard, and review-run output |
+| [Reviews](reviews.md) | Review daemon, review command guard, and review-run output |
 
 ## Sandbox and execution
 
