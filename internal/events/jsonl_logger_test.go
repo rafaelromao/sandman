@@ -809,6 +809,39 @@ func TestJSONLLogger_InterruptedTransactionRecoversBeforeLog(t *testing.T) {
 	}
 }
 
+func TestJSONLLogger_CommittedTransactionCleansUpWithoutRestoring(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "events.jsonl")
+	filtered := []byte(`{"type":"run.started","timestamp":"2025-01-01T00:00:00Z","run_id":"keep","issue":2}` + "\n")
+	previous := []byte(`{"type":"run.started","timestamp":"2025-01-01T00:00:00Z","run_id":"removed","issue":1}` + "\n")
+	if err := os.WriteFile(path, filtered, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path+".recovery", previous, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path+".txn", []byte("committed\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	logger := &JSONLLogger{Path: path}
+	if err := logger.Log(Event{Type: "run.finished", RunID: "new", Issue: 3}); err != nil {
+		t.Fatalf("log after committed cleanup interruption: %v", err)
+	}
+	got, err := logger.Read()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0].RunID != "keep" || got[1].RunID != "new" {
+		t.Fatalf("committed transaction was incorrectly restored: %+v", got)
+	}
+	for _, artifact := range []string{path + ".recovery", path + ".txn"} {
+		if _, err := os.Stat(artifact); !os.IsNotExist(err) {
+			t.Fatalf("transaction artifact remains after committed recovery: %s: %v", artifact, err)
+		}
+	}
+}
+
 func TestJSONLLogger_QuarantineFailureDoesNotRewriteMainLog(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()

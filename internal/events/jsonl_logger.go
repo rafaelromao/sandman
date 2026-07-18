@@ -161,8 +161,11 @@ func (l *JSONLLogger) RemoveEventsByIssue(issueNumber int) error {
 		if err := f.Sync(); err != nil {
 			return failed(fmt.Errorf("sync event log: %w", err))
 		}
-		if err := l.finishTransaction(); err != nil {
+		if err := l.commitTransaction(); err != nil {
 			return failed(err)
+		}
+		if err := l.finishTransaction(); err != nil {
+			return err
 		}
 		return nil
 	})
@@ -205,8 +208,15 @@ func (l *JSONLLogger) beginTransaction(raw []byte) error {
 }
 
 func (l *JSONLLogger) finishTransaction() error {
-	// Remove the marker first. If snapshot cleanup then fails, restore uses the
-	// in-memory raw bytes and leaves the snapshot for operator inspection.
+	if err := l.hit("cleanup-snapshot"); err != nil {
+		return err
+	}
+	if err := os.Remove(l.snapshotPath()); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("remove recovery snapshot: %w", err)
+	}
+	if err := syncDir(filepath.Dir(l.Path)); err != nil {
+		return fmt.Errorf("sync recovery snapshot removal: %w", err)
+	}
 	if err := l.hit("cleanup-marker"); err != nil {
 		return err
 	}
@@ -216,21 +226,29 @@ func (l *JSONLLogger) finishTransaction() error {
 	if err := syncDir(filepath.Dir(l.Path)); err != nil {
 		return fmt.Errorf("sync recovery marker removal: %w", err)
 	}
-	if err := l.hit("cleanup-snapshot"); err != nil {
-		return err
-	}
-	if err := os.Remove(l.snapshotPath()); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("remove recovery snapshot: %w", err)
+	return nil
+}
+
+func (l *JSONLLogger) commitTransaction() error {
+	if err := l.writeSynced(l.markerPath(), []byte("committed\n")); err != nil {
+		return fmt.Errorf("mark event log transaction committed: %w", err)
 	}
 	return nil
 }
 
 func (l *JSONLLogger) recoverTransaction() error {
-	if _, err := os.Stat(l.markerPath()); err != nil {
+	marker, err := os.ReadFile(l.markerPath())
+	if err != nil {
 		if os.IsNotExist(err) {
 			return nil
 		}
 		return fmt.Errorf("stat recovery marker: %w", err)
+	}
+	if string(marker) == "committed\n" {
+		if err := l.finishTransaction(); err != nil {
+			return fmt.Errorf("cleanup committed event log transaction: %w", err)
+		}
+		return nil
 	}
 	raw, err := os.ReadFile(l.snapshotPath())
 	if err != nil {
