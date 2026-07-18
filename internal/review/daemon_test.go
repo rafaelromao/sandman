@@ -1165,7 +1165,7 @@ func TestDaemon_StopCancelsInflightBatch(t *testing.T) {
 	gh := &fakeGH{
 		prs: []github.PR{{Number: 1, State: "open"}},
 		comments: map[int][]github.PRComment{
-			1: {{ID: "x", Body: "/sandman review"}},
+			1: {{ID: "x", AuthorLogin: "sandman", Body: "/sandman review"}},
 		},
 	}
 
