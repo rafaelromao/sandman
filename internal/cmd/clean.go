@@ -374,15 +374,16 @@ func executeClean(actions []cleanAction, gr gitRunner, idx *batchindex.Index, la
 		removed++
 	}
 
-	var kept []batchindex.Batch
-	for _, entry := range idx.Batches {
-		if !actionIDs[entry.ID] {
-			kept = append(kept, entry)
+	if err := batchindex.Update(layout.BatchesIndexPath, func(current *batchindex.Index) error {
+		var kept []batchindex.Batch
+		for _, entry := range current.Batches {
+			if !actionIDs[entry.ID] {
+				kept = append(kept, entry)
+			}
 		}
-	}
-	idx.Batches = kept
-
-	if err := idx.Save(layout.BatchesIndexPath); err != nil {
+		current.Batches = kept
+		return nil
+	}); err != nil {
 		return 0, fmt.Errorf("save batches index: %w", err)
 	}
 
@@ -436,28 +437,21 @@ func runCleanOrphaned(cmd *cobra.Command, deps Dependencies, layout paths.Layout
 // shared prune step used by both the standalone --orphaned mode and the --all
 // umbrella flag.
 func pruneBatchesIndexByOrphanPlan(indexPath string, plan []string) error {
-	idx, err := batchindex.Load(indexPath)
-	if err != nil {
-		return fmt.Errorf("load batches index: %w", err)
-	}
-
 	pruned := make(map[string]struct{}, len(plan))
 	for _, p := range plan {
 		pruned[filepath.Base(p)] = struct{}{}
 	}
-	var kept []batchindex.Batch
-	for _, entry := range idx.Batches {
-		if _, drop := pruned[entry.ID]; drop {
-			continue
+	return batchindex.Update(indexPath, func(idx *batchindex.Index) error {
+		var kept []batchindex.Batch
+		for _, entry := range idx.Batches {
+			if _, drop := pruned[entry.ID]; drop {
+				continue
+			}
+			kept = append(kept, entry)
 		}
-		kept = append(kept, entry)
-	}
-	idx.Batches = kept
-
-	if err := idx.Save(indexPath); err != nil {
-		return fmt.Errorf("save batches index: %w", err)
-	}
-	return nil
+		idx.Batches = kept
+		return nil
+	})
 }
 
 func runCleanTemps(cmd *cobra.Command, deps Dependencies, layout paths.Layout, dryRun bool) (tempDirs []string, images []string) {

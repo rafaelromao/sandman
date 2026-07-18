@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"sync"
@@ -713,6 +714,94 @@ func TestSave_ConcurrentWriters(t *testing.T) {
 	}
 	if len(tmpFiles) != 0 {
 		t.Errorf("temp files still exist after all writers done: %v", tmpFiles)
+	}
+}
+
+func TestUpdate_ConcurrentMutationsPreserveEveryBatch(t *testing.T) {
+	indexPath := filepath.Join(t.TempDir(), ".sandman", "batches.json")
+	if err := os.MkdirAll(filepath.Dir(indexPath), 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	const writers = 20
+	var wg sync.WaitGroup
+	for i := 0; i < writers; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			if err := Update(indexPath, func(idx *Index) error {
+				idx.AddBatch(Batch{ID: fmt.Sprintf("batch-%d", i), Path: fmt.Sprintf("/batches/%d", i), Kind: KindIssue})
+				return nil
+			}); err != nil {
+				t.Errorf("Update(%d): %v", i, err)
+			}
+		}(i)
+	}
+	wg.Wait()
+
+	idx, err := Load(indexPath)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(idx.Batches) != writers {
+		t.Fatalf("Batches = %d, want %d", len(idx.Batches), writers)
+	}
+}
+
+func TestUpdate_ConcurrentProcessesPreserveEveryBatch(t *testing.T) {
+	indexPath := filepath.Join(t.TempDir(), ".sandman", "batches.json")
+	if err := os.MkdirAll(filepath.Dir(indexPath), 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	startPath := indexPath + ".start"
+	const writers = 8
+	cmds := make([]*exec.Cmd, 0, writers)
+	for i := 0; i < writers; i++ {
+		cmd := exec.Command(os.Args[0], "-test.run=^TestUpdateSubprocessHelper$")
+		cmd.Env = append(os.Environ(), "BATCHINDEX_HELPER=1", "BATCHINDEX_PATH="+indexPath, fmt.Sprintf("BATCHINDEX_ID=process-%d", i), "BATCHINDEX_START="+startPath)
+		if err := cmd.Start(); err != nil {
+			t.Fatalf("start helper %d: %v", i, err)
+		}
+		cmds = append(cmds, cmd)
+	}
+	if err := os.WriteFile(startPath, nil, 0600); err != nil {
+		t.Fatalf("release helpers: %v", err)
+	}
+	for i, cmd := range cmds {
+		if err := cmd.Wait(); err != nil {
+			t.Fatalf("helper %d: %v", i, err)
+		}
+	}
+
+	idx, err := Load(indexPath)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(idx.Batches) != writers {
+		t.Fatalf("Batches = %d, want %d", len(idx.Batches), writers)
+	}
+}
+
+func TestUpdateSubprocessHelper(t *testing.T) {
+	if os.Getenv("BATCHINDEX_HELPER") != "1" {
+		return
+	}
+	startPath := os.Getenv("BATCHINDEX_START")
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if _, err := os.Stat(startPath); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("timed out waiting for start barrier")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if err := Update(os.Getenv("BATCHINDEX_PATH"), func(idx *Index) error {
+		idx.AddBatch(Batch{ID: os.Getenv("BATCHINDEX_ID"), Path: "/batch", Kind: KindIssue})
+		return nil
+	}); err != nil {
+		t.Fatal(err)
 	}
 }
 

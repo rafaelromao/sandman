@@ -374,28 +374,23 @@ func portalReadRowStatus(batch *batchindex.Batch, runID string) (batchindex.RunM
 // record survives crash recovery.
 func archivePortalRowArchiver(repoRoot string, entryID, runID string) error {
 	layout := paths.NewLayout(&config.Config{}, repoRoot)
-	idx, err := batchindex.Load(layout.BatchesIndexPath)
-	if err != nil {
-		return fmt.Errorf("load batches index: %w", err)
-	}
-	entry := idx.ResolveBatch(entryID)
-	if entry == nil {
-		return fmt.Errorf("entry %q not found", entryID)
-	}
-	if idx.RunRecordFor(entryID, runID) == nil {
-		idx.AddRun(entryID, batchindex.RunRecord{RunID: runID, Status: batchindex.RunRecordStatusActive})
-	}
-	rec, err := daemon.ArchiveRow(repoRoot, entry, runID)
-	if err != nil {
-		return err
-	}
-	if err := idx.MarkRunArchived(entryID, runID, rec.ArchivePath); err != nil {
-		return fmt.Errorf("mark run archived: %w", err)
-	}
-	if err := idx.Save(layout.BatchesIndexPath); err != nil {
-		return fmt.Errorf("save batches index: %w", err)
-	}
-	return nil
+	return batchindex.Update(layout.BatchesIndexPath, func(idx *batchindex.Index) error {
+		entry := idx.ResolveBatch(entryID)
+		if entry == nil {
+			return fmt.Errorf("entry %q not found", entryID)
+		}
+		if idx.RunRecordFor(entryID, runID) == nil {
+			idx.AddRun(entryID, batchindex.RunRecord{RunID: runID, Status: batchindex.RunRecordStatusActive})
+		}
+		rec, err := daemon.ArchiveRow(repoRoot, entry, runID)
+		if err != nil {
+			return err
+		}
+		if err := idx.MarkRunArchived(entryID, runID, rec.ArchivePath); err != nil {
+			return fmt.Errorf("mark run archived: %w", err)
+		}
+		return nil
+	})
 }
 
 // resolveBatchFromRunIDFastOrScan returns the batch index batch that
@@ -618,7 +613,11 @@ func discoverPortalInstances(repoRoot string) ([]portalInstance, error) {
 	}
 
 	if idx.MarkUnavailable() {
-		if err := idx.Save(layout.BatchesIndexPath); err != nil {
+		if err := batchindex.Update(layout.BatchesIndexPath, func(current *batchindex.Index) error {
+			current.MarkUnavailable()
+			*idx = *current
+			return nil
+		}); err != nil {
 			return nil, fmt.Errorf("save batches index: %w", err)
 		}
 	}
