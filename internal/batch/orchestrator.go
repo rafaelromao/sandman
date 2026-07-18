@@ -2613,7 +2613,7 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 		s.emitEarlyFailure("write run manifest", branch)
 		return AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "failure", Branch: branch}, false
 	}
-	cmdServer := daemon.NewCommandServer(daemon.RunFolder(batchDir, runID), s.commander)
+	cmdServer := daemon.NewCommandServerForIssue(daemon.RunFolder(batchDir, runID), s.commander, s.issueNumber)
 	if err := cmdServer.Start(); err != nil {
 		fmt.Fprintf(s.deps.errorLog, "error: start command server for issue %d: %v\n", s.issueNumber, err)
 	} else {
@@ -3016,7 +3016,7 @@ func (s *runSession) executePromptOnly(ctx context.Context) (AgentRunResult, boo
 		_ = wt.Stop()
 		return AgentRunResult{Status: "failure", Branch: branch, Review: s.review, RunID: runID}, false
 	}
-	cmdServer := daemon.NewCommandServer(daemon.RunFolder(batchDir, runID), s.commander)
+	cmdServer := daemon.NewCommandServerForIssue(daemon.RunFolder(batchDir, runID), s.commander, s.issueNumber)
 	if err := cmdServer.Start(); err != nil {
 		fmt.Fprintf(s.deps.errorLog, "error: start command server for prompt-only run: %v\n", err)
 	} else {

@@ -3,10 +3,12 @@ package batch
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"io/fs"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -22,6 +24,7 @@ import (
 
 	"github.com/rafaelromao/sandman/internal/batchindex"
 	"github.com/rafaelromao/sandman/internal/config"
+	"github.com/rafaelromao/sandman/internal/daemon"
 	"github.com/rafaelromao/sandman/internal/events"
 	"github.com/rafaelromao/sandman/internal/github"
 	"github.com/rafaelromao/sandman/internal/paths"
@@ -2642,6 +2645,106 @@ func TestRunBatch_ReturnsAbortedStatusOnPromptOnlyCancel(t *testing.T) {
 	}
 	if result == nil || len(result.Runs) != 1 || result.Runs[0].Status != "aborted" {
 		t.Fatalf("expected aborted prompt-only batch result to report aborted, got %#v", result)
+	}
+}
+
+func TestRunBatch_PromptOnlyCommandSocketRejectsAbort(t *testing.T) {
+	for _, review := range []bool{false, true} {
+		review := review
+		name := "prompt-only"
+		if review {
+			name = "review"
+		}
+		t.Run(name, func(t *testing.T) {
+			workDir := testenv.MkdirShort(t, "sm-orch-")
+			t.Chdir(workDir)
+			initGitRepo(t, workDir)
+
+			cfg := &config.Config{
+				Agent:       "test-agent",
+				Sandbox:     "worktree",
+				WorktreeDir: filepath.Join(workDir, "worktrees"),
+				Git:         config.GitConfig{BaseBranch: "main"},
+				AgentProviders: map[string]config.Agent{
+					"test-agent": {Command: "true"},
+				},
+			}
+			started := make(chan struct{})
+			release := make(chan struct{})
+			runnable := &controlledRunnable{
+				result:  AgentRunResult{Status: "success", Review: review},
+				started: started,
+				release: release,
+			}
+			sb := &fakeSandbox{workDir: filepath.Join(workDir, "worktree")}
+			o := NewOrchestrator(
+				&fakeGitHubClient{},
+				&noopRenderer{},
+				&fakeConfigStore{config: cfg},
+				nil,
+				WithSandboxFactory(&fakeSandboxFactory{sandbox: sb}),
+				WithRunnableFactory(&controlledRunnableFactory{runnables: map[int]Runnable{0: runnable}}),
+			)
+
+			runID := "socket-" + name
+			done := make(chan struct{})
+			go func() {
+				_, _ = o.RunBatch(context.Background(), Request{
+					PromptConfig: prompt.RenderConfig{PromptFlag: "return only ok"},
+					Review:       review,
+					PRNumber:     42,
+					RunID:        runID,
+				})
+				close(done)
+			}()
+			waitForSignal(t, started, "expected prompt-only run to start")
+
+			var sockPath string
+			deadline := time.Now().Add(2 * time.Second)
+			for {
+				matches, err := filepath.Glob(filepath.Join(workDir, ".sandman", "batches", "*", "runs", "*", "run.sock"))
+				if err != nil {
+					t.Fatalf("find command socket: %v", err)
+				}
+				if len(matches) == 1 {
+					sockPath = matches[0]
+					break
+				}
+				if time.Now().After(deadline) {
+					t.Fatalf("command socket %q did not appear", sockPath)
+				}
+				time.Sleep(5 * time.Millisecond)
+			}
+
+			conn, err := net.Dial("unix", sockPath)
+			if err != nil {
+				t.Fatalf("dial command socket: %v", err)
+			}
+			if err := conn.SetDeadline(time.Now().Add(2 * time.Second)); err != nil {
+				conn.Close()
+				t.Fatalf("set command socket deadline: %v", err)
+			}
+			if err := json.NewEncoder(conn).Encode(daemon.CommandRequest{Action: "abort", Issue: 0}); err != nil {
+				conn.Close()
+				t.Fatalf("encode abort request: %v", err)
+			}
+			var resp daemon.CommandResponse
+			if err := json.NewDecoder(conn).Decode(&resp); err != nil {
+				conn.Close()
+				t.Fatalf("decode abort response: %v", err)
+			}
+			conn.Close()
+			if resp.Status != "error" || resp.Message != "abort_failed" {
+				t.Fatalf("abort response = %+v, want abort_failed", resp)
+			}
+
+			close(release)
+			select {
+			case <-done:
+			case <-time.After(3 * time.Second):
+				t.Fatal("prompt-only run did not finish")
+			}
+		})
 	}
 }
 
