@@ -16,6 +16,7 @@ Turn issue context into a concise, behavior-first plan:
 - design interfaces for testability
 - get subagent review and reach consensus before finalizing
 - write the result into `.sandman/task.md` under `## Plan`
+- post the approved plan as a comment on the implementor's open work item
 
 ## Workflow
 
@@ -66,6 +67,12 @@ Turn issue context into a concise, behavior-first plan:
 - Preserve the task document scaffold; do not replace it.
 - Put the plan in a top-level `## Plan` section inside the body.
 - Below the plan, add a `## Next Step` section set to the first `sandman-tdd` action, so the execution phase can start immediately.
+- Once consensus is reached and the plan is ready for implementation, post the exact `## Plan` content as a Markdown comment on the implementor's open work item.
+- Do not post a draft, a rejected review, or any content outside the approved plan. On a retry, check the existing comments first and do not post a duplicate approved plan.
+
+```bash
+gh issue comment <ID> --body "<approved plan>"
+```
 
 ## Plan output shape
 
