@@ -91,6 +91,7 @@ type cleanAction struct {
 	BatchPath string
 	Worktree  string
 	Kind      batchindex.Kind
+	Status    batchindex.Status
 	IsUnavail bool
 }
 
@@ -276,6 +277,7 @@ func collectCleanActions(idx *batchindex.Index, targetStatus batchindex.Status) 
 				BatchID:   entry.ID,
 				BatchPath: entry.Path,
 				Kind:      entry.Kind,
+				Status:    entry.Status,
 				IsUnavail: entry.Status == batchindex.StatusUnavailable,
 			}
 			if !action.IsUnavail && entry.Path != "" {
@@ -356,28 +358,28 @@ func executeClean(actions []cleanAction, gr gitRunner, idx *batchindex.Index, la
 		return 0, nil
 	}
 
-	actionIDs := make(map[string]bool)
-	for _, a := range actions {
-		actionIDs[a.BatchID] = true
-	}
-
 	var removed int
-	for _, a := range actions {
-		if a.Worktree != "" {
-			if err := gr.removeWorktree(a.Worktree); err != nil {
-				_ = gr.pruneAndDeleteBranch(filepath.Base(a.Worktree))
-			}
-		}
-		if a.BatchPath != "" && !a.IsUnavail {
-			_ = os.RemoveAll(a.BatchPath)
-		}
-		removed++
-	}
-
 	if err := batchindex.Update(layout.BatchesIndexPath, func(current *batchindex.Index) error {
+		removedIDs := make(map[string]bool)
+		for _, a := range actions {
+			entry := current.Resolve(a.BatchID)
+			if entry == nil || entry.Path != a.BatchPath || entry.Status != a.Status {
+				continue
+			}
+			if a.Worktree != "" {
+				if err := gr.removeWorktree(a.Worktree); err != nil {
+					_ = gr.pruneAndDeleteBranch(filepath.Base(a.Worktree))
+				}
+			}
+			if a.BatchPath != "" && !a.IsUnavail {
+				_ = os.RemoveAll(a.BatchPath)
+			}
+			removed++
+			removedIDs[a.BatchID] = true
+		}
 		var kept []batchindex.Batch
 		for _, entry := range current.Batches {
-			if !actionIDs[entry.ID] {
+			if !removedIDs[entry.ID] {
 				kept = append(kept, entry)
 			}
 		}

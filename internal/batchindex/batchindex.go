@@ -302,6 +302,14 @@ func (idx *Index) Save(indexPath string) error {
 	if err != nil && !os.IsNotExist(err) {
 		return err
 	}
+	if len(prev) > 0 {
+		var previous Index
+		if err := json.Unmarshal(prev, &previous); err != nil || previous.Version != IndexVersion {
+			// A recovery update must not replace a known-good backup with the
+			// corrupt primary that caused Load to fall back to it.
+			prev = nil
+		}
+	}
 
 	if err := atomicfs.WriteAtomicJSON(indexPath, idx, 0644); err != nil {
 		return err
