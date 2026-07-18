@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -731,4 +732,251 @@ func TestJSONLLogger_CrossProcessChild(t *testing.T) {
 			t.Fatalf("log %d/%d: %v", k, count, err)
 		}
 	}
+}
+
+func TestJSONLLogger_RemoveFailureRestoresAndNextOperationRecovers(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "events.jsonl")
+	seed := &JSONLLogger{Path: path}
+	for _, event := range []Event{{Type: "run.started", RunID: "remove", Issue: 7}, {Type: "run.finished", RunID: "keep", Issue: 8}} {
+		if err := seed.Log(event); err != nil {
+			t.Fatal(err)
+		}
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	logger := &JSONLLogger{
+		Path: path,
+		hooks: &jsonlLoggerHooks{fail: func(stage string) error {
+			if stage == "truncate" {
+				return fmt.Errorf("injected truncate failure")
+			}
+			return nil
+		}},
+	}
+	if err := logger.RemoveEventsByIssue(7); err == nil {
+		t.Fatal("RemoveEventsByIssue succeeded after injected failure")
+	}
+	gotRaw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(gotRaw, raw) {
+		t.Fatalf("failed removal changed main log\nwant %q\n got %q", raw, gotRaw)
+	}
+
+	// Restoration also clears completed recovery artifacts, so a fresh logger
+	// sees the original projection rather than an interrupted transaction.
+	got, err := (&JSONLLogger{Path: path}).Read()
+	if err != nil {
+		t.Fatalf("recovery read: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("recovery lost events: %+v", got)
+	}
+	if _, err := os.Stat(path + ".txn"); !os.IsNotExist(err) {
+		t.Fatalf("transaction marker remains after restoration: %v", err)
+	}
+}
+
+func TestJSONLLogger_InterruptedTransactionRecoversBeforeLog(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "events.jsonl")
+	original := []byte(`{"type":"run.started","timestamp":"2025-01-01T00:00:00Z","run_id":"old","issue":1}` + "\n")
+	if err := os.WriteFile(path, []byte("partial rewrite\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path+".recovery", original, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path+".txn", []byte("pending\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	logger := &JSONLLogger{Path: path}
+	if err := logger.Log(Event{Type: "run.finished", RunID: "new", Issue: 2}); err != nil {
+		t.Fatalf("log after interruption: %v", err)
+	}
+	got, err := logger.Read()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0].RunID != "old" || got[1].RunID != "new" {
+		t.Fatalf("interrupted transaction was not restored: %+v", got)
+	}
+}
+
+func TestJSONLLogger_QuarantineFailureDoesNotRewriteMainLog(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "events.jsonl")
+	raw := []byte(`{"type":"run.started","timestamp":"2025-01-01T00:00:00Z","run_id":"keep","issue":2}` + "\nnot json\n")
+	if err := os.WriteFile(path, raw, 0644); err != nil {
+		t.Fatal(err)
+	}
+	logger := &JSONLLogger{Path: path, hooks: &jsonlLoggerHooks{fail: func(stage string) error {
+		if stage == "quarantine" {
+			return fmt.Errorf("injected quarantine failure")
+		}
+		return nil
+	}}}
+	if err := logger.RemoveEventsByIssue(99); err == nil {
+		t.Fatal("RemoveEventsByIssue succeeded after quarantine failure")
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, raw) {
+		t.Fatalf("quarantine failure rewrote main log\nwant %q\n got %q", raw, got)
+	}
+}
+
+func TestJSONLLogger_LockBlocksOtherInstancesAndReleasesAfterFailure(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "events.jsonl")
+	lock, err := os.OpenFile(path+".lock", os.O_CREATE|os.O_RDWR, 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lock.Close()
+	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX); err != nil {
+		t.Fatal(err)
+	}
+	defer syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)
+
+	done := make(chan error, 1)
+	go func() { done <- (&JSONLLogger{Path: path}).Log(Event{Type: "run.started", RunID: "blocked", Issue: 1}) }()
+	select {
+	case err := <-done:
+		t.Fatalf("Log escaped held advisory lock: %v", err)
+	case <-time.After(30 * time.Millisecond):
+	}
+	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_UN); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-done; err != nil {
+		t.Fatalf("Log after lock release: %v", err)
+	}
+
+	failing := &JSONLLogger{Path: path, hooks: &jsonlLoggerHooks{fail: func(stage string) error {
+		if stage == "snapshot" {
+			return fmt.Errorf("injected failure")
+		}
+		return nil
+	}}}
+	if err := failing.RemoveEventsByIssue(1); err == nil {
+		t.Fatal("expected removal failure")
+	}
+	if err := (&JSONLLogger{Path: path}).Log(Event{Type: "run.finished", RunID: "after-failure", Issue: 2}); err != nil {
+		t.Fatalf("lock was not released after failure: %v", err)
+	}
+}
+
+func TestJSONLLogger_RemovalPreservesRemainingRunStateProjection(t *testing.T) {
+	dir := t.TempDir()
+	logger := &JSONLLogger{Path: filepath.Join(dir, "events.jsonl")}
+	for _, event := range []Event{
+		{Type: "run.started", RunID: "remove", Issue: 7},
+		{Type: "run.finished", RunID: "remove", Issue: 7, Payload: map[string]any{"status": "success"}},
+		{Type: "run.started", RunID: "keep", Issue: 8},
+		{Type: "run.finished", RunID: "keep", Issue: 8, Payload: map[string]any{"status": "failure"}},
+	} {
+		if err := logger.Log(event); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := logger.RemoveEventsByIssue(7); err != nil {
+		t.Fatal(err)
+	}
+	got, err := logger.Read()
+	if err != nil {
+		t.Fatal(err)
+	}
+	states := ProjectRunStates(got)
+	if len(states) != 1 || states[0].RunID != "keep" || states[0].Status() != "failure" {
+		t.Fatalf("remaining projection changed: %+v", states)
+	}
+}
+
+const jsonlLockHolderChildFlag = "SANDMAN_JSONL_LOCK_HOLDER_CHILD"
+
+func TestJSONLLogger_CrossProcessLockCoordinatesRemoveAndLog(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "events.jsonl")
+	ready := filepath.Join(dir, "ready")
+	release := filepath.Join(dir, "release")
+	cmd := exec.Command(os.Args[0], "-test.run=^TestJSONLLogger_CrossProcessLockHolder$")
+	cmd.Env = append(os.Environ(), jsonlLockHolderChildFlag+"=1", "SANDMAN_JSONL_PATH="+path, "SANDMAN_JSONL_READY="+ready, "SANDMAN_JSONL_RELEASE="+release)
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if cmd.ProcessState == nil {
+			_ = cmd.Process.Kill()
+			_ = cmd.Wait()
+		}
+	}()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(ready); err == nil {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if _, err := os.Stat(ready); err != nil {
+		t.Fatalf("lock holder did not become ready: %v", err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		done <- (&JSONLLogger{Path: path}).Log(Event{Type: "run.started", RunID: "after-remove", Issue: 2})
+	}()
+	select {
+	case err := <-done:
+		t.Fatalf("Log ran while another process held the lock: %v", err)
+	case <-time.After(30 * time.Millisecond):
+	}
+	if err := os.WriteFile(release, []byte("go"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Wait(); err != nil {
+		t.Fatalf("lock holder: %v", err)
+	}
+	got, err := (&JSONLLogger{Path: path}).Read()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].RunID != "after-remove" {
+		t.Fatalf("cross-process removal/log result: %+v", got)
+	}
+}
+
+func TestJSONLLogger_CrossProcessLockHolder(t *testing.T) {
+	if os.Getenv(jsonlLockHolderChildFlag) != "1" {
+		t.Skip("cross-process lock holder")
+	}
+	path := os.Getenv("SANDMAN_JSONL_PATH")
+	lock, err := os.OpenFile(path+".lock", os.O_CREATE|os.O_RDWR, 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lock.Close()
+	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX); err != nil {
+		t.Fatal(err)
+	}
+	defer syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)
+	if err := os.WriteFile(os.Getenv("SANDMAN_JSONL_READY"), []byte("ready"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if info, err := os.Stat(os.Getenv("SANDMAN_JSONL_RELEASE")); err == nil && info.Size() > 0 {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatal("parent did not release lock holder")
 }
