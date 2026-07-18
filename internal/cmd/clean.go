@@ -51,9 +51,28 @@ func (r *realGitRunner) pruneAndDeleteBranch(branch string) error {
 	delCmd := exec.Command("git", "branch", "-D", branch)
 	delCmd.Dir = r.repoPath
 	if out, err := delCmd.CombinedOutput(); err != nil {
+		if isBranchNotFoundError(err, out) {
+			return nil
+		}
 		return fmt.Errorf("git branch -D: %w\n%s", err, out)
 	}
 	return nil
+}
+
+func isBranchNotFoundError(err error, output []byte) bool {
+	if err == nil {
+		return false
+	}
+	message := strings.ToLower(string(output) + "\n" + err.Error())
+	if !strings.Contains(message, "branch") {
+		return false
+	}
+	for _, phrase := range []string{"not found", "does not exist", "not a valid branch"} {
+		if strings.Contains(message, phrase) {
+			return true
+		}
+	}
+	return false
 }
 
 func (r *realGitRunner) removeOrphanBranches() (int, error) {
@@ -173,9 +192,9 @@ func NewCleanCmd(deps Dependencies) *cobra.Command {
 				}
 				_ = staleRemoved
 				fmt.Fprintf(cmd.OutOrStdout(), "Recovered %d stale runs as aborted across %d dead directories.\n", recovered, deadDirs)
-				tempDirs, images := runCleanTemps(cmd, deps, layout, false)
+				tempDirs, images, tempErr := runCleanTemps(cmd, deps, layout, false)
 				printCleanReport(cmd, nil, nil, tempDirs, images, false)
-				return nil
+				return tempErr
 			}
 
 			if orphaned {
@@ -232,9 +251,10 @@ func NewCleanCmd(deps Dependencies) *cobra.Command {
 					orphanRemoved = orphanPlan
 				}
 
-				tempDirs, images := runCleanTemps(cmd, deps, layout, dryRun)
+				tempDirs, images, tempErr := runCleanTemps(cmd, deps, layout, dryRun)
 				reportActions := successfulActions(outcomes)
 				printCleanReport(cmd, reportActions, orphanRemoved, tempDirs, images, dryRun)
+				cleanErr = errors.Join(cleanErr, tempErr)
 				if cleanErr != nil {
 					return fmt.Errorf("execute clean: %w", cleanErr)
 				}
@@ -262,8 +282,9 @@ func NewCleanCmd(deps Dependencies) *cobra.Command {
 
 			if dryRun {
 				outcomes, cleanErr := validateCleanActions(actions, layout)
-				tempDirs, images := runCleanTemps(cmd, deps, layout, true)
+				tempDirs, images, tempErr := runCleanTemps(cmd, deps, layout, true)
 				printCleanReport(cmd, successfulActions(outcomes), nil, tempDirs, images, true)
+				cleanErr = errors.Join(cleanErr, tempErr)
 				if cleanErr != nil {
 					return fmt.Errorf("validate clean: %w", cleanErr)
 				}
@@ -272,8 +293,9 @@ func NewCleanCmd(deps Dependencies) *cobra.Command {
 
 			outcomes, cleanErr := executeClean(actions, gr, layout, remover)
 
-			tempDirs, images := runCleanTemps(cmd, deps, layout, false)
+			tempDirs, images, tempErr := runCleanTemps(cmd, deps, layout, false)
 			printCleanReport(cmd, successfulActions(outcomes), nil, tempDirs, images, false)
+			cleanErr = errors.Join(cleanErr, tempErr)
 			if cleanErr != nil {
 				return fmt.Errorf("execute clean: %w", cleanErr)
 			}
@@ -426,7 +448,7 @@ func executeClean(actions []cleanAction, gr gitRunner, layout paths.Layout, remo
 					actionErrs = append(actionErrs, err)
 					continue
 				}
-				if err := gr.pruneAndDeleteBranch(branch); err != nil {
+				if err := gr.pruneAndDeleteBranch(branch); err != nil && !isBranchNotFoundError(err, nil) {
 					err = fmt.Errorf("delete branch %s: %w", branch, err)
 					outcomes = append(outcomes, cleanOutcome{Action: a, Err: err})
 					actionErrs = append(actionErrs, err)
@@ -590,13 +612,16 @@ func runCleanOrphaned(cmd *cobra.Command, deps Dependencies, layout paths.Layout
 		if orphanErr := validateOrphanPaths(plan, layout); orphanErr != nil {
 			return fmt.Errorf("validate orphan paths: %w", orphanErr)
 		}
-		tempDirs, images := runCleanTemps(cmd, deps, layout, true)
+		tempDirs, images, tempErr := runCleanTemps(cmd, deps, layout, true)
 		if len(plan) == 0 && len(tempDirs) == 0 && len(images) == 0 {
+			if tempErr != nil {
+				return tempErr
+			}
 			fmt.Fprintln(cmd.OutOrStdout(), "Nothing to remove.")
 			return nil
 		}
 		printCleanReport(cmd, nil, plan, tempDirs, images, true)
-		return nil
+		return tempErr
 	}
 
 	remover := deps.CleanupRemover
@@ -605,7 +630,8 @@ func runCleanOrphaned(cmd *cobra.Command, deps Dependencies, layout paths.Layout
 	}
 	removed, cleanupErr := cleanupOrphanedBatches(layout, deps.EventLog, probe, remover)
 
-	tempDirs, images := runCleanTemps(cmd, deps, layout, false)
+	tempDirs, images, tempErr := runCleanTemps(cmd, deps, layout, false)
+	cleanupErr = errors.Join(cleanupErr, tempErr)
 	if len(removed) == 0 && len(tempDirs) == 0 && len(images) == 0 {
 		if cleanupErr == nil {
 			fmt.Fprintln(cmd.OutOrStdout(), "Nothing to remove.")
@@ -718,7 +744,7 @@ func pruneBatchesIndexByOrphanPlan(indexPath string, plan []string) error {
 	})
 }
 
-func runCleanTemps(cmd *cobra.Command, deps Dependencies, layout paths.Layout, dryRun bool) (tempDirs []string, images []string) {
+func runCleanTemps(cmd *cobra.Command, deps Dependencies, layout paths.Layout, dryRun bool) (tempDirs []string, images []string, cleanupErr error) {
 	tc := deps.TempCleaner
 	if tc == nil {
 		tc = &realTempCleaner{}
@@ -728,7 +754,7 @@ func runCleanTemps(cmd *cobra.Command, deps Dependencies, layout paths.Layout, d
 	dirs, err := tc.ScanTempDirs(tempDir)
 	if err != nil {
 		fmt.Fprintf(cmd.ErrOrStderr(), "warning: scan temp dirs: %v\n", err)
-		return nil, nil
+		return nil, nil, nil
 	}
 
 	runtime := tc.ResolveRuntime()
@@ -740,23 +766,27 @@ func runCleanTemps(cmd *cobra.Command, deps Dependencies, layout paths.Layout, d
 	}
 
 	if dryRun {
-		return dirs, images
+		return dirs, images, nil
 	}
 
-	var removedDirs, removedImgs int
+	var removalErrs []error
 	for _, d := range dirs {
 		if err := tc.RemoveTempDir(d); err != nil {
 			fmt.Fprintf(cmd.ErrOrStderr(), "warning: remove temp dir %s: %v\n", d, err)
+			removalErrs = append(removalErrs, fmt.Errorf("remove temp dir %s: %w", d, err))
 		} else {
-			removedDirs++
+			tempDirs = append(tempDirs, d)
 		}
 	}
-	for _, img := range images {
+	imageCandidates := images
+	images = nil
+	for _, img := range imageCandidates {
 		if err := tc.RemoveContainerImage(runtime, img); err != nil {
 			fmt.Fprintf(cmd.ErrOrStderr(), "warning: remove image %s: %v\n", img, err)
+			removalErrs = append(removalErrs, fmt.Errorf("remove image %s: %w", img, err))
 		} else {
-			removedImgs++
+			images = append(images, img)
 		}
 	}
-	return dirs[:removedDirs], images[:removedImgs]
+	return tempDirs, images, errors.Join(removalErrs...)
 }

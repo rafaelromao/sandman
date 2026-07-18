@@ -130,6 +130,28 @@ func TestExecuteClean_AbsentWorktreeStillDeletesManifestBranch(t *testing.T) {
 	}
 }
 
+func TestExecuteClean_BranchNotFoundIsSuccessful(t *testing.T) {
+	repo := t.TempDir()
+	layout := paths.NewLayout(&config.Config{}, repo)
+	batchPath := filepath.Join(layout.BatchesDir, "batch")
+	if err := os.MkdirAll(batchPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeBatchIndex(t, repo, []batchindex.Batch{{ID: "batch", Path: batchPath, Status: batchindex.StatusArchived}})
+	actions := []cleanAction{{BatchID: "batch", BatchPath: batchPath, Branch: "sandman/batch", Status: batchindex.StatusArchived}}
+	gr := &fakeGitRunner{pruneAndDeleteBranchErr: errors.New("fatal: branch 'sandman/batch' not found")}
+	if _, err := executeClean(actions, gr, layout, &fakeCleanupRemover{}); err != nil {
+		t.Fatalf("branch-not-found cleanup should succeed: %v", err)
+	}
+	idx, err := batchindex.Load(layout.BatchesIndexPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if idx.Resolve("batch") != nil {
+		t.Fatal("successful cleanup should remove index entry")
+	}
+}
+
 func TestExecuteClean_BranchFailureRetainsEntry(t *testing.T) {
 	repo := t.TempDir()
 	layout := paths.NewLayout(&config.Config{}, repo)
