@@ -206,11 +206,8 @@ func NewCleanCmd(deps Dependencies) *cobra.Command {
 					if _, err := executeClean(actions, gr, idx, layout); err != nil {
 						return fmt.Errorf("execute clean: %w", err)
 					}
-					orphanRemoved, err = daemon.CleanupOrphanedTestBatches(layout.SandmanDir, deps.EventLog, probe)
+					orphanRemoved, err = cleanupOrphanedBatches(layout, deps.EventLog, probe)
 					if err != nil {
-						return fmt.Errorf("cleanup orphaned batches: %w", err)
-					}
-					if err := pruneBatchesIndexByOrphanPlan(layout.BatchesIndexPath, orphanRemoved); err != nil {
 						return err
 					}
 				} else {
@@ -413,11 +410,8 @@ func runCleanOrphaned(cmd *cobra.Command, deps Dependencies, layout paths.Layout
 		return nil
 	}
 
-	removed, err := daemon.CleanupOrphanedTestBatches(layout.SandmanDir, deps.EventLog, probe)
+	removed, err := cleanupOrphanedBatches(layout, deps.EventLog, probe)
 	if err != nil {
-		return fmt.Errorf("cleanup orphaned batches: %w", err)
-	}
-	if err := pruneBatchesIndexByOrphanPlan(layout.BatchesIndexPath, removed); err != nil {
 		return err
 	}
 
@@ -428,6 +422,35 @@ func runCleanOrphaned(cmd *cobra.Command, deps Dependencies, layout paths.Layout
 	}
 	printCleanReport(cmd, nil, removed, tempDirs, images, false)
 	return nil
+}
+
+func cleanupOrphanedBatches(layout paths.Layout, log events.EventLog, probe func(string) bool) ([]string, error) {
+	var removed []string
+	err := batchindex.Update(layout.BatchesIndexPath, func(idx *batchindex.Index) error {
+		var err error
+		removed, err = daemon.CleanupOrphanedTestBatches(layout.SandmanDir, log, probe)
+		if err != nil {
+			return fmt.Errorf("cleanup orphaned batches: %w", err)
+		}
+		removedByID := make(map[string]string, len(removed))
+		for _, path := range removed {
+			absolute, err := filepath.Abs(path)
+			if err != nil {
+				return fmt.Errorf("resolve removed orphan path %q: %w", path, err)
+			}
+			removedByID[filepath.Base(path)] = absolute
+		}
+		kept := idx.Batches[:0]
+		for _, entry := range idx.Batches {
+			if path, ok := removedByID[entry.ID]; ok && filepath.Clean(entry.Path) == filepath.Clean(path) {
+				continue
+			}
+			kept = append(kept, entry)
+		}
+		idx.Batches = kept
+		return nil
+	})
+	return removed, err
 }
 
 // pruneBatchesIndexByOrphanPlan removes the index entries whose BatchID matches
