@@ -163,6 +163,72 @@ func TestCommandServer_AbortFailureReturnsStableCode(t *testing.T) {
 	}
 }
 
+func TestCommandServer_RejectsAbortForAnotherIssue(t *testing.T) {
+	dir := testenv.MkdirShort(t, "sm-cmd-")
+	stub := &fakeCommander{}
+	server := NewCommandServerForIssue(dir, stub, 42)
+	if err := server.Start(); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer server.Stop()
+
+	conn, err := net.Dial("unix", CommandSocketPath(dir))
+	if err != nil {
+		t.Fatalf("dial cmd.sock: %v", err)
+	}
+	defer conn.Close()
+	if err := conn.SetDeadline(time.Now().Add(2 * time.Second)); err != nil {
+		t.Fatalf("set deadline: %v", err)
+	}
+	if err := json.NewEncoder(conn).Encode(CommandRequest{Action: "abort", Issue: 43}); err != nil {
+		t.Fatalf("encode request: %v", err)
+	}
+
+	var resp CommandResponse
+	if err := json.NewDecoder(conn).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.Status != "error" || resp.Message != "abort_failed" {
+		t.Fatalf("response = %+v, want abort_failed", resp)
+	}
+	if calls := stub.calls(); len(calls) != 0 {
+		t.Fatalf("commander calls = %v, want none", calls)
+	}
+}
+
+func TestCommandServer_AllowsAbortForBoundIssue(t *testing.T) {
+	dir := testenv.MkdirShort(t, "sm-cmd-")
+	stub := &fakeCommander{}
+	server := NewCommandServerForIssue(dir, stub, 42)
+	if err := server.Start(); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer server.Stop()
+
+	conn, err := net.Dial("unix", CommandSocketPath(dir))
+	if err != nil {
+		t.Fatalf("dial cmd.sock: %v", err)
+	}
+	defer conn.Close()
+	if err := conn.SetDeadline(time.Now().Add(2 * time.Second)); err != nil {
+		t.Fatalf("set deadline: %v", err)
+	}
+	if err := json.NewEncoder(conn).Encode(CommandRequest{Action: "abort", Issue: 42}); err != nil {
+		t.Fatalf("encode request: %v", err)
+	}
+
+	var resp CommandResponse
+	if err := json.NewDecoder(conn).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.Status != "ok" {
+		t.Fatalf("response = %+v, want ok", resp)
+	}
+	if calls := stub.calls(); len(calls) != 1 || calls[0] != 42 {
+		t.Fatalf("commander calls = %v, want [42]", calls)
+	}
+}
+
 func TestCommandServer_RejectsUnknownFields(t *testing.T) {
 	dir := testenv.MkdirShort(t, "sm-cmd-")
 	stub := &fakeCommander{}

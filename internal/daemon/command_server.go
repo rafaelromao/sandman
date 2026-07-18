@@ -66,16 +66,30 @@ func CommandSocketPath(dir string) string {
 // lifecycle and removes the filesystem socket path when the listener is
 // path-based.
 type CommandServer struct {
-	dir        string
-	commander  IssueCommander
-	listener   net.Listener
-	isAbstract bool
+	dir         string
+	commander   IssueCommander
+	targetIssue int
+	targetBound bool
+	listener    net.Listener
+	isAbstract  bool
 }
 
 // NewCommandServer wires a CommandServer to the given run directory and
 // orchestrator. Start must be called to begin accepting connections.
 func NewCommandServer(dir string, commander IssueCommander) *CommandServer {
 	return &CommandServer{dir: dir, commander: commander}
+}
+
+// NewCommandServerForIssue binds abort requests to the issue represented by
+// this run's socket. Requests for another issue are rejected before reaching
+// the shared commander.
+func NewCommandServerForIssue(dir string, commander IssueCommander, issueNumber int) *CommandServer {
+	return &CommandServer{
+		dir:         dir,
+		commander:   commander,
+		targetIssue: issueNumber,
+		targetBound: true,
+	}
 }
 
 // Start creates the command socket and begins accepting connections.
@@ -171,6 +185,10 @@ func (s *CommandServer) handle(conn net.Conn) {
 	}
 	switch req.Action {
 	case "abort":
+		if s.targetBound && (s.targetIssue <= 0 || req.Issue != s.targetIssue) {
+			writeResponse(conn, CommandResponse{Status: "error", Message: "abort_failed"})
+			return
+		}
 		if s.commander == nil {
 			writeResponse(conn, CommandResponse{Status: "error", Message: "abort_failed"})
 			return
