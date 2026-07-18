@@ -2326,6 +2326,7 @@ func runSandmanBinary(t *testing.T, binPath, workDir string, args ...string) (st
 	cmd.Dir = workDir
 	cmd.Env = append(os.Environ(),
 		"PATH="+ghBin+string(os.PathListSeparator)+os.Getenv("PATH"),
+		"HOME="+filepath.Join(workDir, ".sandman-test-home"),
 		"GH_TOKEN=fake",
 		"GITHUB_TOKEN=fake",
 	)
