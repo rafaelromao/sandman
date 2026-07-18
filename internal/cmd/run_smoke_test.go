@@ -217,6 +217,7 @@ func mergedPR(branch, sha string) *github.PR {
 
 func runSmokeProviderTwice(t *testing.T, tc smokeProviderCase, secondArgs ...string) {
 	t.Helper()
+	requireSmokeE2E(t)
 	runtime, repoDir, deps, issue := prepareSmokeProvider(t, tc)
 	out, err := executeSmokeRun(t, deps, runtime, issue.Number)
 	if err != nil {
@@ -284,11 +285,20 @@ func TestSmoke_RealAgentCLIs_Continue(t *testing.T) {
 	runSmokeProviderTwice(t, smokeProviderCases[0], "--continue")
 }
 
+func requireSmokeE2E(t *testing.T) {
+	t.Helper()
+	if os.Getenv("SANDMAN_RUN_SMOKE_E2E") != "1" {
+		t.Skip("skip smoke real-agent e2e: SANDMAN_RUN_SMOKE_E2E=1 not set")
+	}
+}
+
 func parseSmokeProviders(cases []smokeProviderCase) (map[string]bool, error) {
 	return testenv.ResolveProviderAllowlist(smokeProviderNames(cases))
 }
 
 func runSmokeProviderCases(t *testing.T, cases []smokeProviderCase) {
+	requireSmokeE2E(t)
+
 	allowed, err := parseSmokeProviders(cases)
 	if err != nil {
 		t.Fatal(err)
@@ -527,7 +537,7 @@ func customizeSmokeConfig(repoDir, provider, model string) (*config.Config, erro
 func ensureSmokeHostCLI(t *testing.T, tc smokeProviderCase) {
 	t.Helper()
 
-	if _, err := exec.LookPath(tc.hostCLI); err != nil {
+	if _, err := cachedLookPath(tc.hostCLI); err != nil {
 		t.Skipf("skip %s smoke: host CLI %q not installed", tc.name, tc.hostCLI)
 	}
 }

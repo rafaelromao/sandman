@@ -25,7 +25,7 @@ func (buildPrompter) Select(string, []string) (string, error) { return "", nil }
 // exceeded the 10m per-test timeout, taking the whole test binary down with
 // SIGQUIT. The smoke pre-warm already exercises every variant we want to
 // assert against when the host can build it; on hosts where the pre-warm
-// could not produce the image (or where SANDMAN_SMOKE_PREFETCH=0), the test
+// could not produce the image (or where SANDMAN_RUN_SMOKE_E2E=1 / SANDMAN_SMOKE_PREFETCH=1 were not set), the test
 // is skipped instead of being retried.
 const buildPresetImageSkipRationale = "smoke pre-warm image not available for this (agent, preset) pair; per-test build skipped to stay inside the 10m timeout"
 

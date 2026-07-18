@@ -84,9 +84,9 @@ Interrupted or failed e2e runs leave worktrees, orphaned batch directories, and 
 
 ## Sandbox container image changes don't take effect
 
-Smoke tests prewarm a per-provider / per-buildTools image. Subsequent test invocations reuse the cached image unless the cache is cleared.
+Smoke tests skip the expensive real-agent cases unless `SANDMAN_RUN_SMOKE_E2E=1` is set. When enabled, they build a per-provider / per-buildTools image on demand. Set `SANDMAN_SMOKE_PREFETCH=1` to enable the optional upfront prewarm fan-out; subsequent test invocations reuse the cached image unless the cache is cleared.
 
-- Disable the prewarm and force every smoke test to build its own image: `SANDMAN_SMOKE_PREFETCH=0 SANDMAN_TEST_PROVIDERS=opencode go test -tags smoke ./internal/cmd -run Smoke`.
+- Enable the real-agent smoke path with prewarm: `SANDMAN_RUN_SMOKE_E2E=1 SANDMAN_SMOKE_PREFETCH=1 SANDMAN_TEST_PROVIDERS=opencode go test -tags smoke ./internal/cmd -run Smoke`.
 - See [Testing > Smoke image prewarm](../development/testing.md#smoke-image-prewarm).
 
 ## Git identity missing

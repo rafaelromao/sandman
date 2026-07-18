@@ -366,7 +366,8 @@ func writeAbortE2EConfig(t *testing.T, repoDir string) {
 
 func containerRuntimeAvailable(t *testing.T) bool {
 	t.Helper()
-	for _, runtime := range []string{"podman", "docker"} {
+	runtime, err := cachedContainerRuntime()
+	if err == nil {
 		cmd := exec.Command(runtime, "version")
 		if cmd.Run() == nil {
 			return true
