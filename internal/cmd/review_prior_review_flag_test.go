@@ -20,6 +20,9 @@ type fakePRCommentsClient struct {
 func (f *fakePRCommentsClient) ListPRComments(ctx context.Context, number int) ([]github.PRComment, error) {
 	return f.comments, f.err
 }
+func (f *fakePRCommentsClient) AuthenticatedLogin(ctx context.Context) (string, error) {
+	return "sandman", nil
+}
 
 // Stubs to satisfy review.GitHubClient — not exercised by these tests.
 func (f *fakePRCommentsClient) FetchPR(ctx context.Context, number int) (*github.PR, error) {

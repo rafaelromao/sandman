@@ -77,6 +77,9 @@ func (badgeE2EIssueGitHubClient) ListOpenPRs(_ context.Context) ([]github.PR, er
 func (badgeE2EIssueGitHubClient) ListPRComments(_ context.Context, _ int) ([]github.PRComment, error) {
 	return nil, nil
 }
+func (badgeE2EIssueGitHubClient) AuthenticatedLogin(_ context.Context) (string, error) {
+	return "sandman", nil
+}
 func (badgeE2EIssueGitHubClient) ListIssueComments(_ context.Context, _ int) ([]github.IssueComment, error) {
 	return nil, nil
 }

@@ -240,6 +240,10 @@ func (f *fakeGitHubClient) ListPRComments(ctx context.Context, number int) ([]gi
 	return nil, nil
 }
 
+func (f *fakeGitHubClient) AuthenticatedLogin(ctx context.Context) (string, error) {
+	return "sandman", nil
+}
+
 func (f *fakeGitHubClient) ListIssueComments(ctx context.Context, number int) ([]github.IssueComment, error) {
 	f.listIssueCommentsCalls = append(f.listIssueCommentsCalls, number)
 	if f.issueComments == nil {

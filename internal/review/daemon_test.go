@@ -37,17 +37,28 @@ type reactionCall struct {
 // fakeGH is a test double for the GitHubClient surface area used by the
 // review daemon.
 type fakeGH struct {
-	mu            sync.Mutex
-	prs           []github.PR
-	comments      map[int][]github.PRComment
-	prFetch       map[int]*github.PR
-	listErr       error
-	commentErr    map[int]error
-	fetchErr      map[int]error
-	listCalls     int
-	commentCalls  map[int]int // tracks ListPRComments calls per PR number
-	reactionCalls []reactionCall
-	addReactionID int // auto-increment for fake reaction IDs
+	mu                    sync.Mutex
+	prs                   []github.PR
+	comments              map[int][]github.PRComment
+	prFetch               map[int]*github.PR
+	listErr               error
+	commentErr            map[int]error
+	fetchErr              map[int]error
+	authenticatedLogin    string
+	authenticatedLoginErr error
+	listCalls             int
+	commentCalls          map[int]int // tracks ListPRComments calls per PR number
+	reactionCalls         []reactionCall
+	addReactionID         int // auto-increment for fake reaction IDs
+}
+
+func (f *fakeGH) AuthenticatedLogin(ctx context.Context) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.authenticatedLogin == "" && f.authenticatedLoginErr == nil {
+		return "sandman", nil
+	}
+	return f.authenticatedLogin, f.authenticatedLoginErr
 }
 
 func (f *fakeGH) ListOpenPRs(ctx context.Context) ([]github.PR, error) {
@@ -995,8 +1006,11 @@ func TestDaemon_StartSocketCreatesReviewSock(t *testing.T) {
 func TestDaemon_RunRespondsToTrigger(t *testing.T) {
 	gh := &fakeGH{
 		prs: []github.PR{{Number: 1, State: "open"}},
+		comments: map[int][]github.PRComment{
+			1: {{ID: "request", AuthorLogin: "SandMan", Body: "/sandman review"}},
+		},
 	}
-	runner := &capturedRequest{}
+	runner := newDecisionRunner()
 	d, _, _ := newDaemonForTest(t, gh, runner, &config.Config{
 		DefaultReviewAgent: "opencode",
 		DefaultReviewModel: "m",
@@ -1030,12 +1044,120 @@ func TestDaemon_RunRespondsToTrigger(t *testing.T) {
 	if calls != 1 {
 		t.Fatalf("expected exactly 1 list call, got %d", calls)
 	}
+	deadline = time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if runner.Calls() == 1 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if got := runner.Calls(); got != 1 {
+		t.Fatalf("review launches = %d, want 1 for authenticated request", got)
+	}
 
 	cancel()
 	select {
 	case <-done:
 	case <-time.After(2 * time.Second):
 		t.Fatal("Run did not return after context cancel")
+	}
+}
+
+func TestDaemon_RunFailsClosedWhenAuthenticatedLoginLookupFails(t *testing.T) {
+	gh := &fakeGH{authenticatedLoginErr: errors.New("not authenticated")}
+	d, _, _ := newDaemonForTest(t, gh, &capturedRequest{}, &config.Config{
+		DefaultReviewAgent: "opencode",
+		DefaultReviewModel: "m",
+	})
+	d.Trigger = make(chan struct{})
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	err := d.Run(ctx)
+	if err == nil || !strings.Contains(err.Error(), "authenticated GitHub login") {
+		t.Fatalf("Run error = %v, want authenticated-login lookup failure", err)
+	}
+
+	gh.mu.Lock()
+	defer gh.mu.Unlock()
+	if gh.listCalls != 0 {
+		t.Fatalf("ListOpenPRs calls = %d, want 0 after authentication failure", gh.listCalls)
+	}
+}
+
+func TestDaemon_RunFailsClosedWhenAuthenticatedLoginIsEmpty(t *testing.T) {
+	gh := &fakeGH{authenticatedLogin: " "}
+	d, _, _ := newDaemonForTest(t, gh, &capturedRequest{}, &config.Config{
+		DefaultReviewAgent: "opencode",
+		DefaultReviewModel: "m",
+	})
+	d.Trigger = make(chan struct{})
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	err := d.Run(ctx)
+	if err == nil || !strings.Contains(err.Error(), "authenticated GitHub login is empty") {
+		t.Fatalf("Run error = %v, want empty authenticated-login failure", err)
+	}
+
+	gh.mu.Lock()
+	defer gh.mu.Unlock()
+	if gh.listCalls != 0 {
+		t.Fatalf("ListOpenPRs calls = %d, want 0 after empty authentication login", gh.listCalls)
+	}
+}
+
+func TestDaemon_IgnoresReviewRequestsFromOtherUsers(t *testing.T) {
+	gh := &fakeGH{
+		prs: []github.PR{{Number: 42, State: "open"}},
+		comments: map[int][]github.PRComment{
+			42: {{ID: "foreign", AuthorLogin: "other-user", Body: "/sandman review"}},
+		},
+	}
+	runner := newDecisionRunner()
+	d, _, _ := newDaemonForTest(t, gh, runner, &config.Config{
+		DefaultReviewAgent: "opencode",
+		DefaultReviewModel: "m",
+	})
+	d.authenticatedLogin = "sandman"
+
+	tickAndWait(t, d, context.Background())
+	if got := runner.Calls(); got != 0 {
+		t.Fatalf("review launches = %d, want 0", got)
+	}
+	gh.mu.Lock()
+	defer gh.mu.Unlock()
+	if len(gh.reactionCalls) != 0 {
+		t.Fatalf("reactions = %#v, want none", gh.reactionCalls)
+	}
+}
+
+func TestDaemon_AuthorizedRequestIsNotSupersededByNewerForeignRequest(t *testing.T) {
+	now := time.Now()
+	gh := &fakeGH{
+		prs: []github.PR{{Number: 42, State: "open"}},
+		comments: map[int][]github.PRComment{
+			42: {
+				{ID: "authorized", AuthorLogin: "SandMan", Body: "/sandman review focus on tests", CreatedAt: now},
+				{ID: "foreign", AuthorLogin: "other-user", Body: "/sandman review", CreatedAt: now.Add(time.Minute)},
+			},
+		},
+	}
+	runner := newDecisionRunner()
+	d, _, _ := newDaemonForTest(t, gh, runner, &config.Config{
+		DefaultReviewAgent: "opencode",
+		DefaultReviewModel: "m",
+	})
+	d.authenticatedLogin = "sandman"
+
+	tickAndWait(t, d, context.Background())
+	if got := runner.Calls(); got != 1 {
+		t.Fatalf("review launches = %d, want 1", got)
+	}
+	runner.mu.Lock()
+	defer runner.mu.Unlock()
+	if got := runner.last.ReviewFocus; got != "focus on tests" {
+		t.Fatalf("review focus = %q, want authorized request focus", got)
 	}
 }
 
