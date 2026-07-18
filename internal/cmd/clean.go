@@ -447,7 +447,9 @@ func pruneBatchesIndexByOrphanPlan(indexPath string, plan []string) error {
 		var kept []batchindex.Batch
 		for _, entry := range idx.Batches {
 			if plannedPath, drop := pruned[entry.ID]; drop && filepath.Clean(entry.Path) == filepath.Clean(plannedPath) {
-				continue
+				if _, err := os.Stat(entry.Path); os.IsNotExist(err) {
+					continue
+				}
 			}
 			kept = append(kept, entry)
 		}
