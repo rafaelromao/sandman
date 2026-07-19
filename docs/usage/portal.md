@@ -74,9 +74,9 @@ Use the picker to switch between the continuation and the previous run without c
 
 Sandman does not migrate on-disk state across version upgrades. Clear `.sandman/` and re-run `sandman init` after upgrading. See [Troubleshooting](../help/troubleshooting.md#portal-shows-unknown-rows-after-upgrading-sandman) if the portal shows unknown rows.
 
-## Stop (Abort)
+## Abort
 
-Use the **Stop** button in the portal UI to abort a running issue. The portal calls:
+Use the **Abort** button in the portal UI to abort a running issue. The portal calls:
 
 ```
 POST /api/runs/abort
