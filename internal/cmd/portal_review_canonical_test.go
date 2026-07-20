@@ -1498,7 +1498,7 @@ func badgeAssertion(issue int) string {
 
 // TestPortal_ReviewGrouping_OrphanReviewStaysOrphan pins the slice-3
 // acceptance criterion: an orphan review (no linked issue) must
-// surface as a standalone "Review of PR <n>" row, NOT grouped under
+// surface as a standalone "PR <n>" row, NOT grouped under
 // any issue. The row's GroupedReview flag is false and IssueNumber
 // is 0. Without this invariant the portal would either drop the row
 // in dedupRuns or falsely attach it to an unrelated issue.
@@ -1543,8 +1543,8 @@ func TestPortal_ReviewGrouping_OrphanReviewStaysOrphan(t *testing.T) {
 	if row.GroupedReview {
 		t.Errorf("GroupedReview=true, want false (orphan review must not group under an issue)")
 	}
-	if !strings.HasPrefix(row.IssueLabel, "Review of PR") {
-		t.Errorf("IssueLabel=%q, want prefix %q (ADR-0029 orphan review label)", row.IssueLabel, "Review of PR")
+	if !strings.HasPrefix(row.IssueLabel, "PR ") {
+		t.Errorf("IssueLabel=%q, want prefix %q (issue #2296 orphan review label)", row.IssueLabel, "PR ")
 	}
 }
 

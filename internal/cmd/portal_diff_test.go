@@ -623,7 +623,7 @@ if (!visibleRow) throw new Error('expected orphan review visible under its real 
 func TestPortalDiffDiffRuns_SubjectSelectorExcludesUndefinedIssueRuns(t *testing.T) {
 	js := `const body = makeMockBody();
 // Orphan review with no issueNumber at all — the expanded row.
-const orphan = { key: 'PR42', runId: 'PR42', review: true, issueLabel: 'Review of PR 42', prNumber: 42, kind: 'active', status: 'reviewing', startedAt: '2026-06-30T12:00:00Z' };
+const orphan = { key: 'PR42', runId: 'PR42', review: true, issueLabel: 'PR 42', prNumber: 42, kind: 'active', status: 'reviewing', startedAt: '2026-06-30T12:00:00Z' };
 // Unrelated runs that carry NO issueNumber (prompt-only rows).
 // These must be ignored entirely, never grouped onto the orphan.
 const noIssue1 = { key: 'prompt-a', runId: 'prompt-a', issueLabel: 'Prompt', kind: 'active', status: 'running' };
@@ -3551,7 +3551,7 @@ const wrap = created.row.querySelector('[data-cell="title"]').children[0];
 func TestPortalDiffUpdateCells_ReasonChangeAddsAndRemovesChipInPlace(t *testing.T) {
 	js := `const body = makeMockBody();
 const runOld = { key: 'a', runId: 'r1', kind: 'completed', status: 'success', issueLabel: '#42' };
-const runNew = Object.assign({}, runOld, { reason: 'review', issueLabel: 'Review of PR 42' });
+const runNew = Object.assign({}, runOld, { reason: 'review', issueLabel: 'PR 42' });
 const stopGroups = new Set();
 const opts = { helpers, stopGroups, expandedKey: null };
 const created = SandmanPortalDiff.insertRunRow(body, runOld, opts);
@@ -3562,7 +3562,7 @@ SandmanPortalDiff.resetCounters();
 SandmanPortalDiff.updateRunRowCells(created.row, runOld, runNew, opts);
 const ctxRow = body.querySelector('tr.context-row[data-context-for="a"]');
 if (ctxRow) throw new Error('review rows must not render a context row');
-if (wrap.children[0].textContent !== 'Review of PR 42') throw new Error('expected name updated to review label');
+if (wrap.children[0].textContent !== 'PR 42') throw new Error('expected name updated to review label');
 if (wrap.children[1].textContent.indexOf('r1') < 0) throw new Error('expected meta-line to retain run id');
 const runNew2 = Object.assign({}, runNew, { reason: '' });
 SandmanPortalDiff.resetCounters();
@@ -4128,7 +4128,7 @@ console.log('PASS');
 // TestPortalRunsView_VisibleRunForIssueGroup_ReviewOnlyLabelsIssueWithPrefix
 // is the tracer bullet for issue #1526: a review-only issue group must
 // produce a visible row whose issueLabel explicitly signals review-only
-// (e.g. "Review of PR 1508 (#1472)") rather than reusing the source PR
+// (e.g. "PR 1508 (#1472)") rather than reusing the source PR
 // label or fabricating a bare issue label. The PR the review targeted
 // is surfaced first, the linked issue is shown as a parenthesised
 // reference.
@@ -4139,7 +4139,6 @@ if (!stub) throw new Error('expected visible row for review-only issue group');
 const label = String(stub.issueLabel || '');
 if (label === 'PR1508') throw new Error('expected review-only label to differ from source PR label, got bare PR label ' + JSON.stringify(label));
 if (label === '#1472') throw new Error('expected review-only label to differ from bare issue label, got bare issue label ' + JSON.stringify(label));
-if (label.indexOf('Review') < 0) throw new Error('expected review-only label to mention Review, got ' + JSON.stringify(label));
 if (label.indexOf('PR 1508') < 0) throw new Error('expected review-only label to reference the PR number, got ' + JSON.stringify(label));
 if (label.indexOf('#1472') < 0) throw new Error('expected review-only label to reference the issue number, got ' + JSON.stringify(label));
 console.log('PASS');
@@ -4170,14 +4169,14 @@ console.log('PASS');
 // TestPortalRunsView_VisibleRunsForTable_OrphanReviewRowCarriesReviewOnlyLabel
 // covers behaviour #3 of issue #1526 at the table-projection level:
 // visibleRunsForTable must surface the orphan review's issueLabel as
-// "Review of PR <N> (#<issue>)", so the table renders the explicit
+// "PR <N> (#<issue>)", so the table renders the explicit
 // review-only label with both the PR and the linked issue visible.
 func TestPortalRunsView_VisibleRunsForTable_OrphanReviewRowCarriesReviewOnlyLabel(t *testing.T) {
 	js := `const review = { key: 'PR1508', kind: 'active', status: 'reviewing', review: true, issueLabel: 'PR1508', runId: 'PR1508', issueNumber: 1472, prNumber: 1508, startedAt: '2026-06-30T12:00:00Z' };
 const visible = visibleRunsForTable([review]);
 if (visible.length !== 1) throw new Error('expected exactly one visible row, got ' + JSON.stringify(visible.length));
 if (visible[0].key !== 'PR1508') throw new Error('expected visible row key to match source runId, got ' + JSON.stringify(visible[0].key));
-if (visible[0].issueLabel !== 'Review of PR 1508 (#1472)') throw new Error('expected visible row label to be explicit review-only with PR+issue, got ' + JSON.stringify(visible[0].issueLabel));
+if (visible[0].issueLabel !== 'PR 1508 (#1472)') throw new Error('expected visible row label to be explicit review-only with PR+issue, got ' + JSON.stringify(visible[0].issueLabel));
 console.log('PASS');
 `
 	runPortalHTMLScript(t, js)
@@ -4187,14 +4186,14 @@ console.log('PASS');
 // pins the no-issue-number projection of issue #1667: an orphan review
 // row (review=true, no issueNumber) is routed to the passthrough bucket
 // in visibleRunsForTable, and the row survives with whatever issueLabel
-// the Go projection set — here the explicit "Review of PR <N>" we now
+// the Go projection set — here the explicit "PR <N>" we now
 // construct server-side for this case.
 func TestPortalRunsView_VisibleRunsForTable_OrphanReviewWithoutIssueNumberPassesThrough(t *testing.T) {
-	js := `const review = { key: '260622193226-a0c19-PR1508', kind: 'active', status: 'reviewing', review: true, issueLabel: 'Review of PR 1508', runId: '260622193226-a0c19-PR1508', prNumber: 1508, startedAt: '2026-06-30T12:00:00Z' };
+	js := `const review = { key: '260622193226-a0c19-PR1508', kind: 'active', status: 'reviewing', review: true, issueLabel: 'PR 1508', runId: '260622193226-a0c19-PR1508', prNumber: 1508, startedAt: '2026-06-30T12:00:00Z' };
 const visible = visibleRunsForTable([review]);
 if (visible.length !== 1) throw new Error('expected exactly one visible row, got ' + JSON.stringify(visible.length));
 if (visible[0].key !== '260622193226-a0c19-PR1508') throw new Error('expected visible row key to match source runId, got ' + JSON.stringify(visible[0].key));
-if (visible[0].issueLabel !== 'Review of PR 1508') throw new Error('expected visible row label to use the Review of PR <n> form, got ' + JSON.stringify(visible[0].issueLabel));
+if (visible[0].issueLabel !== 'PR 1508') throw new Error('expected visible row label to use the PR <n> form, got ' + JSON.stringify(visible[0].issueLabel));
 console.log('PASS');
 `
 	runPortalHTMLScript(t, js)
@@ -4202,13 +4201,13 @@ console.log('PASS');
 
 // TestPortalDiffCreateRunRow_OrphanReviewWithoutIssueNumberRendersReviewOfPRLabel
 // asserts the DOM end of issue #1667: when a passthrough orphan review
-// row carries an explicit "Review of PR <n>" issueLabel, the rendered
+// row carries an explicit "PR <n>" issueLabel, the rendered
 // name cell surfaces that label verbatim (matching the convention used
 // for orphan reviews WITH an issue number,
-// ADR-0029 §Review-only orphan label).
+// issue #2296 §Review-only orphan label).
 func TestPortalDiffCreateRunRow_OrphanReviewWithoutIssueNumberRendersReviewOfPRLabel(t *testing.T) {
 	js := `const body = makeMockBody();
-const review = { key: '260622193226-a0c19-PR1508', kind: 'active', status: 'reviewing', review: true, issueLabel: 'Review of PR 1508', runId: '260622193226-a0c19-PR1508', prNumber: 1508, startedAt: '2026-06-30T12:00:00Z' };
+const review = { key: '260622193226-a0c19-PR1508', kind: 'active', status: 'reviewing', review: true, issueLabel: 'PR 1508', runId: '260622193226-a0c19-PR1508', prNumber: 1508, startedAt: '2026-06-30T12:00:00Z' };
 const stopGroups = new Set();
 const opts = { helpers, stopGroups, expandedKey: null };
 const created = SandmanPortalDiff.insertRunRow(body, review, opts);
@@ -4220,7 +4219,7 @@ const wrap = titleCell.children[0];
 if (!wrap) throw new Error('expected wrap div in title cell');
 const name = Array.from(wrap.children || []).find((c) => c.classList && c.classList.contains('name'));
 if (!name) throw new Error('expected name span in title wrap, got ' + JSON.stringify(Array.from(wrap.children || []).map((c) => c.className || c.tagName)));
-if (name.textContent !== 'Review of PR 1508') throw new Error('expected name text "Review of PR 1508", got ' + JSON.stringify(name.textContent));
+if (name.textContent !== 'PR 1508') throw new Error('expected name text "PR 1508", got ' + JSON.stringify(name.textContent));
 console.log('PASS');
 `
 	runNodeScript(t, js)
@@ -4232,10 +4231,10 @@ console.log('PASS');
 // the review run's content directly. A review-only orphan is always alone, so
 // no subject selector should render. The visible row here mirrors what
 // visibleRunForIssueGroup produces: identity fields from the review run
-// with an explicit "Review of PR <N> (#<issue>)" issueLabel.
+// with an explicit "PR <N> (#<issue>)" issueLabel.
 func TestPortalDiffDiffRuns_OrphanReviewWithReviewOnlyLabelExpandsToDetailPanel(t *testing.T) {
 	js := `const body = makeMockBody();
-const orphanRow = { key: 'PR1508', runId: 'PR1508', review: true, groupedReview: false, issueLabel: 'Review of PR 1508 (#1472)', issueNumber: 1472, prNumber: 1508, kind: 'active', status: 'reviewing', startedAt: '2026-06-30T12:00:00Z' };
+const orphanRow = { key: 'PR1508', runId: 'PR1508', review: true, groupedReview: false, issueLabel: 'PR 1508 (#1472)', issueNumber: 1472, prNumber: 1508, kind: 'active', status: 'reviewing', startedAt: '2026-06-30T12:00:00Z' };
 const review = { key: 'PR1508', runId: 'PR1508', review: true, issueLabel: 'PR1508', issueNumber: 1472, prNumber: 1508, kind: 'active', status: 'reviewing', startedAt: '2026-06-30T12:00:00Z' };
 const stopGroups = new Set();
 const opts = { helpers, stopGroups, expandedKey: 'PR1508', runs: [review], visibleRuns: [orphanRow] };
@@ -4264,7 +4263,7 @@ func TestPortalDiffDiffRuns_OrphanReviewSubjectSwitchPreservesRowIdentity(t *tes
 	js := `const body = makeMockBody();
 const terminal = { key: 'PR1507', kind: 'completed', status: 'success', review: true, issueLabel: 'PR1507', runId: 'PR1507', issueNumber: 1472, prNumber: 1507, startedAt: '2026-06-29T10:00:00Z' };
 const live = { key: 'PR1508', kind: 'active', status: 'reviewing', review: true, issueLabel: 'PR1508', runId: 'PR1508', issueNumber: 1472, prNumber: 1508, startedAt: '2026-06-30T10:00:00Z' };
-const orphanRow = { key: 'PR1508', runId: 'PR1508', review: true, groupedReview: false, issueLabel: 'Review of PR 1508 (#1472)', issueNumber: 1472, prNumber: 1508, kind: 'active', status: 'reviewing', startedAt: '2026-06-30T12:00:00Z' };
+const orphanRow = { key: 'PR1508', runId: 'PR1508', review: true, groupedReview: false, issueLabel: 'PR 1508 (#1472)', issueNumber: 1472, prNumber: 1508, kind: 'active', status: 'reviewing', startedAt: '2026-06-30T12:00:00Z' };
 const stopGroups = new Set();
 const opts = { helpers, stopGroups, expandedKey: 'PR1508', runs: [terminal, live], visibleRuns: [orphanRow] };
 SandmanPortalDiff.diffRuns(body, [orphanRow], opts);

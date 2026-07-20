@@ -42,7 +42,7 @@ func TestPortal_Compute_ReasonTableForAllRunKinds(t *testing.T) {
 				{Type: "run.started", Timestamp: time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC), RunID: "PR42", Payload: map[string]any{"review": true, "pr_number": 42, "branch": "sandman/review-PR42"}},
 				{Type: "run.finished", Timestamp: time.Date(2025, 1, 1, 12, 5, 0, 0, time.UTC), RunID: "PR42", Payload: map[string]any{"review": true, "pr_number": 42, "status": "success", "branch": "sandman/review-PR42"}},
 			},
-			want: want{reason: "review", status: "success", kind: "completed", review: true, prNum: 42, label: "Review of PR 42"},
+			want: want{reason: "review", status: "success", kind: "completed", review: true, prNum: 42, label: "PR 42"},
 		},
 		{
 			name: "review failure",
@@ -50,7 +50,7 @@ func TestPortal_Compute_ReasonTableForAllRunKinds(t *testing.T) {
 				{Type: "run.started", Timestamp: time.Date(2025, time.January, 1, 12, 0, 0, 0, time.UTC), RunID: "PR42-fail", Payload: map[string]any{"review": true, "pr_number": 42, "branch": "sandman/review-PR42"}},
 				{Type: "run.finished", Timestamp: time.Date(2025, time.January, 1, 12, 5, 0, 0, time.UTC), RunID: "PR42-fail", Payload: map[string]any{"review": true, "pr_number": 42, "status": "failure", "branch": "sandman/review-PR42"}},
 			},
-			want: want{reason: "review", status: "failure", kind: "completed", review: true, prNum: 42, label: "Review of PR 42"},
+			want: want{reason: "review", status: "failure", kind: "completed", review: true, prNum: 42, label: "PR 42"},
 		},
 		{
 			name: "review aborted",
@@ -58,7 +58,7 @@ func TestPortal_Compute_ReasonTableForAllRunKinds(t *testing.T) {
 				{Type: "run.started", Timestamp: time.Date(2025, time.January, 1, 12, 0, 0, 0, time.UTC), RunID: "PR42-abort", Payload: map[string]any{"review": true, "pr_number": 42, "branch": "sandman/review-PR42"}},
 				{Type: "run.aborted", Timestamp: time.Date(2025, time.January, 1, 12, 5, 0, 0, time.UTC), RunID: "PR42-abort", Payload: map[string]any{"review": true, "pr_number": 42, "status": "aborted", "branch": "sandman/review-PR42"}},
 			},
-			want: want{reason: "review", status: "aborted", kind: "completed", review: true, prNum: 42, label: "Review of PR 42"},
+			want: want{reason: "review", status: "aborted", kind: "completed", review: true, prNum: 42, label: "PR 42"},
 		},
 		{
 			name: "regular issue-driven run",
@@ -988,8 +988,8 @@ func TestPortal_Polling_ReviewSuccessPreservesReviewFlagAndReason(t *testing.T) 
 		if got.PRNumber != 42 {
 			t.Fatalf("%s: PRNumber = %d, want 42", label, got.PRNumber)
 		}
-		if got.IssueLabel != "Review of PR 42" {
-			t.Fatalf("%s: IssueLabel = %q, want %q", label, got.IssueLabel, "Review of PR 42")
+		if got.IssueLabel != "PR 42" {
+			t.Fatalf("%s: IssueLabel = %q, want %q", label, got.IssueLabel, "PR 42")
 		}
 	}
 
