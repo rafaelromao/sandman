@@ -55,7 +55,7 @@ The done-condition for this layout:
 - `<colgroup>` with explicit `<col id="...">` for each column
 - `table-layout: fixed` on `<table>` for predictable column sizing
 
-The regression test `TestPortal_RunsTableHasColgroupAndFixedLayout` verifies this structure in `internal/cmd/portal_server_test.go:3439`.
+The regression test `TestPortal_RunsTableHasColgroupAndFixedLayout` verifies this structure.
 
 ## Active-row attempts chip (slice 4)
 

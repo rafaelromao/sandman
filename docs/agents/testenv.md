@@ -67,21 +67,17 @@ gate rather than `runtime.GOOS != "linux"`:
 
 - `portalAbortSupported() bool` in `internal/cmd` returns true on
   linux + darwin, false elsewhere. Portal-abort tests gate on this
-  function; see `internal/cmd/portal_abort_batch_kinds_test.go` for
-  examples.
+  function.
 - `shouldFallbackToAbstractSocket` and `nonLinuxPlatformError` in
-  `internal/daemon` are build-tag-gated across `socket_linux.go` and
-  `socket_other.go`, with `socket_fallback_other_test.go` exercising
-  the non-Linux branch on every non-Linux platform via build tag.
+  `internal/daemon` are build-tag-gated, with the non-Linux branch
+  exercised on every non-Linux platform via build tag.
 
 ### Skips that survive in this slice
 
 The stranded worktree detector's macOS `--force` semantics are
-intentionally out of scope for `MkdirShort`-based migration
-(tracked in `internal/cmd/stranded_test.go` and the
-`skipIfNotStrandedSupported` helper in `internal/sandbox/stranded_test.go`).
-The skip itself stays until the detector is re-implemented; the
-tracker string names the tracking file instead of "follow-up work".
+intentionally out of scope for `MkdirShort`-based migration. The
+skip itself stays until the detector is re-implemented; the tracker
+string names the tracking file instead of "follow-up work".
 
 ## SANDMAN canonical env vars
 
