@@ -23,6 +23,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/events"
 	"github.com/rafaelromao/sandman/internal/github"
 	"github.com/rafaelromao/sandman/internal/runid"
+	"github.com/rafaelromao/sandman/internal/testenv"
 	"github.com/spf13/cobra"
 )
 
@@ -266,7 +267,7 @@ type continuationRunFixture struct {
 
 func newContinuationRunFixture(t *testing.T) continuationRunFixture {
 	t.Helper()
-	repoDir := t.TempDir()
+	repoDir := testenv.MkdirShort(t, "sm-run-")
 	initRunIntegrationRepo(t, repoDir)
 	t.Chdir(repoDir)
 
@@ -1954,7 +1955,7 @@ func TestRun_ContinueFlag_UsesOverridesAndEmptyTemplateFallback(t *testing.T) {
 }
 
 func TestRun_ContinueFlag_MixedBatchResolvesPerIssueModes(t *testing.T) {
-	repoDir := t.TempDir()
+	repoDir := testenv.MkdirShort(t, "sm-run-")
 	initRunIntegrationRepo(t, repoDir)
 	t.Chdir(repoDir)
 
