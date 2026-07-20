@@ -53,7 +53,30 @@ The bullet prefix is required when trailing annotation follows a titled issue li
 
 ## Children
 
-A Specification can list child issues under a `## Children` section:
+### Inline references
+
+Child issues may be declared inline with these phrases:
+
+```text
+Children: #123
+Child Issues: #123
+children #123
+child issues: #123
+Children [#123](https://github.com/example/project/issues/123)
+```
+
+The phrase is case-insensitive. The issue number may be written as `#123` or as a Markdown link to an issue URL.
+
+### Heading sections
+
+A Specification can list child issues under a `## Children` or `## Child Issues` section:
+
+```text
+## Children
+## Child Issues
+```
+
+Accepted list entries follow the same rules as Blocked by heading sections: bare issue numbers, linked issue numbers, titled issue links, and bullets with trailing annotations are all recognized. The section ends at the next H2 heading.
 
 ```text
 ## Children
@@ -62,9 +85,7 @@ A Specification can list child issues under a `## Children` section:
 - [Issue #203: API seams](https://github.com/example/project/issues/203) (T2)
 ```
 
-Child references may also occur in surrounding body prose. Both `#N` shorthand and full issue URLs containing `/issues/N` are recognized. Text before or after a reference is allowed, so titles and trailing annotations are presentation text. Any additional `#N` or `/issues/N` reference in that text is also a separate candidate.
-
-Child discovery also considers issue comments and GitHub-native sub-issue relationships. Candidates are deduplicated in first-occurrence order and then checked against the child's `## Parent` reference.
+Child discovery also considers issue comments and GitHub-native sub-issue relationships (REST API `ListSubIssues`). Candidates are deduplicated in first-occurrence order and then checked against the child's `## Parent` reference.
 
 ## GitHub-native relationships
 

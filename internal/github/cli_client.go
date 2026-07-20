@@ -37,6 +37,12 @@ var bulletLinePattern = regexp.MustCompile(`(?m)^\s*-\s+(?:\[#(\d+)\]|#(\d+)|\[(
 // nextHeadingPattern finds the next H2 section; see docs/usage/issue-body-formats.md.
 var nextHeadingPattern = regexp.MustCompile(`(?m)^\s*##\s`)
 
+// childrenPattern parses inline children references; see docs/usage/issue-body-formats.md.
+var childrenPattern = regexp.MustCompile(`(?i)\b(?:children|child issues)[:\s]+(?:\[#(\d+)\](?:\([^)]+\))?|#(\d+)\b)`)
+
+// childrenHeadingPattern parses children headings; see docs/usage/issue-body-formats.md.
+var childrenHeadingPattern = regexp.MustCompile(`(?im)^\s*##\s+(?:children|child issues)\s*$`)
+
 // execRunner abstracts os/exec for testability. The context is threaded
 // through so fakes can honour cancellation when the caller cancels its
 // context.
@@ -746,6 +752,56 @@ func parseBlockedByHeading(body string) []int {
 	}
 
 	return parseBulletsInSection(section, bulletIssuePattern, bulletLinePattern)
+}
+
+func parseChildrenInline(body string) []int {
+	inline := childrenPattern.FindAllStringSubmatch(body, -1)
+
+	var children []int
+	seen := make(map[int]struct{})
+
+	for _, match := range inline {
+		number, ok := issueNumberFromMatch(match[1], match[2])
+		if !ok {
+			continue
+		}
+		if _, ok := seen[number]; ok {
+			continue
+		}
+		seen[number] = struct{}{}
+		children = append(children, number)
+	}
+
+	return children
+}
+
+func parseChildrenFromHeading(body string) []int {
+	headingIdx := childrenHeadingPattern.FindStringIndex(body)
+	if headingIdx == nil {
+		return nil
+	}
+
+	afterHeading := body[headingIdx[1]:]
+	nextHeadingIdx := nextHeadingPattern.FindStringIndex(afterHeading)
+
+	var section string
+	if nextHeadingIdx != nil {
+		section = afterHeading[:nextHeadingIdx[0]]
+	} else {
+		section = afterHeading
+	}
+
+	return parseBulletsInSection(section, bulletIssuePattern, bulletLinePattern)
+}
+
+func ParseChildrenFromBody(body string) []int {
+	children := parseChildrenInline(body)
+	children = mergeIssueNumbers(children, parseChildrenFromHeading(body))
+
+	if len(children) == 0 {
+		return nil
+	}
+	return children
 }
 
 func parseBulletsInSection(section string, patterns ...*regexp.Regexp) []int {

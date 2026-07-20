@@ -779,6 +779,94 @@ func TestParseBlockedBy(t *testing.T) {
 	}
 }
 
+func TestParseChildrenFromBody(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		want []int
+	}{
+		{
+			name: "inline children colon variant",
+			body: "Children: #42",
+			want: []int{42},
+		},
+		{
+			name: "inline child issues colon variant",
+			body: "Child Issues: #99",
+			want: []int{99},
+		},
+		{
+			name: "inline children with markdown link",
+			body: "children [#1](https://github.com/example/project/issues/1)",
+			want: []int{1},
+		},
+		{
+			name: "heading children section",
+			body: "## Children\n- #10\n- #11",
+			want: []int{10, 11},
+		},
+		{
+			name: "heading child issues section",
+			body: "## Child Issues\n- #20\n- #21",
+			want: []int{20, 21},
+		},
+		{
+			name: "heading with trailing annotation",
+			body: "## Children\n- [#10](https://github.com/example/project/issues/10) (T1: text)",
+			want: []int{10},
+		},
+		{
+			name: "heading with in-title annotation",
+			body: "## Children\n- [Issue #10: T1 text](https://github.com/example/project/issues/10)",
+			want: []int{10},
+		},
+		{
+			name: "inline and heading merged and deduped",
+			body: "Children: #10\n## Children\n- #10\n- #11",
+			want: []int{10, 11},
+		},
+		{
+			name: "heading bounded by next section",
+			body: "## Children\n- #10\n\n## Blocked by\n- #20",
+			want: []int{10},
+		},
+		{
+			name: "no match for standalone number without phrase",
+			body: "Related #42.",
+			want: nil,
+		},
+		{
+			name: "case insensitive heading children",
+			body: "## CHILDREN\n- #100",
+			want: []int{100},
+		},
+		{
+			name: "case insensitive heading child issues",
+			body: "## CHILD ISSUES\n- #200",
+			want: []int{200},
+		},
+		{
+			name: "deduplicates inline and heading",
+			body: "Children: #10\n## Children\n- #10",
+			want: []int{10},
+		},
+		{
+			name: "multiple inline variants",
+			body: "Children: #1\nChild Issues: #2\nchildren #3\nchild issues: #4",
+			want: []int{1, 2, 3, 4},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ParseChildrenFromBody(tt.body)
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Fatalf("expected %v, got %v", tt.want, got)
+			}
+		})
+	}
+}
+
 func TestCLIClient_FetchPR_Success(t *testing.T) {
 	runner := &fakeRunner{responses: []fakeResponse{
 		{output: `{"name":"sandman","owner":{"login":"rafaelromao"}}`},

@@ -383,6 +383,7 @@ func (r *SpecificationResolver) collectCandidates(ctx context.Context, parent in
 		}
 	}
 	add(ExtractIssueReferences(body))
+	add(github.ParseChildrenFromBody(body))
 	if comments, err := r.client.ListIssueComments(ctx, parent); err == nil {
 		for _, c := range comments {
 			add(ExtractIssueReferences(c.Body))
