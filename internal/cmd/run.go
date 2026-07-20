@@ -483,7 +483,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 					lastRun := lastRuns[num]
 					if lastRun.RunID == "" {
 						modes[num] = batch.ModeOverride
-						fmt.Fprintf(cmd.ErrOrStderr(), "[--continue] promoting #%d to override (no prior started/continued run)\n", num)
+						fmt.Fprintf(cmd.ErrOrStderr(), "[--continue] promoting #%d to --override (no prior started/continued run)\n", num)
 						continue
 					}
 					branch, ok := payloadString(lastRun.Payload, "branch")

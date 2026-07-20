@@ -2188,7 +2188,7 @@ func TestRun_ContinueFlag_NoPriorRunPromotesToOverride(t *testing.T) {
 	if got := spy.req.IssueMode(42); got != batch.ModeOverride {
 		t.Fatalf("expected ModeOverride when no prior run exists under --continue, got %v", got)
 	}
-	if !strings.Contains(buf.String(), "[--continue] promoting #42 to override (no prior started/continued run)") {
+	if !strings.Contains(buf.String(), "[--continue] promoting #42 to --override (no prior started/continued run)") {
 		t.Fatalf("expected promotion log line for issue 42, got output:\n%s", buf.String())
 	}
 }
@@ -5105,10 +5105,10 @@ func TestRun_ContinueFlag_NoPriorRunPromotesToOverrideWithoutAPICall(t *testing.
 	if calls := gh.findPRCalls[onlyBranch]; calls > 1 {
 		t.Fatalf("expected at most one FindPRByBranch call for the continued branch, got %d", calls)
 	}
-	if !strings.Contains(output.String(), "[--continue] promoting #201 to override") {
+	if !strings.Contains(output.String(), "[--continue] promoting #201 to --override") {
 		t.Errorf("expected override promotion log for #201, got: %q", output.String())
 	}
-	if !strings.Contains(output.String(), "[--continue] promoting #202 to override") {
+	if !strings.Contains(output.String(), "[--continue] promoting #202 to --override") {
 		t.Errorf("expected override promotion log for #202, got: %q", output.String())
 	}
 }

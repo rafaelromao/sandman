@@ -40,7 +40,7 @@ Union, then validate. **Strict mode** (the default) errors if any in-batch block
 
 ## Specifications
 
-A **Specification** is a GitHub issue whose body contains the H2 sections `## Problem Statement`, `## Solution`, and `## User Stories`. Detection is structural, not label-based. Sandman resolves a Specification into its child issues before execution; children are accepted only when their bodies contain a `## Parent` backlink to the Specification. Nested Specifications are rejected. User-typed issue numbers skip the validation — the operator owns the choice.
+A **Specification** is a GitHub issue whose body contains the H2 sections `## Problem Statement` and `## Solution`. Detection is structural, not label-based. Sandman resolves a Specification into its child issues before execution; children are accepted only when their bodies contain a `## Parent` backlink to the Specification. Nested Specifications are rejected. User-typed issue numbers skip the validation — the operator owns the choice.
 
 ## Sandman Review
 

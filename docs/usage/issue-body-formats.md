@@ -1,25 +1,10 @@
 # Issue body formats
 
-Sandman reads issue-body references when it builds dependency and Specification relationships. The formats below are accepted for blocker references and child issue references.
+Sandman reads issue-body references when it builds dependency and Specification relationships. The formats below are accepted for blocker references and child issue references. Inline phrase parsing was retired because it caught incidental prose mentions across the tracker; the supported contracts are explicit headings and the GitHub-native data.
 
 ## Blocked by
 
-### Inline references
-
-These inline phrases identify blockers:
-
-```text
-Blocked by #123
-Depends on #123
-Blocked-by: #123
-Blocked by [#123](https://github.com/example/project/issues/123)
-```
-
-The phrase is case-insensitive. The issue number may be written as `#123` or as a Markdown link to an issue URL.
-
-### Heading sections
-
-A blocker list may use any of these H2 headings:
+A blocker list must use one of these H2 headings:
 
 ```text
 ## Blocked by
@@ -51,32 +36,18 @@ A bullet may include annotation after the issue reference. The annotation is ign
 
 The bullet prefix is required when trailing annotation follows a titled issue link. An unbulleted link followed by prose is not treated as a blocker reference. Only links containing an `/issues/<number>` path are accepted; unrelated URLs are ignored. The section ends at the next H2 heading.
 
+Inline phrases such as `Blocked by #123`, `Depends on #123`, or `Blocked-by: #123` outside an explicit heading are NOT recognized as blocker declarations. They appear in many issue bodies as prose mentions (for example inside child-list annotations like `- #10 (blocked by #2319)`) and treating them as authoritative made unrelated parents appear blocked. The recommended migration is to move them under a `## Blocked by` heading.
+
 ## Children
 
-### Inline references
-
-Child issues may be declared inline with these phrases:
-
-```text
-Children: #123
-Child Issues: #123
-children #123
-child issues: #123
-Children [#123](https://github.com/example/project/issues/123)
-```
-
-The phrase is case-insensitive. The issue number may be written as `#123` or as a Markdown link to an issue URL.
-
-### Heading sections
-
-A Specification can list child issues under a `## Children` or `## Child Issues` section:
+A parent can list child issues under one of these H2 headings:
 
 ```text
 ## Children
 ## Child Issues
 ```
 
-Accepted list entries follow the same rules as Blocked by heading sections: bare issue numbers, linked issue numbers, titled issue links, and bullets with trailing annotations are all recognized. The section ends at the next H2 heading.
+Accepted list entries follow the same rules as `## Blocked by`: bare issue numbers, linked issue numbers, titled issue links, and bullets with trailing annotations. The section ends at the next H2 heading.
 
 ```text
 ## Children
@@ -85,7 +56,11 @@ Accepted list entries follow the same rules as Blocked by heading sections: bare
 - [Issue #203: API seams](https://github.com/example/project/issues/203) (T2)
 ```
 
-Child discovery also considers issue comments and GitHub-native sub-issue relationships (REST API `ListSubIssues`). Candidates are deduplicated in first-occurrence order and then checked against the child's `## Parent` reference.
+Child references may also occur in surrounding body prose. Both `#N` shorthand and full issue URLs containing `/issues/N` are recognized. Text before or after a reference is allowed, so titles and trailing annotations are presentation text. Any additional `#N` or `/issues/N` reference in that text is also a separate candidate.
+
+Child discovery also considers issue comments and GitHub-native sub-issue relationships. Candidates are deduplicated in first-occurrence order and then checked against the child's `## Parent` reference.
+
+Inline phrases such as `Children: #123` or `Child Issues: #123` are NOT recognized as authoritative child declarations. The recommended migration is to move them under a `## Children` heading.
 
 ## GitHub-native relationships
 

@@ -28,8 +28,17 @@ func TestIsSpecification_RejectsMissingSection(t *testing.T) {
 	t.Parallel()
 	body := "## Problem Statement\n\nSome problem.\n\n## Solution\n\nSome solution.\n"
 	r := NewSpecificationResolver(nil, nil)
-	if r.IsSpecification(body) {
-		t.Fatal("expected body missing User Stories section to NOT be detected as a Specification")
+	if !r.IsSpecification(body) {
+		t.Fatal("expected body with Problem Statement and Solution to be detected as a Specification (User Stories no longer required)")
+	}
+}
+
+func TestIsSpecification_AcceptsBodyWithoutUserStories(t *testing.T) {
+	t.Parallel()
+	body := "## Problem Statement\n\nSome problem.\n\n## Solution\n\nSome solution.\n"
+	r := NewSpecificationResolver(nil, nil)
+	if !r.IsSpecification(body) {
+		t.Fatal("expected Specification detection to no longer require User Stories")
 	}
 }
 
@@ -614,6 +623,38 @@ func TestSpecificationResolver_HasChildrenReturnsTrueOnCommentReference(t *testi
 	}
 	if !got {
 		t.Fatal("expected HasChildren to return true when a comment references another issue")
+	}
+}
+
+func TestSpecificationResolver_BodyOnlyChildrenHeadingExpands(t *testing.T) {
+	// Regression for issue #2329. The parent body has only `## Children`
+	// (no `## Problem Statement` / `## Solution`), no comments, and no
+	// GitHub-native sub-issues. The resolver must still expand the
+	// parent into the children listed in the body, even though the
+	// previous IsSpecification gate and broadened-probe path would have
+	// skipped the issue.
+	parentBody := "## Children\n\n- #10 (slice: foundation)\n- #11\n"
+	child10Body := "## Parent\n\n#1\n\n## What\n\nChild 10.\n"
+	child11Body := "## Parent\n\n#1\n\n## What\n\nChild 11.\n"
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			1:  {Number: 1, Title: "Body-only child heading parent", Body: parentBody},
+			10: {Number: 10, Title: "Child 10", Body: child10Body},
+			11: {Number: 11, Title: "Child 11", Body: child11Body},
+		},
+	}
+
+	var infoBuf bytes.Buffer
+	r := NewSpecificationResolver(client, &infoBuf)
+	got, err := r.Resolve(context.Background(), []int{1})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !equalInts(got, []int{10, 11}) {
+		t.Fatalf("expected body-only ## Children to expand to [10 11], got %v", got)
+	}
+	if !strings.Contains(infoBuf.String(), "expanded specification #1 to 2 accepted children") {
+		t.Errorf("expected top-level expanded log line, got: %q", infoBuf.String())
 	}
 }
 

@@ -77,7 +77,7 @@ func NewSpecificationResolver(client github.Client, warningWriter io.Writer) *Sp
 	if warningWriter == nil {
 		warningWriter = os.Stderr
 	}
-	required := []string{"Problem Statement", "Solution", "User Stories"}
+	required := []string{"Problem Statement", "Solution"}
 	sectionREs := make([]*regexp.Regexp, len(required))
 	for i, name := range required {
 		sectionREs[i] = regexp.MustCompile(`(?im)^##\s+` + regexp.QuoteMeta(name) + `\s*$`)
@@ -85,8 +85,14 @@ func NewSpecificationResolver(client github.Client, warningWriter io.Writer) *Sp
 	return &SpecificationResolver{client: client, warningWriter: warningWriter, sectionREs: sectionREs, maxConcurrentFetches: 8}
 }
 
-// IsSpecification reports whether the body contains the three required Specification sections
-// as H2 headings: Problem Statement, Solution, and User Stories.
+// IsSpecification reports whether the body carries the two structural
+// H2 sections — Problem Statement and Solution — that distinguish a
+// Specification from a regular issue. The previous three-section rule
+// (adding User Stories) was dropped because User Stories is
+// presentation, not structure, and the broadened child-discovery
+// path now handles child discovery from any heading or comment
+// signal, so the User Stories gate only blocked valid parents
+// that happened to author the work without that section.
 func (r *SpecificationResolver) IsSpecification(body string) bool {
 	for _, re := range r.sectionREs {
 		if !re.MatchString(body) {
@@ -210,11 +216,12 @@ func (r *SpecificationResolver) expandOne(
 	broadened := !r.IsSpecification(issue.Body)
 	var subIssues []int
 	if broadened {
+		bodyChildren := parseChildrenFromBodyForExpansion(issue.Body)
 		hasChildren, hcErr := r.HasChildren(ctx, num)
 		if hcErr != nil {
 			fmt.Fprintf(r.warningWriter, "warning: could not list comments for #%d: %v\n", num, hcErr)
 		}
-		if !hasChildren {
+		if !hasChildren && len(bodyChildren) == 0 {
 			nums, subErr := r.client.ListSubIssues(ctx, num)
 			if subErr != nil {
 				fmt.Fprintf(r.warningWriter, "warning: could not list sub-issues for specification #%d: %v\n", num, subErr)
@@ -402,4 +409,11 @@ func (r *SpecificationResolver) collectCandidates(ctx context.Context, parent in
 	}
 	add(subIssues)
 	return order
+}
+
+// parseChildrenFromBodyForExpansion is a thin alias that lets the
+// broadened-detector path consult the same heading-only child parser
+// without widening the parser's exported contract.
+func parseChildrenFromBodyForExpansion(body string) []int {
+	return github.ParseChildrenFromBody(body)
 }

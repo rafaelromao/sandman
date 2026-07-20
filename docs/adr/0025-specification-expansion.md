@@ -23,7 +23,9 @@ before dependency resolution and execution.
 Specifications and their children are identified by body structure, not labels:
 
 - A Specification is an issue whose body contains the H2 sections
-  `## Problem Statement`, `## Solution`, and `## User Stories`.
+  `## Problem Statement` and `## Solution`. `## User Stories` is presentation,
+  not structure, and the broadened child-discovery path now covers
+  child discovery for parents that author the work without that section.
 - A child of Specification `<n>` is an issue whose body contains a `## Parent`
   section citing `<n>` (via `#N` shorthand or a full GitHub issue URL).
 - Specification expansion is the act of replacing a Specification with its accepted
@@ -52,9 +54,10 @@ using the same `DependencyResolver`-style seam that already lives in
 `internal/batch`. The flow is:
 
 1. **Detection** — `SpecificationResolver.IsSpecification(body)` returns true iff the body
-   contains the three required H2 sections, case-insensitive on the
-   section text. H3 or deeper sections do not count. The section text
-   is anchored to the line start with optional whitespace.
+   contains the two required H2 sections (`## Problem Statement` and
+   `## Solution`), case-insensitive on the section text. H3 or deeper sections do
+   not count. The section text is anchored to the line start with optional
+   whitespace.
 2. **Child discovery** — In order: (a) `#N` references and full issue URLs in the
    Specification body, (b) `#N` references and full issue URLs in each Specification
    comment in chronological order,
