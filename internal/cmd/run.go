@@ -21,6 +21,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/paths"
 	"github.com/rafaelromao/sandman/internal/prompt"
 	"github.com/rafaelromao/sandman/internal/runid"
+	"github.com/rafaelromao/sandman/internal/sandbox"
 	"github.com/spf13/cobra"
 )
 
@@ -485,7 +486,6 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 						fmt.Fprintf(cmd.ErrOrStderr(), "[--continue] promoting #%d to override (no prior started/continued run)\n", num)
 						continue
 					}
-					continueIssues = append(continueIssues, num)
 					branch, ok := payloadString(lastRun.Payload, "branch")
 					if !ok || strings.TrimSpace(branch) == "" {
 						return fmt.Errorf("missing branch in previous run for issue #%d", num)
@@ -494,6 +494,10 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 					if !ok || strings.TrimSpace(baseBranchValue) == "" {
 						return fmt.Errorf("missing base branch in previous run for issue #%d", num)
 					}
+					branch = strings.TrimSpace(branch)
+					baseBranchValue = strings.TrimSpace(baseBranchValue)
+					branches[num] = branch
+					baseBranches[num] = baseBranchValue
 					worktreePath := filepath.Join(worktreeBase, branch)
 					if info, err := os.Stat(worktreePath); err != nil {
 						if os.IsNotExist(err) {
@@ -503,6 +507,16 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 					} else if !info.IsDir() {
 						return fmt.Errorf("worktree %q is missing; use \"sandman run\" instead", worktreePath)
 					}
+					if err := sandbox.RestoreWorktreeGitPaths(repoRoot, worktreePath); err != nil {
+						return fmt.Errorf("normalize preserved worktree git paths for issue #%d: %w", num, err)
+					}
+					state, actualRef := sandbox.ContinuationWorktreeStatus(repoRoot, worktreeBase, branch)
+					if reason := continuationPromotionReason(state, actualRef, branch); reason != "" {
+						modes[num] = batch.ModeOverride
+						fmt.Fprintf(cmd.ErrOrStderr(), "[--continue] promoting #%d to --override (%s; override will reconcile it)\n", num, reason)
+						continue
+					}
+					continueIssues = append(continueIssues, num)
 					taskPath := filepath.Join(worktreePath, ".sandman", "task.md")
 					content, err := readTaskPrompt(cmd, taskPath)
 					if err != nil {
@@ -510,8 +524,6 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 					}
 					modes[num] = batch.ModeContinue
 					previousRunIDs[num] = lastRun.RunID
-					branches[num] = strings.TrimSpace(branch)
-					baseBranches[num] = strings.TrimSpace(baseBranchValue)
 					taskPrompts[num] = prompt.ContinuationTaskPrompt(content)
 				}
 			}
@@ -770,6 +782,19 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 	cmd.Flags().BoolP("verbose", "v", false, "Print diagnostic phase timing to stderr")
 
 	return cmd
+}
+
+func continuationPromotionReason(state sandbox.ContinuationWorktreeState, actualRef, branch string) string {
+	switch state {
+	case sandbox.ContinuationWorktreeMissing:
+		return "preserved worktree has no live registration in the parent repo"
+	case sandbox.ContinuationWorktreeDetached:
+		return "preserved worktree has detached HEAD"
+	case sandbox.ContinuationWorktreeWrongBranch:
+		return fmt.Sprintf("preserved worktree is on branch %q, expected %q", strings.TrimPrefix(actualRef, "refs/heads/"), branch)
+	default:
+		return ""
+	}
 }
 
 func buildIssueQuery(label, query string) string {
