@@ -248,6 +248,11 @@ func (r *SpecificationResolver) expandOne(
 		return nil
 	}
 
+	if !r.IsSpecification(issue.Body) && len(accepted) == 0 {
+		addUnique(num)
+		return nil
+	}
+
 	if depth == 0 {
 		fmt.Fprintf(r.warningWriter, "expanded specification #%d to %d accepted children\n", num, len(accepted))
 	} else {

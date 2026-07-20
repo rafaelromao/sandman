@@ -979,6 +979,27 @@ func TestSpecificationResolver_EmptyChildCarveOut_AllCandidatesFiltered(t *testi
 	}
 }
 
+func TestSpecificationResolver_BroadenedAllFilteredPassesThrough(t *testing.T) {
+	parentBody := "## What to build\n\nNo PRD sections.\n"
+	strangerBody := "## What\n\nNo Parent backlink at all.\n"
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			1:  {Number: 1, Title: "Parent", Body: parentBody},
+			42: {Number: 42, Title: "Stranger", Body: strangerBody},
+		},
+		subIssues: map[int][]int{1: {42}},
+	}
+
+	r := NewSpecificationResolver(client, io.Discard)
+	got, err := r.Resolve(context.Background(), []int{1})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !equalInts(got, []int{1}) {
+		t.Fatalf("expected pass-through [1], got %v", got)
+	}
+}
+
 func TestSpecificationResolver_NonSpecWithoutChildrenCallsListSubIssuesOnce(t *testing.T) {
 	parentBody := "## What\n\nJust a regular issue.\n"
 	client := &fakeGitHubClient{
