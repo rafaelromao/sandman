@@ -107,7 +107,7 @@ Sandman discovers `BlockedBy` relationships from two sources:
 1. **Body references** — issue bodies containing `blocked by #N` or `depends on #N`
 2. **GitHub REST API** — `gh api` issue and events responses that surface native blocker numbers
 
-The union of both sources forms each issue's `BlockedBy` set.
+The union of both sources forms each issue's `BlockedBy` set. See [Issue body formats](issue-body-formats.md) for accepted inline, heading, bullet, and annotation shapes.
 
 ### Strict mode (default)
 
