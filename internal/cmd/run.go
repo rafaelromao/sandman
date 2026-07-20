@@ -756,7 +756,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 	cmd.Flags().String("template", "", "Path to prompt template file (overrides .sandman/prompt.md). Omit {{ISSUE_NUMBER}} for prompt-only mode.")
 	cmd.Flags().String("branch", "", "Branch name for prompt-only runs; overrides the default sandman/<slug>-<timestamp> shape (prompt-only mode only)")
 	cmd.Flags().String("model", "", "Override agent model for built-in presets")
-	cmd.Flags().String("run-id", "", "Batch-level identifier for prompt-only runs; may contain alphanumeric characters, hyphens, and underscores (max 64 chars); cannot be combined with issue selection")
+	cmd.Flags().String("run-id", "", "Batch-level identifier for prompt-only runs; must start with a letter and contain only alphanumeric characters, hyphens, and underscores (max 64 chars); cannot be combined with issue selection")
 	cmd.Flags().String("agent", "", "Built-in agent preset (opencode)")
 	cmd.Flags().String("base-branch", "", "Base branch to fetch from origin before each AgentRun starts")
 	cmd.Flags().StringArray("prompt-arg", nil, "Custom template substitution KEY=VALUE (repeatable)")

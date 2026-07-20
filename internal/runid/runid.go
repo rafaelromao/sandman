@@ -98,7 +98,7 @@ func NewRunID(kind Kind, subject string, ts, shortid string) string {
 	return fmt.Sprintf("%s-%s-%s", ts, shortid, subject)
 }
 
-var userRunIDRe = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,64}$`)
+var userRunIDRe = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9_-]{0,63}$`)
 
 func IsValidUserRunID(s string) error {
 	if s == "" {
@@ -108,7 +108,7 @@ func IsValidUserRunID(s string) error {
 		return fmt.Errorf("run id cannot exceed 64 characters")
 	}
 	if !userRunIDRe.MatchString(s) {
-		return fmt.Errorf("run id must contain only alphanumerics, hyphens, and underscores")
+		return fmt.Errorf("run id must start with a letter and contain only alphanumeric characters, hyphens, and underscores (max 64 chars)")
 	}
 	return nil
 }
