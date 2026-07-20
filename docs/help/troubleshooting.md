@@ -50,7 +50,7 @@ Sandman does not migrate on-disk state across version upgrades. Existing `.sandm
 
 ## `/sandman review` keeps triggering itself
 
-The review daemon's primary defence is the **daemon-side redactor** in `internal/review/redactor.go`. The agent's `decision.md` body cannot contain a `/sandman` substring after the daemon transforms it. The redactor runs out-of-band of the LLM, so the trigger substring is stripped regardless of what the model writes.
+The review daemon's primary defence is the **daemon-side redactor**. The agent's `decision.md` body cannot contain a `/sandman` substring after the daemon transforms it. The redactor runs out-of-band of the LLM, so the trigger substring is stripped regardless of what the model writes.
 
 - Confirm `sandman review` is running. The command starts the review daemon and does not accept positional arguments.
 - If a bot review body does land with `## Previous review progress` *and* the literal `/sandman review` substring, the structural sniff `LooksLikeBotReviewBody` drops it before `ParseTrigger` runs — defence-in-depth.

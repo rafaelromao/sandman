@@ -22,7 +22,7 @@ The event types are documented in [Monitoring](../usage/monitoring.md#event-log)
 
 ## Top-down dependency injection at the command boundary
 
-`cmd.Dependencies` (`internal/cmd/root.go`) is the single composition root. It owns the wiring between the concrete adapters (`gh` CLI client, file-backed config store, JSONL event store, Docker / Podman container starter,…) and the in-process interfaces they implement. The orchestrator only knows about interfaces; nothing inside `internal/batch/` constructs a concrete dependency.
+`cmd.Dependencies` is the single composition root. It owns the wiring between the concrete adapters (`gh` CLI client, file-backed config store, JSONL event store, Docker / Podman container starter,…) and the in-process interfaces they implement. The orchestrator only knows about interfaces and does not construct a concrete dependency.
 
 In tests, fakes are injected at the interface boundary (`Runner`, `Sandbox`, `Store`, `Client`, `EventLog`, `Renderer`) instead of mocking deep concrete types. This keeps the orchestrator testable without poking holes through its invariants.
 
