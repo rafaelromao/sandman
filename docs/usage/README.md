@@ -8,6 +8,7 @@ Reference for running, configuring, and operating Sandman day to day.
 |------|-------------|
 | [Commands](commands.md) | Every CLI command, flag, and issue selection mode |
 | [Workflows](workflows.md) | Recipes: by issue, label, range, auto mode, continue, prompt-only |
+| [Issue Body Formats](issue-body-formats.md) | Accepted Blocked by and Children references in issue bodies |
 | [Scaffolding and Supported Languages](scaffolding.md) | `sandman init`, generated files, build-tool presets, and language version selection |
 | [Configuration](configuration.md) | Full config schema and `config get/set` |
 | [Reviews](reviews.md) | Review daemon, review command guard, and review-run output |

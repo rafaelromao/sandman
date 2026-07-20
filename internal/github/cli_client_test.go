@@ -693,6 +693,26 @@ func TestParseBlockedBy(t *testing.T) {
 			want: nil,
 		},
 		{
+			name: "bullet with trailing parenthetical annotation",
+			body: "## Blocked by\n- [Issue #288](https://github.com/rafaelromao/slotmerge/issues/288) (T2: description)",
+			want: []int{288},
+		},
+		{
+			name: "bullet with in-title annotation",
+			body: "## Blocked by\n- [Issue #288: T2 URL tree and auth/CSRF seams](https://github.com/rafaelromao/slotmerge/issues/288)",
+			want: []int{288},
+		},
+		{
+			name: "multiple bullets with mixed trailing text",
+			body: "## Blocked by\n- [Issue #288](https://github.com/rafaelromao/slotmerge/issues/288) (T2: URL tree and auth/CSRF seams)\n- [Issue #289: T2 identity seams](https://github.com/rafaelromao/slotmerge/issues/289)\n- #290 — follow-up",
+			want: []int{288, 289, 290},
+		},
+		{
+			name: "plain-link line with trailing prose and no bullet prefix is still ignored",
+			body: "## Blocked by\n[Issue #288](https://github.com/rafaelromao/slotmerge/issues/288) with extra text",
+			want: nil,
+		},
+		{
 			name: "heading with multiple bullets",
 			body: "## Blocked by\n- #1\n- #2\n- #3",
 			want: []int{1, 2, 3},

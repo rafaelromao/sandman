@@ -22,9 +22,19 @@ import (
 // via WithTimeout when constructing via NewCLIClient.
 const DefaultCallTimeout = 30 * time.Second
 
+// blockedByPattern parses inline references; see docs/usage/issue-body-formats.md.
 var blockedByPattern = regexp.MustCompile(`(?i)\b(?:blocked by|depends on|blocked-by)[:\s]+(?:\[#(\d+)\](?:\([^)]+\))?|#(\d+)\b)`)
+
+// blockedByHeadingPattern parses blocker headings; see docs/usage/issue-body-formats.md.
 var blockedByHeadingPattern = regexp.MustCompile(`(?im)^\s*##\s+(?:blocked by|depends on|blocked-by)\s*$`)
+
+// bulletIssuePattern parses strict issue lines; see docs/usage/issue-body-formats.md.
 var bulletIssuePattern = regexp.MustCompile(`(?m)^\s*(?:-\s*)?(?:\[#(\d+)\]|#(\d+)|\[(?:[^\]]*)\]\([^()]*?/issues/(\d+)\))\s*$`)
+
+// bulletLinePattern parses annotated bullet lines; see docs/usage/issue-body-formats.md.
+var bulletLinePattern = regexp.MustCompile(`(?m)^\s*-\s+(?:\[#(\d+)\]|#(\d+)|\[(?:[^\]]*)\]\([^()]*?/issues/(\d+)\))[^\n]*$`)
+
+// nextHeadingPattern finds the next H2 section; see docs/usage/issue-body-formats.md.
 var nextHeadingPattern = regexp.MustCompile(`(?m)^\s*##\s`)
 
 // execRunner abstracts os/exec for testability. The context is threaded
@@ -735,25 +745,47 @@ func parseBlockedByHeading(body string) []int {
 		section = afterHeading
 	}
 
-	matches := bulletIssuePattern.FindAllStringSubmatch(section, -1)
-	if len(matches) == 0 {
-		return nil
+	return parseBulletsInSection(section, bulletIssuePattern, bulletLinePattern)
+}
+
+func parseBulletsInSection(section string, patterns ...*regexp.Regexp) []int {
+	type bulletMatch struct {
+		start  int
+		number int
 	}
+
+	var matches []bulletMatch
+	for _, pattern := range patterns {
+		for _, indexes := range pattern.FindAllStringSubmatchIndex(section, -1) {
+			groups := make([]string, 0, len(indexes)/2-1)
+			for i := 2; i < len(indexes); i += 2 {
+				if indexes[i] == -1 {
+					groups = append(groups, "")
+					continue
+				}
+				groups = append(groups, section[indexes[i]:indexes[i+1]])
+			}
+			number, ok := issueNumberFromMatch(groups...)
+			if !ok {
+				continue
+			}
+			matches = append(matches, bulletMatch{start: indexes[0], number: number})
+		}
+	}
+
+	sort.SliceStable(matches, func(i, j int) bool {
+		return matches[i].start < matches[j].start
+	})
 
 	blockedBy := make([]int, 0, len(matches))
 	seen := make(map[int]struct{}, len(matches))
 	for _, match := range matches {
-		number, ok := issueNumberFromMatch(match[1], match[2], match[3])
-		if !ok {
+		if _, ok := seen[match.number]; ok {
 			continue
 		}
-		if _, ok := seen[number]; ok {
-			continue
-		}
-		seen[number] = struct{}{}
-		blockedBy = append(blockedBy, number)
+		seen[match.number] = struct{}{}
+		blockedBy = append(blockedBy, match.number)
 	}
-
 	if len(blockedBy) == 0 {
 		return nil
 	}
