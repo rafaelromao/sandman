@@ -3379,20 +3379,33 @@ func TestRunBatch_MixedContinueStillValidatesFreshBranches(t *testing.T) {
 }
 
 func TestRunBatch_MixedContinuePropagatesPerIssueModeMap(t *testing.T) {
-	// Mixed mode should still carry continue metadata only for continue issues.
+	dir := testenv.MkdirShort(t, "sm-orch-")
+	t.Chdir(dir)
+	initGitRepo(t, dir)
+
+	continueBranch := "sandman/42-continue-issue"
+	overrideBranch := "sandman/43-fresh-issue"
 	client := &fakeGitHubClient{
 		issues: map[int]*github.Issue{
 			42: {Number: 42, Title: "Continue issue"},
 			43: {Number: 43, Title: "Fresh issue"},
 		},
 		prs: map[string]*github.PR{
-			"sandman/42-continue-issue": mergedPR("sandman/42-continue-issue", ""),
-			"sandman/43-fresh-issue":    mergedPR("sandman/43-fresh-issue", ""),
+			continueBranch: mergedPR(continueBranch, ""),
+			overrideBranch: mergedPR(overrideBranch, ""),
 		},
 	}
 	spyLog := &spyEventLog{}
+	continueSandbox := &fakeSandbox{}
+	overrideSandbox := &fakeSandbox{}
+	sandboxByBranch := map[string]*fakeSandbox{
+		continueBranch: continueSandbox,
+		overrideBranch: overrideSandbox,
+	}
 	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{Agent: "test-agent", Sandbox: "worktree", WorktreeDir: ".sandman/worktrees", Git: config.GitConfig{BaseBranch: "main"}, AgentProviders: map[string]config.Agent{"test-agent": {Command: "true"}}}}, spyLog,
-		WithSandboxFactory(&fakeSandboxFactory{sandbox: &fakeSandbox{}}),
+		WithSandboxFactory(sandboxFactoryFunc(func(repoPath, worktreeBase, branch, sourceBranch string, container sandbox.Container) sandbox.Sandbox {
+			return sandboxByBranch[branch]
+		})),
 		WithRunnableFactory(&controlledRunnableFactory{runnables: map[int]Runnable{
 			42: &controlledRunnable{result: AgentRunResult{IssueNumber: 42, Status: "success"}},
 			43: &controlledRunnable{result: AgentRunResult{IssueNumber: 43, Status: "success"}},
@@ -3401,9 +3414,9 @@ func TestRunBatch_MixedContinuePropagatesPerIssueModeMap(t *testing.T) {
 
 	result, err := o.RunBatch(context.Background(), Request{
 		Issues:         []int{42, 43},
-		Mode:           map[int]IssueMode{42: ModeContinue, 43: ModeFresh},
-		Branches:       map[int]string{42: "sandman/42-continue-issue"},
-		BaseBranches:   map[int]string{42: "main"},
+		Mode:           map[int]IssueMode{42: ModeContinue, 43: ModeOverride},
+		Branches:       map[int]string{42: continueBranch, 43: overrideBranch},
+		BaseBranches:   map[int]string{42: "main", 43: "main"},
 		PreviousRunIDs: map[int]string{42: runIDFor(42) + "-prev"},
 		PromptConfig:   prompt.RenderConfig{TaskPrompt: "finish the work"},
 	})
@@ -3412,16 +3425,33 @@ func TestRunBatch_MixedContinuePropagatesPerIssueModeMap(t *testing.T) {
 	}
 
 	var continued bool
+	var started bool
 	for _, e := range spyLog.events {
 		switch e.Type {
 		case "run.continued":
 			if e.Issue == 42 && e.Payload["previous_run_id"] == runIDFor(42)+"-prev" {
 				continued = true
 			}
+		case "run.started":
+			if e.Issue == 43 {
+				if _, exists := e.Payload["previous_run_id"]; exists {
+					t.Fatalf("expected override row to omit previous_run_id, got %v", e.Payload["previous_run_id"])
+				}
+				started = true
+			}
 		}
 	}
 	if !continued {
 		t.Fatal("expected run.continued event for issue 42")
+	}
+	if !started {
+		t.Fatal("expected run.started event for issue 43")
+	}
+	if !continueSandbox.startOpts.Continue || continueSandbox.startOpts.Override {
+		t.Fatalf("expected issue 42 SandboxStart Continue=true Override=false, got %+v", continueSandbox.startOpts)
+	}
+	if !overrideSandbox.startOpts.Override || overrideSandbox.startOpts.Continue {
+		t.Fatalf("expected issue 43 SandboxStart Override=true Continue=false, got %+v", overrideSandbox.startOpts)
 	}
 	if len(result.Runs) != 2 {
 		t.Fatalf("expected 2 run results, got %d", len(result.Runs))

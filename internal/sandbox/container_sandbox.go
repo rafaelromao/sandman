@@ -147,6 +147,26 @@ func RestoreWorktreeGitPaths(repoPath, worktreePath string) error {
 	}
 
 	updated := strings.Replace(string(data), "/workspace", absRepo, 1)
+	content := strings.TrimSpace(updated)
+	const prefix = "gitdir: "
+	if strings.HasPrefix(content, prefix) {
+		registrationDir := strings.TrimSpace(strings.TrimPrefix(content, prefix))
+		if !filepath.IsAbs(registrationDir) {
+			registrationDir = filepath.Join(worktreePath, registrationDir)
+		}
+		registrationGitdir := filepath.Join(registrationDir, "gitdir")
+		registrationData, readErr := os.ReadFile(registrationGitdir)
+		if readErr == nil {
+			restoredRegistration := strings.Replace(string(registrationData), "/workspace", absRepo, 1)
+			if restoredRegistration != string(registrationData) {
+				if err := atomicfs.WriteAtomic(registrationGitdir, []byte(restoredRegistration), 0644); err != nil {
+					return err
+				}
+			}
+		} else if !os.IsNotExist(readErr) {
+			return readErr
+		}
+	}
 	if updated == string(data) {
 		return nil
 	}

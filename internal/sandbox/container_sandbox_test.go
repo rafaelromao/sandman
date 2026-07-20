@@ -109,6 +109,96 @@ func TestContainerSandbox_Start_DelegatesToWorktree(t *testing.T) {
 	}
 }
 
+func TestRestoreWorktreeGitPaths_RestoresWorktreeAndRegistrationPointers(t *testing.T) {
+	repoDir := t.TempDir()
+	initGitRepoWithRemote(t, repoDir)
+	commitGitFile(t, repoDir, "tracked.txt", "base\n", "base")
+	runGit(t, repoDir, "push", "origin", "main")
+
+	branch := "sandman/42-fix-bug"
+	worktreeBase := filepath.Join(repoDir, ".sandman", "worktrees")
+	wt := NewWorktreeSandbox(repoDir, worktreeBase, branch, "main")
+	if err := wt.Start(SandboxStart{StrandedReconcile: true}); err != nil {
+		t.Fatalf("create worktree: %v", err)
+	}
+	t.Cleanup(func() {
+		wt.Stop()
+		removeBranch(t, repoDir, branch)
+	})
+
+	absRepo, err := filepath.Abs(repoDir)
+	if err != nil {
+		t.Fatalf("resolve repo path: %v", err)
+	}
+	gitlinkPath := filepath.Join(wt.WorkDir(), ".git")
+	gitlink, err := os.ReadFile(gitlinkPath)
+	if err != nil {
+		t.Fatalf("read worktree gitlink: %v", err)
+	}
+	hostGitdir := strings.TrimSpace(strings.TrimPrefix(string(gitlink), "gitdir: "))
+	registrationGitdirPath := filepath.Join(hostGitdir, "gitdir")
+	registrationGitdir, err := os.ReadFile(registrationGitdirPath)
+	if err != nil {
+		t.Fatalf("read registration gitdir: %v", err)
+	}
+	if err := os.WriteFile(gitlinkPath, []byte(strings.Replace(string(gitlink), absRepo, "/workspace", 1)), 0o644); err != nil {
+		t.Fatalf("write container gitlink: %v", err)
+	}
+	if err := os.WriteFile(registrationGitdirPath, []byte(strings.Replace(string(registrationGitdir), absRepo, "/workspace", 1)), 0o644); err != nil {
+		t.Fatalf("write container registration pointer: %v", err)
+	}
+
+	if state, _ := ContinuationWorktreeStatus(repoDir, worktreeBase, branch); state != ContinuationWorktreeMissing {
+		t.Fatalf("expected container-only registration to be missing from host, got state %v", state)
+	}
+	if err := RestoreWorktreeGitPaths(repoDir, wt.WorkDir()); err != nil {
+		t.Fatalf("restore host paths: %v", err)
+	}
+
+	for _, path := range []string{gitlinkPath, registrationGitdirPath} {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read restored path %q: %v", path, err)
+		}
+		if strings.Contains(string(data), "/workspace") {
+			t.Fatalf("expected %q to omit /workspace after restoration, got %q", path, data)
+		}
+		if !strings.Contains(string(data), absRepo) {
+			t.Fatalf("expected %q to contain host repo %q, got %q", path, absRepo, data)
+		}
+	}
+	if state, _ := ContinuationWorktreeStatus(repoDir, worktreeBase, branch); state != ContinuationWorktreeReusable {
+		t.Fatalf("expected restored registration to be reusable, got state %v", state)
+	}
+
+	gitlinkInfo, err := os.Stat(gitlinkPath)
+	if err != nil {
+		t.Fatalf("stat restored gitlink: %v", err)
+	}
+	registrationInfo, err := os.Stat(registrationGitdirPath)
+	if err != nil {
+		t.Fatalf("stat restored registration pointer: %v", err)
+	}
+	time.Sleep(20 * time.Millisecond)
+	if err := RestoreWorktreeGitPaths(repoDir, wt.WorkDir()); err != nil {
+		t.Fatalf("repeat host path restoration: %v", err)
+	}
+	gitlinkInfoAfter, err := os.Stat(gitlinkPath)
+	if err != nil {
+		t.Fatalf("stat gitlink after repeated restoration: %v", err)
+	}
+	registrationInfoAfter, err := os.Stat(registrationGitdirPath)
+	if err != nil {
+		t.Fatalf("stat registration pointer after repeated restoration: %v", err)
+	}
+	if !gitlinkInfo.ModTime().Equal(gitlinkInfoAfter.ModTime()) {
+		t.Fatalf("expected repeated restoration to leave gitlink unchanged")
+	}
+	if !registrationInfo.ModTime().Equal(registrationInfoAfter.ModTime()) {
+		t.Fatalf("expected repeated restoration to leave registration pointer unchanged")
+	}
+}
+
 func TestContainerSandbox_Start_ReturnsWorktreeError(t *testing.T) {
 	wt := &fakeWorktreeForContainer{startError: errors.New("worktree failed")}
 	ctr := &fakeContainer{id: "abc123"}
