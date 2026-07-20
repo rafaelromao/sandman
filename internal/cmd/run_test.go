@@ -256,6 +256,72 @@ func addRegisteredContinuationWorktree(t *testing.T, repoDir, worktreeBase, bran
 	return worktreePath
 }
 
+type continuationRunFixture struct {
+	repoDir      string
+	branch       string
+	worktreePath string
+	spy          *spyBatchRunner
+	deps         Dependencies
+}
+
+func newContinuationRunFixture(t *testing.T) continuationRunFixture {
+	t.Helper()
+	repoDir := t.TempDir()
+	initRunIntegrationRepo(t, repoDir)
+	t.Chdir(repoDir)
+
+	branch := "sandman/42-fix-bug"
+	worktreeBase := filepath.Join(repoDir, ".sandman", "worktrees")
+	worktreePath := filepath.Join(worktreeBase, branch)
+	runGit(t, repoDir, "branch", branch)
+	runGit(t, repoDir, "worktree", "add", worktreePath, branch)
+	if err := os.MkdirAll(filepath.Join(worktreePath, ".sandman"), 0o755); err != nil {
+		t.Fatalf("mkdir task dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(worktreePath, ".sandman", "task.md"), []byte("# Task\n\nResume.\n"), 0o644); err != nil {
+		t.Fatalf("write task: %v", err)
+	}
+
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	deps := Dependencies{
+		BatchRunner: spy,
+		ConfigStore: &fakeStore{config: &config.Config{
+			Agent:         "opencode",
+			WorktreeDir:   worktreeBase,
+			ReviewCommand: "/oc review",
+			AgentProviders: map[string]config.Agent{
+				"opencode": {Preset: "opencode", Command: "true"},
+			},
+		}},
+		EventLog: &fakeEventLog{events: []events.Event{{
+			Type:  "run.started",
+			RunID: testRunID42Prev,
+			Issue: 42,
+			Payload: map[string]any{
+				"agent":       "opencode",
+				"branch":      branch,
+				"base_branch": "main",
+			},
+		}}},
+		GitHubClient: &fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug", State: "open"}}},
+		RepoRoot:     repoDir,
+	}
+	return continuationRunFixture{repoDir: repoDir, branch: branch, worktreePath: worktreePath, spy: spy, deps: deps}
+}
+
+func (f continuationRunFixture) execute(t *testing.T) string {
+	t.Helper()
+	var output bytes.Buffer
+	cmd := NewRunCmd(f.deps)
+	cmd.SetOut(&output)
+	cmd.SetErr(&output)
+	cmd.SetArgs([]string{"--continue", "42"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v\noutput:\n%s", err, output.String())
+	}
+	return output.String()
+}
+
 // newRunDepsInDir creates a fresh temp dir containing .sandman/
 // with a live .sandman/review.sock listener, chdirs the test
 // into it, and returns the dir and Dependencies wired to the
@@ -1976,228 +2042,72 @@ func TestRun_ContinueFlag_MixedBatchResolvesPerIssueModes(t *testing.T) {
 }
 
 func TestRun_ContinueFlag_MissingRegistrationPromotesToOverride(t *testing.T) {
-	repoDir := t.TempDir()
-	initRunIntegrationRepo(t, repoDir)
-	t.Chdir(repoDir)
-
-	branch := "sandman/42-fix-bug"
-	worktreeBase := filepath.Join(repoDir, ".sandman", "worktrees")
-	worktreePath := filepath.Join(worktreeBase, branch)
-	runGit(t, repoDir, "branch", branch)
-	runGit(t, repoDir, "worktree", "add", worktreePath, branch)
-	if err := os.MkdirAll(filepath.Join(worktreePath, ".sandman"), 0o755); err != nil {
-		t.Fatalf("mkdir task dir: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(worktreePath, ".sandman", "task.md"), []byte("# Task\n\nResume.\n"), 0o644); err != nil {
-		t.Fatalf("write task: %v", err)
-	}
-	if err := os.RemoveAll(filepath.Join(repoDir, ".git", "worktrees", filepath.Base(worktreePath))); err != nil {
+	fixture := newContinuationRunFixture(t)
+	if err := os.RemoveAll(filepath.Join(fixture.repoDir, ".git", "worktrees", filepath.Base(fixture.worktreePath))); err != nil {
 		t.Fatalf("remove worktree registration: %v", err)
 	}
 
-	spy := &spyBatchRunner{result: &batch.Result{}}
-	deps := Dependencies{
-		BatchRunner: spy,
-		ConfigStore: &fakeStore{config: &config.Config{
-			Agent:         "opencode",
-			WorktreeDir:   worktreeBase,
-			ReviewCommand: "/oc review",
-			AgentProviders: map[string]config.Agent{
-				"opencode": {Preset: "opencode", Command: "true"},
-			},
-		}},
-		EventLog: &fakeEventLog{events: []events.Event{{
-			Type:  "run.started",
-			RunID: testRunID42Prev,
-			Issue: 42,
-			Payload: map[string]any{
-				"agent":       "opencode",
-				"branch":      branch,
-				"base_branch": "main",
-			},
-		}}},
-		GitHubClient: &fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug", State: "open"}}},
-		RepoRoot:     repoDir,
-	}
-
-	var output bytes.Buffer
-	cmd := NewRunCmd(deps)
-	cmd.SetOut(&output)
-	cmd.SetErr(&output)
-	cmd.SetArgs([]string{"--continue", "42"})
-
-	if err := cmd.Execute(); err != nil {
-		t.Fatalf("unexpected error: %v\noutput:\n%s", err, output.String())
-	}
-	if got := spy.req.IssueMode(42); got != batch.ModeOverride {
+	output := fixture.execute(t)
+	if got := fixture.spy.req.IssueMode(42); got != batch.ModeOverride {
 		t.Fatalf("expected missing registration to promote issue 42 to override, got %v", got)
 	}
-	if got := spy.req.Branches[42]; got != branch {
-		t.Fatalf("expected promoted row branch %q, got %q", branch, got)
+	if got := fixture.spy.req.Branches[42]; got != fixture.branch {
+		t.Fatalf("expected promoted row branch %q, got %q", fixture.branch, got)
 	}
-	if got := spy.req.BaseBranches[42]; got != "main" {
+	if got := fixture.spy.req.BaseBranches[42]; got != "main" {
 		t.Fatalf("expected promoted row base branch main, got %q", got)
 	}
-	if _, ok := spy.req.PreviousRunIDs[42]; ok {
-		t.Fatalf("expected promoted row to omit previous run ID, got %q", spy.req.PreviousRunIDs[42])
+	if _, ok := fixture.spy.req.PreviousRunIDs[42]; ok {
+		t.Fatalf("expected promoted row to omit previous run ID, got %q", fixture.spy.req.PreviousRunIDs[42])
 	}
-	if _, ok := spy.req.TaskPrompts[42]; ok {
-		t.Fatalf("expected promoted row to omit continuation task, got %q", spy.req.TaskPrompts[42])
+	if _, ok := fixture.spy.req.TaskPrompts[42]; ok {
+		t.Fatalf("expected promoted row to omit continuation task, got %q", fixture.spy.req.TaskPrompts[42])
 	}
 	for _, want := range []string{"[--continue] promoting #42 to --override", "no live registration", "reconcile"} {
-		if !strings.Contains(output.String(), want) {
-			t.Fatalf("expected promotion output to contain %q, got:\n%s", want, output.String())
+		if !strings.Contains(output, want) {
+			t.Fatalf("expected promotion output to contain %q, got:\n%s", want, output)
 		}
 	}
 }
 
 func TestRun_ContinueFlag_DetachedRegistrationPromotesToOverride(t *testing.T) {
-	repoDir := t.TempDir()
-	initRunIntegrationRepo(t, repoDir)
-	t.Chdir(repoDir)
+	fixture := newContinuationRunFixture(t)
+	runGit(t, fixture.worktreePath, "checkout", "--detach", "HEAD")
 
-	branch := "sandman/42-fix-bug"
-	worktreeBase := filepath.Join(repoDir, ".sandman", "worktrees")
-	worktreePath := filepath.Join(worktreeBase, branch)
-	runGit(t, repoDir, "branch", branch)
-	runGit(t, repoDir, "worktree", "add", worktreePath, branch)
-	runGit(t, worktreePath, "checkout", "--detach", "HEAD")
-	if err := os.MkdirAll(filepath.Join(worktreePath, ".sandman"), 0o755); err != nil {
-		t.Fatalf("mkdir task dir: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(worktreePath, ".sandman", "task.md"), []byte("# Task\n\nResume.\n"), 0o644); err != nil {
-		t.Fatalf("write task: %v", err)
-	}
-
-	spy := &spyBatchRunner{result: &batch.Result{}}
-	deps := Dependencies{
-		BatchRunner: spy,
-		ConfigStore: &fakeStore{config: &config.Config{
-			Agent:         "opencode",
-			WorktreeDir:   worktreeBase,
-			ReviewCommand: "/oc review",
-			AgentProviders: map[string]config.Agent{
-				"opencode": {Preset: "opencode", Command: "true"},
-			},
-		}},
-		EventLog: &fakeEventLog{events: []events.Event{{
-			Type:  "run.started",
-			RunID: testRunID42Prev,
-			Issue: 42,
-			Payload: map[string]any{
-				"agent":       "opencode",
-				"branch":      branch,
-				"base_branch": "main",
-			},
-		}}},
-		GitHubClient: &fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug", State: "open"}}},
-		RepoRoot:     repoDir,
-	}
-
-	var output bytes.Buffer
-	cmd := NewRunCmd(deps)
-	cmd.SetOut(&output)
-	cmd.SetErr(&output)
-	cmd.SetArgs([]string{"--continue", "42"})
-
-	if err := cmd.Execute(); err != nil {
-		t.Fatalf("unexpected error: %v\noutput:\n%s", err, output.String())
-	}
-	if got := spy.req.IssueMode(42); got != batch.ModeOverride {
+	output := fixture.execute(t)
+	if got := fixture.spy.req.IssueMode(42); got != batch.ModeOverride {
 		t.Fatalf("expected detached registration to promote issue 42 to override, got %v", got)
 	}
 	for _, want := range []string{"[--continue] promoting #42 to --override", "detached HEAD", "reconcile"} {
-		if !strings.Contains(output.String(), want) {
-			t.Fatalf("expected promotion output to contain %q, got:\n%s", want, output.String())
+		if !strings.Contains(output, want) {
+			t.Fatalf("expected promotion output to contain %q, got:\n%s", want, output)
 		}
 	}
 }
 
 func TestRun_ContinueFlag_WrongBranchRegistrationPromotesToOverride(t *testing.T) {
-	repoDir := t.TempDir()
-	initRunIntegrationRepo(t, repoDir)
-	t.Chdir(repoDir)
-
-	branch := "sandman/42-fix-bug"
+	fixture := newContinuationRunFixture(t)
 	otherBranch := "sandman/other-branch"
-	worktreeBase := filepath.Join(repoDir, ".sandman", "worktrees")
-	worktreePath := filepath.Join(worktreeBase, branch)
-	runGit(t, repoDir, "branch", branch)
-	runGit(t, repoDir, "worktree", "add", worktreePath, branch)
-	runGit(t, worktreePath, "checkout", "-b", otherBranch)
-	if err := os.MkdirAll(filepath.Join(worktreePath, ".sandman"), 0o755); err != nil {
-		t.Fatalf("mkdir task dir: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(worktreePath, ".sandman", "task.md"), []byte("# Task\n\nResume.\n"), 0o644); err != nil {
-		t.Fatalf("write task: %v", err)
-	}
+	runGit(t, fixture.worktreePath, "checkout", "-b", otherBranch)
 
-	spy := &spyBatchRunner{result: &batch.Result{}}
-	deps := Dependencies{
-		BatchRunner: spy,
-		ConfigStore: &fakeStore{config: &config.Config{
-			Agent:         "opencode",
-			WorktreeDir:   worktreeBase,
-			ReviewCommand: "/oc review",
-			AgentProviders: map[string]config.Agent{
-				"opencode": {Preset: "opencode", Command: "true"},
-			},
-		}},
-		EventLog: &fakeEventLog{events: []events.Event{{
-			Type:  "run.started",
-			RunID: testRunID42Prev,
-			Issue: 42,
-			Payload: map[string]any{
-				"agent":       "opencode",
-				"branch":      branch,
-				"base_branch": "main",
-			},
-		}}},
-		GitHubClient: &fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug", State: "open"}}},
-		RepoRoot:     repoDir,
-	}
-
-	var output bytes.Buffer
-	cmd := NewRunCmd(deps)
-	cmd.SetOut(&output)
-	cmd.SetErr(&output)
-	cmd.SetArgs([]string{"--continue", "42"})
-
-	if err := cmd.Execute(); err != nil {
-		t.Fatalf("unexpected error: %v\noutput:\n%s", err, output.String())
-	}
-	if got := spy.req.IssueMode(42); got != batch.ModeOverride {
+	output := fixture.execute(t)
+	if got := fixture.spy.req.IssueMode(42); got != batch.ModeOverride {
 		t.Fatalf("expected wrong-branch registration to promote issue 42 to override, got %v", got)
 	}
-	for _, want := range []string{"[--continue] promoting #42 to --override", otherBranch, "expected \"" + branch + "\"", "reconcile"} {
-		if !strings.Contains(output.String(), want) {
-			t.Fatalf("expected promotion output to contain %q, got:\n%s", want, output.String())
+	for _, want := range []string{"[--continue] promoting #42 to --override", otherBranch, "expected \"" + fixture.branch + "\"", "reconcile"} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("expected promotion output to contain %q, got:\n%s", want, output)
 		}
 	}
 }
 
 func TestRun_ContinueFlag_NormalizesContainerPathsBeforeClassification(t *testing.T) {
-	repoDir := t.TempDir()
-	initRunIntegrationRepo(t, repoDir)
-	t.Chdir(repoDir)
-
-	branch := "sandman/42-fix-bug"
-	worktreeBase := filepath.Join(repoDir, ".sandman", "worktrees")
-	worktreePath := filepath.Join(worktreeBase, branch)
-	runGit(t, repoDir, "branch", branch)
-	runGit(t, repoDir, "worktree", "add", worktreePath, branch)
-	if err := os.MkdirAll(filepath.Join(worktreePath, ".sandman"), 0o755); err != nil {
-		t.Fatalf("mkdir task dir: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(worktreePath, ".sandman", "task.md"), []byte("# Task\n\nResume.\n"), 0o644); err != nil {
-		t.Fatalf("write task: %v", err)
-	}
-
-	absRepo, err := filepath.Abs(repoDir)
+	fixture := newContinuationRunFixture(t)
+	absRepo, err := filepath.Abs(fixture.repoDir)
 	if err != nil {
 		t.Fatalf("resolve repo path: %v", err)
 	}
-	gitlinkPath := filepath.Join(worktreePath, ".git")
+	gitlinkPath := filepath.Join(fixture.worktreePath, ".git")
 	gitlink, err := os.ReadFile(gitlinkPath)
 	if err != nil {
 		t.Fatalf("read worktree gitlink: %v", err)
@@ -2215,44 +2125,11 @@ func TestRun_ContinueFlag_NormalizesContainerPathsBeforeClassification(t *testin
 		t.Fatalf("write container registration pointer: %v", err)
 	}
 
-	spy := &spyBatchRunner{result: &batch.Result{}}
-	deps := Dependencies{
-		BatchRunner: spy,
-		ConfigStore: &fakeStore{config: &config.Config{
-			Agent:         "opencode",
-			WorktreeDir:   worktreeBase,
-			ReviewCommand: "/oc review",
-			AgentProviders: map[string]config.Agent{
-				"opencode": {Preset: "opencode", Command: "true"},
-			},
-		}},
-		EventLog: &fakeEventLog{events: []events.Event{{
-			Type:  "run.started",
-			RunID: testRunID42Prev,
-			Issue: 42,
-			Payload: map[string]any{
-				"agent":       "opencode",
-				"branch":      branch,
-				"base_branch": "main",
-			},
-		}}},
-		GitHubClient: &fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug", State: "open"}}},
-		RepoRoot:     repoDir,
-	}
-
-	var output bytes.Buffer
-	cmd := NewRunCmd(deps)
-	cmd.SetOut(&output)
-	cmd.SetErr(&output)
-	cmd.SetArgs([]string{"--continue", "42"})
-
-	if err := cmd.Execute(); err != nil {
-		t.Fatalf("unexpected error: %v\noutput:\n%s", err, output.String())
-	}
-	if got := spy.req.IssueMode(42); got != batch.ModeContinue {
+	fixture.execute(t)
+	if got := fixture.spy.req.IssueMode(42); got != batch.ModeContinue {
 		t.Fatalf("expected normalized registration to remain continue mode, got %v", got)
 	}
-	if got := spy.req.PreviousRunIDs[42]; got != testRunID42Prev {
+	if got := fixture.spy.req.PreviousRunIDs[42]; got != testRunID42Prev {
 		t.Fatalf("expected prior run %q, got %q", testRunID42Prev, got)
 	}
 	for _, path := range []string{gitlinkPath, registrationGitdirPath} {
