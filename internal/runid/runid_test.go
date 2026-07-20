@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -145,7 +146,6 @@ func TestIsValidUserRunID(t *testing.T) {
 	}{
 		{"valid with hyphen", "my-run-id", false},
 		{"valid with underscore", "a_b-c", false},
-		{"valid numeric", "42", false},
 		{"valid mixed", "abc123-xyz_789", false},
 		{"empty string", "", true},
 		{"single char", "a", false},
@@ -160,6 +160,44 @@ func TestIsValidUserRunID(t *testing.T) {
 			err := IsValidUserRunID(tt.input)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("IsValidUserRunID(%q) error = %v, wantErr %v", tt.input, err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestIsValidUserRunID_LeadingCharacterIsLetter(t *testing.T) {
+	tests := []struct {
+		name        string
+		input       string
+		wantErr     bool
+		errContains string
+	}{
+		{"starts with digit", "1foo", true, "must start with a letter"},
+		{"starts with underscore", "_dash", true, "must start with a letter"},
+		{"starts with hyphen", "-dash", true, "must start with a letter"},
+		{"empty string returns empty error", "", true, ""},
+		{"single letter is valid", "a", false, ""},
+		{"word is valid", "foo", false, ""},
+		{"letter then hyphen is valid", "a-b", false, ""},
+		{"letter then digit is valid", "a1", false, ""},
+		{"mixed letters and underscores is valid", "Abc_D", false, ""},
+		{"65 chars starts with letter still gets length error", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", true, "64 characters"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := IsValidUserRunID(tt.input)
+			if tt.wantErr {
+				if err == nil {
+					t.Errorf("IsValidUserRunID(%q) expected error, got nil", tt.input)
+					return
+				}
+				if tt.errContains != "" && !strings.Contains(err.Error(), tt.errContains) {
+					t.Errorf("IsValidUserRunID(%q) error = %q, want error containing %q", tt.input, err.Error(), tt.errContains)
+				}
+			} else {
+				if err != nil {
+					t.Errorf("IsValidUserRunID(%q) unexpected error: %v", tt.input, err)
+				}
 			}
 		})
 	}
