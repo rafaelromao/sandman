@@ -167,6 +167,61 @@ func TestPRReviewSkill_BehavioralSmoke(t *testing.T) {
 	}
 }
 
+// TestPRReviewSkill_StaleApprovalHardRule pins the rule that prevents an old
+// informal approval from gating PR-Merge after a new commit has landed. The
+// regression case (run 260720131929-8d25-257) showed the agent classifying a
+// 2.5-day-old APPROVED comment as Case C informal approval and merging the PR
+// 30 seconds later, even though the user had just posted a fresh
+// `/sandman review` trigger against the new head SHA.
+//
+// Three rules must remain in the skill text:
+//
+//  1. Case C approval is only valid when its createdAt is after the head
+//     SHA recorded in `.sandman/state/<N>.head_sha` — a SHA change makes
+//     every prior approval stale.
+//  2. An unanswered `/sandman review` trigger sitting above an older
+//     APPROVED comment blocks Case C classification — the trigger itself
+//     is a fresh request that must receive a response first.
+//  3. Case C classification requires at least one full polling cycle
+//     (cumulative sleep ≥ 240 s) since the most recent trigger post —
+//     a single 120 s poll cannot observe a meaningful response window.
+func TestPRReviewSkill_StaleApprovalHardRule(t *testing.T) {
+	text := readPRReviewSkill(t)
+
+	anchors := []struct {
+		name    string
+		substr  string
+		message string
+	}{
+		{
+			name:    "approval-vs-current-SHA gate",
+			substr:  "its `createdAt` is **after** the SHA recorded in `.sandman/state/<N>.head_sha`",
+			message: "Case C must require the approval's createdAt to be after the head SHA recorded at the last /sandman review post",
+		},
+		{
+			name:    "stale-approval-after-SHA-change rule",
+			substr:  "every prior approval timestamp is stale",
+			message: "Step 3 SHA change must explicitly mark prior approval timestamps stale",
+		},
+		{
+			name:    "pending-trigger-beats-older-approval rule",
+			substr:  "an implementor `{{REVIEW_COMMAND}}` trigger that has not yet received a response",
+			message: "Case C must not classify an older APPROVED comment below an unanswered /sandman review trigger",
+		},
+		{
+			name:    "minimum-poll-budget rule",
+			substr:  "at least 240 s of cumulative sleep",
+			message: "Case C must require at least one full polling cycle (240 s cumulative) before classifying",
+		},
+	}
+
+	for _, a := range anchors {
+		if !strings.Contains(text, a.substr) {
+			t.Errorf("%s: missing %q\nfull text:\n%s", a.message, a.substr, text)
+		}
+	}
+}
+
 func TestPRReviewSkill_ADRNotesDaemonOwnership(t *testing.T) {
 	text := readADR0014(t)
 

@@ -125,7 +125,7 @@ On CI failure, `continue` the outer loop to wait for the newly-triggered CI run 
 
 Read `.sandman/state/<N>.head_sha` if it exists and compare against the current head SHA from Step 1.
 
-- **SHA changed** (new commit landed since last request): mark all previous review state stale. Delete `.sandman/state/<N>.addressed_comments` if it exists, because inline comment IDs from the old commit are no longer relevant. A fresh review request is always permitted. The pass counter resets to 0 — a new commit is a new review cycle on a new diff, and any exhausted 10-pass budget against the prior SHA does not apply.
+- **SHA changed** (new commit landed since last request): mark all previous review state stale. Delete `.sandman/state/<N>.addressed_comments` if it exists, because inline comment IDs from the old commit are no longer relevant. A fresh review request is always permitted. The pass counter resets to 0 — a new commit is a new review cycle on a new diff, and any exhausted 10-pass budget against the prior SHA does not apply. **All prior approvals are stale** for the purposes of Step 6 Case C — the new SHA requires a fresh APPROVED comment (formal or informal) against the new diff, not a re-application of an approval that was issued against the prior SHA. This is the symmetric counterpart of the pass-counter reset: if the budget must reset, the approval window must reset too.
 - **SHA unchanged**: apply the "previous request still pending" logic before posting again.
 
 #### Step 4: Delegate review to the PR Review Agent (trigger post)
@@ -208,10 +208,19 @@ On **every** poll iteration, after running the three commands above, inspect the
 
 **C. Informal approval (implicit approval without formal review)?**
 - No pending `CHANGES_REQUESTED` reviews, AND
-- A `COMMENTED` review OR top-level comment with approval keywords
+- A `COMMENTED` review OR top-level comment with approval keywords, AND
+- **The approval is for the current diff** — its `createdAt` is **after** the SHA recorded in `.sandman/state/<N>.head_sha` (the SHA at which the most recent `{{REVIEW_COMMAND}}` was posted), AND
+- **No unanswered `/sandman review` trigger is sitting above the approval** — the most recent top-level comment by `createdAt` is not an implementor trigger that has not yet received a response, AND
+- **The minimum polling cycle has elapsed** — at least 240 s of cumulative sleep (one full `120 + 60 + 60` cycle from Step 5) has passed since the most recent trigger post. A single 120 s first poll cannot have observed a meaningful response window.
 → **Approve — DONE. Stop the loop.** An informal approval is sufficient.
 
 Approval keywords: `lgtm`, `looks good`, `looks great`, `nice work`, `good work`, `approved`, `ship it`, `+1`, `thumbs up`, `all good`, `all set`, `good to go`, `no major issues`, `minor issues only`, etc.
+
+**Hard rule — stale approval after a SHA change.** When Step 3 detects that the head SHA has changed since the last `{{REVIEW_COMMAND}}` post, every prior approval timestamp is stale. The new diff requires a fresh approval against the new SHA, not a re-application of an approval that was issued against the prior diff. Treat any pre-SHA-change APPROVED comment as **not approved** until a new APPROVED comment arrives after the new SHA — even if `reviewDecision` would otherwise be empty and the comment list otherwise looks clean. The pass-counter reset on SHA change implies the approval window resets too; do not infer that a stale APPROVED carries forward across a SHA change.
+
+**Hard rule — pending trigger beats older approval.** When the most recent top-level comment on the PR is an implementor `{{REVIEW_COMMAND}}` trigger that has not yet received a response, do not classify an older APPROVED comment below it as Case C. The trigger is itself a fresh request; the loop must continue polling until either the trigger receives a response or the trigger's hard timeout (Step 5's 900 s cumulative budget) is exhausted. This is the symmetric counterpart of Hard Rule 5 / Hard Rule 6 (which prevent *posting* a duplicate trigger before the previous one is answered) and closes the same race at the *exit* side of the loop.
+
+**Hard rule — minimum poll budget before Case C.** Even when the other Case C gates (no CHANGES_REQUESTED, approval keywords, post-SHA-change, no pending trigger) all pass, the agent MUST NOT exit the loop on a single 120 s poll. Step 5 budgets a cumulative 900 s window across multiple polls. Exiting after one poll iterates the budget once and provides a 120 s response window for the fresh trigger — far short of what the polling schedule is designed to give the reviewer. Require at least one full `120 + 60 + 60 = 240 s` cycle before classification, and treat the 120 s-first-poll short-circuit as a hard violation of the skill contract.
 
 **D. Still pending?**
 - `reviewDecision: "REVIEW_REQUIRED"` or absent, AND
