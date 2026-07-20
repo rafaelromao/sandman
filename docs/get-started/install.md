@@ -125,7 +125,7 @@ Open a second terminal while a `sandman run` is in progress to stream its output
 sandman attach
 ```
 
-Attach discovers the daemon's control socket automatically and exits with code 0 when the batch finishes.
+Attach discovers the daemon's control socket automatically and exits when the daemon closes the control socket.
 
 ## See also
 

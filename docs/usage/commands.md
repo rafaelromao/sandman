@@ -50,7 +50,7 @@ Positional arguments (numbers and ranges) can be combined with `--label` and `--
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--parallel` | `parallel` from config (1) | Maximum concurrent agent runs; `0` falls back to `parallel` |
+| `--parallel` | config default (1) | Maximum concurrent agent runs; unset → config default (1); `0` → unlimited / no cap |
 | `--start-delay` | config `start_delay` (0) | Wait this many seconds after any `AgentRun` finishes before starting the next one; `0` disables pacing |
 | `--sandbox` | config default (`podman`) | Sandbox mode: `podman`, `docker`, or `worktree` |
 | `--base-branch` | config `git.base_branch` (`main`) | Base branch to fetch from origin before each `AgentRun` starts |

@@ -48,7 +48,7 @@ The `run_id` (per-row RunID) and the `payload.batch_id` (public BatchId) identif
 ### Event payloads
 
 #### `run.started` / `run.continued`
-Emitted when an agent run begins. `run.continued` replays stored `agent`, `model`, and `review_command` from the original run context (no `previous_run_id` field).
+Emitted when an agent run begins. `run.continued` carries the same fields as `run.started` (branch, base_branch, parallel, start_delay, retries, sandbox, container_capacity, container_capacity_set, max_containers, max_containers_set, agent, model, review_command) plus `previous_run_id`. The full payload shape is identical to `run.started`; `previous_run_id` links the continuation to the original run.
 
 | Field | Description |
 |-------|-------------|
