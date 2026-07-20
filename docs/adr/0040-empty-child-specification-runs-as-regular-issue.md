@@ -1,4 +1,4 @@
-# ADR-0026: Empty-child Specification runs as a regular issue
+# ADR-0040: Empty-child Specification runs as a regular issue
 
 ## Status
 
@@ -8,9 +8,9 @@ proposed
 
 ADR-0025 introduced Specification expansion: Sandman detects Specification-shaped issues (body contains `## Problem Statement`, `## Solution`, `## User Stories`), harvests their child issues, and replaces the Specification with its accepted children in the batch. Step 5 of that decision records the "no-children rejection": a Specification whose accepted-child set is empty fails resolution with `no child issues for specification #<n>`.
 
-The rejection was added as a guardrail — the original intent was loud failure rather than silent denial. But the guardrail creates downstream friction in a legitimate workflow: a maintainer who writes a Specification-style ticket to describe a single vertical slice, intending that slice to be the work item itself, cannot run it without either editing the body, hand-copying child numbers, or abandoning the Specification shape entirely. All three defeat the body-as-source-of-truth convention ADR-0025 leans on.
+The rejection was added as a guardrail — the original intent was loud failure rather than silent denial. But the guardrail creates downstream friction in a legitimate workflow: a maintainer who writes a Specification-style Issue to describe a single vertical slice, intending that slice to be the work item itself, cannot run it without either editing the body, hand-copying child numbers, or abandoning the Specification shape entirely. All three defeat the body-as-source-of-truth convention ADR-0025 leans on.
 
-The broadened-detector carve-out at `internal/batch/spec.go:213–230` already implements an analogous pass-through for the non-spec-shaped case: when `IsSpecification(body)` is false but `HasChildren(ctx, n)` is true, and `ListSubIssues` returns zero results, the issue runs as a regular issue via `addUnique(num)` without error. The asymmetry is principled — the strict-spec path is louder because the body shape is misleading when it claims children but delivers none — but the operational outcome (a single-row batch) is the same.
+The broadened-detector carve-out at `internal/batch/spec.go:213–230` already implements an analogous pass-through for the non-spec-shaped case: when `IsSpecification(body)` is false and `HasChildren(ctx, n)` is false (or errored), and `ListSubIssues` returns zero results, the issue runs as a regular issue via `addUnique(num)` without error. The asymmetry is principled — the strict-spec path is louder because the body shape is misleading when it claims children but delivers none — but the operational outcome (a single-row batch) is the same.
 
 This ADR softens the strict-spec guardrail at ADR-0025 §5: when a Specification-shaped issue has zero accepted children, it runs as a regular issue instead of failing resolution. The broadened-detector carve-out is unchanged.
 
@@ -36,7 +36,7 @@ The broadened-detector silent pass-through at `spec.go:222` and `spec.go:225` is
 
 ### Positive
 
-- A Specification that describes a single vertical slice is now a first-class Sandman input. Maintainers can write `sandman run #<spec>` and get a run, not an error.
+- A Specification that describes a single vertical slice is now a first-class Sandman input. Maintainers can write `sandman run #<n>` and get a run, not an error.
 - Symmetry with the broadened-detector carve-out: both paths now produce a single-row batch when the child harvest is empty, rather than diverging in outcome.
 - The log line `running specification #<n> as a regular issue (no children)` makes the fall-through visible in operator logs without being surprising.
 
@@ -47,5 +47,5 @@ The broadened-detector silent pass-through at `spec.go:222` and `spec.go:225` is
 
 ### Neutral
 
-- `CONTEXT.md` `SpecificationResolver` entry (currently: "fails the resolution") is updated inline to: "runs as a single-row batch, logged as `running specification #<n> as a regular issue (no children)`, per ADR-0026". No new glossary term is introduced.
+- `CONTEXT.md` `SpecificationResolver` entry will be updated in the implementation ticket (#2299) to reflect the new carve-out behaviour. No new glossary term is introduced.
 - ADR-0025 §5 remains the authoritative source for the original guardrail language being softened; this ADR is the authoritative source for the new carve-out behavior.
