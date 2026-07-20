@@ -146,7 +146,6 @@ func (r *SpecificationResolver) HasChildren(ctx context.Context, number int) (bo
 // emitted exactly once.
 //
 // Errors:
-//   - `no child issues for specification #<n>` if a Specification has no accepted children
 //   - any FetchIssue error encountered while loading a candidate child
 func (r *SpecificationResolver) Resolve(ctx context.Context, issues []int) ([]int, error) {
 	unique := uniqueIssues(issues)
