@@ -18,10 +18,10 @@ import (
 // The layout covers four groups:
 //
 //	(a) Scaffold state under SandmanDir: DockerfilePath, ConfigPath,
-//	    PromptPath, AutoSelectionPromptPath.
+//	    PromptPath.
 //	(b) Repo-global state: BatchesIndexPath, EventsLogPath, plus StateDir
 //	    and its children (PromptVersionPath, BadgeControlFilePath,
-//	    SelectedIssuesPath, PRHeadShaPath, PRAddressedCommentsPath).
+//	    PRHeadShaPath, PRAddressedCommentsPath).
 //	(c) Per-batch + per-row tree under BatchesDir: BatchDir, BatchManifestPath,
 //	    BatchSocketPath, BatchConfigSnapshotDir, RunFolder, RunLogPath,
 //	    RunSocketPath, RunManifestPath, ReviewStatePath, RunConfigSnapshotDir.
