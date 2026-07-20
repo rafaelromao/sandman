@@ -146,7 +146,6 @@ func (r *SpecificationResolver) HasChildren(ctx context.Context, number int) (bo
 // emitted exactly once.
 //
 // Errors:
-//   - `no child issues for specification #<n>` if a Specification has no accepted children
 //   - any FetchIssue error encountered while loading a candidate child
 func (r *SpecificationResolver) Resolve(ctx context.Context, issues []int) ([]int, error) {
 	unique := uniqueIssues(issues)
@@ -242,6 +241,17 @@ func (r *SpecificationResolver) expandOne(
 		return err
 	}
 
+	if r.IsSpecification(issue.Body) && len(accepted) == 0 {
+		addUnique(num)
+		fmt.Fprintf(r.warningWriter, "running specification #%d as a regular issue (no children)\n", num)
+		return nil
+	}
+
+	if !r.IsSpecification(issue.Body) && len(accepted) == 0 {
+		addUnique(num)
+		return nil
+	}
+
 	if depth == 0 {
 		fmt.Fprintf(r.warningWriter, "expanded specification #%d to %d accepted children\n", num, len(accepted))
 	} else {
@@ -281,7 +291,7 @@ func (r *SpecificationResolver) expandOne(
 func (r *SpecificationResolver) collectAcceptedChildren(ctx context.Context, parent int, body string, subIssues []int, userInputSet map[int]struct{}, fetches *issueFetchGroup) ([]int, error) {
 	candidates := r.collectCandidates(ctx, parent, body, subIssues)
 	if len(candidates) == 0 {
-		return nil, fmt.Errorf("no child issues for specification #%d", parent)
+		return nil, nil
 	}
 	childIssues := make([]*github.Issue, len(candidates))
 	fetchErrors := make([]error, len(candidates))
@@ -352,7 +362,7 @@ sendLoop:
 		accepted = append(accepted, child)
 	}
 	if len(accepted) == 0 {
-		return nil, fmt.Errorf("no child issues for specification #%d", parent)
+		return nil, nil
 	}
 	return accepted, nil
 }
