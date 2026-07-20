@@ -76,3 +76,4 @@ ADRs are numbered sequentially starting from `0001`. The template ADR (`0000`) i
 | 0034 | Review daemon — stateless on age, stateful on comment | accepted |
 | 0035 | `run.retry` payload schema and closed `reason` vocabulary | accepted |
 | 0038 | Badge marker — paginated idempotency check | proposed |
+| 0040 | Empty-child Specification runs as a regular issue | proposed |
