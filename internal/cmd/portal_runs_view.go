@@ -994,7 +994,7 @@ func (v *portalRunsView) aggregateReviewChildren(layout paths.Layout, runs []por
 		// Issue #1919 slice 3: only reviews with a resolved linked
 		// issue group under the parent issue row. Orphan reviews
 		// (no linked issue, IssueNumber == 0) stay as standalone
-		// "Review of PR <n>" rows; the JS orphan path renders them
+		// "PR <n>" rows; the JS orphan path renders them
 		// outside the issue group. Setting GroupedReview=true for
 		// every review row would let the JS-grouped path consume an
 		// orphan row that has no parent.
@@ -1780,9 +1780,9 @@ func (v *portalRunsView) runFromActiveMatch(repoRoot string, match portalRunMatc
 	prNumber := match.instance.PRNumber
 	if prNumber > 0 {
 		// Live orphan review row (no resolved issue): prefer the
-		// explicit "Review of #<prNumber>" label, matching the
-		// convention used for terminal orphan reviews (ADR-0029
-		// §Review-only orphan label, issue #1526 / #1667). Falls back
+		// explicit "PR <prNumber>" label, matching the
+		// convention used for terminal orphan reviews (issue
+		// #2296/#1526 / #1667). Falls back
 		// to the raw runID, then to "PR<n>", when neither applies.
 		issueLabel = reviewOrphanIssueLabel(runID, prNumber)
 		if issueLabel == "" {
@@ -1872,9 +1872,9 @@ func (v *portalRunsView) runFromState(repoRoot string, runState events.RunState,
 	issueLabel := runState.IssueLabel()
 	if runState.IsReview() && issueNumber == 0 {
 		// Orphan review row (no resolved issue): prefer the explicit
-		// "Review of #<prNumber>" label so the table cell matches the
+		// "PR <prNumber>" label so the table cell matches the
 		// convention used by the visibleRunForIssueGroup fallback
-		// (ADR-0029 §Review-only orphan label, issue #1526). When
+		// (issue #2296/#1526). When
 		// even the PR number is missing, fall back to the raw runID —
 		// a degraded but non-leaking display for an exotic edge case.
 		issueLabel = reviewOrphanIssueLabel(runID, prNumber)
@@ -2264,14 +2264,14 @@ func (v *portalRunsView) reviewContext(runState events.RunState) (bool, int) {
 // reviewOrphanIssueLabel returns the main label for an orphan review run
 // that has no associated issue number (i.e. the row survives as a
 // passthrough, not grouped under a canonical implementation row). It
-// uses the "Review of PR <N>" form, matching the orphan-with-issue
-// fallback in portal.html's visibleRunForIssueGroup (ADR-0029 §Review-
-// only orphan label, issue #1526 / #1667). When even the PR number is
-// missing, the raw runID is returned — a degraded display for the
-// exotic case of a review run with neither an issue nor a PR.
+// uses the "PR <N>" form (issue #2296), matching the orphan-with-issue
+// fallback in portal.html's visibleRunForIssueGroup (issue #1526 /
+// #1667). When even the PR number is missing, the raw runID is returned
+// — a degraded display for the exotic case of a review run with neither
+// an issue nor a PR.
 func reviewOrphanIssueLabel(runID string, prNumber int) string {
 	if prNumber > 0 {
-		return fmt.Sprintf("Review of PR %d", prNumber)
+		return fmt.Sprintf("PR %d", prNumber)
 	}
 	return runID
 }

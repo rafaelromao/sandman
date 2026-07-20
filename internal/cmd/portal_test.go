@@ -573,11 +573,10 @@ func TestPortal_RunFromActiveMatchReturnsReviewingForPRInstance(t *testing.T) {
 	if run.PRNumber != 42 {
 		t.Fatalf("expected PRNumber=42, got %d", run.PRNumber)
 	}
-	if run.IssueLabel != "Review of PR 42" {
+	if run.IssueLabel != "PR 42" {
 		// Orphan active review row (no resolved issue): the main
-		// label uses the "Review of PR <n>" convention (issue #1667,
-		// ADR-0029 §Review-only orphan label).
-		t.Fatalf("expected IssueLabel 'Review of PR 42', got %q", run.IssueLabel)
+		// label uses the "PR <n>" convention (issue #2296/#1667).
+		t.Fatalf("expected IssueLabel 'PR 42', got %q", run.IssueLabel)
 	}
 	if run.Kind != "active" {
 		t.Fatalf("expected kind 'active' for PR instance with live socket, got %q", run.Kind)
@@ -2100,11 +2099,10 @@ func TestPortal_ReviewRunLifecycle(t *testing.T) {
 		if got.PRNumber != 42 {
 			t.Fatalf("expected PRNumber=42, got %d", got.PRNumber)
 		}
-		if got.IssueLabel != "Review of PR 42" {
+		if got.IssueLabel != "PR 42" {
 			// Orphan review row (no resolved issue): the main label
-			// uses the "Review of PR <n>" convention (issue #1667,
-			// ADR-0029 §Review-only orphan label).
-			t.Fatalf("expected IssueLabel 'Review of PR 42', got %q", got.IssueLabel)
+			// uses the "PR <n>" convention (issue #2296/#1667).
+			t.Fatalf("expected IssueLabel 'PR 42', got %q", got.IssueLabel)
 		}
 		if got.Reason != "review" {
 			t.Fatalf("expected Reason 'review' for active review run, got %q", got.Reason)
@@ -2174,8 +2172,8 @@ func TestPortal_ReviewRunLifecycle(t *testing.T) {
 		if got.PRNumber != 42 {
 			t.Fatalf("expected PRNumber=42 on completed review run, got %d", got.PRNumber)
 		}
-		if got.IssueLabel != "Review of PR 42" {
-			t.Fatalf("expected IssueLabel 'Review of PR 42' on completed review run, got %q", got.IssueLabel)
+		if got.IssueLabel != "PR 42" {
+			t.Fatalf("expected IssueLabel 'PR 42' on completed review run, got %q", got.IssueLabel)
 		}
 		if got.Reason != "review" {
 			t.Fatalf("expected Reason 'review' on completed review run, got %q", got.Reason)
@@ -2222,8 +2220,8 @@ func TestPortal_ReviewRunLifecycle(t *testing.T) {
 		if got.PRNumber != 42 {
 			t.Fatalf("expected PRNumber=42 for event-log-only review run, got %d", got.PRNumber)
 		}
-		if got.IssueLabel != "Review of PR 42" {
-			t.Fatalf("expected IssueLabel 'Review of PR 42' for event-log-only review run, got %q", got.IssueLabel)
+		if got.IssueLabel != "PR 42" {
+			t.Fatalf("expected IssueLabel 'PR 42' for event-log-only review run, got %q", got.IssueLabel)
 		}
 		if got.Reason != "review" {
 			t.Fatalf("expected Reason 'review' for event-log-only review run, got %q", got.Reason)
@@ -2403,8 +2401,8 @@ func TestPortal_ReasonField_PopulatedFromRunKind(t *testing.T) {
 		if run.Status != "reviewing" {
 			t.Fatalf("expected Status 'reviewing' (active review run), got %q", run.Status)
 		}
-		if run.IssueLabel != "Review of PR 42" {
-			t.Fatalf("expected IssueLabel 'Review of PR 42', got %q", run.IssueLabel)
+		if run.IssueLabel != "PR 42" {
+			t.Fatalf("expected IssueLabel 'PR 42', got %q", run.IssueLabel)
 		}
 	})
 
@@ -2428,8 +2426,8 @@ func TestPortal_ReasonField_PopulatedFromRunKind(t *testing.T) {
 		if run.Status != "success" {
 			t.Fatalf("expected Status 'success', got %q", run.Status)
 		}
-		if run.IssueLabel != "Review of PR 42" {
-			t.Fatalf("expected IssueLabel 'Review of PR 42', got %q", run.IssueLabel)
+		if run.IssueLabel != "PR 42" {
+			t.Fatalf("expected IssueLabel 'PR 42', got %q", run.IssueLabel)
 		}
 	})
 
@@ -2453,8 +2451,8 @@ func TestPortal_ReasonField_PopulatedFromRunKind(t *testing.T) {
 		if run.Status != "failure" {
 			t.Fatalf("expected Status 'failure', got %q", run.Status)
 		}
-		if run.IssueLabel != "Review of PR 42" {
-			t.Fatalf("expected IssueLabel 'Review of PR 42', got %q", run.IssueLabel)
+		if run.IssueLabel != "PR 42" {
+			t.Fatalf("expected IssueLabel 'PR 42', got %q", run.IssueLabel)
 		}
 	})
 
@@ -2483,8 +2481,8 @@ func TestPortal_ReasonField_PopulatedFromRunKind(t *testing.T) {
 		if run.Status != "aborted" {
 			t.Fatalf("expected Status 'aborted', got %q", run.Status)
 		}
-		if run.IssueLabel != "Review of PR 42" {
-			t.Fatalf("expected IssueLabel 'Review of PR 42' on aborted review run, got %q", run.IssueLabel)
+		if run.IssueLabel != "PR 42" {
+			t.Fatalf("expected IssueLabel 'PR 42' on aborted review run, got %q", run.IssueLabel)
 		}
 	})
 

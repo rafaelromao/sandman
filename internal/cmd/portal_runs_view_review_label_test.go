@@ -7,14 +7,13 @@ import (
 	"github.com/rafaelromao/sandman/internal/events"
 )
 
-// TestPortalRunsView_RunFromState_ReviewWithoutIssueNumberUsesReviewOfPRLabel
-// is the tracer bullet for issue #1667: the main label of an orphan
-// review run (review=true, issueNumber=0) must render as
-// "Review of PR <prNumber>" instead of leaking the raw runID into the
-// UI. Mirrors the orphan-with-issue shape (issue #1526,
-// ADR-0029 §Review-only orphan label) but with the PR number standing
-// on its own.
-func TestPortalRunsView_RunFromState_ReviewWithoutIssueNumberUsesReviewOfPRLabel(t *testing.T) {
+// TestPortalRunsView_RunFromState_ReviewWithoutIssueNumberUsesPRLabel
+// is the tracer bullet for issue #2296/#1667: the main label of an orphan
+// review run (review=true, issueNumber=0) must render as "PR <prNumber>"
+// instead of leaking the raw runID into the UI and instead of the noisy
+// "Review of PR <prNumber>" prefix. Mirrors the orphan-with-issue shape
+// (issue #2296/#1526) but with the PR number standing on its own.
+func TestPortalRunsView_RunFromState_ReviewWithoutIssueNumberUsesPRLabel(t *testing.T) {
 	v := &portalRunsView{}
 	runID := "260622193226-a0c19-PR1508"
 	state := events.RunState{
@@ -35,8 +34,8 @@ func TestPortalRunsView_RunFromState_ReviewWithoutIssueNumberUsesReviewOfPRLabel
 
 	run := v.runFromState("/tmp", state, nil, nil, nil, nil)
 
-	if run.IssueLabel != "Review of PR 1508" {
-		t.Fatalf("IssueLabel=%q, want %q", run.IssueLabel, "Review of PR 1508")
+	if run.IssueLabel != "PR 1508" {
+		t.Fatalf("IssueLabel=%q, want %q", run.IssueLabel, "PR 1508")
 	}
 	if run.IssueNumber != 0 {
 		t.Fatalf("IssueNumber=%d, want 0 (orphan review without resolved issue)", run.IssueNumber)
