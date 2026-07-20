@@ -1062,20 +1062,24 @@ func TestRun_FailsWhenSpecificationHasNoChildren(t *testing.T) {
 	deps := newRunDeps(t, spy)
 	deps.GitHubClient = gh
 
+	var stderr bytes.Buffer
 	cmd := NewRunCmd(deps)
 	cmd.SetOut(&bytes.Buffer{})
-	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetErr(&stderr)
 	cmd.SetArgs([]string{"1"})
 
 	err := cmd.Execute()
-	if err == nil {
-		t.Fatal("expected error for Specification with no children, got nil")
+	if err != nil {
+		t.Fatalf("expected no error for Specification with no children, got %v", err)
 	}
-	if !strings.Contains(err.Error(), "no child issues for specification #1") {
-		t.Fatalf("expected 'no child issues for specification #1' in error, got %q", err)
+	if !spy.called {
+		t.Error("expected batch runner to be called")
 	}
-	if spy.called {
-		t.Error("expected batch runner NOT to be called when Specification resolution fails")
+	if len(spy.req.Issues) != 1 || spy.req.Issues[0] != 1 {
+		t.Fatalf("expected pass-through [1], got %v", spy.req.Issues)
+	}
+	if !strings.Contains(stderr.String(), "running specification #1 as a regular issue (no children)") {
+		t.Fatalf("expected carve-out log line in stderr, got: %q", stderr.String())
 	}
 }
 

@@ -235,24 +235,6 @@ func TestSpecificationResolver_ReplacesSpecificationWithChildrenFromNamedFullURL
 	}
 }
 
-func TestSpecificationResolver_RejectsSpecificationWithNoChildren(t *testing.T) {
-	specBody := "## Problem Statement\n\nProblem.\n\n## Solution\n\nSolution.\n\n## User Stories\n\n1. Story.\n"
-	client := &fakeGitHubClient{
-		issues: map[int]*github.Issue{
-			1: {Number: 1, Title: "Specification with no children", Body: specBody},
-		},
-	}
-
-	r := NewSpecificationResolver(client, nil)
-	_, err := r.Resolve(context.Background(), []int{1})
-	if err == nil {
-		t.Fatal("expected error for Specification with no children, got nil")
-	}
-	if !strings.Contains(err.Error(), "no child issues for specification #1") {
-		t.Fatalf("expected 'no child issues for specification #1' in error, got %q", err)
-	}
-}
-
 func TestSpecificationResolver_CarveOutNestedSpecFlattens(t *testing.T) {
 	// Per destination-aligned beat #4 (T3 #2145): harvested nested
 	// specs (not userInputSet) now flatten recursively instead of
@@ -950,20 +932,50 @@ func TestSpecificationResolver_NativeSubIssuesKeepsBodyRefOrder(t *testing.T) {
 	}
 }
 
-func TestSpecificationResolver_NativeSubIssueDroppedWithoutParentBacklink(t *testing.T) {
-	parentBody := "## What to build\n\nNo PRD sections.\n"
+func TestSpecificationResolver_EmptyChildCarveOut_NoCandidates(t *testing.T) {
+	specBody := "## Problem Statement\n\nProblem.\n\n## Solution\n\nSolution.\n\n## User Stories\n\n1. Story.\n"
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			1: {Number: 1, Title: "Specification with no children", Body: specBody},
+		},
+	}
+
+	var infoBuf bytes.Buffer
+	r := NewSpecificationResolver(client, &infoBuf)
+	got, err := r.Resolve(context.Background(), []int{1})
+	if err != nil {
+		t.Fatalf("expected no error for Specification with no children, got %v", err)
+	}
+	if !equalInts(got, []int{1}) {
+		t.Fatalf("expected pass-through [1], got %v", got)
+	}
+	if !strings.Contains(infoBuf.String(), "running specification #1 as a regular issue (no children)") {
+		t.Fatalf("expected carve-out log line in stderr, got: %q", infoBuf.String())
+	}
+}
+
+func TestSpecificationResolver_EmptyChildCarveOut_AllCandidatesFiltered(t *testing.T) {
+	specBody := "## Problem Statement\n\nProblem.\n\n## Solution\n\nSolution.\n\n## User Stories\n\n1. Story.\n"
 	strangerBody := "## What\n\nNo Parent backlink at all.\n"
 	client := &fakeGitHubClient{
 		issues: map[int]*github.Issue{
-			1:  {Number: 1, Title: "Parent", Body: parentBody},
+			1:  {Number: 1, Title: "Specification", Body: specBody},
 			42: {Number: 42, Title: "Stranger", Body: strangerBody},
 		},
 		subIssues: map[int][]int{1: {42}},
 	}
 
-	r := NewSpecificationResolver(client, io.Discard)
-	if _, err := r.Resolve(context.Background(), []int{1}); err == nil {
-		t.Fatal("expected error when no candidates survive the ## Parent filter, got nil")
+	var infoBuf bytes.Buffer
+	r := NewSpecificationResolver(client, &infoBuf)
+	got, err := r.Resolve(context.Background(), []int{1})
+	if err != nil {
+		t.Fatalf("expected no error when all candidates filtered, got %v", err)
+	}
+	if !equalInts(got, []int{1}) {
+		t.Fatalf("expected pass-through [1], got %v", got)
+	}
+	if !strings.Contains(infoBuf.String(), "running specification #1 as a regular issue (no children)") {
+		t.Fatalf("expected carve-out log line in stderr, got: %q", infoBuf.String())
 	}
 }
 
