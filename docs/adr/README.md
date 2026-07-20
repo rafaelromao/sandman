@@ -53,7 +53,7 @@ ADRs are numbered sequentially starting from `0001`. The template ADR (`0000`) i
 | 0010 | Local portal command and repo-scoped run scan | accepted |
 | 0011 | Remove interactive agent mode | accepted |
 | 0012 | Ralph Loop — Agent-Driven Issue Selection | superseded |
-| 0026 | Rename Ralph to Auto Mode | proposed |
+| 0026 | Empty-child Specification runs as a regular issue | proposed |
 | 0013 | Rename delegate-review to pr-review | accepted |
 | 0014 | Sandman Review - Daemon-Monitored PR Reviews | proposed |
 | 0015 | Store container config snapshots under the run dir | accepted |
