@@ -91,7 +91,7 @@ Trigger phrases: `run full regression suite`, `run all tests`, `run the full sui
 go test -race -v ./...
 
 # 2. Smoke — every provider, every buildTools preset, full timeout
-SANDMAN_TEST_PROVIDERS=all \
+SANDMAN_TEST_PROVIDERS=all SANDMAN_RUN_SMOKE_E2E=1 \
   go test -tags smoke -timeout 60m ./internal/cmd -run Smoke
 
 # 3. E2E — every scenario gate, no real-agent sub-tests
