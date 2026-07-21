@@ -113,9 +113,21 @@ Before performing the review, ensure the PR is in a healthy state:
 
    If a finding concerns a gap that the issue itself does not require (the PR does what the issue asked, but you would have asked for more), downgrade it to `Nit` or omit it — do not gate `APPROVED` on a broader interpretation of the issue.
 
-9. **Apply the quality rules.** Read `internal/prompt/quality_rules.md` and apply its rules as a smoke test to the diff. For each rule, judge whether its `Applies to` tag matches the language of the file under review; skip rules that do not apply. Follow the counting model and the threshold defined in that file. Quality findings are never `Blocking` — they are `Important` only when the threshold is crossed, otherwise `Nit` or omitted.
+9. **Apply the quality rules.** Resolve the local rules file at the relative path `internal/prompt/quality_rules.md` from the repository root. When the file is absent, render the verdict `Quality rules unavailable in this repository; no built-in quality-rule evaluation was applied.` and stop the quality check; do not cite Sandman's internal path in another project. When the file is present, apply its rules as a smoke test to the diff. For each rule, judge whether its construct tag (`[control-flow]`, `[functional]`, `[OOP]`, `[public-api]`) matches the changed code; skip rules whose tags do not apply. Use the per-finding severity table in `quality_rules.md`. Quality findings are never `Blocking`.
 
-10. After applying the rules, **render a `## Quality check` section** in the posted comment between `## Summary` and `## Findings`. The section must always render, even when no rule applies to the diff. Report: total locations reviewed `t`, distinct smelly locations `n`, the ratio `n / t` and its verdict against the threshold defined in `internal/prompt/quality_rules.md` (e.g. "below threshold", "at or above threshold", or `all rules skipped — no language-tagged rules matched the diff`), and the rule sections (complexity signals, OC, SOLID) cited by any filed finding. Do not restate the threshold literal; refer to `internal/prompt/quality_rules.md` for the value. Quality findings are never `Blocking`; this section does not change that.
+10. After applying the rules, **render a `## Quality check` section** in the posted comment between `## Summary` and `## Findings`. The section must always render. Use the four sub-sections below:
+
+   - `### Scope` — list files changed (added/modified) and lines added/removed, the language mix, the modules touched, and the blast radius. Pick one of the three labels below and append a one-line justification:
+     - `focused — <one-line justification>` (concentrated in a single module and a single concern)
+     - `mixed scope — <one-line justification>` (two modules, or a behaviour change mixed with refactoring or test scaffolding)
+     - `cross-cutting — <one-line justification>` (three or more modules, shared infrastructure, or a public contract used outside the changed location)
+   - `### Metrics` — report the worst cognitive and cyclomatic complexity values found in a changed location, with the configured threshold for each, in the formats `value (threshold N). No flag.` or `value (threshold N). Flag: <location>`. Report prior coverage of code in the blast radius when the repository exposes a coverage tool; otherwise render `Prior coverage of the blast radius not measured: repository has no configured coverage tool.` Do not convert any percentage into a finding severity. State explicitly which analyzer or manual assessment was used.
+   - `### Findings` — list any quality findings filed from this PR. Cite the construct tag from `quality_rules.md` for each finding.
+   - `### Tools used` — one line: either the analyzer used (e.g. `gocognit`, `radon`, `complexity-report`) or `Manual review of diff, no static analyzer configured for this PR.`
+
+   When the rules file is absent, render exactly: `Quality rules unavailable in this repository; no built-in quality-rule evaluation was applied.` and skip the four sub-sections above.
+
+   Do not restate the threshold literal; refer to `internal/prompt/quality_rules.md` for the value. Do not produce aggregate ratios. Do not invent metric values that the analyzer did not produce.
 
 11. When you find an issue, cite the file and line range, quote the offending snippet, and describe the concrete fix.
 
@@ -137,7 +149,7 @@ This is the standard atomic-rename pattern (write to a temp file, then `os.Renam
 Format the body as Markdown with the following sections:
 
 - `## Summary` — one paragraph describing what the PR does.
-- `## Quality check` — Always render. Cite n/t, the ratio, the threshold verdict (using the threshold defined in `internal/prompt/quality_rules.md`; never restate the literal), and the rule sections cited by any filed finding. If no rule applied to the diff, render a one-line "all rules skipped — no language-tagged rules matched the diff" verdict.
+- `## Quality check` — Always render. Use the four sub-sections `### Scope`, `### Metrics`, `### Findings`, `### Tools used` defined in step 10. When the local rules file is absent, render the verdict `Quality rules unavailable in this repository; no built-in quality-rule evaluation was applied.` and skip the four sub-sections. Never restate the obsolete ratio or threshold literal; refer to `internal/prompt/quality_rules.md` for the value.
 - `## Findings` — bulleted list grouped by severity (`Blocking`, `Important`, `Nit`). If there are no findings in a group, omit it. Every `Nit` must cite a specific documented rule from step 7 (file + section); otherwise omit it. Do not pad the section — empty means `APPROVED`.
 - `## Suggested next steps` — the minimum set of follow-ups for the author. Do not suggest splitting the PR; review the diff as one unit.
 - `## Decision` — If there are zero `Blocking` or `Important` findings, place a single line: `**APPROVED**`. Otherwise, place `**CHANGES_REQUESTED**`.
