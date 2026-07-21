@@ -10,6 +10,76 @@ import (
 	"testing"
 )
 
+// TestDocGuard_QualityRulesPositivePhrasing pins the new wording
+// introduced by issue #2332 in the PR review quality rules template
+// and the PR review prompt. The check enforces:
+//   - the four construct tags ([control-flow], [functional], [OOP],
+//     [public-api]);
+//   - the blast-radius labels (focused, mixed scope, cross-cutting);
+//   - the unavailable-rules verdict phrase;
+//   - the four Quality check sub-section headings (### Scope, ###
+//     Metrics, ### Findings, ### Tools used).
+//
+// A future drift that removes any of these phrasings will fail the
+// build even if no forbidden wording has been added. The shell mirror
+// in scripts/check-review-docs.sh runs the same scan for editors /
+// pre-commit hooks.
+func TestDocGuard_QualityRulesPositivePhrasing(t *testing.T) {
+	root, err := repoRoot()
+	if err != nil {
+		t.Fatalf("locate repo root: %v", err)
+	}
+
+	constructTags := []string{"[control-flow]", "[functional]", "[OOP]", "[public-api]"}
+	blastRadiusLabels := []string{"focused", "mixed scope", "cross-cutting"}
+	qualityCheckHeadings := []string{"### Scope", "### Metrics", "### Findings", "### Tools used"}
+
+	scopedFiles := []string{
+		filepath.Join(root, "internal", "prompt", "quality_rules.md"),
+		filepath.Join(root, "internal", "prompt", "default_pr_review_prompt.md"),
+	}
+
+	unavailable := "Quality rules unavailable in this repository; no built-in quality-rule evaluation was applied."
+
+	contents := make(map[string]string, len(scopedFiles))
+	for _, path := range scopedFiles {
+		body, err := os.ReadFile(path)
+		if err != nil {
+			t.Errorf("read %s: %v", path, err)
+			continue
+		}
+		contents[path] = string(body)
+		rel, _ := filepath.Rel(root, path)
+		for _, needle := range constructTags {
+			if !strings.Contains(contents[path], needle) {
+				t.Errorf("%s must contain construct tag %q (issue #2332)", rel, needle)
+			}
+		}
+		if !strings.Contains(contents[path], unavailable) {
+			t.Errorf("%s must contain unavailable-rules verdict %q (issue #2332)", rel, unavailable)
+		}
+	}
+
+	// Blast-radius labels and Quality check sub-section headings are
+	// only required in the PR review prompt; the rules template is
+	// the authoritative source the prompt references.
+	promptPath := filepath.Join(root, "internal", "prompt", "default_pr_review_prompt.md")
+	promptText, ok := contents[promptPath]
+	if !ok {
+		t.Fatalf("prompt file %q was not read in the previous pass", promptPath)
+	}
+	for _, needle := range blastRadiusLabels {
+		if !strings.Contains(promptText, needle) {
+			t.Errorf("default_pr_review_prompt.md must contain blast-radius label %q (issue #2332)", needle)
+		}
+	}
+	for _, needle := range qualityCheckHeadings {
+		if !strings.Contains(promptText, needle) {
+			t.Errorf("default_pr_review_prompt.md must contain Quality check heading %q (issue #2332)", needle)
+		}
+	}
+}
+
 // TestDocGuard_ReviewRunPositivePhrasing is the positive side of the
 // docguard: it asserts that key canonical phrasing exists in
 // CONTEXT.md, docs/usage/portal.md, and the in-package ReviewRunIDFor

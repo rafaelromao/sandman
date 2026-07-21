@@ -1,11 +1,12 @@
 # PR Review Quality Rules
 
 Smoke-test rules the PR reviewer applies to the diff in addition to the
-acceptance criteria, ADRs, and correctness checks defined in the review prompt.
+acceptance criteria, ADRs, and correctness checks defined in the review
+prompt.
 
 These rules are **secondary**. A finding under these rules never blocks the PR
-on its own — the issue's acceptance criteria still take precedence. A finding
-here only ever escalates to `Important` when the threshold below is crossed.
+on its own — the issue's acceptance criteria still take precedence. Severity
+is assigned per-location and never reaches `Blocking`.
 
 ## Counting model
 
@@ -18,31 +19,55 @@ here only ever escalates to `Important` when the threshold below is crossed.
   functions (configs, schemas, top-level scripts), a location is a
   top-level block of logic that contains control flow.
 
-## Threshold
+## Construct tags
 
-Let `n` be the number of distinct smelly locations in the diff, and `t` the
-total number of locations reviewed.
+Each rule below carries one or more **construct tags**. Apply a rule when the
+diff uses the construct it names. A file can match more than one tag.
 
-- If `n / t >= 0.75` → at least one representative finding must be filed as
-  `Important`. The rest stay `Important` or `Nit` at the reviewer's
-  discretion.
-- If `n / t < 0.75` → findings are `Nit` or omitted.
+- `[control-flow]` — applies to functions, methods, lambdas, scripts,
+  branches, loops, exception paths, or pattern matches in any language.
+- `[functional]` — applies to higher-order functions, callbacks, pipelines,
+  comprehensions, recursion, or algebraic/pattern-matched transformations.
+- `[OOP]` — applies to stateful domain objects, inheritance, polymorphic
+  contracts, or public class APIs. For Go, Rust, or pure-functional
+  languages, skip these rules unless the changed code defines a stateful
+  object or a public contract.
+- `[public-api]` — applies to exported or externally consumed functions,
+  methods, types, modules, or schemas.
 
-In both cases, every `Nit` must cite the specific rule it breaks.
+## Metrics
 
-## Per-language applicability
+Thresholds below are **signals**, not pass/fail. Reviewers must state
+explicitly which analyzer they used (or that they made a manual
+assessment). Per-location severity is described after the table.
 
-For each rule below, the reviewer must judge whether it applies to the
-language of the file being reviewed. Skip rules whose `Applies to` tag does
-not match the file's language family. The tags are:
+1. **Cognitive complexity**: a configured signal for each changed function,
+   method, lambda, or top-level control-flow block. Default threshold **15**;
+   25 for C-family languages (C, C++, Objective-C) when no stricter setting
+   exists. See the Cognitive Complexity white paper for the precise counting
+   rules.
+2. **Cyclomatic complexity**: a configured signal for the same units. Default
+   threshold **20** when repository tooling provides none. Apply the
+   language-specific counting definition; do not hand-convert a boolean
+   operator count into a cyclomatic complexity.
+3. **tool precedence**: this is the rule that resolves conflicts between
+   analyzer output and manual estimates. When a repository configures a
+   linter or analyzer, its reported metric and threshold win.
+4. **No metric theatre**: do not request extraction merely to lower a score.
+   Request a change only when a named decision, branch, effect boundary, or
+   domain transformation can become clearer.
 
-- `[all]` — applies to any language with the relevant control flow or
-  construct.
-- `[OOP]` — applies to languages with classes and methods (Java, C#, C++,
-  Python, Ruby, PHP, Kotlin, Swift, etc.). For Go, Rust, or pure-functional
-  languages, skip these rules.
+## Per-finding severity
 
-## Complexity signals — `[all]`
+Assign severity per changed location, not per rule.
+
+| Evidence | Default action |
+| --- | --- |
+| A construct-specific readability concern with a concrete, small fix | `Nit` or omit |
+| Cognitive complexity above the configured signal threshold, or cyclomatic complexity above its configured signal threshold, plus a concrete explanation of why the changed control flow is hard to verify or modify | `Important` |
+| A metric breach without a demonstrated readability or change-risk concern | Report in the metrics summary only |
+
+## Complexity signals — `[control-flow]`
 
 1. **Deep nesting** — 4 or more levels of `if`/`for`/`while`/`try` inside
    each other.
@@ -51,63 +76,70 @@ not match the file's language family. The tags are:
    or happy path indented further than the error path.
 4. **Long switch / if-else chain** — many cases with non-trivial bodies, or
    fallthrough across cases.
-5. **Boolean-heavy condition** — three or more boolean operators in a
-   single condition.
-6. **Mixed concerns** — input parsing, business logic, and I/O all in the
+5. **Mixed concerns** — input parsing, business logic, and I/O all in the
    same function body.
 
-## Object Calisthenics
+## Functional code — `[functional]`
 
-1. **One level of indentation per method** — flag methods with 2+ nesting
-   levels. `Applies to: [OOP]`
-2. **Don't use the `else` keyword** — flag `if/else` blocks; prefer early
-   return or guard clauses. `Applies to: [all]`
-3. **Wrap all primitives and strings** — flag raw primitives with domain
-   meaning passed across function boundaries (e.g. `string userId` instead
-   of a `UserID` type). Skip for one-off locals.
-   `Applies to: [OOP]`
-4. **First-class collections** — flag a class whose main field is a
-   collection of related objects and that has no other behaviour. Skip for
-   transient locals. `Applies to: [OOP]`
-5. **One dot per line** — flag chained method calls (`.a().b().c()`) and
-   long property chains (`obj.a.b.c`). Skip for fluent builders.
-   `Applies to: [all]`
-6. **Don't abbreviate** — flag short cryptic names (`usr`, `mgr`, `tmp`,
-   `data`, `info`) used outside local scopes. `Applies to: [all]`
-7. **Keep entities small** — flag classes/modules over ~150 lines or with
-   more than ~10 public methods. `Applies to: [OOP]`
-8. **No classes with more than two instance variables** — flag classes
-   with 3+ fields. Skip for value objects and DTOs.
-   `Applies to: [OOP]`
-9. **No getters/setters/properties/public fields** — flag exposed mutable
-   state outside of value objects and DTOs. `Applies to: [OOP]`
+1. **Nested transformation**: flag nested callbacks, lambdas,
+   comprehensions, or recursive branches when an intermediate transformation
+   has domain meaning but is unnamed, or when nesting hides error/effect
+   order. Do not flag a short, conventional pipeline.
+2. **Effect boundary**: flag a pipeline that interleaves I/O, state
+   mutation, asynchronous scheduling, or exception handling with substantial
+   pure transformation such that order and failure behavior cannot be
+   reasoned about locally.
+3. **Pattern-match contract**: for public transformations, flag a
+   non-exhaustive or catch-all pattern when a new variant can silently take
+   an unintended path and the compiler or repository conventions do not
+   already enforce exhaustiveness. Use a correctness severity when it can
+   actually fail at runtime.
+4. **Opaque composition**: flag point-free or combinator-heavy code only when
+   a reader cannot identify the input, output, or effect from the surrounding
+   names and types. Prefer a named local transformation over mechanically
+   unrolling a pipeline.
 
 ## SOLID
 
-1. **Single Responsibility (SRP)** — flag a class/module whose purpose
-   cannot be stated in one short sentence without "and".
-   `Applies to: [OOP]`
-2. **Open/Closed (OCP)** — flag behaviour added by editing existing code
-   with conditionals rather than extending it. Skip for trivial changes.
-   `Applies to: [all]`
-3. **Liskov Substitution (LSP)** — flag an override that narrows the
-   parent's contract (throws where parent doesn't, returns narrower
-   types, silently no-ops). Skip for documented intentional narrowing.
-   `Applies to: [OOP]`
-4. **Interface Segregation (ISP)** — flag a class implementing an
-   interface whose methods it does not use, or a public API surface
-   whose callers only touch a subset. `Applies to: [OOP]`
-5. **Dependency Inversion (DIP)** — flag a high-level module importing or
-   constructing a concrete low-level dependency directly. Concrete
-   constructors and `init` functions are out of scope for this rule.
-   `Applies to: [OOP]`
+1. **Single Responsibility (SRP)** `[OOP]` `[public-api]`: flag a class/module whose purpose cannot be stated in one short sentence without "and".
+2. **Open/Closed (OCP)** `[public-api]`: flag conditionals only when an established, repeated contract is already present and the change duplicates a known extension seam. Skip for trivial changes.
+3. **Liskov Substitution (LSP)** `[OOP]`: flag an override or public interface only with a concrete caller-visible contract violation, such as a strengthened precondition, returns narrower types, incompatible no-op, or surprising exception. Skip for documented intentional narrowing.
+4. **Interface Segregation (ISP)** `[OOP]`: flag a class implementing an interface whose methods it does not use, or a public API surface whose callers only touch a subset.
+5. **Dependency Inversion (DIP)** `[OOP]`: flag a high-level module importing or constructing a concrete low-level dependency directly. Concrete constructors and `init` functions are out of scope for this rule.
 
-## Severity recap
+## Mutable state — `[OOP]` `[public-api]`
 
-- Per-finding: `Nit` (or omit) by default.
-- Aggregate: if the 75% threshold is crossed, file at least one
-  representative finding as `Important` and reference this file.
-- Never combine a quality-rules finding with a `Blocking` severity.
-  Quality smells do not block the PR.
-- Skip per-language inapplicable rules before counting toward the
-  threshold.
+Flag exposed mutable instance state when mutation can bypass the type's
+invariant. Exempt immutable value types, DTOs, schemas, and intentionally
+public data carriers.
+
+## Public API contract — `[public-api]`
+
+1. **Naming**: flag a name only when its scope makes its meaning
+   ambiguous. Do not flag conventional short local names, loop indices, or
+   receivers.
+2. **Members**: when a type is overloaded or has multiple members with
+   similar shapes, parameter names, order, and semantics must remain
+   consistent across members.
+
+## Out of scope for the rules
+
+- **Performance regressions** — covered by the correctness/safety check
+  in the review prompt, not the quality rules.
+- **Style preferences** — explicitly excluded from the reviewer's scope
+  (formatting, import order, comment phrasing, renames without behaviour
+  impact).
+- **Domain-specific heuristics** — the rules are language-agnostic.
+  Domain smells belong in the linked issue's acceptance criteria or in an
+  ADR cited from the issue body.
+
+## When the rules file is absent
+
+If `internal/prompt/quality_rules.md` is absent from the repository being
+reviewed, render exactly:
+
+> `Quality rules unavailable in this repository; no built-in quality-rule evaluation was applied.`
+
+Do not cite Sandman's internal path in another project. The reviewer may
+still apply the repository's own documented standards under the existing
+standards review.

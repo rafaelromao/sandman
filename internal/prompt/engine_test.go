@@ -640,6 +640,62 @@ func TestDefaultQualityRules_EmbeddedTemplate(t *testing.T) {
 	}
 }
 
+// TestDefaultQualityRules_ContainsConstructTagsAndMetrics pins the
+// canonical phrasings introduced by issue #2332: construct tags replace
+// the old `[all]`/`[OOP]` labels, cognitive and cyclomatic complexity
+// appear with their default thresholds, the unavailable-rules verdict is
+// pinned verbatim, and the obsolete Object Calisthenics numerics are
+// gone.
+func TestDefaultQualityRules_ContainsConstructTagsAndMetrics(t *testing.T) {
+	body := DefaultQualityRules()
+
+	for _, tag := range []string{"[control-flow]", "[functional]", "[OOP]", "[public-api]"} {
+		if !strings.Contains(body, tag) {
+			t.Errorf("quality rules template must contain construct tag %q (issue #2332)", tag)
+		}
+	}
+
+	for _, phrase := range []string{
+		"Cognitive complexity",
+		"Cyclomatic complexity",
+		"threshold **15**",
+		"threshold **20**",
+		"tool precedence",
+		"Quality rules unavailable in this repository; no built-in quality-rule evaluation was applied.",
+		"flag a class/module whose purpose cannot be stated in one short sentence without \"and\"",
+		"flag conditionals only when an established, repeated contract is already present",
+		"flag an override or public interface only with a concrete caller-visible contract violation",
+		"flag a class implementing an interface whose methods it does not use",
+		"flag a high-level module importing or constructing a concrete low-level dependency directly",
+	} {
+		if !strings.Contains(body, phrase) {
+			t.Errorf("quality rules template must contain %q (issue #2332)", phrase)
+		}
+	}
+
+	for _, forbidden := range []string{
+		"[all]",
+		"Applies to: [OOP]",
+		"Object Calisthenics",
+		"One level of indentation per method",
+		"wrap all primitives",
+		"One dot per line",
+		"Don't abbreviate",
+		"Keep entities small",
+		"No classes with more than two instance variables",
+		"No getters/setters/properties/public fields",
+		"n / t",
+		"0.75",
+		"75%",
+		"75 %",
+		"three or more boolean operators",
+	} {
+		if strings.Contains(body, forbidden) {
+			t.Errorf("quality rules template must not retain obsolete wording %q (issue #2332)", forbidden)
+		}
+	}
+}
+
 func TestDefaultPRReviewPrompt_ContainsRequiredKeys(t *testing.T) {
 	prompt := DefaultPRReviewPrompt()
 	for _, key := range []string{"{{PR_NUMBER}}", "{{PR_TITLE}}", "{{PR_BODY}}", "{{REVIEW_FOCUS}}", "{{RUN_DIR}}"} {
@@ -781,27 +837,76 @@ func TestDefaultPRReviewPrompt_ContainsQualityCheckSection(t *testing.T) {
 
 	required := []string{
 		"After applying the rules, **render a `## Quality check` section**",
-		"\"below threshold\", \"at or above threshold\", or `all rules skipped — no language-tagged rules matched the diff`",
-		"complexity signals, OC, SOLID",
+		"`### Scope`",
+		"`### Metrics`",
+		"`### Findings`",
+		"`### Tools used`",
+		"focused — <one-line justification>",
+		"mixed scope — <one-line justification>",
+		"cross-cutting — <one-line justification>",
+		"Quality rules unavailable in this repository; no built-in quality-rule evaluation was applied.",
 		"Do not restate the threshold literal; refer to `internal/prompt/quality_rules.md`",
-		"- `## Quality check` — Always render. Cite n/t, the ratio, the threshold verdict (using the threshold defined in `internal/prompt/quality_rules.md`; never restate the literal)",
-		"render a one-line \"all rules skipped — no language-tagged rules matched the diff\" verdict",
-		"10. ",
 		"11. When you find an issue, cite the file and line range, quote the offending snippet, and describe the concrete fix.",
 	}
 	for _, phrase := range required {
 		if !strings.Contains(prompt, phrase) {
-			t.Errorf("default PR review prompt must retain canonical quality-check phrase %q", phrase)
+			t.Errorf("default PR review prompt must retain canonical quality-check phrase %q (issue #2332)", phrase)
 		}
 	}
 
 	buggyInstructional := []string{
 		"0.75",
 		"75%",
+		"complexity signals, OC, SOLID",
+		"all rules skipped — no language-tagged rules matched the diff",
+		"Cite n/t, the ratio, the threshold verdict",
 	}
 	for _, phrase := range buggyInstructional {
 		if strings.Contains(prompt, phrase) {
-			t.Errorf("default PR review prompt must not restate the threshold literal %q; refer to internal/prompt/quality_rules.md (issue #1714)", phrase)
+			t.Errorf("default PR review prompt must not retain obsolete quality-check wording %q (issue #2332)", phrase)
+		}
+	}
+}
+
+func TestRenderReview_QualityCheckRendersAllSubSections(t *testing.T) {
+	engine := &Engine{}
+	data := PRData{
+		Number:            17,
+		Title:             "Revise quality rules",
+		Body:              "Refs #2332.",
+		ReviewFocus:       "",
+		RunDir:            "/abs/path/to/worktree",
+		PriorReviewExists: true,
+	}
+	result, err := engine.RenderReview(RenderConfig{}, data)
+	if err != nil {
+		t.Fatalf("render review prompt: %v", err)
+	}
+
+	for _, heading := range []string{"### Scope", "### Metrics", "### Findings", "### Tools used"} {
+		if !strings.Contains(result, heading) {
+			t.Errorf("rendered review prompt must contain %q (issue #2332)", heading)
+		}
+	}
+
+	for _, phrase := range []string{
+		"Quality rules unavailable in this repository; no built-in quality-rule evaluation was applied.",
+		"focused — <one-line justification>",
+		"mixed scope — <one-line justification>",
+		"cross-cutting — <one-line justification>",
+		"value (threshold N). No flag.",
+		"value (threshold N). Flag: <location>",
+		"Prior coverage of the blast radius not measured: repository has no configured coverage tool.",
+		"State explicitly which analyzer or manual assessment was used.",
+	} {
+		if !strings.Contains(result, phrase) {
+			t.Errorf("rendered review prompt must contain %q (issue #2332)", phrase)
+		}
+	}
+
+	for _, forbidden := range []string{"0.75", "75%", "complexity signals, OC, SOLID", "n / t"} {
+		if strings.Contains(result, forbidden) {
+			t.Errorf("rendered review prompt must not retain obsolete wording %q (issue #2332)", forbidden)
 		}
 	}
 }
