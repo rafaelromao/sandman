@@ -10,8 +10,8 @@ import (
 	"github.com/rafaelromao/sandman/internal/github"
 )
 
-// T2 / T1 / T4 use real git when no Runner / RepoDir override is
-// supplied. The fixtures below mirror the DiffSubset test's repo.
+// PreFilter / Decision / CheapGate use real git when no Runner / RepoDir
+// override is supplied. The fixtures below mirror the DiffSubset test's repo.
 
 func t2Fixture(t *testing.T) (repo string, a, b string) {
 	t.Helper()
@@ -53,12 +53,12 @@ func runOutput(t *testing.T, dir string, args ...string) string {
 	return string(out)
 }
 
-func TestT2PreFilter_HeadDescendantOfBaseAbstains(t *testing.T) {
+func TestPreFilterOracle_HeadDescendantOfBaseAbstains(t *testing.T) {
 	t.Parallel()
 	repo, a, _ := t2Fixture(t)
 	// a is the empty initial commit; HEAD is the same as a (no new
 	// commits), so a is an ancestor of HEAD.
-	oracle := &T2PreFilter{RepoDir: repo, BaseRef: a, HeadRef: a}
+	oracle := &PreFilterOracle{RepoDir: repo, BaseRef: a, HeadRef: a}
 	out, check, err := oracle.Run(VerifyInput{WorkDir: repo})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
@@ -71,7 +71,7 @@ func TestT2PreFilter_HeadDescendantOfBaseAbstains(t *testing.T) {
 	}
 }
 
-func TestT2PreFilter_DivergedRejects(t *testing.T) {
+func TestPreFilterOracle_DivergedRejects(t *testing.T) {
 	t.Parallel()
 	repo, a, b := t2Fixture(t)
 	// Create a divergent commit that is not in the b→a direction.
@@ -87,7 +87,7 @@ func TestT2PreFilter_DivergedRejects(t *testing.T) {
 	sh("echo new > divergent.txt")
 	runGitNoErr(t, repo, "add", "divergent.txt")
 	runGitNoErr(t, repo, "commit", "-q", "-m", "divergent")
-	oracle := &T2PreFilter{RepoDir: repo, BaseRef: a, HeadRef: "HEAD"}
+	oracle := &PreFilterOracle{RepoDir: repo, BaseRef: a, HeadRef: "HEAD"}
 	out, check, err := oracle.Run(VerifyInput{WorkDir: repo})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
@@ -100,9 +100,9 @@ func TestT2PreFilter_DivergedRejects(t *testing.T) {
 	}
 }
 
-func TestT2PreFilter_MissingRepoAbstains(t *testing.T) {
+func TestPreFilterOracle_MissingRepoAbstains(t *testing.T) {
 	t.Parallel()
-	oracle := &T2PreFilter{RepoDir: "/nonexistent", BaseRef: "main", HeadRef: "HEAD"}
+	oracle := &PreFilterOracle{RepoDir: "/nonexistent", BaseRef: "main", HeadRef: "HEAD"}
 	out, _, err := oracle.Run(VerifyInput{WorkDir: "/nonexistent"})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
@@ -121,11 +121,11 @@ func runGitNoErr(t *testing.T, dir string, args ...string) {
 	}
 }
 
-// T4 cheap gate: pure function over a PR snapshot.
+// CheapGate oracle: pure function over a PR snapshot.
 
-func TestT4CheapGate_AllGreenDefersToT1(t *testing.T) {
+func TestCheapGateOracle_AllGreenDefersToDecision(t *testing.T) {
 	t.Parallel()
-	oracle := &T4CheapGate{}
+	oracle := &CheapGateOracle{}
 	out, check, err := oracle.Run(VerifyInput{PR: &github.PR{
 		ReviewDecision:    "APPROVED",
 		MergeStateStatus:  "CLEAN",
@@ -134,17 +134,17 @@ func TestT4CheapGate_AllGreenDefersToT1(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if out != OracleDeferT1 {
-		t.Errorf("outcome = %v, want OracleDeferT1", out)
+	if out != OracleDeferDecision {
+		t.Errorf("outcome = %v, want OracleDeferDecision", out)
 	}
-	if check.Name != "T4" {
-		t.Errorf("check.Name = %q, want T4", check.Name)
+	if check.Name != "cheap-gate" {
+		t.Errorf("check.Name = %q, want cheap-gate", check.Name)
 	}
 }
 
-func TestT4CheapGate_ChangesRequestedAbstains(t *testing.T) {
+func TestCheapGateOracle_ChangesRequestedAbstains(t *testing.T) {
 	t.Parallel()
-	oracle := &T4CheapGate{}
+	oracle := &CheapGateOracle{}
 	out, _, err := oracle.Run(VerifyInput{PR: &github.PR{
 		ReviewDecision:    "CHANGES_REQUESTED",
 		MergeStateStatus:  "CLEAN",
@@ -158,9 +158,9 @@ func TestT4CheapGate_ChangesRequestedAbstains(t *testing.T) {
 	}
 }
 
-func TestT4CheapGate_DirtyMergeAbstains(t *testing.T) {
+func TestCheapGateOracle_DirtyMergeAbstains(t *testing.T) {
 	t.Parallel()
-	oracle := &T4CheapGate{}
+	oracle := &CheapGateOracle{}
 	out, _, err := oracle.Run(VerifyInput{PR: &github.PR{
 		ReviewDecision:    "APPROVED",
 		MergeStateStatus:  "DIRTY",
@@ -174,9 +174,9 @@ func TestT4CheapGate_DirtyMergeAbstains(t *testing.T) {
 	}
 }
 
-func TestT4CheapGate_NilPRAbstains(t *testing.T) {
+func TestCheapGateOracle_NilPRAbstains(t *testing.T) {
 	t.Parallel()
-	oracle := &T4CheapGate{}
+	oracle := &CheapGateOracle{}
 	out, _, err := oracle.Run(VerifyInput{})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
@@ -186,11 +186,11 @@ func TestT4CheapGate_NilPRAbstains(t *testing.T) {
 	}
 }
 
-// T1 decision oracle: pure over the issue body + a Runner.
+// Decision oracle: pure over the issue body + a Runner.
 
-func TestT1DecisionOracle_NoACReturnsNoSignal(t *testing.T) {
+func TestDecisionOracle_NoACReturnsNoSignal(t *testing.T) {
 	t.Parallel()
-	oracle := &T1DecisionOracle{Runner: func(_ context.Context, _, _ string) (string, error) {
+	oracle := &DecisionOracle{Runner: func(_ context.Context, _, _ string) (string, error) {
 		t.Errorf("Runner should not be called when there are no ACs")
 		return "", nil
 	}}
@@ -206,10 +206,10 @@ func TestT1DecisionOracle_NoACReturnsNoSignal(t *testing.T) {
 	}
 }
 
-func TestT1DecisionOracle_AllGreenReturnsVerified(t *testing.T) {
+func TestDecisionOracle_AllGreenReturnsVerified(t *testing.T) {
 	t.Parallel()
 	calls := 0
-	oracle := &T1DecisionOracle{Runner: func(_ context.Context, dir, line string) (string, error) {
+	oracle := &DecisionOracle{Runner: func(_ context.Context, dir, line string) (string, error) {
 		calls++
 		return "ok", nil
 	}}
@@ -228,9 +228,9 @@ func TestT1DecisionOracle_AllGreenReturnsVerified(t *testing.T) {
 	}
 }
 
-func TestT1DecisionOracle_OneFailingReturnsFailed(t *testing.T) {
+func TestDecisionOracle_OneFailingReturnsFailed(t *testing.T) {
 	t.Parallel()
-	oracle := &T1DecisionOracle{Runner: func(_ context.Context, _, line string) (string, error) {
+	oracle := &DecisionOracle{Runner: func(_ context.Context, _, line string) (string, error) {
 		if strings.Contains(line, "TestB") {
 			return "FAIL", errors.New("exit 1")
 		}
@@ -245,9 +245,9 @@ func TestT1DecisionOracle_OneFailingReturnsFailed(t *testing.T) {
 	}
 }
 
-func TestT1DecisionOracle_NilIssueReturnsNoSignal(t *testing.T) {
+func TestDecisionOracle_NilIssueReturnsNoSignal(t *testing.T) {
 	t.Parallel()
-	oracle := &T1DecisionOracle{}
+	oracle := &DecisionOracle{}
 	out, _, err := oracle.Run(VerifyInput{})
 	if err != nil {
 		t.Fatalf("Run: %v", err)
@@ -257,14 +257,14 @@ func TestT1DecisionOracle_NilIssueReturnsNoSignal(t *testing.T) {
 	}
 }
 
-// Sanity check: the default T1 runner is the shell exec runner.
+// Sanity check: the default Decision runner is the shell exec runner.
 
-func TestDefaultT1Runner_RunsShellCommand(t *testing.T) {
+func TestDefaultDecisionRunner_RunsShellCommand(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	out, err := defaultT1Runner(context.Background(), dir, "echo hello")
+	out, err := defaultDecisionRunner(context.Background(), dir, "echo hello")
 	if err != nil {
-		t.Fatalf("defaultT1Runner: %v", err)
+		t.Fatalf("defaultDecisionRunner: %v", err)
 	}
 	if !strings.Contains(out, "hello") {
 		t.Errorf("output = %q, want contains hello", out)

@@ -10,14 +10,14 @@ import (
 	"github.com/rafaelromao/sandman/internal/sandbox"
 )
 
-// T2PreFilter is the L1 + DiffSubset pre-filter. It runs the cheap
+// PreFilterOracle is the L1 + DiffSubset pre-filter. It runs the cheap
 // `git merge-base --is-ancestor B M` check first; on L1-true it
 // abstains. On L1-false it computes the DiffSubset between the branch
 // HEAD and origin/main; if the branch's diff is not a subset of
 // origin/main's, the oracle rejects. Sub-second, zero REST.
-type T2PreFilter struct {
-	// RepoDir is the git working copy whose refs T2 queries. The
-	// orchestrator wires this to the same worktree the run executes
+type PreFilterOracle struct {
+	// RepoDir is the git working copy whose refs the oracle queries.
+	// The orchestrator wires this to the same worktree the run executes
 	// in.
 	RepoDir string
 	// BaseRef is the local ref for the base branch (typically
@@ -29,67 +29,67 @@ type T2PreFilter struct {
 	HeadRef string
 }
 
-// Run executes the T2 pre-filter. See the issue body for the full
+// Run executes the PreFilter oracle. See the issue body for the full
 // contract; the high-level outcome is:
 //
 //   - L1 true (base is ancestor of head) → OracleAbstain (the change
-//     is exactly on main, so further verification is unnecessary; T1
-//     will abstain too because it only runs on diffs).
+//     is exactly on main, so further verification is unnecessary; the
+//     Decision oracle will abstain too because it only runs on diffs).
 //   - L1 false + subset of main → OracleAbstain (the change is part
 //     of main; no proof either way).
 //   - L1 false + not a subset → OracleReject (the branch has lines
-//     that are not in main; T1 cannot prove).
+//     that are not in main; the Decision oracle cannot prove).
 //   - L1 error → OracleAbstain with a logged warning (transient
 //     network / git errors must not block the run).
-func (t *T2PreFilter) Run(in VerifyInput) (OracleResult, OracleCheck, error) {
-	dir := t.repoDir(in)
+func (p *PreFilterOracle) Run(in VerifyInput) (OracleResult, OracleCheck, error) {
+	dir := p.repoDir(in)
 	if dir == "" {
-		return OracleAbstain, OracleCheck{Name: "T2"}, nil
+		return OracleAbstain, OracleCheck{Name: "pre-filter"}, nil
 	}
-	base := t.baseRef(in)
-	head := t.headRef(in)
+	base := p.baseRef(in)
+	head := p.headRef(in)
 	if base == "" || head == "" {
-		return OracleAbstain, OracleCheck{Name: "T2"}, nil
+		return OracleAbstain, OracleCheck{Name: "pre-filter"}, nil
 	}
 	ancestor, err := sandbox.GitMergeBaseIsAncestor(dir, head, base)
 	if err != nil {
-		return OracleAbstain, OracleCheck{Name: "T2", Details: map[string]any{"error": err.Error()}}, nil
+		return OracleAbstain, OracleCheck{Name: "pre-filter", Details: map[string]any{"error": err.Error()}}, nil
 	}
 	if ancestor {
 		// head is a descendant of base → the change is on main.
-		return OracleAbstain, OracleCheck{Name: "T2", Details: map[string]any{"l1": true}}, nil
+		return OracleAbstain, OracleCheck{Name: "pre-filter", Details: map[string]any{"l1": true}}, nil
 	}
 	subset, err := sandbox.DiffSubset(dir, head, base)
 	if err != nil {
-		return OracleAbstain, OracleCheck{Name: "T2", Details: map[string]any{"error": err.Error()}}, nil
+		return OracleAbstain, OracleCheck{Name: "pre-filter", Details: map[string]any{"error": err.Error()}}, nil
 	}
 	mainSet, err := sandbox.DiffSubset(dir, base, head)
 	if err != nil {
-		return OracleAbstain, OracleCheck{Name: "T2", Details: map[string]any{"error": err.Error()}}, nil
+		return OracleAbstain, OracleCheck{Name: "pre-filter", Details: map[string]any{"error": err.Error()}}, nil
 	}
 	if isSubset(subset, mainSet) {
-		return OracleAbstain, OracleCheck{Name: "T2", Details: map[string]any{"l1": false, "subset": true}}, nil
+		return OracleAbstain, OracleCheck{Name: "pre-filter", Details: map[string]any{"l1": false, "subset": true}}, nil
 	}
-	return OracleReject, OracleCheck{Name: "T2", Details: map[string]any{"l1": false, "subset": false, "files": fileNames(subset)}}, nil
+	return OracleReject, OracleCheck{Name: "pre-filter", Details: map[string]any{"l1": false, "subset": false, "files": fileNames(subset)}}, nil
 }
 
-func (t *T2PreFilter) repoDir(in VerifyInput) string {
-	if t.RepoDir != "" {
-		return t.RepoDir
+func (p *PreFilterOracle) repoDir(in VerifyInput) string {
+	if p.RepoDir != "" {
+		return p.RepoDir
 	}
 	return in.WorkDir
 }
 
-func (t *T2PreFilter) baseRef(in VerifyInput) string {
-	if t.BaseRef != "" {
-		return t.BaseRef
+func (p *PreFilterOracle) baseRef(in VerifyInput) string {
+	if p.BaseRef != "" {
+		return p.BaseRef
 	}
 	return "origin/main"
 }
 
-func (t *T2PreFilter) headRef(in VerifyInput) string {
-	if t.HeadRef != "" {
-		return t.HeadRef
+func (p *PreFilterOracle) headRef(in VerifyInput) string {
+	if p.HeadRef != "" {
+		return p.HeadRef
 	}
 	return "HEAD"
 }
@@ -130,77 +130,76 @@ func fileNames(ds sandbox.DiffSet) []string {
 	return out
 }
 
-// T4CheapGate is the API-side pre-check. It reads reviewDecision /
-// mergeStateStatus / statusCheckRollup off the supplied PR and
-// returns OracleDeferT1 when all three are positive (T1 should make
-// the final call) or OracleAbstain otherwise. CHANGES_REQUESTED
-// abstains — sandman-pr-review Hard Rule 8 owns that path.
-type T4CheapGate struct{}
+// CheapGateOracle is the API-side pre-check. It reads reviewDecision /
+// mergeStateStatus / statusCheckRollup off the supplied PR and returns
+// OracleDeferDecision when all three are positive (the Decision oracle
+// should make the final call) or OracleAbstain otherwise.
+// CHANGES_REQUESTED abstains — sandman-pr-review Hard Rule 8 owns that path.
+type CheapGateOracle struct{}
 
-// Run executes the T4 cheap gate. It is pure: it does not shell out
+// Run executes the CheapGate oracle. It is pure: it does not shell out
 // and does not call any GitHub API; the orchestrator fetches the PR
 // once and reuses the result across the oracles.
-func (t *T4CheapGate) Run(in VerifyInput) (OracleResult, OracleCheck, error) {
+func (c *CheapGateOracle) Run(in VerifyInput) (OracleResult, OracleCheck, error) {
 	if in.PR == nil {
-		return OracleAbstain, OracleCheck{Name: "T4", Details: map[string]any{"reason": "no-pr"}}, nil
+		return OracleAbstain, OracleCheck{Name: "cheap-gate", Details: map[string]any{"reason": "no-pr"}}, nil
 	}
 	if strings.EqualFold(in.PR.ReviewDecision, "CHANGES_REQUESTED") {
-		return OracleAbstain, OracleCheck{Name: "T4", Details: map[string]any{"review": in.PR.ReviewDecision}}, nil
+		return OracleAbstain, OracleCheck{Name: "cheap-gate", Details: map[string]any{"review": in.PR.ReviewDecision}}, nil
 	}
 	if !strings.EqualFold(in.PR.ReviewDecision, "APPROVED") {
-		return OracleAbstain, OracleCheck{Name: "T4", Details: map[string]any{"review": in.PR.ReviewDecision}}, nil
+		return OracleAbstain, OracleCheck{Name: "cheap-gate", Details: map[string]any{"review": in.PR.ReviewDecision}}, nil
 	}
 	if !strings.EqualFold(in.PR.MergeStateStatus, "CLEAN") {
-		return OracleAbstain, OracleCheck{Name: "T4", Details: map[string]any{"merge": in.PR.MergeStateStatus}}, nil
+		return OracleAbstain, OracleCheck{Name: "cheap-gate", Details: map[string]any{"merge": in.PR.MergeStateStatus}}, nil
 	}
 	if !strings.EqualFold(in.PR.StatusCheckRollup, "success") {
-		return OracleAbstain, OracleCheck{Name: "T4", Details: map[string]any{"checks": in.PR.StatusCheckRollup}}, nil
+		return OracleAbstain, OracleCheck{Name: "cheap-gate", Details: map[string]any{"checks": in.PR.StatusCheckRollup}}, nil
 	}
-	return OracleDeferT1, OracleCheck{Name: "T4", Details: map[string]any{"review": in.PR.ReviewDecision, "merge": in.PR.MergeStateStatus, "checks": in.PR.StatusCheckRollup}}, nil
+	return OracleDeferDecision, OracleCheck{Name: "cheap-gate", Details: map[string]any{"review": in.PR.ReviewDecision, "merge": in.PR.MergeStateStatus, "checks": in.PR.StatusCheckRollup}}, nil
 }
 
-// T1DecisionOracle runs the structured `## Acceptance criteria` test
-// plan inside a worktree pinned to `origin/main` HEAD. It is the only
-// oracle that can produce `Verified`; see the issue body for the full
+// DecisionOracle runs the structured `## Acceptance criteria` test plan
+// inside a worktree pinned to `origin/main` HEAD. It is the only oracle
+// that can produce `Verified`; see the issue body for the full
 // architecture summary.
-type T1DecisionOracle struct {
+type DecisionOracle struct {
 	// Runner is the function that executes one AC line. Production
 	// wires it to sandbox.NewWorktreeSandbox(...).Exec; tests inject
 	// a fake that records the calls and returns a canned output.
 	Runner func(ctx context.Context, dir, line string) (string, error)
 }
 
-// Run executes the T1 decision oracle. The contract is:
+// Run executes the Decision oracle. The contract is:
 //
 //   - No `## Acceptance criteria` section → OracleNoSignal.
-//   - AC section present but no parseable `go test -run` lines →
-//     OracleNoSignal.
+//   - AC section present but no parseable `go test -run` lines → OracleNoSignal.
 //   - All lines pass (exit 0) → OracleVerified.
 //   - Any line fails (exit non-zero) → OracleFailed.
-func (t *T1DecisionOracle) Run(in VerifyInput) (OracleResult, OracleCheck, error) {
+func (d *DecisionOracle) Run(in VerifyInput) (OracleResult, OracleCheck, error) {
 	if in.Issue == nil {
-		return OracleNoSignal, OracleCheck{Name: "T1", Details: map[string]any{"reason": "no-issue"}}, nil
+		return OracleNoSignal, OracleCheck{Name: "decision", Details: map[string]any{"reason": "no-issue"}}, nil
 	}
 	lines := ParseAcceptanceCriteria(in.Issue.Body)
 	if len(lines) == 0 {
-		return OracleNoSignal, OracleCheck{Name: "T1", Details: map[string]any{"reason": "no-ac"}}, nil
+		return OracleNoSignal, OracleCheck{Name: "decision", Details: map[string]any{"reason": "no-ac"}}, nil
 	}
-	runner := t.Runner
+	runner := d.Runner
 	if runner == nil {
-		runner = defaultT1Runner
+		runner = defaultDecisionRunner
 	}
 	ran := 0
 	for _, line := range lines {
 		ran++
 		out, err := runner(in.Context, in.WorkDir, line)
 		if err != nil {
-			return OracleFailed, OracleCheck{Name: "T1", Details: map[string]any{"ran": ran, "total": len(lines), "failed": line, "output": truncate(out, 512)}}, fmt.Errorf("t1 line %q: %w", line, err)
+			return OracleFailed, OracleCheck{Name: "decision", Details: map[string]any{"ran": ran, "total": len(lines), "failed": line, "output": truncate(out, 512)}}, fmt.Errorf("decision line %q: %w", line, err)
 		}
 	}
-	return OracleVerified, OracleCheck{Name: "T1", Details: map[string]any{"ran": ran, "total": len(lines)}}, nil
+	return OracleVerified, OracleCheck{Name: "decision", Details: map[string]any{"ran": ran, "total": len(lines)}}, nil
 }
 
-func defaultT1Runner(ctx context.Context, dir, line string) (string, error) {
+func defaultDecisionRunner(ctx context.Context, dir, line string) (string, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
