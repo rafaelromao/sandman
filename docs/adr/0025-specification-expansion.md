@@ -64,11 +64,11 @@ using the same `DependencyResolver`-style seam that already lives in
 1. **Detection** — `SpecificationResolver.IsSpecification(body)` returns true iff the
    body declares children (heading or prose refs to other issues,
    outside the `## Parent` backlink) OR carries the canonical
-   Specification shape (any of `## Problem Statement`, `## Solution`,
-   or `## User Stories`). Case-insensitive on the section text. H3 or
-   deeper sections do not count as the canonical-shape signal. The
-   `## Parent` backlink is excluded from the children-content probe
-   because it points upward, not downward.
+   Specification shape (`## Problem Statement` AND `## Solution`,
+   with `## User Stories` optional). Case-insensitive on the section
+   text. H3 or deeper sections do not count as the canonical-shape
+   signal. The `## Parent` backlink is excluded from the
+   children-content probe because it points upward, not downward.
 2. **Child discovery** — In order: (a) `#N` references and full issue URLs in the
    Specification body, (b) `#N` references and full issue URLs in each Specification
    comment in chronological order,
@@ -123,10 +123,13 @@ using the same `DependencyResolver`-style seam that already lives in
    (no body children, no comment children, no native sub-issues) is
    passed through as a regular issue with a `running issue #<n> as a
    regular issue (no children)` log line. The mention-search fallback
-   only fires when one of the cheaper sources surfaced a candidate;
-   for inputs whose surface is already filtered upstream (label
-   search, range selection) the fallback is skipped so the operator
-   search query is preserved and re-discovery is avoided.
+   fires only when none of the cheaper sources (body refs, comment
+   refs, native sub-issues) have surfaced a candidate. Inputs whose
+   surface is already filtered upstream (label search, range
+   selection) skip the cheap-source probes entirely (see step 1a in
+   `expandOne`); the search fallback does not run for them either,
+   so the operator search query is preserved and re-discovery is
+   avoided.
 6. **Replacement and dedup** — The resolver walks the input issue
    list and replaces each Specification with its accepted children in the
    original order. The Specification itself is not in the output. Duplicates
