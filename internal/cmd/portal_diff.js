@@ -1658,6 +1658,13 @@
   }
 
   function liveDurationText(run) {
+    // While the issue is queued, duration time must not be counted at
+    // all — show the same em-dash placeholder the empty-duration branch
+    // uses, regardless of how long ago the run entered the queue. The
+    // duration tick re-engages the moment status flips to running /
+    // reviewing (where startedAt is anchored on run.started) and the
+    // terminal path uses the server-stamped Finished - Started.
+    if (run && run.status === 'queued') return '—';
     const startedAt = Date.parse(run && run.startedAt || '');
     if (!Number.isFinite(startedAt)) return run && run.duration || '—';
     let seconds = Math.max(0, Math.round((Date.now() - startedAt) / 1000));
