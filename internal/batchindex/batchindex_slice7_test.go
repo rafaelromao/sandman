@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-// TestIndex_BatchesIsCanonicalSlice pins slice 7: the canonical slice
+// TestIndex_BatchesIsCanonicalSlice pins the #1916 contract: the canonical slice
 // on Index is Batches (typed []Batch). The legacy Entries []Entry
 // field is gone — only Batches remains.
 func TestIndex_BatchesIsCanonicalSlice(t *testing.T) {
@@ -20,7 +20,7 @@ func TestIndex_BatchesIsCanonicalSlice(t *testing.T) {
 	}
 }
 
-// TestIndex_JSONKeyRemainsEntries pins slice 7: the JSON wire format on
+// TestIndex_JSONKeyRemainsEntries pins the #1916 contract: the JSON wire format on
 // disk MUST keep the "entries" key even though the Go field is now
 // Batches. Existing operator batches.json files use "entries" and
 // must continue to round-trip.
@@ -56,7 +56,7 @@ func TestIndex_JSONKeyRemainsEntries(t *testing.T) {
 	}
 }
 
-// TestIndex_LoadLegacyEntriesKey pins slice 7: an existing
+// TestIndex_LoadLegacyEntriesKey pins the #1916 contract: an existing
 // batches.json with the legacy "entries" key decodes into the new
 // Index struct (Batches is populated).
 func TestIndex_LoadLegacyEntriesKey(t *testing.T) {

@@ -34,7 +34,7 @@ var _ batchindex.Batch
 // test file compiles in the steady state. Uncomment to verify the
 // guard fires when `type Entry` is reintroduced.
 //
-// var _ batchindex.Entry // <-- must fail to compile after slice 7.
+// var _ batchindex.Entry // <-- must fail to compile after #1916.
 
 func TestBatchIndex_BatchIsPrimaryType(t *testing.T) {
 	// Build a zero value through Add to confirm the type is the
