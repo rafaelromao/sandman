@@ -113,7 +113,7 @@ func TestArchiveRow_MovesRunFolder(t *testing.T) {
 	}
 }
 
-// TestArchiveRow_StripsSocketsFromMovedFolder covers slice 2: every
+// TestArchiveRow_StripsSocketsFromMovedFolder covers #1917: every
 // socket file inside the moved folder must be removed before the move
 // returns, so the archive never ships live daemon sockets.
 func TestArchiveRow_StripsSocketsFromMovedFolder(t *testing.T) {
@@ -159,7 +159,7 @@ func TestArchiveRow_StripsSocketsFromMovedFolder(t *testing.T) {
 	}
 }
 
-// TestArchiveRow_RefusesNonTerminalRow covers slice 2: a row whose
+// TestArchiveRow_RefusesNonTerminalRow covers #1917: a row whose
 // run.json Status is still active must not be archived; ArchiveRow
 // must return a typed error and leave both the live folder and
 // events.jsonl untouched.
@@ -197,7 +197,7 @@ func TestArchiveRow_RefusesNonTerminalRow(t *testing.T) {
 	}
 }
 
-// TestArchiveRow_DoesNotTouchWorktreesOrEvents covers slice 2: the
+// TestArchiveRow_DoesNotTouchWorktreesOrEvents covers #1917: the
 // per-row archive is a pure index + filesystem move. It must not
 // touch .sandman/worktrees/ and must not edit events.jsonl.
 func TestArchiveRow_DoesNotTouchWorktreesOrEvents(t *testing.T) {
@@ -243,7 +243,7 @@ func TestArchiveRow_DoesNotTouchWorktreesOrEvents(t *testing.T) {
 	}
 }
 
-// TestArchiveRow_AlreadyArchivedReturnsError covers slice 2 idempotence:
+// TestArchiveRow_AlreadyArchivedReturnsError covers #1917 idempotence:
 // archiving a row whose destination already exists must return an
 // AlreadyArchivedError carrying the existing archive path, leaving the
 // live folder untouched.
@@ -304,7 +304,7 @@ func dialUnixSock(path string) bool {
 	return true
 }
 
-// TestArchiveRow_LeavesSiblingRowsAlive covers slice 6: archiving one
+// TestArchiveRow_LeavesSiblingRowsAlive covers #2224: archiving one
 // row of a multi-run batch must leave the sibling row's folder, log
 // file, and socket in place.
 func TestArchiveRow_LeavesSiblingRowsAlive(t *testing.T) {

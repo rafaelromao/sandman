@@ -11,7 +11,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/github"
 )
 
-// TestPostDecision_PersistsDecisionMDToRunFolder pins issue #2224 slice 3a:
+// TestPostDecision_PersistsDecisionMDToRunFolder pins issue #2224:
 // after postDecision successfully reads decision.md from the worktree and
 // posts the redacted body, the decision body must be persisted to
 // <reviewRunFolder>/decision.md so the portal can still find it after
@@ -22,7 +22,7 @@ import (
 // runs `git worktree remove --force`, deleting the worktree directory
 // and decision.md with it. The portal then tried to read
 // <worktreePath>/decision.md (from the manifest's WorktreePath, stamped
-// by #2220 slice 2) and found nothing, rendering Unclear for every
+// by #2220) and found nothing, rendering Unclear for every
 // review row.
 func TestPostDecision_PersistsDecisionMDToRunFolder(t *testing.T) {
 	const (
@@ -66,7 +66,7 @@ func TestPostDecision_PersistsDecisionMDToRunFolder(t *testing.T) {
 		t.Fatalf("expected 1 PostComment call, got %d", poster.Calls())
 	}
 
-	// Locate the review run folder — the slice 3a contract writes
+	// Locate the review run folder — the issue #2224 contract writes
 	// decision.md there so it survives ClearReviewArtifacts.
 	batchID := findReviewBatchID(t, dir)
 	runID := findReviewRunID(t, dir)
@@ -81,7 +81,7 @@ func TestPostDecision_PersistsDecisionMDToRunFolder(t *testing.T) {
 }
 
 // TestPostDecision_PersistsBeforeCleanup pins the ordering invariant for
-// slice 3a: the run-folder copy must exist BEFORE ClearReviewArtifacts
+// issue #2224: the run-folder copy must exist BEFORE ClearReviewArtifacts
 // removes the worktree. The launchReview defer fires after postDecision
 // returns, so postDecision must complete the copy before it returns.
 // This test asserts the run-folder copy exists immediately after the
@@ -141,7 +141,7 @@ func TestPostDecision_PersistsBeforeCleanup(t *testing.T) {
 }
 
 // TestPostDecision_NoCopyOnMissingDecisionMD pins the negative case for
-// slice 3a: when decision.md is missing from the worktree (the
+// issue #2224: when decision.md is missing from the worktree (the
 // retryable-missing branch, issue #1949), postDecision must NOT write a
 // run-folder copy. The copy is a success-path optimization; copying an
 // absent file would create a phantom decision.md that the portal would

@@ -14,7 +14,7 @@ import (
 
 // TestReviewStateStore_StartsEmpty pins the contract that opening a
 // ReviewStateStore against a non-existent file yields an empty store
-// without error. Slice 1 tracer bullet: confirms the path the new store
+// without error. Tracer bullet: confirms the path the new store
 // takes to read from disk and proves the file-is-optional behavior the
 // daemon needs when the very first review run has no prior state.
 func TestReviewStateStore_StartsEmpty(t *testing.T) {

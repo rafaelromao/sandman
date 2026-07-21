@@ -772,7 +772,7 @@ func TestDefaultPRReviewPrompt_ContainsOmitPreviousReviewProgressRule(t *testing
 		"**omit** the `## Previous review progress` section from the posted comment",
 		"Do not render this section if there are no prior reviews",
 		"Do not write a placeholder such as \"No previous reviews found.\"",
-		// Slice 3 additions (issue #1892): the new hard-rule block
+		// issue #1892 additions: the new hard-rule block
 		// must be present and must reference the deterministic
 		// {{PRIOR_REVIEW_EXISTS}} token with the explicit three
 		// prohibitions (no heading, no placeholder, no default body).

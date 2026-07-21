@@ -146,7 +146,7 @@ func TestNewLayout_ResolvesStateDir(t *testing.T) {
 }
 
 // TestLayout_PromptOnlyRunLogPath pins the prompt-only saved log path
-// shape (issue #1920 slice 4 of #1916). For prompt-only batches the
+// shape (issue #1920). For prompt-only batches the
 // public BatchId equals the per-row RunID, so the saved log path
 // collapses to `<batchesDir>/<promptBatchId>/runs/<promptBatchId>/run.log`.
 // With userid the batchid has a `-prompt-<userid>` segment; without
@@ -174,7 +174,7 @@ func TestLayout_PromptOnlyRunLogPath(t *testing.T) {
 	}
 }
 
-// TestLayout_DecisionFile pins issue #1937 slice 0: the per-run
+// TestLayout_DecisionFile pins issue #1937: the per-run
 // decision file lives at `<batchesDir>/<batchID>/runs/<runID>/decision.md`.
 // This is the run-folder location used by slice-1 verdict readers that
 // read `<portalRun.RunDir>/decision.md`. Note that this is NOT the

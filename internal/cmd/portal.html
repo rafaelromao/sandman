@@ -2776,14 +2776,18 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
       if (Number(run.reviewCount || 0) > 0) {
         const count = Number(run.reviewCount || 0);
         const reviewPart = count + ' review' + (count === 1 ? '' : 's');
-        // Order of preference (issue #2109 + issue #2220):
-        //   1. A populated reviewVerdict (Approved / Changes requested)
-        //      wins — the reviewer wrote a parseable ## Decision marker.
-        //   2. reviewLive=true means a sibling review child still has
-        //      Status == "reviewing"; the verdict has not landed yet, so
-        //      render "In Progress" instead of the misleading "Unclear"
-        //      fallback that today only fires for terminal-but-unparseable
-        //      reviews.
+        // Order of preference (issue #2109 + issue #2220 + issue #2340):
+        //   1. reviewLive=true means a sibling review child still has
+        //      Status == "reviewing"; the current round has not landed
+        //      yet, so render "In Progress" regardless of what a prior
+        //      review round wrote into its decision.md. The live signal
+        //      beats a stale terminal verdict (issue #2340 — repro on
+        //      #2321: "2 reviews - Changes Requested" while the new
+        //      review was still running).
+        //   2. A populated reviewVerdict (Approved / Changes requested)
+        //      from a fully terminal review wins — the reviewer wrote a
+        //      parseable ## Decision marker and no live child overrides
+        //      it (issues #2109 + #2220).
         //   3. run.status === 'success' is a stronger signal than the
         //      missing decision.md: in Sandman's flow the implementation
         //      run can only finish with status=success when the PR was
@@ -2797,10 +2801,10 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
         //      suffix so the user can see the server saw the row but could
         //      not read a verdict (issue #1939 slice 2).
         let verdictSuffix;
-        if (run.reviewVerdict) {
-          verdictSuffix = run.reviewVerdict === 'Changes requested' ? 'Changes Requested' : run.reviewVerdict;
-        } else if (run.reviewLive) {
+        if (run.reviewLive) {
           verdictSuffix = 'In Progress';
+        } else if (run.reviewVerdict) {
+          verdictSuffix = run.reviewVerdict === 'Changes requested' ? 'Changes Requested' : run.reviewVerdict;
         } else if (String(run.status || '').toLowerCase() === 'success') {
           verdictSuffix = 'Approved';
         } else {

@@ -250,7 +250,7 @@ func TestPrepareReviewRun_BatchDirName_MatchesPerRowRunIDForLinkedIssue(t *testi
 		t.Errorf("perRowRunID = %q, want suffix %q", perRowRunID, "-1855-PR1875")
 	}
 
-	// Issue #1919 slice 3: the batch-level parent MUST equal the
+	// Issue #1919: the batch-level parent MUST equal the
 	// per-row RunID, not the legacy `<ts>-<sid>-PR<pr>` form. The
 	// per-row run folder is therefore `<perRowRunID>/runs/<perRowRunID>/`,
 	// keeping `decision.md` and the daemon's read path on the same
@@ -258,7 +258,7 @@ func TestPrepareReviewRun_BatchDirName_MatchesPerRowRunIDForLinkedIssue(t *testi
 	batchDir := filepath.Dir(filepath.Dir(reviewRunFolder))
 	wantBatchDir := filepath.Join(dir, "batches", perRowRunID)
 	if batchDir != wantBatchDir {
-		t.Errorf("batch dir = %q, want %q (per-row RunID; slice 3 invariant)", batchDir, wantBatchDir)
+		t.Errorf("batch dir = %q, want %q (per-row RunID; issue #1919 invariant)", batchDir, wantBatchDir)
 	}
 
 	// The run-level folder must be <batchDir>/runs/<perRowRunID>.

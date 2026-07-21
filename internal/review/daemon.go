@@ -42,7 +42,7 @@ const PostStepMaxAttempts = 5
 // 1+2+4+8+16 = 31s. The slot is held for that window but the busy
 // semaphore has already been released (tick returned when the
 // goroutine launched), so the next tick runs unaffected. The
-// per-PR slot table (issue #1481 slice C) keeps the trigger from
+// per-PR slot table (issue #1481) keeps the trigger from
 // being re-launched while the post retries are in flight.
 var postStepBackoffs = []time.Duration{
 	1 * time.Second,
@@ -243,7 +243,7 @@ func (d *Daemon) effectiveLaunchBackoff(attempts int) time.Duration {
 
 // New returns a Daemon configured with the project defaults for the
 // polling interval and clock. The seen cache is hydrated eagerly from
-// the on-disk batches index (issue #1480 slice A), and the in-memory
+// the on-disk batches index (issue #1480), and the in-memory
 // pendingPost map (issue #1847 S4) is rehydrated from the same index
 // so an in-flight rehydrate post survives a daemon restart. A
 // missing or unreadable index yields empty caches; the rename-loser
@@ -980,7 +980,7 @@ func (d *Daemon) tick(ctx context.Context) error {
 
 // processPR scans one PR's comments and launches a review agent for the
 // newest unseen /sandman review trigger. The per-PR slot (issue #1481
-// slice C — see acquirePRSlot / releasePRSlot) preserves the trigger
+// issue #1481 — see acquirePRSlot / releasePRSlot) preserves the trigger
 // when the slot pool is full or a stale review is in flight; the deferred
 // release runs after MarkSeen persists.
 //
@@ -1069,7 +1069,7 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) error {
 
 	// Cross-run dedup: read terminal-seen membership from the
 	// per-process in-memory cache populated at construction
-	// (issue #1480 slice A). ADR-0034 §3 accepts the rename-loser
+	// (issue #1480). ADR-0034 §3 accepts the rename-loser
 	// trade-off; the cache only short-circuits what is already
 	// persisted on disk. The read lock must be held across the
 	// per-trigger lookup because the inner map is shared with
@@ -1129,7 +1129,7 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) error {
 		unprocessed = filtered
 	}
 
-	// Lazy verify (issue #1482 slice D) is gone (issue #1849 S6);
+	// Lazy verify (issue #1482) is gone (issue #1849);
 	// no in-memory pendingSet filter is needed — the seen-cache
 	// short-circuit (driven by MarkSeen on success / failure) is
 	// the sole deduplication gate.
@@ -1247,7 +1247,7 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) error {
 	return nil
 }
 
-// loadGlobalSeenForPR was removed in issue #1480 slice A: cross-run
+// loadGlobalSeenForPR was removed in issue #1480: cross-run
 // dedup now reads from the daemon's seenCache (hydrated at
 // construction), so the per-tick on-disk scan no longer exists. The
 // on-disk source-of-truth construction lives in loadSeenCache.
@@ -1308,7 +1308,7 @@ func (d *Daemon) prepareReviewRun(ctx context.Context, prNumber int, commentID s
 	perRowRunID := ReviewRunIDFor(prNumber, linkedIssue, ts, shortid)
 
 	rs := daemon.NewRunSession(d.BaseDir, perRowRunID)
-	// Issue #1919 slice 3: the on-disk batch directory name and the
+	// Issue #1919: the on-disk batch directory name and the
 	// per-row RunID MUST agree for both orphan and linked reviews.
 	// For orphan reviews both are `<ts>-<sid>-PR<pr>`; for linked
 	// reviews both are `<ts>-<sid>-<linkedIssue>-PR<pr>`. ADR-0030
@@ -1332,7 +1332,7 @@ func (d *Daemon) prepareReviewRun(ctx context.Context, prNumber int, commentID s
 		BatchID: perRowRunID,
 		PR:      prNumber,
 		Kind:    batchindex.KindReview,
-		// Issue #2220 slice 2: WorktreePath must be stamped onto the
+		// Issue #2220: WorktreePath must be stamped onto the
 		// review manifest so the portal's verdict reader
 		// (reviewVerdictFromDecisionFile) can locate decision.md at the
 		// per-row worktree, which is the canonical artifact path since
@@ -1659,11 +1659,11 @@ func (d *Daemon) postDecision(ctx context.Context, prNumber int, commentID, revi
 		return fmt.Errorf("read %s: %w", decisionPath, err)
 	}
 
-	// Issue #2224 slice 3a: persist decision.md to the run folder
+	// Issue #2224: persist decision.md to the run folder
 	// before the launchReview defer fires ClearReviewArtifacts and
 	// removes the worktree (which deletes the only copy of
 	// decision.md). The run folder copy is what the portal's verdict
-	// reader falls back to after the worktree is gone (slice 3b).
+	// reader falls back to after the worktree is gone (issue #2224).
 	// Use atomicfs.WriteAtomic so the portal never observes a
 	// partially written file. If the write fails we log and
 	// continue — the post step is the critical path, and the
