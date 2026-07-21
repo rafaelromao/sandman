@@ -1318,9 +1318,14 @@ func TestBatchIDRules_ContinueEmitsRunContinuedEvent(t *testing.T) {
 		{Type: "run.started", RunID: prevRunID, Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix-bug", "base_branch": "main", "agent": "opencode"}},
 	}}
 	dir := freshSandmanDir(t)
+	// newRunDeps sets RepoRoot to "."; pin it to the absolute temp dir so the
+	// --continue worktree-status check resolves against the git worktree list
+	// recorded by `git worktree add` below (this relies on absolute paths).
+	deps.RepoRoot = dir
 
 	branch := "sandman/42-fix-bug"
-	worktreePath := filepath.Join(dir, ".sandman", "worktrees", branch)
+	worktreeBase := filepath.Join(dir, ".sandman", "worktrees")
+	worktreePath := addRegisteredContinuationWorktree(t, dir, worktreeBase, branch)
 	if err := os.MkdirAll(filepath.Join(worktreePath, ".sandman"), 0755); err != nil {
 		t.Fatal(err)
 	}
