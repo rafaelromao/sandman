@@ -469,6 +469,60 @@ console.log('PASS');
 	}
 }
 
+func TestPortalStateKeepsExpandedHiddenSiblingSubject(t *testing.T) {
+	if _, err := exec.LookPath("node"); err != nil {
+		t.Skip("node is required for portal state helper test")
+	}
+
+	_, currentFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("locate test file")
+	}
+	portalStatePath := filepath.Join(filepath.Dir(currentFile), "portal_state.js")
+
+	script := `const fs = require('fs');
+const vm = require('vm');
+const helperPath = process.argv[1];
+const source = fs.readFileSync(helperPath, 'utf8');
+const storage = new Map();
+const sandbox = {
+  window: {},
+  globalThis: {},
+  sessionStorage: {
+    getItem(key) { return storage.has(key) ? storage.get(key) : null; },
+    setItem(key, value) { storage.set(String(key), String(value)); },
+    removeItem(key) { storage.delete(key); },
+  },
+  Set, Map, JSON, console,
+};
+sandbox.window = sandbox;
+sandbox.globalThis = sandbox;
+vm.runInNewContext(source, sandbox, { filename: helperPath });
+const api = sandbox.SandmanPortalState;
+
+const visibleRuns = [
+  { key: 'abc1-42', runId: 'abc1-42', issueNumber: 42 },
+];
+const allRuns = [
+  { key: 'abc1-42', runId: 'abc1-42', issueNumber: 42 },
+  { key: 'abc2-PR42', runId: 'abc2-PR42', issueNumber: 42, review: true },
+];
+
+storage.set(api.storageKey, JSON.stringify({ expandedRunKey: 'abc2-PR42', tabs: {} }));
+const loaded = api.load();
+const normalized = api.normalize(loaded, visibleRuns, allRuns);
+if (normalized.state.expandedRunKey !== 'abc2-PR42') {
+  throw new Error('expected hidden sibling subject to stay expanded, got ' + JSON.stringify(normalized.state.expandedRunKey));
+}
+
+console.log('PASS');
+`
+	cmd := exec.Command("node", "-e", script, portalStatePath)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("portal state helper failed: %v\n%s", err, out)
+	}
+}
+
 func TestPortalStateStorageKeySync(t *testing.T) {
 	_, currentFile, _, ok := runtime.Caller(0)
 	if !ok {
