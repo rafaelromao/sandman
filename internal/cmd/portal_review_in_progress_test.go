@@ -2,6 +2,11 @@ package cmd
 
 import "testing"
 
+// B-tag vocabulary for issue #2109 (review canonical row):
+//   B3 — live review renders "N review(s) - In Progress" in JS counter
+//   B4 — terminal verdict wins over live signal in JS counter
+//   B5 — no-live-no-verdict fallback renders "N review(s) - Unclear"
+
 // TestRenderRunMeta_LiveReviewRendersInProgress pins issue #2109 slice 3 (B3):
 // when the Go server stamps reviewLive=true on a parent implementation row
 // (because at least one sibling review child has Status == "reviewing"),

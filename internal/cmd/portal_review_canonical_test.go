@@ -16,6 +16,14 @@ import (
 	"github.com/rafaelromao/sandman/internal/paths"
 )
 
+// B-tag vocabulary for issue #2109 (review canonical row):
+//   B1 — batch.id == public BatchId (foundation)
+//   B2 — RunID == BatchId for prompt-only
+//   B3 — RunID == BatchId for issue batches
+//   B4 — BatchId == dir basename (alias)
+//   B5 — archive flow
+//   B6 — live wire
+
 // TestPortal_ResolveReviewRunFromCanonicalFolder_Active pins the canonical
 // portal behavior for an ACTIVE review run: the active row's RunID must
 // equal the per-row RunID written to runs/<rowID>/run.json by the review
