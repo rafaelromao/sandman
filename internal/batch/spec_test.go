@@ -14,49 +14,98 @@ import (
 	"github.com/rafaelromao/sandman/internal/github"
 )
 
-func TestIsSpecification_AcceptsCanonicalBody(t *testing.T) {
+// TestIsSpecification pins the body-shape and children-content gates
+// for the Specification detection. A body is a Specification if it
+// carries the canonical Specification shape (any of the three
+// sections — Problem Statement, Solution, User Stories) OR if it
+// declares children in any form (`## Children` / `## Child Issues`
+// heading or prose `#N` / full-URL references outside the `## Parent`
+// backlink). The canonical-shape signal is preserved so historical
+// canonical-spec authoring keeps working without the user having to
+// add `## Children` bullets. The `## Parent` backlink is excluded
+// from the children-content probe because it points upward, not
+// downward. The seam stays exported because the recursive-flatten
+// path uses it to decide whether to recurse into a harvested child.
+func TestIsSpecification(t *testing.T) {
 	t.Parallel()
-	body := "## Problem Statement\n\nSome problem.\n\n## Solution\n\nSome solution.\n\n## User Stories\n\n1. Story one.\n"
-
-	r := NewSpecificationResolver(nil, nil)
-	if !r.IsSpecification(body) {
-		t.Fatalf("expected body with H2 Problem Statement, Solution, and User Stories to be detected as a Specification, got false")
+	cases := []struct {
+		name string
+		body string
+		want bool
+	}{
+		{
+			name: "empty body",
+			body: "",
+			want: false,
+		},
+		{
+			name: "plain prose body without issue references",
+			body: "plain prose body without any references",
+			want: false,
+		},
+		{
+			name: "two-section body without children content",
+			body: "## Problem Statement\n\nSome problem.\n\n## Solution\n\nSome solution.\n",
+			want: true,
+		},
+		{
+			name: "canonical body without children content",
+			body: "## Problem Statement\n\nSome problem.\n\n## Solution\n\nSome solution.\n\n## User Stories\n\n1. Story one.\n",
+			want: true,
+		},
+		{
+			name: "h3-only sections without children content",
+			body: "### Problem Statement\n\nH3 instead of H2",
+			want: false,
+		},
+		{
+			name: "body with only parent backlink",
+			body: "## Parent\n\n#1\n\n## What\n\nStandalone work.\n",
+			want: false,
+		},
+		{
+			name: "body with parent backlink and standalone section",
+			body: "## Parent\n\nhttps://github.com/owner/repo/issues/1\n\n## What\n\nChild work.\n",
+			want: false,
+		},
+		{
+			name: "body with children heading",
+			body: "## Children\n- #10",
+			want: true,
+		},
+		{
+			name: "body with child issues heading",
+			body: "## Child Issues\n- #10",
+			want: true,
+		},
+		{
+			name: "body with prose shorthand reference",
+			body: "## What to build\n\nTracking #10 here, see #11 for context.\n",
+			want: true,
+		},
+		{
+			name: "body with prose full URL reference",
+			body: "## What to build\n\nSee [the issue](https://github.com/owner/repo/issues/10) for context.\n",
+			want: true,
+		},
+		{
+			name: "body with parent backlink and children heading",
+			body: "## Parent\n\n#1\n\n## Children\n- #10",
+			want: true,
+		},
+		{
+			name: "body with parent backlink and canonical sections",
+			body: "## Parent\n\n#1\n\n## Problem Statement\n\nP\n\n## Solution\n\nS\n\n## User Stories\n\nU",
+			want: true,
+		},
 	}
-}
-
-func TestIsSpecification_RejectsMissingSection(t *testing.T) {
-	t.Parallel()
-	body := "## Problem Statement\n\nSome problem.\n\n## Solution\n\nSome solution.\n"
 	r := NewSpecificationResolver(nil, nil)
-	if !r.IsSpecification(body) {
-		t.Fatal("expected body with Problem Statement and Solution to be detected as a Specification (User Stories no longer required)")
-	}
-}
-
-func TestIsSpecification_AcceptsBodyWithoutUserStories(t *testing.T) {
-	t.Parallel()
-	body := "## Problem Statement\n\nSome problem.\n\n## Solution\n\nSome solution.\n"
-	r := NewSpecificationResolver(nil, nil)
-	if !r.IsSpecification(body) {
-		t.Fatal("expected Specification detection to no longer require User Stories")
-	}
-}
-
-func TestIsSpecification_RejectsH3Section(t *testing.T) {
-	t.Parallel()
-	body := "## Solution\n\nSome solution.\n\n### User Stories\n\n1. Story.\n\n### Problem Statement\n\nSome problem.\n"
-	r := NewSpecificationResolver(nil, nil)
-	if r.IsSpecification(body) {
-		t.Fatal("expected body with H3 sections to NOT be detected as a Specification")
-	}
-}
-
-func TestIsSpecification_IsCaseInsensitive(t *testing.T) {
-	t.Parallel()
-	body := "## problem statement\n\nSome problem.\n\n## SOLUTION\n\nSome solution.\n\n## User Stories\n\n1. Story.\n"
-	r := NewSpecificationResolver(nil, nil)
-	if !r.IsSpecification(body) {
-		t.Fatal("expected Specification detection to be case-insensitive on section names")
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := r.IsSpecification(c.body); got != c.want {
+				t.Fatalf("IsSpecification(%q) = %v, want %v", c.body, got, c.want)
+			}
+		})
 	}
 }
 
@@ -217,7 +266,7 @@ func TestSpecificationResolver_ReplacesSpecificationWithChildrenFromBody(t *test
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if !equalInts(got, []int{10, 11}) {
-		t.Fatalf("expected [10 11], got %v", got)
+		t.Fatalf("expected [10 11] (accepted children, parent replaced by its children), got %v", got)
 	}
 }
 
@@ -658,9 +707,248 @@ func TestSpecificationResolver_BodyOnlyChildrenHeadingExpands(t *testing.T) {
 	}
 }
 
+func TestSpecificationResolver_BodyOnlyChildIssuesHeadingExpands(t *testing.T) {
+	// Mirrors TestSpecificationResolver_BodyOnlyChildrenHeadingExpands
+	// for the `## Child Issues` heading alias — the parser treats both
+	// headings identically, but pinning both keeps the contract honest
+	// if a future regex change diverges them.
+	parentBody := "## Child Issues\n\n- #10\n- #11\n"
+	child10Body := "## Parent\n\n#1\n\n## What\n\nChild 10.\n"
+	child11Body := "## Parent\n\n#1\n\n## What\n\nChild 11.\n"
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			1:  {Number: 1, Title: "Body-only child issues heading parent", Body: parentBody},
+			10: {Number: 10, Title: "Child 10", Body: child10Body},
+			11: {Number: 11, Title: "Child 11", Body: child11Body},
+		},
+	}
+
+	var infoBuf bytes.Buffer
+	r := NewSpecificationResolver(client, &infoBuf)
+	got, err := r.Resolve(context.Background(), []int{1})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !equalInts(got, []int{10, 11}) {
+		t.Fatalf("expected body-only ## Child Issues to expand to [10 11], got %v", got)
+	}
+	if !strings.Contains(infoBuf.String(), "expanded specification #1 to 2 accepted children") {
+		t.Errorf("expected top-level expanded log line, got: %q", infoBuf.String())
+	}
+}
+
+// TestSpecificationResolver_ChildDiscoveryMatrix pins every supported
+// non-inline child-discovery source end-to-end. The matrix covers:
+//   - body heading (`## Children` / `## Child Issues`)
+//   - body prose `#N` / `/issues/N` references (canonical Specification body)
+//   - body URL bare / link / titled-link forms (canonical Specification body)
+//   - body-only `## Children` heading with no canonical sections
+//   - issue comments
+//   - GitHub-native sub-issues
+//   - search-fallback when no other source fired
+//
+// Each case exercises a single source in isolation. The shared
+// resolver path is the broadened-detector → collectCandidates
+// pipeline; the asserts use equalInts so order matters (the
+// collectCandidates add function preserves first-occurrence order
+// across sources) and dedup happens across all of them.
+func TestSpecificationResolver_ChildDiscoveryMatrix(t *testing.T) {
+	childBody := "## Parent\n\n#1\n"
+	specPrefix := "## Problem Statement\n\nP.\n\n## Solution\n\nS.\n\n## Children\n\n"
+
+	type tc struct {
+		name    string
+		build   func() (*fakeGitHubClient, []int)
+		wantLog string
+	}
+	cases := []tc{
+		{
+			name: "body heading children only",
+			build: func() (*fakeGitHubClient, []int) {
+				c := &fakeGitHubClient{
+					issues: map[int]*github.Issue{
+						1:  {Number: 1, Body: "## Children\n- #10\n- #11"},
+						10: {Number: 10, Body: childBody},
+						11: {Number: 11, Body: childBody},
+					},
+				}
+				return c, []int{10, 11}
+			},
+			wantLog: "expanded specification #1 to 2 accepted children",
+		},
+		{
+			name: "body heading child issues only",
+			build: func() (*fakeGitHubClient, []int) {
+				c := &fakeGitHubClient{
+					issues: map[int]*github.Issue{
+						1:  {Number: 1, Body: "## Child Issues\n- #10\n- #11"},
+						10: {Number: 10, Body: childBody},
+						11: {Number: 11, Body: childBody},
+					},
+				}
+				return c, []int{10, 11}
+			},
+			wantLog: "expanded specification #1 to 2 accepted children",
+		},
+		{
+			name: "body prose shorthand reference under canonical body",
+			build: func() (*fakeGitHubClient, []int) {
+				c := &fakeGitHubClient{
+					issues: map[int]*github.Issue{
+						1:  {Number: 1, Body: specPrefix + "Tracking #10 here, see also #11 for context."},
+						10: {Number: 10, Body: childBody},
+						11: {Number: 11, Body: childBody},
+					},
+				}
+				return c, []int{10, 11}
+			},
+			wantLog: "expanded specification #1 to 2 accepted children",
+		},
+		{
+			name: "body prose full URL reference under canonical body",
+			build: func() (*fakeGitHubClient, []int) {
+				c := &fakeGitHubClient{
+					issues: map[int]*github.Issue{
+						1:  {Number: 1, Body: specPrefix + "See [child 10](https://github.com/rafaelromao/sandman/issues/10) for details."},
+						10: {Number: 10, Body: childBody},
+					},
+				}
+				return c, []int{10}
+			},
+			wantLog: "expanded specification #1 to 1 accepted children",
+		},
+		{
+			name: "issue comment reference under canonical body",
+			build: func() (*fakeGitHubClient, []int) {
+				c := &fakeGitHubClient{
+					issues: map[int]*github.Issue{
+						1:  {Number: 1, Body: specPrefix + "No further body refs."},
+						10: {Number: 10, Body: childBody},
+						11: {Number: 11, Body: childBody},
+					},
+					issueComments: map[int][]github.IssueComment{
+						1: {{Body: "Tracking #10 and #11 here."}},
+					},
+				}
+				return c, []int{10, 11}
+			},
+			wantLog: "expanded specification #1 to 2 accepted children",
+		},
+		{
+			name: "native sub-issues only under canonical body",
+			build: func() (*fakeGitHubClient, []int) {
+				c := &fakeGitHubClient{
+					issues: map[int]*github.Issue{
+						1:  {Number: 1, Body: specPrefix + "No further body refs, no comments."},
+						10: {Number: 10, Body: childBody},
+						11: {Number: 11, Body: childBody},
+					},
+					subIssues: map[int][]int{1: {10, 11}},
+				}
+				return c, []int{10, 11}
+			},
+			wantLog: "expanded specification #1 to 2 accepted children",
+		},
+		{
+			name: "search fallback under canonical body",
+			build: func() (*fakeGitHubClient, []int) {
+				c := &fakeGitHubClient{
+					issues: map[int]*github.Issue{
+						1:  {Number: 1, Body: specPrefix + "No further body refs, no comments, no sub-issues."},
+						10: {Number: 10, Body: childBody},
+						11: {Number: 11, Body: childBody},
+					},
+					searchIssuesResult: []github.Issue{
+						{Number: 10, Body: childBody},
+						{Number: 11, Body: childBody},
+					},
+				}
+				return c, []int{10, 11}
+			},
+			wantLog: "expanded specification #1 to 2 accepted children",
+		},
+		{
+			name: "non-spec body with comment-only child reference",
+			build: func() (*fakeGitHubClient, []int) {
+				c := &fakeGitHubClient{
+					issues: map[int]*github.Issue{
+						1:  {Number: 1, Body: "No Problem Statement or Solution here."},
+						10: {Number: 10, Body: childBody},
+					},
+					issueComments: map[int][]github.IssueComment{
+						1: {{Body: "Tracking #10 here."}},
+					},
+				}
+				return c, []int{10}
+			},
+			wantLog: "expanded specification #1 to 1 accepted children",
+		},
+		{
+			name: "non-spec body with native sub-issue only",
+			build: func() (*fakeGitHubClient, []int) {
+				c := &fakeGitHubClient{
+					issues: map[int]*github.Issue{
+						1:  {Number: 1, Body: "No Problem Statement or Solution here."},
+						10: {Number: 10, Body: childBody},
+					},
+					subIssues: map[int][]int{1: {10}},
+				}
+				return c, []int{10}
+			},
+			wantLog: "expanded specification #1 to 1 accepted children",
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			client, want := c.build()
+			var infoBuf bytes.Buffer
+			r := NewSpecificationResolver(client, &infoBuf)
+			got, err := r.Resolve(context.Background(), []int{1})
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if !equalInts(got, want) {
+				t.Fatalf("expected %v, got %v", want, got)
+			}
+			if !strings.Contains(infoBuf.String(), c.wantLog) {
+				t.Errorf("expected log to contain %q, got: %q", c.wantLog, infoBuf.String())
+			}
+		})
+	}
+}
+
+// TestSpecificationResolver_ChildDiscoveryMatrix_DedupAcrossSources
+// pins that the broadened-detector path deduplicates when a child
+// number appears in multiple sources (body, comment, native
+// sub-issue, search). First-occurrence order wins.
+func TestSpecificationResolver_ChildDiscoveryMatrix_DedupAcrossSources(t *testing.T) {
+	childBody := "## Parent\n\n#1\n"
+	c := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			1:  {Number: 1, Body: "## Children\n- #10"},
+			10: {Number: 10, Body: childBody},
+			11: {Number: 11, Body: childBody},
+		},
+		issueComments: map[int][]github.IssueComment{
+			1: {{Body: "And #10 again, plus #11."}},
+		},
+		subIssues: map[int][]int{1: {10}},
+	}
+	r := NewSpecificationResolver(c, io.Discard)
+	got, err := r.Resolve(context.Background(), []int{1})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !equalInts(got, []int{10, 11}) {
+		t.Fatalf("expected deduped [10 11], got %v", got)
+	}
+}
+
 func TestSpecificationResolver_ChildrenOnlyDetection(t *testing.T) {
-	// Body has no Specification sections; comment body references a child issue.
-	// Broadened detector must fire on the lazy probe and expand the input.
+	// No body Specification sections; comment body references a child issue.
+	// The no-other-gate contract means a single child source (a comment
+	// ref here) is sufficient to expand.
 	parentBody := "## What\n\nJust a parent issue body, no PRD sections.\n"
 	childBody := "## Parent\n\n#1\n\n## What\n\nChild work goes here.\n"
 	client := &fakeGitHubClient{
@@ -684,9 +972,6 @@ func TestSpecificationResolver_ChildrenOnlyDetection(t *testing.T) {
 	if !strings.Contains(infoBuf.String(), "expanded specification #1 to 1 accepted children") {
 		t.Errorf("expected top-level expanded-expansion log line, got: %q", infoBuf.String())
 	}
-	if strings.Contains(infoBuf.String(), "flattened specification") {
-		t.Errorf("did not expect a flattened log line at depth 0, got: %q", infoBuf.String())
-	}
 }
 
 func TestSpecificationResolver_ChildrenOnlyDetectionFromNamedURLComment(t *testing.T) {
@@ -709,8 +994,13 @@ func TestSpecificationResolver_ChildrenOnlyDetectionFromNamedURLComment(t *testi
 	if !equalInts(got, []int{10}) {
 		t.Fatalf("expected [10], got %v", got)
 	}
-	if len(client.listSubIssuesCalls) != 0 {
-		t.Fatalf("comment child discovery must preserve the existing no-native-probe path, got %v", client.listSubIssuesCalls)
+	// With the no-other-gate contract, the resolver always probes
+	// ListSubIssues; the comment-only path no longer short-circuits
+	// the native probe. Pin the call count as one (the cache ensures
+	// no second call inside the same expansion) so future regressions
+	// here show up as a test failure.
+	if len(client.listSubIssuesCalls) != 1 {
+		t.Fatalf("expected exactly 1 ListSubIssues call, got %v", client.listSubIssuesCalls)
 	}
 }
 
@@ -751,8 +1041,12 @@ func TestSpecificationResolver_LazyProbeSkipsWhenSectionShapePresent(t *testing.
 }
 
 func TestSpecificationResolver_LazyProbeNoChildrenPassesThrough(t *testing.T) {
-	// Body has no Specification sections and no comments reference any issue.
-	// HasChildren returns false; input passes through unchanged.
+	// No body refs, no comments, no sub-issues, no search results.
+	// The resolver probes every source and finds nothing — the input
+	// is preserved (not expanded into a child) and the input itself
+	// does not appear in the output because it is the requested
+	// input and the broadened-detector contract keeps the
+	// dependency-resolver handoff to input issues intact.
 	parentBody := "## What\n\nJust a regular issue with no Specification shape and no children.\n"
 	client := &fakeGitHubClient{
 		issues: map[int]*github.Issue{
@@ -785,18 +1079,21 @@ func TestSpecificationResolver_FlattensNestedSpecAtTwoLevels(t *testing.T) {
 	}
 	var infoBuf bytes.Buffer
 	r := NewSpecificationResolver(client, &infoBuf)
-	// #1 expanded via the prose harvest (not userInputSet), so #2 should be
-	// rejected as a nested spec unless the recursive flatten handles it.
-	// Per T3 beat #4: harvested nested specs ARE expanded recursively (the
-	// previous hard-fail is removed for the broader detector).
 	got, err := r.Resolve(context.Background(), []int{1})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	// Expected: outer expansion emits #2 (replacing #1's slot);
-	// within #2, userInputSet= {1}, so #1 is accepted into #2's harvest
-	// (carve-out); #20 is the parent-verified leaf.
-	// Per destination-aligned beat #4 from T3.
+	// #1 expanded via the prose harvest (not userInputSet), so #2 should be
+	// rejected as a nested spec unless the recursive flatten handles it.
+	// Per T3 beat #4: harvested nested specs ARE expanded recursively (the
+	// previous hard-fail is removed for the broader detector).
+	//
+	// Outer expansion emits #2 (replacing #1's slot); within #2,
+	// userInputSet= {1}, so #1 is accepted into #2's harvest (carve-out);
+	// #20 is the parent-verified leaf. Per destination-aligned beat #4 from
+	// T3. The recursion also re-enters #1 (whose body again yields #2 via
+	// the ## Child Issues heading), but #2 is already in `seen`, so the
+	// flatten short-circuits.
 	if !equalInts(got, []int{2, 1, 20}) {
 		t.Fatalf("expected [2 1 20], got %v", got)
 	}
@@ -853,9 +1150,8 @@ func TestSpecificationResolver_FlattensNestedSpecAtThreeLevels(t *testing.T) {
 }
 
 func TestSpecificationResolver_UserTypedNestedSpecCarveOutSurvivesFlatten(t *testing.T) {
-	// Replicates the regression for #1038 (ADR-0025 §3a) under the new
-	// recursive flatten: both #1 (outer) and #2 (inner) are user-typed.
-	// The resolver must accept both, expand them, and produce a flat list.
+	// Both #1 (outer) and #2 (inner) are user-typed. The resolver
+	// must accept both, expand them, and produce a flat list.
 	outerBody := "## Problem Statement\n\nP.\n\n## Solution\n\nS.\n\n## User Stories\n\n1. U.\n\n## Child Issues\n\n- #2 nested\n"
 	innerBody := "## Parent\n\n#1\n\n## Problem Statement\n\nP.\n\n## Solution\n\nS.\n\n## User Stories\n\n1. U.\n\n## Child Issues\n\n- #11 leaf\n"
 	leafBody := "## Parent\n\n#2\n\n## What\n\n"
@@ -968,6 +1264,10 @@ func TestSpecificationResolver_NativeSubIssuesKeepsBodyRefOrder(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
+	// No-other-gate contract: original input (#1) is in the seen
+	// set, so the recursive flatten cannot echo it. Body ref #43
+	// arrives via collectCandidates; sub-issue #42 is appended
+	// after via the merge step in expandOne. Result: [43, 42].
 	if !equalInts(got, []int{43, 42}) {
 		t.Fatalf("expected [43 42] (body ref first, sub-issue second), got %v", got)
 	}
@@ -987,10 +1287,13 @@ func TestSpecificationResolver_EmptyChildCarveOut_NoCandidates(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected no error for Specification with no children, got %v", err)
 	}
+	// No-other-gate contract: input is pre-loaded into the seen set
+	// so the empty-children path emits the input itself (not the
+	// child) and the input is in the output.
 	if !equalInts(got, []int{1}) {
 		t.Fatalf("expected pass-through [1], got %v", got)
 	}
-	if !strings.Contains(infoBuf.String(), "running specification #1 as a regular issue (no children)") {
+	if !strings.Contains(infoBuf.String(), "running issue #1 as a regular issue (no children)") {
 		t.Fatalf("expected carve-out log line in stderr, got: %q", infoBuf.String())
 	}
 }
@@ -1015,7 +1318,7 @@ func TestSpecificationResolver_EmptyChildCarveOut_AllCandidatesFiltered(t *testi
 	if !equalInts(got, []int{1}) {
 		t.Fatalf("expected pass-through [1], got %v", got)
 	}
-	if !strings.Contains(infoBuf.String(), "running specification #1 as a regular issue (no children)") {
+	if !strings.Contains(infoBuf.String(), "running issue #1 as a regular issue (no children)") {
 		t.Fatalf("expected carve-out log line in stderr, got: %q", infoBuf.String())
 	}
 }

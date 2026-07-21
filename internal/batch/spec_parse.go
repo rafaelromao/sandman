@@ -87,3 +87,23 @@ func ExtractParentReference(body string) (int, bool) {
 	}
 	return 0, false
 }
+
+// StripParentSection returns body with the `## Parent` H2 section
+// (and any content until the next H2) removed. Used by the
+// Specification gate so the parent backlink does not count as a
+// child declaration. Returns the input unchanged when no `## Parent`
+// heading is present.
+func StripParentSection(body string) string {
+	body = strings.ReplaceAll(body, "\r\n", "\n")
+	idx := parentHeadingPattern.FindStringIndex(body)
+	if idx == nil {
+		return body
+	}
+	before := body[:idx[0]]
+	after := body[idx[1]:]
+	nextIdx := nextHeadingPattern.FindStringIndex(after)
+	if nextIdx == nil {
+		return before
+	}
+	return before + after[nextIdx[0]:]
+}
