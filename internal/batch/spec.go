@@ -91,31 +91,28 @@ func specSectionPattern(name string) *regexp.Regexp {
 }
 
 // IsSpecification reports whether the body looks like a
-// Specification. A body is a Specification if it declares children
-// (heading or prose refs outside the `## Parent` backlink) OR if
-// it carries the canonical Specification shape (`## Problem
+// Specification. A body is a Specification if it carries a
+// children-list declaration (`## Children` or `## Child Issues`
+// heading) OR the canonical Specification shape (`## Problem
 // Statement` + `## Solution`; `## User Stories` is optional and
-// does not contribute to the canonical signal). The body alone is
-// no longer sufficient or required — comments, native sub-issues,
-// and the search fallback can also surface children — but the
-// body-shape check is preserved as one valid spec signal so
-// historical canonical-spec authoring keeps working without the
-// user having to add `## Children` bullets. The `## Parent`
-// backlink is excluded from the children-content probe because it
-// points upward, not downward.
+// does not contribute to the canonical signal). Prose `#N` and
+// `/issues/N` references outside the `## Parent` backlink do NOT
+// by themselves make an issue a Specification — they are
+// incidental mentions and would otherwise cause every child with a
+// casual reference (e.g. "Tracking #500 for context") to be
+// flattened as a sub-spec, which is the bug that issue #2333
+// fixes. The `## Parent` backlink is excluded from the
+// children-list probe because it points upward, not downward.
 //
 // The recursive-flatten path uses IsSpecification to decide whether
 // to recurse into a harvested child. The user-typed bypass (in
 // expandOne) covers the carve-out case: a user-typed nested spec
-// whose body has no children-content (e.g. a spec typed alongside
-// the parent) is still expanded because the user explicitly asked
-// for it.
+// whose body has no children-list or canonical signal (e.g. a spec
+// typed alongside the parent) is still expanded because the user
+// explicitly asked for it.
 func (r *SpecificationResolver) IsSpecification(body string) bool {
 	bodyNoParent := StripParentSection(body)
 	if github.ParseChildrenFromBody(bodyNoParent) != nil {
-		return true
-	}
-	if len(ExtractIssueReferences(bodyNoParent)) > 0 {
 		return true
 	}
 	// Canonical-shape signal: the body carries both `## Problem
@@ -206,7 +203,7 @@ func (r *SpecificationResolver) Resolve(ctx context.Context, issues []int) ([]in
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		if err := r.expandOne(ctx, num, 0, "-", userInputSet, addUnique, fetches); err != nil {
+		if err := r.expandOne(ctx, num, 0, "-", 0, userInputSet, addUnique, fetches); err != nil {
 			return nil, err
 		}
 	}
@@ -218,7 +215,9 @@ func (r *SpecificationResolver) Resolve(ctx context.Context, issues []int) ([]in
 // in place; the depth parameter selects the top-level "expanded" verb vs the nested
 // "flattened" verb. parentLabel is used in the nested-flatten log line (the parent
 // specification number that triggered the recursive call); pass "-" at depth 0 to make that
-// distinction crisp in operator logs.
+// distinction crisp in operator logs. recursionParent is the issue that triggered this
+// recursion (0 at depth 0); the carve-out in collectAcceptedChildren uses it to skip the
+// recursion-tree parent so the recursive flatten does not echo it back into the output.
 //
 // The userInputSet is the original typed input set; candidates drawn from it bypass
 // the IsSpecification re-check and the ## Parent verification (the user owns the choice).
@@ -230,6 +229,7 @@ func (r *SpecificationResolver) expandOne(
 	num int,
 	depth int,
 	parentLabel string,
+	recursionParent int,
 	userInputSet map[int]struct{},
 	addUnique func(int) bool,
 	fetches *issueFetchGroup,
@@ -278,7 +278,7 @@ func (r *SpecificationResolver) expandOne(
 		}
 	}
 
-	accepted, err := r.collectAcceptedChildren(ctx, num, issue.Body, subIssues, userInputSet, fetches, depth)
+	accepted, err := r.collectAcceptedChildren(ctx, num, issue.Body, subIssues, userInputSet, fetches, depth, recursionParent)
 	if err != nil {
 		return err
 	}
@@ -318,7 +318,7 @@ func (r *SpecificationResolver) expandOne(
 			return fmt.Errorf("fetch child #%d: not found", child)
 		}
 		if r.IsSpecification(childIssue.Body) {
-			if err := r.expandOne(ctx, child, depth+1, fmt.Sprintf("#%d", num), userInputSet, addUnique, fetches); err != nil {
+			if err := r.expandOne(ctx, child, depth+1, fmt.Sprintf("#%d", num), num, userInputSet, addUnique, fetches); err != nil {
 				return err
 			}
 		}
@@ -341,7 +341,7 @@ func (r *SpecificationResolver) expandOne(
 // the outermost input. A leaf input that happens to share a
 // `## Parent` backlink with another user input does not recurse, so
 // its carve-out is disabled and the echo is filtered out.
-func (r *SpecificationResolver) collectAcceptedChildren(ctx context.Context, parent int, body string, subIssues []int, userInputSet map[int]struct{}, fetches *issueFetchGroup, depth int) ([]int, error) {
+func (r *SpecificationResolver) collectAcceptedChildren(ctx context.Context, parent int, body string, subIssues []int, userInputSet map[int]struct{}, fetches *issueFetchGroup, depth int, recursionParent int) ([]int, error) {
 	// ancestorSet is the union of the original typed inputs and the
 	// current parent. Candidates drawn from a child body that
 	// match an ancestor are parent-backlink noise, not new children,
@@ -420,14 +420,16 @@ sendLoop:
 		if _, ok := ancestorSet[child]; ok {
 			// Ancestor echo (parent or outer user input): accept
 			// it for the recursion carve-out only when the
-			// carve-out is enabled (see above). The carve-out is
-			// the nested-spec recursive-flatten escape; for leaf
-			// top-level inputs the echo would inflate the output
-			// with parallel user inputs that share a `## Parent`
-			// backlink. The userInputSet bypass of the ## Parent
-			// check stays active here for inputs that are NOT
-			// ancestors of the current parent.
-			if carveOutEnabled {
+			// carve-out is enabled (see above) AND the candidate
+			// is not the recursion-tree parent. The recursion-tree
+			// parent is already in the output via the depth-0
+			// carve-out of the call that triggered this
+			// expansion; pulling it in again at the recursive
+			// level would echo it as a child of its own
+			// descendant (issue #2333). The userInputSet bypass
+			// of the ## Parent check stays active for ancestors
+			// that are NOT the recursion-tree parent.
+			if carveOutEnabled && child != recursionParent {
 				if _, isUserInput := userInputSet[child]; isUserInput {
 					accepted = append(accepted, child)
 				}

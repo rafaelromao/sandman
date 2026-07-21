@@ -17,15 +17,19 @@ import (
 // TestIsSpecification pins the body-shape and children-content gates
 // for the Specification detection. A body is a Specification if it
 // declares children in any form (`## Children` / `## Child Issues`
-// heading or prose `#N` / full-URL references outside the `## Parent`
-// backlink) OR if it carries the canonical Specification shape
+// heading) OR if it carries the canonical Specification shape
 // (`## Problem Statement` + `## Solution`; `## User Stories` is
 // optional and does not contribute to the canonical-shape signal).
-// The children-content signal is the only spec gate for bodies
+// Prose `#N` and `/issues/N` references outside the `## Parent`
+// backlink do NOT by themselves make an issue a Specification —
+// they are incidental mentions and would otherwise cause every
+// child with a casual reference (e.g. "Tracking #500 for context")
+// to be flattened as a sub-spec, which is the bug that issue #2333
+// fixes. The children-content signal is the only spec gate for bodies
 // authored against the broadened-detector contract; the canonical
 // shape is preserved so historical canonical-spec authoring keeps
 // working without the user having to add `## Children` bullets. The
-// `## Parent` backlink is excluded from the children-content probe
+// `## Parent` backlink is excluded from the children-list probe
 // because it points upward, not downward. The seam stays exported
 // because the recursive-flatten path uses it to decide whether to
 // recurse into a harvested child.
@@ -92,14 +96,14 @@ func TestIsSpecification(t *testing.T) {
 			want: true,
 		},
 		{
-			name: "body with prose shorthand reference",
+			name: "body with prose shorthand reference is not a specification",
 			body: "## What to build\n\nTracking #10 here, see #11 for context.\n",
-			want: true,
+			want: false,
 		},
 		{
-			name: "body with prose full URL reference",
+			name: "body with prose full URL reference is not a specification",
 			body: "## What to build\n\nSee [the issue](https://github.com/owner/repo/issues/10) for context.\n",
-			want: true,
+			want: false,
 		},
 		{
 			name: "body with parent backlink and children heading",
@@ -372,15 +376,96 @@ func TestSpecificationResolver_CarveOutNestedSpecFlattens(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	// #1 is userInputSet and is in #10's harvest too — the carve-out
-	// accepts it. Flat list: outer emits #10 (its child); recursion into
-	// #10 accepts #1 (carve-out) + #100 (verified leaf). Final:
-	// [10, 1, 100]. Asserts the recursive flatten fired and merged
-	// correctly; the previous behaviour (hard-error "nested specification
-	// detected: #10") is gone — see T4 / ADR-0025 §4 destination-aligned
-	// recursive-flatten invariant.
-	if !equalInts(got, []int{10, 1, 100}) {
-		t.Fatalf("expected [10 1 100], got %v", got)
+	// Issue #2333: the recursion-tree parent (#1 in this case) is no
+	// longer echoed back into #10's accepted set. The depth-1 carve-out
+	// is gated on `candidate != recursionParent`, so #1 is dropped at
+	// the recursive level. Flat list: outer emits #10 (its child);
+	// recursion into #10 accepts only #100 (verified leaf).
+	// Final: [10, 100]. Asserts the recursive flatten fired; the previous
+	// behaviour (hard-error "nested specification detected: #10") is gone
+	// — see T4 / ADR-0025 §4 destination-aligned recursive-flatten invariant.
+	if !equalInts(got, []int{10, 100}) {
+		t.Fatalf("expected [10 100], got %v", got)
+	}
+}
+
+// TestSpecificationResolver_ProseRefAloneIsNotASpec is the regression for
+// the bug surfaced by issue #2333 in production: `sandman run 2315
+// --override` was recursing into harvested children (#2316, #2319, …)
+// whose bodies had no `## Children` heading and no canonical sections
+// but did contain an incidental prose reference to a sibling issue.
+// With the previous prose-ref signal, IsSpecification returned true
+// for those bodies, the recursive flatten fired, and the
+// depth-greater-than-zero carve-out echoed the recursion-tree parent
+// (#2315) back into the output as a "child" of each leaf. The fix
+// removes the prose-ref signal from IsSpecification (only
+// `## Children` / `## Child Issues` headings and the canonical
+// `## Problem Statement` + `## Solution` shape qualify) and gates the
+// recursion-tree-parent carve-out on `candidate != recursionParent`
+// so the recursive path cannot echo the parent back.
+func TestSpecificationResolver_ProseRefAloneIsNotASpec(t *testing.T) {
+	parentBody := "## Children\n- #2316\n"
+	// Body mirrors the shape of issue #2316 from the production bug:
+	// `## Parent` backlink plus several H2 sections, but no
+	// `## Children` / `## Child Issues` heading. The prose mention
+	// in `Question` is the kind of incidental reference that
+	// previously tripped the broadened detector.
+	childBody := "## Parent\n#2315\n\n## Question\nprose mentions a sibling here\n\n## What to change\n\n## Blocked by\n\n## Out of scope\n\n## Done when\n"
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			2315: {Number: 2315, Title: "Parent", Body: parentBody},
+			2316: {Number: 2316, Title: "Child with prose ref only", Body: childBody},
+		},
+	}
+	var infoBuf bytes.Buffer
+	r := NewSpecificationResolver(client, &infoBuf)
+	got, err := r.Resolve(context.Background(), []int{2315})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// Expected: just #2316 as a child of #2315, no recursion into #2316
+	// (IsSpecification is false because the prose ref alone does not
+	// qualify), no echo of #2315 back into the output.
+	if !equalInts(got, []int{2316}) {
+		t.Fatalf("expected [2316], got %v (prose ref must not echo the recursion-tree parent back)", got)
+	}
+	if strings.Contains(infoBuf.String(), "flattened specification #2316") {
+		t.Errorf("prose-ref-only body must not be flattened as a Specification, got log: %q", infoBuf.String())
+	}
+}
+
+// TestSpecificationResolver_RecursionTreeParentNotEchoed is the
+// regression for issue #2333: when a child body lists the
+// recursion-tree parent (the issue that triggered the recursive
+// call) in any form, the parent must not be echoed back as a
+// "child" of the descendant. The depth-greater-than-zero carve-out
+// is gated on `candidate != recursionParent` so the recursion-tree
+// parent stays out of the descendant's accepted set; it is already
+// in the output via the depth-equal-zero path.
+func TestSpecificationResolver_RecursionTreeParentNotEchoed(t *testing.T) {
+	parentBody := "## Children\n- #2316\n"
+	// #2316 lists #2315 (its recursion-tree parent) in three
+	// different ways: via a children-list heading, via a canonical
+	// section, and via a prose reference. None of these should
+	// result in #2315 being added to #2316's accepted children.
+	childBody := "## Parent\n#2315\n\n## Problem Statement\ntracking #2315\n\n## Solution\n\n## Children\n- #2315\n"
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			2315: {Number: 2315, Title: "Parent", Body: parentBody},
+			2316: {Number: 2316, Title: "Child listing its parent", Body: childBody},
+		},
+	}
+	var infoBuf bytes.Buffer
+	r := NewSpecificationResolver(client, &infoBuf)
+	got, err := r.Resolve(context.Background(), []int{2315})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !equalInts(got, []int{2316}) {
+		t.Fatalf("expected [2316], got %v (recursion-tree parent must not be echoed)", got)
+	}
+	if strings.Contains(infoBuf.String(), "flattened specification #2316") {
+		t.Errorf("child that lists its recursion-tree parent must not recurse into itself, got log: %q", infoBuf.String())
 	}
 }
 
@@ -1134,25 +1219,20 @@ func TestSpecificationResolver_FlattensNestedSpecAtTwoLevels(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	// #1 expanded via the prose harvest (not userInputSet), so #2 should be
-	// rejected as a nested spec unless the recursive flatten handles it.
-	// Per T3 beat #4: harvested nested specs ARE expanded recursively (the
-	// previous hard-fail is removed for the broader detector).
-	//
-	// Outer expansion emits #2 (replacing #1's slot); within #2,
-	// userInputSet= {1}, so #1 is accepted into #2's harvest (carve-out);
-	// #20 is the parent-verified leaf. Per destination-aligned beat #4 from
-	// T3. The recursion also re-enters #1 (whose body again yields #2 via
-	// the ## Child Issues heading), but #2 is already in `seen`, so the
-	// flatten short-circuits.
-	if !equalInts(got, []int{2, 1, 20}) {
-		t.Fatalf("expected [2 1 20], got %v", got)
+	// #1 expanded: accept=[2] (## Child Issues heading). #2 expanded:
+	// accept=[20] (## Child Issues heading); #1 in candidates is the
+	// recursion-tree parent, so the carve-out skips it (issue #2333).
+	// Final: [2, 20]. The recursion also re-enters #1 (whose body
+	// again yields #2 via the ## Child Issues heading), but #2 is
+	// already in `seen`, so the flatten short-circuits.
+	if !equalInts(got, []int{2, 20}) {
+		t.Fatalf("expected [2 20], got %v", got)
 	}
 	// Per-flatten line for the inner Specification. Per destination-aligned beat #4,
-	// #1 (userInputSet) is accepted into #2's harvest unconditionally even
-	// though it doesn't carry `## Parent #2`, so #2's accepted-children set
-	// is [1, 20] (size 2). The per-flatten log mirrors that.
-	if !strings.Contains(infoBuf.String(), "flattened specification #2 inside #1 to 2 accepted children") {
+	// #1 in candidates is the recursion-tree parent, so the carve-out
+	// skips it (issue #2333). #2's accepted-children set is [20]
+	// (size 1). The per-flatten log mirrors that.
+	if !strings.Contains(infoBuf.String(), "flattened specification #2 inside #1 to 1 accepted children") {
 		t.Errorf("expected per-flatten log line for nested spec, got: %q", infoBuf.String())
 	}
 	// Top-level expansion line for the outer.
@@ -1180,18 +1260,22 @@ func TestSpecificationResolver_FlattensNestedSpecAtThreeLevels(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	// Depth 0 emits #2 (top-level expand of #1); #1's userInputSet carve-out
-	// rides along when #2 is expanded (depth 1); #3 is the inner-spec
-	// expansion; #30 is the leaf at depth 2.
-	if !equalInts(got, []int{2, 1, 3, 30}) {
-		t.Fatalf("expected [2 1 3 30], got %v", got)
+	// Depth 0 emits #2 (top-level expand of #1); #3 is the inner-spec
+	// expansion; #30 is the leaf at depth 2. Issue #2333: the
+	// recursion-tree parent (e.g. #1 when expanding #2) is no longer
+	// echoed back into the descendant's accepted set, so #1 does not
+	// appear in the final flat list.
+	if !equalInts(got, []int{2, 3, 30}) {
+		t.Fatalf("expected [2 3 30], got %v", got)
 	}
 	// Multi-level log assertion: one top-level "expanded" line and two
-	// per-flatten lines, emitted in depth order.
+	// per-flatten lines, emitted in depth order. The per-flatten counts
+	// are smaller than before because the recursion-tree parent is no
+	// longer echoed in each descendant's accepted set.
 	gotLog := infoBuf.String()
 	for _, want := range []string{
 		"expanded specification #1 to 1 accepted children",
-		"flattened specification #2 inside #1 to 2 accepted children",
+		"flattened specification #2 inside #1 to 1 accepted children",
 		"flattened specification #3 inside #2 to 1 accepted children",
 	} {
 		if !strings.Contains(gotLog, want) {
@@ -1202,7 +1286,9 @@ func TestSpecificationResolver_FlattensNestedSpecAtThreeLevels(t *testing.T) {
 
 func TestSpecificationResolver_UserTypedNestedSpecCarveOutSurvivesFlatten(t *testing.T) {
 	// Both #1 (outer) and #2 (inner) are user-typed. The resolver
-	// must accept both, expand them, and produce a flat list.
+	// must accept both, expand them, and produce a flat list. Issue
+	// #2333: the recursion-tree parent (e.g. #1 when expanding #2)
+	// is no longer echoed back into the descendant's accepted set.
 	outerBody := "## Problem Statement\n\nP.\n\n## Solution\n\nS.\n\n## User Stories\n\n1. U.\n\n## Child Issues\n\n- #2 nested\n"
 	innerBody := "## Parent\n\n#1\n\n## Problem Statement\n\nP.\n\n## Solution\n\nS.\n\n## User Stories\n\n1. U.\n\n## Child Issues\n\n- #11 leaf\n"
 	leafBody := "## Parent\n\n#2\n\n## What\n\n"
@@ -1218,14 +1304,13 @@ func TestSpecificationResolver_UserTypedNestedSpecCarveOutSurvivesFlatten(t *tes
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	// Per destination-aligned beat #4 (T3 #2145): both #1 and #2 are
-	// user-typed so both bypass IsSpecification re-check / ## Parent
-	// verification. #1 expands: candidates include #2 (user-typed → accept
-	// unconditionally) and the recursion picks #2 as a child. Within the
-	// recursion #2 also accepts #1 (user-typed). Final flat list: #2 (top
-	// of #1's expansion), #1 (carve-out into #2), #11 (leaf of #2).
-	if !equalInts(got, []int{2, 1, 11}) {
-		t.Fatalf("expected [2 1 11], got %v", got)
+	// #1 expands: accept=[2] (depth-0 carve-out). #2 expands:
+	// accept=[11] (## Child Issues heading); #1 in candidates is the
+	// recursion-tree parent, so the carve-out skips it. #1 is also a
+	// sibling user input, picked up by expandOne(2, depth=0)'s depth-0
+	// carve-out, so addUnique(1) is the final entry. Final: [2, 11, 1].
+	if !equalInts(got, []int{2, 11, 1}) {
+		t.Fatalf("expected [2 11 1], got %v", got)
 	}
 }
 
