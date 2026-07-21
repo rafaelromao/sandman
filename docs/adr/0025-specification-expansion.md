@@ -22,18 +22,23 @@ before dependency resolution and execution.
 
 Specifications and their children are identified by body structure, not labels:
 
-- A Specification is an issue whose body declares children — in any of
-  the supported forms (body heading, body prose, issue comments,
-  native sub-issues, or the mention-search fallback) — or whose body
-  carries the canonical Specification shape (`## Problem Statement` +
+- A Specification is an issue whose body declares children via a
+  `## Children` or `## Child Issues` heading, or whose body carries
+  the canonical Specification shape (`## Problem Statement` +
   `## Solution` + optional `## User Stories`). The no-other-gate
   contract drops the body-shape as the identification gate: child
-  existence alone is sufficient. The canonical sections remain one
-  valid spec signal so historical authoring keeps working without the
-  user having to add `## Children` bullets. Inline phrases like
-  `Children: #10`, `Child Issues: #10`, `Blocked by #10`, and
-  `Depends on #10` outside a heading are deprecated — prose mentions
-  of the phrase were sensitive noise (see ADR follow-up).
+  existence via a heading declaration alone is sufficient. The
+  canonical sections remain one valid spec signal so historical
+  authoring keeps working without the user having to add
+  `## Children` bullets. Prose `#N` and `/issues/N` references
+  outside the `## Parent` backlink do NOT by themselves make an
+  issue a Specification — they are incidental mentions and would
+  otherwise cause every child with a casual reference (e.g.
+  "Tracking #500 for context") to be flattened as a sub-spec
+  (issue #2333 regression). Inline phrases like `Children: #10`,
+  `Child Issues: #10`, `Blocked by #10`, and `Depends on #10`
+  outside a heading are deprecated — prose mentions of the phrase
+  were sensitive noise (see ADR follow-up).
 - A child of Specification `<n>` is an issue whose body contains a `## Parent`
   section citing `<n>` (via `#N` shorthand or a full GitHub issue URL).
 - Specification expansion is the act of replacing a Specification with its accepted
@@ -62,10 +67,10 @@ using the same `DependencyResolver`-style seam that already lives in
 `internal/batch`. The flow is:
 
 1. **Detection** — `SpecificationResolver.IsSpecification(body)` returns true iff the
-   body declares children (heading or prose refs to other issues,
-   outside the `## Parent` backlink) OR carries the canonical
-   Specification shape (`## Problem Statement` AND `## Solution`,
-   with `## User Stories` optional). Case-insensitive on the section
+   body declares children via a `## Children` or `## Child Issues`
+   heading OR carries the canonical Specification shape (`## Problem
+   Statement` AND `## Solution`, with `## User Stories` optional).
+   Case-insensitive on the section text. H3 or deeper sections do
    text. H3 or deeper sections do not count as the canonical-shape
    signal. The `## Parent` backlink is excluded from the
    children-content probe because it points upward, not downward.
