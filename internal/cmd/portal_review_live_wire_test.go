@@ -119,8 +119,8 @@ func TestPortal_Compute_TerminalReviewOmitsReviewLiveJSON(t *testing.T) {
 	}
 
 	// Register the review batch in the Batches index so runFromState can
-	// stamp RunDir from the index entry (issue #1938)
-	// #1938), letting reviewVerdictFromDecisionFile locate decision.md.
+	// stamp RunDir from the index entry, letting reviewVerdictFromDecisionFile
+	// locate decision.md (issue #1938).
 	sliceLayout := paths.NewLayout(nil, repoRoot)
 	sliceIdx := &batchindex.Index{
 		Version: batchindex.IndexVersion,

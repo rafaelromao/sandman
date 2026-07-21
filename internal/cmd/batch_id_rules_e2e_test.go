@@ -4,7 +4,7 @@
 //
 // This file is the only slice in parent PRD #1916 that adds e2e tests;
 // earlier slices (1-9) focused on unit/integration changes through the
-// public cmd/Dependencies and batch orchestrator seams.
+// public cmd/Dependencies and batch orchestrator seams. This file
 // exercises the full identity model end-to-end through the same
 // public seams so every batch-id rule (slices 1-5), the per-row archive
 // flow, and the --continue flow is validated against
@@ -13,9 +13,8 @@
 // Greenfield .sandman policy
 // --------------------------
 // These tests assume a greenfield .sandman layout. The archive
-// flow and the --continue flow both operate on the
-// `.sandman/batches/<ts>-<sid>-<rest>/` (and `.sandman/archive/...`)
-// shapes introduced by ADR-0032, with no legacy `.sandman/runs/` paths
+// flow and the --continue flow both operate on the same `.sandman/batches/` and
+// `.sandman/archive/` shapes introduced by ADR-0032, with no legacy `.sandman/runs/` paths
 // or pre-#1917 batch ids present at suite start. See
 // docs/adr/0032-sandman-layout-redesign.md, "Migration out of scope":
 // the slice-1 contract change renames the public BatchId surface and
@@ -382,8 +381,8 @@ func TestBatchIDRules_PromptOnlyBatchIdentity(t *testing.T) {
 // behavior 6: the portal's /api/runs row must surface the public
 // BatchId (the batch folder basename, including the "+N" suffix for
 // multi-issue batches) on the Batch label and the Details tab
-// payload, not the per-row RunID. Issue #1954 closed
-// pinned this ordering; pins it end-to-end.
+// payload, not the per-row RunID. Issue #1954 closed that ordering;
+// this test pins it end-to-end.
 func TestBatchIDRules_PortalBatchLabelAndDetailsRenderPublicBatchId(t *testing.T) {
 	requireGateMultiIssue(t)
 	repoRoot := testenv.MkdirShort(t, "sm-slice10-p-")
@@ -496,7 +495,7 @@ func TestBatchIDRules_PortalBatchLabelAndDetailsRenderPublicBatchId(t *testing.T
 // TestBatchIDRules_PortalLiveVsSavedVsArchivedLog covers behavior 7: the
 // portal must serve the live tail for an active row, the saved log
 // for a terminal row, and the archived log for a historical row.
-// hard-coded the live/saved/archived log resolution;
+// Slice 8 hard-coded the live/saved/archived log resolution; this test
 // pins it end-to-end through the public /api/runs endpoint.
 func TestBatchIDRules_PortalLiveVsSavedVsArchivedLog(t *testing.T) {
 	requireGateMultiIssue(t)
@@ -1221,7 +1220,7 @@ func TestBatchIDRules_ContinueReusesOriginalBranchAndWorktree(t *testing.T) {
 
 // TestBatchIDRules_ContinueLeavesPreviousRunUnchanged pins behavior 9c:
 // the previous run's batch dir, run folder, manifest, and event log
-// are unchanged after the new run starts. explicitly guards
+// are unchanged after the new run starts. Slice 9 explicitly guards
 // against the continuation accidentally rewriting history.
 func TestBatchIDRules_ContinueLeavesPreviousRunUnchanged(t *testing.T) {
 	requireGateMultiIssue(t)

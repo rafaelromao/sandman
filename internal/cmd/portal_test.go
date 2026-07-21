@@ -3618,7 +3618,7 @@ func TestPortal_RunsAPI_BatchKeyEqualsPublicBatchId(t *testing.T) {
 
 // TestPortal_ActiveBatchKey_EqualsPublicBatchId_PromptOnly pins the
 // prompt-only public BatchId contract at the active-row portal seam
-// (#1916):
+// (issue #1920, #1916):
 //
 //   - active.BatchKey (rendered as the "Batch:" label and the Details
 //     tab "batch" field) MUST equal the public BatchId (== batch folder
@@ -3687,7 +3687,7 @@ func TestPortal_ActiveBatchKey_EqualsPublicBatchId_PromptOnly(t *testing.T) {
 
 // TestPortal_RunsAPI_BatchKeyEqualsPublicBatchId_PromptOnly pins the
 // prompt-only public BatchId contract at the HTTP API boundary
-// (#1916):
+// (issue #1920, #1916):
 //
 //   - GET /api/runs must return `run.batchKey` == public BatchId for
 //     both the with-userid and without-userid prompt-only shapes. The
