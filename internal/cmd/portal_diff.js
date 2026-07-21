@@ -1658,6 +1658,16 @@
   }
 
   function liveDurationText(run) {
+    // While the issue is queued or blocked, duration time must not be
+    // counted at all — show the same em-dash placeholder the
+    // empty-duration branch uses, regardless of how long ago the run
+    // entered the queue or hit the blocker. This mirrors the
+    // stalenessOf predicate, which also suppresses the stale chip for
+    // queued / blocked / failure statuses. The duration tick
+    // re-engages the moment status flips to running / reviewing (where
+    // startedAt is anchored on run.started) and the terminal path uses
+    // the server-stamped Finished - Started.
+    if (run && (run.status === 'queued' || run.status === 'blocked')) return '—';
     const startedAt = Date.parse(run && run.startedAt || '');
     if (!Number.isFinite(startedAt)) return run && run.duration || '—';
     let seconds = Math.max(0, Math.round((Date.now() - startedAt) / 1000));

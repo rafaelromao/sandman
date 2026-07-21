@@ -1431,20 +1431,15 @@ console.log('PASS');
 	runNodeScript(t, js)
 }
 
-// TestPortalDiffRefreshLiveTimeCells_QueuedRowDurationReflectsQueuedStart
-// pins the duration tick for a queued row. The fix anchors
-// runFromActiveBatchIssue's StartedAt on the run.queued event timestamp
-// instead of the batch manifest's CreatedAt, so refreshLiveTimeCells
-// (which formats via liveDurationText(run) using run.startedAt) must
-// show time-since-queued and must NOT show time-since-manifest-created.
-// The bug would surface as duration text matching the pre-queue delta
-// instead of the post-queue delta.
-func TestPortalDiffRefreshLiveTimeCells_QueuedRowDurationReflectsQueuedStart(t *testing.T) {
+// TestPortalDiffRefreshLiveTimeCells_QueuedRowDurationIsEmDash pins the
+// duration tick for a queued row: while the issue is queued, duration
+// time must not be counted at all. liveDurationText returns "—" for
+// status === "queued" regardless of run.startedAt, so the duration
+// cell never advances from "—" while the row is queued. Pre-fix the
+// cell would tick up from the queue-entry timestamp (e.g. showing
+// "9s" after 9 seconds in the queue) — that is the bug.
+func TestPortalDiffRefreshLiveTimeCells_QueuedRowDurationIsEmDash(t *testing.T) {
 	js := `const body = makeMockBody();
-// 30m since the queue event, 1h since the batch manifest was created.
-// Pre-fix, run.startedAt = manifest.CreatedAt, so liveDurationText
-// would format ~1h. Post-fix, run.startedAt = run.queued.Timestamp, so
-// it formats ~30m.
 const queuedAt = new Date(Date.now() - 30*60*1000).toISOString();
 const run = { key: 'a', kind: 'active', status: 'queued', issueLabel: '#42', runId: 'r1', startedAt: queuedAt, duration: '' };
 const stopGroups = new Set();
@@ -1457,8 +1452,62 @@ if (!durationCell) throw new Error('expected duration cell');
 const value = durationCell.querySelector('.duration-value');
 if (!value) throw new Error('expected .duration-value child');
 const text = value.textContent;
-if (!/^30m/.test(text)) throw new Error('expected duration to start at ~30m (time since run.queued), got ' + JSON.stringify(text));
-if (/^1h/.test(text) || /^59m/.test(text) || /^58m/.test(text) || /^45m/.test(text)) throw new Error('duration must NOT reflect time since batch manifest creation, got ' + JSON.stringify(text));
+if (text !== '\u2014') throw new Error('expected duration to stay at em-dash while queued, got ' + JSON.stringify(text));
+if (/^\d+s$/.test(text) || /^30m/.test(text) || /^1h/.test(text)) throw new Error('duration must NOT count time while queued, got ' + JSON.stringify(text));
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+// TestPortalDiffRefreshLiveTimeCells_BlockedRowDurationIsEmDash is the
+// blocked counterpart of the queued-row suppression. While the issue
+// is blocked (an upstream blocker failed or is still open), duration
+// time must not be counted — same em-dash placeholder, same rationale
+// as the stale-chip predicate which also excludes blocked. The duration
+// tick re-engages the moment status flips to running or reviewing.
+func TestPortalDiffRefreshLiveTimeCells_BlockedRowDurationIsEmDash(t *testing.T) {
+	js := `const body = makeMockBody();
+const blockedAt = new Date(Date.now() - 30*60*1000).toISOString();
+const run = { key: 'b', kind: 'active', status: 'blocked', issueLabel: '#42', runId: 'b1', startedAt: blockedAt, duration: '' };
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: null };
+SandmanPortalDiff.insertRunRow(body, run, opts);
+SandmanPortalDiff.refreshLiveTimeCells(body, [run]);
+const row = body.children[0];
+const durationCell = row.querySelector('[data-cell="duration"]');
+if (!durationCell) throw new Error('expected duration cell');
+const value = durationCell.querySelector('.duration-value');
+if (!value) throw new Error('expected .duration-value child');
+const text = value.textContent;
+if (text !== '\u2014') throw new Error('expected duration to stay at em-dash while blocked, got ' + JSON.stringify(text));
+if (/^\d+s$/.test(text) || /^30m/.test(text) || /^1h/.test(text)) throw new Error('duration must NOT count time while blocked, got ' + JSON.stringify(text));
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+// TestPortalDiffRefreshLiveTimeCells_RunningAndReviewingStillTick pins
+// the duration tick for active running and reviewing rows after the
+// queued-row suppression fix: those statuses must continue to advance
+// from run.startedAt so duration time is counted while the run is
+// actively executing.
+func TestPortalDiffRefreshLiveTimeCells_RunningAndReviewingStillTick(t *testing.T) {
+	js := `const body = makeMockBody();
+const startedAt = new Date(Date.now() - 30*60*1000).toISOString();
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: null };
+
+const runRun = { key: 'r', kind: 'active', status: 'running', issueLabel: '#1', runId: 'r1', startedAt, duration: '' };
+SandmanPortalDiff.insertRunRow(body, runRun, opts);
+SandmanPortalDiff.refreshLiveTimeCells(body, [runRun]);
+const runValue = body.children[0].querySelector('[data-cell="duration"]').querySelector('.duration-value');
+if (!/^30m/.test(runValue.textContent)) throw new Error('expected running row duration to tick to ~30m, got ' + JSON.stringify(runValue.textContent));
+
+const runRev = { key: 'v', kind: 'active', status: 'reviewing', review: true, prNumber: 42, issueLabel: 'PR42', runId: 'v1', startedAt, duration: '' };
+SandmanPortalDiff.insertRunRow(body, runRev, opts);
+SandmanPortalDiff.refreshLiveTimeCells(body, [runRun, runRev]);
+const revValue = body.children[1].querySelector('[data-cell="duration"]').querySelector('.duration-value');
+if (!/^30m/.test(revValue.textContent)) throw new Error('expected reviewing row duration to tick to ~30m, got ' + JSON.stringify(revValue.textContent));
 console.log('PASS');
 `
 	runNodeScript(t, js)
