@@ -19,10 +19,10 @@ The worktree MUST be checked out on `{{BRANCH}}` when the run finishes. Do not s
 ## Execution Checklist
 
 - [ ] Create branch
-- [ ] Load `sandman-plan`
-- [ ] Load `sandman-implement` (TDD + commit + self-review + back-merge + create PR + delegate review)
-- [ ] Load `sandman-pr-review`
-- [ ] Load `sandman-pr-merge`
+- [ ] Plan (Load `sandman-plan`)
+- [ ] Implement (Load `sandman-implement`: TDD + commit + self-review + back-merge + create PR + delegate review)
+- [ ] PR-Review (Load `sandman-pr-review`)
+- [ ] PR-Merge (Load `sandman-pr-merge`)
 
 Each checklist step is a skill-load directive. The agent MUST emit a `Skill "sandman-<name>"` invocation in its transcript before doing any work for that step; the step is not considered started until the skill is loaded. Steps completed without their skill loaded are invalid — for example, a `gh pr create` body composed without first loading `sandman-implement` does not satisfy the closing-reference body requirement (one of `Closes #<issue_number>`, `Fixes #<issue_number>`, `Resolves #<issue_number>`) and is not acceptable.
 
