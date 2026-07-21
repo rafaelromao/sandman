@@ -6,6 +6,13 @@ import (
 	"time"
 )
 
+// PortalStateStorageKeyPrefix is the sessionStorage key prefix used by
+// the portal's persistPortalViewState / normalizePortalViewState pair.
+// The :%s suffix scopes the key by repoRoot so different repos get
+// independent storage. When the schema next needs a breaking change,
+// bump the suffix (v1 → v2) and re-test sessionStorage migration.
+const PortalStateStorageKeyPrefix = "sandman.portal.view-state.v1"
+
 type portalPageData struct {
 	RepoRoot              string
 	PollInterval          int
@@ -32,7 +39,7 @@ func buildPortalPageData(repoRoot string) (*portalPageData, error) {
 		RefreshPath:           "/api/runs",
 		PortalTitle:           "Sleep while your agents code",
 		PortalSubtitle:        "AFK coding agents orchestration in isolated sandboxes.",
-		PortalStateStorageKey: fmt.Sprintf("sandman.portal.view-state.v1:%s", repoRoot),
+		PortalStateStorageKey: fmt.Sprintf("%s:%s", PortalStateStorageKeyPrefix, repoRoot),
 		ThemeOptionsHTML:      portalThemeOptionsHTML,
 		SupportedThemesJSON:   portalSupportedThemesJSON,
 		PortalStateJS:         portalStateJS,

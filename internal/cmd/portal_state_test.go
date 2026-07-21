@@ -1,9 +1,12 @@
 package cmd
 
 import (
+	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -517,5 +520,36 @@ console.log('PASS');
 	cmd := exec.Command("node", "-e", script, portalStatePath)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("portal state helper failed: %v\n%s", err, out)
+	}
+}
+
+func TestPortalStateStorageKeySync(t *testing.T) {
+	_, currentFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("locate test file")
+	}
+	portalStatePath := filepath.Join(filepath.Dir(currentFile), "portal_state.js")
+	src, err := os.ReadFile(portalStatePath)
+	if err != nil {
+		t.Fatalf("read portal_state.js: %v", err)
+	}
+
+	lines := strings.Split(string(src), "\n")
+	var withoutComments strings.Builder
+	for _, line := range lines {
+		if idx := strings.Index(line, "//"); idx >= 0 {
+			line = line[:idx]
+		}
+		withoutComments.WriteString(line)
+		withoutComments.WriteString("\n")
+	}
+
+	re := regexp.MustCompile("DEFAULT_STORAGE_KEY\\s*=\\s*'([^']+)'")
+	match := re.FindStringSubmatch(withoutComments.String())
+	if match == nil {
+		t.Fatal("could not find DEFAULT_STORAGE_KEY assignment in portal_state.js")
+	}
+	if match[1] != PortalStateStorageKeyPrefix {
+		t.Fatalf("JS DEFAULT_STORAGE_KEY %q != Go PortalStateStorageKeyPrefix %q", match[1], PortalStateStorageKeyPrefix)
 	}
 }
