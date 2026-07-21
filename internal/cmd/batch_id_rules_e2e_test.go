@@ -31,7 +31,7 @@
 // `testenv.E2EGateAllowed(testenv.E2EScenarioBatchIDRules)` and skips
 // itself when the env var is unset. Run the suite locally with:
 //
-//	SANDMAN_E2E_GATES=batch_id_rules go test -tags e2e ./internal/cmd -run TestSlice10
+//	SANDMAN_E2E_GATES=batch_id_rules go test -tags e2e ./internal/cmd -run TestBatchIDRules
 package cmd
 
 import (
