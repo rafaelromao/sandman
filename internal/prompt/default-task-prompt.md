@@ -20,7 +20,7 @@ The worktree MUST be checked out on `{{BRANCH}}` when the run finishes. Do not s
 
 - [ ] Create branch
 - [ ] Plan (Load `sandman-plan`)
-- [ ] Implement (Load `sandman-implement`: TDD + commit + self-review + back-merge + create PR + delegate review)
+- [ ] Implement (Load `sandman-implement`)
 - [ ] PR-Review (Load `sandman-pr-review`)
 - [ ] PR-Merge (Load `sandman-pr-merge`)
 

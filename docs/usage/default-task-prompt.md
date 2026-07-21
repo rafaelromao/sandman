@@ -29,7 +29,7 @@ The shared Sandman skill owns the detailed workflow. This page describes the boo
     
     - [ ] Create branch
     - [ ] Plan (Load `sandman-plan`)
-    - [ ] Implement (Load `sandman-implement`: TDD + commit + self-review + back-merge + create PR + delegate review)
+    - [ ] Implement (Load `sandman-implement`)
     - [ ] PR-Review (Load `sandman-pr-review`)
     - [ ] PR-Merge (Load `sandman-pr-merge`)
     
