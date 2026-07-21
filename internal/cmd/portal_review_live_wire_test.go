@@ -13,6 +13,9 @@ import (
 	"github.com/rafaelromao/sandman/internal/paths"
 )
 
+// B-tag vocabulary for issue #2109 (review canonical row):
+//   B6 — live review carries reviewLive on JSON wire; omitempty when terminal
+
 // TestPortal_Compute_LiveReviewCarriesReviewLiveJSON pins issue #2109 slice 6
 // (B6): when compute() projects a parent implementation row whose sibling
 // review child is still in flight, the JSON wire must carry
