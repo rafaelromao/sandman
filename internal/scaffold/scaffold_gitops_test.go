@@ -105,7 +105,7 @@ func TestScaffold_SkipsUntrackWhenNotInsideRepo(t *testing.T) {
 }
 
 // TestScaffold_InstallsPreCommitHookThatBlocksSandmanPaths is the unit test
-// for slice 8 (issue #2148 acceptance criteria 3 and 4): after sandman init,
+// for issue #2148 acceptance criteria 3 and 4: after sandman init,
 // `git add -f .sandman/task.md && git commit` must be rejected by the
 // installed pre-commit hook, even though -f bypasses the .gitignore rule.
 func TestScaffold_InstallsPreCommitHookThatBlocksSandmanPaths(t *testing.T) {

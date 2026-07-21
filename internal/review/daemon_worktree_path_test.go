@@ -13,7 +13,7 @@ import (
 )
 
 // TestPrepareReviewRun_StampsWorktreePathOnManifest pins the root-cause
-// fix for issue #2220 slice 2: the review manifest written by
+// fix for issue #2220: the review manifest written by
 // prepareReviewRun must carry WorktreePath so the portal's verdict
 // reader can locate decision.md at the per-row worktree path (per issue
 // #1953). Without this field, the portal falls back to <runDir>/decision.md
@@ -78,7 +78,7 @@ func TestPrepareReviewRun_StampsWorktreePathOnManifest(t *testing.T) {
 }
 
 // TestPrepareReviewRun_ManifestEnablesVerdictFromWorktree is the
-// daemon-side regression for #2220 slice 2: the manifest written by
+// daemon-side regression for #2220: the manifest written by
 // prepareReviewRun advertises a WorktreePath that points at a real,
 // readable decision.md at the per-row worktree (the canonical artifact
 // location per #1953).

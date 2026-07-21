@@ -252,7 +252,7 @@ func TestDaemon_ReviewBatchDirName_MatchesPerRowRunID(t *testing.T) {
 			rowID := runner.last.RunID
 			batchDir := filepath.Dir(filepath.Dir(runner.last.RunDir))
 			if filepath.Base(batchDir) != rowID {
-				t.Errorf("on-disk batch dir name = %q, want %q (per-row RunID; slice 3 invariant)", filepath.Base(batchDir), rowID)
+				t.Errorf("on-disk batch dir name = %q, want %q (per-row RunID; issue #1919 invariant)", filepath.Base(batchDir), rowID)
 			}
 			if !strings.HasSuffix(rowID, "-"+tt.wantSubject) {
 				t.Errorf("RunID = %q, want suffix -%s", rowID, tt.wantSubject)
@@ -310,13 +310,13 @@ func TestDaemon_ReviewRunManifest_BatchIDAgreesWithPerRowRunID(t *testing.T) {
 				t.Fatalf("decode run.json: %v", err)
 			}
 			if manifest.BatchID != rowID {
-				t.Errorf("run.json.BatchID = %q, want %q (per-row RunID; slice 3 invariant)", manifest.BatchID, rowID)
+				t.Errorf("run.json.BatchID = %q, want %q (per-row RunID; issue #1919 invariant)", manifest.BatchID, rowID)
 			}
 		})
 	}
 }
 
-// TestDaemon_LoadSeenCache_ReadsCanonicalRunFolder pins Slice 2 of
+// TestDaemon_LoadSeenCache_ReadsCanonicalRunFolder pins #1919 of
 // the canonical hydration path. After launch, the daemon's
 // loadSeenCache must consult `<batch>/runs/<rowID>/review-state.json`
 // (where `<rowID>` is the canonical per-row RunID), not the legacy

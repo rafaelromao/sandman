@@ -1591,6 +1591,16 @@ func (v *portalRunsView) runFromActiveBatchIssue(repoRoot string, active portalA
 	if key == "" {
 		key = active.Key
 	}
+	// Anchor the row's duration tick on the run.queued event when one
+	// exists for this issue. active.StartedAt (== manifest.CreatedAt)
+	// is the batch creation time, which predates queue entry by design,
+	// so using it would let the duration counter include pre-queue time
+	// while the issue is queued. Falls back to active.StartedAt for the
+	// pre-queued-event window when run.queued has not been logged yet.
+	startedAt := active.StartedAt
+	if queued != nil && !queued.Timestamp.IsZero() {
+		startedAt = queued.Timestamp
+	}
 	run := portalRun{
 		Key:         key,
 		RunID:       derivedRunID,
@@ -1598,7 +1608,7 @@ func (v *portalRunsView) runFromActiveBatchIssue(repoRoot string, active portalA
 		Status:      "queued",
 		IssueLabel:  issueLabel,
 		IssueNumber: issueNumber,
-		StartedAt:   active.StartedAt,
+		StartedAt:   startedAt,
 		SocketPath:  active.SocketPath,
 		LogPath:     logPath,
 		LogURL:      logURL,
