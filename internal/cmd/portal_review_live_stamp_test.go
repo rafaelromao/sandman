@@ -9,6 +9,10 @@ import (
 	"github.com/rafaelromao/sandman/internal/paths"
 )
 
+// B-tag vocabulary for issue #2109 (review canonical row):
+//   B1 — live review stamps ReviewLive=true on parent implementation row
+//   B2 — terminal review does not stamp ReviewLive on parent implementation row
+
 // TestAggregateReviewChildren_LiveReviewStampsReviewLive pins issue #2109 slice
 // 1 (B1): when a parent implementation row has at least one sibling review
 // child with Status == "reviewing" (an in-flight review), the canonical parent
