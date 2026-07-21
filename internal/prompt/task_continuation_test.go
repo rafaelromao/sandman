@@ -18,7 +18,7 @@ import (
 func TestContinuationTaskPrompt_PreservesOriginalTaskTemplate(t *testing.T) {
 	original := `# Task
 
-Implement GitHub issue #1193: [slice 2] Uniform log prefix -- always [<runID>]
+Implement GitHub issue #1193: Uniform log prefix -- always [<runID>]
 
 ## Issue Context
 
