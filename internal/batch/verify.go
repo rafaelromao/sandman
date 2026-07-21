@@ -34,10 +34,10 @@ const (
 	// distinct so callers can tell the difference between "tried, no
 	// signal" and "didn't try".
 	OracleNoSignal
-	// OracleReject: PreFilter's pre-filter says the branch's diff is
-	// not a subset of origin/main. PreFilter abstains from verifying
-	// but the chain short-circuits because the Decision oracle cannot
-	// prove either.
+	// OracleReject: PreFilter's diff-subset check says the branch's
+	// diff is not a subset of origin/main. PreFilter abstains from
+	// verifying but the chain short-circuits because the Decision
+	// oracle cannot prove either.
 	OracleReject
 )
 
