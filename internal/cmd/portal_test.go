@@ -1146,7 +1146,7 @@ func TestPortal_RunFromActiveBatchIssue_PopulatesIssueTitleForQueued(t *testing.
 		Issue:     962,
 		Payload: map[string]any{
 			"blocked_by":  []int{960, 961},
-			"issue_title": "[slice 3] Add internal/orchestrator dependencies path",
+			"issue_title": "Add internal/orchestrator dependencies path",
 		},
 	}
 
@@ -1155,8 +1155,8 @@ func TestPortal_RunFromActiveBatchIssue_PopulatesIssueTitleForQueued(t *testing.
 	if run.Status != "queued" {
 		t.Fatalf("expected Status %q, got %q", "queued", run.Status)
 	}
-	if run.IssueTitle != "[slice 3] Add internal/orchestrator dependencies path" {
-		t.Fatalf("expected IssueTitle %q, got %q", "[slice 3] Add internal/orchestrator dependencies path", run.IssueTitle)
+	if run.IssueTitle != "Add internal/orchestrator dependencies path" {
+		t.Fatalf("expected IssueTitle %q, got %q", "Add internal/orchestrator dependencies path", run.IssueTitle)
 	}
 }
 
@@ -1193,7 +1193,7 @@ func TestPortal_RunFromActiveBatchIssue_PopulatesIssueTitleForBlocked(t *testing
 		Issue:     962,
 		Payload: map[string]any{
 			"blocked_by":  []int{960, 961},
-			"issue_title": "[slice 3] Add dependencies path",
+			"issue_title": "Add dependencies path",
 		},
 	}
 	blocked := &events.Event{
@@ -1211,8 +1211,8 @@ func TestPortal_RunFromActiveBatchIssue_PopulatesIssueTitleForBlocked(t *testing
 	if run.Status != "blocked" {
 		t.Fatalf("expected Status %q, got %q", "blocked", run.Status)
 	}
-	if run.IssueTitle != "[slice 3] Add dependencies path" {
-		t.Fatalf("expected IssueTitle %q, got %q", "[slice 3] Add dependencies path", run.IssueTitle)
+	if run.IssueTitle != "Add dependencies path" {
+		t.Fatalf("expected IssueTitle %q, got %q", "Add dependencies path", run.IssueTitle)
 	}
 }
 

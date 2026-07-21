@@ -216,6 +216,37 @@ func TestProjectRunStates_QueuedThenContinuedRunIsActive(t *testing.T) {
 	}
 }
 
+func TestProjectRunStates_TerminalRunDurationExcludesQueuedWait(t *testing.T) {
+	t.Parallel()
+	queuedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
+	startedAt := queuedAt.Add(30 * time.Minute)
+	finishedAt := startedAt.Add(5 * time.Minute)
+
+	runs := ProjectRunStates([]Event{
+		{Type: "run.queued", Timestamp: queuedAt, RunID: "run-queued-started-finished", Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
+		{Type: "run.started", Timestamp: startedAt, RunID: "run-queued-started-finished", Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
+		{Type: "run.finished", Timestamp: finishedAt, RunID: "run-queued-started-finished", Issue: 42, Payload: map[string]any{"status": "success", "branch": "sandman/42-fix"}},
+	})
+
+	if len(runs) != 1 {
+		t.Fatalf("expected 1 run, got %d", len(runs))
+	}
+
+	run := runs[0]
+	if run.IsActive() {
+		t.Fatal("expected run to be terminal after run.finished")
+	}
+	if got := run.Status(); got != "success" {
+		t.Fatalf("expected success status, got %q", got)
+	}
+	if got, want := run.Duration(), 5*time.Minute; got != want {
+		t.Fatalf("expected duration %s (started->finished), got %s", want, got)
+	}
+	if got, want := run.Duration(), finishedAt.Sub(queuedAt); got == want {
+		t.Fatalf("duration must NOT equal finished-queued (%s); that would mean the queued wait is counted", want)
+	}
+}
+
 func TestProjectRunStates_UnknownPayloadStatusRoundTripsThroughStatus(t *testing.T) {
 	t.Parallel()
 	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)

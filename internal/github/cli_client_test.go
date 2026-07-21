@@ -1609,7 +1609,7 @@ func TestCLIClient_CloseIssue_Error(t *testing.T) {
 	}
 }
 
-// slice-1: ctx threading — recorded ctx must equal the caller's ctx so
+// ctx threading — recorded ctx must equal the caller's ctx so
 // downstream layers can plumb it through unchanged.
 func TestFakeRunner_RecordsCallerContext(t *testing.T) {
 	runner := &fakeRunner{responses: []fakeResponse{{output: `[{"number":1,"state":"open","title":"","body":"","labels":[]}]`}}}
@@ -1629,7 +1629,7 @@ func TestFakeRunner_RecordsCallerContext(t *testing.T) {
 	}
 }
 
-// slice-2: a fake execRunner whose returned cmd blocks until ctx is
+// a fake execRunner whose returned cmd blocks until ctx is
 // cancelled. The CLIClient must honour the caller's ctx via the
 // underlying exec.CommandContext even when no Timeout is configured
 // (zero-value test path).
@@ -1664,7 +1664,7 @@ func TestCLIClient_CancelledContextReturnsError(t *testing.T) {
 	}
 }
 
-// slice-2: when the caller's ctx has a tight deadline and the
+// when the caller's ctx has a tight deadline and the
 // client has no Timeout (zero-value), the caller's deadline wins.
 // The blocking cmd returns the deadline-exceeded error in bounded time.
 func TestCLIClient_CallerDeadlineWinsOverNoClientTimeout(t *testing.T) {
@@ -1689,7 +1689,7 @@ func TestCLIClient_CallerDeadlineWinsOverNoClientTimeout(t *testing.T) {
 	}
 }
 
-// slice-2: NewCLIClient applies the 30 s default timeout. A cancellation
+// NewCLIClient applies the 30 s default timeout. A cancellation
 // without a caller-side deadline still completes in bounded time.
 func TestNewCLIClient_DefaultTimeoutBoundsCall(t *testing.T) {
 	runner := &blockingFakeRunner{}
@@ -1717,7 +1717,7 @@ func TestNewCLIClient_DefaultTimeoutBoundsCall(t *testing.T) {
 	}
 }
 
-// slice-2: when both the caller's ctx has a deadline and the client
+// when both the caller's ctx has a deadline and the client
 // has a Timeout, the earlier deadline wins. A caller deadline of 30 ms
 // must beat a client Timeout of 30 s.
 func TestCLIClient_CallerDeadlineWinsOverClientTimeout(t *testing.T) {
@@ -1739,7 +1739,7 @@ func TestCLIClient_CallerDeadlineWinsOverClientTimeout(t *testing.T) {
 	}
 }
 
-// slice-2: when the client's Timeout is the only deadline, an unset
+// when the client's Timeout is the only deadline, an unset
 // caller ctx gets the Timeout applied. A short Timeout (50 ms) bounds
 // the call even though the caller's ctx has no deadline.
 func TestCLIClient_ClientTimeoutBoundsCallWithoutCallerDeadline(t *testing.T) {
@@ -1761,7 +1761,7 @@ func TestCLIClient_ClientTimeoutBoundsCallWithoutCallerDeadline(t *testing.T) {
 	}
 }
 
-// slice-2: WithTimeout(0) keeps the zero-value behaviour — no per-call
+// WithTimeout(0) keeps the zero-value behaviour — no per-call
 // timeout is applied. A blocking call with no caller deadline waits
 // for cancellation rather than timing out. We use a short test by
 // cancelling the caller's ctx explicitly.

@@ -802,7 +802,7 @@ func TestReadTailLines_TrailingNewline(t *testing.T) {
 }
 
 // TestBatchIDForIssue_PublicBatchIdShape pins the public BatchId contract
-// for issue batches (issue #1917 slice 1):
+// for issue batches (issue #1917):
 //
 //   - single issue (n=1): "<ts>-<sid>-<num>" (no +N suffix)
 //   - two issues    (n=2): "<ts>-<sid>-<firstIssue>+1"
@@ -10684,7 +10684,7 @@ func TestBatchIDFromRunID_LegacyAndEmptyInputs(t *testing.T) {
 // issue-driven batch is run with explicit RunTS/RunShortID, every per-row
 // run.started / run.finished event carries the new-shape RunID
 // <ts>-<sid>-<num> and that all rows share the batch prefix.
-// This is acceptance criterion #3 for slice 2 (`sandman run 42 43 44`).
+// This is acceptance criterion #3 for #2234 (`sandman run 42 43 44`).
 func TestRunBatch_PerRowRunIDsShareBatchPrefix(t *testing.T) {
 	workDir := t.TempDir()
 	oldWD, err := os.Getwd()
@@ -10782,7 +10782,7 @@ func TestRunBatch_PerRowRunIDsShareBatchPrefix(t *testing.T) {
 // TestRunBatch_ContinuedRunReplaysPreviousRunID verifies that --continue
 // reads back a new-shape PreviousRunIDs entry and reuses it as the
 // previous_run_id in the run.continued event payload (acceptance
-// criterion #5 for slice 2).
+// criterion #5 for #2234).
 func TestRunBatch_ContinuedRunReplaysPreviousRunID(t *testing.T) {
 	workDir := t.TempDir()
 	oldWD, err := os.Getwd()

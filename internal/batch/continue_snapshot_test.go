@@ -14,7 +14,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/testenv"
 )
 
-// TestRunBatch_ModeContinueCopiesOriginalTaskToRunFolder covers slice 9 B3:
+// TestRunBatch_ModeContinueCopiesOriginalTaskToRunFolder covers B3:
 // when launching a ModeContinue run, the orchestrator copies the
 // worktree's existing .sandman/task.md into the new per-row run folder
 // as <runFolder>/task.md before the agent overwrites the worktree file

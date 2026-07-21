@@ -55,7 +55,7 @@ type Index struct {
 }
 
 // Batch is the canonical record in the batches index. It was
-// formerly named Entry; the rename (slice 7 of #1916) makes the
+// formerly named Entry; the rename (#1916) makes the
 // canonical slice field `Batches` reflect what it holds.
 type Batch struct {
 	ID         string      `json:"id"`

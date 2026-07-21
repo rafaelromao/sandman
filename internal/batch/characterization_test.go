@@ -26,7 +26,7 @@ import (
 // (wayfinder map #2226). It pins RunBatch's observable behaviour
 // byte-for-byte — every event (type + full payload), every AgentRunResult
 // field, the ErrAborted exit semantics, and any run.log the orchestrator
-// writes — so the structural refactor (#2228 slice 1, #2234 slice 2) is
+// writes — so the structural refactor (#2228, #2234) is
 // provably behaviour-preserving.
 //
 // Determinism (per the #2232 spec):

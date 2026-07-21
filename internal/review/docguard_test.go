@@ -343,7 +343,7 @@ func mustContain(t *testing.T, haystack, needle string) {
 
 // TestADRSelfPostFilter_DocumentsNewModel pins the positive phrasing of
 // the self-defence pipeline in ADR-0014 after the daemon-as-poster
-// model introduced by issues #1845, #1846, and #1847 (slice S7).
+// model introduced by issues #1845, #1846, and #1847.
 // The ADR must use the canonical phrases for the daemon-side
 // redaction layer: the canonical `decision.md` body file, the
 // case-insensitive `/sandman` redactor, the `RedactBody` helper

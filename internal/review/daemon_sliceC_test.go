@@ -27,7 +27,7 @@ func waitIdle(t *testing.T, d *Daemon) {
 // daemon populates req.WorktreeDir the runner writes there; otherwise
 // it falls back to req.RunDir (the legacy pre-#1953 location).
 // Issue #1949 makes the missing-decision.md outcome retryable, so
-// slice C fixtures must land decision.md on the path the daemon
+// issue #1481 fixtures must land decision.md on the path the daemon
 // actually reads from — otherwise the post step fires the
 // pending-and-rehydrate fallback and re-launches the agent, breaking
 // the slot-table invariants the test is pinning.
@@ -42,7 +42,7 @@ func writeDecisionToWorktree(req batch.Request, body string) error {
 	return os.WriteFile(filepath.Join(req.RunDir, "decision.md"), []byte(body), 0644)
 }
 
-// TestDaemon_PerPRSlotTable_AllowsCrossPRConcurrency pins the slice-C
+// TestDaemon_PerPRSlotTable_AllowsCrossPRConcurrency pins issue #1481
 // behavior: with parallel_reviews=2 and three PRs, exactly two PRs
 // acquire slots and run concurrently; the third PR's processPR
 // returns without dropping the trigger (the slot pool is full).
@@ -267,7 +267,7 @@ func TestDaemon_PerPRSlotTable_ReleasesOnCompletion(t *testing.T) {
 }
 
 // TestDaemon_PerPRSlotTable_NewTriggerMidFlight_IsNotDropped pins
-// acceptance criterion #3 (slice C): a launchReview for PR N is
+// acceptance criterion #3 (issue #1481): a launchReview for PR N is
 // blocked in a controllable fake BatchRunner; mid-flight, a new
 // /sandman review comment arrives on PR N. The in-flight review is
 // released; the next tick must invoke RunBatch for the new commentID
@@ -423,7 +423,7 @@ func TestDaemon_PerPRSlotTable_NewTriggerMidFlight_IsNotDropped(t *testing.T) {
 }
 
 // TestDaemon_PerPRSlotTable_HeldSlotReturnsSilently pins acceptance
-// criterion #2 (slice C): when the slot for a PR is held by an
+// criterion #2 (issue #1481): when the slot for a PR is held by an
 // in-flight review, processPR returns without dropping the trigger.
 // The seen-cache stays non-terminal so the trigger is naturally
 // picked up on the next tick.

@@ -3906,7 +3906,7 @@ func TestPortal_OrphanActiveBatch_AllRowsRender(t *testing.T) {
 		{Type: "run.started", Timestamp: startedAt, RunID: batchID + "-1014", Issue: 1014,
 			Payload: map[string]any{"branch": "sandman/1014-fix", "batch_id": batchID}},
 		{Type: "run.queued", Timestamp: startedAt.Add(1 * time.Second), RunID: batchID + "-1016", Issue: 1016,
-			Payload: map[string]any{"batch_id": batchID, "issue_title": "slice 4 docs"}},
+			Payload: map[string]any{"batch_id": batchID, "issue_title": "Portal batch-id docs"}},
 		{Type: "run.queued", Timestamp: startedAt.Add(2 * time.Second), RunID: batchID + "-135", Issue: 135,
 			Payload: map[string]any{"batch_id": batchID, "issue_title": "Scaffold pinned rust BuildToolsPreset"}},
 		{Type: "run.queued", Timestamp: startedAt.Add(3 * time.Second), RunID: batchID + "-136", Issue: 136,
@@ -4011,7 +4011,7 @@ func TestPortal_QueuedAndTerminalSameIssue_NotCollapsed(t *testing.T) {
 		{Type: "run.finished", Timestamp: startedAt.Add(-1 * time.Hour).Add(1 * time.Minute), RunID: "old-1-1016", Issue: 1016,
 			Payload: map[string]any{"status": "aborted", "batch_id": "old-1"}},
 		{Type: "run.queued", Timestamp: startedAt, RunID: batchID + "-1016", Issue: 1016,
-			Payload: map[string]any{"batch_id": batchID, "issue_title": "slice 4 docs"}},
+			Payload: map[string]any{"batch_id": batchID, "issue_title": "Portal batch-id docs"}},
 		{Type: "run.queued", Timestamp: startedAt, RunID: batchID + "-135", Issue: 135,
 			Payload: map[string]any{"batch_id": batchID, "issue_title": "rust"}},
 	})
