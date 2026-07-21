@@ -118,7 +118,7 @@ Sandman follows a ports-and-adapters (hexagonal) architecture. The core domain l
 ```
 cmd/sandman/main.go          # Composition root — wires interfaces to concrete adapters
 internal/
-  adr/                       # ADR test utilities (adr0030_slice2_test.go, adr_slice6_test.go)
+  adr/                       # ADR test utilities
   atomicfs/                  # Atomic-write helpers: WriteAtomic, WriteAtomicJSON, OpenAppend
   batch/                     # Core domain: Orchestrator, AgentRun, DependencyResolver
   batchindex/                # Batch index types and persistence (Index, Entry, Batch, RunManifest, ReviewState)
