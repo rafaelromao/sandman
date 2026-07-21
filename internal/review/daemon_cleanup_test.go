@@ -160,6 +160,34 @@ func TestClearReviewArtifacts_EmptyWorktreeDirIsNoop(t *testing.T) {
 	}
 }
 
+func TestClearReviewArtifacts_DoesNotPruneSiblingBatchWorktree(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	initReviewTestGitRepo(t, dir)
+
+	worktreeDir := filepath.Join(dir, ".sandman", "worktrees")
+	if err := os.MkdirAll(worktreeDir, 0755); err != nil {
+		t.Fatalf("mkdir worktreeDir: %v", err)
+	}
+
+	target := "sandman/review-42-c1"
+	sibling := "sandman/99-batch"
+	stageReviewWorktree(t, worktreeDir, target)
+	stageReviewWorktree(t, worktreeDir, sibling)
+
+	siblingAdmin := filepath.Join(dir, ".git", "worktrees", filepath.Base(filepath.Join(worktreeDir, sibling)))
+	if err := os.WriteFile(filepath.Join(siblingAdmin, "gitdir"), []byte("gitdir: /workspace/.sandman/worktrees/sandman/99-batch/.git\n"), 0644); err != nil {
+		t.Fatalf("corrupt sibling registration: %v", err)
+	}
+
+	var logBuf strings.Builder
+	ClearReviewArtifacts(target, worktreeDir, &logBuf)
+
+	if _, err := os.Stat(siblingAdmin); err != nil {
+		t.Fatalf("expected sibling worktree registration to remain, got: %v", err)
+	}
+}
+
 func TestClearReviewArtifacts_OnlyTouchesTargetBranch(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
