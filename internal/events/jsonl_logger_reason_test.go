@@ -9,13 +9,13 @@ import (
 )
 
 // TestJSONLLogger_PreservesHistoricalRunRetryEventsWithoutReason
-// asserts that pre-slice-3 run.retry events written to the JSONL log
+// asserts that pre-#1501 run.retry events written to the JSONL log
 // (which lack a "reason" key, or carry reason: null) are preserved
-// verbatim by the logger. Slice 3 of PRD #1498 (#1501) must not
+// verbatim by the logger. #1501 must not
 // force-mutate the historical event log; consumers that read reason
 // must tolerate the empty case for historical events.
 //
-// Two historical shapes are tested because the slice-3 issue notes
+// Two historical shapes are tested because issue #1501 notes
 // "the ones currently sitting in this repo's .sandman/events.jsonl
 // already with reason: null" — the pre-existing production log
 // contains a mix of no-reason and reason:null lines depending on
