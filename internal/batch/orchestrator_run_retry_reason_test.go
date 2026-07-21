@@ -16,7 +16,7 @@ import (
 )
 
 // retryReasonVocabulary is the closed set of reason values that the
-// orchestrator's run.retry emit may use. The set is the slice-3 starting
+// orchestrator's run.retry emit may use. The set is the starting
 // set documented in ADR-0035; the helpers in this file assert that every
 // retry event observed on disk carries a reason drawn from this set.
 var retryReasonVocabulary = map[string]struct{}{
@@ -351,7 +351,7 @@ func TestRunSingle_EmitsRunRetryWithKillTimeoutReasonOnParentCtxCancel(t *testin
 	}
 }
 
-// TestMapRetryReason_PanicsOnUnmappedStatus pins the slice-3 contract
+// TestMapRetryReason_PanicsOnUnmappedStatus pins the contract
 // from #1501 acceptance #3: "Every existing emit site that constructs
 // a run.retry event carries a reason: <vocabulary value> payload field
 // — never null, never empty." The plan locks the vocabulary in

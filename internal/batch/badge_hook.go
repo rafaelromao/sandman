@@ -272,7 +272,7 @@ func (h *defaultBadgeHooker) MaybeSuggestBadge(ctx context.Context, results []Ag
 	// already marked this checkout, neither the API scan nor the spawn
 	// runs. The marker-comment PR check below remains authoritative
 	// for fresh checkouts where the file does not yet exist on disk.
-	// (Issue #2195, slice 3.)
+	// (Issue #2195.)
 	if h.controlReader.HasBadgeControlFile() {
 		return
 	}
@@ -310,6 +310,6 @@ func (h *defaultBadgeHooker) MaybeSuggestBadge(ctx context.Context, results []Ag
 
 	// Synchronously write the tracking file so the next batch in this
 	// checkout short-circuits at the control-file gate without invoking
-	// the API at all. (Issue #2195, slice 4.)
+	// the API at all. (Issue #2195.)
 	_ = h.controlWriter.Write()
 }

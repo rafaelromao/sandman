@@ -17,7 +17,7 @@ import (
 // RowSpec carries the per-row-varying inputs for one AgentRun — the inputs that
 // differ across issues/runs within a batch. It is the elevated seam's input:
 // runSingleRow / runPromptOnlyRow take a RowSpec instead of the historical
-// 28-/27-positional-argument packers (wayfinder map #2226, slice 1 #2228).
+// 28-/27-positional-argument packers (wayfinder map #2226, #2228).
 //
 // Path discrimination is implicit, matching today's runSession: issue-driven
 // when IssueNumber>0 (RunTS/RunShortID carry the ID components); prompt-only /
@@ -72,7 +72,7 @@ type BatchConfig struct {
 // runDeps bundles the read-only dependencies the elevated executor reaches
 // through today's *Orchestrator ref. It is the test seam: behaviour is
 // injected by constructing runDeps directly rather than poking Orchestrator
-// private fields (wayfinder map #2226, slice 2 #2234). Every field is
+// private fields (wayfinder map #2226, #2234). Every field is
 // batch-constant — set once per RunBatch and shared by every row.
 type runDeps struct {
 	githubClient          github.Client

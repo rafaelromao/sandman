@@ -1585,8 +1585,8 @@ func (o *Orchestrator) logAborted(issueNum int, runID string, abortedBy []int) {
 // mapRetryReason picks the closed-vocabulary reason for a run.retry emit
 // from the previous attempt's status, the heartbeat-trips signal, and the
 // parent context. The vocabulary (agent-stalled, agent-failed,
-// sandbox-timeout, kill-timeout, manual) is locked in ADR-0035 (slice 5
-// of #1498) and must not be silently extended. If a future code path
+// sandbox-timeout, kill-timeout, manual) is locked in ADR-0035 (#1498)
+// and must not be silently extended. If a future code path
 // surfaces a status that does not map to a known arm, the function
 // panics so the new condition is added to the ADR and the mapping
 // explicitly, rather than collapsing to an empty string that violates
@@ -1915,7 +1915,7 @@ func batchIDFromRunID(runID string) string {
 
 // snapshotOriginalTask copies the worktree's live task.md into the new
 // per-row run folder as a historical snapshot before the agent overwrites
-// it with the continuation prompt. Used by ModeContinue (slice 9 B3) so
+// it with the continuation prompt. Used by ModeContinue so
 // the prior task wording survives in <runFolder>/task.md for the
 // operator to revisit later. The function is best-effort: a missing
 // source file (already warned about upstream) is treated as a no-op
@@ -2111,9 +2111,14 @@ func (s *runSession) emitTerminal(ctx context.Context, runID string, result Agen
 // (typically "queued"), and dependent runs see a silently-set failure status
 // with no corresponding event in the log. See issue #2136.
 //
-// The error detail is already written to errorLog (stderr) by the caller;
-// this event makes the failure visible in the event log, the portal, and the
-// RunState projection consumed by dependent issues' blocker-wait loops.
+// The error detail is also written to errorLog (stderr) by the caller; this
+// event additionally persists the underlying error in the payload under
+// `error_message` so the operator can read it back from .sandman/events.jsonl
+// after the fact. Without this, the only place the underlying message
+// survives is the live stderr at run time — a regression that bit run
+// 260721104202-24a8-2316 (and its sibling rows 2317/2318/2319 in batch
+// 260721104202-24a8-2318+11), where `wt.Start` failed mid-batch and the
+// operator had no on-disk breadcrumb to diagnose why.
 //
 // This does NOT emit run.started — the run never started the agent — so
 // ProjectRunStates folds run.finished directly, transitioning the run from
@@ -2121,27 +2126,33 @@ func (s *runSession) emitTerminal(ctx context.Context, runID string, result Agen
 // exists yet (the manifest is written later in execute()).
 //
 // reason should be a short diagnostic string identifying the failure point
-// (e.g. "fetch issue", "start sandbox"). The full error is already on stderr.
-func (s *runSession) emitEarlyFailure(reason, branch string) {
+// (e.g. "fetch issue", "start sandbox"). underlyingErr, when non-nil, is
+// preserved verbatim under `error_message` so the operator can recover the
+// actionable diagnostic from the persisted event log.
+func (s *runSession) emitEarlyFailure(reason, branch string, underlyingErr error) {
 	if s.deps.eventLog == nil {
 		return
 	}
 	runID := buildRunID(s.issueNumber, s.runTS, s.runShortID)
+	payload := map[string]any{
+		"status":        "failure",
+		"branch":        branch,
+		"base_branch":   s.baseBranch,
+		"retries_total": s.retries,
+		"retries_done":  0,
+		"early_failure": true,
+		"error":         reason,
+	}
+	if underlyingErr != nil {
+		payload["error_message"] = underlyingErr.Error()
+	}
 	_ = s.deps.eventLog.Log(events.Event{
 		Type:      "run.finished",
 		Timestamp: time.Now(),
 		RunID:     runID,
 		Issue:     s.issueNumber,
 		IssueRef:  issueRef(s.issueNumber),
-		Payload: map[string]any{
-			"status":        "failure",
-			"branch":        branch,
-			"base_branch":   s.baseBranch,
-			"retries_total": s.retries,
-			"retries_done":  0,
-			"early_failure": true,
-			"error":         reason,
-		},
+		Payload:   payload,
 	})
 }
 
@@ -2354,7 +2365,7 @@ func (s *runSession) runOnce(
 		}
 
 		runnable := factory.NewRunnable(issue, branch, wt)
-		// Slice 9 B3: when launching a continuation, copy the original
+		// When launching a continuation, copy the original
 		// task.md that lives in the worktree into the new per-row run
 		// folder as a sibling of run.json / run.log. The worktree file
 		// is about to be overwritten by the continuation prompt; this
@@ -2524,7 +2535,7 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 	issue, err := s.deps.githubClient.FetchIssue(ctx, s.issueNumber)
 	if err != nil {
 		fmt.Fprintf(s.deps.errorLog, "error: fetch issue %d: %v\n", s.issueNumber, err)
-		s.emitEarlyFailure("fetch issue", s.branches[s.issueNumber])
+		s.emitEarlyFailure("fetch issue", s.branches[s.issueNumber], err)
 		return AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "failure"}, false
 	}
 
@@ -2535,7 +2546,7 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 	if s.mode != ModeContinue {
 		if err := syncBaseBranch(s.deps.runSessionOpts, s.deps.sandboxFactory, ".", s.baseBranch); err != nil {
 			fmt.Fprintf(s.deps.errorLog, "error: sync base branch for issue %d: %v\n", s.issueNumber, err)
-			s.emitEarlyFailure("sync base branch", branch)
+			s.emitEarlyFailure("sync base branch", branch, err)
 			return AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "failure", Branch: branch}, false
 		}
 	}
@@ -2545,7 +2556,7 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 		lease, err := s.containerAlloc.Acquire()
 		if err != nil {
 			fmt.Fprintf(s.deps.errorLog, "error: acquire container for issue %d: %v\n", s.issueNumber, err)
-			s.emitEarlyFailure("acquire container", branch)
+			s.emitEarlyFailure("acquire container", branch, err)
 			return AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "failure", Branch: branch}, false
 		}
 		container = lease.container
@@ -2555,12 +2566,12 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 	wt := s.sbFactory.NewSandbox(".", s.worktreeDir(), branch, s.baseBranch, container)
 	opts, errResult, ok := s.startOptsFor(branch)
 	if !ok {
-		s.emitEarlyFailure("resolve git identity", branch)
+		s.emitEarlyFailure("resolve git identity", branch, nil)
 		return errResult, false
 	}
 	if err := wt.Start(opts); err != nil {
 		fmt.Fprintf(s.deps.errorLog, "error: start sandbox for issue %d: %v\n", s.issueNumber, err)
-		s.emitEarlyFailure("start sandbox", branch)
+		s.emitEarlyFailure("start sandbox", branch, err)
 		return AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "failure", Branch: branch}, false
 	}
 	s.coord.firstSandboxStart(sandboxStarted)
@@ -2576,7 +2587,7 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 	if err != nil {
 		fmt.Fprintf(s.deps.errorLog, "error: recheck blockers for issue %d: %v\n", s.issueNumber, err)
 		_ = wt.Stop()
-		s.emitEarlyFailure("recheck blockers", branch)
+		s.emitEarlyFailure("recheck blockers", branch, err)
 		return AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "failure", Branch: branch}, false
 	}
 	runID := buildRunID(s.issueNumber, s.runTS, s.runShortID)
@@ -2610,7 +2621,7 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 	if err := daemon.WriteRunManifest(batchDir, runID, runManifest); err != nil {
 		fmt.Fprintf(s.deps.errorLog, "error: write run manifest for issue %d: %v\n", s.issueNumber, err)
 		_ = wt.Stop()
-		s.emitEarlyFailure("write run manifest", branch)
+		s.emitEarlyFailure("write run manifest", branch, err)
 		return AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "failure", Branch: branch}, false
 	}
 	cmdServer := daemon.NewCommandServerForIssue(daemon.RunFolder(batchDir, runID), s.commander, s.issueNumber)
@@ -2969,7 +2980,7 @@ func (s *runSession) executePromptOnly(ctx context.Context) (AgentRunResult, boo
 	runID := s.runID
 	if s.batchTS != "" && s.batchShortID != "" {
 		// runid.NewRunID(KindPromptOnly, …) hard-codes the `prompt`
-		// segment (issue #1920 slice 4 of #1916), so passing the
+		// segment (issue #1920 of #1916), so passing the
 		// user-supplied --run-id as `subject` (or "" for the no-userid
 		// case) produces the canonical per-row RunID that doubles as
 		// the public BatchId.
@@ -2978,7 +2989,7 @@ func (s *runSession) executePromptOnly(ctx context.Context) (AgentRunResult, boo
 		runID = fmt.Sprintf("run-0-%d", time.Now().UnixNano())
 	}
 	// For prompt-only batches the public BatchId equals the per-row
-	// RunID (issue #1920 slice 4). The cmd layer pre-seeds s.batchID
+	// RunID (issue #1920). The cmd layer pre-seeds s.batchID
 	// from the same runid.NewBatchID call, and the review daemon sets
 	// s.batchID by walking runDir; if neither path
 	// populated it (legacy callers), the legacy batchIDFromRunID
