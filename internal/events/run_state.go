@@ -148,8 +148,8 @@ func (r RunState) Status() string {
 // RunStatus, preserving the exact input→string contract the portal
 // and orchestrator rely on. An unfinished run maps to RunStatusZero
 // (String() == ""); a run.blocked event maps to RunStatusBlocked; a
-// run.queued event to RunStatusQueued; run.aborted and legacy
-// run.cancelled events to RunStatusAborted; any other type (typically
+// run.queued event to RunStatusQueued; run.aborted, plus legacy
+// run.cancelled for back-compat, to RunStatusAborted; any other type (typically
 // run.finished) reads the payload's status field verbatim, mapping
 // named strings to their named constants and unknown strings to
 // RunStatusUnknown (which String()-round-trips the raw value).

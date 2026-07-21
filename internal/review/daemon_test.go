@@ -194,7 +194,7 @@ func (l *lockedBuffer) Bytes() []byte {
 // writes a deterministic <worktree>/decision.md before RunBatch
 // returns. Issue #1846 changed launchReview so a review run is not
 // considered "complete" until decision.md is read and posted; this
-// shim lets the pre-#2244 test fixtures (issue #1481, issue #1482, daemon_test)
+// shim lets the pre-#1846 test fixtures (issue #1481, issue #1482, daemon_test)
 // continue to drive the launch path without each test having to
 // fabricate the file inline.
 //
