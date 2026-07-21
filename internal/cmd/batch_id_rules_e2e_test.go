@@ -495,8 +495,8 @@ func TestBatchIDRules_PortalBatchLabelAndDetailsRenderPublicBatchId(t *testing.T
 // TestBatchIDRules_PortalLiveVsSavedVsArchivedLog covers behavior 7: the
 // portal must serve the live tail for an active row, the saved log
 // for a terminal row, and the archived log for a historical row.
-// Slice 8 hard-coded the live/saved/archived log resolution; this test
-// pins it end-to-end through the public /api/runs endpoint.
+// This test pins the live/saved/archived log resolution end-to-end
+// through the public /api/runs endpoint.
 func TestBatchIDRules_PortalLiveVsSavedVsArchivedLog(t *testing.T) {
 	requireGateMultiIssue(t)
 	repoRoot := t.TempDir()
@@ -1220,7 +1220,7 @@ func TestBatchIDRules_ContinueReusesOriginalBranchAndWorktree(t *testing.T) {
 
 // TestBatchIDRules_ContinueLeavesPreviousRunUnchanged pins behavior 9c:
 // the previous run's batch dir, run folder, manifest, and event log
-// are unchanged after the new run starts. Slice 9 explicitly guards
+// are unchanged after the new run starts. This explicitly guards
 // against the continuation accidentally rewriting history.
 func TestBatchIDRules_ContinueLeavesPreviousRunUnchanged(t *testing.T) {
 	requireGateMultiIssue(t)
