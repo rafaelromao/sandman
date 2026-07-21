@@ -54,10 +54,10 @@ func buildPortalReproPage(t *testing.T, stateJSON string, runsJSON []byte, body 
 	page = strings.ReplaceAll(page, "{{.ThemeOptionsHTML}}", `<option value="sandman">Sandman</option>`)
 	page = strings.ReplaceAll(page, "{{.RefreshPath}}", "/api/runs")
 	page = strings.ReplaceAll(page, "{{.PortalAbortSupported}}", "false")
-	page = strings.ReplaceAll(page, "{{.PortalStateStorageKey}}", "sandman.portal.view-state.v1")
+	page = strings.ReplaceAll(page, "{{.PortalStateStorageKey}}", PortalStateStorageKeyPrefix)
 	page = strings.ReplaceAll(page, "{{.PollInterval}}", "600000")
 	injection := fmt.Sprintf(`<script>
-    try { sessionStorage.setItem('sandman.portal.view-state.v1', %s); } catch (err) {}
+    try { sessionStorage.setItem('%s', %s); } catch (err) {}
     window.requestAnimationFrame = function (cb) { return setTimeout(function () { cb(performance.now()); }, 0); };
     window.cancelAnimationFrame = function (id) { clearTimeout(id); };
     window.__portalChangeCalls = 0;
@@ -93,7 +93,7 @@ func buildPortalReproPage(t *testing.T, stateJSON string, runsJSON []byte, body 
       };
     };
 %s
-    const apiPath = "/api/runs";`, strconv.Quote(stateJSON), string(runsJSON), body)
+    const apiPath = "/api/runs";`, PortalStateStorageKeyPrefix, strconv.Quote(stateJSON), string(runsJSON), body)
 	page = strings.Replace(page, "<script>\n    const apiPath = \"/api/runs\";", injection, 1)
 	return page
 }
@@ -444,7 +444,7 @@ func TestPortalSummaryPoll_UsesIfNoneMatchAndKeepsRowsOn304(t *testing.T) {
 	page = strings.ReplaceAll(page, "{{.ThemeOptionsHTML}}", `<option value="sandman">Sandman</option>`)
 	page = strings.ReplaceAll(page, "{{.RefreshPath}}", "/api/runs")
 	page = strings.ReplaceAll(page, "{{.PortalAbortSupported}}", "false")
-	page = strings.ReplaceAll(page, "{{.PortalStateStorageKey}}", "sandman.portal.view-state.v1")
+	page = strings.ReplaceAll(page, "{{.PortalStateStorageKey}}", PortalStateStorageKeyPrefix)
 	page = strings.ReplaceAll(page, "{{.PollInterval}}", "600000")
 	injection := `<script>
     window.__portalFetchCalls = 0;
@@ -778,7 +778,7 @@ func TestPortalRefresh_DiscardsQueuedExpandedStateBeforeDetailFetch(t *testing.T
       var detail = document.querySelector('tr.detail-row[data-detail-for="queued-1"]');
       var stored = null;
       try {
-        stored = JSON.parse(sessionStorage.getItem('sandman.portal.view-state.v1') || 'null');
+        stored = JSON.parse(sessionStorage.getItem('" + PortalStateStorageKeyPrefix + "') || 'null');
       } catch (err) {}
       var pre = document.createElement('pre');
       pre.id = 'portal-queued-normalize';
@@ -833,7 +833,7 @@ func TestPortalRefresh_IgnoresEmptyExpandedStateBeforeDetailFetch(t *testing.T) 
       var detail = document.querySelector('tr.detail-row[data-detail-for="run-1"]');
       var stored = null;
       try {
-        stored = JSON.parse(sessionStorage.getItem('sandman.portal.view-state.v1') || 'null');
+        stored = JSON.parse(sessionStorage.getItem('" + PortalStateStorageKeyPrefix + "') || 'null');
       } catch (err) {}
       var pre = document.createElement('pre');
       pre.id = 'portal-empty-identity';
@@ -1540,7 +1540,7 @@ func TestPortalRowClick_IgnoresForcedToggleAttrsOnQueuedRun(t *testing.T) {
       var detail = document.querySelector('tr.detail-row[data-detail-for="queued-2"]');
       var stored = null;
       try {
-        stored = JSON.parse(sessionStorage.getItem('sandman.portal.view-state.v1') || 'null');
+        stored = JSON.parse(sessionStorage.getItem('" + PortalStateStorageKeyPrefix + "') || 'null');
       } catch (err) {}
       var pre = document.createElement('pre');
       pre.id = 'portal-queued-click';
@@ -1719,7 +1719,7 @@ func TestPortalSubjectSwitch_IgnoresEmptySelectionChange(t *testing.T) {
       var detail = document.querySelector('pre[data-scroll-key]');
       var stored = null;
       try {
-        stored = JSON.parse(sessionStorage.getItem('sandman.portal.view-state.v1') || 'null');
+        stored = JSON.parse(sessionStorage.getItem('" + PortalStateStorageKeyPrefix + "') || 'null');
       } catch (err) {}
       var marker = document.createElement('pre');
       marker.id = 'portal-empty-subject';

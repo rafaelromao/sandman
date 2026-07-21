@@ -1435,7 +1435,7 @@ func TestPortal_PageWiresPortalViewStatePersistence(t *testing.T) {
 		t.Fatal(err)
 	}
 	content := string(body)
-	for _, want := range []string{"SandmanPortalState", "sandman.portal.view-state.v1:", "persistPortalViewState", "normalizePortalViewState", "const visibleRuns = state.runs.filter(shouldShowRun);", "getSelectedTab"} {
+	for _, want := range []string{"SandmanPortalState", PortalStateStorageKeyPrefix + ":", "persistPortalViewState", "normalizePortalViewState", "const visibleRuns = state.runs.filter(shouldShowRun);", "getSelectedTab"} {
 		if !strings.Contains(content, want) {
 			t.Fatalf("page missing %q\n%s", want, content[:min(800, len(content))])
 		}
