@@ -89,7 +89,7 @@ func TestPrepareReviewRun_StampsWorktreePathOnManifest(t *testing.T) {
 // reader (`reviewVerdictFromDecisionFile` in `internal/cmd`) consumes
 // that field and is pinned separately by
 // `TestPortal_ReviewVerdictFromDecisionFile` in
-// `internal/cmd/portal_slice3_test.go`; this test does not re-invoke
+// `internal/cmd/portal_parent_map_test.go`; this test does not re-invoke
 // the cmd-package reader (it is unexported and lives in a different
 // package). The two tests together close the loop: daemon writes the
 // field (this test), portal reads it (existing test).

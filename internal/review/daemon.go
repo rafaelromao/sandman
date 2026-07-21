@@ -261,7 +261,7 @@ func New(baseDir string, gh GitHubClient, prompts Renderer, runner BatchRunner, 
 	// compiling without each one adding an explicit CommentPoster
 	// argument. The cmd layer (cmd/review.go) always wires a real
 	// GH-backed poster; tests that exercise the post step
-	// (daemon_sliceS3_test.go) inject a fake at the seam.
+	// (daemon_seen_cache_invalidator_test.go) inject a fake at the seam.
 	if poster == nil {
 		poster = nopCommentPoster{}
 	}
