@@ -10,13 +10,13 @@ import (
 	"github.com/rafaelromao/sandman/internal/github"
 )
 
-// TestRunSingle_AlreadyResolved_T1VerifiedAutoClosesAndClosesIssue
+// TestRunSingle_AlreadyResolved_DecisionVerifiedAutoClosesAndClosesIssue
 // pins slice 5's headline behaviour: when the verify chain returns
 // VerifyVerified, the orchestrator flips the run to `success`,
 // closes the issue if open (bypassing the `hasBlockingOpenPR`
 // open-PR backstop on verified outcomes), and surfaces the
 // `verification` payload in the run.finished event.
-func TestRunSingle_AlreadyResolved_T1VerifiedAutoClosesAndClosesIssue(t *testing.T) {
+func TestRunSingle_AlreadyResolved_DecisionVerifiedAutoClosesAndClosesIssue(t *testing.T) {
 	workDir := t.TempDir()
 	t.Chdir(workDir)
 	branch := "sandman/42-fix-bug"
@@ -51,7 +51,7 @@ func TestRunSingle_AlreadyResolved_T1VerifiedAutoClosesAndClosesIssue(t *testing
 			taskContent: "## Status: already resolved",
 		}),
 		WithVerifyPath(VerifyPathFunc(func(in VerifyInput) (VerifyOutcome, []OracleCheck) {
-			return VerifyVerified, []OracleCheck{{Name: "T1", Details: map[string]any{"ran": 3}}}
+			return VerifyVerified, []OracleCheck{{Name: "decision", Details: map[string]any{"ran": 3}}}
 		})),
 	)
 
@@ -73,7 +73,7 @@ func TestRunSingle_AlreadyResolved_T1VerifiedAutoClosesAndClosesIssue(t *testing
 		t.Fatal("expected run to start")
 	}
 	if result.Status != "success" {
-		t.Fatalf("status = %q, want success (T1 verified → auto-close path)", result.Status)
+		t.Fatalf("status = %q, want success (Decision verified → auto-close path)", result.Status)
 	}
 	logs, err := eventLog.Read()
 	if err != nil {
@@ -254,12 +254,13 @@ func TestRunSingle_AlreadyResolved_AllAbstainNoOpenPRSucceeds(t *testing.T) {
 	}
 }
 
-// TestRunSingle_AlreadyResolved_T1FailedFailsWithoutBackstop pins that
-// a T1 `Failed` outcome (oracle proved the issue is NOT resolved)
-// short-circuits with `failure` and does NOT consult the conservative
-// backstop. The run ends in failure with a `verification` payload but
-// no `blocker` (the blocker is reserved for the open-PR backstop).
-func TestRunSingle_AlreadyResolved_T1FailedFailsWithoutBackstop(t *testing.T) {
+// TestRunSingle_AlreadyResolved_DecisionFailedFailsWithoutBackstop pins
+// that a Decision `Failed` outcome (oracle proved the issue is NOT
+// resolved) short-circuits with `failure` and does NOT consult the
+// conservative backstop. The run ends in failure with a `verification`
+// payload but no `blocker` (the blocker is reserved for the open-PR
+// backstop).
+func TestRunSingle_AlreadyResolved_DecisionFailedFailsWithoutBackstop(t *testing.T) {
 	workDir := t.TempDir()
 	t.Chdir(workDir)
 	branch := "sandman/42-fix-bug"
@@ -294,7 +295,7 @@ func TestRunSingle_AlreadyResolved_T1FailedFailsWithoutBackstop(t *testing.T) {
 			taskContent: "## Status: already resolved",
 		}),
 		WithVerifyPath(VerifyPathFunc(func(in VerifyInput) (VerifyOutcome, []OracleCheck) {
-			return VerifyFailed, []OracleCheck{{Name: "T1", Details: map[string]any{"failed": 1}}}
+			return VerifyFailed, []OracleCheck{{Name: "decision", Details: map[string]any{"failed": 1}}}
 		})),
 	)
 
@@ -316,7 +317,7 @@ func TestRunSingle_AlreadyResolved_T1FailedFailsWithoutBackstop(t *testing.T) {
 		t.Fatal("expected run to start")
 	}
 	if result.Status != "failure" {
-		t.Fatalf("status = %q, want failure (T1 failed → orchestrator must respect the negative signal)", result.Status)
+		t.Fatalf("status = %q, want failure (Decision failed → orchestrator must respect the negative signal)", result.Status)
 	}
 	logs, _ := eventLog.Read()
 	var payload map[string]any
@@ -329,18 +330,18 @@ func TestRunSingle_AlreadyResolved_T1FailedFailsWithoutBackstop(t *testing.T) {
 		t.Fatalf("run.finished event not found")
 	}
 	if _, ok := payload["verification"]; !ok {
-		t.Errorf("expected verification payload on T1-failed path")
+		t.Errorf("expected verification payload on Decision-failed path")
 	}
 	if payload["blocker"] != nil {
-		t.Errorf("expected no blocker on T1-failed path, got %v", payload["blocker"])
+		t.Errorf("expected no blocker on Decision-failed path, got %v", payload["blocker"])
 	}
 }
 
 // TestRunSingle_VerifyPathReceivesPRSnapshot pins the slice-1
 // integration: when the orchestrator's alreadyResolved arm runs the
-// verify chain, the VerifyInput carries the PR snapshot fetched
-// via FindPRByBranch. Without this, the T4 cheap-gate oracle would
-// always abstain because T4's first guard is `if in.PR == nil`.
+// verify chain, the VerifyInput carries the PR snapshot fetched via
+// FindPRByBranch. Without this, the CheapGate oracle would always
+// abstain because its first guard is `if in.PR == nil`.
 func TestRunSingle_VerifyPathReceivesPRSnapshot(t *testing.T) {
 	workDir := t.TempDir()
 	t.Chdir(workDir)
@@ -410,7 +411,7 @@ func TestRunSingle_VerifyPathReceivesPRSnapshot(t *testing.T) {
 		t.Fatal("expected run to start")
 	}
 	if seenPR == nil {
-		t.Fatal("verify path received nil PR — slice-1 fields never reach T4 in production")
+		t.Fatal("verify path received nil PR — slice-1 fields never reach CheapGate in production")
 	}
 	if seenPR.ReviewDecision != "APPROVED" {
 		t.Errorf("PR ReviewDecision = %q, want APPROVED", seenPR.ReviewDecision)
@@ -423,11 +424,11 @@ func TestRunSingle_VerifyPathReceivesPRSnapshot(t *testing.T) {
 	}
 }
 
-// TestRunSingle_AlreadyResolved_T2RejectFallsBackToBackstop pins
-// that a T2 reject outcome behaves like NoSignal: the conservative
-// backstop runs. The T2 check is recorded in the verification
-// payload so the operator can see why we abstained.
-func TestRunSingle_AlreadyResolved_T2RejectFallsBackToBackstop(t *testing.T) {
+// TestRunSingle_AlreadyResolved_PreFilterRejectFallsBackToBackstop pins
+// that a PreFilter reject outcome behaves like NoSignal: the
+// conservative backstop runs. The PreFilter check is recorded in the
+// verification payload so the operator can see why we abstained.
+func TestRunSingle_AlreadyResolved_PreFilterRejectFallsBackToBackstop(t *testing.T) {
 	workDir := t.TempDir()
 	t.Chdir(workDir)
 	branch := "sandman/42-fix-bug"
@@ -462,7 +463,7 @@ func TestRunSingle_AlreadyResolved_T2RejectFallsBackToBackstop(t *testing.T) {
 			taskContent: "## Status: already resolved",
 		}),
 		WithVerifyPath(VerifyPathFunc(func(in VerifyInput) (VerifyOutcome, []OracleCheck) {
-			return VerifyNoSignal, []OracleCheck{{Name: "T2", Details: map[string]any{"l1": false, "subset": false}}}
+			return VerifyNoSignal, []OracleCheck{{Name: "pre-filter", Details: map[string]any{"l1": false, "subset": false}}}
 		})),
 	)
 
@@ -484,7 +485,7 @@ func TestRunSingle_AlreadyResolved_T2RejectFallsBackToBackstop(t *testing.T) {
 		t.Fatal("expected run to start")
 	}
 	if result.Status != "failure" {
-		t.Fatalf("status = %q, want failure (T2 reject + open PR → conservative backstop)", result.Status)
+		t.Fatalf("status = %q, want failure (PreFilter reject + open PR → conservative backstop)", result.Status)
 	}
 	logs, _ := eventLog.Read()
 	var payload map[string]any
@@ -493,20 +494,23 @@ func TestRunSingle_AlreadyResolved_T2RejectFallsBackToBackstop(t *testing.T) {
 			payload = e.Payload
 		}
 	}
+	if payload == nil {
+		t.Fatalf("run.finished event not found")
+	}
 	if payload["blocker"] != "open-pr-blocks-already-resolved" {
 		t.Errorf("blocker = %v, want open-pr-blocks-already-resolved", payload["blocker"])
 	}
 	verification, ok := payload["verification"].(map[string]any)
 	if !ok {
-		t.Fatalf("expected verification payload on T2-reject path, got %+v", payload["verification"])
+		t.Fatalf("expected verification payload on PreFilter-reject path, got %+v", payload["verification"])
 	}
 	checks, ok := verification["checks"].([]any)
 	if !ok || len(checks) != 1 {
 		t.Fatalf("checks = %+v, want one element", verification["checks"])
 	}
 	entry, ok := checks[0].(map[string]any)
-	if !ok || entry["name"] != "T2" {
-		t.Errorf("first check = %+v, want T2", checks[0])
+	if !ok || entry["name"] != "pre-filter" {
+		t.Errorf("first check = %+v, want pre-filter", checks[0])
 	}
 }
 
@@ -548,7 +552,7 @@ func TestRunSingle_NonAlreadyResolvedPathUnchanged(t *testing.T) {
 		WithRunnableFactory(&taskWritingRunnableFactory{
 			taskPath:    filepath.Join(wtDir, ".sandman", "task.md"),
 			result:      AgentRunResult{IssueNumber: 42, Status: "success", Branch: branch},
-			taskContent: "## Status: success", // NOT already resolved; PR is merged
+			taskContent: "## Status: success",
 		}),
 		WithVerifyPath(VerifyPathFunc(func(in VerifyInput) (VerifyOutcome, []OracleCheck) {
 			verifyCalled = true
