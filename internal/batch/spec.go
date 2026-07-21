@@ -94,11 +94,12 @@ func specSectionPattern(name string) *regexp.Regexp {
 // Specification. A body is a Specification if it declares children
 // (heading or prose refs outside the `## Parent` backlink) OR if
 // it carries the canonical Specification shape (`## Problem
-// Statement` + `## Solution` + `## User Stories`). The body alone
-// is no longer sufficient or required — comments, native
-// sub-issues, and the search fallback can also surface children —
-// but the body-shape check is preserved as one valid spec signal
-// so historical canonical-spec authoring keeps working without the
+// Statement` + `## Solution`; `## User Stories` is optional and
+// does not contribute to the canonical signal). The body alone is
+// no longer sufficient or required — comments, native sub-issues,
+// and the search fallback can also surface children — but the
+// body-shape check is preserved as one valid spec signal so
+// historical canonical-spec authoring keeps working without the
 // user having to add `## Children` bullets. The `## Parent`
 // backlink is excluded from the children-content probe because it
 // points upward, not downward.
