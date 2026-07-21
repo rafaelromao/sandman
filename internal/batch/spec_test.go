@@ -16,16 +16,19 @@ import (
 
 // TestIsSpecification pins the body-shape and children-content gates
 // for the Specification detection. A body is a Specification if it
-// carries the canonical Specification shape (any of the three
-// sections — Problem Statement, Solution, User Stories) OR if it
 // declares children in any form (`## Children` / `## Child Issues`
 // heading or prose `#N` / full-URL references outside the `## Parent`
-// backlink). The canonical-shape signal is preserved so historical
-// canonical-spec authoring keeps working without the user having to
-// add `## Children` bullets. The `## Parent` backlink is excluded
-// from the children-content probe because it points upward, not
-// downward. The seam stays exported because the recursive-flatten
-// path uses it to decide whether to recurse into a harvested child.
+// backlink) OR if it carries the canonical Specification shape
+// (`## Problem Statement` + `## Solution`; `## User Stories` is
+// optional and does not contribute to the canonical-shape signal).
+// The children-content signal is the only spec gate for bodies
+// authored against the broadened-detector contract; the canonical
+// shape is preserved so historical canonical-spec authoring keeps
+// working without the user having to add `## Children` bullets. The
+// `## Parent` backlink is excluded from the children-content probe
+// because it points upward, not downward. The seam stays exported
+// because the recursive-flatten path uses it to decide whether to
+// recurse into a harvested child.
 func TestIsSpecification(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
@@ -52,6 +55,16 @@ func TestIsSpecification(t *testing.T) {
 			name: "canonical body without children content",
 			body: "## Problem Statement\n\nSome problem.\n\n## Solution\n\nSome solution.\n\n## User Stories\n\n1. Story one.\n",
 			want: true,
+		},
+		{
+			name: "lone solution section is not a specification",
+			body: "## Solution\n\nSome solution here.\n\n## What to build\n\nDescription of the work.\n",
+			want: false,
+		},
+		{
+			name: "lone problem statement section is not a specification",
+			body: "## Problem Statement\n\nSome problem.\n",
+			want: false,
 		},
 		{
 			name: "h3-only sections without children content",
@@ -106,6 +119,44 @@ func TestIsSpecification(t *testing.T) {
 				t.Fatalf("IsSpecification(%q) = %v, want %v", c.body, got, c.want)
 			}
 		})
+	}
+}
+
+// TestSpecificationResolver_NativeSubIssuesSuppressSearchFallback pins
+// the contract that the mention-search fallback only fires when the
+// cheaper sources (body refs, comment refs, native sub-issues) have
+// surfaced no candidate. A native-only parent with GitHub-returned
+// sub-issues must not also accept search-only results — that path is
+// for parents whose surface has been filtered upstream (label search,
+// range selection).
+func TestSpecificationResolver_NativeSubIssuesSuppressSearchFallback(t *testing.T) {
+	childBody := "## Parent\n\n#1\n\n## What\n\nChild work.\n"
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			1:  {Number: 1, Title: "Native-only parent", Body: "## What to build\n"},
+			10: {Number: 10, Title: "Child", Body: childBody},
+			11: {Number: 11, Title: "Stranger", Body: "## What\n\nNo Parent backlink."},
+		},
+		subIssues: map[int][]int{1: {10}},
+		// searchIssuesResult is intentionally populated: the
+		// search path should not fire because subIssues already
+		// surfaced #10.
+		searchIssuesResult: []github.Issue{
+			{Number: 11, Title: "Search-only candidate", Body: "## What\n\nNot a real child."},
+		},
+	}
+
+	var infoBuf bytes.Buffer
+	r := NewSpecificationResolver(client, &infoBuf)
+	got, err := r.Resolve(context.Background(), []int{1})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !equalInts(got, []int{10}) {
+		t.Fatalf("expected native child only [10], got %v (search fallback leaked an extra candidate)", got)
+	}
+	if len(client.searchCalls) != 0 {
+		t.Fatalf("expected SearchIssues to be skipped when native sub-issues already surfaced children, got %d calls: %v", len(client.searchCalls), client.searchCalls)
 	}
 }
 

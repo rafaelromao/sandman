@@ -117,12 +117,18 @@ func (r *SpecificationResolver) IsSpecification(body string) bool {
 	if len(ExtractIssueReferences(bodyNoParent)) > 0 {
 		return true
 	}
-	for _, name := range []string{"Problem Statement", "Solution", "User Stories"} {
-		if specSectionPattern(name).MatchString(bodyNoParent) {
-			return true
-		}
-	}
-	return false
+	// Canonical-shape signal: the body carries both `## Problem
+	// Statement` and `## Solution` (case-insensitive on the
+	// section text). Either alone is not enough — a lone
+	// `## Solution` heading in an ordinary issue must not be
+	// mistaken for a Specification, because doing so would let a
+	// prose child reference in that body replace the issue with
+	// the cited child at expansion time. `## User Stories` is
+	// presentation, not structure, so it does not contribute to
+	// the canonical-shape signal.
+	hasProblem := specSectionPattern("Problem Statement").MatchString(bodyNoParent)
+	hasSolution := specSectionPattern("Solution").MatchString(bodyNoParent)
+	return hasProblem && hasSolution
 }
 
 // HasChildren reports whether the issue identified by `number` has at least one child
@@ -470,6 +476,12 @@ func (r *SpecificationResolver) collectCandidates(ctx context.Context, parent in
 	} else {
 		fmt.Fprintf(r.warningWriter, "warning: could not list comments for specification #%d: %v\n", parent, err)
 	}
+	add(subIssues)
+	// The mention-search fallback runs only when the cheaper
+	// sources (body refs, comment refs, native sub-issues) have
+	// not surfaced any candidate. Native sub-issues count as a
+	// cheap source: when GitHub already gave us the children,
+	// there is no need to re-discover them through search.
 	if len(order) == 0 {
 		if results, err := r.client.SearchIssues(ctx, specSearchToken(parent)); err == nil {
 			for _, issue := range results {
@@ -479,6 +491,5 @@ func (r *SpecificationResolver) collectCandidates(ctx context.Context, parent in
 			fmt.Fprintf(r.warningWriter, "warning: mention search for specification #%d failed: %v\n", parent, err)
 		}
 	}
-	add(subIssues)
 	return order
 }
