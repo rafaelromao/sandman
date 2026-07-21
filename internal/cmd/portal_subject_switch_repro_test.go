@@ -56,6 +56,7 @@ func buildPortalReproPage(t *testing.T, stateJSON string, runsJSON []byte, body 
 	page = strings.ReplaceAll(page, "{{.PortalAbortSupported}}", "false")
 	page = strings.ReplaceAll(page, "{{.PortalStateStorageKey}}", PortalStateStorageKeyPrefix)
 	page = strings.ReplaceAll(page, "{{.PollInterval}}", "600000")
+	body = strings.ReplaceAll(body, "__PORTAL_STORAGE_KEY__", PortalStateStorageKeyPrefix)
 	injection := fmt.Sprintf(`<script>
     try { sessionStorage.setItem('%s', %s); } catch (err) {}
     window.requestAnimationFrame = function (cb) { return setTimeout(function () { cb(performance.now()); }, 0); };
@@ -778,7 +779,7 @@ func TestPortalRefresh_DiscardsQueuedExpandedStateBeforeDetailFetch(t *testing.T
       var detail = document.querySelector('tr.detail-row[data-detail-for="queued-1"]');
       var stored = null;
       try {
-        stored = JSON.parse(sessionStorage.getItem('sandman.portal.view-state.v1') || 'null');
+        stored = JSON.parse(sessionStorage.getItem('__PORTAL_STORAGE_KEY__') || 'null');
       } catch (err) {}
       var pre = document.createElement('pre');
       pre.id = 'portal-queued-normalize';
@@ -833,7 +834,7 @@ func TestPortalRefresh_IgnoresEmptyExpandedStateBeforeDetailFetch(t *testing.T) 
       var detail = document.querySelector('tr.detail-row[data-detail-for="run-1"]');
       var stored = null;
       try {
-        stored = JSON.parse(sessionStorage.getItem('sandman.portal.view-state.v1') || 'null');
+        stored = JSON.parse(sessionStorage.getItem('__PORTAL_STORAGE_KEY__') || 'null');
       } catch (err) {}
       var pre = document.createElement('pre');
       pre.id = 'portal-empty-identity';
@@ -1540,7 +1541,7 @@ func TestPortalRowClick_IgnoresForcedToggleAttrsOnQueuedRun(t *testing.T) {
       var detail = document.querySelector('tr.detail-row[data-detail-for="queued-2"]');
       var stored = null;
       try {
-        stored = JSON.parse(sessionStorage.getItem('sandman.portal.view-state.v1') || 'null');
+        stored = JSON.parse(sessionStorage.getItem('__PORTAL_STORAGE_KEY__') || 'null');
       } catch (err) {}
       var pre = document.createElement('pre');
       pre.id = 'portal-queued-click';
@@ -1719,7 +1720,7 @@ func TestPortalSubjectSwitch_IgnoresEmptySelectionChange(t *testing.T) {
       var detail = document.querySelector('pre[data-scroll-key]');
       var stored = null;
       try {
-        stored = JSON.parse(sessionStorage.getItem('sandman.portal.view-state.v1') || 'null');
+        stored = JSON.parse(sessionStorage.getItem('__PORTAL_STORAGE_KEY__') || 'null');
       } catch (err) {}
       var marker = document.createElement('pre');
       marker.id = 'portal-empty-subject';
