@@ -778,7 +778,7 @@ func TestPortalRefresh_DiscardsQueuedExpandedStateBeforeDetailFetch(t *testing.T
       var detail = document.querySelector('tr.detail-row[data-detail-for="queued-1"]');
       var stored = null;
       try {
-        stored = JSON.parse(sessionStorage.getItem('" + PortalStateStorageKeyPrefix + "') || 'null');
+        stored = JSON.parse(sessionStorage.getItem('sandman.portal.view-state.v1') || 'null');
       } catch (err) {}
       var pre = document.createElement('pre');
       pre.id = 'portal-queued-normalize';
@@ -833,7 +833,7 @@ func TestPortalRefresh_IgnoresEmptyExpandedStateBeforeDetailFetch(t *testing.T) 
       var detail = document.querySelector('tr.detail-row[data-detail-for="run-1"]');
       var stored = null;
       try {
-        stored = JSON.parse(sessionStorage.getItem('" + PortalStateStorageKeyPrefix + "') || 'null');
+        stored = JSON.parse(sessionStorage.getItem('sandman.portal.view-state.v1') || 'null');
       } catch (err) {}
       var pre = document.createElement('pre');
       pre.id = 'portal-empty-identity';
@@ -1540,7 +1540,7 @@ func TestPortalRowClick_IgnoresForcedToggleAttrsOnQueuedRun(t *testing.T) {
       var detail = document.querySelector('tr.detail-row[data-detail-for="queued-2"]');
       var stored = null;
       try {
-        stored = JSON.parse(sessionStorage.getItem('" + PortalStateStorageKeyPrefix + "') || 'null');
+        stored = JSON.parse(sessionStorage.getItem('sandman.portal.view-state.v1') || 'null');
       } catch (err) {}
       var pre = document.createElement('pre');
       pre.id = 'portal-queued-click';
@@ -1719,7 +1719,7 @@ func TestPortalSubjectSwitch_IgnoresEmptySelectionChange(t *testing.T) {
       var detail = document.querySelector('pre[data-scroll-key]');
       var stored = null;
       try {
-        stored = JSON.parse(sessionStorage.getItem('" + PortalStateStorageKeyPrefix + "') || 'null');
+        stored = JSON.parse(sessionStorage.getItem('sandman.portal.view-state.v1') || 'null');
       } catch (err) {}
       var marker = document.createElement('pre');
       marker.id = 'portal-empty-subject';
