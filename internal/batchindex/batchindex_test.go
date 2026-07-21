@@ -1127,7 +1127,7 @@ func TestWriteReviewState_AtomicRenameNoLeftoverTmp(t *testing.T) {
 	})
 }
 
-// TestRunRecord_JSONRoundTrip is the slice-1 tracer bullet. It pins
+// TestRunRecord_JSONRoundTrip is the #1917 tracer bullet. It pins
 // the per-row JSON wire shape: a RunRecord must serialise to
 // {"runId": ..., "status": "active|archived", "archivePath": ""} (the
 // archivePath field is omitted when empty so the persisted batches.json
@@ -1191,7 +1191,7 @@ func TestRunRecord_JSONRoundTrip(t *testing.T) {
 	})
 }
 
-// TestIndex_AddRun_PersistsRecord covers slice 1: AddRun records a row
+// TestIndex_AddRun_PersistsRecord covers #1917: AddRun records a row
 // against the named entry, dedupes by RunID, and the result survives
 // a Save/Load round-trip so subsequent code can rely on the persisted
 // record to drive lazy recovery.
@@ -1236,7 +1236,7 @@ func TestIndex_AddRun_PersistsRecord(t *testing.T) {
 	}
 }
 
-// TestIndex_MarkRunArchived_UpdatesRecord covers slice 1: MarkRunArchived
+// TestIndex_MarkRunArchived_UpdatesRecord covers #1917: MarkRunArchived
 // flips the targeted row's record from active to archived, populates
 // ArchivePath, and is a no-op when no row matches.
 func TestIndex_MarkRunArchived_UpdatesRecord(t *testing.T) {
@@ -1271,7 +1271,7 @@ func TestIndex_MarkRunArchived_UpdatesRecord(t *testing.T) {
 	}
 }
 
-// TestIndex_ReconcileRuns_ArchivedMissingLive verifies slice 7: when
+// TestIndex_ReconcileRuns_ArchivedMissingLive verifies #1916: when
 // the index already records a per-row ArchivePath but the live
 // runs/<runID>/ folder is missing, ReconcileRuns leaves the record as
 // archived (no change), preserving the post-archive on-disk view.
@@ -1313,8 +1313,8 @@ func TestIndex_ReconcileRuns_ArchivedMissingLive(t *testing.T) {
 	}
 }
 
-// TestIndex_ReconcileRuns_ArchivedMissingLiveAndArchive verifies slice
-// 7: when the index records an ArchivePath but neither the live nor
+// TestIndex_ReconcileRuns_ArchivedMissingLiveAndArchive verifies #1916:
+// when the index records an ArchivePath but neither the live nor
 // the archive folder exists on disk (a torn state from a crash), the
 // row's record flips to unavailable with ArchivePath cleared.
 func TestIndex_ReconcileRuns_ArchivedMissingLiveAndArchive(t *testing.T) {

@@ -1585,8 +1585,8 @@ func (o *Orchestrator) logAborted(issueNum int, runID string, abortedBy []int) {
 // mapRetryReason picks the closed-vocabulary reason for a run.retry emit
 // from the previous attempt's status, the heartbeat-trips signal, and the
 // parent context. The vocabulary (agent-stalled, agent-failed,
-// sandbox-timeout, kill-timeout, manual) is locked in ADR-0035 (slice 5
-// of #1498) and must not be silently extended. If a future code path
+// sandbox-timeout, kill-timeout, manual) is locked in ADR-0035 (#1498)
+// and must not be silently extended. If a future code path
 // surfaces a status that does not map to a known arm, the function
 // panics so the new condition is added to the ADR and the mapping
 // explicitly, rather than collapsing to an empty string that violates
@@ -1915,7 +1915,7 @@ func batchIDFromRunID(runID string) string {
 
 // snapshotOriginalTask copies the worktree's live task.md into the new
 // per-row run folder as a historical snapshot before the agent overwrites
-// it with the continuation prompt. Used by ModeContinue (slice 9 B3) so
+// it with the continuation prompt. Used by ModeContinue so
 // the prior task wording survives in <runFolder>/task.md for the
 // operator to revisit later. The function is best-effort: a missing
 // source file (already warned about upstream) is treated as a no-op
@@ -2365,7 +2365,7 @@ func (s *runSession) runOnce(
 		}
 
 		runnable := factory.NewRunnable(issue, branch, wt)
-		// Slice 9 B3: when launching a continuation, copy the original
+		// When launching a continuation, copy the original
 		// task.md that lives in the worktree into the new per-row run
 		// folder as a sibling of run.json / run.log. The worktree file
 		// is about to be overwritten by the continuation prompt; this
@@ -2980,7 +2980,7 @@ func (s *runSession) executePromptOnly(ctx context.Context) (AgentRunResult, boo
 	runID := s.runID
 	if s.batchTS != "" && s.batchShortID != "" {
 		// runid.NewRunID(KindPromptOnly, …) hard-codes the `prompt`
-		// segment (issue #1920 slice 4 of #1916), so passing the
+		// segment (issue #1920 of #1916), so passing the
 		// user-supplied --run-id as `subject` (or "" for the no-userid
 		// case) produces the canonical per-row RunID that doubles as
 		// the public BatchId.
@@ -2989,7 +2989,7 @@ func (s *runSession) executePromptOnly(ctx context.Context) (AgentRunResult, boo
 		runID = fmt.Sprintf("run-0-%d", time.Now().UnixNano())
 	}
 	// For prompt-only batches the public BatchId equals the per-row
-	// RunID (issue #1920 slice 4). The cmd layer pre-seeds s.batchID
+	// RunID (issue #1920). The cmd layer pre-seeds s.batchID
 	// from the same runid.NewBatchID call, and the review daemon sets
 	// s.batchID by walking runDir; if neither path
 	// populated it (legacy callers), the legacy batchIDFromRunID
