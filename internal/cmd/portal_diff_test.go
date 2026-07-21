@@ -1408,6 +1408,62 @@ console.log('PASS');
 	runNodeScript(t, js)
 }
 
+// TestPortalDiffBuildDurationCell_StaleLineForReviewingStatus pins the
+// reviewing counterpart of the running-row stale coverage: while the issue
+// is queued, duration time must not be counted AND the stale chip must
+// not appear, but for an active reviewing run that has gone quiet past
+// the threshold the chip must surface so the user can spot a stalled
+// review agent.
+func TestPortalDiffBuildDurationCell_StaleLineForReviewingStatus(t *testing.T) {
+	js := `const body = makeMockBody();
+const stale = new Date(Date.now() - 90*1000).toISOString();
+const run = { key: 'a', kind: 'active', status: 'reviewing', review: true, prNumber: 42, issueLabel: 'PR42', runId: 'r1', lastOutputAt: stale, duration: 1200 };
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: null };
+SandmanPortalDiff.insertRunRow(body, run, opts);
+const row = body.children[0];
+const durationCell = row.querySelector('[data-cell="duration"]');
+const line = durationCell.querySelector('.stale-line');
+if (!line) throw new Error('expected .stale-line for an active reviewing run idle 90s');
+if (!/^stale \u00b7 /.test(line.textContent)) throw new Error('expected "stale \u00b7 ..." text, got ' + JSON.stringify(line.textContent));
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
+// TestPortalDiffRefreshLiveTimeCells_QueuedRowDurationReflectsQueuedStart
+// pins the duration tick for a queued row. The fix anchors
+// runFromActiveBatchIssue's StartedAt on the run.queued event timestamp
+// instead of the batch manifest's CreatedAt, so refreshLiveTimeCells
+// (which formats via liveDurationText(run) using run.startedAt) must
+// show time-since-queued and must NOT show time-since-manifest-created.
+// The bug would surface as duration text matching the pre-queue delta
+// instead of the post-queue delta.
+func TestPortalDiffRefreshLiveTimeCells_QueuedRowDurationReflectsQueuedStart(t *testing.T) {
+	js := `const body = makeMockBody();
+// 30m since the queue event, 1h since the batch manifest was created.
+// Pre-fix, run.startedAt = manifest.CreatedAt, so liveDurationText
+// would format ~1h. Post-fix, run.startedAt = run.queued.Timestamp, so
+// it formats ~30m.
+const queuedAt = new Date(Date.now() - 30*60*1000).toISOString();
+const run = { key: 'a', kind: 'active', status: 'queued', issueLabel: '#42', runId: 'r1', startedAt: queuedAt, duration: '' };
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: null };
+SandmanPortalDiff.insertRunRow(body, run, opts);
+SandmanPortalDiff.refreshLiveTimeCells(body, [run]);
+const row = body.children[0];
+const durationCell = row.querySelector('[data-cell="duration"]');
+if (!durationCell) throw new Error('expected duration cell');
+const value = durationCell.querySelector('.duration-value');
+if (!value) throw new Error('expected .duration-value child');
+const text = value.textContent;
+if (!/^30m/.test(text)) throw new Error('expected duration to start at ~30m (time since run.queued), got ' + JSON.stringify(text));
+if (/^1h/.test(text) || /^59m/.test(text) || /^58m/.test(text) || /^45m/.test(text)) throw new Error('duration must NOT reflect time since batch manifest creation, got ' + JSON.stringify(text));
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
 func TestPortalDiffBuildEventsContent_RunRetryRendersJSONDocument(t *testing.T) {
 	js := `const body = makeMockBody();
 const run = { key: 'a', kind: 'completed', status: 'success', issueLabel: '#42', runId: 'r1', events: [
