@@ -917,6 +917,95 @@ func TestRun_ExpandsSpecificationBeforeBatchRunner(t *testing.T) {
 	}
 }
 
+func TestRun_ExpandsBodyOnlyChildrenHeadingBeforeBatchRunner(t *testing.T) {
+	// Regression for issue #2329. The parent body has only `## Children`
+	// (no `## Problem Statement` / `## Solution`, no `## User Stories`,
+	// no comments, no native sub-issues). The command must still
+	// expand the parent into the children listed in the body and
+	// hand the expanded children to the batch runner; otherwise the
+	// original `--continue #2315` symptom (the parent emits
+	// `run.blocked` and never reaches the sandbox) returns.
+	parentBody := "## Children\n\n- #10 (slice: foundation)\n- #11\n"
+	childBody := "## Parent\n\n#1\n\n## What\n\n"
+	gh := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			1:  {Number: 1, Title: "Body-only child heading parent", Body: parentBody, State: "open"},
+			10: {Number: 10, Title: "Child 10", Body: childBody, State: "open"},
+			11: {Number: 11, Title: "Child 11", Body: childBody, State: "open"},
+		},
+	}
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	deps := newRunDeps(t, spy)
+	deps.GitHubClient = gh
+
+	var buf bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"1"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v\noutput:\n%s", err, buf.String())
+	}
+	if !spy.called {
+		t.Fatal("expected batch runner to be called")
+	}
+	want := []int{10, 11}
+	if len(spy.req.Issues) != len(want) {
+		t.Fatalf("expected issues %v, got %v", want, spy.req.Issues)
+	}
+	for i, v := range want {
+		if spy.req.Issues[i] != v {
+			t.Errorf("expected issue %d at index %d, got %d", v, i, spy.req.Issues[i])
+		}
+	}
+	if !strings.Contains(buf.String(), "expanded specification #1 to 2 accepted children") {
+		t.Errorf("expected info log about body-children expansion, got: %q", buf.String())
+	}
+}
+
+func TestRun_ExpandsBodyOnlyChildIssuesHeadingBeforeBatchRunner(t *testing.T) {
+	// Mirrors TestRun_ExpandsBodyOnlyChildrenHeadingBeforeBatchRunner
+	// for the `## Child Issues` heading alias.
+	parentBody := "## Child Issues\n\n- #10\n- #11\n"
+	childBody := "## Parent\n\n#1\n\n## What\n\n"
+	gh := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			1:  {Number: 1, Title: "Body-only child issues heading parent", Body: parentBody, State: "open"},
+			10: {Number: 10, Title: "Child 10", Body: childBody, State: "open"},
+			11: {Number: 11, Title: "Child 11", Body: childBody, State: "open"},
+		},
+	}
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	deps := newRunDeps(t, spy)
+	deps.GitHubClient = gh
+
+	var buf bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"1"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v\noutput:\n%s", err, buf.String())
+	}
+	if !spy.called {
+		t.Fatal("expected batch runner to be called")
+	}
+	want := []int{10, 11}
+	if len(spy.req.Issues) != len(want) {
+		t.Fatalf("expected issues %v, got %v", want, spy.req.Issues)
+	}
+	for i, v := range want {
+		if spy.req.Issues[i] != v {
+			t.Errorf("expected issue %d at index %d, got %d", v, i, spy.req.Issues[i])
+		}
+	}
+	if !strings.Contains(buf.String(), "expanded specification #1 to 2 accepted children") {
+		t.Errorf("expected info log about child-issues expansion, got: %q", buf.String())
+	}
+}
+
 func TestRun_FiltersClosedChildrenAfterSpecificationExpansion(t *testing.T) {
 	// Closed children discovered by Specification expansion must be skipped,
 	// mirroring the user-typed-input filtering at line 216.
@@ -1157,7 +1246,7 @@ func TestRun_FailsWhenSpecificationHasNoChildren(t *testing.T) {
 	if len(spy.req.Issues) != 1 || spy.req.Issues[0] != 1 {
 		t.Fatalf("expected pass-through [1], got %v", spy.req.Issues)
 	}
-	if !strings.Contains(stderr.String(), "running specification #1 as a regular issue (no children)") {
+	if !strings.Contains(stderr.String(), "running issue #1 as a regular issue (no children)") {
 		t.Fatalf("expected carve-out log line in stderr, got: %q", stderr.String())
 	}
 }
@@ -2188,7 +2277,7 @@ func TestRun_ContinueFlag_NoPriorRunPromotesToOverride(t *testing.T) {
 	if got := spy.req.IssueMode(42); got != batch.ModeOverride {
 		t.Fatalf("expected ModeOverride when no prior run exists under --continue, got %v", got)
 	}
-	if !strings.Contains(buf.String(), "[--continue] promoting #42 to override (no prior started/continued run)") {
+	if !strings.Contains(buf.String(), "[--continue] promoting #42 to --override (no prior started/continued run)") {
 		t.Fatalf("expected promotion log line for issue 42, got output:\n%s", buf.String())
 	}
 }
@@ -5105,10 +5194,10 @@ func TestRun_ContinueFlag_NoPriorRunPromotesToOverrideWithoutAPICall(t *testing.
 	if calls := gh.findPRCalls[onlyBranch]; calls > 1 {
 		t.Fatalf("expected at most one FindPRByBranch call for the continued branch, got %d", calls)
 	}
-	if !strings.Contains(output.String(), "[--continue] promoting #201 to override") {
+	if !strings.Contains(output.String(), "[--continue] promoting #201 to --override") {
 		t.Errorf("expected override promotion log for #201, got: %q", output.String())
 	}
-	if !strings.Contains(output.String(), "[--continue] promoting #202 to override") {
+	if !strings.Contains(output.String(), "[--continue] promoting #202 to --override") {
 		t.Errorf("expected override promotion log for #202, got: %q", output.String())
 	}
 }

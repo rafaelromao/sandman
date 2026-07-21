@@ -33,14 +33,14 @@ If `sandman run` is invoked with `--prompt` or `--template` and no issue selecto
 
 For each issue, Sandman builds a `BlockedBy` set from two sources:
 
-1. Body references (`blocked by #N`, `depends on #N`, `## Blocked by` bullet list).
+1. Body references (`## Blocked by` / `## Depends on` / `## Blocked-by` heading sections, with bare `#N` shorthand, link bullet, titled link, or trailing-annotation bullet entries).
 2. The GitHub REST API's native dependency surface (`blocked_by` on the issue response).
 
-Union, then validate. **Strict mode** (the default) errors if any in-batch blocker is missing. **Auto-expand mode** (`--include-dependencies`) recursively includes transitive blockers and errors on cycles. In-batch blocker success releases dependents immediately; external blockers must be closed on GitHub before the dependent starts.
+Union, then validate. **Strict mode** (the default) errors if any in-batch blocker is missing. **Auto-expand mode** (`--include-dependencies`) recursively includes transitive blockers and errors on cycles. In-batch blocker success releases dependents immediately; external blockers must be closed on GitHub before the dependent starts. Inline phrases such as `Blocked by #10` or `Depends on #10` outside a heading are not recognized — they were retired because prose mentions were sensitive noise (see ADR-0025 and `docs/usage/issue-body-formats.md`).
 
 ## Specifications
 
-A **Specification** is a GitHub issue whose body contains the H2 sections `## Problem Statement`, `## Solution`, and `## User Stories`. Detection is structural, not label-based. Sandman resolves a Specification into its child issues before execution; children are accepted only when their bodies contain a `## Parent` backlink to the Specification. Nested Specifications are rejected. User-typed issue numbers skip the validation — the operator owns the choice.
+A **Specification** is a GitHub issue whose body declares children — in any of the supported forms (body heading, body prose, issue comments, native GitHub sub-issues, mention-search fallback) — OR whose body carries the canonical Specification shape (`## Problem Statement` + `## Solution` + optional `## User Stories`). Detection is structural, not label-based, and the no-other-gate contract drops the body-shape as the identification gate: child existence alone is sufficient. Sandman resolves a Specification into its child issues before execution; children are accepted only when their bodies contain a `## Parent` backlink to the Specification (user-typed children bypass that check). Nested Specifications are flattened recursively rather than rejected. Inline phrases like `Children: #10`, `Child Issues: #10`, `Blocked by #10`, and `Depends on #10` outside a heading are deprecated — prose mentions were sensitive noise.
 
 ## Sandman Review
 

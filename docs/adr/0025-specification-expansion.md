@@ -22,8 +22,18 @@ before dependency resolution and execution.
 
 Specifications and their children are identified by body structure, not labels:
 
-- A Specification is an issue whose body contains the H2 sections
-  `## Problem Statement`, `## Solution`, and `## User Stories`.
+- A Specification is an issue whose body declares children — in any of
+  the supported forms (body heading, body prose, issue comments,
+  native sub-issues, or the mention-search fallback) — or whose body
+  carries the canonical Specification shape (`## Problem Statement` +
+  `## Solution` + optional `## User Stories`). The no-other-gate
+  contract drops the body-shape as the identification gate: child
+  existence alone is sufficient. The canonical sections remain one
+  valid spec signal so historical authoring keeps working without the
+  user having to add `## Children` bullets. Inline phrases like
+  `Children: #10`, `Child Issues: #10`, `Blocked by #10`, and
+  `Depends on #10` outside a heading are deprecated — prose mentions
+  of the phrase were sensitive noise (see ADR follow-up).
 - A child of Specification `<n>` is an issue whose body contains a `## Parent`
   section citing `<n>` (via `#N` shorthand or a full GitHub issue URL).
 - Specification expansion is the act of replacing a Specification with its accepted
@@ -51,10 +61,14 @@ We will resolve Specifications to their child issues during batch preparation,
 using the same `DependencyResolver`-style seam that already lives in
 `internal/batch`. The flow is:
 
-1. **Detection** — `SpecificationResolver.IsSpecification(body)` returns true iff the body
-   contains the three required H2 sections, case-insensitive on the
-   section text. H3 or deeper sections do not count. The section text
-   is anchored to the line start with optional whitespace.
+1. **Detection** — `SpecificationResolver.IsSpecification(body)` returns true iff the
+   body declares children (heading or prose refs to other issues,
+   outside the `## Parent` backlink) OR carries the canonical
+   Specification shape (`## Problem Statement` AND `## Solution`,
+   with `## User Stories` optional). Case-insensitive on the section
+   text. H3 or deeper sections do not count as the canonical-shape
+   signal. The `## Parent` backlink is excluded from the
+   children-content probe because it points upward, not downward.
 2. **Child discovery** — In order: (a) `#N` references and full issue URLs in the
    Specification body, (b) `#N` references and full issue URLs in each Specification
    comment in chronological order,
@@ -105,9 +119,17 @@ using the same `DependencyResolver`-style seam that already lives in
    (directly or transitively) recurses once and then short-circuits when
    the already-seen number is re-encountered. The carve-out in step 3a
    continues to apply at the immediate acceptance step on every pass.
-5. **No-children rejection** — A Specification whose accepted-child set is
-   empty (no candidates, or every candidate dropped at step 3) fails
-   the resolution with `no child issues for specification #<n>`.
+5. **No-children rejection** — An input whose accepted-child set is empty
+   (no body children, no comment children, no native sub-issues) is
+   passed through as a regular issue with a `running issue #<n> as a
+   regular issue (no children)` log line. The mention-search fallback
+   fires only when none of the cheaper sources (body refs, comment
+   refs, native sub-issues) have surfaced a candidate. Inputs whose
+   surface is already filtered upstream (label search, range
+   selection) skip the cheap-source probes entirely (see step 1a in
+   `expandOne`); the search fallback does not run for them either,
+   so the operator search query is preserved and re-discovery is
+   avoided.
 6. **Replacement and dedup** — The resolver walks the input issue
    list and replaces each Specification with its accepted children in the
    original order. The Specification itself is not in the output. Duplicates

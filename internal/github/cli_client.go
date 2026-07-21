@@ -22,9 +22,6 @@ import (
 // via WithTimeout when constructing via NewCLIClient.
 const DefaultCallTimeout = 30 * time.Second
 
-// blockedByPattern parses inline references; see docs/usage/issue-body-formats.md.
-var blockedByPattern = regexp.MustCompile(`(?i)\b(?:blocked by|depends on|blocked-by)[:\s]+(?:\[#(\d+)\](?:\([^)]+\))?|#(\d+)\b)`)
-
 // blockedByHeadingPattern parses blocker headings; see docs/usage/issue-body-formats.md.
 var blockedByHeadingPattern = regexp.MustCompile(`(?im)^\s*##\s+(?:blocked by|depends on|blocked-by)\s*$`)
 
@@ -36,9 +33,6 @@ var bulletLinePattern = regexp.MustCompile(`(?m)^\s*-\s+(?:\[#(\d+)\]|#(\d+)|\[(
 
 // nextHeadingPattern finds the next H2 section; see docs/usage/issue-body-formats.md.
 var nextHeadingPattern = regexp.MustCompile(`(?m)^\s*##\s`)
-
-// childrenPattern parses inline children references; see docs/usage/issue-body-formats.md.
-var childrenPattern = regexp.MustCompile(`(?i)\b(?:children|child issues)[:\s]+(?:\[#(\d+)\](?:\([^)]+\))?|#(\d+)\b)`)
 
 // childrenHeadingPattern parses children headings; see docs/usage/issue-body-formats.md.
 var childrenHeadingPattern = regexp.MustCompile(`(?im)^\s*##\s+(?:children|child issues)\s*$`)
@@ -709,26 +703,17 @@ func (c *CLIClient) fetchIssueDependencies(ctx context.Context, owner, repo stri
 	return parseDependencyEvents(events), nil
 }
 
+// parseBlockedBy returns the unique issue numbers declared as blockers
+// under a `## Blocked by`, `## Depends on`, or `## Blocked-by` H2 section.
+// Inline phrases such as "Blocked by #123" outside a heading are
+// intentionally NOT recognized: prose mentions of the phrase appear
+// across the issue tracker (including inside child-list annotations
+// such as `- #10 (blocked by #2319)`) and treating them as
+// authoritative blocker declarations caused unrelated parents to be
+// marked as blocked. The heading-only contract is documented in
+// docs/usage/issue-body-formats.md.
 func parseBlockedBy(body string) []int {
-	inline := blockedByPattern.FindAllStringSubmatch(body, -1)
-
-	var blockedBy []int
-	seen := make(map[int]struct{})
-
-	for _, match := range inline {
-		number, ok := issueNumberFromMatch(match[1], match[2])
-		if !ok {
-			continue
-		}
-		if _, ok := seen[number]; ok {
-			continue
-		}
-		seen[number] = struct{}{}
-		blockedBy = append(blockedBy, number)
-	}
-
-	blockedBy = mergeIssueNumbers(blockedBy, parseBlockedByHeading(body))
-
+	blockedBy := parseBlockedByHeading(body)
 	if len(blockedBy) == 0 {
 		return nil
 	}
@@ -754,28 +739,17 @@ func parseBlockedByHeading(body string) []int {
 	return parseBulletsInSection(section, bulletIssuePattern, bulletLinePattern)
 }
 
-func parseChildrenInline(body string) []int {
-	inline := childrenPattern.FindAllStringSubmatch(body, -1)
-
-	var children []int
-	seen := make(map[int]struct{})
-
-	for _, match := range inline {
-		number, ok := issueNumberFromMatch(match[1], match[2])
-		if !ok {
-			continue
-		}
-		if _, ok := seen[number]; ok {
-			continue
-		}
-		seen[number] = struct{}{}
-		children = append(children, number)
-	}
-
-	return children
-}
-
-func parseChildrenFromHeading(body string) []int {
+// ParseChildrenFromBody returns the unique child issue numbers declared
+// under a `## Children` or `## Child Issues` H2 section. The section
+// ends at the next H2 heading. Bullet entries follow the same shape
+// accepted by `## Blocked by` (bare `#N`, link bullet, titled link,
+// trailing annotation). Inline phrases like `Children: #N` and
+// `Child Issues: #N` are intentionally NOT recognized: they are
+// frequently used in prose to refer to upstream issues, and treating
+// them as authoritative child declarations made the resolver
+// sensitive to incidental phrasing. The heading-only contract is
+// documented in docs/usage/issue-body-formats.md.
+func ParseChildrenFromBody(body string) []int {
 	headingIdx := childrenHeadingPattern.FindStringIndex(body)
 	if headingIdx == nil {
 		return nil
@@ -792,16 +766,6 @@ func parseChildrenFromHeading(body string) []int {
 	}
 
 	return parseBulletsInSection(section, bulletIssuePattern, bulletLinePattern)
-}
-
-func ParseChildrenFromBody(body string) []int {
-	children := parseChildrenInline(body)
-	children = mergeIssueNumbers(children, parseChildrenFromHeading(body))
-
-	if len(children) == 0 {
-		return nil
-	}
-	return children
 }
 
 func parseBulletsInSection(section string, patterns ...*regexp.Regexp) []int {

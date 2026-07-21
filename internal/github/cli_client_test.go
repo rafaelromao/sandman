@@ -419,7 +419,7 @@ func TestCLIClient_ResolveRepo_Error(t *testing.T) {
 func TestCLIClient_FetchIssue_Success(t *testing.T) {
 	runner := &fakeRunner{responses: []fakeResponse{
 		{output: `{"name":"sandman","owner":{"login":"rafaelromao"}}`},
-		{output: `{"number":61,"state":"closed","title":"Implement FetchIssue","body":"Blocked by #60\nDepends on #7","labels":[{"name":"enhancement"},{"name":"ready-for-agent"}]}`},
+		{output: `{"number":61,"state":"closed","title":"Implement FetchIssue","body":"## Blocked by\n- #60\n- #7","labels":[{"name":"enhancement"},{"name":"ready-for-agent"}]}`},
 		{output: `[]`},
 	}}
 	client := &CLIClient{runner: runner}
@@ -437,7 +437,7 @@ func TestCLIClient_FetchIssue_Success(t *testing.T) {
 	if issue.Title != "Implement FetchIssue" {
 		t.Fatalf("expected title %q, got %q", "Implement FetchIssue", issue.Title)
 	}
-	if issue.Body != "Blocked by #60\nDepends on #7" {
+	if issue.Body != "## Blocked by\n- #60\n- #7" {
 		t.Fatalf("expected body to round-trip, got %q", issue.Body)
 	}
 	if !reflect.DeepEqual(issue.Labels, []string{"enhancement", "ready-for-agent"}) {
@@ -550,7 +550,7 @@ func TestCLIClient_FetchIssueDependencies_IgnoresSummaryCountsInsidePayload(t *t
 func TestCLIClient_FetchIssue_UnionBodyAndNativeDependencies(t *testing.T) {
 	runner := &fakeRunner{responses: []fakeResponse{
 		{output: `{"name":"sandman","owner":{"login":"rafaelromao"}}`},
-		{output: `{"number":62,"title":"Native dependencies","body":"Blocked by #60\nDepends on #7","labels":[{"name":"enhancement"}],"blocked_by":[{"number":7},{"number":99}]}`},
+		{output: `{"number":62,"title":"Native dependencies","body":"## Blocked by\n- #60\n- #7","labels":[{"name":"enhancement"}],"blocked_by":[{"number":7},{"number":99}]}`},
 	}}
 	client := &CLIClient{runner: runner}
 
@@ -566,7 +566,7 @@ func TestCLIClient_FetchIssue_UnionBodyAndNativeDependencies(t *testing.T) {
 func TestCLIClient_FetchIssue_GracefullyFallsBackToBodyOnly(t *testing.T) {
 	runner := &fakeRunner{responses: []fakeResponse{
 		{output: `{"name":"sandman","owner":{"login":"rafaelromao"}}`},
-		{output: `{"number":62,"title":"Native dependencies","body":"Blocked by #60","labels":[],"issue_dependencies_summary":{"blocked_by":1,"total_blocked_by":1,"blocking":0,"total_blocking":0}}`},
+		{output: `{"number":62,"title":"Native dependencies","body":"## Blocked by\n- #60","labels":[],"issue_dependencies_summary":{"blocked_by":1,"total_blocked_by":1,"blocking":0,"total_blocking":0}}`},
 		{err: exec.ErrNotFound},
 	}}
 	client := &CLIClient{runner: runner}
@@ -578,6 +578,172 @@ func TestCLIClient_FetchIssue_GracefullyFallsBackToBodyOnly(t *testing.T) {
 	if !reflect.DeepEqual(issue.BlockedBy, []int{60}) {
 		t.Fatalf("expected body-only blockers [60], got %v", issue.BlockedBy)
 	}
+}
+
+// TestParseBlockedBy_Matrix pins every supported non-inline
+// blocker-discovery source end-to-end. The matrix covers:
+//   - heading aliases (`## Blocked by` / `## Depends on` / `## Blocked-by`)
+//   - body bare `#N` / link / titled-link bullet forms
+//   - body trailing-annotation bullets
+//   - GitHub-native dependency data merged via FetchIssue
+//   - heading-free bodies that should be empty
+//
+// Each case exercises a single source in isolation. The shared
+// parseBlockedBy path is the heading-only contract; the native
+// merge is the FetchIssue-level union. Inline phrases outside a
+// heading are explicitly excluded from every case.
+func TestParseBlockedBy_Matrix(t *testing.T) {
+	t.Run("heading aliases", func(t *testing.T) {
+		for _, heading := range []string{"## Blocked by", "## Depends on", "## Blocked-by"} {
+			t.Run(heading, func(t *testing.T) {
+				body := heading + "\n- #42\n- #43"
+				got := parseBlockedBy(body)
+				if !slices.Equal(got, []int{42, 43}) {
+					t.Fatalf("expected [42 43] for %q, got %v", heading, got)
+				}
+			})
+		}
+	})
+
+	t.Run("case-insensitive heading", func(t *testing.T) {
+		body := "## BLOCKED-BY\n- #100"
+		got := parseBlockedBy(body)
+		if !slices.Equal(got, []int{100}) {
+			t.Fatalf("expected [100], got %v", got)
+		}
+	})
+
+	t.Run("body bare bullet", func(t *testing.T) {
+		body := "## Blocked by\n- #1\n- #2\n- #3"
+		got := parseBlockedBy(body)
+		if !slices.Equal(got, []int{1, 2, 3}) {
+			t.Fatalf("expected [1 2 3], got %v", got)
+		}
+	})
+
+	t.Run("body link bullet", func(t *testing.T) {
+		body := "## Blocked by\n- [#382](https://github.com/rafaelromao/sandman/issues/382)\n- [#60](https://github.com/rafaelromao/sandman/issues/60)"
+		got := parseBlockedBy(body)
+		if !slices.Equal(got, []int{382, 60}) {
+			t.Fatalf("expected [382 60], got %v", got)
+		}
+	})
+
+	t.Run("body titled-link bullet", func(t *testing.T) {
+		body := "## Blocked by\n\n[Real issue](https://github.com/rafaelromao/slotmerge/issues/42)"
+		got := parseBlockedBy(body)
+		if !slices.Equal(got, []int{42}) {
+			t.Fatalf("expected [42], got %v", got)
+		}
+	})
+
+	t.Run("body trailing-annotation bullet", func(t *testing.T) {
+		body := "## Blocked by\n- [Issue #288](https://github.com/rafaelromao/slotmerge/issues/288) (T2: description)\n- #289"
+		got := parseBlockedBy(body)
+		if !slices.Equal(got, []int{288, 289}) {
+			t.Fatalf("expected [288 289], got %v", got)
+		}
+	})
+
+	t.Run("heading ends at next H2", func(t *testing.T) {
+		body := "## What to build\n\nSome description.\n\n## Blocked by\n\n- #382\n- #60\n\n## Runtime Context"
+		got := parseBlockedBy(body)
+		if !slices.Equal(got, []int{382, 60}) {
+			t.Fatalf("expected [382 60], got %v", got)
+		}
+	})
+
+	t.Run("empty body", func(t *testing.T) {
+		if got := parseBlockedBy(""); got != nil {
+			t.Fatalf("expected nil, got %v", got)
+		}
+	})
+
+	t.Run("body without heading", func(t *testing.T) {
+		body := "## What to build\n\n- #1\n- #2"
+		if got := parseBlockedBy(body); got != nil {
+			t.Fatalf("expected nil, got %v", got)
+		}
+	})
+}
+
+func TestCLIClient_FetchIssue_BlockedByMatrix(t *testing.T) {
+	type tc struct {
+		name     string
+		body     string
+		native   string
+		wantBody []int
+	}
+	cases := []tc{
+		{
+			name:     "heading only",
+			body:     "## Blocked by\n- #60\n- #7",
+			wantBody: []int{60, 7},
+		},
+		{
+			name:     "heading with native events-API union",
+			body:     "## Blocked by\n- #60\n- #7",
+			native:   `[{"event":"blocked_by_added","blocking_issue":{"number":99}},{"event":"blocked_by_added","blocking_issue":{"number":60}}]`,
+			wantBody: []int{60, 7, 99},
+		},
+		{
+			name:     "native only with body event fallback",
+			body:     "",
+			native:   `[{"event":"blocked_by_added","blocking_issue":{"number":60}},{"event":"blocked_by_added","blocking_issue":{"number":7}}]`,
+			wantBody: []int{60, 7},
+		},
+		{
+			name:     "no heading and no native",
+			body:     "## What to build\n\n- #1",
+			wantBody: nil,
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			responses := []fakeResponse{
+				{output: `{"name":"sandman","owner":{"login":"rafaelromao"}}`},
+				{output: `{"number":61,"state":"open","title":"Issue 61","body":` + jsonQuote(c.body) + `,"labels":[],"issue_dependencies_summary":{"blocked_by":0,"total_blocked_by":0,"blocking":0,"total_blocking":0}}`},
+				{output: c.native},
+			}
+			if c.native == "" {
+				responses[2] = fakeResponse{output: `[]`}
+			}
+			runner := &fakeRunner{responses: responses}
+			client := &CLIClient{runner: runner}
+			issue, err := client.FetchIssue(context.Background(), 61)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if !slices.Equal(issue.BlockedBy, c.wantBody) {
+				t.Fatalf("expected BlockedBy %v, got %v", c.wantBody, issue.BlockedBy)
+			}
+		})
+	}
+}
+
+// jsonQuote escapes a Go string for inclusion as a JSON literal value.
+func jsonQuote(s string) string {
+	var b strings.Builder
+	b.WriteByte('"')
+	for _, r := range s {
+		switch r {
+		case '"':
+			b.WriteString(`\"`)
+		case '\\':
+			b.WriteString(`\\`)
+		case '\n':
+			b.WriteString(`\n`)
+		case '\r':
+			b.WriteString(`\r`)
+		case '\t':
+			b.WriteString(`\t`)
+		default:
+			b.WriteRune(r)
+		}
+	}
+	b.WriteByte('"')
+	return b.String()
 }
 
 func TestCLIClient_FetchIssue_CachesResolvedRepo(t *testing.T) {
@@ -632,36 +798,6 @@ func TestParseBlockedBy(t *testing.T) {
 		body string
 		want []int
 	}{
-		{
-			name: "matches accepted phrases case-insensitively",
-			body: "Depends on #7\nblocked by #60\nblocked-by #12",
-			want: []int{7, 60, 12},
-		},
-		{
-			name: "colon variant matches blocked-by with colon",
-			body: "blocked-by: #123",
-			want: []int{123},
-		},
-		{
-			name: "inline code variant",
-			body: "`blocked by #456`",
-			want: []int{456},
-		},
-		{
-			name: "bold variant",
-			body: "**blocked by #789**",
-			want: []int{789},
-		},
-		{
-			name: "italic variant",
-			body: "*blocked by #111*",
-			want: []int{111},
-		},
-		{
-			name: "deduplicates repeated issue references",
-			body: "Blocked by #60\nblocked by #60",
-			want: []int{60},
-		},
 		{
 			name: "ignores plain issue references without phrase",
 			body: "## Not a blocker heading\n- #60",
@@ -728,21 +864,6 @@ func TestParseBlockedBy(t *testing.T) {
 			want: []int{100},
 		},
 		{
-			name: "ignores partial phrase matches",
-			body: "notblocked by #60",
-			want: nil,
-		},
-		{
-			name: "mixed inline and heading blocks",
-			body: "Blocked by #1\n## Blocked by\n- #2\n- #3",
-			want: []int{1, 2, 3},
-		},
-		{
-			name: "inline markdown link matches",
-			body: "Blocked by [#1](https://github.com/rafaelromao/sandman/issues/1)",
-			want: []int{1},
-		},
-		{
 			name: "heading blocks with real issue body format",
 			body: "## What to build\n\nSome description\n\n## Blocked by\n\n- #382\n- #60\n\n## Runtime Context",
 			want: []int{382, 60},
@@ -767,6 +888,31 @@ func TestParseBlockedBy(t *testing.T) {
 			body: "## Parent\n\nPRD link.\n\n## What to build\n\nSome build description.\n\n## Blocked by\n\n- [Provision app shell, auth, and Postgres bootstrap](https://github.com/rafaelromao/slotmerge/issues/20)\n- [Provision GCP project and deployment foundation](https://github.com/rafaelromao/slotmerge/issues/132)\n",
 			want: []int{20, 132},
 		},
+		{
+			name: "rejects inline phrase without heading",
+			body: "Blocked by #1",
+			want: nil,
+		},
+		{
+			name: "rejects depends on without heading",
+			body: "Depends on #5\n",
+			want: nil,
+		},
+		{
+			name: "rejects blocked-by colon variant without heading",
+			body: "blocked-by: #123",
+			want: nil,
+		},
+		{
+			name: "rejects inline markdown link without heading",
+			body: "Blocked by [#1](https://github.com/rafaelromao/sandman/issues/1)",
+			want: nil,
+		},
+		{
+			name: "rejects inline phrase inside child-list annotation",
+			body: "## Children\n- #10 (blocked by #2319)",
+			want: nil,
+		},
 	}
 
 	for _, tt := range tests {
@@ -785,21 +931,6 @@ func TestParseChildrenFromBody(t *testing.T) {
 		body string
 		want []int
 	}{
-		{
-			name: "inline children colon variant",
-			body: "Children: #42",
-			want: []int{42},
-		},
-		{
-			name: "inline child issues colon variant",
-			body: "Child Issues: #99",
-			want: []int{99},
-		},
-		{
-			name: "inline children with markdown link",
-			body: "children [#1](https://github.com/example/project/issues/1)",
-			want: []int{1},
-		},
 		{
 			name: "heading children section",
 			body: "## Children\n- #10\n- #11",
@@ -821,19 +952,9 @@ func TestParseChildrenFromBody(t *testing.T) {
 			want: []int{10},
 		},
 		{
-			name: "inline and heading merged and deduped",
-			body: "Children: #10\n## Children\n- #10\n- #11",
-			want: []int{10, 11},
-		},
-		{
 			name: "heading bounded by next section",
 			body: "## Children\n- #10\n\n## Blocked by\n- #20",
 			want: []int{10},
-		},
-		{
-			name: "no match for standalone number without phrase",
-			body: "Related #42.",
-			want: nil,
 		},
 		{
 			name: "case insensitive heading children",
@@ -846,14 +967,34 @@ func TestParseChildrenFromBody(t *testing.T) {
 			want: []int{200},
 		},
 		{
-			name: "deduplicates inline and heading",
-			body: "Children: #10\n## Children\n- #10",
-			want: []int{10},
+			name: "rejects inline children colon variant",
+			body: "Children: #42",
+			want: nil,
 		},
 		{
-			name: "multiple inline variants",
-			body: "Children: #1\nChild Issues: #2\nchildren #3\nchild issues: #4",
-			want: []int{1, 2, 3, 4},
+			name: "rejects inline child issues colon variant",
+			body: "Child Issues: #99",
+			want: nil,
+		},
+		{
+			name: "rejects inline children with markdown link",
+			body: "children [#1](https://github.com/example/project/issues/1)",
+			want: nil,
+		},
+		{
+			name: "no match for body without child heading",
+			body: "## What to build\n\n- #1\n- #2",
+			want: nil,
+		},
+		{
+			name: "no match for standalone number without heading",
+			body: "Related #42.",
+			want: nil,
+		},
+		{
+			name: "parenthesised child mention in prose is ignored",
+			body: "## Children\n- #10 (blocked by #2319)",
+			want: []int{10},
 		},
 	}
 
