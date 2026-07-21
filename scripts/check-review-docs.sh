@@ -51,13 +51,15 @@ while IFS= read -r -d '' md; do
 done < <(find "$ROOT/docs" -type f -name '*.md' -print0 2>/dev/null)
 
 # Issue #2332: positive phrasing guard for the quality rules template.
-# Ensures the new construct tags, the unavailable-rules verdict, the
-# four Quality check sub-sections, and the blast-radius labels are
-# present in the prompt and rules files. Mirror in
-# internal/review/docguard_test.go.
+# Ensures the new construct tags and the unavailable-rules verdict are
+# present in the rules file, and that the Quality-check headings and
+# blast-radius labels are present in the prompt file. Mirror in
+# internal/review/docguard_test.go. Each case arm matches exactly one
+# file (the second arm must NOT be unreachable — see review feedback on
+# PR #2334).
 while IFS= read -r -d '' md; do
   case "$md" in
-    "$ROOT"/internal/prompt/quality_rules.md|"$ROOT"/internal/prompt/default_pr_review_prompt.md)
+    "$ROOT"/internal/prompt/quality_rules.md)
       file="$md"
       grep -q '\[control-flow\]' "$file" || { echo "docguard: $file must contain construct tag [control-flow] (issue #2332)" >&2; fail=1; }
       grep -q '\[functional\]' "$file" || { echo "docguard: $file must contain construct tag [functional] (issue #2332)" >&2; fail=1; }
@@ -67,13 +69,18 @@ while IFS= read -r -d '' md; do
       ;;
     "$ROOT"/internal/prompt/default_pr_review_prompt.md)
       file="$md"
+      grep -q '\[control-flow\]' "$file" || { echo "docguard: $file must contain construct tag [control-flow] (issue #2332)" >&2; fail=1; }
+      grep -q '\[functional\]' "$file" || { echo "docguard: $file must contain construct tag [functional] (issue #2332)" >&2; fail=1; }
+      grep -q '\[OOP\]' "$file" || { echo "docguard: $file must contain construct tag [OOP] (issue #2332)" >&2; fail=1; }
+      grep -q '\[public-api\]' "$file" || { echo "docguard: $file must contain construct tag [public-api] (issue #2332)" >&2; fail=1; }
+      grep -q 'Quality rules unavailable in this repository; no built-in quality-rule evaluation was applied.' "$file" || { echo "docguard: $file must contain unavailable-rules verdict (issue #2332)" >&2; fail=1; }
       grep -q '### Scope' "$file" || { echo "docguard: $file must contain Quality check heading ### Scope (issue #2332)" >&2; fail=1; }
       grep -q '### Metrics' "$file" || { echo "docguard: $file must contain Quality check heading ### Metrics (issue #2332)" >&2; fail=1; }
       grep -q '### Findings' "$file" || { echo "docguard: $file must contain Quality check heading ### Findings (issue #2332)" >&2; fail=1; }
       grep -q '### Tools used' "$file" || { echo "docguard: $file must contain Quality check heading ### Tools used (issue #2332)" >&2; fail=1; }
-      grep -q 'focused' "$file" || { echo "docguard: $file must contain blast-radius label focused (issue #2332)" >&2; fail=1; }
-      grep -q 'mixed scope' "$file" || { echo "docguard: $file must contain blast-radius label mixed scope (issue #2332)" >&2; fail=1; }
-      grep -q 'cross-cutting' "$file" || { echo "docguard: $file must contain blast-radius label cross-cutting (issue #2332)" >&2; fail=1; }
+      grep -q 'focused — ' "$file" || { echo "docguard: $file must contain blast-radius label focused with justification slot (issue #2332)" >&2; fail=1; }
+      grep -q 'mixed scope — ' "$file" || { echo "docguard: $file must contain blast-radius label mixed scope with justification slot (issue #2332)" >&2; fail=1; }
+      grep -q 'cross-cutting — ' "$file" || { echo "docguard: $file must contain blast-radius label cross-cutting with justification slot (issue #2332)" >&2; fail=1; }
       ;;
   esac
 done < <(find "$ROOT/internal/prompt" -type f -name '*.md' -print0 2>/dev/null)
