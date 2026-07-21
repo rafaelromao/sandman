@@ -31,9 +31,6 @@ func ClearReviewArtifacts(branch, worktreeDir string, logWriter io.Writer) {
 	if out, err := exec.Command("git", "worktree", "remove", "--force", wtPath).CombinedOutput(); err != nil && !isMissingWorktreeErr(out) {
 		fmt.Fprintf(logWriter, "error: remove review worktree %s: %v: %s\n", wtPath, err, out)
 	}
-	if out, err := exec.Command("git", "worktree", "prune").CombinedOutput(); err != nil {
-		fmt.Fprintf(logWriter, "error: prune review worktrees: %v: %s\n", err, out)
-	}
 	if out, err := exec.Command("git", "branch", "-D", branch).CombinedOutput(); err != nil && !isMissingBranchErr(out) {
 		fmt.Fprintf(logWriter, "error: delete review branch %s: %v: %s\n", branch, err, out)
 	}
