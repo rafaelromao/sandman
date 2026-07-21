@@ -192,7 +192,7 @@ func assertNoSmoothScroll(t *testing.T, file, src string) {
 }
 
 // TestPortal_SwitchRows_InstantScrollDoesNotRegress is a regression
-// guard after the smooth→instant+nearest fix: the Slice 0 rapid-row-
+// guard after the smooth→instant+nearest fix: the rapid-row-
 // switch scenario must not regress versus the pinned slice-0 baseline.
 // It asserts against the pinned copy at
 // portal_perf_switch_rows_baseline_slice0.json, not the live baseline

@@ -148,7 +148,7 @@ func TestPortal_RunFromState_MultiIssueBatchActive_LogPathUsesOnDiskDirSuffix(t 
 // active=nil; for a multi-issue batch the LogPath must still come from
 // runState.BatchID() (the event payload's batch_id, with "+N") — NOT
 // from a hard-coded index-entry-id. This slice is the no-regression
-// guard for the active-row fix in Slice 1.
+// guard for the active-row fix.
 func TestPortal_RunFromState_ActiveNil_MultiIssueBatch_LogPathFromEventPayload(t *testing.T) {
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
@@ -195,7 +195,7 @@ func TestPortal_RunFromState_ActiveNil_MultiIssueBatch_LogPathFromEventPayload(t
 // per-row RunID must be resolved from the per-row run.json under the
 // on-disk "+N" directory, distinct from the on-disk BatchId. Without
 // this fix, active.RunID == active.BatchID and the staleness stat
-// falls back to startedAt (issue #1715). Issue #1954 (slice 11) pins
+// falls back to startedAt (issue #1715). Issue #1954 pins
 // the public BatchId contract: the manifest BatchId must equal the
 // on-disk directory basename (with "+N"), so the portal Batch label
 // and Details tab render `<ts>-<sid>-<first>+<additionalCount>`.

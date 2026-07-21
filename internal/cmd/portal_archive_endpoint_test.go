@@ -498,7 +498,7 @@ func TestPortal_ArchiveEndpoint_SurfaceArchivedFlagInRunsAPI(t *testing.T) {
 //
 // Uses n=2 (multi-issue) so the public BatchId carries +1 and differs
 // from the per-row RunID; single-issue batches use the public BatchId
-// = per-row RunID shape (issue #1917 slice 1).
+// = per-row RunID shape (issue #1917).
 func TestPortal_ArchiveEndpoint_EndToEndRealRunIDToDirName(t *testing.T) {
 	repoRoot, err := os.MkdirTemp("/tmp", "sm-archive-e2e-")
 	if err != nil {
@@ -573,7 +573,7 @@ func TestPortal_ArchiveEndpoint_EndToEndRealRunIDToDirName(t *testing.T) {
 		t.Fatalf("expected 200 for per-row id %q, got %d: %s", perRowID, resp.StatusCode, body)
 	}
 
-	// Slice 8 contract: 200 has an empty body.
+	// 200 has an empty body.
 	if len(bytesTrimSpace(body)) != 0 {
 		t.Errorf("expected empty 200 body, got %q", body)
 	}
@@ -676,7 +676,7 @@ func TestPortal_ArchiveEndpoint_ResolvesPerRowRunIDToBatchEntryID(t *testing.T) 
 		t.Fatalf("expected 200 for per-row id %q, got %d: %s", perRowID, resp.StatusCode, body)
 	}
 
-	// Slice 8 contract: 200 has an empty body.
+	// 200 has an empty body.
 	if len(bytesTrimSpace(body)) != 0 {
 		t.Errorf("expected empty 200 body, got %q", body)
 	}
@@ -788,7 +788,7 @@ func TestPortal_ArchiveEndpoint_MultiIssuePerRowIDsResolveToSameEntry(t *testing
 				t.Fatalf("expected 200 for per-row id %q, got %d: %s", perRowID, resp.StatusCode, body)
 			}
 
-			// Slice 8 contract: 200 has an empty body.
+			// 200 has an empty body.
 			if len(bytesTrimSpace(body)) != 0 {
 				t.Errorf("expected empty 200 body, got %q", body)
 			}
@@ -887,7 +887,7 @@ func TestPortal_ArchiveEndpoint_ContinueReview(t *testing.T) {
 		t.Fatalf("expected 200 for per-row id %q, got %d: %s", perRowID, resp.StatusCode, body)
 	}
 
-	// Slice 8 contract: 200 has an empty body.
+	// 200 has an empty body.
 	if len(bytesTrimSpace(body)) != 0 {
 		t.Errorf("expected empty 200 body, got %q", body)
 	}
@@ -1107,7 +1107,7 @@ func TestPortal_ArchiveEndpoint_ContinueIssueRun(t *testing.T) {
 }
 
 // TestPortal_ArchiveEndpoint_PromptOnlyRun covers sandman run --prompt:
-// per issue #1920 (slice 4 of #1916), the per-row RunID equals the
+// per issue #1920 (#1916), the per-row RunID equals the
 // public BatchId, which is "<shortid>-<ts>-prompt-<userid>" (or
 // "<shortid>-<ts>-prompt" without a userid). The on-disk probe resolves
 // the per-row id through runs/<runID>/run.json, so the per-row dir
@@ -1127,7 +1127,7 @@ func TestPortal_ArchiveEndpoint_PromptOnlyRun(t *testing.T) {
 	userID := "my-fix-task"
 	publicBatchID := runid.NewBatchID(runid.KindPromptOnly, 1, userID, ts, shortid)
 	perRowID := runid.NewRunID(runid.KindPromptOnly, userID, ts, shortid)
-	// RunID == public BatchId for prompt-only (issue #1920 slice 4).
+	// RunID == public BatchId for prompt-only (issue #1920).
 	if perRowID != publicBatchID {
 		t.Fatalf("fixture invariant: perRowID %q must equal publicBatchID %q (RunID == public BatchId for prompt-only)", perRowID, publicBatchID)
 	}
@@ -1452,7 +1452,7 @@ func TestPortal_ArchiveEndpoint_PerRowIDPreservesErrorStatuses(t *testing.T) {
 	})
 }
 
-// TestPortal_ArchiveEndpoint_PerRowEmpty200 covers slice 3: the
+// TestPortal_ArchiveEndpoint_PerRowEmpty200 covers the per-row empty 200 contract:
 // archive endpoint is per-row, returns empty 200 on success, and
 // moves only runs/<runID>/ to archive/<batchID>/runs/<runID>/. The
 // batch dir stays in place under .sandman/batches/ and the live run
@@ -1536,7 +1536,7 @@ func TestPortal_ArchiveEndpoint_PerRowEmpty200(t *testing.T) {
 	}
 }
 
-// TestPortal_ArchiveEndpoint_409NonTerminal covers slice 3: a row
+// TestPortal_ArchiveEndpoint_409NonTerminal covers the 409 contract: a row
 // whose run.json Status is still active must return 409 with a
 // non-terminal message; the live folder is preserved and the index
 // does not grow a per-row record.
@@ -1600,7 +1600,7 @@ func TestPortal_ArchiveEndpoint_409NonTerminal(t *testing.T) {
 }
 
 // TestPortal_ArchiveEndpoint_409AlreadyArchived_EchoesArchivePath
-// covers slice 3: an already-archived row returns 409 with the
+// covers the already-archived contract: an already-archived row returns 409 with the
 // existing ArchivePath echoed in the error body so the operator can
 // see where it lives.
 func TestPortal_ArchiveEndpoint_409AlreadyArchived_EchoesArchivePath(t *testing.T) {
@@ -1654,7 +1654,7 @@ func TestPortal_ArchiveEndpoint_409AlreadyArchived_EchoesArchivePath(t *testing.
 	}
 }
 
-// TestPortal_ArchiveEndpoint_LeavesSiblingsAlive covers slice 3: when
+// TestPortal_ArchiveEndpoint_LeavesSiblingsAlive covers the sibling-alive contract: when
 // a batch hosts two runs and the operator archives one, the sibling
 // row folder, log, and socket must remain in place under
 // .sandman/batches/<batchID>/runs/<sibling>/.
@@ -1720,7 +1720,7 @@ func TestPortal_ArchiveEndpoint_LeavesSiblingsAlive(t *testing.T) {
 	}
 }
 
-// TestPortal_ArchiveEndpoint_404ForUnknownRunID covers slice 3: a
+// TestPortal_ArchiveEndpoint_404ForUnknownRunID covers the unknown-runID contract: a
 // request whose runId does not resolve on disk or in the index must
 // return 404, leaving the index untouched.
 func TestPortal_ArchiveEndpoint_404ForUnknownRunID(t *testing.T) {

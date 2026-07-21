@@ -2927,7 +2927,7 @@ func TestPortal_BatchKeyForActive_FallbackChain(t *testing.T) {
 		want   string
 	}{
 		{
-			// Issue #1954 (slice 11): BatchID (public BatchId) wins
+			// Issue #1954: BatchID (public BatchId) wins
 			// over Key (per-row RunID) so the portal Batch label and
 			// Details tab render the public BatchId for multi-issue
 			// active rows. Pre-#1917 this case expected "per-row-1";
@@ -2979,7 +2979,7 @@ func TestPortal_BatchKeyForActive_FallbackChain(t *testing.T) {
 // (prefactor) contract for portalRunsView.resolveRunLog: a non-terminal
 // state with non-empty active live output returns the live output, not
 // the saved log. This locks in the pre-fix behaviour so the refactor
-// in slice 1 stays red-stays-green. Slice 2 will add a separate test
+// pin the red-stays-green contract here; a separate test will cover the green path.
 // that flips the terminal-row branch via
 // TestPortal_RunFromState_CompletedKeepsSavedLogWhenBatchSocketAlive.
 func TestPortal_ResolveRunLog_PrefersLiveForNonTerminal(t *testing.T) {
@@ -3381,7 +3381,7 @@ func TestPortal_ActiveKeyForActive_FallbackChain(t *testing.T) {
 }
 
 // TestPortal_ActiveBatchKey_EqualsPublicBatchId pins the public BatchId
-// contract for the portal surfaces (issue #1917 slice 1):
+// contract for the portal surfaces (issue #1917):
 //
 //   - active.BatchKey (rendered as the "Batch:" label and the Details
 //     tab "batch" field) MUST equal the public BatchId (== batch folder
@@ -3443,7 +3443,7 @@ func TestPortal_ActiveBatchKey_EqualsPublicBatchId(t *testing.T) {
 
 // TestPortal_EventPayloadBatchId_EqualsPublicBatchId pins that the
 // event payload `batch_id` field equals the public BatchId (issue
-// #1917 slice 1). The orchestrator sources `payload.batch_id` from
+// #1917). The orchestrator sources `payload.batch_id` from
 // `issueBatchIDForRequest(req)` which delegates to
 // `batch.BatchIDForIssue(firstIssueNum, n, ts, shortid)`. For a
 // single-issue batch the field carries no +N suffix; for a multi-issue
@@ -3496,7 +3496,7 @@ func TestPortal_EventPayloadBatchId_EqualsPublicBatchId(t *testing.T) {
 }
 
 // TestPortal_RunsAPI_BatchKeyEqualsPublicBatchId pins the public
-// BatchId contract at the HTTP API boundary (issue #1917 slice 1):
+// BatchId contract at the HTTP API boundary (issue #1917):
 //
 //   - GET /api/runs must return `run.batchKey` == public BatchId for
 //     both single-issue and multi-issue issue batches. The portal's
@@ -3618,7 +3618,7 @@ func TestPortal_RunsAPI_BatchKeyEqualsPublicBatchId(t *testing.T) {
 
 // TestPortal_ActiveBatchKey_EqualsPublicBatchId_PromptOnly pins the
 // prompt-only public BatchId contract at the active-row portal seam
-// (issue #1920 slice 4 of #1916):
+// (#1916):
 //
 //   - active.BatchKey (rendered as the "Batch:" label and the Details
 //     tab "batch" field) MUST equal the public BatchId (== batch folder
@@ -3649,7 +3649,7 @@ func TestPortal_ActiveBatchKey_EqualsPublicBatchId_PromptOnly(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			publicBatchID := runid.NewBatchID(runid.KindPromptOnly, 1, tt.firstSub, ts, shortid)
 			perRowID := runid.NewRunID(runid.KindPromptOnly, tt.firstSub, ts, shortid)
-			// RunID == BatchId for prompt-only (issue #1920 slice 4).
+			// RunID == BatchId for prompt-only.
 			if perRowID != publicBatchID {
 				t.Errorf("per-row RunID = %q, want %q (RunID == public BatchId for prompt-only)", perRowID, publicBatchID)
 			}
@@ -3687,7 +3687,7 @@ func TestPortal_ActiveBatchKey_EqualsPublicBatchId_PromptOnly(t *testing.T) {
 
 // TestPortal_RunsAPI_BatchKeyEqualsPublicBatchId_PromptOnly pins the
 // prompt-only public BatchId contract at the HTTP API boundary
-// (issue #1920 slice 4 of #1916):
+// (#1916):
 //
 //   - GET /api/runs must return `run.batchKey` == public BatchId for
 //     both the with-userid and without-userid prompt-only shapes. The
@@ -3790,7 +3790,7 @@ func TestPortal_RunsAPI_BatchKeyEqualsPublicBatchId_PromptOnly(t *testing.T) {
 				t.Errorf("run.batchKey = %q, want %q (public BatchId)", got.BatchKey, tt.wantBatch)
 			}
 			// Per-row RunID must equal the public BatchId (issue #1920
-			// slice 4 contract: RunID == BatchId for prompt-only).
+			// contract: RunID == BatchId for prompt-only).
 			if got.RunID != tt.wantBatch {
 				t.Errorf("run.runID = %q, want %q (public BatchId == per-row RunID for prompt-only)", got.RunID, tt.wantBatch)
 			}

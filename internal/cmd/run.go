@@ -669,7 +669,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 					req.RunID = runID
 					req.BatchTS = ts
 					req.BatchShortID = shortid
-					// Prompt-only batches: per issue #1920 (slice 4 of #1916),
+					// Prompt-only batches: per issue #1920 (#1916),
 					// the public BatchId, the batch folder basename, and the
 					// per-row RunID all carry the same `prompt` segment so the
 					// on-disk folder name, batch.json.batchId, run.json.BatchID,
@@ -697,7 +697,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 			// already suppresses the cmd.sock server; per-run
 			// CommandServer creation is handled by the orchestrator.
 			//
-			// Per issue #1917 (slice 1) and #1920 (slice 4 of #1916):
+			// Per issue #1917 and #1920 (#1916):
 			// manifest.BatchId holds the PUBLIC BatchId (== batch folder
 			// basename), so the on-disk batch.json.batchId agrees with
 			// run.json.BatchID, the event payload batch_id, and the

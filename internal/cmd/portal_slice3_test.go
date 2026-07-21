@@ -209,7 +209,7 @@ func TestPortal_Compute_AggregatesChildReviewsOntoIssueRow(t *testing.T) {
 // row from decision.md (during compute, before the summary endpoint strips
 // Log). The parent's own terminal run.finished status ("success") is
 // preserved because the sibling review is terminal, not live — no
-// badge-flip fires. Slice 1 retargeted the projection source from run.log
+// badge-flip fires. The projection source was retargeted from run.log
 // (which had to tolerate shell debris) to decision.md (the controlled
 // artefact), so the verified fixture writes a bare **APPROVED** marker
 // directly.
@@ -230,7 +230,7 @@ func TestPortal_Compute_TerminalReviewWithApprovedMarker_PreservesParentStatus(t
 	})
 
 	// Register the review batch in the Batches index so runFromState
-	// can stamp RunDir from the index entry (slice 0 plumbing).
+	// can stamp RunDir from the index entry.
 	reviewBatchDir := filepath.Join(repoRoot, ".sandman", "batches", "PR99-review")
 	reviewRunDir := filepath.Join(reviewBatchDir, "runs", "PR99-review")
 	if err := os.MkdirAll(reviewRunDir, 0755); err != nil {
@@ -285,14 +285,14 @@ func TestPortal_Compute_TerminalReviewWithApprovedMarker_PreservesParentStatus(t
 
 // TestPortal_Compute_PreservesParentStatusWithTrailingQuoteRunLogShape
 // is the post-#1825 regression for issue #1767's saved-log shape, retargeted
-// to decision.md by slice 1 of #1938. The previous run.log-parser
+// to decision.md by #1938. The previous run.log-parser
 // (#1767) anchored the marker line and missed the **APPROVED** marker
 // when a trailing `"` followed it (the `gh pr comment --body "..."`
 // shell artifact). After the cross-batch aggregation removal, the
 // parent row's own terminal status is preserved regardless of any
 // review verdict projection.
 //
-// Slice 1: decision.md is the controlled artefact and does not carry
+// decision.md is the controlled artefact and does not carry
 // shell debris. The bare **APPROVED** marker without the trailing `"`
 // now drives the verdict. The previous lenient "trailing `"`" shape
 // moves to the negative-case row in TestPortal_ReviewVerdictFromDecisionFile
@@ -302,7 +302,7 @@ func TestPortal_Compute_TerminalReviewWithApprovedMarker_PreservesParentStatus(t
 // from `260704130316-4f35-1755-PR1763/run.log` (work item
 // 260704125005-18dc-1755 / issue #1755 "Embed sandman-index as a
 // sub-skill of sandman"); only the verdict-carrying artefact
-// changed in slice 1.
+// changed in this work.
 func TestPortal_Compute_PreservesParentStatusWithTrailingQuoteRunLogShape(t *testing.T) {
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
@@ -345,7 +345,7 @@ func TestPortal_Compute_PreservesParentStatusWithTrailingQuoteRunLogShape(t *tes
 		}},
 	})
 
-	// Slice 1: the verdict is read from <runDir>/decision.md (the
+	// The verdict is read from <runDir>/decision.md (the
 	// controlled artefact), not from run.log. We seed a bare
 	// **APPROVED** marker — the previous "trailing-quote" lenient
 	// shape is no longer tolerated (see
@@ -400,7 +400,7 @@ func TestPortal_Compute_PreservesParentStatusWithTrailingQuoteRunLogShape(t *tes
 		t.Fatalf("expected review row %q, got %#v", reviewRunID, runs)
 	}
 	if implRow.ReviewVerdict != "Approved" {
-		t.Fatalf("impl row ReviewVerdict=%q, want %q (verdict sourced from <runDir>/decision.md, slice 1 of #1938)", implRow.ReviewVerdict, "Approved")
+		t.Fatalf("impl row ReviewVerdict=%q, want %q (verdict sourced from <runDir>/decision.md, #1938)", implRow.ReviewVerdict, "Approved")
 	}
 	if reviewRow.Status != "success" {
 		t.Fatalf("review row Status=%q, want success (the agent exits 0 even when it approved)", reviewRow.Status)
@@ -412,13 +412,13 @@ func TestPortal_Compute_PreservesParentStatusWithTrailingQuoteRunLogShape(t *tes
 
 // TestPortal_Compute_PreservesParentStatusWithTrailingQuoteAndPipeRunLogShape
 // is the post-#1825 regression for issue #1792's saved-log shape, retargeted
-// to decision.md by slice 1 of #1938. The previous run.log parser (#1792)
+// to decision.md by #1938. The previous run.log parser (#1792)
 // anchored the marker line to `"?\s*$` and missed the **APPROVED** marker
 // when a trailing `" 2>&1 | tail -5` followed it. After the cross-batch
 // aggregation removal, the parent row's own terminal status is preserved
 // regardless of any review verdict projection.
 //
-// Slice 1: decision.md is the controlled artefact and does not carry
+// decision.md is the controlled artefact and does not carry
 // shell debris. The bare **APPROVED** marker without the trailing
 // `" 2>&1 | tail -5` now drives the verdict. The previous lenient
 // shell-debris shape moves to the negative-case rows in
@@ -428,7 +428,7 @@ func TestPortal_Compute_PreservesParentStatusWithTrailingQuoteRunLogShape(t *tes
 // The reproduction mirrors the actual log tail captured locally from
 // `260704185852-d9f0-1779-PR1789/run.log` (work item
 // 260704183525-a9d3-1779 "[slice 0] e2e gate hygiene" / issue #1779 /
-// PR #1789); only the verdict-carrying artefact changed in slice 1.
+// PR #1789); only the verdict-carrying artefact changed in this work.
 func TestPortal_Compute_PreservesParentStatusWithTrailingQuoteAndPipeRunLogShape(t *testing.T) {
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
@@ -471,7 +471,7 @@ func TestPortal_Compute_PreservesParentStatusWithTrailingQuoteAndPipeRunLogShape
 		}},
 	})
 
-	// Slice 1 (#1938): the verdict is read from
+	// The verdict is read from
 	// <runDir>/decision.md (the controlled artefact), not from
 	// run.log. We seed a bare **APPROVED** marker — the previous
 	// "trailing-quote+pipe" lenient shape is no longer tolerated
@@ -526,7 +526,7 @@ func TestPortal_Compute_PreservesParentStatusWithTrailingQuoteAndPipeRunLogShape
 		t.Fatalf("expected review row %q, got %#v", reviewRunID, runs)
 	}
 	if implRow.ReviewVerdict != "Approved" {
-		t.Fatalf("impl row ReviewVerdict=%q, want %q (verdict sourced from <runDir>/decision.md, slice 1 of #1938)", implRow.ReviewVerdict, "Approved")
+		t.Fatalf("impl row ReviewVerdict=%q, want %q (verdict sourced from <runDir>/decision.md, #1938)", implRow.ReviewVerdict, "Approved")
 	}
 	if reviewRow.Status != "success" {
 		t.Fatalf("review row Status=%q, want success (the agent exits 0 even when it approved)", reviewRow.Status)
@@ -1753,8 +1753,7 @@ func TestPortal_Compute_MultipleDeadBatches_IndependentIssueSets(t *testing.T) {
 // ("success" → "Approved"). But the review agent always exits 0
 // because it posts a single `gh pr comment` and exits cleanly,
 // regardless of what it decided. The actual reviewer decision lives
-// in the artefact published by the agent: <runDir>/decision.md (slice 1
-// of #1938), which contains a `## Decision` section with a literal
+// in the artefact published by the agent: <runDir>/decision.md (#1938), which contains a `## Decision` section with a literal
 // marker.
 //
 // This test pins the new behaviour: when the per-row decision.md
@@ -1809,13 +1808,13 @@ func TestPortal_Compute_ReviewVerdictFromDecisionFileOnDisk(t *testing.T) {
 		}},
 	})
 
-	// Slice 1 (#1938): the verdict is read from
+	// The verdict is read from
 	// <runDir>/decision.md. The agent wrote `**CHANGES_REQUESTED**`
 	// inside the `## Decision` section; run.finished is "success",
-	// so without the slice-1 verdict projection the parent row would
+	// so without the verdict projection the parent row would
 	// surface "Approved" instead of "Changes requested". The review
 	// batch is registered in the Batches index so runFromState can
-	// stamp RunDir from the index entry (slice 0 plumbing).
+	// stamp RunDir from the index entry.
 	reviewBatchDir := filepath.Join(repoRoot, ".sandman", "batches", reviewBatchID)
 	reviewRunDir := filepath.Join(reviewBatchDir, "runs", reviewRunID)
 	if err := os.MkdirAll(reviewRunDir, 0755); err != nil {
@@ -1864,7 +1863,7 @@ func TestPortal_Compute_ReviewVerdictFromDecisionFileOnDisk(t *testing.T) {
 		t.Fatalf("expected review row %q, got %#v", reviewRunID, runs)
 	}
 	if implRow.ReviewVerdict != "Changes requested" {
-		t.Fatalf("impl row ReviewVerdict=%q, want %q (verdict sourced from <runDir>/decision.md, slice 1 of #1938)", implRow.ReviewVerdict, "Changes requested")
+		t.Fatalf("impl row ReviewVerdict=%q, want %q (verdict sourced from <runDir>/decision.md, #1938)", implRow.ReviewVerdict, "Changes requested")
 	}
 	if reviewRow.Status != "success" {
 		t.Fatalf("review row Status=%q, want success (the agent exits 0 even when it requested changes)", reviewRow.Status)
@@ -1875,7 +1874,7 @@ func TestPortal_Compute_ReviewVerdictFromDecisionFileOnDisk(t *testing.T) {
 }
 
 // TestPortal_ReviewVerdictFromDecisionFile pins the boundary of the
-// reviewVerdictFromDecisionFile helper (issue #1938 slice 1). Each
+// reviewVerdictFromDecisionFile helper (issue #1938). Each
 // case writes a real decision.md file into a t.TempDir-backed
 // <repoRoot>/.sandman/batches/<batchID>/runs/<runID> folder and
 // asserts the helper's verdict + ok flag. The cases cover the
@@ -2065,7 +2064,7 @@ func TestPortal_ReviewVerdictFromDecisionFile(t *testing.T) {
 			wantOK:    false,
 		},
 		{
-			// Slice 1 hardening: the previous run.log parser tolerated
+			// Hardening: the previous run.log parser tolerated
 			// shell-debris trailers (`gh pr comment --body "..."`,
 			// `2>&1 | tail -5`). decision.md is a controlled artefact
 			// with no shell prefix and no trailing debris, so these
@@ -2115,11 +2114,11 @@ func TestPortal_ReviewVerdictFromDecisionFile(t *testing.T) {
 			wantOK:    true,
 		},
 		{
-			// Issue #2224 slice 3b: when WorktreePath is set but the
+			// Issue #2224: when WorktreePath is set but the
 			// worktree's decision.md is missing (the worktree was
 			// cleaned up by ClearReviewArtifacts after the review),
 			// the reader must fall through to <runDir>/decision.md —
-			// the persistent copy postDecision writes (slice 3a).
+			// the persistent copy postDecision writes (issue #2224).
 			// Before this fix the reader returned ("", false) when the
 			// worktree file was absent, surfacing every review as
 			// Unclear.
@@ -2179,7 +2178,7 @@ func TestPortal_ReviewVerdictFromDecisionFile(t *testing.T) {
 			}
 			// Default: writeFile seeds the worktree copy (legacy
 			// behaviour preserved). New fields writeAtWorktree /
-			// writeAtRunDir let slice 3b cases override the default
+			// writeAtRunDir let cases introduced in issue #2224 override the default
 			// and seed the run-folder copy instead.
 			if tc.writeFile && tc.writeAtWorktree == false && tc.writeAtRunDir == false {
 				if err := os.WriteFile(filepath.Join(worktreeDir, "decision.md"), []byte(tc.contents), 0644); err != nil {

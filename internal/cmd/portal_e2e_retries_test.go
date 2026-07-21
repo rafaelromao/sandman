@@ -273,12 +273,12 @@ func readPortalRunsRawBody(t *testing.T, baseURL string) []byte {
 }
 
 // TestPortal_E2E_RowCarriesLiveAttemptAndRetryReason is the end-to-end
-// regression test for slice 1 of #1499. It writes events.jsonl with
+// Regression test for #1499. It writes events.jsonl with
 // run.started + run.retry (no run.finished yet), starts a real portal
 // HTTP server pointed at the temp repository, hits /api/runs?runKey=<id>
 // and /api/runs, and asserts the per-run JSON response carries
 // attempts: 1 and lastRetryReason: "agent-stalled" (the literal value
-// the test writer chose; slice 3 of #1499 will populate the orchestrator
+// the test writer chose; #1499 will populate the orchestrator
 // reason vocabulary). The test is decoupled from the orchestrator's
 // future writer changes by writing the event itself. It also locks the
 // behavior on the second endpoint (/api/runs) so the row's

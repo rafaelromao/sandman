@@ -1,19 +1,19 @@
 //go:build e2e
 
-// Slice 10 end-to-end tests for all batch-id rules.
+// end-to-end tests for all batch-id rules.
 //
 // This file is the only slice in parent PRD #1916 that adds e2e tests;
 // earlier slices (1-9) focused on unit/integration changes through the
-// public cmd/Dependencies and batch orchestrator seams. Slice 10
+// public cmd/Dependencies and batch orchestrator seams.
 // exercises the full identity model end-to-end through those same
 // public seams so every batch-id rule (slices 1-5), the per-row archive
-// flow (slice 8), and the --continue flow (slice 9) is validated against
+// flow, and the --continue flow is validated against
 // the actual on-disk and HTTP-rendered behavior.
 //
 // Greenfield .sandman policy
 // --------------------------
-// These tests assume a greenfield .sandman layout. The slice 8 archive
-// flow and the slice 9 --continue flow both operate on the
+// These tests assume a greenfield .sandman layout. The archive
+// flow and the --continue flow both operate on the
 // `.sandman/batches/<ts>-<sid>-<rest>/` (and `.sandman/archive/...`)
 // shapes introduced by ADR-0032, with no legacy `.sandman/runs/` paths
 // or pre-#1917 batch ids present at suite start. See
@@ -59,7 +59,7 @@ import (
 )
 
 // slice10TS and slice10ShortID are the deterministic (ts, shortid)
-// pair the slice 10 suite uses to mint canonical BatchIds that
+// pair the suite uses to mint canonical BatchIds that
 // match the strings the rest of the test fixture hard-codes. The
 // values intentionally avoid the time / random component so the
 // assertions can use full string equality.
@@ -85,12 +85,12 @@ func slice10MultiIssueBatchID() string {
 func slice10RequireGate(t *testing.T) {
 	t.Helper()
 	if !testenv.E2EGateAllowed(testenv.E2EScenarioBatchIDRules) {
-		t.Skip("set SANDMAN_E2E_GATES=batch_id_rules (or all) to run slice 10 e2e tests")
+		t.Skip("set SANDMAN_E2E_GATES=batch_id_rules (or all) to run e2e tests")
 	}
 }
 
 // slice10FreshSandmanDir returns the absolute path of the greenfield
-// per-test temp dir the slice 10 suite runs in. The dir is created by
+// per-test temp dir the suite runs in. The dir is created by
 // `newRunDeps` (or `newRunDepsInDir`) which sets up a fresh `.sandman/`
 // and chdirs the test into it. Callers must invoke `newRunDeps` (or the
 // `Auto`/`InDir` variant) BEFORE calling this helper so the path
@@ -382,8 +382,8 @@ func TestSlice10_PromptOnlyBatchIdentity(t *testing.T) {
 // behavior 6: the portal's /api/runs row must surface the public
 // BatchId (the batch folder basename, including the "+N" suffix for
 // multi-issue batches) on the Batch label and the Details tab
-// payload, not the per-row RunID. Issue #1954 closed by slice 11
-// pinned this ordering; slice 10 pins it end-to-end.
+// payload, not the per-row RunID. Issue #1954 closed
+// pinned this ordering; end-to-end.
 func TestSlice10_PortalBatchLabelAndDetailsRenderPublicBatchId(t *testing.T) {
 	slice10RequireGate(t)
 	repoRoot := testenv.MkdirShort(t, "sm-slice10-p-")
@@ -419,12 +419,12 @@ func TestSlice10_PortalBatchLabelAndDetailsRenderPublicBatchId(t *testing.T) {
 	}
 
 	// Wire a control socket under batchDir so the portal detects the
-	// active row and surfaces it (issue #1924 slice 5 contract:
+	// active row and surfaces it (issue #1924 contract:
 	// active rows surface via control socket).
 	slice10BindUnixSocket(t, filepath.Join(batchDir, "batch.sock"))
 
 	// Write the manifest under the batch dir with the PUBLIC BatchId
-	// (== batch dir basename, with "+N" for multi-issue). Slice 11
+	// (== batch dir basename, with "+N" for multi-issue).
 	// confirmed batchKeyForActive prefers manifest.BatchId over Key.
 	if err := daemon.WriteManifest(batchDir, daemon.BatchManifest{
 		BatchId:   batchID,
@@ -496,7 +496,7 @@ func TestSlice10_PortalBatchLabelAndDetailsRenderPublicBatchId(t *testing.T) {
 // TestSlice10_PortalLiveVsSavedVsArchivedLog covers behavior 7: the
 // portal must serve the live tail for an active row, the saved log
 // for a terminal row, and the archived log for a historical row.
-// Slice 8 hard-coded the live/saved/archived log resolution; slice 10
+// hard-coded the live/saved/archived log resolution;
 // pins it end-to-end through the public /api/runs endpoint.
 func TestSlice10_PortalLiveVsSavedVsArchivedLog(t *testing.T) {
 	slice10RequireGate(t)
@@ -1221,7 +1221,7 @@ func TestSlice10_ContinueReusesOriginalBranchAndWorktree(t *testing.T) {
 
 // TestSlice10_ContinueLeavesPreviousRunUnchanged pins behavior 9c:
 // the previous run's batch dir, run folder, manifest, and event log
-// are unchanged after the new run starts. Slice 9 explicitly guards
+// are unchanged after the new run starts. explicitly guards
 // against the continuation accidentally rewriting history.
 func TestSlice10_ContinueLeavesPreviousRunUnchanged(t *testing.T) {
 	slice10RequireGate(t)

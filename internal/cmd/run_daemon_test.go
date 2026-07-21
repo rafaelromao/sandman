@@ -49,7 +49,7 @@ func chdirToSandmanDir(t testing.TB) string {
 // chdirToShortSandmanDir is like chdirToSandmanDir but allocates the
 // temp dir under /tmp with a short prefix so the resulting socket
 // paths stay under the 108-byte Unix socket limit. The new run-id
-// scheme (slice 2) produces ~38-char directory names which, combined
+// scheme produces ~38-char directory names which, combined
 // with the default t.TempDir path prefix, push run.sock and cmd.sock
 // past the limit. Use this variant for tests that actually dial a
 // socket in the run dir.

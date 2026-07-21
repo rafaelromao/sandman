@@ -1,7 +1,7 @@
 // Package cmd documents the decision for the #1326 flaky-in-CI skip
 // cluster (#1784 / parent #1778).
 //
-// Decision (slice 5 of #1778): the #1326 flaky-in-CI skip cluster was
+// Decision (#1778): the #1326 flaky-in-CI skip cluster was
 // ported to the unit suite rather than re-enabled. The skipped tests in
 // this file all drove the real CLI orchestrator through
 // `executeRunCommand` against real `git` worktrees and (for podman

@@ -1,4 +1,4 @@
-// Tests for issue #1937 slice 0: portalRun.RunDir plumbing. The RunDir
+// Tests for issue #1937: portalRun.RunDir plumbing. The RunDir
 // field is the host-absolute path to the per-row run folder, used by
 // review verdict readers that use the run folder to find run.json and
 // recover the review worktree path for decision.md. The field is
@@ -17,7 +17,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/testenv"
 )
 
-// TestPortal_RunDir_ActiveRowStampsPerRowFolder pins slice 0b: every active
+// TestPortal_RunDir_ActiveRowStampsPerRowFolder pins: every active
 // row produced from a live portalActiveRun carries RunDir equal to the
 // per-row run folder on disk — `<batchDir>/runs/<runID>`. For
 // issue-driven batches whose live socket is `<batchDir>/batch.sock`,
@@ -84,7 +84,7 @@ func TestPortal_RunDir_FieldHasNoJSONTag(t *testing.T) {
 	}
 }
 
-// TestPortal_RunDir_TerminalRowStampsBatchesIndexPath pins slice 0c:
+// TestPortal_RunDir_TerminalRowStampsBatchesIndexPath pins:
 // a terminal event-log row whose batch is in the Batches index carries
 // RunDir equal to `<idx.Resolve(batchID).Path>/runs/<runID>`. The
 // Batches index is the source of truth for the on-disk location because
@@ -120,7 +120,7 @@ func TestPortal_RunDir_TerminalRowStampsBatchesIndexPath(t *testing.T) {
 }
 
 // TestPortal_RunDir_TerminalRowUnresolvableBatchLeavesRunDirEmpty pins
-// the negative side of slice 0c: when the terminal row's batch cannot
+// the negative side of the unresolvable-batch contract: when the terminal row's batch cannot
 // be resolved in the Batches index, RunDir stays empty. The caller
 // treats empty as Unclear (per the issue brief), so a missing index
 // entry must not fabricate a directory the verdict reader can't stat.

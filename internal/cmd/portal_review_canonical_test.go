@@ -368,7 +368,7 @@ func TestPortal_DocComments_DescribeServerSideStampingAndOrphanJSPath(t *testing
 			field: "ReviewVerdict",
 			required: []string{
 				"aggregateReviewChildren",       // canonical Go writer (parent rows)
-				"reviewVerdictFromDecisionFile", // verdict extraction helper (slice 1, #1938)
+				"reviewVerdictFromDecisionFile", // verdict extraction helper (#1938)
 			},
 		},
 		{
@@ -440,7 +440,7 @@ func intPtr(v int) *int {
 	return &v
 }
 
-// TestPortal_ReviewAggregation_HonorsCanonicalRowID pins slice 4: a parent
+// TestPortal_ReviewAggregation_HonorsCanonicalRowID pins the contract: a parent
 // implementation row and a child review row for the same IssueNumber must
 // continue to surface from the event log after the child resolves to its
 // canonical row RunID (rather than the batchId). The review row stays
@@ -474,14 +474,14 @@ func TestPortal_ReviewAggregation_HonorsCanonicalRowID(t *testing.T) {
 		{Type: "run.finished", Timestamp: startedAt.Add(7 * time.Minute), RunID: canonicalReviewRowID, Payload: map[string]any{"status": "success", "branch": "sandman/review-PR42", "review": true, "pr_number": 42, "issue_number": issueNumber, "batch_id": "2606181138-abcd-PR42"}},
 	})
 
-	// Issue #1729 + #1938 slice 1: parent ReviewVerdict flows from
+	// Issue #1729 + #1938: parent ReviewVerdict flows from
 	// <runDir>/decision.md (the controlled artefact), not from
 	// run.finished.status. The verdict reader is
 	// reviewVerdictFromDecisionFile. Seed an APPROVED marker in a
 	// real decision.md so the projection has a real value to
 	// surface. run.log is left as irrelevant chat noise. The review
 	// batch is registered in the Batches index so runFromState can
-	// stamp RunDir from the index entry (slice 0 plumbing).
+	// stamp RunDir from the index entry.
 	reviewBatchDir := filepath.Join(repoRoot, ".sandman", "batches", "2606181138-abcd-PR42")
 	reviewRunDir := filepath.Join(reviewBatchDir, "runs", canonicalReviewRowID)
 	if err := os.MkdirAll(reviewRunDir, 0755); err != nil {
@@ -576,11 +576,11 @@ func TestPortal_ParentImplRow_ReviewCountAndVerdictSurviveSummaryStrip(t *testin
 		{Type: "run.finished", Timestamp: startedAt.Add(7 * time.Minute), RunID: canonicalReviewRowID, Payload: map[string]any{"status": "success", "branch": "sandman/review-PR42", "review": true, "pr_number": 42, "issue_number": issueNumber, "batch_id": "2606181138-abcd-PR42"}},
 	})
 
-	// Issue #1938 slice 1: write the verdict-bearing content into
+	// Issue #1938: write the verdict-bearing content into
 	// decision.md (the controlled artefact); run.log is left as chat
 	// noise for the verdict projection. The review batch is also
 	// registered in the Batches index so runFromState can stamp
-	// RunDir from the index entry (slice 0 plumbing).
+	// RunDir from the index entry.
 	reviewBatchDir := filepath.Join(repoRoot, ".sandman", "batches", "2606181138-abcd-PR42")
 	reviewRunDir := filepath.Join(reviewBatchDir, "runs", canonicalReviewRowID)
 	if err := os.MkdirAll(reviewRunDir, 0755); err != nil {
@@ -646,7 +646,7 @@ func TestPortal_ParentImplRow_ReviewCountAndVerdictSurviveSummaryStrip(t *testin
 // restoring server-side stamping: the older aborted parent stays clean and the
 // newer successful parent carries the aggregated review metadata.
 //
-// Slice 1 (issue #1938): the verdict is read from
+// issue #1938: the verdict is read from
 // <runDir>/decision.md (the controlled artefact), not from run.log. Each
 // test below writes a real decision.md file into a t.TempDir-backed
 // <batchDir>/runs/<runID> folder and sets the review row's RunDir to
@@ -1520,7 +1520,7 @@ func TestPortal_ReviewGrouping_OrphanReviewStaysOrphan(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Per slice 3: batch_id == per-row RunID. For an orphan review
+	// batch_id == per-row RunID for orphan review
 	// the per-row RunID is `<ts>-<sid>-PR<pr>`, so batch_id is the
 	// same value. No `issue_number` in the payload (orphan).
 	const (
