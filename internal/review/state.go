@@ -16,7 +16,7 @@ import (
 // SeenCacheInvalidator is the seam between ReviewStateStore and the
 // daemon's per-process seen cache. It keeps the store independent of
 // daemon internals — production wires *Daemon, tests inject fakes.
-// Issue #1480 slice A.
+// Issue #1480.
 type SeenCacheInvalidator interface {
 	MarkTerminalSeen(prNumber int, commentID string)
 	Forget(prNumber int, commentID string)
@@ -46,7 +46,7 @@ func (noopInvalidator) Forget(int, string)           {}
 // the same comment). There is no separate claims/ directory on disk —
 // claims live inline in the JSON file's claims map.
 //
-// Slice 2 NOTE: The on-disk shape is batchindex.ReviewState, which is
+// NOTE: The on-disk shape is batchindex.ReviewState, which is
 // per-PR (the documented schema in ADR-0034). The store wraps that
 // shape with the atomic-rename writer and the in-memory dedup set so
 // callers don't need to know the file format.
@@ -195,7 +195,7 @@ func (s *ReviewStateStore) Release(commentID string) {
 // explicit control over the Attempts field or the NextAttemptAt
 // stamp.
 //
-// Cache side-effect: the SeenCacheInvalidator hook (slice A) fires
+// Cache side-effect: the SeenCacheInvalidator hook (issue #1480) fires
 // MarkTerminalSeen only when shouldSkipDedupStatus(status) is true
 // (success / superseded). A "failure" or "aborted" save does NOT
 // cache, preserving the rename-loser retry semantics from

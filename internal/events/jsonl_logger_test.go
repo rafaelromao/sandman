@@ -461,7 +461,7 @@ func TestJSONLLogger_RemoveEventsByIssue_FiltersByIssueRef(t *testing.T) {
 	}
 }
 
-// TestJSONLLogger_LogVsRemoveRace is the slice 6 regression test: N
+// TestJSONLLogger_LogVsRemoveRace is the #2224 regression test: N
 // concurrent Log calls run in parallel with one RemoveEventsByIssue
 // and no non-matching event is lost.
 func TestJSONLLogger_LogVsRemoveRace(t *testing.T) {

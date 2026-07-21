@@ -23,8 +23,8 @@ type CommentPoster interface {
 }
 
 // nopCommentPoster is a stub CommentPoster used by tests that do
-// not care about the post step. The daemon's other tests (slice
-// A, slice B, restart, canonical, etc.) wire this so the renamed
+// not care about the post step. The daemon's other tests (issue #1480,
+// restart, canonical, etc.) wire this so the renamed
 // review.New signature stays consistent without each test having
 // to add a CommentPoster fixture. Production wiring goes through
 // NewGHCommentPoster in internal/github/comment_poster.go.

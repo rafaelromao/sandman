@@ -97,12 +97,12 @@ func (s *RunSession) Broadcaster() *Broadcaster {
 //
 // # Contract: manifest.BatchId equals the PUBLIC BatchId
 //
-// Per issue #1917 (slice 1 of #1916), the batches index entry id and
+// Per issue #1917, the batches index entry id and
 // the batch.json.batchId field MUST equal the public BatchId (the
 // batch folder basename). This supersedes the earlier ADR-0036
 // contract (manifest.BatchId == per-row RunID).
 //
-// The public BatchId rules (per #1917, refined for review by #1919 slice 3):
+// The public BatchId rules (per #1917, refined for review by #1919):
 //
 //   - Issue single:    "<ts>-<sid>-<num>"                    (no +N suffix)
 //   - Issue multi:     "<ts>-<sid>-<firstIssue>+<additionalCount>"

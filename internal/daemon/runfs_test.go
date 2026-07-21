@@ -113,7 +113,7 @@ func TestWriteRunManifest(t *testing.T) {
 }
 
 // TestWriteRunManifest_PublicBatchIdRoundTrip pins the public BatchId
-// round-trip for issue batches (issue #1917 slice 1):
+// round-trip for issue batches (issue #1917):
 //
 //   - run.json.batchId equals the public BatchId (= batch folder
 //     basename = batch.json.batchId = event payload batch_id) for both
