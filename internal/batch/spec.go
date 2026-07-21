@@ -273,7 +273,6 @@ func (r *SpecificationResolver) expandOne(
 		bodyChildren := github.ParseChildrenFromBody(issue.Body)
 		if !hasChildren && len(bodyChildren) == 0 && len(subIssues) == 0 {
 			addUnique(num)
-			fmt.Fprintf(r.warningWriter, "running issue #%d as a regular issue (no children)\n", num)
 			return nil
 		}
 	}
