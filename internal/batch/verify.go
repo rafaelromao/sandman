@@ -16,11 +16,11 @@ const (
 	// oracle in the chain runs. When all oracles abstain, the
 	// conservative backstop is the only remaining signal.
 	OracleAbstain OracleResult = iota
-	// OracleDeferT1: T4's cheap gate sees APPROVED + CLEAN + green
-	// checks and wants the decision oracle to make the final call.
-	// The chain treats this like OracleAbstain for ordering: T1
-	// runs after T4.
-	OracleDeferT1
+	// OracleDeferDecision: CheapGate sees APPROVED + CLEAN + green
+	// checks and wants the Decision oracle to make the final call.
+	// The chain treats this like OracleAbstain for ordering: the
+	// Decision oracle runs after CheapGate.
+	OracleDeferDecision
 	// OracleVerified: the oracle produced a positive signal — the
 	// change is already on main. RunVerifyPath short-circuits with
 	// VerifyVerified and surfaces this oracle's check.
@@ -29,21 +29,22 @@ const (
 	// change is not on main. RunVerifyPath short-circuits with
 	// VerifyFailed.
 	OracleFailed
-	// OracleNoSignal: the oracle did not find a reason to verify
-	// or fail; equivalent to OracleAbstain for the chain but kept
-	// distinct so callers can tell the difference between "tried,
-	// no signal" and "didn't try".
+	// OracleNoSignal: the oracle did not find a reason to verify or
+	// fail; equivalent to OracleAbstain for the chain but kept
+	// distinct so callers can tell the difference between "tried, no
+	// signal" and "didn't try".
 	OracleNoSignal
-	// OracleReject: T2's pre-filter says the branch's diff is not
-	// a subset of origin/main. T2 abstains from verifying but the
-	// chain short-circuits because T1 cannot prove either.
+	// OracleReject: PreFilter's diff-subset check says the branch's
+	// diff is not a subset of origin/main. PreFilter abstains from
+	// verifying but the chain short-circuits because the Decision
+	// oracle cannot prove either.
 	OracleReject
 )
 
 // OracleCheck is the per-oracle diagnostic carried in the run.finished
-// payload when an oracle produces a non-abstain outcome. Details is
-// a free-form map keyed by the oracle (e.g. T1: {"ran": 7}, T2:
-// {"reason": "diverged"}).
+// payload when an oracle produces a non-abstain outcome. Details is a
+// free-form map keyed by the oracle (e.g. decision: {"ran": 7},
+// pre-filter: {"reason": "diverged"}).
 type OracleCheck struct {
 	Name    string
 	Details map[string]any
@@ -61,61 +62,62 @@ const (
 	VerifyFailed
 )
 
-// Oracle is the contract every decision oracle implements. The
-// three oracles (T2 / T4 / T1) share the same shape; only their
-// implementation differs. Run is invoked at most once per RunVerifyPath
-// call.
+// Oracle is the contract every decision oracle implements. The three
+// oracles (PreFilter / CheapGate / Decision) share the same shape;
+// only their implementation differs. Run is invoked at most once per
+// RunVerifyPath call.
 type Oracle interface {
 	Run(VerifyInput) (OracleResult, OracleCheck, error)
 }
 
 // VerifyInput is the per-run context every oracle reads. WorkDir is
-// the working tree to use for shell-out oracles (T1); the rest is
-// metadata fetched by the orchestrator before the chain runs. T1 /
-// T2 / T4 are the three oracles; eliding a slot requires passing
-// `&fakeOracle{outcome: OracleAbstain}` rather than nil, since the
-// RunVerifyPath chain slice hard-codes every position.
+// the working tree to use for shell-out oracles (Decision); the rest
+// is metadata fetched by the orchestrator before the chain runs.
+// PreFilter / CheapGate / Decision are the three oracles; eliding a
+// slot requires passing `&fakeOracle{outcome: OracleAbstain}` rather
+// than nil, since the RunVerifyPath chain slice hard-codes every
+// position.
 type VerifyInput struct {
-	Context context.Context
-	Issue   *github.Issue
-	Branch  string
-	WorkDir string
-	PR      *github.PR
-	T2      Oracle
-	T4      Oracle
-	T1      Oracle
+	Context   context.Context
+	Issue     *github.Issue
+	Branch    string
+	WorkDir   string
+	PR        *github.PR
+	PreFilter Oracle
+	CheapGate Oracle
+	Decision  Oracle
 }
 
 // VerifyPathFunc is the seam the orchestrator uses to invoke the
 // three-oracle chain. Production wiring goes through RunVerifyPath
-// with the default T2 / T4 / T1 oracles; tests inject a
-// VerifyPathFunc literal to drive the outcome without touching real
-// git or GitHub. The signature mirrors RunVerifyPath so the seam is
-// 1:1.
+// with the default PreFilter / CheapGate / Decision oracles; tests
+// inject a VerifyPathFunc literal to drive the outcome without
+// touching real git or GitHub. The signature mirrors RunVerifyPath so
+// the seam is 1:1.
 type VerifyPathFunc func(VerifyInput) (VerifyOutcome, []OracleCheck)
 
 // DefaultVerifyPath returns a VerifyPathFunc that wires the three
-// oracles with their default constructors in chain order (T2 → T4 →
-// T1). T1 needs a working tree; the default runner uses the default
-// T1 shell runner. Tests that want to drive the chain in isolation
-// build their own VerifyPathFunc instead.
+// oracles with their default constructors in chain order (PreFilter →
+// CheapGate → Decision). Decision needs a working tree; the default
+// runner uses the default Decision shell runner. Tests that want to
+// drive the chain in isolation build their own VerifyPathFunc instead.
 func DefaultVerifyPath() VerifyPathFunc {
 	return func(in VerifyInput) (VerifyOutcome, []OracleCheck) {
-		if in.T2 == nil {
-			in.T2 = &T2PreFilter{RepoDir: in.WorkDir, BaseRef: "origin/main", HeadRef: "HEAD"}
+		if in.PreFilter == nil {
+			in.PreFilter = &PreFilterOracle{RepoDir: in.WorkDir, BaseRef: "origin/main", HeadRef: "HEAD"}
 		}
-		if in.T4 == nil {
-			in.T4 = &T4CheapGate{}
+		if in.CheapGate == nil {
+			in.CheapGate = &CheapGateOracle{}
 		}
-		if in.T1 == nil {
-			in.T1 = &T1DecisionOracle{}
+		if in.Decision == nil {
+			in.Decision = &DecisionOracle{}
 		}
 		return RunVerifyPath(in)
 	}
 }
 
-// RunVerifyPath runs the three-oracle chain in order: T2 (pre-filter),
-// T4 (cheap gate), T1 (decision oracle).
+// RunVerifyPath runs the three-oracle chain in order: PreFilter
+// (pre-filter), CheapGate (cheap gate), Decision (decision oracle).
 // The chain short-circuits on the first non-abstain outcome; otherwise
 // the conservative backstop is invoked by the orchestrator after this
 // function returns. The returned checks slice is nil when every oracle
@@ -126,9 +128,9 @@ func RunVerifyPath(in VerifyInput) (VerifyOutcome, []OracleCheck) {
 		name string
 		orc  Oracle
 	}{
-		{"T2", in.T2},
-		{"T4", in.T4},
-		{"T1", in.T1},
+		{"pre-filter", in.PreFilter},
+		{"cheap-gate", in.CheapGate},
+		{"decision", in.Decision},
 	}
 	for _, step := range chain {
 		if step.orc == nil {
@@ -149,11 +151,11 @@ func RunVerifyPath(in VerifyInput) (VerifyOutcome, []OracleCheck) {
 		case OracleFailed:
 			return VerifyFailed, []OracleCheck{check}
 		case OracleReject:
-			// T2's reject path: short-circuit with NoSignal so
-			// the conservative backstop runs. Surface the T2
-			// check so the operator can see why.
+			// PreFilter's reject path: short-circuit with NoSignal
+			// so the conservative backstop runs. Surface the
+			// PreFilter check so the operator can see why.
 			return VerifyNoSignal, []OracleCheck{check}
-		case OracleDeferT1, OracleAbstain, OracleNoSignal:
+		case OracleDeferDecision, OracleAbstain, OracleNoSignal:
 			continue
 		}
 	}

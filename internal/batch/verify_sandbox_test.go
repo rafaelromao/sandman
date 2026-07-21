@@ -6,11 +6,11 @@ import (
 	"github.com/rafaelromao/sandman/internal/sandbox"
 )
 
-// TestT1SandboxFactory_PinsSourceToOriginMain pins slice 3's
-// requirement: the T1 factory's NewSandbox returns a WorktreeSandbox
+// TestSandboxFactory_PinsSourceToOriginMain pins slice 3's
+// requirement: the Decision factory's NewSandbox returns a WorktreeSandbox
 // whose source branch is `origin/main`, regardless of what the
 // orchestrator's call site passed in.
-func TestT1SandboxFactory_PinsSourceToOriginMain(t *testing.T) {
+func TestSandboxFactory_PinsSourceToOriginMain(t *testing.T) {
 	t.Parallel()
 	f := &T1SandboxFactory{RepoPath: "/repo", WorktreeBase: "/wt", Branch: "verify-t1"}
 	sb := f.NewSandbox("/other", "/other-wt", "ignored", "feature-branch", nil)
