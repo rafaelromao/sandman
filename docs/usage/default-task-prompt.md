@@ -28,10 +28,10 @@ The shared Sandman skill owns the detailed workflow. This page describes the boo
     ## Execution Checklist
     
     - [ ] Create branch
-    - [ ] Load `sandman-plan`
-    - [ ] Load `sandman-implement` (TDD + commit + self-review + back-merge + create PR + delegate review)
-    - [ ] Load `sandman-pr-review`
-    - [ ] Load `sandman-pr-merge`
+    - [ ] Plan (Load `sandman-plan`)
+    - [ ] Implement (Load `sandman-implement`)
+    - [ ] PR-Review (Load `sandman-pr-review`)
+    - [ ] PR-Merge (Load `sandman-pr-merge`)
     
     Each checklist step is a skill-load directive. The agent MUST emit a `Skill "sandman-<name>"` invocation in its transcript before doing any work for that step; the step is not considered started until the skill is loaded. Steps completed without their skill loaded are invalid — for example, a `gh pr create` body composed without first loading `sandman-implement` does not satisfy the closing-reference body requirement (one of `Closes #<issue_number>`, `Fixes #<issue_number>`, `Resolves #<issue_number>`) and is not acceptable.
 
@@ -175,7 +175,7 @@ The shared Sandman skill owns the detailed workflow. This page describes the boo
 - `Task` names the work and injects the issue number/title.
 - `Issue Context` passes the raw issue body through unchanged.
 - `Runtime Context` passes branch, base, and review metadata into the shared workflow.
-- `Execution Checklist` lists the workflow steps as **skill-load directives** (`Load sandman-plan`, `Load sandman-implement`, `Load sandman-pr-review`, `Load sandman-pr-merge`); a follow-on paragraph pins the **Skill-loading gate** rule — each step is not considered started until the matching `Skill "sandman-<name>"` invocation is emitted in the transcript, and steps completed without the skill loaded are invalid (e.g. a `gh pr create` body composed without `sandman-implement` does not satisfy the closing-reference body requirement and is not acceptable). The checklist also tells the agent to skip already-complete items and keep the registered `## Next Step` aligned with the next unchecked item.
+- `Execution Checklist` lists the workflow steps with their original labels (`Plan`, `Implement`, `PR-Review`, `PR-Merge`) and adds the skill-load directive in parens after each one (`Plan (Load sandman-plan)`, `Implement (Load sandman-implement: …)`, `PR-Review (Load sandman-pr-review)`, `PR-Merge (Load sandman-pr-merge)`); a follow-on paragraph pins the **Skill-loading gate** rule — each step is not considered started until the matching `Skill "sandman-<name>"` invocation is emitted in the transcript, and steps completed without the skill loaded are invalid (e.g. a `gh pr create` body composed without `sandman-implement` does not satisfy the closing-reference body requirement and is not acceptable). Preserving the original labels keeps the `Required Order` mnemonic (`Create branch, Plan, Implement, PR-Review, PR-Merge`) and the legacy `[x] PR-Review` retry reference in sync with the literal checklist items. The checklist also tells the agent to skip already-complete items and keep the registered `## Next Step` aligned with the next unchecked item.
 - `Mandatory Execution Contract` forces the agent to load and obey the Sandman skill chain. Bullet 3 explicitly requires loading `sandman-implement` itself so the closing-reference body rule and the post-create verification step come from inside the skill, not from agent memory; bullet 9 (the Skill-loading gate) repeats the rule from the checklist at the contract level so the agent cannot skip it.
 - `Already Resolved` defines the terminal shortcut for issues already implemented on `{{BASE_BRANCH}}`; the agent must verify `origin/{{BASE_BRANCH}}` against the acceptance criteria, ensuring every AC has a corresponding test on `origin/{{BASE_BRANCH}}` before writing the marker.
 - `AFK Rule — Absolute` replaces human approval with subagent consensus for plan approval, and bans subagent use for PR review (must use `sandman-pr-review` skill). Self-review uses `sandman-self-review` skill.
