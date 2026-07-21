@@ -77,7 +77,7 @@ Some expensive scenarios run without a build tag and are selected with `SANDMAN_
 | `opencode_subagent` | `internal/cmd` | `TestOpencodeSubagentPermissionAllowAll` |
 | `badge` | `internal/cmd` | badge scenario tests |
 | `pathlen` | `internal/cmd` | path-length scenario tests |
-| `batch_id_rules` | `internal/cmd` | `TestSlice10` |
+| `batch_id_rules` | `internal/cmd` | `TestBatchIDRules_*` |
 | `preset_matrix` | `internal/cmd` | preset-matrix scenario tests |
 
 ```bash
