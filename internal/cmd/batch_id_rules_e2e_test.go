@@ -58,44 +58,44 @@ import (
 	"github.com/rafaelromao/sandman/internal/testenv"
 )
 
-// slice10TS and slice10ShortID are the deterministic (ts, shortid)
+// batchIDRulesTS and batchIDRulesShortID are the deterministic (ts, shortid)
 // pair the slice 10 suite uses to mint canonical BatchIds that
 // match the strings the rest of the test fixture hard-codes. The
 // values intentionally avoid the time / random component so the
 // assertions can use full string equality.
 const (
-	slice10TS      = "260618113825"
-	slice10ShortID = "abcd"
+	batchIDRulesTS      = "260618113825"
+	batchIDRulesShortID = "abcd"
 )
 
-// slice10SingleIssueBatchID returns the canonical public BatchId for a
+// singleIssueBatchID returns the canonical public BatchId for a
 // single-issue batch (`<ts>-<sid>-42`).
-func slice10SingleIssueBatchID() string {
-	return runid.NewBatchID(runid.KindIssue, 1, "42", slice10TS, slice10ShortID)
+func singleIssueBatchID() string {
+	return runid.NewBatchID(runid.KindIssue, 1, "42", batchIDRulesTS, batchIDRulesShortID)
 }
 
-// slice10MultiIssueBatchID returns the canonical public BatchId for a
+// multiIssueBatchID returns the canonical public BatchId for a
 // 2-issue batch (`<ts>-<sid>-42+1`).
-func slice10MultiIssueBatchID() string {
-	return runid.NewBatchID(runid.KindIssue, 2, "42", slice10TS, slice10ShortID)
+func multiIssueBatchID() string {
+	return runid.NewBatchID(runid.KindIssue, 2, "42", batchIDRulesTS, batchIDRulesShortID)
 }
 
-// slice10RequireGate is the suite-wide gate: every test calls this
+// requireGateMultiIssue is the suite-wide gate: every test calls this
 // before running so the file self-skips unless the operator opted in.
-func slice10RequireGate(t *testing.T) {
+func requireGateMultiIssue(t *testing.T) {
 	t.Helper()
 	if !testenv.E2EGateAllowed(testenv.E2EScenarioBatchIDRules) {
 		t.Skip("set SANDMAN_E2E_GATES=batch_id_rules (or all) to run slice 10 e2e tests")
 	}
 }
 
-// slice10FreshSandmanDir returns the absolute path of the greenfield
+// freshSandmanDir returns the absolute path of the greenfield
 // per-test temp dir the slice 10 suite runs in. The dir is created by
 // `newRunDeps` (or `newRunDepsInDir`) which sets up a fresh `.sandman/`
 // and chdirs the test into it. Callers must invoke `newRunDeps` (or the
 // `Auto`/`InDir` variant) BEFORE calling this helper so the path
 // returned matches the cwd the run command writes batches.json into.
-func slice10FreshSandmanDir(t *testing.T) string {
+func freshSandmanDir(t *testing.T) string {
 	t.Helper()
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -104,11 +104,11 @@ func slice10FreshSandmanDir(t *testing.T) string {
 	return cwd
 }
 
-// slice10BindUnixSocket binds a Unix domain socket at the given path
+// bindUnixSocketForBatchIDRules binds a Unix domain socket at the given path
 // and registers a Cleanup that releases it when the test finishes.
 // Used to give the portal handler a live control socket without
 // spinning up a real daemon.
-func slice10BindUnixSocket(t *testing.T, path string) {
+func bindUnixSocketForBatchIDRules(t *testing.T, path string) {
 	t.Helper()
 	ln, err := net.Listen("unix", path)
 	if err != nil {
@@ -137,13 +137,13 @@ func idxContinueLookup(t *testing.T, dir, batchID string) int {
 
 // --- Behavior 1: single issue batch identity -----------------------------
 
-// TestSlice10_SingleIssueBatchIdentity covers behavior 1: `sandman run
+// TestBatchIDRules_SingleIssueBatchIdentity covers behavior 1: `sandman run
 // 42` mints `<ts>-<sid>-42` as both the public BatchId and the per-row
 // RunID; the on-disk batch folder basename, batch.json.batchId, the
 // events.jsonl batch_id payload, and the batches index entry id all
 // agree.
-func TestSlice10_SingleIssueBatchIdentity(t *testing.T) {
-	slice10RequireGate(t)
+func TestBatchIDRules_SingleIssueBatchIdentity(t *testing.T) {
+	requireGateMultiIssue(t)
 	spy := &spyBatchRunner{result: &batch.Result{
 		Runs: []batch.AgentRunResult{{IssueNumber: 42, Status: "success", Branch: "sandman/42-fix-bug"}},
 	}}
@@ -152,7 +152,7 @@ func TestSlice10_SingleIssueBatchIdentity(t *testing.T) {
 		issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix login", State: "open"}},
 		prs:    map[string]*github.PR{},
 	}
-	dir := slice10FreshSandmanDir(t)
+	dir := freshSandmanDir(t)
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)
@@ -193,12 +193,12 @@ func TestSlice10_SingleIssueBatchIdentity(t *testing.T) {
 
 // --- Behavior 2: multi-issue batch identity -----------------------------
 
-// TestSlice10_MultiIssueBatchIdentity covers behavior 2: `sandman run
+// TestBatchIDRules_MultiIssueBatchIdentity covers behavior 2: `sandman run
 // 42 43` mints `<ts>-<sid>-42+1` as the public BatchId (one index
 // entry) with per-row RunIDs `<ts>-<sid>-42` and `<ts>-<sid>-43`. The
 // per-row RunIDs do not have their own index entries.
-func TestSlice10_MultiIssueBatchIdentity(t *testing.T) {
-	slice10RequireGate(t)
+func TestBatchIDRules_MultiIssueBatchIdentity(t *testing.T) {
+	requireGateMultiIssue(t)
 	spy := &spyBatchRunner{result: &batch.Result{
 		Runs: []batch.AgentRunResult{
 			{IssueNumber: 42, Status: "success", Branch: "sandman/42-fix"},
@@ -213,7 +213,7 @@ func TestSlice10_MultiIssueBatchIdentity(t *testing.T) {
 		},
 		prs: map[string]*github.PR{},
 	}
-	dir := slice10FreshSandmanDir(t)
+	dir := freshSandmanDir(t)
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)
@@ -252,12 +252,12 @@ func TestSlice10_MultiIssueBatchIdentity(t *testing.T) {
 
 // --- Behavior 4: orphan review identity ----------------------------------
 
-// TestSlice10_OrphanReviewBatchIdentity pins the orphan-review path:
+// TestBatchIDRules_OrphanReviewBatchIdentity pins the orphan-review path:
 // when the review daemon picks up an open PR but no linked issue, the
 // batch is keyed by the canonical review shape and the on-disk batch
 // folder agrees with the index entry id.
-func TestSlice10_OrphanReviewBatchIdentity(t *testing.T) {
-	slice10RequireGate(t)
+func TestBatchIDRules_OrphanReviewBatchIdentity(t *testing.T) {
+	requireGateMultiIssue(t)
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
 		t.Fatal(err)
@@ -301,17 +301,17 @@ func TestSlice10_OrphanReviewBatchIdentity(t *testing.T) {
 
 // --- Behavior 5: prompt-only with and without user id -------------------
 
-// TestSlice10_PromptOnlyBatchIdentity covers behavior 5 for both the
+// TestBatchIDRules_PromptOnlyBatchIdentity covers behavior 5 for both the
 // no-userid and with-userid prompt-only shapes:
 //   - `sandman run --prompt "..."` mints `<ts>-<sid>-prompt`.
 //   - `sandman run --prompt "..." --run-id myid` mints
 //     `<ts>-<sid>-prompt-myid`.
-func TestSlice10_PromptOnlyBatchIdentity(t *testing.T) {
-	slice10RequireGate(t)
+func TestBatchIDRules_PromptOnlyBatchIdentity(t *testing.T) {
+	requireGateMultiIssue(t)
 	spyNoID := &spyBatchRunner{result: &batch.Result{}}
 	depsNoID := newRunDeps(t, spyNoID)
 	depsNoID.GitHubClient = &fakeGitHubClient{fetchIssueError: fmt.Errorf("fetch should not run for prompt-only")}
-	dir := slice10FreshSandmanDir(t)
+	dir := freshSandmanDir(t)
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(depsNoID)
@@ -378,14 +378,14 @@ func TestSlice10_PromptOnlyBatchIdentity(t *testing.T) {
 
 // --- Behavior 6: portal Batch label and Details tab BatchId --------------
 
-// TestSlice10_PortalBatchLabelAndDetailsRenderPublicBatchId covers
+// TestBatchIDRules_PortalBatchLabelAndDetailsRenderPublicBatchId covers
 // behavior 6: the portal's /api/runs row must surface the public
 // BatchId (the batch folder basename, including the "+N" suffix for
 // multi-issue batches) on the Batch label and the Details tab
 // payload, not the per-row RunID. Issue #1954 closed by slice 11
 // pinned this ordering; slice 10 pins it end-to-end.
-func TestSlice10_PortalBatchLabelAndDetailsRenderPublicBatchId(t *testing.T) {
-	slice10RequireGate(t)
+func TestBatchIDRules_PortalBatchLabelAndDetailsRenderPublicBatchId(t *testing.T) {
+	requireGateMultiIssue(t)
 	repoRoot := testenv.MkdirShort(t, "sm-slice10-p-")
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
 		t.Fatal(err)
@@ -397,8 +397,8 @@ func TestSlice10_PortalBatchLabelAndDetailsRenderPublicBatchId(t *testing.T) {
 	layout := paths.NewLayout(nil, repoRoot)
 	now := time.Now()
 
-	ts := slice10TS
-	shortid := slice10ShortID
+	ts := batchIDRulesTS
+	shortid := batchIDRulesShortID
 	batchID := runid.NewBatchID(runid.KindIssue, 2, "42", ts, shortid)
 	rowRunID := runid.NewRunID(runid.KindIssue, "42", ts, shortid)
 
@@ -421,7 +421,7 @@ func TestSlice10_PortalBatchLabelAndDetailsRenderPublicBatchId(t *testing.T) {
 	// Wire a control socket under batchDir so the portal detects the
 	// active row and surfaces it (issue #1924 slice 5 contract:
 	// active rows surface via control socket).
-	slice10BindUnixSocket(t, filepath.Join(batchDir, "batch.sock"))
+	bindUnixSocketForBatchIDRules(t, filepath.Join(batchDir, "batch.sock"))
 
 	// Write the manifest under the batch dir with the PUBLIC BatchId
 	// (== batch dir basename, with "+N" for multi-issue). Slice 11
@@ -493,13 +493,13 @@ func TestSlice10_PortalBatchLabelAndDetailsRenderPublicBatchId(t *testing.T) {
 
 // --- Behavior 7: live-vs-saved log behavior ------------------------------
 
-// TestSlice10_PortalLiveVsSavedVsArchivedLog covers behavior 7: the
+// TestBatchIDRules_PortalLiveVsSavedVsArchivedLog covers behavior 7: the
 // portal must serve the live tail for an active row, the saved log
 // for a terminal row, and the archived log for a historical row.
 // Slice 8 hard-coded the live/saved/archived log resolution; slice 10
 // pins it end-to-end through the public /api/runs endpoint.
-func TestSlice10_PortalLiveVsSavedVsArchivedLog(t *testing.T) {
-	slice10RequireGate(t)
+func TestBatchIDRules_PortalLiveVsSavedVsArchivedLog(t *testing.T) {
+	requireGateMultiIssue(t)
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
 		t.Fatal(err)
@@ -511,8 +511,8 @@ func TestSlice10_PortalLiveVsSavedVsArchivedLog(t *testing.T) {
 	layout := paths.NewLayout(nil, repoRoot)
 	now := time.Now()
 
-	ts := slice10TS
-	shortid := slice10ShortID
+	ts := batchIDRulesTS
+	shortid := batchIDRulesShortID
 
 	activeBatchID := runid.NewBatchID(runid.KindIssue, 1, "42", ts, shortid)
 	activeRowID := runid.NewRunID(runid.KindIssue, "42", ts, shortid)
@@ -623,16 +623,16 @@ func TestSlice10_PortalLiveVsSavedVsArchivedLog(t *testing.T) {
 
 // --- Behavior 8: per-row RunID-based archive -----------------------------
 
-// TestSlice10_ArchiveRunMovesOnlyRunFolder pins behavior 8a:
+// TestBatchIDRules_ArchiveRunMovesOnlyRunFolder pins behavior 8a:
 // `sandman archive run <runId>` moves only `runs/<runId>/` to
 // `archive/<batchId>/runs/<runId>/`. The on-disk batch dir stays in
 // place and the archived run.log is reachable at the new path.
-func TestSlice10_ArchiveRunMovesOnlyRunFolder(t *testing.T) {
-	slice10RequireGate(t)
+func TestBatchIDRules_ArchiveRunMovesOnlyRunFolder(t *testing.T) {
+	requireGateMultiIssue(t)
 	dir := newSandmanDir(t)
 	t.Chdir(dir)
 
-	runID := slice10SingleIssueBatchID()
+	runID := singleIssueBatchID()
 	batchDir := filepath.Join(dir, ".sandman", "batches", runID)
 	now := time.Now()
 	writeRunDirForArchive(t, batchDir, runID, batchindex.RunManifest{
@@ -672,19 +672,19 @@ func TestSlice10_ArchiveRunMovesOnlyRunFolder(t *testing.T) {
 	}
 }
 
-// TestSlice10_ArchiveRunLeavesSiblingsLive pins behavior 8b: sibling
+// TestBatchIDRules_ArchiveRunLeavesSiblingsLive pins behavior 8b: sibling
 // rows in a multi-run batch remain active and source-backed after one
 // row is archived. The batch dir stays in place under batches/, the
 // archived row's runs/<rowID>/ folder leaves for archive/, and the
 // sibling row's folder is untouched.
-func TestSlice10_ArchiveRunLeavesSiblingsLive(t *testing.T) {
-	slice10RequireGate(t)
+func TestBatchIDRules_ArchiveRunLeavesSiblingsLive(t *testing.T) {
+	requireGateMultiIssue(t)
 	dir := newSandmanDir(t)
 	t.Chdir(dir)
 
-	batchID := slice10MultiIssueBatchID()
-	firstRow := runid.NewRunID(runid.KindIssue, "42", slice10TS, slice10ShortID)
-	secondRow := runid.NewRunID(runid.KindIssue, "43", slice10TS, slice10ShortID)
+	batchID := multiIssueBatchID()
+	firstRow := runid.NewRunID(runid.KindIssue, "42", batchIDRulesTS, batchIDRulesShortID)
+	secondRow := runid.NewRunID(runid.KindIssue, "43", batchIDRulesTS, batchIDRulesShortID)
 	batchDir := filepath.Join(dir, ".sandman", "batches", batchID)
 	now := time.Now()
 	writeRunDirForArchive(t, batchDir, firstRow, batchindex.RunManifest{
@@ -727,16 +727,16 @@ func TestSlice10_ArchiveRunLeavesSiblingsLive(t *testing.T) {
 	}
 }
 
-// TestSlice10_ArchiveRunFlipsPerRowRecordStatus pins behavior 8c: the
+// TestBatchIDRules_ArchiveRunFlipsPerRowRecordStatus pins behavior 8c: the
 // archived row's RunRecord.Status flips to `archived` while the
 // entry-level Status stays `active` until the last live row leaves.
 // The same index covers both per-row and entry-level projections.
-func TestSlice10_ArchiveRunFlipsPerRowRecordStatus(t *testing.T) {
-	slice10RequireGate(t)
+func TestBatchIDRules_ArchiveRunFlipsPerRowRecordStatus(t *testing.T) {
+	requireGateMultiIssue(t)
 	dir := newSandmanDir(t)
 	t.Chdir(dir)
 
-	runID := slice10SingleIssueBatchID()
+	runID := singleIssueBatchID()
 	batchDir := filepath.Join(dir, ".sandman", "batches", runID)
 	now := time.Now()
 	writeRunDirForArchive(t, batchDir, runID, batchindex.RunManifest{
@@ -773,16 +773,16 @@ func TestSlice10_ArchiveRunFlipsPerRowRecordStatus(t *testing.T) {
 	}
 }
 
-// TestSlice10_ArchiveRunLogRetrievableFromNewPath pins behavior 8d:
+// TestBatchIDRules_ArchiveRunLogRetrievableFromNewPath pins behavior 8d:
 // the archived row's run.log is readable from the new archive path,
 // proving the file content survives the move and is reachable from
 // the canonical archive location.
-func TestSlice10_ArchiveRunLogRetrievableFromNewPath(t *testing.T) {
-	slice10RequireGate(t)
+func TestBatchIDRules_ArchiveRunLogRetrievableFromNewPath(t *testing.T) {
+	requireGateMultiIssue(t)
 	dir := newSandmanDir(t)
 	t.Chdir(dir)
 
-	runID := slice10SingleIssueBatchID()
+	runID := singleIssueBatchID()
 	batchDir := filepath.Join(dir, ".sandman", "batches", runID)
 	now := time.Now()
 	writeRunDirForArchive(t, batchDir, runID, batchindex.RunManifest{
@@ -816,13 +816,13 @@ func TestSlice10_ArchiveRunLogRetrievableFromNewPath(t *testing.T) {
 	}
 }
 
-// TestSlice10_ArchiveRunAlreadyArchivedReturns409 pins behavior 8e:
+// TestBatchIDRules_ArchiveRunAlreadyArchivedReturns409 pins behavior 8e:
 // re-archiving an already-archived row returns 409 with the existing
 // ArchivePath echoed in the error body. The portal HTTP path is
 // exercised end-to-end so the structured 409 body (carrying
 // `archivePath`) is pinned; the CLI path surfaces the same status.
-func TestSlice10_ArchiveRunAlreadyArchivedReturns409(t *testing.T) {
-	slice10RequireGate(t)
+func TestBatchIDRules_ArchiveRunAlreadyArchivedReturns409(t *testing.T) {
+	requireGateMultiIssue(t)
 	repoRoot := testenv.MkdirShort(t, "sm-slice10-a-")
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
 		t.Fatal(err)
@@ -831,7 +831,7 @@ func TestSlice10_ArchiveRunAlreadyArchivedReturns409(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	runID := slice10SingleIssueBatchID()
+	runID := singleIssueBatchID()
 	batchDir := filepath.Join(repoRoot, ".sandman", "batches", runID)
 	now := time.Now()
 	writeRunDirForArchive(t, batchDir, runID, batchindex.RunManifest{
@@ -894,16 +894,16 @@ func TestSlice10_ArchiveRunAlreadyArchivedReturns409(t *testing.T) {
 	}
 }
 
-// TestSlice10_ArchiveRunNonTerminalReturns409 pins behavior 8f:
+// TestBatchIDRules_ArchiveRunNonTerminalReturns409 pins behavior 8f:
 // archiving a non-terminal targeted row returns 409. The CLI path
 // surfaces a terminal-state error so an operator hitting the failure
 // from the shell sees the same status code as the portal endpoint.
-func TestSlice10_ArchiveRunNonTerminalReturns409(t *testing.T) {
-	slice10RequireGate(t)
+func TestBatchIDRules_ArchiveRunNonTerminalReturns409(t *testing.T) {
+	requireGateMultiIssue(t)
 	dir := newSandmanDir(t)
 	t.Chdir(dir)
 
-	runID := slice10SingleIssueBatchID()
+	runID := singleIssueBatchID()
 	batchDir := filepath.Join(dir, ".sandman", "batches", runID)
 	now := time.Now()
 	writeRunDirForArchive(t, batchDir, runID, batchindex.RunManifest{
@@ -928,16 +928,16 @@ func TestSlice10_ArchiveRunNonTerminalReturns409(t *testing.T) {
 	}
 }
 
-// TestSlice10_ArchiveBatchMovesWholeDirAndFlipsEntry pins behavior 8g:
+// TestBatchIDRules_ArchiveBatchMovesWholeDirAndFlipsEntry pins behavior 8g:
 // whole-batch archive via `archive batch <batchId>` moves the whole
 // batch dir and flips the entry to `archived`. The single-row
 // shortcut is the same op with a single live row.
-func TestSlice10_ArchiveBatchMovesWholeDirAndFlipsEntry(t *testing.T) {
-	slice10RequireGate(t)
+func TestBatchIDRules_ArchiveBatchMovesWholeDirAndFlipsEntry(t *testing.T) {
+	requireGateMultiIssue(t)
 	dir := newSandmanDir(t)
 	t.Chdir(dir)
 
-	runID := slice10SingleIssueBatchID()
+	runID := singleIssueBatchID()
 	batchDir := filepath.Join(dir, ".sandman", "batches", runID)
 	now := time.Now()
 	writeRunDirForArchive(t, batchDir, runID, batchindex.RunManifest{
@@ -973,12 +973,12 @@ func TestSlice10_ArchiveBatchMovesWholeDirAndFlipsEntry(t *testing.T) {
 	}
 }
 
-// TestSlice10_ArchiveOlderThanPerRowAware pins behavior 8h (older-than
+// TestBatchIDRules_ArchiveOlderThanPerRowAware pins behavior 8h (older-than
 // part): bulk `archive older-than` archives only the dead per-row
 // runs whose CreatedAt is older than the cutoff, leaving younger
 // rows alone.
-func TestSlice10_ArchiveOlderThanPerRowAware(t *testing.T) {
-	slice10RequireGate(t)
+func TestBatchIDRules_ArchiveOlderThanPerRowAware(t *testing.T) {
+	requireGateMultiIssue(t)
 	dir := newSandmanDir(t)
 	t.Chdir(dir)
 
@@ -1021,11 +1021,11 @@ func TestSlice10_ArchiveOlderThanPerRowAware(t *testing.T) {
 	}
 }
 
-// TestSlice10_ArchiveStalePerRowAware pins behavior 8h (stale part):
+// TestBatchIDRules_ArchiveStalePerRowAware pins behavior 8h (stale part):
 // bulk `archive stale` is per-row aware — it archives a stale (active
 // but no live daemon) row while leaving freshly-active rows alone.
-func TestSlice10_ArchiveStalePerRowAware(t *testing.T) {
-	slice10RequireGate(t)
+func TestBatchIDRules_ArchiveStalePerRowAware(t *testing.T) {
+	requireGateMultiIssue(t)
 	dir := newSandmanDir(t)
 	t.Chdir(dir)
 
@@ -1065,14 +1065,14 @@ func TestSlice10_ArchiveStalePerRowAware(t *testing.T) {
 	}
 }
 
-// TestSlice10_ArchiveLazyRecoveryOnIndexLoad pins behavior 8i: when an
+// TestBatchIDRules_ArchiveLazyRecoveryOnIndexLoad pins behavior 8i: when an
 // index entry has a non-empty ArchivePath but no live batch dir, the
 // lazy recovery on Load treats the row as archived. The on-disk
 // folder absence is the recovery signal. The test asserts both the
 // per-row ArchivePath field and the entry's effective status after
 // Load (lazy recovery normalises the entry status to "archived").
-func TestSlice10_ArchiveLazyRecoveryOnIndexLoad(t *testing.T) {
-	slice10RequireGate(t)
+func TestBatchIDRules_ArchiveLazyRecoveryOnIndexLoad(t *testing.T) {
+	requireGateMultiIssue(t)
 	dir := testenv.MkdirShort(t, "sm-slice10-l-")
 	if err := os.WriteFile(filepath.Join(dir, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
 		t.Fatal(err)
@@ -1081,7 +1081,7 @@ func TestSlice10_ArchiveLazyRecoveryOnIndexLoad(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	batchID := slice10SingleIssueBatchID()
+	batchID := singleIssueBatchID()
 	runID := batchID
 	archivePath := filepath.Join(dir, ".sandman", "archive", batchID)
 	if err := os.MkdirAll(filepath.Join(archivePath, "runs", runID), 0755); err != nil {
@@ -1128,12 +1128,12 @@ func TestSlice10_ArchiveLazyRecoveryOnIndexLoad(t *testing.T) {
 
 // --- Behavior 9: --continue flow -----------------------------------------
 
-// TestSlice10_ContinueMintsFreshBatchAndRunIDs pins behavior 9a:
+// TestBatchIDRules_ContinueMintsFreshBatchAndRunIDs pins behavior 9a:
 // `sandman run --continue 42` mints a fresh public BatchId and fresh
 // per-row RunIDs. The previous run's per-row RunID is carried only as
 // the PreviousRunID lineage input.
-func TestSlice10_ContinueMintsFreshBatchAndRunIDs(t *testing.T) {
-	slice10RequireGate(t)
+func TestBatchIDRules_ContinueMintsFreshBatchAndRunIDs(t *testing.T) {
+	requireGateMultiIssue(t)
 	spy := &spyBatchRunner{result: &batch.Result{}}
 	deps := newRunDeps(t, spy)
 	deps.GitHubClient = &fakeGitHubClient{
@@ -1143,7 +1143,7 @@ func TestSlice10_ContinueMintsFreshBatchAndRunIDs(t *testing.T) {
 	deps.EventLog = &fakeEventLog{events: []events.Event{
 		{Type: "run.started", RunID: "prev-ts-abcd-42", Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix-bug", "base_branch": "main", "agent": "opencode"}},
 	}}
-	dir := slice10FreshSandmanDir(t)
+	dir := freshSandmanDir(t)
 
 	branch := "sandman/42-fix-bug"
 	worktreePath := filepath.Join(dir, ".sandman", "worktrees", branch)
@@ -1179,12 +1179,12 @@ func TestSlice10_ContinueMintsFreshBatchAndRunIDs(t *testing.T) {
 	}
 }
 
-// TestSlice10_ContinueReusesOriginalBranchAndWorktree pins behavior 9b:
+// TestBatchIDRules_ContinueReusesOriginalBranchAndWorktree pins behavior 9b:
 // the new --continue run reuses the original branch and worktree.
 // The previous run's branch is carried through `req.Branches[issue]`
 // (and the per-row worktree follows the same path).
-func TestSlice10_ContinueReusesOriginalBranchAndWorktree(t *testing.T) {
-	slice10RequireGate(t)
+func TestBatchIDRules_ContinueReusesOriginalBranchAndWorktree(t *testing.T) {
+	requireGateMultiIssue(t)
 	spy := &spyBatchRunner{result: &batch.Result{}}
 	deps := newRunDeps(t, spy)
 	deps.GitHubClient = &fakeGitHubClient{
@@ -1194,7 +1194,7 @@ func TestSlice10_ContinueReusesOriginalBranchAndWorktree(t *testing.T) {
 	deps.EventLog = &fakeEventLog{events: []events.Event{
 		{Type: "run.started", RunID: "prev-ts-abcd-42", Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix-bug", "base_branch": "main", "agent": "opencode"}},
 	}}
-	dir := slice10FreshSandmanDir(t)
+	dir := freshSandmanDir(t)
 
 	branch := "sandman/42-fix-bug"
 	worktreePath := filepath.Join(dir, ".sandman", "worktrees", branch)
@@ -1219,12 +1219,12 @@ func TestSlice10_ContinueReusesOriginalBranchAndWorktree(t *testing.T) {
 	}
 }
 
-// TestSlice10_ContinueLeavesPreviousRunUnchanged pins behavior 9c:
+// TestBatchIDRules_ContinueLeavesPreviousRunUnchanged pins behavior 9c:
 // the previous run's batch dir, run folder, manifest, and event log
 // are unchanged after the new run starts. Slice 9 explicitly guards
 // against the continuation accidentally rewriting history.
-func TestSlice10_ContinueLeavesPreviousRunUnchanged(t *testing.T) {
-	slice10RequireGate(t)
+func TestBatchIDRules_ContinueLeavesPreviousRunUnchanged(t *testing.T) {
+	requireGateMultiIssue(t)
 	spy := &spyBatchRunner{result: &batch.Result{}}
 	deps := newRunDeps(t, spy)
 	deps.GitHubClient = &fakeGitHubClient{
@@ -1234,7 +1234,7 @@ func TestSlice10_ContinueLeavesPreviousRunUnchanged(t *testing.T) {
 	deps.EventLog = &fakeEventLog{events: []events.Event{
 		{Type: "run.started", RunID: "prev-ts-abcd-42", Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix-bug", "base_branch": "main", "agent": "opencode"}},
 	}}
-	dir := slice10FreshSandmanDir(t)
+	dir := freshSandmanDir(t)
 
 	branch := "sandman/42-fix-bug"
 	worktreePath := filepath.Join(dir, ".sandman", "worktrees", branch)
@@ -1298,7 +1298,7 @@ func TestSlice10_ContinueLeavesPreviousRunUnchanged(t *testing.T) {
 	}
 }
 
-// TestSlice10_ContinueEmitsRunContinuedEvent pins behavior 9d at the
+// TestBatchIDRules_ContinueEmitsRunContinuedEvent pins behavior 9d at the
 // e2e seam the run command controls: the continuation request
 // forwarded to the batch runner carries `Mode[issue] == ModeContinue`
 // and `PreviousRunIDs[issue] == prev`. These are the inputs the
@@ -1306,8 +1306,8 @@ func TestSlice10_ContinueLeavesPreviousRunUnchanged(t *testing.T) {
 // in its payload (the orchestrator-level emission is pinned by
 // TestRunBatch_MultiIssueContinuationLogsPerIssuePreviousRunID in
 // internal/batch/orchestrator_test.go).
-func TestSlice10_ContinueEmitsRunContinuedEvent(t *testing.T) {
-	slice10RequireGate(t)
+func TestBatchIDRules_ContinueEmitsRunContinuedEvent(t *testing.T) {
+	requireGateMultiIssue(t)
 	prevRunID := "prev-ts-abcd-42"
 	spy := &spyBatchRunner{result: &batch.Result{}}
 	deps := newRunDeps(t, spy)
@@ -1318,7 +1318,7 @@ func TestSlice10_ContinueEmitsRunContinuedEvent(t *testing.T) {
 	deps.EventLog = &fakeEventLog{events: []events.Event{
 		{Type: "run.started", RunID: prevRunID, Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix-bug", "base_branch": "main", "agent": "opencode"}},
 	}}
-	dir := slice10FreshSandmanDir(t)
+	dir := freshSandmanDir(t)
 
 	branch := "sandman/42-fix-bug"
 	worktreePath := filepath.Join(dir, ".sandman", "worktrees", branch)
@@ -1347,13 +1347,13 @@ func TestSlice10_ContinueEmitsRunContinuedEvent(t *testing.T) {
 	}
 }
 
-// TestSlice10_ContinueFoldCreatesFreshRunState pins behavior 9e: the
+// TestBatchIDRules_ContinueFoldCreatesFreshRunState pins behavior 9e: the
 // events fold (which the run/portal state derives from) creates a
 // fresh RunState keyed by the new RunID, not by the previous one.
 // Each per-row run folder owns its own events.jsonl so the events
 // fold is naturally scoped to the new RunID.
-func TestSlice10_ContinueFoldCreatesFreshRunState(t *testing.T) {
-	slice10RequireGate(t)
+func TestBatchIDRules_ContinueFoldCreatesFreshRunState(t *testing.T) {
+	requireGateMultiIssue(t)
 	dir := t.TempDir()
 
 	prevBatchID := "prev-ts-abcd-42"
@@ -1398,13 +1398,13 @@ func TestSlice10_ContinueFoldCreatesFreshRunState(t *testing.T) {
 	}
 }
 
-// TestSlice10_ContinueSubjectPickerExposesPreviousRun pins behavior
+// TestBatchIDRules_ContinueSubjectPickerExposesPreviousRun pins behavior
 // 9f: the portal subject picker exposes the previous run as a sibling
 // entry on the continuation row. The picker derives its options from
 // the per-row RunIDs visible on the continuation batch — both the
 // new run and the prior run appear as options.
-func TestSlice10_ContinueSubjectPickerExposesPreviousRun(t *testing.T) {
-	slice10RequireGate(t)
+func TestBatchIDRules_ContinueSubjectPickerExposesPreviousRun(t *testing.T) {
+	requireGateMultiIssue(t)
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
 		t.Fatal(err)
@@ -1473,13 +1473,13 @@ func TestSlice10_ContinueSubjectPickerExposesPreviousRun(t *testing.T) {
 	}
 }
 
-// TestSlice10_ContinuePickerSwitchesToPreviousRun pins behavior 9g:
+// TestBatchIDRules_ContinuePickerSwitchesToPreviousRun pins behavior 9g:
 // the previous run is selectable in the picker; switching to it shows
 // the previous run's log and details. The /api/runs?runKey= endpoint
 // is the picker switch seam; the response must echo the previous
 // run's content.
-func TestSlice10_ContinuePickerSwitchesToPreviousRun(t *testing.T) {
-	slice10RequireGate(t)
+func TestBatchIDRules_ContinuePickerSwitchesToPreviousRun(t *testing.T) {
+	requireGateMultiIssue(t)
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
 		t.Fatal(err)
@@ -1562,15 +1562,15 @@ func TestSlice10_ContinuePickerSwitchesToPreviousRun(t *testing.T) {
 	}
 }
 
-// TestSlice10_ContinueDoesNotRenderContinuationChip pins behavior 9h:
+// TestBatchIDRules_ContinueDoesNotRenderContinuationChip pins behavior 9h:
 // no new "Continuation" chip is rendered. The portalRun struct has
 // no `Continuation` field; the JSON envelope for /api/runs must not
 // carry a "continuation" key for the continuation row either. We
 // pin the absence by inspecting the raw JSON payload: a future
 // regression that adds a chip field would surface here as an
 // unexpected key.
-func TestSlice10_ContinueDoesNotRenderContinuationChip(t *testing.T) {
-	slice10RequireGate(t)
+func TestBatchIDRules_ContinueDoesNotRenderContinuationChip(t *testing.T) {
+	requireGateMultiIssue(t)
 	repoRoot := testenv.MkdirShort(t, "sm-slice10-c-")
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
 		t.Fatal(err)
@@ -1643,11 +1643,11 @@ func TestSlice10_ContinueDoesNotRenderContinuationChip(t *testing.T) {
 
 // --- Behavior 10: per-row RunID-based abort resolution ------------------
 
-// TestSlice10_AbortResolvesByRunID pins behavior 10: the portal abort
+// TestBatchIDRules_AbortResolvesByRunID pins behavior 10: the portal abort
 // endpoint resolves the targeted row by RunID. Two siblings live in
 // the same batch; aborting one leaves the other untouched.
-func TestSlice10_AbortResolvesByRunID(t *testing.T) {
-	slice10RequireGate(t)
+func TestBatchIDRules_AbortResolvesByRunID(t *testing.T) {
+	requireGateMultiIssue(t)
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
 		t.Fatal(err)
@@ -1658,9 +1658,9 @@ func TestSlice10_AbortResolvesByRunID(t *testing.T) {
 
 	layout := paths.NewLayout(nil, repoRoot)
 	now := time.Now()
-	firstRow := runid.NewRunID(runid.KindIssue, "42", slice10TS, slice10ShortID)
-	secondRow := runid.NewRunID(runid.KindIssue, "43", slice10TS, slice10ShortID)
-	batchID := slice10MultiIssueBatchID()
+	firstRow := runid.NewRunID(runid.KindIssue, "42", batchIDRulesTS, batchIDRulesShortID)
+	secondRow := runid.NewRunID(runid.KindIssue, "43", batchIDRulesTS, batchIDRulesShortID)
+	batchID := multiIssueBatchID()
 	batchDir := filepath.Join(layout.BatchesDir, batchID)
 
 	for _, row := range []string{firstRow, secondRow} {

@@ -36,7 +36,7 @@ var _ batchindex.Batch
 //
 // var _ batchindex.Entry // <-- must fail to compile after slice 7.
 
-func TestSlice7_BatchIsPrimaryType(t *testing.T) {
+func TestBatchIndex_BatchIsPrimaryType(t *testing.T) {
 	// Build a zero value through Add to confirm the type is the
 	// canonical insertion target.
 	idx := &batchindex.Index{Version: batchindex.IndexVersion}
