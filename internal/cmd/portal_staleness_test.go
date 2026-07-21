@@ -363,3 +363,102 @@ func TestPortal_Compute_LeavesLastOutputAtNilForCompletedRows(t *testing.T) {
 		t.Fatalf("expected LastOutputAt nil for completed row, got %v", *runs[0].LastOutputAt)
 	}
 }
+
+// TestPortal_RunFromActiveBatchIssue_QueuedRow_StartedAtAnchorsOnQueuedEvent
+// pins the active-row StartedAt for a state-less queued row. While the
+// issue is queued, the live duration tick is anchored on the run.queued
+// event's timestamp — not on the batch manifest's CreatedAt — so the
+// duration counter does not include any time before the run entered the
+// queue. Stale-time chips continue to be gated by the JS stalenessOf
+// predicate and never fire for `queued` rows regardless of StartedAt.
+func TestPortal_RunFromActiveBatchIssue_QueuedRow_StartedAtAnchorsOnQueuedEvent(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	const perRowRunID = "260703095305-fde2-1704"
+	const onDiskDir = "260703095305-fde2-1699+6"
+
+	batchDir := filepath.Join(repoRoot, ".sandman", "batches", onDiskDir)
+	if err := os.MkdirAll(filepath.Join(batchDir, "runs", perRowRunID), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	// manifestCreatedAt represents active.StartedAt — the batch
+	// manifest's creation timestamp. This is BEFORE the run was queued
+	// and MUST NOT be the duration anchor for a queued row.
+	manifestCreatedAt := time.Date(2025, 6, 17, 11, 0, 0, 0, time.UTC)
+	queuedAt := time.Date(2025, 6, 17, 11, 30, 0, 0, time.UTC)
+
+	active := portalActiveRun{
+		Key:        perRowRunID,
+		Dir:        batchDir,
+		SocketPath: filepath.Join(batchDir, "batch.sock"),
+		BatchID:    onDiskDir,
+		RunID:      perRowRunID,
+		StartedAt:  manifestCreatedAt,
+		ModTime:    manifestCreatedAt,
+	}
+
+	// queued != nil, state == nil: the state-less queued path the bug
+	// fix targets. In this state, runsFromActiveBatch nulls the state
+	// because state.Status() == "queued".
+	queued := &events.Event{
+		Type:      "run.queued",
+		Timestamp: queuedAt,
+		RunID:     perRowRunID,
+		Issue:     1704,
+		Payload:   map[string]any{"branch": "sandman/1704-fix"},
+	}
+
+	run := (&portalRunsView{}).runFromActiveBatchIssue(repoRoot, active, 1704, nil, nil, queued, "", nil, nil)
+
+	if run.StartedAt.IsZero() {
+		t.Fatal("StartedAt is zero; want run.queued.Timestamp so the duration tick is anchored on queue entry")
+	}
+	if !run.StartedAt.Equal(queuedAt) {
+		t.Fatalf("StartedAt=%v, want queued.Timestamp %v (duration must NOT be anchored on active.StartedAt=%v, that would count time before queue entry)", run.StartedAt, queuedAt, manifestCreatedAt)
+	}
+	if run.StartedAt.Equal(manifestCreatedAt) {
+		t.Fatalf("StartedAt=%v equals active.StartedAt (manifest.CreatedAt); the queued row would count pre-queue time in its duration tick", run.StartedAt)
+	}
+}
+
+// TestPortal_RunFromActiveBatchIssue_StateLessPreQueuedRow_FallsBackToActiveStartedAt
+// pins the pre-queued-event window. When the run is so fresh that
+// run.queued has not been emitted yet, the row's StartedAt falls back to
+// active.StartedAt so the duration tick has a sane anchor instead of
+// rendering "—". The fix MUST preserve this fallback when no queued
+// event exists.
+func TestPortal_RunFromActiveBatchIssue_StateLessPreQueuedRow_FallsBackToActiveStartedAt(t *testing.T) {
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	const perRowRunID = "260703095305-fde2-1704"
+	const onDiskDir = "260703095305-fde2-1699+6"
+
+	batchDir := filepath.Join(repoRoot, ".sandman", "batches", onDiskDir)
+	if err := os.MkdirAll(filepath.Join(batchDir, "runs", perRowRunID), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	manifestCreatedAt := time.Date(2025, 6, 17, 11, 0, 0, 0, time.UTC)
+	active := portalActiveRun{
+		Key:        perRowRunID,
+		Dir:        batchDir,
+		SocketPath: filepath.Join(batchDir, "batch.sock"),
+		BatchID:    onDiskDir,
+		RunID:      perRowRunID,
+		StartedAt:  manifestCreatedAt,
+		ModTime:    manifestCreatedAt,
+	}
+
+	run := (&portalRunsView{}).runFromActiveBatchIssue(repoRoot, active, 1704, nil, nil, nil, "", nil, nil)
+
+	if !run.StartedAt.Equal(manifestCreatedAt) {
+		t.Fatalf("StartedAt=%v, want active.StartedAt=%v (no queued event -> fall back to active.StartedAt)", run.StartedAt, manifestCreatedAt)
+	}
+}
