@@ -49,7 +49,7 @@ func headerSlice(t *testing.T, html, startMarker string) string {
 // TestPortal_SettingsPanelHeaderHTML_DedupedToSingleHeading asserts that
 // the settings drawer header has exactly one `<h2 id="settings-panel-title">`
 // with the text "Settings" and that no `<p class="eyebrow">` paragraph
-// carries the redundant "Settings" label. Slice 7 of issue #1189.
+// carries the redundant "Settings" label. issue #1189.
 func TestPortal_SettingsPanelHeaderHTML_DedupedToSingleHeading(t *testing.T) {
 	html := readPortalHTML(t)
 	header := headerSlice(t, html, "<aside id=\"settings-panel\"")
@@ -75,7 +75,7 @@ func TestPortal_SettingsPanelHeaderHTML_DedupedToSingleHeading(t *testing.T) {
 // TestPortal_PanelHeadersHTML_KeepAriaLabelledByAnchors asserts the
 // `<aside>` dialog wrappers still declare `aria-labelledby` pointing at the
 // heading ids in each panel. The dialog labelling contract is preserved even
-// though the heading text content was shortened. Slice 8 of issue #1189.
+// though the heading text content was shortened. issue #1189.
 func TestPortal_PanelHeadersHTML_KeepAriaLabelledByAnchors(t *testing.T) {
 	html := readPortalHTML(t)
 
@@ -100,7 +100,7 @@ func TestPortal_PanelHeadersHTML_KeepAriaLabelledByAnchors(t *testing.T) {
 // TestPortal_VisualTestFixtureHTML_HasNoDrawerMarkup asserts the chromium
 // visual-test fixture HTML (the run-table layout fixture, not the live
 // portal) does not pin any drawer chrome. That keeps the existing snapshot
-// green across the flatten-drawers refactor and avoids a re-baseline. Slice 9
+// green across the flatten-drawers refactor and avoids a re-baseline. issue #1189.
 // of issue #1189.
 func TestPortal_VisualTestFixtureHTML_HasNoDrawerMarkup(t *testing.T) {
 	// The fixture is composed inside `buildVisualFixture` in

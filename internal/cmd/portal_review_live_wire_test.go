@@ -16,7 +16,7 @@ import (
 // B-tag vocabulary for issue #2109 (review canonical row):
 //   B6 — live review carries reviewLive on JSON wire; omitempty when terminal
 
-// TestPortal_Compute_LiveReviewCarriesReviewLiveJSON pins issue #2109 slice 6
+// TestPortal_Compute_LiveReviewCarriesReviewLiveJSON pins issue #2109
 // (B6): when compute() projects a parent implementation row whose sibling
 // review child is still in flight, the JSON wire must carry
 // "reviewLive": true so the JS renderRunMeta helper can render
@@ -93,7 +93,7 @@ func TestPortal_Compute_LiveReviewCarriesReviewLiveJSON(t *testing.T) {
 }
 
 // TestPortal_Compute_TerminalReviewOmitsReviewLiveJSON pins issue #2109
-// slice 6 (B6) omitempty contract: when every sibling review child is
+// B6 omitempty contract: when every sibling review child is
 // terminal (no in-flight child), the JSON wire must NOT carry the
 // "reviewLive" key. The Verdict field rides instead.
 func TestPortal_Compute_TerminalReviewOmitsReviewLiveJSON(t *testing.T) {
@@ -119,8 +119,8 @@ func TestPortal_Compute_TerminalReviewOmitsReviewLiveJSON(t *testing.T) {
 	}
 
 	// Register the review batch in the Batches index so runFromState can
-	// stamp RunDir from the index entry (slice 0 plumbing for issue
-	// #1938), letting reviewVerdictFromDecisionFile locate decision.md.
+	// stamp RunDir from the index entry, letting reviewVerdictFromDecisionFile
+	// locate decision.md (issue #1938).
 	sliceLayout := paths.NewLayout(nil, repoRoot)
 	sliceIdx := &batchindex.Index{
 		Version: batchindex.IndexVersion,

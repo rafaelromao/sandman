@@ -451,7 +451,7 @@ func TestPortal_ActiveRowAddedMobileCSS_NoOverrides(t *testing.T) {
 }
 
 // TestPortal_MobileIssueTitleCSS_AlignSelfCenterIn960pxBlock is the
-// regression pin for issue #1857 (Slice 2 of #1854). Slice 1
+// regression pin for issue #1857 (#1854).
 // (issue #1855) deleted the `td[data-cell="issue-title"] { display: none; }`
 // rule from the `@media (max-width: 760px)` block in portal.html so
 // the cell renders on mobile, and added `align-self: center;` to the

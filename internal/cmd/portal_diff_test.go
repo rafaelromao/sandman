@@ -253,7 +253,7 @@ console.log('PASS');
 }
 
 // TestRenderRunMeta_ActiveWithAttempts_RendersChipOnCounterLine is the
-// tracer bullet for slice 4 of #1499: an active row backed by
+// tracer bullet for #1499: an active row backed by
 // run.started + run.retry (no run.finished) must surface the live
 // attempt count on the trailing counter line in the same "N retries"
 // shape the finished #1483 path uses, and stay within the 3-line
@@ -342,7 +342,7 @@ console.log('PASS');
 
 // TestRenderRunMeta_FinishedRunWithAttemptsAndRetriesDone_DoesNotDuplicate
 // is the duplication-guard regression: a finished row carries both
-// attempts (sourced from retries_done by slice 1's attemptsForRun) and
+// attempts (sourced from retries_done by the attemptsForRun helper) and
 // retriesDone in the JSON, but the chip must emit only once. The
 // attempts branch is gated on retriesDone === 0 so the chip is the
 // active-only path; finished rows use the existing retriesDone branch.
@@ -359,7 +359,7 @@ console.log('PASS');
 }
 
 // TestPortalDiffCreateRunRow_ActiveAttemptsChipPersistsTitle is the
-// client-path coverage for slice 4: when SandmanPortalDiff.insertRunRow
+// client-path coverage: when SandmanPortalDiff.insertRunRow
 // renders an active row backed by run.started + run.retry, the
 // meta-line element must carry the "2 retries" text on its textContent
 // AND a title attribute naming the most recent retry reason. The
@@ -4644,7 +4644,7 @@ console.log('PASS');
 }
 
 // TestPortalRunsView_VisibleRunForIssueGroup_LiveActiveParentKeepsIdentity
-// is slice 2 for issue #1525: a live, active canonical parent row must
+// issue #1525: a live, active canonical parent row must
 // remain the visible row even when a later-started review child exists in
 // the same group, and the parent's identity fields must not be blended
 // with any review metadata. The badge status comes from the backend
@@ -4676,7 +4676,7 @@ console.log('PASS');
 }
 
 // TestPortalRunsView_VisibleRunForIssueGroup_ArchivedParentKeepsIdentity
-// is slice 3 for issue #1525: an archived canonical parent row must
+// issue #1525: an archived canonical parent row must
 // remain the visible row when an active review child exists, and the
 // archived parent's identity fields must not be blended with the review
 // child's identity.
@@ -4706,7 +4706,7 @@ console.log('PASS');
 }
 
 // TestPortalRunsView_VisibleRunForIssueGroup_CompletedParentWithVerdict
-// is slice 4 for issue #1525: a completed canonical parent row with a
+// issue #1525: a completed canonical parent row with a
 // review verdict must remain the visible row when a review child exists,
 // and the parent's identity fields must not be blended with the review
 // child's identity. The parent's reviewVerdict is preserved as a
@@ -5172,7 +5172,7 @@ try {
 	runNodeScript(t, js)
 }
 
-// --- Issue #1856: slice 1 — summarizeReviewGroup verdict extraction ---
+// --- Issue #1856: summarizeReviewGroup verdict extraction ---
 
 // Note: runInNewContext does not accept single-quoted strings that span
 // multiple lines, so the fixture logs are built with String.fromCharCode(10)
@@ -5253,7 +5253,7 @@ console.log('PASS');
 }
 
 // TestSummarizeReviewGroup_Verdict_GoRegexParityBare pins Go-side parity
-// for the bare marker line shape. Slice 1 of issue #1938 retargeted
+// for the bare marker line shape. issue #1938 retargeted
 // the server-side verdict reader from run.log to decision.md; the bare
 // marker rule is the only rule the new Go helper accepts (decision.md
 // is a controlled artefact with no shell prefix and no trailing
@@ -5272,12 +5272,12 @@ console.log('PASS');
 
 // TestSummarizeReviewGroup_Verdict_JSOrphanDebrisStillTolerated pins the
 // JS-side orphan helper's tolerance of shell-debris shapes
-// (`**APPROVED**" 2>&1 | tail -5`). Issue #1938 slice 1 retargeted the
+// (`**APPROVED**" 2>&1 | tail -5`). Issue #1938 retargeted the
 // Go server-side verdict reader to decision.md (no debris tolerated),
 // but the JS orphan-fallback path still reads each review's saved
 // run.log, where the same debris rule remains in place — the JS-side
 // debris regex must continue to accept these lines so orphan rows in
-// flight before slice 1 still surface a verdict. This test gates that
+// flight before issue #1938 still surface a verdict. This test gates that
 // behaviour so a future JS tidy-up does not silently drop orphan
 // verdicts for legacy runs.
 func TestSummarizeReviewGroup_Verdict_JSOrphanDebrisStillTolerated(t *testing.T) {
@@ -5350,7 +5350,7 @@ console.log('PASS');
 // the orphan path: with the new extraction, an orphan review-only group
 // whose log has a Decision marker must also surface the verdict through
 // the existing summary path (no separate code change in the orphan
-// branch). Slice 1's effect propagates to the orphan stub automatically.
+// branch). issue #1938's effect propagates to the orphan stub automatically.
 func TestSummarizeReviewGroup_Verdict_OrphanPathPicksUpNewExtraction(t *testing.T) {
 	js := `const NL = String.fromCharCode(10);
 const review = { key: 'r1', runId: 'r1', review: true, status: 'success', issueNumber: 1, prNumber: 5, startedAt: '2026-07-01T00:00:00Z', log: '## Decision' + NL + '**APPROVED**' + NL };
@@ -5362,7 +5362,7 @@ console.log('PASS');
 	runPortalHTMLScript(t, js)
 }
 
-// --- Issue #1856: slice 2 — visibleRunForIssueGroup parent enrichment ---
+// --- Issue #1856: visibleRunForIssueGroup parent enrichment ---
 
 // TestVisibleRunForIssueGroup_ParentStampsTwoReviews is AC 6 (a): a
 // completed parent with two terminal review children that each carry
@@ -5523,7 +5523,7 @@ console.log('PASS');
 // TestVisibleRunForIssueGroup_OrphanReviewOnlyPathUnchanged is AC 4:
 // the orphan review-only group path (no canonical parent) must remain
 // unchanged. The synthesized stub already gets reviewCount and
-// reviewVerdict from summarizeReviewGroup (slice 1 propagation). The
+// reviewVerdict from summarizeReviewGroup (propagation from issue #1938). The
 // visible row is the orphan stub, not the canonical parent shape.
 func TestVisibleRunForIssueGroup_OrphanReviewOnlyPathUnchanged(t *testing.T) {
 	js := `const NL = String.fromCharCode(10);
@@ -5623,7 +5623,7 @@ console.log('PASS');
 	runPortalHTMLScript(t, js)
 }
 
-// --- Issue #1856: slice 3 — renderRunMeta line shape for parent with reviews ---
+// --- Issue #1856: renderRunMeta line shape for parent with reviews ---
 
 // TestRenderRunMeta_ParentWithTwoReviewsPluralWording is AC 1 (plural):
 // the meta line for a visible parent row with reviewCount=2 and
@@ -5657,7 +5657,7 @@ console.log('PASS');
 }
 
 // TestRenderRunMeta_ParentWithTwoReviewsNoVerdictRendersUnclear pins AC 2
-// (no marker recoverable) after issue #1939 slice 2 flipped the empty
+// (no marker recoverable) after issue #1939 flipped the empty
 // verdict contract: on a non-success parent, the meta line for
 // reviewCount=2 with empty reviewVerdict must render "2 reviews -
 // Unclear" — the server stamp for "decision.md was missing or
@@ -5678,7 +5678,7 @@ console.log('PASS');
 }
 
 // TestRenderRunMeta_ParentWithOneReviewEmptyVerdictRendersUnclear pins
-// issue #1939 slice 2: when the Go server stamps reviewVerdict=” on a
+// issue #1939: when the Go server stamps reviewVerdict=” on a
 // review row (because decision.md was missing or unparseable), the JS
 // renderRunMeta projection must render "Unclear" on the counter line
 // instead of dropping the verdict suffix. The orphan path can still

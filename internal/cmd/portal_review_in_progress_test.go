@@ -10,7 +10,7 @@ import "testing"
 //        (one terminal with verdict="Changes requested", one live)
 //        renders "N reviews - In Progress"
 
-// TestRenderRunMeta_LiveReviewRendersInProgress pins issue #2109 slice 3 (B3):
+// TestRenderRunMeta_LiveReviewRendersInProgress pins issue #2109 (B3):
 // when the Go server stamps reviewLive=true on a parent implementation row
 // (because at least one sibling review child has Status == "reviewing"),
 // renderRunMeta must render "N review(s) - In Progress" instead of the
@@ -30,7 +30,7 @@ console.log('PASS');
 	runPortalHTMLScript(t, js)
 }
 
-// TestRenderRunMeta_TwoLiveReviewsRenderInProgress pins issue #2109 slice 3
+// TestRenderRunMeta_TwoLiveReviewsRenderInProgress pins issue #2109
 // (B3 plural): a parent with 2 in-flight reviews (reviewCount=2,
 // reviewLive=true) must render "2 reviews - In Progress". Plural form
 // regression guard so the "review" vs "reviews" join is preserved alongside
@@ -101,7 +101,7 @@ console.log('PASS');
 }
 
 // TestRenderRunMeta_NoLiveNoVerdictStillRendersUnclear pins issue #2109
-// slice 5 (B5) + issue #2220: the existing fallback "N review(s) - Unclear"
+// (B5) + issue #2220: the existing fallback "N review(s) - Unclear"
 // still fires when reviewVerdict is empty, reviewLive is false, AND the
 // impl run did not succeed — i.e. the terminal-but-unparseable review
 // path on a failed/aborted run (AC4). This is a regression guard that

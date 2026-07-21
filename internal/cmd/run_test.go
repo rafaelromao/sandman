@@ -2434,7 +2434,7 @@ func TestRun_PromptOnlyAllowsNoIssueSelection(t *testing.T) {
 }
 
 // TestRun_PromptOnlyWithRunIDRegistersOrchestratorRunIDInBatchesIndex
-// pins the prompt-only public BatchId contract (issue #1920 slice 4 of
+// pins the prompt-only public BatchId contract (issue #1920
 // #1916): `sandman run --prompt "..." --run-id myid` registers the
 // batches index entry with id `<ts>-<sid>-prompt-myid`, matching the
 // per-row RunID the orchestrator will emit in run.started for a
@@ -2496,7 +2496,7 @@ func TestRun_PromptOnlyWithRunIDRegistersOrchestratorRunIDInBatchesIndex(t *test
 
 // TestRun_PromptOnlyWithoutRunIDRegistersCanonicalBatchIdInBatchesIndex
 // pins the prompt-only public BatchId contract for the no-userid case
-// (issue #1920 slice 4 of #1916): `sandman run --prompt "..."` (no
+// (#1916): `sandman run --prompt "..."` (no
 // --run-id) registers the batches index entry with id `<ts>-<sid>-prompt`,
 // matching the per-row RunID the orchestrator will emit in run.started.
 // The on-disk batch folder basename, batch.json.batchId, event payload
@@ -4394,7 +4394,7 @@ func TestRun_PromptAndTemplateFlagsCombined(t *testing.T) {
 
 // TestRun_SingleIssueRegistersPublicBatchIdInBatchesIndex verifies that
 // `sandman run 42` registers a SINGLE batch index entry whose id and
-// path equal the public BatchId `<ts>-<sid>-42` (issue #1917 slice 1).
+// path equal the public BatchId `<ts>-<sid>-42` (issue #1917).
 // For single-issue batches, the public BatchId (== per-row RunID ==
 // batch folder basename) carries no +N suffix.
 func TestRun_SingleIssueRegistersPublicBatchIdInBatchesIndex(t *testing.T) {
@@ -4435,7 +4435,7 @@ func TestRun_SingleIssueRegistersPublicBatchIdInBatchesIndex(t *testing.T) {
 		t.Error("entry Path must be non-empty")
 	}
 	// Path is the public BatchId (= batch folder basename). For single
-	// issue batches there is no +N suffix (issue #1917 slice 1).
+	// issue batches there is no +N suffix (issue #1917).
 	if filepath.Base(got.Path) != wantPublicBatchID {
 		t.Errorf("entry Path basename = %q, want public BatchId %q", filepath.Base(got.Path), wantPublicBatchID)
 	}
@@ -4451,7 +4451,7 @@ func TestRun_SingleIssueRegistersPublicBatchIdInBatchesIndex(t *testing.T) {
 
 // TestRun_MultiIssueRegistersPublicBatchIdInBatchesIndex verifies that
 // `sandman run 42 43` registers a SINGLE batch index entry whose id and
-// path equal the public BatchId `<ts>-<sid>-42+1` (issue #1917 slice 1).
+// path equal the public BatchId `<ts>-<sid>-42+1` (issue #1917).
 // Per-row addressability is via the per-run folders under
 // `runs/<ts>-<sid>-<num>/`, not via additional index entries. The
 // batch.json.batchId stored on disk MUST equal the public BatchId

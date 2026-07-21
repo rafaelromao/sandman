@@ -345,7 +345,7 @@ func TestPortalPerf_AsyncLargeLogInflightTabSwitch(t *testing.T) {
 }
 
 // TestPortalPerf_StreamCoalescer_LeadingFlushBatchesOneLineIntoFragmentAppend
-// is slice A of the SSE coalescer work for #1563: a single scheduled line
+// SSE coalescer work for #1563: a single scheduled line
 // should land as a single flush that calls highlightTerminalLog exactly
 // once with the joined batch and appends the result to the run's <pre>
 // using a single DocumentFragment.appendChild. appendStreamLine no longer
@@ -411,7 +411,7 @@ console.log('PASS');
 }
 
 // TestPortalPerf_StreamCoalescer_DedupAcrossBufferedBatch
-// is slice A.5 of the coalescer work: duplicate lines within the same
+// coalescer work: duplicate lines within the same
 // pending batch must not produce duplicate DOM writes; lines already in
 // the run's known-lines set must be dropped at schedule time.
 func TestPortalPerf_StreamCoalescer_DedupAcrossBufferedBatch(t *testing.T) {
@@ -472,7 +472,7 @@ console.log('PASS');
 }
 
 // TestPortalPerf_StreamCoalescer_BurstOf100MessagesProducesAtMost3Flushes
-// is slice B (the headline acceptance test from #1563): 100 SSE messages
+// SSE coalescer headline acceptance test from #1563: 100 SSE messages
 // over a controlled rAF clock must coalesce into <=3 flushes, sticky-bottom
 // must be preserved after each batch.
 func TestPortalPerf_StreamCoalescer_BurstOf100MessagesProducesAtMost3Flushes(t *testing.T) {
@@ -547,7 +547,7 @@ console.log('PASS');
 }
 
 // TestPortalPerf_StreamCoalescer_OverflowAtCapTailMostFirst
-// is slice C: when the per-run buffer grows past cap, the trailing rAF
+// when the per-run buffer grows past cap, the trailing rAF
 // truncates the buffer to the most recent `cap` lines before calling
 // highlight. The oldest lines stay buffered only as long as the buffer
 // itself does; they are flushed first. The headline burst test (≤3 flushes)
@@ -611,7 +611,7 @@ console.log('PASS');
 }
 
 // TestPortalPerf_StreamCoalescer_StickyToggleReflectsRunScrolling
-// is slice B continuation: sticky=false must leave scrollTop alone.
+// sticky=false must leave scrollTop alone.
 func TestPortalPerf_StreamCoalescer_StickyToggleReflectsRunScrolling(t *testing.T) {
 	js := `
 const rafQueue = [];

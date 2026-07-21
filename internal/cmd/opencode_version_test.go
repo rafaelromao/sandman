@@ -65,7 +65,7 @@ func defaultCfgSandbox(value string) *config.Config {
 }
 
 // TestWarnOpencodeVersionMismatch_NeverTouchesStdout pins the
-// non-interference contract from Slice 4: the orchestrator only
+// non-interference contract: the orchestrator only
 // writes to stderr. Touching OutOrStdout would pollute the batch's
 // stdout (which feeds into the event log / batch payload), changing
 // observable behavior beyond "advisory warning."

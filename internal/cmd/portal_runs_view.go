@@ -95,7 +95,7 @@ type portalRun struct {
 	// GroupedReview marks review rows that are owned by an issue-parent row.
 	// Set by aggregateReviewChildren during compute (restored in #1897) for
 	// every review row that has a resolved linked issue (IssueNumber > 0) so
-	// it can be folded into the parent issue's group. Issue #1919 slice 3
+	// it can be folded into the parent issue's group. Issue #1919
 	// tightened the contract: orphan reviews (no linked issue, IssueNumber
 	// == 0) keep GroupedReview=false and render via the orphan review-only
 	// JS path (visibleRunForIssueGroup, portal.html), which hardcodes
@@ -133,7 +133,7 @@ type portalRun struct {
 	// events.RunState.LiveAttempt) and the finished-payload retry count
 	// (Finished.Payload["retries_done"]) for finished runs. The finished
 	// payload wins when both signals are present, matching the
-	// acceptance contract for slice 1 of #1499. Omitted when the run has
+	// acceptance contract for #1499. Omitted when the run has
 	// not retried (zero value).
 	Attempts int `json:"attempts,omitempty"`
 	// LastRetryReason is the `reason` of the most recent `run.retry`
@@ -141,7 +141,7 @@ type portalRun struct {
 	// finished payload does not carry a `reason`, so this is the
 	// only place the field can be sourced. Omitted when no retries
 	// exist or when the most recent retry payload omits the key
-	// (the current orchestrator shape; slice 3 of #1499 will populate
+	// (the current orchestrator shape; #1499 will populate
 	// it).
 	LastRetryReason string `json:"lastRetryReason,omitempty"`
 	// Archived is true when a completed batch's directory has been
@@ -371,10 +371,10 @@ func (v *portalRunsView) computeWithActiveRuns(repoRoot string, eventList []even
 }
 
 func (v *portalRunsView) computeWithActiveRunsAndIndex(repoRoot string, eventList []events.Event, eventsByRun map[string][]portalEvent, activeInstances []portalActiveRun, idx *batchindex.Index) ([]portalRun, error) {
-	// Slice 1 (issue #1938): build the paths.Layout once per
+	// issue #1938: build the paths.Layout once per
 	// compute() so aggregateReviewChildren can locate each terminal
 	// review child's <runDir>/decision.md via the canonical seam
-	// from slice 0 (#1937). The pointer is reused for every verdict
+	// from #1937. The pointer is reused for every verdict
 	// read in the loop below; one paths.NewLayout call per compute
 	// pass, no per-row work.
 	layout := paths.NewLayout(nil, repoRoot)
@@ -792,7 +792,7 @@ func (v *portalRunsView) synthesizedDeadBatchRows(deadBatches []daemon.DeadBatch
 				// per-row folder location via the DeadBatch.RunDir the
 				// scanner produced; stamp RunDir directly from there
 				// without re-resolving through the Batches index
-				// (issue #1937 slice 0d).
+				// (#1937).
 				RunDir: filepath.Join(batch.RunDir, "runs", runID),
 			}
 			if len(batch.Manifest.Issues) > 1 {
@@ -911,7 +911,7 @@ func (v *portalRunsView) demoteOrphanedActiveRunsFromDeadBatches(repoRoot string
 // reviewVerdictFromDecisionFile during compute, before portalSummaryRuns
 // blanks Log for transport — so the verdict survives the summary endpoint.
 // Restored per issue #1897 after #1825 deleted it (and retargeted to the
-// decision.md artefact by slice 1 of issue #1938); the parent pick mirrors
+// decision.md artefact by #1938); the parent pick mirrors
 // the JS pickCanonicalParent (see portal.html) so the stamp lands on the
 // row the portal actually displays.
 //
@@ -957,7 +957,7 @@ func (v *portalRunsView) aggregateReviewChildren(layout paths.Layout, runs []por
 				summary.live = true
 			}
 			// Only terminal review rows project a verdict; an in-flight
-			// review has no final "## Decision" yet (issue #1729, slice 3).
+			// review has no final "## Decision" yet (issue #1729).
 			if run.FinishedAt != nil {
 				verdict := "Unclear"
 				if run.BatchKey != "" && run.RunDir != "" {
@@ -991,7 +991,7 @@ func (v *portalRunsView) aggregateReviewChildren(layout paths.Layout, runs []por
 		}
 	}
 	for i := range runs {
-		// Issue #1919 slice 3: only reviews with a resolved linked
+		// Issue #1919: only reviews with a resolved linked
 		// issue group under the parent issue row. Orphan reviews
 		// (no linked issue, IssueNumber == 0) stay as standalone
 		// "PR <n>" rows; the JS orphan path renders them
@@ -1049,10 +1049,10 @@ func isTerminalStatus(status string) bool {
 // Older rows that predate the manifest field still fall back to the legacy
 // <runDir>/decision.md location.
 //
-// Issue #2224 slice 3b: when the manifest carries WorktreePath but the
+// Issue #2224: when the manifest carries WorktreePath but the
 // worktree's decision.md is missing (the worktree was cleaned up by
 // ClearReviewArtifacts after the review), fall through to the run-folder
-// copy that postDecision persists (slice 3a). The worktree is the
+// copy that postDecision persists (#2224). The worktree is the
 // preferred path because it is the canonical artifact location (per
 // #1953); the run-folder copy is a postDecision-managed backup that
 // survives cleanup.
@@ -2007,7 +2007,7 @@ func (v *portalRunsView) runFromState(repoRoot string, runState events.RunState,
 	}
 	// Terminal rows (active==nil AND kind=="completed"): stamp RunDir
 	// from the Batches index, which is the source of truth for the
-	// on-disk location of the run folder (issue #1937 slice 0c). When
+	// on-disk location of the run folder (issue #1937). When
 	// the batch cannot be resolved (e.g. an evicted index entry or an
 	// event-log-only run with no surviving batch), leave RunDir empty
 	// so the verdict reader treats the row as Unclear.
@@ -2362,7 +2362,7 @@ func (v *portalRunsView) loadBatchesIndex(repoRoot string) *batchindex.Index {
 // archived (whole-batch archive path) or (b) its per-row Runs[]
 // record carries Status: archived (per-row archive path). The
 // fallback to entry-level Status keeps legacy entries without Runs
-// records visible in the same way as before slice 8.
+// records visible in the same way as before.
 func (v *portalRunsView) isRunArchived(idx *batchindex.Index, locator runLocator) bool {
 	if locator.batchID == "" || idx == nil {
 		return false
@@ -2592,7 +2592,7 @@ func (v *portalRunsView) activeRunLogPathAndURL(repoRoot string, active portalAc
 // `filepath.Dir(SocketPath)` already is the per-row folder.
 // Collapsing both shapes through active.Dir + active.RunID keeps the
 // per-row RunDir consistent regardless of which socket is the live
-// one (issue #1937 slice 0b).
+// one (issue #1937).
 func activeRunDir(active portalActiveRun) string {
 	if active.Dir == "" || active.RunID == "" {
 		return ""
@@ -2620,7 +2620,7 @@ func (v *portalRunsView) portalLogDownloadURLForPath(repoRoot, logPath string) s
 // Saved log files are persisted in the same `[<label>] HH:MM:SS ` prefixed
 // format as the live stream. For portal display, labels are stripped so the
 // UI shows "HH:MM:SS msg" instead of "[<label>] HH:MM:SS msg". Pre-change
-// log files (saved before slice 1) may be un-prefixed; the reader tolerates
+// log files (saved before the change) may be un-prefixed; the reader tolerates
 // both. The raw file is unchanged; log download (/api/logs) serves it raw.
 func (v *portalRunsView) readPortalTextFile(path string) string {
 	if path == "" {

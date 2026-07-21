@@ -40,7 +40,7 @@ func TestResolveBatchFromRunIDFastOrScan_FastPathMatchesBatchID(t *testing.T) {
 // NOT trust the per-row manifest's BatchID field — see the
 // `TestResolveBatchFromRunIDFastOrScan_FallbackIgnoresManifestBatchID`
 // subtest below. The two resolvers are deliberately distinct
-// contracts preserved by the slice 7 renaming.
+// contracts preserved by the rename.
 func TestResolveBatchFromRunIDFastOrScan_FallbackStatOnly(t *testing.T) {
 	baseDir := t.TempDir()
 	batchDir := filepath.Join(baseDir, "batches", "260618113825-abc-42+2")

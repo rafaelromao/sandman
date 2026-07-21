@@ -52,7 +52,7 @@ func TestAggregateReviewChildren_LiveReviewStampsReviewLive(t *testing.T) {
 		t.Fatalf("parent implementation row missing from aggregate output: %#v", runs)
 	}
 	if !stamped.ReviewLive {
-		t.Fatalf("parent ReviewLive=false, want true when a sibling review has Status=\"reviewing\" (issue #2109 slice 1)")
+		t.Fatalf("parent ReviewLive=false, want true when a sibling review has Status=\"reviewing\" (issue #2109)")
 	}
 	if stamped.ReviewCount != 1 {
 		t.Fatalf("parent ReviewCount=%d, want 1 (review child still aggregates)", stamped.ReviewCount)
