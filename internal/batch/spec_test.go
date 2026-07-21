@@ -700,10 +700,10 @@ func TestSpecificationResolver_AcceptsUserTypedIssuesOverridingHarvestedCandidat
 	childBody := "## Parent\n\n#982\n\n## What\n\n"
 	client := &fakeGitHubClient{
 		issues: map[int]*github.Issue{
-			972: {Number: 972, Title: "Slice 972", Body: "## What\n\nJust a slice.\n"},
-			973: {Number: 973, Title: "Slice 973", Body: "## What\n\nJust a slice.\n"},
-			974: {Number: 974, Title: "Slice 974", Body: "## What\n\nJust a slice.\n"},
-			980: {Number: 980, Title: "Slice 980", Body: "## What\n\nSlice mentioned in prose only.\n"},
+			972: {Number: 972, Title: "Fixture 972", Body: "## What\n\nFixture body.\n"},
+			973: {Number: 973, Title: "Fixture 973", Body: "## What\n\nFixture body.\n"},
+			974: {Number: 974, Title: "Fixture 974", Body: "## What\n\nFixture body.\n"},
+			980: {Number: 980, Title: "Fixture 980", Body: "## What\n\nFixture mentioned in prose only.\n"},
 			982: {Number: 982, Title: "Outer Specification", Body: spec982Body},
 			984: {Number: 984, Title: "Child 984", Body: childBody},
 			985: {Number: 985, Title: "Child 985", Body: childBody},

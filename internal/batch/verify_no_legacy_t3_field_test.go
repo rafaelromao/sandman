@@ -5,6 +5,8 @@ import (
 	"testing"
 )
 
+const retiredT3FieldName = "T3"
+
 // TestVerifyInput_HasNoT3Field is the seam-level regression net for
 // the retirement of the transitional fallback in the verify chain.
 // The chain order is already pinned by
@@ -16,8 +18,8 @@ func TestVerifyInput_HasNoT3Field(t *testing.T) {
 	t.Parallel()
 	vt := reflect.TypeOf(VerifyInput{})
 	for i := 0; i < vt.NumField(); i++ {
-		if vt.Field(i).Name == "T3" {
-			t.Fatalf("VerifyInput still has a T3 field; the transitional fallback has been retired")
+		if vt.Field(i).Name == retiredT3FieldName {
+			t.Fatalf("VerifyInput still has a %s field; the transitional fallback has been retired", retiredT3FieldName)
 		}
 	}
 }
