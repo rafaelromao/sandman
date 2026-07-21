@@ -33,10 +33,10 @@ If `sandman run` is invoked with `--prompt` or `--template` and no issue selecto
 
 For each issue, Sandman builds a `BlockedBy` set from two sources:
 
-1. Body references (`blocked by #N`, `depends on #N`, `## Blocked by` bullet list).
+1. Body references (`## Blocked by` / `## Depends on` / `## Blocked-by` heading sections, with bare `#N` shorthand, link bullet, titled link, or trailing-annotation bullet entries).
 2. The GitHub REST API's native dependency surface (`blocked_by` on the issue response).
 
-Union, then validate. **Strict mode** (the default) errors if any in-batch blocker is missing. **Auto-expand mode** (`--include-dependencies`) recursively includes transitive blockers and errors on cycles. In-batch blocker success releases dependents immediately; external blockers must be closed on GitHub before the dependent starts.
+Union, then validate. **Strict mode** (the default) errors if any in-batch blocker is missing. **Auto-expand mode** (`--include-dependencies`) recursively includes transitive blockers and errors on cycles. In-batch blocker success releases dependents immediately; external blockers must be closed on GitHub before the dependent starts. Inline phrases such as `Blocked by #10` or `Depends on #10` outside a heading are not recognized — they were retired because prose mentions were sensitive noise (see ADR-0025 and `docs/usage/issue-body-formats.md`).
 
 ## Specifications
 
