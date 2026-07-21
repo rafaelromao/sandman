@@ -1459,6 +1459,33 @@ console.log('PASS');
 	runNodeScript(t, js)
 }
 
+// TestPortalDiffRefreshLiveTimeCells_BlockedRowDurationIsEmDash is the
+// blocked counterpart of the queued-row suppression. While the issue
+// is blocked (an upstream blocker failed or is still open), duration
+// time must not be counted — same em-dash placeholder, same rationale
+// as the stale-chip predicate which also excludes blocked. The duration
+// tick re-engages the moment status flips to running or reviewing.
+func TestPortalDiffRefreshLiveTimeCells_BlockedRowDurationIsEmDash(t *testing.T) {
+	js := `const body = makeMockBody();
+const blockedAt = new Date(Date.now() - 30*60*1000).toISOString();
+const run = { key: 'b', kind: 'active', status: 'blocked', issueLabel: '#42', runId: 'b1', startedAt: blockedAt, duration: '' };
+const stopGroups = new Set();
+const opts = { helpers, stopGroups, expandedKey: null };
+SandmanPortalDiff.insertRunRow(body, run, opts);
+SandmanPortalDiff.refreshLiveTimeCells(body, [run]);
+const row = body.children[0];
+const durationCell = row.querySelector('[data-cell="duration"]');
+if (!durationCell) throw new Error('expected duration cell');
+const value = durationCell.querySelector('.duration-value');
+if (!value) throw new Error('expected .duration-value child');
+const text = value.textContent;
+if (text !== '\u2014') throw new Error('expected duration to stay at em-dash while blocked, got ' + JSON.stringify(text));
+if (/^\d+s$/.test(text) || /^30m/.test(text) || /^1h/.test(text)) throw new Error('duration must NOT count time while blocked, got ' + JSON.stringify(text));
+console.log('PASS');
+`
+	runNodeScript(t, js)
+}
+
 // TestPortalDiffRefreshLiveTimeCells_RunningAndReviewingStillTick pins
 // the duration tick for active running and reviewing rows after the
 // queued-row suppression fix: those statuses must continue to advance
