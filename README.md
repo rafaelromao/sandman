@@ -1,10 +1,8 @@
 # Sandman
 
-<a href="https://github.com/rafaelromao/sandman">
-  <img src="https://raw.githubusercontent.com/rafaelromao/sandman/main/assets/badge-built-with-sandman.svg" alt="Built with Sandman" width="154" />
-</a>
+Sleep while your agents code.
 
-CLI tool for orchestrating AFK coding agents in isolated sandboxes.
+AFK coding agents orchestration in isolated sandboxes.
 
 ## Quick Start
 
@@ -71,3 +69,7 @@ Contributing to Sandman? See the [Development docs](docs/development/README.md).
 ## License
 
 MIT
+
+<a href="https://github.com/rafaelromao/sandman">
+  <img src="https://raw.githubusercontent.com/rafaelromao/sandman/main/assets/badge-built-with-sandman.svg" alt="Built with Sandman" width="154" />
+</a>
