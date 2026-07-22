@@ -47,7 +47,7 @@ const ContainerWorkspaceMount = "/workspace"
 // discarded on exit. postDecision then os.Stat'd the host path, saw
 // ENOENT, and marked the review as failure. See
 // internal/review/daemon.go::launchReview (prompt substitution);
-// ADR-0014 §"Daemon posts the review comment" pins the decision.md
+// ADR-0013 §"Daemon posts the review comment" pins the decision.md
 // hand-off contract this translation protects.
 func ContainerVisiblePath(hostPath, repoRoot, sandboxMode string) string {
 	if hostPath == "" || repoRoot == "" {

@@ -35,13 +35,13 @@ func readPRReviewPrompt(t *testing.T) string {
 	return string(data)
 }
 
-func readADR0014(t *testing.T) string {
+func readADR0013(t *testing.T) string {
 	t.Helper()
 	wd, err := os.Getwd()
 	if err != nil {
 		t.Fatalf("getwd: %v", err)
 	}
-	path := filepath.Join(wd, "..", "..", "..", "docs", "adr", "0014-sandman-review-daemon-and-guard.md")
+	path := filepath.Join(wd, "..", "..", "..", "docs", "adr", "0013-sandman-review-daemon-and-guard.md")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read %s: %v", path, err)
@@ -223,10 +223,10 @@ func TestPRReviewSkill_StaleApprovalHardRule(t *testing.T) {
 }
 
 func TestPRReviewSkill_ADRNotesDaemonOwnership(t *testing.T) {
-	text := readADR0014(t)
+	text := readADR0013(t)
 
 	// Post-#1845 the trust boundary is the daemon transform, not the
-	// LLM prompt. ADR-0014 §Daemon-side redaction must name the
+	// LLM prompt. ADR-0013 §Daemon-side redaction must name the
 	// daemon as the sole poster (reads decision.md, redacts, posts
 	// via gh pr comment) and the agent as the writer of the canonical
 	// body file. The old "sole authoritative record" SelfPostStore
@@ -241,14 +241,14 @@ func TestPRReviewSkill_ADRNotesDaemonOwnership(t *testing.T) {
 	}
 	for _, phrase := range required {
 		if !strings.Contains(text, phrase) {
-			t.Errorf("ADR-0014 must record the daemon-as-poster ownership after issue #1845; missing %q", phrase)
+			t.Errorf("ADR-0013 must record the daemon-as-poster ownership after issue #1845; missing %q", phrase)
 		}
 	}
 
 	if strings.Contains(text, "the `pr-review` SKILL.md Step 4b wrapper hashes the bot's review-body") {
-		t.Errorf("ADR-0014 must no longer claim the pr-review SKILL.md Step 4b wrapper is the primary record site (issue #1757)")
+		t.Errorf("ADR-0013 must no longer claim the pr-review SKILL.md Step 4b wrapper is the primary record site (issue #1757)")
 	}
 	if strings.Contains(text, "the skill no longer maintains `.sandman/reviews/self-posted.json`") {
-		t.Errorf("ADR-0014 must no longer reference the deleted self-posted.json store (issues #1845/#1848)")
+		t.Errorf("ADR-0013 must no longer reference the deleted self-posted.json store (issues #1845/#1848)")
 	}
 }
