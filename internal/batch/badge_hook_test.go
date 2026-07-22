@@ -556,6 +556,20 @@ func TestMaybeSuggestBadge_PromptContainsMergedPRs(t *testing.T) {
 	if strings.Contains(fakeRunner.capturedPrompt, "{{MERGED_PRS}}") {
 		t.Errorf("expected prompt to NOT contain unsubstituted {{MERGED_PRS}}, got: %s", fakeRunner.capturedPrompt)
 	}
+}
+
+func TestMaybeSuggestBadge_PromptAppendsBadgeAfterExistingContent(t *testing.T) {
+	fakeGh := &fakePRLister{
+		mergedPRs: []MergedSandmanPR{
+			{Number: 10, HeadRefName: "sandman/feat", Title: "Add login"},
+		},
+		hasBadge: false,
+	}
+	fakeRunner := &fakeSandmanRunner{prURL: "https://github.com/owner/repo/pull/5"}
+	h, _ := newTestBadgeHooker(fakeGh, fakeRunner)
+
+	h.MaybeSuggestBadge(context.Background(), []AgentRunResult{{Status: "success"}})
+
 	if !strings.Contains(fakeRunner.capturedPrompt, "Append the badge HTML after the final existing content.") {
 		t.Errorf("expected rendered prompt to preserve the end-of-file badge placement contract, got: %s", fakeRunner.capturedPrompt)
 	}
