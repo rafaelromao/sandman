@@ -5605,37 +5605,37 @@ func TestRunBatch_LogsContinuedEventWithPreviousRunID(t *testing.T) {
 		t.Fatalf("expected first event run.continued, got %q", continued.Type)
 	}
 	if continued.Payload["previous_run_id"] != runIDFor(42) {
-		t.Fatalf("expected previous run ID replay, got %#v", continued.Payload["previous_run_id"])
+		t.Fatalf("expected previous run ID from current Request, got %#v", continued.Payload["previous_run_id"])
 	}
 	if continued.Payload["agent"] != "test-agent" {
-		t.Fatalf("expected agent replay, got %#v", continued.Payload["agent"])
+		t.Fatalf("expected agent from current Request, got %#v", continued.Payload["agent"])
 	}
 	if continued.Payload["base_branch"] != "main" {
-		t.Fatalf("expected base branch replay, got %#v", continued.Payload["base_branch"])
+		t.Fatalf("expected base branch from current Request, got %#v", continued.Payload["base_branch"])
 	}
 	if continued.Payload["parallel"] != 2 {
-		t.Fatalf("expected parallel replay, got %#v", continued.Payload["parallel"])
+		t.Fatalf("expected parallel from current Request, got %#v", continued.Payload["parallel"])
 	}
 	if continued.Payload["start_delay"] != 5 {
-		t.Fatalf("expected start delay replay, got %#v", continued.Payload["start_delay"])
+		t.Fatalf("expected start delay from current Request, got %#v", continued.Payload["start_delay"])
 	}
 	if continued.Payload["retries"] != 1 {
-		t.Fatalf("expected retries replay, got %#v", continued.Payload["retries"])
+		t.Fatalf("expected retries from current Request, got %#v", continued.Payload["retries"])
 	}
 	if continued.Payload["sandbox"] != "worktree" {
-		t.Fatalf("expected sandbox replay, got %#v", continued.Payload["sandbox"])
+		t.Fatalf("expected sandbox from current Request, got %#v", continued.Payload["sandbox"])
 	}
 	if continued.Payload["container_capacity"] != 4 {
-		t.Fatalf("expected container capacity replay, got %#v", continued.Payload["container_capacity"])
+		t.Fatalf("expected container capacity from current Request, got %#v", continued.Payload["container_capacity"])
 	}
 	if continued.Payload["container_capacity_set"] != true {
-		t.Fatalf("expected container capacity set replay, got %#v", continued.Payload["container_capacity_set"])
+		t.Fatalf("expected container capacity set from current Request, got %#v", continued.Payload["container_capacity_set"])
 	}
 	if continued.Payload["max_containers"] != 6 {
-		t.Fatalf("expected max containers replay, got %#v", continued.Payload["max_containers"])
+		t.Fatalf("expected max containers from current Request, got %#v", continued.Payload["max_containers"])
 	}
 	if continued.Payload["max_containers_set"] != true {
-		t.Fatalf("expected max containers set replay, got %#v", continued.Payload["max_containers_set"])
+		t.Fatalf("expected max containers set from current Request, got %#v", continued.Payload["max_containers_set"])
 	}
 }
 
