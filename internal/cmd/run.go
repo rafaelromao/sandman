@@ -585,24 +585,11 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 				if runID != "" && len(resolvedBatch.Issues) == 0 {
 					req = continuationReq
 				} else if len(continueIssues) == len(resolvedBatch.Issues) {
-					req.Agent = continuationReq.Agent
-					req.Model = continuationReq.Model
+					// baseBranch stays pinned to the prior run's stored
+					// value — the worktree was cut from it. Other tunables
+					// come from current flags/config on both sides, so
+					// they don't need a merge here.
 					req.BaseBranch = continuationReq.BaseBranch
-					req.Retries = continuationReq.Retries
-					req.Parallel = continuationReq.Parallel
-					req.StartDelay = continuationReq.StartDelay
-					req.StartDelaySet = continuationReq.StartDelaySet
-					req.RunIdleTimeout = continuationReq.RunIdleTimeout
-					req.RunIdleTimeoutSet = continuationReq.RunIdleTimeoutSet
-					req.Sandbox = continuationReq.Sandbox
-					req.ContainerCapacity = continuationReq.ContainerCapacity
-					req.ContainerCapacitySet = continuationReq.ContainerCapacitySet
-					req.MaxContainers = continuationReq.MaxContainers
-					req.MaxContainersSet = continuationReq.MaxContainersSet
-					req.DangerouslySkipPermissions = continuationReq.DangerouslySkipPermissions
-					req.StrandedReconcile = continuationReq.StrandedReconcile
-					req.PromptConfig.ReviewCommand = continuationReq.PromptConfig.ReviewCommand
-					req.PromptConfig.ReviewCommandSet = continuationReq.PromptConfig.ReviewCommandSet
 				}
 				for k, v := range continuationReq.PreviousRunIDs {
 					req.PreviousRunIDs[k] = v
