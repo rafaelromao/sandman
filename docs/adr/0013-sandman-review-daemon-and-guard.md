@@ -1,4 +1,4 @@
-# ADR-0014: Sandman Review - Daemon-Monitored PR Reviews
+# ADR-0013: Sandman Review - Daemon-Monitored PR Reviews
 
 ## Status
 

@@ -1,4 +1,4 @@
-# ADR-0016: Split OpenCode config snapshot from mutable state
+# ADR-0015: Split OpenCode config snapshot from mutable state
 
 ## Status
 
@@ -6,7 +6,7 @@ accepted
 
 ## Context
 
-ADR-0008 introduced a copy-resolve step that, before bind-mounting host config paths into a container sandbox, copies every entry under each `config_dirs` path into a snapshot directory with symlinks dereferenced. ADR-0015 moved that snapshot from `/tmp` to `<runDir>/config/` so a Batch owns its snapshot directly.
+ADR-0008 introduced a copy-resolve step that, before bind-mounting host config paths into a container sandbox, copies every entry under each `config_dirs` path into a snapshot directory with symlinks dereferenced. ADR-0014 moved that snapshot from `/tmp` to `<runDir>/config/` so a Batch owns its snapshot directly.
 
 For the OpenCode AgentPreset, `~/.local/share/opencode/` is one of the configured `config_dirs`, because OpenCode keeps its file-based auth there (`auth.json`). The same directory also accumulates a large amount of mutable runtime state that the agent does not need on a fresh container run:
 
@@ -18,7 +18,7 @@ For the OpenCode AgentPreset, `~/.local/share/opencode/` is one of the configure
 Because the copy step in ADR-0008 walks the full subtree, every container run copies all of this into `<runDir>/config/`. The run dir then carries hundreds of megabytes of duplicated mutable state that:
 
 - inflates disk usage per run,
-- multiplies the stale-snapshot sweep work added in ADR-0015,
+- multiplies the stale-snapshot sweep work added in ADR-0014,
 - duplicates session history that the user actively wants to keep host-side and inspect after the container exits.
 
 A second, related concern: the existing snapshot is a frozen copy. Any session work the container does against `opencode.db` lives only inside the snapshot for the lifetime of the run; it is thrown away when the run dir is removed. That makes it impossible for a host-side OpenCode to open the session history a container agent produced.
@@ -56,7 +56,7 @@ The mechanism is general (not opencode-specific) and lives in `sandbox` and `bat
 ### Negative
 
 - The host's `opencode.db` is now mutated by container agents. If two agents in two containers (or one container with `container_capacity > 1`) write to the same host DB simultaneously, SQLite WAL mode serialises the writes; the agents do not see each other's transactions until commit. This matches how host-side OpenCode plus a container agent would already interact today if the user opened both at once. The preset definition carries a comment to flag this trade-off.
-- A snapshot still contains `auth.json` and everything else in `~/.config/opencode/` and `~/.local/share/opencode/` minus the excluded subtrees. The hardening in ADR-0015 around stale-snapshot sweeping still applies, and the security envelope is unchanged.
+- A snapshot still contains `auth.json` and everything else in `~/.config/opencode/` and `~/.local/share/opencode/` minus the excluded subtrees. The hardening in ADR-0014 around stale-snapshot sweeping still applies, and the security envelope is unchanged.
 - Adding fields to `AgentPreset` enlarges the public-ish surface of `internal/config`. The fields are not exposed via YAML on `Agent` (no user-facing override path), which keeps the foot-gun closed: a user cannot accidentally drop the OpenCode excludes by writing a partial override.
 
 ### Neutral

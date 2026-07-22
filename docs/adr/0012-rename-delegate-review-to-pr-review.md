@@ -1,4 +1,4 @@
-# ADR-0013: Rename delegate-review to pr-review
+# ADR-0012: Rename delegate-review to pr-review
 
 ## Status
 

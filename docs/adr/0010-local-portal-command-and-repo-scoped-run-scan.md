@@ -2,7 +2,7 @@
 
 ## Status
 
-superseded by ADR-0031
+superseded by ADR-0023
 
 ## Context
 

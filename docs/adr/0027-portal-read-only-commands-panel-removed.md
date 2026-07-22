@@ -1,4 +1,4 @@
-# ADR-0031: Portal read-only — commands panel removed
+# ADR-0027: Portal read-only — commands panel removed
 
 ## Status
 

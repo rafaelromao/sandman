@@ -1,4 +1,4 @@
-# ADR-0025: Specification expansion to child issues
+# ADR-0021: Specification expansion to child issues
 
 ## Status
 

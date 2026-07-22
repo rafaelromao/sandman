@@ -1,4 +1,4 @@
-# ADR-0039: Opencode host/sandbox version drift — warning + init self-resolution
+# ADR-0033: Opencode host/sandbox version drift — warning + init self-resolution
 
 ## Status
 

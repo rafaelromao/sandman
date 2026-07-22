@@ -1,4 +1,4 @@
-# ADR-0015: Store container config snapshots under the run dir
+# ADR-0014: Store container config snapshots under the run dir
 
 ## Status
 

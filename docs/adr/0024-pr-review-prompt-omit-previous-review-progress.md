@@ -1,4 +1,4 @@
-# ADR-0028: PR review prompt — omit `## Previous review progress` when there are no prior reviews
+# ADR-0024: PR review prompt — omit `## Previous review progress` when there are no prior reviews
 
 ## Status
 

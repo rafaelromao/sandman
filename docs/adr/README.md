@@ -50,30 +50,30 @@ ADRs are numbered sequentially starting from `0001`. The template ADR (`0000`) i
 | 0007 | BuildToolsPreset and pinned init scaffolding | accepted |
 | 0008 | Config mount resolution via temporary copy | accepted |
 | 0009 | Stabilize container-backed smoke and e2e tests | accepted |
-| 0010 | Local portal command and repo-scoped run scan | accepted |
+| 0010 | Local portal command and repo-scoped run scan | superseded |
 | 0011 | Remove interactive agent mode | accepted |
-| 0012 | Ralph Loop — Agent-Driven Issue Selection | superseded |
-| 0026 | Rename Ralph to Auto Mode | proposed |
-| 0013 | Rename delegate-review to pr-review | accepted |
-| 0014 | Sandman Review - Daemon-Monitored PR Reviews | proposed |
-| 0015 | Store container config snapshots under the run dir | accepted |
-| 0016 | Split OpenCode config snapshot from mutable state | accepted |
-| 0017 | Split Pi config snapshot from mutable state | superseded |
-| 0018 | Unblock dependents from same-batch success | proposed |
-| 0019 | Canonical test env vars for provider allowlists and e2e scenario gates | accepted |
-| 0020 | Per-agent env vars to parameterize the model used by smoke and e2e tests | accepted |
-| 0021 | Portal auto-runs `clean --stale` on startup | accepted |
-| 0022 | Replace end-of-session continuation with checkpointed handoffs | superseded |
-| 0023 | Handoff points to rendered prompt and tracks last skill | superseded |
-| 0024 | Remove Pi agent support | accepted |
-| 0027 | Auto-recover from stranded worktrees in `--override` and `--continue` flows | proposed |
-| 0028 | PR review prompt — omit `## Previous review progress` when there are no prior reviews | accepted |
-| 0029 | Portal secondary-row chips for run context | accepted |
-| 0030 | Standardize Run ID and Run Dir naming | accepted |
-| 0031 | Portal read-only — commands panel removed | accepted |
+| 0012 | Rename delegate-review to pr-review | accepted |
+| 0013 | Sandman Review - Daemon-Monitored PR Reviews | accepted |
+| 0014 | Store container config snapshots under the run dir | accepted |
+| 0015 | Split OpenCode config snapshot from mutable state | accepted |
+| 0016 | Unblock dependents from same-batch success | accepted |
+| 0017 | Canonical test env vars for provider allowlists and e2e scenario gates | accepted |
+| 0018 | Per-agent env vars to parameterize the model used by smoke and e2e tests | accepted |
+| 0019 | Portal auto-runs `clean --stale` on startup | accepted |
+| 0020 | Remove Pi agent support | accepted |
+| 0021 | Specification expansion to child issues | accepted |
+| 0022 | Rename Ralph Loop to Auto Mode | accepted |
+| 0023 | Auto-recover from stranded worktrees in `--override` and `--continue` flows | accepted |
+| 0024 | PR review prompt — omit `## Previous review progress` when there are no prior reviews | accepted |
+| 0025 | Portal secondary-row chips for run context | accepted |
+| 0026 | Standardize per-row RunID and run directory naming | accepted |
+| 0027 | Portal read-only — commands panel removed | accepted |
+| 0028 | Per-run command sockets for command and abort | accepted |
+| 0029 | Review daemon — stateless on age, stateful on comment | accepted |
+| 0030 | `run.retry` payload schema and closed `reason` vocabulary | accepted |
+| 0031 | [placeholder] | accepted |
 | 0032 | `.sandman/` layout redesign — batches, runs, and the master index | accepted |
-| 0033 | Per-run command sockets for command and abort | accepted |
-| 0034 | Review daemon — stateless on age, stateful on comment | accepted |
-| 0035 | `run.retry` payload schema and closed `reason` vocabulary | accepted |
-| 0038 | Badge marker — paginated idempotency check | proposed |
-| 0040 | Empty-child Specification runs as a regular issue | proposed |
+| 0033 | Opencode host/sandbox version drift — warning + in-ARB retry | accepted |
+| 0034 | Empty-child Specification runs as a regular issue | accepted |
+| 0037 | Hermetic `gh` in pr-flow e2e tests | accepted |
+| 0038 | Badge marker — paginated idempotency check | accepted |

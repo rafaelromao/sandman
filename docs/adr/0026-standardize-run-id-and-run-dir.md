@@ -1,4 +1,4 @@
-# ADR-0030: Standardize per-row RunID and run directory naming
+# ADR-0026: Standardize per-row RunID and run directory naming
 
 ## Status
 

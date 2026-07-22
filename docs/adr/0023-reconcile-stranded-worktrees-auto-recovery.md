@@ -1,4 +1,4 @@
-# ADR-0027: Auto-recover from stranded worktrees in `--override` and `--continue` flows
+# ADR-0023: Auto-recover from stranded worktrees in `--override` and `--continue` flows
 
 ## Status
 
@@ -14,9 +14,9 @@ The glossary promise is therefore wrong for the most common stranded state. Issu
 
 This ADR records the decision to make that auto-repair the default behaviour. It is the contract that the slices in #934–#938 collectively implement. It is filed as `proposed` so the slices can be revised against the contract, not the other way around.
 
-The auto-recovery pattern is not new. ADR-0021 (`docs/adr/0021-portal-auto-runs-clean-stale-on-startup.md`) established that the portal auto-runs `sandman clean --stale` on startup through a package-level function variable seam (`portalStaleCleaner func(string) error`) so the body is shared with the CLI flag and tests can stub the side effect. ADR-0027 reuses the same idea for the stranded-worktree case: the detection logic lives in one Go helper, the recovery loop lives in one place per call site, and tests swap the side effect through a function variable seam rather than reaching into the git CLI.
+The auto-recovery pattern is not new. ADR-0019 (`docs/adr/0021-portal-auto-runs-clean-stale-on-startup.md`) established that the portal auto-runs `sandman clean --stale` on startup through a package-level function variable seam (`portalStaleCleaner func(string) error`) so the body is shared with the CLI flag and tests can stub the side effect. ~~ADR-0023 (deleted)~~ reuses the same idea for the stranded-worktree case: the detection logic lives in one Go helper, the recovery loop lives in one place per call site, and tests swap the side effect through a function variable seam rather than reaching into the git CLI.
 
-`--continue` is the second call site. ADR-0022 (`docs/adr/0022-replace-end-of-session-continuation-with-checkpointed-handoffs.md`) defined `--continue` as "Handoff is the persisted state; Continue is the action that reads it", with the implicit assumption that a prior AgentRun exists for the issue. Slice #934 lifts that assumption: when there is no prior run, `--continue` now falls through to `ModeOverride`, which means it will go through the same auto-recovery path as an explicit `--override`. The new behaviour, in other words, makes the "no prior run" branch of `--continue` indistinguishable from a fresh `--override` — including the stranded-worktree recovery that both flows now perform.
+`--continue` is the second call site. ~~ADR-0022 (deleted)~~ (`docs/adr/0022-replace-end-of-session-continuation-with-checkpointed-handoffs.md`) defined `--continue` as "Handoff is the persisted state; Continue is the action that reads it", with the implicit assumption that a prior AgentRun exists for the issue. Slice #934 lifts that assumption: when there is no prior run, `--continue` now falls through to `ModeOverride`, which means it will go through the same auto-recovery path as an explicit `--override`. The new behaviour, in other words, makes the "no prior run" branch of `--continue` indistinguishable from a fresh `--override` — including the stranded-worktree recovery that both flows now perform.
 
 `scripts/reconcile-stranded-worktrees.sh` is the third artefact. After slice #936 lands, the script becomes a thin wrapper around the same Go helper that `--override` and `--continue` use. Operators can still run the script to *detect* stranded worktrees manually; they no longer need to copy-paste the printed remediation commands, because the orchestrator will run them automatically the next time they invoke `--override` or `--continue`.
 
@@ -41,7 +41,7 @@ The recovery loop tries four strategies, in order, and stops as soon as one succ
 
 All three strategies are local to the worktree base and the main repo. They never touch refs that the operator has not touched in this session, and they never force-push.
 
-The package-level function variable seam that ADR-0021 introduced is replicated here. The recovery loop calls a package-level `reconcileStrandedFn func(repoRoot, worktreeBase string) error` (or the equivalent closure captured by the orchestrator) so tests can stub the side effect without spawning a real git repo. The default closure calls the real helper; tests inject a stub that records the call and returns success.
+The package-level function variable seam that ADR-0019 introduced is replicated here. The recovery loop calls a package-level `reconcileStrandedFn func(repoRoot, worktreeBase string) error` (or the equivalent closure captured by the orchestrator) so tests can stub the side effect without spawning a real git repo. The default closure calls the real helper; tests inject a stub that records the call and returns success.
 
 ## Consequences
 
@@ -56,7 +56,7 @@ The package-level function variable seam that ADR-0021 introduced is replicated 
 
 - Auto-recovery mutates the main repo's checked-out branch. Operators who treat `sandman run --override` as a "scoped to `.sandman/worktrees/`" command will be surprised the first time their main repo's branch changes underneath them. The CLI logs the recovery and the strategy used so the surprise is at least visible in the same terminal session.
 - Strategy (c) (`git update-ref -d`) is destructive. It is a deliberate last resort, but it does drop a ref. The helper logs a warning before this branch runs and refuses to delete a ref that has commits ahead of the base, so the destruction is bounded; still, an operator who expected the recovery to be no-op-on-main-repo will see the ref disappear and may not realise why.
-- The auto-promotion in `--continue` (slice #934) breaks the implicit assumption from ADR-0022 that a prior AgentRun exists. The previous error path — "no AgentRun for issue N; run with `--override`" — is no longer the only way out. Operators who relied on that error to catch wrong issue numbers will need to add an explicit guard, since the orchestrator will now treat a typo'd issue as a fresh `--override` and try to auto-recover whatever stranded state happens to exist.
+- The auto-promotion in `--continue` (slice #934) breaks the implicit assumption from ~~ADR-0022 (deleted)~~ that a prior AgentRun exists. The previous error path — "no AgentRun for issue N; run with `--override`" — is no longer the only way out. Operators who relied on that error to catch wrong issue numbers will need to add an explicit guard, since the orchestrator will now treat a typo'd issue as a fresh `--override` and try to auto-recover whatever stranded state happens to exist.
 
 ### Phase 5 follow-up
 
@@ -65,5 +65,5 @@ Slices #934–#938 wired the auto-recovery for the `--override` path only. The p
 ### Neutral
 
 - `scripts/reconcile-stranded-worktrees.sh` still works for manual detection. After slice #936 lands it is a thin wrapper around the Go helper, but operators can still run it to see which worktrees are stranded without invoking `sandman run`. The script's printed remediation commands are no longer needed in the common case, but the detection output is unchanged.
-- The function variable seam is a `func(...) error`, not a struct field. This mirrors ADR-0021's `portalStaleCleaner` choice. Future work that wants to inject a stub from a `Dependencies` object can wrap the seam; today the orchestrator does not take a `Dependencies`.
+- The function variable seam is a `func(...) error`, not a struct field. This mirrors ADR-0019's `portalStaleCleaner` choice. Future work that wants to inject a stub from a `Dependencies` object can wrap the seam; today the orchestrator does not take a `Dependencies`.
 - This ADR is filed as `accepted`. The original contract (slices #934–#938) and the extension (slices 1–3 of #1006) collectively implement the auto-recovery for both `--override` and `--continue`, including prunable-reattach for the `--continue` path. If any future slice diverges from the contract — for example, if `StrandedWorktree` returns a different shape, or if the recovery strategies are reordered — the ADR is the artefact that has to change to match, not the code.
