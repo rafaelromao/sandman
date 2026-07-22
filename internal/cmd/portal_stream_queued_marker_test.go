@@ -37,6 +37,7 @@ if (!startMatch || !fillMatch) throw new Error('stream lifecycle functions not f
 const streamSources = {};
 const streamingKeys = new Set();
 const streamPath = '/api/runs/stream';
+const queuedMarker = "Queued. Waiting to start.";
 const streamCoalescer = {
   seedKnownLines() {},
   clearBuffer() {},
