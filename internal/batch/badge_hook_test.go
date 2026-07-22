@@ -556,6 +556,12 @@ func TestMaybeSuggestBadge_PromptContainsMergedPRs(t *testing.T) {
 	if strings.Contains(fakeRunner.capturedPrompt, "{{MERGED_PRS}}") {
 		t.Errorf("expected prompt to NOT contain unsubstituted {{MERGED_PRS}}, got: %s", fakeRunner.capturedPrompt)
 	}
+	if !strings.Contains(fakeRunner.capturedPrompt, "Append the badge HTML after the final existing content.") {
+		t.Errorf("expected rendered prompt to preserve the end-of-file badge placement contract, got: %s", fakeRunner.capturedPrompt)
+	}
+	if strings.Contains(fakeRunner.capturedPrompt, "directly under the H1") || strings.Contains(fakeRunner.capturedPrompt, "very first line of the file") {
+		t.Errorf("expected rendered prompt to omit legacy top-of-file badge placement, got: %s", fakeRunner.capturedPrompt)
+	}
 }
 
 func TestMaybeSuggestBadge_PromptBodyRationaleReferencesMergedPRs(t *testing.T) {
