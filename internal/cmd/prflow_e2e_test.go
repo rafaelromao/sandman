@@ -37,6 +37,16 @@ const (
 	parallelBranch150 = "sandman/150-fix-150"
 	parallelBranch151 = "sandman/151-fix-151"
 	parallelBranch152 = "sandman/152-fix-152"
+
+	// prFlowTitles are the Conventional-Commits-shaped titles the issue
+	// fixtures and the parallel sub-tests pin on the change request. They
+	// intentionally stay in the conventional fix:<subject> shape so the
+	// CI / semantic-pull-request check (when present) accepts them; tests
+	// assert these literals at multiple sites below.
+	prFlowSingleTitle    = "fix: failing test"
+	prFlowParallelTitle0 = "fix: 150"
+	prFlowParallelTitle1 = "fix: 151"
+	prFlowParallelTitle2 = "fix: 152"
 )
 
 type prFlowProviderCase struct {
@@ -187,8 +197,8 @@ func TestPRFlow_PodmanSandboxBinaryCommitsAndPushes(t *testing.T) {
 		if got := prFlowFlagValue(args, "--head"); got != prFlowBranch {
 			t.Fatalf("pr create --head: got %q, want %q", got, prFlowBranch)
 		}
-		if got := prFlowFlagValue(args, "--title"); got != "Fix failing test" {
-			t.Fatalf("pr create --title: got %q, want %q", got, "Fix failing test")
+		if got := prFlowFlagValue(args, "--title"); got != "fix: failing test" {
+			t.Fatalf("pr create --title: got %q, want %q", got, "fix: failing test")
 		}
 
 		bodyData, err := os.ReadFile(filepath.Join(ghShimDir, "pr-create.body"))
@@ -323,8 +333,8 @@ func TestPRFlow_PodmanSandboxCommitsAndPushes(t *testing.T) {
 		if got := prFlowFlagValue(args, "--head"); got != prFlowBranch {
 			t.Fatalf("pr create --head: got %q, want %q", got, prFlowBranch)
 		}
-		if got := prFlowFlagValue(args, "--title"); got != "Fix failing test" {
-			t.Fatalf("pr create --title: got %q, want %q", got, "Fix failing test")
+		if got := prFlowFlagValue(args, "--title"); got != "fix: failing test" {
+			t.Fatalf("pr create --title: got %q, want %q", got, "fix: failing test")
 		}
 
 		bodyData, err := os.ReadFile(filepath.Join(containerGhShimDir, "pr-create.body"))
@@ -430,8 +440,8 @@ func TestPRFlow_WorktreeSandboxCommitsAndPushes(t *testing.T) {
 		if got := prFlowFlagValue(args, "--head"); got != prFlowBranch {
 			t.Fatalf("pr create --head: got %q, want %q", got, prFlowBranch)
 		}
-		if got := prFlowFlagValue(args, "--title"); got != "Fix failing test" {
-			t.Fatalf("pr create --title: got %q, want %q", got, "Fix failing test")
+		if got := prFlowFlagValue(args, "--title"); got != "fix: failing test" {
+			t.Fatalf("pr create --title: got %q, want %q", got, "fix: failing test")
 		}
 
 		bodyData, err := os.ReadFile(filepath.Join(ghShimDir, "pr-create.body"))
@@ -500,7 +510,7 @@ func prFlowSandboxDeps(repoDir, branch string, agentName string, issue int) Depe
 	base := prFlowDeps(repoDir)
 	base.GitHubClient = &fakeGitHubClient{
 		issues: map[int]*github.Issue{
-			issue: {Number: issue, State: "open", Title: "Fix failing test"},
+			issue: {Number: issue, State: "open", Title: "fix: failing test"},
 		},
 	}
 	base.BatchRunner = &prFlowSandboxFakeRunner{
@@ -540,7 +550,7 @@ func (f *prFlowSandboxFakeRunner) RunBatch(_ context.Context, _ batch.Request) (
 				"agent":       f.agentName,
 				"sandbox":     "podman",
 				"issue":       f.issue,
-				"issue_title": "Fix failing test",
+				"issue_title": "fix: failing test",
 			},
 		})
 	}
@@ -585,7 +595,7 @@ func Double(n int) int {
 		"pr", "create",
 		"--base", "main",
 		"--head", f.branch,
-		"--title", "Fix failing test",
+		"--title", "fix: failing test",
 		"--body", "Fixes #1",
 	)
 	prCmd.Dir = worktreeDir
@@ -816,7 +826,7 @@ case "$1" in
           issue_number="${3:-}"
           body="The repo has a tiny failing Go test. Make Double(2) return 4."
           cat <<JSON
-{"number":$issue_number,"title":"Fix failing test","body":"$body"}
+{"number":$issue_number,"title":"fix: failing test","body":"$body"}
 JSON
           exit 0
           ;;
@@ -824,7 +834,7 @@ JSON
           issue_number="${3:-}"
           body="The repo has a tiny failing Go test. Make Double(3) return 6."
           cat <<JSON
-{"number":$issue_number,"title":"Fix failing test","body":"$body"}
+{"number":$issue_number,"title":"fix: failing test","body":"$body"}
 JSON
           exit 0
           ;;
@@ -948,13 +958,13 @@ JSON
     case "$path" in
       repos/example/sandbox/issues/1)
         cat <<'JSON'
-{"number":1,"title":"Fix failing test","body":"The repo has a tiny failing Go test. Make Double(2) return 4.","labels":[{"name":"ready-for-agent"}]}
+{"number":1,"title":"fix: failing test","body":"The repo has a tiny failing Go test. Make Double(2) return 4.","labels":[{"name":"ready-for-agent"}]}
 JSON
         exit 0
         ;;
       repos/example/sandbox/issues/2)
         cat <<'JSON'
-{"number":2,"title":"Fix failing test","body":"The repo has a tiny failing Go test. Make Double(3) return 6.","labels":[{"name":"ready-for-agent"}]}
+{"number":2,"title":"fix: failing test","body":"The repo has a tiny failing Go test. Make Double(3) return 6.","labels":[{"name":"ready-for-agent"}]}
 JSON
         exit 0
         ;;
@@ -1056,7 +1066,7 @@ case "$1" in
           issue_number="${3:-}"
           body="The repo has a tiny failing Go test. Make Double(2) return 4."
           cat <<JSON
-{"number":$issue_number,"title":"Fix failing test","body":"$body"}
+{"number":$issue_number,"title":"fix: failing test","body":"$body"}
 JSON
           exit 0
           ;;
@@ -1064,7 +1074,7 @@ JSON
           issue_number="${3:-}"
           body="The repo has a tiny failing Go test. Make Double(3) return 6."
           cat <<JSON
-{"number":$issue_number,"title":"Fix failing test","body":"$body"}
+{"number":$issue_number,"title":"fix: failing test","body":"$body"}
 JSON
           exit 0
           ;;
@@ -1188,13 +1198,13 @@ JSON
     case "$path" in
       repos/example/sandbox/issues/1)
         cat <<'JSON'
-{"number":1,"title":"Fix failing test","body":"The repo has a tiny failing Go test. Make Double(2) return 4.","labels":[{"name":"ready-for-agent"}]}
+{"number":1,"title":"fix: failing test","body":"The repo has a tiny failing Go test. Make Double(2) return 4.","labels":[{"name":"ready-for-agent"}]}
 JSON
         exit 0
         ;;
       repos/example/sandbox/issues/2)
         cat <<'JSON'
-{"number":2,"title":"Fix failing test","body":"The repo has a tiny failing Go test. Make Double(3) return 6.","labels":[{"name":"ready-for-agent"}]}
+{"number":2,"title":"fix: failing test","body":"The repo has a tiny failing Go test. Make Double(3) return 6.","labels":[{"name":"ready-for-agent"}]}
 JSON
         exit 0
         ;;
@@ -1415,8 +1425,8 @@ func TestPRFlow_PodmanSandboxBinaryParallelAgentRuns(t *testing.T) {
 			ContainerGhShimDir: containerGhShimDir,
 			ExpectedOriginURL:  rewrittenOriginURL,
 			ExpectedPRCalls: []prFlowExpectedPR{
-				{Branch: parallelBranch150, Title: "Fix 150", Body: "Fixes #150"},
-				{Branch: parallelBranch151, Title: "Fix 151", Body: "Fixes #151"},
+				{Branch: parallelBranch150, Title: "fix: 150", Body: "Fixes #150"},
+				{Branch: parallelBranch151, Title: "fix: 151", Body: "Fixes #151"},
 			},
 		}})
 	})
@@ -1607,8 +1617,8 @@ func TestPRFlow_PodmanSandboxBinaryParallelAgentRunsAutoCapacity(t *testing.T) {
 			ContainerGhShimDir: containerGhShimDir,
 			ExpectedOriginURL:  rewrittenOriginURL,
 			ExpectedPRCalls: []prFlowExpectedPR{
-				{Branch: parallelBranch150, Title: "Fix 150", Body: "Fixes #150"},
-				{Branch: parallelBranch151, Title: "Fix 151", Body: "Fixes #151"},
+				{Branch: parallelBranch150, Title: "fix: 150", Body: "Fixes #150"},
+				{Branch: parallelBranch151, Title: "fix: 151", Body: "Fixes #151"},
 			},
 		}})
 	})
@@ -1849,8 +1859,8 @@ func TestE2E_QueuedIssuesPersistAfterBatchCompletes(t *testing.T) {
 			ContainerGhShimDir: containerGhShimDir,
 			ExpectedOriginURL:  rewrittenOriginURL,
 			ExpectedPRCalls: []prFlowExpectedPR{
-				{Branch: parallelBranch150, Title: "Fix 150", Body: "Fixes #150"},
-				{Branch: parallelBranch151, Title: "Fix 151", Body: "Fixes #151"},
+				{Branch: parallelBranch150, Title: "fix: 150", Body: "Fixes #150"},
+				{Branch: parallelBranch151, Title: "fix: 151", Body: "Fixes #151"},
 			},
 		}})
 	})
@@ -1969,7 +1979,7 @@ JSON
     case "$path" in
       repos/example/sandbox/issues/150)
         cat <<'JSON'
-{"number":150,"title":"Fix 150","body":"Run go test -run TestDoubleFor150 ./... Make Double(2) return 5. Do not make TestDoubleFor151 pass in this branch.","labels":[{"name":"ready-for-agent"}]}
+{"number":150,"title":"fix: 150","body":"Run go test -run TestDoubleFor150 ./... Make Double(2) return 5. Do not make TestDoubleFor151 pass in this branch.","labels":[{"name":"ready-for-agent"}]}
 JSON
         exit 0
         ;;
@@ -1979,7 +1989,7 @@ JSON
         ;;
       repos/example/sandbox/issues/151)
         cat <<'JSON'
-{"number":151,"title":"Fix 151","body":"Run go test -run TestDoubleFor151 ./... Make Double(2) return 7. Do not make TestDoubleFor150 pass in this branch.","labels":[{"name":"ready-for-agent"}]}
+{"number":151,"title":"fix: 151","body":"Run go test -run TestDoubleFor151 ./... Make Double(2) return 7. Do not make TestDoubleFor150 pass in this branch.","labels":[{"name":"ready-for-agent"}]}
 JSON
         exit 0
         ;;
@@ -1989,7 +1999,7 @@ JSON
         ;;
       repos/example/sandbox/issues/152)
         cat <<'JSON'
-{"number":152,"title":"Fix 152","body":"Run go test -run TestDoubleFor152 ./... Make Double(2) return 9. This issue is blocked by issue 150.","labels":[{"name":"ready-for-agent"}],"blocked_by":[{"number":150}]}
+{"number":152,"title":"fix: 152","body":"Run go test -run TestDoubleFor152 ./... Make Double(2) return 9. This issue is blocked by issue 150.","labels":[{"name":"ready-for-agent"}],"blocked_by":[{"number":150}]}
 JSON
         exit 0
         ;;
@@ -2152,7 +2162,7 @@ JSON
     case "$path" in
       repos/example/sandbox/issues/150)
         cat <<'JSON'
-{"number":150,"title":"Fix 150","body":"Run go test -run TestDoubleFor150 ./... Make Double(2) return 5. Do not make TestDoubleFor151 pass in this branch.","labels":[{"name":"ready-for-agent"}]}
+{"number":150,"title":"fix: 150","body":"Run go test -run TestDoubleFor150 ./... Make Double(2) return 5. Do not make TestDoubleFor151 pass in this branch.","labels":[{"name":"ready-for-agent"}]}
 JSON
         exit 0
         ;;
@@ -2162,7 +2172,7 @@ JSON
         ;;
       repos/example/sandbox/issues/151)
         cat <<'JSON'
-{"number":151,"title":"Fix 151","body":"Run go test -run TestDoubleFor151 ./... Make Double(2) return 7. Do not make TestDoubleFor150 pass in this branch.","labels":[{"name":"ready-for-agent"}]}
+{"number":151,"title":"fix: 151","body":"Run go test -run TestDoubleFor151 ./... Make Double(2) return 7. Do not make TestDoubleFor150 pass in this branch.","labels":[{"name":"ready-for-agent"}]}
 JSON
         exit 0
         ;;
@@ -2172,7 +2182,7 @@ JSON
         ;;
       repos/example/sandbox/issues/152)
         cat <<'JSON'
-{"number":152,"title":"Fix 152","body":"Run go test -run TestDoubleFor152 ./... Make Double(2) return 9. This issue is blocked by issue 150.","labels":[{"name":"ready-for-agent"}],"blocked_by":[{"number":150}]}
+{"number":152,"title":"fix: 152","body":"Run go test -run TestDoubleFor152 ./... Make Double(2) return 9. This issue is blocked by issue 150.","labels":[{"name":"ready-for-agent"}],"blocked_by":[{"number":150}]}
 JSON
         exit 0
         ;;
