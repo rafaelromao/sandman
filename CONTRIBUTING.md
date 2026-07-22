@@ -30,9 +30,11 @@ For suggestions related to agent behavior, prompts, or domain vocabulary, use th
 ### Pull Requests
 
 - Fill in the [required template](.github/PULL_REQUEST_TEMPLATE.md).
-- Ensure the PR description clearly describes the problem and solution.
-- Include the relevant issue number if applicable.
-- Ensure all CI checks pass.
+- Change-request titles must follow [Conventional Commits](#conventional-commits) — this is enforced by the `CI / semantic-pull-request` status check. The full regex and allowed-types list are documented in [`AGENTS.md`](AGENTS.md#branching-and-versioning-rules).
+- Change requests branch from `main`. Direct pushes to `main` are blocked by the repository's GitHub Ruleset.
+- Ensure the change-request description clearly describes the problem and solution.
+- Reference the issue this change request addresses in the body (`Closes #<n>`, `Fixes #<n>`, or `Resolves #<n>`), not in the title.
+- Ensure all CI checks pass. The merge button only enables after both `CI / build` and `CI / semantic-pull-request` are green.
 
 ## Code Contributions
 
@@ -82,11 +84,13 @@ Before submitting a PR, always run `make check` locally.
 - Write tests for new functionality.
 - Keep the domain vocabulary in `CONTEXT.md` in mind when naming things.
 
-### Commit Messages
+### Conventional Commits
 
-- Use the present tense ("Add feature" not "Added feature").
-- Use the imperative mood ("Move cursor to..." not "Moves cursor to...").
-- Reference issues and pull requests where appropriate.
+Change-request and commit titles follow the [Conventional Commits](https://www.conventionalcommits.org/) specification.
+
+- **Allowed types:** `feat`, `fix`, `perf`, `docs`, `refactor`, `test`, `build`, `ci`, `chore`, `revert`. Append `!` (for example `feat!:`) only when the change is breaking.
+- **Imperative mood:** write titles as commands ("Add feature" not "Added feature" or "Adds feature").
+- The full regex, SemVer rules, and the allowed type list are documented in [`AGENTS.md`](AGENTS.md#branching-and-versioning-rules). This section keeps `AGENTS.md` as the single source of truth for the regex.
 
 ## Non-Code Contributions
 

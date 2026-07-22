@@ -31,6 +31,10 @@ make fmt      # Format Go files
 
 The default `make check` target runs `gofmt -w .`, `go vet ./...`, and `go test -race -v ./...`.
 
+## Change-request titles
+
+Change-request titles against `main` are gated by the `CI / semantic-pull-request` status check. Titles must follow the Conventional Commits format — the full regex, the allowed type list, and the SemVer derivation rules are documented in the [Branching and versioning rules](../../AGENTS.md#branching-and-versioning-rules) section of `AGENTS.md`. Keep titles to one imperative sentence with no trailing period and link issues in the body (`Closes #<n>` or `Fixes #<n>`), not in the title.
+
 ## Build locally
 
 ```bash
