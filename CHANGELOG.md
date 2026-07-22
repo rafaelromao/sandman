@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-07-22
+
 ### Added
 
 - `rust` BuildToolsPreset. `sandman init` detects Rust repos from `Cargo.toml`/`Cargo.lock`/`rust-toolchain`/`rust-toolchain.toml`/`.rust-version`/`.tool-versions`, offers `rust` as the default preset, and still lets `--build-tools generic` win as an explicit override. The preset pins Rust via mise from repo hints or `--tool-version` selection and records the exact version in the scaffolded Dockerfile. Real container build coverage exercises the built-in Agent Provider x `rust` matrix.
@@ -14,9 +16,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `elixir` BuildToolsPreset. `sandman init` detects Elixir repos from `mix.exs`/`.formatter.exs`/`.elixir_version`/`.tool-versions`, offers `elixir` as the default preset, and still lets `--build-tools generic` win as an explicit override. The preset pins both Elixir and a matched Erlang/OTP via mise (read from the resolved version's `-otp-NN` suffix, falling back to the bundled Elixir-OTP table), and installs mainstream companion tooling (`mix local.hex --force`, `mix local.rebar --force`). Real container build coverage exercises the built-in Agent Provider x `elixir` matrix.
 - `auto_max_count` config key (default 50) and `sandman config get/set auto_max_count` round-trip. `0` means unlimited.
 - `sandman run --auto` boolean flag and `sandman run --count N` integer cap. Auto Mode accepts the same filters as regular Sandman runs (label, query, explicit issue args) and lets the agent pick which to implement up to the cap.
-
-### Added (continued)
-
 - `parallel_reviews` config key and `--parallel-reviews` init flag (default 1) controlling review-daemon concurrency. `EffectiveReviewParallel()` defaults to the constant when unset or invalid.
 - `sandman run --continue --run-id` flag for prompt-only continuation. Mirrors `sandman run --run-id`: looks up the most recent prompt-only run (`Issue: 0`) from the event log, reads the task file from its worktree, and forwards it as the prompt for the new prompt-only run. Supports the same format validation and mutual-exclusivity with issue numbers.
 - `scripts/reconcile-stranded-worktrees.sh` — standalone detection tool for stranded worktrees (prints remediation commands for the operator to run)
@@ -33,7 +32,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Default value of the `parallel` config key and the `DefaultParallel` constant changed from `4` to `1`. This affects `sandman run`, `sandman init --parallel`, and scaffolded config when no explicit value is set.
 - Default value of the `parallel_reviews` config key and the `DefaultReviewParallel` constant changed from `4` to `1`. This affects the review daemon and `sandman init --parallel-reviews` when no explicit value is set.
-
 - Standard open-source project files: `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `SECURITY.md`, `CHANGELOG.md`
 - `Makefile` with common development tasks
 - GitHub issue templates for bug reports, feature requests, and agent improvements
@@ -50,9 +48,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Node BuildToolsPreset with repo hint detection and pinned container scaffolding
 - `--sandbox`, `--container-capacity`, `--max-containers` CLI flags
 - Event log: `run.warning` event type
-
-### Changed
-
 - `sandman run --continue` and the orchestrator's retry path now read `.sandman/task.md` verbatim instead of routing the file through a prompt parser/rewriter. The previous pipeline rewrote the file into a different scaffold and carried forward stale blocker state; the continuation seam now returns the file content as-is and falls back to `prompt.DefaultPrompt()` when the file is blank.
 - `sandman tdd` skill now reuses an existing `## Plan` section in `.sandman/task.md` instead of drafting a new plan. The plan section stays in the task file for continuation runs, and the `## Next Step` heading remains part of the handoff/resume flow. Verification: Go unit tests cover the plan-reuse branches and prompt handoff behavior.
 - **Sandman layout redesign**: The on-disk layout has been redesigned. The `batches.json` file now serves as the canonical index of all batches (replacing the former `.sandman/runs/` directory-based scanning). Archive directories live under `.sandman/archive/<batch-id>` instead of `.sandman/archive/<id>`. The `clean` command now uses `--archived` (remove archived batches) and `--stale` (recover stale runs in dead batches) instead of status-based flags. The old `.sandman/runs/` and `.sandman/logs/` directories are no longer used; all run artifacts now live under `.sandman/batches/<batch-id>/runs/<run-id>/`. See ADR-0032 for the full design rationale.
@@ -78,19 +73,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `#1326` flaky-in-CI cluster from `internal/cmd/`. The 26 `t.Skip("flaky in CI; tracked in #1326")` and bespoke in-batch-blocker skip sites across `run_integration_test.go`, `run_test.go`, `run_session_test.go`, and `run_daemon_test.go` were deleted. The decision was **port load-bearing assertions to the unit suite** (Option 2 in #1784): every previously-skipped test's assertions live in `internal/batch/orchestrator_test.go` (`TestRunBatch_*`) or `internal/cmd/run_test.go` (`TestRun_*`); the only previously-uncovered assertion — the `.sandman/Dockerfile` preflight under container mode — is now covered by `TestRunBatch_ContainerModeFailsBeforeAgentWhenDockerfileMissing`. `internal/cmd/run_integration_test.go` is reduced to a package doc comment with the full per-test coverage map. Shared test helpers used by both the (deleted) integration tests and the surviving unit-style tests moved to `internal/cmd/run_helpers_test.go`. Operators should expect run-path coverage from the unit suite under `go test -race ./internal/batch/...` and `go test -race ./internal/cmd/...`; the old integration-test path no longer exists.
 - Sandman no longer integrates with `codeindex`. The `RUN git clone ... && pip3 install -e /tmp/codeindex` line is removed from scaffolded Dockerfiles; the `codeindex.json` precondition is dropped from `internal/prompt/default-task-prompt.md`, `internal/prompt/default_pr_review_prompt.md`, and `docs/usage/default-task-prompt.md`; the standalone policy doc `docs/agents/codeindex-strategy.md` is deleted, along with its index entries in `docs/agents/README.md` and the two-layer codeindex section in `AGENTS.md`; every codeindex mention is stripped from `docs/usage/agent-compatibility.md` and `docs/usage/configuration.md` (including the `codeindex install-hook` pre-commit feature and its bootstrap patch); both `codeindex.json` / `symbolindex.json` ignore blocks are removed from `.gitignore`. This is a hard cut — already-scaffolded repos are not migrated; re-running `sandman init` (or re-scaffolding the Dockerfile) is the upgrade path. Follows the same shape as ADR-0024 (Remove Pi agent support).
 
-## [0.1.0] - 2026-05-09
-
-### Added
-
-- Initial release of Sandman
-- CLI commands: `init`, `run`, `status`, `history`, `clean`, `config`, `attach`, `portal`, `review`, `archive`, `stranded` (note: `continue` is `sandman run --continue`, not a standalone command)
-- Git worktree sandboxing for isolated agent execution
-- Parallel batch execution with configurable concurrency
-- Event logging to JSONL
-- Integration with `gh` CLI for issue fetching
-- Prompt template rendering for AI agents
-- Support for custom agent providers via configuration
-
-[Unreleased]: https://github.com/rafaelromao/sandman/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/rafaelromao/sandman/releases/tag/v0.1.0
-
+[Unreleased]: https://github.com/rafaelromao/sandman/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/rafaelromao/sandman/releases/tag/v1.0.0
