@@ -3191,6 +3191,15 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
 	      }
 	      if (currentRunKey) {
 	        stopRunStream(currentRunKey);
+	        // Drain any lines buffered for the outgoing subject before the
+	        // subject-switch render moves its pane to the per-subject cache.
+	        // stopRunStream only closes the SSE source, so an un-flushed
+	        // rAF would later drop those lines when the cache has detached
+	        // the pane from runsBody — visible as missing leading segments
+	        // on the next visit to that subject. Flushing now preserves the
+	        // full stream tail in the cached pane while keeping the new
+	        // subject's pre unaffected.
+	        streamCoalescer.flushPending(currentRunKey);
 	      }
 	      state.expandedRunKey = nextRunKey;
 	      persistPortalViewState();
