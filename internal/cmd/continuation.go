@@ -123,13 +123,14 @@ func buildContinuationRequest(ctx context.Context, cmd *cobra.Command, deps Depe
 	}
 
 	firstIssue := issues[0]
-	firstLastRun := lastRuns[firstIssue]
 
-	// Tunables are intentionally read from current CLI flags / config
-	// defaults only; the prior run's event payload is NOT consulted.
-	// Worktree identity (branch, base_branch, task prompt) is still
-	// pinned to the preserved worktree via the caller in run.go.
-	_ = firstLastRun
+	// Tunables (agent, model, parallel, retries, sandbox, container
+	// tunables, review command) are intentionally read from current
+	// CLI flags / config defaults only; the prior run's event payload
+	// is not consulted. Worktree identity (branch, base_branch, task
+	// prompt, previous run id, issue mode) is still pinned to the
+	// preserved worktree via the per-issue maps above and the
+	// BaseBranch layering in run.go.
 
 	reviewCommand := effectiveReviewCommand(cfg)
 

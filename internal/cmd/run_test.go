@@ -2044,6 +2044,9 @@ func TestRun_ContinueFlag_UsesOverridesAndEmptyTemplateFallback(t *testing.T) {
 	if spy.req.BaseBranches[42] != "trunk" {
 		t.Fatalf("expected per-issue base branch override, got %q", spy.req.BaseBranches[42])
 	}
+	if spy.req.PromptConfig.ReviewCommand != "/oc review" {
+		t.Fatalf("expected review command from cfg (stored value should be ignored), got %q", spy.req.PromptConfig.ReviewCommand)
+	}
 	if !strings.Contains(spy.req.TaskPrompts[42], "# Task") {
 		t.Fatalf("expected default-task-prompt.md fallback (missing task file), got %q", spy.req.TaskPrompts[42])
 	}

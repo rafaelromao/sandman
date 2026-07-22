@@ -58,7 +58,7 @@ Positional arguments (numbers and ranges) can be combined with `--label` and `--
 | `--max-containers` | config default (0) | Max containers; `0` = no cap (unbounded pool growth) |
 | `--retries` | `0` | Number of times to retry a failed run |
 | `--override` | `false` | Clear artifacts before running (deletes prior worktree, logs, and events; force-checkout worktree to expected branch on mismatch or detached HEAD) |
-| `--continue` | `false` | Continue the latest AgentRun for selected issues by reusing the stored task file and prior run settings |
+| `--continue` | `false` | Continue the latest AgentRun for selected issues by reusing the preserved worktree (branch, base branch, task file, prior run id); tunables come from current flags/config |
 | `--dangerously-skip-permissions` | `true` for container runs, `false` for worktree runs | Skip permission checks for agent runs |
 | `--include-dependencies` | `false` | Auto-expand batch with transitive blockers |
 | `--label` | — | Select issues by label |
@@ -67,7 +67,7 @@ Positional arguments (numbers and ranges) can be combined with `--label` and `--
 | `--template` | — | Path to prompt template file |
 | `--prompt-arg` | — | Custom template substitution (`KEY=VALUE`, repeatable) |
 | `--model` | `model` from config | Override the model passed to the agent for built-in presets |
-| `--agent` | `agent` from config (`opencode`) | Built-in agent preset for this run |
+| `--agent` | `agent` from config (`opencode`) | Built-in agent preset for this run; on `--continue` the prior run's stored agent is no longer replayed |
 | `--run-id` | — | Batch-level identifier for prompt-only runs; must start with a letter and contain only alphanumeric characters, hyphens, and underscores; cannot be combined with issue selection |
 | `--run-idle-timeout` | `0` | Treat an AgentRun as stuck if it produces no output for N seconds; `0` disables the timeout |
 | `--branch` | `""` | Branch name for prompt-only runs; overrides the default `sandman/<slug>-<timestamp>` shape (prompt-only mode only) |
