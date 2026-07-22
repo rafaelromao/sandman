@@ -75,5 +75,6 @@ ADRs are numbered sequentially starting from `0001`. The template ADR (`0000`) i
 | 0032 | `.sandman/` layout redesign — batches, runs, and the master index | accepted |
 | 0033 | Opencode host/sandbox version drift — warning + in-ARB retry | accepted |
 | 0034 | Empty-child Specification runs as a regular issue | accepted |
+| 0041 | Roll back Auto Mode (`--auto`, `--count`, `auto_max_count`) | accepted |
 | 0037 | Hermetic `gh` in pr-flow e2e tests | accepted |
 | 0038 | Badge marker — paginated idempotency check | accepted |
