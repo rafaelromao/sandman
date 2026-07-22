@@ -2266,3 +2266,95 @@ func TestWorktreeSandbox_StartPreservesMainRepoBranch_OnMainRepoBranch(t *testin
 		t.Errorf("expected tracked.txt in worktree after Start(), got: %v", err)
 	}
 }
+
+// TestDefaultReconcileStrandedBranch_RefusesWhenParentHEADMismatches pins
+// the safety guard added in response to PR #2377 review feedback. When a
+// foreign worktree holder race leaves the parent HEAD on a branch other
+// than the target, the recovery loop must refuse to detach the parent
+// (which would silently mutate the operator's HEAD) and refuse to drop
+// the ref (which would leave the foreign worktree's symbolic HEAD
+// dangling against a deleted ref). The guard is verified via the
+// reconcileStrandedFn seam.
+func TestDefaultReconcileStrandedBranch_RefusesWhenParentHEADMismatches(t *testing.T) {
+	dir := t.TempDir()
+	initGitRepo(t, dir)
+
+	const branch = "sandman/42-fix-bug"
+	runGit(t, dir, "branch", branch)
+
+	// Parent HEAD is on main (a foreign worktree is the simulated
+	// holder — race condition). The branch ref exists but the parent
+	// is on a different branch.
+	parentHeadBefore := runGit(t, dir, "rev-parse", "HEAD")
+
+	worktreeBase := filepath.Join(dir, ".sandman", "worktrees")
+	if err := os.MkdirAll(worktreeBase, 0755); err != nil {
+		t.Fatalf("mkdir worktreeBase: %v", err)
+	}
+
+	err := defaultReconcileStrandedBranch(dir, worktreeBase, branch, "main")
+	if err == nil {
+		t.Fatalf("expected defaultReconcileStrandedBranch to refuse when parent HEAD is %q and target branch is %q, got nil error", "refs/heads/main", branch)
+	}
+	if !strings.Contains(err.Error(), "main repo HEAD is") || !strings.Contains(err.Error(), "not the target branch") {
+		t.Errorf("expected refusal-with-explanation error, got: %v", err)
+	}
+
+	// Parent HEAD commit must be unchanged after the refused call.
+	parentHeadAfter := runGit(t, dir, "rev-parse", "HEAD")
+	if strings.TrimSpace(parentHeadAfter) != strings.TrimSpace(parentHeadBefore) {
+		t.Errorf("parent repo HEAD commit moved despite guard: before=%q after=%q",
+			strings.TrimSpace(parentHeadBefore), strings.TrimSpace(parentHeadAfter))
+	}
+
+	// Branch ref must still exist (ref-drop was refused).
+	revCmd := exec.Command("git", "-C", dir, "rev-parse", "--verify", "refs/heads/"+branch)
+	if _, err := revCmd.CombinedOutput(); err != nil {
+		t.Errorf("branch %q was dropped despite guard: %v", branch, err)
+	}
+}
+
+// TestDefaultReconcileStrandedBranch_RefusesWhenParentHEADDetached pins
+// the detached-HEAD guard added in response to PR #2377 review feedback.
+// When the parent HEAD is already detached, we cannot tell whether the
+// parent or a foreign worktree holds the branch, so the recovery loop
+// must refuse to drop the ref (which would risk deleting a branch a
+// foreign worktree still holds).
+func TestDefaultReconcileStrandedBranch_RefusesWhenParentHEADDetached(t *testing.T) {
+	dir := t.TempDir()
+	initGitRepo(t, dir)
+
+	const branch = "sandman/42-fix-bug"
+	runGit(t, dir, "branch", branch)
+
+	// Detach HEAD in the parent repo.
+	runGit(t, dir, "checkout", "--detach")
+
+	parentCommitBefore := runGit(t, dir, "rev-parse", "HEAD")
+
+	worktreeBase := filepath.Join(dir, ".sandman", "worktrees")
+	if err := os.MkdirAll(worktreeBase, 0755); err != nil {
+		t.Fatalf("mkdir worktreeBase: %v", err)
+	}
+
+	err := defaultReconcileStrandedBranch(dir, worktreeBase, branch, "main")
+	if err == nil {
+		t.Fatalf("expected defaultReconcileStrandedBranch to refuse when parent HEAD is detached, got nil error")
+	}
+	if !strings.Contains(err.Error(), "not a symbolic ref") {
+		t.Errorf("expected refusal-with-explanation error, got: %v", err)
+	}
+
+	// Parent HEAD commit must be unchanged after the refused call.
+	parentCommitAfter := runGit(t, dir, "rev-parse", "HEAD")
+	if strings.TrimSpace(parentCommitAfter) != strings.TrimSpace(parentCommitBefore) {
+		t.Errorf("parent repo HEAD commit moved despite guard: before=%q after=%q",
+			strings.TrimSpace(parentCommitBefore), strings.TrimSpace(parentCommitAfter))
+	}
+
+	// Branch ref must still exist (ref-drop was refused).
+	revCmd := exec.Command("git", "-C", dir, "rev-parse", "--verify", "refs/heads/"+branch)
+	if _, err := revCmd.CombinedOutput(); err != nil {
+		t.Errorf("branch %q was dropped despite guard: %v", branch, err)
+	}
+}

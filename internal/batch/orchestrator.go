@@ -3324,18 +3324,31 @@ func ClearIssueArtifacts(issueNumber int, branch string, worktreeDir string, eve
 }
 
 // recoverBranchDeleteFromMainRepo attempts to unstick `git branch -D <branch>`
-// when the main repo is itself checked out on `branch`. It mirrors the
-// recovery strategy from WorktreeSandbox.Start (issue #937):
+// when the branch is checked out somewhere that blocks the delete. It
+// mirrors the recovery strategy from WorktreeSandbox.Start (issue #937):
 //  1. Detect a stranded worktree at <worktreeBase>/<branch>; if present,
 //     delete the branch from inside that worktree's cwd (which bypasses
 //     the main-repo guard).
-//  2. Otherwise, detach HEAD in the main repo (working tree untouched) and
-//     drop the stray ref via `git update-ref -d refs/heads/<branch>`.
-//     This keeps the operator's working-tree contents intact instead of
-//     force-checking out the base branch underneath them. The branch
-//     reference is re-created on the next `sandman run` against the same
-//     issue; the operator's local commits on that branch remain reachable
-//     via the reflog until then.
+//  2. Otherwise, detect a foreign live worktree at a non-canonical path
+//     holding the branch; if found, detach its HEAD via
+//     `git -C <path> checkout --detach`. This is the only step that
+//     preserves a foreign worktree's directory, `.git` gitlink, and
+//     `.git/worktrees/<dir>` registration — the foreign worktree is left
+//     in detached HEAD state at the same commit (no data loss).
+//  3. Otherwise, if the main repo itself holds the branch (its HEAD is
+//     `refs/heads/<branch>`), detach HEAD in the main repo (working tree
+//     untouched) and drop the stray ref via
+//     `git update-ref -d refs/heads/<branch>`. This keeps the operator's
+//     working-tree contents intact instead of force-checking out the base
+//     branch underneath them.
+//
+// The guard in step 3 is critical: without verifying that the parent HEAD
+// actually points at the branch, a foreign-worktree holder race (or a
+// `git branch -D` failure caused by something other than a checked-out
+// branch) would silently detach the parent's HEAD even when the parent
+// is on a different branch. The ref-drop is also refused if the parent
+// HEAD is already detached — we cannot tell whether the parent or a
+// foreign worktree holds the branch in that state.
 //
 // On failure at any step, a warning is logged. The caller retries the
 // delete after this returns.
@@ -3353,8 +3366,31 @@ func recoverBranchDeleteFromMainRepo(logWriter io.Writer, branch, worktreeBase s
 		}
 		return
 	}
+	// Strategy 2: foreign worktree (non-canonical, non-main-repo path).
+	// ForeignStrandedWorktree may also return the main repo as a
+	// "foreign" entry when the main repo is on the branch and its
+	// path differs from the canonical worktree path; in that case we
+	// fall through to strategy 3 below.
+	if info, foreign := sandbox.ForeignStrandedWorktree(".", absBase, branch); foreign && !sandbox.SamePath(info.Path, ".") {
+		if err := sandbox.ReleaseBranchInWorktree(info.Path); err != nil {
+			fmt.Fprintf(logWriter, "warning: detach HEAD in foreign worktree %s: %v\n", info.Path, err)
+		}
+		return
+	}
+	// Strategy 3: main repo on branch. Detach HEAD and drop the stray ref.
+	symRefCmd := exec.Command("git", "symbolic-ref", "--quiet", "HEAD")
+	symRefOut, symRefErr := symRefCmd.CombinedOutput()
+	if symRefErr != nil {
+		fmt.Fprintf(logWriter, "warning: drop refs/heads/%s: main repo HEAD is not a symbolic ref — refusing to detach (foreign worktree holder race?): %v\n", branch, symRefErr)
+		return
+	}
+	if strings.TrimSpace(string(symRefOut)) != "refs/heads/"+branch {
+		fmt.Fprintf(logWriter, "warning: drop refs/heads/%s: main repo HEAD is %q, not the target branch — refusing to detach (foreign worktree holder race?)\n", branch, strings.TrimSpace(string(symRefOut)))
+		return
+	}
 	if out, err := exec.Command("git", "checkout", "--detach").CombinedOutput(); err != nil {
 		fmt.Fprintf(logWriter, "warning: detach HEAD in main repo: %v: %s\n", err, out)
+		return
 	}
 	if out, err := exec.Command("git", "update-ref", "-d", "refs/heads/"+branch).CombinedOutput(); err != nil {
 		fmt.Fprintf(logWriter, "warning: drop stray ref refs/heads/%s in main repo: %v: %s\n", branch, err, out)

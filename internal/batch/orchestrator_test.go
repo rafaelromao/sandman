@@ -8815,6 +8815,77 @@ func TestClearIssueArtifacts_PreservesMainRepoBranch(t *testing.T) {
 	}
 }
 
+// TestClearIssueArtifacts_ForeignWorktreeHolderPreserved pins the contract
+// that when the issue branch is checked out in a foreign worktree at a
+// non-canonical path (not <worktreeBase>/<branch>), ClearIssueArtifacts
+// must release the branch in that foreign worktree (detach HEAD only)
+// rather than dropping the ref from under it. The parent repo HEAD must
+// also be preserved if the parent itself does not hold the branch.
+//
+// Regression test for the foreign-worktree safety required by #2187 and
+// the review feedback on PR #2377.
+func TestClearIssueArtifacts_ForeignWorktreeHolderPreserved(t *testing.T) {
+	dir := testenv.MkdirShort(t, "sm-orch-")
+	t.Chdir(dir)
+	initGitRepo(t, dir)
+
+	branch := "sandman/42-fix-bug"
+	runGit(t, dir, "branch", branch)
+
+	// Parent is on main (canonical operator state), NOT on the
+	// issue branch. A foreign worktree at a non-canonical path
+	// holds the branch instead.
+	const foreignPath = "/tmp/sandman-foreign-wt-2377-XXX"
+	foreignAbs := filepath.Join(dir, "foreign")
+	if err := os.MkdirAll(foreignAbs, 0755); err != nil {
+		t.Fatalf("mkdir foreign: %v", err)
+	}
+	addCmd := exec.Command("git", "worktree", "add", "--detach", foreignAbs, branch)
+	addCmd.Dir = dir
+	if out, err := addCmd.CombinedOutput(); err != nil {
+		t.Fatalf("git worktree add (foreign): %v: %s", err, out)
+	}
+	symRefCmd := exec.Command("git", "symbolic-ref", "HEAD", "refs/heads/"+branch)
+	symRefCmd.Dir = foreignAbs
+	if out, err := symRefCmd.CombinedOutput(); err != nil {
+		t.Fatalf("foreign symbolic-ref: %v: %s", err, out)
+	}
+	t.Cleanup(func() {
+		exec.Command("git", "worktree", "remove", "--force", foreignAbs).Run()
+	})
+
+	worktreeDir := filepath.Join(dir, ".sandman", "worktrees")
+	el := &spyEventLog{}
+	logBuf := &bytes.Buffer{}
+
+	parentCommitBefore := runGit(t, dir, "rev-parse", "HEAD")
+
+	trueVal := true
+	ClearIssueArtifacts(42, branch, worktreeDir, el, logBuf, "main", &trueVal, "")
+
+	// Parent commit unchanged (parent was on main, must stay on main).
+	parentCommitAfter := runGit(t, dir, "rev-parse", "HEAD")
+	if strings.TrimSpace(parentCommitAfter) != strings.TrimSpace(parentCommitBefore) {
+		t.Errorf("parent repo HEAD commit moved during ClearIssueArtifacts: before=%q after=%q",
+			strings.TrimSpace(parentCommitBefore), strings.TrimSpace(parentCommitAfter))
+	}
+
+	// Foreign worktree's symbolic HEAD must still resolve to the branch
+	// ref (i.e., the foreign worktree was released via detach, not by
+	// dropping the ref out from under it).
+	foreignSymRefCmd := exec.Command("git", "-C", foreignAbs, "symbolic-ref", "--quiet", "HEAD")
+	if _, err := foreignSymRefCmd.CombinedOutput(); err != nil {
+		t.Errorf("foreign worktree symbolic HEAD was lost (ref was dropped under it): %v", err)
+	}
+
+	// Branch must still exist (foreign worktree still holds it; the
+	// release was a detach, not a ref-drop).
+	revCmd := exec.Command("git", "-C", dir, "rev-parse", "--verify", "refs/heads/"+branch)
+	if _, err := revCmd.CombinedOutput(); err != nil {
+		t.Errorf("branch %q was dropped instead of being released in the foreign worktree", branch)
+	}
+}
+
 // TestClearIssueArtifacts_NoReconcileKeepsBeltAndSuspenders asserts that
 // when `strandedReconcile` is nil, today's belt-and-suspenders behaviour is
 // preserved: the delete failure is logged, the function continues, and the

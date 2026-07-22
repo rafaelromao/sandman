@@ -196,7 +196,7 @@ overrideCleanup:
 				// the branch is then re-created by `git worktree add
 				// -b` later in Start().
 				if !samePath(info.Path, s.repoPath) {
-					if err := releaseBranchInWorktree(info.Path); err != nil {
+					if err := ReleaseBranchInWorktree(info.Path); err != nil {
 						s.warn("issue #2187: release foreign worktree at %q: %v\n", info.Path, err)
 					}
 				}
@@ -599,9 +599,28 @@ var reconcileStrandedFn = func(repoPath, worktreeBase, branch, sourceBranch stri
 // switched to the source branch under them. The destructive
 // `git update-ref -d` only fires when the stranded branch is held by
 // the parent repo itself; foreign-worktree recovery still goes through
-// `releaseBranchInWorktree` and the stranded-worktree path, both of
+// `ReleaseBranchInWorktree` and the stranded-worktree path, both of
 // which only detach a foreign HEAD.
+//
+// Guard: the parent HEAD must point at refs/heads/<branch> before this
+// function detaches it. Without this guard, a race with a foreign
+// worktree holder (between detection in Start() and the recovery
+// branch) would leave the parent HEAD silently detached even though
+// the parent was on, e.g., main, and the foreign worktree's symbolic
+// HEAD would dangle against a deleted ref. The guard restores the
+// invariant: this function only ever mutates HEAD when the parent is
+// the verified holder.
 func defaultReconcileStrandedBranch(repoPath, worktreeBase, branch, sourceBranch string) error {
+	headRef, err := CurrentBranchRef(repoPath)
+	if err != nil {
+		// HEAD is detached or unreadable. We cannot tell whether the
+		// parent holds the branch; refuse to drop the ref to avoid
+		// deleting a branch a foreign worktree still holds.
+		return fmt.Errorf("drop stray ref refs/heads/%s: main repo HEAD is not a symbolic ref (%v) — refusing to detach (foreign worktree holder race?)", branch, err)
+	}
+	if headRef != "refs/heads/"+branch {
+		return fmt.Errorf("drop stray ref refs/heads/%s: main repo HEAD is %q, not the target branch — refusing to detach (foreign worktree holder race?)", branch, headRef)
+	}
 	detachCmd := exec.Command("git", "checkout", "--detach")
 	detachCmd.Dir = repoPath
 	if out, err := detachCmd.CombinedOutput(); err != nil {
@@ -707,10 +726,13 @@ func (s *WorktreeSandbox) refuseContinuation(state ContinuationWorktreeState, ac
 	return nil
 }
 
-// samePath reports whether two paths refer to the same directory
-// after symlink resolution. Used to exclude the main repo from being
-// treated as a "foreign stranded worktree" by recovery helpers.
-func samePath(a, b string) bool {
+// SamePath reports whether two paths refer to the same directory after
+// symlink resolution. Used to exclude the main repo from being treated
+// as a "foreign stranded worktree" by recovery helpers. Exported so
+// call sites in other packages (e.g. recoverBranchDeleteFromMainRepo
+// in internal/batch) can apply the same guard without depending on
+// WorktreeSandbox's full overrideCleanup flow.
+func SamePath(a, b string) bool {
 	if a == b {
 		return true
 	}
@@ -735,7 +757,11 @@ func samePath(a, b string) bool {
 	return false
 }
 
-// releaseBranchInWorktree detaches HEAD in the worktree at `path` so the
+// samePath is the package-internal alias kept for callers that prefer
+// the shorter form (WorktreeSandbox.Start overrides).
+func samePath(a, b string) bool { return SamePath(a, b) }
+
+// ReleaseBranchInWorktree detaches HEAD in the worktree at `path` so the
 // branch it currently holds is no longer checked out there. After this
 // runs, `git branch -D` from the main repo succeeds even though the
 // worktree's directory, `.git` gitlink, and `.git/worktrees/<dir>`
@@ -748,7 +774,12 @@ func samePath(a, b string) bool {
 // directory is still around between detection and the recovery step.
 // Issue #2187: scoped to the offending worktree only; never runs
 // `git worktree remove` or `git worktree prune` against any path.
-func releaseBranchInWorktree(path string) error {
+//
+// Exported so call sites in other packages (e.g. ClearIssueArtifacts
+// in internal/batch) can recover from a "branch checked out in a
+// foreign worktree" failure without depending on WorktreeSandbox's
+// full overrideCleanup flow.
+func ReleaseBranchInWorktree(path string) error {
 	if path == "" {
 		return fmt.Errorf("release branch in worktree: empty path")
 	}
@@ -765,6 +796,11 @@ func releaseBranchInWorktree(path string) error {
 	}
 	return nil
 }
+
+// releaseBranchInWorktree is the package-internal alias for
+// ReleaseBranchInWorktree, kept so in-package callers and tests that
+// prefer the lower-case identifier continue to compile.
+func releaseBranchInWorktree(path string) error { return ReleaseBranchInWorktree(path) }
 
 // reconcileStrandedBranch attempts to remove the stale branch after the
 // initial "git branch -D" failed because the branch is checked out
