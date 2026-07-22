@@ -342,7 +342,7 @@ func mustContain(t *testing.T, haystack, needle string) {
 }
 
 // TestADRSelfPostFilter_DocumentsNewModel pins the positive phrasing of
-// the self-defence pipeline in ADR-0014 after the daemon-as-poster
+// the self-defence pipeline in ADR-0013 after the daemon-as-poster
 // model introduced by issues #1845, #1846, and #1847.
 // The ADR must use the canonical phrases for the daemon-side
 // redaction layer: the canonical `decision.md` body file, the
@@ -355,10 +355,10 @@ func TestADRSelfPostFilter_DocumentsNewModel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("locate repo root: %v", err)
 	}
-	adrPath := filepath.Join(root, "docs", "adr", "0014-sandman-review-daemon-and-guard.md")
+	adrPath := filepath.Join(root, "docs", "adr", "0013-sandman-review-daemon-and-guard.md")
 	body, err := os.ReadFile(adrPath)
 	if err != nil {
-		t.Fatalf("read ADR-0014: %v", err)
+		t.Fatalf("read ADR-0013: %v", err)
 	}
 	text := string(body)
 	for _, phrase := range []string{
@@ -368,20 +368,20 @@ func TestADRSelfPostFilter_DocumentsNewModel(t *testing.T) {
 		"pendingPost",
 	} {
 		if !strings.Contains(text, phrase) {
-			t.Errorf("ADR-0014 must contain %q per issues #1845/#1846/#1847", phrase)
+			t.Errorf("ADR-0013 must contain %q per issues #1845/#1846/#1847", phrase)
 		}
 	}
 }
 
 // TestADRSelfPostFilter_NoLongerReferencesWrapper pins the negative
-// side: ADR-0014 must not present the old `record_review_posted`
+// side: ADR-0013 must not present the old `record_review_posted`
 // wrapper, the old `Step 4b` ownership, or the skill-side ownership
 // claim in canonical-style prose. The wrapper names are allowed only
 // inside the §Ownership note (issue #1757) historical-context
 // paragraph; anywhere else in the file the wrapper references must
 // be absent.
 //
-// The test reads ADR-0014 line by line, classifies each line by the
+// The test reads ADR-0013 line by line, classifies each line by the
 // ADR heading structure, and flags any forbidden phrase that lives
 // outside the §Ownership note paragraph.
 func TestADRSelfPostFilter_NoLongerReferencesWrapper(t *testing.T) {
@@ -389,10 +389,10 @@ func TestADRSelfPostFilter_NoLongerReferencesWrapper(t *testing.T) {
 	if err != nil {
 		t.Fatalf("locate repo root: %v", err)
 	}
-	adrPath := filepath.Join(root, "docs", "adr", "0014-sandman-review-daemon-and-guard.md")
+	adrPath := filepath.Join(root, "docs", "adr", "0013-sandman-review-daemon-and-guard.md")
 	body, err := os.ReadFile(adrPath)
 	if err != nil {
-		t.Fatalf("read ADR-0014: %v", err)
+		t.Fatalf("read ADR-0013: %v", err)
 	}
 	lines := strings.Split(string(body), "\n")
 
@@ -412,7 +412,7 @@ func TestADRSelfPostFilter_NoLongerReferencesWrapper(t *testing.T) {
 		if !inOwnershipNote {
 			for _, phrase := range forbidden {
 				if strings.Contains(line, phrase) {
-					t.Errorf("ADR-0014 line %d: forbidden canonical-style wrapper reference %q outside §Ownership note (issue #1757) historical-context paragraph", i+1, phrase)
+					t.Errorf("ADR-0013 line %d: forbidden canonical-style wrapper reference %q outside §Ownership note (issue #1757) historical-context paragraph", i+1, phrase)
 				}
 			}
 		}
@@ -420,14 +420,14 @@ func TestADRSelfPostFilter_NoLongerReferencesWrapper(t *testing.T) {
 }
 
 // TestADR_CrossReferencesConsistent asserts the cross-ADR consistency
-// invariant: only ADR-0014 may name the old self-post wrapper, the
+// invariant: only ADR-0013 may name the old self-post wrapper, the
 // step-4b wrapper, the record_review_posted helper, or the run-log
 // grep helper. No other ADR under docs/adr/ should reference the
 // recording site or the SelfPostStore. If a future ADR introduces a
 // new mention of SelfPostStore, this test will surface it for review.
 //
 // The test also pins that any reference to the wrapper names inside
-// ADR-0014 lives only in the §Ownership note paragraph.
+// ADR-0013 lives only in the §Ownership note paragraph.
 func TestADR_CrossReferencesConsistent(t *testing.T) {
 	root, err := repoRoot()
 	if err != nil {
@@ -447,12 +447,12 @@ func TestADR_CrossReferencesConsistent(t *testing.T) {
 		"extractBodiesFromLog",
 	}
 
-	const adr0014 = "0014-sandman-review-daemon-and-guard.md"
+	const adr0013 = "0013-sandman-review-daemon-and-guard.md"
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
 			continue
 		}
-		if e.Name() == adr0014 {
+		if e.Name() == adr0013 {
 			continue
 		}
 		path := filepath.Join(adrDir, e.Name())
@@ -463,16 +463,16 @@ func TestADR_CrossReferencesConsistent(t *testing.T) {
 		}
 		for _, phrase := range storeOrWrapperPhrases {
 			if strings.Contains(string(body), phrase) {
-				t.Errorf("ADR %s must not reference %q; only ADR-0014 owns the SelfPostStore / wrapper references", e.Name(), phrase)
+				t.Errorf("ADR %s must not reference %q; only ADR-0013 owns the SelfPostStore / wrapper references", e.Name(), phrase)
 			}
 		}
 	}
 
-	// ADR-0014's wrapper references must live inside the
+	// ADR-0013's wrapper references must live inside the
 	// §Ownership note historical-context paragraph.
-	adrBody, err := os.ReadFile(filepath.Join(adrDir, adr0014))
+	adrBody, err := os.ReadFile(filepath.Join(adrDir, adr0013))
 	if err != nil {
-		t.Fatalf("read ADR-0014: %v", err)
+		t.Fatalf("read ADR-0013: %v", err)
 	}
 	lines := strings.Split(string(adrBody), "\n")
 	inOwnershipNote := false
@@ -486,7 +486,7 @@ func TestADR_CrossReferencesConsistent(t *testing.T) {
 		}
 		for _, phrase := range []string{"record_review_posted", "Step 4b"} {
 			if strings.Contains(line, phrase) {
-				t.Errorf("ADR-0014 line %d: wrapper reference %q outside §Ownership note historical-context paragraph", i+1, phrase)
+				t.Errorf("ADR-0013 line %d: wrapper reference %q outside §Ownership note historical-context paragraph", i+1, phrase)
 			}
 		}
 	}

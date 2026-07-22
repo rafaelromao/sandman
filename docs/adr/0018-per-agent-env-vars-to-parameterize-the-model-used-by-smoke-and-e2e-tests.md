@@ -1,4 +1,4 @@
-# ADR-0020: Per-agent env vars to parameterize the model used by smoke and e2e tests
+# ADR-0018: Per-agent env vars to parameterize the model used by smoke and e2e tests
 
 ## Status
 
@@ -18,7 +18,7 @@ editing the test source and rebuilding. It also coupled the canonical
 test corpus to one specific model, so any change to the default model
 (e.g. retiring `opencode/big-pickle`) required a code change.
 
-ADR-0019 established a pattern for canonical test env vars
+~~ADR-0017 (deleted)~~ established a pattern for canonical test env vars
 (`SANDMAN_TEST_PROVIDERS`, `SANDMAN_E2E_GATES`) consolidated in the
 `internal/testenv` package. Per-agent model overrides belong to the
 same family: they let operators tweak what the agent targets without

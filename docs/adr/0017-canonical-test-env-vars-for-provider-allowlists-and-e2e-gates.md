@@ -1,4 +1,4 @@
-# ADR-0019: Canonical test env vars for provider allowlists and e2e scenario gates
+# ADR-0017: Canonical test env vars for provider allowlists and e2e scenario gates
 
 > Historical note: this ADR records the original decision to introduce the canonical test env vars (`SANDMAN_TEST_PROVIDERS`, `SANDMAN_E2E_GATES`) alongside a per-scenario legacy fallback. The legacy fallback path was later removed in issue #628; the current code reads only the canonical vars. See the Migration path section below and the corresponding changes to `internal/testenv/testenv.go` and the four test call sites for the post-removal state.
 

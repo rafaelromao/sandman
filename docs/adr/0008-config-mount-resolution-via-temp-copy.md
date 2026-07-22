@@ -45,6 +45,6 @@ Before mounting, Sandman will copy each config directory and file to a batch-sco
 ### Neutral
 
 - The copy-resolve step is batch-scoped: one copy per config path per batch, shared across all AgentRuns in that batch.
-- The snapshot lives under `.sandman/runs/<run-id>/config/` and is cleaned up when the run dir is removed, regardless of success or failure. **Superseded by ADR-0015.** The snapshot lives under `.sandman/batches/<batchID>/runs/<runID>/config/` per ADR-0015; the path cited above was the pre-#1238 location. See ADR-0015 for the move out of `/tmp` and the stale-snapshot sweep added to `sandman run`, `sandman run --continue`, and `sandman clean`.
+- The snapshot lives under `.sandman/runs/<run-id>/config/` and is cleaned up when the run dir is removed, regardless of success or failure. **Superseded by ADR-0014.** The snapshot lives under `.sandman/batches/<batchID>/runs/<runID>/config/` per ADR-0014; the path cited above was the pre-#1238 location. See ADR-0014 for the move out of `/tmp` and the stale-snapshot sweep added to `sandman run`, `sandman run --continue`, and `sandman clean`.
 - Isolation is strengthened: config files cannot accidentally escape the container or modify host files through symlink traversal.
 - Large config directories should be reviewed: users with multi-GB config trees may want to exclude cache-like subdirectories from `config_dirs`.

@@ -1,8 +1,8 @@
-# ADR-0018: Unblock dependents from same-batch success
+# ADR-0016: Unblock dependents from same-batch success
 
-## Status
+ ## Status
 
-proposed
+ accepted
 
 ## Context
 

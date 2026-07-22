@@ -1,4 +1,4 @@
-# ADR-0040: Empty-child Specification runs as a regular issue
+# ADR-0034: Empty-child Specification runs as a regular issue
 
 ## Status
 
@@ -6,13 +6,13 @@ accepted; amended to restore the broadened-detector silent pass-through (see §D
 
 ## Context
 
-ADR-0025 introduced Specification expansion: Sandman detects Specifications by their body shape (canonical sections or children declarations), harvests their child issues, and replaces the Specification with its accepted children in the batch. Step 5 of that decision records the "no-children rejection": a Specification whose accepted-child set is empty fails resolution with `no child issues for specification #<n>`.
+ADR-0021 introduced Specification expansion: Sandman detects Specifications by their body shape (canonical sections or children declarations), harvests their child issues, and replaces the Specification with its accepted children in the batch. Step 5 of that decision records the "no-children rejection": a Specification whose accepted-child set is empty fails resolution with `no child issues for specification #<n>`.
 
-The rejection was added as a guardrail — the original intent was loud failure rather than silent denial. But the guardrail creates downstream friction in a legitimate workflow: a maintainer who writes a Specification-style Issue to describe a single vertical slice, intending that slice to be the work item itself, cannot run it without either editing the body, hand-copying child numbers, or abandoning the Specification shape entirely. All three defeat the body-as-source-of-truth convention ADR-0025 leans on.
+The rejection was added as a guardrail — the original intent was loud failure rather than silent denial. But the guardrail creates downstream friction in a legitimate workflow: a maintainer who writes a Specification-style Issue to describe a single vertical slice, intending that slice to be the work item itself, cannot run it without either editing the body, hand-copying child numbers, or abandoning the Specification shape entirely. All three defeat the body-as-source-of-truth convention ADR-0021 leans on.
 
 The broadened-detector carve-out at `internal/batch/spec.go` already implements an analogous pass-through for the non-spec-shaped case: when `IsSpecification(body)` is false and `HasChildren(ctx, n)` is false (or errored), and `ListSubIssues` returns zero results, the issue runs as a regular issue via `addUnique(num)` and emits no log line. The asymmetry is principled — the strict-spec path is louder because the body shape is misleading when it claims children but delivers none, while a non-spec-shaped body has made no such claim — but the operational outcome (a single-row batch) is the same.
 
-This ADR softens the strict-spec guardrail at ADR-0025 §5: when a Specification-shaped issue has zero accepted children, it runs as a regular issue instead of failing resolution. The broadened-detector carve-out is unchanged.
+This ADR softens the strict-spec guardrail at ADR-0021 §5: when a Specification-shaped issue has zero accepted children, it runs as a regular issue instead of failing resolution. The broadened-detector carve-out is unchanged.
 
 ## Decision
 
@@ -48,5 +48,5 @@ The broadened-detector pass-through is silent. Operators grep the strict-spec pa
 ### Neutral
 
 - `CONTEXT.md` `SpecificationResolver` entry was updated to reflect the new carve-out behaviour. No new glossary term is introduced.
-- ADR-0025 §5 remains the authoritative source for the original guardrail language being softened; this ADR is the authoritative source for the carve-out behavior.
+- ADR-0021 §5 remains the authoritative source for the original guardrail language being softened; this ADR is the authoritative source for the carve-out behavior.
 - Issue #2329 further refines the contract: the body-shape gate is gone; the canonical-shape sections remain a valid spec signal alongside the children-content check. (The accompanying log-line unification from #2329 is reverted by this amendment — see step 4.)

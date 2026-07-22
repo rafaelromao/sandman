@@ -1,4 +1,4 @@
-# ADR-0033: Per-run command sockets for command and abort
+# ADR-0028: Per-run command sockets for command and abort
 
 ## Status
 

@@ -1,4 +1,4 @@
-# ADR-0021: Portal auto-runs `clean --stale` on startup
+# ADR-0019: Portal auto-runs `clean --stale` on startup
 
 ## Status
 

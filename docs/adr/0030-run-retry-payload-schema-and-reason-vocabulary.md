@@ -1,4 +1,4 @@
-# ADR-0035: `run.retry` payload schema and closed `reason` vocabulary
+# ADR-0030: `run.retry` payload schema and closed `reason` vocabulary
 
 ## Status
 
