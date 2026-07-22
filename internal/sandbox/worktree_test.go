@@ -125,6 +125,67 @@ func TestWorktreeSandbox_CreatesBranchFromSourceBranchWithTrackedFilesOnly(t *te
 	}
 }
 
+// TestWorktreeSandbox_CutsWorktreeFromCustomFeatureBranch pins the
+// "feature branch as base" contract: when WorktreeSandbox is constructed
+// with a non-main sourceBranch, the new worktree must be forked from
+// that branch's tip, not from `main` or the default config base. This
+// is the contract the `--base-branch` CLI flag relies on — the CLI
+// passes the operator's chosen reference through to the sandbox as
+// sourceBranch, and the sandbox must use it as the worktree add
+// start-point without falling back to a hard-coded default.
+func TestWorktreeSandbox_CutsWorktreeFromCustomFeatureBranch(t *testing.T) {
+	seedDir := t.TempDir()
+	remoteDir := initGitRepoWithRemote(t, seedDir)
+	commitGitFile(t, seedDir, "shared.txt", "shared ancestry\n", "shared commit")
+	runGit(t, seedDir, "push", "origin", "main")
+	runGit(t, seedDir, "checkout", "-b", "feature-x")
+	commitGitFile(t, seedDir, "feature.txt", "from feature\n", "feature commit")
+	runGit(t, seedDir, "push", "origin", "feature-x")
+	runGit(t, seedDir, "checkout", "main")
+	commitGitFile(t, seedDir, "main-only.txt", "from main only\n", "main-only commit")
+	runGit(t, seedDir, "push", "origin", "main")
+
+	localDir := t.TempDir()
+	runGit(t, localDir, "clone", "-b", "main", remoteDir, ".")
+	runGit(t, localDir, "config", "user.email", "test@test.com")
+	runGit(t, localDir, "config", "user.name", "Test")
+	runGit(t, localDir, "fetch", "origin", "feature-x")
+	runGit(t, localDir, "checkout", "-b", "feature-x", "origin/feature-x")
+
+	mainTip := strings.TrimSpace(runGit(t, localDir, "rev-parse", "origin/main"))
+	featureTip := strings.TrimSpace(runGit(t, localDir, "rev-parse", "feature-x"))
+	if mainTip == featureTip {
+		t.Fatalf("test precondition: main and feature-x must differ, both = %q", mainTip)
+	}
+
+	if err := SyncBaseBranch(localDir, "feature-x"); err != nil {
+		t.Fatalf("sync error: %v", err)
+	}
+
+	s := NewWorktreeSandbox(localDir, filepath.Join(localDir, ".sandman", "worktrees"), "sandman/42-fix-bug", "feature-x")
+	if err := s.Start(SandboxStart{StrandedReconcile: true}); err != nil {
+		t.Fatalf("start error: %v", err)
+	}
+	t.Cleanup(func() {
+		s.Stop()
+		removeBranch(t, localDir, "sandman/42-fix-bug")
+	})
+
+	wtTip := strings.TrimSpace(runGit(t, s.WorkDir(), "rev-parse", "HEAD"))
+	if wtTip != featureTip {
+		t.Errorf("worktree tip = %s, want feature-x tip %s (main tip was %s)", wtTip, featureTip, mainTip)
+	}
+	if wtTip == mainTip {
+		t.Errorf("worktree tip %s equals main tip %s — the sandbox fell back to main instead of feature-x", wtTip, mainTip)
+	}
+	if _, err := os.Stat(filepath.Join(s.WorkDir(), "feature.txt")); err != nil {
+		t.Errorf("expected feature.txt from feature-x base, got err=%v", err)
+	}
+	if _, err := os.Stat(filepath.Join(s.WorkDir(), "main-only.txt")); !os.IsNotExist(err) {
+		t.Errorf("expected main-only.txt to be absent (worktree was cut from feature-x, not main), got err=%v", err)
+	}
+}
+
 func TestWorktreeSandbox_StartCreatesWorktree(t *testing.T) {
 	dir := t.TempDir()
 	_ = initGitRepoWithRemote(t, dir)
