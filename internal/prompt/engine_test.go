@@ -345,61 +345,6 @@ func TestRender_MissingTemplateFlagReturnsError(t *testing.T) {
 	}
 }
 
-func TestRender_CandidateIssuesSubstituted(t *testing.T) {
-	engine := &Engine{}
-	cfg := RenderConfig{
-		PromptFlag:      "candidates: {{CANDIDATE_ISSUES}}",
-		CandidateIssues: "#42 Fix login\n#99 Add tests",
-	}
-
-	result, err := engine.Render(cfg, IssueData{})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	want := "candidates: #42 Fix login\n#99 Add tests"
-	if result != want {
-		t.Errorf("got: %q, want: %q", result, want)
-	}
-}
-
-func TestRender_MaxCountSubstituted(t *testing.T) {
-	engine := &Engine{}
-	cfg := RenderConfig{
-		PromptFlag: "max: {{MAX_COUNT}}",
-		MaxCount:   5,
-	}
-
-	result, err := engine.Render(cfg, IssueData{})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	want := "max: 5"
-	if result != want {
-		t.Errorf("got: %q, want: %q", result, want)
-	}
-}
-
-func TestRender_CandidateIssuesAndMaxCountBothSubstituted(t *testing.T) {
-	engine := &Engine{}
-	cfg := RenderConfig{
-		PromptFlag:      "Pick up to {{MAX_COUNT}} from:\n{{CANDIDATE_ISSUES}}",
-		CandidateIssues: "#1 Fix\n#2 Add",
-		MaxCount:        3,
-	}
-
-	result, err := engine.Render(cfg, IssueData{})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	want := "Pick up to 3 from:\n#1 Fix\n#2 Add"
-	if result != want {
-		t.Errorf("got: %q, want: %q", result, want)
-	}
-}
-
 func TestMaterializePromptFile_EmptyPromptFileIsNoOp(t *testing.T) {
 	cfg := RenderConfig{}
 	err := MaterializePromptFile(cfg)

@@ -2357,6 +2357,12 @@ func TestRun_NoIssues(t *testing.T) {
 	}
 }
 
+// TestRun_HelpMentionsPromptOnlyMode is the permanent rollback sentinel
+// for the `sandman run --auto` and `sandman run --count` flags. The
+// implementation was rolled back in #2376 (see CHANGELOG.md v1.0.0
+// `### Removed` and docs/adr/0041-rollback-auto-mode.md). The flags
+// are gone forever; future readers must NOT "fix" this test by adding
+// the flags back to the CLI.
 func TestRun_HelpMentionsPromptOnlyMode(t *testing.T) {
 	deps := newRunDeps(t, &spyBatchRunner{result: &batch.Result{}})
 

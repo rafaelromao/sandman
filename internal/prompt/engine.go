@@ -82,9 +82,7 @@ func issueMapping(data IssueData) map[string]string {
 // The other keys come straight from cfg.
 func configMapping(cfg RenderConfig) map[string]string {
 	mapping := map[string]string{
-		"CANDIDATE_ISSUES": cfg.CandidateIssues,
-		"MAX_COUNT":        fmt.Sprintf("%d", cfg.MaxCount),
-		"REVIEW_COMMAND":   config.DefaultReviewCommand,
+		"REVIEW_COMMAND": config.DefaultReviewCommand,
 	}
 	for k, v := range cfg.PromptArgs {
 		if k == "REVIEW_COMMAND" {
