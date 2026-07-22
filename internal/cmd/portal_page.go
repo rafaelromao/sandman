@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"html/template"
+	"strconv"
 	"time"
 )
 
@@ -12,6 +13,13 @@ import (
 // independent storage. When the schema next needs a breaking change,
 // bump the suffix (v1 → v2) and re-test sessionStorage migration.
 const PortalStateStorageKeyPrefix = "sandman.portal.view-state.v1"
+
+// QueuedMarker is the server-side fallback string stamped into run.Log
+// when a state-less active batch issue has not yet received any real
+// output. The portal strips it on stream open; keep the writer
+// (portal_runs_view.go) and the reader (portal.html) in sync via this
+// single constant.
+const QueuedMarker = "Queued. Waiting to start."
 
 type portalPageData struct {
 	RepoRoot              string
@@ -28,6 +36,7 @@ type portalPageData struct {
 	PortalScrollJS        template.JS
 	PortalDiffJS          template.JS
 	PortalAbortSupported  bool
+	QueuedMarker          template.JS
 }
 
 func buildPortalPageData(repoRoot string) (*portalPageData, error) {
@@ -46,5 +55,6 @@ func buildPortalPageData(repoRoot string) (*portalPageData, error) {
 		PortalScrollJS:        portalScrollJS,
 		PortalDiffJS:          portalDiffJS,
 		PortalAbortSupported:  portalAbortSupported(),
+		QueuedMarker:          template.JS(strconv.Quote(QueuedMarker)),
 	}, nil
 }

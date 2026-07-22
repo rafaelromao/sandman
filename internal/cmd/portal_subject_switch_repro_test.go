@@ -56,6 +56,7 @@ func buildPortalReproPage(t *testing.T, stateJSON string, runsJSON []byte, body 
 	page = strings.ReplaceAll(page, "{{.PortalAbortSupported}}", "false")
 	page = strings.ReplaceAll(page, "{{.PortalStateStorageKey}}", PortalStateStorageKeyPrefix)
 	page = strings.ReplaceAll(page, "{{.PollInterval}}", "600000")
+	page = strings.ReplaceAll(page, "{{.QueuedMarker}}", `"Queued. Waiting to start."`)
 	body = strings.ReplaceAll(body, "__PORTAL_STORAGE_KEY__", PortalStateStorageKeyPrefix)
 	injection := fmt.Sprintf(`<script>
     try { sessionStorage.setItem('%s', %s); } catch (err) {}
@@ -447,6 +448,7 @@ func TestPortalSummaryPoll_UsesIfNoneMatchAndKeepsRowsOn304(t *testing.T) {
 	page = strings.ReplaceAll(page, "{{.PortalAbortSupported}}", "false")
 	page = strings.ReplaceAll(page, "{{.PortalStateStorageKey}}", PortalStateStorageKeyPrefix)
 	page = strings.ReplaceAll(page, "{{.PollInterval}}", "600000")
+	page = strings.ReplaceAll(page, "{{.QueuedMarker}}", `"Queued. Waiting to start."`)
 	injection := `<script>
     window.__portalFetchCalls = 0;
     window.__portalIfNoneMatch = [];

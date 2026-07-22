@@ -1752,6 +1752,7 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
     const errorBanner = document.getElementById('error-banner');
     const summaryPill = document.getElementById('summary-pill');
     const abortSupported = {{.PortalAbortSupported}};
+    const queuedMarker = {{.QueuedMarker}};
     const portalState = window.SandmanPortalState;
     if (portalState && portalState.configure) {
       portalState.configure({ storageKey: "{{.PortalStateStorageKey}}" });
@@ -2136,6 +2137,39 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
         if (!cachedLog) {
           while (pre.firstChild) pre.removeChild(pre.firstChild);
           pre.setAttribute('data-rendered-log', '');
+        }
+        // Strip the queued-marker placeholder that the polled snapshot
+        // may carry at the head of this pane. The marker is the
+        // server-side fallback for state-less active batch issues — it is
+        // stamped into run.Log before any run.started event has been
+        // projected, then carried verbatim into the next polled snapshot.
+        // Once the live SSE stream takes ownership here, the marker is
+        // stale and would otherwise sit at the head of the live log view
+        // until the next poll refresh catches up. Removing it on stream
+        // open keeps the SSE tail clean without waiting for the next
+        // poll cycle.
+        if (cachedLog.startsWith(queuedMarker)) {
+          cachedLog = cachedLog.slice(queuedMarker.length);
+          if (cachedLog.startsWith('\n')) cachedLog = cachedLog.slice(1);
+          pre.setAttribute('data-rendered-log', cachedLog);
+          // Mirror the data-rendered-log trim into the DOM. Drop the
+          // leading child and the separating "\n" node.
+          const firstChild = pre.firstChild;
+          if (firstChild) {
+            const firstText = firstChild.textContent || '';
+            if (firstText.startsWith(queuedMarker)) {
+              const stripped = firstText.slice(queuedMarker.length);
+              if (stripped.length === 0) {
+                pre.removeChild(firstChild);
+                const next = pre.firstChild;
+                if (next && next.textContent === '\n') {
+                  pre.removeChild(next);
+                }
+              } else {
+                firstChild.textContent = stripped;
+              }
+            }
+          }
         }
       }
       streamCoalescer.seedKnownLines(run.key, cachedLog.split('\n').filter(Boolean));

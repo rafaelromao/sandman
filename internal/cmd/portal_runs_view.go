@@ -1612,7 +1612,7 @@ func (v *portalRunsView) runFromActiveBatchIssue(repoRoot string, active portalA
 		SocketPath:  active.SocketPath,
 		LogPath:     logPath,
 		LogURL:      logURL,
-		Log:         "Queued. Waiting to start.",
+		Log:         QueuedMarker,
 		BatchKey:    batchKey,
 		RunDir:      activeRunDir(active),
 	}
