@@ -670,6 +670,57 @@ func TestDaemon_LaunchReviewPropagatesAgentModelParallelOverrides(t *testing.T) 
 	}
 }
 
+// TestDaemon_LaunchReviewPropagatesQualityRulesPath asserts issue #2367:
+// launchReview materialises the host copy of `.sandman/reviews/quality-rules.md`
+// (via initPromptTemplate) and threads the host-absolute path into the
+// orchestrator's batch.Request so the per-row worktree copy can resolve it
+// inside the agent's CWD. The pre-fix prompt pointed the agent at
+// `internal/prompt/quality_rules.md`, which the worktree never contained,
+// so every review rendered the "unavailable" verdict.
+func TestDaemon_LaunchReviewPropagatesQualityRulesPath(t *testing.T) {
+	gh := &fakeGH{
+		prs: []github.PR{{Number: 30, State: "open"}},
+		comments: map[int][]github.PRComment{
+			30: {{ID: "c30", Body: "/sandman review"}},
+		},
+		prFetch: map[int]*github.PR{30: {Number: 30, Title: "PR 30", Body: "Body"}},
+	}
+	runner := &capturedRequest{}
+	cfg := &config.Config{
+		DefaultReviewAgent: "config-agent",
+		DefaultReviewModel: "config/model",
+		AgentProviders: map[string]config.Agent{
+			"claude": {Preset: "claude", Command: "claude"},
+		},
+	}
+	d, _, dir := newDaemonForTest(t, gh, runner, cfg)
+
+	tickAndWait(t, d, context.Background())
+
+	if runner.calls != 1 {
+		t.Fatalf("expected 1 batch run, got %d", runner.calls)
+	}
+	if runner.last.QualityRulesFile == "" {
+		t.Fatalf("expected QualityRulesFile to be populated from d.QualityRulesPath()")
+	}
+	expectedPath := filepath.Join(dir, "reviews", "quality-rules.md")
+	if runner.last.QualityRulesFile != expectedPath {
+		t.Errorf("expected QualityRulesFile %q, got %q", expectedPath, runner.last.QualityRulesFile)
+	}
+	if _, err := os.Stat(expectedPath); err != nil {
+		t.Errorf("expected daemon to have materialised %s: %v", expectedPath, err)
+	}
+	// The rendered prompt (PromptFlag) must point the agent at the
+	// canonical daemon-materialised path, not the stale Sandman-internal
+	// path the previous template hardcoded.
+	if !strings.Contains(runner.last.PromptConfig.PromptFlag, ".sandman/reviews/quality-rules.md") {
+		t.Errorf("expected review prompt to reference .sandman/reviews/quality-rules.md")
+	}
+	if strings.Contains(runner.last.PromptConfig.PromptFlag, "internal/prompt/quality_rules.md") {
+		t.Errorf("review prompt must no longer reference the stale internal/prompt/quality_rules.md path")
+	}
+}
+
 func TestDaemon_TickAddsReactionAndRemovesAfterReview(t *testing.T) {
 	now := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
 	gh := &fakeGH{

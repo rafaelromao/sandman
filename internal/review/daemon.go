@@ -1573,6 +1573,13 @@ func (d *Daemon) launchReview(ctx context.Context, prNumber int, focus, commentI
 		RunID:        perRowRunID,
 		RunDir:       reviewRunFolder,
 		WorktreeDir:  d.reviewWorktreeBase(),
+		// Issue #2367: the daemon has just materialised the rules file
+		// (initPromptTemplate above) at d.QualityRulesPath(). The
+		// orchestrator copies it into the per-row worktree after the
+		// sandbox starts so the relative path the review prompt points at
+		// (`.sandman/reviews/quality-rules.md`) resolves inside the
+		// agent's CWD.
+		QualityRulesFile: d.QualityRulesPath(),
 	}
 	if _, err := d.Runner.RunBatch(ctx, req); err != nil {
 		return d.recordLaunchFailure(ctx, commentID, state, fmt.Errorf("run batch: %w", err))

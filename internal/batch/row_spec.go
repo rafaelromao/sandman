@@ -47,6 +47,13 @@ type RowSpec struct {
 	Review      bool
 	PRNumber    int
 	ReviewFocus string
+	// QualityRulesFile is the host-absolute path of the
+	// `.sandman/reviews/quality-rules.md` file the review daemon has
+	// materialised. The orchestrator copies it into the per-row worktree
+	// after the sandbox starts so the agent can read the rules at the
+	// relative path the review prompt points at. Empty for non-review
+	// runs.
+	QualityRulesFile string
 }
 
 // BatchConfig carries the batch-constant knobs — inputs that are the same for
@@ -214,6 +221,7 @@ func newRunSession(e *runExecutor, row RowSpec) *runSession {
 		review:                     row.Review,
 		prNumber:                   row.PRNumber,
 		reviewFocus:                row.ReviewFocus,
+		qualityRulesFile:           row.QualityRulesFile,
 		parentCtx:                  e.parentCtx,
 		opts:                       e.deps.runSessionOpts,
 	}
