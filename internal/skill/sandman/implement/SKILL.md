@@ -90,11 +90,23 @@ Writing `## Status: already resolved` while a PR is open without a verification 
 
 ### 4. Commit implementation
 
-Once all tests pass and user is satisfied:
+Once all tests pass and user is satisfied, derive a Conventional Commits subject that the PR title and the commit will share.
+
+Pick the most accurate type for the change. Allowed types: `feat`, `fix`, `perf`, `docs`, `refactor`, `test`, `build`, `ci`, `chore`, `revert`. Append `!` to the type for breaking changes (for example, `feat!:`). Keep the subject to one imperative sentence with no trailing period.
 
 ```bash
+COMMIT_TYPE="<type>"
+COMMIT_SCOPE="<scope-or-empty>"
+COMMIT_SUBJECT="<one-line imperative description of the change>"
+
+if [ -n "$COMMIT_SCOPE" ]; then
+  COMMIT_HEADER="$COMMIT_TYPE($COMMIT_SCOPE): $COMMIT_SUBJECT"
+else
+  COMMIT_HEADER="$COMMIT_TYPE: $COMMIT_SUBJECT"
+fi
+
 git add -A
-git commit -m "feat: <issue title>"
+git commit -m "$COMMIT_HEADER"
 ```
 
 ### 5. Self-review
@@ -142,10 +154,10 @@ git commit -m "refactor: self-review fixes"
    ```
 
    `Closes`, `Fixes`, and `Resolves` are all accepted closing keywords on GitHub. Do NOT use `Refs`, `See`, `Related to`, `Part of`, or any other phrasing — those do not auto-close the issue, and a change request that does not auto-close its work item is not acceptable.
-3. Create the change request with that body.
+3. Create the change request with that body. The PR title must use the same Conventional Commits shape as the commit subject from step 4 (same `<type>(<scope>)?:` header; same subject). The title is gated by the CI status check that scans for Conventional Commits, so do not bypass the format with the literal issue title.
 
    ```bash
-   gh pr create --title "<issue title>" --body "$BODY"
+   gh pr create --title "$COMMIT_HEADER" --body "$BODY"
    ```
 4. Verify the body that landed on the PR. Pull it back from the tracker and confirm it matches the closing-reference shape — do not trust that the create call succeeded, because the API may accept variants silently.
 
