@@ -191,8 +191,10 @@ overrideCleanup:
 				// Only release FOREIGN worktrees (a worktree whose
 				// path is not the main repo). The main repo holding
 				// the branch is recovered via reconcileStrandedBranch
-				// below; detaching the main repo's HEAD here would
-				// leave it detached with nothing re-attaching it.
+				// below via a `git update-ref -d` on refs/heads/<branch>,
+				// which preserves the operator's working-tree HEAD —
+				// the branch is then re-created by `git worktree add
+				// -b` later in Start().
 				if !samePath(info.Path, s.repoPath) {
 					if err := releaseBranchInWorktree(info.Path); err != nil {
 						s.warn("issue #2187: release foreign worktree at %q: %v\n", info.Path, err)
@@ -231,11 +233,12 @@ overrideCleanup:
 			delCmd.Dir = s.repoPath
 			if out, err := delCmd.CombinedOutput(); err != nil {
 				if s.strandedReconcile && isBranchCheckedOutError(out) {
-					// Fall back to the main-repo force-checkout strategy.
+					// Fall back to the in-main-repo ref-drop strategy.
 					// If the foreign worktree was correctly released above,
 					// this branch is unreachable for our expected workflow
 					// but still covers the case where the branch is checked
-					// out in repoPath itself.
+					// out in repoPath itself. The drop is `git update-ref -d`
+					// only — the operator's working-tree HEAD is preserved.
 					if recErr := s.reconcileStrandedBranch(); recErr != nil {
 						return fmt.Errorf("delete stale branch %q: %w\n%s", s.branch, recErr, out)
 					}
@@ -579,20 +582,35 @@ var reconcileStrandedFn = func(repoPath, worktreeBase, branch, sourceBranch stri
 }
 
 // defaultReconcileStrandedBranch is the default implementation of the
-// recovery loop. It force-checks out sourceBranch in repoPath and
-// retries the branch delete. Exposed as a free function so the
-// function-variable seam can be substituted independently of the
-// receiver-bound method on WorktreeSandbox.
+// recovery loop. The previous version force-checked out sourceBranch in
+// repoPath, which silently mutated the operator's working-copy HEAD and
+// left them on the source branch instead of the issue branch they were
+// inspecting. The new version detaches HEAD in the parent repo (working
+// tree untouched) and then drops the stray ref via
+// `git update-ref -d refs/heads/<branch>`. The branch is re-created
+// later in Start() by the canonical `git worktree add -b <branch>` call,
+// so the effective loss is bounded to a transient detached-HEAD window
+// in the parent repo.
+//
+// ADR-0027 documented `git update-ref -d` as strategy (3) "last resort";
+// this commit elevates it to the default for the main-repo case so that
+// operators who keep their working copy on the issue branch while
+// orchestrating runs from the same checkout no longer have their HEAD
+// switched to the source branch under them. The destructive
+// `git update-ref -d` only fires when the stranded branch is held by
+// the parent repo itself; foreign-worktree recovery still goes through
+// `releaseBranchInWorktree` and the stranded-worktree path, both of
+// which only detach a foreign HEAD.
 func defaultReconcileStrandedBranch(repoPath, worktreeBase, branch, sourceBranch string) error {
-	checkoutCmd := exec.Command("git", "checkout", "-f", sourceBranch)
-	checkoutCmd.Dir = repoPath
-	if out, err := checkoutCmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("checkout -f %s in main repo: %w\n%s", sourceBranch, err, out)
+	detachCmd := exec.Command("git", "checkout", "--detach")
+	detachCmd.Dir = repoPath
+	if out, err := detachCmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("detach HEAD in main repo: %w\n%s", err, out)
 	}
-	delCmd := exec.Command("git", "branch", "-D", branch)
-	delCmd.Dir = repoPath
-	if out, err := delCmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("delete stale branch %q after force-checkout: %w\n%s", branch, err, out)
+	delRefCmd := exec.Command("git", "update-ref", "-d", "refs/heads/"+branch)
+	delRefCmd.Dir = repoPath
+	if out, err := delRefCmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("drop stray ref refs/heads/%s in main repo: %w\n%s", branch, err, out)
 	}
 	return nil
 }
@@ -755,6 +773,13 @@ func releaseBranchInWorktree(path string) error {
 // stale worktree registration; the recovery path here is therefore
 // the "main repo on the branch" case, dispatched through the
 // package-level reconcileStrandedFn seam (see ADR-0027).
+//
+// The default seam implementation drops the stray ref via
+// `git update-ref -d` rather than force-checking out the source branch
+// in the parent repo, so the operator's working-tree HEAD is preserved
+// across the recovery. The branch is re-created later in Start() by the
+// canonical `git worktree add -b <branch>` call, so the operator's
+// local view of the branch is restored within the same Start().
 //
 // Returns nil on success, or a non-nil error on hard failure.
 func (s *WorktreeSandbox) reconcileStrandedBranch() error {

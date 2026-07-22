@@ -8702,7 +8702,7 @@ func TestClearIssueArtifacts_ReconcilesStrandedWorktreeInMainRepo(t *testing.T) 
 		}
 	})
 
-	t.Run("recovers via base-branch checkout when no stranded worktree", func(t *testing.T) {
+	t.Run("recovers via in-main-repo ref-drop when no stranded worktree", func(t *testing.T) {
 		dir := t.TempDir()
 		t.Chdir(dir)
 		initGitRepo(t, dir)
@@ -8717,10 +8717,15 @@ func TestClearIssueArtifacts_ReconcilesStrandedWorktreeInMainRepo(t *testing.T) 
 		// `git branch -D <branch>` from the main repo cwd will still
 		// fail with "used by worktree at" (because the main repo IS
 		// the worktree holding that branch). Recovery must take the
-		// base-branch-checkout path: `git checkout -f main` then
-		// `git branch -D <branch>`.
+		// ref-drop path: `git checkout --detach` then
+		// `git update-ref -d refs/heads/<branch>`. The main repo's
+		// working-tree commit is preserved (it stays at the same
+		// commit, just in detached HEAD state) instead of being
+		// silently switched to the base branch.
 		runGit(t, dir, "branch", branch)
 		runGit(t, dir, "checkout", "--quiet", branch)
+
+		parentCommitBefore := runGit(t, dir, "rev-parse", "HEAD")
 
 		logDir := filepath.Join(dir, ".sandman", "logs")
 		if err := os.MkdirAll(logDir, 0755); err != nil {
@@ -8738,18 +8743,76 @@ func TestClearIssueArtifacts_ReconcilesStrandedWorktreeInMainRepo(t *testing.T) 
 		if out, err := revCmd.CombinedOutput(); err == nil {
 			t.Errorf("expected branch %q to be deleted, rev-parse succeeded: %s", branch, out)
 		}
-		// The main repo must have ended up on the base branch.
-		headCmd := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD")
-		headCmd.Dir = dir
-		headOut, err := headCmd.CombinedOutput()
-		if err != nil || strings.TrimSpace(string(headOut)) != "main" {
-			t.Errorf("expected main repo to be on base branch %q after recovery, got %q (err=%v)", "main", strings.TrimSpace(string(headOut)), err)
+		// The main repo's working-tree commit must NOT have changed —
+		// we preserve HEAD even though the branch ref is gone.
+		parentCommitAfter := runGit(t, dir, "rev-parse", "HEAD")
+		if strings.TrimSpace(parentCommitAfter) != strings.TrimSpace(parentCommitBefore) {
+			t.Errorf("parent repo HEAD commit moved during ClearIssueArtifacts: before=%q after=%q",
+				strings.TrimSpace(parentCommitBefore), strings.TrimSpace(parentCommitAfter))
+		}
+		// The main repo must NOT have been moved onto the base branch
+		// (the buggy behaviour we are fixing). `git symbolic-ref`
+		// exits non-zero on a detached HEAD, so use exec.Command
+		// directly.
+		symRefCmd := exec.Command("git", "-C", dir, "symbolic-ref", "--quiet", "HEAD")
+		symRefOut, _ := symRefCmd.CombinedOutput()
+		if strings.TrimSpace(string(symRefOut)) == "refs/heads/main" {
+			t.Errorf("parent repo HEAD moved to source branch refs/heads/main — the buggy behaviour we are fixing")
 		}
 		// No error must be logged.
 		if strings.Contains(logBuf.String(), "error:") {
-			t.Errorf("expected no error log on the base-branch-checkout recovery path, got:\n%s", logBuf.String())
+			t.Errorf("expected no error log on the in-main-repo ref-drop recovery path, got:\n%s", logBuf.String())
 		}
 	})
+}
+
+// TestClearIssueArtifacts_PreservesMainRepoBranch pins the contract that
+// ClearIssueArtifacts must not flip the operator's checked-out branch in the
+// parent repo. The previous `recoverBranchDeleteFromMainRepo` strategy
+// force-checked out `baseBranch` in the cwd when the issue branch was held
+// by the parent repo, which silently switched the operator's working copy
+// to the base branch. The fix uses `git checkout --detach` followed by
+// `git update-ref -d refs/heads/<branch>` instead, leaving the parent's
+// working-tree HEAD commit unchanged.
+func TestClearIssueArtifacts_PreservesMainRepoBranch(t *testing.T) {
+	dir := testenv.MkdirShort(t, "sm-orch-")
+	t.Chdir(dir)
+	initGitRepo(t, dir)
+
+	branch := "sandman/42-fix-bug"
+	runGit(t, dir, "branch", branch)
+	runGit(t, dir, "checkout", "--quiet", branch)
+
+	worktreeDir := filepath.Join(dir, ".sandman", "worktrees")
+	el := &spyEventLog{}
+	logBuf := &bytes.Buffer{}
+
+	parentHeadBefore := strings.TrimSpace(runGit(t, dir, "symbolic-ref", "--quiet", "HEAD"))
+	if parentHeadBefore != "refs/heads/"+branch {
+		t.Fatalf("precondition: parent repo HEAD should be %q, got %q", branch, parentHeadBefore)
+	}
+	parentCommitBefore := runGit(t, dir, "rev-parse", "HEAD")
+
+	trueVal := true
+	ClearIssueArtifacts(42, branch, worktreeDir, el, logBuf, "main", &trueVal, "")
+
+	parentCommitAfter, err := exec.Command("git", "-C", dir, "rev-parse", "HEAD").CombinedOutput()
+	if err != nil {
+		t.Fatalf("read post-clear HEAD commit: %v: %s", err, parentCommitAfter)
+	}
+	if strings.TrimSpace(string(parentCommitAfter)) != strings.TrimSpace(parentCommitBefore) {
+		t.Errorf("parent repo HEAD commit moved during ClearIssueArtifacts: before=%q after=%q",
+			strings.TrimSpace(parentCommitBefore), strings.TrimSpace(string(parentCommitAfter)))
+	}
+
+	// The parent repo should NOT have been moved to the source branch
+	// (the buggy behaviour we are fixing). `git symbolic-ref` exits
+	// non-zero on a detached HEAD, so use exec.Command directly.
+	symRefCmd := exec.Command("git", "-C", dir, "symbolic-ref", "--quiet", "HEAD")
+	symRefOut, _ := symRefCmd.CombinedOutput()
+	if strings.TrimSpace(string(symRefOut)) == "refs/heads/main" {
+		t.Errorf("parent repo HEAD moved to source branch refs/heads/main — the buggy behaviour we are fixing")
+	}
 }
 
 // TestClearIssueArtifacts_NoReconcileKeepsBeltAndSuspenders asserts that

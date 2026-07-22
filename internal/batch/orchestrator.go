@@ -3291,7 +3291,7 @@ func ClearIssueArtifacts(issueNumber int, branch string, worktreeDir string, eve
 	// Delete branch (may fail if already deleted — idempotent)
 	if out, err := exec.Command("git", "branch", "-D", branch).CombinedOutput(); err != nil && !isMissingBranchError(err, out) {
 		if strandedReconcile != nil && *strandedReconcile {
-			recoverBranchDeleteFromMainRepo(logWriter, branch, worktreeDir, baseBranch)
+			recoverBranchDeleteFromMainRepo(logWriter, branch, worktreeDir)
 			// Retry the delete from the main repo. If the recovery
 			// succeeded the branch is already gone (and `git branch -D`
 			// will report "not found", suppressed by
@@ -3329,12 +3329,17 @@ func ClearIssueArtifacts(issueNumber int, branch string, worktreeDir string, eve
 //  1. Detect a stranded worktree at <worktreeBase>/<branch>; if present,
 //     delete the branch from inside that worktree's cwd (which bypasses
 //     the main-repo guard).
-//  2. Otherwise, if `baseBranch` is set, `git checkout -f <baseBranch>` in
-//     the main repo so the branch can be deleted.
+//  2. Otherwise, detach HEAD in the main repo (working tree untouched) and
+//     drop the stray ref via `git update-ref -d refs/heads/<branch>`.
+//     This keeps the operator's working-tree contents intact instead of
+//     force-checking out the base branch underneath them. The branch
+//     reference is re-created on the next `sandman run` against the same
+//     issue; the operator's local commits on that branch remain reachable
+//     via the reflog until then.
 //
 // On failure at any step, a warning is logged. The caller retries the
 // delete after this returns.
-func recoverBranchDeleteFromMainRepo(logWriter io.Writer, branch, worktreeBase, baseBranch string) {
+func recoverBranchDeleteFromMainRepo(logWriter io.Writer, branch, worktreeBase string) {
 	absBase, err := filepath.Abs(worktreeBase)
 	if err != nil {
 		fmt.Fprintf(logWriter, "warning: resolve worktree base for stranded recovery: %v\n", err)
@@ -3348,12 +3353,11 @@ func recoverBranchDeleteFromMainRepo(logWriter io.Writer, branch, worktreeBase, 
 		}
 		return
 	}
-	if strings.TrimSpace(baseBranch) == "" {
-		fmt.Fprintf(logWriter, "warning: cannot recover branch %s — main repo is checked out on it, no stranded worktree found, and no base branch configured\n", branch)
-		return
+	if out, err := exec.Command("git", "checkout", "--detach").CombinedOutput(); err != nil {
+		fmt.Fprintf(logWriter, "warning: detach HEAD in main repo: %v: %s\n", err, out)
 	}
-	if out, err := exec.Command("git", "checkout", "-f", baseBranch).CombinedOutput(); err != nil {
-		fmt.Fprintf(logWriter, "warning: git checkout -f %s to recover branch %s: %v: %s\n", baseBranch, branch, err, out)
+	if out, err := exec.Command("git", "update-ref", "-d", "refs/heads/"+branch).CombinedOutput(); err != nil {
+		fmt.Fprintf(logWriter, "warning: drop stray ref refs/heads/%s in main repo: %v: %s\n", branch, err, out)
 	}
 }
 
