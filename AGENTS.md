@@ -135,6 +135,12 @@ gofmt -w . && go vet ./...
 
 If the change affects behavior materially, also run the most relevant targeted tests for the touched package(s) before finalizing.
 
+When changing `docs/adr/`, run the structural ADR assertion script to verify index integrity:
+
+```bash
+go run scripts/check_adr_index.go
+```
+
 ## Agent skills and repository references
 
 Use these repository-specific references when appropriate:
