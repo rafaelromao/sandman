@@ -25,14 +25,6 @@ It rejects the generic SaaS dashboard look, especially floating KPI cards, decor
 
 The palette should be restrained: tinted neutrals, one deliberate accent, and enough semantic contrast to keep run state legible.
 
-### Primary
-- **Primary Accent**: [to be resolved during implementation]. Use sparingly for active runs, selected states, and key actions only.
-
-### Neutral
-- **Console Surface**: [to be resolved during implementation]. The main background and table canvas.
-- **Raised Surface**: [to be resolved during implementation]. Secondary panels, side rails, and detail regions.
-- **Text and Dividers**: [to be resolved during implementation]. Maintain strong contrast without harsh black-and-white extremes.
-
 ### Named Rules
 **The One Accent Rule.** The accent color is reserved for state and action, not decoration. If it starts to feel like a dashboard theme, it is already wrong.
 
