@@ -558,6 +558,26 @@ func TestMaybeSuggestBadge_PromptContainsMergedPRs(t *testing.T) {
 	}
 }
 
+func TestMaybeSuggestBadge_PromptAppendsBadgeAfterExistingContent(t *testing.T) {
+	fakeGh := &fakePRLister{
+		mergedPRs: []MergedSandmanPR{
+			{Number: 10, HeadRefName: "sandman/feat", Title: "Add login"},
+		},
+		hasBadge: false,
+	}
+	fakeRunner := &fakeSandmanRunner{prURL: "https://github.com/owner/repo/pull/5"}
+	h, _ := newTestBadgeHooker(fakeGh, fakeRunner)
+
+	h.MaybeSuggestBadge(context.Background(), []AgentRunResult{{Status: "success"}})
+
+	if !strings.Contains(fakeRunner.capturedPrompt, "Append the badge HTML after the final existing content.") {
+		t.Errorf("expected rendered prompt to preserve the end-of-file badge placement contract, got: %s", fakeRunner.capturedPrompt)
+	}
+	if strings.Contains(fakeRunner.capturedPrompt, "directly under the H1") || strings.Contains(fakeRunner.capturedPrompt, "very first line of the file") {
+		t.Errorf("expected rendered prompt to omit legacy top-of-file badge placement, got: %s", fakeRunner.capturedPrompt)
+	}
+}
+
 func TestMaybeSuggestBadge_PromptBodyRationaleReferencesMergedPRs(t *testing.T) {
 	fakeGh := &fakePRLister{
 		mergedPRs: []MergedSandmanPR{

@@ -38,11 +38,10 @@ Close the badge PR unmerged. Sandman respects that decision forever — the mark
 
 ## README placement rules
 
-The agent follows three placement rules:
+The agent follows two placement rules:
 
-1. **No README exists** → scaffold a minimal `README.md` with the project name, description (or a placeholder), the badge, and an `## About` stub.
-2. **README exists, no H1** → insert the badge as the very first line of the file.
-3. **README exists with H1** → insert the badge directly under the H1, before any other content.
+1. **No README exists** → scaffold a minimal `README.md` with the project name, description (or a placeholder), an `## About` stub, and the badge as the final content.
+2. **README exists** → preserve its content and append the badge after the final content, separated by a blank line, leaving the file newline-terminated.
 
 ## Commit trailer
 

@@ -32,26 +32,26 @@ Merged Sandman PRs in this repo:
 
      <description>
 
-      <a href="https://github.com/rafaelromao/sandman">
-        <img src="https://raw.githubusercontent.com/rafaelromao/sandman/main/assets/badge-built-with-sandman.svg" alt="Built with Sandman" width="154" />
-      </a>
-
      ## About
 
      A description of this project and what it does.
+
+      <a href="https://github.com/rafaelromao/sandman">
+        <img src="https://raw.githubusercontent.com/rafaelromao/sandman/main/assets/badge-built-with-sandman.svg" alt="Built with Sandman" width="154" />
+      </a>
      ```
 
-2. If `README.md` exists with a top-level `# ` heading (H1):
-   - Insert the badge HTML as the first line directly under the H1 (before any other body content).
+2. If `README.md` exists:
+   - Preserve all existing content.
+   - Append the badge HTML after the final existing content.
+   - Separate the existing content from the badge with one blank line.
+   - Ensure `README.md` ends with a newline.
    - Badge HTML:
      ```html
      <a href="https://github.com/rafaelromao/sandman">
        <img src="https://raw.githubusercontent.com/rafaelromao/sandman/main/assets/badge-built-with-sandman.svg" alt="Built with Sandman" width="154" />
      </a>
      ```
-
-3. If `README.md` exists with no H1:
-   - Insert the badge HTML as the very first line of the file.
 
 ## Branch and commit
 
