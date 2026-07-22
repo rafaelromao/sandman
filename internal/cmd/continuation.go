@@ -125,17 +125,15 @@ func buildContinuationRequest(ctx context.Context, cmd *cobra.Command, deps Depe
 	firstIssue := issues[0]
 	firstLastRun := lastRuns[firstIssue]
 
+	// Tunables are intentionally read from current CLI flags / config
+	// defaults only; the prior run's event payload is NOT consulted.
+	// Worktree identity (branch, base_branch, task prompt) is still
+	// pinned to the preserved worktree via the caller in run.go.
+	_ = firstLastRun
+
 	reviewCommand := effectiveReviewCommand(cfg)
-	if storedReviewCommand, ok := payloadString(firstLastRun.Payload, "review_command"); ok && strings.TrimSpace(storedReviewCommand) != "" {
-		reviewCommand = strings.TrimSpace(storedReviewCommand)
-	}
 
 	agentName := strings.TrimSpace(cmdFlag(cmd, "agent"))
-	if agentName == "" {
-		if storedAgent, ok := payloadString(firstLastRun.Payload, "agent"); ok {
-			agentName = strings.TrimSpace(storedAgent)
-		}
-	}
 	if agentName == "" {
 		agentName = strings.TrimSpace(cfg.DefaultAgent)
 	}
@@ -149,33 +147,21 @@ func buildContinuationRequest(ctx context.Context, cmd *cobra.Command, deps Depe
 
 	model := strings.TrimSpace(cmdFlag(cmd, "model"))
 	if model == "" {
-		if storedModel, ok := payloadString(firstLastRun.Payload, "model"); ok && strings.TrimSpace(storedModel) != "" {
-			if storedAgent, ok := payloadString(firstLastRun.Payload, "agent"); !ok || strings.TrimSpace(storedAgent) == "" || strings.TrimSpace(storedAgent) == agentName {
-				model = strings.TrimSpace(storedModel)
-			}
-		}
-	}
-	if model == "" {
 		model = resolveModel("", cfg.DefaultModel, agentCfg.Preset)
 	}
 
 	parallel := 0
-	if v, ok := payloadInt(firstLastRun.Payload, "parallel"); ok {
-		parallel = v
-	}
 	if flag := cmd.Flags().Lookup("parallel"); flag != nil && flag.Changed {
 		parallel, _ = cmd.Flags().GetInt("parallel")
 		if parallel < 0 {
 			return batch.Request{}, MarkUsage(fmt.Errorf("parallel must be 0 or greater"))
 		}
+	} else if cfg != nil {
+		parallel = cfg.DefaultParallel
 	}
 
 	startDelay := 0
 	startDelaySet := false
-	if v, ok := payloadInt(firstLastRun.Payload, "start_delay"); ok {
-		startDelay = v
-		startDelaySet = true
-	}
 	if flag := cmd.Flags().Lookup("start-delay"); flag != nil && flag.Changed {
 		startDelay, _ = cmd.Flags().GetInt("start-delay")
 		startDelaySet = true
@@ -186,10 +172,6 @@ func buildContinuationRequest(ctx context.Context, cmd *cobra.Command, deps Depe
 
 	runIdleTimeout := 0
 	runIdleTimeoutSet := false
-	if v, ok := payloadInt(firstLastRun.Payload, "run_idle_timeout"); ok {
-		runIdleTimeout = v
-		runIdleTimeoutSet = true
-	}
 	if flag := cmd.Flags().Lookup("run-idle-timeout"); flag != nil && flag.Changed {
 		runIdleTimeout, _ = cmd.Flags().GetInt("run-idle-timeout")
 		runIdleTimeoutSet = true
@@ -199,9 +181,6 @@ func buildContinuationRequest(ctx context.Context, cmd *cobra.Command, deps Depe
 	}
 
 	retries := -1
-	if v, ok := payloadInt(firstLastRun.Payload, "retries"); ok {
-		retries = v
-	}
 	if flag := cmd.Flags().Lookup("retries"); flag != nil && flag.Changed {
 		retries, _ = cmd.Flags().GetInt("retries")
 		if retries < 0 {
@@ -210,21 +189,12 @@ func buildContinuationRequest(ctx context.Context, cmd *cobra.Command, deps Depe
 	}
 
 	sandboxMode := ""
-	if v, ok := payloadString(firstLastRun.Payload, "sandbox"); ok {
-		sandboxMode = strings.TrimSpace(v)
-	}
 	if flag := cmd.Flags().Lookup("sandbox"); flag != nil && flag.Changed {
 		sandboxMode, _ = cmd.Flags().GetString("sandbox")
 	}
 
 	containerCapacity := 0
 	containerCapacitySet := false
-	if v, ok := payloadInt(firstLastRun.Payload, "container_capacity"); ok {
-		containerCapacity = v
-	}
-	if v, ok := payloadBool(firstLastRun.Payload, "container_capacity_set"); ok {
-		containerCapacitySet = v
-	}
 	if flag := cmd.Flags().Lookup("container-capacity"); flag != nil && flag.Changed {
 		containerCapacity, _ = cmd.Flags().GetInt("container-capacity")
 		containerCapacitySet = true
@@ -235,12 +205,6 @@ func buildContinuationRequest(ctx context.Context, cmd *cobra.Command, deps Depe
 
 	maxContainers := 0
 	maxContainersSet := false
-	if v, ok := payloadInt(firstLastRun.Payload, "max_containers"); ok {
-		maxContainers = v
-	}
-	if v, ok := payloadBool(firstLastRun.Payload, "max_containers_set"); ok {
-		maxContainersSet = v
-	}
 	if flag := cmd.Flags().Lookup("max-containers"); flag != nil && flag.Changed {
 		maxContainers, _ = cmd.Flags().GetInt("max-containers")
 		maxContainersSet = true
@@ -263,6 +227,9 @@ func buildContinuationRequest(ctx context.Context, cmd *cobra.Command, deps Depe
 		strandedReconcile = &val
 	}
 
+	// baseBranch stays pinned to the original — the worktree was cut
+	// from it; re-fetching from a new base would break the continuation.
+	// A CLI override of --base-branch still wins (per AC4).
 	baseBranch := strings.TrimSpace(baseBranches[firstIssue])
 	if flag := cmd.Flags().Lookup("base-branch"); flag != nil && flag.Changed {
 		baseBranch, _ = cmd.Flags().GetString("base-branch")

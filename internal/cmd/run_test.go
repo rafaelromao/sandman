@@ -1882,7 +1882,7 @@ func TestRun_ContinueFlagAcceptedAndMutuallyExclusiveWithOverride(t *testing.T) 
 	}
 }
 
-func TestRun_ContinueFlag_ReplaysStoredContinuationState(t *testing.T) {
+func TestRun_ContinueFlag_UsesCurrentFlagsOverStoredValues(t *testing.T) {
 	dir := t.TempDir()
 	branch := "sandman/42-fix-bug"
 
@@ -1896,18 +1896,18 @@ func TestRun_ContinueFlag_ReplaysStoredContinuationState(t *testing.T) {
 		t.Fatalf("write task: %v", err)
 	}
 	deps.ConfigStore = &fakeStore{config: &config.Config{
-		Agent:         "opencode",
+		Agent:         "opencode-current",
 		DefaultModel:  "openai/gpt-4.1",
 		WorktreeDir:   dir,
 		ReviewCommand: "/oc review",
 		Git:           config.GitConfig{BaseBranch: "trunk"},
 		AgentProviders: map[string]config.Agent{
-			"opencode": {Preset: "opencode", Command: "true"},
+			"opencode-current": {Preset: "opencode", Command: "true"},
 		},
 	}}
 	deps.EventLog = &fakeEventLog{events: []events.Event{
-		{Type: "run.started", RunID: testRunID42First, Issue: 42, Payload: map[string]any{"branch": branch, "base_branch": "main", "agent": "opencode", "model": "gpt-4.1", "review_command": "/custom review", "parallel": 1, "start_delay": 3, "retries": 2, "sandbox": "worktree", "container_capacity": 1, "container_capacity_set": true, "max_containers": 2, "max_containers_set": true}},
-		{Type: "run.continued", RunID: testRunID42Second, Issue: 42, Payload: map[string]any{"branch": branch, "base_branch": "main", "agent": "opencode", "model": "gpt-4.2", "review_command": "/custom review 2", "parallel": 7, "start_delay": 11, "retries": 4, "sandbox": "docker", "container_capacity": 3, "container_capacity_set": true, "max_containers": 5, "max_containers_set": true}},
+		{Type: "run.started", RunID: testRunID42First, Issue: 42, Payload: map[string]any{"branch": branch, "base_branch": "main", "agent": "opencode-stored", "model": "gpt-4.1", "review_command": "/custom review", "parallel": 1, "start_delay": 3, "retries": 2, "sandbox": "worktree", "container_capacity": 1, "container_capacity_set": true, "max_containers": 2, "max_containers_set": true, "run_idle_timeout": 99, "run_idle_timeout_set": true}},
+		{Type: "run.continued", RunID: testRunID42Second, Issue: 42, Payload: map[string]any{"branch": branch, "base_branch": "main", "agent": "opencode-stored", "model": "gpt-4.2", "review_command": "/custom review 2", "parallel": 7, "start_delay": 11, "retries": 4, "sandbox": "docker", "container_capacity": 3, "container_capacity_set": true, "max_containers": 5, "max_containers_set": true, "run_idle_timeout": 99, "run_idle_timeout_set": true}},
 	}}
 	deps.GitHubClient = &fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, State: "open"}}, prs: map[string]*github.PR{}}
 
@@ -1943,35 +1943,44 @@ func TestRun_ContinueFlag_ReplaysStoredContinuationState(t *testing.T) {
 	if strings.Contains(spy.req.TaskPrompts[42], "## Prior Context") {
 		t.Fatalf("expected verbatim task prompt (not rewritten wrapper), got %q", spy.req.TaskPrompts[42])
 	}
-	if spy.req.Agent != "opencode" {
-		t.Fatalf("expected agent replay, got %q", spy.req.Agent)
+	if spy.req.Agent != "opencode-current" {
+		t.Fatalf("expected agent from current cfg, got %q", spy.req.Agent)
 	}
-	if spy.req.Model != "gpt-4.2" {
-		t.Fatalf("expected model replay from prior run, got %q", spy.req.Model)
+	if spy.req.Model != "openai/gpt-4.1" {
+		t.Fatalf("expected model from cfg.DefaultModel, got %q", spy.req.Model)
 	}
 	if spy.req.BaseBranch != "main" {
-		t.Fatalf("expected base branch replay, got %q", spy.req.BaseBranch)
+		t.Fatalf("expected base branch pinned to stored value, got %q", spy.req.BaseBranch)
 	}
-	if spy.req.Parallel != 7 {
-		t.Fatalf("expected parallel replay, got %d", spy.req.Parallel)
+	if spy.req.Parallel != 0 {
+		t.Fatalf("expected parallel from current cfg (default 0), got %d", spy.req.Parallel)
 	}
-	if spy.req.StartDelay != 11*time.Second || !spy.req.StartDelaySet {
-		t.Fatalf("expected start delay replay, got %s set=%v", spy.req.StartDelay, spy.req.StartDelaySet)
+	if spy.req.StartDelay != 0 || spy.req.StartDelaySet {
+		t.Fatalf("expected start delay unset, got %s set=%v", spy.req.StartDelay, spy.req.StartDelaySet)
 	}
-	if spy.req.Retries != 4 {
-		t.Fatalf("expected retries replay, got %d", spy.req.Retries)
+	if spy.req.RunIdleTimeout != 0 || spy.req.RunIdleTimeoutSet {
+		t.Fatalf("expected run idle timeout unset, got %d set=%v", spy.req.RunIdleTimeout, spy.req.RunIdleTimeoutSet)
 	}
-	if spy.req.Sandbox != "docker" {
-		t.Fatalf("expected sandbox replay, got %q", spy.req.Sandbox)
+	if spy.req.Retries != -1 {
+		t.Fatalf("expected retries sentinel (-1) from current cfg, got %d", spy.req.Retries)
 	}
-	if spy.req.ContainerCapacity != 3 || !spy.req.ContainerCapacitySet {
-		t.Fatalf("expected container capacity replay, got %d set=%v", spy.req.ContainerCapacity, spy.req.ContainerCapacitySet)
+	if spy.req.Sandbox != "" {
+		t.Fatalf("expected sandbox from current cfg (default empty), got %q", spy.req.Sandbox)
 	}
-	if spy.req.MaxContainers != 5 || !spy.req.MaxContainersSet {
-		t.Fatalf("expected max containers replay, got %d set=%v", spy.req.MaxContainers, spy.req.MaxContainersSet)
+	if spy.req.ContainerCapacity != 0 || spy.req.ContainerCapacitySet {
+		t.Fatalf("expected container capacity unset, got %d set=%v", spy.req.ContainerCapacity, spy.req.ContainerCapacitySet)
 	}
-	if spy.req.PromptConfig.ReviewCommand != "/custom review 2" || !spy.req.PromptConfig.ReviewCommandSet {
-		t.Fatalf("expected review command replay, got %q set=%v", spy.req.PromptConfig.ReviewCommand, spy.req.PromptConfig.ReviewCommandSet)
+	if spy.req.MaxContainers != 0 || spy.req.MaxContainersSet {
+		t.Fatalf("expected max containers unset, got %d set=%v", spy.req.MaxContainers, spy.req.MaxContainersSet)
+	}
+	if spy.req.PromptConfig.ReviewCommand != "/oc review" {
+		t.Fatalf("expected review command from cfg, got %q", spy.req.PromptConfig.ReviewCommand)
+	}
+	if spy.req.DangerouslySkipPermissions != nil {
+		t.Fatalf("expected dangerously skip permissions nil (no flag), got %v", *spy.req.DangerouslySkipPermissions)
+	}
+	if spy.req.StrandedReconcile != nil {
+		t.Fatalf("expected stranded reconcile nil (no flag), got %v", *spy.req.StrandedReconcile)
 	}
 }
 
