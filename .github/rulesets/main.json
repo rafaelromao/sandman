@@ -1,0 +1,34 @@
+{
+  "name": "Protect main",
+  "target": "branch",
+  "enforcement": "active",
+  "conditions": {
+    "ref_name": {
+      "include": ["refs/heads/main"]
+    }
+  },
+  "rules": [
+    {
+      "type": "required_status_checks",
+      "parameters": {
+        "required_status_checks": [
+          {
+            "context": "CI / build",
+            "type": "required"
+          },
+          {
+            "context": "CI / semantic-pull-request",
+            "type": "required"
+          }
+        ],
+        "strict_required_status_checks_policy": false
+      }
+    },
+    {
+      "type": "block_force_push"
+    },
+    {
+      "type": "block_branch_deletion"
+    }
+  ]
+}

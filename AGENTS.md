@@ -115,6 +115,30 @@ Skip a tier with a one-line note (e.g. `skipping tier 4: no opencode auth at $HO
 - Preserve DI seams. Prefer injecting dependencies over hard-coding globals or constructing deep dependencies inline.
 - Keep IPC changes compatible with Unix domain socket assumptions already used in the repo.
 
+## Branching and versioning rules
+
+- **Trunk-based on `main`**. No `develop` branch. Direct pushes blocked by the GitHub Ruleset.
+- **PR titles follow Conventional Commits** with the regex:
+  ```
+  ^(feat|fix|perf|chore|docs|refactor|test|build|ci|revert|feat!|fix!|perf!)(\([a-z0-9-]+\))?!?: .+
+  ```
+- **Allowed types**: `feat`, `fix`, `perf`, `docs`, `refactor`, `test`, `build`, `ci`, `chore`, `revert`. Trailing `!` (e.g. `feat!:`) marks breaking changes.
+- **SemVer is derived from the merged PR title**: `feat:` → minor, `fix:` / `perf:` → patch, `feat!:` / `fix!:` → major; everything else is changelog-only.
+- **Required status checks on `main`**: `CI / build` (matrix `ubuntu-latest` + `macos-latest`, `pull_request` + `push` triggers in `.github/workflows/go.yml`) and `CI / semantic-pull-request`.
+
+### When opening a PR
+
+- Branch from `main`.
+- Write a one-sentence PR title. No trailing period. No issue number in the title.
+- Run `make check` before pushing.
+- Link issues in the PR body (e.g. `Closes #<number>`).
+
+### When the change touches CI, versioning, or repository-level agent docs
+
+- **CI gate change** → update `.github/workflows/go.yml` and `.github/rulesets/main.json`.
+- **Versioning or SemVer rule change** → update this section and `CONTRIBUTING.md`.
+- **Repository-level agent docs change** → update `AGENTS.md` and the relevant `docs/development/` file.
+
 ## Skill content constraints
 
 Skills under `internal/skill/sandman/` describe how coding agents work with the **user-facing** concepts (`.sandman/` state files, public CLI, review commands, worktrees, ADRs). They must not reference Sandman's **internals** — Go package paths under `internal/`, Go type and function names like `processPR` / `MarkSeen` / `launchReview`, or other implementation details that may shift.

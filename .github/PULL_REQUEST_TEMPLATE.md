@@ -1,3 +1,5 @@
+**PR title must follow Conventional Commits** (`feat:`, `fix:`, `docs:`, …) — see [`AGENTS.md`](AGENTS.md#branching-and-versioning-rules).
+
 ## What surface is this PR modifying?
 
 - [ ] Go code

@@ -30,6 +30,10 @@ For suggestions related to agent behavior, prompts, or domain vocabulary, use th
 ### Pull Requests
 
 - Fill in the [required template](.github/PULL_REQUEST_TEMPLATE.md).
+- **PR titles must follow [Conventional Commits](#conventional-commits)**.
+- PRs branch from `main`.
+- The GitHub Ruleset blocks direct pushes to `main` — all changes arrive through PRs.
+- Both `CI / build` and `CI / semantic-pull-request` must be green before merge.
 - Ensure the PR description clearly describes the problem and solution.
 - Include the relevant issue number if applicable.
 - Ensure all CI checks pass.
@@ -82,11 +86,15 @@ Before submitting a PR, always run `make check` locally.
 - Write tests for new functionality.
 - Keep the domain vocabulary in `CONTEXT.md` in mind when naming things.
 
-### Commit Messages
+### Conventional Commits
 
-- Use the present tense ("Add feature" not "Added feature").
-- Use the imperative mood ("Move cursor to..." not "Moves cursor to...").
-- Reference issues and pull requests where appropriate.
+PR and commit titles follow the [Conventional Commits](https://www.conventionalcommits.org/) specification.
+
+**Allowed types**: `feat`, `fix`, `perf`, `docs`, `refactor`, `test`, `build`, `ci`, `chore`, `revert`. A trailing `!` (e.g. `feat!:`) marks a breaking change.
+
+**Imperative mood**: write titles as commands ("Add feature" not "Added feature" or "Adds feature").
+
+The full regex, SemVer rules, and allowed type list are documented in [`AGENTS.md`](AGENTS.md#branching-and-versioning-rules).
 
 ## Non-Code Contributions
 
