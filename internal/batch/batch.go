@@ -101,9 +101,18 @@ type Request struct {
 	// in run.started payload so the portal can populate the review chip.
 	IssueNumber int
 	// ReviewFocus is the free-form text that followed `/sandman review`
-	// in the trigger comment. May be empty. Only meaningful when Review
-	// is true.
+	// in the trigger comment. May be empty. Only meaningful when Review is
+	// true.
 	ReviewFocus string
+	// QualityRulesFile is the host-absolute path of the
+	// `.sandman/reviews/quality-rules.md` file the review daemon has just
+	// materialised. The orchestrator copies this file into the per-row
+	// review worktree after the sandbox starts so the agent can read the
+	// rules from the relative path the review prompt points at
+	// (`.sandman/reviews/quality-rules.md`). Empty for non-review runs;
+	// the orchestrator skips the copy when the path is empty or the file
+	// does not exist on the host.
+	QualityRulesFile string
 	// RunID is the optional user-provided batch identifier for prompt-only
 	// runs. When set, it is used as the run directory name and the per-row
 	// RunID in run.started events. Issue-driven runs leave it empty; their

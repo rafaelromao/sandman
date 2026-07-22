@@ -10967,3 +10967,113 @@ func TestValidateBatchBranches_ReadsEventLogOnce(t *testing.T) {
 		t.Fatalf("expected one event-log read, got %d", log.readCalls)
 	}
 }
+
+// TestRunSession_CopyQualityRulesIntoWorktree pins issue #2367: the review
+// daemon materialises `.sandman/reviews/quality-rules.md` on the host and
+// threads the path into batch.Request.QualityRulesFile. The runSession must
+// copy that file into the per-row worktree at the relative path the review
+// prompt points at, so the agent's CWD resolves it.
+func TestRunSession_CopyQualityRulesIntoWorktree(t *testing.T) {
+	branch := "sandman/316-fix-quality-rules-prompt-path"
+	worktreeRoot := t.TempDir()
+	worktree := filepath.Join(worktreeRoot, branch)
+	if err := os.MkdirAll(worktree, 0o755); err != nil {
+		t.Fatalf("mkdir worktree: %v", err)
+	}
+	srcDir := t.TempDir()
+	srcPath := filepath.Join(srcDir, "quality-rules.md")
+	wantBody := []byte("# Test rules\nApplies to: [all]\n")
+	if err := os.WriteFile(srcPath, wantBody, 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+
+	s := &runSession{
+		deps: runDeps{
+			errorLog: io.Discard,
+			layout:   paths.Layout{RepoRoot: worktreeRoot, WorktreeDir: worktreeRoot},
+		},
+		branches:         map[int]string{0: branch},
+		review:           true,
+		qualityRulesFile: srcPath,
+	}
+
+	if err := s.copyQualityRulesIntoWorktree(branch); err != nil {
+		t.Fatalf("copyQualityRulesIntoWorktree: %v", err)
+	}
+
+	target := filepath.Join(worktree, ".sandman", "reviews", "quality-rules.md")
+	got, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatalf("read target %s: %v", target, err)
+	}
+	if string(got) != string(wantBody) {
+		t.Errorf("target body = %q, want %q", got, wantBody)
+	}
+}
+
+// TestRunSession_CopyQualityRulesSkipsNonReview confirms the copy is gated
+// on s.review so implementation runs do not accidentally pull the host
+// rules file into the worktree.
+func TestRunSession_CopyQualityRulesSkipsNonReview(t *testing.T) {
+	branch := "sandman/42-fix-bug"
+	worktreeRoot := t.TempDir()
+	worktree := filepath.Join(worktreeRoot, branch)
+	if err := os.MkdirAll(worktree, 0o755); err != nil {
+		t.Fatalf("mkdir worktree: %v", err)
+	}
+	srcDir := t.TempDir()
+	srcPath := filepath.Join(srcDir, "quality-rules.md")
+	if err := os.WriteFile(srcPath, []byte("rules"), 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
+	}
+
+	s := &runSession{
+		deps: runDeps{
+			errorLog: io.Discard,
+			layout:   paths.Layout{RepoRoot: worktreeRoot, WorktreeDir: worktreeRoot},
+		},
+		branches:         map[int]string{42: branch},
+		review:           false,
+		qualityRulesFile: srcPath,
+	}
+
+	if err := s.copyQualityRulesIntoWorktree(branch); err != nil {
+		t.Fatalf("copyQualityRulesIntoWorktree: %v", err)
+	}
+	target := filepath.Join(worktree, ".sandman", "reviews", "quality-rules.md")
+	if _, err := os.Stat(target); !os.IsNotExist(err) {
+		t.Errorf("expected non-review session not to write %s; stat err = %v", target, err)
+	}
+}
+
+// TestRunSession_CopyQualityRulesMissingSource confirms the copy is
+// best-effort: a missing source leaves the worktree untouched so the agent
+// renders the canonical "Quality rules unavailable in this repository"
+// verdict.
+func TestRunSession_CopyQualityRulesMissingSource(t *testing.T) {
+	branch := "sandman/316-fix-quality-rules-prompt-path"
+	worktreeRoot := t.TempDir()
+	worktree := filepath.Join(worktreeRoot, branch)
+	if err := os.MkdirAll(worktree, 0o755); err != nil {
+		t.Fatalf("mkdir worktree: %v", err)
+	}
+	srcPath := filepath.Join(t.TempDir(), "does-not-exist.md")
+
+	s := &runSession{
+		deps: runDeps{
+			errorLog: io.Discard,
+			layout:   paths.Layout{RepoRoot: worktreeRoot, WorktreeDir: worktreeRoot},
+		},
+		branches:         map[int]string{0: branch},
+		review:           true,
+		qualityRulesFile: srcPath,
+	}
+
+	if err := s.copyQualityRulesIntoWorktree(branch); err != nil {
+		t.Errorf("expected nil error for missing source, got %v", err)
+	}
+	target := filepath.Join(worktree, ".sandman", "reviews", "quality-rules.md")
+	if _, err := os.Stat(target); !os.IsNotExist(err) {
+		t.Errorf("expected missing-source to leave target absent; stat err = %v", err)
+	}
+}

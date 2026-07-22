@@ -14,6 +14,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/rafaelromao/sandman/internal/atomicfs"
 	"github.com/rafaelromao/sandman/internal/batchindex"
 	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/daemon"
@@ -1382,6 +1383,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				RunTS:            req.RunTS,
 				RunShortID:       req.RunShortID,
 				BatchID:          issueBatchID,
+				QualityRulesFile: req.QualityRulesFile,
 			}
 			bc := BatchConfig{
 				Cfg:                        cfg,
@@ -1831,6 +1833,13 @@ type runSession struct {
 	review      bool
 	prNumber    int
 	reviewFocus string
+	// qualityRulesFile is the host-absolute path of the
+	// `.sandman/reviews/quality-rules.md` file the daemon has just
+	// materialised. The session copies the file into the per-row
+	// worktree at `.sandman/reviews/quality-rules.md` after the sandbox
+	// starts, so the relative path the review prompt points at resolves
+	// inside the agent's CWD. Empty for non-review runs.
+	qualityRulesFile string
 
 	// opts carries the test-injection hooks copied from
 	// Orchestrator.runSessionOpts at session construction. Zero-valued in
@@ -1846,6 +1855,43 @@ func (s *runSession) worktreeDir() string {
 		return strings.TrimSpace(s.cfg.WorktreeDir)
 	}
 	return ""
+}
+
+// copyQualityRulesIntoWorktree copies the host-materialised
+// `.sandman/reviews/quality-rules.md` (the daemon's authoritative copy) into
+// the per-row review worktree so the agent can read it at the relative
+// path the review prompt points at. Called after wt.Start succeeds, only
+// for review runs.
+//
+// The file copy is best-effort: a missing source is logged and skipped so
+// the agent can still render the canonical "Quality rules unavailable in
+// this repository" verdict. Write errors are also non-fatal — the prompt
+// already documents the absent-file fallback.
+func (s *runSession) copyQualityRulesIntoWorktree(branch string) error {
+	if !s.review {
+		return nil
+	}
+	src := strings.TrimSpace(s.qualityRulesFile)
+	if src == "" {
+		return nil
+	}
+	data, err := os.ReadFile(src)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("read %s: %w", src, err)
+	}
+	wtPath := filepath.Join(s.worktreeDir(), branch)
+	targetDir := filepath.Join(wtPath, ".sandman", "reviews")
+	if err := os.MkdirAll(targetDir, 0o755); err != nil {
+		return fmt.Errorf("mkdir %s: %w", targetDir, err)
+	}
+	target := filepath.Join(targetDir, "quality-rules.md")
+	if err := atomicfs.WriteAtomic(target, data, 0o644); err != nil {
+		return fmt.Errorf("write %s: %w", target, err)
+	}
+	return nil
 }
 
 // orchestratorWorktreeDir resolves the worktree base directory
@@ -2574,6 +2620,11 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 		s.emitEarlyFailure("start sandbox", branch, err)
 		return AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "failure", Branch: branch}, false
 	}
+	if s.review && s.qualityRulesFile != "" {
+		if err := s.copyQualityRulesIntoWorktree(branch); err != nil {
+			fmt.Fprintf(s.deps.errorLog, "warn: copy quality rules into review worktree for issue %d: %v\n", s.issueNumber, err)
+		}
+	}
 	s.coord.firstSandboxStart(sandboxStarted)
 	// Guaranteed cleanup: defer wt.RestoreHostPaths() so container
 	// sandboxes normalize the preserved worktree's .git pointer back to
@@ -2864,6 +2915,7 @@ func (o *Orchestrator) runPromptOnly(ctx context.Context, cfg *config.Config, ag
 		Review:            req.Review,
 		PRNumber:          req.PRNumber,
 		ReviewFocus:       req.ReviewFocus,
+		QualityRulesFile:  req.QualityRulesFile,
 	}
 	bc := BatchConfig{
 		Cfg:                        cfg,

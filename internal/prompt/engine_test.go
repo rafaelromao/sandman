@@ -845,7 +845,7 @@ func TestDefaultPRReviewPrompt_ContainsQualityCheckSection(t *testing.T) {
 		"mixed scope — <one-line justification>",
 		"cross-cutting — <one-line justification>",
 		"Quality rules unavailable in this repository; no built-in quality-rule evaluation was applied.",
-		"Do not restate the threshold literal; refer to `internal/prompt/quality_rules.md`",
+		"Do not restate the threshold literal; refer to `.sandman/reviews/quality-rules.md`",
 		"11. When you find an issue, cite the file and line range, quote the offending snippet, and describe the concrete fix.",
 	}
 	for _, phrase := range required {

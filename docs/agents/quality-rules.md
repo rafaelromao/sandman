@@ -1,7 +1,7 @@
 # Quality Rules for the PR Reviewer
 
 This doc explains how the PR review prompt (`internal/prompt/default_pr_review_prompt.md`)
-applies the quality rules in `internal/prompt/quality_rules.md`, and how to
+applies the quality rules in `.sandman/reviews/quality-rules.md`, and how to
 edit those rules without breaking the reviewer.
 
 ## What the reviewer checks
@@ -18,7 +18,7 @@ correctness/safety defect — never a quality rule.
 
 ## How the reviewer judges a rule
 
-For each rule in `quality_rules.md`, the reviewer must decide whether one of
+For each rule in `.sandman/reviews/quality-rules.md`, the reviewer must decide whether one of
 its **construct tags** matches the changed code:
 
 - **`[control-flow]`** — functions, methods, lambdas, scripts, branches,
@@ -51,7 +51,7 @@ finding; they are not counted at all.
 
 ## Per-finding severity table
 
-The full table lives in `quality_rules.md` under `## Per-finding severity`:
+The full table lives in `.sandman/reviews/quality-rules.md` under `## Per-finding severity`:
 
 | Evidence | Default action |
 | --- | --- |
@@ -61,7 +61,7 @@ The full table lives in `quality_rules.md` under `## Per-finding severity`:
 
 ## Tool precedence
 
-Tool precedence is also defined in `quality_rules.md`:
+Tool precedence is also defined in `.sandman/reviews/quality-rules.md`:
 
 1. Cognitive complexity default threshold **15** (25 for C-family languages
    when no stricter setting exists).
@@ -75,13 +75,17 @@ Tool precedence is also defined in `quality_rules.md`:
 
 ## Editing the rules
 
-`internal/prompt/quality_rules.md` is the single source of truth. The
-reviewer prompt references it by path. To change a rule:
+`.sandman/reviews/quality-rules.md` is the user-facing rules file. The
+reviewer prompt references it by path. The Sandman daemon materialises the
+built-in rules into this file under `.sandman/reviews/quality-rules.md`
+when `sandman init` runs; user edits to that file survive re-inits. To
+change a rule:
 
-1. Edit `internal/prompt/quality_rules.md`.
+1. Edit `.sandman/reviews/quality-rules.md` in the target repository.
 2. Update the construct tags if the rule's scope changed.
-3. Do **not** move the file — the prompt hardcodes the relative path
-   `internal/prompt/quality_rules.md`.
+3. The review daemon copies this file into the per-PR worktree before the
+   agent launches, so the path resolves inside the agent's working
+   directory.
 4. Do **not** add new sections without a matching update to this doc, or
    the reviewer and the docs will drift.
 
@@ -96,11 +100,11 @@ reviewer prompt references it by path. To change a rule:
    Good: *"flag a class/module whose purpose cannot be stated in one
    short sentence without 'and'"*.
 4. If the new rule changes how severity is assigned, update the
-   `Per-finding severity` table in `quality_rules.md`.
+   `Per-finding severity` table in `.sandman/reviews/quality-rules.md`.
 
 ## Removing a rule
 
-1. Remove the rule from `quality_rules.md`.
+1. Remove the rule from `.sandman/reviews/quality-rules.md`.
 2. Remove any local references in this doc.
 
 No version bump is required — the rules file is consumed by reference, not
@@ -119,8 +123,9 @@ imported as code.
 
 ## When the rules file is absent
 
-If `internal/prompt/quality_rules.md` is absent from the repository being
-reviewed, the prompt renders the verdict `Quality rules unavailable in this
+If `.sandman/reviews/quality-rules.md` is absent from the repository being
+reviewed (and the daemon therefore has nothing to copy into the worktree),
+the prompt renders the verdict `Quality rules unavailable in this
 repository; no built-in quality-rule evaluation was applied.` and skips
 the Quality check sub-sections. The reviewer may still apply the
 repository's own documented standards under the existing standards review.

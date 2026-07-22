@@ -135,8 +135,9 @@ public data carriers.
 
 ## When the rules file is absent
 
-If `internal/prompt/quality_rules.md` is absent from the repository being
-reviewed, render exactly:
+If `.sandman/reviews/quality-rules.md` is absent from the repository being
+reviewed (the review daemon materialises the file into the per-PR worktree
+before launching the agent), render exactly:
 
 > `Quality rules unavailable in this repository; no built-in quality-rule evaluation was applied.`
 
