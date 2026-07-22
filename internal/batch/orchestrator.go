@@ -3378,14 +3378,13 @@ func recoverBranchDeleteFromMainRepo(logWriter io.Writer, branch, worktreeBase s
 		return
 	}
 	// Strategy 3: main repo on branch. Detach HEAD and drop the stray ref.
-	symRefCmd := exec.Command("git", "symbolic-ref", "--quiet", "HEAD")
-	symRefOut, symRefErr := symRefCmd.CombinedOutput()
-	if symRefErr != nil {
-		fmt.Fprintf(logWriter, "warning: drop refs/heads/%s: main repo HEAD is not a symbolic ref — refusing to detach (foreign worktree holder race?): %v\n", branch, symRefErr)
+	headRef, headErr := sandbox.CurrentBranchRef(".")
+	if headErr != nil {
+		fmt.Fprintf(logWriter, "warning: drop refs/heads/%s: main repo HEAD is not a symbolic ref — refusing to detach (foreign worktree holder race?): %v\n", branch, headErr)
 		return
 	}
-	if strings.TrimSpace(string(symRefOut)) != "refs/heads/"+branch {
-		fmt.Fprintf(logWriter, "warning: drop refs/heads/%s: main repo HEAD is %q, not the target branch — refusing to detach (foreign worktree holder race?)\n", branch, strings.TrimSpace(string(symRefOut)))
+	if headRef != "refs/heads/"+branch {
+		fmt.Fprintf(logWriter, "warning: drop refs/heads/%s: main repo HEAD is %q, not the target branch — refusing to detach (foreign worktree holder race?)\n", branch, headRef)
 		return
 	}
 	if out, err := exec.Command("git", "checkout", "--detach").CombinedOutput(); err != nil {

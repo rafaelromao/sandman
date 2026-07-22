@@ -1114,7 +1114,7 @@ func TestIsBranchCheckedOutError_OnlyMatchesCheckedOutOrWorktreeMessages(t *test
 // override path uses this helper to recover from `git branch -D` failures
 // caused by the branch being checked out in a foreign worktree. The
 // helper must extract the worktree path from both modern and legacy
-// error message formats so it can be passed to releaseBranchInWorktree.
+// error message formats so it can be passed to ReleaseBranchInWorktree.
 func TestParseCheckedOutPath_ExtractsWorktreePath(t *testing.T) {
 	cases := []struct {
 		name string
@@ -1514,7 +1514,7 @@ func TestReleaseBranchInWorktree_NoOpOnMissingPath(t *testing.T) {
 	dir := t.TempDir()
 	missing := filepath.Join(dir, "does-not-exist")
 
-	if err := releaseBranchInWorktree(missing); err != nil {
+	if err := ReleaseBranchInWorktree(missing); err != nil {
 		t.Fatalf("expected nil for missing path, got: %v", err)
 	}
 
@@ -1524,7 +1524,7 @@ func TestReleaseBranchInWorktree_NoOpOnMissingPath(t *testing.T) {
 }
 
 // TestReleaseBranchInWorktree_DetachesBranchWithoutRemovingWorktree
-// pins the core behaviour: calling releaseBranchInWorktree detaches
+// pins the core behaviour: calling ReleaseBranchInWorktree detaches
 // the worktree's HEAD so `git branch -D` becomes legal from the main
 // repo, while leaving the worktree directory, `.git` gitlink, and
 // `.git/worktrees/<dir>` registration intact.
@@ -1547,8 +1547,8 @@ func TestReleaseBranchInWorktree_DetachesBranchWithoutRemovingWorktree(t *testin
 		t.Fatalf("precondition: expected worktree list to include %q, got:\n%s", wtPath, listBefore)
 	}
 
-	if err := releaseBranchInWorktree(wtPath); err != nil {
-		t.Fatalf("releaseBranchInWorktree failed: %v", err)
+	if err := ReleaseBranchInWorktree(wtPath); err != nil {
+		t.Fatalf("ReleaseBranchInWorktree failed: %v", err)
 	}
 
 	if _, err := os.Stat(wtPath); err != nil {
@@ -1649,6 +1649,82 @@ func TestWorktreeSandbox_OverrideDoesNotDeleteForeignLiveWorktree(t *testing.T) 
 // acceptance criterion #6: a foreign worktree that holds a DIFFERENT
 // branch from `s.branch` must be left completely untouched by the
 // override recovery path. No reattach, no prune, no removal.
+// TestWorktreeSandbox_OverrideForeignReleaseFailed_ParentHEADPreserved
+// pins the failed-release fallback added in response to PR #2377
+// review feedback. When the foreign-worktree release in Start() fails
+// (e.g. because the foreign's `.git` gitlink was corrupted out-of-band),
+// the subsequent `git branch -D` retry fails with "checked out at"
+// and the recovery loop falls through to `defaultReconcileStrandedBranch`.
+// The parent-HEAD guard inside that seam must then refuse to detach the
+// parent and refuse to drop the ref — even though the foreign still
+// holds the branch — so the operator's working-tree commit is preserved
+// and the foreign worktree's symbolic HEAD does not dangle.
+//
+// Regression test for the safety contract pinned in the PR #2377 review.
+func TestWorktreeSandbox_OverrideForeignReleaseFailed_ParentHEADPreserved(t *testing.T) {
+	repoDir := t.TempDir()
+	initGitRepo(t, repoDir)
+
+	const branch = "sandman/2377-failed-release"
+	runGit(t, repoDir, "branch", branch)
+
+	worktreeBase := filepath.Join(repoDir, ".sandman", "worktrees")
+	if err := os.MkdirAll(worktreeBase, 0755); err != nil {
+		t.Fatalf("mkdir worktreeBase: %v", err)
+	}
+
+	// Foreign worktree at a non-canonical path, holding the branch.
+	foreignPath := filepath.Join(worktreeBase, "review-2377-foreign")
+	runGit(t, repoDir, "worktree", "add", foreignPath, branch)
+
+	// Sabotage the foreign worktree's .git gitlink so the
+	// `git -C <foreignPath> checkout --detach` call inside
+	// ReleaseBranchInWorktree cannot reach the foreign worktree's
+	// gitdir. The foreign worktree registration under
+	// `.git/worktrees/<name>` is left intact, so `ForeignStrandedWorktree`
+	// still detects the holder — but the release fails when called.
+	gitlinkPath := filepath.Join(foreignPath, ".git")
+	if err := os.WriteFile(gitlinkPath, []byte("gitdir: /tmp/sandman-nonexistent-gitdir-2377\n"), 0644); err != nil {
+		t.Fatalf("sabotage foreign .git: %v", err)
+	}
+	t.Cleanup(func() {
+		// Restore the gitlink so worktree cleanup can find the gitdir.
+		_ = os.RemoveAll(repoDir)
+	})
+
+	// Sanity: ForeignStrandedWorktree still detects the foreign.
+	info, ok := ForeignStrandedWorktree(repoDir, worktreeBase, branch)
+	if !ok {
+		t.Fatalf("precondition: expected ForeignStrandedWorktree to detect the foreign at %q, got info=%+v", foreignPath, info)
+	}
+
+	parentCommitBefore := runGit(t, repoDir, "rev-parse", "HEAD")
+
+	// Sanity: the parent's symbolic HEAD must point to refs/heads/main,
+	// not refs/heads/<branch>. If it did point to <branch>, the
+	// recovery would correctly fire the parent-HEAD guard for a
+	// different reason (parent HEAD matches target) and the test
+	// would not exercise the "foreign holder race" path.
+	symRefCmd := exec.Command("git", "-C", repoDir, "symbolic-ref", "--quiet", "HEAD")
+	symRefOut, _ := symRefCmd.CombinedOutput()
+	if strings.TrimSpace(string(symRefOut)) != "refs/heads/main" {
+		t.Fatalf("precondition: parent repo HEAD should be refs/heads/main, got %q", strings.TrimSpace(string(symRefOut)))
+	}
+
+	sb := NewWorktreeSandbox(repoDir, worktreeBase, branch, "main")
+	_ = sb.Start(SandboxStart{Override: true, StrandedReconcile: true})
+
+	// Regardless of whether Start() ultimately succeeds or fails
+	// (the foreign still holds the branch, so `git branch -D` and
+	// `git worktree add` may both fail), the parent HEAD commit
+	// must NOT have been mutated.
+	parentCommitAfter := runGit(t, repoDir, "rev-parse", "HEAD")
+	if strings.TrimSpace(parentCommitAfter) != strings.TrimSpace(parentCommitBefore) {
+		t.Errorf("parent repo HEAD commit moved despite failed-release fallback: before=%q after=%q",
+			strings.TrimSpace(parentCommitBefore), strings.TrimSpace(parentCommitAfter))
+	}
+}
+
 func TestWorktreeSandbox_OverrideDoesNotPruneUnrelatedWorktrees(t *testing.T) {
 	repoDir := t.TempDir()
 	initGitRepo(t, repoDir)

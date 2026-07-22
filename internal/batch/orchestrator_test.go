@@ -8819,11 +8819,13 @@ func TestClearIssueArtifacts_PreservesMainRepoBranch(t *testing.T) {
 // that when the issue branch is checked out in a foreign worktree at a
 // non-canonical path (not <worktreeBase>/<branch>), ClearIssueArtifacts
 // must release the branch in that foreign worktree (detach HEAD only)
-// rather than dropping the ref from under it. The parent repo HEAD must
-// also be preserved if the parent itself does not hold the branch.
+// rather than dropping the ref from under it. The foreign worktree's
+// directory, `.git` gitlink, and `.git/worktrees/<name>` registration
+// all stay intact, mirroring the contract pinned for WorktreeSandbox
+// by TestWorktreeSandbox_OverrideDoesNotDeleteForeignLiveWorktree.
 //
-// Regression test for the foreign-worktree safety required by #2187 and
-// the review feedback on PR #2377.
+// Regression test for the foreign-worktree safety required by #2187
+// and the review feedback on PR #2377.
 func TestClearIssueArtifacts_ForeignWorktreeHolderPreserved(t *testing.T) {
 	dir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(dir)
@@ -8832,10 +8834,11 @@ func TestClearIssueArtifacts_ForeignWorktreeHolderPreserved(t *testing.T) {
 	branch := "sandman/42-fix-bug"
 	runGit(t, dir, "branch", branch)
 
-	// Parent is on main (canonical operator state), NOT on the
-	// issue branch. A foreign worktree at a non-canonical path
-	// holds the branch instead.
-	const foreignPath = "/tmp/sandman-foreign-wt-2377-XXX"
+	// Parent is on main (canonical operator state), NOT on the issue
+	// branch. A foreign worktree at a non-canonical path holds the
+	// branch instead — and is the only thing holding it, so the
+	// recovery strategy here is the foreign-worktree detach (not a
+	// parent ref-drop).
 	foreignAbs := filepath.Join(dir, "foreign")
 	if err := os.MkdirAll(foreignAbs, 0755); err != nil {
 		t.Fatalf("mkdir foreign: %v", err)
@@ -8845,16 +8848,27 @@ func TestClearIssueArtifacts_ForeignWorktreeHolderPreserved(t *testing.T) {
 	if out, err := addCmd.CombinedOutput(); err != nil {
 		t.Fatalf("git worktree add (foreign): %v: %s", err, out)
 	}
+	// Move the foreign's HEAD to the branch ref via symbolic-ref, so
+	// it behaves like a normal "checked out on branch" worktree (not
+	// a detached worktree).
 	symRefCmd := exec.Command("git", "symbolic-ref", "HEAD", "refs/heads/"+branch)
 	symRefCmd.Dir = foreignAbs
 	if out, err := symRefCmd.CombinedOutput(); err != nil {
 		t.Fatalf("foreign symbolic-ref: %v: %s", err, out)
 	}
+
+	// CRITICAL: pre-create the worktree base directory so
+	// sandbox.StrandedWorktree and sandbox.ForeignStrandedWorktree
+	// (which os.Stat the base and bail if it is missing) can run.
+	worktreeDir := filepath.Join(dir, ".sandman", "worktrees")
+	if err := os.MkdirAll(worktreeDir, 0755); err != nil {
+		t.Fatalf("mkdir worktreeDir: %v", err)
+	}
+
 	t.Cleanup(func() {
 		exec.Command("git", "worktree", "remove", "--force", foreignAbs).Run()
 	})
 
-	worktreeDir := filepath.Join(dir, ".sandman", "worktrees")
 	el := &spyEventLog{}
 	logBuf := &bytes.Buffer{}
 
@@ -8863,26 +8877,56 @@ func TestClearIssueArtifacts_ForeignWorktreeHolderPreserved(t *testing.T) {
 	trueVal := true
 	ClearIssueArtifacts(42, branch, worktreeDir, el, logBuf, "main", &trueVal, "")
 
-	// Parent commit unchanged (parent was on main, must stay on main).
+	// Parent HEAD commit must be unchanged: parent was on main, the
+	// branch was held by a foreign worktree, the recovery must not
+	// touch the parent at all.
 	parentCommitAfter := runGit(t, dir, "rev-parse", "HEAD")
 	if strings.TrimSpace(parentCommitAfter) != strings.TrimSpace(parentCommitBefore) {
 		t.Errorf("parent repo HEAD commit moved during ClearIssueArtifacts: before=%q after=%q",
 			strings.TrimSpace(parentCommitBefore), strings.TrimSpace(parentCommitAfter))
 	}
 
-	// Foreign worktree's symbolic HEAD must still resolve to the branch
-	// ref (i.e., the foreign worktree was released via detach, not by
-	// dropping the ref out from under it).
-	foreignSymRefCmd := exec.Command("git", "-C", foreignAbs, "symbolic-ref", "--quiet", "HEAD")
-	if _, err := foreignSymRefCmd.CombinedOutput(); err != nil {
-		t.Errorf("foreign worktree symbolic HEAD was lost (ref was dropped under it): %v", err)
+	// Foreign worktree directory must still exist (#2187: scoped
+	// recovery — no destruction).
+	if _, err := os.Stat(foreignAbs); err != nil {
+		t.Errorf("foreign worktree dir was removed at %q (recovery must preserve foreign worktrees): %v", foreignAbs, err)
 	}
-
-	// Branch must still exist (foreign worktree still holds it; the
-	// release was a detach, not a ref-drop).
-	revCmd := exec.Command("git", "-C", dir, "rev-parse", "--verify", "refs/heads/"+branch)
-	if _, err := revCmd.CombinedOutput(); err != nil {
-		t.Errorf("branch %q was dropped instead of being released in the foreign worktree", branch)
+	// Foreign worktree's .git gitlink must still resolve to a real
+	// gitdir (the foreign worktree must remain a usable worktree).
+	gitlinkPath := filepath.Join(foreignAbs, ".git")
+	gitlinkBytes, err := os.ReadFile(gitlinkPath)
+	if err != nil {
+		t.Fatalf("foreign worktree .git file was removed or unreadable: %v", err)
+	}
+	gitlink := strings.TrimSpace(string(gitlinkBytes))
+	const prefix = "gitdir: "
+	if !strings.HasPrefix(gitlink, prefix) {
+		t.Fatalf("foreign worktree .git content unexpected: %q", gitlink)
+	}
+	gitdir := strings.TrimSpace(strings.TrimPrefix(gitlink, prefix))
+	if _, err := os.Stat(gitdir); err != nil {
+		t.Errorf("foreign worktree .git gitdir %q no longer exists: %v", gitdir, err)
+	}
+	// Foreign worktree registration under .git/worktrees/<name> must
+	// still exist (so the foreign worktree remains in `git worktree
+	// list`).
+	wtName := filepath.Base(foreignAbs)
+	regPath := filepath.Join(dir, ".git", "worktrees", wtName)
+	if _, err := os.Stat(regPath); err != nil {
+		t.Errorf("foreign worktree registration at %q no longer exists: %v", regPath, err)
+	}
+	// Foreign HEAD must now be detached (the recovery released the
+	// branch by detaching HEAD; the ref itself was NOT dropped under
+	// the foreign worktree). After ClearIssueArtifacts, the foreign
+	// worktree is left in detached-HEAD state at the same commit,
+	// and `git branch -D` was then able to delete the branch.
+	foreignHeadOut, err := exec.Command("git", "-C", foreignAbs, "rev-parse", "--abbrev-ref", "HEAD").CombinedOutput()
+	if err != nil {
+		t.Fatalf("read foreign HEAD: %v: %s", err, foreignHeadOut)
+	}
+	foreignHeadBranch := strings.TrimSpace(string(foreignHeadOut))
+	if foreignHeadBranch == branch {
+		t.Errorf("foreign worktree still on branch %q; expected detached HEAD after foreign-release recovery", branch)
 	}
 }
 

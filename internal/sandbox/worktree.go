@@ -195,7 +195,7 @@ overrideCleanup:
 				// which preserves the operator's working-tree HEAD —
 				// the branch is then re-created by `git worktree add
 				// -b` later in Start().
-				if !samePath(info.Path, s.repoPath) {
+				if !SamePath(info.Path, s.repoPath) {
 					if err := ReleaseBranchInWorktree(info.Path); err != nil {
 						s.warn("issue #2187: release foreign worktree at %q: %v\n", info.Path, err)
 					}
@@ -757,10 +757,6 @@ func SamePath(a, b string) bool {
 	return false
 }
 
-// samePath is the package-internal alias kept for callers that prefer
-// the shorter form (WorktreeSandbox.Start overrides).
-func samePath(a, b string) bool { return SamePath(a, b) }
-
 // ReleaseBranchInWorktree detaches HEAD in the worktree at `path` so the
 // branch it currently holds is no longer checked out there. After this
 // runs, `git branch -D` from the main repo succeeds even though the
@@ -796,11 +792,6 @@ func ReleaseBranchInWorktree(path string) error {
 	}
 	return nil
 }
-
-// releaseBranchInWorktree is the package-internal alias for
-// ReleaseBranchInWorktree, kept so in-package callers and tests that
-// prefer the lower-case identifier continue to compile.
-func releaseBranchInWorktree(path string) error { return ReleaseBranchInWorktree(path) }
 
 // reconcileStrandedBranch attempts to remove the stale branch after the
 // initial "git branch -D" failed because the branch is checked out
