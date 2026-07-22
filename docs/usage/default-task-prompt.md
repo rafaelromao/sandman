@@ -190,5 +190,5 @@ The shared Sandman skill owns the detailed workflow. This page describes the boo
 - **Project Prompt Template**: `.sandman/prompt.md`, created from the Default Task Prompt during `sandman init` and materialized on run when missing.
 - **Sandman Skill**: the shared skill folder installed into `~/.agents/skills/sandman/` by `sandman init`.
 - **Prompt**: `.sandman/task.md`, the rendered instruction file handed to the agent.
-- **Continue replay**: `sandman run --continue` reuses the stored branch, base branch, agent, and review command from the prior run. It reads the task file (`.sandman/task.md`) from the worktree and passes its contents verbatim as the agent's resume prompt. When no task file exists, an empty task template is used with a warning on stderr.
+- **Continue replay**: `sandman run --continue` reuses the prior run's worktree identity: the existing branch, the stored base branch, the prior run id, the `.sandman/task.md` contents, and the issue mode. Tunables (agent, model, parallel, retries, sandbox, container tunables, review command) come from current CLI flags / config defaults, not from the stored payload. When no task file exists, an empty task template is used with a warning on stderr.
 

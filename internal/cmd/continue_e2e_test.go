@@ -14,7 +14,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/events"
 )
 
-func TestRun_ContinueFlag_ReplaysPromptOnlyRun_E2E(t *testing.T) {
+func TestRun_ContinueFlag_PromptOnlyUsesCurrentConfig_E2E(t *testing.T) {
 	dir := t.TempDir()
 	branch := "sandman/prompt-only-456"
 	if err := os.MkdirAll(filepath.Join(dir, branch, ".sandman"), 0755); err != nil {
@@ -28,14 +28,15 @@ func TestRun_ContinueFlag_ReplaysPromptOnlyRun_E2E(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
 	deps := newRunDeps(t, spy)
 	deps.ConfigStore = &fakeStore{config: &config.Config{
-		Agent:         "opencode",
+		Agent:         "opencode-current",
+		DefaultModel:  "openai/gpt-4.1",
 		WorktreeDir:   dir,
 		ReviewCommand: "/oc review",
 		AgentProviders: map[string]config.Agent{
-			"opencode": {Preset: "opencode", Command: "true"},
+			"opencode-current": {Preset: "opencode", Command: "true"},
 		},
 	}}
-	deps.EventLog = &fakeEventLog{events: []events.Event{{Type: "run.started", RunID: "run-0-abc", Issue: 0, Payload: map[string]any{"agent": "opencode", "branch": branch, "base_branch": "main", "prompt_source_type": "prompt"}}}}
+	deps.EventLog = &fakeEventLog{events: []events.Event{{Type: "run.started", RunID: "run-0-abc", Issue: 0, Payload: map[string]any{"agent": "opencode-stored", "model": "gpt-4.2", "review_command": "/stored review", "parallel": 9, "start_delay": 30, "start_delay_set": true, "retries": 7, "sandbox": "worktree", "container_capacity": 8, "container_capacity_set": true, "max_containers": 4, "max_containers_set": true, "run_idle_timeout": 999, "run_idle_timeout_set": true, "branch": branch, "base_branch": "main", "prompt_source_type": "prompt"}}}}
 
 	var buf bytes.Buffer
 	cmd := NewRunCmd(deps)
@@ -70,6 +71,36 @@ func TestRun_ContinueFlag_ReplaysPromptOnlyRun_E2E(t *testing.T) {
 	}
 	if strings.Contains(buf.String(), "warning: no task found") {
 		t.Fatalf("did not expect missing-task warning, got %q", buf.String())
+	}
+	if spy.req.Agent != "opencode-current" {
+		t.Fatalf("expected agent from current cfg, got %q", spy.req.Agent)
+	}
+	if spy.req.Model != "openai/gpt-4.1" {
+		t.Fatalf("expected model from cfg.DefaultModel, got %q", spy.req.Model)
+	}
+	if spy.req.Parallel != 0 {
+		t.Fatalf("expected parallel from current cfg (default 0), got %d", spy.req.Parallel)
+	}
+	if spy.req.StartDelay != 0 || spy.req.StartDelaySet {
+		t.Fatalf("expected start delay unset, got %s set=%v", spy.req.StartDelay, spy.req.StartDelaySet)
+	}
+	if spy.req.RunIdleTimeout != 0 || spy.req.RunIdleTimeoutSet {
+		t.Fatalf("expected run idle timeout unset, got %d set=%v", spy.req.RunIdleTimeout, spy.req.RunIdleTimeoutSet)
+	}
+	if spy.req.Retries != -1 {
+		t.Fatalf("expected retries sentinel (-1) from current cfg, got %d", spy.req.Retries)
+	}
+	if spy.req.Sandbox != "" {
+		t.Fatalf("expected sandbox from current cfg (default empty), got %q", spy.req.Sandbox)
+	}
+	if spy.req.ContainerCapacity != 0 || spy.req.ContainerCapacitySet {
+		t.Fatalf("expected container capacity unset, got %d set=%v", spy.req.ContainerCapacity, spy.req.ContainerCapacitySet)
+	}
+	if spy.req.MaxContainers != 0 || spy.req.MaxContainersSet {
+		t.Fatalf("expected max containers unset, got %d set=%v", spy.req.MaxContainers, spy.req.MaxContainersSet)
+	}
+	if spy.req.PromptConfig.ReviewCommand != "/oc review" {
+		t.Fatalf("expected review command from cfg, got %q", spy.req.PromptConfig.ReviewCommand)
 	}
 }
 

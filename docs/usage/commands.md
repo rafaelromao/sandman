@@ -58,7 +58,7 @@ Positional arguments (numbers and ranges) can be combined with `--label` and `--
 | `--max-containers` | config default (0) | Max containers; `0` = no cap (unbounded pool growth) |
 | `--retries` | `0` | Number of times to retry a failed run |
 | `--override` | `false` | Clear artifacts before running (deletes prior worktree, logs, and events; force-checkout worktree to expected branch on mismatch or detached HEAD) |
-| `--continue` | `false` | Continue the latest AgentRun for selected issues by reusing the stored task file and prior run settings |
+| `--continue` | `false` | Continue the latest AgentRun for selected issues by reusing the preserved worktree (branch, base branch, task file, prior run id); tunables come from current flags/config |
 | `--dangerously-skip-permissions` | `true` for container runs, `false` for worktree runs | Skip permission checks for agent runs |
 | `--include-dependencies` | `false` | Auto-expand batch with transitive blockers |
 | `--label` | — | Select issues by label |
@@ -67,7 +67,7 @@ Positional arguments (numbers and ranges) can be combined with `--label` and `--
 | `--template` | — | Path to prompt template file |
 | `--prompt-arg` | — | Custom template substitution (`KEY=VALUE`, repeatable) |
 | `--model` | `model` from config | Override the model passed to the agent for built-in presets |
-| `--agent` | `agent` from config (`opencode`) | Built-in agent preset for this run |
+| `--agent` | `agent` from config (`opencode`) | Built-in agent preset for this run; on `--continue` the prior run's stored agent is no longer replayed |
 | `--run-id` | — | Batch-level identifier for prompt-only runs; must start with a letter and contain only alphanumeric characters, hyphens, and underscores; cannot be combined with issue selection |
 | `--run-idle-timeout` | `0` | Treat an AgentRun as stuck if it produces no output for N seconds; `0` disables the timeout |
 | `--branch` | `""` | Branch name for prompt-only runs; overrides the default `sandman/<slug>-<timestamp>` shape (prompt-only mode only) |
@@ -120,7 +120,7 @@ Continue the last agent run for one or more issues. Reads the task file (`.sandm
 sandman run --continue <issue-number>...
 ```
 
-Reuses the existing branch and recorded agent and review command from the prior run, though `--agent` can override and `--model` falls back to `model` from config when omitted. It also replays the stored base branch from the prior run for prompt rendering and event metadata only, ignoring current base-branch config changes. When no task file exists, an empty task template is used as the resume prompt (with a warning on stderr).
+Reuses the prior run's worktree identity: the existing branch, the stored base branch (the worktree was cut from it), the prior run id, the `.sandman/task.md` contents, and the issue mode. Tunables (agent, model, parallel, retries, sandbox, container tunables, review command) come from current CLI flags / config defaults, not from the stored payload. CLI overrides on the `--continue` invocation still win over both config defaults and stored values. When no task file exists, an empty task template is used as the resume prompt (with a warning on stderr).
 
 | Flag | Default | Description |
 |------|---------|-------------|
