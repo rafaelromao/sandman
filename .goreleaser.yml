@@ -1,12 +1,9 @@
-version: 1
+version: 2
 
 archives:
   - format: tar.gz
     name_template: >-
       sandman_{{ .Version }}_{{ .Os }}_{{ .Arch }}
-    formats: [tar.gz]
-    checksum: true
-    checksum_template: "checksums.txt"
 
 builds:
   - id: linux-amd64
