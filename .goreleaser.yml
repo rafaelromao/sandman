@@ -7,22 +7,28 @@ archives:
 
 builds:
   - id: linux-amd64
-    goos: linux
-    goarch: amd64
+    goos:
+      - linux
+    goarch:
+      - amd64
     binary: sandman
     ldflags:
       - -X main.version={{ .Version }}
 
   - id: darwin-amd64
-    goos: darwin
-    goarch: amd64
+    goos:
+      - darwin
+    goarch:
+      - amd64
     binary: sandman
     ldflags:
       - -X main.version={{ .Version }}
 
   - id: darwin-arm64
-    goos: darwin
-    goarch: arm64
+    goos:
+      - darwin
+    goarch:
+      - arm64
     binary: sandman
     ldflags:
       - -X main.version={{ .Version }}
