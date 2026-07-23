@@ -1,35 +1,37 @@
 version: 2
 
+project_name: sandman
+
 archives:
   - format: tar.gz
     name_template: >-
       sandman_{{ .Version }}_{{ .Os }}_{{ .Arch }}
 
 builds:
-  - id: linux-amd64
+  - dir: ./cmd/sandman
+    id: linux-amd64
     goos:
       - linux
     goarch:
       - amd64
-    binary: sandman
     ldflags:
       - -X main.version={{ .Version }}
 
-  - id: darwin-amd64
+  - dir: ./cmd/sandman
+    id: darwin-amd64
     goos:
       - darwin
     goarch:
       - amd64
-    binary: sandman
     ldflags:
       - -X main.version={{ .Version }}
 
-  - id: darwin-arm64
+  - dir: ./cmd/sandman
+    id: darwin-arm64
     goos:
       - darwin
     goarch:
       - arm64
-    binary: sandman
     ldflags:
       - -X main.version={{ .Version }}
 
