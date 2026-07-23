@@ -12,13 +12,13 @@
       "type": "required_status_checks",
       "parameters": {
         "required_status_checks": [
-          { "context": "CI / build", "type": "required" },
-          { "context": "CI / semantic-pull-request", "type": "required" }
+          { "context": "CI / build" },
+          { "context": "CI / semantic-pull-request" }
         ],
         "strict_required_status_checks_policy": false
       }
     },
-    { "type": "block_force_push" },
-    { "type": "block_branch_deletion" }
+    { "type": "non_fast_forward" },
+    { "type": "deletion" }
   ]
 }
