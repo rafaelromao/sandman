@@ -38,5 +38,8 @@ builds:
 snapshot:
   name_template: "{{ .Version }}-SNAPSHOT-{{ .ShortCommit }}"
 
+release:
+  draft: false
+
 checksum:
   name_template: "checksums.txt"
