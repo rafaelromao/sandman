@@ -26,7 +26,7 @@ func TestJSONLLogger_LogWritesValidJSONLine(t *testing.T) {
 		Timestamp: time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC),
 		RunID:     "run-42",
 		Issue:     42,
-		Payload:   map[string]any{"branch": "sandman/42-fix-bug"},
+		Payload:   map[string]any{"branch": "42-fix-bug"},
 	}
 
 	if err := logger.Log(event); err != nil {
@@ -58,8 +58,8 @@ func TestJSONLLogger_LogWritesValidJSONLine(t *testing.T) {
 		t.Errorf("expected issue 42, got %d", got.Issue)
 	}
 	branch, _ := got.Payload["branch"].(string)
-	if branch != "sandman/42-fix-bug" {
-		t.Errorf("expected branch sandman/42-fix-bug, got %q", branch)
+	if branch != "42-fix-bug" {
+		t.Errorf("expected branch 42-fix-bug, got %q", branch)
 	}
 }
 
@@ -161,7 +161,7 @@ func TestJSONLLogger_ReadSkipsMalformedLine(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "events.jsonl")
 
-	good := Event{Type: "run.started", Timestamp: time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC), RunID: "run-good", Issue: 1, Payload: map[string]any{"branch": "sandman/1-fix"}}
+	good := Event{Type: "run.started", Timestamp: time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC), RunID: "run-good", Issue: 1, Payload: map[string]any{"branch": "1-fix"}}
 	goodLine, err := json.Marshal(good)
 	if err != nil {
 		t.Fatalf("marshal good: %v", err)
@@ -220,7 +220,7 @@ func TestJSONLLogger_ReadQuarantinesMalformedLines(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "events.jsonl")
 
-	good := Event{Type: "run.started", Timestamp: time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC), RunID: "run-good", Issue: 1, Payload: map[string]any{"branch": "sandman/1-fix"}}
+	good := Event{Type: "run.started", Timestamp: time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC), RunID: "run-good", Issue: 1, Payload: map[string]any{"branch": "1-fix"}}
 	goodLine, err := json.Marshal(good)
 	if err != nil {
 		t.Fatalf("marshal good: %v", err)
@@ -316,7 +316,7 @@ func TestJSONLLogger_RemoveQuarantinesMalformedLines(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "events.jsonl")
 
-	good := Event{Type: "run.started", Timestamp: time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC), RunID: "run-good", Issue: 1, Payload: map[string]any{"branch": "sandman/1-fix"}}
+	good := Event{Type: "run.started", Timestamp: time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC), RunID: "run-good", Issue: 1, Payload: map[string]any{"branch": "1-fix"}}
 	goodLine, err := json.Marshal(good)
 	if err != nil {
 		t.Fatalf("marshal good: %v", err)

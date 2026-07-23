@@ -49,8 +49,8 @@ func TestPortalRunsView_CompletedBatchCountLogDownload(t *testing.T) {
 	startedAt := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
 	finishedAt := startedAt.Add(5 * time.Minute)
 	writePortalLog(t, layout.EventsLogPath, []events.Event{
-		{Type: "run.started", Timestamp: startedAt, RunID: runID, Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix", "batch_id": batchID}},
-		{Type: "run.finished", Timestamp: finishedAt, RunID: runID, Issue: 42, Payload: map[string]any{"status": "success", "branch": "sandman/42-fix", "batch_id": batchID}},
+		{Type: "run.started", Timestamp: startedAt, RunID: runID, Issue: 42, Payload: map[string]any{"branch": "42-fix", "batch_id": batchID}},
+		{Type: "run.finished", Timestamp: finishedAt, RunID: runID, Issue: 42, Payload: map[string]any{"status": "success", "branch": "42-fix", "batch_id": batchID}},
 	})
 
 	batchDir := filepath.Join(layout.BatchesDir, batchID)
@@ -159,8 +159,8 @@ func TestPortalRunsView_ArchivedBatchCountLogDownload(t *testing.T) {
 	startedAt := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
 	finishedAt := startedAt.Add(5 * time.Minute)
 	writePortalLog(t, layout.EventsLogPath, []events.Event{
-		{Type: "run.started", Timestamp: startedAt, RunID: runID, Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix", "batch_id": batchID}},
-		{Type: "run.finished", Timestamp: finishedAt, RunID: runID, Issue: 42, Payload: map[string]any{"status": "success", "branch": "sandman/42-fix", "batch_id": batchID}},
+		{Type: "run.started", Timestamp: startedAt, RunID: runID, Issue: 42, Payload: map[string]any{"branch": "42-fix", "batch_id": batchID}},
+		{Type: "run.finished", Timestamp: finishedAt, RunID: runID, Issue: 42, Payload: map[string]any{"status": "success", "branch": "42-fix", "batch_id": batchID}},
 	})
 
 	archiveDir := filepath.Join(layout.ArchiveDir, batchID)
@@ -296,12 +296,12 @@ func TestPortalRunsView_CompletedRunLogResolvesFromSavedFile(t *testing.T) {
 	finishedAt := startedAt.Add(5 * time.Minute)
 	writePortalLog(t, layout.EventsLogPath, []events.Event{
 		{Type: "run.started", Timestamp: startedAt, RunID: rowRunID, Issue: 1597, Payload: map[string]any{
-			"branch":   "sandman/1597-fix",
+			"branch":   "1597-fix",
 			"batch_id": batchID,
 		}},
 		{Type: "run.finished", Timestamp: finishedAt, RunID: rowRunID, Issue: 1597, Payload: map[string]any{
 			"status":   "success",
-			"branch":   "sandman/1597-fix",
+			"branch":   "1597-fix",
 			"batch_id": batchID,
 		}},
 	})

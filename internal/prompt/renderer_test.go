@@ -167,20 +167,6 @@ func TestRenderer_ConfigMappingReviewCommandFieldFallsThroughToDefault(t *testin
 	}
 }
 
-func TestRenderer_ConfigMappingCandidateAndMaxCount(t *testing.T) {
-	cfg := RenderConfig{
-		CandidateIssues: "#1 Fix\n#2 Add",
-		MaxCount:        3,
-	}
-	mapping := configMapping(cfg)
-	if got := mapping["CANDIDATE_ISSUES"]; got != "#1 Fix\n#2 Add" {
-		t.Errorf("CANDIDATE_ISSUES mismatch, got %q", got)
-	}
-	if got := mapping["MAX_COUNT"]; got != "3" {
-		t.Errorf("MAX_COUNT mismatch, got %q", got)
-	}
-}
-
 func TestEngine_RenderTreatsBodyPlaceholdersAsInert(t *testing.T) {
 	engine := &Engine{}
 	cfg := RenderConfig{

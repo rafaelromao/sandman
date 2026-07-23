@@ -28,7 +28,7 @@ func TestRunSingle_EmitsRunRetryBetweenAttemptsOnFailure(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chdir(oldWD) })
 
-	branch := "sandman/42-fix-bug"
+	branch := "42-fix-bug"
 	rtSandbox := &retrySandbox{
 		workDir: filepath.Join(workDir, "worktree"),
 	}
@@ -209,7 +209,7 @@ func TestRunSingle_AlreadyResolvedTaskMarkerShortCircuitsToSuccess(t *testing.T)
 	}
 	t.Cleanup(func() { _ = os.Chdir(oldWD) })
 
-	branch := "sandman/42-fix-bug"
+	branch := "42-fix-bug"
 	rtSandbox := &retrySandbox{
 		workDir: filepath.Join(workDir, "worktree"),
 	}
@@ -282,7 +282,7 @@ func TestRunSingle_AlreadyResolvedOpenPREndsFailure(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chdir(oldWD) })
 
-	branch := "sandman/42-fix-bug"
+	branch := "42-fix-bug"
 	rtSandbox := &retrySandbox{
 		workDir: filepath.Join(workDir, "worktree"),
 	}
@@ -377,7 +377,7 @@ func TestRunSingle_AlreadyResolvedConflictingPREndsFailure(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chdir(oldWD) })
 
-	branch := "sandman/42-fix-bug"
+	branch := "42-fix-bug"
 	rtSandbox := &retrySandbox{
 		workDir: filepath.Join(workDir, "worktree"),
 	}
@@ -466,7 +466,7 @@ func TestRunSingle_AlreadyResolvedMergedPRStillSuccess(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chdir(oldWD) })
 
-	branch := "sandman/42-fix-bug"
+	branch := "42-fix-bug"
 	rtSandbox := &retrySandbox{
 		workDir: filepath.Join(workDir, "worktree"),
 	}
@@ -563,8 +563,8 @@ func TestRunSingle_EmitsRunRetryWithAbortedStatusAfterHeartbeatKill(t *testing.T
 	t.Cleanup(func() { _ = os.Chdir(oldWD) })
 	initGitRepo(t, workDir)
 
-	branch := "sandman/42-fix-bug"
-	worktreePath := filepath.Join(workDir, heartbeatTestWorktreeDir, "sandman", "42-fix-bug")
+	branch := "42-fix-bug"
+	worktreePath := filepath.Join(workDir, heartbeatTestWorktreeDir, "42-fix-bug")
 	proc := &fakeProcess{killed: make(chan struct{})}
 	sb := &fakeSandbox{workDir: worktreePath, process: proc}
 	factory := &fakeSandboxFactory{sandbox: sb}
@@ -685,7 +685,7 @@ func TestRunSingle_EmitsZeroRunRetryEventsOnSingleAttempt(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chdir(oldWD) })
 
-	branch := "sandman/42-fix-bug"
+	branch := "42-fix-bug"
 	rtSandbox := &retrySandbox{workDir: filepath.Join(workDir, "worktree")}
 	oldHeadFn := currentBranchHeadFn
 	currentBranchHeadFn = func(string) (string, error) { return "current-sha", nil }
@@ -921,7 +921,7 @@ func TestRunSingle_ClosedIssueNoPRReturnsSuccess(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chdir(oldWD) })
 
-	branch := "sandman/42-fix-bug"
+	branch := "42-fix-bug"
 	rtSandbox := &retrySandbox{
 		workDir: filepath.Join(workDir, "worktree"),
 	}
@@ -997,7 +997,7 @@ func TestRunSingle_RetryBannersUseRetriesBudgetAsDenominator(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chdir(oldWD) })
 
-	branch := "sandman/42-fix-bug"
+	branch := "42-fix-bug"
 	rtSandbox := &retrySandbox{
 		workDir: filepath.Join(workDir, "worktree"),
 	}
@@ -1112,7 +1112,7 @@ func TestRunSingle_InitialAttemptOnlyHasNoBanner(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chdir(oldWD) })
 
-	branch := "sandman/42-fix-bug"
+	branch := "42-fix-bug"
 	// Use a real fakeSandbox (not retrySandbox) so the agent
 	// writes the run log via execStdout; retrySandbox returns
 	// execErrors and does not write to the log file.

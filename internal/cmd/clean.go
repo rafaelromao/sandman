@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/rafaelromao/sandman/internal/batchindex"
@@ -576,7 +577,19 @@ func validateOwnedBranch(branch string) error {
 	if filepath.IsAbs(branch) || filepath.Clean(branch) != branch || strings.ContainsAny(branch, `\`) {
 		return fmt.Errorf("branch name is unsafe")
 	}
-	if !strings.HasPrefix(branch, "sandman/") || len(branch) == len("sandman/") {
+	// Accept the runtime's branch conventions:
+	//   - issue-driven default:   "<n>-<slug>"
+	//   - issue-driven feature:   "<feature>/<n>-<slug>"
+	//   - legacy issue-driven:   "sandman/<n>-<slug>"
+	//   - sidecars:                "sandman/review-<n>-<commentID>", "sandman/built-with-sandman"
+	//   - prompt-only:             "sandman/<slug>-<timestamp>"
+	// The "sandman/" prefix is the legacy namespace marker; the new
+	// convention uses the base branch as the prefix-owner instead.
+	// The regex accepts both shapes so clean can remove branches the
+	// runtime (or its legacy form) ever created.
+	ownedByIssuePattern := issueBranchNamePattern.MatchString(branch)
+	ownedByLegacyPrefix := strings.HasPrefix(branch, "sandman/") && len(branch) > len("sandman/")
+	if !ownedByIssuePattern && !ownedByLegacyPrefix {
 		return fmt.Errorf("branch is not Sandman-owned")
 	}
 	if strings.Contains(branch, "//") || strings.Contains(branch, "..") || strings.ContainsAny(branch, "~^:?*[\x00") || strings.HasSuffix(branch, ".") || strings.HasSuffix(branch, "/") {
@@ -584,6 +597,12 @@ func validateOwnedBranch(branch string) error {
 	}
 	return nil
 }
+
+// issueBranchNamePattern matches the runtime's issue-driven branch shapes:
+//   - default-base: "<n>-<slug>"
+//   - feature-base: "<feature>/<n>-<slug>" (the feature prefix can be any
+//     non-empty path that does not contain a slash or unsafe character).
+var issueBranchNamePattern = regexp.MustCompile(`^[A-Za-z0-9._/-]+/\d+-[a-z0-9-]+$|^\d+-[a-z0-9-]+$`)
 
 func existingResolvedPath(path string) (string, error) {
 	for current := path; ; current = filepath.Dir(current) {

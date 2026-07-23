@@ -60,7 +60,7 @@ func TestDiscoverPortalInstances_IndexFirstDiscovery(t *testing.T) {
 			RunID:        filepath.Base(p),
 			BatchID:      filepath.Base(filepath.Dir(filepath.Dir(p))),
 			Issue:        42,
-			Branch:       "sandman/42-fix",
+			Branch:       "42-fix",
 			BaseBranch:   "main",
 			WorktreePath: filepath.Join(repoRoot, ".sandman", "worktrees", "sandman-42-fix"),
 			Kind:         batchindex.KindIssue,

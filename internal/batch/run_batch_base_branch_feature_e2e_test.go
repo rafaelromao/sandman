@@ -134,7 +134,7 @@ sandbox: worktree
 			42: {Number: 42, Title: "Cut from feature branch", Body: "Body."},
 		},
 		prs: map[string]*github.PR{
-			"sandman/42-cut-from-feature-branch": mergedPR("sandman/42-cut-from-feature-branch", ""),
+			"42-cut-from-feature-branch": mergedPR("42-cut-from-feature-branch", ""),
 		},
 	}
 	store := &config.FileStore{Path: configPath}
@@ -153,7 +153,7 @@ sandbox: worktree
 		t.Errorf("expected success, got %s", result.Runs[0].Status)
 	}
 
-	wtPath := filepath.Join(dir, ".sandman", "worktrees", "sandman", "42-cut-from-feature-branch")
+	wtPath := filepath.Join(dir, ".sandman", "worktrees", "42-cut-from-feature-branch")
 	wtHeadCmd := exec.Command("git", "-C", wtPath, "rev-parse", "HEAD")
 	wtHeadOut, err := wtHeadCmd.CombinedOutput()
 	if err != nil {

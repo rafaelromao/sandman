@@ -112,8 +112,61 @@ Skip a tier with a one-line note (e.g. `skipping tier 4: no opencode auth at $HO
 
 - Preserve event-sourced reasoning. Do not add mutable status fields as shortcuts if status should be derived from events.
 - Preserve atomic filesystem semantics. Prefer temp-file + rename over direct in-place writes.
-- Preserve DI seams. Prefer injecting dependencies over hard-coding globals or constructing deep dependencies inline.
+- Preserve DI seams. Prefer injecting dependencies over hard-coding globals or constructing deep concrete dependencies inline.
 - Keep IPC changes compatible with Unix domain socket assumptions already used in the repo.
+
+## Branching and versioning rules
+
+These rules apply to every change-request an agent opens against this repository. They mirror what the GitHub Ruleset on `main` and the CI status checks enforce, and what the release-please automation reads back when computing the next SemVer. Skipping them now means a CI failure later — read them before opening a change request.
+
+- **Trunk-based on `main`.** No `develop` branch exists. Every change lands via change request against `main`. Direct pushes to `main` are blocked by the GitHub Ruleset.
+- **Change-request titles follow Conventional Commits.** The full regex enforced by the `CI / semantic-pull-request` status check is:
+  ```
+  ^(feat|fix|perf|chore|docs|refactor|test|build|ci|revert|feat!|fix!|perf!)(\([a-z0-9-]+\))?!?: .+
+  ```
+  Allowed types: `feat`, `fix`, `perf`, `docs`, `refactor`, `test`, `build`, `ci`, `chore`, `revert`. Use a trailing `!` (for example `feat!:`) only when the change is breaking. Keep the title to one short imperative sentence with no trailing period.
+- **SemVer is derived from the merged change-request title.** `feat:` → minor bump, `fix:` / `perf:` → patch, `feat!:` / `fix!:` → major. Everything else is changelog-only. The release-please automation aggregates the merged change-request type stack and opens a Release change request that applies the next SemVer tag.
+- **Required status checks on `main`:** `CI / build` (matrix `ubuntu-latest` + `macos-latest`, `pull_request` and `push` triggers from `.github/workflows/go.yml`) and `CI / semantic-pull-request`. Both must pass before the GitHub merge button enables.
+
+### When opening a change request
+
+1. Branch from `main`.
+2. Pick the most accurate Conventional Commits type. `Update README` fails the gate; `docs: explain the branching and versioning rules in AGENTS.md` passes.
+3. Keep the title short — one sentence, no trailing period, no issue number in the title.
+4. Run `make check` locally before pushing; `CI / build` runs the same suite.
+5. Link issues in the body (`Closes #<n>`, `Fixes #<n>`, or `Resolves #<n>`), not in the title.
+
+### When the change touches CI, versioning, or repository-level agent docs
+
+- **CI gate change** → update `.github/workflows/go.yml` and `.github/rulesets/main.json`.
+- **Versioning or SemVer rule change** → update this section and `CONTRIBUTING.md`.
+- **Repository-level agent-docs change** → update `AGENTS.md` and the relevant `docs/development/` file.
+
+### Feature branches
+
+When several related issues need to ship together as one initiative, group them under a feature branch cut from `main`. The feature branch is the merge target for each issue's change request, and is itself change-requested back to `main` once the last issue lands.
+
+- **Feature branch name** — `feat/<feature-name>`. Lowercase, hyphen-separated. Examples: `feat/release-pipeline-2026q3`, `feat/badge-mark-pagination`.
+- **Issue branch base** — issue branches named `<issue-no>-<slug>` (the runtime's worktree branch name) are cut from the feature branch, not from `main`. The Sandman Go runtime resolves the base via `git.base_branch`; override the default `main` with `sandman run --base-branch <feature>` (or `.sandman/config.yaml:git.base_branch`) when running an issue that belongs to a feature-branch initiative. The branch name does not encode the feature branch (git's ref-namespace constraints prevent it); the feature-branch relationship is the source branch on the worktree cut, not the branch name.
+- **Change-request target** — issue change requests target the feature branch. The feature branch's own change request targets `main`.
+- **Branch lifecycle** — once a feature branch merges to `main`, delete it. Issue branches are deleted on their own merge.
+- **Conventional Commits title** — every change request, issue or feature, carries a Conventional Commits header. The `feat:` prefix on the feature branch's change request indicates a SemVer minor bump; the issue change requests can use any allowed type.
+
+Example initiative:
+
+```
+main
+└── feat/release-pipeline-2026q3
+    ├── feat(skill): 955-conventional-pull-request-gate
+    ├── fix(workflow): 956-rename-go-to-ci
+    ├── docs(contributor): 957-conventional-commits-in-templates
+    ├── refactor(prompt): drop-rolled-back-auto-fields
+    ├── test(prflow): 955-conventional-titles-in-e2e-fixtures
+    ├── build(release): 956-goreleaser-multi-arch-config
+    └── ci(ruleset): 955-protect-main-with-required-status-checks
+```
+
+The seven change requests cover seven allowed types. Issue change requests PR back to `feat/release-pipeline-2026q3`. Once all seven merge, the feature branch's own change request (titled e.g. `feat: ship the release pipeline initiative`) lands on `main`, and `feat/release-pipeline-2026q3` is deleted. The SemVer bump on `main` is the aggregate of the seven issue change requests plus the feature-branch change request.
 
 ## Skill content constraints
 

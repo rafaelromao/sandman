@@ -65,7 +65,7 @@ type Request struct {
 	DangerouslySkipPermissions *bool
 	// StrandedReconcile enables auto-recovery from a stranded worktree
 	// when a batch starts on a main repo that is checked out on a
-	// `sandman/N-…` branch (see ADR-0027 and the *Stranded worktree*
+	// `<n>-<slug>` branch (see ADR-0023 and the *Stranded worktree*
 	// glossary entry in CONTEXT.md). Threaded from the
 	// `--reconcile-stranded` / `--no-reconcile-stranded` flags; nil
 	// preserves today's belt-and-suspenders behaviour, false is the

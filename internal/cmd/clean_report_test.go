@@ -62,7 +62,7 @@ func TestCleanReport_ArchivedRealRun_PrintsPerLineRemoved(t *testing.T) {
 	}
 
 	batchDir := filepath.Join(dir, ".sandman", "batches", "batch-archived-real")
-	worktreeDir := filepath.Join(dir, ".sandman", "worktrees", "sandman", "13-archived-real")
+	worktreeDir := filepath.Join(dir, ".sandman", "worktrees", "13-archived-real")
 	if err := os.MkdirAll(worktreeDir, 0755); err != nil {
 		t.Fatalf("create worktree: %v", err)
 	}
@@ -70,7 +70,7 @@ func TestCleanReport_ArchivedRealRun_PrintsPerLineRemoved(t *testing.T) {
 		RunID:        "batch-archived-real",
 		BatchID:      "batch-archived-real",
 		Issue:        13,
-		Branch:       "sandman/13-archived-real",
+		Branch:       "13-archived-real",
 		WorktreePath: worktreeDir,
 		Kind:         batchindex.KindIssue,
 		Status:       batchindex.RunManifestStatusActive,
@@ -122,7 +122,7 @@ func TestClean_Archived_PrintsRemovedReport(t *testing.T) {
 		RunID:        "batch-ac-report",
 		BatchID:      "batch-ac-report",
 		Issue:        2061,
-		Branch:       "sandman/2061-ac",
+		Branch:       "2061-ac",
 		WorktreePath: worktreeDir,
 		Kind:         batchindex.KindIssue,
 		Status:       batchindex.RunManifestStatusActive,

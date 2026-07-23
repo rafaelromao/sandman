@@ -147,10 +147,10 @@ func TestRunBatch_StartGateUsesEffectiveParallelNotRawParallel(t *testing.T) {
 			4: {Number: 4, Title: "Four"},
 		},
 		prs: map[string]*github.PR{
-			"sandman/1-one":   {Number: 1, State: "closed", Merged: true, HeadRefName: "sandman/1-one"},
-			"sandman/2-two":   {Number: 2, State: "closed", Merged: true, HeadRefName: "sandman/2-two"},
-			"sandman/3-three": {Number: 3, State: "closed", Merged: true, HeadRefName: "sandman/3-three"},
-			"sandman/4-four":  {Number: 4, State: "closed", Merged: true, HeadRefName: "sandman/4-four"},
+			"1-one":   {Number: 1, State: "closed", Merged: true, HeadRefName: "1-one"},
+			"2-two":   {Number: 2, State: "closed", Merged: true, HeadRefName: "2-two"},
+			"3-three": {Number: 3, State: "closed", Merged: true, HeadRefName: "3-three"},
+			"4-four":  {Number: 4, State: "closed", Merged: true, HeadRefName: "4-four"},
 		},
 	}
 
@@ -222,7 +222,7 @@ func TestRunBatch_ParallelEightCapacityFourAutoMode_PeakAndContainerCount(t *tes
 	delays := make([]time.Duration, 8)
 	for i := 1; i <= 8; i++ {
 		issues[i] = &github.Issue{Number: i, Title: fmt.Sprintf("Issue %d", i)}
-		branch := fmt.Sprintf("sandman/%d-issue-%d", i, i)
+		branch := fmt.Sprintf("%d-issue-%d", i, i)
 		prs[branch] = &github.PR{Number: i, State: "closed", Merged: true, HeadRefName: branch}
 		results[i-1] = AgentRunResult{IssueNumber: i, Status: "success"}
 		delays[i-1] = 100 * time.Millisecond

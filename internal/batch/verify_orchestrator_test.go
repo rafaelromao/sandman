@@ -19,7 +19,7 @@ import (
 func TestRunSingle_AlreadyResolved_DecisionVerifiedAutoClosesAndClosesIssue(t *testing.T) {
 	workDir := t.TempDir()
 	t.Chdir(workDir)
-	branch := "sandman/42-fix-bug"
+	branch := "42-fix-bug"
 	wtDir := filepath.Join(workDir, "worktree")
 	rtSandbox := &retrySandbox{workDir: wtDir}
 
@@ -113,7 +113,7 @@ func TestRunSingle_AlreadyResolved_DecisionVerifiedAutoClosesAndClosesIssue(t *t
 func TestRunSingle_AlreadyResolved_AllAbstainFallsBackToBackstop(t *testing.T) {
 	workDir := t.TempDir()
 	t.Chdir(workDir)
-	branch := "sandman/42-fix-bug"
+	branch := "42-fix-bug"
 	wtDir := filepath.Join(workDir, "worktree")
 	rtSandbox := &retrySandbox{workDir: wtDir}
 
@@ -197,7 +197,7 @@ func TestRunSingle_AlreadyResolved_AllAbstainFallsBackToBackstop(t *testing.T) {
 func TestRunSingle_AlreadyResolved_AllAbstainNoOpenPRSucceeds(t *testing.T) {
 	workDir := t.TempDir()
 	t.Chdir(workDir)
-	branch := "sandman/42-fix-bug"
+	branch := "42-fix-bug"
 	wtDir := filepath.Join(workDir, "worktree")
 	rtSandbox := &retrySandbox{workDir: wtDir}
 
@@ -263,7 +263,7 @@ func TestRunSingle_AlreadyResolved_AllAbstainNoOpenPRSucceeds(t *testing.T) {
 func TestRunSingle_AlreadyResolved_DecisionFailedFailsWithoutBackstop(t *testing.T) {
 	workDir := t.TempDir()
 	t.Chdir(workDir)
-	branch := "sandman/42-fix-bug"
+	branch := "42-fix-bug"
 	wtDir := filepath.Join(workDir, "worktree")
 	rtSandbox := &retrySandbox{workDir: wtDir}
 
@@ -345,7 +345,7 @@ func TestRunSingle_AlreadyResolved_DecisionFailedFailsWithoutBackstop(t *testing
 func TestRunSingle_VerifyPathReceivesPRSnapshot(t *testing.T) {
 	workDir := t.TempDir()
 	t.Chdir(workDir)
-	branch := "sandman/42-fix-bug"
+	branch := "42-fix-bug"
 	wtDir := filepath.Join(workDir, "worktree")
 	rtSandbox := &retrySandbox{workDir: wtDir}
 
@@ -431,7 +431,7 @@ func TestRunSingle_VerifyPathReceivesPRSnapshot(t *testing.T) {
 func TestRunSingle_AlreadyResolved_PreFilterRejectFallsBackToBackstop(t *testing.T) {
 	workDir := t.TempDir()
 	t.Chdir(workDir)
-	branch := "sandman/42-fix-bug"
+	branch := "42-fix-bug"
 	wtDir := filepath.Join(workDir, "worktree")
 	rtSandbox := &retrySandbox{workDir: wtDir}
 
@@ -522,7 +522,7 @@ func TestRunSingle_AlreadyResolved_PreFilterRejectFallsBackToBackstop(t *testing
 func TestRunSingle_NonAlreadyResolvedPathUnchanged(t *testing.T) {
 	workDir := t.TempDir()
 	t.Chdir(workDir)
-	branch := "sandman/42-fix-bug"
+	branch := "42-fix-bug"
 	wtDir := filepath.Join(workDir, "worktree")
 	rtSandbox := &retrySandbox{workDir: wtDir}
 

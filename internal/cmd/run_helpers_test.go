@@ -389,7 +389,7 @@ func podmanGitIdentityDeps(t *testing.T, dir, remoteDir, dotGitConfig, xdgGitCon
 		issues: map[int]*github.Issue{
 			42: {Number: 42, Title: "Fix bug", Body: "Users cannot log in."},
 		},
-		prs: map[string]*github.PR{"sandman/42-fix-bug": {Number: 42, State: "closed", Merged: true, HeadRefName: "sandman/42-fix-bug"}},
+		prs: map[string]*github.PR{"42-fix-bug": {Number: 42, State: "closed", Merged: true, HeadRefName: "42-fix-bug"}},
 	}
 
 	return newRunIntegrationDepsWithSandboxAndGit(config.Agent{Name: "test-agent", Command: strings.TrimSpace(agentCmd)}, "podman", config.GitConfig{BaseBranch: "main"}, gh)

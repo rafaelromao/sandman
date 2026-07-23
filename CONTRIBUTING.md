@@ -30,9 +30,39 @@ For suggestions related to agent behavior, prompts, or domain vocabulary, use th
 ### Pull Requests
 
 - Fill in the [required template](.github/PULL_REQUEST_TEMPLATE.md).
-- Ensure the PR description clearly describes the problem and solution.
-- Include the relevant issue number if applicable.
-- Ensure all CI checks pass.
+- Change-request titles must follow [Conventional Commits](#conventional-commits) — this is enforced by the `CI / semantic-pull-request` status check. The full regex and allowed-types list are documented in [`AGENTS.md`](AGENTS.md#branching-and-versioning-rules).
+- Change requests branch from `main`. Direct pushes to `main` are blocked by the repository's GitHub Ruleset.
+- Ensure the change-request description clearly describes the problem and solution.
+- Reference the issue this change request addresses in the body (`Closes #<n>`, `Fixes #<n>`, or `Resolves #<n>`), not in the title.
+- Ensure all CI checks pass. The merge button only enables after both `CI / build` and `CI / semantic-pull-request` are green.
+
+### Feature branches
+
+When several related issues ship together as one initiative, group them under a feature branch cut from `main`. Issue branches are cut from the feature branch and change-requested back to it; the feature branch itself change-requests back to `main` once the last issue lands.
+
+- **Feature branch name** — `feat/<feature-name>`. Lowercase, hyphen-separated. Examples: `feat/release-pipeline-2026q3`, `feat/badge-mark-pagination`.
+- **Issue branch base** — issue branches are cut from the feature branch. The Sandman Go runtime reads `git.base_branch` from `.sandman/config.yaml` (default `main`) and accepts `sandman run --base-branch <feature>` to override; when an issue belongs to a feature-branch initiative, override the base.
+- **Change-request target** — issue change requests target the feature branch. The feature branch's own change request targets `main`.
+- **Branch lifecycle** — once a feature branch merges to `main`, delete it. Issue branches are deleted on their own merge.
+- **Conventional Commits title** — every change request, issue or feature, carries a Conventional Commits header (see [Conventional Commits](#conventional-commits) below and [`AGENTS.md`](AGENTS.md#branching-and-versioning-rules)).
+
+Example initiative:
+
+```
+main
+└── feat/release-pipeline-2026q3
+    ├── feat(skill): 955-conventional-pull-request-gate
+    ├── fix(workflow): 956-rename-go-to-ci
+    ├── docs(contributor): 957-conventional-commits-in-templates
+    ├── refactor(prompt): drop-rolled-back-auto-fields
+    ├── test(prflow): 955-conventional-titles-in-e2e-fixtures
+    ├── build(release): 956-goreleaser-multi-arch-config
+    └── ci(ruleset): 955-protect-main-with-required-status-checks
+```
+
+The seven change requests cover seven allowed types. Issue change requests PR back to `feat/release-pipeline-2026q3`. Once all seven merge, the feature branch's own change request (titled e.g. `feat: ship the release pipeline initiative`) lands on `main`, and `feat/release-pipeline-2026q3` is deleted. The SemVer bump on `main` is the aggregate of the seven issue change requests plus the feature-branch change request.
+
+The full rule lives in [`AGENTS.md`](AGENTS.md#feature-branches).
 
 ## Code Contributions
 
@@ -82,11 +112,13 @@ Before submitting a PR, always run `make check` locally.
 - Write tests for new functionality.
 - Keep the domain vocabulary in `CONTEXT.md` in mind when naming things.
 
-### Commit Messages
+### Conventional Commits
 
-- Use the present tense ("Add feature" not "Added feature").
-- Use the imperative mood ("Move cursor to..." not "Moves cursor to...").
-- Reference issues and pull requests where appropriate.
+Change-request and commit titles follow the [Conventional Commits](https://www.conventionalcommits.org/) specification.
+
+- **Allowed types:** `feat`, `fix`, `perf`, `docs`, `refactor`, `test`, `build`, `ci`, `chore`, `revert`. Append `!` (for example `feat!:`) only when the change is breaking.
+- **Imperative mood:** write titles as commands ("Add feature" not "Added feature" or "Adds feature").
+- The full regex, SemVer rules, and the allowed type list are documented in [`AGENTS.md`](AGENTS.md#branching-and-versioning-rules). This section keeps `AGENTS.md` as the single source of truth for the regex.
 
 ## Non-Code Contributions
 

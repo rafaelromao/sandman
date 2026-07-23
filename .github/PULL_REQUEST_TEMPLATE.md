@@ -1,3 +1,7 @@
+**Change-request title must follow Conventional Commits** (`feat:`, `fix:`, `docs:`, …) — see [`AGENTS.md`](../AGENTS.md#branching-and-versioning-rules). The `CI / semantic-pull-request` status check blocks merge when the title is non-conventional.
+
+If this change request is part of a multi-issue initiative that ships under a `feat/<feature-name>` branch, target the feature branch instead of `main`; see [`AGENTS.md`](../AGENTS.md#feature-branches).
+
 ## What surface is this PR modifying?
 
 - [ ] Go code

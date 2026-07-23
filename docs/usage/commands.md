@@ -71,7 +71,7 @@ Positional arguments (numbers and ranges) can be combined with `--label` and `--
 | `--run-id` | — | Batch-level identifier for prompt-only runs; must start with a letter and contain only alphanumeric characters, hyphens, and underscores; cannot be combined with issue selection |
 | `--run-idle-timeout` | `0` | Treat an AgentRun as stuck if it produces no output for N seconds; `0` disables the timeout |
 | `--branch` | `""` | Branch name for prompt-only runs; overrides the default `sandman/<slug>-<timestamp>` shape (prompt-only mode only) |
-| `--reconcile-stranded` | `true` | Auto-recover stranded worktrees when the main repo is checked out on a `sandman/N-…` branch |
+| `--reconcile-stranded` | `true` | Auto-recover stranded worktrees when the main repo is checked out on a `<n>-<slug>` branch |
 | `--no-reconcile-stranded` | `false` | Opt out of stranded-worktree auto-recovery (negative form of `--reconcile-stranded`) |
 
 ### Flag interactions
@@ -90,7 +90,7 @@ Positional arguments (numbers and ranges) can be combined with `--label` and `--
 - `--agent` selects which built-in preset to use for this run; if omitted, Sandman uses `agent` from config
 - `--continue` cannot be combined with `--override`
 - When `--max-containers` and `--container-capacity` together constrain concurrency below `--parallel`, the tighter limit wins
-- `--reconcile-stranded` auto-recovers stranded worktrees when the main repo is checked out on a `sandman/N-…` branch; `--no-reconcile-stranded` opts out of this auto-recovery
+- `--reconcile-stranded` auto-recovers stranded worktrees when the main repo is checked out on a `<n>-<slug>` branch; `--no-reconcile-stranded` opts out of this auto-recovery
 
 ## `sandman status`
 
@@ -275,10 +275,10 @@ A *stranded worktree* is a sandman-managed worktree whose HEAD points to a diffe
 
 `sandman stranded` works from the main repo root or from inside any sandman worktree. It reads the configured `worktree_dir` from `.sandman/config.yaml` and resolves the path to match `git worktree list` output correctly, including absolute, tilde-prefixed, and relative `worktree_dir` values.
 
-The command parses `git worktree list --porcelain`, reads the configured `worktree_dir` from `.sandman/config.yaml` (defaults to `.sandman/worktrees`), matches worktrees under that directory whose directory name follows the `sandman/<number>-<slug>` pattern, and compares the actual branch against the expected branch derived from the directory name. For each mismatch it prints a one-line remediation command:
+The command parses `git worktree list --porcelain`, reads the configured `worktree_dir` from `.sandman/config.yaml` (defaults to `.sandman/worktrees`), matches worktrees under that directory whose directory name follows the `<n>-<slug>` pattern (the runtime's issue-driven default; see ADR-0040), and compares the actual branch against the expected branch derived from the directory name. For each mismatch it prints a one-line remediation command:
 
 ```
-Worktree /path/.sandman/worktrees/sandman/724-foo is on refs/heads/main, expected refs/heads/sandman/724-foo. Run: git -C /path/.sandman/worktrees/sandman/724-foo checkout -f sandman/724-foo
+Worktree /path/.sandman/worktrees/724-foo is on refs/heads/main, expected refs/heads/724-foo. Run: git -C /path/.sandman/worktrees/724-foo checkout -f 724-foo
 ```
 
 `sandman stranded` is non-destructive: it never checks out branches or removes worktrees automatically. It exits 0 on success, including when no stranded worktrees are found.
@@ -289,7 +289,7 @@ For machine-readable output, pass `--json` to print the structured result list i
 sandman stranded --json
 ```
 
-`--reconcile-stranded` (enabled by default) auto-recovers stranded worktrees when the main repo is checked out on a `sandman/N-…` branch; `--no-reconcile-stranded` opts out.
+`--reconcile-stranded` (enabled by default) auto-recovers stranded worktrees when the main repo is checked out on a `<n>-<slug>` branch; `--no-reconcile-stranded` opts out.
 
 For details on false positives with prompt-only branches and the `git checkout -f` warning, see [Troubleshooting > Stranded worktrees](#troubleshooting-stranded-worktrees).
 

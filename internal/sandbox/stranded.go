@@ -15,7 +15,7 @@ import (
 type StrandedWorktreeInfo struct {
 	Path           string // absolute path to the worktree directory
 	ActualBranch   string // the ref the worktree's HEAD actually points to (or "" if detached)
-	ExpectedBranch string // the ref the directory name implies (e.g. "refs/heads/sandman/907-...")
+	ExpectedBranch string // the ref the directory name implies (e.g. "refs/heads/907-..." for a default-base worktree, or "refs/heads/<feature>/907-..." for a feature-branch-prefixed worktree)
 }
 
 // resolveBase resolves a worktreeBase path to an absolute, symlink-free form
@@ -230,12 +230,14 @@ func ContinuationWorktreeStatus(repoPath, worktreeBase, branch string) (Continua
 }
 
 // issueDrivenDir matches directory names that come from issue-driven
-// branches (e.g. "sandman/907-foo" stored as the worktree directory name).
+// branches (e.g. "907-foo" or "feat/foo/907-bar" stored as the
+// worktree directory name). The basename of a feature-branch-prefixed
+// worktree directory is still "907-<slug>".
 var issueDrivenDir = regexp.MustCompile(`^[0-9]+-`)
 
 // ListStrandedWorktrees scans all worktrees under worktreeBase whose directory
 // name matches the issue-driven branch pattern (N-slug) and returns those whose
-// HEAD ref does not match the expected ref (refs/heads/sandman/<dirname>).
+// HEAD ref does not match the expected ref (refs/heads/<dirname>).
 // Returns nil if worktreeBase is missing or git fails; callers that need error
 // visibility on a `git worktree list` failure should call listWorktrees
 // directly.
@@ -267,7 +269,7 @@ func ListStrandedWorktrees(repoPath, worktreeBase string) []StrandedWorktreeInfo
 		if !issueDrivenDir.MatchString(dir) {
 			continue
 		}
-		expectedRef := "refs/heads/sandman/" + dir
+		expectedRef := "refs/heads/" + dir
 		if e.detached || e.branch != expectedRef {
 			stranded = append(stranded, StrandedWorktreeInfo{
 				Path:           e.path,

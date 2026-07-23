@@ -25,6 +25,10 @@ The shared Sandman skill owns the detailed workflow. This page describes the boo
     
     The worktree MUST be checked out on `{{BRANCH}}` when the run finishes. Do not switch to `{{BASE_BRANCH}}` or any other branch before exiting.
     
+    ## Commit and PR Title
+    
+    The change-request title (and the commit subject) must follow the Conventional Commits format. Pick the most accurate type for the change from `feat`, `fix`, `perf`, `docs`, `refactor`, `test`, `build`, `ci`, `chore`, `revert`. Append `!` to the type for breaking changes. The full regex and allowed-types list are documented in `AGENTS.md`'s "Branching and versioning rules" section — read it before opening the change request. The `CI / semantic-pull-request` status check on `{{BASE_BRANCH}}` enforces the regex; titles that fall outside the format will block merge. Reuse the same Conventional Commits header for both the commit and the change request so the merge button sees one coherent signal.
+    
     ## Execution Checklist
     
     - [ ] Create branch

@@ -116,7 +116,7 @@ func titleForIssue(n int) string {
 func prsForIssues(issues []int) map[string]*github.PR {
 	prs := map[string]*github.PR{}
 	for _, n := range issues {
-		branch := fmt.Sprintf("sandman/%d-%s", n, slugForIssue(n))
+		branch := fmt.Sprintf("%d-%s", n, slugForIssue(n))
 		prs[branch] = &github.PR{Number: n, State: "closed", Merged: true, HeadRefName: branch, HeadRefOid: ""}
 	}
 	return prs

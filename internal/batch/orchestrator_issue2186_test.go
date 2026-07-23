@@ -23,8 +23,8 @@ func TestRunBatch_InBatchBlockerOrdering_ResolverWired(t *testing.T) {
 			100: {Number: 100, Title: "Dependent", State: "open", BlockedBy: []int{42}},
 		},
 		prs: map[string]*github.PR{
-			"sandman/42-blocker":    mergedPR("sandman/42-blocker", ""),
-			"sandman/100-dependent": mergedPR("sandman/100-dependent", ""),
+			"42-blocker":    mergedPR("42-blocker", ""),
+			"100-dependent": mergedPR("100-dependent", ""),
 		},
 	}
 
@@ -211,8 +211,8 @@ func TestRunBatch_InBatchBlockerSuccessButIssueOpen_EmitsRunBlocked(t *testing.T
 			100: {Number: 100, Title: "Dependent", State: "open", BlockedBy: []int{42}},
 		},
 		prs: map[string]*github.PR{
-			"sandman/42-blocker":    mergedPR("sandman/42-blocker", ""),
-			"sandman/100-dependent": mergedPR("sandman/100-dependent", ""),
+			"42-blocker":    mergedPR("42-blocker", ""),
+			"100-dependent": mergedPR("100-dependent", ""),
 		},
 	}
 
@@ -286,8 +286,8 @@ func TestRunBatch_InBatchBlockerStaysQueuedUntilBlockerTerminal(t *testing.T) {
 			100: {Number: 100, Title: "Dependent", State: "open", BlockedBy: []int{42}},
 		},
 		prs: map[string]*github.PR{
-			"sandman/42-blocker":    mergedPR("sandman/42-blocker", ""),
-			"sandman/100-dependent": mergedPR("sandman/100-dependent", ""),
+			"42-blocker":    mergedPR("42-blocker", ""),
+			"100-dependent": mergedPR("100-dependent", ""),
 		},
 	}
 

@@ -62,7 +62,7 @@ ADRs are numbered sequentially starting from `0001`. The template ADR (`0000`) i
 | 0019 | Portal auto-runs `clean --stale` on startup | accepted |
 | 0020 | Remove Pi agent support | accepted |
 | 0021 | Specification expansion to child issues | accepted |
-| 0022 | Rename Ralph Loop to Auto Mode | accepted |
+| 0022 | Rename Ralph Loop to Auto Mode | superseded by ADR-0039 |
 | 0023 | Auto-recover from stranded worktrees in `--override` and `--continue` flows | accepted |
 | 0024 | PR review prompt — omit `## Previous review progress` when there are no prior reviews | accepted |
 | 0025 | Portal secondary-row chips for run context | accepted |
@@ -77,3 +77,5 @@ ADRs are numbered sequentially starting from `0001`. The template ADR (`0000`) i
 | 0034 | Empty-child Specification runs as a regular issue | accepted |
 | 0037 | Hermetic `gh` in pr-flow e2e tests | accepted |
 | 0038 | Badge marker — paginated idempotency check | accepted |
+| 0039 | Roll back Auto Mode (`--auto`, `--count`, `auto_max_count`) | accepted |
+| 0040 | Runtime branch naming drops the `sandman/` prefix | accepted |

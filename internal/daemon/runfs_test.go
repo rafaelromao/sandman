@@ -85,7 +85,7 @@ func TestWriteRunManifest(t *testing.T) {
 		RunID:   runID,
 		BatchID: "batch123",
 		Issue:   1213,
-		Branch:  "sandman/1213-foo",
+		Branch:  "1213-foo",
 	}
 
 	if err := WriteRunManifest(batchDir, runID, manifest); err != nil {
@@ -141,7 +141,7 @@ func TestWriteRunManifest_PublicBatchIdRoundTrip(t *testing.T) {
 				RunID:     tt.runID,
 				BatchID:   tt.publicID,
 				Issue:     42,
-				Branch:    "sandman/42-fix",
+				Branch:    "42-fix",
 				CreatedAt: time.Now(),
 				Status:    batchindex.RunManifestStatusActive,
 			}

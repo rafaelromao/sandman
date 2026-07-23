@@ -105,7 +105,7 @@ sandman run 42:45
 Sandman will:
 
 1. Fetch the issue from GitHub
-2. Create a git worktree at `.sandman/worktrees/sandman/42-<slugified-title>`
+2. Create a git worktree at `.sandman/worktrees/42-<slugified-title>`
 3. Render the Project Prompt Template with issue metadata
 4. Launch the configured AI agent inside the sandbox
 5. Stream agent output to the terminal

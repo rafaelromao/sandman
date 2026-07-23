@@ -131,7 +131,7 @@ func TestWorktreeSandboxStart_OverrideStaleBranchSucceeds(t *testing.T) {
 	initGitRepo(t, dir)
 
 	// Stale branch + no worktree dir + no registration.
-	const branch = "sandman/2316-slice-2-stale"
+	const branch = "2316-slice-2-stale"
 	runGit(t, dir, "branch", branch, "main")
 
 	wt := sandbox.NewWorktreeSandbox(dir, dir+"/.sandman/worktrees", branch, "main")

@@ -189,15 +189,15 @@ func TestAgentRun_Prepare_PopulatesBranchFields(t *testing.T) {
 	sb := &fakeSandbox{}
 	spy := &spyRenderer{result: "rendered prompt"}
 
-	run := NewAgentRun(issue, "sandman/42-fix-bug", sb)
+	run := NewAgentRun(issue, "42-fix-bug", sb)
 	run.baseBranch = "main"
 
 	if err := run.Prepare(spy, prompt.RenderConfig{}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if spy.data.SourceBranch != "sandman/42-fix-bug" {
-		t.Errorf("expected SourceBranch 'sandman/42-fix-bug', got %q", spy.data.SourceBranch)
+	if spy.data.SourceBranch != "42-fix-bug" {
+		t.Errorf("expected SourceBranch '42-fix-bug', got %q", spy.data.SourceBranch)
 	}
 	if spy.data.BaseBranch != "main" {
 		t.Errorf("expected BaseBranch 'main', got %q", spy.data.BaseBranch)
@@ -210,7 +210,7 @@ func TestAgentRun_Prepare_RendersAndWritesPrompt(t *testing.T) {
 	spy := &spyRenderer{result: "rendered prompt"}
 	renderCfg := prompt.RenderConfig{PromptFile: ".sandman/prompt.md"}
 
-	run := NewAgentRun(issue, "sandman/42-fix-bug", sb)
+	run := NewAgentRun(issue, "42-fix-bug", sb)
 	if err := run.Prepare(spy, renderCfg); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -244,7 +244,7 @@ func TestAgentRun_Prepare_RenderError(t *testing.T) {
 	sb := &fakeSandbox{}
 	spy := &spyRenderer{err: errors.New("render failed")}
 
-	run := NewAgentRun(issue, "sandman/42-fix-bug", sb)
+	run := NewAgentRun(issue, "42-fix-bug", sb)
 	if err := run.Prepare(spy, prompt.RenderConfig{}); err == nil {
 		t.Fatal("expected error when render fails")
 	}
@@ -255,7 +255,7 @@ func TestAgentRun_Prepare_WritePromptError(t *testing.T) {
 	sb := &fakeSandbox{writePromptError: errors.New("write failed")}
 	spy := &spyRenderer{result: "rendered prompt"}
 
-	run := NewAgentRun(issue, "sandman/42-fix-bug", sb)
+	run := NewAgentRun(issue, "42-fix-bug", sb)
 	if err := run.Prepare(spy, prompt.RenderConfig{}); err == nil {
 		t.Fatal("expected error when WritePrompt fails")
 	}
@@ -266,7 +266,7 @@ func TestAgentRun_Execute_RunsCommand(t *testing.T) {
 	issue := &github.Issue{Number: 42, Title: "Fix bug"}
 	sb := &fakeSandbox{workDir: dir}
 
-	run := NewAgentRun(issue, "sandman/42-fix-bug", sb)
+	run := NewAgentRun(issue, "42-fix-bug", sb)
 	if err := run.Execute(context.Background(), "echo hello", io.Discard, io.Discard); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -285,7 +285,7 @@ func TestAgentRun_Run_IncludesModelFlagForBuiltInPreset(t *testing.T) {
 	sb := &fakeSandbox{workDir: dir}
 	spy := &spyRenderer{result: "rendered prompt"}
 
-	run := NewAgentRun(issue, "sandman/42-fix-bug", sb)
+	run := NewAgentRun(issue, "42-fix-bug", sb)
 	run.preset = "opencode"
 	run.model = "gpt-4.1"
 
@@ -306,7 +306,7 @@ func TestAgentRun_Run_DoesNotInjectModelFlagForCustomCommand(t *testing.T) {
 	sb := &fakeSandbox{workDir: dir}
 	spy := &spyRenderer{result: "rendered prompt"}
 
-	run := NewAgentRun(issue, "sandman/42-fix-bug", sb)
+	run := NewAgentRun(issue, "42-fix-bug", sb)
 	run.preset = "opencode"
 	run.model = "gpt-4.1"
 
@@ -327,7 +327,7 @@ func TestAgentRun_Execute_Failure(t *testing.T) {
 	issue := &github.Issue{Number: 42, Title: "Fix bug"}
 	sb := &fakeSandbox{workDir: dir, execError: errors.New("agent failed")}
 
-	run := NewAgentRun(issue, "sandman/42-fix-bug", sb)
+	run := NewAgentRun(issue, "42-fix-bug", sb)
 	if err := run.Execute(context.Background(), "exit 1", io.Discard, io.Discard); err == nil {
 		t.Fatal("expected error when exec fails")
 	}
@@ -339,7 +339,7 @@ func TestAgentRun_Execute_PrefixesOutput(t *testing.T) {
 	sb := &fakeSandbox{workDir: dir, execStdout: "hello world\n"}
 	var outBuf bytes.Buffer
 
-	run := NewAgentRun(issue, "sandman/42-fix-bug", sb)
+	run := NewAgentRun(issue, "42-fix-bug", sb)
 	run.runID = "issue-42"
 	if err := run.Execute(context.Background(), "echo hello", &outBuf, io.Discard); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -368,7 +368,7 @@ func TestAgentRun_Execute_WritesLogFile(t *testing.T) {
 	issue := &github.Issue{Number: 42, Title: "Fix bug"}
 	sb := &fakeSandbox{workDir: dir, execStdout: "hello world\n", execStderr: "error line\n"}
 
-	run := NewAgentRun(issue, "sandman/42-fix-bug", sb)
+	run := NewAgentRun(issue, "42-fix-bug", sb)
 	run.runID = "issue-42"
 	if err := run.Execute(context.Background(), "echo hello", io.Discard, io.Discard); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -401,7 +401,7 @@ func TestAgentRun_Execute_UsesRunFolderLog_IgnoresCWD(t *testing.T) {
 	issue := &github.Issue{Number: 42, Title: "Fix bug"}
 	sb := &fakeSandbox{workDir: workDir, execStdout: "hello world\n"}
 
-	run := NewAgentRunWithLayout(issue, "sandman/42-fix-bug", sb, paths.NewLayout(&config.Config{}, repo))
+	run := NewAgentRunWithLayout(issue, "42-fix-bug", sb, paths.NewLayout(&config.Config{}, repo))
 	if err := run.Execute(context.Background(), "echo hello", io.Discard, io.Discard); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -454,7 +454,7 @@ func TestAgentRun_Run_Success(t *testing.T) {
 	spy := &spyRenderer{result: "rendered prompt"}
 	renderCfg := prompt.RenderConfig{}
 
-	run := NewAgentRun(issue, "sandman/42-fix-bug", sb)
+	run := NewAgentRun(issue, "42-fix-bug", sb)
 	res := run.Run(context.Background(), spy, "echo hello", renderCfg)
 
 	if res.Status != "success" {
@@ -477,7 +477,7 @@ func TestAgentRun_Run_PrepareFailure(t *testing.T) {
 	sb := &fakeSandbox{workDir: dir}
 	spy := &spyRenderer{err: errors.New("render failed")}
 
-	run := NewAgentRun(issue, "sandman/42-fix-bug", sb)
+	run := NewAgentRun(issue, "42-fix-bug", sb)
 	res := run.Run(context.Background(), spy, "echo hello", prompt.RenderConfig{})
 
 	if res.Status != "failure" {
@@ -494,7 +494,7 @@ func TestAgentRun_Run_ExecuteFailure(t *testing.T) {
 	sb := &fakeSandbox{workDir: dir, execError: errors.New("agent failed")}
 	spy := &spyRenderer{result: "rendered prompt"}
 
-	run := NewAgentRun(issue, "sandman/42-fix-bug", sb)
+	run := NewAgentRun(issue, "42-fix-bug", sb)
 	res := run.Run(context.Background(), spy, "exit 1", prompt.RenderConfig{})
 
 	if res.Status != "failure" {
@@ -508,7 +508,7 @@ func TestAgentRun_Execute_WritesToOutputWriter(t *testing.T) {
 	sb := &fakeSandbox{workDir: dir, execStdout: "hello world\n"}
 	var buf bytes.Buffer
 
-	run := NewAgentRun(issue, "sandman/42-fix-bug", sb)
+	run := NewAgentRun(issue, "42-fix-bug", sb)
 	run.runID = "issue-42"
 	run.outputWriter = &buf
 	if err := run.Execute(context.Background(), "echo hello", io.Discard, io.Discard); err != nil {
@@ -531,7 +531,7 @@ func TestAgentRun_Run_UsesExecEvenWhenInteractiveRequested(t *testing.T) {
 	sb := &fakeSandbox{workDir: dir}
 	spy := &spyRenderer{result: "rendered prompt"}
 
-	run := NewAgentRun(issue, "sandman/42-fix-bug", sb)
+	run := NewAgentRun(issue, "42-fix-bug", sb)
 	res := run.Run(context.Background(), spy, "echo hello", prompt.RenderConfig{})
 
 	if res.Status != "success" {
@@ -553,7 +553,7 @@ func TestAgentRun_Run_InjectsPromptFileIntoCommandTemplate(t *testing.T) {
 	sb := &fakeSandbox{workDir: "/tmp/worktrees/fix-bug"}
 	spy := &spyRenderer{result: "rendered prompt"}
 
-	run := NewAgentRun(issue, "sandman/42-fix-bug", sb)
+	run := NewAgentRun(issue, "42-fix-bug", sb)
 	res := run.Run(context.Background(), spy, "opencode --prompt-file {{.PromptFile}}", prompt.RenderConfig{
 		PromptFile: ".sandman/prompt.md",
 	})
@@ -571,7 +571,7 @@ func TestAgentRun_Run_PassesEnvAndPromptFileThroughFullChain(t *testing.T) {
 	sb := &fakeSandbox{workDir: "/tmp/worktrees/fix-auth"}
 	spy := &spyRenderer{result: "rendered prompt for auth fix"}
 
-	run := NewAgentRun(issue, "sandman/7-fix-auth", sb)
+	run := NewAgentRun(issue, "7-fix-auth", sb)
 	run.baseBranch = "main"
 	run.env = map[string]string{"API_KEY": "sk-test123", "MODEL": "gpt-4"}
 
@@ -595,8 +595,8 @@ func TestAgentRun_Run_PassesEnvAndPromptFileThroughFullChain(t *testing.T) {
 	if spy.data.Body != "OAuth is broken." {
 		t.Errorf("expected body 'OAuth is broken.', got %q", spy.data.Body)
 	}
-	if spy.data.SourceBranch != "sandman/7-fix-auth" {
-		t.Errorf("expected SourceBranch 'sandman/7-fix-auth', got %q", spy.data.SourceBranch)
+	if spy.data.SourceBranch != "7-fix-auth" {
+		t.Errorf("expected SourceBranch '7-fix-auth', got %q", spy.data.SourceBranch)
 	}
 	if spy.data.BaseBranch != "main" {
 		t.Errorf("expected BaseBranch 'main', got %q", spy.data.BaseBranch)
@@ -630,7 +630,7 @@ func TestAgentRun_Run_TemplateErrorCausesFailure(t *testing.T) {
 	sb := &fakeSandbox{workDir: t.TempDir()}
 	spy := &spyRenderer{result: "rendered prompt"}
 
-	run := NewAgentRun(issue, "sandman/42-fix-bug", sb)
+	run := NewAgentRun(issue, "42-fix-bug", sb)
 	res := run.Run(context.Background(), spy, "opencode {{.Unknown}}", prompt.RenderConfig{})
 
 	if res.Status != "failure" {
@@ -650,7 +650,7 @@ func TestAgentRun_Prepare_PassesRenderConfigToRenderer(t *testing.T) {
 		PromptArgs: map[string]string{"FOO": "bar"},
 	}
 
-	run := NewAgentRun(issue, "sandman/42-fix-bug", sb)
+	run := NewAgentRun(issue, "42-fix-bug", sb)
 	if err := run.Prepare(spy, renderCfg); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -669,7 +669,7 @@ func TestAgentRun_Run_WritesRawTaskPrompt(t *testing.T) {
 	sb := &fakeSandbox{workDir: dir}
 	spy := &spyRenderer{result: "rendered prompt"}
 
-	run := NewAgentRun(issue, "sandman/42-fix-bug", sb)
+	run := NewAgentRun(issue, "42-fix-bug", sb)
 	res := run.Run(context.Background(), spy, "opencode run {{.PromptFile}}", prompt.RenderConfig{TaskPrompt: "finish {{ISSUE_NUMBER}}"})
 
 	if res.Status != "success" {
@@ -698,14 +698,14 @@ func TestAgentRun_Result(t *testing.T) {
 	issue := &github.Issue{Number: 42, Title: "Fix bug"}
 	sb := &fakeSandbox{}
 
-	run := NewAgentRun(issue, "sandman/42-fix-bug", sb)
+	run := NewAgentRun(issue, "42-fix-bug", sb)
 
 	res := run.Result()
 	if res.IssueNumber != 42 {
 		t.Errorf("expected issue 42, got %d", res.IssueNumber)
 	}
-	if res.Branch != "sandman/42-fix-bug" {
-		t.Errorf("expected branch sandman/42-fix-bug, got %s", res.Branch)
+	if res.Branch != "42-fix-bug" {
+		t.Errorf("expected branch 42-fix-bug, got %s", res.Branch)
 	}
 	if res.Status != "success" {
 		t.Errorf("expected status success, got %s", res.Status)
@@ -718,7 +718,7 @@ func TestAgentRun_Run_EmptyEnvLeavesCommandUnchanged(t *testing.T) {
 	sb := &fakeSandbox{workDir: dir}
 	spy := &spyRenderer{result: "rendered prompt"}
 
-	run := NewAgentRun(issue, "sandman/42-fix-bug", sb)
+	run := NewAgentRun(issue, "42-fix-bug", sb)
 	res := run.Run(context.Background(), spy, "opencode run {{.PromptFile}}", prompt.RenderConfig{})
 
 	if res.Status != "success" {
@@ -735,7 +735,7 @@ func TestAgentRun_Run_ExportsSortedQuotedVariables(t *testing.T) {
 	sb := &fakeSandbox{workDir: dir}
 	spy := &spyRenderer{result: "rendered prompt"}
 
-	run := NewAgentRun(issue, "sandman/42-fix-bug", sb)
+	run := NewAgentRun(issue, "42-fix-bug", sb)
 	run.env = map[string]string{
 		"BETA":  "two words",
 		"ALPHA": "it's fine",
@@ -766,7 +766,7 @@ func TestAgentRun_Run_OpencodePresetExportsPermissionForDangerousRuns(t *testing
 		t.Fatal("expected opencode preset env to carry OPENCODE_PERMISSION")
 	}
 
-	run := NewAgentRun(issue, "sandman/42-fix-bug", sb)
+	run := NewAgentRun(issue, "42-fix-bug", sb)
 	run.preset = "opencode"
 	run.env = agent.Env
 	run.opencodePermissionMode = agent.OpencodePermissionMode
@@ -796,7 +796,7 @@ func TestAgentRun_Run_OpencodePresetSkipsPermissionForNonDangerousRuns(t *testin
 	}
 	agent := preset.Agent("opencode")
 
-	run := NewAgentRun(issue, "sandman/42-fix-bug", sb)
+	run := NewAgentRun(issue, "42-fix-bug", sb)
 	run.preset = "opencode"
 	run.env = agent.Env
 	run.opencodePermissionMode = agent.OpencodePermissionMode
@@ -818,7 +818,7 @@ func TestAgentRun_Run_PreservesUserOpencodePermissionOverride(t *testing.T) {
 	sb := &fakeSandbox{workDir: dir}
 	spy := &spyRenderer{result: "rendered prompt"}
 
-	run := NewAgentRun(issue, "sandman/42-fix-bug", sb)
+	run := NewAgentRun(issue, "42-fix-bug", sb)
 	run.env = map[string]string{
 		"OPENCODE_PERMISSION": `{"external_directory":"allow"}`,
 	}
@@ -839,7 +839,7 @@ func TestAgentRun_Run_InvalidEnvKeyFails(t *testing.T) {
 	sb := &fakeSandbox{workDir: t.TempDir()}
 	spy := &spyRenderer{result: "rendered prompt"}
 
-	run := NewAgentRun(issue, "sandman/42-fix-bug", sb)
+	run := NewAgentRun(issue, "42-fix-bug", sb)
 	run.env = map[string]string{
 		"FOO; rm -rf /": "danger",
 	}
@@ -859,7 +859,7 @@ func TestAgentRun_Execute_LogFilePrefixed(t *testing.T) {
 	issue := &github.Issue{Number: 42, Title: "Fix bug"}
 	sb := &fakeSandbox{workDir: dir, execStdout: "hello world\nsecond line\n", execStderr: "warn line\n"}
 
-	run := NewAgentRun(issue, "sandman/42-fix-bug", sb)
+	run := NewAgentRun(issue, "42-fix-bug", sb)
 	run.runID = "issue-42"
 	if err := run.Execute(context.Background(), "echo hello", io.Discard, io.Discard); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -918,7 +918,7 @@ func TestAgentRun_Execute_LogFilePrefixed_FlushesPartialLine(t *testing.T) {
 	issue := &github.Issue{Number: 42, Title: "Fix bug"}
 	sb := &fakeSandbox{workDir: dir, execStdout: "complete line\npartial line"}
 
-	run := NewAgentRun(issue, "sandman/42-fix-bug", sb)
+	run := NewAgentRun(issue, "42-fix-bug", sb)
 	run.runID = "issue-42"
 	if err := run.Execute(context.Background(), "echo hello", io.Discard, io.Discard); err != nil {
 		t.Fatalf("unexpected error: %v", err)

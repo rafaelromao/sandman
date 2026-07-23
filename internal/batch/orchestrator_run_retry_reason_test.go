@@ -79,7 +79,7 @@ func TestRunSingle_EmitsRunRetryWithAgentFailedReason(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chdir(oldWD) })
 
-	branch := "sandman/42-fix-bug"
+	branch := "42-fix-bug"
 	rtSandbox := &retrySandbox{
 		workDir: filepath.Join(workDir, "worktree"),
 	}
@@ -159,8 +159,8 @@ func TestRunSingle_EmitsRunRetryWithAgentStalledReason(t *testing.T) {
 	t.Cleanup(func() { _ = os.Chdir(oldWD) })
 	initGitRepo(t, workDir)
 
-	branch := "sandman/42-fix-bug"
-	worktreePath := filepath.Join(workDir, heartbeatTestWorktreeDir, "sandman", "42-fix-bug")
+	branch := "42-fix-bug"
+	worktreePath := filepath.Join(workDir, heartbeatTestWorktreeDir, "42-fix-bug")
 	proc := &fakeProcess{killed: make(chan struct{})}
 	sb := &fakeSandbox{workDir: worktreePath, process: proc}
 	factory := &fakeSandboxFactory{sandbox: sb}

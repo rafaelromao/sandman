@@ -36,8 +36,8 @@ func TestPortalRunsView_UnavailableFlagFromBatchIndex(t *testing.T) {
 	startedAt := time.Date(2025, 1, 1, 10, 0, 0, 0, time.UTC)
 	finishedAt := startedAt.Add(5 * time.Minute)
 	writePortalLog(t, filepath.Join(layout.EventsLogPath), []events.Event{
-		{Type: "run.started", Timestamp: startedAt, RunID: rowRunID, Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
-		{Type: "run.finished", Timestamp: finishedAt, RunID: rowRunID, Issue: 42, Payload: map[string]any{"status": "success", "branch": "sandman/42-fix"}},
+		{Type: "run.started", Timestamp: startedAt, RunID: rowRunID, Issue: 42, Payload: map[string]any{"branch": "42-fix"}},
+		{Type: "run.finished", Timestamp: finishedAt, RunID: rowRunID, Issue: 42, Payload: map[string]any{"status": "success", "branch": "42-fix"}},
 	})
 
 	// Create a dead batch directory with a runs/ subdirectory so that
@@ -151,8 +151,8 @@ func TestPortalRunsView_IssueRunLogFromCorrectRunFolder(t *testing.T) {
 	startedAt := time.Date(2025, 1, 1, 10, 0, 0, 0, time.UTC)
 	finishedAt := startedAt.Add(5 * time.Minute)
 	writePortalLog(t, filepath.Join(layout.EventsLogPath), []events.Event{
-		{Type: "run.started", Timestamp: startedAt, RunID: rowRunID, Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
-		{Type: "run.finished", Timestamp: finishedAt, RunID: rowRunID, Issue: 42, Payload: map[string]any{"status": "success", "branch": "sandman/42-fix"}},
+		{Type: "run.started", Timestamp: startedAt, RunID: rowRunID, Issue: 42, Payload: map[string]any{"branch": "42-fix"}},
+		{Type: "run.finished", Timestamp: finishedAt, RunID: rowRunID, Issue: 42, Payload: map[string]any{"status": "success", "branch": "42-fix"}},
 	})
 
 	batchDir := filepath.Join(layout.BatchesDir, batchID)
@@ -244,8 +244,8 @@ func TestPortalRunsView_IssueRunLogDownload(t *testing.T) {
 	startedAt := time.Date(2025, 1, 1, 10, 0, 0, 0, time.UTC)
 	finishedAt := startedAt.Add(5 * time.Minute)
 	writePortalLog(t, filepath.Join(layout.EventsLogPath), []events.Event{
-		{Type: "run.started", Timestamp: startedAt, RunID: rowRunID, Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
-		{Type: "run.finished", Timestamp: finishedAt, RunID: rowRunID, Issue: 42, Payload: map[string]any{"status": "success", "branch": "sandman/42-fix"}},
+		{Type: "run.started", Timestamp: startedAt, RunID: rowRunID, Issue: 42, Payload: map[string]any{"branch": "42-fix"}},
+		{Type: "run.finished", Timestamp: finishedAt, RunID: rowRunID, Issue: 42, Payload: map[string]any{"status": "success", "branch": "42-fix"}},
 	})
 
 	batchDir := filepath.Join(layout.BatchesDir, batchID)

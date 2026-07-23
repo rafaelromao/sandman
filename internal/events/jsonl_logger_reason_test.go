@@ -26,8 +26,8 @@ func TestJSONLLogger_PreservesHistoricalRunRetryEventsWithoutReason(t *testing.T
 	dir := t.TempDir()
 	path := filepath.Join(dir, "events.jsonl")
 
-	historicalWithoutReason := []byte(`{"type":"run.retry","timestamp":"2025-01-01T12:00:00Z","run_id":"run-1","issue":42,"payload":{"attempt":2,"max_attempts":3,"previous_status":"failure","branch":"sandman/42-fix-bug","last_log_lines":["line1"]}}` + "\n")
-	historicalWithNullReason := []byte(`{"type":"run.retry","timestamp":"2025-01-01T12:01:00Z","run_id":"run-1","issue":42,"payload":{"attempt":3,"max_attempts":3,"previous_status":"failure","branch":"sandman/42-fix-bug","last_log_lines":["line2"],"reason":null}}` + "\n")
+	historicalWithoutReason := []byte(`{"type":"run.retry","timestamp":"2025-01-01T12:00:00Z","run_id":"run-1","issue":42,"payload":{"attempt":2,"max_attempts":3,"previous_status":"failure","branch":"42-fix-bug","last_log_lines":["line1"]}}` + "\n")
+	historicalWithNullReason := []byte(`{"type":"run.retry","timestamp":"2025-01-01T12:01:00Z","run_id":"run-1","issue":42,"payload":{"attempt":3,"max_attempts":3,"previous_status":"failure","branch":"42-fix-bug","last_log_lines":["line2"],"reason":null}}` + "\n")
 	if err := os.WriteFile(path, append(historicalWithoutReason, historicalWithNullReason...), 0644); err != nil {
 		t.Fatalf("seed events.jsonl: %v", err)
 	}

@@ -36,12 +36,12 @@ func TestPortal_Compute_LiveReviewCarriesReviewLiveJSON(t *testing.T) {
 
 	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
 		{Type: "run.started", Timestamp: implStartedAt, RunID: "impl-2109", Issue: 2109, Payload: map[string]any{
-			"branch":   "sandman/2109-fix",
+			"branch":   "2109-fix",
 			"batch_id": "impl-2109",
 			"status":   "running",
 		}},
 		{Type: "run.finished", Timestamp: implFinishedAt, RunID: "impl-2109", Issue: 2109, Payload: map[string]any{
-			"branch":   "sandman/2109-fix",
+			"branch":   "2109-fix",
 			"batch_id": "impl-2109",
 			"status":   "success",
 		}},
@@ -141,12 +141,12 @@ func TestPortal_Compute_TerminalReviewOmitsReviewLiveJSON(t *testing.T) {
 
 	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
 		{Type: "run.started", Timestamp: implStartedAt, RunID: "impl-2109", Issue: 2109, Payload: map[string]any{
-			"branch":   "sandman/2109-fix",
+			"branch":   "2109-fix",
 			"batch_id": "impl-2109",
 			"status":   "running",
 		}},
 		{Type: "run.finished", Timestamp: implFinishedAt, RunID: "impl-2109", Issue: 2109, Payload: map[string]any{
-			"branch":   "sandman/2109-fix",
+			"branch":   "2109-fix",
 			"batch_id": "impl-2109",
 			"status":   "success",
 		}},
