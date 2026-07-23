@@ -576,7 +576,7 @@ var _ Sandbox = (*WorktreeSandbox)(nil)
 // `git branch -D` fails with a "checked out at" error and reconciliation is
 // enabled. The default implementation calls the real recovery logic;
 // tests can substitute a stub to record the call and return success
-// without spawning a real git repo. See ADR-0027 for the pattern.
+// without spawning a real git repo. See ADR-0023 for the pattern.
 var reconcileStrandedFn = func(repoPath, worktreeBase, branch, sourceBranch string) error {
 	return defaultReconcileStrandedBranch(repoPath, worktreeBase, branch, sourceBranch)
 }
@@ -592,7 +592,7 @@ var reconcileStrandedFn = func(repoPath, worktreeBase, branch, sourceBranch stri
 // so the effective loss is bounded to a transient detached-HEAD window
 // in the parent repo.
 //
-// ADR-0027 documented `git update-ref -d` as strategy (3) "last resort";
+// ADR-0023 documented `git update-ref -d` as strategy (3) "last resort";
 // this commit elevates it to the default for the main-repo case so that
 // operators who keep their working copy on the issue branch while
 // orchestrating runs from the same checkout no longer have their HEAD
@@ -799,7 +799,7 @@ func ReleaseBranchInWorktree(path string) error {
 // strategy (delete from the stranded worktree's cwd) and removed any
 // stale worktree registration; the recovery path here is therefore
 // the "main repo on the branch" case, dispatched through the
-// package-level reconcileStrandedFn seam (see ADR-0027).
+// package-level reconcileStrandedFn seam (see ADR-0023).
 //
 // The default seam implementation drops the stray ref via
 // `git update-ref -d` rather than force-checking out the source branch

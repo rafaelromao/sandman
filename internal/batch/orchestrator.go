@@ -3263,7 +3263,7 @@ func isMissingBranchError(err error, out []byte) bool {
 // When `git branch -D <branch>` from the main-repo cwd fails because the
 // branch is currently checked out somewhere, and `strandedReconcile` is
 // non-nil and true, the function runs the auto-recovery flow described in
-// ADR-0027 (stranded-worktree first, then base-branch checkout).
+// ADR-0023 (stranded-worktree first, then base-branch checkout).
 //
 // When `strandedReconcile` is nil, today's belt-and-suspenders behaviour
 // is preserved (the failure is logged and the function continues);
