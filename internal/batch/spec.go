@@ -284,7 +284,16 @@ func (r *SpecificationResolver) expandOne(
 
 	if len(accepted) == 0 {
 		addUnique(num)
-		fmt.Fprintf(r.warningWriter, "running issue #%d as a regular issue (no children)\n", num)
+		// Re-check the spec gate so the broadened-detector path stays
+		// silent. The strict-spec log line is reserved for bodies that
+		// actually look like a Specification (canonical shape or
+		// children-content signal); a non-spec body whose candidate
+		// harvest is empty is the broadened-detector carve-out and
+		// must not log the misleading "as a regular issue" line.
+		// Mirrors ADR-0034 §4.
+		if r.IsSpecification(issue.Body) {
+			fmt.Fprintf(r.warningWriter, "running issue #%d as a regular issue (no children)\n", num)
+		}
 		return nil
 	}
 

@@ -1480,6 +1480,47 @@ func TestSpecificationResolver_BroadenedAllFilteredPassesThrough(t *testing.T) {
 	}
 }
 
+// TestSpecificationResolver_BroadenedCommentRefAllFilteredIsSilent reproduces
+// the bug from slotmerge #294. The parent body is not a Specification
+// (no `## Children` heading, no `## Problem Statement`+`## Solution`
+// canonical shape), but a comment on the issue incidentally mentions
+// another issue number. The candidate the comment surfaces is not a real
+// child (no `## Parent` backlink), so the accepted-child set is empty.
+// Per ADR-0034 §4 the broadened-detector path must be silent in that
+// case: the strict-spec log line `running issue #<n> as a regular issue
+// (no children)` is reserved for bodies that actually look like a
+// Specification. Failing this test means non-spec bodies with stray
+// comment references are being misreported as Specifications.
+func TestSpecificationResolver_BroadenedCommentRefAllFilteredIsSilent(t *testing.T) {
+	parentBody := "## What to build\n\nThe Calendar Connection page.\n\n## Acceptance criteria\n\n- [ ] AC1\n\n## Blocked by\n\n- [Issue #288](https://github.com/rafaelromao/slotmerge/issues/288)\n"
+	strangerBody := "## What\n\nNo Parent backlink at all.\n"
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			294: {Number: 294, Title: "Calendar Connection", Body: parentBody},
+			288: {Number: 288, Title: "URL tree", Body: strangerBody},
+			296: {Number: 296, Title: "Stranger", Body: strangerBody},
+		},
+		issueComments: map[int][]github.IssueComment{
+			294: {
+				{Body: "The full invite → verify → setup → Calendar Connection → sign-out User journey remains owned by T10/#296 rather than T8."},
+			},
+		},
+	}
+
+	var infoBuf bytes.Buffer
+	r := NewSpecificationResolver(client, &infoBuf)
+	got, err := r.Resolve(context.Background(), []int{294})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !equalInts(got, []int{294}) {
+		t.Fatalf("expected pass-through [294], got %v", got)
+	}
+	if strings.Contains(infoBuf.String(), "running issue #294 as a regular issue (no children)") {
+		t.Fatalf("broadened-detector pass-through must be silent for non-spec bodies, got: %q", infoBuf.String())
+	}
+}
+
 func TestSpecificationResolver_NonSpecWithoutChildrenCallsListSubIssuesOnce(t *testing.T) {
 	parentBody := "## What\n\nJust a regular issue.\n"
 	client := &fakeGitHubClient{
