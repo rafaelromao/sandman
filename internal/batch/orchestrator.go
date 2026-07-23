@@ -3263,14 +3263,20 @@ func isMissingBranchError(err error, out []byte) bool {
 // When `git branch -D <branch>` from the main-repo cwd fails because the
 // branch is currently checked out somewhere, and `strandedReconcile` is
 // non-nil and true, the function runs the auto-recovery flow described in
-// ADR-0023 (stranded-worktree first, then base-branch checkout).
+// ADR-0023: (1) delete from inside a stranded worktree at the canonical
+// path if present, (2) detach HEAD in a foreign worktree at a
+// non-canonical path if present, (3) detach HEAD in the parent repo and
+// `git branch -D` the branch only when the parent is the verified
+// holder. The fallback branch is no longer used; the helper refuses
+// to delete a held branch instead of force-checking out an arbitrary
+// base branch underneath the operator.
 //
 // When `strandedReconcile` is nil, today's belt-and-suspenders behaviour
 // is preserved (the failure is logged and the function continues);
 // false is the explicit opt-out (`--no-reconcile-stranded`).
 //
-// `baseBranch` is the branch the function falls back to when no stranded
-// worktree is found; when empty, the fallback path is skipped.
+// `baseBranch` is accepted for API compatibility with prior call sites
+// but is no longer used by the recovery flow.
 func ClearIssueArtifacts(issueNumber int, branch string, worktreeDir string, eventLog events.EventLog, logWriter io.Writer, baseBranch string, strandedReconcile *bool, batchesIndexPath string) {
 	wtPath := filepath.Join(worktreeDir, branch)
 
@@ -3337,8 +3343,11 @@ func ClearIssueArtifacts(issueNumber int, branch string, worktreeDir string, eve
 //     in detached HEAD state at the same commit (no data loss).
 //  3. Otherwise, if the main repo itself holds the branch (its HEAD is
 //     `refs/heads/<branch>`), detach HEAD in the main repo (working tree
-//     untouched) and drop the stray ref via
-//     `git update-ref -d refs/heads/<branch>`. This keeps the operator's
+//     untouched) and delete the branch via `git branch -D`. The
+//     `git branch -D` form (rather than raw `git update-ref -d`) re-checks
+//     worktree holders atomically with the ref-drop, closing the TOCTOU
+//     window where a sibling worktree could check out the branch between
+//     the parent's detach and the ref-drop. This keeps the operator's
 //     working-tree contents intact instead of force-checking out the base
 //     branch underneath them.
 //
@@ -3377,7 +3386,11 @@ func recoverBranchDeleteFromMainRepo(logWriter io.Writer, branch, worktreeBase s
 		}
 		return
 	}
-	// Strategy 3: main repo on branch. Detach HEAD and drop the stray ref.
+	// Strategy 3: main repo on branch. Detach HEAD and delete the branch
+	// via `git branch -D`. The `git branch -D` form re-checks worktree
+	// holders atomically with the ref-drop, closing the TOCTOU window
+	// where a sibling worktree could check out the branch between the
+	// parent's detach and a raw `git update-ref -d`.
 	headRef, headErr := sandbox.CurrentBranchRef(".")
 	if headErr != nil {
 		fmt.Fprintf(logWriter, "warning: drop refs/heads/%s: main repo HEAD is not a symbolic ref — refusing to detach (foreign worktree holder race?): %v\n", branch, headErr)
@@ -3391,8 +3404,8 @@ func recoverBranchDeleteFromMainRepo(logWriter io.Writer, branch, worktreeBase s
 		fmt.Fprintf(logWriter, "warning: detach HEAD in main repo: %v: %s\n", err, out)
 		return
 	}
-	if out, err := exec.Command("git", "update-ref", "-d", "refs/heads/"+branch).CombinedOutput(); err != nil {
-		fmt.Fprintf(logWriter, "warning: drop stray ref refs/heads/%s in main repo: %v: %s\n", branch, err, out)
+	if out, err := exec.Command("git", "branch", "-D", branch).CombinedOutput(); err != nil {
+		fmt.Fprintf(logWriter, "warning: drop branch refs/heads/%s in main repo via 'git branch -D': %v: %s\n", branch, err, out)
 	}
 }
 

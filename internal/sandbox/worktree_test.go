@@ -2434,3 +2434,72 @@ func TestDefaultReconcileStrandedBranch_RefusesWhenParentHEADDetached(t *testing
 		t.Errorf("branch %q was dropped despite guard: %v", branch, err)
 	}
 }
+
+// TestDefaultReconcileStrandedBranch_AcceptsForeignHolderAfterDetach pins
+// the TOCTOU-race fix from PR #2377 review feedback. The recovery loop
+// uses `git branch -D` (rather than raw `git update-ref -d`) after
+// detaching the parent, so a sibling worktree that checks out the
+// branch between the detach and the delete is preserved — `git branch
+// -D` re-checks worktree holders atomically with the ref-drop.
+//
+// The test sets up the post-detach state directly (parent detached
+// at the branch tip, foreign worktree holds the branch) and asserts
+// that `git branch -D` from the parent fails with a worktree-holder
+// error rather than silently dropping the ref. This is the safety
+// guarantee the seam's `git branch -D` (rather than `git update-ref
+// -d`) provides — if the test ever stops failing, the seam's safety
+// guarantee is gone.
+func TestDefaultReconcileStrandedBranch_AcceptsForeignHolderAfterDetach(t *testing.T) {
+	dir := t.TempDir()
+	initGitRepo(t, dir)
+
+	const branch = "sandman/2377-toctou"
+	runGit(t, dir, "branch", branch)
+	runGit(t, dir, "checkout", branch)
+
+	worktreeBase := filepath.Join(dir, ".sandman", "worktrees")
+	if err := os.MkdirAll(worktreeBase, 0755); err != nil {
+		t.Fatalf("mkdir worktreeBase: %v", err)
+	}
+
+	// Simulate the post-detach state: parent is detached at the
+	// branch tip, and a foreign worktree now holds the branch.
+	runGit(t, dir, "checkout", "--detach")
+	foreignAbs := filepath.Join(dir, "foreign-toctou")
+	if err := os.MkdirAll(foreignAbs, 0755); err != nil {
+		t.Fatalf("mkdir foreign: %v", err)
+	}
+	addCmd := exec.Command("git", "worktree", "add", "--detach", foreignAbs, branch)
+	addCmd.Dir = dir
+	if out, err := addCmd.CombinedOutput(); err != nil {
+		t.Fatalf("git worktree add (foreign): %v: %s", err, out)
+	}
+	symRefCmd := exec.Command("git", "symbolic-ref", "HEAD", "refs/heads/"+branch)
+	symRefCmd.Dir = foreignAbs
+	if out, err := symRefCmd.CombinedOutput(); err != nil {
+		t.Fatalf("foreign symbolic-ref: %v: %s", err, out)
+	}
+	t.Cleanup(func() {
+		exec.Command("git", "worktree", "remove", "--force", foreignAbs).Run()
+	})
+
+	// Now `git branch -D <branch>` from the parent cwd MUST fail
+	// because the foreign worktree holds the branch. This is the
+	// safety guarantee the seam's `git branch -D` (rather than
+	// `git update-ref -d`) provides.
+	delCmd := exec.Command("git", "branch", "-D", branch)
+	delCmd.Dir = dir
+	out, err := delCmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("expected 'git branch -D' to fail when foreign worktree holds the branch (the safety guarantee the seam relies on); got success: %s", out)
+	}
+	if !isBranchCheckedOutError(out) {
+		t.Errorf("expected 'checked out' error from 'git branch -D', got: %v: %s", err, out)
+	}
+
+	// Verify the foreign worktree's branch ref still resolves.
+	revCmd := exec.Command("git", "-C", foreignAbs, "rev-parse", "--verify", "refs/heads/"+branch)
+	if _, err := revCmd.CombinedOutput(); err != nil {
+		t.Errorf("foreign worktree's branch ref was deleted out from under it: %v", err)
+	}
+}

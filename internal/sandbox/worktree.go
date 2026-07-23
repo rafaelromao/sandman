@@ -586,21 +586,27 @@ var reconcileStrandedFn = func(repoPath, worktreeBase, branch, sourceBranch stri
 // repoPath, which silently mutated the operator's working-copy HEAD and
 // left them on the source branch instead of the issue branch they were
 // inspecting. The new version detaches HEAD in the parent repo (working
-// tree untouched) and then drops the stray ref via
-// `git update-ref -d refs/heads/<branch>`. The branch is re-created
-// later in Start() by the canonical `git worktree add -b <branch>` call,
-// so the effective loss is bounded to a transient detached-HEAD window
-// in the parent repo.
+// tree untouched) and then deletes the branch via `git branch -D`,
+// which re-checks worktree holders at the moment of the delete — this
+// closes the TOCTOU window where a sibling worktree could check out
+// the branch between the parent's `git checkout --detach` and a raw
+// `git update-ref -d`. The branch is re-created later in Start() by
+// the canonical `git worktree add -b <branch>` call, so the effective
+// loss is bounded to a transient detached-HEAD window in the parent
+// repo.
 //
 // ADR-0023 documented `git update-ref -d` as strategy (3) "last resort";
 // this commit elevates it to the default for the main-repo case so that
 // operators who keep their working copy on the issue branch while
 // orchestrating runs from the same checkout no longer have their HEAD
-// switched to the source branch under them. The destructive
-// `git update-ref -d` only fires when the stranded branch is held by
-// the parent repo itself; foreign-worktree recovery still goes through
-// `ReleaseBranchInWorktree` and the stranded-worktree path, both of
-// which only detach a foreign HEAD.
+// switched to the source branch under them. The implementation uses
+// `git branch -D` (rather than the documented `update-ref -d`) so the
+// delete re-checks worktree holders atomically with the ref-drop,
+// closing the TOCTOU window where a sibling worktree could check out
+// the branch between the parent's detach and a raw update-ref.
+// Foreign-worktree recovery still goes through `ReleaseBranchInWorktree`
+// and the stranded-worktree path, both of which only detach a foreign
+// HEAD.
 //
 // Guard: the parent HEAD must point at refs/heads/<branch> before this
 // function detaches it. Without this guard, a race with a foreign
@@ -610,26 +616,39 @@ var reconcileStrandedFn = func(repoPath, worktreeBase, branch, sourceBranch stri
 // HEAD would dangle against a deleted ref. The guard restores the
 // invariant: this function only ever mutates HEAD when the parent is
 // the verified holder.
+//
+// TOCTOU note: `git checkout --detach` releases Git's
+// checked-out-branch guard. A sibling worktree that checks out the
+// branch between the detach and the delete would otherwise see the
+// ref deleted out from under it. Using `git branch -D` (rather than
+// `git update-ref -d`) makes the delete re-check worktree holders
+// atomically with the ref-drop, so a freshly-checked-out sibling is
+// preserved.
 func defaultReconcileStrandedBranch(repoPath, worktreeBase, branch, sourceBranch string) error {
 	headRef, err := CurrentBranchRef(repoPath)
 	if err != nil {
 		// HEAD is detached or unreadable. We cannot tell whether the
 		// parent holds the branch; refuse to drop the ref to avoid
 		// deleting a branch a foreign worktree still holds.
-		return fmt.Errorf("drop stray ref refs/heads/%s: main repo HEAD is not a symbolic ref (%v) — refusing to detach (foreign worktree holder race?)", branch, err)
+		return fmt.Errorf("drop branch refs/heads/%s: main repo HEAD is not a symbolic ref (%v) — refusing to detach (foreign worktree holder race?)", branch, err)
 	}
 	if headRef != "refs/heads/"+branch {
-		return fmt.Errorf("drop stray ref refs/heads/%s: main repo HEAD is %q, not the target branch — refusing to detach (foreign worktree holder race?)", branch, headRef)
+		return fmt.Errorf("drop branch refs/heads/%s: main repo HEAD is %q, not the target branch — refusing to detach (foreign worktree holder race?)", branch, headRef)
 	}
 	detachCmd := exec.Command("git", "checkout", "--detach")
 	detachCmd.Dir = repoPath
 	if out, err := detachCmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("detach HEAD in main repo: %w\n%s", err, out)
 	}
-	delRefCmd := exec.Command("git", "update-ref", "-d", "refs/heads/"+branch)
-	delRefCmd.Dir = repoPath
-	if out, err := delRefCmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("drop stray ref refs/heads/%s in main repo: %w\n%s", branch, err, out)
+	// Use `git branch -D` rather than `git update-ref -d` so the
+	// delete re-checks worktree holders atomically with the
+	// ref-drop. This closes the TOCTOU window where a sibling
+	// worktree could check out the branch between the parent's
+	// detach and a raw update-ref.
+	delCmd := exec.Command("git", "branch", "-D", branch)
+	delCmd.Dir = repoPath
+	if out, err := delCmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("drop branch refs/heads/%s in main repo via 'git branch -D': %w\n%s", branch, err, out)
 	}
 	return nil
 }
