@@ -10,6 +10,8 @@ jobs:
   semantic-pull-request:
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
+    env:
+      TITLE: ${{ github.event.pull_request.title }}
     steps:
       - uses: amannn/action-semantic-pull-request@v5
         env:
@@ -27,9 +29,14 @@ jobs:
             ci
             revert
           requireScope: false
-          headerPattern: '^(feat|fix|perf|chore|docs|refactor|test|build|ci|revert|feat!|fix!|perf!)(\([a-z0-9-]+\))?!?: .+'
-          headerPatternCorrespondence: TYPE,SCOPE
-          validateSingleCommit: false
+
+      - name: Validate change-request title regex
+        run: |
+          if ! echo "$TITLE" | grep -Eq '^(feat|fix|perf|chore|docs|refactor|test|build|ci|revert|feat!|fix!|perf!)(\([a-z0-9-]+\))?!?: .+'; then
+            echo "::error::Change-request title '$TITLE' does not match the Conventional Commits regex documented in AGENTS.md." >&2
+            echo "::error::Expected: ^(feat|fix|perf|chore|docs|refactor|test|build|ci|revert|feat!|fix!|perf!)(\([a-z0-9-]+\))?!?: .+" >&2
+            exit 1
+          fi
 
   build:
     runs-on: ${{ matrix.os }}
