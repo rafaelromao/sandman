@@ -26,6 +26,10 @@ jobs:
             build
             ci
             revert
+          requireScope: false
+          headerPattern: '^(feat|fix|perf|chore|docs|refactor|test|build|ci|revert|feat!|fix!|perf!)(\([a-z0-9-]+\))?!?: .+'
+          headerPatternCorrespondence: TYPE,SCOPE
+          validateSingleCommit: false
 
   build:
     runs-on: ${{ matrix.os }}

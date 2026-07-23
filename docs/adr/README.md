@@ -77,4 +77,4 @@ ADRs are numbered sequentially starting from `0001`. The template ADR (`0000`) i
 | 0034 | Empty-child Specification runs as a regular issue | accepted |
 | 0037 | Hermetic `gh` in pr-flow e2e tests | accepted |
 | 0038 | Badge marker — paginated idempotency check | accepted |
-| 0041 | Roll back Auto Mode (`--auto`, `--count`, `auto_max_count`) | accepted |
+| 0039 | Roll back Auto Mode (`--auto`, `--count`, `auto_max_count`) | accepted |

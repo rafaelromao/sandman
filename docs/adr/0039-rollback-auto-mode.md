@@ -1,4 +1,4 @@
-# ADR-0041: Roll back Auto Mode (`--auto`, `--count`, `auto_max_count`)
+# ADR-0039: Roll back Auto Mode (`--auto`, `--count`, `auto_max_count`)
 
 ## Status
 

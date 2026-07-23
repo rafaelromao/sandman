@@ -97,12 +97,21 @@ Pick the most accurate type for the change. Allowed types: `feat`, `fix`, `perf`
 ```bash
 COMMIT_TYPE="<type>"
 COMMIT_SCOPE="<scope-or-empty>"
+COMMIT_BREAKING="0"   # 1 if this is a breaking change, else 0
 COMMIT_SUBJECT="<one-line imperative description of the change>"
 
+# Conventional Commits headers place the breaking marker (`!`) AFTER the
+# optional scope, never between the type and the scope. So
+# `feat(scope)!: subject`, not `feat!(scope): subject`.
+BREAKING_MARK=""
+if [ "$COMMIT_BREAKING" = "1" ]; then
+  BREAKING_MARK="!"
+fi
+
 if [ -n "$COMMIT_SCOPE" ]; then
-  COMMIT_HEADER="$COMMIT_TYPE($COMMIT_SCOPE): $COMMIT_SUBJECT"
+  COMMIT_HEADER="$COMMIT_TYPE($COMMIT_SCOPE)${BREAKING_MARK}: $COMMIT_SUBJECT"
 else
-  COMMIT_HEADER="$COMMIT_TYPE: $COMMIT_SUBJECT"
+  COMMIT_HEADER="$COMMIT_TYPE${BREAKING_MARK}: $COMMIT_SUBJECT"
 fi
 
 git add -A

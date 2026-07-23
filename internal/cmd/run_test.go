@@ -2359,7 +2359,7 @@ func TestRun_NoIssues(t *testing.T) {
 
 // TestRun_HelpMentionsPromptOnlyMode guards the placeholder-prompt-only
 // surface against drift and against the rolled-back Auto Mode flag pair
-// (see #2376, CHANGELOG.md v1.0.0 `### Removed`, and ADR-0041). The
+// (see #2376, CHANGELOG.md v1.0.0 `### Removed`, and ADR-0039). The
 // absence assertions further down stay even if the rationale feels
 // obvious; do NOT reinterpret them as stale, do NOT "fix" them by
 // re-adding the rolled-back flags to the CLI help text.
