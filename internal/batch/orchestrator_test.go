@@ -515,6 +515,18 @@ func (s *spyEventLog) Read() ([]events.Event, error) {
 	return out, nil
 }
 
+// snapshot returns a copy of the events slice taken under the lock.
+// Tests use this for concurrent reads so the race detector does not
+// flag direct `spyLog.events` access from the main goroutine while
+// the orchestrator's run goroutines call Log() concurrently.
+func (s *spyEventLog) snapshot() []events.Event {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]events.Event, len(s.events))
+	copy(out, s.events)
+	return out
+}
+
 func (s *spyEventLog) RemoveEventsByIssue(issueNumber int) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -9217,10 +9229,15 @@ func TestOrchestrator_RunQueuedOnlyForWaitingIssues(t *testing.T) {
 
 	waitForSignal(t, blockerStarted, "expected blocker to start")
 
+	// Use the thread-safe snapshot rather than the un-synchronised
+	// spyLog.events slice; the orchestrator's run goroutines call
+	// Log() concurrently with this main goroutine, and a direct read
+	// races the write at orchestrator_test.go:505.
+	snapshot := spyLog.snapshot()
 	var queuedEvent *events.Event
-	for i := range spyLog.events {
-		if spyLog.events[i].Type == "run.queued" && spyLog.events[i].Issue == 100 {
-			queuedEvent = &spyLog.events[i]
+	for i := range snapshot {
+		if snapshot[i].Type == "run.queued" && snapshot[i].Issue == 100 {
+			queuedEvent = &snapshot[i]
 			break
 		}
 	}
@@ -9229,8 +9246,8 @@ func TestOrchestrator_RunQueuedOnlyForWaitingIssues(t *testing.T) {
 	}
 
 	var unblockedQueued bool
-	for i := range spyLog.events {
-		if spyLog.events[i].Type == "run.queued" && spyLog.events[i].Issue == 1 {
+	for i := range snapshot {
+		if snapshot[i].Type == "run.queued" && snapshot[i].Issue == 1 {
 			unblockedQueued = true
 			break
 		}
