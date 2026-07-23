@@ -36,6 +36,34 @@ For suggestions related to agent behavior, prompts, or domain vocabulary, use th
 - Reference the issue this change request addresses in the body (`Closes #<n>`, `Fixes #<n>`, or `Resolves #<n>`), not in the title.
 - Ensure all CI checks pass. The merge button only enables after both `CI / build` and `CI / semantic-pull-request` are green.
 
+### Feature branches
+
+When several related issues ship together as one initiative, group them under a feature branch cut from `main`. Issue branches are cut from the feature branch and change-requested back to it; the feature branch itself change-requests back to `main` once the last issue lands.
+
+- **Feature branch name** — `feat/<feature-name>`. Lowercase, hyphen-separated. Examples: `feat/release-pipeline-2026q3`, `feat/badge-mark-pagination`.
+- **Issue branch base** — issue branches are cut from the feature branch. The Sandman Go runtime reads `git.base_branch` from `.sandman/config.yaml` (default `main`) and accepts `sandman run --base-branch <feature>` to override; when an issue belongs to a feature-branch initiative, override the base.
+- **Change-request target** — issue change requests target the feature branch. The feature branch's own change request targets `main`.
+- **Branch lifecycle** — once a feature branch merges to `main`, delete it. Issue branches are deleted on their own merge.
+- **Conventional Commits title** — every change request, issue or feature, carries a Conventional Commits header (see [Conventional Commits](#conventional-commits) below and [`AGENTS.md`](AGENTS.md#branching-and-versioning-rules)).
+
+Example initiative:
+
+```
+main
+└── feat/release-pipeline-2026q3
+    ├── feat(skill): 955-conventional-pull-request-gate
+    ├── fix(workflow): 956-rename-go-to-ci
+    ├── docs(contributor): 957-conventional-commits-in-templates
+    ├── refactor(prompt): drop-rolled-back-auto-fields
+    ├── test(prflow): 955-conventional-titles-in-e2e-fixtures
+    ├── build(release): 956-goreleaser-multi-arch-config
+    └── ci(ruleset): 955-protect-main-with-required-status-checks
+```
+
+The seven change requests cover seven allowed types. Issue change requests PR back to `feat/release-pipeline-2026q3`. Once all seven merge, the feature branch's own change request (titled e.g. `feat: ship the release pipeline initiative`) lands on `main`, and `feat/release-pipeline-2026q3` is deleted. The SemVer bump on `main` is the aggregate of the seven issue change requests plus the feature-branch change request.
+
+The full rule lives in [`AGENTS.md`](AGENTS.md#feature-branches).
+
 ## Code Contributions
 
 ### Prerequisites

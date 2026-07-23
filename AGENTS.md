@@ -142,6 +142,32 @@ These rules apply to every change-request an agent opens against this repository
 - **Versioning or SemVer rule change** → update this section and `CONTRIBUTING.md`.
 - **Repository-level agent-docs change** → update `AGENTS.md` and the relevant `docs/development/` file.
 
+### Feature branches
+
+When several related issues need to ship together as one initiative, group them under a feature branch cut from `main`. The feature branch is the merge target for each issue's change request, and is itself change-requested back to `main` once the last issue lands.
+
+- **Feature branch name** — `feat/<feature-name>`. Lowercase, hyphen-separated. Examples: `feat/release-pipeline-2026q3`, `feat/badge-mark-pagination`.
+- **Issue branch base** — issue branches named `sandman/<issue-no>-<slug>` (the runtime's worktree branch name) are cut from the feature branch, not from `main`. The Sandman Go runtime resolves the base via `git.base_branch`; override the default `main` with `sandman run --base-branch <feature>` (or `.sandman/config.yaml:git.base_branch`) when running an issue that belongs to a feature-branch initiative.
+- **Change-request target** — issue change requests target the feature branch. The feature branch's own change request targets `main`.
+- **Branch lifecycle** — once a feature branch merges to `main`, delete it. Issue branches are deleted on their own merge.
+- **Conventional Commits title** — every change request, issue or feature, carries a Conventional Commits header. The `feat:` prefix on the feature branch's change request indicates a SemVer minor bump; the issue change requests can use any allowed type.
+
+Example initiative:
+
+```
+main
+└── feat/release-pipeline-2026q3
+    ├── feat(skill): 955-conventional-pull-request-gate
+    ├── fix(workflow): 956-rename-go-to-ci
+    ├── docs(contributor): 957-conventional-commits-in-templates
+    ├── refactor(prompt): drop-rolled-back-auto-fields
+    ├── test(prflow): 955-conventional-titles-in-e2e-fixtures
+    ├── build(release): 956-goreleaser-multi-arch-config
+    └── ci(ruleset): 955-protect-main-with-required-status-checks
+```
+
+The seven change requests cover seven allowed types. Issue change requests PR back to `feat/release-pipeline-2026q3`. Once all seven merge, the feature branch's own change request (titled e.g. `feat: ship the release pipeline initiative`) lands on `main`, and `feat/release-pipeline-2026q3` is deleted. The SemVer bump on `main` is the aggregate of the seven issue change requests plus the feature-branch change request.
+
 ## Skill content constraints
 
 Skills under `internal/skill/sandman/` describe how coding agents work with the **user-facing** concepts (`.sandman/` state files, public CLI, review commands, worktrees, ADRs). They must not reference Sandman's **internals** — Go package paths under `internal/`, Go type and function names like `processPR` / `MarkSeen` / `launchReview`, or other implementation details that may shift.

@@ -35,6 +35,10 @@ The default `make check` target runs `gofmt -w .`, `go vet ./...`, and `go test 
 
 Change-request titles against `main` are gated by the `CI / semantic-pull-request` status check. Titles must follow the Conventional Commits format — the full regex, the allowed type list, and the SemVer derivation rules are documented in the [Branching and versioning rules](../../AGENTS.md#branching-and-versioning-rules) section of `AGENTS.md`. Keep titles to one imperative sentence with no trailing period and link issues in the body (`Closes #<n>` or `Fixes #<n>`), not in the title.
 
+## Feature branches
+
+When several related issues ship together as one initiative, group them under a feature branch cut from `main`. Issue branches are cut from the feature branch, and the feature branch itself change-requests back to `main` once all issues land. The full rule and an example initiative tree live in the [Feature branches](../../AGENTS.md#feature-branches) subsection of `AGENTS.md`. To run an issue against a feature branch instead of `main`, pass `sandman run --base-branch <feature>` or set `git.base_branch` in `.sandman/config.yaml`.
+
 ## Build locally
 
 ```bash
