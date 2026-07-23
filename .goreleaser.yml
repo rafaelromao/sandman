@@ -1,0 +1,42 @@
+version: 2
+
+project_name: sandman
+
+archives:
+  - format: tar.gz
+    name_template: >-
+      sandman_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+
+builds:
+  - dir: ./cmd/sandman
+    id: linux-amd64
+    goos:
+      - linux
+    goarch:
+      - amd64
+    ldflags:
+      - -X main.version={{ .Version }}
+
+  - dir: ./cmd/sandman
+    id: darwin-amd64
+    goos:
+      - darwin
+    goarch:
+      - amd64
+    ldflags:
+      - -X main.version={{ .Version }}
+
+  - dir: ./cmd/sandman
+    id: darwin-arm64
+    goos:
+      - darwin
+    goarch:
+      - arm64
+    ldflags:
+      - -X main.version={{ .Version }}
+
+snapshot:
+  name_template: "{{ .Version }}-SNAPSHOT-{{ .ShortCommit }}"
+
+checksum:
+  name_template: "checksums.txt"
