@@ -925,10 +925,15 @@ func TestWorktreeSandbox_OverrideReconcileDetachedHead(t *testing.T) {
 }
 
 func TestWorktreeSandbox_StartPreservesErrorWhenReconcileDisabled(t *testing.T) {
-	// The main repo is checked out on the very branch we need to delete.
-	// `git branch -D` from the main-repo cwd refuses with the
-	// "Cannot delete branch ... checked out at ..." error. With
-	// --no-reconcile-stranded, that error must surface unchanged.
+	// The previous behavior was: when the main repo holds the
+	// target branch and `git branch -D` refuses, the override
+	// path surfaced that error if `StrandedReconcile` was
+	// disabled. The new behavior (PR #2377) reuses the
+	// existing branch via `git worktree add -f <path> <branch>`
+	// instead of deleting-and-recreating, so there is no
+	// "delete stale branch" error to surface. The override
+	// path now succeeds whether the operator enables
+	// `StrandedReconcile` or not.
 	dir := t.TempDir()
 	initGitRepo(t, dir)
 	const branch = "42-fix-bug"
@@ -936,21 +941,29 @@ func TestWorktreeSandbox_StartPreservesErrorWhenReconcileDisabled(t *testing.T) 
 
 	s := NewWorktreeSandbox(dir, filepath.Join(dir, ".sandman", "worktrees"), branch, "main")
 
-	err := s.Start(SandboxStart{Override: true, StrandedReconcile: false})
-	if err == nil {
-		t.Fatal("expected error when main repo is checked out on branch and reconcile is disabled")
+	// Override with the parent on the branch. The override
+	// path now detaches the parent and reuses the existing
+	// branch — no error regardless of `StrandedReconcile`.
+	if err := s.Start(SandboxStart{Override: true, StrandedReconcile: false}); err != nil {
+		t.Fatalf("expected override to succeed by reusing the existing branch, got: %v", err)
 	}
-	if !strings.Contains(err.Error(), "delete stale branch") {
-		t.Errorf("expected error to mention 'delete stale branch', got %q", err.Error())
-	}
-	if !strings.Contains(err.Error(), branch) {
-		t.Errorf("expected error to mention branch %q, got %q", branch, err.Error())
-	}
-
 	t.Cleanup(func() {
-		runGit(t, dir, "checkout", "main")
+		s.Stop()
 		removeBranch(t, dir, branch)
 	})
+
+	// Verify the operator's branch was preserved (not deleted
+	// and re-created from source). The override reused the
+	// branch instead of dropping it.
+	revCmd := exec.Command("git", "-C", dir, "rev-parse", "--verify", "refs/heads/"+branch)
+	if _, err := revCmd.CombinedOutput(); err != nil {
+		t.Errorf("expected refs/heads/%s to be preserved, got: %v", branch, err)
+	}
+	// Verify the worktree was created and is on the branch.
+	wtHead := runGit(t, s.WorkDir(), "symbolic-ref", "--quiet", "HEAD")
+	if strings.TrimSpace(wtHead) != "refs/heads/"+branch {
+		t.Errorf("expected worktree to be on %s, got %q", "refs/heads/"+branch, strings.TrimSpace(wtHead))
+	}
 }
 
 func TestWorktreeSandbox_RecoversFromMainRepoBranch_StrandedWorktreePath(t *testing.T) {
@@ -958,7 +971,9 @@ func TestWorktreeSandbox_RecoversFromMainRepoBranch_StrandedWorktreePath(t *test
 	// stranded worktree lives at <worktreeBase>/<branch> on a different
 	// branch. Start() should detect the stranded worktree, run
 	// `git -C <strandedPath> branch -D <branch>` from inside the worktree,
-	// and then create the worktree as normal.
+	// and then create the worktree as normal. The main repo must remain
+	// on the issue branch (the fix preserves the operator's HEAD commit
+	// — see TestWorktreeSandbox_StartPreservesMainRepoBranch).
 	dir := t.TempDir()
 	_ = initGitRepoWithRemote(t, dir)
 	commitGitFile(t, dir, "tracked.txt", "base\n", "base")
@@ -976,6 +991,8 @@ func TestWorktreeSandbox_RecoversFromMainRepoBranch_StrandedWorktreePath(t *test
 	addStrandedWorktree(t, dir, worktreeBase, branch, otherBranch)
 
 	runGit(t, dir, "checkout", branch)
+
+	parentCommitBefore := runGit(t, dir, "rev-parse", "HEAD")
 
 	s := NewWorktreeSandbox(dir, worktreeBase, branch, "main")
 
@@ -995,17 +1012,26 @@ func TestWorktreeSandbox_RecoversFromMainRepoBranch_StrandedWorktreePath(t *test
 	if !strings.Contains(headRef, branch) {
 		t.Errorf("expected worktree HEAD to be on %q, got %q", branch, headRef)
 	}
-	mainHeadRef := runGit(t, dir, "symbolic-ref", "HEAD")
-	if !strings.Contains(mainHeadRef, "main") {
-		t.Errorf("expected main repo to be back on main after recovery, got %q", mainHeadRef)
+	parentCommitAfter := runGit(t, dir, "rev-parse", "HEAD")
+	if strings.TrimSpace(parentCommitAfter) != strings.TrimSpace(parentCommitBefore) {
+		t.Errorf("parent repo HEAD commit moved during Start(): before=%q after=%q",
+			strings.TrimSpace(parentCommitBefore), strings.TrimSpace(parentCommitAfter))
+	}
+	symRefCmd := exec.Command("git", "-C", dir, "symbolic-ref", "--quiet", "HEAD")
+	symRefOut, _ := symRefCmd.CombinedOutput()
+	if strings.TrimSpace(string(symRefOut)) == "refs/heads/main" {
+		t.Errorf("parent repo HEAD moved to source branch refs/heads/main — the buggy behaviour we are fixing")
 	}
 }
 
 func TestWorktreeSandbox_RecoversFromMainRepoBranch_MainRepoCheckoutPath(t *testing.T) {
 	// The main repo is checked out on the branch we need to delete, and
 	// there is NO stranded worktree at <worktreeBase>/<branch>. Start()
-	// should force-checkout the source branch in the main repo and
-	// retry the delete, then create the worktree as normal.
+	// should detach HEAD in the parent repo (preserving the working-tree
+	// commit) and drop the stray ref, then create the worktree as
+	// normal. The parent repo must NOT be moved to the source branch
+	// (the fix preserves the operator's HEAD commit — see
+	// TestWorktreeSandbox_StartPreservesMainRepoBranch).
 	dir := t.TempDir()
 	_ = initGitRepoWithRemote(t, dir)
 	commitGitFile(t, dir, "tracked.txt", "base\n", "base")
@@ -1019,6 +1045,8 @@ func TestWorktreeSandbox_RecoversFromMainRepoBranch_MainRepoCheckoutPath(t *test
 
 	runGit(t, dir, "branch", branch)
 	runGit(t, dir, "checkout", branch)
+
+	parentCommitBefore := runGit(t, dir, "rev-parse", "HEAD")
 
 	s := NewWorktreeSandbox(dir, worktreeBase, branch, "main")
 
@@ -1037,9 +1065,15 @@ func TestWorktreeSandbox_RecoversFromMainRepoBranch_MainRepoCheckoutPath(t *test
 	if !strings.Contains(headRef, branch) {
 		t.Errorf("expected worktree HEAD to be on %q, got %q", branch, headRef)
 	}
-	mainHeadRef := runGit(t, dir, "symbolic-ref", "HEAD")
-	if !strings.Contains(mainHeadRef, "main") {
-		t.Errorf("expected main repo to be back on main after recovery, got %q", mainHeadRef)
+	parentCommitAfter := runGit(t, dir, "rev-parse", "HEAD")
+	if strings.TrimSpace(parentCommitAfter) != strings.TrimSpace(parentCommitBefore) {
+		t.Errorf("parent repo HEAD commit moved during Start(): before=%q after=%q",
+			strings.TrimSpace(parentCommitBefore), strings.TrimSpace(parentCommitAfter))
+	}
+	symRefCmd := exec.Command("git", "-C", dir, "symbolic-ref", "--quiet", "HEAD")
+	symRefOut, _ := symRefCmd.CombinedOutput()
+	if strings.TrimSpace(string(symRefOut)) == "refs/heads/main" {
+		t.Errorf("parent repo HEAD moved to source branch refs/heads/main — the buggy behaviour we are fixing")
 	}
 }
 
@@ -1093,7 +1127,7 @@ func TestIsBranchCheckedOutError_OnlyMatchesCheckedOutOrWorktreeMessages(t *test
 // override path uses this helper to recover from `git branch -D` failures
 // caused by the branch being checked out in a foreign worktree. The
 // helper must extract the worktree path from both modern and legacy
-// error message formats so it can be passed to releaseBranchInWorktree.
+// error message formats so it can be passed to ReleaseBranchInWorktree.
 func TestParseCheckedOutPath_ExtractsWorktreePath(t *testing.T) {
 	cases := []struct {
 		name string
@@ -1260,64 +1294,48 @@ func TestStrandedWorktree_ResolvesRelativeWorktreeBase(t *testing.T) {
 	}
 }
 
-func TestWorktreeSandbox_StartCallsReconcileStrandedFnSeam(t *testing.T) {
-	// The recovery loop is dispatched through the package-level
-	// reconcileStrandedFn seam (ADR-0027). When a `git branch -D`
-	// failure matches the "checked out at" pattern, the seam is
-	// invoked with the expected (repoPath, worktreeBase, branch,
-	// sourceBranch) tuple.
+func TestWorktreeSandbox_StartDoesNotInvokeReconcileSeam(t *testing.T) {
+	// PR #2377 rewrote the override path to reuse the existing
+	// branch via `git worktree add -f <path> <branch>` instead of
+	// delete-and-recreate. With the new flow, the override path
+	// never calls the `reconcileStrandedFn` seam (there is no
+	// `git branch -D` to recover from). The seam is still wired
+	// up for `ClearIssueArtifacts` recovery (see the orchestrator
+	// tests), but `WorktreeSandbox.Start` no longer reaches it.
+	//
+	// This test pins the new contract: a stranded main-repo
+	// holder with the seam armed is observed as a no-op (the
+	// seam is not called), and Start succeeds because the
+	// override path detaches the parent and reuses the branch.
 	prev := reconcileStrandedFn
 	defer func() { reconcileStrandedFn = prev }()
 
-	var captured struct {
-		repoPath     string
-		worktreeBase string
-		branch       string
-		sourceBranch string
-		called       bool
-	}
+	called := false
 	reconcileStrandedFn = func(repoPath, worktreeBase, branch, sourceBranch string) error {
-		captured.repoPath = repoPath
-		captured.worktreeBase = worktreeBase
-		captured.branch = branch
-		captured.sourceBranch = sourceBranch
-		captured.called = true
+		called = true
 		return nil
 	}
 
 	dir := t.TempDir()
 	initGitRepo(t, dir)
 	const branch = "42-fix-bug"
-	runGit(t, dir, "checkout", "-b", branch)
+	runGit(t, dir, "branch", branch)
+	runGit(t, dir, "checkout", branch)
 
 	worktreeBase := filepath.Join(dir, ".sandman", "worktrees")
 	s := NewWorktreeSandbox(dir, worktreeBase, branch, "main")
 
-	// The seam will silently succeed but no worktree exists yet at
-	// the worktreeBase, so the worktree-add step still fails. We
-	// only need the recovery to fire and the seam to be invoked.
-	_ = s.Start(SandboxStart{Override: true, StrandedReconcile: true})
-
-	if !captured.called {
-		t.Fatal("expected reconcileStrandedFn seam to be called during Start")
+	if err := s.Start(SandboxStart{Override: true, StrandedReconcile: true}); err != nil {
+		t.Fatalf("Start with override on parent holding the branch should succeed via reuse: %v", err)
 	}
-	if captured.repoPath != dir {
-		t.Errorf("seam repoPath: got %q, want %q", captured.repoPath, dir)
-	}
-	if captured.worktreeBase != worktreeBase {
-		t.Errorf("seam worktreeBase: got %q, want %q", captured.worktreeBase, worktreeBase)
-	}
-	if captured.branch != branch {
-		t.Errorf("seam branch: got %q, want %q", captured.branch, branch)
-	}
-	if captured.sourceBranch != "main" {
-		t.Errorf("seam sourceBranch: got %q, want %q", captured.sourceBranch, "main")
-	}
-
 	t.Cleanup(func() {
-		runGit(t, dir, "checkout", "main")
+		s.Stop()
 		removeBranch(t, dir, branch)
 	})
+
+	if called {
+		t.Errorf("reconcileStrandedFn seam should NOT be invoked from WorktreeSandbox.Start after the PR #2377 reuse-the-branch refactor")
+	}
 }
 
 func TestWorktreeSandbox_StartReattachesPrunableWorktree_DirIntact(t *testing.T) {
@@ -1493,7 +1511,7 @@ func TestReleaseBranchInWorktree_NoOpOnMissingPath(t *testing.T) {
 	dir := t.TempDir()
 	missing := filepath.Join(dir, "does-not-exist")
 
-	if err := releaseBranchInWorktree(missing); err != nil {
+	if err := ReleaseBranchInWorktree(missing); err != nil {
 		t.Fatalf("expected nil for missing path, got: %v", err)
 	}
 
@@ -1503,7 +1521,7 @@ func TestReleaseBranchInWorktree_NoOpOnMissingPath(t *testing.T) {
 }
 
 // TestReleaseBranchInWorktree_DetachesBranchWithoutRemovingWorktree
-// pins the core behaviour: calling releaseBranchInWorktree detaches
+// pins the core behaviour: calling ReleaseBranchInWorktree detaches
 // the worktree's HEAD so `git branch -D` becomes legal from the main
 // repo, while leaving the worktree directory, `.git` gitlink, and
 // `.git/worktrees/<dir>` registration intact.
@@ -1526,8 +1544,8 @@ func TestReleaseBranchInWorktree_DetachesBranchWithoutRemovingWorktree(t *testin
 		t.Fatalf("precondition: expected worktree list to include %q, got:\n%s", wtPath, listBefore)
 	}
 
-	if err := releaseBranchInWorktree(wtPath); err != nil {
-		t.Fatalf("releaseBranchInWorktree failed: %v", err)
+	if err := ReleaseBranchInWorktree(wtPath); err != nil {
+		t.Fatalf("ReleaseBranchInWorktree failed: %v", err)
 	}
 
 	if _, err := os.Stat(wtPath); err != nil {
@@ -1628,6 +1646,82 @@ func TestWorktreeSandbox_OverrideDoesNotDeleteForeignLiveWorktree(t *testing.T) 
 // acceptance criterion #6: a foreign worktree that holds a DIFFERENT
 // branch from `s.branch` must be left completely untouched by the
 // override recovery path. No reattach, no prune, no removal.
+// TestWorktreeSandbox_OverrideForeignReleaseFailed_ParentHEADPreserved
+// pins the failed-release fallback added in response to PR #2377
+// review feedback. When the foreign-worktree release in Start() fails
+// (e.g. because the foreign's `.git` gitlink was corrupted out-of-band),
+// the subsequent `git branch -D` retry fails with "checked out at"
+// and the recovery loop falls through to `defaultReconcileStrandedBranch`.
+// The parent-HEAD guard inside that seam must then refuse to detach the
+// parent and refuse to drop the ref — even though the foreign still
+// holds the branch — so the operator's working-tree commit is preserved
+// and the foreign worktree's symbolic HEAD does not dangle.
+//
+// Regression test for the safety contract pinned in the PR #2377 review.
+func TestWorktreeSandbox_OverrideForeignReleaseFailed_ParentHEADPreserved(t *testing.T) {
+	repoDir := t.TempDir()
+	initGitRepo(t, repoDir)
+
+	const branch = "sandman/2377-failed-release"
+	runGit(t, repoDir, "branch", branch)
+
+	worktreeBase := filepath.Join(repoDir, ".sandman", "worktrees")
+	if err := os.MkdirAll(worktreeBase, 0755); err != nil {
+		t.Fatalf("mkdir worktreeBase: %v", err)
+	}
+
+	// Foreign worktree at a non-canonical path, holding the branch.
+	foreignPath := filepath.Join(worktreeBase, "review-2377-foreign")
+	runGit(t, repoDir, "worktree", "add", foreignPath, branch)
+
+	// Sabotage the foreign worktree's .git gitlink so the
+	// `git -C <foreignPath> checkout --detach` call inside
+	// ReleaseBranchInWorktree cannot reach the foreign worktree's
+	// gitdir. The foreign worktree registration under
+	// `.git/worktrees/<name>` is left intact, so `ForeignStrandedWorktree`
+	// still detects the holder — but the release fails when called.
+	gitlinkPath := filepath.Join(foreignPath, ".git")
+	if err := os.WriteFile(gitlinkPath, []byte("gitdir: /tmp/sandman-nonexistent-gitdir-2377\n"), 0644); err != nil {
+		t.Fatalf("sabotage foreign .git: %v", err)
+	}
+	t.Cleanup(func() {
+		// Restore the gitlink so worktree cleanup can find the gitdir.
+		_ = os.RemoveAll(repoDir)
+	})
+
+	// Sanity: ForeignStrandedWorktree still detects the foreign.
+	info, ok := ForeignStrandedWorktree(repoDir, worktreeBase, branch)
+	if !ok {
+		t.Fatalf("precondition: expected ForeignStrandedWorktree to detect the foreign at %q, got info=%+v", foreignPath, info)
+	}
+
+	parentCommitBefore := runGit(t, repoDir, "rev-parse", "HEAD")
+
+	// Sanity: the parent's symbolic HEAD must point to refs/heads/main,
+	// not refs/heads/<branch>. If it did point to <branch>, the
+	// recovery would correctly fire the parent-HEAD guard for a
+	// different reason (parent HEAD matches target) and the test
+	// would not exercise the "foreign holder race" path.
+	symRefCmd := exec.Command("git", "-C", repoDir, "symbolic-ref", "--quiet", "HEAD")
+	symRefOut, _ := symRefCmd.CombinedOutput()
+	if strings.TrimSpace(string(symRefOut)) != "refs/heads/main" {
+		t.Fatalf("precondition: parent repo HEAD should be refs/heads/main, got %q", strings.TrimSpace(string(symRefOut)))
+	}
+
+	sb := NewWorktreeSandbox(repoDir, worktreeBase, branch, "main")
+	_ = sb.Start(SandboxStart{Override: true, StrandedReconcile: true})
+
+	// Regardless of whether Start() ultimately succeeds or fails
+	// (the foreign still holds the branch, so `git branch -D` and
+	// `git worktree add` may both fail), the parent HEAD commit
+	// must NOT have been mutated.
+	parentCommitAfter := runGit(t, repoDir, "rev-parse", "HEAD")
+	if strings.TrimSpace(parentCommitAfter) != strings.TrimSpace(parentCommitBefore) {
+		t.Errorf("parent repo HEAD commit moved despite failed-release fallback: before=%q after=%q",
+			strings.TrimSpace(parentCommitBefore), strings.TrimSpace(parentCommitAfter))
+	}
+}
+
 func TestWorktreeSandbox_OverrideDoesNotPruneUnrelatedWorktrees(t *testing.T) {
 	repoDir := t.TempDir()
 	initGitRepo(t, repoDir)
@@ -2101,5 +2195,309 @@ func TestWorktreeSandbox_ContinueReturnsTargetedErrorOnUncontinuableState(t *tes
 				removeBranch(t, dir, "sandman/other-branch")
 			})
 		})
+	}
+}
+
+// TestWorktreeSandbox_StartPreservesMainRepoBranch pins the contract
+// that WorktreeSandbox.Start MUST NOT silently switch the operator's
+// working copy to a different branch. The stranded-reconcile flow used
+// to recover a "branch checked out in the main repo" state by
+// force-checking out the source branch in the parent repo
+// (defaultReconcileStrandedBranch in worktree.go). That side effect
+// was hostile to operators who keep their own working copy on a
+// feature branch while orchestrating runs from the same checkout — the
+// run silently moved their HEAD to the source branch underneath them.
+//
+// The fix replaces the in-parent-repo `git checkout -f <sourceBranch>`
+// step with `git checkout --detach` followed by
+// `git branch -D <branch>` (which re-checks worktree holders atomically
+// with the delete). The working tree contents are untouched; the
+// operator's view of their files does not change. The branch is
+// re-used later in Start() by `git worktree add -f <path> <branch>`,
+// so the operator can `git checkout
+// <branch>` again from the detached HEAD to recover their branch.
+// The test asserts three invariants:
+//   - The parent repo's working-tree commit (HEAD's target) is
+//     unchanged across Start().
+//   - The parent's working-tree file set is unchanged.
+//   - The parent repo is NOT checked out on the source branch after
+//     Start() (this was the buggy behaviour we are fixing).
+func TestWorktreeSandbox_StartPreservesMainRepoBranch(t *testing.T) {
+	dir := t.TempDir()
+	_ = initGitRepoWithRemote(t, dir)
+	commitGitFile(t, dir, "tracked.txt", "base\n", "base")
+	runGit(t, dir, "push", "origin", "main")
+
+	worktreeBase := filepath.Join(dir, ".sandman", "worktrees")
+	if err := os.MkdirAll(worktreeBase, 0755); err != nil {
+		t.Fatalf("mkdir worktreeBase: %v", err)
+	}
+	branch := "sandman/42-fix-bug"
+
+	// The operator has the parent repo checked out on the issue branch
+	// (e.g. they were inspecting the branch in their editor before
+	// triggering --override). This is the state that previously
+	// triggered the "force checkout sourceBranch in main repo" path.
+	runGit(t, dir, "branch", branch)
+	runGit(t, dir, "checkout", branch)
+
+	// Snapshot the parent's HEAD commit so we can prove the working
+	// tree was not moved to a different commit.
+	parentCommitBefore := runGit(t, dir, "rev-parse", "HEAD")
+	parentHeadRefBefore := strings.TrimSpace(runGit(t, dir, "symbolic-ref", "--quiet", "HEAD"))
+	if parentHeadRefBefore != "refs/heads/"+branch {
+		t.Fatalf("precondition: parent repo HEAD should be %q, got %q", branch, parentHeadRefBefore)
+	}
+
+	// Record the working-tree file set. The fix must not delete or
+	// rewrite these files as part of detaching HEAD.
+	trackedBytesBefore, err := os.ReadFile(filepath.Join(dir, "tracked.txt"))
+	if err != nil {
+		t.Fatalf("read tracked.txt before Start: %v", err)
+	}
+
+	s := NewWorktreeSandbox(dir, worktreeBase, branch, "main")
+	if err := s.Start(SandboxStart{Override: true, StrandedReconcile: true}); err != nil {
+		t.Fatalf("Start() should succeed without mutating the parent repo's HEAD, got: %v", err)
+	}
+	t.Cleanup(func() {
+		s.Stop()
+		removeBranch(t, dir, branch)
+	})
+
+	parentCommitAfter := runGit(t, dir, "rev-parse", "HEAD")
+	if strings.TrimSpace(parentCommitAfter) != strings.TrimSpace(parentCommitBefore) {
+		t.Errorf("parent repo HEAD commit changed during Start(): before=%q after=%q (operator's working copy was moved to a different commit)",
+			strings.TrimSpace(parentCommitBefore), strings.TrimSpace(parentCommitAfter))
+	}
+
+	// The parent repo should NOT have been moved to the source branch
+	// (the buggy behaviour we are fixing). `git symbolic-ref` exits
+	// non-zero on a detached HEAD, so use exec.Command directly.
+	symRefCmd := exec.Command("git", "-C", dir, "symbolic-ref", "--quiet", "HEAD")
+	symRefOut, _ := symRefCmd.CombinedOutput()
+	parentHeadRefAfter := strings.TrimSpace(string(symRefOut))
+	if parentHeadRefAfter == "refs/heads/main" {
+		t.Errorf("parent repo HEAD moved to source branch refs/heads/main — the buggy behaviour we are fixing")
+	}
+
+	trackedBytesAfter, err := os.ReadFile(filepath.Join(dir, "tracked.txt"))
+	if err != nil {
+		t.Fatalf("read tracked.txt after Start: %v", err)
+	}
+	if string(trackedBytesAfter) != string(trackedBytesBefore) {
+		t.Errorf("parent repo working-tree contents changed during Start(): before=%q after=%q",
+			string(trackedBytesBefore), string(trackedBytesAfter))
+	}
+
+	if _, err := os.Stat(filepath.Join(s.WorkDir(), "tracked.txt")); err != nil {
+		t.Errorf("expected tracked.txt in worktree after recovery, got: %v", err)
+	}
+}
+
+// TestWorktreeSandbox_StartPreservesMainRepoBranch_OnMainRepoBranch covers
+// the inverse direction: the operator is on the source/base branch in the
+// parent repo (the canonical `git status` state), and the issue branch
+// exists as a stale ref that was never checked out anywhere. Start() must
+// still not flip the parent repo onto the issue branch as a side effect of
+// any recovery step.
+func TestWorktreeSandbox_StartPreservesMainRepoBranch_OnMainRepoBranch(t *testing.T) {
+	dir := t.TempDir()
+	_ = initGitRepoWithRemote(t, dir)
+	commitGitFile(t, dir, "tracked.txt", "base\n", "base")
+	runGit(t, dir, "push", "origin", "main")
+
+	worktreeBase := filepath.Join(dir, ".sandman", "worktrees")
+	if err := os.MkdirAll(worktreeBase, 0755); err != nil {
+		t.Fatalf("mkdir worktreeBase: %v", err)
+	}
+	branch := "sandman/42-fix-bug"
+
+	// Parent repo is on main (the canonical operator state). The issue
+	// branch exists as a stale ref from a prior run.
+	runGit(t, dir, "branch", branch)
+
+	parentHeadBefore := runGit(t, dir, "symbolic-ref", "HEAD")
+	if strings.TrimSpace(parentHeadBefore) != "refs/heads/main" {
+		t.Fatalf("precondition: parent repo HEAD should be refs/heads/main, got %q", parentHeadBefore)
+	}
+
+	s := NewWorktreeSandbox(dir, worktreeBase, branch, "main")
+	if err := s.Start(SandboxStart{Override: true, StrandedReconcile: true}); err != nil {
+		t.Fatalf("Start() should succeed, got: %v", err)
+	}
+	t.Cleanup(func() {
+		s.Stop()
+		removeBranch(t, dir, branch)
+	})
+
+	parentHeadAfter := runGit(t, dir, "symbolic-ref", "HEAD")
+	if strings.TrimSpace(parentHeadAfter) != "refs/heads/main" {
+		t.Errorf("parent repo HEAD should remain on main, got %q (operator-facing worktree was mutated)", strings.TrimSpace(parentHeadAfter))
+	}
+
+	if _, err := os.Stat(filepath.Join(s.WorkDir(), "tracked.txt")); err != nil {
+		t.Errorf("expected tracked.txt in worktree after Start(), got: %v", err)
+	}
+}
+
+// TestDefaultReconcileStrandedBranch_RefusesWhenParentHEADMismatches pins
+// the safety guard added in response to PR #2377 review feedback. When a
+// foreign worktree holder race leaves the parent HEAD on a branch other
+// than the target, the recovery loop must refuse to detach the parent
+// (which would silently mutate the operator's HEAD) and refuse to drop
+// the ref (which would leave the foreign worktree's symbolic HEAD
+// dangling against a deleted ref). The guard is verified via the
+// reconcileStrandedFn seam.
+func TestDefaultReconcileStrandedBranch_RefusesWhenParentHEADMismatches(t *testing.T) {
+	dir := t.TempDir()
+	initGitRepo(t, dir)
+
+	const branch = "sandman/42-fix-bug"
+	runGit(t, dir, "branch", branch)
+
+	// Parent HEAD is on main (a foreign worktree is the simulated
+	// holder — race condition). The branch ref exists but the parent
+	// is on a different branch.
+	parentHeadBefore := runGit(t, dir, "rev-parse", "HEAD")
+
+	worktreeBase := filepath.Join(dir, ".sandman", "worktrees")
+	if err := os.MkdirAll(worktreeBase, 0755); err != nil {
+		t.Fatalf("mkdir worktreeBase: %v", err)
+	}
+
+	err := defaultReconcileStrandedBranch(dir, worktreeBase, branch, "main")
+	if err == nil {
+		t.Fatalf("expected defaultReconcileStrandedBranch to refuse when parent HEAD is %q and target branch is %q, got nil error", "refs/heads/main", branch)
+	}
+	if !strings.Contains(err.Error(), "main repo HEAD is") || !strings.Contains(err.Error(), "not the target branch") {
+		t.Errorf("expected refusal-with-explanation error, got: %v", err)
+	}
+
+	// Parent HEAD commit must be unchanged after the refused call.
+	parentHeadAfter := runGit(t, dir, "rev-parse", "HEAD")
+	if strings.TrimSpace(parentHeadAfter) != strings.TrimSpace(parentHeadBefore) {
+		t.Errorf("parent repo HEAD commit moved despite guard: before=%q after=%q",
+			strings.TrimSpace(parentHeadBefore), strings.TrimSpace(parentHeadAfter))
+	}
+
+	// Branch ref must still exist (ref-drop was refused).
+	revCmd := exec.Command("git", "-C", dir, "rev-parse", "--verify", "refs/heads/"+branch)
+	if _, err := revCmd.CombinedOutput(); err != nil {
+		t.Errorf("branch %q was dropped despite guard: %v", branch, err)
+	}
+}
+
+// TestDefaultReconcileStrandedBranch_RefusesWhenParentHEADDetached pins
+// the detached-HEAD guard added in response to PR #2377 review feedback.
+// When the parent HEAD is already detached, we cannot tell whether the
+// parent or a foreign worktree holds the branch, so the recovery loop
+// must refuse to drop the ref (which would risk deleting a branch a
+// foreign worktree still holds).
+func TestDefaultReconcileStrandedBranch_RefusesWhenParentHEADDetached(t *testing.T) {
+	dir := t.TempDir()
+	initGitRepo(t, dir)
+
+	const branch = "sandman/42-fix-bug"
+	runGit(t, dir, "branch", branch)
+
+	// Detach HEAD in the parent repo.
+	runGit(t, dir, "checkout", "--detach")
+
+	parentCommitBefore := runGit(t, dir, "rev-parse", "HEAD")
+
+	worktreeBase := filepath.Join(dir, ".sandman", "worktrees")
+	if err := os.MkdirAll(worktreeBase, 0755); err != nil {
+		t.Fatalf("mkdir worktreeBase: %v", err)
+	}
+
+	err := defaultReconcileStrandedBranch(dir, worktreeBase, branch, "main")
+	if err == nil {
+		t.Fatalf("expected defaultReconcileStrandedBranch to refuse when parent HEAD is detached, got nil error")
+	}
+	if !strings.Contains(err.Error(), "not a symbolic ref") {
+		t.Errorf("expected refusal-with-explanation error, got: %v", err)
+	}
+
+	// Parent HEAD commit must be unchanged after the refused call.
+	parentCommitAfter := runGit(t, dir, "rev-parse", "HEAD")
+	if strings.TrimSpace(parentCommitAfter) != strings.TrimSpace(parentCommitBefore) {
+		t.Errorf("parent repo HEAD commit moved despite guard: before=%q after=%q",
+			strings.TrimSpace(parentCommitBefore), strings.TrimSpace(parentCommitAfter))
+	}
+
+	// Branch ref must still exist (ref-drop was refused).
+	revCmd := exec.Command("git", "-C", dir, "rev-parse", "--verify", "refs/heads/"+branch)
+	if _, err := revCmd.CombinedOutput(); err != nil {
+		t.Errorf("branch %q was dropped despite guard: %v", branch, err)
+	}
+}
+
+// TestDefaultReconcileStrandedBranch_AcceptsForeignHolderAfterDetach pins
+// the TOCTOU-race fix from PR #2377 review feedback. The recovery loop
+// uses `git branch -D` (rather than raw `git update-ref -d`) after
+// detaching the parent, so a sibling worktree that checks out the
+// branch between the detach and the delete is preserved — `git branch
+// -D` re-checks worktree holders atomically with the ref-drop.
+//
+// The test sets up the post-detach state directly (parent detached
+// at the branch tip, foreign worktree holds the branch) and asserts
+// that `git branch -D` from the parent fails with a worktree-holder
+// error rather than silently dropping the ref. This is the safety
+// guarantee the seam's `git branch -D` (rather than `git update-ref
+// -d`) provides — if the test ever stops failing, the seam's safety
+// guarantee is gone.
+func TestDefaultReconcileStrandedBranch_AcceptsForeignHolderAfterDetach(t *testing.T) {
+	dir := t.TempDir()
+	initGitRepo(t, dir)
+
+	const branch = "sandman/2377-toctou"
+	runGit(t, dir, "branch", branch)
+	runGit(t, dir, "checkout", branch)
+
+	worktreeBase := filepath.Join(dir, ".sandman", "worktrees")
+	if err := os.MkdirAll(worktreeBase, 0755); err != nil {
+		t.Fatalf("mkdir worktreeBase: %v", err)
+	}
+
+	// Simulate the post-detach state: parent is detached at the
+	// branch tip, and a foreign worktree now holds the branch.
+	runGit(t, dir, "checkout", "--detach")
+	foreignAbs := filepath.Join(dir, "foreign-toctou")
+	if err := os.MkdirAll(foreignAbs, 0755); err != nil {
+		t.Fatalf("mkdir foreign: %v", err)
+	}
+	addCmd := exec.Command("git", "worktree", "add", "--detach", foreignAbs, branch)
+	addCmd.Dir = dir
+	if out, err := addCmd.CombinedOutput(); err != nil {
+		t.Fatalf("git worktree add (foreign): %v: %s", err, out)
+	}
+	symRefCmd := exec.Command("git", "symbolic-ref", "HEAD", "refs/heads/"+branch)
+	symRefCmd.Dir = foreignAbs
+	if out, err := symRefCmd.CombinedOutput(); err != nil {
+		t.Fatalf("foreign symbolic-ref: %v: %s", err, out)
+	}
+	t.Cleanup(func() {
+		exec.Command("git", "worktree", "remove", "--force", foreignAbs).Run()
+	})
+
+	// Now `git branch -D <branch>` from the parent cwd MUST fail
+	// because the foreign worktree holds the branch. This is the
+	// safety guarantee the seam's `git branch -D` (rather than
+	// `git update-ref -d`) provides.
+	delCmd := exec.Command("git", "branch", "-D", branch)
+	delCmd.Dir = dir
+	out, err := delCmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("expected 'git branch -D' to fail when foreign worktree holds the branch (the safety guarantee the seam relies on); got success: %s", out)
+	}
+	if !isBranchCheckedOutError(out) {
+		t.Errorf("expected 'checked out' error from 'git branch -D', got: %v: %s", err, out)
+	}
+
+	// Verify the foreign worktree's branch ref still resolves.
+	revCmd := exec.Command("git", "-C", foreignAbs, "rev-parse", "--verify", "refs/heads/"+branch)
+	if _, err := revCmd.CombinedOutput(); err != nil {
+		t.Errorf("foreign worktree's branch ref was deleted out from under it: %v", err)
 	}
 }

@@ -515,6 +515,18 @@ func (s *spyEventLog) Read() ([]events.Event, error) {
 	return out, nil
 }
 
+// snapshot returns a copy of the events slice taken under the lock.
+// Tests use this for concurrent reads so the race detector does not
+// flag direct `spyLog.events` access from the main goroutine while
+// the orchestrator's run goroutines call Log() concurrently.
+func (s *spyEventLog) snapshot() []events.Event {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]events.Event, len(s.events))
+	copy(out, s.events)
+	return out
+}
+
 func (s *spyEventLog) RemoveEventsByIssue(issueNumber int) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -8706,7 +8718,7 @@ func TestClearIssueArtifacts_ReconcilesStrandedWorktreeInMainRepo(t *testing.T) 
 		}
 	})
 
-	t.Run("recovers via base-branch checkout when no stranded worktree", func(t *testing.T) {
+	t.Run("recovers via in-main-repo ref-drop when no stranded worktree", func(t *testing.T) {
 		dir := t.TempDir()
 		t.Chdir(dir)
 		initGitRepo(t, dir)
@@ -8721,10 +8733,16 @@ func TestClearIssueArtifacts_ReconcilesStrandedWorktreeInMainRepo(t *testing.T) 
 		// `git branch -D <branch>` from the main repo cwd will still
 		// fail with "used by worktree at" (because the main repo IS
 		// the worktree holding that branch). Recovery must take the
-		// base-branch-checkout path: `git checkout -f main` then
-		// `git branch -D <branch>`.
+		// ref-drop path: `git checkout --detach` then
+		// `git branch -D <branch>` (which re-checks worktree holders
+		// atomically with the delete). The main repo's working-tree
+		// commit is preserved (it stays at the same commit, just in
+		// detached HEAD state) instead of being silently switched to
+		// the base branch.
 		runGit(t, dir, "branch", branch)
 		runGit(t, dir, "checkout", "--quiet", branch)
+
+		parentCommitBefore := runGit(t, dir, "rev-parse", "HEAD")
 
 		logDir := filepath.Join(dir, ".sandman", "logs")
 		if err := os.MkdirAll(logDir, 0755); err != nil {
@@ -8742,18 +8760,192 @@ func TestClearIssueArtifacts_ReconcilesStrandedWorktreeInMainRepo(t *testing.T) 
 		if out, err := revCmd.CombinedOutput(); err == nil {
 			t.Errorf("expected branch %q to be deleted, rev-parse succeeded: %s", branch, out)
 		}
-		// The main repo must have ended up on the base branch.
-		headCmd := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD")
-		headCmd.Dir = dir
-		headOut, err := headCmd.CombinedOutput()
-		if err != nil || strings.TrimSpace(string(headOut)) != "main" {
-			t.Errorf("expected main repo to be on base branch %q after recovery, got %q (err=%v)", "main", strings.TrimSpace(string(headOut)), err)
+		// The main repo's working-tree commit must NOT have changed —
+		// we preserve HEAD even though the branch ref is gone.
+		parentCommitAfter := runGit(t, dir, "rev-parse", "HEAD")
+		if strings.TrimSpace(parentCommitAfter) != strings.TrimSpace(parentCommitBefore) {
+			t.Errorf("parent repo HEAD commit moved during ClearIssueArtifacts: before=%q after=%q",
+				strings.TrimSpace(parentCommitBefore), strings.TrimSpace(parentCommitAfter))
+		}
+		// The main repo must NOT have been moved onto the base branch
+		// (the buggy behaviour we are fixing). `git symbolic-ref`
+		// exits non-zero on a detached HEAD, so use exec.Command
+		// directly.
+		symRefCmd := exec.Command("git", "-C", dir, "symbolic-ref", "--quiet", "HEAD")
+		symRefOut, _ := symRefCmd.CombinedOutput()
+		if strings.TrimSpace(string(symRefOut)) == "refs/heads/main" {
+			t.Errorf("parent repo HEAD moved to source branch refs/heads/main — the buggy behaviour we are fixing")
 		}
 		// No error must be logged.
 		if strings.Contains(logBuf.String(), "error:") {
-			t.Errorf("expected no error log on the base-branch-checkout recovery path, got:\n%s", logBuf.String())
+			t.Errorf("expected no error log on the in-main-repo ref-drop recovery path, got:\n%s", logBuf.String())
 		}
 	})
+}
+
+// TestClearIssueArtifacts_PreservesMainRepoBranch pins the contract that
+// ClearIssueArtifacts must not flip the operator's checked-out branch in the
+// parent repo. The previous `recoverBranchDeleteFromMainRepo` strategy
+// force-checked out `baseBranch` in the cwd when the issue branch was held
+// by the parent repo, which silently switched the operator's working copy
+// to the base branch. The fix uses `git checkout --detach` followed by
+// `git branch -D <branch>` (which re-checks worktree holders atomically
+// with the delete) instead, leaving the parent's working-tree HEAD
+// commit unchanged.
+func TestClearIssueArtifacts_PreservesMainRepoBranch(t *testing.T) {
+	dir := testenv.MkdirShort(t, "sm-orch-")
+	t.Chdir(dir)
+	initGitRepo(t, dir)
+
+	branch := "sandman/42-fix-bug"
+	runGit(t, dir, "branch", branch)
+	runGit(t, dir, "checkout", "--quiet", branch)
+
+	worktreeDir := filepath.Join(dir, ".sandman", "worktrees")
+	el := &spyEventLog{}
+	logBuf := &bytes.Buffer{}
+
+	parentHeadBefore := strings.TrimSpace(runGit(t, dir, "symbolic-ref", "--quiet", "HEAD"))
+	if parentHeadBefore != "refs/heads/"+branch {
+		t.Fatalf("precondition: parent repo HEAD should be %q, got %q", branch, parentHeadBefore)
+	}
+	parentCommitBefore := runGit(t, dir, "rev-parse", "HEAD")
+
+	trueVal := true
+	ClearIssueArtifacts(42, branch, worktreeDir, el, logBuf, "main", &trueVal, "")
+
+	parentCommitAfter, err := exec.Command("git", "-C", dir, "rev-parse", "HEAD").CombinedOutput()
+	if err != nil {
+		t.Fatalf("read post-clear HEAD commit: %v: %s", err, parentCommitAfter)
+	}
+	if strings.TrimSpace(string(parentCommitAfter)) != strings.TrimSpace(parentCommitBefore) {
+		t.Errorf("parent repo HEAD commit moved during ClearIssueArtifacts: before=%q after=%q",
+			strings.TrimSpace(parentCommitBefore), strings.TrimSpace(string(parentCommitAfter)))
+	}
+
+	// The parent repo should NOT have been moved to the source branch
+	// (the buggy behaviour we are fixing). `git symbolic-ref` exits
+	// non-zero on a detached HEAD, so use exec.Command directly.
+	symRefCmd := exec.Command("git", "-C", dir, "symbolic-ref", "--quiet", "HEAD")
+	symRefOut, _ := symRefCmd.CombinedOutput()
+	if strings.TrimSpace(string(symRefOut)) == "refs/heads/main" {
+		t.Errorf("parent repo HEAD moved to source branch refs/heads/main — the buggy behaviour we are fixing")
+	}
+}
+
+// TestClearIssueArtifacts_ForeignWorktreeHolderPreserved pins the contract
+// that when the issue branch is checked out in a foreign worktree at a
+// non-canonical path (not <worktreeBase>/<branch>), ClearIssueArtifacts
+// must release the branch in that foreign worktree (detach HEAD only)
+// rather than dropping the ref from under it. The foreign worktree's
+// directory, `.git` gitlink, and `.git/worktrees/<name>` registration
+// all stay intact, mirroring the contract pinned for WorktreeSandbox
+// by TestWorktreeSandbox_OverrideDoesNotDeleteForeignLiveWorktree.
+//
+// Regression test for the foreign-worktree safety required by #2187
+// and the review feedback on PR #2377.
+func TestClearIssueArtifacts_ForeignWorktreeHolderPreserved(t *testing.T) {
+	dir := testenv.MkdirShort(t, "sm-orch-")
+	t.Chdir(dir)
+	initGitRepo(t, dir)
+
+	branch := "sandman/42-fix-bug"
+	runGit(t, dir, "branch", branch)
+
+	// Parent is on main (canonical operator state), NOT on the issue
+	// branch. A foreign worktree at a non-canonical path holds the
+	// branch instead — and is the only thing holding it, so the
+	// recovery strategy here is the foreign-worktree detach (not a
+	// parent ref-drop).
+	foreignAbs := filepath.Join(dir, "foreign")
+	if err := os.MkdirAll(foreignAbs, 0755); err != nil {
+		t.Fatalf("mkdir foreign: %v", err)
+	}
+	addCmd := exec.Command("git", "worktree", "add", "--detach", foreignAbs, branch)
+	addCmd.Dir = dir
+	if out, err := addCmd.CombinedOutput(); err != nil {
+		t.Fatalf("git worktree add (foreign): %v: %s", err, out)
+	}
+	// Move the foreign's HEAD to the branch ref via symbolic-ref, so
+	// it behaves like a normal "checked out on branch" worktree (not
+	// a detached worktree).
+	symRefCmd := exec.Command("git", "symbolic-ref", "HEAD", "refs/heads/"+branch)
+	symRefCmd.Dir = foreignAbs
+	if out, err := symRefCmd.CombinedOutput(); err != nil {
+		t.Fatalf("foreign symbolic-ref: %v: %s", err, out)
+	}
+
+	// CRITICAL: pre-create the worktree base directory so
+	// sandbox.StrandedWorktree and sandbox.ForeignStrandedWorktree
+	// (which os.Stat the base and bail if it is missing) can run.
+	worktreeDir := filepath.Join(dir, ".sandman", "worktrees")
+	if err := os.MkdirAll(worktreeDir, 0755); err != nil {
+		t.Fatalf("mkdir worktreeDir: %v", err)
+	}
+
+	t.Cleanup(func() {
+		exec.Command("git", "worktree", "remove", "--force", foreignAbs).Run()
+	})
+
+	el := &spyEventLog{}
+	logBuf := &bytes.Buffer{}
+
+	parentCommitBefore := runGit(t, dir, "rev-parse", "HEAD")
+
+	trueVal := true
+	ClearIssueArtifacts(42, branch, worktreeDir, el, logBuf, "main", &trueVal, "")
+
+	// Parent HEAD commit must be unchanged: parent was on main, the
+	// branch was held by a foreign worktree, the recovery must not
+	// touch the parent at all.
+	parentCommitAfter := runGit(t, dir, "rev-parse", "HEAD")
+	if strings.TrimSpace(parentCommitAfter) != strings.TrimSpace(parentCommitBefore) {
+		t.Errorf("parent repo HEAD commit moved during ClearIssueArtifacts: before=%q after=%q",
+			strings.TrimSpace(parentCommitBefore), strings.TrimSpace(parentCommitAfter))
+	}
+
+	// Foreign worktree directory must still exist (#2187: scoped
+	// recovery — no destruction).
+	if _, err := os.Stat(foreignAbs); err != nil {
+		t.Errorf("foreign worktree dir was removed at %q (recovery must preserve foreign worktrees): %v", foreignAbs, err)
+	}
+	// Foreign worktree's .git gitlink must still resolve to a real
+	// gitdir (the foreign worktree must remain a usable worktree).
+	gitlinkPath := filepath.Join(foreignAbs, ".git")
+	gitlinkBytes, err := os.ReadFile(gitlinkPath)
+	if err != nil {
+		t.Fatalf("foreign worktree .git file was removed or unreadable: %v", err)
+	}
+	gitlink := strings.TrimSpace(string(gitlinkBytes))
+	const prefix = "gitdir: "
+	if !strings.HasPrefix(gitlink, prefix) {
+		t.Fatalf("foreign worktree .git content unexpected: %q", gitlink)
+	}
+	gitdir := strings.TrimSpace(strings.TrimPrefix(gitlink, prefix))
+	if _, err := os.Stat(gitdir); err != nil {
+		t.Errorf("foreign worktree .git gitdir %q no longer exists: %v", gitdir, err)
+	}
+	// Foreign worktree registration under .git/worktrees/<name> must
+	// still exist (so the foreign worktree remains in `git worktree
+	// list`).
+	wtName := filepath.Base(foreignAbs)
+	regPath := filepath.Join(dir, ".git", "worktrees", wtName)
+	if _, err := os.Stat(regPath); err != nil {
+		t.Errorf("foreign worktree registration at %q no longer exists: %v", regPath, err)
+	}
+	// Foreign HEAD must now be detached (the recovery released the
+	// branch by detaching HEAD; the ref itself was NOT dropped under
+	// the foreign worktree). After ClearIssueArtifacts, the foreign
+	// worktree is left in detached-HEAD state at the same commit,
+	// and `git branch -D` was then able to delete the branch.
+	foreignHeadOut, err := exec.Command("git", "-C", foreignAbs, "rev-parse", "--abbrev-ref", "HEAD").CombinedOutput()
+	if err != nil {
+		t.Fatalf("read foreign HEAD: %v: %s", err, foreignHeadOut)
+	}
+	foreignHeadBranch := strings.TrimSpace(string(foreignHeadOut))
+	if foreignHeadBranch == branch {
+		t.Errorf("foreign worktree still on branch %q; expected detached HEAD after foreign-release recovery", branch)
+	}
 }
 
 // TestClearIssueArtifacts_NoReconcileKeepsBeltAndSuspenders asserts that
@@ -9041,10 +9233,15 @@ func TestOrchestrator_RunQueuedOnlyForWaitingIssues(t *testing.T) {
 
 	waitForSignal(t, blockerStarted, "expected blocker to start")
 
+	// Use the thread-safe snapshot rather than the un-synchronised
+	// spyLog.events slice; the orchestrator's run goroutines call
+	// Log() concurrently with this main goroutine, and a direct read
+	// races the write at orchestrator_test.go:505.
+	snapshot := spyLog.snapshot()
 	var queuedEvent *events.Event
-	for i := range spyLog.events {
-		if spyLog.events[i].Type == "run.queued" && spyLog.events[i].Issue == 100 {
-			queuedEvent = &spyLog.events[i]
+	for i := range snapshot {
+		if snapshot[i].Type == "run.queued" && snapshot[i].Issue == 100 {
+			queuedEvent = &snapshot[i]
 			break
 		}
 	}
@@ -9053,8 +9250,8 @@ func TestOrchestrator_RunQueuedOnlyForWaitingIssues(t *testing.T) {
 	}
 
 	var unblockedQueued bool
-	for i := range spyLog.events {
-		if spyLog.events[i].Type == "run.queued" && spyLog.events[i].Issue == 1 {
+	for i := range snapshot {
+		if snapshot[i].Type == "run.queued" && snapshot[i].Issue == 1 {
 			unblockedQueued = true
 			break
 		}
