@@ -925,10 +925,15 @@ func TestWorktreeSandbox_OverrideReconcileDetachedHead(t *testing.T) {
 }
 
 func TestWorktreeSandbox_StartPreservesErrorWhenReconcileDisabled(t *testing.T) {
-	// The main repo is checked out on the very branch we need to delete.
-	// `git branch -D` from the main-repo cwd refuses with the
-	// "Cannot delete branch ... checked out at ..." error. With
-	// --no-reconcile-stranded, that error must surface unchanged.
+	// The previous behavior was: when the main repo holds the
+	// target branch and `git branch -D` refuses, the override
+	// path surfaced that error if `StrandedReconcile` was
+	// disabled. The new behavior (PR #2377) reuses the
+	// existing branch via `git worktree add -f <path> <branch>`
+	// instead of deleting-and-recreating, so there is no
+	// "delete stale branch" error to surface. The override
+	// path now succeeds whether the operator enables
+	// `StrandedReconcile` or not.
 	dir := t.TempDir()
 	initGitRepo(t, dir)
 	const branch = "sandman/42-fix-bug"
@@ -936,21 +941,29 @@ func TestWorktreeSandbox_StartPreservesErrorWhenReconcileDisabled(t *testing.T) 
 
 	s := NewWorktreeSandbox(dir, filepath.Join(dir, ".sandman", "worktrees"), branch, "main")
 
-	err := s.Start(SandboxStart{Override: true, StrandedReconcile: false})
-	if err == nil {
-		t.Fatal("expected error when main repo is checked out on branch and reconcile is disabled")
+	// Override with the parent on the branch. The override
+	// path now detaches the parent and reuses the existing
+	// branch — no error regardless of `StrandedReconcile`.
+	if err := s.Start(SandboxStart{Override: true, StrandedReconcile: false}); err != nil {
+		t.Fatalf("expected override to succeed by reusing the existing branch, got: %v", err)
 	}
-	if !strings.Contains(err.Error(), "delete stale branch") {
-		t.Errorf("expected error to mention 'delete stale branch', got %q", err.Error())
-	}
-	if !strings.Contains(err.Error(), branch) {
-		t.Errorf("expected error to mention branch %q, got %q", branch, err.Error())
-	}
-
 	t.Cleanup(func() {
-		runGit(t, dir, "checkout", "main")
+		s.Stop()
 		removeBranch(t, dir, branch)
 	})
+
+	// Verify the operator's branch was preserved (not deleted
+	// and re-created from source). The override reused the
+	// branch instead of dropping it.
+	revCmd := exec.Command("git", "-C", dir, "rev-parse", "--verify", "refs/heads/"+branch)
+	if _, err := revCmd.CombinedOutput(); err != nil {
+		t.Errorf("expected refs/heads/%s to be preserved, got: %v", branch, err)
+	}
+	// Verify the worktree was created and is on the branch.
+	wtHead := runGit(t, s.WorkDir(), "symbolic-ref", "--quiet", "HEAD")
+	if strings.TrimSpace(wtHead) != "refs/heads/"+branch {
+		t.Errorf("expected worktree to be on %s, got %q", "refs/heads/"+branch, strings.TrimSpace(wtHead))
+	}
 }
 
 func TestWorktreeSandbox_RecoversFromMainRepoBranch_StrandedWorktreePath(t *testing.T) {
@@ -1281,64 +1294,48 @@ func TestStrandedWorktree_ResolvesRelativeWorktreeBase(t *testing.T) {
 	}
 }
 
-func TestWorktreeSandbox_StartCallsReconcileStrandedFnSeam(t *testing.T) {
-	// The recovery loop is dispatched through the package-level
-	// reconcileStrandedFn seam (ADR-0027). When a `git branch -D`
-	// failure matches the "checked out at" pattern, the seam is
-	// invoked with the expected (repoPath, worktreeBase, branch,
-	// sourceBranch) tuple.
+func TestWorktreeSandbox_StartDoesNotInvokeReconcileSeam(t *testing.T) {
+	// PR #2377 rewrote the override path to reuse the existing
+	// branch via `git worktree add -f <path> <branch>` instead of
+	// delete-and-recreate. With the new flow, the override path
+	// never calls the `reconcileStrandedFn` seam (there is no
+	// `git branch -D` to recover from). The seam is still wired
+	// up for `ClearIssueArtifacts` recovery (see the orchestrator
+	// tests), but `WorktreeSandbox.Start` no longer reaches it.
+	//
+	// This test pins the new contract: a stranded main-repo
+	// holder with the seam armed is observed as a no-op (the
+	// seam is not called), and Start succeeds because the
+	// override path detaches the parent and reuses the branch.
 	prev := reconcileStrandedFn
 	defer func() { reconcileStrandedFn = prev }()
 
-	var captured struct {
-		repoPath     string
-		worktreeBase string
-		branch       string
-		sourceBranch string
-		called       bool
-	}
+	called := false
 	reconcileStrandedFn = func(repoPath, worktreeBase, branch, sourceBranch string) error {
-		captured.repoPath = repoPath
-		captured.worktreeBase = worktreeBase
-		captured.branch = branch
-		captured.sourceBranch = sourceBranch
-		captured.called = true
+		called = true
 		return nil
 	}
 
 	dir := t.TempDir()
 	initGitRepo(t, dir)
 	const branch = "sandman/42-fix-bug"
-	runGit(t, dir, "checkout", "-b", branch)
+	runGit(t, dir, "branch", branch)
+	runGit(t, dir, "checkout", branch)
 
 	worktreeBase := filepath.Join(dir, ".sandman", "worktrees")
 	s := NewWorktreeSandbox(dir, worktreeBase, branch, "main")
 
-	// The seam will silently succeed but no worktree exists yet at
-	// the worktreeBase, so the worktree-add step still fails. We
-	// only need the recovery to fire and the seam to be invoked.
-	_ = s.Start(SandboxStart{Override: true, StrandedReconcile: true})
-
-	if !captured.called {
-		t.Fatal("expected reconcileStrandedFn seam to be called during Start")
+	if err := s.Start(SandboxStart{Override: true, StrandedReconcile: true}); err != nil {
+		t.Fatalf("Start with override on parent holding the branch should succeed via reuse: %v", err)
 	}
-	if captured.repoPath != dir {
-		t.Errorf("seam repoPath: got %q, want %q", captured.repoPath, dir)
-	}
-	if captured.worktreeBase != worktreeBase {
-		t.Errorf("seam worktreeBase: got %q, want %q", captured.worktreeBase, worktreeBase)
-	}
-	if captured.branch != branch {
-		t.Errorf("seam branch: got %q, want %q", captured.branch, branch)
-	}
-	if captured.sourceBranch != "main" {
-		t.Errorf("seam sourceBranch: got %q, want %q", captured.sourceBranch, "main")
-	}
-
 	t.Cleanup(func() {
-		runGit(t, dir, "checkout", "main")
+		s.Stop()
 		removeBranch(t, dir, branch)
 	})
+
+	if called {
+		t.Errorf("reconcileStrandedFn seam should NOT be invoked from WorktreeSandbox.Start after the PR #2377 reuse-the-branch refactor")
+	}
 }
 
 func TestWorktreeSandbox_StartReattachesPrunableWorktree_DirIntact(t *testing.T) {
@@ -2213,10 +2210,11 @@ func TestWorktreeSandbox_ContinueReturnsTargetedErrorOnUncontinuableState(t *tes
 //
 // The fix replaces the in-parent-repo `git checkout -f <sourceBranch>`
 // step with `git checkout --detach` followed by
-// `git update-ref -d refs/heads/<branch>`. The working tree contents
-// are untouched; the operator's view of their files does not change.
-// The branch reference is re-created later in Start() by
-// `git worktree add -b <branch>`, so the operator can `git checkout
+// `git branch -D <branch>` (which re-checks worktree holders atomically
+// with the delete). The working tree contents are untouched; the
+// operator's view of their files does not change. The branch is
+// re-used later in Start() by `git worktree add -f <path> <branch>`,
+// so the operator can `git checkout
 // <branch>` again from the detached HEAD to recover their branch.
 // The test asserts three invariants:
 //   - The parent repo's working-tree commit (HEAD's target) is

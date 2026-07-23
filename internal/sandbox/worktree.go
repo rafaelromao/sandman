@@ -190,11 +190,11 @@ overrideCleanup:
 			if info, foreign := ForeignStrandedWorktree(s.repoPath, s.worktreeBase, s.branch); foreign {
 				// Only release FOREIGN worktrees (a worktree whose
 				// path is not the main repo). The main repo holding
-				// the branch is recovered via reconcileStrandedBranch
-				// below via a `git update-ref -d` on refs/heads/<branch>,
-				// which preserves the operator's working-tree HEAD —
-				// the branch is then re-created by `git worktree add
-				// -b` later in Start().
+				// the branch is recovered via the worktree-add step
+				// further below — the override path detaches the
+				// parent (if on the branch) and reuses the branch
+				// via `git worktree add -f <path> <branch>` instead
+				// of the previous delete-and-recreate flow.
 				if !SamePath(info.Path, s.repoPath) {
 					if err := ReleaseBranchInWorktree(info.Path); err != nil {
 						s.warn("issue #2187: release foreign worktree at %q: %v\n", info.Path, err)
@@ -212,7 +212,7 @@ overrideCleanup:
 		} else if s.workDirExists() {
 			// Issue #2187: scoped reattach for the canonical
 			// `s.workDir`. Drop the registration BEFORE clearing
-			// the directory so subsequent `git branch -D` does
+			// the directory so subsequent recovery does
 			// not see a "checked out at" pointer. No global
 			// `git worktree prune`.
 			if err := s.removePrunableWorktreeRegistration(); err != nil {
@@ -228,25 +228,13 @@ overrideCleanup:
 		// ReclaimableWorktree path or by the `git worktree remove --force
 		// <s.workDir>` above. We deliberately do not prune sibling
 		// registrations.
-		if BranchExists(s.repoPath, s.branch) {
-			delCmd := exec.Command("git", "branch", "-D", s.branch)
-			delCmd.Dir = s.repoPath
-			if out, err := delCmd.CombinedOutput(); err != nil {
-				if s.strandedReconcile && isBranchCheckedOutError(out) {
-					// Fall back to the in-main-repo ref-drop strategy.
-					// If the foreign worktree was correctly released above,
-					// this branch is unreachable for our expected workflow
-					// but still covers the case where the branch is checked
-					// out in repoPath itself. The drop is `git update-ref -d`
-					// only — the operator's working-tree HEAD is preserved.
-					if recErr := s.reconcileStrandedBranch(); recErr != nil {
-						return fmt.Errorf("delete stale branch %q: %w\n%s", s.branch, recErr, out)
-					}
-				} else {
-					return fmt.Errorf("delete stale branch %q: %w\n%s", s.branch, err, out)
-				}
-			}
-		}
+		//
+		// The override path no longer deletes the branch here. The
+		// worktree-add step (further below) reuses the branch if it
+		// exists via `git worktree add -f <path> <branch>`, avoiding
+		// the delete-and-recreate TOCTOU window where a sibling
+		// worktree could attach between the parent's detach and the
+		// ref-drop. See ADR-0023 strategy 3.
 	}
 	if s.workDirExists() {
 		// Directory exists on disk but is not a registered git worktree.
@@ -292,7 +280,33 @@ overrideCleanup:
 		}
 	}
 
-	addCmd := exec.Command("git", "worktree", "add", "-b", s.branch, s.workDir, s.sourceBranch)
+	// Avoid the delete-and-recreate TOCTOU window. `git branch -D`
+	// re-checks worktree holders at the moment of the call, but its
+	// `refs_delete_refs` transaction is a separate step that can race
+	// with a sibling worktree attaching `refs/heads/<branch>` in
+	// between — leaving the sibling with a dangling symbolic HEAD.
+	// Instead, reuse the existing branch via `git worktree add -f
+	// <path> <branch>` when it is present; only fall back to creating
+	// a new branch from source when the branch does not exist. This
+	// eliminates the delete-recreate window entirely (the existing
+	// branch is never deleted) and shrinks the attach window to the
+	// single git command boundary.
+	var addCmd *exec.Cmd
+	if BranchExists(s.repoPath, s.branch) {
+		// If the parent is on the branch, detach so the branch is
+		// not "checked out" in the parent when we add the worktree.
+		headRef, err := CurrentBranchRef(s.repoPath)
+		if err == nil && headRef == "refs/heads/"+s.branch {
+			detachCmd := exec.Command("git", "checkout", "--detach")
+			detachCmd.Dir = s.repoPath
+			if out, err := detachCmd.CombinedOutput(); err != nil {
+				return fmt.Errorf("detach HEAD in main repo to release %s: %w\n%s", s.branch, err, out)
+			}
+		}
+		addCmd = exec.Command("git", "worktree", "add", "-f", s.workDir, s.branch)
+	} else {
+		addCmd = exec.Command("git", "worktree", "add", "-b", s.branch, s.workDir, s.sourceBranch)
+	}
 	addCmd.Dir = s.repoPath
 	if out, err := addCmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("git worktree add: %w\n%s", err, out)
@@ -589,11 +603,11 @@ var reconcileStrandedFn = func(repoPath, worktreeBase, branch, sourceBranch stri
 // tree untouched) and then deletes the branch via `git branch -D`,
 // which re-checks worktree holders at the moment of the delete — this
 // closes the TOCTOU window where a sibling worktree could check out
-// the branch between the parent's `git checkout --detach` and a raw
-// `git update-ref -d`. The branch is re-created later in Start() by
-// the canonical `git worktree add -b <branch>` call, so the effective
-// loss is bounded to a transient detached-HEAD window in the parent
-// repo.
+// the branch between the parent's `git checkout --detach` and the
+// delete. The branch is re-created later in Start() by the worktree-add
+// step (which reuses the branch if it exists, or creates a fresh
+// branch from source if it does not), so the effective loss is bounded
+// to a transient detached-HEAD window in the parent repo.
 //
 // ADR-0023 documented `git update-ref -d` as strategy (3) "last resort";
 // this commit elevates it to the default for the main-repo case so that
@@ -821,11 +835,15 @@ func ReleaseBranchInWorktree(path string) error {
 // package-level reconcileStrandedFn seam (see ADR-0023).
 //
 // The default seam implementation drops the stray ref via
-// `git update-ref -d` rather than force-checking out the source branch
+// `git branch -D` rather than force-checking out the source branch
 // in the parent repo, so the operator's working-tree HEAD is preserved
-// across the recovery. The branch is re-created later in Start() by the
-// canonical `git worktree add -b <branch>` call, so the operator's
-// local view of the branch is restored within the same Start().
+// across the recovery. `git branch -D` re-checks worktree holders at
+// the moment of the delete; a sibling worktree that acquires the
+// branch after the parent detach but before the delete is preserved.
+// The branch is re-created later in Start() by the worktree-add step
+// (which reuses the branch if it exists, or creates a fresh branch
+// from source if it does not), so the operator's local view of the
+// branch is restored within the same Start().
 //
 // Returns nil on success, or a non-nil error on hard failure.
 func (s *WorktreeSandbox) reconcileStrandedBranch() error {

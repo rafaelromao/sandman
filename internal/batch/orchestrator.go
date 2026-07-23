@@ -3390,7 +3390,7 @@ func recoverBranchDeleteFromMainRepo(logWriter io.Writer, branch, worktreeBase s
 	// via `git branch -D`. The `git branch -D` form re-checks worktree
 	// holders atomically with the ref-drop, closing the TOCTOU window
 	// where a sibling worktree could check out the branch between the
-	// parent's detach and a raw `git update-ref -d`.
+	// parent's detach and the delete.
 	headRef, headErr := sandbox.CurrentBranchRef(".")
 	if headErr != nil {
 		fmt.Fprintf(logWriter, "warning: drop refs/heads/%s: main repo HEAD is not a symbolic ref — refusing to detach (foreign worktree holder race?): %v\n", branch, headErr)

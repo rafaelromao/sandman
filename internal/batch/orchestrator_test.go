@@ -8718,10 +8718,11 @@ func TestClearIssueArtifacts_ReconcilesStrandedWorktreeInMainRepo(t *testing.T) 
 		// fail with "used by worktree at" (because the main repo IS
 		// the worktree holding that branch). Recovery must take the
 		// ref-drop path: `git checkout --detach` then
-		// `git update-ref -d refs/heads/<branch>`. The main repo's
-		// working-tree commit is preserved (it stays at the same
-		// commit, just in detached HEAD state) instead of being
-		// silently switched to the base branch.
+		// `git branch -D <branch>` (which re-checks worktree holders
+		// atomically with the delete). The main repo's working-tree
+		// commit is preserved (it stays at the same commit, just in
+		// detached HEAD state) instead of being silently switched to
+		// the base branch.
 		runGit(t, dir, "branch", branch)
 		runGit(t, dir, "checkout", "--quiet", branch)
 
@@ -8772,8 +8773,9 @@ func TestClearIssueArtifacts_ReconcilesStrandedWorktreeInMainRepo(t *testing.T) 
 // force-checked out `baseBranch` in the cwd when the issue branch was held
 // by the parent repo, which silently switched the operator's working copy
 // to the base branch. The fix uses `git checkout --detach` followed by
-// `git update-ref -d refs/heads/<branch>` instead, leaving the parent's
-// working-tree HEAD commit unchanged.
+// `git branch -D <branch>` (which re-checks worktree holders atomically
+// with the delete) instead, leaving the parent's working-tree HEAD
+// commit unchanged.
 func TestClearIssueArtifacts_PreservesMainRepoBranch(t *testing.T) {
 	dir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(dir)
