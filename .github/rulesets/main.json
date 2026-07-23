@@ -18,7 +18,7 @@
         "strict_required_status_checks_policy": false
       }
     },
-    { "type": "block_force_pushes" },
+    { "type": "block_force_push" },
     { "type": "block_branch_deletion" }
   ]
 }
