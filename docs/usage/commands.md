@@ -278,7 +278,7 @@ A *stranded worktree* is a sandman-managed worktree whose HEAD points to a diffe
 The command parses `git worktree list --porcelain`, reads the configured `worktree_dir` from `.sandman/config.yaml` (defaults to `.sandman/worktrees`), matches worktrees under that directory whose directory name follows the `sandman/<number>-<slug>` pattern, and compares the actual branch against the expected branch derived from the directory name. For each mismatch it prints a one-line remediation command:
 
 ```
-Worktree /path/.sandman/worktrees/sandman/724-foo is on refs/heads/main, expected refs/heads/sandman/724-foo. Run: git -C /path/.sandman/worktrees/sandman/724-foo checkout -f sandman/724-foo
+Worktree /path/.sandman/worktrees/724-foo is on refs/heads/main, expected refs/heads/724-foo. Run: git -C /path/.sandman/worktrees/724-foo checkout -f 724-foo
 ```
 
 `sandman stranded` is non-destructive: it never checks out branches or removes worktrees automatically. It exits 0 on success, including when no stranded worktrees are found.

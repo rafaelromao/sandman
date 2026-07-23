@@ -175,7 +175,7 @@ A run is marked as `blocked` when one or more of its `BlockedBy` issues failed i
 
 ```
 Summary: 3 succeeded, 0 failed, 1 blocked
-  #42  success  sandman/42-fix-login
+  #42  success  42-fix-login
   #43  blocked
 ```
 
@@ -191,17 +191,17 @@ After a batch completes, Sandman prints a summary:
 
 ```
 Summary: 2 succeeded, 1 failed
-  #42  success  sandman/42-fix-login
-  #43  failure  sandman/43-add-tests
-  #44  success  sandman/44-update-docs
+  #42  success  42-fix-login
+  #43  failure  43-add-tests
+  #44  success  44-update-docs
 ```
 
 Buckets with a zero count are omitted. A batch interrupted by SIGINT/SIGTERM prints the aborted runs in their own bucket and exits with code 130:
 
 ```
 Summary: 1 succeeded, 1 aborted
-  #42  success  sandman/42-fix-login
-  #43  aborted  sandman/43-add-tests
+  #42  success  42-fix-login
+  #43  aborted  43-add-tests
 ```
 
 Prompt-only runs show the same summary with `prompt-only` in the issue column.

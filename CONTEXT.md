@@ -108,7 +108,7 @@ _Avoid_: bot log (the run log is the canonical per-run artefact, not a self-post
 _See_: Review daemon state, Review run log.
 
 **Branch**:
-A git branch named `sandman/<issue-number>-<slugified-title>` for issue-driven AgentRuns, or `sandman/<slug>-<timestamp>` for prompt-only runs.
+A git branch named `<issue-number>-<slugified-title>` for issue-driven AgentRuns (the legacy `sandman/<issue-number>-<slugified-title>` shape is gone after ADR-0040), or `sandman/<slug>-<timestamp>` for prompt-only runs.
 _Avoid_: Feature branch, PR branch.
 
 **SidecarBranch**:

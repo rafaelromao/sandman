@@ -4584,7 +4584,7 @@ func TestRun_ContinueRegistersPerRowRunIDInBatchesIndex(t *testing.T) {
 // continuation mints a fresh public BatchId from a new (ts, shortid) pair and
 // carries the previous per-row RunIDs only as lineage inputs.
 func TestRun_Continue_MultiIssueFreshBatchAndRunIDs(t *testing.T) {
-	branch := "sandman/42-43-fix-bugs"
+	branch := "42-43-fix-bugs"
 	spy := &spyBatchRunner{result: &batch.Result{}}
 	deps := newRunDeps(t, spy)
 	worktreeBase := t.TempDir()
