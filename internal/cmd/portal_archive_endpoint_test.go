@@ -429,8 +429,8 @@ func TestPortal_ArchiveEndpoint_SurfaceArchivedFlagInRunsAPI(t *testing.T) {
 		t.Fatal(err)
 	}
 	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
-		{Type: "run.started", Timestamp: started, RunID: runID, Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
-		{Type: "run.finished", Timestamp: started.Add(time.Minute), RunID: runID, Issue: 42, Payload: map[string]any{"status": "success", "branch": "sandman/42-fix"}},
+		{Type: "run.started", Timestamp: started, RunID: runID, Issue: 42, Payload: map[string]any{"branch": "42-fix"}},
+		{Type: "run.finished", Timestamp: started.Add(time.Minute), RunID: runID, Issue: 42, Payload: map[string]any{"status": "success", "branch": "42-fix"}},
 	})
 
 	originalProbe := portalRunLivenessProbe
@@ -560,8 +560,8 @@ func TestPortal_ArchiveEndpoint_EndToEndRealRunIDToDirName(t *testing.T) {
 	}
 
 	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
-		{Type: "run.started", Timestamp: started, RunID: perRowID, Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
-		{Type: "run.finished", Timestamp: started.Add(time.Minute), RunID: perRowID, Issue: 42, Payload: map[string]any{"status": "success", "branch": "sandman/42-fix"}},
+		{Type: "run.started", Timestamp: started, RunID: perRowID, Issue: 42, Payload: map[string]any{"branch": "42-fix"}},
+		{Type: "run.finished", Timestamp: started.Add(time.Minute), RunID: perRowID, Issue: 42, Payload: map[string]any{"status": "success", "branch": "42-fix"}},
 	})
 
 	originalProbe := portalRunLivenessProbe

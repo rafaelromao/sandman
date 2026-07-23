@@ -124,7 +124,7 @@ func TestClean_DryRun_ProducesNoIO(t *testing.T) {
 	}
 
 	batchDir := filepath.Join(dir, ".sandman", "batches", "batch-1")
-	worktreeDir := filepath.Join(dir, ".sandman", "worktrees", "sandman", "42-fix")
+	worktreeDir := filepath.Join(dir, ".sandman", "worktrees", "42-fix")
 	if err := os.MkdirAll(worktreeDir, 0755); err != nil {
 		t.Fatalf("create worktree: %v", err)
 	}
@@ -132,7 +132,7 @@ func TestClean_DryRun_ProducesNoIO(t *testing.T) {
 		RunID:        "batch-1",
 		BatchID:      "batch-1",
 		Issue:        42,
-		Branch:       "sandman/42-fix",
+		Branch:       "42-fix",
 		WorktreePath: worktreeDir,
 		Kind:         batchindex.KindIssue,
 		Status:       batchindex.RunManifestStatusActive,
@@ -174,8 +174,8 @@ func TestClean_All_PreservesActiveEntries(t *testing.T) {
 
 	batchActive := filepath.Join(dir, ".sandman", "batches", "batch-active")
 	batchArchived := filepath.Join(dir, ".sandman", "batches", "batch-archived")
-	worktreeActive := filepath.Join(dir, ".sandman", "worktrees", "sandman", "42-fix")
-	worktreeArchived := filepath.Join(dir, ".sandman", "worktrees", "sandman", "43-fix")
+	worktreeActive := filepath.Join(dir, ".sandman", "worktrees", "42-fix")
+	worktreeArchived := filepath.Join(dir, ".sandman", "worktrees", "43-fix")
 
 	if err := os.MkdirAll(worktreeActive, 0755); err != nil {
 		t.Fatalf("create worktree active: %v", err)
@@ -188,7 +188,7 @@ func TestClean_All_PreservesActiveEntries(t *testing.T) {
 		RunID:        "batch-active",
 		BatchID:      "batch-active",
 		Issue:        42,
-		Branch:       "sandman/42-fix",
+		Branch:       "42-fix",
 		WorktreePath: worktreeActive,
 		Kind:         batchindex.KindIssue,
 		Status:       batchindex.RunManifestStatusActive,
@@ -197,7 +197,7 @@ func TestClean_All_PreservesActiveEntries(t *testing.T) {
 		RunID:        "batch-archived",
 		BatchID:      "batch-archived",
 		Issue:        43,
-		Branch:       "sandman/43-fix",
+		Branch:       "43-fix",
 		WorktreePath: worktreeArchived,
 		Kind:         batchindex.KindIssue,
 		Status:       batchindex.RunManifestStatusActive,
@@ -261,7 +261,7 @@ func TestClean_All_RunsEveryPass(t *testing.T) {
 	writeBatchManifest(t, dir, "run-dead-1", []int{42}, createdAt)
 
 	batchArchived := filepath.Join(dir, ".sandman", "batches", "batch-archived")
-	worktreeArchived := filepath.Join(dir, ".sandman", "worktrees", "sandman", "43-fix")
+	worktreeArchived := filepath.Join(dir, ".sandman", "worktrees", "43-fix")
 	if err := os.MkdirAll(worktreeArchived, 0755); err != nil {
 		t.Fatalf("create worktree: %v", err)
 	}
@@ -269,7 +269,7 @@ func TestClean_All_RunsEveryPass(t *testing.T) {
 		RunID:        "batch-archived",
 		BatchID:      "batch-archived",
 		Issue:        43,
-		Branch:       "sandman/43-fix",
+		Branch:       "43-fix",
 		WorktreePath: worktreeArchived,
 		Kind:         batchindex.KindIssue,
 		Status:       batchindex.RunManifestStatusActive,
@@ -280,7 +280,7 @@ func TestClean_All_RunsEveryPass(t *testing.T) {
 	})
 
 	log := &fakeEventLog{events: []events.Event{
-		{Type: "run.started", RunID: "run-42", Issue: 42, Timestamp: started, Payload: map[string]any{"branch": "sandman/42-fix"}},
+		{Type: "run.started", RunID: "run-42", Issue: 42, Timestamp: started, Payload: map[string]any{"branch": "42-fix"}},
 	}}
 	gr := &fakeGitRunner{}
 	deps.ConfigStore = &fakeStore{config: &config.Config{WorktreeDir: filepath.Join(dir, ".sandman", "worktrees")}}
@@ -337,8 +337,8 @@ func TestClean_All_DryRun_PrintsAllPasses(t *testing.T) {
 
 	batchActive := filepath.Join(dir, ".sandman", "batches", "batch-active")
 	batchArchived := filepath.Join(dir, ".sandman", "batches", "batch-archived")
-	worktreeActive := filepath.Join(dir, ".sandman", "worktrees", "sandman", "42-fix")
-	worktreeArchived := filepath.Join(dir, ".sandman", "worktrees", "sandman", "43-fix")
+	worktreeActive := filepath.Join(dir, ".sandman", "worktrees", "42-fix")
+	worktreeArchived := filepath.Join(dir, ".sandman", "worktrees", "43-fix")
 	if err := os.MkdirAll(worktreeActive, 0755); err != nil {
 		t.Fatalf("create active worktree: %v", err)
 	}
@@ -349,7 +349,7 @@ func TestClean_All_DryRun_PrintsAllPasses(t *testing.T) {
 		RunID:        "batch-active",
 		BatchID:      "batch-active",
 		Issue:        42,
-		Branch:       "sandman/42-fix",
+		Branch:       "42-fix",
 		WorktreePath: worktreeActive,
 		Kind:         batchindex.KindIssue,
 		Status:       batchindex.RunManifestStatusActive,
@@ -358,7 +358,7 @@ func TestClean_All_DryRun_PrintsAllPasses(t *testing.T) {
 		RunID:        "batch-archived",
 		BatchID:      "batch-archived",
 		Issue:        43,
-		Branch:       "sandman/43-fix",
+		Branch:       "43-fix",
 		WorktreePath: worktreeArchived,
 		Kind:         batchindex.KindIssue,
 		Status:       batchindex.RunManifestStatusActive,
@@ -370,7 +370,7 @@ func TestClean_All_DryRun_PrintsAllPasses(t *testing.T) {
 	})
 
 	log := &fakeEventLog{events: []events.Event{
-		{Type: "run.started", RunID: "run-42", Issue: 42, Timestamp: started, Payload: map[string]any{"branch": "sandman/42-fix"}},
+		{Type: "run.started", RunID: "run-42", Issue: 42, Timestamp: started, Payload: map[string]any{"branch": "42-fix"}},
 	}}
 	gr := &fakeGitRunner{}
 	deps.ConfigStore = &fakeStore{config: &config.Config{WorktreeDir: filepath.Join(dir, ".sandman", "worktrees")}}
@@ -435,8 +435,8 @@ func TestClean_Archived_RemovesArchivedAndUnavailableEntries(t *testing.T) {
 
 	batchActive := filepath.Join(dir, ".sandman", "batches", "batch-active")
 	batchArchived := filepath.Join(dir, ".sandman", "batches", "batch-archived")
-	worktreeActive := filepath.Join(dir, ".sandman", "worktrees", "sandman", "42-fix")
-	worktreeArchived := filepath.Join(dir, ".sandman", "worktrees", "sandman", "43-fix")
+	worktreeActive := filepath.Join(dir, ".sandman", "worktrees", "42-fix")
+	worktreeArchived := filepath.Join(dir, ".sandman", "worktrees", "43-fix")
 
 	if err := os.MkdirAll(worktreeActive, 0755); err != nil {
 		t.Fatalf("create worktree active: %v", err)
@@ -449,7 +449,7 @@ func TestClean_Archived_RemovesArchivedAndUnavailableEntries(t *testing.T) {
 		RunID:        "batch-active",
 		BatchID:      "batch-active",
 		Issue:        42,
-		Branch:       "sandman/42-fix",
+		Branch:       "42-fix",
 		WorktreePath: worktreeActive,
 		Kind:         batchindex.KindIssue,
 		Status:       batchindex.RunManifestStatusActive,
@@ -458,7 +458,7 @@ func TestClean_Archived_RemovesArchivedAndUnavailableEntries(t *testing.T) {
 		RunID:        "batch-archived",
 		BatchID:      "batch-archived",
 		Issue:        43,
-		Branch:       "sandman/43-fix",
+		Branch:       "43-fix",
 		WorktreePath: worktreeArchived,
 		Kind:         batchindex.KindIssue,
 		Status:       batchindex.RunManifestStatusActive,
@@ -593,8 +593,8 @@ func TestRecoverStaleRuns_DeadBatchUnterminated_EmitsAborted(t *testing.T) {
 	writeBatchManifest(t, dir, "run-dead-1", []int{42, 43}, createdAt)
 
 	log := &fakeEventLog{events: []events.Event{
-		{Type: "run.started", RunID: "run-42", Issue: 42, Timestamp: started, Payload: map[string]any{"branch": "sandman/42-fix"}},
-		{Type: "run.started", RunID: "run-43", Issue: 43, Timestamp: started, Payload: map[string]any{"branch": "sandman/43-fix"}},
+		{Type: "run.started", RunID: "run-42", Issue: 42, Timestamp: started, Payload: map[string]any{"branch": "42-fix"}},
+		{Type: "run.started", RunID: "run-43", Issue: 43, Timestamp: started, Payload: map[string]any{"branch": "43-fix"}},
 	}}
 
 	deps.ConfigStore = &fakeStore{config: &config.Config{WorktreeDir: filepath.Join(dir, ".sandman", "worktrees")}}
@@ -657,7 +657,7 @@ func TestRecoverStaleRuns_LiveBatch_NoEventEmitted(t *testing.T) {
 	defer ctlSocket.Stop()
 
 	log := &fakeEventLog{events: []events.Event{
-		{Type: "run.started", RunID: "run-42", Issue: 42, Timestamp: started, Payload: map[string]any{"branch": "sandman/42-fix"}},
+		{Type: "run.started", RunID: "run-42", Issue: 42, Timestamp: started, Payload: map[string]any{"branch": "42-fix"}},
 	}}
 
 	deps.ConfigStore = &fakeStore{config: &config.Config{WorktreeDir: filepath.Join(dir, ".sandman", "worktrees")}}
@@ -694,7 +694,7 @@ func TestRecoverStaleRuns_RunStartedBeforeManifestCreatedAt_RecoveredAsOrphan(t 
 	writeBatchManifest(t, dir, "run-old", []int{42}, createdAt)
 
 	log := &fakeEventLog{events: []events.Event{
-		{Type: "run.started", RunID: "run-42", Issue: 42, Timestamp: started, Payload: map[string]any{"branch": "sandman/42-fix"}},
+		{Type: "run.started", RunID: "run-42", Issue: 42, Timestamp: started, Payload: map[string]any{"branch": "42-fix"}},
 	}}
 
 	deps.ConfigStore = &fakeStore{config: &config.Config{WorktreeDir: filepath.Join(dir, ".sandman", "worktrees")}}
@@ -731,7 +731,7 @@ func TestRecoverStaleRuns_AlreadyTerminated_NoEventEmitted(t *testing.T) {
 	writeBatchManifest(t, dir, "run-finished", []int{42}, createdAt)
 
 	log := &fakeEventLog{events: []events.Event{
-		{Type: "run.started", RunID: "run-42", Issue: 42, Timestamp: started, Payload: map[string]any{"branch": "sandman/42-fix"}},
+		{Type: "run.started", RunID: "run-42", Issue: 42, Timestamp: started, Payload: map[string]any{"branch": "42-fix"}},
 		{Type: "run.finished", RunID: "run-42", Issue: 42, Timestamp: started.Add(time.Hour), Payload: map[string]any{"status": "success"}},
 	}}
 
@@ -767,8 +767,8 @@ func TestRecoverStaleRuns_ContinuedResetsStartedTimestamp(t *testing.T) {
 	writeBatchManifest(t, dir, "run-cont-1", []int{42}, createdAt)
 
 	log := &fakeEventLog{events: []events.Event{
-		{Type: "run.started", RunID: "run-42", Issue: 42, Timestamp: firstStart, Payload: map[string]any{"branch": "sandman/42-fix"}},
-		{Type: "run.continued", RunID: "run-42", Issue: 42, Timestamp: continuedAt, Payload: map[string]any{"branch": "sandman/42-fix"}},
+		{Type: "run.started", RunID: "run-42", Issue: 42, Timestamp: firstStart, Payload: map[string]any{"branch": "42-fix"}},
+		{Type: "run.continued", RunID: "run-42", Issue: 42, Timestamp: continuedAt, Payload: map[string]any{"branch": "42-fix"}},
 	}}
 
 	deps.ConfigStore = &fakeStore{config: &config.Config{WorktreeDir: filepath.Join(dir, ".sandman", "worktrees")}}
@@ -849,7 +849,7 @@ func TestRecoverStaleRuns_JSONRoundTripPreservesIssue(t *testing.T) {
 	}
 	logger := &events.JSONLLogger{Path: logFile}
 	initial := []events.Event{
-		{Type: "run.started", RunID: "run-42", Issue: 42, Timestamp: started, Payload: map[string]any{"branch": "sandman/42-fix"}},
+		{Type: "run.started", RunID: "run-42", Issue: 42, Timestamp: started, Payload: map[string]any{"branch": "42-fix"}},
 	}
 	for _, e := range initial {
 		if err := logger.Log(e); err != nil {

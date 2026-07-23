@@ -16,8 +16,8 @@ func TestAssertHermeticGHShimsParallel_HappyPath(t *testing.T) {
 		t.Fatalf("mkdir shim: %v", err)
 	}
 	writeFakePRCreateArtifactsParallel(t, containerGhShimDir, []prFlowExpectedPR{
-		{Branch: "sandman/150-fix-150", Title: "Fix 150", Body: "Fixes #150"},
-		{Branch: "sandman/151-fix-151", Title: "Fix 151", Body: "Fixes #151"},
+		{Branch: "150-fix-150", Title: "Fix 150", Body: "Fixes #150"},
+		{Branch: "151-fix-151", Title: "Fix 151", Body: "Fixes #151"},
 	})
 
 	scopes := []prFlowHermeticScope{
@@ -26,8 +26,8 @@ func TestAssertHermeticGHShimsParallel_HappyPath(t *testing.T) {
 			ContainerGhShimDir: containerGhShimDir,
 			ExpectedOriginURL:  "file:///tmp/example.git",
 			ExpectedPRCalls: []prFlowExpectedPR{
-				{Branch: "sandman/150-fix-150", Title: "Fix 150", Body: "Fixes #150"},
-				{Branch: "sandman/151-fix-151", Title: "Fix 151", Body: "Fixes #151"},
+				{Branch: "150-fix-150", Title: "Fix 150", Body: "Fixes #150"},
+				{Branch: "151-fix-151", Title: "Fix 151", Body: "Fixes #151"},
 			},
 		},
 	}
@@ -42,8 +42,8 @@ func TestAssertHermeticGHShimsParallel_MultipleScopes(t *testing.T) {
 		t.Fatalf("mkdir shimA: %v", err)
 	}
 	writeFakePRCreateArtifactsParallel(t, shimA, []prFlowExpectedPR{
-		{Branch: "sandman/10-fix-10", Title: "Fix 10", Body: "Fixes #10"},
-		{Branch: "sandman/11-fix-11", Title: "Fix 11", Body: "Fixes #11"},
+		{Branch: "10-fix-10", Title: "Fix 10", Body: "Fixes #10"},
+		{Branch: "11-fix-11", Title: "Fix 11", Body: "Fixes #11"},
 	})
 
 	repoB := initHermeticTestRepo(t, "file:///tmp/b.git")
@@ -52,7 +52,7 @@ func TestAssertHermeticGHShimsParallel_MultipleScopes(t *testing.T) {
 		t.Fatalf("mkdir shimB: %v", err)
 	}
 	writeFakePRCreateArtifactsParallel(t, shimB, []prFlowExpectedPR{
-		{Branch: "sandman/20-fix-20", Title: "Fix 20", Body: "Fixes #20"},
+		{Branch: "20-fix-20", Title: "Fix 20", Body: "Fixes #20"},
 	})
 
 	scopes := []prFlowHermeticScope{
@@ -61,8 +61,8 @@ func TestAssertHermeticGHShimsParallel_MultipleScopes(t *testing.T) {
 			ContainerGhShimDir: shimA,
 			ExpectedOriginURL:  "file:///tmp/a.git",
 			ExpectedPRCalls: []prFlowExpectedPR{
-				{Branch: "sandman/10-fix-10", Title: "Fix 10", Body: "Fixes #10"},
-				{Branch: "sandman/11-fix-11", Title: "Fix 11", Body: "Fixes #11"},
+				{Branch: "10-fix-10", Title: "Fix 10", Body: "Fixes #10"},
+				{Branch: "11-fix-11", Title: "Fix 11", Body: "Fixes #11"},
 			},
 		},
 		{
@@ -70,7 +70,7 @@ func TestAssertHermeticGHShimsParallel_MultipleScopes(t *testing.T) {
 			ContainerGhShimDir: shimB,
 			ExpectedOriginURL:  "file:///tmp/b.git",
 			ExpectedPRCalls: []prFlowExpectedPR{
-				{Branch: "sandman/20-fix-20", Title: "Fix 20", Body: "Fixes #20"},
+				{Branch: "20-fix-20", Title: "Fix 20", Body: "Fixes #20"},
 			},
 		},
 	}

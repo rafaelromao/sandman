@@ -98,7 +98,7 @@ func TestPortalPerf_AsyncLargeReviewLogRoundTrip(t *testing.T) {
 	  startedAt: 1000,
 	  finishedAt: null,
 	  duration: 1,
-	  branch: 'sandman/1479-slice-b',
+	  branch: '1479-slice-b',
 	  log: log,
 	  logPath: '/tmp/260629182613-d8b9-1479/run.log',
 	  logUrl: '/api/logs?path=.sandman%2Fbatches%2Fd8b9-260629182613-1479%2B5%2Fruns%2Fd8b9-260629182613-1479%2Frun.log',

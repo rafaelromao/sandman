@@ -115,7 +115,7 @@ func TestRestoreWorktreeGitPaths_RestoresWorktreeAndRegistrationPointers(t *test
 	commitGitFile(t, repoDir, "tracked.txt", "base\n", "base")
 	runGit(t, repoDir, "push", "origin", "main")
 
-	branch := "sandman/42-fix-bug"
+	branch := "42-fix-bug"
 	worktreeBase := filepath.Join(repoDir, ".sandman", "worktrees")
 	wt := NewWorktreeSandbox(repoDir, worktreeBase, branch, "main")
 	if err := wt.Start(SandboxStart{StrandedReconcile: true}); err != nil {

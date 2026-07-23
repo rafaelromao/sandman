@@ -179,7 +179,7 @@ func TestShellenvQuote(t *testing.T) {
 	}{
 		{in: "", want: "''"},
 		{in: "main", want: "'main'"},
-		{in: "sandman/42-fix-bug", want: "'sandman/42-fix-bug'"},
+		{in: "42-fix-bug", want: "'42-fix-bug'"},
 		{in: "two words", want: "'two words'"},
 		{in: "it's fine", want: `'it'"'"'s fine'`},
 		{in: "'; rm -rf /", want: `''"'"'; rm -rf /'`},

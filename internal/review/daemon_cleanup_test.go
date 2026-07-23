@@ -171,12 +171,12 @@ func TestClearReviewArtifacts_DoesNotPruneSiblingBatchWorktree(t *testing.T) {
 	}
 
 	target := "sandman/review-42-c1"
-	sibling := "sandman/99-batch"
+	sibling := "99-batch"
 	stageReviewWorktree(t, worktreeDir, target)
 	stageReviewWorktree(t, worktreeDir, sibling)
 
 	siblingAdmin := filepath.Join(dir, ".git", "worktrees", filepath.Base(filepath.Join(worktreeDir, sibling)))
-	if err := os.WriteFile(filepath.Join(siblingAdmin, "gitdir"), []byte("gitdir: /workspace/.sandman/worktrees/sandman/99-batch/.git\n"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(siblingAdmin, "gitdir"), []byte("gitdir: /workspace/.sandman/worktrees/99-batch/.git\n"), 0644); err != nil {
 		t.Fatalf("corrupt sibling registration: %v", err)
 	}
 

@@ -69,7 +69,7 @@ var smokeProviderCases = []smokeProviderCase{
 			Title:  "Smoke opencode",
 			Body:   "Reply with exactly SMOKE_OK.",
 		},
-		wantBranch: "sandman/421-smoke-opencode",
+		wantBranch: "421-smoke-opencode",
 		requiredAuth: []string{
 			"~/.local/share/opencode/auth.json",
 		},

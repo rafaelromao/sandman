@@ -16,7 +16,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/testenv"
 )
 
-const subagentPermissionE2EBranch = "sandman/1-fix-failing-test"
+const subagentPermissionE2EBranch = "1-fix-failing-test"
 
 const subagentMarkerEnv = "FAKE_OPENCODE_SUBAGENT"
 

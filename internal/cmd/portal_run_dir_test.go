@@ -42,7 +42,7 @@ func TestPortal_RunDir_ActiveRowStampsPerRowFolder(t *testing.T) {
 	addBatchToIndex(t, repoRoot, "live-rundir", batchDir, []int{42})
 
 	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
-		{Type: "run.started", Timestamp: time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC), RunID: "abcd-260101120000-42", Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
+		{Type: "run.started", Timestamp: time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC), RunID: "abcd-260101120000-42", Issue: 42, Payload: map[string]any{"branch": "42-fix"}},
 	})
 
 	runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")})
@@ -100,8 +100,8 @@ func TestPortal_RunDir_TerminalRowStampsBatchesIndexPath(t *testing.T) {
 	batchDir := filepath.Join(repoRoot, ".sandman", "batches", batchID)
 	runID := "abcd-260101120000-99"
 	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
-		{Type: "run.started", Timestamp: time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC), RunID: runID, Issue: 99, Payload: map[string]any{"branch": "sandman/99-fix", "batch_id": batchID}},
-		{Type: "run.finished", Timestamp: time.Date(2025, 1, 1, 12, 5, 0, 0, time.UTC), RunID: runID, Issue: 99, Payload: map[string]any{"status": "success", "branch": "sandman/99-fix", "batch_id": batchID}},
+		{Type: "run.started", Timestamp: time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC), RunID: runID, Issue: 99, Payload: map[string]any{"branch": "99-fix", "batch_id": batchID}},
+		{Type: "run.finished", Timestamp: time.Date(2025, 1, 1, 12, 5, 0, 0, time.UTC), RunID: runID, Issue: 99, Payload: map[string]any{"status": "success", "branch": "99-fix", "batch_id": batchID}},
 	})
 	addBatchToIndex(t, repoRoot, batchID, batchDir, []int{99})
 
@@ -134,8 +134,8 @@ func TestPortal_RunDir_TerminalRowUnresolvableBatchLeavesRunDirEmpty(t *testing.
 	// No addBatchToIndex call — the batch is unknown to the Batches
 	// index. The terminal row survives via the event log alone.
 	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
-		{Type: "run.started", Timestamp: time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC), RunID: runID, Issue: 77, Payload: map[string]any{"branch": "sandman/77-fix", "batch_id": "ghost-batch"}},
-		{Type: "run.finished", Timestamp: time.Date(2025, 1, 1, 12, 5, 0, 0, time.UTC), RunID: runID, Issue: 77, Payload: map[string]any{"status": "success", "branch": "sandman/77-fix", "batch_id": "ghost-batch"}},
+		{Type: "run.started", Timestamp: time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC), RunID: runID, Issue: 77, Payload: map[string]any{"branch": "77-fix", "batch_id": "ghost-batch"}},
+		{Type: "run.finished", Timestamp: time.Date(2025, 1, 1, 12, 5, 0, 0, time.UTC), RunID: runID, Issue: 77, Payload: map[string]any{"status": "success", "branch": "77-fix", "batch_id": "ghost-batch"}},
 	})
 
 	runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")})
@@ -182,8 +182,8 @@ func TestPortal_RunDir_SynthesizedDeadBatchRowStampsBatchRunDir(t *testing.T) {
 	// so synthesizedDeadBatchRows will produce a row for issue 66 only.
 	runID55 := "abcd-260101120000-55"
 	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
-		{Type: "run.started", Timestamp: time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC), RunID: runID55, Issue: 55, Payload: map[string]any{"branch": "sandman/55-fix", "batch_id": batchID}},
-		{Type: "run.finished", Timestamp: time.Date(2025, 1, 1, 12, 5, 0, 0, time.UTC), RunID: runID55, Issue: 55, Payload: map[string]any{"status": "success", "branch": "sandman/55-fix", "batch_id": batchID}},
+		{Type: "run.started", Timestamp: time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC), RunID: runID55, Issue: 55, Payload: map[string]any{"branch": "55-fix", "batch_id": batchID}},
+		{Type: "run.finished", Timestamp: time.Date(2025, 1, 1, 12, 5, 0, 0, time.UTC), RunID: runID55, Issue: 55, Payload: map[string]any{"status": "success", "branch": "55-fix", "batch_id": batchID}},
 	})
 	addBatchToIndex(t, repoRoot, batchID, batchDir, []int{55, 66})
 

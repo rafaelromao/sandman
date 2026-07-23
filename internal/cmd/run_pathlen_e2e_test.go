@@ -32,11 +32,11 @@ func TestRun_PathlenWorktreeAndReviewSockets(t *testing.T) {
 				42: {Number: 42, Title: "Pathlen regression", Body: "Exercise long Unix socket paths."},
 			},
 			prs: map[string]*github.PR{
-				"sandman/42-pathlen-regression": {
+				"42-pathlen-regression": {
 					Number:      42,
 					State:       "closed",
 					Merged:      true,
-					HeadRefName: "sandman/42-pathlen-regression",
+					HeadRefName: "42-pathlen-regression",
 				},
 			},
 		}

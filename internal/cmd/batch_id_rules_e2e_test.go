@@ -144,7 +144,7 @@ func idxContinueLookup(t *testing.T, dir, batchID string) int {
 func TestBatchIDRules_SingleIssueBatchIdentity(t *testing.T) {
 	requireGateMultiIssue(t)
 	spy := &spyBatchRunner{result: &batch.Result{
-		Runs: []batch.AgentRunResult{{IssueNumber: 42, Status: "success", Branch: "sandman/42-fix-bug"}},
+		Runs: []batch.AgentRunResult{{IssueNumber: 42, Status: "success", Branch: "42-fix-bug"}},
 	}}
 	deps := newRunDeps(t, spy)
 	deps.GitHubClient = &fakeGitHubClient{
@@ -200,8 +200,8 @@ func TestBatchIDRules_MultiIssueBatchIdentity(t *testing.T) {
 	requireGateMultiIssue(t)
 	spy := &spyBatchRunner{result: &batch.Result{
 		Runs: []batch.AgentRunResult{
-			{IssueNumber: 42, Status: "success", Branch: "sandman/42-fix"},
-			{IssueNumber: 43, Status: "success", Branch: "sandman/43-fix"},
+			{IssueNumber: 42, Status: "success", Branch: "42-fix"},
+			{IssueNumber: 43, Status: "success", Branch: "43-fix"},
 		},
 	}}
 	deps := newRunDeps(t, spy)
@@ -436,7 +436,7 @@ func TestBatchIDRules_PortalBatchLabelAndDetailsRenderPublicBatchId(t *testing.T
 
 	startedAt := now
 	writePortalLog(t, layout.EventsLogPath, []events.Event{
-		{Type: "run.started", Timestamp: startedAt, RunID: rowRunID, Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix", "batch_id": batchID}},
+		{Type: "run.started", Timestamp: startedAt, RunID: rowRunID, Issue: 42, Payload: map[string]any{"branch": "42-fix", "batch_id": batchID}},
 	})
 
 	idx := batchindex.Index{Version: batchindex.IndexVersion, Batches: []batchindex.Batch{
@@ -525,7 +525,7 @@ func TestBatchIDRules_PortalLiveVsSavedVsArchivedLog(t *testing.T) {
 		t.Fatal(err)
 	}
 	writePortalLog(t, layout.EventsLogPath, []events.Event{
-		{Type: "run.started", Timestamp: now.Add(-time.Minute), RunID: activeRowID, Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix", "batch_id": activeBatchID}},
+		{Type: "run.started", Timestamp: now.Add(-time.Minute), RunID: activeRowID, Issue: 42, Payload: map[string]any{"branch": "42-fix", "batch_id": activeBatchID}},
 	})
 
 	terminalBatchID := runid.NewBatchID(runid.KindIssue, 1, "43", ts, shortid)
@@ -540,8 +540,8 @@ func TestBatchIDRules_PortalLiveVsSavedVsArchivedLog(t *testing.T) {
 		t.Fatal(err)
 	}
 	writePortalLog(t, layout.EventsLogPath, []events.Event{
-		{Type: "run.started", Timestamp: now.Add(-2 * time.Minute), RunID: terminalRowID, Issue: 43, Payload: map[string]any{"branch": "sandman/43-fix", "batch_id": terminalBatchID}},
-		{Type: "run.finished", Timestamp: now.Add(-time.Minute), RunID: terminalRowID, Issue: 43, Payload: map[string]any{"status": "success", "branch": "sandman/43-fix", "batch_id": terminalBatchID}},
+		{Type: "run.started", Timestamp: now.Add(-2 * time.Minute), RunID: terminalRowID, Issue: 43, Payload: map[string]any{"branch": "43-fix", "batch_id": terminalBatchID}},
+		{Type: "run.finished", Timestamp: now.Add(-time.Minute), RunID: terminalRowID, Issue: 43, Payload: map[string]any{"status": "success", "branch": "43-fix", "batch_id": terminalBatchID}},
 	})
 
 	archivedBatchID := runid.NewBatchID(runid.KindIssue, 1, "99", ts, shortid)
@@ -557,8 +557,8 @@ func TestBatchIDRules_PortalLiveVsSavedVsArchivedLog(t *testing.T) {
 	}
 	archivedAt := now.Add(-time.Hour)
 	writePortalLog(t, layout.EventsLogPath, []events.Event{
-		{Type: "run.started", Timestamp: now.Add(-3 * time.Hour), RunID: archivedRowID, Issue: 99, Payload: map[string]any{"branch": "sandman/99-fix", "batch_id": archivedBatchID}},
-		{Type: "run.finished", Timestamp: now.Add(-2 * time.Hour), RunID: archivedRowID, Issue: 99, Payload: map[string]any{"status": "success", "branch": "sandman/99-fix", "batch_id": archivedBatchID}},
+		{Type: "run.started", Timestamp: now.Add(-3 * time.Hour), RunID: archivedRowID, Issue: 99, Payload: map[string]any{"branch": "99-fix", "batch_id": archivedBatchID}},
+		{Type: "run.finished", Timestamp: now.Add(-2 * time.Hour), RunID: archivedRowID, Issue: 99, Payload: map[string]any{"status": "success", "branch": "99-fix", "batch_id": archivedBatchID}},
 	})
 
 	idx := batchindex.Index{Version: batchindex.IndexVersion, Batches: []batchindex.Batch{
@@ -1140,11 +1140,11 @@ func TestBatchIDRules_ContinueMintsFreshBatchAndRunIDs(t *testing.T) {
 		prs:    map[string]*github.PR{},
 	}
 	deps.EventLog = &fakeEventLog{events: []events.Event{
-		{Type: "run.started", RunID: "prev-ts-abcd-42", Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix-bug", "base_branch": "main", "agent": "opencode"}},
+		{Type: "run.started", RunID: "prev-ts-abcd-42", Issue: 42, Payload: map[string]any{"branch": "42-fix-bug", "base_branch": "main", "agent": "opencode"}},
 	}}
 	dir := freshSandmanDir(t)
 
-	branch := "sandman/42-fix-bug"
+	branch := "42-fix-bug"
 	worktreePath := filepath.Join(dir, ".sandman", "worktrees", branch)
 	if err := os.MkdirAll(filepath.Join(worktreePath, ".sandman"), 0755); err != nil {
 		t.Fatal(err)
@@ -1191,11 +1191,11 @@ func TestBatchIDRules_ContinueReusesOriginalBranchAndWorktree(t *testing.T) {
 		prs:    map[string]*github.PR{},
 	}
 	deps.EventLog = &fakeEventLog{events: []events.Event{
-		{Type: "run.started", RunID: "prev-ts-abcd-42", Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix-bug", "base_branch": "main", "agent": "opencode"}},
+		{Type: "run.started", RunID: "prev-ts-abcd-42", Issue: 42, Payload: map[string]any{"branch": "42-fix-bug", "base_branch": "main", "agent": "opencode"}},
 	}}
 	dir := freshSandmanDir(t)
 
-	branch := "sandman/42-fix-bug"
+	branch := "42-fix-bug"
 	worktreePath := filepath.Join(dir, ".sandman", "worktrees", branch)
 	if err := os.MkdirAll(filepath.Join(worktreePath, ".sandman"), 0755); err != nil {
 		t.Fatal(err)
@@ -1231,11 +1231,11 @@ func TestBatchIDRules_ContinueLeavesPreviousRunUnchanged(t *testing.T) {
 		prs:    map[string]*github.PR{},
 	}
 	deps.EventLog = &fakeEventLog{events: []events.Event{
-		{Type: "run.started", RunID: "prev-ts-abcd-42", Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix-bug", "base_branch": "main", "agent": "opencode"}},
+		{Type: "run.started", RunID: "prev-ts-abcd-42", Issue: 42, Payload: map[string]any{"branch": "42-fix-bug", "base_branch": "main", "agent": "opencode"}},
 	}}
 	dir := freshSandmanDir(t)
 
-	branch := "sandman/42-fix-bug"
+	branch := "42-fix-bug"
 	worktreePath := filepath.Join(dir, ".sandman", "worktrees", branch)
 	if err := os.MkdirAll(filepath.Join(worktreePath, ".sandman"), 0755); err != nil {
 		t.Fatal(err)
@@ -1315,7 +1315,7 @@ func TestBatchIDRules_ContinueEmitsRunContinuedEvent(t *testing.T) {
 		prs:    map[string]*github.PR{},
 	}
 	deps.EventLog = &fakeEventLog{events: []events.Event{
-		{Type: "run.started", RunID: prevRunID, Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix-bug", "base_branch": "main", "agent": "opencode"}},
+		{Type: "run.started", RunID: prevRunID, Issue: 42, Payload: map[string]any{"branch": "42-fix-bug", "base_branch": "main", "agent": "opencode"}},
 	}}
 	dir := freshSandmanDir(t)
 	// newRunDeps sets RepoRoot to "."; pin it to the absolute temp dir so the
@@ -1323,7 +1323,7 @@ func TestBatchIDRules_ContinueEmitsRunContinuedEvent(t *testing.T) {
 	// recorded by `git worktree add` below (this relies on absolute paths).
 	deps.RepoRoot = dir
 
-	branch := "sandman/42-fix-bug"
+	branch := "42-fix-bug"
 	worktreeBase := filepath.Join(dir, ".sandman", "worktrees")
 	worktreePath := addRegisteredContinuationWorktree(t, dir, worktreeBase, branch)
 	if err := os.MkdirAll(filepath.Join(worktreePath, ".sandman"), 0755); err != nil {
@@ -1371,7 +1371,7 @@ func TestBatchIDRules_ContinueFoldCreatesFreshRunState(t *testing.T) {
 	}
 	prevEvents := filepath.Join(prevRunDir, "events.jsonl")
 	prevLog := &events.JSONLLogger{Path: prevEvents}
-	if err := prevLog.Log(events.Event{Type: "run.started", Timestamp: time.Now().Add(-time.Hour), RunID: prevBatchID, Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix", "agent": "opencode"}}); err != nil {
+	if err := prevLog.Log(events.Event{Type: "run.started", Timestamp: time.Now().Add(-time.Hour), RunID: prevBatchID, Issue: 42, Payload: map[string]any{"branch": "42-fix", "agent": "opencode"}}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1386,7 +1386,7 @@ func TestBatchIDRules_ContinueFoldCreatesFreshRunState(t *testing.T) {
 	}
 	newEvents := filepath.Join(newRunDir, "events.jsonl")
 	newLog := &events.JSONLLogger{Path: newEvents}
-	if err := newLog.Log(events.Event{Type: "run.continued", Timestamp: time.Now(), RunID: newBatchID, Issue: 42, Payload: map[string]any{"previous_run_id": prevBatchID, "branch": "sandman/42-fix"}}); err != nil {
+	if err := newLog.Log(events.Event{Type: "run.continued", Timestamp: time.Now(), RunID: newBatchID, Issue: 42, Payload: map[string]any{"previous_run_id": prevBatchID, "branch": "42-fix"}}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1447,10 +1447,10 @@ func TestBatchIDRules_ContinueSubjectPickerExposesPreviousRun(t *testing.T) {
 		t.Fatal(err)
 	}
 	writePortalLog(t, layout.EventsLogPath, []events.Event{
-		{Type: "run.started", Timestamp: now.Add(-time.Hour), RunID: prevRunID, Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix", "batch_id": prevBatchID}},
-		{Type: "run.finished", Timestamp: now.Add(-30 * time.Minute), RunID: prevRunID, Issue: 42, Payload: map[string]any{"status": "success", "branch": "sandman/42-fix", "batch_id": prevBatchID}},
-		{Type: "run.continued", Timestamp: now, RunID: newRunID, Issue: 42, Payload: map[string]any{"previous_run_id": prevRunID, "branch": "sandman/42-fix", "batch_id": newBatchID}},
-		{Type: "run.started", Timestamp: now, RunID: newRunID, Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix", "batch_id": newBatchID}},
+		{Type: "run.started", Timestamp: now.Add(-time.Hour), RunID: prevRunID, Issue: 42, Payload: map[string]any{"branch": "42-fix", "batch_id": prevBatchID}},
+		{Type: "run.finished", Timestamp: now.Add(-30 * time.Minute), RunID: prevRunID, Issue: 42, Payload: map[string]any{"status": "success", "branch": "42-fix", "batch_id": prevBatchID}},
+		{Type: "run.continued", Timestamp: now, RunID: newRunID, Issue: 42, Payload: map[string]any{"previous_run_id": prevRunID, "branch": "42-fix", "batch_id": newBatchID}},
+		{Type: "run.started", Timestamp: now, RunID: newRunID, Issue: 42, Payload: map[string]any{"branch": "42-fix", "batch_id": newBatchID}},
 	})
 
 	idx := batchindex.Index{Version: batchindex.IndexVersion, Batches: []batchindex.Batch{
@@ -1523,10 +1523,10 @@ func TestBatchIDRules_ContinuePickerSwitchesToPreviousRun(t *testing.T) {
 		t.Fatal(err)
 	}
 	writePortalLog(t, layout.EventsLogPath, []events.Event{
-		{Type: "run.started", Timestamp: now.Add(-time.Hour), RunID: prevRunID, Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix", "batch_id": prevBatchID}},
-		{Type: "run.finished", Timestamp: now.Add(-30 * time.Minute), RunID: prevRunID, Issue: 42, Payload: map[string]any{"status": "success", "branch": "sandman/42-fix", "batch_id": prevBatchID}},
-		{Type: "run.continued", Timestamp: now, RunID: newRunID, Issue: 42, Payload: map[string]any{"previous_run_id": prevRunID, "branch": "sandman/42-fix", "batch_id": newBatchID}},
-		{Type: "run.started", Timestamp: now, RunID: newRunID, Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix", "batch_id": newBatchID}},
+		{Type: "run.started", Timestamp: now.Add(-time.Hour), RunID: prevRunID, Issue: 42, Payload: map[string]any{"branch": "42-fix", "batch_id": prevBatchID}},
+		{Type: "run.finished", Timestamp: now.Add(-30 * time.Minute), RunID: prevRunID, Issue: 42, Payload: map[string]any{"status": "success", "branch": "42-fix", "batch_id": prevBatchID}},
+		{Type: "run.continued", Timestamp: now, RunID: newRunID, Issue: 42, Payload: map[string]any{"previous_run_id": prevRunID, "branch": "42-fix", "batch_id": newBatchID}},
+		{Type: "run.started", Timestamp: now, RunID: newRunID, Issue: 42, Payload: map[string]any{"branch": "42-fix", "batch_id": newBatchID}},
 	})
 
 	idx := batchindex.Index{Version: batchindex.IndexVersion, Batches: []batchindex.Batch{
@@ -1607,10 +1607,10 @@ func TestBatchIDRules_ContinueDoesNotRenderContinuationChip(t *testing.T) {
 		t.Fatal(err)
 	}
 	writePortalLog(t, layout.EventsLogPath, []events.Event{
-		{Type: "run.started", Timestamp: now.Add(-time.Hour), RunID: prevRunID, Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix", "batch_id": prevBatchID}},
-		{Type: "run.finished", Timestamp: now.Add(-30 * time.Minute), RunID: prevRunID, Issue: 42, Payload: map[string]any{"status": "success", "branch": "sandman/42-fix", "batch_id": prevBatchID}},
-		{Type: "run.continued", Timestamp: now, RunID: newRunID, Issue: 42, Payload: map[string]any{"previous_run_id": prevRunID, "branch": "sandman/42-fix", "batch_id": newBatchID}},
-		{Type: "run.started", Timestamp: now, RunID: newRunID, Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix", "batch_id": newBatchID}},
+		{Type: "run.started", Timestamp: now.Add(-time.Hour), RunID: prevRunID, Issue: 42, Payload: map[string]any{"branch": "42-fix", "batch_id": prevBatchID}},
+		{Type: "run.finished", Timestamp: now.Add(-30 * time.Minute), RunID: prevRunID, Issue: 42, Payload: map[string]any{"status": "success", "branch": "42-fix", "batch_id": prevBatchID}},
+		{Type: "run.continued", Timestamp: now, RunID: newRunID, Issue: 42, Payload: map[string]any{"previous_run_id": prevRunID, "branch": "42-fix", "batch_id": newBatchID}},
+		{Type: "run.started", Timestamp: now, RunID: newRunID, Issue: 42, Payload: map[string]any{"branch": "42-fix", "batch_id": newBatchID}},
 	})
 
 	idx := batchindex.Index{Version: batchindex.IndexVersion, Batches: []batchindex.Batch{
@@ -1677,8 +1677,8 @@ func TestBatchIDRules_AbortResolvesByRunID(t *testing.T) {
 		}
 	}
 	writePortalLog(t, layout.EventsLogPath, []events.Event{
-		{Type: "run.started", Timestamp: now, RunID: firstRow, Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix", "batch_id": batchID}},
-		{Type: "run.started", Timestamp: now, RunID: secondRow, Issue: 43, Payload: map[string]any{"branch": "sandman/43-fix", "batch_id": batchID}},
+		{Type: "run.started", Timestamp: now, RunID: firstRow, Issue: 42, Payload: map[string]any{"branch": "42-fix", "batch_id": batchID}},
+		{Type: "run.started", Timestamp: now, RunID: secondRow, Issue: 43, Payload: map[string]any{"branch": "43-fix", "batch_id": batchID}},
 	})
 	idx := batchindex.Index{Version: batchindex.IndexVersion, Batches: []batchindex.Batch{
 		{ID: batchID, Path: batchDir, Kind: batchindex.KindIssue, Status: batchindex.StatusActive, CreatedAt: now, Issues: []int{42, 43}},
@@ -1696,7 +1696,7 @@ func TestBatchIDRules_AbortResolvesByRunID(t *testing.T) {
 		if issueNumber != 42 {
 			t.Errorf("expected aborter called with issue 42, got %d", issueNumber)
 		}
-		return (&events.JSONLLogger{Path: filepath.Join(repoRootArg, ".sandman", "events.jsonl")}).Log(events.Event{Type: "run.aborted", Timestamp: time.Now(), RunID: firstRow, Issue: 42, Payload: map[string]any{"status": "aborted", "branch": "sandman/42-fix", "batch_id": batchID}})
+		return (&events.JSONLLogger{Path: filepath.Join(repoRootArg, ".sandman", "events.jsonl")}).Log(events.Event{Type: "run.aborted", Timestamp: time.Now(), RunID: firstRow, Issue: 42, Payload: map[string]any{"status": "aborted", "branch": "42-fix", "batch_id": batchID}})
 	}
 
 	server := startPortalHTTPServer(t, newPortalHandler(repoRoot))

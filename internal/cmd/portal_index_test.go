@@ -36,7 +36,7 @@ func TestPortalRunsIndex_ReadEvents_AppendsJSONLTail(t *testing.T) {
 	}
 	logPath := filepath.Join(repoRoot, ".sandman", "events.jsonl")
 	firstTS := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
-	writePortalLog(t, logPath, []events.Event{{Type: "run.started", Timestamp: firstTS, RunID: "260618113825-abcd-42", Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}}})
+	writePortalLog(t, logPath, []events.Event{{Type: "run.started", Timestamp: firstTS, RunID: "260618113825-abcd-42", Issue: 42, Payload: map[string]any{"branch": "42-fix"}}})
 
 	idx := getPortalRunsIndex(repoRoot)
 	first, err := idx.readEvents()
@@ -55,7 +55,7 @@ func TestPortalRunsIndex_ReadEvents_AppendsJSONLTail(t *testing.T) {
 	}
 
 	secondTS := firstTS.Add(2 * time.Minute)
-	writePortalLog(t, logPath, []events.Event{{Type: "run.finished", Timestamp: secondTS, RunID: "260618113825-abcd-42", Issue: 42, Payload: map[string]any{"status": "success", "branch": "sandman/42-fix"}}})
+	writePortalLog(t, logPath, []events.Event{{Type: "run.finished", Timestamp: secondTS, RunID: "260618113825-abcd-42", Issue: 42, Payload: map[string]any{"status": "success", "branch": "42-fix"}}})
 	second, err := idx.readEvents()
 	if err != nil {
 		t.Fatalf("readEvents second: %v", err)

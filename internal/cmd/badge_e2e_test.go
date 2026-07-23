@@ -104,7 +104,7 @@ func TestBadge_E2E_HappyPath(t *testing.T) {
 	// stands in for the real sandman binary so this test exercises
 	// the production hook end-to-end without shelling out.
 	rec := &cmdBadgeRunner{branch: "sandman/built-with-sandman", prURL: "https://example.test/badge/pull/99"}
-	lister := &cmdBadgeLister{mergedPRs: []batch.MergedSandmanPR{{Number: 1, HeadRefName: "sandman/1-fix", Title: "Fix failing test"}}, hasBadge: false}
+	lister := &cmdBadgeLister{mergedPRs: []batch.MergedSandmanPR{{Number: 1, HeadRefName: "1-fix", Title: "Fix failing test"}}, hasBadge: false}
 	controlReader := &cmdBadgeControlFileReader{present: false}
 	controlWriter := &cmdBadgeControlFileWriter{}
 	badgeHook := batch.NewBadgeHookerWith(rec, lister, controlReader, controlWriter)
@@ -160,7 +160,7 @@ func TestBadge_E2E_MarkerPRSeeded_ShortCircuitsBadgeHook(t *testing.T) {
 	seedBadgeTestRepo(t, repoDir)
 
 	rec := &cmdBadgeRunner{branch: "sandman/built-with-sandman", prURL: "https://example.test/badge/pull/99"}
-	lister := &cmdBadgeLister{mergedPRs: []batch.MergedSandmanPR{{Number: 1, HeadRefName: "sandman/1-fix", Title: "Fix failing test"}}, hasBadge: true}
+	lister := &cmdBadgeLister{mergedPRs: []batch.MergedSandmanPR{{Number: 1, HeadRefName: "1-fix", Title: "Fix failing test"}}, hasBadge: true}
 	controlReader := &cmdBadgeControlFileReader{present: false}
 	controlWriter := &cmdBadgeControlFileWriter{}
 	badgeHook := batch.NewBadgeHookerWith(rec, lister, controlReader, controlWriter)
@@ -242,7 +242,7 @@ func (f *fakeBadgeBatchRunner) RunBatch(ctx context.Context, req batch.Request) 
 		results[i] = batch.AgentRunResult{
 			IssueNumber: issue,
 			Status:      "success",
-			Branch:      "sandman/1-fix",
+			Branch:      "1-fix",
 		}
 	}
 	if f.hook != nil {

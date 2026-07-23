@@ -41,16 +41,16 @@ func TestPortal_E2E_RetriesContract_RetryRunCarriesCountsAndEvents(t *testing.T)
 		"max_attempts":    3,
 		"previous_status": "failure",
 		"last_log_lines":  []string{"line one", "line two", "line three"},
-		"branch":          "sandman/42-fix",
+		"branch":          "42-fix",
 	}
 
 	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
-		{Type: "run.started", Timestamp: startedAt, RunID: runID, Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
+		{Type: "run.started", Timestamp: startedAt, RunID: runID, Issue: 42, Payload: map[string]any{"branch": "42-fix"}},
 		{Type: "run.retry", Timestamp: startedAt.Add(2 * time.Minute), RunID: runID, Issue: 42, Payload: retryPayload},
 		{Type: "run.retry", Timestamp: startedAt.Add(5 * time.Minute), RunID: runID, Issue: 42, Payload: retryPayload},
 		{Type: "run.finished", Timestamp: finishedAt, RunID: runID, Issue: 42, Payload: map[string]any{
 			"status":        "success",
-			"branch":        "sandman/42-fix",
+			"branch":        "42-fix",
 			"retries_total": 3,
 			"retries_done":  2,
 		}},
@@ -125,8 +125,8 @@ func TestPortal_E2E_RetriesContract_RetryRunCarriesCountsAndEvents(t *testing.T)
 		if got, _ := payload["previous_status"].(string); got != "failure" {
 			t.Fatalf("event %d: expected previous_status=failure, got %v (raw: %s)", i, payload["previous_status"], body)
 		}
-		if got, _ := payload["branch"].(string); got != "sandman/42-fix" {
-			t.Fatalf("event %d: expected branch=sandman/42-fix, got %v (raw: %s)", i, payload["branch"], body)
+		if got, _ := payload["branch"].(string); got != "42-fix" {
+			t.Fatalf("event %d: expected branch=42-fix, got %v (raw: %s)", i, payload["branch"], body)
 		}
 		lines, ok := payload["last_log_lines"].([]any)
 		if !ok {
@@ -154,10 +154,10 @@ func TestPortal_E2E_RetriesContract_CleanRunOmitsFields(t *testing.T) {
 	finishedAt := startedAt.Add(2 * time.Minute)
 
 	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
-		{Type: "run.started", Timestamp: startedAt, RunID: runID, Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
+		{Type: "run.started", Timestamp: startedAt, RunID: runID, Issue: 42, Payload: map[string]any{"branch": "42-fix"}},
 		{Type: "run.finished", Timestamp: finishedAt, RunID: runID, Issue: 42, Payload: map[string]any{
 			"status": "success",
-			"branch": "sandman/42-fix",
+			"branch": "42-fix",
 		}},
 	})
 
@@ -219,10 +219,10 @@ func TestPortal_E2E_RetriesContract_LegacyFinishedRunDefaultsToZero(t *testing.T
 	finishedAt := startedAt.Add(2 * time.Minute)
 
 	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
-		{Type: "run.started", Timestamp: startedAt, RunID: runID, Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
+		{Type: "run.started", Timestamp: startedAt, RunID: runID, Issue: 42, Payload: map[string]any{"branch": "42-fix"}},
 		{Type: "run.finished", Timestamp: finishedAt, RunID: runID, Issue: 42, Payload: map[string]any{
 			"status": "success",
-			"branch": "sandman/42-fix",
+			"branch": "42-fix",
 		}},
 	})
 
@@ -294,13 +294,13 @@ func TestPortal_E2E_RowCarriesLiveAttemptAndRetryReason(t *testing.T) {
 	retryAt := startedAt.Add(2 * time.Minute)
 
 	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
-		{Type: "run.started", Timestamp: startedAt, RunID: runID, Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
+		{Type: "run.started", Timestamp: startedAt, RunID: runID, Issue: 42, Payload: map[string]any{"branch": "42-fix"}},
 		{Type: "run.retry", Timestamp: retryAt, RunID: runID, Issue: 42, Payload: map[string]any{
 			"attempt":         2,
 			"max_attempts":    3,
 			"previous_status": "failure",
 			"reason":          "agent-stalled",
-			"branch":          "sandman/42-fix",
+			"branch":          "42-fix",
 		}},
 	})
 
@@ -388,10 +388,10 @@ func TestPortal_E2E_CleanRunOmitsAttemptsAndLastRetryReason(t *testing.T) {
 	finishedAt := startedAt.Add(2 * time.Minute)
 
 	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
-		{Type: "run.started", Timestamp: startedAt, RunID: runID, Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
+		{Type: "run.started", Timestamp: startedAt, RunID: runID, Issue: 42, Payload: map[string]any{"branch": "42-fix"}},
 		{Type: "run.finished", Timestamp: finishedAt, RunID: runID, Issue: 42, Payload: map[string]any{
 			"status": "success",
-			"branch": "sandman/42-fix",
+			"branch": "42-fix",
 		}},
 	})
 
@@ -431,8 +431,8 @@ func TestPortal_E2E_ParentSuccWithLiveChild(t *testing.T) {
 	addBatchToIndex(t, repoRoot, "PR42-live", batchDir, []int{1})
 
 	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
-		{Type: "run.started", Timestamp: startedAt, RunID: "260618113825-abcd-1", Issue: 1, Payload: map[string]any{"branch": "sandman/1-fix"}},
-		{Type: "run.finished", Timestamp: startedAt.Add(1 * time.Minute), RunID: "260618113825-abcd-1", Issue: 1, Payload: map[string]any{"branch": "sandman/1-fix", "status": "success"}},
+		{Type: "run.started", Timestamp: startedAt, RunID: "260618113825-abcd-1", Issue: 1, Payload: map[string]any{"branch": "1-fix"}},
+		{Type: "run.finished", Timestamp: startedAt.Add(1 * time.Minute), RunID: "260618113825-abcd-1", Issue: 1, Payload: map[string]any{"branch": "1-fix", "status": "success"}},
 		{Type: "run.started", Timestamp: startedAt.Add(30 * time.Second), RunID: "PR42-live", Issue: 1, Payload: map[string]any{"review": true, "pr_number": 42, "branch": "sandman/review-PR42"}},
 	})
 

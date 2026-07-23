@@ -54,8 +54,8 @@ func TestPortal_DeadBatchSynthesizesNeverStartedMembers(t *testing.T) {
 	}
 	logPath := filepath.Join(repoRoot, ".sandman", "events.jsonl")
 	writePortalLog(t, logPath, []events.Event{
-		{Type: "run.started", Timestamp: startedAt.Add(1 * time.Minute), RunID: "run-1", Issue: 1, Payload: map[string]any{"branch": "sandman/1-fix", "batch_id": "dead-1"}},
-		{Type: "run.finished", Timestamp: startedAt.Add(2 * time.Minute), RunID: "run-1", Issue: 1, Payload: map[string]any{"status": "success", "branch": "sandman/1-fix"}},
+		{Type: "run.started", Timestamp: startedAt.Add(1 * time.Minute), RunID: "run-1", Issue: 1, Payload: map[string]any{"branch": "1-fix", "batch_id": "dead-1"}},
+		{Type: "run.finished", Timestamp: startedAt.Add(2 * time.Minute), RunID: "run-1", Issue: 1, Payload: map[string]any{"status": "success", "branch": "1-fix"}},
 	})
 
 	runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: logPath})
@@ -128,8 +128,8 @@ func TestPortal_DeadBatchSynthesizesOnlyMissingManifestMembers(t *testing.T) {
 
 	logPath := filepath.Join(repoRoot, ".sandman", "events.jsonl")
 	writePortalLog(t, logPath, []events.Event{
-		{Type: "run.started", Timestamp: startedAt.Add(1 * time.Minute), RunID: "run-1", Issue: 1, Payload: map[string]any{"branch": "sandman/1-fix"}},
-		{Type: "run.finished", Timestamp: startedAt.Add(2 * time.Minute), RunID: "run-1", Issue: 1, Payload: map[string]any{"status": "success", "branch": "sandman/1-fix"}},
+		{Type: "run.started", Timestamp: startedAt.Add(1 * time.Minute), RunID: "run-1", Issue: 1, Payload: map[string]any{"branch": "1-fix"}},
+		{Type: "run.finished", Timestamp: startedAt.Add(2 * time.Minute), RunID: "run-1", Issue: 1, Payload: map[string]any{"status": "success", "branch": "1-fix"}},
 	})
 
 	runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: logPath})
@@ -183,8 +183,8 @@ func TestPortal_DeadBatchSynthesizesNeverStartedMembersWithoutRunsTree(t *testin
 	addBatchToIndex(t, repoRoot, "dead-1", batchDir, []int{1, 2, 3})
 	logPath := filepath.Join(repoRoot, ".sandman", "events.jsonl")
 	writePortalLog(t, logPath, []events.Event{
-		{Type: "run.started", Timestamp: startedAt.Add(1 * time.Minute), RunID: "run-1", Issue: 1, Payload: map[string]any{"branch": "sandman/1-fix"}},
-		{Type: "run.finished", Timestamp: startedAt.Add(2 * time.Minute), RunID: "run-1", Issue: 1, Payload: map[string]any{"status": "success", "branch": "sandman/1-fix"}},
+		{Type: "run.started", Timestamp: startedAt.Add(1 * time.Minute), RunID: "run-1", Issue: 1, Payload: map[string]any{"branch": "1-fix"}},
+		{Type: "run.finished", Timestamp: startedAt.Add(2 * time.Minute), RunID: "run-1", Issue: 1, Payload: map[string]any{"status": "success", "branch": "1-fix"}},
 	})
 
 	runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: logPath})
@@ -261,8 +261,8 @@ func TestPortal_DeadBatchesReuseIssueNumberWithEventBackedSuppression(t *testing
 
 	logPath := filepath.Join(repoRoot, ".sandman", "events.jsonl")
 	writePortalLog(t, logPath, []events.Event{
-		{Type: "run.started", Timestamp: firstStart.Add(1 * time.Minute), RunID: "run-42-old", Issue: 42, Payload: map[string]any{"branch": "sandman/42-old", "batch_id": "dead-1"}},
-		{Type: "run.finished", Timestamp: firstStart.Add(2 * time.Minute), RunID: "run-42-old", Issue: 42, Payload: map[string]any{"status": "success", "branch": "sandman/42-old"}},
+		{Type: "run.started", Timestamp: firstStart.Add(1 * time.Minute), RunID: "run-42-old", Issue: 42, Payload: map[string]any{"branch": "42-old", "batch_id": "dead-1"}},
+		{Type: "run.finished", Timestamp: firstStart.Add(2 * time.Minute), RunID: "run-42-old", Issue: 42, Payload: map[string]any{"status": "success", "branch": "42-old"}},
 	})
 
 	runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: logPath})
@@ -305,8 +305,8 @@ func TestPortal_DeadBatchUsesBatchSkewWindowForSeenIssues(t *testing.T) {
 
 	logPath := filepath.Join(repoRoot, ".sandman", "events.jsonl")
 	writePortalLog(t, logPath, []events.Event{
-		{Type: "run.started", Timestamp: startedAt.Add(-500 * time.Millisecond), RunID: "run-42", Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix", "batch_id": "dead-1"}},
-		{Type: "run.finished", Timestamp: startedAt.Add(500 * time.Millisecond), RunID: "run-42", Issue: 42, Payload: map[string]any{"status": "success", "branch": "sandman/42-fix"}},
+		{Type: "run.started", Timestamp: startedAt.Add(-500 * time.Millisecond), RunID: "run-42", Issue: 42, Payload: map[string]any{"branch": "42-fix", "batch_id": "dead-1"}},
+		{Type: "run.finished", Timestamp: startedAt.Add(500 * time.Millisecond), RunID: "run-42", Issue: 42, Payload: map[string]any{"status": "success", "branch": "42-fix"}},
 	})
 
 	runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: logPath})
@@ -382,10 +382,10 @@ func TestPortal_MixedLiveDeadAndOrphanRowsStayDistinct(t *testing.T) {
 
 	logPath := filepath.Join(repoRoot, ".sandman", "events.jsonl")
 	writePortalLog(t, logPath, []events.Event{
-		{Type: "run.started", Timestamp: startedAt.Add(1 * time.Minute), RunID: "run-1", Issue: 1, Payload: map[string]any{"branch": "sandman/1-fix", "batch_id": "dead-1"}},
-		{Type: "run.finished", Timestamp: startedAt.Add(2 * time.Minute), RunID: "run-1", Issue: 1, Payload: map[string]any{"status": "success", "branch": "sandman/1-fix"}},
-		{Type: "run.started", Timestamp: startedAt.Add(3 * time.Minute), RunID: "orphan-99", Issue: 99, Payload: map[string]any{"branch": "sandman/99-fix"}},
-		{Type: "run.aborted", Timestamp: startedAt.Add(4 * time.Minute), RunID: "orphan-99", Issue: 99, Payload: map[string]any{"status": "aborted", "branch": "sandman/99-fix"}},
+		{Type: "run.started", Timestamp: startedAt.Add(1 * time.Minute), RunID: "run-1", Issue: 1, Payload: map[string]any{"branch": "1-fix", "batch_id": "dead-1"}},
+		{Type: "run.finished", Timestamp: startedAt.Add(2 * time.Minute), RunID: "run-1", Issue: 1, Payload: map[string]any{"status": "success", "branch": "1-fix"}},
+		{Type: "run.started", Timestamp: startedAt.Add(3 * time.Minute), RunID: "orphan-99", Issue: 99, Payload: map[string]any{"branch": "99-fix"}},
+		{Type: "run.aborted", Timestamp: startedAt.Add(4 * time.Minute), RunID: "orphan-99", Issue: 99, Payload: map[string]any{"status": "aborted", "branch": "99-fix"}},
 	})
 
 	runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: logPath})
@@ -431,8 +431,8 @@ func TestPortal_DeadBatchSynthesisIgnoresReviewRuns(t *testing.T) {
 
 	logPath := filepath.Join(repoRoot, ".sandman", "events.jsonl")
 	writePortalLog(t, logPath, []events.Event{
-		{Type: "run.started", Timestamp: startedAt.Add(1 * time.Minute), RunID: "review-42", Issue: 42, Payload: map[string]any{"review": true, "branch": "sandman/42-fix"}},
-		{Type: "run.finished", Timestamp: startedAt.Add(2 * time.Minute), RunID: "review-42", Issue: 42, Payload: map[string]any{"review": true, "status": "success", "branch": "sandman/42-fix"}},
+		{Type: "run.started", Timestamp: startedAt.Add(1 * time.Minute), RunID: "review-42", Issue: 42, Payload: map[string]any{"review": true, "branch": "42-fix"}},
+		{Type: "run.finished", Timestamp: startedAt.Add(2 * time.Minute), RunID: "review-42", Issue: 42, Payload: map[string]any{"review": true, "status": "success", "branch": "42-fix"}},
 	})
 
 	runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: logPath})
@@ -480,8 +480,8 @@ func TestPortal_Compute_ReviewOnlyRunRemainsInComputedSet(t *testing.T) {
 	startedAt := time.Now().Add(-10 * time.Minute)
 	logPath := filepath.Join(repoRoot, ".sandman", "events.jsonl")
 	writePortalLog(t, logPath, []events.Event{
-		{Type: "run.started", Timestamp: startedAt, RunID: "review-1472", Issue: 1472, Payload: map[string]any{"review": true, "branch": "sandman/1472-fix", "pr_number": 1508}},
-		{Type: "run.finished", Timestamp: startedAt.Add(2 * time.Minute), RunID: "review-1472", Issue: 1472, Payload: map[string]any{"review": true, "status": "success", "branch": "sandman/1472-fix", "pr_number": 1508}},
+		{Type: "run.started", Timestamp: startedAt, RunID: "review-1472", Issue: 1472, Payload: map[string]any{"review": true, "branch": "1472-fix", "pr_number": 1508}},
+		{Type: "run.finished", Timestamp: startedAt.Add(2 * time.Minute), RunID: "review-1472", Issue: 1472, Payload: map[string]any{"review": true, "status": "success", "branch": "1472-fix", "pr_number": 1508}},
 	})
 
 	runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: logPath})
@@ -546,8 +546,8 @@ func TestPortal_CrossBatchSynthesisSuppressedWhenIssueAlreadyCovered(t *testing.
 
 	logPath := filepath.Join(repoRoot, ".sandman", "events.jsonl")
 	writePortalLog(t, logPath, []events.Event{
-		{Type: "run.started", Timestamp: realStart.Add(1 * time.Minute), RunID: "fb4a-real-1857", Issue: 1857, Payload: map[string]any{"branch": "sandman/1857-fix", "batch_id": "fb4a-real"}},
-		{Type: "run.finished", Timestamp: realStart.Add(2 * time.Minute), RunID: "fb4a-real-1857", Issue: 1857, Payload: map[string]any{"status": "success", "branch": "sandman/1857-fix"}},
+		{Type: "run.started", Timestamp: realStart.Add(1 * time.Minute), RunID: "fb4a-real-1857", Issue: 1857, Payload: map[string]any{"branch": "1857-fix", "batch_id": "fb4a-real"}},
+		{Type: "run.finished", Timestamp: realStart.Add(2 * time.Minute), RunID: "fb4a-real-1857", Issue: 1857, Payload: map[string]any{"status": "success", "branch": "1857-fix"}},
 	})
 
 	runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: logPath})

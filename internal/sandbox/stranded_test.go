@@ -47,7 +47,7 @@ func TestStrandedWorktree_MissingBaseReturnsFalse(t *testing.T) {
 
 	missingBase := filepath.Join(repoDir, "does-not-exist")
 
-	info, stranded := StrandedWorktree(repoDir, missingBase, "sandman/907-foo")
+	info, stranded := StrandedWorktree(repoDir, missingBase, "907-foo")
 	if stranded {
 		t.Fatalf("expected false (no-op) when worktreeBase is missing, got info=%+v stranded=%v", info, stranded)
 	}
@@ -65,7 +65,7 @@ func TestStrandedWorktree_NoWorktreeAtPathReturnsFalse(t *testing.T) {
 		t.Fatalf("mkdir worktreeBase: %v", err)
 	}
 
-	info, stranded := StrandedWorktree(repoDir, worktreeBase, "sandman/907-foo")
+	info, stranded := StrandedWorktree(repoDir, worktreeBase, "907-foo")
 	if stranded {
 		t.Fatalf("expected false when no worktree exists at <worktreeBase>/<branch>, got info=%+v", info)
 	}
@@ -78,7 +78,7 @@ func TestStrandedWorktree_CleanWorktreeOnExpectedBranchReturnsFalse(t *testing.T
 	repoDir := t.TempDir()
 	initGitRepo(t, repoDir)
 
-	const branch = "sandman/907-foo"
+	const branch = "907-foo"
 	runGit(t, repoDir, "branch", branch)
 
 	worktreeBase := filepath.Join(repoDir, ".sandman", "worktrees")
@@ -101,8 +101,8 @@ func TestStrandedWorktree_MismatchedBranchReturnsTrue(t *testing.T) {
 	repoDir := t.TempDir()
 	initGitRepo(t, repoDir)
 
-	const expected = "sandman/907-foo"
-	const actual = "sandman/42-other-branch"
+	const expected = "907-foo"
+	const actual = "42-other-branch"
 	runGit(t, repoDir, "branch", expected)
 	runGit(t, repoDir, "branch", actual)
 
@@ -131,7 +131,7 @@ func TestStrandedWorktree_DetachedHeadReturnsTrue(t *testing.T) {
 	repoDir := t.TempDir()
 	initGitRepo(t, repoDir)
 
-	const branch = "sandman/77-detached"
+	const branch = "77-detached"
 	runGit(t, repoDir, "branch", branch)
 
 	worktreeBase := filepath.Join(repoDir, ".sandman", "worktrees")
@@ -161,8 +161,8 @@ func TestStrandedWorktree_ExpectedRefMissingLocallyReturnsTrue(t *testing.T) {
 	repoDir := t.TempDir()
 	initGitRepo(t, repoDir)
 
-	const expected = "sandman/907-foo"
-	const actual = "sandman/42-other-branch"
+	const expected = "907-foo"
+	const actual = "42-other-branch"
 	runGit(t, repoDir, "branch", actual)
 	if BranchExists(repoDir, expected) {
 		t.Fatalf("precondition: expected ref %q should not exist locally", expected)
@@ -196,8 +196,8 @@ func TestStrandedWorktree_IgnoresSiblingWorktrees(t *testing.T) {
 	repoDir := t.TempDir()
 	initGitRepo(t, repoDir)
 
-	const healthy = "sandman/1-healthy"
-	const stranded = "sandman/2-bad"
+	const healthy = "1-healthy"
+	const stranded = "2-bad"
 	runGit(t, repoDir, "branch", healthy)
 	runGit(t, repoDir, "branch", stranded)
 
@@ -232,9 +232,9 @@ func TestListStrandedWorktrees(t *testing.T) {
 	repoDir := t.TempDir()
 	initGitRepo(t, repoDir)
 
-	runGit(t, repoDir, "branch", "sandman/1-healthy")
-	runGit(t, repoDir, "branch", "sandman/2-wrong")
-	runGit(t, repoDir, "branch", "sandman/3-detached")
+	runGit(t, repoDir, "branch", "1-healthy")
+	runGit(t, repoDir, "branch", "2-wrong")
+	runGit(t, repoDir, "branch", "3-detached")
 
 	worktreeBase := filepath.Join(repoDir, ".sandman", "worktrees")
 	if err := os.MkdirAll(worktreeBase, 0755); err != nil {
@@ -242,10 +242,10 @@ func TestListStrandedWorktrees(t *testing.T) {
 	}
 
 	runGit(t, repoDir, "branch", "no-issue-branch")
-	runGit(t, repoDir, "worktree", "add", filepath.Join(worktreeBase, "sandman/1-healthy"), "sandman/1-healthy")
-	addStrandedWorktree(t, repoDir, worktreeBase, "sandman/2-wrong", "sandman/1-healthy")
-	runGit(t, repoDir, "worktree", "add", filepath.Join(worktreeBase, "sandman/3-detached"), "sandman/3-detached")
-	runGit(t, filepath.Join(worktreeBase, "sandman/3-detached"), "checkout", "--detach", "HEAD")
+	runGit(t, repoDir, "worktree", "add", filepath.Join(worktreeBase, "1-healthy"), "1-healthy")
+	addStrandedWorktree(t, repoDir, worktreeBase, "2-wrong", "1-healthy")
+	runGit(t, repoDir, "worktree", "add", filepath.Join(worktreeBase, "3-detached"), "3-detached")
+	runGit(t, filepath.Join(worktreeBase, "3-detached"), "checkout", "--detach", "HEAD")
 	runGit(t, repoDir, "worktree", "add", filepath.Join(worktreeBase, "no-issue-prefix"), "no-issue-branch")
 
 	results := ListStrandedWorktrees(repoDir, worktreeBase)
@@ -254,7 +254,7 @@ func TestListStrandedWorktrees(t *testing.T) {
 		for _, r := range results {
 			names = append(names, r.Path)
 		}
-		t.Fatalf("expected 2 stranded worktrees (sandman/2-wrong, sandman/3-detached), got %d: %v", len(results), names)
+		t.Fatalf("expected 2 stranded worktrees (2-wrong, 3-detached), got %d: %v", len(results), names)
 	}
 
 	byName := map[string]StrandedWorktreeInfo{}
@@ -262,26 +262,26 @@ func TestListStrandedWorktrees(t *testing.T) {
 		byName[r.ExpectedBranch] = r
 	}
 
-	wrong, ok := byName["refs/heads/sandman/2-wrong"]
+	wrong, ok := byName["refs/heads/2-wrong"]
 	if !ok {
-		t.Fatalf("expected refs/heads/sandman/2-wrong in results, got %+v", results)
+		t.Fatalf("expected refs/heads/2-wrong in results, got %+v", results)
 	}
-	if wrong.ActualBranch != "refs/heads/sandman/1-healthy" {
-		t.Errorf("sandman/2-wrong ActualBranch: got %q, want %q", wrong.ActualBranch, "refs/heads/sandman/1-healthy")
+	if wrong.ActualBranch != "refs/heads/1-healthy" {
+		t.Errorf("2-wrong ActualBranch: got %q, want %q", wrong.ActualBranch, "refs/heads/1-healthy")
 	}
-	if wrong.ExpectedBranch != "refs/heads/sandman/2-wrong" {
-		t.Errorf("sandman/2-wrong ExpectedBranch: got %q, want %q", wrong.ExpectedBranch, "refs/heads/sandman/2-wrong")
+	if wrong.ExpectedBranch != "refs/heads/2-wrong" {
+		t.Errorf("2-wrong ExpectedBranch: got %q, want %q", wrong.ExpectedBranch, "refs/heads/2-wrong")
 	}
 
-	detached, ok := byName["refs/heads/sandman/3-detached"]
+	detached, ok := byName["refs/heads/3-detached"]
 	if !ok {
-		t.Fatalf("expected refs/heads/sandman/3-detached in results, got %+v", results)
+		t.Fatalf("expected refs/heads/3-detached in results, got %+v", results)
 	}
 	if detached.ActualBranch != "" {
-		t.Errorf("sandman/3-detached ActualBranch: got %q, want empty (detached)", detached.ActualBranch)
+		t.Errorf("3-detached ActualBranch: got %q, want empty (detached)", detached.ActualBranch)
 	}
-	if detached.ExpectedBranch != "refs/heads/sandman/3-detached" {
-		t.Errorf("sandman/3-detached ExpectedBranch: got %q, want %q", detached.ExpectedBranch, "refs/heads/sandman/3-detached")
+	if detached.ExpectedBranch != "refs/heads/3-detached" {
+		t.Errorf("3-detached ExpectedBranch: got %q, want %q", detached.ExpectedBranch, "refs/heads/3-detached")
 	}
 }
 
@@ -300,7 +300,7 @@ func TestStrandedWorktree_PrunableWorktreeIsNotFlagged(t *testing.T) {
 	repoDir := t.TempDir()
 	initGitRepo(t, repoDir)
 
-	const branch = "sandman/77-prunable"
+	const branch = "77-prunable"
 	runGit(t, repoDir, "branch", branch)
 
 	worktreeBase := filepath.Join(repoDir, ".sandman", "worktrees")
@@ -334,7 +334,7 @@ func TestReclaimableWorktree_PrunableWorktreeAtPathReturnsTrue(t *testing.T) {
 	repoDir := t.TempDir()
 	initGitRepo(t, repoDir)
 
-	const branch = "sandman/77-prunable"
+	const branch = "77-prunable"
 	runGit(t, repoDir, "branch", branch)
 
 	worktreeBase := filepath.Join(repoDir, ".sandman", "worktrees")
@@ -370,7 +370,7 @@ func TestReclaimableWorktree_NoWorktreeAtPathReturnsFalse(t *testing.T) {
 		t.Fatalf("mkdir worktreeBase: %v", err)
 	}
 
-	info, reclaimable := ReclaimableWorktree(repoDir, worktreeBase, "sandman/907-foo")
+	info, reclaimable := ReclaimableWorktree(repoDir, worktreeBase, "907-foo")
 	if reclaimable {
 		t.Fatalf("expected reclaimable=false when no worktree exists at path, got info=%+v", info)
 	}
@@ -385,7 +385,7 @@ func TestReclaimableWorktree_MissingBaseReturnsFalse(t *testing.T) {
 
 	missingBase := filepath.Join(repoDir, "does-not-exist")
 
-	info, reclaimable := ReclaimableWorktree(repoDir, missingBase, "sandman/907-foo")
+	info, reclaimable := ReclaimableWorktree(repoDir, missingBase, "907-foo")
 	if reclaimable {
 		t.Fatalf("expected false (no-op) when worktreeBase is missing, got info=%+v", info)
 	}
@@ -398,7 +398,7 @@ func TestReclaimableWorktree_NonPrunableWorktreeAtPathReturnsTrue(t *testing.T) 
 	repoDir := t.TempDir()
 	initGitRepo(t, repoDir)
 
-	const branch = "sandman/77-healthy"
+	const branch = "77-healthy"
 	runGit(t, repoDir, "branch", branch)
 
 	worktreeBase := filepath.Join(repoDir, ".sandman", "worktrees")
@@ -429,7 +429,7 @@ func TestForeignStrandedWorktree_DetectsBranchHeldElsewhere(t *testing.T) {
 	repoDir := t.TempDir()
 	initGitRepo(t, repoDir)
 
-	const branch = "sandman/30-foo"
+	const branch = "30-foo"
 	runGit(t, repoDir, "branch", branch)
 
 	worktreeBase := filepath.Join(repoDir, ".sandman", "worktrees")
@@ -463,7 +463,7 @@ func TestForeignStrandedWorktree_IgnoresWorktreeAtExpectedPath(t *testing.T) {
 	repoDir := t.TempDir()
 	initGitRepo(t, repoDir)
 
-	const branch = "sandman/30-foo"
+	const branch = "30-foo"
 	runGit(t, repoDir, "branch", branch)
 
 	worktreeBase := filepath.Join(repoDir, ".sandman", "worktrees")
@@ -489,7 +489,7 @@ func TestForeignStrandedWorktree_IgnoresPrunableWorktree(t *testing.T) {
 	repoDir := t.TempDir()
 	initGitRepo(t, repoDir)
 
-	const branch = "sandman/30-foo"
+	const branch = "30-foo"
 	runGit(t, repoDir, "branch", branch)
 
 	worktreeBase := filepath.Join(repoDir, ".sandman", "worktrees")
@@ -519,7 +519,7 @@ func TestForeignStrandedWorktree_MissingBaseReturnsFalse(t *testing.T) {
 	initGitRepo(t, repoDir)
 
 	missingBase := filepath.Join(repoDir, "does-not-exist")
-	info, ok := ForeignStrandedWorktree(repoDir, missingBase, "sandman/30-foo")
+	info, ok := ForeignStrandedWorktree(repoDir, missingBase, "30-foo")
 	if ok {
 		t.Fatalf("expected foreign=false when worktreeBase is missing, got info=%+v", info)
 	}

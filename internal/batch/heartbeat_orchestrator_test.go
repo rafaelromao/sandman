@@ -19,7 +19,7 @@ type sandboxSandbox = sandbox.Sandbox
 
 const (
 	heartbeatTestWorktreeDir = ".sandman/worktrees"
-	heartbeatTestBranch      = "sandman/42-fix-bug"
+	heartbeatTestBranch      = "42-fix-bug"
 	heartbeatTestIssueNum    = 42
 	heartbeatTestTick        = 10 * time.Millisecond
 	heartbeatTestIdle        = 1
@@ -102,7 +102,7 @@ func heartbeatTestSetup(t *testing.T) (client *fakeGitHubClient, proc *fakeProce
 		prs: map[string]*github.PR{heartbeatTestBranch: mergedPR(heartbeatTestBranch, "")},
 	}
 	proc = &fakeProcess{killed: make(chan struct{})}
-	worktreePath := filepath.Join(workDir, heartbeatTestWorktreeDir, "sandman", "42-fix-bug")
+	worktreePath := filepath.Join(workDir, heartbeatTestWorktreeDir, "42-fix-bug")
 	sb = &fakeSandbox{workDir: worktreePath, process: proc}
 	factory = &fakeSandboxFactory{sandbox: sb}
 	return

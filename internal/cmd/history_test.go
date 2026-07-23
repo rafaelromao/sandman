@@ -13,7 +13,7 @@ func TestHistory_ShowsCompletedRun(t *testing.T) {
 	log := &fakeEventLog{
 		events: []events.Event{
 			{Type: "run.started", Timestamp: time.Now().Add(-10 * time.Minute), RunID: "run-42", Issue: 42},
-			{Type: "run.finished", Timestamp: time.Now().Add(-5 * time.Minute), RunID: "run-42", Issue: 42, Payload: map[string]any{"status": "success", "branch": "sandman/42-fix-bug"}},
+			{Type: "run.finished", Timestamp: time.Now().Add(-5 * time.Minute), RunID: "run-42", Issue: 42, Payload: map[string]any{"status": "success", "branch": "42-fix-bug"}},
 		},
 	}
 
@@ -34,7 +34,7 @@ func TestHistory_ShowsCompletedRun(t *testing.T) {
 	if !strings.Contains(out, "success") {
 		t.Errorf("expected output to contain success, got:\n%s", out)
 	}
-	if !strings.Contains(out, "sandman/42-fix-bug") {
+	if !strings.Contains(out, "42-fix-bug") {
 		t.Errorf("expected output to contain branch, got:\n%s", out)
 	}
 	if strings.Contains(out, "not yet implemented") {

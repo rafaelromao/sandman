@@ -25,7 +25,7 @@ func TestRunBatch_ModeContinueCopiesOriginalTaskToRunFolder(t *testing.T) {
 	t.Chdir(dir)
 	initGitRepo(t, dir)
 
-	branch := "sandman/42-fix-bug"
+	branch := "42-fix-bug"
 	worktreePath := filepath.Join(".sandman", "worktrees", branch)
 	if err := os.MkdirAll(filepath.Join(worktreePath, ".sandman"), 0755); err != nil {
 		t.Fatalf("mkdir worktree: %v", err)

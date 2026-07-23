@@ -208,7 +208,7 @@ func readEventLogIndex(eventLog events.EventLog) eventLogIndex {
 	return index
 }
 
-func collectIssueBranchesFromIndex(issueNumber int, title string, recordedBranch string, index eventLogIndex) []string {
+func collectIssueBranchesFromIndex(issueNumber int, title string, recordedBranch string, sourceBranch string, index eventLogIndex) []string {
 	seen := map[string]bool{}
 	branches := make([]string, 0, len(index.branchesByIssue[issueNumber])+2)
 	add := func(branch string) {
@@ -221,15 +221,15 @@ func collectIssueBranchesFromIndex(issueNumber int, title string, recordedBranch
 		add(branch)
 	}
 	add(recordedBranch)
-	add(BranchName(issueNumber, title))
+	add(BranchName(issueNumber, title, sourceBranch))
 	return branches
 }
 
-func (o *Orchestrator) validateBatchBranches(ctx context.Context, req Request) error {
-	return o.validateBatchBranchesWithIndex(ctx, req, readEventLogIndex(o.eventLog))
+func (o *Orchestrator) validateBatchBranches(ctx context.Context, req Request, baseBranch string) error {
+	return o.validateBatchBranchesWithIndex(ctx, req, baseBranch, readEventLogIndex(o.eventLog))
 }
 
-func (o *Orchestrator) validateBatchBranchesWithIndex(ctx context.Context, req Request, index eventLogIndex) error {
+func (o *Orchestrator) validateBatchBranchesWithIndex(ctx context.Context, req Request, baseBranch string, index eventLogIndex) error {
 	if !branchValidationEnabled || len(req.Issues) == 0 {
 		return nil
 	}
@@ -259,7 +259,7 @@ func (o *Orchestrator) validateBatchBranchesWithIndex(ctx context.Context, req R
 			title = issue.Title
 		}
 
-		for _, branch := range collectIssueBranchesFromIndex(num, title, req.Branches[num], index) {
+		for _, branch := range collectIssueBranchesFromIndex(num, title, req.Branches[num], baseBranch, index) {
 			if !branchExists(repoRoot, branch) {
 				continue
 			}
@@ -1126,7 +1126,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 			fmt.Fprintf(o.errorLog, "error: fetch issue %d for force-clean: %v\n", num, err)
 			continue
 		}
-		branches := collectIssueBranchesFromIndex(num, issue.Title, req.Branches[num], overrideIndex)
+		branches := collectIssueBranchesFromIndex(num, issue.Title, req.Branches[num], baseBranch, overrideIndex)
 		for _, branch := range branches {
 			ClearIssueArtifacts(num, branch, layout.WorktreeDir, o.eventLog, o.errorLog, baseBranch, req.StrandedReconcile, layout.BatchesIndexPath)
 		}
@@ -1138,7 +1138,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 	}
 
 	phaseStarted = time.Now()
-	if err := o.validateBatchBranchesWithIndex(ctx, req, eventIndex); err != nil {
+	if err := o.validateBatchBranchesWithIndex(ctx, req, baseBranch, eventIndex); err != nil {
 		return nil, err
 	}
 	writePhase(coord.currentPhaseWriter(), "branch-validation", phaseStarted)
@@ -2587,7 +2587,7 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 
 	branch := s.branches[s.issueNumber]
 	if branch == "" {
-		branch = BranchName(issue.Number, issue.Title)
+		branch = BranchName(issue.Number, issue.Title, s.baseBranch)
 	}
 	if s.mode != ModeContinue {
 		if err := syncBaseBranch(s.deps.runSessionOpts, s.deps.sandboxFactory, ".", s.baseBranch); err != nil {
@@ -3227,8 +3227,20 @@ func Slugify(title string) string {
 }
 
 // BranchName returns the standard git branch name for an issue.
-func BranchName(issueNumber int, title string) string {
-	return fmt.Sprintf("sandman/%d-%s", issueNumber, Slugify(title))
+//
+// The branch name is always the issue-driven default shape
+// "<n>-<slug>". The sourceBranch argument is accepted for
+// future extensibility (e.g. namespaced issue branches), but the
+// current convention keeps the branch name simple regardless of the
+// configured base — git's ref-namespace model forbids encoding a
+// feature branch (e.g. "feat/release-pipeline-2026q3") as a prefix
+// of another branch (e.g. "feat/release-pipeline-2026q3/955-...")
+// when the feature branch itself exists. The source branch is the
+// orchestrator's `--base-branch` value, threaded through for that
+// future extension; see ADR-0040 for the rationale.
+func BranchName(issueNumber int, title string, sourceBranch string) string {
+	_ = sourceBranch
+	return fmt.Sprintf("%d-%s", issueNumber, Slugify(title))
 }
 
 // isMissingWorktreeError returns true when the git worktree remove error is

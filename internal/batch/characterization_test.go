@@ -93,7 +93,7 @@ func charNetBase(t *testing.T, opts ...OrchestratorOpt) (*Orchestrator, *events.
 		issues: map[int]*github.Issue{
 			42: {Number: 42, Title: "Fix bug", Body: "Users cannot log in."},
 		},
-		prs: map[string]*github.PR{"sandman/42-fix-bug": mergedPR("sandman/42-fix-bug", "")},
+		prs: map[string]*github.PR{"42-fix-bug": mergedPR("42-fix-bug", "")},
 	}
 	cfg := &config.Config{
 		Agent:       "test-agent",
@@ -114,7 +114,7 @@ func charNetBase(t *testing.T, opts ...OrchestratorOpt) (*Orchestrator, *events.
 
 func charNetIssueSuccess(t *testing.T) (context.Context, Request, *Orchestrator, *events.JSONLLogger, string) {
 	o, el, dir := charNetBase(t, WithRunnableFactory(&fakeRunnableFactory{results: []AgentRunResult{
-		{IssueNumber: 42, Status: "success", Branch: "sandman/42-fix-bug"},
+		{IssueNumber: 42, Status: "success", Branch: "42-fix-bug"},
 	}}))
 	req := Request{Issues: []int{42}, RunTS: orchTestRunTS, RunShortID: orchTestRunShortID}
 	return context.Background(), req, o, el, dir
@@ -137,7 +137,7 @@ func charNetIssueAbort(t *testing.T) (context.Context, Request, *Orchestrator, *
 		issues: map[int]*github.Issue{
 			42: {Number: 42, Title: "Fix bug", Body: "Users cannot log in."},
 		},
-		prs: map[string]*github.PR{"sandman/42-fix-bug": mergedPR("sandman/42-fix-bug", "")},
+		prs: map[string]*github.PR{"42-fix-bug": mergedPR("42-fix-bug", "")},
 	}
 	cfg := &config.Config{
 		Agent:       "test-agent",
@@ -272,7 +272,7 @@ func charNetIssueRetrySuccess(t *testing.T) (context.Context, Request, *Orchestr
 		issues: map[int]*github.Issue{
 			42: {Number: 42, Title: "Fix bug", Body: "Users cannot log in."},
 		},
-		prs: map[string]*github.PR{"sandman/42-fix-bug": {Number: 1, State: "open", Merged: false, HeadRefName: "sandman/42-fix-bug"}},
+		prs: map[string]*github.PR{"42-fix-bug": {Number: 1, State: "open", Merged: false, HeadRefName: "42-fix-bug"}},
 	}
 	cfg := &config.Config{
 		Agent:       "test-agent",
@@ -286,9 +286,9 @@ func charNetIssueRetrySuccess(t *testing.T) (context.Context, Request, *Orchestr
 	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: cfg}, el,
 		WithSandboxFactory(&fakeSandboxFactory{sandbox: &fakeSandbox{workDir: filepath.Join(dir, "wt", "42")}}),
 		WithRunnableFactory(&fakeRunnableFactory{results: []AgentRunResult{
-			{IssueNumber: 42, Status: "failure", Branch: "sandman/42-fix-bug"},
-			{IssueNumber: 42, Status: "failure", Branch: "sandman/42-fix-bug"},
-			{IssueNumber: 42, Status: "success", Branch: "sandman/42-fix-bug"},
+			{IssueNumber: 42, Status: "failure", Branch: "42-fix-bug"},
+			{IssueNumber: 42, Status: "failure", Branch: "42-fix-bug"},
+			{IssueNumber: 42, Status: "success", Branch: "42-fix-bug"},
 		}}),
 		WithRunSessionOpts(runSessionOptions{retryReset: func(ctx context.Context, sb sandbox.Sandbox, branch, baseBranch string) error {
 			return nil

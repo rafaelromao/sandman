@@ -109,7 +109,7 @@ func TestExecuteClean_AbsentWorktreeStillDeletesManifestBranch(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeBatchIndex(t, repo, []batchindex.Batch{{ID: "batch", Path: batchPath, Status: batchindex.StatusArchived}})
-	branch := "sandman/2278-batch"
+	branch := "2278-batch"
 	gr := &fakeGitRunner{}
 	actions := []cleanAction{{
 		BatchID: "batch", BatchPath: batchPath, Worktree: filepath.Join(layout.WorktreeDir, "missing"),

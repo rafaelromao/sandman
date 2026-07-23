@@ -701,13 +701,13 @@ func TestPortal_RunFromState_PopulatesRetriesFromFinishedPayload(t *testing.T) {
 		RunID: "260618113825-abcd-1",
 		Started: events.Event{
 			Timestamp: startedAt,
-			Payload:   map[string]any{"branch": "sandman/42-fix"},
+			Payload:   map[string]any{"branch": "42-fix"},
 		},
 		Finished: &events.Event{
 			Timestamp: finishedAt,
 			Payload: map[string]any{
 				"status":        "success",
-				"branch":        "sandman/42-fix",
+				"branch":        "42-fix",
 				"retries_total": 3,
 				"retries_done":  2,
 			},
@@ -734,7 +734,7 @@ func TestPortal_RunFromState_LeavesRetriesZeroWhenActive(t *testing.T) {
 		RunID: "260618113825-abcd-active",
 		Started: events.Event{
 			Timestamp: time.Now().Add(-30 * time.Second),
-			Payload:   map[string]any{"branch": "sandman/42-fix"},
+			Payload:   map[string]any{"branch": "42-fix"},
 		},
 	}
 
@@ -783,13 +783,13 @@ func TestPortal_RunFromState_ActiveRunPopulatesAttemptsAndLastRetryReason(t *tes
 
 	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
 	runState := events.ProjectRunStates([]events.Event{
-		{Type: "run.started", Timestamp: startedAt, RunID: "260618113825-abcd-active-retry", Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
+		{Type: "run.started", Timestamp: startedAt, RunID: "260618113825-abcd-active-retry", Issue: 42, Payload: map[string]any{"branch": "42-fix"}},
 		{Type: "run.retry", Timestamp: startedAt.Add(2 * time.Minute), RunID: "260618113825-abcd-active-retry", Issue: 42, Payload: map[string]any{
 			"attempt":         2,
 			"max_attempts":    3,
 			"previous_status": "failure",
 			"reason":          "agent-stalled",
-			"branch":          "sandman/42-fix",
+			"branch":          "42-fix",
 		}},
 	})[0]
 
@@ -812,17 +812,17 @@ func TestPortal_RunFromState_FinishedRunUsesRetriesDoneForAttempts(t *testing.T)
 	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
 	finishedAt := startedAt.Add(10 * time.Minute)
 	runState := events.ProjectRunStates([]events.Event{
-		{Type: "run.started", Timestamp: startedAt, RunID: "260618113825-abcd-finished-retry", Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
+		{Type: "run.started", Timestamp: startedAt, RunID: "260618113825-abcd-finished-retry", Issue: 42, Payload: map[string]any{"branch": "42-fix"}},
 		{Type: "run.retry", Timestamp: startedAt.Add(2 * time.Minute), RunID: "260618113825-abcd-finished-retry", Issue: 42, Payload: map[string]any{
 			"attempt":         2,
 			"max_attempts":    3,
 			"previous_status": "failure",
 			"reason":          "agent-stalled",
-			"branch":          "sandman/42-fix",
+			"branch":          "42-fix",
 		}},
 		{Type: "run.finished", Timestamp: finishedAt, RunID: "260618113825-abcd-finished-retry", Issue: 42, Payload: map[string]any{
 			"status":        "success",
-			"branch":        "sandman/42-fix",
+			"branch":        "42-fix",
 			"retries_total": 3,
 			"retries_done":  2,
 		}},
@@ -848,7 +848,7 @@ func TestPortal_RunFromState_ActiveCleanRunOmitsBoth(t *testing.T) {
 	}
 
 	runState := events.ProjectRunStates([]events.Event{
-		{Type: "run.started", Timestamp: time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC), RunID: "260618113825-abcd-clean", Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
+		{Type: "run.started", Timestamp: time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC), RunID: "260618113825-abcd-clean", Issue: 42, Payload: map[string]any{"branch": "42-fix"}},
 	})[0]
 
 	run := (&portalRunsView{}).runFromState(repoRoot, runState, nil, nil, nil, nil)
@@ -902,13 +902,13 @@ func TestPortal_RunFromActiveMatch_StateAbsentPopulatesAttemptsAndLastRetryReaso
 	}
 	eventsByRun := map[string][]portalEvent{
 		"260618113825-abcd-prompt-retry": {
-			{Type: "run.started", Timestamp: startedAt, Payload: map[string]any{"branch": "sandman/42-fix"}},
+			{Type: "run.started", Timestamp: startedAt, Payload: map[string]any{"branch": "42-fix"}},
 			{Type: "run.retry", Timestamp: startedAt.Add(2 * time.Minute), Payload: map[string]any{
 				"attempt":         2,
 				"max_attempts":    3,
 				"previous_status": "failure",
 				"reason":          "agent-stalled",
-				"branch":          "sandman/42-fix",
+				"branch":          "42-fix",
 			}},
 		},
 	}
@@ -1376,7 +1376,7 @@ func TestPortal_RunFromState_CompletedKeepsSavedLogWhenBatchSocketAlive(t *testi
 			Issue:     1597,
 			Payload: map[string]any{
 				"batch_id": batchID,
-				"branch":   "sandman/1597-fix",
+				"branch":   "1597-fix",
 			},
 		},
 		Finished: &events.Event{
@@ -1387,7 +1387,7 @@ func TestPortal_RunFromState_CompletedKeepsSavedLogWhenBatchSocketAlive(t *testi
 			Payload: map[string]any{
 				"status":   "success",
 				"batch_id": batchID,
-				"branch":   "sandman/1597-fix",
+				"branch":   "1597-fix",
 			},
 		},
 	}
@@ -2683,8 +2683,8 @@ func TestPortalRuns_ReviewAndImplRowsSeparateForSameIssue(t *testing.T) {
 		// production shape where the first attempt was aborted
 		// and the second attempt is mid-flight, leaving an
 		// aborted row in the event log.
-		{Type: "run.started", Timestamp: startedAt, RunID: "260618113825-abcd-1066-impl", Issue: 1066, Payload: map[string]any{"branch": "sandman/1066-impl"}},
-		{Type: "run.aborted", Timestamp: abortedAt, RunID: "260618113825-abcd-1066-impl", Issue: 1066, Payload: map[string]any{"branch": "sandman/1066-impl", "status": "aborted"}},
+		{Type: "run.started", Timestamp: startedAt, RunID: "260618113825-abcd-1066-impl", Issue: 1066, Payload: map[string]any{"branch": "1066-impl"}},
+		{Type: "run.aborted", Timestamp: abortedAt, RunID: "260618113825-abcd-1066-impl", Issue: 1066, Payload: map[string]any{"branch": "1066-impl", "status": "aborted"}},
 		// Review run for PR 1075 of issue 1066 — finished. The
 		// orchestrator stamps `issue: 1066` on the finished event
 		// (and `issue_number: 1066` in the payload), so both the
@@ -3019,12 +3019,12 @@ func TestPortal_ResolveRunLog_SavedWinsForTerminalIssueRow(t *testing.T) {
 		RunID: "260618113825-abcd-42",
 		Started: events.Event{
 			Timestamp: startedAt,
-			Payload:   map[string]any{"branch": "sandman/42-fix"},
+			Payload:   map[string]any{"branch": "42-fix"},
 		},
 		Finished: &events.Event{
 			Type:      "run.finished",
 			Timestamp: finishedAt,
-			Payload:   map[string]any{"status": "success", "branch": "sandman/42-fix"},
+			Payload:   map[string]any{"status": "success", "branch": "42-fix"},
 		},
 	}
 	active := &portalActiveRun{
@@ -3248,7 +3248,7 @@ func TestPortal_ResolveRunLog_TerminalIssueRowIgnoresBatchLiveOutput(t *testing.
 			Timestamp: finishedAt,
 			Payload: map[string]any{
 				"base_branch":   "main",
-				"branch":        "sandman/30-view-controlled-topic-catalogue",
+				"branch":        "30-view-controlled-topic-catalogue",
 				"early_failure": true,
 				"error":         "start sandbox",
 				"retries_done":  0,
@@ -3559,12 +3559,12 @@ func TestPortal_RunsAPI_BatchKeyEqualsPublicBatchId(t *testing.T) {
 			startedAt := time.Now().Add(-10 * time.Minute)
 			writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
 				{Type: "run.started", Timestamp: startedAt, RunID: tt.rowRunID, Issue: 42, Payload: map[string]any{
-					"branch":   "sandman/42-fix",
+					"branch":   "42-fix",
 					"batch_id": tt.wantBatch,
 				}},
 				{Type: "run.finished", Timestamp: startedAt.Add(time.Minute), RunID: tt.rowRunID, Issue: 42, Payload: map[string]any{
 					"status":   "success",
-					"branch":   "sandman/42-fix",
+					"branch":   "42-fix",
 					"batch_id": tt.wantBatch,
 				}},
 			})

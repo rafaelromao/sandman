@@ -149,7 +149,7 @@ func badgeE2EBuildOrchestrator(t *testing.T, lister PRLister, runner SandmanRunn
 // badge e2e tests. The orchestrator's RunBatch sees one successful
 // run and fires the post-batch hook.
 func badgeE2ESuccessResults() []AgentRunResult {
-	return []AgentRunResult{{IssueNumber: 1, Status: "success", Branch: "sandman/1-fix"}}
+	return []AgentRunResult{{IssueNumber: 1, Status: "success", Branch: "1-fix"}}
 }
 
 // badgeE2EPrimeRepo primes a temp dir as a git repo and chdir's into
@@ -172,7 +172,7 @@ func TestBadgeE2E_HappyPath_ProductionWiringFiresBadgeHook(t *testing.T) {
 
 	controlReader := &fakeBadgeControlFileReader{present: false}
 	controlWriter := &fakeBadgeControlFileWriter{}
-	seedPRs := []MergedSandmanPR{{Number: 1, HeadRefName: "sandman/1-fix-bug", Title: "Fix failing test"}}
+	seedPRs := []MergedSandmanPR{{Number: 1, HeadRefName: "1-fix-bug", Title: "Fix failing test"}}
 	lister := &fakePRLister{mergedPRs: seedPRs, hasBadge: false}
 	runner := &fakeSandmanRunner{prURL: "https://github.com/owner/repo/pull/99"}
 
@@ -209,7 +209,7 @@ func TestBadgeE2E_Idempotency_MarkerPRPresent(t *testing.T) {
 
 	controlReader := &fakeBadgeControlFileReader{present: false}
 	controlWriter := &fakeBadgeControlFileWriter{}
-	seedPRs := []MergedSandmanPR{{Number: 1, HeadRefName: "sandman/1-fix-bug", Title: "Fix failing test"}}
+	seedPRs := []MergedSandmanPR{{Number: 1, HeadRefName: "1-fix-bug", Title: "Fix failing test"}}
 	lister := &fakePRLister{mergedPRs: seedPRs, hasBadge: true}
 	runner := &fakeSandmanRunner{prURL: "https://github.com/owner/repo/pull/99"}
 
@@ -282,7 +282,7 @@ func TestBadgeE2E_PRCreateFailure_StaysSilentAndDoesNotMarkFile(t *testing.T) {
 
 	controlReader := &fakeBadgeControlFileReader{present: false}
 	controlWriter := &fakeBadgeControlFileWriter{}
-	seedPRs := []MergedSandmanPR{{Number: 1, HeadRefName: "sandman/1-fix-bug", Title: "Fix failing test"}}
+	seedPRs := []MergedSandmanPR{{Number: 1, HeadRefName: "1-fix-bug", Title: "Fix failing test"}}
 	lister := &fakePRLister{mergedPRs: seedPRs, hasBadge: false}
 	runner := &fakeSandmanRunner{err: errFakeNetwork}
 
@@ -313,7 +313,7 @@ func TestBadgeE2E_ControlFilePresent_SkipsAPIScan(t *testing.T) {
 
 	controlReader := &fakeBadgeControlFileReader{present: true}
 	controlWriter := &fakeBadgeControlFileWriter{}
-	seedPRs := []MergedSandmanPR{{Number: 1, HeadRefName: "sandman/1-fix-bug", Title: "Fix failing test"}}
+	seedPRs := []MergedSandmanPR{{Number: 1, HeadRefName: "1-fix-bug", Title: "Fix failing test"}}
 	lister := &fakePRLister{mergedPRs: seedPRs, hasBadge: false}
 	runner := &fakeSandmanRunner{prURL: "https://github.com/owner/repo/pull/99"}
 
@@ -399,7 +399,7 @@ func TestBadgeE2E_PaginatedSearch_FindsMarkerOnSecondPage_NoSpawn(t *testing.T) 
 	badgeE2EPrimeRepo(t)
 
 	mergedJSON, err := json.Marshal([]prPayloadList{
-		{Number: 1, HeadRefName: "sandman/1-fix-bug", Title: "Fix failing test"},
+		{Number: 1, HeadRefName: "1-fix-bug", Title: "Fix failing test"},
 	})
 	if err != nil {
 		t.Fatalf("marshal merged prs: %v", err)
@@ -467,8 +467,8 @@ func TestBadgeE2E_PaginatedSearch_MarkerAbsent_TriggersCreation(t *testing.T) {
 	badgeE2EPrimeRepo(t)
 
 	mergedJSON, err := json.Marshal([]prPayloadList{
-		{Number: 7, HeadRefName: "sandman/7-add-login", Title: "Add login"},
-		{Number: 8, HeadRefName: "sandman/8-refactor", Title: "Refactor auth"},
+		{Number: 7, HeadRefName: "7-add-login", Title: "Add login"},
+		{Number: 8, HeadRefName: "8-refactor", Title: "Refactor auth"},
 	})
 	if err != nil {
 		t.Fatalf("marshal merged prs: %v", err)

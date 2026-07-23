@@ -12,7 +12,7 @@ func TestLookupOpenPR_None(t *testing.T) {
 		return false, 0, "", nil
 	}
 
-	exists, number, mergeable, err := LookupOpenPR("sandman/42-fix-bug")
+	exists, number, mergeable, err := LookupOpenPR("42-fix-bug")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -34,7 +34,7 @@ func TestLookupOpenPR_OpenClean(t *testing.T) {
 		return true, 17, "MERGEABLE", nil
 	}
 
-	exists, number, mergeable, err := LookupOpenPR("sandman/42-fix-bug")
+	exists, number, mergeable, err := LookupOpenPR("42-fix-bug")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -56,7 +56,7 @@ func TestLookupOpenPR_OpenConflicting(t *testing.T) {
 		return true, 42, "CONFLICTING", nil
 	}
 
-	exists, number, mergeable, err := LookupOpenPR("sandman/42-fix-bug")
+	exists, number, mergeable, err := LookupOpenPR("42-fix-bug")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -78,7 +78,7 @@ func TestLookupOpenPR_OpenUnknown(t *testing.T) {
 		return true, 9, "UNKNOWN", nil
 	}
 
-	exists, _, mergeable, err := LookupOpenPR("sandman/42-fix-bug")
+	exists, _, mergeable, err := LookupOpenPR("42-fix-bug")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -98,7 +98,7 @@ func TestLookupOpenPR_GHError(t *testing.T) {
 		return false, 0, "", sentinel
 	}
 
-	exists, _, _, err := LookupOpenPR("sandman/42-fix-bug")
+	exists, _, _, err := LookupOpenPR("42-fix-bug")
 	if err == nil {
 		t.Fatalf("expected error, got nil")
 	}

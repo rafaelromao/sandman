@@ -104,7 +104,7 @@ func TestWorktreeSandbox_CreatesBranchFromSourceBranchWithTrackedFilesOnly(t *te
 		t.Fatalf("sync error: %v", err)
 	}
 
-	s := NewWorktreeSandbox(localDir, filepath.Join(localDir, ".sandman", "worktrees"), "sandman/99-test", "main")
+	s := NewWorktreeSandbox(localDir, filepath.Join(localDir, ".sandman", "worktrees"), "99-test", "main")
 	if err := s.Start(SandboxStart{StrandedReconcile: true}); err != nil {
 		t.Fatalf("start error: %v", err)
 	}
@@ -119,9 +119,9 @@ func TestWorktreeSandbox_CreatesBranchFromSourceBranchWithTrackedFilesOnly(t *te
 		t.Errorf("expected untracked.txt to NOT be in worktree, got %v", err)
 	}
 
-	branchesOut := runGit(t, localDir, "branch", "--list", "sandman/99-test")
+	branchesOut := runGit(t, localDir, "branch", "--list", "99-test")
 	if branchesOut == "" {
-		t.Error("expected branch sandman/99-test to exist")
+		t.Error("expected branch 99-test to exist")
 	}
 }
 
@@ -162,13 +162,13 @@ func TestWorktreeSandbox_CutsWorktreeFromCustomFeatureBranch(t *testing.T) {
 		t.Fatalf("sync error: %v", err)
 	}
 
-	s := NewWorktreeSandbox(localDir, filepath.Join(localDir, ".sandman", "worktrees"), "sandman/42-fix-bug", "feature-x")
+	s := NewWorktreeSandbox(localDir, filepath.Join(localDir, ".sandman", "worktrees"), "42-fix-bug", "feature-x")
 	if err := s.Start(SandboxStart{StrandedReconcile: true}); err != nil {
 		t.Fatalf("start error: %v", err)
 	}
 	t.Cleanup(func() {
 		s.Stop()
-		removeBranch(t, localDir, "sandman/42-fix-bug")
+		removeBranch(t, localDir, "42-fix-bug")
 	})
 
 	wtTip := strings.TrimSpace(runGit(t, s.WorkDir(), "rev-parse", "HEAD"))
@@ -189,15 +189,15 @@ func TestWorktreeSandbox_CutsWorktreeFromCustomFeatureBranch(t *testing.T) {
 func TestWorktreeSandbox_StartCreatesWorktree(t *testing.T) {
 	dir := t.TempDir()
 	_ = initGitRepoWithRemote(t, dir)
-	removeBranch(t, dir, "sandman/42-fix-bug")
+	removeBranch(t, dir, "42-fix-bug")
 
-	s := NewWorktreeSandbox(dir, filepath.Join(dir, ".sandman", "worktrees"), "sandman/42-fix-bug", "main")
+	s := NewWorktreeSandbox(dir, filepath.Join(dir, ".sandman", "worktrees"), "42-fix-bug", "main")
 	if err := s.Start(SandboxStart{StrandedReconcile: true}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	t.Cleanup(func() {
 		s.Stop()
-		removeBranch(t, dir, "sandman/42-fix-bug")
+		removeBranch(t, dir, "42-fix-bug")
 	})
 
 	worktreePath := s.WorkDir()
@@ -223,7 +223,7 @@ func TestSyncBaseBranchFastForwardsBaseBranchBeforeAddingWorktree(t *testing.T) 
 	runGit(t, localDir, "checkout", "-b", "feature")
 	commitGitFile(t, localDir, "feature-only.txt", "feature\n", "feature")
 	writeGitFile(t, localDir, "untracked.txt", "keep me out of the worktree\n")
-	removeBranch(t, localDir, "sandman/42-fix-bug")
+	removeBranch(t, localDir, "42-fix-bug")
 
 	commitGitFile(t, seedDir, "tracked.txt", "remote\n", "remote update")
 	runGit(t, seedDir, "push", "origin", "main")
@@ -238,13 +238,13 @@ func TestSyncBaseBranchFastForwardsBaseBranchBeforeAddingWorktree(t *testing.T) 
 		t.Fatalf("expected local main to sync to remote main, got %q and %q", localMain, remoteMain)
 	}
 
-	s := NewWorktreeSandbox(localDir, filepath.Join(localDir, ".sandman", "worktrees"), "sandman/42-fix-bug", "main")
+	s := NewWorktreeSandbox(localDir, filepath.Join(localDir, ".sandman", "worktrees"), "42-fix-bug", "main")
 	if err := s.Start(SandboxStart{StrandedReconcile: true}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	t.Cleanup(func() {
 		s.Stop()
-		removeBranch(t, localDir, "sandman/42-fix-bug")
+		removeBranch(t, localDir, "42-fix-bug")
 	})
 
 	trackedPath := filepath.Join(s.WorkDir(), "tracked.txt")
@@ -329,7 +329,7 @@ func TestSyncBaseBranchAtSameCommit(t *testing.T) {
 func TestWorktreeSandbox_StartFailsOutsideGitRepo(t *testing.T) {
 	dir := t.TempDir()
 
-	s := NewWorktreeSandbox(dir, filepath.Join(dir, ".sandman", "worktrees"), "sandman/42-fix-bug", "main")
+	s := NewWorktreeSandbox(dir, filepath.Join(dir, ".sandman", "worktrees"), "42-fix-bug", "main")
 	if err := s.Start(SandboxStart{StrandedReconcile: true}); err == nil {
 		t.Fatal("expected error when not inside a git repo")
 	}
@@ -339,7 +339,7 @@ func TestWorktreeSandbox_WorkDirBeforeStart(t *testing.T) {
 	dir := t.TempDir()
 	initGitRepo(t, dir)
 
-	s := NewWorktreeSandbox(dir, filepath.Join(dir, ".sandman", "worktrees"), "sandman/42-fix-bug", "main")
+	s := NewWorktreeSandbox(dir, filepath.Join(dir, ".sandman", "worktrees"), "42-fix-bug", "main")
 	if s.WorkDir() != "" {
 		t.Error("expected workdir to be empty before Start")
 	}
@@ -348,15 +348,15 @@ func TestWorktreeSandbox_WorkDirBeforeStart(t *testing.T) {
 func TestWorktreeSandbox_WritePrompt(t *testing.T) {
 	dir := t.TempDir()
 	_ = initGitRepoWithRemote(t, dir)
-	removeBranch(t, dir, "sandman/42-fix-bug")
+	removeBranch(t, dir, "42-fix-bug")
 
-	s := NewWorktreeSandbox(dir, filepath.Join(dir, ".sandman", "worktrees"), "sandman/42-fix-bug", "main")
+	s := NewWorktreeSandbox(dir, filepath.Join(dir, ".sandman", "worktrees"), "42-fix-bug", "main")
 	if err := s.Start(SandboxStart{StrandedReconcile: true}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	t.Cleanup(func() {
 		s.Stop()
-		removeBranch(t, dir, "sandman/42-fix-bug")
+		removeBranch(t, dir, "42-fix-bug")
 	})
 
 	content := "hello prompt"
@@ -377,15 +377,15 @@ func TestWorktreeSandbox_WritePrompt(t *testing.T) {
 func TestWorktreeSandbox_StopRemovesWorktree(t *testing.T) {
 	dir := t.TempDir()
 	_ = initGitRepoWithRemote(t, dir)
-	removeBranch(t, dir, "sandman/42-fix-bug")
+	removeBranch(t, dir, "42-fix-bug")
 
-	s := NewWorktreeSandbox(dir, filepath.Join(dir, ".sandman", "worktrees"), "sandman/42-fix-bug", "main")
+	s := NewWorktreeSandbox(dir, filepath.Join(dir, ".sandman", "worktrees"), "42-fix-bug", "main")
 	if err := s.Start(SandboxStart{StrandedReconcile: true}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	t.Cleanup(func() {
 		_ = s.Stop()
-		removeBranch(t, dir, "sandman/42-fix-bug")
+		removeBranch(t, dir, "42-fix-bug")
 	})
 
 	worktreePath := s.WorkDir()
@@ -401,15 +401,15 @@ func TestWorktreeSandbox_StopRemovesWorktree(t *testing.T) {
 func TestWorktreeSandbox_StartReusesExistingWorktree(t *testing.T) {
 	dir := t.TempDir()
 	_ = initGitRepoWithRemote(t, dir)
-	removeBranch(t, dir, "sandman/42-fix-bug")
+	removeBranch(t, dir, "42-fix-bug")
 
-	s := NewWorktreeSandbox(dir, filepath.Join(dir, ".sandman", "worktrees"), "sandman/42-fix-bug", "main")
+	s := NewWorktreeSandbox(dir, filepath.Join(dir, ".sandman", "worktrees"), "42-fix-bug", "main")
 	if err := s.Start(SandboxStart{StrandedReconcile: true}); err != nil {
 		t.Fatalf("unexpected error on first start: %v", err)
 	}
 	t.Cleanup(func() {
 		s.Stop()
-		removeBranch(t, dir, "sandman/42-fix-bug")
+		removeBranch(t, dir, "42-fix-bug")
 	})
 
 	worktreePath := s.WorkDir()
@@ -417,7 +417,7 @@ func TestWorktreeSandbox_StartReusesExistingWorktree(t *testing.T) {
 		t.Fatalf("write marker: %v", err)
 	}
 
-	s2 := NewWorktreeSandbox(dir, filepath.Join(dir, ".sandman", "worktrees"), "sandman/42-fix-bug", "main")
+	s2 := NewWorktreeSandbox(dir, filepath.Join(dir, ".sandman", "worktrees"), "42-fix-bug", "main")
 	if err := s2.Start(SandboxStart{StrandedReconcile: true}); err != nil {
 		t.Fatalf("unexpected error on second start: %v", err)
 	}
@@ -438,15 +438,15 @@ func TestWorktreeSandbox_StartReusesExistingWorktree(t *testing.T) {
 func TestWorktreeSandbox_OverrideRecreatesDirtyWorktreeFromScratch(t *testing.T) {
 	dir := t.TempDir()
 	_ = initGitRepoWithRemote(t, dir)
-	removeBranch(t, dir, "sandman/42-fix-bug")
+	removeBranch(t, dir, "42-fix-bug")
 
-	s := NewWorktreeSandbox(dir, filepath.Join(dir, ".sandman", "worktrees"), "sandman/42-fix-bug", "main")
+	s := NewWorktreeSandbox(dir, filepath.Join(dir, ".sandman", "worktrees"), "42-fix-bug", "main")
 	if err := s.Start(SandboxStart{Override: true, StrandedReconcile: true}); err != nil {
 		t.Fatalf("unexpected error on first start: %v", err)
 	}
 	t.Cleanup(func() {
 		s.Stop()
-		removeBranch(t, dir, "sandman/42-fix-bug")
+		removeBranch(t, dir, "42-fix-bug")
 	})
 
 	markerPath := filepath.Join(s.WorkDir(), "stale-marker.txt")
@@ -454,7 +454,7 @@ func TestWorktreeSandbox_OverrideRecreatesDirtyWorktreeFromScratch(t *testing.T)
 		t.Fatalf("write marker: %v", err)
 	}
 
-	s2 := NewWorktreeSandbox(dir, filepath.Join(dir, ".sandman", "worktrees"), "sandman/42-fix-bug", "main")
+	s2 := NewWorktreeSandbox(dir, filepath.Join(dir, ".sandman", "worktrees"), "42-fix-bug", "main")
 	if err := s2.Start(SandboxStart{Override: true, StrandedReconcile: true}); err != nil {
 		t.Fatalf("expected no error with --override, got: %v", err)
 	}
@@ -470,36 +470,36 @@ func TestWorktreeSandbox_OverrideRecreatesDirtyWorktreeFromScratch(t *testing.T)
 func TestWorktreeSandbox_StartFailsWhenBranchAlreadyExists(t *testing.T) {
 	dir := t.TempDir()
 	initGitRepo(t, dir)
-	removeBranch(t, dir, "sandman/42-fix-bug")
-	runGit(t, dir, "checkout", "-b", "sandman/42-fix-bug")
+	removeBranch(t, dir, "42-fix-bug")
+	runGit(t, dir, "checkout", "-b", "42-fix-bug")
 
-	s := NewWorktreeSandbox(dir, filepath.Join(dir, ".sandman", "worktrees"), "sandman/42-fix-bug", "main")
+	s := NewWorktreeSandbox(dir, filepath.Join(dir, ".sandman", "worktrees"), "42-fix-bug", "main")
 	err := s.Start(SandboxStart{StrandedReconcile: true})
 	if err == nil {
 		t.Fatal("expected error when branch already exists")
 	}
-	want := `branch "sandman/42-fix-bug" already exists`
+	want := `branch "42-fix-bug" already exists`
 	if !strings.Contains(err.Error(), want) {
 		t.Errorf("expected error to contain %q, got %q", want, err.Error())
 	}
-	if !strings.Contains(err.Error(), `git branch -D sandman/42-fix-bug`) {
+	if !strings.Contains(err.Error(), `git branch -D 42-fix-bug`) {
 		t.Errorf("expected error to contain actionable delete command, got %q", err.Error())
 	}
 	runGit(t, dir, "checkout", "main")
-	t.Cleanup(func() { removeBranch(t, dir, "sandman/42-fix-bug") })
+	t.Cleanup(func() { removeBranch(t, dir, "42-fix-bug") })
 }
 
 func TestBranchExists(t *testing.T) {
 	dir := t.TempDir()
 	initGitRepo(t, dir)
-	removeBranch(t, dir, "sandman/42-fix-bug")
+	removeBranch(t, dir, "42-fix-bug")
 
-	if BranchExists(dir, "sandman/42-fix-bug") {
+	if BranchExists(dir, "42-fix-bug") {
 		t.Fatal("expected missing branch to return false")
 	}
 
-	runGit(t, dir, "checkout", "-b", "sandman/42-fix-bug")
-	if !BranchExists(dir, "sandman/42-fix-bug") {
+	runGit(t, dir, "checkout", "-b", "42-fix-bug")
+	if !BranchExists(dir, "42-fix-bug") {
 		t.Fatal("expected existing branch to return true")
 	}
 }
@@ -507,15 +507,15 @@ func TestBranchExists(t *testing.T) {
 func TestWorktreeSandbox_ExecInteractive_RunsCommand(t *testing.T) {
 	dir := t.TempDir()
 	_ = initGitRepoWithRemote(t, dir)
-	removeBranch(t, dir, "sandman/42-fix-bug")
+	removeBranch(t, dir, "42-fix-bug")
 
-	s := NewWorktreeSandbox(dir, filepath.Join(dir, ".sandman", "worktrees"), "sandman/42-fix-bug", "main")
+	s := NewWorktreeSandbox(dir, filepath.Join(dir, ".sandman", "worktrees"), "42-fix-bug", "main")
 	if err := s.Start(SandboxStart{StrandedReconcile: true}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	t.Cleanup(func() {
 		s.Stop()
-		removeBranch(t, dir, "sandman/42-fix-bug")
+		removeBranch(t, dir, "42-fix-bug")
 	})
 
 	if err := s.ExecInteractive(context.Background(), "touch interactive-ran.txt"); err != nil {
@@ -539,15 +539,15 @@ func TestWorktreeSandbox_ExecInteractive_IsProcessGroupLeader(t *testing.T) {
 
 	dir := t.TempDir()
 	_ = initGitRepoWithRemote(t, dir)
-	removeBranch(t, dir, "sandman/42-fix-bug")
+	removeBranch(t, dir, "42-fix-bug")
 
-	s := NewWorktreeSandbox(dir, filepath.Join(dir, ".sandman", "worktrees"), "sandman/42-fix-bug", "main")
+	s := NewWorktreeSandbox(dir, filepath.Join(dir, ".sandman", "worktrees"), "42-fix-bug", "main")
 	if err := s.Start(SandboxStart{StrandedReconcile: true}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	t.Cleanup(func() {
 		s.Stop()
-		removeBranch(t, dir, "sandman/42-fix-bug")
+		removeBranch(t, dir, "42-fix-bug")
 	})
 
 	pidFile := filepath.Join(t.TempDir(), "child.pid")
@@ -612,7 +612,7 @@ func TestWorktreeSandbox_Start_RecreatesOrphanWorktreeDirectory(t *testing.T) {
 	runGit(t, dir, "push", "origin", "main")
 
 	worktreeBase := filepath.Join(dir, ".sandman", "worktrees")
-	branch := "sandman/42-fix-bug"
+	branch := "42-fix-bug"
 	orphanPath := filepath.Join(worktreeBase, branch)
 	if err := os.MkdirAll(orphanPath, 0755); err != nil {
 		t.Fatalf("create orphan dir: %v", err)
@@ -657,20 +657,20 @@ func TestWorktreeSandbox_Start_RecreatesOrphanWorktreeDirectory(t *testing.T) {
 func TestWorktreeSandbox_StartErrorsOnWrongBranch(t *testing.T) {
 	dir := t.TempDir()
 	_ = initGitRepoWithRemote(t, dir)
-	removeBranch(t, dir, "sandman/42-fix-bug")
+	removeBranch(t, dir, "42-fix-bug")
 
-	s := NewWorktreeSandbox(dir, filepath.Join(dir, ".sandman", "worktrees"), "sandman/42-fix-bug", "main")
+	s := NewWorktreeSandbox(dir, filepath.Join(dir, ".sandman", "worktrees"), "42-fix-bug", "main")
 	if err := s.Start(SandboxStart{StrandedReconcile: true}); err != nil {
 		t.Fatalf("unexpected error on first start: %v", err)
 	}
 	t.Cleanup(func() {
 		s.Stop()
-		removeBranch(t, dir, "sandman/42-fix-bug")
+		removeBranch(t, dir, "42-fix-bug")
 	})
 
 	runGit(t, s.WorkDir(), "checkout", "-b", "wrong-branch")
 
-	s2 := NewWorktreeSandbox(dir, filepath.Join(dir, ".sandman", "worktrees"), "sandman/42-fix-bug", "main")
+	s2 := NewWorktreeSandbox(dir, filepath.Join(dir, ".sandman", "worktrees"), "42-fix-bug", "main")
 	err := s2.Start(SandboxStart{StrandedReconcile: true})
 	if err == nil {
 		t.Fatal("expected error when worktree is on wrong branch")
@@ -678,8 +678,8 @@ func TestWorktreeSandbox_StartErrorsOnWrongBranch(t *testing.T) {
 	if !strings.Contains(err.Error(), "wrong-branch") {
 		t.Errorf("expected error to contain actual branch name 'wrong-branch', got: %v", err)
 	}
-	if !strings.Contains(err.Error(), "sandman/42-fix-bug") {
-		t.Errorf("expected error to contain expected branch name 'sandman/42-fix-bug', got: %v", err)
+	if !strings.Contains(err.Error(), "42-fix-bug") {
+		t.Errorf("expected error to contain expected branch name '42-fix-bug', got: %v", err)
 	}
 	if !strings.Contains(err.Error(), s.WorkDir()) {
 		t.Errorf("expected error to contain worktree path %q, got: %v", s.WorkDir(), err)
@@ -697,20 +697,20 @@ func TestWorktreeSandbox_StartErrorsOnWrongBranch(t *testing.T) {
 func TestWorktreeSandbox_OverrideFalseStillErrorsOnWrongBranch(t *testing.T) {
 	dir := t.TempDir()
 	_ = initGitRepoWithRemote(t, dir)
-	removeBranch(t, dir, "sandman/42-fix-bug")
+	removeBranch(t, dir, "42-fix-bug")
 
-	s := NewWorktreeSandbox(dir, filepath.Join(dir, ".sandman", "worktrees"), "sandman/42-fix-bug", "main")
+	s := NewWorktreeSandbox(dir, filepath.Join(dir, ".sandman", "worktrees"), "42-fix-bug", "main")
 	if err := s.Start(SandboxStart{StrandedReconcile: true}); err != nil {
 		t.Fatalf("unexpected error on first start: %v", err)
 	}
 	t.Cleanup(func() {
 		s.Stop()
-		removeBranch(t, dir, "sandman/42-fix-bug")
+		removeBranch(t, dir, "42-fix-bug")
 	})
 
 	runGit(t, s.WorkDir(), "checkout", "-b", "wrong-branch")
 
-	s2 := NewWorktreeSandbox(dir, filepath.Join(dir, ".sandman", "worktrees"), "sandman/42-fix-bug", "main")
+	s2 := NewWorktreeSandbox(dir, filepath.Join(dir, ".sandman", "worktrees"), "42-fix-bug", "main")
 	err := s2.Start(SandboxStart{StrandedReconcile: true})
 	if err == nil {
 		t.Fatal("expected error when override is false")
@@ -723,20 +723,20 @@ func TestWorktreeSandbox_OverrideFalseStillErrorsOnWrongBranch(t *testing.T) {
 func TestWorktreeSandbox_StartErrorsOnDetachedHead(t *testing.T) {
 	dir := t.TempDir()
 	_ = initGitRepoWithRemote(t, dir)
-	removeBranch(t, dir, "sandman/42-fix-bug")
+	removeBranch(t, dir, "42-fix-bug")
 
-	s := NewWorktreeSandbox(dir, filepath.Join(dir, ".sandman", "worktrees"), "sandman/42-fix-bug", "main")
+	s := NewWorktreeSandbox(dir, filepath.Join(dir, ".sandman", "worktrees"), "42-fix-bug", "main")
 	if err := s.Start(SandboxStart{StrandedReconcile: true}); err != nil {
 		t.Fatalf("unexpected error on first start: %v", err)
 	}
 	t.Cleanup(func() {
 		s.Stop()
-		removeBranch(t, dir, "sandman/42-fix-bug")
+		removeBranch(t, dir, "42-fix-bug")
 	})
 
 	runGit(t, s.WorkDir(), "checkout", "--detach", "HEAD")
 
-	s2 := NewWorktreeSandbox(dir, filepath.Join(dir, ".sandman", "worktrees"), "sandman/42-fix-bug", "main")
+	s2 := NewWorktreeSandbox(dir, filepath.Join(dir, ".sandman", "worktrees"), "42-fix-bug", "main")
 	err := s2.Start(SandboxStart{StrandedReconcile: true})
 	if err == nil {
 		t.Fatal("expected error when worktree HEAD is detached")
@@ -766,7 +766,7 @@ func TestWorktreeSandbox_StartSelfHealsBrokenWorktreeWithStaleDotGitFile(t *test
 	runGit(t, dir, "push", "origin", "main")
 
 	worktreeBase := filepath.Join(dir, ".sandman", "worktrees")
-	branch := "sandman/42-fix-bug"
+	branch := "42-fix-bug"
 
 	// Create a real worktree first so the branch exists in the parent repo.
 	s1 := NewWorktreeSandbox(dir, worktreeBase, branch, "main")
@@ -812,27 +812,27 @@ func TestWorktreeSandbox_StartSelfHealsBrokenWorktreeWithStaleDotGitFile(t *test
 func TestWorktreeSandbox_OverrideReconcileWrongBranch(t *testing.T) {
 	dir := t.TempDir()
 	_ = initGitRepoWithRemote(t, dir)
-	removeBranch(t, dir, "sandman/42-fix-bug")
+	removeBranch(t, dir, "42-fix-bug")
 
-	s := NewWorktreeSandbox(dir, filepath.Join(dir, ".sandman", "worktrees"), "sandman/42-fix-bug", "main")
+	s := NewWorktreeSandbox(dir, filepath.Join(dir, ".sandman", "worktrees"), "42-fix-bug", "main")
 	if err := s.Start(SandboxStart{Override: true, StrandedReconcile: true}); err != nil {
 		t.Fatalf("unexpected error on first start: %v", err)
 	}
 	t.Cleanup(func() {
 		s.Stop()
-		removeBranch(t, dir, "sandman/42-fix-bug")
+		removeBranch(t, dir, "42-fix-bug")
 	})
 
 	runGit(t, s.WorkDir(), "checkout", "-b", "wrong-branch")
 
-	s2 := NewWorktreeSandbox(dir, filepath.Join(dir, ".sandman", "worktrees"), "sandman/42-fix-bug", "main")
+	s2 := NewWorktreeSandbox(dir, filepath.Join(dir, ".sandman", "worktrees"), "42-fix-bug", "main")
 	if err := s2.Start(SandboxStart{Override: true, StrandedReconcile: true}); err != nil {
 		t.Fatalf("expected no error with --override, got: %v", err)
 	}
 
 	headRef := runGit(t, s2.WorkDir(), "symbolic-ref", "HEAD")
-	if !strings.Contains(headRef, "sandman/42-fix-bug") {
-		t.Errorf("expected HEAD to be on sandman/42-fix-bug after force-checkout, got %q", headRef)
+	if !strings.Contains(headRef, "42-fix-bug") {
+		t.Errorf("expected HEAD to be on 42-fix-bug after force-checkout, got %q", headRef)
 	}
 }
 
@@ -845,36 +845,36 @@ func TestWorktreeSandbox_OverrideReconcileWrongBranch(t *testing.T) {
 func TestWorktreeSandbox_OverrideBypassesContinueRefusal(t *testing.T) {
 	dir := t.TempDir()
 	_ = initGitRepoWithRemote(t, dir)
-	removeBranch(t, dir, "sandman/42-fix-bug")
+	removeBranch(t, dir, "42-fix-bug")
 
-	s := NewWorktreeSandbox(dir, filepath.Join(dir, ".sandman", "worktrees"), "sandman/42-fix-bug", "main")
+	s := NewWorktreeSandbox(dir, filepath.Join(dir, ".sandman", "worktrees"), "42-fix-bug", "main")
 	if err := s.Start(SandboxStart{Override: true, StrandedReconcile: true}); err != nil {
 		t.Fatalf("create initial worktree: %v", err)
 	}
 
 	runGit(t, s.WorkDir(), "checkout", "-b", "wrong-branch")
 
-	s2 := NewWorktreeSandbox(dir, filepath.Join(dir, ".sandman", "worktrees"), "sandman/42-fix-bug", "main")
+	s2 := NewWorktreeSandbox(dir, filepath.Join(dir, ".sandman", "worktrees"), "42-fix-bug", "main")
 	if err := s2.Start(SandboxStart{Override: true, Continue: true, StrandedReconcile: true}); err != nil {
 		t.Fatalf("expected --continue --override to succeed via override reconciliation, got: %v", err)
 	}
 	t.Cleanup(func() {
 		s2.Stop()
-		removeBranch(t, dir, "sandman/42-fix-bug")
+		removeBranch(t, dir, "42-fix-bug")
 	})
 
 	headRef := runGit(t, s2.WorkDir(), "symbolic-ref", "HEAD")
-	if !strings.Contains(headRef, "sandman/42-fix-bug") {
-		t.Errorf("expected HEAD to be on sandman/42-fix-bug after override reconciliation, got %q", headRef)
+	if !strings.Contains(headRef, "42-fix-bug") {
+		t.Errorf("expected HEAD to be on 42-fix-bug after override reconciliation, got %q", headRef)
 	}
 }
 
 func TestWorktreeSandbox_OverrideReconcileMissingBranch(t *testing.T) {
 	dir := t.TempDir()
 	_ = initGitRepoWithRemote(t, dir)
-	removeBranch(t, dir, "sandman/42-fix-bug")
+	removeBranch(t, dir, "42-fix-bug")
 
-	s := NewWorktreeSandbox(dir, filepath.Join(dir, ".sandman", "worktrees"), "sandman/42-fix-bug", "main")
+	s := NewWorktreeSandbox(dir, filepath.Join(dir, ".sandman", "worktrees"), "42-fix-bug", "main")
 	if err := s.Start(SandboxStart{Override: true, StrandedReconcile: true}); err != nil {
 		t.Fatalf("unexpected error on first start: %v", err)
 	}
@@ -884,43 +884,43 @@ func TestWorktreeSandbox_OverrideReconcileMissingBranch(t *testing.T) {
 
 	runGit(t, s.WorkDir(), "checkout", "-b", "wrong-branch")
 
-	runGit(t, dir, "branch", "-D", "sandman/42-fix-bug")
+	runGit(t, dir, "branch", "-D", "42-fix-bug")
 
-	s2 := NewWorktreeSandbox(dir, filepath.Join(dir, ".sandman", "worktrees"), "sandman/42-fix-bug", "main")
+	s2 := NewWorktreeSandbox(dir, filepath.Join(dir, ".sandman", "worktrees"), "42-fix-bug", "main")
 	if err := s2.Start(SandboxStart{Override: true, StrandedReconcile: false}); err != nil {
 		t.Fatalf("expected no error with --override, got: %v", err)
 	}
 
 	headRef := runGit(t, s2.WorkDir(), "symbolic-ref", "HEAD")
-	if !strings.Contains(headRef, "sandman/42-fix-bug") {
-		t.Errorf("expected HEAD to be on sandman/42-fix-bug after recreation, got %q", headRef)
+	if !strings.Contains(headRef, "42-fix-bug") {
+		t.Errorf("expected HEAD to be on 42-fix-bug after recreation, got %q", headRef)
 	}
 }
 
 func TestWorktreeSandbox_OverrideReconcileDetachedHead(t *testing.T) {
 	dir := t.TempDir()
 	_ = initGitRepoWithRemote(t, dir)
-	removeBranch(t, dir, "sandman/42-fix-bug")
+	removeBranch(t, dir, "42-fix-bug")
 
-	s := NewWorktreeSandbox(dir, filepath.Join(dir, ".sandman", "worktrees"), "sandman/42-fix-bug", "main")
+	s := NewWorktreeSandbox(dir, filepath.Join(dir, ".sandman", "worktrees"), "42-fix-bug", "main")
 	if err := s.Start(SandboxStart{Override: true, StrandedReconcile: true}); err != nil {
 		t.Fatalf("unexpected error on first start: %v", err)
 	}
 	t.Cleanup(func() {
 		s.Stop()
-		removeBranch(t, dir, "sandman/42-fix-bug")
+		removeBranch(t, dir, "42-fix-bug")
 	})
 
 	runGit(t, s.WorkDir(), "checkout", "--detach", "HEAD")
 
-	s2 := NewWorktreeSandbox(dir, filepath.Join(dir, ".sandman", "worktrees"), "sandman/42-fix-bug", "main")
+	s2 := NewWorktreeSandbox(dir, filepath.Join(dir, ".sandman", "worktrees"), "42-fix-bug", "main")
 	if err := s2.Start(SandboxStart{Override: true, StrandedReconcile: true}); err != nil {
 		t.Fatalf("expected no error with --override on detached HEAD, got: %v", err)
 	}
 
 	headRef := runGit(t, s2.WorkDir(), "symbolic-ref", "HEAD")
-	if !strings.Contains(headRef, "sandman/42-fix-bug") {
-		t.Errorf("expected HEAD to be on sandman/42-fix-bug after force-checkout, got %q", headRef)
+	if !strings.Contains(headRef, "42-fix-bug") {
+		t.Errorf("expected HEAD to be on 42-fix-bug after force-checkout, got %q", headRef)
 	}
 }
 
@@ -931,7 +931,7 @@ func TestWorktreeSandbox_StartPreservesErrorWhenReconcileDisabled(t *testing.T) 
 	// --no-reconcile-stranded, that error must surface unchanged.
 	dir := t.TempDir()
 	initGitRepo(t, dir)
-	const branch = "sandman/42-fix-bug"
+	const branch = "42-fix-bug"
 	runGit(t, dir, "checkout", "-b", branch)
 
 	s := NewWorktreeSandbox(dir, filepath.Join(dir, ".sandman", "worktrees"), branch, "main")
@@ -968,8 +968,8 @@ func TestWorktreeSandbox_RecoversFromMainRepoBranch_StrandedWorktreePath(t *test
 	if err := os.MkdirAll(worktreeBase, 0755); err != nil {
 		t.Fatalf("mkdir worktreeBase: %v", err)
 	}
-	branch := "sandman/42-fix-bug"
-	const otherBranch = "sandman/9-other"
+	branch := "42-fix-bug"
+	const otherBranch = "9-other"
 
 	runGit(t, dir, "branch", branch)
 	runGit(t, dir, "branch", otherBranch)
@@ -1015,7 +1015,7 @@ func TestWorktreeSandbox_RecoversFromMainRepoBranch_MainRepoCheckoutPath(t *test
 	if err := os.MkdirAll(worktreeBase, 0755); err != nil {
 		t.Fatalf("mkdir worktreeBase: %v", err)
 	}
-	branch := "sandman/42-fix-bug"
+	branch := "42-fix-bug"
 
 	runGit(t, dir, "branch", branch)
 	runGit(t, dir, "checkout", branch)
@@ -1056,22 +1056,22 @@ func TestIsBranchCheckedOutError_OnlyMatchesCheckedOutOrWorktreeMessages(t *test
 	}{
 		{
 			name: "modern checked out message",
-			out:  "error: Cannot delete branch 'sandman/42-fix-bug' checked out at '/tmp/repo'\n",
+			out:  "error: Cannot delete branch '42-fix-bug' checked out at '/tmp/repo'\n",
 			want: true,
 		},
 		{
 			name: "legacy used by worktree message",
-			out:  "error: cannot delete branch 'sandman/42-fix-bug' used by worktree at '/tmp/repo'\n",
+			out:  "error: cannot delete branch '42-fix-bug' used by worktree at '/tmp/repo'\n",
 			want: true,
 		},
 		{
 			name: "branch not found",
-			out:  "error: branch 'sandman/42-fix-bug' not found.\n",
+			out:  "error: branch '42-fix-bug' not found.\n",
 			want: false,
 		},
 		{
 			name: "permission denied",
-			out:  "error: cannot remove '.git/refs/heads/sandman/42-fix-bug': Permission denied\n",
+			out:  "error: cannot remove '.git/refs/heads/42-fix-bug': Permission denied\n",
 			want: false,
 		},
 		{
@@ -1103,25 +1103,25 @@ func TestParseCheckedOutPath_ExtractsWorktreePath(t *testing.T) {
 	}{
 		{
 			name: "modern checked out message",
-			out:  "error: Cannot delete branch 'sandman/30-foo' checked out at '/tmp/repo/.sandman/worktrees/review-148'\n",
+			out:  "error: Cannot delete branch '30-foo' checked out at '/tmp/repo/.sandman/worktrees/review-148'\n",
 			want: "/tmp/repo/.sandman/worktrees/review-148",
 			ok:   true,
 		},
 		{
 			name: "legacy used by worktree message",
-			out:  "error: cannot delete branch 'sandman/30-foo' used by worktree at '/tmp/repo/.sandman/worktrees/review-148'\n",
+			out:  "error: cannot delete branch '30-foo' used by worktree at '/tmp/repo/.sandman/worktrees/review-148'\n",
 			want: "/tmp/repo/.sandman/worktrees/review-148",
 			ok:   true,
 		},
 		{
 			name: "branch not found",
-			out:  "error: branch 'sandman/30-foo' not found.\n",
+			out:  "error: branch '30-foo' not found.\n",
 			want: "",
 			ok:   false,
 		},
 		{
 			name: "permission denied",
-			out:  "error: cannot remove '.git/refs/heads/sandman/30-foo': Permission denied\n",
+			out:  "error: cannot remove '.git/refs/heads/30-foo': Permission denied\n",
 			want: "",
 			ok:   false,
 		},
@@ -1133,7 +1133,7 @@ func TestParseCheckedOutPath_ExtractsWorktreePath(t *testing.T) {
 		},
 		{
 			name: "path with spaces inside quotes",
-			out:  "error: Cannot delete branch 'sandman/30-foo' checked out at '/tmp/path with spaces/wt'\n",
+			out:  "error: Cannot delete branch '30-foo' checked out at '/tmp/path with spaces/wt'\n",
 			want: "/tmp/path with spaces/wt",
 			ok:   true,
 		},
@@ -1172,7 +1172,7 @@ func TestWorktreeSandbox_OverrideReclaimsForeignStrandedWorktree(t *testing.T) {
 	repoDir := t.TempDir()
 	initGitRepo(t, repoDir)
 
-	const branch = "sandman/30-foo"
+	const branch = "30-foo"
 	runGit(t, repoDir, "branch", branch)
 
 	worktreeBase := filepath.Join(repoDir, ".sandman", "worktrees")
@@ -1245,8 +1245,8 @@ func TestStrandedWorktree_ResolvesRelativeWorktreeBase(t *testing.T) {
 		t.Fatalf("mkdir worktreeBase: %v", err)
 	}
 
-	const expected = "sandman/907-foo"
-	const actual = "sandman/42-other-branch"
+	const expected = "907-foo"
+	const actual = "42-other-branch"
 	runGit(t, dir, "branch", expected)
 	runGit(t, dir, "branch", actual)
 	strandedPath := addStrandedWorktree(t, dir, filepath.Join(dir, worktreeBase), expected, actual)
@@ -1287,7 +1287,7 @@ func TestWorktreeSandbox_StartCallsReconcileStrandedFnSeam(t *testing.T) {
 
 	dir := t.TempDir()
 	initGitRepo(t, dir)
-	const branch = "sandman/42-fix-bug"
+	const branch = "42-fix-bug"
 	runGit(t, dir, "checkout", "-b", branch)
 
 	worktreeBase := filepath.Join(dir, ".sandman", "worktrees")
@@ -1331,7 +1331,7 @@ func TestWorktreeSandbox_StartReattachesPrunableWorktree_DirIntact(t *testing.T)
 	runGit(t, dir, "push", "origin", "main")
 
 	worktreeBase := filepath.Join(dir, ".sandman", "worktrees")
-	branch := "sandman/42-fix-bug"
+	branch := "42-fix-bug"
 
 	s1 := NewWorktreeSandbox(dir, worktreeBase, branch, "main")
 	if err := s1.Start(SandboxStart{StrandedReconcile: true}); err != nil {
@@ -1394,7 +1394,7 @@ func TestWorktreeSandbox_StartReattachesPrunableWorktree_DirGone(t *testing.T) {
 	runGit(t, dir, "push", "origin", "main")
 
 	worktreeBase := filepath.Join(dir, ".sandman", "worktrees")
-	branch := "sandman/42-fix-bug"
+	branch := "42-fix-bug"
 
 	s1 := NewWorktreeSandbox(dir, worktreeBase, branch, "main")
 	if err := s1.Start(SandboxStart{StrandedReconcile: true}); err != nil {
@@ -1455,7 +1455,7 @@ func TestWorktreeSandbox_StartSkipsPrunableReattachWhenReconcileDisabled(t *test
 	runGit(t, dir, "push", "origin", "main")
 
 	worktreeBase := filepath.Join(dir, ".sandman", "worktrees")
-	branch := "sandman/42-fix-bug"
+	branch := "42-fix-bug"
 
 	s1 := NewWorktreeSandbox(dir, worktreeBase, branch, "main")
 	if err := s1.Start(SandboxStart{StrandedReconcile: true}); err != nil {
@@ -1511,7 +1511,7 @@ func TestReleaseBranchInWorktree_DetachesBranchWithoutRemovingWorktree(t *testin
 	repoDir := t.TempDir()
 	initGitRepo(t, repoDir)
 
-	const branch = "sandman/2187-release-target"
+	const branch = "2187-release-target"
 	runGit(t, repoDir, "branch", branch)
 
 	worktreeBase := filepath.Join(repoDir, ".sandman", "worktrees")
@@ -1563,7 +1563,7 @@ func TestWorktreeSandbox_OverrideDoesNotDeleteForeignLiveWorktree(t *testing.T) 
 	repoDir := t.TempDir()
 	initGitRepo(t, repoDir)
 
-	const branch = "sandman/2187-foreign-live"
+	const branch = "2187-foreign-live"
 	runGit(t, repoDir, "branch", branch)
 
 	worktreeBase := filepath.Join(repoDir, ".sandman", "worktrees")
@@ -1632,8 +1632,8 @@ func TestWorktreeSandbox_OverrideDoesNotPruneUnrelatedWorktrees(t *testing.T) {
 	repoDir := t.TempDir()
 	initGitRepo(t, repoDir)
 
-	runGit(t, repoDir, "branch", "sandman/2187-target")
-	runGit(t, repoDir, "branch", "sandman/2187-unrelated")
+	runGit(t, repoDir, "branch", "2187-target")
+	runGit(t, repoDir, "branch", "2187-unrelated")
 
 	worktreeBase := filepath.Join(repoDir, ".sandman", "worktrees")
 	if err := os.MkdirAll(worktreeBase, 0755); err != nil {
@@ -1642,7 +1642,7 @@ func TestWorktreeSandbox_OverrideDoesNotPruneUnrelatedWorktrees(t *testing.T) {
 
 	// Foreign worktree on an UNRELATED branch at non-canonical path.
 	foreignPath := filepath.Join(worktreeBase, "review-2187-unrelated")
-	runGit(t, repoDir, "worktree", "add", foreignPath, "sandman/2187-unrelated")
+	runGit(t, repoDir, "worktree", "add", foreignPath, "2187-unrelated")
 
 	beforeDirInfo, err := os.Stat(foreignPath)
 	if err != nil {
@@ -1653,7 +1653,7 @@ func TestWorktreeSandbox_OverrideDoesNotPruneUnrelatedWorktrees(t *testing.T) {
 
 	// Override Start on the TARGET branch. The unrelated foreign
 	// worktree must be invisible to the recovery logic.
-	sb := NewWorktreeSandbox(repoDir, worktreeBase, "sandman/2187-target", "main")
+	sb := NewWorktreeSandbox(repoDir, worktreeBase, "2187-target", "main")
 	if err := sb.Start(SandboxStart{Override: true, StrandedReconcile: true}); err != nil {
 		t.Fatalf("Start with override failed: %v", err)
 	}
@@ -1664,8 +1664,8 @@ func TestWorktreeSandbox_OverrideDoesNotPruneUnrelatedWorktrees(t *testing.T) {
 		wtCmd := exec.Command("git", "worktree", "remove", "--force", foreignPath)
 		wtCmd.Dir = repoDir
 		_, _ = wtCmd.CombinedOutput()
-		removeBranch(t, repoDir, "sandman/2187-target")
-		removeBranch(t, repoDir, "sandman/2187-unrelated")
+		removeBranch(t, repoDir, "2187-target")
+		removeBranch(t, repoDir, "2187-unrelated")
 	})
 
 	// Foreign worktree directory MUST be unchanged (mtime preserved).
@@ -1700,8 +1700,8 @@ func TestWorktreeSandbox_ParallelStartsDoNotDestroyEachOther(t *testing.T) {
 	repoDir := t.TempDir()
 	initGitRepo(t, repoDir)
 
-	const branchA = "sandman/2187-parallel-a"
-	const branchB = "sandman/2187-parallel-b"
+	const branchA = "2187-parallel-a"
+	const branchB = "2187-parallel-b"
 	runGit(t, repoDir, "branch", branchA)
 	runGit(t, repoDir, "branch", branchB)
 
@@ -1757,7 +1757,7 @@ func TestWorktreeSandbox_ContinueNormalizesWorkspaceGitlink(t *testing.T) {
 	runGit(t, dir, "push", "origin", "main")
 
 	worktreeBase := filepath.Join(dir, ".sandman", "worktrees")
-	branch := "sandman/42-fix-bug"
+	branch := "42-fix-bug"
 
 	s1 := NewWorktreeSandbox(dir, worktreeBase, branch, "main")
 	if err := s1.Start(SandboxStart{StrandedReconcile: true}); err != nil {
@@ -1815,7 +1815,7 @@ func TestWorktreeSandbox_ContinueReusesPreservedWorktree(t *testing.T) {
 	runGit(t, dir, "push", "origin", "main")
 
 	worktreeBase := filepath.Join(dir, ".sandman", "worktrees")
-	branch := "sandman/42-fix-bug"
+	branch := "42-fix-bug"
 
 	s1 := NewWorktreeSandbox(dir, worktreeBase, branch, "main")
 	if err := s1.Start(SandboxStart{StrandedReconcile: true}); err != nil {
@@ -1882,7 +1882,7 @@ func TestWorktreeSandbox_ContinueIsIdempotentOnHostVisibleGitlink(t *testing.T) 
 	runGit(t, dir, "push", "origin", "main")
 
 	worktreeBase := filepath.Join(dir, ".sandman", "worktrees")
-	branch := "sandman/42-fix-bug"
+	branch := "42-fix-bug"
 
 	s1 := NewWorktreeSandbox(dir, worktreeBase, branch, "main")
 	if err := s1.Start(SandboxStart{StrandedReconcile: true}); err != nil {
@@ -1945,7 +1945,7 @@ func TestWorktreeSandbox_ContinueRecoversFromCrashedContainerAttempt(t *testing.
 	runGit(t, dir, "push", "origin", "main")
 
 	worktreeBase := filepath.Join(dir, ".sandman", "worktrees")
-	branch := "sandman/42-fix-bug"
+	branch := "42-fix-bug"
 
 	s1 := NewWorktreeSandbox(dir, worktreeBase, branch, "main")
 	if err := s1.Start(SandboxStart{StrandedReconcile: true}); err != nil {
@@ -2064,7 +2064,7 @@ func TestWorktreeSandbox_ContinueReturnsTargetedErrorOnUncontinuableState(t *tes
 			runGit(t, dir, "push", "origin", "main")
 
 			worktreeBase := filepath.Join(dir, ".sandman", "worktrees")
-			branch := "sandman/42-fix-bug"
+			branch := "42-fix-bug"
 
 			s1 := NewWorktreeSandbox(dir, worktreeBase, branch, "main")
 			if err := s1.Start(SandboxStart{StrandedReconcile: true}); err != nil {

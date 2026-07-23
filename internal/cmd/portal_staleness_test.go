@@ -109,7 +109,7 @@ func TestPortal_RunFromState_MultiIssueBatchActive_LogPathUsesOnDiskDirSuffix(t 
 			Timestamp: startedAt,
 			Payload: map[string]any{
 				"batch_id": onDiskDir,
-				"branch":   "sandman/1704-fix",
+				"branch":   "1704-fix",
 			},
 		},
 	}
@@ -174,7 +174,7 @@ func TestPortal_RunFromState_ActiveNil_MultiIssueBatch_LogPathFromEventPayload(t
 			Timestamp: startedAt,
 			Payload: map[string]any{
 				"batch_id": onDiskDir,
-				"branch":   "sandman/1704-fix",
+				"branch":   "1704-fix",
 			},
 		},
 		Finished: &events.Event{Timestamp: finishedAt, Payload: map[string]any{"status": "success"}},
@@ -240,7 +240,7 @@ func TestPortal_DiscoverActiveRuns_IssueMultiBatch_RunIDIsPerRow(t *testing.T) {
 		RunID:     perRowRunID,
 		BatchID:   onDiskDir,
 		Issue:     1704,
-		Branch:    "sandman/1704-fix",
+		Branch:    "1704-fix",
 		Kind:      batchindex.KindIssue,
 		Status:    batchindex.RunManifestStatusActive,
 		CreatedAt: time.Now(),
@@ -345,8 +345,8 @@ func TestPortal_Compute_LeavesLastOutputAtNilForCompletedRows(t *testing.T) {
 	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
 	finishedAt := startedAt.Add(2 * time.Minute)
 	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
-		{Type: "run.started", Timestamp: startedAt, RunID: "260618113825-abcd-42", Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
-		{Type: "run.finished", Timestamp: finishedAt, RunID: "260618113825-abcd-42", Issue: 42, Payload: map[string]any{"status": "success", "branch": "sandman/42-fix"}},
+		{Type: "run.started", Timestamp: startedAt, RunID: "260618113825-abcd-42", Issue: 42, Payload: map[string]any{"branch": "42-fix"}},
+		{Type: "run.finished", Timestamp: finishedAt, RunID: "260618113825-abcd-42", Issue: 42, Payload: map[string]any{"status": "success", "branch": "42-fix"}},
 	})
 
 	runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")})
@@ -409,7 +409,7 @@ func TestPortal_RunFromActiveBatchIssue_QueuedRow_StartedAtAnchorsOnQueuedEvent(
 		Timestamp: queuedAt,
 		RunID:     perRowRunID,
 		Issue:     1704,
-		Payload:   map[string]any{"branch": "sandman/1704-fix"},
+		Payload:   map[string]any{"branch": "1704-fix"},
 	}
 
 	run := (&portalRunsView{}).runFromActiveBatchIssue(repoRoot, active, 1704, nil, nil, queued, "", nil, nil)

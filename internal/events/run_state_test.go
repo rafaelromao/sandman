@@ -43,9 +43,9 @@ func TestProjectRunStates_IncludesContinuedRun(t *testing.T) {
 	finishedAt := continuedAt.Add(2 * time.Minute)
 
 	runs := ProjectRunStates([]Event{
-		{Type: "run.started", Timestamp: startedAt, RunID: "run-1", Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
-		{Type: "run.continued", Timestamp: continuedAt, RunID: "run-2", Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
-		{Type: "run.finished", Timestamp: finishedAt, RunID: "run-2", Issue: 42, Payload: map[string]any{"status": "success", "branch": "sandman/42-fix"}},
+		{Type: "run.started", Timestamp: startedAt, RunID: "run-1", Issue: 42, Payload: map[string]any{"branch": "42-fix"}},
+		{Type: "run.continued", Timestamp: continuedAt, RunID: "run-2", Issue: 42, Payload: map[string]any{"branch": "42-fix"}},
+		{Type: "run.finished", Timestamp: finishedAt, RunID: "run-2", Issue: 42, Payload: map[string]any{"status": "success", "branch": "42-fix"}},
 	})
 
 	if len(runs) != 2 {
@@ -67,8 +67,8 @@ func TestProjectRunStates_IncludesContinuedRun(t *testing.T) {
 	if got := continued.Status(); got != "success" {
 		t.Fatalf("expected success status, got %q", got)
 	}
-	if got := continued.Branch(); got != "sandman/42-fix" {
-		t.Fatalf("expected branch sandman/42-fix, got %q", got)
+	if got := continued.Branch(); got != "42-fix" {
+		t.Fatalf("expected branch 42-fix, got %q", got)
 	}
 	if got := continued.Duration(); got != 2*time.Minute {
 		t.Fatalf("expected 2m duration, got %s", got)
@@ -154,7 +154,7 @@ func TestProjectRunStates_UnfinishedRunHasEmptyStatus(t *testing.T) {
 	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
 
 	runs := ProjectRunStates([]Event{
-		{Type: "run.started", Timestamp: startedAt, RunID: "run-active", Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
+		{Type: "run.started", Timestamp: startedAt, RunID: "run-active", Issue: 42, Payload: map[string]any{"branch": "42-fix"}},
 	})
 
 	if len(runs) != 1 {
@@ -176,8 +176,8 @@ func TestProjectRunStates_QueuedThenStartedRunIsActive(t *testing.T) {
 	startedAt := queuedAt.Add(30 * time.Second)
 
 	runs := ProjectRunStates([]Event{
-		{Type: "run.queued", Timestamp: queuedAt, RunID: "run-queued-started", Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
-		{Type: "run.started", Timestamp: startedAt, RunID: "run-queued-started", Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
+		{Type: "run.queued", Timestamp: queuedAt, RunID: "run-queued-started", Issue: 42, Payload: map[string]any{"branch": "42-fix"}},
+		{Type: "run.started", Timestamp: startedAt, RunID: "run-queued-started", Issue: 42, Payload: map[string]any{"branch": "42-fix"}},
 	})
 
 	if len(runs) != 1 {
@@ -199,8 +199,8 @@ func TestProjectRunStates_QueuedThenContinuedRunIsActive(t *testing.T) {
 	continuedAt := queuedAt.Add(30 * time.Second)
 
 	runs := ProjectRunStates([]Event{
-		{Type: "run.queued", Timestamp: queuedAt, RunID: "run-queued-continued", Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
-		{Type: "run.continued", Timestamp: continuedAt, RunID: "run-queued-continued", Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
+		{Type: "run.queued", Timestamp: queuedAt, RunID: "run-queued-continued", Issue: 42, Payload: map[string]any{"branch": "42-fix"}},
+		{Type: "run.continued", Timestamp: continuedAt, RunID: "run-queued-continued", Issue: 42, Payload: map[string]any{"branch": "42-fix"}},
 	})
 
 	if len(runs) != 1 {
@@ -223,9 +223,9 @@ func TestProjectRunStates_TerminalRunDurationExcludesQueuedWait(t *testing.T) {
 	finishedAt := startedAt.Add(5 * time.Minute)
 
 	runs := ProjectRunStates([]Event{
-		{Type: "run.queued", Timestamp: queuedAt, RunID: "run-queued-started-finished", Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
-		{Type: "run.started", Timestamp: startedAt, RunID: "run-queued-started-finished", Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
-		{Type: "run.finished", Timestamp: finishedAt, RunID: "run-queued-started-finished", Issue: 42, Payload: map[string]any{"status": "success", "branch": "sandman/42-fix"}},
+		{Type: "run.queued", Timestamp: queuedAt, RunID: "run-queued-started-finished", Issue: 42, Payload: map[string]any{"branch": "42-fix"}},
+		{Type: "run.started", Timestamp: startedAt, RunID: "run-queued-started-finished", Issue: 42, Payload: map[string]any{"branch": "42-fix"}},
+		{Type: "run.finished", Timestamp: finishedAt, RunID: "run-queued-started-finished", Issue: 42, Payload: map[string]any{"status": "success", "branch": "42-fix"}},
 	})
 
 	if len(runs) != 1 {
@@ -254,8 +254,8 @@ func TestProjectRunStates_UnknownPayloadStatusRoundTripsThroughStatus(t *testing
 
 	t.Run("named unknown status round-trips verbatim", func(t *testing.T) {
 		runs := ProjectRunStates([]Event{
-			{Type: "run.started", Timestamp: startedAt, RunID: "run-quirky", Issue: 99, Payload: map[string]any{"branch": "sandman/99-fix"}},
-			{Type: "run.finished", Timestamp: finishedAt, RunID: "run-quirky", Issue: 99, Payload: map[string]any{"status": "timeout", "branch": "sandman/99-fix"}},
+			{Type: "run.started", Timestamp: startedAt, RunID: "run-quirky", Issue: 99, Payload: map[string]any{"branch": "99-fix"}},
+			{Type: "run.finished", Timestamp: finishedAt, RunID: "run-quirky", Issue: 99, Payload: map[string]any{"status": "timeout", "branch": "99-fix"}},
 		})
 
 		if len(runs) != 1 {
@@ -268,8 +268,8 @@ func TestProjectRunStates_UnknownPayloadStatusRoundTripsThroughStatus(t *testing
 
 	t.Run("missing status key maps to empty string", func(t *testing.T) {
 		runs := ProjectRunStates([]Event{
-			{Type: "run.started", Timestamp: startedAt, RunID: "run-nokey", Issue: 100, Payload: map[string]any{"branch": "sandman/100-fix"}},
-			{Type: "run.finished", Timestamp: finishedAt, RunID: "run-nokey", Issue: 100, Payload: map[string]any{"branch": "sandman/100-fix"}},
+			{Type: "run.started", Timestamp: startedAt, RunID: "run-nokey", Issue: 100, Payload: map[string]any{"branch": "100-fix"}},
+			{Type: "run.finished", Timestamp: finishedAt, RunID: "run-nokey", Issue: 100, Payload: map[string]any{"branch": "100-fix"}},
 		})
 
 		if len(runs) != 1 {
@@ -317,7 +317,7 @@ func TestRunState_Kinds(t *testing.T) {
 		startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
 
 		runs := ProjectRunStates([]Event{
-			{Type: "run.started", Timestamp: startedAt, RunID: "run-42-1", Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
+			{Type: "run.started", Timestamp: startedAt, RunID: "run-42-1", Issue: 42, Payload: map[string]any{"branch": "42-fix"}},
 		})
 
 		if len(runs) != 1 {
@@ -512,10 +512,10 @@ func TestProjectRunStates_RetriesTotalAndDone_ReadFromFinishedPayload(t *testing
 	finishedAt := startedAt.Add(2 * time.Minute)
 
 	runs := ProjectRunStates([]Event{
-		{Type: "run.started", Timestamp: startedAt, RunID: "run-retry", Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
+		{Type: "run.started", Timestamp: startedAt, RunID: "run-retry", Issue: 42, Payload: map[string]any{"branch": "42-fix"}},
 		{Type: "run.finished", Timestamp: finishedAt, RunID: "run-retry", Issue: 42, Payload: map[string]any{
 			"status":        "success",
-			"branch":        "sandman/42-fix",
+			"branch":        "42-fix",
 			"retries_total": 3,
 			"retries_done":  2,
 		}},
@@ -539,7 +539,7 @@ func TestProjectRunStates_RetriesTotalAndDone_ActiveRunReturnsZero(t *testing.T)
 	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
 
 	runs := ProjectRunStates([]Event{
-		{Type: "run.started", Timestamp: startedAt, RunID: "run-active", Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
+		{Type: "run.started", Timestamp: startedAt, RunID: "run-active", Issue: 42, Payload: map[string]any{"branch": "42-fix"}},
 	})
 
 	if len(runs) != 1 {
@@ -564,10 +564,10 @@ func TestProjectRunStates_RetriesTotalAndDone_LegacyFinishedWithoutRetryKeys(t *
 	finishedAt := startedAt.Add(2 * time.Minute)
 
 	runs := ProjectRunStates([]Event{
-		{Type: "run.started", Timestamp: startedAt, RunID: "run-legacy", Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
+		{Type: "run.started", Timestamp: startedAt, RunID: "run-legacy", Issue: 42, Payload: map[string]any{"branch": "42-fix"}},
 		{Type: "run.finished", Timestamp: finishedAt, RunID: "run-legacy", Issue: 42, Payload: map[string]any{
 			"status": "success",
-			"branch": "sandman/42-fix",
+			"branch": "42-fix",
 		}},
 	})
 
@@ -593,10 +593,10 @@ func TestProjectRunStates_RetriesTotalAndDone_AbortedFinishedPayload(t *testing.
 	abortedAt := startedAt.Add(2 * time.Minute)
 
 	runs := ProjectRunStates([]Event{
-		{Type: "run.started", Timestamp: startedAt, RunID: "run-aborted-retry", Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
+		{Type: "run.started", Timestamp: startedAt, RunID: "run-aborted-retry", Issue: 42, Payload: map[string]any{"branch": "42-fix"}},
 		{Type: "run.aborted", Timestamp: abortedAt, RunID: "run-aborted-retry", Issue: 42, Payload: map[string]any{
 			"status":        "aborted",
-			"branch":        "sandman/42-fix",
+			"branch":        "42-fix",
 			"retries_total": 1,
 			"retries_done":  1,
 		}},
@@ -623,18 +623,18 @@ func TestProjectRunStates_LiveAttempt_ReturnsRetryCount(t *testing.T) {
 	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
 
 	runs := ProjectRunStates([]Event{
-		{Type: "run.started", Timestamp: startedAt, RunID: "run-active-retry", Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
+		{Type: "run.started", Timestamp: startedAt, RunID: "run-active-retry", Issue: 42, Payload: map[string]any{"branch": "42-fix"}},
 		{Type: "run.retry", Timestamp: startedAt.Add(2 * time.Minute), RunID: "run-active-retry", Issue: 42, Payload: map[string]any{
 			"attempt":         2,
 			"max_attempts":    3,
 			"previous_status": "failure",
-			"branch":          "sandman/42-fix",
+			"branch":          "42-fix",
 		}},
 		{Type: "run.retry", Timestamp: startedAt.Add(5 * time.Minute), RunID: "run-active-retry", Issue: 42, Payload: map[string]any{
 			"attempt":         3,
 			"max_attempts":    3,
 			"previous_status": "failure",
-			"branch":          "sandman/42-fix",
+			"branch":          "42-fix",
 		}},
 	})
 
@@ -652,12 +652,12 @@ func TestProjectRunStates_LiveAttempt_SingleRetryReturnsOne(t *testing.T) {
 	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
 
 	runs := ProjectRunStates([]Event{
-		{Type: "run.started", Timestamp: startedAt, RunID: "run-single-retry", Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
+		{Type: "run.started", Timestamp: startedAt, RunID: "run-single-retry", Issue: 42, Payload: map[string]any{"branch": "42-fix"}},
 		{Type: "run.retry", Timestamp: startedAt.Add(2 * time.Minute), RunID: "run-single-retry", Issue: 42, Payload: map[string]any{
 			"attempt":         2,
 			"max_attempts":    3,
 			"previous_status": "failure",
-			"branch":          "sandman/42-fix",
+			"branch":          "42-fix",
 		}},
 	})
 
@@ -675,7 +675,7 @@ func TestProjectRunStates_LiveAttempt_NoRetriesReturnsZero(t *testing.T) {
 	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
 
 	runs := ProjectRunStates([]Event{
-		{Type: "run.started", Timestamp: startedAt, RunID: "run-clean", Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
+		{Type: "run.started", Timestamp: startedAt, RunID: "run-clean", Issue: 42, Payload: map[string]any{"branch": "42-fix"}},
 	})
 
 	if len(runs) != 1 {
@@ -692,12 +692,12 @@ func TestProjectRunStates_LiveAttempt_MalformedZeroAttemptClampsAtZero(t *testin
 	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
 
 	runs := ProjectRunStates([]Event{
-		{Type: "run.started", Timestamp: startedAt, RunID: "run-malformed", Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
+		{Type: "run.started", Timestamp: startedAt, RunID: "run-malformed", Issue: 42, Payload: map[string]any{"branch": "42-fix"}},
 		{Type: "run.retry", Timestamp: startedAt.Add(1 * time.Minute), RunID: "run-malformed", Issue: 42, Payload: map[string]any{
 			"attempt":         0,
 			"max_attempts":    3,
 			"previous_status": "failure",
-			"branch":          "sandman/42-fix",
+			"branch":          "42-fix",
 		}},
 	})
 
@@ -716,16 +716,16 @@ func TestProjectRunStates_LiveAttempt_FinishedRunStillReturnsRetryAttempt(t *tes
 	finishedAt := startedAt.Add(10 * time.Minute)
 
 	runs := ProjectRunStates([]Event{
-		{Type: "run.started", Timestamp: startedAt, RunID: "run-finished-retry", Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
+		{Type: "run.started", Timestamp: startedAt, RunID: "run-finished-retry", Issue: 42, Payload: map[string]any{"branch": "42-fix"}},
 		{Type: "run.retry", Timestamp: startedAt.Add(2 * time.Minute), RunID: "run-finished-retry", Issue: 42, Payload: map[string]any{
 			"attempt":         2,
 			"max_attempts":    3,
 			"previous_status": "failure",
-			"branch":          "sandman/42-fix",
+			"branch":          "42-fix",
 		}},
 		{Type: "run.finished", Timestamp: finishedAt, RunID: "run-finished-retry", Issue: 42, Payload: map[string]any{
 			"status":        "success",
-			"branch":        "sandman/42-fix",
+			"branch":        "42-fix",
 			"retries_total": 3,
 			"retries_done":  2,
 		}},
@@ -748,20 +748,20 @@ func TestProjectRunStates_LastRetryReason_ReturnsMostRecentReason(t *testing.T) 
 	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
 
 	runs := ProjectRunStates([]Event{
-		{Type: "run.started", Timestamp: startedAt, RunID: "run-reason", Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
+		{Type: "run.started", Timestamp: startedAt, RunID: "run-reason", Issue: 42, Payload: map[string]any{"branch": "42-fix"}},
 		{Type: "run.retry", Timestamp: startedAt.Add(2 * time.Minute), RunID: "run-reason", Issue: 42, Payload: map[string]any{
 			"attempt":         2,
 			"max_attempts":    3,
 			"previous_status": "failure",
 			"reason":          "agent-stalled",
-			"branch":          "sandman/42-fix",
+			"branch":          "42-fix",
 		}},
 		{Type: "run.retry", Timestamp: startedAt.Add(5 * time.Minute), RunID: "run-reason", Issue: 42, Payload: map[string]any{
 			"attempt":         3,
 			"max_attempts":    3,
 			"previous_status": "failure",
 			"reason":          "build-failed",
-			"branch":          "sandman/42-fix",
+			"branch":          "42-fix",
 		}},
 	})
 
@@ -779,7 +779,7 @@ func TestProjectRunStates_LastRetryReason_NoRetriesReturnsEmpty(t *testing.T) {
 	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
 
 	runs := ProjectRunStates([]Event{
-		{Type: "run.started", Timestamp: startedAt, RunID: "run-clean", Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
+		{Type: "run.started", Timestamp: startedAt, RunID: "run-clean", Issue: 42, Payload: map[string]any{"branch": "42-fix"}},
 	})
 
 	if len(runs) != 1 {
@@ -796,12 +796,12 @@ func TestProjectRunStates_LastRetryReason_MostRecentRetryWithoutReasonReturnsEmp
 	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
 
 	runs := ProjectRunStates([]Event{
-		{Type: "run.started", Timestamp: startedAt, RunID: "run-current-orchestrator", Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
+		{Type: "run.started", Timestamp: startedAt, RunID: "run-current-orchestrator", Issue: 42, Payload: map[string]any{"branch": "42-fix"}},
 		{Type: "run.retry", Timestamp: startedAt.Add(2 * time.Minute), RunID: "run-current-orchestrator", Issue: 42, Payload: map[string]any{
 			"attempt":         2,
 			"max_attempts":    3,
 			"previous_status": "failure",
-			"branch":          "sandman/42-fix",
+			"branch":          "42-fix",
 		}},
 	})
 
@@ -820,17 +820,17 @@ func TestProjectRunStates_LastRetryReason_FinishedRunStillReturnsRetryReason(t *
 	finishedAt := startedAt.Add(10 * time.Minute)
 
 	runs := ProjectRunStates([]Event{
-		{Type: "run.started", Timestamp: startedAt, RunID: "run-finished-reason", Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
+		{Type: "run.started", Timestamp: startedAt, RunID: "run-finished-reason", Issue: 42, Payload: map[string]any{"branch": "42-fix"}},
 		{Type: "run.retry", Timestamp: startedAt.Add(2 * time.Minute), RunID: "run-finished-reason", Issue: 42, Payload: map[string]any{
 			"attempt":         2,
 			"max_attempts":    3,
 			"previous_status": "failure",
 			"reason":          "agent-stalled",
-			"branch":          "sandman/42-fix",
+			"branch":          "42-fix",
 		}},
 		{Type: "run.finished", Timestamp: finishedAt, RunID: "run-finished-reason", Issue: 42, Payload: map[string]any{
 			"status":        "success",
-			"branch":        "sandman/42-fix",
+			"branch":        "42-fix",
 			"retries_total": 3,
 			"retries_done":  2,
 		}},
@@ -860,23 +860,23 @@ func TestProjectRunStates_RetainsRetryEvents(t *testing.T) {
 		"max_attempts":    3,
 		"previous_status": "failure",
 		"reason":          "agent-stalled",
-		"branch":          "sandman/42-fix",
+		"branch":          "42-fix",
 	}
 	secondRetryPayload := map[string]any{
 		"attempt":         3,
 		"max_attempts":    3,
 		"previous_status": "failure",
 		"reason":          "build-failed",
-		"branch":          "sandman/42-fix",
+		"branch":          "42-fix",
 	}
 
 	runs := ProjectRunStates([]Event{
-		{Type: "run.started", Timestamp: startedAt, RunID: "run-retry-events", Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
+		{Type: "run.started", Timestamp: startedAt, RunID: "run-retry-events", Issue: 42, Payload: map[string]any{"branch": "42-fix"}},
 		{Type: "run.retry", Timestamp: firstRetryAt, RunID: "run-retry-events", Issue: 42, Payload: firstRetryPayload},
 		{Type: "run.retry", Timestamp: secondRetryAt, RunID: "run-retry-events", Issue: 42, Payload: secondRetryPayload},
 		{Type: "run.finished", Timestamp: finishedAt, RunID: "run-retry-events", Issue: 42, Payload: map[string]any{
 			"status":        "success",
-			"branch":        "sandman/42-fix",
+			"branch":        "42-fix",
 			"retries_total": 3,
 			"retries_done":  2,
 		}},
@@ -919,23 +919,23 @@ func TestProjectRunStates_Retries_AreAppendOnlyAcrossRunContinued(t *testing.T) 
 	finishedAt := startedAt.Add(15 * time.Minute)
 
 	runs := ProjectRunStates([]Event{
-		{Type: "run.started", Timestamp: startedAt, RunID: "run-append-only", Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
+		{Type: "run.started", Timestamp: startedAt, RunID: "run-append-only", Issue: 42, Payload: map[string]any{"branch": "42-fix"}},
 		{Type: "run.retry", Timestamp: firstRetryAt, RunID: "run-append-only", Issue: 42, Payload: map[string]any{
 			"attempt":         2,
 			"max_attempts":    3,
 			"previous_status": "failure",
-			"branch":          "sandman/42-fix",
+			"branch":          "42-fix",
 		}},
-		{Type: "run.continued", Timestamp: continuedAt, RunID: "run-append-only", Issue: 42, Payload: map[string]any{"branch": "sandman/42-fix"}},
+		{Type: "run.continued", Timestamp: continuedAt, RunID: "run-append-only", Issue: 42, Payload: map[string]any{"branch": "42-fix"}},
 		{Type: "run.retry", Timestamp: secondRetryAt, RunID: "run-append-only", Issue: 42, Payload: map[string]any{
 			"attempt":         3,
 			"max_attempts":    3,
 			"previous_status": "failure",
-			"branch":          "sandman/42-fix",
+			"branch":          "42-fix",
 		}},
 		{Type: "run.finished", Timestamp: finishedAt, RunID: "run-append-only", Issue: 42, Payload: map[string]any{
 			"status":        "success",
-			"branch":        "sandman/42-fix",
+			"branch":        "42-fix",
 			"retries_total": 3,
 			"retries_done":  2,
 		}},

@@ -27,12 +27,12 @@ Slice 2 of issue #1193.
 ## Runtime Context
 
 - You are running inside a Sandman-created worktree.
-- Current branch: 'sandman/1193-slice-2-uniform-log-prefix-always-runid'
-- Source branch: 'sandman/1193-slice-2-uniform-log-prefix-always-runid'
+- Current branch: '1193-slice-2-uniform-log-prefix-always-runid'
+- Source branch: '1193-slice-2-uniform-log-prefix-always-runid'
 - Base branch: 'main'
 - Review command: '/sandman review'
 
-The worktree MUST be checked out on 'sandman/1193-slice-2-uniform-log-prefix-always-runid' when the run finishes. Do not switch to 'main' or any other branch before exiting.
+The worktree MUST be checked out on '1193-slice-2-uniform-log-prefix-always-runid' when the run finishes. Do not switch to 'main' or any other branch before exiting.
 
 ## Execution Checklist
 

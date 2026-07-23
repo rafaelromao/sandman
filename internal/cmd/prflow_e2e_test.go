@@ -29,14 +29,14 @@ import (
 
 const (
 	prFlowIssueNumber = 1
-	prFlowBranch      = "sandman/1-fix-failing-test"
+	prFlowBranch      = "1-fix-failing-test"
 
 	parallelIssue150  = 150
 	parallelIssue151  = 151
 	parallelIssue152  = 152
-	parallelBranch150 = "sandman/150-fix-150"
-	parallelBranch151 = "sandman/151-fix-151"
-	parallelBranch152 = "sandman/152-fix-152"
+	parallelBranch150 = "150-fix-150"
+	parallelBranch151 = "151-fix-151"
+	parallelBranch152 = "152-fix-152"
 
 	// prFlowTitles are the Conventional-Commits-shaped titles the issue
 	// fixtures and the parallel sub-tests pin on the change request. They

@@ -271,7 +271,7 @@ func newContinuationRunFixture(t *testing.T) continuationRunFixture {
 	initRunIntegrationRepo(t, repoDir)
 	t.Chdir(repoDir)
 
-	branch := "sandman/42-fix-bug"
+	branch := "42-fix-bug"
 	worktreeBase := filepath.Join(repoDir, ".sandman", "worktrees")
 	worktreePath := filepath.Join(worktreeBase, branch)
 	runGit(t, repoDir, "branch", branch)
@@ -1835,7 +1835,7 @@ func TestRun_ContinueFlagAcceptedAndMutuallyExclusiveWithOverride(t *testing.T) 
 
 			if tt.name == "continue only" {
 				dir := t.TempDir()
-				branch := "sandman/42-fix-bug"
+				branch := "42-fix-bug"
 				worktreePath := addRegisteredContinuationWorktree(t, deps.RepoRoot, dir, branch)
 				if err := os.MkdirAll(filepath.Join(worktreePath, ".sandman"), 0755); err != nil {
 					t.Fatalf("mkdir worktree: %v", err)
@@ -1884,7 +1884,7 @@ func TestRun_ContinueFlagAcceptedAndMutuallyExclusiveWithOverride(t *testing.T) 
 
 func TestRun_ContinueFlag_UsesCurrentFlagsOverStoredValues(t *testing.T) {
 	dir := t.TempDir()
-	branch := "sandman/42-fix-bug"
+	branch := "42-fix-bug"
 
 	spy := &spyBatchRunner{result: &batch.Result{}}
 	deps := newRunDeps(t, spy)
@@ -1986,7 +1986,7 @@ func TestRun_ContinueFlag_UsesCurrentFlagsOverStoredValues(t *testing.T) {
 
 func TestRun_ContinueFlag_UsesOverridesAndEmptyTemplateFallback(t *testing.T) {
 	dir := t.TempDir()
-	branch := "sandman/42-fix-bug"
+	branch := "42-fix-bug"
 
 	spy := &spyBatchRunner{result: &batch.Result{}}
 	deps := newRunDeps(t, spy)
@@ -2062,8 +2062,8 @@ func TestRun_ContinueFlag_MixedBatchResolvesPerIssueModes(t *testing.T) {
 
 	worktreeBase := filepath.Join(repoDir, ".sandman", "worktrees")
 	branches := map[int]string{
-		42: "sandman/42-fix-bug",
-		43: "sandman/43-broken-worktree",
+		42: "42-fix-bug",
+		43: "43-broken-worktree",
 	}
 	for issue, branch := range branches {
 		worktreePath := filepath.Join(worktreeBase, branch)
@@ -2682,8 +2682,8 @@ func TestRun_PromptOnlyStillRequiresIssueNumberWhenPromptUsesIt(t *testing.T) {
 func TestRun_PrintsSummaryOnSuccess(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{
 		Runs: []batch.AgentRunResult{
-			{IssueNumber: 42, Status: "success", Branch: "sandman/42-fix-bug"},
-			{IssueNumber: 43, Status: "success", Branch: "sandman/43-new-feature"},
+			{IssueNumber: 42, Status: "success", Branch: "42-fix-bug"},
+			{IssueNumber: 43, Status: "success", Branch: "43-new-feature"},
 		},
 	}}
 	deps := newRunDeps(t, spy)
@@ -2703,14 +2703,14 @@ func TestRun_PrintsSummaryOnSuccess(t *testing.T) {
 	if !strings.Contains(out, "Summary: 2 succeeded") {
 		t.Errorf("expected success summary, got:\n%s", out)
 	}
-	if !strings.Contains(out, "#42  success  sandman/42-fix-bug") {
+	if !strings.Contains(out, "#42  success  42-fix-bug") {
 		t.Errorf("expected issue 42 in summary, got:\n%s", out)
 	}
 }
 
 func TestRun_PrintsRetryCountInSummary(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{
-		Runs: []batch.AgentRunResult{{IssueNumber: 42, Status: "success", RetriesTotal: 3, Branch: "sandman/42-fix-bug"}},
+		Runs: []batch.AgentRunResult{{IssueNumber: 42, Status: "success", RetriesTotal: 3, Branch: "42-fix-bug"}},
 	}}
 	deps := newRunDeps(t, spy)
 
@@ -2734,8 +2734,8 @@ func TestRun_PrintsRetryCountInSummary(t *testing.T) {
 func TestRun_PrintsSummaryOnPartialFailure(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{
 		Runs: []batch.AgentRunResult{
-			{IssueNumber: 42, Status: "success", Branch: "sandman/42-fix-bug"},
-			{IssueNumber: 43, Status: "failure", Branch: "sandman/43-broken"},
+			{IssueNumber: 42, Status: "success", Branch: "42-fix-bug"},
+			{IssueNumber: 43, Status: "failure", Branch: "43-broken"},
 		},
 	}, err: errors.New("1 of 2 runs failed")}
 	deps := newRunDeps(t, spy)
@@ -2755,7 +2755,7 @@ func TestRun_PrintsSummaryOnPartialFailure(t *testing.T) {
 	if !strings.Contains(out, "Summary: 1 succeeded, 1 failed") {
 		t.Errorf("expected partial failure summary, got:\n%s", out)
 	}
-	if !strings.Contains(out, "#43  failure  sandman/43-broken") {
+	if !strings.Contains(out, "#43  failure  43-broken") {
 		t.Errorf("expected issue 43 failure in summary, got:\n%s", out)
 	}
 }
@@ -2763,9 +2763,9 @@ func TestRun_PrintsSummaryOnPartialFailure(t *testing.T) {
 func TestRun_PrintsSummaryWithBlockedRuns(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{
 		Runs: []batch.AgentRunResult{
-			{IssueNumber: 42, Status: "success", Branch: "sandman/42-fix-bug"},
-			{IssueNumber: 43, Status: "failure", Branch: "sandman/43-broken"},
-			{IssueNumber: 100, Status: "blocked", Branch: "sandman/100-dependent"},
+			{IssueNumber: 42, Status: "success", Branch: "42-fix-bug"},
+			{IssueNumber: 43, Status: "failure", Branch: "43-broken"},
+			{IssueNumber: 100, Status: "blocked", Branch: "100-dependent"},
 		},
 	}, err: errors.New("1 of 3 runs failed")}
 	deps := newRunDeps(t, spy)
@@ -2785,7 +2785,7 @@ func TestRun_PrintsSummaryWithBlockedRuns(t *testing.T) {
 	if !strings.Contains(out, "Summary: 1 succeeded, 1 failed, 1 blocked") {
 		t.Errorf("expected blocked summary, got:\n%s", out)
 	}
-	if !strings.Contains(out, "#100  blocked  sandman/100-dependent") {
+	if !strings.Contains(out, "#100  blocked  100-dependent") {
 		t.Errorf("expected issue 100 blocked in summary, got:\n%s", out)
 	}
 }
@@ -2793,9 +2793,9 @@ func TestRun_PrintsSummaryWithBlockedRuns(t *testing.T) {
 func TestRun_PrintsSummaryWithBlockedRunsAndNoFailures(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{
 		Runs: []batch.AgentRunResult{
-			{IssueNumber: 42, Status: "success", Branch: "sandman/42-fix-bug"},
-			{IssueNumber: 100, Status: "blocked", Branch: "sandman/100-dependent"},
-			{IssueNumber: 101, Status: "blocked", Branch: "sandman/101-another-dependent"},
+			{IssueNumber: 42, Status: "success", Branch: "42-fix-bug"},
+			{IssueNumber: 100, Status: "blocked", Branch: "100-dependent"},
+			{IssueNumber: 101, Status: "blocked", Branch: "101-another-dependent"},
 		},
 	}}
 	deps := newRunDeps(t, spy)
@@ -2815,7 +2815,7 @@ func TestRun_PrintsSummaryWithBlockedRunsAndNoFailures(t *testing.T) {
 	if !strings.Contains(out, "Summary: 1 succeeded, 2 blocked") {
 		t.Errorf("expected blocked summary without failures, got:\n%s", out)
 	}
-	if !strings.Contains(out, "#101  blocked  sandman/101-another-dependent") {
+	if !strings.Contains(out, "#101  blocked  101-another-dependent") {
 		t.Errorf("expected issue 101 blocked in summary, got:\n%s", out)
 	}
 }
@@ -2823,8 +2823,8 @@ func TestRun_PrintsSummaryWithBlockedRunsAndNoFailures(t *testing.T) {
 func TestRun_PrintsSummaryWithAbortedRuns(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{
 		Runs: []batch.AgentRunResult{
-			{IssueNumber: 42, Status: "success", Branch: "sandman/42-fix-bug"},
-			{IssueNumber: 43, Status: "aborted", Branch: "sandman/43-stalled"},
+			{IssueNumber: 42, Status: "success", Branch: "42-fix-bug"},
+			{IssueNumber: 43, Status: "aborted", Branch: "43-stalled"},
 		},
 	}}
 	deps := newRunDeps(t, spy)
@@ -2847,7 +2847,7 @@ func TestRun_PrintsSummaryWithAbortedRuns(t *testing.T) {
 	if strings.Contains(out, "0 failed") {
 		t.Errorf("expected zero-failed bucket to be omitted, got:\n%s", out)
 	}
-	if !strings.Contains(out, "#43  aborted  sandman/43-stalled") {
+	if !strings.Contains(out, "#43  aborted  43-stalled") {
 		t.Errorf("expected issue 43 aborted in summary, got:\n%s", out)
 	}
 }
@@ -2855,10 +2855,10 @@ func TestRun_PrintsSummaryWithAbortedRuns(t *testing.T) {
 func TestPrintSummary_ReportsAbortedCount(t *testing.T) {
 	result := &batch.Result{
 		Runs: []batch.AgentRunResult{
-			{IssueNumber: 42, Status: "success", Branch: "sandman/42-fix-bug"},
-			{IssueNumber: 43, Status: "failure", Branch: "sandman/43-broken"},
-			{IssueNumber: 44, Status: "aborted", Branch: "sandman/44-stalled"},
-			{IssueNumber: 100, Status: "blocked", Branch: "sandman/100-dependent"},
+			{IssueNumber: 42, Status: "success", Branch: "42-fix-bug"},
+			{IssueNumber: 43, Status: "failure", Branch: "43-broken"},
+			{IssueNumber: 44, Status: "aborted", Branch: "44-stalled"},
+			{IssueNumber: 100, Status: "blocked", Branch: "100-dependent"},
 		},
 	}
 
@@ -2879,8 +2879,8 @@ func TestPrintSummary_ReportsAbortedCount(t *testing.T) {
 func TestPrintSummary_OmitsAbortedWhenZero(t *testing.T) {
 	result := &batch.Result{
 		Runs: []batch.AgentRunResult{
-			{IssueNumber: 42, Status: "success", Branch: "sandman/42-fix-bug"},
-			{IssueNumber: 43, Status: "failure", Branch: "sandman/43-broken"},
+			{IssueNumber: 42, Status: "success", Branch: "42-fix-bug"},
+			{IssueNumber: 43, Status: "failure", Branch: "43-broken"},
 		},
 	}
 
@@ -2903,8 +2903,8 @@ func TestPrintSummary_OmitsAbortedWhenZero(t *testing.T) {
 func TestPrintSummary_OmitsSucceededWhenZero(t *testing.T) {
 	result := &batch.Result{
 		Runs: []batch.AgentRunResult{
-			{IssueNumber: 43, Status: "aborted", Branch: "sandman/43-stalled"},
-			{IssueNumber: 44, Status: "aborted", Branch: "sandman/44-stalled"},
+			{IssueNumber: 43, Status: "aborted", Branch: "43-stalled"},
+			{IssueNumber: 44, Status: "aborted", Branch: "44-stalled"},
 		},
 	}
 
@@ -2928,7 +2928,7 @@ func TestRun_ExitsWithCode130OnAbort(t *testing.T) {
 	spy := &spyBatchRunner{
 		result: &batch.Result{
 			Runs: []batch.AgentRunResult{
-				{IssueNumber: 42, Status: "aborted", Branch: "sandman/42-fix-bug"},
+				{IssueNumber: 42, Status: "aborted", Branch: "42-fix-bug"},
 			},
 		},
 		err: batch.ErrAborted,
@@ -2970,7 +2970,7 @@ func TestRun_PreservesRunBatchErrorMessage(t *testing.T) {
 	spy := &spyBatchRunner{
 		result: &batch.Result{
 			Runs: []batch.AgentRunResult{
-				{IssueNumber: 42, Status: "failure", Branch: "sandman/42-broken"},
+				{IssueNumber: 42, Status: "failure", Branch: "42-broken"},
 			},
 		},
 		err: errors.New("1 of 1 runs failed"),
@@ -3000,7 +3000,7 @@ func TestRun_PreservesRunBatchErrorMessage(t *testing.T) {
 }
 
 func TestRun_PrintsWorktreeHintForCompletedRuns(t *testing.T) {
-	spy := &spyBatchRunner{result: &batch.Result{Runs: []batch.AgentRunResult{{IssueNumber: 42, Status: "success", Branch: "sandman/42-fix-bug", WorktreePath: ".sandman/worktrees/sandman/42-fix-bug"}}}}
+	spy := &spyBatchRunner{result: &batch.Result{Runs: []batch.AgentRunResult{{IssueNumber: 42, Status: "success", Branch: "42-fix-bug", WorktreePath: ".sandman/worktrees/42-fix-bug"}}}}
 	deps := newRunDeps(t, spy)
 
 	var buf bytes.Buffer
@@ -3015,7 +3015,7 @@ func TestRun_PrintsWorktreeHintForCompletedRuns(t *testing.T) {
 	}
 
 	out := buf.String()
-	if !strings.Contains(out, "worktree: .sandman/worktrees/sandman/42-fix-bug") {
+	if !strings.Contains(out, "worktree: .sandman/worktrees/42-fix-bug") {
 		t.Fatalf("expected worktree hint, got:\n%s", out)
 	}
 }
@@ -4540,7 +4540,7 @@ func TestRun_MultiIssueRegistersPublicBatchIdInBatchesIndex(t *testing.T) {
 // acceptance criterion and pins the structural-ordering invariant that
 // `req.RunTS`/`RunShortID` must be minted before `Prepare` is called.
 func TestRun_ContinueRegistersPerRowRunIDInBatchesIndex(t *testing.T) {
-	branch := "sandman/42-fix-bug"
+	branch := "42-fix-bug"
 	spy := &spyBatchRunner{result: &batch.Result{}}
 	deps := newRunDeps(t, spy)
 	worktreeBase := t.TempDir()
@@ -5060,7 +5060,7 @@ func TestRun_PhaseWriterGatedByVerbose(t *testing.T) {
 func TestRun_ContinueFlag_SpecExpansion_StatusCheckRollupArray(t *testing.T) {
 	specBody := "## Problem Statement\n\nP.\n\n## Solution\n\nS.\n\n## User Stories\n\n1. U.\n\n## Child Issues\n\n- #63\n- #64\n- #65\n"
 	childBody := "## Parent\n\n#62\n\n## What\n\n"
-	branch := batch.BranchName(65, "child-65")
+	branch := batch.BranchName(65, "child-65", "")
 
 	gh := &fakeGitHubClient{
 		issues: map[int]*github.Issue{
@@ -5150,7 +5150,7 @@ func TestRun_ContinueFlag_SpecExpansion_StatusCheckRollupArray(t *testing.T) {
 func TestRun_ContinueFlag_NoPriorRunPromotesToOverrideWithoutAPICall(t *testing.T) {
 	specBody := "## Problem Statement\n\nP.\n\n## Solution\n\nS.\n\n## User Stories\n\n1. U.\n\n## Child Issues\n\n- #200\n- #201\n- #202\n"
 	childBody := "## Parent\n\n#199\n\n## What\n\n"
-	onlyBranch := batch.BranchName(200, "child-200")
+	onlyBranch := batch.BranchName(200, "child-200", "")
 
 	gh := &fakeGitHubClient{
 		issues: map[int]*github.Issue{

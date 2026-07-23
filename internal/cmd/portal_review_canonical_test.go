@@ -468,8 +468,8 @@ func TestPortal_ReviewAggregation_HonorsCanonicalRowID(t *testing.T) {
 	// linked PR. The original issue event uses the issue-row's own RunID;
 	// the review event uses the canonical per-row RunID (ADR-0030 shape).
 	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
-		{Type: "run.started", Timestamp: startedAt, RunID: "impl-1066", Issue: issueNumber, Payload: map[string]any{"branch": "sandman/1066-fix", "issue_number": issueNumber, "batch_id": "impl-1066"}},
-		{Type: "run.finished", Timestamp: startedAt.Add(8 * time.Minute), RunID: "impl-1066", Issue: issueNumber, Payload: map[string]any{"status": "success", "branch": "sandman/1066-fix", "issue_number": issueNumber, "batch_id": "impl-1066"}},
+		{Type: "run.started", Timestamp: startedAt, RunID: "impl-1066", Issue: issueNumber, Payload: map[string]any{"branch": "1066-fix", "issue_number": issueNumber, "batch_id": "impl-1066"}},
+		{Type: "run.finished", Timestamp: startedAt.Add(8 * time.Minute), RunID: "impl-1066", Issue: issueNumber, Payload: map[string]any{"status": "success", "branch": "1066-fix", "issue_number": issueNumber, "batch_id": "impl-1066"}},
 		{Type: "run.started", Timestamp: startedAt.Add(2 * time.Minute), RunID: canonicalReviewRowID, Payload: map[string]any{"branch": "sandman/review-PR42", "review": true, "pr_number": 42, "issue_number": issueNumber, "batch_id": "2606181138-abcd-PR42"}},
 		{Type: "run.finished", Timestamp: startedAt.Add(7 * time.Minute), RunID: canonicalReviewRowID, Payload: map[string]any{"status": "success", "branch": "sandman/review-PR42", "review": true, "pr_number": 42, "issue_number": issueNumber, "batch_id": "2606181138-abcd-PR42"}},
 	})
@@ -570,8 +570,8 @@ func TestPortal_ParentImplRow_ReviewCountAndVerdictSurviveSummaryStrip(t *testin
 	startedAt := time.Now().Add(-10 * time.Minute)
 
 	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
-		{Type: "run.started", Timestamp: startedAt, RunID: "impl-1066", Issue: issueNumber, Payload: map[string]any{"branch": "sandman/1066-fix", "issue_number": issueNumber, "batch_id": "impl-1066"}},
-		{Type: "run.finished", Timestamp: startedAt.Add(8 * time.Minute), RunID: "impl-1066", Issue: issueNumber, Payload: map[string]any{"status": "success", "branch": "sandman/1066-fix", "issue_number": issueNumber, "batch_id": "impl-1066"}},
+		{Type: "run.started", Timestamp: startedAt, RunID: "impl-1066", Issue: issueNumber, Payload: map[string]any{"branch": "1066-fix", "issue_number": issueNumber, "batch_id": "impl-1066"}},
+		{Type: "run.finished", Timestamp: startedAt.Add(8 * time.Minute), RunID: "impl-1066", Issue: issueNumber, Payload: map[string]any{"status": "success", "branch": "1066-fix", "issue_number": issueNumber, "batch_id": "impl-1066"}},
 		{Type: "run.started", Timestamp: startedAt.Add(2 * time.Minute), RunID: canonicalReviewRowID, Payload: map[string]any{"branch": "sandman/review-PR42", "review": true, "pr_number": 42, "issue_number": issueNumber, "batch_id": "2606181138-abcd-PR42"}},
 		{Type: "run.finished", Timestamp: startedAt.Add(7 * time.Minute), RunID: canonicalReviewRowID, Payload: map[string]any{"status": "success", "branch": "sandman/review-PR42", "review": true, "pr_number": 42, "issue_number": issueNumber, "batch_id": "2606181138-abcd-PR42"}},
 	})
@@ -810,8 +810,8 @@ func TestPortal_ReviewAggregation_LiveReviewSocketPreservesIssueIdentity(t *test
 
 	parentStarted := startedAt.Add(-6 * time.Minute)
 	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
-		{Type: "run.started", Timestamp: parentStarted, RunID: "impl-139", Issue: issueNumber, Payload: map[string]any{"branch": "sandman/139-fix", "issue_number": issueNumber, "issue_title": "Fix issue 139", "batch_id": "impl-139"}},
-		{Type: "run.finished", Timestamp: parentStarted.Add(5 * time.Minute), RunID: "impl-139", Issue: issueNumber, Payload: map[string]any{"status": "success", "branch": "sandman/139-fix", "issue_number": issueNumber, "issue_title": "Fix issue 139", "batch_id": "impl-139"}},
+		{Type: "run.started", Timestamp: parentStarted, RunID: "impl-139", Issue: issueNumber, Payload: map[string]any{"branch": "139-fix", "issue_number": issueNumber, "issue_title": "Fix issue 139", "batch_id": "impl-139"}},
+		{Type: "run.finished", Timestamp: parentStarted.Add(5 * time.Minute), RunID: "impl-139", Issue: issueNumber, Payload: map[string]any{"status": "success", "branch": "139-fix", "issue_number": issueNumber, "issue_title": "Fix issue 139", "batch_id": "impl-139"}},
 		{Type: "run.started", Timestamp: startedAt, RunID: canonicalReviewRowID, Issue: issueNumber, Payload: map[string]any{"branch": "sandman/review-PR42", "review": true, "pr_number": 42, "issue_number": issueNumber, "batch_id": batchID}},
 	})
 
@@ -1112,8 +1112,8 @@ func TestPortal_ReviewAggregation_HistoricalReviewRecoversIssueFromIdentity(t *t
 	startedAt := time.Now().Add(-10 * time.Minute)
 
 	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
-		{Type: "run.started", Timestamp: startedAt, RunID: "impl-135", Issue: issueNumber, Payload: map[string]any{"branch": "sandman/135-fix", "issue_number": issueNumber, "batch_id": "impl-135"}},
-		{Type: "run.finished", Timestamp: startedAt.Add(8 * time.Minute), RunID: "impl-135", Issue: issueNumber, Payload: map[string]any{"status": "success", "branch": "sandman/135-fix", "issue_number": issueNumber, "batch_id": "impl-135"}},
+		{Type: "run.started", Timestamp: startedAt, RunID: "impl-135", Issue: issueNumber, Payload: map[string]any{"branch": "135-fix", "issue_number": issueNumber, "batch_id": "impl-135"}},
+		{Type: "run.finished", Timestamp: startedAt.Add(8 * time.Minute), RunID: "impl-135", Issue: issueNumber, Payload: map[string]any{"status": "success", "branch": "135-fix", "issue_number": issueNumber, "batch_id": "impl-135"}},
 		// Review run.started/finished mirroring the real production
 		// payload: review=true, pr_number set, batch_id without the
 		// issue, and NO issue_number key.
@@ -1350,7 +1350,7 @@ func TestPortal_Compute_ActiveReviewDoesNotDuplicateParentCount(t *testing.T) {
 	implRunID := "260707064710-516b-1863"
 	implStart := time.Now().Add(-2 * time.Hour)
 	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
-		{Type: "run.started", Timestamp: implStart, RunID: implRunID, Issue: issueNumber, Payload: map[string]any{"branch": "sandman/1863-fix", "batch_id": "260707064710-516b-1860+9"}},
+		{Type: "run.started", Timestamp: implStart, RunID: implRunID, Issue: issueNumber, Payload: map[string]any{"branch": "1863-fix", "batch_id": "260707064710-516b-1860+9"}},
 		{Type: "run.started", Timestamp: runStartedAt, RunID: canonicalReviewRowID, Payload: map[string]any{"review": true, "pr_number": prNumber, "branch": "sandman/review-1912", "batch_id": batchID}},
 	})
 
@@ -1583,8 +1583,8 @@ func TestPortal_ReviewGrouping_LinkedReviewGroupsUnderIssue(t *testing.T) {
 	)
 	startedAt := time.Now().Add(-10 * time.Minute)
 	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
-		{Type: "run.started", Timestamp: startedAt, RunID: parentRowID, Issue: linkedIssue, Payload: map[string]any{"branch": "sandman/1066-fix", "issue_number": linkedIssue, "batch_id": parentRowID}},
-		{Type: "run.finished", Timestamp: startedAt.Add(8 * time.Minute), RunID: parentRowID, Issue: linkedIssue, Payload: map[string]any{"status": "success", "branch": "sandman/1066-fix", "issue_number": linkedIssue, "batch_id": parentRowID}},
+		{Type: "run.started", Timestamp: startedAt, RunID: parentRowID, Issue: linkedIssue, Payload: map[string]any{"branch": "1066-fix", "issue_number": linkedIssue, "batch_id": parentRowID}},
+		{Type: "run.finished", Timestamp: startedAt.Add(8 * time.Minute), RunID: parentRowID, Issue: linkedIssue, Payload: map[string]any{"status": "success", "branch": "1066-fix", "issue_number": linkedIssue, "batch_id": parentRowID}},
 		{Type: "run.started", Timestamp: startedAt.Add(2 * time.Minute), RunID: rowID, Payload: map[string]any{"branch": "sandman/review-PR42", "review": true, "pr_number": 42, "batch_id": rowID}},
 		{Type: "run.finished", Timestamp: startedAt.Add(7 * time.Minute), RunID: rowID, Payload: map[string]any{"status": "success", "review": true, "pr_number": 42, "batch_id": rowID}},
 	})

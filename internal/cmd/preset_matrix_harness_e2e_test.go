@@ -320,7 +320,7 @@ func runE2EScaffoldNode(t *testing.T, preset, dockerfileAppend string) (string, 
 // and matches the opencode_subagent_e2e_test.go convention, so the
 // post-run assertions can read the agent's committed work from the
 // branch tip (the orchestrator removes the worktree after the run).
-const presetMatrixBranch = "sandman/1-fix-failing-test"
+const presetMatrixBranch = "1-fix-failing-test"
 
 // requirePresetMatrixE2E gates the real-opencode preset-matrix run tests.
 // They need a container runtime AND a working opencode install with auth on
