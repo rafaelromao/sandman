@@ -1662,7 +1662,7 @@ func TestWorktreeSandbox_OverrideForeignReleaseFailed_ParentHEADPreserved(t *tes
 	repoDir := t.TempDir()
 	initGitRepo(t, repoDir)
 
-	const branch = "sandman/2377-failed-release"
+	const branch = "2377-failed-release"
 	runGit(t, repoDir, "branch", branch)
 
 	worktreeBase := filepath.Join(repoDir, ".sandman", "worktrees")
@@ -2232,7 +2232,7 @@ func TestWorktreeSandbox_StartPreservesMainRepoBranch(t *testing.T) {
 	if err := os.MkdirAll(worktreeBase, 0755); err != nil {
 		t.Fatalf("mkdir worktreeBase: %v", err)
 	}
-	branch := "sandman/42-fix-bug"
+	branch := "42-fix-bug"
 
 	// The operator has the parent repo checked out on the issue branch
 	// (e.g. they were inspecting the branch in their editor before
@@ -2311,7 +2311,7 @@ func TestWorktreeSandbox_StartPreservesMainRepoBranch_OnMainRepoBranch(t *testin
 	if err := os.MkdirAll(worktreeBase, 0755); err != nil {
 		t.Fatalf("mkdir worktreeBase: %v", err)
 	}
-	branch := "sandman/42-fix-bug"
+	branch := "42-fix-bug"
 
 	// Parent repo is on main (the canonical operator state). The issue
 	// branch exists as a stale ref from a prior run.
@@ -2353,7 +2353,7 @@ func TestDefaultReconcileStrandedBranch_RefusesWhenParentHEADMismatches(t *testi
 	dir := t.TempDir()
 	initGitRepo(t, dir)
 
-	const branch = "sandman/42-fix-bug"
+	const branch = "42-fix-bug"
 	runGit(t, dir, "branch", branch)
 
 	// Parent HEAD is on main (a foreign worktree is the simulated
@@ -2398,7 +2398,7 @@ func TestDefaultReconcileStrandedBranch_RefusesWhenParentHEADDetached(t *testing
 	dir := t.TempDir()
 	initGitRepo(t, dir)
 
-	const branch = "sandman/42-fix-bug"
+	const branch = "42-fix-bug"
 	runGit(t, dir, "branch", branch)
 
 	// Detach HEAD in the parent repo.
@@ -2451,7 +2451,7 @@ func TestDefaultReconcileStrandedBranch_AcceptsForeignHolderAfterDetach(t *testi
 	dir := t.TempDir()
 	initGitRepo(t, dir)
 
-	const branch = "sandman/2377-toctou"
+	const branch = "2377-toctou"
 	runGit(t, dir, "branch", branch)
 	runGit(t, dir, "checkout", branch)
 

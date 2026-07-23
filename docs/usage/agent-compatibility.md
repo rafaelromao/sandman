@@ -78,7 +78,7 @@ Sandman installs its shared skill into `~/.agents/skills`, so the built-in prese
 
 Sandman manages worktrees itself — the agent does not need to create or switch branches. Sandman:
 
-1. Creates a git worktree at `.sandman/worktrees/sandman/<issue-number>-<slugified-title>`
+1. Creates a git worktree at `.sandman/worktrees/<issue-number>-<slugified-title>` (or `<feature>/<issue-number>-<slugified-title>` when `--base-branch` selects a feature branch, though git's ref-namespace constraints keep the branch name unprefixed; see ADR-0040)
 2. Checks out the base branch as a starting point
 3. The agent works inside this pre-created worktree directory
 4. When the agent finishes, Sandman records the branch for commit history

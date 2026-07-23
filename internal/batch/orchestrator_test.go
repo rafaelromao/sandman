@@ -8797,7 +8797,7 @@ func TestClearIssueArtifacts_PreservesMainRepoBranch(t *testing.T) {
 	t.Chdir(dir)
 	initGitRepo(t, dir)
 
-	branch := "sandman/42-fix-bug"
+	branch := "42-fix-bug"
 	runGit(t, dir, "branch", branch)
 	runGit(t, dir, "checkout", "--quiet", branch)
 
@@ -8849,7 +8849,7 @@ func TestClearIssueArtifacts_ForeignWorktreeHolderPreserved(t *testing.T) {
 	t.Chdir(dir)
 	initGitRepo(t, dir)
 
-	branch := "sandman/42-fix-bug"
+	branch := "42-fix-bug"
 	runGit(t, dir, "branch", branch)
 
 	// Parent is on main (canonical operator state), NOT on the issue
@@ -10123,6 +10123,21 @@ func TestOrchestrator_AbortIssue_SiblingIsNotSignalled(t *testing.T) {
 	if proc43.sigTermObserved() {
 		t.Fatal("per-issue abort must not signal sibling issue 43's process")
 	}
+
+	// Negative assertion: the twoSandboxFactory must actually dispatch
+	// by branch. A regression that always returned f.primary would let
+	// this test pass vacuously (the proc43.sigTermObserved check above
+	// only fires if proc43 is wired to a runnable that gets started).
+	// Asserting that both fake sandboxes had Start called proves the
+	// dispatch happened — if a future branch-name change ever drops the
+	// secondary case again, the new twoSandboxFactory.NewSandbox panic
+	// will fail loud before this assertion ever runs.
+	if !sb42.startCalled {
+		t.Fatal("expected sb42 to be started for issue 42; dispatch did not happen")
+	}
+	if !sb43.startCalled {
+		t.Fatal("expected sb43 to be started for issue 43; dispatch did not happen")
+	}
 }
 
 // twoSandboxFactory hands out a different fakeSandbox per issue
@@ -10137,12 +10152,18 @@ type twoSandboxFactory struct {
 
 func (f *twoSandboxFactory) NewSandbox(repoPath, worktreeBase, branch, sourceBranch string, container sandbox.Container) sandbox.Sandbox {
 	switch branch {
-	case fmt.Sprintf("sandman/%d-fix-bug", f.primaryIssue):
+	case fmt.Sprintf("%d-fix-bug", f.primaryIssue):
 		return f.primary
-	case fmt.Sprintf("sandman/%d-other-bug", f.secondaryIssue):
+	case fmt.Sprintf("%d-other-bug", f.secondaryIssue):
 		return f.secondary
 	}
-	return f.primary
+	// Negative assertion: a regression that always returned f.primary (e.g. by
+	// forgetting the secondary case) would silently re-wire the sibling
+	// sandbox into every runSession. Surface a sentinel so the dispatch
+	// failure is loud. The runtime must not fall back to f.primary when the
+	// branch is unexpected — the orchestrator's runSession will own the
+	// fallback path itself, not the factory.
+	panic(fmt.Sprintf("twoSandboxFactory: unexpected branch %q (primary=%d, secondary=%d)", branch, f.primaryIssue, f.secondaryIssue))
 }
 
 type twoRunnableFactory struct {
