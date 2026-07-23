@@ -38,6 +38,18 @@ jobs:
             exit 1
           fi
 
+  goreleaser:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          args: release --snapshot --clean
+          version: latest
+
   build:
     runs-on: ${{ matrix.os }}
     strategy:
