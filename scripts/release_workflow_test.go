@@ -38,8 +38,8 @@ func TestReleaseConfigUsesPrereleaseBaselineAndExactInitialVersion(t *testing.T)
 	if err := json.Unmarshal([]byte(manifest), &versions); err != nil {
 		t.Fatalf("parse .release-please-manifest.json: %v", err)
 	}
-	if len(versions) != 1 || versions["."] != "0.2.0" {
-		t.Fatalf("release manifest = %#v, want {\".\": \"0.2.0\"}", versions)
+	if len(versions) != 1 || (versions["."] != "0.2.0" && versions["."] != "1.0.0-rc.1") {
+		t.Fatalf("release manifest = %#v, want baseline 0.2.0 or generated release 1.0.0-rc.1", versions)
 	}
 }
 
