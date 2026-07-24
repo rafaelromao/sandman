@@ -69,6 +69,50 @@ git:
 	}
 }
 
+func TestReviewVariantConfigIsOptionalAndTrimmed(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(path, []byte("review_variant: '  provider/foo bar  '\n"), 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := cfg.EffectiveReviewVariant(); got != "provider/foo bar" {
+		t.Fatalf("EffectiveReviewVariant = %q, want trimmed value", got)
+	}
+	if got, err := cfg.GetValue("review_variant"); err != nil || got != "provider/foo bar" {
+		t.Fatalf("GetValue(review_variant) = %q, %v", got, err)
+	}
+
+	if err := cfg.SetValue("review_variant", "  provider/bar baz  "); err != nil {
+		t.Fatalf("SetValue(review_variant): %v", err)
+	}
+	if got := cfg.ReviewVariant; got != "provider/bar baz" {
+		t.Fatalf("ReviewVariant after set = %q, want trimmed value", got)
+	}
+	if !slices.Contains(SupportedKeys(), "review_variant") {
+		t.Fatal("SupportedKeys missing review_variant")
+	}
+}
+
+func TestReviewVariantConfigDefaultsToEmpty(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(path, []byte("agent: opencode\n"), 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := cfg.EffectiveReviewVariant(); got != "" {
+		t.Fatalf("EffectiveReviewVariant = %q, want empty", got)
+	}
+}
+
 func TestLoad_IgnoresLegacyGitAuthorFields(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")

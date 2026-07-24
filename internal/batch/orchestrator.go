@@ -2444,9 +2444,7 @@ func (s *runSession) runOnce(
 			agentRun.model = s.agentCfg.Model
 			agentRun.modelProvider = s.agentCfg.ModelProvider
 			agentRun.modelName = s.agentCfg.ModelName
-			if !s.review {
-				agentRun.variant = s.variant
-			}
+			agentRun.variant = s.variant
 			agentRun.opencodePermissionMode = s.agentCfg.OpencodePermissionMode
 			agentRun.baseBranch = s.baseBranch
 			agentRun.runID = runID
@@ -2911,12 +2909,13 @@ func resetRetryBranch(opts runSessionOptions, ctx context.Context, sb sandbox.Sa
 
 func (o *Orchestrator) runPromptOnly(ctx context.Context, cfg *config.Config, agentName string, agentCfg config.Agent, identityResolver *gitIdentityResolver, sbFactory SandboxFactory, containerAlloc containerAllocator, req Request, baseBranch string, startDelay time.Duration, parallel int, retries int, sandboxMode string, containerCapacity int, containerCapacitySet bool, maxContainers int, maxContainersSet bool, dangerouslySkipPermissions bool, strandedReconcile bool, coord runCoordination, layout paths.Layout) (*Result, error) {
 	branch := promptOnlyBranch(req.PromptConfig)
-	variant := ""
-	if !req.Review {
-		variant = strings.TrimSpace(req.Variant)
-	}
-	if !req.Review && !req.VariantSet && strings.TrimSpace(req.Variant) == "" {
-		variant = strings.TrimSpace(cfg.Variant)
+	variant := strings.TrimSpace(req.Variant)
+	if !req.VariantSet && variant == "" {
+		if req.Review {
+			variant = cfg.EffectiveReviewVariant()
+		} else {
+			variant = strings.TrimSpace(cfg.Variant)
+		}
 	}
 	row := RowSpec{
 		IssueNumber:       req.IssueNumber,
@@ -3130,10 +3129,8 @@ func (s *runSession) executePromptOnly(ctx context.Context) (AgentRunResult, boo
 		if model := strings.TrimSpace(s.agentCfg.Model); model != "" {
 			payload["model"] = model
 		}
-		if !s.review {
-			if variant := strings.TrimSpace(s.variant); variant != "" {
-				payload["variant"] = variant
-			}
+		if variant := strings.TrimSpace(s.variant); variant != "" {
+			payload["variant"] = variant
 		}
 		if s.batchID != "" {
 			payload["batch_id"] = s.batchID

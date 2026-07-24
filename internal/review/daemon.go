@@ -173,6 +173,8 @@ type Daemon struct {
 	MaxContainersSet     bool
 	Agent                string
 	Model                string
+	Variant              string
+	VariantSet           bool
 	Parallel             int
 	ParallelSet          bool
 	CommentPoster        CommentPoster
@@ -765,6 +767,18 @@ func (d *Daemon) effectiveModel() string {
 		return ""
 	}
 	return d.Config.EffectiveReviewModel()
+}
+
+// effectiveVariant returns the review-specific model variant. An explicit
+// CLI value, including an empty value, takes precedence over configuration.
+func (d *Daemon) effectiveVariant() string {
+	if d.VariantSet {
+		return strings.TrimSpace(d.Variant)
+	}
+	if d.Config == nil {
+		return ""
+	}
+	return d.Config.EffectiveReviewVariant()
 }
 
 // effectiveParallel returns the parallel value to use for this run.
@@ -1554,6 +1568,8 @@ func (d *Daemon) launchReview(ctx context.Context, prNumber int, focus, commentI
 	req := batch.Request{
 		Agent:                agentName,
 		Model:                modelName,
+		Variant:              d.effectiveVariant(),
+		VariantSet:           d.VariantSet,
 		Mode:                 map[int]batch.IssueMode{0: batch.ModeOverride},
 		Sandbox:              sandboxMode,
 		Parallel:             d.effectiveParallel(),

@@ -3045,6 +3045,95 @@ func TestRunBatch_ExplicitEmptyVariantOmitsCommandFlagAndEventPayload(t *testing
 	t.Fatal("expected run.started event")
 }
 
+func TestRunBatch_ReviewVariantReachesCommandAndStartEvent(t *testing.T) {
+	sb := &fakeSandbox{}
+	log := &spyEventLog{}
+	o := NewOrchestrator(&fakeGitHubClient{}, &noopRenderer{}, &fakeConfigStore{config: &config.Config{
+		Agent:         "opencode",
+		DefaultModel:  "opencode/foo",
+		ReviewVariant: "provider/foo bar; echo unsafe",
+		Sandbox:       "worktree",
+		WorktreeDir:   ".sandman/worktrees",
+		Git:           config.GitConfig{BaseBranch: "main"},
+		AgentProviders: map[string]config.Agent{
+			"opencode": {Preset: "opencode"},
+		},
+	}}, log, WithSandboxFactory(&fakeSandboxFactory{sandbox: sb}))
+
+	if _, err := o.RunBatch(context.Background(), Request{
+		Agent:    "opencode",
+		Model:    "opencode/foo",
+		Review:   true,
+		PRNumber: 42,
+		PromptConfig: prompt.RenderConfig{
+			PromptFlag: "review prompt",
+			Branch:     "review-branch",
+		},
+		RunID:      "review-run",
+		RunTS:      orchTestRunTS,
+		RunShortID: orchTestRunShortID,
+	}); err != nil {
+		t.Fatalf("review batch: %v", err)
+	}
+	if !strings.Contains(sb.execCommand, `--variant 'provider/foo bar; echo unsafe'`) {
+		t.Fatalf("review command missing safely quoted variant: %q", sb.execCommand)
+	}
+	for _, event := range log.snapshot() {
+		if event.Type == "run.started" {
+			if got := event.Payload["variant"]; got != "provider/foo bar; echo unsafe" {
+				t.Fatalf("start payload variant = %#v", got)
+			}
+			return
+		}
+	}
+	t.Fatal("expected review run.started event")
+}
+
+func TestRunBatch_EmptyReviewVariantOmitsCommandFlagAndEventPayload(t *testing.T) {
+	sb := &fakeSandbox{}
+	log := &spyEventLog{}
+	o := NewOrchestrator(&fakeGitHubClient{}, &noopRenderer{}, &fakeConfigStore{config: &config.Config{
+		Agent:         "opencode",
+		DefaultModel:  "opencode/foo",
+		ReviewVariant: "configured/provider",
+		Sandbox:       "worktree",
+		WorktreeDir:   ".sandman/worktrees",
+		Git:           config.GitConfig{BaseBranch: "main"},
+		AgentProviders: map[string]config.Agent{
+			"opencode": {Preset: "opencode"},
+		},
+	}}, log, WithSandboxFactory(&fakeSandboxFactory{sandbox: sb}))
+
+	if _, err := o.RunBatch(context.Background(), Request{
+		Agent:      "opencode",
+		Model:      "opencode/foo",
+		VariantSet: true,
+		Review:     true,
+		PRNumber:   42,
+		PromptConfig: prompt.RenderConfig{
+			PromptFlag: "review prompt",
+			Branch:     "review-branch",
+		},
+		RunID:      "review-run",
+		RunTS:      orchTestRunTS,
+		RunShortID: orchTestRunShortID,
+	}); err != nil {
+		t.Fatalf("review batch: %v", err)
+	}
+	if strings.Contains(sb.execCommand, "--variant") {
+		t.Fatalf("empty review variant rendered command flag: %q", sb.execCommand)
+	}
+	for _, event := range log.snapshot() {
+		if event.Type == "run.started" {
+			if _, exists := event.Payload["variant"]; exists {
+				t.Fatalf("empty review variant appeared in start payload: %#v", event.Payload)
+			}
+			return
+		}
+	}
+	t.Fatal("expected review run.started event")
+}
+
 func TestRunBatch_SendsSIGKILLAfterTimeout(t *testing.T) {
 	client := &fakeGitHubClient{
 		issues: map[int]*github.Issue{

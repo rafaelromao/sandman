@@ -13,7 +13,7 @@ func TestReviewCmd_NoArgsStartsDaemon(t *testing.T) {
 	deps := Dependencies{ConfigStore: &fakeStore{config: cfg}, RepoRoot: t.TempDir()}
 
 	prev := reviewDaemonRunner
-	reviewDaemonRunner = func(ctx context.Context, deps Dependencies, cfg *config.Config, sandbox string, cc int, ccSet bool, mc int, mcSet bool, agent string, model string, parallel int, parallelSet bool) error {
+	reviewDaemonRunner = func(ctx context.Context, deps Dependencies, cfg *config.Config, sandbox string, cc int, ccSet bool, mc int, mcSet bool, agent string, model string, variant string, variantSet bool, parallel int, parallelSet bool) error {
 		return errReviewDaemonReached
 	}
 	defer func() { reviewDaemonRunner = prev }()
@@ -51,7 +51,7 @@ func TestReviewCmd_ForwardsDaemonOptions(t *testing.T) {
 		ccSet, mcSet, parallelSet bool
 	}
 	prev := reviewDaemonRunner
-	reviewDaemonRunner = func(ctx context.Context, deps Dependencies, cfg *config.Config, sandbox string, cc int, ccSet bool, mc int, mcSet bool, agent string, model string, parallel int, parallelSet bool) error {
+	reviewDaemonRunner = func(ctx context.Context, deps Dependencies, cfg *config.Config, sandbox string, cc int, ccSet bool, mc int, mcSet bool, agent string, model string, variant string, variantSet bool, parallel int, parallelSet bool) error {
 		got.sandbox, got.agent, got.model = sandbox, agent, model
 		got.cc, got.mc, got.parallel = cc, mc, parallel
 		got.ccSet, got.mcSet, got.parallelSet = ccSet, mcSet, parallelSet
@@ -69,6 +69,28 @@ func TestReviewCmd_ForwardsDaemonOptions(t *testing.T) {
 	}
 	if got.cc != 2 || !got.ccSet || got.mc != 3 || !got.mcSet || got.parallel != 4 || !got.parallelSet {
 		t.Fatalf("daemon numeric options = cc=%d/%t mc=%d/%t parallel=%d/%t", got.cc, got.ccSet, got.mc, got.mcSet, got.parallel, got.parallelSet)
+	}
+}
+
+func TestReviewCmd_ForwardsTrimmedVariantOverride(t *testing.T) {
+	cfg := &config.Config{DefaultReviewAgent: "opencode", ReviewVariant: "configured"}
+	deps := Dependencies{ConfigStore: &fakeStore{config: cfg}, RepoRoot: t.TempDir()}
+	var gotVariant string
+	var gotSet bool
+	prev := reviewDaemonRunner
+	reviewDaemonRunner = func(ctx context.Context, deps Dependencies, cfg *config.Config, sandbox string, cc int, ccSet bool, mc int, mcSet bool, agent string, model string, variant string, variantSet bool, parallel int, parallelSet bool) error {
+		gotVariant, gotSet = variant, variantSet
+		return nil
+	}
+	defer func() { reviewDaemonRunner = prev }()
+
+	cmd := NewReviewCmd(deps)
+	cmd.SetArgs([]string{"--variant", "  provider/foo bar  "})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("execute review command: %v", err)
+	}
+	if gotVariant != "provider/foo bar" || !gotSet {
+		t.Fatalf("variant = %q (set=%v), want trimmed explicit override", gotVariant, gotSet)
 	}
 }
 

@@ -240,6 +240,7 @@ The daemon's review path is **daemon-as-poster**: the reviewer agent writes its 
 | `--max-containers` | `0` | Maximum number of containers to run at once; `0` means no cap (unbounded pool) |
 | `--agent` | `""` | Override `default_review_agent` for this run |
 | `--model` | `""` | Override `default_review_model` for this run |
+| `--variant` | `""` | Override `review_variant` for this run; trimmed and forwarded as one argument only when non-empty |
 | `--sandbox` | `""` (config default: `podman`) | Sandbox mode for the review run |
 
 ## `sandman config`
@@ -260,6 +261,7 @@ sandman config set <key> <value>
 | `variant` | string | `""` |
 | `review_agent` | string | `opencode` |
 | `review_model` | string | `opencode/big-pickle` |
+| `review_variant` | string | `""` |
 | `build_tools` | string | `node` |
 | `parallel` | int | `1` |
 | `parallel_reviews` | int | `1` |
