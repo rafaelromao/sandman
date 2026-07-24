@@ -707,8 +707,7 @@ func parseCheckedOutPath(out []byte) (string, bool) {
 	return "", false
 }
 
-// removePrunableWorktreeRegistration drops the
-// `.git/worktrees/<basename(s.workDir)>` registration directory that
+// removePrunableWorktreeRegistration drops the registration directory that
 // corresponds to the canonical worktree, without touching any other
 // worktree registration. It is the scoped equivalent of
 // `git worktree prune` for a single path.
@@ -730,21 +729,41 @@ func (s *WorktreeSandbox) removePrunableWorktreeRegistration() error {
 // which can remove live sibling registrations when host paths are not visible
 // from a container.
 func RemoveWorktreeRegistration(repoPath, worktreePath string) error {
-	name := filepath.Base(worktreePath)
-	candidate := filepath.Join(repoPath, ".git", "worktrees", name)
-	info, err := os.Stat(candidate)
+	registrations := filepath.Join(repoPath, ".git", "worktrees")
+	entries, err := os.ReadDir(registrations)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil
 		}
-		return fmt.Errorf("stat %q: %w", candidate, err)
+		return fmt.Errorf("read worktree registrations %q: %w", registrations, err)
 	}
-	if !info.IsDir() {
+
+	want, err := filepath.Abs(worktreePath)
+	if err != nil {
+		return fmt.Errorf("resolve worktree path %q: %w", worktreePath, err)
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		candidate := filepath.Join(registrations, entry.Name())
+		gitdir, err := os.ReadFile(filepath.Join(candidate, "gitdir"))
+		if err != nil {
+			continue
+		}
+		registeredPath, err := filepath.Abs(filepath.Dir(strings.TrimSpace(string(gitdir))))
+		if err != nil {
+			continue
+		}
+		if registeredPath != want {
+			continue
+		}
+		if err := os.RemoveAll(candidate); err != nil {
+			return fmt.Errorf("remove registration %q: %w", candidate, err)
+		}
 		return nil
 	}
-	if err := os.RemoveAll(candidate); err != nil {
-		return fmt.Errorf("remove registration %q: %w", candidate, err)
-	}
+
 	return nil
 }
 
