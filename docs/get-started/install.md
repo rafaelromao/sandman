@@ -66,7 +66,7 @@ want to build from a checkout, or when no compatible release binary is
 available:
 
 ```bash
-go install github.com/rafaelromao/sandman/cmd/sandman@latest
+go install github.com/rafaelromao/sandman/cmd/sandman@v1.0.0
 ```
 
 To build the current checkout instead:
@@ -77,12 +77,6 @@ cd sandman
 make build
 # Optionally install to $GOPATH/bin
 make install
-```
-
-To install a specific source release, pin the module version explicitly:
-
-```bash
-go install github.com/rafaelromao/sandman/cmd/sandman@v1.0.0
 ```
 
 ## OpenCode setup
