@@ -738,7 +738,7 @@ func RemoveWorktreeRegistration(repoPath, worktreePath string) error {
 		return fmt.Errorf("read worktree registrations %q: %w", registrations, err)
 	}
 
-	want, err := filepath.Abs(worktreePath)
+	want, err := canonicalWorktreePath(worktreePath)
 	if err != nil {
 		return fmt.Errorf("resolve worktree path %q: %w", worktreePath, err)
 	}
@@ -751,7 +751,7 @@ func RemoveWorktreeRegistration(repoPath, worktreePath string) error {
 		if err != nil {
 			continue
 		}
-		registeredPath, err := filepath.Abs(filepath.Dir(strings.TrimSpace(string(gitdir))))
+		registeredPath, err := canonicalWorktreePath(filepath.Dir(strings.TrimSpace(string(gitdir))))
 		if err != nil {
 			continue
 		}
@@ -765,6 +765,35 @@ func RemoveWorktreeRegistration(repoPath, worktreePath string) error {
 	}
 
 	return nil
+}
+
+func canonicalWorktreePath(path string) (string, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	missing := ""
+	existing := abs
+	for {
+		if _, err := os.Lstat(existing); err == nil {
+			resolved, err := filepath.EvalSymlinks(existing)
+			if err != nil {
+				return abs, nil
+			}
+			return filepath.Join(resolved, missing), nil
+		}
+		parent := filepath.Dir(existing)
+		if parent == existing {
+			return abs, nil
+		}
+		part := filepath.Base(existing)
+		if missing == "" {
+			missing = part
+		} else {
+			missing = filepath.Join(part, missing)
+		}
+		existing = parent
+	}
 }
 
 // refuseContinuation returns a targeted error explaining why the preserved
