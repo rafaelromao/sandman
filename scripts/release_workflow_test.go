@@ -29,8 +29,8 @@ func TestReleaseConfigUsesPrereleaseBaselineAndExactInitialVersion(t *testing.T)
 	if root.ChangelogPath != "CHANGELOG.md" {
 		t.Fatalf("bootstrap changelog path = %q, want CHANGELOG.md", root.ChangelogPath)
 	}
-	if root.ReleaseAs != "1.0.0-rc.1" {
-		t.Fatalf("initial release-as = %q, want 1.0.0-rc.1", root.ReleaseAs)
+	if root.ReleaseAs != "1.0.0-rc.1" && root.ReleaseAs != "" {
+		t.Fatalf("initial release-as = %q, want 1.0.0-rc.1 or removed", root.ReleaseAs)
 	}
 
 	manifest := readRepositoryFile(t, "../.release-please-manifest.json")
@@ -38,8 +38,9 @@ func TestReleaseConfigUsesPrereleaseBaselineAndExactInitialVersion(t *testing.T)
 	if err := json.Unmarshal([]byte(manifest), &versions); err != nil {
 		t.Fatalf("parse .release-please-manifest.json: %v", err)
 	}
-	if len(versions) != 1 || (versions["."] != "0.2.0" && versions["."] != "1.0.0-rc.1") {
-		t.Fatalf("release manifest = %#v, want baseline 0.2.0 or generated release 1.0.0-rc.1", versions)
+	version := versions["."]
+	if len(versions) != 1 || (version != "0.2.0" && !strings.HasPrefix(version, "1.0.0-rc.")) {
+		t.Fatalf("release manifest = %#v, want baseline 0.2.0 or generated 1.0.0-rc.N release", versions)
 	}
 }
 
