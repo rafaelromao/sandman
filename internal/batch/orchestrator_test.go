@@ -2264,6 +2264,37 @@ func TestRunPromptOnlySingle_PrefixesOutputWithRunID(t *testing.T) {
 	}
 }
 
+func TestRunPromptOnlySingle_ReviewOmitsImplementationVariant(t *testing.T) {
+	workDir := t.TempDir()
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get wd: %v", err)
+	}
+	if err := os.Chdir(workDir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(oldWD) })
+
+	rtSandbox := &fakeSandbox{workDir: filepath.Join(workDir, "worktree")}
+	o := &Orchestrator{
+		renderer:       &noopRenderer{},
+		errorLog:       io.Discard,
+		sandboxFactory: &fakeSandboxFactory{sandbox: rtSandbox},
+	}
+	cfg := &config.Config{
+		Variant:     "implementation/provider",
+		WorktreeDir: "worktree",
+		Git:         config.GitConfig{BaseBranch: "main"},
+	}
+	_, started := o.runPromptOnlySingle(context.Background(), cfg, "opencode", config.Agent{Preset: "opencode"}, noopIdentityResolver(), "sandman/review-17-1", prompt.RenderConfig{}, nil, &fakeSandboxFactory{sandbox: rtSandbox}, nil, ModeFresh, "main", 0, 0, 0, "", 0, false, 0, false, false, false, true, 17, "check tests", "PR17", nil, 0, "", "", "")
+	if !started {
+		t.Fatal("expected prompt-only review run to start")
+	}
+	if strings.Contains(rtSandbox.execCommand, "--variant") {
+		t.Fatalf("review command unexpectedly included implementation variant: %q", rtSandbox.execCommand)
+	}
+}
+
 // TestRunPromptOnlySingle_ReviewRunIDIsCanonical pins the regression
 // gate for issue #1946: the orchestrator's executePromptOnly path
 // must NOT mangle a review per-row RunID that flows through it. The
