@@ -10,5 +10,6 @@ These pages are for contributors changing Sandman itself. If you want to use San
 | [Testing](testing.md) | Test tiers, smoke/e2e gates, cleanup, and common commands |
 | [Test Infrastructure](test-infrastructure.md) | Hermetic shims, fast mode, env vars, temp dirs, and parallel safety |
 | [Documentation](documentation.md) | Public docs rules, internal agent docs, and embedded skill hygiene |
+| [Releasing](releasing.md) | Release Please, versioning policy, GoReleaser, and release artifacts |
 
 For contribution workflow and code of conduct details, see [CONTRIBUTING.md](../../CONTRIBUTING.md) at the repo root.
