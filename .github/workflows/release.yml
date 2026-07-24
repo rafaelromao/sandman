@@ -3,31 +3,24 @@ name: Release
 on:
   push:
     branches: [main]
-    tags: ['v*']
+  release:
+    types: [released]
 
 permissions:
   contents: write
+  issues: write
+  pull-requests: write
 
 jobs:
   release-please:
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     steps:
       - uses: googleapis/release-please-action@v4
         with:
           release-type: go
           default-branch: main
-          changelog-path: /dev/null
-          manifest: .release-please-manifest.json
-
-  goreleaser:
-    runs-on: ubuntu-latest
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
       - uses: goreleaser/goreleaser-action@v6
+        if: success()
         with:
           args: release --clean
           version: latest
