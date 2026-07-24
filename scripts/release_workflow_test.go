@@ -103,6 +103,30 @@ func TestReleaseWorkflowPublishesConfiguredReleaseArtifacts(t *testing.T) {
 	}
 }
 
+func TestBinaryInstallationDocumentationMatchesReleaseContract(t *testing.T) {
+	install := readRepositoryFile(t, "../docs/get-started/install.md")
+	for _, required := range []string{
+		"https://github.com/rafaelromao/sandman/releases/download/v${VERSION}",
+		"sandman_<version>_<os>_<arch>.tar.gz",
+		"sandman_1.0.0_linux_amd64.tar.gz",
+		"sandman_1.0.0_darwin_amd64.tar.gz",
+		"sandman_1.0.0_darwin_arm64.tar.gz",
+		"checksums.txt",
+		"TARGET_ARCHIVE=\"sandman_${VERSION}_linux_amd64.tar.gz\"",
+		"grep -F \"  ${TARGET_ARCHIVE}\" checksums.txt | sha256sum -c -",
+		"grep -F \"  ${TARGET_ARCHIVE}\" checksums.txt | shasum -a 256 -c -",
+		"VERSION=1.0.0",
+		"sandman --version",
+		"sandman 1.0.0",
+		"go install github.com/rafaelromao/sandman/cmd/sandman@v1.0.0",
+		"Install from source",
+	} {
+		if !strings.Contains(install, required) {
+			t.Errorf("installation guide missing %q", required)
+		}
+	}
+}
+
 func TestReleaseWorkflowUsesCredentialThatTriggersReleasePRChecks(t *testing.T) {
 	release := readRepositoryFile(t, "../.github/workflows/release.yml")
 	ci := readRepositoryFile(t, "../.github/workflows/go.yml")

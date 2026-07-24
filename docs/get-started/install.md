@@ -4,21 +4,72 @@ Full setup guide: prerequisites, install methods, OpenCode setup, project initia
 
 ## Prerequisites
 
-- [Go](https://go.dev/dl/) 1.24 or later
 - [Git](https://git-scm.com/)
 - [`gh` CLI](https://cli.github.com/) — authenticated and with `repo` scope
 - An AI coding agent: [OpenCode](https://opencode.ai/)
 - Optional but recommended: [Podman](https://podman.io/) or [Docker](https://docker.com/) for container-backed sandboxing
 
+Go 1.24 or later is only needed for the source-install methods below. Binary
+installations do not require Go.
+
 ## Install Sandman
 
-### Quick install
+### Release binary
+
+Published binaries are available from the [GitHub Releases](https://github.com/rafaelromao/sandman/releases) page. The `v1.0.0` release publishes these targets:
+
+| Platform | Architecture | Archive |
+|----------|--------------|---------|
+| Linux | amd64 | `sandman_1.0.0_linux_amd64.tar.gz` |
+| macOS | amd64 | `sandman_1.0.0_darwin_amd64.tar.gz` |
+| macOS | arm64 | `sandman_1.0.0_darwin_arm64.tar.gz` |
+
+Archives use the naming convention `sandman_<version>_<os>_<arch>.tar.gz`.
+Release archive versions omit the `v` prefix, so tag `v1.0.0` produces archives
+with version `1.0.0`. Each release also includes `checksums.txt`.
+
+The following example installs the Linux amd64 binary from `v1.0.0`. Select the
+archive for your platform, then verify that archive against its entry in
+`checksums.txt` before extracting it.
+
+```bash
+VERSION=1.0.0
+RELEASE_URL="https://github.com/rafaelromao/sandman/releases/download/v${VERSION}"
+TARGET_ARCHIVE="sandman_${VERSION}_linux_amd64.tar.gz"
+
+curl -fLO "${RELEASE_URL}/${TARGET_ARCHIVE}"
+curl -fLO "${RELEASE_URL}/checksums.txt"
+
+grep -F "  ${TARGET_ARCHIVE}" checksums.txt | sha256sum -c -
+
+tar -xzf "${TARGET_ARCHIVE}"
+mkdir -p "${HOME}/.local/bin"
+install -m 755 sandman "${HOME}/.local/bin/sandman"
+export PATH="${HOME}/.local/bin:${PATH}"
+sandman --version
+# sandman 1.0.0
+```
+
+On macOS, use the same commands with `TARGET_ARCHIVE` set to
+`sandman_${VERSION}_darwin_amd64.tar.gz` for Intel or
+`sandman_${VERSION}_darwin_arm64.tar.gz` for Apple silicon, and replace the
+checksum command with:
+
+```bash
+grep -F "  ${TARGET_ARCHIVE}" checksums.txt | shasum -a 256 -c -
+```
+
+### Install from source
+
+Use a source installation when your platform is not listed above, when you
+want to build from a checkout, or when no compatible release binary is
+available:
 
 ```bash
 go install github.com/rafaelromao/sandman/cmd/sandman@latest
 ```
 
-### Build from source
+To build the current checkout instead:
 
 ```bash
 git clone https://github.com/rafaelromao/sandman.git
@@ -26,6 +77,12 @@ cd sandman
 make build
 # Optionally install to $GOPATH/bin
 make install
+```
+
+To install a specific source release, pin the module version explicitly:
+
+```bash
+go install github.com/rafaelromao/sandman/cmd/sandman@v1.0.0
 ```
 
 ## OpenCode setup
