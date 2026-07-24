@@ -707,21 +707,7 @@ func (s *Scaffolder) resolveBuildToolsPreset(repoRoot string, opts Options, p Pr
 		} else if hasGoRepoHint(repoRoot) {
 			name = goBuildToolsPreset
 		} else if hasNodeRepoHint(repoRoot) {
-			if p != nil {
-				options := []string{nodeBuildToolsPreset}
-				for _, preset := range KnownBuildToolsPresets {
-					if preset != nodeBuildToolsPreset {
-						options = append(options, preset)
-					}
-				}
-				selected, err := p.Select("Choose a build tools preset:", options)
-				if err == nil {
-					name = strings.ToLower(strings.TrimSpace(selected))
-				}
-			}
-			if name == "" {
-				name = nodeBuildToolsPreset
-			}
+			name = nodeBuildToolsPreset
 		} else if hasPythonRepoHint(repoRoot) {
 			name = pythonBuildToolsPreset
 		} else if hasElixirRepoHint(repoRoot) {
@@ -729,21 +715,7 @@ func (s *Scaffolder) resolveBuildToolsPreset(repoRoot string, opts Options, p Pr
 		} else if hasRubyRepoHint(repoRoot) {
 			name = rubyBuildToolsPreset
 		} else if hasRustRepoHint(repoRoot) {
-			if p != nil {
-				options := []string{rustBuildToolsPreset}
-				for _, preset := range KnownBuildToolsPresets {
-					if preset != rustBuildToolsPreset {
-						options = append(options, preset)
-					}
-				}
-				selected, err := p.Select("Choose a build tools preset:", options)
-				if err == nil {
-					name = strings.ToLower(strings.TrimSpace(selected))
-				}
-			}
-			if name == "" {
-				name = rustBuildToolsPreset
-			}
+			name = rustBuildToolsPreset
 		} else if hasJavaRepoHint(repoRoot) {
 			name = javaBuildToolsPreset
 		} else if p != nil {
