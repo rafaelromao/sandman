@@ -13,11 +13,20 @@ jobs:
   release-please:
     runs-on: ubuntu-latest
     steps:
+      - name: Verify release credential
+        env:
+          RELEASE_PLEASE_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+        run: |
+          if [ -z "$RELEASE_PLEASE_TOKEN" ]; then
+            echo "::error::The RELEASE_PLEASE_TOKEN repository secret is required for release PR creation."
+            exit 1
+          fi
       - uses: googleapis/release-please-action@v4
         id: release-please
         with:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN }}
       - uses: actions/checkout@v4
         if: steps.release-please.outputs.release_created == 'true'
         with:
