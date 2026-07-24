@@ -27,7 +27,7 @@ The shared Sandman skill owns the detailed workflow. This page describes the boo
     
     ## Commit and PR Title
     
-    The change-request title (and the commit subject) must follow the Conventional Commits format. Pick the most accurate type for the change from `feat`, `fix`, `perf`, `docs`, `refactor`, `test`, `build`, `ci`, `chore`, `revert`. Append `!` to the type for breaking changes. The full regex and allowed-types list are documented in `AGENTS.md`'s "Branching and versioning rules" section — read it before opening the change request. The `CI / semantic-pull-request` status check on `{{BASE_BRANCH}}` enforces the regex; titles that fall outside the format will block merge. Reuse the same Conventional Commits header for both the commit and the change request so the merge button sees one coherent signal.
+    The change-request title (and the commit subject) must follow the Conventional Commits format. Pick the most accurate type for the change from `feat`, `fix`, `perf`, `docs`, `refactor`, `test`, `build`, `ci`, `chore`, `revert`. Append `!` to the type for breaking changes. The full regex and allowed-types list are documented in `AGENTS.md`'s "Branching and versioning rules" section — read it before opening the change request. The `CI / semantic-pull-request` status check on `{{BASE_BRANCH}}` enforces the title regex; title validation is separate from Release Please's SemVer parsing of merged commit history. Reuse the same Conventional Commits header for both the commit and the change request so the merge button sees one coherent signal.
     
     ## Execution Checklist
     
@@ -195,4 +195,3 @@ The shared Sandman skill owns the detailed workflow. This page describes the boo
 - **Sandman Skill**: the shared skill folder installed into `~/.agents/skills/sandman/` by `sandman init`.
 - **Prompt**: `.sandman/task.md`, the rendered instruction file handed to the agent.
 - **Continue replay**: `sandman run --continue` reuses the prior run's worktree identity: the existing branch, the stored base branch, the prior run id, the `.sandman/task.md` contents, and the issue mode. Tunables (agent, model, parallel, retries, sandbox, container tunables, review command) come from current CLI flags / config defaults, not from the stored payload. When no task file exists, an empty task template is used with a warning on stderr.
-

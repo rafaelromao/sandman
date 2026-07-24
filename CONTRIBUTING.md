@@ -35,6 +35,7 @@ For suggestions related to agent behavior, prompts, or domain vocabulary, use th
 - Ensure the change-request description clearly describes the problem and solution.
 - Reference the issue this change request addresses in the body (`Closes #<n>`, `Fixes #<n>`, or `Resolves #<n>`), not in the title.
 - Ensure all CI checks pass. The merge button only enables after both `CI / build` and `CI / semantic-pull-request` are green.
+- For the post-merge release procedure and versioning policy, see the [Releasing guide](docs/development/releasing.md).
 
 ### Release automation
 
@@ -124,7 +125,7 @@ Change-request and commit titles follow the [Conventional Commits](https://www.c
 
 - **Allowed types:** `feat`, `fix`, `perf`, `docs`, `refactor`, `test`, `build`, `ci`, `chore`, `revert`. Append `!` (for example `feat!:`) only when the change is breaking.
 - **Imperative mood:** write titles as commands ("Add feature" not "Added feature" or "Adds feature").
-- The full regex, SemVer rules, and the allowed type list are documented in [`AGENTS.md`](AGENTS.md#branching-and-versioning-rules). This section keeps `AGENTS.md` as the single source of truth for the regex.
+- The full regex is documented in [`AGENTS.md`](AGENTS.md#branching-and-versioning-rules). Release Please derives SemVer from merged commit history, not from the title check alone; see the [releasing guide](docs/development/releasing.md#versioning-policy) for the mapping.
 
 ## Non-Code Contributions
 

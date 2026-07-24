@@ -18,7 +18,7 @@ The worktree MUST be checked out on `{{BRANCH}}` when the run finishes. Do not s
 
 ## Commit and PR Title
 
-The change-request title (and the commit subject) must follow the Conventional Commits format. Pick the most accurate type for the change from `feat`, `fix`, `perf`, `docs`, `refactor`, `test`, `build`, `ci`, `chore`, `revert`. Append `!` to the type for breaking changes. The full regex and allowed-types list are documented in `AGENTS.md`'s "Branching and versioning rules" section — read it before opening the change request. The `CI / semantic-pull-request` status check on `{{BASE_BRANCH}}` enforces the regex; titles that fall outside the format will block merge. Reuse the same Conventional Commits header for both the commit and the change request so the merge button sees one coherent signal.
+The change-request title (and the commit subject) must follow the Conventional Commits format. Pick the most accurate type for the change from `feat`, `fix`, `perf`, `docs`, `refactor`, `test`, `build`, `ci`, `chore`, `revert`. Append `!` to the type for breaking changes. The full regex and allowed-types list are documented in `AGENTS.md`'s "Branching and versioning rules" section — read it before opening the change request. The `CI / semantic-pull-request` status check on `{{BASE_BRANCH}}` enforces the title regex; title validation is separate from Release Please's SemVer parsing of merged commit history. Reuse the same Conventional Commits header for both the commit and the change request so the merge button sees one coherent signal.
 
 ## Execution Checklist
 
@@ -162,4 +162,3 @@ Before final response, verify and report:
 - Test/format commands run and outcomes.
 - PR URL and review status, if a PR was created.
 - Whether PR merge was performed or skipped, with reason.
-
