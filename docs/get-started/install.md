@@ -4,12 +4,13 @@ Full setup guide: prerequisites, install methods, OpenCode setup, project initia
 
 ## Prerequisites
 
+- [Go](https://go.dev/dl/) 1.25 or later
 - [Git](https://git-scm.com/)
 - [`gh` CLI](https://cli.github.com/) — authenticated and with `repo` scope
 - An AI coding agent: [OpenCode](https://opencode.ai/)
 - Optional but recommended: [Podman](https://podman.io/) or [Docker](https://docker.com/) for container-backed sandboxing
 
-Go 1.24 or later is only needed for the source-install methods below. Binary
+Go 1.25 or later is only needed for the source-install methods below. Binary
 installations do not require Go.
 
 ## Install Sandman
@@ -66,7 +67,7 @@ want to build from a checkout, or when no compatible release binary is
 available:
 
 ```bash
-go install github.com/rafaelromao/sandman/cmd/sandman@latest
+go install github.com/rafaelromao/sandman/cmd/sandman@v1.0.0
 ```
 
 To build the current checkout instead:
@@ -77,12 +78,6 @@ cd sandman
 make build
 # Optionally install to $GOPATH/bin
 make install
-```
-
-To install a specific source release, pin the module version explicitly:
-
-```bash
-go install github.com/rafaelromao/sandman/cmd/sandman@v1.0.0
 ```
 
 ## OpenCode setup

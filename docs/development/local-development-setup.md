@@ -6,7 +6,7 @@ This page is for contributors modifying Sandman itself. For using Sandman, see [
 
 Install these before working on Sandman locally:
 
-- Go 1.24 or later
+- Go 1.25 or later
 - Git
 - GitHub CLI (`gh`), authenticated for tests or workflows that call GitHub-backed commands
 - OpenCode, when running agent-backed smoke or e2e tests

@@ -5,10 +5,10 @@ From zero to first agent run in five minutes.
 ## Install
 
 ```bash
-go install github.com/rafaelromao/sandman/cmd/sandman@latest
+go install github.com/rafaelromao/sandman/cmd/sandman@v1.0.0
 ```
 
-Requires Go 1.24+, Git, and the [`gh` CLI](https://cli.github.com/) authenticated with `repo` scope.
+Requires Go 1.25+, Git, and the [`gh` CLI](https://cli.github.com/) authenticated with `repo` scope.
 
 ## Initialize a project
 
