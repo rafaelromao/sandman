@@ -23,6 +23,10 @@ review_agent: opencode
 # Falls back to model if empty.
 review_model: opencode/big-pickle
 
+# Optional provider-specific review model variant. Empty disables forwarding
+# --variant to review OpenCode commands.
+review_variant: ""
+
 # Build tools preset for the container image (generic, dotnet, go, node, python, elixir, ruby, rust, java).
 build_tools: generic
 
@@ -153,6 +157,7 @@ sandman config set container_capacity 2
 sandman config set start_delay 5
 sandman config set run_idle_timeout 3600
 sandman config set model opencode/BigPickle
+sandman config set review_variant "provider/foo bar"
 sandman config set git.base_branch main
 ```
 

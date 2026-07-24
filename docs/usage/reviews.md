@@ -10,6 +10,18 @@ Run this command to start the daemon:
 sandman review
 ```
 
+Set an independent review model variant in project configuration or override
+it for one daemon process:
+
+```bash
+sandman config set review_variant "provider/foo bar"
+sandman review --variant "provider/other"
+```
+
+The CLI value wins when supplied. Both configured and CLI values are trimmed
+but otherwise treated as opaque provider-specific text. Empty values do not
+add a variant flag to the OpenCode command.
+
 The daemon polls open pull requests for the configured review command, which defaults to:
 
 ```text
@@ -73,6 +85,6 @@ Review runs appear in:
 ## See also
 
 - [Commands Reference](commands.md#sandman-review) — full `sandman review` flags
-- [Configuration](configuration.md) — `review_command`, `review_agent`, `review_model`, and `parallel_reviews`
+- [Configuration](configuration.md) — `review_command`, `review_agent`, `review_model`, `review_variant`, and `parallel_reviews`
 - [Portal](portal.md) — watching review runs in the browser
 - [Sandman Skills](skills.md) — how the review command is injected into shared skills

@@ -36,6 +36,7 @@ type Config struct {
 	Variant               string           `yaml:"variant"`
 	DefaultReviewAgent    string           `yaml:"review_agent"`
 	DefaultReviewModel    string           `yaml:"review_model"`
+	ReviewVariant         string           `yaml:"review_variant"`
 	BuildTools            string           `yaml:"build_tools"`
 	ReviewCommand         string           `yaml:"review_command"`
 	DefaultParallel       int              `yaml:"parallel"`
@@ -150,6 +151,7 @@ func SupportedKeys() []string {
 		"variant",
 		"review_agent",
 		"review_model",
+		"review_variant",
 		"build_tools",
 		"review_command",
 		"parallel",
@@ -178,6 +180,7 @@ func Load(path string) (*Config, error) {
 		Variant               string           `yaml:"variant"`
 		DefaultReviewAgent    string           `yaml:"review_agent"`
 		DefaultReviewModel    string           `yaml:"review_model"`
+		ReviewVariant         string           `yaml:"review_variant"`
 		BuildTools            string           `yaml:"build_tools"`
 		ReviewCommand         string           `yaml:"review_command"`
 		DefaultParallel       int              `yaml:"parallel"`
@@ -207,6 +210,7 @@ func Load(path string) (*Config, error) {
 		Variant:               strings.TrimSpace(raw.Variant),
 		DefaultReviewAgent:    raw.DefaultReviewAgent,
 		DefaultReviewModel:    raw.DefaultReviewModel,
+		ReviewVariant:         strings.TrimSpace(raw.ReviewVariant),
 		BuildTools:            raw.BuildTools,
 		ReviewCommand:         raw.ReviewCommand,
 		DefaultParallel:       raw.DefaultParallel,
@@ -427,6 +431,8 @@ func (c *Config) GetValue(key string) (string, error) {
 		return c.EffectiveReviewAgent(), nil
 	case "review_model":
 		return c.EffectiveReviewModel(), nil
+	case "review_variant":
+		return c.EffectiveReviewVariant(), nil
 	case "build_tools":
 		return c.EffectiveBuildTools(), nil
 	case "review_command":
@@ -501,6 +507,8 @@ func (c *Config) SetValue(key, value string) error {
 		c.DefaultReviewAgent = strings.TrimSpace(value)
 	case "review_model":
 		c.DefaultReviewModel = value
+	case "review_variant":
+		c.ReviewVariant = strings.TrimSpace(value)
 	case "build_tools":
 		c.BuildTools = value
 	case "review_command":
@@ -585,4 +593,13 @@ func (c *Config) EffectiveReviewModel() string {
 		return model
 	}
 	return strings.TrimSpace(c.DefaultModel)
+}
+
+// EffectiveReviewVariant returns the configured review model variant, or an
+// empty string when no review-specific variant is configured.
+func (c *Config) EffectiveReviewVariant() string {
+	if c == nil {
+		return ""
+	}
+	return strings.TrimSpace(c.ReviewVariant)
 }

@@ -44,6 +44,8 @@ func NewReviewCmd(deps Dependencies) *cobra.Command {
 			mcSet := cmd.Flags().Changed("max-containers")
 			agentFlag, _ := cmd.Flags().GetString("agent")
 			modelFlag, _ := cmd.Flags().GetString("model")
+			variantFlag, _ := cmd.Flags().GetString("variant")
+			variantFlag = strings.TrimSpace(variantFlag)
 
 			if parallelFlag < 0 {
 				return MarkUsage(fmt.Errorf("parallel must be 0 or greater"))
@@ -77,12 +79,13 @@ func NewReviewCmd(deps Dependencies) *cobra.Command {
 			warnOpencodeVersionMismatch(cmd, reviewAgentName, sandboxFlag, repoRoot, cfg)
 
 			parallelSet := cmd.Flags().Changed("parallel")
-			return reviewDaemonRunner(cmd.Context(), deps, cfg, sandboxFlag, ccFlag, ccSet, mcFlag, mcSet, agentFlag, modelFlag, parallelFlag, parallelSet)
+			return reviewDaemonRunner(cmd.Context(), deps, cfg, sandboxFlag, ccFlag, ccSet, mcFlag, mcSet, agentFlag, modelFlag, variantFlag, cmd.Flags().Changed("variant"), parallelFlag, parallelSet)
 		},
 	}
 
 	cmd.Flags().String("agent", "", "Override default_review_agent for this run")
 	cmd.Flags().String("model", "", "Override default_review_model for this run")
+	cmd.Flags().String("variant", "", "Override review_variant for this run")
 	cmd.Flags().String("sandbox", "", "Sandbox mode: podman (default), docker, or worktree")
 	cmd.Flags().Int("parallel", 0, "Override parallel_reviews for this run; 0 uses the configured value")
 	cmd.Flags().Int("container-capacity", 0, "Maximum concurrent agent runs per container; 0 means unlimited")
@@ -94,7 +97,7 @@ func NewReviewCmd(deps Dependencies) *cobra.Command {
 // runReviewDaemon wires and runs the review daemon. The cmd layer owns
 // the SIGINT/SIGTERM signal handling; the daemon handles the polling
 // loop and the in-flight batch cancellation.
-func runReviewDaemon(parent context.Context, deps Dependencies, cfg *config.Config, sandbox string, cc int, ccSet bool, mc int, mcSet bool, agentFlag string, modelFlag string, parallel int, parallelSet bool) error {
+func runReviewDaemon(parent context.Context, deps Dependencies, cfg *config.Config, sandbox string, cc int, ccSet bool, mc int, mcSet bool, agentFlag string, modelFlag string, variantFlag string, variantSet bool, parallel int, parallelSet bool) error {
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	defer signal.Stop(sigCh)
@@ -135,6 +138,8 @@ func runReviewDaemon(parent context.Context, deps Dependencies, cfg *config.Conf
 	d.MaxContainersSet = mcSet
 	d.Agent = agentFlag
 	d.Model = modelFlag
+	d.Variant = variantFlag
+	d.VariantSet = variantSet
 	d.SetSocket(ctlSocket)
 	return d.Run(ctx)
 }

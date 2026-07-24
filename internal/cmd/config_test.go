@@ -259,6 +259,7 @@ git:
 		"variant: ",
 		"review_agent: opencode",
 		"review_model: opencode/big-pickle",
+		"review_variant: ",
 		"build_tools: go",
 		"review_command: /review please",
 		"parallel: 3",
