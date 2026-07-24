@@ -7,10 +7,13 @@ import (
 	"testing"
 )
 
-func TestReleaseBootstrapUsesCuratedChangelogAndExactInitialVersion(t *testing.T) {
+func TestReleaseConfigUsesPrereleaseBaselineAndExactInitialVersion(t *testing.T) {
 	config := readRepositoryFile(t, "../release-please-config.json")
 	var releaseConfig struct {
-		Packages map[string]struct {
+		Versioning     string `json:"versioning"`
+		Prerelease     bool   `json:"prerelease"`
+		PrereleaseType string `json:"prerelease-type"`
+		Packages       map[string]struct {
 			ChangelogPath string `json:"changelog-path"`
 			ReleaseAs     string `json:"release-as"`
 		} `json:"packages"`
@@ -18,13 +21,16 @@ func TestReleaseBootstrapUsesCuratedChangelogAndExactInitialVersion(t *testing.T
 	if err := json.Unmarshal([]byte(config), &releaseConfig); err != nil {
 		t.Fatalf("parse release-please-config.json: %v", err)
 	}
+	if releaseConfig.Versioning != "prerelease" || !releaseConfig.Prerelease || releaseConfig.PrereleaseType != "rc" {
+		t.Fatalf("release config prerelease settings = (%q, %t, %q), want (prerelease, true, rc)", releaseConfig.Versioning, releaseConfig.Prerelease, releaseConfig.PrereleaseType)
+	}
 
 	root := releaseConfig.Packages["."]
 	if root.ChangelogPath != "CHANGELOG.md" {
 		t.Fatalf("bootstrap changelog path = %q, want CHANGELOG.md", root.ChangelogPath)
 	}
-	if root.ReleaseAs != "1.0.0" {
-		t.Fatalf("bootstrap release-as = %q, want 1.0.0", root.ReleaseAs)
+	if root.ReleaseAs != "1.0.0-rc.1" {
+		t.Fatalf("initial release-as = %q, want 1.0.0-rc.1", root.ReleaseAs)
 	}
 
 	manifest := readRepositoryFile(t, "../.release-please-manifest.json")
@@ -32,12 +38,12 @@ func TestReleaseBootstrapUsesCuratedChangelogAndExactInitialVersion(t *testing.T
 	if err := json.Unmarshal([]byte(manifest), &versions); err != nil {
 		t.Fatalf("parse .release-please-manifest.json: %v", err)
 	}
-	if len(versions) != 1 || versions["."] != "1.0.0" {
-		t.Fatalf("bootstrap manifest = %#v, want {\".\": \"1.0.0\"}", versions)
+	if len(versions) != 1 || versions["."] != "0.2.0" {
+		t.Fatalf("release manifest = %#v, want {\".\": \"0.2.0\"}", versions)
 	}
 }
 
-func TestReleaseBootstrapPreservesCuratedChangelogAndNoDevNull(t *testing.T) {
+func TestReleaseBaselinePreservesCuratedChangelogAndNoDevNull(t *testing.T) {
 	if _, err := os.Stat("../dev/null"); err == nil {
 		t.Fatal("release automation must not create repository file dev/null")
 	} else if !os.IsNotExist(err) {
@@ -46,7 +52,7 @@ func TestReleaseBootstrapPreservesCuratedChangelogAndNoDevNull(t *testing.T) {
 
 	changelog := readRepositoryFile(t, "../CHANGELOG.md")
 	for _, required := range []string{
-		"## [1.0.0] - 2026-07-22",
+		"## [0.2.0] - 2026-07-22",
 		"### Added",
 		"`rust` BuildToolsPreset.",
 		"### Changed",
@@ -55,7 +61,7 @@ func TestReleaseBootstrapPreservesCuratedChangelogAndNoDevNull(t *testing.T) {
 		"`--continue` no longer carries forward a stale",
 		"### Removed",
 		"`--ralph` flag",
-		"[1.0.0]: https://github.com/rafaelromao/sandman/releases/tag/v1.0.0",
+		"[0.2.0]: https://github.com/rafaelromao/sandman/releases/tag/v0.2.0",
 	} {
 		if !strings.Contains(changelog, required) {
 			t.Errorf("curated changelog missing %q", required)
@@ -66,8 +72,8 @@ func TestReleaseBootstrapPreservesCuratedChangelogAndNoDevNull(t *testing.T) {
 	if strings.Contains(releasing, "/dev/null") {
 		t.Fatal("release guide must not describe /dev/null as the changelog path")
 	}
-	if !strings.Contains(releasing, "After `v1.0.0` is created, the release workflow removes that override") {
-		t.Fatal("release guide must require removing the bootstrap override after v1.0.0")
+	if !strings.Contains(releasing, "After `v1.0.0-rc.1` is created, remove the one-time override") {
+		t.Fatal("release guide must require removing the prerelease override after v1.0.0-rc.1")
 	}
 }
 
@@ -80,14 +86,14 @@ func TestReleaseWorkflowPublishesConfiguredReleaseArtifacts(t *testing.T) {
 		"version: v2.10.1",
 		"args: release --clean",
 		"GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}",
-		"name: Remove first-release override",
-		"refs/tags/v1.0.0",
-		"jq 'del(.packages[\".\"][\"release-as\"])'",
-		"git commit -m \"chore(release): remove first-release override\"",
-		"HEAD:main",
 	} {
 		if !strings.Contains(release, required) {
 			t.Errorf("release workflow missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{"Remove first-release override", "refs/tags/v1.0.0", "release-as\\\": \\\"1.0.0\\\"", "jq 'del(.packages"} {
+		if strings.Contains(release, forbidden) {
+			t.Errorf("release workflow still contains bootstrap cleanup %q", forbidden)
 		}
 	}
 
@@ -134,17 +140,17 @@ func TestBinaryInstallationDocumentationMatchesReleaseContract(t *testing.T) {
 	for _, required := range []string{
 		"https://github.com/rafaelromao/sandman/releases/download/v${VERSION}",
 		"sandman_<version>_<os>_<arch>.tar.gz",
-		"sandman_1.0.0_linux_amd64.tar.gz",
-		"sandman_1.0.0_darwin_amd64.tar.gz",
-		"sandman_1.0.0_darwin_arm64.tar.gz",
+		"sandman_1.0.0-rc.1_linux_amd64.tar.gz",
+		"sandman_1.0.0-rc.1_darwin_amd64.tar.gz",
+		"sandman_1.0.0-rc.1_darwin_arm64.tar.gz",
 		"checksums.txt",
 		"TARGET_ARCHIVE=\"sandman_${VERSION}_linux_amd64.tar.gz\"",
 		"grep -F \"  ${TARGET_ARCHIVE}\" checksums.txt | sha256sum -c -",
 		"grep -F \"  ${TARGET_ARCHIVE}\" checksums.txt | shasum -a 256 -c -",
-		"VERSION=1.0.0",
+		"VERSION=1.0.0-rc.1",
 		"sandman --version",
-		"sandman 1.0.0",
-		"go install github.com/rafaelromao/sandman/cmd/sandman@v1.0.0",
+		"sandman 1.0.0-rc.1",
+		"go install github.com/rafaelromao/sandman/cmd/sandman@v1.0.0-rc.1",
 		"Install from source",
 	} {
 		if !strings.Contains(install, required) {

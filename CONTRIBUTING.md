@@ -125,7 +125,7 @@ Change-request and commit titles follow the [Conventional Commits](https://www.c
 
 - **Allowed types:** `feat`, `fix`, `perf`, `docs`, `refactor`, `test`, `build`, `ci`, `chore`, `revert`. Append `!` (for example `feat!:`) only when the change is breaking.
 - **Imperative mood:** write titles as commands ("Add feature" not "Added feature" or "Adds feature").
-- The full regex is documented in [`AGENTS.md`](AGENTS.md#branching-and-versioning-rules). Release Please derives SemVer from merged commit history, not from the title check alone; see the [releasing guide](docs/development/releasing.md#versioning-policy) for the mapping. The initial bootstrap is forced to `1.0.0` by a one-time `release-as` setting, which must be removed after tag `v1.0.0` is created.
+- The full regex is documented in [`AGENTS.md`](AGENTS.md#branching-and-versioning-rules). Release Please derives SemVer from merged commit history, not from the title check alone; see the [releasing guide](docs/development/releasing.md#versioning-policy) for the mapping. The first prerelease is forced to `1.0.0-rc.1` by a one-time `release-as` setting, which must be removed after tag `v1.0.0-rc.1` is created.
 
 ## Non-Code Contributions
 

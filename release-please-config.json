@@ -1,9 +1,12 @@
 {
+  "versioning": "prerelease",
+  "prerelease": true,
+  "prerelease-type": "rc",
   "packages": {
     ".": {
       "release-type": "go",
       "changelog-path": "CHANGELOG.md",
-      "release-as": "1.0.0"
+      "release-as": "1.0.0-rc.1"
     }
   }
 }
