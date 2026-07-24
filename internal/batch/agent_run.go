@@ -181,7 +181,7 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.IssueRenderer, comma
 }
 
 func (r *AgentRun) variantFlag(command string) string {
-	if r.variant == "" || r.preset == "" || !strings.Contains(command, "{{.VariantFlag}}") {
+	if r.variant == "" || r.preset != "opencode" || command != config.BuiltInAgentPresets["opencode"].Command {
 		return ""
 	}
 	return "--variant " + shellenv.Quote(r.variant)
