@@ -184,6 +184,8 @@ func TestScaffold_PreCommitHookExistsWarnsAndSkipsInstall(t *testing.T) {
 }
 
 func TestScaffold_PreCommitHookExistsIsSilentWithoutDiagnostics(t *testing.T) {
+	t.Parallel()
+
 	tmp := t.TempDir()
 	hooksDir := filepath.Join(tmp, ".git", "hooks")
 	if err := os.MkdirAll(hooksDir, 0o755); err != nil {
@@ -209,6 +211,8 @@ func TestScaffold_PreCommitHookExistsIsSilentWithoutDiagnostics(t *testing.T) {
 }
 
 func TestScaffold_PreCommitHookErrorsAreFatal(t *testing.T) {
+	t.Parallel()
+
 	tmp := t.TempDir()
 	hooksDir := filepath.Join(tmp, ".git", "hooks")
 	if err := os.MkdirAll(filepath.Dir(hooksDir), 0o755); err != nil {
