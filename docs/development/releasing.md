@@ -55,10 +55,12 @@ repository's current policy is:
 | `docs:`, `chore:`, `refactor:`, `test:`, `build:`, `ci:`, `revert:` | No release bump |
 
 Use a `!` after the type or scope for a breaking `feat`, `fix`, or `perf`.
-Conventional Commits also defines a `BREAKING CHANGE:` footer; when a change
-is breaking, use the repository's accepted breaking title form so the commit
-history, change-request title, and CI policy agree. The title gate does not
-accept arbitrary breaking variants such as `docs!:`.
+Conventional Commits also defines a `BREAKING CHANGE:` footer. Release Please
+can use either marker when parsing a release-bearing commit; either marker
+changes that commit's effect to a major release. For this repository, use the
+accepted `feat!`, `fix!`, or `perf!` title form as well so the commit history,
+change-request title, and CI policy agree. The title gate does not accept
+arbitrary breaking variants such as `docs!:`.
 
 This is separate from pull-request title validation. The
 `semantic-pull-request` job validates the title of every change request using
@@ -102,13 +104,18 @@ The sources of that value differ by build path:
 |------------|---------------|
 | Release binary | GoReleaser injects `.Version` into `main.version`; the release tag is `v1.0.0`, while GoReleaser's version value is displayed without the tag's `v` prefix (for example `1.0.0`) |
 | `make build` | `VERSION` may be supplied explicitly; otherwise it comes from `git describe --tags --always --dirty`, so it can be `v1.0.0`, a commit hash, or a dirty description |
-| `go install ./cmd/sandman` | The Makefile is bypassed; Go build information supplies a module pseudo-version when available, otherwise the binary reports `dev` |
+| `go install ./cmd/sandman` | The Makefile is bypassed; a local checkout normally reports Go's `(devel)` build-info version, while a module install from a versioned source can report a pseudo-version; the final fallback is `dev` |
 | `go install github.com/rafaelromao/sandman/cmd/sandman@v1.0.0` | Go embeds the requested module version, normally `v1.0.0` |
 
 The intentional policy is to preserve the `v` prefix on Git tags and Go module
 versions, while accepting the GoReleaser and local-build differences described
 above. A release artifact's version output should therefore be checked with
 `sandman --version`, not inferred from the archive filename alone.
+
+The prompt guidance repeats the title/history distinction so agents do not
+mistake the CI title gate for release calculation. It was verified against the
+regex in `AGENTS.md`, `.github/workflows/go.yml`, the Release Please config, and
+the version command tests.
 
 ## Maintainer Follow-ups
 

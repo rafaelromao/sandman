@@ -56,6 +56,7 @@
     "development/testing.md",
     "development/test-infrastructure.md",
     "development/documentation.md",
+    "development/releasing.md",
   ];
 
   var sidebar = document.getElementById("sidebar");
