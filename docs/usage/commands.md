@@ -1,5 +1,14 @@
 # Commands Reference
 
+## `sandman version`
+
+Print the installed Sandman version. It uses the same version value as
+`sandman --version` and prints it as `sandman <version>`.
+
+```bash
+sandman version
+```
+
 ## `sandman init`
 
 Scaffolds `.sandman/` configuration files in the current directory.
