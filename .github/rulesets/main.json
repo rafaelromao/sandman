@@ -12,7 +12,8 @@
       "type": "required_status_checks",
       "parameters": {
         "required_status_checks": [
-          { "context": "CI / build" },
+          { "context": "CI / build (ubuntu-latest)" },
+          { "context": "CI / build (macos-latest)" },
           { "context": "CI / semantic-pull-request" }
         ],
         "strict_required_status_checks_policy": false

@@ -16,6 +16,8 @@ func TestReleaseWorkflowUsesCredentialThatTriggersReleasePRChecks(t *testing.T) 
 		"contents: write",
 		"issues: write",
 		"pull-requests: write",
+		"name: Verify release credential",
+		"RELEASE_PLEASE_TOKEN repository secret is required",
 		"RELEASE_PLEASE_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN }}",
 		"token: ${{ secrets.RELEASE_PLEASE_TOKEN }}",
 	} {
@@ -35,7 +37,8 @@ func TestReleaseWorkflowUsesCredentialThatTriggersReleasePRChecks(t *testing.T) 
 	}
 
 	for _, required := range []string{
-		`"context": "CI / build"`,
+		`"context": "CI / build (ubuntu-latest)"`,
+		`"context": "CI / build (macos-latest)"`,
 		`"context": "CI / semantic-pull-request"`,
 	} {
 		if !strings.Contains(ruleset, required) {
