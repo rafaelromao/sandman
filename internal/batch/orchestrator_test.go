@@ -5490,6 +5490,219 @@ func TestRunBatch_PromptOnlyReviewRunEmitsReviewTag(t *testing.T) {
 	}
 }
 
+type qualityRulesTestSandbox struct {
+	*fakeSandbox
+	startCheck func(string)
+}
+
+func (s *qualityRulesTestSandbox) Start(opts sandbox.SandboxStart) error {
+	if s.startCheck != nil {
+		s.startCheck(s.workDir)
+	}
+	return s.fakeSandbox.Start(opts)
+}
+
+type qualityRulesTestRunnableFactory struct {
+	wantBody      []byte
+	expectPresent bool
+	err           error
+}
+
+func (f *qualityRulesTestRunnableFactory) NewRunnable(_ *github.Issue, branch string, sb sandbox.Sandbox) Runnable {
+	target := filepath.Join(sb.WorkDir(), ".sandman", "reviews", "quality-rules.md")
+	got, err := os.ReadFile(target)
+	if !f.expectPresent && os.IsNotExist(err) {
+		return &fakeRunnable{result: AgentRunResult{Status: "success", Branch: branch}}
+	}
+	if err != nil {
+		f.err = err
+	} else if !bytes.Equal(got, f.wantBody) {
+		f.err = fmt.Errorf("quality rules body = %q, want %q", got, f.wantBody)
+	}
+	return &fakeRunnable{result: AgentRunResult{Status: "success", Branch: branch}}
+}
+
+func newQualityRulesPromptOnlyOrchestrator(t *testing.T, worktreeBase string, runnableFactory *qualityRulesTestRunnableFactory, startCheck func(string), errLog io.Writer) *Orchestrator {
+	t.Helper()
+	sandboxFactory := sandboxFactoryFunc(func(_, _, branch, _ string, _ sandbox.Container) sandbox.Sandbox {
+		worktree := filepath.Join(worktreeBase, branch)
+		if err := os.MkdirAll(worktree, 0755); err != nil {
+			t.Fatalf("create worktree: %v", err)
+		}
+		return &qualityRulesTestSandbox{
+			fakeSandbox: &fakeSandbox{workDir: worktree},
+			startCheck:  startCheck,
+		}
+	})
+	opts := []OrchestratorOpt{
+		WithSandboxFactory(sandboxFactory),
+		WithRunnableFactory(runnableFactory),
+		WithRunSessionOpts(runSessionOptions{
+			baseBranchSync: func(string, string) error { return nil },
+		}),
+	}
+	if errLog != nil {
+		opts = append(opts, WithErrorLog(errLog))
+	}
+	return NewOrchestrator(
+		&fakeGitHubClient{err: errors.New("fetch should not run")},
+		&noopRenderer{},
+		&fakeConfigStore{config: &config.Config{
+			Agent:       "test-agent",
+			Sandbox:     "worktree",
+			WorktreeDir: worktreeBase,
+			Git:         config.GitConfig{BaseBranch: "main"},
+			AgentProviders: map[string]config.Agent{
+				"test-agent": {Command: "true"},
+			},
+		}},
+		nil,
+		opts...,
+	)
+}
+
+func TestRunBatch_PromptOnlyReviewCopiesQualityRulesBeforeAgent(t *testing.T) {
+	dir := testenv.MkdirShort(t, "sm-orch-")
+	t.Chdir(dir)
+	initGitRepo(t, dir)
+
+	worktreeBase := filepath.Join(dir, "worktrees")
+	source := filepath.Join(dir, "quality-rules.md")
+	wantBody := []byte("# quality rules\n")
+	if err := os.WriteFile(source, wantBody, 0644); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+
+	var startSawTarget bool
+	runnableFactory := &qualityRulesTestRunnableFactory{wantBody: wantBody, expectPresent: true}
+
+	o := newQualityRulesPromptOnlyOrchestrator(t, worktreeBase, runnableFactory, func(workDir string) {
+		_, err := os.Stat(filepath.Join(workDir, ".sandman", "reviews", "quality-rules.md"))
+		startSawTarget = err == nil
+	}, nil)
+
+	_, err := o.RunBatch(context.Background(), Request{
+		Review:           true,
+		PRNumber:         2400,
+		QualityRulesFile: source,
+		Mode:             map[int]IssueMode{0: ModeOverride},
+		PromptConfig: prompt.RenderConfig{
+			PromptFlag: "Review the PR.",
+			Branch:     "review-2400",
+		},
+		RunID:      "PR2400",
+		BaseBranch: "main",
+	})
+	if err != nil {
+		t.Fatalf("prompt-only review: %v", err)
+	}
+	if startSawTarget {
+		t.Fatal("quality rules copied before sandbox startup completed")
+	}
+	if runnableFactory.err != nil {
+		t.Fatalf("quality rules were not available before agent creation: %v", runnableFactory.err)
+	}
+}
+
+func TestRunBatch_PromptOnlyImplementationDoesNotCopyQualityRules(t *testing.T) {
+	dir := testenv.MkdirShort(t, "sm-orch-")
+	t.Chdir(dir)
+	initGitRepo(t, dir)
+
+	worktreeBase := filepath.Join(dir, "worktrees")
+	source := filepath.Join(dir, "quality-rules.md")
+	if err := os.WriteFile(source, []byte("# quality rules\n"), 0644); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+
+	runnableFactory := &qualityRulesTestRunnableFactory{}
+	o := newQualityRulesPromptOnlyOrchestrator(t, worktreeBase, runnableFactory, nil, nil)
+
+	_, err := o.RunBatch(context.Background(), Request{
+		QualityRulesFile: source,
+		Mode:             map[int]IssueMode{0: ModeOverride},
+		PromptConfig: prompt.RenderConfig{
+			PromptFlag: "Run the implementation.",
+			Branch:     "implementation-2401",
+		},
+		RunID:      "prompt2401",
+		BaseBranch: "main",
+	})
+	if err != nil {
+		t.Fatalf("prompt-only implementation: %v", err)
+	}
+	if runnableFactory.err != nil {
+		t.Fatalf("implementation run copied quality rules: %v", runnableFactory.err)
+	}
+}
+
+func TestRunBatch_PromptOnlyReviewMissingQualityRulesIsNonFatal(t *testing.T) {
+	dir := testenv.MkdirShort(t, "sm-orch-")
+	t.Chdir(dir)
+	initGitRepo(t, dir)
+
+	worktreeBase := filepath.Join(dir, "worktrees")
+	source := filepath.Join(dir, "missing-quality-rules.md")
+	runnableFactory := &qualityRulesTestRunnableFactory{}
+	o := newQualityRulesPromptOnlyOrchestrator(t, worktreeBase, runnableFactory, nil, nil)
+
+	_, err := o.RunBatch(context.Background(), Request{
+		Review:           true,
+		PRNumber:         2400,
+		QualityRulesFile: source,
+		Mode:             map[int]IssueMode{0: ModeOverride},
+		PromptConfig: prompt.RenderConfig{
+			PromptFlag: "Review the PR.",
+			Branch:     "review-missing-quality-rules",
+		},
+		RunID:      "PR2400missing",
+		BaseBranch: "main",
+	})
+	if err != nil {
+		t.Fatalf("review with missing quality rules: %v", err)
+	}
+	if runnableFactory.err != nil {
+		t.Fatalf("missing source made review non-fatal contract fail: %v", runnableFactory.err)
+	}
+}
+
+func TestRunBatch_PromptOnlyReviewQualityRulesReadErrorIsNonFatal(t *testing.T) {
+	dir := testenv.MkdirShort(t, "sm-orch-")
+	t.Chdir(dir)
+	initGitRepo(t, dir)
+
+	worktreeBase := filepath.Join(dir, "worktrees")
+	source := filepath.Join(dir, "quality-rules-directory")
+	if err := os.Mkdir(source, 0755); err != nil {
+		t.Fatalf("create source directory: %v", err)
+	}
+	runnableFactory := &qualityRulesTestRunnableFactory{}
+	var errLog bytes.Buffer
+	o := newQualityRulesPromptOnlyOrchestrator(t, worktreeBase, runnableFactory, nil, &errLog)
+
+	_, err := o.RunBatch(context.Background(), Request{
+		Review:           true,
+		PRNumber:         2400,
+		QualityRulesFile: source,
+		Mode:             map[int]IssueMode{0: ModeOverride},
+		PromptConfig: prompt.RenderConfig{
+			PromptFlag: "Review the PR.",
+			Branch:     "review-quality-rules-read-error",
+		},
+		RunID:      "PR2400readerror",
+		BaseBranch: "main",
+	})
+	if err != nil {
+		t.Fatalf("review with unreadable quality rules: %v", err)
+	}
+	if runnableFactory.err != nil {
+		t.Fatalf("quality-rules read error prevented review execution: %v", runnableFactory.err)
+	}
+	if !strings.Contains(errLog.String(), "warn: copy quality rules into review worktree for prompt-only run") {
+		t.Fatalf("quality-rules read error was not logged as a warning: %q", errLog.String())
+	}
+}
+
 func TestRunBatch_PromptOnlyReviewRunResultCarriesReviewIdentity(t *testing.T) {
 	dir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(dir)
