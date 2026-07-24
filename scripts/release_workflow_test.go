@@ -66,6 +66,9 @@ func TestReleaseBootstrapPreservesCuratedChangelogAndNoDevNull(t *testing.T) {
 	if strings.Contains(releasing, "/dev/null") {
 		t.Fatal("release guide must not describe /dev/null as the changelog path")
 	}
+	if !strings.Contains(releasing, "Remove that override after `v1.0.0` is created") {
+		t.Fatal("release guide must require removing the bootstrap override after v1.0.0")
+	}
 }
 
 func TestReleaseWorkflowPublishesConfiguredReleaseArtifacts(t *testing.T) {
