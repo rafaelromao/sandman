@@ -51,6 +51,7 @@ func NewInitCmd() *cobra.Command {
 		Use:   "init",
 		Short: "Initialize a new Sandman project in the current directory",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			verbose, _ := cmd.Flags().GetBool("verbose")
 			buildTools, _ := cmd.Flags().GetString("build-tools")
 			toolVersion, _ := cmd.Flags().GetString("tool-version")
 			agent, _ := cmd.Flags().GetString("agent")
@@ -80,6 +81,11 @@ func NewInitCmd() *cobra.Command {
 				return fmt.Errorf("get working directory: %w", err)
 			}
 
+			var writer io.Writer
+			if verbose {
+				writer = cmd.OutOrStdout()
+			}
+
 			if err := s.Scaffold(wd, scaffold.Options{
 				BuildTools:      buildTools,
 				ToolVersion:     toolVersion,
@@ -91,7 +97,7 @@ func NewInitCmd() *cobra.Command {
 				ReviewCommand:   reviewCommand,
 				Retries:         retriesOverride,
 				RunIdleTimeout:  runIdleTimeoutOverride,
-				Writer:          cmd.OutOrStdout(),
+				Writer:          writer,
 			}, prompter); err != nil {
 				return err
 			}
@@ -111,6 +117,7 @@ func NewInitCmd() *cobra.Command {
 	}
 
 	cmd.Flags().String("build-tools", "", fmt.Sprintf("Build tools preset (%s)", strings.Join(scaffold.KnownBuildToolsPresets, ", ")))
+	cmd.Flags().BoolP("verbose", "v", false, "Print diagnostic output")
 	cmd.Flags().String("tool-version", "", "Logical version selector (repo, latest, lts, or semver shorthand)")
 	cmd.Flags().String("agent", "", "Default built-in agent preset (opencode)")
 	cmd.Flags().String("model", "", "Default model for the agent")
