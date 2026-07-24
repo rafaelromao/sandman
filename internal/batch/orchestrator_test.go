@@ -5511,7 +5511,14 @@ type qualityRulesTestRunnableFactory struct {
 func (f *qualityRulesTestRunnableFactory) NewRunnable(_ *github.Issue, branch string, sb sandbox.Sandbox) Runnable {
 	target := filepath.Join(sb.WorkDir(), ".sandman", "reviews", "quality-rules.md")
 	got, err := os.ReadFile(target)
-	if !f.expectPresent && os.IsNotExist(err) {
+	if !f.expectPresent {
+		if err == nil {
+			f.err = fmt.Errorf("quality rules unexpectedly exist at %s", target)
+		} else if os.IsNotExist(err) {
+			return &fakeRunnable{result: AgentRunResult{Status: "success", Branch: branch}}
+		} else {
+			f.err = err
+		}
 		return &fakeRunnable{result: AgentRunResult{Status: "success", Branch: branch}}
 	}
 	if err != nil {
