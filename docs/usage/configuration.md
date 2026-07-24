@@ -12,6 +12,10 @@ agent: opencode
 # Falls back to the agent provider's configured model if empty.
 model: opencode/big-pickle
 
+# Optional provider-specific implementation model variant. Empty disables
+# forwarding --variant to the built-in OpenCode command.
+variant: ""
+
 # Default agent preset used for review runs when `--agent` is omitted in `sandman review`.
 review_agent: opencode
 
@@ -167,4 +171,3 @@ If `user.name` or `user.email` is still missing after that lookup, `sandman run`
 See [Commands Reference](commands.md) for the full list of supported dot-notation keys.
 
 For build-tool preset detection and language version selectors, see [Scaffolding and Supported Languages](scaffolding.md).
-

@@ -62,6 +62,7 @@ type BatchConfig struct {
 	Cfg                        *config.Config
 	AgentName                  string
 	AgentCfg                   config.Agent
+	Variant                    string
 	IdentityResolver           *gitIdentityResolver
 	Parallel                   int
 	StartDelay                 time.Duration
@@ -190,6 +191,7 @@ func newRunSession(e *runExecutor, row RowSpec) *runSession {
 		cfg:                        bc.Cfg,
 		agentName:                  bc.AgentName,
 		agentCfg:                   bc.AgentCfg,
+		variant:                    bc.Variant,
 		mode:                       row.Mode,
 		previousRunIDs:             row.PreviousRunIDs,
 		identityResolver:           bc.IdentityResolver,

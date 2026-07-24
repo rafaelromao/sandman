@@ -65,6 +65,7 @@ type Options struct {
 	ToolVersion     string // --tool-version override
 	Agent           string // --agent override
 	Model           string // --model override
+	Variant         string // --variant override
 	Parallel        int    // --parallel override (-1 = use config default)
 	ParallelReviews int    // --parallel-reviews override (-1 = use config default)
 	ReviewCommand   string // --review-command override
@@ -542,6 +543,7 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 	cfg := &config.Config{
 		DefaultAgent:          defaultAgent,
 		DefaultModel:          model,
+		Variant:               strings.TrimSpace(opts.Variant),
 		DefaultReviewAgent:    config.DefaultReviewAgent,
 		DefaultReviewModel:    config.DefaultReviewModel,
 		BuildTools:            preset.Name,

@@ -2936,6 +2936,43 @@ func TestRunBatch_ModelPrecedenceAndDefaultBehavior(t *testing.T) {
 	}
 }
 
+func TestRunBatch_UsesVariantInCommandAndImplementationEvent(t *testing.T) {
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug", Body: "Users cannot log in."}},
+		prs:    map[string]*github.PR{"42-fix-bug": mergedPR("42-fix-bug", "")},
+	}
+	sb := &fakeSandbox{}
+	log := &spyEventLog{}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{
+		Agent:       "opencode",
+		Variant:     "configured/provider",
+		Sandbox:     "worktree",
+		WorktreeDir: ".sandman/worktrees",
+		Git:         config.GitConfig{BaseBranch: "main"},
+		AgentProviders: map[string]config.Agent{
+			"opencode": {Preset: "opencode"},
+		},
+	}}, log, WithSandboxFactory(&fakeSandboxFactory{sandbox: sb}))
+
+	if _, err := o.RunBatch(context.Background(), Request{Issues: []int{42}, RunTS: orchTestRunTS, RunShortID: orchTestRunShortID}); err != nil {
+		t.Fatalf("unexpected configured variant run error: %v", err)
+	}
+	if !strings.Contains(sb.execCommand, `--variant 'configured/provider'`) {
+		t.Fatalf("expected configured variant in command, got %q", sb.execCommand)
+	}
+
+	var started events.Event
+	for _, event := range log.snapshot() {
+		if event.Type == "run.started" {
+			started = event
+			break
+		}
+	}
+	if got, ok := started.Payload["variant"].(string); !ok || got != "configured/provider" {
+		t.Fatalf("start payload variant = %#v, want configured/provider", started.Payload["variant"])
+	}
+}
+
 func TestRunBatch_SendsSIGKILLAfterTimeout(t *testing.T) {
 	client := &fakeGitHubClient{
 		issues: map[int]*github.Issue{

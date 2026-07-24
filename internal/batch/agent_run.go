@@ -29,6 +29,7 @@ type AgentRun struct {
 	model                      string
 	modelProvider              string
 	modelName                  string
+	variant                    string
 	dangerouslySkipPermissions *bool
 	opencodePermissionMode     string
 	sessionName                string
@@ -151,6 +152,7 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.IssueRenderer, comma
 	renderedCmd, err := RenderCommand(command, CommandData{
 		PromptFile:                 renderedPromptFile,
 		ModelFlag:                  r.modelFlag(command),
+		VariantFlag:                r.variantFlag(command),
 		ModelProvider:              r.modelProvider,
 		ModelName:                  r.modelName,
 		DangerouslySkipPermissions: r.dangerouslySkipPermissions != nil && *r.dangerouslySkipPermissions,
@@ -176,6 +178,13 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.IssueRenderer, comma
 		return r.Result()
 	}
 	return r.Result()
+}
+
+func (r *AgentRun) variantFlag(command string) string {
+	if r.variant == "" || r.preset == "" || !strings.Contains(command, "{{.VariantFlag}}") {
+		return ""
+	}
+	return "--variant " + shellenv.Quote(r.variant)
 }
 
 // prependEnv returns command prefixed with `export KEY=VALUE; ...` entries
