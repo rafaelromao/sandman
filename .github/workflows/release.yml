@@ -1,0 +1,31 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: googleapis/release-please-action@v4
+        id: release-please
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+      - uses: actions/checkout@v4
+        if: steps.release-please.outputs.release_created == 'true'
+        with:
+          fetch-depth: 0
+      - uses: goreleaser/goreleaser-action@v6
+        if: steps.release-please.outputs.release_created == 'true'
+        with:
+          args: release --clean
+          version: latest
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
