@@ -17,6 +17,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/paths"
 	"github.com/rafaelromao/sandman/internal/prompt"
 	"github.com/rafaelromao/sandman/internal/sandbox"
+	"github.com/rafaelromao/sandman/internal/shellenv"
 )
 
 type fakeProcess struct {
@@ -297,6 +298,45 @@ func TestAgentRun_Run_IncludesModelFlagForBuiltInPreset(t *testing.T) {
 	want := `opencode run -m gpt-4.1 "$(cat .sandman/task.md)"`
 	if sb.execCommand != want {
 		t.Errorf("expected command %q, got %q", want, sb.execCommand)
+	}
+}
+
+func TestAgentRun_RunQuotesOpaqueVariantAsOneArgument(t *testing.T) {
+	dir := t.TempDir()
+	issue := &github.Issue{Number: 42, Title: "Fix bug"}
+	sb := &fakeSandbox{workDir: dir}
+	spy := &spyRenderer{result: "rendered prompt"}
+
+	run := NewAgentRun(issue, "42-fix-bug", sb)
+	run.preset = "opencode"
+	run.variant = "provider/foo; echo hacked 'x' $()"
+
+	res := run.Run(context.Background(), spy, config.BuiltInAgentPresets["opencode"].Command, prompt.RenderConfig{})
+	if res.Status != "success" {
+		t.Fatalf("expected success, got %s", res.Status)
+	}
+	want := `opencode run --variant ` + shellenv.Quote(run.variant) + ` "$(cat .sandman/task.md)"`
+	if sb.execCommand != want {
+		t.Errorf("expected command %q, got %q", want, sb.execCommand)
+	}
+}
+
+func TestAgentRun_RunDoesNotInjectVariantIntoCustomCommand(t *testing.T) {
+	dir := t.TempDir()
+	issue := &github.Issue{Number: 42, Title: "Fix bug"}
+	sb := &fakeSandbox{workDir: dir}
+	spy := &spyRenderer{result: "rendered prompt"}
+
+	run := NewAgentRun(issue, "42-fix-bug", sb)
+	run.preset = "opencode"
+	run.variant = "provider/foo"
+	command := `opencode run {{.VariantFlag}} "$(cat {{.PromptFile}})"`
+	if res := run.Run(context.Background(), spy, command, prompt.RenderConfig{}); res.Status != "success" {
+		t.Fatalf("expected success")
+	}
+	want := `opencode run  "$(cat .sandman/task.md)"`
+	if sb.execCommand != want {
+		t.Errorf("expected custom command %q, got %q", want, sb.execCommand)
 	}
 }
 

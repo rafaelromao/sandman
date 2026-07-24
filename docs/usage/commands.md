@@ -16,6 +16,7 @@ sandman init [flags]
 | `--tool-version` | `""` | Version selector (`latest`, `lts`, `repo`, or semver shorthand) |
 | `--agent` | `""` | Default built-in agent preset for `init` (`opencode`) |
 | `--model` | `""` | Default model for the agent |
+| `--variant` | `""` | Default provider-specific implementation model variant |
 | `--parallel` | `-1` | Default parallel container count (`-1` = use config default 1) |
 | `--review-command` | `""` | Review command stored as `review_command` in project config; defaults to `/sandman review` (requires `sandman review` to be running) |
 | `--retries` | `-1` | Persist `retries` in scaffolded config. `-1` keeps the built-in default of `3`; `0` disables retries |
@@ -67,6 +68,7 @@ Positional arguments (numbers and ranges) can be combined with `--label` and `--
 | `--template` | — | Path to prompt template file |
 | `--prompt-arg` | — | Custom template substitution (`KEY=VALUE`, repeatable) |
 | `--model` | `model` from config | Override the model passed to the agent for built-in presets |
+| `--variant` | `variant` from config | Override the implementation model variant; forwarded to built-in OpenCode only when non-empty |
 | `--agent` | `agent` from config (`opencode`) | Built-in agent preset for this run; on `--continue` the prior run's stored agent is no longer replayed |
 | `--run-id` | — | Batch-level identifier for prompt-only runs; must start with a letter and contain only alphanumeric characters, hyphens, and underscores; cannot be combined with issue selection |
 | `--run-idle-timeout` | `0` | Treat an AgentRun as stuck if it produces no output for N seconds; `0` disables the timeout |
@@ -87,6 +89,7 @@ Positional arguments (numbers and ranges) can be combined with `--label` and `--
 - `--container-capacity` accepts `0` as unlimited mode (no per-container cap)
 - `--max-containers` caps the number of `ContainerSandbox` instances; `0` means no cap (unbounded pool growth)
 - `--model` only applies to built-in presets; if omitted, Sandman uses `model` from config, falling back to the agent provider's configured model
+- `--variant` is trimmed and treated as opaque provider-specific text; when omitted, Sandman uses `variant` from config. On `--continue`, current CLI/config values replace the prior event value. Non-empty values are safely passed as one argument to built-in OpenCode; custom commands are unchanged.
 - `--agent` selects which built-in preset to use for this run; if omitted, Sandman uses `agent` from config
 - `--continue` cannot be combined with `--override`
 - When `--max-containers` and `--container-capacity` together constrain concurrency below `--parallel`, the tighter limit wins
@@ -125,6 +128,7 @@ Reuses the prior run's worktree identity: the existing branch, the stored base b
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--model` | `model` from config | Override the model for the continued run |
+| `--variant` | `variant` from config | Override the implementation model variant for the continued run; current CLI/config values take precedence over the prior run |
 | `--agent` | prior run's agent | Override the agent preset for the continued run |
 | `--run-id` | — | Continue the most recent prompt-only run by its batch-level identifier; must start with a letter and contain only alphanumeric characters, hyphens, and underscores; cannot be combined with issue numbers. Reads the prior task file from the existing worktree and reuses the same branch for the continued run. When the most recent Issue-0 event is a review run (not a prompt-only run), `sandman run --continue` skips it and selects the prior prompt-only run instead — or errors if none exists. |
 | `--dangerously-skip-permissions` | `true` for container runs, `false` for worktree runs | Skip permission checks for the continued run |
@@ -244,6 +248,7 @@ sandman config set <key> <value>
 |-----|------|---------|
 | `agent` | string | `opencode` |
 | `model` | string | `opencode/big-pickle` |
+| `variant` | string | `""` |
 | `review_agent` | string | `opencode` |
 | `review_model` | string | `opencode/big-pickle` |
 | `build_tools` | string | `node` |

@@ -2,6 +2,7 @@ package batch
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/rafaelromao/sandman/internal/config"
@@ -9,8 +10,8 @@ import (
 
 func TestCommandData_ExposesPromptFileAndModelFields(t *testing.T) {
 	typ := reflect.TypeOf(CommandData{})
-	if typ.NumField() != 6 {
-		t.Errorf("expected exactly 6 fields in CommandData, got %d", typ.NumField())
+	if typ.NumField() != 7 {
+		t.Errorf("expected exactly 7 fields in CommandData, got %d", typ.NumField())
 	}
 	field, ok := typ.FieldByName("PromptFile")
 	if !ok {
@@ -39,6 +40,13 @@ func TestCommandData_ExposesPromptFileAndModelFields(t *testing.T) {
 	}
 	if nameField.Type.Kind() != reflect.String {
 		t.Errorf("expected ModelName to be string, got %s", nameField.Type)
+	}
+	variantField, ok := typ.FieldByName("VariantFlag")
+	if !ok {
+		t.Fatal("expected VariantFlag field in CommandData")
+	}
+	if variantField.Type.Kind() != reflect.String {
+		t.Errorf("expected VariantFlag to be string, got %s", variantField.Type)
 	}
 	sessionField, ok := typ.FieldByName("SessionName")
 	if !ok {
@@ -108,6 +116,30 @@ func TestRenderCommand_IncludesModelFlagForBuiltInPreset(t *testing.T) {
 	want := `opencode run -m gpt-4.1 "$(cat .sandman/task.md)"`
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestRenderCommand_IncludesQuotedVariantFlagForBuiltInPreset(t *testing.T) {
+	got, err := RenderCommand(config.BuiltInAgentPresets["opencode"].Command, CommandData{
+		PromptFile:  ".sandman/task.md",
+		VariantFlag: "--variant 'provider/foo bar'",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := `opencode run --variant 'provider/foo bar' "$(cat .sandman/task.md)"`
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestRenderCommand_OmitsEmptyVariantFlag(t *testing.T) {
+	got, err := RenderCommand(config.BuiltInAgentPresets["opencode"].Command, CommandData{PromptFile: ".sandman/task.md"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if strings.Contains(got, "--variant") {
+		t.Fatalf("empty variant rendered a flag: %q", got)
 	}
 }
 

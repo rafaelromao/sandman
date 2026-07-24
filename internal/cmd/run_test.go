@@ -1659,6 +1659,51 @@ func TestRun_UsesDefaultModelWhenModelFlagOmitted(t *testing.T) {
 	}
 }
 
+func TestRun_VariantFlagOverridesConfiguredVariant(t *testing.T) {
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	deps := newRunDeps(t, spy)
+	deps.ConfigStore = &fakeStore{config: &config.Config{Agent: "opencode", Variant: "configured", ReviewCommand: "/oc review"}}
+
+	cmd := NewRunCmd(deps)
+	cmd.SetArgs([]string{"--variant", "  cli/provider  ", "42"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if spy.req.Variant != "cli/provider" || !spy.req.VariantSet {
+		t.Fatalf("variant request = %q (set=%v), want trimmed CLI override", spy.req.Variant, spy.req.VariantSet)
+	}
+}
+
+func TestRun_UsesConfiguredVariantWhenFlagOmitted(t *testing.T) {
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	deps := newRunDeps(t, spy)
+	deps.ConfigStore = &fakeStore{config: &config.Config{Agent: "opencode", Variant: "configured/provider", ReviewCommand: "/oc review"}}
+
+	cmd := NewRunCmd(deps)
+	cmd.SetArgs([]string{"42"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if spy.req.Variant != "configured/provider" || spy.req.VariantSet {
+		t.Fatalf("variant request = %q (set=%v), want config fallback", spy.req.Variant, spy.req.VariantSet)
+	}
+}
+
+func TestRun_ExplicitEmptyVariantSuppressesConfiguredVariant(t *testing.T) {
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	deps := newRunDeps(t, spy)
+	deps.ConfigStore = &fakeStore{config: &config.Config{Agent: "opencode", Variant: "configured/provider", ReviewCommand: "/oc review"}}
+
+	cmd := NewRunCmd(deps)
+	cmd.SetArgs([]string{"--variant", "   ", "42"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if spy.req.Variant != "" || !spy.req.VariantSet {
+		t.Fatalf("variant request = %q (set=%v), want explicit empty override", spy.req.Variant, spy.req.VariantSet)
+	}
+}
+
 func TestRun_DoesNotUseDefaultModelForCustomAgent(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
 	deps := newRunDeps(t, spy)
@@ -1898,6 +1943,7 @@ func TestRun_ContinueFlag_UsesCurrentFlagsOverStoredValues(t *testing.T) {
 	deps.ConfigStore = &fakeStore{config: &config.Config{
 		Agent:         "opencode-current",
 		DefaultModel:  "openai/gpt-4.1",
+		Variant:       "configured/provider",
 		WorktreeDir:   dir,
 		ReviewCommand: "/oc review",
 		Git:           config.GitConfig{BaseBranch: "trunk"},
@@ -1915,7 +1961,7 @@ func TestRun_ContinueFlag_UsesCurrentFlagsOverStoredValues(t *testing.T) {
 	cmd := NewRunCmd(deps)
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
-	cmd.SetArgs([]string{"--continue", "42"})
+	cmd.SetArgs([]string{"--continue", "--variant", " cli/provider ", "42"})
 
 	err := cmd.Execute()
 	if err != nil {
@@ -1948,6 +1994,9 @@ func TestRun_ContinueFlag_UsesCurrentFlagsOverStoredValues(t *testing.T) {
 	}
 	if spy.req.Model != "openai/gpt-4.1" {
 		t.Fatalf("expected model from cfg.DefaultModel, got %q", spy.req.Model)
+	}
+	if spy.req.Variant != "cli/provider" || !spy.req.VariantSet {
+		t.Fatalf("expected current CLI variant, got %q (set=%v)", spy.req.Variant, spy.req.VariantSet)
 	}
 	if spy.req.BaseBranch != "main" {
 		t.Fatalf("expected base branch pinned to stored value, got %q", spy.req.BaseBranch)
