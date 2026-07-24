@@ -53,6 +53,82 @@ func TestInit_CreatesSandmanFiles(t *testing.T) {
 	}
 }
 
+func TestInit_VerboseFlagSupportsLongAndShortForms(t *testing.T) {
+	for _, args := range [][]string{{"--verbose"}, {"-v"}} {
+		cmd := NewInitCmd()
+		flag := cmd.Flags().Lookup("verbose")
+		if flag == nil {
+			t.Fatal("--verbose flag missing")
+		}
+		if flag.Shorthand != "v" {
+			t.Fatalf("--verbose shorthand = %q, want %q", flag.Shorthand, "v")
+		}
+		if err := cmd.ParseFlags(args); err != nil {
+			t.Fatalf("%v should parse: %v", args, err)
+		}
+		verbose, err := cmd.Flags().GetBool("verbose")
+		if err != nil {
+			t.Fatalf("read verbose flag: %v", err)
+		}
+		if !verbose {
+			t.Fatalf("%v did not enable verbose output", args)
+		}
+	}
+}
+
+func TestInit_VerboseControlsScaffoldDiagnostics(t *testing.T) {
+	tests := []struct {
+		name       string
+		verboseArg string
+		wantWarn   bool
+	}{
+		{name: "default is quiet", wantWarn: false},
+		{name: "long form", verboseArg: "--verbose", wantWarn: true},
+		{name: "short form", verboseArg: "-v", wantWarn: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			t.Chdir(dir)
+			if err := os.MkdirAll(filepath.Join(dir, ".sandman"), 0755); err != nil {
+				t.Fatalf("create .sandman: %v", err)
+			}
+			hooksDir := filepath.Join(dir, ".git", "hooks")
+			if err := os.MkdirAll(hooksDir, 0755); err != nil {
+				t.Fatalf("create hooks directory: %v", err)
+			}
+			if err := os.WriteFile(filepath.Join(hooksDir, "pre-commit"), []byte("#!/bin/sh\n"), 0755); err != nil {
+				t.Fatalf("create pre-commit hook: %v", err)
+			}
+
+			var out bytes.Buffer
+			cmd := NewInitCmd()
+			cmd.SetOut(&out)
+			cmd.SetIn(strings.NewReader("y\n"))
+			args := []string{"--build-tools", "generic"}
+			if tt.verboseArg != "" {
+				args = append(args, tt.verboseArg)
+			}
+			cmd.SetArgs(args)
+
+			if err := cmd.Execute(); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if !strings.Contains(out.String(), "Directory .sandman/ already exists. Overwrite?") {
+				t.Fatalf("overwrite prompt missing from output: %q", out.String())
+			}
+			gotWarn := strings.Contains(out.String(), "pre-commit hook already exists")
+			if gotWarn != tt.wantWarn {
+				t.Fatalf("diagnostic warning present = %t, want %t; output: %q", gotWarn, tt.wantWarn, out.String())
+			}
+			if !strings.Contains(out.String(), "Scaffold complete.") {
+				t.Fatalf("init summary missing from output: %q", out.String())
+			}
+		})
+	}
+}
+
 func TestInit_ReviewCommandFlagStoredInConfig(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)

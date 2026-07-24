@@ -166,7 +166,7 @@ func TestScaffold_PreCommitHookExistsWarnsAndSkipsInstall(t *testing.T) {
 		HooksDir:  hooksDir,
 	}
 
-	if err := s.Scaffold(tmp, Options{BuildTools: "generic", Writer: &warn}, &fakePrompter{confirm: true}); err != nil {
+	if err := s.Scaffold(tmp, Options{BuildTools: "generic", DiagnosticWriter: &warn}, &fakePrompter{confirm: true}); err != nil {
 		t.Fatalf("Scaffold returned error: %v", err)
 	}
 
