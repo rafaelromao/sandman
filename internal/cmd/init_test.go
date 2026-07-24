@@ -98,7 +98,9 @@ func TestInit_VerboseControlsScaffoldDiagnostics(t *testing.T) {
 			if err := os.MkdirAll(hooksDir, 0755); err != nil {
 				t.Fatalf("create hooks directory: %v", err)
 			}
-			if err := os.WriteFile(filepath.Join(hooksDir, "pre-commit"), []byte("#!/bin/sh\n"), 0755); err != nil {
+			existingHook := "#!/bin/sh\necho user hook\nexit 0\n"
+			hookPath := filepath.Join(hooksDir, "pre-commit")
+			if err := os.WriteFile(hookPath, []byte(existingHook), 0755); err != nil {
 				t.Fatalf("create pre-commit hook: %v", err)
 			}
 
@@ -121,6 +123,16 @@ func TestInit_VerboseControlsScaffoldDiagnostics(t *testing.T) {
 			gotWarn := strings.Contains(out.String(), "pre-commit hook already exists")
 			if gotWarn != tt.wantWarn {
 				t.Fatalf("diagnostic warning present = %t, want %t; output: %q", gotWarn, tt.wantWarn, out.String())
+			}
+			if tt.wantWarn && !strings.Contains(out.String(), hookPath) {
+				t.Fatalf("diagnostic warning missing hook path %q; output: %q", hookPath, out.String())
+			}
+			gotHook, err := os.ReadFile(hookPath)
+			if err != nil {
+				t.Fatalf("read pre-commit hook: %v", err)
+			}
+			if string(gotHook) != existingHook {
+				t.Fatalf("existing pre-commit hook changed: got %q, want %q", string(gotHook), existingHook)
 			}
 			if !strings.Contains(out.String(), "Scaffold complete.") {
 				t.Fatalf("init summary missing from output: %q", out.String())

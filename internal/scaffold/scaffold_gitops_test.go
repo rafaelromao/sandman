@@ -138,13 +138,8 @@ func TestScaffold_InstallsPreCommitHookThatBlocksSandmanPaths(t *testing.T) {
 }
 
 // TestScaffold_PreCommitHookExistsWarnsAndSkipsInstall pins the
-// no-destructive behavior (M2 in the post-24h review): when a
-// pre-commit hook already exists, installPreCommitHook returns nil
-// (preserves the user's hook) AND emits a warning to Options.Writer so
-// the operator is informed that AC3 may not be satisfied. Without the
-// warning, AC3 (rejecting `git add -f .sandman/task.md`) is silently
-// unmet when the user's existing hook does not include the sandman
-// guard.
+// non-destructive behavior: an existing hook is preserved and its warning is
+// emitted only through the diagnostic writer.
 func TestScaffold_PreCommitHookExistsWarnsAndSkipsInstall(t *testing.T) {
 	tmp := t.TempDir()
 	hooksDir := filepath.Join(tmp, ".git", "hooks")
@@ -185,6 +180,56 @@ func TestScaffold_PreCommitHookExistsWarnsAndSkipsInstall(t *testing.T) {
 	}
 	if !strings.Contains(warn.String(), hooksDir) {
 		t.Errorf("warning should mention the hooks dir path %q, got: %q", hooksDir, warn.String())
+	}
+}
+
+func TestScaffold_PreCommitHookExistsIsSilentWithoutDiagnostics(t *testing.T) {
+	tmp := t.TempDir()
+	hooksDir := filepath.Join(tmp, ".git", "hooks")
+	if err := os.MkdirAll(hooksDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(hooksDir, "pre-commit"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatalf("seed pre-commit: %v", err)
+	}
+
+	var out bytes.Buffer
+	s := &Scaffolder{
+		Gitignore: &fakeGitignoreRuleWriter{},
+		GitOps:    &fakeGitOps{isRepo: true},
+		HooksDir:  hooksDir,
+	}
+
+	if err := s.Scaffold(tmp, Options{Writer: &out}, &fakePrompter{confirm: true}); err != nil {
+		t.Fatalf("Scaffold returned error: %v", err)
+	}
+	if strings.Contains(out.String(), "pre-commit hook already exists") {
+		t.Fatalf("default diagnostics should be silent, got: %q", out.String())
+	}
+}
+
+func TestScaffold_PreCommitHookErrorsAreFatal(t *testing.T) {
+	tmp := t.TempDir()
+	hooksDir := filepath.Join(tmp, ".git", "hooks")
+	if err := os.MkdirAll(filepath.Dir(hooksDir), 0o755); err != nil {
+		t.Fatalf("create git directory: %v", err)
+	}
+	if err := os.WriteFile(hooksDir, []byte("not a directory"), 0o644); err != nil {
+		t.Fatalf("seed invalid hooks path: %v", err)
+	}
+
+	s := &Scaffolder{
+		Gitignore: &fakeGitignoreRuleWriter{},
+		GitOps:    &fakeGitOps{isRepo: true},
+		HooksDir:  hooksDir,
+	}
+
+	err := s.Scaffold(tmp, Options{BuildTools: "generic"}, &fakePrompter{confirm: true})
+	if err == nil {
+		t.Fatal("Scaffold should return an error when the hooks directory cannot be created")
+	}
+	if !strings.Contains(err.Error(), "install pre-commit hook") {
+		t.Fatalf("error should identify hook installation, got: %v", err)
 	}
 }
 
