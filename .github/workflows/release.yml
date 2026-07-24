@@ -14,13 +14,22 @@ permissions:
 jobs:
   release-please:
     runs-on: ubuntu-latest
+    if: github.event_name == 'push'
     steps:
       - uses: googleapis/release-please-action@v4
         with:
           release-type: go
           default-branch: main
+          release-as: 1.0.1
+
+  goreleaser:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'release'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: goreleaser/goreleaser-action@v6
-        if: success()
         with:
           args: release --clean
           version: latest
