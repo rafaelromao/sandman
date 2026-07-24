@@ -160,7 +160,7 @@ func TestConfig_ResolveAgentProvider_BuiltInPreset(t *testing.T) {
 	if agent.Preset != "opencode" {
 		t.Errorf("preset: got %q, want %q", agent.Preset, "opencode")
 	}
-	wantCmd := `opencode run{{if .DangerouslySkipPermissions}} --dangerously-skip-permissions{{end}}{{if .SessionName}} --title '{{.SessionName}}'{{end}}{{if .ModelFlag}} {{.ModelFlag}}{{end}} "$(cat {{.PromptFile}})"`
+	wantCmd := `opencode run{{if .DangerouslySkipPermissions}} --dangerously-skip-permissions{{end}}{{if .SessionName}} --title '{{.SessionName}}'{{end}}{{if .ModelFlag}} {{.ModelFlag}}{{end}}{{if .VariantFlag}} {{.VariantFlag}}{{end}} "$(cat {{.PromptFile}})"`
 	if agent.Command != wantCmd {
 		t.Errorf("command: got %q, want %q", agent.Command, wantCmd)
 	}
@@ -976,6 +976,47 @@ func TestConfig_GetAndSetModel(t *testing.T) {
 	}
 	if cfg.DefaultModel != "openai/gpt-4.1" {
 		t.Fatalf("model not updated: %#v", cfg)
+	}
+}
+
+func TestConfig_GetAndSetVariantTrimsOpaqueValue(t *testing.T) {
+	cfg := &Config{}
+
+	if got, err := cfg.GetValue("variant"); err != nil || got != "" {
+		t.Fatalf("GetValue(variant) = %q, %v", got, err)
+	}
+	if err := cfg.SetValue("variant", "  provider-specific/foo bar  "); err != nil {
+		t.Fatalf("SetValue(variant): %v", err)
+	}
+	if cfg.Variant != "provider-specific/foo bar" {
+		t.Fatalf("variant not trimmed: %q", cfg.Variant)
+	}
+}
+
+func TestLoad_TrimsVariantAndDefaultsEmpty(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(path, []byte("variant: '  provider/foo  '\n"), 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Variant != "provider/foo" {
+		t.Fatalf("variant = %q, want trimmed value", cfg.Variant)
+	}
+
+	if err := os.WriteFile(path, []byte("model: opencode/big-pickle\n"), 0644); err != nil {
+		t.Fatalf("write default config: %v", err)
+	}
+	cfg, err = Load(path)
+	if err != nil {
+		t.Fatalf("Load default: %v", err)
+	}
+	if cfg.Variant != "" {
+		t.Fatalf("default variant = %q, want empty", cfg.Variant)
 	}
 }
 

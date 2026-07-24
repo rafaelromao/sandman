@@ -150,6 +150,14 @@ func buildContinuationRequest(ctx context.Context, cmd *cobra.Command, deps Depe
 	if model == "" {
 		model = resolveModel("", cfg.DefaultModel, agentCfg.Preset)
 	}
+	variantFlag := strings.TrimSpace(cmdFlag(cmd, "variant"))
+	variantSet := false
+	if flag := cmd.Flags().Lookup("variant"); flag != nil {
+		variantSet = flag.Changed
+	}
+	if !variantSet {
+		variantFlag = strings.TrimSpace(cfg.Variant)
+	}
 
 	parallel := 0
 	if flag := cmd.Flags().Lookup("parallel"); flag != nil && flag.Changed {
@@ -251,6 +259,8 @@ func buildContinuationRequest(ctx context.Context, cmd *cobra.Command, deps Depe
 		Issues:                     reqIssues,
 		Agent:                      agentName,
 		Model:                      model,
+		Variant:                    variantFlag,
+		VariantSet:                 variantSet,
 		BaseBranch:                 baseBranch,
 		Mode:                       modes,
 		PreviousRunIDs:             previousRunIDs,

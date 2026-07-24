@@ -2264,6 +2264,37 @@ func TestRunPromptOnlySingle_PrefixesOutputWithRunID(t *testing.T) {
 	}
 }
 
+func TestRunPromptOnlySingle_ReviewOmitsImplementationVariant(t *testing.T) {
+	workDir := t.TempDir()
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get wd: %v", err)
+	}
+	if err := os.Chdir(workDir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(oldWD) })
+
+	rtSandbox := &fakeSandbox{workDir: filepath.Join(workDir, "worktree")}
+	o := &Orchestrator{
+		renderer:       &noopRenderer{},
+		errorLog:       io.Discard,
+		sandboxFactory: &fakeSandboxFactory{sandbox: rtSandbox},
+	}
+	cfg := &config.Config{
+		Variant:     "implementation/provider",
+		WorktreeDir: "worktree",
+		Git:         config.GitConfig{BaseBranch: "main"},
+	}
+	_, started := o.runPromptOnlySingle(context.Background(), cfg, "opencode", config.Agent{Preset: "opencode"}, noopIdentityResolver(), "sandman/review-17-1", prompt.RenderConfig{}, nil, &fakeSandboxFactory{sandbox: rtSandbox}, nil, ModeFresh, "main", 0, 0, 0, "", 0, false, 0, false, false, false, true, 17, "check tests", "PR17", nil, 0, "", "", "")
+	if !started {
+		t.Fatal("expected prompt-only review run to start")
+	}
+	if strings.Contains(rtSandbox.execCommand, "--variant") {
+		t.Fatalf("review command unexpectedly included implementation variant: %q", rtSandbox.execCommand)
+	}
+}
+
 // TestRunPromptOnlySingle_ReviewRunIDIsCanonical pins the regression
 // gate for issue #1946: the orchestrator's executePromptOnly path
 // must NOT mangle a review per-row RunID that flows through it. The
@@ -2934,6 +2965,84 @@ func TestRunBatch_ModelPrecedenceAndDefaultBehavior(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestRunBatch_UsesVariantInCommandAndImplementationEvent(t *testing.T) {
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug", Body: "Users cannot log in."}},
+		prs:    map[string]*github.PR{"42-fix-bug": mergedPR("42-fix-bug", "")},
+	}
+	sb := &fakeSandbox{}
+	log := &spyEventLog{}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{
+		Agent:       "opencode",
+		Variant:     "configured/provider",
+		Sandbox:     "worktree",
+		WorktreeDir: ".sandman/worktrees",
+		Git:         config.GitConfig{BaseBranch: "main"},
+		AgentProviders: map[string]config.Agent{
+			"opencode": {Preset: "opencode"},
+		},
+	}}, log, WithSandboxFactory(&fakeSandboxFactory{sandbox: sb}))
+
+	if _, err := o.RunBatch(context.Background(), Request{Issues: []int{42}, RunTS: orchTestRunTS, RunShortID: orchTestRunShortID}); err != nil {
+		t.Fatalf("unexpected configured variant run error: %v", err)
+	}
+	if !strings.Contains(sb.execCommand, `--variant 'configured/provider'`) {
+		t.Fatalf("expected configured variant in command, got %q", sb.execCommand)
+	}
+
+	var started events.Event
+	for _, event := range log.snapshot() {
+		if event.Type == "run.started" {
+			started = event
+			break
+		}
+	}
+	if got, ok := started.Payload["variant"].(string); !ok || got != "configured/provider" {
+		t.Fatalf("start payload variant = %#v, want configured/provider", started.Payload["variant"])
+	}
+}
+
+func TestRunBatch_ExplicitEmptyVariantOmitsCommandFlagAndEventPayload(t *testing.T) {
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug", Body: "Users cannot log in."}},
+		prs:    map[string]*github.PR{"42-fix-bug": mergedPR("42-fix-bug", "")},
+	}
+	sb := &fakeSandbox{}
+	log := &spyEventLog{}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{
+		Agent:       "opencode",
+		Variant:     "configured/provider",
+		Sandbox:     "worktree",
+		WorktreeDir: ".sandman/worktrees",
+		Git:         config.GitConfig{BaseBranch: "main"},
+		AgentProviders: map[string]config.Agent{
+			"opencode": {Preset: "opencode"},
+		},
+	}}, log, WithSandboxFactory(&fakeSandboxFactory{sandbox: sb}))
+
+	if _, err := o.RunBatch(context.Background(), Request{
+		Issues:     []int{42},
+		VariantSet: true,
+		RunTS:      orchTestRunTS,
+		RunShortID: orchTestRunShortID,
+	}); err != nil {
+		t.Fatalf("unexpected explicit empty variant run error: %v", err)
+	}
+	if strings.Contains(sb.execCommand, "--variant") {
+		t.Fatalf("explicit empty variant rendered a command flag: %q", sb.execCommand)
+	}
+
+	for _, event := range log.snapshot() {
+		if event.Type == "run.started" {
+			if _, exists := event.Payload["variant"]; exists {
+				t.Fatalf("explicit empty variant appeared in start payload: %#v", event.Payload)
+			}
+			return
+		}
+	}
+	t.Fatal("expected run.started event")
 }
 
 func TestRunBatch_SendsSIGKILLAfterTimeout(t *testing.T) {

@@ -55,6 +55,7 @@ func NewInitCmd() *cobra.Command {
 			toolVersion, _ := cmd.Flags().GetString("tool-version")
 			agent, _ := cmd.Flags().GetString("agent")
 			model, _ := cmd.Flags().GetString("model")
+			variant, _ := cmd.Flags().GetString("variant")
 			parallel, _ := cmd.Flags().GetInt("parallel")
 			parallelReviews, _ := cmd.Flags().GetInt("parallel-reviews")
 			reviewCommand, _ := cmd.Flags().GetString("review-command")
@@ -84,6 +85,7 @@ func NewInitCmd() *cobra.Command {
 				ToolVersion:     toolVersion,
 				Agent:           agent,
 				Model:           model,
+				Variant:         variant,
 				Parallel:        parallel,
 				ParallelReviews: parallelReviews,
 				ReviewCommand:   reviewCommand,
@@ -112,6 +114,7 @@ func NewInitCmd() *cobra.Command {
 	cmd.Flags().String("tool-version", "", "Logical version selector (repo, latest, lts, or semver shorthand)")
 	cmd.Flags().String("agent", "", "Default built-in agent preset (opencode)")
 	cmd.Flags().String("model", "", "Default model for the agent")
+	cmd.Flags().String("variant", "", "Default implementation model variant")
 	cmd.Flags().Int("parallel", -1, fmt.Sprintf("Default parallel container count (-1 = use config default %d)", config.DefaultParallel))
 	cmd.Flags().Int("parallel-reviews", -1, fmt.Sprintf("Default parallel reviews count (-1 = use built-in default of %d)", config.DefaultReviewParallel))
 	cmd.Flags().String("review-command", "", "Review command to store in config and install into shared skills")

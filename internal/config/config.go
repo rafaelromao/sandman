@@ -33,6 +33,7 @@ const (
 type Config struct {
 	DefaultAgent          string           `yaml:"agent"`
 	DefaultModel          string           `yaml:"model"`
+	Variant               string           `yaml:"variant"`
 	DefaultReviewAgent    string           `yaml:"review_agent"`
 	DefaultReviewModel    string           `yaml:"review_model"`
 	BuildTools            string           `yaml:"build_tools"`
@@ -95,7 +96,7 @@ const OpencodePermissionExternalDirectoryAllow = `{"external_directory":"allow"}
 var BuiltInAgentPresets = map[string]AgentPreset{
 	"opencode": {
 		DisplayName: "OpenCode",
-		Command:     `opencode run{{if .DangerouslySkipPermissions}} --dangerously-skip-permissions{{end}}{{if .SessionName}} --title '{{.SessionName}}'{{end}}{{if .ModelFlag}} {{.ModelFlag}}{{end}} "$(cat {{.PromptFile}})"`,
+		Command:     `opencode run{{if .DangerouslySkipPermissions}} --dangerously-skip-permissions{{end}}{{if .SessionName}} --title '{{.SessionName}}'{{end}}{{if .ModelFlag}} {{.ModelFlag}}{{end}}{{if .VariantFlag}} {{.VariantFlag}}{{end}} "$(cat {{.PromptFile}})"`,
 		Env: map[string]string{
 			"OPENCODE_PERMISSION": OpencodePermissionExternalDirectoryAllow,
 		},
@@ -146,6 +147,7 @@ func SupportedKeys() []string {
 	return []string{
 		"agent",
 		"model",
+		"variant",
 		"review_agent",
 		"review_model",
 		"build_tools",
@@ -173,6 +175,7 @@ func Load(path string) (*Config, error) {
 	type rawConfig struct {
 		DefaultAgent          string           `yaml:"agent"`
 		DefaultModel          string           `yaml:"model"`
+		Variant               string           `yaml:"variant"`
 		DefaultReviewAgent    string           `yaml:"review_agent"`
 		DefaultReviewModel    string           `yaml:"review_model"`
 		BuildTools            string           `yaml:"build_tools"`
@@ -201,6 +204,7 @@ func Load(path string) (*Config, error) {
 	cfg := Config{
 		DefaultAgent:          raw.DefaultAgent,
 		DefaultModel:          raw.DefaultModel,
+		Variant:               strings.TrimSpace(raw.Variant),
 		DefaultReviewAgent:    raw.DefaultReviewAgent,
 		DefaultReviewModel:    raw.DefaultReviewModel,
 		BuildTools:            raw.BuildTools,
@@ -417,6 +421,8 @@ func (c *Config) GetValue(key string) (string, error) {
 		return c.DefaultAgent, nil
 	case "model":
 		return c.DefaultModel, nil
+	case "variant":
+		return strings.TrimSpace(c.Variant), nil
 	case "review_agent":
 		return c.EffectiveReviewAgent(), nil
 	case "review_model":
@@ -486,6 +492,8 @@ func (c *Config) SetValue(key, value string) error {
 		c.Agent = c.DefaultAgent
 	case "model":
 		c.DefaultModel = value
+	case "variant":
+		c.Variant = strings.TrimSpace(value)
 	case "review_agent":
 		if _, err := c.ResolveAgentProvider(strings.TrimSpace(value)); err != nil {
 			return err

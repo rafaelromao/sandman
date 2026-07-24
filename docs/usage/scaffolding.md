@@ -103,6 +103,7 @@ Useful init flags:
 |------|---------|
 | `--agent` | Default built-in agent preset (`opencode`) |
 | `--model` | Default agent model |
+| `--variant` | Default provider-specific implementation model variant |
 | `--build-tools` | Build-tools preset |
 | `--tool-version` | Language/tool version selector |
 | `--parallel` | Default concurrent agent runs |

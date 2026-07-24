@@ -1010,6 +1010,10 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 		}
 		agentCfg.Model = model
 	}
+	variant := strings.TrimSpace(req.Variant)
+	if !req.VariantSet && strings.TrimSpace(req.Variant) == "" {
+		variant = strings.TrimSpace(cfg.Variant)
+	}
 	if err := sandbox.ValidateAgentConfig(agentName, agentCfg); err != nil {
 		return nil, err
 	}
@@ -1389,6 +1393,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				Cfg:                        cfg,
 				AgentName:                  agentName,
 				AgentCfg:                   agentCfg,
+				Variant:                    variant,
 				IdentityResolver:           batchIdentityResolver,
 				Parallel:                   parallel,
 				StartDelay:                 startDelay,
@@ -1762,6 +1767,7 @@ type runSession struct {
 	cfg                        *config.Config
 	agentName                  string
 	agentCfg                   config.Agent
+	variant                    string
 	mode                       IssueMode
 	previousRunIDs             map[int]string
 	identityResolver           *gitIdentityResolver
@@ -2438,6 +2444,9 @@ func (s *runSession) runOnce(
 			agentRun.model = s.agentCfg.Model
 			agentRun.modelProvider = s.agentCfg.ModelProvider
 			agentRun.modelName = s.agentCfg.ModelName
+			if !s.review {
+				agentRun.variant = s.variant
+			}
 			agentRun.opencodePermissionMode = s.agentCfg.OpencodePermissionMode
 			agentRun.baseBranch = s.baseBranch
 			agentRun.runID = runID
@@ -2748,6 +2757,9 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 		if model := strings.TrimSpace(s.agentCfg.Model); model != "" {
 			payload["model"] = model
 		}
+		if variant := strings.TrimSpace(s.variant); variant != "" {
+			payload["variant"] = variant
+		}
 		if s.batchID != "" {
 			payload["batch_id"] = s.batchID
 		}
@@ -2899,6 +2911,13 @@ func resetRetryBranch(opts runSessionOptions, ctx context.Context, sb sandbox.Sa
 
 func (o *Orchestrator) runPromptOnly(ctx context.Context, cfg *config.Config, agentName string, agentCfg config.Agent, identityResolver *gitIdentityResolver, sbFactory SandboxFactory, containerAlloc containerAllocator, req Request, baseBranch string, startDelay time.Duration, parallel int, retries int, sandboxMode string, containerCapacity int, containerCapacitySet bool, maxContainers int, maxContainersSet bool, dangerouslySkipPermissions bool, strandedReconcile bool, coord runCoordination, layout paths.Layout) (*Result, error) {
 	branch := promptOnlyBranch(req.PromptConfig)
+	variant := ""
+	if !req.Review {
+		variant = strings.TrimSpace(req.Variant)
+	}
+	if !req.Review && !req.VariantSet && strings.TrimSpace(req.Variant) == "" {
+		variant = strings.TrimSpace(cfg.Variant)
+	}
 	row := RowSpec{
 		IssueNumber:       req.IssueNumber,
 		Mode:              req.IssueMode(0),
@@ -2921,6 +2940,7 @@ func (o *Orchestrator) runPromptOnly(ctx context.Context, cfg *config.Config, ag
 		Cfg:                        cfg,
 		AgentName:                  agentName,
 		AgentCfg:                   agentCfg,
+		Variant:                    variant,
 		IdentityResolver:           identityResolver,
 		Parallel:                   parallel,
 		StartDelay:                 startDelay,
@@ -3109,6 +3129,11 @@ func (s *runSession) executePromptOnly(ctx context.Context) (AgentRunResult, boo
 		}
 		if model := strings.TrimSpace(s.agentCfg.Model); model != "" {
 			payload["model"] = model
+		}
+		if !s.review {
+			if variant := strings.TrimSpace(s.variant); variant != "" {
+				payload["variant"] = variant
+			}
 		}
 		if s.batchID != "" {
 			payload["batch_id"] = s.batchID

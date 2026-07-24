@@ -11,6 +11,7 @@ import (
 type CommandData struct {
 	PromptFile                 string
 	ModelFlag                  string
+	VariantFlag                string
 	ModelProvider              string
 	ModelName                  string
 	DangerouslySkipPermissions bool

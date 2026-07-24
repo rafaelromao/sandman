@@ -256,6 +256,7 @@ git:
 	want := []string{
 		"agent: opencode",
 		"model: openai/gpt-4.1",
+		"variant: ",
 		"review_agent: opencode",
 		"review_model: opencode/big-pickle",
 		"build_tools: go",

@@ -66,6 +66,21 @@ func TestScaffold_PersistsRuntimeDefaults(t *testing.T) {
 	}
 }
 
+func TestScaffold_PersistsImplementationVariant(t *testing.T) {
+	dir := t.TempDir()
+	if err := (&Scaffolder{}).Scaffold(dir, Options{BuildTools: "generic", Variant: "  provider/foo  "}, &fakePrompter{confirm: true}); err != nil {
+		t.Fatalf("scaffold: %v", err)
+	}
+
+	cfg, err := config.Load(filepath.Join(dir, ".sandman", "config.yaml"))
+	if err != nil {
+		t.Fatalf("load scaffolded config: %v", err)
+	}
+	if cfg.Variant != "provider/foo" {
+		t.Fatalf("variant = %q, want trimmed value", cfg.Variant)
+	}
+}
+
 func TestScaffold_ParallelReviewsSeeded(t *testing.T) {
 	dir := t.TempDir()
 	s := &Scaffolder{}

@@ -37,6 +37,8 @@ type Request struct {
 	Blocked    map[int][]int
 	Agent      string
 	Model      string
+	Variant    string
+	VariantSet bool
 	BaseBranch string
 	// Mode maps each issue number to its routing mode. Missing entries default
 	// to ModeFresh.
