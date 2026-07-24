@@ -3049,23 +3049,22 @@ func TestRunBatch_ReviewVariantReachesCommandAndStartEvent(t *testing.T) {
 	sb := &fakeSandbox{}
 	log := &spyEventLog{}
 	o := NewOrchestrator(&fakeGitHubClient{}, &noopRenderer{}, &fakeConfigStore{config: &config.Config{
-		Agent:        "opencode",
-		DefaultModel: "opencode/foo",
-		Sandbox:      "worktree",
-		WorktreeDir:  ".sandman/worktrees",
-		Git:          config.GitConfig{BaseBranch: "main"},
+		Agent:         "opencode",
+		DefaultModel:  "opencode/foo",
+		ReviewVariant: "provider/foo bar; echo unsafe",
+		Sandbox:       "worktree",
+		WorktreeDir:   ".sandman/worktrees",
+		Git:           config.GitConfig{BaseBranch: "main"},
 		AgentProviders: map[string]config.Agent{
 			"opencode": {Preset: "opencode"},
 		},
 	}}, log, WithSandboxFactory(&fakeSandboxFactory{sandbox: sb}))
 
 	if _, err := o.RunBatch(context.Background(), Request{
-		Agent:      "opencode",
-		Model:      "opencode/foo",
-		Variant:    "provider/foo bar; echo unsafe",
-		VariantSet: true,
-		Review:     true,
-		PRNumber:   42,
+		Agent:    "opencode",
+		Model:    "opencode/foo",
+		Review:   true,
+		PRNumber: 42,
 		PromptConfig: prompt.RenderConfig{
 			PromptFlag: "review prompt",
 			Branch:     "review-branch",
