@@ -3,7 +3,9 @@ package cmd
 import (
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/rafaelromao/sandman/internal/batchindex"
@@ -118,8 +120,8 @@ func TestExecuteClean_AbsentWorktreeStillDeletesManifestBranch(t *testing.T) {
 	if _, err := executeClean(actions, gr, layout, &fakeCleanupRemover{}); err != nil {
 		t.Fatal(err)
 	}
-	if len(gr.pruneAndDeleteBranchCalls) != 1 || gr.pruneAndDeleteBranchCalls[0] != branch {
-		t.Fatalf("expected branch cleanup for absent worktree, calls=%v", gr.pruneAndDeleteBranchCalls)
+	if len(gr.deleteBranchCalls) != 1 || gr.deleteBranchCalls[0] != branch {
+		t.Fatalf("expected branch cleanup for absent worktree, calls=%v", gr.deleteBranchCalls)
 	}
 	idx, err := batchindex.Load(layout.BatchesIndexPath)
 	if err != nil {
@@ -139,7 +141,7 @@ func TestExecuteClean_BranchNotFoundIsSuccessful(t *testing.T) {
 	}
 	writeBatchIndex(t, repo, []batchindex.Batch{{ID: "batch", Path: batchPath, Status: batchindex.StatusArchived}})
 	actions := []cleanAction{{BatchID: "batch", BatchPath: batchPath, Branch: "sandman/batch", Status: batchindex.StatusArchived}}
-	gr := &fakeGitRunner{pruneAndDeleteBranchErr: errors.New("fatal: branch 'sandman/batch' not found")}
+	gr := &fakeGitRunner{deleteBranchErr: errors.New("fatal: branch 'sandman/batch' not found")}
 	if _, err := executeClean(actions, gr, layout, &fakeCleanupRemover{}); err != nil {
 		t.Fatalf("branch-not-found cleanup should succeed: %v", err)
 	}
@@ -160,7 +162,7 @@ func TestExecuteClean_BranchFailureRetainsEntry(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeBatchIndex(t, repo, []batchindex.Batch{{ID: "batch", Path: batchPath, Status: batchindex.StatusArchived}})
-	gr := &fakeGitRunner{pruneAndDeleteBranchErr: errors.New("branch locked")}
+	gr := &fakeGitRunner{deleteBranchErr: errors.New("branch locked")}
 	actions := []cleanAction{{BatchID: "batch", BatchPath: batchPath, Branch: "sandman/batch", Status: batchindex.StatusArchived}}
 	if _, err := executeClean(actions, gr, layout, &fakeCleanupRemover{}); err == nil {
 		t.Fatal("expected branch cleanup error")
@@ -203,7 +205,7 @@ func TestExecuteClean_UnavailablePlanDoesNotDeleteChangedEntry(t *testing.T) {
 	}
 }
 
-func TestExecuteClean_RejectsUnownedBranchBeforeGit(t *testing.T) {
+func TestExecuteClean_RejectsUnsafeBranchBeforeGit(t *testing.T) {
 	repo := t.TempDir()
 	layout := paths.NewLayout(&config.Config{}, repo)
 	batchPath := filepath.Join(layout.BatchesDir, "batch")
@@ -212,12 +214,12 @@ func TestExecuteClean_RejectsUnownedBranchBeforeGit(t *testing.T) {
 	}
 	writeBatchIndex(t, repo, []batchindex.Batch{{ID: "batch", Path: batchPath, Status: batchindex.StatusArchived}})
 	gr := &fakeGitRunner{}
-	actions := []cleanAction{{BatchID: "batch", BatchPath: batchPath, Branch: "main", Status: batchindex.StatusArchived}}
+	actions := []cleanAction{{BatchID: "batch", BatchPath: batchPath, Branch: "../main", Status: batchindex.StatusArchived}}
 	if _, err := executeClean(actions, gr, layout, &fakeCleanupRemover{}); err == nil {
-		t.Fatal("expected unowned branch validation error")
+		t.Fatal("expected unsafe branch validation error")
 	}
-	if len(gr.pruneAndDeleteBranchCalls) != 0 {
-		t.Fatalf("unowned branch should not invoke git, calls=%v", gr.pruneAndDeleteBranchCalls)
+	if len(gr.deleteBranchCalls) != 0 {
+		t.Fatalf("unowned branch should not invoke git, calls=%v", gr.deleteBranchCalls)
 	}
 	idx, err := batchindex.Load(layout.BatchesIndexPath)
 	if err != nil {
@@ -225,6 +227,61 @@ func TestExecuteClean_RejectsUnownedBranchBeforeGit(t *testing.T) {
 	}
 	if idx.Resolve("batch") == nil {
 		t.Fatal("branch validation failure must retain index entry")
+	}
+}
+
+func TestValidateBranchName_AcceptsManifestBranches(t *testing.T) {
+	for _, branch := range []string{
+		"42-fix-bug",
+		"operator/topic",
+		"sandman/review-2381-12345",
+	} {
+		if err := validateBranchName(branch); err != nil {
+			t.Errorf("validateBranchName(%q) = %v", branch, err)
+		}
+	}
+}
+
+func TestValidateBranchName_RejectsUnsafeBranch(t *testing.T) {
+	for _, branch := range []string{"", "../main", "topic//branch", "topic..branch", "topic~branch"} {
+		if err := validateBranchName(branch); err == nil {
+			t.Errorf("validateBranchName(%q) unexpectedly accepted unsafe branch", branch)
+		}
+	}
+}
+
+func TestRealGitRunner_DeleteBranchDoesNotPruneSiblingRegistrations(t *testing.T) {
+	repo := t.TempDir()
+	runGit(t, repo, "init", "-q", "-b", "main")
+	runGit(t, repo, "config", "user.email", "test@example.com")
+	runGit(t, repo, "config", "user.name", "Test")
+	runGit(t, repo, "commit", "--allow-empty", "-m", "init")
+
+	worktreeBase := filepath.Join(repo, ".sandman", "worktrees")
+	targetBranch := "42-target"
+	siblingBranch := "43-sibling"
+	targetPath := filepath.Join(worktreeBase, targetBranch)
+	siblingPath := filepath.Join(worktreeBase, siblingBranch)
+	runGit(t, repo, "worktree", "add", "-b", targetBranch, targetPath, "main")
+	runGit(t, repo, "worktree", "add", "-b", siblingBranch, siblingPath, "main")
+
+	siblingRegistration := strings.TrimSpace(runGit(t, siblingPath, "rev-parse", "--git-dir"))
+	if err := os.WriteFile(filepath.Join(siblingRegistration, "gitdir"), []byte("/missing/container/path/.git\n"), 0o644); err != nil {
+		t.Fatalf("make sibling registration appear prunable: %v", err)
+	}
+	if err := os.RemoveAll(targetPath); err != nil {
+		t.Fatalf("remove target worktree directory: %v", err)
+	}
+
+	if err := newRealGitRunner(repo).deleteBranch(targetBranch, targetPath); err != nil {
+		t.Fatalf("delete target branch: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(repo, ".git", "worktrees", siblingBranch)); err != nil {
+		t.Fatalf("sibling registration was pruned: %v", err)
+	}
+	if out, err := exec.Command("git", "-C", siblingPath, "status", "--short").CombinedOutput(); err != nil {
+		t.Fatalf("sibling worktree became unusable: %v: %s", err, out)
 	}
 }
 

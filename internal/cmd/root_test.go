@@ -131,13 +131,10 @@ func (f *fakeIssuePicker) Select(issues []github.Issue) ([]int, error) {
 
 // fakeGitRunner is a test double for gitRunner.
 type fakeGitRunner struct {
-	removeWorktreeErr          error
-	removeWorktreeCalls        []string
-	pruneAndDeleteBranchErr    error
-	pruneAndDeleteBranchCalls  []string
-	removeOrphanBranchesErr    error
-	removeOrphanBranchesCount  int
-	removeOrphanBranchesCalled bool
+	removeWorktreeErr   error
+	removeWorktreeCalls []string
+	deleteBranchErr     error
+	deleteBranchCalls   []string
 }
 
 func (f *fakeGitRunner) removeWorktree(path string) error {
@@ -149,14 +146,9 @@ func (f *fakeGitRunner) removeWorktree(path string) error {
 	return nil
 }
 
-func (f *fakeGitRunner) pruneAndDeleteBranch(branch string) error {
-	f.pruneAndDeleteBranchCalls = append(f.pruneAndDeleteBranchCalls, branch)
-	return f.pruneAndDeleteBranchErr
-}
-
-func (f *fakeGitRunner) removeOrphanBranches() (int, error) {
-	f.removeOrphanBranchesCalled = true
-	return f.removeOrphanBranchesCount, f.removeOrphanBranchesErr
+func (f *fakeGitRunner) deleteBranch(branch, worktreePath string) error {
+	f.deleteBranchCalls = append(f.deleteBranchCalls, branch)
+	return f.deleteBranchErr
 }
 
 func TestRootHelpListsAllCommands(t *testing.T) {

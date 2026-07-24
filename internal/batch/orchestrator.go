@@ -3298,14 +3298,13 @@ func ClearIssueArtifacts(issueNumber int, branch string, worktreeDir string, eve
 			if rmErr := os.RemoveAll(wtPath); rmErr != nil {
 				fmt.Fprintf(logWriter, "error: remove worktree dir %s for issue %d: %v\n", wtPath, issueNumber, rmErr)
 			}
+			if rmErr := sandbox.RemoveWorktreeRegistration(".", wtPath); rmErr != nil {
+				fmt.Fprintf(logWriter, "error: remove worktree registration %s for issue %d: %v\n", wtPath, issueNumber, rmErr)
+			}
 		} else {
 			fmt.Fprintf(logWriter, "error: remove worktree %s for issue %d: %v: %s\n", wtPath, issueNumber, err, out)
 		}
 	}
-	if out, err := exec.Command("git", "worktree", "prune").CombinedOutput(); err != nil {
-		fmt.Fprintf(logWriter, "error: prune worktrees for issue %d: %v: %s\n", issueNumber, err, out)
-	}
-
 	// Delete branch (may fail if already deleted — idempotent)
 	if out, err := exec.Command("git", "branch", "-D", branch).CombinedOutput(); err != nil && !isMissingBranchError(err, out) {
 		if strandedReconcile != nil && *strandedReconcile {

@@ -722,8 +722,16 @@ func parseCheckedOutPath(out []byte) (string, bool) {
 //
 // Issue #2187.
 func (s *WorktreeSandbox) removePrunableWorktreeRegistration() error {
-	name := filepath.Base(s.workDir)
-	candidate := filepath.Join(s.repoPath, ".git", "worktrees", name)
+	return RemoveWorktreeRegistration(s.repoPath, s.workDir)
+}
+
+// RemoveWorktreeRegistration removes only the registration corresponding to
+// worktreePath. It is the target-scoped alternative to `git worktree prune`,
+// which can remove live sibling registrations when host paths are not visible
+// from a container.
+func RemoveWorktreeRegistration(repoPath, worktreePath string) error {
+	name := filepath.Base(worktreePath)
+	candidate := filepath.Join(repoPath, ".git", "worktrees", name)
 	info, err := os.Stat(candidate)
 	if err != nil {
 		if os.IsNotExist(err) {
