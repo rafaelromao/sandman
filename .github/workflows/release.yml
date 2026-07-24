@@ -19,11 +19,11 @@ jobs:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
       - uses: actions/checkout@v4
-        if: steps.release-please.outputs.release-created == 'true'
+        if: steps.release-please.outputs.release_created == 'true'
         with:
           fetch-depth: 0
       - uses: goreleaser/goreleaser-action@v6
-        if: steps.release-please.outputs.release-created == 'true'
+        if: steps.release-please.outputs.release_created == 'true'
         with:
           args: release --clean
           version: latest
