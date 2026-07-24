@@ -76,17 +76,19 @@ The exact title policy is also summarized in
 
 ## Changelog Ownership
 
-`CHANGELOG.md` is currently a curated, repository-owned changelog. It contains
-the bootstrapped `1.0.0` entry and the `Unreleased` section, and the pull-request
-template asks contributors to update it for user-facing changes. Release
-Please is configured with `changelog-path: /dev/null`, so it must not be
-described as the writer of `CHANGELOG.md`.
+`CHANGELOG.md` is a curated, repository-owned changelog. It contains the
+bootstrapped `1.0.0` entry and the `Unreleased` section, and the pull-request
+template asks contributors to update it for user-facing changes. Release Please
+reads this file when preparing the bootstrap release, so its generated notes
+must preserve the curated entry.
 
-The first-release decision and any one-time bootstrap behavior belong to
-[#2390](https://github.com/rafaelromao/sandman/issues/2390). Until that work
-changes this policy, maintainers own the curated changelog and release
-contributors should update it in the same change request as user-facing
-behavior. Do not duplicate the bootstrap procedure here.
+The release configuration contains a one-time `release-as: 1.0.0` override so
+the first release PR cannot be advanced by the pre-release Conventional Commit
+history. After `v1.0.0` is created, the release workflow removes that override
+and commits the cleanup to `main`; subsequent versions are derived from
+Conventional Commits. Maintainers continue to own the curated changelog and
+release contributors should update it in the same change request as user-facing
+behavior.
 
 ## Version Output
 

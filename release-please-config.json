@@ -2,7 +2,8 @@
   "packages": {
     ".": {
       "release-type": "go",
-      "changelog-path": "/dev/null"
+      "changelog-path": "CHANGELOG.md",
+      "release-as": "1.0.0"
     }
   }
 }

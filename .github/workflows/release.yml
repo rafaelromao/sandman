@@ -38,3 +38,21 @@ jobs:
           version: latest
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Remove first-release override
+        if: steps.release-please.outputs.release_created == 'true'
+        env:
+          RELEASE_PLEASE_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+        run: |
+          if ! git rev-parse --verify --quiet refs/tags/v1.0.0; then
+            exit 0
+          fi
+          if ! grep -q '"release-as": "1.0.0"' release-please-config.json; then
+            exit 0
+          fi
+          jq 'del(.packages["."]["release-as"])' release-please-config.json > release-please-config.json.tmp
+          mv release-please-config.json.tmp release-please-config.json
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add release-please-config.json
+          git commit -m "chore(release): remove first-release override"
+          git push "https://x-access-token:${RELEASE_PLEASE_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" HEAD:main
