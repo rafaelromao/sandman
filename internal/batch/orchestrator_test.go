@@ -8733,6 +8733,44 @@ func TestClearIssueArtifacts_RemovesWorktree(t *testing.T) {
 	}
 }
 
+func TestClearIssueArtifacts_DoesNotPruneSiblingContainerWorktree(t *testing.T) {
+	dir := testenv.MkdirShort(t, "sm-orch-")
+	t.Chdir(dir)
+	initGitRepo(t, dir)
+
+	worktreeDir := filepath.Join(dir, ".sandman", "worktrees")
+	targetBranch := "42-target"
+	siblingBranch := "43-sibling"
+	targetPath := filepath.Join(worktreeDir, targetBranch)
+	siblingPath := filepath.Join(worktreeDir, siblingBranch)
+	runGit(t, dir, "worktree", "add", "-b", targetBranch, targetPath, "main")
+	runGit(t, dir, "worktree", "add", "-b", siblingBranch, siblingPath, "main")
+
+	registration := strings.TrimSpace(runGit(t, siblingPath, "rev-parse", "--git-dir"))
+	if !filepath.IsAbs(registration) {
+		registration = filepath.Join(siblingPath, registration)
+	}
+	// Container sandboxes rewrite the worktree's forward .git pointer to
+	// /workspace, while the registration's reverse pointer remains a host
+	// path that does not exist inside the container. A global worktree prune
+	// therefore misclassifies this live sibling as prunable.
+	if err := os.WriteFile(filepath.Join(registration, "gitdir"), []byte("/host/path/not-visible/in-container/.git\n"), 0644); err != nil {
+		t.Fatalf("rewrite sibling registration gitdir: %v", err)
+	}
+
+	ClearIssueArtifacts(42, targetBranch, worktreeDir, &spyEventLog{}, io.Discard, "main", nil, "")
+
+	if _, err := os.Stat(registration); err != nil {
+		t.Fatalf("sibling worktree registration was removed while clearing another issue: %v", err)
+	}
+	if out, err := exec.Command("git", "-C", siblingPath, "status", "--short").CombinedOutput(); err != nil {
+		t.Fatalf("sibling worktree became unusable: %v: %s", err, out)
+	}
+	if got := strings.TrimSpace(runGit(t, dir, "symbolic-ref", "--quiet", "HEAD")); got != "refs/heads/main" {
+		t.Fatalf("main worktree HEAD changed: got %q, want refs/heads/main", got)
+	}
+}
+
 func TestClearIssueArtifacts_Idempotent(t *testing.T) {
 	dir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(dir)
@@ -8746,7 +8784,7 @@ func TestClearIssueArtifacts_RemovesOrphanWorktreeDirectory(t *testing.T) {
 	// Simulate a previous run that crashed inside `git worktree add` after the
 	// directory was created but before git registered it. The dir exists with
 	// throwaway content; git never knew about the worktree, so
-	// `git worktree remove --force` / `git worktree prune` / `git branch -D`
+	// `git worktree remove --force` / `git branch -D`
 	// all no-op. ClearIssueArtifacts must still clean up the orphan dir.
 	// See #545.
 	dir := testenv.MkdirShort(t, "sm-orch-")

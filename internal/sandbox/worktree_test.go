@@ -1839,6 +1839,39 @@ func TestWorktreeSandbox_ParallelStartsDoNotDestroyEachOther(t *testing.T) {
 	}
 }
 
+func TestRemoveWorktreeRegistration_MatchesStoredPath(t *testing.T) {
+	repoDir := t.TempDir()
+	registrations := filepath.Join(repoDir, ".git", "worktrees")
+	if err := os.MkdirAll(registrations, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	sibling := filepath.Join(repoDir, ".sandman", "worktrees", "topic")
+	target := filepath.Join(repoDir, ".sandman", "worktrees", "operator", "topic")
+	for name, worktreePath := range map[string]string{
+		"topic":  sibling,
+		"topic1": target,
+	} {
+		registration := filepath.Join(registrations, name)
+		if err := os.Mkdir(registration, 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(registration, "gitdir"), []byte(filepath.Join(worktreePath, ".git")+"\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if err := RemoveWorktreeRegistration(repoDir, target); err != nil {
+		t.Fatalf("RemoveWorktreeRegistration: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(registrations, "topic1")); !os.IsNotExist(err) {
+		t.Fatalf("target registration still exists: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(registrations, "topic")); err != nil {
+		t.Fatalf("sibling registration was removed: %v", err)
+	}
+}
+
 // TestWorktreeSandbox_ContinueNormalizesWorkspaceGitlink pins behavior 1 of
 // issue #2189: when a preserved worktree's `.git` file points at a
 // `/workspace/...` gitdir (left over from a container attempt that exited
