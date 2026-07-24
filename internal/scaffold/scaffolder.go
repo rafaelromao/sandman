@@ -61,17 +61,18 @@ func DefaultNodeLTSVersion() string {
 
 // Options configures the scaffolding behavior.
 type Options struct {
-	BuildTools      string // --build-tools override
-	ToolVersion     string // --tool-version override
-	Agent           string // --agent override
-	Model           string // --model override
-	Variant         string // --variant override
-	Parallel        int    // --parallel override (-1 = use config default)
-	ParallelReviews int    // --parallel-reviews override (-1 = use config default)
-	ReviewCommand   string // --review-command override
-	Retries         *int   // --retries override; nil = use config.DefaultRetries
-	RunIdleTimeout  *int   // --run-idle-timeout override; nil = use config.DefaultRunIdleTimeout
-	Writer          io.Writer
+	BuildTools       string // --build-tools override
+	ToolVersion      string // --tool-version override
+	Agent            string // --agent override
+	Model            string // --model override
+	Variant          string // --variant override
+	Parallel         int    // --parallel override (-1 = use config default)
+	ParallelReviews  int    // --parallel-reviews override (-1 = use config default)
+	ReviewCommand    string // --review-command override
+	Retries          *int   // --retries override; nil = use config.DefaultRetries
+	RunIdleTimeout   *int   // --run-idle-timeout override; nil = use config.DefaultRunIdleTimeout
+	Writer           io.Writer
+	DiagnosticWriter io.Writer
 }
 
 // BuildToolsPreset describes a scaffold-time recipe for the container image.
@@ -587,7 +588,7 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 		return fmt.Errorf("ensure .sandman/ in .gitignore: %w", err)
 	}
 
-	if err := installPreCommitHook(s.resolveHooksDir(repoRoot), opts.Writer); err != nil {
+	if err := installPreCommitHook(s.resolveHooksDir(repoRoot), opts.DiagnosticWriter); err != nil {
 		return fmt.Errorf("install pre-commit hook: %w", err)
 	}
 

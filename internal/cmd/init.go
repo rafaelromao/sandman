@@ -81,23 +81,24 @@ func NewInitCmd() *cobra.Command {
 				return fmt.Errorf("get working directory: %w", err)
 			}
 
-			var writer io.Writer
+			var diagnosticWriter io.Writer
 			if verbose {
-				writer = cmd.OutOrStdout()
+				diagnosticWriter = cmd.OutOrStdout()
 			}
 
 			if err := s.Scaffold(wd, scaffold.Options{
-				BuildTools:      buildTools,
-				ToolVersion:     toolVersion,
-				Agent:           agent,
-				Model:           model,
-				Variant:         variant,
-				Parallel:        parallel,
-				ParallelReviews: parallelReviews,
-				ReviewCommand:   reviewCommand,
-				Retries:         retriesOverride,
-				RunIdleTimeout:  runIdleTimeoutOverride,
-				Writer:          writer,
+				BuildTools:       buildTools,
+				ToolVersion:      toolVersion,
+				Agent:            agent,
+				Model:            model,
+				Variant:          variant,
+				Parallel:         parallel,
+				ParallelReviews:  parallelReviews,
+				ReviewCommand:    reviewCommand,
+				Retries:          retriesOverride,
+				RunIdleTimeout:   runIdleTimeoutOverride,
+				Writer:           cmd.OutOrStdout(),
+				DiagnosticWriter: diagnosticWriter,
 			}, prompter); err != nil {
 				return err
 			}

@@ -122,6 +122,9 @@ func TestInit_VerboseControlsScaffoldDiagnostics(t *testing.T) {
 			if gotWarn != tt.wantWarn {
 				t.Fatalf("diagnostic warning present = %t, want %t; output: %q", gotWarn, tt.wantWarn, out.String())
 			}
+			if !strings.Contains(out.String(), "Scaffold complete.") {
+				t.Fatalf("init summary missing from output: %q", out.String())
+			}
 		})
 	}
 }
