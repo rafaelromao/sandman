@@ -285,6 +285,33 @@ func TestRealGitRunner_DeleteBranchDoesNotPruneSiblingRegistrations(t *testing.T
 	}
 }
 
+func TestRealGitRunner_RemoveWorktreeCleansStaleRegistration(t *testing.T) {
+	repo := t.TempDir()
+	runGit(t, repo, "init", "-q", "-b", "main")
+	runGit(t, repo, "config", "user.email", "test@example.com")
+	runGit(t, repo, "config", "user.name", "Test")
+	runGit(t, repo, "commit", "--allow-empty", "-m", "init")
+
+	worktreePath := filepath.Join(repo, ".sandman", "worktrees", "42-target")
+	runGit(t, repo, "worktree", "add", "-b", "42-target", worktreePath, "main")
+	if err := os.WriteFile(filepath.Join(worktreePath, ".git"), []byte("gitdir: /missing/container/path\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := newRealGitRunner(repo).removeWorktree(worktreePath); err != nil {
+		t.Fatalf("remove stale worktree: %v", err)
+	}
+	if _, err := os.Stat(worktreePath); !os.IsNotExist(err) {
+		t.Fatalf("stale worktree directory still exists: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(repo, ".git", "worktrees", "42-target")); !os.IsNotExist(err) {
+		t.Fatalf("stale worktree registration still exists: %v", err)
+	}
+	if err := newRealGitRunner(repo).deleteBranch("42-target", worktreePath); err != nil {
+		t.Fatalf("delete branch after stale cleanup: %v", err)
+	}
+}
+
 func TestCleanupOrphanedBatches_PartialFailureKeepsFailedIndexEntry(t *testing.T) {
 	repo := t.TempDir()
 	layout := paths.NewLayout(&config.Config{}, repo)

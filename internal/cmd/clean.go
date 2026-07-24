@@ -37,9 +37,28 @@ func (r *realGitRunner) removeWorktree(path string) error {
 	cmd := exec.Command("git", "worktree", "remove", "--force", path)
 	cmd.Dir = r.repoPath
 	if out, err := cmd.CombinedOutput(); err != nil {
+		if isStaleWorktreeRemovalError(err, out) {
+			if removeErr := sandbox.RemoveWorktreeRegistration(r.repoPath, path); removeErr != nil {
+				return fmt.Errorf("remove stale worktree registration: %w", removeErr)
+			}
+			if removeErr := os.RemoveAll(path); removeErr != nil {
+				return fmt.Errorf("remove stale worktree directory: %w", removeErr)
+			}
+			return nil
+		}
 		return fmt.Errorf("git worktree remove: %w\n%s", err, out)
 	}
 	return nil
+}
+
+func isStaleWorktreeRemovalError(err error, output []byte) bool {
+	if err == nil {
+		return false
+	}
+	message := strings.ToLower(string(output) + "\n" + err.Error())
+	return strings.Contains(message, "is not a working tree") ||
+		strings.Contains(message, "could not open worktree") ||
+		strings.Contains(message, "is not a .git file")
 }
 
 func (r *realGitRunner) deleteBranch(branch, worktreePath string) error {
