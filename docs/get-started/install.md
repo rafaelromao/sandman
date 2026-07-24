@@ -4,7 +4,7 @@ Full setup guide: prerequisites, install methods, OpenCode setup, project initia
 
 ## Prerequisites
 
-- [Go](https://go.dev/dl/) 1.24 or later
+- [Go](https://go.dev/dl/) 1.25 or later
 - [Git](https://git-scm.com/)
 - [`gh` CLI](https://cli.github.com/) — authenticated and with `repo` scope
 - An AI coding agent: [OpenCode](https://opencode.ai/)
@@ -15,7 +15,7 @@ Full setup guide: prerequisites, install methods, OpenCode setup, project initia
 ### Quick install
 
 ```bash
-go install github.com/rafaelromao/sandman/cmd/sandman@latest
+go install github.com/rafaelromao/sandman/cmd/sandman@v1.0.0
 ```
 
 ### Build from source
