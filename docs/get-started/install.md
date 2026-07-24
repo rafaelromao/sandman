@@ -28,36 +28,36 @@ Archives use the naming convention `sandman_<version>_<os>_<arch>.tar.gz`.
 Release archive versions omit the `v` prefix, so tag `v1.0.0` produces archives
 with version `1.0.0`. Each release also includes `checksums.txt`.
 
-The following example installs the Linux amd64 binary from `v1.0.0`. Download
-all archives before checking the checksum because `checksums.txt` contains an
-entry for every target. Replace the archive you extract with the matching
-target for your platform.
+The following example installs the Linux amd64 binary from `v1.0.0`. Select the
+archive for your platform, then verify that archive against its entry in
+`checksums.txt` before extracting it.
 
 ```bash
 VERSION=1.0.0
 RELEASE_URL="https://github.com/rafaelromao/sandman/releases/download/v${VERSION}"
+TARGET_ARCHIVE="sandman_${VERSION}_linux_amd64.tar.gz"
 
-curl -fLO "${RELEASE_URL}/sandman_${VERSION}_linux_amd64.tar.gz"
-curl -fLO "${RELEASE_URL}/sandman_${VERSION}_darwin_amd64.tar.gz"
-curl -fLO "${RELEASE_URL}/sandman_${VERSION}_darwin_arm64.tar.gz"
+curl -fLO "${RELEASE_URL}/${TARGET_ARCHIVE}"
 curl -fLO "${RELEASE_URL}/checksums.txt"
 
-# Linux
-sha256sum -c checksums.txt
-# macOS
-shasum -a 256 -c checksums.txt
+grep -F "  ${TARGET_ARCHIVE}" checksums.txt | sha256sum -c -
 
-tar -xzf "sandman_${VERSION}_linux_amd64.tar.gz"
-install -Dm755 sandman "${HOME}/.local/bin/sandman"
+tar -xzf "${TARGET_ARCHIVE}"
+mkdir -p "${HOME}/.local/bin"
+install -m 755 sandman "${HOME}/.local/bin/sandman"
 export PATH="${HOME}/.local/bin:${PATH}"
 sandman --version
 # sandman 1.0.0
 ```
 
-On macOS, extract and install the archive matching your Mac's architecture:
-`darwin_amd64` for Intel or `darwin_arm64` for Apple silicon. If your checksum
-tool reports missing files, download all three archives as shown above before
-running the check.
+On macOS, use the same commands with `TARGET_ARCHIVE` set to
+`sandman_${VERSION}_darwin_amd64.tar.gz` for Intel or
+`sandman_${VERSION}_darwin_arm64.tar.gz` for Apple silicon, and replace the
+checksum command with:
+
+```bash
+grep -F "  ${TARGET_ARCHIVE}" checksums.txt | shasum -a 256 -c -
+```
 
 ### Install from source
 
