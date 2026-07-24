@@ -84,10 +84,11 @@ must preserve the curated entry.
 
 The release configuration contains a one-time `release-as: 1.0.0` override so
 the first release PR cannot be advanced by the pre-release Conventional Commit
-history. Remove that override after `v1.0.0` is created; subsequent versions
-must again be derived from Conventional Commits. Maintainers continue to own
-the curated changelog and release contributors should update it in the same
-change request as user-facing behavior.
+history. After `v1.0.0` is created, the release workflow removes that override
+and commits the cleanup to `main`; subsequent versions are derived from
+Conventional Commits. Maintainers continue to own the curated changelog and
+release contributors should update it in the same change request as user-facing
+behavior.
 
 ## Version Output
 

@@ -66,7 +66,7 @@ func TestReleaseBootstrapPreservesCuratedChangelogAndNoDevNull(t *testing.T) {
 	if strings.Contains(releasing, "/dev/null") {
 		t.Fatal("release guide must not describe /dev/null as the changelog path")
 	}
-	if !strings.Contains(releasing, "Remove that override after `v1.0.0` is created") {
+	if !strings.Contains(releasing, "After `v1.0.0` is created, the release workflow removes that override") {
 		t.Fatal("release guide must require removing the bootstrap override after v1.0.0")
 	}
 }
@@ -77,6 +77,11 @@ func TestReleaseWorkflowPublishesConfiguredReleaseArtifacts(t *testing.T) {
 		"release_created == 'true'",
 		"args: release --clean",
 		"GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}",
+		"name: Remove first-release override",
+		"refs/tags/v1.0.0",
+		"jq 'del(.packages[\".\"][\"release-as\"])'",
+		"git commit -m \"chore(release): remove first-release override\"",
+		"HEAD:main",
 	} {
 		if !strings.Contains(release, required) {
 			t.Errorf("release workflow missing %q", required)
