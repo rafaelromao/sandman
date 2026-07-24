@@ -9,7 +9,7 @@ Full setup guide: prerequisites, install methods, OpenCode setup, project initia
 - An AI coding agent: [OpenCode](https://opencode.ai/)
 - Optional but recommended: [Podman](https://podman.io/) or [Docker](https://docker.com/) for container-backed sandboxing
 
-Go 1.24 or later is only needed for the source-install methods below. Binary
+Go 1.25 or later is only needed for the source-install methods below. Binary
 installations do not require Go.
 
 ## Install Sandman

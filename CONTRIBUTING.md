@@ -75,7 +75,7 @@ The full rule lives in [`AGENTS.md`](AGENTS.md#feature-branches).
 
 ### Prerequisites
 
-- Go 1.24 or later
+- Go 1.25 or later
 - `gh` CLI installed and authenticated
 - Git
 
