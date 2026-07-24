@@ -22,9 +22,10 @@ binary installation ([#2392](https://github.com/rafaelromao/sandman/issues/2392)
    `1.0.0`, so the first tag is expected to be `v1.0.0` after the bootstrap
    work in [#2390](https://github.com/rafaelromao/sandman/issues/2390).
 5. When Release Please reports `release_created == 'true'`, the same workflow
-   checks out the tagged repository with full history and runs GoReleaser with
-   `release --clean`. GoReleaser uploads the archives and `checksums.txt` to
-   the GitHub Release.
+   checks out the workflow's triggering commit with full history and runs
+   GoReleaser with `release --clean`. GoReleaser uploads the archives and
+   `checksums.txt` to the GitHub Release. The workflow does not explicitly pass
+   the generated tag to `actions/checkout`.
 
 To diagnose a release, inspect the Release workflow run, the Release Please
 change request and its generated tag, then the GoReleaser step and the assets
@@ -113,15 +114,15 @@ above. A release artifact's version output should therefore be checked with
 `sandman --version`, not inferred from the archive filename alone.
 
 The prompt guidance repeats the title/history distinction so agents do not
-mistake the CI title gate for release calculation. It was verified against the
-regex in `AGENTS.md`, `.github/workflows/go.yml`, the Release Please config, and
-the version command tests.
+mistake the CI title gate for release calculation. Its wording was checked
+against the regex in `AGENTS.md`, `.github/workflows/go.yml`, the Release Please
+config, and the version command tests; no sandbox behavior change is claimed.
 
 ## Maintainer Follow-ups
 
 The release jobs currently rely on the runner's environment for Go rather than
 having an explicit `actions/setup-go` step in the release job, and both release
-workflows use the floating GoReleaser `version: latest`. Track these as release
-pipeline follow-ups: add explicit Go setup and pin a reviewed GoReleaser version
-before treating the release workflow as fully hermetic. They are deliberately
-not changed by this documentation issue.
+workflows use the floating GoReleaser `version: latest`. Follow
+[#2397](https://github.com/rafaelromao/sandman/issues/2397) to add explicit Go
+setup and pin a reviewed GoReleaser version before treating the release workflow
+as fully hermetic. Those changes are deliberately not made by this issue.
