@@ -6,7 +6,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"strings"
 
 	"github.com/rafaelromao/sandman/internal/batchindex"
@@ -14,13 +13,13 @@ import (
 	"github.com/rafaelromao/sandman/internal/daemon"
 	"github.com/rafaelromao/sandman/internal/events"
 	"github.com/rafaelromao/sandman/internal/paths"
+	"github.com/rafaelromao/sandman/internal/sandbox"
 	"github.com/spf13/cobra"
 )
 
 type gitRunner interface {
 	removeWorktree(path string) error
-	pruneAndDeleteBranch(branch string) error
-	removeOrphanBranches() (int, error)
+	deleteBranch(branch, worktreePath string) error
 }
 
 type realGitRunner struct {
@@ -38,16 +37,43 @@ func (r *realGitRunner) removeWorktree(path string) error {
 	cmd := exec.Command("git", "worktree", "remove", "--force", path)
 	cmd.Dir = r.repoPath
 	if out, err := cmd.CombinedOutput(); err != nil {
+		if isStaleWorktreeRemovalError(err, out) {
+			if removeErr := sandbox.RemoveWorktreeRegistration(r.repoPath, path); removeErr != nil {
+				return fmt.Errorf("remove stale worktree registration: %w", removeErr)
+			}
+			if removeErr := os.RemoveAll(path); removeErr != nil {
+				return fmt.Errorf("remove stale worktree directory: %w", removeErr)
+			}
+			return nil
+		}
 		return fmt.Errorf("git worktree remove: %w\n%s", err, out)
 	}
 	return nil
 }
 
-func (r *realGitRunner) pruneAndDeleteBranch(branch string) error {
-	pruneCmd := exec.Command("git", "worktree", "prune")
-	pruneCmd.Dir = r.repoPath
-	if out, err := pruneCmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("git worktree prune: %w\n%s", err, out)
+func isStaleWorktreeRemovalError(err error, output []byte) bool {
+	if err == nil {
+		return false
+	}
+	message := strings.ToLower(string(output) + "\n" + err.Error())
+	return strings.Contains(message, "is not a working tree") ||
+		strings.Contains(message, "could not open worktree") ||
+		strings.Contains(message, "is not a .git file")
+}
+
+func (r *realGitRunner) deleteBranch(branch, worktreePath string) error {
+	// A missing target directory can leave behind a prunable registration.
+	// Remove only that registration; a repository-wide `git worktree prune`
+	// can delete live sibling registrations when their paths are not visible
+	// from a container.
+	if worktreePath != "" {
+		if _, err := os.Stat(worktreePath); os.IsNotExist(err) {
+			if removeErr := sandbox.RemoveWorktreeRegistration(r.repoPath, worktreePath); removeErr != nil {
+				return fmt.Errorf("remove worktree registration: %w", removeErr)
+			}
+		} else if err != nil {
+			return fmt.Errorf("stat worktree: %w", err)
+		}
 	}
 	delCmd := exec.Command("git", "branch", "-D", branch)
 	delCmd.Dir = r.repoPath
@@ -74,37 +100,6 @@ func isBranchNotFoundError(err error, output []byte) bool {
 		}
 	}
 	return false
-}
-
-func (r *realGitRunner) removeOrphanBranches() (int, error) {
-	listCmd := exec.Command("git", "branch", "--list", "sandman/*", "--format", "%(refname:short)")
-	listCmd.Dir = r.repoPath
-	out, err := listCmd.CombinedOutput()
-	if err != nil {
-		return 0, fmt.Errorf("git branch --list: %w\n%s", err, out)
-	}
-	raw := strings.TrimSpace(string(out))
-	if raw == "" {
-		return 0, nil
-	}
-	branches := strings.Split(raw, "\n")
-	var removed int
-	for _, branch := range branches {
-		branch = strings.TrimSpace(branch)
-		if branch == "" {
-			continue
-		}
-		delCmd := exec.Command("git", "branch", "-D", branch)
-		delCmd.Dir = r.repoPath
-		if delCmd.Run() != nil {
-			continue
-		}
-		removed++
-	}
-	pruneCmd := exec.Command("git", "worktree", "prune")
-	pruneCmd.Dir = r.repoPath
-	_ = pruneCmd.Run()
-	return removed, nil
 }
 
 type cleanAction struct {
@@ -438,19 +433,15 @@ func executeClean(actions []cleanAction, gr gitRunner, layout paths.Layout, remo
 					continue
 				}
 			}
-			if a.Branch != "" || a.Worktree != "" {
-				branch := a.Branch
-				if branch == "" {
-					branch = filepath.Base(a.Worktree)
-				}
-				if branchErr := validateOwnedBranch(branch); branchErr != nil {
-					err := fmt.Errorf("validate branch %s: %w", branch, branchErr)
+			if a.Branch != "" {
+				if branchErr := validateBranchName(a.Branch); branchErr != nil {
+					err := fmt.Errorf("validate branch %s: %w", a.Branch, branchErr)
 					outcomes = append(outcomes, cleanOutcome{Action: a, Err: err})
 					actionErrs = append(actionErrs, err)
 					continue
 				}
-				if err := gr.pruneAndDeleteBranch(branch); err != nil && !isBranchNotFoundError(err, nil) {
-					err = fmt.Errorf("delete branch %s: %w", branch, err)
+				if err := gr.deleteBranch(a.Branch, a.Worktree); err != nil && !isBranchNotFoundError(err, nil) {
+					err = fmt.Errorf("delete branch %s: %w", a.Branch, err)
 					outcomes = append(outcomes, cleanOutcome{Action: a, Err: err})
 					actionErrs = append(actionErrs, err)
 					continue
@@ -528,6 +519,9 @@ func validateCleanAction(action cleanAction, layout paths.Layout) error {
 		}
 	}
 	if action.Worktree != "" {
+		if action.Branch == "" {
+			return fmt.Errorf("manifest has a worktree but no branch")
+		}
 		if err := validateOwnedPath(action.Worktree, layout.WorktreeDir); err != nil {
 			return fmt.Errorf("validate worktree %s: %w", action.BatchID, err)
 		}
@@ -570,39 +564,18 @@ func validateOwnedPath(candidate string, roots ...string) error {
 	return fmt.Errorf("path is outside trusted roots")
 }
 
-func validateOwnedBranch(branch string) error {
+func validateBranchName(branch string) error {
 	if branch == "" {
 		return fmt.Errorf("branch must be non-empty")
 	}
 	if filepath.IsAbs(branch) || filepath.Clean(branch) != branch || strings.ContainsAny(branch, `\`) {
 		return fmt.Errorf("branch name is unsafe")
 	}
-	// Accept the runtime's branch conventions:
-	//   - issue-driven default:   "<n>-<slug>"
-	//   - issue-driven feature:   "<feature>/<n>-<slug>"
-	//   - legacy issue-driven:   "sandman/<n>-<slug>"
-	//   - sidecars:                "sandman/review-<n>-<commentID>", "sandman/built-with-sandman"
-	//   - prompt-only:             "sandman/<slug>-<timestamp>"
-	// The "sandman/" prefix is the legacy namespace marker; the new
-	// convention uses the base branch as the prefix-owner instead.
-	// The regex accepts both shapes so clean can remove branches the
-	// runtime (or its legacy form) ever created.
-	ownedByIssuePattern := issueBranchNamePattern.MatchString(branch)
-	ownedByLegacyPrefix := strings.HasPrefix(branch, "sandman/") && len(branch) > len("sandman/")
-	if !ownedByIssuePattern && !ownedByLegacyPrefix {
-		return fmt.Errorf("branch is not Sandman-owned")
-	}
 	if strings.Contains(branch, "//") || strings.Contains(branch, "..") || strings.ContainsAny(branch, "~^:?*[\x00") || strings.HasSuffix(branch, ".") || strings.HasSuffix(branch, "/") {
 		return fmt.Errorf("branch name is unsafe")
 	}
 	return nil
 }
-
-// issueBranchNamePattern matches the runtime's issue-driven branch shapes:
-//   - default-base: "<n>-<slug>"
-//   - feature-base: "<feature>/<n>-<slug>" (the feature prefix can be any
-//     non-empty path that does not contain a slash or unsafe character).
-var issueBranchNamePattern = regexp.MustCompile(`^[A-Za-z0-9._/-]+/\d+-[a-z0-9-]+$|^\d+-[a-z0-9-]+$`)
 
 func existingResolvedPath(path string) (string, error) {
 	for current := path; ; current = filepath.Dir(current) {

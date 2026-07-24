@@ -707,8 +707,7 @@ func parseCheckedOutPath(out []byte) (string, bool) {
 	return "", false
 }
 
-// removePrunableWorktreeRegistration drops the
-// `.git/worktrees/<basename(s.workDir)>` registration directory that
+// removePrunableWorktreeRegistration drops the registration directory that
 // corresponds to the canonical worktree, without touching any other
 // worktree registration. It is the scoped equivalent of
 // `git worktree prune` for a single path.
@@ -722,22 +721,79 @@ func parseCheckedOutPath(out []byte) (string, bool) {
 //
 // Issue #2187.
 func (s *WorktreeSandbox) removePrunableWorktreeRegistration() error {
-	name := filepath.Base(s.workDir)
-	candidate := filepath.Join(s.repoPath, ".git", "worktrees", name)
-	info, err := os.Stat(candidate)
+	return RemoveWorktreeRegistration(s.repoPath, s.workDir)
+}
+
+// RemoveWorktreeRegistration removes only the registration corresponding to
+// worktreePath. It is the target-scoped alternative to `git worktree prune`,
+// which can remove live sibling registrations when host paths are not visible
+// from a container.
+func RemoveWorktreeRegistration(repoPath, worktreePath string) error {
+	registrations := filepath.Join(repoPath, ".git", "worktrees")
+	entries, err := os.ReadDir(registrations)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil
 		}
-		return fmt.Errorf("stat %q: %w", candidate, err)
+		return fmt.Errorf("read worktree registrations %q: %w", registrations, err)
 	}
-	if !info.IsDir() {
+
+	want, err := canonicalWorktreePath(worktreePath)
+	if err != nil {
+		return fmt.Errorf("resolve worktree path %q: %w", worktreePath, err)
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		candidate := filepath.Join(registrations, entry.Name())
+		gitdir, err := os.ReadFile(filepath.Join(candidate, "gitdir"))
+		if err != nil {
+			continue
+		}
+		registeredPath, err := canonicalWorktreePath(filepath.Dir(strings.TrimSpace(string(gitdir))))
+		if err != nil {
+			continue
+		}
+		if registeredPath != want {
+			continue
+		}
+		if err := os.RemoveAll(candidate); err != nil {
+			return fmt.Errorf("remove registration %q: %w", candidate, err)
+		}
 		return nil
 	}
-	if err := os.RemoveAll(candidate); err != nil {
-		return fmt.Errorf("remove registration %q: %w", candidate, err)
-	}
+
 	return nil
+}
+
+func canonicalWorktreePath(path string) (string, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	missing := ""
+	existing := abs
+	for {
+		if _, err := os.Lstat(existing); err == nil {
+			resolved, err := filepath.EvalSymlinks(existing)
+			if err != nil {
+				return abs, nil
+			}
+			return filepath.Join(resolved, missing), nil
+		}
+		parent := filepath.Dir(existing)
+		if parent == existing {
+			return abs, nil
+		}
+		part := filepath.Base(existing)
+		if missing == "" {
+			missing = part
+		} else {
+			missing = filepath.Join(part, missing)
+		}
+		existing = parent
+	}
 }
 
 // refuseContinuation returns a targeted error explaining why the preserved

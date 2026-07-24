@@ -3315,19 +3315,18 @@ func ClearIssueArtifacts(issueNumber int, branch string, worktreeDir string, eve
 	wtPath := filepath.Join(worktreeDir, branch)
 
 	// Remove worktree (may fail if already removed — idempotent)
-	if out, err := exec.Command("git", "worktree", "remove", "--force", wtPath).CombinedOutput(); err != nil && !isMissingWorktreeError(err, out) {
-		if isPrunableWorktreeError(err, out) && strandedReconcile != nil && *strandedReconcile {
+	if out, err := exec.Command("git", "worktree", "remove", "--force", wtPath).CombinedOutput(); err != nil {
+		if (isPrunableWorktreeError(err, out) || isMissingWorktreeError(err, out)) && strandedReconcile != nil && *strandedReconcile {
 			if rmErr := os.RemoveAll(wtPath); rmErr != nil {
 				fmt.Fprintf(logWriter, "error: remove worktree dir %s for issue %d: %v\n", wtPath, issueNumber, rmErr)
 			}
-		} else {
+			if rmErr := sandbox.RemoveWorktreeRegistration(".", wtPath); rmErr != nil {
+				fmt.Fprintf(logWriter, "error: remove worktree registration %s for issue %d: %v\n", wtPath, issueNumber, rmErr)
+			}
+		} else if !isMissingWorktreeError(err, out) {
 			fmt.Fprintf(logWriter, "error: remove worktree %s for issue %d: %v: %s\n", wtPath, issueNumber, err, out)
 		}
 	}
-	if out, err := exec.Command("git", "worktree", "prune").CombinedOutput(); err != nil {
-		fmt.Fprintf(logWriter, "error: prune worktrees for issue %d: %v: %s\n", issueNumber, err, out)
-	}
-
 	// Delete branch (may fail if already deleted — idempotent)
 	if out, err := exec.Command("git", "branch", "-D", branch).CombinedOutput(); err != nil && !isMissingBranchError(err, out) {
 		if strandedReconcile != nil && *strandedReconcile {
