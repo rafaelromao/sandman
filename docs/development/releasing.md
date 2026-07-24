@@ -19,8 +19,8 @@ binary installation ([#2392](https://github.com/rafaelromao/sandman/issues/2392)
    protection rules.
 4. Release Please creates the version tag and published GitHub Release when
    the release change request is merged. The initial manifest version is
-   `1.0.0`, so the first tag is expected to be `v1.0.0` after the bootstrap
-   work in [#2390](https://github.com/rafaelromao/sandman/issues/2390).
+   `0.2.0`; the first prerelease is forced to exactly `v1.0.0-rc.1` and is
+   marked as a GitHub prerelease.
 5. When Release Please reports `release_created == 'true'`, the same workflow
    checks out the workflow's triggering commit with full history and runs
    Go `1.25.0` from `go.mod`, then runs GoReleaser `v2.10.1` with
@@ -78,16 +78,16 @@ The exact title policy is also summarized in
 ## Changelog Ownership
 
 `CHANGELOG.md` is a curated, repository-owned changelog. It contains the
-bootstrapped `1.0.0` entry and the `Unreleased` section, and the pull-request
+reconstructed `0.2.0` entry and the `Unreleased` section, and the pull-request
 template asks contributors to update it for user-facing changes. Release Please
 reads this file when preparing the bootstrap release, so its generated notes
 must preserve the curated entry.
 
-The release configuration contains a one-time `release-as: 1.0.0` override so
-the first release PR cannot be advanced by the pre-release Conventional Commit
-history. After `v1.0.0` is created, the release workflow removes that override
-and commits the cleanup to `main`; subsequent versions are derived from
-Conventional Commits. Maintainers continue to own the curated changelog and
+The release configuration contains a one-time `release-as: 1.0.0-rc.1` override
+so the first release PR is exact despite the pre-release Conventional Commit
+history. After `v1.0.0-rc.1` is created, remove the one-time override in a
+maintainer change; subsequent RCs are derived from Conventional Commits and the
+prerelease strategy. Maintainers continue to own the curated changelog and
 release contributors should update it in the same change request as user-facing
 behavior.
 
@@ -97,19 +97,19 @@ Both commands use the same build version and prefix it with `sandman`:
 
 ```console
 $ sandman --version
-sandman v1.0.0
+sandman v1.0.0-rc.1
 $ sandman version
-sandman v1.0.0
+sandman v1.0.0-rc.1
 ```
 
 The sources of that value differ by build path:
 
 | Build path | Version value |
 |------------|---------------|
-| Release binary | GoReleaser injects `.Version` into `main.version`; the release tag is `v1.0.0`, while GoReleaser's version value is displayed without the tag's `v` prefix (for example `1.0.0`) |
-| `make build` | `VERSION` may be supplied explicitly; otherwise it comes from `git describe --tags --always --dirty`, so it can be `v1.0.0`, a commit hash, or a dirty description |
+| Release binary | GoReleaser injects `.Version` into `main.version`; the release tag is `v1.0.0-rc.1`, while GoReleaser's version value is displayed without the tag's `v` prefix (for example `1.0.0-rc.1`) |
+| `make build` | `VERSION` may be supplied explicitly; otherwise it comes from `git describe --tags --always --dirty`, so it can be `v1.0.0-rc.1`, a commit hash, or a dirty description |
 | `go install ./cmd/sandman` | The Makefile is bypassed; a local checkout normally reports Go's `(devel)` build-info version, while a module install from a versioned source can report a pseudo-version; the final fallback is `dev` |
-| `go install github.com/rafaelromao/sandman/cmd/sandman@v1.0.0` | Go embeds the requested module version, normally `v1.0.0` |
+| `go install github.com/rafaelromao/sandman/cmd/sandman@v1.0.0-rc.1` | Go embeds the requested module version, normally `v1.0.0-rc.1` |
 
 The intentional policy is to preserve the `v` prefix on Git tags and Go module
 versions, while accepting the GoReleaser and local-build differences described
@@ -128,3 +128,10 @@ The production release job explicitly installs the Go version declared by
 Please reports `release_created == 'true'`. The pull-request snapshot workflow
 is separate and intentionally remains independent of the production release
 toolchain.
+
+## First RC Verification
+
+After `v1.0.0-rc.1` is created, remove the one-time override only after GitHub
+shows the tag and release as a prerelease, all three platform archives and
+`checksums.txt` are present, and the binary reports `sandman v1.0.0-rc.1`.
+The next Release Please run should then advance to `v1.0.0-rc.2`.

@@ -17,24 +17,24 @@ installations do not require Go.
 
 ### Release binary
 
-Published binaries are available from the [GitHub Releases](https://github.com/rafaelromao/sandman/releases) page. The `v1.0.0` release publishes these targets:
+Published binaries are available from the [GitHub Releases](https://github.com/rafaelromao/sandman/releases) page. The `v1.0.0-rc.1` prerelease publishes these targets:
 
 | Platform | Architecture | Archive |
 |----------|--------------|---------|
-| Linux | amd64 | `sandman_1.0.0_linux_amd64.tar.gz` |
-| macOS | amd64 | `sandman_1.0.0_darwin_amd64.tar.gz` |
-| macOS | arm64 | `sandman_1.0.0_darwin_arm64.tar.gz` |
+| Linux | amd64 | `sandman_1.0.0-rc.1_linux_amd64.tar.gz` |
+| macOS | amd64 | `sandman_1.0.0-rc.1_darwin_amd64.tar.gz` |
+| macOS | arm64 | `sandman_1.0.0-rc.1_darwin_arm64.tar.gz` |
 
 Archives use the naming convention `sandman_<version>_<os>_<arch>.tar.gz`.
-Release archive versions omit the `v` prefix, so tag `v1.0.0` produces archives
-with version `1.0.0`. Each release also includes `checksums.txt`.
+Release archive versions omit the `v` prefix, so tag `v1.0.0-rc.1` produces
+archives with version `1.0.0-rc.1`. Each release also includes `checksums.txt`.
 
-The following example installs the Linux amd64 binary from `v1.0.0`. Select the
+The following example installs the Linux amd64 binary from `v1.0.0-rc.1`. Select the
 archive for your platform, then verify that archive against its entry in
 `checksums.txt` before extracting it.
 
 ```bash
-VERSION=1.0.0
+VERSION=1.0.0-rc.1
 RELEASE_URL="https://github.com/rafaelromao/sandman/releases/download/v${VERSION}"
 TARGET_ARCHIVE="sandman_${VERSION}_linux_amd64.tar.gz"
 
@@ -48,7 +48,7 @@ mkdir -p "${HOME}/.local/bin"
 install -m 755 sandman "${HOME}/.local/bin/sandman"
 export PATH="${HOME}/.local/bin:${PATH}"
 sandman --version
-# sandman 1.0.0
+# sandman 1.0.0-rc.1
 ```
 
 On macOS, use the same commands with `TARGET_ARCHIVE` set to
@@ -67,7 +67,7 @@ want to build from a checkout, or when no compatible release binary is
 available:
 
 ```bash
-go install github.com/rafaelromao/sandman/cmd/sandman@v1.0.0
+go install github.com/rafaelromao/sandman/cmd/sandman@v1.0.0-rc.1
 ```
 
 To build the current checkout instead:
