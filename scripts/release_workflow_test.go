@@ -75,6 +75,9 @@ func TestReleaseWorkflowPublishesConfiguredReleaseArtifacts(t *testing.T) {
 	release := readRepositoryFile(t, "../.github/workflows/release.yml")
 	for _, required := range []string{
 		"release_created == 'true'",
+		"uses: actions/setup-go@v5",
+		"go-version-file: go.mod",
+		"version: v2.10.1",
 		"args: release --clean",
 		"GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}",
 		"name: Remove first-release override",
@@ -85,6 +88,29 @@ func TestReleaseWorkflowPublishesConfiguredReleaseArtifacts(t *testing.T) {
 	} {
 		if !strings.Contains(release, required) {
 			t.Errorf("release workflow missing %q", required)
+		}
+	}
+
+	checkout := strings.Index(release, "uses: actions/checkout@v4")
+	setupGo := strings.Index(release, "uses: actions/setup-go@v5")
+	goreleaserStep := strings.Index(release, "uses: goreleaser/goreleaser-action@v6")
+	if checkout == -1 || setupGo == -1 || goreleaserStep == -1 || checkout > setupGo || setupGo > goreleaserStep {
+		t.Fatal("release workflow must set up Go after checkout and before GoReleaser")
+	}
+
+	setupGoBlock := release[setupGo:goreleaserStep]
+	if !strings.Contains(setupGoBlock, "if: steps.release-please.outputs.release_created == 'true'") {
+		t.Fatal("release workflow Go setup must be gated on release creation")
+	}
+
+	releasing := readRepositoryFile(t, "../docs/development/releasing.md")
+	for _, required := range []string{
+		"Go `1.25.0` from `go.mod`",
+		"GoReleaser `v2.10.1`",
+		"production release job explicitly installs",
+	} {
+		if !strings.Contains(releasing, required) {
+			t.Errorf("release guide missing %q", required)
 		}
 	}
 

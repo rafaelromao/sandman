@@ -23,9 +23,10 @@ binary installation ([#2392](https://github.com/rafaelromao/sandman/issues/2392)
    work in [#2390](https://github.com/rafaelromao/sandman/issues/2390).
 5. When Release Please reports `release_created == 'true'`, the same workflow
    checks out the workflow's triggering commit with full history and runs
-   GoReleaser with `release --clean`. GoReleaser uploads the archives and
-   `checksums.txt` to the GitHub Release. The workflow does not explicitly pass
-   the generated tag to `actions/checkout`.
+   Go `1.25.0` from `go.mod`, then runs GoReleaser `v2.10.1` with
+   `release --clean`. GoReleaser uploads the archives and `checksums.txt` to
+   the GitHub Release. The workflow does not explicitly pass the generated tag
+   to `actions/checkout`.
 
 To diagnose a release, inspect the Release workflow run, the Release Please
 change request and its generated tag, then the GoReleaser step and the assets
@@ -120,11 +121,10 @@ mistake the CI title gate for release calculation. Its wording was checked
 against the regex in `AGENTS.md`, `.github/workflows/go.yml`, the Release Please
 config, and the version command tests; no sandbox behavior change is claimed.
 
-## Maintainer Follow-ups
+## Toolchain Determinism
 
-The release jobs currently rely on the runner's environment for Go rather than
-having an explicit `actions/setup-go` step in the release job, and both release
-workflows use the floating GoReleaser `version: latest`. Follow
-[#2397](https://github.com/rafaelromao/sandman/issues/2397) to add explicit Go
-setup and pin a reviewed GoReleaser version before treating the release workflow
-as fully hermetic. Those changes are deliberately not made by this issue.
+The production release job explicitly installs the Go version declared by
+`go.mod` and pins GoReleaser to `v2.10.1`. Both steps run only when Release
+Please reports `release_created == 'true'`. The pull-request snapshot workflow
+is separate and intentionally remains independent of the production release
+toolchain.
