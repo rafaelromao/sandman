@@ -1689,6 +1689,21 @@ func TestRun_UsesConfiguredVariantWhenFlagOmitted(t *testing.T) {
 	}
 }
 
+func TestRun_ExplicitEmptyVariantSuppressesConfiguredVariant(t *testing.T) {
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	deps := newRunDeps(t, spy)
+	deps.ConfigStore = &fakeStore{config: &config.Config{Agent: "opencode", Variant: "configured/provider", ReviewCommand: "/oc review"}}
+
+	cmd := NewRunCmd(deps)
+	cmd.SetArgs([]string{"--variant", "   ", "42"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if spy.req.Variant != "" || !spy.req.VariantSet {
+		t.Fatalf("variant request = %q (set=%v), want explicit empty override", spy.req.Variant, spy.req.VariantSet)
+	}
+}
+
 func TestRun_DoesNotUseDefaultModelForCustomAgent(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
 	deps := newRunDeps(t, spy)

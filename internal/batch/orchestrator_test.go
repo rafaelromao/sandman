@@ -2973,6 +2973,47 @@ func TestRunBatch_UsesVariantInCommandAndImplementationEvent(t *testing.T) {
 	}
 }
 
+func TestRunBatch_ExplicitEmptyVariantOmitsCommandFlagAndEventPayload(t *testing.T) {
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug", Body: "Users cannot log in."}},
+		prs:    map[string]*github.PR{"42-fix-bug": mergedPR("42-fix-bug", "")},
+	}
+	sb := &fakeSandbox{}
+	log := &spyEventLog{}
+	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{
+		Agent:       "opencode",
+		Variant:     "configured/provider",
+		Sandbox:     "worktree",
+		WorktreeDir: ".sandman/worktrees",
+		Git:         config.GitConfig{BaseBranch: "main"},
+		AgentProviders: map[string]config.Agent{
+			"opencode": {Preset: "opencode"},
+		},
+	}}, log, WithSandboxFactory(&fakeSandboxFactory{sandbox: sb}))
+
+	if _, err := o.RunBatch(context.Background(), Request{
+		Issues:     []int{42},
+		VariantSet: true,
+		RunTS:      orchTestRunTS,
+		RunShortID: orchTestRunShortID,
+	}); err != nil {
+		t.Fatalf("unexpected explicit empty variant run error: %v", err)
+	}
+	if strings.Contains(sb.execCommand, "--variant") {
+		t.Fatalf("explicit empty variant rendered a command flag: %q", sb.execCommand)
+	}
+
+	for _, event := range log.snapshot() {
+		if event.Type == "run.started" {
+			if _, exists := event.Payload["variant"]; exists {
+				t.Fatalf("explicit empty variant appeared in start payload: %#v", event.Payload)
+			}
+			return
+		}
+	}
+	t.Fatal("expected run.started event")
+}
+
 func TestRunBatch_SendsSIGKILLAfterTimeout(t *testing.T) {
 	client := &fakeGitHubClient{
 		issues: map[int]*github.Issue{
