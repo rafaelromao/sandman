@@ -20,6 +20,7 @@ type fakePrompter struct {
 	confirmErr error
 	selected   string
 	selectErr  error
+	selectMsgs []string
 }
 
 func (f *fakePrompter) Confirm(msg string) (bool, error) {
@@ -27,7 +28,18 @@ func (f *fakePrompter) Confirm(msg string) (bool, error) {
 }
 
 func (f *fakePrompter) Select(msg string, options []string) (string, error) {
+	f.selectMsgs = append(f.selectMsgs, msg)
 	return f.selected, f.selectErr
+}
+
+func (f *fakePrompter) selectCount(msg string) int {
+	count := 0
+	for _, selectedMsg := range f.selectMsgs {
+		if selectedMsg == msg {
+			count++
+		}
+	}
+	return count
 }
 
 func TestScaffold_PersistsRuntimeDefaults(t *testing.T) {
@@ -1840,6 +1852,135 @@ func TestScaffold_NodeRepoAutoDetect(t *testing.T) {
 				t.Errorf("expected preset %q, got %q", tt.want, preset.Name)
 			}
 		})
+	}
+}
+
+func TestScaffold_NodeRepoAutoDetectDoesNotPromptForPreset(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"name":"demo"}`), 0644); err != nil {
+		t.Fatalf("write package.json: %v", err)
+	}
+
+	prompter := &fakePrompter{selected: "generic"}
+	preset, err := (&Scaffolder{}).resolveBuildToolsPreset(dir, Options{}, prompter)
+	if err != nil {
+		t.Fatalf("resolve build tools preset: %v", err)
+	}
+	if preset.Name != nodeBuildToolsPreset {
+		t.Fatalf("expected preset %q, got %q", nodeBuildToolsPreset, preset.Name)
+	}
+	if got := prompter.selectCount("Choose a build tools preset:"); got != 0 {
+		t.Fatalf("build-tools preset prompt count = %d, want 0", got)
+	}
+}
+
+func TestScaffold_DetectedRepoAutoDetectDoesNotPromptForPreset(t *testing.T) {
+	tests := []struct {
+		name     string
+		filename string
+		contents string
+		want     string
+	}{
+		{name: "node", filename: "package.json", contents: `{"name":"demo"}`, want: nodeBuildToolsPreset},
+		{name: "rust", filename: "Cargo.toml", contents: "[package]\nname = \"demo\"\n", want: rustBuildToolsPreset},
+		{name: "go", filename: "go.mod", contents: "module example.com/demo\n\ngo 1.24\n", want: goBuildToolsPreset},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, tt.filename), []byte(tt.contents), 0644); err != nil {
+				t.Fatalf("write %s: %v", tt.filename, err)
+			}
+
+			prompter := &fakePrompter{selected: "generic"}
+			preset, err := (&Scaffolder{}).resolveBuildToolsPreset(dir, Options{}, prompter)
+			if err != nil {
+				t.Fatalf("resolve build tools preset: %v", err)
+			}
+			if preset.Name != tt.want {
+				t.Fatalf("expected preset %q, got %q", tt.want, preset.Name)
+			}
+			if got := prompter.selectCount("Choose a build tools preset:"); got != 0 {
+				t.Fatalf("build-tools preset prompt count = %d, want 0", got)
+			}
+		})
+	}
+}
+
+func TestScaffold_UndetectedRepoPromptsForPreset(t *testing.T) {
+	prompter := &fakePrompter{selected: rustBuildToolsPreset}
+	preset, err := (&Scaffolder{}).resolveBuildToolsPreset(t.TempDir(), Options{}, prompter)
+	if err != nil {
+		t.Fatalf("resolve build tools preset: %v", err)
+	}
+	if preset.Name != rustBuildToolsPreset {
+		t.Fatalf("expected preset %q, got %q", rustBuildToolsPreset, preset.Name)
+	}
+	if got := prompter.selectCount("Choose a build tools preset:"); got != 1 {
+		t.Fatalf("build-tools preset prompt count = %d, want 1", got)
+	}
+}
+
+func TestScaffold_ExplicitBuildToolsOverridesDetectedRepoWithoutPrompt(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"name":"demo"}`), 0644); err != nil {
+		t.Fatalf("write package.json: %v", err)
+	}
+
+	prompter := &fakePrompter{selected: nodeBuildToolsPreset}
+	preset, err := (&Scaffolder{}).resolveBuildToolsPreset(dir, Options{BuildTools: "generic"}, prompter)
+	if err != nil {
+		t.Fatalf("resolve build tools preset: %v", err)
+	}
+	if preset.Name != defaultBuildToolsPreset {
+		t.Fatalf("expected explicit preset %q, got %q", defaultBuildToolsPreset, preset.Name)
+	}
+	if got := prompter.selectCount("Choose a build tools preset:"); got != 0 {
+		t.Fatalf("build-tools preset prompt count = %d, want 0", got)
+	}
+}
+
+func TestScaffold_DetectedRepoPreservesMarkerPrecedence(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/demo\n\ngo 1.24\n"), 0644); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"name":"demo"}`), 0644); err != nil {
+		t.Fatalf("write package.json: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "Cargo.toml"), []byte("[package]\nname = \"demo\"\n"), 0644); err != nil {
+		t.Fatalf("write Cargo.toml: %v", err)
+	}
+
+	prompter := &fakePrompter{selected: rustBuildToolsPreset}
+	preset, err := (&Scaffolder{}).resolveBuildToolsPreset(dir, Options{}, prompter)
+	if err != nil {
+		t.Fatalf("resolve build tools preset: %v", err)
+	}
+	if preset.Name != goBuildToolsPreset {
+		t.Fatalf("expected Go preset to take priority, got %q", preset.Name)
+	}
+	if got := prompter.selectCount("Choose a build tools preset:"); got != 0 {
+		t.Fatalf("build-tools preset prompt count = %d, want 0", got)
+	}
+}
+
+func TestScaffold_DetectedNodeRepoStillPromptsForVersionWithoutHint(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"name":"demo"}`), 0644); err != nil {
+		t.Fatalf("write package.json: %v", err)
+	}
+
+	prompter := &fakePrompter{selected: "20"}
+	if _, err := (&Scaffolder{}).resolveNodeVersion(dir, "", prompter); err != nil {
+		t.Fatalf("resolve node version: %v", err)
+	}
+	if got := prompter.selectCount("Choose a Node version:"); got != 1 {
+		t.Fatalf("node version prompt count = %d, want 1", got)
+	}
+	if got := prompter.selectCount("Choose a build tools preset:"); got != 0 {
+		t.Fatalf("build-tools preset prompt count = %d, want 0", got)
 	}
 }
 
