@@ -3014,6 +3014,11 @@ func (s *runSession) executePromptOnly(ctx context.Context) (AgentRunResult, boo
 		fmt.Fprintf(s.deps.errorLog, "error: start sandbox for prompt-only run: %v\n", err)
 		return AgentRunResult{Status: "failure", Branch: branch, Review: s.review, RunID: s.runID}, false
 	}
+	if s.review && s.qualityRulesFile != "" {
+		if err := s.copyQualityRulesIntoWorktree(branch); err != nil {
+			fmt.Fprintf(s.deps.errorLog, "warn: copy quality rules into review worktree for prompt-only run: %v\n", err)
+		}
+	}
 	// Guaranteed cleanup: defer wt.RestoreHostPaths() so container
 	// sandboxes normalize the preserved worktree's .git pointer back to
 	// host paths on every exit path. Worktree-only sandboxes no-op.
