@@ -12,6 +12,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/atomicfs"
 	"github.com/rafaelromao/sandman/internal/batchindex"
 	"github.com/rafaelromao/sandman/internal/events"
+	"github.com/rafaelromao/sandman/internal/socketpath"
 )
 
 // IsRunActive reports whether a batch directory is currently owned by a live
@@ -20,15 +21,16 @@ import (
 // Batch dirs that survived a crash (no live socket) are stale and safe to
 // clean up.
 func IsRunActive(batchPath string) bool {
-	batchSock := filepath.Join(batchPath, "batch.sock")
+	batchSock := socketpath.Path(filepath.Join(batchPath, "batch.sock"))
 	if isConnectableSocket(batchSock) {
 		return true
 	}
-	runSockets, err := filepath.Glob(filepath.Join(batchPath, "runs", "*", "run.sock"))
+	runDirs, err := filepath.Glob(filepath.Join(batchPath, "runs", "*"))
 	if err != nil {
 		return false
 	}
-	for _, runSock := range runSockets {
+	for _, runDir := range runDirs {
+		runSock := socketpath.Path(filepath.Join(runDir, "run.sock"))
 		if isConnectableSocket(runSock) {
 			return true
 		}
@@ -231,12 +233,12 @@ func RunFolder(batchDir, runID string) string {
 
 // BatchSocketPath returns the path to the batch control socket at the batch root.
 func BatchSocketPath(batchDir string) string {
-	return filepath.Join(batchDir, "batch.sock")
+	return socketpath.Path(filepath.Join(batchDir, "batch.sock"))
 }
 
 // RunSocketPath returns the path to the per-run command socket inside a run folder.
 func RunSocketPath(batchDir, runID string) string {
-	return filepath.Join(RunFolder(batchDir, runID), "run.sock")
+	return socketpath.Path(filepath.Join(RunFolder(batchDir, runID), "run.sock"))
 }
 
 // WriteRunManifest writes a RunManifest to the per-run folder under the batch.

@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"syscall"
+
+	"github.com/rafaelromao/sandman/internal/socketpath"
 )
 
 type ControlSocket struct {
@@ -14,7 +16,13 @@ type ControlSocket struct {
 	listener    net.Listener
 	broadcaster *Broadcaster
 	isAbstract  bool
-	actualPath  string
+}
+
+func removeSocketPath(path string) error {
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
 }
 
 func NewControlSocket(dir string, broadcaster *Broadcaster) *ControlSocket {
@@ -30,7 +38,7 @@ func (s *ControlSocket) Broadcaster() *Broadcaster {
 }
 
 func (s *ControlSocket) Path() string {
-	return filepath.Join(s.dir, s.name)
+	return socketpath.Path(filepath.Join(s.dir, s.name))
 }
 
 func (s *ControlSocket) Start() error {
@@ -42,9 +50,6 @@ func (s *ControlSocket) Start() error {
 	}
 
 	sockPath := s.Path()
-	if needsShortSocketPath(sockPath) {
-		return s.startWithShortSocketPath(sockPath)
-	}
 	_ = os.Remove(sockPath)
 	listener, err := net.Listen("unix", sockPath)
 	if err != nil {
@@ -58,7 +63,6 @@ func (s *ControlSocket) Start() error {
 		return fmt.Errorf("chmod control socket: %w", err)
 	}
 	s.listener = listener
-	s.actualPath = sockPath
 
 	go func() {
 		for {
@@ -70,29 +74,6 @@ func (s *ControlSocket) Start() error {
 		}
 	}()
 
-	return nil
-}
-
-func (s *ControlSocket) startWithShortSocketPath(logicalPath string) error {
-	actualPath := shortSocketPath(logicalPath)
-	_ = removeSocketPath(actualPath)
-	listener, err := net.Listen("unix", actualPath)
-	if err != nil {
-		return fmt.Errorf("create short control socket: %w", err)
-	}
-	if err := os.Chmod(actualPath, 0o600); err != nil {
-		_ = listener.Close()
-		_ = removeSocketPath(actualPath)
-		return fmt.Errorf("chmod control socket: %w", err)
-	}
-	if err := linkShortSocket(logicalPath, actualPath); err != nil {
-		_ = listener.Close()
-		_ = removeSocketPath(actualPath)
-		return fmt.Errorf("link control socket: %w", err)
-	}
-	s.listener = listener
-	s.actualPath = actualPath
-	go s.acceptLoop(listener)
 	return nil
 }
 
@@ -151,11 +132,6 @@ func (s *ControlSocket) Stop() error {
 	if !s.isAbstract {
 		if rmErr := removeSocketPath(s.Path()); rmErr != nil {
 			return rmErr
-		}
-		if s.actualPath != "" && s.actualPath != s.Path() {
-			if rmErr := removeSocketPath(s.actualPath); rmErr != nil {
-				return rmErr
-			}
 		}
 	}
 	return closeErr

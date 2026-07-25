@@ -5,6 +5,8 @@ package paths
 
 import (
 	"path/filepath"
+
+	"github.com/rafaelromao/sandman/internal/socketpath"
 	"strconv"
 	"strings"
 
@@ -74,7 +76,7 @@ func (l Layout) QualityRulesPath() string {
 
 // ReviewSocketPath returns the review daemon socket: <repo>/.sandman/reviews/review.sock
 func (l Layout) ReviewSocketPath() string {
-	return filepath.Join(l.ReviewsDir(), "review.sock")
+	return socketpath.Path(filepath.Join(l.ReviewsDir(), "review.sock"))
 }
 
 // DockerfilePath returns the sandbox Dockerfile: <repo>/.sandman/Dockerfile
@@ -99,7 +101,7 @@ func (l Layout) RunLogPath(batchID, runID string) string {
 
 // RunSocketPath returns the run socket: <batchesDir>/<batchID>/runs/<runID>/run.sock
 func (l Layout) RunSocketPath(batchID, runID string) string {
-	return filepath.Join(l.RunFolder(batchID, runID), "run.sock")
+	return socketpath.Path(filepath.Join(l.RunFolder(batchID, runID), "run.sock"))
 }
 
 // RunManifestPath returns the run manifest file: <batchesDir>/<batchID>/runs/<runID>/run.json
@@ -143,7 +145,7 @@ func (l Layout) BatchManifestPath(batchID string) string {
 
 // BatchSocketPath returns the batch socket: <batchesDir>/<batchID>/batch.sock
 func (l Layout) BatchSocketPath(batchID string) string {
-	return filepath.Join(l.BatchDir(batchID), "batch.sock")
+	return socketpath.Path(filepath.Join(l.BatchDir(batchID), "batch.sock"))
 }
 
 // BatchConfigSnapshotDir returns the per-batch config snapshot directory: <batchesDir>/<batchID>/config

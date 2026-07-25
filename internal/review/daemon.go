@@ -23,6 +23,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/prompt"
 	"github.com/rafaelromao/sandman/internal/runid"
 	"github.com/rafaelromao/sandman/internal/sandbox"
+	"github.com/rafaelromao/sandman/internal/socketpath"
 )
 
 // PollingInterval is the default interval at which the daemon scans open PRs
@@ -738,7 +739,7 @@ func (d *Daemon) SocketPath() string {
 	if d.Layout.RepoRoot != "" {
 		return d.Layout.ReviewSocketPath()
 	}
-	return filepath.Join(d.BaseDir, "reviews", "review.sock")
+	return socketpath.Path(filepath.Join(d.BaseDir, "reviews", "review.sock"))
 }
 
 // effectiveAgent returns the review agent name to use for this run.

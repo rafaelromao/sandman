@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/rafaelromao/sandman/internal/socketpath"
 )
 
 // IssueCommander is the seam the command socket uses to abort a single
@@ -58,7 +60,7 @@ type CommandResponse struct {
 // CommandSocketPath returns the unix socket path for the per-run command
 // server inside a run folder.
 func CommandSocketPath(dir string) string {
-	return filepath.Join(dir, "run.sock")
+	return socketpath.Path(filepath.Join(dir, "run.sock"))
 }
 
 // CommandServer accepts one-shot JSON command requests on a unix socket
@@ -72,7 +74,6 @@ type CommandServer struct {
 	targetBound bool
 	listener    net.Listener
 	isAbstract  bool
-	actualPath  string
 }
 
 // NewCommandServer wires a CommandServer to the given run directory and
@@ -103,9 +104,6 @@ func (s *CommandServer) Start() error {
 		return fmt.Errorf("chmod run dir: %w", err)
 	}
 	sockPath := CommandSocketPath(s.dir)
-	if needsShortSocketPath(sockPath) {
-		return s.startWithShortSocketPath(sockPath)
-	}
 	_ = os.Remove(sockPath)
 	listener, err := net.Listen("unix", sockPath)
 	if err != nil {
@@ -129,34 +127,9 @@ func (s *CommandServer) Start() error {
 		return fmt.Errorf("chmod command socket: %w", err)
 	}
 	s.listener = listener
-	s.actualPath = sockPath
 	go s.acceptLoop()
 	return nil
 }
-
-func (s *CommandServer) startWithShortSocketPath(logicalPath string) error {
-	actualPath := shortSocketPath(logicalPath)
-	_ = removeSocketPath(actualPath)
-	listener, err := net.Listen("unix", actualPath)
-	if err != nil {
-		return fmt.Errorf("create short command socket: %w", err)
-	}
-	if err := os.Chmod(actualPath, 0o600); err != nil {
-		_ = listener.Close()
-		_ = removeSocketPath(actualPath)
-		return fmt.Errorf("chmod command socket: %w", err)
-	}
-	if err := linkShortSocket(logicalPath, actualPath); err != nil {
-		_ = listener.Close()
-		_ = removeSocketPath(actualPath)
-		return fmt.Errorf("link command socket: %w", err)
-	}
-	s.listener = listener
-	s.actualPath = actualPath
-	go s.acceptLoop()
-	return nil
-}
-
 func (s *CommandServer) startWithShortSockName() error {
 	abstractName := abstractCommandSocketName(s.dir)
 	listener, err := net.Listen("unix", abstractName)
@@ -183,11 +156,6 @@ func (s *CommandServer) Stop() error {
 	if !s.isAbstract {
 		if rmErr := removeSocketPath(CommandSocketPath(s.dir)); rmErr != nil && err == nil {
 			err = rmErr
-		}
-		if s.actualPath != "" && s.actualPath != CommandSocketPath(s.dir) {
-			if rmErr := removeSocketPath(s.actualPath); rmErr != nil && err == nil {
-				err = rmErr
-			}
 		}
 	}
 	return err
