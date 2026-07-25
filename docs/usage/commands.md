@@ -78,7 +78,7 @@ Positional arguments (numbers and ranges) can be combined with `--label` and `--
 | `--prompt-arg` | — | Custom template substitution (`KEY=VALUE`, repeatable) |
 | `--model` | `model` from config | Override the model passed to the agent for built-in presets |
 | `--variant` | `variant` from config | Override the implementation model variant; forwarded to built-in OpenCode only when non-empty |
-| `--agent` | `agent` from config (`opencode`) | Built-in agent preset for this run; on `--continue` the prior run's stored agent is no longer replayed |
+| `--agent` | `agent` from config (`opencode`) | Built-in agent preset for this run; on `--continue` uses the current value, not the prior run's stored agent |
 | `--run-id` | — | Batch-level identifier for prompt-only runs; must start with a letter and contain only alphanumeric characters, hyphens, and underscores; cannot be combined with issue selection |
 | `--run-idle-timeout` | `0` | Treat an AgentRun as stuck if it produces no output for N seconds; `0` disables the timeout |
 | `--branch` | `""` | Branch name for prompt-only runs; overrides the default `sandman/<slug>-<timestamp>` shape (prompt-only mode only) |
