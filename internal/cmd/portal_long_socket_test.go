@@ -20,9 +20,11 @@ func TestDiscoverPortalInstances_LongPathBindsAndDials(t *testing.T) {
 	repoRoot := testenv.MkdirShort(t, "sm-portal-")
 	batchesDir := filepath.Join(repoRoot, ".sandman", "batches")
 
-	// Build a batch dir long enough that batch.sock exceeds the sun_path limit.
+	// Build a batch dir whose logical batch.sock path exceeds the
+	// sun_path limit so the effective socket goes to the short /tmp
+	// location via socketpath.Path.
 	batchDir := batchesDir
-	for len(daemon.BatchSocketPath(batchDir)) <= 108 {
+	for len(filepath.Join(batchDir, "batch.sock")) <= 108 {
 		batchDir = filepath.Join(batchDir, strings.Repeat("long-path-segment", 4))
 	}
 	if err := os.MkdirAll(batchDir, 0755); err != nil {
