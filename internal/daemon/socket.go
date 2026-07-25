@@ -14,6 +14,7 @@ type ControlSocket struct {
 	listener    net.Listener
 	broadcaster *Broadcaster
 	isAbstract  bool
+	actualPath  string
 }
 
 func NewControlSocket(dir string, broadcaster *Broadcaster) *ControlSocket {
@@ -41,7 +42,10 @@ func (s *ControlSocket) Start() error {
 	}
 
 	sockPath := s.Path()
-	os.Remove(sockPath)
+	if needsShortSocketPath(sockPath) {
+		return s.startWithShortSocketPath(sockPath)
+	}
+	_ = os.Remove(sockPath)
 	listener, err := net.Listen("unix", sockPath)
 	if err != nil {
 		if shouldFallbackToAbstractSocket(sockPath, err) {
@@ -54,6 +58,7 @@ func (s *ControlSocket) Start() error {
 		return fmt.Errorf("chmod control socket: %w", err)
 	}
 	s.listener = listener
+	s.actualPath = sockPath
 
 	go func() {
 		for {
@@ -66,6 +71,39 @@ func (s *ControlSocket) Start() error {
 	}()
 
 	return nil
+}
+
+func (s *ControlSocket) startWithShortSocketPath(logicalPath string) error {
+	actualPath := shortSocketPath(logicalPath)
+	_ = removeSocketPath(actualPath)
+	listener, err := net.Listen("unix", actualPath)
+	if err != nil {
+		return fmt.Errorf("create short control socket: %w", err)
+	}
+	if err := os.Chmod(actualPath, 0o600); err != nil {
+		_ = listener.Close()
+		_ = removeSocketPath(actualPath)
+		return fmt.Errorf("chmod control socket: %w", err)
+	}
+	if err := linkShortSocket(logicalPath, actualPath); err != nil {
+		_ = listener.Close()
+		_ = removeSocketPath(actualPath)
+		return fmt.Errorf("link control socket: %w", err)
+	}
+	s.listener = listener
+	s.actualPath = actualPath
+	go s.acceptLoop(listener)
+	return nil
+}
+
+func (s *ControlSocket) acceptLoop(listener net.Listener) {
+	for {
+		conn, err := listener.Accept()
+		if err != nil {
+			return
+		}
+		s.broadcaster.AddClient(conn)
+	}
 }
 
 func isPathTooLong(err error) bool {
@@ -86,15 +124,7 @@ func (s *ControlSocket) startWithShortSockName() error {
 	s.listener = listener
 	s.isAbstract = true
 
-	go func() {
-		for {
-			conn, err := listener.Accept()
-			if err != nil {
-				return
-			}
-			s.broadcaster.AddClient(conn)
-		}
-	}()
+	go s.acceptLoop(listener)
 
 	return nil
 }
@@ -119,8 +149,13 @@ func (s *ControlSocket) Stop() error {
 	}
 	s.broadcaster.Close()
 	if !s.isAbstract {
-		if rmErr := os.Remove(s.Path()); rmErr != nil && !os.IsNotExist(rmErr) {
+		if rmErr := removeSocketPath(s.Path()); rmErr != nil {
 			return rmErr
+		}
+		if s.actualPath != "" && s.actualPath != s.Path() {
+			if rmErr := removeSocketPath(s.actualPath); rmErr != nil {
+				return rmErr
+			}
 		}
 	}
 	return closeErr
