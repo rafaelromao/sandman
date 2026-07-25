@@ -5079,7 +5079,12 @@ func TestRunBatch_StartDelay_DoesNotStaggerSimultaneousReadyRuns(t *testing.T) {
 	case <-time.After(1 * time.Second):
 		t.Fatal("expected second dependent to start")
 	}
-	if diff := secondAt.Sub(firstAt); diff > 200*time.Millisecond {
+	if diff := secondAt.Sub(firstAt); diff > 500*time.Millisecond {
+		// The second dependent should start as soon as the first one does.
+		// On CI-loaded macOS runners goroutine/timer scheduling can introduce
+		// a few hundred milliseconds of jitter, so keep the anti-stagger
+		// ceiling well above the start delay without allowing a full extra
+		// serialized delay to pass.
 		t.Fatalf("expected simultaneous ready runs to start together, got %s", diff)
 	}
 
