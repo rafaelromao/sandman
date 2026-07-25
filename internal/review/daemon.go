@@ -742,6 +742,17 @@ func (d *Daemon) SocketPath() string {
 	return socketpath.Path(filepath.Join(d.BaseDir, "reviews", "review.sock"))
 }
 
+// SocketAddr returns the address the daemon is actually listening on.
+// On Linux with a path that exceeds the sun_path limit this is the
+// abstract-socket name; on other platforms it is the effective socket
+// path.
+func (d *Daemon) SocketAddr() string {
+	if d.controlSocket != nil {
+		return d.controlSocket.Address()
+	}
+	return d.SocketPath()
+}
+
 // effectiveAgent returns the review agent name to use for this run.
 // Precedence: the CLI override (Daemon.Agent, when non-empty after
 // trimming) wins; otherwise d.Config.EffectiveReviewAgent(). Returns

@@ -87,9 +87,9 @@ func TestRun_PathlenWorktreeAndReviewSockets(t *testing.T) {
 			t.Fatalf("expected no review.sock file at %s, got err=%v", reviewSockPath, err)
 		}
 
-		conn, err := net.Dial("unix", reviewAbstractSocketName())
+		conn, err := net.Dial("unix", d.SocketAddr())
 		if err != nil {
-			t.Fatalf("dial abstract review socket: %v", err)
+			t.Fatalf("dial review socket at %s: %v", d.SocketAddr(), err)
 		}
 		if err := conn.Close(); err != nil {
 			t.Fatalf("close review socket connection: %v", err)
@@ -143,16 +143,4 @@ func assertNoNamedFiles(t *testing.T, root string, names ...string) {
 	}); err != nil {
 		t.Fatalf("scan %s: %v", root, err)
 	}
-}
-
-func reviewAbstractSocketName() string {
-	return "@sandman-" + fmt.Sprintf("%x", reviewSocketHashString("reviews"))
-}
-
-func reviewSocketHashString(s string) uint64 {
-	h := uint64(0)
-	for i, c := range s {
-		h = h*31 + uint64(c) + uint64(i)
-	}
-	return h
 }

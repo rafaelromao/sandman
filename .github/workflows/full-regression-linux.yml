@@ -13,6 +13,8 @@ jobs:
       GIT_TERMINAL_PROMPT: "0"
       DEBIAN_FRONTEND: noninteractive
       PAGER: cat
+      GH_TOKEN: ${{ github.token }}
+      GITHUB_TOKEN: ${{ github.token }}
       REPORT_FILE: regression-report-linux.md
 
     steps:
