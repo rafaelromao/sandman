@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0-rc.1](https://github.com/rafaelromao/sandman/compare/v1.0.0-rc.1...v1.0.0-rc.1) (2026-07-25)
+
+
+### Features
+
+* **install:** add checksum-verified release installer ([#2416](https://github.com/rafaelromao/sandman/issues/2416)) ([9c3cd03](https://github.com/rafaelromao/sandman/commit/9c3cd037ab8d4797e10fd4e45813cfcb76340bcf))
+
+
+### Bug Fixes
+
+* **release:** mark prerelease artifacts correctly ([#2414](https://github.com/rafaelromao/sandman/issues/2414)) ([eda9213](https://github.com/rafaelromao/sandman/commit/eda921359fc206b3dee3467a38880c2d8daa94a8))
+
 ## [1.0.0-rc.1](https://github.com/rafaelromao/sandman/compare/v0.2.0...v1.0.0-rc.1) (2026-07-24)
 
 
