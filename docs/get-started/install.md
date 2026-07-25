@@ -40,6 +40,16 @@ The release provides:
 
 Each release includes `checksums.txt`.
 
+For the simplest verified install, let the installer detect your platform:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/rafaelromao/sandman/main/scripts/install.sh | sh -s -- --version v1.0.0-rc.1
+```
+
+The installer supports Linux amd64, macOS amd64, and macOS arm64. It verifies
+the downloaded archive before installing to `~/.local/bin`. Use
+`--install-dir DIRECTORY` or `SANDMAN_INSTALL_DIR` to choose another location.
+
 ### Manual checksum verification
 
 Use the following procedure for a verified manual installation. Select the
