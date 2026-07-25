@@ -153,7 +153,9 @@ func TestBinaryInstallationDocumentationMatchesReleaseContract(t *testing.T) {
 		"sandman --version",
 		"sandman 1.0.0-rc.1",
 		"go install github.com/rafaelromao/sandman/cmd/sandman@v1.0.0-rc.1",
-		"Install from source",
+		"curl -fsSL https://raw.githubusercontent.com/rafaelromao/sandman/main/scripts/install.sh | sh -s -- --version v1.0.0-rc.1",
+		"--install-dir DIRECTORY",
+		"Build from a checkout",
 	} {
 		if !strings.Contains(install, required) {
 			t.Errorf("installation guide missing %q", required)

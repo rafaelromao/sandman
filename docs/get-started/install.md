@@ -10,14 +10,50 @@ Full setup guide: prerequisites, install methods, OpenCode setup, project initia
 - An AI coding agent: [OpenCode](https://opencode.ai/)
 - Optional but recommended: [Podman](https://podman.io/) or [Docker](https://docker.com/) for container-backed sandboxing
 
-Go 1.25 or later is only needed for the source-install methods below. Binary
-installations do not require Go.
+Go 1.25 or later is needed for the Go installation and build-from-checkout
+methods below. Prebuilt binary installations do not require Go.
 
 ## Install Sandman
 
-### Release binary
+### Recommended: install with Go
 
-Published binaries are available from the [GitHub Releases](https://github.com/rafaelromao/sandman/releases) page. The `v1.0.0-rc.1` prerelease publishes these targets:
+```bash
+go install github.com/rafaelromao/sandman/cmd/sandman@v1.0.0-rc.1
+```
+
+This installs Sandman into Go's configured binary directory. Verify the
+installation with:
+
+```bash
+sandman --version
+```
+
+### Prebuilt binaries
+
+If Go is not installed, download the archive for your platform from the
+[v1.0.0-rc.1 release](https://github.com/rafaelromao/sandman/releases/tag/v1.0.0-rc.1).
+The release provides:
+
+- Linux amd64
+- macOS amd64
+- macOS arm64
+
+Each release includes `checksums.txt`.
+
+For the simplest verified install, let the installer detect your platform:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/rafaelromao/sandman/main/scripts/install.sh | sh -s -- --version v1.0.0-rc.1
+```
+
+The installer supports Linux amd64, macOS amd64, and macOS arm64. It verifies
+the downloaded archive before installing to `~/.local/bin`. Use
+`--install-dir DIRECTORY` or `SANDMAN_INSTALL_DIR` to choose another location.
+
+### Manual checksum verification
+
+Use the following procedure for a verified manual installation. Select the
+archive matching your platform:
 
 | Platform | Architecture | Archive |
 |----------|--------------|---------|
@@ -29,9 +65,8 @@ Archives use the naming convention `sandman_<version>_<os>_<arch>.tar.gz`.
 Release archive versions omit the `v` prefix, so tag `v1.0.0-rc.1` produces
 archives with version `1.0.0-rc.1`. Each release also includes `checksums.txt`.
 
-The following example installs the Linux amd64 binary from `v1.0.0-rc.1`. Select the
-archive for your platform, then verify that archive against its entry in
-`checksums.txt` before extracting it.
+The example below installs the Linux amd64 binary. Verify the archive against
+its entry in `checksums.txt` before extracting it.
 
 ```bash
 VERSION=1.0.0-rc.1
@@ -60,17 +95,10 @@ checksum command with:
 grep -F "  ${TARGET_ARCHIVE}" checksums.txt | shasum -a 256 -c -
 ```
 
-### Install from source
+### Build from a checkout
 
-Use a source installation when your platform is not listed above, when you
-want to build from a checkout, or when no compatible release binary is
-available:
-
-```bash
-go install github.com/rafaelromao/sandman/cmd/sandman@v1.0.0-rc.1
-```
-
-To build the current checkout instead:
+Build from source when your platform is not listed above or when you want to
+build the current checkout:
 
 ```bash
 git clone https://github.com/rafaelromao/sandman.git
