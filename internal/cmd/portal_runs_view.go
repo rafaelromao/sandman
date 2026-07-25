@@ -1205,7 +1205,10 @@ func (v *portalRunsView) discoverActiveRuns(repoRoot string, eventsByRun map[str
 			}
 			continue
 		}
-		runDir := filepath.Dir(instance.SocketPath)
+		runDir := instance.Dir
+		if runDir == "" {
+			runDir = filepath.Dir(instance.SocketPath)
+		}
 		manifest, manifestErr := v.readManifestCached(runDir)
 		prNumber := 0
 		batchID := instance.Name
