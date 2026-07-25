@@ -41,6 +41,16 @@ func (s *ControlSocket) Path() string {
 	return socketpath.Path(filepath.Join(s.dir, s.name))
 }
 
+// Address returns the address the socket is actually listening on. When the
+// control socket fell back to an abstract socket (Linux-only), Address returns
+// the abstract name; otherwise it returns Path().
+func (s *ControlSocket) Address() string {
+	if s.isAbstract {
+		return abstractSocketName(s.dir)
+	}
+	return s.Path()
+}
+
 func (s *ControlSocket) Start() error {
 	if err := os.MkdirAll(s.dir, 0o700); err != nil {
 		return err

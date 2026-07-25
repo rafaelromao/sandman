@@ -12,6 +12,8 @@ jobs:
       CI: true
       GIT_TERMINAL_PROMPT: "0"
       PAGER: cat
+      GH_TOKEN: ${{ github.token }}
+      GITHUB_TOKEN: ${{ github.token }}
       REPORT_FILE: regression-report-macos.md
 
     steps:
