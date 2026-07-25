@@ -4,21 +4,17 @@ Full setup guide: prerequisites, install methods, OpenCode setup, project initia
 
 ## Prerequisites
 
-- [Go](https://go.dev/dl/) 1.25 or later
 - [Git](https://git-scm.com/)
 - [`gh` CLI](https://cli.github.com/) — authenticated and with `repo` scope
-- An AI coding agent: [OpenCode](https://opencode.ai/)
+- [OpenCode](https://opencode.ai/)
 - Optional but recommended: [Podman](https://podman.io/) or [Docker](https://docker.com/) for container-backed sandboxing
-
-Go 1.25 or later is needed for the Go installation and build-from-checkout
-methods below. Prebuilt binary installations do not require Go.
 
 ## Install Sandman
 
-### Recommended: install with Go
+### Install with Go
 
 ```bash
-go install github.com/rafaelromao/sandman/cmd/sandman@v1.0.0-rc.1
+go install github.com/rafaelromao/sandman/cmd/sandman@latest
 ```
 
 This installs Sandman into Go's configured binary directory. Verify the
@@ -31,7 +27,7 @@ sandman --version
 ### Prebuilt binaries
 
 If Go is not installed, download the archive for your platform from the
-[v1.0.0-rc.1 release](https://github.com/rafaelromao/sandman/releases/tag/v1.0.0-rc.1).
+[latest release](https://github.com/rafaelromao/sandman/releases/latest).
 The release provides:
 
 - Linux amd64
@@ -43,7 +39,7 @@ Each release includes `checksums.txt`.
 For the simplest verified install, let the installer detect your platform:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/rafaelromao/sandman/main/scripts/install.sh | sh -s -- --version v1.0.0-rc.1
+curl -fsSL https://raw.githubusercontent.com/rafaelromao/sandman/main/scripts/install.sh | sh
 ```
 
 The installer supports Linux amd64, macOS amd64, and macOS arm64. It verifies
@@ -57,19 +53,20 @@ archive matching your platform:
 
 | Platform | Architecture | Archive |
 |----------|--------------|---------|
-| Linux | amd64 | `sandman_1.0.0-rc.1_linux_amd64.tar.gz` |
-| macOS | amd64 | `sandman_1.0.0-rc.1_darwin_amd64.tar.gz` |
-| macOS | arm64 | `sandman_1.0.0-rc.1_darwin_arm64.tar.gz` |
+| Linux | amd64 | `sandman_<version>_linux_amd64.tar.gz` |
+| macOS | amd64 | `sandman_<version>_darwin_amd64.tar.gz` |
+| macOS | arm64 | `sandman_<version>_darwin_arm64.tar.gz` |
 
 Archives use the naming convention `sandman_<version>_<os>_<arch>.tar.gz`.
-Release archive versions omit the `v` prefix, so tag `v1.0.0-rc.1` produces
-archives with version `1.0.0-rc.1`. Each release also includes `checksums.txt`.
+Release archive versions omit the `v` prefix. Each release also includes
+`checksums.txt`.
 
 The example below installs the Linux amd64 binary. Verify the archive against
 its entry in `checksums.txt` before extracting it.
 
 ```bash
-VERSION=1.0.0-rc.1
+VERSION=$(curl -fsSL https://api.github.com/repos/rafaelromao/sandman/releases/latest | sed -n 's/.*"tag_name": "\([^"]*\)".*/\1/p' | head -n 1)
+VERSION=${VERSION#v}
 RELEASE_URL="https://github.com/rafaelromao/sandman/releases/download/v${VERSION}"
 TARGET_ARCHIVE="sandman_${VERSION}_linux_amd64.tar.gz"
 
@@ -83,7 +80,6 @@ mkdir -p "${HOME}/.local/bin"
 install -m 755 sandman "${HOME}/.local/bin/sandman"
 export PATH="${HOME}/.local/bin:${PATH}"
 sandman --version
-# sandman 1.0.0-rc.1
 ```
 
 On macOS, use the same commands with `TARGET_ARCHIVE` set to
@@ -138,7 +134,7 @@ sandman init
 
 This scaffolds `.sandman/` with:
 
-- **`.sandman/config.yaml`** — Sandman configuration with the selected default agent preset
+- **`.sandman/config.yaml`** — Sandman configuration with the detected build-tools preset
 - **`.sandman/Dockerfile`** — container image definition for container-backed sandboxing
 - **`.sandman/prompt.md`** — Project Prompt Template seeded from the Default Task Prompt
 
@@ -153,19 +149,14 @@ Agent commits use your host Git identity. Before the first run, make sure your G
 
 Sandman resolves them from `~/.gitconfig`, then the host global/XDG Git config, then repo-local `.git/config`, and stops early if either value is missing.
 
-### Interactive prompts
+### Preset detection
 
-The `init` command interactively prompts you for:
-
-- **Default agent preset** — which built-in agent to use by default (`opencode`)
-- **Build tools preset** — container recipe for the image (`generic`, `dotnet`, `go`, `node`, `python`, `rust`, `elixir`, `ruby`, or `java`)
-
-Sandman auto-detects repo hints and defaults to the matching preset when it finds .NET, Go, Node, Python, Rust, Elixir, Ruby, or Java project files; otherwise it falls back to `generic`.
-
-Skip the prompts by passing flags:
+Sandman auto-detects repository files and selects the matching build-tools
+preset for .NET, Go, Node, Python, Rust, Elixir, Ruby, or Java projects. If no
+project hint matches, it uses `generic`. Override detection when needed with:
 
 ```bash
-sandman init --agent opencode --build-tools node
+sandman init --build-tools node
 ```
 
 ## First run
