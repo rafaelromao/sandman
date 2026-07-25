@@ -1484,6 +1484,9 @@ func TestBatchIDRules_ContinueSubjectPickerExposesPreviousRun(t *testing.T) {
 // run's content.
 func TestBatchIDRules_ContinuePickerSwitchesToPreviousRun(t *testing.T) {
 	requireGateMultiIssue(t)
+	prevStale := portalStaleCleaner
+	portalStaleCleaner = func(string) error { return nil }
+	t.Cleanup(func() { portalStaleCleaner = prevStale })
 	repoRoot := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: .git/worktrees/test\n"), 0644); err != nil {
 		t.Fatal(err)

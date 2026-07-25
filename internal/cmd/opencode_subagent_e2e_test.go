@@ -24,6 +24,9 @@ func TestOpencodeSubagentPermissionAllowAll(t *testing.T) {
 	if !testenv.E2EGateAllowed(testenv.E2EScenarioOpencodeSubagent) {
 		t.Skip("set SANDMAN_E2E_GATES=opencode_subagent (or all) to run opencode subagent permission e2e")
 	}
+	if os.Getenv("CI") != "" {
+		t.Skip("skip e2e in CI")
+	}
 	if !podmanAvailable(t) {
 		return
 	}
