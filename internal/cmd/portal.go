@@ -82,7 +82,7 @@ var portalRunCleanStale = runCleanStale
 
 type portalInstance struct {
 	Name       string `json:"name"`
-	Dir        string `json:"dir"`
+	Dir        string `json:"-"`
 	SocketPath string `json:"socketPath"`
 }
 

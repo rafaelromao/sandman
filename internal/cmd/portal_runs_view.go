@@ -1995,6 +1995,7 @@ func (v *portalRunsView) runFromState(repoRoot string, runState events.RunState,
 		}
 		if batchDir != "" {
 			portalRun.BatchKey = filepath.Base(batchDir)
+			portalRun.RunDir = filepath.Join(batchDir, "runs", runState.RunID)
 			sockPath := daemon.RunSocketPath(batchDir, runState.RunID)
 			if _, err := os.Lstat(sockPath); err == nil {
 				portalRun.SocketPath = sockPath
