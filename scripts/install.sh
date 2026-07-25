@@ -2,7 +2,7 @@
 set -eu
 
 REPOSITORY="rafaelromao/sandman"
-VERSION="${SANDMAN_VERSION:-v1.0.0-rc.1}"
+VERSION="${SANDMAN_VERSION:-}"
 INSTALL_DIR="${SANDMAN_INSTALL_DIR:-${HOME}/.local/bin}"
 
 fail() {
@@ -15,7 +15,7 @@ usage() {
 Usage: install.sh [--version VERSION] [--install-dir DIRECTORY]
 
 Environment overrides:
-  SANDMAN_VERSION       release tag, for example v1.0.0-rc.1
+  SANDMAN_VERSION       release tag, for example v1.2.3
   SANDMAN_INSTALL_DIR   destination directory (default: ~/.local/bin)
 EOF
     exit 2
@@ -44,6 +44,13 @@ done
 
 command -v curl >/dev/null 2>&1 || fail "curl is required"
 command -v tar >/dev/null 2>&1 || fail "tar is required"
+
+if [ -z "$VERSION" ]; then
+    VERSION=$(curl -fsSL "https://api.github.com/repos/${REPOSITORY}/releases/latest" |
+        sed -n 's/.*"tag_name": "\([^"]*\)".*/\1/p' | head -n 1) ||
+        fail "could not determine the latest release"
+    [ -n "$VERSION" ] || fail "latest release did not include a tag"
+fi
 
 case "$(uname -s)" in
     Linux) OS=linux ;;

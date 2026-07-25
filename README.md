@@ -6,18 +6,16 @@ AFK coding agents orchestration in isolated sandboxes.
 
 ## Install
 
-Requires Go 1.25 or later:
-
 ```bash
-go install github.com/rafaelromao/sandman/cmd/sandman@v1.0.0-rc.1
+go install github.com/rafaelromao/sandman/cmd/sandman@latest
 ```
 
 If Go is not installed, download a prebuilt binary from the
-[v1.0.0-rc.1 release](https://github.com/rafaelromao/sandman/releases/tag/v1.0.0-rc.1).
+[latest release](https://github.com/rafaelromao/sandman/releases/latest).
 For a verified install with automatic platform detection:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/rafaelromao/sandman/main/scripts/install.sh | sh -s -- --version v1.0.0-rc.1
+curl -fsSL https://raw.githubusercontent.com/rafaelromao/sandman/main/scripts/install.sh | sh
 ```
 
 ## Quick Start

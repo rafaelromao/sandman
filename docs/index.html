@@ -239,7 +239,7 @@
       .cli-shot {
         margin: 22px 0 18px;
         border-radius: 8px;
-        overflow: hidden;
+        overflow-x: auto;
         border: 1px solid var(--night-line);
         background: var(--night);
         color: var(--night-text);
@@ -247,20 +247,10 @@
         position: relative;
       }
 
-      .cli-scrollbar {
-        position: absolute;
-        top: 8px;
-        right: 5px;
-        width: 3px;
-        height: 34px;
-        border-radius: 999px;
-        background: oklch(75% 0.05 255 / 0.45);
-      }
-
       .cli-shot pre {
         margin: 0;
         padding: 18px;
-        white-space: pre-wrap;
+        white-space: pre;
         color: var(--night-text);
         font-size: 11.8px;
         line-height: 1.45;
@@ -513,8 +503,7 @@
               <p class="lead">You do not babysit the agent, but you can inspect the loop at any time.</p>
 
               <div class="cli-shot" aria-label="Sandman CLI screenshot">
-                <span class="cli-scrollbar" aria-hidden="true"></span>
-                <pre><span class="branch">sandman main ?</span> <span class="prompt">❯</span> <span class="cmd">./sandman run 2102</span>
+                <pre><span class="branch">sandman main ?</span> <span class="prompt">❯</span> <span class="cmd">sandman run 2102</span>
 expanded specification #2102 to 3 accepted children
 <span class="dim">[260710093543-0142-2103] 09:36:34</span>
 <span class="dim">[260710093543-0142-2103] 09:36:34</span> <span class="arrow">→</span> build · MiniMax-M2.7
