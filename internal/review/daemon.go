@@ -23,6 +23,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/prompt"
 	"github.com/rafaelromao/sandman/internal/runid"
 	"github.com/rafaelromao/sandman/internal/sandbox"
+	"github.com/rafaelromao/sandman/internal/socketpath"
 )
 
 // PollingInterval is the default interval at which the daemon scans open PRs
@@ -738,7 +739,7 @@ func (d *Daemon) SocketPath() string {
 	if d.Layout.RepoRoot != "" {
 		return d.Layout.ReviewSocketPath()
 	}
-	return filepath.Join(d.BaseDir, "reviews", "review.sock")
+	return socketpath.Path(filepath.Join(d.BaseDir, "reviews", "review.sock"))
 }
 
 // effectiveAgent returns the review agent name to use for this run.
@@ -876,14 +877,18 @@ func (d *Daemon) SetSocket(s *daemon.ControlSocket) {
 // static shared prompt template, and starts the control socket. Safe
 // to call multiple times.
 func (d *Daemon) StartSocket() error {
-	if err := os.MkdirAll(filepath.Dir(d.SocketPath()), 0755); err != nil {
+	reviewsDir := d.Layout.ReviewsDir()
+	if reviewsDir == "" || reviewsDir == "reviews" {
+		reviewsDir = filepath.Join(d.BaseDir, "reviews")
+	}
+	if err := os.MkdirAll(reviewsDir, 0755); err != nil {
 		return fmt.Errorf("create reviews dir: %w", err)
 	}
 	if err := d.initPromptTemplate(); err != nil {
 		return fmt.Errorf("init review prompt template: %w", err)
 	}
 	if d.controlSocket == nil {
-		d.controlSocket = daemon.NewControlSocketWithName(filepath.Dir(d.SocketPath()), "review.sock", daemon.NewBroadcaster())
+		d.controlSocket = daemon.NewControlSocketWithName(reviewsDir, "review.sock", daemon.NewBroadcaster())
 	}
 	return d.controlSocket.Start()
 }

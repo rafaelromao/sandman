@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/rafaelromao/sandman/internal/socketpath"
 )
 
 // IssueCommander is the seam the command socket uses to abort a single
@@ -58,7 +60,7 @@ type CommandResponse struct {
 // CommandSocketPath returns the unix socket path for the per-run command
 // server inside a run folder.
 func CommandSocketPath(dir string) string {
-	return filepath.Join(dir, "run.sock")
+	return socketpath.Path(filepath.Join(dir, "run.sock"))
 }
 
 // CommandServer accepts one-shot JSON command requests on a unix socket
@@ -128,7 +130,6 @@ func (s *CommandServer) Start() error {
 	go s.acceptLoop()
 	return nil
 }
-
 func (s *CommandServer) startWithShortSockName() error {
 	abstractName := abstractCommandSocketName(s.dir)
 	listener, err := net.Listen("unix", abstractName)
@@ -153,7 +154,7 @@ func (s *CommandServer) Stop() error {
 		err = s.listener.Close()
 	}
 	if !s.isAbstract {
-		if rmErr := os.Remove(CommandSocketPath(s.dir)); rmErr != nil && !os.IsNotExist(rmErr) && err == nil {
+		if rmErr := removeSocketPath(CommandSocketPath(s.dir)); rmErr != nil && err == nil {
 			err = rmErr
 		}
 	}

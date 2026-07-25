@@ -182,16 +182,32 @@ func testsInFilesWithoutTempDir(t *testing.T) []string {
 // Returns a path relative to root (e.g., "internal/cmd/model_test.go").
 func sourceFileForTest(t *testing.T, root, testName string) string {
 	t.Helper()
+	absFiles, err := filepath.Glob(filepath.Join(root, "internal/cmd", "*_test.go"))
+	if err != nil || len(absFiles) == 0 {
+		return ""
+	}
+	relFiles := make([]string, 0, len(absFiles))
+	for _, f := range absFiles {
+		rel, err := filepath.Rel(root, f)
+		if err != nil {
+			continue
+		}
+		relFiles = append(relFiles, rel)
+	}
+	if len(relFiles) == 0 {
+		return ""
+	}
 	pattern := "func " + regexp.QuoteMeta(testName) + `(t \*testing\.T)`
-	cmd := exec.Command("grep", "-r", "-l", pattern, "internal/cmd")
+	args := append([]string{"-l", pattern}, relFiles...)
+	cmd := exec.Command("grep", args...)
 	cmd.Dir = root
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return ""
 	}
-	files := strings.Split(strings.TrimSpace(string(out)), "\n")
-	if len(files) > 0 && files[0] != "" {
-		return files[0]
+	split := strings.Split(strings.TrimSpace(string(out)), "\n")
+	if len(split) > 0 && split[0] != "" {
+		return split[0]
 	}
 	return ""
 }
@@ -226,7 +242,7 @@ func TestNoLeakToRealBatchesDir(t *testing.T) {
 		t.Log("no tests without t.TempDir found; skipping subprocess run")
 	} else {
 		pattern := "^(" + strings.Join(potentiallyLeaking, "|") + ")$"
-		cmd = exec.Command("go", "test", "-count=1", "-run", pattern, "./internal/cmd/...")
+		cmd = exec.Command("go", "test", "-count=1", "-timeout", "8m", "-run", pattern, "./internal/cmd/...")
 		cmd.Dir = root
 		cmd.Env = append(os.Environ(), "SANDMAN_NO_LEAK_GUARD_SKIP=1")
 		var stdout, stderr strings.Builder

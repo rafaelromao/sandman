@@ -53,7 +53,7 @@ func longCommandSocketDir(t *testing.T) string {
 	t.Helper()
 
 	dir := testenv.MkdirShort(t, "sm-cmd-")
-	for len(CommandSocketPath(dir)) <= 108 {
+	for len(filepath.Join(dir, "run.sock")) <= 108 {
 		dir = filepath.Join(dir, strings.Repeat("long-path-segment", 4))
 	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {

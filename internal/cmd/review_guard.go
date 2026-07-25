@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/rafaelromao/sandman/internal/socketpath"
 )
 
 // defaultReviewDaemonDialTimeout is the fallback dial timeout used by
@@ -66,7 +68,7 @@ func requireReviewDaemon(reviewCommand, sandmanDir string) error {
 	if !strings.Contains(reviewCommand, "/sandman") {
 		return nil
 	}
-	conn, err := net.DialTimeout("unix", ReviewSocketPath(sandmanDir), reviewDaemonDialTimeout)
+	conn, err := net.DialTimeout("unix", socketpath.Path(ReviewSocketPath(sandmanDir)), reviewDaemonDialTimeout)
 	if err != nil {
 		return errors.New(reviewGuardMessage)
 	}

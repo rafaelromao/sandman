@@ -1,0 +1,138 @@
+name: Full Regression - Linux
+
+on:
+  workflow_dispatch:
+
+jobs:
+  full-regression:
+    name: Full Regression Suite (Ubuntu)
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    env:
+      CI: true
+      GIT_TERMINAL_PROMPT: "0"
+      DEBIAN_FRONTEND: noninteractive
+      PAGER: cat
+      REPORT_FILE: regression-report-linux.md
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Install Podman
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y podman
+
+      - name: Validate Podman
+        run: podman info
+
+      - name: Run full regression suite
+        shell: bash
+        run: |
+          set -uo pipefail
+
+          RESULTS_FILE=$(mktemp)
+          trap 'rm -f "$RESULTS_FILE"' EXIT
+
+          log_tier() {
+            local name=$1 status=$2 reason=$3
+            printf '%s|%s|%s\n' "$name" "$status" "$reason" >> "$RESULTS_FILE"
+          }
+
+          run_tier() {
+            local name=$1 cmd=$2
+            echo "▶ Running $name"
+            echo "::group::$name"
+
+            set +e
+            bash -c "$cmd"
+            local rc=$?
+            set -e
+            echo "::endgroup::"
+
+            if [ $rc -eq 0 ]; then
+              log_tier "$name" "PASS" ""
+              echo "  $name: PASS"
+            else
+              log_tier "$name" "FAIL" "exit code $rc"
+              echo "  $name: FAIL (exit code $rc)"
+            fi
+          }
+
+          skip_tier() {
+            local name=$1 reason=$2
+            log_tier "$name" "SKIP" "$reason"
+            echo "  $name: SKIP ($reason)"
+          }
+
+          # Tier 1: Unit tests + race detector (matches `make test`)
+          run_tier "Unit + Race" "go test -race -v ./..."
+
+          # Tier 2: Smoke tests, every provider, every buildTools preset
+          run_tier "Smoke" "SANDMAN_TEST_PROVIDERS=all SANDMAN_RUN_SMOKE_E2E=1 go test -tags smoke -timeout 60m ./internal/cmd -run Smoke"
+
+          # Tier 3: E2E tests, every scenario gate
+          run_tier "E2E" "SANDMAN_TEST_PROVIDERS=all SANDMAN_E2E_GATES=all go test -tags e2e -timeout 30m ./..."
+
+          # Tier 4: Real-agent preset matrix, opt-in
+          if [ -f "$HOME/.local/share/opencode/auth.json" ] && command -v podman >/dev/null 2>&1; then
+            run_tier "Real-agent Preset Matrix" "SANDMAN_RUN_AGENT_E2E=1 SANDMAN_TEST_PROVIDERS=all SANDMAN_E2E_GATES=all go test -tags e2e -timeout 90m ./internal/cmd -run TestPresetMatrixHarness"
+          elif [ ! -f "$HOME/.local/share/opencode/auth.json" ]; then
+            skip_tier "Real-agent Preset Matrix" "no opencode auth at $HOME/.local/share/opencode/auth.json"
+          else
+            skip_tier "Real-agent Preset Matrix" "podman not available"
+          fi
+
+          {
+            echo "# Full Regression Report — Linux"
+            echo ""
+            echo "| Tier | Status | Details |"
+            echo "|------|--------|---------|"
+            while IFS='|' read -r name status reason; do
+              emoji=""
+              case "$status" in
+                PASS) emoji="✅" ;;
+                FAIL) emoji="❌" ;;
+                SKIP) emoji="⏭️" ;;
+                TIMEOUT) emoji="⏰" ;;
+              esac
+              echo "| $name | $emoji $status | $reason |"
+            done < "$RESULTS_FILE"
+            echo ""
+            echo "Workflow run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          {
+            echo "# Full Regression Report — Linux"
+            echo ""
+            echo "| Tier | Status | Details |"
+            echo "|------|--------|---------|"
+            while IFS='|' read -r name status reason; do
+              echo "| $name | $status | $reason |"
+            done < "$RESULTS_FILE"
+            echo ""
+            echo "Workflow run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          } > "$REPORT_FILE"
+
+          final_rc=0
+          while IFS='|' read -r name status reason; do
+            if [ "$status" = "FAIL" ] || [ "$status" = "TIMEOUT" ]; then
+              final_rc=1
+            fi
+          done < "$RESULTS_FILE"
+
+          exit $final_rc
+
+      - name: Upload regression report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: regression-report-linux
+          path: regression-report-linux.md
+          if-no-files-found: ignore

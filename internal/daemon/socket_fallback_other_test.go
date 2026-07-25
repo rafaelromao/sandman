@@ -5,7 +5,6 @@ package daemon
 import (
 	"net"
 	"os"
-	"runtime"
 	"strings"
 	"syscall"
 	"testing"
@@ -23,23 +22,32 @@ func TestShouldFallbackToAbstractSocket_AlwaysFalseOnNonLinux(t *testing.T) {
 	}
 }
 
-func TestCommandServer_StartReturnsPlatformSpecificErrorOnLongPath(t *testing.T) {
+func TestCommandServer_StartUsesShortFilesystemSocketOnLongPath(t *testing.T) {
 	dir := longCommandSocketDir(t)
 
 	server := NewCommandServer(dir, &fakeCommander{})
 	err := server.Start()
-	if err == nil {
-		server.Stop()
-		t.Fatalf("expected Start to fail on non-Linux with a long path; got nil")
+	if err != nil {
+		t.Fatalf("expected long path to use a short filesystem socket: %v", err)
 	}
-	msg := err.Error()
-	if !strings.Contains(msg, runtime.GOOS) {
-		t.Errorf("expected error to name the host platform %q, got %q", runtime.GOOS, msg)
+	defer server.Stop()
+	conn, err := net.Dial("unix", CommandSocketPath(dir))
+	if err != nil {
+		t.Fatalf("dial logical socket path: %v", err)
 	}
-	if !strings.Contains(msg, "sun_path limit") {
-		t.Errorf("expected error to mention the sun_path limit, got %q", msg)
+	conn.Close()
+}
+
+func TestControlSocket_StartUsesShortFilesystemSocketOnLongPath(t *testing.T) {
+	dir := longCommandSocketDir(t)
+	sock := NewControlSocket(dir, NewBroadcaster())
+	if err := sock.Start(); err != nil {
+		t.Fatalf("expected long path to use a short filesystem socket: %v", err)
 	}
-	if !strings.Contains(msg, "shorten the repo path") {
-		t.Errorf("expected error to advise shortening the repo path, got %q", msg)
+	defer sock.Stop()
+	conn, err := net.Dial("unix", sock.Path())
+	if err != nil {
+		t.Fatalf("dial logical socket path: %v", err)
 	}
+	conn.Close()
 }

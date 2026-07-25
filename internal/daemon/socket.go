@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"syscall"
+
+	"github.com/rafaelromao/sandman/internal/socketpath"
 )
 
 type ControlSocket struct {
@@ -14,6 +16,13 @@ type ControlSocket struct {
 	listener    net.Listener
 	broadcaster *Broadcaster
 	isAbstract  bool
+}
+
+func removeSocketPath(path string) error {
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
 }
 
 func NewControlSocket(dir string, broadcaster *Broadcaster) *ControlSocket {
@@ -29,7 +38,7 @@ func (s *ControlSocket) Broadcaster() *Broadcaster {
 }
 
 func (s *ControlSocket) Path() string {
-	return filepath.Join(s.dir, s.name)
+	return socketpath.Path(filepath.Join(s.dir, s.name))
 }
 
 func (s *ControlSocket) Start() error {
@@ -41,7 +50,7 @@ func (s *ControlSocket) Start() error {
 	}
 
 	sockPath := s.Path()
-	os.Remove(sockPath)
+	_ = os.Remove(sockPath)
 	listener, err := net.Listen("unix", sockPath)
 	if err != nil {
 		if shouldFallbackToAbstractSocket(sockPath, err) {
@@ -68,6 +77,16 @@ func (s *ControlSocket) Start() error {
 	return nil
 }
 
+func (s *ControlSocket) acceptLoop(listener net.Listener) {
+	for {
+		conn, err := listener.Accept()
+		if err != nil {
+			return
+		}
+		s.broadcaster.AddClient(conn)
+	}
+}
+
 func isPathTooLong(err error) bool {
 	if opErr, ok := err.(*net.OpError); ok {
 		if sysErr, ok := opErr.Err.(*os.SyscallError); ok {
@@ -86,15 +105,7 @@ func (s *ControlSocket) startWithShortSockName() error {
 	s.listener = listener
 	s.isAbstract = true
 
-	go func() {
-		for {
-			conn, err := listener.Accept()
-			if err != nil {
-				return
-			}
-			s.broadcaster.AddClient(conn)
-		}
-	}()
+	go s.acceptLoop(listener)
 
 	return nil
 }
@@ -119,7 +130,7 @@ func (s *ControlSocket) Stop() error {
 	}
 	s.broadcaster.Close()
 	if !s.isAbstract {
-		if rmErr := os.Remove(s.Path()); rmErr != nil && !os.IsNotExist(rmErr) {
+		if rmErr := removeSocketPath(s.Path()); rmErr != nil {
 			return rmErr
 		}
 	}

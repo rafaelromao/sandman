@@ -1205,7 +1205,10 @@ func (v *portalRunsView) discoverActiveRuns(repoRoot string, eventsByRun map[str
 			}
 			continue
 		}
-		runDir := filepath.Dir(instance.SocketPath)
+		runDir := instance.Dir
+		if runDir == "" {
+			runDir = filepath.Dir(instance.SocketPath)
+		}
 		manifest, manifestErr := v.readManifestCached(runDir)
 		prNumber := 0
 		batchID := instance.Name
@@ -1992,6 +1995,7 @@ func (v *portalRunsView) runFromState(repoRoot string, runState events.RunState,
 		}
 		if batchDir != "" {
 			portalRun.BatchKey = filepath.Base(batchDir)
+			portalRun.RunDir = filepath.Join(batchDir, "runs", runState.RunID)
 			sockPath := daemon.RunSocketPath(batchDir, runState.RunID)
 			if _, err := os.Lstat(sockPath); err == nil {
 				portalRun.SocketPath = sockPath

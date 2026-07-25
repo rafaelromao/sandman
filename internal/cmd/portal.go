@@ -82,6 +82,7 @@ var portalRunCleanStale = runCleanStale
 
 type portalInstance struct {
 	Name       string `json:"name"`
+	Dir        string `json:"-"`
 	SocketPath string `json:"socketPath"`
 }
 
@@ -473,7 +474,10 @@ func abortPortalRun(ctx context.Context, repoRoot, runKey string, issueNumber in
 		return &portalAbortError{status: http.StatusConflict, message: fmt.Sprintf("daemon for run %q is no longer live", runKey)}
 	}
 
-	runDir := filepath.Dir(run.SocketPath)
+	runDir := run.RunDir
+	if runDir == "" {
+		runDir = filepath.Dir(run.SocketPath)
+	}
 
 	// For batch-level sockets (batch.sock), resolve to the per-run folder.
 	cmdSock := daemon.CommandSocketPath(runDir)
@@ -629,15 +633,15 @@ func discoverPortalInstances(repoRoot string) ([]portalInstance, error) {
 		}
 
 		batchDir := entry.Path
-		sockPath := filepath.Join(batchDir, "batch.sock")
-		info, err := os.Lstat(sockPath)
+		sockPath := daemon.BatchSocketPath(batchDir)
+		info, err := os.Stat(sockPath)
 		if err != nil || info.IsDir() || info.Mode()&os.ModeSocket == 0 {
 			continue
 		}
 		if !portalRunLivenessProbe(batchDir) {
 			continue
 		}
-		instances = append(instances, portalInstance{Name: entry.ID, SocketPath: sockPath})
+		instances = append(instances, portalInstance{Name: entry.ID, Dir: batchDir, SocketPath: sockPath})
 	}
 
 	sort.Slice(instances, func(i, j int) bool {
