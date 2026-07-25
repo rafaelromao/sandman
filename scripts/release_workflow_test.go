@@ -129,6 +129,7 @@ func TestReleaseWorkflowPublishesConfiguredReleaseArtifacts(t *testing.T) {
 		"format: tar.gz",
 		"checksums.txt",
 		"sandman_{{ .Version }}_{{ .Os }}_{{ .Arch }}",
+		"prerelease: auto",
 	} {
 		if !strings.Contains(goreleaser, required) {
 			t.Errorf("GoReleaser config missing %q", required)
