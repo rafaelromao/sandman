@@ -1,4 +1,4 @@
-//go:build smoke
+//go:build smoke || e2e
 
 package cmd
 
@@ -217,7 +217,6 @@ func mergedPR(branch, sha string) *github.PR {
 
 func runSmokeProviderTwice(t *testing.T, tc smokeProviderCase, secondArgs ...string) {
 	t.Helper()
-	requireSmokeE2E(t)
 	runtime, repoDir, deps, issue := prepareSmokeProvider(t, tc)
 	out, err := executeSmokeRun(t, deps, runtime, issue.Number)
 	if err != nil {
@@ -230,104 +229,6 @@ func runSmokeProviderTwice(t *testing.T, tc smokeProviderCase, secondArgs ...str
 		t.Fatalf("second smoke run failed: %v\noutput:\n%s", err, out)
 	}
 	assertSmokeProviderRun(t, out, tc, repoDir, issue)
-}
-
-func TestSmoke_RealAgentCLIs(t *testing.T) {
-	runSmokeProviderCases(t, smokeProviderCases)
-}
-
-func TestSmoke_RealAgentCLIs_GoPreset(t *testing.T) {
-	cases := make([]smokeProviderCase, len(smokeProviderCases))
-	for i, tc := range smokeProviderCases {
-		tc.buildTools = "go"
-		cases[i] = tc
-	}
-	runSmokeProviderCases(t, cases)
-}
-
-func TestSmoke_RealAgentCLIs_PythonPreset(t *testing.T) {
-	cases := make([]smokeProviderCase, len(smokeProviderCases))
-	for i, tc := range smokeProviderCases {
-		tc.buildTools = "python"
-		cases[i] = tc
-	}
-	runSmokeProviderCases(t, cases)
-}
-
-func TestSmoke_RealAgentCLIs_ElixirPreset(t *testing.T) {
-	cases := make([]smokeProviderCase, len(smokeProviderCases))
-	for i, tc := range smokeProviderCases {
-		tc.buildTools = "elixir"
-		cases[i] = tc
-	}
-	runSmokeProviderCases(t, cases)
-}
-
-func TestSmoke_RealAgentCLIs_NodePreset(t *testing.T) {
-	cases := make([]smokeProviderCase, len(smokeProviderCases))
-	for i, tc := range smokeProviderCases {
-		tc.buildTools = "node"
-		cases[i] = tc
-	}
-	runSmokeProviderCases(t, cases)
-}
-
-func TestSmoke_RealAgentCLIs_DotnetPreset(t *testing.T) {
-	cases := make([]smokeProviderCase, len(smokeProviderCases))
-	for i, tc := range smokeProviderCases {
-		tc.buildTools = "dotnet"
-		cases[i] = tc
-	}
-	runSmokeProviderCases(t, cases)
-}
-
-func TestSmoke_RealAgentCLIs_RustPreset(t *testing.T) {
-	cases := make([]smokeProviderCase, len(smokeProviderCases))
-	for i, tc := range smokeProviderCases {
-		tc.buildTools = "rust"
-		cases[i] = tc
-	}
-	runSmokeProviderCases(t, cases)
-}
-
-func TestSmoke_RealAgentCLIs_JavaPreset(t *testing.T) {
-	cases := make([]smokeProviderCase, len(smokeProviderCases))
-	for i, tc := range smokeProviderCases {
-		tc.buildTools = "java"
-		cases[i] = tc
-	}
-	runSmokeProviderCases(t, cases)
-}
-
-func TestSmoke_RealAgentCLIs_RubyPreset(t *testing.T) {
-	cases := make([]smokeProviderCase, len(smokeProviderCases))
-	for i, tc := range smokeProviderCases {
-		tc.buildTools = "ruby"
-		cases[i] = tc
-	}
-	runSmokeProviderCases(t, cases)
-}
-
-func TestSmoke_RealAgentCLIs_Override(t *testing.T) {
-	allowed, err := parseSmokeProviders(smokeProviderCases)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(allowed) == 0 || !allowed[smokeProviderCases[0].name] {
-		t.Skip("set SANDMAN_TEST_PROVIDERS=opencode and run `go test -tags smoke ./internal/cmd -run Smoke`")
-	}
-	runSmokeProviderTwice(t, smokeProviderCases[0], "--override")
-}
-
-func TestSmoke_RealAgentCLIs_Continue(t *testing.T) {
-	allowed, err := parseSmokeProviders(smokeProviderCases)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(allowed) == 0 || !allowed[smokeProviderCases[0].name] {
-		t.Skip("set SANDMAN_TEST_PROVIDERS=opencode and run `go test -tags smoke ./internal/cmd -run Smoke`")
-	}
-	runSmokeProviderTwice(t, smokeProviderCases[0], "--continue")
 }
 
 func requireSmokeE2E(t *testing.T) {

@@ -94,19 +94,12 @@ go test -race -v ./...
 SANDMAN_TEST_PROVIDERS=all SANDMAN_RUN_SMOKE_E2E=1 \
   go test -tags smoke -timeout 60m ./internal/cmd -run Smoke
 
-# 3. E2E — every scenario gate, no real-agent sub-tests
-SANDMAN_TEST_PROVIDERS=all SANDMAN_E2E_GATES=all \
-  go test -tags e2e -timeout 30m ./...
-
-# 4. Real-agent preset matrix (opt-in; needs host opencode auth +
-#    a working podman/docker. SKIP if either is unavailable.)
-if [ -f "$HOME/.local/share/opencode/auth.json" ] && command -v podman >/dev/null 2>&1; then
-  SANDMAN_RUN_AGENT_E2E=1 SANDMAN_TEST_PROVIDERS=all SANDMAN_E2E_GATES=all \
-    go test -tags e2e -timeout 90m ./internal/cmd -run TestPresetMatrixHarness
-fi
+# 3. E2E — every scenario gate, including real-agent coverage
+SANDMAN_RUN_AGENT_E2E=1 SANDMAN_TEST_PROVIDERS=all SANDMAN_E2E_GATES=all \
+  go test -tags e2e -timeout 90m ./...
 ```
 
-Skip a tier with a one-line note (e.g. `skipping tier 4: no opencode auth at $HOME/.local/share/opencode/auth.json`) rather than blocking on it. Aggregate the per-tier PASS/FAIL/SKIP counts and surface a final summary, never silently swallow a failure. Timeouts are tuned per tier — do not lower them; lowering reintroduces the `batch aborted by operator` false-positive from under-budgeted test processes.
+The real-agent E2E cases skip with a clear reason when their runtime prerequisites are absent. Aggregate the per-tier PASS/FAIL/SKIP counts and surface a final summary, never silently swallow a failure. Timeouts are tuned per tier — do not lower them; lowering reintroduces the `batch aborted by operator` false-positive from under-budgeted test processes.
 
 ## Implementation constraints
 
