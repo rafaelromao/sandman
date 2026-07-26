@@ -250,8 +250,13 @@ func TestCIWorkflowRunsOnPullRequestsToAnyBranch(t *testing.T) {
 	ci := readRepositoryFile(t, "../.github/workflows/go.yml")
 
 	pullRequestBlock := extractOnSubBlock(t, ci, "pull_request")
-	if strings.Contains(pullRequestBlock, "branches: [main]") {
-		t.Errorf("CI workflow pull_request trigger must not be restricted to [main] only; pull_request block was:\n%s", pullRequestBlock)
+	for _, forbidden := range []string{
+		"branches: [main]",
+		"branches-ignore:",
+	} {
+		if strings.Contains(pullRequestBlock, forbidden) {
+			t.Errorf("CI workflow pull_request trigger must not restrict by base branch; found %q in pull_request block:\n%s", forbidden, pullRequestBlock)
+		}
 	}
 
 	pushBlock := extractOnSubBlock(t, ci, "push")
@@ -264,13 +269,11 @@ func TestContributorDocumentationDescribesCIPullRequestScope(t *testing.T) {
 	contributing := readRepositoryFile(t, "../CONTRIBUTING.md")
 	agents := readRepositoryFile(t, "../AGENTS.md")
 
-	for _, doc := range []struct{ name, content string }{
-		{"CONTRIBUTING.md", contributing},
-		{"AGENTS.md", agents},
-	} {
-		if !strings.Contains(doc.content, "CI runs on pull requests to any branch") {
-			t.Errorf("%s must state that CI runs on pull requests to any branch, not only on pull requests targeting main", doc.name)
-		}
+	if !strings.Contains(contributing, "CI runs on pull requests to any branch") {
+		t.Error("CONTRIBUTING.md must state that CI runs on pull requests to any branch, not only on pull requests targeting main")
+	}
+	if !strings.Contains(agents, "CI runs on pull requests to any branch") {
+		t.Error("AGENTS.md must state that CI runs on pull requests to any branch, not only on pull requests targeting main")
 	}
 }
 
@@ -282,7 +285,7 @@ func extractOnSubBlock(t *testing.T, workflow, key string) string {
 		t.Fatalf("could not find %q block under on: in workflow", key)
 	}
 	rest := workflow[match[1]:]
-	nextTopRe := regexp.MustCompile(`(?m)^  [a-zA-Z]`)
+	nextTopRe := regexp.MustCompile(`(?m)^[^ ]`)
 	nextMatch := nextTopRe.FindStringIndex(rest)
 	if nextMatch == nil {
 		return rest
