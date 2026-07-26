@@ -201,6 +201,15 @@ func TestE2EGateListAllowed_EmptyRawDisables(t *testing.T) {
 	}
 }
 
+func TestE2EGateListAllowed_ReviewDaemonScenario(t *testing.T) {
+	if !E2EGateListAllowed(E2EScenarioReviewDaemon, E2EScenarioReviewDaemon, []string{E2EScenarioReviewDaemon}) {
+		t.Fatal("expected review_daemon enabled when raw=\"review_daemon\"")
+	}
+	if E2EGateListAllowed(E2EScenarioBatch, E2EScenarioReviewDaemon, []string{E2EScenarioReviewDaemon}) {
+		t.Fatal("expected batch disabled when raw=\"review_daemon\"")
+	}
+}
+
 func TestE2EGateListAllowed_InvalidRawDisables(t *testing.T) {
 	if E2EGateListAllowed(E2EScenarioBatch, "claude", []string{E2EScenarioBatch, E2EScenarioContinueMulti, E2EScenarioOpencodeSubagent}) {
 		t.Fatal("expected batch disabled when raw contains unknown scenario")
