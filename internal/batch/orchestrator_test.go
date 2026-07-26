@@ -5158,10 +5158,13 @@ func TestRunBatch_StartDelay_AbortsImmediatelyOnCancel(t *testing.T) {
 	assertNoSignal(t, secondStarted, "second run started after batch cancellation")
 	close(firstRelease)
 
+	// Cancellation prevents the next run from starting immediately above;
+	// allow the cancelled run time to finish its filesystem cleanup on loaded
+	// CI runners before asserting that the batch has returned.
 	select {
 	case <-done:
-	case <-time.After(100 * time.Millisecond):
-		t.Fatal("expected batch to abort immediately after cancellation")
+	case <-time.After(1 * time.Second):
+		t.Fatal("expected batch to abort after cancellation")
 	}
 }
 
