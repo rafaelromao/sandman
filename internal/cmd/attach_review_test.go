@@ -7,6 +7,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/rafaelromao/sandman/internal/socketpath"
+	"github.com/rafaelromao/sandman/internal/testenv"
 )
 
 func TestAttach_FindsReviewSock(t *testing.T) {
@@ -117,5 +120,65 @@ func TestAttach_NoSocketsReturnsError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "no sandman daemon is running") {
 		t.Fatalf("expected 'no sandman daemon is running', got: %v", err)
+	}
+}
+
+// longRepoRootForAttach returns a repo root whose
+// .sandman/reviews/review.sock logical path exceeds the host sun_path
+// limit (104) so the resolver maps it to a short /tmp filesystem path.
+// The .git marker and reviews directory are created.
+func longRepoRootForAttach(t *testing.T) string {
+	t.Helper()
+	dir := testenv.MkdirShort(t, "sm-attach-")
+	for {
+		logical := filepath.Join(dir, ".sandman", "reviews", "review.sock")
+		if len(logical) > 104 && socketpath.Path(logical) != logical {
+			break
+		}
+		dir = filepath.Join(dir, "long-prefix-segment")
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".git"), []byte("gitdir: .git\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, ".sandman", "reviews"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+func TestAttach_FindsLongPathReviewSock(t *testing.T) {
+	dir := longRepoRootForAttach(t)
+	t.Chdir(dir)
+
+	logical := filepath.Join(dir, ".sandman", "reviews", "review.sock")
+	effective := socketpath.Path(logical)
+	listener, err := net.Listen("unix", effective)
+	if err != nil {
+		t.Fatalf("listen on effective review socket %q: %v", effective, err)
+	}
+	defer listener.Close()
+
+	go func() {
+		conn, err := listener.Accept()
+		if err != nil {
+			return
+		}
+		conn.Write([]byte("hello from long-path review daemon"))
+		conn.Close()
+	}()
+
+	var buf bytes.Buffer
+	cmd := NewAttachCmd()
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("attach failed: %v\noutput: %s", err, buf.String())
+	}
+	if buf.String() != "hello from long-path review daemon" {
+		t.Fatalf("expected long-path review payload, got %q", buf.String())
 	}
 }
