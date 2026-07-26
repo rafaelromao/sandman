@@ -112,14 +112,10 @@ func (r *containerReviewRunner) RunBatch(ctx context.Context, req batch.Request)
 
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		output = append(output, []byte(fmt.Sprintf("\n--- agent error: %v ---", err))...)
+		return nil, fmt.Errorf("run opencode in container: %w\noutput: %s", err, output)
 	}
 
-	decisionContent := string(output)
-	if decisionContent == "" {
-		decisionContent = "Review completed. No issues found."
-	}
-	if err := os.WriteFile(decisionPath, []byte(decisionContent), 0644); err != nil {
+	if err := os.WriteFile(decisionPath, output, 0644); err != nil {
 		return nil, fmt.Errorf("write decision.md: %w", err)
 	}
 
@@ -155,8 +151,8 @@ func TestReviewDaemonE2E_RealAgentInContainer(t *testing.T) {
 	model := testenv.ResolveTestModel("opencode", "opencode/big-pickle")
 	imageTag := fmt.Sprintf("sandman-review-daemon-e2e-%d:latest", time.Now().UnixNano())
 
-	dockerfile := fmt.Sprintf(`FROM docker.io/alpine:latest
-RUN apk add --no-cache git ca-certificates bash
+	dockerfile := fmt.Sprintf(`FROM docker.io/ubuntu:latest
+RUN apt-get update && apt-get install -y git ca-certificates && rm -rf /var/lib/apt/lists/*
 COPY %s /usr/local/bin/opencode
 RUN chmod +x /usr/local/bin/opencode
 WORKDIR /workspace
@@ -200,9 +196,10 @@ WORKDIR /workspace
 		imageTag: imageTag,
 		model:    model,
 	}
+	poster := github.NewGHCommentPoster(ghClient)
 
 	broadcaster := daemon.NewBroadcaster()
-	d := review.New(repoDir, ghClient, &prompt.Engine{}, runner, cfg, broadcaster, 0, false, nil)
+	d := review.New(repoDir, ghClient, &prompt.Engine{}, runner, cfg, broadcaster, 0, false, poster)
 	d.PollInterval = 0
 
 	if err := d.StartSocket(); err != nil {
