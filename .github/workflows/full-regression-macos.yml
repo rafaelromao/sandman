@@ -10,12 +10,13 @@ on:
 jobs:
   full-regression:
     name: Full Regression Suite (macOS)
-    runs-on: macos-latest
+    runs-on: macos-15-intel
     timeout-minutes: 360
     env:
       CI: true
       GIT_TERMINAL_PROMPT: "0"
       PAGER: cat
+      CONTAINERS_MACHINE_PROVIDER: applehv
       GH_TOKEN: ${{ github.token }}
       GITHUB_TOKEN: ${{ github.token }}
       REPORT_FILE: regression-report-macos.md
@@ -28,6 +29,41 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+
+      - name: Install Podman
+        run: brew install podman
+
+      - name: Initialize Podman machine
+        run: |
+          podman machine init \
+            --cpus 3 \
+            --memory 8192 \
+            --disk-size 60 \
+            --now
+
+      - name: Validate Podman
+        run: |
+          podman info
+          podman run --rm alpine:latest uname -a
+
+      - name: Configure short temporary paths
+        run: |
+          mkdir -p /private/tmp/sandman-ci
+          chmod 1777 /private/tmp/sandman-ci
+          echo "TMPDIR=/private/tmp/sandman-ci" >> "$GITHUB_ENV"
+
+      - name: Prewarm container image
+        run: podman pull alpine:latest
+
+      - name: Podman diagnostics
+        run: |
+          uname -a
+          arch
+          podman version
+          podman machine list
+          podman machine inspect
+          podman info
+          df -h
 
       - name: Run full regression suite
         shell: bash
@@ -116,6 +152,10 @@ jobs:
           done < "$RESULTS_FILE"
 
           exit $final_rc
+
+      - name: Stop Podman machine
+        if: always()
+        run: podman machine stop || true
 
       - name: Upload regression report
         if: always()
