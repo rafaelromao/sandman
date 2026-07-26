@@ -49,7 +49,7 @@ const (
 	E2EScenarioBatchIDRules      = "batch_id_rules"
 	E2EScenarioPresetMatrix      = "preset_matrix"
 	E2EScenarioBaseBranchFeature = "base_branch_feature"
-	E2EScenarioReviewDaemon     = "review_daemon"
+	E2EScenarioReviewDaemon      = "review_daemon"
 )
 
 // Canonical env var names.
