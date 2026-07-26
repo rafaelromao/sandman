@@ -260,6 +260,20 @@ func TestCIWorkflowRunsOnPullRequestsToAnyBranch(t *testing.T) {
 	}
 }
 
+func TestContributorDocumentationDescribesCIPullRequestScope(t *testing.T) {
+	contributing := readRepositoryFile(t, "../CONTRIBUTING.md")
+	agents := readRepositoryFile(t, "../AGENTS.md")
+
+	for _, doc := range []struct{ name, content string }{
+		{"CONTRIBUTING.md", contributing},
+		{"AGENTS.md", agents},
+	} {
+		if !strings.Contains(doc.content, "CI runs on pull requests to any branch") {
+			t.Errorf("%s must state that CI runs on pull requests to any branch, not only on pull requests targeting main", doc.name)
+		}
+	}
+}
+
 func extractOnSubBlock(t *testing.T, workflow, key string) string {
 	t.Helper()
 	headerRe := regexp.MustCompile(`(?m)^  ` + regexp.QuoteMeta(key) + `:\n`)
