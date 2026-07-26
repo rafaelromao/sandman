@@ -14,7 +14,9 @@
         "required_status_checks": [
           { "context": "CI / build (ubuntu-latest)" },
           { "context": "CI / build (macos-latest)" },
-          { "context": "CI / semantic-pull-request" }
+          { "context": "CI / semantic-pull-request" },
+          { "context": "Full Regression - Linux / Full Regression Suite (Ubuntu)" },
+          { "context": "Full Regression - macOS / Full Regression Suite (macOS)" }
         ],
         "strict_required_status_checks_policy": false
       }
