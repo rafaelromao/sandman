@@ -406,7 +406,7 @@ func TestRun_ContainerSandboxMode_RunDirAndSocketsBeforeAgentStart(t *testing.T)
 		Agent:         "opencode",
 		ReviewCommand: "/oc review",
 		WorktreeDir:   ".sandman/worktrees",
-		Sandbox:       "docker", // container mode
+		Sandbox:       "podman", // container mode
 		Git:           config.GitConfig{BaseBranch: "main"},
 		AgentProviders: map[string]config.Agent{
 			"opencode": {Command: "true"},
@@ -431,9 +431,9 @@ func TestRun_ContainerSandboxMode_RunDirAndSocketsBeforeAgentStart(t *testing.T)
 		cmd := NewRunCmd(deps)
 		cmd.SetOut(&buf)
 		cmd.SetErr(&buf)
-		// Pass --sandbox=docker explicitly to make the test
+		// Pass --sandbox=podman explicitly to make the test
 		// resilient to changes in the default sandbox mode.
-		cmd.SetArgs([]string{"--sandbox", "docker", "964"})
+		cmd.SetArgs([]string{"--sandbox", "podman", "964"})
 		runDone <- cmd.Execute()
 	}()
 
@@ -442,11 +442,11 @@ func TestRun_ContainerSandboxMode_RunDirAndSocketsBeforeAgentStart(t *testing.T)
 	// reached even when the container runtime is unavailable (the
 	// runtime call happens after run.started, inside runOnce).
 	//
-	// In the no-docker case, the orchestrator logs run.started and
+	// In the no-podman case, the orchestrator logs run.started and
 	// then fails when trying to start the container, but the run
 	// dir + sockets are already on disk.
 	//
-	// In the with-docker case, the orchestrator logs run.started
+	// In the with-podman case, the orchestrator logs run.started
 	// and proceeds to the agent; either way, the boot artifacts
 	// are on disk by the time the event is written.
 	deadline := time.Now().Add(10 * time.Second)
