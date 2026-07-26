@@ -737,6 +737,106 @@ func preflightSmokeWorktree(t *testing.T, repoDir, branch string) {
 	}
 }
 
+func TestSmoke_ContainerBuildFailure(t *testing.T) {
+	requireSmokeE2E(t)
+
+	allowed, err := parseSmokeProviders(smokeProviderCases)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(allowed) == 0 || !allowed[smokeProviderCases[0].name] {
+		t.Skip("set SANDMAN_TEST_PROVIDERS=opencode and run `go test -tags smoke ./internal/cmd -run Smoke`")
+	}
+
+	runtime, err := sandbox.ResolveRuntime("podman")
+	if err != nil {
+		t.Skipf("container runtime unavailable: %v", err)
+	}
+
+	repoDir := t.TempDir()
+	t.Chdir(repoDir)
+	_ = initRunIntegrationRepoWithRemote(t, repoDir)
+	runGit(t, repoDir, "remote", "set-url", "origin", "git@github.com:rafaelromao/sandman.git")
+
+	s := &scaffold.Scaffolder{}
+	if err := s.Scaffold(repoDir, scaffold.Options{BuildTools: "generic", Agent: "opencode"}, smokePrompter{}); err != nil {
+		t.Fatalf("scaffold repo: %v", err)
+	}
+
+	dockerfilePath := filepath.Join(repoDir, ".sandman", "Dockerfile")
+	data, err := os.ReadFile(dockerfilePath)
+	if err != nil {
+		t.Fatalf("read .sandman/Dockerfile: %v", err)
+	}
+	data = append(data, []byte("\nINVALID\n")...)
+	if err := os.WriteFile(dockerfilePath, data, 0644); err != nil {
+		t.Fatalf("write broken .sandman/Dockerfile: %v", err)
+	}
+
+	warmSmokeRuntime(t, runtime)
+
+	cfg, err := config.Load(filepath.Join(repoDir, ".sandman", "config.yaml"))
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	cfg.ReviewCommand = "/oc review"
+
+	issue := github.Issue{
+		Number: 2430,
+		Title:  "Container build failure smoke test",
+		Body:   "Test container image build failure handling.",
+	}
+	branch := "2430-container-build-failure"
+	gh := &fakeGitHubClient{
+		issues: map[int]*github.Issue{issue.Number: &issue},
+		prs:    map[string]*github.PR{branch: mergedPR(branch, "")},
+	}
+	store := &fakeStore{config: cfg}
+	deps := Dependencies{
+		BatchRunner:  batch.NewOrchestrator(gh, &prompt.Engine{}, store, nil),
+		ConfigStore:  store,
+		EventLog:     &recordingEventLog{},
+		GitHubClient: gh,
+		Renderer:     &prompt.Engine{},
+		IsTTY:        func() bool { return false },
+	}
+
+	containersBefore, cErr := exec.Command(runtime, "ps", "-a", "-q").Output()
+	if cErr != nil {
+		t.Fatalf("list containers before run: %v", cErr)
+	}
+
+	out, err := executeSmokeRun(t, deps, runtime, issue.Number)
+	if err == nil {
+		t.Fatalf("expected error when Dockerfile has invalid instruction, got nil\noutput:\n%s", out)
+	}
+	if !strings.Contains(err.Error(), "build container image") {
+		t.Fatalf("expected error mentioning build container image, got: %v\noutput:\n%s", err, out)
+	}
+	if !strings.Contains(err.Error(), "INVALID") && !strings.Contains(out, "INVALID") {
+		t.Fatalf("expected build error detail (INVALID instruction) in error or output, got err=%v out=%s", err, out)
+	}
+
+	worktreesDir := filepath.Join(repoDir, ".sandman", "worktrees")
+	if entries, err := os.ReadDir(worktreesDir); err == nil && len(entries) > 0 {
+		names := make([]string, len(entries))
+		for i, e := range entries {
+			names[i] = e.Name()
+		}
+		t.Errorf("expected no worktrees after build failure, found: %v", names)
+	}
+
+	containersAfter, cErr := exec.Command(runtime, "ps", "-a", "-q").Output()
+	if cErr != nil {
+		t.Fatalf("list containers after run: %v", cErr)
+	}
+	if string(containersBefore) != string(containersAfter) {
+		t.Errorf("stale containers detected: before=%q after=%q",
+			strings.TrimSpace(string(containersBefore)),
+			strings.TrimSpace(string(containersAfter)))
+	}
+}
+
 func TestCopySmokeAuthLayout_SkipsOpencodeDB(t *testing.T) {
 	realHome := t.TempDir()
 	tempHome := t.TempDir()

@@ -41,6 +41,15 @@ sub-test per buildTools variant — `generic`, `go`, `python`, `elixir`,
 `node`, `dotnet`, `rust`, `java`, `ruby`), `-timeout 60m` is a safer
 budget.
 
+### Container build failure smoke test
+
+`TestSmoke_ContainerBuildFailure` verifies that when the scaffolded container image cannot be built (e.g., an invalid Dockerfile instruction), the run fails with a clear build-error message and no stranded containers or worktrees are left behind. It is gated on `SANDMAN_RUN_SMOKE_E2E=1` because it needs a real container runtime.
+
+```bash
+SANDMAN_RUN_SMOKE_E2E=1 SANDMAN_TEST_PROVIDERS=opencode \
+  go test -tags smoke -timeout 5m ./internal/cmd -run TestSmoke_ContainerBuildFailure
+```
+
 ### Smoke image prewarm
 
 Smoke tests skip the expensive real-agent cases unless `SANDMAN_RUN_SMOKE_E2E=1` is set. When enabled, they build the container images they need on first use, then reuse those images during the same test process. To enable the upfront prewarm fan-out instead of on-demand builds, set:
