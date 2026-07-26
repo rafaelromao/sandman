@@ -34,7 +34,7 @@ For suggestions related to agent behavior, prompts, or domain vocabulary, use th
 - Change requests branch from `main`. Direct pushes to `main` are blocked by the repository's GitHub Ruleset.
 - Ensure the change-request description clearly describes the problem and solution.
 - Reference the issue this change request addresses in the body (`Closes #<n>`, `Fixes #<n>`, or `Resolves #<n>`), not in the title.
-- Ensure all CI checks pass. The merge button only enables after both `CI / build` and `CI / semantic-pull-request` are green.
+- Ensure all CI checks pass. The merge button only enables after both `CI / build` and `CI / semantic-pull-request` are green. CI runs on pull requests to any branch, not only on pull requests targeting `main`, so stacked and feature-branch change requests receive the same checks before they reach `main`.
 - For the post-merge release procedure and versioning policy, see the [Releasing guide](docs/development/releasing.md).
 
 ### Release automation
