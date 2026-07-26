@@ -65,15 +65,13 @@ func CommandSocketPath(dir string) string {
 
 // CommandServer accepts one-shot JSON command requests on a unix socket
 // and dispatches them to an IssueCommander. It owns the listener
-// lifecycle and removes the filesystem socket path when the listener is
-// path-based.
+// lifecycle and removes the filesystem socket path when stopped.
 type CommandServer struct {
 	dir         string
 	commander   IssueCommander
 	targetIssue int
 	targetBound bool
 	listener    net.Listener
-	isAbstract  bool
 }
 
 // NewCommandServer wires a CommandServer to the given run directory and
@@ -107,19 +105,6 @@ func (s *CommandServer) Start() error {
 	_ = os.Remove(sockPath)
 	listener, err := net.Listen("unix", sockPath)
 	if err != nil {
-		if shouldFallbackToAbstractSocket(sockPath, err) {
-			listener, err = net.Listen("unix", abstractCommandSocketName(s.dir))
-			if err != nil {
-				return fmt.Errorf("create abstract command socket: %w", err)
-			}
-			s.listener = listener
-			s.isAbstract = true
-			go s.acceptLoop()
-			return nil
-		}
-		if platformErr := nonLinuxPlatformError(sockPath); platformErr != nil {
-			return platformErr
-		}
 		return fmt.Errorf("create command socket: %w", err)
 	}
 	if err := os.Chmod(sockPath, 0o600); err != nil {
@@ -130,21 +115,6 @@ func (s *CommandServer) Start() error {
 	go s.acceptLoop()
 	return nil
 }
-func (s *CommandServer) startWithShortSockName() error {
-	abstractName := abstractCommandSocketName(s.dir)
-	listener, err := net.Listen("unix", abstractName)
-	if err != nil {
-		return fmt.Errorf("create abstract command socket: %w", err)
-	}
-	s.listener = listener
-	s.isAbstract = true
-	go s.acceptLoop()
-	return nil
-}
-
-func abstractCommandSocketName(dir string) string {
-	return "@sandman-cmd-" + fmt.Sprintf("%x", hashString(filepath.Base(dir)))
-}
 
 // Stop closes the listener and removes the socket file. It is safe to
 // call Stop multiple times.
@@ -153,10 +123,8 @@ func (s *CommandServer) Stop() error {
 	if s.listener != nil {
 		err = s.listener.Close()
 	}
-	if !s.isAbstract {
-		if rmErr := removeSocketPath(CommandSocketPath(s.dir)); rmErr != nil && err == nil {
-			err = rmErr
-		}
+	if rmErr := removeSocketPath(CommandSocketPath(s.dir)); rmErr != nil && err == nil {
+		err = rmErr
 	}
 	return err
 }

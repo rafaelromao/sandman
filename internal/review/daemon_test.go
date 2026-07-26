@@ -22,6 +22,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/github"
 	"github.com/rafaelromao/sandman/internal/prompt"
 	"github.com/rafaelromao/sandman/internal/sandbox"
+	"github.com/rafaelromao/sandman/internal/socketpath"
 	"github.com/rafaelromao/sandman/internal/testenv"
 )
 
@@ -1052,6 +1053,38 @@ func TestDaemon_StartSocketCreatesReviewSock(t *testing.T) {
 		t.Fatalf("connect to review.sock: %v", err)
 	}
 	conn.Close()
+}
+
+// TestDaemon_SocketPathAndSocketAddrAgreeForLongPath pins the
+// cross-platform contract (issue #2441): on a long-path repo the
+// resolver maps the review socket to a short /tmp filesystem path,
+// and SocketPath() and SocketAddr() return the same value (no
+// separate abstract-name surface).
+func TestDaemon_SocketPathAndSocketAddrAgreeForLongPath(t *testing.T) {
+	dir := testenv.MkdirShort(t, "sm-review-")
+	for {
+		logical := filepath.Join(dir, "reviews", "review.sock")
+		if len(logical) > socketpath.SunPathLimit && socketpath.Path(logical) != logical {
+			break
+		}
+		dir = filepath.Join(dir, "long-prefix-segment")
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "reviews"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := &config.Config{DefaultReviewAgent: "opencode", DefaultReviewModel: "opencode/foo"}
+	d := New(dir, &fakeGH{}, &prompt.Engine{}, &capturedRequest{}, cfg, &lockedBuffer{}, 0, false, nil)
+
+	if got, want := d.SocketPath(), socketpath.Path(filepath.Join(dir, "reviews", "review.sock")); got != want {
+		t.Errorf("SocketPath() = %q, want %q (effective path)", got, want)
+	}
+	if got, want := d.SocketAddr(), d.SocketPath(); got != want {
+		t.Errorf("SocketAddr() = %q, want %q (must agree with SocketPath on every host)", got, want)
+	}
+	if !strings.HasPrefix(d.SocketPath(), "/tmp/") {
+		t.Errorf("SocketPath() = %q, want /tmp/ prefix for long-path review", d.SocketPath())
+	}
 }
 
 func TestDaemon_RunRespondsToTrigger(t *testing.T) {

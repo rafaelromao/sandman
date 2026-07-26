@@ -4,8 +4,10 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/rafaelromao/sandman/internal/socketpath"
 	"github.com/rafaelromao/sandman/internal/testenv"
 )
 
@@ -159,6 +161,169 @@ func TestControlSocket_RemovesStaleSocketOnStart(t *testing.T) {
 		t.Fatalf("connect after restart: %v", err)
 	}
 	conn.Close()
+}
+
+func TestControlSocket_StartForLongPathCreatesShortFilesystemSocket(t *testing.T) {
+	dir := longSocketDir(t)
+
+	sock := NewControlSocket(dir, NewBroadcaster())
+	if err := sock.Start(); err != nil {
+		t.Fatalf("Start() for long path failed: %v", err)
+	}
+	defer sock.Stop()
+
+	effective := sock.Path()
+	if got := len(effective); got > socketpath.SunPathLimit {
+		t.Fatalf("effective Path() length = %d, want <= %d: %s", got, socketpath.SunPathLimit, effective)
+	}
+
+	info, err := os.Stat(effective)
+	if err != nil {
+		t.Fatalf("expected real filesystem socket at effective path %q, stat err: %v", effective, err)
+	}
+	if info.Mode()&os.ModeSocket == 0 {
+		t.Fatalf("expected file at %q to be a socket, mode=%v", effective, info.Mode())
+	}
+
+	conn, err := net.Dial("unix", effective)
+	if err != nil {
+		t.Fatalf("dial effective socket %q: %v", effective, err)
+	}
+	conn.Close()
+}
+
+func TestControlSocket_StartForLongPathKeepsLogicalPathEmpty(t *testing.T) {
+	dir := longSocketDir(t)
+	sock := NewControlSocket(dir, NewBroadcaster())
+	if err := sock.Start(); err != nil {
+		t.Fatalf("Start() for long path failed: %v", err)
+	}
+	defer sock.Stop()
+
+	logical := filepath.Join(dir, "batch.sock")
+	if _, err := os.Stat(logical); !os.IsNotExist(err) {
+		t.Fatalf("expected no filesystem socket at the long logical path %q, got err=%v", logical, err)
+	}
+}
+
+func TestControlSocket_StopRemovesEffectiveSocketOnLongPath(t *testing.T) {
+	dir := longSocketDir(t)
+	sock := NewControlSocket(dir, NewBroadcaster())
+	if err := sock.Start(); err != nil {
+		t.Fatalf("Start() for long path failed: %v", err)
+	}
+
+	effective := sock.Path()
+	if _, err := os.Stat(effective); err != nil {
+		t.Fatalf("expected effective socket at %q before Stop, stat err: %v", effective, err)
+	}
+
+	if err := sock.Stop(); err != nil {
+		t.Fatalf("Stop() for long path failed: %v", err)
+	}
+
+	if _, err := os.Stat(effective); !os.IsNotExist(err) {
+		t.Fatalf("expected effective socket at %q to be removed after Stop, stat err: %v", effective, err)
+	}
+}
+
+func TestIsRunActive_LongPathUsesEffectiveSocket(t *testing.T) {
+	dir := longSocketDir(t)
+	if IsRunActive(dir) {
+		t.Fatal("expected long-path dir without sockets to be inactive")
+	}
+
+	sock := NewControlSocket(dir, NewBroadcaster())
+	if err := sock.Start(); err != nil {
+		t.Fatalf("Start() failed: %v", err)
+	}
+	defer sock.Stop()
+
+	if !IsRunActive(dir) {
+		t.Fatal("expected long-path dir with live effective socket to be active (liveness probe must use socketpath.Path)")
+	}
+}
+
+func TestFindDeadRunBatches_LongPathExcludesLiveBatch(t *testing.T) {
+	baseDir := testenv.MkdirShort(t, "sm-dead-")
+	dir := longBatchPathIn(baseDir)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "batch.json"), []byte(`{"issues":[42]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	sock := NewControlSocket(dir, NewBroadcaster())
+	if err := sock.Start(); err != nil {
+		t.Fatalf("Start() failed: %v", err)
+	}
+	defer sock.Stop()
+
+	dead, err := FindDeadRunBatches(baseDir)
+	if err != nil {
+		t.Fatalf("FindDeadRunBatches: %v", err)
+	}
+	for _, b := range dead {
+		if b.RunDir == dir {
+			t.Fatalf("long-path batch %q with a live effective socket should not appear in dead batches", dir)
+		}
+	}
+}
+
+func TestFindDeadRunBatches_LongPathIncludesDeadBatch(t *testing.T) {
+	baseDir := testenv.MkdirShort(t, "sm-dead-")
+	dir := longBatchPathIn(baseDir)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "batch.json"), []byte(`{"issues":[42]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	dead, err := FindDeadRunBatches(baseDir)
+	if err != nil {
+		t.Fatalf("FindDeadRunBatches: %v", err)
+	}
+	var found bool
+	for _, b := range dead {
+		if b.RunDir == dir {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("long-path batch %q without a live effective socket should appear in dead batches; got %d entries", dir, len(dead))
+	}
+}
+
+func longBatchPathIn(baseDir string) string {
+	batchName := "long-batch-name"
+	for {
+		dir := filepath.Join(baseDir, "batches", batchName)
+		logical := filepath.Join(dir, "batch.sock")
+		if len(logical) > socketpath.SunPathLimit && socketpath.Path(logical) != logical {
+			return dir
+		}
+		batchName = batchName + "-extra-padding"
+	}
+}
+
+func longSocketDir(t *testing.T) string {
+	t.Helper()
+	base := testenv.MkdirShort(t, "sm-sock-")
+	dir := base
+	for {
+		logical := filepath.Join(dir, "batch.sock")
+		if len(logical) > socketpath.SunPathLimit && socketpath.Path(logical) != logical {
+			break
+		}
+		dir = filepath.Join(dir, strings.Repeat("long-path-segment-", 4))
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatalf("mkdir long dir: %v", err)
+	}
+	return dir
 }
 
 func TestIsRunActive(t *testing.T) {

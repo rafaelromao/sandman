@@ -20,18 +20,18 @@ Relevant user stories from #1218: 27–30.
 
 Each batch has two socket types:
 
-| Socket | Location | Purpose |
-|--------|----------|---------|
+| Socket | Logical location | Purpose |
+|--------|------------------|---------|
 | `batch.sock` | Batch root `.sandman/batches/<batch-id>/batch.sock` | Batch-level attach/streaming; `IsRunActive` liveness probe |
 | `run.sock` | Run folder `.sandman/batches/<batch-id>/runs/<run-id>/run.sock` | Per-run command/abort; addressed by path from external tools |
 
 The daemon creates one command server (`run.sock`) **per AgentRun** inside each run folder. The command server dispatches to the orchestrator's per-issue cancel API, which maps an external abort request to a specific `AgentRun`.
 
-`RunSocketPath()` (`internal/daemon/runfs.go:247`) returns the per-run socket path and is used by the portal to probe run liveness.
+`RunSocketPath()` (`internal/daemon/runfs.go:240`) returns the effective per-run socket path — the logical path verbatim for short paths, and a deterministic short `/tmp` filesystem path (`/tmp/sandman-<hash>.sock`) when the logical path exceeds the host `sun_path` limit. External tools must use `RunSocketPath()` rather than computing the path themselves; the resolver is the single source of truth on every host (issue #2441).
 
 ### Why per-run sockets
 
-**External abort tools address runs by path.** An external tool (e.g., a human operator or automation script) that wants to abort a specific AgentRun without affecting siblings needs a stable, path-based handle. With `run.sock` inside each run folder, the tool connects to `<batch>/runs/<runID>/run.sock` — the path is the address and encodes the run identity directly.
+**External abort tools address runs by path.** An external tool (e.g., a human operator or automation script) that wants to abort a specific AgentRun without affecting siblings needs a stable, path-based handle. With `run.sock` inside each run folder, the tool connects to the path returned by `RunSocketPath()` — for short repos the path is `<batch>/runs/<runID>/run.sock`; for long repos it is the deterministic short `/tmp` filesystem path. The address encodes the run identity and is the same on every host.
 
 **One command server per AgentRun.** The command server is created per-AgentRun inside its run folder and dispatches to the orchestrator's per-issue cancel API (the `IssueCommander` seam), which maps an external cancel to a single `AgentRun`.
 
@@ -53,14 +53,14 @@ The `run.sock` accepts JSON command requests. The first supported command is:
 {"action": "abort", "issue": <issue-number>}
 ```
 
-Each `CommandServer` (one per AgentRun, bound at `<batch>/runs/<runID>/run.sock`) dispatches this to the `IssueCommander` interface on the orchestrator, which cancels the context for that specific `AgentRun` without affecting siblings. If the filesystem socket path exceeds the Unix `sun_path` limit, the implementation falls back to an abstract Unix socket with the same `@sandman-<hex-hash>` naming scheme used by the control socket.
+Each `CommandServer` (one per AgentRun, bound at the path returned by `CommandSocketPath()`) dispatches this to the `IssueCommander` interface on the orchestrator, which cancels the context for that specific `AgentRun` without affecting siblings. For typical repos `CommandSocketPath()` returns `<batch>/runs/<runID>/run.sock`; when the logical path exceeds the host `sun_path` limit, the resolver returns a deterministic short `/tmp` filesystem path derived from the full logical path. Every consumer (bind, dial, `os.Stat`, liveness probes, attach, portal discovery) sees the same effective path on every host — there is no platform-specific fallback (issue #2441).
 
 ### Schema changes
 
-`run.json` (ADR-0032) adds no socket-specific fields — socket paths are derived deterministically from the folder layout:
+`run.json` (ADR-0032) adds no socket-specific fields — socket paths are derived deterministically from the folder layout through the `socketpath.Path()` resolver:
 
-- `batch.sock` is at `<batch>/batch.sock`
-- `run.sock` is at `<batch>/runs/<runID>/run.sock` (per-run folder)
+- `batch.sock` is at the path returned by `daemon.BatchSocketPath(<batch>)` (the logical path for short repos; a short `/tmp` path on long paths)
+- `run.sock` is at the path returned by `daemon.RunSocketPath(<batch>, <runID>)` (the logical path for short repos; a short `/tmp` path on long paths)
 
 The `Command Server` entry in `CONTEXT.md` is updated to reflect the per-run socket decision.
 

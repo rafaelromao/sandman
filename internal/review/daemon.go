@@ -742,14 +742,13 @@ func (d *Daemon) SocketPath() string {
 	return socketpath.Path(filepath.Join(d.BaseDir, "reviews", "review.sock"))
 }
 
-// SocketAddr returns the address the daemon is actually listening on.
-// On Linux with a path that exceeds the sun_path limit this is the
-// abstract-socket name; on other platforms it is the effective socket
-// path.
+// SocketAddr returns the address the daemon is listening on. The
+// daemon's address always lives on the filesystem (the resolver maps
+// overlong paths to a short /tmp path), so SocketAddr is the same as
+// SocketPath. It is preserved as a separate accessor because the e2e
+// path-length test (cmd/run_pathlen_e2e_test.go) and any future
+// "address" seam both need a stable handle.
 func (d *Daemon) SocketAddr() string {
-	if d.controlSocket != nil {
-		return d.controlSocket.Address()
-	}
 	return d.SocketPath()
 }
 

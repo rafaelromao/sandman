@@ -11,6 +11,9 @@ import (
 
 	"github.com/rafaelromao/sandman/internal/batch"
 	"github.com/rafaelromao/sandman/internal/config"
+	"github.com/rafaelromao/sandman/internal/daemon"
+	"github.com/rafaelromao/sandman/internal/socketpath"
+	"github.com/rafaelromao/sandman/internal/testenv"
 )
 
 func TestRequireReviewDaemon_BypassesWhenReviewCommandHasNoSandmanSubstring(t *testing.T) {
@@ -59,7 +62,7 @@ func TestRequireReviewDaemon_FailsWhenSocketIsStaleFile(t *testing.T) {
 }
 
 func TestRequireReviewDaemon_PassesWhenLiveSocketExists(t *testing.T) {
-	dir := t.TempDir()
+	dir := testenv.MkdirShort(t, "sm-rguard-")
 	sandmanDir := filepath.Join(dir, ".sandman")
 	reviewsDir := filepath.Join(sandmanDir, "reviews")
 	if err := os.MkdirAll(reviewsDir, 0755); err != nil {
@@ -183,5 +186,55 @@ func TestResolveReviewDaemonDialTimeout_InvalidValueFallsBackToDefault(t *testin
 	want := 200 * time.Millisecond
 	if got != want {
 		t.Fatalf("invalid value should fall back to default\nwant: %s\ngot:  %s", want, got)
+	}
+}
+
+// longSandmanDirIn returns a path under baseDir whose joined
+// `.sandman/reviews/review.sock` logical path exceeds the host
+// sun_path limit (104) so the resolver maps it to a short /tmp
+// filesystem path on every platform. The reviews directory is
+// created.
+func longSandmanDirIn(t *testing.T, baseDir string) string {
+	t.Helper()
+	root := baseDir
+	for {
+		sandmanDir := filepath.Join(root, ".sandman")
+		logical := filepath.Join(sandmanDir, "reviews", "review.sock")
+		if len(logical) > socketpath.SunPathLimit && socketpath.Path(logical) != logical {
+			if err := os.MkdirAll(filepath.Join(sandmanDir, "reviews"), 0o755); err != nil {
+				t.Fatalf("mkdir long reviews dir: %v", err)
+			}
+			return sandmanDir
+		}
+		root = filepath.Join(root, "long-prefix-segment")
+	}
+}
+
+func TestRequireReviewDaemon_PassesWhenLongPathLiveSocketExists(t *testing.T) {
+	repoRoot := testenv.MkdirShort(t, "sm-rguard-")
+	sandmanDir := longSandmanDirIn(t, repoRoot)
+	reviewsDir := filepath.Join(sandmanDir, "reviews")
+
+	ctl := daemon.NewControlSocketWithName(reviewsDir, "review.sock", daemon.NewBroadcaster())
+	if err := ctl.Start(); err != nil {
+		t.Fatalf("Start review control socket: %v", err)
+	}
+	defer ctl.Stop()
+
+	if err := requireReviewDaemon("/sandman review", sandmanDir); err != nil {
+		t.Fatalf("expected nil for live long-path review socket, got: %v", err)
+	}
+}
+
+func TestRequireReviewDaemon_FailsWhenLongPathSocketMissing(t *testing.T) {
+	repoRoot := testenv.MkdirShort(t, "sm-rguard-")
+	sandmanDir := longSandmanDirIn(t, repoRoot)
+
+	err := requireReviewDaemon("/sandman review", sandmanDir)
+	if err == nil {
+		t.Fatal("expected error when long-path repo has no live review socket")
+	}
+	if !strings.Contains(err.Error(), "sandman review daemon is not running") {
+		t.Errorf("expected guard message, got: %v", err)
 	}
 }
