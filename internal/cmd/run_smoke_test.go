@@ -263,6 +263,51 @@ func TestSmoke_RealAgentCLIs_ElixirPreset(t *testing.T) {
 	runSmokeProviderCases(t, cases)
 }
 
+func TestSmoke_RealAgentCLIs_NodePreset(t *testing.T) {
+	cases := make([]smokeProviderCase, len(smokeProviderCases))
+	for i, tc := range smokeProviderCases {
+		tc.buildTools = "node"
+		cases[i] = tc
+	}
+	runSmokeProviderCases(t, cases)
+}
+
+func TestSmoke_RealAgentCLIs_DotnetPreset(t *testing.T) {
+	cases := make([]smokeProviderCase, len(smokeProviderCases))
+	for i, tc := range smokeProviderCases {
+		tc.buildTools = "dotnet"
+		cases[i] = tc
+	}
+	runSmokeProviderCases(t, cases)
+}
+
+func TestSmoke_RealAgentCLIs_RustPreset(t *testing.T) {
+	cases := make([]smokeProviderCase, len(smokeProviderCases))
+	for i, tc := range smokeProviderCases {
+		tc.buildTools = "rust"
+		cases[i] = tc
+	}
+	runSmokeProviderCases(t, cases)
+}
+
+func TestSmoke_RealAgentCLIs_JavaPreset(t *testing.T) {
+	cases := make([]smokeProviderCase, len(smokeProviderCases))
+	for i, tc := range smokeProviderCases {
+		tc.buildTools = "java"
+		cases[i] = tc
+	}
+	runSmokeProviderCases(t, cases)
+}
+
+func TestSmoke_RealAgentCLIs_RubyPreset(t *testing.T) {
+	cases := make([]smokeProviderCase, len(smokeProviderCases))
+	for i, tc := range smokeProviderCases {
+		tc.buildTools = "ruby"
+		cases[i] = tc
+	}
+	runSmokeProviderCases(t, cases)
+}
+
 func TestSmoke_RealAgentCLIs_Override(t *testing.T) {
 	allowed, err := parseSmokeProviders(smokeProviderCases)
 	if err != nil {
@@ -496,6 +541,21 @@ func addSmokeDockerDeps(repoDir, provider, buildTools string) error {
 	if buildTools == "elixir" {
 		data = append(data, []byte("RUN command -v mix >/dev/null\n")...)
 	}
+	if buildTools == "node" {
+		data = append(data, []byte("RUN command -v node >/dev/null && command -v npm >/dev/null\n")...)
+	}
+	if buildTools == "dotnet" {
+		data = append(data, []byte("RUN command -v dotnet >/dev/null\n")...)
+	}
+	if buildTools == "rust" {
+		data = append(data, []byte("RUN command -v rustc >/dev/null && command -v cargo >/dev/null\n")...)
+	}
+	if buildTools == "java" {
+		data = append(data, []byte("RUN command -v java >/dev/null\n")...)
+	}
+	if buildTools == "ruby" {
+		data = append(data, []byte("RUN command -v ruby >/dev/null && command -v bundler >/dev/null\n")...)
+	}
 	return os.WriteFile(dockerfilePath, data, 0644)
 }
 
@@ -652,6 +712,21 @@ func preflightSmokeContainer(t *testing.T, runtime, imageTag, repoDir, homeDir, 
 	}
 	if buildTools == "elixir" {
 		assertCmd += "; command -v mix >/dev/null; command -v elixir >/dev/null"
+	}
+	if buildTools == "node" {
+		assertCmd += "; command -v node >/dev/null; command -v npm >/dev/null"
+	}
+	if buildTools == "dotnet" {
+		assertCmd += "; command -v dotnet >/dev/null"
+	}
+	if buildTools == "rust" {
+		assertCmd += "; command -v rustc >/dev/null; command -v cargo >/dev/null"
+	}
+	if buildTools == "java" {
+		assertCmd += "; command -v java >/dev/null"
+	}
+	if buildTools == "ruby" {
+		assertCmd += "; command -v ruby >/dev/null; command -v bundler >/dev/null"
 	}
 	check := exec.Command(runtime, "exec", container.ID(), "sh", "-c", assertCmd)
 	if out, err := check.CombinedOutput(); err != nil {
