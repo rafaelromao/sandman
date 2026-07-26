@@ -261,6 +261,7 @@ func TestMacOSFullRegressionPreparesPodmanOnIntelRunner(t *testing.T) {
 		"a30e5010e59aea43f6d808eff29166d31b216d5d7c3991bb038e00c0acdb0b27",
 		"shasum -a 256 -c -",
 		"sudo installer -pkg \"$podman_pkg\" -target /",
+		"echo /opt/podman/bin >> \"$GITHUB_PATH\"",
 		"name: Initialize Podman machine",
 		"podman machine init \\",
 		"--cpus 3",
