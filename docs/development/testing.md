@@ -43,7 +43,7 @@ budget.
 
 ### Container build failure smoke test
 
-`TestSmoke_ContainerBuildFailure` verifies that when the scaffolded container image cannot be built (e.g., an invalid Dockerfile instruction), the run fails with a clear build-error message and no orphaned containers or worktrees are left behind. It is gated on `SANDMAN_RUN_SMOKE_E2E=1` because it needs a real container runtime.
+`TestSmoke_ContainerBuildFailure` verifies that when the scaffolded container image cannot be built (e.g., an invalid Dockerfile instruction), the run fails with a clear build-error message and no stranded containers or worktrees are left behind. It is gated on `SANDMAN_RUN_SMOKE_E2E=1` because it needs a real container runtime.
 
 ```bash
 SANDMAN_RUN_SMOKE_E2E=1 SANDMAN_TEST_PROVIDERS=opencode \

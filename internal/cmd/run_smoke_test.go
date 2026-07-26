@@ -737,12 +737,16 @@ func preflightSmokeWorktree(t *testing.T, repoDir, branch string) {
 	}
 }
 
-// TestSmoke_ContainerBuildFailure verifies that when the scaffolded
-// container image cannot be built (e.g., invalid Dockerfile instruction),
-// the run fails with a clear build-error message and no orphaned
-// containers or worktrees are left behind.
 func TestSmoke_ContainerBuildFailure(t *testing.T) {
 	requireSmokeE2E(t)
+
+	allowed, err := parseSmokeProviders(smokeProviderCases)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(allowed) == 0 || !allowed[smokeProviderCases[0].name] {
+		t.Skip("set SANDMAN_TEST_PROVIDERS=opencode and run `go test -tags smoke ./internal/cmd -run Smoke`")
+	}
 
 	runtime, err := sandbox.ResolveRuntime("podman")
 	if err != nil {
@@ -797,7 +801,10 @@ func TestSmoke_ContainerBuildFailure(t *testing.T) {
 		IsTTY:        func() bool { return false },
 	}
 
-	containersBefore, _ := exec.Command(runtime, "ps", "-a", "-q").Output()
+	containersBefore, cErr := exec.Command(runtime, "ps", "-a", "-q").Output()
+	if cErr != nil {
+		t.Fatalf("list containers before run: %v", cErr)
+	}
 
 	out, err := executeSmokeRun(t, deps, runtime, issue.Number)
 	if err == nil {
@@ -806,8 +813,9 @@ func TestSmoke_ContainerBuildFailure(t *testing.T) {
 	if !strings.Contains(err.Error(), "build container image") {
 		t.Fatalf("expected error mentioning build container image, got: %v\noutput:\n%s", err, out)
 	}
-
-	t.Logf("run command failed as expected with: %v", err)
+	if !strings.Contains(err.Error(), "INVALID") && !strings.Contains(out, "INVALID") {
+		t.Fatalf("expected build error detail (INVALID instruction) in error or output, got err=%v out=%s", err, out)
+	}
 
 	worktreesDir := filepath.Join(repoDir, ".sandman", "worktrees")
 	if entries, err := os.ReadDir(worktreesDir); err == nil && len(entries) > 0 {
@@ -818,9 +826,12 @@ func TestSmoke_ContainerBuildFailure(t *testing.T) {
 		t.Errorf("expected no worktrees after build failure, found: %v", names)
 	}
 
-	containersAfter, _ := exec.Command(runtime, "ps", "-a", "-q").Output()
+	containersAfter, cErr := exec.Command(runtime, "ps", "-a", "-q").Output()
+	if cErr != nil {
+		t.Fatalf("list containers after run: %v", cErr)
+	}
 	if string(containersBefore) != string(containersAfter) {
-		t.Errorf("orphaned containers detected: before=%q after=%q",
+		t.Errorf("stale containers detected: before=%q after=%q",
 			strings.TrimSpace(string(containersBefore)),
 			strings.TrimSpace(string(containersAfter)))
 	}
