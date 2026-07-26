@@ -12,7 +12,7 @@ import (
 // bind always succeeds and every consumer (bind, dial, os.Stat,
 // liveness probes, attach, portal discovery) sees the same effective
 // path on every host.
-const SunPathLimit = 104
+const SunPathLimit = 103
 
 // Path returns the address used for a Unix socket. When the logical
 // filesystem path fits inside SunPathLimit, the logical path is

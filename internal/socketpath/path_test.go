@@ -41,6 +41,21 @@ func TestPath_LongLogicalPathIsShortenedOnEveryOS(t *testing.T) {
 	}
 }
 
+func TestPath_BoundaryLogicalPathIsShortened(t *testing.T) {
+	logical := "/tmp/" + strings.Repeat("b", SunPathLimit+1-len("/tmp/"))
+	if len(logical) != SunPathLimit+1 {
+		t.Fatalf("test fixture has length %d, want %d", len(logical), SunPathLimit+1)
+	}
+
+	got := Path(logical)
+	if got == logical {
+		t.Fatalf("Path(%q) returned the boundary path verbatim; want short filesystem path", logical)
+	}
+	if len(got) > SunPathLimit {
+		t.Fatalf("Path(%q) = %q, length %d exceeds sun_path %d", logical, got, len(got), SunPathLimit)
+	}
+}
+
 func TestPath_LongLogicalPathIsDeterministic(t *testing.T) {
 	long := "/some/" + strings.Repeat("long-path-segment-", 6) + "/.sandman/batches/abc/batch.sock"
 
