@@ -140,6 +140,14 @@ and need the wider `-timeout 90m` budget. Without it, the same tests skip with
 a message naming the skipped provider and the missing opt-in, and the rest of
 the suite runs as normal.
 
+## CI full-regression reports
+
+The Linux and macOS full-regression workflows run all tiers for every change
+request to `main` and for manual dispatches. Their job summary and report
+artifact record each tier's status, started-test count, and elapsed duration.
+A non-skipped tier that starts zero tests fails the workflow; a successful
+full-regression result therefore cannot be an empty run.
+
 ## Cleanup after interrupted tests
 
 Smoke and e2e tests can create worktrees, containers, batch directories, temp directories, and shim state. If a run is interrupted before cleanup executes, remove residue with `sandman clean --all` (or pick a specific mode flag from the recipes below — bare `sandman clean` is a hard error).

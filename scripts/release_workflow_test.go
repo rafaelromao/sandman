@@ -214,6 +214,30 @@ func TestReleaseWorkflowUsesCredentialThatTriggersReleasePRChecks(t *testing.T) 
 	}
 }
 
+func TestFullRegressionWorkflowsRunTestsAndReportCountsAndDurations(t *testing.T) {
+	for _, platform := range []string{"linux", "macos"} {
+		workflow := readRepositoryFile(t, "../.github/workflows/full-regression-"+platform+".yml")
+		for _, required := range []string{
+			"go test -race -v ./...",
+			"grep -c '^=== RUN'",
+			"no test cases ran",
+			"| Tests run | Duration | Details |",
+		} {
+			if !strings.Contains(workflow, required) {
+				t.Errorf("%s full-regression workflow missing %q", platform, required)
+			}
+		}
+		if strings.Contains(workflow, "RUN_REGRESSION") {
+			t.Errorf("%s full-regression workflow must not report success without running tests", platform)
+		}
+	}
+
+	testingGuide := readRepositoryFile(t, "../docs/development/testing.md")
+	if !strings.Contains(testingGuide, "starts zero tests fails the workflow") {
+		t.Error("testing guide must document that an empty full-regression tier fails")
+	}
+}
+
 func readRepositoryFile(t *testing.T, path string) string {
 	t.Helper()
 

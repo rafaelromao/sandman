@@ -1,7 +1,6 @@
 name: Full Regression - Linux
 
-# The job runs on every PR to main so it can be a required status check.
-# The expensive suite only executes for release-please release PRs.
+# The job runs the full suite on every PR to main.
 on:
   workflow_dispatch:
   pull_request:
@@ -22,39 +21,23 @@ jobs:
       REPORT_FILE: regression-report-linux.md
 
     steps:
-      - name: Detect release PR
-        id: gate
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ] || [[ "${{ github.head_ref }}" == release-please--branches--* ]]; then
-            echo "RUN_REGRESSION=true" >> "$GITHUB_OUTPUT"
-            echo "Running full regression suite."
-          else
-            echo "RUN_REGRESSION=false" >> "$GITHUB_OUTPUT"
-            echo "Skipping full regression suite; this is not a release PR."
-          fi
-
       - name: Checkout
-        if: steps.gate.outputs.RUN_REGRESSION == 'true'
         uses: actions/checkout@v4
 
       - name: Set up Go
-        if: steps.gate.outputs.RUN_REGRESSION == 'true'
         uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
 
       - name: Install Podman
-        if: steps.gate.outputs.RUN_REGRESSION == 'true'
         run: |
           sudo apt-get update
           sudo apt-get install -y podman
 
       - name: Validate Podman
-        if: steps.gate.outputs.RUN_REGRESSION == 'true'
         run: podman info
 
       - name: Run full regression suite
-        if: steps.gate.outputs.RUN_REGRESSION == 'true'
         shell: bash
         run: |
           set -uo pipefail
@@ -63,33 +46,46 @@ jobs:
           trap 'rm -f "$RESULTS_FILE"' EXIT
 
           log_tier() {
-            local name=$1 status=$2 reason=$3
-            printf '%s|%s|%s\n' "$name" "$status" "$reason" >> "$RESULTS_FILE"
+            local name=$1 status=$2 tests=$3 duration=$4 details=$5
+            printf '%s|%s|%s|%s|%s\n' "$name" "$status" "$tests" "$duration" "$details" >> "$RESULTS_FILE"
           }
 
           run_tier() {
             local name=$1 cmd=$2
+            local output started rc duration tests details status
             echo "▶ Running $name"
             echo "::group::$name"
 
+            output=$(mktemp)
+            started=$SECONDS
             set +e
-            bash -c "$cmd"
-            local rc=$?
+            bash -c "$cmd" 2>&1 | tee "$output"
+            rc=${PIPESTATUS[0]}
             set -e
+            duration=$((SECONDS - started))
+            tests=$(grep -c '^=== RUN' "$output" || true)
+            rm -f "$output"
             echo "::endgroup::"
 
             if [ $rc -eq 0 ]; then
-              log_tier "$name" "PASS" ""
-              echo "  $name: PASS"
+              if [ "$tests" -eq 0 ]; then
+                status="FAIL"
+                details="no test cases ran"
+              else
+                status="PASS"
+                details=""
+              fi
             else
-              log_tier "$name" "FAIL" "exit code $rc"
-              echo "  $name: FAIL (exit code $rc)"
+              status="FAIL"
+              details="exit code $rc"
             fi
+            log_tier "$name" "$status" "$tests" "${duration}s" "$details"
+            echo "  $name: $status ($tests tests, ${duration}s${details:+, $details})"
           }
 
           skip_tier() {
             local name=$1 reason=$2
-            log_tier "$name" "SKIP" "$reason"
+            log_tier "$name" "SKIP" "0" "0s" "$reason"
             echo "  $name: SKIP ($reason)"
           }
 
@@ -114,9 +110,9 @@ jobs:
           {
             echo "# Full Regression Report — Linux"
             echo ""
-            echo "| Tier | Status | Details |"
-            echo "|------|--------|---------|"
-            while IFS='|' read -r name status reason; do
+            echo "| Tier | Status | Tests run | Duration | Details |"
+            echo "|------|--------|-----------|----------|---------|"
+            while IFS='|' read -r name status tests duration details; do
               emoji=""
               case "$status" in
                 PASS) emoji="✅" ;;
@@ -124,7 +120,7 @@ jobs:
                 SKIP) emoji="⏭️" ;;
                 TIMEOUT) emoji="⏰" ;;
               esac
-              echo "| $name | $emoji $status | $reason |"
+              echo "| $name | $emoji $status | $tests | $duration | $details |"
             done < "$RESULTS_FILE"
             echo ""
             echo "Workflow run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
@@ -133,17 +129,17 @@ jobs:
           {
             echo "# Full Regression Report — Linux"
             echo ""
-            echo "| Tier | Status | Details |"
-            echo "|------|--------|---------|"
-            while IFS='|' read -r name status reason; do
-              echo "| $name | $status | $reason |"
+            echo "| Tier | Status | Tests run | Duration | Details |"
+            echo "|------|--------|-----------|----------|---------|"
+            while IFS='|' read -r name status tests duration details; do
+              echo "| $name | $status | $tests | $duration | $details |"
             done < "$RESULTS_FILE"
             echo ""
             echo "Workflow run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
           } > "$REPORT_FILE"
 
           final_rc=0
-          while IFS='|' read -r name status reason; do
+          while IFS='|' read -r name status tests duration details; do
             if [ "$status" = "FAIL" ] || [ "$status" = "TIMEOUT" ]; then
               final_rc=1
             fi
@@ -152,7 +148,7 @@ jobs:
           exit $final_rc
 
       - name: Upload regression report
-        if: always() && steps.gate.outputs.RUN_REGRESSION == 'true'
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: regression-report-linux
