@@ -5,6 +5,7 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -151,12 +152,21 @@ func TestReviewDaemonE2E_RealAgentInContainer(t *testing.T) {
 	model := testenv.ResolveTestModel("opencode", "opencode/big-pickle")
 	imageTag := fmt.Sprintf("sandman-review-daemon-e2e-%d:latest", time.Now().UnixNano())
 
-	dockerfile := fmt.Sprintf(`FROM docker.io/ubuntu:latest
+	binDir := filepath.Join(sandmanDir, "bin")
+	if err := os.MkdirAll(binDir, 0755); err != nil {
+		t.Fatalf("create .sandman/bin dir: %v", err)
+	}
+	containerOpencodePath := filepath.Join(binDir, "opencode")
+	if err := copyFile(opencodePath, containerOpencodePath); err != nil {
+		t.Fatalf("copy opencode binary to build context: %v", err)
+	}
+
+	dockerfile := `FROM docker.io/ubuntu:latest
 RUN apt-get update && apt-get install -y git ca-certificates && rm -rf /var/lib/apt/lists/*
-COPY %s /usr/local/bin/opencode
+COPY .sandman/bin/opencode /usr/local/bin/opencode
 RUN chmod +x /usr/local/bin/opencode
 WORKDIR /workspace
-`, opencodePath)
+`
 	if err := os.WriteFile(filepath.Join(sandmanDir, "Dockerfile"), []byte(dockerfile), 0644); err != nil {
 		t.Fatalf("write Dockerfile: %v", err)
 	}
@@ -258,4 +268,22 @@ WORKDIR /workspace
 		t.Fatal("expected non-empty review comment body")
 	}
 	t.Logf("review comment body (%d bytes)", len(bodyStr))
+}
+
+func copyFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+	_, err = io.Copy(out, in)
+	if err != nil {
+		return err
+	}
+	return out.Sync()
 }
