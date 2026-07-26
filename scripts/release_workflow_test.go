@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"os"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -243,6 +244,36 @@ func TestFullRegressionWorkflowsRunOnlyForReleasePleaseBranch(t *testing.T) {
 			t.Errorf("%s must not run on every pull request", path)
 		}
 	}
+}
+
+func TestCIWorkflowRunsOnPullRequestsToAnyBranch(t *testing.T) {
+	ci := readRepositoryFile(t, "../.github/workflows/go.yml")
+
+	pullRequestBlock := extractOnSubBlock(t, ci, "pull_request")
+	if strings.Contains(pullRequestBlock, "branches: [main]") {
+		t.Errorf("CI workflow pull_request trigger must not be restricted to [main] only; pull_request block was:\n%s", pullRequestBlock)
+	}
+
+	pushBlock := extractOnSubBlock(t, ci, "push")
+	if !strings.Contains(pushBlock, "branches: [main]") {
+		t.Errorf("CI workflow push trigger must remain restricted to [main] so direct pushes to feature branches do not start CI independently of a PR; push block was:\n%s", pushBlock)
+	}
+}
+
+func extractOnSubBlock(t *testing.T, workflow, key string) string {
+	t.Helper()
+	headerRe := regexp.MustCompile(`(?m)^  ` + regexp.QuoteMeta(key) + `:\n`)
+	match := headerRe.FindStringIndex(workflow)
+	if match == nil {
+		t.Fatalf("could not find %q block under on: in workflow", key)
+	}
+	rest := workflow[match[1]:]
+	nextTopRe := regexp.MustCompile(`(?m)^  [a-zA-Z]`)
+	nextMatch := nextTopRe.FindStringIndex(rest)
+	if nextMatch == nil {
+		return rest
+	}
+	return rest[:nextMatch[0]]
 }
 
 func readRepositoryFile(t *testing.T, path string) string {
