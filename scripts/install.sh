@@ -55,13 +55,13 @@ fi
 case "$(uname -s)" in
     Linux) OS=linux ;;
     Darwin) OS=darwin ;;
-    *) fail "unsupported operating system: $(uname -s)" ;;
+    *) fail "unsupported operating system: $(uname -s); supported platforms: linux/amd64, linux/arm64, darwin/amd64, darwin/arm64" ;;
 esac
 
 case "$(uname -m)" in
     amd64|x86_64) ARCH=amd64 ;;
     arm64|aarch64) ARCH=arm64 ;;
-    *) fail "unsupported architecture: $(uname -m)" ;;
+    *) fail "unsupported architecture: $(uname -m); supported platforms: linux/amd64, linux/arm64, darwin/amd64, darwin/arm64" ;;
 esac
 
 case "$VERSION" in
