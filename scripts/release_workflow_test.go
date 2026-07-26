@@ -124,6 +124,7 @@ func TestReleaseWorkflowPublishesConfiguredReleaseArtifacts(t *testing.T) {
 	goreleaser := readRepositoryFile(t, "../.goreleaser.yml")
 	for _, required := range []string{
 		"id: linux-amd64",
+		"id: linux-arm64",
 		"id: darwin-amd64",
 		"id: darwin-arm64",
 		"format: tar.gz",
@@ -144,6 +145,10 @@ func TestBinaryInstallationDocumentationMatchesReleaseContract(t *testing.T) {
 		"sandman_<version>_<os>_<arch>.tar.gz",
 		"checksums.txt",
 		"TARGET_ARCHIVE=\"sandman_${VERSION}_linux_amd64.tar.gz\"",
+		"`sandman_<version>_linux_amd64.tar.gz`",
+		"`sandman_<version>_linux_arm64.tar.gz`",
+		"`sandman_<version>_darwin_amd64.tar.gz`",
+		"`sandman_<version>_darwin_arm64.tar.gz`",
 		"grep -F \"  ${TARGET_ARCHIVE}\" checksums.txt | sha256sum -c -",
 		"grep -F \"  ${TARGET_ARCHIVE}\" checksums.txt | shasum -a 256 -c -",
 		"VERSION=$(curl -fsSL https://api.github.com/repos/rafaelromao/sandman/releases/latest",

@@ -31,6 +31,7 @@ If Go is not installed, download the archive for your platform from the
 The release provides:
 
 - Linux amd64
+- Linux arm64
 - macOS amd64
 - macOS arm64
 
@@ -42,8 +43,8 @@ For the simplest verified install, let the installer detect your platform:
 curl -fsSL https://raw.githubusercontent.com/rafaelromao/sandman/main/scripts/install.sh | sh
 ```
 
-The installer supports Linux amd64, macOS amd64, and macOS arm64. It verifies
-the downloaded archive before installing to `~/.local/bin`. Use
+The installer supports Linux amd64, Linux arm64, macOS amd64, and macOS arm64.
+It verifies the downloaded archive before installing to `~/.local/bin`. Use
 `--install-dir DIRECTORY` or `SANDMAN_INSTALL_DIR` to choose another location.
 
 ### Manual checksum verification
@@ -54,6 +55,7 @@ archive matching your platform:
 | Platform | Architecture | Archive |
 |----------|--------------|---------|
 | Linux | amd64 | `sandman_<version>_linux_amd64.tar.gz` |
+| Linux | arm64 | `sandman_<version>_linux_arm64.tar.gz` |
 | macOS | amd64 | `sandman_<version>_darwin_amd64.tar.gz` |
 | macOS | arm64 | `sandman_<version>_darwin_arm64.tar.gz` |
 
@@ -82,7 +84,9 @@ export PATH="${HOME}/.local/bin:${PATH}"
 sandman --version
 ```
 
-On macOS, use the same commands with `TARGET_ARCHIVE` set to
+On Linux arm64, use the same commands with `TARGET_ARCHIVE` set to
+`sandman_${VERSION}_linux_arm64.tar.gz` and keep the `sha256sum` checksum
+command. On macOS, use the same commands with `TARGET_ARCHIVE` set to
 `sandman_${VERSION}_darwin_amd64.tar.gz` for Intel or
 `sandman_${VERSION}_darwin_arm64.tar.gz` for Apple silicon, and replace the
 checksum command with:
