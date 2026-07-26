@@ -12,17 +12,17 @@ Specification  ->  Sandman  ->  Validation
 
 Sandman owns the middle. The upstream tool that produced the spec — SDD, a staff engineer, your existing issue template, a Matt Pocock skill — is yours to choose. The downstream validation — smoke, e2e, QA, security review — is yours to run.
 
-## Sandman, SDD, and Loop Engineering occupy different layers
+## Sandman, SDD, and Loop Engineering solve different problems
 
-- **SDD describes the work.** Specs become the source of truth, then plans and tasks flow from them. The clearest reference is GitHub's [Spec-driven development with AI](https://github.blog/ai-and-ml/generative-ai/spec-driven-development-with-ai-get-started-with-a-new-open-source-toolkit/) article: specs become the source of truth, then plans and tasks flow from them.
+- **SDD structures intent.** Specifications become the source of truth, then plans and tasks flow from them. The clearest reference is GitHub's [Spec-driven development with AI](https://github.blog/ai-and-ml/generative-ai/spec-driven-development-with-ai-get-started-with-a-new-open-source-toolkit/) article.
 
-- **Sandman delivers it.** It runs the AFK delivery loop from a clear, agent-ready GitHub issue to reviewed, merged PR: plan, sandbox, implement, test, self-review, open PR, request review, apply feedback, back-merge, merge.
+- **Sandman operationalizes delivery.** It turns a clear, agent-ready GitHub issue into an AFK delivery loop through isolated execution, durable progress, tests, self-review, review gates, and merge.
 
 - **Loop Engineering frames the broader operating model.** Addy Osmani's [Loop Engineering](https://addyosmani.com/blog/loop-engineering/) article describes designing systems that prompt agents, preserve state, verify work, and keep humans in judgment. Sandman applies those principles to one concrete loop — it is not all of Loop Engineering.
 
 The three short forms:
 
-- **SDD describes. Sandman delivers.**
+- **SDD structures intent. Sandman operationalizes delivery.**
 - **Sandman applies Loop Engineering, but is not all of Loop Engineering.**
 - **The durable handoff is `Specification -> Sandman -> Validation`.**
 
