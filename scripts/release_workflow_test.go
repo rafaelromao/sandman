@@ -124,6 +124,7 @@ func TestReleaseWorkflowPublishesConfiguredReleaseArtifacts(t *testing.T) {
 	goreleaser := readRepositoryFile(t, "../.goreleaser.yml")
 	for _, required := range []string{
 		"id: linux-amd64",
+		"id: linux-arm64",
 		"id: darwin-amd64",
 		"id: darwin-arm64",
 		"format: tar.gz",
