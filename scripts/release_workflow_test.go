@@ -219,6 +219,8 @@ func TestFullRegressionWorkflowsRunTestsAndReportCountsAndDurations(t *testing.T
 		workflow := readRepositoryFile(t, "../.github/workflows/full-regression-"+platform+".yml")
 		for _, required := range []string{
 			"go test -race -v ./...",
+			"go test -v -tags smoke",
+			"go test -v -tags e2e",
 			"grep -c '^=== RUN'",
 			"no test cases ran",
 			"| Tests run | Duration | Details |",
