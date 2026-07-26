@@ -198,6 +198,14 @@ func TestReleaseWorkflowUsesCredentialThatTriggersReleasePRChecks(t *testing.T) 
 			t.Errorf("main ruleset missing required check %q", required)
 		}
 	}
+	for _, forbidden := range []string{
+		`"context": "Full Regression - Linux / Full Regression Suite (Ubuntu)"`,
+		`"context": "Full Regression - macOS / Full Regression Suite (macOS)"`,
+	} {
+		if strings.Contains(ruleset, forbidden) {
+			t.Errorf("main ruleset must not require release-only check %q", forbidden)
+		}
+	}
 
 	for _, required := range []string{
 		"RELEASE_PLEASE_TOKEN",
@@ -208,6 +216,26 @@ func TestReleaseWorkflowUsesCredentialThatTriggersReleasePRChecks(t *testing.T) 
 	} {
 		if !strings.Contains(contributing, required) {
 			t.Errorf("maintainer documentation missing %q", required)
+		}
+	}
+}
+
+func TestFullRegressionWorkflowsRunOnlyForReleasePleaseBranch(t *testing.T) {
+	for _, path := range []string{
+		"../.github/workflows/full-regression-linux.yml",
+		"../.github/workflows/full-regression-macos.yml",
+	} {
+		workflow := readRepositoryFile(t, path)
+		for _, required := range []string{
+			"  push:",
+			"branches: [release-please--branches--main]",
+		} {
+			if !strings.Contains(workflow, required) {
+				t.Errorf("%s missing %q", path, required)
+			}
+		}
+		if strings.Contains(workflow, "  pull_request:") {
+			t.Errorf("%s must not run on every pull request", path)
 		}
 	}
 }

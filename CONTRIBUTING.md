@@ -41,7 +41,7 @@ For suggestions related to agent behavior, prompts, or domain vocabulary, use th
 
 The release workflow requires a repository secret named `RELEASE_PLEASE_TOKEN`. Configure it under **Settings > Secrets and variables > Actions**. Use a fine-grained personal access token limited to this repository with write access to **Contents**, **Issues**, and **Pull requests**. The token must belong to a maintainer who owns its rotation; set an expiration date and replace the repository secret before it expires.
 
-Release automation uses this token instead of `GITHUB_TOKEN` because pull requests created with `GITHUB_TOKEN` do not start `pull_request` workflows. The maintainer token lets release-please create or update the release pull request and allows it to receive the required `CI / build` and `CI / semantic-pull-request` checks. Never print the token or commit it to the repository. A missing `RELEASE_PLEASE_TOKEN` intentionally fails the release workflow rather than falling back to an unverified credential.
+Release automation uses this token instead of `GITHUB_TOKEN` because pull requests created with `GITHUB_TOKEN` do not start `pull_request` workflows. The maintainer token lets release-please create or update the release pull request and allows it to receive the required `CI / build` and `CI / semantic-pull-request` checks. The full regression workflows run separately when Release Please pushes to its release branch; their results are visible on the release pull request and must be reviewed before merging. Never print the token or commit it to the repository. A missing `RELEASE_PLEASE_TOKEN` intentionally fails the release workflow rather than falling back to an unverified credential.
 
 ### Feature branches
 

@@ -1,7 +1,11 @@
 name: Full Regression - macOS
 
+# Release Please pushes updates to this branch; the resulting checks appear on
+# its open release PR without running on ordinary pull requests.
 on:
   workflow_dispatch:
+  push:
+    branches: [release-please--branches--main]
 
 jobs:
   full-regression:
