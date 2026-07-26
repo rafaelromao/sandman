@@ -1,11 +1,11 @@
 name: Full Regression - Linux
 
-# The job runs on every PR to main so it can be a required status check.
-# The expensive suite only executes for release-please release PRs.
+# Release Please pushes updates to this branch; the resulting checks appear on
+# its open release PR without running on ordinary pull requests.
 on:
   workflow_dispatch:
-  pull_request:
-    branches: [main]
+  push:
+    branches: [release-please--branches--main]
 
 jobs:
   full-regression:
@@ -22,39 +22,23 @@ jobs:
       REPORT_FILE: regression-report-linux.md
 
     steps:
-      - name: Detect release PR
-        id: gate
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ] || [[ "${{ github.head_ref }}" == release-please--branches--* ]]; then
-            echo "RUN_REGRESSION=true" >> "$GITHUB_OUTPUT"
-            echo "Running full regression suite."
-          else
-            echo "RUN_REGRESSION=false" >> "$GITHUB_OUTPUT"
-            echo "Skipping full regression suite; this is not a release PR."
-          fi
-
       - name: Checkout
-        if: steps.gate.outputs.RUN_REGRESSION == 'true'
         uses: actions/checkout@v4
 
       - name: Set up Go
-        if: steps.gate.outputs.RUN_REGRESSION == 'true'
         uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
 
       - name: Install Podman
-        if: steps.gate.outputs.RUN_REGRESSION == 'true'
         run: |
           sudo apt-get update
           sudo apt-get install -y podman
 
       - name: Validate Podman
-        if: steps.gate.outputs.RUN_REGRESSION == 'true'
         run: podman info
 
       - name: Run full regression suite
-        if: steps.gate.outputs.RUN_REGRESSION == 'true'
         shell: bash
         run: |
           set -uo pipefail
@@ -152,7 +136,7 @@ jobs:
           exit $final_rc
 
       - name: Upload regression report
-        if: always() && steps.gate.outputs.RUN_REGRESSION == 'true'
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: regression-report-linux
