@@ -37,8 +37,9 @@ The `-timeout 30m` budget is required because each smoke sub-test pays a real
 `podman build` of the per-provider / per-buildTools image plus a real
 `opencode run` agent invocation; the cumulative wall time of the smoke suite
 exceeds Go's 10-minute default timeout. For the full preset matrix (one
-sub-test per buildTools variant — `generic`, `go`, `python`, `elixir`),
-`-timeout 60m` is a safer budget.
+sub-test per buildTools variant — `generic`, `go`, `python`, `elixir`,
+`node`, `dotnet`, `rust`, `java`, `ruby`), `-timeout 60m` is a safer
+budget.
 
 ### Smoke image prewarm
 

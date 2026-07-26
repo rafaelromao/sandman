@@ -263,6 +263,51 @@ func TestSmoke_RealAgentCLIs_ElixirPreset(t *testing.T) {
 	runSmokeProviderCases(t, cases)
 }
 
+func TestSmoke_RealAgentCLIs_NodePreset(t *testing.T) {
+	cases := make([]smokeProviderCase, len(smokeProviderCases))
+	for i, tc := range smokeProviderCases {
+		tc.buildTools = "node"
+		cases[i] = tc
+	}
+	runSmokeProviderCases(t, cases)
+}
+
+func TestSmoke_RealAgentCLIs_DotnetPreset(t *testing.T) {
+	cases := make([]smokeProviderCase, len(smokeProviderCases))
+	for i, tc := range smokeProviderCases {
+		tc.buildTools = "dotnet"
+		cases[i] = tc
+	}
+	runSmokeProviderCases(t, cases)
+}
+
+func TestSmoke_RealAgentCLIs_RustPreset(t *testing.T) {
+	cases := make([]smokeProviderCase, len(smokeProviderCases))
+	for i, tc := range smokeProviderCases {
+		tc.buildTools = "rust"
+		cases[i] = tc
+	}
+	runSmokeProviderCases(t, cases)
+}
+
+func TestSmoke_RealAgentCLIs_JavaPreset(t *testing.T) {
+	cases := make([]smokeProviderCase, len(smokeProviderCases))
+	for i, tc := range smokeProviderCases {
+		tc.buildTools = "java"
+		cases[i] = tc
+	}
+	runSmokeProviderCases(t, cases)
+}
+
+func TestSmoke_RealAgentCLIs_RubyPreset(t *testing.T) {
+	cases := make([]smokeProviderCase, len(smokeProviderCases))
+	for i, tc := range smokeProviderCases {
+		tc.buildTools = "ruby"
+		cases[i] = tc
+	}
+	runSmokeProviderCases(t, cases)
+}
+
 func TestSmoke_RealAgentCLIs_Override(t *testing.T) {
 	allowed, err := parseSmokeProviders(smokeProviderCases)
 	if err != nil {
@@ -484,6 +529,26 @@ func copySmokeFile(src, dst string, mode os.FileMode) error {
 	return os.Chmod(dst, mode.Perm())
 }
 
+var smokeDockerDeps = map[string]string{
+	"elixir": "RUN command -v mix >/dev/null\n",
+	"node":   "RUN command -v node >/dev/null && command -v npm >/dev/null\n",
+	"dotnet": "RUN command -v dotnet >/dev/null\n",
+	"rust":   "RUN command -v rustc >/dev/null && command -v cargo >/dev/null\n",
+	"java":   "RUN command -v java >/dev/null\n",
+	"ruby":   "RUN command -v ruby >/dev/null && command -v bundler >/dev/null\n",
+}
+
+var smokeContainerAssertions = map[string]string{
+	"go":     "; command -v go >/dev/null; test \"$(go env GOPATH)\" = \"/.local/share/go\"; test \"$(go env GOMODCACHE)\" = \"/.cache/go/pkg/mod\"; mkdir -p /.cache/go/pkg/mod /.local/share/go; test -w /.cache/go/pkg/mod; test -w /.local/share/go",
+	"python": "; command -v python >/dev/null || command -v python3 >/dev/null",
+	"elixir": "; command -v mix >/dev/null; command -v elixir >/dev/null",
+	"node":   "; command -v node >/dev/null; command -v npm >/dev/null",
+	"dotnet": "; command -v dotnet >/dev/null",
+	"rust":   "; command -v rustc >/dev/null; command -v cargo >/dev/null",
+	"java":   "; command -v java >/dev/null",
+	"ruby":   "; command -v ruby >/dev/null; command -v bundler >/dev/null",
+}
+
 func addSmokeDockerDeps(repoDir, provider, buildTools string) error {
 	dockerfilePath := filepath.Join(repoDir, ".sandman", "Dockerfile")
 	data, err := os.ReadFile(dockerfilePath)
@@ -493,8 +558,8 @@ func addSmokeDockerDeps(repoDir, provider, buildTools string) error {
 	if provider == "opencode" {
 		data = append(data, []byte("RUN command -v opencode >/dev/null\n")...)
 	}
-	if buildTools == "elixir" {
-		data = append(data, []byte("RUN command -v mix >/dev/null\n")...)
+	if dep, ok := smokeDockerDeps[buildTools]; ok {
+		data = append(data, []byte(dep)...)
 	}
 	return os.WriteFile(dockerfilePath, data, 0644)
 }
@@ -644,14 +709,8 @@ func preflightSmokeContainer(t *testing.T, runtime, imageTag, repoDir, homeDir, 
 	defer container.Stop()
 
 	assertCmd := "set -eu; command -v gh >/dev/null; test -w /.cache; test -w /.local; test -w /.config"
-	if buildTools == "go" {
-		assertCmd += "; command -v go >/dev/null; test \"$(go env GOPATH)\" = \"/.local/share/go\"; test \"$(go env GOMODCACHE)\" = \"/.cache/go/pkg/mod\"; mkdir -p /.cache/go/pkg/mod /.local/share/go; test -w /.cache/go/pkg/mod; test -w /.local/share/go"
-	}
-	if buildTools == "python" {
-		assertCmd += "; command -v python >/dev/null || command -v python3 >/dev/null"
-	}
-	if buildTools == "elixir" {
-		assertCmd += "; command -v mix >/dev/null; command -v elixir >/dev/null"
+	if assertion, ok := smokeContainerAssertions[buildTools]; ok {
+		assertCmd += assertion
 	}
 	check := exec.Command(runtime, "exec", container.ID(), "sh", "-c", assertCmd)
 	if out, err := check.CombinedOutput(); err != nil {

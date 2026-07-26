@@ -28,13 +28,19 @@ var prewarmImageFunc = prewarmSmokeImage
 // smokePrewarmVariants enumerates the (provider, buildTools) pairs whose
 // images the pre-warm builds. These are the cross-product of the
 // smoke provider (opencode) and the buildTools variants
-// (generic, go, python) that TestSmoke_RealAgentCLIs_* exercises via
-// buildTools overrides on smokeProviderCases.
+// (generic, go, python, elixir, node, dotnet, rust, java, ruby)
+// that TestSmoke_RealAgentCLIs_* exercises via buildTools overrides
+// on smokeProviderCases.
 var smokePrewarmVariants = []smokePrewarmVariant{
 	{provider: "opencode", buildTools: "generic"},
 	{provider: "opencode", buildTools: "go"},
 	{provider: "opencode", buildTools: "python"},
 	{provider: "opencode", buildTools: "elixir"},
+	{provider: "opencode", buildTools: "node"},
+	{provider: "opencode", buildTools: "dotnet"},
+	{provider: "opencode", buildTools: "rust"},
+	{provider: "opencode", buildTools: "java"},
+	{provider: "opencode", buildTools: "ruby"},
 }
 
 type smokePrewarmVariant struct {
@@ -66,7 +72,7 @@ func TestMain(m *testing.M) {
 // tolerated: a missing entry just means the test that needs it falls
 // back to the in-test build path.
 //
-// Concurrency is capped at the number of variants (4) via a semaphore
+// Concurrency is capped at the number of variants via a semaphore
 // so a slow container runtime does not have to back off.
 func prewarmSmokeImages() {
 	var wg sync.WaitGroup
@@ -165,6 +171,11 @@ func TestPrewarmFailureIsolation(t *testing.T) {
 		{"opencode", "generic"},
 		{"opencode", "go"},
 		{"opencode", "python"},
+		{"opencode", "node"},
+		{"opencode", "dotnet"},
+		{"opencode", "rust"},
+		{"opencode", "java"},
+		{"opencode", "ruby"},
 	}
 	for _, v := range okVariants {
 		tag := smokePrewarmLookup(v.provider, v.buildTools)
@@ -194,6 +205,11 @@ func BenchmarkPrewarmParallelism(b *testing.B) {
 		"opencode-go":      20 * time.Millisecond,
 		"opencode-python":  30 * time.Millisecond,
 		"opencode-elixir":  40 * time.Millisecond,
+		"opencode-node":    50 * time.Millisecond,
+		"opencode-dotnet":  60 * time.Millisecond,
+		"opencode-rust":    70 * time.Millisecond,
+		"opencode-java":    80 * time.Millisecond,
+		"opencode-ruby":    90 * time.Millisecond,
 	}
 
 	prewarmImageFunc = func(provider, buildTools string) (string, error) {
