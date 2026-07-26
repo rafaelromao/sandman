@@ -29,17 +29,6 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Check for Podman
-        id: podman_check
-        run: |
-          if command -v podman >/dev/null 2>&1; then
-            echo "available=true" >> "$GITHUB_OUTPUT"
-            podman info
-          else
-            echo "available=false" >> "$GITHUB_OUTPUT"
-            echo "Podman not available on this runner."
-          fi
-
       - name: Run full regression suite
         shell: bash
         run: |
