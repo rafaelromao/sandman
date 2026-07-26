@@ -250,6 +250,86 @@ func TestFullRegressionWorkflowsRunOnlyForReleasePleaseBranch(t *testing.T) {
 	}
 }
 
+func TestMacOSFullRegressionPreparesPodmanOnIntelRunner(t *testing.T) {
+	workflow := readRepositoryFile(t, "../.github/workflows/full-regression-macos.yml")
+
+	for _, required := range []string{
+		"runs-on: macos-15-intel",
+		"CONTAINERS_MACHINE_PROVIDER: applehv",
+		"name: Install Podman",
+		"run: brew install podman",
+		"name: Initialize Podman machine",
+		"podman machine init \\",
+		"--cpus 3",
+		"--memory 8192",
+		"--disk-size 60",
+		"--now",
+		"name: Validate Podman",
+		"podman info",
+		"podman run --rm alpine:latest uname -a",
+		"name: Configure short temporary paths",
+		"TMPDIR=/private/tmp/sandman-ci",
+		"name: Prewarm container image",
+		"podman pull alpine:latest",
+	} {
+		if !strings.Contains(workflow, required) {
+			t.Errorf("macOS full regression workflow missing %q", required)
+		}
+	}
+
+	setupGo := strings.Index(workflow, "name: Set up Go")
+	installPodman := strings.Index(workflow, "name: Install Podman")
+	validatePodman := strings.Index(workflow, "name: Validate Podman")
+	prewarm := strings.Index(workflow, "name: Prewarm container image")
+	regression := strings.Index(workflow, "name: Run full regression suite")
+	if setupGo == -1 || installPodman == -1 || validatePodman == -1 || prewarm == -1 || regression == -1 ||
+		setupGo > installPodman || installPodman > validatePodman || validatePodman > prewarm || prewarm > regression {
+		t.Fatal("macOS full regression workflow must prepare Podman before running tests")
+	}
+}
+
+func TestMacOSFullRegressionCollectsDiagnosticsAndStopsPodman(t *testing.T) {
+	workflow := readRepositoryFile(t, "../.github/workflows/full-regression-macos.yml")
+
+	for _, required := range []string{
+		"name: Podman diagnostics",
+		"uname -a",
+		"arch",
+		"podman version",
+		"podman machine list",
+		"podman machine inspect",
+		"df -h",
+		"name: Stop Podman machine",
+		"if: always()",
+		"podman machine stop || true",
+	} {
+		if !strings.Contains(workflow, required) {
+			t.Errorf("macOS full regression workflow missing %q", required)
+		}
+	}
+
+	diagnostics := strings.Index(workflow, "name: Podman diagnostics")
+	regression := strings.Index(workflow, "name: Run full regression suite")
+	stop := strings.Index(workflow, "name: Stop Podman machine")
+	if diagnostics == -1 || regression == -1 || stop == -1 || diagnostics > regression || regression > stop {
+		t.Fatal("macOS full regression workflow must collect diagnostics before tests and stop Podman afterward")
+	}
+}
+
+func TestMacOSFullRegressionPreservesAllRegressionCommands(t *testing.T) {
+	workflow := readRepositoryFile(t, "../.github/workflows/full-regression-macos.yml")
+
+	for _, command := range []string{
+		`go test -race -v ./...`,
+		`SANDMAN_TEST_PROVIDERS=all SANDMAN_RUN_SMOKE_E2E=1 go test -tags smoke -timeout 60m ./internal/cmd -run Smoke`,
+		`SANDMAN_RUN_AGENT_E2E=1 SANDMAN_TEST_PROVIDERS=all SANDMAN_E2E_GATES=all go test -tags e2e -timeout 90m ./...`,
+	} {
+		if !strings.Contains(workflow, command) {
+			t.Errorf("macOS full regression workflow missing regression command %q", command)
+		}
+	}
+}
+
 func TestCIWorkflowRunsOnPullRequestsToAnyBranch(t *testing.T) {
 	ci := readRepositoryFile(t, "../.github/workflows/go.yml")
 
