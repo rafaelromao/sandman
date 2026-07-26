@@ -506,7 +506,11 @@ func TestContainerSandbox_Exec_KillAgentFnCalledOnAbort(t *testing.T) {
 		return nil
 	}
 	ExecCommandFn = func(name string, arg ...string) *exec.Cmd {
-		return exec.Command("sh", "-c", fmt.Sprintf("touch %s && sleep 60", shellenv.Quote(readyPath)))
+		// Keep the injected command short-lived. On macOS-CI the process-group
+		// SIGKILL can occasionally fail to reach the shell, and a 60 s sleep
+		// would blow past the job timeout; this test only asserts that
+		// KillAgentFn is invoked, not that the signal path is fast.
+		return exec.Command("sh", "-c", fmt.Sprintf("touch %s && sleep 5", shellenv.Quote(readyPath)))
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())

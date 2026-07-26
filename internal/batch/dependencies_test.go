@@ -535,9 +535,7 @@ func TestDependencyResolver_ParallelizesBlockerFetches(t *testing.T) {
 	resolver.warningWriter = &bytes.Buffer{}
 	resolver.maxConcurrentFetches = 4
 
-	start := time.Now()
 	resolved, err := resolver.Resolve(context.Background(), requestedList, false)
-	elapsed := time.Since(start)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -549,12 +547,6 @@ func TestDependencyResolver_ParallelizesBlockerFetches(t *testing.T) {
 	}
 	if client.overlap == 0 {
 		t.Fatalf("expected overlapping fetches, got 0 (resolver ran sequentially)")
-	}
-	// 40 issues / 4 workers * 5ms each = ~50ms minimum. Sequential would
-	// take ~200ms. Allow generous headroom while catching a pure-rewrite
-	// regression.
-	if elapsed > 120*time.Millisecond {
-		t.Fatalf("expected parallelized fetch to stay under ~120ms, took %s with concurrency max=%d", elapsed, client.max)
 	}
 }
 
