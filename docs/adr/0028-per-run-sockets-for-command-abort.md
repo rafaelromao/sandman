@@ -53,7 +53,7 @@ The `run.sock` accepts JSON command requests. The first supported command is:
 {"action": "abort", "issue": <issue-number>}
 ```
 
-Each `CommandServer` (one per AgentRun, bound at `<batch>/runs/<runID>/run.sock`) dispatches this to the `IssueCommander` interface on the orchestrator, which cancels the context for that specific `AgentRun` without affecting siblings. If the filesystem socket path exceeds the Unix `sun_path` limit, the implementation falls back to an abstract Unix socket with the same `@sandman-<hex-hash>` naming scheme used by the control socket.
+Each `CommandServer` (one per AgentRun, bound at `<batch>/runs/<runID>/run.sock`) dispatches this to the `IssueCommander` interface on the orchestrator, which cancels the context for that specific `AgentRun` without affecting siblings. When the filesystem socket path exceeds the host `sun_path` limit (104 on macOS, 108 on Linux), the resolver maps the logical path to a deterministic short `/tmp` filesystem path derived from the full logical path. Every consumer (bind, dial, `os.Stat`, liveness probes, attach, portal discovery) sees the same effective short path on every host — there is no platform-specific fallback (issue #2441).
 
 ### Schema changes
 
