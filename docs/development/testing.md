@@ -124,13 +124,9 @@ suite stays runnable on developer machines and CI without live agent
 credentials:
 
 ```bash
-# Default: agent sub-tests skip cleanly with a clear message.
-SANDMAN_TEST_PROVIDERS=all SANDMAN_E2E_GATES=all \
-  go test -tags e2e -timeout 30m ./internal/cmd
-
-# Opt in: agent sub-tests actually execute.
+# Real-agent sub-tests execute as part of the E2E suite.
 SANDMAN_RUN_AGENT_E2E=1 SANDMAN_TEST_PROVIDERS=all SANDMAN_E2E_GATES=all \
-  go test -tags e2e -timeout 90m ./internal/cmd
+  go test -tags e2e -timeout 90m ./...
 ```
 
 `SANDMAN_RUN_AGENT_E2E=1` requires the host's opencode auth snapshot

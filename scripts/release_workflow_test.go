@@ -234,6 +234,7 @@ func TestFullRegressionWorkflowsRunOnlyForReleasePleaseBranch(t *testing.T) {
 		for _, required := range []string{
 			"  push:",
 			"branches: [release-please--branches--main]",
+			"SANDMAN_RUN_AGENT_E2E=1 SANDMAN_TEST_PROVIDERS=all SANDMAN_E2E_GATES=all go test -tags e2e -timeout 90m ./...",
 		} {
 			if !strings.Contains(workflow, required) {
 				t.Errorf("%s missing %q", path, required)
@@ -241,6 +242,9 @@ func TestFullRegressionWorkflowsRunOnlyForReleasePleaseBranch(t *testing.T) {
 		}
 		if strings.Contains(workflow, "  pull_request:") {
 			t.Errorf("%s must not run on every pull request", path)
+		}
+		if strings.Contains(workflow, "Real-agent Preset Matrix") {
+			t.Errorf("%s must run the real-agent matrix as part of E2E", path)
 		}
 	}
 }

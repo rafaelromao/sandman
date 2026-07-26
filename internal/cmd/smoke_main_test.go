@@ -1,4 +1,4 @@
-//go:build smoke
+//go:build smoke || e2e
 
 package cmd
 

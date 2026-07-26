@@ -360,6 +360,16 @@ func requireSandmanAgentE2E(t *testing.T) {
 	}
 }
 
+func TestPresetMatrixHarness_RealAgentOverride(t *testing.T) {
+	requireSandmanAgentE2E(t)
+	runSmokeProviderTwice(t, smokeProviderCases[0], "--override")
+}
+
+func TestPresetMatrixHarness_RealAgentContinue(t *testing.T) {
+	requireSandmanAgentE2E(t)
+	runSmokeProviderTwice(t, smokeProviderCases[0], "--continue")
+}
+
 // customizePresetMatrixOpencodeAgent rewires the scaffolded opencode agent
 // for a real in-container run, mirroring prflow_e2e_test.go's
 // customizeOpenCodeAgentForContainer: --pure (no host sessions/config leak
