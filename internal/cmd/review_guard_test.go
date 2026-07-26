@@ -62,7 +62,7 @@ func TestRequireReviewDaemon_FailsWhenSocketIsStaleFile(t *testing.T) {
 }
 
 func TestRequireReviewDaemon_PassesWhenLiveSocketExists(t *testing.T) {
-	dir := t.TempDir()
+	dir := testenv.MkdirShort(t, "sm-rguard-")
 	sandmanDir := filepath.Join(dir, ".sandman")
 	reviewsDir := filepath.Join(sandmanDir, "reviews")
 	if err := os.MkdirAll(reviewsDir, 0755); err != nil {

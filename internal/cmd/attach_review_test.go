@@ -13,7 +13,7 @@ import (
 )
 
 func TestAttach_FindsReviewSock(t *testing.T) {
-	dir := t.TempDir()
+	dir := testenv.MkdirShort(t, "sm-attach-")
 	if err := os.WriteFile(filepath.Join(dir, ".git"), []byte("gitdir: .git\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -54,7 +54,7 @@ func TestAttach_FindsReviewSock(t *testing.T) {
 }
 
 func TestAttach_MultipleSocketsReturnsError(t *testing.T) {
-	dir := t.TempDir()
+	dir := testenv.MkdirShort(t, "sm-attach-")
 	if err := os.WriteFile(filepath.Join(dir, ".git"), []byte("gitdir: .git\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
