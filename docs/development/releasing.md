@@ -15,8 +15,9 @@ binary installation ([#2392](https://github.com/rafaelromao/sandman/issues/2392)
    or updates a release change request when the commit history contains a
    release-bearing change.
 3. Review the generated release change request. It is the authorization point
-   for the next version and release notes. Merge it through the normal branch
-   protection rules.
+   for the next version and release notes. The release change request also runs
+   the `Full Regression - Linux` and `Full Regression - macOS` suites; both must
+   pass before it can merge through the normal branch protection rules.
 4. Release Please creates the version tag and published GitHub Release when
    the release change request is merged. The initial manifest version is
    `0.2.0`; the first prerelease is forced to exactly `v1.0.0-rc.1` and is

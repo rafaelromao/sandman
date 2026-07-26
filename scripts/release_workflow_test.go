@@ -193,6 +193,8 @@ func TestReleaseWorkflowUsesCredentialThatTriggersReleasePRChecks(t *testing.T) 
 		`"context": "CI / build (ubuntu-latest)"`,
 		`"context": "CI / build (macos-latest)"`,
 		`"context": "CI / semantic-pull-request"`,
+		`"context": "Full Regression - Linux / Full Regression Suite (Ubuntu)"`,
+		`"context": "Full Regression - macOS / Full Regression Suite (macOS)"`,
 	} {
 		if !strings.Contains(ruleset, required) {
 			t.Errorf("main ruleset missing required check %q", required)
