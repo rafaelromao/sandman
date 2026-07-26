@@ -169,7 +169,7 @@ func TestRunBatch_StartGateUsesEffectiveParallelNotRawParallel(t *testing.T) {
 
 	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{
 		Agent:             "test-agent",
-		Sandbox:           "docker",
+		Sandbox:           "podman",
 		WorktreeDir:       ".sandman/worktrees",
 		ContainerCapacity: 2,
 		MaxContainers:     0,
@@ -183,7 +183,7 @@ func TestRunBatch_StartGateUsesEffectiveParallelNotRawParallel(t *testing.T) {
 
 	_, err := o.RunBatch(context.Background(), Request{
 		Issues:               []int{1, 2, 3, 4},
-		Sandbox:              "docker",
+		Sandbox:              "podman",
 		Parallel:             4,
 		ContainerCapacity:    2,
 		ContainerCapacitySet: true,
@@ -238,7 +238,7 @@ func TestRunBatch_ParallelEightCapacityFourAutoMode_PeakAndContainerCount(t *tes
 
 	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{
 		Agent:             "test-agent",
-		Sandbox:           "docker",
+		Sandbox:           "podman",
 		WorktreeDir:       ".sandman/worktrees",
 		ContainerCapacity: 4,
 		MaxContainers:     0,
@@ -252,7 +252,7 @@ func TestRunBatch_ParallelEightCapacityFourAutoMode_PeakAndContainerCount(t *tes
 
 	_, err := o.RunBatch(context.Background(), Request{
 		Issues:               []int{1, 2, 3, 4, 5, 6, 7, 8},
-		Sandbox:              "docker",
+		Sandbox:              "podman",
 		Parallel:             8,
 		ContainerCapacity:    4,
 		ContainerCapacitySet: true,
@@ -438,7 +438,7 @@ func TestBatch_StartOrderPreservedWithSerialStart(t *testing.T) {
 
 	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{
 		Agent:             "test-agent",
-		Sandbox:           "docker",
+		Sandbox:           "podman",
 		WorktreeDir:       ".sandman/worktrees",
 		ContainerCapacity: 1,
 		MaxContainers:     0,
@@ -455,7 +455,7 @@ func TestBatch_StartOrderPreservedWithSerialStart(t *testing.T) {
 		defer close(done)
 		_, _ = o.RunBatch(context.Background(), Request{
 			Issues:               []int{1, 2, 3, 4},
-			Sandbox:              "docker",
+			Sandbox:              "podman",
 			Parallel:             1,
 			ContainerCapacity:    1,
 			ContainerCapacitySet: true,
@@ -515,7 +515,7 @@ func TestBatch_StartOrderNotSerialisedWithParallelStart(t *testing.T) {
 
 	o := NewOrchestrator(client, &noopRenderer{}, &fakeConfigStore{config: &config.Config{
 		Agent:             "test-agent",
-		Sandbox:           "docker",
+		Sandbox:           "podman",
 		WorktreeDir:       ".sandman/worktrees",
 		ContainerCapacity: 4,
 		MaxContainers:     1,
@@ -532,7 +532,7 @@ func TestBatch_StartOrderNotSerialisedWithParallelStart(t *testing.T) {
 		defer close(done)
 		_, _ = o.RunBatch(context.Background(), Request{
 			Issues:               []int{1, 2, 3, 4},
-			Sandbox:              "docker",
+			Sandbox:              "podman",
 			Parallel:             4,
 			ContainerCapacity:    4,
 			ContainerCapacitySet: true,

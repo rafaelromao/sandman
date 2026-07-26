@@ -8456,8 +8456,8 @@ func TestRunBatch_SharedContainer_ReturnsErrorWhenDockerUnavailable(t *testing.T
 }
 
 func TestRunBatch_ReturnsErrorWhenBuildImageFails(t *testing.T) {
-	if _, err := sandbox.ResolveRuntime("docker"); err != nil {
-		t.Skip("docker unavailable")
+	if _, err := sandbox.ResolveRuntime("podman"); err != nil {
+		t.Skip("podman unavailable")
 	}
 	client := &fakeGitHubClient{
 		issues: map[int]*github.Issue{
@@ -8472,7 +8472,7 @@ func TestRunBatch_ReturnsErrorWhenBuildImageFails(t *testing.T) {
 		WithSandboxFactory(&fakeSandboxFactory{sandbox: &fakeSandbox{}}),
 	)
 
-	_, err := o.RunBatch(context.Background(), Request{Issues: []int{42}, Sandbox: "docker"})
+	_, err := o.RunBatch(context.Background(), Request{Issues: []int{42}, Sandbox: "podman"})
 	if err == nil {
 		t.Fatal("expected error when build image fails")
 	}

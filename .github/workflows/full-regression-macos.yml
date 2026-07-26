@@ -41,7 +41,6 @@ jobs:
           echo "a30e5010e59aea43f6d808eff29166d31b216d5d7c3991bb038e00c0acdb0b27  $podman_pkg" | shasum -a 256 -c -
           sudo installer -pkg "$podman_pkg" -target /
           echo /opt/podman/bin >> "$GITHUB_PATH"
-          sudo ln -sf /opt/podman/bin/podman /usr/local/bin/docker
 
       - name: Initialize Podman machine
         run: |
@@ -55,7 +54,6 @@ jobs:
         run: |
           podman info
           podman run --rm alpine:latest uname -a
-          docker info
 
       - name: Configure short temporary paths
         run: |
