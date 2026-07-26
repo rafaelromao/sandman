@@ -204,7 +204,6 @@ WORKDIR /workspace
 	broadcaster := daemon.NewBroadcaster()
 	d := review.New(repoDir, ghClient, &prompt.Engine{}, runner, cfg, broadcaster, 0, false, nil)
 	d.PollInterval = 0
-	d.Sandbox = "podman"
 
 	if err := d.StartSocket(); err != nil {
 		t.Fatalf("StartSocket: %v", err)
@@ -262,11 +261,4 @@ WORKDIR /workspace
 		t.Fatal("expected non-empty review comment body")
 	}
 	t.Logf("review comment body (%d bytes)", len(bodyStr))
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }
