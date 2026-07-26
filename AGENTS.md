@@ -94,19 +94,12 @@ go test -race -v ./...
 SANDMAN_TEST_PROVIDERS=all SANDMAN_RUN_SMOKE_E2E=1 \
   go test -tags smoke -timeout 60m ./internal/cmd -run Smoke
 
-# 3. E2E — every scenario gate, no real-agent sub-tests
-SANDMAN_TEST_PROVIDERS=all SANDMAN_E2E_GATES=all \
-  go test -tags e2e -timeout 30m ./...
-
-# 4. Real-agent preset matrix (opt-in; needs host opencode auth +
-#    a working podman/docker. SKIP if either is unavailable.)
-if [ -f "$HOME/.local/share/opencode/auth.json" ] && command -v podman >/dev/null 2>&1; then
-  SANDMAN_RUN_AGENT_E2E=1 SANDMAN_TEST_PROVIDERS=all SANDMAN_E2E_GATES=all \
-    go test -tags e2e -timeout 90m ./internal/cmd -run TestPresetMatrixHarness
-fi
+# 3. E2E — every scenario gate, including real-agent coverage
+SANDMAN_RUN_AGENT_E2E=1 SANDMAN_TEST_PROVIDERS=all SANDMAN_E2E_GATES=all \
+  go test -tags e2e -timeout 90m ./...
 ```
 
-Skip a tier with a one-line note (e.g. `skipping tier 4: no opencode auth at $HOME/.local/share/opencode/auth.json`) rather than blocking on it. Aggregate the per-tier PASS/FAIL/SKIP counts and surface a final summary, never silently swallow a failure. Timeouts are tuned per tier — do not lower them; lowering reintroduces the `batch aborted by operator` false-positive from under-budgeted test processes.
+The real-agent E2E cases skip with a clear reason when their runtime prerequisites are absent. Aggregate the per-tier PASS/FAIL/SKIP counts and surface a final summary, never silently swallow a failure. Timeouts are tuned per tier — do not lower them; lowering reintroduces the `batch aborted by operator` false-positive from under-budgeted test processes.
 
 ## Implementation constraints
 
@@ -127,6 +120,7 @@ These rules apply to every change-request an agent opens against this repository
   Allowed types: `feat`, `fix`, `perf`, `docs`, `refactor`, `test`, `build`, `ci`, `chore`, `revert`. Use a trailing `!` (for example `feat!:`) only when the change is breaking. Keep the title to one short imperative sentence with no trailing period.
 - **SemVer is derived from merged Conventional Commits.** Release Please aggregates the merged commit type stack: `feat:` → minor bump, `fix:` / `perf:` → patch, `feat!:` / `fix!:` / `perf!:` → major. Everything else is changelog-only. The pull-request title is validated separately by CI; title validation does not replace Release Please's commit-history parsing. Release Please opens a Release change request that applies the next SemVer tag. The prerelease bootstrap is the one-time exception: `release-as: 1.0.0-rc.1` forces the initial RC and must be removed after tag `v1.0.0-rc.1` is created.
 - **Required status checks on `main`:** `CI / build` (matrix `ubuntu-latest` + `macos-latest`, `pull_request` and `push` triggers from `.github/workflows/go.yml`) and `CI / semantic-pull-request`. Both must pass before the GitHub merge button enables. The full regression workflows run on pushes to `release-please--branches--main` (and on `workflow_dispatch`), so their failures are visible on the release PR but require maintainer review rather than a static ruleset check.
+- **CI scope on pull requests:** CI runs on pull requests to any branch, not only on pull requests targeting `main`. The `pull_request` trigger in `.github/workflows/go.yml` is unfiltered so stacked and feature-branch change requests receive `CI / build` and `CI / semantic-pull-request` checks before they reach `main`. The `push` trigger is restricted to `main` so a direct push to a feature branch does not start a duplicate CI run alongside the pull request's checks.
 
 ### When opening a change request
 

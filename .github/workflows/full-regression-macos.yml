@@ -29,17 +29,6 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Check for Podman
-        id: podman_check
-        run: |
-          if command -v podman >/dev/null 2>&1; then
-            echo "available=true" >> "$GITHUB_OUTPUT"
-            podman info
-          else
-            echo "available=false" >> "$GITHUB_OUTPUT"
-            echo "Podman not available on this runner."
-          fi
-
       - name: Run full regression suite
         shell: bash
         run: |
@@ -82,21 +71,11 @@ jobs:
           # Tier 1: Unit tests + race detector (matches `make test`)
           run_tier "Unit + Race" "go test -race -v ./..."
 
-          # Tier 2: Smoke tests, every provider, every buildTools preset
+          # Tier 2: Focused smoke tests
           run_tier "Smoke" "SANDMAN_TEST_PROVIDERS=all SANDMAN_RUN_SMOKE_E2E=1 go test -tags smoke -timeout 60m ./internal/cmd -run Smoke"
 
-          # Tier 3: E2E tests, every scenario gate
-          run_tier "E2E" "SANDMAN_TEST_PROVIDERS=all SANDMAN_E2E_GATES=all go test -tags e2e -timeout 30m ./..."
-
-          # Tier 4: Real-agent preset matrix, opt-in
-          PODMAN_AVAILABLE="${{ steps.podman_check.outputs.available }}"
-          if [ -f "$HOME/.local/share/opencode/auth.json" ] && [ "$PODMAN_AVAILABLE" = "true" ]; then
-            run_tier "Real-agent Preset Matrix" "SANDMAN_RUN_AGENT_E2E=1 SANDMAN_TEST_PROVIDERS=all SANDMAN_E2E_GATES=all go test -tags e2e -timeout 90m ./internal/cmd -run TestPresetMatrixHarness"
-          elif [ ! -f "$HOME/.local/share/opencode/auth.json" ]; then
-            skip_tier "Real-agent Preset Matrix" "no opencode auth at $HOME/.local/share/opencode/auth.json"
-          else
-            skip_tier "Real-agent Preset Matrix" "podman not available"
-          fi
+          # Tier 3: E2E tests, every scenario gate and real-agent matrix
+          run_tier "E2E" "SANDMAN_RUN_AGENT_E2E=1 SANDMAN_TEST_PROVIDERS=all SANDMAN_E2E_GATES=all go test -tags e2e -timeout 90m ./..."
 
           {
             echo "# Full Regression Report — macOS"

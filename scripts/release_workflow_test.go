@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"os"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -234,6 +235,7 @@ func TestFullRegressionWorkflowsRunOnlyForReleasePleaseBranch(t *testing.T) {
 		for _, required := range []string{
 			"  push:",
 			"branches: [release-please--branches--main]",
+			"SANDMAN_RUN_AGENT_E2E=1 SANDMAN_TEST_PROVIDERS=all SANDMAN_E2E_GATES=all go test -tags e2e -timeout 90m ./...",
 		} {
 			if !strings.Contains(workflow, required) {
 				t.Errorf("%s missing %q", path, required)
@@ -242,7 +244,57 @@ func TestFullRegressionWorkflowsRunOnlyForReleasePleaseBranch(t *testing.T) {
 		if strings.Contains(workflow, "  pull_request:") {
 			t.Errorf("%s must not run on every pull request", path)
 		}
+		if strings.Contains(workflow, "Real-agent Preset Matrix") {
+			t.Errorf("%s must run the real-agent matrix as part of E2E", path)
+		}
 	}
+}
+
+func TestCIWorkflowRunsOnPullRequestsToAnyBranch(t *testing.T) {
+	ci := readRepositoryFile(t, "../.github/workflows/go.yml")
+
+	pullRequestBlock := extractOnSubBlock(t, ci, "pull_request")
+	for _, forbidden := range []string{
+		"branches: [main]",
+		"branches-ignore:",
+	} {
+		if strings.Contains(pullRequestBlock, forbidden) {
+			t.Errorf("CI workflow pull_request trigger must not restrict by base branch; found %q in pull_request block:\n%s", forbidden, pullRequestBlock)
+		}
+	}
+
+	pushBlock := extractOnSubBlock(t, ci, "push")
+	if !strings.Contains(pushBlock, "branches: [main]") {
+		t.Errorf("CI workflow push trigger must remain restricted to [main] so direct pushes to feature branches do not start CI independently of a PR; push block was:\n%s", pushBlock)
+	}
+}
+
+func TestContributorDocumentationDescribesCIPullRequestScope(t *testing.T) {
+	contributing := readRepositoryFile(t, "../CONTRIBUTING.md")
+	agents := readRepositoryFile(t, "../AGENTS.md")
+
+	if !strings.Contains(contributing, "CI runs on pull requests to any branch") {
+		t.Error("CONTRIBUTING.md must state that CI runs on pull requests to any branch, not only on pull requests targeting main")
+	}
+	if !strings.Contains(agents, "CI runs on pull requests to any branch") {
+		t.Error("AGENTS.md must state that CI runs on pull requests to any branch, not only on pull requests targeting main")
+	}
+}
+
+func extractOnSubBlock(t *testing.T, workflow, key string) string {
+	t.Helper()
+	headerRe := regexp.MustCompile(`(?m)^  ` + regexp.QuoteMeta(key) + `:\n`)
+	match := headerRe.FindStringIndex(workflow)
+	if match == nil {
+		t.Fatalf("could not find %q block under on: in workflow", key)
+	}
+	rest := workflow[match[1]:]
+	nextTopRe := regexp.MustCompile(`(?m)^[^ ]`)
+	nextMatch := nextTopRe.FindStringIndex(rest)
+	if nextMatch == nil {
+		return rest
+	}
+	return rest[:nextMatch[0]]
 }
 
 func readRepositoryFile(t *testing.T, path string) string {
