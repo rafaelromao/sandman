@@ -14,9 +14,9 @@ Sandman owns the middle. The upstream tool that produced the spec — SDD, a sta
 
 ## Sandman, SDD, and Loop Engineering solve different problems
 
-- **SDD structures intent.** Specifications become the source of truth, then plans and tasks flow from them. An SDD workflow can also implement that work; it does not require Sandman. The clearest reference is GitHub's [Spec-driven development with AI](https://github.blog/ai-and-ml/generative-ai/spec-driven-development-with-ai-get-started-with-a-new-open-source-toolkit/) article.
+- **SDD structures intent.** Specifications become the source of truth, then plans and tasks flow from them. The clearest reference is GitHub's [Spec-driven development with AI](https://github.blog/ai-and-ml/generative-ai/spec-driven-development-with-ai-get-started-with-a-new-open-source-toolkit/) article.
 
-- **Sandman operationalizes delivery.** When work becomes a clear, agent-ready GitHub issue, Sandman can run the AFK delivery loop through isolated execution, durable progress, tests, self-review, review gates, and merge.
+- **Sandman operationalizes delivery.** It turns a clear, agent-ready GitHub issue into an AFK delivery loop through isolated execution, durable progress, tests, self-review, review gates, and merge.
 
 - **Loop Engineering frames the broader operating model.** Addy Osmani's [Loop Engineering](https://addyosmani.com/blog/loop-engineering/) article describes designing systems that prompt agents, preserve state, verify work, and keep humans in judgment. Sandman applies those principles to one concrete loop — it is not all of Loop Engineering.
 

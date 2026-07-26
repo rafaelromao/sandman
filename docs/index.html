@@ -573,7 +573,7 @@ expanded specification #2102 to 3 accepted children
             <thead><tr><th scope="col">Layer</th><th scope="col">Precise role</th><th scope="col">Relationship to Sandman</th></tr></thead>
             <tbody>
               <tr><td data-label="Layer">Matt Pocock workflow</td><td data-label="Precise role"><span class="skill-chain"><span>wayfinder</span><span>-&gt;</span><span>to-spec</span><span>-&gt;</span><span>to-tickets</span><span>-&gt;</span><span>Sandman</span><span>-&gt;</span><span>Validation.</span><span>Plus diagnosing-bugs, improve-codebase-architecture and others.</span></span></td><td data-label="Relationship to Sandman">Use the skills to resolve uncertainty, publish the spec, and slice GitHub tickets. Sandman runs the ready ticket frontier AFK.</td></tr>
-              <tr><td data-label="Layer">Spec-Driven Development</td><td data-label="Precise role">Executable specifications become the source of truth that tasks are derived from, for example GitHub Spec Kit or OpenSpec.</td><td data-label="Relationship to Sandman">Optional upstream source of agent-ready issues. Sandman does not need to own the spec layer.</td></tr>
+              <tr><td data-label="Layer">Spec-Driven Development</td><td data-label="Precise role">Executable specifications become the source of truth that tasks are derived from, for example GitHub Spec Kit or OpenSpec.</td><td data-label="Relationship to Sandman">SDD turns specifications into plans and task sets. Sandman turns the resulting agent-ready issue into an isolated, governed path to a merged PR.</td></tr>
             </tbody>
           </table>
         </section>
@@ -613,12 +613,12 @@ expanded specification #2102 to 3 accepted children
         <section id="comparison-session">
           <div class="kicker">Comparison</div>
           <h2>Sandman, SDD, and Loop Engineering solve different problems.</h2>
-          <p class="lead">SDD makes intent explicit through a specification, plan, and tasks. Sandman is an optional operational layer for taking an agent-ready GitHub issue through isolated AFK execution, review, and merge. GitHub's <a class="text-link" href="https://github.blog/ai-and-ml/generative-ai/spec-driven-development-with-ai-get-started-with-a-new-open-source-toolkit/">Spec Kit article</a> is the clearest SDD reference. Loop Engineering is the broader discipline of designing agent loops; Addy Osmani's <a class="text-link" href="https://addyosmani.com/blog/loop-engineering/">Loop Engineering article</a> is the reference.</p>
+          <p class="lead">SDD makes intent explicit through a specification, plan, and tasks. Sandman turns the resulting agent-ready GitHub issue into isolated AFK execution, review, and merge. GitHub's <a class="text-link" href="https://github.blog/ai-and-ml/generative-ai/spec-driven-development-with-ai-get-started-with-a-new-open-source-toolkit/">Spec Kit article</a> is the clearest SDD reference. Loop Engineering is the broader discipline of designing agent loops; Addy Osmani's <a class="text-link" href="https://addyosmani.com/blog/loop-engineering/">Loop Engineering article</a> is the reference.</p>
           <div class="grid-2">
             <div class="note-card">
               <h3>SDD structures intent. Sandman operationalizes delivery.</h3>
-              <p>SDD makes the specification the source of truth, then refines it into a plan and task set. An SDD workflow can implement work itself; it does not require Sandman.</p>
-              <p>When that work becomes a clear, agent-ready GitHub issue, Sandman can own the AFK delivery loop: isolated execution, durable progress, tests, review gates, and merge.</p>
+              <p>SDD makes the specification the source of truth, then refines it into a plan and task set with clear acceptance criteria.</p>
+              <p>Sandman turns that agent-ready GitHub issue into the AFK delivery loop: isolated execution, durable progress, tests, review gates, and merge.</p>
             </div>
             <div class="note-card">
               <h3>Sandman applies Loop Engineering.</h3>
