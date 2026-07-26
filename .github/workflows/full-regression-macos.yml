@@ -31,7 +31,15 @@ jobs:
           go-version-file: go.mod
 
       - name: Install Podman
-        run: brew install podman
+        run: |
+          podman_pkg_dir=$(mktemp -d)
+          podman_pkg="$podman_pkg_dir/podman.pkg"
+          trap 'rm -rf "$podman_pkg_dir"' EXIT
+          curl -fsSL \
+            "https://github.com/podman-container-tools/podman/releases/download/v5.5.2/podman-installer-macos-amd64.pkg" \
+            -o "$podman_pkg"
+          echo "a30e5010e59aea43f6d808eff29166d31b216d5d7c3991bb038e00c0acdb0b27  $podman_pkg" | shasum -a 256 -c -
+          sudo installer -pkg "$podman_pkg" -target /
 
       - name: Initialize Podman machine
         run: |
