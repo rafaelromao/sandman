@@ -22,7 +22,7 @@ func TestPath_ShortLogicalPathIsReturnedVerbatim(t *testing.T) {
 
 func TestPath_LongLogicalPathIsShortenedOnEveryOS(t *testing.T) {
 	long := "/some/" + strings.Repeat("long-path-segment-", 6) + "/.sandman/batches/abc/batch.sock"
-	if len(long) <= sunPathLimit {
+	if len(long) <= SunPathLimit {
 		t.Fatalf("test fixture is too short to exercise the long-path case: len=%d", len(long))
 	}
 
@@ -36,8 +36,8 @@ func TestPath_LongLogicalPathIsShortenedOnEveryOS(t *testing.T) {
 	if !strings.HasSuffix(got, ".sock") {
 		t.Errorf("Path(%q) = %q, want .sock suffix", long, got)
 	}
-	if len(got) > sunPathLimit {
-		t.Errorf("Path(%q) = %q, length %d exceeds sun_path %d", long, got, len(got), sunPathLimit)
+	if len(got) > SunPathLimit {
+		t.Errorf("Path(%q) = %q, length %d exceeds sun_path %d", long, got, len(got), SunPathLimit)
 	}
 }
 
@@ -55,7 +55,7 @@ func TestPath_LongLogicalPathIsDeterministic(t *testing.T) {
 func TestPath_DistinctLongPathsProduceDistinctShortPaths(t *testing.T) {
 	a := "/some/" + strings.Repeat("alpha-", 20) + "/.sandman/batches/abc/batch.sock"
 	b := "/some/" + strings.Repeat("beta-", 20) + "/.sandman/batches/abc/batch.sock"
-	if len(a) <= sunPathLimit || len(b) <= sunPathLimit {
+	if len(a) <= SunPathLimit || len(b) <= SunPathLimit {
 		t.Fatalf("test fixture is too short: a=%d b=%d", len(a), len(b))
 	}
 
@@ -70,7 +70,7 @@ func TestPath_LongLogicalPathHashesFullPath(t *testing.T) {
 	commonPrefix := "/var/folders/very-long-prefix-with-padding-to-overflow-sunpath-zzzzzzzzzzzz/"
 	differentTailA := commonPrefix + "branch-A/" + strings.Repeat("x", 30) + "/run.sock"
 	differentTailB := commonPrefix + "branch-B/" + strings.Repeat("x", 30) + "/run.sock"
-	if len(differentTailA) <= sunPathLimit || len(differentTailB) <= sunPathLimit {
+	if len(differentTailA) <= SunPathLimit || len(differentTailB) <= SunPathLimit {
 		t.Fatalf("test fixture is too short: a=%d b=%d", len(differentTailA), len(differentTailB))
 	}
 

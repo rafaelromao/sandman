@@ -200,7 +200,7 @@ func longSandmanDirIn(t *testing.T, baseDir string) string {
 	for {
 		sandmanDir := filepath.Join(root, ".sandman")
 		logical := filepath.Join(sandmanDir, "reviews", "review.sock")
-		if len(logical) > 104 && socketpath.Path(logical) != logical {
+		if len(logical) > socketpath.SunPathLimit && socketpath.Path(logical) != logical {
 			if err := os.MkdirAll(filepath.Join(sandmanDir, "reviews"), 0o755); err != nil {
 				t.Fatalf("mkdir long reviews dir: %v", err)
 			}

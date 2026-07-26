@@ -173,8 +173,8 @@ func TestControlSocket_StartForLongPathCreatesShortFilesystemSocket(t *testing.T
 	defer sock.Stop()
 
 	effective := sock.Path()
-	if got := len(effective); got > 104 {
-		t.Fatalf("effective Path() length = %d, want <= 104: %s", got, effective)
+	if got := len(effective); got > socketpath.SunPathLimit {
+		t.Fatalf("effective Path() length = %d, want <= %d: %s", got, socketpath.SunPathLimit, effective)
 	}
 
 	info, err := os.Stat(effective)
@@ -302,7 +302,7 @@ func longBatchPathIn(baseDir string) string {
 	for {
 		dir := filepath.Join(baseDir, "batches", batchName)
 		logical := filepath.Join(dir, "batch.sock")
-		if len(logical) > 104 && socketpath.Path(logical) != logical {
+		if len(logical) > socketpath.SunPathLimit && socketpath.Path(logical) != logical {
 			return dir
 		}
 		batchName = batchName + "-extra-padding"
@@ -315,7 +315,7 @@ func longSocketDir(t *testing.T) string {
 	dir := base
 	for {
 		logical := filepath.Join(dir, "batch.sock")
-		if len(logical) > 104 && socketpath.Path(logical) != logical {
+		if len(logical) > socketpath.SunPathLimit && socketpath.Path(logical) != logical {
 			break
 		}
 		dir = filepath.Join(dir, strings.Repeat("long-path-segment-", 4))

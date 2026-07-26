@@ -1064,7 +1064,7 @@ func TestDaemon_SocketPathAndSocketAddrAgreeForLongPath(t *testing.T) {
 	dir := testenv.MkdirShort(t, "sm-review-")
 	for {
 		logical := filepath.Join(dir, "reviews", "review.sock")
-		if len(logical) > 104 && socketpath.Path(logical) != logical {
+		if len(logical) > socketpath.SunPathLimit && socketpath.Path(logical) != logical {
 			break
 		}
 		dir = filepath.Join(dir, "long-prefix-segment")

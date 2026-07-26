@@ -132,7 +132,7 @@ func longRepoRootForAttach(t *testing.T) string {
 	dir := testenv.MkdirShort(t, "sm-attach-")
 	for {
 		logical := filepath.Join(dir, ".sandman", "reviews", "review.sock")
-		if len(logical) > 104 && socketpath.Path(logical) != logical {
+		if len(logical) > socketpath.SunPathLimit && socketpath.Path(logical) != logical {
 			break
 		}
 		dir = filepath.Join(dir, "long-prefix-segment")

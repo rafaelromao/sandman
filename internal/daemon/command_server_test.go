@@ -43,7 +43,7 @@ func longCommandSocketDir(t *testing.T) string {
 	dir := testenv.MkdirShort(t, "sm-cmd-")
 	for {
 		logical := filepath.Join(dir, "run.sock")
-		if len(logical) > 104 && socketpath.Path(logical) != logical {
+		if len(logical) > socketpath.SunPathLimit && socketpath.Path(logical) != logical {
 			break
 		}
 		dir = filepath.Join(dir, strings.Repeat("long-path-segment-", 4))
@@ -64,8 +64,8 @@ func TestCommandServer_StartUsesShortFilesystemSocketForLongPath(t *testing.T) {
 	defer server.Stop()
 
 	effective := CommandSocketPath(dir)
-	if got := len(effective); got > 104 {
-		t.Fatalf("effective CommandSocketPath length = %d, want <= 104: %s", got, effective)
+	if got := len(effective); got > socketpath.SunPathLimit {
+		t.Fatalf("effective CommandSocketPath length = %d, want <= %d: %s", got, socketpath.SunPathLimit, effective)
 	}
 
 	info, err := os.Stat(effective)
@@ -113,30 +113,6 @@ func TestCommandServer_StopRemovesEffectiveSocketForLongPath(t *testing.T) {
 
 	if err := server.Stop(); err != nil {
 		t.Fatalf("Stop failed for long path: %v", err)
-	}
-
-	if _, err := os.Stat(effective); !os.IsNotExist(err) {
-		t.Fatalf("expected effective socket at %q to be removed after Stop, stat err: %v", effective, err)
-	}
-}
-
-func TestCommandServer_StopRemovesEffectiveSocketForLongPath_marker(t *testing.T) {
-	// This is a guard against the old "leave filesystem alone" behaviour
-	// for abstract sockets. The new contract always removes the effective
-	// filesystem socket on Stop, regardless of length.
-	dir := longCommandSocketDir(t)
-	server := NewCommandServer(dir, &fakeCommander{})
-	if err := server.Start(); err != nil {
-		t.Fatalf("Start failed: %v", err)
-	}
-
-	effective := CommandSocketPath(dir)
-	if _, err := os.Stat(effective); err != nil {
-		t.Fatalf("expected effective socket at %q before Stop, stat err: %v", effective, err)
-	}
-
-	if err := server.Stop(); err != nil {
-		t.Fatalf("Stop failed: %v", err)
 	}
 
 	if _, err := os.Stat(effective); !os.IsNotExist(err) {

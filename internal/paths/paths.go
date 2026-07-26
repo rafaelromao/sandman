@@ -74,7 +74,12 @@ func (l Layout) QualityRulesPath() string {
 	return filepath.Join(l.ReviewsDir(), "quality-rules.md")
 }
 
-// ReviewSocketPath returns the review daemon socket: <repo>/.sandman/reviews/review.sock
+// ReviewSocketPath returns the address the review daemon binds to.
+// For typical repos the socket lives at
+// <repo>/.sandman/reviews/review.sock. When the logical path exceeds
+// the host sun_path limit (issue #2441), the resolver maps it to a
+// deterministic short /tmp filesystem path so bind, dial, stat, and
+// cleanup all agree on the same effective path on every host.
 func (l Layout) ReviewSocketPath() string {
 	return socketpath.Path(filepath.Join(l.ReviewsDir(), "review.sock"))
 }
@@ -99,7 +104,12 @@ func (l Layout) RunLogPath(batchID, runID string) string {
 	return filepath.Join(l.RunFolder(batchID, runID), "run.log")
 }
 
-// RunSocketPath returns the run socket: <batchesDir>/<batchID>/runs/<runID>/run.sock
+// RunSocketPath returns the per-run command socket address. For
+// typical repos the socket lives at
+// <batchesDir>/<batchID>/runs/<runID>/run.sock. When the logical path
+// exceeds the host sun_path limit (issue #2441), the resolver maps it
+// to a deterministic short /tmp filesystem path so bind, dial, stat,
+// and cleanup all agree on the same effective path on every host.
 func (l Layout) RunSocketPath(batchID, runID string) string {
 	return socketpath.Path(filepath.Join(l.RunFolder(batchID, runID), "run.sock"))
 }
@@ -143,7 +153,12 @@ func (l Layout) BatchManifestPath(batchID string) string {
 	return filepath.Join(l.BatchDir(batchID), "batch.json")
 }
 
-// BatchSocketPath returns the batch socket: <batchesDir>/<batchID>/batch.sock
+// BatchSocketPath returns the batch control socket address. For
+// typical repos the socket lives at
+// <batchesDir>/<batchID>/batch.sock. When the logical path exceeds the
+// host sun_path limit (issue #2441), the resolver maps it to a
+// deterministic short /tmp filesystem path so bind, dial, stat, and
+// cleanup all agree on the same effective path on every host.
 func (l Layout) BatchSocketPath(batchID string) string {
 	return socketpath.Path(filepath.Join(l.BatchDir(batchID), "batch.sock"))
 }

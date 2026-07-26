@@ -25,7 +25,7 @@ func longPathDir(t *testing.T, repoRoot string) string {
 	batchDir := batchesDir
 	for {
 		logical := filepath.Join(batchDir, "batch.sock")
-		if len(logical) > 104 && socketpath.Path(logical) != logical {
+		if len(logical) > socketpath.SunPathLimit && socketpath.Path(logical) != logical {
 			break
 		}
 		batchDir = filepath.Join(batchDir, strings.Repeat("long-path-segment-", 4))
