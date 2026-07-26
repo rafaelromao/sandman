@@ -220,7 +220,7 @@ func TestFullRegressionWorkflowsRunTestsAndReportCountsAndDurations(t *testing.T
 		for _, required := range []string{
 			"go test -race -v ./...",
 			"go test -v -tags smoke",
-			"go test -v -tags e2e",
+			"SANDMAN_RUN_AGENT_E2E=1 SANDMAN_TEST_PROVIDERS=all SANDMAN_E2E_GATES=all go test -v -tags e2e -timeout 90m ./...",
 			"grep -c '^=== RUN'",
 			"no test cases ran",
 			"| Tests run | Duration | Details |",
@@ -231,6 +231,9 @@ func TestFullRegressionWorkflowsRunTestsAndReportCountsAndDurations(t *testing.T
 		}
 		if strings.Contains(workflow, "RUN_REGRESSION") {
 			t.Errorf("%s full-regression workflow must not report success without running tests", platform)
+		}
+		if strings.Contains(workflow, "Real-agent Preset Matrix") {
+			t.Errorf("%s full-regression workflow must run the real-agent matrix as part of E2E", platform)
 		}
 	}
 
