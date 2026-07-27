@@ -10,9 +10,9 @@ description: Automates the GitHub PR review loop with the PR Review Agent. Waits
 1. **You must NOT review the PR yourself in this session.**
    Your only job is to delegate the review to the PR Review Agent by posting `{{REVIEW_COMMAND}}` as a PR comment, then wait for the PR Review Agent's feedback and act on it. Under no circumstances should you read the diff and provide your own review comments.
 
-2. **You must NOT finish on ambiguous feedback.** If the reviewer's intent cannot be reduced to a concrete, actionable code change, do not guess, do not change code, and do not stop the loop. Post a new PR comment that includes `{{REVIEW_COMMAND}}` plus a freeform request asking the reviewer to clarify the intended actionable change, then continue polling. The loop only ends on approval (formal case A or informal case C), explicit user stop, or max passes reached — never on ambiguity.
+2. **You must NOT finish on ambiguous feedback.** If the reviewer's intent cannot be reduced to a concrete, actionable code change, do not guess, do not change code, and do not stop the loop. Post a new PR comment that includes `{{REVIEW_COMMAND}}` plus a freeform request asking the reviewer to clarify the intended actionable change, then continue polling. The loop only ends on approval (formal case A or informal case C), an explicit skill-defined irrecoverable stop condition, or max passes reached — never on ambiguity.
 
-3. **You must NOT finish before the review timeout or max attempts when no feedback has been provided.** If `reviewDecision` is still `REVIEW_REQUIRED` (or absent), no reviews exist yet, no inline file comments exist, and only boilerplate setup comments are present, keep polling. Do not declare done, do not report success to the user, and do not stop the loop. The only acceptable reasons to exit early are: approval (formal case A or informal case C), explicit user stop, or 10 passes reached.
+3. **You must NOT finish before the review timeout or max attempts when no feedback has been provided.** If `reviewDecision` is still `REVIEW_REQUIRED` (or absent), no reviews exist yet, no inline file comments exist, and only boilerplate setup comments are present, keep polling. Do not declare done or stop the loop. The only acceptable reasons to exit early are: approval (formal case A or informal case C), an explicit skill-defined irrecoverable stop condition, or 10 passes reached.
 
 4. **You must NOT exit the polling loop on a `0/0` count of (formal reviews, inline comments) when the top-level PR conversation has new comments from any non-agent author.** A reviewer who only posts a top-level PR conversation comment (no formal review event, no inline file comments) is still a real reviewer response. Re-classify the state, run the self-check (Step 4), and continue polling — do not give up.
 
@@ -236,7 +236,7 @@ An inline file comment OR top-level comment OR review body contains concrete cod
 
 **F. Ambiguous feedback with unclear actionable intent only?**
 - Comments exist but none specify a concrete code change
-→ **Clarification** — ask for clarification if no request is pending; otherwise keep polling.
+→ **Clarification** — post a reviewer-directed clarification with `{{REVIEW_COMMAND}}` if no request is pending; otherwise keep polling.
 
 **G. Only nits or suggestions?**
 - Comments are nits or optional improvements, no `CHANGES_REQUESTED`
@@ -246,7 +246,7 @@ An inline file comment OR top-level comment OR review body contains concrete cod
 
 **Hard rule — never exit after pushing a fix.** After `git push` in Step 7, the agent MUST continue to Step 5 to poll for the reviewer's next response.
 
-**Hard rule — never exit with `CHANGES_REQUESTED` unresolved.** If a `CHANGES_REQUESTED` review exists after applying fixes, do not declare the run done. Re-request review (Step 4) and continue the loop. Only approval (formal case A or informal case C), explicit user stop, or max passes reached may end the loop. Applying a fix that you believe addresses the reviewer's concern does NOT close the loop — the reviewer must explicitly approve.
+**Hard rule — never exit with `CHANGES_REQUESTED` unresolved.** If a `CHANGES_REQUESTED` review exists after applying fixes, do not declare the run done. Re-request review (Step 4) and continue the loop. Only approval (formal case A or informal case C), an explicit skill-defined irrecoverable stop condition, or max passes reached may end the loop. Applying a fix that you believe addresses the reviewer's concern does NOT close the loop — the reviewer must explicitly approve.
 
 - Read `.sandman/state/<N>.addressed_comments` — skip any inline comment IDs already present.
 - Read relevant source files, make minimal changes.
@@ -275,7 +275,7 @@ If an inline comment ID appears in 3+ consecutive passes without resolution, tre
 
 Stop only when:
 - Formal approval (A or C) — the **only** condition that completes the PR-Review phase. "Exhausted after 10 passes" or any other non-approval signal is **never** a reason to mark PR-Review complete; only Approval is.
-- User explicitly asks to stop
+- An explicit skill-defined irrecoverable condition prevents further autonomous progress
 - Max 10 passes reached with unresolved blockers AND no new commit has landed on the PR branch since the last `{{REVIEW_COMMAND}}` post (i.e., the prior exhausted budget is still on the latest SHA). This ends the loop with a `REVIEW_TIMEOUT`, not a completion — the run-level checklist item stays unchecked until Approval is observed.
 - **`REVIEW_CONFLICT_UNRESOLVED` — back-merge failed to resolve a DIRTY PR; not a `REVIEW_TIMEOUT`, never silent**
 
@@ -297,7 +297,7 @@ Continue polling when:
 - Always include `top=<count> reviews=<count> inline=<count>` in the final report.
 - Never force-push or amend commits.
 - Keep commits focused: one commit per review round.
-- When feedback is ambiguous, ask for clarification with `{{REVIEW_COMMAND}}` in the same comment.
+- When feedback is ambiguous, post a reviewer-directed clarification with `{{REVIEW_COMMAND}}` in the same comment.
 - Review agents may post feedback as: top-level comments, inline diff comments, or formal `COMMENT` reviews. Always check all three sources.
 - When CI is broken and the failure may be base-branch drift, load `sandman-back-merge` first so any fix that landed on the base branch can be merged before retrying.
 - When CI is failing, fix it first — CI must be green before any review feedback can be meaningfully addressed.

@@ -41,7 +41,7 @@ gh issue view <ID> --json title,number
 
 - Checkout `main`/`master`, pull latest
 - Create and switch to branch: `issue-<ID>/<slugified-title>`
-- Report the issue title and branch name to user
+- Record the issue title and branch name in the task board or run log, then continue automatically.
 
 ### 1.5. Pre-flight check
 
@@ -90,7 +90,7 @@ Writing `## Status: already resolved` while a PR is open without a verification 
 
 ### 4. Commit implementation
 
-Once all tests pass and user is satisfied, derive a Conventional Commits subject that the PR title and the commit will share.
+Once all tests pass and the objective plan, formatting, CI, and review gates pass, derive a Conventional Commits subject that the PR title and the commit will share.
 
 Pick the most accurate type for the change. Allowed types: `feat`, `fix`, `perf`, `docs`, `refactor`, `test`, `build`, `ci`, `chore`, `revert`. Append `!` to the type for breaking changes (for example, `feat!:`). Keep the subject to one imperative sentence with no trailing period.
 
@@ -174,7 +174,7 @@ git commit -m "refactor: self-review fixes"
    gh pr view <new-pr-number> --json body --jq -r .body
    ```
 
-   The first non-empty line of the returned body MUST match `^(Closes|Fixes|Resolves) #<issue_number>\s*$`. If it does not — for example, the body is a long description with only `issue #<n>` buried in prose — STOP. Update the body in place so it is exactly `Closes #<issue_number>` (or `Fixes` / `Resolves`), then re-verify. If the body still cannot be made to match after one re-edit attempt, stop without delegating review and report the exact wrong body to the user.
+   The first non-empty line of the returned body MUST match `^(Closes|Fixes|Resolves) #<issue_number>\s*$`. If it does not — for example, the body is a long description with only `issue #<n>` buried in prose — update the body in place so it is exactly `Closes #<issue_number>` (or `Fixes` / `Resolves`), then re-verify. If the body still cannot be made to match after one re-edit attempt, do not delegate review: persist the exact body, structured blocker, and next executable action in the task board and run log, then follow the continuation step below.
 5. Capture the PR URL and number.
 
 ### 8. Delegate review
@@ -189,7 +189,7 @@ git commit -m "refactor: self-review fixes"
 
 - [ ] Branch created from latest main
 - [ ] Changes confined to the repository codebase (not meta-infrastructure)
-- [ ] User confirmed plan before TDD
+- [ ] Plan reviewed and recorded before TDD
 - [ ] Each vertical slice committed before moving to the next (Hard Rule 2)
 - [ ] All tests green at exit (Hard Rule 1) — no failing tests left unresolved
 - [ ] Implementation committed

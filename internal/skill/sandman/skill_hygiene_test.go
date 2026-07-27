@@ -123,6 +123,102 @@ func TestSkills_NoGhCliReferencesInProse(t *testing.T) {
 	}
 }
 
+func TestSkills_NoOperatorResponseDirectives(t *testing.T) {
+	files := readSkillMarkdown(t)
+	forbidden := []struct {
+		name    string
+		pattern string
+	}{
+		{name: "operator question", pattern: `(?i)\bask (the )?user\b`},
+		{name: "operator direction request", pattern: `(?i)\bask for (direction|clarification|approval|confirmation|feedback)\b`},
+		{name: "operator-dependent stop", pattern: `(?i)\b(stop|pause|wait)( and)? ask\b`},
+		{name: "operator satisfaction gate", pattern: `(?i)\buser (is )?(satisfied|confirmed|approval|confirmation|direction|clarification|feedback|review)\b`},
+		{name: "operator status report", pattern: `(?i)\b(report|tell) .* to the user\b`},
+		{name: "operator stop choice", pattern: `(?i)\bexplicit user stop\b`},
+	}
+
+	for _, rule := range forbidden {
+		re := regexp.MustCompile(rule.pattern)
+		for path, text := range files {
+			if loc := re.FindStringIndex(text); loc != nil {
+				t.Errorf("%s contains forbidden %s %q at offset %d", path, rule.name, text[loc[0]:loc[1]], loc[0])
+			}
+		}
+	}
+}
+
+func TestSkills_ReviewerClarificationUsesReviewCommand(t *testing.T) {
+	text, ok := readSkillMarkdown(t)["pr-review/SKILL.md"]
+	if !ok {
+		t.Fatal("expected pr-review/SKILL.md")
+	}
+	for _, phrase := range []string{
+		"reviewer to clarify",
+		"{{REVIEW_COMMAND}}",
+		"reviewer-directed",
+	} {
+		if !strings.Contains(text, phrase) {
+			t.Errorf("pr-review skill must preserve reviewer-directed clarification phrase %q", phrase)
+		}
+	}
+}
+
+func TestSkillsDocumentation_DescribesAFKWorkflow(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "..", "docs", "usage", "skills.md"))
+	if err != nil {
+		t.Fatalf("read user-facing skills documentation: %v", err)
+	}
+	text := string(data)
+	if !strings.Contains(text, "AFK") {
+		t.Fatal("user-facing skills documentation must identify the shared workflow as AFK")
+	}
+	for _, forbidden := range []string{
+		"interactive Sandman-guided session",
+		"answer questions",
+		"steer the work in real time",
+	} {
+		if strings.Contains(text, forbidden) {
+			t.Errorf("user-facing skills documentation must not advertise operator interaction %q", forbidden)
+		}
+	}
+}
+
+func TestSkills_AutonomousRecoveryLaddersRemainExplicit(t *testing.T) {
+	files := readSkillMarkdown(t)
+	checks := map[string][]string{
+		"implement/SKILL.md": {
+			"structured blocker",
+			"next executable action",
+			"then follow the continuation step below",
+		},
+		"back-merge/SKILL.md": {
+			"preserve it, inspect the status and diff",
+			"record the exact blocker and next executable action",
+		},
+		"self-review/SKILL.md": {
+			"`origin/main` when available",
+			"no spec available",
+		},
+		"pr-review/SKILL.md": {
+			"reviewer-directed clarification",
+			"Total polling budget: **900s = 15 minutes**",
+			"max 10 passes",
+		},
+	}
+
+	for path, phrases := range checks {
+		text, ok := files[path]
+		if !ok {
+			t.Fatalf("expected %s", path)
+		}
+		for _, phrase := range phrases {
+			if !strings.Contains(text, phrase) {
+				t.Errorf("%s must retain autonomous recovery behavior %q", path, phrase)
+			}
+		}
+	}
+}
+
 func TestSkills_ImplementSkillStillReadable(t *testing.T) {
 	files := readSkillMarkdown(t)
 	const target = "implement/SKILL.md"
