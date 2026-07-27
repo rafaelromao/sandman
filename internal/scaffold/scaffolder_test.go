@@ -280,7 +280,7 @@ func TestScaffold_NodePresetWritesPinnedDockerfile(t *testing.T) {
 	if strings.Contains(content, "RUN git clone https://github.com/rafaelromao/codeindex /tmp/codeindex && pip3 install -e /tmp/codeindex --break-system-packages") {
 		t.Fatalf("Dockerfile should not install codeindex, got:\n%s", content)
 	}
-	if !strings.Contains(content, "RUN MISE_VERSION="+DefaultMISEVersion+" curl https://mise.run | MISE_INSTALL_PATH=/usr/local/bin/mise sh") {
+	if !strings.Contains(content, "RUN curl https://mise.run | MISE_VERSION="+DefaultMISEVersion+" MISE_INSTALL_PATH=/usr/local/bin/mise sh") {
 		t.Fatalf("Dockerfile missing pinned mise install, got:\n%s", content)
 	}
 }
@@ -315,7 +315,7 @@ func TestScaffold_GenericPresetWritesPinnedDockerfile(t *testing.T) {
 	if !strings.Contains(content, "RUN npm install -g opencode-ai@"+DefaultBuiltInAgentVersion("opencode")) {
 		t.Fatalf("Dockerfile missing pinned opencode install, got:\n%s", content)
 	}
-	if !strings.Contains(content, "RUN MISE_VERSION="+DefaultMISEVersion+" curl https://mise.run | MISE_INSTALL_PATH=/usr/local/bin/mise sh") {
+	if !strings.Contains(content, "RUN curl https://mise.run | MISE_VERSION="+DefaultMISEVersion+" MISE_INSTALL_PATH=/usr/local/bin/mise sh") {
 		t.Fatalf("Dockerfile missing pinned mise install, got:\n%s", content)
 	}
 	if !strings.Contains(content, " gh ") {
@@ -1585,7 +1585,7 @@ func TestScaffold_AllAgentPresets_GenerateUsableFiles(t *testing.T) {
 			if !strings.Contains(content, "FROM debian:bookworm-slim") {
 				t.Fatalf("Dockerfile missing Debian base image, got:\n%s", content)
 			}
-			if !strings.Contains(content, "RUN MISE_VERSION="+DefaultMISEVersion+" curl https://mise.run | MISE_INSTALL_PATH=/usr/local/bin/mise sh") {
+			if !strings.Contains(content, "RUN curl https://mise.run | MISE_VERSION="+DefaultMISEVersion+" MISE_INSTALL_PATH=/usr/local/bin/mise sh") {
 				t.Fatalf("Dockerfile missing pinned mise install, got:\n%s", content)
 			}
 			if !strings.Contains(content, " gh ") {
@@ -1694,7 +1694,7 @@ func TestScaffold_PythonPresetWritesPinnedDockerfile(t *testing.T) {
 	if !strings.Contains(content, "RUN npm install -g opencode-ai@"+DefaultBuiltInAgentVersion("opencode")) {
 		t.Fatalf("Dockerfile missing pinned opencode install, got:\n%s", content)
 	}
-	if !strings.Contains(content, "RUN MISE_VERSION="+DefaultMISEVersion+" curl https://mise.run | MISE_INSTALL_PATH=/usr/local/bin/mise sh") {
+	if !strings.Contains(content, "RUN curl https://mise.run | MISE_VERSION="+DefaultMISEVersion+" MISE_INSTALL_PATH=/usr/local/bin/mise sh") {
 		t.Fatalf("Dockerfile missing pinned mise install, got:\n%s", content)
 	}
 
@@ -2862,7 +2862,7 @@ func TestScaffold_RubyPresetResolvesRangeSelectorToCatalogPin(t *testing.T) {
 func TestScaffold_RenderRubyInstallCommand(t *testing.T) {
 	got := renderRubyInstallCommand("3.2.2")
 	for _, want := range []string{
-		"RUN mise use -g --pin ruby@3.2.2",
+		"RUN MISE_RUBY_COMPILE=false mise use -g --pin ruby@3.2.2",
 		"RUN gem install bundler",
 	} {
 		if !strings.Contains(got, want) {
@@ -2900,7 +2900,7 @@ func TestScaffold_JavaPresetWritesPinnedDockerfile(t *testing.T) {
 		"# sandman installed-agents: opencode",
 		"FROM debian:bookworm-slim",
 		"RUN mise use -g --pin java@21.0.2",
-		"RUN MISE_VERSION=" + DefaultMISEVersion + " curl https://mise.run | MISE_INSTALL_PATH=/usr/local/bin/mise sh",
+		"RUN curl https://mise.run | MISE_VERSION=" + DefaultMISEVersion + " MISE_INSTALL_PATH=/usr/local/bin/mise sh",
 		"RUN npm install -g opencode-ai@" + DefaultBuiltInAgentVersion("opencode"),
 	} {
 		if !strings.Contains(content, want) {
@@ -2940,7 +2940,7 @@ func TestScaffold_DeriveErlangOTPFromElixirVersion(t *testing.T) {
 func TestScaffold_RenderElixirInstallCommand(t *testing.T) {
 	got := renderElixirInstallCommand("1.18.4-otp-28", "28")
 	for _, want := range []string{
-		"RUN mise use -g --pin erlang@28",
+		"RUN ImageOS=ubuntu22 MISE_ERLANG_COMPILE=false mise use -g --pin erlang@28",
 		"RUN mise use -g --pin elixir@1.18.4-otp-28",
 		"mix local.rebar --force",
 		"mix local.hex --force",
@@ -2987,11 +2987,11 @@ func TestScaffold_ElixirPresetWritesPinnedDockerfile(t *testing.T) {
 		// Erlang/OTP compilation requires libncurses-dev; without it
 		// `mise use -g erlang` fails with "No curses library functions found".
 		"libncurses-dev",
-		"RUN mise use -g --pin erlang@" + wantOTP,
+		"RUN ImageOS=ubuntu22 MISE_ERLANG_COMPILE=false mise use -g --pin erlang@" + wantOTP,
 		"RUN mise use -g --pin elixir@" + wantElixirVersion,
 		"RUN mix local.hex --force",
 		"RUN mix local.rebar --force",
-		"RUN MISE_VERSION=" + DefaultMISEVersion + " curl https://mise.run | MISE_INSTALL_PATH=/usr/local/bin/mise sh",
+		"RUN curl https://mise.run | MISE_VERSION=" + DefaultMISEVersion + " MISE_INSTALL_PATH=/usr/local/bin/mise sh",
 		"RUN npm install -g opencode-ai@" + DefaultBuiltInAgentVersion("opencode"),
 	} {
 		if !strings.Contains(content, want) {
@@ -3048,7 +3048,7 @@ func TestScaffold_ElixirPresetAllAgentsGenerateFiles(t *testing.T) {
 			if !strings.Contains(content, "# sandman build-tools: elixir") {
 				t.Errorf("Dockerfile missing elixir build-tools metadata, got:\n%s", content)
 			}
-			if !strings.Contains(content, "RUN mise use -g --pin erlang@"+wantOTP) {
+			if !strings.Contains(content, "RUN ImageOS=ubuntu22 MISE_ERLANG_COMPILE=false mise use -g --pin erlang@"+wantOTP) {
 				t.Errorf("Dockerfile missing pinned erlang install %q, got:\n%s", wantOTP, content)
 			}
 			if !strings.Contains(content, "RUN mise use -g --pin elixir@"+wantElixirVersion) {
@@ -3265,9 +3265,9 @@ func TestScaffold_RubyPresetWritesPinnedDockerfile(t *testing.T) {
 		"# sandman ruby-version: " + wantRubyVersion,
 		"# sandman installed-agents: opencode",
 		"FROM debian:bookworm-slim",
-		"RUN mise use -g --pin ruby@" + wantRubyVersion,
+		"RUN MISE_RUBY_COMPILE=false mise use -g --pin ruby@" + wantRubyVersion,
 		"RUN gem install bundler",
-		"RUN MISE_VERSION=" + DefaultMISEVersion + " curl https://mise.run | MISE_INSTALL_PATH=/usr/local/bin/mise sh",
+		"RUN curl https://mise.run | MISE_VERSION=" + DefaultMISEVersion + " MISE_INSTALL_PATH=/usr/local/bin/mise sh",
 		"RUN npm install -g opencode-ai@" + DefaultBuiltInAgentVersion("opencode"),
 	} {
 		if !strings.Contains(content, want) {
@@ -3320,7 +3320,7 @@ func TestScaffold_RubyPresetAllAgentsGenerateFiles(t *testing.T) {
 			if !strings.Contains(content, "# sandman build-tools: ruby") {
 				t.Errorf("Dockerfile missing ruby build-tools metadata, got:\n%s", content)
 			}
-			if !strings.Contains(content, "RUN mise use -g --pin ruby@"+wantRubyVersion) {
+			if !strings.Contains(content, "RUN MISE_RUBY_COMPILE=false mise use -g --pin ruby@"+wantRubyVersion) {
 				t.Errorf("Dockerfile missing pinned ruby install %q, got:\n%s", wantRubyVersion, content)
 			}
 			if !strings.Contains(content, "RUN gem install bundler") {

@@ -1930,7 +1930,7 @@ func (s *Scaffolder) renderBuildToolsDockerfile(preset BuildToolsPreset, default
 	aptPackages := append([]string{}, preset.SharedPackages...)
 	aptPackages = append(aptPackages, preset.ExtraPackages...)
 	fmt.Fprintf(&out, "RUN apt-get update && apt-get install -y --no-install-recommends %s && rm -rf /var/lib/apt/lists/*\n", strings.Join(aptPackages, " "))
-	fmt.Fprintf(&out, "RUN MISE_VERSION=%s curl https://mise.run | MISE_INSTALL_PATH=/usr/local/bin/mise sh\n", preset.MiseVersion)
+	fmt.Fprintf(&out, "RUN curl https://mise.run | MISE_VERSION=%s MISE_INSTALL_PATH=/usr/local/bin/mise sh\n", preset.MiseVersion)
 	out.WriteString("ENV MISE_GLOBAL_CONFIG_FILE=\"/etc/mise/config.toml\"\n")
 	out.WriteString("ENV MISE_CONFIG_DIR=\"/etc/mise\"\n")
 	out.WriteString("ENV MISE_DATA_DIR=\"/usr/local/share/mise\"\n")
@@ -2192,9 +2192,11 @@ func deriveErlangOTPFromElixir(version string) (string, error) {
 // erlang + elixir via mise and installing the mainstream companion
 // tooling (hex, rebar3). The elixir line uses the full pinned string
 // (which keeps the `-otp-<NN>` suffix so the mise shim is unambiguous).
+// Debian 12 can run the Ubuntu 22 build because its glibc is newer. Avoiding a
+// source build also keeps Erlang installation reliable on virtual CPUs.
 func renderElixirInstallCommand(elixirVersion, otpVersion string) string {
 	var out strings.Builder
-	fmt.Fprintf(&out, "RUN mise use -g --pin erlang@%s\n", otpVersion)
+	fmt.Fprintf(&out, "RUN ImageOS=ubuntu22 MISE_ERLANG_COMPILE=false mise use -g --pin erlang@%s\n", otpVersion)
 	fmt.Fprintf(&out, "RUN mise use -g --pin elixir@%s\n", elixirVersion)
 	out.WriteString("RUN mix local.hex --force\n")
 	out.WriteString("RUN mix local.rebar --force\n")
@@ -2203,7 +2205,7 @@ func renderElixirInstallCommand(elixirVersion, otpVersion string) string {
 
 func renderRubyInstallCommand(version string) string {
 	var out strings.Builder
-	fmt.Fprintf(&out, "RUN mise use -g --pin ruby@%s\n", version)
+	fmt.Fprintf(&out, "RUN MISE_RUBY_COMPILE=false mise use -g --pin ruby@%s\n", version)
 	out.WriteString("RUN gem install bundler\n")
 	return out.String()
 }

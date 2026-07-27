@@ -207,6 +207,7 @@ func TestReleaseWorkflowUsesCredentialThatTriggersReleasePRChecks(t *testing.T) 
 	for _, forbidden := range []string{
 		`"context": "Full Regression - Linux / Full Regression Suite (Ubuntu)"`,
 		`"context": "Full Regression - macOS / Full Regression Suite (macOS)"`,
+		`"context": "macOS Compatibility / Native Compatibility (macOS Intel)"`,
 	} {
 		if strings.Contains(ruleset, forbidden) {
 			t.Errorf("main ruleset must not require release-only check %q", forbidden)
@@ -226,16 +227,15 @@ func TestReleaseWorkflowUsesCredentialThatTriggersReleasePRChecks(t *testing.T) 
 	}
 }
 
-func TestFullRegressionWorkflowsRunOnlyForReleasePleaseBranch(t *testing.T) {
+func TestReleaseValidationWorkflowsRunOnlyForReleasePleaseBranch(t *testing.T) {
 	for _, path := range []string{
 		"../.github/workflows/full-regression-linux.yml",
-		"../.github/workflows/full-regression-macos.yml",
+		"../.github/workflows/macos-compatibility.yml",
 	} {
 		workflow := readRepositoryFile(t, path)
 		for _, required := range []string{
 			"  push:",
 			"branches: [release-please--branches--main]",
-			"SANDMAN_RUN_AGENT_E2E=1 SANDMAN_TEST_PROVIDERS=all SANDMAN_E2E_GATES=all go test -tags e2e -timeout 90m ./...",
 		} {
 			if !strings.Contains(workflow, required) {
 				t.Errorf("%s missing %q", path, required)
@@ -248,88 +248,114 @@ func TestFullRegressionWorkflowsRunOnlyForReleasePleaseBranch(t *testing.T) {
 			t.Errorf("%s must run the real-agent matrix as part of E2E", path)
 		}
 	}
+
+	linux := readRepositoryFile(t, "../.github/workflows/full-regression-linux.yml")
+	if !strings.Contains(linux, "SANDMAN_RUN_AGENT_E2E=1 SANDMAN_TEST_PROVIDERS=all SANDMAN_E2E_GATES=all go test -tags e2e -timeout 90m ./...") {
+		t.Error("Linux full regression workflow must preserve the canonical E2E command")
+	}
 }
 
-func TestMacOSFullRegressionPreparesPodmanOnIntelRunner(t *testing.T) {
-	workflow := readRepositoryFile(t, "../.github/workflows/full-regression-macos.yml")
+func TestMacOSCompatibilityExercisesNativeBoundariesOnIntelRunner(t *testing.T) {
+	workflow := readRepositoryFile(t, "../.github/workflows/macos-compatibility.yml")
 
 	for _, required := range []string{
+		"name: macOS Compatibility",
 		"runs-on: macos-15-intel",
-		"CONTAINERS_MACHINE_PROVIDER: applehv",
+		"timeout-minutes: 45",
+		"name: Build native Sandman",
+		`test "$(go env GOOS)" = "darwin"`,
+		`test "$(go env GOARCH)" = "amd64"`,
+		`go build -o "$RUNNER_TEMP/sandman" ./cmd/sandman`,
+		"name: Test native socket compatibility",
+		"TestResolvePortalPeerPIDReturnsCallerPID",
+		"TestDiscoverPortalInstances_LongPathBindsAndDials",
+		"TestPortal_RunStream_BridgesControlSocketToSSE",
+		"TestAttach_(ReadsFromSocket|ExitsOnEOF|FindsLongPathReviewSock)",
+		"name: Test native portal process",
+		"TestPortal_E2E_TwoLiveRuns",
+		"name: Test native portal abort endpoint",
+		"TestPortal_E2E_AbortReturns404ForUnknownRun",
+	} {
+		if !strings.Contains(workflow, required) {
+			t.Errorf("macOS compatibility workflow missing %q", required)
+		}
+	}
+
+	buildNative := strings.Index(workflow, "name: Build native Sandman")
+	socketTests := strings.Index(workflow, "name: Test native socket compatibility")
+	portalE2E := strings.Index(workflow, "name: Test native portal process")
+	abortE2E := strings.Index(workflow, "name: Test native portal abort endpoint")
+	if buildNative == -1 || socketTests == -1 || portalE2E == -1 || abortE2E == -1 ||
+		buildNative > socketTests || socketTests > portalE2E || portalE2E > abortE2E {
+		t.Fatal("macOS compatibility workflow must build Sandman before running native socket and portal boundary tests")
+	}
+
+	portalE2ETests := readRepositoryFile(t, "../internal/cmd/portal_e2e_test.go")
+	for _, funcName := range []string{
+		"TestPortal_E2E_TwoLiveRuns",
+		"TestPortal_E2E_AbortReturns404ForUnknownRun",
+	} {
+		body, start := extractGoFunction(t, portalE2ETests, funcName)
+		if start == -1 {
+			t.Fatalf("macOS compatibility contract requires %s in portal_e2e_test.go", funcName)
+		}
+		if strings.Contains(body, `t.Skip("skip e2e in CI")`) || strings.Contains(body, `t.Skip("no container runtime available in CI")`) {
+			t.Errorf("%s must not self-skip on CI; it is one of the hermetic cases the macOS Compatibility suite must run", funcName)
+		}
+	}
+}
+
+func extractGoFunction(t *testing.T, source, name string) (string, int) {
+	t.Helper()
+	header := "func " + name + "("
+	start := strings.Index(source, header)
+	if start == -1 {
+		return "", -1
+	}
+	body := source[start:]
+	next := strings.Index(body, "\nfunc ")
+	if next == -1 {
+		return body, start
+	}
+	return body[:next], start
+}
+
+func TestMacOSCompatibilityDoesNotDuplicateLinuxFullRegression(t *testing.T) {
+	workflow := readRepositoryFile(t, "../.github/workflows/macos-compatibility.yml")
+
+	for _, forbidden := range []string{
+		"Run full regression suite",
+		"go test -race -v ./...",
+		"SANDMAN_RUN_SMOKE_E2E=1",
+		"SANDMAN_RUN_AGENT_E2E=1",
+		"SANDMAN_E2E_GATES=all",
+		"TestPresetMatrixHarness_",
+		"matrix:",
 		"name: Install Podman",
-		"podman-installer-macos-amd64.pkg",
-		"a30e5010e59aea43f6d808eff29166d31b216d5d7c3991bb038e00c0acdb0b27",
-		"shasum -a 256 -c -",
-		"sudo installer -pkg \"$podman_pkg\" -target /",
-		"name: Initialize Podman machine",
-		"podman machine init \\",
-		"--cpus 3",
-		"--memory 8192",
-		"--disk-size 60",
-		"--now",
-		"name: Validate Podman",
-		"podman info",
-		"podman run --rm alpine:latest uname -a",
-		"name: Configure short temporary paths",
-		"TMPDIR=/private/tmp/sandman-ci",
-		"name: Prewarm container image",
-		"podman pull alpine:latest",
+		"podman machine",
+		"TestOpencodeSubagentPermissionAllowAll",
 	} {
-		if !strings.Contains(workflow, required) {
-			t.Errorf("macOS full regression workflow missing %q", required)
+		if strings.Contains(workflow, forbidden) {
+			t.Errorf("macOS compatibility workflow must leave exhaustive coverage to Linux and the native boundary to Darwin; found %q", forbidden)
 		}
-	}
-
-	setupGo := strings.Index(workflow, "name: Set up Go")
-	installPodman := strings.Index(workflow, "name: Install Podman")
-	validatePodman := strings.Index(workflow, "name: Validate Podman")
-	prewarm := strings.Index(workflow, "name: Prewarm container image")
-	regression := strings.Index(workflow, "name: Run full regression suite")
-	if setupGo == -1 || installPodman == -1 || validatePodman == -1 || prewarm == -1 || regression == -1 ||
-		setupGo > installPodman || installPodman > validatePodman || validatePodman > prewarm || prewarm > regression {
-		t.Fatal("macOS full regression workflow must prepare Podman before running tests")
 	}
 }
 
-func TestMacOSFullRegressionCollectsDiagnosticsAndStopsPodman(t *testing.T) {
-	workflow := readRepositoryFile(t, "../.github/workflows/full-regression-macos.yml")
-
+func TestCIWorkflowKeepsOptInSuitesDisabled(t *testing.T) {
+	workflow := readRepositoryFile(t, "../.github/workflows/go.yml")
 	for _, required := range []string{
-		"name: Podman diagnostics",
-		"uname -a",
-		"arch",
-		"podman version",
-		"podman machine list",
-		"podman machine inspect",
-		"df -h",
-		"name: Stop Podman machine",
-		"if: always()",
-		"podman machine stop || true",
+		`SANDMAN_TEST_PROVIDERS: ""`,
+		`SANDMAN_RUN_SMOKE_E2E: "0"`,
+		`SANDMAN_RUN_AGENT_E2E: "0"`,
+		`SANDMAN_E2E_GATES: ""`,
+		"run: go test -race -v ./...",
 	} {
 		if !strings.Contains(workflow, required) {
-			t.Errorf("macOS full regression workflow missing %q", required)
+			t.Errorf("regular CI workflow missing opt-in suite exclusion %q", required)
 		}
 	}
-
-	diagnostics := strings.Index(workflow, "name: Podman diagnostics")
-	regression := strings.Index(workflow, "name: Run full regression suite")
-	stop := strings.Index(workflow, "name: Stop Podman machine")
-	if diagnostics == -1 || regression == -1 || stop == -1 || diagnostics > regression || regression > stop {
-		t.Fatal("macOS full regression workflow must collect diagnostics before tests and stop Podman afterward")
-	}
-}
-
-func TestMacOSFullRegressionPreservesAllRegressionCommands(t *testing.T) {
-	workflow := readRepositoryFile(t, "../.github/workflows/full-regression-macos.yml")
-
-	for _, command := range []string{
-		`go test -race -v ./...`,
-		`SANDMAN_TEST_PROVIDERS=all SANDMAN_RUN_SMOKE_E2E=1 go test -tags smoke -timeout 60m ./internal/cmd -run Smoke`,
-		`SANDMAN_RUN_AGENT_E2E=1 SANDMAN_TEST_PROVIDERS=all SANDMAN_E2E_GATES=all go test -tags e2e -timeout 90m ./...`,
-	} {
-		if !strings.Contains(workflow, command) {
-			t.Errorf("macOS full regression workflow missing regression command %q", command)
-		}
+	if strings.Contains(workflow, "-tags smoke") || strings.Contains(workflow, "-tags e2e") {
+		t.Fatal("regular CI must not compile or run smoke/e2e-tagged tests")
 	}
 }
 
