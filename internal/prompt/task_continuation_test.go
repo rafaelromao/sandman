@@ -192,6 +192,45 @@ func TestContinuationTaskPrompt_DetectsContinuedGuardWithExtraTrailingText(t *te
 	}
 }
 
+func TestContinuationTaskPrompt_ShortStaleGuardPreservesFollowingSections(t *testing.T) {
+	prior := "# Task\n\n## Continuation Freshness Guard\nOld copy.\n\n## Custom Section\n\nPersisted note.\n"
+	got := ContinuationTaskPrompt(prior)
+
+	if !strings.Contains(got, "## Custom Section\n\nPersisted note.") {
+		t.Fatalf("expected ## Custom Section preserved after stale guard, got:\n%s", got)
+	}
+	if strings.Contains(got, "Old copy.") {
+		t.Fatalf("expected stale guard body to be removed, got:\n%s", got)
+	}
+	if !strings.Contains(got, "Treat every persisted blocker and next action as historical evidence") {
+		t.Fatalf("expected canonical guard body appended, got:\n%s", got)
+	}
+}
+
+func TestContinuationTaskPrompt_StaleGuardPreservesExecutionChecklist(t *testing.T) {
+	prior := "# Task\n\n## Continuation Freshness Guard\nCustom body.\n\n## Execution Checklist\n\n- [x] Continue.\n"
+	got := ContinuationTaskPrompt(prior)
+
+	if !strings.Contains(got, "## Execution Checklist\n\n- [x] Continue.") {
+		t.Fatalf("expected Execution Checklist preserved after stale guard, got:\n%s", got)
+	}
+	if strings.Contains(got, "Custom body.") {
+		t.Fatalf("expected stale guard body to be removed, got:\n%s", got)
+	}
+}
+
+func TestContinuationTaskPrompt_StaleGuardPreservesNextStep(t *testing.T) {
+	prior := "# Task\n\n## Continuation Freshness Guard\nCustom body.\n\n## Blockers\n\n- stale\n\n## Next Step\n\n- run tests\n"
+	got := ContinuationTaskPrompt(prior)
+
+	if !strings.Contains(got, "## Blockers\n\n- stale") {
+		t.Fatalf("expected ## Blockers preserved after stale guard, got:\n%s", got)
+	}
+	if !strings.Contains(got, "## Next Step\n\n- run tests") {
+		t.Fatalf("expected ## Next Step preserved after stale guard, got:\n%s", got)
+	}
+}
+
 // TestContinuationTaskPrompt_EmptyTaskFallsBackToTemplate verifies that the
 // empty-file path (when .sandman/task.md does not exist) still produces a
 // usable resume prompt — it should use the embedded DefaultPrompt as a

@@ -43,15 +43,46 @@ func ContinuationTaskPrompt(content string) string {
 }
 
 func removeCanonicalGuard(content string) string {
-	if idx := strings.Index(content, continuationFreshnessGuardHeading); idx >= 0 {
-		end := idx + len(continuationFreshnessGuard) + 1
-		if end > len(content) {
-			end = len(content)
+	for {
+		idx := strings.Index(content, continuationFreshnessGuardHeading)
+		if idx < 0 {
+			return content
 		}
+		end := guardSectionEnd(content, idx)
 		content = content[:idx] + content[end:]
-		return removeCanonicalGuard(content)
 	}
-	return content
+}
+
+// guardSectionEnd returns the byte offset that follows the H2 section opened
+// by the guard heading at the given offset. The section terminates at the
+// next H2 heading (a line beginning with "## "), at the next H1 ("# "), or
+// at the end of the content. Anchoring on Markdown headings ensures stale or
+// short-bodied guards cannot delete the persisted sections that follow
+// them — a regression that previously sliced into the next H2 body.
+func guardSectionEnd(content string, headingIdx int) int {
+	lineStart := strings.LastIndex(content[:headingIdx], "\n") + 1
+	scan := lineStart
+	for scan < len(content) {
+		nl := strings.IndexByte(content[scan:], '\n')
+		var end int
+		if nl < 0 {
+			end = len(content)
+		} else {
+			end = scan + nl
+		}
+		line := content[scan:end]
+		trimmed := strings.TrimSpace(line)
+		if scan != lineStart {
+			if strings.HasPrefix(trimmed, "## ") || (scan+1 < len(content) && strings.HasPrefix(trimmed, "# ") && !strings.HasPrefix(trimmed, "##")) {
+				return scan
+			}
+		}
+		if nl < 0 {
+			return len(content)
+		}
+		scan = end + 1
+	}
+	return len(content)
 }
 
 func trimTrailingNewlines(content string) string {
