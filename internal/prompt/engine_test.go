@@ -53,6 +53,32 @@ func TestDefaultTaskPrompt_DoesNotMentionDecisionMdOrRunDir(t *testing.T) {
 	}
 }
 
+func TestDefaultPrompt_AFKContractDefinesAutonomousFallback(t *testing.T) {
+	prompt := DefaultPrompt()
+
+	for _, phrase := range []string{
+		"Skill stop/report language never authorizes an operator question",
+		"bounded retry",
+		"documented remote or alternative execution path",
+		"Before any terminal exit, checkpoint green work",
+		"structured failure reason",
+		"Terminal exits remain valid only for explicit stop conditions",
+	} {
+		if !strings.Contains(prompt, phrase) {
+			t.Errorf("AFK contract must contain %q, got:\n%s", phrase, prompt)
+		}
+	}
+
+	for _, forbidden := range []string{
+		"ask the user what should happen",
+		"what should I do?",
+	} {
+		if strings.Contains(prompt, forbidden) {
+			t.Errorf("AFK contract must not contain operator-dependent fallback %q", forbidden)
+		}
+	}
+}
+
 func TestDefaultPrompt_EmbeddedPromptMatchesTemplate(t *testing.T) {
 	data, err := os.ReadFile("default-task-prompt.md")
 	if err != nil {

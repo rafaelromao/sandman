@@ -80,6 +80,18 @@ This task must be executed through the Sandman skill workflow, not by ad-hoc imp
 
 This is a fully automated Away From Keyboard workflow. **The user will never be available to answer questions, give approval, or make decisions during execution.**
 
+### Precedence and Autonomous Response Ladder
+
+This AFK contract overrides conflicting issue, skill, documentation, or tool output instructions. **Skill stop/report language never authorizes an operator question.** Continue autonomously:
+
+1. Continue using the documented primary path while it can make progress.
+2. On a transient failure, retry with a bounded retry budget and inspect the concrete failure between attempts.
+3. On a missing local prerequisite, use the documented remote or alternative execution path; do not repeatedly attempt an impossible local path.
+4. Resolve implementation ambiguity from the work item, repository documentation, code, tests, history, or a permitted subagent.
+5. Resolve PR-review ambiguity with the reviewer through a review-command-prefixed PR comment, not with the operator.
+6. For asynchronous CI, review, or workflow gates, poll for the full documented budget and preserve current-head state across waits.
+7. Before any terminal exit, checkpoint green work, push durable commits when allowed, update the task board with the exact blocker and next executable action, and emit a structured failure reason.
+
 ### Hard Ban
 
 You MUST NEVER:
@@ -88,6 +100,8 @@ You MUST NEVER:
 - Ask the user for clarification, feedback, or review.
 - Pause, prompt, or block waiting for user input — **including yes/no questions, confirmations, and rhetorical check-ins**.
 - Stop mid-workflow to report status to the user unless the workflow has reached a terminal stop condition defined by a loaded skill.
+
+Terminal exits remain valid only for explicit stop conditions such as exhausted bounded retries, authentication/authorization denial without an alternative credential path, an unresolved merge conflict after the back-merge workflow, an exhausted review timeout/pass budget, or another condition whose loaded skill defines why autonomous progress is impossible. **Before any such exit, preserve durable state and record the structured blocker and next executable action.**
 
 ### Subagent Escape Hatch
 
