@@ -353,6 +353,22 @@ func TestMacOSFullRegressionPreservesAllRegressionCommands(t *testing.T) {
 			t.Errorf("macOS full regression workflow missing preset build %q", testName)
 		}
 	}
+
+	parallelPresets := strings.Index(workflow, `run_tier "E2E (parallel preset builds)"`)
+	elixirPreset := strings.Index(workflow, `run_tier "E2E (Elixir preset build)"`)
+	rubyPreset := strings.Index(workflow, `run_tier "E2E (Ruby preset build)"`)
+	if parallelPresets == -1 || elixirPreset == -1 || rubyPreset == -1 || parallelPresets > elixirPreset || elixirPreset > rubyPreset {
+		t.Fatal("macOS full regression workflow must run source-compiling Elixir and Ruby presets serially after parallel preset builds")
+	}
+	parallelBlock := workflow[parallelPresets:elixirPreset]
+	for _, sourceBuild := range []string{
+		"TestPresetMatrixHarness_ElixirBuildsWithEditedDockerfile",
+		"TestPresetMatrixHarness_RubyBuildsWithEditedDockerfile",
+	} {
+		if strings.Contains(parallelBlock, sourceBuild) {
+			t.Errorf("parallel macOS preset builds must exclude source-compiling test %q", sourceBuild)
+		}
+	}
 }
 
 func TestCIWorkflowRunsOnPullRequestsToAnyBranch(t *testing.T) {
