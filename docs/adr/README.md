@@ -78,5 +78,5 @@ ADRs are numbered sequentially starting from `0001`. The template ADR (`0000`) i
 | 0037 | Hermetic `gh` in pr-flow e2e tests | accepted |
 | 0038 | Badge marker — paginated idempotency check | accepted |
 | 0039 | Roll back Auto Mode (`--auto`, `--count`, `auto_max_count`) | accepted |
-| 0041 | AFK skills use an autonomous response contract | proposed |
 | 0040 | Runtime branch naming drops the `sandman/` prefix | accepted |
+| 0041 | AFK skills use an autonomous response contract | accepted |
