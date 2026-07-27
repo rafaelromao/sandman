@@ -143,7 +143,10 @@ func TestSkills_NoOperatorResponseDirectives(t *testing.T) {
 	for _, rule := range forbidden {
 		re := regexp.MustCompile(rule.pattern)
 		for path, text := range files {
-			if loc := re.FindStringIndex(text); loc != nil && !allowlistedSkillCommunication(path, text, loc) {
+			for _, loc := range re.FindAllStringIndex(text, -1) {
+				if allowlistedSkillCommunication(path, text, loc) {
+					continue
+				}
 				t.Errorf("%s contains forbidden %s %q at offset %d", path, rule.name, text[loc[0]:loc[1]], loc[0])
 			}
 		}
@@ -253,6 +256,7 @@ func TestSkills_AutonomousRecoveryLaddersRemainExplicit(t *testing.T) {
 		},
 		"self-review/SKILL.md": {
 			"`origin/main` when available",
+			"inspect `git diff HEAD` and every untracked path",
 			"no spec available",
 		},
 		"pr-review/SKILL.md": {

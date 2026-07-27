@@ -23,7 +23,7 @@ Merge the PR only when all merge gates pass.
 4. Merge with squash: `gh pr merge --squash`. Do not pass `--delete-branch`; the local branch must remain in this worktree for downstream sandman tooling (next run, --continue, --override).
 5. Verify the PR actually merged.
 6. After verifying, delete the remote branch from a different worktree — never from this worktree: `git push origin --delete <branch>`.
-7. If approval is not achieved after 10 review cycles, leave the PR open and record final blockers plus the next executable action in the task board and run log.
+7. If approval is not achieved after 10 review cycles, leave the PR open and record final blockers plus the next executable action in `.sandman/task.md` and the run log.
 
 ## Stop conditions
 

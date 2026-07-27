@@ -94,12 +94,12 @@ The shared Sandman skill owns the detailed workflow. This page describes the boo
     This AFK contract overrides conflicting issue, skill, documentation, or tool output instructions. **Skill stop/report language never authorizes an operator question.** Continue autonomously:
     
     1. Continue using the documented primary path while it can make progress.
-    2. On a transient failure, retry with a bounded retry budget and inspect the concrete failure between attempts.
+    2. On a transient failure, retry with a bounded retry budget and inspect the concrete failure between attempts; after the bounded retry budget is exhausted, apply the next step rather than stopping or asking the operator.
     3. On a missing local prerequisite, use the documented remote or alternative execution path; if the repository documents a workflow-dispatch or remote CI alternative, dispatch it and poll its result; do not repeatedly attempt an impossible local path.
     4. Resolve implementation ambiguity from the work item, repository documentation, code, tests, history, or a permitted subagent.
     5. Resolve PR-review ambiguity with the reviewer through a review-command-prefixed PR comment, not with the operator.
     6. For asynchronous CI, review, or workflow gates, poll for the full documented budget and preserve current-head state across waits.
-    7. Before any terminal exit, checkpoint green work, push durable commits when allowed, update the task board with the exact blocker and next executable action, and emit a structured failure reason.
+    7. Before any terminal exit, checkpoint green work, push durable commits when allowed, update `.sandman/task.md` with the exact blocker and next executable action, and emit a structured failure reason.
     
     ### Hard Ban
     
