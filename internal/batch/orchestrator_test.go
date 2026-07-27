@@ -10906,6 +10906,65 @@ func TestRunBatch_CallsRestoreHostPathsAfterSuccessfulRun(t *testing.T) {
 	}
 }
 
+func TestRunBatch_RestoresHostPathsBeforeSuccessfulReconcile(t *testing.T) {
+	branch := "42-fix-bug"
+	_, repoPath, worktreePath, _ := stageReconcileWorktree(t, branch, "")
+	gitFile := filepath.Join(worktreePath, ".git")
+	hostGitFile, err := os.ReadFile(gitFile)
+	if err != nil {
+		t.Fatalf("read worktree .git file: %v", err)
+	}
+	containerGitFile := strings.Replace(string(hostGitFile), repoPath, "/workspace", 1)
+	if containerGitFile == string(hostGitFile) {
+		t.Fatalf("worktree .git file does not contain repo path %q", repoPath)
+	}
+	if err := os.WriteFile(gitFile, []byte(containerGitFile), 0644); err != nil {
+		t.Fatalf("write container worktree .git file: %v", err)
+	}
+
+	sb := &fakeSandbox{
+		workDir:  worktreePath,
+		repoPath: repoPath,
+		restoreHostPathsFunc: func() error {
+			return os.WriteFile(gitFile, hostGitFile, 0644)
+		},
+	}
+	var errorBuf bytes.Buffer
+	o := NewOrchestrator(
+		&fakeGitHubClient{
+			issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}},
+			prs:    map[string]*github.PR{branch: mergedPR(branch, "")},
+		},
+		&noopRenderer{},
+		&fakeConfigStore{config: &config.Config{
+			Agent:       "test-agent",
+			Sandbox:     "worktree",
+			WorktreeDir: "worktrees",
+			Git:         config.GitConfig{BaseBranch: "main"},
+			AgentProviders: map[string]config.Agent{
+				"test-agent": {Command: "true"},
+			},
+		}},
+		nil,
+		WithSandboxFactory(&fakeSandboxFactory{sandbox: sb}),
+		WithErrorLog(&errorBuf),
+	)
+
+	result, err := o.RunBatch(context.Background(), Request{Issues: []int{42}})
+	if err != nil {
+		t.Fatalf("RunBatch: %v", err)
+	}
+	if len(result.Runs) != 1 || result.Runs[0].Status != "success" {
+		t.Fatalf("run result = %#v, want one successful run", result.Runs)
+	}
+	if strings.Contains(errorBuf.String(), "not a valid git directory") {
+		t.Fatalf("reconcile ran before host paths were restored:\n%s", errorBuf.String())
+	}
+	if !sandbox.IsGitDir(worktreePath) {
+		t.Fatal("worktree is not host-visible after run")
+	}
+}
+
 func TestOrchestrator_ResetRetryBranch_Command(t *testing.T) {
 	ctx := context.Background()
 	sb := &fakeSandbox{}
