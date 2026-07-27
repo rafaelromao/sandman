@@ -165,8 +165,19 @@ func allowlistedSkillCommunication(path, text string, loc []int) bool {
 		lineEnd += loc[1]
 	}
 	line := strings.ToLower(text[lineStart:lineEnd])
-	return strings.Contains(line, "reviewer") && strings.Contains(line, "{{review_command}}") &&
-		!strings.Contains(line, "user") && !strings.Contains(line, "operator")
+	if strings.Contains(line, "user") || strings.Contains(line, "operator") || !strings.Contains(line, "{{review_command}}") {
+		return false
+	}
+	for _, phrase := range []string{
+		"asking the reviewer to clarify",
+		"ask the reviewer to clarify",
+		"reviewer-directed clarification",
+	} {
+		if strings.Contains(line, phrase) {
+			return true
+		}
+	}
+	return false
 }
 
 func TestSkills_DirectiveAllowlistIsReviewerScoped(t *testing.T) {
@@ -179,7 +190,7 @@ func TestSkills_DirectiveAllowlistIsReviewerScoped(t *testing.T) {
 		{
 			name: "reviewer clarification",
 			path: "pr-review/SKILL.md",
-			text: "ask for clarification from the reviewer with {{REVIEW_COMMAND}}",
+			text: "ask the reviewer to clarify with {{REVIEW_COMMAND}}",
 			want: true,
 		},
 		{
@@ -198,7 +209,8 @@ func TestSkills_DirectiveAllowlistIsReviewerScoped(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			loc := []int{strings.Index(tc.text, "clarification"), strings.Index(tc.text, "clarification") + len("clarification")}
+			start := strings.Index(strings.ToLower(tc.text), "clarif")
+			loc := []int{start, start + len("clarif")}
 			if got := allowlistedSkillCommunication(tc.path, tc.text, loc); got != tc.want {
 				t.Fatalf("allowlistedSkillCommunication() = %t, want %t", got, tc.want)
 			}
@@ -246,11 +258,13 @@ func TestSkills_AutonomousRecoveryLaddersRemainExplicit(t *testing.T) {
 	files := readSkillMarkdown(t)
 	checks := map[string][]string{
 		"implement/SKILL.md": {
+			".sandman/task.md",
 			"structured blocker",
 			"next executable action",
 			"the next run continues from the durable blocker",
 		},
 		"back-merge/SKILL.md": {
+			".sandman/task.md",
 			"preserve it, inspect the status and diff",
 			"record the exact blocker and next executable action",
 		},
@@ -260,8 +274,10 @@ func TestSkills_AutonomousRecoveryLaddersRemainExplicit(t *testing.T) {
 			"no spec available",
 		},
 		"pr-review/SKILL.md": {
+			".sandman/task.md",
 			"reviewer-directed clarification",
 			"Total polling budget: **900s = 15 minutes**",
+			"REVIEW_TIMEOUT",
 			"max 10 passes",
 		},
 	}

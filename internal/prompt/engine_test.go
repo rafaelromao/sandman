@@ -59,7 +59,9 @@ func TestDefaultPrompt_AFKContractDefinesAutonomousFallback(t *testing.T) {
 	for _, phrase := range []string{
 		"Skill stop/report language never authorizes an operator question",
 		"bounded retry",
+		"at most 3 retries when no budget is documented",
 		"after the bounded retry budget is exhausted",
+		"at most 3 retries when no budget is documented",
 		"documented remote or alternative execution path",
 		"workflow-dispatch or remote CI alternative",
 		"dispatch it and poll its result",

@@ -30,7 +30,7 @@ If `git merge-base --is-ancestor` succeeds, the current branch already contains 
 ## Workflow
 
 1. Confirm you are on the intended feature branch, not the base branch.
-2. Check `git status --short`. If the worktree is dirty, preserve it, inspect the status and diff, record the exact blocker and next executable action in `.sandman/task.md` or the run log, and return without merging.
+2. Check `git status --short`. If the worktree is dirty, preserve it, inspect the status and diff, record the exact blocker and next executable action in `.sandman/task.md` and the run log, and return without merging.
 3. Run `git fetch origin`.
 4. Check whether the merge is already present:
    `git merge-base --is-ancestor "origin/<base-branch>" HEAD`

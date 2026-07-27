@@ -178,7 +178,7 @@ A reviewer response is **any** of:
 **Self-check (after every poll, before classifying):**
 If `top > 0` AND `reviews == 0` AND `inline == 0`, AND no previous `{{REVIEW_COMMAND}}` is already pending without response, post a follow-up comment with `{{REVIEW_COMMAND}}` plus a freeform clarification request. If a request is already pending, skip — do not pile on.
 
-If no reviewer response arrives within 15 minutes, stop and exit the loop with a `REVIEW_TIMEOUT` reason documented in the run log so the failure is visible in the run history.
+If no reviewer response arrives within 15 minutes, stop and exit the loop with a `REVIEW_TIMEOUT` reason documented in `.sandman/task.md` and the run log so the failure and next executable action are durable.
 
 #### Step 5a: DIRTY handling — every poll iteration
 
@@ -190,7 +190,7 @@ On **every** poll iteration, after running the three commands above, inspect the
 2. Load `sandman-back-merge` (see the `sandman-back-merge` skill). Run it on the current branch. It performs the disciplined 3-way merge of the base branch into the working branch and resolves conflicts without history rewrites.
 3. If back-merge succeeds, push the updated branch with `git push`. Update `.sandman/state/<N>.head_sha` with the new head SHA so Step 3's stale-request check sees the new commit and re-evaluates.
 4. Restart polling from Step 1 — a fresh CI run will be triggered by the push, and the review agent may have already posted feedback on the prior SHA that the polling loop should classify on the next pass.
-5. If back-merge fails to resolve conflicts (e.g. semantic conflict, merge helper rejected a hunk), exit the loop with a distinct `REVIEW_CONFLICT_UNRESOLVED` reason in the run log. This is **never** a `REVIEW_TIMEOUT`. It is also **never** a silent success — the PR remains unmergeable and a future run must continue from this state.
+5. If back-merge fails to resolve conflicts (e.g. semantic conflict, merge helper rejected a hunk), exit the loop with a distinct `REVIEW_CONFLICT_UNRESOLVED` reason in `.sandman/task.md` and the run log. This is **never** a `REVIEW_TIMEOUT`. It is also **never** a silent success — the PR remains unmergeable and a future run must continue from this state.
 
 **Hard rule — DIRTY is not REVIEW_TIMEOUT.** A DIRTY PR that back-merge cannot resolve is a structured failure with a downstream signal in the run payload. Do not collapse it into the generic review-timeout bucket: the two failures have different remediation paths and different downstream tooling.
 
@@ -276,7 +276,7 @@ If an inline comment ID appears in 3+ consecutive passes without resolution, tre
 Stop only when:
 - Formal approval (A or C) — the **only** condition that completes the PR-Review phase. "Exhausted after 10 passes" or any other non-approval signal is **never** a reason to mark PR-Review complete; only Approval is.
 - An explicit skill-defined irrecoverable condition prevents further autonomous progress
-- Max 10 passes reached with unresolved blockers AND no new commit has landed on the PR branch since the last `{{REVIEW_COMMAND}}` post (i.e., the prior exhausted budget is still on the latest SHA). This ends the loop with a `REVIEW_TIMEOUT`, not a completion — the run-level checklist item stays unchecked until Approval is observed.
+- Max 10 passes reached with unresolved blockers AND no new commit has landed on the PR branch since the last `{{REVIEW_COMMAND}}` post (i.e., the prior exhausted budget is still on the latest SHA). This ends the loop with a `REVIEW_TIMEOUT` documented in `.sandman/task.md` and the run log, not a completion — the run-level checklist item stays unchecked until Approval is observed.
 - **`REVIEW_CONFLICT_UNRESOLVED` — back-merge failed to resolve a DIRTY PR; not a `REVIEW_TIMEOUT`, never silent**
 
 Continue polling when:
