@@ -230,7 +230,7 @@ func TestReleaseWorkflowUsesCredentialThatTriggersReleasePRChecks(t *testing.T) 
 func TestReleaseValidationWorkflowsRunOnlyForReleasePleaseBranch(t *testing.T) {
 	for _, path := range []string{
 		"../.github/workflows/full-regression-linux.yml",
-		"../.github/workflows/full-regression-macos.yml",
+		"../.github/workflows/macos-compatibility.yml",
 	} {
 		workflow := readRepositoryFile(t, path)
 		for _, required := range []string{
@@ -256,7 +256,7 @@ func TestReleaseValidationWorkflowsRunOnlyForReleasePleaseBranch(t *testing.T) {
 }
 
 func TestMacOSCompatibilityExercisesNativeBoundariesOnIntelRunner(t *testing.T) {
-	workflow := readRepositoryFile(t, "../.github/workflows/full-regression-macos.yml")
+	workflow := readRepositoryFile(t, "../.github/workflows/macos-compatibility.yml")
 
 	for _, required := range []string{
 		"name: macOS Compatibility",
@@ -321,7 +321,7 @@ func extractGoFunction(t *testing.T, source, name string) (string, int) {
 }
 
 func TestMacOSCompatibilityDoesNotDuplicateLinuxFullRegression(t *testing.T) {
-	workflow := readRepositoryFile(t, "../.github/workflows/full-regression-macos.yml")
+	workflow := readRepositoryFile(t, "../.github/workflows/macos-compatibility.yml")
 
 	for _, forbidden := range []string{
 		"Run full regression suite",
