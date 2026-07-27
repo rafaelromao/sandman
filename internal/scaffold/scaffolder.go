@@ -2205,7 +2205,7 @@ func renderElixirInstallCommand(elixirVersion, otpVersion string) string {
 
 func renderRubyInstallCommand(version string) string {
 	var out strings.Builder
-	fmt.Fprintf(&out, "RUN mise use -g --pin ruby@%s\n", version)
+	fmt.Fprintf(&out, "RUN MISE_RUBY_COMPILE=false mise use -g --pin ruby@%s\n", version)
 	out.WriteString("RUN gem install bundler\n")
 	return out.String()
 }

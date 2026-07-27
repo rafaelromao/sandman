@@ -745,7 +745,7 @@ func TestInit_RubyBuildToolsScaffoldsPinnedDockerfile(t *testing.T) {
 	if !strings.Contains(dockerfile, "# sandman ruby-version:") {
 		t.Fatalf("Dockerfile missing ruby-version metadata, got:\n%s", dockerfile)
 	}
-	if !strings.Contains(dockerfile, "RUN mise use -g --pin ruby@") {
+	if !strings.Contains(dockerfile, "RUN MISE_RUBY_COMPILE=false mise use -g --pin ruby@") {
 		t.Fatalf("Dockerfile missing pinned ruby install, got:\n%s", dockerfile)
 	}
 	if !strings.Contains(dockerfile, "RUN gem install bundler") {
@@ -809,7 +809,7 @@ func TestInit_DefaultsToRubyPresetForRubyRepo(t *testing.T) {
 	if !strings.Contains(dockerfile, "# sandman ruby-version:") {
 		t.Fatalf("Dockerfile missing ruby-version metadata, got:\n%s", dockerfile)
 	}
-	if !strings.Contains(dockerfile, "RUN mise use -g --pin ruby@") {
+	if !strings.Contains(dockerfile, "RUN MISE_RUBY_COMPILE=false mise use -g --pin ruby@") {
 		t.Fatalf("Dockerfile missing pinned ruby install, got:\n%s", dockerfile)
 	}
 	if !strings.Contains(dockerfile, "RUN gem install bundler") {

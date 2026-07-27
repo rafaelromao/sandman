@@ -2862,7 +2862,7 @@ func TestScaffold_RubyPresetResolvesRangeSelectorToCatalogPin(t *testing.T) {
 func TestScaffold_RenderRubyInstallCommand(t *testing.T) {
 	got := renderRubyInstallCommand("3.2.2")
 	for _, want := range []string{
-		"RUN mise use -g --pin ruby@3.2.2",
+		"RUN MISE_RUBY_COMPILE=false mise use -g --pin ruby@3.2.2",
 		"RUN gem install bundler",
 	} {
 		if !strings.Contains(got, want) {
@@ -3265,7 +3265,7 @@ func TestScaffold_RubyPresetWritesPinnedDockerfile(t *testing.T) {
 		"# sandman ruby-version: " + wantRubyVersion,
 		"# sandman installed-agents: opencode",
 		"FROM debian:bookworm-slim",
-		"RUN mise use -g --pin ruby@" + wantRubyVersion,
+		"RUN MISE_RUBY_COMPILE=false mise use -g --pin ruby@" + wantRubyVersion,
 		"RUN gem install bundler",
 		"RUN curl https://mise.run | MISE_VERSION=" + DefaultMISEVersion + " MISE_INSTALL_PATH=/usr/local/bin/mise sh",
 		"RUN npm install -g opencode-ai@" + DefaultBuiltInAgentVersion("opencode"),
@@ -3320,7 +3320,7 @@ func TestScaffold_RubyPresetAllAgentsGenerateFiles(t *testing.T) {
 			if !strings.Contains(content, "# sandman build-tools: ruby") {
 				t.Errorf("Dockerfile missing ruby build-tools metadata, got:\n%s", content)
 			}
-			if !strings.Contains(content, "RUN mise use -g --pin ruby@"+wantRubyVersion) {
+			if !strings.Contains(content, "RUN MISE_RUBY_COMPILE=false mise use -g --pin ruby@"+wantRubyVersion) {
 				t.Errorf("Dockerfile missing pinned ruby install %q, got:\n%s", wantRubyVersion, content)
 			}
 			if !strings.Contains(content, "RUN gem install bundler") {
