@@ -47,6 +47,19 @@ The shared Sandman skill owns the detailed workflow. This page describes the boo
 
     The registered next step is the first unchecked item in the Execution Checklist.
 
+    ## Continuation Freshness Guard
+
+    This section applies to every retry and `sandman run --continue` and overrides persisted blocker and next-action text from earlier attempts.
+
+    Before acting on any persisted blocker or next action:
+
+    1. Treat every persisted blocker and next action as historical evidence, never current truth.
+    2. Re-check its authoritative live source now: Git and worktree state, change-request state and checks, review state, authentication, required tools, or the relevant test command.
+    3. If the blocker no longer exists, remove or mark it resolved in `.sandman/task.md`, recompute `## Next Step` from current live state and the first unchecked checklist item, and continue automatically.
+    4. If the blocker still exists, refresh its evidence and next executable action before following it.
+
+    Never stop or exit solely because an earlier attempt recorded a blocker.
+
     ## Already Resolved
     
     If the issue is already implemented on `{{BASE_BRANCH}}`, after fetching and checking the current `origin/{{BASE_BRANCH}}` HEAD against the issue acceptance criteria, update `.sandman/task.md` so it contains the exact line `## Status: already resolved`.
@@ -194,6 +207,7 @@ The shared Sandman skill owns the detailed workflow. This page describes the boo
 - `Issue Context` passes the raw issue body through unchanged.
 - `Runtime Context` passes branch, base, and review metadata into the shared workflow.
 - `Execution Checklist` lists the workflow steps with their original labels (`Plan`, `Implement`, `PR-Review`, `PR-Merge`) and adds the skill-load directive in parens after each one (`Plan (Load sandman-plan)`, `Implement (Load sandman-implement: …)`, `PR-Review (Load sandman-pr-review)`, `PR-Merge (Load sandman-pr-merge)`); a follow-on paragraph pins the **Skill-loading gate** rule — each step is not considered started until the matching `Skill "sandman-<name>"` invocation is emitted in the transcript, and steps completed without the skill loaded are invalid (e.g. a `gh pr create` body composed without `sandman-implement` does not satisfy the closing-reference body requirement and is not acceptable). Preserving the original labels keeps the `Required Order` mnemonic (`Create branch, Plan, Implement, PR-Review, PR-Merge`) and the legacy `[x] PR-Review` retry reference in sync with the literal checklist items. The checklist also tells the agent to skip already-complete items and keep the registered `## Next Step` aligned with the next unchecked item.
+- `Continuation Freshness Guard` treats persisted blockers and next actions as historical evidence. Every retry revalidates them against live state, clears resolved blockers, and recomputes the next step before it may stop.
 - `Mandatory Execution Contract` forces the agent to load and obey the Sandman skill chain. Bullet 3 explicitly requires loading `sandman-implement` itself so the closing-reference body rule and the post-create verification step come from inside the skill, not from agent memory; bullet 9 (the Skill-loading gate) repeats the rule from the checklist at the contract level so the agent cannot skip it.
 - `Already Resolved` defines the terminal shortcut for issues already implemented on `{{BASE_BRANCH}}`; the agent must verify `origin/{{BASE_BRANCH}}` against the acceptance criteria, ensuring every AC has a corresponding test on `origin/{{BASE_BRANCH}}` before writing the marker.
 - `AFK Rule — Absolute` replaces human approval with subagent consensus for plan approval, and bans subagent use for PR review (must use `sandman-pr-review` skill). Self-review uses `sandman-self-review` skill.
@@ -208,4 +222,4 @@ The shared Sandman skill owns the detailed workflow. This page describes the boo
 - **Project Prompt Template**: `.sandman/prompt.md`, created from the Default Task Prompt during `sandman init` and materialized on run when missing.
 - **Sandman Skill**: the shared skill folder installed into `~/.agents/skills/sandman/` by `sandman init`.
 - **Prompt**: `.sandman/task.md`, the rendered instruction file handed to the agent.
-- **Continue replay**: `sandman run --continue` reuses the prior run's worktree identity: the existing branch, the stored base branch, the prior run id, the `.sandman/task.md` contents, and the issue mode. Tunables (agent, model, parallel, retries, sandbox, container tunables, review command) come from current CLI flags / config defaults, not from the stored payload. When no task file exists, an empty task template is used with a warning on stderr.
+- **Continue replay**: `sandman run --continue` reuses the prior run's worktree identity: the existing branch, the stored base branch, the prior run id, the `.sandman/task.md` contents, and the issue mode. The prior task contents are preserved and one canonical `Continuation Freshness Guard` is moved after all persisted state, including for task files created by older versions. Tunables (agent, model, parallel, retries, sandbox, container tunables, review command) come from current CLI flags / config defaults, not from the stored payload. When no task file exists, an empty task template is used with a warning on stderr.

@@ -103,8 +103,8 @@ func findOpenPRByBranch(ctx context.Context, client github.Client, branch string
 
 // EmptyTaskTemplate is the fallback prompt used when the task document
 // is missing (the file does not exist). The continuation prompt now passes
-// the original .sandman/task.md content verbatim, so the missing-file
-// fallback must mirror the original default-task-prompt.md layout
+// the original .sandman/task.md content with an additive freshness guard, so
+// the missing-file fallback must mirror the original default-task-prompt.md layout
 // (# Task, ## Execution Checklist, …) rather than the obsolete
 // Completed/Pending/Blockers/Key Decisions/Next Step scratchpad. The
 // embedded template carries placeholder keys like {{ISSUE_NUMBER}} that

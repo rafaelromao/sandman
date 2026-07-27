@@ -38,6 +38,19 @@ After checking off an item, update `.sandman/task.md` in place and rewrite the r
 
 The registered next step is the first unchecked item in the Execution Checklist.
 
+## Continuation Freshness Guard
+
+This section applies to every retry and `sandman run --continue` and overrides persisted blocker and next-action text from earlier attempts.
+
+Before acting on any persisted blocker or next action:
+
+1. Treat every persisted blocker and next action as historical evidence, never current truth.
+2. Re-check its authoritative live source now: Git and worktree state, change-request state and checks, review state, authentication, required tools, or the relevant test command.
+3. If the blocker no longer exists, remove or mark it resolved in `.sandman/task.md`, recompute `## Next Step` from current live state and the first unchecked checklist item, and continue automatically.
+4. If the blocker still exists, refresh its evidence and next executable action before following it.
+
+Never stop or exit solely because an earlier attempt recorded a blocker.
+
 ## Already Resolved
 
 If the issue is already implemented on `{{BASE_BRANCH}}`, after fetching and checking the current `origin/{{BASE_BRANCH}}` HEAD against the issue acceptance criteria, update `.sandman/task.md` so it contains the exact line `## Status: already resolved`.

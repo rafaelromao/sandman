@@ -750,6 +750,111 @@ func TestRunSingle_EmitsZeroRunRetryEventsOnSingleAttempt(t *testing.T) {
 	}
 }
 
+// TestRunPromptOnly_RefreshesTaskPromptOnRetry verifies that prompt-only
+// retries re-read the worktree's .sandman/task.md (which may have been
+// updated by an earlier attempt) and inject the continuation freshness
+// guard, instead of replaying the stale pre-run prompt.
+func TestRunPromptOnly_RefreshesTaskPromptOnRetry(t *testing.T) {
+	workDir := t.TempDir()
+	oldWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get wd: %v", err)
+	}
+	if err := os.Chdir(workDir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(oldWD) })
+
+	branch := "sandman/prompt-only-refresh"
+	worktreePath := filepath.Join(workDir, "worktree")
+	if err := os.MkdirAll(filepath.Join(worktreePath, ".sandman"), 0755); err != nil {
+		t.Fatalf("mkdir worktree: %v", err)
+	}
+	taskPath := filepath.Join(worktreePath, ".sandman", "task.md")
+	updatedTask := "# Task\n\n## Blockers\n\n- CI timed out.\n"
+	if err := os.WriteFile(taskPath, []byte(updatedTask), 0644); err != nil {
+		t.Fatalf("seed task.md: %v", err)
+	}
+
+	var seenPrompts []string
+	rtSandbox := &retrySandbox{workDir: worktreePath}
+
+	eventsPath := filepath.Join(t.TempDir(), "events.jsonl")
+	eventLog := &events.JSONLLogger{Path: eventsPath}
+	o := NewOrchestrator(
+		nil,
+		&retryRenderer{result: "rendered prompt"},
+		nil,
+		eventLog,
+		WithErrorLog(io.Discard),
+		WithSandboxFactory(&retrySandboxFactory{sandbox: rtSandbox}),
+		WithRunnableFactory(&recordingPromptOnlyFactory{hook: func(renderCfg prompt.RenderConfig) AgentRunResult {
+			seenPrompts = append(seenPrompts, renderCfg.TaskPrompt)
+			if len(seenPrompts) == 1 {
+				if err := os.WriteFile(taskPath, []byte(updatedTask), 0644); err != nil {
+					t.Errorf("rewrite task.md for retry: %v", err)
+				}
+				return AgentRunResult{Status: "failure", Branch: branch}
+			}
+			return AgentRunResult{Status: "success", Branch: branch}
+		}}),
+		WithRunSessionOpts(runSessionOptions{retryReset: func(ctx context.Context, sb sandbox.Sandbox, branch, baseBranch string) error {
+			return nil
+		}}),
+	)
+
+	cfg := &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}}
+	bc := BatchConfig{
+		Cfg:              cfg,
+		AgentName:        "opencode",
+		AgentCfg:         config.Agent{Command: "echo hi"},
+		IdentityResolver: noopIdentityResolver(),
+		Retries:          2,
+	}
+	row := RowSpec{
+		Mode:              ModeFresh,
+		Branches:          map[int]string{0: branch},
+		BaseBranch:        "main",
+		BatchID:           batchIDForPromptOnly("", "", "run-prompt-refresh", ""),
+		RunID:             "run-prompt-refresh",
+		UserProvidedRunID: "run-prompt-refresh",
+	}
+	result, started := o.newRunExecutor(context.Background(), bc, &retrySandboxFactory{sandbox: rtSandbox}, nil).Execute(context.Background(), row)
+	if !started {
+		t.Fatal("expected prompt-only run to start")
+	}
+	if result.Status != "success" {
+		t.Fatalf("status = %q, want success", result.Status)
+	}
+
+	if len(seenPrompts) < 2 {
+		t.Fatalf("expected at least two prompt observations, got %d", len(seenPrompts))
+	}
+	last := seenPrompts[len(seenPrompts)-1]
+	if !strings.Contains(last, "## Blockers\n\n- CI timed out.") {
+		t.Fatalf("retry prompt must preserve updated blocker text, got:\n%s", last)
+	}
+	if !strings.Contains(last, "## Continuation Freshness Guard") {
+		t.Fatalf("retry prompt must append the freshness guard, got:\n%s", last)
+	}
+}
+
+type recordingPromptOnlyFactory struct {
+	hook func(prompt.RenderConfig) AgentRunResult
+}
+
+func (f *recordingPromptOnlyFactory) NewRunnable(issue *github.Issue, branch string, sb sandbox.Sandbox) Runnable {
+	return &recordingRunnable{hook: f.hook}
+}
+
+type recordingRunnable struct {
+	hook func(prompt.RenderConfig) AgentRunResult
+}
+
+func (r *recordingRunnable) Run(ctx context.Context, renderer prompt.IssueRenderer, command string, renderCfg prompt.RenderConfig) AgentRunResult {
+	return r.hook(renderCfg)
+}
+
 // TestRunPromptOnly_EmitsRunRetryBetweenAttemptsOnFailure asserts that the
 // prompt-only retry loop emits run.retry with issue: 0 in the JSON payload,
 // matching the existing prompt-only convention for run.started/run.finished.

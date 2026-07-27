@@ -126,7 +126,7 @@ Displays each completed run with status, duration, and branch name.
 
 ## `sandman run --continue`
 
-Continue the last agent run for one or more issues. Reads the task file (`.sandman/task.md`) from each issue's worktree and passes it verbatim as the agent's resume prompt.
+Continue the last agent run for one or more issues. Reads the task file (`.sandman/task.md`) from each issue's worktree, preserves its contents, and places one canonical freshness guard after all persisted state so blockers and next actions must be revalidated against live state.
 
 ```bash
 sandman run --continue <issue-number>...

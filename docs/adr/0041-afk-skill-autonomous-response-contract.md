@@ -16,7 +16,7 @@ The AFK contract in the default task prompt has precedence over conflicting issu
 
 Each workflow uses the autonomous response ladder: continue the primary path, retry transient failures within a configured bound (at most three retries when no bound is documented), use a documented workflow-dispatch or remote alternative when a local prerequisite is unavailable, resolve ambiguity from repository evidence or a permitted subagent, and poll asynchronous gates for their documented budgets.
 
-Every terminal blocker records the exact failure and next executable action in `.sandman/task.md` and the run log. Reviewer clarification remains allowed only through the configured review command and is directed to the reviewer, not the operator.
+Every terminal blocker records the exact failure and next executable action in `.sandman/task.md` and the run log. On retry or continuation, persisted blockers and next actions are historical evidence rather than current truth: Sandman moves one canonical freshness guard after all persisted state, requiring the agent to re-check the authoritative live source, clear resolved blockers, and recompute the next step before acting or stopping. Reviewer clarification remains allowed only through the configured review command and is directed to the reviewer, not the operator.
 
 ## Consequences
 
@@ -24,6 +24,7 @@ Every terminal blocker records the exact failure and next executable action in `
 
 - AFK runs can continue through recoverable ambiguity and missing local prerequisites without consuming retries on operator questions.
 - Terminal failures remain resumable because the blocker and next action are durable.
+- Resumed runs cannot stop solely on a stale blocker from an earlier attempt; old task files receive the same freshness guard at the continuation boundary.
 - Static skill hygiene tests and prompt synchronization tests prevent the embedded and installed workflow surfaces from drifting back to interactive behavior.
 
 ### Negative

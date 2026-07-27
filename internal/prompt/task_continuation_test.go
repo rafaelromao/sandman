@@ -9,7 +9,7 @@ import (
 // --continue invariant: when an issue's .sandman/task.md was originally
 // rendered from default-task-prompt.md (and therefore starts with "# Task"
 // and contains ## Issue Context, ## Runtime Context, and ## Execution
-// Checklist), the resume prompt must be the file's verbatim content. The
+// Checklist), the resume prompt must preserve the file's verbatim content. The
 // earlier round-trip through ParseTask → BuildTaskPrompt rewrote the file
 // into a different scaffold (## Completed / ## Pending / ## Blockers /
 // ## Key Decisions / ## Next Step), destroying the user-facing Execution
@@ -47,16 +47,18 @@ After completing each item, update '.sandman/task.md' in place by checking that 
 
 	got := ContinuationTaskPrompt(original)
 
-	if got != original {
-		t.Fatalf("expected continuation prompt to be the verbatim task.md content, got a rewritten scaffold.\n\n--- diff (first 40 lines) ---\nwant:\n%s\n\ngot:\n%s", firstLines(original, 40), firstLines(got, 40))
+	if !strings.HasPrefix(got, original) {
+		t.Fatalf("expected continuation prompt to preserve the verbatim task.md content before the freshness guard.\n\n--- diff (first 40 lines) ---\nwant prefix:\n%s\n\ngot:\n%s", firstLines(original, 40), firstLines(got, 40))
+	}
+	if !strings.Contains(got, "## Continuation Freshness Guard") {
+		t.Fatalf("expected continuation prompt to append the mandatory freshness guard, got:\n%s", got)
 	}
 }
 
-// TestContinuationTaskPrompt_PreservesBlockersSection verifies that
-// ContinuationTaskPrompt does NOT strip ## Blockers sections from the
-// content. No Sandman skill writes a ## Blockers section to task.md, so
-// stripping is unnecessary and the content should be returned verbatim.
-func TestContinuationTaskPrompt_PreservesBlockersSection(t *testing.T) {
+// TestContinuationTaskPrompt_RevalidatesPreservedBlockers verifies that a
+// historical blocker remains available as evidence but cannot be mistaken for
+// current state on a later retry.
+func TestContinuationTaskPrompt_RevalidatesPreservedBlockers(t *testing.T) {
 	withBlockers := `# Task
 
 Implement GitHub issue #1193.
@@ -86,6 +88,74 @@ Wait for CI to be green.
 	}
 	if !strings.Contains(got, "## Execution Checklist") {
 		t.Fatalf("expected continuation prompt to preserve ## Execution Checklist, got:\n%s", got)
+	}
+	for _, phrase := range []string{
+		"Treat every persisted blocker and next action as historical evidence",
+		"Re-check its authoritative live source",
+		"Never stop or exit solely because an earlier attempt recorded a blocker",
+	} {
+		if !strings.Contains(got, phrase) {
+			t.Errorf("expected continuation freshness rule %q, got:\n%s", phrase, got)
+		}
+	}
+	if blocker, guard := strings.Index(got, "## Blockers"), strings.Index(got, "## Continuation Freshness Guard"); guard <= blocker {
+		t.Fatalf("freshness guard must follow persisted blockers so it overrides stale next actions: blocker=%d guard=%d", blocker, guard)
+	}
+}
+
+func TestContinuationTaskPrompt_DoesNotDuplicateFreshnessGuard(t *testing.T) {
+	once := ContinuationTaskPrompt("# Task\n\n## Blockers\n\n- CI timed out.\n")
+	twice := ContinuationTaskPrompt(once)
+
+	if twice != once {
+		t.Fatalf("expected freshness guard injection to be idempotent\nonce:\n%s\ntwice:\n%s", once, twice)
+	}
+	if got := strings.Count(twice, "## Continuation Freshness Guard"); got != 1 {
+		t.Fatalf("freshness guard count = %d, want 1", got)
+	}
+}
+
+func TestContinuationTaskPrompt_MovesFreshnessGuardAfterLaterBlocker(t *testing.T) {
+	prior := ContinuationTaskPrompt("# Task\n\n## Next Step\n\nRun tests.\n")
+	prior += "\n## Blockers\n\n- CI timed out.\n\n## Next Step\n\nStop because CI timed out.\n"
+
+	got := ContinuationTaskPrompt(prior)
+
+	if count := strings.Count(got, "## Continuation Freshness Guard"); count != 1 {
+		t.Fatalf("freshness guard count = %d, want 1", count)
+	}
+	if blocker, guard := strings.LastIndex(got, "## Blockers"), strings.LastIndex(got, "## Continuation Freshness Guard"); guard <= blocker {
+		t.Fatalf("freshness guard must be moved after later blockers: blocker=%d guard=%d\n%s", blocker, guard, got)
+	}
+}
+
+func TestContinuationTaskPrompt_PreservesArbitraryH2AfterGuard(t *testing.T) {
+	task := "# Task\n\n## Blockers\n\n- CI timed out.\n\n## Custom Section\n\nPersisted note.\n"
+	got := ContinuationTaskPrompt(ContinuationTaskPrompt(task))
+
+	if !strings.Contains(got, "## Custom Section\n\nPersisted note.") {
+		t.Fatalf("expected ## Custom Section preserved verbatim, got:\n%s", got)
+	}
+}
+
+func TestContinuationTaskPrompt_PreservesH1AndH3Content(t *testing.T) {
+	task := "# Task\n\n### Subheading\n\nKeep me.\n\n## Blockers\n\n- stale\n"
+	got := ContinuationTaskPrompt(ContinuationTaskPrompt(task))
+
+	if !strings.Contains(got, "### Subheading\n\nKeep me.") {
+		t.Fatalf("expected H3 content preserved verbatim, got:\n%s", got)
+	}
+}
+
+func TestContinuationTaskPrompt_DetectsContinuedGuardWithExtraTrailingText(t *testing.T) {
+	prior := ContinuationTaskPrompt("# Task\n\n## Blockers\n\n- stale\n") + "\n## Continuation Freshness Guard\nOld copy.\n"
+	got := ContinuationTaskPrompt(prior)
+
+	if strings.Contains(got, "Old copy.") {
+		t.Fatalf("expected canonical guard to replace a stale copy, got:\n%s", got)
+	}
+	if !strings.Contains(got, "Treat every persisted blocker and next action as historical evidence") {
+		t.Fatalf("expected canonical guard body, got:\n%s", got)
 	}
 }
 

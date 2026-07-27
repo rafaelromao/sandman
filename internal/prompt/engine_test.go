@@ -84,6 +84,21 @@ func TestDefaultPrompt_AFKContractDefinesAutonomousFallback(t *testing.T) {
 	}
 }
 
+func TestDefaultPrompt_RequiresPersistedBlockerRevalidation(t *testing.T) {
+	prompt := DefaultPrompt()
+	for _, phrase := range []string{
+		"## Continuation Freshness Guard",
+		"Treat every persisted blocker and next action as historical evidence",
+		"Re-check its authoritative live source",
+		"remove or mark it resolved",
+		"Never stop or exit solely because an earlier attempt recorded a blocker",
+	} {
+		if !strings.Contains(prompt, phrase) {
+			t.Errorf("default prompt must contain continuation freshness rule %q", phrase)
+		}
+	}
+}
+
 func TestRender_MissingLocalPrerequisiteUsesDocumentedAlternative(t *testing.T) {
 	const issueBody = "The browser gate requires Docker; repository docs define a workflow-dispatch fallback."
 

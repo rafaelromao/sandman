@@ -2792,9 +2792,9 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 			}
 			taskPath := filepath.Join(wt.WorkDir(), ".sandman", "task.md")
 			openPR, prLookupErr := findOpenPRByBranch(ctx, s.deps.githubClient, branch)
-			// Always pass the task content verbatim (or empty template if
-			// missing). The agent reads its next instruction from the task
-			// document's ## Next Step field directly. The openPR value is only
+			// Preserve the task content (or use the empty template if missing)
+			// and place the continuation freshness guard after persisted state. The agent
+			// revalidates the task document's ## Next Step against live state. The openPR value is only
 			// used below to decide whether to reset the branch — the agent
 			// receives the same task content regardless of open-PR state.
 			taskContent, taskExists, err := ReadTaskContent(taskPath)
@@ -3168,7 +3168,21 @@ func (s *runSession) executePromptOnly(ctx context.Context) (AgentRunResult, boo
 				}
 			}
 		}
-		return s.renderCfg, nil
+		attemptCfg := s.renderCfg
+		if s.mode == ModeContinue || attempt > 0 {
+			taskPath := filepath.Join(wt.WorkDir(), ".sandman", "task.md")
+			taskContent, taskExists, err := ReadTaskContent(taskPath)
+			if err != nil {
+				fmt.Fprintf(s.deps.errorLog, "error: read prompt-only task for continuation: %v\n", err)
+			} else if taskExists || taskContent != "" {
+				if taskContent == "" {
+					taskContent = EmptyTaskTemplate
+				}
+				attemptCfg.TaskPrompt = prompt.ContinuationTaskPrompt(taskContent)
+				attemptCfg.RenderedPromptFile = filepath.Join(".", ".sandman", "task.md")
+			}
+		}
+		return attemptCfg, nil
 	})
 	result.Review = s.review
 	result.RunID = s.runID
