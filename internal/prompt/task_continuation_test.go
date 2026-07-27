@@ -115,6 +115,39 @@ func TestContinuationTaskPrompt_DoesNotDuplicateFreshnessGuard(t *testing.T) {
 	}
 }
 
+func TestContinuationTaskPrompt_RemainsSingleAfterManyContinuations(t *testing.T) {
+	original := "# Task\n\n## Blockers\n\n- CI timed out.\n"
+	got := original
+	for i := 0; i < 5; i++ {
+		got = ContinuationTaskPrompt(got)
+	}
+
+	if count := strings.Count(got, "## Continuation Freshness Guard"); count != 1 {
+		t.Fatalf("freshness guard count = %d, want 1 after 5 continuations:\n%s", count, got)
+	}
+	if !strings.HasPrefix(got, original) {
+		t.Fatalf("task content must survive multiple continuations:\n%s", got)
+	}
+	if !strings.Contains(got, "## Blockers\n\n- CI timed out.") {
+		t.Fatalf("blocker text must survive multiple continuations:\n%s", got)
+	}
+}
+
+func TestContinuationTaskPrompt_DoesNotDuplicateWhenAlreadyInInput(t *testing.T) {
+	withGuard := "# Task\n\n## Continuation Freshness Guard\n\nCustom body.\n"
+	got := ContinuationTaskPrompt(withGuard)
+
+	if count := strings.Count(got, "## Continuation Freshness Guard"); count != 1 {
+		t.Fatalf("freshness guard count = %d, want 1 (input already contained the guard):\n%s", count, got)
+	}
+	if !strings.Contains(got, "Treat every persisted blocker and next action as historical evidence") {
+		t.Fatalf("canonical guard body must replace the stale custom copy:\n%s", got)
+	}
+	if strings.Contains(got, "Custom body.") {
+		t.Fatalf("stale guard body must be removed:\n%s", got)
+	}
+}
+
 func TestContinuationTaskPrompt_MovesFreshnessGuardAfterLaterBlocker(t *testing.T) {
 	prior := ContinuationTaskPrompt("# Task\n\n## Next Step\n\nRun tests.\n")
 	prior += "\n## Blockers\n\n- CI timed out.\n\n## Next Step\n\nStop because CI timed out.\n"
