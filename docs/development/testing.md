@@ -29,7 +29,7 @@ The ordinary `CI` workflow runs the default untagged suite on Linux and macOS. I
 Release Please branch updates add two release-validation workflows:
 
 - `Full Regression - Linux` is the exhaustive authority. It runs the race-enabled unit suite, every smoke provider and build-tools preset, and every E2E gate including real-agent coverage with the canonical 60- and 90-minute budgets.
-- `macOS Compatibility` is a focused Intel macOS suite. It builds and runs Sandman natively, exercises Darwin socket paths plus portal and attach streaming, and verifies a native `sandman run --sandbox podman` boundary with deterministic fake GitHub and agent fixtures. Linux-container preset portability remains covered by the Linux workflow rather than being rebuilt inside the macOS Podman VM.
+- `macOS Compatibility` is a focused Intel macOS suite. It builds and runs Sandman natively, exercises Darwin socket paths plus portal and attach streaming, and verifies the native portal and attach streaming boundary through two hermetic portal E2E cases. Linux-container preset portability remains covered by the Linux workflow rather than being rebuilt inside the macOS Podman VM.
 
 ## Smoke tests
 
