@@ -276,10 +276,11 @@ func TestSkills_AutonomousRecoveryLaddersRemainExplicit(t *testing.T) {
 		"pr-review/SKILL.md": {
 			".sandman/task.md",
 			"reviewer-directed clarification",
-			"60-minute budget per PR head SHA",
-			"at most 3 fix-and-push attempts",
+			"60-minute budget per `sandman-pr-review` invocation",
+			"at most 3 fix-and-push attempts in total",
 			"ci_deadline",
 			"ci_fix_attempts",
+			"not reset by agent-authored commits",
 			"Total polling budget: **900s = 15 minutes**",
 			"review_sleep_elapsed",
 			"REVIEW_TIMEOUT",
@@ -297,6 +298,10 @@ func TestSkills_AutonomousRecoveryLaddersRemainExplicit(t *testing.T) {
 				t.Errorf("%s must retain autonomous recovery behavior %q", path, phrase)
 			}
 		}
+	}
+
+	if strings.Contains(files["pr-review/SKILL.md"], "A new head SHA starts a fresh deadline and counter") {
+		t.Error("pr-review CI remediation budget must survive agent-authored head-SHA changes")
 	}
 }
 

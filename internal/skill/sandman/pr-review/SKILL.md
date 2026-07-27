@@ -50,6 +50,13 @@ description: Automates the GitHub PR review loop with the PR Review Agent. Waits
 
 ### Iteration loop (max 10 passes)
 
+Initialize the CI remediation budget once before entering this loop. It is scoped to this `sandman-pr-review` invocation and is not reset by agent-authored commits, pushes, head-SHA changes, or repeated passes:
+
+```bash
+ci_deadline=$(( $(date +%s) + 3600 ))
+ci_fix_attempts=0
+```
+
 #### Step 1: Get current PR state
 
 ```bash
@@ -62,16 +69,9 @@ comments=$(echo "$pr_data" | jq -r '.comments')
 
 #### Step 2: Wait for CI to pass
 
-The CI wait has a 60-minute budget per PR head SHA. A failed check gets at most 3 fix-and-push attempts for that SHA; after the budget or attempts are exhausted, record `CI_TIMEOUT` or `CI_FAILURE_UNRESOLVED` in `.sandman/task.md` and the run log with the exact failure and next executable action, then leave the PR open for the next run.
+The CI wait has a 60-minute budget per `sandman-pr-review` invocation. Failed checks get at most 3 fix-and-push attempts in total during that invocation; after the budget or attempts are exhausted, record `CI_TIMEOUT` or `CI_FAILURE_UNRESOLVED` in `.sandman/task.md` and the run log with the exact failure and next executable action, then leave the PR open for the next run.
 
-Enforce those limits in the polling loop with a deadline and attempt counter:
-
-```bash
-ci_deadline=$(( $(date +%s) + 3600 ))
-ci_fix_attempts=0
-```
-
-Before each CI poll, compare the current time with `ci_deadline`. On a failed check, if `ci_fix_attempts` is already 3, record `CI_FAILURE_UNRESOLVED` and exit the review attempt; otherwise increment `ci_fix_attempts` before applying the fix and pushing. When the deadline is reached, record `CI_TIMEOUT` and exit the review attempt. A new head SHA starts a fresh deadline and counter.
+Before each CI poll, compare the current time with `ci_deadline`. On a failed check, if `ci_fix_attempts` is already 3, record `CI_FAILURE_UNRESOLVED` and exit the review attempt; otherwise increment `ci_fix_attempts` before applying the fix and pushing. When the deadline is reached, record `CI_TIMEOUT` and exit the review attempt. Preserve both values across every agent-authored fix push and head-SHA change; only a new `sandman-pr-review` invocation starts a fresh budget.
 
 > **Prerequisite**: `gh` ≥ 2.0 (released 2021) for `gh pr checks --json ... --jq`. Verify with `gh --version | awk '{print $1, $3}'` before relying on the loop. On older `gh` the `--json` flag is unknown; fall back to plain `gh pr checks <N> --repo <owner/repo>` and parse the first column instead.
 
