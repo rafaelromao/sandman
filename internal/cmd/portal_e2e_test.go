@@ -312,10 +312,6 @@ func TestPortal_E2E_MixedBatchShowsBatchMembershipAndFiltersSiblingLogs(t *testi
 }
 
 func TestPortal_E2E_AbortReturns404ForUnknownRun(t *testing.T) {
-	// CI: STALE — abort path uses worktree sandbox; platform support gate below is the real guard.
-	if os.Getenv("CI") != "" {
-		t.Skip("skip e2e in CI")
-	}
 	if !portalAbortSupported() {
 		t.Skip("skip abort e2e on unsupported platform")
 	}

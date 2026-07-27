@@ -289,6 +289,35 @@ func TestMacOSCompatibilityExercisesNativeBoundariesOnIntelRunner(t *testing.T) 
 		buildNative > socketTests || socketTests > portalE2E || portalE2E > abortE2E {
 		t.Fatal("macOS compatibility workflow must build Sandman before running native socket and portal boundary tests")
 	}
+
+	portalE2ETests := readRepositoryFile(t, "../internal/cmd/portal_e2e_test.go")
+	for _, funcName := range []string{
+		"TestPortal_E2E_TwoLiveRuns",
+		"TestPortal_E2E_AbortReturns404ForUnknownRun",
+	} {
+		body, start := extractGoFunction(t, portalE2ETests, funcName)
+		if start == -1 {
+			t.Fatalf("macOS compatibility contract requires %s in portal_e2e_test.go", funcName)
+		}
+		if strings.Contains(body, `t.Skip("skip e2e in CI")`) || strings.Contains(body, `t.Skip("no container runtime available in CI")`) {
+			t.Errorf("%s must not self-skip on CI; it is one of the hermetic cases the macOS Compatibility suite must run", funcName)
+		}
+	}
+}
+
+func extractGoFunction(t *testing.T, source, name string) (string, int) {
+	t.Helper()
+	header := "func " + name + "("
+	start := strings.Index(source, header)
+	if start == -1 {
+		return "", -1
+	}
+	body := source[start:]
+	next := strings.Index(body, "\nfunc ")
+	if next == -1 {
+		return body, start
+	}
+	return body[:next], start
 }
 
 func TestMacOSCompatibilityDoesNotDuplicateLinuxFullRegression(t *testing.T) {
