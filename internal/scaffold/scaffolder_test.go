@@ -2940,7 +2940,7 @@ func TestScaffold_DeriveErlangOTPFromElixirVersion(t *testing.T) {
 func TestScaffold_RenderElixirInstallCommand(t *testing.T) {
 	got := renderElixirInstallCommand("1.18.4-otp-28", "28")
 	for _, want := range []string{
-		"RUN KERL_CONFIGURE_OPTIONS=--disable-jit mise use -g --pin erlang@28",
+		"RUN ImageOS=ubuntu22 MISE_ERLANG_COMPILE=false mise use -g --pin erlang@28",
 		"RUN mise use -g --pin elixir@1.18.4-otp-28",
 		"mix local.rebar --force",
 		"mix local.hex --force",
@@ -2987,7 +2987,7 @@ func TestScaffold_ElixirPresetWritesPinnedDockerfile(t *testing.T) {
 		// Erlang/OTP compilation requires libncurses-dev; without it
 		// `mise use -g erlang` fails with "No curses library functions found".
 		"libncurses-dev",
-		"RUN KERL_CONFIGURE_OPTIONS=--disable-jit mise use -g --pin erlang@" + wantOTP,
+		"RUN ImageOS=ubuntu22 MISE_ERLANG_COMPILE=false mise use -g --pin erlang@" + wantOTP,
 		"RUN mise use -g --pin elixir@" + wantElixirVersion,
 		"RUN mix local.hex --force",
 		"RUN mix local.rebar --force",
@@ -3048,7 +3048,7 @@ func TestScaffold_ElixirPresetAllAgentsGenerateFiles(t *testing.T) {
 			if !strings.Contains(content, "# sandman build-tools: elixir") {
 				t.Errorf("Dockerfile missing elixir build-tools metadata, got:\n%s", content)
 			}
-			if !strings.Contains(content, "RUN KERL_CONFIGURE_OPTIONS=--disable-jit mise use -g --pin erlang@"+wantOTP) {
+			if !strings.Contains(content, "RUN ImageOS=ubuntu22 MISE_ERLANG_COMPILE=false mise use -g --pin erlang@"+wantOTP) {
 				t.Errorf("Dockerfile missing pinned erlang install %q, got:\n%s", wantOTP, content)
 			}
 			if !strings.Contains(content, "RUN mise use -g --pin elixir@"+wantElixirVersion) {

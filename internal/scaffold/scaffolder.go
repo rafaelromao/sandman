@@ -2192,10 +2192,11 @@ func deriveErlangOTPFromElixir(version string) (string, error) {
 // erlang + elixir via mise and installing the mainstream companion
 // tooling (hex, rebar3). The elixir line uses the full pinned string
 // (which keeps the `-otp-<NN>` suffix so the mise shim is unambiguous).
-// Disabling the optional JIT keeps Erlang builds portable across virtual CPUs.
+// Debian 12 can run the Ubuntu 22 build because its glibc is newer. Avoiding a
+// source build also keeps Erlang installation reliable on virtual CPUs.
 func renderElixirInstallCommand(elixirVersion, otpVersion string) string {
 	var out strings.Builder
-	fmt.Fprintf(&out, "RUN KERL_CONFIGURE_OPTIONS=--disable-jit mise use -g --pin erlang@%s\n", otpVersion)
+	fmt.Fprintf(&out, "RUN ImageOS=ubuntu22 MISE_ERLANG_COMPILE=false mise use -g --pin erlang@%s\n", otpVersion)
 	fmt.Fprintf(&out, "RUN mise use -g --pin elixir@%s\n", elixirVersion)
 	out.WriteString("RUN mix local.hex --force\n")
 	out.WriteString("RUN mix local.rebar --force\n")
