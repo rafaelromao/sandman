@@ -331,10 +331,26 @@ func TestMacOSFullRegressionPreservesAllRegressionCommands(t *testing.T) {
 		`go test -race -v ./...`,
 		`SANDMAN_TEST_PROVIDERS=all SANDMAN_RUN_SMOKE_E2E=1 go test -tags smoke -timeout 60m ./internal/cmd -run Smoke`,
 		`SANDMAN_RUN_AGENT_E2E=1 SANDMAN_TEST_PROVIDERS=all SANDMAN_E2E_GATES=all go test -tags e2e -timeout 90m \$(go list ./... | grep -v '/internal/cmd$')`,
-		`SANDMAN_RUN_AGENT_E2E=1 SANDMAN_TEST_PROVIDERS=all SANDMAN_E2E_GATES=all go test -v -tags e2e -timeout 90m ./internal/cmd`,
+		`SANDMAN_RUN_AGENT_E2E=1 SANDMAN_TEST_PROVIDERS=all SANDMAN_E2E_GATES=all go test -v -tags e2e -timeout 90m ./internal/cmd -skip 'TestPresetMatrixHarness_.*BuildsWithEditedDockerfile'`,
+		`xargs -n 1 -P 3 bash -c`,
 	} {
 		if !strings.Contains(workflow, command) {
 			t.Errorf("macOS full regression workflow missing regression command %q", command)
+		}
+	}
+	for _, testName := range []string{
+		"TestPresetMatrixHarness_GenericBuildsWithEditedDockerfile",
+		"TestPresetMatrixHarness_GoBuildsWithEditedDockerfile",
+		"TestPresetMatrixHarness_NodeBuildsWithEditedDockerfile",
+		"TestPresetMatrixHarness_DotnetBuildsWithEditedDockerfile",
+		"TestPresetMatrixHarness_ElixirBuildsWithEditedDockerfile",
+		"TestPresetMatrixHarness_RustBuildsWithEditedDockerfile",
+		"TestPresetMatrixHarness_JavaBuildsWithEditedDockerfile",
+		"TestPresetMatrixHarness_RubyBuildsWithEditedDockerfile",
+		"TestPresetMatrixHarness_PythonBuildsWithEditedDockerfile",
+	} {
+		if !strings.Contains(workflow, testName) {
+			t.Errorf("macOS full regression workflow missing preset build %q", testName)
 		}
 	}
 }
