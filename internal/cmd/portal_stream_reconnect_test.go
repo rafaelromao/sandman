@@ -205,6 +205,7 @@ function EventSource() {
     }
   });
 }
+
 vm.runInThisContext(startMatch[0] + '\n' + stopMatch[0] + '\n' + reconcileMatch[0], { filename: 'portal.html' });
 startRunStream({ key: 'review-1', kind: 'active', socketPath: '/tmp/review.sock' });
 setTimeout(function() {
@@ -213,7 +214,7 @@ setTimeout(function() {
   if (!streamSources['review-1']) throw new Error('replacement source was not retained');
   if (!streamingKeys.has('review-1')) throw new Error('replacement source was not marked as streaming');
   console.log('PASS');
-}, 20);
+}, 700);
 `
 	cmd := exec.Command("node", "-e", prefix)
 	out, err := cmd.CombinedOutput()
@@ -223,4 +224,132 @@ setTimeout(function() {
 	if !strings.Contains(string(out), "PASS") {
 		t.Fatalf("script did not emit PASS: %s", out)
 	}
+}
+
+func TestPortalStream_PermanentFailureDoesNotSpin(t *testing.T) {
+	if _, err := exec.LookPath("node"); err != nil {
+		t.Skip("node not on PATH; skipping portal stream lifecycle test")
+	}
+	_, currentFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("locate test file")
+	}
+	htmlPath := filepath.Join(filepath.Dir(currentFile), "portal.html")
+	script := `
+const fs = require('fs');
+const vm = require('vm');
+const src = fs.readFileSync(` + "`" + htmlPath + "`" + `, 'utf8');
+const startMatch = src.match(/function startRunStream\(run\) \{[\s\S]*?^\s{4}\}/m);
+const stopMatch = src.match(/function stopRunStream\(runKey\) \{[\s\S]*?^\s{4}\}/m);
+const reconcileMatch = src.match(/function reconcileRunStreams\(\) \{[\s\S]*?^\s{4}\}/m);
+if (!startMatch || !stopMatch || !reconcileMatch) throw new Error('stream lifecycle functions not found');
+let sourceCount = 0;
+const streamSources = {};
+const streamingKeys = new Set();
+const streamPath = '/api/runs/stream';
+const state = {
+  expandedRunKey: 'review-1',
+  tabs: { 'review-1': 'log' },
+  runs: [{ key: 'review-1', runId: 'review-1', kind: 'active', socketPath: '/tmp/missing.sock' }]
+};
+const loadingDetailKeys = new Set();
+const streamCoalescer = { seedKnownLines() {}, clearBuffer() {}, scheduleLine() {}, setBlocked() {}, flushPending() {} };
+function streamPreFor() { return null; }
+function findRunByIdentity(key) { return state.runs.find(function(run) { return run.key === key || run.runId === key; }) || null; }
+function isWaitStateRun() { return false; }
+function subjectRunIdentity(run) { return run ? (run.runId || run.key || '') : ''; }
+function scheduleRender() { setTimeout(reconcileRunStreams, 0); }
+function EventSource() {
+  const self = this;
+  sourceCount++;
+  this.readyState = 1;
+  this.close = function() { self.readyState = 2; };
+  Object.defineProperty(this, 'onerror', {
+    configurable: true,
+    set: function(fn) {
+      setTimeout(function() {
+        self.readyState = 2;
+        fn(new Error('permanent bridge failure'));
+      }, 0);
+    }
+  });
+}
+vm.runInThisContext(startMatch[0] + '\n' + stopMatch[0] + '\n' + reconcileMatch[0], { filename: 'portal.html' });
+startRunStream(state.runs[0]);
+setTimeout(function() {
+  if (sourceCount > 3) throw new Error('permanent SSE failure caused a reconnect spin: ' + sourceCount + ' EventSources in 100ms');
+  console.log('PASS sources=' + sourceCount);
+  process.exit(0);
+}, 100);
+`
+	cmd := exec.Command("node", "-e", script)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("script failed: %v\n%s", err, out)
+	}
+	if !strings.Contains(string(out), "PASS") {
+		t.Fatalf("script did not emit PASS: %s", out)
+	}
+	t.Logf("permanent-failure Node harness output: %s", strings.TrimSpace(string(out)))
+}
+
+func TestPortalStream_PermanentFailureDoesNotSpinInBrowser(t *testing.T) {
+	if _, err := exec.LookPath("chromium"); err != nil {
+		t.Skip("chromium-compatible browser not on PATH; skipping browser lifecycle test")
+	}
+	runID := "260727120000-abcd-42"
+	runsJSON, err := json.Marshal([]map[string]any{{
+		"key":         runID,
+		"runId":       runID,
+		"kind":        "active",
+		"status":      "running",
+		"issueLabel":  "#42",
+		"issueNumber": 42,
+		"batchKey":    runID,
+		"socketPath":  "/tmp/missing.sock",
+		"log":         "initial line",
+	}})
+	if err != nil {
+		t.Fatalf("marshal runs: %v", err)
+	}
+	stateJSON := `{"expandedRunKey":"` + runID + `","tabs":{"` + runID + `":"log"},"showArchived":false,"activeBatches":false,"sortBy":"started","sortDir":"desc"}`
+	page := buildPortalReproPage(t, stateJSON, runsJSON, `
+    window.__portalSourceCount = 0;
+    window.EventSource = function () {
+      var self = this;
+      window.__portalSourceCount += 1;
+      this.readyState = 1;
+      this.close = function () { self.readyState = 2; };
+      Object.defineProperty(this, 'onerror', {
+        configurable: true,
+        set: function (fn) {
+          setTimeout(function () {
+            self.readyState = 2;
+            fn(new Event('error'));
+          }, 0);
+        }
+      });
+    };
+    setTimeout(function () {
+      var marker = document.createElement('pre');
+      marker.id = 'portal-permanent-failure-marker';
+      marker.textContent = JSON.stringify({ sourceCount: window.__portalSourceCount });
+      document.body.appendChild(marker);
+    }, 1000);
+  `)
+	dom, _ := runPortalChromium(t, page)
+	payload := extractPortalMarker(t, dom, "portal-permanent-failure-marker")
+	var result struct {
+		SourceCount int `json:"sourceCount"`
+	}
+	if err := json.Unmarshal([]byte(payload), &result); err != nil {
+		t.Fatalf("parse browser marker: %v\nraw=%s", err, payload)
+	}
+	if result.SourceCount < 1 {
+		t.Fatalf("browser did not create an EventSource; fixture did not exercise stream setup")
+	}
+	if result.SourceCount > 3 {
+		t.Fatalf("permanent SSE failure caused a browser reconnect spin: %d EventSources in 1s", result.SourceCount)
+	}
+	t.Logf("permanent-failure browser EventSources in 1s: %d", result.SourceCount)
 }
