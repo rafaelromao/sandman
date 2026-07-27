@@ -16,9 +16,11 @@ binary installation ([#2392](https://github.com/rafaelromao/sandman/issues/2392)
    release-bearing change.
 3. Review the generated release change request. It is the authorization point
    for the next version and release notes. Release Please branch updates run the
-   exhaustive `Full Regression - Linux` suite and focused `macOS Compatibility`
-   suite. Their results appear on the release change request. Reviewers must not
-   merge a failed suite.
+   exhaustive `Full Regression - Linux` suite and the focused `Native
+   Compatibility` suite (a parallel pair: `Native Compatibility (darwin/amd64)`
+   on `macos-15-intel` and `Native Compatibility (darwin/arm64)` on
+   `macos-14`). Their results appear on the release change request. Reviewers
+   must not merge a failed suite.
 4. Release Please creates the version tag and published GitHub Release when
    the release change request is merged. The initial manifest version is
    `0.2.0`; the first prerelease is forced to exactly `v1.0.0-rc.1` and is

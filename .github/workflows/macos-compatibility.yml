@@ -1,4 +1,4 @@
-name: macOS Compatibility
+name: Native Compatibility
 
 on:
   workflow_dispatch:
@@ -9,12 +9,12 @@ permissions:
   contents: read
 
 concurrency:
-  group: macos-compatibility-${{ github.ref }}
+  group: native-compatibility-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  compatibility:
-    name: Native Compatibility (macOS Intel)
+  darwin-amd64:
+    name: Native Compatibility (darwin/amd64)
     runs-on: macos-15-intel
     timeout-minutes: 45
     env:
@@ -30,11 +30,57 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Build native Sandman
+      - name: Build native Sandman (Intel)
         run: |
           test "$(uname -m)" = "x86_64"
           test "$(go env GOOS)" = "darwin"
           test "$(go env GOARCH)" = "amd64"
+          go build -o "$RUNNER_TEMP/sandman" ./cmd/sandman
+          file "$RUNNER_TEMP/sandman"
+          "$RUNNER_TEMP/sandman" version
+
+      - name: Test native socket compatibility
+        run: |
+          go test -race -v -timeout 10m \
+            ./internal/socketpath ./internal/review ./internal/daemon ./internal/cmd \
+            -run '^(TestPath_(LongLogicalPathIsShortenedOnEveryOS|LongLogicalPathIsDeterministic)|TestDaemon_SocketPathAndSocketAddrAgreeForLongPath|TestControlSocket_StartForLongPathCreatesShortFilesystemSocket|TestCommandServer_StartUsesShortFilesystemSocketForLongPath|TestResolvePortalPeerPIDReturnsCallerPID|TestDiscoverPortalInstances_LongPathBindsAndDials|TestPortal_RunStream_BridgesControlSocketToSSE|TestAttach_(ReadsFromSocket|ExitsOnEOF|FindsLongPathReviewSock))$'
+
+      - name: Test native portal process
+        env:
+          SANDMAN_E2E_GATES: portal
+        run: |
+          go test -v -tags e2e -timeout 10m ./internal/cmd \
+            -run '^TestPortal_E2E_TwoLiveRuns$'
+
+      - name: Test native portal abort endpoint
+        env:
+          SANDMAN_E2E_GATES: portal
+        run: |
+          go test -v -tags e2e -timeout 10m ./internal/cmd \
+            -run '^TestPortal_E2E_AbortReturns404ForUnknownRun$'
+
+  darwin-arm64:
+    name: Native Compatibility (darwin/arm64)
+    runs-on: macos-14
+    timeout-minutes: 45
+    env:
+      CI: "true"
+      SANDMAN_TEST_PROVIDERS: all
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build native Sandman (Apple Silicon)
+        run: |
+          test "$(uname -m)" = "arm64"
+          test "$(go env GOOS)" = "darwin"
+          test "$(go env GOARCH)" = "arm64"
           go build -o "$RUNNER_TEMP/sandman" ./cmd/sandman
           file "$RUNNER_TEMP/sandman"
           "$RUNNER_TEMP/sandman" version
