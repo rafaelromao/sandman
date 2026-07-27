@@ -123,6 +123,183 @@ func TestSkills_NoGhCliReferencesInProse(t *testing.T) {
 	}
 }
 
+func TestSkills_NoOperatorResponseDirectives(t *testing.T) {
+	files := readSkillMarkdown(t)
+	forbidden := []struct {
+		name    string
+		pattern string
+	}{
+		{name: "operator question", pattern: `(?i)\bask (the )?user\b`},
+		{name: "operator direction request", pattern: `(?i)\bask for (direction|clarification|approval|confirmation|feedback)\b`},
+		{name: "operator response request", pattern: `(?i)\b(request|await|wait for|seek)\s+(the\s+)?(user|operator)\b`},
+		{name: "operator-dependent stop", pattern: `(?i)\b(stop|pause|wait)( and)? ask\b`},
+		{name: "operator decision gate", pattern: `(?i)\b(user|operator)'?s?\s+(approval|confirmation|clarification|direction|feedback|decision|review)\b`},
+		{name: "operator decision source", pattern: `(?i)\b(approval|confirmation|clarification|direction|feedback|decision|review)\s+from\s+(the\s+)?(user|operator)\b`},
+		{name: "operator satisfaction gate", pattern: `(?i)\buser (is )?(satisfied|confirmed|approval|confirmation|direction|clarification|feedback|review)\b`},
+		{name: "operator status report", pattern: `(?i)\b(report|tell) .* to the user\b`},
+		{name: "operator stop choice", pattern: `(?i)\bexplicit user stop\b`},
+	}
+
+	for _, rule := range forbidden {
+		re := regexp.MustCompile(rule.pattern)
+		for path, text := range files {
+			for _, loc := range re.FindAllStringIndex(text, -1) {
+				if allowlistedSkillCommunication(path, text, loc) {
+					continue
+				}
+				t.Errorf("%s contains forbidden %s %q at offset %d", path, rule.name, text[loc[0]:loc[1]], loc[0])
+			}
+		}
+	}
+}
+
+func allowlistedSkillCommunication(path, text string, loc []int) bool {
+	if path != "pr-review/SKILL.md" {
+		return false
+	}
+	lineStart := strings.LastIndex(text[:loc[0]], "\n") + 1
+	lineEnd := strings.Index(text[loc[1]:], "\n")
+	if lineEnd < 0 {
+		lineEnd = len(text)
+	} else {
+		lineEnd += loc[1]
+	}
+	line := strings.ToLower(text[lineStart:lineEnd])
+	if strings.Contains(line, "user") || strings.Contains(line, "operator") || !strings.Contains(line, "{{review_command}}") {
+		return false
+	}
+	for _, phrase := range []string{
+		"asking the reviewer to clarify",
+		"ask the reviewer to clarify",
+		"reviewer-directed clarification",
+	} {
+		if strings.Contains(line, phrase) {
+			return true
+		}
+	}
+	return false
+}
+
+func TestSkills_DirectiveAllowlistIsReviewerScoped(t *testing.T) {
+	cases := []struct {
+		name string
+		path string
+		text string
+		want bool
+	}{
+		{
+			name: "reviewer clarification",
+			path: "pr-review/SKILL.md",
+			text: "ask the reviewer to clarify with {{REVIEW_COMMAND}}",
+			want: true,
+		},
+		{
+			name: "operator clarification",
+			path: "pr-review/SKILL.md",
+			text: "ask the user for clarification with {{REVIEW_COMMAND}}",
+			want: false,
+		},
+		{
+			name: "same wording in another skill",
+			path: "implement/SKILL.md",
+			text: "ask for clarification from the reviewer with {{REVIEW_COMMAND}}",
+			want: false,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			start := strings.Index(strings.ToLower(tc.text), "clarif")
+			loc := []int{start, start + len("clarif")}
+			if got := allowlistedSkillCommunication(tc.path, tc.text, loc); got != tc.want {
+				t.Fatalf("allowlistedSkillCommunication() = %t, want %t", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestSkills_ReviewerClarificationUsesReviewCommand(t *testing.T) {
+	text, ok := readSkillMarkdown(t)["pr-review/SKILL.md"]
+	if !ok {
+		t.Fatal("expected pr-review/SKILL.md")
+	}
+	for _, phrase := range []string{
+		"reviewer to clarify",
+		"{{REVIEW_COMMAND}}",
+		"reviewer-directed",
+	} {
+		if !strings.Contains(text, phrase) {
+			t.Errorf("pr-review skill must preserve reviewer-directed clarification phrase %q", phrase)
+		}
+	}
+}
+
+func TestSkillsDocumentation_DescribesAFKWorkflow(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "..", "docs", "usage", "skills.md"))
+	if err != nil {
+		t.Fatalf("read user-facing skills documentation: %v", err)
+	}
+	text := string(data)
+	if !strings.Contains(text, "AFK") {
+		t.Fatal("user-facing skills documentation must identify the shared workflow as AFK")
+	}
+	for _, forbidden := range []string{
+		"interactive Sandman-guided session",
+		"answer questions",
+		"steer the work in real time",
+	} {
+		if strings.Contains(text, forbidden) {
+			t.Errorf("user-facing skills documentation must not advertise operator interaction %q", forbidden)
+		}
+	}
+}
+
+func TestSkills_AutonomousRecoveryLaddersRemainExplicit(t *testing.T) {
+	files := readSkillMarkdown(t)
+	checks := map[string][]string{
+		"implement/SKILL.md": {
+			".sandman/task.md",
+			"structured blocker",
+			"next executable action",
+			"the next run continues from the durable blocker",
+		},
+		"back-merge/SKILL.md": {
+			".sandman/task.md",
+			"preserve it, inspect the status and diff",
+			"record the exact blocker and next executable action",
+		},
+		"self-review/SKILL.md": {
+			"`origin/main` when available",
+			"inspect `git diff HEAD` and every untracked path",
+			"no spec available",
+		},
+		"pr-review/SKILL.md": {
+			".sandman/task.md",
+			"reviewer-directed clarification",
+			"60-minute budget per PR head SHA",
+			"at most 3 fix-and-push attempts",
+			"ci_deadline",
+			"ci_fix_attempts",
+			"Total polling budget: **900s = 15 minutes**",
+			"review_sleep_elapsed",
+			"REVIEW_TIMEOUT",
+			"max 10 passes",
+		},
+	}
+
+	for path, phrases := range checks {
+		text, ok := files[path]
+		if !ok {
+			t.Fatalf("expected %s", path)
+		}
+		for _, phrase := range phrases {
+			if !strings.Contains(text, phrase) {
+				t.Errorf("%s must retain autonomous recovery behavior %q", path, phrase)
+			}
+		}
+	}
+}
+
 func TestSkills_ImplementSkillStillReadable(t *testing.T) {
 	files := readSkillMarkdown(t)
 	const target = "implement/SKILL.md"

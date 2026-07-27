@@ -53,6 +53,77 @@ func TestDefaultTaskPrompt_DoesNotMentionDecisionMdOrRunDir(t *testing.T) {
 	}
 }
 
+func TestDefaultPrompt_AFKContractDefinesAutonomousFallback(t *testing.T) {
+	prompt := DefaultPrompt()
+
+	for _, phrase := range []string{
+		"Skill stop/report language never authorizes an operator question",
+		"bounded retry",
+		"at most 3 retries when no budget is documented",
+		"after the bounded retry budget is exhausted",
+		"at most 3 retries when no budget is documented",
+		"documented remote or alternative execution path",
+		"workflow-dispatch or remote CI alternative",
+		"dispatch it and poll its result",
+		"Before any terminal exit, checkpoint green work",
+		"structured failure reason",
+		"Terminal exits remain valid only for explicit stop conditions",
+	} {
+		if !strings.Contains(prompt, phrase) {
+			t.Errorf("AFK contract must contain %q, got:\n%s", phrase, prompt)
+		}
+	}
+
+	for _, forbidden := range []string{
+		"ask the user what should happen",
+		"what should I do?",
+	} {
+		if strings.Contains(prompt, forbidden) {
+			t.Errorf("AFK contract must not contain operator-dependent fallback %q", forbidden)
+		}
+	}
+}
+
+func TestDefaultPrompt_RequiresPersistedBlockerRevalidation(t *testing.T) {
+	prompt := DefaultPrompt()
+	for _, phrase := range []string{
+		"## Continuation Freshness Guard",
+		"Treat every persisted blocker and next action as historical evidence",
+		"Re-check its authoritative live source",
+		"remove or mark it resolved",
+		"Never stop or exit solely because an earlier attempt recorded a blocker",
+	} {
+		if !strings.Contains(prompt, phrase) {
+			t.Errorf("default prompt must contain continuation freshness rule %q", phrase)
+		}
+	}
+}
+
+func TestRender_MissingLocalPrerequisiteUsesDocumentedAlternative(t *testing.T) {
+	const issueBody = "The browser gate requires Docker; repository docs define a workflow-dispatch fallback."
+
+	result, err := (&Engine{}).Render(RenderConfig{}, IssueData{
+		Number: 2455,
+		Title:  "AFK fallback",
+		Body:   issueBody,
+	})
+	if err != nil {
+		t.Fatalf("render prompt: %v", err)
+	}
+
+	for _, phrase := range []string{
+		issueBody,
+		"after the bounded retry budget is exhausted",
+		"workflow-dispatch or remote CI alternative",
+		"dispatch it and poll its result",
+		"do not repeatedly attempt an impossible local path",
+	} {
+		if !strings.Contains(result, phrase) {
+			t.Errorf("rendered missing-prerequisite scenario must contain %q, got:\n%s", phrase, result)
+		}
+	}
+}
+
 func TestDefaultPrompt_EmbeddedPromptMatchesTemplate(t *testing.T) {
 	data, err := os.ReadFile("default-task-prompt.md")
 	if err != nil {

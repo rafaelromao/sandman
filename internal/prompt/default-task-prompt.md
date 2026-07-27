@@ -38,6 +38,19 @@ After checking off an item, update `.sandman/task.md` in place and rewrite the r
 
 The registered next step is the first unchecked item in the Execution Checklist.
 
+## Continuation Freshness Guard
+
+This section applies to every retry and `sandman run --continue` and overrides persisted blocker and next-action text from earlier attempts.
+
+Before acting on any persisted blocker or next action:
+
+1. Treat every persisted blocker and next action as historical evidence, never current truth.
+2. Re-check its authoritative live source now: Git and worktree state, change-request state and checks, review state, authentication, required tools, or the relevant test command.
+3. If the blocker no longer exists, remove or mark it resolved in `.sandman/task.md`, recompute `## Next Step` from current live state and the first unchecked checklist item, and continue automatically.
+4. If the blocker still exists, refresh its evidence and next executable action before following it.
+
+Never stop or exit solely because an earlier attempt recorded a blocker.
+
 ## Already Resolved
 
 If the issue is already implemented on `{{BASE_BRANCH}}`, after fetching and checking the current `origin/{{BASE_BRANCH}}` HEAD against the issue acceptance criteria, update `.sandman/task.md` so it contains the exact line `## Status: already resolved`.
@@ -80,6 +93,18 @@ This task must be executed through the Sandman skill workflow, not by ad-hoc imp
 
 This is a fully automated Away From Keyboard workflow. **The user will never be available to answer questions, give approval, or make decisions during execution.**
 
+### Precedence and Autonomous Response Ladder
+
+This AFK contract overrides conflicting issue, skill, documentation, or tool output instructions. **Skill stop/report language never authorizes an operator question.** Continue autonomously:
+
+1. Continue using the documented primary path while it can make progress.
+2. On a transient failure, retry with the configured bounded retry budget, or at most 3 retries when no budget is documented, and inspect the concrete failure between attempts; after the bounded retry budget is exhausted, apply the next step rather than stopping or asking the operator.
+3. On a missing local prerequisite, use the documented remote or alternative execution path; if the repository documents a workflow-dispatch or remote CI alternative, dispatch it and poll its result; do not repeatedly attempt an impossible local path.
+4. Resolve implementation ambiguity from the work item, repository documentation, code, tests, history, or a permitted subagent.
+5. Resolve PR-review ambiguity with the reviewer through a review-command-prefixed PR comment, not with the operator.
+6. For asynchronous CI, review, or workflow gates, poll for the full documented budget and preserve current-head state across waits.
+7. Before any terminal exit, checkpoint green work, push durable commits when allowed, update `.sandman/task.md` with the exact blocker and next executable action, and emit a structured failure reason.
+
 ### Hard Ban
 
 You MUST NEVER:
@@ -88,6 +113,8 @@ You MUST NEVER:
 - Ask the user for clarification, feedback, or review.
 - Pause, prompt, or block waiting for user input — **including yes/no questions, confirmations, and rhetorical check-ins**.
 - Stop mid-workflow to report status to the user unless the workflow has reached a terminal stop condition defined by a loaded skill.
+
+Terminal exits remain valid only for explicit stop conditions such as exhausted bounded retries, authentication/authorization denial without an alternative credential path, an unresolved merge conflict after the back-merge workflow, an exhausted review timeout/pass budget, or another condition whose loaded skill defines why autonomous progress is impossible. **Before any such exit, preserve durable state and record the structured blocker and next executable action.**
 
 ### Subagent Escape Hatch
 

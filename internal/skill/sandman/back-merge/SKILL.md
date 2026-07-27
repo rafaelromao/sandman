@@ -22,7 +22,7 @@ If `git merge-base --is-ancestor` succeeds, the current branch already contains 
 
 - Never rebase as part of this skill.
 - Never force-push.
-- Never merge with uncommitted or unstaged changes. Stop and ask for direction instead.
+- Never merge with uncommitted or unstaged changes. Preserve the changes, inspect the concrete state, and record a structured blocker with the next executable action instead.
 - Never use `git merge -X ours`, `git merge -X theirs`, or file-wide `--ours` / `--theirs` unless the user explicitly asks for that tradeoff.
 - Never resolve conflicts from markers alone when the behavior is non-trivial.
 - **Never run `git stash` or `git checkout` while in a merge state.** If `git status` shows "All conflicts fixed but you are still merging", running `git stash` drops `MERGE_HEAD` and aborts the merge — the subsequent `stash pop` will restore your changes as ordinary edits, producing a single-parent commit that does NOT contain the base branch. Either commit the merge or resolve it properly before switching context.
@@ -30,7 +30,7 @@ If `git merge-base --is-ancestor` succeeds, the current branch already contains 
 ## Workflow
 
 1. Confirm you are on the intended feature branch, not the base branch.
-2. Check `git status --short`. If the worktree is dirty, stop.
+2. Check `git status --short`. If the worktree is dirty, preserve it, inspect the status and diff, record the exact blocker and next executable action in `.sandman/task.md` and the run log, and return without merging.
 3. Run `git fetch origin`.
 4. Check whether the merge is already present:
    `git merge-base --is-ancestor "origin/<base-branch>" HEAD`
@@ -84,6 +84,6 @@ If `git merge-base --is-ancestor` succeeds, the current branch already contains 
 
 ## Stop conditions
 
-- Stop and report if the worktree was dirty before merge.
-- Stop and report if you cannot determine the correct behavior from code, tests, and history.
-- Stop and report if tests fail and the correct post-merge behavior is ambiguous.
+- A dirty worktree is a terminal condition for this merge attempt only after its state, exact blocker, and next executable action have been recorded without discarding changes.
+- If the correct behavior cannot be determined from code, tests, and history, record the ambiguity and the evidence inspected as a structured blocker with a next executable action.
+- If tests fail and the correct post-merge behavior is ambiguous, preserve the merge state, record the failure and next executable action, and leave the branch unpushed until the ambiguity is resolved autonomously.

@@ -31,7 +31,7 @@ You need to follow all steps in this workflow. Make sure you have gone through a
 
     **Closing-reference body is mandatory.** The PR body MUST contain a line of the exact shape `(Closes|Fixes|Resolves) #<issue_number>` so the tracker auto-closes the linked work item when the change request merges. Phrases like `issue #<n>` buried in prose, `Refs #<n>`, `See #<n>`, `Related to #<n>`, or `Part of #<n>` are NOT closing references — they leave the work item open after merge. A change request whose body does not match the closing-reference shape is not acceptable and must not be created.
 
-4. **Never stage Sandman runtime state.** The `.sandman/` directory holds runtime files (config, prompt, Dockerfile, reviews, the per-run task board). It is intentionally gitignored and is untracked by `sandman init`'s pre-commit guard. Do not run `git add` (with or without `-f`) on any path under `.sandman/`, and do not commit changes that include such paths. The pre-commit hook installed by `sandman init` will reject any commit that attempts to put a `.sandman/` path back into the index, but treat that as a last line of defense: do not stage it in the first place. Other Sandman-managed worktrees may not yet have the hook installed, and a force-pushed history rewrite can resurrect ignored paths.
+4. **Never stage Sandman runtime state.** The `.sandman/` directory holds runtime files (config, prompt, Dockerfile, reviews, the per-run task document). It is intentionally gitignored and is untracked by `sandman init`'s pre-commit guard. Do not run `git add` (with or without `-f`) on any path under `.sandman/`, and do not commit changes that include such paths. The pre-commit hook installed by `sandman init` will reject any commit that attempts to put a `.sandman/` path back into the index, but treat that as a last line of defense: do not stage it in the first place. Other Sandman-managed worktrees may not yet have the hook installed, and a force-pushed history rewrite can resurrect ignored paths.
 
 ### 1. Setup branch
 
@@ -41,7 +41,7 @@ gh issue view <ID> --json title,number
 
 - Checkout `main`/`master`, pull latest
 - Create and switch to branch: `issue-<ID>/<slugified-title>`
-- Report the issue title and branch name to user
+- Record the issue title and branch name in `.sandman/task.md` or the run log, then continue automatically.
 
 ### 1.5. Pre-flight check
 
@@ -90,7 +90,7 @@ Writing `## Status: already resolved` while a PR is open without a verification 
 
 ### 4. Commit implementation
 
-Once all tests pass and user is satisfied, derive a Conventional Commits subject that the PR title and the commit will share.
+Once all tests pass and formatting is clean, derive a Conventional Commits subject that the PR title and the commit will share.
 
 Pick the most accurate type for the change. Allowed types: `feat`, `fix`, `perf`, `docs`, `refactor`, `test`, `build`, `ci`, `chore`, `revert`. Append `!` to the type for breaking changes (for example, `feat!:`). Keep the subject to one imperative sentence with no trailing period.
 
@@ -129,7 +129,7 @@ git add -A
 git commit -m "refactor: self-review fixes"
 ```
 
-- **If any test fails during self-review, you must NOT exit with the failure unresolved** (see Hard Rule 1). Diagnose the failure, fix the code, and re-run until the test is green. If the failing test is a pre-existing flake unrelated to your changes, isolate it with `git stash`, re-run to confirm green, and document the flake in the commit message. If you cannot resolve the failure within the run's context window, do not proceed to Steps 6-8 — stop and leave the failure documented in the commit message and task.md so the next attempt has a clear starting point.
+- **If any test fails during self-review, you must NOT exit with the failure unresolved** (see Hard Rule 1). Diagnose the failure, fix the code, and re-run until the test is green. If the failing test is a pre-existing flake unrelated to your changes, isolate it with `git stash`, re-run to confirm green, and document the flake in the commit message. If you cannot resolve the failure within the run's context window, checkpoint the last green implementation, preserve the exact failure, structured blocker, and next executable action in `.sandman/task.md` and the run log, commit the known-broken state only on a separate diagnostic branch, restore the implementation branch to its last green commit, and do not proceed to Steps 6-8.
 
 - Fix the code in case any of the tests fail. Commit again:
 
@@ -174,7 +174,7 @@ git commit -m "refactor: self-review fixes"
    gh pr view <new-pr-number> --json body --jq -r .body
    ```
 
-   The first non-empty line of the returned body MUST match `^(Closes|Fixes|Resolves) #<issue_number>\s*$`. If it does not — for example, the body is a long description with only `issue #<n>` buried in prose — STOP. Update the body in place so it is exactly `Closes #<issue_number>` (or `Fixes` / `Resolves`), then re-verify. If the body still cannot be made to match after one re-edit attempt, stop without delegating review and report the exact wrong body to the user.
+   The first non-empty line of the returned body MUST match `^(Closes|Fixes|Resolves) #<issue_number>\s*$`. If it does not — for example, the body is a long description with only `issue #<n>` buried in prose — update the body in place so it is exactly `Closes #<issue_number>` (or `Fixes` / `Resolves`), then re-verify. If the body still cannot be made to match after one re-edit attempt, do not delegate review: persist the exact body, structured blocker, and next executable action in `.sandman/task.md` and the run log, then exit this attempt with a structured failure reason so the next run continues from the durable blocker.
 5. Capture the PR URL and number.
 
 ### 8. Delegate review
@@ -189,7 +189,7 @@ git commit -m "refactor: self-review fixes"
 
 - [ ] Branch created from latest main
 - [ ] Changes confined to the repository codebase (not meta-infrastructure)
-- [ ] User confirmed plan before TDD
+- [ ] Plan reviewed and recorded before TDD
 - [ ] Each vertical slice committed before moving to the next (Hard Rule 2)
 - [ ] All tests green at exit (Hard Rule 1) — no failing tests left unresolved
 - [ ] Implementation committed

@@ -72,8 +72,11 @@ func TestSyncInstallsIssueClosingGuardInImplementSkill(t *testing.T) {
 	if !strings.Contains(text, "Verify") || !strings.Contains(text, "body") {
 		t.Fatal("expected implement skill to verify the body")
 	}
-	if !strings.Contains(text, "wrong") || !strings.Contains(text, "report") {
-		t.Fatal("expected implement skill to report wrong body to user")
+	if !strings.Contains(text, "structured blocker") || !strings.Contains(text, "next executable action") {
+		t.Fatal("expected implement skill to persist a structured blocker and next executable action for a wrong body")
+	}
+	if strings.Contains(text, "report the exact wrong body to the user") {
+		t.Fatal("implement skill must not direct an operator report for a wrong body")
 	}
 }
 

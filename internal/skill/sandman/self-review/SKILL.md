@@ -16,7 +16,7 @@ Both axes run as **parallel sub-agents** so they don't pollute each other's cont
 
 ### 1. Pin the fixed point
 
-Whatever the user said is the fixed point — a commit SHA, branch name, tag, `main`, `HEAD~5`, etc. Don't be opinionated; pass it through. If they didn't specify one, ask: "Review against what — a branch, a commit, or `main`?" Don't proceed until you have it.
+Use the fixed point supplied in the invocation — a commit SHA, branch name, tag, `main`, `HEAD~5`, etc. If none was supplied, use `origin/main` when available, then the current branch's upstream, then `HEAD~1` when it exists. If no historical baseline exists, use `HEAD` as the committed baseline, inspect `git diff HEAD` and every untracked path listed by `git status --short`, and record that no historical baseline was available; do not treat an empty three-dot diff as a completed review.
 
 Capture the diff command once: `git diff <fixed-point>...HEAD` (three-dot, so the comparison is against the merge-base). Also note the list of commits via `git log <fixed-point>..HEAD --oneline`.
 
@@ -27,7 +27,7 @@ Look for the originating spec, in this order:
 1. References to the implementor's open work item or change request in commit messages — resolve them via the workflow documented in `docs/agents/`.
 2. A path the user passed as an argument.
 3. A PRD/spec file under `docs/`, `specs/`, or `.scratch/` matching the branch name or feature.
-4. If nothing is found, ask the user where the spec is. If they say there isn't one, the **Spec** sub-agent will skip and report "no spec available".
+4. If nothing is found, use the work item's body and change-request body as the specification sources. If neither contains a specification, the **Spec** sub-agent skips and records "no spec available" while the Standards review continues.
 
 ### 3. Identify the standards sources
 

@@ -116,7 +116,7 @@ Custom keys can be passed at runtime using the `--prompt-arg KEY=VALUE` flag on 
 
 See [Sandman Skills](skills.md) for the shared workflow details.
 
-`sandman run --continue` uses current CLI flags / config defaults for tunables (agent, model, parallel, retries, sandbox, container tunables, review command, etc.) and replays only the worktree identity from the prior run: the preserved branch, the stored base branch (because the worktree was cut from it), the prior run id, the `.sandman/task.md` contents, and the issue mode. CLI overrides on the `--continue` invocation still win over both config defaults and stored values. When no task file exists, an empty task template is used with a warning on stderr.
+`sandman run --continue` uses current CLI flags / config defaults for tunables (agent, model, parallel, retries, sandbox, container tunables, review command, etc.) and replays only the worktree identity from the prior run: the preserved branch, the stored base branch (because the worktree was cut from it), the prior run id, the `.sandman/task.md` contents, and the issue mode. Before replay, Sandman places one canonical continuation freshness guard after all persisted task state so blockers and next actions must be revalidated. CLI overrides on the `--continue` invocation still win over both config defaults and stored values. When no task file exists, an empty task template is used with a warning on stderr.
 
 ## Container scheduling configuration
 

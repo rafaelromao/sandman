@@ -10,9 +10,9 @@ description: Automates the GitHub PR review loop with the PR Review Agent. Waits
 1. **You must NOT review the PR yourself in this session.**
    Your only job is to delegate the review to the PR Review Agent by posting `{{REVIEW_COMMAND}}` as a PR comment, then wait for the PR Review Agent's feedback and act on it. Under no circumstances should you read the diff and provide your own review comments.
 
-2. **You must NOT finish on ambiguous feedback.** If the reviewer's intent cannot be reduced to a concrete, actionable code change, do not guess, do not change code, and do not stop the loop. Post a new PR comment that includes `{{REVIEW_COMMAND}}` plus a freeform request asking the reviewer to clarify the intended actionable change, then continue polling. The loop only ends on approval (formal case A or informal case C), explicit user stop, or max passes reached — never on ambiguity.
+2. **You must NOT finish on ambiguous feedback.** If the reviewer's intent cannot be reduced to a concrete, actionable code change, do not guess, do not change code, and do not stop the loop. Post a new PR comment that includes `{{REVIEW_COMMAND}}` plus a freeform request asking the reviewer to clarify the intended actionable change, then continue polling. The loop only ends on approval (formal case A or informal case C), an explicit skill-defined irrecoverable stop condition, or max passes reached — never on ambiguity.
 
-3. **You must NOT finish before the review timeout or max attempts when no feedback has been provided.** If `reviewDecision` is still `REVIEW_REQUIRED` (or absent), no reviews exist yet, no inline file comments exist, and only boilerplate setup comments are present, keep polling. Do not declare done, do not report success to the user, and do not stop the loop. The only acceptable reasons to exit early are: approval (formal case A or informal case C), explicit user stop, or 10 passes reached.
+3. **You must NOT finish before the review timeout or max attempts when no feedback has been provided.** If `reviewDecision` is still `REVIEW_REQUIRED` (or absent), no reviews exist yet, no inline file comments exist, and only boilerplate setup comments are present, keep polling. Do not declare done or stop the loop. The only acceptable reasons to exit early are: approval (formal case A or informal case C), an explicit skill-defined irrecoverable stop condition, or 10 passes reached.
 
 4. **You must NOT exit the polling loop on a `0/0` count of (formal reviews, inline comments) when the top-level PR conversation has new comments from any non-agent author.** A reviewer who only posts a top-level PR conversation comment (no formal review event, no inline file comments) is still a real reviewer response. Re-classify the state, run the self-check (Step 4), and continue polling — do not give up.
 
@@ -26,7 +26,7 @@ description: Automates the GitHub PR review loop with the PR Review Agent. Waits
    - **Implement the requested change.** Read the issue description and its acceptance criteria, confirm the reviewer's interpretation is consistent with them, then make the change, commit, push, and re-request review.
    - **Convince the reviewer the requirement is out of scope.** Post a PR comment that quotes the issue's own acceptance criteria verbatim, explains why the requested change falls outside the issue's stated scope, and asks the reviewer to either accept the narrowed scope or correct the implementor's interpretation. Then **wait for the reviewer's explicit agreement** before considering the `CHANGES_REQUESTED` resolved. If the reviewer reaffirms the change is required, you must implement it on the next pass — you cannot keep asserting your own interpretation against theirs.
    
-   It is NEVER acceptable to assert "this is out of scope" unilaterally and exit the loop with a `CHANGES_REQUESTED` still pending. If max passes are reached with the deadlock unresolved, exit the loop with a clearly-documented `CHANGES_REQUESTED_UNRESOLVED` reason in the run log so the failure is visible in the run history — do not silently terminate as if the work were complete.
+   It is NEVER acceptable to assert "this is out of scope" unilaterally and exit the loop with a `CHANGES_REQUESTED` still pending. If max passes are reached with the deadlock unresolved, exit the loop with a clearly-documented `CHANGES_REQUESTED_UNRESOLVED` reason in `.sandman/task.md` and the run log so the failure and next executable action are durable — do not silently terminate as if the work were complete.
 
 9. **Any PR comment intended to be read by the reviewer MUST start with the review command.** A comment that does not begin with the review command is treated as boilerplate by the daemon and ignored — it does not reach the reviewer and does not advance the loop. Concretely:
     - When posting the trigger comment (Step 4), the body must be exactly the review command on its own (e.g. via the platform's "post change-request comment" CLI, passing the change-request identifier and the review-command body).
@@ -61,6 +61,17 @@ comments=$(echo "$pr_data" | jq -r '.comments')
 ```
 
 #### Step 2: Wait for CI to pass
+
+The CI wait has a 60-minute budget per PR head SHA. A failed check gets at most 3 fix-and-push attempts for that SHA; after the budget or attempts are exhausted, record `CI_TIMEOUT` or `CI_FAILURE_UNRESOLVED` in `.sandman/task.md` and the run log with the exact failure and next executable action, then leave the PR open for the next run.
+
+Enforce those limits in the polling loop with a deadline and attempt counter:
+
+```bash
+ci_deadline=$(( $(date +%s) + 3600 ))
+ci_fix_attempts=0
+```
+
+Before each CI poll, compare the current time with `ci_deadline`. On a failed check, if `ci_fix_attempts` is already 3, record `CI_FAILURE_UNRESOLVED` and exit the review attempt; otherwise increment `ci_fix_attempts` before applying the fix and pushing. When the deadline is reached, record `CI_TIMEOUT` and exit the review attempt. A new head SHA starts a fresh deadline and counter.
 
 > **Prerequisite**: `gh` ≥ 2.0 (released 2021) for `gh pr checks --json ... --jq`. Verify with `gh --version | awk '{print $1, $3}'` before relying on the loop. On older `gh` the `--json` flag is unknown; fall back to plain `gh pr checks <N> --repo <owner/repo>` and parse the first column instead.
 
@@ -151,6 +162,8 @@ After posting, write the current head SHA to `.sandman/state/<N>.head_sha` so su
 
 Total polling budget: **900s = 15 minutes** of cumulative sleep (120 + 60 + 60 + N×30).
 
+Track `review_sleep_elapsed` across the polling loop. Before every sleep, if adding the next interval would exceed 900 seconds, record `REVIEW_TIMEOUT` in `.sandman/task.md` and the run log and exit; otherwise add the interval to `review_sleep_elapsed` after sleeping. A new review request starts a fresh counter.
+
 **Hard rule — observed-response fast path.** If any poll iteration observes a new top-level PR conversation comment whose author is not the agent itself, the very next sleep MUST be ≤ 60s.
 
 **Hard rule — DIRTY mid-poll must trigger back-merge, not be observed and ignored.** A PR whose `mergeStateStatus` was CLEAN at Step 1 can drift to `DIRTY` mid-poll once a new commit lands on the base branch and conflicts with the PR. The DIRTY pre-check at Step 2 only catches the initial state; subsequent polls MUST detect and resolve this. See Step 5a.
@@ -178,7 +191,7 @@ A reviewer response is **any** of:
 **Self-check (after every poll, before classifying):**
 If `top > 0` AND `reviews == 0` AND `inline == 0`, AND no previous `{{REVIEW_COMMAND}}` is already pending without response, post a follow-up comment with `{{REVIEW_COMMAND}}` plus a freeform clarification request. If a request is already pending, skip — do not pile on.
 
-If no reviewer response arrives within 15 minutes, stop and exit the loop with a `REVIEW_TIMEOUT` reason documented in the run log so the failure is visible in the run history.
+If no reviewer response arrives within 15 minutes, stop and exit the loop with a `REVIEW_TIMEOUT` reason documented in `.sandman/task.md` and the run log so the failure and next executable action are durable.
 
 #### Step 5a: DIRTY handling — every poll iteration
 
@@ -190,7 +203,7 @@ On **every** poll iteration, after running the three commands above, inspect the
 2. Load `sandman-back-merge` (see the `sandman-back-merge` skill). Run it on the current branch. It performs the disciplined 3-way merge of the base branch into the working branch and resolves conflicts without history rewrites.
 3. If back-merge succeeds, push the updated branch with `git push`. Update `.sandman/state/<N>.head_sha` with the new head SHA so Step 3's stale-request check sees the new commit and re-evaluates.
 4. Restart polling from Step 1 — a fresh CI run will be triggered by the push, and the review agent may have already posted feedback on the prior SHA that the polling loop should classify on the next pass.
-5. If back-merge fails to resolve conflicts (e.g. semantic conflict, merge helper rejected a hunk), exit the loop with a distinct `REVIEW_CONFLICT_UNRESOLVED` reason in the run log. This is **never** a `REVIEW_TIMEOUT`. It is also **never** a silent success — the PR remains unmergeable and a future run must continue from this state.
+5. If back-merge fails to resolve conflicts (e.g. semantic conflict, merge helper rejected a hunk), exit the loop with a distinct `REVIEW_CONFLICT_UNRESOLVED` reason in `.sandman/task.md` and the run log. This is **never** a `REVIEW_TIMEOUT`. It is also **never** a silent success — the PR remains unmergeable and a future run must continue from this state.
 
 **Hard rule — DIRTY is not REVIEW_TIMEOUT.** A DIRTY PR that back-merge cannot resolve is a structured failure with a downstream signal in the run payload. Do not collapse it into the generic review-timeout bucket: the two failures have different remediation paths and different downstream tooling.
 
@@ -236,7 +249,7 @@ An inline file comment OR top-level comment OR review body contains concrete cod
 
 **F. Ambiguous feedback with unclear actionable intent only?**
 - Comments exist but none specify a concrete code change
-→ **Clarification** — ask for clarification if no request is pending; otherwise keep polling.
+→ **Clarification** — post a reviewer-directed clarification with `{{REVIEW_COMMAND}}` if no request is pending; otherwise keep polling.
 
 **G. Only nits or suggestions?**
 - Comments are nits or optional improvements, no `CHANGES_REQUESTED`
@@ -246,7 +259,7 @@ An inline file comment OR top-level comment OR review body contains concrete cod
 
 **Hard rule — never exit after pushing a fix.** After `git push` in Step 7, the agent MUST continue to Step 5 to poll for the reviewer's next response.
 
-**Hard rule — never exit with `CHANGES_REQUESTED` unresolved.** If a `CHANGES_REQUESTED` review exists after applying fixes, do not declare the run done. Re-request review (Step 4) and continue the loop. Only approval (formal case A or informal case C), explicit user stop, or max passes reached may end the loop. Applying a fix that you believe addresses the reviewer's concern does NOT close the loop — the reviewer must explicitly approve.
+**Hard rule — never exit with `CHANGES_REQUESTED` unresolved.** If a `CHANGES_REQUESTED` review exists after applying fixes, do not declare the run done. Re-request review (Step 4) and continue the loop. Only approval (formal case A or informal case C), an explicit skill-defined irrecoverable stop condition, or max passes reached may end the loop. Applying a fix that you believe addresses the reviewer's concern does NOT close the loop — the reviewer must explicitly approve.
 
 - Read `.sandman/state/<N>.addressed_comments` — skip any inline comment IDs already present.
 - Read relevant source files, make minimal changes.
@@ -275,8 +288,8 @@ If an inline comment ID appears in 3+ consecutive passes without resolution, tre
 
 Stop only when:
 - Formal approval (A or C) — the **only** condition that completes the PR-Review phase. "Exhausted after 10 passes" or any other non-approval signal is **never** a reason to mark PR-Review complete; only Approval is.
-- User explicitly asks to stop
-- Max 10 passes reached with unresolved blockers AND no new commit has landed on the PR branch since the last `{{REVIEW_COMMAND}}` post (i.e., the prior exhausted budget is still on the latest SHA). This ends the loop with a `REVIEW_TIMEOUT`, not a completion — the run-level checklist item stays unchecked until Approval is observed.
+- An explicit skill-defined irrecoverable condition prevents further autonomous progress
+- Max 10 passes reached with unresolved blockers AND no new commit has landed on the PR branch since the last `{{REVIEW_COMMAND}}` post (i.e., the prior exhausted budget is still on the latest SHA). This ends the loop with a `REVIEW_TIMEOUT` documented in `.sandman/task.md` and the run log, not a completion — the run-level checklist item stays unchecked until Approval is observed.
 - **`REVIEW_CONFLICT_UNRESOLVED` — back-merge failed to resolve a DIRTY PR; not a `REVIEW_TIMEOUT`, never silent**
 
 Continue polling when:
@@ -297,7 +310,7 @@ Continue polling when:
 - Always include `top=<count> reviews=<count> inline=<count>` in the final report.
 - Never force-push or amend commits.
 - Keep commits focused: one commit per review round.
-- When feedback is ambiguous, ask for clarification with `{{REVIEW_COMMAND}}` in the same comment.
+- When feedback is ambiguous, post a reviewer-directed clarification with `{{REVIEW_COMMAND}}` in the same comment.
 - Review agents may post feedback as: top-level comments, inline diff comments, or formal `COMMENT` reviews. Always check all three sources.
 - When CI is broken and the failure may be base-branch drift, load `sandman-back-merge` first so any fix that landed on the base branch can be merged before retrying.
 - When CI is failing, fix it first — CI must be green before any review feedback can be meaningfully addressed.

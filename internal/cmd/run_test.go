@@ -4677,8 +4677,11 @@ func TestRun_Continue_MultiIssueFreshBatchAndRunIDs(t *testing.T) {
 	if got := spy.req.Branches[43]; got != branch {
 		t.Fatalf("Branches[43] = %q, want reused branch %q", got, branch)
 	}
-	if got, want := spy.req.TaskPrompts[42], "## Completed\nInitial pass.\n"; got != want {
-		t.Fatalf("TaskPrompts[42] = %q, want original task content %q", got, want)
+	if got, want := spy.req.TaskPrompts[42], "## Completed\nInitial pass.\n"; !strings.HasPrefix(got, want) {
+		t.Fatalf("TaskPrompts[42] = %q, want original task content prefix %q", got, want)
+	}
+	if got := spy.req.TaskPrompts[42]; !strings.Contains(got, "## Continuation Freshness Guard") {
+		t.Fatalf("TaskPrompts[42] missing continuation freshness guard: %q", got)
 	}
 
 	idx, err := batchindex.Load(filepath.Join(".", ".sandman", "batches.json"))
