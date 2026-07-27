@@ -2829,6 +2829,10 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 	result.Status = s.emitTerminal(ctx, runID, result, terminalExtras)
 
 	if events.RunStatusFromPayload(result.Status).IsSuccess() {
+		// Container sandboxes leave the worktree's .git pointer addressed for
+		// /workspace until cleanup. Restore it before running host-side git;
+		// the deferred call remains as the fallback for every other exit path.
+		_ = wt.RestoreHostPaths()
 		s.reconcileWorktreeBranch(wt, branch)
 	}
 

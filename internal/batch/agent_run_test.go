@@ -97,7 +97,9 @@ type fakeSandbox struct {
 	process                *fakeProcess
 	stopCalled             bool
 	workDir                string
+	repoPath               string
 	restoreHostPathsCalled bool
+	restoreHostPathsFunc   func() error
 }
 
 func (f *fakeSandbox) Start(opts sandbox.SandboxStart) error {
@@ -138,6 +140,9 @@ func (f *fakeSandbox) Stop() error {
 }
 func (f *fakeSandbox) WorkDir() string { return f.workDir }
 func (f *fakeSandbox) RepoPath() string {
+	if f.repoPath != "" {
+		return f.repoPath
+	}
 	if f.workDir == "" {
 		return ""
 	}
@@ -158,8 +163,12 @@ func (f *fakeSandbox) Process() sandbox.Process {
 }
 func (f *fakeSandbox) RestoreHostPaths() error {
 	f.mu.Lock()
-	defer f.mu.Unlock()
 	f.restoreHostPathsCalled = true
+	restore := f.restoreHostPathsFunc
+	f.mu.Unlock()
+	if restore != nil {
+		return restore()
+	}
 	return nil
 }
 
