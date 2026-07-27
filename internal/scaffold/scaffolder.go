@@ -1930,7 +1930,7 @@ func (s *Scaffolder) renderBuildToolsDockerfile(preset BuildToolsPreset, default
 	aptPackages := append([]string{}, preset.SharedPackages...)
 	aptPackages = append(aptPackages, preset.ExtraPackages...)
 	fmt.Fprintf(&out, "RUN apt-get update && apt-get install -y --no-install-recommends %s && rm -rf /var/lib/apt/lists/*\n", strings.Join(aptPackages, " "))
-	fmt.Fprintf(&out, "RUN MISE_VERSION=%s curl https://mise.run | MISE_INSTALL_PATH=/usr/local/bin/mise sh\n", preset.MiseVersion)
+	fmt.Fprintf(&out, "RUN curl https://mise.run | MISE_VERSION=%s MISE_INSTALL_PATH=/usr/local/bin/mise sh\n", preset.MiseVersion)
 	out.WriteString("ENV MISE_GLOBAL_CONFIG_FILE=\"/etc/mise/config.toml\"\n")
 	out.WriteString("ENV MISE_CONFIG_DIR=\"/etc/mise\"\n")
 	out.WriteString("ENV MISE_DATA_DIR=\"/usr/local/share/mise\"\n")

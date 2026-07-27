@@ -280,7 +280,7 @@ func TestScaffold_NodePresetWritesPinnedDockerfile(t *testing.T) {
 	if strings.Contains(content, "RUN git clone https://github.com/rafaelromao/codeindex /tmp/codeindex && pip3 install -e /tmp/codeindex --break-system-packages") {
 		t.Fatalf("Dockerfile should not install codeindex, got:\n%s", content)
 	}
-	if !strings.Contains(content, "RUN MISE_VERSION="+DefaultMISEVersion+" curl https://mise.run | MISE_INSTALL_PATH=/usr/local/bin/mise sh") {
+	if !strings.Contains(content, "RUN curl https://mise.run | MISE_VERSION="+DefaultMISEVersion+" MISE_INSTALL_PATH=/usr/local/bin/mise sh") {
 		t.Fatalf("Dockerfile missing pinned mise install, got:\n%s", content)
 	}
 }
@@ -315,7 +315,7 @@ func TestScaffold_GenericPresetWritesPinnedDockerfile(t *testing.T) {
 	if !strings.Contains(content, "RUN npm install -g opencode-ai@"+DefaultBuiltInAgentVersion("opencode")) {
 		t.Fatalf("Dockerfile missing pinned opencode install, got:\n%s", content)
 	}
-	if !strings.Contains(content, "RUN MISE_VERSION="+DefaultMISEVersion+" curl https://mise.run | MISE_INSTALL_PATH=/usr/local/bin/mise sh") {
+	if !strings.Contains(content, "RUN curl https://mise.run | MISE_VERSION="+DefaultMISEVersion+" MISE_INSTALL_PATH=/usr/local/bin/mise sh") {
 		t.Fatalf("Dockerfile missing pinned mise install, got:\n%s", content)
 	}
 	if !strings.Contains(content, " gh ") {
@@ -1585,7 +1585,7 @@ func TestScaffold_AllAgentPresets_GenerateUsableFiles(t *testing.T) {
 			if !strings.Contains(content, "FROM debian:bookworm-slim") {
 				t.Fatalf("Dockerfile missing Debian base image, got:\n%s", content)
 			}
-			if !strings.Contains(content, "RUN MISE_VERSION="+DefaultMISEVersion+" curl https://mise.run | MISE_INSTALL_PATH=/usr/local/bin/mise sh") {
+			if !strings.Contains(content, "RUN curl https://mise.run | MISE_VERSION="+DefaultMISEVersion+" MISE_INSTALL_PATH=/usr/local/bin/mise sh") {
 				t.Fatalf("Dockerfile missing pinned mise install, got:\n%s", content)
 			}
 			if !strings.Contains(content, " gh ") {
@@ -1694,7 +1694,7 @@ func TestScaffold_PythonPresetWritesPinnedDockerfile(t *testing.T) {
 	if !strings.Contains(content, "RUN npm install -g opencode-ai@"+DefaultBuiltInAgentVersion("opencode")) {
 		t.Fatalf("Dockerfile missing pinned opencode install, got:\n%s", content)
 	}
-	if !strings.Contains(content, "RUN MISE_VERSION="+DefaultMISEVersion+" curl https://mise.run | MISE_INSTALL_PATH=/usr/local/bin/mise sh") {
+	if !strings.Contains(content, "RUN curl https://mise.run | MISE_VERSION="+DefaultMISEVersion+" MISE_INSTALL_PATH=/usr/local/bin/mise sh") {
 		t.Fatalf("Dockerfile missing pinned mise install, got:\n%s", content)
 	}
 
@@ -2900,7 +2900,7 @@ func TestScaffold_JavaPresetWritesPinnedDockerfile(t *testing.T) {
 		"# sandman installed-agents: opencode",
 		"FROM debian:bookworm-slim",
 		"RUN mise use -g --pin java@21.0.2",
-		"RUN MISE_VERSION=" + DefaultMISEVersion + " curl https://mise.run | MISE_INSTALL_PATH=/usr/local/bin/mise sh",
+		"RUN curl https://mise.run | MISE_VERSION=" + DefaultMISEVersion + " MISE_INSTALL_PATH=/usr/local/bin/mise sh",
 		"RUN npm install -g opencode-ai@" + DefaultBuiltInAgentVersion("opencode"),
 	} {
 		if !strings.Contains(content, want) {
@@ -2991,7 +2991,7 @@ func TestScaffold_ElixirPresetWritesPinnedDockerfile(t *testing.T) {
 		"RUN mise use -g --pin elixir@" + wantElixirVersion,
 		"RUN mix local.hex --force",
 		"RUN mix local.rebar --force",
-		"RUN MISE_VERSION=" + DefaultMISEVersion + " curl https://mise.run | MISE_INSTALL_PATH=/usr/local/bin/mise sh",
+		"RUN curl https://mise.run | MISE_VERSION=" + DefaultMISEVersion + " MISE_INSTALL_PATH=/usr/local/bin/mise sh",
 		"RUN npm install -g opencode-ai@" + DefaultBuiltInAgentVersion("opencode"),
 	} {
 		if !strings.Contains(content, want) {
@@ -3267,7 +3267,7 @@ func TestScaffold_RubyPresetWritesPinnedDockerfile(t *testing.T) {
 		"FROM debian:bookworm-slim",
 		"RUN mise use -g --pin ruby@" + wantRubyVersion,
 		"RUN gem install bundler",
-		"RUN MISE_VERSION=" + DefaultMISEVersion + " curl https://mise.run | MISE_INSTALL_PATH=/usr/local/bin/mise sh",
+		"RUN curl https://mise.run | MISE_VERSION=" + DefaultMISEVersion + " MISE_INSTALL_PATH=/usr/local/bin/mise sh",
 		"RUN npm install -g opencode-ai@" + DefaultBuiltInAgentVersion("opencode"),
 	} {
 		if !strings.Contains(content, want) {
