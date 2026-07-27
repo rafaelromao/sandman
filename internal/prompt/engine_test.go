@@ -60,6 +60,8 @@ func TestDefaultPrompt_AFKContractDefinesAutonomousFallback(t *testing.T) {
 		"Skill stop/report language never authorizes an operator question",
 		"bounded retry",
 		"documented remote or alternative execution path",
+		"workflow-dispatch or remote CI alternative",
+		"dispatch it and poll its result",
 		"Before any terminal exit, checkpoint green work",
 		"structured failure reason",
 		"Terminal exits remain valid only for explicit stop conditions",
@@ -75,6 +77,30 @@ func TestDefaultPrompt_AFKContractDefinesAutonomousFallback(t *testing.T) {
 	} {
 		if strings.Contains(prompt, forbidden) {
 			t.Errorf("AFK contract must not contain operator-dependent fallback %q", forbidden)
+		}
+	}
+}
+
+func TestRender_MissingLocalPrerequisiteUsesDocumentedAlternative(t *testing.T) {
+	const issueBody = "The browser gate requires Docker; repository docs define a workflow-dispatch fallback."
+
+	result, err := (&Engine{}).Render(RenderConfig{}, IssueData{
+		Number: 2455,
+		Title:  "AFK fallback",
+		Body:   issueBody,
+	})
+	if err != nil {
+		t.Fatalf("render prompt: %v", err)
+	}
+
+	for _, phrase := range []string{
+		issueBody,
+		"workflow-dispatch or remote CI alternative",
+		"dispatch it and poll its result",
+		"do not repeatedly attempt an impossible local path",
+	} {
+		if !strings.Contains(result, phrase) {
+			t.Errorf("rendered missing-prerequisite scenario must contain %q, got:\n%s", phrase, result)
 		}
 	}
 }

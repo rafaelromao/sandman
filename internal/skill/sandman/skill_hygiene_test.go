@@ -131,7 +131,10 @@ func TestSkills_NoOperatorResponseDirectives(t *testing.T) {
 	}{
 		{name: "operator question", pattern: `(?i)\bask (the )?user\b`},
 		{name: "operator direction request", pattern: `(?i)\bask for (direction|clarification|approval|confirmation|feedback)\b`},
+		{name: "operator response request", pattern: `(?i)\b(request|await|wait for|seek)\s+(the\s+)?(user|operator)\b`},
 		{name: "operator-dependent stop", pattern: `(?i)\b(stop|pause|wait)( and)? ask\b`},
+		{name: "operator decision gate", pattern: `(?i)\b(user|operator)'?s?\s+(approval|confirmation|clarification|direction|feedback|decision|review)\b`},
+		{name: "operator decision source", pattern: `(?i)\b(approval|confirmation|clarification|direction|feedback|decision|review)\s+from\s+(the\s+)?(user|operator)\b`},
 		{name: "operator satisfaction gate", pattern: `(?i)\buser (is )?(satisfied|confirmed|approval|confirmation|direction|clarification|feedback|review)\b`},
 		{name: "operator status report", pattern: `(?i)\b(report|tell) .* to the user\b`},
 		{name: "operator stop choice", pattern: `(?i)\bexplicit user stop\b`},
@@ -140,10 +143,63 @@ func TestSkills_NoOperatorResponseDirectives(t *testing.T) {
 	for _, rule := range forbidden {
 		re := regexp.MustCompile(rule.pattern)
 		for path, text := range files {
-			if loc := re.FindStringIndex(text); loc != nil {
+			if loc := re.FindStringIndex(text); loc != nil && !allowlistedSkillCommunication(path, text, loc) {
 				t.Errorf("%s contains forbidden %s %q at offset %d", path, rule.name, text[loc[0]:loc[1]], loc[0])
 			}
 		}
+	}
+}
+
+func allowlistedSkillCommunication(path, text string, loc []int) bool {
+	if path != "pr-review/SKILL.md" {
+		return false
+	}
+	lineStart := strings.LastIndex(text[:loc[0]], "\n") + 1
+	lineEnd := strings.Index(text[loc[1]:], "\n")
+	if lineEnd < 0 {
+		lineEnd = len(text)
+	} else {
+		lineEnd += loc[1]
+	}
+	line := strings.ToLower(text[lineStart:lineEnd])
+	return strings.Contains(line, "reviewer") && strings.Contains(line, "{{review_command}}") &&
+		!strings.Contains(line, "user") && !strings.Contains(line, "operator")
+}
+
+func TestSkills_DirectiveAllowlistIsReviewerScoped(t *testing.T) {
+	cases := []struct {
+		name string
+		path string
+		text string
+		want bool
+	}{
+		{
+			name: "reviewer clarification",
+			path: "pr-review/SKILL.md",
+			text: "ask for clarification from the reviewer with {{REVIEW_COMMAND}}",
+			want: true,
+		},
+		{
+			name: "operator clarification",
+			path: "pr-review/SKILL.md",
+			text: "ask the user for clarification with {{REVIEW_COMMAND}}",
+			want: false,
+		},
+		{
+			name: "same wording in another skill",
+			path: "implement/SKILL.md",
+			text: "ask for clarification from the reviewer with {{REVIEW_COMMAND}}",
+			want: false,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			loc := []int{strings.Index(tc.text, "clarification"), strings.Index(tc.text, "clarification") + len("clarification")}
+			if got := allowlistedSkillCommunication(tc.path, tc.text, loc); got != tc.want {
+				t.Fatalf("allowlistedSkillCommunication() = %t, want %t", got, tc.want)
+			}
+		})
 	}
 }
 
@@ -189,7 +245,7 @@ func TestSkills_AutonomousRecoveryLaddersRemainExplicit(t *testing.T) {
 		"implement/SKILL.md": {
 			"structured blocker",
 			"next executable action",
-			"then follow the continuation step below",
+			"the next run continues from the durable blocker",
 		},
 		"back-merge/SKILL.md": {
 			"preserve it, inspect the status and diff",

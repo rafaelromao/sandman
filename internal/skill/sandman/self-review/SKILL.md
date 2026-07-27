@@ -16,7 +16,7 @@ Both axes run as **parallel sub-agents** so they don't pollute each other's cont
 
 ### 1. Pin the fixed point
 
-Use the fixed point supplied in the invocation — a commit SHA, branch name, tag, `main`, `HEAD~5`, etc. If none was supplied, use `origin/main` when available, then the current branch's upstream, then `HEAD~1` when it exists. If no historical baseline exists, review the current worktree against `HEAD` and record that no baseline was available.
+Use the fixed point supplied in the invocation — a commit SHA, branch name, tag, `main`, `HEAD~5`, etc. If none was supplied, use `origin/main` when available, then the current branch's upstream, then `HEAD~1` when it exists. If no historical baseline exists, use `HEAD` as the committed baseline, inspect `git diff HEAD` and every untracked path listed by `git status --short`, and record that no historical baseline was available; do not treat an empty three-dot diff as a completed review.
 
 Capture the diff command once: `git diff <fixed-point>...HEAD` (three-dot, so the comparison is against the merge-base). Also note the list of commits via `git log <fixed-point>..HEAD --oneline`.
 

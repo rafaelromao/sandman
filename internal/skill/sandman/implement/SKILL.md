@@ -174,7 +174,7 @@ git commit -m "refactor: self-review fixes"
    gh pr view <new-pr-number> --json body --jq -r .body
    ```
 
-   The first non-empty line of the returned body MUST match `^(Closes|Fixes|Resolves) #<issue_number>\s*$`. If it does not — for example, the body is a long description with only `issue #<n>` buried in prose — update the body in place so it is exactly `Closes #<issue_number>` (or `Fixes` / `Resolves`), then re-verify. If the body still cannot be made to match after one re-edit attempt, do not delegate review: persist the exact body, structured blocker, and next executable action in the task board and run log, then follow the continuation step below.
+   The first non-empty line of the returned body MUST match `^(Closes|Fixes|Resolves) #<issue_number>\s*$`. If it does not — for example, the body is a long description with only `issue #<n>` buried in prose — update the body in place so it is exactly `Closes #<issue_number>` (or `Fixes` / `Resolves`), then re-verify. If the body still cannot be made to match after one re-edit attempt, do not delegate review: persist the exact body, structured blocker, and next executable action in the task board and run log, then exit this attempt with a structured failure reason so the next run continues from the durable blocker.
 5. Capture the PR URL and number.
 
 ### 8. Delegate review
