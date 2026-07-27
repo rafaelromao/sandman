@@ -371,6 +371,24 @@ func TestMacOSFullRegressionPreservesAllRegressionCommands(t *testing.T) {
 	}
 }
 
+func TestMacOSFullRegressionSupportsTargetedPresetDispatch(t *testing.T) {
+	workflow := readRepositoryFile(t, "../.github/workflows/full-regression-macos.yml")
+	for _, required := range []string{
+		"tier:",
+		"- all",
+		"- presets",
+		"- elixir",
+		"- ruby",
+		`REQUESTED_TIER="${{ inputs.tier || 'all' }}"`,
+		`[ "$REQUESTED_TIER" = "elixir" ]`,
+		`[ "$REQUESTED_TIER" = "ruby" ]`,
+	} {
+		if !strings.Contains(workflow, required) {
+			t.Errorf("macOS full regression workflow missing targeted dispatch setting %q", required)
+		}
+	}
+}
+
 func TestCIWorkflowRunsOnPullRequestsToAnyBranch(t *testing.T) {
 	ci := readRepositoryFile(t, "../.github/workflows/go.yml")
 
