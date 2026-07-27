@@ -139,11 +139,10 @@ jobs:
             run_tier "E2E (internal/cmd)" "SANDMAN_RUN_AGENT_E2E=1 SANDMAN_TEST_PROVIDERS=all SANDMAN_E2E_GATES=all go test -v -tags e2e -timeout 90m ./internal/cmd -skip 'TestPresetMatrixHarness_.*BuildsWithEditedDockerfile'"
           fi
 
-          # Tier 5: parallelize presets that install binaries or light toolchains.
-          # Erlang and Ruby compile from source and each consume all three VM CPUs,
-          # so run those builds separately to keep their resource use isolated.
+          # Tier 5: keep image builds serial. Concurrent builds can exhaust the
+          # three-CPU Podman VM and terminate its server with unexpected EOF.
           if [ "$REQUESTED_TIER" = "all" ] || [ "$REQUESTED_TIER" = "presets" ]; then
-            run_tier "E2E (parallel preset builds)" "printf '%s\n' TestPresetMatrixHarness_NodeBuildsWithEditedDockerfile TestPresetMatrixHarness_GoBuildsWithEditedDockerfile TestPresetMatrixHarness_PythonBuildsWithEditedDockerfile TestPresetMatrixHarness_GenericBuildsWithEditedDockerfile TestPresetMatrixHarness_DotnetBuildsWithEditedDockerfile TestPresetMatrixHarness_RustBuildsWithEditedDockerfile TestPresetMatrixHarness_JavaBuildsWithEditedDockerfile | xargs -n 1 -P 3 bash -c 'SANDMAN_RUN_AGENT_E2E=1 SANDMAN_TEST_PROVIDERS=all SANDMAN_E2E_GATES=all go test -v -tags e2e -timeout 90m ./internal/cmd -run \"^\$1\$\"' _"
+            run_tier "E2E (serial preset builds)" "printf '%s\n' TestPresetMatrixHarness_NodeBuildsWithEditedDockerfile TestPresetMatrixHarness_GoBuildsWithEditedDockerfile TestPresetMatrixHarness_PythonBuildsWithEditedDockerfile TestPresetMatrixHarness_GenericBuildsWithEditedDockerfile TestPresetMatrixHarness_DotnetBuildsWithEditedDockerfile TestPresetMatrixHarness_RustBuildsWithEditedDockerfile TestPresetMatrixHarness_JavaBuildsWithEditedDockerfile | xargs -n 1 -P 1 bash -c 'SANDMAN_RUN_AGENT_E2E=1 SANDMAN_TEST_PROVIDERS=all SANDMAN_E2E_GATES=all go test -v -tags e2e -timeout 90m ./internal/cmd -run \"^\$1\$\"' _"
           fi
           if [ "$REQUESTED_TIER" = "all" ] || [ "$REQUESTED_TIER" = "presets" ] || [ "$REQUESTED_TIER" = "elixir" ]; then
             run_tier "E2E (Elixir preset build)" "SANDMAN_RUN_AGENT_E2E=1 SANDMAN_TEST_PROVIDERS=all SANDMAN_E2E_GATES=all go test -v -tags e2e -timeout 90m ./internal/cmd -run '^TestPresetMatrixHarness_ElixirBuildsWithEditedDockerfile$'"

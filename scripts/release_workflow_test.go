@@ -332,7 +332,7 @@ func TestMacOSFullRegressionPreservesAllRegressionCommands(t *testing.T) {
 		`SANDMAN_TEST_PROVIDERS=all SANDMAN_RUN_SMOKE_E2E=1 go test -tags smoke -timeout 60m ./internal/cmd -run Smoke`,
 		`SANDMAN_RUN_AGENT_E2E=1 SANDMAN_TEST_PROVIDERS=all SANDMAN_E2E_GATES=all go test -tags e2e -timeout 90m \$(go list ./... | grep -v '/internal/cmd$')`,
 		`SANDMAN_RUN_AGENT_E2E=1 SANDMAN_TEST_PROVIDERS=all SANDMAN_E2E_GATES=all go test -v -tags e2e -timeout 90m ./internal/cmd -skip 'TestPresetMatrixHarness_.*BuildsWithEditedDockerfile'`,
-		`xargs -n 1 -P 3 bash -c`,
+		`xargs -n 1 -P 1 bash -c`,
 	} {
 		if !strings.Contains(workflow, command) {
 			t.Errorf("macOS full regression workflow missing regression command %q", command)
@@ -354,19 +354,19 @@ func TestMacOSFullRegressionPreservesAllRegressionCommands(t *testing.T) {
 		}
 	}
 
-	parallelPresets := strings.Index(workflow, `run_tier "E2E (parallel preset builds)"`)
+	serialPresets := strings.Index(workflow, `run_tier "E2E (serial preset builds)"`)
 	elixirPreset := strings.Index(workflow, `run_tier "E2E (Elixir preset build)"`)
 	rubyPreset := strings.Index(workflow, `run_tier "E2E (Ruby preset build)"`)
-	if parallelPresets == -1 || elixirPreset == -1 || rubyPreset == -1 || parallelPresets > elixirPreset || elixirPreset > rubyPreset {
-		t.Fatal("macOS full regression workflow must run source-compiling Elixir and Ruby presets serially after parallel preset builds")
+	if serialPresets == -1 || elixirPreset == -1 || rubyPreset == -1 || serialPresets > elixirPreset || elixirPreset > rubyPreset {
+		t.Fatal("macOS full regression workflow must run all preset build tiers serially")
 	}
-	parallelBlock := workflow[parallelPresets:elixirPreset]
+	serialBlock := workflow[serialPresets:elixirPreset]
 	for _, sourceBuild := range []string{
 		"TestPresetMatrixHarness_ElixirBuildsWithEditedDockerfile",
 		"TestPresetMatrixHarness_RubyBuildsWithEditedDockerfile",
 	} {
-		if strings.Contains(parallelBlock, sourceBuild) {
-			t.Errorf("parallel macOS preset builds must exclude source-compiling test %q", sourceBuild)
+		if strings.Contains(serialBlock, sourceBuild) {
+			t.Errorf("general macOS preset build tier must exclude separately reported test %q", sourceBuild)
 		}
 	}
 }
