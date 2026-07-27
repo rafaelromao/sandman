@@ -423,7 +423,7 @@ func TestInit_ElixirBuildToolsScaffoldsPinnedDockerfile(t *testing.T) {
 	if !strings.Contains(dockerfile, "RUN mise use -g --pin elixir@") {
 		t.Fatalf("Dockerfile missing pinned elixir install, got:\n%s", dockerfile)
 	}
-	if !strings.Contains(dockerfile, "RUN mise use -g --pin erlang@") {
+	if !strings.Contains(dockerfile, "RUN KERL_CONFIGURE_OPTIONS=--disable-jit mise use -g --pin erlang@") {
 		t.Fatalf("Dockerfile missing pinned erlang install, got:\n%s", dockerfile)
 	}
 	if !strings.Contains(dockerfile, "RUN mix local.hex --force") {
