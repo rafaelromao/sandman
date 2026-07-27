@@ -64,6 +64,15 @@ comments=$(echo "$pr_data" | jq -r '.comments')
 
 The CI wait has a 60-minute budget per PR head SHA. A failed check gets at most 3 fix-and-push attempts for that SHA; after the budget or attempts are exhausted, record `CI_TIMEOUT` or `CI_FAILURE_UNRESOLVED` in `.sandman/task.md` and the run log with the exact failure and next executable action, then leave the PR open for the next run.
 
+Enforce those limits in the polling loop with a deadline and attempt counter:
+
+```bash
+ci_deadline=$(( $(date +%s) + 3600 ))
+ci_fix_attempts=0
+```
+
+Before each CI poll, compare the current time with `ci_deadline`. On a failed check, if `ci_fix_attempts` is already 3, record `CI_FAILURE_UNRESOLVED` and exit the review attempt; otherwise increment `ci_fix_attempts` before applying the fix and pushing. When the deadline is reached, record `CI_TIMEOUT` and exit the review attempt. A new head SHA starts a fresh deadline and counter.
+
 > **Prerequisite**: `gh` ≥ 2.0 (released 2021) for `gh pr checks --json ... --jq`. Verify with `gh --version | awk '{print $1, $3}'` before relying on the loop. On older `gh` the `--json` flag is unknown; fall back to plain `gh pr checks <N> --repo <owner/repo>` and parse the first column instead.
 
 ```bash
@@ -152,6 +161,8 @@ After posting, write the current head SHA to `.sandman/state/<N>.head_sha` so su
 | 4+        | `sleep 30` (repeated until cumulative sleep budget of 900s is exhausted) |
 
 Total polling budget: **900s = 15 minutes** of cumulative sleep (120 + 60 + 60 + N×30).
+
+Track `review_sleep_elapsed` across the polling loop. Before every sleep, if adding the next interval would exceed 900 seconds, record `REVIEW_TIMEOUT` in `.sandman/task.md` and the run log and exit; otherwise add the interval to `review_sleep_elapsed` after sleeping. A new review request starts a fresh counter.
 
 **Hard rule — observed-response fast path.** If any poll iteration observes a new top-level PR conversation comment whose author is not the agent itself, the very next sleep MUST be ≤ 60s.
 
