@@ -2175,7 +2175,10 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
       streamCoalescer.seedKnownLines(run.key, cachedLog.split('\n').filter(Boolean));
       streamCoalescer.clearBuffer(run.key);
       const src = new EventSource(streamPath + '?runKey=' + encodeURIComponent(backendKey));
-      src.onmessage = function (ev) { streamCoalescer.scheduleLine(run.key, ev.data); };
+      src.onmessage = function (ev) {
+        streamCoalescer.scheduleLine(run.key, ev.data);
+        if (state.streamReconnectAttempts) delete state.streamReconnectAttempts[run.key];
+      };
       src.onerror = function () {
         // EventSource fires onerror for both transient network errors
         // (readyState 0 — CONNECTING, browser will auto-reconnect) and
@@ -2185,12 +2188,16 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
         // the user manually re-selects the row. Only tear down when the
         // source is fully closed.
         if (src.readyState === 2) {
+          const reconnectAttempts = state.streamReconnectAttempts || (state.streamReconnectAttempts = {});
+          const attempts = reconnectAttempts[run.key] || 0;
+          const delay = Math.min(15000, 500 * Math.pow(2, attempts));
           stopRunStream(run.key);
           // A 304 summary poll does not render, so without this explicit
           // render there is no path back through reconcileRunStreams() to
           // replace a source closed by the bridge. Reconciliation rechecks
           // the active subject and selected tab before opening anything.
-          scheduleRender();
+          reconnectAttempts[run.key] = attempts + 1;
+          setTimeout(scheduleRender, delay);
         }
       };
       streamSources[run.key] = src;
@@ -2204,6 +2211,7 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
         delete streamSources[runKey];
       }
       streamingKeys.delete(runKey);
+      if (state.streamReconnectAttempts) delete state.streamReconnectAttempts[runKey];
     }
 
     function stopAllRunStreams() {
