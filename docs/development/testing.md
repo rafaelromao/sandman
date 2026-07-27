@@ -24,12 +24,23 @@ For a faster targeted loop while editing one package, run the smallest relevant 
 
 ## CI coverage
 
-The ordinary `CI` workflow runs the default untagged suite on Linux and macOS. It explicitly leaves `SANDMAN_TEST_PROVIDERS`, `SANDMAN_E2E_GATES`, `SANDMAN_RUN_SMOKE_E2E`, and `SANDMAN_RUN_AGENT_E2E` disabled, so pull requests do not run opt-in smoke or E2E scenarios.
+Sandman publishes four GoReleaser targets that match the four Unix platforms OpenCode supports (sans Windows): Linux amd64, Linux arm64, macOS amd64 (Intel), and macOS arm64 (Apple Silicon). The CI and release-validation tiers exercise those platforms as follows:
+
+| Platform | Build + unit (race) | Podman-backed regression | Native Compatibility boundary |
+|----------|---------------------|--------------------------|-------------------------------|
+| Linux amd64 | `CI / build (ubuntu-latest)` (PR + push to `main`) | `Full Regression - Linux` (release-please branch + dispatch) | n/a |
+| Linux arm64 | (no PR-time matrix entry today; covered by the released archive) | n/a | `Native Compatibility / (linux/arm64)` on `ubuntu-24.04-arm` (release-please branch + dispatch) |
+| macOS amd64 (Intel) | n/a (covered transitively by `CI / build (macos-latest)` arm64 today) | n/a — release-please does not run Podman on macOS after #2459 | `Native Compatibility / (darwin/amd64)` on `macos-15-intel` (release-please branch + dispatch) |
+| macOS arm64 (Apple Silicon) | `CI / build (macos-latest)` (PR + push to `main`) | n/a | `Native Compatibility / (darwin/arm64)` on `macos-14` (release-please branch + dispatch) |
+
+The ordinary `CI` workflow runs the default untagged suite on the `ubuntu-latest` and `macos-latest` runners. It explicitly leaves `SANDMAN_TEST_PROVIDERS`, `SANDMAN_E2E_GATES`, `SANDMAN_RUN_SMOKE_E2E`, and `SANDMAN_RUN_AGENT_E2E` disabled, so pull requests do not run opt-in smoke or E2E scenarios.
 
 Release Please branch updates add two release-validation workflows:
 
-- `Full Regression - Linux` is the exhaustive authority. It runs the race-enabled unit suite, every smoke provider and build-tools preset, and every E2E gate including real-agent coverage with the canonical 60- and 90-minute budgets.
-- `macOS Compatibility` is a focused Intel macOS suite. It builds and runs Sandman natively, exercises Darwin socket paths plus portal and attach streaming, and verifies the native portal and attach streaming boundary through two hermetic portal E2E cases. Linux-container preset portability remains covered by the Linux workflow rather than being rebuilt inside the macOS Podman VM.
+- `Full Regression - Linux` is the exhaustive authority for Linux. It runs the race-enabled unit suite, every smoke provider and build-tools preset, and every E2E gate including real-agent coverage with the canonical 60- and 90-minute budgets.
+- `Native Compatibility` is a focused suite with three parallel arch-specific jobs — `Native Compatibility (darwin/amd64)` on `macos-15-intel`, `Native Compatibility (darwin/arm64)` on `macos-14`, and `Native Compatibility (linux/arm64)` on `ubuntu-24.04-arm`. Each job builds Sandman natively for its arch, then exercises Darwin/Linux socket paths plus portal and attach streaming, and verifies the native portal and attach streaming boundary through two hermetic portal E2E cases. Linux-container preset portability remains covered by the Linux workflow rather than being rebuilt inside the macOS Podman VM.
+
+The contract test `TestPlatformCoverageMapMatchesWorkflowsAndGoReleaser` enforces that the CI matrix, the `Native Compatibility` workflow shape, the `Full Regression - Linux` exhaustive command, and the four `.goreleaser.yml` build IDs all stay aligned with the matrix above. A drift in any one of those four sources fails the contract.
 
 ## Smoke tests
 
