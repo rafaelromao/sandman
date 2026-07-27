@@ -235,7 +235,6 @@ func TestFullRegressionWorkflowsRunOnlyForReleasePleaseBranch(t *testing.T) {
 		for _, required := range []string{
 			"  push:",
 			"branches: [release-please--branches--main]",
-			"SANDMAN_RUN_AGENT_E2E=1 SANDMAN_TEST_PROVIDERS=all SANDMAN_E2E_GATES=all go test -tags e2e -timeout 90m ./...",
 		} {
 			if !strings.Contains(workflow, required) {
 				t.Errorf("%s missing %q", path, required)
@@ -247,6 +246,11 @@ func TestFullRegressionWorkflowsRunOnlyForReleasePleaseBranch(t *testing.T) {
 		if strings.Contains(workflow, "Real-agent Preset Matrix") {
 			t.Errorf("%s must run the real-agent matrix as part of E2E", path)
 		}
+	}
+
+	linux := readRepositoryFile(t, "../.github/workflows/full-regression-linux.yml")
+	if !strings.Contains(linux, "SANDMAN_RUN_AGENT_E2E=1 SANDMAN_TEST_PROVIDERS=all SANDMAN_E2E_GATES=all go test -tags e2e -timeout 90m ./...") {
+		t.Error("Linux full regression workflow must preserve the canonical E2E command")
 	}
 }
 
@@ -326,7 +330,8 @@ func TestMacOSFullRegressionPreservesAllRegressionCommands(t *testing.T) {
 	for _, command := range []string{
 		`go test -race -v ./...`,
 		`SANDMAN_TEST_PROVIDERS=all SANDMAN_RUN_SMOKE_E2E=1 go test -tags smoke -timeout 60m ./internal/cmd -run Smoke`,
-		`SANDMAN_RUN_AGENT_E2E=1 SANDMAN_TEST_PROVIDERS=all SANDMAN_E2E_GATES=all go test -tags e2e -timeout 90m ./...`,
+		`SANDMAN_RUN_AGENT_E2E=1 SANDMAN_TEST_PROVIDERS=all SANDMAN_E2E_GATES=all go test -tags e2e -timeout 90m \$(go list ./... | grep -v '/internal/cmd$')`,
+		`SANDMAN_RUN_AGENT_E2E=1 SANDMAN_TEST_PROVIDERS=all SANDMAN_E2E_GATES=all go test -v -tags e2e -timeout 90m ./internal/cmd`,
 	} {
 		if !strings.Contains(workflow, command) {
 			t.Errorf("macOS full regression workflow missing regression command %q", command)

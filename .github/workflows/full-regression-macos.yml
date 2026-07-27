@@ -119,8 +119,12 @@ jobs:
           # Tier 2: Focused smoke tests
           run_tier "Smoke" "SANDMAN_TEST_PROVIDERS=all SANDMAN_RUN_SMOKE_E2E=1 go test -tags smoke -timeout 60m ./internal/cmd -run Smoke"
 
-          # Tier 3: E2E tests, every scenario gate and real-agent matrix
-          run_tier "E2E" "SANDMAN_RUN_AGENT_E2E=1 SANDMAN_TEST_PROVIDERS=all SANDMAN_E2E_GATES=all go test -tags e2e -timeout 90m ./..."
+          # Tier 3: E2E tests outside internal/cmd.
+          run_tier "E2E (other packages)" "SANDMAN_RUN_AGENT_E2E=1 SANDMAN_TEST_PROVIDERS=all SANDMAN_E2E_GATES=all go test -tags e2e -timeout 90m \$(go list ./... | grep -v '/internal/cmd$')"
+
+          # Tier 4: internal/cmd is the long-running package. Run it separately
+          # and verbosely so a stalled scenario is visible in the job log.
+          run_tier "E2E (internal/cmd)" "SANDMAN_RUN_AGENT_E2E=1 SANDMAN_TEST_PROVIDERS=all SANDMAN_E2E_GATES=all go test -v -tags e2e -timeout 90m ./internal/cmd"
 
           {
             echo "# Full Regression Report — macOS"
