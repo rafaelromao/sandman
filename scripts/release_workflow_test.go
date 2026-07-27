@@ -209,6 +209,7 @@ func TestReleaseWorkflowUsesCredentialThatTriggersReleasePRChecks(t *testing.T) 
 		`"context": "Full Regression - macOS / Full Regression Suite (macOS)"`,
 		`"context": "Native Compatibility / Native Compatibility (darwin/amd64)"`,
 		`"context": "Native Compatibility / Native Compatibility (darwin/arm64)"`,
+		`"context": "Native Compatibility / Native Compatibility (linux/arm64)"`,
 	} {
 		if strings.Contains(ruleset, forbidden) {
 			t.Errorf("main ruleset must not require release-only check %q", forbidden)
@@ -231,7 +232,7 @@ func TestReleaseWorkflowUsesCredentialThatTriggersReleasePRChecks(t *testing.T) 
 func TestReleaseValidationWorkflowsRunOnlyForReleasePleaseBranch(t *testing.T) {
 	for _, path := range []string{
 		"../.github/workflows/full-regression-linux.yml",
-		"../.github/workflows/macos-compatibility.yml",
+		"../.github/workflows/native-compatibility.yml",
 	} {
 		workflow := readRepositoryFile(t, path)
 		for _, required := range []string{
@@ -256,21 +257,25 @@ func TestReleaseValidationWorkflowsRunOnlyForReleasePleaseBranch(t *testing.T) {
 	}
 }
 
-func TestNativeCompatibilityCoversBothDarwinArches(t *testing.T) {
-	workflow := readRepositoryFile(t, "../.github/workflows/macos-compatibility.yml")
+func TestNativeCompatibilityCoversAllFourArches(t *testing.T) {
+	workflow := readRepositoryFile(t, "../.github/workflows/native-compatibility.yml")
 
 	for _, required := range []string{
 		"name: Native Compatibility",
 		"runs-on: macos-15-intel",
 		"runs-on: macos-14",
+		"runs-on: ubuntu-24.04-arm",
 		"timeout-minutes: 45",
 		"name: Build native Sandman (Intel)",
 		"name: Build native Sandman (Apple Silicon)",
+		"name: Build native Sandman (Linux arm64)",
 		`test "$(go env GOOS)" = "darwin"`,
+		`test "$(go env GOOS)" = "linux"`,
 		`test "$(go env GOARCH)" = "amd64"`,
 		`test "$(go env GOARCH)" = "arm64"`,
 		`test "$(uname -m)" = "x86_64"`,
 		`test "$(uname -m)" = "arm64"`,
+		`test "$(uname -m)" = "aarch64"`,
 		`go build -o "$RUNNER_TEMP/sandman" ./cmd/sandman`,
 		"name: Test native socket compatibility",
 		"TestResolvePortalPeerPIDReturnsCallerPID",
@@ -289,15 +294,12 @@ func TestNativeCompatibilityCoversBothDarwinArches(t *testing.T) {
 
 	darwinAmd64 := strings.Index(workflow, "runs-on: macos-15-intel")
 	darwinArm64 := strings.Index(workflow, "runs-on: macos-14")
-	amd64Build := strings.Index(workflow, `test "$(go env GOARCH)" = "amd64"`)
-	arm64Build := strings.Index(workflow, `test "$(go env GOARCH)" = "arm64"`)
-	amd64FileCheck := strings.Index(workflow, `test "$(uname -m)" = "x86_64"`)
-	arm64FileCheck := strings.Index(workflow, `test "$(uname -m)" = "arm64"`)
-	if darwinAmd64 == -1 || darwinArm64 == -1 || amd64Build == -1 || arm64Build == -1 || amd64FileCheck == -1 || arm64FileCheck == -1 {
-		t.Fatal("native compatibility workflow must build and verify both darwin/amd64 and darwin/arm64")
+	linuxArm64 := strings.Index(workflow, "runs-on: ubuntu-24.04-arm")
+	if darwinAmd64 == -1 || darwinArm64 == -1 || linuxArm64 == -1 {
+		t.Fatal("native compatibility workflow must declare the darwin/amd64, darwin/arm64, and linux/arm64 jobs")
 	}
-	if darwinAmd64 > darwinArm64 {
-		t.Fatal("native compatibility workflow must declare the darwin/amd64 job before the darwin/arm64 job")
+	if darwinAmd64 > darwinArm64 || darwinArm64 > linuxArm64 {
+		t.Fatal("native compatibility workflow must declare jobs in the order darwin/amd64, darwin/arm64, linux/arm64")
 	}
 
 	portalE2ETests := readRepositoryFile(t, "../internal/cmd/portal_e2e_test.go")
@@ -331,7 +333,7 @@ func extractGoFunction(t *testing.T, source, name string) (string, int) {
 }
 
 func TestNativeCompatibilityDoesNotDuplicateLinuxFullRegression(t *testing.T) {
-	workflow := readRepositoryFile(t, "../.github/workflows/macos-compatibility.yml")
+	workflow := readRepositoryFile(t, "../.github/workflows/native-compatibility.yml")
 
 	for _, forbidden := range []string{
 		"Run full regression suite",
@@ -372,7 +374,7 @@ func TestCIWorkflowKeepsOptInSuitesDisabled(t *testing.T) {
 func TestPlatformCoverageMapMatchesWorkflowsAndGoReleaser(t *testing.T) {
 	ci := readRepositoryFile(t, "../.github/workflows/go.yml")
 	linuxFull := readRepositoryFile(t, "../.github/workflows/full-regression-linux.yml")
-	macCompat := readRepositoryFile(t, "../.github/workflows/macos-compatibility.yml")
+	nativeCompat := readRepositoryFile(t, "../.github/workflows/native-compatibility.yml")
 	goreleaser := readRepositoryFile(t, "../.goreleaser.yml")
 
 	ciMatrix := extractOnSubBlock(t, ci, "build")
@@ -388,12 +390,18 @@ func TestPlatformCoverageMapMatchesWorkflowsAndGoReleaser(t *testing.T) {
 	for _, required := range []string{
 		"runs-on: macos-15-intel",
 		"runs-on: macos-14",
+		"runs-on: ubuntu-24.04-arm",
+		`test "$(go env GOOS)" = "darwin"`,
+		`test "$(go env GOOS)" = "linux"`,
 		`test "$(go env GOARCH)" = "amd64"`,
 		`test "$(go env GOARCH)" = "arm64"`,
+		`test "$(uname -m)" = "x86_64"`,
+		`test "$(uname -m)" = "arm64"`,
+		`test "$(uname -m)" = "aarch64"`,
 		"TestPortal_E2E_TwoLiveRuns",
 		"TestPortal_E2E_AbortReturns404ForUnknownRun",
 	} {
-		if !strings.Contains(macCompat, required) {
+		if !strings.Contains(nativeCompat, required) {
 			t.Errorf("native compatibility workflow must include %q so the four-platform coverage claim holds", required)
 		}
 	}

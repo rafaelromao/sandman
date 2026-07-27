@@ -104,3 +104,49 @@ jobs:
         run: |
           go test -v -tags e2e -timeout 10m ./internal/cmd \
             -run '^TestPortal_E2E_AbortReturns404ForUnknownRun$'
+
+  linux-arm64:
+    name: Native Compatibility (linux/arm64)
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 45
+    env:
+      CI: "true"
+      SANDMAN_TEST_PROVIDERS: all
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build native Sandman (Linux arm64)
+        run: |
+          test "$(uname -m)" = "aarch64"
+          test "$(go env GOOS)" = "linux"
+          test "$(go env GOARCH)" = "arm64"
+          go build -o "$RUNNER_TEMP/sandman" ./cmd/sandman
+          file "$RUNNER_TEMP/sandman"
+          "$RUNNER_TEMP/sandman" version
+
+      - name: Test native socket compatibility
+        run: |
+          go test -race -v -timeout 10m \
+            ./internal/socketpath ./internal/review ./internal/daemon ./internal/cmd \
+            -run '^(TestPath_(LongLogicalPathIsShortenedOnEveryOS|LongLogicalPathIsDeterministic)|TestDaemon_SocketPathAndSocketAddrAgreeForLongPath|TestControlSocket_StartForLongPathCreatesShortFilesystemSocket|TestCommandServer_StartUsesShortFilesystemSocketForLongPath|TestResolvePortalPeerPIDReturnsCallerPID|TestDiscoverPortalInstances_LongPathBindsAndDials|TestPortal_RunStream_BridgesControlSocketToSSE|TestAttach_(ReadsFromSocket|ExitsOnEOF|FindsLongPathReviewSock))$'
+
+      - name: Test native portal process
+        env:
+          SANDMAN_E2E_GATES: portal
+        run: |
+          go test -v -tags e2e -timeout 10m ./internal/cmd \
+            -run '^TestPortal_E2E_TwoLiveRuns$'
+
+      - name: Test native portal abort endpoint
+        env:
+          SANDMAN_E2E_GATES: portal
+        run: |
+          go test -v -tags e2e -timeout 10m ./internal/cmd \
+            -run '^TestPortal_E2E_AbortReturns404ForUnknownRun$'
