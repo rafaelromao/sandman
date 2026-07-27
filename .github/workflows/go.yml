@@ -92,4 +92,8 @@ jobs:
       - name: Test
         env:
           GH_TOKEN: ${{ github.token }}
+          SANDMAN_TEST_PROVIDERS: ""
+          SANDMAN_RUN_SMOKE_E2E: "0"
+          SANDMAN_RUN_AGENT_E2E: "0"
+          SANDMAN_E2E_GATES: ""
         run: go test -race -v ./...

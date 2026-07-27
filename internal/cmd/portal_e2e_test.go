@@ -24,11 +24,6 @@ import (
 )
 
 func TestPortal_E2E_TwoLiveRuns(t *testing.T) {
-	// CI: STALE — uses buildSandmanBinary + startPortalBinary; no provider auth or runtime required.
-	if os.Getenv("CI") != "" {
-		t.Skip("skip e2e in CI")
-	}
-
 	binPath := buildSandmanBinary(t)
 
 	repoDir := t.TempDir()

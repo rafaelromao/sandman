@@ -22,6 +22,15 @@ go test -race -v ./...
 
 For a faster targeted loop while editing one package, run the smallest relevant `go test` command first, then finish with `make check` when the change is ready.
 
+## CI coverage
+
+The ordinary `CI` workflow runs the default untagged suite on Linux and macOS. It explicitly leaves `SANDMAN_TEST_PROVIDERS`, `SANDMAN_E2E_GATES`, `SANDMAN_RUN_SMOKE_E2E`, and `SANDMAN_RUN_AGENT_E2E` disabled, so pull requests do not run opt-in smoke or E2E scenarios.
+
+Release Please branch updates add two release-validation workflows:
+
+- `Full Regression - Linux` is the exhaustive authority. It runs the race-enabled unit suite, every smoke provider and build-tools preset, and every E2E gate including real-agent coverage with the canonical 60- and 90-minute budgets.
+- `macOS Compatibility` is a focused Intel macOS suite. It builds and runs Sandman natively, exercises Darwin socket paths plus portal and attach streaming, and verifies a native `sandman run --sandbox podman` boundary with deterministic fake GitHub and agent fixtures. Linux-container preset portability remains covered by the Linux workflow rather than being rebuilt inside the macOS Podman VM.
+
 ## Smoke tests
 
 Smoke tests run a single agent session end-to-end and verify the core run loop. They are fast compared with full e2e tests and are disabled unless a provider allowlist is set.

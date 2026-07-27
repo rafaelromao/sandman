@@ -24,6 +24,9 @@ func TestOpencodeSubagentPermissionAllowAll(t *testing.T) {
 	if !testenv.E2EGateAllowed(testenv.E2EScenarioOpencodeSubagent) {
 		t.Skip("set SANDMAN_E2E_GATES=opencode_subagent (or all) to run opencode subagent permission e2e")
 	}
+	// FIX: merged gh shim is prepended on the host PATH even though its relative
+	// paths only resolve inside the container. The follow-up branch should split
+	// host/container shims before this E2E is brought back into CI. See #2459.
 	if os.Getenv("CI") != "" {
 		t.Skip("skip e2e in CI")
 	}

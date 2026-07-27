@@ -1,37 +1,25 @@
-name: Full Regression - macOS
+name: macOS Compatibility
 
-# Release Please pushes updates to this branch; the resulting checks appear on
-# its open release PR without running on ordinary pull requests.
 on:
   workflow_dispatch:
-    inputs:
-      tier:
-        description: Regression tier to run
-        required: true
-        default: all
-        type: choice
-        options:
-          - all
-          - presets
-          - elixir
-          - ruby
   push:
     branches: [release-please--branches--main]
 
-jobs:
-  full-regression:
-    name: Full Regression Suite (macOS)
-    runs-on: macos-15-intel
-    timeout-minutes: 360
-    env:
-      CI: true
-      GIT_TERMINAL_PROMPT: "0"
-      PAGER: cat
-      CONTAINERS_MACHINE_PROVIDER: applehv
-      GH_TOKEN: ${{ github.token }}
-      GITHUB_TOKEN: ${{ github.token }}
-      REPORT_FILE: regression-report-macos.md
+permissions:
+  contents: read
 
+concurrency:
+  group: macos-compatibility-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  compatibility:
+    name: Native Compatibility (macOS Intel)
+    runs-on: macos-15-intel
+    timeout-minutes: 45
+    env:
+      CI: "true"
+      SANDMAN_TEST_PROVIDERS: all
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -40,165 +28,33 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+          cache: true
 
-      - name: Install Podman
+      - name: Build native Sandman
         run: |
-          podman_pkg_dir=$(mktemp -d)
-          podman_pkg="$podman_pkg_dir/podman.pkg"
-          trap 'rm -rf "$podman_pkg_dir"' EXIT
-          curl -fsSL \
-            "https://github.com/podman-container-tools/podman/releases/download/v5.5.2/podman-installer-macos-amd64.pkg" \
-            -o "$podman_pkg"
-          echo "a30e5010e59aea43f6d808eff29166d31b216d5d7c3991bb038e00c0acdb0b27  $podman_pkg" | shasum -a 256 -c -
-          sudo installer -pkg "$podman_pkg" -target /
-          echo /opt/podman/bin >> "$GITHUB_PATH"
+          test "$(uname -m)" = "x86_64"
+          test "$(go env GOOS)" = "darwin"
+          test "$(go env GOARCH)" = "amd64"
+          go build -o "$RUNNER_TEMP/sandman" ./cmd/sandman
+          file "$RUNNER_TEMP/sandman"
+          "$RUNNER_TEMP/sandman" version
 
-      - name: Initialize Podman machine
+      - name: Test native socket compatibility
         run: |
-          podman machine init \
-            --cpus 3 \
-            --memory 8192 \
-            --disk-size 60 \
-            --now
+          go test -race -v -timeout 10m \
+            ./internal/socketpath ./internal/review ./internal/daemon ./internal/cmd \
+            -run '^(TestPath_(LongLogicalPathIsShortenedOnEveryOS|LongLogicalPathIsDeterministic)|TestDaemon_SocketPathAndSocketAddrAgreeForLongPath|TestControlSocket_StartForLongPathCreatesShortFilesystemSocket|TestCommandServer_StartUsesShortFilesystemSocketForLongPath|TestResolvePortalPeerPIDReturnsCallerPID|TestDiscoverPortalInstances_LongPathBindsAndDials|TestPortal_RunStream_BridgesControlSocketToSSE|TestAttach_(ReadsFromSocket|ExitsOnEOF|FindsLongPathReviewSock))$'
 
-      - name: Validate Podman
+      - name: Test native portal process
+        env:
+          SANDMAN_E2E_GATES: portal
         run: |
-          podman info
-          podman run --rm alpine:latest uname -a
+          go test -v -tags e2e -timeout 10m ./internal/cmd \
+            -run '^TestPortal_E2E_TwoLiveRuns$'
 
-      - name: Configure short temporary paths
+      - name: Test native portal abort endpoint
+        env:
+          SANDMAN_E2E_GATES: portal
         run: |
-          mkdir -p /private/tmp/sandman-ci
-          chmod 1777 /private/tmp/sandman-ci
-          echo "TMPDIR=/private/tmp/sandman-ci" >> "$GITHUB_ENV"
-
-      - name: Prewarm container image
-        run: podman pull alpine:latest
-
-      - name: Podman diagnostics
-        run: |
-          uname -a
-          arch
-          podman version
-          podman machine list
-          podman machine inspect
-          podman info
-          df -h
-
-      - name: Run full regression suite
-        shell: bash
-        run: |
-          set -uo pipefail
-
-          RESULTS_FILE=$(mktemp)
-          trap 'rm -f "$RESULTS_FILE"' EXIT
-          REQUESTED_TIER="${{ inputs.tier || 'all' }}"
-
-          log_tier() {
-            local name=$1 status=$2 reason=$3
-            printf '%s|%s|%s\n' "$name" "$status" "$reason" >> "$RESULTS_FILE"
-          }
-
-          run_tier() {
-            local name=$1 cmd=$2
-            echo "▶ Running $name"
-            echo "::group::$name"
-
-            set +e
-            bash -c "$cmd"
-            local rc=$?
-            set -e
-            echo "::endgroup::"
-
-            if [ $rc -eq 0 ]; then
-              log_tier "$name" "PASS" ""
-              echo "  $name: PASS"
-            else
-              log_tier "$name" "FAIL" "exit code $rc"
-              echo "  $name: FAIL (exit code $rc)"
-            fi
-          }
-
-          skip_tier() {
-            local name=$1 reason=$2
-            log_tier "$name" "SKIP" "$reason"
-            echo "  $name: SKIP ($reason)"
-          }
-
-          if [ "$REQUESTED_TIER" = "all" ]; then
-            # Tier 1: Unit tests + race detector (matches `make test`)
-            run_tier "Unit + Race" "go test -race -v ./..."
-
-            # Tier 2: Focused smoke tests
-            run_tier "Smoke" "SANDMAN_TEST_PROVIDERS=all SANDMAN_RUN_SMOKE_E2E=1 go test -tags smoke -timeout 60m ./internal/cmd -run Smoke"
-
-            # Tier 3: E2E tests outside internal/cmd.
-            run_tier "E2E (other packages)" "SANDMAN_RUN_AGENT_E2E=1 SANDMAN_TEST_PROVIDERS=all SANDMAN_E2E_GATES=all go test -tags e2e -timeout 90m \$(go list ./... | grep -v '/internal/cmd$')"
-
-            # Tier 4: internal/cmd without the expensive independent preset builds.
-            run_tier "E2E (internal/cmd)" "SANDMAN_RUN_AGENT_E2E=1 SANDMAN_TEST_PROVIDERS=all SANDMAN_E2E_GATES=all go test -v -tags e2e -timeout 90m ./internal/cmd -skip 'TestPresetMatrixHarness_.*BuildsWithEditedDockerfile'"
-          fi
-
-          # Tier 5: keep image builds serial. Concurrent builds can exhaust the
-          # three-CPU Podman VM and terminate its server with unexpected EOF.
-          if [ "$REQUESTED_TIER" = "all" ] || [ "$REQUESTED_TIER" = "presets" ]; then
-            run_tier "E2E (serial preset builds)" "printf '%s\n' TestPresetMatrixHarness_NodeBuildsWithEditedDockerfile TestPresetMatrixHarness_GoBuildsWithEditedDockerfile TestPresetMatrixHarness_PythonBuildsWithEditedDockerfile TestPresetMatrixHarness_GenericBuildsWithEditedDockerfile TestPresetMatrixHarness_DotnetBuildsWithEditedDockerfile TestPresetMatrixHarness_RustBuildsWithEditedDockerfile TestPresetMatrixHarness_JavaBuildsWithEditedDockerfile | xargs -n 1 -P 1 bash -c 'SANDMAN_RUN_AGENT_E2E=1 SANDMAN_TEST_PROVIDERS=all SANDMAN_E2E_GATES=all go test -v -tags e2e -timeout 90m ./internal/cmd -run \"^\$1\$\"' _"
-          fi
-          if [ "$REQUESTED_TIER" = "all" ] || [ "$REQUESTED_TIER" = "presets" ] || [ "$REQUESTED_TIER" = "elixir" ]; then
-            run_tier "E2E (Elixir preset build)" "SANDMAN_RUN_AGENT_E2E=1 SANDMAN_TEST_PROVIDERS=all SANDMAN_E2E_GATES=all go test -v -tags e2e -timeout 90m ./internal/cmd -run '^TestPresetMatrixHarness_ElixirBuildsWithEditedDockerfile$'"
-          fi
-          if [ "$REQUESTED_TIER" = "all" ] || [ "$REQUESTED_TIER" = "presets" ] || [ "$REQUESTED_TIER" = "ruby" ]; then
-            run_tier "E2E (Ruby preset build)" "SANDMAN_RUN_AGENT_E2E=1 SANDMAN_TEST_PROVIDERS=all SANDMAN_E2E_GATES=all go test -v -tags e2e -timeout 90m ./internal/cmd -run '^TestPresetMatrixHarness_RubyBuildsWithEditedDockerfile$'"
-          fi
-
-          {
-            echo "# Full Regression Report — macOS"
-            echo ""
-            echo "| Tier | Status | Details |"
-            echo "|------|--------|---------|"
-            while IFS='|' read -r name status reason; do
-              emoji=""
-              case "$status" in
-                PASS) emoji="✅" ;;
-                FAIL) emoji="❌" ;;
-                SKIP) emoji="⏭️" ;;
-                TIMEOUT) emoji="⏰" ;;
-              esac
-              echo "| $name | $emoji $status | $reason |"
-            done < "$RESULTS_FILE"
-            echo ""
-            echo "Workflow run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
-          } >> "$GITHUB_STEP_SUMMARY"
-
-          {
-            echo "# Full Regression Report — macOS"
-            echo ""
-            echo "| Tier | Status | Details |"
-            echo "|------|--------|---------|"
-            while IFS='|' read -r name status reason; do
-              echo "| $name | $status | $reason |"
-            done < "$RESULTS_FILE"
-            echo ""
-            echo "Workflow run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
-          } > "$REPORT_FILE"
-
-          final_rc=0
-          while IFS='|' read -r name status reason; do
-            if [ "$status" = "FAIL" ] || [ "$status" = "TIMEOUT" ]; then
-              final_rc=1
-            fi
-          done < "$RESULTS_FILE"
-
-          exit $final_rc
-
-      - name: Stop Podman machine
-        if: always()
-        run: podman machine stop || true
-
-      - name: Upload regression report
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: regression-report-macos
-          path: regression-report-macos.md
-          if-no-files-found: ignore
+          go test -v -tags e2e -timeout 10m ./internal/cmd \
+            -run '^TestPortal_E2E_AbortReturns404ForUnknownRun$'
