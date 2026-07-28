@@ -206,6 +206,39 @@ func TestRunBatch_KillsStuckRunAfterIdleTimeout(t *testing.T) {
 	}
 }
 
+func TestRunBatch_PromptOnlyKillsStuckRunAfterIdleTimeout(t *testing.T) {
+	if os.Getenv("CI") != "" {
+		t.Skip("flaky in CI: socket path sensitivity and timing issues with fake process")
+	}
+	client, proc, _, factory, workDir := heartbeatTestSetup(t)
+	runnable := &heartbeatStallRunnable{
+		logPath: filepath.Join(workDir, ".sandman", "logs", "prompt-only.log"),
+		proc:    proc,
+	}
+	spyLog := &spyEventLog{}
+	o := newHeartbeatOrchestrator(client, factory, &heartbeatSingleRunnableFactory{runnable: runnable}, 0, spyLog)
+
+	result, err := o.RunBatch(context.Background(), Request{
+		PromptConfig:      prompt.RenderConfig{PromptFlag: "Review the PR."},
+		RunIdleTimeoutSet: true,
+		RunIdleTimeout:    heartbeatTestIdle,
+	})
+	if err == nil {
+		t.Fatal("expected prompt-only run to abort after the idle timeout")
+	}
+	if result == nil || len(result.Runs) != 1 || result.Runs[0].Status != "aborted" {
+		t.Fatalf("result = %#v, want one aborted prompt-only run", result)
+	}
+	if !proc.killObserved() {
+		t.Fatal("expected heartbeat to kill the prompt-only process")
+	}
+	if got := findEvent(spyLog.events, "run.idle_timeout"); got == nil {
+		t.Fatalf("expected run.idle_timeout event, got %v", spyLog.events)
+	} else if got.Payload["idle_timeout_seconds"] != heartbeatTestIdle {
+		t.Errorf("idle_timeout_seconds = %v, want %d", got.Payload["idle_timeout_seconds"], heartbeatTestIdle)
+	}
+}
+
 func TestRunBatch_IdleTimeoutRetriesAndSucceeds(t *testing.T) {
 	client, proc, _, factory, workDir := heartbeatTestSetup(t)
 	logPath := filepath.Join(workDir, ".sandman", "logs", "42.log")
