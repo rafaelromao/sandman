@@ -256,7 +256,8 @@ func TestReleaseValidationWorkflowsRunOnlyForReleasePleaseBranch(t *testing.T) {
 		t.Error("Linux full regression workflow must preserve the canonical E2E command")
 	}
 	for _, required := range []string{
-		"CONTAINERS_CONF: ${{ runner.temp }}/containers.conf",
+		`export CONTAINERS_CONF="$RUNNER_TEMP/containers.conf"`,
+		`echo "CONTAINERS_CONF=$CONTAINERS_CONF" >> "$GITHUB_ENV"`,
 		"name: Configure Podman runtime",
 		`runtime = "runc"`,
 		`test "$(podman info --format '{{.Host.OCIRuntime.Name}}')" = "runc"`,
@@ -380,7 +381,8 @@ func TestCIWorkflowKeepsOptInSuitesDisabled(t *testing.T) {
 		t.Fatal("regular CI must not compile or run smoke/e2e-tagged tests")
 	}
 	for _, required := range []string{
-		"CONTAINERS_CONF: ${{ runner.temp }}/containers.conf",
+		`export CONTAINERS_CONF="$RUNNER_TEMP/containers.conf"`,
+		`echo "CONTAINERS_CONF=$CONTAINERS_CONF" >> "$GITHUB_ENV"`,
 		"name: Configure Podman runtime",
 		`runtime = "runc"`,
 		`test "$(podman info --format '{{.Host.OCIRuntime.Name}}')" = "runc"`,
