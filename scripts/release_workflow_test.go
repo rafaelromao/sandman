@@ -379,6 +379,16 @@ func TestCIWorkflowKeepsOptInSuitesDisabled(t *testing.T) {
 	if strings.Contains(workflow, "-tags smoke") || strings.Contains(workflow, "-tags e2e") {
 		t.Fatal("regular CI must not compile or run smoke/e2e-tagged tests")
 	}
+	for _, required := range []string{
+		"CONTAINERS_CONF: ${{ runner.temp }}/containers.conf",
+		"name: Configure Podman runtime",
+		`runtime = "runc"`,
+		`test "$(podman info --format '{{.Host.OCIRuntime.Name}}')" = "runc"`,
+	} {
+		if !strings.Contains(workflow, required) {
+			t.Errorf("regular CI workflow missing Podman runtime configuration %q", required)
+		}
+	}
 }
 
 func TestPlatformCoverageMapMatchesWorkflowsAndGoReleaser(t *testing.T) {
