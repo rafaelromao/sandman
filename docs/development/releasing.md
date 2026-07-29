@@ -42,6 +42,7 @@ Release Please release means it does not run.
 The configured release targets are:
 
 - `sandman_<version>_linux_amd64.tar.gz`
+- `sandman_<version>_linux_arm64.tar.gz`
 - `sandman_<version>_darwin_amd64.tar.gz`
 - `sandman_<version>_darwin_arm64.tar.gz`
 - `checksums.txt`
@@ -101,9 +102,9 @@ Both commands use the same build version and prefix it with `sandman`:
 
 ```console
 $ sandman --version
-sandman v1.0.0-rc.1
+sandman 1.0.0-rc.1
 $ sandman version
-sandman v1.0.0-rc.1
+sandman 1.0.0-rc.1
 ```
 
 The sources of that value differ by build path:

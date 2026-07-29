@@ -140,6 +140,7 @@ func TestReleaseWorkflowPublishesConfiguredReleaseArtifacts(t *testing.T) {
 		"Go `1.25.0` from `go.mod`",
 		"GoReleaser `v2.10.1`",
 		"production release job explicitly installs",
+		"`sandman_<version>_linux_arm64.tar.gz`",
 	} {
 		if !strings.Contains(releasing, required) {
 			t.Errorf("release guide missing %q", required)
@@ -160,6 +161,21 @@ func TestReleaseWorkflowPublishesConfiguredReleaseArtifacts(t *testing.T) {
 		if !strings.Contains(goreleaser, required) {
 			t.Errorf("GoReleaser config missing %q", required)
 		}
+	}
+}
+
+func TestReleaseGuideMatchesVerifiedRC1BinaryOutput(t *testing.T) {
+	releasing := readRepositoryFile(t, "../docs/development/releasing.md")
+	for _, required := range []string{
+		"sandman 1.0.0-rc.1",
+		"released binary reports version `1.0.0-rc.1`",
+	} {
+		if !strings.Contains(releasing, required) {
+			t.Errorf("release guide missing verified binary output %q", required)
+		}
+	}
+	if strings.Contains(releasing, "sandman v1.0.0-rc.1") {
+		t.Error("release guide must not add a v prefix to release binary output")
 	}
 }
 
