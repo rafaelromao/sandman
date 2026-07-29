@@ -20,6 +20,7 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       GITHUB_TOKEN: ${{ github.token }}
       REPORT_FILE: regression-report-linux.md
+      CONTAINERS_CONF: ${{ runner.temp }}/containers.conf
 
     steps:
       - name: Checkout
@@ -35,8 +36,17 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y podman
 
+      - name: Configure Podman runtime
+        run: |
+          cat > "$CONTAINERS_CONF" <<'EOF'
+          [engine]
+          runtime = "runc"
+          EOF
+
       - name: Validate Podman
-        run: podman info
+        run: |
+          test "$(podman info --format '{{.Host.OCIRuntime.Name}}')" = "runc"
+          podman run --rm alpine true
 
       - name: Run full regression suite
         shell: bash

@@ -255,6 +255,16 @@ func TestReleaseValidationWorkflowsRunOnlyForReleasePleaseBranch(t *testing.T) {
 	if !strings.Contains(linux, "SANDMAN_RUN_AGENT_E2E=1 SANDMAN_TEST_PROVIDERS=all SANDMAN_E2E_GATES=all go test -tags e2e -timeout 90m ./...") {
 		t.Error("Linux full regression workflow must preserve the canonical E2E command")
 	}
+	for _, required := range []string{
+		"CONTAINERS_CONF: ${{ runner.temp }}/containers.conf",
+		"name: Configure Podman runtime",
+		`runtime = "runc"`,
+		`test "$(podman info --format '{{.Host.OCIRuntime.Name}}')" = "runc"`,
+	} {
+		if !strings.Contains(linux, required) {
+			t.Errorf("Linux full regression workflow missing Podman runtime configuration %q", required)
+		}
+	}
 }
 
 func TestNativeCompatibilityCoversAllFourArches(t *testing.T) {
