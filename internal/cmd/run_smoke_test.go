@@ -212,7 +212,7 @@ func runSmokeProvider(t *testing.T, tc smokeProviderCase) {
 }
 
 func mergedPR(branch, sha string) *github.PR {
-	return &github.PR{Number: 1, State: "closed", Merged: true, HeadRefName: branch}
+	return &github.PR{Number: 1, State: "closed", Merged: true, HeadRefName: branch, Body: "Fixes #1"}
 }
 
 func runSmokeProviderTwice(t *testing.T, tc smokeProviderCase, secondArgs ...string) {

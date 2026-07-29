@@ -37,6 +37,7 @@ func TestRun_PathlenWorktreeAndReviewSockets(t *testing.T) {
 					State:       "closed",
 					Merged:      true,
 					HeadRefName: "42-pathlen-regression",
+					Body:        "Fixes #42",
 				},
 			},
 		}
