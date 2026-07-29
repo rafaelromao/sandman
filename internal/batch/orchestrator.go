@@ -2087,6 +2087,55 @@ func (s *runSession) withHeartbeat(ctx context.Context, runID string, attempt in
 	return result, abortedByHeartbeat
 }
 
+// withClosingReferenceGuard repairs an open PR as soon as it becomes visible
+// during an issue run. This keeps an agent from merging a body that only uses
+// a non-closing reference such as "Refs #42". A merged PR is never edited:
+// at that point GitHub cannot apply its auto-close behavior retroactively.
+func (s *runSession) withClosingReferenceGuard(ctx context.Context, branch string, fn func() AgentRunResult) AgentRunResult {
+	if s.issueNumber <= 0 || s.deps.githubClient == nil || strings.TrimSpace(branch) == "" {
+		return fn()
+	}
+
+	interval := s.deps.heartbeatTickInterval
+	if interval <= 0 {
+		interval = time.Second
+	}
+	guardCtx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-guardCtx.Done():
+				return
+			case <-ticker.C:
+				repairOpenPRClosingReference(guardCtx, s.deps.githubClient, branch, s.issueNumber, s.deps.errorLog)
+			}
+		}
+	}()
+
+	result := fn()
+	cancel()
+	<-done
+	return result
+}
+
+func repairOpenPRClosingReference(ctx context.Context, client github.Client, branch string, issueNumber int, errorLog io.Writer) {
+	pr, err := client.FindPRByBranch(ctx, branch)
+	if err != nil || pr == nil || !strings.EqualFold(pr.State, "open") || pr.Merged {
+		return
+	}
+	body, changed := github.EnsureClosingReference(pr.Body, issueNumber)
+	if !changed {
+		return
+	}
+	if err := client.EditPRBody(ctx, pr.Number, body); err != nil && errorLog != nil {
+		fmt.Fprintf(errorLog, "error: repair closing reference for PR #%d and issue %d: %v\n", pr.Number, issueNumber, err)
+	}
+}
+
 // emitTerminal writes the terminal run event (run.finished or run.aborted),
 // rewrites the on-disk run.json snapshot so its status matches the terminal
 // event, and returns the normalised status so the caller can use it without
@@ -2456,7 +2505,9 @@ func (s *runSession) runOnce(
 		}
 
 		result, abortedByHeartbeat = s.withHeartbeat(ctx, runID, attempt, logPath, wt, func() AgentRunResult {
-			return runnable.Run(ctx, s.deps.renderer, s.agentCfg.Command, attemptRenderCfg)
+			return s.withClosingReferenceGuard(ctx, branch, func() AgentRunResult {
+				return runnable.Run(ctx, s.deps.renderer, s.agentCfg.Command, attemptRenderCfg)
+			})
 		})
 		if result.Issue == nil && s.issueNumber > 0 {
 			result.Issue = issueRef(s.issueNumber)
@@ -2470,7 +2521,7 @@ func (s *runSession) runOnce(
 		taskContent, _, _ := ReadTaskContent(taskPath)
 		alreadyResolved := hasExactTaskStatus(taskContent, "## Status: already resolved")
 		if mergeRequired {
-			prMerged := checkPRMerged(ctx, s.deps.githubClient, branch)
+			prMerged := checkPRMergedForIssue(ctx, s.deps.githubClient, branch, s.issueNumber)
 			if events.RunStatusFromPayload(result.Status).IsAborted() {
 				continue
 			}
@@ -2533,7 +2584,7 @@ func (s *runSession) runOnce(
 			}
 			if events.RunStatusFromPayload(result.Status).IsSuccess() || alreadyResolved {
 				if issue != nil && s.deps.githubClient != nil {
-					prMerged := checkPRMerged(ctx, s.deps.githubClient, branch)
+					prMerged := checkPRMergedForIssue(ctx, s.deps.githubClient, branch, s.issueNumber)
 					if prMerged || alreadyResolved {
 						if alreadyResolved {
 							pr := lookupPRForVerify(ctx, s.deps.githubClient, s.deps.errorLog, branch)
@@ -2787,7 +2838,7 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 			// issue-driven runs (see #860). ModeContinue uses a different
 			// `prepareAttempt` closure (the prompt-only one) that does not
 			// contain this guard, so continuation replays are unaffected.
-			if checkPRMerged(ctx, s.deps.githubClient, branch) {
+			if checkPRMergedForIssue(ctx, s.deps.githubClient, branch, s.issueNumber) {
 				return attemptRenderCfg, &AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "success", Branch: branch, RetriesTotal: attempt}
 			}
 			taskPath := filepath.Join(wt.WorkDir(), ".sandman", "task.md")
