@@ -225,7 +225,7 @@ func TestCLIClient_SearchIssues_SortsByNumberAscending(t *testing.T) {
 }
 
 func TestCLIClient_FindPRByBranch_Success(t *testing.T) {
-	runner := &fakeRunner{responses: []fakeResponse{{output: `[{"number":17,"state":"open","mergedAt":null,"headRefName":"issue-386/smart-completion-detection-phase-aware-retry","headRefOid":"abc123","reviewDecision":"APPROVED","mergeStateStatus":"CLEAN","statusCheckRollup":"success"}]`}}}
+	runner := &fakeRunner{responses: []fakeResponse{{output: `[{"number":17,"state":"open","body":"Refs #386","mergedAt":null,"headRefName":"issue-386/smart-completion-detection-phase-aware-retry","headRefOid":"abc123","reviewDecision":"APPROVED","mergeStateStatus":"CLEAN","statusCheckRollup":"success"}]`}}}
 	client := &CLIClient{runner: runner}
 
 	pr, err := client.FindPRByBranch(context.Background(), "issue-386/smart-completion-detection-phase-aware-retry")
@@ -250,6 +250,9 @@ func TestCLIClient_FindPRByBranch_Success(t *testing.T) {
 	if pr.HeadRefOid != "abc123" {
 		t.Fatalf("expected head ref oid to round-trip, got %q", pr.HeadRefOid)
 	}
+	if pr.Body != "Refs #386" {
+		t.Fatalf("expected body to round-trip, got %q", pr.Body)
+	}
 	if pr.ReviewDecision != "APPROVED" {
 		t.Errorf("ReviewDecision = %q, want APPROVED", pr.ReviewDecision)
 	}
@@ -262,7 +265,7 @@ func TestCLIClient_FindPRByBranch_Success(t *testing.T) {
 	if len(runner.calls) != 1 {
 		t.Fatalf("expected 1 command, got %d", len(runner.calls))
 	}
-	expectedArgs := []string{"pr", "list", "--head", "issue-386/smart-completion-detection-phase-aware-retry", "--state", "all", "--json", "number,state,mergedAt,headRefName,headRefOid,reviewDecision,mergeStateStatus,statusCheckRollup", "--limit", "1"}
+	expectedArgs := []string{"pr", "list", "--head", "issue-386/smart-completion-detection-phase-aware-retry", "--state", "all", "--json", "number,state,body,mergedAt,headRefName,headRefOid,reviewDecision,mergeStateStatus,statusCheckRollup", "--limit", "1"}
 	if !reflect.DeepEqual(runner.calls[0].args, expectedArgs) {
 		t.Fatalf("unexpected args: %v", runner.calls[0].args)
 	}

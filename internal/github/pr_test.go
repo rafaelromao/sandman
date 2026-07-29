@@ -49,6 +49,97 @@ func TestPR_LinkedIssueNumber_NativeTakesPrecedence(t *testing.T) {
 	}
 }
 
+func TestPR_ClosesIssueRecognizesGitHubClosingKeywords(t *testing.T) {
+	for _, body := range []string{
+		"Close #348",
+		"Closes #348",
+		"Closed #348",
+		"Fix #348",
+		"Fixes: #348",
+		"Fixed #348",
+		"Resolve #348",
+		"Resolves #348",
+		"Resolved: #348",
+		"Closes #348, #349",
+		"Resolves #348 and #349",
+	} {
+		t.Run(body, func(t *testing.T) {
+			if !(&PR{Body: body}).ClosesIssue(348) {
+				t.Fatalf("ClosesIssue(348) = false for %q", body)
+			}
+		})
+	}
+
+	for _, body := range []string{"Refs #348", "Implements #348", "Closes #349"} {
+		t.Run(body, func(t *testing.T) {
+			if (&PR{Body: body}).ClosesIssue(348) {
+				t.Fatalf("ClosesIssue(348) = true for non-closing body %q", body)
+			}
+		})
+	}
+}
+
+func TestPR_ClosesIssueRecognizesEveryIssueInClosingReferenceList(t *testing.T) {
+	pr := &PR{Body: "Fixes #10, #15, and #20"}
+	for _, issueNumber := range []int{10, 15, 20} {
+		if !pr.ClosesIssue(issueNumber) {
+			t.Fatalf("ClosesIssue(%d) = false", issueNumber)
+		}
+	}
+}
+
+func TestEnsureClosingReference(t *testing.T) {
+	cases := []struct {
+		name        string
+		body        string
+		wantBody    string
+		wantChanged bool
+	}{
+		{
+			name:        "repairs refs line in place",
+			body:        "Refs #348\n\nAcceptance evidence.",
+			wantBody:    "Closes #348\n\nAcceptance evidence.",
+			wantChanged: true,
+		},
+		{
+			name:        "preserves valid closing reference",
+			body:        "Fixes: #348\n\nAcceptance evidence.",
+			wantBody:    "Fixes: #348\n\nAcceptance evidence.",
+			wantChanged: false,
+		},
+		{
+			name:        "prepends when reference is missing",
+			body:        "Acceptance evidence.",
+			wantBody:    "Closes #348\n\nAcceptance evidence.",
+			wantChanged: true,
+		},
+		{
+			name:        "does not replace another issue",
+			body:        "Refs #349\n\nAcceptance evidence.",
+			wantBody:    "Closes #348\n\nRefs #349\n\nAcceptance evidence.",
+			wantChanged: true,
+		},
+		{
+			name:        "redacts an unsupported verb",
+			body:        "Addresses #348\n\nAcceptance evidence.",
+			wantBody:    "Closes #348\n\nAcceptance evidence.",
+			wantChanged: true,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			body, changed := EnsureClosingReference(tc.body, 348)
+			if body != tc.wantBody {
+				t.Fatalf("body = %q, want %q", body, tc.wantBody)
+			}
+			if changed != tc.wantChanged {
+				t.Fatalf("changed = %v, want %v", changed, tc.wantChanged)
+			}
+		})
+	}
+}
+
 // TestPR_ReviewFieldsRoundTrip verifies the slice-1 PR struct extension:
 // the three new fields (ReviewDecision, MergeStateStatus, StatusCheckRollup)
 // survive construction so the T4 cheap-gate oracle can read them off the

@@ -66,6 +66,33 @@ func checkPRMerged(ctx context.Context, client github.Client, branch string) boo
 	return err == nil && merged
 }
 
+func checkPRMergedForIssue(ctx context.Context, client github.Client, branch string, issueNumber int) bool {
+	if client == nil || strings.TrimSpace(branch) == "" || issueNumber <= 0 {
+		return false
+	}
+	pr, err := client.FindPRByBranch(ctx, branch)
+	if err != nil || pr == nil {
+		return false
+	}
+	if pr.Merged || strings.EqualFold(pr.State, "merged") {
+		return pr.ClosesIssue(issueNumber)
+	}
+	if body, changed := github.EnsureClosingReference(pr.Body, issueNumber); changed {
+		if err := client.EditPRBody(ctx, pr.Number, body); err != nil {
+			return false
+		}
+	}
+	return false
+}
+
+func mergedPRMissingClosingReference(ctx context.Context, client github.Client, branch string, issueNumber int) bool {
+	if client == nil || strings.TrimSpace(branch) == "" || issueNumber <= 0 {
+		return false
+	}
+	pr, err := client.FindPRByBranch(ctx, branch)
+	return err == nil && pr != nil && strings.EqualFold(pr.State, "merged") && !pr.ClosesIssue(issueNumber)
+}
+
 func CheckPRMergedAtHead(ctx context.Context, client github.Client, branch, headSHA string) (bool, error) {
 	return checkPRMergedAtHead(ctx, client, branch, headSHA)
 }

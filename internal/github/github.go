@@ -2,6 +2,7 @@ package github
 
 import (
 	"context"
+	"fmt"
 	"regexp"
 	"strconv"
 	"strings"
@@ -40,11 +41,13 @@ type PR struct {
 	linkedIssueNumber int
 }
 
-var prIssueLinkRe = regexp.MustCompile(`\b(?i)(?:fixes|closes|resolves|implements)\s+#(\d+)`)
+var prClosingIssueRe = regexp.MustCompile(`\b(?i)(?:close(?:s|d)?|fix(?:es|ed)?|resolve(?:s|d)?)\s*:?\s*((?:#\d+)(?:(?:\s*,\s*(?:and\s+)?|\s+and\s+)#\d+)*)`)
+var prImplementsIssueRe = regexp.MustCompile(`\b(?i)implements\s+#(\d+)`)
+var prIssueNumberRe = regexp.MustCompile(`#(\d+)`)
 
 // LinkedIssueNumber returns the linked issue number for the PR.
 // It first checks the native closingIssuesReferences metadata from GitHub,
-// then falls back to searching the PR body for Fixes/Closes/Resolves keywords.
+// then falls back to searching the PR body for any GitHub closing keyword.
 func (pr *PR) LinkedIssueNumber() int {
 	if pr.linkedIssueNumber > 0 {
 		return pr.linkedIssueNumber
@@ -52,12 +55,77 @@ func (pr *PR) LinkedIssueNumber() int {
 	if pr.Body == "" {
 		return 0
 	}
-	if m := prIssueLinkRe.FindStringSubmatch(pr.Body); len(m) > 1 {
-		if n, err := strconv.Atoi(strings.TrimSpace(m[1])); err == nil {
+	if match := prImplementsIssueRe.FindStringSubmatch(pr.Body); len(match) > 1 {
+		if n, err := strconv.Atoi(strings.TrimSpace(match[1])); err == nil {
 			return n
 		}
 	}
+	for _, match := range prClosingIssueRe.FindAllStringSubmatch(pr.Body, -1) {
+		if len(match) < 2 {
+			continue
+		}
+		if references := prIssueNumberRe.FindStringSubmatch(match[1]); len(references) > 1 {
+			if n, err := strconv.Atoi(strings.TrimSpace(references[1])); err == nil {
+				return n
+			}
+		}
+	}
 	return 0
+}
+
+// ClosesIssue reports whether the PR has GitHub closing intent for issueNumber.
+// Native closing metadata wins for manually linked PRs; the body fallback
+// recognizes every closing-keyword form documented by GitHub.
+func (pr *PR) ClosesIssue(issueNumber int) bool {
+	if pr == nil || issueNumber <= 0 {
+		return false
+	}
+	if pr.linkedIssueNumber == issueNumber {
+		return true
+	}
+	for _, match := range prClosingIssueRe.FindAllStringSubmatch(pr.Body, -1) {
+		if len(match) < 2 {
+			continue
+		}
+		for _, reference := range prIssueNumberRe.FindAllStringSubmatch(match[1], -1) {
+			if len(reference) < 2 {
+				continue
+			}
+			if number, err := strconv.Atoi(reference[1]); err == nil && number == issueNumber {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// EnsureClosingReference returns a PR body with closing intent for issueNumber.
+// A standalone non-closing reference is repaired in place; otherwise the
+// canonical closing line is prepended without disturbing the existing body.
+func EnsureClosingReference(body string, issueNumber int) (string, bool) {
+	if issueNumber <= 0 || (&PR{Body: body}).ClosesIssue(issueNumber) {
+		return body, false
+	}
+
+	canonical := fmt.Sprintf("Closes #%d", issueNumber)
+	lines := strings.Split(body, "\n")
+	for i, line := range lines {
+		for _, reference := range prIssueNumberRe.FindAllStringSubmatch(line, -1) {
+			if len(reference) < 2 {
+				continue
+			}
+			number, err := strconv.Atoi(reference[1])
+			if err == nil && number == issueNumber {
+				lines[i] = canonical
+				return strings.Join(lines, "\n"), true
+			}
+		}
+	}
+
+	if strings.TrimSpace(body) == "" {
+		return canonical, true
+	}
+	return canonical + "\n\n" + body, true
 }
 
 // PRComment holds a PR conversation comment fetched from the GitHub REST API.
