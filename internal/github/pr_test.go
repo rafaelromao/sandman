@@ -60,6 +60,8 @@ func TestPR_ClosesIssueRecognizesGitHubClosingKeywords(t *testing.T) {
 		"Resolve #348",
 		"Resolves #348",
 		"Resolved: #348",
+		"Closes #348, #349",
+		"Resolves #348 and #349",
 	} {
 		t.Run(body, func(t *testing.T) {
 			if !(&PR{Body: body}).ClosesIssue(348) {
@@ -74,6 +76,15 @@ func TestPR_ClosesIssueRecognizesGitHubClosingKeywords(t *testing.T) {
 				t.Fatalf("ClosesIssue(348) = true for non-closing body %q", body)
 			}
 		})
+	}
+}
+
+func TestPR_ClosesIssueRecognizesEveryIssueInClosingReferenceList(t *testing.T) {
+	pr := &PR{Body: "Fixes #10, #15, and #20"}
+	for _, issueNumber := range []int{10, 15, 20} {
+		if !pr.ClosesIssue(issueNumber) {
+			t.Fatalf("ClosesIssue(%d) = false", issueNumber)
+		}
 	}
 }
 
@@ -106,6 +117,12 @@ func TestEnsureClosingReference(t *testing.T) {
 			name:        "does not replace another issue",
 			body:        "Refs #349\n\nAcceptance evidence.",
 			wantBody:    "Closes #348\n\nRefs #349\n\nAcceptance evidence.",
+			wantChanged: true,
+		},
+		{
+			name:        "redacts an unsupported verb",
+			body:        "Addresses #348\n\nAcceptance evidence.",
+			wantBody:    "Closes #348\n\nAcceptance evidence.",
 			wantChanged: true,
 		},
 	}

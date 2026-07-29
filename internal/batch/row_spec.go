@@ -83,16 +83,17 @@ type BatchConfig struct {
 // private fields (wayfinder map #2226, #2234). Every field is
 // batch-constant — set once per RunBatch and shared by every row.
 type runDeps struct {
-	githubClient          github.Client
-	renderer              prompt.IssueRenderer
-	eventLog              events.EventLog
-	runnableFactory       RunnableFactory
-	sandboxFactory        SandboxFactory
-	layout                paths.Layout
-	heartbeatTickInterval time.Duration
-	errorLog              io.Writer
-	runSessionOpts        runSessionOptions
-	verifyPath            VerifyPathFunc
+	githubClient             github.Client
+	renderer                 prompt.IssueRenderer
+	eventLog                 events.EventLog
+	runnableFactory          RunnableFactory
+	sandboxFactory           SandboxFactory
+	layout                   paths.Layout
+	heartbeatTickInterval    time.Duration
+	closingGuardTickInterval time.Duration
+	errorLog                 io.Writer
+	runSessionOpts           runSessionOptions
+	verifyPath               VerifyPathFunc
 }
 
 // runCoordination is the narrow interface the elevated executor uses for the
@@ -145,16 +146,17 @@ func (o *Orchestrator) newRunExecutor(parentCtx context.Context, bc BatchConfig,
 func (o *Orchestrator) newRunExecutorWith(parentCtx context.Context, bc BatchConfig, sbFactory SandboxFactory, containerAlloc containerAllocator, coord runCoordination, commander daemon.IssueCommander, layout paths.Layout) *runExecutor {
 	return &runExecutor{
 		deps: runDeps{
-			githubClient:          o.githubClient,
-			renderer:              o.renderer,
-			eventLog:              o.eventLog,
-			runnableFactory:       o.runnableFactory,
-			sandboxFactory:        o.sandboxFactory,
-			layout:                layout,
-			heartbeatTickInterval: o.heartbeatTickInterval,
-			errorLog:              o.errorLog,
-			runSessionOpts:        o.runSessionOpts,
-			verifyPath:            o.verifyPath,
+			githubClient:             o.githubClient,
+			renderer:                 o.renderer,
+			eventLog:                 o.eventLog,
+			runnableFactory:          o.runnableFactory,
+			sandboxFactory:           o.sandboxFactory,
+			layout:                   layout,
+			heartbeatTickInterval:    o.heartbeatTickInterval,
+			closingGuardTickInterval: o.closingGuardTickInterval,
+			errorLog:                 o.errorLog,
+			runSessionOpts:           o.runSessionOpts,
+			verifyPath:               o.verifyPath,
 		},
 		coord:          coord,
 		commander:      commander,

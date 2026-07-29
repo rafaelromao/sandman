@@ -121,7 +121,7 @@ func TestRunBatch_RepairsNonClosingPRReferenceBeforeAgentMerges(t *testing.T) {
 		&spyEventLog{},
 		WithSandboxFactory(sbFactory),
 		WithRunnableFactory(&prCreatingRunnableFactory{runnable: runnable}),
-		WithHeartbeatTickInterval(10*time.Millisecond),
+		WithClosingGuardTickInterval(10*time.Millisecond),
 		WithErrorLog(io.Discard),
 	)
 

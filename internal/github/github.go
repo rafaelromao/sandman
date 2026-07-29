@@ -41,13 +41,13 @@ type PR struct {
 	linkedIssueNumber int
 }
 
-var prIssueLinkRe = regexp.MustCompile(`\b(?i)(?:fixes|closes|resolves|implements)\s+#(\d+)`)
-var prClosingIssueRe = regexp.MustCompile(`\b(?i)(?:close(?:s|d)?|fix(?:es|ed)?|resolve(?:s|d)?)\s*:?\s+#(\d+)`)
-var prNonClosingIssueLineRe = regexp.MustCompile(`(?i)^\s*(?:refs?|references?|see|related\s+to|part\s+of|implements)\s*:?\s+#(\d+)\s*$`)
+var prClosingIssueRe = regexp.MustCompile(`\b(?i)(?:close(?:s|d)?|fix(?:es|ed)?|resolve(?:s|d)?)\s*:?\s*((?:#\d+)(?:(?:\s*,\s*(?:and\s+)?|\s+and\s+)#\d+)*)`)
+var prImplementsIssueRe = regexp.MustCompile(`\b(?i)implements\s+#(\d+)`)
+var prIssueNumberRe = regexp.MustCompile(`#(\d+)`)
 
 // LinkedIssueNumber returns the linked issue number for the PR.
 // It first checks the native closingIssuesReferences metadata from GitHub,
-// then falls back to searching the PR body for Fixes/Closes/Resolves keywords.
+// then falls back to searching the PR body for any GitHub closing keyword.
 func (pr *PR) LinkedIssueNumber() int {
 	if pr.linkedIssueNumber > 0 {
 		return pr.linkedIssueNumber
@@ -55,9 +55,19 @@ func (pr *PR) LinkedIssueNumber() int {
 	if pr.Body == "" {
 		return 0
 	}
-	if m := prIssueLinkRe.FindStringSubmatch(pr.Body); len(m) > 1 {
-		if n, err := strconv.Atoi(strings.TrimSpace(m[1])); err == nil {
+	if match := prImplementsIssueRe.FindStringSubmatch(pr.Body); len(match) > 1 {
+		if n, err := strconv.Atoi(strings.TrimSpace(match[1])); err == nil {
 			return n
+		}
+	}
+	for _, match := range prClosingIssueRe.FindAllStringSubmatch(pr.Body, -1) {
+		if len(match) < 2 {
+			continue
+		}
+		if references := prIssueNumberRe.FindStringSubmatch(match[1]); len(references) > 1 {
+			if n, err := strconv.Atoi(strings.TrimSpace(references[1])); err == nil {
+				return n
+			}
 		}
 	}
 	return 0
@@ -77,8 +87,13 @@ func (pr *PR) ClosesIssue(issueNumber int) bool {
 		if len(match) < 2 {
 			continue
 		}
-		if number, err := strconv.Atoi(match[1]); err == nil && number == issueNumber {
-			return true
+		for _, reference := range prIssueNumberRe.FindAllStringSubmatch(match[1], -1) {
+			if len(reference) < 2 {
+				continue
+			}
+			if number, err := strconv.Atoi(reference[1]); err == nil && number == issueNumber {
+				return true
+			}
 		}
 	}
 	return false
@@ -95,14 +110,15 @@ func EnsureClosingReference(body string, issueNumber int) (string, bool) {
 	canonical := fmt.Sprintf("Closes #%d", issueNumber)
 	lines := strings.Split(body, "\n")
 	for i, line := range lines {
-		match := prNonClosingIssueLineRe.FindStringSubmatch(line)
-		if len(match) < 2 {
-			continue
-		}
-		number, err := strconv.Atoi(match[1])
-		if err == nil && number == issueNumber {
-			lines[i] = canonical
-			return strings.Join(lines, "\n"), true
+		for _, reference := range prIssueNumberRe.FindAllStringSubmatch(line, -1) {
+			if len(reference) < 2 {
+				continue
+			}
+			number, err := strconv.Atoi(reference[1])
+			if err == nil && number == issueNumber {
+				lines[i] = canonical
+				return strings.Join(lines, "\n"), true
+			}
 		}
 	}
 

@@ -324,8 +324,9 @@ type Orchestrator struct {
 	layout paths.Layout
 	// heartbeatTickInterval overrides the default 30s heartbeat tick for tests.
 	// Zero means use the default tick interval.
-	heartbeatTickInterval time.Duration
-	errorLog              io.Writer
+	heartbeatTickInterval    time.Duration
+	closingGuardTickInterval time.Duration
+	errorLog                 io.Writer
 
 	// lookupGHToken resolves the host GitHub auth token for hydrating the
 	// copied gh hosts.yml in container config snapshots. It runs once per
@@ -884,6 +885,10 @@ func WithRunSessionOpts(opts runSessionOptions) OrchestratorOpt {
 
 func WithHeartbeatTickInterval(d time.Duration) OrchestratorOpt {
 	return func(o *Orchestrator) { o.heartbeatTickInterval = d }
+}
+
+func WithClosingGuardTickInterval(d time.Duration) OrchestratorOpt {
+	return func(o *Orchestrator) { o.closingGuardTickInterval = d }
 }
 
 func WithVerifyPath(v VerifyPathFunc) OrchestratorOpt {
@@ -2096,11 +2101,12 @@ func (s *runSession) withClosingReferenceGuard(ctx context.Context, branch strin
 		return fn()
 	}
 
-	interval := s.deps.heartbeatTickInterval
+	interval := s.deps.closingGuardTickInterval
 	if interval <= 0 {
 		interval = time.Second
 	}
 	guardCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -2122,6 +2128,9 @@ func (s *runSession) withClosingReferenceGuard(ctx context.Context, branch strin
 	return result
 }
 
+// repairOpenPRClosingReference repairs closing intent only while the PR is
+// open. It rechecks after the edit because an edit that races a merge cannot
+// make GitHub auto-close the issue retroactively.
 func repairOpenPRClosingReference(ctx context.Context, client github.Client, branch string, issueNumber int, errorLog io.Writer) {
 	pr, err := client.FindPRByBranch(ctx, branch)
 	if err != nil || pr == nil || !strings.EqualFold(pr.State, "open") || pr.Merged {
@@ -2131,8 +2140,17 @@ func repairOpenPRClosingReference(ctx context.Context, client github.Client, bra
 	if !changed {
 		return
 	}
-	if err := client.EditPRBody(ctx, pr.Number, body); err != nil && errorLog != nil {
-		fmt.Fprintf(errorLog, "error: repair closing reference for PR #%d and issue %d: %v\n", pr.Number, issueNumber, err)
+	if err := client.EditPRBody(ctx, pr.Number, body); err != nil {
+		if errorLog != nil {
+			fmt.Fprintf(errorLog, "error: repair closing reference for PR #%d and issue %d: %v\n", pr.Number, issueNumber, err)
+		}
+		return
+	}
+	updated, err := client.FindPRByBranch(ctx, branch)
+	if err != nil || updated == nil || updated.Merged || !strings.EqualFold(updated.State, "open") {
+		if errorLog != nil {
+			fmt.Fprintf(errorLog, "error: PR #%d merged while repairing closing reference for issue %d\n", pr.Number, issueNumber)
+		}
 	}
 }
 
@@ -2344,6 +2362,17 @@ func mergeVerificationExtras(existing map[string]any, outcome VerifyOutcome, che
 	}
 	out["verification"] = verification
 	return out
+}
+
+func mergeCompletionFailureExtras(existing map[string]any, issueNumber int) map[string]any {
+	if existing == nil {
+		existing = make(map[string]any)
+	}
+	existing["completion"] = map[string]any{
+		"reason":         "merged-pr-missing-closing-reference",
+		"expected_issue": issueNumber,
+	}
+	return existing
 }
 
 // mergeBlockerExtras folds the conservative-backstop blocker payload
