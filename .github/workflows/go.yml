@@ -51,8 +51,6 @@ jobs:
 
   build:
     runs-on: ${{ matrix.os }}
-    env:
-      CONTAINERS_CONF: ${{ runner.temp }}/containers.conf
     strategy:
       fail-fast: false
       matrix:
@@ -76,6 +74,8 @@ jobs:
       - name: Configure Podman runtime
         if: runner.os == 'Linux'
         run: |
+          export CONTAINERS_CONF="$RUNNER_TEMP/containers.conf"
+          echo "CONTAINERS_CONF=$CONTAINERS_CONF" >> "$GITHUB_ENV"
           cat > "$CONTAINERS_CONF" <<'EOF'
           [engine]
           runtime = "runc"
