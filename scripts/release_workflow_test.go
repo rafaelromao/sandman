@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-func TestReleaseConfigUsesPrereleaseBaselineAndExactInitialVersion(t *testing.T) {
+func TestReleaseConfigUsesAutomaticRCVersioningAfterRC1(t *testing.T) {
 	config := readRepositoryFile(t, "../release-please-config.json")
 	var releaseConfig struct {
 		Versioning     string `json:"versioning"`
@@ -30,8 +30,8 @@ func TestReleaseConfigUsesPrereleaseBaselineAndExactInitialVersion(t *testing.T)
 	if root.ChangelogPath != "CHANGELOG.md" {
 		t.Fatalf("bootstrap changelog path = %q, want CHANGELOG.md", root.ChangelogPath)
 	}
-	if root.ReleaseAs != "1.0.0-rc.1" && root.ReleaseAs != "" {
-		t.Fatalf("initial release-as = %q, want 1.0.0-rc.1 or removed", root.ReleaseAs)
+	if root.ReleaseAs != "" {
+		t.Fatalf("release-as = %q, want removed after RC1", root.ReleaseAs)
 	}
 
 	manifest := readRepositoryFile(t, "../.release-please-manifest.json")
@@ -39,9 +39,8 @@ func TestReleaseConfigUsesPrereleaseBaselineAndExactInitialVersion(t *testing.T)
 	if err := json.Unmarshal([]byte(manifest), &versions); err != nil {
 		t.Fatalf("parse .release-please-manifest.json: %v", err)
 	}
-	version := versions["."]
-	if len(versions) != 1 || (version != "0.2.0" && !strings.HasPrefix(version, "1.0.0-rc.")) {
-		t.Fatalf("release manifest = %#v, want baseline 0.2.0 or generated 1.0.0-rc.N release", versions)
+	if len(versions) != 1 || versions["."] != "1.0.0-rc.1" {
+		t.Fatalf("release manifest = %#v, want generated RC1 state", versions)
 	}
 }
 
@@ -74,8 +73,33 @@ func TestReleaseBaselinePreservesCuratedChangelogAndNoDevNull(t *testing.T) {
 	if strings.Contains(releasing, "/dev/null") {
 		t.Fatal("release guide must not describe /dev/null as the changelog path")
 	}
-	if !strings.Contains(releasing, "After `v1.0.0-rc.1` is created, remove the one-time override") {
-		t.Fatal("release guide must require removing the prerelease override after v1.0.0-rc.1")
+	for _, forbidden := range []string{
+		"release-as: 1.0.0-rc.1",
+		"The next Release Please run should then advance to `v1.0.0-rc.2`.",
+	} {
+		if strings.Contains(releasing, forbidden) {
+			t.Errorf("release guide must not retain bootstrap-specific versioning guidance %q", forbidden)
+		}
+	}
+	for _, required := range []string{
+		"now calculates later RC versions",
+		"all four platform archives",
+	} {
+		if !strings.Contains(releasing, required) {
+			t.Errorf("release guide missing automatic-versioning guidance %q", required)
+		}
+	}
+}
+
+func TestReleasePolicyDocumentationDescribesAutomaticVersioningAfterRC1(t *testing.T) {
+	for _, path := range []string{"../AGENTS.md", "../CONTRIBUTING.md"} {
+		documentation := readRepositoryFile(t, path)
+		if strings.Contains(documentation, "release-as: 1.0.0-rc.1") {
+			t.Errorf("%s must not retain the RC1 bootstrap override", path)
+		}
+		if !strings.Contains(documentation, "subsequent RC versions automatically") {
+			t.Errorf("%s must describe automatic subsequent RC versioning", path)
+		}
 	}
 }
 

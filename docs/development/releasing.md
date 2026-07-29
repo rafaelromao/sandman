@@ -23,9 +23,10 @@ binary installation ([#2392](https://github.com/rafaelromao/sandman/issues/2392)
    `ubuntu-24.04-arm`). Their results appear on the release change request.
    Reviewers must not merge a failed suite.
 4. Release Please creates the version tag and published GitHub Release when
-   the release change request is merged. The initial manifest version is
-   `0.2.0`; the first prerelease is forced to exactly `v1.0.0-rc.1` and is
-   marked as a GitHub prerelease.
+   the release change request is merged. The manifest records the published
+   `v1.0.0-rc.1` release, which is marked as a GitHub prerelease. Release Please
+   now calculates later RC versions from merged release-bearing Conventional
+   Commits.
 5. When Release Please reports `release_created == 'true'`, the same workflow
    checks out the workflow's triggering commit with full history and runs
    Go `1.25.0` from `go.mod`, then runs GoReleaser `v2.10.1` with
@@ -88,13 +89,11 @@ template asks contributors to update it for user-facing changes. Release Please
 reads this file when preparing the bootstrap release, so its generated notes
 must preserve the curated entry.
 
-The release configuration contains a one-time `release-as: 1.0.0-rc.1` override
-so the first release PR is exact despite the pre-release Conventional Commit
-history. After `v1.0.0-rc.1` is created, remove the one-time override in a
-maintainer change; subsequent RCs are derived from Conventional Commits and the
-prerelease strategy. Maintainers continue to own the curated changelog and
-release contributors should update it in the same change request as user-facing
-behavior.
+The RC1 bootstrap override was removed after `v1.0.0-rc.1` was verified.
+Release Please now calculates subsequent RC versions automatically from merged
+release-bearing Conventional Commits and the prerelease strategy. Maintainers
+continue to own the curated changelog and release contributors should update it
+in the same change request as user-facing behavior.
 
 ## Version Output
 
@@ -136,7 +135,8 @@ toolchain.
 
 ## First RC Verification
 
-After `v1.0.0-rc.1` is created, remove the one-time override only after GitHub
-shows the tag and release as a prerelease, all three platform archives and
-`checksums.txt` are present, and the binary reports `sandman v1.0.0-rc.1`.
-The next Release Please run should then advance to `v1.0.0-rc.2`.
+`v1.0.0-rc.1` has been verified: GitHub shows the tag and release as a
+prerelease, all four platform archives and `checksums.txt` are present, and the
+released binary reports version `1.0.0-rc.1`. Leave the manifest at the
+Release Please-generated RC1 state; the next release-bearing merged history
+determines the next version automatically.
