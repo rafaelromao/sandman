@@ -65,13 +65,13 @@ func (badgeE2EIssueGitHubClient) FetchIssueDependencies(_ context.Context, _ int
 	return nil, nil
 }
 func (badgeE2EIssueGitHubClient) FetchPR(_ context.Context, _ int) (*github.PR, error) {
-	return &github.PR{Number: 1, State: "closed", Merged: true}, nil
+	return &github.PR{Number: 1, State: "closed", Merged: true, Body: "Fixes #1"}, nil
 }
 func (badgeE2EIssueGitHubClient) SearchIssues(_ context.Context, _ string) ([]github.Issue, error) {
 	return nil, nil
 }
 func (badgeE2EIssueGitHubClient) FindPRByBranch(_ context.Context, branch string) (*github.PR, error) {
-	return &github.PR{Number: 1, State: "closed", Merged: true, HeadRefName: branch}, nil
+	return &github.PR{Number: 1, State: "closed", Merged: true, HeadRefName: branch, Body: "Fixes #1"}, nil
 }
 func (badgeE2EIssueGitHubClient) ListOpenPRs(_ context.Context) ([]github.PR, error) { return nil, nil }
 func (badgeE2EIssueGitHubClient) ListPRComments(_ context.Context, _ int) ([]github.PRComment, error) {
