@@ -25,7 +25,11 @@ type closingReferenceTestClient struct {
 func (c *closingReferenceTestClient) FindPRByBranch(context.Context, string) (*github.PR, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.pr, nil
+	if c.pr == nil {
+		return nil, nil
+	}
+	pr := *c.pr
+	return &pr, nil
 }
 
 func (c *closingReferenceTestClient) EditPRBody(_ context.Context, prNumber int, body string) error {
