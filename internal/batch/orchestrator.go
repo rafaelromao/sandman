@@ -2554,6 +2554,11 @@ func (s *runSession) runOnce(
 			if events.RunStatusFromPayload(result.Status).IsAborted() {
 				continue
 			}
+			if events.RunStatusFromPayload(result.Status).IsSuccess() && mergedPRMissingClosingReference(ctx, s.deps.githubClient, branch, s.issueNumber) {
+				terminalExtras = mergeCompletionFailureExtras(terminalExtras, s.issueNumber)
+				result.Status = "failure"
+				break
+			}
 			if prMerged || alreadyResolved {
 				if ctx.Err() != nil {
 					break
@@ -2614,6 +2619,11 @@ func (s *runSession) runOnce(
 			if events.RunStatusFromPayload(result.Status).IsSuccess() || alreadyResolved {
 				if issue != nil && s.deps.githubClient != nil {
 					prMerged := checkPRMergedForIssue(ctx, s.deps.githubClient, branch, s.issueNumber)
+					if events.RunStatusFromPayload(result.Status).IsSuccess() && mergedPRMissingClosingReference(ctx, s.deps.githubClient, branch, s.issueNumber) {
+						terminalExtras = mergeCompletionFailureExtras(terminalExtras, s.issueNumber)
+						result.Status = "failure"
+						break
+					}
 					if prMerged || alreadyResolved {
 						if alreadyResolved {
 							pr := lookupPRForVerify(ctx, s.deps.githubClient, s.deps.errorLog, branch)

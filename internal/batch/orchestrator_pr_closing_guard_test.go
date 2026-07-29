@@ -140,3 +140,17 @@ func TestRunBatch_RepairsNonClosingPRReferenceBeforeAgentMerges(t *testing.T) {
 		t.Fatalf("PR body = %q, want repaired closing reference", body)
 	}
 }
+
+func TestMergedPRMissingClosingReference(t *testing.T) {
+	for _, body := range []string{"", "Refs #348"} {
+		t.Run(body, func(t *testing.T) {
+			client := &closingReferenceTestClient{
+				fakeGitHubClient: &fakeGitHubClient{},
+				pr:               &github.PR{Number: 355, State: "merged", Merged: true, Body: body},
+			}
+			if !mergedPRMissingClosingReference(context.Background(), client, "348-acceptance", 348) {
+				t.Fatalf("mergedPRMissingClosingReference() = false for %q", body)
+			}
+		})
+	}
+}
