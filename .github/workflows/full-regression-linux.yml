@@ -20,7 +20,6 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       GITHUB_TOKEN: ${{ github.token }}
       REPORT_FILE: regression-report-linux.md
-      CONTAINERS_CONF: ${{ runner.temp }}/containers.conf
 
     steps:
       - name: Checkout
@@ -38,6 +37,8 @@ jobs:
 
       - name: Configure Podman runtime
         run: |
+          export CONTAINERS_CONF="$RUNNER_TEMP/containers.conf"
+          echo "CONTAINERS_CONF=$CONTAINERS_CONF" >> "$GITHUB_ENV"
           cat > "$CONTAINERS_CONF" <<'EOF'
           [engine]
           runtime = "runc"
