@@ -6,10 +6,20 @@ import (
 	"io"
 	"os"
 	"regexp"
+	"sort"
+	"strings"
 	"sync"
 
 	"github.com/rafaelromao/sandman/internal/github"
 )
+
+// discoveredChildrenMarker is the hidden HTML marker the
+// Specification resolver writes on a spec to persist auto-discovered
+// children. The marker lets future runs short-circuit the expensive
+// open-issue scan (the existing comment harvest picks the candidates
+// up via ExtractIssueReferences) and lets operators identify the
+// auto-generated comment. See ADR-0044.
+const discoveredChildrenMarker = "<!-- sandman-discovered-children -->"
 
 // SpecificationResolver resolves Specification issues to their child issues during batch preparation.
 type SpecificationResolver struct {
@@ -505,5 +515,117 @@ func (r *SpecificationResolver) collectCandidates(ctx context.Context, parent in
 			fmt.Fprintf(r.warningWriter, "warning: mention search for specification #%d failed: %v\n", parent, err)
 		}
 	}
+	// Open-issue scan: last-resort harvest source. Fires only when
+	// every cheaper source (body refs, comment refs, native
+	// sub-issues, mention-search fallback) returned zero
+	// candidates. The scan walks every open issue in the repo and
+	// keeps the ones whose body carries a `## Parent`-style H2
+	// section (broadened per ADR-0042) that cites the spec —
+	// those candidates pass the verifier by construction. Discovered
+	// candidates are persisted as a marker comment on the spec so
+	// future runs see them via the existing comment harvest and
+	// operators can review the auto-discovery. The two new
+	// operations are exposed as optional interfaces; clients that
+	// do not implement them silently skip the new step, which is
+	// what keeps existing test fakes unchanged. See ADR-0044.
+	if len(order) == 0 {
+		discovered := r.discoverChildrenViaOpenIssueScan(ctx, parent)
+		if len(discovered) > 0 {
+			add(discovered)
+			r.postDiscoveredChildrenComment(ctx, parent, discovered)
+		}
+	}
 	return order
+}
+
+// discoverChildrenViaOpenIssueScan returns the issue numbers of
+// every open issue in the repo whose body has at least one parent
+// H2 section (heading text contains the word "parent",
+// case-insensitive) that cites `parent`. Returns nil when the
+// client does not implement OpenIssueLister (existing test fakes)
+// or when the scan fails; a scan failure logs a warning via
+// r.warningWriter so the operator can diagnose. The spec issue
+// itself is excluded. The filter reuses HasParentSectionBacklinkTo
+// from spec_parse.go so every candidate the scan returns passes
+// the resolver's verifier.
+func (r *SpecificationResolver) discoverChildrenViaOpenIssueScan(ctx context.Context, parent int) []int {
+	lister, ok := r.client.(github.OpenIssueLister)
+	if !ok {
+		return nil
+	}
+	issues, err := lister.ListOpenIssues(ctx)
+	if err != nil {
+		fmt.Fprintf(r.warningWriter, "warning: open-issue scan for specification #%d failed: %v\n", parent, err)
+		return nil
+	}
+	var discovered []int
+	for _, issue := range issues {
+		if issue.Number == parent {
+			continue
+		}
+		if HasParentSectionBacklinkTo(issue.Body, parent) {
+			discovered = append(discovered, issue.Number)
+		}
+	}
+	return discovered
+}
+
+// postDiscoveredChildrenComment persists the discovered children
+// as a marker comment on the spec so future runs see them via the
+// existing comment harvest and the operator can review or curate
+// the auto-discovery. Idempotent: if a marker comment already
+// exists on the spec, posting is skipped (operators force a
+// re-scan by deleting the marker). A post failure logs a warning
+// and does not abort the resolver — the candidates harvested in
+// memory are still accepted this run. No-op when the client does
+// not implement IssueCommentPoster.
+func (r *SpecificationResolver) postDiscoveredChildrenComment(ctx context.Context, parent int, discovered []int) {
+	poster, ok := r.client.(github.IssueCommentPoster)
+	if !ok {
+		return
+	}
+	if r.markerCommentExists(ctx, parent) {
+		return
+	}
+	body := buildDiscoveredChildrenComment(discovered)
+	if err := poster.PostIssueComment(ctx, parent, body); err != nil {
+		fmt.Fprintf(r.warningWriter, "warning: could not post discovered-children comment for specification #%d: %v\n", parent, err)
+	}
+}
+
+// markerCommentExists reports whether the spec already carries a
+// comment whose body contains the discovered-children marker. A
+// comment-list failure is treated as "no marker" so the post
+// proceeds; the marker absence is the conservative default.
+func (r *SpecificationResolver) markerCommentExists(ctx context.Context, parent int) bool {
+	comments, err := r.client.ListIssueComments(ctx, parent)
+	if err != nil {
+		return false
+	}
+	for _, c := range comments {
+		if strings.Contains(c.Body, discoveredChildrenMarker) {
+			return true
+		}
+	}
+	return false
+}
+
+// buildDiscoveredChildrenComment renders the discovered-children
+// marker comment body. The hidden HTML marker identifies the
+// comment as auto-generated; the `## Discovered children` H2
+// section plus `- #N` bullets is the format the existing comment
+// harvest (ExtractIssueReferences) recognises on subsequent runs,
+// so the expensive open-issue scan is short-circuited for any
+// spec whose marker comment is intact. Bullet items are sorted by
+// issue number ascending for stable rendering.
+func buildDiscoveredChildrenComment(children []int) string {
+	sorted := append([]int(nil), children...)
+	sort.Ints(sorted)
+	var b strings.Builder
+	b.WriteString(discoveredChildrenMarker)
+	b.WriteString("\n\n## Discovered children\n\n")
+	for _, n := range sorted {
+		fmt.Fprintf(&b, "- #%d\n", n)
+	}
+	return b.String()
 }

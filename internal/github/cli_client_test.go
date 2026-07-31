@@ -1304,6 +1304,121 @@ func TestCLIClient_ListOpenPRs_Error(t *testing.T) {
 	}
 }
 
+// TestCLIClient_ListOpenIssues_Success pins the constructed gh
+// invocation: `gh api repos/<owner>/<repo>/issues?state=open&per_page=100
+// --paginate` (not `gh issue list --paginate`, which is unsupported
+// by the gh CLI and would silently fail at runtime). The response is
+// the REST API shape: each item carries a `pull_request` field that
+// is null for issues and populated for PRs; PRs must be filtered
+// out so the Specification resolver's open-issue scan only sees real
+// issues. Results are sorted by issue number ascending so callers
+// get a deterministic batch order.
+func TestCLIClient_ListOpenIssues_Success(t *testing.T) {
+	runner := &fakeRunner{responses: []fakeResponse{
+		{output: `{"name":"sandman","owner":{"login":"rafaelromao"}}`},
+		{output: `[
+			{"number":1,"state":"open","title":"Bug","body":"bug body","labels":[{"name":"bug"}],"pull_request":null},
+			{"number":2,"state":"open","title":"PR-shaped thing","body":"pr body","labels":[],"pull_request":{"url":"https://api.github.com/repos/rafaelromao/sandman/pulls/2"}},
+			{"number":3,"state":"open","title":"Feature","body":"feat body","labels":[{"name":"feat"}],"pull_request":null}
+		]`},
+	}}
+	client := &CLIClient{runner: runner}
+
+	issues, err := client.ListOpenIssues(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(issues) != 2 {
+		t.Fatalf("expected 2 issues (PR filtered), got %d: %+v", len(issues), issues)
+	}
+	// Sorted ascending by number — issue 1 first, issue 3 second.
+	if issues[0].Number != 1 {
+		t.Errorf("expected issue 1 first, got %d", issues[0].Number)
+	}
+	if issues[0].Title != "Bug" {
+		t.Errorf("expected title 'Bug', got %q", issues[0].Title)
+	}
+	if issues[0].Body != "bug body" {
+		t.Errorf("expected body 'bug body', got %q", issues[0].Body)
+	}
+	if len(issues[0].Labels) != 1 || issues[0].Labels[0] != "bug" {
+		t.Errorf("expected labels [bug], got %v", issues[0].Labels)
+	}
+	if issues[1].Number != 3 {
+		t.Errorf("expected issue 3 second (PR 2 filtered), got %d", issues[1].Number)
+	}
+	// Verify the constructed gh invocation.
+	apiCall := runner.calls[1]
+	if apiCall.name != "gh" {
+		t.Errorf("expected second call to gh, got %q", apiCall.name)
+	}
+	if apiCall.args[0] != "api" {
+		t.Errorf("expected first arg 'api', got %q", apiCall.args[0])
+	}
+	if !slices.Contains(apiCall.args, "--paginate") {
+		t.Errorf("expected --paginate flag, got %v", apiCall.args)
+	}
+	// No `gh issue list` invocation: the open-issue scan must use gh
+	// api with --paginate, not the unsupported gh issue list combo.
+	for _, call := range runner.calls {
+		if len(call.args) >= 2 && call.args[0] == "issue" && call.args[1] == "list" {
+			t.Errorf("must not invoke `gh issue list` for the open-issue scan; got %v", call.args)
+		}
+	}
+	found := false
+	for _, arg := range apiCall.args {
+		if strings.Contains(arg, "issues?state=open") && strings.Contains(arg, "rafaelromao/sandman") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("API args should target issues?state=open on rafaelromao/sandman, got %v", apiCall.args)
+	}
+}
+
+// TestCLIClient_ListOpenIssues_MultiPage handles paginated responses
+// (one JSON array per page) the same way ListIssueComments does,
+// proving the streaming decoder preserves cross-page order.
+func TestCLIClient_ListOpenIssues_MultiPage(t *testing.T) {
+	page1 := `[{"number":10,"state":"open","title":"p1","body":"","labels":[],"pull_request":null}]`
+	page2 := `[{"number":20,"state":"open","title":"p2","body":"","labels":[],"pull_request":null}]`
+	runner := &fakeRunner{responses: []fakeResponse{
+		{output: `{"name":"sandman","owner":{"login":"rafaelromao"}}`},
+		{output: page1 + "\n" + page2},
+	}}
+	client := &CLIClient{runner: runner}
+
+	issues, err := client.ListOpenIssues(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(issues) != 2 {
+		t.Fatalf("expected 2 issues across two pages, got %d", len(issues))
+	}
+	if issues[0].Number != 10 || issues[1].Number != 20 {
+		t.Errorf("expected [10 20] in order, got [%d %d]", issues[0].Number, issues[1].Number)
+	}
+}
+
+// TestCLIClient_ListOpenIssues_Error verifies the failure path bubbles
+// up a meaningful error rather than silently returning empty.
+func TestCLIClient_ListOpenIssues_Error(t *testing.T) {
+	runner := &fakeRunner{responses: []fakeResponse{
+		{output: `{"name":"sandman","owner":{"login":"rafaelromao"}}`},
+		{err: exec.ErrNotFound},
+	}}
+	client := &CLIClient{runner: runner}
+
+	_, err := client.ListOpenIssues(context.Background())
+	if err == nil {
+		t.Fatal("expected error when gh api issues fails")
+	}
+	if !strings.Contains(err.Error(), "gh api issues") {
+		t.Errorf("error should mention 'gh api issues'; got %q", err.Error())
+	}
+}
+
 func TestCLIClient_ListPRComments_Success(t *testing.T) {
 	runner := &fakeRunner{responses: []fakeResponse{
 		{output: `{"name":"sandman","owner":{"login":"rafaelromao"}}`},

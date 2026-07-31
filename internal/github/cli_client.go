@@ -1050,6 +1050,116 @@ func labelNames(labels []struct {
 	return names
 }
 
+// ListOpenIssues lists every open issue in the current repo via the
+// GitHub REST API (`gh api repos/.../issues?state=open --paginate`).
+// The REST endpoint returns issues AND pull requests, so each result
+// is filtered client-side by checking the `pull_request` field (null
+// for issues, populated for PRs) — only issues pass through. The
+// result set is the last-resort harvest source for the Specification
+// resolver's open-issue scan (see ADR-0044): every candidate is then
+// filtered through the broadened `HasParentSectionBacklinkTo`
+// matcher, so the scan only surfaces candidates that the verifier
+// would accept. Results are sorted by issue number ascending for
+// deterministic batch ordering.
+//
+// `gh issue list --paginate` is intentionally NOT used because
+// `--paginate` is a `gh api` flag, not a `gh issue list` flag — the
+// unsupported combination would silently fail at runtime and make
+// the new harvest path a no-op in production.
+func (c *CLIClient) ListOpenIssues(ctx context.Context) ([]Issue, error) {
+	owner, repo, err := c.resolveRepo(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	path := fmt.Sprintf("repos/%s/%s/issues?state=open&per_page=100", owner, repo)
+	callCtx, cancel := c.boundContext(ctx)
+	defer cancel()
+	cmd := c.command(callCtx, "gh", "api", path, "--paginate")
+	out, err := runCmd(callCtx, cmd, "gh api issues")
+	if err != nil {
+		return nil, fmt.Errorf("gh api issues: %w", err)
+	}
+
+	if len(bytes.TrimSpace(out)) == 0 {
+		return nil, nil
+	}
+
+	var payloads []issueListPayload
+	dec := json.NewDecoder(bytes.NewReader(out))
+	for {
+		var page []issueListPayload
+		if err := dec.Decode(&page); err != nil {
+			if err == io.EOF {
+				break
+			}
+			return nil, fmt.Errorf("parse issues: %w", err)
+		}
+		payloads = append(payloads, page...)
+	}
+
+	issues := make([]Issue, 0, len(payloads))
+	for _, payload := range payloads {
+		// GitHub's REST endpoint returns both issues and pull
+		// requests under /repos/{owner}/{repo}/issues; pull
+		// requests carry a populated `pull_request` field while
+		// issues carry `null`. Filter PRs out so the open-issue
+		// scan only sees real issues.
+		if payload.PullRequest != nil {
+			continue
+		}
+		issues = append(issues, Issue{
+			Number: payload.Number,
+			State:  payload.State,
+			Title:  payload.Title,
+			Body:   payload.Body,
+			Labels: labelNames(payload.Labels),
+		})
+	}
+	sort.SliceStable(issues, func(i, j int) bool {
+		return issues[i].Number < issues[j].Number
+	})
+	return issues, nil
+}
+
+// issueListPayload models the JSON shape returned by
+// `GET /repos/{owner}/{repo}/issues`. `PullRequest` is a pointer so
+// the nil-value (an actual issue) is distinguishable from an empty
+// PR object (a real PR); see ListOpenIssues for the filter.
+type issueListPayload struct {
+	Number      int    `json:"number"`
+	State       string `json:"state"`
+	Title       string `json:"title"`
+	Body        string `json:"body"`
+	PullRequest *struct {
+		URL string `json:"url"`
+	} `json:"pull_request"`
+	Labels []struct {
+		Name string `json:"name"`
+	} `json:"labels"`
+}
+
+// PostIssueComment posts body as a new comment on the given issue via
+// `gh issue comment <n> --body <body>`. Used by the Specification
+// resolver's open-issue scan to persist auto-discovered children as
+// a `<!-- sandman-discovered-children -->` marker comment so future
+// runs see the candidates via the existing comment harvest and the
+// operator can review or curate the auto-discovery (see ADR-0044).
+// Post failures bubble up so the resolver can log a warning without
+// aborting the expansion.
+func (c *CLIClient) PostIssueComment(ctx context.Context, issueNumber int, body string) error {
+	if issueNumber <= 0 {
+		return fmt.Errorf("issue number must be positive, got %d", issueNumber)
+	}
+	callCtx, cancel := c.boundContext(ctx)
+	defer cancel()
+	cmd := c.command(callCtx, "gh", "issue", "comment", strconv.Itoa(issueNumber), "--body", body)
+	if _, err := runCmd(callCtx, cmd, "gh issue comment"); err != nil {
+		return fmt.Errorf("gh issue comment: %w", err)
+	}
+	return nil
+}
+
 // EditComment overwrites a PR conversation comment body via the GitHub REST API.
 func (c *CLIClient) EditComment(ctx context.Context, commentID, body string) error {
 	owner, repo, err := c.resolveRepo(ctx)

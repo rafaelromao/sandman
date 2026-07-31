@@ -56,6 +56,14 @@ _Avoid_: Specification expander, Specification flattener, PRDResolver, spec reso
 Any H2 section in an issue body whose heading text contains the word "parent" (case-insensitive substring on the heading text). A Parent section may be named `## Parent`, `## Parent area`, `## Parent spec`, `## Parents`, or any other heading that contains the word. A candidate child of Specification `#N` is accepted when its body carries at least one Parent section whose extracted issue references include `#N` (via `#N` shorthand or a full GitHub issue URL). Multi-reference Parent sections are accepted when `#N` is among the references — a child that cites both its intermediate parent area and the umbrella spec in the same Parent section passes. H3-or-deeper sections do not match. The legacy heading `## Parent` remains valid and continues to match.
 _Avoid_: parent reference, parent link, parent header.
 
+**Open-issue scan**:
+The last-resort Specification child harvest source. When every cheaper harvest path (body refs in non-blocker sections, issue comments, native sub-issue edges, mention-search fallback) returns zero candidates, the Specification resolver lists every open issue in the repo and keeps the ones whose body carries a Parent section (heading text contains "parent", case-insensitive) that cites the spec. Reuses the broadened Parent-section matcher so the scan surfaces only candidates the existing verifier would accept. Fires only on the cold path; gated by `len(order) == 0` after the existing sources. The two new GitHub operations are exposed as optional interfaces (`OpenIssueLister`, `IssueCommentPoster`) so existing test fakes that pre-date the new strategy continue to skip it without modification. References ADR-0044.
+_Avoid_: full-repo scan, discovery scan.
+
+**Discovered children**:
+The subset of Specification children identified by the Open-issue scan and persisted on the spec as a `<!-- sandman-discovered-children -->` marker comment containing a `## Discovered children` H2 section with `- #N` bullets. Future runs pick the candidates up via the existing comment harvest so the expensive scan is short-circuited while the marker comment is intact. Operators may edit the marker comment to remove false positives, add missing candidates, or delete the marker to force a re-scan. References ADR-0044.
+_Avoid_: auto-discovered children, scan results.
+
 **Batch**:
 The folder `.sandman/batches/<batch-id>/` plus all child run folders. Contains the daemon sockets (`batch.sock`, `run.sock`), the `batch.json` manifest, and the `config/` host snapshot at the batch root. Each run folder (`.sandman/batches/<batch-id>/runs/<run-id>/`) holds its own `run.json`, `run.log`, and per-run command socket. One daemon process, one `batch.json`. References ADR-0032.
 _Avoid_: Batch run, invocation.
