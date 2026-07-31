@@ -451,8 +451,10 @@ sendLoop:
 		if childIssue == nil {
 			return nil, fmt.Errorf("fetch child #%d: not found", child)
 		}
-		ref, ok := ExtractParentReference(childIssue.Body)
-		if !ok || ref != parent {
+		// Verifier widened in ADR-0042: any parent-section H2
+		// accepts the candidate when the originating spec is in
+		// the unioned refs.
+		if !HasParentSectionBacklinkTo(childIssue.Body, parent) {
 			continue
 		}
 		accepted = append(accepted, child)
@@ -478,8 +480,9 @@ func (r *SpecificationResolver) collectCandidates(ctx context.Context, parent in
 			order = append(order, n)
 		}
 	}
-	add(ExtractIssueReferences(body))
-	add(github.ParseChildrenFromBody(body))
+	// Per-section body harvest; skips blocker-style headings
+	// (vocabulary owned by github.IsBlockedByHeading, see ADR-0042).
+	add(bodyReferencesOutsideBlockerSections(body))
 	if comments, err := r.client.ListIssueComments(ctx, parent); err == nil {
 		for _, c := range comments {
 			add(ExtractIssueReferences(c.Body))
