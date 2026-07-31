@@ -25,7 +25,7 @@ func TestDependencyResolverResolve_SortsIssuesTopologically(t *testing.T) {
 	resolver := NewDependencyResolver(client)
 	resolver.warningWriter = &bytes.Buffer{}
 
-	resolved, err := resolver.Resolve(context.Background(), []int{100}, true)
+	resolved, err := resolver.Resolve(context.Background(), []int{100}, true, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -57,7 +57,7 @@ func TestDependencyResolverResolve_StableTopologicalOrderForMixedDependencyLevel
 	resolver := NewDependencyResolver(client)
 	resolver.warningWriter = &bytes.Buffer{}
 
-	resolved, err := resolver.Resolve(context.Background(), []int{3, 4, 1, 2}, true)
+	resolved, err := resolver.Resolve(context.Background(), []int{3, 4, 1, 2}, true, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -107,7 +107,7 @@ func TestDependencyResolverResolve_PreservesRequestedOrderForIndependentIssues(t
 	resolver := NewDependencyResolver(client)
 	resolver.warningWriter = &bytes.Buffer{}
 
-	resolved, err := resolver.Resolve(context.Background(), []int{3, 1, 2}, true)
+	resolved, err := resolver.Resolve(context.Background(), []int{3, 1, 2}, true, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -128,7 +128,7 @@ func TestDependencyResolverResolve_OpenExternalBlockerMarkedAsBlocked(t *testing
 	resolver := NewDependencyResolver(client)
 	resolver.warningWriter = &bytes.Buffer{}
 
-	resolved, err := resolver.Resolve(context.Background(), []int{100}, false)
+	resolved, err := resolver.Resolve(context.Background(), []int{100}, false, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -154,7 +154,7 @@ func TestDependencyResolverResolve_ClosedBlockerNotInDeps(t *testing.T) {
 	resolver := NewDependencyResolver(client)
 	resolver.warningWriter = &bytes.Buffer{}
 
-	resolved, err := resolver.Resolve(context.Background(), []int{100}, false)
+	resolved, err := resolver.Resolve(context.Background(), []int{100}, false, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -180,7 +180,7 @@ func TestDependencyResolverResolve_MarksOpenExternalBlockersWithoutFallingOutOfB
 	resolver := NewDependencyResolver(client)
 	resolver.warningWriter = &bytes.Buffer{}
 
-	resolved, err := resolver.Resolve(context.Background(), []int{42, 100}, false)
+	resolved, err := resolver.Resolve(context.Background(), []int{42, 100}, false, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -207,7 +207,7 @@ func TestDependencyResolverResolve_StillErrorsOnUnfetchableBlockers(t *testing.T
 	resolver := NewDependencyResolver(client)
 	resolver.warningWriter = &bytes.Buffer{}
 
-	_, err := resolver.Resolve(context.Background(), []int{100}, false)
+	_, err := resolver.Resolve(context.Background(), []int{100}, false, nil)
 	if err == nil {
 		t.Fatal("expected error for unfetchable blocker")
 	}
@@ -310,7 +310,7 @@ func TestDependencyResolverResolve_IgnoresClosedBlockers(t *testing.T) {
 	resolver := NewDependencyResolver(client)
 	resolver.warningWriter = &bytes.Buffer{}
 
-	resolved, err := resolver.Resolve(context.Background(), []int{100}, true)
+	resolved, err := resolver.Resolve(context.Background(), []int{100}, true, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -340,7 +340,7 @@ func TestDependencyResolverResolve_ExpandsTransitiveBlockers(t *testing.T) {
 	resolver := NewDependencyResolver(client)
 	resolver.warningWriter = &bytes.Buffer{}
 
-	resolved, err := resolver.Resolve(context.Background(), []int{100}, true)
+	resolved, err := resolver.Resolve(context.Background(), []int{100}, true, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -361,7 +361,7 @@ func TestDependencyResolverResolve_DetectsCycles(t *testing.T) {
 	resolver := NewDependencyResolver(client)
 	resolver.warningWriter = &bytes.Buffer{}
 
-	_, err := resolver.Resolve(context.Background(), []int{100}, true)
+	_, err := resolver.Resolve(context.Background(), []int{100}, true, nil)
 	if err == nil {
 		t.Fatal("expected cycle error")
 	}
@@ -382,7 +382,7 @@ func TestDependencyResolverResolve_DetectsCyclesWithClosedBlockersIgnored(t *tes
 	resolver := NewDependencyResolver(client)
 	resolver.warningWriter = &bytes.Buffer{}
 
-	_, err := resolver.Resolve(context.Background(), []int{100}, true)
+	_, err := resolver.Resolve(context.Background(), []int{100}, true, nil)
 	if err == nil {
 		t.Fatal("expected cycle error")
 	}
@@ -406,7 +406,7 @@ func TestDependencyResolverResolve_WarnsWhenExpansionGetsLarge(t *testing.T) {
 	resolver := NewDependencyResolver(client)
 	resolver.warningWriter = &warnings
 
-	resolved, err := resolver.Resolve(context.Background(), []int{51}, true)
+	resolved, err := resolver.Resolve(context.Background(), []int{51}, true, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -432,7 +432,7 @@ func TestDependencyResolverResolve_DoesNotWarnForLargeExplicitBatch(t *testing.T
 	resolver := NewDependencyResolver(client)
 	resolver.warningWriter = &warnings
 
-	resolved, err := resolver.Resolve(context.Background(), requested, true)
+	resolved, err := resolver.Resolve(context.Background(), requested, true, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -454,7 +454,7 @@ func TestDependencyResolverResolve_IgnoresSelfReferentialBlocker(t *testing.T) {
 	resolver := NewDependencyResolver(client)
 	resolver.warningWriter = &bytes.Buffer{}
 
-	resolved, err := resolver.Resolve(context.Background(), []int{1222}, true)
+	resolved, err := resolver.Resolve(context.Background(), []int{1222}, true, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -535,7 +535,7 @@ func TestDependencyResolver_ParallelizesBlockerFetches(t *testing.T) {
 	resolver.warningWriter = &bytes.Buffer{}
 	resolver.maxConcurrentFetches = 4
 
-	resolved, err := resolver.Resolve(context.Background(), requestedList, false)
+	resolved, err := resolver.Resolve(context.Background(), requestedList, false, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -570,7 +570,7 @@ func TestDependencyResolver_SingleFlightRepeatedBlockers(t *testing.T) {
 	resolver := NewDependencyResolver(tracker)
 	resolver.warningWriter = &bytes.Buffer{}
 
-	resolved, err := resolver.Resolve(context.Background(), []int{200, 201, 202}, true)
+	resolved, err := resolver.Resolve(context.Background(), []int{200, 201, 202}, true, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -579,5 +579,222 @@ func TestDependencyResolver_SingleFlightRepeatedBlockers(t *testing.T) {
 	}
 	if calls := tracker.calls[42]; calls != 1 {
 		t.Fatalf("expected shared blocker #42 to be fetched once, got %d", calls)
+	}
+}
+
+// TestDependencyResolver_ParentGateEdgesHoldBackRetainedSpec is the
+// tracer bullet for the in-memory parent-gate edge: a parent (the
+// retained Specification row) is held back by every accepted open
+// child passed in parentChildren. The union with declared BlockedBy
+// is empty here, so deps[1] is exactly the two open children and
+// the topological order is [child1, child2, parent].
+func TestDependencyResolver_ParentGateEdgesHoldBackRetainedSpec(t *testing.T) {
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			1:  {Number: 1, Title: "Retained parent"},
+			10: {Number: 10, Title: "Child 1"},
+			11: {Number: 11, Title: "Child 2"},
+		},
+	}
+
+	resolver := NewDependencyResolver(client)
+	resolver.warningWriter = &bytes.Buffer{}
+
+	resolved, err := resolver.Resolve(context.Background(), []int{10, 11, 1}, true, map[int][]int{
+		1: {10, 11},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !reflect.DeepEqual(resolved.Issues, []int{10, 11, 1}) {
+		t.Fatalf("expected children before retained parent [10 11 1], got %v", resolved.Issues)
+	}
+	if !reflect.DeepEqual(resolved.Deps[1], []int{10, 11}) {
+		t.Fatalf("expected parent #1 blocked by [10 11] in memory, got %v", resolved.Deps[1])
+	}
+	if len(resolved.Blocked) != 0 {
+		t.Fatalf("expected no external blockers, got %v", resolved.Blocked)
+	}
+}
+
+// TestDependencyResolver_ParentGateDropsClosedChildren pins the
+// contract that a closed accepted child is filtered out of the
+// parent's blocker set: the parent's gate only includes children
+// that actually made it into the requested batch.
+func TestDependencyResolver_ParentGateDropsClosedChildren(t *testing.T) {
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			1:  {Number: 1, Title: "Retained parent"},
+			10: {Number: 10, Title: "Open child"},
+			11: {Number: 11, Title: "Closed child", State: "closed"},
+		},
+	}
+
+	resolver := NewDependencyResolver(client)
+	resolver.warningWriter = &bytes.Buffer{}
+
+	resolved, err := resolver.Resolve(context.Background(), []int{10, 1}, true, map[int][]int{
+		1: {10, 11},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !reflect.DeepEqual(resolved.Issues, []int{10, 1}) {
+		t.Fatalf("expected [10 1], got %v", resolved.Issues)
+	}
+	if !reflect.DeepEqual(resolved.Deps[1], []int{10}) {
+		t.Fatalf("expected parent #1 blocked by open child [10] only, got %v", resolved.Deps[1])
+	}
+}
+
+// TestDependencyResolver_ParentGateUnionsDeclaredBlockedBy pins
+// that an existing declared BlockedBy on the parent is unioned
+// with the synthetic child edges, deduplicated and sorted.
+func TestDependencyResolver_ParentGateUnionsDeclaredBlockedBy(t *testing.T) {
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			1:  {Number: 1, Title: "Retained parent", BlockedBy: []int{99}},
+			10: {Number: 10, Title: "Child"},
+			11: {Number: 11, Title: "Sibling"},
+			99: {Number: 99, Title: "External blocker"},
+		},
+	}
+
+	resolver := NewDependencyResolver(client)
+	resolver.warningWriter = &bytes.Buffer{}
+
+	resolved, err := resolver.Resolve(context.Background(), []int{99, 10, 11, 1}, true, map[int][]int{
+		1: {10, 11},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !reflect.DeepEqual(resolved.Deps[1], []int{10, 11, 99}) {
+		t.Fatalf("expected parent #1 blocked by [10 11 99] (synthetic + declared, sorted), got %v", resolved.Deps[1])
+	}
+}
+
+// TestDependencyResolver_ParentGateDeduplicatesTwoSpecsSharingChild
+// pins the contract for two parents sharing a child: each parent
+// retains a synthetic edge to the shared child, and the shared
+// child is fetched and placed once in the topological order.
+func TestDependencyResolver_ParentGateDeduplicatesTwoSpecsSharingChild(t *testing.T) {
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			1:  {Number: 1, Title: "Parent 1"},
+			2:  {Number: 2, Title: "Parent 2"},
+			10: {Number: 10, Title: "Shared child"},
+		},
+	}
+
+	resolver := NewDependencyResolver(client)
+	resolver.warningWriter = &bytes.Buffer{}
+
+	resolved, err := resolver.Resolve(context.Background(), []int{10, 1, 2}, true, map[int][]int{
+		1: {10},
+		2: {10},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !reflect.DeepEqual(resolved.Issues, []int{10, 1, 2}) {
+		t.Fatalf("expected shared child first, then both parents [10 1 2], got %v", resolved.Issues)
+	}
+	if !reflect.DeepEqual(resolved.Deps[1], []int{10}) {
+		t.Fatalf("expected parent #1 blocked by [10], got %v", resolved.Deps[1])
+	}
+	if !reflect.DeepEqual(resolved.Deps[2], []int{10}) {
+		t.Fatalf("expected parent #2 blocked by [10], got %v", resolved.Deps[2])
+	}
+}
+
+// TestDependencyResolver_ParentGateNestedOrdering pins the
+// nested-spec ordering: grandchild, middle, root, with each level
+// gated by its own children.
+func TestDependencyResolver_ParentGateNestedOrdering(t *testing.T) {
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			1:   {Number: 1, Title: "Root"},
+			10:  {Number: 10, Title: "Middle"},
+			100: {Number: 100, Title: "Leaf"},
+		},
+	}
+
+	resolver := NewDependencyResolver(client)
+	resolver.warningWriter = &bytes.Buffer{}
+
+	resolved, err := resolver.Resolve(context.Background(), []int{100, 10, 1}, true, map[int][]int{
+		1:  {10},
+		10: {100},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !reflect.DeepEqual(resolved.Issues, []int{100, 10, 1}) {
+		t.Fatalf("expected nested ordering [100 10 1], got %v", resolved.Issues)
+	}
+	if !reflect.DeepEqual(resolved.Deps[10], []int{100}) {
+		t.Fatalf("expected middle #10 blocked by [100], got %v", resolved.Deps[10])
+	}
+	if !reflect.DeepEqual(resolved.Deps[1], []int{10}) {
+		t.Fatalf("expected root #1 blocked by [10], got %v", resolved.Deps[1])
+	}
+}
+
+// TestDependencyResolver_ParentGateIgnoresSyntheticChildNotInBatch
+// pins the contract that a synthetic child listed in
+// parentChildren but absent from the requested batch is silently
+// skipped (no missing-blocker error). This is the safety valve for
+// closed-issue filtering dropping a child before the dep resolver
+// runs.
+func TestDependencyResolver_ParentGateIgnoresSyntheticChildNotInBatch(t *testing.T) {
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			1:  {Number: 1, Title: "Parent"},
+			10: {Number: 10, Title: "Child"},
+		},
+	}
+
+	resolver := NewDependencyResolver(client)
+	resolver.warningWriter = &bytes.Buffer{}
+
+	resolved, err := resolver.Resolve(context.Background(), []int{10, 1}, true, map[int][]int{
+		1: {10, 999},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !reflect.DeepEqual(resolved.Deps[1], []int{10}) {
+		t.Fatalf("expected parent #1 blocked by [10] only (999 is not in batch), got %v", resolved.Deps[1])
+	}
+}
+
+// TestDependencyResolver_NoParentGateKeepsLegacyBehaviour pins
+// that callers passing nil for parentChildren get the same deps
+// graph as before — the change is purely additive.
+func TestDependencyResolver_NoParentGateKeepsLegacyBehaviour(t *testing.T) {
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			1:  {Number: 1, Title: "Issue", BlockedBy: []int{42}},
+			42: {Number: 42, Title: "Blocker"},
+		},
+	}
+
+	resolver := NewDependencyResolver(client)
+	resolver.warningWriter = &bytes.Buffer{}
+
+	resolved, err := resolver.Resolve(context.Background(), []int{1}, true, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !reflect.DeepEqual(resolved.Deps[1], []int{42}) {
+		t.Fatalf("expected declared BlockedBy only [42], got %v", resolved.Deps[1])
 	}
 }

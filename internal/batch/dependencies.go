@@ -93,7 +93,14 @@ func (g *dependencyIssueFetchGroup) fetch(ctx context.Context, client github.Cli
 	return issue, err
 }
 
-func (r *DependencyResolver) Resolve(ctx context.Context, issues []int, includeDeps bool) (*ResolvedBatch, error) {
+// Resolve produces a ResolvedBatch for the input issues. parentChildren
+// is the in-memory parent-to-children mapping synthesised by the
+// Specification resolver: each parent issue listed as a key is held
+// back from starting until every accepted open child has succeeded in
+// the batch. The edges are recorded in ResolvedBatch.Deps only — they
+// are never persisted to GitHub. Pass nil when no parent-gate edges
+// apply (e.g. tests that do not exercise Specification expansion).
+func (r *DependencyResolver) Resolve(ctx context.Context, issues []int, includeDeps bool, parentChildren map[int][]int) (*ResolvedBatch, error) {
 	requested := uniqueIssues(issues)
 	if len(requested) == 0 {
 		return &ResolvedBatch{Deps: map[int][]int{}, Blocked: map[int][]int{}}, nil
@@ -171,6 +178,17 @@ func (r *DependencyResolver) Resolve(ctx context.Context, issues []int, includeD
 			order = append(order, blocker)
 		}
 
+		// Union the in-memory parent-gate edges supplied by the
+		// Specification resolver with the declared BlockedBy.
+		// Synthetic edges are deduplicated and merged into the
+		// activeBlockers set so the topological sort naturally
+		// sequences the parent after its open children. The edge
+		// is never persisted to GitHub and only lives in
+		// ResolvedBatch.Deps. See ADR-0047.
+		if synthetic, ok := parentChildren[issueNum]; ok {
+			activeBlockers = mergeSyntheticBlockers(activeBlockers, synthetic, known)
+		}
+
 		if len(activeBlockers) == 0 {
 			deps[issueNum] = nil
 		} else {
@@ -192,6 +210,38 @@ func (r *DependencyResolver) Resolve(ctx context.Context, issues []int, includeD
 	}
 
 	return &ResolvedBatch{Issues: ordered, Deps: deps, Blocked: blocked}, nil
+}
+
+// mergeSyntheticBlockers unions the declared activeBlockers with the
+// in-memory parent-gate children, dropping any child that is not in
+// the `known` set (i.e. was filtered out of the requested batch, for
+// example by a closed-issue filter). Output is deduplicated and
+// sorted so the topological sort can compare it stably.
+func mergeSyntheticBlockers(declared, synthetic []int, known map[int]struct{}) []int {
+	seen := make(map[int]struct{}, len(declared)+len(synthetic))
+	union := make([]int, 0, len(declared)+len(synthetic))
+	for _, b := range declared {
+		if _, ok := seen[b]; ok {
+			continue
+		}
+		seen[b] = struct{}{}
+		union = append(union, b)
+	}
+	for _, b := range synthetic {
+		if _, ok := known[b]; !ok {
+			// Synthetic child that was filtered out of the
+			// batch (e.g. closed before expansion). Skip
+			// rather than introduce a missing-blocker error.
+			continue
+		}
+		if _, ok := seen[b]; ok {
+			continue
+		}
+		seen[b] = struct{}{}
+		union = append(union, b)
+	}
+	sort.Ints(union)
+	return union
 }
 
 // fetchBlockersParallel fans out FetchIssue calls across a bounded

@@ -177,6 +177,15 @@ func (r *SpecificationResolver) HasChildren(ctx context.Context, number int) (bo
 // itself and deduplicating across Specifications and explicit inputs. Non-Specification
 // issues pass through unchanged.
 //
+// The second return value is the in-memory parent-children map: every
+// retained Specification is keyed by its issue number, and the value
+// is the list of accepted (open) child issues. The cmd layer threads
+// this map into DependencyResolver.Resolve so each retained parent
+// is held back from starting until its children succeed in the
+// batch. The edges never leave the batch — they are not persisted
+// to GitHub. Callers that only care about the expanded list can
+// discard the map. See ADR-0047.
+//
 // The no-other-gate contract: every input is probed for children
 // unconditionally. Body heading, body prose, issue comments, native
 // sub-issues, and the mention-search fallback all feed a single
@@ -200,7 +209,7 @@ func (r *SpecificationResolver) HasChildren(ctx context.Context, number int) (bo
 //
 // Errors:
 //   - any FetchIssue error encountered while loading a candidate child
-func (r *SpecificationResolver) Resolve(ctx context.Context, issues []int) ([]int, error) {
+func (r *SpecificationResolver) Resolve(ctx context.Context, issues []int) ([]int, map[int][]int, error) {
 	unique := uniqueIssues(issues)
 	userInputSet := make(map[int]struct{}, len(unique))
 	for _, num := range unique {
@@ -216,16 +225,35 @@ func (r *SpecificationResolver) Resolve(ctx context.Context, issues []int) ([]in
 		out = append(out, n)
 		return true
 	}
+	parentChildren := make(map[int][]int)
+	recordChildren := func(parent int, children []int) {
+		if len(children) == 0 {
+			return
+		}
+		// Dedupe and sort so the DependencyResolver can compare
+		// the synthetic edge set without an extra pass.
+		seen := make(map[int]struct{}, len(children))
+		out := make([]int, 0, len(children))
+		for _, c := range children {
+			if _, ok := seen[c]; ok {
+				continue
+			}
+			seen[c] = struct{}{}
+			out = append(out, c)
+		}
+		sort.Ints(out)
+		parentChildren[parent] = out
+	}
 	fetches := newIssueFetchGroup()
 	for _, num := range unique {
 		if err := ctx.Err(); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
-		if err := r.expandOne(ctx, num, 0, "-", 0, userInputSet, addUnique, fetches); err != nil {
-			return nil, err
+		if err := r.expandOne(ctx, num, 0, "-", 0, userInputSet, addUnique, fetches, recordChildren); err != nil {
+			return nil, nil, err
 		}
 	}
-	return out, nil
+	return out, parentChildren, nil
 }
 
 // expandOne resolves a single input number into one-or-more child issues, mutating
@@ -251,6 +279,7 @@ func (r *SpecificationResolver) expandOne(
 	userInputSet map[int]struct{},
 	addUnique func(int) bool,
 	fetches *issueFetchGroup,
+	recordChildren func(parent int, children []int),
 ) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -344,11 +373,19 @@ func (r *SpecificationResolver) expandOne(
 			return fmt.Errorf("fetch child #%d: not found", child)
 		}
 		if r.IsSpecification(childIssue.Body) {
-			if err := r.expandOne(ctx, child, depth+1, fmt.Sprintf("#%d", num), num, userInputSet, addUnique, fetches); err != nil {
+			if err := r.expandOne(ctx, child, depth+1, fmt.Sprintf("#%d", num), num, userInputSet, addUnique, fetches, recordChildren); err != nil {
 				return err
 			}
 		}
 	}
+	// Retain the Specification itself as a regular row, placed
+	// immediately after its accepted children. The retained parent
+	// participates in the batch as an ordinary AgentRun; the
+	// DependencyResolver synthesises in-memory blocker edges from
+	// each accepted child to this parent so it cannot start until
+	// its children finish. See ADR-0047.
+	recordChildren(num, accepted)
+	addUnique(num)
 	return nil
 }
 

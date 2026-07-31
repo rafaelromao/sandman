@@ -701,8 +701,13 @@ func TestRun_FiltersClosedChildrenAfterSpecificationExpansion_NoUsageError(t *te
 	if !spy.called {
 		t.Fatal("expected batch runner to be called even with empty issues")
 	}
-	if len(spy.req.Issues) != 0 {
-		t.Fatalf("expected empty issues, got %v", spy.req.Issues)
+	// Both children are closed and filtered; only the retained
+	// spec (#1) survives as a regular row. The spec has no
+	// remaining in-batch blockers (the closed children were
+	// dropped from its synthetic gate), so it is the sole row
+	// in the batch.
+	if len(spy.req.Issues) != 1 || spy.req.Issues[0] != 1 {
+		t.Fatalf("expected [#1] (retained spec, all children closed), got %v", spy.req.Issues)
 	}
 	// Cobra prints the usage banner to stderr when RunE returns an
 	// error AND SilenceUsage is false. If the empty batch had surfaced
@@ -745,7 +750,7 @@ func TestRun_RangeWithSpecification_PreservesOpenUserTypedFromRange(t *testing.T
 	if !spy.called {
 		t.Fatal("expected batch runner to be called")
 	}
-	want := map[int]bool{2: true, 3: true, 11: true}
+	want := map[int]bool{1: true, 2: true, 3: true, 11: true}
 	if len(spy.req.Issues) != len(want) {
 		t.Fatalf("expected issues %v, got %v", want, spy.req.Issues)
 	}
@@ -837,11 +842,12 @@ func TestRun_ClosedUserTypedFilteredBeforeExpansion_PinsContract(t *testing.T) {
 	if !spy.called {
 		t.Fatal("expected batch runner to be called")
 	}
-	// #10 was filtered at line 216 (user-typed filter). #1 expanded to
-	// [#11]. Post-expansion filter sees [11] (only expansion-only
-	// children; the no-op short-circuit triggers). Result: [#11].
-	if len(spy.req.Issues) != 1 || spy.req.Issues[0] != 11 {
-		t.Fatalf("expected [11], got %v", spy.req.Issues)
+	// #10 was filtered at line 216 (user-typed filter). #1 expanded
+	// to [#11, #1] (the spec is retained under the parent-retained
+	// contract). Post-expansion filter sees both #11 and #1 are
+	// open, so both stay. Result: [#11, #1].
+	if len(spy.req.Issues) != 2 || spy.req.Issues[0] != 11 || spy.req.Issues[1] != 1 {
+		t.Fatalf("expected [11 1] (open child + retained spec), got %v", spy.req.Issues)
 	}
 	if !strings.Contains(buf.String(), "Issue #10 is closed, skipping") {
 		t.Errorf("expected skip warning for #10, got: %q", buf.String())
@@ -903,7 +909,7 @@ func TestRun_ExpandsSpecificationBeforeBatchRunner(t *testing.T) {
 	if !spy.called {
 		t.Fatal("expected batch runner to be called")
 	}
-	want := []int{10, 11}
+	want := []int{10, 11, 1}
 	if len(spy.req.Issues) != len(want) {
 		t.Fatalf("expected issues %v, got %v", want, spy.req.Issues)
 	}
@@ -950,7 +956,7 @@ func TestRun_ExpandsBodyOnlyChildrenHeadingBeforeBatchRunner(t *testing.T) {
 	if !spy.called {
 		t.Fatal("expected batch runner to be called")
 	}
-	want := []int{10, 11}
+	want := []int{10, 11, 1}
 	if len(spy.req.Issues) != len(want) {
 		t.Fatalf("expected issues %v, got %v", want, spy.req.Issues)
 	}
@@ -992,7 +998,7 @@ func TestRun_ExpandsBodyOnlyChildIssuesHeadingBeforeBatchRunner(t *testing.T) {
 	if !spy.called {
 		t.Fatal("expected batch runner to be called")
 	}
-	want := []int{10, 11}
+	want := []int{10, 11, 1}
 	if len(spy.req.Issues) != len(want) {
 		t.Fatalf("expected issues %v, got %v", want, spy.req.Issues)
 	}
@@ -1034,8 +1040,12 @@ func TestRun_FiltersClosedChildrenAfterSpecificationExpansion(t *testing.T) {
 	if !spy.called {
 		t.Fatal("expected batch runner to be called (with empty issues after filtering)")
 	}
-	if len(spy.req.Issues) != 0 {
-		t.Fatalf("expected empty issues after closed children filter, got %v", spy.req.Issues)
+	// The retained spec (#1) survives as the sole row when all
+	// discovered children are closed. The spec has no remaining
+	// in-batch blockers (closed children are dropped from its
+	// synthetic gate), so it is the only row in the batch.
+	if len(spy.req.Issues) != 1 || spy.req.Issues[0] != 1 {
+		t.Fatalf("expected [#1] (retained spec with all children closed), got %v", spy.req.Issues)
 	}
 	if !strings.Contains(buf.String(), "Issue #10 is closed, skipping") {
 		t.Errorf("expected skip warning for #10, got: %q", buf.String())
@@ -1072,16 +1082,18 @@ func TestRun_KeepsOpenChildrenAfterSpecificationExpansion(t *testing.T) {
 	if !spy.called {
 		t.Fatal("expected batch runner to be called")
 	}
-	if len(spy.req.Issues) != 2 {
-		t.Fatalf("expected 2 open children preserved, got %v", spy.req.Issues)
+	if len(spy.req.Issues) != 3 {
+		t.Fatalf("expected 2 open children + retained spec, got %v", spy.req.Issues)
 	}
 }
 
 func TestRun_PostExpansionFilterKeepsOpenUserTypedAlongsideOpenChildren(t *testing.T) {
 	// Mixed batch: a Specification (#1) and a non-Specification user-typed
-	// issue (#20). Post-expansion the list is [#11, #20] (#10 is closed and
-	// filtered, #1 is replaced by its children). The post-expansion filter
-	// preserves both because they are open.
+	// issue (#20). Post-expansion the list is [#11, #1, #20] (#10 is
+	// closed and filtered; #1 is retained as a regular row under
+	// the parent-retained expansion contract). The
+	// post-expansion filter preserves all three because they are
+	// open.
 	specBody := "## Problem Statement\n\nP.\n\n## Solution\n\nS.\n\n## User Stories\n\n1. U.\n\n## Child Issues\n\n- #10\n- #11\n"
 	childBody := "## Parent\n\n#1\n\n## What\n\n"
 	gh := &fakeGitHubClient{
@@ -1108,7 +1120,7 @@ func TestRun_PostExpansionFilterKeepsOpenUserTypedAlongsideOpenChildren(t *testi
 	if !spy.called {
 		t.Fatal("expected batch runner to be called")
 	}
-	want := map[int]bool{11: true, 20: true}
+	want := map[int]bool{1: true, 11: true, 20: true}
 	if len(spy.req.Issues) != len(want) {
 		t.Fatalf("expected issues %v, got %v", want, spy.req.Issues)
 	}
@@ -5175,11 +5187,19 @@ func TestRun_ContinueFlag_SpecExpansion_StatusCheckRollupArray(t *testing.T) {
 	if !spy.called {
 		t.Fatalf("expected batch runner to be called, output:\n%s", output.String())
 	}
-	if len(spy.req.Issues) != 1 || spy.req.Issues[0] != 65 {
-		t.Fatalf("expected only #65 to be continued (open spec child), got %v", spy.req.Issues)
+	// The retained parent (#62) is now part of the batch under
+	// the parent-retained expansion contract; it has no prior run
+	// so it routes to ModeOverride (the new spec row in
+	// continuation.go's lastRunPerIssue lookup). #65 still gets
+	// the continue path.
+	if len(spy.req.Issues) != 2 || spy.req.Issues[0] != 65 || spy.req.Issues[1] != 62 {
+		t.Fatalf("expected [#65 #62] (open spec child + retained spec), got %v", spy.req.Issues)
 	}
 	if mode := spy.req.IssueMode(65); mode != batch.ModeContinue {
 		t.Fatalf("expected #65 mode=continue, got %q", mode)
+	}
+	if mode := spy.req.IssueMode(62); mode != batch.ModeOverride {
+		t.Fatalf("expected #62 mode=override (retained spec with no prior run), got %q", mode)
 	}
 	if !strings.Contains(output.String(), "Issue #63 is closed, skipping") {
 		t.Errorf("expected skip warning for closed child #63, got: %q", output.String())

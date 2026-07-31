@@ -30,7 +30,7 @@ func TestRunBatch_InBatchBlockerOrdering_ResolverWired(t *testing.T) {
 
 	resolver := NewDependencyResolver(client)
 	resolver.warningWriter = &bytes.Buffer{}
-	resolved, err := resolver.Resolve(context.Background(), []int{42, 100}, true)
+	resolved, err := resolver.Resolve(context.Background(), []int{42, 100}, true, nil)
 	if err != nil {
 		t.Fatalf("resolver: %v", err)
 	}
@@ -140,7 +140,7 @@ func TestRunBatch_InBatchBlockerFailure_EmitsRunBlocked(t *testing.T) {
 
 	resolver := NewDependencyResolver(client)
 	resolver.warningWriter = &bytes.Buffer{}
-	resolved, err := resolver.Resolve(context.Background(), []int{42, 100}, true)
+	resolved, err := resolver.Resolve(context.Background(), []int{42, 100}, true, nil)
 	if err != nil {
 		t.Fatalf("resolver: %v", err)
 	}
@@ -218,7 +218,7 @@ func TestRunBatch_InBatchBlockerSuccessButIssueOpen_EmitsRunBlocked(t *testing.T
 
 	resolver := NewDependencyResolver(client)
 	resolver.warningWriter = &bytes.Buffer{}
-	resolved, err := resolver.Resolve(context.Background(), []int{42, 100}, true)
+	resolved, err := resolver.Resolve(context.Background(), []int{42, 100}, true, nil)
 	if err != nil {
 		t.Fatalf("resolver: %v", err)
 	}
@@ -293,7 +293,7 @@ func TestRunBatch_InBatchBlockerStaysQueuedUntilBlockerTerminal(t *testing.T) {
 
 	resolver := NewDependencyResolver(client)
 	resolver.warningWriter = &bytes.Buffer{}
-	resolved, err := resolver.Resolve(context.Background(), []int{42, 100}, true)
+	resolved, err := resolver.Resolve(context.Background(), []int{42, 100}, true, nil)
 	if err != nil {
 		t.Fatalf("resolver: %v", err)
 	}
