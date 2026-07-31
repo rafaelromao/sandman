@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"os/exec"
@@ -9,6 +10,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestPortalDiffUpdateCells_StatusChangeUpdatesOnlyBadge(t *testing.T) {
@@ -3573,9 +3575,14 @@ const source = fs.readFileSync(helperPath, 'utf8');
 	const SandmanPortalDiff = sandbox.SandmanPortalDiff;
 	if (!SandmanPortalDiff) throw new Error('SandmanPortalDiff missing');
 `
-	cmd := exec.Command("node", "-e", prefix+js)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "node", "-e", prefix+js)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			t.Fatalf("script timed out after 60s\n%s", out)
+		}
 		t.Fatalf("script failed: %v\n%s", err, out)
 	}
 	if !strings.Contains(string(out), "PASS") {
