@@ -1157,6 +1157,26 @@ func TestParseChildrenFromBody(t *testing.T) {
 			body: "## My child issues for area-01\n\n- #7",
 			want: []int{7},
 		},
+		{
+			name: "sub-children heading is recognised",
+			body: "## Sub-children\n\n- #55",
+			want: []int{55},
+		},
+		{
+			name: "child tasks heading is recognised",
+			body: "## Child tasks for slice\n\n- [#88](https://github.com/rafaelromao/sandman/issues/88)",
+			want: []int{88},
+		},
+		{
+			name: "children word anywhere in heading",
+			body: "## All children we promised\n\n- #11",
+			want: []int{11},
+		},
+		{
+			name: "child word anywhere in heading",
+			body: "## Each child issue with its slug\n\n- #13",
+			want: []int{13},
+		},
 	}
 
 	for _, tt := range tests {
