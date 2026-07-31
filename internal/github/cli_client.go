@@ -41,11 +41,34 @@ var bulletIssuePattern = regexp.MustCompile(`(?m)^\s*(?:-\s*)?(?:\[#(\d+)\]|#(\d
 // bulletLinePattern parses annotated bullet lines; see docs/usage/issue-body-formats.md.
 var bulletLinePattern = regexp.MustCompile(`(?m)^\s*-\s+(?:\[#(\d+)\]|#(\d+)|\[(?:[^\]]*)\]\([^()]*?/issues/(\d+)\))[^\n]*$`)
 
+// tableRowIssuePattern parses issue references inside markdown table
+// cells. The pattern is shape-compatible with `bulletIssuePattern`
+// (same three capture groups for `#N`, `[#N]`, and `[text](url)`),
+// but it allows the row to be framed by `|` delimiters and to carry
+// additional cell content before the reference. The widened pattern
+// is what lets a threeterm-style children table under `## Leaf
+// children` (issue #305) — e.g. `| `slug` | [#232](url) |` — feed
+// the parser that `ParseChildrenFromBody` calls. Mirrors
+// `bulletIssuePattern` so `parseBulletsInSection` can reuse the same
+// `issueNumberFromMatch` helper without per-pattern branching.
+var tableRowIssuePattern = regexp.MustCompile(`(?m)^\s*\|[^\n]*?(?:\[#(\d+)\]|#(\d+)|\[(?:[^\]]*)\]\([^()]*?/issues/(\d+)\))[^\n]*$`)
+
 // nextHeadingPattern finds the next H2 section; see docs/usage/issue-body-formats.md.
 var nextHeadingPattern = regexp.MustCompile(`(?m)^\s*##\s`)
 
 // childrenHeadingPattern parses children headings; see docs/usage/issue-body-formats.md.
-var childrenHeadingPattern = regexp.MustCompile(`(?im)^\s*##\s+(?:children|child issues)\s*$`)
+//
+// The match widens beyond the literal `## Children` / `## Child
+// Issues` heading text: any H2 whose title contains the word
+// "children" or "child" (case-insensitive substring) is recognised
+// as a children section. The substring match mirrors the parent
+// heading pattern in internal/batch/spec_parse.go, where the
+// `## Parent area` / `## Parent spec` heading variants are all
+// recognised as parent sections. The widening is what lets a
+// threeterm-style body that lists leaf children under `## Leaf
+// children` (issue #305) be detected as a specification and
+// expanded, instead of being passed through unchanged.
+var childrenHeadingPattern = regexp.MustCompile(`(?im)^\s*##\s+[^\n]*child[^\n]*\s*$`)
 
 // execRunner abstracts os/exec for testability. The context is threaded
 // through so fakes can honour cancellation when the caller cancels its
@@ -806,10 +829,15 @@ func parseBlockedByHeading(body string) []int {
 }
 
 // ParseChildrenFromBody returns the unique child issue numbers declared
-// under a `## Children` or `## Child Issues` H2 section. The section
-// ends at the next H2 heading. Bullet entries follow the same shape
-// accepted by `## Blocked by` (bare `#N`, link bullet, titled link,
-// trailing annotation). Inline phrases like `Children: #N` and
+// under a `## Children`, `## Child Issues`, or any other H2 whose title
+// contains the word "children" or "child" (case-insensitive substring,
+// matched by `childrenHeadingPattern`). The section ends at the next
+// H2 heading. Bullet entries follow the same shape accepted by
+// `## Blocked by` (bare `#N`, link bullet, titled link, trailing
+// annotation). Markdown table rows that frame the issue reference with
+// `|` delimiters are also accepted, so a children table under a
+// `## Leaf children` heading (issue #305) is parsed by the same
+// machinery as a bullet list. Inline phrases like `Children: #N` and
 // `Child Issues: #N` are intentionally NOT recognized: they are
 // frequently used in prose to refer to upstream issues, and treating
 // them as authoritative child declarations made the resolver
@@ -831,7 +859,7 @@ func ParseChildrenFromBody(body string) []int {
 		section = afterHeading
 	}
 
-	return parseBulletsInSection(section, bulletIssuePattern, bulletLinePattern)
+	return parseBulletsInSection(section, bulletIssuePattern, bulletLinePattern, tableRowIssuePattern)
 }
 
 func parseBulletsInSection(section string, patterns ...*regexp.Regexp) []int {

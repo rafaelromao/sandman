@@ -1137,6 +1137,26 @@ func TestParseChildrenFromBody(t *testing.T) {
 			body: "## Children\n- #10 (blocked by #2319)",
 			want: []int{10},
 		},
+		{
+			name: "leaf children heading with table cell",
+			body: "## Leaf children\n\n| Slug | Issue |\n| --- | --- |\n| `slug` | [#232](https://github.com/rafaelromao/threeterm/issues/232) |\n",
+			want: []int{232},
+		},
+		{
+			name: "leaf children heading with bullet reference",
+			body: "## Leaf children\n\n- #232",
+			want: []int{232},
+		},
+		{
+			name: "children in title heading variant",
+			body: "## Children in this area\n\n- #42",
+			want: []int{42},
+		},
+		{
+			name: "child issues variant with surrounding text",
+			body: "## My child issues for area-01\n\n- #7",
+			want: []int{7},
+		},
 	}
 
 	for _, tt := range tests {
