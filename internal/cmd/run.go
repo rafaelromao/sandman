@@ -252,6 +252,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 			}
 
 			var issues []int
+			var parentChildren map[int][]int
 			if overridePrompt && !issueSelectionProvided {
 				if promptNeedsIssueSelection {
 					return MarkUsage(fmt.Errorf("prompt requires issue selection but no issue selection was provided"))
@@ -366,7 +367,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 
 			if len(issues) > 0 {
 				userTyped := append([]int(nil), issues...)
-				issues, err = expandSpecifications(cmd.Context(), githubClient, issues, cmd.ErrOrStderr())
+				issues, parentChildren, err = expandSpecifications(cmd.Context(), githubClient, issues, cmd.ErrOrStderr())
 				if err != nil {
 					return err
 				}
@@ -378,6 +379,10 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 				}
 			}
 
+			if parentChildren == nil {
+				parentChildren = map[int][]int{}
+			}
+
 			baseBranchFlag, _ := cmd.Flags().GetString("base-branch")
 			baseBranch := strings.TrimSpace(baseBranchFlag)
 			if baseBranch == "" {
@@ -387,7 +392,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 				baseBranch = "main"
 			}
 
-			resolvedBatch, err := batch.NewDependencyResolver(githubClient).Resolve(cmd.Context(), issues, includeDependencies)
+			resolvedBatch, err := batch.NewDependencyResolver(githubClient).Resolve(cmd.Context(), issues, includeDependencies, parentChildren)
 			if err != nil {
 				return fmt.Errorf("resolve dependencies: %w", err)
 			}
@@ -1197,16 +1202,16 @@ func pickIssues(ctx context.Context, client github.Client, picker IssuePicker) (
 // expanded list. Empty input short-circuits to avoid wasted fetches. Any Specification
 // resolution error is wrapped as a regular command error (not a usage error)
 // because the input was syntactically valid.
-func expandSpecifications(ctx context.Context, client github.Client, issues []int, stderr io.Writer) ([]int, error) {
+func expandSpecifications(ctx context.Context, client github.Client, issues []int, stderr io.Writer) ([]int, map[int][]int, error) {
 	if len(issues) == 0 {
-		return issues, nil
+		return issues, nil, nil
 	}
 	specResolver := batch.NewSpecificationResolver(client, stderr)
-	expanded, err := specResolver.Resolve(ctx, issues)
+	expanded, parents, err := specResolver.Resolve(ctx, issues)
 	if err != nil {
-		return nil, fmt.Errorf("resolve specifications: %w", err)
+		return nil, nil, fmt.Errorf("resolve specifications: %w", err)
 	}
-	return expanded, nil
+	return expanded, parents, nil
 }
 
 func printSummary(cmd *cobra.Command, result *batch.Result) {

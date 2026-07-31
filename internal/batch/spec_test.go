@@ -174,12 +174,12 @@ func TestSpecificationResolver_NativeSubIssuesSuppressSearchFallback(t *testing.
 
 	var infoBuf bytes.Buffer
 	r := NewSpecificationResolver(client, &infoBuf)
-	got, err := r.Resolve(context.Background(), []int{1})
+	got, _, err := r.Resolve(context.Background(), []int{1})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !equalInts(got, []int{10}) {
-		t.Fatalf("expected native child only [10], got %v (search fallback leaked an extra candidate)", got)
+	if !equalInts(got, []int{10, 1}) {
+		t.Fatalf("expected native child + retained spec [10 1], got %v (search fallback leaked an extra candidate)", got)
 	}
 	if len(client.searchCalls) != 0 {
 		t.Fatalf("expected SearchIssues to be skipped when native sub-issues already surfaced children, got %d calls: %v", len(client.searchCalls), client.searchCalls)
@@ -284,12 +284,12 @@ func TestSpecificationResolver_LeafChildrenHeadingExpandsToLeafRows(t *testing.T
 	}
 
 	var buf bytes.Buffer
-	got, err := NewSpecificationResolver(client, &buf).Resolve(context.Background(), []int{305})
+	got, _, err := NewSpecificationResolver(client, &buf).Resolve(context.Background(), []int{305})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !equalInts(got, []int{232}) {
-		t.Fatalf("expected expansion to [232] (the leaf row), got %v. log:\n%s", got, buf.String())
+	if !equalInts(got, []int{232, 305}) {
+		t.Fatalf("expected expansion to [232 305] (the leaf row + retained spec), got %v. log:\n%s", got, buf.String())
 	}
 	if !strings.Contains(buf.String(), "expanded specification #305") {
 		t.Fatalf("expected the resolver to log an expansion for #305, got log:\n%s", buf.String())
@@ -315,12 +315,12 @@ func TestSpecificationResolver_EmptyEarlierChildHeadingThenLeafChildren(t *testi
 	}
 
 	var buf bytes.Buffer
-	got, err := NewSpecificationResolver(client, &buf).Resolve(context.Background(), []int{305})
+	got, _, err := NewSpecificationResolver(client, &buf).Resolve(context.Background(), []int{305})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !equalInts(got, []int{232}) {
-		t.Fatalf("expected expansion to [232] (the later leaf-children heading), got %v. log:\n%s", got, buf.String())
+	if !equalInts(got, []int{232, 305}) {
+		t.Fatalf("expected expansion to [232 305] (the later leaf-children heading + retained spec), got %v. log:\n%s", got, buf.String())
 	}
 }
 
@@ -345,12 +345,12 @@ func TestSpecificationResolver_BlockedByHeadingRefsExcludedFromChildren(t *testi
 		},
 	}
 
-	got, err := NewSpecificationResolver(client, io.Discard).Resolve(context.Background(), []int{1})
+	got, _, err := NewSpecificationResolver(client, io.Discard).Resolve(context.Background(), []int{1})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !equalInts(got, []int{10}) {
-		t.Fatalf("expected [10] (## Blocked by refs must not become children), got %v", got)
+	if !equalInts(got, []int{10, 1}) {
+		t.Fatalf("expected [10 1] (## Blocked by refs must not become children, spec retained), got %v", got)
 	}
 }
 
@@ -372,12 +372,12 @@ func TestSpecificationResolver_DependsOnHeadingRefsExcludedFromChildren(t *testi
 		},
 	}
 
-	got, err := NewSpecificationResolver(client, io.Discard).Resolve(context.Background(), []int{1})
+	got, _, err := NewSpecificationResolver(client, io.Discard).Resolve(context.Background(), []int{1})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !equalInts(got, []int{10}) {
-		t.Fatalf("expected [10] (## Depends on refs must not become children), got %v", got)
+	if !equalInts(got, []int{10, 1}) {
+		t.Fatalf("expected [10 1] (## Depends on refs must not become children, spec retained), got %v", got)
 	}
 }
 
@@ -398,12 +398,12 @@ func TestSpecificationResolver_BlockedByHyphenatedHeadingRefsExcludedFromChildre
 		},
 	}
 
-	got, err := NewSpecificationResolver(client, io.Discard).Resolve(context.Background(), []int{1})
+	got, _, err := NewSpecificationResolver(client, io.Discard).Resolve(context.Background(), []int{1})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !equalInts(got, []int{10}) {
-		t.Fatalf("expected [10] (## Blocked-by refs must not become children), got %v", got)
+	if !equalInts(got, []int{10, 1}) {
+		t.Fatalf("expected [10 1] (## Blocked-by refs must not become children, spec retained), got %v", got)
 	}
 }
 
@@ -428,12 +428,12 @@ func TestSpecificationResolver_BodyOnlyChildrenInNonBlockerSection(t *testing.T)
 		},
 	}
 
-	got, err := NewSpecificationResolver(client, io.Discard).Resolve(context.Background(), []int{1})
+	got, _, err := NewSpecificationResolver(client, io.Discard).Resolve(context.Background(), []int{1})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !equalInts(got, []int{10, 11}) {
-		t.Fatalf("expected [10 11] (only ## Children refs become children; ## Blocked by refs are dropped), got %v", got)
+	if !equalInts(got, []int{10, 11, 1}) {
+		t.Fatalf("expected [10 11 1] (only ## Children refs become children; ## Blocked by refs are dropped; spec retained), got %v", got)
 	}
 }
 
@@ -653,13 +653,13 @@ func TestSpecificationResolver_ThreetermStyleExpansion(t *testing.T) {
 	}
 
 	client := &fakeGitHubClient{issues: clientIssues}
-	got, err := NewSpecificationResolver(client, io.Discard).Resolve(context.Background(), []int{58})
+	got, _, err := NewSpecificationResolver(client, io.Discard).Resolve(context.Background(), []int{58})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	want := []int{232, 233, 234}
+	want := []int{232, 233, 234, 58}
 	if !equalInts(got, want) {
-		t.Fatalf("expected %v (vertical-slice children only), got %v", want, got)
+		t.Fatalf("expected %v (vertical-slice children + retained spec), got %v", want, got)
 	}
 }
 
@@ -685,20 +685,20 @@ func TestSpecificationResolver_ChildCitesBothParentAreaAndSpec_AcceptsUnderEithe
 		},
 	}
 
-	got58, err := NewSpecificationResolver(client, io.Discard).Resolve(context.Background(), []int{58})
+	got58, _, err := NewSpecificationResolver(client, io.Discard).Resolve(context.Background(), []int{58})
 	if err != nil {
 		t.Fatalf("Resolve([58]) unexpected error: %v", err)
 	}
-	if !equalInts(got58, []int{232}) {
-		t.Fatalf("Resolve([58]) expected [232] (child cites spec), got %v", got58)
+	if !equalInts(got58, []int{232, 58}) {
+		t.Fatalf("Resolve([58]) expected [232 58] (child cites spec, spec retained), got %v", got58)
 	}
 
-	got59, err := NewSpecificationResolver(client, io.Discard).Resolve(context.Background(), []int{59})
+	got59, _, err := NewSpecificationResolver(client, io.Discard).Resolve(context.Background(), []int{59})
 	if err != nil {
 		t.Fatalf("Resolve([59]) unexpected error: %v", err)
 	}
-	if !equalInts(got59, []int{232}) {
-		t.Fatalf("Resolve([59]) expected [232] (child cites parent area), got %v", got59)
+	if !equalInts(got59, []int{232, 59}) {
+		t.Fatalf("Resolve([59]) expected [232 59] (child cites parent area, spec retained), got %v", got59)
 	}
 }
 
@@ -726,19 +726,21 @@ func TestSpecificationResolver_OverlappingSpecsDedupeSharedChild(t *testing.T) {
 		},
 	}
 
-	got, err := NewSpecificationResolver(client, io.Discard).Resolve(context.Background(), []int{58, 59})
+	got, _, err := NewSpecificationResolver(client, io.Discard).Resolve(context.Background(), []int{58, 59})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	// Either expansion order: #58 fires first and accepts #232
-	// (addUnique adds 232, output = [232]); #59 fires second and
-	// rejects #232 because the child's parent section doesn't cite
-	// #59, leaving #59's accepted set empty so the strict-spec
+	// (addUnique adds 232, output = [232]); #58 is then retained
+	// as an AgentRun row. #59 fires second and rejects #232
+	// because the child's parent section doesn't cite #59,
+	// leaving #59's accepted set empty so the strict-spec
 	// empty-child carve-out (ADR-0034) adds #59 itself as a
-	// regular issue. Final output [232, 59]: 232 appears exactly
-	// once even though both specs list it.
-	if !equalInts(got, []int{232, 59}) {
-		t.Fatalf("Resolve([58 59]) expected [232 59] (232 deduped to once, 59 from carve-out), got %v", got)
+	// regular issue. Final output [232, 58, 59]: 232 appears
+	// exactly once even though both specs list it, and each spec
+	// is retained at the end of its own expansion slice.
+	if !equalInts(got, []int{232, 58, 59}) {
+		t.Fatalf("Resolve([58 59]) expected [232 58 59] (232 deduped to once, both specs retained), got %v", got)
 	}
 }
 
@@ -766,7 +768,7 @@ func TestSpecificationResolver_ChildMissedByUmbrella_AcceptedByParentAreaOnly(t 
 		},
 	}
 
-	got58, err := NewSpecificationResolver(client, io.Discard).Resolve(context.Background(), []int{58})
+	got58, _, err := NewSpecificationResolver(client, io.Discard).Resolve(context.Background(), []int{58})
 	if err != nil {
 		t.Fatalf("Resolve([58]) unexpected error: %v", err)
 	}
@@ -779,16 +781,17 @@ func TestSpecificationResolver_ChildMissedByUmbrella_AcceptedByParentAreaOnly(t 
 		t.Fatalf("Resolve([58]) expected [58] (no children accepted, carve-out adds 58 itself), got %v", got58)
 	}
 
-	gotBoth, err := NewSpecificationResolver(client, io.Discard).Resolve(context.Background(), []int{58, 59})
+	gotBoth, _, err := NewSpecificationResolver(client, io.Discard).Resolve(context.Background(), []int{58, 59})
 	if err != nil {
 		t.Fatalf("Resolve([58 59]) unexpected error: %v", err)
 	}
 	// #58's expansion finds no accepted children (the strict-spec
 	// carve-out adds 58 itself); #59's expansion accepts #999 via
-	// the parent-area backlink. Output [58, 999] preserves input
-	// order. 999 appears exactly once.
-	if !equalInts(gotBoth, []int{58, 999}) {
-		t.Fatalf("Resolve([58 59]) expected [58 999] (58 from carve-out, 999 accepted via #59), got %v", gotBoth)
+	// the parent-area backlink. Output [58, 999, 59] preserves
+	// input order. 999 appears exactly once, and each spec is
+	// retained at the end of its own expansion slice.
+	if !equalInts(gotBoth, []int{58, 999, 59}) {
+		t.Fatalf("Resolve([58 59]) expected [58 999 59] (58 from carve-out, 999 accepted via #59, both specs retained), got %v", gotBoth)
 	}
 }
 
@@ -873,12 +876,12 @@ func TestSpecificationResolver_ReplacesSpecificationWithChildrenFromBody(t *test
 	}
 
 	r := NewSpecificationResolver(client, nil)
-	got, err := r.Resolve(context.Background(), []int{1})
+	got, _, err := r.Resolve(context.Background(), []int{1})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !equalInts(got, []int{10, 11}) {
-		t.Fatalf("expected [10 11] (accepted children, parent replaced by its children), got %v", got)
+	if !equalInts(got, []int{10, 11, 1}) {
+		t.Fatalf("expected [10 11 1] (accepted children + retained spec), got %v", got)
 	}
 }
 
@@ -893,12 +896,12 @@ func TestSpecificationResolver_ReplacesSpecificationWithChildrenFromNamedFullURL
 		},
 	}
 
-	got, err := NewSpecificationResolver(client, io.Discard).Resolve(context.Background(), []int{1})
+	got, _, err := NewSpecificationResolver(client, io.Discard).Resolve(context.Background(), []int{1})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !equalInts(got, []int{10, 11}) {
-		t.Fatalf("expected [10 11], got %v", got)
+	if !equalInts(got, []int{10, 11, 1}) {
+		t.Fatalf("expected [10 11 1] (children + retained spec), got %v", got)
 	}
 	if len(client.searchCalls) != 0 {
 		t.Fatalf("expected URL children to avoid fallback search, got %v", client.searchCalls)
@@ -929,7 +932,7 @@ func TestSpecificationResolver_CarveOutNestedSpecFlattens(t *testing.T) {
 	}
 
 	r := NewSpecificationResolver(client, io.Discard)
-	got, err := r.Resolve(context.Background(), []int{1})
+	got, _, err := r.Resolve(context.Background(), []int{1})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -937,12 +940,16 @@ func TestSpecificationResolver_CarveOutNestedSpecFlattens(t *testing.T) {
 	// longer echoed back into #10's accepted set. The depth-1 carve-out
 	// is gated on `candidate != recursionParent`, so #1 is dropped at
 	// the recursive level. Flat list: outer emits #10 (its child);
-	// recursion into #10 accepts only #100 (verified leaf).
-	// Final: [10, 100]. Asserts the recursive flatten fired; the previous
-	// behaviour (hard-error "nested specification detected: #10") is gone
-	// — see T4 / ADR-0025 §4 destination-aligned recursive-flatten invariant.
-	if !equalInts(got, []int{10, 100}) {
-		t.Fatalf("expected [10 100], got %v", got)
+	// recursion into #10 accepts only #100 (verified leaf). Both
+	// #10 and #1 are then retained as regular rows at the end of
+	// their own expansion slice. Final: [10, 100, 1] (nested
+	// #10's own #100 child + retained inner spec + retained outer
+	// spec). Asserts the recursive flatten fired; the previous
+	// behaviour (hard-error "nested specification detected: #10")
+	// is gone — see T4 / ADR-0025 §4 destination-aligned
+	// recursive-flatten invariant.
+	if !equalInts(got, []int{10, 100, 1}) {
+		t.Fatalf("expected [10 100 1] (nested children + both retained specs), got %v", got)
 	}
 }
 
@@ -978,15 +985,15 @@ func TestSpecificationResolver_ProseRefAloneIsNotASpec(t *testing.T) {
 	}
 	var infoBuf bytes.Buffer
 	r := NewSpecificationResolver(client, &infoBuf)
-	got, err := r.Resolve(context.Background(), []int{2315})
+	got, _, err := r.Resolve(context.Background(), []int{2315})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	// Expected: just #2316 as a child of #2315, no recursion into #2316
 	// (IsSpecification is false because the prose ref alone does not
 	// qualify), no echo of #2315 back into the output.
-	if !equalInts(got, []int{2316}) {
-		t.Fatalf("expected [2316], got %v (prose ref must not echo the recursion-tree parent back)", got)
+	if !equalInts(got, []int{2316, 2315}) {
+		t.Fatalf("expected [2316 2315], got %v (prose ref must not echo the recursion-tree parent back; spec retained)", got)
 	}
 	if strings.Contains(infoBuf.String(), "flattened specification #2316") {
 		t.Errorf("prose-ref-only body must not be flattened as a Specification, got log: %q", infoBuf.String())
@@ -1016,12 +1023,12 @@ func TestSpecificationResolver_RecursionTreeParentNotEchoed(t *testing.T) {
 	}
 	var infoBuf bytes.Buffer
 	r := NewSpecificationResolver(client, &infoBuf)
-	got, err := r.Resolve(context.Background(), []int{2315})
+	got, _, err := r.Resolve(context.Background(), []int{2315})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !equalInts(got, []int{2316}) {
-		t.Fatalf("expected [2316], got %v (recursion-tree parent must not be echoed)", got)
+	if !equalInts(got, []int{2316, 2315}) {
+		t.Fatalf("expected [2316 2315], got %v (recursion-tree parent must not be echoed; spec retained)", got)
 	}
 	if strings.Contains(infoBuf.String(), "flattened specification #2316") {
 		t.Errorf("child that lists its recursion-tree parent must not recurse into itself, got log: %q", infoBuf.String())
@@ -1043,12 +1050,12 @@ func TestSpecificationResolver_FallsBackToSearch(t *testing.T) {
 
 	var infoBuf bytes.Buffer
 	r := NewSpecificationResolver(client, &infoBuf)
-	got, err := r.Resolve(context.Background(), []int{1})
+	got, _, err := r.Resolve(context.Background(), []int{1})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !equalInts(got, []int{10}) {
-		t.Fatalf("expected [10], got %v", got)
+	if !equalInts(got, []int{10, 1}) {
+		t.Fatalf("expected [10 1], got %v", got)
 	}
 	if len(client.searchCalls) == 0 {
 		t.Fatal("expected SearchIssues to be called as fallback, but it was not")
@@ -1074,13 +1081,13 @@ func TestSpecificationResolver_PreservesOrderAndDedupes(t *testing.T) {
 
 	r := NewSpecificationResolver(client, nil)
 	// Input: Specification #1, regular #42, then explicit #11 (which is also a child of #1)
-	got, err := r.Resolve(context.Background(), []int{1, 42, 11})
+	got, _, err := r.Resolve(context.Background(), []int{1, 42, 11})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	// Expected: #10, #11 (children of Specification), #42 (regular), no duplicate #11
-	if !equalInts(got, []int{10, 11, 42}) {
-		t.Fatalf("expected [10 11 42], got %v", got)
+	if !equalInts(got, []int{10, 11, 1, 42}) {
+		t.Fatalf("expected [10 11 1 42] (children + spec retained after expansion, then regular issue), got %v", got)
 	}
 }
 
@@ -1101,7 +1108,7 @@ func TestSpecificationResolver_NonSpecificationPassesThrough(t *testing.T) {
 	}
 
 	r := NewSpecificationResolver(client, nil)
-	got, err := r.Resolve(context.Background(), []int{42})
+	got, _, err := r.Resolve(context.Background(), []int{42})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1128,12 +1135,12 @@ func TestSpecificationResolver_DiscoversChildrenFromComments(t *testing.T) {
 	}
 
 	r := NewSpecificationResolver(client, nil)
-	got, err := r.Resolve(context.Background(), []int{1})
+	got, _, err := r.Resolve(context.Background(), []int{1})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !equalInts(got, []int{10, 11}) {
-		t.Fatalf("expected [10 11], got %v", got)
+	if !equalInts(got, []int{10, 11, 1}) {
+		t.Fatalf("expected [10 11 1] (children + retained spec), got %v", got)
 	}
 }
 
@@ -1150,12 +1157,12 @@ func TestSpecificationResolver_FiltersHarvestedCandidatesWithoutMatchingParent(t
 	}
 
 	r := NewSpecificationResolver(client, nil)
-	got, err := r.Resolve(context.Background(), []int{1})
+	got, _, err := r.Resolve(context.Background(), []int{1})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !equalInts(got, []int{10}) {
-		t.Fatalf("expected [10], got %v", got)
+	if !equalInts(got, []int{10, 1}) {
+		t.Fatalf("expected [10 1] (real child + retained spec), got %v", got)
 	}
 }
 
@@ -1176,12 +1183,12 @@ func TestSpecificationResolver_AcceptsUserTypedNestedSpecification(t *testing.T)
 	}
 
 	r := NewSpecificationResolver(client, nil)
-	got, err := r.Resolve(context.Background(), []int{1, 2})
+	got, _, err := r.Resolve(context.Background(), []int{1, 2})
 	if err != nil {
 		t.Fatalf("expected user-typed nested Specification to be accepted, got error: %v", err)
 	}
 	if !equalInts(got, []int{2, 1}) {
-		t.Fatalf("expected [2 1], got %v", got)
+		t.Fatalf("expected [2 1] (user-typed nested spec already retained), got %v", got)
 	}
 }
 
@@ -1201,20 +1208,21 @@ func TestSpecificationResolver_AcceptsUserTypedNumberWithoutParent(t *testing.T)
 	}
 
 	r := NewSpecificationResolver(client, nil)
-	got, err := r.Resolve(context.Background(), []int{1, 99})
+	got, _, err := r.Resolve(context.Background(), []int{1, 99})
 	if err != nil {
 		t.Fatalf("expected user-typed non-child to be accepted, got error: %v", err)
 	}
-	if !equalInts(got, []int{99}) {
-		t.Fatalf("expected [99], got %v", got)
+	if !equalInts(got, []int{99, 1}) {
+		t.Fatalf("expected [99 1] (user-typed non-child + retained spec), got %v", got)
 	}
 }
 
 func TestSpecificationResolver_AcceptsUserTypedNumberInMixedBatch(t *testing.T) {
 	// #1 is a Specification with one authored child #10. The user types [1, 42]:
 	// #42 is a standalone regular issue that is not a child of #1. The
-	// Specification must expand to its real child #10, and the user-typed #42 must
-	// pass through unchanged, preserving input order [10, 42].
+	// Specification must expand to its real child #10, the spec is
+	// retained, and the user-typed #42 must pass through unchanged,
+	// preserving input order [10, 1, 42].
 	specBody := "## Problem Statement\n\nP.\n\n## Solution\n\nS.\n\n## User Stories\n\n1. U.\n\n## Child Issues\n\n- #10 child\n"
 	childBody10 := "## Parent\n\n#1\n\n## What\n\n"
 	client := &fakeGitHubClient{
@@ -1226,12 +1234,12 @@ func TestSpecificationResolver_AcceptsUserTypedNumberInMixedBatch(t *testing.T) 
 	}
 
 	r := NewSpecificationResolver(client, nil)
-	got, err := r.Resolve(context.Background(), []int{1, 42})
+	got, _, err := r.Resolve(context.Background(), []int{1, 42})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !equalInts(got, []int{10, 42}) {
-		t.Fatalf("expected [10 42], got %v", got)
+	if !equalInts(got, []int{10, 1, 42}) {
+		t.Fatalf("expected [10 1 42] (child + retained spec + user-typed standalone), got %v", got)
 	}
 }
 
@@ -1244,7 +1252,7 @@ func TestSpecificationResolver_PropagatesChildFetchError(t *testing.T) {
 	}
 
 	r := NewSpecificationResolver(client, nil)
-	_, err := r.Resolve(context.Background(), []int{1})
+	_, _, err := r.Resolve(context.Background(), []int{1})
 	if err == nil {
 		t.Fatal("expected error from child fetch failure, got nil")
 	}
@@ -1275,7 +1283,7 @@ func TestSpecificationResolver_AcceptsUserTypedIssuesOverridingHarvestedCandidat
 	}
 
 	r := NewSpecificationResolver(client, io.Discard)
-	got, err := r.Resolve(context.Background(), []int{982, 972, 973, 974, 990})
+	got, _, err := r.Resolve(context.Background(), []int{982, 972, 973, 974, 990})
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
 	}
@@ -1333,13 +1341,13 @@ func TestSpecificationResolver_PreservesUserTypedNonSpecifications(t *testing.T)
 	}
 
 	r := NewSpecificationResolver(client, nil)
-	got, err := r.Resolve(context.Background(), []int{42, 982, 43})
+	got, _, err := r.Resolve(context.Background(), []int{42, 982, 43})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	want := []int{42, 984, 985, 986, 987, 988, 989, 43}
+	want := []int{42, 984, 985, 986, 987, 988, 989, 982, 43}
 	if !equalInts(got, want) {
-		t.Fatalf("expected %v, got %v", want, got)
+		t.Fatalf("expected %v (children + retained spec at end of expansion slice), got %v", want, got)
 	}
 }
 
@@ -1390,12 +1398,12 @@ func TestSpecificationResolver_BodyOnlyChildrenHeadingExpands(t *testing.T) {
 
 	var infoBuf bytes.Buffer
 	r := NewSpecificationResolver(client, &infoBuf)
-	got, err := r.Resolve(context.Background(), []int{1})
+	got, _, err := r.Resolve(context.Background(), []int{1})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !equalInts(got, []int{10, 11}) {
-		t.Fatalf("expected body-only ## Children to expand to [10 11], got %v", got)
+	if !equalInts(got, []int{10, 11, 1}) {
+		t.Fatalf("expected body-only ## Children to expand to [10 11 1] (children + retained spec), got %v", got)
 	}
 	if !strings.Contains(infoBuf.String(), "expanded specification #1 to 2 accepted children") {
 		t.Errorf("expected top-level expanded log line, got: %q", infoBuf.String())
@@ -1420,12 +1428,12 @@ func TestSpecificationResolver_BodyOnlyChildIssuesHeadingExpands(t *testing.T) {
 
 	var infoBuf bytes.Buffer
 	r := NewSpecificationResolver(client, &infoBuf)
-	got, err := r.Resolve(context.Background(), []int{1})
+	got, _, err := r.Resolve(context.Background(), []int{1})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !equalInts(got, []int{10, 11}) {
-		t.Fatalf("expected body-only ## Child Issues to expand to [10 11], got %v", got)
+	if !equalInts(got, []int{10, 11, 1}) {
+		t.Fatalf("expected body-only ## Child Issues to expand to [10 11 1] (children + retained spec), got %v", got)
 	}
 	if !strings.Contains(infoBuf.String(), "expanded specification #1 to 2 accepted children") {
 		t.Errorf("expected top-level expanded log line, got: %q", infoBuf.String())
@@ -1467,7 +1475,7 @@ func TestSpecificationResolver_ChildDiscoveryMatrix(t *testing.T) {
 						11: {Number: 11, Body: childBody},
 					},
 				}
-				return c, []int{10, 11}
+				return c, []int{10, 11, 1}
 			},
 			wantLog: "expanded specification #1 to 2 accepted children",
 		},
@@ -1481,7 +1489,7 @@ func TestSpecificationResolver_ChildDiscoveryMatrix(t *testing.T) {
 						11: {Number: 11, Body: childBody},
 					},
 				}
-				return c, []int{10, 11}
+				return c, []int{10, 11, 1}
 			},
 			wantLog: "expanded specification #1 to 2 accepted children",
 		},
@@ -1495,7 +1503,7 @@ func TestSpecificationResolver_ChildDiscoveryMatrix(t *testing.T) {
 						11: {Number: 11, Body: childBody},
 					},
 				}
-				return c, []int{10, 11}
+				return c, []int{10, 11, 1}
 			},
 			wantLog: "expanded specification #1 to 2 accepted children",
 		},
@@ -1508,7 +1516,7 @@ func TestSpecificationResolver_ChildDiscoveryMatrix(t *testing.T) {
 						10: {Number: 10, Body: childBody},
 					},
 				}
-				return c, []int{10}
+				return c, []int{10, 1}
 			},
 			wantLog: "expanded specification #1 to 1 accepted children",
 		},
@@ -1525,7 +1533,7 @@ func TestSpecificationResolver_ChildDiscoveryMatrix(t *testing.T) {
 						1: {{Body: "Tracking #10 and #11 here."}},
 					},
 				}
-				return c, []int{10, 11}
+				return c, []int{10, 11, 1}
 			},
 			wantLog: "expanded specification #1 to 2 accepted children",
 		},
@@ -1540,7 +1548,7 @@ func TestSpecificationResolver_ChildDiscoveryMatrix(t *testing.T) {
 					},
 					subIssues: map[int][]int{1: {10, 11}},
 				}
-				return c, []int{10, 11}
+				return c, []int{10, 11, 1}
 			},
 			wantLog: "expanded specification #1 to 2 accepted children",
 		},
@@ -1558,7 +1566,7 @@ func TestSpecificationResolver_ChildDiscoveryMatrix(t *testing.T) {
 						{Number: 11, Body: childBody},
 					},
 				}
-				return c, []int{10, 11}
+				return c, []int{10, 11, 1}
 			},
 			wantLog: "expanded specification #1 to 2 accepted children",
 		},
@@ -1574,7 +1582,7 @@ func TestSpecificationResolver_ChildDiscoveryMatrix(t *testing.T) {
 						1: {{Body: "Tracking #10 here."}},
 					},
 				}
-				return c, []int{10}
+				return c, []int{10, 1}
 			},
 			wantLog: "expanded specification #1 to 1 accepted children",
 		},
@@ -1588,7 +1596,7 @@ func TestSpecificationResolver_ChildDiscoveryMatrix(t *testing.T) {
 					},
 					subIssues: map[int][]int{1: {10}},
 				}
-				return c, []int{10}
+				return c, []int{10, 1}
 			},
 			wantLog: "expanded specification #1 to 1 accepted children",
 		},
@@ -1599,7 +1607,7 @@ func TestSpecificationResolver_ChildDiscoveryMatrix(t *testing.T) {
 			client, want := c.build()
 			var infoBuf bytes.Buffer
 			r := NewSpecificationResolver(client, &infoBuf)
-			got, err := r.Resolve(context.Background(), []int{1})
+			got, _, err := r.Resolve(context.Background(), []int{1})
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -1631,12 +1639,12 @@ func TestSpecificationResolver_ChildDiscoveryMatrix_DedupAcrossSources(t *testin
 		subIssues: map[int][]int{1: {10}},
 	}
 	r := NewSpecificationResolver(c, io.Discard)
-	got, err := r.Resolve(context.Background(), []int{1})
+	got, _, err := r.Resolve(context.Background(), []int{1})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !equalInts(got, []int{10, 11}) {
-		t.Fatalf("expected deduped [10 11], got %v", got)
+	if !equalInts(got, []int{10, 11, 1}) {
+		t.Fatalf("expected deduped [10 11 1] (children + retained spec), got %v", got)
 	}
 }
 
@@ -1657,12 +1665,12 @@ func TestSpecificationResolver_ChildrenOnlyDetection(t *testing.T) {
 	}
 	var infoBuf bytes.Buffer
 	r := NewSpecificationResolver(client, &infoBuf)
-	got, err := r.Resolve(context.Background(), []int{1})
+	got, _, err := r.Resolve(context.Background(), []int{1})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !equalInts(got, []int{10}) {
-		t.Fatalf("expected [10], got %v", got)
+	if !equalInts(got, []int{10, 1}) {
+		t.Fatalf("expected [10 1] (child + retained spec), got %v", got)
 	}
 	if !strings.Contains(infoBuf.String(), "expanded specification #1 to 1 accepted children") {
 		t.Errorf("expected top-level expanded-expansion log line, got: %q", infoBuf.String())
@@ -1682,12 +1690,12 @@ func TestSpecificationResolver_ChildrenOnlyDetectionFromNamedURLComment(t *testi
 		},
 	}
 
-	got, err := NewSpecificationResolver(client, io.Discard).Resolve(context.Background(), []int{1})
+	got, _, err := NewSpecificationResolver(client, io.Discard).Resolve(context.Background(), []int{1})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !equalInts(got, []int{10}) {
-		t.Fatalf("expected [10], got %v", got)
+	if !equalInts(got, []int{10, 1}) {
+		t.Fatalf("expected [10 1] (child + retained spec), got %v", got)
 	}
 	// With the no-other-gate contract, the resolver always probes
 	// ListSubIssues; the comment-only path no longer short-circuits
@@ -1714,12 +1722,12 @@ func TestSpecificationResolver_LazyProbeSkipsWhenSectionShapePresent(t *testing.
 		},
 	}
 	r := NewSpecificationResolver(client, io.Discard)
-	got, err := r.Resolve(context.Background(), []int{1})
+	got, _, err := r.Resolve(context.Background(), []int{1})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !equalInts(got, []int{10}) {
-		t.Fatalf("expected [10], got %v", got)
+	if !equalInts(got, []int{10, 1}) {
+		t.Fatalf("expected [10 1] (child + retained spec), got %v", got)
 	}
 	// Section-shape expansion already calls ListIssueComments once via
 	// collectCandidates. A second call would mean the broadened probe fired
@@ -1752,7 +1760,7 @@ func TestSpecificationResolver_LazyProbeNoChildrenPassesThrough(t *testing.T) {
 		},
 	}
 	r := NewSpecificationResolver(client, io.Discard)
-	got, err := r.Resolve(context.Background(), []int{42})
+	got, _, err := r.Resolve(context.Background(), []int{42})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1774,7 +1782,7 @@ func TestSpecificationResolver_FlattensNestedSpecAtTwoLevels(t *testing.T) {
 	}
 	var infoBuf bytes.Buffer
 	r := NewSpecificationResolver(client, &infoBuf)
-	got, err := r.Resolve(context.Background(), []int{1})
+	got, _, err := r.Resolve(context.Background(), []int{1})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1784,8 +1792,8 @@ func TestSpecificationResolver_FlattensNestedSpecAtTwoLevels(t *testing.T) {
 	// Final: [2, 20]. The recursion also re-enters #1 (whose body
 	// again yields #2 via the ## Child Issues heading), but #2 is
 	// already in `seen`, so the flatten short-circuits.
-	if !equalInts(got, []int{2, 20}) {
-		t.Fatalf("expected [2 20], got %v", got)
+	if !equalInts(got, []int{2, 20, 1}) {
+		t.Fatalf("expected [2 20 1] (nested children + both retained specs), got %v", got)
 	}
 	// Per-flatten line for the inner Specification. Per destination-aligned beat #4,
 	// #1 in candidates is the recursion-tree parent, so the carve-out
@@ -1815,7 +1823,7 @@ func TestSpecificationResolver_FlattensNestedSpecAtThreeLevels(t *testing.T) {
 	}
 	var infoBuf bytes.Buffer
 	r := NewSpecificationResolver(client, &infoBuf)
-	got, err := r.Resolve(context.Background(), []int{1})
+	got, _, err := r.Resolve(context.Background(), []int{1})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1824,8 +1832,8 @@ func TestSpecificationResolver_FlattensNestedSpecAtThreeLevels(t *testing.T) {
 	// recursion-tree parent (e.g. #1 when expanding #2) is no longer
 	// echoed back into the descendant's accepted set, so #1 does not
 	// appear in the final flat list.
-	if !equalInts(got, []int{2, 3, 30}) {
-		t.Fatalf("expected [2 3 30], got %v", got)
+	if !equalInts(got, []int{2, 3, 30, 1}) {
+		t.Fatalf("expected [2 3 30 1] (three-level children + retained specs), got %v", got)
 	}
 	// Multi-level log assertion: one top-level "expanded" line and two
 	// per-flatten lines, emitted in depth order. The per-flatten counts
@@ -1859,7 +1867,7 @@ func TestSpecificationResolver_UserTypedNestedSpecCarveOutSurvivesFlatten(t *tes
 		},
 	}
 	r := NewSpecificationResolver(client, io.Discard)
-	got, err := r.Resolve(context.Background(), []int{1, 2})
+	got, _, err := r.Resolve(context.Background(), []int{1, 2})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1906,12 +1914,12 @@ func TestSpecificationResolver_ExpandNativeSubIssues(t *testing.T) {
 
 	var infoBuf bytes.Buffer
 	r := NewSpecificationResolver(client, &infoBuf)
-	got, err := r.Resolve(context.Background(), []int{1})
+	got, _, err := r.Resolve(context.Background(), []int{1})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !equalInts(got, []int{42, 43}) {
-		t.Fatalf("expected [42 43], got %v", got)
+	if !equalInts(got, []int{42, 43, 1}) {
+		t.Fatalf("expected [42 43 1] (children + retained spec), got %v", got)
 	}
 	if !strings.Contains(infoBuf.String(), "expanded specification #1 to 2 accepted children") {
 		t.Errorf("expected top-level expanded-expansion log line, got: %q", infoBuf.String())
@@ -1929,12 +1937,12 @@ func TestSpecificationResolver_ExpandsNativeSubIssuesForCanonicalSpecification(t
 		subIssues: map[int][]int{1: {42}},
 	}
 
-	got, err := NewSpecificationResolver(client, io.Discard).Resolve(context.Background(), []int{1})
+	got, _, err := NewSpecificationResolver(client, io.Discard).Resolve(context.Background(), []int{1})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !equalInts(got, []int{42}) {
-		t.Fatalf("expected [42], got %v", got)
+	if !equalInts(got, []int{42, 1}) {
+		t.Fatalf("expected [42 1] (native child + retained spec), got %v", got)
 	}
 	if !equalInts(client.listSubIssuesCalls, []int{1}) {
 		t.Fatalf("expected native child lookup for canonical Specification, got %v", client.listSubIssuesCalls)
@@ -1955,7 +1963,7 @@ func TestSpecificationResolver_NativeSubIssuesKeepsBodyRefOrder(t *testing.T) {
 	}
 
 	r := NewSpecificationResolver(client, io.Discard)
-	got, err := r.Resolve(context.Background(), []int{1})
+	got, _, err := r.Resolve(context.Background(), []int{1})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1963,8 +1971,8 @@ func TestSpecificationResolver_NativeSubIssuesKeepsBodyRefOrder(t *testing.T) {
 	// set, so the recursive flatten cannot echo it. Body ref #43
 	// arrives via collectCandidates; sub-issue #42 is appended
 	// after via the merge step in expandOne. Result: [43, 42].
-	if !equalInts(got, []int{43, 42}) {
-		t.Fatalf("expected [43 42] (body ref first, sub-issue second), got %v", got)
+	if !equalInts(got, []int{43, 42, 1}) {
+		t.Fatalf("expected [43 42 1] (body ref first, sub-issue second, retained spec), got %v", got)
 	}
 }
 
@@ -1978,7 +1986,7 @@ func TestSpecificationResolver_EmptyChildCarveOut_NoCandidates(t *testing.T) {
 
 	var infoBuf bytes.Buffer
 	r := NewSpecificationResolver(client, &infoBuf)
-	got, err := r.Resolve(context.Background(), []int{1})
+	got, _, err := r.Resolve(context.Background(), []int{1})
 	if err != nil {
 		t.Fatalf("expected no error for Specification with no children, got %v", err)
 	}
@@ -2006,7 +2014,7 @@ func TestSpecificationResolver_EmptyChildCarveOut_AllCandidatesFiltered(t *testi
 
 	var infoBuf bytes.Buffer
 	r := NewSpecificationResolver(client, &infoBuf)
-	got, err := r.Resolve(context.Background(), []int{1})
+	got, _, err := r.Resolve(context.Background(), []int{1})
 	if err != nil {
 		t.Fatalf("expected no error when all candidates filtered, got %v", err)
 	}
@@ -2030,7 +2038,7 @@ func TestSpecificationResolver_BroadenedAllFilteredPassesThrough(t *testing.T) {
 	}
 
 	r := NewSpecificationResolver(client, io.Discard)
-	got, err := r.Resolve(context.Background(), []int{1})
+	got, _, err := r.Resolve(context.Background(), []int{1})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -2068,7 +2076,7 @@ func TestSpecificationResolver_BroadenedCommentRefAllFilteredIsSilent(t *testing
 
 	var infoBuf bytes.Buffer
 	r := NewSpecificationResolver(client, &infoBuf)
-	got, err := r.Resolve(context.Background(), []int{294})
+	got, _, err := r.Resolve(context.Background(), []int{294})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -2088,7 +2096,7 @@ func TestSpecificationResolver_NonSpecWithoutChildrenCallsListSubIssuesOnce(t *t
 		},
 	}
 	r := NewSpecificationResolver(client, io.Discard)
-	got, err := r.Resolve(context.Background(), []int{42})
+	got, _, err := r.Resolve(context.Background(), []int{42})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -2110,7 +2118,7 @@ func TestSpecificationResolver_SpecShapeExpansionCallsListSubIssues(t *testing.T
 		},
 	}
 	r := NewSpecificationResolver(client, io.Discard)
-	if _, err := r.Resolve(context.Background(), []int{1}); err != nil {
+	if _, _, err := r.Resolve(context.Background(), []int{1}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if !equalInts(client.listSubIssuesCalls, []int{1}) {
@@ -2129,7 +2137,7 @@ func TestSpecificationResolver_ListSubIssuesFailureLogsAndContinues(t *testing.T
 
 	var infoBuf bytes.Buffer
 	r := NewSpecificationResolver(client, &infoBuf)
-	got, err := r.Resolve(context.Background(), []int{1})
+	got, _, err := r.Resolve(context.Background(), []int{1})
 	if err != nil {
 		t.Fatalf("expected error-free resolution on transient gh failure, got %v", err)
 	}
@@ -2195,16 +2203,17 @@ func TestSpecificationResolver_Verifies63ChildrenBoundedAndInOrder(t *testing.T)
 	resolver := NewSpecificationResolver(client, io.Discard)
 	resolver.maxConcurrentFetches = 4
 
-	got, err := resolver.Resolve(context.Background(), []int{1})
+	got, _, err := resolver.Resolve(context.Background(), []int{1})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	want := make([]int, childCount)
+	want := make([]int, childCount+1)
 	for n := range want {
 		want[n] = 100 + n
 	}
+	want[childCount] = 1
 	if !equalInts(got, want) {
-		t.Fatalf("expected children in discovery order, got %v", got)
+		t.Fatalf("expected children in discovery order + retained spec, got %v", got)
 	}
 	if client.max > 4 {
 		t.Fatalf("expected at most 4 concurrent fetches, got %d", client.max)
@@ -2219,6 +2228,35 @@ func TestSpecificationResolver_Verifies63ChildrenBoundedAndInOrder(t *testing.T)
 	}
 }
 
+// TestSpecificationResolver_RetainsParentAfterChildren is the tracer
+// bullet for the parent-retained expansion: a Specification with two
+// accepted children expands to [child1, child2, spec]. The retained
+// spec is the same AgentRun row the operator typed; the resolver
+// does not echo it earlier in the list and does not drop it. This
+// replaces the legacy "spec is replaced by its children" contract
+// (see ADR-0047) and is the seam the DependencyResolver consumes
+// to build the in-memory parent-gate blocker edges.
+func TestSpecificationResolver_RetainsParentAfterChildren(t *testing.T) {
+	specBody := "## Problem Statement\n\nProblem.\n\n## Solution\n\nSolution.\n\n## User Stories\n\n1. Story.\n\n## Child Issues\n\n- #10 first child\n- #11 second child\n"
+	childBody10 := "## Parent\n\n#1\n\n## What\n\n"
+	childBody11 := "## Parent\n\n#1\n\n## What\n\n"
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			1:  {Number: 1, Title: "Specification", Body: specBody},
+			10: {Number: 10, Title: "Child 1", Body: childBody10},
+			11: {Number: 11, Title: "Child 2", Body: childBody11},
+		},
+	}
+
+	got, _, err := NewSpecificationResolver(client, io.Discard).Resolve(context.Background(), []int{1})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !equalInts(got, []int{10, 11, 1}) {
+		t.Fatalf("expected [10 11 1] (parent retained after its children), got %v", got)
+	}
+}
+
 func TestSpecificationResolver_ReturnsCancellationDuringVerification(t *testing.T) {
 	client := &fakeGitHubClient{issues: map[int]*github.Issue{
 		1:  {Number: 1, Body: "## Problem Statement\n\nP\n\n## Solution\n\nS\n\n## User Stories\n\nU\n\n- #10\n"},
@@ -2227,7 +2265,7 @@ func TestSpecificationResolver_ReturnsCancellationDuringVerification(t *testing.
 	resolver := NewSpecificationResolver(client, io.Discard)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	_, err := resolver.Resolve(ctx, []int{1})
+	_, _, err := resolver.Resolve(ctx, []int{1})
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("expected context cancellation, got %v", err)
 	}
