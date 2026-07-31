@@ -995,29 +995,64 @@ func labelNames(labels []struct {
 	return names
 }
 
-// ListOpenIssues lists every open issue in the current repo via
-// `gh issue list --state open --paginate`. PRs are excluded because
-// `gh issue list` returns issues only (the `gh pr list` command is
-// its sibling). The result set is the last-resort harvest source for
-// the Specification resolver's open-issue scan (see ADR-0043):
-// every candidate is then filtered through the broadened
-// `HasParentSectionBacklinkTo` matcher, so the scan only surfaces
-// candidates that the verifier would accept. Results are sorted by
-// issue number ascending for deterministic batch ordering.
+// ListOpenIssues lists every open issue in the current repo via the
+// GitHub REST API (`gh api repos/.../issues?state=open --paginate`).
+// The REST endpoint returns issues AND pull requests, so each result
+// is filtered client-side by checking the `pull_request` field (null
+// for issues, populated for PRs) — only issues pass through. The
+// result set is the last-resort harvest source for the Specification
+// resolver's open-issue scan (see ADR-0043): every candidate is then
+// filtered through the broadened `HasParentSectionBacklinkTo`
+// matcher, so the scan only surfaces candidates that the verifier
+// would accept. Results are sorted by issue number ascending for
+// deterministic batch ordering.
+//
+// `gh issue list --paginate` is intentionally NOT used because
+// `--paginate` is a `gh api` flag, not a `gh issue list` flag — the
+// unsupported combination would silently fail at runtime and make
+// the new harvest path a no-op in production.
 func (c *CLIClient) ListOpenIssues(ctx context.Context) ([]Issue, error) {
+	owner, repo, err := c.resolveRepo(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	path := fmt.Sprintf("repos/%s/%s/issues?state=open&per_page=100", owner, repo)
 	callCtx, cancel := c.boundContext(ctx)
 	defer cancel()
-	cmd := c.command(callCtx, "gh", "issue", "list", "--state", "open", "--json", "number,state,title,body,labels", "--paginate")
-	out, err := runCmd(callCtx, cmd, "gh issue list")
+	cmd := c.command(callCtx, "gh", "api", path, "--paginate")
+	out, err := runCmd(callCtx, cmd, "gh api issues")
 	if err != nil {
-		return nil, fmt.Errorf("gh issue list: %w", err)
+		return nil, fmt.Errorf("gh api issues: %w", err)
 	}
-	var payloads []issuePayload
-	if err := json.Unmarshal(out, &payloads); err != nil {
-		return nil, fmt.Errorf("parse issues: %w", err)
+
+	if len(bytes.TrimSpace(out)) == 0 {
+		return nil, nil
 	}
+
+	var payloads []issueListPayload
+	dec := json.NewDecoder(bytes.NewReader(out))
+	for {
+		var page []issueListPayload
+		if err := dec.Decode(&page); err != nil {
+			if err == io.EOF {
+				break
+			}
+			return nil, fmt.Errorf("parse issues: %w", err)
+		}
+		payloads = append(payloads, page...)
+	}
+
 	issues := make([]Issue, 0, len(payloads))
 	for _, payload := range payloads {
+		// GitHub's REST endpoint returns both issues and pull
+		// requests under /repos/{owner}/{repo}/issues; pull
+		// requests carry a populated `pull_request` field while
+		// issues carry `null`. Filter PRs out so the open-issue
+		// scan only sees real issues.
+		if payload.PullRequest != nil {
+			continue
+		}
 		issues = append(issues, Issue{
 			Number: payload.Number,
 			State:  payload.State,
@@ -1030,6 +1065,23 @@ func (c *CLIClient) ListOpenIssues(ctx context.Context) ([]Issue, error) {
 		return issues[i].Number < issues[j].Number
 	})
 	return issues, nil
+}
+
+// issueListPayload models the JSON shape returned by
+// `GET /repos/{owner}/{repo}/issues`. `PullRequest` is a pointer so
+// the nil-value (an actual issue) is distinguishable from an empty
+// PR object (a real PR); see ListOpenIssues for the filter.
+type issueListPayload struct {
+	Number      int    `json:"number"`
+	State       string `json:"state"`
+	Title       string `json:"title"`
+	Body        string `json:"body"`
+	PullRequest *struct {
+		URL string `json:"url"`
+	} `json:"pull_request"`
+	Labels []struct {
+		Name string `json:"name"`
+	} `json:"labels"`
 }
 
 // PostIssueComment posts body as a new comment on the given issue via
