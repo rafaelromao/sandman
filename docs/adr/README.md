@@ -81,3 +81,4 @@ ADRs are numbered sequentially starting from `0001`. The template ADR (`0000`) i
 | 0040 | Runtime branch naming drops the `sandman/` prefix | accepted |
 | 0041 | AFK skills use an autonomous response contract | accepted |
 | 0042 | Robust Specification detection and generalized parent-section matching | accepted |
+| 0043 | Query the dedicated `/dependencies/blocked_by` endpoint for native blockers | accepted |
