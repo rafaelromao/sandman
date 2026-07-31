@@ -705,10 +705,10 @@ func (c *CLIClient) fetchIssueDependencies(ctx context.Context, owner, repo stri
 	// blockers; the dedicated endpoint is the only REST source that
 	// surfaces the current state (verified against threeterm #278 in
 	// 2026-07). It returns an array of issue objects whose `number`
-	// field is the blocker. When the endpoint reports zero blockers we
-	// do not fall through to the events endpoint — the events endpoint
-	// only carries event-time state and can stay empty at issue
-	// creation time even when the dependencies are present.
+	// field is the blocker. When the endpoint returns one or more
+	// blockers we use that result directly; otherwise we fall through
+	// to the events endpoint so older event-driven blockers and
+	// zero-blocker cases still resolve cleanly.
 	if current, err := c.fetchIssueDependencyBlockers(ctx, owner, repo, number); err == nil && len(current) > 0 {
 		return current, nil
 	}
