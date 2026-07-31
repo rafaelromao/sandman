@@ -39,8 +39,9 @@ func TestReleaseConfigUsesAutomaticRCVersioningAfterRC1(t *testing.T) {
 	if err := json.Unmarshal([]byte(manifest), &versions); err != nil {
 		t.Fatalf("parse .release-please-manifest.json: %v", err)
 	}
-	if len(versions) != 1 || versions["."] != "1.0.0-rc.1" {
-		t.Fatalf("release manifest = %#v, want generated RC1 state", versions)
+	version := versions["."]
+	if len(versions) != 1 || !strings.HasPrefix(version, "1.0.0-rc.") {
+		t.Fatalf("release manifest = %#v, want generated 1.0.0-rc.N state", versions)
 	}
 }
 
