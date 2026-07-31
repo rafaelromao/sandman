@@ -248,9 +248,9 @@ type dependencySummary struct {
 }
 
 type issueEventPayload struct {
-	Event         string              `json:"event"`
-	BlockingIssue *dependencyIssueRef `json:"blocking_issue"`
-	Source        *eventSource        `json:"source"`
+	Event     string              `json:"event"`
+	BlockedBy *dependencyIssueRef `json:"blocked_by"`
+	Source    *eventSource        `json:"source"`
 }
 
 type dependencyIssueRef struct {
@@ -698,6 +698,21 @@ func (c *CLIClient) fetchIssueDependencies(ctx context.Context, owner, repo stri
 		return blockedBy, nil
 	}
 
+	// Consult the dedicated /dependencies/blocked_by endpoint for the
+	// current set of native blockers. GitHub's public issue payload
+	// (repos/{o}/{r}/issues/{n}) returns `blocked_by: null` and
+	// `issue_dependencies: null` even when the issue has active native
+	// blockers; the dedicated endpoint is the only REST source that
+	// surfaces the current state (verified against threeterm #278 in
+	// 2026-07). It returns an array of issue objects whose `number`
+	// field is the blocker. When the endpoint reports zero blockers we
+	// do not fall through to the events endpoint — the events endpoint
+	// only carries event-time state and can stay empty at issue
+	// creation time even when the dependencies are present.
+	if current, err := c.fetchIssueDependencyBlockers(ctx, owner, repo, number); err == nil && len(current) > 0 {
+		return current, nil
+	}
+
 	callCtx, cancel := c.boundContext(ctx)
 	defer cancel()
 	cmd := c.command(callCtx, "gh", "api", "-H", "Accept: application/vnd.github+json", fmt.Sprintf("repos/%s/%s/issues/%d/events", owner, repo, number))
@@ -712,6 +727,46 @@ func (c *CLIClient) fetchIssueDependencies(ctx context.Context, owner, repo stri
 	}
 
 	return parseDependencyEvents(events), nil
+}
+
+// fetchIssueDependencyBlockers fetches the *current* set of native
+// blockers for an issue via the dedicated
+// `GET /repos/{owner}/{repo}/issues/{number}/dependencies/blocked_by`
+// REST endpoint. Returns nil when the endpoint reports no blockers,
+// when the API returns an empty array, or when the call fails; the
+// caller falls back to the events endpoint in the latter two cases
+// (preserving the prior event-derived behaviour for older event-only
+// blockers).
+func (c *CLIClient) fetchIssueDependencyBlockers(ctx context.Context, owner, repo string, number int) ([]int, error) {
+	callCtx, cancel := c.boundContext(ctx)
+	defer cancel()
+	path := fmt.Sprintf("repos/%s/%s/issues/%d/dependencies/blocked_by", owner, repo, number)
+	cmd := c.command(callCtx, "gh", "api", "-H", "Accept: application/vnd.github+json", path)
+	out, err := runCmd(callCtx, cmd, "gh api issue dependencies blocked_by")
+	if err != nil {
+		return nil, err
+	}
+	trimmed := bytes.TrimSpace(out)
+	if len(trimmed) == 0 || string(trimmed) == "[]" || string(trimmed) == "null" {
+		return nil, nil
+	}
+	var payload []struct {
+		Number int `json:"number"`
+	}
+	if err := json.Unmarshal(trimmed, &payload); err != nil {
+		return nil, fmt.Errorf("parse issue dependencies: %w", err)
+	}
+	numbers := make([]int, 0, len(payload))
+	for _, item := range payload {
+		if item.Number <= 0 {
+			continue
+		}
+		numbers = append(numbers, item.Number)
+	}
+	if len(numbers) == 0 {
+		return nil, nil
+	}
+	return mergeIssueNumbers(numbers), nil
 }
 
 // parseBlockedBy returns the unique issue numbers declared as blockers
@@ -892,15 +947,15 @@ func parseDependencyEvents(events []issueEventPayload) []int {
 	for _, event := range events {
 		switch event.Event {
 		case "blocked_by_added":
-			if event.BlockingIssue == nil || event.BlockingIssue.Number == 0 {
+			if event.BlockedBy == nil || event.BlockedBy.Number == 0 {
 				continue
 			}
-			blockedBy = mergeIssueNumbers(blockedBy, []int{event.BlockingIssue.Number})
+			blockedBy = mergeIssueNumbers(blockedBy, []int{event.BlockedBy.Number})
 		case "blocked_by_removed":
-			if event.BlockingIssue == nil || event.BlockingIssue.Number == 0 {
+			if event.BlockedBy == nil || event.BlockedBy.Number == 0 {
 				continue
 			}
-			blockedBy = removeIssueNumber(blockedBy, event.BlockingIssue.Number)
+			blockedBy = removeIssueNumber(blockedBy, event.BlockedBy.Number)
 		case "cross-referenced":
 			if event.Source == nil || event.Source.Issue == nil || event.Source.Issue.Number == 0 {
 				continue
