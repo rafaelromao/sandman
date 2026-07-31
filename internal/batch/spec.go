@@ -451,13 +451,9 @@ sendLoop:
 		if childIssue == nil {
 			return nil, fmt.Errorf("fetch child #%d: not found", child)
 		}
-		// Replacement for the strict single-section `## Parent`
-		// probe: the verifier now accepts any parent-section H2
-		// (heading text contains "parent", case-insensitive
-		// substring) whose extracted refs include the originating
-		// spec. Multi-ref parent sections are accepted when the
-		// spec is among them; refs across multiple parent
-		// sections are unioned. See ADR-0042.
+		// Verifier widened in ADR-0042: any parent-section H2
+		// accepts the candidate when the originating spec is in
+		// the unioned refs.
 		if !HasParentSectionBacklinkTo(childIssue.Body, parent) {
 			continue
 		}
@@ -484,11 +480,8 @@ func (r *SpecificationResolver) collectCandidates(ctx context.Context, parent in
 			order = append(order, n)
 		}
 	}
-	// Body candidate refs are harvested per H2 section so the carve-out
-	// skips `## Blocked by`, `## Depends on`, and `## Blocked-by`
-	// headings. The same vocabulary `parseBlockedByHeading` recognises
-	// is mirrored in `bodyReferencesOutsideBlockerSections`; this is
-	// the load-bearing change from ADR-0042's vertical slice 1.
+	// Per-section body harvest; skips blocker-style headings
+	// (vocabulary owned by github.IsBlockedByHeading, see ADR-0042).
 	add(bodyReferencesOutsideBlockerSections(body))
 	if comments, err := r.client.ListIssueComments(ctx, parent); err == nil {
 		for _, c := range comments {

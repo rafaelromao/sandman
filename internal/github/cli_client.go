@@ -25,6 +25,16 @@ const DefaultCallTimeout = 30 * time.Second
 // blockedByHeadingPattern parses blocker headings; see docs/usage/issue-body-formats.md.
 var blockedByHeadingPattern = regexp.MustCompile(`(?im)^\s*##\s+(?:blocked by|depends on|blocked-by)\s*$`)
 
+// IsBlockedByHeading reports whether `heading` carries the canonical
+// H2 text of a blocker section. Exposed so other parsers (e.g.
+// `SpecificationResolver`'s candidate harvest in
+// `internal/batch`) share the single blocker vocabulary defined
+// here. The case-insensitive flag lets `## blocked by`,
+// `## Blocked-By`, and `##   Depends on` all match.
+func IsBlockedByHeading(heading string) bool {
+	return blockedByHeadingPattern.MatchString(heading)
+}
+
 // bulletIssuePattern parses strict issue lines; see docs/usage/issue-body-formats.md.
 var bulletIssuePattern = regexp.MustCompile(`(?m)^\s*(?:-\s*)?(?:\[#(\d+)\]|#(\d+)|\[(?:[^\]]*)\]\([^()]*?/issues/(\d+)\))\s*$`)
 

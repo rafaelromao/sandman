@@ -4,6 +4,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/rafaelromao/sandman/internal/github"
 )
 
 var issueRefPattern = regexp.MustCompile(`(?:/issues/(\d+)(?:#[^\s)\]]*)?|#(\d+)\b)`)
@@ -220,21 +222,12 @@ func StripParentSection(body string) string {
 	return before + after[nextIdx[0]:]
 }
 
-// blockerHeadingPattern matches H2 sections whose heading text equals
-// `Blocked by`, `Depends on`, or `Blocked-by` (case-insensitive on the
-// heading text). The vocabulary mirrors `parseBlockedByHeading`'s
-// recognised names in `internal/github/cli_client.go`, so the spec
-// candidate harvest and the blocker parse share a single source of
-// truth for what a "blocker" heading looks like.
-var blockerHeadingPattern = regexp.MustCompile(`(?im)^##\s+(?:blocked\s+by|depends\s+on|blocked-by)\s*$`)
-
-// IsBlockerHeading reports whether `heading` is the canonical H2
-// text of a blocker section. `heading` may include leading
-// whitespace and a trailing newline; only the heading text itself is
-// matched. The case-insensitive vocabulary is reused from
-// `parseBlockedByHeading`.
-func IsBlockerHeading(heading string) bool {
-	return blockerHeadingPattern.MatchString(heading)
+// isBlockerHeading reports whether `heading` carries the canonical
+// H2 text of a blocker section. The blocker vocabulary is owned by
+// `internal/github.IsBlockedByHeading` so the spec candidate
+// harvest and the dependency parse share a single source of truth.
+func isBlockerHeading(heading string) bool {
+	return github.IsBlockedByHeading(heading)
 }
 
 // headerLinePattern consumes an entire H2 heading line up to (but
@@ -284,7 +277,7 @@ func bodyReferencesOutsideBlockerSections(body string) []int {
 	seen := make(map[int]struct{})
 	var out []int
 	for _, sec := range sections {
-		if IsBlockerHeading(sec.heading) {
+		if isBlockerHeading(sec.heading) {
 			continue
 		}
 		for _, n := range ExtractIssueReferences(sec.content) {

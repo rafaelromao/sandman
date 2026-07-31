@@ -292,6 +292,32 @@ func TestSpecificationResolver_DependsOnHeadingRefsExcludedFromChildren(t *testi
 	}
 }
 
+// TestSpecificationResolver_BlockedByHyphenatedHeadingRefsExcludedFromChildren
+// pins the third recognised blocker heading alias, `## Blocked-by`.
+// All three names (`Blocked by`, `Depends on`, `Blocked-by`) share
+// the single vocabulary owned by `parseBlockedByHeading`.
+func TestSpecificationResolver_BlockedByHyphenatedHeadingRefsExcludedFromChildren(t *testing.T) {
+	t.Parallel()
+	specBody := "## Problem Statement\n\nP.\n\n## Solution\n\nS.\n\n## User Stories\n\n1. U.\n\n## Child Issues\n\n- #10 child\n\n## Blocked-by\n\n- #99 blocked\n"
+	childBody10 := "## Parent\n\n#1\n\n## What\n\nChild work.\n"
+	childBody99 := "## Parent\n\n#1\n\n## What\n\nWould-be false-positive child.\n"
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			1:  {Number: 1, Title: "Specification", Body: specBody},
+			10: {Number: 10, Title: "Real child", Body: childBody10},
+			99: {Number: 99, Title: "Blocked-by reference, not a child", Body: childBody99},
+		},
+	}
+
+	got, err := NewSpecificationResolver(client, io.Discard).Resolve(context.Background(), []int{1})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !equalInts(got, []int{10}) {
+		t.Fatalf("expected [10] (## Blocked-by refs must not become children), got %v", got)
+	}
+}
+
 // TestSpecificationResolver_BodyOnlyChildrenInNonBlockerSection pins
 // the positive case for the carve-out: a body whose `## Children`
 // heading lists real children must still expand, even when a
@@ -333,6 +359,44 @@ func TestParentSectionHeading_AcceptsParentAreaSection(t *testing.T) {
 	got, ok := ExtractParentReference(body)
 	if !ok || got != 58 {
 		t.Fatalf("expected (58, true), got (%d, %v)", got, ok)
+	}
+}
+
+// TestParentSectionHeading_AcceptsParentSpecSection pins the
+// `## Parent spec` form so the substring match keeps accepting
+// future author-side variation.
+func TestParentSectionHeading_AcceptsParentSpecSection(t *testing.T) {
+	t.Parallel()
+	body := "## Parent spec\n\n#58\n"
+	got, ok := ExtractParentReference(body)
+	if !ok || got != 58 {
+		t.Fatalf("expected (58, true), got (%d, %v)", got, ok)
+	}
+}
+
+// TestParentSectionHeading_AcceptsParentsSection pins the
+// `## Parents` (plural) form so a body with a multi-child parent
+// block matches the same probe.
+func TestParentSectionHeading_AcceptsParentsSection(t *testing.T) {
+	t.Parallel()
+	body := "## Parents\n\n#58\n"
+	got, ok := ExtractParentReference(body)
+	if !ok || got != 58 {
+		t.Fatalf("expected (58, true), got (%d, %v)", got, ok)
+	}
+}
+
+// TestParentSectionHeading_RejectsH3ParentSection pins that H3-or-
+// deeper headings (`### Parent`) are NOT matched even though the
+// heading text contains "parent". The matcher anchor is two `#`
+// characters; the regex's `^##\s+` rejects a third leading `#`. A
+// body with `### Parent area\n\n#58` returns `(0, false)`.
+func TestParentSectionHeading_RejectsH3ParentSection(t *testing.T) {
+	t.Parallel()
+	body := "### Parent area\n\n#58\n"
+	got, ok := ExtractParentReference(body)
+	if ok || got != 0 {
+		t.Fatalf("expected (0, false) for H3 heading, got (%d, %v)", got, ok)
 	}
 }
 
