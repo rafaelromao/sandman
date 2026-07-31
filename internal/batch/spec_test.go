@@ -16,10 +16,13 @@ import (
 
 // TestIsSpecification pins the body-shape and children-content gates
 // for the Specification detection. A body is a Specification if it
-// declares children in any form (`## Children` / `## Child Issues`
-// heading) OR if it carries the canonical Specification shape
-// (`## Problem Statement` + `## Solution`; `## User Stories` is
-// optional and does not contribute to the canonical-shape signal).
+// declares children under any H2 heading whose title contains the
+// word `children` or `child` (case-insensitive substring; see
+// ADR-0045) — `## Children`, `## Child Issues`, `## Leaf children`,
+// `## Children in this area`, etc. — OR if it carries the canonical
+// Specification shape (`## Problem Statement` + `## Solution`; `##
+// User Stories` is optional and does not contribute to the
+// canonical-shape signal).
 // Prose `#N` and `/issues/N` references outside the `## Parent`
 // backlink do NOT by themselves make an issue a Specification —
 // they are incidental mentions and would otherwise cause every
@@ -884,18 +887,20 @@ func TestSpecificationResolver_CarveOutNestedSpecFlattens(t *testing.T) {
 // for those bodies, the recursive flatten fired, and the
 // depth-greater-than-zero carve-out echoed the recursion-tree parent
 // (#2315) back into the output as a "child" of each leaf. The fix
-// removes the prose-ref signal from IsSpecification (only
-// `## Children` / `## Child Issues` headings and the canonical
-// `## Problem Statement` + `## Solution` shape qualify) and gates the
-// recursion-tree-parent carve-out on `candidate != recursionParent`
-// so the recursive path cannot echo the parent back.
+// removes the prose-ref signal from IsSpecification (only H2
+// headings containing the word `children` or `child` — see
+// ADR-0045 — and the canonical `## Problem Statement` + `##
+// Solution` shape qualify) and gates the recursion-tree-parent
+// carve-out on `candidate != recursionParent` so the recursive path
+// cannot echo the parent back.
 func TestSpecificationResolver_ProseRefAloneIsNotASpec(t *testing.T) {
 	parentBody := "## Children\n- #2316\n"
 	// Body mirrors the shape of issue #2316 from the production bug:
-	// `## Parent` backlink plus several H2 sections, but no
-	// `## Children` / `## Child Issues` heading. The prose mention
-	// in `Question` is the kind of incidental reference that
-	// previously tripped the broadened detector.
+	// `## Parent` backlink plus several H2 sections, but no H2
+	// heading whose title contains `children` or `child` (per
+	// ADR-0045). The prose mention in `Question` is the kind of
+	// incidental reference that previously tripped the broadened
+	// detector.
 	childBody := "## Parent\n#2315\n\n## Question\nprose mentions a sibling here\n\n## What to change\n\n## Blocked by\n\n## Out of scope\n\n## Done when\n"
 	client := &fakeGitHubClient{
 		issues: map[int]*github.Issue{
@@ -1361,7 +1366,7 @@ func TestSpecificationResolver_BodyOnlyChildIssuesHeadingExpands(t *testing.T) {
 
 // TestSpecificationResolver_ChildDiscoveryMatrix pins every supported
 // non-inline child-discovery source end-to-end. The matrix covers:
-//   - body heading (`## Children` / `## Child Issues`)
+//   - body heading (any H2 containing `children` or `child` per ADR-0045; canonical `## Children` / `## Child Issues` are the most common shape)
 //   - body prose `#N` / `/issues/N` references (canonical Specification body)
 //   - body URL bare / link / titled-link forms (canonical Specification body)
 //   - body-only `## Children` heading with no canonical sections
