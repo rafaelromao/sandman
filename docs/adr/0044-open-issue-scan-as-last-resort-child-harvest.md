@@ -1,4 +1,4 @@
-# ADR-0043: Open-issue scan as last-resort Specification child harvest
+# ADR-0044: Open-issue scan as last-resort Specification child harvest
 
 ## Status
 

@@ -18,7 +18,7 @@ import (
 // children. The marker lets future runs short-circuit the expensive
 // open-issue scan (the existing comment harvest picks the candidates
 // up via ExtractIssueReferences) and lets operators identify the
-// auto-generated comment. See ADR-0043.
+// auto-generated comment. See ADR-0044.
 const discoveredChildrenMarker = "<!-- sandman-discovered-children -->"
 
 // SpecificationResolver resolves Specification issues to their child issues during batch preparation.
@@ -527,7 +527,7 @@ func (r *SpecificationResolver) collectCandidates(ctx context.Context, parent in
 	// operators can review the auto-discovery. The two new
 	// operations are exposed as optional interfaces; clients that
 	// do not implement them silently skip the new step, which is
-	// what keeps existing test fakes unchanged. See ADR-0043.
+	// what keeps existing test fakes unchanged. See ADR-0044.
 	if len(order) == 0 {
 		discovered := r.discoverChildrenViaOpenIssueScan(ctx, parent)
 		if len(discovered) > 0 {

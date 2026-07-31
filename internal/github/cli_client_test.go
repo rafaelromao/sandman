@@ -423,6 +423,9 @@ func TestCLIClient_FetchIssue_Success(t *testing.T) {
 	runner := &fakeRunner{responses: []fakeResponse{
 		{output: `{"name":"sandman","owner":{"login":"rafaelromao"}}`},
 		{output: `{"number":61,"state":"closed","title":"Implement FetchIssue","body":"## Blocked by\n- #60\n- #7","labels":[{"name":"enhancement"},{"name":"ready-for-agent"}]}`},
+		// /dependencies/blocked_by reports no blockers; the events endpoint
+		// also reports an empty timeline.
+		{output: `[]`},
 		{output: `[]`},
 	}}
 	client := &CLIClient{runner: runner}
@@ -449,15 +452,18 @@ func TestCLIClient_FetchIssue_Success(t *testing.T) {
 	if !reflect.DeepEqual(issue.BlockedBy, []int{60, 7}) {
 		t.Fatalf("expected blocked-by references [60 7], got %v", issue.BlockedBy)
 	}
-	if len(runner.calls) != 3 {
-		t.Fatalf("expected 3 commands, got %d", len(runner.calls))
+	if len(runner.calls) != 4 {
+		t.Fatalf("expected 4 commands, got %d", len(runner.calls))
 	}
 	expectedArgs := []string{"api", "-H", "Accept: application/vnd.github+json", "repos/rafaelromao/sandman/issues/61"}
 	if !reflect.DeepEqual(runner.calls[1].args, expectedArgs) {
 		t.Fatalf("expected fetch args %v, got %v", expectedArgs, runner.calls[1].args)
 	}
-	if !reflect.DeepEqual(runner.calls[2].args, []string{"api", "-H", "Accept: application/vnd.github+json", "repos/rafaelromao/sandman/issues/61/events"}) {
-		t.Fatalf("unexpected events args: %v", runner.calls[2].args)
+	if !reflect.DeepEqual(runner.calls[2].args, []string{"api", "-H", "Accept: application/vnd.github+json", "repos/rafaelromao/sandman/issues/61/dependencies/blocked_by"}) {
+		t.Fatalf("unexpected deps args: %v", runner.calls[2].args)
+	}
+	if !reflect.DeepEqual(runner.calls[3].args, []string{"api", "-H", "Accept: application/vnd.github+json", "repos/rafaelromao/sandman/issues/61/events"}) {
+		t.Fatalf("unexpected events args: %v", runner.calls[3].args)
 	}
 }
 
@@ -487,7 +493,13 @@ func TestCLIClient_FetchIssueDependencies_FallsBackToEvents(t *testing.T) {
 	runner := &fakeRunner{responses: []fakeResponse{
 		{output: `{"name":"sandman","owner":{"login":"rafaelromao"}}`},
 		{output: `{"number":62,"title":"Native dependencies","body":"","labels":[],"issue_dependencies_summary":{"blocked_by":2,"total_blocked_by":2,"blocking":0,"total_blocking":0}}`},
-		{output: `[{"event":"labeled"},{"event":"blocked_by_added","blocking_issue":{"number":60}},{"event":"blocked_by_added","blocking_issue":{"number":7}},{"event":"blocked_by_removed","blocking_issue":{"number":7}}]`},
+		// The dedicated /dependencies/blocked_by endpoint reports an empty
+		// array for this issue, so the client falls through to the events
+		// endpoint to pick up the legacy event-time blockers. The events
+		// payload uses the real GitHub `blocked_by` field name, not the
+		// legacy `blocking_issue` guess.
+		{output: `[]`},
+		{output: `[{"event":"labeled"},{"event":"blocked_by_added","blocked_by":{"number":60}},{"event":"blocked_by_added","blocked_by":{"number":7}},{"event":"blocked_by_removed","blocked_by":{"number":7}}]`},
 	}}
 	client := &CLIClient{runner: runner}
 
@@ -498,11 +510,14 @@ func TestCLIClient_FetchIssueDependencies_FallsBackToEvents(t *testing.T) {
 	if !reflect.DeepEqual(blockedBy, []int{60}) {
 		t.Fatalf("expected event-derived blockers [60], got %v", blockedBy)
 	}
-	if len(runner.calls) != 3 {
-		t.Fatalf("expected 3 commands, got %d", len(runner.calls))
+	if len(runner.calls) != 4 {
+		t.Fatalf("expected 4 commands, got %d", len(runner.calls))
 	}
-	if !reflect.DeepEqual(runner.calls[2].args, []string{"api", "-H", "Accept: application/vnd.github+json", "repos/rafaelromao/sandman/issues/62/events"}) {
-		t.Fatalf("unexpected events fetch args: %v", runner.calls[2].args)
+	if !reflect.DeepEqual(runner.calls[2].args, []string{"api", "-H", "Accept: application/vnd.github+json", "repos/rafaelromao/sandman/issues/62/dependencies/blocked_by"}) {
+		t.Fatalf("unexpected deps fetch args: %v", runner.calls[2].args)
+	}
+	if !reflect.DeepEqual(runner.calls[3].args, []string{"api", "-H", "Accept: application/vnd.github+json", "repos/rafaelromao/sandman/issues/62/events"}) {
+		t.Fatalf("unexpected events fetch args: %v", runner.calls[3].args)
 	}
 }
 
@@ -510,6 +525,9 @@ func TestCLIClient_FetchIssueDependencies_FallsBackToCrossReferencesWithoutSumma
 	runner := &fakeRunner{responses: []fakeResponse{
 		{output: `{"name":"sandman","owner":{"login":"rafaelromao"}}`},
 		{output: `{"number":62,"title":"Native dependencies","body":"","labels":[]}`},
+		// /dependencies/blocked_by reports no blockers; the events endpoint
+		// is the cross-reference source for this fixture.
+		{output: `[]`},
 		{output: `[{"event":"cross-referenced","source":{"issue":{"number":61}}}]`},
 	}}
 	client := &CLIClient{runner: runner}
@@ -521,11 +539,14 @@ func TestCLIClient_FetchIssueDependencies_FallsBackToCrossReferencesWithoutSumma
 	if !reflect.DeepEqual(blockedBy, []int{61}) {
 		t.Fatalf("expected cross-referenced blockers [61], got %v", blockedBy)
 	}
-	if len(runner.calls) != 3 {
-		t.Fatalf("expected 3 commands, got %d", len(runner.calls))
+	if len(runner.calls) != 4 {
+		t.Fatalf("expected 4 commands, got %d", len(runner.calls))
 	}
-	if !reflect.DeepEqual(runner.calls[2].args, []string{"api", "-H", "Accept: application/vnd.github+json", "repos/rafaelromao/sandman/issues/62/events"}) {
-		t.Fatalf("unexpected events fetch args: %v", runner.calls[2].args)
+	if !reflect.DeepEqual(runner.calls[2].args, []string{"api", "-H", "Accept: application/vnd.github+json", "repos/rafaelromao/sandman/issues/62/dependencies/blocked_by"}) {
+		t.Fatalf("unexpected deps fetch args: %v", runner.calls[2].args)
+	}
+	if !reflect.DeepEqual(runner.calls[3].args, []string{"api", "-H", "Accept: application/vnd.github+json", "repos/rafaelromao/sandman/issues/62/events"}) {
+		t.Fatalf("unexpected events fetch args: %v", runner.calls[3].args)
 	}
 }
 
@@ -580,6 +601,106 @@ func TestCLIClient_FetchIssue_GracefullyFallsBackToBodyOnly(t *testing.T) {
 	}
 	if !reflect.DeepEqual(issue.BlockedBy, []int{60}) {
 		t.Fatalf("expected body-only blockers [60], got %v", issue.BlockedBy)
+	}
+}
+
+// TestCLIClient_FetchIssue_ReadsNativeBlockersFromDependenciesEndpoint pins the
+// real-world threeterm #278 repro: the public issue REST endpoint returns
+// `blocked_by: null` and `issue_dependencies: null` for the issue, but the
+// dedicated `GET /repos/{o}/{r}/issues/{n}/dependencies/blocked_by` endpoint
+// surfaces the *current* set of native blockers (here: 232, 246, 127, 128, 129).
+// The client must query that endpoint and surface the result so the dependency
+// resolver can gate the dependent.
+func TestCLIClient_FetchIssue_ReadsNativeBlockersFromDependenciesEndpoint(t *testing.T) {
+	runner := &fakeRunner{responses: []fakeResponse{
+		{output: `{"name":"threeterm","owner":{"login":"rafaelromao"}}`},
+		{output: `{"number":278,"state":"open","title":"Viewport cache exclusions","body":"## Blocked by\n\n- None — can start immediately.\n","labels":[],"issue_dependencies_summary":{"blocked_by":4,"total_blocked_by":5,"blocking":0,"total_blocking":0}}`},
+		{output: `[{"number":232,"title":"Pinned Rust toolchain","state":"closed"},{"number":246,"title":"Viewport cache reuses Layer 1","state":"open"},{"number":127,"title":"Layer 1 derived results","state":"open"},{"number":128,"title":"Layer 2 viewport cache","state":"open"},{"number":129,"title":"Cache exclusion policy","state":"open"}]`},
+	}}
+	client := &CLIClient{runner: runner}
+
+	issue, err := client.FetchIssue(context.Background(), 278)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := []int{232, 246, 127, 128, 129}
+	if !reflect.DeepEqual(issue.BlockedBy, want) {
+		t.Fatalf("expected native blockers %v, got %v", want, issue.BlockedBy)
+	}
+	// Confirm the dedicated endpoint was queried, not just the events endpoint.
+	if len(runner.calls) < 3 {
+		t.Fatalf("expected at least 3 calls (repo, issue, deps), got %d", len(runner.calls))
+	}
+	var foundDeps bool
+	for _, call := range runner.calls {
+		for _, arg := range call.args {
+			if strings.Contains(arg, "issues/278/dependencies/blocked_by") {
+				foundDeps = true
+				break
+			}
+		}
+	}
+	if !foundDeps {
+		t.Fatalf("expected call to issues/278/dependencies/blocked_by, calls: %v", runner.calls)
+	}
+}
+
+// TestCLIClient_FetchIssueDependencies_ReadsFromCurrentStateEndpoint pins the
+// lower-level client method: when the issue payload carries no native blocker
+// data (the public REST shape), the client must consult the dedicated
+// `/dependencies/blocked_by` endpoint for the *current* set of blockers
+// before falling back to the events endpoint.
+func TestCLIClient_FetchIssueDependencies_ReadsFromCurrentStateEndpoint(t *testing.T) {
+	runner := &fakeRunner{responses: []fakeResponse{
+		{output: `{"name":"threeterm","owner":{"login":"rafaelromao"}}`},
+		{output: `{"number":278,"state":"open","title":"Viewport cache exclusions","body":"","labels":[],"issue_dependencies_summary":{"blocked_by":4,"total_blocked_by":5,"blocking":0,"total_blocking":0}}`},
+		{output: `[{"number":232,"state":"closed"},{"number":246,"state":"open"},{"number":127,"state":"open"},{"number":128,"state":"open"},{"number":129,"state":"open"}]`},
+	}}
+	client := &CLIClient{runner: runner}
+
+	blockedBy, err := client.FetchIssueDependencies(context.Background(), 278)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := []int{232, 246, 127, 128, 129}
+	if !reflect.DeepEqual(blockedBy, want) {
+		t.Fatalf("expected current-state blockers %v, got %v", want, blockedBy)
+	}
+	if len(runner.calls) < 3 {
+		t.Fatalf("expected 3 calls (repo, issue, deps), got %d", len(runner.calls))
+	}
+	depsArgs := runner.calls[2].args
+	foundDeps := false
+	for _, arg := range depsArgs {
+		if strings.Contains(arg, "issues/278/dependencies/blocked_by") {
+			foundDeps = true
+			break
+		}
+	}
+	if !foundDeps {
+		t.Fatalf("expected call to issues/278/dependencies/blocked_by, got %v", depsArgs)
+	}
+}
+
+// TestParseDependencyEvents_RealGitHubShape pins the public GitHub events
+// shape: the blocker object on a `blocked_by_added` event is keyed as
+// `blocked_by` (not `blocking_issue`). The previous `blocking_issue` field
+// was a guess that matched the GraphQL schema but not the REST events
+// payload, so the parser silently returned nothing for real GitHub events.
+func TestParseDependencyEvents_RealGitHubShape(t *testing.T) {
+	events := []issueEventPayload{
+		{Event: "labeled"},
+		{Event: "blocked_by_added", BlockedBy: &dependencyIssueRef{Number: 232}},
+		{Event: "blocked_by_added", BlockedBy: &dependencyIssueRef{Number: 246}},
+		{Event: "blocked_by_added", BlockedBy: &dependencyIssueRef{Number: 127}},
+		{Event: "blocked_by_added", BlockedBy: &dependencyIssueRef{Number: 128}},
+		{Event: "blocked_by_added", BlockedBy: &dependencyIssueRef{Number: 129}},
+		{Event: "blocked_by_removed", BlockedBy: &dependencyIssueRef{Number: 7}},
+	}
+	got := parseDependencyEvents(events)
+	want := []int{232, 246, 127, 128, 129}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("expected real-shape event blockers %v, got %v", want, got)
 	}
 }
 
@@ -686,13 +807,13 @@ func TestCLIClient_FetchIssue_BlockedByMatrix(t *testing.T) {
 		{
 			name:     "heading with native events-API union",
 			body:     "## Blocked by\n- #60\n- #7",
-			native:   `[{"event":"blocked_by_added","blocking_issue":{"number":99}},{"event":"blocked_by_added","blocking_issue":{"number":60}}]`,
+			native:   `[{"event":"blocked_by_added","blocked_by":{"number":99}},{"event":"blocked_by_added","blocked_by":{"number":60}}]`,
 			wantBody: []int{60, 7, 99},
 		},
 		{
 			name:     "native only with body event fallback",
 			body:     "",
-			native:   `[{"event":"blocked_by_added","blocking_issue":{"number":60}},{"event":"blocked_by_added","blocking_issue":{"number":7}}]`,
+			native:   `[{"event":"blocked_by_added","blocked_by":{"number":60}},{"event":"blocked_by_added","blocked_by":{"number":7}}]`,
 			wantBody: []int{60, 7},
 		},
 		{
@@ -707,10 +828,15 @@ func TestCLIClient_FetchIssue_BlockedByMatrix(t *testing.T) {
 			responses := []fakeResponse{
 				{output: `{"name":"sandman","owner":{"login":"rafaelromao"}}`},
 				{output: `{"number":61,"state":"open","title":"Issue 61","body":` + jsonQuote(c.body) + `,"labels":[],"issue_dependencies_summary":{"blocked_by":0,"total_blocked_by":0,"blocking":0,"total_blocking":0}}`},
+				// The dedicated /dependencies/blocked_by endpoint reports no
+				// blockers for this fixture, so the client falls through to
+				// the events endpoint to honour the matrix's event-driven
+				// shape.
+				{output: `[]`},
 				{output: c.native},
 			}
 			if c.native == "" {
-				responses[2] = fakeResponse{output: `[]`}
+				responses[3] = fakeResponse{output: `[]`}
 			}
 			runner := &fakeRunner{responses: responses}
 			client := &CLIClient{runner: runner}
@@ -753,8 +879,14 @@ func TestCLIClient_FetchIssue_CachesResolvedRepo(t *testing.T) {
 	runner := &fakeRunner{responses: []fakeResponse{
 		{output: `{"name":"sandman","owner":{"login":"rafaelromao"}}`},
 		{output: `{"number":61,"title":"Issue 61","body":"","labels":[]}`},
+		// /dependencies/blocked_by reports no blockers for issue 61.
+		{output: `[]`},
+		// Events for issue 61 also empty.
 		{output: `[]`},
 		{output: `{"number":62,"title":"Issue 62","body":"","labels":[]}`},
+		// /dependencies/blocked_by reports no blockers for issue 62.
+		{output: `[]`},
+		// Events for issue 62 also empty.
 		{output: `[]`},
 	}}
 	client := &CLIClient{runner: runner}
@@ -765,20 +897,26 @@ func TestCLIClient_FetchIssue_CachesResolvedRepo(t *testing.T) {
 	if _, err := client.FetchIssue(context.Background(), 62); err != nil {
 		t.Fatalf("unexpected error on second fetch: %v", err)
 	}
-	if len(runner.calls) != 5 {
-		t.Fatalf("expected 5 commands, got %d", len(runner.calls))
+	if len(runner.calls) != 7 {
+		t.Fatalf("expected 7 commands, got %d", len(runner.calls))
 	}
 	if !reflect.DeepEqual(runner.calls[1].args, []string{"api", "-H", "Accept: application/vnd.github+json", "repos/rafaelromao/sandman/issues/61"}) {
 		t.Fatalf("unexpected first fetch args: %v", runner.calls[1].args)
 	}
-	if !reflect.DeepEqual(runner.calls[2].args, []string{"api", "-H", "Accept: application/vnd.github+json", "repos/rafaelromao/sandman/issues/61/events"}) {
-		t.Fatalf("unexpected first events args: %v", runner.calls[2].args)
+	if !reflect.DeepEqual(runner.calls[2].args, []string{"api", "-H", "Accept: application/vnd.github+json", "repos/rafaelromao/sandman/issues/61/dependencies/blocked_by"}) {
+		t.Fatalf("unexpected first deps args: %v", runner.calls[2].args)
 	}
-	if !reflect.DeepEqual(runner.calls[3].args, []string{"api", "-H", "Accept: application/vnd.github+json", "repos/rafaelromao/sandman/issues/62"}) {
-		t.Fatalf("unexpected second fetch args: %v", runner.calls[3].args)
+	if !reflect.DeepEqual(runner.calls[3].args, []string{"api", "-H", "Accept: application/vnd.github+json", "repos/rafaelromao/sandman/issues/61/events"}) {
+		t.Fatalf("unexpected first events args: %v", runner.calls[3].args)
 	}
-	if !reflect.DeepEqual(runner.calls[4].args, []string{"api", "-H", "Accept: application/vnd.github+json", "repos/rafaelromao/sandman/issues/62/events"}) {
-		t.Fatalf("unexpected second events args: %v", runner.calls[4].args)
+	if !reflect.DeepEqual(runner.calls[4].args, []string{"api", "-H", "Accept: application/vnd.github+json", "repos/rafaelromao/sandman/issues/62"}) {
+		t.Fatalf("unexpected second fetch args: %v", runner.calls[4].args)
+	}
+	if !reflect.DeepEqual(runner.calls[5].args, []string{"api", "-H", "Accept: application/vnd.github+json", "repos/rafaelromao/sandman/issues/62/dependencies/blocked_by"}) {
+		t.Fatalf("unexpected second deps args: %v", runner.calls[5].args)
+	}
+	if !reflect.DeepEqual(runner.calls[6].args, []string{"api", "-H", "Accept: application/vnd.github+json", "repos/rafaelromao/sandman/issues/62/events"}) {
+		t.Fatalf("unexpected second events args: %v", runner.calls[6].args)
 	}
 }
 
