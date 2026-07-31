@@ -12,7 +12,7 @@ A spike (`spike/upstream-spec-shape`, worktree at `/home/romao/projects/sandman-
 
 The upstream mattpocock `to-tickets` convention produces every ticket with `## Parent` already wired, but operators regularly migrate, hand-write, or import tickets from external trackers where the spec body is silent and the relationship only lives in the child side. The spike's keyword-only and umbrella-style fixtures reproduce exactly this case.
 
-The cost of one full-repo `gh issue list --state open --paginate` is bounded by repo size and paid only when the cheaper sources are silent — same gating as the existing search fallback.
+The cost of one full-repo `gh api repos/<owner>/<repo>/issues?state=open --paginate` is bounded by repo size and paid only when the cheaper sources are silent — same gating as the existing search fallback. The REST endpoint returns both issues and pull requests, so a client-side `pull_request`-field filter keeps the scan issue-only.
 
 ## Decision
 
@@ -31,9 +31,10 @@ The cost of one full-repo `gh issue list --state open --paginate` is bounded by 
 4. **Optional interfaces for additive growth.** The two new GitHub operations are exposed as optional interfaces (`github.OpenIssueLister`, `github.IssueCommentPoster`) on `internal/github/github.go`. The resolver type-asserts `r.client.(github.OpenIssueLister)` and `r.client.(github.IssueCommentPoster)`; production `CLIClient` implements both, existing test fakes do not. This means the new step is a no-op on every existing fake — no test changes are required. The hardening guarantee: existing tests stay unchanged because they pre-date the optional interface.
 5. **Implementation seams.**
    - `internal/github/github.go` gains the `OpenIssueLister` and `IssueCommentPoster` interfaces.
-   - `internal/github/cli_client.go` implements both via `gh issue list --state open --paginate --json number,state,title,body,labels` and `gh issue comment <n> --body <body>`.
+   - `internal/github/cli_client.go` implements both via `gh api repos/<owner>/<repo>/issues?state=open&per_page=100 --paginate` (streaming JSON decoder, client-side `pull_request` filter) and `gh issue comment <n> --body <body>`. `gh issue list --paginate` is intentionally NOT used because `--paginate` is a `gh api` flag, not a `gh issue list` flag.
    - `internal/batch/spec.go` gains `discoverChildrenViaOpenIssueScan`, `postDiscoveredChildrenComment`, `markerCommentExists`, and `buildDiscoveredChildrenComment`. `collectCandidates` extends with a new step gated by `len(order) == 0` (same gate as the existing search fallback).
    - `internal/batch/spec_discovery_test.go` is a new test file with eight unit tests pinning the behaviour; the existing `spec_test.go` is not modified.
+   - `internal/github/cli_client_test.go` adds `TestCLIClient_ListOpenIssues_Success` / `_MultiPage` / `_Error` pinning the constructed `gh api ... --paginate` invocation, the PR filter, the multi-page decoder, and the error path.
 6. **Test plan (all in the new file).**
    - `TestOpenIssueScan_FiresWhenCheaperSourcesEmpty` — body, comments, sub-issues, and search are silent; the scan fires, finds candidates, and posts the marker comment exactly once.
    - `TestOpenIssueScan_SkippedWhenCheaperSourcesReturnCandidates` — body declares a child; the scan does not fire.

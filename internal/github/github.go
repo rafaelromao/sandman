@@ -174,8 +174,10 @@ type Client interface {
 // OpenIssueLister is the optional capability the Specification
 // resolver type-asserts against to run the last-resort open-issue
 // scan (see ADR-0043). Production `CLIClient` satisfies it via
-// `gh issue list --state open --paginate`; existing test fakes do
-// not, which preserves their behaviour without modifying them.
+// `gh api repos/<owner>/<repo>/issues?state=open --paginate` with
+// a client-side pull-request filter; existing test fakes do not,
+// which preserves their behaviour without modifying them. See
+// `CLIClient.ListOpenIssues` for the full invocation and PR filter.
 type OpenIssueLister interface {
 	ListOpenIssues(ctx context.Context) ([]Issue, error)
 }
