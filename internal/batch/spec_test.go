@@ -258,20 +258,22 @@ func equalInts(a, b []int) bool {
 }
 
 // TestSpecificationResolver_LeafChildrenHeadingExpandsToLeafRows
-// pins the issue #305 regression: the threeterm area-spec body
-// declares its leaf children under a `## Leaf children` H2 (not the
-// canonical `## Children` heading), and the children live in a
-// markdown table rather than a bullet list. The resolver must still
-// detect the body as a specification, harvest the leaf-row issue
-// numbers from the table, and verify each candidate through its
-// `## Parent` backlink. The expected output is the single leaf
-// row `#232` — the planning-context `#58` reference must NOT be
-// accepted, because its body backlogs the root spec instead of the
-// area spec.
+// pins the issue #305 regression using the actual threeterm body
+// shapes: the area-spec body declares its leaf children under a
+// `## Leaf children` H2 with a markdown-table row (`| ... | #232 |`),
+// and the leaf issue's body declares its parent spec under a
+// `## Part of #305` H2 (not the canonical `## Parent`). The resolver
+// must still detect the parent body as a specification, harvest
+// the leaf-row issue numbers from the table, and accept each
+// candidate whose body carries a parent-style H2 (`## Parent` or
+// `## Part of`) citing the originating spec. The expected output
+// is the single leaf row `#232` — the planning-context `#58`
+// reference must NOT be accepted, because its body backlogs the
+// root spec instead of the area spec.
 func TestSpecificationResolver_LeafChildrenHeadingExpandsToLeafRows(t *testing.T) {
 	t.Parallel()
-	specBody := "## What this spec delivers\n\nSome spec deliverable.\n\n## Planning context\n\n- Parent spec: [ThreeTerm MVP implementation specification #58](https://github.com/rafaelromao/threeterm/issues/58).\n\n## Leaf children\n\n| Slug | Issue |\n| --- | --- |\n| `01v1-rust-toolchain-and-cargo-build` | [#232](https://github.com/rafaelromao/threeterm/issues/232) |\n\n## Hierarchy\n\nThis issue is a sub-spec.\n"
-	childBody232 := "## Parent\n\n#305\n\n## What\n\nLeaf work.\n"
+	specBody := "## What this spec delivers\n\nSome spec deliverable.\n\n## Planning context\n\n- Parent spec: [ThreeTerm MVP implementation specification #58](https://github.com/rafaelromao/threeterm/issues/58).\n\n## Leaf children\n\n| Slug | Issue |\n|---|---|\n| `01v1-rust-toolchain-and-cargo-build` | #232 |\n\n## Hierarchy\n\nThis issue is a sub-spec.\n"
+	childBody232 := "## Part of #305\n\nThis is a leaf vertical-slice child of area subspec [#305](https://github.com/rafaelromao/threeterm/issues/305), which is itself a sub-spec of the root spec [#58](https://github.com/rafaelromao/threeterm/issues/58).\n\n## What to build\n\nDescription.\n"
 	rootSpecBody := "## Parent\n\n#1\n\n## Problem Statement\n\nRoot.\n\n## Solution\n\nRoot.\n\n## Child Issues\n\n- #305\n"
 	client := &fakeGitHubClient{
 		issues: map[int]*github.Issue{
@@ -544,6 +546,44 @@ func TestHasParentSectionBacklinkTo_UnionAcrossMultipleParentSections(t *testing
 	}
 	if HasParentSectionBacklinkTo(body, 99) {
 		t.Fatalf("expected HasParentSectionBacklinkTo(body, 99) to be false when no parent section cites 99")
+	}
+}
+
+// TestHasParentSectionBacklinkTo_PartOfHeading pins the
+// "Part of" widening: a candidate body that declares its parent
+// under a `## Part of <spec>` H2 heading (the threeterm leaf
+// style, issue #232's body) is accepted as a child of that spec.
+// The widening mirrors the broadened children-heading detection
+// (ADR-0045) on the parent side: where the children section
+// detector accepts any H2 containing the word "children" or
+// "child", the parent section detector accepts any H2 starting
+// the words "parent" or "part of". A candidate whose `## Part of`
+// cites a different parent must still reject.
+func TestHasParentSectionBacklinkTo_PartOfHeading(t *testing.T) {
+	t.Parallel()
+	body := "## Part of #305\n\nThis is a leaf vertical-slice child of area subspec [#305](https://github.com/rafaelromao/threeterm/issues/305), which is itself a sub-spec of the root spec [#58](https://github.com/rafaelromao/threeterm/issues/58).\n\n## What to build\n\nDescription.\n"
+	if !HasParentSectionBacklinkTo(body, 305) {
+		t.Fatalf("expected HasParentSectionBacklinkTo(body, 305) to be true when ## Part of #305 cites 305")
+	}
+	if !HasParentSectionBacklinkTo(body, 58) {
+		t.Fatalf("expected HasParentSectionBacklinkTo(body, 58) to be true when ## Part of #305 also cites 58")
+	}
+	if HasParentSectionBacklinkTo(body, 999) {
+		t.Fatalf("expected HasParentSectionBacklinkTo(body, 999) to be false when no parent-style heading cites 999")
+	}
+}
+
+// TestHasParentSectionBacklinkTo_ParticularHeadingDoesNotMatch pins
+// the negative half of the "Part of" widening: a heading like
+// `## Particular implementation` does NOT match `parentHeadingPattern`
+// even though it contains the substring "part" — the pattern requires
+// the literal "part of" sequence, so "Particular" is rejected. This
+// is the false-positive ceiling for the widening.
+func TestHasParentSectionBacklinkTo_ParticularHeadingDoesNotMatch(t *testing.T) {
+	t.Parallel()
+	body := "## Particular implementation\n\nBody without a parent reference.\n"
+	if HasParentSectionBacklinkTo(body, 1) {
+		t.Fatalf("expected HasParentSectionBacklinkTo(body, 1) to be false for `## Particular implementation` (no `parent` and no `part of` literal)")
 	}
 }
 

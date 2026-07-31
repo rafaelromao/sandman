@@ -54,14 +54,26 @@ func specSearchToken(parent int) string {
 var issueURLPattern = regexp.MustCompile(`/issues/(\d+)(?:\b|#)`)
 
 // parentHeadingPattern matches H2 sections whose heading text
-// contains the word "parent" (case-insensitive substring). The
-// match widened from `^##\s+Parent\s*$` to a substring match so that
-// the threeterm `## Parent area` style headings are recognised as
-// parent sections. H3-or-deeper sections (`### Parent area`) do not
-// match because the anchor is two `#` characters. The case-
-// insensitive flag lets `## parent`, `## Parent`, and `## Parent
-// area` all match uniformly. See ADR-0042 for the rationale.
-var parentHeadingPattern = regexp.MustCompile(`(?im)^##\s+[^\n]*parent[^\n]*\s*$`)
+// declares a parent relationship. The matcher widens the original
+// `^##\s+Parent\s*$` literal (which only matched the canonical
+// `## Parent` heading) to two cases:
+//   - any H2 containing the word "parent" (case-insensitive
+//     substring), so `## Parent`, `## parent`, `## Parent area`,
+//     and `## Parent spec` all match;
+//   - any H2 starting the words "part of" (case-insensitive
+//     substring), so `## Part of #N` matches the threeterm leaf
+//     style where a leaf issue declares its parent area-spec under
+//     `## Part of <spec>` (issue #305 → #232).
+//
+// H3-or-deeper sections (`### Parent area`) do not match because
+// the anchor is two `#` characters. The case-insensitive flag lets
+// `## parent`, `## Parent`, and `## Parent area` all match
+// uniformly. See ADR-0042 for the original widening; the "part of"
+// branch is the symmetric counterpart of the children-heading
+// widening in ADR-0045, closing the verifier gap so that a
+// threeterm-style area-spec body whose leaf rows carry `## Part of
+// <spec>` rather than `## Parent` is still expanded.
+var parentHeadingPattern = regexp.MustCompile(`(?im)^##\s+[^\n]*(?:parent|part of)[^\n]*\s*$`)
 var nextHeadingPattern = regexp.MustCompile(`(?m)^\s*##\s`)
 
 // ExtractParentReference parses the first H2 section of an issue body

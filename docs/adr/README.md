@@ -84,3 +84,4 @@ ADRs are numbered sequentially starting from `0001`. The template ADR (`0000`) i
 | 0043 | Query the dedicated `/dependencies/blocked_by` endpoint for native blockers | accepted |
 | 0044 | Open-issue scan as last-resort Specification child harvest | proposed |
 | 0045 | Widened children-heading matcher for Specification detection | accepted |
+| 0046 | Widened parent-section matcher accepts "Part of" headings | accepted |
