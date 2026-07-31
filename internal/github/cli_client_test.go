@@ -1177,6 +1177,29 @@ func TestParseChildrenFromBody(t *testing.T) {
 			body: "## Each child issue with its slug\n\n- #13",
 			want: []int{13},
 		},
+		{
+			// Regression for the PR Review Agent's "first-match-only"
+			// finding: a body that carries an earlier empty
+			// `## Child notes` heading followed by a populated
+			// `## Leaf children` heading must harvest the later
+			// section, not return an empty list because the first
+			// match was empty. Iterating every matching H2 (ADR-0045)
+			// is what makes the broadened matcher behave like the
+			// broadened parent matcher (ADR-0042).
+			name: "empty child notes then populated leaf children",
+			body: "## Child notes\n\nNo rows here.\n\n## Leaf children\n\n| Slug | Issue |\n| --- | --- |\n| x | [#232](https://github.com/rafaelromao/threeterm/issues/232) |\n",
+			want: []int{232},
+		},
+		{
+			name: "empty child safety then populated children",
+			body: "## Child safety notes\n\nProse only.\n\n## Children\n\n- #30\n",
+			want: []int{30},
+		},
+		{
+			name: "two matching sections are unioned in body order",
+			body: "## Child notes\n\n- #30\n\n## Leaf children\n\n- #31\n",
+			want: []int{30, 31},
+		},
 	}
 
 	for _, tt := range tests {

@@ -294,6 +294,34 @@ func TestSpecificationResolver_LeafChildrenHeadingExpandsToLeafRows(t *testing.T
 	}
 }
 
+// TestSpecificationResolver_EmptyEarlierChildHeadingThenLeafChildren
+// pins the PR Review Agent's "first-match-only" finding: a body that
+// carries an earlier empty children-heading (`## Child notes`) before
+// the actual populated leaf-children section must still be detected
+// as a specification and expand to the leaf rows. Iterating every
+// matching H2 (ADR-0045) is what makes the broadened matcher behave
+// like the broadened parent matcher (ADR-0042).
+func TestSpecificationResolver_EmptyEarlierChildHeadingThenLeafChildren(t *testing.T) {
+	t.Parallel()
+	specBody := "## What this spec delivers\n\nSome spec deliverable.\n\n## Child notes\n\nNo rows here.\n\n## Leaf children\n\n| Slug | Issue |\n| --- | --- |\n| `01v1-rust-toolchain-and-cargo-build` | [#232](https://github.com/rafaelromao/threeterm/issues/232) |\n\n## Hierarchy\n\nThis issue is a sub-spec.\n"
+	childBody232 := "## Parent\n\n#305\n\n## What\n\nLeaf work.\n"
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			305: {Number: 305, Title: "[area-01] Workspace scaffold and CI baseline", Body: specBody},
+			232: {Number: 232, Title: "01v1 Rust toolchain", Body: childBody232},
+		},
+	}
+
+	var buf bytes.Buffer
+	got, err := NewSpecificationResolver(client, &buf).Resolve(context.Background(), []int{305})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !equalInts(got, []int{232}) {
+		t.Fatalf("expected expansion to [232] (the later leaf-children heading), got %v. log:\n%s", got, buf.String())
+	}
+}
+
 // TestSpecificationResolver_BlockedByHeadingRefsExcludedFromChildren
 // pins vertical slice 1 of ADR-0042: refs inside a `## Blocked by`
 // heading must NOT be harvested as candidate children. The body mixes
