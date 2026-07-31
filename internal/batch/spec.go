@@ -478,8 +478,12 @@ func (r *SpecificationResolver) collectCandidates(ctx context.Context, parent in
 			order = append(order, n)
 		}
 	}
-	add(ExtractIssueReferences(body))
-	add(github.ParseChildrenFromBody(body))
+	// Body candidate refs are harvested per H2 section so the carve-out
+	// skips `## Blocked by`, `## Depends on`, and `## Blocked-by`
+	// headings. The same vocabulary `parseBlockedByHeading` recognises
+	// is mirrored in `bodyReferencesOutsideBlockerSections`; this is
+	// the load-bearing change from ADR-0042's vertical slice 1.
+	add(bodyReferencesOutsideBlockerSections(body))
 	if comments, err := r.client.ListIssueComments(ctx, parent); err == nil {
 		for _, c := range comments {
 			add(ExtractIssueReferences(c.Body))

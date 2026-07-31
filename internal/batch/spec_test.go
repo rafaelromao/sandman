@@ -235,6 +235,93 @@ func equalInts(a, b []int) bool {
 	return true
 }
 
+// TestSpecificationResolver_BlockedByHeadingRefsExcludedFromChildren
+// pins vertical slice 1 of ADR-0042: refs inside a `## Blocked by`
+// heading must NOT be harvested as candidate children. The body mixes
+// a `## Child Issues` heading listing `#10` and a `## Blocked by`
+// heading listing `#99`; only the `## Child Issues` row is accepted.
+// Both candidates' bodies carry a valid `## Parent` backlink to `#1`,
+// so without the carve-out `## Blocked by` would slip through as a
+// false-positive child.
+func TestSpecificationResolver_BlockedByHeadingRefsExcludedFromChildren(t *testing.T) {
+	t.Parallel()
+	specBody := "## Problem Statement\n\nP.\n\n## Solution\n\nS.\n\n## User Stories\n\n1. U.\n\n## Child Issues\n\n- #10 child\n\n## Blocked by\n\n- #99 blocked\n"
+	childBody10 := "## Parent\n\n#1\n\n## What\n\nChild work.\n"
+	childBody99 := "## Parent\n\n#1\n\n## What\n\nWould-be false-positive child.\n"
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			1:  {Number: 1, Title: "Specification", Body: specBody},
+			10: {Number: 10, Title: "Real child", Body: childBody10},
+			99: {Number: 99, Title: "Blocked-by reference, not a child", Body: childBody99},
+		},
+	}
+
+	got, err := NewSpecificationResolver(client, io.Discard).Resolve(context.Background(), []int{1})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !equalInts(got, []int{10}) {
+		t.Fatalf("expected [10] (## Blocked by refs must not become children), got %v", got)
+	}
+}
+
+// TestSpecificationResolver_DependsOnHeadingRefsExcludedFromChildren
+// pins that the carve-out also covers the `## Depends on` heading
+// alias, mirroring `parseBlockedByHeading`'s recognition list. Same
+// shape as `TestSpecificationResolver_BlockedByHeadingRefsExcludedFromChildren`
+// with the alternative heading text.
+func TestSpecificationResolver_DependsOnHeadingRefsExcludedFromChildren(t *testing.T) {
+	t.Parallel()
+	specBody := "## Problem Statement\n\nP.\n\n## Solution\n\nS.\n\n## User Stories\n\n1. U.\n\n## Child Issues\n\n- #10 child\n\n## Depends on\n\n- #99 blocked\n"
+	childBody10 := "## Parent\n\n#1\n\n## What\n\nChild work.\n"
+	childBody99 := "## Parent\n\n#1\n\n## What\n\nWould-be false-positive child.\n"
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			1:  {Number: 1, Title: "Specification", Body: specBody},
+			10: {Number: 10, Title: "Real child", Body: childBody10},
+			99: {Number: 99, Title: "Depends-on reference, not a child", Body: childBody99},
+		},
+	}
+
+	got, err := NewSpecificationResolver(client, io.Discard).Resolve(context.Background(), []int{1})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !equalInts(got, []int{10}) {
+		t.Fatalf("expected [10] (## Depends on refs must not become children), got %v", got)
+	}
+}
+
+// TestSpecificationResolver_BodyOnlyChildrenInNonBlockerSection pins
+// the positive case for the carve-out: a body whose `## Children`
+// heading lists real children must still expand, even when a
+// `## Blocked by` heading shares the body. The carve-out is a
+// tightening, not a blanket suppression — non-blocker headings keep
+// their refs.
+func TestSpecificationResolver_BodyOnlyChildrenInNonBlockerSection(t *testing.T) {
+	t.Parallel()
+	specBody := "## Problem Statement\n\nP.\n\n## Solution\n\nS.\n\n## User Stories\n\n1. U.\n\n## Children\n\n- #10 slice\n- #11 slice\n\n## Blocked by\n\n- #99 dependency\n- #98 dependency\n"
+	childBody10 := "## Parent\n\n#1\n\n## What\n\nChild 10.\n"
+	childBody11 := "## Parent\n\n#1\n\n## What\n\nChild 11.\n"
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			1:  {Number: 1, Title: "Specification", Body: specBody},
+			10: {Number: 10, Title: "Child 10", Body: childBody10},
+			11: {Number: 11, Title: "Child 11", Body: childBody11},
+			99: {Number: 99, Title: "Dependency", Body: "## Parent\n\n#1\n"},
+			98: {Number: 98, Title: "Dependency", Body: "## Parent\n\n#1\n"},
+		},
+	}
+
+	got, err := NewSpecificationResolver(client, io.Discard).Resolve(context.Background(), []int{1})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !equalInts(got, []int{10, 11}) {
+		t.Fatalf("expected [10 11] (only ## Children refs become children; ## Blocked by refs are dropped), got %v", got)
+	}
+}
+
 func TestExtractParentReference(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

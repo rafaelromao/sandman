@@ -107,3 +107,84 @@ func StripParentSection(body string) string {
 	}
 	return before + after[nextIdx[0]:]
 }
+
+// blockerHeadingPattern matches H2 sections whose heading text equals
+// `Blocked by`, `Depends on`, or `Blocked-by` (case-insensitive on the
+// heading text). The vocabulary mirrors `parseBlockedByHeading`'s
+// recognised names in `internal/github/cli_client.go`, so the spec
+// candidate harvest and the blocker parse share a single source of
+// truth for what a "blocker" heading looks like.
+var blockerHeadingPattern = regexp.MustCompile(`(?im)^##\s+(?:blocked\s+by|depends\s+on|blocked-by)\s*$`)
+
+// IsBlockerHeading reports whether `heading` is the canonical H2
+// text of a blocker section. `heading` may include leading
+// whitespace and a trailing newline; only the heading text itself is
+// matched. The case-insensitive vocabulary is reused from
+// `parseBlockedByHeading`.
+func IsBlockerHeading(heading string) bool {
+	return blockerHeadingPattern.MatchString(heading)
+}
+
+// headerLinePattern consumes an entire H2 heading line up to (but
+// not including) the trailing newline. `nextHeadingPattern` matches
+// only `## ` at the start of a line, which leaves the heading text
+// unconsumed; the walker uses this pattern to slice the line out
+// in one shot so `headingText` carries the full heading title.
+var headerLinePattern = regexp.MustCompile(`(?m)^\s*##\s+[^\n]+`)
+
+// bodyReferencesOutsideBlockerSections walks the H2 sections of the
+// given body in order and returns the unique issue references
+// harvested from every section whose heading is not a blocker
+// heading. References inside `## Blocked by`, `## Depends on`, and
+// `## Blocked-by` sections are skipped — those names declare
+// dependency edges, not children. Comment refs, native sub-issues,
+// and the search fallback remain callers' responsibility.
+//
+// The harvest inside each non-blocker section is the same set the
+// existing resolver path produced: every prose `#N` and `/issues/N`
+// match. The existing helper `ExtractIssueReferences` is reused per
+// section to keep the parser surface in sync. Bullet refs
+// (`- #10`) and link refs (`- [text](url)`) are subsumed by
+// `ExtractIssueReferences` because both forms contain either a bare
+// `#N` shorthand or a `/issues/N` URL segment.
+func bodyReferencesOutsideBlockerSections(body string) []int {
+	body = strings.ReplaceAll(body, "\r\n", "\n")
+	type section struct {
+		heading string
+		content string
+	}
+	var sections []section
+	matches := headerLinePattern.FindAllStringIndex(body, -1)
+	if len(matches) == 0 {
+		return ExtractIssueReferences(body)
+	}
+	for i, m := range matches {
+		hStart, hEnd := m[0], m[1]
+		headingText := strings.TrimSpace(body[hStart:hEnd])
+		var sectionEnd int
+		if i+1 < len(matches) {
+			sectionEnd = matches[i+1][0]
+		} else {
+			sectionEnd = len(body)
+		}
+		sections = append(sections, section{heading: headingText, content: body[hEnd:sectionEnd]})
+	}
+	seen := make(map[int]struct{})
+	var out []int
+	for _, sec := range sections {
+		if IsBlockerHeading(sec.heading) {
+			continue
+		}
+		for _, n := range ExtractIssueReferences(sec.content) {
+			if n == 0 {
+				continue
+			}
+			if _, ok := seen[n]; ok {
+				continue
+			}
+			seen[n] = struct{}{}
+			out = append(out, n)
+		}
+	}
+	return out
+}
