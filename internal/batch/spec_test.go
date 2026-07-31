@@ -322,6 +322,80 @@ func TestSpecificationResolver_BodyOnlyChildrenInNonBlockerSection(t *testing.T)
 	}
 }
 
+// TestParentSectionHeading_AcceptsParentAreaSection pins vertical
+// slice 2 of ADR-0042: any H2 whose heading text contains the word
+// "parent" (case-insensitive substring) is a parent section. A body
+// with `## Parent area` carrying `#58` must be recognised by the
+// probe just as `## Parent` carrying `#58` already is.
+func TestParentSectionHeading_AcceptsParentAreaSection(t *testing.T) {
+	t.Parallel()
+	body := "## Parent area\n\n#58\n"
+	got, ok := ExtractParentReference(body)
+	if !ok || got != 58 {
+		t.Fatalf("expected (58, true), got (%d, %v)", got, ok)
+	}
+}
+
+// TestParentSectionHeading_RejectsNonParentSections pins that the
+// widened matcher still rejects H2 headings whose text does not
+// contain "parent". A `## Random section` body with `#58` must
+// still return `(0, false)` even after the substring widening.
+func TestParentSectionHeading_RejectsNonParentSections(t *testing.T) {
+	t.Parallel()
+	body := "## Random section\n\n#58\n"
+	got, ok := ExtractParentReference(body)
+	if ok || got != 0 {
+		t.Fatalf("expected (0, false), got (%d, %v)", got, ok)
+	}
+}
+
+// TestHasParentSectionBacklinkTo_AcceptsSpecInMultiRef pins vertical
+// slice 3 of ADR-0042: a parent section that cites multiple issues
+// is accepted iff the originating spec's number is among them. A
+// `## Parent area` section listing both `#59` and `#58` must accept
+// the candidate for parent `58`. The threeterm child pattern cites
+// both an intermediate parent area and the umbrella spec in one
+// section.
+func TestHasParentSectionBacklinkTo_AcceptsSpecInMultiRef(t *testing.T) {
+	t.Parallel()
+	body := "## Parent area\n\nSub-issue of [#59](https://github.com/rafaelromao/threeterm/issues/59) and the spec [#58](https://github.com/rafaelromao/threeterm/issues/58).\n"
+	if !HasParentSectionBacklinkTo(body, 58) {
+		t.Fatalf("expected HasParentSectionBacklinkTo(body, 58) to be true when ## Parent area cites both 59 and 58")
+	}
+}
+
+// TestHasParentSectionBacklinkTo_RejectsSpecNotInMultiRef pins the
+// rejection half of slice 3: a parent section that cites other
+// issues but not the originating spec must reject the candidate. A
+// `## Parent area` listing `#59` and `#57` rejects for parent `58`.
+func TestHasParentSectionBacklinkTo_RejectsSpecNotInMultiRef(t *testing.T) {
+	t.Parallel()
+	body := "## Parent area\n\nSub-issue of #59 and the spec #57.\n"
+	if HasParentSectionBacklinkTo(body, 58) {
+		t.Fatalf("expected HasParentSectionBacklinkTo(body, 58) to be false when ## Parent area cites 59 and 57 but not 58")
+	}
+}
+
+// TestHasParentSectionBacklinkTo_UnionAcrossMultipleParentSections
+// pins that references across multiple parent sections are unioned
+// before the spec membership check. A body that has both `## Parent`
+// (citing #5) and `## Parent area` (citing #58) is accepted for
+// either parent — the union makes every cited issue a possible
+// backlink target — and rejected for an un-cited issue.
+func TestHasParentSectionBacklinkTo_UnionAcrossMultipleParentSections(t *testing.T) {
+	t.Parallel()
+	body := "## Parent\n\n#5\n\n## Parent area\n\nSpec link #58.\n"
+	if !HasParentSectionBacklinkTo(body, 58) {
+		t.Fatalf("expected HasParentSectionBacklinkTo(body, 58) to be true when 58 is cited in any unioned parent section")
+	}
+	if !HasParentSectionBacklinkTo(body, 5) {
+		t.Fatalf("expected HasParentSectionBacklinkTo(body, 5) to be true via the union as well")
+	}
+	if HasParentSectionBacklinkTo(body, 99) {
+		t.Fatalf("expected HasParentSectionBacklinkTo(body, 99) to be false when no parent section cites 99")
+	}
+}
+
 func TestExtractParentReference(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

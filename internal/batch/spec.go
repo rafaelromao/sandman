@@ -451,8 +451,14 @@ sendLoop:
 		if childIssue == nil {
 			return nil, fmt.Errorf("fetch child #%d: not found", child)
 		}
-		ref, ok := ExtractParentReference(childIssue.Body)
-		if !ok || ref != parent {
+		// Replacement for the strict single-section `## Parent`
+		// probe: the verifier now accepts any parent-section H2
+		// (heading text contains "parent", case-insensitive
+		// substring) whose extracted refs include the originating
+		// spec. Multi-ref parent sections are accepted when the
+		// spec is among them; refs across multiple parent
+		// sections are unioned. See ADR-0042.
+		if !HasParentSectionBacklinkTo(childIssue.Body, parent) {
 			continue
 		}
 		accepted = append(accepted, child)
