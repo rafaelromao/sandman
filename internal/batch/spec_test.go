@@ -396,6 +396,211 @@ func TestHasParentSectionBacklinkTo_UnionAcrossMultipleParentSections(t *testing
 	}
 }
 
+// TestSpecificationResolver_ThreetermStyleExpansion pins vertical
+// slice 4 of ADR-0042: a hierarchical umbrella spec whose
+// `## Child Issues` heading lists both parent-area rows (top-level
+// thematic areas like #1-#22 in threeterm) and vertical-slice
+// children (like #232-#253) must expand to ONLY the children, not
+// the parent areas. Children are accepted because each carries a
+// `## Parent area` section that cites the spec; parent areas are
+// rejected because they have no parent section at all. The fixture
+// uses a small subset so the assertion stays readable.
+func TestSpecificationResolver_ThreetermStyleExpansion(t *testing.T) {
+	t.Parallel()
+	// The fixture mirrors the threeterm #58 body shape: a
+	// canonical-shape header followed by a `## Child Issues`
+	// heading whose bullets mix parent-area rows (1-22) and
+	// vertical-slice children rows (232-253). Using markdown
+	// links so the parser sees distinct refs without dedup in
+	// the fixture itself.
+	specBody := strings.Join([]string{
+		"## Problem Statement",
+		"",
+		"ThreeTerm's planning phase is complete.",
+		"",
+		"## Solution",
+		"",
+		"A single coherent ThreeTerm MVP.",
+		"",
+		"## User Stories",
+		"",
+		"1. As a designer, I want to model a part.",
+		"",
+		"## Child Issues",
+		"",
+		"- [#1](https://github.com/rafaelromao/threeterm/issues/1) parent area",
+		"- [#2](https://github.com/rafaelromao/threeterm/issues/2) parent area",
+		"- [#3](https://github.com/rafaelromao/threeterm/issues/3) parent area",
+		"- [#232](https://github.com/rafaelromao/threeterm/issues/232) slice",
+		"- [#233](https://github.com/rafaelromao/threeterm/issues/233) slice",
+		"- [#234](https://github.com/rafaelromao/threeterm/issues/234) slice",
+		"",
+	}, "\n")
+
+	clientIssues := map[int]*github.Issue{
+		58: {Number: 58, Title: "ThreeTerm MVP implementation specification", Body: specBody},
+	}
+	// Parent-area rows must have NO parent section — they're the
+	// top-level thematic buckets.
+	for _, n := range []int{1, 2, 3} {
+		clientIssues[n] = &github.Issue{
+			Number: n,
+			Title:  fmt.Sprintf("Parent area %d", n),
+			Body:   "## Area\n\nThematic area body.\n",
+		}
+	}
+	// Vertical-slice children each carry a `## Parent area`
+	// section that cites the spec (#58) — exactly the threeterm
+	// pattern.
+	childBody := "## Parent area\n\nSub-issue of the vertical-slice area [#61](https://github.com/rafaelromao/threeterm/issues/61) and the spec [#58](https://github.com/rafaelromao/threeterm/issues/58).\n\n## What to build\n\nImplement one slice.\n"
+	for _, n := range []int{232, 233, 234} {
+		clientIssues[n] = &github.Issue{
+			Number: n,
+			Title:  fmt.Sprintf("Slice %d", n),
+			Body:   childBody,
+		}
+	}
+
+	client := &fakeGitHubClient{issues: clientIssues}
+	got, err := NewSpecificationResolver(client, io.Discard).Resolve(context.Background(), []int{58})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := []int{232, 233, 234}
+	if !equalInts(got, want) {
+		t.Fatalf("expected %v (vertical-slice children only), got %v", want, got)
+	}
+}
+
+// TestSpecificationResolver_ChildCitesBothParentAreaAndSpec_AcceptsUnderEither
+// pins vertical slice 5 of ADR-0042: when a child cites both the
+// intermediate parent area and the umbrella spec in its
+// `## Parent area` section, either input expansion accepts the
+// child. This is the bidirectional expansion contract that the
+// umbrella spec (#58) and the parent area (#59) both reach the
+// same vertical-slice child (#232) — see the threeterm pattern.
+func TestSpecificationResolver_ChildCitesBothParentAreaAndSpec_AcceptsUnderEither(t *testing.T) {
+	t.Parallel()
+	specBody58 := "## Problem Statement\n\nP.\n\n## Solution\n\nS.\n\n## Child Issues\n\n- [#232](https://github.com/owner/repo/issues/232) slice\n"
+	specBody59 := "## Problem Statement\n\nP.\n\n## Solution\n\nS.\n\n## Child Issues\n\n- [#232](https://github.com/owner/repo/issues/232) slice\n"
+	// The child cites both the parent area (#59) and the spec (#58).
+	childBody232 := "## Parent area\n\nSub-issue of [#59](https://github.com/owner/repo/issues/59) and the spec [#58](https://github.com/owner/repo/issues/58).\n"
+
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			58:  {Number: 58, Title: "Umbrella spec", Body: specBody58},
+			59:  {Number: 59, Title: "Parent area", Body: specBody59},
+			232: {Number: 232, Title: "Vertical slice", Body: childBody232},
+		},
+	}
+
+	got58, err := NewSpecificationResolver(client, io.Discard).Resolve(context.Background(), []int{58})
+	if err != nil {
+		t.Fatalf("Resolve([58]) unexpected error: %v", err)
+	}
+	if !equalInts(got58, []int{232}) {
+		t.Fatalf("Resolve([58]) expected [232] (child cites spec), got %v", got58)
+	}
+
+	got59, err := NewSpecificationResolver(client, io.Discard).Resolve(context.Background(), []int{59})
+	if err != nil {
+		t.Fatalf("Resolve([59]) unexpected error: %v", err)
+	}
+	if !equalInts(got59, []int{232}) {
+		t.Fatalf("Resolve([59]) expected [232] (child cites parent area), got %v", got59)
+	}
+}
+
+// TestSpecificationResolver_OverlappingSpecsDedupeSharedChild pins
+// the dedup half of slice 5: when two specs both list the same
+// child and both run in the same input slice, the child appears in
+// the output exactly once. The existing addUnique closure under
+// Resolve owns the dedup, and this test pins the contract under the
+// new parent-section matcher.
+func TestSpecificationResolver_OverlappingSpecsDedupeSharedChild(t *testing.T) {
+	t.Parallel()
+	specBody58 := "## Problem Statement\n\nP.\n\n## Solution\n\nS.\n\n## Child Issues\n\n- [#232](https://github.com/owner/repo/issues/232) slice\n"
+	specBody59 := "## Problem Statement\n\nP.\n\n## Solution\n\nS.\n\n## Child Issues\n\n- [#232](https://github.com/owner/repo/issues/232) slice\n"
+	// The child cites ONLY the spec (#58), not the parent area —
+	// so #59's expansion rejects it. This locks down the dedup
+	// path without conflating with the bidirectional acceptance
+	// case in the previous test.
+	childBody232 := "## Parent\n\n#58\n"
+
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			58:  {Number: 58, Title: "Umbrella spec", Body: specBody58},
+			59:  {Number: 59, Title: "Parent area", Body: specBody59},
+			232: {Number: 232, Title: "Vertical slice", Body: childBody232},
+		},
+	}
+
+	got, err := NewSpecificationResolver(client, io.Discard).Resolve(context.Background(), []int{58, 59})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// Either expansion order: #58 fires first and accepts #232
+	// (addUnique adds 232, output = [232]); #59 fires second and
+	// rejects #232 because the child's parent section doesn't cite
+	// #59, leaving #59's accepted set empty so the strict-spec
+	// empty-child carve-out (ADR-0034) adds #59 itself as a
+	// regular issue. Final output [232, 59]: 232 appears exactly
+	// once even though both specs list it.
+	if !equalInts(got, []int{232, 59}) {
+		t.Fatalf("Resolve([58 59]) expected [232 59] (232 deduped to once, 59 from carve-out), got %v", got)
+	}
+}
+
+// TestSpecificationResolver_ChildMissedByUmbrella_AcceptedByParentAreaOnly
+// pins the rejection half of slice 5: a child that cites only the
+// intermediate parent area (not the umbrella spec) is correctly
+// rejected by the umbrella expansion and accepted by the parent
+// area expansion. This guards against "smart merging" heuristics
+// that would auto-accept children just because they appear in two
+// spec bodies.
+func TestSpecificationResolver_ChildMissedByUmbrella_AcceptedByParentAreaOnly(t *testing.T) {
+	t.Parallel()
+	specBody58 := "## Problem Statement\n\nP.\n\n## Solution\n\nS.\n\n## Child Issues\n\n- [#999](https://github.com/owner/repo/issues/999) slice\n"
+	specBody59 := "## Problem Statement\n\nP.\n\n## Solution\n\nS.\n\n## Child Issues\n\n- [#999](https://github.com/owner/repo/issues/999) slice\n"
+	// The child cites ONLY the parent area (#59), not the
+	// umbrella spec (#58). The umbrella's expansion must reject
+	// the candidate; the parent area's expansion accepts it.
+	childBody999 := "## Parent\n\n#59\n"
+
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			58:  {Number: 58, Title: "Umbrella spec", Body: specBody58},
+			59:  {Number: 59, Title: "Parent area", Body: specBody59},
+			999: {Number: 999, Title: "Vertical slice", Body: childBody999},
+		},
+	}
+
+	got58, err := NewSpecificationResolver(client, io.Discard).Resolve(context.Background(), []int{58})
+	if err != nil {
+		t.Fatalf("Resolve([58]) unexpected error: %v", err)
+	}
+	// #58's only candidate is #999 whose parent section cites
+	// only #59, not #58. The strict-spec empty-child carve-out
+	// (ADR-0034) adds #58 itself as a regular issue, so the
+	// output is [58], not []. This is the desired operator-
+	// visible pass-through, not a silent suppression.
+	if !equalInts(got58, []int{58}) {
+		t.Fatalf("Resolve([58]) expected [58] (no children accepted, carve-out adds 58 itself), got %v", got58)
+	}
+
+	gotBoth, err := NewSpecificationResolver(client, io.Discard).Resolve(context.Background(), []int{58, 59})
+	if err != nil {
+		t.Fatalf("Resolve([58 59]) unexpected error: %v", err)
+	}
+	// #58's expansion finds no accepted children (the strict-spec
+	// carve-out adds 58 itself); #59's expansion accepts #999 via
+	// the parent-area backlink. Output [58, 999] preserves input
+	// order. 999 appears exactly once.
+	if !equalInts(gotBoth, []int{58, 999}) {
+		t.Fatalf("Resolve([58 59]) expected [58 999] (58 from carve-out, 999 accepted via #59), got %v", gotBoth)
+	}
+}
+
 func TestExtractParentReference(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
