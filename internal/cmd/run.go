@@ -383,8 +383,6 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 				parentChildren = map[int][]int{}
 			}
 
-			resolvedBatch, err := batch.NewDependencyResolver(githubClient).Resolve(cmd.Context(), issues, includeDependencies, parentChildren)
-
 			baseBranchFlag, _ := cmd.Flags().GetString("base-branch")
 			baseBranch := strings.TrimSpace(baseBranchFlag)
 			if baseBranch == "" {
@@ -394,7 +392,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 				baseBranch = "main"
 			}
 
-			resolvedBatch, err = batch.NewDependencyResolver(githubClient).Resolve(cmd.Context(), issues, includeDependencies, parentChildren)
+			resolvedBatch, err := batch.NewDependencyResolver(githubClient).Resolve(cmd.Context(), issues, includeDependencies, parentChildren)
 			if err != nil {
 				return fmt.Errorf("resolve dependencies: %w", err)
 			}
