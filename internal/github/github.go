@@ -170,3 +170,21 @@ type Client interface {
 	RemoveIssueReaction(ctx context.Context, issueNumber int, reactionID string) error
 	CloseIssue(ctx context.Context, issueNumber int, comment string) error
 }
+
+// OpenIssueLister is the optional capability the Specification
+// resolver type-asserts against to run the last-resort open-issue
+// scan (see ADR-0043). Production `CLIClient` satisfies it via
+// `gh issue list --state open --paginate`; existing test fakes do
+// not, which preserves their behaviour without modifying them.
+type OpenIssueLister interface {
+	ListOpenIssues(ctx context.Context) ([]Issue, error)
+}
+
+// IssueCommentPoster is the optional capability the Specification
+// resolver type-asserts against to persist auto-discovered children
+// as a marker comment on the spec (see ADR-0043). Production
+// `CLIClient` satisfies it via `gh issue comment`; existing test
+// fakes do not, so the new harvest step silently no-ops on them.
+type IssueCommentPoster interface {
+	PostIssueComment(ctx context.Context, issueNumber int, body string) error
+}
