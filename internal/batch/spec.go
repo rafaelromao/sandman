@@ -102,17 +102,25 @@ func specSectionPattern(name string) *regexp.Regexp {
 
 // IsSpecification reports whether the body looks like a
 // Specification. A body is a Specification if it carries a
-// children-list declaration (`## Children` or `## Child Issues`
-// heading) OR the canonical Specification shape (`## Problem
-// Statement` + `## Solution`; `## User Stories` is optional and
-// does not contribute to the canonical signal). Prose `#N` and
-// `/issues/N` references outside the `## Parent` backlink do NOT
-// by themselves make an issue a Specification — they are
-// incidental mentions and would otherwise cause every child with a
-// casual reference (e.g. "Tracking #500 for context") to be
-// flattened as a sub-spec, which is the bug that issue #2333
-// fixes. The `## Parent` backlink is excluded from the
-// children-list probe because it points upward, not downward.
+// children-list declaration (an H2 heading whose title contains the
+// word `children` or `child`, case-insensitive substring — `##
+// Children`, `## Child Issues`, `## Leaf children`, `## Children in
+// this area`, `## Child tasks`, etc.) OR the canonical
+// Specification shape (`## Problem Statement` + `## Solution`; `##
+// User Stories` is optional and does not contribute to the
+// canonical signal). The widened children-heading matcher is
+// documented in ADR-0045 and is the symmetric counterpart of the
+// broadened parent-section matcher from ADR-0042; it is what lets
+// a threeterm-style body that lists leaf children under `## Leaf
+// children` (issue #305) be detected as a specification and
+// expanded. Prose `#N` and `/issues/N` references outside the `##
+// Parent` backlink do NOT by themselves make an issue a
+// Specification — they are incidental mentions and would otherwise
+// cause every child with a casual reference (e.g. "Tracking #500
+// for context") to be flattened as a sub-spec, which is the bug
+// that issue #2333 fixes. The `## Parent` backlink is excluded
+// from the children-list probe because it points upward, not
+// downward.
 //
 // The recursive-flatten path uses IsSpecification to decide whether
 // to recurse into a harvested child. The user-typed bypass (in

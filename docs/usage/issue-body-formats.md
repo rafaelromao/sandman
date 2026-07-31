@@ -40,20 +40,27 @@ Inline phrases such as `Blocked by #123`, `Depends on #123`, or `Blocked-by: #12
 
 ## Children
 
-A parent can list child issues under one of these H2 headings:
+A parent can list child issues under any H2 heading whose title contains the word `children` or `child` (case-insensitive). The canonical headings below are the most common form; any `## Leaf children`, `## Child tasks`, or `## Children in this area` variant is also recognised as a children section. The widened match mirrors the broadened `## Parent` heading pattern in `internal/batch/spec_parse.go` and is what lets a threeterm-style body that lists leaf children under `## Leaf children` (issue #305) be detected as a specification and expanded, instead of being passed through unchanged.
 
 ```text
 ## Children
 ## Child Issues
+## Leaf children
+## Children in this area
 ```
 
-Accepted list entries follow the same rules as `## Blocked by`: bare issue numbers, linked issue numbers, titled issue links, and bullets with trailing annotations. The section ends at the next H2 heading.
+Accepted list entries follow the same rules as `## Blocked by`: bare issue numbers, linked issue numbers, titled issue links, and bullets with trailing annotations. Markdown table rows that frame the issue reference with `|` delimiters are also accepted, so a children table under a `## Leaf children` heading feeds the parser that backs the rest of the bullet list. The section ends at the next H2 heading.
 
 ```text
 ## Children
 - #201
 - [Database setup](https://github.com/example/project/issues/202)
 - [Issue #203: API seams](https://github.com/example/project/issues/203) (T2)
+
+## Leaf children
+| Slug | Issue |
+| --- | --- |
+| `01v1-rust-toolchain-and-cargo-build` | [#232](https://github.com/example/project/issues/232) |
 ```
 
 Child references may also occur in surrounding body prose. Both `#N` shorthand and full issue URLs containing `/issues/N` are recognized. Text before or after a reference is allowed, so titles and trailing annotations are presentation text. Any additional `#N` or `/issues/N` reference in that text is also a separate candidate.

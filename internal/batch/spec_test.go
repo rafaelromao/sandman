@@ -16,10 +16,13 @@ import (
 
 // TestIsSpecification pins the body-shape and children-content gates
 // for the Specification detection. A body is a Specification if it
-// declares children in any form (`## Children` / `## Child Issues`
-// heading) OR if it carries the canonical Specification shape
-// (`## Problem Statement` + `## Solution`; `## User Stories` is
-// optional and does not contribute to the canonical-shape signal).
+// declares children under any H2 heading whose title contains the
+// word `children` or `child` (case-insensitive substring; see
+// ADR-0045) — `## Children`, `## Child Issues`, `## Leaf children`,
+// `## Children in this area`, etc. — OR if it carries the canonical
+// Specification shape (`## Problem Statement` + `## Solution`; `##
+// User Stories` is optional and does not contribute to the
+// canonical-shape signal).
 // Prose `#N` and `/issues/N` references outside the `## Parent`
 // backlink do NOT by themselves make an issue a Specification —
 // they are incidental mentions and would otherwise cause every
@@ -113,6 +116,25 @@ func TestIsSpecification(t *testing.T) {
 		{
 			name: "body with parent backlink and canonical sections",
 			body: "## Parent\n\n#1\n\n## Problem Statement\n\nP\n\n## Solution\n\nS\n\n## User Stories\n\nU",
+			want: true,
+		},
+		{
+			// Regression for issue #305: the threeterm area-spec body
+			// declares leaf children under a `## Leaf children` H2
+			// heading (not the canonical `## Children`). The resolver
+			// must still recognise the body as a specification when
+			// the children-word appears anywhere in the H2 title, so
+			// the parent expands to its leaf rows instead of being
+			// passed through unchanged.
+			name: "leaf children heading is a specification",
+			body: "## Planning context\n\n- Parent spec: [#58](https://github.com/rafaelromao/threeterm/issues/58).\n\n## Leaf children\n\n| Slug | Issue |\n| --- | --- |\n| `01v1-rust-toolchain-and-cargo-build` | [#232](https://github.com/rafaelromao/threeterm/issues/232) |\n",
+			want: true,
+		},
+		{
+			// Heading that contains the word "children" anywhere in
+			// its title still counts as a children declaration.
+			name: "children word in heading title is a specification",
+			body: "## Children in this area\n\n- #42\n",
 			want: true,
 		},
 	}
@@ -233,6 +255,71 @@ func equalInts(a, b []int) bool {
 		}
 	}
 	return true
+}
+
+// TestSpecificationResolver_LeafChildrenHeadingExpandsToLeafRows
+// pins the issue #305 regression: the threeterm area-spec body
+// declares its leaf children under a `## Leaf children` H2 (not the
+// canonical `## Children` heading), and the children live in a
+// markdown table rather than a bullet list. The resolver must still
+// detect the body as a specification, harvest the leaf-row issue
+// numbers from the table, and verify each candidate through its
+// `## Parent` backlink. The expected output is the single leaf
+// row `#232` — the planning-context `#58` reference must NOT be
+// accepted, because its body backlogs the root spec instead of the
+// area spec.
+func TestSpecificationResolver_LeafChildrenHeadingExpandsToLeafRows(t *testing.T) {
+	t.Parallel()
+	specBody := "## What this spec delivers\n\nSome spec deliverable.\n\n## Planning context\n\n- Parent spec: [ThreeTerm MVP implementation specification #58](https://github.com/rafaelromao/threeterm/issues/58).\n\n## Leaf children\n\n| Slug | Issue |\n| --- | --- |\n| `01v1-rust-toolchain-and-cargo-build` | [#232](https://github.com/rafaelromao/threeterm/issues/232) |\n\n## Hierarchy\n\nThis issue is a sub-spec.\n"
+	childBody232 := "## Parent\n\n#305\n\n## What\n\nLeaf work.\n"
+	rootSpecBody := "## Parent\n\n#1\n\n## Problem Statement\n\nRoot.\n\n## Solution\n\nRoot.\n\n## Child Issues\n\n- #305\n"
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			305: {Number: 305, Title: "[area-01] Workspace scaffold and CI baseline", Body: specBody},
+			232: {Number: 232, Title: "01v1 Rust toolchain", Body: childBody232},
+			58:  {Number: 58, Title: "ThreeTerm MVP implementation specification", Body: rootSpecBody},
+		},
+	}
+
+	var buf bytes.Buffer
+	got, err := NewSpecificationResolver(client, &buf).Resolve(context.Background(), []int{305})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !equalInts(got, []int{232}) {
+		t.Fatalf("expected expansion to [232] (the leaf row), got %v. log:\n%s", got, buf.String())
+	}
+	if !strings.Contains(buf.String(), "expanded specification #305") {
+		t.Fatalf("expected the resolver to log an expansion for #305, got log:\n%s", buf.String())
+	}
+}
+
+// TestSpecificationResolver_EmptyEarlierChildHeadingThenLeafChildren
+// pins the PR Review Agent's "first-match-only" finding: a body that
+// carries an earlier empty children-heading (`## Child notes`) before
+// the actual populated leaf-children section must still be detected
+// as a specification and expand to the leaf rows. Iterating every
+// matching H2 (ADR-0045) is what makes the broadened matcher behave
+// like the broadened parent matcher (ADR-0042).
+func TestSpecificationResolver_EmptyEarlierChildHeadingThenLeafChildren(t *testing.T) {
+	t.Parallel()
+	specBody := "## What this spec delivers\n\nSome spec deliverable.\n\n## Child notes\n\nNo rows here.\n\n## Leaf children\n\n| Slug | Issue |\n| --- | --- |\n| `01v1-rust-toolchain-and-cargo-build` | [#232](https://github.com/rafaelromao/threeterm/issues/232) |\n\n## Hierarchy\n\nThis issue is a sub-spec.\n"
+	childBody232 := "## Parent\n\n#305\n\n## What\n\nLeaf work.\n"
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			305: {Number: 305, Title: "[area-01] Workspace scaffold and CI baseline", Body: specBody},
+			232: {Number: 232, Title: "01v1 Rust toolchain", Body: childBody232},
+		},
+	}
+
+	var buf bytes.Buffer
+	got, err := NewSpecificationResolver(client, &buf).Resolve(context.Background(), []int{305})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !equalInts(got, []int{232}) {
+		t.Fatalf("expected expansion to [232] (the later leaf-children heading), got %v. log:\n%s", got, buf.String())
+	}
 }
 
 // TestSpecificationResolver_BlockedByHeadingRefsExcludedFromChildren
@@ -828,18 +915,20 @@ func TestSpecificationResolver_CarveOutNestedSpecFlattens(t *testing.T) {
 // for those bodies, the recursive flatten fired, and the
 // depth-greater-than-zero carve-out echoed the recursion-tree parent
 // (#2315) back into the output as a "child" of each leaf. The fix
-// removes the prose-ref signal from IsSpecification (only
-// `## Children` / `## Child Issues` headings and the canonical
-// `## Problem Statement` + `## Solution` shape qualify) and gates the
-// recursion-tree-parent carve-out on `candidate != recursionParent`
-// so the recursive path cannot echo the parent back.
+// removes the prose-ref signal from IsSpecification (only H2
+// headings containing the word `children` or `child` — see
+// ADR-0045 — and the canonical `## Problem Statement` + `##
+// Solution` shape qualify) and gates the recursion-tree-parent
+// carve-out on `candidate != recursionParent` so the recursive path
+// cannot echo the parent back.
 func TestSpecificationResolver_ProseRefAloneIsNotASpec(t *testing.T) {
 	parentBody := "## Children\n- #2316\n"
 	// Body mirrors the shape of issue #2316 from the production bug:
-	// `## Parent` backlink plus several H2 sections, but no
-	// `## Children` / `## Child Issues` heading. The prose mention
-	// in `Question` is the kind of incidental reference that
-	// previously tripped the broadened detector.
+	// `## Parent` backlink plus several H2 sections, but no H2
+	// heading whose title contains `children` or `child` (per
+	// ADR-0045). The prose mention in `Question` is the kind of
+	// incidental reference that previously tripped the broadened
+	// detector.
 	childBody := "## Parent\n#2315\n\n## Question\nprose mentions a sibling here\n\n## What to change\n\n## Blocked by\n\n## Out of scope\n\n## Done when\n"
 	client := &fakeGitHubClient{
 		issues: map[int]*github.Issue{
@@ -1305,7 +1394,7 @@ func TestSpecificationResolver_BodyOnlyChildIssuesHeadingExpands(t *testing.T) {
 
 // TestSpecificationResolver_ChildDiscoveryMatrix pins every supported
 // non-inline child-discovery source end-to-end. The matrix covers:
-//   - body heading (`## Children` / `## Child Issues`)
+//   - body heading (any H2 containing `children` or `child` per ADR-0045; canonical `## Children` / `## Child Issues` are the most common shape)
 //   - body prose `#N` / `/issues/N` references (canonical Specification body)
 //   - body URL bare / link / titled-link forms (canonical Specification body)
 //   - body-only `## Children` heading with no canonical sections

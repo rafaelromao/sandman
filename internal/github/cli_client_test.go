@@ -1137,6 +1137,69 @@ func TestParseChildrenFromBody(t *testing.T) {
 			body: "## Children\n- #10 (blocked by #2319)",
 			want: []int{10},
 		},
+		{
+			name: "leaf children heading with table cell",
+			body: "## Leaf children\n\n| Slug | Issue |\n| --- | --- |\n| `slug` | [#232](https://github.com/rafaelromao/threeterm/issues/232) |\n",
+			want: []int{232},
+		},
+		{
+			name: "leaf children heading with bullet reference",
+			body: "## Leaf children\n\n- #232",
+			want: []int{232},
+		},
+		{
+			name: "children in title heading variant",
+			body: "## Children in this area\n\n- #42",
+			want: []int{42},
+		},
+		{
+			name: "child issues variant with surrounding text",
+			body: "## My child issues for area-01\n\n- #7",
+			want: []int{7},
+		},
+		{
+			name: "sub-children heading is recognised",
+			body: "## Sub-children\n\n- #55",
+			want: []int{55},
+		},
+		{
+			name: "child tasks heading is recognised",
+			body: "## Child tasks for slice\n\n- [#88](https://github.com/rafaelromao/sandman/issues/88)",
+			want: []int{88},
+		},
+		{
+			name: "children word anywhere in heading",
+			body: "## All children we promised\n\n- #11",
+			want: []int{11},
+		},
+		{
+			name: "child word anywhere in heading",
+			body: "## Each child issue with its slug\n\n- #13",
+			want: []int{13},
+		},
+		{
+			// Regression for the PR Review Agent's "first-match-only"
+			// finding: a body that carries an earlier empty
+			// `## Child notes` heading followed by a populated
+			// `## Leaf children` heading must harvest the later
+			// section, not return an empty list because the first
+			// match was empty. Iterating every matching H2 (ADR-0045)
+			// is what makes the broadened matcher behave like the
+			// broadened parent matcher (ADR-0042).
+			name: "empty child notes then populated leaf children",
+			body: "## Child notes\n\nNo rows here.\n\n## Leaf children\n\n| Slug | Issue |\n| --- | --- |\n| x | [#232](https://github.com/rafaelromao/threeterm/issues/232) |\n",
+			want: []int{232},
+		},
+		{
+			name: "empty child safety then populated children",
+			body: "## Child safety notes\n\nProse only.\n\n## Children\n\n- #30\n",
+			want: []int{30},
+		},
+		{
+			name: "two matching sections are unioned in body order",
+			body: "## Child notes\n\n- #30\n\n## Leaf children\n\n- #31\n",
+			want: []int{30, 31},
+		},
 	}
 
 	for _, tt := range tests {
