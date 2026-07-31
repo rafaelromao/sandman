@@ -39,8 +39,17 @@ func TestReleaseConfigUsesAutomaticRCVersioningAfterRC1(t *testing.T) {
 	if err := json.Unmarshal([]byte(manifest), &versions); err != nil {
 		t.Fatalf("parse .release-please-manifest.json: %v", err)
 	}
-	if len(versions) != 1 || versions["."] != "1.0.0-rc.1" {
-		t.Fatalf("release manifest = %#v, want generated RC1 state", versions)
+	// The RC1 bootstrap locked the manifest at 1.0.0-rc.1, but the
+	// release-please automation has since advanced the manifest
+	// to 1.0.0-rc.N for every subsequent release-bearing merge
+	// (the first such advance was PR #2477's spec-detection
+	// feature, which produced 1.0.0-rc.2). Pin to the
+	// release-please-generated 1.0.0-rc.<N> shape instead of a
+	// single version so the test tracks the post-bootstrap
+	// automatic-RC contract rather than a frozen state.
+	prereleasePattern := regexp.MustCompile(`^1\.0\.0-rc\.\d+$`)
+	if len(versions) != 1 || !prereleasePattern.MatchString(versions["."]) {
+		t.Fatalf("release manifest = %#v, want a release-please-generated 1.0.0-rc.N state", versions)
 	}
 }
 

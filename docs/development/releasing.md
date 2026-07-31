@@ -138,6 +138,9 @@ toolchain.
 
 `v1.0.0-rc.1` has been verified: GitHub shows the tag and release as a
 prerelease, all four platform archives and `checksums.txt` are present, and the
-released binary reports version `1.0.0-rc.1`. Leave the manifest at the
-Release Please-generated RC1 state; the next release-bearing merged history
-determines the next version automatically.
+released binary reports version `1.0.0-rc.1`. The bootstrap override that
+forced that release was removed before the verification, so subsequent
+release-bearing merged history (the first such advance landed as
+`v1.0.0-rc.2`, carrying the spec-detection feature from #2477)
+determines the next version automatically — the manifest stays at whatever
+Release Please computes for the next release-bearing merge.
