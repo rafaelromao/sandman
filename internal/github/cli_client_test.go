@@ -1703,7 +1703,7 @@ func TestCLIClient_ListPRComments_SortParams(t *testing.T) {
 func TestCLIClient_ListPRComments_PopulatesCreatedAt(t *testing.T) {
 	runner := &fakeRunner{responses: []fakeResponse{
 		{output: `{"name":"sandman","owner":{"login":"rafaelromao"}}`},
-		{output: `[{"id":123,"body":"/sandman review","user":{"login":"alice"},"created_at":"2026-06-01T12:00:00Z"},{"id":124,"body":"later comment","user":{"login":"bob"},"created_at":"2026-06-02T12:00:00Z"}]`},
+		{output: `[{"id":123,"body":"/sandman review","user":{"login":"alice"},"created_at":"2026-06-01T12:00:00Z","updated_at":"2026-06-01T13:00:00Z"},{"id":124,"body":"later comment","user":{"login":"bob"},"created_at":"2026-06-02T12:00:00Z","updated_at":"2026-06-02T14:00:00Z"}]`},
 	}}
 	client := &CLIClient{runner: runner}
 
@@ -1719,6 +1719,9 @@ func TestCLIClient_ListPRComments_PopulatesCreatedAt(t *testing.T) {
 		wantTime, _ := time.Parse(time.RFC3339, want)
 		if !comments[i].CreatedAt.Equal(wantTime) {
 			t.Errorf("comment %d CreatedAt = %v, want %v", i, comments[i].CreatedAt, wantTime)
+		}
+		if !comments[i].UpdatedAt.After(comments[i].CreatedAt) {
+			t.Errorf("comment %d UpdatedAt = %v, want after CreatedAt %v", i, comments[i].UpdatedAt, comments[i].CreatedAt)
 		}
 	}
 }

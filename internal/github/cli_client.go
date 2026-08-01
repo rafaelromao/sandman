@@ -602,6 +602,7 @@ type prCommentPayload struct {
 	ID        int64  `json:"id"`
 	Body      string `json:"body"`
 	CreatedAt string `json:"created_at"`
+	UpdatedAt string `json:"updated_at"`
 	User      struct {
 		Login string `json:"login"`
 	} `json:"user"`
@@ -674,17 +675,12 @@ func (c *CLIClient) ListPRComments(ctx context.Context, number int) ([]PRComment
 
 	comments := make([]PRComment, 0, len(payloads))
 	for _, payload := range payloads {
-		var createdAt time.Time
-		if payload.CreatedAt != "" {
-			if t, err := time.Parse(time.RFC3339, payload.CreatedAt); err == nil {
-				createdAt = t
-			}
-		}
 		comments = append(comments, PRComment{
 			ID:          strconv.FormatInt(payload.ID, 10),
 			Body:        payload.Body,
 			AuthorLogin: payload.User.Login,
-			CreatedAt:   createdAt,
+			CreatedAt:   parseGitHubTime(payload.CreatedAt),
+			UpdatedAt:   parseGitHubTime(payload.UpdatedAt),
 		})
 	}
 	return comments, nil

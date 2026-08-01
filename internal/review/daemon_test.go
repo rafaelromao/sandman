@@ -72,6 +72,70 @@ func TestDaemonSkipsUnchangedPRCommentSnapshot(t *testing.T) {
 	}
 }
 
+func TestDaemonProcessesEditedReviewTriggerAsNewRevision(t *testing.T) {
+	const (
+		prNumber  = 17
+		commentID = "123"
+	)
+	createdAt := time.Date(2026, time.August, 1, 12, 0, 0, 0, time.UTC)
+	first := github.PRComment{
+		ID:        commentID,
+		Body:      "/sandman review first pass",
+		CreatedAt: createdAt,
+		UpdatedAt: createdAt,
+	}
+	gh := &fakeGH{
+		prs:      []github.PR{{Number: prNumber, State: "open"}},
+		comments: map[int][]github.PRComment{prNumber: {first}},
+		prFetch:  map[int]*github.PR{prNumber: {Number: prNumber, Title: "T", Body: "B"}},
+	}
+	runner := newDecisionRunner()
+	cfg := &config.Config{DefaultReviewAgent: "opencode", DefaultReviewModel: "opencode/foo", WorktreeDir: ".sandman/worktrees"}
+	d, _, _ := newDaemonForTest(t, gh, runner, cfg)
+
+	tickAndWait(t, d, context.Background())
+	firstKey := reviewTriggerKey(first)
+	if !d.IsTerminalSeen(prNumber, firstKey) {
+		t.Fatalf("first revision %q was not terminal-seen", firstKey)
+	}
+
+	edited := first
+	edited.Body = "/sandman review second pass"
+	edited.UpdatedAt = first.UpdatedAt.Add(time.Minute)
+	gh.mu.Lock()
+	gh.comments[prNumber] = []github.PRComment{edited}
+	gh.mu.Unlock()
+
+	tickAndWait(t, d, context.Background())
+	editedKey := reviewTriggerKey(edited)
+	if editedKey == firstKey {
+		t.Fatal("edited revision must have a distinct dedup key")
+	}
+	if !d.IsTerminalSeen(prNumber, editedKey) {
+		t.Fatalf("edited revision %q was not terminal-seen", editedKey)
+	}
+	if runner.Calls() != 2 {
+		t.Fatalf("RunBatch calls = %d, want 2", runner.Calls())
+	}
+
+	gh.mu.Lock()
+	defer gh.mu.Unlock()
+	var commentReactions []reactionCall
+	for _, call := range gh.reactionCalls {
+		if call.kind == "add_comment" {
+			commentReactions = append(commentReactions, call)
+		}
+	}
+	if len(commentReactions) != 2 {
+		t.Fatalf("comment reactions = %d, want 2", len(commentReactions))
+	}
+	for _, call := range commentReactions {
+		if call.commentID != commentID {
+			t.Errorf("reaction comment ID = %q, want raw ID %q", call.commentID, commentID)
+		}
+	}
+}
+
 func (f *fakeGH) AuthenticatedLogin(ctx context.Context) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

@@ -1068,6 +1068,15 @@ func (d *Daemon) markCommentsRead(pr github.PR) {
 	d.commentVersions[pr.Number] = pr.UpdatedAt
 }
 
+// reviewTriggerKey identifies one immutable revision of a GitHub comment.
+// Raw IDs remain reserved for GitHub API calls such as reactions.
+func reviewTriggerKey(comment github.PRComment) string {
+	if comment.UpdatedAt.IsZero() {
+		return comment.ID
+	}
+	return fmt.Sprintf("%s@%d", comment.ID, comment.UpdatedAt.UTC().UnixNano())
+}
+
 // processPR scans one PR's comments and launches a review agent for the
 // newest unseen /sandman review trigger. The per-PR slot (issue #1481
 // issue #1481 — see acquirePRSlot / releasePRSlot) preserves the trigger
@@ -1114,6 +1123,7 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) error {
 	type unseenTrigger struct {
 		comment github.PRComment
 		focus   string
+		key     string
 	}
 	var triggers []unseenTrigger
 	for _, comment := range comments {
@@ -1149,7 +1159,7 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) error {
 		}
 		focus, ok := ParseTrigger(comment.Body)
 		if ok {
-			triggers = append(triggers, unseenTrigger{comment: comment, focus: focus})
+			triggers = append(triggers, unseenTrigger{comment: comment, focus: focus, key: reviewTriggerKey(comment)})
 			continue
 		}
 	}
@@ -1168,8 +1178,8 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) error {
 	d.seenCacheMu.RLock()
 	var unprocessed []unseenTrigger
 	for _, t := range triggers {
-		if d.seenCache[prNumber][t.comment.ID] {
-			d.logf("comment %s already terminal-seen, skipping", t.comment.ID)
+		if d.seenCache[prNumber][t.key] {
+			d.logf("comment %s already terminal-seen, skipping", t.key)
 			continue
 		}
 		// Issue #2211: per-trigger retry-budget gate. Skips
@@ -1179,7 +1189,7 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) error {
 		// the launch. The stamp is per-(prNumber, commentID)
 		// so a fresh trigger on the same PR is not blocked by
 		// an older comment's stamp.
-		if stamp := d.NextAttemptAt(prNumber, t.comment.ID); !stamp.IsZero() && stamp.After(d.now()) {
+		if stamp := d.NextAttemptAt(prNumber, t.key); !stamp.IsZero() && stamp.After(d.now()) {
 			continue
 		}
 		unprocessed = append(unprocessed, t)
@@ -1206,7 +1216,7 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) error {
 	if len(hasPostEntry) > 0 {
 		var filtered []unseenTrigger
 		for _, t := range unprocessed {
-			if hasPostEntry[t.comment.ID] {
+			if hasPostEntry[t.key] {
 				if d.tryRehydratePost(ctx, prNumber, t.comment) {
 					continue
 				}
@@ -1241,15 +1251,15 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) error {
 		return errReviewDeferred
 	}
 
-	reviewRunFolder, perRowRunID, rs, state, prepErr := d.prepareReviewRun(ctx, prNumber, comment.ID)
+	reviewRunFolder, perRowRunID, rs, state, prepErr := d.prepareReviewRun(ctx, prNumber, newest.key)
 	if prepErr != nil {
 		d.logf("prepare review run for PR #%d comment %s: %v", prNumber, comment.ID, prepErr)
 		d.releasePRSlot(prNumber)
 		return nil
 	}
 
-	if !state.TryClaim(comment.ID) {
-		d.logf("comment %s already claimed or terminal-seen, skipping", comment.ID)
+	if !state.TryClaim(newest.key) {
+		d.logf("comment %s already claimed or terminal-seen, skipping", newest.key)
 		_ = rs.Close()
 		d.releasePRSlot(prNumber)
 		return nil
@@ -1273,14 +1283,14 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) error {
 	// synchronous so the goroutine and the sync preamble never
 	// touch the ReviewStateStore concurrently.
 	for _, t := range unprocessed {
-		if t.comment.ID == comment.ID {
+		if t.key == newest.key {
 			continue
 		}
-		if state.IsSeen(t.comment.ID) {
+		if state.IsSeen(t.key) {
 			continue
 		}
-		if err := state.MarkSeen(t.comment.ID, "superseded"); err != nil {
-			d.logf("mark superseded comment %s: %v", t.comment.ID, err)
+		if err := state.MarkSeen(t.key, "superseded"); err != nil {
+			d.logf("mark superseded comment %s: %v", t.key, err)
 		} else {
 			d.logf("skipping stale trigger comment %s (newer %s exists)", t.comment.ID, comment.ID)
 		}
@@ -1306,7 +1316,7 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) error {
 		defer d.inFlight.Done()
 		defer d.releasePRSlot(prNumber)
 
-		launchErr := d.launchReview(ctx, prNumber, focus, comment.ID, commentReactionID, prReactionID, reviewRunFolder, perRowRunID, rs, state, priorReviewExists)
+		launchErr := d.launchReviewRevision(ctx, prNumber, focus, newest.key, comment.ID, commentReactionID, prReactionID, reviewRunFolder, perRowRunID, rs, state, priorReviewExists)
 		if launchErr != nil {
 			d.logf("launch review for PR #%d comment %s: %v", prNumber, comment.ID, launchErr)
 			// Ctx-cancel between RunBatch and the post step:
@@ -1314,7 +1324,7 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) error {
 			// the next tick's processPR can re-launch.
 			if errors.Is(launchErr, context.Canceled) || errors.Is(launchErr, context.DeadlineExceeded) {
 				if persisted == nil {
-					state.Release(comment.ID)
+					state.Release(newest.key)
 				}
 				return
 			}
@@ -1537,12 +1547,16 @@ func logWriterFor(d *Daemon) io.Writer {
 // bounded-retry walker is gone; the bounded-retry contract is now
 // expressed as a single-shot at launch-end via the seen-cache).
 func (d *Daemon) launchReview(ctx context.Context, prNumber int, focus, commentID, commentReactionID, prReactionID, reviewRunFolder, perRowRunID string, rs *daemon.RunSession, state *ReviewStateStore, priorReviewExists bool) error {
+	return d.launchReviewRevision(ctx, prNumber, focus, commentID, commentID, commentReactionID, prReactionID, reviewRunFolder, perRowRunID, rs, state, priorReviewExists)
+}
+
+func (d *Daemon) launchReviewRevision(ctx context.Context, prNumber int, focus, triggerKey, commentID, commentReactionID, prReactionID, reviewRunFolder, perRowRunID string, rs *daemon.RunSession, state *ReviewStateStore, priorReviewExists bool) error {
 	// We compute the review branch name up-front so the cleanup defer
 	// has it available on every exit path, including early errors
 	// before RunBatch runs. The same value is reused in the
 	// batch.Request.PromptConfig.Branch below so cleanup and creation
 	// always target the same branch.
-	reviewBranch := reviewBranchName(prNumber, commentID)
+	reviewBranch := reviewBranchName(prNumber, triggerKey)
 	defer func() {
 		if rs != nil {
 			_ = rs.Close()
@@ -1604,7 +1618,7 @@ func (d *Daemon) launchReview(ctx context.Context, prNumber int, focus, commentI
 	if filepath.Base(d.BaseDir) == ".sandman" {
 		repoRoot = filepath.Dir(d.BaseDir)
 	}
-	agentRunDir := sandbox.ContainerVisiblePath(d.reviewWorktreePath(prNumber, commentID), repoRoot, sandboxMode)
+	agentRunDir := sandbox.ContainerVisiblePath(d.reviewWorktreePath(prNumber, triggerKey), repoRoot, sandboxMode)
 
 	rendered, err := d.Prompts.RenderReview(prompt.RenderConfig{}, prompt.PRData{
 		Number:            pr.Number,
@@ -1674,7 +1688,7 @@ func (d *Daemon) launchReview(ctx context.Context, prNumber int, focus, commentI
 		QualityRulesFile: d.QualityRulesPath(),
 	}
 	if _, err := d.Runner.RunBatch(ctx, req); err != nil {
-		return d.recordLaunchFailure(ctx, commentID, state, fmt.Errorf("run batch: %w", err))
+		return d.recordLaunchFailure(ctx, triggerKey, state, fmt.Errorf("run batch: %w", err))
 	}
 
 	// S3 post step (issue #1846): the agent writes
@@ -1687,7 +1701,7 @@ func (d *Daemon) launchReview(ctx context.Context, prNumber int, focus, commentI
 	// `else` branch only Releases the claim so the bounded-retry
 	// escape can re-process the comment if launchReview returned
 	// an error before any decision.md existed.
-	return d.postDecision(ctx, prNumber, commentID, reviewRunFolder, state)
+	return d.postDecision(ctx, prNumber, triggerKey, reviewRunFolder, state)
 }
 
 // postDecision implements the S3 post step (issue #1846):
@@ -1927,13 +1941,14 @@ func (d *Daemon) registerPendingPost(prNumber int, commentID, worktreePath, revi
 // for the MarkSeen call and never spawns a goroutine, so it can
 // run inline in processPR.
 func (d *Daemon) tryRehydratePost(ctx context.Context, prNumber int, comment github.PRComment) bool {
+	triggerKey := reviewTriggerKey(comment)
 	d.pendingPostMu.Lock()
 	m, ok := d.pendingPost[prNumber]
 	if !ok {
 		d.pendingPostMu.Unlock()
 		return false
 	}
-	entry, ok := m[comment.ID]
+	entry, ok := m[triggerKey]
 	if !ok {
 		d.pendingPostMu.Unlock()
 		return false
@@ -1947,7 +1962,7 @@ func (d *Daemon) tryRehydratePost(ctx context.Context, prNumber int, comment git
 			// Stale entry: drop and fall through to launch.
 			d.logf("PR #%d comment %s: rehydrate entry stale, decision.md missing at tick time, falling through to launch (issue #1847)", prNumber, comment.ID)
 			d.pendingPostMu.Lock()
-			delete(d.pendingPost[prNumber], comment.ID)
+			delete(d.pendingPost[prNumber], triggerKey)
 			if len(d.pendingPost[prNumber]) == 0 {
 				delete(d.pendingPost, prNumber)
 			}
@@ -1970,7 +1985,7 @@ func (d *Daemon) tryRehydratePost(ctx context.Context, prNumber int, comment git
 		// branch.
 		d.logf("PR #%d comment %s: rehydrate entry stale, decision.md is not a regular file at tick time, falling through to launch (issue #1949)", prNumber, comment.ID)
 		d.pendingPostMu.Lock()
-		delete(d.pendingPost[prNumber], comment.ID)
+		delete(d.pendingPost[prNumber], triggerKey)
 		if len(d.pendingPost[prNumber]) == 0 {
 			delete(d.pendingPost, prNumber)
 		}
@@ -2027,14 +2042,14 @@ func (d *Daemon) tryRehydratePost(ctx context.Context, prNumber int, comment git
 		d.logf("PR #%d comment %s: open review-state for MarkSeen failed: %v; keeping entry and seen-cache untouched (issue #1847)", prNumber, comment.ID, storeErr)
 		return true
 	}
-	if err := store.MarkSeen(comment.ID, "success"); err != nil {
+	if err := store.MarkSeen(triggerKey, "success"); err != nil {
 		d.logf("PR #%d comment %s: MarkSeen(success) failed in rehydrate branch: %v; keeping entry (issue #1847)", prNumber, comment.ID, err)
 		return true
 	}
 
 	// Drop the entry from pendingPost under the dedicated mutex.
 	d.pendingPostMu.Lock()
-	delete(d.pendingPost[prNumber], comment.ID)
+	delete(d.pendingPost[prNumber], triggerKey)
 	if len(d.pendingPost[prNumber]) == 0 {
 		delete(d.pendingPost, prNumber)
 	}

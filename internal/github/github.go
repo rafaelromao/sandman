@@ -136,6 +136,7 @@ type PRComment struct {
 	Body        string
 	AuthorLogin string
 	CreatedAt   time.Time
+	UpdatedAt   time.Time
 }
 
 // IssueComment holds an issue conversation comment fetched from the GitHub
