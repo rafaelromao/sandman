@@ -1286,8 +1286,9 @@ func TestRunSingle_RetryWithOpenPRFallsBackToEmptyTaskTemplate(t *testing.T) {
 	}
 
 	pr := &github.PR{Number: 17, State: "open", Merged: false, HeadRefName: branch}
-	// Flip Merged only after the retry has run (third FindPRByBranch call)
-	// so the pre-retry guard on the second call does not short-circuit the
+	// Flip Merged only after the retry has run (fifth FindPRByBranch call).
+	// The closing-reference guard now performs an immediate observation, so
+	// the pre-retry guard does not short-circuit the
 	// retry before the empty task template is rendered.
 	var findPRCalls int
 	rtSandbox := &retrySandbox{workDir: worktreePath, execErrors: []error{errors.New("exit 1"), nil}}
@@ -1302,7 +1303,7 @@ func TestRunSingle_RetryWithOpenPRFallsBackToEmptyTaskTemplate(t *testing.T) {
 			prs:    map[string]*github.PR{branch: pr},
 			findPRHook: func() {
 				findPRCalls++
-				if findPRCalls >= 3 {
+				if findPRCalls >= 5 {
 					pr.Merged = true
 				}
 			},
@@ -1968,7 +1969,8 @@ func TestRunSingle_LogsRetryCounters(t *testing.T) {
 
 	pr := &github.PR{Number: 42, State: "closed", Merged: false, HeadRefName: branch}
 	// Flip Merged only on the post-attempt check after both attempts have
-	// run (third FindPRByBranch call) so the pre-retry guard does not
+	// run (fifth FindPRByBranch call). The closing-reference guard now
+	// performs an immediate observation, so the pre-retry guard does not
 	// short-circuit the retry before the second attempt logs its counter.
 	var findPRCalls int
 	rtSandbox := &retrySandbox{workDir: worktreePath, execErrors: []error{errors.New("exit 1"), nil}}
@@ -1982,7 +1984,7 @@ func TestRunSingle_LogsRetryCounters(t *testing.T) {
 			prs:    map[string]*github.PR{branch: pr},
 			findPRHook: func() {
 				findPRCalls++
-				if findPRCalls >= 3 {
+				if findPRCalls >= 5 {
 					pr.Merged = true
 				}
 			},

@@ -53,6 +53,152 @@ type fakeGH struct {
 	addReactionID         int // auto-increment for fake reaction IDs
 }
 
+func TestDaemonSkipsUnchangedPRCommentSnapshot(t *testing.T) {
+	d := &Daemon{}
+	pr := github.PR{Number: 17, UpdatedAt: time.Date(2026, time.August, 1, 12, 0, 0, 0, time.UTC)}
+	if !d.shouldReadComments(pr) {
+		t.Fatal("first observation must read comments")
+	}
+	d.markCommentsRead(pr)
+	if d.shouldReadComments(pr) {
+		t.Fatal("unchanged PR must not re-read comments")
+	}
+	pr.UpdatedAt = pr.UpdatedAt.Add(time.Second)
+	if !d.shouldReadComments(pr) {
+		t.Fatal("updated PR must re-read comments")
+	}
+	if !d.shouldReadComments(github.PR{Number: 18}) {
+		t.Fatal("PR without update token must retain compatibility read")
+	}
+}
+
+func TestDaemonProcessesEditedReviewTriggerAsNewRevision(t *testing.T) {
+	const (
+		prNumber  = 17
+		commentID = "123"
+	)
+	createdAt := time.Date(2026, time.August, 1, 12, 0, 0, 0, time.UTC)
+	first := github.PRComment{
+		ID:        commentID,
+		Body:      "/sandman review first pass",
+		CreatedAt: createdAt,
+		UpdatedAt: createdAt,
+	}
+	gh := &fakeGH{
+		prs:      []github.PR{{Number: prNumber, State: "open"}},
+		comments: map[int][]github.PRComment{prNumber: {first}},
+		prFetch:  map[int]*github.PR{prNumber: {Number: prNumber, Title: "T", Body: "B"}},
+	}
+	runner := newDecisionRunner()
+	cfg := &config.Config{DefaultReviewAgent: "opencode", DefaultReviewModel: "opencode/foo", WorktreeDir: ".sandman/worktrees"}
+	d, _, _ := newDaemonForTest(t, gh, runner, cfg)
+
+	tickAndWait(t, d, context.Background())
+	firstKey := reviewTriggerKey(first)
+	if !d.IsTerminalSeen(prNumber, firstKey) {
+		t.Fatalf("first revision %q was not terminal-seen", firstKey)
+	}
+
+	edited := first
+	edited.Body = "/sandman review second pass"
+	edited.UpdatedAt = first.UpdatedAt.Add(time.Minute)
+	gh.mu.Lock()
+	gh.comments[prNumber] = []github.PRComment{edited}
+	gh.mu.Unlock()
+
+	tickAndWait(t, d, context.Background())
+	editedKey := reviewTriggerKey(edited)
+	if editedKey == firstKey {
+		t.Fatal("edited revision must have a distinct dedup key")
+	}
+	if !d.IsTerminalSeen(prNumber, editedKey) {
+		t.Fatalf("edited revision %q was not terminal-seen", editedKey)
+	}
+	if runner.Calls() != 2 {
+		t.Fatalf("RunBatch calls = %d, want 2", runner.Calls())
+	}
+
+	gh.mu.Lock()
+	defer gh.mu.Unlock()
+	var commentReactions []reactionCall
+	for _, call := range gh.reactionCalls {
+		if call.kind == "add_comment" {
+			commentReactions = append(commentReactions, call)
+		}
+	}
+	if len(commentReactions) != 2 {
+		t.Fatalf("comment reactions = %d, want 2", len(commentReactions))
+	}
+	for _, call := range commentReactions {
+		if call.commentID != commentID {
+			t.Errorf("reaction comment ID = %q, want raw ID %q", call.commentID, commentID)
+		}
+	}
+}
+
+func TestDaemonMigratesLegacyTerminalStateBeforeRevisionDedup(t *testing.T) {
+	const (
+		prNumber  = 17
+		commentID = "123"
+		batchID   = "20260801-abc-PR17"
+	)
+	dir := testenv.MkdirShort(t, "sm-review-")
+	seedPriorReviewEntry(t, dir, batchID, prNumber, commentID, "success")
+	comment := github.PRComment{ID: commentID, Body: "/sandman review", CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	gh := &fakeGH{prs: []github.PR{{Number: prNumber, State: "open"}}, comments: map[int][]github.PRComment{prNumber: {comment}}}
+	runner := &capturedRequest{}
+	d := New(dir, gh, &prompt.Engine{}, runner, &config.Config{WorktreeDir: ".sandman/worktrees"}, &lockedBuffer{}, 0, false, nil)
+
+	tickAndWait(t, d, context.Background())
+	if runner.Calls() != 0 {
+		t.Fatalf("RunBatch calls = %d, want 0 for migrated terminal state", runner.Calls())
+	}
+	state, err := batchindex.ReadReviewState(filepath.Join(dir, "batches", batchID, "runs", deriveReviewRowID(batchID, prNumber)))
+	if err != nil {
+		t.Fatalf("ReadReviewState() error = %v", err)
+	}
+	key := reviewTriggerKey(comment)
+	if len(state.SeenComments) != 1 || state.SeenComments[0].CommentID != key {
+		t.Fatalf("legacy state = %+v, want revision key %q", state.SeenComments, key)
+	}
+}
+
+func TestDaemonMigratesLegacyPendingStateBeforeRehydration(t *testing.T) {
+	const (
+		prNumber  = 17
+		commentID = "123"
+		batchID   = "20260801-def-PR17"
+	)
+	dir := testenv.MkdirShort(t, "sm-review-")
+	seedPriorReviewEntry(t, dir, batchID, prNumber, commentID, "pending")
+	comment := github.PRComment{ID: commentID, Body: "/sandman review", CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	gh := &fakeGH{prs: []github.PR{{Number: prNumber, State: "open"}}, comments: map[int][]github.PRComment{prNumber: {comment}}}
+	runner := &capturedRequest{}
+	d := New(dir, gh, &prompt.Engine{}, runner, &config.Config{WorktreeDir: ".sandman/worktrees"}, &lockedBuffer{}, 0, false, nil)
+	if err := os.MkdirAll(d.reviewWorktreePath(prNumber, commentID), 0o755); err != nil {
+		t.Fatalf("create legacy worktree: %v", err)
+	}
+	if err := os.WriteFile(d.reviewDecisionPath(prNumber, commentID), []byte("review"), 0o644); err != nil {
+		t.Fatalf("write decision: %v", err)
+	}
+	if err := d.InvalidatePendingPosts(); err != nil {
+		t.Fatalf("InvalidatePendingPosts() error = %v", err)
+	}
+
+	tickAndWait(t, d, context.Background())
+	if runner.Calls() != 0 {
+		t.Fatalf("RunBatch calls = %d, want rehydration without relaunch", runner.Calls())
+	}
+	state, err := batchindex.ReadReviewState(filepath.Join(dir, "batches", batchID, "runs", deriveReviewRowID(batchID, prNumber)))
+	if err != nil {
+		t.Fatalf("ReadReviewState() error = %v", err)
+	}
+	key := reviewTriggerKey(comment)
+	if len(state.SeenComments) != 1 || state.SeenComments[0].CommentID != key || state.SeenComments[0].Status != "success" {
+		t.Fatalf("rehydrated state = %+v, want successful revision %q", state.SeenComments, key)
+	}
+}
+
 func (f *fakeGH) AuthenticatedLogin(ctx context.Context) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

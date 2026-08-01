@@ -53,6 +53,8 @@ var postStepBackoffs = []time.Duration{
 	16 * time.Second,
 }
 
+var errReviewDeferred = errors.New("review deferred until a slot is available")
+
 // failureBackoffBase is the floor of the launch-failure backoff
 // schedule. Doubled each attempt, capped at failureBackoffCap. The
 // schedule is exponential so a transient upstream failure (e.g. the
@@ -184,6 +186,10 @@ type Daemon struct {
 	promptOnce           sync.Once
 	seenCache            map[int]map[string]bool
 	seenCacheMu          sync.RWMutex
+	commentVersions      map[int]time.Time
+	commentVersionsMu    sync.Mutex
+	rateLimitedUntil     time.Time
+	rateLimitedMu        sync.Mutex
 	// nextAttempt is the per-(prNumber, commentID) retry-budget
 	// stamp persisted in review-state.json (issue #2211). The
 	// processPR dedup loop consults it on every tick and skips
@@ -979,6 +985,9 @@ func (d *Daemon) Run(ctx context.Context) error {
 // tick performs one full scan over open PRs. It serializes via a single
 // semaphore so concurrent trigger signals are dropped while a scan runs.
 func (d *Daemon) tick(ctx context.Context) error {
+	if d.isRateLimited() {
+		return nil
+	}
 	select {
 	case d.busy <- struct{}{}:
 		defer func() { <-d.busy }()
@@ -989,22 +998,96 @@ func (d *Daemon) tick(ctx context.Context) error {
 
 	prs, err := d.GitHub.ListOpenPRs(ctx)
 	if err != nil {
+		if github.IsRateLimited(err) {
+			d.deferForRateLimit()
+		}
 		return fmt.Errorf("list open PRs: %w", err)
 	}
 
 	var wg sync.WaitGroup
 	for _, pr := range prs {
+		if !d.shouldReadComments(pr) {
+			continue
+		}
 		pr := pr
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			if err := d.processPR(ctx, pr.Number); err != nil {
-				d.logf("process PR #%d: %v", pr.Number, err)
+				if !errors.Is(err, errReviewDeferred) {
+					d.logf("process PR #%d: %v", pr.Number, err)
+				}
+				return
 			}
+			d.markCommentsRead(pr)
 		}()
 	}
 	wg.Wait()
 	return nil
+}
+
+func (d *Daemon) isRateLimited() bool {
+	d.rateLimitedMu.Lock()
+	defer d.rateLimitedMu.Unlock()
+	return !d.rateLimitedUntil.IsZero() && d.now().Before(d.rateLimitedUntil)
+}
+
+func (d *Daemon) deferForRateLimit() {
+	d.rateLimitedMu.Lock()
+	defer d.rateLimitedMu.Unlock()
+	d.rateLimitedUntil = d.now().Add(PollingInterval)
+}
+
+// shouldReadComments keeps an initial scan (and all compatibility clients
+// that omit updatedAt) unchanged. GitHub updates a pull request's updatedAt
+// when its conversation changes, so a stable token means the previous comment
+// snapshot remains valid for trigger discovery.
+func (d *Daemon) shouldReadComments(pr github.PR) bool {
+	if pr.UpdatedAt.IsZero() {
+		return true
+	}
+	if d.hasPendingPost(pr.Number) {
+		return true
+	}
+	if d.hasRetryAttempt(pr.Number) {
+		return true
+	}
+	d.commentVersionsMu.Lock()
+	defer d.commentVersionsMu.Unlock()
+	return d.commentVersions[pr.Number] != pr.UpdatedAt
+}
+
+func (d *Daemon) hasRetryAttempt(prNumber int) bool {
+	d.nextAttemptMu.RLock()
+	defer d.nextAttemptMu.RUnlock()
+	return len(d.nextAttempt[prNumber]) > 0
+}
+
+func (d *Daemon) hasPendingPost(prNumber int) bool {
+	d.pendingPostMu.Lock()
+	defer d.pendingPostMu.Unlock()
+	return len(d.pendingPost[prNumber]) > 0
+}
+
+func (d *Daemon) markCommentsRead(pr github.PR) {
+	if pr.UpdatedAt.IsZero() {
+		return
+	}
+	d.commentVersionsMu.Lock()
+	defer d.commentVersionsMu.Unlock()
+	if d.commentVersions == nil {
+		d.commentVersions = make(map[int]time.Time)
+	}
+	d.commentVersions[pr.Number] = pr.UpdatedAt
+}
+
+// reviewTriggerKey identifies one immutable revision of a GitHub comment.
+// Raw IDs remain reserved for GitHub API calls such as reactions.
+func reviewTriggerKey(comment github.PRComment) string {
+	if comment.UpdatedAt.IsZero() {
+		return comment.ID
+	}
+	return fmt.Sprintf("%s@%d", comment.ID, comment.UpdatedAt.UTC().UnixNano())
 }
 
 // processPR scans one PR's comments and launches a review agent for the
@@ -1053,6 +1136,7 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) error {
 	type unseenTrigger struct {
 		comment github.PRComment
 		focus   string
+		key     string
 	}
 	var triggers []unseenTrigger
 	for _, comment := range comments {
@@ -1088,12 +1172,17 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) error {
 		}
 		focus, ok := ParseTrigger(comment.Body)
 		if ok {
-			triggers = append(triggers, unseenTrigger{comment: comment, focus: focus})
+			triggers = append(triggers, unseenTrigger{comment: comment, focus: focus, key: reviewTriggerKey(comment)})
 			continue
 		}
 	}
 	if len(triggers) == 0 {
 		return nil
+	}
+	for _, trigger := range triggers {
+		if err := d.reconcileCommentRevision(prNumber, trigger.comment, trigger.key); err != nil {
+			return err
+		}
 	}
 
 	// Cross-run dedup: read terminal-seen membership from the
@@ -1107,8 +1196,8 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) error {
 	d.seenCacheMu.RLock()
 	var unprocessed []unseenTrigger
 	for _, t := range triggers {
-		if d.seenCache[prNumber][t.comment.ID] {
-			d.logf("comment %s already terminal-seen, skipping", t.comment.ID)
+		if d.seenCache[prNumber][t.key] {
+			d.logf("comment %s already terminal-seen, skipping", t.key)
 			continue
 		}
 		// Issue #2211: per-trigger retry-budget gate. Skips
@@ -1118,7 +1207,7 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) error {
 		// the launch. The stamp is per-(prNumber, commentID)
 		// so a fresh trigger on the same PR is not blocked by
 		// an older comment's stamp.
-		if stamp := d.NextAttemptAt(prNumber, t.comment.ID); !stamp.IsZero() && stamp.After(d.now()) {
+		if stamp := d.NextAttemptAt(prNumber, t.key); !stamp.IsZero() && stamp.After(d.now()) {
 			continue
 		}
 		unprocessed = append(unprocessed, t)
@@ -1145,7 +1234,7 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) error {
 	if len(hasPostEntry) > 0 {
 		var filtered []unseenTrigger
 		for _, t := range unprocessed {
-			if hasPostEntry[t.comment.ID] {
+			if hasPostEntry[t.key] {
 				if d.tryRehydratePost(ctx, prNumber, t.comment) {
 					continue
 				}
@@ -1177,18 +1266,18 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) error {
 	// in-flight review (or the parallel_reviews cross-PR cap) makes
 	// the trigger wait for the next tick instead of dropping it.
 	if !d.acquirePRSlot(prNumber) {
-		return nil
+		return errReviewDeferred
 	}
 
-	reviewRunFolder, perRowRunID, rs, state, prepErr := d.prepareReviewRun(ctx, prNumber, comment.ID)
+	reviewRunFolder, perRowRunID, rs, state, prepErr := d.prepareReviewRun(ctx, prNumber, newest.key)
 	if prepErr != nil {
 		d.logf("prepare review run for PR #%d comment %s: %v", prNumber, comment.ID, prepErr)
 		d.releasePRSlot(prNumber)
 		return nil
 	}
 
-	if !state.TryClaim(comment.ID) {
-		d.logf("comment %s already claimed or terminal-seen, skipping", comment.ID)
+	if !state.TryClaim(newest.key) {
+		d.logf("comment %s already claimed or terminal-seen, skipping", newest.key)
 		_ = rs.Close()
 		d.releasePRSlot(prNumber)
 		return nil
@@ -1212,14 +1301,14 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) error {
 	// synchronous so the goroutine and the sync preamble never
 	// touch the ReviewStateStore concurrently.
 	for _, t := range unprocessed {
-		if t.comment.ID == comment.ID {
+		if t.key == newest.key {
 			continue
 		}
-		if state.IsSeen(t.comment.ID) {
+		if state.IsSeen(t.key) {
 			continue
 		}
-		if err := state.MarkSeen(t.comment.ID, "superseded"); err != nil {
-			d.logf("mark superseded comment %s: %v", t.comment.ID, err)
+		if err := state.MarkSeen(t.key, "superseded"); err != nil {
+			d.logf("mark superseded comment %s: %v", t.key, err)
 		} else {
 			d.logf("skipping stale trigger comment %s (newer %s exists)", t.comment.ID, comment.ID)
 		}
@@ -1245,7 +1334,7 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) error {
 		defer d.inFlight.Done()
 		defer d.releasePRSlot(prNumber)
 
-		launchErr := d.launchReview(ctx, prNumber, focus, comment.ID, commentReactionID, prReactionID, reviewRunFolder, perRowRunID, rs, state, priorReviewExists)
+		launchErr := d.launchReviewRevision(ctx, prNumber, focus, newest.key, comment.ID, commentReactionID, prReactionID, reviewRunFolder, perRowRunID, rs, state, priorReviewExists)
 		if launchErr != nil {
 			d.logf("launch review for PR #%d comment %s: %v", prNumber, comment.ID, launchErr)
 			// Ctx-cancel between RunBatch and the post step:
@@ -1253,7 +1342,7 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) error {
 			// the next tick's processPR can re-launch.
 			if errors.Is(launchErr, context.Canceled) || errors.Is(launchErr, context.DeadlineExceeded) {
 				if persisted == nil {
-					state.Release(comment.ID)
+					state.Release(newest.key)
 				}
 				return
 			}
@@ -1274,6 +1363,79 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) error {
 	}()
 
 	return nil
+}
+
+// reconcileCommentRevision updates persisted pre-revision state before the
+// cache is consulted, then retires stale retry and pending entries in memory.
+func (d *Daemon) reconcileCommentRevision(prNumber int, comment github.PRComment, key string) error {
+	if key == comment.ID {
+		return nil
+	}
+	idx, err := seenCacheLoader(d.BaseDir)
+	if err != nil || idx == nil {
+		return err
+	}
+	for _, entry := range idx.Batches {
+		if entry.Kind != batchindex.KindReview || entry.PR != prNumber {
+			continue
+		}
+		rowID, err := readReviewRowID(filepath.Join(entry.Path, "runs"))
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return err
+		}
+		store, err := NewReviewStateStore(filepath.Join(entry.Path, "runs", rowID, "review-state.json"), prNumber, nil)
+		if err != nil {
+			return err
+		}
+		if _, err := store.ReconcileCommentRevision(comment.ID, key); err != nil {
+			return err
+		}
+	}
+	d.reconcileCommentRevisionCache(prNumber, comment.ID, key)
+	return nil
+}
+
+func (d *Daemon) reconcileCommentRevisionCache(prNumber int, commentID, key string) {
+	d.seenCacheMu.Lock()
+	if seen := d.seenCache[prNumber]; seen != nil {
+		if seen[commentID] {
+			delete(seen, commentID)
+			seen[key] = true
+		}
+	}
+	d.seenCacheMu.Unlock()
+
+	d.nextAttemptMu.Lock()
+	if attempts := d.nextAttempt[prNumber]; attempts != nil {
+		if stamp, ok := attempts[commentID]; ok {
+			delete(attempts, commentID)
+			attempts[key] = stamp
+		}
+		for candidate := range attempts {
+			if candidate != key && isCommentRevision(commentID, candidate) {
+				delete(attempts, candidate)
+			}
+		}
+	}
+	d.nextAttemptMu.Unlock()
+
+	d.pendingPostMu.Lock()
+	if pending := d.pendingPost[prNumber]; pending != nil {
+		if entry, ok := pending[commentID]; ok {
+			delete(pending, commentID)
+			entry.commentID = key
+			pending[key] = entry
+		}
+		for candidate := range pending {
+			if candidate != key && isCommentRevision(commentID, candidate) {
+				delete(pending, candidate)
+			}
+		}
+	}
+	d.pendingPostMu.Unlock()
 }
 
 // loadGlobalSeenForPR was removed in issue #1480: cross-run
@@ -1476,12 +1638,16 @@ func logWriterFor(d *Daemon) io.Writer {
 // bounded-retry walker is gone; the bounded-retry contract is now
 // expressed as a single-shot at launch-end via the seen-cache).
 func (d *Daemon) launchReview(ctx context.Context, prNumber int, focus, commentID, commentReactionID, prReactionID, reviewRunFolder, perRowRunID string, rs *daemon.RunSession, state *ReviewStateStore, priorReviewExists bool) error {
+	return d.launchReviewRevision(ctx, prNumber, focus, commentID, commentID, commentReactionID, prReactionID, reviewRunFolder, perRowRunID, rs, state, priorReviewExists)
+}
+
+func (d *Daemon) launchReviewRevision(ctx context.Context, prNumber int, focus, triggerKey, commentID, commentReactionID, prReactionID, reviewRunFolder, perRowRunID string, rs *daemon.RunSession, state *ReviewStateStore, priorReviewExists bool) error {
 	// We compute the review branch name up-front so the cleanup defer
 	// has it available on every exit path, including early errors
 	// before RunBatch runs. The same value is reused in the
 	// batch.Request.PromptConfig.Branch below so cleanup and creation
 	// always target the same branch.
-	reviewBranch := reviewBranchName(prNumber, commentID)
+	reviewBranch := reviewBranchName(prNumber, triggerKey)
 	defer func() {
 		if rs != nil {
 			_ = rs.Close()
@@ -1543,7 +1709,7 @@ func (d *Daemon) launchReview(ctx context.Context, prNumber int, focus, commentI
 	if filepath.Base(d.BaseDir) == ".sandman" {
 		repoRoot = filepath.Dir(d.BaseDir)
 	}
-	agentRunDir := sandbox.ContainerVisiblePath(d.reviewWorktreePath(prNumber, commentID), repoRoot, sandboxMode)
+	agentRunDir := sandbox.ContainerVisiblePath(d.reviewWorktreePath(prNumber, triggerKey), repoRoot, sandboxMode)
 
 	rendered, err := d.Prompts.RenderReview(prompt.RenderConfig{}, prompt.PRData{
 		Number:            pr.Number,
@@ -1613,7 +1779,7 @@ func (d *Daemon) launchReview(ctx context.Context, prNumber int, focus, commentI
 		QualityRulesFile: d.QualityRulesPath(),
 	}
 	if _, err := d.Runner.RunBatch(ctx, req); err != nil {
-		return d.recordLaunchFailure(ctx, commentID, state, fmt.Errorf("run batch: %w", err))
+		return d.recordLaunchFailure(ctx, triggerKey, state, fmt.Errorf("run batch: %w", err))
 	}
 
 	// S3 post step (issue #1846): the agent writes
@@ -1626,7 +1792,7 @@ func (d *Daemon) launchReview(ctx context.Context, prNumber int, focus, commentI
 	// `else` branch only Releases the claim so the bounded-retry
 	// escape can re-process the comment if launchReview returned
 	// an error before any decision.md existed.
-	return d.postDecision(ctx, prNumber, commentID, reviewRunFolder, state)
+	return d.postDecision(ctx, prNumber, triggerKey, reviewRunFolder, state)
 }
 
 // postDecision implements the S3 post step (issue #1846):
@@ -1866,13 +2032,14 @@ func (d *Daemon) registerPendingPost(prNumber int, commentID, worktreePath, revi
 // for the MarkSeen call and never spawns a goroutine, so it can
 // run inline in processPR.
 func (d *Daemon) tryRehydratePost(ctx context.Context, prNumber int, comment github.PRComment) bool {
+	triggerKey := reviewTriggerKey(comment)
 	d.pendingPostMu.Lock()
 	m, ok := d.pendingPost[prNumber]
 	if !ok {
 		d.pendingPostMu.Unlock()
 		return false
 	}
-	entry, ok := m[comment.ID]
+	entry, ok := m[triggerKey]
 	if !ok {
 		d.pendingPostMu.Unlock()
 		return false
@@ -1886,7 +2053,7 @@ func (d *Daemon) tryRehydratePost(ctx context.Context, prNumber int, comment git
 			// Stale entry: drop and fall through to launch.
 			d.logf("PR #%d comment %s: rehydrate entry stale, decision.md missing at tick time, falling through to launch (issue #1847)", prNumber, comment.ID)
 			d.pendingPostMu.Lock()
-			delete(d.pendingPost[prNumber], comment.ID)
+			delete(d.pendingPost[prNumber], triggerKey)
 			if len(d.pendingPost[prNumber]) == 0 {
 				delete(d.pendingPost, prNumber)
 			}
@@ -1909,7 +2076,7 @@ func (d *Daemon) tryRehydratePost(ctx context.Context, prNumber int, comment git
 		// branch.
 		d.logf("PR #%d comment %s: rehydrate entry stale, decision.md is not a regular file at tick time, falling through to launch (issue #1949)", prNumber, comment.ID)
 		d.pendingPostMu.Lock()
-		delete(d.pendingPost[prNumber], comment.ID)
+		delete(d.pendingPost[prNumber], triggerKey)
 		if len(d.pendingPost[prNumber]) == 0 {
 			delete(d.pendingPost, prNumber)
 		}
@@ -1966,14 +2133,14 @@ func (d *Daemon) tryRehydratePost(ctx context.Context, prNumber int, comment git
 		d.logf("PR #%d comment %s: open review-state for MarkSeen failed: %v; keeping entry and seen-cache untouched (issue #1847)", prNumber, comment.ID, storeErr)
 		return true
 	}
-	if err := store.MarkSeen(comment.ID, "success"); err != nil {
+	if err := store.MarkSeen(triggerKey, "success"); err != nil {
 		d.logf("PR #%d comment %s: MarkSeen(success) failed in rehydrate branch: %v; keeping entry (issue #1847)", prNumber, comment.ID, err)
 		return true
 	}
 
 	// Drop the entry from pendingPost under the dedicated mutex.
 	d.pendingPostMu.Lock()
-	delete(d.pendingPost[prNumber], comment.ID)
+	delete(d.pendingPost[prNumber], triggerKey)
 	if len(d.pendingPost[prNumber]) == 0 {
 		delete(d.pendingPost, prNumber)
 	}

@@ -27,6 +27,18 @@ type fakeResponse struct {
 	err    error
 }
 
+type rateLimitRunner struct {
+	calls int
+}
+
+func (r *rateLimitRunner) Run(ctx context.Context, name string, arg ...string) *exec.Cmd {
+	r.calls++
+	if r.calls == 1 {
+		return exec.CommandContext(ctx, "sh", "-c", "printf 'rate limit; retry-after: 1' >&2; exit 1")
+	}
+	return exec.CommandContext(ctx, "echo", `{"login":"octocat"}`)
+}
+
 func (f *fakeRunner) Run(ctx context.Context, name string, arg ...string) *exec.Cmd {
 	f.calls = append(f.calls, fakeCall{ctx: ctx, name: name, args: append([]string(nil), arg...)})
 	idx := len(f.calls) - 1
@@ -225,7 +237,7 @@ func TestCLIClient_SearchIssues_SortsByNumberAscending(t *testing.T) {
 }
 
 func TestCLIClient_FindPRByBranch_Success(t *testing.T) {
-	runner := &fakeRunner{responses: []fakeResponse{{output: `[{"number":17,"state":"open","body":"Refs #386","mergedAt":null,"headRefName":"issue-386/smart-completion-detection-phase-aware-retry","headRefOid":"abc123","reviewDecision":"APPROVED","mergeStateStatus":"CLEAN","statusCheckRollup":"success"}]`}}}
+	runner := &fakeRunner{responses: []fakeResponse{{output: `[{"number":17,"state":"open","body":"Refs #386","mergedAt":null,"headRefName":"issue-386/smart-completion-detection-phase-aware-retry","headRefOid":"abc123","updatedAt":"2026-08-01T12:00:00Z","reviewDecision":"APPROVED","mergeStateStatus":"CLEAN","statusCheckRollup":"success"}]`}}}
 	client := &CLIClient{runner: runner}
 
 	pr, err := client.FindPRByBranch(context.Background(), "issue-386/smart-completion-detection-phase-aware-retry")
@@ -250,6 +262,9 @@ func TestCLIClient_FindPRByBranch_Success(t *testing.T) {
 	if pr.HeadRefOid != "abc123" {
 		t.Fatalf("expected head ref oid to round-trip, got %q", pr.HeadRefOid)
 	}
+	if got := pr.UpdatedAt.Format(time.RFC3339); got != "2026-08-01T12:00:00Z" {
+		t.Fatalf("UpdatedAt = %q", got)
+	}
 	if pr.Body != "Refs #386" {
 		t.Fatalf("expected body to round-trip, got %q", pr.Body)
 	}
@@ -265,7 +280,7 @@ func TestCLIClient_FindPRByBranch_Success(t *testing.T) {
 	if len(runner.calls) != 1 {
 		t.Fatalf("expected 1 command, got %d", len(runner.calls))
 	}
-	expectedArgs := []string{"pr", "list", "--head", "issue-386/smart-completion-detection-phase-aware-retry", "--state", "all", "--json", "number,state,body,mergedAt,headRefName,headRefOid,reviewDecision,mergeStateStatus,statusCheckRollup", "--limit", "1"}
+	expectedArgs := []string{"pr", "list", "--head", "issue-386/smart-completion-detection-phase-aware-retry", "--state", "all", "--json", "number,state,body,mergedAt,headRefName,headRefOid,updatedAt,reviewDecision,mergeStateStatus,statusCheckRollup", "--limit", "1"}
 	if !reflect.DeepEqual(runner.calls[0].args, expectedArgs) {
 		t.Fatalf("unexpected args: %v", runner.calls[0].args)
 	}
@@ -419,6 +434,39 @@ func TestCLIClient_ResolveRepo_Error(t *testing.T) {
 	}
 }
 
+func TestClassifyRateLimit(t *testing.T) {
+	for _, message := range []string{"API rate limit exceeded", "secondary rate limit; retry-after: 30"} {
+		if !IsRateLimited(classifyRateLimit(errors.New(message))) {
+			t.Fatalf("%q was not classified as rate limited", message)
+		}
+	}
+	if IsRateLimited(classifyRateLimit(errors.New("network unavailable"))) {
+		t.Fatal("ordinary command error was classified as rate limited")
+	}
+}
+
+func TestParseRateLimitRetryAfter(t *testing.T) {
+	if got := parseRateLimitRetryAfter("secondary rate limit; retry-after: 30", time.Now()); got != 30*time.Second {
+		t.Fatalf("retry-after = %s, want 30s", got)
+	}
+}
+
+func TestCLIClientRetriesRateLimitedCommandThroughRunner(t *testing.T) {
+	runner := &rateLimitRunner{}
+	client := &CLIClient{runner: runner}
+
+	login, err := client.AuthenticatedLogin(context.Background())
+	if err != nil {
+		t.Fatalf("AuthenticatedLogin() error = %v", err)
+	}
+	if login != "octocat" {
+		t.Fatalf("AuthenticatedLogin() = %q, want octocat", login)
+	}
+	if runner.calls != 2 {
+		t.Fatalf("runner calls = %d, want initial request plus retry", runner.calls)
+	}
+}
+
 func TestCLIClient_FetchIssue_Success(t *testing.T) {
 	runner := &fakeRunner{responses: []fakeResponse{
 		{output: `{"name":"sandman","owner":{"login":"rafaelromao"}}`},
@@ -464,6 +512,33 @@ func TestCLIClient_FetchIssue_Success(t *testing.T) {
 	}
 	if !reflect.DeepEqual(runner.calls[3].args, []string{"api", "-H", "Accept: application/vnd.github+json", "repos/rafaelromao/sandman/issues/61/events"}) {
 		t.Fatalf("unexpected events args: %v", runner.calls[3].args)
+	}
+}
+
+func TestCLIClient_FetchIssueContentAndStateSkipDependencyReads(t *testing.T) {
+	runner := &fakeRunner{responses: []fakeResponse{
+		{output: `{"name":"sandman","owner":{"login":"rafaelromao"}}`},
+		{output: `{"number":61,"state":"open","title":"Render me","body":"Body","labels":[]}`},
+		{output: `{"number":62,"state":"closed","title":"Blocker","body":"","labels":[]}`},
+	}}
+	client := &CLIClient{runner: runner}
+
+	issue, err := client.FetchIssueContent(context.Background(), 61)
+	if err != nil {
+		t.Fatalf("FetchIssueContent() error = %v", err)
+	}
+	if issue.Body != "Body" || len(issue.BlockedBy) != 0 {
+		t.Fatalf("FetchIssueContent() = %#v, want content without blockers", issue)
+	}
+	state, err := client.FetchIssueState(context.Background(), 62)
+	if err != nil {
+		t.Fatalf("FetchIssueState() error = %v", err)
+	}
+	if state != "closed" {
+		t.Fatalf("FetchIssueState() = %q, want closed", state)
+	}
+	if len(runner.calls) != 3 {
+		t.Fatalf("commands = %d, want repo lookup plus two issue reads", len(runner.calls))
 	}
 }
 
@@ -1656,7 +1731,7 @@ func TestCLIClient_ListPRComments_SortParams(t *testing.T) {
 func TestCLIClient_ListPRComments_PopulatesCreatedAt(t *testing.T) {
 	runner := &fakeRunner{responses: []fakeResponse{
 		{output: `{"name":"sandman","owner":{"login":"rafaelromao"}}`},
-		{output: `[{"id":123,"body":"/sandman review","user":{"login":"alice"},"created_at":"2026-06-01T12:00:00Z"},{"id":124,"body":"later comment","user":{"login":"bob"},"created_at":"2026-06-02T12:00:00Z"}]`},
+		{output: `[{"id":123,"body":"/sandman review","user":{"login":"alice"},"created_at":"2026-06-01T12:00:00Z","updated_at":"2026-06-01T13:00:00Z"},{"id":124,"body":"later comment","user":{"login":"bob"},"created_at":"2026-06-02T12:00:00Z","updated_at":"2026-06-02T14:00:00Z"}]`},
 	}}
 	client := &CLIClient{runner: runner}
 
@@ -1672,6 +1747,9 @@ func TestCLIClient_ListPRComments_PopulatesCreatedAt(t *testing.T) {
 		wantTime, _ := time.Parse(time.RFC3339, want)
 		if !comments[i].CreatedAt.Equal(wantTime) {
 			t.Errorf("comment %d CreatedAt = %v, want %v", i, comments[i].CreatedAt, wantTime)
+		}
+		if !comments[i].UpdatedAt.After(comments[i].CreatedAt) {
+			t.Errorf("comment %d UpdatedAt = %v, want after CreatedAt %v", i, comments[i].UpdatedAt, comments[i].CreatedAt)
 		}
 	}
 }

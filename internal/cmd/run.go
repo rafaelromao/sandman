@@ -50,6 +50,28 @@ func (c *cachedGitHubClient) FetchIssue(ctx context.Context, number int) (*githu
 	})
 }
 
+// FetchIssueContent preserves the optional narrow-read capability through the
+// command cache. Fresh content intentionally bypasses the preparation snapshot.
+func (c *cachedGitHubClient) FetchIssueContent(ctx context.Context, number int) (*github.Issue, error) {
+	if contentClient, ok := c.Client.(github.IssueContentFetcher); ok {
+		return contentClient.FetchIssueContent(ctx, number)
+	}
+	return c.FetchIssue(ctx, number)
+}
+
+// FetchIssueState preserves the optional fresh-state capability through the
+// command cache. Blocker rechecks must not use a stale preparation snapshot.
+func (c *cachedGitHubClient) FetchIssueState(ctx context.Context, number int) (string, error) {
+	if stateClient, ok := c.Client.(github.IssueStateFetcher); ok {
+		return stateClient.FetchIssueState(ctx, number)
+	}
+	issue, err := c.FetchIssue(ctx, number)
+	if err != nil || issue == nil {
+		return "", err
+	}
+	return issue.State, nil
+}
+
 func (c *cachedGitHubClient) SearchIssues(ctx context.Context, query string) ([]github.Issue, error) {
 	c.mu.Lock()
 	if issues, ok := c.searches[query]; ok {

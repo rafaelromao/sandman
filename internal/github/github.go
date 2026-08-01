@@ -2,6 +2,7 @@ package github
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"regexp"
 	"strconv"
@@ -29,6 +30,7 @@ type PR struct {
 	Merged      bool
 	HeadRefName string
 	HeadRefOid  string
+	UpdatedAt   time.Time
 	// ReviewDecision, MergeStateStatus, and StatusCheckRollup are populated
 	// by FindPRByBranch when available; they are empty when the underlying
 	// `gh` invocation omits the columns (e.g. on PRs that never had a
@@ -134,6 +136,7 @@ type PRComment struct {
 	Body        string
 	AuthorLogin string
 	CreatedAt   time.Time
+	UpdatedAt   time.Time
 }
 
 // IssueComment holds an issue conversation comment fetched from the GitHub
@@ -169,6 +172,36 @@ type Client interface {
 	RemoveCommentReaction(ctx context.Context, commentID, reactionID string) error
 	RemoveIssueReaction(ctx context.Context, issueNumber int, reactionID string) error
 	CloseIssue(ctx context.Context, issueNumber int, comment string) error
+}
+
+// IssueContentFetcher optionally provides a fresh issue payload without
+// resolving BlockedBy. Callers that only render an AgentRun prompt should use
+// it to avoid loading dependency metadata they do not consume.
+type IssueContentFetcher interface {
+	FetchIssueContent(ctx context.Context, number int) (*Issue, error)
+}
+
+// IssueStateFetcher optionally provides fresh state for a blocker recheck
+// without resolving its dependency graph.
+type IssueStateFetcher interface {
+	FetchIssueState(ctx context.Context, number int) (string, error)
+}
+
+// RateLimitError marks a GitHub CLI failure that explicitly reports a rate
+// limit. It retains the underlying command error for errors.Is/As callers.
+type RateLimitError struct {
+	Err        error
+	RetryAfter time.Duration
+}
+
+func (e *RateLimitError) Error() string { return e.Err.Error() }
+func (e *RateLimitError) Unwrap() error { return e.Err }
+
+// IsRateLimited reports whether GitHub explicitly rejected a request for a
+// primary or secondary rate limit.
+func IsRateLimited(err error) bool {
+	var target *RateLimitError
+	return errors.As(err, &target)
 }
 
 // OpenIssueLister is the optional capability the Specification

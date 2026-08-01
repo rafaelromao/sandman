@@ -41,7 +41,7 @@ func (p *GHCommentPoster) PostComment(ctx context.Context, prNumber int, body st
 	callCtx, cancel := p.cli.boundContext(ctx)
 	defer cancel()
 	cmd := p.cli.command(callCtx, "gh", "pr", "comment", strconv.Itoa(prNumber), "--body", body)
-	_, err := runCmd(callCtx, cmd, "gh pr comment")
+	_, err := p.cli.runCmd(callCtx, cmd, "gh pr comment")
 	if err != nil {
 		return fmt.Errorf("gh pr comment: %w", err)
 	}

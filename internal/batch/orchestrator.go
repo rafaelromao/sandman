@@ -1292,8 +1292,8 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				case blockerStatus.IsAborted():
 					abortedBy = append(abortedBy, blocker)
 				case blockerStatus.IsSuccess():
-					issue, err := o.githubClient.FetchIssue(issueCtx, blocker)
-					if err == nil && issue != nil && strings.EqualFold(issue.State, "open") {
+					state, err := fetchIssueState(issueCtx, o.githubClient, blocker)
+					if err == nil && strings.EqualFold(state, "open") {
 						stillBlockedBy = append(stillBlockedBy, blocker)
 					}
 				case blockerStatus.IsTerminal() && !blockerStatus.IsSuccess():
@@ -2110,14 +2110,26 @@ func (s *runSession) withClosingReferenceGuard(ctx context.Context, branch strin
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		ticker := time.NewTicker(interval)
-		defer ticker.Stop()
+		wait := interval
 		for {
+			outcome := repairOpenPRClosingReference(guardCtx, s.deps.githubClient, branch, s.issueNumber, s.deps.errorLog)
+			if outcome == closingGuardProtected || outcome == closingGuardTerminal {
+				return
+			}
+			// A PR cannot be repaired before it exists. Back off while it is
+			// absent, but preserve the configured cadence for lookup failures.
+			if (outcome == closingGuardAbsent || outcome == closingGuardRetry) && wait < 30*time.Second {
+				wait *= 2
+				if wait > 30*time.Second {
+					wait = 30 * time.Second
+				}
+			}
+			timer := time.NewTimer(wait)
 			select {
 			case <-guardCtx.Done():
+				timer.Stop()
 				return
-			case <-ticker.C:
-				repairOpenPRClosingReference(guardCtx, s.deps.githubClient, branch, s.issueNumber, s.deps.errorLog)
+			case <-timer.C:
 			}
 		}
 	}()
@@ -2128,30 +2140,59 @@ func (s *runSession) withClosingReferenceGuard(ctx context.Context, branch strin
 	return result
 }
 
+type closingGuardOutcome int
+
+const (
+	closingGuardRetry closingGuardOutcome = iota
+	closingGuardAbsent
+	closingGuardProtected
+	closingGuardTerminal
+)
+
 // repairOpenPRClosingReference repairs closing intent only while the PR is
 // open. It rechecks after the edit because an edit that races a merge cannot
 // make GitHub auto-close the issue retroactively.
-func repairOpenPRClosingReference(ctx context.Context, client github.Client, branch string, issueNumber int, errorLog io.Writer) {
+func repairOpenPRClosingReference(ctx context.Context, client github.Client, branch string, issueNumber int, errorLog io.Writer) closingGuardOutcome {
 	pr, err := client.FindPRByBranch(ctx, branch)
-	if err != nil || pr == nil || !strings.EqualFold(pr.State, "open") || pr.Merged {
-		return
+	if err != nil {
+		if github.IsRateLimited(err) {
+			return closingGuardTerminal
+		}
+		return closingGuardRetry
+	}
+	if pr == nil {
+		return closingGuardAbsent
+	}
+	if !strings.EqualFold(pr.State, "open") || pr.Merged {
+		return closingGuardTerminal
 	}
 	body, changed := github.EnsureClosingReference(pr.Body, issueNumber)
 	if !changed {
-		return
+		return closingGuardProtected
 	}
 	if err := client.EditPRBody(ctx, pr.Number, body); err != nil {
 		if errorLog != nil {
 			fmt.Fprintf(errorLog, "error: repair closing reference for PR #%d and issue %d: %v\n", pr.Number, issueNumber, err)
 		}
-		return
+		return closingGuardRetry
 	}
 	updated, err := client.FindPRByBranch(ctx, branch)
-	if err != nil || updated == nil || updated.Merged || !strings.EqualFold(updated.State, "open") {
+	if err != nil {
+		return closingGuardRetry
+	}
+	if updated == nil {
+		return closingGuardAbsent
+	}
+	if updated.Merged || !strings.EqualFold(updated.State, "open") {
 		if errorLog != nil {
 			fmt.Fprintf(errorLog, "error: PR #%d merged while repairing closing reference for issue %d\n", pr.Number, issueNumber)
 		}
+		return closingGuardTerminal
 	}
+	if updated.ClosesIssue(issueNumber) {
+		return closingGuardProtected
+	}
+	return closingGuardRetry
 }
 
 // emitTerminal writes the terminal run event (run.finished or run.aborted),
@@ -2675,7 +2716,7 @@ func (o *Orchestrator) runSingleRow(ctx context.Context, parentCtx context.Conte
 // execute runs the issue-driven AgentRun lifecycle owned by this session. It
 // contains the body that previously lived in (*Orchestrator).runSingle.
 func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
-	issue, err := s.deps.githubClient.FetchIssue(ctx, s.issueNumber)
+	issue, err := fetchIssueContent(ctx, s.deps.githubClient, s.issueNumber)
 	if err != nil {
 		fmt.Fprintf(s.deps.errorLog, "error: fetch issue %d: %v\n", s.issueNumber, err)
 		s.emitEarlyFailure("fetch issue", s.branches[s.issueNumber], err)
@@ -2976,16 +3017,37 @@ func recheckBlockedBy(ctx context.Context, githubClient github.Client, blockers 
 			return nil, err
 		}
 
-		issue, err := githubClient.FetchIssue(ctx, blocker)
+		state, err := fetchIssueState(ctx, githubClient, blocker)
 		if err != nil {
 			return nil, fmt.Errorf("fetch blocker issue %d: %w", blocker, err)
 		}
-		if !github.IsIssueClosed(issue) {
+		if !strings.EqualFold(state, "closed") {
 			blockedBy = append(blockedBy, blocker)
 		}
 	}
 
 	return blockedBy, nil
+}
+
+func fetchIssueContent(ctx context.Context, client github.Client, number int) (*github.Issue, error) {
+	if contentClient, ok := client.(github.IssueContentFetcher); ok {
+		return contentClient.FetchIssueContent(ctx, number)
+	}
+	return client.FetchIssue(ctx, number)
+}
+
+func fetchIssueState(ctx context.Context, client github.Client, number int) (string, error) {
+	if stateClient, ok := client.(github.IssueStateFetcher); ok {
+		return stateClient.FetchIssueState(ctx, number)
+	}
+	issue, err := client.FetchIssue(ctx, number)
+	if err != nil {
+		return "", err
+	}
+	if issue == nil {
+		return "", nil
+	}
+	return issue.State, nil
 }
 
 func resetRetryBranch(opts runSessionOptions, ctx context.Context, sb sandbox.Sandbox, branch, baseBranch string) error {
