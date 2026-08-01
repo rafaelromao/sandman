@@ -312,11 +312,12 @@ func (c *CLIClient) command(ctx context.Context, name string, arg ...string) *ex
 // text) survives the wrap.
 func runCmd(ctx context.Context, cmd *exec.Cmd, errMsg string) ([]byte, error) {
 	out, err := cmd.CombinedOutput()
-	if err == nil {
-		return out, nil
-	}
-	commandErr := commandError(ctx, errMsg, err, out)
-	if rateLimit, ok := commandErr.(*RateLimitError); ok && rateLimit.RetryAfter > 0 {
+	for err != nil {
+		commandErr := commandError(ctx, errMsg, err, out)
+		rateLimit, ok := commandErr.(*RateLimitError)
+		if !ok || rateLimit.RetryAfter <= 0 {
+			return out, commandErr
+		}
 		if err := waitForRateLimit(ctx, rateLimit.RetryAfter); err != nil {
 			return out, err
 		}
@@ -324,12 +325,8 @@ func runCmd(ctx context.Context, cmd *exec.Cmd, errMsg string) ([]byte, error) {
 		retry.Dir = cmd.Dir
 		retry.Env = cmd.Env
 		out, err = retry.CombinedOutput()
-		if err == nil {
-			return out, nil
-		}
-		return out, commandError(ctx, errMsg, err, out)
 	}
-	return out, commandErr
+	return out, nil
 }
 
 func commandError(ctx context.Context, errMsg string, err error, out []byte) error {
