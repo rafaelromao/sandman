@@ -40,6 +40,44 @@ func TestReviewStateStore_StartsEmpty(t *testing.T) {
 	}
 }
 
+func TestReviewStateStoreReconcilesLegacyAndSupersededRevisions(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "review-state.json")
+	future := time.Now().Add(time.Hour)
+	state := batchindex.ReviewState{
+		PR: 42,
+		SeenComments: []batchindex.SeenComment{
+			{CommentID: "123", Status: "success", Timestamp: time.Now()},
+			{CommentID: "123@100", Status: "failure", Timestamp: time.Now(), NextAttemptAt: &future},
+			{CommentID: "123@200", Status: "pending", Timestamp: time.Now()},
+		},
+		Claims: map[string]batchindex.Claim{"123@200": {Holder: "local", Since: time.Now()}},
+	}
+	if err := batchindex.WriteReviewState(filepath.Dir(path), state); err != nil {
+		t.Fatalf("WriteReviewState() error = %v", err)
+	}
+	store, err := NewReviewStateStore(path, 42, nil)
+	if err != nil {
+		t.Fatalf("NewReviewStateStore() error = %v", err)
+	}
+	changed, err := store.ReconcileCommentRevision("123", "123@300")
+	if err != nil || !changed {
+		t.Fatalf("ReconcileCommentRevision() = %v, %v; want changed success", changed, err)
+	}
+	reloaded, err := NewReviewStateStore(path, 42, nil)
+	if err != nil {
+		t.Fatalf("reopen state: %v", err)
+	}
+	if !reloaded.IsSeen("123@300") || reloaded.IsSeen("123") {
+		t.Fatal("legacy terminal state was not migrated to the revision key")
+	}
+	if got := ReadNextAttemptAt(reloaded, "123@100"); !got.IsZero() {
+		t.Fatalf("superseded retry stamp = %v, want zero", got)
+	}
+	if reloaded.IsClaimed("123@200") {
+		t.Fatal("superseded pending revision retained its claim")
+	}
+}
+
 // TestReviewStateStore_LoadsExistingClaims asserts that a store opened
 // against a valid JSON file sees the previously-recorded terminal
 // claims. Mirrors TestSeenCommentsStore_LoadsExistingIDs.

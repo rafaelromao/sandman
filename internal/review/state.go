@@ -403,6 +403,57 @@ func (s *ReviewStateStore) MarkSeenWithBudget(commentID, status string, attempts
 	return nil
 }
 
+// ReconcileCommentRevision migrates the legacy raw comment ID to its first
+// observed revision and retires older revisions of that comment. It preserves
+// old terminal entries as superseded evidence while clearing retry gates and
+// claims that would otherwise keep a PR eligible forever.
+func (s *ReviewStateStore) ReconcileCommentRevision(commentID, revision string) (bool, error) {
+	commentID = strings.TrimSpace(commentID)
+	revision = strings.TrimSpace(revision)
+	if commentID == "" || revision == "" || revision == commentID {
+		return false, nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	changed := false
+	if !s.isSeenLocked(revision) {
+		for i := range s.state.SeenComments {
+			if s.state.SeenComments[i].CommentID == commentID {
+				s.state.SeenComments[i].CommentID = revision
+				changed = true
+				break
+			}
+		}
+	}
+	if claim, ok := s.state.Claims[commentID]; ok {
+		if _, exists := s.state.Claims[revision]; !exists {
+			s.state.Claims[revision] = claim
+		}
+		delete(s.state.Claims, commentID)
+		changed = true
+	}
+	for i := range s.state.SeenComments {
+		sc := &s.state.SeenComments[i]
+		if sc.CommentID == revision || !isCommentRevision(commentID, sc.CommentID) {
+			continue
+		}
+		sc.Status = "superseded"
+		sc.Timestamp = time.Now()
+		sc.NextAttemptAt = nil
+		delete(s.state.Claims, sc.CommentID)
+		changed = true
+	}
+	if !changed {
+		return false, nil
+	}
+	return true, reviewStateSave(s)
+}
+
+func isCommentRevision(commentID, key string) bool {
+	return key == commentID || strings.HasPrefix(key, commentID+"@")
+}
+
 // reviewStateSave is an internal seam so tests can intercept the
 // atomic-rename write and confirm the cache hook does not fire on
 // Save errors. Production wires it to (*ReviewStateStore).saveLocked.
