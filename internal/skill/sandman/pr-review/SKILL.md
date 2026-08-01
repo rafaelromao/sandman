@@ -14,7 +14,7 @@ description: Automates the GitHub PR review loop with the PR Review Agent. Waits
 
 3. **You must NOT finish before the review timeout or max attempts when no feedback has been provided.** If `reviewDecision` is still `REVIEW_REQUIRED` (or absent), no reviews exist yet, no inline file comments exist, and only boilerplate setup comments are present, keep polling. Do not declare done or stop the loop. The only acceptable reasons to exit early are: approval (formal case A or informal case C), an explicit skill-defined irrecoverable stop condition, or 10 passes reached.
 
-4. **You must NOT exit the polling loop on a `0/0` count of (formal reviews, inline comments) when the top-level PR conversation has new comments from any non-agent author.** A reviewer who only posts a top-level PR conversation comment (no formal review event, no inline file comments) is still a real reviewer response. Re-classify the state, run the self-check (Step 4), and continue polling — do not give up.
+4. **You must NOT exit the polling loop on a `0/0` count of (formal reviews, inline comments) when the top-level PR conversation has a new non-trigger comment.** A reviewer who only posts a top-level PR conversation comment (no formal review event, no inline file comments) is still a real reviewer response. Re-classify the state, run the self-check (Step 4), and continue polling — do not give up.
 
 5. **You must NOT request another review while a previous `{{REVIEW_COMMAND}}` is still waiting for a response AND the PR head SHA has not changed.** Only post `{{REVIEW_COMMAND}}` again after either: (a) the reviewer has responded to the previous request, OR (b) a new commit has landed on the PR branch (head SHA changed). If the SHA changed, the previous request is stale — re-request regardless of feedback state. If SHA is unchanged but a response arrived, act on it before re-requesting.
 
@@ -164,7 +164,7 @@ Total polling budget: **900s = 15 minutes** of cumulative sleep (120 + 60 + 60 +
 
 Track `review_sleep_elapsed` across the polling loop. Before every sleep, if adding the next interval would exceed 900 seconds, record `REVIEW_TIMEOUT` in `.sandman/task.md` and the run log and exit; otherwise add the interval to `review_sleep_elapsed` after sleeping. A new review request starts a fresh counter.
 
-**Hard rule — observed-response fast path.** If any poll iteration observes a new top-level PR conversation comment whose author is not the agent itself, the very next sleep MUST be ≤ 60s.
+**Hard rule — observed-response fast path.** If any poll iteration observes a new top-level PR conversation comment that does not begin with `{{REVIEW_COMMAND}}`, the very next sleep MUST be ≤ 60s.
 
 **Hard rule — DIRTY mid-poll must trigger back-merge, not be observed and ignored.** A PR whose `mergeStateStatus` was CLEAN at Step 1 can drift to `DIRTY` mid-poll once a new commit lands on the base branch and conflicts with the PR. The DIRTY pre-check at Step 2 only catches the initial state; subsequent polls MUST detect and resolve this. See Step 5a.
 
@@ -179,12 +179,12 @@ gh api repos/<owner>/<repo>/pulls/<N>/comments --paginate
 Counter: `top=<count> reviews=<count> inline=<count>`
 
 Counter definitions:
-- `top` = top-level change-request comments from the change-request view (the JSON `comments` field) whose author is not the agent itself AND whose body is not the `{{REVIEW_COMMAND}}` request
+- `top` = top-level change-request comments from the change-request view (the JSON `comments` field) posted after the most recent `{{REVIEW_COMMAND}}` trigger whose body does not begin with `{{REVIEW_COMMAND}}`. Do not filter by author: the implementor and reviewer may share credentials.
 - `reviews` = entries returned by the reviews endpoint (full entry, not truncated `latestReviews`)
 - `inline` = entries returned by the inline comments endpoint with pagination
 
 A reviewer response is **any** of:
-- A new top-level comment whose author is not the agent itself and whose body is not the `{{REVIEW_COMMAND}}` request
+- A new top-level comment posted after the most recent `{{REVIEW_COMMAND}}` trigger whose body does not begin with `{{REVIEW_COMMAND}}`, regardless of author
 - A formal review with `state: COMMENTED`, `APPROVED`, or `CHANGES_REQUESTED`
 - An inline file comment
 
