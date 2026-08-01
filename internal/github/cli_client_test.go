@@ -27,6 +27,18 @@ type fakeResponse struct {
 	err    error
 }
 
+type rateLimitRunner struct {
+	calls int
+}
+
+func (r *rateLimitRunner) Run(ctx context.Context, name string, arg ...string) *exec.Cmd {
+	r.calls++
+	if r.calls == 1 {
+		return exec.CommandContext(ctx, "sh", "-c", "printf 'rate limit; retry-after: 1' >&2; exit 1")
+	}
+	return exec.CommandContext(ctx, "echo", `{"login":"octocat"}`)
+}
+
 func (f *fakeRunner) Run(ctx context.Context, name string, arg ...string) *exec.Cmd {
 	f.calls = append(f.calls, fakeCall{ctx: ctx, name: name, args: append([]string(nil), arg...)})
 	idx := len(f.calls) - 1
@@ -436,6 +448,22 @@ func TestClassifyRateLimit(t *testing.T) {
 func TestParseRateLimitRetryAfter(t *testing.T) {
 	if got := parseRateLimitRetryAfter("secondary rate limit; retry-after: 30", time.Now()); got != 30*time.Second {
 		t.Fatalf("retry-after = %s, want 30s", got)
+	}
+}
+
+func TestCLIClientRetriesRateLimitedCommandThroughRunner(t *testing.T) {
+	runner := &rateLimitRunner{}
+	client := &CLIClient{runner: runner}
+
+	login, err := client.AuthenticatedLogin(context.Background())
+	if err != nil {
+		t.Fatalf("AuthenticatedLogin() error = %v", err)
+	}
+	if login != "octocat" {
+		t.Fatalf("AuthenticatedLogin() = %q, want octocat", login)
+	}
+	if runner.calls != 2 {
+		t.Fatalf("runner calls = %d, want initial request plus retry", runner.calls)
 	}
 }
 

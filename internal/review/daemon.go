@@ -189,6 +189,7 @@ type Daemon struct {
 	commentVersions      map[int]time.Time
 	commentVersionsMu    sync.Mutex
 	rateLimitedUntil     time.Time
+	rateLimitedMu        sync.Mutex
 	// nextAttempt is the per-(prNumber, commentID) retry-budget
 	// stamp persisted in review-state.json (issue #2211). The
 	// processPR dedup loop consults it on every tick and skips
@@ -984,7 +985,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 // tick performs one full scan over open PRs. It serializes via a single
 // semaphore so concurrent trigger signals are dropped while a scan runs.
 func (d *Daemon) tick(ctx context.Context) error {
-	if !d.rateLimitedUntil.IsZero() && d.now().Before(d.rateLimitedUntil) {
+	if d.isRateLimited() {
 		return nil
 	}
 	select {
@@ -998,7 +999,7 @@ func (d *Daemon) tick(ctx context.Context) error {
 	prs, err := d.GitHub.ListOpenPRs(ctx)
 	if err != nil {
 		if github.IsRateLimited(err) {
-			d.rateLimitedUntil = d.now().Add(PollingInterval)
+			d.deferForRateLimit()
 		}
 		return fmt.Errorf("list open PRs: %w", err)
 	}
@@ -1023,6 +1024,18 @@ func (d *Daemon) tick(ctx context.Context) error {
 	}
 	wg.Wait()
 	return nil
+}
+
+func (d *Daemon) isRateLimited() bool {
+	d.rateLimitedMu.Lock()
+	defer d.rateLimitedMu.Unlock()
+	return !d.rateLimitedUntil.IsZero() && d.now().Before(d.rateLimitedUntil)
+}
+
+func (d *Daemon) deferForRateLimit() {
+	d.rateLimitedMu.Lock()
+	defer d.rateLimitedMu.Unlock()
+	d.rateLimitedUntil = d.now().Add(PollingInterval)
 }
 
 // shouldReadComments keeps an initial scan (and all compatibility clients
@@ -1165,6 +1178,11 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) error {
 	}
 	if len(triggers) == 0 {
 		return nil
+	}
+	for _, trigger := range triggers {
+		if err := d.reconcileCommentRevision(prNumber, trigger.comment, trigger.key); err != nil {
+			return err
+		}
 	}
 
 	// Cross-run dedup: read terminal-seen membership from the
@@ -1345,6 +1363,79 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) error {
 	}()
 
 	return nil
+}
+
+// reconcileCommentRevision updates persisted pre-revision state before the
+// cache is consulted, then retires stale retry and pending entries in memory.
+func (d *Daemon) reconcileCommentRevision(prNumber int, comment github.PRComment, key string) error {
+	if key == comment.ID {
+		return nil
+	}
+	idx, err := seenCacheLoader(d.BaseDir)
+	if err != nil || idx == nil {
+		return err
+	}
+	for _, entry := range idx.Batches {
+		if entry.Kind != batchindex.KindReview || entry.PR != prNumber {
+			continue
+		}
+		rowID, err := readReviewRowID(filepath.Join(entry.Path, "runs"))
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return err
+		}
+		store, err := NewReviewStateStore(filepath.Join(entry.Path, "runs", rowID, "review-state.json"), prNumber, nil)
+		if err != nil {
+			return err
+		}
+		if _, err := store.ReconcileCommentRevision(comment.ID, key); err != nil {
+			return err
+		}
+	}
+	d.reconcileCommentRevisionCache(prNumber, comment.ID, key)
+	return nil
+}
+
+func (d *Daemon) reconcileCommentRevisionCache(prNumber int, commentID, key string) {
+	d.seenCacheMu.Lock()
+	if seen := d.seenCache[prNumber]; seen != nil {
+		if seen[commentID] {
+			delete(seen, commentID)
+			seen[key] = true
+		}
+	}
+	d.seenCacheMu.Unlock()
+
+	d.nextAttemptMu.Lock()
+	if attempts := d.nextAttempt[prNumber]; attempts != nil {
+		if stamp, ok := attempts[commentID]; ok {
+			delete(attempts, commentID)
+			attempts[key] = stamp
+		}
+		for candidate := range attempts {
+			if candidate != key && isCommentRevision(commentID, candidate) {
+				delete(attempts, candidate)
+			}
+		}
+	}
+	d.nextAttemptMu.Unlock()
+
+	d.pendingPostMu.Lock()
+	if pending := d.pendingPost[prNumber]; pending != nil {
+		if entry, ok := pending[commentID]; ok {
+			delete(pending, commentID)
+			entry.commentID = key
+			pending[key] = entry
+		}
+		for candidate := range pending {
+			if candidate != key && isCommentRevision(commentID, candidate) {
+				delete(pending, candidate)
+			}
+		}
+	}
+	d.pendingPostMu.Unlock()
 }
 
 // loadGlobalSeenForPR was removed in issue #1480: cross-run

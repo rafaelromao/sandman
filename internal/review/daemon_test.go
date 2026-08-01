@@ -136,6 +136,69 @@ func TestDaemonProcessesEditedReviewTriggerAsNewRevision(t *testing.T) {
 	}
 }
 
+func TestDaemonMigratesLegacyTerminalStateBeforeRevisionDedup(t *testing.T) {
+	const (
+		prNumber  = 17
+		commentID = "123"
+		batchID   = "20260801-abc-PR17"
+	)
+	dir := testenv.MkdirShort(t, "sm-review-")
+	seedPriorReviewEntry(t, dir, batchID, prNumber, commentID, "success")
+	comment := github.PRComment{ID: commentID, Body: "/sandman review", CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	gh := &fakeGH{prs: []github.PR{{Number: prNumber, State: "open"}}, comments: map[int][]github.PRComment{prNumber: {comment}}}
+	runner := &capturedRequest{}
+	d := New(dir, gh, &prompt.Engine{}, runner, &config.Config{WorktreeDir: ".sandman/worktrees"}, &lockedBuffer{}, 0, false, nil)
+
+	tickAndWait(t, d, context.Background())
+	if runner.Calls() != 0 {
+		t.Fatalf("RunBatch calls = %d, want 0 for migrated terminal state", runner.Calls())
+	}
+	state, err := batchindex.ReadReviewState(filepath.Join(dir, "batches", batchID, "runs", deriveReviewRowID(batchID, prNumber)))
+	if err != nil {
+		t.Fatalf("ReadReviewState() error = %v", err)
+	}
+	key := reviewTriggerKey(comment)
+	if len(state.SeenComments) != 1 || state.SeenComments[0].CommentID != key {
+		t.Fatalf("legacy state = %+v, want revision key %q", state.SeenComments, key)
+	}
+}
+
+func TestDaemonMigratesLegacyPendingStateBeforeRehydration(t *testing.T) {
+	const (
+		prNumber  = 17
+		commentID = "123"
+		batchID   = "20260801-def-PR17"
+	)
+	dir := testenv.MkdirShort(t, "sm-review-")
+	seedPriorReviewEntry(t, dir, batchID, prNumber, commentID, "pending")
+	comment := github.PRComment{ID: commentID, Body: "/sandman review", CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	gh := &fakeGH{prs: []github.PR{{Number: prNumber, State: "open"}}, comments: map[int][]github.PRComment{prNumber: {comment}}}
+	runner := &capturedRequest{}
+	d := New(dir, gh, &prompt.Engine{}, runner, &config.Config{WorktreeDir: ".sandman/worktrees"}, &lockedBuffer{}, 0, false, nil)
+	if err := os.MkdirAll(d.reviewWorktreePath(prNumber, commentID), 0o755); err != nil {
+		t.Fatalf("create legacy worktree: %v", err)
+	}
+	if err := os.WriteFile(d.reviewDecisionPath(prNumber, commentID), []byte("review"), 0o644); err != nil {
+		t.Fatalf("write decision: %v", err)
+	}
+	if err := d.InvalidatePendingPosts(); err != nil {
+		t.Fatalf("InvalidatePendingPosts() error = %v", err)
+	}
+
+	tickAndWait(t, d, context.Background())
+	if runner.Calls() != 0 {
+		t.Fatalf("RunBatch calls = %d, want rehydration without relaunch", runner.Calls())
+	}
+	state, err := batchindex.ReadReviewState(filepath.Join(dir, "batches", batchID, "runs", deriveReviewRowID(batchID, prNumber)))
+	if err != nil {
+		t.Fatalf("ReadReviewState() error = %v", err)
+	}
+	key := reviewTriggerKey(comment)
+	if len(state.SeenComments) != 1 || state.SeenComments[0].CommentID != key || state.SeenComments[0].Status != "success" {
+		t.Fatalf("rehydrated state = %+v, want successful revision %q", state.SeenComments, key)
+	}
+}
+
 func (f *fakeGH) AuthenticatedLogin(ctx context.Context) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
