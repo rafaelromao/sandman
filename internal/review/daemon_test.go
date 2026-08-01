@@ -53,6 +53,25 @@ type fakeGH struct {
 	addReactionID         int // auto-increment for fake reaction IDs
 }
 
+func TestDaemonSkipsUnchangedPRCommentSnapshot(t *testing.T) {
+	d := &Daemon{}
+	pr := github.PR{Number: 17, UpdatedAt: time.Date(2026, time.August, 1, 12, 0, 0, 0, time.UTC)}
+	if !d.shouldReadComments(pr) {
+		t.Fatal("first observation must read comments")
+	}
+	d.markCommentsRead(pr)
+	if d.shouldReadComments(pr) {
+		t.Fatal("unchanged PR must not re-read comments")
+	}
+	pr.UpdatedAt = pr.UpdatedAt.Add(time.Second)
+	if !d.shouldReadComments(pr) {
+		t.Fatal("updated PR must re-read comments")
+	}
+	if !d.shouldReadComments(github.PR{Number: 18}) {
+		t.Fatal("PR without update token must retain compatibility read")
+	}
+}
+
 func (f *fakeGH) AuthenticatedLogin(ctx context.Context) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

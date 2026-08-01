@@ -184,6 +184,8 @@ type Daemon struct {
 	promptOnce           sync.Once
 	seenCache            map[int]map[string]bool
 	seenCacheMu          sync.RWMutex
+	commentVersions      map[int]time.Time
+	commentVersionsMu    sync.Mutex
 	// nextAttempt is the per-(prNumber, commentID) retry-budget
 	// stamp persisted in review-state.json (issue #2211). The
 	// processPR dedup loop consults it on every tick and skips
@@ -994,17 +996,47 @@ func (d *Daemon) tick(ctx context.Context) error {
 
 	var wg sync.WaitGroup
 	for _, pr := range prs {
+		if !d.shouldReadComments(pr) {
+			continue
+		}
 		pr := pr
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			if err := d.processPR(ctx, pr.Number); err != nil {
 				d.logf("process PR #%d: %v", pr.Number, err)
+				return
 			}
+			d.markCommentsRead(pr)
 		}()
 	}
 	wg.Wait()
 	return nil
+}
+
+// shouldReadComments keeps an initial scan (and all compatibility clients
+// that omit updatedAt) unchanged. GitHub updates a pull request's updatedAt
+// when its conversation changes, so a stable token means the previous comment
+// snapshot remains valid for trigger discovery.
+func (d *Daemon) shouldReadComments(pr github.PR) bool {
+	if pr.UpdatedAt.IsZero() {
+		return true
+	}
+	d.commentVersionsMu.Lock()
+	defer d.commentVersionsMu.Unlock()
+	return d.commentVersions[pr.Number] != pr.UpdatedAt
+}
+
+func (d *Daemon) markCommentsRead(pr github.PR) {
+	if pr.UpdatedAt.IsZero() {
+		return
+	}
+	d.commentVersionsMu.Lock()
+	defer d.commentVersionsMu.Unlock()
+	if d.commentVersions == nil {
+		d.commentVersions = make(map[int]time.Time)
+	}
+	d.commentVersions[pr.Number] = pr.UpdatedAt
 }
 
 // processPR scans one PR's comments and launches a review agent for the

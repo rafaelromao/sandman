@@ -216,6 +216,7 @@ type prPayload struct {
 	MergedAt                string          `json:"mergedAt"`
 	HeadRefName             string          `json:"headRefName"`
 	HeadRefOid              string          `json:"headRefOid"`
+	UpdatedAt               string          `json:"updatedAt"`
 	ReviewDecision          string          `json:"reviewDecision"`
 	MergeStateStatus        string          `json:"mergeStateStatus"`
 	StatusCheckRollup       json.RawMessage `json:"statusCheckRollup"`
@@ -476,7 +477,7 @@ func (c *CLIClient) FetchIssueDependencies(ctx context.Context, number int) ([]i
 func (c *CLIClient) FindPRByBranch(ctx context.Context, branch string) (*PR, error) {
 	callCtx, cancel := c.boundContext(ctx)
 	defer cancel()
-	cmd := c.command(callCtx, "gh", "pr", "list", "--head", branch, "--state", "all", "--json", "number,state,body,mergedAt,headRefName,headRefOid,reviewDecision,mergeStateStatus,statusCheckRollup", "--limit", "1")
+	cmd := c.command(callCtx, "gh", "pr", "list", "--head", branch, "--state", "all", "--json", "number,state,body,mergedAt,headRefName,headRefOid,updatedAt,reviewDecision,mergeStateStatus,statusCheckRollup", "--limit", "1")
 	out, err := runCmd(callCtx, cmd, "gh pr list")
 	if err != nil {
 		return nil, fmt.Errorf("gh pr list: %w", err)
@@ -497,6 +498,7 @@ func (c *CLIClient) FindPRByBranch(ctx context.Context, branch string) (*PR, err
 		Merged:            strings.TrimSpace(payload.MergedAt) != "",
 		HeadRefName:       payload.HeadRefName,
 		HeadRefOid:        payload.HeadRefOid,
+		UpdatedAt:         parseGitHubTime(payload.UpdatedAt),
 		ReviewDecision:    payload.ReviewDecision,
 		MergeStateStatus:  payload.MergeStateStatus,
 		StatusCheckRollup: rollupStateFromJSON(payload.StatusCheckRollup),
@@ -512,7 +514,7 @@ const prListPageLimit = "1000"
 func (c *CLIClient) ListOpenPRs(ctx context.Context) ([]PR, error) {
 	callCtx, cancel := c.boundContext(ctx)
 	defer cancel()
-	cmd := c.command(callCtx, "gh", "pr", "list", "--state", "open", "--json", "number,state,title,body,mergedAt,headRefName,headRefOid", "--limit", prListPageLimit)
+	cmd := c.command(callCtx, "gh", "pr", "list", "--state", "open", "--json", "number,state,title,body,mergedAt,headRefName,headRefOid,updatedAt", "--limit", prListPageLimit)
 	out, err := runCmd(callCtx, cmd, "gh pr list")
 	if err != nil {
 		return nil, fmt.Errorf("gh pr list: %w", err)
@@ -533,9 +535,15 @@ func (c *CLIClient) ListOpenPRs(ctx context.Context) ([]PR, error) {
 			Merged:      strings.TrimSpace(payload.MergedAt) != "",
 			HeadRefName: payload.HeadRefName,
 			HeadRefOid:  payload.HeadRefOid,
+			UpdatedAt:   parseGitHubTime(payload.UpdatedAt),
 		})
 	}
 	return prs, nil
+}
+
+func parseGitHubTime(value string) time.Time {
+	t, _ := time.Parse(time.RFC3339, value)
+	return t
 }
 
 type prCommentPayload struct {
