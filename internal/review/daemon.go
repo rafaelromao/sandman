@@ -53,6 +53,8 @@ var postStepBackoffs = []time.Duration{
 	16 * time.Second,
 }
 
+var errReviewDeferred = errors.New("review deferred until a slot is available")
+
 // failureBackoffBase is the floor of the launch-failure backoff
 // schedule. Doubled each attempt, capped at failureBackoffCap. The
 // schedule is exponential so a transient upstream failure (e.g. the
@@ -186,6 +188,7 @@ type Daemon struct {
 	seenCacheMu          sync.RWMutex
 	commentVersions      map[int]time.Time
 	commentVersionsMu    sync.Mutex
+	rateLimitedUntil     time.Time
 	// nextAttempt is the per-(prNumber, commentID) retry-budget
 	// stamp persisted in review-state.json (issue #2211). The
 	// processPR dedup loop consults it on every tick and skips
@@ -981,6 +984,9 @@ func (d *Daemon) Run(ctx context.Context) error {
 // tick performs one full scan over open PRs. It serializes via a single
 // semaphore so concurrent trigger signals are dropped while a scan runs.
 func (d *Daemon) tick(ctx context.Context) error {
+	if !d.rateLimitedUntil.IsZero() && d.now().Before(d.rateLimitedUntil) {
+		return nil
+	}
 	select {
 	case d.busy <- struct{}{}:
 		defer func() { <-d.busy }()
@@ -991,6 +997,9 @@ func (d *Daemon) tick(ctx context.Context) error {
 
 	prs, err := d.GitHub.ListOpenPRs(ctx)
 	if err != nil {
+		if github.IsRateLimited(err) {
+			d.rateLimitedUntil = d.now().Add(PollingInterval)
+		}
 		return fmt.Errorf("list open PRs: %w", err)
 	}
 
@@ -1004,7 +1013,9 @@ func (d *Daemon) tick(ctx context.Context) error {
 		go func() {
 			defer wg.Done()
 			if err := d.processPR(ctx, pr.Number); err != nil {
-				d.logf("process PR #%d: %v", pr.Number, err)
+				if !errors.Is(err, errReviewDeferred) {
+					d.logf("process PR #%d: %v", pr.Number, err)
+				}
 				return
 			}
 			d.markCommentsRead(pr)
@@ -1023,9 +1034,6 @@ func (d *Daemon) shouldReadComments(pr github.PR) bool {
 		return true
 	}
 	if d.hasPendingPost(pr.Number) {
-		return true
-	}
-	if d.slotPool != nil && len(d.slotPool) == cap(d.slotPool) {
 		return true
 	}
 	d.commentVersionsMu.Lock()
@@ -1221,7 +1229,7 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) error {
 	// in-flight review (or the parallel_reviews cross-PR cap) makes
 	// the trigger wait for the next tick instead of dropping it.
 	if !d.acquirePRSlot(prNumber) {
-		return nil
+		return errReviewDeferred
 	}
 
 	reviewRunFolder, perRowRunID, rs, state, prepErr := d.prepareReviewRun(ctx, prNumber, comment.ID)

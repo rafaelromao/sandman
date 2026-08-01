@@ -320,9 +320,17 @@ func runCmd(ctx context.Context, cmd *exec.Cmd, errMsg string) ([]byte, error) {
 		suffix = "\n" + string(out)
 	}
 	if cerr := ctx.Err(); cerr != nil {
-		return out, fmt.Errorf("%s (context: %w): %w%s", errMsg, cerr, err, suffix)
+		return out, classifyRateLimit(fmt.Errorf("%s (context: %w): %w%s", errMsg, cerr, err, suffix))
 	}
-	return out, fmt.Errorf("%s: %w%s", errMsg, err, suffix)
+	return out, classifyRateLimit(fmt.Errorf("%s: %w%s", errMsg, err, suffix))
+}
+
+func classifyRateLimit(err error) error {
+	message := strings.ToLower(err.Error())
+	if strings.Contains(message, "rate limit") || strings.Contains(message, "retry-after") {
+		return &RateLimitError{Err: err}
+	}
+	return err
 }
 
 func (c *CLIClient) resolveRepo(ctx context.Context) (string, string, error) {

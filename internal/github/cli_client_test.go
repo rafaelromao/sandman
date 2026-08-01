@@ -422,6 +422,17 @@ func TestCLIClient_ResolveRepo_Error(t *testing.T) {
 	}
 }
 
+func TestClassifyRateLimit(t *testing.T) {
+	for _, message := range []string{"API rate limit exceeded", "secondary rate limit; retry-after: 30"} {
+		if !IsRateLimited(classifyRateLimit(errors.New(message))) {
+			t.Fatalf("%q was not classified as rate limited", message)
+		}
+	}
+	if IsRateLimited(classifyRateLimit(errors.New("network unavailable"))) {
+		t.Fatal("ordinary command error was classified as rate limited")
+	}
+}
+
 func TestCLIClient_FetchIssue_Success(t *testing.T) {
 	runner := &fakeRunner{responses: []fakeResponse{
 		{output: `{"name":"sandman","owner":{"login":"rafaelromao"}}`},

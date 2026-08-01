@@ -2,6 +2,7 @@ package github
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"regexp"
 	"strconv"
@@ -183,6 +184,20 @@ type IssueContentFetcher interface {
 // without resolving its dependency graph.
 type IssueStateFetcher interface {
 	FetchIssueState(ctx context.Context, number int) (string, error)
+}
+
+// RateLimitError marks a GitHub CLI failure that explicitly reports a rate
+// limit. It retains the underlying command error for errors.Is/As callers.
+type RateLimitError struct{ Err error }
+
+func (e *RateLimitError) Error() string { return e.Err.Error() }
+func (e *RateLimitError) Unwrap() error { return e.Err }
+
+// IsRateLimited reports whether GitHub explicitly rejected a request for a
+// primary or secondary rate limit.
+func IsRateLimited(err error) bool {
+	var target *RateLimitError
+	return errors.As(err, &target)
 }
 
 // OpenIssueLister is the optional capability the Specification

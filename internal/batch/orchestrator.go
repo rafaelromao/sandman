@@ -2155,6 +2155,9 @@ const (
 func repairOpenPRClosingReference(ctx context.Context, client github.Client, branch string, issueNumber int, errorLog io.Writer) closingGuardOutcome {
 	pr, err := client.FindPRByBranch(ctx, branch)
 	if err != nil {
+		if github.IsRateLimited(err) {
+			return closingGuardTerminal
+		}
 		return closingGuardRetry
 	}
 	if pr == nil {
