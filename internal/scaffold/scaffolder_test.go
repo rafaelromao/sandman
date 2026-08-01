@@ -412,6 +412,7 @@ func TestScaffold_RustPresetUsesToolchainFileAndVerifiesRuntimeTools(t *testing.
 	content := string(data)
 	for _, want := range []string{
 		"# sandman rust-version: 1.97.1",
+		"RUN mise use -g --pin rust@1.97.1",
 		"ENV RUSTUP_HOME=\"/usr/local/rustup\"",
 		"ENV CARGO_HOME=\"/usr/local/cargo\"",
 		"rustup component add rustfmt clippy",
