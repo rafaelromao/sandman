@@ -1022,9 +1022,21 @@ func (d *Daemon) shouldReadComments(pr github.PR) bool {
 	if pr.UpdatedAt.IsZero() {
 		return true
 	}
+	if d.hasPendingPost(pr.Number) {
+		return true
+	}
+	if d.slotPool != nil && len(d.slotPool) == cap(d.slotPool) {
+		return true
+	}
 	d.commentVersionsMu.Lock()
 	defer d.commentVersionsMu.Unlock()
 	return d.commentVersions[pr.Number] != pr.UpdatedAt
+}
+
+func (d *Daemon) hasPendingPost(prNumber int) bool {
+	d.pendingPostMu.Lock()
+	defer d.pendingPostMu.Unlock()
+	return len(d.pendingPost[prNumber]) > 0
 }
 
 func (d *Daemon) markCommentsRead(pr github.PR) {
