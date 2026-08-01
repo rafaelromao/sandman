@@ -2110,14 +2110,26 @@ func (s *runSession) withClosingReferenceGuard(ctx context.Context, branch strin
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		ticker := time.NewTicker(interval)
-		defer ticker.Stop()
+		wait := interval
 		for {
+			outcome := repairOpenPRClosingReference(guardCtx, s.deps.githubClient, branch, s.issueNumber, s.deps.errorLog)
+			if outcome == closingGuardProtected || outcome == closingGuardTerminal {
+				return
+			}
+			// A PR cannot be repaired before it exists. Back off while it is
+			// absent, but preserve the configured cadence for lookup failures.
+			if outcome == closingGuardAbsent && wait < 30*time.Second {
+				wait *= 2
+				if wait > 30*time.Second {
+					wait = 30 * time.Second
+				}
+			}
+			timer := time.NewTimer(wait)
 			select {
 			case <-guardCtx.Done():
+				timer.Stop()
 				return
-			case <-ticker.C:
-				repairOpenPRClosingReference(guardCtx, s.deps.githubClient, branch, s.issueNumber, s.deps.errorLog)
+			case <-timer.C:
 			}
 		}
 	}()
@@ -2128,30 +2140,56 @@ func (s *runSession) withClosingReferenceGuard(ctx context.Context, branch strin
 	return result
 }
 
+type closingGuardOutcome int
+
+const (
+	closingGuardRetry closingGuardOutcome = iota
+	closingGuardAbsent
+	closingGuardProtected
+	closingGuardTerminal
+)
+
 // repairOpenPRClosingReference repairs closing intent only while the PR is
 // open. It rechecks after the edit because an edit that races a merge cannot
 // make GitHub auto-close the issue retroactively.
-func repairOpenPRClosingReference(ctx context.Context, client github.Client, branch string, issueNumber int, errorLog io.Writer) {
+func repairOpenPRClosingReference(ctx context.Context, client github.Client, branch string, issueNumber int, errorLog io.Writer) closingGuardOutcome {
 	pr, err := client.FindPRByBranch(ctx, branch)
-	if err != nil || pr == nil || !strings.EqualFold(pr.State, "open") || pr.Merged {
-		return
+	if err != nil {
+		return closingGuardRetry
+	}
+	if pr == nil {
+		return closingGuardAbsent
+	}
+	if !strings.EqualFold(pr.State, "open") || pr.Merged {
+		return closingGuardTerminal
 	}
 	body, changed := github.EnsureClosingReference(pr.Body, issueNumber)
 	if !changed {
-		return
+		return closingGuardProtected
 	}
 	if err := client.EditPRBody(ctx, pr.Number, body); err != nil {
 		if errorLog != nil {
 			fmt.Fprintf(errorLog, "error: repair closing reference for PR #%d and issue %d: %v\n", pr.Number, issueNumber, err)
 		}
-		return
+		return closingGuardRetry
 	}
 	updated, err := client.FindPRByBranch(ctx, branch)
-	if err != nil || updated == nil || updated.Merged || !strings.EqualFold(updated.State, "open") {
+	if err != nil {
+		return closingGuardRetry
+	}
+	if updated == nil {
+		return closingGuardAbsent
+	}
+	if updated.Merged || !strings.EqualFold(updated.State, "open") {
 		if errorLog != nil {
 			fmt.Fprintf(errorLog, "error: PR #%d merged while repairing closing reference for issue %d\n", pr.Number, issueNumber)
 		}
+		return closingGuardTerminal
 	}
+	if updated.ClosesIssue(issueNumber) {
+		return closingGuardProtected
+	}
+	return closingGuardRetry
 }
 
 // emitTerminal writes the terminal run event (run.finished or run.aborted),

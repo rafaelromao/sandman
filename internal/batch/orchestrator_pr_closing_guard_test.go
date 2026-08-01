@@ -16,20 +16,28 @@ import (
 
 type closingReferenceTestClient struct {
 	*fakeGitHubClient
-	mu       sync.Mutex
-	pr       *github.PR
-	repaired chan struct{}
-	once     sync.Once
+	mu        sync.Mutex
+	pr        *github.PR
+	repaired  chan struct{}
+	once      sync.Once
+	findCalls int
 }
 
 func (c *closingReferenceTestClient) FindPRByBranch(context.Context, string) (*github.PR, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.findCalls++
 	if c.pr == nil {
 		return nil, nil
 	}
 	pr := *c.pr
 	return &pr, nil
+}
+
+func (c *closingReferenceTestClient) calls() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.findCalls
 }
 
 func (c *closingReferenceTestClient) EditPRBody(_ context.Context, prNumber int, body string) error {
@@ -41,6 +49,29 @@ func (c *closingReferenceTestClient) EditPRBody(_ context.Context, prNumber int,
 	c.pr.Body = body
 	c.once.Do(func() { close(c.repaired) })
 	return nil
+}
+
+func TestClosingReferenceGuardStopsAfterValidOpenPR(t *testing.T) {
+	client := &closingReferenceTestClient{
+		fakeGitHubClient: &fakeGitHubClient{},
+		pr:               &github.PR{Number: 355, State: "open", Body: "Closes #348"},
+	}
+	session := &runSession{
+		issueNumber: 348,
+		deps: runDeps{
+			githubClient:             client,
+			closingGuardTickInterval: time.Millisecond,
+		},
+	}
+
+	session.withClosingReferenceGuard(context.Background(), "348-acceptance", func() AgentRunResult {
+		time.Sleep(20 * time.Millisecond)
+		return AgentRunResult{Status: "success"}
+	})
+
+	if calls := client.calls(); calls != 1 {
+		t.Fatalf("FindPRByBranch calls = %d, want 1 after valid PR", calls)
+	}
 }
 
 func (c *closingReferenceTestClient) createPR(pr *github.PR) {
