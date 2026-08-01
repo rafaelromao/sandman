@@ -467,6 +467,33 @@ func TestCLIClient_FetchIssue_Success(t *testing.T) {
 	}
 }
 
+func TestCLIClient_FetchIssueContentAndStateSkipDependencyReads(t *testing.T) {
+	runner := &fakeRunner{responses: []fakeResponse{
+		{output: `{"name":"sandman","owner":{"login":"rafaelromao"}}`},
+		{output: `{"number":61,"state":"open","title":"Render me","body":"Body","labels":[]}`},
+		{output: `{"number":62,"state":"closed","title":"Blocker","body":"","labels":[]}`},
+	}}
+	client := &CLIClient{runner: runner}
+
+	issue, err := client.FetchIssueContent(context.Background(), 61)
+	if err != nil {
+		t.Fatalf("FetchIssueContent() error = %v", err)
+	}
+	if issue.Body != "Body" || len(issue.BlockedBy) != 0 {
+		t.Fatalf("FetchIssueContent() = %#v, want content without blockers", issue)
+	}
+	state, err := client.FetchIssueState(context.Background(), 62)
+	if err != nil {
+		t.Fatalf("FetchIssueState() error = %v", err)
+	}
+	if state != "closed" {
+		t.Fatalf("FetchIssueState() = %q, want closed", state)
+	}
+	if len(runner.calls) != 3 {
+		t.Fatalf("commands = %d, want repo lookup plus two issue reads", len(runner.calls))
+	}
+}
+
 func TestCLIClient_FetchIssueDependencies_FromIssuePayload(t *testing.T) {
 	runner := &fakeRunner{responses: []fakeResponse{
 		{output: `{"name":"sandman","owner":{"login":"rafaelromao"}}`},

@@ -383,6 +383,10 @@ func (c *CLIClient) FetchIssue(ctx context.Context, number int) (*Issue, error) 
 		blockedBy = mergeIssueNumbers(blockedBy, nativeBlockedBy)
 	}
 
+	return issueFromPayload(issue, blockedBy), nil
+}
+
+func issueFromPayload(issue issuePayload, blockedBy []int) *Issue {
 	return &Issue{
 		Number:    issue.Number,
 		State:     issue.State,
@@ -390,7 +394,30 @@ func (c *CLIClient) FetchIssue(ctx context.Context, number int) (*Issue, error) 
 		Body:      issue.Body,
 		Labels:    labelNames(issue.Labels),
 		BlockedBy: blockedBy,
-	}, nil
+	}
+}
+
+// FetchIssueContent fetches the current issue fields used to render an
+// AgentRun without the dependency resolution performed by FetchIssue.
+func (c *CLIClient) FetchIssueContent(ctx context.Context, number int) (*Issue, error) {
+	owner, repo, err := c.resolveRepo(ctx)
+	if err != nil {
+		return nil, err
+	}
+	issue, err := c.fetchIssuePayload(ctx, owner, repo, number)
+	if err != nil {
+		return nil, err
+	}
+	return issueFromPayload(issue, nil), nil
+}
+
+// FetchIssueState fetches only the current state needed to recheck a blocker.
+func (c *CLIClient) FetchIssueState(ctx context.Context, number int) (string, error) {
+	issue, err := c.FetchIssueContent(ctx, number)
+	if err != nil {
+		return "", err
+	}
+	return issue.State, nil
 }
 
 // FetchPR fetches pull request metadata via gh CLI.
@@ -736,17 +763,17 @@ func (c *CLIClient) fetchIssueDependencies(ctx context.Context, owner, repo stri
 	// blockers; the dedicated endpoint is the only REST source that
 	// surfaces the current state (verified against threeterm #278 in
 	// 2026-07). It returns an array of issue objects whose `number`
-	// field is the blocker. When the endpoint returns one or more
-	// blockers we use that result directly; otherwise we fall through
-	// to the events endpoint so older event-driven blockers and
-	// zero-blocker cases still resolve cleanly.
+	// field is the blocker. A non-empty current-state response is
+	// authoritative; an empty response retains the legacy event fallback
+	// because some repositories expose older event-driven relationships only.
 	if current, err := c.fetchIssueDependencyBlockers(ctx, owner, repo, number); err == nil && len(current) > 0 {
 		return current, nil
 	}
 
 	callCtx, cancel := c.boundContext(ctx)
 	defer cancel()
-	cmd := c.command(callCtx, "gh", "api", "-H", "Accept: application/vnd.github+json", fmt.Sprintf("repos/%s/%s/issues/%d/events", owner, repo, number))
+	path := fmt.Sprintf("repos/%s/%s/issues/%d/events", owner, repo, number)
+	cmd := c.command(callCtx, "gh", "api", "-H", "Accept: application/vnd.github+json", path)
 	out, err := runCmd(callCtx, cmd, "gh api issue events")
 	if err != nil {
 		return nil, fmt.Errorf("gh api issue events: %w", err)
@@ -763,11 +790,8 @@ func (c *CLIClient) fetchIssueDependencies(ctx context.Context, owner, repo stri
 // fetchIssueDependencyBlockers fetches the *current* set of native
 // blockers for an issue via the dedicated
 // `GET /repos/{owner}/{repo}/issues/{number}/dependencies/blocked_by`
-// REST endpoint. Returns nil when the endpoint reports no blockers,
-// when the API returns an empty array, or when the call fails; the
-// caller falls back to the events endpoint in the latter two cases
-// (preserving the prior event-derived behaviour for older event-only
-// blockers).
+// REST endpoint. A successful empty response and an error both leave the
+// caller to use the compatibility events fallback.
 func (c *CLIClient) fetchIssueDependencyBlockers(ctx context.Context, owner, repo string, number int) ([]int, error) {
 	callCtx, cancel := c.boundContext(ctx)
 	defer cancel()
@@ -789,13 +813,9 @@ func (c *CLIClient) fetchIssueDependencyBlockers(ctx context.Context, owner, rep
 	}
 	numbers := make([]int, 0, len(payload))
 	for _, item := range payload {
-		if item.Number <= 0 {
-			continue
+		if item.Number > 0 {
+			numbers = append(numbers, item.Number)
 		}
-		numbers = append(numbers, item.Number)
-	}
-	if len(numbers) == 0 {
-		return nil, nil
 	}
 	return mergeIssueNumbers(numbers), nil
 }

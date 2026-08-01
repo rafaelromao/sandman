@@ -1292,8 +1292,8 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				case blockerStatus.IsAborted():
 					abortedBy = append(abortedBy, blocker)
 				case blockerStatus.IsSuccess():
-					issue, err := o.githubClient.FetchIssue(issueCtx, blocker)
-					if err == nil && issue != nil && strings.EqualFold(issue.State, "open") {
+					state, err := fetchIssueState(issueCtx, o.githubClient, blocker)
+					if err == nil && strings.EqualFold(state, "open") {
 						stillBlockedBy = append(stillBlockedBy, blocker)
 					}
 				case blockerStatus.IsTerminal() && !blockerStatus.IsSuccess():
@@ -2713,7 +2713,7 @@ func (o *Orchestrator) runSingleRow(ctx context.Context, parentCtx context.Conte
 // execute runs the issue-driven AgentRun lifecycle owned by this session. It
 // contains the body that previously lived in (*Orchestrator).runSingle.
 func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
-	issue, err := s.deps.githubClient.FetchIssue(ctx, s.issueNumber)
+	issue, err := fetchIssueContent(ctx, s.deps.githubClient, s.issueNumber)
 	if err != nil {
 		fmt.Fprintf(s.deps.errorLog, "error: fetch issue %d: %v\n", s.issueNumber, err)
 		s.emitEarlyFailure("fetch issue", s.branches[s.issueNumber], err)
@@ -3014,16 +3014,37 @@ func recheckBlockedBy(ctx context.Context, githubClient github.Client, blockers 
 			return nil, err
 		}
 
-		issue, err := githubClient.FetchIssue(ctx, blocker)
+		state, err := fetchIssueState(ctx, githubClient, blocker)
 		if err != nil {
 			return nil, fmt.Errorf("fetch blocker issue %d: %w", blocker, err)
 		}
-		if !github.IsIssueClosed(issue) {
+		if !strings.EqualFold(state, "closed") {
 			blockedBy = append(blockedBy, blocker)
 		}
 	}
 
 	return blockedBy, nil
+}
+
+func fetchIssueContent(ctx context.Context, client github.Client, number int) (*github.Issue, error) {
+	if contentClient, ok := client.(github.IssueContentFetcher); ok {
+		return contentClient.FetchIssueContent(ctx, number)
+	}
+	return client.FetchIssue(ctx, number)
+}
+
+func fetchIssueState(ctx context.Context, client github.Client, number int) (string, error) {
+	if stateClient, ok := client.(github.IssueStateFetcher); ok {
+		return stateClient.FetchIssueState(ctx, number)
+	}
+	issue, err := client.FetchIssue(ctx, number)
+	if err != nil {
+		return "", err
+	}
+	if issue == nil {
+		return "", nil
+	}
+	return issue.State, nil
 }
 
 func resetRetryBranch(opts runSessionOptions, ctx context.Context, sb sandbox.Sandbox, branch, baseBranch string) error {

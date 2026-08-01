@@ -171,6 +171,19 @@ type Client interface {
 	CloseIssue(ctx context.Context, issueNumber int, comment string) error
 }
 
+// IssueContentFetcher optionally provides a fresh issue payload without
+// resolving BlockedBy. Callers that only render an AgentRun prompt should use
+// it to avoid loading dependency metadata they do not consume.
+type IssueContentFetcher interface {
+	FetchIssueContent(ctx context.Context, number int) (*Issue, error)
+}
+
+// IssueStateFetcher optionally provides fresh state for a blocker recheck
+// without resolving its dependency graph.
+type IssueStateFetcher interface {
+	FetchIssueState(ctx context.Context, number int) (string, error)
+}
+
 // OpenIssueLister is the optional capability the Specification
 // resolver type-asserts against to run the last-resort open-issue
 // scan (see ADR-0044). Production `CLIClient` satisfies it via
