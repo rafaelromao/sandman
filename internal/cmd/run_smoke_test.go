@@ -445,7 +445,7 @@ var smokeContainerAssertions = map[string]string{
 	"elixir": "; command -v mix >/dev/null; command -v elixir >/dev/null",
 	"node":   "; command -v node >/dev/null; command -v npm >/dev/null",
 	"dotnet": "; command -v dotnet >/dev/null",
-	"rust":   "; command -v rustc >/dev/null; command -v cargo >/dev/null; command -v rustfmt >/dev/null; cargo clippy --version >/dev/null",
+	"rust":   "; command -v rustc >/dev/null; command -v cargo >/dev/null; command -v rustfmt >/dev/null; cargo clippy --version >/dev/null; test -w \"$CARGO_HOME\"",
 	"java":   "; command -v java >/dev/null",
 	"ruby":   "; command -v ruby >/dev/null; command -v bundler >/dev/null",
 }

@@ -386,7 +386,7 @@ func TestScaffold_RustPresetWritesPinnedDockerfile(t *testing.T) {
 	if !strings.Contains(content, "# sandman rust-version: 1.95.0") {
 		t.Fatalf("Dockerfile missing rust-version metadata, got:\n%s", content)
 	}
-	if !strings.Contains(content, "--default-toolchain 1.95.0") {
+	if !strings.Contains(content, "RUN mise use -g --pin rust@1.95.0") {
 		t.Fatalf("Dockerfile missing pinned rust install, got:\n%s", content)
 	}
 	if !strings.Contains(content, "RUN npm install -g opencode-ai@"+DefaultBuiltInAgentVersion("opencode")) {

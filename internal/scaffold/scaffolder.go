@@ -2215,9 +2215,8 @@ func renderRustInstallCommand(version string) string {
 	out.WriteString("ENV RUSTUP_HOME=\"/usr/local/rustup\"\n")
 	out.WriteString("ENV CARGO_HOME=\"/usr/local/cargo\"\n")
 	out.WriteString("ENV PATH=\"/usr/local/cargo/bin:$PATH\"\n")
-	out.WriteString("RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain ")
-	out.WriteString(version)
-	out.WriteString(" --no-modify-path && rustup component add rustfmt clippy && chmod -R a+rx /usr/local/cargo /usr/local/rustup\n")
+	out.WriteString(fmt.Sprintf("RUN mise use -g --pin rust@%s\n", version))
+	out.WriteString("RUN rustup component add rustfmt clippy && chmod -R a+rx /usr/local/cargo /usr/local/rustup && chmod a+rwx /usr/local/cargo\n")
 	out.WriteString("RUN rustc --version && cargo --version && rustfmt --version && cargo clippy --version\n")
 	return out.String()
 }
