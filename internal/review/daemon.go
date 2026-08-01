@@ -1036,9 +1036,18 @@ func (d *Daemon) shouldReadComments(pr github.PR) bool {
 	if d.hasPendingPost(pr.Number) {
 		return true
 	}
+	if d.hasRetryAttempt(pr.Number) {
+		return true
+	}
 	d.commentVersionsMu.Lock()
 	defer d.commentVersionsMu.Unlock()
 	return d.commentVersions[pr.Number] != pr.UpdatedAt
+}
+
+func (d *Daemon) hasRetryAttempt(prNumber int) bool {
+	d.nextAttemptMu.RLock()
+	defer d.nextAttemptMu.RUnlock()
+	return len(d.nextAttempt[prNumber]) > 0
 }
 
 func (d *Daemon) hasPendingPost(prNumber int) bool {

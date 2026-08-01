@@ -324,6 +324,7 @@ func runCmd(ctx context.Context, cmd *exec.Cmd, errMsg string) ([]byte, error) {
 		retry := exec.CommandContext(ctx, cmd.Path, cmd.Args[1:]...)
 		retry.Dir = cmd.Dir
 		retry.Env = cmd.Env
+		configureCancelProcessGroup(retry)
 		out, err = retry.CombinedOutput()
 	}
 	return out, nil

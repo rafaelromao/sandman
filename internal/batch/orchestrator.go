@@ -2118,7 +2118,7 @@ func (s *runSession) withClosingReferenceGuard(ctx context.Context, branch strin
 			}
 			// A PR cannot be repaired before it exists. Back off while it is
 			// absent, but preserve the configured cadence for lookup failures.
-			if outcome == closingGuardAbsent && wait < 30*time.Second {
+			if (outcome == closingGuardAbsent || outcome == closingGuardRetry) && wait < 30*time.Second {
 				wait *= 2
 				if wait > 30*time.Second {
 					wait = 30 * time.Second
