@@ -386,11 +386,43 @@ func TestScaffold_RustPresetWritesPinnedDockerfile(t *testing.T) {
 	if !strings.Contains(content, "# sandman rust-version: 1.95.0") {
 		t.Fatalf("Dockerfile missing rust-version metadata, got:\n%s", content)
 	}
-	if !strings.Contains(content, "RUN mise use -g --pin rust@1.95.0") {
+	if !strings.Contains(content, "--default-toolchain 1.95.0") {
 		t.Fatalf("Dockerfile missing pinned rust install, got:\n%s", content)
 	}
 	if !strings.Contains(content, "RUN npm install -g opencode-ai@"+DefaultBuiltInAgentVersion("opencode")) {
 		t.Fatalf("Dockerfile missing pinned opencode install, got:\n%s", content)
+	}
+}
+
+func TestScaffold_RustPresetUsesToolchainFileAndVerifiesRuntimeTools(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "rust-toolchain.toml"), []byte("[toolchain]\nchannel = \"1.97.1\"\ncomponents = [\"rustfmt\", \"clippy\"]\n"), 0644); err != nil {
+		t.Fatalf("write rust-toolchain.toml: %v", err)
+	}
+
+	s := &Scaffolder{}
+	if err := s.Scaffold(dir, Options{BuildTools: "rust", ToolVersion: "repo"}, &fakePrompter{confirm: true}); err != nil {
+		t.Fatalf("scaffold: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(dir, ".sandman", "Dockerfile"))
+	if err != nil {
+		t.Fatalf("read Dockerfile: %v", err)
+	}
+	content := string(data)
+	for _, want := range []string{
+		"# sandman rust-version: 1.97.1",
+		"ENV RUSTUP_HOME=\"/usr/local/rustup\"",
+		"ENV CARGO_HOME=\"/usr/local/cargo\"",
+		"rustup component add rustfmt clippy",
+		"rustc --version",
+		"cargo --version",
+		"rustfmt --version",
+		"cargo clippy --version",
+	} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("Dockerfile missing %q, got:\n%s", want, content)
+		}
 	}
 }
 

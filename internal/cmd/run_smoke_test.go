@@ -434,7 +434,7 @@ var smokeDockerDeps = map[string]string{
 	"elixir": "RUN command -v mix >/dev/null\n",
 	"node":   "RUN command -v node >/dev/null && command -v npm >/dev/null\n",
 	"dotnet": "RUN command -v dotnet >/dev/null\n",
-	"rust":   "RUN command -v rustc >/dev/null && command -v cargo >/dev/null\n",
+	"rust":   "RUN command -v rustc >/dev/null && command -v cargo >/dev/null && command -v rustfmt >/dev/null && cargo clippy --version >/dev/null\n",
 	"java":   "RUN command -v java >/dev/null\n",
 	"ruby":   "RUN command -v ruby >/dev/null && command -v bundler >/dev/null\n",
 }
@@ -445,7 +445,7 @@ var smokeContainerAssertions = map[string]string{
 	"elixir": "; command -v mix >/dev/null; command -v elixir >/dev/null",
 	"node":   "; command -v node >/dev/null; command -v npm >/dev/null",
 	"dotnet": "; command -v dotnet >/dev/null",
-	"rust":   "; command -v rustc >/dev/null; command -v cargo >/dev/null",
+	"rust":   "; command -v rustc >/dev/null; command -v cargo >/dev/null; command -v rustfmt >/dev/null; cargo clippy --version >/dev/null",
 	"java":   "; command -v java >/dev/null",
 	"ruby":   "; command -v ruby >/dev/null; command -v bundler >/dev/null",
 }
