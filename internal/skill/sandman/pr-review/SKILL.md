@@ -300,7 +300,7 @@ Continue polling when:
 - **The PR is DIRTY mid-poll — Step 5a triggers `sandman-back-merge`, then restarts polling from Step 1 after a successful push. Keep going while back-merge is making progress; exit with `REVIEW_CONFLICT_UNRESOLVED` only when back-merge itself fails.**
 - Any `CHANGES_REQUESTED` review exists but is addressable
 - Only already-addressed inline comment IDs remain
-- Top-level PR conversation has new comments from non-agent author
+- Top-level PR conversation has a new non-trigger comment
 - **A new commit has landed (head SHA changed) — re-request always permitted regardless of prior response state, and the 10-pass counter resets to 0 for the new SHA (intra- or inter-session)**
 - **A `CHANGES_REQUESTED` review references the issue's acceptance criteria and you have not yet implemented the change OR obtained the reviewer's explicit agreement on the narrowed scope (Hard Rule 7)**
 

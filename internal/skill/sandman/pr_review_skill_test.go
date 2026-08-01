@@ -239,6 +239,7 @@ func TestPRReviewSkill_SameCredentialDecisionIsResponse(t *testing.T) {
 	forbidden := []string{
 		"whose author is not the agent itself",
 		"any non-agent author",
+		"comments from non-agent author",
 	}
 	for _, phrase := range forbidden {
 		if strings.Contains(text, phrase) {
