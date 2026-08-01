@@ -433,6 +433,12 @@ func TestClassifyRateLimit(t *testing.T) {
 	}
 }
 
+func TestParseRateLimitRetryAfter(t *testing.T) {
+	if got := parseRateLimitRetryAfter("secondary rate limit; retry-after: 30", time.Now()); got != 30*time.Second {
+		t.Fatalf("retry-after = %s, want 30s", got)
+	}
+}
+
 func TestCLIClient_FetchIssue_Success(t *testing.T) {
 	runner := &fakeRunner{responses: []fakeResponse{
 		{output: `{"name":"sandman","owner":{"login":"rafaelromao"}}`},

@@ -188,7 +188,10 @@ type IssueStateFetcher interface {
 
 // RateLimitError marks a GitHub CLI failure that explicitly reports a rate
 // limit. It retains the underlying command error for errors.Is/As callers.
-type RateLimitError struct{ Err error }
+type RateLimitError struct {
+	Err        error
+	RetryAfter time.Duration
+}
 
 func (e *RateLimitError) Error() string { return e.Err.Error() }
 func (e *RateLimitError) Unwrap() error { return e.Err }

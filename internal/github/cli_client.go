@@ -315,22 +315,68 @@ func runCmd(ctx context.Context, cmd *exec.Cmd, errMsg string) ([]byte, error) {
 	if err == nil {
 		return out, nil
 	}
+	commandErr := commandError(ctx, errMsg, err, out)
+	if rateLimit, ok := commandErr.(*RateLimitError); ok && rateLimit.RetryAfter > 0 {
+		if err := waitForRateLimit(ctx, rateLimit.RetryAfter); err != nil {
+			return out, err
+		}
+		retry := exec.CommandContext(ctx, cmd.Path, cmd.Args[1:]...)
+		retry.Dir = cmd.Dir
+		retry.Env = cmd.Env
+		out, err = retry.CombinedOutput()
+		if err == nil {
+			return out, nil
+		}
+		return out, commandError(ctx, errMsg, err, out)
+	}
+	return out, commandErr
+}
+
+func commandError(ctx context.Context, errMsg string, err error, out []byte) error {
 	suffix := ""
 	if len(bytes.TrimSpace(out)) > 0 {
 		suffix = "\n" + string(out)
 	}
 	if cerr := ctx.Err(); cerr != nil {
-		return out, classifyRateLimit(fmt.Errorf("%s (context: %w): %w%s", errMsg, cerr, err, suffix))
+		return classifyRateLimit(fmt.Errorf("%s (context: %w): %w%s", errMsg, cerr, err, suffix))
 	}
-	return out, classifyRateLimit(fmt.Errorf("%s: %w%s", errMsg, err, suffix))
+	return classifyRateLimit(fmt.Errorf("%s: %w%s", errMsg, err, suffix))
 }
 
 func classifyRateLimit(err error) error {
 	message := strings.ToLower(err.Error())
 	if strings.Contains(message, "rate limit") || strings.Contains(message, "retry-after") {
-		return &RateLimitError{Err: err}
+		return &RateLimitError{Err: err, RetryAfter: parseRateLimitRetryAfter(message, time.Now())}
 	}
 	return err
+}
+
+var retryAfterPattern = regexp.MustCompile(`retry[- ]after\s*:?\s*(\d+)`)
+var resetAtPattern = regexp.MustCompile(`reset(?:s)?(?: at)?\s*:?\s*(\d{4}-\d\d-\d\d[t ][^\s]+)`)
+
+func parseRateLimitRetryAfter(message string, now time.Time) time.Duration {
+	if match := retryAfterPattern.FindStringSubmatch(message); len(match) == 2 {
+		if seconds, err := strconv.Atoi(match[1]); err == nil && seconds > 0 {
+			return time.Duration(seconds) * time.Second
+		}
+	}
+	if match := resetAtPattern.FindStringSubmatch(message); len(match) == 2 {
+		if reset, err := time.Parse(time.RFC3339, strings.ToUpper(strings.ReplaceAll(match[1], " ", "T"))); err == nil && reset.After(now) {
+			return time.Until(reset)
+		}
+	}
+	return 0
+}
+
+func waitForRateLimit(ctx context.Context, delay time.Duration) error {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 func (c *CLIClient) resolveRepo(ctx context.Context) (string, string, error) {
