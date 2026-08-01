@@ -222,6 +222,32 @@ func TestPRReviewSkill_StaleApprovalHardRule(t *testing.T) {
 	}
 }
 
+func TestPRReviewSkill_SameCredentialDecisionIsResponse(t *testing.T) {
+	text := readPRReviewSkill(t)
+
+	required := []string{
+		"Do not filter it out because the author shares your GitHub login",
+		"whose body does not begin with `{{REVIEW_COMMAND}}`. Do not filter by author",
+		"regardless of author",
+	}
+	for _, phrase := range required {
+		if !strings.Contains(text, phrase) {
+			t.Errorf("pr-review SKILL.md must preserve same-credential decision handling %q", phrase)
+		}
+	}
+
+	forbidden := []string{
+		"whose author is not the agent itself",
+		"any non-agent author",
+		"comments from non-agent author",
+	}
+	for _, phrase := range forbidden {
+		if strings.Contains(text, phrase) {
+			t.Errorf("pr-review SKILL.md must not filter reviewer decisions by author %q", phrase)
+		}
+	}
+}
+
 func TestPRReviewSkill_ADRNotesDaemonOwnership(t *testing.T) {
 	text := readADR0013(t)
 
