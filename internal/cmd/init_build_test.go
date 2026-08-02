@@ -248,6 +248,8 @@ func buildPresetImage(t *testing.T, runtime, agent, preset string) {
 }
 
 func TestSmoke_AllPresetImagesExposeRuntimeTools(t *testing.T) {
+	requireSmokeE2E(t)
+
 	runtime, err := sandbox.ResolveRuntime("podman")
 	if err != nil {
 		t.Skipf("container runtime unavailable: %v", err)
