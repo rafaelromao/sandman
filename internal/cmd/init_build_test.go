@@ -249,6 +249,13 @@ func buildPresetImage(t *testing.T, runtime, agent, preset string) {
 
 func TestSmoke_AllPresetImagesExposeRuntimeTools(t *testing.T) {
 	requireSmokeE2E(t)
+	allowed, err := parseSmokeProviders(smokeProviderCases)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !allowed["opencode"] {
+		t.Skip("set SANDMAN_TEST_PROVIDERS=opencode and run `go test -tags smoke ./internal/cmd -run Smoke`")
+	}
 
 	runtime, err := sandbox.ResolveRuntime("podman")
 	if err != nil {
