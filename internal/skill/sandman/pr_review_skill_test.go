@@ -88,16 +88,10 @@ func TestPRReviewSkill_NoInternalPaths(t *testing.T) {
 func TestPRReviewSkill_PromptRulePreserved(t *testing.T) {
 	prompt := readPRReviewPrompt(t)
 
-	// The line-34 hard rule from issue #1701 was softened into a Note
-	// about daemon-side redaction by issue #1845. The old literal
-	// prohibition is gone; the new canonical mitigation text is the
-	// daemon redacts every `/sandman` substring before posting.
-	if strings.Contains(prompt, "do NOT write the literal `/sandman review` substring") {
-		t.Error("default PR review prompt must not retain the line-34 hard rule from issue #1701; it was softened into a Note about daemon-side redaction by issue #1845")
-	}
 	required := []string{
-		"the daemon redacts every `/sandman` substring",
-		"Open review requests",
+		"sandman-code-review",
+		"daemon-review context",
+		"the daemon owns those actions",
 	}
 	for _, phrase := range required {
 		if !strings.Contains(prompt, phrase) {
@@ -105,13 +99,9 @@ func TestPRReviewSkill_PromptRulePreserved(t *testing.T) {
 		}
 	}
 
-	buggy := []string{
-		"refer to prior review requests as `Open /sandman review requests`",
-		"write `Open /sandman review requests`",
-	}
-	for _, phrase := range buggy {
+	for _, phrase := range []string{"gh pr view", "gh pr checks", "gh pr diff", "gh api", "git push"} {
 		if strings.Contains(prompt, phrase) {
-			t.Errorf("default PR review prompt must not instruct the bot to emit the buggy phrasing %q in its review output (issue #1701)", phrase)
+			t.Errorf("default PR review prompt must not direct the daemon reviewer to orchestrate a pull request with %q", phrase)
 		}
 	}
 }

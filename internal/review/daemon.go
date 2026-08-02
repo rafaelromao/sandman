@@ -1711,13 +1711,28 @@ func (d *Daemon) launchReviewRevision(ctx context.Context, prNumber int, focus, 
 	}
 	agentRunDir := sandbox.ContainerVisiblePath(d.reviewWorktreePath(prNumber, triggerKey), repoRoot, sandboxMode)
 
+	acceptanceCriteria := ""
+	if linkedIssue := pr.LinkedIssueNumber(); linkedIssue > 0 {
+		if fetcher, ok := d.GitHub.(interface {
+			FetchIssue(context.Context, int) (*github.Issue, error)
+		}); ok {
+			issue, fetchErr := fetcher.FetchIssue(ctx, linkedIssue)
+			if fetchErr != nil {
+				d.logf("fetch linked work item #%d for review prompt: %v", linkedIssue, fetchErr)
+			} else if issue != nil {
+				acceptanceCriteria = issue.Body
+			}
+		}
+	}
+
 	rendered, err := d.Prompts.RenderReview(prompt.RenderConfig{}, prompt.PRData{
-		Number:            pr.Number,
-		Title:             pr.Title,
-		Body:              pr.Body,
-		ReviewFocus:       focus,
-		RunDir:            agentRunDir,
-		PriorReviewExists: priorReviewExists,
+		Number:             pr.Number,
+		Title:              pr.Title,
+		Body:               pr.Body,
+		AcceptanceCriteria: acceptanceCriteria,
+		ReviewFocus:        focus,
+		RunDir:             agentRunDir,
+		PriorReviewExists:  priorReviewExists,
 	})
 	if err != nil {
 		return fmt.Errorf("render prompt: %w", err)

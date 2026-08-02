@@ -268,7 +268,7 @@ func TestSkills_AutonomousRecoveryLaddersRemainExplicit(t *testing.T) {
 			"preserve it, inspect the status and diff",
 			"record the exact blocker and next executable action",
 		},
-		"self-review/SKILL.md": {
+		"code-review/SKILL.md": {
 			"`origin/main` when available",
 			"inspect `git diff HEAD` and every untracked path",
 			"no spec available",
@@ -296,6 +296,46 @@ func TestSkills_AutonomousRecoveryLaddersRemainExplicit(t *testing.T) {
 			if !strings.Contains(text, phrase) {
 				t.Errorf("%s must retain autonomous recovery behavior %q", path, phrase)
 			}
+		}
+	}
+}
+
+func TestCodeReviewSkill_SeparatesSelfAndDaemonContexts(t *testing.T) {
+	text, ok := readSkillMarkdown(t)["code-review/SKILL.md"]
+	if !ok {
+		t.Fatal("expected code-review/SKILL.md")
+	}
+
+	for _, phrase := range []string{
+		"## Self-review context",
+		"`origin/main` when available",
+		"## Standards",
+		"## Spec",
+		"## Daemon-review context",
+		"Those inputs are authoritative.",
+		"current review worktree",
+		"atomic temp-file-and-rename write",
+		"`## Decision` with `**APPROVED**`",
+	} {
+		if !strings.Contains(text, phrase) {
+			t.Errorf("code-review skill missing context contract %q", phrase)
+		}
+	}
+
+	for _, forbidden := range []string{
+		"trigger, poll, fetch, post to, merge, commit to, push to, or remediate",
+	} {
+		if !strings.Contains(text, "Do not "+forbidden) {
+			t.Errorf("code-review daemon context must forbid pull-request orchestration %q", forbidden)
+		}
+	}
+}
+
+func TestSkills_NoObsoleteSelfReviewSkillReference(t *testing.T) {
+	obsolete := "sandman-self" + "-review"
+	for path, text := range readSkillMarkdown(t) {
+		if strings.Contains(text, obsolete) {
+			t.Errorf("%s retains obsolete skill reference %q", path, obsolete)
 		}
 	}
 }

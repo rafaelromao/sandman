@@ -160,6 +160,7 @@ func ApplyPRSubstitutions(template string, data PRData) string {
 	result = strings.ReplaceAll(result, "{{PR_NUMBER}}", fmt.Sprintf("%d", data.Number))
 	result = strings.ReplaceAll(result, "{{PR_TITLE}}", NeutraliseBodyPlaceholders(data.Title))
 	result = strings.ReplaceAll(result, "{{PR_BODY}}", NeutraliseBodyPlaceholders(data.Body))
+	result = strings.ReplaceAll(result, "{{ACCEPTANCE_CRITERIA}}", NeutraliseBodyPlaceholders(data.AcceptanceCriteria))
 	result = strings.ReplaceAll(result, "{{REVIEW_FOCUS}}", NeutraliseBodyPlaceholders(data.ReviewFocus))
 	result = strings.ReplaceAll(result, "{{RUN_DIR}}", data.RunDir)
 	result = strings.ReplaceAll(result, "{{PRIOR_REVIEW_EXISTS}}", priorReviewExistsToken(data.PriorReviewExists))
