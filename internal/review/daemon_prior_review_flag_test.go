@@ -2,6 +2,7 @@ package review
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -153,5 +154,32 @@ func TestDaemon_PriorReviewContext_IncludesFormalAndInlineHistory(t *testing.T) 
 		if !strings.Contains(prompt, want) {
 			t.Errorf("rendered prompt must include prior review history %q, got:\n%s", want, prompt)
 		}
+	}
+}
+
+func TestDaemon_PriorReviewContext_FailsClosedOnHistoryError(t *testing.T) {
+	now := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
+	for name, configure := range map[string]func(*fakeGH){
+		"formal": func(gh *fakeGH) { gh.formalReviewErr = errors.New("formal history unavailable") },
+		"inline": func(gh *fakeGH) { gh.inlineReviewErr = errors.New("inline history unavailable") },
+	} {
+		t.Run(name, func(t *testing.T) {
+			gh := &fakeGH{
+				prs:      []github.PR{{Number: 42, State: "open"}},
+				comments: map[int][]github.PRComment{42: {{ID: "trigger-1", Body: "/sandman review", CreatedAt: now}}},
+			}
+			configure(gh)
+			runner := &decisionCapturingRunner{capturedRequest: &capturedRequest{}, body: "ok"}
+			d, _, _ := newDaemonForTest(t, gh, runner, &config.Config{
+				DefaultReviewAgent: "opencode",
+				DefaultReviewModel: "opencode/foo",
+			})
+			d.Clock = func() time.Time { return now.Add(-time.Minute) }
+
+			tickAndWait(t, d, context.Background())
+			if runner.calls != 0 {
+				t.Fatalf("review launched with incomplete %s history", name)
+			}
+		})
 	}
 }

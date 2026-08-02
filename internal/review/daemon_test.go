@@ -43,6 +43,8 @@ type fakeGH struct {
 	comments              map[int][]github.PRComment
 	formalReviews         map[int][]github.PRReview
 	inlineReviewComments  map[int][]github.PRReviewComment
+	formalReviewErr       error
+	inlineReviewErr       error
 	prFetch               map[int]*github.PR
 	listErr               error
 	commentErr            map[int]error
@@ -238,6 +240,9 @@ func (f *fakeGH) ListPRComments(ctx context.Context, number int) ([]github.PRCom
 func (f *fakeGH) ListPRReviews(ctx context.Context, number int) ([]github.PRReview, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.formalReviewErr != nil {
+		return nil, f.formalReviewErr
+	}
 	result := append([]github.PRReview(nil), f.formalReviews[number]...)
 	return result, nil
 }
@@ -245,6 +250,9 @@ func (f *fakeGH) ListPRReviews(ctx context.Context, number int) ([]github.PRRevi
 func (f *fakeGH) ListPRReviewComments(ctx context.Context, number int) ([]github.PRReviewComment, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.inlineReviewErr != nil {
+		return nil, f.inlineReviewErr
+	}
 	result := append([]github.PRReviewComment(nil), f.inlineReviewComments[number]...)
 	return result, nil
 }

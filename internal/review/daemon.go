@@ -1149,7 +1149,7 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) error {
 	if lister, ok := d.GitHub.(github.PRReviewLister); ok {
 		reviews, listErr := lister.ListPRReviews(ctx, prNumber)
 		if listErr != nil {
-			d.logf("list formal reviews for PR #%d: %v", prNumber, listErr)
+			return fmt.Errorf("list formal reviews for PR #%d: %w", prNumber, listErr)
 		} else {
 			for _, review := range reviews {
 				priorReviewExists = true
@@ -1160,7 +1160,7 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) error {
 	if lister, ok := d.GitHub.(github.PRReviewCommentLister); ok {
 		inline, listErr := lister.ListPRReviewComments(ctx, prNumber)
 		if listErr != nil {
-			d.logf("list inline reviews for PR #%d: %v", prNumber, listErr)
+			return fmt.Errorf("list inline reviews for PR #%d: %w", prNumber, listErr)
 		} else {
 			for _, comment := range inline {
 				priorReviewExists = true
