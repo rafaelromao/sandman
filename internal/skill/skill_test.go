@@ -62,7 +62,7 @@ func TestSyncInstallsCodeReviewSkillWithoutObsoleteSelfReviewSkill(t *testing.T)
 		t.Fatalf("read installed code-review skill: %v", err)
 	}
 	text := string(data)
-	for _, want := range []string{"name: sandman-code-review", "## Self-review context", "## Daemon-review context", "decision.md"} {
+	for _, want := range []string{"name: sandman-code-review", "## Self-review context", "## Pull-request review context", "decision.md"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("code-review skill missing %q", want)
 		}

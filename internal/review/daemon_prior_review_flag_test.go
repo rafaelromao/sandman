@@ -183,3 +183,44 @@ func TestDaemon_PriorReviewContext_FailsClosedOnHistoryError(t *testing.T) {
 		})
 	}
 }
+
+type linkedIssueReviewGH struct {
+	*fakeGH
+	issue *github.Issue
+	err   error
+}
+
+func (g *linkedIssueReviewGH) FetchIssue(context.Context, int) (*github.Issue, error) {
+	return g.issue, g.err
+}
+
+func TestDaemon_ReviewPrompt_FailsClosedWhenAcceptanceCriteriaUnavailable(t *testing.T) {
+	now := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
+	for name, input := range map[string]struct {
+		issue *github.Issue
+		err   error
+	}{
+		"error": {err: errors.New("issue unavailable")},
+		"empty": {},
+	} {
+		t.Run(name, func(t *testing.T) {
+			base := &fakeGH{
+				prs:      []github.PR{{Number: 42, State: "open"}},
+				comments: map[int][]github.PRComment{42: {{ID: "trigger-1", Body: "/sandman review", CreatedAt: now}}},
+				prFetch:  map[int]*github.PR{42: {Number: 42, Title: "T", Body: "Closes #99"}},
+			}
+			gh := &linkedIssueReviewGH{fakeGH: base, issue: input.issue, err: input.err}
+			runner := &decisionCapturingRunner{capturedRequest: &capturedRequest{}, body: "ok"}
+			d, _, _ := newDaemonForTest(t, gh, runner, &config.Config{
+				DefaultReviewAgent: "opencode",
+				DefaultReviewModel: "opencode/foo",
+			})
+			d.Clock = func() time.Time { return now.Add(-time.Minute) }
+
+			tickAndWait(t, d, context.Background())
+			if runner.calls != 0 {
+				t.Fatalf("review launched without acceptance criteria after %s", name)
+			}
+		})
+	}
+}

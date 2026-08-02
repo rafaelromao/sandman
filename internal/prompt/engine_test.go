@@ -741,7 +741,7 @@ func TestDefaultPRReviewPrompt_ContainsRequiredKeys(t *testing.T) {
 	}
 	required := []string{
 		"sandman-code-review",
-		"daemon-review context",
+		"pull-request review context",
 		"supplied above and are authoritative",
 		"decision.md",
 		"atomically write",
@@ -762,7 +762,7 @@ func TestDefaultPRReviewPrompt_DelegatesPostingToDaemon(t *testing.T) {
 	prompt := string(data)
 
 	required := []string{
-		"the daemon owns those actions",
+		"the surrounding workflow owns those actions",
 		"posts the decision artifact",
 	}
 	for _, phrase := range required {
@@ -824,7 +824,7 @@ func TestDefaultPRReviewPrompt_DelegatesQualityCheckToCodeReview(t *testing.T) {
 	}
 	prompt := string(data)
 
-	if !strings.Contains(prompt, "Load `sandman-code-review` and use its daemon-review context") {
+	if !strings.Contains(prompt, "Load `sandman-code-review` and use its pull-request review context") {
 		t.Error("default PR review prompt must delegate quality evaluation to sandman-code-review")
 	}
 }
@@ -846,7 +846,7 @@ func TestRenderReview_DelegatesQualityCheckToCodeReview(t *testing.T) {
 
 	for _, phrase := range []string{
 		"sandman-code-review",
-		"daemon-review context",
+		"pull-request review context",
 		"supplied above and are authoritative",
 		"atomically write `/abs/path/to/worktree/decision.md` and exit",
 	} {

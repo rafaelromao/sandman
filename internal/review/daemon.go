@@ -1762,9 +1762,11 @@ func (d *Daemon) launchReviewRevision(ctx context.Context, prNumber int, focus, 
 		}); ok {
 			issue, fetchErr := fetcher.FetchIssue(ctx, linkedIssue)
 			if fetchErr != nil {
-				d.logf("fetch linked work item #%d for review prompt: %v", linkedIssue, fetchErr)
+				return fmt.Errorf("fetch linked work item #%d for review prompt: %w", linkedIssue, fetchErr)
 			} else if issue != nil {
 				acceptanceCriteria = issue.Body
+			} else {
+				return fmt.Errorf("fetch linked work item #%d for review prompt: empty response", linkedIssue)
 			}
 		}
 	}

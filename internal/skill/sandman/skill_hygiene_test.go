@@ -311,7 +311,7 @@ func TestCodeReviewSkill_SeparatesSelfAndDaemonContexts(t *testing.T) {
 		"`origin/main` when available",
 		"## Standards",
 		"## Spec",
-		"## Daemon-review context",
+		"## Pull-request review context",
 		"Those inputs are authoritative.",
 		"current review worktree",
 		"atomic temp-file-and-rename write",

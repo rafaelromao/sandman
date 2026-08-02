@@ -90,8 +90,8 @@ func TestPRReviewSkill_PromptRulePreserved(t *testing.T) {
 
 	required := []string{
 		"sandman-code-review",
-		"daemon-review context",
-		"the daemon owns those actions",
+		"pull-request review context",
+		"the surrounding workflow owns those actions",
 	}
 	for _, phrase := range required {
 		if !strings.Contains(prompt, phrase) {

@@ -1,6 +1,6 @@
 ---
 name: sandman-code-review
-description: Review changes along separate Standards and Spec axes. Use in self-review context for an implementor's own diff, or in daemon-review context when authoritative pull-request context and a review worktree are supplied.
+description: Review changes along separate Standards and Spec axes. Use in self-review context for an implementor's own diff, or in pull-request review context when authoritative pull-request context and a review worktree are supplied.
 ---
 
 # Code Review
@@ -38,7 +38,7 @@ Review the diff separately for:
 
 Report under `## Standards` and `## Spec` headings. State the finding count for each axis and the worst finding.
 
-## Daemon-review context
+## Pull-request review context
 
 Use this context only when the invocation supplies pull-request title, body, acceptance criteria, review focus, prior-review state, and the destination for the decision artifact. Those inputs are authoritative. Work only in the current review worktree.
 
