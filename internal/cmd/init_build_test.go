@@ -3,6 +3,7 @@
 package cmd
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -243,5 +244,59 @@ func buildPresetImage(t *testing.T, runtime, agent, preset string) {
 
 	if err := exec.Command(runtime, "image", "exists", tag).Run(); err != nil {
 		t.Skipf("smoke pre-warm image %q not present in %s: %v", tag, runtime, err)
+	}
+}
+
+func TestSmoke_AllPresetImagesExposeRuntimeTools(t *testing.T) {
+	requireSmokeE2E(t)
+	allowed, err := parseSmokeProviders(smokeProviderCases)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !allowed["opencode"] {
+		t.Skip("set SANDMAN_TEST_PROVIDERS=opencode and run `go test -tags smoke ./internal/cmd -run Smoke`")
+	}
+
+	runtime, err := sandbox.ResolveRuntime("podman")
+	if err != nil {
+		t.Skipf("container runtime unavailable: %v", err)
+	}
+
+	tests := []struct {
+		preset string
+		check  string
+	}{
+		{"generic", "command -v gh >/dev/null; command -v git >/dev/null; command -v jq >/dev/null; command -v yq >/dev/null; command -v opencode >/dev/null; command -v rtk >/dev/null"},
+		{"go", "go version; test \"$(go env GOPATH)\" = \"/.local/share/go\"; test \"$(go env GOMODCACHE)\" = \"/.cache/go/pkg/mod\"; mkdir -p \"$(go env GOPATH)\" \"$(go env GOMODCACHE)\"; test -w \"$(go env GOPATH)\"; test -w \"$(go env GOMODCACHE)\""},
+		{"node", "node --version; npm --version; npx --version; corepack --version"},
+		{"python", "python3 --version; pip3 --version; uv --version"},
+		{"elixir", "elixir --version; mix --version"},
+		{"dotnet", "dotnet --version"},
+		{"rust", "rustc --version; cargo --version; rustfmt --version; cargo clippy --version; test -w \"$CARGO_HOME\""},
+		{"java", "java --version"},
+		{"ruby", "ruby --version; bundler --version"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.preset, func(t *testing.T) {
+			tag := smokePrewarmLookup("opencode", tt.preset)
+			if tag == "" {
+				var err error
+				tag, err = prewarmSmokeImage("opencode", tt.preset)
+				if err != nil {
+					t.Fatalf("build %s preset image: %v", tt.preset, err)
+				}
+			}
+			container, err := sandbox.NewContainerRuntime(runtime).Start(tag, t.TempDir(), sandbox.StartOptions{UserID: fmt.Sprintf("%d", os.Getuid())})
+			if err != nil {
+				t.Fatalf("start %s preset container: %v", tt.preset, err)
+			}
+			defer container.Stop()
+
+			check := exec.Command(runtime, "exec", container.ID(), "sh", "-ceu", tt.check)
+			if out, err := check.CombinedOutput(); err != nil {
+				t.Fatalf("%s preset runtime tools unavailable: %v\n%s", tt.preset, err, out)
+			}
+		})
 	}
 }

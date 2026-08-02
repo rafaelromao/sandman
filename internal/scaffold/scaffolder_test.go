@@ -1721,6 +1721,9 @@ func TestScaffold_PythonPresetWritesPinnedDockerfile(t *testing.T) {
 	if !strings.Contains(content, "RUN pip3 install uv") {
 		t.Fatalf("Dockerfile missing uv install, got:\n%s", content)
 	}
+	if !strings.Contains(content, "RUN ln -sf \"$(dirname \"$(mise which python3)\")/uv\" /usr/local/bin/uv") {
+		t.Fatalf("Dockerfile missing uv runtime path, got:\n%s", content)
+	}
 	if strings.Contains(content, "RUN git clone https://github.com/rafaelromao/codeindex /tmp/codeindex && pip3 install -e /tmp/codeindex --break-system-packages") {
 		t.Fatalf("Dockerfile should not install codeindex, got:\n%s", content)
 	}
