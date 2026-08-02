@@ -38,7 +38,7 @@ var promptVersion string
 // <repo>/.sandman when cfg.PromptFile ends in .sandman/prompt.md.
 const promptVersionFile = "state/.prompt-version"
 
-const legacyPRReviewPromptSHA256 = "deda1b0adea9952d1bb61cf27def77f6d4c8c12c637203fc32ae6a063ed54bab"
+var legacyPRReviewPromptSHA256 = "deda1b0adea9952d1bb61cf27def77f6d4c8c12c637203fc32ae6a063ed54bab"
 
 func init() {
 	sum := sha256.Sum256([]byte(defaultPrompt))

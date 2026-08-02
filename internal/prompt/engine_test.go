@@ -1,6 +1,8 @@
 package prompt
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -640,6 +642,21 @@ func TestDefaultPRReviewPrompt_EmbeddedTemplate(t *testing.T) {
 	got := strings.TrimSpace(DefaultPRReviewPrompt())
 	if got != want {
 		t.Fatalf("default PR review prompt drifted\nwant:\n%s\ngot:\n%s", want, got)
+	}
+}
+
+func TestIsLegacyDefaultPRReviewPrompt(t *testing.T) {
+	legacy := []byte("legacy generated review prompt")
+	sum := sha256.Sum256(legacy)
+	original := legacyPRReviewPromptSHA256
+	legacyPRReviewPromptSHA256 = hex.EncodeToString(sum[:])
+	t.Cleanup(func() { legacyPRReviewPromptSHA256 = original })
+
+	if !IsLegacyDefaultPRReviewPrompt(legacy) {
+		t.Fatal("exact legacy prompt should be eligible for upgrade")
+	}
+	if IsLegacyDefaultPRReviewPrompt([]byte("user-edited review prompt")) {
+		t.Fatal("user-edited prompt must not be eligible for upgrade")
 	}
 }
 

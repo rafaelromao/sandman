@@ -3469,6 +3469,39 @@ func TestScaffold_ReInitPreservesUserEditedReviewFiles(t *testing.T) {
 	}
 }
 
+func TestWriteReviewPromptIfLegacyUpgradesOnlyLegacyContent(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "review-prompt.md")
+	legacy := []byte("legacy generated review prompt")
+	if err := os.WriteFile(path, legacy, 0644); err != nil {
+		t.Fatalf("write legacy prompt: %v", err)
+	}
+	if err := writeReviewPromptIfLegacy(path, func(data []byte) bool { return string(data) == string(legacy) }); err != nil {
+		t.Fatalf("upgrade legacy prompt: %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read upgraded prompt: %v", err)
+	}
+	if string(data) != prompt.DefaultPRReviewPrompt() {
+		t.Fatal("legacy generated prompt was not upgraded")
+	}
+
+	edited := []byte("user-edited review prompt")
+	if err := os.WriteFile(path, edited, 0644); err != nil {
+		t.Fatalf("write edited prompt: %v", err)
+	}
+	if err := writeReviewPromptIfLegacy(path, func([]byte) bool { return false }); err != nil {
+		t.Fatalf("preserve edited prompt: %v", err)
+	}
+	data, err = os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read preserved prompt: %v", err)
+	}
+	if string(data) != string(edited) {
+		t.Fatal("user-edited prompt was overwritten")
+	}
+}
+
 func TestScaffold_InitMessageWritten(t *testing.T) {
 	dir := t.TempDir()
 	s := &Scaffolder{}

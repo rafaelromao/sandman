@@ -651,8 +651,12 @@ func (s *Scaffolder) materializeReviewPrompts(layout paths.Layout) error {
 }
 
 func writeReviewPrompt(path string) error {
+	return writeReviewPromptIfLegacy(path, prompt.IsLegacyDefaultPRReviewPrompt)
+}
+
+func writeReviewPromptIfLegacy(path string, isLegacy func([]byte) bool) error {
 	data, err := os.ReadFile(path)
-	if os.IsNotExist(err) || prompt.IsLegacyDefaultPRReviewPrompt(data) {
+	if os.IsNotExist(err) || isLegacy(data) {
 		return atomicfs.WriteAtomic(path, []byte(prompt.DefaultPRReviewPrompt()), 0644)
 	}
 	if err != nil {
