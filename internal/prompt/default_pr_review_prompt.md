@@ -31,9 +31,15 @@ The `## Previous review progress` section is conditional. The deterministic prio
 
 The code-review skill applies `.sandman/reviews/quality-rules.md` using applicable `[control-flow]`, `[functional]`, `[OOP]`, and `[public-api]` tags. If unavailable, it records `Quality rules unavailable in this repository; no built-in quality-rule evaluation was applied.` Its `## Quality check` contains `### Scope`, `### Metrics`, `### Findings`, and `### Tools used`; Scope uses `focused`, `mixed scope`, or `cross-cutting`.
 
+## Previous review progress — hard rule
+
+This is a conditional slot, not a default section. The deterministic prior-review flag is `{{PRIOR_REVIEW_EXISTS}}`. When it is `YES`, render the section and list each prior finding with status **resolved**, **partially addressed**, or **still outstanding**. When it is `NO`, render no heading, no placeholder, and no default body. Do not fetch pull-request history to decide this; the supplied flag and context are authoritative.
+
 Reviews are acceptance-criteria-first, then documented-standards-only, then correctness and safety. Stay inside the supplied scope. Blocking and Important findings must cite an acceptance criterion, a documented repository standard, or a correctness or safety defect. Suggestions outside those sources are Nits and must not prevent approval.
 
 The decision artifact must contain `## Summary`, `## Standards`, `## Spec`, `## Quality check`, `## Findings`, `## Suggested next steps`, and `## Decision`. Group findings under `Blocking`, `Important`, and `Nit`, omitting empty groups. For every Blocking or Important finding, cite the file and line range, quote the relevant behavior, explain the impact, and name the smallest useful fix. Use `**CHANGES_REQUESTED**` when any Blocking or Important finding remains; otherwise use `**APPROVED**`. Include `## Previous review progress` only when the authoritative prior-review flag is `YES`, and mark each prior finding **resolved**, **partially addressed**, or **still outstanding**. Write the artifact atomically with a temporary file and rename.
+
+The review procedure is acceptance-criteria-first, then documented-standards-only, then correctness and safety. Read the supplied change in the current worktree end to end. Apply the supplied acceptance criteria and review focus, documented repository standards, applicable quality rules, and correctness and safety checks. Keep the review inside the supplied scope. Do not make Blocking or Important findings for unrequested improvements unless they are correctness or safety defects. Every finding cites the relevant file and line range, quotes the behavior, explains the impact, and names the smallest useful fix.
 
 ## Search Scope Restriction
 

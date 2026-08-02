@@ -273,6 +273,10 @@ func (f *fakeGH) FetchPR(ctx context.Context, number int) (*github.PR, error) {
 	return &github.PR{Number: number, Title: "T", Body: body}, nil
 }
 
+func (f *fakeGH) FetchIssue(ctx context.Context, number int) (*github.Issue, error) {
+	return &github.Issue{Number: number, Body: "acceptance criteria"}, nil
+}
+
 func (f *fakeGH) RepoName(ctx context.Context) (string, error) {
 	return "owner/repo", nil
 }
