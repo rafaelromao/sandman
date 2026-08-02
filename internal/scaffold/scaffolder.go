@@ -2155,7 +2155,7 @@ func renderPythonInstallCommand(version string) string {
 	var out strings.Builder
 	out.WriteString(fmt.Sprintf("RUN mise use -g --pin python@%s\n", version))
 	out.WriteString("RUN pip3 install uv\n")
-	out.WriteString("RUN ln -sf \"$(command -v uv)\" /usr/local/bin/uv\n")
+	out.WriteString("RUN ln -sf \"$(dirname \"$(mise which python3)\")/uv\" /usr/local/bin/uv\n")
 	return out.String()
 }
 

@@ -247,7 +247,7 @@ func buildPresetImage(t *testing.T, runtime, agent, preset string) {
 	}
 }
 
-func TestInit_AllPresetImagesExposeRuntimeTools(t *testing.T) {
+func TestSmoke_AllPresetImagesExposeRuntimeTools(t *testing.T) {
 	runtime, err := sandbox.ResolveRuntime("podman")
 	if err != nil {
 		t.Skipf("container runtime unavailable: %v", err)
@@ -270,8 +270,14 @@ func TestInit_AllPresetImagesExposeRuntimeTools(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.preset, func(t *testing.T) {
-			buildPresetImage(t, runtime, "opencode", tt.preset)
 			tag := smokePrewarmLookup("opencode", tt.preset)
+			if tag == "" {
+				var err error
+				tag, err = prewarmSmokeImage("opencode", tt.preset)
+				if err != nil {
+					t.Fatalf("build %s preset image: %v", tt.preset, err)
+				}
+			}
 			container, err := sandbox.NewContainerRuntime(runtime).Start(tag, t.TempDir(), sandbox.StartOptions{UserID: fmt.Sprintf("%d", os.Getuid())})
 			if err != nil {
 				t.Fatalf("start %s preset container: %v", tt.preset, err)
