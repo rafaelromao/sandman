@@ -121,3 +121,37 @@ func TestDaemon_PriorReviewFlag_BotSelfPost_RendersYES(t *testing.T) {
 		t.Errorf("rendered prompt must substitute {{PRIOR_REVIEW_EXISTS}}=YES when a bot self-post exists (counts as a prior review, issue #1892), got prompt:\n%s", prompt)
 	}
 }
+
+func TestDaemon_PriorReviewContext_IncludesFormalAndInlineHistory(t *testing.T) {
+	now := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
+	gh := &fakeGH{
+		prs:      []github.PR{{Number: 42, State: "open"}},
+		comments: map[int][]github.PRComment{42: {{ID: "trigger-1", Body: "/sandman review", CreatedAt: now}}},
+		formalReviews: map[int][]github.PRReview{42: {{
+			ID: "review-1", State: "CHANGES_REQUESTED", Body: "Please add coverage.", CreatedAt: now,
+		}}},
+		inlineReviewComments: map[int][]github.PRReviewComment{42: {{
+			ID: "inline-1", Path: "internal/review/daemon.go", Line: 42, Body: "Handle this error.", CreatedAt: now,
+		}}},
+	}
+	runner := &decisionCapturingRunner{capturedRequest: &capturedRequest{}, body: "ok"}
+	d, _, _ := newDaemonForTest(t, gh, runner, &config.Config{
+		DefaultReviewAgent: "opencode",
+		DefaultReviewModel: "opencode/foo",
+	})
+	d.Clock = func() time.Time { return now.Add(-time.Minute) }
+
+	tickAndWait(t, d, context.Background())
+
+	prompt := runner.last.PromptConfig.PromptFlag
+	for _, want := range []string{
+		"### Formal review (CHANGES_REQUESTED)",
+		"Please add coverage.",
+		"### Inline review (internal/review/daemon.go:42)",
+		"Handle this error.",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("rendered prompt must include prior review history %q, got:\n%s", want, prompt)
+		}
+	}
+}

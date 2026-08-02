@@ -1142,6 +1142,36 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) error {
 			priorReviewEntries = append(priorReviewEntries, c.Body)
 		}
 	}
+	// Conversation comments do not include GitHub's formal reviews or inline
+	// review comments. Supply those sources through optional client capabilities
+	// so daemon reviewers can account for the complete authoritative history
+	// without making pull-request API calls from the review worktree.
+	if lister, ok := d.GitHub.(github.PRReviewLister); ok {
+		reviews, listErr := lister.ListPRReviews(ctx, prNumber)
+		if listErr != nil {
+			d.logf("list formal reviews for PR #%d: %v", prNumber, listErr)
+		} else {
+			for _, review := range reviews {
+				priorReviewExists = true
+				priorReviewEntries = append(priorReviewEntries, fmt.Sprintf("### Formal review (%s)\n\n%s", review.State, review.Body))
+			}
+		}
+	}
+	if lister, ok := d.GitHub.(github.PRReviewCommentLister); ok {
+		inline, listErr := lister.ListPRReviewComments(ctx, prNumber)
+		if listErr != nil {
+			d.logf("list inline reviews for PR #%d: %v", prNumber, listErr)
+		} else {
+			for _, comment := range inline {
+				priorReviewExists = true
+				location := comment.Path
+				if comment.Line > 0 {
+					location = fmt.Sprintf("%s:%d", location, comment.Line)
+				}
+				priorReviewEntries = append(priorReviewEntries, fmt.Sprintf("### Inline review (%s)\n\n%s", location, comment.Body))
+			}
+		}
+	}
 	priorReviewContext := ""
 	if len(priorReviewEntries) > 0 {
 		priorReviewContext = "## Authoritative prior review entries\n\n" + strings.Join(priorReviewEntries, "\n\n---\n\n")

@@ -41,6 +41,8 @@ type fakeGH struct {
 	mu                    sync.Mutex
 	prs                   []github.PR
 	comments              map[int][]github.PRComment
+	formalReviews         map[int][]github.PRReview
+	inlineReviewComments  map[int][]github.PRReviewComment
 	prFetch               map[int]*github.PR
 	listErr               error
 	commentErr            map[int]error
@@ -230,6 +232,20 @@ func (f *fakeGH) ListPRComments(ctx context.Context, number int) ([]github.PRCom
 	comments := f.comments[number]
 	result := make([]github.PRComment, len(comments))
 	copy(result, comments)
+	return result, nil
+}
+
+func (f *fakeGH) ListPRReviews(ctx context.Context, number int) ([]github.PRReview, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	result := append([]github.PRReview(nil), f.formalReviews[number]...)
+	return result, nil
+}
+
+func (f *fakeGH) ListPRReviewComments(ctx context.Context, number int) ([]github.PRReviewComment, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	result := append([]github.PRReviewComment(nil), f.inlineReviewComments[number]...)
 	return result, nil
 }
 

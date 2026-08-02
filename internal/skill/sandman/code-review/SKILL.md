@@ -44,6 +44,12 @@ Use this context only when the invocation supplies pull-request title, body, acc
 
 Do not trigger, poll, fetch, post to, merge, commit to, push to, or remediate the pull request. Do not ask for additional context. The daemon owns pull-request orchestration and posting; this context only evaluates the supplied change and writes the decision artifact.
 
+### Reviewer posture
+
+Reviews are acceptance-criteria-first, then documented-standards-only, then correctness and safety. Stay inside the supplied scope. Blocking and Important findings must cite an acceptance criterion, a documented repository standard, or a correctness or safety defect in the supplied change. Suggestions that are not required by those sources are Nits and must not prevent approval.
+
+The supplied prior-review context is authoritative. Do not fetch pull-request history to reconstruct it. When prior-review state exists, report each prior finding as **resolved**, **partially addressed**, or **still outstanding**. When it does not exist, omit the `## Previous review progress` section entirely.
+
 ### 1. Review the supplied change
 
 Read the current worktree diff end to end. Evaluate every changed file against:
@@ -89,3 +95,53 @@ When quality rules are available, `## Quality check` always includes:
 - `### Metrics`: worst cognitive and cyclomatic values from an available analyzer, their configured thresholds, and prior blast-radius coverage when a coverage tool exists. Otherwise state `Prior coverage of the blast radius not measured: repository has no configured coverage tool.`
 - `### Findings`: quality findings with their applicable construct tags.
 - `### Tools used`: the analyzer used, or `Manual review of diff, no static analyzer configured for this PR.`
+
+For every Blocking or Important finding, cite the file and line range, quote the relevant code or behavior, explain the concrete impact, and name the smallest useful fix. Do not invent complexity or coverage measurements. Do not recommend splitting the change. An empty `## Findings` section means approval when no Blocking or Important findings exist.
+
+The daemon-review decision must preserve this complete output contract:
+
+```markdown
+## Summary
+
+<one paragraph describing the supplied change>
+
+## Standards
+
+<documented-standard assessment and finding count>
+
+## Spec
+
+<acceptance-criteria assessment and finding count>
+
+## Quality check
+
+<the quality-rules verdict and, when available, Scope, Metrics, Findings, and Tools used>
+
+## Findings
+
+### Blocking
+
+<only if present: citation, quoted behavior, impact, and smallest fix>
+
+### Important
+
+<only if present: citation, quoted behavior, impact, and smallest fix>
+
+### Nit
+
+<only if present: actionable optional improvement with its source>
+
+## Suggested next steps
+
+<minimum follow-ups>
+
+## Decision
+
+**APPROVED**
+
+## Previous review progress
+
+<only when authoritative prior-review state exists; status each prior finding>
+```
+
+Use `**CHANGES_REQUESTED**` instead of `**APPROVED**` whenever a Blocking or Important finding remains. The daemon atomically reads `decision.md` and posts it; the reviewer never posts the body or performs any pull-request action.

@@ -72,6 +72,39 @@ func TestSyncInstallsCodeReviewSkillWithoutObsoleteSelfReviewSkill(t *testing.T)
 	}
 }
 
+func TestCodeReviewSkillPreservesDaemonDecisionContract(t *testing.T) {
+	home := t.TempDir()
+	if err := Sync(SyncOptions{HomeDir: home, ReviewCommand: "/review"}); err != nil {
+		t.Fatalf("sync skill: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(home, ".agents", "skills", embeddedSkillRoot, "code-review", "SKILL.md"))
+	if err != nil {
+		t.Fatalf("read code-review skill: %v", err)
+	}
+	text := string(data)
+	for _, want := range []string{
+		"acceptance-criteria-first",
+		"## Standards",
+		"## Spec",
+		"## Quality check",
+		"## Previous review progress",
+		"resolved",
+		"partially addressed",
+		"still outstanding",
+		"atomic temp-file-and-rename",
+		"**CHANGES_REQUESTED**",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("code-review skill missing daemon contract %q", want)
+		}
+	}
+	for _, forbidden := range []string{"gh pr comment", "gh pr view", "git push", "git commit"} {
+		if strings.Contains(text, forbidden) {
+			t.Errorf("daemon-review skill must not orchestrate pull requests; found %q", forbidden)
+		}
+	}
+}
+
 func TestSyncUpgradesManagedSelfReviewTreeToCodeReview(t *testing.T) {
 	home := t.TempDir()
 	if err := Sync(SyncOptions{HomeDir: home, ReviewCommand: "/old-review"}); err != nil {

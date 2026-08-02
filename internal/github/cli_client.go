@@ -610,6 +610,27 @@ type prCommentPayload struct {
 	} `json:"user"`
 }
 
+type prReviewPayload struct {
+	ID        int64  `json:"id"`
+	Body      string `json:"body"`
+	State     string `json:"state"`
+	Submitted string `json:"submitted_at"`
+	User      struct {
+		Login string `json:"login"`
+	} `json:"user"`
+}
+
+type prReviewCommentPayload struct {
+	ID        int64  `json:"id"`
+	Body      string `json:"body"`
+	Path      string `json:"path"`
+	Line      int    `json:"line"`
+	CreatedAt string `json:"created_at"`
+	User      struct {
+		Login string `json:"login"`
+	} `json:"user"`
+}
+
 type authenticatedUserPayload struct {
 	Login string `json:"login"`
 }
@@ -686,6 +707,74 @@ func (c *CLIClient) ListPRComments(ctx context.Context, number int) ([]PRComment
 		})
 	}
 	return comments, nil
+}
+
+// ListPRReviews fetches formal pull-request reviews. It is an optional
+// review-daemon capability because ordinary GitHub clients need only the
+// conversation-comment surface exposed by Client.
+func (c *CLIClient) ListPRReviews(ctx context.Context, number int) ([]PRReview, error) {
+	owner, repo, err := c.resolveRepo(ctx)
+	if err != nil {
+		return nil, err
+	}
+	path := fmt.Sprintf("repos/%s/%s/pulls/%d/reviews?per_page=%s", owner, repo, number, prCommentPageSize)
+	callCtx, cancel := c.boundContext(ctx)
+	defer cancel()
+	out, err := c.runCmd(callCtx, c.command(callCtx, "gh", "api", path, "--paginate"), "gh api pr reviews")
+	if err != nil {
+		return nil, fmt.Errorf("gh api pr reviews: %w", err)
+	}
+	if len(bytes.TrimSpace(out)) == 0 {
+		return nil, nil
+	}
+	var result []PRReview
+	dec := json.NewDecoder(bytes.NewReader(out))
+	for {
+		var page []prReviewPayload
+		if err := dec.Decode(&page); err != nil {
+			if err == io.EOF {
+				break
+			}
+			return nil, fmt.Errorf("parse pr reviews: %w", err)
+		}
+		for _, payload := range page {
+			result = append(result, PRReview{ID: strconv.FormatInt(payload.ID, 10), Body: payload.Body, State: payload.State, AuthorLogin: payload.User.Login, CreatedAt: parseGitHubTime(payload.Submitted)})
+		}
+	}
+	return result, nil
+}
+
+// ListPRReviewComments fetches inline pull-request review comments.
+func (c *CLIClient) ListPRReviewComments(ctx context.Context, number int) ([]PRReviewComment, error) {
+	owner, repo, err := c.resolveRepo(ctx)
+	if err != nil {
+		return nil, err
+	}
+	path := fmt.Sprintf("repos/%s/%s/pulls/%d/comments?per_page=%s", owner, repo, number, prCommentPageSize)
+	callCtx, cancel := c.boundContext(ctx)
+	defer cancel()
+	out, err := c.runCmd(callCtx, c.command(callCtx, "gh", "api", path, "--paginate"), "gh api pr review comments")
+	if err != nil {
+		return nil, fmt.Errorf("gh api pr review comments: %w", err)
+	}
+	if len(bytes.TrimSpace(out)) == 0 {
+		return nil, nil
+	}
+	var result []PRReviewComment
+	dec := json.NewDecoder(bytes.NewReader(out))
+	for {
+		var page []prReviewCommentPayload
+		if err := dec.Decode(&page); err != nil {
+			if err == io.EOF {
+				break
+			}
+			return nil, fmt.Errorf("parse pr review comments: %w", err)
+		}
+		for _, payload := range page {
+			result = append(result, PRReviewComment{ID: strconv.FormatInt(payload.ID, 10), Body: payload.Body, Path: payload.Path, Line: payload.Line, AuthorLogin: payload.User.Login, CreatedAt: parseGitHubTime(payload.CreatedAt)})
+		}
+	}
+	return result, nil
 }
 
 // ListIssueComments fetches issue conversation comments for the given

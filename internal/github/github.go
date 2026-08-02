@@ -139,6 +139,39 @@ type PRComment struct {
 	UpdatedAt   time.Time
 }
 
+// PRReview holds a formal pull-request review supplied to the review daemon.
+type PRReview struct {
+	ID          string
+	Body        string
+	State       string
+	AuthorLogin string
+	CreatedAt   time.Time
+}
+
+// PRReviewComment holds an inline pull-request review comment supplied to the
+// review daemon. The path and line identify the reviewed location when GitHub
+// provides them.
+type PRReviewComment struct {
+	ID          string
+	Body        string
+	Path        string
+	Line        int
+	AuthorLogin string
+	CreatedAt   time.Time
+}
+
+// PRReviewLister is an optional capability for clients that can supply formal
+// review history without widening the core Client interface.
+type PRReviewLister interface {
+	ListPRReviews(ctx context.Context, number int) ([]PRReview, error)
+}
+
+// PRReviewCommentLister is an optional capability for clients that can supply
+// inline review history without widening the core Client interface.
+type PRReviewCommentLister interface {
+	ListPRReviewComments(ctx context.Context, number int) ([]PRReviewComment, error)
+}
+
 // IssueComment holds an issue conversation comment fetched from the GitHub
 // REST API. These are the comments posted on an issue (not a PR), used by
 // Specification expansion to discover child references that live in the conversation
