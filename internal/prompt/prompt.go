@@ -42,6 +42,9 @@ type PRData struct {
 	// entirely — see default_pr_review_prompt.md "Previous review
 	// progress — hard rule".
 	PriorReviewExists bool
+	// PriorReviewContext contains the daemon-supplied prior review entries.
+	// It is empty when no prior review exists.
+	PriorReviewContext string
 }
 
 // IssueRenderer renders prompt templates with substitutions.

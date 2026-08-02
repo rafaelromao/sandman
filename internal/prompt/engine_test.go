@@ -950,6 +950,7 @@ func TestRenderReview_BuiltInDefaultRendersPRData(t *testing.T) {
 	want = strings.ReplaceAll(want, "{{RUN_DIR}}", "/abs/path/to/run")
 	// Issue #1892: zero-value PRData.PriorReviewExists is false -> "NO".
 	want = strings.ReplaceAll(want, "{{PRIOR_REVIEW_EXISTS}}", "NO")
+	want = strings.ReplaceAll(want, "{{PRIOR_REVIEW_CONTEXT}}", "")
 
 	if result != want {
 		t.Errorf("unexpected rendered review prompt\nwant:\n%s\ngot:\n%s", want, result)
@@ -1039,6 +1040,17 @@ func TestApplyPRSubstitutions_PriorReviewExistsFalseRendersNO(t *testing.T) {
 	got := ApplyPRSubstitutions(template, data)
 	if got != "PRIOR_REVIEW_EXISTS=NO" {
 		t.Errorf("got %q, want %q", got, "PRIOR_REVIEW_EXISTS=NO")
+	}
+}
+
+func TestApplyPRSubstitutions_RendersAuthoritativePriorReviewContext(t *testing.T) {
+	template := "prior={{PRIOR_REVIEW_CONTEXT}}"
+	data := PRData{PriorReviewContext: "## Authoritative prior review entries\n\n- prior finding: add coverage"}
+
+	got := ApplyPRSubstitutions(template, data)
+	want := "prior=## Authoritative prior review entries\n\n- prior finding: add coverage"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
 	}
 }
 

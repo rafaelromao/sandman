@@ -27,6 +27,8 @@ Load `sandman-code-review` and use its daemon-review context. Review the supplie
 
 The `## Previous review progress` section is conditional. The deterministic prior-review flag is `{{PRIOR_REVIEW_EXISTS}}`: render the section only for `YES`; for `NO`, render no heading, placeholder, or default body.
 
+{{PRIOR_REVIEW_CONTEXT}}
+
 The code-review skill applies `.sandman/reviews/quality-rules.md` using applicable `[control-flow]`, `[functional]`, `[OOP]`, and `[public-api]` tags. If unavailable, it records `Quality rules unavailable in this repository; no built-in quality-rule evaluation was applied.` Its `## Quality check` contains `### Scope`, `### Metrics`, `### Findings`, and `### Tools used`; Scope uses `focused`, `mixed scope`, or `cross-cutting`.
 
 ## Search Scope Restriction

@@ -78,6 +78,9 @@ func TestDaemon_PriorReviewFlag_HumanReview_RendersYES(t *testing.T) {
 	if !strings.Contains(prompt, "deterministic prior-review flag is `YES`") {
 		t.Errorf("rendered prompt must substitute {{PRIOR_REVIEW_EXISTS}}=YES when a human review exists (issue #1892), got prompt:\n%s", prompt)
 	}
+	if !strings.Contains(prompt, "## Authoritative prior review entries\n\nLGTM, no blockers.") {
+		t.Errorf("rendered prompt must supply prior review entries to the daemon-review agent, got prompt:\n%s", prompt)
+	}
 }
 
 // TestDaemon_PriorReviewFlag_BotSelfPost_RendersYES pins the asymmetric

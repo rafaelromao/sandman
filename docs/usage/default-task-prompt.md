@@ -144,7 +144,7 @@ The shared Sandman skill owns the detailed workflow. This page describes the boo
     | Step | Designated Mechanism | Notes |
     |------|-------------------|-------|
     | Plan approval (TDD) | Subagent review + consensus | Only step that explicitly requires subagent review |
-| Self-review | `sandman-code-review` skill in self-review context |
+    | Self-review | `sandman-code-review` skill in self-review context |
     | PR review | `sandman-pr-review` skill | **Must NOT use subagent**
     
     **PR review is the only step where subagent review is banned.** Use the `sandman-pr-review` skill instead. Subagent review is recommended for plan approval.
@@ -174,7 +174,7 @@ The shared Sandman skill owns the detailed workflow. This page describes the boo
     
     - `sandman-implement` — end-to-end implement workflow. Must be loaded before any implementation work begins. Owns the closing-reference body rule, the back-merge step, and the post-create body verification.
     - `sandman-tdd` for planning, subagent-reviewed plan consensus, vertical red-green TDD, and refactor-after-green.
-- `sandman-code-review` for self-review.
+    - `sandman-code-review` for self-review.
     - `sandman-back-merge` before PR creation, with no rebase and no force-push.
     - `sandman-pr-review` for delegated PR review. Do not review the PR yourself.
     - `sandman-pr-merge` only if the PR is fully approved, required checks are green, and GitHub reports it mergeable.
@@ -182,7 +182,7 @@ The shared Sandman skill owns the detailed workflow. This page describes the boo
     ## Required Order
     
     1. Complete checklist items in order: Create branch, Plan, Implement, PR-Review, PR-Merge.
-2. For plan-approval, use subagent review. For self-review, use `sandman-code-review` skill in self-review context. For PR-review, use `sandman-pr-review` skill — subagent review is banned there. Proceed after consensus/completion. Do not ask the user.
+    2. For plan-approval, use subagent review. For self-review, use `sandman-code-review` skill in self-review context. For PR-review, use `sandman-pr-review` skill — subagent review is banned there. Proceed after consensus/completion. Do not ask the user.
     3. **PR creation is not PR review.** A PR existing does not mean it has been reviewed or is ready to merge. Before loading `sandman-pr-merge`, the agent MUST confirm that `sandman-pr-review` was actually executed and produced a reviewed/approved state. If the last completed step is "PR Created" and the PR is not approved or not mergeable, the agent MUST call `sandman-pr-review` before `sandman-pr-merge` — do not skip the review step. If any merge gate is false or ambiguous, call `sandman-pr-review` and continue the review loop instead of reporting blockers to the user.
     4. **PR-Review is `[x]` only when the PR has Approval against the current diff.** `PR-Review` cannot be marked complete on the basis of exhausted review passes, timeouts, or zero reviewer responses. The check is a concrete signal: the PR has Approval (`reviewDecision === 'APPROVED'` OR informal approval per `sandman-pr-review` Step 6 case C) **and that approval was posted against the current head SHA** (issue #2309). An APPROVED comment from a prior SHA is stale — the prior approval was issued against a different diff and does not authorize merging the current one. Until a fresh Approval is observed against the head SHA recorded at the last `{{REVIEW_COMMAND}}` post, leave the checkbox unchecked and keep the review loop open — even if every other item is checked. Marking `PR-Review` `[x]` on a stale approval is the failure mode that strands a run at PR-Merge after a back-merge with no path forward.
     5. If `PR-Review` completes with full approval and all merge gates are true, load and run `sandman-pr-merge`.
