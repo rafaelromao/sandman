@@ -42,7 +42,7 @@ Report under `## Standards` and `## Spec` headings. State the finding count for 
 
 Use this context only when the invocation supplies pull-request title, body, acceptance criteria, review focus, prior-review state, and the destination for the decision artifact. Those inputs are authoritative. Work only in the current review worktree.
 
-Do not trigger, poll, fetch, post to, merge, commit to, push to, or remediate the pull request. Do not ask for additional context. The daemon owns pull-request orchestration and posting; this context only evaluates the supplied change and writes the decision artifact.
+Do not trigger, poll, fetch, post to, merge, commit to, push to, or remediate the pull request. Do not ask for additional context. The surrounding workflow owns pull-request orchestration and posting; this context only evaluates the supplied change and writes the decision artifact.
 
 ### Reviewer posture
 
@@ -74,7 +74,7 @@ Correctness and safety findings are reported in addition to the two axes. Each f
 
 ### 3. Write the reviewer decision
 
-Write the full Markdown decision to the supplied `decision.md` path using an atomic temp-file-and-rename write. The daemon reads and posts that file; do not post it yourself.
+Write the full Markdown decision to the supplied `decision.md` path using an atomic temp-file-and-rename write. The surrounding workflow reads and posts that file; do not post it yourself.
 
 Use this structure:
 
@@ -98,7 +98,7 @@ When quality rules are available, `## Quality check` always includes:
 
 For every Blocking or Important finding, cite the file and line range, quote the relevant code or behavior, explain the concrete impact, and name the smallest useful fix. Do not invent complexity or coverage measurements. Do not recommend splitting the change. An empty `## Findings` section means approval when no Blocking or Important findings exist.
 
-The daemon-review decision must preserve this complete output contract:
+The pull-request review decision must preserve this complete output contract:
 
 ```markdown
 ## Summary
@@ -144,4 +144,4 @@ The daemon-review decision must preserve this complete output contract:
 <only when authoritative prior-review state exists; status each prior finding>
 ```
 
-Use `**CHANGES_REQUESTED**` instead of `**APPROVED**` whenever a Blocking or Important finding remains. The daemon atomically reads `decision.md` and posts it; the reviewer never posts the body or performs any pull-request action.
+Use `**CHANGES_REQUESTED**` instead of `**APPROVED**` whenever a Blocking or Important finding remains. The surrounding workflow atomically reads `decision.md` and posts it; the reviewer never posts the body or performs any pull-request action.
