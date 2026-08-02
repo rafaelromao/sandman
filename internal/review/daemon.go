@@ -841,10 +841,10 @@ func (d *Daemon) QualityRulesPath() string {
 
 // initPromptTemplate writes the static, PR-agnostic review prompt
 // template to PromptTemplatePath() and the quality rules to
-// .sandman/reviews/quality-rules.md, but only when they are missing.
-// Files materialised by `sandman init` (or by a previous daemon start)
-// are left untouched so user edits survive restarts. It is safe to call
-// from multiple goroutines and from both StartSocket and launchReview.
+// .sandman/reviews/quality-rules.md when they are missing. It also upgrades
+// the exact prior generated review prompt while preserving user edits. It is
+// safe to call from multiple goroutines and from both StartSocket and
+// launchReview.
 //
 // Both writes go through atomicfs.WriteAtomic, which uses a unique
 // temp-file suffix (".tmp.<random>") rather than a fixed "<path>.tmp",
@@ -854,8 +854,17 @@ func (d *Daemon) QualityRulesPath() string {
 func (d *Daemon) initPromptTemplate() error {
 	var err error
 	d.promptOnce.Do(func() {
-		if _, statErr := os.Stat(d.PromptTemplatePath()); os.IsNotExist(statErr) {
-			if err = atomicfs.WriteAtomic(d.PromptTemplatePath(), []byte(prompt.DefaultPRReviewPrompt()), 0644); err != nil {
+		promptPath := d.PromptTemplatePath()
+		promptData, readErr := os.ReadFile(promptPath)
+		if os.IsNotExist(readErr) {
+			if err = atomicfs.WriteAtomic(promptPath, []byte(prompt.DefaultPRReviewPrompt()), 0644); err != nil {
+				return
+			}
+		} else if readErr != nil {
+			err = fmt.Errorf("read review prompt: %w", readErr)
+			return
+		} else if prompt.IsLegacyDefaultPRReviewPrompt(promptData) {
+			if err = atomicfs.WriteAtomic(promptPath, []byte(prompt.DefaultPRReviewPrompt()), 0644); err != nil {
 				return
 			}
 		}

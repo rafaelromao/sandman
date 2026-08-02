@@ -38,6 +38,8 @@ var promptVersion string
 // <repo>/.sandman when cfg.PromptFile ends in .sandman/prompt.md.
 const promptVersionFile = "state/.prompt-version"
 
+const legacyPRReviewPromptSHA256 = "deda1b0adea9952d1bb61cf27def77f6d4c8c12c637203fc32ae6a063ed54bab"
+
 func init() {
 	sum := sha256.Sum256([]byte(defaultPrompt))
 	promptVersion = hex.EncodeToString(sum[:])
@@ -49,6 +51,13 @@ func DefaultPrompt() string { return defaultPrompt }
 // DefaultPRReviewPrompt returns the built-in prompt template used by
 // `sandman review` daemon.
 func DefaultPRReviewPrompt() string { return defaultPRReviewPrompt }
+
+// IsLegacyDefaultPRReviewPrompt reports whether data is the prior generated
+// review prompt and can therefore be upgraded without overwriting user edits.
+func IsLegacyDefaultPRReviewPrompt(data []byte) bool {
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:]) == legacyPRReviewPromptSHA256
+}
 
 // DefaultQualityRules returns the built-in PR review quality rules template.
 // The rules are embedded at compile time and materialised alongside the

@@ -104,6 +104,31 @@ func TestSyncUpgradesManagedSelfReviewTreeToCodeReview(t *testing.T) {
 	}
 }
 
+func TestSyncUpgradesUnmanifestedSelfReviewTreeToCodeReview(t *testing.T) {
+	home := t.TempDir()
+	if err := Sync(SyncOptions{HomeDir: home, ReviewCommand: "/old-review"}); err != nil {
+		t.Fatalf("seed skill: %v", err)
+	}
+
+	root := filepath.Join(home, ".agents", "skills", embeddedSkillRoot)
+	if err := os.Rename(filepath.Join(root, "code-review"), filepath.Join(root, "self-review")); err != nil {
+		t.Fatalf("simulate legacy self-review tree: %v", err)
+	}
+	if err := os.Remove(filepath.Join(root, manifestFileName)); err != nil {
+		t.Fatalf("remove manifest from legacy tree: %v", err)
+	}
+
+	if err := Sync(SyncOptions{HomeDir: home, ReviewCommand: "/new-review"}); err != nil {
+		t.Fatalf("upgrade unmanifested legacy skill tree: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "code-review", "SKILL.md")); err != nil {
+		t.Fatalf("upgraded code-review skill missing: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "self-review")); !os.IsNotExist(err) {
+		t.Fatalf("obsolete self-review skill remains after upgrade, stat error = %v", err)
+	}
+}
+
 func TestSyncInstallsIssueClosingGuardInImplementSkill(t *testing.T) {
 	home := t.TempDir()
 

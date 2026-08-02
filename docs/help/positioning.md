@@ -30,7 +30,7 @@ The three short forms:
 
 Matt Pocock's engineering skill chain (`grill-with-docs`, `to-spec`, `to-tickets`, `diagnosing-bugs`, `improve-codebase-architecture`, and others) is an optional upstream helper. The chain resolves uncertainty, publishes a spec, and slices GitHub tickets. Sandman runs the ready ticket frontier AFK — it does not need to own the spec layer, the alignment layer, or the domain-modelling layer.
 
-Sandman does ship its own workflow skills (under `~/.agents/skills/sandman/`) for the Sandman-owned parts of the loop: `implement`, `tdd`, `review`, `pr-review`, `back-merge`, `pr-merge`. The two skill chains serve different layers; they are not in competition.
+Sandman does ship its own workflow skills (under `~/.agents/skills/sandman/`) for the Sandman-owned parts of the loop: `implement`, `tdd`, `code-review` (for implementor self-review and daemon pull-request review), `pr-review`, `back-merge`, `pr-merge`. The two skill chains serve different layers; they are not in competition.
 
 ## Sandman and OpenCode
 
