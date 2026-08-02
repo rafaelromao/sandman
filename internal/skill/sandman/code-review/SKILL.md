@@ -15,15 +15,19 @@ Use this context when an implementor reviews its own changes.
 
 Use the fixed point supplied in the invocation. If none was supplied, use `origin/main` when available, then the current branch's upstream, then `HEAD~1` when it exists. If no historical baseline exists, use `HEAD` as the committed baseline, inspect `git diff HEAD` and every untracked path listed by `git status --short`, and record that no historical baseline was available.
 
-Capture `git diff <fixed-point>...HEAD` and `git log <fixed-point>..HEAD --oneline` once.
+Confirm the fixed point resolves and the diff is non-empty before proceeding. Capture `git diff <fixed-point>...HEAD` and `git log <fixed-point>..HEAD --oneline` once.
 
 ### 2. Identify review sources
 
-Find the originating work item, a supplied specification path, or a matching specification under `docs/`, `specs/`, or `.scratch/`. If no specification is available, the Spec assessment records `no spec available` while Standards continues.
+Find the originating work item, a supplied specification path, or a matching specification under `docs/`, `specs/`, or `.scratch/`. If no specification is available, use the work item's body and change-request body; if neither supplies a specification, the Spec assessment records `no spec available` while Standards continues.
 
 Collect documented standards from contributor guidance, domain vocabulary, architectural decisions, and machine-enforced configuration. Do not manually re-check rules already enforced by tooling.
 
-### 3. Review and report
+### 3. Run the two axes in parallel
+
+Use separate review agents so the axes do not pollute each other's context. Give the Standards reviewer the diff, commit list, and standards sources; it reports documented-standard violations with source citations. Give the Spec reviewer the diff, commit list, and specification; it reports missing, partial, incorrect, and out-of-scope behavior with requirement citations. Skip the Spec reviewer only when no specification is available.
+
+### 4. Review and report
 
 Review the diff separately for:
 
