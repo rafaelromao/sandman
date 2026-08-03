@@ -821,7 +821,67 @@ func TestDefaultPRReviewPrompt_ForbidsDaemonSideOrchestration(t *testing.T) {
 	}
 }
 
-func TestDefaultPRReviewPrompt_DelegatesQualityCheckToCodeReview(t *testing.T) {
+func TestDefaultPRReviewPrompt_ContainsQualityCheckSection(t *testing.T) {
+	data, err := os.ReadFile("default_pr_review_prompt.md")
+	if err != nil {
+		t.Fatalf("read default PR review prompt template: %v", err)
+	}
+	prompt := string(data)
+
+	required := []string{
+		"After applying the rules, **render a `## Quality check` section**",
+		"`### Scope`",
+		"`### Metrics`",
+		"`### Findings`",
+		"`### Tools used`",
+		"focused — <one-line justification>",
+		"mixed scope — <one-line justification>",
+		"cross-cutting — <one-line justification>",
+		"Quality rules unavailable in this repository; no built-in quality-rule evaluation was applied.",
+		"Do not restate the threshold literal; refer to `.sandman/reviews/quality-rules.md`",
+		"7. When you find an issue, cite the file and line range, quote the offending snippet, and describe the concrete fix.",
+	}
+	for _, phrase := range required {
+		if !strings.Contains(prompt, phrase) {
+			t.Errorf("default PR review prompt must retain canonical quality-check phrase %q (issue #2332)", phrase)
+		}
+	}
+
+	buggyInstructional := []string{
+		"0.75",
+		"75%",
+		"complexity signals, OC, SOLID",
+		"all rules skipped — no language-tagged rules matched the diff",
+		"Cite n/t, the ratio, the threshold verdict",
+	}
+	for _, phrase := range buggyInstructional {
+		if strings.Contains(prompt, phrase) {
+			t.Errorf("default PR review prompt must not retain obsolete quality-check wording %q (issue #2332)", phrase)
+		}
+	}
+}
+
+func TestDefaultPRReviewPrompt_ContainsDaemonRedactionNote(t *testing.T) {
+	data, err := os.ReadFile("default_pr_review_prompt.md")
+	if err != nil {
+		t.Fatalf("read default PR review prompt template: %v", err)
+	}
+	prompt := string(data)
+
+	required := []string{
+		"## Note",
+		"the daemon redacts every `/sandman` substring",
+		"case-insensitive",
+		"Open review requests",
+	}
+	for _, phrase := range required {
+		if !strings.Contains(prompt, phrase) {
+			t.Errorf("default PR review prompt must retain canonical daemon-redaction note phrase %q", phrase)
+		}
+	}
+}
+
+func TestDefaultPRReviewPrompt_DelegatesToCodeReviewSkill(t *testing.T) {
 	data, err := os.ReadFile("default_pr_review_prompt.md")
 	if err != nil {
 		t.Fatalf("read default PR review prompt template: %v", err)
@@ -829,11 +889,11 @@ func TestDefaultPRReviewPrompt_DelegatesQualityCheckToCodeReview(t *testing.T) {
 	prompt := string(data)
 
 	if !strings.Contains(prompt, "Load `sandman-code-review` and use its pull-request review context") {
-		t.Error("default PR review prompt must delegate quality evaluation to sandman-code-review")
+		t.Error("default PR review prompt must instruct the agent to load sandman-code-review")
 	}
 }
 
-func TestRenderReview_DelegatesQualityCheckToCodeReview(t *testing.T) {
+func TestRenderReview_PreservesQualityCheckAndSkillDelegation(t *testing.T) {
 	engine := &Engine{}
 	data := PRData{
 		Number:            17,
@@ -853,6 +913,10 @@ func TestRenderReview_DelegatesQualityCheckToCodeReview(t *testing.T) {
 		"pull-request review context",
 		"supplied above and are authoritative",
 		"atomically write `/abs/path/to/worktree/decision.md` and exit",
+		"`### Scope`",
+		"`### Metrics`",
+		"`### Findings`",
+		"`### Tools used`",
 	} {
 		if !strings.Contains(result, phrase) {
 			t.Errorf("rendered review prompt must contain %q", phrase)

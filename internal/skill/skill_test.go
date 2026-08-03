@@ -72,7 +72,7 @@ func TestSyncInstallsCodeReviewSkillWithoutObsoleteSelfReviewSkill(t *testing.T)
 	}
 }
 
-func TestCodeReviewSkillPreservesDaemonDecisionContract(t *testing.T) {
+func TestCodeReviewSkillDelegatesDecisionContractToInvokingPrompt(t *testing.T) {
 	home := t.TempDir()
 	if err := Sync(SyncOptions{HomeDir: home, ReviewCommand: "/review"}); err != nil {
 		t.Fatalf("sync skill: %v", err)
@@ -83,19 +83,20 @@ func TestCodeReviewSkillPreservesDaemonDecisionContract(t *testing.T) {
 	}
 	text := string(data)
 	for _, want := range []string{
+		"## Self-review context",
+		"## Pull-request review context",
 		"acceptance-criteria-first",
 		"## Standards",
 		"## Spec",
-		"## Quality check",
-		"## Previous review progress",
 		"resolved",
 		"partially addressed",
 		"still outstanding",
-		"atomic temp-file-and-rename",
-		"**CHANGES_REQUESTED**",
+		"atomic temp-file-and-rename write",
+		"invoking pull-request review prompt defines the decision output contract",
+		"Do not trigger, poll, fetch, post to, merge, commit to, push to, or remediate",
 	} {
 		if !strings.Contains(text, want) {
-			t.Errorf("code-review skill missing daemon contract %q", want)
+			t.Errorf("code-review skill missing daemon review contract %q", want)
 		}
 	}
 	for _, forbidden := range []string{"gh pr comment", "gh pr view", "git push", "git commit"} {

@@ -315,7 +315,7 @@ func TestCodeReviewSkill_SeparatesSelfAndDaemonContexts(t *testing.T) {
 		"Those inputs are authoritative.",
 		"current review worktree",
 		"atomic temp-file-and-rename write",
-		"`## Decision` with `**APPROVED**`",
+		"invoking pull-request review prompt defines the decision output contract",
 	} {
 		if !strings.Contains(text, phrase) {
 			t.Errorf("code-review skill missing context contract %q", phrase)
