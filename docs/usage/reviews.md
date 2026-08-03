@@ -82,6 +82,31 @@ Review runs appear in:
 - `sandman portal`
 - `.sandman/batches/<batch-id>/runs/<run-id>/`
 
+## Review prompt
+
+`.sandman/reviews/review-prompt.md` is the **live daemon template** for pull-request reviews. `sandman init` writes it into `.sandman/reviews/` alongside `.sandman/reviews/quality-rules.md`; the review daemon reads it back for every review run and renders each launched reviewer request from it. Edit the file in the repository to make repository-specific prompt instructions govern reviewer behavior — later reviews pick up the change without a daemon restart.
+
+The template is PR-agnostic. PR context is injected per run through these placeholders:
+
+| Placeholder | Meaning |
+|-------------|---------|
+| `{{PR_NUMBER}}` | Pull-request number |
+| `{{PR_TITLE}}` | Pull-request title |
+| `{{PR_BODY}}` | Pull-request body |
+| `{{ACCEPTANCE_CRITERIA}}` | Linked work item's acceptance criteria |
+| `{{REVIEW_FOCUS}}` | The review focus after `/sandman review` |
+| `{{RUN_DIR}}` | The review worktree directory (where `decision.md` is written) |
+| `{{PRIOR_REVIEW_EXISTS}}` | `YES`/`NO` — whether a prior review exists |
+| `{{PRIOR_REVIEW_CONTEXT}}` | Prior review entries supplied by the daemon |
+
+The file is preserved across re-runs of `sandman init`. When it is missing, the daemon atomically re-materializes it from the built-in default before rendering the next review, so the shared template always exists on disk.
+
+### Reviewer versus implementor roles
+
+The default prompt requires the `sandman-code-review` skill for daemon reviews and explicitly forbids `sandman-pr-review`, which owns the implementor-side review loop (posting `/sandman review` and driving iterative approval). The daemon reviewer is **read-only**: it reports mergeability or CI problems as findings but never fixes code, pushes, merges, posts GitHub comments, or requests another review. Keep that boundary when you edit the template — a review prompt that tells the reviewer to orchestrate the pull request will conflict with the daemon's own posting workflow.
+
+The template must not contain stray `{{...}}` literals beyond the placeholders above: an unknown key fails the render and the review is not launched.
+
 ## See also
 
 - [Commands Reference](commands.md#sandman-review) — full `sandman review` flags

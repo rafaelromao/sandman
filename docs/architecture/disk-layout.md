@@ -70,7 +70,7 @@ Every persisted Sandman artifact lives under `<repo>/.sandman/` (with two docume
 | `batches/<batchID>/runs/<runID>/run.sock` | runtime | command server on per-row start | external caller (`{"action":"abort","issue":N}`) | command server on per-row completion | per AgentRun |
 | `batches/<batchID>/runs/<runID>/review-state.json` | runtime, atomic-rename | review state store (dedup, claim lock) | review state store | orchestrator (on run completion) | per review AgentRun |
 | `batches/<batchID>/runs/<runID>/config/` | runtime, container snapshot | `PrepareContainerConfigMounts` | container runtime (bind-mount) | orchestrator (on run completion) | per AgentRun |
-| `reviews/review-prompt.md` | scaffold | `sandman init` | review daemon (prompt materialization) | repo (manual) | init only |
+| `reviews/review-prompt.md` | scaffold | `sandman init` | review daemon (materialization + live template render) | repo (manual) | init only |
 | `reviews/quality-rules.md` | scaffold | `sandman init` | review daemon (prompt materialization) | repo (manual) | init only |
 | `reviews/review.sock` | runtime | review daemon on start | review daemon CLI | review daemon on stop | continuous |
 | `worktrees/<branch>/` | runtime, git worktree | `git worktree add` (orchestrator) | agent, orchestrator | orchestrator (on run completion) | per AgentRun |
