@@ -792,9 +792,13 @@ func TestDefaultPRReviewPrompt_ContainsOmitPreviousReviewProgressRule(t *testing
 	prompt := string(data)
 
 	required := []string{
-		"`## Previous review progress` section is conditional",
+		"**omit** the `## Previous review progress` section from the posted comment",
+		"Do not render this section if there are no prior reviews",
+		"Do not write a placeholder such as \"No previous reviews found.\"",
+		"## Previous review progress — hard rule",
 		"deterministic prior-review flag is `{{PRIOR_REVIEW_EXISTS}}`",
-		"render no heading, placeholder, or default body",
+		"render **no heading, no placeholder, no default body**",
+		"Treat `NO` as authoritative",
 	}
 	for _, phrase := range required {
 		if !strings.Contains(prompt, phrase) {
