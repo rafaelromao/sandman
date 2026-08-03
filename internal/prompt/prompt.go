@@ -11,6 +11,14 @@ type RenderConfig struct {
 	ReviewCommand      string            // REVIEW_COMMAND substitution value
 	ReviewCommandSet   bool              // true when review_command should be recorded in events
 	PromptArgs         map[string]string // arbitrary keys from config
+	// ReviewPromptFile is the path to the project's live review-prompt
+	// template (.sandman/reviews/review-prompt.md). The review daemon passes
+	// it so repository-specific prompt edits govern reviewer behavior. When
+	// set and readable it replaces the embedded default as the PR-agnostic
+	// template for RenderReview; PromptFlag/TemplateFlag still win as
+	// explicit overrides, and a missing or empty file falls back to the
+	// embedded default.
+	ReviewPromptFile string
 }
 
 // IssueData holds the issue metadata needed for prompt rendering.

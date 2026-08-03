@@ -881,6 +881,66 @@ func TestDefaultPRReviewPrompt_ContainsDaemonRedactionNote(t *testing.T) {
 	}
 }
 
+func TestDefaultPRReviewPrompt_ForbidsImplementorReviewLoopSkill(t *testing.T) {
+	data, err := os.ReadFile("default_pr_review_prompt.md")
+	if err != nil {
+		t.Fatalf("read default PR review prompt template: %v", err)
+	}
+	prompt := string(data)
+
+	for _, phrase := range []string{
+		"Do not load `sandman-pr-review`",
+		"implementor-side review loop",
+	} {
+		if !strings.Contains(prompt, phrase) {
+			t.Errorf("default PR review prompt must explicitly forbid sandman-pr-review via %q", phrase)
+		}
+	}
+}
+
+func TestDefaultPRReviewPrompt_DefinesReadOnlyReviewer(t *testing.T) {
+	data, err := os.ReadFile("default_pr_review_prompt.md")
+	if err != nil {
+		t.Fatalf("read default PR review prompt template: %v", err)
+	}
+	prompt := string(data)
+
+	required := []string{
+		"You are read-only.",
+		"Report mergeability or CI problems as findings",
+		"never fix the code, push, merge, post GitHub comments, or request another review",
+	}
+	for _, phrase := range required {
+		if !strings.Contains(prompt, phrase) {
+			t.Errorf("default PR review prompt must define the daemon reviewer as read-only via %q", phrase)
+		}
+	}
+}
+
+// TestIsLegacyDefaultPRReviewPrompt_PriorDefaultIsUpgradeable pins the
+// legacy-upgrade contract: the production legacy hash must match the
+// immediately previous generated default, so repositories that
+// materialized that generation get upgraded to the new default while
+// user edits (any other bytes) are preserved. When the embedded default
+// changes, rotate legacyPRReviewPromptSHA256 to the prior content and
+// update fixtures/prior_default_pr_review_prompt.md with that same prior
+// content.
+func TestIsLegacyDefaultPRReviewPrompt_PriorDefaultIsUpgradeable(t *testing.T) {
+	frozen, err := os.ReadFile(filepath.Join("fixtures", "prior_default_pr_review_prompt.md"))
+	if err != nil {
+		t.Fatalf("read frozen prior default: %v", err)
+	}
+	if !IsLegacyDefaultPRReviewPrompt(frozen) {
+		t.Fatal("frozen prior generated default must be eligible for upgrade to the current default")
+	}
+	if IsLegacyDefaultPRReviewPrompt([]byte(DefaultPRReviewPrompt())) {
+		t.Fatal("current default must not be classified as legacy")
+	}
+	if IsLegacyDefaultPRReviewPrompt([]byte("user-edited review prompt")) {
+		t.Fatal("user-edited prompt must not be eligible for upgrade")
+	}
+}
+
 func TestDefaultPRReviewPrompt_DelegatesToCodeReviewSkill(t *testing.T) {
 	data, err := os.ReadFile("default_pr_review_prompt.md")
 	if err != nil {
@@ -1038,6 +1098,103 @@ func TestRenderReview_PromptFlagOverridesDefault(t *testing.T) {
 
 	if result != "PR #7 focus=F" {
 		t.Errorf("expected prompt-flag override, got %q", result)
+	}
+}
+
+func TestRenderReview_ReadsReviewPromptFile(t *testing.T) {
+	engine := &Engine{}
+	templatePath := filepath.Join(t.TempDir(), "review-prompt.md")
+	custom := "# repo review prompt\nReview #{{PR_NUMBER}}: {{PR_TITLE}}\nFocus: {{REVIEW_FOCUS}}\n"
+	if err := os.WriteFile(templatePath, []byte(custom), 0644); err != nil {
+		t.Fatalf("write review prompt file: %v", err)
+	}
+	data := PRData{
+		Number:      42,
+		Title:       "Render the project review prompt",
+		ReviewFocus: "focus on prompt",
+	}
+
+	result, err := engine.RenderReview(RenderConfig{ReviewPromptFile: templatePath}, data)
+	if err != nil {
+		t.Fatalf("render review prompt: %v", err)
+	}
+
+	for _, want := range []string{
+		"# repo review prompt",
+		"Review #42: Render the project review prompt",
+		"Focus: focus on prompt",
+	} {
+		if !strings.Contains(result, want) {
+			t.Errorf("rendered review prompt must contain %q, got:\n%s", want, result)
+		}
+	}
+}
+
+func TestRenderReview_EmptyReviewPromptFileFallsBackToDefault(t *testing.T) {
+	engine := &Engine{}
+	templatePath := filepath.Join(t.TempDir(), "review-prompt.md")
+	if err := os.WriteFile(templatePath, []byte("  \n\t\n"), 0644); err != nil {
+		t.Fatalf("write review prompt file: %v", err)
+	}
+	data := PRData{Number: 1, Title: "T"}
+
+	result, err := engine.RenderReview(RenderConfig{ReviewPromptFile: templatePath}, data)
+	if err != nil {
+		t.Fatalf("render review prompt: %v", err)
+	}
+	if !strings.Contains(result, "sandman-code-review") {
+		t.Errorf("empty persisted prompt must fall back to the built-in default, got:\n%s", result)
+	}
+}
+
+func TestRenderReview_UnknownKeyInReviewPromptFileReturnsError(t *testing.T) {
+	engine := &Engine{}
+	templatePath := filepath.Join(t.TempDir(), "review-prompt.md")
+	custom := "PR #{{PR_NUMBER}} unknown={{UNKNOWN}}"
+	if err := os.WriteFile(templatePath, []byte(custom), 0644); err != nil {
+		t.Fatalf("write review prompt file: %v", err)
+	}
+	data := PRData{Number: 1}
+
+	_, err := engine.RenderReview(RenderConfig{ReviewPromptFile: templatePath}, data)
+	if err == nil {
+		t.Fatal("expected error for missing key in persisted review prompt")
+	}
+	if !strings.Contains(err.Error(), "UNKNOWN") {
+		t.Errorf("error should mention missing key, got: %v", err)
+	}
+}
+
+func TestRenderReview_MissingReviewPromptFileFallsBackToDefault(t *testing.T) {
+	engine := &Engine{}
+	data := PRData{Number: 1, Title: "T"}
+
+	result, err := engine.RenderReview(RenderConfig{ReviewPromptFile: filepath.Join(t.TempDir(), "does-not-exist.md")}, data)
+	if err != nil {
+		t.Fatalf("render review prompt: %v", err)
+	}
+	if !strings.Contains(result, "sandman-code-review") {
+		t.Errorf("missing persisted prompt must fall back to the built-in default, got:\n%s", result)
+	}
+}
+
+func TestRenderReview_PromptFlagOverridesReviewPromptFile(t *testing.T) {
+	engine := &Engine{}
+	templatePath := filepath.Join(t.TempDir(), "review-prompt.md")
+	if err := os.WriteFile(templatePath, []byte("PR #{{PR_NUMBER}} from-file"), 0644); err != nil {
+		t.Fatalf("write review prompt file: %v", err)
+	}
+	data := PRData{Number: 7, Title: "T", Body: "B", ReviewFocus: "F"}
+
+	result, err := engine.RenderReview(RenderConfig{
+		PromptFlag:       "PR #{{PR_NUMBER}} focus={{REVIEW_FOCUS}}",
+		ReviewPromptFile: templatePath,
+	}, data)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result != "PR #7 focus=F" {
+		t.Errorf("PromptFlag must override the persisted review prompt, got %q", result)
 	}
 }
 

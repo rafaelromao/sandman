@@ -636,6 +636,62 @@ func TestDaemon_TickLaunchesReviewForTriggerComment(t *testing.T) {
 	}
 }
 
+func TestDaemon_UserEditedPromptAppearsInLaunchedRequest(t *testing.T) {
+	now := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
+	gh := &fakeGH{
+		prs: []github.PR{{Number: 42, State: "open"}},
+		comments: map[int][]github.PRComment{
+			42: {
+				{ID: "100", Body: "/sandman review", CreatedAt: now},
+				{ID: "101", Body: "## Summary\nLGTM", CreatedAt: now.Add(1 * time.Minute)},
+			},
+		},
+		prFetch: map[int]*github.PR{42: {Number: 42, Title: "PR 42", Body: "B"}},
+	}
+	runner := &capturedRequest{}
+	d, _, _ := newDaemonForTest(t, gh, runner, &config.Config{
+		DefaultReviewAgent: "opencode",
+		DefaultReviewModel: "opencode/foo",
+	})
+	d.Clock = func() time.Time { return now.Add(-1 * time.Minute) }
+
+	reviewsDir := filepath.Join(d.BaseDir, "reviews")
+	if err := os.MkdirAll(reviewsDir, 0755); err != nil {
+		t.Fatalf("mkdir reviews: %v", err)
+	}
+	edited := []byte("# repo-specific review prompt\nReview PR #{{PR_NUMBER}} with extreme care. Always load `sandman-code-review`.\n")
+	if err := os.WriteFile(filepath.Join(reviewsDir, "review-prompt.md"), edited, 0644); err != nil {
+		t.Fatalf("write review-prompt.md: %v", err)
+	}
+
+	tickAndWait(t, d, context.Background())
+
+	if runner.calls != 1 {
+		t.Fatalf("expected 1 batch run, got %d", runner.calls)
+	}
+	promptContent := runner.last.PromptConfig.PromptFlag
+	for _, want := range []string{
+		"# repo-specific review prompt",
+		"Review PR #42 with extreme care",
+		"Always load `sandman-code-review`.",
+	} {
+		if !strings.Contains(promptContent, want) {
+			t.Errorf("launched review prompt must carry user-edited instruction %q, got:\n%s", want, promptContent)
+		}
+	}
+	if strings.Contains(promptContent, "{{PR_NUMBER}}") {
+		t.Errorf("launched review prompt must substitute {{PR_NUMBER}}, got:\n%s", promptContent)
+	}
+
+	data, err := os.ReadFile(filepath.Join(reviewsDir, "review-prompt.md"))
+	if err != nil {
+		t.Fatalf("read review-prompt.md: %v", err)
+	}
+	if string(data) != string(edited) {
+		t.Errorf("daemon clobbered user-edited review-prompt.md\ngot: %q\nwant: %q", data, edited)
+	}
+}
+
 func TestDaemon_TickLaunchesReviewsInParallel(t *testing.T) {
 	now := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
 	after := now.Add(1 * time.Minute)
@@ -2931,6 +2987,202 @@ func TestDaemon_ConcurrentPRsDoNotClobberSharedPrompt(t *testing.T) {
 		if strings.Contains(string(data), prSpecific) {
 			t.Errorf("shared review-prompt.md should not contain PR-specific string %q", prSpecific)
 		}
+	}
+}
+
+func TestDaemon_ReMaterializesDeletedPromptBeforeNextRender(t *testing.T) {
+	now := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
+	gh := &fakeGH{
+		prs: []github.PR{{Number: 42, State: "open"}},
+		comments: map[int][]github.PRComment{
+			42: {
+				{ID: "c1", Body: "/sandman review", CreatedAt: now},
+				{ID: "c2", Body: "/sandman review", CreatedAt: now.Add(1 * time.Minute)},
+			},
+		},
+		prFetch: map[int]*github.PR{42: {Number: 42, Title: "PR 42", Body: "B"}},
+	}
+	runner := &capturedRequest{}
+	d, _, _ := newDaemonForTest(t, gh, runner, &config.Config{
+		DefaultReviewAgent: "opencode",
+		DefaultReviewModel: "opencode/foo",
+	})
+	d.Clock = func() time.Time { return now.Add(-1 * time.Minute) }
+
+	promptPath := filepath.Join(d.BaseDir, "reviews", "review-prompt.md")
+
+	tickAndWait(t, d, context.Background())
+	if runner.calls != 1 {
+		t.Fatalf("expected 1 batch run on first tick, got %d", runner.calls)
+	}
+	if _, err := os.Stat(promptPath); err != nil {
+		t.Fatalf("prompt template should exist after first tick: %v", err)
+	}
+
+	if err := os.Remove(promptPath); err != nil {
+		t.Fatalf("remove review-prompt.md: %v", err)
+	}
+
+	tickAndWait(t, d, context.Background())
+	if runner.calls != 2 {
+		t.Fatalf("expected 2 batch runs after second trigger, got %d", runner.calls)
+	}
+	data, err := os.ReadFile(promptPath)
+	if err != nil {
+		t.Fatalf("deleted template must be re-materialized before the next render: %v", err)
+	}
+	if string(data) != prompt.DefaultPRReviewPrompt() {
+		t.Errorf("re-materialized template must be the embedded default\ngot:\n%s", data)
+	}
+}
+
+func TestDaemon_UserEditedPromptWithUnknownKeyNeverLaunchesReview(t *testing.T) {
+	now := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
+	gh := &fakeGH{
+		prs: []github.PR{{Number: 42, State: "open"}},
+		comments: map[int][]github.PRComment{
+			42: {
+				{ID: "100", Body: "/sandman review", CreatedAt: now},
+			},
+		},
+		prFetch: map[int]*github.PR{42: {Number: 42, Title: "PR 42", Body: "B"}},
+	}
+	runner := &capturedRequest{}
+	d, _, _ := newDaemonForTest(t, gh, runner, &config.Config{
+		DefaultReviewAgent: "opencode",
+		DefaultReviewModel: "opencode/foo",
+	})
+	d.Clock = func() time.Time { return now.Add(-1 * time.Minute) }
+
+	reviewsDir := filepath.Join(d.BaseDir, "reviews")
+	if err := os.MkdirAll(reviewsDir, 0755); err != nil {
+		t.Fatalf("mkdir reviews: %v", err)
+	}
+	broken := []byte("# broken prompt\nPR #{{PR_NUMBER}} {{UNKNOWN_KEY}}\n")
+	if err := os.WriteFile(filepath.Join(reviewsDir, "review-prompt.md"), broken, 0644); err != nil {
+		t.Fatalf("write review-prompt.md: %v", err)
+	}
+
+	tickAndWait(t, d, context.Background())
+
+	if runner.calls != 0 {
+		t.Errorf("review must not launch when the persisted prompt has an unknown substitution key, got %d batch runs", runner.calls)
+	}
+
+	data, err := os.ReadFile(filepath.Join(reviewsDir, "review-prompt.md"))
+	if err != nil {
+		t.Fatalf("read review-prompt.md: %v", err)
+	}
+	if string(data) != string(broken) {
+		t.Errorf("daemon clobbered user-edited review-prompt.md after a render failure\ngot: %q\nwant: %q", data, broken)
+	}
+}
+
+func TestDaemon_ConcurrentPRsPreserveUserEditedPrompt(t *testing.T) {
+	now := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
+	gh := &fakeGH{
+		prs: []github.PR{{Number: 1, State: "open"}, {Number: 2, State: "open"}},
+		comments: map[int][]github.PRComment{
+			1: {
+				{ID: "c1", Body: "/sandman review focus alpha", CreatedAt: now},
+				{ID: "reply1", Body: "## Summary\nLGTM", CreatedAt: now.Add(1 * time.Minute)},
+			},
+			2: {
+				{ID: "c2", Body: "/sandman review focus beta", CreatedAt: now},
+				{ID: "reply2", Body: "## Summary\nLGTM", CreatedAt: now.Add(1 * time.Minute)},
+			},
+		},
+		prFetch: map[int]*github.PR{
+			1: {Number: 1, Title: "PR 1 Alpha", Body: "Body 1 Unique"},
+			2: {Number: 2, Title: "PR 2 Beta", Body: "Body 2 Unique"},
+		},
+	}
+
+	started := make(chan int, 2)
+	release := make(chan struct{})
+	var mu sync.Mutex
+	seenReqs := make(map[int]batch.Request)
+
+	runner := batchFunc(func(ctx context.Context, req batch.Request) (*batch.Result, error) {
+		mu.Lock()
+		seenReqs[req.PRNumber] = req
+		mu.Unlock()
+		started <- req.PRNumber
+		<-release
+		return &batch.Result{}, nil
+	})
+
+	d, _, _ := newDaemonForTest(t, gh, runner, &config.Config{
+		DefaultReviewAgent:    "opencode",
+		DefaultReviewModel:    "opencode/foo",
+		DefaultReviewParallel: 2,
+	})
+	d.Clock = func() time.Time { return now.Add(-1 * time.Minute) }
+
+	edited := []byte("# repo-specific review prompt\nReview PR #{{PR_NUMBER}} {{PR_TITLE}} focus={{REVIEW_FOCUS}} with care. Always load `sandman-code-review`.\n")
+	reviewsDir := filepath.Join(d.BaseDir, "reviews")
+	if err := os.MkdirAll(reviewsDir, 0755); err != nil {
+		t.Fatalf("mkdir reviews: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(reviewsDir, "review-prompt.md"), edited, 0644); err != nil {
+		t.Fatalf("write review-prompt.md: %v", err)
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		done <- d.tick(context.Background())
+	}()
+
+	seen := map[int]struct{}{}
+	for len(seen) < 2 {
+		select {
+		case prNumber := <-started:
+			seen[prNumber] = struct{}{}
+		case <-time.After(5 * time.Second):
+			t.Fatal("expected both PR reviews to start in parallel")
+		}
+	}
+
+	close(release)
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("tick: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("tick did not finish after releasing parallel reviews")
+	}
+	idleCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := d.WaitForIdle(idleCtx); err != nil {
+		t.Fatalf("WaitForIdle: %v", err)
+	}
+
+	mu.Lock()
+	r1, ok1 := seenReqs[1]
+	r2, ok2 := seenReqs[2]
+	mu.Unlock()
+	if !ok1 || !ok2 {
+		t.Fatalf("expected batch requests for both PRs, got PR1=%v PR2=%v", ok1, ok2)
+	}
+	for pr, req := range map[int]batch.Request{1: r1, 2: r2} {
+		if !strings.Contains(req.PromptConfig.PromptFlag, "repo-specific review prompt") {
+			t.Errorf("PR%d request must carry the user-edited prompt, got: %q", pr, req.PromptConfig.PromptFlag)
+		}
+	}
+	if !strings.Contains(r1.PromptConfig.PromptFlag, "PR 1 Alpha") || !strings.Contains(r1.PromptConfig.PromptFlag, "focus alpha") {
+		t.Errorf("PR1 request should contain PR-specific prompt, got: %q", r1.PromptConfig.PromptFlag)
+	}
+	if !strings.Contains(r2.PromptConfig.PromptFlag, "PR 2 Beta") || !strings.Contains(r2.PromptConfig.PromptFlag, "focus beta") {
+		t.Errorf("PR2 request should contain PR-specific prompt, got: %q", r2.PromptConfig.PromptFlag)
+	}
+
+	data, err := os.ReadFile(filepath.Join(reviewsDir, "review-prompt.md"))
+	if err != nil {
+		t.Fatalf("read review-prompt.md: %v", err)
+	}
+	if string(data) != string(edited) {
+		t.Errorf("shared review-prompt.md must remain byte-identical to the user edit under concurrent reviews\ngot: %q\nwant: %q", data, edited)
 	}
 }
 

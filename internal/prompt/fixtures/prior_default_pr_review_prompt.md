@@ -18,10 +18,6 @@ Review pull request #{{PR_NUMBER}}: {{PR_TITLE}}
 
 Load `sandman-code-review` and use its pull-request review context. Review the supplied change in the current worktree, then atomically write `{{RUN_DIR}}/decision.md` and exit. Do not trigger, poll, fetch, post to, merge, commit to, push to, or remediate the pull request; the surrounding workflow owns those actions and posts the decision artifact.
 
-Do not load `sandman-pr-review`. That skill owns the implementor-side review loop — posting the `/sandman review` trigger, iterating through review passes, and driving toward merge. Running it from this daemon review would start a second, unowned review loop. You are the daemon's direct reviewer, not the implementor's loop driver.
-
-You are read-only. Report mergeability or CI problems as findings, but never fix the code, push, merge, post GitHub comments, or request another review.
-
 The `## Previous review progress` section is a **conditional section**, not a default slot. The deterministic prior-review flag is `{{PRIOR_REVIEW_EXISTS}}` (`YES` when at least one prior review exists, `NO` otherwise). When it is `YES`, render the section. When it is `NO`, **omit** the `## Previous review progress` section from the posted comment. Do not render this section if there are no prior reviews. Do not write a placeholder such as "No previous reviews found."
 
 {{PRIOR_REVIEW_CONTEXT}}

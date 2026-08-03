@@ -15,7 +15,7 @@ Creates or updates:
 | `.sandman/config.yaml` | Project configuration: agent, model, sandbox, build tools, concurrency, retries, idle timeout, and git base branch |
 | `.sandman/Dockerfile` | Container image recipe used by Podman/Docker sandboxes |
 | `.sandman/prompt.md` | Project Prompt Template used to render each agent task |
-| `.sandman/reviews/prompt.md` | Review-agent prompt used by `sandman review` |
+| `.sandman/reviews/review-prompt.md` | Review-agent prompt template used by `sandman review` |
 | `.sandman/reviews/quality-rules.md` | Review quality rules used by the review prompt |
 
 The scaffolded `.sandman/Dockerfile` is a **minimal BuildToolsPreset** for the detected project type. It includes the shared baseline packages and the preset-specific toolchain, but it is intentionally lightweight. Before starting work with Sandman, **review and extend `.sandman/Dockerfile`** with the project-specific tools, runtimes, and system packages you need — then rebuild the container image so the sandbox has everything your work requires.
@@ -26,7 +26,7 @@ It also installs the shared Sandman skill folder into `~/.agents/skills/sandman/
 
 If `.sandman/` already exists, `sandman init` asks before overwriting in an interactive terminal.
 
-Review prompt files are write-if-missing: existing `.sandman/reviews/prompt.md` and `.sandman/reviews/quality-rules.md` files are preserved so local edits survive re-initialization.
+Review prompt files are write-if-missing: existing `.sandman/reviews/review-prompt.md` and `.sandman/reviews/quality-rules.md` files are preserved so local edits survive re-initialization.
 
 ## Build-tools presets
 
