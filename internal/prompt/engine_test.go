@@ -881,6 +881,66 @@ func TestDefaultPRReviewPrompt_ContainsDaemonRedactionNote(t *testing.T) {
 	}
 }
 
+func TestDefaultPRReviewPrompt_ForbidsImplementorReviewLoopSkill(t *testing.T) {
+	data, err := os.ReadFile("default_pr_review_prompt.md")
+	if err != nil {
+		t.Fatalf("read default PR review prompt template: %v", err)
+	}
+	prompt := string(data)
+
+	for _, phrase := range []string{
+		"Do not load `sandman-pr-review`",
+		"implementor-side review loop",
+	} {
+		if !strings.Contains(prompt, phrase) {
+			t.Errorf("default PR review prompt must explicitly forbid sandman-pr-review via %q", phrase)
+		}
+	}
+}
+
+func TestDefaultPRReviewPrompt_DefinesReadOnlyReviewer(t *testing.T) {
+	data, err := os.ReadFile("default_pr_review_prompt.md")
+	if err != nil {
+		t.Fatalf("read default PR review prompt template: %v", err)
+	}
+	prompt := string(data)
+
+	required := []string{
+		"You are read-only.",
+		"Report mergeability or CI problems as findings",
+		"never fix the code, push, merge, post GitHub comments, or request another review",
+	}
+	for _, phrase := range required {
+		if !strings.Contains(prompt, phrase) {
+			t.Errorf("default PR review prompt must define the daemon reviewer as read-only via %q", phrase)
+		}
+	}
+}
+
+// TestIsLegacyDefaultPRReviewPrompt_PriorDefaultIsUpgradeable pins the
+// legacy-upgrade contract: the production legacy hash must match the
+// immediately previous generated default, so repositories that
+// materialized that generation get upgraded to the new default while
+// user edits (any other bytes) are preserved. When the embedded default
+// changes, rotate legacyPRReviewPromptSHA256 to the prior content and
+// update fixtures/prior_default_pr_review_prompt.md with that same prior
+// content.
+func TestIsLegacyDefaultPRReviewPrompt_PriorDefaultIsUpgradeable(t *testing.T) {
+	frozen, err := os.ReadFile(filepath.Join("fixtures", "prior_default_pr_review_prompt.md"))
+	if err != nil {
+		t.Fatalf("read frozen prior default: %v", err)
+	}
+	if !IsLegacyDefaultPRReviewPrompt(frozen) {
+		t.Fatal("frozen prior generated default must be eligible for upgrade to the current default")
+	}
+	if IsLegacyDefaultPRReviewPrompt([]byte(DefaultPRReviewPrompt())) {
+		t.Fatal("current default must not be classified as legacy")
+	}
+	if IsLegacyDefaultPRReviewPrompt([]byte("user-edited review prompt")) {
+		t.Fatal("user-edited prompt must not be eligible for upgrade")
+	}
+}
+
 func TestDefaultPRReviewPrompt_DelegatesToCodeReviewSkill(t *testing.T) {
 	data, err := os.ReadFile("default_pr_review_prompt.md")
 	if err != nil {
