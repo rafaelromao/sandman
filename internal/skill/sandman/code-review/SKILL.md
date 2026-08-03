@@ -27,7 +27,7 @@ Collect documented standards from contributor guidance, domain vocabulary, archi
 
 Use separate review agents so the axes do not pollute each other's context. Give the Standards reviewer the diff, commit list, and standards sources; it reports documented-standard violations with source citations. Give the Spec reviewer the diff, commit list, and specification; it reports missing, partial, incorrect, and out-of-scope behavior with requirement citations. Skip the Spec reviewer only when no specification is available.
 
-Cap each review agent at 20 minutes. If an agent stalls, retry that axis up to two times. After three stalled attempts, report `sub-agent stuck` under that axis and continue with the other axis. Record the timeout and next executable action in the run log before ending a blocked review.
+Cap each review agent at 20 minutes. If an agent stalls, retry that axis up to two times. After three stalled attempts, report `sub-agent stuck` under that axis and continue with the other axis. When a blocked review ends with no decision, record the exact timeout and next executable action in `.sandman/task.md` and the run log before ending the review.
 
 ### 4. Review and report
 

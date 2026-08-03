@@ -272,6 +272,7 @@ func TestSkills_AutonomousRecoveryLaddersRemainExplicit(t *testing.T) {
 			"`origin/main` when available",
 			"inspect `git diff HEAD` and every untracked path",
 			"no spec available",
+			"`.sandman/task.md` and the run log",
 		},
 		"pr-review/SKILL.md": {
 			".sandman/task.md",
