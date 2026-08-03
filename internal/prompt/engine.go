@@ -212,8 +212,10 @@ func (e *Engine) Render(cfg RenderConfig, data IssueData) (string, error) {
 }
 
 // RenderReview produces a review prompt string. The template is taken from
-// cfg (PromptFlag overrides the embedded default); PR substitutions are then
-// applied. The issue-running render path never sees these keys.
+// cfg (PromptFlag overrides the embedded default; TemplateFlag reads a file;
+// ReviewPromptFile reads the project's live review-prompt.md template); PR
+// substitutions are then applied. The issue-running render path never sees
+// these keys.
 func (e *Engine) RenderReview(cfg RenderConfig, data PRData) (string, error) {
 	template := defaultPRReviewPrompt
 	switch {
@@ -225,6 +227,20 @@ func (e *Engine) RenderReview(cfg RenderConfig, data PRData) (string, error) {
 			return "", fmt.Errorf("read template file: %w", err)
 		}
 		template = string(content)
+	case cfg.ReviewPromptFile != "":
+		content, err := os.ReadFile(cfg.ReviewPromptFile)
+		if err == nil {
+			template = string(content)
+		} else if !os.IsNotExist(err) {
+			return "", fmt.Errorf("read review prompt file: %w", err)
+		}
+	}
+	// A missing or empty/whitespace-only persisted template falls back to
+	// the embedded default so a user can never launch an empty or partial
+	// review request. Missing files are materialised by the daemon's
+	// initPromptTemplate before rendering (issue #2501).
+	if strings.TrimSpace(template) == "" {
+		template = defaultPRReviewPrompt
 	}
 	result := ApplyPRSubstitutions(template, data)
 
