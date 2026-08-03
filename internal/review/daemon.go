@@ -1799,8 +1799,12 @@ func (d *Daemon) launchReviewRevision(ctx context.Context, prNumber int, focus, 
 		PriorReviewExists:  priorReviewExists,
 		PriorReviewContext: priorReviewContext,
 	})
+	// A malformed persisted template (e.g. a stray {{UNKNOWN_KEY}}
+	// introduced by a user edit) fails the render and is recorded as a
+	// launch failure so the trigger gets the bounded-retry budget instead
+	// of being re-rendered on every tick (issue #2501).
 	if err != nil {
-		return fmt.Errorf("render prompt: %w", err)
+		return d.recordLaunchFailure(ctx, triggerKey, state, fmt.Errorf("render review prompt: %w", err))
 	}
 
 	agentName := ""
