@@ -816,8 +816,10 @@ func (d *Daemon) effectiveParallel() int {
 
 // PromptTemplatePath returns the absolute path of the shared review
 // prompt template. The file is a static, PR-agnostic copy of the
-// built-in template; PR context flows only through the per-run
-// batch request.
+// built-in template that doubles as the live render source: the daemon
+// reads it back for every review run and applies the PR context through
+// the per-run substitutions (issue #2501). PR context flows only
+// through the per-run batch request.
 //
 // Acceptance criterion #2 from issue #1224: ".sandman/reviews/
 // contains only review.sock, review-prompt.md, and the quality
@@ -844,7 +846,9 @@ func (d *Daemon) QualityRulesPath() string {
 // .sandman/reviews/quality-rules.md when they are missing. It also upgrades
 // the exact prior generated review prompt while preserving user edits. It is
 // safe to call from multiple goroutines and from both StartSocket and
-// launchReview.
+// launchReview, and it must run before launchReview renders so the persisted
+// template exists on disk (issue #2501). Each render reads the file back,
+// so user edits made between renders take effect on the next review run.
 //
 // Both writes go through atomicfs.WriteAtomic, which uses a unique
 // temp-file suffix (".tmp.<random>") rather than a fixed "<path>.tmp",
@@ -1773,7 +1777,19 @@ func (d *Daemon) launchReviewRevision(ctx context.Context, prNumber int, focus, 
 		}
 	}
 
-	rendered, err := d.Prompts.RenderReview(prompt.RenderConfig{}, prompt.PRData{
+	// Materialize the shared review prompt template before rendering
+	// (issue #2501): the daemon renders the persisted
+	// .sandman/reviews/review-prompt.md for every review run, so a
+	// missing template must be atomically written from the embedded
+	// default first. initPromptTemplate preserves user edits, so a
+	// user-edited template is read back verbatim by the render below.
+	if err := d.initPromptTemplate(); err != nil {
+		return fmt.Errorf("init review prompt template: %w", err)
+	}
+
+	rendered, err := d.Prompts.RenderReview(prompt.RenderConfig{
+		ReviewPromptFile: d.PromptTemplatePath(),
+	}, prompt.PRData{
 		Number:             pr.Number,
 		Title:              pr.Title,
 		Body:               pr.Body,
@@ -1785,10 +1801,6 @@ func (d *Daemon) launchReviewRevision(ctx context.Context, prNumber int, focus, 
 	})
 	if err != nil {
 		return fmt.Errorf("render prompt: %w", err)
-	}
-
-	if err := d.initPromptTemplate(); err != nil {
-		return fmt.Errorf("init review prompt template: %w", err)
 	}
 
 	agentName := ""

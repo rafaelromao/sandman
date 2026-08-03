@@ -636,6 +636,62 @@ func TestDaemon_TickLaunchesReviewForTriggerComment(t *testing.T) {
 	}
 }
 
+func TestDaemon_UserEditedPromptAppearsInLaunchedRequest(t *testing.T) {
+	now := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
+	gh := &fakeGH{
+		prs: []github.PR{{Number: 42, State: "open"}},
+		comments: map[int][]github.PRComment{
+			42: {
+				{ID: "100", Body: "/sandman review", CreatedAt: now},
+				{ID: "101", Body: "## Summary\nLGTM", CreatedAt: now.Add(1 * time.Minute)},
+			},
+		},
+		prFetch: map[int]*github.PR{42: {Number: 42, Title: "PR 42", Body: "B"}},
+	}
+	runner := &capturedRequest{}
+	d, _, _ := newDaemonForTest(t, gh, runner, &config.Config{
+		DefaultReviewAgent: "opencode",
+		DefaultReviewModel: "opencode/foo",
+	})
+	d.Clock = func() time.Time { return now.Add(-1 * time.Minute) }
+
+	reviewsDir := filepath.Join(d.BaseDir, "reviews")
+	if err := os.MkdirAll(reviewsDir, 0755); err != nil {
+		t.Fatalf("mkdir reviews: %v", err)
+	}
+	edited := []byte("# repo-specific review prompt\nReview PR #{{PR_NUMBER}} with extreme care. Always load `sandman-code-review`.\n")
+	if err := os.WriteFile(filepath.Join(reviewsDir, "review-prompt.md"), edited, 0644); err != nil {
+		t.Fatalf("write review-prompt.md: %v", err)
+	}
+
+	tickAndWait(t, d, context.Background())
+
+	if runner.calls != 1 {
+		t.Fatalf("expected 1 batch run, got %d", runner.calls)
+	}
+	promptContent := runner.last.PromptConfig.PromptFlag
+	for _, want := range []string{
+		"# repo-specific review prompt",
+		"Review PR #42 with extreme care",
+		"Always load `sandman-code-review`.",
+	} {
+		if !strings.Contains(promptContent, want) {
+			t.Errorf("launched review prompt must carry user-edited instruction %q, got:\n%s", want, promptContent)
+		}
+	}
+	if strings.Contains(promptContent, "{{PR_NUMBER}}") {
+		t.Errorf("launched review prompt must substitute {{PR_NUMBER}}, got:\n%s", promptContent)
+	}
+
+	data, err := os.ReadFile(filepath.Join(reviewsDir, "review-prompt.md"))
+	if err != nil {
+		t.Fatalf("read review-prompt.md: %v", err)
+	}
+	if string(data) != string(edited) {
+		t.Errorf("daemon clobbered user-edited review-prompt.md\ngot: %q\nwant: %q", data, edited)
+	}
+}
+
 func TestDaemon_TickLaunchesReviewsInParallel(t *testing.T) {
 	now := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
 	after := now.Add(1 * time.Minute)
