@@ -183,7 +183,6 @@ type Daemon struct {
 	CommentPoster        CommentPoster
 	controlSocket        *daemon.ControlSocket
 	busy                 chan struct{}
-	promptOnce           sync.Once
 	seenCache            map[int]map[string]bool
 	seenCacheMu          sync.RWMutex
 	commentVersions      map[int]time.Time
@@ -847,39 +846,39 @@ func (d *Daemon) QualityRulesPath() string {
 // the exact prior generated review prompt while preserving user edits. It is
 // safe to call from multiple goroutines and from both StartSocket and
 // launchReview, and it must run before launchReview renders so the persisted
-// template exists on disk (issue #2501). Each render reads the file back,
-// so user edits made between renders take effect on the next review run.
+// template exists on disk (issue #2501). The check runs on every call — not
+// behind a sync.Once — so a template that is deleted while the daemon is
+// live is re-materialized before the next render. Each render reads the file
+// back, so user edits made between renders take effect on the next review run.
 //
 // Both writes go through atomicfs.WriteAtomic, which uses a unique
 // temp-file suffix (".tmp.<random>") rather than a fixed "<path>.tmp",
 // so two concurrent callers (across processes or goroutines) cannot
 // collide on the same temp name. The pre-check os.Stat + os.IsNotExist
-// guard is preserved so user-edited files are not clobbered.
+// guard is preserved so user-edited files are not clobbered. Concurrent
+// callers may both observe a missing file and both write the identical
+// embedded default; that write is idempotent and safe.
 func (d *Daemon) initPromptTemplate() error {
-	var err error
-	d.promptOnce.Do(func() {
-		promptPath := d.PromptTemplatePath()
-		promptData, readErr := os.ReadFile(promptPath)
-		if os.IsNotExist(readErr) {
-			if err = atomicfs.WriteAtomic(promptPath, []byte(prompt.DefaultPRReviewPrompt()), 0644); err != nil {
-				return
-			}
-		} else if readErr != nil {
-			err = fmt.Errorf("read review prompt: %w", readErr)
-			return
-		} else if prompt.IsLegacyDefaultPRReviewPrompt(promptData) {
-			if err = atomicfs.WriteAtomic(promptPath, []byte(prompt.DefaultPRReviewPrompt()), 0644); err != nil {
-				return
-			}
+	promptPath := d.PromptTemplatePath()
+	promptData, readErr := os.ReadFile(promptPath)
+	if os.IsNotExist(readErr) {
+		if err := atomicfs.WriteAtomic(promptPath, []byte(prompt.DefaultPRReviewPrompt()), 0644); err != nil {
+			return fmt.Errorf("write review prompt: %w", err)
 		}
-		qualityRulesPath := d.QualityRulesPath()
-		if _, statErr := os.Stat(qualityRulesPath); os.IsNotExist(statErr) {
-			if err = atomicfs.WriteAtomic(qualityRulesPath, []byte(prompt.DefaultQualityRules()), 0644); err != nil {
-				return
-			}
+	} else if readErr != nil {
+		return fmt.Errorf("read review prompt: %w", readErr)
+	} else if prompt.IsLegacyDefaultPRReviewPrompt(promptData) {
+		if err := atomicfs.WriteAtomic(promptPath, []byte(prompt.DefaultPRReviewPrompt()), 0644); err != nil {
+			return fmt.Errorf("write review prompt: %w", err)
 		}
-	})
-	return err
+	}
+	qualityRulesPath := d.QualityRulesPath()
+	if _, statErr := os.Stat(qualityRulesPath); os.IsNotExist(statErr) {
+		if err := atomicfs.WriteAtomic(qualityRulesPath, []byte(prompt.DefaultQualityRules()), 0644); err != nil {
+			return fmt.Errorf("write quality rules: %w", err)
+		}
+	}
+	return nil
 }
 
 // ReviewStatePath returns the on-disk path of the per-run review-state
@@ -1783,8 +1782,12 @@ func (d *Daemon) launchReviewRevision(ctx context.Context, prNumber int, focus, 
 	// missing template must be atomically written from the embedded
 	// default first. initPromptTemplate preserves user edits, so a
 	// user-edited template is read back verbatim by the render below.
+	// A persistent materialization failure (e.g. an unwritable
+	// .sandman/reviews/ dir) is recorded as a launch failure so the
+	// trigger gets the bounded-retry budget instead of a full launch
+	// attempt on every tick.
 	if err := d.initPromptTemplate(); err != nil {
-		return fmt.Errorf("init review prompt template: %w", err)
+		return d.recordLaunchFailure(ctx, triggerKey, state, fmt.Errorf("init review prompt template: %w", err))
 	}
 
 	rendered, err := d.Prompts.RenderReview(prompt.RenderConfig{

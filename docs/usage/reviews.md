@@ -99,7 +99,7 @@ The template is PR-agnostic. PR context is injected per run through these placeh
 | `{{PRIOR_REVIEW_EXISTS}}` | `YES`/`NO` — whether a prior review exists |
 | `{{PRIOR_REVIEW_CONTEXT}}` | Prior review entries supplied by the daemon |
 
-The file is preserved across re-runs of `sandman init`. When it is missing, the daemon atomically re-materializes it from the built-in default before rendering the next review, so the shared template always exists on disk.
+The file is preserved across re-runs of `sandman init`. When it is missing, the daemon atomically re-materializes it from the built-in default before rendering the next review, so the shared template always exists on disk. An empty or whitespace-only template is treated as if it were missing and renders the built-in default.
 
 ### Reviewer versus implementor roles
 

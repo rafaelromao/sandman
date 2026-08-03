@@ -2990,6 +2990,52 @@ func TestDaemon_ConcurrentPRsDoNotClobberSharedPrompt(t *testing.T) {
 	}
 }
 
+func TestDaemon_ReMaterializesDeletedPromptBeforeNextRender(t *testing.T) {
+	now := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
+	gh := &fakeGH{
+		prs: []github.PR{{Number: 42, State: "open"}},
+		comments: map[int][]github.PRComment{
+			42: {
+				{ID: "c1", Body: "/sandman review", CreatedAt: now},
+				{ID: "c2", Body: "/sandman review", CreatedAt: now.Add(1 * time.Minute)},
+			},
+		},
+		prFetch: map[int]*github.PR{42: {Number: 42, Title: "PR 42", Body: "B"}},
+	}
+	runner := &capturedRequest{}
+	d, _, _ := newDaemonForTest(t, gh, runner, &config.Config{
+		DefaultReviewAgent: "opencode",
+		DefaultReviewModel: "opencode/foo",
+	})
+	d.Clock = func() time.Time { return now.Add(-1 * time.Minute) }
+
+	promptPath := filepath.Join(d.BaseDir, "reviews", "review-prompt.md")
+
+	tickAndWait(t, d, context.Background())
+	if runner.calls != 1 {
+		t.Fatalf("expected 1 batch run on first tick, got %d", runner.calls)
+	}
+	if _, err := os.Stat(promptPath); err != nil {
+		t.Fatalf("prompt template should exist after first tick: %v", err)
+	}
+
+	if err := os.Remove(promptPath); err != nil {
+		t.Fatalf("remove review-prompt.md: %v", err)
+	}
+
+	tickAndWait(t, d, context.Background())
+	if runner.calls != 2 {
+		t.Fatalf("expected 2 batch runs after second trigger, got %d", runner.calls)
+	}
+	data, err := os.ReadFile(promptPath)
+	if err != nil {
+		t.Fatalf("deleted template must be re-materialized before the next render: %v", err)
+	}
+	if string(data) != prompt.DefaultPRReviewPrompt() {
+		t.Errorf("re-materialized template must be the embedded default\ngot:\n%s", data)
+	}
+}
+
 func TestDaemon_UserEditedPromptWithUnknownKeyNeverLaunchesReview(t *testing.T) {
 	now := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
 	gh := &fakeGH{
