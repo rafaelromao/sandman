@@ -150,9 +150,15 @@ func matchesLegacyManagedTree(targetDir string) (bool, error) {
 		return false, nil
 	}
 	for _, rel := range expectedFiles {
-		if _, ok := actualFiles[rel]; !ok {
-			return false, nil
+		if _, ok := actualFiles[rel]; ok {
+			continue
 		}
+		if rel == filepath.Join("code-review", "SKILL.md") {
+			if _, ok := actualFiles[filepath.Join("self-review", "SKILL.md")]; ok {
+				continue
+			}
+		}
+		return false, nil
 	}
 	return true, nil
 }

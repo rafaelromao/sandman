@@ -8,18 +8,18 @@ The installed folder mirrors the local Sandman skill and includes routed subskil
 
 - implement
 - tdd
-- review
+- code-review (self-review and daemon-review contexts)
 - pr-review
 - back-merge
 - pr-merge
 
-> **Note:** The `tdd` and `review` skills were originally created by Matt Pocock. We strongly recommend checking out his work at [aihero.dev](https://www.aihero.dev/).
+> **Note:** The `tdd` and `code-review` skills were originally created by Matt Pocock. We strongly recommend checking out his work at [aihero.dev](https://www.aihero.dev/).
 
 `docs/usage/default-task-prompt.md` now acts as an AFK bootstrap that passes issue context, branch context, and the configured review command into the installed `sandman` skill.
 
 ## Using the skills directly
 
-You can also load `sandman-implement` and `sandman-pr-review` directly in OpenCode for a local run without `sandman run`. The same autonomous workflow, guardrails, and terminal conditions apply; the skills do not wait for operator input.
+You can also load `sandman-implement`, `sandman-code-review`, and `sandman-pr-review` directly in OpenCode for a local run without `sandman run`. Use `sandman-code-review` in self-review context for an implementor's own changes; the review daemon uses its daemon-review context with supplied pull-request information and writes the reviewer decision artifact without managing the pull request. The same autonomous workflow, guardrails, and terminal conditions apply; the skills do not wait for operator input.
 
 ## Container access
 

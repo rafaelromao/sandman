@@ -50,6 +50,119 @@ func TestSyncWritesEmbeddedSkill(t *testing.T) {
 	}
 }
 
+func TestSyncInstallsCodeReviewSkillWithoutObsoleteSelfReviewSkill(t *testing.T) {
+	home := t.TempDir()
+	if err := Sync(SyncOptions{HomeDir: home, ReviewCommand: "/review-please"}); err != nil {
+		t.Fatalf("sync skill: %v", err)
+	}
+
+	root := filepath.Join(home, ".agents", "skills", embeddedSkillRoot)
+	data, err := os.ReadFile(filepath.Join(root, "code-review", "SKILL.md"))
+	if err != nil {
+		t.Fatalf("read installed code-review skill: %v", err)
+	}
+	text := string(data)
+	for _, want := range []string{"name: sandman-code-review", "## Self-review context", "## Pull-request review context", "decision.md"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("code-review skill missing %q", want)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(root, "self-review", "SKILL.md")); !os.IsNotExist(err) {
+		t.Fatalf("obsolete self-review skill must not be installed, stat error = %v", err)
+	}
+}
+
+func TestCodeReviewSkillDelegatesDecisionContractToInvokingPrompt(t *testing.T) {
+	home := t.TempDir()
+	if err := Sync(SyncOptions{HomeDir: home, ReviewCommand: "/review"}); err != nil {
+		t.Fatalf("sync skill: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(home, ".agents", "skills", embeddedSkillRoot, "code-review", "SKILL.md"))
+	if err != nil {
+		t.Fatalf("read code-review skill: %v", err)
+	}
+	text := string(data)
+	for _, want := range []string{
+		"## Self-review context",
+		"## Pull-request review context",
+		"acceptance-criteria-first",
+		"## Standards",
+		"## Spec",
+		"resolved",
+		"partially addressed",
+		"still outstanding",
+		"atomic temp-file-and-rename write",
+		"invoking pull-request review prompt defines the decision output contract",
+		"Do not trigger, poll, fetch, post to, merge, commit to, push to, or remediate",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("code-review skill missing daemon review contract %q", want)
+		}
+	}
+	for _, forbidden := range []string{"gh pr comment", "gh pr view", "git push", "git commit"} {
+		if strings.Contains(text, forbidden) {
+			t.Errorf("daemon-review skill must not orchestrate pull requests; found %q", forbidden)
+		}
+	}
+}
+
+func TestSyncUpgradesManagedSelfReviewTreeToCodeReview(t *testing.T) {
+	home := t.TempDir()
+	if err := Sync(SyncOptions{HomeDir: home, ReviewCommand: "/old-review"}); err != nil {
+		t.Fatalf("seed skill: %v", err)
+	}
+
+	root := filepath.Join(home, ".agents", "skills", embeddedSkillRoot)
+	if err := os.Rename(filepath.Join(root, "code-review"), filepath.Join(root, "self-review")); err != nil {
+		t.Fatalf("simulate prior managed self-review tree: %v", err)
+	}
+	if err := writeManifest(root); err != nil {
+		t.Fatalf("write simulated prior manifest: %v", err)
+	}
+
+	if err := Sync(SyncOptions{HomeDir: home, ReviewCommand: "/new-review"}); err != nil {
+		t.Fatalf("upgrade managed skill tree: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "code-review", "SKILL.md")); err != nil {
+		t.Fatalf("upgraded code-review skill missing: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "self-review", "SKILL.md")); !os.IsNotExist(err) {
+		t.Fatalf("obsolete self-review skill remains after upgrade, stat error = %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(root, "pr-review", "SKILL.md"))
+	if err != nil {
+		t.Fatalf("read upgraded pr-review skill: %v", err)
+	}
+	if !strings.Contains(string(data), "/new-review") {
+		t.Fatalf("upgraded skill tree did not render new review command:\n%s", data)
+	}
+}
+
+func TestSyncUpgradesUnmanifestedSelfReviewTreeToCodeReview(t *testing.T) {
+	home := t.TempDir()
+	if err := Sync(SyncOptions{HomeDir: home, ReviewCommand: "/old-review"}); err != nil {
+		t.Fatalf("seed skill: %v", err)
+	}
+
+	root := filepath.Join(home, ".agents", "skills", embeddedSkillRoot)
+	if err := os.Rename(filepath.Join(root, "code-review"), filepath.Join(root, "self-review")); err != nil {
+		t.Fatalf("simulate legacy self-review tree: %v", err)
+	}
+	if err := os.Remove(filepath.Join(root, manifestFileName)); err != nil {
+		t.Fatalf("remove manifest from legacy tree: %v", err)
+	}
+
+	if err := Sync(SyncOptions{HomeDir: home, ReviewCommand: "/new-review"}); err != nil {
+		t.Fatalf("upgrade unmanifested legacy skill tree: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "code-review", "SKILL.md")); err != nil {
+		t.Fatalf("upgraded code-review skill missing: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "self-review")); !os.IsNotExist(err) {
+		t.Fatalf("obsolete self-review skill remains after upgrade, stat error = %v", err)
+	}
+}
+
 func TestSyncInstallsIssueClosingGuardInImplementSkill(t *testing.T) {
 	home := t.TempDir()
 

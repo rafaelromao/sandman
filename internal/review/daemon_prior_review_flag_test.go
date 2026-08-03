@@ -2,6 +2,7 @@ package review
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -78,6 +79,9 @@ func TestDaemon_PriorReviewFlag_HumanReview_RendersYES(t *testing.T) {
 	if !strings.Contains(prompt, "deterministic prior-review flag is `YES`") {
 		t.Errorf("rendered prompt must substitute {{PRIOR_REVIEW_EXISTS}}=YES when a human review exists (issue #1892), got prompt:\n%s", prompt)
 	}
+	if !strings.Contains(prompt, "## Authoritative prior review entries\n\nLGTM, no blockers.") {
+		t.Errorf("rendered prompt must supply prior review entries to the daemon-review agent, got prompt:\n%s", prompt)
+	}
 }
 
 // TestDaemon_PriorReviewFlag_BotSelfPost_RendersYES pins the asymmetric
@@ -116,5 +120,107 @@ func TestDaemon_PriorReviewFlag_BotSelfPost_RendersYES(t *testing.T) {
 	prompt := runner.last.PromptConfig.PromptFlag
 	if !strings.Contains(prompt, "deterministic prior-review flag is `YES`") {
 		t.Errorf("rendered prompt must substitute {{PRIOR_REVIEW_EXISTS}}=YES when a bot self-post exists (counts as a prior review, issue #1892), got prompt:\n%s", prompt)
+	}
+}
+
+func TestDaemon_PriorReviewContext_IncludesFormalAndInlineHistory(t *testing.T) {
+	now := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
+	gh := &fakeGH{
+		prs:      []github.PR{{Number: 42, State: "open"}},
+		comments: map[int][]github.PRComment{42: {{ID: "trigger-1", Body: "/sandman review", CreatedAt: now}}},
+		formalReviews: map[int][]github.PRReview{42: {{
+			ID: "review-1", State: "CHANGES_REQUESTED", Body: "Please add coverage.", CreatedAt: now,
+		}}},
+		inlineReviewComments: map[int][]github.PRReviewComment{42: {{
+			ID: "inline-1", Path: "internal/review/daemon.go", Line: 42, Body: "Handle this error.", CreatedAt: now,
+		}}},
+	}
+	runner := &decisionCapturingRunner{capturedRequest: &capturedRequest{}, body: "ok"}
+	d, _, _ := newDaemonForTest(t, gh, runner, &config.Config{
+		DefaultReviewAgent: "opencode",
+		DefaultReviewModel: "opencode/foo",
+	})
+	d.Clock = func() time.Time { return now.Add(-time.Minute) }
+
+	tickAndWait(t, d, context.Background())
+
+	prompt := runner.last.PromptConfig.PromptFlag
+	for _, want := range []string{
+		"### Formal review (CHANGES_REQUESTED)",
+		"Please add coverage.",
+		"### Inline review (internal/review/daemon.go:42)",
+		"Handle this error.",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("rendered prompt must include prior review history %q, got:\n%s", want, prompt)
+		}
+	}
+}
+
+func TestDaemon_PriorReviewContext_FailsClosedOnHistoryError(t *testing.T) {
+	now := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
+	for name, configure := range map[string]func(*fakeGH){
+		"formal": func(gh *fakeGH) { gh.formalReviewErr = errors.New("formal history unavailable") },
+		"inline": func(gh *fakeGH) { gh.inlineReviewErr = errors.New("inline history unavailable") },
+	} {
+		t.Run(name, func(t *testing.T) {
+			gh := &fakeGH{
+				prs:      []github.PR{{Number: 42, State: "open"}},
+				comments: map[int][]github.PRComment{42: {{ID: "trigger-1", Body: "/sandman review", CreatedAt: now}}},
+			}
+			configure(gh)
+			runner := &decisionCapturingRunner{capturedRequest: &capturedRequest{}, body: "ok"}
+			d, _, _ := newDaemonForTest(t, gh, runner, &config.Config{
+				DefaultReviewAgent: "opencode",
+				DefaultReviewModel: "opencode/foo",
+			})
+			d.Clock = func() time.Time { return now.Add(-time.Minute) }
+
+			tickAndWait(t, d, context.Background())
+			if runner.calls != 0 {
+				t.Fatalf("review launched with incomplete %s history", name)
+			}
+		})
+	}
+}
+
+type linkedIssueReviewGH struct {
+	*fakeGH
+	issue *github.Issue
+	err   error
+}
+
+func (g *linkedIssueReviewGH) FetchIssue(context.Context, int) (*github.Issue, error) {
+	return g.issue, g.err
+}
+
+func TestDaemon_ReviewPrompt_FailsClosedWhenAcceptanceCriteriaUnavailable(t *testing.T) {
+	now := time.Date(2026, 6, 10, 12, 0, 0, 0, time.UTC)
+	for name, input := range map[string]struct {
+		issue *github.Issue
+		err   error
+	}{
+		"error": {err: errors.New("issue unavailable")},
+		"empty": {},
+	} {
+		t.Run(name, func(t *testing.T) {
+			base := &fakeGH{
+				prs:      []github.PR{{Number: 42, State: "open"}},
+				comments: map[int][]github.PRComment{42: {{ID: "trigger-1", Body: "/sandman review", CreatedAt: now}}},
+				prFetch:  map[int]*github.PR{42: {Number: 42, Title: "T", Body: "Closes #99"}},
+			}
+			gh := &linkedIssueReviewGH{fakeGH: base, issue: input.issue, err: input.err}
+			runner := &decisionCapturingRunner{capturedRequest: &capturedRequest{}, body: "ok"}
+			d, _, _ := newDaemonForTest(t, gh, runner, &config.Config{
+				DefaultReviewAgent: "opencode",
+				DefaultReviewModel: "opencode/foo",
+			})
+			d.Clock = func() time.Time { return now.Add(-time.Minute) }
+
+			tickAndWait(t, d, context.Background())
+			if runner.calls != 0 {
+				t.Fatalf("review launched without acceptance criteria after %s", name)
+			}
+		})
 	}
 }

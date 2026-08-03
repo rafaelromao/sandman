@@ -634,18 +634,33 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 // materializeReviewPrompts writes the static PR review prompt and the
 // quality rules to .sandman/reviews/. Both files are materialised at init
 // time (not on first daemon use) so the user can edit them before any
-// review runs. Existing files are left untouched to respect user edits
-// across re-inits.
+// review runs. Existing files are left untouched to respect user edits,
+// except for the exact prior generated review prompt which is upgraded.
 func (s *Scaffolder) materializeReviewPrompts(layout paths.Layout) error {
 	reviewsDir := layout.ReviewsDir()
 	if err := os.MkdirAll(reviewsDir, 0755); err != nil {
 		return fmt.Errorf("create reviews dir: %w", err)
 	}
-	if err := writeIfMissing(layout.ReviewPromptPath(), []byte(prompt.DefaultPRReviewPrompt())); err != nil {
+	if err := writeReviewPrompt(layout.ReviewPromptPath()); err != nil {
 		return err
 	}
 	if err := writeIfMissing(layout.QualityRulesPath(), []byte(prompt.DefaultQualityRules())); err != nil {
 		return err
+	}
+	return nil
+}
+
+func writeReviewPrompt(path string) error {
+	return writeReviewPromptIfLegacy(path, prompt.IsLegacyDefaultPRReviewPrompt)
+}
+
+func writeReviewPromptIfLegacy(path string, isLegacy func([]byte) bool) error {
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) || isLegacy(data) {
+		return atomicfs.WriteAtomic(path, []byte(prompt.DefaultPRReviewPrompt()), 0644)
+	}
+	if err != nil {
+		return fmt.Errorf("read %s: %w", path, err)
 	}
 	return nil
 }

@@ -841,10 +841,10 @@ func (d *Daemon) QualityRulesPath() string {
 
 // initPromptTemplate writes the static, PR-agnostic review prompt
 // template to PromptTemplatePath() and the quality rules to
-// .sandman/reviews/quality-rules.md, but only when they are missing.
-// Files materialised by `sandman init` (or by a previous daemon start)
-// are left untouched so user edits survive restarts. It is safe to call
-// from multiple goroutines and from both StartSocket and launchReview.
+// .sandman/reviews/quality-rules.md when they are missing. It also upgrades
+// the exact prior generated review prompt while preserving user edits. It is
+// safe to call from multiple goroutines and from both StartSocket and
+// launchReview.
 //
 // Both writes go through atomicfs.WriteAtomic, which uses a unique
 // temp-file suffix (".tmp.<random>") rather than a fixed "<path>.tmp",
@@ -854,8 +854,17 @@ func (d *Daemon) QualityRulesPath() string {
 func (d *Daemon) initPromptTemplate() error {
 	var err error
 	d.promptOnce.Do(func() {
-		if _, statErr := os.Stat(d.PromptTemplatePath()); os.IsNotExist(statErr) {
-			if err = atomicfs.WriteAtomic(d.PromptTemplatePath(), []byte(prompt.DefaultPRReviewPrompt()), 0644); err != nil {
+		promptPath := d.PromptTemplatePath()
+		promptData, readErr := os.ReadFile(promptPath)
+		if os.IsNotExist(readErr) {
+			if err = atomicfs.WriteAtomic(promptPath, []byte(prompt.DefaultPRReviewPrompt()), 0644); err != nil {
+				return
+			}
+		} else if readErr != nil {
+			err = fmt.Errorf("read review prompt: %w", readErr)
+			return
+		} else if prompt.IsLegacyDefaultPRReviewPrompt(promptData) {
+			if err = atomicfs.WriteAtomic(promptPath, []byte(prompt.DefaultPRReviewPrompt()), 0644); err != nil {
 				return
 			}
 		}
@@ -1126,11 +1135,46 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) error {
 	// prior reviews — they are reviews of the PR, just not fresh
 	// triggers. The two filters answer different questions and coexist.
 	priorReviewExists := false
+	var priorReviewEntries []string
 	for _, c := range comments {
 		if !IsReviewRequest(c.Body) {
 			priorReviewExists = true
-			break
+			priorReviewEntries = append(priorReviewEntries, c.Body)
 		}
+	}
+	// Conversation comments do not include GitHub's formal reviews or inline
+	// review comments. Supply those sources through optional client capabilities
+	// so daemon reviewers can account for the complete authoritative history
+	// without making pull-request API calls from the review worktree.
+	if lister, ok := d.GitHub.(github.PRReviewLister); ok {
+		reviews, listErr := lister.ListPRReviews(ctx, prNumber)
+		if listErr != nil {
+			return fmt.Errorf("list formal reviews for PR #%d: %w", prNumber, listErr)
+		} else {
+			for _, review := range reviews {
+				priorReviewExists = true
+				priorReviewEntries = append(priorReviewEntries, fmt.Sprintf("### Formal review (%s)\n\n%s", review.State, review.Body))
+			}
+		}
+	}
+	if lister, ok := d.GitHub.(github.PRReviewCommentLister); ok {
+		inline, listErr := lister.ListPRReviewComments(ctx, prNumber)
+		if listErr != nil {
+			return fmt.Errorf("list inline reviews for PR #%d: %w", prNumber, listErr)
+		} else {
+			for _, comment := range inline {
+				priorReviewExists = true
+				location := comment.Path
+				if comment.Line > 0 {
+					location = fmt.Sprintf("%s:%d", location, comment.Line)
+				}
+				priorReviewEntries = append(priorReviewEntries, fmt.Sprintf("### Inline review (%s)\n\n%s", location, comment.Body))
+			}
+		}
+	}
+	priorReviewContext := ""
+	if len(priorReviewEntries) > 0 {
+		priorReviewContext = "## Authoritative prior review entries\n\n" + strings.Join(priorReviewEntries, "\n\n---\n\n")
 	}
 
 	type unseenTrigger struct {
@@ -1334,7 +1378,7 @@ func (d *Daemon) processPR(ctx context.Context, prNumber int) error {
 		defer d.inFlight.Done()
 		defer d.releasePRSlot(prNumber)
 
-		launchErr := d.launchReviewRevision(ctx, prNumber, focus, newest.key, comment.ID, commentReactionID, prReactionID, reviewRunFolder, perRowRunID, rs, state, priorReviewExists)
+		launchErr := d.launchReviewRevision(ctx, prNumber, focus, newest.key, comment.ID, commentReactionID, prReactionID, reviewRunFolder, perRowRunID, rs, state, priorReviewExists, priorReviewContext)
 		if launchErr != nil {
 			d.logf("launch review for PR #%d comment %s: %v", prNumber, comment.ID, launchErr)
 			// Ctx-cancel between RunBatch and the post step:
@@ -1638,10 +1682,10 @@ func logWriterFor(d *Daemon) io.Writer {
 // bounded-retry walker is gone; the bounded-retry contract is now
 // expressed as a single-shot at launch-end via the seen-cache).
 func (d *Daemon) launchReview(ctx context.Context, prNumber int, focus, commentID, commentReactionID, prReactionID, reviewRunFolder, perRowRunID string, rs *daemon.RunSession, state *ReviewStateStore, priorReviewExists bool) error {
-	return d.launchReviewRevision(ctx, prNumber, focus, commentID, commentID, commentReactionID, prReactionID, reviewRunFolder, perRowRunID, rs, state, priorReviewExists)
+	return d.launchReviewRevision(ctx, prNumber, focus, commentID, commentID, commentReactionID, prReactionID, reviewRunFolder, perRowRunID, rs, state, priorReviewExists, "")
 }
 
-func (d *Daemon) launchReviewRevision(ctx context.Context, prNumber int, focus, triggerKey, commentID, commentReactionID, prReactionID, reviewRunFolder, perRowRunID string, rs *daemon.RunSession, state *ReviewStateStore, priorReviewExists bool) error {
+func (d *Daemon) launchReviewRevision(ctx context.Context, prNumber int, focus, triggerKey, commentID, commentReactionID, prReactionID, reviewRunFolder, perRowRunID string, rs *daemon.RunSession, state *ReviewStateStore, priorReviewExists bool, priorReviewContext string) error {
 	// We compute the review branch name up-front so the cleanup defer
 	// has it available on every exit path, including early errors
 	// before RunBatch runs. The same value is reused in the
@@ -1711,13 +1755,33 @@ func (d *Daemon) launchReviewRevision(ctx context.Context, prNumber int, focus, 
 	}
 	agentRunDir := sandbox.ContainerVisiblePath(d.reviewWorktreePath(prNumber, triggerKey), repoRoot, sandboxMode)
 
+	acceptanceCriteria := ""
+	if linkedIssue := pr.LinkedIssueNumber(); linkedIssue > 0 {
+		if fetcher, ok := d.GitHub.(interface {
+			FetchIssue(context.Context, int) (*github.Issue, error)
+		}); ok {
+			issue, fetchErr := fetcher.FetchIssue(ctx, linkedIssue)
+			if fetchErr != nil {
+				return d.recordLaunchFailure(ctx, triggerKey, state, fmt.Errorf("fetch linked work item #%d for review prompt: %w", linkedIssue, fetchErr))
+			} else if issue != nil {
+				acceptanceCriteria = issue.Body
+			} else {
+				return d.recordLaunchFailure(ctx, triggerKey, state, fmt.Errorf("fetch linked work item #%d for review prompt: empty response", linkedIssue))
+			}
+		} else {
+			return d.recordLaunchFailure(ctx, triggerKey, state, fmt.Errorf("fetch linked work item #%d for review prompt: client does not support issue content", linkedIssue))
+		}
+	}
+
 	rendered, err := d.Prompts.RenderReview(prompt.RenderConfig{}, prompt.PRData{
-		Number:            pr.Number,
-		Title:             pr.Title,
-		Body:              pr.Body,
-		ReviewFocus:       focus,
-		RunDir:            agentRunDir,
-		PriorReviewExists: priorReviewExists,
+		Number:             pr.Number,
+		Title:              pr.Title,
+		Body:               pr.Body,
+		AcceptanceCriteria: acceptanceCriteria,
+		ReviewFocus:        focus,
+		RunDir:             agentRunDir,
+		PriorReviewExists:  priorReviewExists,
+		PriorReviewContext: priorReviewContext,
 	})
 	if err != nil {
 		return fmt.Errorf("render prompt: %w", err)

@@ -115,9 +115,9 @@ func TestAGENTS_SkillContentConstraintsSectionHasExpectedClauses(t *testing.T) {
 			meaning: "section forbids kanban/triage jargon in skill prose",
 		},
 		{
-			name:    "catch site names sandman-self-review",
-			substr:  "sandman-self-review",
-			meaning: "section names sandman-self-review as a catch site",
+			name:    "catch site names sandman-code-review",
+			substr:  "sandman-code-review",
+			meaning: "section names sandman-code-review as a catch site",
 		},
 		{
 			name:    "catch site names sandman-pr-review",

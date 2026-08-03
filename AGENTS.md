@@ -170,7 +170,7 @@ Skills also must not mention the GitHub issue tracker directly (issue numbers, k
 
 Concretely: a contributor reviewing a skill should be able to read it without knowing Sandman's package layout or workflow automation. If a paragraph needs re-reading after the user-facing vocab is internalized, it shouldn't name internals.
 
-**Violations** to be caught during `sandman-self-review` and `sandman-pr-review`. The regression net is `internal/skill/sandman/skill_hygiene_test.go`, which scans all skill prose for forbidden internal package paths, forbidden internal Go identifiers, and tracker jargon.
+**Violations** to be caught during `sandman-code-review` and `sandman-pr-review`. The regression net is `internal/skill/sandman/skill_hygiene_test.go`, which scans all skill prose for forbidden internal package paths, forbidden internal Go identifiers, and tracker jargon.
 
 ## Before committing
 

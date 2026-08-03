@@ -1,6 +1,8 @@
 package prompt
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -643,6 +645,21 @@ func TestDefaultPRReviewPrompt_EmbeddedTemplate(t *testing.T) {
 	}
 }
 
+func TestIsLegacyDefaultPRReviewPrompt(t *testing.T) {
+	legacy := []byte("legacy generated review prompt")
+	sum := sha256.Sum256(legacy)
+	original := legacyPRReviewPromptSHA256
+	legacyPRReviewPromptSHA256 = hex.EncodeToString(sum[:])
+	t.Cleanup(func() { legacyPRReviewPromptSHA256 = original })
+
+	if !IsLegacyDefaultPRReviewPrompt(legacy) {
+		t.Fatal("exact legacy prompt should be eligible for upgrade")
+	}
+	if IsLegacyDefaultPRReviewPrompt([]byte("user-edited review prompt")) {
+		t.Fatal("user-edited prompt must not be eligible for upgrade")
+	}
+}
+
 func TestDefaultQualityRules_EmbeddedTemplate(t *testing.T) {
 	data, err := os.ReadFile("quality_rules.md")
 	if err != nil {
@@ -714,26 +731,21 @@ func TestDefaultQualityRules_ContainsConstructTagsAndMetrics(t *testing.T) {
 
 func TestDefaultPRReviewPrompt_ContainsRequiredKeys(t *testing.T) {
 	prompt := DefaultPRReviewPrompt()
-	for _, key := range []string{"{{PR_NUMBER}}", "{{PR_TITLE}}", "{{PR_BODY}}", "{{REVIEW_FOCUS}}", "{{RUN_DIR}}"} {
+	for _, key := range []string{"{{PR_NUMBER}}", "{{PR_TITLE}}", "{{PR_BODY}}", "{{ACCEPTANCE_CRITERIA}}", "{{REVIEW_FOCUS}}", "{{RUN_DIR}}"} {
 		if !strings.Contains(prompt, key) {
 			t.Errorf("review prompt missing key %s", key)
 		}
-	}
-	if !strings.Contains(prompt, "gh pr diff {{PR_NUMBER}}") {
-		t.Error("review prompt must instruct agent to read the diff via gh pr diff with PR_NUMBER")
-	}
-	if strings.Contains(prompt, "gh pr comment {{PR_NUMBER}} --body") {
-		t.Error("review prompt must NOT instruct the agent to post via `gh pr comment {{PR_NUMBER}} --body`; the agent writes {{RUN_DIR}}/decision.md and the daemon posts (issue #1845)")
 	}
 	if strings.Contains(prompt, "<RUN_DIR>") {
 		t.Error("review prompt must not contain literal `<RUN_DIR>` — use `{{RUN_DIR}}` so the renderer substitutes the actual path")
 	}
 	required := []string{
-		"## Posting the Review",
+		"sandman-code-review",
+		"pull-request review context",
+		"supplied above and are authoritative",
 		"decision.md",
-		"decision.md.tmp",
-		"os.Rename",
-		"atomic",
+		"atomically write",
+		"Do not trigger, poll, fetch, post to, merge, commit to, push to, or remediate",
 	}
 	for _, phrase := range required {
 		if !strings.Contains(prompt, phrase) {
@@ -742,7 +754,7 @@ func TestDefaultPRReviewPrompt_ContainsRequiredKeys(t *testing.T) {
 	}
 }
 
-func TestDefaultPRReviewPrompt_ContainsDaemonRedactionNote(t *testing.T) {
+func TestDefaultPRReviewPrompt_DelegatesPostingToDaemon(t *testing.T) {
 	data, err := os.ReadFile("default_pr_review_prompt.md")
 	if err != nil {
 		t.Fatalf("read default PR review prompt template: %v", err)
@@ -750,10 +762,8 @@ func TestDefaultPRReviewPrompt_ContainsDaemonRedactionNote(t *testing.T) {
 	prompt := string(data)
 
 	required := []string{
-		"## Note",
-		"/sandman",
-		"case-insensitive",
-		"redact",
+		"the surrounding workflow owns those actions",
+		"posts the decision artifact",
 	}
 	for _, phrase := range required {
 		if !strings.Contains(prompt, phrase) {
@@ -762,18 +772,15 @@ func TestDefaultPRReviewPrompt_ContainsDaemonRedactionNote(t *testing.T) {
 	}
 }
 
-func TestDefaultPRReviewPrompt_AFKRuleIsDecisionMdWrite(t *testing.T) {
+func TestDefaultPRReviewPrompt_EndsWithDecisionWrite(t *testing.T) {
 	data, err := os.ReadFile("default_pr_review_prompt.md")
 	if err != nil {
 		t.Fatalf("read default PR review prompt template: %v", err)
 	}
 	prompt := string(data)
 
-	if !strings.Contains(prompt, "Write `{{RUN_DIR}}/decision.md`, then exit.") {
-		t.Error("default PR review prompt's AFK Rule must be `Write {{RUN_DIR}}/decision.md, then exit.` (issue #1845)")
-	}
-	if strings.Contains(prompt, "Produce the comment, post it, and exit.") {
-		t.Error("default PR review prompt must not retain the old AFK Rule `Produce the comment, post it, and exit.` (issue #1845)")
+	if !strings.Contains(prompt, "atomically write `{{RUN_DIR}}/decision.md` and exit") {
+		t.Error("default PR review prompt must direct the daemon reviewer to write the decision artifact and exit")
 	}
 }
 
@@ -788,10 +795,6 @@ func TestDefaultPRReviewPrompt_ContainsOmitPreviousReviewProgressRule(t *testing
 		"**omit** the `## Previous review progress` section from the posted comment",
 		"Do not render this section if there are no prior reviews",
 		"Do not write a placeholder such as \"No previous reviews found.\"",
-		// issue #1892 additions: the new hard-rule block
-		// must be present and must reference the deterministic
-		// {{PRIOR_REVIEW_EXISTS}} token with the explicit three
-		// prohibitions (no heading, no placeholder, no default body).
 		"## Previous review progress — hard rule",
 		"deterministic prior-review flag is `{{PRIOR_REVIEW_EXISTS}}`",
 		"render **no heading, no placeholder, no default body**",
@@ -804,42 +807,16 @@ func TestDefaultPRReviewPrompt_ContainsOmitPreviousReviewProgressRule(t *testing
 	}
 }
 
-func TestDefaultPRReviewPrompt_ForbidsLiteralTriggerSubstring(t *testing.T) {
+func TestDefaultPRReviewPrompt_ForbidsDaemonSideOrchestration(t *testing.T) {
 	data, err := os.ReadFile("default_pr_review_prompt.md")
 	if err != nil {
 		t.Fatalf("read default PR review prompt template: %v", err)
 	}
 	prompt := string(data)
 
-	// The line-34 hard rule from issue #1701 has been softened into a
-	// daemon-side redaction Note (issue #1845). The prompt must NOT
-	// retain the literal "do NOT write the literal `/sandman review`
-	// substring" prohibition.
-	if strings.Contains(prompt, "do NOT write the literal `/sandman review` substring") {
-		t.Error("default PR review prompt must not retain the literal line-34 hard rule from issue #1701; the rule has been softened into a Note about daemon-side redaction (issue #1845)")
-	}
-
-	// The new canonical mitigation text (the daemon redacts every
-	// `/sandman` substring before posting) must be present so a future
-	// reader can see why the trigger substring is no longer a bot-side
-	// concern.
-	required := []string{
-		"the daemon redacts every `/sandman` substring",
-		"Open review requests",
-	}
-	for _, phrase := range required {
-		if !strings.Contains(prompt, phrase) {
-			t.Errorf("default PR review prompt must retain canonical daemon-redaction phrasing %q", phrase)
-		}
-	}
-
-	buggyInstructional := []string{
-		"refer to prior review requests as `Open /sandman review requests`",
-		"write `Open /sandman review requests`",
-	}
-	for _, phrase := range buggyInstructional {
+	for _, phrase := range []string{"gh pr view", "gh pr checks", "gh pr diff", "gh api", "git push", "gh pr comment"} {
 		if strings.Contains(prompt, phrase) {
-			t.Errorf("default PR review prompt must not instruct the bot to emit the buggy phrasing %q in its review output (issue #1701)", phrase)
+			t.Errorf("default PR review prompt must not direct daemon-side pull-request orchestration %q", phrase)
 		}
 	}
 }
@@ -862,7 +839,7 @@ func TestDefaultPRReviewPrompt_ContainsQualityCheckSection(t *testing.T) {
 		"cross-cutting — <one-line justification>",
 		"Quality rules unavailable in this repository; no built-in quality-rule evaluation was applied.",
 		"Do not restate the threshold literal; refer to `.sandman/reviews/quality-rules.md`",
-		"11. When you find an issue, cite the file and line range, quote the offending snippet, and describe the concrete fix.",
+		"7. When you find an issue, cite the file and line range, quote the offending snippet, and describe the concrete fix.",
 	}
 	for _, phrase := range required {
 		if !strings.Contains(prompt, phrase) {
@@ -884,7 +861,39 @@ func TestDefaultPRReviewPrompt_ContainsQualityCheckSection(t *testing.T) {
 	}
 }
 
-func TestRenderReview_QualityCheckRendersAllSubSections(t *testing.T) {
+func TestDefaultPRReviewPrompt_ContainsDaemonRedactionNote(t *testing.T) {
+	data, err := os.ReadFile("default_pr_review_prompt.md")
+	if err != nil {
+		t.Fatalf("read default PR review prompt template: %v", err)
+	}
+	prompt := string(data)
+
+	required := []string{
+		"## Note",
+		"the daemon redacts every `/sandman` substring",
+		"case-insensitive",
+		"Open review requests",
+	}
+	for _, phrase := range required {
+		if !strings.Contains(prompt, phrase) {
+			t.Errorf("default PR review prompt must retain canonical daemon-redaction note phrase %q", phrase)
+		}
+	}
+}
+
+func TestDefaultPRReviewPrompt_DelegatesToCodeReviewSkill(t *testing.T) {
+	data, err := os.ReadFile("default_pr_review_prompt.md")
+	if err != nil {
+		t.Fatalf("read default PR review prompt template: %v", err)
+	}
+	prompt := string(data)
+
+	if !strings.Contains(prompt, "Load `sandman-code-review` and use its pull-request review context") {
+		t.Error("default PR review prompt must instruct the agent to load sandman-code-review")
+	}
+}
+
+func TestRenderReview_PreservesQualityCheckAndSkillDelegation(t *testing.T) {
 	engine := &Engine{}
 	data := PRData{
 		Number:            17,
@@ -899,30 +908,24 @@ func TestRenderReview_QualityCheckRendersAllSubSections(t *testing.T) {
 		t.Fatalf("render review prompt: %v", err)
 	}
 
-	for _, heading := range []string{"### Scope", "### Metrics", "### Findings", "### Tools used"} {
-		if !strings.Contains(result, heading) {
-			t.Errorf("rendered review prompt must contain %q (issue #2332)", heading)
-		}
-	}
-
 	for _, phrase := range []string{
-		"Quality rules unavailable in this repository; no built-in quality-rule evaluation was applied.",
-		"focused — <one-line justification>",
-		"mixed scope — <one-line justification>",
-		"cross-cutting — <one-line justification>",
-		"value (threshold N). No flag.",
-		"value (threshold N). Flag: <location>",
-		"Prior coverage of the blast radius not measured: repository has no configured coverage tool.",
-		"State explicitly which analyzer or manual assessment was used.",
+		"sandman-code-review",
+		"pull-request review context",
+		"supplied above and are authoritative",
+		"atomically write `/abs/path/to/worktree/decision.md` and exit",
+		"`### Scope`",
+		"`### Metrics`",
+		"`### Findings`",
+		"`### Tools used`",
 	} {
 		if !strings.Contains(result, phrase) {
-			t.Errorf("rendered review prompt must contain %q (issue #2332)", phrase)
+			t.Errorf("rendered review prompt must contain %q", phrase)
 		}
 	}
 
-	for _, forbidden := range []string{"0.75", "75%", "complexity signals, OC, SOLID", "n / t"} {
+	for _, forbidden := range []string{"gh pr view", "gh pr checks", "gh pr diff", "gh api", "git push", "gh pr comment"} {
 		if strings.Contains(result, forbidden) {
-			t.Errorf("rendered review prompt must not retain obsolete wording %q (issue #2332)", forbidden)
+			t.Errorf("rendered review prompt must not orchestrate the pull request with %q", forbidden)
 		}
 	}
 }
@@ -940,6 +943,13 @@ func TestApplyPRSubstitutions(t *testing.T) {
 	want := "PR #42: Add review command\n\nImplements the one-shot review.\n\nfocus: focus on config"
 	if got != want {
 		t.Errorf("got:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+func TestApplyPRSubstitutions_RendersAcceptanceCriteria(t *testing.T) {
+	got := ApplyPRSubstitutions("criteria={{ACCEPTANCE_CRITERIA}}", PRData{AcceptanceCriteria: "- [ ] review both contexts"})
+	if got != "criteria=- [ ] review both contexts" {
+		t.Errorf("got %q", got)
 	}
 }
 
@@ -1003,10 +1013,12 @@ func TestRenderReview_BuiltInDefaultRendersPRData(t *testing.T) {
 	want = strings.ReplaceAll(want, "{{PR_NUMBER}}", "17")
 	want = strings.ReplaceAll(want, "{{PR_TITLE}}", "Refactor daemon")
 	want = strings.ReplaceAll(want, "{{PR_BODY}}", "Splits the orchestrator.")
+	want = strings.ReplaceAll(want, "{{ACCEPTANCE_CRITERIA}}", "")
 	want = strings.ReplaceAll(want, "{{REVIEW_FOCUS}}", "")
 	want = strings.ReplaceAll(want, "{{RUN_DIR}}", "/abs/path/to/run")
 	// Issue #1892: zero-value PRData.PriorReviewExists is false -> "NO".
 	want = strings.ReplaceAll(want, "{{PRIOR_REVIEW_EXISTS}}", "NO")
+	want = strings.ReplaceAll(want, "{{PRIOR_REVIEW_CONTEXT}}", "")
 
 	if result != want {
 		t.Errorf("unexpected rendered review prompt\nwant:\n%s\ngot:\n%s", want, result)
@@ -1096,6 +1108,17 @@ func TestApplyPRSubstitutions_PriorReviewExistsFalseRendersNO(t *testing.T) {
 	got := ApplyPRSubstitutions(template, data)
 	if got != "PRIOR_REVIEW_EXISTS=NO" {
 		t.Errorf("got %q, want %q", got, "PRIOR_REVIEW_EXISTS=NO")
+	}
+}
+
+func TestApplyPRSubstitutions_RendersAuthoritativePriorReviewContext(t *testing.T) {
+	template := "prior={{PRIOR_REVIEW_CONTEXT}}"
+	data := PRData{PriorReviewContext: "## Authoritative prior review entries\n\n- prior finding: add coverage"}
+
+	got := ApplyPRSubstitutions(template, data)
+	want := "prior=## Authoritative prior review entries\n\n- prior finding: add coverage"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
 	}
 }
 

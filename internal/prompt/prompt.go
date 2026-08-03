@@ -24,10 +24,13 @@ type IssueData struct {
 
 // PRData holds the pull request metadata needed for review prompt rendering.
 type PRData struct {
-	Number      int
-	Title       string
-	Body        string
-	ReviewFocus string
+	Number int
+	Title  string
+	Body   string
+	// AcceptanceCriteria is the linked work item's authoritative acceptance
+	// criteria, fetched by the review daemon when available.
+	AcceptanceCriteria string
+	ReviewFocus        string
 	// RunDir is substituted into `{{RUN_DIR}}` in the review prompt.
 	// Empty renders as empty (no unfilled-key error) so callers that
 	// have not yet been migrated continue to work.
@@ -39,6 +42,9 @@ type PRData struct {
 	// entirely — see default_pr_review_prompt.md "Previous review
 	// progress — hard rule".
 	PriorReviewExists bool
+	// PriorReviewContext contains the daemon-supplied prior review entries.
+	// It is empty when no prior review exists.
+	PriorReviewContext string
 }
 
 // IssueRenderer renders prompt templates with substitutions.

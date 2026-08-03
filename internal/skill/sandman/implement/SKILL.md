@@ -15,7 +15,7 @@ This skill implements an open work item by modifying the current repository's so
 
 - `gh` CLI authenticated
 - Working directory at repo root
-- `sandman-plan`, `sandman-tdd`, `sandman-self-review`, and `sandman-back-merge` skills available
+- `sandman-plan`, `sandman-tdd`, `sandman-code-review`, and `sandman-back-merge` skills available
 
 ## Workflow
 
@@ -120,7 +120,7 @@ git commit -m "$COMMIT_HEADER"
 
 ### 5. Self-review
 
-- Load the `sandman-self-review` skill
+- Load the `sandman-code-review` skill in self-review context
 - Perform a self-review of the changes
 - Apply fixes, format the code, run all tests, including smoke and e2e, and commit:
 
