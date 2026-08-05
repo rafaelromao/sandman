@@ -250,7 +250,7 @@ func TestRunSingle_EmitsRunRetryWithKillTimeoutReasonOnParentCtxCancel(t *testin
 	t.Cleanup(func() { _ = os.Chdir(oldWD) })
 	initGitRepo(t, workDir)
 
-	branch := "sandman/prompt-only-kill-timeout"
+	branch := "prompt-only-kill-timeout"
 	rtSandbox := &retrySandbox{workDir: filepath.Join(workDir, "worktree")}
 
 	// First runnable blocks until the context is cancelled, then
@@ -435,7 +435,7 @@ func (r *ctxCancelRunnable) Run(ctx context.Context, _ prompt.IssueRenderer, _ s
 		default:
 		}
 	}
-	return AgentRunResult{Status: "aborted", Branch: "sandman/prompt-only-kill-timeout"}
+	return AgentRunResult{Status: "aborted", Branch: "prompt-only-kill-timeout"}
 }
 
 // dualRunnableFactory is a RunnableFactory that returns the first

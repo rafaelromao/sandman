@@ -16,27 +16,18 @@ import (
 	"github.com/rafaelromao/sandman/internal/prompt"
 )
 
-// sandmanBranchRE matches the sidecar and prompt-only branch shapes
-// that retain the sandman/ prefix (see ADR-0040): review daemon
-// branches sandman/review-<pr>-<commentID> and prompt-only branches
-// sandman/<slug>-<timestamp>. The badge sidecar branch follows the new
-// bare-slug convention (built-with-sandman) like every other
-// Sandman-managed branch.
-var sandmanBranchRE = regexp.MustCompile(`^sandman/`)
-
 // issueDrivenBranchRE matches the issue-driven branch shape emitted by
-// BranchName since ADR-0040 dropped the sandman/ prefix: "<n>-<slug>"
-// (e.g. "369-implement-crash-safe-project-generation-publication").
-// It mirrors the issueDrivenDir convention the runtime uses for
-// stranded-worktree detection.
+// BranchName since ADR-0040: "<n>-<slug>" (e.g.
+// "369-implement-crash-safe-project-generation-publication"). The
+// legacy sandman/ prefix is not supported — every Sandman-managed
+// branch now carries the bare shape, matching the issueDrivenDir
+// convention the runtime uses for stranded-worktree detection.
 var issueDrivenBranchRE = regexp.MustCompile(`^[0-9]+-`)
 
 // isSandmanBranch reports whether a merged PR head ref was created by
-// Sandman. Both branch shapes count as Sandman-managed: the legacy and
-// sidecar/prompt-only sandman/ prefix, and the ADR-0040 issue-driven
-// <n>-<slug> shape.
+// Sandman. Only the ADR-0040 issue-driven "<n>-<slug>" shape counts.
 func isSandmanBranch(headRef string) bool {
-	return sandmanBranchRE.MatchString(headRef) || issueDrivenBranchRE.MatchString(headRef)
+	return issueDrivenBranchRE.MatchString(headRef)
 }
 
 var badgeMarkerRE = regexp.MustCompile(`<!-- sandman-badge-pr -->`)

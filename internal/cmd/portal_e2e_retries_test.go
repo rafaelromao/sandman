@@ -433,7 +433,7 @@ func TestPortal_E2E_ParentSuccWithLiveChild(t *testing.T) {
 	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
 		{Type: "run.started", Timestamp: startedAt, RunID: "260618113825-abcd-1", Issue: 1, Payload: map[string]any{"branch": "1-fix"}},
 		{Type: "run.finished", Timestamp: startedAt.Add(1 * time.Minute), RunID: "260618113825-abcd-1", Issue: 1, Payload: map[string]any{"branch": "1-fix", "status": "success"}},
-		{Type: "run.started", Timestamp: startedAt.Add(30 * time.Second), RunID: "PR42-live", Issue: 1, Payload: map[string]any{"review": true, "pr_number": 42, "branch": "sandman/review-PR42"}},
+		{Type: "run.started", Timestamp: startedAt.Add(30 * time.Second), RunID: "PR42-live", Issue: 1, Payload: map[string]any{"review": true, "pr_number": 42, "branch": "review-PR42"}},
 	})
 
 	handler := newPortalHandler(repoRoot)

@@ -1,6 +1,6 @@
 # Built with Sandman Badge
 
-When a project has merged its first Sandman-managed branch — an issue-driven `<n>-<slug>` branch, a `sandman/*` sidecar/prompt-only branch — Sandman can suggest adding a "Built with Sandman" badge to the README — a lightweight way to signal that the project ships issues via Sandman.
+When a project has merged its first Sandman-managed branch, Sandman can suggest adding a "Built with Sandman" badge to the README — a lightweight way to signal that the project ships issues via Sandman.
 
 ## What the badge is
 
@@ -10,7 +10,7 @@ The badge is a self-hosted SVG pill that links to the [Sandman repo](https://git
 
 ## How it gets there
 
-After a batch completes with at least one merged Sandman-managed PR (an issue-driven `<n>-<slug>` branch, or a `sandman/*` sidecar/prompt-only branch), Sandman's post-batch sidecar checks whether a badge has already been proposed. If not, it dispatches a child `sandman run --prompt` that opens a PR titled `chore: add Built with Sandman badge`.
+After a batch completes with at least one merged Sandman-managed PR, Sandman's post-batch sidecar checks whether a badge has already been proposed. If not, it dispatches a child `sandman run --prompt` that opens a PR titled `chore: add Built with Sandman badge`.
 
 The PR is created by an agent — the same agent infrastructure used for issue-driven runs — not by hardcoded Go logic. The agent reads or scaffolds the README, inserts the badge, pushes the branch, and opens the PR.
 

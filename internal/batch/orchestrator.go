@@ -896,7 +896,7 @@ func WithVerifyPath(v VerifyPathFunc) OrchestratorOpt {
 }
 
 // NewBadgeHooker returns a BadgeHooker that suggests a Built with Sandman
-// badge PR after a batch with merged sandman/* PRs. The hook is silent
+// badge PR after a batch with merged Sandman-managed PRs. The hook is silent
 // to the operator — it writes nothing to any user-visible stream and
 // only persists a marker under <sandmanDir>/state/ to gate future
 // batches (see issue #2195). It returns a nopBadgeHooker if the sandman
@@ -3368,7 +3368,7 @@ func promptOnlyBranch(cfg prompt.RenderConfig) string {
 	if slug == "" {
 		slug = "prompt-only"
 	}
-	return fmt.Sprintf("sandman/%s-%d", slug, time.Now().UnixNano())
+	return fmt.Sprintf("%s-%d", slug, time.Now().UnixNano())
 }
 
 func terminalRunEvent(ctx context.Context, status string) (string, string) {

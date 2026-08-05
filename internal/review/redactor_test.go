@@ -63,7 +63,7 @@ func TestRedactBody_NoLeadingSlashUntouched(t *testing.T) {
 	cases := []string{
 		"sandman",
 		"call the sandman team",
-		"sandman/review-1234",
+		"review-1234",
 		"sandman-review-1234",
 		"see sandman-implement/SKILL.md",
 		"see sandman/pr-review/SKILL.md",

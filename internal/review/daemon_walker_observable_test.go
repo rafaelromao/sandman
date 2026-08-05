@@ -117,7 +117,7 @@ func TestDaemon_S4_PeekRegisteredEntry(t *testing.T) {
 // fixture should write decision.md into. Issue #1953: decision.md
 // lives in the per-row worktree (the agent's CWD), not the run
 // folder. The worktree path mirrors the daemon's
-// reviewWorktreePath: <baseDir>/.sandman/worktrees/sandman/review-<pr>-<commentID>/decision.md.
+// reviewWorktreePath: <baseDir>/.sandman/worktrees/review-<pr>-<commentID>/decision.md.
 // Tests using this helper must set cfg.WorktreeDir = ".sandman/worktrees"
 // on the daemon (default in cmd/review.go) before constructing it.
 func decisionPathForTest(t *testing.T, baseDir, _ string, prNumber int, commentID string) string {

@@ -96,7 +96,7 @@ func TestClearReviewArtifacts_HappyPath(t *testing.T) {
 	if err := os.MkdirAll(worktreeDir, 0755); err != nil {
 		t.Fatalf("mkdir worktreeDir: %v", err)
 	}
-	branch := "sandman/review-42-c1"
+	branch := "review-42-c1"
 	stageReviewWorktree(t, worktreeDir, branch)
 
 	if !gitWorktreeHasBranch(t, worktreeDir, branch) {
@@ -128,7 +128,7 @@ func TestClearReviewArtifacts_Idempotent(t *testing.T) {
 	}
 
 	var logBuf strings.Builder
-	ClearReviewArtifacts("sandman/review-999-nonexistent", worktreeDir, &logBuf)
+	ClearReviewArtifacts("review-999-nonexistent", worktreeDir, &logBuf)
 
 	if got := logBuf.String(); strings.Contains(got, "error") {
 		t.Errorf("idempotent cleanup should not log errors, got: %s", got)
@@ -154,7 +154,7 @@ func TestClearReviewArtifacts_EmptyWorktreeDirIsNoop(t *testing.T) {
 	initReviewTestGitRepo(t, dir)
 
 	var logBuf strings.Builder
-	ClearReviewArtifacts("sandman/review-42-c1", "", &logBuf)
+	ClearReviewArtifacts("review-42-c1", "", &logBuf)
 	if got := logBuf.String(); got != "" {
 		t.Errorf("empty worktreeDir should produce no log output, got: %s", got)
 	}
@@ -170,7 +170,7 @@ func TestClearReviewArtifacts_DoesNotPruneSiblingBatchWorktree(t *testing.T) {
 		t.Fatalf("mkdir worktreeDir: %v", err)
 	}
 
-	target := "sandman/review-42-c1"
+	target := "review-42-c1"
 	sibling := "99-batch"
 	stageReviewWorktree(t, worktreeDir, target)
 	stageReviewWorktree(t, worktreeDir, sibling)
@@ -198,8 +198,8 @@ func TestClearReviewArtifacts_OnlyTouchesTargetBranch(t *testing.T) {
 		t.Fatalf("mkdir worktreeDir: %v", err)
 	}
 
-	target := "sandman/review-42-c1"
-	other := "sandman/review-99-other"
+	target := "review-42-c1"
+	other := "review-99-other"
 	stageReviewWorktree(t, worktreeDir, target)
 	stageReviewWorktree(t, worktreeDir, other)
 

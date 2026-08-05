@@ -35,7 +35,7 @@ func (r *cmdBadgeRunner) RunPrompt(_ context.Context, promptText, branch string)
 }
 
 // cmdBadgeLister is a deterministic PRLister for the badge e2e test.
-// It returns a fixed list of merged sandman/* PRs and an explicit
+// It returns a fixed list of merged Sandman-managed PRs and an explicit
 // marker-PR-found flag so the trigger decision is exercised under
 // controlled inputs.
 type cmdBadgeLister struct {

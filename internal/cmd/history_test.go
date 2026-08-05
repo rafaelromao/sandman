@@ -68,8 +68,8 @@ func TestHistory_ExcludesIncompleteRuns(t *testing.T) {
 func TestHistory_ShowsPromptOnlyRun(t *testing.T) {
 	log := &fakeEventLog{
 		events: []events.Event{
-			{Type: "run.started", Timestamp: time.Now().Add(-10 * time.Minute), RunID: "run-prompt-only", Payload: map[string]any{"branch": "sandman/return-only-ok-123"}},
-			{Type: "run.finished", Timestamp: time.Now().Add(-5 * time.Minute), RunID: "run-prompt-only", Payload: map[string]any{"status": "success", "branch": "sandman/return-only-ok-123"}},
+			{Type: "run.started", Timestamp: time.Now().Add(-10 * time.Minute), RunID: "run-prompt-only", Payload: map[string]any{"branch": "return-only-ok-123"}},
+			{Type: "run.finished", Timestamp: time.Now().Add(-5 * time.Minute), RunID: "run-prompt-only", Payload: map[string]any{"status": "success", "branch": "return-only-ok-123"}},
 		},
 	}
 
@@ -95,8 +95,8 @@ func TestHistory_ShowsPromptOnlyRun(t *testing.T) {
 func TestHistory_ShowsReviewRunWithPRID(t *testing.T) {
 	log := &fakeEventLog{
 		events: []events.Event{
-			{Type: "run.started", Timestamp: time.Now().Add(-10 * time.Minute), RunID: "PR42", Payload: map[string]any{"review": true, "pr_number": 42, "branch": "sandman/review-PR42"}},
-			{Type: "run.finished", Timestamp: time.Now().Add(-5 * time.Minute), RunID: "PR42", Payload: map[string]any{"review": true, "pr_number": 42, "status": "success", "branch": "sandman/review-PR42"}},
+			{Type: "run.started", Timestamp: time.Now().Add(-10 * time.Minute), RunID: "PR42", Payload: map[string]any{"review": true, "pr_number": 42, "branch": "review-PR42"}},
+			{Type: "run.finished", Timestamp: time.Now().Add(-5 * time.Minute), RunID: "PR42", Payload: map[string]any{"review": true, "pr_number": 42, "status": "success", "branch": "review-PR42"}},
 		},
 	}
 

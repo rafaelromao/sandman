@@ -302,13 +302,13 @@ func TestDaemon_PerPRSlotTable_NewTriggerMidFlight_IsNotDropped(t *testing.T) {
 		if err := writeDecisionToWorktree(req, "ok"); err != nil {
 			return nil, err
 		}
-		if cid == "sandman/review-7-first" {
+		if cid == "review-7-first" {
 			select {
 			case startedFirst <- struct{}{}:
 			default:
 			}
 			<-releaseFirst
-		} else if cid == "sandman/review-7-second" {
+		} else if cid == "review-7-second" {
 			select {
 			case startedSecond <- struct{}{}:
 			default:

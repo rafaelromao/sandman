@@ -368,11 +368,11 @@ func TestPortal_LoadPortalRunsShowsReviewAndPromptOnlyLabels(t *testing.T) {
 
 	started := time.Now().Add(-5 * time.Minute)
 	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
-		{Type: "run.started", Timestamp: started, RunID: "PR42", Issue: 0, Payload: map[string]any{"branch": "sandman/review-PR42", "review": true, "pr_number": 42}},
-		{Type: "run.finished", Timestamp: started.Add(1 * time.Minute), RunID: "PR42", Issue: 0, Payload: map[string]any{"status": "success", "branch": "sandman/review-PR42", "review": true}},
-		{Type: "run.started", Timestamp: started.Add(2 * time.Minute), RunID: "PR43", Issue: 0, Payload: map[string]any{"branch": "sandman/review-PR43", "review": true, "pr_number": 43}},
-		{Type: "run.started", Timestamp: started.Add(2 * time.Minute), RunID: "run-prompt-1", Issue: 0, Payload: map[string]any{"branch": "sandman/prompt-only-1"}},
-		{Type: "run.finished", Timestamp: started.Add(3 * time.Minute), RunID: "run-prompt-1", Issue: 0, Payload: map[string]any{"status": "success", "branch": "sandman/prompt-only-1"}},
+		{Type: "run.started", Timestamp: started, RunID: "PR42", Issue: 0, Payload: map[string]any{"branch": "review-PR42", "review": true, "pr_number": 42}},
+		{Type: "run.finished", Timestamp: started.Add(1 * time.Minute), RunID: "PR42", Issue: 0, Payload: map[string]any{"status": "success", "branch": "review-PR42", "review": true}},
+		{Type: "run.started", Timestamp: started.Add(2 * time.Minute), RunID: "PR43", Issue: 0, Payload: map[string]any{"branch": "review-PR43", "review": true, "pr_number": 43}},
+		{Type: "run.started", Timestamp: started.Add(2 * time.Minute), RunID: "run-prompt-1", Issue: 0, Payload: map[string]any{"branch": "prompt-only-1"}},
+		{Type: "run.finished", Timestamp: started.Add(3 * time.Minute), RunID: "run-prompt-1", Issue: 0, Payload: map[string]any{"status": "success", "branch": "prompt-only-1"}},
 	})
 
 	handler := newPortalHandler(repoRoot)
@@ -433,8 +433,8 @@ func TestPortal_RunsEndpoint_RoundTripsReasonForReview(t *testing.T) {
 
 	started := time.Now().Add(-5 * time.Minute)
 	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
-		{Type: "run.started", Timestamp: started, RunID: "PR42", Issue: 0, Payload: map[string]any{"branch": "sandman/review-PR42", "review": true, "pr_number": 42}},
-		{Type: "run.finished", Timestamp: started.Add(1 * time.Minute), RunID: "PR42", Issue: 0, Payload: map[string]any{"status": "success", "branch": "sandman/review-PR42", "review": true}},
+		{Type: "run.started", Timestamp: started, RunID: "PR42", Issue: 0, Payload: map[string]any{"branch": "review-PR42", "review": true, "pr_number": 42}},
+		{Type: "run.finished", Timestamp: started.Add(1 * time.Minute), RunID: "PR42", Issue: 0, Payload: map[string]any{"status": "success", "branch": "review-PR42", "review": true}},
 		{Type: "run.started", Timestamp: started.Add(4 * time.Minute), RunID: "run-42-1", Issue: 42, Payload: map[string]any{"branch": "42-fix"}},
 		{Type: "run.finished", Timestamp: started.Add(5 * time.Minute), RunID: "run-42-1", Issue: 42, Payload: map[string]any{"branch": "42-fix", "status": "success"}},
 	})
@@ -3361,8 +3361,8 @@ func TestPortal_LoadPortalRunsMarksReviewRows(t *testing.T) {
 	}
 	started := time.Now().Add(-5 * time.Minute)
 	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
-		{Type: "run.started", Timestamp: started, RunID: "run-review-17", Issue: 0, IssueRef: nil, Payload: map[string]any{"branch": "sandman/review-17-100", "review": true, "pr_number": float64(17), "review_focus": "focus on tests"}},
-		{Type: "run.finished", Timestamp: started.Add(2 * time.Minute), RunID: "run-review-17", Issue: 0, IssueRef: nil, Payload: map[string]any{"status": "success", "branch": "sandman/review-17-100"}},
+		{Type: "run.started", Timestamp: started, RunID: "run-review-17", Issue: 0, IssueRef: nil, Payload: map[string]any{"branch": "review-17-100", "review": true, "pr_number": float64(17), "review_focus": "focus on tests"}},
+		{Type: "run.finished", Timestamp: started.Add(2 * time.Minute), RunID: "run-review-17", Issue: 0, IssueRef: nil, Payload: map[string]any{"status": "success", "branch": "review-17-100"}},
 		{Type: "run.started", Timestamp: started.Add(1 * time.Minute), RunID: "run-impl-42", Issue: 42, Payload: map[string]any{"branch": "42-fix"}},
 		{Type: "run.finished", Timestamp: started.Add(3 * time.Minute), RunID: "run-impl-42", Issue: 42, Payload: map[string]any{"status": "success", "branch": "42-fix"}},
 	})
@@ -3409,8 +3409,8 @@ func TestPortal_LoadPortalRunsReviewKindStaysActiveOrCompleted(t *testing.T) {
 	}
 	started := time.Now().Add(-5 * time.Minute)
 	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
-		{Type: "run.started", Timestamp: started, RunID: "run-review-9", Issue: 0, IssueRef: nil, Payload: map[string]any{"branch": "sandman/review-9-1", "review": true, "pr_number": float64(9), "review_focus": ""}},
-		{Type: "run.finished", Timestamp: started.Add(2 * time.Minute), RunID: "run-review-9", Issue: 0, IssueRef: nil, Payload: map[string]any{"status": "success", "branch": "sandman/review-9-1"}},
+		{Type: "run.started", Timestamp: started, RunID: "run-review-9", Issue: 0, IssueRef: nil, Payload: map[string]any{"branch": "review-9-1", "review": true, "pr_number": float64(9), "review_focus": ""}},
+		{Type: "run.finished", Timestamp: started.Add(2 * time.Minute), RunID: "run-review-9", Issue: 0, IssueRef: nil, Payload: map[string]any{"status": "success", "branch": "review-9-1"}},
 	})
 
 	runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")})
@@ -4132,7 +4132,7 @@ func TestPortal_MatchRunState_BatchIDTiebreakerDisambiguatesImplAndReview(t *tes
 			Timestamp: time.Now().Add(-3 * time.Second),
 			RunID:     reviewBatchID,
 			Issue:     106,
-			Payload:   map[string]any{"batch_id": reviewBatchID, "branch": "sandman/review-247-x", "review": true},
+			Payload:   map[string]any{"batch_id": reviewBatchID, "branch": "review-247-x", "review": true},
 		},
 	}
 	// Order matters: place the review state first to simulate the
@@ -4337,7 +4337,7 @@ func TestPortal_ActiveMixedBatch_AllIssuesRenderedAcrossStatuses(t *testing.T) {
 			RunID:     fmt.Sprintf("%s-%d", runName, issue),
 			Issue:     issue,
 			Payload: map[string]any{
-				"branch":   fmt.Sprintf("sandman/%d-fix", issue),
+				"branch":   fmt.Sprintf("%d-fix", issue),
 				"batch_id": batchID,
 			},
 		})

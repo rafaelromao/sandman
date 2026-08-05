@@ -2177,9 +2177,9 @@ func TestWorktreeSandbox_ContinueReturnsTargetedErrorOnUncontinuableState(t *tes
 		{
 			name: "wrong branch",
 			setup: func(t *testing.T, dir, worktreePath string) {
-				runGit(t, worktreePath, "checkout", "-b", "sandman/other-branch")
+				runGit(t, worktreePath, "checkout", "-b", "other-branch")
 			},
-			wantErrSubstr: "is checked out on branch \"sandman/other-branch\"",
+			wantErrSubstr: "is checked out on branch \"other-branch\"",
 		},
 	}
 
@@ -2225,7 +2225,7 @@ func TestWorktreeSandbox_ContinueReturnsTargetedErrorOnUncontinuableState(t *tes
 			t.Cleanup(func() {
 				s1.Stop()
 				removeBranch(t, dir, branch)
-				removeBranch(t, dir, "sandman/other-branch")
+				removeBranch(t, dir, "other-branch")
 			})
 		})
 	}

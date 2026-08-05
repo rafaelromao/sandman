@@ -2259,7 +2259,7 @@ func TestRunPromptOnlySingle_PrefixesOutputWithRunID(t *testing.T) {
 	}
 
 	cfg := &config.Config{WorktreeDir: "worktree", Git: config.GitConfig{BaseBranch: "main"}}
-	result, started := o.runPromptOnlySingle(context.Background(), cfg, "opencode", config.Agent{Command: "echo hi"}, noopIdentityResolver(), "sandman/review-17-1", prompt.RenderConfig{}, &output, &fakeSandboxFactory{sandbox: rtSandbox}, nil, ModeFresh, "main", 0, 0, 0, "", 0, false, 0, false, false, false, true, 17, "check tests", "PR17", nil, 0, "", "", "")
+	result, started := o.runPromptOnlySingle(context.Background(), cfg, "opencode", config.Agent{Command: "echo hi"}, noopIdentityResolver(), "review-17-1", prompt.RenderConfig{}, &output, &fakeSandboxFactory{sandbox: rtSandbox}, nil, ModeFresh, "main", 0, 0, 0, "", 0, false, 0, false, false, false, true, 17, "check tests", "PR17", nil, 0, "", "", "")
 	if !started {
 		t.Fatal("expected prompt-only review run to start")
 	}
@@ -2297,7 +2297,7 @@ func TestRunPromptOnlySingle_ReviewOmitsImplementationVariant(t *testing.T) {
 		WorktreeDir: "worktree",
 		Git:         config.GitConfig{BaseBranch: "main"},
 	}
-	_, started := o.runPromptOnlySingle(context.Background(), cfg, "opencode", config.Agent{Preset: "opencode"}, noopIdentityResolver(), "sandman/review-17-1", prompt.RenderConfig{}, nil, &fakeSandboxFactory{sandbox: rtSandbox}, nil, ModeFresh, "main", 0, 0, 0, "", 0, false, 0, false, false, false, true, 17, "check tests", "PR17", nil, 0, "", "", "")
+	_, started := o.runPromptOnlySingle(context.Background(), cfg, "opencode", config.Agent{Preset: "opencode"}, noopIdentityResolver(), "review-17-1", prompt.RenderConfig{}, nil, &fakeSandboxFactory{sandbox: rtSandbox}, nil, ModeFresh, "main", 0, 0, 0, "", 0, false, 0, false, false, false, true, 17, "check tests", "PR17", nil, 0, "", "", "")
 	if !started {
 		t.Fatal("expected prompt-only review run to start")
 	}
@@ -2363,7 +2363,7 @@ func TestRunPromptOnlySingle_ReviewRunIDIsCanonical(t *testing.T) {
 	// (neither sets those fields, to avoid the prompt-only override).
 	result, started := o.runPromptOnlySingle(
 		context.Background(), cfg, "opencode", config.Agent{Command: "echo hi"},
-		noopIdentityResolver(), "sandman/review-17-1",
+		noopIdentityResolver(), "review-17-1",
 		prompt.RenderConfig{}, nil, &fakeSandboxFactory{sandbox: rtSandbox}, nil,
 		ModeFresh, "main", 0, 0, 0, "",
 		0, false, 0, false, false, false,
@@ -2416,7 +2416,7 @@ func TestRunPromptOnlySingle_PrefixesOutputPromptOnlyWhenNotReview(t *testing.T)
 	}
 
 	cfg := &config.Config{WorktreeDir: "worktree", Git: config.GitConfig{BaseBranch: "main"}}
-	result, started := o.runPromptOnlySingle(context.Background(), cfg, "opencode", config.Agent{Command: "echo hi"}, noopIdentityResolver(), "sandman/prompt-only-123", prompt.RenderConfig{}, &output, &fakeSandboxFactory{sandbox: rtSandbox}, nil, ModeFresh, "main", 0, 0, 0, "", 0, false, 0, false, false, false, false, 0, "", "run-123", nil, 0, "", "", "")
+	result, started := o.runPromptOnlySingle(context.Background(), cfg, "opencode", config.Agent{Command: "echo hi"}, noopIdentityResolver(), "prompt-only-123", prompt.RenderConfig{}, &output, &fakeSandboxFactory{sandbox: rtSandbox}, nil, ModeFresh, "main", 0, 0, 0, "", 0, false, 0, false, false, false, false, 0, "", "run-123", nil, 0, "", "", "")
 	if !started {
 		t.Fatal("expected prompt-only run to start")
 	}
@@ -5453,7 +5453,7 @@ func TestRunBatch_PromptOnlyRunSkipsIssueLookupAndUsesNullIssue(t *testing.T) {
 	if !sawIssueNil {
 		t.Fatal("expected prompt-only run to skip issue lookup")
 	}
-	if !strings.HasPrefix(sawBranch, "sandman/return-only-ok-") {
+	if !strings.HasPrefix(sawBranch, "return-only-ok-") {
 		t.Fatalf("expected prompt-only branch prefix, got %q", sawBranch)
 	}
 	if result.Runs[0].IssueNumber != 0 {

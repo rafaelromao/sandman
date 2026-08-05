@@ -2250,7 +2250,7 @@ func TestRun_ContinueFlag_DetachedRegistrationPromotesToOverride(t *testing.T) {
 
 func TestRun_ContinueFlag_WrongBranchRegistrationPromotesToOverride(t *testing.T) {
 	fixture := newContinuationRunFixture(t)
-	otherBranch := "sandman/other-branch"
+	otherBranch := "other-branch"
 	runGit(t, fixture.worktreePath, "checkout", "-b", otherBranch)
 
 	output := fixture.execute(t)
@@ -3082,7 +3082,7 @@ func TestRun_PrintsWorktreeHintForCompletedRuns(t *testing.T) {
 }
 
 func TestRun_PrintsPromptOnlySummaryLabel(t *testing.T) {
-	spy := &spyBatchRunner{result: &batch.Result{Runs: []batch.AgentRunResult{{Status: "success", Branch: "sandman/return-only-ok-123"}}}}
+	spy := &spyBatchRunner{result: &batch.Result{Runs: []batch.AgentRunResult{{Status: "success", Branch: "return-only-ok-123"}}}}
 	deps := newRunDeps(t, spy)
 
 	var buf bytes.Buffer
@@ -3097,13 +3097,13 @@ func TestRun_PrintsPromptOnlySummaryLabel(t *testing.T) {
 	}
 
 	out := buf.String()
-	if !strings.Contains(out, "prompt-only  success  sandman/return-only-ok-123") {
+	if !strings.Contains(out, "prompt-only  success  return-only-ok-123") {
 		t.Fatalf("expected prompt-only summary label, got:\n%s", out)
 	}
 }
 
 func TestRun_PrintsReviewRunSummaryLabel(t *testing.T) {
-	spy := &spyBatchRunner{result: &batch.Result{Runs: []batch.AgentRunResult{{Status: "success", Branch: "sandman/review-PR42", Review: true, RunID: "PR42"}}}}
+	spy := &spyBatchRunner{result: &batch.Result{Runs: []batch.AgentRunResult{{Status: "success", Branch: "review-PR42", Review: true, RunID: "PR42"}}}}
 	deps := newRunDeps(t, spy)
 
 	var buf bytes.Buffer
@@ -3118,7 +3118,7 @@ func TestRun_PrintsReviewRunSummaryLabel(t *testing.T) {
 	}
 
 	out := buf.String()
-	if !strings.Contains(out, "PR42  success  sandman/review-PR42") {
+	if !strings.Contains(out, "PR42  success  review-PR42") {
 		t.Fatalf("expected review run summary label PR42, got:\n%s", out)
 	}
 	if strings.Contains(out, "prompt-only") {

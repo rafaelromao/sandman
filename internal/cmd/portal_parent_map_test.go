@@ -39,24 +39,24 @@ func TestPortal_Compute_ReasonTableForAllRunKinds(t *testing.T) {
 		{
 			name: "review success",
 			events: []events.Event{
-				{Type: "run.started", Timestamp: time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC), RunID: "PR42", Payload: map[string]any{"review": true, "pr_number": 42, "branch": "sandman/review-PR42"}},
-				{Type: "run.finished", Timestamp: time.Date(2025, 1, 1, 12, 5, 0, 0, time.UTC), RunID: "PR42", Payload: map[string]any{"review": true, "pr_number": 42, "status": "success", "branch": "sandman/review-PR42"}},
+				{Type: "run.started", Timestamp: time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC), RunID: "PR42", Payload: map[string]any{"review": true, "pr_number": 42, "branch": "review-PR42"}},
+				{Type: "run.finished", Timestamp: time.Date(2025, 1, 1, 12, 5, 0, 0, time.UTC), RunID: "PR42", Payload: map[string]any{"review": true, "pr_number": 42, "status": "success", "branch": "review-PR42"}},
 			},
 			want: want{reason: "review", status: "success", kind: "completed", review: true, prNum: 42, label: "PR 42"},
 		},
 		{
 			name: "review failure",
 			events: []events.Event{
-				{Type: "run.started", Timestamp: time.Date(2025, time.January, 1, 12, 0, 0, 0, time.UTC), RunID: "PR42-fail", Payload: map[string]any{"review": true, "pr_number": 42, "branch": "sandman/review-PR42"}},
-				{Type: "run.finished", Timestamp: time.Date(2025, time.January, 1, 12, 5, 0, 0, time.UTC), RunID: "PR42-fail", Payload: map[string]any{"review": true, "pr_number": 42, "status": "failure", "branch": "sandman/review-PR42"}},
+				{Type: "run.started", Timestamp: time.Date(2025, time.January, 1, 12, 0, 0, 0, time.UTC), RunID: "PR42-fail", Payload: map[string]any{"review": true, "pr_number": 42, "branch": "review-PR42"}},
+				{Type: "run.finished", Timestamp: time.Date(2025, time.January, 1, 12, 5, 0, 0, time.UTC), RunID: "PR42-fail", Payload: map[string]any{"review": true, "pr_number": 42, "status": "failure", "branch": "review-PR42"}},
 			},
 			want: want{reason: "review", status: "failure", kind: "completed", review: true, prNum: 42, label: "PR 42"},
 		},
 		{
 			name: "review aborted",
 			events: []events.Event{
-				{Type: "run.started", Timestamp: time.Date(2025, time.January, 1, 12, 0, 0, 0, time.UTC), RunID: "PR42-abort", Payload: map[string]any{"review": true, "pr_number": 42, "branch": "sandman/review-PR42"}},
-				{Type: "run.aborted", Timestamp: time.Date(2025, time.January, 1, 12, 5, 0, 0, time.UTC), RunID: "PR42-abort", Payload: map[string]any{"review": true, "pr_number": 42, "status": "aborted", "branch": "sandman/review-PR42"}},
+				{Type: "run.started", Timestamp: time.Date(2025, time.January, 1, 12, 0, 0, 0, time.UTC), RunID: "PR42-abort", Payload: map[string]any{"review": true, "pr_number": 42, "branch": "review-PR42"}},
+				{Type: "run.aborted", Timestamp: time.Date(2025, time.January, 1, 12, 5, 0, 0, time.UTC), RunID: "PR42-abort", Payload: map[string]any{"review": true, "pr_number": 42, "status": "aborted", "branch": "review-PR42"}},
 			},
 			want: want{reason: "review", status: "aborted", kind: "completed", review: true, prNum: 42, label: "PR 42"},
 		},
@@ -162,9 +162,9 @@ func TestPortal_Compute_AggregatesChildReviewsOntoIssueRow(t *testing.T) {
 	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
 		{Type: "run.started", Timestamp: startedAt, RunID: "260618113825-abcd-1", Issue: 1, Payload: map[string]any{"branch": "1-fix"}},
 		{Type: "run.finished", Timestamp: startedAt.Add(1 * time.Minute), RunID: "260618113825-abcd-1", Issue: 1, Payload: map[string]any{"branch": "1-fix", "status": "success"}},
-		{Type: "run.started", Timestamp: startedAt.Add(30 * time.Second), RunID: "PR42-live", Issue: 1, Payload: map[string]any{"review": true, "pr_number": 42, "branch": "sandman/review-PR42"}},
-		{Type: "run.started", Timestamp: startedAt.Add(90 * time.Second), RunID: "PR43-done", Issue: 1, Payload: map[string]any{"review": true, "pr_number": 43, "branch": "sandman/review-PR43"}},
-		{Type: "run.finished", Timestamp: terminalReviewAt, RunID: "PR43-done", Issue: 1, Payload: map[string]any{"review": true, "pr_number": 43, "branch": "sandman/review-PR43", "status": "success"}},
+		{Type: "run.started", Timestamp: startedAt.Add(30 * time.Second), RunID: "PR42-live", Issue: 1, Payload: map[string]any{"review": true, "pr_number": 42, "branch": "review-PR42"}},
+		{Type: "run.started", Timestamp: startedAt.Add(90 * time.Second), RunID: "PR43-done", Issue: 1, Payload: map[string]any{"review": true, "pr_number": 43, "branch": "review-PR43"}},
+		{Type: "run.finished", Timestamp: terminalReviewAt, RunID: "PR43-done", Issue: 1, Payload: map[string]any{"review": true, "pr_number": 43, "branch": "review-PR43", "status": "success"}},
 	})
 
 	runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")})
@@ -225,8 +225,8 @@ func TestPortal_Compute_TerminalReviewWithApprovedMarker_PreservesParentStatus(t
 	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
 		{Type: "run.started", Timestamp: startedAt, RunID: "260618113825-abcd-99", Issue: 99, Payload: map[string]any{"branch": "99-fix"}},
 		{Type: "run.finished", Timestamp: startedAt.Add(1 * time.Minute), RunID: "260618113825-abcd-99", Issue: 99, Payload: map[string]any{"branch": "99-fix", "status": "success"}},
-		{Type: "run.started", Timestamp: startedAt.Add(30 * time.Second), RunID: "PR99-review", Issue: 99, Payload: map[string]any{"review": true, "pr_number": 99, "branch": "sandman/review-PR99"}},
-		{Type: "run.finished", Timestamp: finishedAt, RunID: "PR99-review", Issue: 99, Payload: map[string]any{"review": true, "pr_number": 99, "branch": "sandman/review-PR99", "status": "success"}},
+		{Type: "run.started", Timestamp: startedAt.Add(30 * time.Second), RunID: "PR99-review", Issue: 99, Payload: map[string]any{"review": true, "pr_number": 99, "branch": "review-PR99"}},
+		{Type: "run.finished", Timestamp: finishedAt, RunID: "PR99-review", Issue: 99, Payload: map[string]any{"review": true, "pr_number": 99, "branch": "review-PR99", "status": "success"}},
 	})
 
 	// Register the review batch in the Batches index so runFromState
@@ -329,7 +329,7 @@ func TestPortal_Compute_PreservesParentStatusWithTrailingQuoteRunLogShape(t *tes
 			"status":   "success",
 		}},
 		{Type: "run.started", Timestamp: startedAt.Add(1*time.Hour + 3*time.Minute + 11*time.Second), RunID: reviewRunID, Payload: map[string]any{
-			"branch":       "sandman/review-1763-4878138837",
+			"branch":       "review-1763-4878138837",
 			"batch_id":     reviewBatchID,
 			"review":       true,
 			"pr_number":    1763,
@@ -337,7 +337,7 @@ func TestPortal_Compute_PreservesParentStatusWithTrailingQuoteRunLogShape(t *tes
 			"base_branch":  "main",
 		}},
 		{Type: "run.finished", Timestamp: reviewFinishedAt, RunID: reviewRunID, Payload: map[string]any{
-			"branch":    "sandman/review-1763-4878138837",
+			"branch":    "review-1763-4878138837",
 			"batch_id":  reviewBatchID,
 			"review":    true,
 			"pr_number": 1763,
@@ -455,7 +455,7 @@ func TestPortal_Compute_PreservesParentStatusWithTrailingQuoteAndPipeRunLogShape
 			"status":   "success",
 		}},
 		{Type: "run.started", Timestamp: startedAt.Add(25 * time.Minute), RunID: reviewRunID, Payload: map[string]any{
-			"branch":       "sandman/review-1789-4878138837",
+			"branch":       "review-1789-4878138837",
 			"batch_id":     reviewBatchID,
 			"review":       true,
 			"pr_number":    1789,
@@ -463,7 +463,7 @@ func TestPortal_Compute_PreservesParentStatusWithTrailingQuoteAndPipeRunLogShape
 			"base_branch":  "main",
 		}},
 		{Type: "run.finished", Timestamp: reviewFinishedAt, RunID: reviewRunID, Payload: map[string]any{
-			"branch":    "sandman/review-1789-4878138837",
+			"branch":    "review-1789-4878138837",
 			"batch_id":  reviewBatchID,
 			"review":    true,
 			"pr_number": 1789,
@@ -557,7 +557,7 @@ func TestPortal_Compute_CanonicalParentIdentityPreservedWithReviewChildren(t *te
 
 	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
 	parentBranch := "1-canonical"
-	reviewBranch := "sandman/review-PR42"
+	reviewBranch := "review-PR42"
 	terminalReviewAt := startedAt.Add(2 * time.Minute)
 
 	// Active review batch for issue #1. Only one batch is registered so
@@ -611,7 +611,7 @@ func TestPortal_Compute_CanonicalParentIdentityPreservedWithReviewChildren(t *te
 			Payload: map[string]any{
 				"review":    true,
 				"pr_number": 43,
-				"branch":    "sandman/review-PR43",
+				"branch":    "review-PR43",
 				"status":    "success",
 			},
 		},
@@ -694,8 +694,8 @@ func TestPortal_TerminalReviewChild_ParentNotStuck(t *testing.T) {
 
 	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
 		{Type: "run.started", Timestamp: startedAt, RunID: "260618113825-abcd-1", Issue: 1, Payload: map[string]any{"branch": "1-fix"}},
-		{Type: "run.started", Timestamp: startedAt.Add(30 * time.Second), RunID: "PR42", Issue: 1, Payload: map[string]any{"review": true, "pr_number": 42, "branch": "sandman/review-PR42"}},
-		{Type: "run.finished", Timestamp: reviewFinishedAt, RunID: "PR42", Issue: 1, Payload: map[string]any{"review": true, "pr_number": 42, "branch": "sandman/review-PR42", "status": "success"}},
+		{Type: "run.started", Timestamp: startedAt.Add(30 * time.Second), RunID: "PR42", Issue: 1, Payload: map[string]any{"review": true, "pr_number": 42, "branch": "review-PR42"}},
+		{Type: "run.finished", Timestamp: reviewFinishedAt, RunID: "PR42", Issue: 1, Payload: map[string]any{"review": true, "pr_number": 42, "branch": "review-PR42", "status": "success"}},
 	})
 
 	runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")})
@@ -753,8 +753,8 @@ func TestPortal_TerminalReviewLiveSocket_PreservesStatus(t *testing.T) {
 	addBatchToIndex(t, repoRoot, "PR42", runDir, []int{})
 
 	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
-		{Type: "run.started", Timestamp: startedAt, RunID: "PR42", Issue: 1, Payload: map[string]any{"review": true, "pr_number": 42, "branch": "sandman/review-PR42"}},
-		{Type: "run.finished", Timestamp: reviewFinishedAt, RunID: "PR42", Issue: 1, Payload: map[string]any{"review": true, "pr_number": 42, "branch": "sandman/review-PR42", "status": "success"}},
+		{Type: "run.started", Timestamp: startedAt, RunID: "PR42", Issue: 1, Payload: map[string]any{"review": true, "pr_number": 42, "branch": "review-PR42"}},
+		{Type: "run.finished", Timestamp: reviewFinishedAt, RunID: "PR42", Issue: 1, Payload: map[string]any{"review": true, "pr_number": 42, "branch": "review-PR42", "status": "success"}},
 	})
 
 	runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")})
@@ -799,7 +799,7 @@ func TestPortal_ParentSuccWithLiveChild_PreservesTerminalStatus(t *testing.T) {
 	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
 		{Type: "run.started", Timestamp: startedAt, RunID: "260618113825-abcd-1", Issue: 1, Payload: map[string]any{"branch": "1-fix"}},
 		{Type: "run.finished", Timestamp: startedAt.Add(1 * time.Minute), RunID: "260618113825-abcd-1", Issue: 1, Payload: map[string]any{"branch": "1-fix", "status": "success"}},
-		{Type: "run.started", Timestamp: startedAt.Add(30 * time.Second), RunID: "PR42", Issue: 1, Payload: map[string]any{"review": true, "pr_number": 42, "branch": "sandman/review-PR42"}},
+		{Type: "run.started", Timestamp: startedAt.Add(30 * time.Second), RunID: "PR42", Issue: 1, Payload: map[string]any{"review": true, "pr_number": 42, "branch": "review-PR42"}},
 	})
 
 	runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")})
@@ -958,12 +958,12 @@ func TestPortal_Polling_ReviewSuccessPreservesReviewFlagAndReason(t *testing.T) 
 	}
 	log := &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")}
 	if err := log.Log(events.Event{Type: "run.started", Timestamp: startedAt, RunID: "PR42", Payload: map[string]any{
-		"review": true, "pr_number": 42, "branch": "sandman/review-PR42",
+		"review": true, "pr_number": 42, "branch": "review-PR42",
 	}}); err != nil {
 		t.Fatal(err)
 	}
 	if err := log.Log(events.Event{Type: "run.finished", Timestamp: finishedAt, RunID: "PR42", Payload: map[string]any{
-		"review": true, "pr_number": 42, "status": "success", "branch": "sandman/review-PR42",
+		"review": true, "pr_number": 42, "status": "success", "branch": "review-PR42",
 	}}); err != nil {
 		t.Fatal(err)
 	}
@@ -1039,10 +1039,10 @@ func TestPortal_Polling_ReviewLiveSocketStillShowsTerminalSuccess(t *testing.T) 
 	finishedAt := startedAt.Add(2 * time.Minute)
 	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
 		{Type: "run.started", Timestamp: startedAt, RunID: "PR42", Payload: map[string]any{
-			"review": true, "pr_number": 42, "branch": "sandman/review-PR42",
+			"review": true, "pr_number": 42, "branch": "review-PR42",
 		}},
 		{Type: "run.finished", Timestamp: finishedAt, RunID: "PR42", Payload: map[string]any{
-			"review": true, "pr_number": 42, "status": "success", "branch": "sandman/review-PR42",
+			"review": true, "pr_number": 42, "status": "success", "branch": "review-PR42",
 		}},
 	})
 
@@ -1619,14 +1619,14 @@ func TestPortal_Compute_LiveParentAndDeadReviewChild_DoesNotAggregateReviewing(t
 	if err := daemon.WriteManifest(deadBatchDir, daemon.BatchManifest{Issues: []int{1}, CreatedAt: deadReviewAt, BatchId: deadBatchID}); err != nil {
 		t.Fatalf("write dead manifest: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(deadRunDir, "run.json"), []byte(`{"run_id":"`+deadReviewID+`","issue":1,"branch":"sandman/review-42"}`), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(deadRunDir, "run.json"), []byte(`{"run_id":"`+deadReviewID+`","issue":1,"branch":"review-42"}`), 0644); err != nil {
 		t.Fatalf("write dead run.json: %v", err)
 	}
 	addBatchToIndex(t, repoRoot, deadBatchID, deadBatchDir, []int{1})
 
 	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
 		{Type: "run.started", Timestamp: liveParentAt, RunID: liveRunID, Issue: 1, Payload: map[string]any{"branch": "1-fix"}},
-		{Type: "run.started", Timestamp: deadReviewAt, RunID: deadReviewID, Issue: 1, Payload: map[string]any{"review": true, "pr_number": 42, "branch": "sandman/review-42"}},
+		{Type: "run.started", Timestamp: deadReviewAt, RunID: deadReviewID, Issue: 1, Payload: map[string]any{"review": true, "pr_number": 42, "branch": "review-42"}},
 	})
 
 	runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")})
@@ -1690,7 +1690,7 @@ func TestPortal_Compute_MultipleDeadBatches_IndependentIssueSets(t *testing.T) {
 	for _, b := range batches {
 		evts = append(evts, events.Event{
 			Type: "run.started", Timestamp: startedAt, RunID: b.runID, Issue: b.issueNum,
-			Payload: map[string]any{"branch": fmt.Sprintf("sandman/%d-fix", b.issueNum)},
+			Payload: map[string]any{"branch": fmt.Sprintf("%d-fix", b.issueNum)},
 		})
 	}
 	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), evts)
@@ -1792,7 +1792,7 @@ func TestPortal_Compute_ReviewVerdictFromDecisionFileOnDisk(t *testing.T) {
 			"status":   "success",
 		}},
 		{Type: "run.started", Timestamp: startedAt, RunID: reviewRunID, Payload: map[string]any{
-			"branch":       "sandman/review-1726-4878138837",
+			"branch":       "review-1726-4878138837",
 			"batch_id":     reviewBatchID,
 			"review":       true,
 			"pr_number":    1726,
@@ -1800,7 +1800,7 @@ func TestPortal_Compute_ReviewVerdictFromDecisionFileOnDisk(t *testing.T) {
 			"base_branch":  "main",
 		}},
 		{Type: "run.finished", Timestamp: finishedAt, RunID: reviewRunID, Payload: map[string]any{
-			"branch":    "sandman/review-1726-4878138837",
+			"branch":    "review-1726-4878138837",
 			"batch_id":  reviewBatchID,
 			"review":    true,
 			"pr_number": 1726,

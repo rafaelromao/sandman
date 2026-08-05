@@ -106,7 +106,7 @@ func TestPortal_RunStream_BridgesControlSocketToSSE(t *testing.T) {
 	}, 200*time.Millisecond)
 
 	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
-		{Type: "run.started", Timestamp: startedAt, RunID: runID, Payload: map[string]any{"branch": "sandman/review-PR42", "review": true, "pr_number": 42}},
+		{Type: "run.started", Timestamp: startedAt, RunID: runID, Payload: map[string]any{"branch": "review-PR42", "review": true, "pr_number": 42}},
 	})
 
 	handler := newPortalHandler(repoRoot)
@@ -199,7 +199,7 @@ func TestPortal_RunStream_EmitsHeartbeatOnIdleSocket(t *testing.T) {
 
 	startedAt := time.Now().Add(-5 * time.Minute)
 	writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
-		{Type: "run.started", Timestamp: startedAt, RunID: runID, Payload: map[string]any{"branch": "sandman/review-PR42", "review": true, "pr_number": 42}},
+		{Type: "run.started", Timestamp: startedAt, RunID: runID, Payload: map[string]any{"branch": "review-PR42", "review": true, "pr_number": 42}},
 	})
 
 	handler := newPortalHandler(repoRoot)

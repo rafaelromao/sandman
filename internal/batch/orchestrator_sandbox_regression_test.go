@@ -37,7 +37,7 @@ import (
 // If either contract breaks, the operator loses the ability to diagnose the
 // failure without rerunning.
 func TestRunBatch_StartSandboxFailurePreservesUnderlyingError(t *testing.T) {
-	underlying := errors.New("git worktree add: fatal: a branch named 'sandman/2316-...' already exists")
+	underlying := errors.New("git worktree add: fatal: a branch named '2316-...' already exists")
 	client := &fakeGitHubClient{
 		issues: map[int]*github.Issue{2316: {Number: 2316, Title: "stale issue"}},
 	}

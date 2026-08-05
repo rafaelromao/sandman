@@ -765,7 +765,7 @@ func TestRunPromptOnly_RefreshesTaskPromptOnRetry(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chdir(oldWD) })
 
-	branch := "sandman/prompt-only-refresh"
+	branch := "prompt-only-refresh"
 	worktreePath := filepath.Join(workDir, "worktree")
 	if err := os.MkdirAll(filepath.Join(worktreePath, ".sandman"), 0755); err != nil {
 		t.Fatalf("mkdir worktree: %v", err)
@@ -869,7 +869,7 @@ func TestRunPromptOnly_EmitsRunRetryBetweenAttemptsOnFailure(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chdir(oldWD) })
 
-	branch := "sandman/prompt-only-123"
+	branch := "prompt-only-123"
 	rtSandbox := &retrySandbox{workDir: filepath.Join(workDir, "worktree"), execErrors: []error{errors.New("exit 1"), nil}}
 	eventsPath := filepath.Join(t.TempDir(), "events.jsonl")
 	eventLog := &events.JSONLLogger{Path: eventsPath}
@@ -954,7 +954,7 @@ func TestRunPromptOnly_EmitsZeroRunRetryEventsOnSingleAttempt(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chdir(oldWD) })
 
-	branch := "sandman/prompt-only-456"
+	branch := "prompt-only-456"
 	rtSandbox := &retrySandbox{workDir: filepath.Join(workDir, "worktree")}
 	eventsPath := filepath.Join(t.TempDir(), "events.jsonl")
 	eventLog := &events.JSONLLogger{Path: eventsPath}

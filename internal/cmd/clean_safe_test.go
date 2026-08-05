@@ -140,8 +140,8 @@ func TestExecuteClean_BranchNotFoundIsSuccessful(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeBatchIndex(t, repo, []batchindex.Batch{{ID: "batch", Path: batchPath, Status: batchindex.StatusArchived}})
-	actions := []cleanAction{{BatchID: "batch", BatchPath: batchPath, Branch: "sandman/batch", Status: batchindex.StatusArchived}}
-	gr := &fakeGitRunner{deleteBranchErr: errors.New("fatal: branch 'sandman/batch' not found")}
+	actions := []cleanAction{{BatchID: "batch", BatchPath: batchPath, Branch: "batch", Status: batchindex.StatusArchived}}
+	gr := &fakeGitRunner{deleteBranchErr: errors.New("fatal: branch 'batch' not found")}
 	if _, err := executeClean(actions, gr, layout, &fakeCleanupRemover{}); err != nil {
 		t.Fatalf("branch-not-found cleanup should succeed: %v", err)
 	}
@@ -163,7 +163,7 @@ func TestExecuteClean_BranchFailureRetainsEntry(t *testing.T) {
 	}
 	writeBatchIndex(t, repo, []batchindex.Batch{{ID: "batch", Path: batchPath, Status: batchindex.StatusArchived}})
 	gr := &fakeGitRunner{deleteBranchErr: errors.New("branch locked")}
-	actions := []cleanAction{{BatchID: "batch", BatchPath: batchPath, Branch: "sandman/batch", Status: batchindex.StatusArchived}}
+	actions := []cleanAction{{BatchID: "batch", BatchPath: batchPath, Branch: "batch", Status: batchindex.StatusArchived}}
 	if _, err := executeClean(actions, gr, layout, &fakeCleanupRemover{}); err == nil {
 		t.Fatal("expected branch cleanup error")
 	}
@@ -234,7 +234,7 @@ func TestValidateBranchName_AcceptsManifestBranches(t *testing.T) {
 	for _, branch := range []string{
 		"42-fix-bug",
 		"operator/topic",
-		"sandman/review-2381-12345",
+		"review-2381-12345",
 	} {
 		if err := validateBranchName(branch); err != nil {
 			t.Errorf("validateBranchName(%q) = %v", branch, err)

@@ -8,7 +8,7 @@ When you run `sandman run 42 43 44`, three things happen:
 
 1. The CLI parses flags, selects issues, and resolves `BlockedBy` relationships.
 2. A **Batch** is created at `.sandman/batches/<batch-id>/`. The Batch is the long-lived artifact: a daemon process owns it, a control socket lives on it, and the per-row Run folders hang off it.
-3. For each issue, an **AgentRun** is scheduled and executed. An AgentRun targets exactly one Issue and produces exactly one Branch (`<issue-number>-<slugified-title>` for issue-driven runs, `sandman/<slug>-<timestamp>` for prompt-only runs).
+3. For each issue, an **AgentRun** is scheduled and executed. An AgentRun targets exactly one Issue and produces exactly one Branch (`<issue-number>-<slugified-title>` for issue-driven runs, `<slug>-<timestamp>` for prompt-only runs).
 
 **Run** is the load-bearing term for everything you see in the portal: one row in the runs table, with its own RunID, log file, command socket, and (for review runs) `review-state.json`.
 
@@ -25,7 +25,7 @@ Callers must not assume the sandbox is a worktree; the abstraction keeps orchest
 
 If `sandman run` is invoked with `--prompt` or `--template` and no issue selectors, and the final prompt omits the issue placeholders, Sandman enters prompt-only mode:
 
-- No `gh` call. The branch is named `sandman/<slug>-<timestamp>`.
+- No `gh` call. The branch is named `<slug>-<timestamp>`.
 - The issue in events and history is `null`, summarised as `prompt-only` for human readers.
 - Useful for ad-hoc scripted tasks and as a continuation target for `sandman run --continue --run-id`.
 

@@ -617,8 +617,8 @@ func TestPortal_CrossBatchSynthesisKeepsReviewRunDistinct(t *testing.T) {
 
 	logPath := filepath.Join(repoRoot, ".sandman", "events.jsonl")
 	writePortalLog(t, logPath, []events.Event{
-		{Type: "run.started", Timestamp: reviewAt.Add(1 * time.Minute), RunID: "review-42-42", Issue: 42, Payload: map[string]any{"review": true, "pr_number": 99, "branch": "sandman/review-99"}},
-		{Type: "run.finished", Timestamp: reviewAt.Add(2 * time.Minute), RunID: "review-42-42", Issue: 42, Payload: map[string]any{"review": true, "status": "success", "pr_number": 99, "branch": "sandman/review-99"}},
+		{Type: "run.started", Timestamp: reviewAt.Add(1 * time.Minute), RunID: "review-42-42", Issue: 42, Payload: map[string]any{"review": true, "pr_number": 99, "branch": "review-99"}},
+		{Type: "run.finished", Timestamp: reviewAt.Add(2 * time.Minute), RunID: "review-42-42", Issue: 42, Payload: map[string]any{"review": true, "status": "success", "pr_number": 99, "branch": "review-99"}},
 	})
 
 	runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: logPath})
