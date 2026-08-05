@@ -103,7 +103,7 @@ func TestBadge_E2E_HappyPath(t *testing.T) {
 	// have spawned a child `sandman run --prompt` for. The recorder
 	// stands in for the real sandman binary so this test exercises
 	// the production hook end-to-end without shelling out.
-	rec := &cmdBadgeRunner{branch: "sandman/built-with-sandman", prURL: "https://example.test/badge/pull/99"}
+	rec := &cmdBadgeRunner{branch: "built-with-sandman", prURL: "https://example.test/badge/pull/99"}
 	lister := &cmdBadgeLister{mergedPRs: []batch.MergedSandmanPR{{Number: 1, HeadRefName: "1-fix", Title: "Fix failing test"}}, hasBadge: false}
 	controlReader := &cmdBadgeControlFileReader{present: false}
 	controlWriter := &cmdBadgeControlFileWriter{}
@@ -124,8 +124,8 @@ func TestBadge_E2E_HappyPath(t *testing.T) {
 	// stable sidecar branch and a prompt that contains the marker
 	// comment, and the tracking file was written exactly once after
 	// the child run reported success.
-	if rec.capturedBranch != "sandman/built-with-sandman" {
-		t.Errorf("expected badge hook branch=sandman/built-with-sandman, got %q", rec.capturedBranch)
+	if rec.capturedBranch != "built-with-sandman" {
+		t.Errorf("expected badge hook branch=built-with-sandman, got %q", rec.capturedBranch)
 	}
 	if rec.capturedPrompt == "" {
 		t.Errorf("expected badge hook to record a prompt, got empty")
@@ -159,7 +159,7 @@ func TestBadge_E2E_MarkerPRSeeded_ShortCircuitsBadgeHook(t *testing.T) {
 	initRunIntegrationRepo(t, repoDir)
 	seedBadgeTestRepo(t, repoDir)
 
-	rec := &cmdBadgeRunner{branch: "sandman/built-with-sandman", prURL: "https://example.test/badge/pull/99"}
+	rec := &cmdBadgeRunner{branch: "built-with-sandman", prURL: "https://example.test/badge/pull/99"}
 	lister := &cmdBadgeLister{mergedPRs: []batch.MergedSandmanPR{{Number: 1, HeadRefName: "1-fix", Title: "Fix failing test"}}, hasBadge: true}
 	controlReader := &cmdBadgeControlFileReader{present: false}
 	controlWriter := &cmdBadgeControlFileWriter{}

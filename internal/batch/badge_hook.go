@@ -16,7 +16,29 @@ import (
 	"github.com/rafaelromao/sandman/internal/prompt"
 )
 
+// sandmanBranchRE matches the sidecar and prompt-only branch shapes
+// that retain the sandman/ prefix (see ADR-0040): review daemon
+// branches sandman/review-<pr>-<commentID> and prompt-only branches
+// sandman/<slug>-<timestamp>. The badge sidecar branch follows the new
+// bare-slug convention (built-with-sandman) like every other
+// Sandman-managed branch.
 var sandmanBranchRE = regexp.MustCompile(`^sandman/`)
+
+// issueDrivenBranchRE matches the issue-driven branch shape emitted by
+// BranchName since ADR-0040 dropped the sandman/ prefix: "<n>-<slug>"
+// (e.g. "369-implement-crash-safe-project-generation-publication").
+// It mirrors the issueDrivenDir convention the runtime uses for
+// stranded-worktree detection.
+var issueDrivenBranchRE = regexp.MustCompile(`^[0-9]+-`)
+
+// isSandmanBranch reports whether a merged PR head ref was created by
+// Sandman. Both branch shapes count as Sandman-managed: the legacy and
+// sidecar/prompt-only sandman/ prefix, and the ADR-0040 issue-driven
+// <n>-<slug> shape.
+func isSandmanBranch(headRef string) bool {
+	return sandmanBranchRE.MatchString(headRef) || issueDrivenBranchRE.MatchString(headRef)
+}
+
 var badgeMarkerRE = regexp.MustCompile(`<!-- sandman-badge-pr -->`)
 var prURLRE = regexp.MustCompile(`https://github\.com/[^/]+/[^/]+/pull/\d+`)
 
@@ -80,7 +102,7 @@ func (d *defaultPRLister) ListMergedSandmanPRs(ctx context.Context) ([]MergedSan
 	}
 	var result []MergedSandmanPR
 	for _, p := range payloads {
-		if sandmanBranchRE.MatchString(p.HeadRefName) {
+		if isSandmanBranch(p.HeadRefName) {
 			result = append(result, MergedSandmanPR{
 				Number:      p.Number,
 				HeadRefName: p.HeadRefName,
@@ -217,9 +239,12 @@ func lookSandman() (string, error) {
 }
 
 // badgeBranchName is the stable sidecar branch used for the Built with
-// Sandman badge PR. It is the contract honored by the post-batch badge
-// hook so that re-runs do not produce timestamped prompt-only branches.
-const badgeBranchName = "sandman/built-with-sandman"
+// Sandman badge PR. Following ADR-0040, runtime-created branches carry
+// no sandman/ namespace prefix, so the badge sidecar branch uses the
+// bare "<slug>" shape like every other Sandman-managed branch. It is
+// the contract honored by the post-batch badge hook so that re-runs do
+// not produce timestamped prompt-only branches.
+const badgeBranchName = "built-with-sandman"
 
 func (r *defaultSandmanRunner) RunPrompt(ctx context.Context, promptText, branch string) (string, error) {
 	args := []string{"run", "--prompt", promptText, "--branch", branch}

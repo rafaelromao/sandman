@@ -183,8 +183,8 @@ func TestBadgeE2E_HappyPath_ProductionWiringFiresBadgeHook(t *testing.T) {
 	if runner.capturedPrompt == "" {
 		t.Fatalf("expected RunPrompt invocation")
 	}
-	if runner.capturedBranch != "sandman/built-with-sandman" {
-		t.Errorf("expected branch=sandman/built-with-sandman, got %q", runner.capturedBranch)
+	if runner.capturedBranch != "built-with-sandman" {
+		t.Errorf("expected branch=built-with-sandman, got %q", runner.capturedBranch)
 	}
 	if !strings.Contains(runner.capturedPrompt, badgeE2EMarker) {
 		t.Errorf("expected prompt to contain marker, got: %s", runner.capturedPrompt)
@@ -448,7 +448,7 @@ func TestBadgeE2E_PaginatedSearch_FindsMarkerOnSecondPage_NoSpawn(t *testing.T) 
 //   - The paginated scan consumes the full stream without finding a
 //     marker, so the hook reaches the spawn step.
 //   - The runner is invoked exactly once with the stable
-//     sandman/built-with-sandman branch and a prompt that contains
+//     built-with-sandman branch and a prompt that contains
 //     the marker, the placement instructions, and the merged PR
 //     rationale.
 //   - The tracking file is written exactly once after the runner
@@ -502,8 +502,8 @@ func TestBadgeE2E_PaginatedSearch_MarkerAbsent_TriggersCreation(t *testing.T) {
 	if runner.capturedPrompt == "" {
 		t.Fatalf("expected exactly one RunPrompt attempt on PR creation path")
 	}
-	if runner.capturedBranch != "sandman/built-with-sandman" {
-		t.Errorf("expected branch=sandman/built-with-sandman, got %q", runner.capturedBranch)
+	if runner.capturedBranch != "built-with-sandman" {
+		t.Errorf("expected branch=built-with-sandman, got %q", runner.capturedBranch)
 	}
 	if !strings.Contains(runner.capturedPrompt, badgeE2EMarker) {
 		t.Errorf("expected prompt to contain marker, got: %s", runner.capturedPrompt)
