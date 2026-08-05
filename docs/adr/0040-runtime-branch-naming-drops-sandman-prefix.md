@@ -20,7 +20,9 @@ The `sourceBranch` argument is accepted for API symmetry with the orchestrator's
 
 The hardcoded `sandman/` prefix at `internal/sandbox/stranded.go:270` drops in lockstep, so the expected ref becomes `refs/heads/<dirname>` for directory names matching `^[0-9]+-`. The regex still matches issue-driven worktree directories at the basename level regardless of the source branch.
 
-The sidecar branches (`sandman/built-with-sandman` for the badge, `sandman/review-<pr>-<commentID>` for the review daemon) and the prompt-only branch (`sandman/<slug>-<timestamp>`) keep their `sandman/` prefix because they have no `<n>-<slug>` shape and no base-branch relationship. Migrating them would either rename the badge PR branch or break the convention's symmetry.
+The sidecar branches (the review daemon `sandman/review-<pr>-<commentID>`) and the prompt-only branch (`sandman/<slug>-<timestamp>`) keep their `sandman/` prefix because they have no `<n>-<slug>` shape and no base-branch relationship.
+
+The badge sidecar branch follows the same bare-slug convention as the rest of the runtime: `built-with-sandman` (no `sandman/` prefix). The badge branch has no `<n>-<slug>` shape and no base-branch relationship either, but it lives in a repo that already has at least one merged Sandman-managed branch, so dropping the prefix keeps every Sandman-created branch in a single namespace shape. This is a follow-up to the original decision in this ADR, which kept `sandman/built-with-sandman`; the badge PR branch was renamed as part of the badge-trigger regression fix (issue-driven merged PRs no longer carry the `sandman/` prefix, so the badge hook filter had to recognise both shapes).
 
 The `internal/skill/sandman/implement/SKILL.md` line that mentions `issue-<ID>/<slugified-title>` is the outside-Sandman manual-invocation convention and is unaffected — it stays as the user-facing skill's documented branch shape for the manual path.
 

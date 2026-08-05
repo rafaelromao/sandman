@@ -55,7 +55,7 @@ Merged Sandman PRs in this repo:
 
 ## Branch and commit
 
-- Branch name: `sandman/built-with-sandman`
+- Branch name: `built-with-sandman`
 - Base branch: read from `gh repo view --json defaultBranchRef`
 - Single commit on this branch, touching only `README.md` (or creating it)
 - Commit author: your own `gh` auth identity
