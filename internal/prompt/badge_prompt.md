@@ -1,6 +1,6 @@
 # Built with Sandman badge
 
-This repo has at least one merged `sandman/*` PR — the trigger for suggesting a `Built with Sandman` badge has fired.
+This repo has at least one merged Sandman-managed branch — an issue-driven `<n>-<slug>` branch or a `sandman/*` sidecar/prompt-only branch — so the trigger for suggesting a `Built with Sandman` badge has fired.
 
 ## Idempotency check
 
