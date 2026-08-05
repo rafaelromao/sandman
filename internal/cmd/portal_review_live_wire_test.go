@@ -46,7 +46,7 @@ func TestPortal_Compute_LiveReviewCarriesReviewLiveJSON(t *testing.T) {
 			"status":   "success",
 		}},
 		{Type: "run.started", Timestamp: reviewStartedAt, RunID: "PR2109-review", Issue: 2109, Payload: map[string]any{
-			"branch":       "sandman/review-PR2109",
+			"branch":       "review-PR2109",
 			"batch_id":     "PR2109-review",
 			"review":       true,
 			"pr_number":    2109,
@@ -151,14 +151,14 @@ func TestPortal_Compute_TerminalReviewOmitsReviewLiveJSON(t *testing.T) {
 			"status":   "success",
 		}},
 		{Type: "run.started", Timestamp: reviewStartedAt, RunID: reviewRunID, Issue: 2109, Payload: map[string]any{
-			"branch":       "sandman/review-PR2109",
+			"branch":       "review-PR2109",
 			"batch_id":     reviewBatchID,
 			"review":       true,
 			"pr_number":    2109,
 			"issue_number": 2109,
 		}},
 		{Type: "run.finished", Timestamp: reviewFinishedAt, RunID: reviewRunID, Issue: 2109, Payload: map[string]any{
-			"branch":   "sandman/review-PR2109",
+			"branch":   "review-PR2109",
 			"batch_id": reviewBatchID,
 			"review":   true,
 			"status":   "success",

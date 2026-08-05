@@ -788,7 +788,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 	cmd.Flags().String("query", "", "Select issues by GitHub search query")
 	cmd.Flags().String("prompt", "", "Inline prompt template (overrides --template and .sandman/prompt.md). Omit {{ISSUE_NUMBER}} for prompt-only mode.")
 	cmd.Flags().String("template", "", "Path to prompt template file (overrides .sandman/prompt.md). Omit {{ISSUE_NUMBER}} for prompt-only mode.")
-	cmd.Flags().String("branch", "", "Branch name for prompt-only runs; overrides the default sandman/<slug>-<timestamp> shape (prompt-only mode only)")
+	cmd.Flags().String("branch", "", "Branch name for prompt-only runs; overrides the default <slug>-<timestamp> shape (prompt-only mode only)")
 	cmd.Flags().String("model", "", "Override agent model for built-in presets")
 	cmd.Flags().String("variant", "", "Override implementation model variant")
 	cmd.Flags().String("run-id", "", "Batch-level identifier for prompt-only runs; must start with a letter and contain only alphanumeric characters, hyphens, and underscores (max 64 chars); cannot be combined with issue selection")

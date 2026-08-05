@@ -62,7 +62,7 @@ func TestStatus_NoActiveRuns(t *testing.T) {
 func TestStatus_ShowsPromptOnlyRun(t *testing.T) {
 	log := &fakeEventLog{
 		events: []events.Event{
-			{Type: "run.started", Timestamp: time.Now().Add(-5 * time.Minute), RunID: "run-prompt-only", Payload: map[string]any{"branch": "sandman/return-only-ok-123"}},
+			{Type: "run.started", Timestamp: time.Now().Add(-5 * time.Minute), RunID: "run-prompt-only", Payload: map[string]any{"branch": "return-only-ok-123"}},
 		},
 	}
 
@@ -85,7 +85,7 @@ func TestStatus_ShowsPromptOnlyRun(t *testing.T) {
 func TestStatus_ShowsReviewRunWithPRID(t *testing.T) {
 	log := &fakeEventLog{
 		events: []events.Event{
-			{Type: "run.started", Timestamp: time.Now().Add(-5 * time.Minute), RunID: "PR42", Payload: map[string]any{"review": true, "pr_number": 42, "branch": "sandman/review-PR42"}},
+			{Type: "run.started", Timestamp: time.Now().Add(-5 * time.Minute), RunID: "PR42", Payload: map[string]any{"review": true, "pr_number": 42, "branch": "review-PR42"}},
 		},
 	}
 

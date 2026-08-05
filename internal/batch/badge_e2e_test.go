@@ -172,7 +172,7 @@ func TestBadgeE2E_HappyPath_ProductionWiringFiresBadgeHook(t *testing.T) {
 
 	controlReader := &fakeBadgeControlFileReader{present: false}
 	controlWriter := &fakeBadgeControlFileWriter{}
-	seedPRs := []MergedSandmanPR{{Number: 1, HeadRefName: "sandman/1-fix-bug", Title: "Fix failing test"}}
+	seedPRs := []MergedSandmanPR{{Number: 1, HeadRefName: "1-fix-bug", Title: "Fix failing test"}}
 	lister := &fakePRLister{mergedPRs: seedPRs, hasBadge: false}
 	runner := &fakeSandmanRunner{prURL: "https://github.com/owner/repo/pull/99"}
 
@@ -183,8 +183,8 @@ func TestBadgeE2E_HappyPath_ProductionWiringFiresBadgeHook(t *testing.T) {
 	if runner.capturedPrompt == "" {
 		t.Fatalf("expected RunPrompt invocation")
 	}
-	if runner.capturedBranch != "sandman/built-with-sandman" {
-		t.Errorf("expected branch=sandman/built-with-sandman, got %q", runner.capturedBranch)
+	if runner.capturedBranch != "built-with-sandman" {
+		t.Errorf("expected branch=built-with-sandman, got %q", runner.capturedBranch)
 	}
 	if !strings.Contains(runner.capturedPrompt, badgeE2EMarker) {
 		t.Errorf("expected prompt to contain marker, got: %s", runner.capturedPrompt)
@@ -209,7 +209,7 @@ func TestBadgeE2E_Idempotency_MarkerPRPresent(t *testing.T) {
 
 	controlReader := &fakeBadgeControlFileReader{present: false}
 	controlWriter := &fakeBadgeControlFileWriter{}
-	seedPRs := []MergedSandmanPR{{Number: 1, HeadRefName: "sandman/1-fix-bug", Title: "Fix failing test"}}
+	seedPRs := []MergedSandmanPR{{Number: 1, HeadRefName: "1-fix-bug", Title: "Fix failing test"}}
 	lister := &fakePRLister{mergedPRs: seedPRs, hasBadge: true}
 	runner := &fakeSandmanRunner{prURL: "https://github.com/owner/repo/pull/99"}
 
@@ -242,10 +242,10 @@ func TestBadgeE2E_NoMergedSandmanPRs(t *testing.T) {
 	_, _ = o.RunBatch(context.Background(), Request{Issues: []int{1}, Sandbox: "worktree"})
 
 	if runner.capturedPrompt != "" {
-		t.Errorf("expected no RunPrompt when no merged sandman/* PRs, got: %s", runner.capturedPrompt)
+		t.Errorf("expected no RunPrompt when no merged Sandman-managed PRs, got: %s", runner.capturedPrompt)
 	}
 	if controlWriter.calls != 0 {
-		t.Errorf("expected no control-file write when no merged sandman/* PRs, got %d write(s)", controlWriter.calls)
+		t.Errorf("expected no control-file write when no merged Sandman-managed PRs, got %d write(s)", controlWriter.calls)
 	}
 }
 
@@ -282,7 +282,7 @@ func TestBadgeE2E_PRCreateFailure_StaysSilentAndDoesNotMarkFile(t *testing.T) {
 
 	controlReader := &fakeBadgeControlFileReader{present: false}
 	controlWriter := &fakeBadgeControlFileWriter{}
-	seedPRs := []MergedSandmanPR{{Number: 1, HeadRefName: "sandman/1-fix-bug", Title: "Fix failing test"}}
+	seedPRs := []MergedSandmanPR{{Number: 1, HeadRefName: "1-fix-bug", Title: "Fix failing test"}}
 	lister := &fakePRLister{mergedPRs: seedPRs, hasBadge: false}
 	runner := &fakeSandmanRunner{err: errFakeNetwork}
 
@@ -313,7 +313,7 @@ func TestBadgeE2E_ControlFilePresent_SkipsAPIScan(t *testing.T) {
 
 	controlReader := &fakeBadgeControlFileReader{present: true}
 	controlWriter := &fakeBadgeControlFileWriter{}
-	seedPRs := []MergedSandmanPR{{Number: 1, HeadRefName: "sandman/1-fix-bug", Title: "Fix failing test"}}
+	seedPRs := []MergedSandmanPR{{Number: 1, HeadRefName: "1-fix-bug", Title: "Fix failing test"}}
 	lister := &fakePRLister{mergedPRs: seedPRs, hasBadge: false}
 	runner := &fakeSandmanRunner{prURL: "https://github.com/owner/repo/pull/99"}
 
@@ -399,7 +399,7 @@ func TestBadgeE2E_PaginatedSearch_FindsMarkerOnSecondPage_NoSpawn(t *testing.T) 
 	badgeE2EPrimeRepo(t)
 
 	mergedJSON, err := json.Marshal([]prPayloadList{
-		{Number: 1, HeadRefName: "sandman/1-fix-bug", Title: "Fix failing test"},
+		{Number: 1, HeadRefName: "1-fix-bug", Title: "Fix failing test"},
 	})
 	if err != nil {
 		t.Fatalf("marshal merged prs: %v", err)
@@ -448,7 +448,7 @@ func TestBadgeE2E_PaginatedSearch_FindsMarkerOnSecondPage_NoSpawn(t *testing.T) 
 //   - The paginated scan consumes the full stream without finding a
 //     marker, so the hook reaches the spawn step.
 //   - The runner is invoked exactly once with the stable
-//     sandman/built-with-sandman branch and a prompt that contains
+//     built-with-sandman branch and a prompt that contains
 //     the marker, the placement instructions, and the merged PR
 //     rationale.
 //   - The tracking file is written exactly once after the runner
@@ -467,8 +467,8 @@ func TestBadgeE2E_PaginatedSearch_MarkerAbsent_TriggersCreation(t *testing.T) {
 	badgeE2EPrimeRepo(t)
 
 	mergedJSON, err := json.Marshal([]prPayloadList{
-		{Number: 7, HeadRefName: "sandman/7-add-login", Title: "Add login"},
-		{Number: 8, HeadRefName: "sandman/8-refactor", Title: "Refactor auth"},
+		{Number: 7, HeadRefName: "7-add-login", Title: "Add login"},
+		{Number: 8, HeadRefName: "8-refactor", Title: "Refactor auth"},
 	})
 	if err != nil {
 		t.Fatalf("marshal merged prs: %v", err)
@@ -502,8 +502,8 @@ func TestBadgeE2E_PaginatedSearch_MarkerAbsent_TriggersCreation(t *testing.T) {
 	if runner.capturedPrompt == "" {
 		t.Fatalf("expected exactly one RunPrompt attempt on PR creation path")
 	}
-	if runner.capturedBranch != "sandman/built-with-sandman" {
-		t.Errorf("expected branch=sandman/built-with-sandman, got %q", runner.capturedBranch)
+	if runner.capturedBranch != "built-with-sandman" {
+		t.Errorf("expected branch=built-with-sandman, got %q", runner.capturedBranch)
 	}
 	if !strings.Contains(runner.capturedPrompt, badgeE2EMarker) {
 		t.Errorf("expected prompt to contain marker, got: %s", runner.capturedPrompt)

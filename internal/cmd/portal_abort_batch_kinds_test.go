@@ -171,7 +171,7 @@ func portalAbortBatchKindsFixture(t *testing.T, opts portalAbortBatchKindsOpts) 
 				Issue:     opts.issueNumber,
 				PR:        opts.pr,
 				Kind:      batchindex.KindReview,
-				Branch:    "sandman/" + opts.branch + "-fix",
+				Branch:    "" + opts.branch + "-fix",
 				CreatedAt: time.Now().Add(-10 * time.Minute),
 				Status:    batchindex.RunManifestStatusActive,
 			}
@@ -184,7 +184,7 @@ func portalAbortBatchKindsFixture(t *testing.T, opts portalAbortBatchKindsOpts) 
 				BatchID:   opts.batchKey,
 				Issue:     opts.issueNumber,
 				Kind:      batchindex.KindIssue,
-				Branch:    "sandman/" + opts.branch + "-fix",
+				Branch:    "" + opts.branch + "-fix",
 				CreatedAt: time.Now().Add(-10 * time.Minute),
 				Status:    batchindex.RunManifestStatusActive,
 			}
@@ -216,7 +216,7 @@ func portalAbortBatchKindsFixture(t *testing.T, opts portalAbortBatchKindsOpts) 
 		Timestamp: startedAt,
 		RunID:     runID,
 		Issue:     opts.issueNumber,
-		Payload:   map[string]any{"branch": "sandman/" + opts.branch + "-fix"},
+		Payload:   map[string]any{"branch": "" + opts.branch + "-fix"},
 	}
 	if opts.review {
 		ev.Payload["review"] = true

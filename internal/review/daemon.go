@@ -1603,7 +1603,7 @@ func (d *Daemon) prepareReviewRun(ctx context.Context, prNumber int, commentID s
 // request, and the cleanup defer all derive the same string and tests can
 // reference it without re-encoding the format.
 func reviewBranchName(prNumber int, commentID string) string {
-	return fmt.Sprintf("sandman/review-%d-%s", prNumber, commentID)
+	return fmt.Sprintf("review-%d-%s", prNumber, commentID)
 }
 
 // reviewWorktreeBase returns the host-absolute path of the

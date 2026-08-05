@@ -43,10 +43,10 @@ func TestContainerVisiblePath_TableDriven(t *testing.T) {
 		},
 		{
 			name:        "podman rebase worktree dir",
-			hostPath:    filepath.Join(repo, ".sandman", "worktrees", "sandman", "review-17-1"),
+			hostPath:    filepath.Join(repo, ".sandman", "worktrees", "review-17-1"),
 			repoRoot:    repo,
 			sandboxMode: "podman",
-			want:        "/workspace/.sandman/worktrees/sandman/review-17-1",
+			want:        "/workspace/.sandman/worktrees/review-17-1",
 		},
 		{
 			name:        "worktree sandbox no-op returns host path",

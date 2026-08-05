@@ -201,7 +201,7 @@ func charNetPromptOnlySuccess(t *testing.T) (context.Context, Request, *Orchestr
 		BatchTS:      orchTestRunTS,
 		BatchShortID: orchTestRunShortID,
 		PromptConfig: prompt.RenderConfig{
-			Branch:     "sandman/test-prompt-only",
+			Branch:     "test-prompt-only",
 			TaskPrompt: "charnet prompt-only success",
 		},
 	}
@@ -240,7 +240,7 @@ func charNetPromptOnlyAbort(t *testing.T) (context.Context, Request, *Orchestrat
 		BatchTS:      orchTestRunTS,
 		BatchShortID: orchTestRunShortID,
 		PromptConfig: prompt.RenderConfig{
-			Branch:     "sandman/test-prompt-only",
+			Branch:     "test-prompt-only",
 			TaskPrompt: "charnet prompt-only abort",
 		},
 	}

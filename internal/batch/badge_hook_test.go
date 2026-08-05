@@ -28,7 +28,7 @@ func (f *fakePRLister) ListMergedSandmanPRs(ctx context.Context) ([]MergedSandma
 	}
 	var result []MergedSandmanPR
 	for _, p := range f.mergedPRs {
-		if sandmanBranchRE.MatchString(p.HeadRefName) {
+		if isSandmanBranch(p.HeadRefName) {
 			result = append(result, p)
 		}
 	}
@@ -129,7 +129,7 @@ func newTestBadgeHooker(lister *fakePRLister, runner *fakeSandmanRunner) (*defau
 
 func TestMaybeSuggestBadge_NoSuccessRuns(t *testing.T) {
 	fakeGh := &fakePRLister{
-		mergedPRs: []MergedSandmanPR{{Number: 1, HeadRefName: "sandman/feat", Title: "Test"}},
+		mergedPRs: []MergedSandmanPR{{Number: 1, HeadRefName: "123-feat", Title: "Test"}},
 	}
 	fakeRunner := &fakeSandmanRunner{prURL: "https://github.com/owner/repo/pull/99"}
 	h, _ := newTestBadgeHooker(fakeGh, fakeRunner)
@@ -167,8 +167,8 @@ func TestMaybeSuggestBadge_ZeroMergedSandmanPRs(t *testing.T) {
 func TestMaybeSuggestBadge_TriggersChildSandman(t *testing.T) {
 	fakeGh := &fakePRLister{
 		mergedPRs: []MergedSandmanPR{
-			{Number: 42, HeadRefName: "sandman/feat", Title: "Add feature X"},
-			{Number: 43, HeadRefName: "sandman/fix", Title: "Fix bug Y"},
+			{Number: 42, HeadRefName: "123-feat", Title: "Add feature X"},
+			{Number: 43, HeadRefName: "124-fix", Title: "Fix bug Y"},
 		},
 		hasBadge: false,
 	}
@@ -186,14 +186,14 @@ func TestMaybeSuggestBadge_TriggersChildSandman(t *testing.T) {
 	if fakeRunner.capturedPrompt == "" {
 		t.Errorf("expected prompt run, got no prompt")
 	}
-	if fakeRunner.capturedBranch != "sandman/built-with-sandman" {
-		t.Errorf("expected branch=sandman/built-with-sandman, got %q", fakeRunner.capturedBranch)
+	if fakeRunner.capturedBranch != "built-with-sandman" {
+		t.Errorf("expected branch=built-with-sandman, got %q", fakeRunner.capturedBranch)
 	}
 }
 
 func TestMaybeSuggestBadge_TriggersChildSandman_MultipleSuccessRuns(t *testing.T) {
 	fakeGh := &fakePRLister{
-		mergedPRs: []MergedSandmanPR{{Number: 5, HeadRefName: "sandman/test", Title: "Test PR"}},
+		mergedPRs: []MergedSandmanPR{{Number: 5, HeadRefName: "125-test", Title: "Test PR"}},
 		hasBadge:  false,
 	}
 	fakeRunner := &fakeSandmanRunner{prURL: "https://github.com/owner/repo/pull/7"}
@@ -230,7 +230,7 @@ func TestMaybeSuggestBadge_MergedErr_WarnsAndContinues(t *testing.T) {
 
 func TestMaybeSuggestBadge_BadgeErr_WarnsAndContinues(t *testing.T) {
 	fakeGh := &fakePRLister{
-		mergedPRs: []MergedSandmanPR{{Number: 1, HeadRefName: "sandman/feat", Title: "Test"}},
+		mergedPRs: []MergedSandmanPR{{Number: 1, HeadRefName: "123-feat", Title: "Test"}},
 		badgeErr:  context.DeadlineExceeded,
 	}
 	fakeRunner := &fakeSandmanRunner{prURL: "https://github.com/owner/repo/pull/99"}
@@ -247,7 +247,7 @@ func TestMaybeSuggestBadge_BadgeErr_WarnsAndContinues(t *testing.T) {
 
 func TestMaybeSuggestBadge_SandmanRunErr_WarnsAndContinues(t *testing.T) {
 	fakeGh := &fakePRLister{
-		mergedPRs: []MergedSandmanPR{{Number: 1, HeadRefName: "sandman/feat", Title: "Test"}},
+		mergedPRs: []MergedSandmanPR{{Number: 1, HeadRefName: "123-feat", Title: "Test"}},
 		hasBadge:  false,
 	}
 	fakeRunner := &fakeSandmanRunner{err: context.DeadlineExceeded}
@@ -263,7 +263,7 @@ func TestMaybeSuggestBadge_NonSandmanBranchFiltered(t *testing.T) {
 		mergedPRs: []MergedSandmanPR{
 			{Number: 1, HeadRefName: "main", Title: "Regular PR"},
 			{Number: 2, HeadRefName: "feature/other", Title: "Other PR"},
-			{Number: 3, HeadRefName: "sandman/feat", Title: "Sandman PR"},
+			{Number: 3, HeadRefName: "123-feat", Title: "Sandman PR"},
 		},
 		hasBadge: false,
 	}
@@ -275,7 +275,7 @@ func TestMaybeSuggestBadge_NonSandmanBranchFiltered(t *testing.T) {
 	h.MaybeSuggestBadge(context.Background(), results)
 
 	if fakeRunner.capturedPrompt == "" {
-		t.Errorf("expected prompt run when at least one sandman/* PR exists, got no prompt")
+		t.Errorf("expected prompt run when at least one Sandman-managed PR exists, got no prompt")
 	}
 }
 
@@ -288,7 +288,7 @@ func TestMaybeSuggestBadge_NopBadgeHooker(t *testing.T) {
 
 func TestNewBadgeHookerWith_ExercisesInjectedRunner(t *testing.T) {
 	fakeGh := &fakePRLister{
-		mergedPRs: []MergedSandmanPR{{Number: 7, HeadRefName: "sandman/feat", Title: "Add feature"}},
+		mergedPRs: []MergedSandmanPR{{Number: 7, HeadRefName: "123-feat", Title: "Add feature"}},
 		hasBadge:  false,
 	}
 	fakeRunner := &fakeSandmanRunner{prURL: "https://github.com/owner/repo/pull/55"}
@@ -300,8 +300,8 @@ func TestNewBadgeHookerWith_ExercisesInjectedRunner(t *testing.T) {
 
 	h.MaybeSuggestBadge(context.Background(), []AgentRunResult{{Status: "success"}})
 
-	if fakeRunner.capturedBranch != "sandman/built-with-sandman" {
-		t.Errorf("expected branch=sandman/built-with-sandman, got %q", fakeRunner.capturedBranch)
+	if fakeRunner.capturedBranch != "built-with-sandman" {
+		t.Errorf("expected branch=built-with-sandman, got %q", fakeRunner.capturedBranch)
 	}
 	if !strings.Contains(fakeRunner.capturedPrompt, "Add feature (#7)") {
 		t.Errorf("expected prompt to contain merged PR rationale, got: %s", fakeRunner.capturedPrompt)
@@ -325,7 +325,7 @@ func TestNewBadgeHookerWith_DoesNotSpawnWhenNoMergedSandmanPRs(t *testing.T) {
 
 func TestMaybeSuggestBadge_ControlFileAbsent_StillChecksPRExistence(t *testing.T) {
 	fakeGh := &fakePRLister{
-		mergedPRs: []MergedSandmanPR{{Number: 7, HeadRefName: "sandman/feat", Title: "Add feature"}},
+		mergedPRs: []MergedSandmanPR{{Number: 7, HeadRefName: "123-feat", Title: "Add feature"}},
 		hasBadge:  true,
 	}
 	fakeRunner := &fakeSandmanRunner{prURL: "https://github.com/owner/repo/pull/55"}
@@ -343,7 +343,7 @@ func TestMaybeSuggestBadge_ControlFileAbsent_StillChecksPRExistence(t *testing.T
 
 func TestMaybeSuggestBadge_ControlFileAbsent_NoMarkerPR_SpawnsSidecar(t *testing.T) {
 	fakeGh := &fakePRLister{
-		mergedPRs: []MergedSandmanPR{{Number: 7, HeadRefName: "sandman/feat", Title: "Add feature"}},
+		mergedPRs: []MergedSandmanPR{{Number: 7, HeadRefName: "123-feat", Title: "Add feature"}},
 		hasBadge:  false,
 	}
 	fakeRunner := &fakeSandmanRunner{prURL: "https://github.com/owner/repo/pull/55"}
@@ -383,7 +383,7 @@ func (w *wrappingPRLister) ListMergedSandmanPRs(ctx context.Context) ([]MergedSa
 	}
 	var result []MergedSandmanPR
 	for _, p := range payloads {
-		if sandmanBranchRE.MatchString(p.HeadRefName) {
+		if isSandmanBranch(p.HeadRefName) {
 			result = append(result, MergedSandmanPR{
 				Number:      p.Number,
 				HeadRefName: p.HeadRefName,
@@ -419,7 +419,7 @@ func TestMaybeSuggestBadge_HasBadgePR_AnyState_SkipsSpawn(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			mergedGh := &fakeGhCommander{
-				payload: []byte(`[{"number":1,"headRefName":"sandman/feat","title":"Add feature"}]`),
+				payload: []byte(`[{"number":1,"headRefName":"123-feat","title":"Add feature"}]`),
 			}
 			markerEntry := prPayloadBody{
 				Number: 7,
@@ -458,7 +458,7 @@ func TestMaybeSuggestBadge_HasBadgePR_AnyState_SkipsSpawn(t *testing.T) {
 
 func TestMaybeSuggestBadge_ControlFilePresent_SkipsAPIScan(t *testing.T) {
 	fakeGh := &fakePRLister{
-		mergedPRs: []MergedSandmanPR{{Number: 7, HeadRefName: "sandman/feat", Title: "Add feature"}},
+		mergedPRs: []MergedSandmanPR{{Number: 7, HeadRefName: "123-feat", Title: "Add feature"}},
 		hasBadge:  false,
 	}
 	fakeRunner := &fakeSandmanRunner{prURL: "https://github.com/owner/repo/pull/55"}
@@ -535,8 +535,8 @@ func TestDefaultBadgeControlFileReader_TreatsMissingSandmanDirAsAbsent(t *testin
 func TestMaybeSuggestBadge_PromptContainsMergedPRs(t *testing.T) {
 	fakeGh := &fakePRLister{
 		mergedPRs: []MergedSandmanPR{
-			{Number: 10, HeadRefName: "sandman/feat", Title: "Add login"},
-			{Number: 20, HeadRefName: "sandman/fix", Title: "Fix logout"},
+			{Number: 10, HeadRefName: "123-feat", Title: "Add login"},
+			{Number: 20, HeadRefName: "124-fix", Title: "Fix logout"},
 		},
 		hasBadge: false,
 	}
@@ -561,7 +561,7 @@ func TestMaybeSuggestBadge_PromptContainsMergedPRs(t *testing.T) {
 func TestMaybeSuggestBadge_PromptAppendsBadgeAfterExistingContent(t *testing.T) {
 	fakeGh := &fakePRLister{
 		mergedPRs: []MergedSandmanPR{
-			{Number: 10, HeadRefName: "sandman/feat", Title: "Add login"},
+			{Number: 10, HeadRefName: "123-feat", Title: "Add login"},
 		},
 		hasBadge: false,
 	}
@@ -581,7 +581,7 @@ func TestMaybeSuggestBadge_PromptAppendsBadgeAfterExistingContent(t *testing.T) 
 func TestMaybeSuggestBadge_PromptBodyRationaleReferencesMergedPRs(t *testing.T) {
 	fakeGh := &fakePRLister{
 		mergedPRs: []MergedSandmanPR{
-			{Number: 10, HeadRefName: "sandman/feat", Title: "Add login"},
+			{Number: 10, HeadRefName: "123-feat", Title: "Add login"},
 		},
 		hasBadge: false,
 	}

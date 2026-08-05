@@ -469,7 +469,7 @@ func TestAgentRun_Execute_PromptOnlyUsesConstantRunLog(t *testing.T) {
 	workDir := t.TempDir()
 	sb := &fakeSandbox{workDir: workDir, execStdout: "hello world\n"}
 
-	run := NewAgentRunWithLayout(nil, "sandman/42 foo", sb, paths.NewLayout(&config.Config{}, workDir))
+	run := NewAgentRunWithLayout(nil, "42 foo", sb, paths.NewLayout(&config.Config{}, workDir))
 	if err := run.Execute(context.Background(), "echo hello", io.Discard, io.Discard); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

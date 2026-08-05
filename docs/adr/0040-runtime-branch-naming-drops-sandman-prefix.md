@@ -1,5 +1,4 @@
 # ADR-0040: Runtime branch naming drops the `sandman/` prefix
-
 ## Status
 
 accepted
@@ -20,7 +19,7 @@ The `sourceBranch` argument is accepted for API symmetry with the orchestrator's
 
 The hardcoded `sandman/` prefix at `internal/sandbox/stranded.go:270` drops in lockstep, so the expected ref becomes `refs/heads/<dirname>` for directory names matching `^[0-9]+-`. The regex still matches issue-driven worktree directories at the basename level regardless of the source branch.
 
-The sidecar branches (`sandman/built-with-sandman` for the badge, `sandman/review-<pr>-<commentID>` for the review daemon) and the prompt-only branch (`sandman/<slug>-<timestamp>`) keep their `sandman/` prefix because they have no `<n>-<slug>` shape and no base-branch relationship. Migrating them would either rename the badge PR branch or break the convention's symmetry.
+The sidecar branches (`built-with-sandman` for the badge, `review-<pr>-<commentID>` for the review daemon) and the prompt-only branch (`<slug>-<timestamp>`) drop the `sandman/` prefix as well. These branches have no `<n>-<slug>` shape and no base-branch relationship, so the bare shapes carry no risk of colliding with issue-driven names or feature-branch refs, and dropping the prefix removes the last hardcoded namespace marker from every branch the runtime creates.
 
 The `internal/skill/sandman/implement/SKILL.md` line that mentions `issue-<ID>/<slugified-title>` is the outside-Sandman manual-invocation convention and is unaffected — it stays as the user-facing skill's documented branch shape for the manual path.
 
@@ -41,6 +40,6 @@ The `internal/skill/sandman/implement/SKILL.md` line that mentions `issue-<ID>/<
 
 ### Neutral
 
-- The sidecar and prompt-only branches keep their `sandman/` prefix. The new convention strictly applies to issue-driven branches where the branch name is the issue identifier.
+- The sidecar and prompt-only branches drop the `sandman/` prefix in the same change that removes it from issue-driven branches, so every branch the runtime creates follows a prefix-free shape. Worktree directories under `.sandman/worktrees/` are the bare branch name in every case.
 - The container-side T1 oracle (`internal/batch/verify_sandbox.go`) is unaffected — it uses `origin/main` as the source for verification, not the runtime branch name.
 - The orphan worktree at `/home/romao/projects/sandman/internal/batch/.sandman/worktrees/sandman/42-fix-bug/` is a stale test artifact unrelated to the runtime change. Operator cleanup is `rm -rf` when convenient; out of scope for this ADR.

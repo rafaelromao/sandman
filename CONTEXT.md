@@ -37,7 +37,7 @@ One execution of an agent against one issue, producing commits on a branch. The 
 _Avoid_: Run, job, task.
 
 **Prompt-only run**:
-A Batch execution that runs without fetching a GitHub Issue. Also called a no-issue run. Prompt-only runs use a `sandman/<slug>-<timestamp>` branch name and carry a null issue in events and result output; human-facing summaries label them `prompt-only`.
+A Batch execution that runs without fetching a GitHub Issue. Also called a no-issue run. Prompt-only runs use a `<slug>-<timestamp>` branch name and carry a null issue in events and result output; human-facing summaries label them `prompt-only`.
 _Avoid_: synthetic issue run.
 
 **DependencyResolver**:
@@ -124,11 +124,11 @@ _Avoid_: bot log (the run log is the canonical per-run artefact, not a self-post
 _See_: Review daemon state, Review run log.
 
 **Branch**:
-A git branch named `<issue-number>-<slugified-title>` for issue-driven AgentRuns (the legacy `sandman/<issue-number>-<slugified-title>` shape is gone after ADR-0040), or `sandman/<slug>-<timestamp>` for prompt-only runs.
+A git branch named `<issue-number>-<slugified-title>` for issue-driven AgentRuns (the legacy `sandman/<issue-number>-<slugified-title>` shape is gone after ADR-0040), or `<slug>-<timestamp>` for prompt-only runs.
 _Avoid_: Feature branch, PR branch.
 
 **SidecarBranch**:
-A git branch initiated by Sandman's own post-batch side effects rather than by a user-supplied issue or prompt. The badge branch `sandman/built-with-sandman` is the first such SidecarBranch. Unlike issue-driven branches (which carry a GitHub issue) or prompt-only branches (which carry a timestamp suffix for uniqueness), a SidecarBranch carries no issue and no timestamp — its shape is determined by the sidecar that created it. The sidecar's idempotency contract (what triggers it, what gates it, what it persists) lives in `docs/usage/badge.md` and the ADR alongside it.
+A git branch initiated by Sandman's own post-batch side effects rather than by a user-supplied issue or prompt. The badge branch `built-with-sandman` is the first such SidecarBranch. Unlike issue-driven branches (which carry a GitHub issue) or prompt-only branches (which carry a timestamp suffix for uniqueness), a SidecarBranch carries no issue and no timestamp — its shape is determined by the sidecar that created it. The sidecar's idempotency contract (what triggers it, what gates it, what it persists) lives in `docs/usage/badge.md` and the ADR alongside it.
 _Avoid_: Bot branch, auto branch.
 
 **BuildToolsPreset**:

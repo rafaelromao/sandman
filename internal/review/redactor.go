@@ -17,7 +17,7 @@ var redactPattern = regexp.MustCompile(`(?i)/sandman`)
 //	RedactBody("hello /sandman world")  -> "hello sandman world"
 //	RedactBody("/Sandman /SANDMAN")     -> "sandman sandman"
 //	RedactBody("/sandmannery")          -> "sandmannery"
-//	RedactBody("sandman/review-1234")   -> "sandman/review-1234" (no leading slash, unchanged)
+//	RedactBody("review-1234")          -> "review-1234" (no leading slash, unchanged)
 func RedactBody(body string) string {
 	return redactPattern.ReplaceAllString(body, "sandman")
 }

@@ -17,7 +17,7 @@ func TestRunVerifyPath_AllAbstainReturnsNoSignal(t *testing.T) {
 	t.Parallel()
 	out, checks := RunVerifyPath(VerifyInput{
 		Issue:     &github.Issue{Number: 42, Body: "No ACs."},
-		Branch:    "sandman/42",
+		Branch:    "42",
 		WorkDir:   t.TempDir(),
 		PreFilter: &fakeOracle{outcome: OracleAbstain},
 		CheapGate: &fakeOracle{outcome: OracleAbstain},
@@ -38,7 +38,7 @@ func TestRunVerifyPath_DecisionVerifiedTriggersAutoClose(t *testing.T) {
 	t.Parallel()
 	out, checks := RunVerifyPath(VerifyInput{
 		Issue:     &github.Issue{Number: 42, Body: "## Acceptance criteria\n\n- [ ] go test -run TestX ./internal/x/...\n"},
-		Branch:    "sandman/42",
+		Branch:    "42",
 		WorkDir:   t.TempDir(),
 		PreFilter: &fakeOracle{outcome: OracleAbstain},
 		CheapGate: &fakeOracle{outcome: OracleAbstain},
@@ -59,7 +59,7 @@ func TestRunVerifyPath_DecisionFailedReturnsFailed(t *testing.T) {
 	t.Parallel()
 	out, checks := RunVerifyPath(VerifyInput{
 		Issue:     &github.Issue{Number: 42},
-		Branch:    "sandman/42",
+		Branch:    "42",
 		WorkDir:   t.TempDir(),
 		PreFilter: &fakeOracle{outcome: OracleAbstain},
 		CheapGate: &fakeOracle{outcome: OracleAbstain},
@@ -81,7 +81,7 @@ func TestRunVerifyPath_CheapGateDefersToDecision(t *testing.T) {
 	t.Parallel()
 	out, _ := RunVerifyPath(VerifyInput{
 		Issue:     &github.Issue{Number: 42},
-		Branch:    "sandman/42",
+		Branch:    "42",
 		WorkDir:   t.TempDir(),
 		PreFilter: &fakeOracle{outcome: OracleAbstain},
 		CheapGate: &fakeOracle{outcome: OracleDeferDecision, check: OracleCheck{Name: "cheap-gate"}},
@@ -103,7 +103,7 @@ func TestRunVerifyPath_PreFilterRejectsSkipsRest(t *testing.T) {
 	decisionCalled := false
 	out, checks := RunVerifyPath(VerifyInput{
 		Issue:     &github.Issue{Number: 42},
-		Branch:    "sandman/42",
+		Branch:    "42",
 		WorkDir:   t.TempDir(),
 		PreFilter: &fakeOracle{outcome: OracleReject, check: OracleCheck{Name: "pre-filter", Details: map[string]any{"reason": "diverged"}}},
 		CheapGate: &fakeOracle{outcome: OracleAbstain},
@@ -132,7 +132,7 @@ func TestRunVerifyPath_RunsOraclesInOrder(t *testing.T) {
 	}
 	_, _ = RunVerifyPath(VerifyInput{
 		Issue:     &github.Issue{Number: 42},
-		Branch:    "sandman/42",
+		Branch:    "42",
 		WorkDir:   t.TempDir(),
 		PreFilter: rec("pre-filter"),
 		CheapGate: rec("cheap-gate"),

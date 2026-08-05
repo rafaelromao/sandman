@@ -2076,7 +2076,7 @@ func TestPortal_ReviewRunLifecycle(t *testing.T) {
 
 		startedAt := time.Now().Add(-5 * time.Minute)
 		writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
-			{Type: "run.started", Timestamp: startedAt, RunID: "PR42", Issue: 0, Payload: map[string]any{"branch": "sandman/review-PR42", "review": true, "pr_number": 42}},
+			{Type: "run.started", Timestamp: startedAt, RunID: "PR42", Issue: 0, Payload: map[string]any{"branch": "review-PR42", "review": true, "pr_number": 42}},
 		})
 
 		runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")})
@@ -2148,8 +2148,8 @@ func TestPortal_ReviewRunLifecycle(t *testing.T) {
 
 		startedAt := time.Now().Add(-5 * time.Minute)
 		writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
-			{Type: "run.started", Timestamp: startedAt, RunID: "PR42", Issue: 0, Payload: map[string]any{"branch": "sandman/review-PR42", "review": true, "pr_number": 42}},
-			{Type: "run.finished", Timestamp: startedAt.Add(1 * time.Minute), RunID: "PR42", Issue: 0, Payload: map[string]any{"status": "success", "branch": "sandman/review-PR42", "review": true}},
+			{Type: "run.started", Timestamp: startedAt, RunID: "PR42", Issue: 0, Payload: map[string]any{"branch": "review-PR42", "review": true, "pr_number": 42}},
+			{Type: "run.finished", Timestamp: startedAt.Add(1 * time.Minute), RunID: "PR42", Issue: 0, Payload: map[string]any{"status": "success", "branch": "review-PR42", "review": true}},
 		})
 
 		runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")})
@@ -2196,8 +2196,8 @@ func TestPortal_ReviewRunLifecycle(t *testing.T) {
 		// still surface the run from the event log alone.
 		startedAt := time.Now().Add(-5 * time.Minute)
 		writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
-			{Type: "run.started", Timestamp: startedAt, RunID: "PR42", Issue: 0, Payload: map[string]any{"branch": "sandman/review-PR42", "review": true, "pr_number": 42}},
-			{Type: "run.finished", Timestamp: startedAt.Add(1 * time.Minute), RunID: "PR42", Issue: 0, Payload: map[string]any{"status": "success", "branch": "sandman/review-PR42", "review": true}},
+			{Type: "run.started", Timestamp: startedAt, RunID: "PR42", Issue: 0, Payload: map[string]any{"branch": "review-PR42", "review": true, "pr_number": 42}},
+			{Type: "run.finished", Timestamp: startedAt.Add(1 * time.Minute), RunID: "PR42", Issue: 0, Payload: map[string]any{"status": "success", "branch": "review-PR42", "review": true}},
 		})
 
 		runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")})
@@ -2372,7 +2372,7 @@ func TestPortal_ReasonField_PopulatedFromRunKind(t *testing.T) {
 			RunID: "PR42",
 			Started: events.Event{
 				Timestamp: startedAt,
-				Payload:   map[string]any{"review": true, "pr_number": 42, "branch": "sandman/review-PR42"},
+				Payload:   map[string]any{"review": true, "pr_number": 42, "branch": "review-PR42"},
 			},
 		}
 		root := repoRoot(t)
@@ -2412,11 +2412,11 @@ func TestPortal_ReasonField_PopulatedFromRunKind(t *testing.T) {
 			RunID: "PR42",
 			Started: events.Event{
 				Timestamp: startedAt,
-				Payload:   map[string]any{"review": true, "pr_number": 42, "branch": "sandman/review-PR42"},
+				Payload:   map[string]any{"review": true, "pr_number": 42, "branch": "review-PR42"},
 			},
 			Finished: &events.Event{
 				Timestamp: startedAt.Add(2 * time.Minute),
-				Payload:   map[string]any{"review": true, "status": "success", "branch": "sandman/review-PR42"},
+				Payload:   map[string]any{"review": true, "status": "success", "branch": "review-PR42"},
 			},
 		}
 		run := (&portalRunsView{}).runFromState(repoRoot(t), state, nil, nil, nil, nil)
@@ -2437,11 +2437,11 @@ func TestPortal_ReasonField_PopulatedFromRunKind(t *testing.T) {
 			RunID: "PR42",
 			Started: events.Event{
 				Timestamp: startedAt,
-				Payload:   map[string]any{"review": true, "pr_number": 42, "branch": "sandman/review-PR42"},
+				Payload:   map[string]any{"review": true, "pr_number": 42, "branch": "review-PR42"},
 			},
 			Finished: &events.Event{
 				Timestamp: startedAt.Add(2 * time.Minute),
-				Payload:   map[string]any{"review": true, "status": "failure", "branch": "sandman/review-PR42"},
+				Payload:   map[string]any{"review": true, "status": "failure", "branch": "review-PR42"},
 			},
 		}
 		run := (&portalRunsView{}).runFromState(repoRoot(t), state, nil, nil, nil, nil)
@@ -2462,11 +2462,11 @@ func TestPortal_ReasonField_PopulatedFromRunKind(t *testing.T) {
 			RunID: "PR42",
 			Started: events.Event{
 				Timestamp: startedAt,
-				Payload:   map[string]any{"review": true, "pr_number": 42, "branch": "sandman/review-PR42"},
+				Payload:   map[string]any{"review": true, "pr_number": 42, "branch": "review-PR42"},
 			},
 			Finished: &events.Event{
 				Timestamp: startedAt.Add(2 * time.Minute),
-				Payload:   map[string]any{"review": true, "status": "failure", "branch": "sandman/review-PR42"},
+				Payload:   map[string]any{"review": true, "status": "failure", "branch": "review-PR42"},
 			},
 		}
 		// Mark the row as aborted by re-issuing run.aborted. The
@@ -2493,12 +2493,12 @@ func TestPortal_ReasonField_PopulatedFromRunKind(t *testing.T) {
 			Started: events.Event{
 				Timestamp: startedAt,
 				Issue:     42,
-				Payload:   map[string]any{"branch": "sandman/issue-42"},
+				Payload:   map[string]any{"branch": "issue-42"},
 			},
 			Finished: &events.Event{
 				Timestamp: startedAt.Add(1 * time.Minute),
 				Issue:     42,
-				Payload:   map[string]any{"branch": "sandman/issue-42", "status": "success"},
+				Payload:   map[string]any{"branch": "issue-42", "status": "success"},
 			},
 		}
 		run := (&portalRunsView{}).runFromState(repoRoot(t), state, nil, nil, nil, nil)
@@ -2516,7 +2516,7 @@ func TestPortal_ReasonField_PopulatedFromRunKind(t *testing.T) {
 			RunID: "260618113825-abcd-prompt",
 			Started: events.Event{
 				Timestamp: startedAt,
-				Payload:   map[string]any{"branch": "sandman/prompt"},
+				Payload:   map[string]any{"branch": "prompt"},
 			},
 		}
 		run := (&portalRunsView{}).runFromState(repoRoot(t), state, nil, nil, nil, nil)
@@ -2539,7 +2539,7 @@ func TestPortal_ReasonField_PopulatedFromRunKind(t *testing.T) {
 			Started: events.Event{
 				Timestamp: startedAt,
 				Issue:     42,
-				Payload:   map[string]any{"branch": "sandman/issue-42"},
+				Payload:   map[string]any{"branch": "issue-42"},
 			},
 		}
 		run := (&portalRunsView{}).runFromState(repoRoot(t), state, nil, nil, nil, nil)
@@ -2691,8 +2691,8 @@ func TestPortalRuns_ReviewAndImplRowsSeparateForSameIssue(t *testing.T) {
 		// event-level Issue field and the payload field point at
 		// issue 1066. This is the production shape that produced
 		// the row-mixing bug in the portal.
-		{Type: "run.started", Timestamp: reviewStartedAt, RunID: "PR1075", Issue: 0, Payload: map[string]any{"branch": "sandman/review-PR1075", "review": true, "pr_number": 1075, "issue_number": 1066}},
-		{Type: "run.finished", Timestamp: reviewFinishedAt, RunID: "PR1075", Issue: 1066, Payload: map[string]any{"branch": "sandman/review-PR1075", "review": true, "pr_number": 1075, "issue_number": 1066, "status": "success"}},
+		{Type: "run.started", Timestamp: reviewStartedAt, RunID: "PR1075", Issue: 0, Payload: map[string]any{"branch": "review-PR1075", "review": true, "pr_number": 1075, "issue_number": 1066}},
+		{Type: "run.finished", Timestamp: reviewFinishedAt, RunID: "PR1075", Issue: 1066, Payload: map[string]any{"branch": "review-PR1075", "review": true, "pr_number": 1075, "issue_number": 1066, "status": "success"}},
 	})
 
 	runs, err := (&portalRunsView{}).compute(repoRoot, &events.JSONLLogger{Path: filepath.Join(repoRoot, ".sandman", "events.jsonl")})
@@ -3060,7 +3060,7 @@ func TestPortal_ResolveRunLog_LiveWinsForTerminalReview(t *testing.T) {
 		Started: events.Event{
 			Timestamp: startedAt,
 			Payload: map[string]any{
-				"branch":    "sandman/review-pr-99",
+				"branch":    "review-pr-99",
 				"review":    true,
 				"pr_number": 99,
 			},
@@ -3070,7 +3070,7 @@ func TestPortal_ResolveRunLog_LiveWinsForTerminalReview(t *testing.T) {
 			Timestamp: finishedAt,
 			Payload: map[string]any{
 				"status":    "success",
-				"branch":    "sandman/review-pr-99",
+				"branch":    "review-pr-99",
 				"review":    true,
 				"pr_number": 99,
 			},
@@ -3108,7 +3108,7 @@ func TestPortal_ResolveRunLog_TerminalReviewPrefersSavedLog(t *testing.T) {
 		Started: events.Event{
 			Timestamp: startedAt,
 			Payload: map[string]any{
-				"branch":    "sandman/review-pr-1726",
+				"branch":    "review-pr-1726",
 				"review":    true,
 				"pr_number": 1726,
 			},
@@ -3118,7 +3118,7 @@ func TestPortal_ResolveRunLog_TerminalReviewPrefersSavedLog(t *testing.T) {
 			Timestamp: finishedAt,
 			Payload: map[string]any{
 				"status":    "success",
-				"branch":    "sandman/review-pr-1726",
+				"branch":    "review-pr-1726",
 				"review":    true,
 				"pr_number": 1726,
 			},
@@ -3752,12 +3752,12 @@ func TestPortal_RunsAPI_BatchKeyEqualsPublicBatchId_PromptOnly(t *testing.T) {
 			startedAt := time.Now().Add(-10 * time.Minute)
 			writePortalLog(t, filepath.Join(repoRoot, ".sandman", "events.jsonl"), []events.Event{
 				{Type: "run.started", Timestamp: startedAt, RunID: tt.rowRunID, Issue: 0, IssueRef: nil, Payload: map[string]any{
-					"branch":   "sandman/prompt-only-branch",
+					"branch":   "prompt-only-branch",
 					"batch_id": tt.wantBatch,
 				}},
 				{Type: "run.finished", Timestamp: startedAt.Add(time.Minute), RunID: tt.rowRunID, Issue: 0, IssueRef: nil, Payload: map[string]any{
 					"status":   "success",
-					"branch":   "sandman/prompt-only-branch",
+					"branch":   "prompt-only-branch",
 					"batch_id": tt.wantBatch,
 				}},
 			})

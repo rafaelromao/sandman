@@ -13,8 +13,8 @@ func TestProjectRunStates_PreservesPromptOnlyRun(t *testing.T) {
 	finishedAt := startedAt.Add(2 * time.Minute)
 
 	runs := ProjectRunStates([]Event{
-		{Type: "run.started", Timestamp: startedAt, RunID: "run-prompt", Payload: map[string]any{"branch": "sandman/prompt-only-123"}},
-		{Type: "run.finished", Timestamp: finishedAt, RunID: "run-prompt", Payload: map[string]any{"status": "success", "branch": "sandman/prompt-only-123"}},
+		{Type: "run.started", Timestamp: startedAt, RunID: "run-prompt", Payload: map[string]any{"branch": "prompt-only-123"}},
+		{Type: "run.finished", Timestamp: finishedAt, RunID: "run-prompt", Payload: map[string]any{"status": "success", "branch": "prompt-only-123"}},
 	})
 
 	if len(runs) != 1 {
@@ -28,8 +28,8 @@ func TestProjectRunStates_PreservesPromptOnlyRun(t *testing.T) {
 	if got := run.Status(); got != "success" {
 		t.Fatalf("expected success status, got %q", got)
 	}
-	if got := run.Branch(); got != "sandman/prompt-only-123" {
-		t.Fatalf("expected branch sandman/prompt-only-123, got %q", got)
+	if got := run.Branch(); got != "prompt-only-123" {
+		t.Fatalf("expected branch prompt-only-123, got %q", got)
 	}
 	if got := run.Duration(); got != 2*time.Minute {
 		t.Fatalf("expected 2m duration, got %s", got)
@@ -287,8 +287,8 @@ func TestProjectRunStates_ReviewRunLabel(t *testing.T) {
 	finishedAt := startedAt.Add(2 * time.Minute)
 
 	runs := ProjectRunStates([]Event{
-		{Type: "run.started", Timestamp: startedAt, RunID: "PR42", Payload: map[string]any{"review": true, "pr_number": 42, "branch": "sandman/review-PR42"}},
-		{Type: "run.finished", Timestamp: finishedAt, RunID: "PR42", Payload: map[string]any{"review": true, "pr_number": 42, "status": "success", "branch": "sandman/review-PR42"}},
+		{Type: "run.started", Timestamp: startedAt, RunID: "PR42", Payload: map[string]any{"review": true, "pr_number": 42, "branch": "review-PR42"}},
+		{Type: "run.finished", Timestamp: finishedAt, RunID: "PR42", Payload: map[string]any{"review": true, "pr_number": 42, "status": "success", "branch": "review-PR42"}},
 	})
 
 	if len(runs) != 1 {
@@ -333,8 +333,8 @@ func TestRunState_Kinds(t *testing.T) {
 		finishedAt := startedAt.Add(2 * time.Minute)
 
 		runs := ProjectRunStates([]Event{
-			{Type: "run.started", Timestamp: startedAt, RunID: "PR42", Payload: map[string]any{"review": true, "pr_number": 42, "branch": "sandman/review-PR42"}},
-			{Type: "run.finished", Timestamp: finishedAt, RunID: "PR42", Payload: map[string]any{"review": true, "pr_number": 42, "status": "success", "branch": "sandman/review-PR42"}},
+			{Type: "run.started", Timestamp: startedAt, RunID: "PR42", Payload: map[string]any{"review": true, "pr_number": 42, "branch": "review-PR42"}},
+			{Type: "run.finished", Timestamp: finishedAt, RunID: "PR42", Payload: map[string]any{"review": true, "pr_number": 42, "status": "success", "branch": "review-PR42"}},
 		})
 
 		if len(runs) != 1 {
@@ -350,8 +350,8 @@ func TestRunState_Kinds(t *testing.T) {
 		finishedAt := startedAt.Add(2 * time.Minute)
 
 		runs := ProjectRunStates([]Event{
-			{Type: "run.started", Timestamp: startedAt, RunID: "run-prompt", Payload: map[string]any{"branch": "sandman/prompt-only-1"}},
-			{Type: "run.finished", Timestamp: finishedAt, RunID: "run-prompt", Payload: map[string]any{"status": "success", "branch": "sandman/prompt-only-1"}},
+			{Type: "run.started", Timestamp: startedAt, RunID: "run-prompt", Payload: map[string]any{"branch": "prompt-only-1"}},
+			{Type: "run.finished", Timestamp: finishedAt, RunID: "run-prompt", Payload: map[string]any{"status": "success", "branch": "prompt-only-1"}},
 		})
 
 		if len(runs) != 1 {

@@ -73,7 +73,7 @@ func TestJSONLLogger_LogWritesNullIssue(t *testing.T) {
 		Type:      "run.started",
 		Timestamp: time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC),
 		RunID:     "run-prompt-only",
-		Payload:   map[string]any{"branch": "sandman/return-only-ok-123"},
+		Payload:   map[string]any{"branch": "return-only-ok-123"},
 	}
 
 	if err := logger.Log(event); err != nil {
@@ -726,7 +726,7 @@ func TestJSONLLogger_CrossProcessChild(t *testing.T) {
 			Timestamp: time.Now(),
 			RunID:     fmt.Sprintf("w%d-r%d", workerID, k),
 			Issue:     workerID,
-			Payload:   map[string]any{"branch": "sandman/cross-process", "payload": payload},
+			Payload:   map[string]any{"branch": "cross-process", "payload": payload},
 		}
 		if err := logger.Log(e); err != nil {
 			t.Fatalf("log %d/%d: %v", k, count, err)

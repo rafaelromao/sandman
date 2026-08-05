@@ -16,7 +16,7 @@ import (
 
 func TestRun_ContinueFlag_PromptOnlyUsesCurrentConfig_E2E(t *testing.T) {
 	dir := t.TempDir()
-	branch := "sandman/prompt-only-456"
+	branch := "prompt-only-456"
 	if err := os.MkdirAll(filepath.Join(dir, branch, ".sandman"), 0755); err != nil {
 		t.Fatalf("mkdir worktree: %v", err)
 	}
@@ -106,7 +106,7 @@ func TestRun_ContinueFlag_PromptOnlyUsesCurrentConfig_E2E(t *testing.T) {
 
 func TestRun_ContinueFlag_WarnsWhenPromptOnlyTaskMissing(t *testing.T) {
 	dir := t.TempDir()
-	branch := "sandman/prompt-only-456"
+	branch := "prompt-only-456"
 	if err := os.MkdirAll(filepath.Join(dir, branch, ".sandman"), 0755); err != nil {
 		t.Fatalf("mkdir worktree: %v", err)
 	}

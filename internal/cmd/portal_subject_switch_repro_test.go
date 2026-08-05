@@ -892,7 +892,7 @@ func TestPortalRefresh_ActiveEventsTabHydratesDetail(t *testing.T) {
 		"batchKey":    "260618113825-abcd",
 		"log":         "live log line 1\nlive log line 2",
 		"events": []map[string]any{
-			{"type": "run.started", "timestamp": "2026-06-30T14:02:18Z", "payload": map[string]any{"branch": "sandman/review-42"}},
+			{"type": "run.started", "timestamp": "2026-06-30T14:02:18Z", "payload": map[string]any{"branch": "review-42"}},
 			{"type": "run.retry", "timestamp": "2026-06-30T14:03:18Z", "payload": map[string]any{"attempt": 2, "reason": "agent-stalled"}},
 		},
 	}
