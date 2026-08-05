@@ -279,6 +279,32 @@ func TestMaybeSuggestBadge_NonSandmanBranchFiltered(t *testing.T) {
 	}
 }
 
+// TestMaybeSuggestBadge_IssueDrivenBranchShape triggers on the ADR-0040
+// issue-driven branch shape "<n>-<slug>". BranchName stopped emitting the
+// sandman/ prefix for issue-driven runs (ADR-0040); the badge hook must
+// still recognise those merged PRs as Sandman-managed or it silently never
+// proposes the badge on current repos (threeterm repro).
+func TestMaybeSuggestBadge_IssueDrivenBranchShape(t *testing.T) {
+	fakeGh := &fakePRLister{
+		mergedPRs: []MergedSandmanPR{
+			{Number: 373, HeadRefName: "369-implement-crash-safe-project-generation-publication", Title: "feat(persistence): serialize concurrent project generation publication"},
+			{Number: 288, HeadRefName: "234-03v1-new-project-emits-revision-snapshot", Title: "feat(project): create sealed empty project generations"},
+		},
+		hasBadge: false,
+	}
+	fakeRunner := &fakeSandmanRunner{prURL: "https://github.com/owner/repo/pull/99"}
+	h, _ := newTestBadgeHooker(fakeGh, fakeRunner)
+
+	h.MaybeSuggestBadge(context.Background(), []AgentRunResult{{Status: "success"}})
+
+	if fakeRunner.capturedPrompt == "" {
+		t.Fatalf("expected prompt run when merged PRs use the ADR-0040 <n>-<slug> branch shape, got no prompt")
+	}
+	if !strings.Contains(fakeRunner.capturedPrompt, "feat(persistence): serialize concurrent project generation publication (#373)") {
+		t.Errorf("expected prompt to contain merged PR rationale, got: %s", fakeRunner.capturedPrompt)
+	}
+}
+
 func TestMaybeSuggestBadge_NopBadgeHooker(t *testing.T) {
 	h := nopBadgeHooker{}
 
