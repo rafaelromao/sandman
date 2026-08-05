@@ -193,10 +193,10 @@ func TestBinaryInstallationDocumentationMatchesReleaseContract(t *testing.T) {
 		"`sandman_<version>_darwin_arm64.tar.gz`",
 		"grep -F \"  ${TARGET_ARCHIVE}\" checksums.txt | sha256sum -c -",
 		"grep -F \"  ${TARGET_ARCHIVE}\" checksums.txt | shasum -a 256 -c -",
-		"VERSION=$(curl -fsSL https://api.github.com/repos/rafaelromao/sandman/releases/latest",
+		"VERSION=$(curl -fsSL https://api.github.com/repos/rafaelromao/sandman/releases",
 		"sandman --version",
-		"go install github.com/rafaelromao/sandman/cmd/sandman@latest",
-		"curl -fsSL https://raw.githubusercontent.com/rafaelromao/sandman/main/scripts/install.sh | sh",
+		"go install github.com/rafaelromao/sandman/cmd/sandman@v1.0.0-rc.1",
+		"curl -fsSL https://raw.githubusercontent.com/rafaelromao/sandman/main/scripts/install.sh | sh -s -- --include-prerelease",
 		"--install-dir DIRECTORY",
 		"Build from a checkout",
 	} {

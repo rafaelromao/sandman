@@ -12,6 +12,7 @@ func TestInstallScriptIsPortableAndVerifiesDownloads(t *testing.T) {
 		"#!/bin/sh",
 		"--version",
 		"--install-dir",
+		"--include-prerelease",
 		"SANDMAN_VERSION",
 		"SANDMAN_INSTALL_DIR",
 		"Linux) OS=linux",

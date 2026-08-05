@@ -14,7 +14,7 @@ Full setup guide: prerequisites, install methods, OpenCode setup, project initia
 ### Install with Go
 
 ```bash
-go install github.com/rafaelromao/sandman/cmd/sandman@latest
+go install github.com/rafaelromao/sandman/cmd/sandman@v1.0.0-rc.1
 ```
 
 This installs Sandman into Go's configured binary directory. Verify the
@@ -27,7 +27,7 @@ sandman --version
 ### Prebuilt binaries
 
 If Go is not installed, download the archive for your platform from the
-[latest release](https://github.com/rafaelromao/sandman/releases/latest).
+[latest release](https://github.com/rafaelromao/sandman/releases).
 The release provides:
 
 - Linux amd64
@@ -40,7 +40,7 @@ Each release includes `checksums.txt`.
 For the simplest verified install, let the installer detect your platform:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/rafaelromao/sandman/main/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/rafaelromao/sandman/main/scripts/install.sh | sh -s -- --include-prerelease
 ```
 
 The installer supports Linux amd64, Linux arm64, macOS amd64, and macOS arm64.
@@ -67,7 +67,7 @@ The example below installs the Linux amd64 binary. Verify the archive against
 its entry in `checksums.txt` before extracting it.
 
 ```bash
-VERSION=$(curl -fsSL https://api.github.com/repos/rafaelromao/sandman/releases/latest | sed -n 's/.*"tag_name": "\([^"]*\)".*/\1/p' | head -n 1)
+VERSION=$(curl -fsSL https://api.github.com/repos/rafaelromao/sandman/releases | sed -n 's/.*"tag_name": "\([^"]*\)".*/\1/p' | head -n 1)
 VERSION=${VERSION#v}
 RELEASE_URL="https://github.com/rafaelromao/sandman/releases/download/v${VERSION}"
 TARGET_ARCHIVE="sandman_${VERSION}_linux_amd64.tar.gz"
