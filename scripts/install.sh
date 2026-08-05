@@ -4,6 +4,7 @@ set -eu
 REPOSITORY="rafaelromao/sandman"
 VERSION="${SANDMAN_VERSION:-}"
 INSTALL_DIR="${SANDMAN_INSTALL_DIR:-${HOME}/.local/bin}"
+INCLUDE_PRERELEASE=0
 
 fail() {
     printf '%s\n' "install: $*" >&2
@@ -12,7 +13,7 @@ fail() {
 
 usage() {
     cat >&2 <<'EOF'
-Usage: install.sh [--version VERSION] [--install-dir DIRECTORY]
+Usage: install.sh [--version VERSION] [--install-dir DIRECTORY] [--include-prerelease]
 
 Environment overrides:
   SANDMAN_VERSION       release tag, for example v1.2.3
@@ -33,6 +34,10 @@ while [ "$#" -gt 0 ]; do
             INSTALL_DIR=$2
             shift 2
             ;;
+        --include-prerelease)
+            INCLUDE_PRERELEASE=1
+            shift
+            ;;                        
         -h|--help)
             usage
             ;;
@@ -46,10 +51,23 @@ command -v curl >/dev/null 2>&1 || fail "curl is required"
 command -v tar >/dev/null 2>&1 || fail "tar is required"
 
 if [ -z "$VERSION" ]; then
-    VERSION=$(curl -fsSL "https://api.github.com/repos/${REPOSITORY}/releases/latest" |
-        sed -n 's/.*"tag_name": "\([^"]*\)".*/\1/p' | head -n 1) ||
+    VERSION=$(curl -fsSL "https://api.github.com/repos/${REPOSITORY}/releases" |
+        awk -v include_prerelease="$INCLUDE_PRERELEASE" '
+            /"tag_name":/ {
+                tag = $0; gsub(/.*"tag_name": *"/, "", tag); gsub(/".*/, "", tag)
+                next
+            }
+            /"prerelease":/ {
+                pre = ($0 ~ /true/) ? 1 : 0
+                if (include_prerelease || !pre) {
+                    print tag
+                    exit
+                }
+                next
+            }
+        ') ||
         fail "could not determine the latest release"
-    [ -n "$VERSION" ] || fail "latest release did not include a tag"
+    [ -n "$VERSION" ] || fail "no releases found; use --version to specify a release tag, or --include-prerelease to include prereleases"
 fi
 
 case "$(uname -s)" in
