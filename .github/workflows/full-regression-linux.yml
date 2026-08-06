@@ -14,6 +14,7 @@ jobs:
     timeout-minutes: 360
     env:
       CI: true
+      SANDMAN_FULL_REGRESSION: "1"
       GIT_TERMINAL_PROMPT: "0"
       DEBIAN_FRONTEND: noninteractive
       PAGER: cat
@@ -48,6 +49,22 @@ jobs:
         run: |
           test "$(podman info --format '{{.Host.OCIRuntime.Name}}')" = "runc"
           podman run --rm alpine true
+
+      - name: Install opencode CLI
+        run: |
+          curl -fsSL https://opencode.ai/install | bash
+          echo "$HOME/.opencode/bin" >> "$GITHUB_PATH"
+
+      - name: Provision opencode auth
+        env:
+          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+        run: |
+          if [ -n "$OPENCODE_API_KEY" ]; then
+            mkdir -p "$HOME/.local/share/opencode"
+            printf '{"opencode": {"type": "api", "key": "%s"}}\n' "$OPENCODE_API_KEY" > "$HOME/.local/share/opencode/auth.json"
+          else
+            echo "No OPENCODE_API_KEY secret configured; real-agent tests that require auth will skip cleanly."
+          fi
 
       - name: Run full regression suite
         shell: bash

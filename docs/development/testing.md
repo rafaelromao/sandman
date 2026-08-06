@@ -42,6 +42,29 @@ Release Please branch updates add two release-validation workflows:
 
 The contract test `TestPlatformCoverageMapMatchesWorkflowsAndGoReleaser` enforces that the CI matrix, the `Native Compatibility` workflow shape, the `Full Regression - Linux` exhaustive command, and the four `.goreleaser.yml` build IDs all stay aligned with the matrix above. A drift in any one of those four sources fails the contract.
 
+### Full regression (`SANDMAN_FULL_REGRESSION`)
+
+Tests that are tagged for a container runtime or a real provider typically skip
+themselves when the generic `CI` env var is set (`os.Getenv("CI") != ""`), so
+the ordinary PR-time `CI` workflow stays fast and never spends API quota on
+real-agent runs. The `Full Regression - Linux` workflow is different: its whole
+point is that nothing is skipped. It sets `SANDMAN_FULL_REGRESSION=1`, and every
+CI-only skip guard is written as
+`if os.Getenv("CI") != "" && !testenv.FullRegression() { t.Skip(...) }` so the
+exhaustive job actually executes the real-agent, portal, preset-matrix, visual,
+and heartbeat-timeout tests that ordinary CI only compiles.
+
+The full-regression workflow installs the `opencode` CLI (`curl -fsSL
+https://opencode.ai/install | bash`) and provisions `~/.local/share/opencode/auth.json`
+from the `OPENCODE_API_KEY` secret. With auth present, the real-agent tests run
+for real and a free-model quota exhaustion surfaces as a failed job instead of
+a green-but-empty one. If the secret is absent, the auth-gated tests skip
+cleanly with their normal "missing auth" message rather than failing.
+
+`go.yml` must never set `SANDMAN_FULL_REGRESSION`; the contract test
+`TestCIWorkflowKeepsOptInSuitesDisabled` enforces that so the CI-only skips
+remain active on pull requests.
+
 ## Smoke tests
 
 Smoke tests run a single agent session end-to-end and verify the core run loop. They are fast compared with full e2e tests and are disabled unless a provider allowlist is set.
@@ -155,6 +178,12 @@ runtime. With the opt-in set, the preset-matrix sub-tests are real-workflow
 and need the wider `-timeout 90m` budget. Without it, the same tests skip with
 a message naming the skipped provider and the missing opt-in, and the rest of
 the suite runs as normal.
+
+In addition to the `SANDMAN_RUN_AGENT_E2E` opt-in, the real-agent tests also
+self-skip when the generic `CI` env var is set — unless `SANDMAN_FULL_REGRESSION=1`
+is present (see [Full regression](#full-regression-sandman_full_regression)).
+The `Full Regression - Linux` workflow sets both, so its real-agent coverage
+genuinely exercises the free `opencode/big-pickle` model.
 
 ## Cleanup after interrupted tests
 

@@ -55,9 +55,10 @@ const (
 
 // Canonical env var names.
 const (
-	CanonicalE2EGatesEnvVar     = "SANDMAN_E2E_GATES"
-	CanonicalProviderListEnvVar = "SANDMAN_TEST_PROVIDERS"
-	CanonicalTestFastEnvVar     = "SANDMAN_TEST_FAST"
+	CanonicalE2EGatesEnvVar       = "SANDMAN_E2E_GATES"
+	CanonicalProviderListEnvVar   = "SANDMAN_TEST_PROVIDERS"
+	CanonicalTestFastEnvVar       = "SANDMAN_TEST_FAST"
+	CanonicalFullRegressionEnvVar = "SANDMAN_FULL_REGRESSION"
 )
 
 // TestModelEnvVar returns the canonical env var name that overrides the
@@ -169,6 +170,17 @@ func E2EGateAllowed(scenario string) bool {
 // caller should set WAKEUP_DIR to a directory the shim can poll.
 func IsTestFastEnabled() bool {
 	return strings.TrimSpace(os.Getenv(CanonicalTestFastEnvVar)) == "1"
+}
+
+// FullRegression reports whether the exhaustive release regression suite is
+// running (SANDMAN_FULL_REGRESSION=1). The full-regression workflow sets it
+// so that tests which normally self-skip under a generic CI environment
+// (e.g. `os.Getenv("CI") != ""`) still run there: the whole point of the
+// exhaustive job is that no test is skipped. Ordinary CI jobs and developer
+// machines leave it unset, so the existing CI guards keep the cheap suites
+// fast and the expensive real-agent suites opt-in only.
+func FullRegression() bool {
+	return strings.TrimSpace(os.Getenv(CanonicalFullRegressionEnvVar)) == "1"
 }
 
 // MkdirShort returns a per-test directory rooted at /tmp/ (not the

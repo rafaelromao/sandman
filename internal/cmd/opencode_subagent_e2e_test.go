@@ -27,7 +27,7 @@ func TestOpencodeSubagentPermissionAllowAll(t *testing.T) {
 	// FIX: merged gh shim is prepended on the host PATH even though its relative
 	// paths only resolve inside the container. The follow-up branch should split
 	// host/container shims before this E2E is brought back into CI. See #2459.
-	if os.Getenv("CI") != "" {
+	if os.Getenv("CI") != "" && !testenv.FullRegression() {
 		t.Skip("skip e2e in CI")
 	}
 	if !podmanAvailable(t) {

@@ -297,6 +297,11 @@ func TestReleaseValidationWorkflowsRunOnlyForReleasePleaseBranch(t *testing.T) {
 		t.Error("Linux full regression workflow must preserve the canonical E2E command")
 	}
 	for _, required := range []string{
+		`SANDMAN_FULL_REGRESSION: "1"`,
+		"name: Install opencode CLI",
+		"curl -fsSL https://opencode.ai/install | bash",
+		"name: Provision opencode auth",
+		"secrets.OPENCODE_API_KEY",
 		`export CONTAINERS_CONF="$RUNNER_TEMP/containers.conf"`,
 		`echo "CONTAINERS_CONF=$CONTAINERS_CONF" >> "$GITHUB_ENV"`,
 		"name: Configure Podman runtime",
@@ -304,7 +309,7 @@ func TestReleaseValidationWorkflowsRunOnlyForReleasePleaseBranch(t *testing.T) {
 		`test "$(podman info --format '{{.Host.OCIRuntime.Name}}')" = "runc"`,
 	} {
 		if !strings.Contains(linux, required) {
-			t.Errorf("Linux full regression workflow missing Podman runtime configuration %q", required)
+			t.Errorf("Linux full regression workflow missing %q", required)
 		}
 	}
 }
@@ -417,6 +422,9 @@ func TestCIWorkflowKeepsOptInSuitesDisabled(t *testing.T) {
 		if !strings.Contains(workflow, required) {
 			t.Errorf("regular CI workflow missing opt-in suite exclusion %q", required)
 		}
+	}
+	if strings.Contains(workflow, "SANDMAN_FULL_REGRESSION") {
+		t.Fatal("regular CI must not set SANDMAN_FULL_REGRESSION; only the full-regression workflow disables CI skips")
 	}
 	if strings.Contains(workflow, "-tags smoke") || strings.Contains(workflow, "-tags e2e") {
 		t.Fatal("regular CI must not compile or run smoke/e2e-tagged tests")

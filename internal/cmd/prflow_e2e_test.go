@@ -118,7 +118,7 @@ func TestPRFlow_PodmanSandboxBinaryCommitsAndPushes(t *testing.T) {
 	// CI: JUSTIFIED — calls requirePodmanE2E (real container build). The agent
 	// is faked via prFlowSandboxFakeRunner so the test no longer drives the
 	// real opencode agent against the LLM (issue #1797).
-	if os.Getenv("CI") != "" {
+	if os.Getenv("CI") != "" && !testenv.FullRegression() {
 		t.Skip("skip e2e in CI")
 	}
 
@@ -238,7 +238,7 @@ func TestPRFlow_PodmanSandboxBinaryCommitsAndPushes(t *testing.T) {
 
 func TestPRFlow_PodmanSandboxCommitsAndPushes(t *testing.T) {
 	// CI: JUSTIFIED — calls requirePRFlowProvider (real provider auth) and requirePodmanE2E.
-	if os.Getenv("CI") != "" {
+	if os.Getenv("CI") != "" && !testenv.FullRegression() {
 		t.Skip("skip e2e in CI")
 	}
 
@@ -376,7 +376,7 @@ func TestPRFlow_PodmanSandboxCommitsAndPushes(t *testing.T) {
 
 func TestPRFlow_WorktreeSandboxCommitsAndPushes(t *testing.T) {
 	// CI: JUSTIFIED — calls requirePRFlowProvider (real provider auth); worktree sandbox, no runtime.
-	if os.Getenv("CI") != "" {
+	if os.Getenv("CI") != "" && !testenv.FullRegression() {
 		t.Skip("skip e2e in CI")
 	}
 
@@ -1251,7 +1251,7 @@ exit 1
 
 func TestPRFlow_PodmanSandboxBinaryParallelAgentRuns(t *testing.T) {
 	// CI: JUSTIFIED — calls requirePRFlowProvider (real provider auth) and requirePodmanE2E.
-	if os.Getenv("CI") != "" {
+	if os.Getenv("CI") != "" && !testenv.FullRegression() {
 		t.Skip("skip e2e in CI")
 	}
 
@@ -1434,7 +1434,7 @@ func TestPRFlow_PodmanSandboxBinaryParallelAgentRuns(t *testing.T) {
 
 func TestPRFlow_PodmanSandboxBinaryParallelAgentRunsAutoCapacity(t *testing.T) {
 	// CI: JUSTIFIED — calls requirePRFlowProvider (real provider auth) and requirePodmanE2E.
-	if os.Getenv("CI") != "" {
+	if os.Getenv("CI") != "" && !testenv.FullRegression() {
 		t.Skip("skip e2e in CI")
 	}
 
@@ -1675,7 +1675,7 @@ func TestDoubleFor152(t *testing.T) {
 
 func TestE2E_QueuedIssuesPersistAfterBatchCompletes(t *testing.T) {
 	// CI: JUSTIFIED — calls requirePRFlowProvider (real provider auth) and requirePodmanE2E.
-	if os.Getenv("CI") != "" {
+	if os.Getenv("CI") != "" && !testenv.FullRegression() {
 		t.Skip("skip e2e in CI")
 	}
 

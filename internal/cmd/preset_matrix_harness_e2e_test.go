@@ -330,7 +330,7 @@ const presetMatrixBranch = "1-fix-failing-test"
 // a machine that cannot run the real agent.
 func requirePresetMatrixE2E(t *testing.T) {
 	t.Helper()
-	if os.Getenv("CI") != "" {
+	if os.Getenv("CI") != "" && !testenv.FullRegression() {
 		t.Skip("skip preset-matrix e2e in CI")
 	}
 	containerRuntimeAvailable(t)
