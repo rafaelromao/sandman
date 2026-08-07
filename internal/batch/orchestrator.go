@@ -818,6 +818,9 @@ func NewOrchestrator(githubClient github.Client, renderer prompt.IssueRenderer, 
 		lookupGHToken: defaultLookupGHToken,
 		runSessionOpts: runSessionOptions{
 			baseBranchSyncMu: &sync.Mutex{},
+			gatePollInitial:  120 * time.Second,
+			gatePollMaxSleep: 600 * time.Second,
+			gatePollBudget:   1800 * time.Second,
 		},
 		badgeHooker:  nopBadgeHooker{},
 		coordinators: make(map[*batchCoordinator]struct{}),
@@ -1756,6 +1759,9 @@ type runSessionOptions struct {
 	baseBranchSyncMu *sync.Mutex
 	retryReset       func(ctx context.Context, sb sandbox.Sandbox, branch, baseBranch string) error
 	killTimeout      time.Duration
+	gatePollInitial  time.Duration
+	gatePollMaxSleep time.Duration
+	gatePollBudget   time.Duration
 }
 
 // runSession owns the per-AgentRun state and lifecycle for a single issue
@@ -2524,6 +2530,7 @@ func (s *runSession) runOnce(
 	}
 
 	var terminalExtras map[string]any
+loop:
 	for attempt := 0; attempt < attempts; attempt++ {
 		attemptRenderCfg, errResult := prepareAttempt(attempt)
 		if errResult != nil {
@@ -2648,6 +2655,31 @@ func (s *runSession) runOnce(
 			if github.IsIssueClosed(issue) {
 				if events.RunStatusFromPayload(result.Status).IsSuccess() {
 					break
+				}
+			}
+			if s.deps.githubClient != nil && result.Status == "success" {
+				gate, _ := checkPRExternalGate(ctx, s.deps.githubClient, branch)
+				switch gate {
+				case "resolved":
+					result.Status = "success"
+					break loop
+				case "pending":
+					r := pollPRGate(ctx, s.deps.githubClient, branch, s.opts)
+					if r == gateResolved {
+						result.Status = "success"
+						break loop
+					}
+					result.Status = "blocked"
+					gateReason := "pending"
+					if r == gateFailed {
+						gateReason = "failed"
+					}
+					terminalExtras = mergeBlockerExtras(terminalExtras, map[string]any{"blocker": "external-gate", "gate": gateReason})
+					break loop
+				case "failed":
+					result.Status = "blocked"
+					terminalExtras = mergeBlockerExtras(terminalExtras, map[string]any{"blocker": "external-gate", "gate": "failed"})
+					break loop
 				}
 			}
 			result.Status = "failure"
