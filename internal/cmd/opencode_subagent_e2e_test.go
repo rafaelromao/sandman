@@ -64,7 +64,15 @@ func TestOpencodeSubagentPermissionAllowAll(t *testing.T) {
 	writeMergedFakeGHShimForContainer(t, filepath.Join(repoDir, ".sandman", "bin"))
 	installPermissionFakeOpenCodeForContainer(t, repoDir)
 
-	out, err = runSandmanBinaryWithTimeout(t, binPath, repoDir, 60*time.Second, "run", "--sandbox", "podman", "1")
+	// HOME is isolated above, so rootless podman starts with a cold container
+	// store. Warm it and pre-build the sandman image outside the timed run:
+	// the orchestrator's BuildImage inside `sandman run` then hits the layer
+	// cache instead of re-initializing the store and re-pulling debian +
+	// opencode under the run budget. Mirrors the smoke tests' warm-up step.
+	warmSmokeRuntime(t, "podman")
+	prebuildSubagentImage(t, repoDir)
+
+	out, err = runSandmanBinaryWithTimeout(t, binPath, repoDir, 10*time.Minute, "run", "--sandbox", "podman", "1")
 	if err != nil {
 		ghLog, _ := os.ReadFile(filepath.Join(ghShimDir, "gh-calls.log"))
 		t.Fatalf("sandman run failed: %v\noutput:\n%s\ngh log:\n%s", err, out, ghLog)
@@ -203,6 +211,19 @@ func writeMergedFakeGHShim(t *testing.T, dir string) {
 	writeFakeGHShim(t, dir)
 	if err := os.WriteFile(filepath.Join(dir, "pr-state"), []byte("merged\n"), 0644); err != nil {
 		t.Fatalf("seed merged pr state: %v", err)
+	}
+}
+
+// prebuildSubagentImage caches the scaffolded sandman image layers so the
+// in-run BuildImage is fast. Run from repoDir after the container gh shim and
+// fake opencode have been written into .sandman/bin, so the baked layers match
+// what the orchestrator will rebuild.
+func prebuildSubagentImage(t *testing.T, repoDir string) {
+	t.Helper()
+	cmd := exec.Command("podman", "build", "-t", "sandman-subagent-preflight:latest", "-f", filepath.Join(".sandman", "Dockerfile"), ".")
+	cmd.Dir = repoDir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("prebuild sandman image: %v\n%s", err, out)
 	}
 }
 
