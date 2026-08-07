@@ -293,7 +293,7 @@ func TestReleaseValidationWorkflowsRunOnlyForReleasePleaseBranch(t *testing.T) {
 	}
 
 	linux := readRepositoryFile(t, "../.github/workflows/full-regression-linux.yml")
-	if !strings.Contains(linux, "SANDMAN_RUN_AGENT_E2E=1 SANDMAN_TEST_PROVIDERS=all SANDMAN_E2E_GATES=all go test -tags e2e -timeout 90m ./...") {
+	if !strings.Contains(linux, "SANDMAN_RUN_AGENT_E2E=1 SANDMAN_TEST_PROVIDERS=all SANDMAN_E2E_GATES=all go test -tags e2e -json -timeout 90m ./...") {
 		t.Error("Linux full regression workflow must preserve the canonical E2E command")
 	}
 	for _, required := range []string{
