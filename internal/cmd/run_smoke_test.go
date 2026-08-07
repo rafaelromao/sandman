@@ -150,7 +150,7 @@ func prepareSmokeProvider(t *testing.T, tc smokeProviderCase) (runtime string, r
 	branch := tc.wantBranch
 	gh := &fakeGitHubClient{
 		issues: map[int]*github.Issue{issue.Number: &issue},
-		prs:    map[string]*github.PR{branch: mergedPR(branch, "")},
+		prs:    map[string]*github.PR{branch: mergedPR(branch, issue.Number)},
 	}
 	store := &fakeStore{config: depsCfg}
 	deps = Dependencies{
@@ -211,8 +211,8 @@ func runSmokeProvider(t *testing.T, tc smokeProviderCase) {
 	assertSmokeProviderRun(t, out, tc, repoDir, issue)
 }
 
-func mergedPR(branch, sha string) *github.PR {
-	return &github.PR{Number: 1, State: "closed", Merged: true, HeadRefName: branch, Body: "Fixes #1"}
+func mergedPR(branch string, issueNumber int) *github.PR {
+	return &github.PR{Number: issueNumber, State: "closed", Merged: true, HeadRefName: branch, Body: fmt.Sprintf("Fixes #%d", issueNumber)}
 }
 
 func runSmokeProviderTwice(t *testing.T, tc smokeProviderCase, secondArgs ...string) {
@@ -690,7 +690,7 @@ func TestSmoke_ContainerBuildFailure(t *testing.T) {
 	branch := "2430-container-build-failure"
 	gh := &fakeGitHubClient{
 		issues: map[int]*github.Issue{issue.Number: &issue},
-		prs:    map[string]*github.PR{branch: mergedPR(branch, "")},
+		prs:    map[string]*github.PR{branch: mergedPR(branch, issue.Number)},
 	}
 	store := &fakeStore{config: cfg}
 	deps := Dependencies{

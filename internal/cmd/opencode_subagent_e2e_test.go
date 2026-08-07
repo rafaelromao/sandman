@@ -208,19 +208,9 @@ func writeMergedFakeGHShim(t *testing.T, dir string) {
 
 func writeMergedFakeGHShimForContainer(t *testing.T, dir string) {
 	t.Helper()
+	// The container shim already answers `pr list` with state "merged"
+	// deterministically, so no marker patch is needed.
 	writeFakeGHShimForContainer(t, dir)
-	ghPath := filepath.Join(dir, "gh")
-	body, err := os.ReadFile(ghPath)
-	if err != nil {
-		t.Fatalf("read container gh shim: %v", err)
-	}
-	patched := strings.Replace(string(body), `state="open"`, `state="merged"`, 1)
-	if patched == string(body) {
-		t.Fatalf("patch container gh shim: merged-state marker not found")
-	}
-	if err := os.WriteFile(ghPath, []byte(patched), 0755); err != nil {
-		t.Fatalf("write patched container gh shim: %v", err)
-	}
 }
 
 func forcePodmanSandbox(t *testing.T, repoDir string) {
