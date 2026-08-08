@@ -330,7 +330,7 @@ const presetMatrixBranch = "1-fix-failing-test"
 // a machine that cannot run the real agent.
 func requirePresetMatrixE2E(t *testing.T) {
 	t.Helper()
-	if os.Getenv("CI") != "" {
+	if os.Getenv("CI") != "" && !testenv.FullRegression() {
 		t.Skip("skip preset-matrix e2e in CI")
 	}
 	containerRuntimeAvailable(t)
@@ -562,10 +562,13 @@ func prFlowDepsForPresetMatrix(t *testing.T, repoDir string) Dependencies {
 // override (PATH, GH_TOKEN, GITHUB_TOKEN). It is the same shape as
 // runSandmanBinary in prflow_e2e_test.go but exposes the env so the
 // harness can prepend its gh shim without mutating the process env
-// for the whole test binary.
+// for the whole test binary. The context is a fail-fast bound, not a
+// success budget: when the real opencode agent stalls on its provider
+// the tests should surface the failure quickly instead of burning a
+// long slice of the E2E tier per preset.
 func runSandmanBinaryWithEnv(t *testing.T, binPath, workDir, ghBinDir string, args []string) (string, error) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, binPath, args...)
 	cmd.Dir = workDir

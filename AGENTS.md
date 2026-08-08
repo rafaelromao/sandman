@@ -88,18 +88,18 @@ Trigger phrases: `run full regression suite`, `run all tests`, `run the full sui
 
 ```bash
 # 1. Default unit + race (matches `make test`)
-go test -race -v ./...
+SANDMAN_FULL_REGRESSION=1 go test -race -v ./...
 
 # 2. Smoke — every provider, every buildTools preset, full timeout
-SANDMAN_TEST_PROVIDERS=all SANDMAN_RUN_SMOKE_E2E=1 \
+SANDMAN_FULL_REGRESSION=1 SANDMAN_TEST_PROVIDERS=all SANDMAN_RUN_SMOKE_E2E=1 \
   go test -tags smoke -timeout 60m ./internal/cmd -run Smoke
 
 # 3. E2E — every scenario gate, including real-agent coverage
-SANDMAN_RUN_AGENT_E2E=1 SANDMAN_TEST_PROVIDERS=all SANDMAN_E2E_GATES=all \
+SANDMAN_FULL_REGRESSION=1 SANDMAN_RUN_AGENT_E2E=1 SANDMAN_TEST_PROVIDERS=all SANDMAN_E2E_GATES=all \
   go test -tags e2e -timeout 90m ./...
 ```
 
-The real-agent E2E cases skip with a clear reason when their runtime prerequisites are absent. Aggregate the per-tier PASS/FAIL/SKIP counts and surface a final summary, never silently swallow a failure. Timeouts are tuned per tier — do not lower them; lowering reintroduces the `batch aborted by operator` false-positive from under-budgeted test processes.
+`SANDMAN_FULL_REGRESSION=1` disables the CI-only skip guards so the exhaustive run actually executes every test (see `docs/development/testing.md`). The real-agent E2E cases still skip with a clear reason when their runtime prerequisites (opencode binary, auth snapshot, podman) are absent. Aggregate the per-tier PASS/FAIL/SKIP counts and surface a final summary, never silently swallow a failure. Timeouts are tuned per tier — do not lower them; lowering reintroduces the `batch aborted by operator` false-positive from under-budgeted test processes.
 
 ## Implementation constraints
 

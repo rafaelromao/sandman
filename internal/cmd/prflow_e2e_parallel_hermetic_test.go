@@ -22,9 +22,9 @@ func TestAssertHermeticGHShimsParallel_HappyPath(t *testing.T) {
 
 	scopes := []prFlowHermeticScope{
 		{
-			RepoDir:            repoDir,
-			ContainerGhShimDir: containerGhShimDir,
-			ExpectedOriginURL:  "file:///tmp/example.git",
+			RepoDir:           repoDir,
+			GhShimDir:         containerGhShimDir,
+			ExpectedOriginURL: "file:///tmp/example.git",
 			ExpectedPRCalls: []prFlowExpectedPR{
 				{Branch: "150-fix-150", Title: "Fix 150", Body: "Fixes #150"},
 				{Branch: "151-fix-151", Title: "Fix 151", Body: "Fixes #151"},
@@ -57,18 +57,18 @@ func TestAssertHermeticGHShimsParallel_MultipleScopes(t *testing.T) {
 
 	scopes := []prFlowHermeticScope{
 		{
-			RepoDir:            repoA,
-			ContainerGhShimDir: shimA,
-			ExpectedOriginURL:  "file:///tmp/a.git",
+			RepoDir:           repoA,
+			GhShimDir:         shimA,
+			ExpectedOriginURL: "file:///tmp/a.git",
 			ExpectedPRCalls: []prFlowExpectedPR{
 				{Branch: "10-fix-10", Title: "Fix 10", Body: "Fixes #10"},
 				{Branch: "11-fix-11", Title: "Fix 11", Body: "Fixes #11"},
 			},
 		},
 		{
-			RepoDir:            repoB,
-			ContainerGhShimDir: shimB,
-			ExpectedOriginURL:  "file:///tmp/b.git",
+			RepoDir:           repoB,
+			GhShimDir:         shimB,
+			ExpectedOriginURL: "file:///tmp/b.git",
 			ExpectedPRCalls: []prFlowExpectedPR{
 				{Branch: "20-fix-20", Title: "Fix 20", Body: "Fixes #20"},
 			},

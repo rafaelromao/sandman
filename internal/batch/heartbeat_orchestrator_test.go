@@ -13,6 +13,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/github"
 	"github.com/rafaelromao/sandman/internal/prompt"
 	"github.com/rafaelromao/sandman/internal/sandbox"
+	"github.com/rafaelromao/sandman/internal/testenv"
 )
 
 type sandboxSandbox = sandbox.Sandbox
@@ -146,7 +147,7 @@ func findEvent(snapshot []events.Event, t string) *events.Event {
 }
 
 func TestRunBatch_KillsStuckRunAfterIdleTimeout(t *testing.T) {
-	if os.Getenv("CI") != "" {
+	if os.Getenv("CI") != "" && !testenv.FullRegression() {
 		t.Skip("flaky in CI: socket path sensitivity and timing issues with fake process")
 	}
 	client, proc, sb, factory, workDir := heartbeatTestSetup(t)
@@ -207,7 +208,7 @@ func TestRunBatch_KillsStuckRunAfterIdleTimeout(t *testing.T) {
 }
 
 func TestRunBatch_PromptOnlyKillsStuckRunAfterIdleTimeout(t *testing.T) {
-	if os.Getenv("CI") != "" {
+	if os.Getenv("CI") != "" && !testenv.FullRegression() {
 		t.Skip("flaky in CI: socket path sensitivity and timing issues with fake process")
 	}
 	client, proc, _, factory, workDir := heartbeatTestSetup(t)

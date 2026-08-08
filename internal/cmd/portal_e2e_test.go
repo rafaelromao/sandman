@@ -21,6 +21,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/daemon"
 	"github.com/rafaelromao/sandman/internal/events"
 	"github.com/rafaelromao/sandman/internal/paths"
+	"github.com/rafaelromao/sandman/internal/testenv"
 )
 
 func TestPortal_E2E_TwoLiveRuns(t *testing.T) {
@@ -71,7 +72,7 @@ func TestPortal_E2E_TwoLiveRuns(t *testing.T) {
 
 func TestPortal_E2E_AbortStopsOneIssueAndBatchContinues(t *testing.T) {
 	// CI: STALE — abort path uses worktree sandbox; platform support gate below is the real guard.
-	if os.Getenv("CI") != "" {
+	if os.Getenv("CI") != "" && !testenv.FullRegression() {
 		t.Skip("skip e2e in CI")
 	}
 	if !portalAbortSupported() {
@@ -164,7 +165,7 @@ func TestPortal_E2E_AbortStopsOneIssueAndBatchContinues(t *testing.T) {
 
 func TestPortal_E2E_AbortStopsOneIssueAndBatchContinues_Container(t *testing.T) {
 	// CI: STALE — containerRuntimeAvailable below already self-skips; podman install on Linux CI is redundant.
-	if os.Getenv("CI") != "" {
+	if os.Getenv("CI") != "" && !testenv.FullRegression() {
 		t.Skip("skip e2e in CI")
 	}
 	if !portalAbortSupported() {
@@ -246,7 +247,7 @@ func TestPortal_E2E_AbortStopsOneIssueAndBatchContinues_Container(t *testing.T) 
 
 func TestPortal_E2E_MixedBatchShowsBatchMembershipAndFiltersSiblingLogs(t *testing.T) {
 	// CI: STALE — uses buildSandmanBinary + startPortalBinary; no provider auth or runtime required.
-	if os.Getenv("CI") != "" {
+	if os.Getenv("CI") != "" && !testenv.FullRegression() {
 		t.Skip("skip e2e in CI")
 	}
 
@@ -365,7 +366,7 @@ func containerRuntimeAvailable(t *testing.T) bool {
 		}
 	}
 	// CI: STALE — generic self-skip below already covers macOS CI; the CI-specific message is misleading because the workflow installs podman on Linux.
-	if os.Getenv("CI") != "" {
+	if os.Getenv("CI") != "" && !testenv.FullRegression() {
 		t.Skip("no container runtime available in CI")
 	}
 	t.Skip("no container runtime available (podman or docker)")
