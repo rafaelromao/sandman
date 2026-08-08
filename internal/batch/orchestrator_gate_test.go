@@ -13,6 +13,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/events"
 	"github.com/rafaelromao/sandman/internal/github"
+	"github.com/rafaelromao/sandman/internal/testenv"
 )
 
 const gateTestBranch = "42-fix-bug"
@@ -27,7 +28,7 @@ func gateTestRunOptions() runSessionOptions {
 
 func runCleanGateCase(t *testing.T, pr *github.PR) (AgentRunResult, []events.Event, int) {
 	t.Helper()
-	workDir := t.TempDir()
+	workDir := testenv.MkdirShort(t, "gate-")
 	oldWD, err := os.Getwd()
 	if err != nil {
 		t.Fatalf("get working directory: %v", err)
