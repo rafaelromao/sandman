@@ -16,31 +16,24 @@ const (
 	gatePollBudgetExhausted
 )
 
-// GatePollInitial, GatePollMaxSleep, and GatePollBudget are the package-level
-// defaults applied when runSessionOptions does not override them. NewOrchestrator
-// sets the production values (120s/600s/1800s) on every orchestrator it builds,
-// so production paths never hit these defaults. Tests that build Orchestrator
-// structs directly without going through NewOrchestrator get the test-friendly
-// values set here, which keeps the existing retry-focused test fixtures from
-// blocking inside the gate wait.
 var (
-	GatePollInitial  = time.Millisecond
-	GatePollMaxSleep = time.Millisecond
-	GatePollBudget   = 5 * time.Millisecond
+	defaultGatePollInitial  = time.Millisecond
+	defaultGatePollMaxSleep = time.Millisecond
+	defaultGatePollBudget   = 5 * time.Millisecond
 )
 
 func pollPRGate(ctx context.Context, client github.Client, branch string, opts runSessionOptions) gateResult {
 	initial := opts.gatePollInitial
 	if initial <= 0 {
-		initial = GatePollInitial
+		initial = defaultGatePollInitial
 	}
 	maxSleep := opts.gatePollMaxSleep
 	if maxSleep <= 0 {
-		maxSleep = GatePollMaxSleep
+		maxSleep = defaultGatePollMaxSleep
 	}
 	budget := opts.gatePollBudget
 	if budget <= 0 {
-		budget = GatePollBudget
+		budget = defaultGatePollBudget
 	}
 
 	var totalSlept time.Duration
