@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -228,6 +229,9 @@ func NewCleanCmd(deps Dependencies) *cobra.Command {
 				}
 
 				actions := collectCleanActions(idx, batchindex.StatusArchived)
+				if activeActions := collectEligibleActiveActions(idx, probe); len(activeActions) > 0 {
+					actions = append(actions, activeActions...)
+				}
 				if actions == nil {
 					actions = []cleanAction{}
 				}
@@ -332,6 +336,85 @@ func collectCleanActions(idx *batchindex.Index, targetStatus batchindex.Status) 
 		}
 	}
 	return actions
+}
+
+// collectEligibleActiveActions returns cleanActions for StatusActive
+// batches whose daemon is gone and whose run manifests are all in a
+// terminal status. The umbrella `clean --all` mode promotes these to
+// the cleanup set: they are not strictly `StatusArchived` because no
+// one ever ran `archive batch` (whole-batch archive), but their runs
+// are all terminal (success/failure/aborted/blocked) and no live
+// socket remains, so reclaiming the worktree and the batch dir is
+// safe. Per-row archive (`archive run`, `archive older-than`,
+// `archive stale`) marks each RunRecord archived but never promotes
+// the batch-level Status, which is the gap that lets worktrees pile
+// up under `clean --all`.
+func collectEligibleActiveActions(idx *batchindex.Index, probe runActivityProbe) []cleanAction {
+	var actions []cleanAction
+	for _, entry := range idx.Batches {
+		if entry.Status != batchindex.StatusActive {
+			continue
+		}
+		if entry.Path == "" {
+			continue
+		}
+		action, ok := buildEligibleActiveAction(entry, probe)
+		if !ok {
+			continue
+		}
+		actions = append(actions, action)
+	}
+	return actions
+}
+
+// buildEligibleActiveAction returns a cleanAction for a single
+// StatusActive entry iff its batch daemon is gone and every run
+// manifest under it has a terminal status. The worktree/branch fields
+// are populated from any row manifest that carries them — usually the
+// first non-empty one — since the per-row manifest schema carries
+// per-row worktree paths.
+func buildEligibleActiveAction(entry batchindex.Batch, probe runActivityProbe) (cleanAction, bool) {
+	if probe != nil && probe(entry.Path) {
+		return cleanAction{}, false
+	}
+	runsDir := filepath.Join(entry.Path, "runs")
+	entries, err := os.ReadDir(runsDir)
+	if err != nil {
+		return cleanAction{}, false
+	}
+	action := cleanAction{
+		BatchID:   entry.ID,
+		BatchPath: entry.Path,
+		Kind:      entry.Kind,
+		Status:    entry.Status,
+	}
+	sawRun := false
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		sawRun = true
+		manifestPath := filepath.Join(runsDir, e.Name(), "run.json")
+		data, err := os.ReadFile(manifestPath)
+		if err != nil {
+			return cleanAction{}, false
+		}
+		var manifest batchindex.RunManifest
+		if err := json.Unmarshal(data, &manifest); err != nil {
+			return cleanAction{}, false
+		}
+		if !isTerminalRunManifestStatus(manifest.Status) {
+			return cleanAction{}, false
+		}
+		if action.Worktree == "" {
+			action.Worktree = manifest.WorktreePath
+			action.Branch = manifest.Branch
+		}
+	}
+	if !sawRun {
+		return cleanAction{}, false
+	}
+	return action, true
 }
 
 func printCleanReport(cmd *cobra.Command, actions []cleanAction, orphanPaths []string, tempDirs []string, images []string, dryRun bool) {
