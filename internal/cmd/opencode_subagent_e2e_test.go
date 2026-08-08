@@ -27,7 +27,7 @@ func TestOpencodeSubagentPermissionAllowAll(t *testing.T) {
 	// FIX: merged gh shim is prepended on the host PATH even though its relative
 	// paths only resolve inside the container. The follow-up branch should split
 	// host/container shims before this E2E is brought back into CI. See #2459.
-	if os.Getenv("CI") != "" {
+	if os.Getenv("CI") != "" && !testenv.FullRegression() {
 		t.Skip("skip e2e in CI")
 	}
 	if !podmanAvailable(t) {
@@ -40,12 +40,18 @@ func TestOpencodeSubagentPermissionAllowAll(t *testing.T) {
 	t.Chdir(repoDir)
 	_ = initRunIntegrationRepoWithRemote(t, repoDir)
 
-	isolatedHome := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(isolatedHome, ".ssh"), 0755); err != nil {
-		t.Fatalf("create isolated ssh dir: %v", err)
-	}
-	t.Setenv("HOME", isolatedHome)
-	t.Setenv("XDG_CONFIG_HOME", filepath.Join(isolatedHome, ".config"))
+	// Note: this test deliberately does NOT isolate HOME/XDG_CONFIG_HOME.
+	// The earlier isolated-HOME shape gave rootless podman a cold container
+	// store on a brand-new $HOME/.local/share/containers tree, and the
+	// orchestrator's BuildImage inside `sandman run` blew the run budget
+	// re-pulling debian + opencode under that cold store. Sharing the
+	// runner's HOME lets the orchestrator reuse the podman layer cache
+	// warmed by the smoke and sandbox tiers that ran earlier in the same
+	// job. GitHub calls are still mocked by the gh shim prepended to
+	// PATH below, so the loss of HOME isolation does not re-introduce
+	// real-network calls. The host/container shim split (#2459) is
+	// preserved by the PATH ordering (ghShimDir first, .sandman/bin last)
+	// applied in runSandmanBinaryWithTimeout.
 
 	ghShimDir := t.TempDir()
 	writeMergedFakeGHShim(t, ghShimDir)
@@ -64,7 +70,7 @@ func TestOpencodeSubagentPermissionAllowAll(t *testing.T) {
 	writeMergedFakeGHShimForContainer(t, filepath.Join(repoDir, ".sandman", "bin"))
 	installPermissionFakeOpenCodeForContainer(t, repoDir)
 
-	out, err = runSandmanBinaryWithTimeout(t, binPath, repoDir, 60*time.Second, "run", "--sandbox", "podman", "1")
+	out, err = runSandmanBinaryWithTimeout(t, binPath, repoDir, 10*time.Minute, "run", "--sandbox", "podman", "1")
 	if err != nil {
 		ghLog, _ := os.ReadFile(filepath.Join(ghShimDir, "gh-calls.log"))
 		t.Fatalf("sandman run failed: %v\noutput:\n%s\ngh log:\n%s", err, out, ghLog)
@@ -208,19 +214,9 @@ func writeMergedFakeGHShim(t *testing.T, dir string) {
 
 func writeMergedFakeGHShimForContainer(t *testing.T, dir string) {
 	t.Helper()
+	// The container shim already answers `pr list` with state "merged"
+	// deterministically, so no marker patch is needed.
 	writeFakeGHShimForContainer(t, dir)
-	ghPath := filepath.Join(dir, "gh")
-	body, err := os.ReadFile(ghPath)
-	if err != nil {
-		t.Fatalf("read container gh shim: %v", err)
-	}
-	patched := strings.Replace(string(body), `state="open"`, `state="merged"`, 1)
-	if patched == string(body) {
-		t.Fatalf("patch container gh shim: merged-state marker not found")
-	}
-	if err := os.WriteFile(ghPath, []byte(patched), 0755); err != nil {
-		t.Fatalf("write patched container gh shim: %v", err)
-	}
 }
 
 func forcePodmanSandbox(t *testing.T, repoDir string) {

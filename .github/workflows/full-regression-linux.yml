@@ -14,6 +14,7 @@ jobs:
     timeout-minutes: 360
     env:
       CI: true
+      SANDMAN_FULL_REGRESSION: "1"
       GIT_TERMINAL_PROMPT: "0"
       DEBIAN_FRONTEND: noninteractive
       PAGER: cat
@@ -49,98 +50,66 @@ jobs:
           test "$(podman info --format '{{.Host.OCIRuntime.Name}}')" = "runc"
           podman run --rm alpine true
 
-      - name: Run full regression suite
+      - name: Install opencode CLI
+        run: |
+          curl -fsSL https://opencode.ai/install | bash
+          echo "$HOME/.opencode/bin" >> "$GITHUB_PATH"
+
+      - name: Provision opencode auth
+        env:
+          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+        run: |
+          if [ -n "$OPENCODE_API_KEY" ]; then
+            mkdir -p "$HOME/.local/share/opencode"
+            printf '{"opencode": {"type": "api", "key": "%s"}}\n' "$OPENCODE_API_KEY" > "$HOME/.local/share/opencode/auth.json"
+          else
+            echo "No OPENCODE_API_KEY secret configured; real-agent tests that require auth will skip cleanly."
+          fi
+
+      - name: Prepare regression report
         shell: bash
         run: |
-          set -uo pipefail
-
-          RESULTS_FILE=$(mktemp)
-          trap 'rm -f "$RESULTS_FILE"' EXIT
-
-          log_tier() {
-            local name=$1 status=$2 reason=$3
-            printf '%s|%s|%s\n' "$name" "$status" "$reason" >> "$RESULTS_FILE"
-          }
-
-          run_tier() {
-            local name=$1 cmd=$2
-            echo "▶ Running $name"
-            echo "::group::$name"
-
-            set +e
-            bash -c "$cmd"
-            local rc=$?
-            set -e
-            echo "::endgroup::"
-
-            if [ $rc -eq 0 ]; then
-              log_tier "$name" "PASS" ""
-              echo "  $name: PASS"
-            else
-              log_tier "$name" "FAIL" "exit code $rc"
-              echo "  $name: FAIL (exit code $rc)"
-            fi
-          }
-
-          skip_tier() {
-            local name=$1 reason=$2
-            log_tier "$name" "SKIP" "$reason"
-            echo "  $name: SKIP ($reason)"
-          }
-
-          # Tier 1: Unit tests + race detector (matches `make test`)
-          run_tier "Unit + Race" "go test -race -v ./..."
-
-          # Tier 2: Focused smoke tests
-          run_tier "Smoke" "SANDMAN_TEST_PROVIDERS=all SANDMAN_RUN_SMOKE_E2E=1 go test -tags smoke -timeout 60m ./internal/cmd -run Smoke"
-
-          # Tier 3: E2E tests, every scenario gate and real-agent matrix
-          run_tier "E2E" "SANDMAN_RUN_AGENT_E2E=1 SANDMAN_TEST_PROVIDERS=all SANDMAN_E2E_GATES=all go test -tags e2e -timeout 90m ./..."
-
+          mkdir -p regression-artifacts
           {
             echo "# Full Regression Report — Linux"
             echo ""
-            echo "| Tier | Status | Details |"
-            echo "|------|--------|---------|"
-            while IFS='|' read -r name status reason; do
-              emoji=""
-              case "$status" in
-                PASS) emoji="✅" ;;
-                FAIL) emoji="❌" ;;
-                SKIP) emoji="⏭️" ;;
-                TIMEOUT) emoji="⏰" ;;
-              esac
-              echo "| $name | $emoji $status | $reason |"
-            done < "$RESULTS_FILE"
-            echo ""
             echo "Workflow run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
-          } >> "$GITHUB_STEP_SUMMARY"
-
-          {
-            echo "# Full Regression Report — Linux"
             echo ""
-            echo "| Tier | Status | Details |"
-            echo "|------|--------|---------|"
-            while IFS='|' read -r name status reason; do
-              echo "| $name | $status | $reason |"
-            done < "$RESULTS_FILE"
-            echo ""
-            echo "Workflow run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
           } > "$REPORT_FILE"
 
-          final_rc=0
-          while IFS='|' read -r name status reason; do
-            if [ "$status" = "FAIL" ] || [ "$status" = "TIMEOUT" ]; then
-              final_rc=1
-            fi
-          done < "$RESULTS_FILE"
+      # Tier 1: Unit tests + race detector (matches `make test`). The default
+      # per-package `go test` timeout (10m) applies; 30m is only a backstop.
+      - name: Run regression tier — Unit + Race
+        shell: bash
+        run: |
+          scripts/full_regression_tier.sh "Unit + Race" \
+            "go test -race -json ./..." \
+            "30m" "$REPORT_FILE" "regression-artifacts"
 
-          exit $final_rc
+      # Tier 2: Focused smoke tests. `-timeout 60m` stays the tuned budget;
+      # 65m is only a backstop.
+      - name: Run regression tier — Smoke
+        shell: bash
+        run: |
+          scripts/full_regression_tier.sh "Smoke" \
+            "SANDMAN_TEST_PROVIDERS=all SANDMAN_RUN_SMOKE_E2E=1 go test -tags smoke -json -timeout 60m ./internal/cmd -run Smoke" \
+            "65m" "$REPORT_FILE" "regression-artifacts"
+
+      # Tier 3: E2E tests, every scenario gate and real-agent matrix.
+      # `-timeout 90m` stays the tuned budget; 95m is only a backstop.
+      - name: Run regression tier — E2E
+        shell: bash
+        run: |
+          scripts/full_regression_tier.sh "E2E" \
+            "SANDMAN_RUN_AGENT_E2E=1 SANDMAN_TEST_PROVIDERS=all SANDMAN_E2E_GATES=all go test -tags e2e -json -timeout 90m ./..." \
+            "95m" "$REPORT_FILE" "regression-artifacts"
 
       - name: Upload regression report
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: regression-report-linux
-          path: regression-report-linux.md
+          path: |
+            regression-report-linux.md
+            regression-artifacts
           if-no-files-found: ignore

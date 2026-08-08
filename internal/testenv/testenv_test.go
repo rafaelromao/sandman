@@ -303,6 +303,34 @@ func TestIsTestFastEnabled_TrueReturnsFalse(t *testing.T) {
 	}
 }
 
+func TestFullRegression_UnsetReturnsFalse(t *testing.T) {
+	t.Setenv(CanonicalFullRegressionEnvVar, "")
+	if got := FullRegression(); got {
+		t.Errorf("FullRegression() with empty env = %v, want false", got)
+	}
+}
+
+func TestFullRegression_1ReturnsTrue(t *testing.T) {
+	t.Setenv(CanonicalFullRegressionEnvVar, "1")
+	if got := FullRegression(); !got {
+		t.Errorf("FullRegression() with env = %q, want true", os.Getenv(CanonicalFullRegressionEnvVar))
+	}
+}
+
+func TestFullRegression_WhitespaceReturnsFalse(t *testing.T) {
+	t.Setenv(CanonicalFullRegressionEnvVar, "  ")
+	if got := FullRegression(); got {
+		t.Errorf("FullRegression() with whitespace env = %q, want false", os.Getenv(CanonicalFullRegressionEnvVar))
+	}
+}
+
+func TestFullRegression_TrueReturnsFalse(t *testing.T) {
+	t.Setenv(CanonicalFullRegressionEnvVar, "true")
+	if got := FullRegression(); got {
+		t.Errorf("FullRegression() with env = %q, want false (only '1' enables)", os.Getenv(CanonicalFullRegressionEnvVar))
+	}
+}
+
 func TestMkdirShort_ReturnsPathUnderTmp(t *testing.T) {
 	got := MkdirShort(t, "sandman-test-")
 	if !strings.HasPrefix(got, "/tmp/") {

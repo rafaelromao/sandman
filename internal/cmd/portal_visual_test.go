@@ -13,6 +13,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/rafaelromao/sandman/internal/testenv"
 )
 
 // visualChromiumMu serialises chromium invocations across the visual tests.
@@ -277,7 +279,7 @@ func itoa(n int) string {
 // unbreakable run-id token in the meta-line breaks inside the value cell
 // and does not force the Run column wider than its cap.
 func TestPortal_Visual_MetaLineDoesNotForceColumnWidth(t *testing.T) {
-	if os.Getenv("CI") != "" {
+	if os.Getenv("CI") != "" && !testenv.FullRegression() {
 		t.Skip("skip visual in CI")
 	}
 	fixture := buildVisualFixture(t)
@@ -310,7 +312,7 @@ func TestPortal_Visual_MetaLineDoesNotForceColumnWidth(t *testing.T) {
 // TestPortal_Visual_NoHorizontalScrollAt1280px asserts the table fits
 // the viewport with no horizontal scroll inside .table-shell.
 func TestPortal_Visual_NoHorizontalScrollAt1280px(t *testing.T) {
-	if os.Getenv("CI") != "" {
+	if os.Getenv("CI") != "" && !testenv.FullRegression() {
 		t.Skip("skip visual in CI")
 	}
 	fixture := buildVisualFixture(t)
@@ -336,7 +338,7 @@ func TestPortal_Visual_NoHorizontalScrollAt1280px(t *testing.T) {
 // Chromium's headless mode has a minimum window width of ~500px, so we
 // use 500x720 as the narrowest we can test.
 func TestPortal_Visual_RunRowStaysShortOnMobileViewport(t *testing.T) {
-	if os.Getenv("CI") != "" {
+	if os.Getenv("CI") != "" && !testenv.FullRegression() {
 		t.Skip("skip visual in CI")
 	}
 	fixture := buildVisualFixture(t)

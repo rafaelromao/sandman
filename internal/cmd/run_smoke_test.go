@@ -129,6 +129,21 @@ func prepareSmokeProvider(t *testing.T, tc smokeProviderCase) (runtime string, r
 	t.Setenv("HOME", homeDir)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(homeDir, ".config"))
 
+	// Keep podman's rootless container store rooted in the REAL data home
+	// instead of the isolated temp HOME. With an isolated HOME, rootless
+	// podman creates its storage under $HOME/.local/share/containers; the
+	// container runs with a user-namespace-mapped root, so the overlay
+	// layers end up owned by the mapped root UID. The unprivileged test
+	// process then cannot remove them and t.TempDir() cleanup fails the
+	// test even though the run itself succeeded (SMOKE_OK printed twice).
+	// Redirecting XDG_DATA_HOME keeps the store out of the test tempdir
+	// and reuses the runner's warm podman layer cache.
+	realDataHome := os.Getenv("XDG_DATA_HOME")
+	if realDataHome == "" {
+		realDataHome = filepath.Join(realHome, ".local", "share")
+	}
+	t.Setenv("XDG_DATA_HOME", realDataHome)
+
 	warmSmokeRuntime(t, runtime)
 
 	s := &scaffold.Scaffolder{}
@@ -150,7 +165,7 @@ func prepareSmokeProvider(t *testing.T, tc smokeProviderCase) (runtime string, r
 	branch := tc.wantBranch
 	gh := &fakeGitHubClient{
 		issues: map[int]*github.Issue{issue.Number: &issue},
-		prs:    map[string]*github.PR{branch: mergedPR(branch, "")},
+		prs:    map[string]*github.PR{branch: mergedPR(branch, issue.Number)},
 	}
 	store := &fakeStore{config: depsCfg}
 	deps = Dependencies{
@@ -211,8 +226,8 @@ func runSmokeProvider(t *testing.T, tc smokeProviderCase) {
 	assertSmokeProviderRun(t, out, tc, repoDir, issue)
 }
 
-func mergedPR(branch, sha string) *github.PR {
-	return &github.PR{Number: 1, State: "closed", Merged: true, HeadRefName: branch, Body: "Fixes #1"}
+func mergedPR(branch string, issueNumber int) *github.PR {
+	return &github.PR{Number: issueNumber, State: "closed", Merged: true, HeadRefName: branch, Body: fmt.Sprintf("Fixes #%d", issueNumber)}
 }
 
 func runSmokeProviderTwice(t *testing.T, tc smokeProviderCase, secondArgs ...string) {
@@ -381,6 +396,13 @@ func copySmokePath(src, dst string) error {
 	}
 	if info.IsDir() {
 		return copySmokeDir(src, dst)
+	}
+	if !info.Mode().IsRegular() {
+		// Skip sockets, FIFOs, and device nodes: e.g. a live opencode
+		// token-optimizer git repo leaves a fsmonitor--daemon.ipc unix
+		// socket under ~/.local/share/opencode that cannot be opened as
+		// a regular file. The agent never needs these in the snapshot.
+		return nil
 	}
 	return copySmokeFile(src, dst, info.Mode())
 }
@@ -690,7 +712,7 @@ func TestSmoke_ContainerBuildFailure(t *testing.T) {
 	branch := "2430-container-build-failure"
 	gh := &fakeGitHubClient{
 		issues: map[int]*github.Issue{issue.Number: &issue},
-		prs:    map[string]*github.PR{branch: mergedPR(branch, "")},
+		prs:    map[string]*github.PR{branch: mergedPR(branch, issue.Number)},
 	}
 	store := &fakeStore{config: cfg}
 	deps := Dependencies{
