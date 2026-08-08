@@ -263,7 +263,7 @@ func NewCleanCmd(deps Dependencies) *cobra.Command {
 				var outcomes []cleanOutcome
 				var cleanErr error
 				if !dryRun {
-					outcomes, cleanErr = executeClean(actions, gr, layout, remover)
+					outcomes, cleanErr = executeCleanWithProbe(actions, gr, layout, remover, probe)
 					orphanRemoved, err = cleanupOrphanedBatches(layout, deps.EventLog, probe, remover)
 					cleanErr = errors.Join(cleanErr, err)
 				} else {
@@ -430,7 +430,7 @@ func buildEligibleActiveAction(entry batchindex.Batch, probe runActivityProbe, l
 		if err := json.Unmarshal(data, &manifest); err != nil {
 			return cleanAction{}, false
 		}
-		if !reclaimableRunManifest(manifest, entry, e.Name()) {
+		if !reclaimableRunManifest(manifest, entry, e.Name(), layout) {
 			return cleanAction{}, false
 		}
 		if !isTerminalRunManifestStatus(manifest.Status) {
@@ -463,19 +463,20 @@ func appendArchivedRunRef(action *cleanAction, entry batchindex.Batch, rec batch
 		return false
 	}
 	manifest, err := batchindex.ReadManifest(filepath.Join(layout.RepoRoot, rec.ArchivePath))
-	if err != nil || !reclaimableRunManifest(manifest, entry, rec.RunID) || !isTerminalRunManifestStatus(manifest.Status) {
+	if err != nil || !reclaimableRunManifest(manifest, entry, rec.RunID, layout) || !isTerminalRunManifestStatus(manifest.Status) {
 		return false
 	}
 	appendWorktreeRef(action, manifest.WorktreePath, manifest.Branch)
 	return true
 }
 
-func reclaimableRunManifest(manifest batchindex.RunManifest, entry batchindex.Batch, runID string) bool {
-	return manifest.RunID == runID &&
+func reclaimableRunManifest(manifest batchindex.RunManifest, entry batchindex.Batch, runID string, layout paths.Layout) bool {
+	return runID != "" &&
+		manifest.RunID == runID &&
 		manifest.BatchID == entry.ID &&
 		manifest.Kind == entry.Kind &&
-		manifest.Branch != "" &&
-		manifest.WorktreePath != ""
+		validateBranchName(manifest.Branch) == nil &&
+		validateOwnedPath(manifest.WorktreePath, layout.WorktreeDir) == nil
 }
 
 func appendWorktreeRef(action *cleanAction, worktree, branch string) {
@@ -574,6 +575,10 @@ func printCleanReport(cmd *cobra.Command, actions []cleanAction, orphanPaths []s
 }
 
 func executeClean(actions []cleanAction, gr gitRunner, layout paths.Layout, remover CleanupRemover) ([]cleanOutcome, error) {
+	return executeCleanWithProbe(actions, gr, layout, remover, nil)
+}
+
+func executeCleanWithProbe(actions []cleanAction, gr gitRunner, layout paths.Layout, remover CleanupRemover, probe runActivityProbe) ([]cleanOutcome, error) {
 	if len(actions) == 0 {
 		return nil, nil
 	}
@@ -585,6 +590,13 @@ func executeClean(actions []cleanAction, gr gitRunner, layout paths.Layout, remo
 			entry := current.Resolve(a.BatchID)
 			if entry == nil || entry.Path != a.BatchPath || !cleanStatusCompatible(a.Status, a.IsUnavail, entry.Status) {
 				continue
+			}
+			if a.Status == batchindex.StatusActive && probe != nil {
+				fresh, ok := buildEligibleActiveAction(*entry, probe, layout)
+				if !ok {
+					continue
+				}
+				a = fresh
 			}
 			if a.Err != nil {
 				outcomes = append(outcomes, cleanOutcome{Action: a, Err: a.Err})
