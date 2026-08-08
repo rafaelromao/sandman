@@ -239,6 +239,55 @@ func TestPollPRGateStopsWhenPRMerges(t *testing.T) {
 	}
 }
 
+type gateAvailabilityClient struct {
+	fakeGitHubClient
+	responses []*github.PR
+	lookupErr error
+	calls     int
+}
+
+func (c *gateAvailabilityClient) FindPRByBranch(ctx context.Context, branch string) (*github.PR, error) {
+	_ = ctx
+	_ = branch
+	index := c.calls
+	c.calls++
+	if c.lookupErr != nil {
+		return nil, c.lookupErr
+	}
+	if index < len(c.responses) {
+		return c.responses[index], nil
+	}
+	return nil, nil
+}
+
+func TestPollPRGatePreservesLookupErrors(t *testing.T) {
+	client := &gateAvailabilityClient{
+		lookupErr: context.DeadlineExceeded,
+	}
+
+	got := pollPRGate(context.Background(), client, gateTestBranch, gateTestRunOptions())
+	if got != gatePollUnavailable {
+		t.Fatalf("poll result = %v, want gatePollUnavailable", got)
+	}
+}
+
+func TestPollPRGateDetectsDisappearedPR(t *testing.T) {
+	client := &gateAvailabilityClient{
+		responses: []*github.PR{
+			{
+				State:             "open",
+				StatusCheckRollup: "pending",
+			},
+			nil,
+		},
+	}
+
+	got := pollPRGate(context.Background(), client, gateTestBranch, gateTestRunOptions())
+	if got != gatePollPRMissing {
+		t.Fatalf("poll result = %v, want gatePollPRMissing", got)
+	}
+}
+
 func TestConfirmExternalGateRejectsMergedPRWithoutClosingReference(t *testing.T) {
 	branch := gateTestBranch
 	session := &runSession{
@@ -256,7 +305,7 @@ func TestConfirmExternalGateRejectsMergedPRWithoutClosingReference(t *testing.T)
 		},
 	}
 
-	status, extras, handled := session.confirmExternalGate(context.Background(), t.TempDir(), branch, "")
+	status, extras, handled := session.confirmExternalGate(context.Background(), t.TempDir(), branch, "", "run-test")
 	if !handled {
 		t.Fatal("expected merged gate to be handled")
 	}
@@ -280,7 +329,7 @@ func TestRecordExternalGateBlockerPersistsTaskAndLog(t *testing.T) {
 	logPath := filepath.Join(workDir, ".sandman", "run.log")
 	session := &runSession{deps: runDeps{errorLog: io.Discard}}
 
-	session.recordExternalGateBlocker(workDir, logPath, "pending")
+	session.recordExternalGateBlocker(workDir, logPath, "run-test", "pending")
 
 	task, err := os.ReadFile(taskPath)
 	if err != nil {
@@ -293,7 +342,16 @@ func TestRecordExternalGateBlockerPersistsTaskAndLog(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read run log: %v", err)
 	}
-	if !strings.Contains(string(log), "external gate pending") || !strings.Contains(string(log), "next action:") {
+	if !strings.Contains(string(log), "[run-test]") || !strings.Contains(string(log), "external gate pending") || !strings.Contains(string(log), "next action:") {
 		t.Fatalf("run log blocker record = %q, want failure and next action", log)
+	}
+
+	session.recordExternalGateBlocker(workDir, logPath, "run-test", "failed")
+	updatedTask, err := os.ReadFile(taskPath)
+	if err != nil {
+		t.Fatalf("read updated task: %v", err)
+	}
+	if strings.Count(string(updatedTask), "## External Gate") != 1 || strings.Contains(string(updatedTask), "gate is pending") || !strings.Contains(string(updatedTask), "gate is failed") {
+		t.Fatalf("updated task blocker = %q, want one current failed-gate section", updatedTask)
 	}
 }

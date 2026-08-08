@@ -2657,7 +2657,7 @@ loop:
 				}
 			}
 			if events.RunStatusFromPayload(result.Status).IsSuccess() {
-				if gateStatus, extras, handled := s.handleExternalGate(ctx, wt.WorkDir(), branch, logPath); handled {
+				if gateStatus, extras, handled := s.handleExternalGate(ctx, wt.WorkDir(), branch, logPath, runID); handled {
 					result.Status = gateStatus
 					terminalExtras = mergeBlockerExtras(terminalExtras, extras)
 					break loop
@@ -2704,7 +2704,7 @@ loop:
 						break
 					}
 					if events.RunStatusFromPayload(result.Status).IsSuccess() {
-						if gateStatus, extras, handled := s.handleExternalGate(ctx, wt.WorkDir(), branch, logPath); handled {
+						if gateStatus, extras, handled := s.handleExternalGate(ctx, wt.WorkDir(), branch, logPath, runID); handled {
 							result.Status = gateStatus
 							terminalExtras = mergeBlockerExtras(terminalExtras, extras)
 							break loop

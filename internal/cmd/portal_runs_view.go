@@ -1438,7 +1438,7 @@ func (v *portalRunsView) runsFromActiveBatch(repoRoot string, active portalActiv
 				}
 			}
 		}
-		if state != nil && !state.IsActive() && (state.Status() == "queued" || (state.Status() == "blocked" && blocked == nil)) {
+		if state != nil && !state.IsActive() && (state.Status() == "queued" || (state.Status() == "blocked" && blocked == nil && !isExternalGateRunState(state))) {
 			state = nil
 		}
 		run := v.runFromActiveBatchIssue(repoRoot, active, issueNumber, state, blocked, queued, active.LiveOutput, eventsByRun, deadBatches)
@@ -1462,6 +1462,14 @@ func (v *portalRunsView) runsFromActiveBatch(repoRoot string, active portalActiv
 		}
 	}
 	return runs, usedRunIDs
+}
+
+func isExternalGateRunState(state *events.RunState) bool {
+	if state == nil || state.Finished == nil {
+		return false
+	}
+	blocker, _ := state.Finished.Payload["blocker"].(string)
+	return blocker == "external-gate"
 }
 
 func (v *portalRunsView) latestRunStateForIssue(runStates []events.RunState, issueNumber int, batchStart time.Time) *events.RunState {

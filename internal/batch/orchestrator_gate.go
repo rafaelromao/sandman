@@ -18,6 +18,8 @@ const (
 	gateResolved gateResult = iota
 	gateFailed
 	gatePollBudgetExhausted
+	gatePollUnavailable
+	gatePollPRMissing
 )
 
 var (
@@ -44,10 +46,14 @@ func pollPRGate(ctx context.Context, client github.Client, branch string, opts r
 	defer cancel()
 	deadline := time.Now().Add(budget)
 	delay := initial
+	lastLookupUnavailable := false
 
 	for {
 		remaining := time.Until(deadline)
 		if remaining <= 0 {
+			if lastLookupUnavailable {
+				return gatePollUnavailable
+			}
 			return gatePollBudgetExhausted
 		}
 		if delay > remaining {
@@ -55,6 +61,9 @@ func pollPRGate(ctx context.Context, client github.Client, branch string, opts r
 		}
 		select {
 		case <-pollCtx.Done():
+			if lastLookupUnavailable {
+				return gatePollUnavailable
+			}
 			return gatePollBudgetExhausted
 		case <-time.After(delay):
 		}
@@ -65,7 +74,12 @@ func pollPRGate(ctx context.Context, client github.Client, branch string, opts r
 			return gateResolved
 		case "failed":
 			return gateFailed
+		case "unavailable":
+			lastLookupUnavailable = true
+		case "none":
+			return gatePollPRMissing
 		default:
+			lastLookupUnavailable = false
 			delay = delay * 2
 			if delay > maxSleep {
 				delay = maxSleep
@@ -119,7 +133,7 @@ func checkPRExternalGate(ctx context.Context, client github.Client, branch strin
 // result when the branch has an open PR waiting on CI or review. It is shared
 // by fresh and continuation runs so an explicit intervention cannot re-enter
 // the old failure/retry path while the same PR gate is still unresolved.
-func (s *runSession) handleExternalGate(ctx context.Context, workDir, branch, logPath string) (string, map[string]any, bool) {
+func (s *runSession) handleExternalGate(ctx context.Context, workDir, branch, logPath, runID string) (string, map[string]any, bool) {
 	if s.deps.githubClient == nil {
 		return "", nil, false
 	}
@@ -135,41 +149,44 @@ func (s *runSession) handleExternalGate(ctx context.Context, workDir, branch, lo
 		return "", nil, false
 	}
 	if gate == "resolved" {
-		return s.confirmExternalGate(ctx, workDir, branch, logPath)
+		return s.confirmExternalGate(ctx, workDir, branch, logPath, runID)
 	}
 	if gate == "failed" {
-		return s.blockExternalGate(workDir, logPath, "failed")
+		return s.blockExternalGate(workDir, logPath, runID, "failed")
 	}
 
 	polled := pollPRGate(ctx, s.deps.githubClient, branch, s.opts)
 	if polled == gateResolved {
-		return s.confirmExternalGate(ctx, workDir, branch, logPath)
+		return s.confirmExternalGate(ctx, workDir, branch, logPath, runID)
 	}
 	if polled == gateFailed {
-		return s.blockExternalGate(workDir, logPath, "failed")
+		return s.blockExternalGate(workDir, logPath, runID, "failed")
+	}
+	if polled == gatePollUnavailable || polled == gatePollPRMissing {
+		return s.blockExternalGate(workDir, logPath, runID, "unavailable")
 	}
 	if initialUnavailable {
-		return s.blockExternalGate(workDir, logPath, "unavailable")
+		return s.blockExternalGate(workDir, logPath, runID, "unavailable")
 	}
-	return s.blockExternalGate(workDir, logPath, "pending")
+	return s.blockExternalGate(workDir, logPath, runID, "pending")
 }
 
-func (s *runSession) confirmExternalGate(ctx context.Context, workDir, branch, logPath string) (string, map[string]any, bool) {
+func (s *runSession) confirmExternalGate(ctx context.Context, workDir, branch, logPath, runID string) (string, map[string]any, bool) {
 	if checkPRMergedForIssue(ctx, s.deps.githubClient, branch, s.issueNumber) {
 		return "success", nil, true
 	}
 	if mergedPRMissingClosingReference(ctx, s.deps.githubClient, branch, s.issueNumber) {
 		return "failure", mergeCompletionFailureExtras(nil, s.issueNumber), true
 	}
-	return s.blockExternalGate(workDir, logPath, "unverified")
+	return s.blockExternalGate(workDir, logPath, runID, "unverified")
 }
 
-func (s *runSession) blockExternalGate(workDir, logPath, reason string) (string, map[string]any, bool) {
-	s.recordExternalGateBlocker(workDir, logPath, reason)
+func (s *runSession) blockExternalGate(workDir, logPath, runID, reason string) (string, map[string]any, bool) {
+	s.recordExternalGateBlocker(workDir, logPath, runID, reason)
 	return "blocked", map[string]any{"blocker": "external-gate", "gate": reason}, true
 }
 
-func (s *runSession) recordExternalGateBlocker(workDir, logPath, reason string) {
+func (s *runSession) recordExternalGateBlocker(workDir, logPath, runID, reason string) {
 	failure := fmt.Sprintf("pull request external gate is %s", reason)
 	nextAction := "recheck CI and delegated review, then continue the run when intervention is required"
 	if reason == "failed" {
@@ -182,8 +199,8 @@ func (s *runSession) recordExternalGateBlocker(workDir, logPath, reason string) 
 		content, err := os.ReadFile(taskPath)
 		if err != nil && !os.IsNotExist(err) {
 			s.logExternalGateWriteError("read task.md", err)
-		} else if !strings.Contains(string(content), "## External Gate") {
-			updated := append(append([]byte(nil), content...), []byte(blocker)...)
+		} else {
+			updated := replaceExternalGateBlocker(content, blocker)
 			if err := atomicfs.WriteAtomic(taskPath, updated, 0o644); err != nil {
 				s.logExternalGateWriteError("write task.md", err)
 			}
@@ -200,15 +217,37 @@ func (s *runSession) recordExternalGateBlocker(workDir, logPath, reason string) 
 			s.logExternalGateWriteError("open run.log", err)
 			return
 		}
-		_, writeErr := fmt.Fprintf(file, "[orchestrator] external gate %s: %s; next action: %s\n", reason, failure, nextAction)
+		prefixed := NewLinePrefixWriter(runID, file)
+		_, writeErr := fmt.Fprintf(prefixed, "external gate %s: %s; next action: %s\n", reason, failure, nextAction)
+		flushErr := prefixed.Flush()
 		closeErr := file.Close()
 		if writeErr != nil {
 			s.logExternalGateWriteError("write run.log", writeErr)
+		}
+		if flushErr != nil {
+			s.logExternalGateWriteError("flush run.log", flushErr)
 		}
 		if closeErr != nil {
 			s.logExternalGateWriteError("close run.log", closeErr)
 		}
 	}
+}
+
+func replaceExternalGateBlocker(content []byte, blocker string) []byte {
+	text := string(content)
+	const heading = "## External Gate"
+	start := strings.Index(text, heading)
+	if start < 0 {
+		return append(append([]byte(nil), content...), []byte(blocker)...)
+	}
+
+	end := len(text)
+	rest := text[start+len(heading):]
+	if next := strings.Index(rest, "\n## "); next >= 0 {
+		end = start + len(heading) + next + 1
+	}
+	updated := text[:start] + strings.TrimSpace(blocker) + "\n\n" + text[end:]
+	return []byte(updated)
 }
 
 func (s *runSession) logExternalGateWriteError(operation string, err error) {
