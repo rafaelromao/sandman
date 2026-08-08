@@ -23,4 +23,5 @@ RunID:
 ## RunID: 260618113825-abcd-42
 --- retry 1/2 ---
 --- retry 2/2 ---
+[orchestrator] external gate pending: pull request external gate is pending; next action: recheck CI and delegated review, then continue the run when intervention is required
 

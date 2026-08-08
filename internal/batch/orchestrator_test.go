@@ -6371,7 +6371,7 @@ func TestRunBatch_ChainedContinuationFlow(t *testing.T) {
 	}
 }
 
-func TestRunBatch_ModeContinueAgentSuccessUnmergedPR(t *testing.T) {
+func TestRunBatch_ModeContinueAgentSuccessUnmergedPROpenGate(t *testing.T) {
 	dir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(dir)
 
@@ -6390,6 +6390,7 @@ func TestRunBatch_ModeContinueAgentSuccessUnmergedPR(t *testing.T) {
 		WithRunnableFactory(&controlledRunnableFactory{runnables: map[int]Runnable{
 			42: &controlledRunnable{result: AgentRunResult{IssueNumber: 42, Status: "success"}},
 		}}),
+		WithRunSessionOpts(gateTestRunOptions()),
 	)
 
 	_, err := o.RunBatch(context.Background(), Request{
@@ -6399,8 +6400,8 @@ func TestRunBatch_ModeContinueAgentSuccessUnmergedPR(t *testing.T) {
 		BaseBranch:     "main",
 		PromptConfig:   prompt.RenderConfig{TaskPrompt: "finish the work"},
 	})
-	if err == nil {
-		t.Fatal("expected error because PR is not merged, but got nil")
+	if err != nil {
+		t.Fatalf("expected external gate to finish as blocked without an agent error, got %v", err)
 	}
 
 	events, _ := log.Read()
@@ -6413,8 +6414,8 @@ func TestRunBatch_ModeContinueAgentSuccessUnmergedPR(t *testing.T) {
 	if events[1].Type != "run.finished" {
 		t.Fatalf("expected second event run.finished, got %q", events[1].Type)
 	}
-	if status, _ := events[1].Payload["status"].(string); status != "failure" {
-		t.Fatalf("expected terminal status failure (PR not merged), got %q", status)
+	if status, _ := events[1].Payload["status"].(string); status != "blocked" {
+		t.Fatalf("expected terminal status blocked (external gate pending), got %q", status)
 	}
 }
 
