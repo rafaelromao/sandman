@@ -1349,7 +1349,7 @@ func TestRunSingle_RetryWithOpenPRFallsBackToEmptyTaskTemplate(t *testing.T) {
 	}
 }
 
-func TestRunSingle_FailsWhenSuccessPRUnmerged(t *testing.T) {
+func TestRunSingle_WaitsForExternalGateAfterCleanExit(t *testing.T) {
 	workDir := t.TempDir()
 	oldWD, err := os.Getwd()
 	if err != nil {
@@ -1364,7 +1364,6 @@ func TestRunSingle_FailsWhenSuccessPRUnmerged(t *testing.T) {
 	worktreePath := filepath.Join(workDir, "worktree")
 	sbFactory := &fakeSandboxFactory{sandbox: &fakeSandbox{workDir: worktreePath}}
 	resultFactory := &fakeRunnableFactory{results: []AgentRunResult{
-		{IssueNumber: 42, Status: "success", Branch: branch},
 		{IssueNumber: 42, Status: "success", Branch: branch},
 	}}
 	spyLog := &spyEventLog{}
@@ -1385,30 +1384,30 @@ func TestRunSingle_FailsWhenSuccessPRUnmerged(t *testing.T) {
 	if !started {
 		t.Fatal("expected run to start")
 	}
-	if result.Status != "failure" {
-		t.Fatalf("status = %q, want failure", result.Status)
+	if result.Status != "blocked" {
+		t.Fatalf("status = %q, want blocked while external gate is pending", result.Status)
 	}
-	if len(resultFactory.created) != 2 {
-		t.Fatalf("created runnables = %d, want 2", len(resultFactory.created))
+	if len(resultFactory.created) != 1 {
+		t.Fatalf("created runnables = %d, want 1 while external gate is pending", len(resultFactory.created))
 	}
 	events, err := spyLog.Read()
 	if err != nil {
 		t.Fatalf("read events: %v", err)
 	}
-	if len(events) != 3 {
-		t.Fatalf("expected 3 events (run.started + run.retry + run.finished), got %d: %v", len(events), events)
+	if len(events) != 2 {
+		t.Fatalf("expected 2 events (run.started + run.finished), got %d: %v", len(events), events)
 	}
 	if events[0].Type != "run.started" {
 		t.Fatalf("expected first event run.started, got %q", events[0].Type)
 	}
-	if events[1].Type != "run.retry" {
-		t.Fatalf("expected second event run.retry, got %q", events[1].Type)
+	if events[1].Type != "run.finished" {
+		t.Fatalf("expected terminal event run.finished, got %q", events[1].Type)
 	}
-	if events[2].Type != "run.finished" {
-		t.Fatalf("expected terminal event run.finished, got %q", events[2].Type)
+	if status, _ := events[1].Payload["status"].(string); status != "blocked" {
+		t.Fatalf("expected terminal status blocked, got %q", status)
 	}
-	if status, _ := events[2].Payload["status"].(string); status != "failure" {
-		t.Fatalf("expected terminal status failure, got %q", status)
+	if blocker, _ := events[1].Payload["blocker"].(string); blocker != "external-gate" {
+		t.Fatalf("expected external-gate blocker, got %q", blocker)
 	}
 }
 
@@ -1446,7 +1445,7 @@ func TestRunSingle_MergedPRSuccessRegardlessOfAgentExitCode(t *testing.T) {
 	}
 }
 
-func TestRunSingle_UnmergedPRFailureRegardlessOfAgentExitCode(t *testing.T) {
+func TestRunSingle_UnmergedPROpenGateIsNotAgentFailure(t *testing.T) {
 	workDir := t.TempDir()
 	t.Chdir(workDir)
 
@@ -1475,8 +1474,8 @@ func TestRunSingle_UnmergedPRFailureRegardlessOfAgentExitCode(t *testing.T) {
 	if !started {
 		t.Fatal("expected run to start")
 	}
-	if result.Status != "failure" {
-		t.Fatalf("status = %q, want failure (unmerged PR forces failure regardless of agent zero exit)", result.Status)
+	if result.Status != "blocked" {
+		t.Fatalf("status = %q, want blocked (pending external gate must not be agent failure)", result.Status)
 	}
 }
 

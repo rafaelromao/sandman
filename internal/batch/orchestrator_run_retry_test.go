@@ -1236,6 +1236,7 @@ func TestRunSingle_InitialAttemptOnlyHasNoBanner(t *testing.T) {
 		nil,
 		WithErrorLog(io.Discard),
 		WithSandboxFactory(&fakeSandboxFactory{sandbox: rtSandbox}),
+		WithRunSessionOpts(gateTestRunOptions()),
 	)
 
 	cfg := &config.Config{WorktreeDir: "worktree", Git: config.GitConfig{BaseBranch: "main"}}
@@ -1256,8 +1257,8 @@ func TestRunSingle_InitialAttemptOnlyHasNoBanner(t *testing.T) {
 	if !started {
 		t.Fatal("expected run to start")
 	}
-	if result.Status != "failure" {
-		t.Fatalf("status = %q, want failure (unmerged PR forces failure regardless of agent exit)", result.Status)
+	if result.Status != "blocked" {
+		t.Fatalf("status = %q, want blocked (pending external gate must not be reported as agent failure)", result.Status)
 	}
 
 	logPath := filepath.Join(workDir, ".sandman", "batches", "260622105532-68cb", "runs", "260622105532-68cb-42", "run.log")
