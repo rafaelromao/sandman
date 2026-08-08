@@ -462,7 +462,11 @@ func appendArchivedRunRef(action *cleanAction, entry batchindex.Batch, rec batch
 	if rec.ArchivePath == "" {
 		return false
 	}
-	manifest, err := batchindex.ReadManifest(filepath.Join(layout.RepoRoot, rec.ArchivePath))
+	archiveDir, ok := trustedArchivePath(layout, rec.ArchivePath)
+	if !ok {
+		return false
+	}
+	manifest, err := batchindex.ReadManifest(archiveDir)
 	if err != nil || !reclaimableRunManifest(manifest, entry, rec.RunID, layout) || !isTerminalRunManifestStatus(manifest.Status) {
 		return false
 	}
@@ -503,12 +507,23 @@ func allRowsArchived(entry batchindex.Batch, layout paths.Layout) bool {
 		if rec.Status != batchindex.RunRecordStatusArchived || rec.ArchivePath == "" {
 			return false
 		}
-		archiveDir := filepath.Join(layout.RepoRoot, rec.ArchivePath)
+		archiveDir, ok := trustedArchivePath(layout, rec.ArchivePath)
+		if !ok {
+			return false
+		}
 		if info, err := os.Stat(archiveDir); err != nil || !info.IsDir() {
 			return false
 		}
 	}
 	return true
+}
+
+func trustedArchivePath(layout paths.Layout, archivePath string) (string, bool) {
+	archiveDir, err := filepath.Abs(filepath.Join(layout.RepoRoot, archivePath))
+	if err != nil || validateOwnedPath(archiveDir, layout.ArchiveDir) != nil {
+		return "", false
+	}
+	return archiveDir, true
 }
 
 func printCleanReport(cmd *cobra.Command, actions []cleanAction, orphanPaths []string, tempDirs []string, images []string, dryRun bool) {
