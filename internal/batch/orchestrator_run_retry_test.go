@@ -15,6 +15,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/github"
 	"github.com/rafaelromao/sandman/internal/prompt"
 	"github.com/rafaelromao/sandman/internal/sandbox"
+	"github.com/rafaelromao/sandman/internal/testenv"
 )
 
 func TestRunSingle_EmitsRunRetryBetweenAttemptsOnFailure(t *testing.T) {
@@ -1207,7 +1208,7 @@ func TestRunSingle_RetryBannersUseRetriesBudgetAsDenominator(t *testing.T) {
 // that contains no `--- run ---` and no `--- retry ---` banner at
 // all — the agent's own output is the only content.
 func TestRunSingle_InitialAttemptOnlyHasNoBanner(t *testing.T) {
-	workDir := t.TempDir()
+	workDir := testenv.MkdirShort(t, "retry-")
 	oldWD, err := os.Getwd()
 	if err != nil {
 		t.Fatalf("get wd: %v", err)

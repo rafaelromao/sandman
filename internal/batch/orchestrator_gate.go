@@ -40,24 +40,26 @@ func pollPRGate(ctx context.Context, client github.Client, branch string, opts r
 		budget = defaultGatePollBudget
 	}
 
-	var totalSlept time.Duration
+	pollCtx, cancel := context.WithTimeout(ctx, budget)
+	defer cancel()
+	deadline := time.Now().Add(budget)
 	delay := initial
 
 	for {
-		if totalSlept >= budget {
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
 			return gatePollBudgetExhausted
 		}
-		if remaining := budget - totalSlept; delay > remaining {
+		if delay > remaining {
 			delay = remaining
 		}
 		select {
-		case <-ctx.Done():
+		case <-pollCtx.Done():
 			return gatePollBudgetExhausted
 		case <-time.After(delay):
-			totalSlept += delay
 		}
 
-		gate, _ := checkPRExternalGate(ctx, client, branch)
+		gate, _ := checkPRExternalGate(pollCtx, client, branch)
 		switch gate {
 		case "resolved":
 			return gateResolved
@@ -67,9 +69,6 @@ func pollPRGate(ctx context.Context, client github.Client, branch string, opts r
 			delay = delay * 2
 			if delay > maxSleep {
 				delay = maxSleep
-			}
-			if totalSlept+delay > budget {
-				delay = budget - totalSlept
 			}
 		}
 	}

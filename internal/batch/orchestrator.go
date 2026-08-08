@@ -1743,12 +1743,11 @@ func expandPath(path string) (string, error) {
 }
 
 // runSessionOptions bundles the test-injection hooks consumed by runSession
-// (the function overrides and the test-tunable killTimeout) together with
+// (the function overrides, gate-poll policy, and test-tunable killTimeout) together with
 // the shared baseBranchSyncMu mutex that gates syncBaseBranch. The function
-// and timeout fields exist only so tests in this package can override
-// behaviour that would otherwise touch the network, run real git, or sleep
-// for the production timeout; production code leaves them at their zero
-// values. The baseBranchSyncMu pointer is initialised once per Orchestrator
+// and timeout fields exist so tests in this package can override behaviour
+// that would otherwise touch the network, run real git, or sleep for the
+// production timeout. The baseBranchSyncMu pointer is initialised once per Orchestrator
 // in NewOrchestrator and shared across all sessions via this struct's value
 // copy at construction time, so that concurrent calls to syncBaseBranch
 // serialise on the same mutex. If baseBranchSyncMu is ever converted from a
