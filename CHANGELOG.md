@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0-rc.2](https://github.com/rafaelromao/sandman/compare/v1.0.0-rc.1...v1.0.0-rc.2) (2026-08-08)
+
+
+### Features
+
+* **batch:** retain Specification as in-memory-blocked parent row ([#2490](https://github.com/rafaelromao/sandman/issues/2490)) ([ab6b5f4](https://github.com/rafaelromao/sandman/commit/ab6b5f4e7fcda52c536c4b54327ee79dc6ee7fb5))
+* **spec:** open-issue scan as last-resort child harvest ([#2480](https://github.com/rafaelromao/sandman/issues/2480)) ([f9ad024](https://github.com/rafaelromao/sandman/commit/f9ad02407d0511ef7b09537e91b488fcfa8598de))
+* **spec:** robust specification detection and generalised parent-section matching ([#2477](https://github.com/rafaelromao/sandman/issues/2477)) ([8423c04](https://github.com/rafaelromao/sandman/commit/8423c04edc4b4c980f124f89fa04790d839b96f8))
+
+
+### Bug Fixes
+
+* **badge:** drop the sandman/ branch prefix everywhere ([#2507](https://github.com/rafaelromao/sandman/issues/2507)) ([36c6a14](https://github.com/rafaelromao/sandman/commit/36c6a14307272bdc5206c3889e253c394f8d2b95)), closes [#2506](https://github.com/rafaelromao/sandman/issues/2506)
+* **badge:** recognize issue-driven branches as badge trigger and follow bare-slug branch convention ([#2505](https://github.com/rafaelromao/sandman/issues/2505)) ([63f6f4c](https://github.com/rafaelromao/sandman/commit/63f6f4cd9bdd1e1bee97aae4e2d6fe51af377b60))
+* **ci:** stop full-regression suite from skipping real-agent tests ([#2511](https://github.com/rafaelromao/sandman/issues/2511)) ([560d7ef](https://github.com/rafaelromao/sandman/commit/560d7efecb8344c4eba07f4393c04ef9baeba3cc))
+* **github:** read native blockers from /dependencies/blocked_by endpoint ([#2482](https://github.com/rafaelromao/sandman/issues/2482)) ([9c3ea41](https://github.com/rafaelromao/sandman/commit/9c3ea419896d88fb3557583513ab4fbd8ed020de))
+* **github:** reduce request-heavy polling ([#2494](https://github.com/rafaelromao/sandman/issues/2494)) ([09ef515](https://github.com/rafaelromao/sandman/commit/09ef515669c5c4e34e7a2472be33ce9908352060))
+* **install:** apply install fixes to README ([#2510](https://github.com/rafaelromao/sandman/issues/2510)) ([377e949](https://github.com/rafaelromao/sandman/commit/377e949009826492b35244c2837d9206f89a9f77)), closes [#2508](https://github.com/rafaelromao/sandman/issues/2508)
+* **install:** resolve prerelease-only install failures and gate prereleases behind --include-prerelease ([#2509](https://github.com/rafaelromao/sandman/issues/2509)) ([f92dd93](https://github.com/rafaelromao/sandman/commit/f92dd93680dfe9c9dee29aef428bb1e553c4f188)), closes [#2508](https://github.com/rafaelromao/sandman/issues/2508)
+* **release:** accept any generated 1.0.0-rc.N manifest version ([#2483](https://github.com/rafaelromao/sandman/issues/2483)) ([7a2f43f](https://github.com/rafaelromao/sandman/commit/7a2f43f581c2c3191d379e5dee749dd7f25b89ce))
+* **review:** render the project review prompt ([#2503](https://github.com/rafaelromao/sandman/issues/2503)) ([88de75a](https://github.com/rafaelromao/sandman/commit/88de75a634041e61e0232188518112c1e8771bba))
+* **scaffold:** generate usable pinned Rust toolchains ([#2497](https://github.com/rafaelromao/sandman/issues/2497)) ([a8e56b1](https://github.com/rafaelromao/sandman/commit/a8e56b1a2908553fa4011de23620b252c0494ee7))
+* **skill:** recognize same-credential review decisions ([#2493](https://github.com/rafaelromao/sandman/issues/2493)) ([c7f0bc5](https://github.com/rafaelromao/sandman/commit/c7f0bc5a551ded44deafb4590faba2ba44133181))
+* **spec:** accept parent-style 'Part of' headings on the candidate side ([#2488](https://github.com/rafaelromao/sandman/issues/2488)) ([145019e](https://github.com/rafaelromao/sandman/commit/145019ea90333d085bccfc1a50592583d6cf7357))
+* **spec:** recognise any H2 containing child or children as a children section ([#2485](https://github.com/rafaelromao/sandman/issues/2485)) ([f9e8855](https://github.com/rafaelromao/sandman/commit/f9e88553e4fe7195903a3cd5f5a02cfd2d404276))
+* **test:** bound node scripts with a deadline in runNodeScript ([#2487](https://github.com/rafaelromao/sandman/issues/2487)) ([6323312](https://github.com/rafaelromao/sandman/commit/6323312b7bec33aaee4593197bdc9e50d830fea8))
+
 ## [1.0.0-rc.1](https://github.com/rafaelromao/sandman/compare/v1.0.0-rc.1...v1.0.0-rc.1) (2026-07-29)
 
 
