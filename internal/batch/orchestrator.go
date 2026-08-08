@@ -2657,28 +2657,10 @@ loop:
 					break
 				}
 			}
-			if s.deps.githubClient != nil && result.Status == "success" {
-				gate, _ := checkPRExternalGate(ctx, s.deps.githubClient, branch)
-				switch gate {
-				case "resolved":
-					result.Status = "success"
-					break loop
-				case "pending":
-					r := pollPRGate(ctx, s.deps.githubClient, branch, s.opts)
-					if r == gateResolved {
-						result.Status = "success"
-						break loop
-					}
-					result.Status = "blocked"
-					gateReason := "pending"
-					if r == gateFailed {
-						gateReason = "failed"
-					}
-					terminalExtras = mergeBlockerExtras(terminalExtras, map[string]any{"blocker": "external-gate", "gate": gateReason})
-					break loop
-				case "failed":
-					result.Status = "blocked"
-					terminalExtras = mergeBlockerExtras(terminalExtras, map[string]any{"blocker": "external-gate", "gate": "failed"})
+			if events.RunStatusFromPayload(result.Status).IsSuccess() {
+				if gateStatus, extras, handled := s.handleExternalGate(ctx, wt.WorkDir(), branch, logPath); handled {
+					result.Status = gateStatus
+					terminalExtras = mergeBlockerExtras(terminalExtras, extras)
 					break loop
 				}
 			}
@@ -2721,6 +2703,13 @@ loop:
 							result.Status = "success"
 						}
 						break
+					}
+					if events.RunStatusFromPayload(result.Status).IsSuccess() {
+						if gateStatus, extras, handled := s.handleExternalGate(ctx, wt.WorkDir(), branch, logPath); handled {
+							result.Status = gateStatus
+							terminalExtras = mergeBlockerExtras(terminalExtras, extras)
+							break loop
+						}
 					}
 					result.Status = "failure"
 				} else {

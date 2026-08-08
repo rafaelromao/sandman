@@ -1479,7 +1479,7 @@ func TestRunSingle_UnmergedPROpenGateIsNotAgentFailure(t *testing.T) {
 	}
 }
 
-func TestRunSingle_ModeContinueUnmergedPRIsFailure(t *testing.T) {
+func TestRunSingle_ModeContinueUnmergedPROpenGateIsBlocked(t *testing.T) {
 	workDir := t.TempDir()
 	t.Chdir(workDir)
 
@@ -1508,8 +1508,8 @@ func TestRunSingle_ModeContinueUnmergedPRIsFailure(t *testing.T) {
 	if !started {
 		t.Fatal("expected run to start")
 	}
-	if result.Status != "failure" {
-		t.Fatalf("status = %q, want failure (ModeContinue with unmerged PR should be failure, not success)", result.Status)
+	if result.Status != "blocked" {
+		t.Fatalf("status = %q, want blocked (continuation must preserve external-gate state)", result.Status)
 	}
 }
 

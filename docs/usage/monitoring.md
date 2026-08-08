@@ -105,7 +105,7 @@ Emitted when an agent run completes.
 
 | Field | Description |
 |-------|-------------|
-| `status` | Terminal status (`success`, `failure`) |
+| `status` | Terminal status (`success`, `failure`, or `blocked`; `blocked` with `blocker: "external-gate"` means the agent finished cleanly and the PR gate remains unresolved) |
 | `branch` | Branch name |
 | `base_branch` | Base branch name |
 | `worktree_state` | Always `preserved` |
@@ -113,6 +113,23 @@ Emitted when an agent run completes.
 | `retries_done` | Actual retries performed |
 | `run_kind` | Mirrors the `run.started` payload so projection sees a consistent kind on both events. |
 | `reason` | Short string built from the error returned by the selection phase. |
+| `blocker` | Optional terminal blocker classification. `"external-gate"` identifies CI/review waiting or intervention, rather than an agent failure. |
+| `gate` | Optional external-gate state: `"pending"`, `"failed"`, `"unavailable"`, or `"unverified"`. |
+
+#### External-gate lifecycle
+When an issue-driven agent exits successfully while its open PR is waiting on CI
+or delegated review, Sandman keeps the run in the same attempt and polls the
+PR gate with bounded exponential backoff. The production poll starts at 120
+seconds, caps individual waits at 600 seconds, and stops after 1800 seconds.
+The wait does not emit `run.retry` or consume the configured agent retry
+budget. A merge is accepted only when the PR still carries closing intent for
+the issue. A failed CI or rejected review ends as an actionable `blocked` run
+with `blocker: "external-gate"`; an operator can continue the run to address
+the intervention.
+
+External-gate terminal blockers are also appended to the run log and persisted
+under `## External Gate` in the worktree's `.sandman/task.md`, including the
+next executable action.
 
 #### `run.aborted`
 Emitted when a run is aborted via context cancellation (e.g. SIGINT/SIGTERM). Also emitted for runs that were still queued (waiting on the turn gate or the start gate) when the batch was cancelled, and cascaded to dependents whose in-batch blocker finished with status `aborted` (instead of `run.blocked`). For queued/cascaded runs, the `RunID` matches the prior `run.queued` event so projection collapses to a single `RunState`.

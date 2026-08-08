@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -234,5 +235,64 @@ func TestPollPRGateStopsWhenPRMerges(t *testing.T) {
 	}
 	if calls := atomic.LoadInt32(&client.calls); calls < 2 {
 		t.Fatalf("PR lookups = %d, want at least 2", calls)
+	}
+}
+
+func TestConfirmExternalGateRejectsMergedPRWithoutClosingReference(t *testing.T) {
+	branch := gateTestBranch
+	session := &runSession{
+		issueNumber: 42,
+		deps: runDeps{
+			githubClient: &fakeGitHubClient{
+				prs: map[string]*github.PR{branch: {
+					Number:      17,
+					State:       "merged",
+					Merged:      true,
+					HeadRefName: branch,
+				}},
+			},
+			errorLog: io.Discard,
+		},
+	}
+
+	status, extras, handled := session.confirmExternalGate(context.Background(), t.TempDir(), branch, "")
+	if !handled {
+		t.Fatal("expected merged gate to be handled")
+	}
+	if status != "failure" {
+		t.Fatalf("status = %q, want failure", status)
+	}
+	if _, ok := extras["completion"]; !ok {
+		t.Fatalf("completion extras = %#v, want merged closing-reference diagnostic", extras)
+	}
+}
+
+func TestRecordExternalGateBlockerPersistsTaskAndLog(t *testing.T) {
+	workDir := t.TempDir()
+	taskPath := filepath.Join(workDir, ".sandman", "task.md")
+	if err := os.MkdirAll(filepath.Dir(taskPath), 0o755); err != nil {
+		t.Fatalf("create task directory: %v", err)
+	}
+	if err := os.WriteFile(taskPath, []byte("# Existing task\n"), 0o644); err != nil {
+		t.Fatalf("seed task: %v", err)
+	}
+	logPath := filepath.Join(workDir, ".sandman", "run.log")
+	session := &runSession{deps: runDeps{errorLog: io.Discard}}
+
+	session.recordExternalGateBlocker(workDir, logPath, "pending")
+
+	task, err := os.ReadFile(taskPath)
+	if err != nil {
+		t.Fatalf("read task: %v", err)
+	}
+	if !strings.Contains(string(task), "# Existing task") || !strings.Contains(string(task), "## External Gate") || !strings.Contains(string(task), "Next action:") {
+		t.Fatalf("task blocker record = %q, want preserved task and durable next action", task)
+	}
+	log, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read run log: %v", err)
+	}
+	if !strings.Contains(string(log), "external gate pending") || !strings.Contains(string(log), "next action:") {
+		t.Fatalf("run log blocker record = %q, want failure and next action", log)
 	}
 }

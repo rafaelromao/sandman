@@ -2230,6 +2230,15 @@ func (v *portalRunsView) resolveRunLog(loadSaved func() string, runState events.
 }
 
 func (v *portalRunsView) portalBlockedMessage(payload map[string]any) string {
+	if payload != nil {
+		if blocker, _ := payload["blocker"].(string); blocker == "external-gate" {
+			gate, _ := payload["gate"].(string)
+			if gate == "failed" {
+				return "Blocked by a failed external gate."
+			}
+			return "Blocked while waiting for the external CI/review gate."
+		}
+	}
 	blockers := v.portalBlockedByIssues(payload)
 	if len(blockers) == 0 {
 		return "Blocked. Waiting on unresolved blockers."

@@ -2,9 +2,13 @@ package batch
 
 import (
 	"context"
+	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/rafaelromao/sandman/internal/atomicfs"
 	"github.com/rafaelromao/sandman/internal/github"
 )
 
@@ -43,6 +47,9 @@ func pollPRGate(ctx context.Context, client github.Client, branch string, opts r
 		if totalSlept >= budget {
 			return gatePollBudgetExhausted
 		}
+		if remaining := budget - totalSlept; delay > remaining {
+			delay = remaining
+		}
 		select {
 		case <-ctx.Done():
 			return gatePollBudgetExhausted
@@ -73,7 +80,10 @@ func checkPRExternalGate(ctx context.Context, client github.Client, branch strin
 		return "none", nil
 	}
 	pr, err := client.FindPRByBranch(ctx, branch)
-	if err != nil || pr == nil {
+	if err != nil {
+		return "unavailable", err
+	}
+	if pr == nil {
 		return "none", err
 	}
 	if pr.Merged || strings.EqualFold(pr.State, "merged") {
@@ -83,8 +93,9 @@ func checkPRExternalGate(ctx context.Context, client github.Client, branch strin
 		return "none", nil
 	}
 
-	hasCIPending := pr.StatusCheckRollup == "pending"
-	hasCIFailure := pr.StatusCheckRollup == "failure"
+	checkRollup := strings.ToLower(strings.TrimSpace(pr.StatusCheckRollup))
+	hasCIPending := checkRollup == "pending"
+	hasCIFailure := checkRollup == "failure"
 	review := strings.ToUpper(strings.TrimSpace(pr.ReviewDecision))
 	mergeStatus := strings.ToUpper(strings.TrimSpace(pr.MergeStateStatus))
 
@@ -103,4 +114,106 @@ func checkPRExternalGate(ctx context.Context, client github.Client, branch strin
 	}
 
 	return "pending", nil
+}
+
+// handleExternalGate turns a clean agent exit into a terminal external-gate
+// result when the branch has an open PR waiting on CI or review. It is shared
+// by fresh and continuation runs so an explicit intervention cannot re-enter
+// the old failure/retry path while the same PR gate is still unresolved.
+func (s *runSession) handleExternalGate(ctx context.Context, workDir, branch, logPath string) (string, map[string]any, bool) {
+	if s.deps.githubClient == nil {
+		return "", nil, false
+	}
+
+	gate, err := checkPRExternalGate(ctx, s.deps.githubClient, branch)
+	initialUnavailable := err != nil
+	if err != nil && s.deps.errorLog != nil {
+		fmt.Fprintf(s.deps.errorLog, "warning: external gate lookup for branch %q: %v\n", branch, err)
+		gate = "pending"
+	}
+
+	if gate == "none" {
+		return "", nil, false
+	}
+	if gate == "resolved" {
+		return s.confirmExternalGate(ctx, workDir, branch, logPath)
+	}
+	if gate == "failed" {
+		return s.blockExternalGate(workDir, logPath, "failed")
+	}
+
+	polled := pollPRGate(ctx, s.deps.githubClient, branch, s.opts)
+	if polled == gateResolved {
+		return s.confirmExternalGate(ctx, workDir, branch, logPath)
+	}
+	if polled == gateFailed {
+		return s.blockExternalGate(workDir, logPath, "failed")
+	}
+	if initialUnavailable {
+		return s.blockExternalGate(workDir, logPath, "unavailable")
+	}
+	return s.blockExternalGate(workDir, logPath, "pending")
+}
+
+func (s *runSession) confirmExternalGate(ctx context.Context, workDir, branch, logPath string) (string, map[string]any, bool) {
+	if checkPRMergedForIssue(ctx, s.deps.githubClient, branch, s.issueNumber) {
+		return "success", nil, true
+	}
+	if mergedPRMissingClosingReference(ctx, s.deps.githubClient, branch, s.issueNumber) {
+		return "failure", mergeCompletionFailureExtras(nil, s.issueNumber), true
+	}
+	return s.blockExternalGate(workDir, logPath, "unverified")
+}
+
+func (s *runSession) blockExternalGate(workDir, logPath, reason string) (string, map[string]any, bool) {
+	s.recordExternalGateBlocker(workDir, logPath, reason)
+	return "blocked", map[string]any{"blocker": "external-gate", "gate": reason}, true
+}
+
+func (s *runSession) recordExternalGateBlocker(workDir, logPath, reason string) {
+	failure := fmt.Sprintf("pull request external gate is %s", reason)
+	nextAction := "recheck CI and delegated review, then continue the run when intervention is required"
+	if reason == "failed" {
+		nextAction = "inspect the failed CI or requested review changes, then continue the run to address them"
+	}
+	blocker := fmt.Sprintf("\n\n## External Gate\n\n- Failure: %s.\n- Next action: %s.\n", failure, nextAction)
+
+	if strings.TrimSpace(workDir) != "" {
+		taskPath := filepath.Join(workDir, ".sandman", "task.md")
+		content, err := os.ReadFile(taskPath)
+		if err != nil && !os.IsNotExist(err) {
+			s.logExternalGateWriteError("read task.md", err)
+		} else if !strings.Contains(string(content), "## External Gate") {
+			updated := append(append([]byte(nil), content...), []byte(blocker)...)
+			if err := atomicfs.WriteAtomic(taskPath, updated, 0o644); err != nil {
+				s.logExternalGateWriteError("write task.md", err)
+			}
+		}
+	}
+
+	if strings.TrimSpace(logPath) != "" {
+		if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
+			s.logExternalGateWriteError("create run.log directory", err)
+			return
+		}
+		file, err := atomicfs.OpenAppend(logPath, 0o644)
+		if err != nil {
+			s.logExternalGateWriteError("open run.log", err)
+			return
+		}
+		_, writeErr := fmt.Fprintf(file, "[orchestrator] external gate %s: %s; next action: %s\n", reason, failure, nextAction)
+		closeErr := file.Close()
+		if writeErr != nil {
+			s.logExternalGateWriteError("write run.log", writeErr)
+		}
+		if closeErr != nil {
+			s.logExternalGateWriteError("close run.log", closeErr)
+		}
+	}
+}
+
+func (s *runSession) logExternalGateWriteError(operation string, err error) {
+	if s.deps.errorLog != nil {
+		fmt.Fprintf(s.deps.errorLog, "warning: %s for external gate blocker: %v\n", operation, err)
+	}
 }
