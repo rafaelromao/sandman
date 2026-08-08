@@ -1748,7 +1748,7 @@ func TestE2E_QueuedIssuesPersistAfterBatchCompletes(t *testing.T) {
 		root.SetErr(io.Discard)
 
 		var buf bytes.Buffer
-		root.SetArgs([]string{"portal", "--no-open"})
+		root.SetArgs([]string{"portal"})
 		root.SetOut(&buf)
 		root.SetErr(&buf)
 
