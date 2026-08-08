@@ -298,6 +298,7 @@ func TestReleaseValidationWorkflowsRunOnlyForReleasePleaseBranch(t *testing.T) {
 	}
 	for _, required := range []string{
 		`SANDMAN_FULL_REGRESSION: "1"`,
+		`SANDMAN_COVERAGE: "1"`,
 		"name: Install opencode CLI",
 		"curl -fsSL https://opencode.ai/install | bash",
 		"name: Provision opencode auth",
@@ -307,9 +308,41 @@ func TestReleaseValidationWorkflowsRunOnlyForReleasePleaseBranch(t *testing.T) {
 		"name: Configure Podman runtime",
 		`runtime = "runc"`,
 		`test "$(podman info --format '{{.Host.OCIRuntime.Name}}')" = "runc"`,
+		"if: always()",
+		"name: Fail if a regression tier failed",
+		"scripts/render_coverage_report.sh",
 	} {
 		if !strings.Contains(linux, required) {
 			t.Errorf("Linux full regression workflow missing %q", required)
+		}
+	}
+}
+
+func TestFullRegressionCoverageUsesAtomicRepositoryWideProfiles(t *testing.T) {
+	wrapper := readRepositoryFile(t, "../scripts/full_regression_tier.sh")
+	renderer := readRepositoryFile(t, "../scripts/render_coverage_report.sh")
+
+	for _, required := range []string{
+		`SANDMAN_COVERAGE`,
+		`-covermode=atomic`,
+		`-coverpkg=./...`,
+		`.coverprofile`,
+		`Test events`,
+	} {
+		if !strings.Contains(wrapper, required) {
+			t.Errorf("full regression tier wrapper missing coverage contract %q", required)
+		}
+	}
+	for _, required := range []string{
+		`TRUSTED`,
+		`PARTIAL`,
+		`UNAVAILABLE`,
+		`ran at least one test`,
+		`SANDMAN_COVERAGE_STRICT`,
+		`go tool cover -html`,
+	} {
+		if !strings.Contains(renderer, required) {
+			t.Errorf("coverage renderer missing validity contract %q", required)
 		}
 	}
 }

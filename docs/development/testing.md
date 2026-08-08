@@ -22,6 +22,37 @@ go test -race -v ./...
 
 For a faster targeted loop while editing one package, run the smallest relevant `go test` command first, then finish with `make check` when the change is ready.
 
+### Coverage report
+
+Generate a coverage report from the same full-regression tiers used by the
+Linux release-validation job:
+
+```bash
+make coverage
+```
+
+The command writes `TEST_REPORT.md` and raw artifacts under
+`coverage-artifacts/`. It runs three tiers in order:
+
+| Report tier | Execution surface |
+|-------------|-------------------|
+| Unit + Race | The untagged `go test -race ./...` suite, including hermetic in-process tests and any untagged container integration tests whose runtime is available |
+| Integration (Smoke) | The `smoke`-tagged provider/build-tools runs with real sandbox resources and the configured agent provider |
+| E2E | The `e2e`-tagged suite with every `SANDMAN_E2E_GATES` scenario and the real-agent opt-in |
+
+All Sandman packages are instrumented with `-coverpkg=./...` and atomic
+counters. The report records passed, failed, and skipped test events alongside
+statement coverage. A tier is `TRUSTED` only when it ran at least one test,
+passed, produced a coverage profile, and skipped no tests. Missing credentials or runtime
+prerequisites produce `PARTIAL` coverage rather than a misleading complete
+claim. Set `SANDMAN_COVERAGE_STRICT=1` when the environment is expected to
+support every scenario and skipped tests should fail the command.
+
+The full-regression GitHub job collects the same profiles, HTML reports, and
+JSONL execution logs as artifacts. Its existing tier commands remain the
+canonical execution commands; coverage is enabled through the tier wrapper so
+the report cannot silently cover a different test selection.
+
 ## CI coverage
 
 Sandman publishes four GoReleaser targets that match the four Unix platforms OpenCode supports (sans Windows): Linux amd64, Linux arm64, macOS amd64 (Intel), and macOS arm64 (Apple Silicon). The CI and release-validation tiers exercise those platforms as follows:
