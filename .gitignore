@@ -49,6 +49,7 @@ token-optimizer/
 # reproducible from a test invocation and should not be tracked.
 testdata/
 TEST_REPORT.md
+coverage-artifacts/
 
 # OpenCode sessions
 .opencode/
@@ -59,4 +60,3 @@ state/*.addressed_comments
 # OS
 .DS_Store
 Thumbs.db
-

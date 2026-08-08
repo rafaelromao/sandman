@@ -21,6 +21,7 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       GITHUB_TOKEN: ${{ github.token }}
       REPORT_FILE: regression-report-linux.md
+      SANDMAN_COVERAGE: "1"
 
     steps:
       - name: Checkout
@@ -89,6 +90,7 @@ jobs:
       # Tier 2: Focused smoke tests. `-timeout 60m` stays the tuned budget;
       # 65m is only a backstop.
       - name: Run regression tier — Smoke
+        if: always()
         shell: bash
         run: |
           scripts/full_regression_tier.sh "Smoke" \
@@ -98,11 +100,18 @@ jobs:
       # Tier 3: E2E tests, every scenario gate and real-agent matrix.
       # `-timeout 90m` stays the tuned budget; 95m is only a backstop.
       - name: Run regression tier — E2E
+        if: always()
         shell: bash
         run: |
           scripts/full_regression_tier.sh "E2E" \
             "SANDMAN_RUN_AGENT_E2E=1 SANDMAN_TEST_PROVIDERS=all SANDMAN_E2E_GATES=all go test -tags e2e -json -timeout 90m ./..." \
             "95m" "$REPORT_FILE" "regression-artifacts"
+
+      - name: Render coverage report
+        if: always()
+        shell: bash
+        run: |
+          scripts/render_coverage_report.sh "$REPORT_FILE" "regression-artifacts"
 
       - name: Upload regression report
         if: always()
@@ -113,3 +122,23 @@ jobs:
             regression-report-linux.md
             regression-artifacts
           if-no-files-found: ignore
+
+      - name: Fail if a regression tier failed
+        if: always()
+        shell: bash
+        run: |
+          failed=0
+          for tier in Unit_Race Smoke E2E; do
+            status_file="regression-artifacts/$tier.status"
+            if [ ! -s "$status_file" ]; then
+              echo "$tier: no status recorded"
+              failed=1
+              continue
+            fi
+            status="$(<"$status_file")"
+            if [ "$status" != PASS ]; then
+              echo "$tier: $status"
+              failed=1
+            fi
+          done
+          exit "$failed"
