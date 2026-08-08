@@ -49,7 +49,6 @@ token-optimizer/
 # reproducible from a test invocation and should not be tracked.
 testdata/
 TEST_REPORT.md
-coverage-artifacts/
 
 # OpenCode sessions
 .opencode/

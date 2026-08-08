@@ -22,7 +22,7 @@ VERSION ?= $(shell git -C . describe --tags --always --dirty 2>/dev/null || git 
 
 LDFLAGS := -ldflags '-X main.version=$(VERSION)'
 
-.PHONY: check build install fmt test vet coverage clean
+.PHONY: check build install fmt test vet clean
 
 check: fmt vet test
 	@echo "All checks passed."
@@ -38,10 +38,6 @@ vet:
 test:
 	@echo "Running tests..."
 	go test -race -v ./...
-
-coverage:
-	@echo "Running full regression with coverage..."
-	scripts/coverage_report.sh
 
 build:
 	@echo "Building $(BINARY)..."

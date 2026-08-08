@@ -421,7 +421,6 @@ func buildEligibleActiveAction(entry batchindex.Batch, probe runActivityProbe, l
 			continue
 		}
 		liveCount++
-		liveRunIDs[e.Name()] = true
 		manifestPath := filepath.Join(runsDir, e.Name(), "run.json")
 		data, err := os.ReadFile(manifestPath)
 		if err != nil {
@@ -431,12 +430,13 @@ func buildEligibleActiveAction(entry batchindex.Batch, probe runActivityProbe, l
 		if err := json.Unmarshal(data, &manifest); err != nil {
 			return cleanAction{}, false
 		}
+		if !reclaimableRunManifest(manifest, entry, e.Name()) {
+			return cleanAction{}, false
+		}
 		if !isTerminalRunManifestStatus(manifest.Status) {
 			return cleanAction{}, false
 		}
-		if manifest.RunID != "" {
-			liveRunIDs[manifest.RunID] = true
-		}
+		liveRunIDs[e.Name()] = true
 		appendWorktreeRef(&action, manifest.WorktreePath, manifest.Branch)
 	}
 	if liveCount == 0 {
@@ -446,7 +446,7 @@ func buildEligibleActiveAction(entry batchindex.Batch, probe runActivityProbe, l
 	}
 	for _, rec := range entry.Runs {
 		if rec.Status == batchindex.RunRecordStatusArchived {
-			if !appendArchivedRunRef(&action, rec, layout) {
+			if !appendArchivedRunRef(&action, entry, rec, layout) {
 				return cleanAction{}, false
 			}
 			continue
@@ -458,16 +458,24 @@ func buildEligibleActiveAction(entry batchindex.Batch, probe runActivityProbe, l
 	return action, true
 }
 
-func appendArchivedRunRef(action *cleanAction, rec batchindex.RunRecord, layout paths.Layout) bool {
+func appendArchivedRunRef(action *cleanAction, entry batchindex.Batch, rec batchindex.RunRecord, layout paths.Layout) bool {
 	if rec.ArchivePath == "" {
 		return false
 	}
 	manifest, err := batchindex.ReadManifest(filepath.Join(layout.RepoRoot, rec.ArchivePath))
-	if err != nil || !isTerminalRunManifestStatus(manifest.Status) {
+	if err != nil || !reclaimableRunManifest(manifest, entry, rec.RunID) || !isTerminalRunManifestStatus(manifest.Status) {
 		return false
 	}
 	appendWorktreeRef(action, manifest.WorktreePath, manifest.Branch)
 	return true
+}
+
+func reclaimableRunManifest(manifest batchindex.RunManifest, entry batchindex.Batch, runID string) bool {
+	return manifest.RunID == runID &&
+		manifest.BatchID == entry.ID &&
+		manifest.Kind == entry.Kind &&
+		manifest.Branch != "" &&
+		manifest.WorktreePath != ""
 }
 
 func appendWorktreeRef(action *cleanAction, worktree, branch string) {
