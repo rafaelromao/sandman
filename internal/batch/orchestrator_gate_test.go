@@ -296,7 +296,7 @@ func TestConfirmExternalGateRejectsMergedPRWithoutClosingReference(t *testing.T)
 			githubClient: &fakeGitHubClient{
 				prs: map[string]*github.PR{branch: {
 					Number:      17,
-					State:       "merged",
+					State:       "closed",
 					Merged:      true,
 					HeadRefName: branch,
 				}},
