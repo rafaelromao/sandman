@@ -2215,13 +2215,16 @@ func repairOpenPRClosingReference(ctx context.Context, client github.Client, bra
 //
 // Before normalising the terminal event, emitTerminal performs a defensive
 // post-check: if the agent's branch has an open PR whose mergeable state is
-// `CONFLICTING`, the run is reclassified as `failure` and the terminal event
-// payload carries `merge_conflict: true` and the PR number. This is
-// defence-in-depth against skill regressions that forget to flag the DIRTY
-// PR case; see issue #1684.
+// `CONFLICTING`, the terminal event payload carries `merge_conflict: true`
+// and the PR number. Ordinary terminal results are reclassified as
+// `failure`, but an external-gate blocker remains `blocked` so the gate does
+// not become an ordinary agent failure; see issue #1684.
 func (s *runSession) emitTerminal(ctx context.Context, runID string, result AgentRunResult, extras map[string]any) string {
 	if conflictExtras, ok := s.detectConflictingPR(result.Branch); ok {
-		result.Status = "failure"
+		blocker, _ := extras["blocker"].(string)
+		if !(result.Status == "blocked" && blocker == "external-gate") {
+			result.Status = "failure"
+		}
 		if extras == nil {
 			extras = map[string]any{}
 		}
@@ -2341,7 +2344,7 @@ func (s *runSession) detectConflictingPR(branch string) (map[string]any, bool) {
 		return nil, false
 	}
 	if strings.EqualFold(mergeable, "CONFLICTING") {
-		fmt.Fprintf(s.deps.errorLog, "error: branch %q has CONFLICTING open PR #%d, overriding run status to failure\n", branch, prNumber)
+		fmt.Fprintf(s.deps.errorLog, "error: branch %q has CONFLICTING open PR #%d\n", branch, prNumber)
 		return map[string]any{"merge_conflict": true, "pr_number": prNumber}, true
 	}
 	return nil, false
