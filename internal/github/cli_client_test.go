@@ -237,7 +237,7 @@ func TestCLIClient_SearchIssues_SortsByNumberAscending(t *testing.T) {
 }
 
 func TestCLIClient_FindPRByBranch_Success(t *testing.T) {
-	runner := &fakeRunner{responses: []fakeResponse{{output: `[{"number":17,"state":"open","body":"Refs #386","mergedAt":null,"headRefName":"issue-386/smart-completion-detection-phase-aware-retry","headRefOid":"abc123","updatedAt":"2026-08-01T12:00:00Z","reviewDecision":"APPROVED","mergeStateStatus":"CLEAN","statusCheckRollup":"success","closingIssuesReferences":[{"number":386}]}]`}}}
+	runner := &fakeRunner{responses: []fakeResponse{{output: `[{"number":17,"state":"open","body":"Refs #386","mergedAt":null,"headRefName":"issue-386/smart-completion-detection-phase-aware-retry","headRefOid":"abc123","updatedAt":"2026-08-01T12:00:00Z","reviewDecision":"APPROVED","mergeStateStatus":"CLEAN","statusCheckRollup":"success","closingIssuesReferences":[{"number":999},{"number":386}]}]`}}}
 	client := &CLIClient{runner: runner}
 
 	pr, err := client.FindPRByBranch(context.Background(), "issue-386/smart-completion-detection-phase-aware-retry")
@@ -306,6 +306,22 @@ func TestCLIClient_FindPRByBranch_StatusCheckRollupArrayAllSuccess(t *testing.T)
 	}
 	if pr.StatusCheckRollup != "success" {
 		t.Fatalf("StatusCheckRollup = %q, want success", pr.StatusCheckRollup)
+	}
+}
+
+func TestCLIClient_FindPRByBranch_StatusContextFailure(t *testing.T) {
+	runner := &fakeRunner{responses: []fakeResponse{{output: `[{"number":21,"state":"open","headRefName":"legacy-status","statusCheckRollup":[{"__typename":"StatusContext","context":"legacy-ci","state":"FAILURE"}]}]`}}}
+	client := &CLIClient{runner: runner}
+
+	pr, err := client.FindPRByBranch(context.Background(), "legacy-status")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if pr == nil {
+		t.Fatal("expected PR, got nil")
+	}
+	if pr.StatusCheckRollup != "failure" {
+		t.Fatalf("StatusCheckRollup = %q, want failure", pr.StatusCheckRollup)
 	}
 }
 

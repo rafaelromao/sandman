@@ -231,6 +231,7 @@ type prPayload struct {
 type statusCheckRun struct {
 	Conclusion string `json:"conclusion"`
 	Status     string `json:"status"`
+	State      string `json:"state"`
 }
 
 // rollupStateFromJSON converts the raw `gh pr list --json
@@ -259,7 +260,18 @@ func rollupStateFromJSON(raw json.RawMessage) string {
 		return ""
 	}
 	for _, run := range checks {
-		if !strings.EqualFold(run.Status, "COMPLETED") {
+		status := strings.ToUpper(strings.TrimSpace(run.Status))
+		if status != "" {
+			if status != "COMPLETED" {
+				return "pending"
+			}
+			continue
+		}
+		switch strings.ToUpper(strings.TrimSpace(run.State)) {
+		case "FAILURE", "ERROR":
+			return "failure"
+		case "SUCCESS":
+		default:
 			return "pending"
 		}
 	}
@@ -495,21 +507,31 @@ func (c *CLIClient) FetchPR(ctx context.Context, number int) (*PR, error) {
 		return nil, fmt.Errorf("parse pr: %w", err)
 	}
 
-	var linkedIssueNumber int
-	if len(payload.ClosingIssuesReferences) > 0 && payload.ClosingIssuesReferences[0].Number > 0 {
-		linkedIssueNumber = payload.ClosingIssuesReferences[0].Number
+	var linkedIssueNumbers []int
+	for _, reference := range payload.ClosingIssuesReferences {
+		if reference.Number > 0 {
+			linkedIssueNumbers = append(linkedIssueNumbers, reference.Number)
+		}
 	}
 
 	return &PR{
-		Number:            payload.Number,
-		State:             payload.State,
-		Title:             payload.Title,
-		Body:              payload.Body,
-		Merged:            strings.TrimSpace(payload.MergedAt) != "",
-		HeadRefName:       payload.HeadRefName,
-		HeadRefOid:        payload.HeadRefOid,
-		linkedIssueNumber: linkedIssueNumber,
+		Number:             payload.Number,
+		State:              payload.State,
+		Title:              payload.Title,
+		Body:               payload.Body,
+		Merged:             strings.TrimSpace(payload.MergedAt) != "",
+		HeadRefName:        payload.HeadRefName,
+		HeadRefOid:         payload.HeadRefOid,
+		linkedIssueNumber:  firstLinkedIssueNumber(linkedIssueNumbers),
+		linkedIssueNumbers: linkedIssueNumbers,
 	}, nil
+}
+
+func firstLinkedIssueNumber(numbers []int) int {
+	if len(numbers) == 0 {
+		return 0
+	}
+	return numbers[0]
 }
 
 // FetchIssueDependencies fetches native GitHub issue dependencies via gh CLI.
@@ -545,22 +567,25 @@ func (c *CLIClient) FindPRByBranch(ctx context.Context, branch string) (*PR, err
 		return nil, nil
 	}
 	payload := payloads[0]
-	var linkedIssueNumber int
-	if len(payload.ClosingIssuesReferences) > 0 && payload.ClosingIssuesReferences[0].Number > 0 {
-		linkedIssueNumber = payload.ClosingIssuesReferences[0].Number
+	var linkedIssueNumbers []int
+	for _, reference := range payload.ClosingIssuesReferences {
+		if reference.Number > 0 {
+			linkedIssueNumbers = append(linkedIssueNumbers, reference.Number)
+		}
 	}
 	return &PR{
-		Number:            payload.Number,
-		State:             payload.State,
-		Body:              payload.Body,
-		Merged:            strings.TrimSpace(payload.MergedAt) != "",
-		HeadRefName:       payload.HeadRefName,
-		HeadRefOid:        payload.HeadRefOid,
-		linkedIssueNumber: linkedIssueNumber,
-		UpdatedAt:         parseGitHubTime(payload.UpdatedAt),
-		ReviewDecision:    payload.ReviewDecision,
-		MergeStateStatus:  payload.MergeStateStatus,
-		StatusCheckRollup: rollupStateFromJSON(payload.StatusCheckRollup),
+		Number:             payload.Number,
+		State:              payload.State,
+		Body:               payload.Body,
+		Merged:             strings.TrimSpace(payload.MergedAt) != "",
+		HeadRefName:        payload.HeadRefName,
+		HeadRefOid:         payload.HeadRefOid,
+		linkedIssueNumber:  firstLinkedIssueNumber(linkedIssueNumbers),
+		linkedIssueNumbers: linkedIssueNumbers,
+		UpdatedAt:          parseGitHubTime(payload.UpdatedAt),
+		ReviewDecision:     payload.ReviewDecision,
+		MergeStateStatus:   payload.MergeStateStatus,
+		StatusCheckRollup:  rollupStateFromJSON(payload.StatusCheckRollup),
 	}, nil
 }
 
