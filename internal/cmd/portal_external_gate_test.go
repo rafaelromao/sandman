@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/rafaelromao/sandman/internal/events"
+	"github.com/rafaelromao/sandman/internal/paths"
 )
 
 func TestPortalBlockedMessage_DistinguishesExternalGate(t *testing.T) {
@@ -23,6 +24,16 @@ func TestPortalBlockedMessage_DistinguishesExternalGate(t *testing.T) {
 			payload: map[string]any{"blocker": "external-gate", "gate": "failed"},
 			want:    "Blocked by a failed external gate.",
 		},
+		{
+			name:    "unavailable",
+			payload: map[string]any{"blocker": "external-gate", "gate": "unavailable"},
+			want:    "External gate unavailable; verify the pull request and its CI/review state.",
+		},
+		{
+			name:    "unverified",
+			payload: map[string]any{"blocker": "external-gate", "gate": "unverified"},
+			want:    "Merged pull request could not be verified; confirm its closing reference.",
+		},
 	}
 
 	for _, tt := range tests {
@@ -32,6 +43,30 @@ func TestPortalBlockedMessage_DistinguishesExternalGate(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestAggregateReviewChildren_PreservesExternalGateParent(t *testing.T) {
+	startedAt := time.Date(2026, 8, 8, 12, 0, 0, 0, time.UTC)
+	liveReview := portalRun{
+		IssueNumber: 2496, Review: true, RunID: "review-live", Key: "review-live",
+		Kind: "active", Status: "reviewing", StartedAt: startedAt,
+	}
+	parent := portalRun{
+		IssueNumber: 2496, RunID: "implementation", Key: "implementation",
+		Kind: "completed", Status: "blocked", StartedAt: startedAt.Add(-time.Minute),
+		externalGate: true,
+	}
+
+	runs := (&portalRunsView{}).aggregateReviewChildren(paths.NewLayout(nil, t.TempDir()), []portalRun{parent, liveReview})
+	for _, run := range runs {
+		if run.RunID == parent.RunID {
+			if run.Status != "blocked" {
+				t.Fatalf("external-gate parent status = %q, want blocked", run.Status)
+			}
+			return
+		}
+	}
+	t.Fatalf("external-gate parent missing from aggregate output: %#v", runs)
 }
 
 func TestPortalActiveBatchPreservesExternalGateState(t *testing.T) {
