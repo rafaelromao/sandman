@@ -259,27 +259,34 @@ func rollupStateFromJSON(raw json.RawMessage) string {
 	if len(checks) == 0 {
 		return ""
 	}
+	failure := false
+	pending := false
 	for _, run := range checks {
 		status := strings.ToUpper(strings.TrimSpace(run.Status))
 		if status != "" {
 			if status != "COMPLETED" {
-				return "pending"
+				pending = true
+				continue
+			}
+			conclusion := strings.ToUpper(strings.TrimSpace(run.Conclusion))
+			if conclusion != "" && conclusion != "SUCCESS" && conclusion != "SKIPPED" && conclusion != "NEUTRAL" {
+				failure = true
 			}
 			continue
 		}
 		switch strings.ToUpper(strings.TrimSpace(run.State)) {
 		case "FAILURE", "ERROR":
-			return "failure"
+			failure = true
 		case "SUCCESS":
 		default:
-			return "pending"
+			pending = true
 		}
 	}
-	for _, run := range checks {
-		conclusion := strings.ToUpper(strings.TrimSpace(run.Conclusion))
-		if conclusion != "" && conclusion != "SUCCESS" && conclusion != "SKIPPED" && conclusion != "NEUTRAL" {
-			return "failure"
-		}
+	if failure {
+		return "failure"
+	}
+	if pending {
+		return "pending"
 	}
 	return "success"
 }

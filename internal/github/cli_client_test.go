@@ -325,6 +325,28 @@ func TestCLIClient_FindPRByBranch_StatusContextFailure(t *testing.T) {
 	}
 }
 
+func TestRollupStateFromJSON_MixedPendingAndFailureIsFailure(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		raw  string
+	}{
+		{
+			name: "pending check before legacy failure",
+			raw:  `[{"__typename":"CheckRun","status":"IN_PROGRESS"},{"__typename":"StatusContext","state":"FAILURE"}]`,
+		},
+		{
+			name: "legacy failure before pending check",
+			raw:  `[{"__typename":"StatusContext","state":"FAILURE"},{"__typename":"CheckRun","status":"IN_PROGRESS"}]`,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := rollupStateFromJSON([]byte(test.raw)); got != "failure" {
+				t.Fatalf("rollupStateFromJSON() = %q, want failure", got)
+			}
+		})
+	}
+}
+
 func TestCLIClient_FindPRByBranch_StatusCheckRollupArrayWithFailure(t *testing.T) {
 	runner := &fakeRunner{responses: []fakeResponse{{output: `[{"number":18,"state":"open","mergedAt":null,"headRefName":"failure-branch","headRefOid":"def456","reviewDecision":"APPROVED","mergeStateStatus":"DIRTY","statusCheckRollup":[{"__typename":"CheckRun","conclusion":"SUCCESS","status":"COMPLETED","name":"build"},{"__typename":"CheckRun","conclusion":"FAILURE","status":"COMPLETED","name":"lint"}]}]`}}}
 	client := &CLIClient{runner: runner}
