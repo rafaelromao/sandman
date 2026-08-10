@@ -306,6 +306,26 @@ func TestCLIClient_FindPRByBranch_MergedFetchesAllNativeClosingReferences(t *tes
 	}
 }
 
+func TestCLIClient_FindPRByBranch_MergedNativeReferenceFailurePreservesBodyIntent(t *testing.T) {
+	runner := &fakeRunner{responses: []fakeResponse{
+		{output: `[{
+			"number":17,"state":"closed","body":"Closes #386","mergedAt":"2026-08-01T12:00:00Z",
+			"headRefName":"merged-branch","headRefOid":"abc123","statusCheckRollup":"success"
+		}]`},
+		{output: `{"name":"sandman","owner":{"login":"rafaelromao"}}`},
+		{err: errors.New("temporary GraphQL failure")},
+	}}
+	client := &CLIClient{runner: runner}
+
+	pr, err := client.FindPRByBranch(context.Background(), "merged-branch")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if pr == nil || !pr.ClosesIssue(386) {
+		t.Fatalf("merged PR body closing intent = %#v, want issue 386", pr)
+	}
+}
+
 // TestCLIClient_FindPRByBranch_StatusCheckRollupArrayAllSuccess asserts
 // that gh CLI ≥ 2.65's array-shaped statusCheckRollup with all SUCCESS
 // checks collapses to the canonical "success" rollup string the rest of

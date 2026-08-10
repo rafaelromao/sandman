@@ -614,10 +614,9 @@ func (c *CLIClient) FindPRByBranch(ctx context.Context, branch string) (*PR, err
 	payload := payloads[0]
 	var linkedIssueNumbers []int
 	if strings.TrimSpace(payload.MergedAt) != "" || strings.EqualFold(payload.State, "merged") {
-		linkedIssueNumbers, err = c.fetchPRClosingIssueNumbers(ctx, payload.Number)
-		if err != nil {
-			return nil, fmt.Errorf("fetch PR closing references: %w", err)
-		}
+		// Native references enrich the parsed PR, but a transient GraphQL
+		// failure must not hide closing intent already present in its body.
+		linkedIssueNumbers, _ = c.fetchPRClosingIssueNumbers(ctx, payload.Number)
 	}
 	return &PR{
 		Number:             payload.Number,

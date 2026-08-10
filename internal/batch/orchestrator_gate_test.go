@@ -336,6 +336,43 @@ func TestConfirmExternalGateRejectsMergedPRWithoutClosingReference(t *testing.T)
 	}
 }
 
+func TestHandleExternalGateCancellationDoesNotPersistBlocker(t *testing.T) {
+	workDir := t.TempDir()
+	taskPath := filepath.Join(workDir, ".sandman", "task.md")
+	if err := os.MkdirAll(filepath.Dir(taskPath), 0o755); err != nil {
+		t.Fatalf("create task directory: %v", err)
+	}
+	if err := os.WriteFile(taskPath, []byte("# Existing task\n"), 0o644); err != nil {
+		t.Fatalf("seed task: %v", err)
+	}
+	logPath := filepath.Join(workDir, ".sandman", "run.log")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	session := &runSession{
+		deps: runDeps{
+			githubClient: &fakeGitHubClient{prs: map[string]*github.PR{gateTestBranch: {
+				Number:            17,
+				State:             "open",
+				StatusCheckRollup: "pending",
+			}}},
+		},
+		opts: gateTestRunOptions(),
+	}
+
+	status, extras, handled := session.handleExternalGate(ctx, workDir, gateTestBranch, logPath, "run-test")
+	if !handled || status != "aborted" || extras != nil {
+		t.Fatalf("canceled gate = (%q, %#v, %t), want (aborted, nil, true)", status, extras, handled)
+	}
+	if task, err := os.ReadFile(taskPath); err != nil {
+		t.Fatalf("read task: %v", err)
+	} else if strings.Contains(string(task), "External Gate") {
+		t.Fatalf("canceled gate persisted task blocker: %q", task)
+	}
+	if _, err := os.Stat(logPath); !os.IsNotExist(err) {
+		t.Fatalf("canceled gate run log exists, stat error = %v", err)
+	}
+}
+
 func TestRecordExternalGateBlockerPersistsTaskAndLog(t *testing.T) {
 	workDir := t.TempDir()
 	taskPath := filepath.Join(workDir, ".sandman", "task.md")

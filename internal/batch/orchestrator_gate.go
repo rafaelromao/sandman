@@ -152,10 +152,10 @@ func (s *runSession) handleExternalGate(ctx context.Context, workDir, branch, lo
 		return s.confirmExternalGate(ctx, workDir, branch, logPath, runID)
 	}
 	if gate == "failed" {
-		return s.blockExternalGate(workDir, logPath, runID, "failed")
+		return s.blockExternalGate(ctx, workDir, logPath, runID, "failed")
 	}
 	if gate == "unavailable" && !initialUnavailable {
-		return s.blockExternalGate(workDir, logPath, runID, "unavailable")
+		return s.blockExternalGate(ctx, workDir, logPath, runID, "unavailable")
 	}
 
 	polled := pollPRGate(ctx, s.deps.githubClient, branch, s.opts)
@@ -163,15 +163,15 @@ func (s *runSession) handleExternalGate(ctx context.Context, workDir, branch, lo
 		return s.confirmExternalGate(ctx, workDir, branch, logPath, runID)
 	}
 	if polled == gateFailed {
-		return s.blockExternalGate(workDir, logPath, runID, "failed")
+		return s.blockExternalGate(ctx, workDir, logPath, runID, "failed")
 	}
 	if polled == gatePollUnavailable || polled == gatePollPRMissing {
-		return s.blockExternalGate(workDir, logPath, runID, "unavailable")
+		return s.blockExternalGate(ctx, workDir, logPath, runID, "unavailable")
 	}
 	if initialUnavailable {
-		return s.blockExternalGate(workDir, logPath, runID, "unavailable")
+		return s.blockExternalGate(ctx, workDir, logPath, runID, "unavailable")
 	}
-	return s.blockExternalGate(workDir, logPath, runID, "pending")
+	return s.blockExternalGate(ctx, workDir, logPath, runID, "pending")
 }
 
 func (s *runSession) confirmExternalGate(ctx context.Context, workDir, branch, logPath, runID string) (string, map[string]any, bool) {
@@ -181,10 +181,13 @@ func (s *runSession) confirmExternalGate(ctx context.Context, workDir, branch, l
 	if mergedPRMissingClosingReference(ctx, s.deps.githubClient, branch, s.issueNumber) {
 		return "failure", mergeCompletionFailureExtras(nil, s.issueNumber), true
 	}
-	return s.blockExternalGate(workDir, logPath, runID, "unverified")
+	return s.blockExternalGate(ctx, workDir, logPath, runID, "unverified")
 }
 
-func (s *runSession) blockExternalGate(workDir, logPath, runID, reason string) (string, map[string]any, bool) {
+func (s *runSession) blockExternalGate(ctx context.Context, workDir, logPath, runID, reason string) (string, map[string]any, bool) {
+	if ctx.Err() != nil {
+		return "aborted", nil, true
+	}
 	s.recordExternalGateBlocker(workDir, logPath, runID, reason)
 	return "blocked", map[string]any{"blocker": "external-gate", "gate": reason}, true
 }
