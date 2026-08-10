@@ -188,7 +188,12 @@ Set `run_idle_timeout: 0` in `.sandman/config.yaml` or pass `--run-idle-timeout 
 
 ### Blocked runs
 
-A run is marked as `blocked` when one or more of its `BlockedBy` issues failed in the same batch with a non-aborted status. Blocked runs do not execute — they are reported in the batch summary:
+There are two blocked lifecycles:
+
+- A dependency-blocked run has one or more `BlockedBy` issues that failed in the same batch with a non-aborted status. It does not execute and emits `run.blocked`, including the upstream blockers.
+- An external-gate run executes successfully, then finds its pull request awaiting CI, delegated review, or intervention. It emits `run.finished` with `status: "blocked"`, `blocker: "external-gate"`, and a `gate` reason. Continue it according to the external-gate next action rather than treating it as an unstarted dependency.
+
+Both appear in the blocked bucket of the batch summary:
 
 ```
 Summary: 3 succeeded, 0 failed, 1 blocked
@@ -196,7 +201,7 @@ Summary: 3 succeeded, 0 failed, 1 blocked
   #43  blocked
 ```
 
-The event log records a `run.blocked` event for each blocked run, including which blockers caused it. If a blocker finished with status `aborted` instead, the dependent is itself emitted as `run.aborted` (with `aborted_by` listing the upstream blocker) and counted in the aborted total rather than the blocked total.
+If a dependency blocker finished with status `aborted`, the dependent is itself emitted as `run.aborted` (with `aborted_by` listing the upstream blocker) and counted in the aborted total rather than the blocked total.
 
 ### Queued runs
 

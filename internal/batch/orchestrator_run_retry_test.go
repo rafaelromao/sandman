@@ -516,7 +516,7 @@ func TestRunSingle_AlreadyResolvedMergedPRStillSuccess(t *testing.T) {
 }
 
 func TestRunSingle_AlreadyResolvedMergedPRStillRunsFailingVerification(t *testing.T) {
-	workDir := testenv.MkdirShort(t, "gate-")
+	workDir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(workDir)
 	branch := "42-fix-bug"
 	wtDir := filepath.Join(workDir, "worktree")
@@ -1249,7 +1249,7 @@ func TestRunSingle_RetryBannersUseRetriesBudgetAsDenominator(t *testing.T) {
 // that contains no `--- run ---` and no `--- retry ---` banner at
 // all — the agent's own output is the only content.
 func TestRunSingle_InitialAttemptOnlyHasNoBanner(t *testing.T) {
-	workDir := testenv.MkdirShort(t, "retry-")
+	workDir := testenv.MkdirShort(t, "sm-orch-")
 	oldWD, err := os.Getwd()
 	if err != nil {
 		t.Fatalf("get wd: %v", err)

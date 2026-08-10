@@ -32,7 +32,7 @@ func runCleanGateCase(t *testing.T, pr *github.PR) (AgentRunResult, []events.Eve
 
 func runCleanGateCaseForIssue(t *testing.T, issueState string, pr *github.PR) (AgentRunResult, []events.Event, int) {
 	t.Helper()
-	workDir := testenv.MkdirShort(t, "gate-")
+	workDir := testenv.MkdirShort(t, "sm-orch-")
 	oldWD, err := os.Getwd()
 	if err != nil {
 		t.Fatalf("get working directory: %v", err)
@@ -355,13 +355,21 @@ func TestPollPRGateDetectsDisappearedPR(t *testing.T) {
 }
 
 func TestCheckPRExternalGateIgnoresFullyGreenOpenPR(t *testing.T) {
-	for _, rollup := range []string{"success", ""} {
-		t.Run(map[string]string{"success": "with checks", "": "without checks"}[rollup], func(t *testing.T) {
+	for _, tt := range []struct {
+		name   string
+		rollup string
+		review string
+	}{
+		{name: "approved with checks", rollup: "success", review: "APPROVED"},
+		{name: "approved without checks", review: "APPROVED"},
+		{name: "no required review", rollup: "success"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
 			client := &fakeGitHubClient{prs: map[string]*github.PR{gateTestBranch: {
 				Number:            17,
 				State:             "open",
-				StatusCheckRollup: rollup,
-				ReviewDecision:    "APPROVED",
+				StatusCheckRollup: tt.rollup,
+				ReviewDecision:    tt.review,
 				MergeStateStatus:  "CLEAN",
 			}}}
 

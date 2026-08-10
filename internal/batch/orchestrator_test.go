@@ -1350,7 +1350,7 @@ func TestRunSingle_RetryWithOpenPRFallsBackToEmptyTaskTemplate(t *testing.T) {
 }
 
 func TestRunSingle_WaitsForExternalGateAfterCleanExit(t *testing.T) {
-	workDir := testenv.MkdirShort(t, "gate-")
+	workDir := testenv.MkdirShort(t, "sm-orch-")
 	oldWD, err := os.Getwd()
 	if err != nil {
 		t.Fatalf("get wd: %v", err)
@@ -1446,7 +1446,7 @@ func TestRunSingle_MergedPRSuccessRegardlessOfAgentExitCode(t *testing.T) {
 }
 
 func TestRunSingle_UnmergedPROpenGateIsNotAgentFailure(t *testing.T) {
-	workDir := testenv.MkdirShort(t, "gate-")
+	workDir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(workDir)
 
 	branch := "42-fix-bug"
@@ -1480,7 +1480,7 @@ func TestRunSingle_UnmergedPROpenGateIsNotAgentFailure(t *testing.T) {
 }
 
 func TestRunSingle_ModeContinueUnmergedPROpenGateIsBlocked(t *testing.T) {
-	workDir := testenv.MkdirShort(t, "gate-")
+	workDir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(workDir)
 
 	branch := "42-fix-bug"
