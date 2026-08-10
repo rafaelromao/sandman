@@ -1496,7 +1496,14 @@ func TestRunSingle_ModeContinueUnmergedPROpenGateIsBlocked(t *testing.T) {
 	o := &Orchestrator{
 		githubClient: &fakeGitHubClient{
 			issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}},
-			prs:    map[string]*github.PR{branch: {Number: 17, State: "open", Merged: false, HeadRefName: branch}},
+			prs: map[string]*github.PR{branch: {
+				Number:            17,
+				State:             "open",
+				HeadRefName:       branch,
+				StatusCheckRollup: "success",
+				ReviewDecision:    "APPROVED",
+				MergeStateStatus:  "CLEAN",
+			}},
 		},
 		renderer:        &retryRenderer{result: "rendered prompt"},
 		sandboxFactory:  sbFactory,
@@ -1513,12 +1520,19 @@ func TestRunSingle_ModeContinueUnmergedPROpenGateIsBlocked(t *testing.T) {
 	if result.Status != "blocked" {
 		t.Fatalf("status = %q, want blocked (continuation must preserve external-gate state)", result.Status)
 	}
+	if result.RetriesTotal != 1 {
+		t.Fatalf("retries total = %d, want 1", result.RetriesTotal)
+	}
 	logs, err := spyLog.Read()
 	if err != nil {
 		t.Fatalf("read events: %v", err)
 	}
 	if got := countEventsByType(logs, "run.retry"); got != 0 {
 		t.Fatalf("run.retry events = %d, want 0", got)
+	}
+	finished := findEvent(logs, "run.finished")
+	if finished == nil || finished.Payload["gate"] != "ready-to-merge" {
+		t.Fatalf("continuation terminal gate = %v, want ready-to-merge", finished)
 	}
 }
 
@@ -1537,7 +1551,7 @@ func TestRunSingle_ModeContinueMergedPRIsSuccess(t *testing.T) {
 	o := &Orchestrator{
 		githubClient: &fakeGitHubClient{
 			issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}},
-			prs:    map[string]*github.PR{branch: {Number: 17, State: "closed", Merged: true, HeadRefName: branch}},
+			prs:    map[string]*github.PR{branch: {Number: 17, State: "closed", Merged: true, HeadRefName: branch, Body: "Closes #42"}},
 		},
 		renderer:        &retryRenderer{result: "rendered prompt"},
 		sandboxFactory:  sbFactory,

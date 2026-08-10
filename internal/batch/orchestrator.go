@@ -1758,6 +1758,7 @@ type runSessionOptions struct {
 	baseBranchSyncMu *sync.Mutex
 	retryReset       func(ctx context.Context, sb sandbox.Sandbox, branch, baseBranch string) error
 	killTimeout      time.Duration
+	currentHead      func(workDir string) (string, error)
 	gatePollInitial  time.Duration
 	gatePollMaxSleep time.Duration
 	gatePollBudget   time.Duration
