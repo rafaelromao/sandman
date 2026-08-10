@@ -657,7 +657,7 @@ func (p *containerPool) Acquire() (*containerLease, error) {
 			return &containerLease{container: container, release: func() { p.releaseShared(best) }}, nil
 		}
 
-		if p.hasPendingLocked() {
+		if p.hasPendingCapacityLocked() {
 			p.cond.Wait()
 			continue
 		}
@@ -708,9 +708,9 @@ func (p *containerPool) pickReadyLocked() *pooledContainer {
 	return best
 }
 
-func (p *containerPool) hasPendingLocked() bool {
+func (p *containerPool) hasPendingCapacityLocked() bool {
 	for _, entry := range p.shared {
-		if !entry.ready && !entry.dead && entry.startErr == nil {
+		if !entry.ready && !entry.dead && entry.startErr == nil && (p.capacity <= 0 || entry.active < p.capacity) {
 			return true
 		}
 	}
