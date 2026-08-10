@@ -213,6 +213,12 @@ func (s *runSession) recordExternalGateBlocker(workDir, logPath, runID, reason s
 		nextAction = "inspect the failed CI or requested review changes, then continue the run to address them"
 	}
 	blocker := fmt.Sprintf("\n\n## External Gate\n\n- Failure: %s.\n- Next action: %s.\n", failure, nextAction)
+	logSummary := failure
+	if reason == gateReadyToMerge {
+		nextAction = "revalidate current-head approval, CI, and mergeability, then execute the normal pull-request merge gate"
+		blocker = fmt.Sprintf("\n\n## External Gate\n\n- State: pull request external gate is ready-to-merge.\n- Next action: %s.\n", nextAction)
+		logSummary = "pull request is ready to merge"
+	}
 
 	if strings.TrimSpace(workDir) != "" {
 		taskPath := filepath.Join(workDir, ".sandman", "task.md")
@@ -238,7 +244,7 @@ func (s *runSession) recordExternalGateBlocker(workDir, logPath, runID, reason s
 			return
 		}
 		prefixed := NewLinePrefixWriter(runID, file)
-		_, writeErr := fmt.Fprintf(prefixed, "external gate %s: %s; next action: %s\n", reason, failure, nextAction)
+		_, writeErr := fmt.Fprintf(prefixed, "external gate %s: %s; next action: %s\n", reason, logSummary, nextAction)
 		flushErr := prefixed.Flush()
 		closeErr := file.Close()
 		if writeErr != nil {

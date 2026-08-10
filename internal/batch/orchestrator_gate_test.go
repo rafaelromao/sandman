@@ -568,3 +568,40 @@ func TestRecordExternalGateBlockerPersistsTaskAndLog(t *testing.T) {
 		t.Fatalf("updated task blocker = %q, want one current failed-gate section", updatedTask)
 	}
 }
+
+func TestRecordReadyToMergeExternalGatePersistsMergeAction(t *testing.T) {
+	workDir := t.TempDir()
+	taskPath := filepath.Join(workDir, ".sandman", "task.md")
+	if err := os.MkdirAll(filepath.Dir(taskPath), 0o755); err != nil {
+		t.Fatalf("create task directory: %v", err)
+	}
+	if err := os.WriteFile(taskPath, []byte("# Existing task\n"), 0o644); err != nil {
+		t.Fatalf("seed task: %v", err)
+	}
+	logPath := filepath.Join(workDir, ".sandman", "run.log")
+	session := &runSession{deps: runDeps{errorLog: io.Discard}}
+
+	session.recordExternalGateBlocker(workDir, logPath, "run-test", gateReadyToMerge)
+
+	task, err := os.ReadFile(taskPath)
+	if err != nil {
+		t.Fatalf("read task: %v", err)
+	}
+	taskText := string(task)
+	if !strings.Contains(taskText, "State: pull request external gate is ready-to-merge.") {
+		t.Fatalf("task blocker = %q, want ready-to-merge state", taskText)
+	}
+	const nextAction = "Next action: revalidate current-head approval, CI, and mergeability, then execute the normal pull-request merge gate."
+	if !strings.Contains(taskText, nextAction) || strings.Contains(taskText, "- Failure:") {
+		t.Fatalf("task blocker = %q, want ready-specific next action without generic failure", taskText)
+	}
+
+	log, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read run log: %v", err)
+	}
+	logText := string(log)
+	if !strings.Contains(logText, "external gate ready-to-merge: pull request is ready to merge; next action: revalidate current-head approval, CI, and mergeability, then execute the normal pull-request merge gate") {
+		t.Fatalf("run log = %q, want ready-specific next action", logText)
+	}
+}

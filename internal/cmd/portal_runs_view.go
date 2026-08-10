@@ -2249,6 +2249,9 @@ func (v *portalRunsView) portalBlockedMessage(payload map[string]any) string {
 	if payload != nil {
 		if blocker, _ := payload["blocker"].(string); blocker == "external-gate" {
 			gate, _ := payload["gate"].(string)
+			if gate == "ready-to-merge" {
+				return "Pull request ready to merge; revalidate current-head approval, CI, and mergeability before executing the normal merge gate."
+			}
 			if gate == "failed" {
 				return "Blocked by a failed external gate."
 			}
