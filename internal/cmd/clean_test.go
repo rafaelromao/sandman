@@ -13,6 +13,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/daemon"
 	"github.com/rafaelromao/sandman/internal/events"
+	"github.com/rafaelromao/sandman/internal/paths"
 )
 
 func TestClean_Stale_AloneAccepted(t *testing.T) {
@@ -246,6 +247,732 @@ func TestClean_All_PreservesActiveEntries(t *testing.T) {
 	}
 	if idx.Batches[0].ID != "batch-active" {
 		t.Errorf("expected remaining entry to be batch-active, got %s", idx.Batches[0].ID)
+	}
+}
+
+// TestClean_All_RemovesCompletedActiveBatchWorktrees reproduces the gap
+// where a batch whose runs are all terminal but whose batch-level
+// Status is still `active` (because no one ever ran `archive batch` to
+// promote it) is left untouched by `clean --all`. Per-row archiving
+// (`archive run`, `archive older-than`, `archive stale`) marks each
+// RunRecord archived but does NOT promote the batch-level Status; the
+// batch dir and worktree persist indefinitely. `clean --all` is the
+// operator escape hatch that should reclaim those resources.
+func TestClean_All_RemovesCompletedActiveBatchWorktrees(t *testing.T) {
+	deps := newRunDepsAuto(t, &fakeBatchRunner{})
+	dir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("os.Getwd: %v", err)
+	}
+
+	batchActive := filepath.Join(dir, ".sandman", "batches", "batch-completed")
+	batchRunDir := filepath.Join(batchActive, "runs", "batch-completed")
+	worktreeActive := filepath.Join(dir, ".sandman", "worktrees", "42-fix")
+
+	if err := os.MkdirAll(batchRunDir, 0755); err != nil {
+		t.Fatalf("create batch run dir: %v", err)
+	}
+	if err := os.MkdirAll(worktreeActive, 0755); err != nil {
+		t.Fatalf("create worktree: %v", err)
+	}
+
+	writeRunManifest(t, batchRunDir, batchindex.RunManifest{
+		RunID:        "batch-completed",
+		BatchID:      "batch-completed",
+		Issue:        42,
+		Branch:       "42-fix",
+		WorktreePath: worktreeActive,
+		Kind:         batchindex.KindIssue,
+		Status:       batchindex.RunManifestStatusSuccess,
+	})
+	now := time.Now()
+	writeBatchIndex(t, dir, []batchindex.Batch{
+		{ID: "batch-completed", Path: batchActive, Kind: batchindex.KindIssue, Status: batchindex.StatusActive, CreatedAt: now},
+	})
+
+	gr := &fakeGitRunner{}
+	deps.ConfigStore = &fakeStore{config: &config.Config{WorktreeDir: filepath.Join(dir, ".sandman", "worktrees")}}
+	deps.EventLog = &fakeEventLog{}
+	deps.GitRunner = gr
+	deps.RunActivityProbe = func(string) bool { return false }
+
+	var buf bytes.Buffer
+	cmd := NewCleanCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--all"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if _, err := os.Stat(worktreeActive); !os.IsNotExist(err) {
+		t.Errorf("expected worktree of completed-but-active batch to be removed by --all, but %s still exists", worktreeActive)
+	}
+	if len(gr.removeWorktreeCalls) != 1 {
+		t.Fatalf("expected 1 removeWorktree call, got %d", len(gr.removeWorktreeCalls))
+	}
+	if gr.removeWorktreeCalls[0] != worktreeActive {
+		t.Errorf("expected removeWorktree(%q), got %q", worktreeActive, gr.removeWorktreeCalls[0])
+	}
+
+	data, _ := os.ReadFile(filepath.Join(dir, ".sandman", "batches.json"))
+	var idx batchindex.Index
+	json.Unmarshal(data, &idx)
+	if len(idx.Batches) != 0 {
+		t.Errorf("expected batches index to be empty after --all, got %d entries", len(idx.Batches))
+	}
+}
+
+// TestClean_All_ReclaimsBatchWhoseRowsWerePerRowArchived covers the
+// all-rows-archived gap: when every row has been moved out of the live
+// batch by per-row archive (`archive run`, `archive older-than`,
+// `archive stale`), `runs/` is empty, the batch-level Status stays
+// `active`, and the worktree would leak. `clean --all` must reconcile
+// the archived RunRecords and reclaim the batch and its worktree from
+// the archived run manifest.
+func TestClean_All_ReclaimsBatchWhoseRowsWerePerRowArchived(t *testing.T) {
+	deps := newRunDepsAuto(t, &fakeBatchRunner{})
+	dir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("os.Getwd: %v", err)
+	}
+
+	batchActive := filepath.Join(dir, ".sandman", "batches", "batch-archived-rows")
+	archiveRunDir := filepath.Join(dir, ".sandman", "archive", "batch-archived-rows", "runs", "batch-archived-rows")
+	worktreeActive := filepath.Join(dir, ".sandman", "worktrees", "42-fix")
+
+	if err := os.MkdirAll(batchActive, 0755); err != nil {
+		t.Fatalf("create batch dir: %v", err)
+	}
+	if err := os.MkdirAll(archiveRunDir, 0755); err != nil {
+		t.Fatalf("create archive run dir: %v", err)
+	}
+	if err := os.MkdirAll(worktreeActive, 0755); err != nil {
+		t.Fatalf("create worktree: %v", err)
+	}
+
+	writeRunManifest(t, archiveRunDir, batchindex.RunManifest{
+		RunID:        "batch-archived-rows",
+		BatchID:      "batch-archived-rows",
+		Issue:        42,
+		Branch:       "42-fix",
+		WorktreePath: worktreeActive,
+		Kind:         batchindex.KindIssue,
+		Status:       batchindex.RunManifestStatusSuccess,
+	})
+	now := time.Now()
+	writeBatchIndex(t, dir, []batchindex.Batch{
+		{
+			ID:        "batch-archived-rows",
+			Path:      batchActive,
+			Kind:      batchindex.KindIssue,
+			Status:    batchindex.StatusActive,
+			CreatedAt: now,
+			Runs: []batchindex.RunRecord{{
+				RunID:       "batch-archived-rows",
+				Status:      batchindex.RunRecordStatusArchived,
+				ArchivePath: filepath.Join(".sandman", "archive", "batch-archived-rows", "runs", "batch-archived-rows"),
+			}},
+		},
+	})
+
+	gr := &fakeGitRunner{}
+	deps.ConfigStore = &fakeStore{config: &config.Config{WorktreeDir: filepath.Join(dir, ".sandman", "worktrees")}}
+	deps.EventLog = &fakeEventLog{}
+	deps.GitRunner = gr
+	deps.RunActivityProbe = func(string) bool { return false }
+
+	var buf bytes.Buffer
+	cmd := NewCleanCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--all"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if _, err := os.Stat(worktreeActive); !os.IsNotExist(err) {
+		t.Errorf("expected worktree of all-rows-archived batch to be removed by --all, but %s still exists", worktreeActive)
+	}
+	if len(gr.removeWorktreeCalls) != 1 {
+		t.Fatalf("expected 1 removeWorktree call, got %d", len(gr.removeWorktreeCalls))
+	}
+	if gr.removeWorktreeCalls[0] != worktreeActive {
+		t.Errorf("expected removeWorktree(%q), got %q", worktreeActive, gr.removeWorktreeCalls[0])
+	}
+
+	data, _ := os.ReadFile(filepath.Join(dir, ".sandman", "batches.json"))
+	var idx batchindex.Index
+	json.Unmarshal(data, &idx)
+	if len(idx.Batches) != 0 {
+		t.Errorf("expected batches index to be empty after --all, got %d entries", len(idx.Batches))
+	}
+}
+
+// TestClean_All_PreservesActiveBatchWithUnarchivedRow covers the
+// fail-closed half of the all-rows-archived reconciliation: a batch
+// whose runs dir is empty but whose RunRecords are NOT all archived
+// must be preserved, because some row's state is unknown.
+func TestClean_All_PreservesActiveBatchWithUnarchivedRow(t *testing.T) {
+	deps := newRunDepsAuto(t, &fakeBatchRunner{})
+	dir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("os.Getwd: %v", err)
+	}
+
+	batchActive := filepath.Join(dir, ".sandman", "batches", "batch-mixed-rows")
+	worktreeActive := filepath.Join(dir, ".sandman", "worktrees", "55-fix")
+
+	if err := os.MkdirAll(batchActive, 0755); err != nil {
+		t.Fatalf("create batch dir: %v", err)
+	}
+	if err := os.MkdirAll(worktreeActive, 0755); err != nil {
+		t.Fatalf("create worktree: %v", err)
+	}
+
+	now := time.Now()
+	writeBatchIndex(t, dir, []batchindex.Batch{
+		{
+			ID:        "batch-mixed-rows",
+			Path:      batchActive,
+			Kind:      batchindex.KindIssue,
+			Status:    batchindex.StatusActive,
+			CreatedAt: now,
+			Runs: []batchindex.RunRecord{
+				{RunID: "row-1", Status: batchindex.RunRecordStatusArchived, ArchivePath: filepath.Join(".sandman", "archive", "batch-mixed-rows", "runs", "row-1")},
+				{RunID: "row-2", Status: batchindex.RunRecordStatusActive},
+			},
+		},
+	})
+
+	gr := &fakeGitRunner{}
+	deps.ConfigStore = &fakeStore{config: &config.Config{WorktreeDir: filepath.Join(dir, ".sandman", "worktrees")}}
+	deps.EventLog = &fakeEventLog{}
+	deps.GitRunner = gr
+	deps.RunActivityProbe = func(string) bool { return false }
+
+	var buf bytes.Buffer
+	cmd := NewCleanCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--all"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if _, err := os.Stat(worktreeActive); os.IsNotExist(err) {
+		t.Errorf("expected worktree of batch with unarchived row to be PRESERVED by --all, but it was removed")
+	}
+	if len(gr.removeWorktreeCalls) != 0 {
+		t.Errorf("expected 0 removeWorktree calls for batch with unarchived row, got %d", len(gr.removeWorktreeCalls))
+	}
+}
+
+// TestClean_All_PreservesBatchWithMissingArchivedRunManifest covers
+// the other fail-closed case: an archived RunRecord whose archive
+// directory exists but whose run.json is missing cannot identify its
+// worktree or branch, so the batch must remain untouched.
+func TestClean_All_PreservesBatchWithMissingArchivedRunManifest(t *testing.T) {
+	deps := newRunDepsAuto(t, &fakeBatchRunner{})
+	dir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("os.Getwd: %v", err)
+	}
+
+	batchActive := filepath.Join(dir, ".sandman", "batches", "batch-missing-manifest")
+	archiveRunDir := filepath.Join(dir, ".sandman", "archive", "batch-missing-manifest", "runs", "row-1")
+	worktreeActive := filepath.Join(dir, ".sandman", "worktrees", "55-fix")
+
+	for _, d := range []string{batchActive, archiveRunDir, worktreeActive} {
+		if err := os.MkdirAll(d, 0755); err != nil {
+			t.Fatalf("create dir %s: %v", d, err)
+		}
+	}
+
+	now := time.Now()
+	writeBatchIndex(t, dir, []batchindex.Batch{
+		{
+			ID:        "batch-missing-manifest",
+			Path:      batchActive,
+			Kind:      batchindex.KindIssue,
+			Status:    batchindex.StatusActive,
+			CreatedAt: now,
+			Runs: []batchindex.RunRecord{{
+				RunID:       "row-1",
+				Status:      batchindex.RunRecordStatusArchived,
+				ArchivePath: filepath.Join(".sandman", "archive", "batch-missing-manifest", "runs", "row-1"),
+			}},
+		},
+	})
+
+	gr := &fakeGitRunner{}
+	deps.ConfigStore = &fakeStore{config: &config.Config{WorktreeDir: filepath.Join(dir, ".sandman", "worktrees")}}
+	deps.EventLog = &fakeEventLog{}
+	deps.GitRunner = gr
+	deps.RunActivityProbe = func(string) bool { return false }
+
+	var buf bytes.Buffer
+	cmd := NewCleanCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--all"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if _, err := os.Stat(batchActive); err != nil {
+		t.Errorf("expected batch with missing archived manifest to be preserved, got: %v", err)
+	}
+	if _, err := os.Stat(worktreeActive); os.IsNotExist(err) {
+		t.Errorf("expected worktree of batch with missing archived manifest to be preserved, but it was removed")
+	}
+	if len(gr.removeWorktreeCalls) != 0 {
+		t.Errorf("expected 0 removeWorktree calls for missing archived manifest, got %d", len(gr.removeWorktreeCalls))
+	}
+}
+
+func TestClean_All_PreservesActiveBatchWithInvalidRunManifest(t *testing.T) {
+	tests := []struct {
+		name       string
+		archived   bool
+		manifestID string
+		batchID    string
+		recordID   string
+		branch     string
+	}{
+		{name: "mismatched live run id", manifestID: "other-row", branch: "42-fix"},
+		{name: "missing live branch", manifestID: "row-1"},
+		{name: "invalid live branch", manifestID: "row-1", branch: "bad..branch"},
+		{name: "mismatched archived batch id", archived: true, manifestID: "row-1", batchID: "other-batch", branch: "42-fix"},
+		{name: "empty archived run id", archived: true, manifestID: "", recordID: "", branch: "42-fix"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			deps := newRunDepsAuto(t, &fakeBatchRunner{})
+			dir, err := os.Getwd()
+			if err != nil {
+				t.Fatalf("os.Getwd: %v", err)
+			}
+
+			batchID := "batch-invalid"
+			if tt.archived {
+				batchID += "-archived"
+			} else {
+				batchID += "-live"
+			}
+			batchDir := filepath.Join(dir, ".sandman", "batches", batchID)
+			worktree := filepath.Join(dir, ".sandman", "worktrees", batchID)
+			manifestDir := filepath.Join(batchDir, "runs", "row-1")
+			var records []batchindex.RunRecord
+			if tt.archived {
+				manifestDir = filepath.Join(dir, ".sandman", "archive", batchID, "runs", "row-1")
+				recordID := tt.recordID
+				if recordID == "" {
+					recordID = "row-1"
+				}
+				records = []batchindex.RunRecord{{
+					RunID:       recordID,
+					Status:      batchindex.RunRecordStatusArchived,
+					ArchivePath: filepath.Join(".sandman", "archive", batchID, "runs", "row-1"),
+				}}
+			}
+			if err := os.MkdirAll(batchDir, 0755); err != nil {
+				t.Fatalf("create batch dir: %v", err)
+			}
+			if err := os.MkdirAll(manifestDir, 0755); err != nil {
+				t.Fatalf("create manifest dir: %v", err)
+			}
+			if err := os.MkdirAll(worktree, 0755); err != nil {
+				t.Fatalf("create worktree: %v", err)
+			}
+
+			manifestBatchID := batchID
+			if tt.batchID != "" {
+				manifestBatchID = tt.batchID
+			}
+			writeRunManifest(t, manifestDir, batchindex.RunManifest{
+				RunID:        tt.manifestID,
+				BatchID:      manifestBatchID,
+				Branch:       tt.branch,
+				WorktreePath: worktree,
+				Kind:         batchindex.KindIssue,
+				Status:       batchindex.RunManifestStatusSuccess,
+			})
+			writeBatchIndex(t, dir, []batchindex.Batch{{
+				ID:        batchID,
+				Path:      batchDir,
+				Kind:      batchindex.KindIssue,
+				Status:    batchindex.StatusActive,
+				CreatedAt: time.Now(),
+				Runs:      records,
+			}})
+
+			gr := &fakeGitRunner{}
+			deps.ConfigStore = &fakeStore{config: &config.Config{WorktreeDir: filepath.Join(dir, ".sandman", "worktrees")}}
+			eventRunID := "row-1"
+			if tt.archived {
+				eventRunID = batchID
+			}
+			deps.EventLog = &fakeEventLog{events: []events.Event{{Type: "run.finished", RunID: eventRunID}}}
+			deps.GitRunner = gr
+			deps.RunActivityProbe = func(string) bool { return false }
+
+			cmd := NewCleanCmd(deps)
+			var output bytes.Buffer
+			cmd.SetOut(&output)
+			cmd.SetErr(&output)
+			cmd.SetArgs([]string{"--all"})
+			if err := cmd.Execute(); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if _, err := os.Stat(batchDir); err != nil {
+				t.Fatalf("expected invalid-manifest batch to be preserved, got: %v\noutput: %s", err, output.String())
+			}
+			if _, err := os.Stat(worktree); err != nil {
+				t.Fatalf("expected invalid-manifest worktree to be preserved, got: %v", err)
+			}
+			if len(gr.removeWorktreeCalls) != 0 {
+				t.Fatalf("expected no worktree cleanup for invalid manifest, got %v", gr.removeWorktreeCalls)
+			}
+		})
+	}
+}
+
+func TestExecuteClean_RechecksActiveEligibilityBeforeMutation(t *testing.T) {
+	_ = newRunDepsAuto(t, &fakeBatchRunner{})
+	dir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("os.Getwd: %v", err)
+	}
+
+	batchID := "batch-recheck"
+	batchDir := filepath.Join(dir, ".sandman", "batches", batchID)
+	runDir := filepath.Join(batchDir, "runs", "run-1")
+	worktree := filepath.Join(dir, ".sandman", "worktrees", batchID)
+	for _, path := range []string{runDir, worktree} {
+		if err := os.MkdirAll(path, 0755); err != nil {
+			t.Fatalf("create %s: %v", path, err)
+		}
+	}
+	writeRunManifest(t, runDir, batchindex.RunManifest{
+		RunID:        "run-1",
+		BatchID:      batchID,
+		Branch:       "42-fix",
+		WorktreePath: worktree,
+		Kind:         batchindex.KindIssue,
+		Status:       batchindex.RunManifestStatusSuccess,
+	})
+	entry := batchindex.Batch{
+		ID:        batchID,
+		Path:      batchDir,
+		Kind:      batchindex.KindIssue,
+		Status:    batchindex.StatusActive,
+		CreatedAt: time.Now(),
+	}
+	writeBatchIndex(t, dir, []batchindex.Batch{entry})
+
+	layout := paths.NewLayout(&config.Config{WorktreeDir: filepath.Join(dir, ".sandman", "worktrees")}, dir)
+	action, ok := buildEligibleActiveAction(entry, func(string) bool { return false }, layout)
+	if !ok {
+		t.Fatal("expected initial active eligibility check to pass")
+	}
+
+	gr := &fakeGitRunner{}
+	if outcomes, err := executeCleanWithProbe([]cleanAction{action}, gr, layout, osCleanupRemover{}, func(string) bool { return true }); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	} else if len(outcomes) != 0 {
+		t.Fatalf("expected no cleanup outcome after activity recheck, got %v", outcomes)
+	}
+	if _, err := os.Stat(batchDir); err != nil {
+		t.Fatalf("expected active batch to be preserved, got: %v", err)
+	}
+	if _, err := os.Stat(worktree); err != nil {
+		t.Fatalf("expected active worktree to be preserved, got: %v", err)
+	}
+	if len(gr.removeWorktreeCalls) != 0 {
+		t.Fatalf("expected no worktree cleanup after activity recheck, got %v", gr.removeWorktreeCalls)
+	}
+}
+
+func TestClean_All_PreservesActiveBatchWithOutOfTreeArchivePath(t *testing.T) {
+	deps := newRunDepsAuto(t, &fakeBatchRunner{})
+	dir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("os.Getwd: %v", err)
+	}
+
+	batchID := "batch-out-of-tree-archive"
+	batchDir := filepath.Join(dir, ".sandman", "batches", batchID)
+	archiveDir := filepath.Join(dir, "outside-archive", "runs", "row-1")
+	worktree := filepath.Join(dir, ".sandman", "worktrees", batchID)
+	for _, path := range []string{batchDir, archiveDir, worktree} {
+		if err := os.MkdirAll(path, 0755); err != nil {
+			t.Fatalf("create %s: %v", path, err)
+		}
+	}
+	writeRunManifest(t, archiveDir, batchindex.RunManifest{
+		RunID:        "row-1",
+		BatchID:      batchID,
+		Branch:       "42-fix",
+		WorktreePath: worktree,
+		Kind:         batchindex.KindIssue,
+		Status:       batchindex.RunManifestStatusSuccess,
+	})
+	writeBatchIndex(t, dir, []batchindex.Batch{{
+		ID:        batchID,
+		Path:      batchDir,
+		Kind:      batchindex.KindIssue,
+		Status:    batchindex.StatusActive,
+		CreatedAt: time.Now(),
+		Runs: []batchindex.RunRecord{{
+			RunID:       "row-1",
+			Status:      batchindex.RunRecordStatusArchived,
+			ArchivePath: filepath.Join("..", "outside-archive", "runs", "row-1"),
+		}},
+	}})
+
+	gr := &fakeGitRunner{}
+	deps.ConfigStore = &fakeStore{config: &config.Config{WorktreeDir: filepath.Join(dir, ".sandman", "worktrees")}}
+	deps.EventLog = &fakeEventLog{events: []events.Event{{Type: "run.finished", RunID: batchID}}}
+	deps.GitRunner = gr
+	deps.RunActivityProbe = func(string) bool { return false }
+	cmd := NewCleanCmd(deps)
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"--all"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if _, err := os.Stat(batchDir); err != nil {
+		t.Fatalf("expected out-of-tree archive batch to be preserved, got: %v", err)
+	}
+	if _, err := os.Stat(worktree); err != nil {
+		t.Fatalf("expected out-of-tree archive worktree to be preserved, got: %v", err)
+	}
+	if len(gr.removeWorktreeCalls) != 0 {
+		t.Fatalf("expected no worktree cleanup for out-of-tree archive, got %v", gr.removeWorktreeCalls)
+	}
+}
+
+// TestClean_All_RemovesAllWorktreesInMultiRunBatch covers the
+// multi-run gap: a batch whose rows each own a distinct worktree and
+// branch must have every pair removed, not just the first. Orphaning
+// sibling worktrees/branches would leak their sandbox state.
+func TestClean_All_RemovesAllWorktreesInMultiRunBatch(t *testing.T) {
+	deps := newRunDepsAuto(t, &fakeBatchRunner{})
+	dir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("os.Getwd: %v", err)
+	}
+
+	batchActive := filepath.Join(dir, ".sandman", "batches", "batch-multi-run")
+	run1Dir := filepath.Join(batchActive, "runs", "run-1")
+	run2Dir := filepath.Join(batchActive, "runs", "run-2")
+	worktree1 := filepath.Join(dir, ".sandman", "worktrees", "42-fix")
+	worktree2 := filepath.Join(dir, ".sandman", "worktrees", "43-fix")
+
+	for _, d := range []string{run1Dir, run2Dir, worktree1, worktree2} {
+		if err := os.MkdirAll(d, 0755); err != nil {
+			t.Fatalf("create dir %s: %v", d, err)
+		}
+	}
+
+	writeRunManifest(t, run1Dir, batchindex.RunManifest{
+		RunID:        "run-1",
+		BatchID:      "batch-multi-run",
+		Issue:        42,
+		Branch:       "42-fix",
+		WorktreePath: worktree1,
+		Kind:         batchindex.KindIssue,
+		Status:       batchindex.RunManifestStatusSuccess,
+	})
+	writeRunManifest(t, run2Dir, batchindex.RunManifest{
+		RunID:        "run-2",
+		BatchID:      "batch-multi-run",
+		Issue:        43,
+		Branch:       "43-fix",
+		WorktreePath: worktree2,
+		Kind:         batchindex.KindIssue,
+		Status:       batchindex.RunManifestStatusFailure,
+	})
+	now := time.Now()
+	writeBatchIndex(t, dir, []batchindex.Batch{
+		{ID: "batch-multi-run", Path: batchActive, Kind: batchindex.KindIssue, Status: batchindex.StatusActive, CreatedAt: now},
+	})
+
+	gr := &fakeGitRunner{}
+	deps.ConfigStore = &fakeStore{config: &config.Config{WorktreeDir: filepath.Join(dir, ".sandman", "worktrees")}}
+	deps.EventLog = &fakeEventLog{}
+	deps.GitRunner = gr
+	deps.RunActivityProbe = func(string) bool { return false }
+
+	var buf bytes.Buffer
+	cmd := NewCleanCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--all"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(gr.removeWorktreeCalls) != 2 {
+		t.Fatalf("expected 2 removeWorktree calls, got %d: %v", len(gr.removeWorktreeCalls), gr.removeWorktreeCalls)
+	}
+	for _, wt := range []string{worktree1, worktree2} {
+		found := false
+		for _, call := range gr.removeWorktreeCalls {
+			if call == wt {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("expected removeWorktree(%q) to be called, calls=%v", wt, gr.removeWorktreeCalls)
+		}
+	}
+	if len(gr.deleteBranchCalls) != 2 {
+		t.Errorf("expected 2 deleteBranch calls, got %d: %v", len(gr.deleteBranchCalls), gr.deleteBranchCalls)
+	}
+	if _, err := os.Stat(worktree1); !os.IsNotExist(err) {
+		t.Errorf("expected worktree1 %s to be removed, but it exists", worktree1)
+	}
+	if _, err := os.Stat(worktree2); !os.IsNotExist(err) {
+		t.Errorf("expected worktree2 %s to be removed, but it exists", worktree2)
+	}
+}
+
+// TestClean_All_PreservesActiveBatchWithLiveDaemon complements the
+// "active entries preserved" guarantee by exercising the new
+// eligible-active path: a batch whose runs are terminal but whose
+// daemon is still alive must NOT be reclaimed. This protects against
+// over-aggressive reclamation that would race against a daemon that
+// is restarting between socket probes.
+func TestClean_All_PreservesActiveBatchWithLiveDaemon(t *testing.T) {
+	deps := newRunDepsAuto(t, &fakeBatchRunner{})
+	dir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("os.Getwd: %v", err)
+	}
+
+	batchActive := filepath.Join(dir, ".sandman", "batches", "batch-live")
+	batchRunDir := filepath.Join(batchActive, "runs", "batch-live")
+	worktreeActive := filepath.Join(dir, ".sandman", "worktrees", "99-fix")
+
+	if err := os.MkdirAll(batchRunDir, 0755); err != nil {
+		t.Fatalf("create batch run dir: %v", err)
+	}
+	if err := os.MkdirAll(worktreeActive, 0755); err != nil {
+		t.Fatalf("create worktree: %v", err)
+	}
+
+	writeRunManifest(t, batchRunDir, batchindex.RunManifest{
+		RunID:        "batch-live",
+		BatchID:      "batch-live",
+		Issue:        99,
+		Branch:       "99-fix",
+		WorktreePath: worktreeActive,
+		Kind:         batchindex.KindIssue,
+		Status:       batchindex.RunManifestStatusSuccess,
+	})
+	now := time.Now()
+	writeBatchIndex(t, dir, []batchindex.Batch{
+		{ID: "batch-live", Path: batchActive, Kind: batchindex.KindIssue, Status: batchindex.StatusActive, CreatedAt: now},
+	})
+
+	gr := &fakeGitRunner{}
+	deps.ConfigStore = &fakeStore{config: &config.Config{WorktreeDir: filepath.Join(dir, ".sandman", "worktrees")}}
+	deps.EventLog = &fakeEventLog{}
+	deps.GitRunner = gr
+	deps.RunActivityProbe = func(string) bool { return true }
+
+	var buf bytes.Buffer
+	cmd := NewCleanCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--all"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if _, err := os.Stat(worktreeActive); os.IsNotExist(err) {
+		t.Errorf("expected worktree of live-daemon batch to be PRESERVED by --all, but it was removed")
+	}
+	if len(gr.removeWorktreeCalls) != 0 {
+		t.Errorf("expected 0 removeWorktree calls for live daemon, got %d", len(gr.removeWorktreeCalls))
+	}
+
+	data, _ := os.ReadFile(filepath.Join(dir, ".sandman", "batches.json"))
+	var idx batchindex.Index
+	json.Unmarshal(data, &idx)
+	if len(idx.Batches) != 1 || idx.Batches[0].ID != "batch-live" {
+		t.Errorf("expected batches index to keep batch-live, got %d entries: %+v", len(idx.Batches), idx.Batches)
+	}
+}
+
+// TestClean_All_PreservesActiveBatchWithNonTerminalRun covers the
+// run-side terminal check: a batch with a live daemon gone but a
+// run still in active status must NOT be reclaimed, because that run
+// could be mid-flight or queued.
+func TestClean_All_PreservesActiveBatchWithNonTerminalRun(t *testing.T) {
+	deps := newRunDepsAuto(t, &fakeBatchRunner{})
+	dir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("os.Getwd: %v", err)
+	}
+
+	batchActive := filepath.Join(dir, ".sandman", "batches", "batch-inflight")
+	batchRunDir := filepath.Join(batchActive, "runs", "batch-inflight")
+	worktreeActive := filepath.Join(dir, ".sandman", "worktrees", "77-fix")
+
+	if err := os.MkdirAll(batchRunDir, 0755); err != nil {
+		t.Fatalf("create batch run dir: %v", err)
+	}
+	if err := os.MkdirAll(worktreeActive, 0755); err != nil {
+		t.Fatalf("create worktree: %v", err)
+	}
+
+	writeRunManifest(t, batchRunDir, batchindex.RunManifest{
+		RunID:        "batch-inflight",
+		BatchID:      "batch-inflight",
+		Issue:        77,
+		Branch:       "77-fix",
+		WorktreePath: worktreeActive,
+		Kind:         batchindex.KindIssue,
+		Status:       batchindex.RunManifestStatusActive,
+	})
+	now := time.Now()
+	writeBatchIndex(t, dir, []batchindex.Batch{
+		{ID: "batch-inflight", Path: batchActive, Kind: batchindex.KindIssue, Status: batchindex.StatusActive, CreatedAt: now},
+	})
+
+	gr := &fakeGitRunner{}
+	deps.ConfigStore = &fakeStore{config: &config.Config{WorktreeDir: filepath.Join(dir, ".sandman", "worktrees")}}
+	deps.EventLog = &fakeEventLog{}
+	deps.GitRunner = gr
+	deps.RunActivityProbe = func(string) bool { return false }
+
+	var buf bytes.Buffer
+	cmd := NewCleanCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--all"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if _, err := os.Stat(worktreeActive); os.IsNotExist(err) {
+		t.Errorf("expected worktree of in-flight batch to be PRESERVED by --all, but it was removed")
+	}
+	if len(gr.removeWorktreeCalls) != 0 {
+		t.Errorf("expected 0 removeWorktree calls for in-flight run, got %d", len(gr.removeWorktreeCalls))
 	}
 }
 
