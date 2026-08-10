@@ -20,8 +20,10 @@ const (
 	gatePollBudgetExhausted
 	gatePollUnavailable
 	gatePollPRMissing
-	gatePollComplete
+	gatePollReadyToMerge
 )
+
+const gateReadyToMerge = "ready-to-merge"
 
 var (
 	defaultGatePollInitial  = time.Millisecond
@@ -30,6 +32,14 @@ var (
 )
 
 func pollPRGate(ctx context.Context, client github.Client, branch string, opts runSessionOptions) gateResult {
+	return pollPRGateWithHead(ctx, client, branch, "", false, opts)
+}
+
+func pollPRGateAtHead(ctx context.Context, client github.Client, branch, headSHA string, opts runSessionOptions) gateResult {
+	return pollPRGateWithHead(ctx, client, branch, headSHA, true, opts)
+}
+
+func pollPRGateWithHead(ctx context.Context, client github.Client, branch, headSHA string, requireHead bool, opts runSessionOptions) gateResult {
 	initial := opts.gatePollInitial
 	if initial <= 0 {
 		initial = defaultGatePollInitial
@@ -69,7 +79,7 @@ func pollPRGate(ctx context.Context, client github.Client, branch string, opts r
 		case <-time.After(delay):
 		}
 
-		gate, err := checkPRExternalGate(pollCtx, client, branch)
+		gate, err := checkPRExternalGateWithHead(pollCtx, client, branch, headSHA, requireHead)
 		switch gate {
 		case "resolved":
 			return gateResolved
@@ -82,8 +92,8 @@ func pollPRGate(ctx context.Context, client github.Client, branch string, opts r
 			lastLookupUnavailable = true
 		case "none":
 			return gatePollPRMissing
-		case "complete":
-			return gatePollComplete
+		case gateReadyToMerge:
+			return gatePollReadyToMerge
 		default:
 			lastLookupUnavailable = false
 			delay = delay * 2
@@ -95,6 +105,14 @@ func pollPRGate(ctx context.Context, client github.Client, branch string, opts r
 }
 
 func checkPRExternalGate(ctx context.Context, client github.Client, branch string) (string, error) {
+	return checkPRExternalGateWithHead(ctx, client, branch, "", false)
+}
+
+func checkPRExternalGateAtHead(ctx context.Context, client github.Client, branch, headSHA string) (string, error) {
+	return checkPRExternalGateWithHead(ctx, client, branch, headSHA, true)
+}
+
+func checkPRExternalGateWithHead(ctx context.Context, client github.Client, branch, headSHA string, requireHead bool) (string, error) {
 	if client == nil || strings.TrimSpace(branch) == "" {
 		return "none", nil
 	}
@@ -131,8 +149,16 @@ func checkPRExternalGate(ctx context.Context, client github.Client, branch strin
 	if hasCIPending || review == "REVIEW_REQUIRED" || mergeStatus == "BLOCKED" {
 		return "pending", nil
 	}
+	if requireHead {
+		if strings.TrimSpace(headSHA) == "" || strings.TrimSpace(pr.HeadRefOid) == "" {
+			return "pending", nil
+		}
+		if !strings.EqualFold(pr.HeadRefOid, headSHA) {
+			return "pending", nil
+		}
+	}
 	if (checkRollup == "" || checkRollup == "success") && (review == "" || review == "APPROVED") && mergeStatus == "CLEAN" {
-		return "complete", nil
+		return gateReadyToMerge, nil
 	}
 
 	return "pending", nil
@@ -143,11 +169,19 @@ func checkPRExternalGate(ctx context.Context, client github.Client, branch strin
 // by fresh and continuation runs so an explicit intervention cannot re-enter
 // the old failure/retry path while the same PR gate is still unresolved.
 func (s *runSession) handleExternalGate(ctx context.Context, workDir, branch, logPath, runID string) (string, map[string]any, bool) {
+	return s.handleExternalGateWithHostPaths(ctx, workDir, branch, logPath, runID, true)
+}
+
+func (s *runSession) handleExternalGateWithHostPaths(ctx context.Context, workDir, branch, logPath, runID string, hostPathsReady bool) (string, map[string]any, bool) {
 	if s.deps.githubClient == nil {
 		return "", nil, false
 	}
 
-	gate, err := checkPRExternalGate(ctx, s.deps.githubClient, branch)
+	headSHA := s.currentGateHead(workDir)
+	if !hostPathsReady {
+		headSHA = ""
+	}
+	gate, err := checkPRExternalGateWithHead(ctx, s.deps.githubClient, branch, headSHA, true)
 	initialUnavailable := err != nil
 	if err != nil && s.deps.errorLog != nil {
 		fmt.Fprintf(s.deps.errorLog, "warning: external gate lookup for branch %q: %v\n", branch, err)
@@ -157,8 +191,8 @@ func (s *runSession) handleExternalGate(ctx context.Context, workDir, branch, lo
 	if gate == "none" {
 		return "", nil, false
 	}
-	if gate == "complete" {
-		return "", nil, false
+	if gate == gateReadyToMerge {
+		return s.blockExternalGate(ctx, workDir, logPath, runID, gateReadyToMerge)
 	}
 	if gate == "resolved" {
 		return s.confirmExternalGate(ctx, workDir, branch, logPath, runID)
@@ -170,12 +204,12 @@ func (s *runSession) handleExternalGate(ctx context.Context, workDir, branch, lo
 		return s.blockExternalGate(ctx, workDir, logPath, runID, "unavailable")
 	}
 
-	polled := pollPRGate(ctx, s.deps.githubClient, branch, s.opts)
+	polled := pollPRGateWithHead(ctx, s.deps.githubClient, branch, headSHA, true, s.opts)
 	if polled == gateResolved {
 		return s.confirmExternalGate(ctx, workDir, branch, logPath, runID)
 	}
-	if polled == gatePollComplete {
-		return "", nil, false
+	if polled == gatePollReadyToMerge {
+		return s.blockExternalGate(ctx, workDir, logPath, runID, gateReadyToMerge)
 	}
 	if polled == gateFailed {
 		return s.blockExternalGate(ctx, workDir, logPath, runID, "failed")
@@ -184,6 +218,21 @@ func (s *runSession) handleExternalGate(ctx context.Context, workDir, branch, lo
 		return s.blockExternalGate(ctx, workDir, logPath, runID, "unavailable")
 	}
 	return s.blockExternalGate(ctx, workDir, logPath, runID, "pending")
+}
+
+func (s *runSession) currentGateHead(workDir string) string {
+	if strings.TrimSpace(workDir) == "" {
+		return ""
+	}
+	resolver := s.opts.currentHead
+	if resolver == nil {
+		resolver = currentBranchHeadFn
+	}
+	headSHA, err := resolver(workDir)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(headSHA)
 }
 
 func (s *runSession) confirmExternalGate(ctx context.Context, workDir, branch, logPath, runID string) (string, map[string]any, bool) {
@@ -211,6 +260,12 @@ func (s *runSession) recordExternalGateBlocker(workDir, logPath, runID, reason s
 		nextAction = "inspect the failed CI or requested review changes, then continue the run to address them"
 	}
 	blocker := fmt.Sprintf("\n\n## External Gate\n\n- Failure: %s.\n- Next action: %s.\n", failure, nextAction)
+	logSummary := failure
+	if reason == gateReadyToMerge {
+		nextAction = "revalidate current-head approval, CI, and mergeability, then execute the normal pull-request merge gate"
+		blocker = fmt.Sprintf("\n\n## External Gate\n\n- State: pull request external gate is ready-to-merge.\n- Next action: %s.\n", nextAction)
+		logSummary = "pull request is ready to merge"
+	}
 
 	if strings.TrimSpace(workDir) != "" {
 		taskPath := filepath.Join(workDir, ".sandman", "task.md")
@@ -236,7 +291,7 @@ func (s *runSession) recordExternalGateBlocker(workDir, logPath, runID, reason s
 			return
 		}
 		prefixed := NewLinePrefixWriter(runID, file)
-		_, writeErr := fmt.Fprintf(prefixed, "external gate %s: %s; next action: %s\n", reason, failure, nextAction)
+		_, writeErr := fmt.Fprintf(prefixed, "external gate %s: %s; next action: %s\n", reason, logSummary, nextAction)
 		flushErr := prefixed.Flush()
 		closeErr := file.Close()
 		if writeErr != nil {

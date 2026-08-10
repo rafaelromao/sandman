@@ -34,6 +34,11 @@ func TestPortalBlockedMessage_DistinguishesExternalGate(t *testing.T) {
 			payload: map[string]any{"blocker": "external-gate", "gate": "unverified"},
 			want:    "Merged pull request could not be verified; confirm its closing reference.",
 		},
+		{
+			name:    "ready to merge",
+			payload: map[string]any{"blocker": "external-gate", "gate": "ready-to-merge"},
+			want:    "Pull request ready to merge; revalidate current-head approval, CI, and mergeability before executing the normal merge gate.",
+		},
 	}
 
 	for _, tt := range tests {

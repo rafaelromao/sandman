@@ -575,11 +575,16 @@ func TestContainerSandbox_Exec_CancelsViaContext(t *testing.T) {
 	sb := NewContainerSandbox(wt, ctr, "docker", "/host/repo")
 
 	prev := ExecCommandFn
-	defer func() { ExecCommandFn = prev }()
+	prevKill := KillAgentFn
+	defer func() {
+		ExecCommandFn = prev
+		KillAgentFn = prevKill
+	}()
 	readyPath := filepath.Join(t.TempDir(), "child.ready")
 	ExecCommandFn = func(name string, arg ...string) *exec.Cmd {
 		return exec.Command("sh", "-c", fmt.Sprintf("touch %s && sleep 60", shellenv.Quote(readyPath)))
 	}
+	KillAgentFn = func(string) error { return nil }
 
 	ctx, cancel := context.WithCancel(context.Background())
 

@@ -1496,13 +1496,24 @@ func TestRunSingle_ModeContinueUnmergedPROpenGateIsBlocked(t *testing.T) {
 	o := &Orchestrator{
 		githubClient: &fakeGitHubClient{
 			issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}},
-			prs:    map[string]*github.PR{branch: {Number: 17, State: "open", Merged: false, HeadRefName: branch}},
+			prs: map[string]*github.PR{branch: {
+				Number:            17,
+				State:             "open",
+				HeadRefName:       branch,
+				HeadRefOid:        "current-sha",
+				StatusCheckRollup: "success",
+				ReviewDecision:    "APPROVED",
+				MergeStateStatus:  "CLEAN",
+			}},
 		},
 		renderer:        &retryRenderer{result: "rendered prompt"},
 		sandboxFactory:  sbFactory,
 		eventLog:        spyLog,
 		errorLog:        io.Discard,
 		runnableFactory: resultFactory,
+		runSessionOpts: runSessionOptions{
+			currentHead: func(string) (string, error) { return "current-sha", nil },
+		},
 	}
 
 	cfg := &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}}
@@ -1513,12 +1524,19 @@ func TestRunSingle_ModeContinueUnmergedPROpenGateIsBlocked(t *testing.T) {
 	if result.Status != "blocked" {
 		t.Fatalf("status = %q, want blocked (continuation must preserve external-gate state)", result.Status)
 	}
+	if result.RetriesTotal != 1 {
+		t.Fatalf("retries total = %d, want 1", result.RetriesTotal)
+	}
 	logs, err := spyLog.Read()
 	if err != nil {
 		t.Fatalf("read events: %v", err)
 	}
 	if got := countEventsByType(logs, "run.retry"); got != 0 {
 		t.Fatalf("run.retry events = %d, want 0", got)
+	}
+	finished := findEvent(logs, "run.finished")
+	if finished == nil || finished.Payload["gate"] != "ready-to-merge" {
+		t.Fatalf("continuation terminal gate = %v, want ready-to-merge", finished)
 	}
 }
 
@@ -1537,7 +1555,7 @@ func TestRunSingle_ModeContinueMergedPRIsSuccess(t *testing.T) {
 	o := &Orchestrator{
 		githubClient: &fakeGitHubClient{
 			issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}},
-			prs:    map[string]*github.PR{branch: {Number: 17, State: "closed", Merged: true, HeadRefName: branch}},
+			prs:    map[string]*github.PR{branch: {Number: 17, State: "closed", Merged: true, HeadRefName: branch, Body: "Closes #42"}},
 		},
 		renderer:        &retryRenderer{result: "rendered prompt"},
 		sandboxFactory:  sbFactory,
@@ -1553,6 +1571,77 @@ func TestRunSingle_ModeContinueMergedPRIsSuccess(t *testing.T) {
 	}
 	if result.Status != "success" {
 		t.Fatalf("status = %q, want success (ModeContinue with merged PR should be success)", result.Status)
+	}
+}
+
+func TestRunSingle_ModeContinueRequestedChangesIsActionableWithoutRetry(t *testing.T) {
+	workDir := testenv.MkdirShort(t, "sm-orch-")
+	t.Chdir(workDir)
+
+	branch := "42-fix-bug"
+	worktreePath := filepath.Join(workDir, "worktree")
+	sbFactory := &fakeSandboxFactory{sandbox: &fakeSandbox{workDir: worktreePath}}
+	resultFactory := &taskWritingRunnableFactory{
+		taskPath:    filepath.Join(worktreePath, ".sandman", "task.md"),
+		taskContent: "## Status: already resolved",
+		result:      AgentRunResult{IssueNumber: 42, Status: "success", Branch: branch},
+	}
+	spyLog := &spyEventLog{}
+	o := NewOrchestrator(
+		&fakeGitHubClient{
+			issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}},
+			prs: map[string]*github.PR{branch: {
+				Number:            17,
+				State:             "open",
+				HeadRefName:       branch,
+				StatusCheckRollup: "success",
+				ReviewDecision:    "CHANGES_REQUESTED",
+				MergeStateStatus:  "CLEAN",
+			}},
+		},
+		&retryRenderer{result: "rendered prompt"},
+		nil,
+		spyLog,
+		WithErrorLog(io.Discard),
+		WithSandboxFactory(sbFactory),
+		WithRunnableFactory(resultFactory),
+		WithRunSessionOpts(gateTestRunOptions()),
+	)
+
+	cfg := &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}}
+	bc := BatchConfig{
+		Cfg:              cfg,
+		AgentName:        "opencode",
+		AgentCfg:         config.Agent{Command: "echo hi"},
+		IdentityResolver: noopIdentityResolver(),
+		Retries:          0,
+	}
+	result, started := o.newRunExecutor(context.Background(), bc, sbFactory, nil).Execute(context.Background(), RowSpec{
+		IssueNumber:    42,
+		Mode:           ModeContinue,
+		Branches:       map[int]string{42: branch},
+		PreviousRunIDs: map[int]string{42: "prior-run"},
+		BaseBranch:     "main",
+	})
+	if !started {
+		t.Fatal("expected run to start")
+	}
+	if result.Status != "blocked" {
+		t.Fatalf("status = %q, want blocked", result.Status)
+	}
+	if result.RetriesTotal != 1 {
+		t.Fatalf("retries total = %d, want 1", result.RetriesTotal)
+	}
+	logs, err := spyLog.Read()
+	if err != nil {
+		t.Fatalf("read events: %v", err)
+	}
+	if got := countEventsByType(logs, "run.retry"); got != 0 {
+		t.Fatalf("run.retry events = %d, want 0", got)
+	}
+	finished := findEvent(logs, "run.finished")
+	if finished == nil || finished.Payload["gate"] != "failed" {
+		t.Fatalf("continuation terminal gate = %v, want failed", finished)
 	}
 }
 

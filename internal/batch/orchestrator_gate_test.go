@@ -20,6 +20,7 @@ const gateTestBranch = "42-fix-bug"
 
 func gateTestRunOptions() runSessionOptions {
 	return runSessionOptions{
+		currentHead:      func(string) (string, error) { return "current-sha", nil },
 		gatePollInitial:  time.Millisecond,
 		gatePollMaxSleep: time.Millisecond,
 		gatePollBudget:   5 * time.Millisecond,
@@ -32,6 +33,9 @@ func runCleanGateCase(t *testing.T, pr *github.PR) (AgentRunResult, []events.Eve
 
 func runCleanGateCaseForIssue(t *testing.T, issueState string, pr *github.PR) (AgentRunResult, []events.Event, int) {
 	t.Helper()
+	if pr != nil && pr.HeadRefOid == "" {
+		pr.HeadRefOid = "current-sha"
+	}
 	workDir := testenv.MkdirShort(t, "sm-orch-")
 	oldWD, err := os.Getwd()
 	if err != nil {
@@ -108,6 +112,12 @@ func assertExternalGateTerminal(t *testing.T, logs []events.Event, gate string) 
 	if got, _ := finished.Payload["gate"].(string); got != gate {
 		t.Fatalf("terminal gate = %q, want %q", got, gate)
 	}
+	if got := finished.Payload["retries_total"]; got != float64(3) {
+		t.Fatalf("terminal retries_total = %v, want configured ceiling 3", got)
+	}
+	if got := finished.Payload["retries_done"]; got != float64(0) {
+		t.Fatalf("terminal retries_done = %v, want 0", got)
+	}
 
 	states := events.ProjectRunStates(logs)
 	if len(states) != 1 {
@@ -115,6 +125,12 @@ func assertExternalGateTerminal(t *testing.T, logs []events.Event, gate string) 
 	}
 	if got := states[0].Status(); got != "blocked" {
 		t.Fatalf("projected status = %q, want blocked", got)
+	}
+	if states[0].Finished == nil {
+		t.Fatal("projected finished event is nil")
+	}
+	if states[0].Finished.Payload["gate"] != gate {
+		t.Fatalf("projected gate = %v, want %q", states[0].Finished.Payload["gate"], gate)
 	}
 }
 
@@ -159,6 +175,187 @@ func TestRunSingle_PendingDelegatedReviewDoesNotConsumeRetries(t *testing.T) {
 		t.Fatalf("agent launches = %d, want 1", launches)
 	}
 	assertExternalGateTerminal(t, logs, "pending")
+}
+
+func TestRunSingle_ApprovedCleanOpenPRIsReadyToMergeWithoutRetry(t *testing.T) {
+	result, logs, launches := runCleanGateCase(t, &github.PR{
+		Number:            17,
+		State:             "open",
+		HeadRefName:       gateTestBranch,
+		StatusCheckRollup: "success",
+		ReviewDecision:    "APPROVED",
+		MergeStateStatus:  "CLEAN",
+	})
+
+	if result.Status != "blocked" {
+		t.Fatalf("status = %q, want blocked", result.Status)
+	}
+	if result.RetriesTotal != 1 {
+		t.Fatalf("retries total = %d, want 1", result.RetriesTotal)
+	}
+	if launches != 1 {
+		t.Fatalf("agent launches = %d, want 1", launches)
+	}
+	assertExternalGateTerminal(t, logs, "ready-to-merge")
+}
+
+func TestRunSingle_ApprovedCleanOpenPRWithoutChecksIsReadyToMerge(t *testing.T) {
+	result, logs, launches := runCleanGateCase(t, &github.PR{
+		Number:           17,
+		State:            "open",
+		HeadRefName:      gateTestBranch,
+		ReviewDecision:   "APPROVED",
+		MergeStateStatus: "CLEAN",
+	})
+
+	if result.Status != "blocked" {
+		t.Fatalf("status = %q, want blocked", result.Status)
+	}
+	if launches != 1 {
+		t.Fatalf("agent launches = %d, want 1", launches)
+	}
+	assertExternalGateTerminal(t, logs, gateReadyToMerge)
+}
+
+func TestRunSingle_RestoresHostPathsBeforeExternalGateHeadCheck(t *testing.T) {
+	workDir := testenv.MkdirShort(t, "sm-orch-")
+	t.Chdir(workDir)
+
+	branch := gateTestBranch
+	sb := &retrySandbox{workDir: filepath.Join(workDir, "worktree")}
+	sbFactory := &retrySandboxFactory{sandbox: sb}
+	factory := &fakeRunnableFactory{results: []AgentRunResult{{
+		IssueNumber: 42,
+		Status:      "success",
+		Branch:      branch,
+	}}}
+	eventLog := &events.JSONLLogger{Path: filepath.Join(t.TempDir(), "events.jsonl")}
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{42: {Number: 42, State: "open", Title: "Fix bug"}},
+		prs: map[string]*github.PR{branch: {
+			Number:            17,
+			State:             "open",
+			HeadRefName:       branch,
+			HeadRefOid:        "current-sha",
+			StatusCheckRollup: "success",
+			ReviewDecision:    "APPROVED",
+			MergeStateStatus:  "CLEAN",
+		}},
+	}
+	o := NewOrchestrator(
+		client,
+		&retryRenderer{result: "rendered prompt"},
+		nil,
+		eventLog,
+		WithErrorLog(io.Discard),
+		WithSandboxFactory(sbFactory),
+		WithRunnableFactory(factory),
+		WithRunSessionOpts(runSessionOptions{
+			currentHead: func(string) (string, error) {
+				if !sb.restoreHostPathsCalled {
+					t.Error("current-head resolver ran before host paths were restored")
+				}
+				return "current-sha", nil
+			},
+			gatePollInitial:  time.Millisecond,
+			gatePollMaxSleep: time.Millisecond,
+			gatePollBudget:   5 * time.Millisecond,
+		}),
+	)
+
+	bc := BatchConfig{
+		Cfg:              &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}},
+		AgentName:        "opencode",
+		AgentCfg:         config.Agent{Command: "echo hi"},
+		IdentityResolver: noopIdentityResolver(),
+		Retries:          3,
+	}
+	result, started := o.newRunExecutor(context.Background(), bc, sbFactory, nil).Execute(context.Background(), RowSpec{
+		IssueNumber: 42,
+		Branches:    map[int]string{42: branch},
+		BaseBranch:  "main",
+	})
+	if !started {
+		t.Fatalf("expected run to start, status=%q", result.Status)
+	}
+	if result.Status != "blocked" {
+		t.Fatalf("status = %q, want blocked", result.Status)
+	}
+	if !sb.restoreHostPathsCalled {
+		t.Fatal("expected RestoreHostPaths before external gate check")
+	}
+}
+
+type perRunGateSequenceClient struct {
+	fakeGitHubClient
+	responses []*github.PR
+	calls     int
+}
+
+func (c *perRunGateSequenceClient) FindPRByBranch(context.Context, string) (*github.PR, error) {
+	index := c.calls
+	c.calls++
+	if index >= len(c.responses) {
+		index = len(c.responses) - 1
+	}
+	return c.responses[index], nil
+}
+
+func TestRunSingle_PendingGateTransitionToReadyToMergeIsTerminal(t *testing.T) {
+	workDir := testenv.MkdirShort(t, "sm-orch-")
+	t.Chdir(workDir)
+
+	branch := gateTestBranch
+	sb := &retrySandbox{workDir: filepath.Join(workDir, "worktree")}
+	sbFactory := &retrySandboxFactory{sandbox: sb}
+	factory := &fakeRunnableFactory{results: []AgentRunResult{{IssueNumber: 42, Status: "success", Branch: branch}}}
+	eventLog := &events.JSONLLogger{Path: filepath.Join(t.TempDir(), "events.jsonl")}
+	client := &perRunGateSequenceClient{
+		fakeGitHubClient: fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, State: "open", Title: "Fix bug"}}},
+		responses: []*github.PR{
+			{Number: 17, State: "open", HeadRefName: branch, HeadRefOid: "current-sha", StatusCheckRollup: "pending", MergeStateStatus: "BLOCKED"},
+			{Number: 17, State: "open", HeadRefName: branch, HeadRefOid: "current-sha", StatusCheckRollup: "success", ReviewDecision: "APPROVED", MergeStateStatus: "CLEAN"},
+		},
+	}
+	o := NewOrchestrator(
+		client,
+		&retryRenderer{result: "rendered prompt"},
+		nil,
+		eventLog,
+		WithErrorLog(io.Discard),
+		WithSandboxFactory(sbFactory),
+		WithRunnableFactory(factory),
+		WithRunSessionOpts(gateTestRunOptions()),
+	)
+	bc := BatchConfig{
+		Cfg:              &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}},
+		AgentName:        "opencode",
+		AgentCfg:         config.Agent{Command: "echo hi"},
+		IdentityResolver: noopIdentityResolver(),
+		Retries:          3,
+	}
+	result, started := o.newRunExecutor(context.Background(), bc, sbFactory, nil).Execute(context.Background(), RowSpec{
+		IssueNumber: 42,
+		Branches:    map[int]string{42: branch},
+		BaseBranch:  "main",
+	})
+	if !started {
+		t.Fatalf("expected run to start, status=%q", result.Status)
+	}
+	if result.Status != "blocked" {
+		t.Fatalf("status = %q, want blocked", result.Status)
+	}
+	if client.calls != 3 {
+		t.Fatalf("PR lookups = %d, want pending lookup, ready poll, and terminal conflict check", client.calls)
+	}
+	logs, err := eventLog.Read()
+	if err != nil {
+		t.Fatalf("read events: %v", err)
+	}
+	assertExternalGateTerminal(t, logs, gateReadyToMerge)
+	if launches := len(factory.created); launches != 1 {
+		t.Fatalf("agent launches = %d, want 1", launches)
+	}
 }
 
 func TestRunSingle_ClosedIssuePendingPRIsExternalGateBlocked(t *testing.T) {
@@ -284,7 +481,7 @@ func TestPollPRGateStopsWhenPRMerges(t *testing.T) {
 	}
 }
 
-func TestPollPRGateStopsWhenOpenPRGateCompletes(t *testing.T) {
+func TestPollPRGateStopsWhenOpenPRGateIsReadyToMerge(t *testing.T) {
 	client := &gateAvailabilityClient{responses: []*github.PR{
 		{
 			State:             "open",
@@ -300,8 +497,40 @@ func TestPollPRGateStopsWhenOpenPRGateCompletes(t *testing.T) {
 		},
 	}}
 
-	if got := pollPRGate(context.Background(), client, gateTestBranch, gateTestRunOptions()); got != gatePollComplete {
-		t.Fatalf("poll result = %v, want gatePollComplete", got)
+	if got := pollPRGate(context.Background(), client, gateTestBranch, gateTestRunOptions()); got != gatePollReadyToMerge {
+		t.Fatalf("poll result = %v, want gatePollReadyToMerge", got)
+	}
+}
+
+func TestPollPRGateContinuesPastStaleReadyState(t *testing.T) {
+	client := &gateAvailabilityClient{responses: []*github.PR{
+		{
+			State:             "open",
+			StatusCheckRollup: "pending",
+			MergeStateStatus:  "BLOCKED",
+		},
+		{
+			State:             "open",
+			StatusCheckRollup: "success",
+			ReviewDecision:    "APPROVED",
+			MergeStateStatus:  "CLEAN",
+			HeadRefOid:        "stale-sha",
+		},
+		{
+			State:             "open",
+			StatusCheckRollup: "success",
+			ReviewDecision:    "APPROVED",
+			MergeStateStatus:  "CLEAN",
+			HeadRefOid:        "current-sha",
+		},
+	}}
+
+	got := pollPRGateAtHead(context.Background(), client, gateTestBranch, "current-sha", gateTestRunOptions())
+	if got != gatePollReadyToMerge {
+		t.Fatalf("poll result = %v, want gatePollReadyToMerge", got)
+	}
+	if client.calls != 3 {
+		t.Fatalf("PR lookups = %d, want 3 after stale ready state", client.calls)
 	}
 }
 
@@ -324,6 +553,124 @@ func (c *gateAvailabilityClient) FindPRByBranch(ctx context.Context, branch stri
 		return c.responses[index], nil
 	}
 	return nil, nil
+}
+
+type staleHeadGateClient struct {
+	fakeGitHubClient
+	calls int
+}
+
+func (c *staleHeadGateClient) FindPRByBranch(context.Context, string) (*github.PR, error) {
+	c.calls++
+	return &github.PR{
+		State:             "open",
+		HeadRefOid:        "stale-sha",
+		StatusCheckRollup: "success",
+		ReviewDecision:    "APPROVED",
+		MergeStateStatus:  "CLEAN",
+	}, nil
+}
+
+func TestHandleExternalGateKeepsPersistentStaleApprovalPending(t *testing.T) {
+	client := &staleHeadGateClient{}
+	resolverCalls := 0
+	session := &runSession{
+		deps: runDeps{githubClient: client, errorLog: io.Discard},
+		opts: runSessionOptions{
+			currentHead: func(string) (string, error) {
+				resolverCalls++
+				return "current-sha", nil
+			},
+			gatePollInitial:  time.Millisecond,
+			gatePollMaxSleep: time.Millisecond,
+			gatePollBudget:   5 * time.Millisecond,
+		},
+	}
+
+	status, extras, handled := session.handleExternalGate(context.Background(), t.TempDir(), gateTestBranch, "", "run-test")
+	if !handled || status != "blocked" {
+		t.Fatalf("stale gate = (%q, %#v, %t), want blocked", status, extras, handled)
+	}
+	if got := extras["gate"]; got != "pending" {
+		t.Fatalf("stale gate reason = %v, want pending", got)
+	}
+	if resolverCalls != 1 {
+		t.Fatalf("current-head resolver calls = %d, want 1 snapshot", resolverCalls)
+	}
+	if client.calls < 2 {
+		t.Fatalf("PR lookups = %d, want initial lookup and polling", client.calls)
+	}
+}
+
+func TestHandleExternalGateHostPathRestoreFailureRemainsPending(t *testing.T) {
+	client := &fakeGitHubClient{prs: map[string]*github.PR{gateTestBranch: {
+		State:             "open",
+		HeadRefOid:        "current-sha",
+		StatusCheckRollup: "success",
+		ReviewDecision:    "APPROVED",
+		MergeStateStatus:  "CLEAN",
+	}}}
+	session := &runSession{
+		deps: runDeps{githubClient: client, errorLog: io.Discard},
+		opts: gateTestRunOptions(),
+	}
+
+	status, extras, handled := session.handleExternalGateWithHostPaths(context.Background(), t.TempDir(), gateTestBranch, "", "run-test", false)
+	if !handled || status != "blocked" {
+		t.Fatalf("restore failure gate = (%q, %#v, %t), want blocked", status, extras, handled)
+	}
+	if got := extras["gate"]; got != "pending" {
+		t.Fatalf("restore failure gate reason = %v, want pending", got)
+	}
+}
+
+func TestHandleExternalGateFailsClosedWhenHeadCannotBeValidated(t *testing.T) {
+	for _, tt := range []struct {
+		name        string
+		currentHead func(string) (string, error)
+		prHead      string
+	}{
+		{
+			name: "current head resolver fails",
+			currentHead: func(string) (string, error) {
+				return "", context.DeadlineExceeded
+			},
+			prHead: "current-sha",
+		},
+		{
+			name: "pull request head is unavailable",
+			currentHead: func(string) (string, error) {
+				return "current-sha", nil
+			},
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			client := &fakeGitHubClient{prs: map[string]*github.PR{gateTestBranch: {
+				State:             "open",
+				HeadRefOid:        tt.prHead,
+				StatusCheckRollup: "success",
+				ReviewDecision:    "APPROVED",
+				MergeStateStatus:  "CLEAN",
+			}}}
+			session := &runSession{
+				deps: runDeps{githubClient: client, errorLog: io.Discard},
+				opts: runSessionOptions{
+					currentHead:      tt.currentHead,
+					gatePollInitial:  time.Millisecond,
+					gatePollMaxSleep: time.Millisecond,
+					gatePollBudget:   5 * time.Millisecond,
+				},
+			}
+
+			status, extras, handled := session.handleExternalGate(context.Background(), t.TempDir(), gateTestBranch, "", "run-test")
+			if !handled || status != "blocked" {
+				t.Fatalf("head validation gate = (%q, %#v, %t), want blocked", status, extras, handled)
+			}
+			if got := extras["gate"]; got != "pending" {
+				t.Fatalf("head validation gate reason = %v, want pending", got)
+			}
+		})
+	}
 }
 
 func TestPollPRGatePreservesLookupErrors(t *testing.T) {
@@ -400,7 +747,7 @@ func TestHandleExternalGateInitialLookupErrorRecoversToPending(t *testing.T) {
 	}
 }
 
-func TestCheckPRExternalGateIgnoresFullyGreenOpenPR(t *testing.T) {
+func TestCheckPRExternalGateRecognizesFullyGreenOpenPRAsReadyToMerge(t *testing.T) {
 	for _, tt := range []struct {
 		name   string
 		rollup string
@@ -423,10 +770,138 @@ func TestCheckPRExternalGateIgnoresFullyGreenOpenPR(t *testing.T) {
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
-			if got != "complete" {
-				t.Fatalf("fully green PR gate = %q, want complete", got)
+			if got != gateReadyToMerge {
+				t.Fatalf("fully green PR gate = %q, want %s", got, gateReadyToMerge)
 			}
 		})
+	}
+}
+
+func TestCheckPRExternalGateDefersStaleApproval(t *testing.T) {
+	client := &fakeGitHubClient{prs: map[string]*github.PR{gateTestBranch: {
+		Number:            17,
+		State:             "open",
+		HeadRefName:       gateTestBranch,
+		HeadRefOid:        "stale-sha",
+		StatusCheckRollup: "success",
+		ReviewDecision:    "APPROVED",
+		MergeStateStatus:  "CLEAN",
+	}}}
+
+	got, err := checkPRExternalGateAtHead(context.Background(), client, gateTestBranch, "current-sha")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "pending" {
+		t.Fatalf("stale approved PR gate = %q, want pending", got)
+	}
+}
+
+func TestCheckPRExternalGateHeadFreshnessPreservesPrecedence(t *testing.T) {
+	tests := []struct {
+		name string
+		pr   *github.PR
+		want string
+	}{
+		{
+			name: "failed CI",
+			pr: &github.PR{
+				State:             "open",
+				HeadRefOid:        "stale-sha",
+				StatusCheckRollup: "failure",
+				MergeStateStatus:  "CLEAN",
+			},
+			want: "failed",
+		},
+		{
+			name: "requested changes",
+			pr: &github.PR{
+				State:             "open",
+				HeadRefOid:        "stale-sha",
+				StatusCheckRollup: "success",
+				ReviewDecision:    "CHANGES_REQUESTED",
+				MergeStateStatus:  "CLEAN",
+			},
+			want: "failed",
+		},
+		{
+			name: "conflicting",
+			pr: &github.PR{
+				State:             "open",
+				HeadRefOid:        "stale-sha",
+				StatusCheckRollup: "success",
+				ReviewDecision:    "APPROVED",
+				MergeStateStatus:  "CONFLICTING",
+			},
+			want: "failed",
+		},
+		{
+			name: "pending review",
+			pr: &github.PR{
+				State:             "open",
+				HeadRefOid:        "stale-sha",
+				StatusCheckRollup: "success",
+				ReviewDecision:    "REVIEW_REQUIRED",
+				MergeStateStatus:  "BLOCKED",
+			},
+			want: "pending",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			client := &fakeGitHubClient{prs: map[string]*github.PR{gateTestBranch: tt.pr}}
+			got, err := checkPRExternalGateAtHead(context.Background(), client, gateTestBranch, "current-sha")
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != tt.want {
+				t.Fatalf("gate = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestHandleExternalGateHeadLookupFailureRemainsPending(t *testing.T) {
+	client := &fakeGitHubClient{prs: map[string]*github.PR{gateTestBranch: {
+		State:             "open",
+		HeadRefOid:        "stale-sha",
+		StatusCheckRollup: "success",
+		ReviewDecision:    "APPROVED",
+		MergeStateStatus:  "CLEAN",
+	}}}
+	session := &runSession{
+		deps: runDeps{githubClient: client, errorLog: io.Discard},
+		opts: runSessionOptions{
+			currentHead: func(string) (string, error) {
+				return "", context.DeadlineExceeded
+			},
+		},
+	}
+
+	status, extras, handled := session.handleExternalGate(context.Background(), t.TempDir(), gateTestBranch, "", "run-test")
+	if !handled || status != "blocked" {
+		t.Fatalf("fallback gate = (%q, %#v, %t), want blocked", status, extras, handled)
+	}
+	if got := extras["gate"]; got != "pending" {
+		t.Fatalf("fallback gate reason = %v, want pending", got)
+	}
+}
+
+func TestCheckPRExternalGateMissingHeadMetadataRemainsPending(t *testing.T) {
+	client := &fakeGitHubClient{prs: map[string]*github.PR{gateTestBranch: {
+		State:             "open",
+		StatusCheckRollup: "success",
+		ReviewDecision:    "APPROVED",
+		MergeStateStatus:  "CLEAN",
+	}}}
+
+	got, err := checkPRExternalGateAtHead(context.Background(), client, gateTestBranch, "current-sha")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "pending" {
+		t.Fatalf("missing PR head gate = %q, want pending", got)
 	}
 }
 
@@ -532,5 +1007,42 @@ func TestRecordExternalGateBlockerPersistsTaskAndLog(t *testing.T) {
 	}
 	if strings.Count(string(updatedTask), "## External Gate") != 1 || strings.Contains(string(updatedTask), "gate is pending") || !strings.Contains(string(updatedTask), "gate is failed") {
 		t.Fatalf("updated task blocker = %q, want one current failed-gate section", updatedTask)
+	}
+}
+
+func TestRecordReadyToMergeExternalGatePersistsMergeAction(t *testing.T) {
+	workDir := t.TempDir()
+	taskPath := filepath.Join(workDir, ".sandman", "task.md")
+	if err := os.MkdirAll(filepath.Dir(taskPath), 0o755); err != nil {
+		t.Fatalf("create task directory: %v", err)
+	}
+	if err := os.WriteFile(taskPath, []byte("# Existing task\n"), 0o644); err != nil {
+		t.Fatalf("seed task: %v", err)
+	}
+	logPath := filepath.Join(workDir, ".sandman", "run.log")
+	session := &runSession{deps: runDeps{errorLog: io.Discard}}
+
+	session.recordExternalGateBlocker(workDir, logPath, "run-test", gateReadyToMerge)
+
+	task, err := os.ReadFile(taskPath)
+	if err != nil {
+		t.Fatalf("read task: %v", err)
+	}
+	taskText := string(task)
+	if !strings.Contains(taskText, "State: pull request external gate is ready-to-merge.") {
+		t.Fatalf("task blocker = %q, want ready-to-merge state", taskText)
+	}
+	const nextAction = "Next action: revalidate current-head approval, CI, and mergeability, then execute the normal pull-request merge gate."
+	if !strings.Contains(taskText, nextAction) || strings.Contains(taskText, "- Failure:") {
+		t.Fatalf("task blocker = %q, want ready-specific next action without generic failure", taskText)
+	}
+
+	log, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read run log: %v", err)
+	}
+	logText := string(log)
+	if !strings.Contains(logText, "external gate ready-to-merge: pull request is ready to merge; next action: revalidate current-head approval, CI, and mergeability, then execute the normal pull-request merge gate") {
+		t.Fatalf("run log = %q, want ready-specific next action", logText)
 	}
 }
