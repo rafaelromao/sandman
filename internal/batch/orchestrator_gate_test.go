@@ -108,6 +108,12 @@ func assertExternalGateTerminal(t *testing.T, logs []events.Event, gate string) 
 	if got, _ := finished.Payload["gate"].(string); got != gate {
 		t.Fatalf("terminal gate = %q, want %q", got, gate)
 	}
+	if got := finished.Payload["retries_total"]; got != float64(3) {
+		t.Fatalf("terminal retries_total = %v, want configured ceiling 3", got)
+	}
+	if got := finished.Payload["retries_done"]; got != float64(0) {
+		t.Fatalf("terminal retries_done = %v, want 0", got)
+	}
 
 	states := events.ProjectRunStates(logs)
 	if len(states) != 1 {
@@ -115,6 +121,12 @@ func assertExternalGateTerminal(t *testing.T, logs []events.Event, gate string) 
 	}
 	if got := states[0].Status(); got != "blocked" {
 		t.Fatalf("projected status = %q, want blocked", got)
+	}
+	if states[0].Finished == nil {
+		t.Fatal("projected finished event is nil")
+	}
+	if states[0].Finished.Payload["gate"] != gate {
+		t.Fatalf("projected gate = %v, want %q", states[0].Finished.Payload["gate"], gate)
 	}
 }
 
@@ -159,6 +171,28 @@ func TestRunSingle_PendingDelegatedReviewDoesNotConsumeRetries(t *testing.T) {
 		t.Fatalf("agent launches = %d, want 1", launches)
 	}
 	assertExternalGateTerminal(t, logs, "pending")
+}
+
+func TestRunSingle_ApprovedCleanOpenPRIsReadyToMergeWithoutRetry(t *testing.T) {
+	result, logs, launches := runCleanGateCase(t, &github.PR{
+		Number:            17,
+		State:             "open",
+		HeadRefName:       gateTestBranch,
+		StatusCheckRollup: "success",
+		ReviewDecision:    "APPROVED",
+		MergeStateStatus:  "CLEAN",
+	})
+
+	if result.Status != "blocked" {
+		t.Fatalf("status = %q, want blocked", result.Status)
+	}
+	if result.RetriesTotal != 1 {
+		t.Fatalf("retries total = %d, want 1", result.RetriesTotal)
+	}
+	if launches != 1 {
+		t.Fatalf("agent launches = %d, want 1", launches)
+	}
+	assertExternalGateTerminal(t, logs, "ready-to-merge")
 }
 
 func TestRunSingle_ClosedIssuePendingPRIsExternalGateBlocked(t *testing.T) {
@@ -284,7 +318,7 @@ func TestPollPRGateStopsWhenPRMerges(t *testing.T) {
 	}
 }
 
-func TestPollPRGateStopsWhenOpenPRGateCompletes(t *testing.T) {
+func TestPollPRGateStopsWhenOpenPRGateIsReadyToMerge(t *testing.T) {
 	client := &gateAvailabilityClient{responses: []*github.PR{
 		{
 			State:             "open",
@@ -300,8 +334,8 @@ func TestPollPRGateStopsWhenOpenPRGateCompletes(t *testing.T) {
 		},
 	}}
 
-	if got := pollPRGate(context.Background(), client, gateTestBranch, gateTestRunOptions()); got != gatePollComplete {
-		t.Fatalf("poll result = %v, want gatePollComplete", got)
+	if got := pollPRGate(context.Background(), client, gateTestBranch, gateTestRunOptions()); got != gatePollReadyToMerge {
+		t.Fatalf("poll result = %v, want gatePollReadyToMerge", got)
 	}
 }
 
@@ -400,7 +434,7 @@ func TestHandleExternalGateInitialLookupErrorRecoversToPending(t *testing.T) {
 	}
 }
 
-func TestCheckPRExternalGateIgnoresFullyGreenOpenPR(t *testing.T) {
+func TestCheckPRExternalGateRecognizesFullyGreenOpenPRAsReadyToMerge(t *testing.T) {
 	for _, tt := range []struct {
 		name   string
 		rollup string
@@ -423,8 +457,8 @@ func TestCheckPRExternalGateIgnoresFullyGreenOpenPR(t *testing.T) {
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
-			if got != "complete" {
-				t.Fatalf("fully green PR gate = %q, want complete", got)
+			if got != gateReadyToMerge {
+				t.Fatalf("fully green PR gate = %q, want %s", got, gateReadyToMerge)
 			}
 		})
 	}
