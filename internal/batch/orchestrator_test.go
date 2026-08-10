@@ -1583,8 +1583,8 @@ func TestRunSingle_ModeContinueRequestedChangesIsActionableWithoutRetry(t *testi
 		result:      AgentRunResult{IssueNumber: 42, Status: "success", Branch: branch},
 	}
 	spyLog := &spyEventLog{}
-	o := &Orchestrator{
-		githubClient: &fakeGitHubClient{
+	o := NewOrchestrator(
+		&fakeGitHubClient{
 			issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}},
 			prs: map[string]*github.PR{branch: {
 				Number:            17,
@@ -1595,15 +1595,30 @@ func TestRunSingle_ModeContinueRequestedChangesIsActionableWithoutRetry(t *testi
 				MergeStateStatus:  "CLEAN",
 			}},
 		},
-		renderer:        &retryRenderer{result: "rendered prompt"},
-		sandboxFactory:  sbFactory,
-		eventLog:        spyLog,
-		errorLog:        io.Discard,
-		runnableFactory: resultFactory,
-	}
+		&retryRenderer{result: "rendered prompt"},
+		nil,
+		spyLog,
+		WithErrorLog(io.Discard),
+		WithSandboxFactory(sbFactory),
+		WithRunnableFactory(resultFactory),
+		WithRunSessionOpts(gateTestRunOptions()),
+	)
 
 	cfg := &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}}
-	result, started := o.runSingle(context.Background(), context.Background(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, true, nil, noopIdentityResolver(), map[int]string{42: branch}, prompt.RenderConfig{}, nil, sbFactory, nil, false, "main", nil, 0, 0, 0, 0, "", 0, false, 0, false, false, false, "", "")
+	bc := BatchConfig{
+		Cfg:              cfg,
+		AgentName:        "opencode",
+		AgentCfg:         config.Agent{Command: "echo hi"},
+		IdentityResolver: noopIdentityResolver(),
+		Retries:          0,
+	}
+	result, started := o.newRunExecutor(context.Background(), bc, sbFactory, nil).Execute(context.Background(), RowSpec{
+		IssueNumber:    42,
+		Mode:           ModeContinue,
+		Branches:       map[int]string{42: branch},
+		PreviousRunIDs: map[int]string{42: "prior-run"},
+		BaseBranch:     "main",
+	})
 	if !started {
 		t.Fatal("expected run to start")
 	}

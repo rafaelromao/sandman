@@ -36,6 +36,10 @@ func pollPRGate(ctx context.Context, client github.Client, branch string, opts r
 }
 
 func pollPRGateAtHead(ctx context.Context, client github.Client, branch, headSHA string, opts runSessionOptions) gateResult {
+	return pollPRGateWithHead(ctx, client, branch, headSHA, false, opts)
+}
+
+func pollPRGateWithHead(ctx context.Context, client github.Client, branch, headSHA string, requireHead bool, opts runSessionOptions) gateResult {
 	initial := opts.gatePollInitial
 	if initial <= 0 {
 		initial = defaultGatePollInitial
@@ -75,7 +79,7 @@ func pollPRGateAtHead(ctx context.Context, client github.Client, branch, headSHA
 		case <-time.After(delay):
 		}
 
-		gate, err := checkPRExternalGateAtHead(pollCtx, client, branch, headSHA)
+		gate, err := checkPRExternalGateWithHead(pollCtx, client, branch, headSHA, requireHead)
 		switch gate {
 		case "resolved":
 			return gateResolved
@@ -105,6 +109,10 @@ func checkPRExternalGate(ctx context.Context, client github.Client, branch strin
 }
 
 func checkPRExternalGateAtHead(ctx context.Context, client github.Client, branch, headSHA string) (string, error) {
+	return checkPRExternalGateWithHead(ctx, client, branch, headSHA, false)
+}
+
+func checkPRExternalGateWithHead(ctx context.Context, client github.Client, branch, headSHA string, requireHead bool) (string, error) {
 	if client == nil || strings.TrimSpace(branch) == "" {
 		return "none", nil
 	}
@@ -141,6 +149,9 @@ func checkPRExternalGateAtHead(ctx context.Context, client github.Client, branch
 	if hasCIPending || review == "REVIEW_REQUIRED" || mergeStatus == "BLOCKED" {
 		return "pending", nil
 	}
+	if requireHead && strings.TrimSpace(headSHA) == "" {
+		return "pending", nil
+	}
 	if strings.TrimSpace(headSHA) != "" && strings.TrimSpace(pr.HeadRefOid) != "" && !strings.EqualFold(pr.HeadRefOid, headSHA) {
 		return "pending", nil
 	}
@@ -156,12 +167,19 @@ func checkPRExternalGateAtHead(ctx context.Context, client github.Client, branch
 // by fresh and continuation runs so an explicit intervention cannot re-enter
 // the old failure/retry path while the same PR gate is still unresolved.
 func (s *runSession) handleExternalGate(ctx context.Context, workDir, branch, logPath, runID string) (string, map[string]any, bool) {
+	return s.handleExternalGateWithHostPaths(ctx, workDir, branch, logPath, runID, true)
+}
+
+func (s *runSession) handleExternalGateWithHostPaths(ctx context.Context, workDir, branch, logPath, runID string, hostPathsReady bool) (string, map[string]any, bool) {
 	if s.deps.githubClient == nil {
 		return "", nil, false
 	}
 
 	headSHA := s.currentGateHead(workDir)
-	gate, err := checkPRExternalGateAtHead(ctx, s.deps.githubClient, branch, headSHA)
+	if !hostPathsReady {
+		headSHA = ""
+	}
+	gate, err := checkPRExternalGateWithHead(ctx, s.deps.githubClient, branch, headSHA, !hostPathsReady)
 	initialUnavailable := err != nil
 	if err != nil && s.deps.errorLog != nil {
 		fmt.Fprintf(s.deps.errorLog, "warning: external gate lookup for branch %q: %v\n", branch, err)
@@ -184,7 +202,7 @@ func (s *runSession) handleExternalGate(ctx context.Context, workDir, branch, lo
 		return s.blockExternalGate(ctx, workDir, logPath, runID, "unavailable")
 	}
 
-	polled := pollPRGateAtHead(ctx, s.deps.githubClient, branch, headSHA, s.opts)
+	polled := pollPRGateWithHead(ctx, s.deps.githubClient, branch, headSHA, !hostPathsReady, s.opts)
 	if polled == gateResolved {
 		return s.confirmExternalGate(ctx, workDir, branch, logPath, runID)
 	}

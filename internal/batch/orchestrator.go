@@ -2601,7 +2601,8 @@ loop:
 		taskContent, _, _ := ReadTaskContent(taskPath)
 		alreadyResolved := hasExactTaskStatus(taskContent, "## Status: already resolved")
 		if s.issueNumber > 0 && events.RunStatusFromPayload(result.Status).IsSuccess() && ctx.Err() == nil {
-			if gateStatus, extras, handled := s.handleExternalGate(ctx, wt.WorkDir(), branch, logPath, runID); handled && gateStatus != "success" {
+			hostPathsReady := s.restoreHostPathsBeforeExternalGate(wt)
+			if gateStatus, extras, handled := s.handleExternalGateWithHostPaths(ctx, wt.WorkDir(), branch, logPath, runID, hostPathsReady); handled && gateStatus != "success" {
 				result.Status = gateStatus
 				terminalExtras = mergeBlockerExtras(terminalExtras, extras)
 				break loop
@@ -2708,7 +2709,8 @@ loop:
 						break
 					}
 					if events.RunStatusFromPayload(result.Status).IsSuccess() && ctx.Err() == nil {
-						if gateStatus, extras, handled := s.handleExternalGate(ctx, wt.WorkDir(), branch, logPath, runID); handled {
+						hostPathsReady := s.restoreHostPathsBeforeExternalGate(wt)
+						if gateStatus, extras, handled := s.handleExternalGateWithHostPaths(ctx, wt.WorkDir(), branch, logPath, runID, hostPathsReady); handled {
 							result.Status = gateStatus
 							terminalExtras = mergeBlockerExtras(terminalExtras, extras)
 							break loop
@@ -2723,6 +2725,14 @@ loop:
 	}
 
 	return result, terminalExtras, true
+}
+
+func (s *runSession) restoreHostPathsBeforeExternalGate(wt sandbox.Sandbox) bool {
+	if err := wt.RestoreHostPaths(); err != nil {
+		fmt.Fprintf(s.deps.errorLog, "warning: restore host paths before external gate: %v\n", err)
+		return false
+	}
+	return true
 }
 
 // runSingleRow is the elevated seam for one issue-driven AgentRun. It builds a
