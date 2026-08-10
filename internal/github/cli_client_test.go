@@ -268,9 +268,6 @@ func TestCLIClient_FindPRByBranch_Success(t *testing.T) {
 	if pr.Body != "Refs #386" {
 		t.Fatalf("expected body to round-trip, got %q", pr.Body)
 	}
-	if !pr.ClosesIssue(386) {
-		t.Fatal("expected native closing reference for issue 386")
-	}
 	if pr.ReviewDecision != "APPROVED" {
 		t.Errorf("ReviewDecision = %q, want APPROVED", pr.ReviewDecision)
 	}
@@ -283,9 +280,29 @@ func TestCLIClient_FindPRByBranch_Success(t *testing.T) {
 	if len(runner.calls) != 1 {
 		t.Fatalf("expected 1 command, got %d", len(runner.calls))
 	}
-	expectedArgs := []string{"pr", "list", "--head", "issue-386/smart-completion-detection-phase-aware-retry", "--state", "all", "--json", "number,state,body,mergedAt,headRefName,headRefOid,updatedAt,reviewDecision,mergeStateStatus,statusCheckRollup,closingIssuesReferences", "--limit", "1"}
+	expectedArgs := []string{"pr", "list", "--head", "issue-386/smart-completion-detection-phase-aware-retry", "--state", "all", "--json", "number,state,body,mergedAt,headRefName,headRefOid,updatedAt,reviewDecision,mergeStateStatus,statusCheckRollup", "--limit", "1"}
 	if !reflect.DeepEqual(runner.calls[0].args, expectedArgs) {
 		t.Fatalf("unexpected args: %v", runner.calls[0].args)
+	}
+}
+
+func TestCLIClient_FindPRByBranch_MergedFetchesAllNativeClosingReferences(t *testing.T) {
+	runner := &fakeRunner{responses: []fakeResponse{
+		{output: `[{"number":17,"state":"closed","mergedAt":"2026-08-01T12:00:00Z","headRefName":"merged-branch","headRefOid":"abc123","statusCheckRollup":"success"}]`},
+		{output: `{"name":"sandman","owner":{"login":"rafaelromao"}}`},
+		{output: `{"number":17,"state":"closed","body":"","mergedAt":"2026-08-01T12:00:00Z","headRefName":"merged-branch","headRefOid":"abc123","closingIssuesReferences":[{"number":999},{"number":386}]}`},
+	}}
+	client := &CLIClient{runner: runner}
+
+	pr, err := client.FindPRByBranch(context.Background(), "merged-branch")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if pr == nil || !pr.ClosesIssue(386) {
+		t.Fatalf("merged PR native closing references = %#v, want issue 386", pr)
+	}
+	if len(runner.calls) != 3 {
+		t.Fatalf("gh calls = %d, want list, repo view, and PR view", len(runner.calls))
 	}
 }
 

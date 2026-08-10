@@ -157,6 +157,25 @@ func TestRunSingle_PendingDelegatedReviewDoesNotConsumeRetries(t *testing.T) {
 	assertExternalGateTerminal(t, logs, "pending")
 }
 
+func TestRunSingle_ClosedUnmergedPRDoesNotConsumeRetries(t *testing.T) {
+	result, logs, launches := runCleanGateCase(t, &github.PR{
+		Number:      17,
+		State:       "closed",
+		HeadRefName: gateTestBranch,
+	})
+
+	if result.Status != "blocked" {
+		t.Fatalf("status = %q, want blocked", result.Status)
+	}
+	if result.RetriesTotal != 1 {
+		t.Fatalf("retries total = %d, want 1", result.RetriesTotal)
+	}
+	if launches != 1 {
+		t.Fatalf("agent launches = %d, want 1", launches)
+	}
+	assertExternalGateTerminal(t, logs, "unavailable")
+}
+
 func TestRunSingle_FailedExternalGateIsActionableWithoutRetry(t *testing.T) {
 	tests := []struct {
 		name string

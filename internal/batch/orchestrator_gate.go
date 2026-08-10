@@ -103,7 +103,7 @@ func checkPRExternalGate(ctx context.Context, client github.Client, branch strin
 		return "resolved", nil
 	}
 	if !strings.EqualFold(pr.State, "open") {
-		return "none", nil
+		return "unavailable", nil
 	}
 
 	checkRollup := strings.ToLower(strings.TrimSpace(pr.StatusCheckRollup))
@@ -153,6 +153,9 @@ func (s *runSession) handleExternalGate(ctx context.Context, workDir, branch, lo
 	}
 	if gate == "failed" {
 		return s.blockExternalGate(workDir, logPath, runID, "failed")
+	}
+	if gate == "unavailable" && !initialUnavailable {
+		return s.blockExternalGate(workDir, logPath, runID, "unavailable")
 	}
 
 	polled := pollPRGate(ctx, s.deps.githubClient, branch, s.opts)

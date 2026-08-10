@@ -36,14 +36,10 @@ func TestRunSingle_EmitsRunRetryBetweenAttemptsOnFailure(t *testing.T) {
 	oldHeadFn := currentBranchHeadFn
 	currentBranchHeadFn = func(string) (string, error) { return "current-sha", nil }
 	t.Cleanup(func() { currentBranchHeadFn = oldHeadFn })
-	// PR stays unmerged for the whole run. The orchestrator's post-attempt
-	// check flips the result to "failure" whenever pr.Merged is false; this
-	// is expected behaviour for an issue-driven run where the PR is the
-	// success signal. The third runnable returns success but the
-	// post-attempt check still flips it to "failure" because the PR is not
-	// merged. The point of this test is to count run.retry events, not to
-	// validate the success/failure signal.
-	pr := &github.PR{Number: 17, State: "closed", Merged: false, HeadRefName: branch}
+	// The PR remains open with a pending external gate for the whole run.
+	// Agent failures still consume retries, while the third clean exit is
+	// terminal blocked state rather than another agent failure.
+	pr := &github.PR{Number: 17, State: "open", HeadRefName: branch, MergeStateStatus: "BLOCKED", StatusCheckRollup: "pending"}
 	eventsPath := filepath.Join(t.TempDir(), "events.jsonl")
 	eventLog := &events.JSONLLogger{Path: eventsPath}
 	resultFactory := &fakeRunnableFactory{results: []AgentRunResult{
@@ -68,7 +64,7 @@ func TestRunSingle_EmitsRunRetryBetweenAttemptsOnFailure(t *testing.T) {
 		// loop with a failure errResult).
 		WithRunSessionOpts(runSessionOptions{retryReset: func(ctx context.Context, sb sandbox.Sandbox, branch, baseBranch string) error {
 			return nil
-		}}),
+		}, gatePollInitial: time.Millisecond, gatePollMaxSleep: time.Millisecond, gatePollBudget: 5 * time.Millisecond}),
 	)
 
 	cfg := &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}}
@@ -88,11 +84,8 @@ func TestRunSingle_EmitsRunRetryBetweenAttemptsOnFailure(t *testing.T) {
 	if !started {
 		t.Fatalf("expected run to start, result.Status=%q, created=%d", result.Status, len(resultFactory.created))
 	}
-	// The PR is unmerged, so the post-attempt check after the third
-	// (success) attempt flips result.Status to "failure". This is the
-	// expected end-state for an issue-driven run with an unmerged PR.
-	if result.Status != "failure" {
-		t.Fatalf("status = %q, want failure (unmerged PR forces failure regardless of agent zero exit)", result.Status)
+	if result.Status != "blocked" {
+		t.Fatalf("status = %q, want blocked (pending external gate must not become agent failure)", result.Status)
 	}
 	if result.RetriesTotal != 3 {
 		t.Fatalf("RetriesTotal = %d, want 3 (3 attempts: fail, fail, succeed)", result.RetriesTotal)

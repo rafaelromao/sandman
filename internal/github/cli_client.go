@@ -560,7 +560,7 @@ func (c *CLIClient) FetchIssueDependencies(ctx context.Context, number int) ([]i
 func (c *CLIClient) FindPRByBranch(ctx context.Context, branch string) (*PR, error) {
 	callCtx, cancel := c.boundContext(ctx)
 	defer cancel()
-	cmd := c.command(callCtx, "gh", "pr", "list", "--head", branch, "--state", "all", "--json", "number,state,body,mergedAt,headRefName,headRefOid,updatedAt,reviewDecision,mergeStateStatus,statusCheckRollup,closingIssuesReferences", "--limit", "1")
+	cmd := c.command(callCtx, "gh", "pr", "list", "--head", branch, "--state", "all", "--json", "number,state,body,mergedAt,headRefName,headRefOid,updatedAt,reviewDecision,mergeStateStatus,statusCheckRollup", "--limit", "1")
 	out, err := c.runCmd(callCtx, cmd, "gh pr list")
 	if err != nil {
 		return nil, fmt.Errorf("gh pr list: %w", err)
@@ -575,9 +575,9 @@ func (c *CLIClient) FindPRByBranch(ctx context.Context, branch string) (*PR, err
 	}
 	payload := payloads[0]
 	var linkedIssueNumbers []int
-	for _, reference := range payload.ClosingIssuesReferences {
-		if reference.Number > 0 {
-			linkedIssueNumbers = append(linkedIssueNumbers, reference.Number)
+	if strings.TrimSpace(payload.MergedAt) != "" || strings.EqualFold(payload.State, "merged") {
+		if mergedPR, err := c.FetchPR(ctx, payload.Number); err == nil && mergedPR != nil {
+			linkedIssueNumbers = append(linkedIssueNumbers, mergedPR.linkedIssueNumbers...)
 		}
 	}
 	return &PR{
