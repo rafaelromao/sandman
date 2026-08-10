@@ -125,6 +125,9 @@ func checkPRExternalGate(ctx context.Context, client github.Client, branch strin
 	if hasCIPending || review == "" || review == "REVIEW_REQUIRED" || mergeStatus == "BLOCKED" {
 		return "pending", nil
 	}
+	if checkRollup == "success" && review == "APPROVED" && mergeStatus == "CLEAN" {
+		return "none", nil
+	}
 
 	return "pending", nil
 }
