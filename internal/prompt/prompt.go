@@ -10,6 +10,7 @@ type RenderConfig struct {
 	TaskPrompt         string            // raw task prompt text
 	ReviewCommand      string            // REVIEW_COMMAND substitution value
 	ReviewCommandSet   bool              // true when review_command should be recorded in events
+	ReviewTimeout      int               // REVIEW_TIMEOUT substitution value in seconds
 	PromptArgs         map[string]string // arbitrary keys from config
 	// ReviewPromptFile is the path to the project's live review-prompt
 	// template (.sandman/reviews/review-prompt.md). The review daemon passes

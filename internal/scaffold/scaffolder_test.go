@@ -61,6 +61,9 @@ func TestScaffold_PersistsRuntimeDefaults(t *testing.T) {
 	if !strings.Contains(content, "run_idle_timeout: 1800") {
 		t.Errorf("scaffolded config missing %q, got:\n%s", "run_idle_timeout: 1800", content)
 	}
+	if !strings.Contains(content, "review_timeout: 1800") {
+		t.Errorf("scaffolded config missing %q, got:\n%s", "review_timeout: 1800", content)
+	}
 	if !strings.Contains(content, "parallel: 1") {
 		t.Errorf("scaffolded config missing %q, got:\n%s", "parallel: 1", content)
 	}
@@ -75,6 +78,26 @@ func TestScaffold_PersistsRuntimeDefaults(t *testing.T) {
 	}
 	if !strings.Contains(content, "review_model: opencode/big-pickle") {
 		t.Errorf("scaffolded config missing %q, got:\n%s", "review_model: opencode/big-pickle", content)
+	}
+}
+
+func TestScaffold_PersistsExplicitReviewTimeout(t *testing.T) {
+	dir := t.TempDir()
+	reviewTimeout := 600
+
+	if err := (&Scaffolder{}).Scaffold(dir, Options{
+		BuildTools:    "generic",
+		ReviewTimeout: &reviewTimeout,
+	}, &fakePrompter{confirm: true}); err != nil {
+		t.Fatalf("scaffold: %v", err)
+	}
+
+	cfg, err := config.Load(filepath.Join(dir, ".sandman", "config.yaml"))
+	if err != nil {
+		t.Fatalf("load scaffolded config: %v", err)
+	}
+	if cfg.ReviewTimeout != reviewTimeout {
+		t.Fatalf("review_timeout = %d, want %d", cfg.ReviewTimeout, reviewTimeout)
 	}
 }
 

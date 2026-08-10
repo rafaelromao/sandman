@@ -22,6 +22,8 @@ const (
 	DefaultReviewParallel    = 1
 	DefaultStartDelay        = 0
 	DefaultRunIdleTimeout    = 1800
+	DefaultReviewTimeout     = 1800
+	MinReviewTimeout         = 240
 	DefaultRetries           = 3
 	DefaultContainerCapacity = 4
 	DefaultMaxContainers     = 0
@@ -43,6 +45,7 @@ type Config struct {
 	DefaultReviewParallel int              `yaml:"parallel_reviews"`
 	StartDelay            int              `yaml:"start_delay"`
 	RunIdleTimeout        int              `yaml:"run_idle_timeout"`
+	ReviewTimeout         int              `yaml:"review_timeout,omitempty"`
 	Retries               int              `yaml:"retries"`
 	ContainerCapacity     int              `yaml:"container_capacity"`
 	MaxContainers         int              `yaml:"max_containers"`
@@ -158,6 +161,7 @@ func SupportedKeys() []string {
 		"parallel_reviews",
 		"start_delay",
 		"run_idle_timeout",
+		"review_timeout",
 		"retries",
 		"container_capacity",
 		"max_containers",
@@ -187,6 +191,7 @@ func Load(path string) (*Config, error) {
 		DefaultReviewParallel int              `yaml:"parallel_reviews"`
 		StartDelay            int              `yaml:"start_delay"`
 		RunIdleTimeout        *int             `yaml:"run_idle_timeout"`
+		ReviewTimeout         yaml.Node        `yaml:"review_timeout"`
 		Retries               *int             `yaml:"retries"`
 		ContainerCapacity     *int             `yaml:"container_capacity"`
 		MaxContainers         *int             `yaml:"max_containers"`
@@ -242,6 +247,11 @@ func Load(path string) (*Config, error) {
 	} else {
 		cfg.RunIdleTimeout = *raw.RunIdleTimeout
 	}
+	reviewTimeout, err := parseReviewTimeout(&raw.ReviewTimeout)
+	if err != nil {
+		return nil, fmt.Errorf("validate config: %w", err)
+	}
+	cfg.ReviewTimeout = reviewTimeout
 	if raw.Retries == nil {
 		cfg.Retries = DefaultRetries
 	} else if *raw.Retries < 0 {
@@ -301,6 +311,31 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("validate config: %w", err)
 	}
 	return &cfg, nil
+}
+
+// ValidateReviewTimeout validates the delegated review response budget in seconds.
+func ValidateReviewTimeout(value int) error {
+	if value < MinReviewTimeout {
+		return fmt.Errorf("review_timeout must be at least %d seconds", MinReviewTimeout)
+	}
+	return nil
+}
+
+func parseReviewTimeout(node *yaml.Node) (int, error) {
+	if node == nil || node.Kind == 0 {
+		return DefaultReviewTimeout, nil
+	}
+	if node.Kind != yaml.ScalarNode || node.Tag != "!!int" {
+		return 0, fmt.Errorf("review_timeout must be an integer number of seconds (minimum %d)", MinReviewTimeout)
+	}
+	value, err := strconv.Atoi(node.Value)
+	if err != nil {
+		return 0, fmt.Errorf("review_timeout must be an integer number of seconds (minimum %d)", MinReviewTimeout)
+	}
+	if err := ValidateReviewTimeout(value); err != nil {
+		return 0, err
+	}
+	return value, nil
 }
 
 // Save writes the config to the given path as YAML.
@@ -445,6 +480,8 @@ func (c *Config) GetValue(key string) (string, error) {
 		return fmt.Sprintf("%d", c.StartDelay), nil
 	case "run_idle_timeout":
 		return fmt.Sprintf("%d", c.RunIdleTimeout), nil
+	case "review_timeout":
+		return fmt.Sprintf("%d", c.EffectiveReviewTimeout()), nil
 	case "retries":
 		return fmt.Sprintf("%d", c.Retries), nil
 	case "container_capacity":
@@ -467,6 +504,7 @@ func (c *Config) GetValue(key string) (string, error) {
 type intSetField struct {
 	name      string
 	allowZero bool
+	minimum   int
 	target    func(*Config) *int
 }
 
@@ -475,6 +513,7 @@ var intSetFields = []intSetField{
 	{name: "parallel_reviews", allowZero: false, target: func(c *Config) *int { return &c.DefaultReviewParallel }},
 	{name: "start_delay", allowZero: true, target: func(c *Config) *int { return &c.StartDelay }},
 	{name: "run_idle_timeout", allowZero: true, target: func(c *Config) *int { return &c.RunIdleTimeout }},
+	{name: "review_timeout", minimum: MinReviewTimeout, target: func(c *Config) *int { return &c.ReviewTimeout }},
 	{name: "retries", allowZero: true, target: func(c *Config) *int { return &c.Retries }},
 	{name: "container_capacity", allowZero: true, target: func(c *Config) *int { return &c.ContainerCapacity }},
 	{name: "max_containers", allowZero: true, target: func(c *Config) *int { return &c.MaxContainers }},
@@ -532,6 +571,9 @@ func setIntField(c *Config, field intSetField, value string) error {
 	if err != nil {
 		return fmt.Errorf("invalid value for %s: %w", field.name, err)
 	}
+	if field.minimum > 0 && n < field.minimum {
+		return fmt.Errorf("%s must be at least %d seconds", field.name, field.minimum)
+	}
 	if field.allowZero {
 		if n < 0 {
 			return fmt.Errorf("%s must be 0 or greater", field.name)
@@ -580,6 +622,14 @@ func (c *Config) EffectiveReviewParallel() int {
 		return DefaultReviewParallel
 	}
 	return c.DefaultReviewParallel
+}
+
+// EffectiveReviewTimeout returns the delegated review response budget in seconds.
+func (c *Config) EffectiveReviewTimeout() int {
+	if c == nil || c.ReviewTimeout < MinReviewTimeout {
+		return DefaultReviewTimeout
+	}
+	return c.ReviewTimeout
 }
 
 // EffectiveReviewModel returns the configured review model, falling back to

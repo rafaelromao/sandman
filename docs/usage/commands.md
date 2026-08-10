@@ -31,6 +31,7 @@ sandman init [flags]
 | `--retries` | `-1` | Persist `retries` in scaffolded config. `-1` keeps the built-in default of `3`; `0` disables retries |
 | `--parallel-reviews` | `-1` | Persist `parallel_reviews` in scaffolded config (default `1`) |
 | `--run-idle-timeout` | `-1` | Persist `run_idle_timeout` (seconds) in scaffolded config. `-1` keeps the built-in default of `1800`; `0` disables the heartbeat watchdog |
+| `--review-timeout` | omitted | Persist `review_timeout` (seconds) in scaffolded config. Default `1800`; values below `240` are invalid |
 
 When `--tool-version` is omitted, `init` uses the preset resolver's interactive defaults: repo hints are offered when present, otherwise `latest`/`lts` choices are prompted.
 
@@ -81,6 +82,7 @@ Positional arguments (numbers and ranges) can be combined with `--label` and `--
 | `--agent` | `agent` from config (`opencode`) | Built-in agent preset for this run; on `--continue` uses the current value, not the prior run's stored agent |
 | `--run-id` | — | Batch-level identifier for prompt-only runs; must start with a letter and contain only alphanumeric characters, hyphens, and underscores; cannot be combined with issue selection |
 | `--run-idle-timeout` | `0` | Treat an AgentRun as stuck if it produces no output for N seconds; `0` disables the timeout |
+| `--review-timeout` | config `review_timeout` (`1800`) | Override the cumulative delegated review response budget in seconds; minimum `240` |
 | `--branch` | `""` | Branch name for prompt-only runs; overrides the default `<slug>-<timestamp>` shape (prompt-only mode only) |
 | `--reconcile-stranded` | `true` | Auto-recover stranded worktrees when the main repo is checked out on a `<n>-<slug>` branch |
 | `--no-reconcile-stranded` | `false` | Opt out of stranded-worktree auto-recovery (negative form of `--reconcile-stranded`) |
@@ -101,6 +103,7 @@ Positional arguments (numbers and ranges) can be combined with `--label` and `--
 - `--variant` is trimmed and treated as opaque provider-specific text; when omitted, Sandman uses `variant` from config. On `--continue`, current CLI/config values replace the prior event value. Non-empty values are safely passed as one argument to built-in OpenCode; custom commands are unchanged.
 - `--agent` selects which built-in preset to use for this run; if omitted, Sandman uses `agent` from config
 - `--continue` cannot be combined with `--override`
+- `--review-timeout` uses explicit override > repository `review_timeout` > built-in default `1800`; the effective value is refreshed on continuations and retries within one AgentRun keep their original value
 - When `--max-containers` and `--container-capacity` together constrain concurrency below `--parallel`, the tighter limit wins
 - `--reconcile-stranded` auto-recovers stranded worktrees when the main repo is checked out on a `<n>-<slug>` branch; `--no-reconcile-stranded` opts out of this auto-recovery
 
@@ -132,7 +135,7 @@ Continue the last agent run for one or more issues. Reads the task file (`.sandm
 sandman run --continue <issue-number>...
 ```
 
-Reuses the prior run's worktree identity: the existing branch, the stored base branch (the worktree was cut from it), the prior run id, the `.sandman/task.md` contents, and the issue mode. Tunables (agent, model, parallel, retries, sandbox, container tunables, review command) come from current CLI flags / config defaults, not from the stored payload. CLI overrides on the `--continue` invocation still win over both config defaults and stored values. When no task file exists, an empty task template is used as the resume prompt (with a warning on stderr).
+Reuses the prior run's worktree identity: the existing branch, the stored base branch (the worktree was cut from it), the prior run id, the `.sandman/task.md` contents, and the issue mode. Tunables (agent, model, parallel, retries, sandbox, container tunables, review command, review timeout) come from current CLI flags / config defaults, not from the stored payload. CLI overrides on the `--continue` invocation still win over both config defaults and stored values. When no task file exists, an empty task template is used as the resume prompt (with a warning on stderr).
 
 | Flag | Default | Description |
 |------|---------|-------------|
@@ -142,6 +145,7 @@ Reuses the prior run's worktree identity: the existing branch, the stored base b
 | `--run-id` | — | Continue the most recent prompt-only run by its batch-level identifier; must start with a letter and contain only alphanumeric characters, hyphens, and underscores; cannot be combined with issue numbers. Reads the prior task file from the existing worktree and reuses the same branch for the continued run. When the most recent Issue-0 event is a review run (not a prompt-only run), `sandman run --continue` skips it and selects the prior prompt-only run instead — or errors if none exists. |
 | `--dangerously-skip-permissions` | `true` for container runs, `false` for worktree runs | Skip permission checks for the continued run |
 | `--run-idle-timeout` | `0` | Treat an AgentRun as stuck if it produces no output for N seconds; `0` disables the timeout |
+| `--review-timeout` | config `review_timeout` (`1800`) | Override the cumulative delegated review response budget in seconds; minimum `240` |
 
 ## `sandman clean`
 
@@ -267,6 +271,7 @@ sandman config set <key> <value>
 | `parallel_reviews` | int | `1` |
 | `start_delay` | int | `0` |
 | `run_idle_timeout` | int | `1800` |
+| `review_timeout` | int | `1800` |
 | `retries` | int | `3` |
 | `review_command` | string | `/sandman review` |
 | `container_capacity` | int | `4` |

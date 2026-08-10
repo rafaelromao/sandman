@@ -48,12 +48,13 @@ The `run_id` (per-row RunID) and the `payload.batch_id` (public BatchId) identif
 ### Event payloads
 
 #### `run.started` / `run.continued`
-Emitted when an agent run begins. `run.continued` carries the same fields as `run.started` (branch, base_branch, parallel, start_delay, retries, sandbox, container_capacity, container_capacity_set, max_containers, max_containers_set, agent, model, review_command) plus `previous_run_id`. The full payload shape is identical to `run.started`; `previous_run_id` links the continuation to the original run.
+Emitted when an agent run begins. `run.continued` carries the same fields as `run.started` (branch, base_branch, parallel, start_delay, review_timeout, retries, sandbox, container_capacity, container_capacity_set, max_containers, max_containers_set, agent, model, review_command) plus `previous_run_id`. The full payload shape is identical to `run.started`; `previous_run_id` links the continuation to the original run.
 
 | Field | Description |
 |-------|-------------|
 | `batch_id` | Public BatchId. Equals the batch folder basename and is the batch-level identifier (not the per-row `run_id` above). |
 | `run_kind` | Optional taxonomy tag. `"review"` is signalled via the boolean `review` field. Issue-driven and prompt-only runs leave it absent. |
+| `review_timeout` | Effective delegated review response budget in integer seconds for this AgentRun. |
 
 #### `run.queued`
 Emitted when an issue enters the wait queue due to unresolved blockers or parallel capacity constraints.

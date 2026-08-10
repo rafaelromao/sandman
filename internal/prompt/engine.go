@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/rafaelromao/sandman/internal/atomicfs"
@@ -98,9 +99,10 @@ func issueMapping(data IssueData) map[string]string {
 func configMapping(cfg RenderConfig) map[string]string {
 	mapping := map[string]string{
 		"REVIEW_COMMAND": config.DefaultReviewCommand,
+		"REVIEW_TIMEOUT": strconv.Itoa(config.DefaultReviewTimeout),
 	}
 	for k, v := range cfg.PromptArgs {
-		if k == "REVIEW_COMMAND" {
+		if k == "REVIEW_COMMAND" || k == "REVIEW_TIMEOUT" {
 			continue
 		}
 		mapping[k] = v
@@ -110,6 +112,9 @@ func configMapping(cfg RenderConfig) map[string]string {
 	}
 	if reviewCommand := strings.TrimSpace(cfg.ReviewCommand); reviewCommand != "" {
 		mapping["REVIEW_COMMAND"] = reviewCommand
+	}
+	if cfg.ReviewTimeout > 0 {
+		mapping["REVIEW_TIMEOUT"] = strconv.Itoa(cfg.ReviewTimeout)
 	}
 	return mapping
 }

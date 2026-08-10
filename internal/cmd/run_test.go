@@ -1630,6 +1630,51 @@ func TestRun_RunIdleTimeoutNegativeValueRejected(t *testing.T) {
 	}
 }
 
+func TestRun_ReviewTimeoutFlagPassedToBatchRunner(t *testing.T) {
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	deps := newRunDeps(t, spy)
+
+	var buf bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--review-timeout", "600", "42"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !spy.req.ReviewTimeoutSet {
+		t.Fatal("expected review timeout override to be marked as set")
+	}
+	if spy.req.ReviewTimeout != 600 {
+		t.Errorf("expected review timeout=600, got %d", spy.req.ReviewTimeout)
+	}
+}
+
+func TestRun_ReviewTimeoutInvalidValueRejected(t *testing.T) {
+	for _, value := range []string{"239", "0", "-1"} {
+		t.Run(value, func(t *testing.T) {
+			spy := &spyBatchRunner{result: &batch.Result{}}
+			deps := newRunDeps(t, spy)
+			cmd := NewRunCmd(deps)
+			cmd.SetOut(&bytes.Buffer{})
+			cmd.SetErr(&bytes.Buffer{})
+			cmd.SetArgs([]string{"--review-timeout", value, "42"})
+
+			err := cmd.Execute()
+			if err == nil {
+				t.Fatal("expected validation error")
+			}
+			if !strings.Contains(err.Error(), "review_timeout") {
+				t.Fatalf("expected review_timeout error, got %v", err)
+			}
+			if spy.called {
+				t.Fatal("expected batch runner not to be called")
+			}
+		})
+	}
+}
+
 func TestRun_ModelFlagPassedToBatchRunner(t *testing.T) {
 	spy := &spyBatchRunner{result: &batch.Result{}}
 	deps := newRunDeps(t, spy)
@@ -1956,6 +2001,7 @@ func TestRun_ContinueFlag_UsesCurrentFlagsOverStoredValues(t *testing.T) {
 		Agent:         "opencode-current",
 		DefaultModel:  "openai/gpt-4.1",
 		Variant:       "configured/provider",
+		ReviewTimeout: 600,
 		WorktreeDir:   dir,
 		ReviewCommand: "/oc review",
 		Git:           config.GitConfig{BaseBranch: "trunk"},
@@ -1973,7 +2019,7 @@ func TestRun_ContinueFlag_UsesCurrentFlagsOverStoredValues(t *testing.T) {
 	cmd := NewRunCmd(deps)
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
-	cmd.SetArgs([]string{"--continue", "--variant", " cli/provider ", "42"})
+	cmd.SetArgs([]string{"--continue", "--variant", " cli/provider ", "--review-timeout", "240", "42"})
 
 	err := cmd.Execute()
 	if err != nil {
@@ -2021,6 +2067,12 @@ func TestRun_ContinueFlag_UsesCurrentFlagsOverStoredValues(t *testing.T) {
 	}
 	if spy.req.RunIdleTimeout != 0 || spy.req.RunIdleTimeoutSet {
 		t.Fatalf("expected run idle timeout unset, got %d set=%v", spy.req.RunIdleTimeout, spy.req.RunIdleTimeoutSet)
+	}
+	if !spy.req.ReviewTimeoutSet || spy.req.ReviewTimeout != 240 {
+		t.Fatalf("expected current review timeout override 240, got %d set=%v", spy.req.ReviewTimeout, spy.req.ReviewTimeoutSet)
+	}
+	if !strings.Contains(spy.req.TaskPrompts[42], "Delegated review response timeout: `240` seconds") {
+		t.Fatalf("expected current review timeout in continuation task, got %q", spy.req.TaskPrompts[42])
 	}
 	if spy.req.Retries != -1 {
 		t.Fatalf("expected retries sentinel (-1) from current cfg, got %d", spy.req.Retries)

@@ -69,6 +69,10 @@ func NewInitCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			reviewTimeoutOverride, err := resolveInitReviewTimeout(cmd)
+			if err != nil {
+				return err
+			}
 
 			s := &scaffold.Scaffolder{}
 			prompter := &cliPrompter{
@@ -97,6 +101,7 @@ func NewInitCmd() *cobra.Command {
 				ReviewCommand:    reviewCommand,
 				Retries:          retriesOverride,
 				RunIdleTimeout:   runIdleTimeoutOverride,
+				ReviewTimeout:    reviewTimeoutOverride,
 				Writer:           cmd.OutOrStdout(),
 				DiagnosticWriter: diagnosticWriter,
 			}, prompter); err != nil {
@@ -128,6 +133,7 @@ func NewInitCmd() *cobra.Command {
 	cmd.Flags().String("review-command", "", "Review command to store in config and install into shared skills")
 	cmd.Flags().Int("retries", -1, fmt.Sprintf("Persist `retries` in scaffolded config (-1 = use built-in default of %d)", config.DefaultRetries))
 	cmd.Flags().Int("run-idle-timeout", -1, fmt.Sprintf("Persist `run_idle_timeout` in scaffolded config (-1 = use built-in default of %d)", config.DefaultRunIdleTimeout))
+	cmd.Flags().Int("review-timeout", 0, fmt.Sprintf("Persist `review_timeout` in scaffolded config (seconds; default %d, minimum %d; 0 is invalid)", config.DefaultReviewTimeout, config.MinReviewTimeout))
 
 	return cmd
 }
@@ -146,6 +152,18 @@ func resolveInitInt(cmd *cobra.Command, name string) (*int, error) {
 	}
 	if value < 0 {
 		return nil, fmt.Errorf("%s must be 0 or greater", strings.ReplaceAll(name, "-", "_"))
+	}
+	return &value, nil
+}
+
+func resolveInitReviewTimeout(cmd *cobra.Command) (*int, error) {
+	flag := cmd.Flags().Lookup("review-timeout")
+	if flag == nil || !flag.Changed {
+		return nil, nil
+	}
+	value, _ := cmd.Flags().GetInt("review-timeout")
+	if err := config.ValidateReviewTimeout(value); err != nil {
+		return nil, err
 	}
 	return &value, nil
 }

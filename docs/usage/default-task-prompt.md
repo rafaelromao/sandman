@@ -22,6 +22,7 @@ The shared Sandman skill owns the detailed workflow. This page describes the boo
     - Source branch: `{{SOURCE_BRANCH}}`
     - Base branch: `{{BASE_BRANCH}}`
     - Review command: `{{REVIEW_COMMAND}}`
+    - Delegated review response timeout: `{{REVIEW_TIMEOUT}}` seconds
     
     The worktree MUST be checked out on `{{BRANCH}}` when the run finishes. Do not switch to `{{BASE_BRANCH}}` or any other branch before exiting.
     
@@ -222,4 +223,4 @@ The shared Sandman skill owns the detailed workflow. This page describes the boo
 - **Project Prompt Template**: `.sandman/prompt.md`, created from the Default Task Prompt during `sandman init` and materialized on run when missing.
 - **Sandman Skill**: the shared skill folder installed into `~/.agents/skills/sandman/` by `sandman init`.
 - **Prompt**: `.sandman/task.md`, the rendered instruction file handed to the agent.
-- **Continue replay**: `sandman run --continue` reuses the prior run's worktree identity: the existing branch, the stored base branch, the prior run id, the `.sandman/task.md` contents, and the issue mode. The prior task contents are preserved and one canonical `Continuation Freshness Guard` is moved after all persisted state, including for task files created by older versions. Tunables (agent, model, parallel, retries, sandbox, container tunables, review command) come from current CLI flags / config defaults, not from the stored payload. When no task file exists, an empty task template is used with a warning on stderr.
+- **Continue replay**: `sandman run --continue` reuses the prior run's worktree identity: the existing branch, the stored base branch, the prior run id, the `.sandman/task.md` contents, and the issue mode. The prior task contents are preserved and one canonical `Continuation Freshness Guard` is moved after all persisted state, including for task files created by older versions. Tunables (agent, model, parallel, retries, sandbox, container tunables, review command, review timeout) come from current CLI flags / config defaults, not from the stored payload. When no task file exists, an empty task template is used with a warning on stderr.

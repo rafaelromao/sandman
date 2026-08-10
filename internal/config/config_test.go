@@ -481,6 +481,83 @@ func TestLoad_MissingRunIdleTimeout_AppliesDefault(t *testing.T) {
 	}
 }
 
+func TestLoad_MissingReviewTimeout_AppliesDefault(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(path, []byte("agent: opencode\n"), 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if cfg.ReviewTimeout != DefaultReviewTimeout {
+		t.Errorf("review_timeout: got %d, want %d", cfg.ReviewTimeout, DefaultReviewTimeout)
+	}
+}
+
+func TestConfig_ReviewTimeoutGetAndSet(t *testing.T) {
+	cfg := &Config{ReviewTimeout: DefaultReviewTimeout}
+
+	if got, err := cfg.GetValue("review_timeout"); err != nil || got != "1800" {
+		t.Fatalf("GetValue(review_timeout) = %q, %v", got, err)
+	}
+	if err := cfg.SetValue("review_timeout", "240"); err != nil {
+		t.Fatalf("SetValue(review_timeout): %v", err)
+	}
+	if got, err := cfg.GetValue("review_timeout"); err != nil || got != "240" {
+		t.Fatalf("GetValue(review_timeout) after set = %q, %v", got, err)
+	}
+	if !slices.Contains(SupportedKeys(), "review_timeout") {
+		t.Fatal("SupportedKeys missing review_timeout")
+	}
+}
+
+func TestLoad_ReviewTimeoutValidation(t *testing.T) {
+	tests := []struct {
+		name    string
+		value   string
+		wantErr string
+	}{
+		{name: "below minimum", value: "239", wantErr: "review_timeout must be at least 240 seconds"},
+		{name: "zero", value: "0", wantErr: "review_timeout must be at least 240 seconds"},
+		{name: "negative", value: "-1", wantErr: "review_timeout must be at least 240 seconds"},
+		{name: "string", value: `"240"`, wantErr: "review_timeout"},
+		{name: "fraction", value: "240.5", wantErr: "review_timeout"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config.yaml")
+			content := "agent: opencode\nreview_timeout: " + tt.value + "\n"
+			if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+				t.Fatalf("write config: %v", err)
+			}
+
+			_, err := Load(path)
+			if err == nil {
+				t.Fatal("expected validation error")
+			}
+			if !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("expected error containing %q, got %v", tt.wantErr, err)
+			}
+		})
+	}
+}
+
+func TestConfig_SetReviewTimeoutValidation(t *testing.T) {
+	cfg := &Config{}
+	for _, value := range []string{"239", "0", "-1", "not-a-number"} {
+		if err := cfg.SetValue("review_timeout", value); err == nil {
+			t.Errorf("SetValue(review_timeout, %q) expected an error", value)
+		} else if !strings.Contains(err.Error(), "review_timeout") {
+			t.Errorf("SetValue(review_timeout, %q) error = %v, want review_timeout", value, err)
+		}
+	}
+}
+
 func TestLoad_MissingRetries_AppliesDefault(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")

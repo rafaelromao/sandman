@@ -244,8 +244,8 @@ func TestAgentRun_Prepare_RendersAndWritesPrompt(t *testing.T) {
 	if !sb.writePromptCalled {
 		t.Fatal("expected WritePrompt to be called")
 	}
-	if sb.writePromptContent != "rendered prompt" {
-		t.Errorf("expected prompt content 'rendered prompt', got %q", sb.writePromptContent)
+	if !strings.Contains(sb.writePromptContent, "rendered prompt") || !strings.Contains(sb.writePromptContent, "Delegated review response timeout: `1800` seconds") {
+		t.Errorf("expected rendered prompt and current review timeout, got %q", sb.writePromptContent)
 	}
 }
 
@@ -654,8 +654,8 @@ func TestAgentRun_Run_PassesEnvAndPromptFileThroughFullChain(t *testing.T) {
 	if !sb.writePromptCalled {
 		t.Fatal("expected WritePrompt to be called")
 	}
-	if sb.writePromptContent != "rendered prompt for auth fix" {
-		t.Errorf("expected prompt content %q, got %q", "rendered prompt for auth fix", sb.writePromptContent)
+	if !strings.Contains(sb.writePromptContent, "rendered prompt for auth fix") || !strings.Contains(sb.writePromptContent, "Delegated review response timeout: `1800` seconds") {
+		t.Errorf("expected rendered prompt and current review timeout, got %q", sb.writePromptContent)
 	}
 
 	if !sb.execCalled {
@@ -735,11 +735,62 @@ func TestAgentRun_Run_WritesRawTaskPrompt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected continue prompt file: %v", err)
 	}
-	if string(data) != "finish {{ISSUE_NUMBER}}" {
-		t.Fatalf("expected raw continue prompt, got %q", string(data))
+	if !strings.Contains(string(data), "finish {{ISSUE_NUMBER}}") {
+		t.Fatalf("expected continue prompt body, got %q", string(data))
+	}
+	if !strings.Contains(string(data), "Delegated review response timeout: `1800` seconds") {
+		t.Fatalf("expected default review timeout context, got %q", string(data))
 	}
 	if sb.execCommand != "opencode run .sandman/task.md" {
 		t.Fatalf("expected continue prompt file in command, got %q", sb.execCommand)
+	}
+}
+
+func TestAgentRun_Run_AppendsReviewTimeoutContextToCustomTaskPrompt(t *testing.T) {
+	dir := t.TempDir()
+	issue := &github.Issue{Number: 42, Title: "Fix bug"}
+	sb := &fakeSandbox{workDir: dir}
+	run := NewAgentRun(issue, "42-fix-bug", sb)
+
+	res := run.Run(context.Background(), &spyRenderer{}, "true", prompt.RenderConfig{
+		TaskPrompt:    "custom task body",
+		ReviewTimeout: 600,
+	})
+	if res.Status != "success" {
+		t.Fatalf("expected success, got %s", res.Status)
+	}
+
+	data, err := os.ReadFile(filepath.Join(dir, ".sandman", "task.md"))
+	if err != nil {
+		t.Fatalf("read task: %v", err)
+	}
+	text := string(data)
+	if !strings.Contains(text, "custom task body") || !strings.Contains(text, "Delegated review response timeout: `600` seconds") {
+		t.Fatalf("task lost authored content or current timeout:\n%s", text)
+	}
+}
+
+func TestAgentRun_Run_DoesNotAppendImplementorTimeoutToReviewTask(t *testing.T) {
+	dir := t.TempDir()
+	issue := &github.Issue{Number: 42, Title: "Review bug"}
+	sb := &fakeSandbox{workDir: dir}
+	run := NewAgentRun(issue, "42-review-bug", sb)
+	run.review = true
+
+	res := run.Run(context.Background(), &spyRenderer{}, "true", prompt.RenderConfig{
+		TaskPrompt:    "review task body",
+		ReviewTimeout: 600,
+	})
+	if res.Status != "success" {
+		t.Fatalf("expected success, got %s", res.Status)
+	}
+
+	data, err := os.ReadFile(filepath.Join(dir, ".sandman", "task.md"))
+	if err != nil {
+		t.Fatalf("read task: %v", err)
+	}
+	if got := string(data); got != "review task body" {
+		t.Fatalf("review task was changed by implementor timeout context: %q", got)
 	}
 }
 

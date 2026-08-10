@@ -12,7 +12,7 @@ Creates or updates:
 
 | Path | Purpose |
 |------|---------|
-| `.sandman/config.yaml` | Project configuration: agent, model, sandbox, build tools, concurrency, retries, idle timeout, and git base branch |
+| `.sandman/config.yaml` | Project configuration: agent, model, sandbox, build tools, concurrency, retries, idle/review timeouts, and git base branch |
 | `.sandman/Dockerfile` | Container image recipe used by Podman/Docker sandboxes |
 | `.sandman/prompt.md` | Project Prompt Template used to render each agent task |
 | `.sandman/reviews/review-prompt.md` | Review-agent prompt template used by `sandman review` |
@@ -94,7 +94,8 @@ sandman init \
   --build-tools node \
   --tool-version lts \
   --parallel 2 \
-  --review-command "/sandman review"
+  --review-command "/sandman review" \
+  --review-timeout 1800
 ```
 
 Useful init flags:
@@ -111,6 +112,7 @@ Useful init flags:
 | `--review-command` | Command injected into prompts and skills |
 | `--retries` | Persist default retry count |
 | `--run-idle-timeout` | Persist idle timeout in seconds |
+| `--review-timeout` | Persist delegated review response timeout in seconds; minimum `240`, default `1800` |
 
 ## Changing presets later
 

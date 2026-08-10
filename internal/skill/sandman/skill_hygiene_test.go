@@ -281,7 +281,7 @@ func TestSkills_AutonomousRecoveryLaddersRemainExplicit(t *testing.T) {
 			"at most 3 fix-and-push attempts",
 			"ci_deadline",
 			"ci_fix_attempts",
-			"Total polling budget: **900s = 15 minutes**",
+			"The total polling budget is the effective `REVIEW_TIMEOUT` seconds",
 			"review_sleep_elapsed",
 			"REVIEW_TIMEOUT",
 			"max 10 passes",

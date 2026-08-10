@@ -1,10 +1,18 @@
 package prompt
 
 import (
+	"fmt"
 	"strings"
+
+	"github.com/rafaelromao/sandman/internal/config"
 )
 
 const continuationFreshnessGuardHeading = "## Continuation Freshness Guard"
+
+const (
+	reviewTimeoutContextHeading = "## Sandman Runtime Context"
+	reviewTimeoutContextPrefix  = "- Delegated review response timeout:"
+)
 
 var continuationFreshnessGuard = `## Continuation Freshness Guard
 
@@ -35,11 +43,85 @@ Never stop or exit solely because an earlier attempt recorded a blocker.`
 // "no task file" path lives in batch.ReadTaskContent and returns its own
 // EmptyTaskTemplate.
 func ContinuationTaskPrompt(content string) string {
+	return continuationTaskPrompt(content, 0)
+}
+
+// ContinuationTaskPromptWithReviewTimeout returns a continuation prompt whose
+// runtime context reflects the current AgentRun's effective review budget.
+func ContinuationTaskPromptWithReviewTimeout(content string, reviewTimeout int) string {
+	return continuationTaskPrompt(content, reviewTimeout)
+}
+
+func continuationTaskPrompt(content string, reviewTimeout int) string {
 	if strings.TrimSpace(content) == "" {
-		return DefaultPrompt()
+		content = DefaultPrompt()
 	}
 	content = removeCanonicalGuard(content)
-	return trimTrailingNewlines(content) + "\n\n" + continuationFreshnessGuard + "\n"
+	if reviewTimeout > 0 {
+		content = EnsureReviewTimeoutContext(content, reviewTimeout)
+	}
+	guard := continuationFreshnessGuard
+	if reviewTimeout > 0 {
+		effective := (&config.Config{ReviewTimeout: reviewTimeout}).EffectiveReviewTimeout()
+		guard += fmt.Sprintf("\n\nCurrent AgentRun delegated review response timeout is `%d` seconds; it supersedes any persisted timeout wording above.", effective)
+	}
+	return trimTrailingNewlines(content) + "\n\n" + guard + "\n"
+}
+
+// EnsureReviewTimeoutContext keeps the effective delegated review budget in
+// the current task even when a custom template omits REVIEW_TIMEOUT.
+func EnsureReviewTimeoutContext(content string, reviewTimeout int) string {
+	effective := (&config.Config{ReviewTimeout: reviewTimeout}).EffectiveReviewTimeout()
+	line := fmt.Sprintf("%s `%d` seconds", reviewTimeoutContextPrefix, effective)
+	lines := strings.Split(content, "\n")
+	sectionStart, sectionEnd := runtimeContextSection(lines)
+	if sectionStart >= 0 {
+		for i := sectionStart + 1; i < sectionEnd; i++ {
+			if strings.HasPrefix(strings.TrimSpace(lines[i]), reviewTimeoutContextPrefix) {
+				lines[i] = line
+				return strings.Join(lines, "\n")
+			}
+		}
+		lines = insertLine(lines, sectionEnd, line)
+		return strings.Join(lines, "\n")
+	}
+
+	return trimTrailingNewlines(content) + "\n\n" + reviewTimeoutContextHeading + "\n\n" + line + "\n"
+}
+
+// runtimeContextSection returns the last runtime-context section so an issue
+// body containing similarly named text is never treated as Sandman metadata.
+func runtimeContextSection(lines []string) (start, end int) {
+	start = -1
+	for i, line := range lines {
+		switch strings.TrimSpace(line) {
+		case reviewTimeoutContextHeading, "## Runtime Context":
+			start = i
+		}
+	}
+	if start < 0 {
+		return -1, -1
+	}
+
+	end = len(lines)
+	for i := start + 1; i < len(lines); i++ {
+		trimmed := strings.TrimSpace(lines[i])
+		if strings.HasPrefix(trimmed, "## ") || (strings.HasPrefix(trimmed, "# ") && !strings.HasPrefix(trimmed, "##")) {
+			end = i
+			break
+		}
+	}
+	return start, end
+}
+
+func insertLine(lines []string, index int, line string) []string {
+	if index == len(lines) && index > 0 && lines[index-1] == "" {
+		index--
+	}
+	lines = append(lines, "")
+	copy(lines[index+1:], lines[index:])
+	lines[index] = line
+	return lines
 }
 
 func removeCanonicalGuard(content string) string {

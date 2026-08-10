@@ -246,6 +246,56 @@ func TestContinuationTaskPrompt_EmptyTaskFallsBackToTemplate(t *testing.T) {
 	}
 }
 
+func TestEnsureReviewTimeoutContextMaintainsCanonicalBlock(t *testing.T) {
+	custom := "# Task\n\nDo the work.\n"
+	withContext := EnsureReviewTimeoutContext(custom, 600)
+	if !strings.Contains(withContext, "## Sandman Runtime Context") {
+		t.Fatalf("expected canonical runtime context, got:\n%s", withContext)
+	}
+	if !strings.Contains(withContext, "Delegated review response timeout: `600` seconds") {
+		t.Fatalf("expected effective timeout in runtime context, got:\n%s", withContext)
+	}
+
+	updated := EnsureReviewTimeoutContext(withContext, 240)
+	if strings.Contains(updated, "`600` seconds") {
+		t.Fatalf("stale timeout remained after refresh:\n%s", updated)
+	}
+	if !strings.Contains(updated, "Delegated review response timeout: `240` seconds") {
+		t.Fatalf("updated timeout missing after refresh:\n%s", updated)
+	}
+}
+
+func TestEnsureReviewTimeoutContextPreservesIssueBodyText(t *testing.T) {
+	content := "# Task\n\n## Issue Context\n\nThe issue mentions - Delegated review response timeout: `900` seconds.\n\n## Runtime Context\n\n- Current branch: `feature`\n"
+
+	got := EnsureReviewTimeoutContext(content, 600)
+
+	if !strings.Contains(got, "The issue mentions - Delegated review response timeout: `900` seconds.") {
+		t.Fatalf("issue body text was changed:\n%s", got)
+	}
+	if !strings.Contains(got, "## Runtime Context\n\n- Current branch: `feature`\n- Delegated review response timeout: `600` seconds") {
+		t.Fatalf("runtime context was not refreshed:\n%s", got)
+	}
+}
+
+func TestContinuationTaskPromptWithReviewTimeoutRefreshesCurrentContext(t *testing.T) {
+	prior := "# Task\n\n## Runtime Context\n\n- Delegated review response timeout: `900` seconds\n\n## Notes\n\nKeep this.\n"
+	got := ContinuationTaskPromptWithReviewTimeout(prior, 600)
+
+	if strings.Contains(got, "`900` seconds") {
+		t.Fatalf("stale review timeout remained:\n%s", got)
+	}
+	if !strings.Contains(got, "Delegated review response timeout: `600` seconds") {
+		t.Fatalf("current review timeout missing:\n%s", got)
+	}
+	if !strings.Contains(got, "Current AgentRun delegated review response timeout is `600` seconds") {
+		t.Fatalf("freshness context did not state current timeout:\n%s", got)
+	}
+	if !strings.Contains(got, "## Notes\n\nKeep this.") {
+		t.Fatalf("arbitrary task content was not preserved:\n%s", got)
+	}
+}
+
 func firstLines(s string, n int) string {
 	lines := strings.Split(s, "\n")
 	if len(lines) <= n {

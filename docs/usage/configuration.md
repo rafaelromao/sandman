@@ -49,6 +49,10 @@ parallel_reviews: 1
 # Default: 1800 (30 minutes).
 run_idle_timeout: 1800
 
+# Cumulative delegated review response budget in seconds for the implementor
+# side of the PR-review loop. The minimum is 240 seconds; default: 1800.
+review_timeout: 1800
+
 # Number of times to retry a failed AgentRun before recording it as failed.
 # 0 disables retries.
 # Default: 3.
@@ -111,12 +115,13 @@ The following built-in substitution keys are available in prompt templates:
 | `{{BASE_BRANCH}}` | Branch the agent will rebase/PR against |
 | `{{BRANCH}}` | Alias for `{{SOURCE_BRANCH}}` |
 | `{{REVIEW_COMMAND}}` | Review command from project config |
+| `{{REVIEW_TIMEOUT}}` | Effective delegated review response budget in seconds |
 
 Custom keys can be passed at runtime using the `--prompt-arg KEY=VALUE` flag on `sandman run` and referenced as `{{KEY}}` in the template.
 
 See [Sandman Skills](skills.md) for the shared workflow details.
 
-`sandman run --continue` uses current CLI flags / config defaults for tunables (agent, model, parallel, retries, sandbox, container tunables, review command, etc.) and replays only the worktree identity from the prior run: the preserved branch, the stored base branch (because the worktree was cut from it), the prior run id, the `.sandman/task.md` contents, and the issue mode. Before replay, Sandman places one canonical continuation freshness guard after all persisted task state so blockers and next actions must be revalidated. CLI overrides on the `--continue` invocation still win over both config defaults and stored values. When no task file exists, an empty task template is used with a warning on stderr.
+`sandman run --continue` uses current CLI flags / config defaults for tunables (agent, model, parallel, retries, sandbox, container tunables, review command, review timeout, etc.) and replays only the worktree identity from the prior run: the preserved branch, the stored base branch (because the worktree was cut from it), the prior run id, the `.sandman/task.md` contents, and the issue mode. Before replay, Sandman places one canonical continuation freshness guard after all persisted task state so blockers, next actions, and the delegated review timeout must be revalidated. CLI overrides on the `--continue` invocation still win over both config defaults and stored values. When no task file exists, an empty task template is used with a warning on stderr.
 
 ## Container scheduling configuration
 
@@ -145,6 +150,14 @@ See [Sandbox Modes](sandbox-modes.md) for detailed scheduling behavior.
 
 `run_idle_timeout` detects when an agent has stalled (e.g., blocked on an interactive prompt, deadlocked, or looping). When triggered, the watchdog kills the agent process and marks the run as `aborted`. A `run.idle_timeout` event is written to the event log for diagnostics. The `--run-idle-timeout` CLI flag overrides the config value for a single invocation.
 
+## Delegated review timeout
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `review_timeout` | `1800` | Cumulative seconds the implementor waits for a delegated PR review response. Values below `240` are rejected |
+
+`review_timeout` governs only the implementor-side delegated review response budget. It does not change the review daemon's reviewer AgentRun lifetime, external-gate polling, idle timeout, or review-pass limit. `--review-timeout` overrides the project value for one run or continuation. The effective value is rendered into the current Task and recorded in `run.started` / `run.continued` payloads.
+
 ## CLI config commands
 
 Use `sandman config get` and `sandman config set` to read and write individual fields:
@@ -156,6 +169,7 @@ sandman config set parallel_reviews 8
 sandman config set container_capacity 2
 sandman config set start_delay 5
 sandman config set run_idle_timeout 3600
+sandman config set review_timeout 3600
 sandman config set model opencode/BigPickle
 sandman config set review_variant "provider/foo bar"
 sandman config set git.base_branch main

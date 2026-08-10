@@ -28,6 +28,13 @@ The daemon polls open pull requests for the configured review command, which def
 /sandman review
 ```
 
+The implementor-side delegated review loop waits according to the project
+`review_timeout` setting (default `1800` seconds, minimum `240`). The value is
+carried in the current AgentRun Task and is independent of the review daemon's
+reviewer AgentRun lifetime and external-gate polling budget. Use
+`sandman config set review_timeout <seconds>` for repository policy or
+`sandman run --review-timeout <seconds>` for one run or continuation.
+
 When it sees a matching comment authored by the GitHub user authenticated to the daemon, it launches a review AgentRun and posts the result back to the pull request. Requests from other users are ignored. Use direct review for manual or CI-driven reviews that should not be tied to the daemon's authenticated user.
 
 ## Review command guard

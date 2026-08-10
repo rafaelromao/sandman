@@ -55,8 +55,12 @@ type Request struct {
 	StartDelaySet     bool
 	RunIdleTimeout    int
 	RunIdleTimeoutSet bool
-	Branches          map[int]string
-	Sandbox           string
+	// ReviewTimeout is the explicit delegated review response budget in seconds.
+	// When ReviewTimeoutSet is false, the orchestrator resolves it from config.
+	ReviewTimeout    int
+	ReviewTimeoutSet bool
+	Branches         map[int]string
+	Sandbox          string
 	// RequireDockerfile enforces a .sandman/Dockerfile preflight for container runs.
 	RequireDockerfile          bool
 	ContainerCapacity          int

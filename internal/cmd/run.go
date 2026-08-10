@@ -15,6 +15,7 @@ import (
 
 	"github.com/rafaelromao/sandman/internal/batch"
 	"github.com/rafaelromao/sandman/internal/batchindex"
+	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/daemon"
 	"github.com/rafaelromao/sandman/internal/events"
 	"github.com/rafaelromao/sandman/internal/github"
@@ -443,6 +444,15 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 				return MarkUsage(fmt.Errorf("run_idle_timeout must be 0 or greater"))
 			}
 
+			reviewTimeoutFlag := cmd.Flags().Lookup("review-timeout")
+			reviewTimeoutSet := reviewTimeoutFlag != nil && reviewTimeoutFlag.Changed
+			reviewTimeout, _ := cmd.Flags().GetInt("review-timeout")
+			if reviewTimeoutSet {
+				if err := config.ValidateReviewTimeout(reviewTimeout); err != nil {
+					return MarkUsage(err)
+				}
+			}
+
 			sandboxMode, _ := cmd.Flags().GetString("sandbox")
 			containerCapacityFlag := cmd.Flags().Lookup("container-capacity")
 			containerCapacitySet := containerCapacityFlag != nil && containerCapacityFlag.Changed
@@ -557,7 +567,11 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 					}
 					modes[num] = batch.ModeContinue
 					previousRunIDs[num] = lastRun.RunID
-					taskPrompts[num] = prompt.ContinuationTaskPrompt(content)
+					continuationTimeout := cfg.EffectiveReviewTimeout()
+					if reviewTimeoutSet {
+						continuationTimeout = reviewTimeout
+					}
+					taskPrompts[num] = prompt.ContinuationTaskPromptWithReviewTimeout(content, continuationTimeout)
 				}
 			}
 			var continuationReq batch.Request
@@ -598,6 +612,8 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 				StartDelaySet:              startDelaySet,
 				RunIdleTimeout:             runIdleTimeout,
 				RunIdleTimeoutSet:          runIdleTimeoutSet,
+				ReviewTimeout:              reviewTimeout,
+				ReviewTimeoutSet:           reviewTimeoutSet,
 				Sandbox:                    sandboxMode,
 				RequireDockerfile:          true,
 				ContainerCapacity:          containerCapacity,
@@ -780,6 +796,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 	cmd.Flags().Int("retries", 0, "Retry failed AgentRuns up to N times")
 	cmd.Flags().Int("start-delay", 0, "Wait N seconds after any AgentRun finishes before starting the next one; 0 disables the delay")
 	cmd.Flags().Int("run-idle-timeout", 0, "Treat an AgentRun as stuck if it produces no output for N seconds; 0 disables the timeout")
+	cmd.Flags().Int("review-timeout", 0, fmt.Sprintf("Delegated review response budget in seconds; omit for config/default (%d), minimum %d", config.DefaultReviewTimeout, config.MinReviewTimeout))
 	cmd.Flags().String("sandbox", "", "Sandbox mode: podman (default), docker, or worktree")
 	cmd.Flags().Int("container-capacity", 0, "Maximum concurrent agent runs per container; 0 means unlimited")
 	cmd.Flags().Int("max-containers", 0, "Maximum number of containers to run at once; 0 means no cap")

@@ -185,6 +185,14 @@ func (e *runExecutor) Execute(ctx context.Context, row RowSpec) (AgentRunResult,
 // every field maps 1:1 to the prior literal assignments.
 func newRunSession(e *runExecutor, row RowSpec) *runSession {
 	bc := e.bc
+	renderCfg := row.RenderCfg
+	if renderCfg.ReviewTimeout < config.MinReviewTimeout {
+		if bc.Cfg != nil {
+			renderCfg.ReviewTimeout = bc.Cfg.EffectiveReviewTimeout()
+		} else {
+			renderCfg.ReviewTimeout = config.DefaultReviewTimeout
+		}
+	}
 	return &runSession{
 		deps:                       e.deps,
 		coord:                      e.coord,
@@ -198,7 +206,7 @@ func newRunSession(e *runExecutor, row RowSpec) *runSession {
 		previousRunIDs:             row.PreviousRunIDs,
 		identityResolver:           bc.IdentityResolver,
 		branches:                   row.Branches,
-		renderCfg:                  row.RenderCfg,
+		renderCfg:                  renderCfg,
 		outputWriter:               row.OutputWriter,
 		sbFactory:                  e.sbFactory,
 		containerAlloc:             e.containerAlloc,

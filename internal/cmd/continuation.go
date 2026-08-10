@@ -26,6 +26,10 @@ func buildContinuationRequest(ctx context.Context, cmd *cobra.Command, deps Depe
 	if strings.TrimSpace(worktreeBase) == "" {
 		worktreeBase = ".sandman/worktrees"
 	}
+	reviewTimeout, reviewTimeoutSet, err := continuationReviewTimeout(cmd, cfg)
+	if err != nil {
+		return batch.Request{}, err
+	}
 
 	lastRuns := lastRunPerIssue(eventsList, issues)
 	previousRunIDs := make(map[int]string, len(issues))
@@ -90,7 +94,7 @@ func buildContinuationRequest(ctx context.Context, cmd *cobra.Command, deps Depe
 			previousRunIDs[num] = lastRun.RunID
 			branches[num] = strings.TrimSpace(branch)
 			baseBranches[num] = strings.TrimSpace(baseBranch)
-			taskPrompts[num] = prompt.ContinuationTaskPrompt(content)
+			taskPrompts[num] = prompt.ContinuationTaskPromptWithReviewTimeout(content, reviewTimeout)
 			modes[num] = batch.ModeContinue
 		}
 	} else {
@@ -118,7 +122,7 @@ func buildContinuationRequest(ctx context.Context, cmd *cobra.Command, deps Depe
 		if err != nil {
 			return batch.Request{}, fmt.Errorf("read task %q: %w", taskPath, err)
 		}
-		taskPromptContent = prompt.ContinuationTaskPrompt(content)
+		taskPromptContent = prompt.ContinuationTaskPromptWithReviewTimeout(content, reviewTimeout)
 		modes[0] = batch.ModeContinue
 	}
 
@@ -272,6 +276,8 @@ func buildContinuationRequest(ctx context.Context, cmd *cobra.Command, deps Depe
 		StartDelaySet:              startDelaySet,
 		RunIdleTimeout:             runIdleTimeout,
 		RunIdleTimeoutSet:          runIdleTimeoutSet,
+		ReviewTimeout:              reviewTimeout,
+		ReviewTimeoutSet:           reviewTimeoutSet,
 		Branches:                   branches,
 		Sandbox:                    sandboxMode,
 		RequireDockerfile:          true,
@@ -345,6 +351,22 @@ func effectiveReviewCommand(cfg *config.Config) string {
 		return config.DefaultReviewCommand
 	}
 	return cfg.EffectiveReviewCommand()
+}
+
+func continuationReviewTimeout(cmd *cobra.Command, cfg *config.Config) (int, bool, error) {
+	effective := config.DefaultReviewTimeout
+	if cfg != nil {
+		effective = cfg.EffectiveReviewTimeout()
+	}
+	flag := cmd.Flags().Lookup("review-timeout")
+	if flag == nil || !flag.Changed {
+		return effective, false, nil
+	}
+	value, _ := cmd.Flags().GetInt("review-timeout")
+	if err := config.ValidateReviewTimeout(value); err != nil {
+		return 0, false, MarkUsage(err)
+	}
+	return value, true, nil
 }
 
 func payloadString(payload map[string]any, key string) (string, bool) {

@@ -377,3 +377,28 @@ func TestResolveRunIdleTimeout(t *testing.T) {
 		t.Errorf("resolveRunIdleTimeout set42/nil = %d, want 42", got)
 	}
 }
+
+func TestResolveReviewTimeout(t *testing.T) {
+	tests := []struct {
+		name string
+		req  Request
+		cfg  *config.Config
+		want int
+	}{
+		{name: "request overrides config", req: Request{ReviewTimeout: 240, ReviewTimeoutSet: true}, cfg: &config.Config{ReviewTimeout: 600}, want: 240},
+		{name: "config when request unset", cfg: &config.Config{ReviewTimeout: 600}, want: 600},
+		{name: "default when config absent", cfg: nil, want: config.DefaultReviewTimeout},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := resolveReviewTimeout(tt.req, tt.cfg)
+			if err != nil {
+				t.Fatalf("resolveReviewTimeout: %v", err)
+			}
+			if got != tt.want {
+				t.Fatalf("resolveReviewTimeout = %d, want %d", got, tt.want)
+			}
+		})
+	}
+}

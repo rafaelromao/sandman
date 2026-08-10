@@ -5382,7 +5382,7 @@ func TestRunBatch_LogsPromptMetadataOnStartedEvent(t *testing.T) {
 		WithRunnableFactory(&controlledRunnableFactory{runnables: map[int]Runnable{42: &controlledRunnable{result: AgentRunResult{IssueNumber: 42, Status: "success"}}}}),
 	)
 
-	_, err := o.RunBatch(context.Background(), Request{Issues: []int{42}, Parallel: 3, Retries: 4, StartDelay: 7 * time.Second, StartDelaySet: true, Sandbox: "worktree", ContainerCapacity: 2, ContainerCapacitySet: true, MaxContainers: 5, MaxContainersSet: true, PromptConfig: prompt.RenderConfig{PromptFlag: "inline", PromptArgs: map[string]string{"FOO": "bar"}, ReviewCommand: "/custom review", ReviewCommandSet: true}})
+	_, err := o.RunBatch(context.Background(), Request{Issues: []int{42}, Parallel: 3, Retries: 4, StartDelay: 7 * time.Second, StartDelaySet: true, ReviewTimeout: 600, ReviewTimeoutSet: true, Sandbox: "worktree", ContainerCapacity: 2, ContainerCapacitySet: true, MaxContainers: 5, MaxContainersSet: true, PromptConfig: prompt.RenderConfig{PromptFlag: "inline", PromptArgs: map[string]string{"FOO": "bar"}, ReviewCommand: "/custom review", ReviewCommandSet: true}})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -5433,6 +5433,9 @@ func TestRunBatch_LogsPromptMetadataOnStartedEvent(t *testing.T) {
 	}
 	if started.Payload["review_command"] != "/custom review" {
 		t.Fatalf("expected review command replay, got %#v", started.Payload["review_command"])
+	}
+	if started.Payload["review_timeout"] != 600 {
+		t.Fatalf("expected review timeout replay, got %#v", started.Payload["review_timeout"])
 	}
 	if started.Payload["agent"] != "test-agent" {
 		t.Fatalf("expected agent replay, got %#v", started.Payload["agent"])
@@ -6142,7 +6145,7 @@ func TestRunBatch_LogsContinuedEventWithPreviousRunID(t *testing.T) {
 		WithRunnableFactory(&controlledRunnableFactory{runnables: map[int]Runnable{42: &controlledRunnable{result: AgentRunResult{IssueNumber: 42, Status: "success"}}}}),
 	)
 
-	_, err := o.RunBatch(context.Background(), Request{Issues: []int{42}, Mode: map[int]IssueMode{42: ModeContinue}, PreviousRunIDs: map[int]string{42: runIDFor(42)}, BaseBranch: "main", Parallel: 2, Retries: 1, StartDelay: 5 * time.Second, StartDelaySet: true, Sandbox: "worktree", ContainerCapacity: 4, ContainerCapacitySet: true, MaxContainers: 6, MaxContainersSet: true, PromptConfig: prompt.RenderConfig{TaskPrompt: "finish the tests"}})
+	_, err := o.RunBatch(context.Background(), Request{Issues: []int{42}, Mode: map[int]IssueMode{42: ModeContinue}, PreviousRunIDs: map[int]string{42: runIDFor(42)}, BaseBranch: "main", Parallel: 2, Retries: 1, StartDelay: 5 * time.Second, StartDelaySet: true, ReviewTimeout: 600, ReviewTimeoutSet: true, Sandbox: "worktree", ContainerCapacity: 4, ContainerCapacitySet: true, MaxContainers: 6, MaxContainersSet: true, PromptConfig: prompt.RenderConfig{TaskPrompt: "finish the tests"}})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -6168,6 +6171,9 @@ func TestRunBatch_LogsContinuedEventWithPreviousRunID(t *testing.T) {
 	}
 	if continued.Payload["start_delay"] != 5 {
 		t.Fatalf("expected start delay from current Request, got %#v", continued.Payload["start_delay"])
+	}
+	if continued.Payload["review_timeout"] != 600 {
+		t.Fatalf("expected review timeout from current Request, got %#v", continued.Payload["review_timeout"])
 	}
 	if continued.Payload["retries"] != 1 {
 		t.Fatalf("expected retries from current Request, got %#v", continued.Payload["retries"])
@@ -6245,8 +6251,12 @@ func TestRunBatch_ContinuationUsesPerIssuePrompts(t *testing.T) {
 		if err != nil {
 			t.Fatalf("read prompt for %s: %v", branch, err)
 		}
-		if string(data) != want {
-			t.Fatalf("unexpected prompt for %s: %q", branch, string(data))
+		text := string(data)
+		if !strings.Contains(text, want) {
+			t.Fatalf("unexpected prompt for %s: %q", branch, text)
+		}
+		if !strings.Contains(text, "Delegated review response timeout: `1800` seconds") {
+			t.Fatalf("prompt for %s missing review timeout context: %q", branch, text)
 		}
 	}
 	if len(spyLog.events) == 0 {

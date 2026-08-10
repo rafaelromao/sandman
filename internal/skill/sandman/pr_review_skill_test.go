@@ -238,6 +238,34 @@ func TestPRReviewSkill_SameCredentialDecisionIsResponse(t *testing.T) {
 	}
 }
 
+func TestPRReviewSkill_UsesConfigurableCurrentAgentRunTimeout(t *testing.T) {
+	text := readPRReviewSkill(t)
+
+	for _, phrase := range []string{
+		"current AgentRun task context",
+		"REVIEW_TIMEOUT",
+		"1800 seconds",
+		"120 seconds",
+		"60 seconds",
+		"30 seconds",
+		"240 seconds",
+		"sleep that lands exactly on the configured budget is permitted",
+		"new review request starts a fresh counter",
+		"observed response counts",
+		"next executable action",
+	} {
+		if !strings.Contains(text, phrase) {
+			t.Errorf("pr-review SKILL.md must describe configurable review timeout behavior %q", phrase)
+		}
+	}
+
+	for _, forbidden := range []string{"900s", "900 s", "15 minutes"} {
+		if strings.Contains(text, forbidden) {
+			t.Errorf("pr-review SKILL.md must not retain fixed review budget %q", forbidden)
+		}
+	}
+}
+
 func TestPRReviewSkill_ADRNotesDaemonOwnership(t *testing.T) {
 	text := readADR0013(t)
 

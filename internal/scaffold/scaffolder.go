@@ -71,6 +71,7 @@ type Options struct {
 	ReviewCommand    string // --review-command override
 	Retries          *int   // --retries override; nil = use config.DefaultRetries
 	RunIdleTimeout   *int   // --run-idle-timeout override; nil = use config.DefaultRunIdleTimeout
+	ReviewTimeout    *int   // --review-timeout override; nil = use config.DefaultReviewTimeout
 	Writer           io.Writer
 	DiagnosticWriter io.Writer
 }
@@ -541,6 +542,10 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 	if err != nil {
 		return err
 	}
+	reviewTimeout, err := resolveReviewTimeout(opts.ReviewTimeout)
+	if err != nil {
+		return err
+	}
 	cfg := &config.Config{
 		DefaultAgent:          defaultAgent,
 		DefaultModel:          model,
@@ -553,6 +558,7 @@ func (s *Scaffolder) Scaffold(repoRoot string, opts Options, p Prompter) error {
 		DefaultReviewParallel: reviewParallel,
 		StartDelay:            config.DefaultStartDelay,
 		RunIdleTimeout:        runIdleTimeout,
+		ReviewTimeout:         reviewTimeout,
 		Retries:               retries,
 		ContainerCapacity:     config.DefaultContainerCapacity,
 		MaxContainers:         config.DefaultMaxContainers,
@@ -700,6 +706,16 @@ func resolveRunIdleTimeout(override *int) (int, error) {
 	}
 	if *override < 0 {
 		return 0, fmt.Errorf("run_idle_timeout must be 0 or greater")
+	}
+	return *override, nil
+}
+
+func resolveReviewTimeout(override *int) (int, error) {
+	if override == nil {
+		return config.DefaultReviewTimeout, nil
+	}
+	if err := config.ValidateReviewTimeout(*override); err != nil {
+		return 0, err
 	}
 	return *override, nil
 }
