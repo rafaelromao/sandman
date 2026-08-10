@@ -2600,6 +2600,13 @@ loop:
 		taskContent, _, _ := ReadTaskContent(taskPath)
 		alreadyResolved := hasExactTaskStatus(taskContent, "## Status: already resolved")
 		if mergeRequired {
+			if events.RunStatusFromPayload(result.Status).IsSuccess() && ctx.Err() == nil {
+				if gateStatus, extras, handled := s.handleExternalGate(ctx, wt.WorkDir(), branch, logPath, runID); handled {
+					result.Status = gateStatus
+					terminalExtras = mergeBlockerExtras(terminalExtras, extras)
+					break loop
+				}
+			}
 			prMerged := checkPRMergedForIssue(ctx, s.deps.githubClient, branch, s.issueNumber)
 			if events.RunStatusFromPayload(result.Status).IsAborted() {
 				continue
@@ -2659,13 +2666,6 @@ loop:
 					break
 				}
 			}
-			if events.RunStatusFromPayload(result.Status).IsSuccess() {
-				if gateStatus, extras, handled := s.handleExternalGate(ctx, wt.WorkDir(), branch, logPath, runID); handled {
-					result.Status = gateStatus
-					terminalExtras = mergeBlockerExtras(terminalExtras, extras)
-					break loop
-				}
-			}
 			result.Status = "failure"
 		} else {
 			if alreadyResolved && issue != nil && !github.IsIssueClosed(issue) && s.deps.githubClient != nil {
@@ -2706,7 +2706,7 @@ loop:
 						}
 						break
 					}
-					if events.RunStatusFromPayload(result.Status).IsSuccess() {
+					if events.RunStatusFromPayload(result.Status).IsSuccess() && ctx.Err() == nil {
 						if gateStatus, extras, handled := s.handleExternalGate(ctx, wt.WorkDir(), branch, logPath, runID); handled {
 							result.Status = gateStatus
 							terminalExtras = mergeBlockerExtras(terminalExtras, extras)

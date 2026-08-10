@@ -27,6 +27,10 @@ func gateTestRunOptions() runSessionOptions {
 }
 
 func runCleanGateCase(t *testing.T, pr *github.PR) (AgentRunResult, []events.Event, int) {
+	return runCleanGateCaseForIssue(t, "open", pr)
+}
+
+func runCleanGateCaseForIssue(t *testing.T, issueState string, pr *github.PR) (AgentRunResult, []events.Event, int) {
 	t.Helper()
 	workDir := testenv.MkdirShort(t, "gate-")
 	oldWD, err := os.Getwd()
@@ -50,7 +54,7 @@ func runCleanGateCase(t *testing.T, pr *github.PR) (AgentRunResult, []events.Eve
 		Branch:      gateTestBranch,
 	}}}
 	client := &fakeGitHubClient{
-		issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}},
+		issues: map[int]*github.Issue{42: {Number: 42, State: issueState, Title: "Fix bug"}},
 		prs:    map[string]*github.PR{gateTestBranch: pr},
 	}
 	o := NewOrchestrator(
@@ -142,6 +146,28 @@ func TestRunSingle_PendingDelegatedReviewDoesNotConsumeRetries(t *testing.T) {
 		State:             "open",
 		HeadRefName:       gateTestBranch,
 		StatusCheckRollup: "success",
+		MergeStateStatus:  "BLOCKED",
+	})
+
+	if result.Status != "blocked" {
+		t.Fatalf("status = %q, want blocked", result.Status)
+	}
+	if result.RetriesTotal != 1 {
+		t.Fatalf("retries total = %d, want 1", result.RetriesTotal)
+	}
+	if launches != 1 {
+		t.Fatalf("agent launches = %d, want 1", launches)
+	}
+	assertExternalGateTerminal(t, logs, "pending")
+}
+
+func TestRunSingle_ClosedIssuePendingPRIsExternalGateBlocked(t *testing.T) {
+	result, logs, launches := runCleanGateCaseForIssue(t, "closed", &github.PR{
+		Number:            17,
+		State:             "open",
+		HeadRefName:       gateTestBranch,
+		StatusCheckRollup: "pending",
+		ReviewDecision:    "APPROVED",
 		MergeStateStatus:  "BLOCKED",
 	})
 
