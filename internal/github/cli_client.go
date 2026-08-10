@@ -534,6 +534,44 @@ func (c *CLIClient) FetchPR(ctx context.Context, number int) (*PR, error) {
 	}, nil
 }
 
+func (c *CLIClient) fetchPRClosingIssueNumbers(ctx context.Context, number int) ([]int, error) {
+	owner, repo, err := c.resolveRepo(ctx)
+	if err != nil {
+		return nil, err
+	}
+	query := `query($owner:String!,$repo:String!,$number:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$number){closingIssuesReferences(first:100){nodes{number}}}}}`
+	callCtx, cancel := c.boundContext(ctx)
+	defer cancel()
+	cmd := c.command(callCtx, "gh", "api", "graphql", "-F", "owner="+owner, "-F", "repo="+repo, "-F", fmt.Sprintf("number=%d", number), "-f", "query="+query)
+	out, err := c.runCmd(callCtx, cmd, "gh api graphql")
+	if err != nil {
+		return nil, err
+	}
+	var payload struct {
+		Data struct {
+			Repository struct {
+				PullRequest struct {
+					ClosingIssuesReferences struct {
+						Nodes []struct {
+							Number int `json:"number"`
+						} `json:"nodes"`
+					} `json:"closingIssuesReferences"`
+				} `json:"pullRequest"`
+			} `json:"repository"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(out, &payload); err != nil {
+		return nil, fmt.Errorf("parse graphql PR: %w", err)
+	}
+	numbers := make([]int, 0, len(payload.Data.Repository.PullRequest.ClosingIssuesReferences.Nodes))
+	for _, node := range payload.Data.Repository.PullRequest.ClosingIssuesReferences.Nodes {
+		if node.Number > 0 {
+			numbers = append(numbers, node.Number)
+		}
+	}
+	return numbers, nil
+}
+
 func firstLinkedIssueNumber(numbers []int) int {
 	if len(numbers) == 0 {
 		return 0
@@ -576,8 +614,9 @@ func (c *CLIClient) FindPRByBranch(ctx context.Context, branch string) (*PR, err
 	payload := payloads[0]
 	var linkedIssueNumbers []int
 	if strings.TrimSpace(payload.MergedAt) != "" || strings.EqualFold(payload.State, "merged") {
-		if mergedPR, err := c.FetchPR(ctx, payload.Number); err == nil && mergedPR != nil {
-			linkedIssueNumbers = append(linkedIssueNumbers, mergedPR.linkedIssueNumbers...)
+		linkedIssueNumbers, err = c.fetchPRClosingIssueNumbers(ctx, payload.Number)
+		if err != nil {
+			return nil, fmt.Errorf("fetch PR closing references: %w", err)
 		}
 	}
 	return &PR{

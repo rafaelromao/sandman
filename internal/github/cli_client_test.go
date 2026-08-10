@@ -290,7 +290,7 @@ func TestCLIClient_FindPRByBranch_MergedFetchesAllNativeClosingReferences(t *tes
 	runner := &fakeRunner{responses: []fakeResponse{
 		{output: `[{"number":17,"state":"closed","mergedAt":"2026-08-01T12:00:00Z","headRefName":"merged-branch","headRefOid":"abc123","statusCheckRollup":"success"}]`},
 		{output: `{"name":"sandman","owner":{"login":"rafaelromao"}}`},
-		{output: `{"number":17,"state":"closed","body":"","mergedAt":"2026-08-01T12:00:00Z","headRefName":"merged-branch","headRefOid":"abc123","closingIssuesReferences":[{"number":999},{"number":386}]}`},
+		{output: `{"data":{"repository":{"pullRequest":{"closingIssuesReferences":{"nodes":[{"number":999},{"number":386}]}}}}}`},
 	}}
 	client := &CLIClient{runner: runner}
 
@@ -302,7 +302,7 @@ func TestCLIClient_FindPRByBranch_MergedFetchesAllNativeClosingReferences(t *tes
 		t.Fatalf("merged PR native closing references = %#v, want issue 386", pr)
 	}
 	if len(runner.calls) != 3 {
-		t.Fatalf("gh calls = %d, want list, repo view, and PR view", len(runner.calls))
+		t.Fatalf("gh calls = %d, want list, repo view, and GraphQL", len(runner.calls))
 	}
 }
 
