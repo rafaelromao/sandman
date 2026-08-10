@@ -88,3 +88,4 @@ ADRs are numbered sequentially starting from `0001`. The template ADR (`0000`) i
 | 0047 | Retain Specification as an in-memory-blocked parent row | accepted |
 | 0048 | External-gate state for clean exits with open pull requests | proposed |
 | 0049 | Merged pull-request closing-reference enrichment | proposed |
+| 0050 | Configurable delegated review response timeout | proposed |

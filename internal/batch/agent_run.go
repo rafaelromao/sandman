@@ -74,6 +74,9 @@ func (r *AgentRun) Prepare(renderer prompt.IssueRenderer, cfg prompt.RenderConfi
 	if err != nil {
 		return fmt.Errorf("render prompt: %w", err)
 	}
+	if !r.review {
+		rendered = prompt.EnsureReviewTimeoutContext(rendered, cfg.ReviewTimeout)
+	}
 
 	if err := r.sandbox.WritePrompt(rendered); err != nil {
 		return fmt.Errorf("write prompt: %w", err)
@@ -138,7 +141,11 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.IssueRenderer, comma
 	}
 
 	if renderCfg.TaskPrompt != "" {
-		if err := r.writeTaskPrompt(renderedPromptFile, renderCfg.TaskPrompt); err != nil {
+		taskPrompt := renderCfg.TaskPrompt
+		if !r.review {
+			taskPrompt = prompt.EnsureReviewTimeoutContext(taskPrompt, renderCfg.ReviewTimeout)
+		}
+		if err := r.writeTaskPrompt(renderedPromptFile, taskPrompt); err != nil {
 			r.status = "failure"
 			return r.Result()
 		}

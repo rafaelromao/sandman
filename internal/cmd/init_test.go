@@ -1227,3 +1227,49 @@ func TestInit_RunIdleTimeoutFlagOverridesPersistedDefault(t *testing.T) {
 		})
 	}
 }
+
+func TestInit_ReviewTimeoutFlagPersistsExplicitValue(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	var out bytes.Buffer
+	cmd := NewInitCmd()
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetIn(strings.NewReader(""))
+	cmd.SetArgs([]string{"--build-tools", "generic", "--review-timeout", "600"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(dir, ".sandman", "config.yaml"))
+	if err != nil {
+		t.Fatalf("read config.yaml: %v", err)
+	}
+	if !strings.Contains(string(data), "review_timeout: 600") {
+		t.Fatalf("config.yaml missing explicit review timeout, got:\n%s", data)
+	}
+}
+
+func TestInit_ReviewTimeoutRejectsValuesBelowMinimum(t *testing.T) {
+	for _, value := range []string{"239", "0", "-1"} {
+		t.Run(value, func(t *testing.T) {
+			dir := t.TempDir()
+			t.Chdir(dir)
+			cmd := NewInitCmd()
+			cmd.SetOut(&bytes.Buffer{})
+			cmd.SetErr(&bytes.Buffer{})
+			cmd.SetIn(strings.NewReader(""))
+			cmd.SetArgs([]string{"--build-tools", "generic", "--review-timeout", value})
+
+			err := cmd.Execute()
+			if err == nil {
+				t.Fatal("expected validation error")
+			}
+			if !strings.Contains(err.Error(), "review_timeout") {
+				t.Fatalf("expected review_timeout error, got %v", err)
+			}
+		})
+	}
+}

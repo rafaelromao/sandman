@@ -266,6 +266,7 @@ git:
 		"parallel_reviews: 1",
 		"start_delay: 5",
 		"run_idle_timeout: 1800",
+		"review_timeout: 1800",
 		"retries: 3",
 		"container_capacity: 7",
 		"max_containers: 2",
@@ -437,6 +438,29 @@ func TestConfigSet_StartDelay_UpdatesFile(t *testing.T) {
 	}
 	if cfg.StartDelay != 9 {
 		t.Errorf("start_delay: got %d, want %d", cfg.StartDelay, 9)
+	}
+}
+
+func TestConfigSet_ReviewTimeout_UpdatesFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(path, []byte("agent: opencode\n"), 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cmd := NewConfigSetCmd(&config.FileStore{Path: path})
+	cmd.SetArgs([]string{"review_timeout", "600"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("reload config: %v", err)
+	}
+	if cfg.ReviewTimeout != 600 {
+		t.Errorf("review_timeout: got %d, want 600", cfg.ReviewTimeout)
 	}
 }
 

@@ -151,18 +151,34 @@ gh pr comment <N> --repo <owner/repo> --body "{{REVIEW_COMMAND}}"
 
 After posting, write the current head SHA to `.sandman/state/<N>.head_sha` so subsequent passes can detect staleness.
 
-#### Step 5: Wait for review (timeout: 15 minutes)
+#### Step 5: Wait for review (configured cumulative budget)
+
+Before polling, read the effective `REVIEW_TIMEOUT` value from the current AgentRun task context. It is an integer number of seconds supplied by the
+project/run configuration, not a value synchronized into this globally
+installed skill. If older task context has no `REVIEW_TIMEOUT` runtime value,
+use the compatibility fallback of **1800 seconds**. Keep this effective value
+fixed for retries within the same AgentRun; a genuinely new review request
+resolves its own value. A new review request starts a fresh counter.
 
 | Iteration | Sleep before this poll |
 |-----------|------------------------|
-| 1         | `sleep 120`            |
-| 2         | `sleep 60`             |
-| 3         | `sleep 60`             |
-| 4+        | `sleep 30` (repeated until cumulative sleep budget of 900s is exhausted) |
+| 1         | `sleep 120` (120 seconds) |
+| 2         | `sleep 60` (60 seconds)  |
+| 3         | `sleep 60` (60 seconds)  |
+| 4+        | `sleep 30` (30 seconds; repeated until the effective budget is exhausted) |
 
-Total polling budget: **900s = 15 minutes** of cumulative sleep (120 + 60 + 60 + N×30).
+The total polling budget is the effective `REVIEW_TIMEOUT` seconds of cumulative
+sleep (120 + 60 + 60 + N×30). The minimum valid budget is 240 seconds, which
+provides one complete approval cycle. A sleep that lands exactly on the configured budget is permitted.
 
-Track `review_sleep_elapsed` across the polling loop. Before every sleep, if adding the next interval would exceed 900 seconds, record `REVIEW_TIMEOUT` in `.sandman/task.md` and the run log and exit; otherwise add the interval to `review_sleep_elapsed` after sleeping. A new review request starts a fresh counter.
+Track `review_sleep_elapsed` across the polling loop. Before every sleep, if
+adding the next interval would exceed the effective `REVIEW_TIMEOUT`, record
+`REVIEW_TIMEOUT` in `.sandman/task.md` and the run log with the effective
+budget, elapsed budget, observed response counts (`top`, `reviews`, `inline`),
+and the next executable action, then exit; otherwise add the interval to
+`review_sleep_elapsed` after sleeping. A new review request starts a fresh
+counter; ordinary polls, pending-trigger checks, and retries of the same wait
+do not reset it.
 
 **Hard rule — observed-response fast path.** If any poll iteration observes a new top-level PR conversation comment that does not begin with `{{REVIEW_COMMAND}}`, the very next sleep MUST be ≤ 60s.
 
@@ -191,7 +207,10 @@ A reviewer response is **any** of:
 **Self-check (after every poll, before classifying):**
 If `top > 0` AND `reviews == 0` AND `inline == 0`, AND no previous `{{REVIEW_COMMAND}}` is already pending without response, post a follow-up comment with `{{REVIEW_COMMAND}}` plus a freeform clarification request. If a request is already pending, skip — do not pile on.
 
-If no reviewer response arrives within 15 minutes, stop and exit the loop with a `REVIEW_TIMEOUT` reason documented in `.sandman/task.md` and the run log so the failure and next executable action are durable.
+If no reviewer response arrives within the effective budget, stop and exit the
+loop with a `REVIEW_TIMEOUT` reason documented in `.sandman/task.md` and the
+run log so the failure, configured budget, elapsed budget, observed response
+counts, and next executable action are durable.
 
 #### Step 5a: DIRTY handling — every poll iteration
 
@@ -231,9 +250,9 @@ Approval keywords: `lgtm`, `looks good`, `looks great`, `nice work`, `good work`
 
 **Hard rule — stale approval after a SHA change.** When Step 3 detects that the head SHA has changed since the last `{{REVIEW_COMMAND}}` post, every prior approval timestamp is stale. The new diff requires a fresh approval against the new SHA, not a re-application of an approval that was issued against the prior diff. Treat any pre-SHA-change APPROVED comment as **not approved** until a new APPROVED comment arrives after the new SHA — even if `reviewDecision` would otherwise be empty and the comment list otherwise looks clean. The pass-counter reset on SHA change implies the approval window resets too; do not infer that a stale APPROVED carries forward across a SHA change.
 
-**Hard rule — pending trigger beats older approval.** When the most recent top-level comment on the PR is an implementor `{{REVIEW_COMMAND}}` trigger that has not yet received a response, do not classify an older APPROVED comment below it as Case C. The trigger is itself a fresh request; the loop must continue polling until either the trigger receives a response or the trigger's hard timeout (Step 5's 900 s cumulative budget) is exhausted. This is the symmetric counterpart of Hard Rule 5 / Hard Rule 6 (which prevent *posting* a duplicate trigger before the previous one is answered) and closes the same race at the *exit* side of the loop.
+**Hard rule — pending trigger beats older approval.** When the most recent top-level comment on the PR is an implementor `{{REVIEW_COMMAND}}` trigger that has not yet received a response, do not classify an older APPROVED comment below it as Case C. The trigger is itself a fresh request; the loop must continue polling until either the trigger receives a response or the effective `REVIEW_TIMEOUT` cumulative budget is exhausted. This is the symmetric counterpart of Hard Rule 5 / Hard Rule 6 (which prevent *posting* a duplicate trigger before the previous one is answered) and closes the same race at the *exit* side of the loop.
 
-**Hard rule — minimum poll budget before Case C.** Even when the other Case C gates (no CHANGES_REQUESTED, approval keywords, post-SHA-change, no pending trigger) all pass, the agent MUST NOT exit the loop on a single 120 s poll. Step 5 budgets a cumulative 900 s window across multiple polls. Exiting after one poll iterates the budget once and provides a 120 s response window for the fresh trigger — far short of what the polling schedule is designed to give the reviewer. Require at least one full `120 + 60 + 60 = 240 s` cycle before classification, and treat the 120 s-first-poll short-circuit as a hard violation of the skill contract.
+**Hard rule — minimum poll budget before Case C.** Even when the other Case C gates (no CHANGES_REQUESTED, approval keywords, post-SHA-change, no pending trigger) all pass, the agent MUST NOT exit the loop on a single 120-second poll. Step 5 requires a cumulative budget across multiple polls. Exiting after one poll provides only a 120-second response window for the fresh trigger — far short of what the polling schedule is designed to give the reviewer. Require at least one full `120 + 60 + 60 = 240 seconds` cycle before classification, and treat the 120-second-first-poll short-circuit as a hard violation of the skill contract.
 
 **D. Still pending?**
 - `reviewDecision: "REVIEW_REQUIRED"` or absent, AND

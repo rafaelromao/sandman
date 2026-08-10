@@ -139,6 +139,21 @@ func resolveRunIdleTimeout(req Request, cfg *config.Config) int {
 	return 0
 }
 
+// resolveReviewTimeout picks the effective delegated review response budget in
+// seconds. Precedence: explicit request override > repository config > default.
+func resolveReviewTimeout(req Request, cfg *config.Config) (int, error) {
+	value := config.DefaultReviewTimeout
+	if req.ReviewTimeoutSet {
+		value = req.ReviewTimeout
+	} else if cfg != nil {
+		value = cfg.EffectiveReviewTimeout()
+	}
+	if err := config.ValidateReviewTimeout(value); err != nil {
+		return 0, err
+	}
+	return value, nil
+}
+
 func readTailLines(path string, n int) []string {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -989,6 +1004,11 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 	layout := paths.NewLayout(cfg, o.layout.RepoRoot)
 	retries := resolveRetries(req, cfg)
 	runIdleTimeout := resolveRunIdleTimeout(req, cfg)
+	reviewTimeout, err := resolveReviewTimeout(req, cfg)
+	if err != nil {
+		return nil, err
+	}
+	req.PromptConfig.ReviewTimeout = reviewTimeout
 
 	sandboxMode := req.Sandbox
 	if sandboxMode == "" {
@@ -2895,6 +2915,7 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 			"prompt_source_type":     promptSourceType,
 			"parallel":               s.parallel,
 			"start_delay":            int(s.startDelay / time.Second),
+			"review_timeout":         s.renderCfg.ReviewTimeout,
 			"retries":                s.retries,
 			"sandbox":                s.sandboxMode,
 			"container_capacity":     s.containerCapacity,
@@ -2967,7 +2988,7 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 				fmt.Fprintf(s.deps.errorLog, "error: read task for issue %d: %v\n", s.issueNumber, err)
 				return attemptRenderCfg, &AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "failure", Branch: branch, RetriesTotal: attempt}
 			}
-			attemptRenderCfg.TaskPrompt = prompt.ContinuationTaskPrompt(taskContent)
+			attemptRenderCfg.TaskPrompt = prompt.ContinuationTaskPromptWithReviewTimeout(taskContent, s.renderCfg.ReviewTimeout)
 			attemptRenderCfg.RenderedPromptFile = filepath.Join(".", ".sandman", "task.md")
 			if !taskExists && openPR == nil {
 				if prLookupErr != nil {
@@ -3303,7 +3324,7 @@ func (s *runSession) executePromptOnly(ctx context.Context) (AgentRunResult, boo
 
 	if s.deps.eventLog != nil {
 		promptSourceType := "current"
-		payload := map[string]any{"branch": branch, "base_branch": s.baseBranch, "prompt_source_type": "prompt", "parallel": s.parallel, "start_delay": int(s.startDelay / time.Second), "retries": s.retries, "sandbox": s.sandboxMode, "container_capacity": s.containerCapacity, "container_capacity_set": s.containerCapacitySet, "max_containers": s.maxContainers, "max_containers_set": s.maxContainersSet}
+		payload := map[string]any{"branch": branch, "base_branch": s.baseBranch, "prompt_source_type": "prompt", "parallel": s.parallel, "start_delay": int(s.startDelay / time.Second), "review_timeout": s.renderCfg.ReviewTimeout, "retries": s.retries, "sandbox": s.sandboxMode, "container_capacity": s.containerCapacity, "container_capacity_set": s.containerCapacitySet, "max_containers": s.maxContainers, "max_containers_set": s.maxContainersSet}
 		if s.renderCfg.PromptFlag != "" {
 			promptSourceType = "prompt"
 		} else if s.renderCfg.TemplateFlag != "" {
@@ -3369,7 +3390,7 @@ func (s *runSession) executePromptOnly(ctx context.Context) (AgentRunResult, boo
 				if taskContent == "" {
 					taskContent = EmptyTaskTemplate
 				}
-				attemptCfg.TaskPrompt = prompt.ContinuationTaskPrompt(taskContent)
+				attemptCfg.TaskPrompt = prompt.ContinuationTaskPromptWithReviewTimeout(taskContent, s.renderCfg.ReviewTimeout)
 				attemptCfg.RenderedPromptFile = filepath.Join(".", ".sandman", "task.md")
 			}
 		}

@@ -34,9 +34,29 @@ func TestRender_BuiltInDefaultRendersIssueData(t *testing.T) {
 	want = strings.ReplaceAll(want, "{{BASE_BRANCH}}", data.BaseBranch)
 	want = strings.ReplaceAll(want, "{{BRANCH}}", data.SourceBranch)
 	want = strings.ReplaceAll(want, "{{REVIEW_COMMAND}}", "/sandman review")
+	want = strings.ReplaceAll(want, "{{REVIEW_TIMEOUT}}", "1800")
 
 	if result != want {
 		t.Errorf("unexpected rendered prompt\nwant:\n%s\ngot:\n%s", want, result)
+	}
+}
+
+func TestRender_ReviewTimeoutSubstitutionUsesEffectiveValue(t *testing.T) {
+	result, err := (&Engine{}).Render(RenderConfig{
+		PromptFlag:    "Budget: {{REVIEW_TIMEOUT}} seconds",
+		ReviewTimeout: 600,
+	}, IssueData{})
+	if err != nil {
+		t.Fatalf("render prompt: %v", err)
+	}
+	if result != "Budget: 600 seconds" {
+		t.Fatalf("rendered prompt = %q, want effective review timeout", result)
+	}
+}
+
+func TestDefaultPrompt_ContainsReviewTimeoutContext(t *testing.T) {
+	if !strings.Contains(DefaultPrompt(), "Delegated review response timeout: `{{REVIEW_TIMEOUT}}` seconds") {
+		t.Fatalf("default prompt must expose REVIEW_TIMEOUT runtime context:\n%s", DefaultPrompt())
 	}
 }
 

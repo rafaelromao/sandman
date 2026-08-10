@@ -857,6 +857,7 @@ func TestRunPromptOnly_RefreshesTaskPromptOnRetry(t *testing.T) {
 		Mode:              ModeFresh,
 		Branches:          map[int]string{0: branch},
 		BaseBranch:        "main",
+		RenderCfg:         prompt.RenderConfig{ReviewTimeout: 600},
 		BatchID:           batchIDForPromptOnly("", "", "run-prompt-refresh", ""),
 		RunID:             "run-prompt-refresh",
 		UserProvidedRunID: "run-prompt-refresh",
@@ -878,6 +879,9 @@ func TestRunPromptOnly_RefreshesTaskPromptOnRetry(t *testing.T) {
 	}
 	if !strings.Contains(last, "## Continuation Freshness Guard") {
 		t.Fatalf("retry prompt must append the freshness guard, got:\n%s", last)
+	}
+	if !strings.Contains(last, "Delegated review response timeout: `600` seconds") {
+		t.Fatalf("retry prompt must retain effective review timeout, got:\n%s", last)
 	}
 }
 

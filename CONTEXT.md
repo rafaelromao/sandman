@@ -210,7 +210,7 @@ The repo-local `.sandman/prompt.md` template created from the Default Task Promp
 _Avoid_: User prompt, custom prompt.
 
 **Prompt keys**:
-The built-in substitution keys available in prompt templates: `{{ISSUE_NUMBER}}`, `{{ISSUE_TITLE}}`, `{{ISSUE_BODY}}`, `{{SOURCE_BRANCH}}`, `{{BASE_BRANCH}}`, `{{BRANCH}}`, `{{REVIEW_COMMAND}}`. Custom keys are supported via the `--prompt-arg KEY=VALUE` CLI flag.
+The built-in substitution keys available in prompt templates: `{{ISSUE_NUMBER}}`, `{{ISSUE_TITLE}}`, `{{ISSUE_BODY}}`, `{{SOURCE_BRANCH}}`, `{{BASE_BRANCH}}`, `{{BRANCH}}`, `{{REVIEW_COMMAND}}`, `{{REVIEW_TIMEOUT}}`. `REVIEW_TIMEOUT` is the effective delegated review response budget in integer seconds for the current AgentRun. Custom keys are supported via the `--prompt-arg KEY=VALUE` CLI flag.
 
 **Command template key**:
 The substitution keys available in agent command templates: `{{.PromptFile}}` (relative path of `.sandman/task.md`) and `{{.SessionName}}` (pre-formatted session display title supplied by the caller, e.g. `"Sandman run-42-1712345678901: "`). `SessionName` must not contain single quotes — the template shells it as `--title '{{.SessionName}}'` and the renderer rejects any value containing `'` with an error. Templates that reference `{{.SessionName}}` should guard the substitution with `{{if .SessionName}}` to avoid emitting a bare `--title ''` when the field is empty.
