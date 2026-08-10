@@ -1570,6 +1570,62 @@ func TestRunSingle_ModeContinueMergedPRIsSuccess(t *testing.T) {
 	}
 }
 
+func TestRunSingle_ModeContinueRequestedChangesIsActionableWithoutRetry(t *testing.T) {
+	workDir := testenv.MkdirShort(t, "sm-orch-")
+	t.Chdir(workDir)
+
+	branch := "42-fix-bug"
+	worktreePath := filepath.Join(workDir, "worktree")
+	sbFactory := &fakeSandboxFactory{sandbox: &fakeSandbox{workDir: worktreePath}}
+	resultFactory := &taskWritingRunnableFactory{
+		taskPath:    filepath.Join(worktreePath, ".sandman", "task.md"),
+		taskContent: "## Status: already resolved",
+		result:      AgentRunResult{IssueNumber: 42, Status: "success", Branch: branch},
+	}
+	spyLog := &spyEventLog{}
+	o := &Orchestrator{
+		githubClient: &fakeGitHubClient{
+			issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}},
+			prs: map[string]*github.PR{branch: {
+				Number:            17,
+				State:             "open",
+				HeadRefName:       branch,
+				StatusCheckRollup: "success",
+				ReviewDecision:    "CHANGES_REQUESTED",
+				MergeStateStatus:  "CLEAN",
+			}},
+		},
+		renderer:        &retryRenderer{result: "rendered prompt"},
+		sandboxFactory:  sbFactory,
+		eventLog:        spyLog,
+		errorLog:        io.Discard,
+		runnableFactory: resultFactory,
+	}
+
+	cfg := &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}}
+	result, started := o.runSingle(context.Background(), context.Background(), 42, cfg, "opencode", config.Agent{Command: "echo hi"}, true, nil, noopIdentityResolver(), map[int]string{42: branch}, prompt.RenderConfig{}, nil, sbFactory, nil, false, "main", nil, 0, 0, 0, 0, "", 0, false, 0, false, false, false, "", "")
+	if !started {
+		t.Fatal("expected run to start")
+	}
+	if result.Status != "blocked" {
+		t.Fatalf("status = %q, want blocked", result.Status)
+	}
+	if result.RetriesTotal != 1 {
+		t.Fatalf("retries total = %d, want 1", result.RetriesTotal)
+	}
+	logs, err := spyLog.Read()
+	if err != nil {
+		t.Fatalf("read events: %v", err)
+	}
+	if got := countEventsByType(logs, "run.retry"); got != 0 {
+		t.Fatalf("run.retry events = %d, want 0", got)
+	}
+	finished := findEvent(logs, "run.finished")
+	if finished == nil || finished.Payload["gate"] != "failed" {
+		t.Fatalf("continuation terminal gate = %v, want failed", finished)
+	}
+}
+
 func TestRunSingle_RetryWithMergedPRIncrementsRetriesTotal(t *testing.T) {
 	workDir := t.TempDir()
 	t.Chdir(workDir)
