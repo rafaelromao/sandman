@@ -354,6 +354,52 @@ func TestPollPRGateDetectsDisappearedPR(t *testing.T) {
 	}
 }
 
+func TestPollPRGateStopsWhenPendingPRCloses(t *testing.T) {
+	client := &gateAvailabilityClient{responses: []*github.PR{
+		{State: "open", StatusCheckRollup: "pending"},
+		{State: "closed"},
+	}}
+
+	if got := pollPRGate(context.Background(), client, gateTestBranch, gateTestRunOptions()); got != gatePollUnavailable {
+		t.Fatalf("poll result = %v, want gatePollUnavailable", got)
+	}
+	if client.calls != 2 {
+		t.Fatalf("PR lookups = %d, want 2 without exhausting the poll budget", client.calls)
+	}
+}
+
+type recoveringGateClient struct {
+	fakeGitHubClient
+	calls int
+}
+
+func (c *recoveringGateClient) FindPRByBranch(context.Context, string) (*github.PR, error) {
+	c.calls++
+	if c.calls == 1 {
+		return nil, context.DeadlineExceeded
+	}
+	return &github.PR{State: "open", StatusCheckRollup: "pending"}, nil
+}
+
+func TestHandleExternalGateInitialLookupErrorRecoversToPending(t *testing.T) {
+	client := &recoveringGateClient{}
+	session := &runSession{
+		deps: runDeps{githubClient: client, errorLog: io.Discard},
+		opts: gateTestRunOptions(),
+	}
+
+	status, extras, handled := session.handleExternalGate(context.Background(), t.TempDir(), gateTestBranch, "", "run-test")
+	if !handled || status != "blocked" {
+		t.Fatalf("recovered gate = (%q, %#v, %t), want blocked", status, extras, handled)
+	}
+	if got := extras["gate"]; got != "pending" {
+		t.Fatalf("recovered gate reason = %v, want pending", got)
+	}
+	if client.calls < 2 {
+		t.Fatalf("PR lookups = %d, want recovery polling", client.calls)
+	}
+}
+
 func TestCheckPRExternalGateIgnoresFullyGreenOpenPR(t *testing.T) {
 	for _, tt := range []struct {
 		name   string

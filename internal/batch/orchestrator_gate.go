@@ -69,13 +69,16 @@ func pollPRGate(ctx context.Context, client github.Client, branch string, opts r
 		case <-time.After(delay):
 		}
 
-		gate, _ := checkPRExternalGate(pollCtx, client, branch)
+		gate, err := checkPRExternalGate(pollCtx, client, branch)
 		switch gate {
 		case "resolved":
 			return gateResolved
 		case "failed":
 			return gateFailed
 		case "unavailable":
+			if err == nil {
+				return gatePollUnavailable
+			}
 			lastLookupUnavailable = true
 		case "none":
 			return gatePollPRMissing
@@ -178,9 +181,6 @@ func (s *runSession) handleExternalGate(ctx context.Context, workDir, branch, lo
 		return s.blockExternalGate(ctx, workDir, logPath, runID, "failed")
 	}
 	if polled == gatePollUnavailable || polled == gatePollPRMissing {
-		return s.blockExternalGate(ctx, workDir, logPath, runID, "unavailable")
-	}
-	if initialUnavailable {
 		return s.blockExternalGate(ctx, workDir, logPath, runID, "unavailable")
 	}
 	return s.blockExternalGate(ctx, workDir, logPath, runID, "pending")
