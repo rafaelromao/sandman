@@ -7495,6 +7495,58 @@ func TestRunBatch_ContainerCapacityOneStartsOneContainerPerConcurrentRun(t *test
 	}
 }
 
+type blockingContainerStarter struct {
+	started chan struct{}
+	release <-chan struct{}
+	count   atomic.Int32
+}
+
+func (s *blockingContainerStarter) BuildImage(string) (string, error) {
+	return "test:latest", nil
+}
+
+func (s *blockingContainerStarter) Start(string, string, sandbox.StartOptions) (sandbox.Container, error) {
+	id := s.count.Add(1)
+	s.started <- struct{}{}
+	<-s.release
+	return &fakeContainerForOrchestrator{id: fmt.Sprintf("container-%d", id)}, nil
+}
+
+func TestContainerPool_CapacityOneStartsContainersConcurrently(t *testing.T) {
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	starter := &blockingContainerStarter{
+		started: make(chan struct{}, 4),
+		release: release,
+	}
+	t.Cleanup(func() { releaseOnce.Do(func() { close(release) }) })
+	pool := newContainerPool(starter, "img", ".", sandbox.StartOptions{}, 1, 0)
+
+	var wg sync.WaitGroup
+	for range 4 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			lease, err := pool.Acquire()
+			if err != nil {
+				t.Errorf("acquire: %v", err)
+				return
+			}
+			lease.Release()
+		}()
+	}
+
+	for i := 0; i < 4; i++ {
+		select {
+		case <-starter.started:
+		case <-time.After(250 * time.Millisecond):
+			t.Fatalf("container startups = %d, want 4 before any startup completes", starter.count.Load())
+		}
+	}
+	releaseOnce.Do(func() { close(release) })
+	wg.Wait()
+}
+
 func TestContainerPool_RespectsCapacityAndMaxUnderContention(t *testing.T) {
 	starter := &fakeContainerStarter{startDelay: 5 * time.Millisecond}
 	pool := newContainerPool(starter, "img", ".", sandbox.StartOptions{}, 3, 2)
