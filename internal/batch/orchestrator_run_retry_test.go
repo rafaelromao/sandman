@@ -516,7 +516,7 @@ func TestRunSingle_AlreadyResolvedMergedPRStillSuccess(t *testing.T) {
 }
 
 func TestRunSingle_AlreadyResolvedMergedPRStillRunsFailingVerification(t *testing.T) {
-	workDir := t.TempDir()
+	workDir := testenv.MkdirShort(t, "gate-")
 	t.Chdir(workDir)
 	branch := "42-fix-bug"
 	wtDir := filepath.Join(workDir, "worktree")

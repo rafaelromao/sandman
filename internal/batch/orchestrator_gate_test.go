@@ -284,6 +284,27 @@ func TestPollPRGateStopsWhenPRMerges(t *testing.T) {
 	}
 }
 
+func TestPollPRGateStopsWhenOpenPRGateCompletes(t *testing.T) {
+	client := &gateAvailabilityClient{responses: []*github.PR{
+		{
+			State:             "open",
+			StatusCheckRollup: "pending",
+			ReviewDecision:    "APPROVED",
+			MergeStateStatus:  "BLOCKED",
+		},
+		{
+			State:             "open",
+			StatusCheckRollup: "success",
+			ReviewDecision:    "APPROVED",
+			MergeStateStatus:  "CLEAN",
+		},
+	}}
+
+	if got := pollPRGate(context.Background(), client, gateTestBranch, gateTestRunOptions()); got != gatePollComplete {
+		t.Fatalf("poll result = %v, want gatePollComplete", got)
+	}
+}
+
 type gateAvailabilityClient struct {
 	fakeGitHubClient
 	responses []*github.PR
@@ -348,8 +369,8 @@ func TestCheckPRExternalGateIgnoresFullyGreenOpenPR(t *testing.T) {
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
-			if got != "none" {
-				t.Fatalf("fully green PR gate = %q, want none", got)
+			if got != "complete" {
+				t.Fatalf("fully green PR gate = %q, want complete", got)
 			}
 		})
 	}

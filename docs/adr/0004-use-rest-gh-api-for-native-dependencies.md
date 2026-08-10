@@ -13,15 +13,13 @@ To fetch GitHub's native issue dependency relationships (the `blocked_by`/`block
 The `gh` CLI's `issue view --json` does not currently expose dependency fields. We must use `gh api` directly.
 
 Alternatives considered:
-- **GraphQL for issue dependencies**: More efficient for nested data, but adds complexity to `CLIClient`; native issue dependencies therefore remain REST-only.
+- **GraphQL**: More efficient for nested data, but adds complexity to `CLIClient` which is currently REST-only.
 - **REST with `issue_dependencies_summary`**: Only gives counts, not issue numbers. Not sufficient.
 - **REST with a dedicated dependencies endpoint or preview header**: Gets actual issue numbers, stays within the existing REST paradigm.
 
 ## Decision
 
 We will use `gh api repos/{owner}/{repo}/issues/{number}` with the `application/vnd.github+json` media type (which includes `issue_dependencies_summary`) and, if the actual blocker numbers are not present in that response, fall back to querying the issue timeline/events API for `cross-referenced` events with the `marked_as_duplicate`/`blocked_by` event types. If GitHub's API surface for this is still evolving, we will prefer the most stable REST endpoint that returns actual blocker issue numbers.
-
-This REST-only rule applies to native issue dependencies. Pull-request closing references are a separate GitHub relationship that the supported REST payload does not expose, so the pull-request lookup may use `gh api graphql` solely to enrich merged PRs with those references. That enrichment is best-effort; the parsed PR body remains authoritative when the metadata query is unavailable.
 
 Specifically:
 - `CLIClient.FetchIssue` will call `gh api repos/{owner}/{repo}/issues/{number}` and parse the response for both `issue_dependencies_summary` (as a hint) and any nested dependency arrays.
@@ -34,12 +32,12 @@ This keeps the client in the existing `gh api` REST pattern without introducing 
 ### Positive
 
 - Consistent with existing `CLIClient` implementation.
-- No GraphQL schema or query language is needed for native issue dependencies.
+- No GraphQL schema or query language to maintain.
 - Works with existing `gh` CLI authentication.
 
 ### Negative
 
-- May require multiple REST calls per issue (issue + events) to get full blocker numbers; merged pull-request verification may make one additional GraphQL metadata call for closing references.
+- May require multiple REST calls per issue (issue + events) to get full blocker numbers.
 - If GitHub changes the event types or preview headers, the parser may break silently.
 
 ### Neutral

@@ -20,6 +20,7 @@ const (
 	gatePollBudgetExhausted
 	gatePollUnavailable
 	gatePollPRMissing
+	gatePollComplete
 )
 
 var (
@@ -78,6 +79,8 @@ func pollPRGate(ctx context.Context, client github.Client, branch string, opts r
 			lastLookupUnavailable = true
 		case "none":
 			return gatePollPRMissing
+		case "complete":
+			return gatePollComplete
 		default:
 			lastLookupUnavailable = false
 			delay = delay * 2
@@ -126,7 +129,7 @@ func checkPRExternalGate(ctx context.Context, client github.Client, branch strin
 		return "pending", nil
 	}
 	if (checkRollup == "" || checkRollup == "success") && review == "APPROVED" && mergeStatus == "CLEAN" {
-		return "none", nil
+		return "complete", nil
 	}
 
 	return "pending", nil
@@ -151,6 +154,9 @@ func (s *runSession) handleExternalGate(ctx context.Context, workDir, branch, lo
 	if gate == "none" {
 		return "", nil, false
 	}
+	if gate == "complete" {
+		return "", nil, false
+	}
 	if gate == "resolved" {
 		return s.confirmExternalGate(ctx, workDir, branch, logPath, runID)
 	}
@@ -164,6 +170,9 @@ func (s *runSession) handleExternalGate(ctx context.Context, workDir, branch, lo
 	polled := pollPRGate(ctx, s.deps.githubClient, branch, s.opts)
 	if polled == gateResolved {
 		return s.confirmExternalGate(ctx, workDir, branch, logPath, runID)
+	}
+	if polled == gatePollComplete {
+		return "", nil, false
 	}
 	if polled == gateFailed {
 		return s.blockExternalGate(ctx, workDir, logPath, runID, "failed")
