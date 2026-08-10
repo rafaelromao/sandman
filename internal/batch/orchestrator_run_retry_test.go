@@ -515,6 +515,54 @@ func TestRunSingle_AlreadyResolvedMergedPRStillSuccess(t *testing.T) {
 	}
 }
 
+func TestRunSingle_AlreadyResolvedMergedPRStillRunsFailingVerification(t *testing.T) {
+	workDir := t.TempDir()
+	t.Chdir(workDir)
+	branch := "42-fix-bug"
+	wtDir := filepath.Join(workDir, "worktree")
+	rtSandbox := &retrySandbox{workDir: wtDir}
+	eventLog := &events.JSONLLogger{Path: filepath.Join(t.TempDir(), "events.jsonl")}
+
+	o := NewOrchestrator(
+		&fakeGitHubClient{
+			issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}},
+			prs:    map[string]*github.PR{branch: {Number: 17, State: "merged", Merged: true, HeadRefName: branch}},
+		},
+		&retryRenderer{result: "rendered prompt"},
+		nil,
+		eventLog,
+		WithErrorLog(io.Discard),
+		WithSandboxFactory(&retrySandboxFactory{sandbox: rtSandbox}),
+		WithRunnableFactory(&taskWritingRunnableFactory{
+			taskPath:    filepath.Join(wtDir, ".sandman", "task.md"),
+			result:      AgentRunResult{IssueNumber: 42, Status: "success", Branch: branch},
+			taskContent: "## Status: already resolved",
+		}),
+		WithVerifyPath(VerifyPathFunc(func(VerifyInput) (VerifyOutcome, []OracleCheck) {
+			return VerifyFailed, nil
+		})),
+	)
+
+	bc := BatchConfig{
+		Cfg:              &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}},
+		AgentName:        "opencode",
+		AgentCfg:         config.Agent{Command: "echo hi"},
+		IdentityResolver: noopIdentityResolver(),
+		Retries:          3,
+	}
+	result, started := o.newRunExecutor(context.Background(), bc, &retrySandboxFactory{sandbox: rtSandbox}, nil).Execute(context.Background(), RowSpec{
+		IssueNumber: 42,
+		Branches:    map[int]string{42: branch},
+		BaseBranch:  "main",
+	})
+	if !started {
+		t.Fatal("expected run to start")
+	}
+	if result.Status != "failure" {
+		t.Fatalf("status = %q, want failure when merged already-resolved verification fails", result.Status)
+	}
+}
+
 type taskWritingRunnableFactory struct {
 	created     int
 	taskPath    string

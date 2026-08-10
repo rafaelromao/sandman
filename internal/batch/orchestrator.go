@@ -2599,14 +2599,14 @@ loop:
 		taskPath := filepath.Join(wt.WorkDir(), ".sandman", "task.md")
 		taskContent, _, _ := ReadTaskContent(taskPath)
 		alreadyResolved := hasExactTaskStatus(taskContent, "## Status: already resolved")
-		if mergeRequired {
-			if events.RunStatusFromPayload(result.Status).IsSuccess() && ctx.Err() == nil {
-				if gateStatus, extras, handled := s.handleExternalGate(ctx, wt.WorkDir(), branch, logPath, runID); handled {
-					result.Status = gateStatus
-					terminalExtras = mergeBlockerExtras(terminalExtras, extras)
-					break loop
-				}
+		if s.issueNumber > 0 && events.RunStatusFromPayload(result.Status).IsSuccess() && ctx.Err() == nil {
+			if gateStatus, extras, handled := s.handleExternalGate(ctx, wt.WorkDir(), branch, logPath, runID); handled && gateStatus != "success" {
+				result.Status = gateStatus
+				terminalExtras = mergeBlockerExtras(terminalExtras, extras)
+				break loop
 			}
+		}
+		if mergeRequired {
 			prMerged := checkPRMergedForIssue(ctx, s.deps.githubClient, branch, s.issueNumber)
 			if events.RunStatusFromPayload(result.Status).IsAborted() {
 				continue

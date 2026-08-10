@@ -1487,9 +1487,11 @@ func TestRunSingle_ModeContinueUnmergedPROpenGateIsBlocked(t *testing.T) {
 	worktreePath := filepath.Join(workDir, "worktree")
 
 	sbFactory := &fakeSandboxFactory{sandbox: &fakeSandbox{workDir: worktreePath}}
-	resultFactory := &fakeRunnableFactory{results: []AgentRunResult{
-		{IssueNumber: 42, Status: "success", Branch: branch},
-	}}
+	resultFactory := &taskWritingRunnableFactory{
+		taskPath:    filepath.Join(worktreePath, ".sandman", "task.md"),
+		taskContent: "## Status: already resolved",
+		result:      AgentRunResult{IssueNumber: 42, Status: "success", Branch: branch},
+	}
 	spyLog := &spyEventLog{}
 	o := &Orchestrator{
 		githubClient: &fakeGitHubClient{
@@ -1510,6 +1512,13 @@ func TestRunSingle_ModeContinueUnmergedPROpenGateIsBlocked(t *testing.T) {
 	}
 	if result.Status != "blocked" {
 		t.Fatalf("status = %q, want blocked (continuation must preserve external-gate state)", result.Status)
+	}
+	logs, err := spyLog.Read()
+	if err != nil {
+		t.Fatalf("read events: %v", err)
+	}
+	if got := countEventsByType(logs, "run.retry"); got != 0 {
+		t.Fatalf("run.retry events = %d, want 0", got)
 	}
 }
 
