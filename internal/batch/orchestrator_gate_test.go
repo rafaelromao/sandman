@@ -308,20 +308,24 @@ func TestPollPRGateDetectsDisappearedPR(t *testing.T) {
 }
 
 func TestCheckPRExternalGateIgnoresFullyGreenOpenPR(t *testing.T) {
-	client := &fakeGitHubClient{prs: map[string]*github.PR{gateTestBranch: {
-		Number:            17,
-		State:             "open",
-		StatusCheckRollup: "success",
-		ReviewDecision:    "APPROVED",
-		MergeStateStatus:  "CLEAN",
-	}}}
+	for _, rollup := range []string{"success", ""} {
+		t.Run(map[string]string{"success": "with checks", "": "without checks"}[rollup], func(t *testing.T) {
+			client := &fakeGitHubClient{prs: map[string]*github.PR{gateTestBranch: {
+				Number:            17,
+				State:             "open",
+				StatusCheckRollup: rollup,
+				ReviewDecision:    "APPROVED",
+				MergeStateStatus:  "CLEAN",
+			}}}
 
-	got, err := checkPRExternalGate(context.Background(), client, gateTestBranch)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if got != "none" {
-		t.Fatalf("fully green PR gate = %q, want none", got)
+			got, err := checkPRExternalGate(context.Background(), client, gateTestBranch)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != "none" {
+				t.Fatalf("fully green PR gate = %q, want none", got)
+			}
+		})
 	}
 }
 
