@@ -89,6 +89,16 @@ The orchestrator writes a `run.retry` event to `.sandman/events.jsonl` at the to
 _Avoid_: retry event (the schema lives here), retry marker (the on-disk log marker is a different concept — see `internal/batch/completion.go::LogRetryMarker`).
 _See_: Event, Run, Branch.
 
+**External gate**:
+The CI and delegated-review state of an open pull request that an agent has
+already prepared. A clean agent exit while this gate is pending is not an
+agent failure and does not consume a retry. Sandman polls it with a bounded
+backoff; if it fails or remains unresolved, the run is terminal `blocked` with
+an `external-gate` blocker, and the run log plus `.sandman/task.md` carry the
+next action for a later continuation. A merge is accepted only when the pull
+request retains closing intent for the work item. References ADR-0048.
+_Avoid_: external blocker, review wait, CI retry.
+
 **Review run**:
 A review run is an ordinary AgentRun that the review daemon launches in response to a `/sandman` comment on an open PR. It is **not** a special kind of run: it carries an ordinary per-row **RunID** minted per [ADR-0030](docs/adr/0030-standardize-run-id-and-run-dir.md) §Per-row RunID templates and lives at `.sandman/batches/<batch-id>/runs/<runID>/` like every other run kind. The two canonical review per-row RunID templates are:
 

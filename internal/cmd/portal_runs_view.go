@@ -31,16 +31,17 @@ type portalEvent struct {
 }
 
 type portalRun struct {
-	Key         string     `json:"key"`
-	RunID       string     `json:"runId"`
-	Kind        string     `json:"kind"`
-	Status      string     `json:"status"`
-	IssueLabel  string     `json:"issueLabel"`
-	IssueNumber int        `json:"issueNumber,omitempty"`
-	Branch      string     `json:"branch,omitempty"`
-	StartedAt   time.Time  `json:"startedAt"`
-	FinishedAt  *time.Time `json:"finishedAt,omitempty"`
-	Duration    string     `json:"duration,omitempty"`
+	Key          string `json:"key"`
+	RunID        string `json:"runId"`
+	Kind         string `json:"kind"`
+	Status       string `json:"status"`
+	externalGate bool
+	IssueLabel   string     `json:"issueLabel"`
+	IssueNumber  int        `json:"issueNumber,omitempty"`
+	Branch       string     `json:"branch,omitempty"`
+	StartedAt    time.Time  `json:"startedAt"`
+	FinishedAt   *time.Time `json:"finishedAt,omitempty"`
+	Duration     string     `json:"duration,omitempty"`
 	// LastOutputAt is the staleness signal for active runs: the mtime of
 	// the run-folder log (<batchDir>/runs/<runID>/run.log, opened with
 	// O_APPEND during AgentRun.Execute), falling back to StartedAt when no
@@ -986,7 +987,7 @@ func (v *portalRunsView) aggregateReviewChildren(layout paths.Layout, runs []por
 		runs[idx].ReviewCount = summary.count
 		runs[idx].ReviewVerdict = summary.verdict
 		runs[idx].ReviewLive = summary.live
-		if summary.live && !isTerminalStatus(runs[idx].Status) {
+		if summary.live && !isTerminalStatus(runs[idx].Status) && !runs[idx].externalGate {
 			runs[idx].Status = "reviewing"
 		}
 	}
@@ -1438,7 +1439,7 @@ func (v *portalRunsView) runsFromActiveBatch(repoRoot string, active portalActiv
 				}
 			}
 		}
-		if state != nil && !state.IsActive() && (state.Status() == "queued" || (state.Status() == "blocked" && blocked == nil)) {
+		if state != nil && !state.IsActive() && (state.Status() == "queued" || (state.Status() == "blocked" && blocked == nil && !isExternalGateRunState(state))) {
 			state = nil
 		}
 		run := v.runFromActiveBatchIssue(repoRoot, active, issueNumber, state, blocked, queued, active.LiveOutput, eventsByRun, deadBatches)
@@ -1462,6 +1463,18 @@ func (v *portalRunsView) runsFromActiveBatch(repoRoot string, active portalActiv
 		}
 	}
 	return runs, usedRunIDs
+}
+
+func isExternalGateRunState(state *events.RunState) bool {
+	if state == nil || state.Finished == nil {
+		return false
+	}
+	return isExternalGatePayload(state.Finished.Payload)
+}
+
+func isExternalGatePayload(payload map[string]any) bool {
+	blocker, _ := payload["blocker"].(string)
+	return blocker == "external-gate"
 }
 
 func (v *portalRunsView) latestRunStateForIssue(runStates []events.RunState, issueNumber int, batchStart time.Time) *events.RunState {
@@ -1643,6 +1656,7 @@ func (v *portalRunsView) runFromActiveBatchIssue(repoRoot string, active portalA
 		switch state.Status() {
 		case "blocked":
 			run.Log = v.portalBlockedMessage(state.Finished.Payload)
+			run.externalGate = isExternalGatePayload(state.Finished.Payload)
 		case "aborted":
 		default:
 			run.Log = v.resolveRunLog(func() string { return v.readPortalTextFile(run.LogPath) }, *state, &active)
@@ -1659,6 +1673,7 @@ func (v *portalRunsView) runFromActiveBatchIssue(repoRoot string, active portalA
 		run.StartedAt = blocked.Timestamp
 		run.Events = []portalEvent{{Type: blocked.Type, Timestamp: blocked.Timestamp, Payload: blocked.Payload}}
 		run.Log = v.portalBlockedMessage(blocked.Payload)
+		run.externalGate = isExternalGatePayload(blocked.Payload)
 		run.IssueTitle = v.issueTitleFromPayload(blocked.Payload)
 	}
 	// Fallback precedence: the state branch returns early above, the
@@ -1966,6 +1981,7 @@ func (v *portalRunsView) runFromState(repoRoot string, runState events.RunState,
 	}
 	if status == "blocked" {
 		portalRun.Log = v.portalBlockedMessage(runState.Finished.Payload)
+		portalRun.externalGate = isExternalGatePayload(runState.Finished.Payload)
 	}
 	if status == "aborted" {
 		portalRun.Kind = "completed"
@@ -2230,6 +2246,21 @@ func (v *portalRunsView) resolveRunLog(loadSaved func() string, runState events.
 }
 
 func (v *portalRunsView) portalBlockedMessage(payload map[string]any) string {
+	if payload != nil {
+		if blocker, _ := payload["blocker"].(string); blocker == "external-gate" {
+			gate, _ := payload["gate"].(string)
+			if gate == "failed" {
+				return "Blocked by a failed external gate."
+			}
+			if gate == "unavailable" {
+				return "External gate unavailable; verify the pull request and its CI/review state."
+			}
+			if gate == "unverified" {
+				return "Merged pull request could not be verified; confirm its closing reference."
+			}
+			return "Blocked while waiting for the external CI/review gate."
+		}
+	}
 	blockers := v.portalBlockedByIssues(payload)
 	if len(blockers) == 0 {
 		return "Blocked. Waiting on unresolved blockers."

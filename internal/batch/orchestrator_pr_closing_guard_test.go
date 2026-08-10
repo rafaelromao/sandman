@@ -173,15 +173,25 @@ func TestRunBatch_RepairsNonClosingPRReferenceBeforeAgentMerges(t *testing.T) {
 }
 
 func TestMergedPRMissingClosingReference(t *testing.T) {
-	for _, body := range []string{"", "Refs #348"} {
-		t.Run(body, func(t *testing.T) {
-			client := &closingReferenceTestClient{
-				fakeGitHubClient: &fakeGitHubClient{},
-				pr:               &github.PR{Number: 355, State: "merged", Merged: true, Body: body},
-			}
-			if !mergedPRMissingClosingReference(context.Background(), client, "348-acceptance", 348) {
-				t.Fatalf("mergedPRMissingClosingReference() = false for %q", body)
-			}
-		})
+	for _, state := range []struct {
+		name   string
+		state  string
+		merged bool
+	}{
+		{name: "merged state", state: "merged", merged: true},
+		{name: "closed state with merged flag", state: "closed", merged: true},
+	} {
+		for _, body := range []string{"", "Refs #348", "Closes #348"} {
+			t.Run(state.name+"/"+body, func(t *testing.T) {
+				client := &closingReferenceTestClient{
+					fakeGitHubClient: &fakeGitHubClient{},
+					pr:               &github.PR{Number: 355, State: state.state, Merged: state.merged, Body: body},
+				}
+				want := body != "Closes #348"
+				if got := mergedPRMissingClosingReference(context.Background(), client, "348-acceptance", 348); got != want {
+					t.Fatalf("mergedPRMissingClosingReference() = %v, want %v for %q", got, want, body)
+				}
+			})
+		}
 	}
 }

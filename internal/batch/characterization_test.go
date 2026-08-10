@@ -259,8 +259,8 @@ func charNetPromptOnlyAbort(t *testing.T) (context.Context, Request, *Orchestrat
 // event stream shows two run.retry events (attempt 1→2 and 2→3
 // transitions), and run.finished emits retries_total=2 (the configured
 // ceiling), retries_done=2 (the actual count, = RetriesTotal - 1), and
-// status "failure" because the agent's third-attempt success is not
-// corroborated by a merged PR (the issue-driven success signal).
+// an external-gate blocker because the agent's third-attempt success is
+// awaiting the open PR's CI/review gate.
 func charNetIssueRetrySuccess(t *testing.T) (context.Context, Request, *Orchestrator, *events.JSONLLogger, string) {
 	t.Helper()
 	dir := testenv.MkdirShort(t, "charnet-")

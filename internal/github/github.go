@@ -37,10 +37,11 @@ type PR struct {
 	// review submitted or where the merge state is still being computed).
 	// The T4 cheap-gate oracle reads these to decide whether to defer to T1
 	// (Approved + CLEAN + green checks) or abstain (any other state).
-	ReviewDecision    string
-	MergeStateStatus  string
-	StatusCheckRollup string
-	linkedIssueNumber int
+	ReviewDecision     string
+	MergeStateStatus   string
+	StatusCheckRollup  string
+	linkedIssueNumber  int
+	linkedIssueNumbers []int
 }
 
 var prClosingIssueRe = regexp.MustCompile(`\b(?i)(?:close(?:s|d)?|fix(?:es|ed)?|resolve(?:s|d)?)\s*:?\s*((?:#\d+)(?:(?:\s*,\s*(?:and\s+)?|\s+and\s+)#\d+)*)`)
@@ -84,6 +85,11 @@ func (pr *PR) ClosesIssue(issueNumber int) bool {
 	}
 	if pr.linkedIssueNumber == issueNumber {
 		return true
+	}
+	for _, number := range pr.linkedIssueNumbers {
+		if number == issueNumber {
+			return true
+		}
 	}
 	for _, match := range prClosingIssueRe.FindAllStringSubmatch(pr.Body, -1) {
 		if len(match) < 2 {

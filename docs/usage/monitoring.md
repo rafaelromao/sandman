@@ -105,7 +105,7 @@ Emitted when an agent run completes.
 
 | Field | Description |
 |-------|-------------|
-| `status` | Terminal status (`success`, `failure`) |
+| `status` | Terminal status (`success`, `failure`, or `blocked`; `blocked` with `blocker: "external-gate"` means the agent finished cleanly and the PR gate remains unresolved) |
 | `branch` | Branch name |
 | `base_branch` | Base branch name |
 | `worktree_state` | Always `preserved` |
@@ -113,6 +113,23 @@ Emitted when an agent run completes.
 | `retries_done` | Actual retries performed |
 | `run_kind` | Mirrors the `run.started` payload so projection sees a consistent kind on both events. |
 | `reason` | Short string built from the error returned by the selection phase. |
+| `blocker` | Optional terminal blocker classification. `"external-gate"` identifies CI/review waiting or intervention, rather than an agent failure. |
+| `gate` | Optional external-gate state: `"pending"`, `"failed"`, `"unavailable"`, or `"unverified"`. |
+
+#### External-gate lifecycle
+When an issue-driven agent exits successfully while its open PR is waiting on CI
+or delegated review, Sandman keeps the run in the same attempt and polls the
+PR gate with bounded exponential backoff. The production poll starts at 120
+seconds, caps individual waits at 600 seconds, and stops after 1800 seconds.
+The wait does not emit `run.retry` or consume the configured agent retry
+budget. A merge is accepted only when the PR still carries closing intent for
+the issue. A failed CI or rejected review ends as an actionable `blocked` run
+with `blocker: "external-gate"`; an operator can continue the run to address
+the intervention.
+
+External-gate terminal blockers are also appended to the run log and persisted
+under `## External Gate` in the worktree's `.sandman/task.md`, including the
+next executable action.
 
 #### `run.aborted`
 Emitted when a run is aborted via context cancellation (e.g. SIGINT/SIGTERM). Also emitted for runs that were still queued (waiting on the turn gate or the start gate) when the batch was cancelled, and cascaded to dependents whose in-batch blocker finished with status `aborted` (instead of `run.blocked`). For queued/cascaded runs, the `RunID` matches the prior `run.queued` event so projection collapses to a single `RunState`.
@@ -171,7 +188,12 @@ Set `run_idle_timeout: 0` in `.sandman/config.yaml` or pass `--run-idle-timeout 
 
 ### Blocked runs
 
-A run is marked as `blocked` when one or more of its `BlockedBy` issues failed in the same batch with a non-aborted status. Blocked runs do not execute — they are reported in the batch summary:
+There are two blocked lifecycles:
+
+- A dependency-blocked run has one or more `BlockedBy` issues that failed in the same batch with a non-aborted status. It does not execute and emits `run.blocked`, including the upstream blockers.
+- An external-gate run executes successfully, then finds its pull request awaiting CI, delegated review, or intervention. It emits `run.finished` with `status: "blocked"`, `blocker: "external-gate"`, and a `gate` reason. Continue it according to the external-gate next action rather than treating it as an unstarted dependency.
+
+Both appear in the blocked bucket of the batch summary:
 
 ```
 Summary: 3 succeeded, 0 failed, 1 blocked
@@ -179,7 +201,7 @@ Summary: 3 succeeded, 0 failed, 1 blocked
   #43  blocked
 ```
 
-The event log records a `run.blocked` event for each blocked run, including which blockers caused it. If a blocker finished with status `aborted` instead, the dependent is itself emitted as `run.aborted` (with `aborted_by` listing the upstream blocker) and counted in the aborted total rather than the blocked total.
+If a dependency blocker finished with status `aborted`, the dependent is itself emitted as `run.aborted` (with `aborted_by` listing the upstream blocker) and counted in the aborted total rather than the blocked total.
 
 ### Queued runs
 

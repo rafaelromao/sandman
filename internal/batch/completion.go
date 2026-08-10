@@ -90,7 +90,7 @@ func mergedPRMissingClosingReference(ctx context.Context, client github.Client, 
 		return false
 	}
 	pr, err := client.FindPRByBranch(ctx, branch)
-	return err == nil && pr != nil && strings.EqualFold(pr.State, "merged") && !pr.ClosesIssue(issueNumber)
+	return err == nil && pr != nil && (pr.Merged || strings.EqualFold(pr.State, "merged")) && !pr.ClosesIssue(issueNumber)
 }
 
 func CheckPRMergedAtHead(ctx context.Context, client github.Client, branch, headSHA string) (bool, error) {

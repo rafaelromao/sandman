@@ -62,6 +62,57 @@ func TestEmitTerminal_PROpenConflictingOverridesStatus(t *testing.T) {
 	}
 }
 
+func TestEmitTerminal_PROpenConflictingPreservesExternalGate(t *testing.T) {
+	s := &runSession{
+		deps: runDeps{
+			githubClient: &fakeGitHubClient{},
+			errorLog:     io.Discard,
+			layout:       paths.NewLayout(&config.Config{}, t.TempDir()),
+		},
+		issueNumber: 42,
+	}
+	oldLookup := lookupOpenPRFn
+	lookupOpenPRFn = func(string) (bool, int, string, error) {
+		return true, 99, "CONFLICTING", nil
+	}
+	t.Cleanup(func() { lookupOpenPRFn = oldLookup })
+
+	eventsPath := filepath.Join(t.TempDir(), "events.jsonl")
+	s.deps.eventLog = &events.JSONLLogger{Path: eventsPath}
+
+	result := AgentRunResult{IssueNumber: 42, Branch: "42-fix-bug", Status: "blocked", RetriesTotal: 1}
+	got := s.emitTerminal(context.Background(), "run-id", result, map[string]any{
+		"blocker": "external-gate",
+		"gate":    "failed",
+	})
+	if got != "blocked" {
+		t.Fatalf("emitTerminal returned %q, want blocked for external-gate conflict", got)
+	}
+	if events.RunStatusFromPayload(got).IsFailure() {
+		t.Fatalf("external-gate status %q would count as a batch failure", got)
+	}
+
+	logs, err := s.deps.eventLog.Read()
+	if err != nil {
+		t.Fatalf("read events: %v", err)
+	}
+	var terminal events.Event
+	for _, e := range logs {
+		if e.Type == "run.finished" {
+			terminal = e
+		}
+	}
+	if terminal.Type == "" {
+		t.Fatalf("run.finished event not found in logs: %v", logs)
+	}
+	if terminal.Payload["status"] != "blocked" || terminal.Payload["blocker"] != "external-gate" {
+		t.Fatalf("external-gate terminal payload = %v, want blocked external-gate", terminal.Payload)
+	}
+	if conflict, _ := terminal.Payload["merge_conflict"].(bool); !conflict {
+		t.Fatalf("run.finished payload merge_conflict = %v, want true", terminal.Payload["merge_conflict"])
+	}
+}
+
 func TestEmitTerminal_PROpenCleanLeavesStatusUnchanged(t *testing.T) {
 	s := &runSession{
 		deps: runDeps{

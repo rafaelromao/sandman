@@ -237,7 +237,7 @@ func TestCLIClient_SearchIssues_SortsByNumberAscending(t *testing.T) {
 }
 
 func TestCLIClient_FindPRByBranch_Success(t *testing.T) {
-	runner := &fakeRunner{responses: []fakeResponse{{output: `[{"number":17,"state":"open","body":"Refs #386","mergedAt":null,"headRefName":"issue-386/smart-completion-detection-phase-aware-retry","headRefOid":"abc123","updatedAt":"2026-08-01T12:00:00Z","reviewDecision":"APPROVED","mergeStateStatus":"CLEAN","statusCheckRollup":"success"}]`}}}
+	runner := &fakeRunner{responses: []fakeResponse{{output: `[{"number":17,"state":"open","body":"Refs #386","mergedAt":null,"headRefName":"issue-386/smart-completion-detection-phase-aware-retry","headRefOid":"abc123","updatedAt":"2026-08-01T12:00:00Z","reviewDecision":"APPROVED","mergeStateStatus":"CLEAN","statusCheckRollup":"success","closingIssuesReferences":[{"number":999},{"number":386}]}]`}}}
 	client := &CLIClient{runner: runner}
 
 	pr, err := client.FindPRByBranch(context.Background(), "issue-386/smart-completion-detection-phase-aware-retry")
@@ -286,6 +286,46 @@ func TestCLIClient_FindPRByBranch_Success(t *testing.T) {
 	}
 }
 
+func TestCLIClient_FindPRByBranch_MergedFetchesAllNativeClosingReferences(t *testing.T) {
+	runner := &fakeRunner{responses: []fakeResponse{
+		{output: `[{"number":17,"state":"closed","mergedAt":"2026-08-01T12:00:00Z","headRefName":"merged-branch","headRefOid":"abc123","statusCheckRollup":"success"}]`},
+		{output: `{"name":"sandman","owner":{"login":"rafaelromao"}}`},
+		{output: `{"data":{"repository":{"pullRequest":{"closingIssuesReferences":{"nodes":[{"number":999},{"number":386}]}}}}}`},
+	}}
+	client := &CLIClient{runner: runner}
+
+	pr, err := client.FindPRByBranch(context.Background(), "merged-branch")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if pr == nil || !pr.ClosesIssue(386) {
+		t.Fatalf("merged PR native closing references = %#v, want issue 386", pr)
+	}
+	if len(runner.calls) != 3 {
+		t.Fatalf("gh calls = %d, want list, repo view, and GraphQL", len(runner.calls))
+	}
+}
+
+func TestCLIClient_FindPRByBranch_MergedNativeReferenceFailurePreservesBodyIntent(t *testing.T) {
+	runner := &fakeRunner{responses: []fakeResponse{
+		{output: `[{
+			"number":17,"state":"closed","body":"Closes #386","mergedAt":"2026-08-01T12:00:00Z",
+			"headRefName":"merged-branch","headRefOid":"abc123","statusCheckRollup":"success"
+		}]`},
+		{output: `{"name":"sandman","owner":{"login":"rafaelromao"}}`},
+		{err: errors.New("temporary GraphQL failure")},
+	}}
+	client := &CLIClient{runner: runner}
+
+	pr, err := client.FindPRByBranch(context.Background(), "merged-branch")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if pr == nil || !pr.ClosesIssue(386) {
+		t.Fatalf("merged PR body closing intent = %#v, want issue 386", pr)
+	}
+}
+
 // TestCLIClient_FindPRByBranch_StatusCheckRollupArrayAllSuccess asserts
 // that gh CLI ≥ 2.65's array-shaped statusCheckRollup with all SUCCESS
 // checks collapses to the canonical "success" rollup string the rest of
@@ -303,6 +343,44 @@ func TestCLIClient_FindPRByBranch_StatusCheckRollupArrayAllSuccess(t *testing.T)
 	}
 	if pr.StatusCheckRollup != "success" {
 		t.Fatalf("StatusCheckRollup = %q, want success", pr.StatusCheckRollup)
+	}
+}
+
+func TestCLIClient_FindPRByBranch_StatusContextFailure(t *testing.T) {
+	runner := &fakeRunner{responses: []fakeResponse{{output: `[{"number":21,"state":"open","headRefName":"legacy-status","statusCheckRollup":[{"__typename":"StatusContext","context":"legacy-ci","state":"FAILURE"}]}]`}}}
+	client := &CLIClient{runner: runner}
+
+	pr, err := client.FindPRByBranch(context.Background(), "legacy-status")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if pr == nil {
+		t.Fatal("expected PR, got nil")
+	}
+	if pr.StatusCheckRollup != "failure" {
+		t.Fatalf("StatusCheckRollup = %q, want failure", pr.StatusCheckRollup)
+	}
+}
+
+func TestRollupStateFromJSON_MixedPendingAndFailureIsFailure(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		raw  string
+	}{
+		{
+			name: "pending check before legacy failure",
+			raw:  `[{"__typename":"CheckRun","status":"IN_PROGRESS"},{"__typename":"StatusContext","state":"FAILURE"}]`,
+		},
+		{
+			name: "legacy failure before pending check",
+			raw:  `[{"__typename":"StatusContext","state":"FAILURE"},{"__typename":"CheckRun","status":"IN_PROGRESS"}]`,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := rollupStateFromJSON([]byte(test.raw)); got != "failure" {
+				t.Fatalf("rollupStateFromJSON() = %q, want failure", got)
+			}
+		})
 	}
 }
 

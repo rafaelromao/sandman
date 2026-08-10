@@ -818,6 +818,9 @@ func NewOrchestrator(githubClient github.Client, renderer prompt.IssueRenderer, 
 		lookupGHToken: defaultLookupGHToken,
 		runSessionOpts: runSessionOptions{
 			baseBranchSyncMu: &sync.Mutex{},
+			gatePollInitial:  120 * time.Second,
+			gatePollMaxSleep: 600 * time.Second,
+			gatePollBudget:   1800 * time.Second,
 		},
 		badgeHooker:  nopBadgeHooker{},
 		coordinators: make(map[*batchCoordinator]struct{}),
@@ -1740,12 +1743,11 @@ func expandPath(path string) (string, error) {
 }
 
 // runSessionOptions bundles the test-injection hooks consumed by runSession
-// (the function overrides and the test-tunable killTimeout) together with
+// (the function overrides, gate-poll policy, and test-tunable killTimeout) together with
 // the shared baseBranchSyncMu mutex that gates syncBaseBranch. The function
-// and timeout fields exist only so tests in this package can override
-// behaviour that would otherwise touch the network, run real git, or sleep
-// for the production timeout; production code leaves them at their zero
-// values. The baseBranchSyncMu pointer is initialised once per Orchestrator
+// and timeout fields exist so tests in this package can override behaviour
+// that would otherwise touch the network, run real git, or sleep for the
+// production timeout. The baseBranchSyncMu pointer is initialised once per Orchestrator
 // in NewOrchestrator and shared across all sessions via this struct's value
 // copy at construction time, so that concurrent calls to syncBaseBranch
 // serialise on the same mutex. If baseBranchSyncMu is ever converted from a
@@ -1756,6 +1758,9 @@ type runSessionOptions struct {
 	baseBranchSyncMu *sync.Mutex
 	retryReset       func(ctx context.Context, sb sandbox.Sandbox, branch, baseBranch string) error
 	killTimeout      time.Duration
+	gatePollInitial  time.Duration
+	gatePollMaxSleep time.Duration
+	gatePollBudget   time.Duration
 }
 
 // runSession owns the per-AgentRun state and lifecycle for a single issue
@@ -2210,13 +2215,16 @@ func repairOpenPRClosingReference(ctx context.Context, client github.Client, bra
 //
 // Before normalising the terminal event, emitTerminal performs a defensive
 // post-check: if the agent's branch has an open PR whose mergeable state is
-// `CONFLICTING`, the run is reclassified as `failure` and the terminal event
-// payload carries `merge_conflict: true` and the PR number. This is
-// defence-in-depth against skill regressions that forget to flag the DIRTY
-// PR case; see issue #1684.
+// `CONFLICTING`, the terminal event payload carries `merge_conflict: true`
+// and the PR number. Ordinary terminal results are reclassified as
+// `failure`, but an external-gate blocker remains `blocked` so the gate does
+// not become an ordinary agent failure; see issue #1684.
 func (s *runSession) emitTerminal(ctx context.Context, runID string, result AgentRunResult, extras map[string]any) string {
 	if conflictExtras, ok := s.detectConflictingPR(result.Branch); ok {
-		result.Status = "failure"
+		blocker, _ := extras["blocker"].(string)
+		if !(result.Status == "blocked" && blocker == "external-gate") {
+			result.Status = "failure"
+		}
 		if extras == nil {
 			extras = map[string]any{}
 		}
@@ -2336,7 +2344,7 @@ func (s *runSession) detectConflictingPR(branch string) (map[string]any, bool) {
 		return nil, false
 	}
 	if strings.EqualFold(mergeable, "CONFLICTING") {
-		fmt.Fprintf(s.deps.errorLog, "error: branch %q has CONFLICTING open PR #%d, overriding run status to failure\n", branch, prNumber)
+		fmt.Fprintf(s.deps.errorLog, "error: branch %q has CONFLICTING open PR #%d\n", branch, prNumber)
 		return map[string]any{"merge_conflict": true, "pr_number": prNumber}, true
 	}
 	return nil, false
@@ -2524,6 +2532,7 @@ func (s *runSession) runOnce(
 	}
 
 	var terminalExtras map[string]any
+loop:
 	for attempt := 0; attempt < attempts; attempt++ {
 		attemptRenderCfg, errResult := prepareAttempt(attempt)
 		if errResult != nil {
@@ -2590,6 +2599,13 @@ func (s *runSession) runOnce(
 		taskPath := filepath.Join(wt.WorkDir(), ".sandman", "task.md")
 		taskContent, _, _ := ReadTaskContent(taskPath)
 		alreadyResolved := hasExactTaskStatus(taskContent, "## Status: already resolved")
+		if s.issueNumber > 0 && events.RunStatusFromPayload(result.Status).IsSuccess() && ctx.Err() == nil {
+			if gateStatus, extras, handled := s.handleExternalGate(ctx, wt.WorkDir(), branch, logPath, runID); handled && gateStatus != "success" {
+				result.Status = gateStatus
+				terminalExtras = mergeBlockerExtras(terminalExtras, extras)
+				break loop
+			}
+		}
 		if mergeRequired {
 			prMerged := checkPRMergedForIssue(ctx, s.deps.githubClient, branch, s.issueNumber)
 			if events.RunStatusFromPayload(result.Status).IsAborted() {
@@ -2689,6 +2705,13 @@ func (s *runSession) runOnce(
 							result.Status = "success"
 						}
 						break
+					}
+					if events.RunStatusFromPayload(result.Status).IsSuccess() && ctx.Err() == nil {
+						if gateStatus, extras, handled := s.handleExternalGate(ctx, wt.WorkDir(), branch, logPath, runID); handled {
+							result.Status = gateStatus
+							terminalExtras = mergeBlockerExtras(terminalExtras, extras)
+							break loop
+						}
 					}
 					result.Status = "failure"
 				} else {

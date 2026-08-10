@@ -15,6 +15,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/github"
 	"github.com/rafaelromao/sandman/internal/prompt"
 	"github.com/rafaelromao/sandman/internal/sandbox"
+	"github.com/rafaelromao/sandman/internal/testenv"
 )
 
 func TestRunSingle_EmitsRunRetryBetweenAttemptsOnFailure(t *testing.T) {
@@ -35,14 +36,10 @@ func TestRunSingle_EmitsRunRetryBetweenAttemptsOnFailure(t *testing.T) {
 	oldHeadFn := currentBranchHeadFn
 	currentBranchHeadFn = func(string) (string, error) { return "current-sha", nil }
 	t.Cleanup(func() { currentBranchHeadFn = oldHeadFn })
-	// PR stays unmerged for the whole run. The orchestrator's post-attempt
-	// check flips the result to "failure" whenever pr.Merged is false; this
-	// is expected behaviour for an issue-driven run where the PR is the
-	// success signal. The third runnable returns success but the
-	// post-attempt check still flips it to "failure" because the PR is not
-	// merged. The point of this test is to count run.retry events, not to
-	// validate the success/failure signal.
-	pr := &github.PR{Number: 17, State: "closed", Merged: false, HeadRefName: branch}
+	// The PR remains open with a pending external gate for the whole run.
+	// Agent failures still consume retries, while the third clean exit is
+	// terminal blocked state rather than another agent failure.
+	pr := &github.PR{Number: 17, State: "open", HeadRefName: branch, MergeStateStatus: "BLOCKED", StatusCheckRollup: "pending"}
 	eventsPath := filepath.Join(t.TempDir(), "events.jsonl")
 	eventLog := &events.JSONLLogger{Path: eventsPath}
 	resultFactory := &fakeRunnableFactory{results: []AgentRunResult{
@@ -67,7 +64,7 @@ func TestRunSingle_EmitsRunRetryBetweenAttemptsOnFailure(t *testing.T) {
 		// loop with a failure errResult).
 		WithRunSessionOpts(runSessionOptions{retryReset: func(ctx context.Context, sb sandbox.Sandbox, branch, baseBranch string) error {
 			return nil
-		}}),
+		}, gatePollInitial: time.Millisecond, gatePollMaxSleep: time.Millisecond, gatePollBudget: 5 * time.Millisecond}),
 	)
 
 	cfg := &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}}
@@ -87,11 +84,8 @@ func TestRunSingle_EmitsRunRetryBetweenAttemptsOnFailure(t *testing.T) {
 	if !started {
 		t.Fatalf("expected run to start, result.Status=%q, created=%d", result.Status, len(resultFactory.created))
 	}
-	// The PR is unmerged, so the post-attempt check after the third
-	// (success) attempt flips result.Status to "failure". This is the
-	// expected end-state for an issue-driven run with an unmerged PR.
-	if result.Status != "failure" {
-		t.Fatalf("status = %q, want failure (unmerged PR forces failure regardless of agent zero exit)", result.Status)
+	if result.Status != "blocked" {
+		t.Fatalf("status = %q, want blocked (pending external gate must not become agent failure)", result.Status)
 	}
 	if result.RetriesTotal != 3 {
 		t.Fatalf("RetriesTotal = %d, want 3 (3 attempts: fail, fail, succeed)", result.RetriesTotal)
@@ -518,6 +512,54 @@ func TestRunSingle_AlreadyResolvedMergedPRStillSuccess(t *testing.T) {
 	}
 	if result.Status != "success" {
 		t.Fatalf("status = %q, want success (alreadyResolved + merged PR should be success)", result.Status)
+	}
+}
+
+func TestRunSingle_AlreadyResolvedMergedPRStillRunsFailingVerification(t *testing.T) {
+	workDir := testenv.MkdirShort(t, "sm-orch-")
+	t.Chdir(workDir)
+	branch := "42-fix-bug"
+	wtDir := filepath.Join(workDir, "worktree")
+	rtSandbox := &retrySandbox{workDir: wtDir}
+	eventLog := &events.JSONLLogger{Path: filepath.Join(t.TempDir(), "events.jsonl")}
+
+	o := NewOrchestrator(
+		&fakeGitHubClient{
+			issues: map[int]*github.Issue{42: {Number: 42, Title: "Fix bug"}},
+			prs:    map[string]*github.PR{branch: {Number: 17, State: "merged", Merged: true, HeadRefName: branch}},
+		},
+		&retryRenderer{result: "rendered prompt"},
+		nil,
+		eventLog,
+		WithErrorLog(io.Discard),
+		WithSandboxFactory(&retrySandboxFactory{sandbox: rtSandbox}),
+		WithRunnableFactory(&taskWritingRunnableFactory{
+			taskPath:    filepath.Join(wtDir, ".sandman", "task.md"),
+			result:      AgentRunResult{IssueNumber: 42, Status: "success", Branch: branch},
+			taskContent: "## Status: already resolved",
+		}),
+		WithVerifyPath(VerifyPathFunc(func(VerifyInput) (VerifyOutcome, []OracleCheck) {
+			return VerifyFailed, nil
+		})),
+	)
+
+	bc := BatchConfig{
+		Cfg:              &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}},
+		AgentName:        "opencode",
+		AgentCfg:         config.Agent{Command: "echo hi"},
+		IdentityResolver: noopIdentityResolver(),
+		Retries:          3,
+	}
+	result, started := o.newRunExecutor(context.Background(), bc, &retrySandboxFactory{sandbox: rtSandbox}, nil).Execute(context.Background(), RowSpec{
+		IssueNumber: 42,
+		Branches:    map[int]string{42: branch},
+		BaseBranch:  "main",
+	})
+	if !started {
+		t.Fatal("expected run to start")
+	}
+	if result.Status != "failure" {
+		t.Fatalf("status = %q, want failure when merged already-resolved verification fails", result.Status)
 	}
 }
 
@@ -1207,7 +1249,7 @@ func TestRunSingle_RetryBannersUseRetriesBudgetAsDenominator(t *testing.T) {
 // that contains no `--- run ---` and no `--- retry ---` banner at
 // all — the agent's own output is the only content.
 func TestRunSingle_InitialAttemptOnlyHasNoBanner(t *testing.T) {
-	workDir := t.TempDir()
+	workDir := testenv.MkdirShort(t, "sm-orch-")
 	oldWD, err := os.Getwd()
 	if err != nil {
 		t.Fatalf("get wd: %v", err)
@@ -1236,6 +1278,7 @@ func TestRunSingle_InitialAttemptOnlyHasNoBanner(t *testing.T) {
 		nil,
 		WithErrorLog(io.Discard),
 		WithSandboxFactory(&fakeSandboxFactory{sandbox: rtSandbox}),
+		WithRunSessionOpts(gateTestRunOptions()),
 	)
 
 	cfg := &config.Config{WorktreeDir: "worktree", Git: config.GitConfig{BaseBranch: "main"}}
@@ -1256,8 +1299,8 @@ func TestRunSingle_InitialAttemptOnlyHasNoBanner(t *testing.T) {
 	if !started {
 		t.Fatal("expected run to start")
 	}
-	if result.Status != "failure" {
-		t.Fatalf("status = %q, want failure (unmerged PR forces failure regardless of agent exit)", result.Status)
+	if result.Status != "blocked" {
+		t.Fatalf("status = %q, want blocked (pending external gate must not be reported as agent failure)", result.Status)
 	}
 
 	logPath := filepath.Join(workDir, ".sandman", "batches", "260622105532-68cb", "runs", "260622105532-68cb-42", "run.log")
