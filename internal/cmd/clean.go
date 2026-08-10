@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -102,6 +103,14 @@ func isBranchNotFoundError(err error, output []byte) bool {
 	return false
 }
 
+// worktreeRef is a single (worktree path, branch) pair attached to a
+// clean action. A batch may contain multiple agent runs, each with its
+// own worktree and branch, so an action can carry several refs.
+type worktreeRef struct {
+	Worktree string
+	Branch   string
+}
+
 type cleanAction struct {
 	BatchID   string
 	BatchPath string
@@ -110,7 +119,22 @@ type cleanAction struct {
 	Status    batchindex.Status
 	IsUnavail bool
 	Branch    string
+	Worktrees []worktreeRef
 	Err       error
+}
+
+// worktreeRefs returns the normalized list of worktree refs for an
+// action. Multi-run actions carry an explicit Worktrees slice; the
+// legacy single-run fields are synthesized into one ref so callers
+// can always iterate.
+func (a cleanAction) worktreeRefs() []worktreeRef {
+	if len(a.Worktrees) > 0 {
+		return a.Worktrees
+	}
+	if a.Worktree != "" || a.Branch != "" {
+		return []worktreeRef{{Worktree: a.Worktree, Branch: a.Branch}}
+	}
+	return nil
 }
 
 type cleanOutcome struct {
@@ -228,6 +252,9 @@ func NewCleanCmd(deps Dependencies) *cobra.Command {
 				}
 
 				actions := collectCleanActions(idx, batchindex.StatusArchived)
+				if activeActions := collectEligibleActiveActions(idx, probe, layout); len(activeActions) > 0 {
+					actions = append(actions, activeActions...)
+				}
 				if actions == nil {
 					actions = []cleanAction{}
 				}
@@ -236,7 +263,7 @@ func NewCleanCmd(deps Dependencies) *cobra.Command {
 				var outcomes []cleanOutcome
 				var cleanErr error
 				if !dryRun {
-					outcomes, cleanErr = executeClean(actions, gr, layout, remover)
+					outcomes, cleanErr = executeCleanWithProbe(actions, gr, layout, remover, probe)
 					orphanRemoved, err = cleanupOrphanedBatches(layout, deps.EventLog, probe, remover)
 					cleanErr = errors.Join(cleanErr, err)
 				} else {
@@ -299,7 +326,7 @@ func NewCleanCmd(deps Dependencies) *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().Bool("all", false, "Run every cleanup pass in sequence without touching active batches or their worktrees")
+	cmd.Flags().Bool("all", false, "Run every cleanup pass in sequence, reclaiming archived and completed batches while preserving live or in-flight active batches")
 	cmd.Flags().Bool("archived", false, "Remove archived batches (combined with unavailable)")
 	cmd.Flags().Bool("dry-run", false, "Print intended deletions without performing I/O")
 	cmd.Flags().Bool("stale", false, "Recover stale runs in dead batches by emitting run.aborted events")
@@ -334,6 +361,171 @@ func collectCleanActions(idx *batchindex.Index, targetStatus batchindex.Status) 
 	return actions
 }
 
+// collectEligibleActiveActions returns cleanActions for StatusActive
+// batches whose daemon is gone and whose live and archived run manifests
+// are all terminal. The umbrella `clean --all` mode promotes these to
+// the cleanup set: they are not strictly `StatusArchived` because no
+// one ever ran `archive batch` (whole-batch archive), but their runs
+// are all terminal (success/failure/aborted/blocked) and no live
+// socket remains, so reclaiming the worktree and the batch dir is
+// safe. Per-row archive (`archive run`, `archive older-than`,
+// `archive stale`) marks each RunRecord archived but never promotes
+// the batch-level Status, which is the gap that lets worktrees pile
+// up under `clean --all`.
+func collectEligibleActiveActions(idx *batchindex.Index, probe runActivityProbe, layout paths.Layout) []cleanAction {
+	var actions []cleanAction
+	for _, entry := range idx.Batches {
+		if entry.Status != batchindex.StatusActive {
+			continue
+		}
+		if entry.Path == "" {
+			continue
+		}
+		action, ok := buildEligibleActiveAction(entry, probe, layout)
+		if !ok {
+			continue
+		}
+		actions = append(actions, action)
+	}
+	return actions
+}
+
+// buildEligibleActiveAction returns a cleanAction for a single
+// StatusActive entry iff its batch daemon is gone and every run under
+// the batch is reclaimable: every live run manifest in <batch>/runs/ has a
+// terminal status, and every persisted archived RunRecord points to a
+// still-present, terminal archive manifest. When the runs dir is empty,
+// the latter condition proves that every row was per-row archived. Every
+// row's worktree/branch pair is collected so a multi-run batch reclaims
+// all of its worktrees. A batch with an unknown or missing row manifest
+// is preserved.
+func buildEligibleActiveAction(entry batchindex.Batch, probe runActivityProbe, layout paths.Layout) (cleanAction, bool) {
+	if probe != nil && probe(entry.Path) {
+		return cleanAction{}, false
+	}
+	action := cleanAction{
+		BatchID:   entry.ID,
+		BatchPath: entry.Path,
+		Kind:      entry.Kind,
+		Status:    entry.Status,
+	}
+	runsDir := filepath.Join(entry.Path, "runs")
+	entries, err := os.ReadDir(runsDir)
+	if err != nil && !os.IsNotExist(err) {
+		return cleanAction{}, false
+	}
+	liveCount := 0
+	liveRunIDs := make(map[string]bool)
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		liveCount++
+		manifestPath := filepath.Join(runsDir, e.Name(), "run.json")
+		data, err := os.ReadFile(manifestPath)
+		if err != nil {
+			return cleanAction{}, false
+		}
+		var manifest batchindex.RunManifest
+		if err := json.Unmarshal(data, &manifest); err != nil {
+			return cleanAction{}, false
+		}
+		if !reclaimableRunManifest(manifest, entry, e.Name(), layout) {
+			return cleanAction{}, false
+		}
+		if !isTerminalRunManifestStatus(manifest.Status) {
+			return cleanAction{}, false
+		}
+		liveRunIDs[e.Name()] = true
+		appendWorktreeRef(&action, manifest.WorktreePath, manifest.Branch)
+	}
+	if liveCount == 0 {
+		if !allRowsArchived(entry, layout) {
+			return cleanAction{}, false
+		}
+	}
+	for _, rec := range entry.Runs {
+		if rec.Status == batchindex.RunRecordStatusArchived {
+			if !appendArchivedRunRef(&action, entry, rec, layout) {
+				return cleanAction{}, false
+			}
+			continue
+		}
+		if !liveRunIDs[rec.RunID] {
+			return cleanAction{}, false
+		}
+	}
+	return action, true
+}
+
+func appendArchivedRunRef(action *cleanAction, entry batchindex.Batch, rec batchindex.RunRecord, layout paths.Layout) bool {
+	if rec.ArchivePath == "" {
+		return false
+	}
+	archiveDir, ok := trustedArchivePath(layout, rec.ArchivePath)
+	if !ok {
+		return false
+	}
+	manifest, err := batchindex.ReadManifest(archiveDir)
+	if err != nil || !reclaimableRunManifest(manifest, entry, rec.RunID, layout) || !isTerminalRunManifestStatus(manifest.Status) {
+		return false
+	}
+	appendWorktreeRef(action, manifest.WorktreePath, manifest.Branch)
+	return true
+}
+
+func reclaimableRunManifest(manifest batchindex.RunManifest, entry batchindex.Batch, runID string, layout paths.Layout) bool {
+	return runID != "" &&
+		manifest.RunID == runID &&
+		manifest.BatchID == entry.ID &&
+		manifest.Kind == entry.Kind &&
+		validateBranchName(manifest.Branch) == nil &&
+		validateOwnedPath(manifest.WorktreePath, layout.WorktreeDir) == nil
+}
+
+func appendWorktreeRef(action *cleanAction, worktree, branch string) {
+	if worktree == "" && branch == "" {
+		return
+	}
+	for _, ref := range action.Worktrees {
+		if ref.Worktree == worktree && ref.Branch == branch {
+			return
+		}
+	}
+	action.Worktrees = append(action.Worktrees, worktreeRef{Worktree: worktree, Branch: branch})
+}
+
+// allRowsArchived reports whether every persisted RunRecord for the
+// batch is archived at an archive path that still exists on disk. An
+// empty Runs slice (unknown row set) is not treated as all-archived so
+// an ambiguous batch is preserved.
+func allRowsArchived(entry batchindex.Batch, layout paths.Layout) bool {
+	if len(entry.Runs) == 0 {
+		return false
+	}
+	for _, rec := range entry.Runs {
+		if rec.Status != batchindex.RunRecordStatusArchived || rec.ArchivePath == "" {
+			return false
+		}
+		archiveDir, ok := trustedArchivePath(layout, rec.ArchivePath)
+		if !ok {
+			return false
+		}
+		if info, err := os.Stat(archiveDir); err != nil || !info.IsDir() {
+			return false
+		}
+	}
+	return true
+}
+
+func trustedArchivePath(layout paths.Layout, archivePath string) (string, bool) {
+	archiveDir, err := filepath.Abs(filepath.Join(layout.RepoRoot, archivePath))
+	if err != nil || validateOwnedPath(archiveDir, layout.ArchiveDir) != nil {
+		return "", false
+	}
+	return archiveDir, true
+}
+
 func printCleanReport(cmd *cobra.Command, actions []cleanAction, orphanPaths []string, tempDirs []string, images []string, dryRun bool) {
 	out := cmd.OutOrStdout()
 
@@ -354,8 +546,10 @@ func printCleanReport(cmd *cobra.Command, actions []cleanAction, orphanPaths []s
 				what = string(a.Kind)
 			}
 			fmt.Fprintf(out, "  - [%s] %s (path: %s", what, a.BatchID, a.BatchPath)
-			if a.Worktree != "" {
-				fmt.Fprintf(out, ", worktree: %s", a.Worktree)
+			for _, ref := range a.worktreeRefs() {
+				if ref.Worktree != "" {
+					fmt.Fprintf(out, ", worktree: %s", ref.Worktree)
+				}
 			}
 			fmt.Fprintln(out, ")")
 		}
@@ -396,6 +590,10 @@ func printCleanReport(cmd *cobra.Command, actions []cleanAction, orphanPaths []s
 }
 
 func executeClean(actions []cleanAction, gr gitRunner, layout paths.Layout, remover CleanupRemover) ([]cleanOutcome, error) {
+	return executeCleanWithProbe(actions, gr, layout, remover, nil)
+}
+
+func executeCleanWithProbe(actions []cleanAction, gr gitRunner, layout paths.Layout, remover CleanupRemover, probe runActivityProbe) ([]cleanOutcome, error) {
 	if len(actions) == 0 {
 		return nil, nil
 	}
@@ -408,6 +606,13 @@ func executeClean(actions []cleanAction, gr gitRunner, layout paths.Layout, remo
 			if entry == nil || entry.Path != a.BatchPath || !cleanStatusCompatible(a.Status, a.IsUnavail, entry.Status) {
 				continue
 			}
+			if a.Status == batchindex.StatusActive && probe != nil {
+				fresh, ok := buildEligibleActiveAction(*entry, probe, layout)
+				if !ok {
+					continue
+				}
+				a = fresh
+			}
 			if a.Err != nil {
 				outcomes = append(outcomes, cleanOutcome{Action: a, Err: a.Err})
 				actionErrs = append(actionErrs, a.Err)
@@ -418,34 +623,44 @@ func executeClean(actions []cleanAction, gr gitRunner, layout paths.Layout, remo
 				actionErrs = append(actionErrs, err)
 				continue
 			}
-			if a.Worktree != "" {
-				if _, statErr := os.Stat(a.Worktree); statErr == nil {
-					if err := gr.removeWorktree(a.Worktree); err != nil {
-						err = fmt.Errorf("remove worktree %s: %w", a.Worktree, err)
+			refFailed := false
+			for _, ref := range a.worktreeRefs() {
+				if ref.Worktree != "" {
+					if _, statErr := os.Stat(ref.Worktree); statErr == nil {
+						if err := gr.removeWorktree(ref.Worktree); err != nil {
+							err = fmt.Errorf("remove worktree %s: %w", ref.Worktree, err)
+							outcomes = append(outcomes, cleanOutcome{Action: a, Err: err})
+							actionErrs = append(actionErrs, err)
+							refFailed = true
+							break
+						}
+					} else if !os.IsNotExist(statErr) {
+						err := fmt.Errorf("stat worktree %s: %w", ref.Worktree, statErr)
 						outcomes = append(outcomes, cleanOutcome{Action: a, Err: err})
 						actionErrs = append(actionErrs, err)
-						continue
+						refFailed = true
+						break
 					}
-				} else if !os.IsNotExist(statErr) {
-					err := fmt.Errorf("stat worktree %s: %w", a.Worktree, statErr)
-					outcomes = append(outcomes, cleanOutcome{Action: a, Err: err})
-					actionErrs = append(actionErrs, err)
-					continue
+				}
+				if ref.Branch != "" {
+					if branchErr := validateBranchName(ref.Branch); branchErr != nil {
+						err := fmt.Errorf("validate branch %s: %w", ref.Branch, branchErr)
+						outcomes = append(outcomes, cleanOutcome{Action: a, Err: err})
+						actionErrs = append(actionErrs, err)
+						refFailed = true
+						break
+					}
+					if err := gr.deleteBranch(ref.Branch, ref.Worktree); err != nil && !isBranchNotFoundError(err, nil) {
+						err = fmt.Errorf("delete branch %s: %w", ref.Branch, err)
+						outcomes = append(outcomes, cleanOutcome{Action: a, Err: err})
+						actionErrs = append(actionErrs, err)
+						refFailed = true
+						break
+					}
 				}
 			}
-			if a.Branch != "" {
-				if branchErr := validateBranchName(a.Branch); branchErr != nil {
-					err := fmt.Errorf("validate branch %s: %w", a.Branch, branchErr)
-					outcomes = append(outcomes, cleanOutcome{Action: a, Err: err})
-					actionErrs = append(actionErrs, err)
-					continue
-				}
-				if err := gr.deleteBranch(a.Branch, a.Worktree); err != nil && !isBranchNotFoundError(err, nil) {
-					err = fmt.Errorf("delete branch %s: %w", a.Branch, err)
-					outcomes = append(outcomes, cleanOutcome{Action: a, Err: err})
-					actionErrs = append(actionErrs, err)
-					continue
-				}
+			if refFailed {
+				continue
 			}
 			if a.BatchPath != "" && !a.IsUnavail {
 				if err := remover.RemoveAll(a.BatchPath); err != nil {
@@ -518,12 +733,14 @@ func validateCleanAction(action cleanAction, layout paths.Layout) error {
 			return fmt.Errorf("validate batch %s: %w", action.BatchID, err)
 		}
 	}
-	if action.Worktree != "" {
-		if action.Branch == "" {
-			return fmt.Errorf("manifest has a worktree but no branch")
-		}
-		if err := validateOwnedPath(action.Worktree, layout.WorktreeDir); err != nil {
-			return fmt.Errorf("validate worktree %s: %w", action.BatchID, err)
+	for _, ref := range action.worktreeRefs() {
+		if ref.Worktree != "" {
+			if ref.Branch == "" {
+				return fmt.Errorf("manifest has a worktree but no branch")
+			}
+			if err := validateOwnedPath(ref.Worktree, layout.WorktreeDir); err != nil {
+				return fmt.Errorf("validate worktree %s: %w", action.BatchID, err)
+			}
 		}
 	}
 	return nil
