@@ -1500,6 +1500,7 @@ func TestRunSingle_ModeContinueUnmergedPROpenGateIsBlocked(t *testing.T) {
 				Number:            17,
 				State:             "open",
 				HeadRefName:       branch,
+				HeadRefOid:        "current-sha",
 				StatusCheckRollup: "success",
 				ReviewDecision:    "APPROVED",
 				MergeStateStatus:  "CLEAN",
@@ -1510,6 +1511,9 @@ func TestRunSingle_ModeContinueUnmergedPROpenGateIsBlocked(t *testing.T) {
 		eventLog:        spyLog,
 		errorLog:        io.Discard,
 		runnableFactory: resultFactory,
+		runSessionOpts: runSessionOptions{
+			currentHead: func(string) (string, error) { return "current-sha", nil },
+		},
 	}
 
 	cfg := &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}}

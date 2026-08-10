@@ -32,11 +32,11 @@ var (
 )
 
 func pollPRGate(ctx context.Context, client github.Client, branch string, opts runSessionOptions) gateResult {
-	return pollPRGateAtHead(ctx, client, branch, "", opts)
+	return pollPRGateWithHead(ctx, client, branch, "", false, opts)
 }
 
 func pollPRGateAtHead(ctx context.Context, client github.Client, branch, headSHA string, opts runSessionOptions) gateResult {
-	return pollPRGateWithHead(ctx, client, branch, headSHA, false, opts)
+	return pollPRGateWithHead(ctx, client, branch, headSHA, true, opts)
 }
 
 func pollPRGateWithHead(ctx context.Context, client github.Client, branch, headSHA string, requireHead bool, opts runSessionOptions) gateResult {
@@ -105,11 +105,11 @@ func pollPRGateWithHead(ctx context.Context, client github.Client, branch, headS
 }
 
 func checkPRExternalGate(ctx context.Context, client github.Client, branch string) (string, error) {
-	return checkPRExternalGateAtHead(ctx, client, branch, "")
+	return checkPRExternalGateWithHead(ctx, client, branch, "", false)
 }
 
 func checkPRExternalGateAtHead(ctx context.Context, client github.Client, branch, headSHA string) (string, error) {
-	return checkPRExternalGateWithHead(ctx, client, branch, headSHA, false)
+	return checkPRExternalGateWithHead(ctx, client, branch, headSHA, true)
 }
 
 func checkPRExternalGateWithHead(ctx context.Context, client github.Client, branch, headSHA string, requireHead bool) (string, error) {
@@ -149,11 +149,13 @@ func checkPRExternalGateWithHead(ctx context.Context, client github.Client, bran
 	if hasCIPending || review == "REVIEW_REQUIRED" || mergeStatus == "BLOCKED" {
 		return "pending", nil
 	}
-	if requireHead && strings.TrimSpace(headSHA) == "" {
-		return "pending", nil
-	}
-	if strings.TrimSpace(headSHA) != "" && strings.TrimSpace(pr.HeadRefOid) != "" && !strings.EqualFold(pr.HeadRefOid, headSHA) {
-		return "pending", nil
+	if requireHead {
+		if strings.TrimSpace(headSHA) == "" || strings.TrimSpace(pr.HeadRefOid) == "" {
+			return "pending", nil
+		}
+		if !strings.EqualFold(pr.HeadRefOid, headSHA) {
+			return "pending", nil
+		}
 	}
 	if (checkRollup == "" || checkRollup == "success") && (review == "" || review == "APPROVED") && mergeStatus == "CLEAN" {
 		return gateReadyToMerge, nil
@@ -179,7 +181,7 @@ func (s *runSession) handleExternalGateWithHostPaths(ctx context.Context, workDi
 	if !hostPathsReady {
 		headSHA = ""
 	}
-	gate, err := checkPRExternalGateWithHead(ctx, s.deps.githubClient, branch, headSHA, !hostPathsReady)
+	gate, err := checkPRExternalGateWithHead(ctx, s.deps.githubClient, branch, headSHA, true)
 	initialUnavailable := err != nil
 	if err != nil && s.deps.errorLog != nil {
 		fmt.Fprintf(s.deps.errorLog, "warning: external gate lookup for branch %q: %v\n", branch, err)
@@ -202,7 +204,7 @@ func (s *runSession) handleExternalGateWithHostPaths(ctx context.Context, workDi
 		return s.blockExternalGate(ctx, workDir, logPath, runID, "unavailable")
 	}
 
-	polled := pollPRGateWithHead(ctx, s.deps.githubClient, branch, headSHA, !hostPathsReady, s.opts)
+	polled := pollPRGateWithHead(ctx, s.deps.githubClient, branch, headSHA, true, s.opts)
 	if polled == gateResolved {
 		return s.confirmExternalGate(ctx, workDir, branch, logPath, runID)
 	}

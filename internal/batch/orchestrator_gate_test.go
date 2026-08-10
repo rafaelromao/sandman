@@ -20,6 +20,7 @@ const gateTestBranch = "42-fix-bug"
 
 func gateTestRunOptions() runSessionOptions {
 	return runSessionOptions{
+		currentHead:      func(string) (string, error) { return "current-sha", nil },
 		gatePollInitial:  time.Millisecond,
 		gatePollMaxSleep: time.Millisecond,
 		gatePollBudget:   5 * time.Millisecond,
@@ -32,6 +33,9 @@ func runCleanGateCase(t *testing.T, pr *github.PR) (AgentRunResult, []events.Eve
 
 func runCleanGateCaseForIssue(t *testing.T, issueState string, pr *github.PR) (AgentRunResult, []events.Event, int) {
 	t.Helper()
+	if pr != nil && pr.HeadRefOid == "" {
+		pr.HeadRefOid = "current-sha"
+	}
 	workDir := testenv.MkdirShort(t, "sm-orch-")
 	oldWD, err := os.Getwd()
 	if err != nil {
@@ -309,8 +313,8 @@ func TestRunSingle_PendingGateTransitionToReadyToMergeIsTerminal(t *testing.T) {
 	client := &perRunGateSequenceClient{
 		fakeGitHubClient: fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, State: "open", Title: "Fix bug"}}},
 		responses: []*github.PR{
-			{Number: 17, State: "open", HeadRefName: branch, StatusCheckRollup: "pending", MergeStateStatus: "BLOCKED"},
-			{Number: 17, State: "open", HeadRefName: branch, StatusCheckRollup: "success", ReviewDecision: "APPROVED", MergeStateStatus: "CLEAN"},
+			{Number: 17, State: "open", HeadRefName: branch, HeadRefOid: "current-sha", StatusCheckRollup: "pending", MergeStateStatus: "BLOCKED"},
+			{Number: 17, State: "open", HeadRefName: branch, HeadRefOid: "current-sha", StatusCheckRollup: "success", ReviewDecision: "APPROVED", MergeStateStatus: "CLEAN"},
 		},
 	}
 	o := NewOrchestrator(
@@ -620,6 +624,55 @@ func TestHandleExternalGateHostPathRestoreFailureRemainsPending(t *testing.T) {
 	}
 }
 
+func TestHandleExternalGateFailsClosedWhenHeadCannotBeValidated(t *testing.T) {
+	for _, tt := range []struct {
+		name        string
+		currentHead func(string) (string, error)
+		prHead      string
+	}{
+		{
+			name: "current head resolver fails",
+			currentHead: func(string) (string, error) {
+				return "", context.DeadlineExceeded
+			},
+			prHead: "current-sha",
+		},
+		{
+			name: "pull request head is unavailable",
+			currentHead: func(string) (string, error) {
+				return "current-sha", nil
+			},
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			client := &fakeGitHubClient{prs: map[string]*github.PR{gateTestBranch: {
+				State:             "open",
+				HeadRefOid:        tt.prHead,
+				StatusCheckRollup: "success",
+				ReviewDecision:    "APPROVED",
+				MergeStateStatus:  "CLEAN",
+			}}}
+			session := &runSession{
+				deps: runDeps{githubClient: client, errorLog: io.Discard},
+				opts: runSessionOptions{
+					currentHead:      tt.currentHead,
+					gatePollInitial:  time.Millisecond,
+					gatePollMaxSleep: time.Millisecond,
+					gatePollBudget:   5 * time.Millisecond,
+				},
+			}
+
+			status, extras, handled := session.handleExternalGate(context.Background(), t.TempDir(), gateTestBranch, "", "run-test")
+			if !handled || status != "blocked" {
+				t.Fatalf("head validation gate = (%q, %#v, %t), want blocked", status, extras, handled)
+			}
+			if got := extras["gate"]; got != "pending" {
+				t.Fatalf("head validation gate reason = %v, want pending", got)
+			}
+		})
+	}
+}
+
 func TestPollPRGatePreservesLookupErrors(t *testing.T) {
 	client := &gateAvailabilityClient{
 		lookupErr: context.DeadlineExceeded,
@@ -809,7 +862,7 @@ func TestCheckPRExternalGateHeadFreshnessPreservesPrecedence(t *testing.T) {
 	}
 }
 
-func TestHandleExternalGateHeadLookupFallbackRemainsReadyToMerge(t *testing.T) {
+func TestHandleExternalGateHeadLookupFailureRemainsPending(t *testing.T) {
 	client := &fakeGitHubClient{prs: map[string]*github.PR{gateTestBranch: {
 		State:             "open",
 		HeadRefOid:        "stale-sha",
@@ -830,12 +883,12 @@ func TestHandleExternalGateHeadLookupFallbackRemainsReadyToMerge(t *testing.T) {
 	if !handled || status != "blocked" {
 		t.Fatalf("fallback gate = (%q, %#v, %t), want blocked", status, extras, handled)
 	}
-	if got := extras["gate"]; got != gateReadyToMerge {
-		t.Fatalf("fallback gate reason = %v, want %s", got, gateReadyToMerge)
+	if got := extras["gate"]; got != "pending" {
+		t.Fatalf("fallback gate reason = %v, want pending", got)
 	}
 }
 
-func TestCheckPRExternalGateMissingHeadMetadataRemainsReadyToMerge(t *testing.T) {
+func TestCheckPRExternalGateMissingHeadMetadataRemainsPending(t *testing.T) {
 	client := &fakeGitHubClient{prs: map[string]*github.PR{gateTestBranch: {
 		State:             "open",
 		StatusCheckRollup: "success",
@@ -847,8 +900,8 @@ func TestCheckPRExternalGateMissingHeadMetadataRemainsReadyToMerge(t *testing.T)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if got != gateReadyToMerge {
-		t.Fatalf("missing PR head gate = %q, want %s", got, gateReadyToMerge)
+	if got != "pending" {
+		t.Fatalf("missing PR head gate = %q, want pending", got)
 	}
 }
 
