@@ -178,6 +178,12 @@ const execWrapperScript = `sh -c 'echo $$ > /tmp/agent-pgid; exec sh -c "$1"' _ 
 
 // Exec runs a command inside the container, writing stdout and stderr to the given writers.
 func (s *ContainerSandbox) Exec(ctx context.Context, command string, stdout, stderr io.Writer) error {
+	// Gate checks may restore host-visible worktree paths between retries.
+	// Reapply container paths before every command so a later agent attempt
+	// still resolves the worktree's .git pointer inside the container.
+	if err := s.rewriteGitPaths(); err != nil {
+		return fmt.Errorf("rewrite git paths before exec: %w", err)
+	}
 	wrapperCmd := fmt.Sprintf(execWrapperScript, shellenv.Quote(command))
 	cmd := ExecCommandFn(s.binary, "exec", "-it", "-w", s.containerWorkDir(), s.container.ID(), "sh", "-c", wrapperCmd)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
@@ -201,6 +207,9 @@ func (s *ContainerSandbox) Exec(ctx context.Context, command string, stdout, std
 
 // ExecInteractive runs a command inside the container attached to the user's terminal.
 func (s *ContainerSandbox) ExecInteractive(ctx context.Context, command string) error {
+	if err := s.rewriteGitPaths(); err != nil {
+		return fmt.Errorf("rewrite git paths before interactive exec: %w", err)
+	}
 	wrapperCmd := fmt.Sprintf(execWrapperScript, command)
 	cmd := ExecCommandFn(s.binary, "exec", "-it", "-w", s.containerWorkDir(), s.container.ID(), "sh", "-c", wrapperCmd)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
