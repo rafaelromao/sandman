@@ -93,6 +93,30 @@ func TestReviewTimeoutHelperStopsDirectChildAtDeadline(t *testing.T) {
 	}
 }
 
+func TestReviewTimeoutHelperAllowsChildCompletingAtExactDeadline(t *testing.T) {
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	helper := filepath.Join(wd, "pr-review", "review-timeout.sh")
+	cmd := exec.Command("sh", "-c", `
+. "$1"
+now_calls=0
+review_timeout_now() {
+		case "$now_calls" in
+			0|1) value=1000 ;;
+			*) sleep 0.1; value=2000 ;;
+		esac
+		now_calls=$((now_calls + 1))
+		printf '%s\n' "$value"
+}
+review_timeout_run 2000 sh -c 'exit 0'
+`, "review-timeout", helper)
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("exact-boundary child should succeed: %v", err)
+	}
+}
+
 func TestReviewTimeoutHelperRemapsChild124BeforeDeadline(t *testing.T) {
 	wd, err := os.Getwd()
 	if err != nil {
@@ -132,6 +156,16 @@ func TestReviewTimeoutHelperWritesAtomicDeadlineState(t *testing.T) {
 	}
 	if _, err := runReviewTimeoutHelper(t, "review_timeout_state_matches", statePath, "new-head", "comment-43"); err == nil {
 		t.Fatal("new head and trigger should not reuse the old deadline state")
+	}
+	if _, err := runReviewTimeoutHelper(t, "review_timeout_write_state", statePath, "new-head", "comment-43", "2000000", "2240000"); err != nil {
+		t.Fatalf("fresh trigger should replace deadline state: %v", err)
+	}
+	data, err = os.ReadFile(statePath)
+	if err != nil {
+		t.Fatalf("read fresh deadline state: %v", err)
+	}
+	if !strings.Contains(string(data), "trigger_id=comment-43\nstarted_at=2000000\ndeadline_at=2240000\n") {
+		t.Fatalf("fresh trigger did not replace deadline state: %q", data)
 	}
 	if err := os.WriteFile(statePath, []byte("head_sha=head-sha\ntrigger_id=comment-42\nstarted_at=bad\ndeadline_at=1240000\n"), 0o600); err != nil {
 		t.Fatalf("write malformed deadline state: %v", err)

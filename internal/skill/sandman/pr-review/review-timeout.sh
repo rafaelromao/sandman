@@ -131,6 +131,13 @@ review_timeout_run() {
 	now_after_start=$(review_timeout_now) || now_after_start=$deadline
 	remaining=$(review_timeout_remaining "$deadline" "$now_after_start") || {
 		status=$?
+		if [ "$status" -eq 1 ] && [ "$now_after_start" -eq "$deadline" ] && ! kill -0 "$child_pid" 2>/dev/null; then
+			wait "$child_pid"
+			child_status=$?
+			rm -f "$marker"
+			[ "$child_status" -eq 124 ] && return 123
+			return "$child_status"
+		fi
 		kill -KILL "$child_pid" 2>/dev/null || true
 		wait "$child_pid" 2>/dev/null || true
 		rm -f "$marker"

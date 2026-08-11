@@ -267,8 +267,35 @@ func reviewTriggerStatus(ctx context.Context, client github.Client, prNumber int
 	if err != nil {
 		return "", err
 	}
-	if len(comments) == 0 {
+	latest, ok := latestReviewTrigger(comments, reviewCommand)
+	if !ok {
 		return reviewTriggerAnswered, nil
+	}
+	triggerAt := latest.CreatedAt
+	if lister, ok := client.(github.PRReviewLister); ok {
+		state, responded, err := formalReviewTriggerStatus(ctx, lister, prNumber, triggerAt)
+		if err != nil {
+			return "", err
+		}
+		if responded {
+			return state, nil
+		}
+	}
+	if lister, ok := client.(github.PRReviewCommentLister); ok {
+		responded, err := hasLaterInlineReview(ctx, lister, prNumber, triggerAt)
+		if err != nil {
+			return "", err
+		}
+		if responded {
+			return reviewTriggerAnswered, nil
+		}
+	}
+	return reviewTriggerUnanswered, nil
+}
+
+func latestReviewTrigger(comments []github.PRComment, reviewCommand string) (github.PRComment, bool) {
+	if len(comments) == 0 {
+		return github.PRComment{}, false
 	}
 	latest := comments[0]
 	for _, comment := range comments[1:] {
@@ -276,70 +303,73 @@ func reviewTriggerStatus(ctx context.Context, client github.Client, prNumber int
 			latest = comment
 		}
 	}
-	if !reviewTriggerPrefixMatches(latest.Body, reviewCommand) {
-		return reviewTriggerAnswered, nil
+	return latest, reviewTriggerPrefixMatches(latest.Body, reviewCommand)
+}
+
+func formalReviewTriggerStatus(ctx context.Context, lister github.PRReviewLister, prNumber int, triggerAt time.Time) (reviewTriggerState, bool, error) {
+	reviews, err := lister.ListPRReviews(ctx, prNumber)
+	if err != nil {
+		return "", false, err
 	}
-	triggerAt := latest.CreatedAt
-	if lister, ok := client.(github.PRReviewLister); ok {
-		reviews, err := lister.ListPRReviews(ctx, prNumber)
-		if err != nil {
-			return "", err
+	var latestReview github.PRReview
+	hasResponse := false
+	for _, review := range reviews {
+		if !reviewSurfaceAfterTrigger(triggerAt, review.CreatedAt) {
+			continue
 		}
-		var latestReview github.PRReview
-		hasResponse := false
-		for _, review := range reviews {
-			if !reviewSurfaceAfterTrigger(triggerAt, review.CreatedAt) {
-				continue
-			}
-			state := strings.ToUpper(strings.TrimSpace(review.State))
-			if state != "COMMENTED" && state != "APPROVED" && state != "CHANGES_REQUESTED" {
-				continue
-			}
-			if !hasResponse || reviewSurfaceLater(latestReview.CreatedAt, review.CreatedAt) {
-				latestReview = review
-				hasResponse = true
-			}
+		state := strings.ToUpper(strings.TrimSpace(review.State))
+		if state != "COMMENTED" && state != "APPROVED" && state != "CHANGES_REQUESTED" {
+			continue
 		}
-		if hasResponse {
-			if strings.EqualFold(strings.TrimSpace(latestReview.State), "CHANGES_REQUESTED") {
-				return reviewTriggerChangesRequested, nil
-			}
-			return reviewTriggerAnswered, nil
+		if !hasResponse || reviewSurfaceLater(latestReview.CreatedAt, review.CreatedAt) {
+			latestReview = review
+			hasResponse = true
 		}
 	}
-	if lister, ok := client.(github.PRReviewCommentLister); ok {
-		comments, err := lister.ListPRReviewComments(ctx, prNumber)
-		if err != nil {
-			return "", err
-		}
-		for _, comment := range comments {
-			if reviewSurfaceAfterTrigger(triggerAt, comment.CreatedAt) {
-				return reviewTriggerAnswered, nil
-			}
+	if !hasResponse {
+		return "", false, nil
+	}
+	if strings.EqualFold(strings.TrimSpace(latestReview.State), "CHANGES_REQUESTED") {
+		return reviewTriggerChangesRequested, true, nil
+	}
+	return reviewTriggerAnswered, true, nil
+}
+
+func hasLaterInlineReview(ctx context.Context, lister github.PRReviewCommentLister, prNumber int, triggerAt time.Time) (bool, error) {
+	comments, err := lister.ListPRReviewComments(ctx, prNumber)
+	if err != nil {
+		return false, err
+	}
+	for _, comment := range comments {
+		if reviewSurfaceAfterTrigger(triggerAt, comment.CreatedAt) {
+			return true, nil
 		}
 	}
-	return reviewTriggerUnanswered, nil
+	return false, nil
 }
 
 func reviewTriggerPrefixMatches(body, reviewCommand string) bool {
-	body = strings.TrimSpace(body)
 	if reviewCommand != config.DefaultReviewCommand {
-		return strings.HasPrefix(body, reviewCommand)
+		return strings.HasPrefix(strings.TrimSpace(body), reviewCommand)
 	}
 	lower := strings.ToLower(body)
 	const commandPrefix = "/sandman"
-	if !strings.HasPrefix(lower, commandPrefix) {
-		return false
+	for offset := 0; offset < len(lower); {
+		match := strings.Index(lower[offset:], commandPrefix)
+		if match < 0 {
+			return false
+		}
+		match += offset
+		remainder := lower[match+len(commandPrefix):]
+		if remainder != "" && (remainder[0] == ' ' || remainder[0] == '\t' || remainder[0] == '\n' || remainder[0] == '\r') {
+			remainder = strings.TrimLeft(remainder, " \t\n\r")
+			if strings.HasPrefix(remainder, "review") && (len(remainder) == len("review") || !isReviewCommandWord(remainder[len("review")])) {
+				return true
+			}
+		}
+		offset = match + len(commandPrefix)
 	}
-	remainder := lower[len(commandPrefix):]
-	if remainder == "" || (remainder[0] != ' ' && remainder[0] != '\t' && remainder[0] != '\n' && remainder[0] != '\r') {
-		return false
-	}
-	remainder = strings.TrimLeft(remainder, " \t\n\r")
-	if !strings.HasPrefix(remainder, "review") {
-		return false
-	}
-	return len(remainder) == len("review") || !isReviewCommandWord(remainder[len("review")])
+	return false
 }
 
 func isReviewCommandWord(char byte) bool {
