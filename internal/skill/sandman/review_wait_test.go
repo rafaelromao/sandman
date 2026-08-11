@@ -214,14 +214,14 @@ printf '%s\n' $((calls + 1)) > "$SANDMAN_REVIEW_WAIT_CLOCK_STATE"
 	}
 }
 
-func TestReviewWaitV1ShortensFinalCadenceToRemainingBudget(t *testing.T) {
+func TestReviewWaitV1PreservesCadenceAndShortensFinalInterval(t *testing.T) {
 	wd, err := os.Getwd()
 	if err != nil {
 		t.Fatalf("getwd: %v", err)
 	}
 	helper := filepath.Join(wd, "pr-review", "review-wait-v1.sh")
 	requestFile := filepath.Join(t.TempDir(), "42.review_request.json")
-	writeReviewWaitRequestValues(t, requestFile, "1001", "2026-08-11T18:00:01Z", "unix:250", 0, 250, 250)
+	writeReviewWaitRequestValues(t, requestFile, "1001", "2026-08-11T18:00:01Z", "unix:270", 0, 270, 270)
 	clock := filepath.Join(t.TempDir(), "clock.sh")
 	sleeper := filepath.Join(t.TempDir(), "sleeper.sh")
 	timeState := filepath.Join(t.TempDir(), "time.state")
@@ -248,25 +248,84 @@ printf '%s\n' "$1" >> "$SANDMAN_REVIEW_WAIT_SLEEP_CALLS"
 		t.Fatalf("write sleeper: %v", err)
 	}
 
-	result := runReviewWaitWithEnv(t, helper, requestFile, writePendingReviewObserver(t), false, map[string]string{
+	first := runReviewWaitWithEnv(t, helper, requestFile, writePendingReviewObserver(t), false, map[string]string{
 		"SANDMAN_REVIEW_WAIT_CLOCK":       clock,
 		"SANDMAN_REVIEW_WAIT_SLEEP":       sleeper,
 		"SANDMAN_REVIEW_WAIT_TIME_STATE":  timeState,
 		"SANDMAN_REVIEW_WAIT_SLEEP_CALLS": sleepCalls,
 	})
 
-	if result.State != "timed_out" {
-		t.Fatalf("state = %q, want timed_out", result.State)
-	}
-	if result.Elapsed != 250 {
-		t.Fatalf("elapsed_seconds = %d, want 250", result.Elapsed)
+	if first.State != "timed_out" || first.Elapsed != 270 {
+		t.Fatalf("full cadence result = %q/%d, want timed_out/270", first.State, first.Elapsed)
 	}
 	calls, err := os.ReadFile(sleepCalls)
 	if err != nil {
 		t.Fatalf("read sleep calls: %v", err)
 	}
+	if got, want := strings.TrimSpace(string(calls)), "120\n60\n60\n30"; got != want {
+		t.Fatalf("full sleep cadence = %q, want %q", got, want)
+	}
+
+	writeReviewWaitRequestValues(t, requestFile, "1002", "2026-08-11T19:00:01Z", "unix:250", 0, 250, 250)
+	if err := os.WriteFile(timeState, []byte("0\n"), 0o600); err != nil {
+		t.Fatalf("reset time state: %v", err)
+	}
+	if err := os.WriteFile(sleepCalls, nil, 0o600); err != nil {
+		t.Fatalf("reset sleep calls: %v", err)
+	}
+	second := runReviewWaitWithEnv(t, helper, requestFile, writePendingReviewObserver(t), false, map[string]string{
+		"SANDMAN_REVIEW_WAIT_CLOCK":       clock,
+		"SANDMAN_REVIEW_WAIT_SLEEP":       sleeper,
+		"SANDMAN_REVIEW_WAIT_TIME_STATE":  timeState,
+		"SANDMAN_REVIEW_WAIT_SLEEP_CALLS": sleepCalls,
+	})
+	if second.State != "timed_out" || second.Elapsed != 250 {
+		t.Fatalf("shortened cadence result = %q/%d, want timed_out/250", second.State, second.Elapsed)
+	}
+	calls, err = os.ReadFile(sleepCalls)
+	if err != nil {
+		t.Fatalf("read shortened sleep calls: %v", err)
+	}
 	if got, want := strings.TrimSpace(string(calls)), "120\n60\n60\n10"; got != want {
-		t.Fatalf("sleep cadence = %q, want %q", got, want)
+		t.Fatalf("shortened sleep cadence = %q, want %q", got, want)
+	}
+}
+
+func TestReviewWaitV1ChargesSnapshotPersistenceBeforePendingResult(t *testing.T) {
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	helper := filepath.Join(wd, "pr-review", "review-wait-v1.sh")
+	requestFile := filepath.Join(t.TempDir(), "42.review_request.json")
+	writeReviewWaitRequestValues(t, requestFile, "1001", "2026-08-11T18:00:01Z", "unix:100", 0, 100, 100)
+	timeState := filepath.Join(t.TempDir(), "time.state")
+	if err := os.WriteFile(timeState, []byte("90\n"), 0o600); err != nil {
+		t.Fatalf("write time state: %v", err)
+	}
+	clock := filepath.Join(t.TempDir(), "clock.sh")
+	if err := os.WriteFile(clock, []byte("#!/bin/sh\ntr -d '\\n' < \"$SANDMAN_REVIEW_WAIT_TIME_STATE\"\nprintf '\\n'\n"), 0o700); err != nil {
+		t.Fatalf("write clock: %v", err)
+	}
+	realMV, err := exec.LookPath("mv")
+	if err != nil {
+		t.Fatalf("find mv: %v", err)
+	}
+	bin := t.TempDir()
+	mv := filepath.Join(bin, "mv")
+	mvScript := "#!/bin/sh\ncase \"$2\" in\n  *.snapshot.json.tmp.*) printf '%s\\n' 100 > \"$SANDMAN_REVIEW_WAIT_TIME_STATE\" ;;\nesac\nexec \"" + realMV + "\" \"$@\"\n"
+	if err := os.WriteFile(mv, []byte(mvScript), 0o700); err != nil {
+		t.Fatalf("write mv wrapper: %v", err)
+	}
+
+	result := runReviewWaitWithEnv(t, helper, requestFile, writePendingReviewObserver(t), true, map[string]string{
+		"PATH":                           bin + ":" + os.Getenv("PATH"),
+		"SANDMAN_REVIEW_WAIT_CLOCK":      clock,
+		"SANDMAN_REVIEW_WAIT_TIME_STATE": timeState,
+	})
+
+	if result.State != "timed_out" || result.Elapsed != 100 {
+		t.Fatalf("post-persistence result = %q/%d, want timed_out/100", result.State, result.Elapsed)
 	}
 }
 

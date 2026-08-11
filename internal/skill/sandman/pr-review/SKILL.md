@@ -154,7 +154,8 @@ if [ -e "$request_file" ] || [ -e "$head_file" ]; then
     (.started_at | type == "string" and length > 0) and
     (.deadline_at | type == "string" and length > 0) and
     (.effective_timeout_seconds | type == "number" and floor == . and . > 0) and
-    (.deadline_unix_seconds == ((.started_unix_seconds // (.deadline_unix_seconds - .effective_timeout_seconds)) + .effective_timeout_seconds))
+    (.deadline_unix_seconds == ((.started_unix_seconds // (.deadline_unix_seconds - .effective_timeout_seconds)) + .effective_timeout_seconds)) and
+    ((.started_unix_seconds // (.deadline_unix_seconds - .effective_timeout_seconds)) >= 0)
   ' "$request_file" >/dev/null 2>&1 || record REVIEW_TIMEOUT_STATE_ERROR and stop
   persisted_head_sha=$(jq -er '.head_sha' "$request_file") || record REVIEW_TIMEOUT_STATE_ERROR and stop
   recorded_head_sha=$(tr -d '\r\n' <"$head_file") || record REVIEW_TIMEOUT_STATE_ERROR and stop

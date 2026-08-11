@@ -84,7 +84,7 @@ if ! jq -e '
 	(.confirmed_at | type == "string" and length > 0) and
 	(.started_at | type == "string" and length > 0) and
 	(.deadline_at | type == "string" and length > 0) and
-	((.started_unix_seconds // (.deadline_unix_seconds - .effective_timeout_seconds)) | type == "number" and floor == .) and
+	((.started_unix_seconds // (.deadline_unix_seconds - .effective_timeout_seconds)) | type == "number" and floor == . and . >= 0) and
 	(.deadline_unix_seconds | type == "number" and floor == . and . > 0) and
 	(.effective_timeout_seconds | type == "number" and floor == . and . > 0) and
 	(.poll_plan | type == "array" and length > 0 and all(.[]; type == "number" and floor == . and . >= 0))
@@ -125,7 +125,7 @@ if [ -e "$state_file" ]; then
 		(.deadline_unix_seconds | type == "number" and floor == . and . > 0) and
 		(.started_at | type == "string" and length > 0) and
 		(.deadline_at | type == "string" and length > 0) and
-		((.started_unix_seconds // (.deadline_unix_seconds - .effective_timeout_seconds)) | type == "number" and floor == .) and
+		((.started_unix_seconds // (.deadline_unix_seconds - .effective_timeout_seconds)) | type == "number" and floor == . and . >= 0) and
 		((.elapsed_seconds // 0) | type == "number" and floor == . and . >= 0) and
 		(.poll_plan == null or (.poll_plan | type == "array" and length > 0 and all(.[]; type == "number" and floor == . and . >= 0))) and
 		(.state | IN("pending", "responded", "timed_out", "unavailable"))
@@ -214,36 +214,51 @@ now() {
 
 run_observer() {
 	observer_output_file=$(mktemp "${TMPDIR:-/tmp}/sandman-review-wait.XXXXXX") || return 125
-	sh "$observer" --request-file "$request_file" >"$observer_output_file" 2>/dev/null &
+	observer_group=false
+	if command -v setsid >/dev/null 2>&1; then
+		setsid sh "$observer" --request-file "$request_file" >"$observer_output_file" 2>/dev/null &
+		observer_group=true
+	else
+		sh "$observer" --request-file "$request_file" >"$observer_output_file" 2>/dev/null &
+	fi
 	observer_pid=$!
-	while kill -0 "$observer_pid" 2>/dev/null; do
-		watch_now=$(now 2>/dev/null) || {
+	stop_observer() {
+		if [ "$observer_group" = true ]; then
+			kill -TERM -"$observer_pid" 2>/dev/null || true
+			kill -KILL -"$observer_pid" 2>/dev/null || true
+		else
 			kill -TERM "$observer_pid" 2>/dev/null || true
 			kill -KILL "$observer_pid" 2>/dev/null || true
+		fi
+	}
+	while kill -0 "$observer_pid" 2>/dev/null; do
+		watch_now=$(now 2>/dev/null) || {
+			stop_observer
 			wait "$observer_pid" 2>/dev/null || true
 			rm -f "$observer_output_file"
 			return 125
 		}
 		case "$watch_now" in
 			''|*[!0-9]*)
-				kill -TERM "$observer_pid" 2>/dev/null || true
-				kill -KILL "$observer_pid" 2>/dev/null || true
+				stop_observer
 				wait "$observer_pid" 2>/dev/null || true
 				rm -f "$observer_output_file"
 				return 125
 				;;
-		esac
+		 esac
 		if [ "$watch_now" -ge "$(jq -r '.deadline_unix_seconds' "$request_file")" ]; then
-			kill -TERM "$observer_pid" 2>/dev/null || true
-			kill -KILL "$observer_pid" 2>/dev/null || true
+			stop_observer
 			wait "$observer_pid" 2>/dev/null || true
 			rm -f "$observer_output_file"
-			return 124
+		return 124
 		fi
+		watch_remaining=$(( $(jq -r '.deadline_unix_seconds' "$request_file") - watch_now ))
+		watch_interval=1
+		[ "$watch_interval" -le "$watch_remaining" ] || watch_interval=$watch_remaining
 		if [ -n "$sleeper" ]; then
-			sh "$sleeper" 1 >/dev/null 2>&1 || true
+			sh "$sleeper" "$watch_interval" >/dev/null 2>&1 || true
 		else
-			sleep 1
+			sleep "$watch_interval"
 		fi
 	done
 	wait "$observer_pid"
@@ -387,6 +402,22 @@ while :; do
 		persist_unavailable snapshot-persist-failed
 		exit 0
 	fi
+	decision_now=$(now 2>/dev/null) || {
+		persist_unavailable clock-unavailable
+		exit 0
+	}
+	case "$decision_now" in
+		''|*[!0-9]*)
+			persist_unavailable clock-invalid
+			exit 0
+		;;
+	esac
+	if [ "$decision_now" -ge "$(jq -r '.deadline_unix_seconds' "$request_file")" ] && [ "$observer_state" != "unavailable" ]; then
+		observer_state=timed_out
+		observer_reason=request-deadline-exhausted
+	fi
+	elapsed_seconds=$((decision_now - request_started_unix))
+	[ "$elapsed_seconds" -ge 0 ] || elapsed_seconds=0
 
 	result_reason=$observer_reason
 	[ -n "$result_reason" ] || result_reason=$observer_state
@@ -408,7 +439,7 @@ while :; do
 		exit 0
 	fi
 
-	if [ "$completed_now" -ge "$(jq -r '.deadline_unix_seconds' "$request_file")" ]; then
+	if [ "$decision_now" -ge "$(jq -r '.deadline_unix_seconds' "$request_file")" ]; then
 		if ! write_state timed_out "$lifecycle" "$observer_head" request-deadline-exhausted "$snapshot_path" "$observer_evidence" "$elapsed_seconds"; then
 			emit_unavailable state-persist-failed
 			exit 0
@@ -418,7 +449,7 @@ while :; do
 	fi
 
 	interval=$(jq -r --argjson index "$poll_index" 'if $index < (.poll_plan | length) then .poll_plan[$index] else .poll_plan[-1] end' "$request_file")
-	remaining=$(( $(jq -r '.deadline_unix_seconds' "$request_file") - completed_now ))
+	remaining=$(( $(jq -r '.deadline_unix_seconds' "$request_file") - decision_now ))
 	sleep_interval=$interval
 	[ "$sleep_interval" -le "$remaining" ] || sleep_interval=$remaining
 	if [ -n "$sleeper" ]; then
