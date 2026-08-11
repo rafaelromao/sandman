@@ -291,6 +291,10 @@ func reviewTriggerStatus(ctx context.Context, client github.Client, prNumber int
 			if !reviewSurfaceAfterTrigger(triggerAt, review.CreatedAt) {
 				continue
 			}
+			state := strings.ToUpper(strings.TrimSpace(review.State))
+			if state != "COMMENTED" && state != "APPROVED" && state != "CHANGES_REQUESTED" {
+				continue
+			}
 			if !hasResponse || reviewSurfaceLater(latestReview.CreatedAt, review.CreatedAt) {
 				latestReview = review
 				hasResponse = true

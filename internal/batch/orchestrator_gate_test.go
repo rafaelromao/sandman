@@ -876,6 +876,32 @@ func TestCheckPRExternalGateTreatsLaterReviewSurfaceAsTriggerResponse(t *testing
 	}
 }
 
+func TestCheckPRExternalGateKeepsPendingFormalReviewUnanswered(t *testing.T) {
+	client := &fakeGitHubClient{
+		prs: map[string]*github.PR{gateTestBranch: {
+			Number:            17,
+			State:             "open",
+			HeadRefOid:        "current-sha",
+			StatusCheckRollup: "success",
+			MergeStateStatus:  "CLEAN",
+		}},
+		prComments: map[int][]github.PRComment{17: {
+			{Body: "/review please", CreatedAt: time.Unix(30, 0)},
+		}},
+		prReviews: map[int][]github.PRReview{17: {
+			{State: "PENDING", CreatedAt: time.Unix(31, 0)},
+		}},
+	}
+
+	got, err := checkPRExternalGateAtHeadWithReviewCommand(context.Background(), client, gateTestBranch, "current-sha", "/review please")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "pending" {
+		t.Fatalf("pending formal review gate = %q, want pending", got)
+	}
+}
+
 func TestCheckPRExternalGateTreatsMissingTimestampFormalResponseAsTriggerResponse(t *testing.T) {
 	client := &fakeGitHubClient{
 		prs: map[string]*github.PR{gateTestBranch: {

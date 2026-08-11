@@ -183,17 +183,23 @@ review_timeout_run <deadline_at> <direct-command> [args...]
 
 `review_timeout_run` starts a deadline watcher for a direct child, kills the child when the deadline wins, and returns `124` for a deadline timeout. A child that independently returns `124` before the deadline is remapped to `123`; other child statuses pass through. Use direct `gh` and `sleep` commands, not unbounded pipelines. The watcher recomputes remaining time after setup and before child launch; no command or sleep may intentionally be scheduled past the deadline.
 
-| Iteration | Sleep before this poll |
-|-----------|------------------------|
-| 1         | `sleep 120` (120 seconds) |
-| 2         | `sleep 60` (60 seconds)  |
-| 3         | `sleep 60` (60 seconds)  |
-| 4+        | `sleep 30` (30 seconds; repeated until the wall-clock deadline) |
+The first poll runs immediately after the deadline state is loaded. After each
+completed poll, use the following sleep before the next poll:
+
+| Completed poll | Sleep before next poll |
+|---------------|------------------------|
+| 1             | `sleep 120` (120 seconds) |
+| 2             | `sleep 60` (60 seconds)  |
+| 3             | `sleep 60` (60 seconds)  |
+| 4+            | `sleep 30` (30 seconds; repeated until the wall-clock deadline) |
 
 The response budget is the effective `REVIEW_TIMEOUT` seconds of wall-clock time
 from `started_at` to `deadline_at`. API calls, parsing, tool overhead, and sleep
 all consume the same budget. The minimum valid budget is 240 seconds, which
-allows one complete approval cycle. A command that completes exactly at the deadline is permitted; after that point no new poll or sleep may start.
+allows three polls before the deadline when the first poll is immediate. A
+formal approval may finish the loop immediately; an informal approval observed
+before the minimum 240-second Case C window must wait without starting another
+poll until that window has elapsed. A command that completes exactly at the deadline is permitted; after that point no new poll or sleep may start.
 
 Before and after every GitHub/API operation, calculate the remaining time from
 the persisted deadline. Run each operation through `review_timeout_run`; a
