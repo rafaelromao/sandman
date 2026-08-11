@@ -375,6 +375,28 @@ func TestReviewWaitV1UnavailableDoesNotApprove(t *testing.T) {
 	}
 }
 
+func TestReviewWaitV1UnavailableIsTerminalForSameTrigger(t *testing.T) {
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	helper := filepath.Join(wd, "pr-review", "review-wait-v1.sh")
+	requestFile := filepath.Join(t.TempDir(), "42.review_request.json")
+	writeReviewWaitRequest(t, requestFile, "1001", "2026-08-11T18:00:01Z", "2026-08-11T18:30:01Z")
+	unavailableObserver := writeReviewObserver(t, `{"state":"unavailable","observed_head_sha":"abc123","reason":"api-unavailable","snapshot":null}`)
+
+	first := runReviewWait(t, helper, requestFile, unavailableObserver, true)
+	if first.State != "unavailable" || first.Reason != "api-unavailable" {
+		t.Fatalf("first result = %q/%q, want unavailable/api-unavailable", first.State, first.Reason)
+	}
+
+	respondedObserver := writeReviewObserver(t, `{"state":"responded","observed_head_sha":"abc123","snapshot":{"comments":[{"body":"LGTM"}],"reviews":[],"inline_comments":[]}}`)
+	second := runReviewWait(t, helper, requestFile, respondedObserver, true)
+	if second.State != "unavailable" || second.Reason != "api-unavailable" {
+		t.Fatalf("same-trigger re-entry = %q/%q, want unavailable/api-unavailable", second.State, second.Reason)
+	}
+}
+
 func TestReviewWaitV1RejectsChangedSameTriggerWithoutResettingState(t *testing.T) {
 	wd, err := os.Getwd()
 	if err != nil {
