@@ -104,6 +104,7 @@ func TestLayout_AgentControlledPaths(t *testing.T) {
 		{"BadgeControlFilePath", l.BadgeControlFilePath(), filepath.Join(l.StateDir, ".built_with_sandman")},
 		{"PRHeadShaPath", l.PRHeadShaPath(42), filepath.Join(l.StateDir, "42.head_sha")},
 		{"PRAddressedCommentsPath", l.PRAddressedCommentsPath(42), filepath.Join(l.StateDir, "42.addressed_comments")},
+		{"PRReviewDeadlinePath", l.PRReviewDeadlinePath(42), filepath.Join(l.StateDir, "42.review_deadline")},
 	}
 	for _, tc := range cases {
 		if tc.got != tc.want {

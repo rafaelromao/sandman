@@ -2,6 +2,7 @@ package batch
 
 import (
 	"context"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -782,6 +783,7 @@ func TestCheckPRExternalGateDefersUnansweredReviewTrigger(t *testing.T) {
 		prs: map[string]*github.PR{gateTestBranch: {
 			Number:            17,
 			State:             "open",
+			HeadRefOid:        "current-sha",
 			StatusCheckRollup: "success",
 			MergeStateStatus:  "CLEAN",
 		}},
@@ -797,6 +799,79 @@ func TestCheckPRExternalGateDefersUnansweredReviewTrigger(t *testing.T) {
 	}
 	if got != "pending" {
 		t.Fatalf("unanswered review trigger gate = %q, want pending", got)
+	}
+}
+
+func TestCheckPRExternalGateTreatsLaterReviewSurfaceAsTriggerResponse(t *testing.T) {
+	client := &fakeGitHubClient{
+		prs: map[string]*github.PR{gateTestBranch: {
+			Number:            17,
+			State:             "open",
+			HeadRefOid:        "current-sha",
+			StatusCheckRollup: "success",
+			MergeStateStatus:  "CLEAN",
+		}},
+		prComments: map[int][]github.PRComment{17: {
+			{Body: "/review please", CreatedAt: time.Unix(30, 0)},
+		}},
+		prReviews: map[int][]github.PRReview{17: {
+			{State: "COMMENTED", CreatedAt: time.Unix(31, 0)},
+		}},
+	}
+
+	got, err := checkPRExternalGateAtHeadWithReviewCommand(context.Background(), client, gateTestBranch, "current-sha", "/review please")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != gateReadyToMerge {
+		t.Fatalf("responded review trigger gate = %q, want %s", got, gateReadyToMerge)
+	}
+}
+
+func TestCheckPRExternalGatePreservesRequestedChangesAfterTrigger(t *testing.T) {
+	client := &fakeGitHubClient{
+		prs: map[string]*github.PR{gateTestBranch: {
+			Number:            17,
+			State:             "open",
+			HeadRefOid:        "current-sha",
+			StatusCheckRollup: "success",
+			MergeStateStatus:  "CLEAN",
+		}},
+		prComments: map[int][]github.PRComment{17: {
+			{Body: "/review please", CreatedAt: time.Unix(30, 0)},
+		}},
+		prReviews: map[int][]github.PRReview{17: {
+			{State: "CHANGES_REQUESTED", CreatedAt: time.Unix(31, 0)},
+		}},
+	}
+
+	got, err := checkPRExternalGateAtHeadWithReviewCommand(context.Background(), client, gateTestBranch, "current-sha", "/review please")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "failed" {
+		t.Fatalf("requested changes after review trigger gate = %q, want failed", got)
+	}
+}
+
+func TestCheckPRExternalGateCommentLookupFailureCannotReady(t *testing.T) {
+	client := &fakeGitHubClient{
+		prs: map[string]*github.PR{gateTestBranch: {
+			Number:            17,
+			State:             "open",
+			HeadRefOid:        "current-sha",
+			StatusCheckRollup: "success",
+			MergeStateStatus:  "CLEAN",
+		}},
+		listPRCommentsErr: errors.New("comments unavailable"),
+	}
+
+	got, err := checkPRExternalGateAtHeadWithReviewCommand(context.Background(), client, gateTestBranch, "current-sha", "/review please")
+	if err == nil {
+		t.Fatal("comment lookup failure should be returned")
+	}
+	if got != "unavailable" {
+		t.Fatalf("comment lookup failure gate = %q, want unavailable", got)
 	}
 }
 

@@ -23,7 +23,7 @@ import (
 //	    PromptPath.
 //	(b) Repo-global state: BatchesIndexPath, EventsLogPath, plus StateDir
 //	    and its children (PromptVersionPath, BadgeControlFilePath,
-//	    PRHeadShaPath, PRAddressedCommentsPath).
+//	    PRHeadShaPath, PRAddressedCommentsPath, PRReviewDeadlinePath).
 //	(c) Per-batch + per-row tree under BatchesDir: BatchDir, BatchManifestPath,
 //	    BatchSocketPath, BatchConfigSnapshotDir, RunFolder, RunLogPath,
 //	    RunSocketPath, RunManifestPath, ReviewStatePath, RunConfigSnapshotDir.
@@ -186,6 +186,12 @@ func (l Layout) PRHeadShaPath(prNumber int) string {
 // PRAddressedCommentsPath returns the addressed-comments file for a PR: <repo>/.sandman/state/<N>.addressed_comments
 func (l Layout) PRAddressedCommentsPath(prNumber int) string {
 	return filepath.Join(l.StateDir, strconv.Itoa(prNumber)+".addressed_comments")
+}
+
+// PRReviewDeadlinePath returns the implementor-side review deadline state for
+// a PR: <repo>/.sandman/state/<N>.review_deadline.
+func (l Layout) PRReviewDeadlinePath(prNumber int) string {
+	return filepath.Join(l.StateDir, strconv.Itoa(prNumber)+".review_deadline")
 }
 
 // NewLayout resolves a Layout for the given repo root, honoring cfg.WorktreeDir

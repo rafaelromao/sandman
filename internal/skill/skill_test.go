@@ -61,7 +61,7 @@ func TestSyncInstallsSourceableReviewTimeoutHelper(t *testing.T) {
 	if err := exec.Command("sh", "-n", helper).Run(); err != nil {
 		t.Fatalf("review-timeout.sh syntax: %v", err)
 	}
-	cmd := exec.Command("sh", "-c", `. "$1"; test "$(review_timeout_cap_wait 17 30)" = 17`, "review-timeout", helper)
+	cmd := exec.Command("sh", "-c", `. "$1"; test "$(review_timeout_cap_wait 17000 30)" = 17.000`, "review-timeout", helper)
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("source installed review-timeout.sh: %v: %s", err, output)
 	}

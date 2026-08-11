@@ -172,11 +172,14 @@ func checkPRExternalGateWithHeadAndReviewCommand(ctx context.Context, client git
 	}
 	if (checkRollup == "" || checkRollup == "success") && (review == "" || review == "APPROVED") && mergeStatus == "CLEAN" {
 		if review == "" {
-			pending, err := hasUnansweredReviewTrigger(ctx, client, pr.Number, reviewCommand)
+			triggerStatus, err := reviewTriggerStatus(ctx, client, pr.Number, reviewCommand)
 			if err != nil {
 				return "unavailable", err
 			}
-			if pending {
+			if triggerStatus == reviewTriggerChangesRequested {
+				return "failed", nil
+			}
+			if triggerStatus == reviewTriggerUnanswered {
 				return "pending", nil
 			}
 		}
@@ -249,17 +252,25 @@ func (s *runSession) handleExternalGateWithHostPaths(ctx context.Context, workDi
 	return s.blockExternalGate(ctx, workDir, logPath, runID, "pending")
 }
 
-func hasUnansweredReviewTrigger(ctx context.Context, client github.Client, prNumber int, reviewCommand string) (bool, error) {
+type reviewTriggerState string
+
+const (
+	reviewTriggerAnswered         reviewTriggerState = "answered"
+	reviewTriggerChangesRequested reviewTriggerState = "changes-requested"
+	reviewTriggerUnanswered       reviewTriggerState = "unanswered"
+)
+
+func reviewTriggerStatus(ctx context.Context, client github.Client, prNumber int, reviewCommand string) (reviewTriggerState, error) {
 	reviewCommand = strings.TrimSpace(reviewCommand)
 	if client == nil || prNumber <= 0 || reviewCommand == "" {
-		return false, nil
+		return reviewTriggerAnswered, nil
 	}
 	comments, err := client.ListPRComments(ctx, prNumber)
 	if err != nil {
-		return false, err
+		return "", err
 	}
 	if len(comments) == 0 {
-		return false, nil
+		return reviewTriggerAnswered, nil
 	}
 	latest := comments[0]
 	for _, comment := range comments[1:] {
@@ -267,7 +278,39 @@ func hasUnansweredReviewTrigger(ctx context.Context, client github.Client, prNum
 			latest = comment
 		}
 	}
-	return strings.HasPrefix(strings.TrimSpace(latest.Body), reviewCommand), nil
+	if !strings.HasPrefix(strings.TrimSpace(latest.Body), reviewCommand) {
+		return reviewTriggerAnswered, nil
+	}
+	triggerAt := latest.CreatedAt
+	if lister, ok := client.(github.PRReviewLister); ok {
+		reviews, err := lister.ListPRReviews(ctx, prNumber)
+		if err != nil {
+			return "", err
+		}
+		for _, review := range reviews {
+			if !review.CreatedAt.After(triggerAt) {
+				continue
+			}
+			switch strings.ToUpper(strings.TrimSpace(review.State)) {
+			case "CHANGES_REQUESTED":
+				return reviewTriggerChangesRequested, nil
+			case "COMMENTED", "APPROVED":
+				return reviewTriggerAnswered, nil
+			}
+		}
+	}
+	if lister, ok := client.(github.PRReviewCommentLister); ok {
+		comments, err := lister.ListPRReviewComments(ctx, prNumber)
+		if err != nil {
+			return "", err
+		}
+		for _, comment := range comments {
+			if comment.CreatedAt.After(triggerAt) {
+				return reviewTriggerAnswered, nil
+			}
+		}
+	}
+	return reviewTriggerUnanswered, nil
 }
 
 func (s *runSession) currentGateHead(workDir string) string {

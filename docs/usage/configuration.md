@@ -155,9 +155,15 @@ See [Sandbox Modes](sandbox-modes.md) for detailed scheduling behavior.
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `review_timeout` | `1800` | Cumulative seconds the implementor waits for a delegated PR review response. Values below `240` are rejected |
+| `review_timeout` | `1800` | Absolute wall-clock seconds for one delegated PR review response wait. Values below `240` are rejected |
 
-`review_timeout` governs only the implementor-side delegated review response budget. It does not change the review daemon's reviewer AgentRun lifetime, external-gate polling, idle timeout, or review-pass limit. `--review-timeout` overrides the project value for one run or continuation. The effective value is rendered into the current Task and recorded in `run.started` / `run.continued` payloads.
+`review_timeout` starts after each fresh review trigger and includes API calls,
+tool overhead, parsing, and polling sleeps. It governs only the
+implementor-side delegated review response budget. It does not change the
+review daemon's reviewer AgentRun lifetime, external-gate polling, idle timeout,
+or review-pass limit. `--review-timeout` overrides the project value for one run
+or continuation. The effective value is rendered into the current Task and
+recorded in `run.started` / `run.continued` payloads.
 
 ## CLI config commands
 

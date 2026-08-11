@@ -160,22 +160,26 @@ func (r *retryRenderer) RenderReview(cfg prompt.RenderConfig, data prompt.PRData
 }
 
 type fakeGitHubClient struct {
-	issues                 map[int]*github.Issue
-	fetchRelease           map[int]<-chan struct{}
-	prs                    map[string]*github.PR
-	err                    error
-	findPRErr              error
-	findPRHook             func()
-	searchIssuesResult     []github.Issue
-	searchIssuesError      error
-	searchCalls            []string
-	issueComments          map[int][]github.IssueComment
-	listIssueCommentsCalls []int
-	prComments             map[int][]github.PRComment
-	listPRCommentsErr      error
-	subIssues              map[int][]int
-	listSubIssuesCalls     []int
-	listSubIssuesErr       error
+	issues                  map[int]*github.Issue
+	fetchRelease            map[int]<-chan struct{}
+	prs                     map[string]*github.PR
+	err                     error
+	findPRErr               error
+	findPRHook              func()
+	searchIssuesResult      []github.Issue
+	searchIssuesError       error
+	searchCalls             []string
+	issueComments           map[int][]github.IssueComment
+	listIssueCommentsCalls  []int
+	prComments              map[int][]github.PRComment
+	listPRCommentsErr       error
+	prReviews               map[int][]github.PRReview
+	listPRReviewsErr        error
+	prReviewComments        map[int][]github.PRReviewComment
+	listPRReviewCommentsErr error
+	subIssues               map[int][]int
+	listSubIssuesCalls      []int
+	listSubIssuesErr        error
 }
 
 func (f *fakeGitHubClient) FetchIssue(ctx context.Context, number int) (*github.Issue, error) {
@@ -255,6 +259,20 @@ func (f *fakeGitHubClient) ListPRComments(ctx context.Context, number int) ([]gi
 		return nil, f.listPRCommentsErr
 	}
 	return f.prComments[number], nil
+}
+
+func (f *fakeGitHubClient) ListPRReviews(ctx context.Context, number int) ([]github.PRReview, error) {
+	if f.listPRReviewsErr != nil {
+		return nil, f.listPRReviewsErr
+	}
+	return f.prReviews[number], nil
+}
+
+func (f *fakeGitHubClient) ListPRReviewComments(ctx context.Context, number int) ([]github.PRReviewComment, error) {
+	if f.listPRReviewCommentsErr != nil {
+		return nil, f.listPRReviewCommentsErr
+	}
+	return f.prReviewComments[number], nil
 }
 
 func (f *fakeGitHubClient) AuthenticatedLogin(ctx context.Context) (string, error) {

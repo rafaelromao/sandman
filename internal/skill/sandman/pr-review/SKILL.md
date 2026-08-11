@@ -56,6 +56,7 @@ description: Automates the GitHub PR review loop with the PR Review Agent. Waits
 pr_data=$(gh pr view <N> --repo <owner/repo> --json headRefOid,comments,reviewDecision,mergeStateStatus)
 mergeStateStatus=$(echo "$pr_data" | jq -r '.mergeStateStatus')
 headRefOid=$(echo "$pr_data" | jq -r '.headRefOid')
+head_sha="$headRefOid"
 reviewDecision=$(echo "$pr_data" | jq -r '.reviewDecision')
 comments=$(echo "$pr_data" | jq -r '.comments')
 ```
@@ -153,11 +154,11 @@ Before Step 4, source the helper from the synced skill tree:
 
 ```bash
 trigger_url=$(gh pr comment <N> --repo <owner/repo> --body "{{REVIEW_COMMAND}}")
+trigger_started_at=$(review_timeout_now) || record REVIEW_TIMEOUT_STATE_ERROR and stop
 trigger_id=${trigger_url##*-}
 case "$trigger_id" in
   ''|*[!0-9]*) record REVIEW_TIMEOUT_STATE_ERROR and stop ;;
 esac
-trigger_started_at=$(review_timeout_now)
 deadline_at=$(review_timeout_deadline "$trigger_started_at" "$REVIEW_TIMEOUT")
 review_timeout_write_state ".sandman/state/<N>.review_deadline" \
   "$head_sha" "$trigger_id" "$trigger_started_at" "$deadline_at" || \
@@ -168,18 +169,19 @@ The command output is the trigger URL, so its trailing issue-comment ID is the t
 
 #### Step 5: Wait for review (absolute wall-clock budget)
 
-Read the effective `REVIEW_TIMEOUT` value from the current AgentRun task context. It is an integer number of seconds supplied by the project/run configuration, not a value synchronized into this globally installed skill. If older task context has no `REVIEW_TIMEOUT` runtime value, use the compatibility fallback of **1800 seconds**. Load `.sandman/state/<N>.review_deadline` and verify that its `head_sha` and `trigger_id` match the current head and latest trigger. Reuse its `started_at` and `deadline_at`; only a genuinely new trigger may replace them. A malformed state file for the current trigger is `REVIEW_TIMEOUT_STATE_ERROR`, not permission to reset the deadline.
+Read the effective `REVIEW_TIMEOUT` value from the current AgentRun task context. It is an integer number of seconds supplied by the project/run configuration, not a value synchronized into this globally installed skill. If older task context has no `REVIEW_TIMEOUT` runtime value, use the compatibility fallback of **1800 seconds**. Load `.sandman/state/<N>.review_deadline` and use `review_timeout_state_matches` to verify that its `head_sha` and `trigger_id` match the current head and latest trigger. Reuse its `started_at` and `deadline_at`; only a genuinely new trigger may replace them. A malformed state file for the current trigger is `REVIEW_TIMEOUT_STATE_ERROR`, not permission to reset the deadline.
 
-The helper at `~/.agents/skills/sandman/pr-review/review-timeout.sh` defines the wall-clock policy. Its pure functions use integer epoch seconds:
+The helper at `~/.agents/skills/sandman/pr-review/review-timeout.sh` defines the wall-clock policy. Timestamps use integer epoch milliseconds when the host `date` supports them, with a whole-second fallback; the configured budget and polling cadence remain seconds:
 
 ```bash
 review_timeout_deadline <started_at> <budget>
 review_timeout_remaining <deadline_at> <now>
 review_timeout_cap_wait <remaining> <requested>
+review_timeout_state_matches <state_path> <head_sha> <trigger_id>
 review_timeout_run <deadline_at> <direct-command> [args...]
 ```
 
-`review_timeout_run` starts a deadline watcher for a direct child, kills the child when the deadline wins, and returns `124` for a deadline timeout. A child that independently returns `124` before the deadline remains an ordinary command result; compare the clock after the command to distinguish it. Use direct `gh` and `sleep` commands, not unbounded pipelines. The watcher is cooperative at integer-second clock resolution; no command or sleep may intentionally be scheduled past the deadline.
+`review_timeout_run` starts a deadline watcher for a direct child, kills the child when the deadline wins, and returns `124` for a deadline timeout. A child that independently returns `124` before the deadline is remapped to `123`; other child statuses pass through. Use direct `gh` and `sleep` commands, not unbounded pipelines. The watcher recomputes remaining time after setup and before child launch; no command or sleep may intentionally be scheduled past the deadline.
 
 | Iteration | Sleep before this poll |
 |-----------|------------------------|
@@ -194,9 +196,11 @@ all consume the same budget. The minimum valid budget is 240 seconds, which
 allows one complete approval cycle. A command that completes exactly at the deadline is permitted; after that point no new poll or sleep may start.
 
 Before and after every GitHub/API operation, calculate the remaining time from
-the persisted deadline. Run each operation through `review_timeout_run`; if it
-returns `124`, or the after-command clock is past the deadline, record
-`REVIEW_TIMEOUT` and exit. Before every sleep, use
+the persisted deadline. Run each operation through `review_timeout_run`; a
+non-zero result before the deadline is a transient poll failure and must be
+retried without resetting the deadline. If it returns `124`, or the
+after-command clock is past the deadline, record `REVIEW_TIMEOUT` and exit.
+Before every sleep, use
 `review_timeout_cap_wait` to shorten the requested cadence to the remaining
 budget. If no positive wait remains, record `REVIEW_TIMEOUT` and exit. The
 wall-clock elapsed time and poll count are the approval-cycle evidence; a new review request resets them, while ordinary polls, pending-trigger checks, and
@@ -209,9 +213,22 @@ retries of the same wait do not.
 On **every** poll iteration run all three commands separately:
 
 ```bash
-view=$(review_timeout_run "$deadline_at" gh pr view <N> --repo <owner/repo> --json comments,reviewDecision,mergeStateStatus) || record REVIEW_TIMEOUT and exit
-reviews=$(review_timeout_run "$deadline_at" gh api repos/<owner>/<repo>/pulls/<N>/reviews) || record REVIEW_TIMEOUT and exit
-inline=$(review_timeout_run "$deadline_at" gh api repos/<owner>/<repo>/pulls/<N>/comments --paginate) || record REVIEW_TIMEOUT and exit
+view=$(review_timeout_run "$deadline_at" gh pr view <N> --repo <owner/repo> --json comments,reviewDecision,mergeStateStatus)
+view_status=$?
+reviews=$(review_timeout_run "$deadline_at" gh api repos/<owner>/<repo>/pulls/<N>/reviews)
+reviews_status=$?
+inline=$(review_timeout_run "$deadline_at" gh api repos/<owner>/<repo>/pulls/<N>/comments --paginate)
+inline_status=$?
+now=$(review_timeout_now)
+if { [ "$view_status" -eq 124 ] && [ "$now" -ge "$deadline_at" ]; } || \
+   { [ "$reviews_status" -eq 124 ] && [ "$now" -ge "$deadline_at" ]; } || \
+   { [ "$inline_status" -eq 124 ] && [ "$now" -ge "$deadline_at" ]; } || \
+   [ "$now" -gt "$deadline_at" ]; then
+  record REVIEW_TIMEOUT and exit
+fi
+if [ "$view_status" -ne 0 ] || [ "$reviews_status" -ne 0 ] || [ "$inline_status" -ne 0 ]; then
+  record a transient poll warning and continue without resetting the deadline
+fi
 ```
 
 Counter: `top=<count> reviews=<count> inline=<count>`
@@ -228,6 +245,10 @@ A reviewer response is **any** of:
 
 **Self-check (after every poll, before classifying):**
 If `top > 0` AND `reviews == 0` AND `inline == 0`, AND no previous `{{REVIEW_COMMAND}}` is already pending without response, post a follow-up comment with `{{REVIEW_COMMAND}}` plus a freeform clarification request. If a request is already pending, skip — do not pile on.
+
+The follow-up is a new review request: use the complete Step 4 trigger-post
+sequence, capture its new comment ID, and replace the persisted deadline state.
+Do not post it through an unbounded direct command.
 
 If no reviewer response arrives within the effective budget, stop and exit the
 loop with a `REVIEW_TIMEOUT` reason documented in `.sandman/task.md` and the

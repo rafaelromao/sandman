@@ -26,7 +26,9 @@ review request. The deadline starts immediately after the trigger post is
 confirmed and includes GitHub/API calls, command overhead, parsing, and polling
 sleep. A new trigger starts a new deadline; retries, continuations, and ordinary
 polls of the same trigger reuse the persisted `(head_sha, trigger_id,
-started_at, deadline_at)` state.
+started_at, deadline_at)` state. The skill uses millisecond timestamps when the
+host clock supports them and falls back to whole seconds without changing the
+configured value's unit.
 
 Render the effective value into the current AgentRun task context and expose it
 as the `REVIEW_TIMEOUT` prompt key. Retries of the same AgentRun retain the
@@ -57,6 +59,5 @@ from silently restoring expired review time.
   consistent when the policy changes.
 - Older task files require the skill's 1800-second compatibility fallback.
 - A larger budget can keep an implementor AgentRun active longer.
-- Integer-second process watching can observe a scheduler overrun of up to one
-  clock second, but the loop never intentionally starts a command or sleep
-  after its deadline.
+- Hosts with millisecond clocks do not intentionally schedule work after the
+  deadline; whole-second fallback is bounded by its clock granularity.

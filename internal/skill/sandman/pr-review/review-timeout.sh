@@ -5,7 +5,11 @@
 # exercise with fixed timestamps.
 
 review_timeout_now() {
-	date +%s
+	now=$(date +%s%3N 2>/dev/null) || return 1
+	case "$now" in
+		''|*[!0-9]*) now=$(date +%s)000 || return 1 ;;
+	esac
+	printf '%s\n' "$now"
 }
 
 review_timeout_integer() {
@@ -18,7 +22,7 @@ review_timeout_deadline() {
 	[ "$#" -eq 2 ] || return 2
 	review_timeout_integer "$1" || return 2
 	review_timeout_integer "$2" || return 2
-	printf '%s\n' "$(( $1 + $2 ))"
+	printf '%s\n' "$(( $1 + ($2 * 1000) ))"
 }
 
 review_timeout_remaining() {
@@ -34,11 +38,30 @@ review_timeout_cap_wait() {
 	review_timeout_integer "$2" || return 2
 	[ "$1" -gt 0 ] || return 1
 	[ "$2" -gt 0 ] || return 1
-	if [ "$2" -gt "$1" ]; then
-		printf '%s\n' "$1"
+	requested_ms=$(( $2 * 1000 ))
+	if [ "$requested_ms" -gt "$1" ]; then
+		wait_ms=$1
 	else
-		printf '%s\n' "$2"
+		wait_ms=$requested_ms
 	fi
+	printf '%s.%03d\n' "$((wait_ms / 1000))" "$((wait_ms % 1000))"
+}
+
+review_timeout_state_field() {
+	[ "$#" -eq 2 ] || return 2
+	[ -f "$1" ] || return 1
+	awk -F= -v key="$2" '$1 == key { print substr($0, index($0, "=") + 1); found = 1; exit } END { if (!found) exit 1 }' "$1"
+}
+
+review_timeout_state_matches() {
+	[ "$#" -eq 3 ] || return 2
+	[ "$(review_timeout_state_field "$1" head_sha)" = "$2" ] || return 1
+	[ "$(review_timeout_state_field "$1" trigger_id)" = "$3" ] || return 1
+	started_at=$(review_timeout_state_field "$1" started_at) || return 1
+	deadline_at=$(review_timeout_state_field "$1" deadline_at) || return 1
+	review_timeout_integer "$started_at" || return 1
+	review_timeout_integer "$deadline_at" || return 1
+	[ "$deadline_at" -ge "$started_at" ] || return 1
 }
 
 # review_timeout_run runs one direct child under an absolute deadline. It
@@ -50,12 +73,39 @@ review_timeout_run() {
 	shift
 	now=$(review_timeout_now) || return 125
 	remaining=$(review_timeout_remaining "$deadline" "$now") || return 125
-	wait_seconds=$(review_timeout_cap_wait "$remaining" "$remaining") || return 124
+	review_timeout_cap_wait "$remaining" 1 >/dev/null || return 124
 
 	marker=$(mktemp "${TMPDIR:-/tmp}/sandman-review-timeout.XXXXXX") || return 125
 	rm -f "$marker"
+	now_before_start=$(review_timeout_now) || {
+		rm -f "$marker"
+		return 125
+	}
+	remaining=$(review_timeout_remaining "$deadline" "$now_before_start") || {
+		rm -f "$marker"
+		return 125
+	}
+	requested_seconds=$(( (remaining + 999) / 1000 ))
+	wait_seconds=$(review_timeout_cap_wait "$remaining" "$requested_seconds") || {
+		rm -f "$marker"
+		return 124
+	}
 	"$@" &
 	child_pid=$!
+	now_after_start=$(review_timeout_now) || now_after_start=$deadline
+	remaining=$(review_timeout_remaining "$deadline" "$now_after_start") || {
+		kill -KILL "$child_pid" 2>/dev/null || true
+		wait "$child_pid" 2>/dev/null || true
+		rm -f "$marker"
+		return 125
+	}
+	requested_seconds=$(( (remaining + 999) / 1000 ))
+	wait_seconds=$(review_timeout_cap_wait "$remaining" "$requested_seconds") || {
+		kill -KILL "$child_pid" 2>/dev/null || true
+		wait "$child_pid" 2>/dev/null || true
+		rm -f "$marker"
+		return 124
+	}
 	(
 		sleep "$wait_seconds"
 		if kill -0 "$child_pid" 2>/dev/null; then
@@ -78,6 +128,9 @@ review_timeout_run() {
 	rm -f "$marker"
 	if [ "$timed_out" = true ]; then
 		return 124
+	fi
+	if [ "$child_status" -eq 124 ]; then
+		return 123
 	fi
 	return "$child_status"
 }
