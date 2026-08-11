@@ -402,6 +402,9 @@ func isInformalReviewApproval(body string) bool {
 		return ' '
 	}, body)
 	body = strings.Join(strings.Fields(body), " ")
+	if strings.HasSuffix(body, "decision approved") {
+		return true
+	}
 	for _, phrase := range []string{
 		"lgtm",
 		"looks good",

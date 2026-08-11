@@ -214,6 +214,12 @@ budget. If no positive wait remains, record `REVIEW_TIMEOUT` and exit. The
 wall-clock elapsed time and poll count are the approval-cycle evidence; a new review request resets them, while ordinary polls, pending-trigger checks, and
 retries of the same wait do not.
 
+Run each capped sleep under the same deadline watcher:
+
+```bash
+review_timeout_run "$deadline_at" sleep "$wait_seconds" || record REVIEW_TIMEOUT and exit
+```
+
 **Hard rule — observed-response fast path.** If any poll iteration observes a new top-level PR conversation comment that does not begin with `{{REVIEW_COMMAND}}`, the very next sleep MUST be ≤ 60s.
 
 **Hard rule — DIRTY mid-poll must trigger back-merge, not be observed and ignored.** A PR whose `mergeStateStatus` was CLEAN at Step 1 can drift to `DIRTY` mid-poll once a new commit lands on the base branch and conflicts with the PR. The DIRTY pre-check at Step 2 only catches the initial state; subsequent polls MUST detect and resolve this. See Step 5a.
@@ -231,7 +237,7 @@ view_status=$?
 view_file=$(mktemp "${TMPDIR:-/tmp}/sandman-review-view.XXXXXX") || record REVIEW_TIMEOUT_STATE_ERROR and stop
 printf '%s' "$view" >"$view_file" || { rm -f "$view_file"; record REVIEW_TIMEOUT_STATE_ERROR and stop; }
 now=$(review_timeout_now)
-if [ "$now" -ge "$deadline_at" ]; then
+if [ "$now" -gt "$deadline_at" ]; then
   rm -f "$view_file"
   record REVIEW_TIMEOUT and exit
 fi
