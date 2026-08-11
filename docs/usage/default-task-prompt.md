@@ -22,7 +22,7 @@ The shared Sandman skill owns the detailed workflow. This page describes the boo
     - Source branch: `{{SOURCE_BRANCH}}`
     - Base branch: `{{BASE_BRANCH}}`
     - Review command: `{{REVIEW_COMMAND}}`
-    - Delegated review response wall-clock budget: `{{REVIEW_TIMEOUT}}` seconds
+    - Delegated review response timeout: `{{REVIEW_TIMEOUT}}` seconds (absolute wall-clock budget)
     
     The worktree MUST be checked out on `{{BRANCH}}` when the run finishes. Do not switch to `{{BASE_BRANCH}}` or any other branch before exiting.
     
