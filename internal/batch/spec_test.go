@@ -337,6 +337,48 @@ func TestSpecificationResolver_ExplicitNestedSpecificationRecursesWithoutBacklin
 	}
 }
 
+func TestSpecificationResolver_QualifiedChildHeadingRecurses(t *testing.T) {
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			1: {Number: 1, Title: "Outer specification", Body: "## Subissues for parent area\n\n- #2\n"},
+			2: {Number: 2, Title: "Nested specification", Body: "## Subissues for parent area\n\n- #3\n"},
+			3: {Number: 3, Title: "Nested child", Body: "## What to build\n\nNo backlink.\n"},
+		},
+	}
+
+	got, parentChildren, err := NewSpecificationResolver(client, io.Discard).Resolve(context.Background(), []int{1})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !equalInts(got, []int{2, 3, 1}) {
+		t.Fatalf("expected qualified nested expansion [2 3 1], got %v", got)
+	}
+	if !equalInts(parentChildren[1], []int{2}) || !equalInts(parentChildren[2], []int{3}) {
+		t.Fatalf("expected retained parent gates [1]=[2], [2]=[3], got %v", parentChildren)
+	}
+}
+
+func TestSpecificationResolver_TypedNativeChildRetainsParentGate(t *testing.T) {
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			1:  {Number: 1, Title: "Parent", Body: "## What to build\n\nNative child only.\n"},
+			10: {Number: 10, Title: "Native child", Body: "## What to build\n\nNo parent backlink.\n"},
+		},
+		subIssues: map[int][]int{1: {10}},
+	}
+
+	got, parentChildren, err := NewSpecificationResolver(client, io.Discard).Resolve(context.Background(), []int{1, 10})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !equalInts(got, []int{10, 1}) {
+		t.Fatalf("expected typed native child and retained parent [10 1], got %v", got)
+	}
+	if !equalInts(parentChildren[1], []int{10}) {
+		t.Fatalf("expected ParentChildren[1] = [10], got %v", parentChildren)
+	}
+}
+
 func TestSpecificationResolver_CommentAndSearchCandidatesStillRequireParentBacklink(t *testing.T) {
 	tests := []struct {
 		name          string

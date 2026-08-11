@@ -130,6 +130,12 @@ func specSectionPattern(name string) *regexp.Regexp {
 // typed alongside the parent) is still expanded because the user
 // explicitly asked for it.
 func (r *SpecificationResolver) IsSpecification(body string) bool {
+	// Child declarations take precedence over the broad parent-heading
+	// matcher, which can also match qualified headings such as
+	// "Subissues for parent area".
+	if github.ParseChildrenFromBody(body) != nil {
+		return true
+	}
 	bodyNoParent := StripParentSection(body)
 	if github.ParseChildrenFromBody(bodyNoParent) != nil {
 		return true
@@ -429,6 +435,13 @@ func (r *SpecificationResolver) collectAcceptedChildren(ctx context.Context, par
 	if len(candidates) == 0 {
 		return nil, nil
 	}
+	explicitChildren := make(map[int]struct{}, len(subIssues))
+	for _, child := range github.ParseChildrenFromBody(body) {
+		explicitChildren[child] = struct{}{}
+	}
+	for _, child := range subIssues {
+		explicitChildren[child] = struct{}{}
+	}
 	childIssues := make([]*github.Issue, len(candidates))
 	fetchErrors := make([]error, len(candidates))
 	pending := make([]int, 0, len(candidates))
@@ -436,7 +449,9 @@ func (r *SpecificationResolver) collectAcceptedChildren(ctx context.Context, par
 		if _, ok := ancestorSet[child]; ok {
 			// Either the user-typed input itself or the current
 			// parent — not a child of the current parent.
-			continue
+			if _, explicit := explicitChildren[child]; !explicit {
+				continue
+			}
 		}
 		pending = append(pending, idx)
 	}
@@ -481,15 +496,14 @@ sendLoop:
 		return nil, err
 	}
 	accepted := make([]int, 0, len(candidates))
-	explicitChildren := make(map[int]struct{}, len(subIssues))
-	for _, child := range github.ParseChildrenFromBody(body) {
-		explicitChildren[child] = struct{}{}
-	}
-	for _, child := range subIssues {
-		explicitChildren[child] = struct{}{}
-	}
 	for idx, child := range candidates {
 		if _, ok := ancestorSet[child]; ok {
+			if child != recursionParent {
+				if _, explicit := explicitChildren[child]; explicit {
+					accepted = append(accepted, child)
+					continue
+				}
+			}
 			// Ancestor echo (parent or outer user input): accept
 			// it for the recursion carve-out only when the
 			// carve-out is enabled (see above) AND the candidate
