@@ -112,7 +112,7 @@ Useful init flags:
 | `--review-command` | Command injected into prompts and skills |
 | `--retries` | Persist default retry count |
 | `--run-idle-timeout` | Persist idle timeout in seconds |
-| `--review-timeout` | Persist delegated review response timeout in seconds; minimum `240`, default `1800` |
+| `--review-timeout` | Persist the absolute wall-clock delegated review response budget in seconds; minimum `240`, default `1800` |
 
 ## Changing presets later
 

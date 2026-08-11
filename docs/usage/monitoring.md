@@ -54,7 +54,7 @@ Emitted when an agent run begins. `run.continued` carries the same fields as `ru
 |-------|-------------|
 | `batch_id` | Public BatchId. Equals the batch folder basename and is the batch-level identifier (not the per-row `run_id` above). |
 | `run_kind` | Optional taxonomy tag. `"review"` is signalled via the boolean `review` field. Issue-driven and prompt-only runs leave it absent. |
-| `review_timeout` | Effective delegated review response budget in integer seconds for this AgentRun. |
+| `review_timeout` | Effective absolute wall-clock delegated review response budget in integer seconds for this AgentRun. It includes API calls, tool overhead, parsing, and polling sleeps. |
 
 #### `run.queued`
 Emitted when an issue enters the wait queue due to unresolved blockers or parallel capacity constraints.
@@ -131,6 +131,11 @@ the intervention.
 External-gate terminal blockers are also appended to the run log and persisted
 under `## External Gate` in the worktree's `.sandman/task.md`, including the
 next executable action.
+
+The `review_timeout` budget above belongs to the implementor's delegated review
+loop and starts again only for a fresh review trigger. It is separate from the
+external-gate polling budget described here, which remains an 1800-second
+wall-clock limit for CI and review-gate checks after an agent exits.
 
 #### `run.aborted`
 Emitted when a run is aborted via context cancellation (e.g. SIGINT/SIGTERM). Also emitted for runs that were still queued (waiting on the turn gate or the start gate) when the batch was cancelled, and cascaded to dependents whose in-batch blocker finished with status `aborted` (instead of `run.blocked`). For queued/cascaded runs, the `RunID` matches the prior `run.queued` event so projection collapses to a single `RunState`.

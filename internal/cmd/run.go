@@ -796,7 +796,7 @@ func NewRunCmd(deps Dependencies) *cobra.Command {
 	cmd.Flags().Int("retries", 0, "Retry failed AgentRuns up to N times")
 	cmd.Flags().Int("start-delay", 0, "Wait N seconds after any AgentRun finishes before starting the next one; 0 disables the delay")
 	cmd.Flags().Int("run-idle-timeout", 0, "Treat an AgentRun as stuck if it produces no output for N seconds; 0 disables the timeout")
-	cmd.Flags().Int("review-timeout", 0, fmt.Sprintf("Delegated review response budget in seconds; omit for config/default (%d), minimum %d", config.DefaultReviewTimeout, config.MinReviewTimeout))
+	cmd.Flags().Int("review-timeout", 0, fmt.Sprintf("Delegated review response wall-clock budget in seconds; omit for config/default (%d), minimum %d", config.DefaultReviewTimeout, config.MinReviewTimeout))
 	cmd.Flags().String("sandbox", "", "Sandbox mode: podman (default), docker, or worktree")
 	cmd.Flags().Int("container-capacity", 0, "Maximum concurrent agent runs per container; 0 means unlimited")
 	cmd.Flags().Int("max-containers", 0, "Maximum number of containers to run at once; 0 means no cap")

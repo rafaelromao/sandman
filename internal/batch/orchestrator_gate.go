@@ -171,17 +171,15 @@ func checkPRExternalGateWithHeadAndReviewCommand(ctx context.Context, client git
 		}
 	}
 	if (checkRollup == "" || checkRollup == "success") && (review == "" || review == "APPROVED") && mergeStatus == "CLEAN" {
-		if review == "" {
-			triggerStatus, err := reviewTriggerStatus(ctx, client, pr.Number, reviewCommand)
-			if err != nil {
-				return "unavailable", err
-			}
-			if triggerStatus == reviewTriggerChangesRequested {
-				return "failed", nil
-			}
-			if triggerStatus == reviewTriggerUnanswered {
-				return "pending", nil
-			}
+		triggerStatus, err := reviewTriggerStatus(ctx, client, pr.Number, reviewCommand)
+		if err != nil {
+			return "unavailable", err
+		}
+		if triggerStatus == reviewTriggerChangesRequested {
+			return "failed", nil
+		}
+		if triggerStatus == reviewTriggerUnanswered {
+			return "pending", nil
 		}
 		return gateReadyToMerge, nil
 	}
@@ -274,7 +272,7 @@ func reviewTriggerStatus(ctx context.Context, client github.Client, prNumber int
 	}
 	latest := comments[0]
 	for _, comment := range comments[1:] {
-		if comment.CreatedAt.After(latest.CreatedAt) || comment.CreatedAt.Equal(latest.CreatedAt) {
+		if latest.CreatedAt.IsZero() || comment.CreatedAt.IsZero() || comment.CreatedAt.After(latest.CreatedAt) || comment.CreatedAt.Equal(latest.CreatedAt) {
 			latest = comment
 		}
 	}
@@ -287,16 +285,22 @@ func reviewTriggerStatus(ctx context.Context, client github.Client, prNumber int
 		if err != nil {
 			return "", err
 		}
+		var latestReview github.PRReview
+		hasResponse := false
 		for _, review := range reviews {
-			if !review.CreatedAt.After(triggerAt) {
+			if !reviewSurfaceAfterTrigger(triggerAt, review.CreatedAt) {
 				continue
 			}
-			switch strings.ToUpper(strings.TrimSpace(review.State)) {
-			case "CHANGES_REQUESTED":
-				return reviewTriggerChangesRequested, nil
-			case "COMMENTED", "APPROVED":
-				return reviewTriggerAnswered, nil
+			if !hasResponse || reviewSurfaceLater(latestReview.CreatedAt, review.CreatedAt) {
+				latestReview = review
+				hasResponse = true
 			}
+		}
+		if hasResponse {
+			if strings.EqualFold(strings.TrimSpace(latestReview.State), "CHANGES_REQUESTED") {
+				return reviewTriggerChangesRequested, nil
+			}
+			return reviewTriggerAnswered, nil
 		}
 	}
 	if lister, ok := client.(github.PRReviewCommentLister); ok {
@@ -305,12 +309,20 @@ func reviewTriggerStatus(ctx context.Context, client github.Client, prNumber int
 			return "", err
 		}
 		for _, comment := range comments {
-			if comment.CreatedAt.After(triggerAt) {
+			if reviewSurfaceAfterTrigger(triggerAt, comment.CreatedAt) {
 				return reviewTriggerAnswered, nil
 			}
 		}
 	}
 	return reviewTriggerUnanswered, nil
+}
+
+func reviewSurfaceAfterTrigger(triggerAt, responseAt time.Time) bool {
+	return triggerAt.IsZero() || responseAt.IsZero() || responseAt.After(triggerAt)
+}
+
+func reviewSurfaceLater(currentAt, candidateAt time.Time) bool {
+	return currentAt.IsZero() || candidateAt.IsZero() || candidateAt.After(currentAt) || candidateAt.Equal(currentAt)
 }
 
 func (s *runSession) currentGateHead(workDir string) string {

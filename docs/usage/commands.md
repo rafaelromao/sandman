@@ -31,7 +31,7 @@ sandman init [flags]
 | `--retries` | `-1` | Persist `retries` in scaffolded config. `-1` keeps the built-in default of `3`; `0` disables retries |
 | `--parallel-reviews` | `-1` | Persist `parallel_reviews` in scaffolded config (default `1`) |
 | `--run-idle-timeout` | `-1` | Persist `run_idle_timeout` (seconds) in scaffolded config. `-1` keeps the built-in default of `1800`; `0` disables the heartbeat watchdog |
-| `--review-timeout` | omitted | Persist `review_timeout` (seconds) in scaffolded config. Default `1800`; values below `240` are invalid |
+| `--review-timeout` | omitted | Persist the absolute wall-clock `review_timeout` budget (seconds) in scaffolded config. Default `1800`; values below `240` are invalid |
 
 When `--tool-version` is omitted, `init` uses the preset resolver's interactive defaults: repo hints are offered when present, otherwise `latest`/`lts` choices are prompted.
 

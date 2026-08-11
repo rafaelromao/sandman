@@ -153,13 +153,13 @@ Before Step 4, source the helper from the synced skill tree:
 ```
 
 ```bash
-trigger_url=$(gh pr comment <N> --repo <owner/repo> --body "{{REVIEW_COMMAND}}")
+trigger_url=$(gh pr comment <N> --repo <owner/repo> --body "{{REVIEW_COMMAND}}") || record REVIEW_TIMEOUT_STATE_ERROR and stop
 trigger_started_at=$(review_timeout_now) || record REVIEW_TIMEOUT_STATE_ERROR and stop
 trigger_id=${trigger_url##*-}
 case "$trigger_id" in
   ''|*[!0-9]*) record REVIEW_TIMEOUT_STATE_ERROR and stop ;;
 esac
-deadline_at=$(review_timeout_deadline "$trigger_started_at" "$REVIEW_TIMEOUT")
+deadline_at=$(review_timeout_deadline "$trigger_started_at" "$REVIEW_TIMEOUT") || record REVIEW_TIMEOUT_STATE_ERROR and stop
 review_timeout_write_state ".sandman/state/<N>.review_deadline" \
   "$head_sha" "$trigger_id" "$trigger_started_at" "$deadline_at" || \
   record REVIEW_TIMEOUT_STATE_ERROR and stop
@@ -171,7 +171,7 @@ The command output is the trigger URL, so its trailing issue-comment ID is the t
 
 Read the effective `REVIEW_TIMEOUT` value from the current AgentRun task context. It is an integer number of seconds supplied by the project/run configuration, not a value synchronized into this globally installed skill. If older task context has no `REVIEW_TIMEOUT` runtime value, use the compatibility fallback of **1800 seconds**. Load `.sandman/state/<N>.review_deadline` and use `review_timeout_state_matches` to verify that its `head_sha` and `trigger_id` match the current head and latest trigger. Reuse its `started_at` and `deadline_at`; only a genuinely new trigger may replace them. A malformed state file for the current trigger is `REVIEW_TIMEOUT_STATE_ERROR`, not permission to reset the deadline.
 
-The helper at `~/.agents/skills/sandman/pr-review/review-timeout.sh` defines the wall-clock policy. Timestamps use integer epoch milliseconds when the host `date` supports them, with a whole-second fallback; the configured budget and polling cadence remain seconds:
+The helper at `~/.agents/skills/sandman/pr-review/review-timeout.sh` defines the wall-clock policy. Timestamps use integer epoch milliseconds when the host `date` supports them, with a whole-second fallback; the configured budget and polling cadence remain seconds. A missing, malformed, or identity-mismatched state file is `REVIEW_TIMEOUT_STATE_ERROR`; never silently create a replacement deadline while a trigger is pending:
 
 ```bash
 review_timeout_deadline <started_at> <budget>

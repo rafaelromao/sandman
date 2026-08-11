@@ -57,6 +57,9 @@ func TestReviewTimeoutHelperUsesWallClockRemaining(t *testing.T) {
 	if remaining != "115000" {
 		t.Fatalf("remaining = %q, want 115000", remaining)
 	}
+	if _, err := runReviewTimeoutHelper(t, "review_timeout_remaining", deadline, deadline); err == nil {
+		t.Fatal("expired deadline should reject remaining time")
+	}
 
 	if _, err := runReviewTimeoutHelper(t, "review_timeout_cap_wait", "0", "30"); err == nil {
 		t.Fatal("expired deadline should reject a wait")

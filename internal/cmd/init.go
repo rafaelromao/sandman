@@ -133,7 +133,7 @@ func NewInitCmd() *cobra.Command {
 	cmd.Flags().String("review-command", "", "Review command to store in config and install into shared skills")
 	cmd.Flags().Int("retries", -1, fmt.Sprintf("Persist `retries` in scaffolded config (-1 = use built-in default of %d)", config.DefaultRetries))
 	cmd.Flags().Int("run-idle-timeout", -1, fmt.Sprintf("Persist `run_idle_timeout` in scaffolded config (-1 = use built-in default of %d)", config.DefaultRunIdleTimeout))
-	cmd.Flags().Int("review-timeout", 0, fmt.Sprintf("Persist `review_timeout` in scaffolded config (seconds; default %d, minimum %d; 0 is invalid)", config.DefaultReviewTimeout, config.MinReviewTimeout))
+	cmd.Flags().Int("review-timeout", 0, fmt.Sprintf("Persist `review_timeout` in scaffolded config (absolute wall-clock seconds; default %d, minimum %d; 0 is invalid)", config.DefaultReviewTimeout, config.MinReviewTimeout))
 
 	return cmd
 }
