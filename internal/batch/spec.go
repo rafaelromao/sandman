@@ -103,9 +103,10 @@ func specSectionPattern(name string) *regexp.Regexp {
 // IsSpecification reports whether the body looks like a
 // Specification. A body is a Specification if it carries a
 // children-list declaration (an H2 heading whose title contains the
-// word `children` or `child`, case-insensitive substring — `##
-// Children`, `## Child Issues`, `## Leaf children`, `## Children in
-// this area`, `## Child tasks`, etc.) OR the canonical
+// word `children` or `child`, or a `subissues` spelling, all
+// case-insensitive — `## Children`, `## Child Issues`, `## Leaf
+// children`, `## Children in this area`, `## Child tasks`, `##
+// Subissues`, etc.) OR the canonical
 // Specification shape (`## Problem Statement` + `## Solution`; `##
 // User Stories` is optional and does not contribute to the
 // canonical signal). The widened children-heading matcher is
@@ -129,6 +130,12 @@ func specSectionPattern(name string) *regexp.Regexp {
 // typed alongside the parent) is still expanded because the user
 // explicitly asked for it.
 func (r *SpecificationResolver) IsSpecification(body string) bool {
+	// Child declarations take precedence over the broad parent-heading
+	// matcher, which can also match qualified headings such as
+	// "Subissues for parent area".
+	if github.ParseChildrenFromBody(body) != nil {
+		return true
+	}
 	bodyNoParent := StripParentSection(body)
 	if github.ParseChildrenFromBody(bodyNoParent) != nil {
 		return true
@@ -391,10 +398,11 @@ func (r *SpecificationResolver) expandOne(
 
 // collectAcceptedChildren runs the existing collectCandidates flow (body refs →
 // comments → search fallback) merged with the pre-collected subIssue numbers
-// gathered by expandOne. It applies the per-candidate ## Parent
-// verification. User-typed inputs bypass verification on the immediate
-// acceptance step but are still subject to recursive expansion in
-// expandOne.
+// gathered by expandOne. Structured child-section entries and native sub-issue
+// relationships are explicit child declarations, so they bypass the child
+// backlink verification. Other candidates still require a matching ## Parent
+// section. User-typed inputs bypass verification on the immediate acceptance
+// step but are still subject to recursive expansion in expandOne.
 //
 // The userInputSet carve-out (accepting ancestors that are user-typed
 // inputs without ## Parent verification) only fires when the issue
@@ -427,6 +435,13 @@ func (r *SpecificationResolver) collectAcceptedChildren(ctx context.Context, par
 	if len(candidates) == 0 {
 		return nil, nil
 	}
+	explicitChildren := make(map[int]struct{}, len(subIssues))
+	for _, child := range github.ParseChildrenFromBody(body) {
+		explicitChildren[child] = struct{}{}
+	}
+	for _, child := range subIssues {
+		explicitChildren[child] = struct{}{}
+	}
 	childIssues := make([]*github.Issue, len(candidates))
 	fetchErrors := make([]error, len(candidates))
 	pending := make([]int, 0, len(candidates))
@@ -434,7 +449,9 @@ func (r *SpecificationResolver) collectAcceptedChildren(ctx context.Context, par
 		if _, ok := ancestorSet[child]; ok {
 			// Either the user-typed input itself or the current
 			// parent — not a child of the current parent.
-			continue
+			if _, explicit := explicitChildren[child]; !explicit {
+				continue
+			}
 		}
 		pending = append(pending, idx)
 	}
@@ -481,6 +498,12 @@ sendLoop:
 	accepted := make([]int, 0, len(candidates))
 	for idx, child := range candidates {
 		if _, ok := ancestorSet[child]; ok {
+			if child != recursionParent {
+				if _, explicit := explicitChildren[child]; explicit {
+					accepted = append(accepted, child)
+					continue
+				}
+			}
 			// Ancestor echo (parent or outer user input): accept
 			// it for the recursion carve-out only when the
 			// carve-out is enabled (see above) AND the candidate
@@ -505,6 +528,10 @@ sendLoop:
 		childIssue := childIssues[idx]
 		if childIssue == nil {
 			return nil, fmt.Errorf("fetch child #%d: not found", child)
+		}
+		if _, ok := explicitChildren[child]; ok {
+			accepted = append(accepted, child)
+			continue
 		}
 		// Verifier widened in ADR-0042: any parent-section H2
 		// accepts the candidate when the originating spec is in

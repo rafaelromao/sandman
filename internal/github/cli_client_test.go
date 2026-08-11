@@ -1307,8 +1307,33 @@ func TestParseChildrenFromBody(t *testing.T) {
 		},
 		{
 			name: "child issues variant with surrounding text",
-			body: "## My child issues for area-01\n\n- #7",
+			body: "## My child issues\n\n- #7",
 			want: []int{7},
+		},
+		{
+			name: "sub-issues heading variant with surrounding text",
+			body: "## SUB-Issues\n\n- #314",
+			want: []int{314},
+		},
+		{
+			name: "subissues heading",
+			body: "## Subissues\n\n- #315",
+			want: []int{315},
+		},
+		{
+			name: "sub issues heading",
+			body: "## Sub Issues\n\n- #316",
+			want: []int{316},
+		},
+		{
+			name: "subissues prose only",
+			body: "## Subissues\n\nTracking #317 here.",
+			want: nil,
+		},
+		{
+			name: "subissues h3 is ignored",
+			body: "### Subissues\n\n- #318",
+			want: nil,
 		},
 		{
 			name: "sub-children heading is recognised",
