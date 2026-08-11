@@ -106,19 +106,45 @@ func TestReviewTimeoutHelperAllowsChildCompletingAtExactDeadline(t *testing.T) {
 	cmd := exec.Command("sh", "-c", `
 . "$1"
 clock_path=$2
-review_timeout_now() {
+	review_timeout_now() {
 		calls=$(awk 'NR == 1 { print $1 }' "$clock_path")
 		case "$calls" in
-			0|1) value=1000 ;;
-			*) sleep 0.1; value=2000 ;;
+			0|1|2) value=1000 ;;
+			*) value=2000 ;;
 		esac
 		printf '%s\n' "$((calls + 1))" >"$clock_path"
 		printf '%s\n' "$value"
 }
-review_timeout_run 2000 sh -c 'exit 0'
+review_timeout_run 2000 true
 `, "review-timeout", helper, clockPath)
 	if err := cmd.Run(); err != nil {
 		t.Fatalf("exact-boundary child should succeed: %v", err)
+	}
+}
+
+func TestReviewTimeoutHelperRejectsExpiredDeadlineDeterministically(t *testing.T) {
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	helper := filepath.Join(wd, "pr-review", "review-timeout.sh")
+	clockPath := filepath.Join(t.TempDir(), "clock")
+	if err := os.WriteFile(clockPath, []byte("0\n"), 0o600); err != nil {
+		t.Fatalf("write clock state: %v", err)
+	}
+	cmd := exec.Command("sh", "-c", `
+. "$1"
+clock_path=$2
+review_timeout_now() {
+		calls=$(awk 'NR == 1 { print $1 }' "$clock_path")
+		printf '%s\n' "$((calls + 1))" >"$clock_path"
+		printf '2000\n'
+}
+review_timeout_run 2000 true
+`, "review-timeout", helper, clockPath)
+	err = cmd.Run()
+	if exitErr, ok := err.(*exec.ExitError); !ok || exitErr.ExitCode() != 124 {
+		t.Fatalf("expired deadline error = %v, want exit 124", err)
 	}
 }
 

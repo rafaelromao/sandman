@@ -267,17 +267,21 @@ func reviewTriggerStatus(ctx context.Context, client github.Client, prNumber int
 	if err != nil {
 		return "", err
 	}
-	latest, ok := latestReviewComment(comments)
+	latest, latestIndex, ok := latestReviewComment(comments)
 	if !ok {
 		return reviewTriggerApproved, nil
 	}
-	triggerAt := latest.CreatedAt
-	if !reviewTriggerPrefixMatches(latest.Body, reviewCommand) {
-		if isInformalReviewApproval(latest.Body) {
+	trigger, triggerIndex, hasTrigger := latestReviewTrigger(comments, reviewCommand)
+	if !hasTrigger {
+		return reviewTriggerApproved, nil
+	}
+	if latestIndex != triggerIndex {
+		if reviewSurfaceAfterTrigger(trigger.CreatedAt, latest.CreatedAt) && isInformalReviewApproval(latest.Body) {
 			return reviewTriggerApproved, nil
 		}
 		return reviewTriggerPending, nil
 	}
+	triggerAt := trigger.CreatedAt
 	if lister, ok := client.(github.PRReviewLister); ok {
 		state, responded, err := formalReviewTriggerStatus(ctx, lister, prNumber, triggerAt)
 		if err != nil {
@@ -299,17 +303,39 @@ func reviewTriggerStatus(ctx context.Context, client github.Client, prNumber int
 	return reviewTriggerPending, nil
 }
 
-func latestReviewComment(comments []github.PRComment) (github.PRComment, bool) {
+func latestReviewComment(comments []github.PRComment) (github.PRComment, int, bool) {
 	if len(comments) == 0 {
-		return github.PRComment{}, false
+		return github.PRComment{}, -1, false
 	}
 	latest := comments[0]
-	for _, comment := range comments[1:] {
-		if latest.CreatedAt.IsZero() || comment.CreatedAt.IsZero() || comment.CreatedAt.After(latest.CreatedAt) || comment.CreatedAt.Equal(latest.CreatedAt) {
+	latestIndex := 0
+	for index, comment := range comments[1:] {
+		index++
+		if reviewCommentLater(latest, comment) {
 			latest = comment
+			latestIndex = index
 		}
 	}
-	return latest, true
+	return latest, latestIndex, true
+}
+
+func latestReviewTrigger(comments []github.PRComment, reviewCommand string) (github.PRComment, int, bool) {
+	var latest github.PRComment
+	latestIndex := -1
+	for index, comment := range comments {
+		if !reviewTriggerPrefixMatches(comment.Body, reviewCommand) {
+			continue
+		}
+		if latestIndex < 0 || reviewCommentLater(latest, comment) {
+			latest = comment
+			latestIndex = index
+		}
+	}
+	return latest, latestIndex, latestIndex >= 0
+}
+
+func reviewCommentLater(current, candidate github.PRComment) bool {
+	return current.CreatedAt.IsZero() || candidate.CreatedAt.IsZero() || candidate.CreatedAt.After(current.CreatedAt) || candidate.CreatedAt.Equal(current.CreatedAt)
 }
 
 func formalReviewTriggerStatus(ctx context.Context, lister github.PRReviewLister, prNumber int, triggerAt time.Time) (reviewTriggerState, bool, error) {
@@ -341,6 +367,9 @@ func formalReviewTriggerStatus(ctx context.Context, lister github.PRReviewLister
 	if strings.EqualFold(strings.TrimSpace(latestReview.State), "APPROVED") {
 		return reviewTriggerApproved, true, nil
 	}
+	if isInformalReviewApproval(latestReview.Body) {
+		return reviewTriggerApproved, true, nil
+	}
 	return reviewTriggerPending, true, nil
 }
 
@@ -370,9 +399,18 @@ func isInformalReviewApproval(body string) bool {
 		"not approved",
 		"no approval",
 		"not lgtm",
+		"not looks good",
 		"not all good",
 		"not good",
 		"unapproved",
+		"but",
+		"except",
+		"however",
+		"although",
+		"though",
+		"please fix",
+		"needs fix",
+		"need fix",
 	} {
 		if strings.Contains(" "+body+" ", " "+phrase+" ") {
 			return false

@@ -933,6 +933,32 @@ func TestCheckPRExternalGateAcceptsLaterFormalApproval(t *testing.T) {
 	}
 }
 
+func TestCheckPRExternalGateAcceptsInformalFormalReviewApproval(t *testing.T) {
+	client := &fakeGitHubClient{
+		prs: map[string]*github.PR{gateTestBranch: {
+			Number:            17,
+			State:             "open",
+			HeadRefOid:        "current-sha",
+			StatusCheckRollup: "success",
+			MergeStateStatus:  "CLEAN",
+		}},
+		prComments: map[int][]github.PRComment{17: {
+			{Body: "/review please", CreatedAt: time.Unix(30, 0)},
+		}},
+		prReviews: map[int][]github.PRReview{17: {
+			{State: "COMMENTED", Body: "LGTM", CreatedAt: time.Unix(31, 0)},
+		}},
+	}
+
+	got, err := checkPRExternalGateAtHeadWithReviewCommand(context.Background(), client, gateTestBranch, "current-sha", "/review please")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != gateReadyToMerge {
+		t.Fatalf("informal formal review gate = %q, want %s", got, gateReadyToMerge)
+	}
+}
+
 func TestCheckPRExternalGateKeepsNonApprovalConversationResponsePending(t *testing.T) {
 	client := &fakeGitHubClient{
 		prs: map[string]*github.PR{gateTestBranch: {
@@ -981,8 +1007,55 @@ func TestCheckPRExternalGateAcceptsInformalConversationApproval(t *testing.T) {
 	}
 }
 
+func TestCheckPRExternalGateKeepsNoReviewConversationReady(t *testing.T) {
+	client := &fakeGitHubClient{
+		prs: map[string]*github.PR{gateTestBranch: {
+			Number:            17,
+			State:             "open",
+			HeadRefOid:        "current-sha",
+			StatusCheckRollup: "success",
+			MergeStateStatus:  "CLEAN",
+		}},
+		prComments: map[int][]github.PRComment{17: {
+			{Body: "thanks for the update", CreatedAt: time.Unix(31, 0)},
+		}},
+	}
+
+	got, err := checkPRExternalGateAtHeadWithReviewCommand(context.Background(), client, gateTestBranch, "current-sha", "/review please")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != gateReadyToMerge {
+		t.Fatalf("no-review conversation gate = %q, want %s", got, gateReadyToMerge)
+	}
+}
+
+func TestCheckPRExternalGateKeepsTimestamplessInformalApprovalPending(t *testing.T) {
+	client := &fakeGitHubClient{
+		prs: map[string]*github.PR{gateTestBranch: {
+			Number:            17,
+			State:             "open",
+			HeadRefOid:        "current-sha",
+			StatusCheckRollup: "success",
+			MergeStateStatus:  "CLEAN",
+		}},
+		prComments: map[int][]github.PRComment{17: {
+			{Body: "/review please", CreatedAt: time.Unix(30, 0)},
+			{Body: "looks good"},
+		}},
+	}
+
+	got, err := checkPRExternalGateAtHeadWithReviewCommand(context.Background(), client, gateTestBranch, "current-sha", "/review please")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "pending" {
+		t.Fatalf("timestampless informal approval gate = %q, want pending", got)
+	}
+}
+
 func TestCheckPRExternalGateRejectsNegatedInformalApproval(t *testing.T) {
-	for _, body := range []string{"not approved", "unapproved", "not all good"} {
+	for _, body := range []string{"not approved", "unapproved", "not all good", "not looks good", "looks good, but please fix the test"} {
 		t.Run(body, func(t *testing.T) {
 			client := &fakeGitHubClient{
 				prs: map[string]*github.PR{gateTestBranch: {

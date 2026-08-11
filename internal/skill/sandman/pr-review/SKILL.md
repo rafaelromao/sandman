@@ -228,8 +228,16 @@ replace an observed terminal decision with `REVIEW_TIMEOUT`.
 ```bash
 view=$(review_timeout_run "$deadline_at" gh pr view <N> --repo <owner/repo> --json comments,reviewDecision,mergeStateStatus)
 view_status=$?
-view_decision=$(review_timeout_run "$deadline_at" sh -c "printf '%s' \"\$1\" | jq -r '.reviewDecision // \"\"'" parse "$view")
+view_file=$(mktemp "${TMPDIR:-/tmp}/sandman-review-view.XXXXXX") || record REVIEW_TIMEOUT_STATE_ERROR and stop
+printf '%s' "$view" >"$view_file" || { rm -f "$view_file"; record REVIEW_TIMEOUT_STATE_ERROR and stop; }
+now=$(review_timeout_now)
+if [ "$now" -ge "$deadline_at" ]; then
+  rm -f "$view_file"
+  record REVIEW_TIMEOUT and exit
+fi
+view_decision=$(review_timeout_run "$deadline_at" jq -r '.reviewDecision // ""' "$view_file")
 view_parse_status=$?
+rm -f "$view_file"
 view_terminal=false
 case "$view_decision" in
   APPROVED|CHANGES_REQUESTED) view_terminal=true ;;
