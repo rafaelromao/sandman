@@ -178,7 +178,7 @@ func checkPRExternalGateWithHeadAndReviewCommand(ctx context.Context, client git
 		if triggerStatus == reviewTriggerChangesRequested {
 			return "failed", nil
 		}
-		if triggerStatus == reviewTriggerUnanswered {
+		if triggerStatus == reviewTriggerPending {
 			return "pending", nil
 		}
 		return gateReadyToMerge, nil
@@ -253,25 +253,31 @@ func (s *runSession) handleExternalGateWithHostPaths(ctx context.Context, workDi
 type reviewTriggerState string
 
 const (
-	reviewTriggerAnswered         reviewTriggerState = "answered"
+	reviewTriggerApproved         reviewTriggerState = "approved"
 	reviewTriggerChangesRequested reviewTriggerState = "changes-requested"
-	reviewTriggerUnanswered       reviewTriggerState = "unanswered"
+	reviewTriggerPending          reviewTriggerState = "pending"
 )
 
 func reviewTriggerStatus(ctx context.Context, client github.Client, prNumber int, reviewCommand string) (reviewTriggerState, error) {
 	reviewCommand = strings.TrimSpace(reviewCommand)
 	if client == nil || prNumber <= 0 || reviewCommand == "" {
-		return reviewTriggerAnswered, nil
+		return reviewTriggerApproved, nil
 	}
 	comments, err := client.ListPRComments(ctx, prNumber)
 	if err != nil {
 		return "", err
 	}
-	latest, ok := latestReviewTrigger(comments, reviewCommand)
+	latest, ok := latestReviewComment(comments)
 	if !ok {
-		return reviewTriggerAnswered, nil
+		return reviewTriggerApproved, nil
 	}
 	triggerAt := latest.CreatedAt
+	if !reviewTriggerPrefixMatches(latest.Body, reviewCommand) {
+		if isInformalReviewApproval(latest.Body) {
+			return reviewTriggerApproved, nil
+		}
+		return reviewTriggerPending, nil
+	}
 	if lister, ok := client.(github.PRReviewLister); ok {
 		state, responded, err := formalReviewTriggerStatus(ctx, lister, prNumber, triggerAt)
 		if err != nil {
@@ -287,13 +293,13 @@ func reviewTriggerStatus(ctx context.Context, client github.Client, prNumber int
 			return "", err
 		}
 		if responded {
-			return reviewTriggerAnswered, nil
+			return reviewTriggerPending, nil
 		}
 	}
-	return reviewTriggerUnanswered, nil
+	return reviewTriggerPending, nil
 }
 
-func latestReviewTrigger(comments []github.PRComment, reviewCommand string) (github.PRComment, bool) {
+func latestReviewComment(comments []github.PRComment) (github.PRComment, bool) {
 	if len(comments) == 0 {
 		return github.PRComment{}, false
 	}
@@ -303,7 +309,7 @@ func latestReviewTrigger(comments []github.PRComment, reviewCommand string) (git
 			latest = comment
 		}
 	}
-	return latest, reviewTriggerPrefixMatches(latest.Body, reviewCommand)
+	return latest, true
 }
 
 func formalReviewTriggerStatus(ctx context.Context, lister github.PRReviewLister, prNumber int, triggerAt time.Time) (reviewTriggerState, bool, error) {
@@ -332,7 +338,10 @@ func formalReviewTriggerStatus(ctx context.Context, lister github.PRReviewLister
 	if strings.EqualFold(strings.TrimSpace(latestReview.State), "CHANGES_REQUESTED") {
 		return reviewTriggerChangesRequested, true, nil
 	}
-	return reviewTriggerAnswered, true, nil
+	if strings.EqualFold(strings.TrimSpace(latestReview.State), "APPROVED") {
+		return reviewTriggerApproved, true, nil
+	}
+	return reviewTriggerPending, true, nil
 }
 
 func hasLaterInlineReview(ctx context.Context, lister github.PRReviewCommentLister, prNumber int, triggerAt time.Time) (bool, error) {
@@ -346,6 +355,31 @@ func hasLaterInlineReview(ctx context.Context, lister github.PRReviewCommentList
 		}
 	}
 	return false, nil
+}
+
+func isInformalReviewApproval(body string) bool {
+	body = strings.ToLower(strings.TrimSpace(body))
+	for _, phrase := range []string{
+		"lgtm",
+		"looks good",
+		"looks great",
+		"nice work",
+		"good work",
+		"approved",
+		"ship it",
+		"+1",
+		"thumbs up",
+		"all good",
+		"all set",
+		"good to go",
+		"no major issues",
+		"minor issues only",
+	} {
+		if strings.Contains(body, phrase) {
+			return true
+		}
+	}
+	return false
 }
 
 func reviewTriggerPrefixMatches(body, reviewCommand string) bool {

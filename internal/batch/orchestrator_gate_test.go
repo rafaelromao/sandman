@@ -902,8 +902,82 @@ func TestCheckPRExternalGateTreatsLaterReviewSurfaceAsTriggerResponse(t *testing
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
+	if got != "pending" {
+		t.Fatalf("commented review trigger gate = %q, want pending", got)
+	}
+}
+
+func TestCheckPRExternalGateAcceptsLaterFormalApproval(t *testing.T) {
+	client := &fakeGitHubClient{
+		prs: map[string]*github.PR{gateTestBranch: {
+			Number:            17,
+			State:             "open",
+			HeadRefOid:        "current-sha",
+			StatusCheckRollup: "success",
+			MergeStateStatus:  "CLEAN",
+		}},
+		prComments: map[int][]github.PRComment{17: {
+			{Body: "/review please", CreatedAt: time.Unix(30, 0)},
+		}},
+		prReviews: map[int][]github.PRReview{17: {
+			{State: "APPROVED", CreatedAt: time.Unix(31, 0)},
+		}},
+	}
+
+	got, err := checkPRExternalGateAtHeadWithReviewCommand(context.Background(), client, gateTestBranch, "current-sha", "/review please")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if got != gateReadyToMerge {
-		t.Fatalf("responded review trigger gate = %q, want %s", got, gateReadyToMerge)
+		t.Fatalf("formal approval gate = %q, want %s", got, gateReadyToMerge)
+	}
+}
+
+func TestCheckPRExternalGateKeepsNonApprovalConversationResponsePending(t *testing.T) {
+	client := &fakeGitHubClient{
+		prs: map[string]*github.PR{gateTestBranch: {
+			Number:            17,
+			State:             "open",
+			HeadRefOid:        "current-sha",
+			StatusCheckRollup: "success",
+			MergeStateStatus:  "CLEAN",
+		}},
+		prComments: map[int][]github.PRComment{17: {
+			{Body: "/review please", CreatedAt: time.Unix(30, 0)},
+			{Body: "please fix the failing test", CreatedAt: time.Unix(31, 0)},
+		}},
+	}
+
+	got, err := checkPRExternalGateAtHeadWithReviewCommand(context.Background(), client, gateTestBranch, "current-sha", "/review please")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "pending" {
+		t.Fatalf("non-approval conversation gate = %q, want pending", got)
+	}
+}
+
+func TestCheckPRExternalGateAcceptsInformalConversationApproval(t *testing.T) {
+	client := &fakeGitHubClient{
+		prs: map[string]*github.PR{gateTestBranch: {
+			Number:            17,
+			State:             "open",
+			HeadRefOid:        "current-sha",
+			StatusCheckRollup: "success",
+			MergeStateStatus:  "CLEAN",
+		}},
+		prComments: map[int][]github.PRComment{17: {
+			{Body: "/review please", CreatedAt: time.Unix(30, 0)},
+			{Body: "looks good", CreatedAt: time.Unix(31, 0)},
+		}},
+	}
+
+	got, err := checkPRExternalGateAtHeadWithReviewCommand(context.Background(), client, gateTestBranch, "current-sha", "/review please")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != gateReadyToMerge {
+		t.Fatalf("informal conversation approval gate = %q, want %s", got, gateReadyToMerge)
 	}
 }
 
@@ -954,8 +1028,8 @@ func TestCheckPRExternalGateTreatsMissingTimestampFormalResponseAsTriggerRespons
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if got != gateReadyToMerge {
-		t.Fatalf("missing-timestamp formal response gate = %q, want %s", got, gateReadyToMerge)
+	if got != "pending" {
+		t.Fatalf("missing-timestamp formal response gate = %q, want pending", got)
 	}
 }
 
@@ -980,8 +1054,8 @@ func TestCheckPRExternalGateTreatsMissingTimestampInlineResponseAsTriggerRespons
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if got != gateReadyToMerge {
-		t.Fatalf("missing-timestamp inline response gate = %q, want %s", got, gateReadyToMerge)
+	if got != "pending" {
+		t.Fatalf("missing-timestamp inline response gate = %q, want pending", got)
 	}
 }
 

@@ -226,14 +226,27 @@ retries of the same wait do not.
 
 On **every** poll iteration run all three commands separately:
 
+If the first change-request view completes before the deadline and returns terminal
+`APPROVED` or `CHANGES_REQUESTED`, preserve and classify that cached decision
+even if a later reviews or inline-comments call reaches the deadline. Do not
+replace an observed terminal decision with `REVIEW_TIMEOUT`.
+
 ```bash
 view=$(review_timeout_run "$deadline_at" gh pr view <N> --repo <owner/repo> --json comments,reviewDecision,mergeStateStatus)
 view_status=$?
+view_decision=$(printf '%s' "$view" | jq -r '.reviewDecision // ""' 2>/dev/null || true)
+view_terminal=false
+case "$view_decision" in
+  APPROVED|CHANGES_REQUESTED) view_terminal=true ;;
+esac
 reviews=$(review_timeout_run "$deadline_at" gh api repos/<owner>/<repo>/pulls/<N>/reviews)
 reviews_status=$?
 inline=$(review_timeout_run "$deadline_at" gh api repos/<owner>/<repo>/pulls/<N>/comments --paginate)
 inline_status=$?
 now=$(review_timeout_now)
+if [ "$view_status" -eq 0 ] && [ "$view_terminal" = true ]; then
+  record the cached "$view_decision" result and exit
+fi
 if { [ "$view_status" -eq 124 ] && [ "$now" -ge "$deadline_at" ]; } || \
    { [ "$reviews_status" -eq 124 ] && [ "$now" -ge "$deadline_at" ]; } || \
    { [ "$inline_status" -eq 124 ] && [ "$now" -ge "$deadline_at" ]; } || \
