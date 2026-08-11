@@ -40,7 +40,7 @@ Inline phrases such as `Blocked by #123`, `Depends on #123`, or `Blocked-by: #12
 
 ## Children
 
-A parent can list child issues under any H2 heading whose title contains the word `children` or `child` (case-insensitive), or contains `subissues`, `sub-issues`, or `sub issues`. The canonical headings below are the most common form; any `## Leaf children`, `## Child tasks`, `## Children in this area`, or `## Subissues for area-01` variant is also recognised as a children section. The widened match mirrors the broadened `## Parent` heading pattern in `internal/batch/spec_parse.go` and is what lets a threeterm-style body that lists leaf children under `## Leaf children` (issue #305) be detected as a specification and expanded, instead of being passed through unchanged.
+A parent can list child issues under any H2 heading whose title contains the word `children` or `child` (case-insensitive), or contains `subissues`, `sub-issues`, or `sub issues`. The canonical headings below are the most common form; any `## Leaf children`, `## Child tasks`, `## Children in this area`, or `## Subissues` variant is also recognised as a children section. The widened match mirrors the broadened `## Parent` heading pattern in `internal/batch/spec_parse.go` and is what lets a threeterm-style body that lists leaf children under `## Leaf children` (issue #305) be detected as a specification and expanded, instead of being passed through unchanged.
 
 ```text
 ## Children
@@ -48,7 +48,7 @@ A parent can list child issues under any H2 heading whose title contains the wor
 ## Leaf children
 ## Children in this area
 ## Subissues
-## Sub-issues for area-01
+## Sub-issues
 ## Sub Issues
 ```
 

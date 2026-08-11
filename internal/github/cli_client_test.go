@@ -1307,12 +1307,12 @@ func TestParseChildrenFromBody(t *testing.T) {
 		},
 		{
 			name: "child issues variant with surrounding text",
-			body: "## My child issues for area-01\n\n- #7",
+			body: "## My child issues\n\n- #7",
 			want: []int{7},
 		},
 		{
 			name: "sub-issues heading variant with surrounding text",
-			body: "## SUB-Issues for area-01\n\n- #314",
+			body: "## SUB-Issues\n\n- #314",
 			want: []int{314},
 		},
 		{
