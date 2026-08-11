@@ -172,6 +172,49 @@ func readTailLines(path string, n int) []string {
 	return parts[len(parts)-n:]
 }
 
+func readRetryLogLines(path string, n int) []string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return []string{}
+	}
+	parts := strings.Split(string(data), "\n")
+	if len(parts) > 0 && parts[len(parts)-1] == "" {
+		parts = parts[:len(parts)-1]
+	}
+	lines := make([]string, 0, len(parts))
+	for _, line := range parts {
+		if !isRetryMarker(line) {
+			lines = append(lines, line)
+		}
+	}
+	if len(lines) <= n {
+		return lines
+	}
+	return lines[len(lines)-n:]
+}
+
+func isRetryMarker(line string) bool {
+	const (
+		prefix = "--- retry "
+		suffix = " ---"
+	)
+	if !strings.HasPrefix(line, prefix) || !strings.HasSuffix(line, suffix) {
+		return false
+	}
+	attempt, maxAttempts, ok := strings.Cut(strings.TrimSuffix(strings.TrimPrefix(line, prefix), suffix), "/")
+	if !ok || attempt == "" || maxAttempts == "" {
+		return false
+	}
+	for _, value := range []string{attempt, maxAttempts} {
+		for _, r := range value {
+			if r < '0' || r > '9' {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 func gitTopLevel(repoPath string) (string, error) {
 	cmd := exec.Command("git", "rev-parse", "--show-toplevel")
 	cmd.Dir = repoPath
@@ -1664,7 +1707,7 @@ func logRetry(eventLog events.EventLog, runID, branch string, attempt, maxAttemp
 			"previous_status": previousStatus,
 			"reason":          reason,
 			"branch":          branch,
-			"last_log_lines":  readTailLines(logPath, 3),
+			"last_log_lines":  readRetryLogLines(logPath, 3),
 		},
 	}
 	if issueNumber > 0 {

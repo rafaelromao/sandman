@@ -822,6 +822,71 @@ func TestReadTailLines_TrailingNewline(t *testing.T) {
 	}
 }
 
+func TestReadRetryLogLines_FiltersMarkersBeforeTail(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "retry.log")
+	content := "line1\n--- retry 1/3 ---\nline2\nline3\n--- retry 2/3 ---\nline4\nline5\n"
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	got := readRetryLogLines(path, 3)
+	want := []string{"line3", "line4", "line5"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+}
+
+func TestReadRetryLogLines_ReturnsAvailableNonMarkerLines(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "retry.log")
+	content := "line1\n--- retry 1/3 ---\nline2\n"
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	got := readRetryLogLines(path, 3)
+	want := []string{"line1", "line2"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+}
+
+func TestReadRetryLogLines_MarkerOnlyLogReturnsEmptySlice(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "retry.log")
+	if err := os.WriteFile(path, []byte("--- retry 1/3 ---\n"), 0644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	got := readRetryLogLines(path, 3)
+	if got == nil {
+		t.Fatal("got nil, want non-nil empty slice")
+	}
+	if len(got) != 0 {
+		t.Fatalf("got %v, want empty", got)
+	}
+}
+
+func TestReadRetryLogLines_NoMarkerUsesLastThreeLines(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "retry.log")
+	content := "line1\nline2\nline3\nline4\n"
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	got := readRetryLogLines(path, 3)
+	want := []string{"line2", "line3", "line4"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+}
+
 // TestBatchIDForIssue_PublicBatchIdShape pins the public BatchId contract
 // for issue batches (issue #1917):
 //
