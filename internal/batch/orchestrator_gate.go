@@ -440,31 +440,7 @@ func isInformalReviewApproval(body string) bool {
 }
 
 func reviewTriggerPrefixMatches(body, reviewCommand string) bool {
-	if reviewCommand != config.DefaultReviewCommand {
-		return strings.HasPrefix(strings.TrimSpace(body), reviewCommand)
-	}
-	lower := strings.ToLower(body)
-	const commandPrefix = "/sandman"
-	for offset := 0; offset < len(lower); {
-		match := strings.Index(lower[offset:], commandPrefix)
-		if match < 0 {
-			return false
-		}
-		match += offset
-		remainder := lower[match+len(commandPrefix):]
-		if remainder != "" && (remainder[0] == ' ' || remainder[0] == '\t' || remainder[0] == '\n' || remainder[0] == '\r') {
-			remainder = strings.TrimLeft(remainder, " \t\n\r")
-			if strings.HasPrefix(remainder, "review") && (len(remainder) == len("review") || !isReviewCommandWord(remainder[len("review")])) {
-				return true
-			}
-		}
-		offset = match + len(commandPrefix)
-	}
-	return false
-}
-
-func isReviewCommandWord(char byte) bool {
-	return char >= 'a' && char <= 'z' || char >= 'A' && char <= 'Z' || char >= '0' && char <= '9' || char == '_'
+	return strings.Contains(body, reviewCommand)
 }
 
 func reviewSurfaceAfterTrigger(triggerAt, responseAt time.Time) bool {

@@ -850,9 +850,8 @@ func TestCheckPRExternalGateUsesSliceOrderForMissingTriggerTimestamp(t *testing.
 	}
 }
 
-func TestCheckPRExternalGateMatchesDefaultTriggerLikeReviewDaemon(t *testing.T) {
+func TestCheckPRExternalGateMatchesConfiguredTriggerAnywhereInComment(t *testing.T) {
 	for _, body := range []string{
-		"/Sandman   Review please",
 		"@sandman-bot /sandman review please",
 		"hi\n/sandman review please",
 	} {
@@ -875,9 +874,32 @@ func TestCheckPRExternalGateMatchesDefaultTriggerLikeReviewDaemon(t *testing.T) 
 				t.Fatalf("unexpected error: %v", err)
 			}
 			if got != "pending" {
-				t.Fatalf("canonical review trigger gate = %q, want pending", got)
+				t.Fatalf("configured review trigger gate = %q, want pending", got)
 			}
 		})
+	}
+}
+
+func TestCheckPRExternalGateOnlyMatchesConfiguredReviewCommand(t *testing.T) {
+	client := &fakeGitHubClient{
+		prs: map[string]*github.PR{gateTestBranch: {
+			Number:            17,
+			State:             "open",
+			HeadRefOid:        "current-sha",
+			StatusCheckRollup: "success",
+			MergeStateStatus:  "CLEAN",
+		}},
+		prComments: map[int][]github.PRComment{17: {
+			{Body: "context /sandman review", CreatedAt: time.Unix(30, 0)},
+		}},
+	}
+
+	got, err := checkPRExternalGateAtHeadWithReviewCommand(context.Background(), client, gateTestBranch, "current-sha", "/custom review")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != gateReadyToMerge {
+		t.Fatalf("different review command gate = %q, want %s", got, gateReadyToMerge)
 	}
 }
 
