@@ -35,6 +35,14 @@ reviewer AgentRun lifetime and external-gate polling budget. Use
 `sandman config set review_timeout <seconds>` for repository policy or
 `sandman run --review-timeout <seconds>` for one run or continuation.
 
+After a configured trigger is posted and confirmed for the current head, the
+implementor skill writes one request envelope under `.sandman/state/` and calls
+the versioned `review-wait-v1.sh` entry point. Re-entering with the same
+trigger reuses that request; a later confirmed trigger is a new request, even
+on the same pull request. The wait returns structured transport state and raw
+response evidence; existing approval and feedback classification remains
+unchanged.
+
 When it sees a matching comment authored by the GitHub user authenticated to the daemon, it launches a review AgentRun and posts the result back to the pull request. Requests from other users are ignored. Use direct review for manual or CI-driven reviews that should not be tied to the daemon's authenticated user.
 
 ## Review command guard

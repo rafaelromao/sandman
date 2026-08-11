@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -47,6 +48,58 @@ func TestSyncWritesEmbeddedSkill(t *testing.T) {
 	}
 	if checked == 0 {
 		t.Fatal("expected embedded skill files to be installed")
+	}
+}
+
+func TestSyncInstallsAndRunsVersionedReviewWait(t *testing.T) {
+	home := t.TempDir()
+	if err := Sync(SyncOptions{HomeDir: home, ReviewCommand: "/sandman review"}); err != nil {
+		t.Fatalf("sync skill: %v", err)
+	}
+
+	root := filepath.Join(home, ".agents", "skills", embeddedSkillRoot)
+	helper := filepath.Join(root, "pr-review", "review-wait-v1.sh")
+	if _, err := os.Stat(helper); err != nil {
+		t.Fatalf("synced review wait helper missing: %v", err)
+	}
+
+	requestFile := filepath.Join(t.TempDir(), "42.review_request.json")
+	request := `{
+  "protocol": "review-wait/v1",
+  "repository": "owner/repo",
+  "pull_request": 42,
+  "head_sha": "abc123",
+  "trigger_id": "1001",
+  "trigger_prefix": "/sandman review",
+  "trigger_created_at": "2026-08-11T18:00:01Z",
+  "confirmed_at": "2026-08-11T18:00:01Z",
+  "started_at": "2026-08-11T18:00:01Z",
+  "deadline_at": "unix:4102444800",
+  "deadline_unix_seconds": 4102444800,
+  "effective_timeout_seconds": 1800,
+  "poll_plan": [120, 60, 60, 30]
+}
+`
+	if err := os.WriteFile(requestFile, []byte(request), 0o600); err != nil {
+		t.Fatalf("write request: %v", err)
+	}
+	observer := filepath.Join(t.TempDir(), "observer.sh")
+	if err := os.WriteFile(observer, []byte("#!/bin/sh\nprintf '%s\\n' '{\"state\":\"pending\",\"observed_head_sha\":\"abc123\",\"snapshot\":{}}'\n"), 0o700); err != nil {
+		t.Fatalf("write observer: %v", err)
+	}
+
+	cmd := exec.Command("sh", helper, "--request-file", requestFile, "--json", "--once")
+	cmd.Env = append(os.Environ(), "SANDMAN_REVIEW_WAIT_OBSERVER="+observer)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("run synced review wait helper: %v\n%s", err, output)
+	}
+	text := strings.TrimSpace(string(output))
+	if !strings.Contains(text, `"protocol":"review-wait/v1"`) || !strings.Contains(text, `"state":"pending"`) {
+		t.Fatalf("synced helper returned unexpected result: %s", text)
+	}
+	if _, err := os.Stat(requestFile + ".state"); err != nil {
+		t.Fatalf("synced helper did not persist state: %v", err)
 	}
 }
 

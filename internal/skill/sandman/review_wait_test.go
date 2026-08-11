@@ -10,13 +10,15 @@ import (
 )
 
 type reviewWaitResult struct {
-	Protocol     string `json:"protocol"`
-	State        string `json:"state"`
-	Lifecycle    string `json:"lifecycle"`
-	ObservedHead string `json:"observed_head_sha"`
-	StartedAt    string `json:"started_at"`
-	DeadlineAt   string `json:"deadline_at"`
-	Reason       string `json:"reason"`
+	Protocol     string          `json:"protocol"`
+	State        string          `json:"state"`
+	Lifecycle    string          `json:"lifecycle"`
+	ObservedHead string          `json:"observed_head_sha"`
+	StartedAt    string          `json:"started_at"`
+	DeadlineAt   string          `json:"deadline_at"`
+	Reason       string          `json:"reason"`
+	SnapshotPath string          `json:"snapshot_path"`
+	Evidence     json.RawMessage `json:"evidence"`
 	Request      struct {
 		PullRequest    int    `json:"pull_request"`
 		HeadSHA        string `json:"head_sha"`
@@ -49,11 +51,13 @@ func writeReviewWaitRequest(t *testing.T, path, triggerID, startedAt, deadlineAt
 }
 
 func writePendingReviewObserver(t *testing.T) string {
+	return writeReviewObserver(t, `{"state":"pending","observed_head_sha":"abc123","snapshot":{"comments":[],"reviews":[],"inline_comments":[]}}`)
+}
+
+func writeReviewObserver(t *testing.T, result string) string {
 	t.Helper()
 	observer := filepath.Join(t.TempDir(), "observer.sh")
-	observerScript := `#!/bin/sh
-printf '%s\n' '{"state":"pending","observed_head_sha":"abc123","snapshot":{"comments":[],"reviews":[],"inline_comments":[]}}'
-`
+	observerScript := "#!/bin/sh\nprintf '%s\\n' '" + result + "'\n"
 	if err := os.WriteFile(observer, []byte(observerScript), 0o700); err != nil {
 		t.Fatalf("write observer: %v", err)
 	}
@@ -61,13 +65,22 @@ printf '%s\n' '{"state":"pending","observed_head_sha":"abc123","snapshot":{"comm
 }
 
 func runReviewWait(t *testing.T, helper, requestFile, observer string, once bool) reviewWaitResult {
+	return runReviewWaitWithEnv(t, helper, requestFile, observer, once, nil)
+}
+
+func runReviewWaitWithEnv(t *testing.T, helper, requestFile, observer string, once bool, extraEnv map[string]string) reviewWaitResult {
 	t.Helper()
 	args := []string{helper, "--request-file", requestFile, "--json"}
 	if once {
 		args = append(args, "--once")
 	}
 	cmd := exec.Command("sh", args...)
-	cmd.Env = append(os.Environ(), "SANDMAN_REVIEW_WAIT_OBSERVER="+observer)
+	cmd.Env = environmentWithOverrides(map[string]string{
+		"SANDMAN_REVIEW_WAIT_OBSERVER": observer,
+	})
+	for key, value := range extraEnv {
+		cmd.Env = environmentWithOverridesOn(cmd.Env, key, value)
+	}
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("review wait: %v\n%s", err, output)
@@ -77,6 +90,35 @@ func runReviewWait(t *testing.T, helper, requestFile, observer string, once bool
 		t.Fatalf("parse result %q: %v", output, err)
 	}
 	return result
+}
+
+func environmentWithOverrides(overrides map[string]string) []string {
+	args := make([]string, 0, len(overrides)*2)
+	for key, value := range overrides {
+		args = append(args, key, value)
+	}
+	return environmentWithOverridesOn(os.Environ(), args...)
+}
+
+func environmentWithOverridesOn(base []string, keyAndValues ...string) []string {
+	keys := make(map[string]struct{}, len(keyAndValues)/2)
+	for i := 0; i+1 < len(keyAndValues); i += 2 {
+		keys[keyAndValues[i]] = struct{}{}
+	}
+	filtered := make([]string, 0, len(base)+len(keyAndValues)/2)
+	for _, entry := range base {
+		key, _, ok := strings.Cut(entry, "=")
+		if ok {
+			if _, overridden := keys[key]; overridden {
+				continue
+			}
+		}
+		filtered = append(filtered, entry)
+	}
+	for i := 0; i+1 < len(keyAndValues); i += 2 {
+		filtered = append(filtered, keyAndValues[i]+"="+keyAndValues[i+1])
+	}
+	return filtered
 }
 
 func TestReviewWaitV1StartsRequestAndReturnsStructuredPending(t *testing.T) {
@@ -157,5 +199,198 @@ func TestReviewWaitV1StartsFreshRequestForLaterTriggerOnSamePullRequest(t *testi
 	}
 	if second.StartedAt == first.StartedAt || second.DeadlineAt == first.DeadlineAt {
 		t.Fatalf("new trigger reused timing: first (%q, %q), second (%q, %q)", first.StartedAt, first.DeadlineAt, second.StartedAt, second.DeadlineAt)
+	}
+}
+
+func TestReviewWaitV1ReturnsRespondedEvidenceAndResumesThatRequest(t *testing.T) {
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	helper := filepath.Join(wd, "pr-review", "review-wait-v1.sh")
+	requestFile := filepath.Join(t.TempDir(), "42.review_request.json")
+	writeReviewWaitRequest(t, requestFile, "1001", "2026-08-11T18:00:01Z", "2026-08-11T18:30:01Z")
+	observer := writeReviewObserver(t, `{"state":"responded","observed_head_sha":"abc123","snapshot":{"comments":[{"body":"LGTM"}],"reviews":[],"inline_comments":[]}}`)
+
+	first := runReviewWait(t, helper, requestFile, observer, true)
+	second := runReviewWait(t, helper, requestFile, observer, true)
+
+	if first.State != "responded" || second.State != "responded" {
+		t.Fatalf("states = %q then %q, want responded for both observations", first.State, second.State)
+	}
+	if first.Lifecycle != "started" || second.Lifecycle != "resumed" {
+		t.Fatalf("lifecycles = %q then %q, want started then resumed", first.Lifecycle, second.Lifecycle)
+	}
+	if second.Request.TriggerID != "1001" || second.ObservedHead != "abc123" {
+		t.Fatalf("resumed response identity = trigger %q/head %q", second.Request.TriggerID, second.ObservedHead)
+	}
+}
+
+func TestReviewWaitV1RetainsTimedOutRequestOnReentry(t *testing.T) {
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	helper := filepath.Join(wd, "pr-review", "review-wait-v1.sh")
+	requestFile := filepath.Join(t.TempDir(), "42.review_request.json")
+	writeReviewWaitRequest(t, requestFile, "1001", "2026-08-11T18:00:01Z", "2026-08-11T18:30:01Z")
+	timedOutObserver := writeReviewObserver(t, `{"state":"timed_out","observed_head_sha":"abc123","reason":"request-deadline-exhausted","snapshot":{"comments":[],"reviews":[],"inline_comments":[]}}`)
+	first := runReviewWait(t, helper, requestFile, timedOutObserver, true)
+
+	second := runReviewWait(t, helper, requestFile, filepath.Join(t.TempDir(), "missing-observer"), true)
+
+	if first.State != "timed_out" || second.State != "timed_out" {
+		t.Fatalf("states = %q then %q, want timed_out for both observations", first.State, second.State)
+	}
+	if second.Lifecycle != "resumed" || second.ObservedHead != "abc123" {
+		t.Fatalf("timed-out reentry = lifecycle %q/head %q, want resumed/abc123", second.Lifecycle, second.ObservedHead)
+	}
+}
+
+func TestReviewWaitV1ReturnsTimedOutWhenCallerDeadlineIsReached(t *testing.T) {
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	helper := filepath.Join(wd, "pr-review", "review-wait-v1.sh")
+	requestFile := filepath.Join(t.TempDir(), "42.review_request.json")
+	writeReviewWaitRequest(t, requestFile, "1001", "2026-08-11T18:00:01Z", "2026-08-11T18:30:01Z")
+	observer := writePendingReviewObserver(t)
+	clock := filepath.Join(t.TempDir(), "clock.sh")
+	if err := os.WriteFile(clock, []byte("#!/bin/sh\nprintf '%s\\n' 4102444800\n"), 0o700); err != nil {
+		t.Fatalf("write clock: %v", err)
+	}
+
+	result := runReviewWaitWithEnv(t, helper, requestFile, observer, false, map[string]string{
+		"SANDMAN_REVIEW_WAIT_CLOCK": clock,
+	})
+
+	if result.State != "timed_out" {
+		t.Fatalf("state = %q, want timed_out", result.State)
+	}
+	if result.Request.TriggerID != "1001" {
+		t.Fatalf("timed-out request trigger = %q, want 1001", result.Request.TriggerID)
+	}
+}
+
+func TestReviewWaitV1UnavailableDoesNotApprove(t *testing.T) {
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	helper := filepath.Join(wd, "pr-review", "review-wait-v1.sh")
+	requestFile := filepath.Join(t.TempDir(), "42.review_request.json")
+	writeReviewWaitRequest(t, requestFile, "1001", "2026-08-11T18:00:01Z", "2026-08-11T18:30:01Z")
+	observer := writeReviewObserver(t, `{"state":"unavailable","observed_head_sha":"abc123","reason":"api-unavailable","snapshot":null}`)
+
+	result := runReviewWait(t, helper, requestFile, observer, true)
+
+	if result.State != "unavailable" {
+		t.Fatalf("state = %q, want unavailable", result.State)
+	}
+	if result.Reason != "api-unavailable" {
+		t.Fatalf("reason = %q, want api-unavailable", result.Reason)
+	}
+}
+
+func TestReviewWaitV1RejectsChangedSameTriggerWithoutResettingState(t *testing.T) {
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	helper := filepath.Join(wd, "pr-review", "review-wait-v1.sh")
+	requestFile := filepath.Join(t.TempDir(), "42.review_request.json")
+	observer := writePendingReviewObserver(t)
+	writeReviewWaitRequest(t, requestFile, "1001", "2026-08-11T18:00:01Z", "2026-08-11T18:30:01Z")
+	runReviewWait(t, helper, requestFile, observer, true)
+	before, err := os.ReadFile(requestFile + ".state")
+	if err != nil {
+		t.Fatalf("read state before mismatch: %v", err)
+	}
+
+	changed, err := os.ReadFile(requestFile)
+	if err != nil {
+		t.Fatalf("read request: %v", err)
+	}
+	changed = []byte(strings.Replace(string(changed), `"head_sha": "abc123"`, `"head_sha": "different"`, 1))
+	if err := os.WriteFile(requestFile, changed, 0o600); err != nil {
+		t.Fatalf("write changed request: %v", err)
+	}
+	result := runReviewWait(t, helper, requestFile, observer, true)
+	after, err := os.ReadFile(requestFile + ".state")
+	if err != nil {
+		t.Fatalf("read state after mismatch: %v", err)
+	}
+
+	if result.State != "unavailable" || result.Reason != "same-trigger-request-changed" {
+		t.Fatalf("changed request result = %q/%q, want unavailable/same-trigger-request-changed", result.State, result.Reason)
+	}
+	if string(after) != string(before) {
+		t.Fatalf("same-trigger mismatch changed state file:\nbefore %safter %s", before, after)
+	}
+}
+
+func TestReviewWaitV1RejectsMalformedState(t *testing.T) {
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	helper := filepath.Join(wd, "pr-review", "review-wait-v1.sh")
+	requestFile := filepath.Join(t.TempDir(), "42.review_request.json")
+	writeReviewWaitRequest(t, requestFile, "1001", "2026-08-11T18:00:01Z", "2026-08-11T18:30:01Z")
+	if err := os.WriteFile(requestFile+".state", []byte("not-json\n"), 0o600); err != nil {
+		t.Fatalf("write malformed state: %v", err)
+	}
+
+	result := runReviewWait(t, helper, requestFile, writePendingReviewObserver(t), true)
+
+	if result.State != "unavailable" || result.Reason != "state-file-invalid" {
+		t.Fatalf("malformed state result = %q/%q, want unavailable/state-file-invalid", result.State, result.Reason)
+	}
+}
+
+func TestReviewWaitV1UsesProductionObserverForAllResponseSurfaces(t *testing.T) {
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	helper := filepath.Join(wd, "pr-review", "review-wait-v1.sh")
+	observer := filepath.Join(wd, "pr-review", "review-observe-v1.sh")
+	requestFile := filepath.Join(t.TempDir(), "42.review_request.json")
+	writeReviewWaitRequest(t, requestFile, "1001", "2026-08-11T18:00:01Z", "2026-08-11T18:30:01Z")
+
+	bin := t.TempDir()
+	gh := filepath.Join(bin, "gh")
+	ghScript := `#!/bin/sh
+if [ "$1" = "pr" ] && [ "$2" = "view" ]; then
+  printf '%s\n' '{"headRefOid":"abc123","comments":[{"id":1001,"body":"/sandman review","createdAt":"2026-08-11T18:00:01Z"},{"id":1002,"body":"LGTM","createdAt":"2026-08-11T18:01:00Z"}],"reviewDecision":"","mergeStateStatus":"CLEAN"}'
+  exit 0
+fi
+if [ "$1" = "api" ]; then
+  case "$2" in
+    */reviews) printf '%s\n' '[{"id":2001,"state":"COMMENTED","submitted_at":"2026-08-11T18:02:00Z","body":"file.go needs a test"}]' ;;
+    */comments) printf '%s\n' '[{"id":3001,"created_at":"2026-08-11T18:03:00Z","body":"inline feedback"}]' ;;
+    *) exit 2 ;;
+  esac
+  exit 0
+fi
+exit 2
+`
+	if err := os.WriteFile(gh, []byte(ghScript), 0o700); err != nil {
+		t.Fatalf("write gh shim: %v", err)
+	}
+
+	result := runReviewWaitWithEnv(t, helper, requestFile, observer, true, map[string]string{
+		"PATH": bin + ":" + os.Getenv("PATH"),
+	})
+
+	if result.State != "responded" {
+		t.Fatalf("state = %q, want responded", result.State)
+	}
+	evidence := string(result.Evidence)
+	for _, want := range []string{"LGTM", "file.go needs a test", "inline feedback", "top_level", "formal_reviews", "inline_comments"} {
+		if !strings.Contains(evidence, want) {
+			t.Errorf("response evidence missing %q: %s", want, evidence)
+		}
 	}
 }

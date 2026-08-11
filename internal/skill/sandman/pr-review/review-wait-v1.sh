@@ -154,13 +154,15 @@ if [ -e "$state_file" ]; then
 fi
 
 if [ "$prior_state" = "timed_out" ]; then
+	prior_observed_head=$(jq -r '.observed_head_sha // ""' "$state_file")
 	jq -cn \
 		--argjson request "$request_json" \
 		--arg lifecycle "$lifecycle" \
+		--arg observed_head_sha "$prior_observed_head" \
 		--arg reason "request-deadline-exhausted" \
 		--arg snapshot_path "$(jq -r '.snapshot_path // ""' "$state_file")" \
 		--argjson evidence "$(jq -c '.evidence // null' "$state_file")" \
-		'{protocol:"review-wait/v1",state:"timed_out",lifecycle:$lifecycle,request:{repository:$request.repository,pull_request:$request.pull_request,head_sha:$request.head_sha,trigger_id:$request.trigger_id,effective_timeout_seconds:$request.effective_timeout_seconds},observed_head_sha:(.observed_head_sha // ""),started_at:$request.started_at,deadline_at:$request.deadline_at,reason:$reason,snapshot_path:(if $snapshot_path == "" then null else $snapshot_path end),evidence:$evidence}'
+		'{protocol:"review-wait/v1",state:"timed_out",lifecycle:$lifecycle,request:{repository:$request.repository,pull_request:$request.pull_request,head_sha:$request.head_sha,trigger_id:$request.trigger_id,effective_timeout_seconds:$request.effective_timeout_seconds},observed_head_sha:$observed_head_sha,started_at:$request.started_at,deadline_at:$request.deadline_at,reason:$reason,snapshot_path:(if $snapshot_path == "" then null else $snapshot_path end),counters:{top:($evidence.response_counts.top_level // 0),reviews:($evidence.response_counts.formal_reviews // 0),inline:($evidence.response_counts.inline_comments // 0)},evidence:$evidence}'
 	exit 0
 fi
 
@@ -226,7 +228,7 @@ emit_result() {
 		--arg reason "$result_reason" \
 		--arg snapshot_path "$result_snapshot_path" \
 		--argjson evidence "$result_evidence" \
-		'{protocol:"review-wait/v1",state:$state,lifecycle:$lifecycle,request:{repository:$request.repository,pull_request:$request.pull_request,head_sha:$request.head_sha,trigger_id:$request.trigger_id,effective_timeout_seconds:$request.effective_timeout_seconds},observed_head_sha:$observed_head_sha,started_at:$request.started_at,deadline_at:$request.deadline_at,reason:$reason,snapshot_path:(if $snapshot_path == "" then null else $snapshot_path end),evidence:$evidence}'
+		'{protocol:"review-wait/v1",state:$state,lifecycle:$lifecycle,request:{repository:$request.repository,pull_request:$request.pull_request,head_sha:$request.head_sha,trigger_id:$request.trigger_id,effective_timeout_seconds:$request.effective_timeout_seconds},observed_head_sha:$observed_head_sha,started_at:$request.started_at,deadline_at:$request.deadline_at,reason:$reason,snapshot_path:(if $snapshot_path == "" then null else $snapshot_path end),counters:{top:($evidence.response_counts.top_level // 0),reviews:($evidence.response_counts.formal_reviews // 0),inline:($evidence.response_counts.inline_comments // 0)},evidence:$evidence}'
 }
 
 while :; do
