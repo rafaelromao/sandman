@@ -34,4 +34,13 @@ effective delegated review response budget in seconds. It is deliberately not
 written into the globally shared skill tree, so repositories with different
 policies cannot overwrite one another's active run context.
 
-If Sandman detects local edits under `~/.agents/skills/sandman/`, it asks before overwriting in a TTY. In non-interactive mode it fails instead of silently replacing those edits.
+The implementor-side review skill uses the versioned
+`pr-review/review-wait-v1.sh` entry point for one confirmed request. The
+request envelope identifies the pull request, current head, confirmed trigger,
+effective timeout, and absolute deadline. The command returns one structured
+JSON result (`pending`, `responded`, `timed_out`, or `unavailable`) and keeps
+raw response evidence separate from the existing approval and feedback
+classification rules. Its state sidecar lives beside the request under the
+repository's `.sandman/state/` directory.
+
+If Sandman detects local edits under `~/.agents/skills/sandman/`, it asks before overwriting in a TTY. In non-interactive mode it fails instead of silently replacing those edits. Built-in containers mount this tree at `/.agents/skills/sandman/`, and the helper is invoked through `sh`, so the wait does not depend on a host `sandman` binary.

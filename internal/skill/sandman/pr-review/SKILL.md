@@ -56,6 +56,7 @@ description: Automates the GitHub PR review loop with the PR Review Agent. Waits
 pr_data=$(gh pr view <N> --repo <owner/repo> --json headRefOid,comments,reviewDecision,mergeStateStatus)
 mergeStateStatus=$(echo "$pr_data" | jq -r '.mergeStateStatus')
 headRefOid=$(echo "$pr_data" | jq -r '.headRefOid')
+head_sha="$headRefOid"
 reviewDecision=$(echo "$pr_data" | jq -r '.reviewDecision')
 comments=$(echo "$pr_data" | jq -r '.comments')
 ```
@@ -145,83 +146,142 @@ If SHA changed since the last request, always allow re-requesting. If SHA is unc
 
 Only post `{{REVIEW_COMMAND}}` after CI has reached a green terminal state in Step 2.
 
-```bash
-gh pr comment <N> --repo <owner/repo> --body "{{REVIEW_COMMAND}}"
-```
-
-After posting, write the current head SHA to `.sandman/state/<N>.head_sha` so subsequent passes can detect staleness.
-
-#### Step 5: Wait for review (configured cumulative budget)
-
-Before polling, read the effective `REVIEW_TIMEOUT` value from the current AgentRun task context. It is an integer number of seconds supplied by the
-project/run configuration, not a value synchronized into this globally
-installed skill. If older task context has no `REVIEW_TIMEOUT` runtime value,
-use the compatibility fallback of **1800 seconds**. Keep this effective value
-fixed for retries within the same AgentRun; a genuinely new review request
-resolves its own value. A new review request starts a fresh counter.
-
-| Iteration | Sleep before this poll |
-|-----------|------------------------|
-| 1         | `sleep 120` (120 seconds) |
-| 2         | `sleep 60` (60 seconds)  |
-| 3         | `sleep 60` (60 seconds)  |
-| 4+        | `sleep 30` (30 seconds; repeated until the effective budget is exhausted) |
-
-The total polling budget is the effective `REVIEW_TIMEOUT` seconds of cumulative
-sleep (120 + 60 + 60 + N×30). The minimum valid budget is 240 seconds, which
-provides one complete approval cycle. A sleep that lands exactly on the configured budget is permitted.
-
-Track `review_sleep_elapsed` across the polling loop. Before every sleep, if
-adding the next interval would exceed the effective `REVIEW_TIMEOUT`, record
-`REVIEW_TIMEOUT` in `.sandman/task.md` and the run log with the effective
-budget, elapsed budget, observed response counts (`top`, `reviews`, `inline`),
-and the next executable action, then exit; otherwise add the interval to
-`review_sleep_elapsed` after sleeping. A new review request starts a fresh
-counter; ordinary polls, pending-trigger checks, and retries of the same wait
-do not reset it.
-
-**Hard rule — observed-response fast path.** If any poll iteration observes a new top-level PR conversation comment that does not begin with `{{REVIEW_COMMAND}}`, the very next sleep MUST be ≤ 60s.
-
-**Hard rule — DIRTY mid-poll must trigger back-merge, not be observed and ignored.** A PR whose `mergeStateStatus` was CLEAN at Step 1 can drift to `DIRTY` mid-poll once a new commit lands on the base branch and conflicts with the PR. The DIRTY pre-check at Step 2 only catches the initial state; subsequent polls MUST detect and resolve this. See Step 5a.
-
-On **every** poll iteration run all three commands separately:
+The post result is not a request until the trigger is confirmed against the
+current PR head. Re-read the PR comments and capture the exact server
+`createdAt` for the returned comment ID:
 
 ```bash
-gh pr view <N> --repo <owner/repo> --json comments,reviewDecision,mergeStateStatus
-gh api repos/<owner>/<repo>/pulls/<N>/reviews
-gh api repos/<owner>/<repo>/pulls/<N>/comments --paginate
+trigger_url=$(gh pr comment <N> --repo <owner/repo> --body "{{REVIEW_COMMAND}}") || record REVIEW_TIMEOUT_STATE_ERROR and stop
+trigger_id="$trigger_url"
+trigger_created_at=$(gh pr view <N> --repo <owner/repo> --json headRefOid,comments |
+  jq -er --arg head "$head_sha" --arg trigger_url "$trigger_url" --arg prefix "{{REVIEW_COMMAND}}" '
+    select(.headRefOid == $head) |
+    first(.comments[] | select((.url // "") == $trigger_url) |
+      select((.body // "") | startswith($prefix))) | .createdAt
+  ') || record REVIEW_TIMEOUT_STATE_ERROR and stop
 ```
 
-Counter: `top=<count> reviews=<count> inline=<count>`
+Only after this confirmation, atomically write the request envelope used by the
+versioned wait. The caller supplies the absolute deadline and polling plan;
+the compatibility form below materializes those fields from the already
+resolved effective timeout. It does not choose defaults, minimums, or a
+pull-request-wide budget:
 
-Counter definitions:
-- `top` = top-level change-request comments from the change-request view (the JSON `comments` field) posted after the most recent `{{REVIEW_COMMAND}}` trigger whose body does not begin with `{{REVIEW_COMMAND}}`. Do not filter by author: the implementor and reviewer may share credentials.
-- `reviews` = entries returned by the reviews endpoint (full entry, not truncated `latestReviews`)
-- `inline` = entries returned by the inline comments endpoint with pagination
+```bash
+review_timeout=${REVIEW_TIMEOUT:-1800}
+request_started_unix=$(date +%s) || record REVIEW_TIMEOUT_STATE_ERROR and stop
+request_deadline_unix=$((request_started_unix + review_timeout))
+request_started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ) || record REVIEW_TIMEOUT_STATE_ERROR and stop
+request_file=".sandman/state/<N>.review_request.json"
+mkdir -p "${request_file%/*}" || record REVIEW_TIMEOUT_STATE_ERROR and stop
+request_tmp=$(mktemp "${request_file}.tmp.XXXXXX") || record REVIEW_TIMEOUT_STATE_ERROR and stop
+jq -n \
+  --arg repository "<owner/repo>" \
+  --arg head_sha "$head_sha" \
+  --arg trigger_id "$trigger_id" \
+  --arg trigger_prefix "{{REVIEW_COMMAND}}" \
+  --arg trigger_created_at "$trigger_created_at" \
+  --arg confirmed_at "$request_started_at" \
+  --arg started_at "$request_started_at" \
+  --arg deadline_at "unix:$request_deadline_unix" \
+  --argjson pull_request <N> \
+  --argjson deadline_unix_seconds "$request_deadline_unix" \
+  --argjson effective_timeout_seconds "$review_timeout" \
+  --argjson poll_plan '[120,60,60,30]' \
+  '{protocol:"review-wait/v1",repository:$repository,pull_request:$pull_request,
+    head_sha:$head_sha,trigger_id:$trigger_id,trigger_prefix:$trigger_prefix,
+    trigger_created_at:$trigger_created_at,confirmed_at:$confirmed_at,
+    started_at:$started_at,deadline_at:$deadline_at,
+    deadline_unix_seconds:$deadline_unix_seconds,
+    effective_timeout_seconds:$effective_timeout_seconds,poll_plan:$poll_plan}' \
+  >"$request_tmp" && mv -f "$request_tmp" "$request_file" || {
+    rm -f "$request_tmp"
+    record REVIEW_TIMEOUT_STATE_ERROR and stop
+  }
+head_tmp=$(mktemp ".sandman/state/<N>.head_sha.tmp.XXXXXX") || record REVIEW_TIMEOUT_STATE_ERROR and stop
+printf '%s\n' "$head_sha" >"$head_tmp" && mv -f "$head_tmp" ".sandman/state/<N>.head_sha" || {
+  rm -f "$head_tmp"
+  record REVIEW_TIMEOUT_STATE_ERROR and stop
+}
 
-A reviewer response is **any** of:
-- A new top-level comment posted after the most recent `{{REVIEW_COMMAND}}` trigger whose body does not begin with `{{REVIEW_COMMAND}}`, regardless of author
-- A formal review with `state: COMMENTED`, `APPROVED`, or `CHANGES_REQUESTED`
-- An inline file comment
+The atomic head-SHA sidecar remains available to the existing stale-approval
+rules and subsequent passes.
 
-**Self-check (after every poll, before classifying):**
-If `top > 0` AND `reviews == 0` AND `inline == 0`, AND no previous `{{REVIEW_COMMAND}}` is already pending without response, post a follow-up comment with `{{REVIEW_COMMAND}}` plus a freeform clarification request. If a request is already pending, skip — do not pile on.
+#### Step 5: Wait for this confirmed request (versioned coordinator)
 
-If no reviewer response arrives within the effective budget, stop and exit the
-loop with a `REVIEW_TIMEOUT` reason documented in `.sandman/task.md` and the
-run log so the failure, configured budget, elapsed budget, observed response
-counts, and next executable action are durable.
+The effective `REVIEW_TIMEOUT` value is an integer number of seconds supplied by
+the current AgentRun task context, not a value synchronized into this globally
+installed skill. If older task context has no value, use the compatibility
+fallback of **1800 seconds**. The request envelope fixes that value, its
+absolute deadline, and the existing polling plan for one confirmed trigger.
+Retries and continuations invoke the same request again; they do not create a
+new deadline. A later confirmed trigger replaces the request envelope and is a
+new request, even when the pull request and head are unchanged.
 
-#### Step 5a: DIRTY handling — every poll iteration
+Invoke the installed coordinator exactly once for this wait. It is a portable
+POSIX-shell entry point shipped with the shared skill, so it works in a
+worktree and in a container where the skill is visible at `/.agents`; it does
+not require a host `sandman` binary. It does not require a host `sandman` binary:
 
-> **Prerequisite**: a DIRTY (`mergeable == CONFLICTING`) PR cannot run CI, cannot be reviewed on its diff cleanly, and cannot be merged. The Step 2 pre-check catches the initial state, but a PR can drift to DIRTY mid-poll once new commits land on the base branch. This section is the per-poll guard.
+```bash
+skill_root="${SANDMAN_SKILL_ROOT:-${HOME}/.agents/skills/sandman}"
+wait_result=$(sh "$skill_root/pr-review/review-wait-v1.sh" \
+  --request-file "$request_file" --json) || record REVIEW_TIMEOUT_STATE_ERROR and stop
+wait_state=$(printf '%s' "$wait_result" | jq -r '.state // "unavailable"')
+wait_reason=$(printf '%s' "$wait_result" | jq -r '.reason // "unknown"')
+```
 
-On **every** poll iteration, after running the three commands above, inspect the `mergeStateStatus` field already returned by the first command (do **not** make a separate change-request view call). If `mergeStateStatus == "DIRTY"`:
+The result is one structured request-scoped envelope. `responded` means that
+raw evidence is available for the existing Step 6 classifier; it does not mean
+approval. The envelope includes the complete top-level, formal-review, and
+inline-comment snapshot plus `top`, `reviews`, and `inline` counters. Handle
+the transport state before classification:
+
+- `responded`: read the opaque snapshot and continue to Step 6 without adding
+  response formats or author filters.
+- `pending`: no eligible response was observed and the request remains active;
+  re-enter this same request, never post a duplicate trigger.
+- `timed_out`: record `REVIEW_TIMEOUT` with the request identity, configured
+  budget, deadline, counters, and next executable action. Do not approve or
+  create a replacement request.
+- `unavailable`: record the structured reason and fail closed. Do not approve,
+  reset the deadline, or post another trigger to recover it.
+
+The coordinator preserves the existing `120, 60, 60, then 30` poll plan and
+observed-response fast path as data. It owns the polling control and deadline
+boundary for this request; the skill no longer tracks cumulative sleep or
+open-codes the three GitHub response calls. A new request starts a fresh plan;
+ordinary polls, pending-trigger checks, retries, and continuations reuse the
+same request. The first intervals remain 120 seconds, 60 seconds, and 60
+seconds; later intervals remain 30 seconds. The existing 240-second minimum
+and boundary rule are unchanged: sleep that lands exactly on the configured budget is permitted. A new review request starts a fresh counter, while the same request retains its observed response counts.
+
+The response snapshot retains the existing source contract: author-agnostic
+top-level non-trigger comments, formal `COMMENTED`/`APPROVED`/
+`CHANGES_REQUESTED` reviews, and inline file comments. The current
+same-credential, stale-head, pending-trigger, requested-changes, informal
+approval, and concrete-feedback rules remain owned by Step 6. The bundled
+`review-observe-v1.sh` observer returns a response whose body does not begin with `{{REVIEW_COMMAND}}` regardless of author; do not filter by author. Preserve observed response counts.
+An envelope with `state:"unavailable"` is structured failure, never approval.
+
+Before Step 6, retain the existing self-check: when `top > 0`, `reviews == 0`,
+and `inline == 0`, and no previous `{{REVIEW_COMMAND}}` request is already
+pending, post a follow-up beginning with `{{REVIEW_COMMAND}}` asking the
+reviewer to clarify. If a request is already pending, do not pile on another
+trigger. This is reviewer communication, not a new response classification.
+
+#### Step 5a: DIRTY handling — every coordinator result
+
+> **Prerequisite**: a DIRTY (`mergeable == CONFLICTING`) PR cannot run CI, cannot be reviewed on its diff cleanly, and cannot be merged. The Step 2 pre-check catches the initial state, but a PR can drift to DIRTY while the coordinator is waiting. This section remains the per-result guard.
+
+On every `responded` or `pending` result, inspect the `mergeStateStatus` field
+in the returned snapshot (do **not** make a separate change-request view call).
+If `mergeStateStatus == "DIRTY"`:
 
 1. Stop polling for review feedback. The PR is unmergeable until the conflict is resolved; reviewer comments posted on a DIRTY PR do not produce a usable review.
 2. Load `sandman-back-merge` (see the `sandman-back-merge` skill). Run it on the current branch. It performs the disciplined 3-way merge of the base branch into the working branch and resolves conflicts without history rewrites.
 3. If back-merge succeeds, push the updated branch with `git push`. Update `.sandman/state/<N>.head_sha` with the new head SHA so Step 3's stale-request check sees the new commit and re-evaluates.
-4. Restart polling from Step 1 — a fresh CI run will be triggered by the push, and the review agent may have already posted feedback on the prior SHA that the polling loop should classify on the next pass.
+4. Restart from Step 1 — a fresh CI run will be triggered by the push, and the review agent may have already posted feedback on the prior SHA that the next request result should classify.
 5. If back-merge fails to resolve conflicts (e.g. semantic conflict, merge helper rejected a hunk), exit the loop with a distinct `REVIEW_CONFLICT_UNRESOLVED` reason in `.sandman/task.md` and the run log. This is **never** a `REVIEW_TIMEOUT`. It is also **never** a silent success — the PR remains unmergeable and a future run must continue from this state.
 
 **Hard rule — DIRTY is not REVIEW_TIMEOUT.** A DIRTY PR that back-merge cannot resolve is a structured failure with a downstream signal in the run payload. Do not collapse it into the generic review-timeout bucket: the two failures have different remediation paths and different downstream tooling.

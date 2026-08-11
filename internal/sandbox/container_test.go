@@ -266,6 +266,20 @@ func TestContainerMount_RendersBuiltInAgentPaths(t *testing.T) {
 					t.Errorf("missing mount for ConfigDir %q (expected %q), args: %v", expanded, expected, captured)
 				}
 			}
+			if name == "opencode" {
+				agentsDir := filepath.Join(os.Getenv("HOME"), ".agents")
+				expected := agentsDir + ":/.agents"
+				found := false
+				for i := 0; i < len(captured)-1; i++ {
+					if captured[i] == "-v" && captured[i+1] == expected {
+						found = true
+						break
+					}
+				}
+				if !found {
+					t.Fatalf("shared Sandman skill must be visible at /.agents in the container, expected %q, args: %v", expected, captured)
+				}
+			}
 
 			for _, expanded := range expandedFiles {
 				containerPath := toContainerPath(expanded)
