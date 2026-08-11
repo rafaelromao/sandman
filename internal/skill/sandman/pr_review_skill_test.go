@@ -245,6 +245,7 @@ func TestPRReviewSkill_UsesConfigurableCurrentAgentRunTimeout(t *testing.T) {
 		"current AgentRun task context",
 		"REVIEW_TIMEOUT",
 		"1800 seconds",
+		"absolute wall-clock",
 		"120 seconds",
 		"60 seconds",
 		"30 seconds",
@@ -279,6 +280,8 @@ func TestPRReviewSkill_UsesVersionedRequestWait(t *testing.T) {
 		"select((.url // \"\") == $trigger_url)",
 		"trigger_id",
 		"trigger_created_at",
+		"started_unix_seconds",
+		"elapsed_seconds",
 		"state:\"unavailable\"",
 		"raw evidence is available for the existing Step 6 classifier",
 		"does not require a host `sandman` binary",
@@ -306,6 +309,34 @@ func TestPRReviewSkill_UsesVersionedRequestWait(t *testing.T) {
 		if strings.Contains(waitSection, forbidden) {
 			t.Errorf("versioned wait section must not open-code %q", forbidden)
 		}
+	}
+}
+
+func TestPRReviewSkill_FailsClosedOnUntrustedRequestPair(t *testing.T) {
+	text := readPRReviewSkill(t)
+
+	for _, phrase := range []string{
+		"The request envelope is the authoritative identity record",
+		"persisted_head_sha=$(jq -er '.head_sha' \"$request_file\")",
+		"recorded_head_sha=$(tr -d '\\r\\n' <\"$head_file\")",
+		"If either artifact is missing, malformed, or mismatched, fail closed",
+		"Do not\nsilently repair it by posting another trigger",
+		"started_unix_seconds",
+		"elapsed_seconds",
+	} {
+		if !strings.Contains(text, phrase) {
+			t.Errorf("pr-review SKILL.md must pin fail-closed request identity behavior %q", phrase)
+		}
+	}
+
+	step3 := strings.Index(text, "#### Step 3: Check if SHA changed")
+	step4 := strings.Index(text, "#### Step 4: Delegate review")
+	if step3 < 0 || step4 < step3 {
+		t.Fatal("could not isolate request identity validation before trigger posting")
+	}
+	validation := text[step3:step4]
+	if strings.Contains(validation, `gh pr comment <N> --repo <owner/repo> --body "{{REVIEW_COMMAND}}"`) {
+		t.Fatal("request identity validation must not post a trigger")
 	}
 }
 

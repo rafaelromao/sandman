@@ -82,7 +82,7 @@ Positional arguments (numbers and ranges) can be combined with `--label` and `--
 | `--agent` | `agent` from config (`opencode`) | Built-in agent preset for this run; on `--continue` uses the current value, not the prior run's stored agent |
 | `--run-id` | — | Batch-level identifier for prompt-only runs; must start with a letter and contain only alphanumeric characters, hyphens, and underscores; cannot be combined with issue selection |
 | `--run-idle-timeout` | `0` | Treat an AgentRun as stuck if it produces no output for N seconds; `0` disables the timeout |
-| `--review-timeout` | config `review_timeout` (`1800`) | Override the cumulative delegated review response budget in seconds; minimum `240` |
+| `--review-timeout` | config `review_timeout` (`1800`) | Override the absolute per-confirmed-request delegated review deadline in seconds; minimum `240` |
 | `--branch` | `""` | Branch name for prompt-only runs; overrides the default `<slug>-<timestamp>` shape (prompt-only mode only) |
 | `--reconcile-stranded` | `true` | Auto-recover stranded worktrees when the main repo is checked out on a `<n>-<slug>` branch |
 | `--no-reconcile-stranded` | `false` | Opt out of stranded-worktree auto-recovery (negative form of `--reconcile-stranded`) |
@@ -103,7 +103,7 @@ Positional arguments (numbers and ranges) can be combined with `--label` and `--
 - `--variant` is trimmed and treated as opaque provider-specific text; when omitted, Sandman uses `variant` from config. On `--continue`, current CLI/config values replace the prior event value. Non-empty values are safely passed as one argument to built-in OpenCode; custom commands are unchanged.
 - `--agent` selects which built-in preset to use for this run; if omitted, Sandman uses `agent` from config
 - `--continue` cannot be combined with `--override`
-- `--review-timeout` uses explicit override > repository `review_timeout` > built-in default `1800`; the effective value is refreshed on continuations and retries within one AgentRun keep their original value
+- `--review-timeout` uses explicit override > repository `review_timeout` > built-in default `1800`; each confirmed review trigger receives one full absolute deadline, while retries and continuations of that trigger keep the original deadline
 - When `--max-containers` and `--container-capacity` together constrain concurrency below `--parallel`, the tighter limit wins
 - `--reconcile-stranded` auto-recovers stranded worktrees when the main repo is checked out on a `<n>-<slug>` branch; `--no-reconcile-stranded` opts out of this auto-recovery
 
@@ -145,7 +145,7 @@ Reuses the prior run's worktree identity: the existing branch, the stored base b
 | `--run-id` | — | Continue the most recent prompt-only run by its batch-level identifier; must start with a letter and contain only alphanumeric characters, hyphens, and underscores; cannot be combined with issue numbers. Reads the prior task file from the existing worktree and reuses the same branch for the continued run. When the most recent Issue-0 event is a review run (not a prompt-only run), `sandman run --continue` skips it and selects the prior prompt-only run instead — or errors if none exists. |
 | `--dangerously-skip-permissions` | `true` for container runs, `false` for worktree runs | Skip permission checks for the continued run |
 | `--run-idle-timeout` | `0` | Treat an AgentRun as stuck if it produces no output for N seconds; `0` disables the timeout |
-| `--review-timeout` | config `review_timeout` (`1800`) | Override the cumulative delegated review response budget in seconds; minimum `240` |
+| `--review-timeout` | config `review_timeout` (`1800`) | Override the absolute per-confirmed-request delegated review deadline in seconds; minimum `240` |
 
 ## `sandman clean`
 

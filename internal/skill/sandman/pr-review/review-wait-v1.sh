@@ -56,10 +56,10 @@ EOF
 		jq -cn \
 			--arg reason "$reason" \
 			--argjson request "$request_json" \
-			'{protocol:"review-wait/v1",state:"unavailable",lifecycle:"resumed",request:{repository:$request.repository,pull_request:$request.pull_request,head_sha:$request.head_sha,trigger_id:$request.trigger_id,effective_timeout_seconds:$request.effective_timeout_seconds},observed_head_sha:"",started_at:$request.started_at,deadline_at:$request.deadline_at,reason:$reason,snapshot_path:null,evidence:null}'
+			'{protocol:"review-wait/v1",state:"unavailable",lifecycle:"resumed",request:{repository:$request.repository,pull_request:$request.pull_request,head_sha:$request.head_sha,trigger_id:$request.trigger_id,started_unix_seconds:($request.started_unix_seconds // ($request.deadline_unix_seconds - $request.effective_timeout_seconds)),deadline_unix_seconds:$request.deadline_unix_seconds,effective_timeout_seconds:$request.effective_timeout_seconds},observed_head_sha:"",started_at:$request.started_at,deadline_at:$request.deadline_at,elapsed_seconds:0,reason:$reason,snapshot_path:null,evidence:null}'
 	else
 		jq -cn --arg reason "$reason" \
-			'{protocol:"review-wait/v1",state:"unavailable",lifecycle:"started",request:null,observed_head_sha:"",started_at:"",deadline_at:"",reason:$reason,snapshot_path:null,evidence:null}'
+			'{protocol:"review-wait/v1",state:"unavailable",lifecycle:"started",request:null,observed_head_sha:"",started_at:"",deadline_at:"",elapsed_seconds:0,reason:$reason,snapshot_path:null,evidence:null}'
 	fi
 }
 
@@ -84,11 +84,20 @@ if ! jq -e '
 	(.confirmed_at | type == "string" and length > 0) and
 	(.started_at | type == "string" and length > 0) and
 	(.deadline_at | type == "string" and length > 0) and
+	((.started_unix_seconds // (.deadline_unix_seconds - .effective_timeout_seconds)) | type == "number" and floor == .) and
 	(.deadline_unix_seconds | type == "number" and floor == . and . > 0) and
 	(.effective_timeout_seconds | type == "number" and floor == . and . > 0) and
 	(.poll_plan | type == "array" and length > 0 and all(.[]; type == "number" and floor == . and . >= 0))
 ' "$request_file" >/dev/null 2>&1
 then
+	emit_unavailable request-envelope-invalid
+	exit 0
+fi
+
+request_started_unix=$(jq -r '(.started_unix_seconds // (.deadline_unix_seconds - .effective_timeout_seconds))' "$request_file")
+request_deadline=$(jq -r '.deadline_unix_seconds' "$request_file")
+request_timeout=$(jq -r '.effective_timeout_seconds' "$request_file")
+if [ "$request_deadline" -ne $((request_started_unix + request_timeout)) ]; then
 	emit_unavailable request-envelope-invalid
 	exit 0
 fi
@@ -116,6 +125,9 @@ if [ -e "$state_file" ]; then
 		(.deadline_unix_seconds | type == "number" and floor == . and . > 0) and
 		(.started_at | type == "string" and length > 0) and
 		(.deadline_at | type == "string" and length > 0) and
+		((.started_unix_seconds // (.deadline_unix_seconds - .effective_timeout_seconds)) | type == "number" and floor == .) and
+		((.elapsed_seconds // 0) | type == "number" and floor == . and . >= 0) and
+		(.poll_plan == null or (.poll_plan | type == "array" and length > 0 and all(.[]; type == "number" and floor == . and . >= 0))) and
 		(.state | IN("pending", "responded", "timed_out", "unavailable"))
 	' "$state_file" >/dev/null 2>&1
 	then
@@ -149,7 +161,9 @@ if [ -e "$state_file" ]; then
 			.repository == $request.repository and
 			.trigger_prefix == $request.trigger_prefix and
 			.trigger_created_at == $request.trigger_created_at and
-			.confirmed_at == $request.confirmed_at
+			.confirmed_at == $request.confirmed_at and
+			((.started_unix_seconds // (.deadline_unix_seconds - .effective_timeout_seconds)) == ($request.started_unix_seconds // ($request.deadline_unix_seconds - $request.effective_timeout_seconds))) and
+			((.poll_plan // $request.poll_plan) == $request.poll_plan)
 		' "$state_file" >/dev/null 2>&1; then
 			emit_unavailable same-trigger-request-changed
 			exit 0
@@ -170,6 +184,7 @@ fi
 
 if [ "$prior_state" = "timed_out" ] || [ "$prior_state" = "unavailable" ]; then
 	prior_observed_head=$(jq -r '.observed_head_sha // ""' "$state_file")
+	prior_elapsed=$(jq -r '.elapsed_seconds // 0' "$state_file")
 	jq -cn \
 		--argjson request "$request_json" \
 		--arg state "$prior_state" \
@@ -177,8 +192,9 @@ if [ "$prior_state" = "timed_out" ] || [ "$prior_state" = "unavailable" ]; then
 		--arg observed_head_sha "$prior_observed_head" \
 		--arg reason "$(jq -r '.reason // .state' "$state_file")" \
 		--arg snapshot_path "$(jq -r '.snapshot_path // ""' "$state_file")" \
+		--argjson elapsed_seconds "$prior_elapsed" \
 		--argjson evidence "$(jq -c '.evidence // null' "$state_file")" \
-		'{protocol:"review-wait/v1",state:$state,lifecycle:$lifecycle,request:{repository:$request.repository,pull_request:$request.pull_request,head_sha:$request.head_sha,trigger_id:$request.trigger_id,effective_timeout_seconds:$request.effective_timeout_seconds},observed_head_sha:$observed_head_sha,started_at:$request.started_at,deadline_at:$request.deadline_at,reason:$reason,snapshot_path:(if $snapshot_path == "" then null else $snapshot_path end),counters:{top:($evidence.response_counts.top_level // 0),reviews:($evidence.response_counts.formal_reviews // 0),inline:($evidence.response_counts.inline_comments // 0)},evidence:$evidence}'
+		'{protocol:"review-wait/v1",state:$state,lifecycle:$lifecycle,request:{repository:$request.repository,pull_request:$request.pull_request,head_sha:$request.head_sha,trigger_id:$request.trigger_id,started_unix_seconds:($request.started_unix_seconds // ($request.deadline_unix_seconds - $request.effective_timeout_seconds)),deadline_unix_seconds:$request.deadline_unix_seconds,effective_timeout_seconds:$request.effective_timeout_seconds},observed_head_sha:$observed_head_sha,started_at:$request.started_at,deadline_at:$request.deadline_at,elapsed_seconds:$elapsed_seconds,reason:$reason,snapshot_path:(if $snapshot_path == "" then null else $snapshot_path end),counters:{top:($evidence.response_counts.top_level // 0),reviews:($evidence.response_counts.formal_reviews // 0),inline:($evidence.response_counts.inline_comments // 0)},evidence:$evidence}'
 	exit 0
 fi
 
@@ -249,6 +265,7 @@ write_state() {
 	result_reason=$4
 	result_snapshot_path=$5
 	result_evidence=$6
+	result_elapsed=$7
 	state_dir=$(dirname -- "$state_file")
 	mkdir -p "$state_dir" || return 1
 	state_tmp=$state_file.tmp.$$
@@ -259,8 +276,9 @@ write_state() {
 		--arg observed_head_sha "$result_observed_head" \
 		--arg reason "$result_reason" \
 		--arg snapshot_path "$result_snapshot_path" \
+		--argjson elapsed_seconds "$result_elapsed" \
 		--argjson evidence "$result_evidence" \
-		'{protocol:"review-wait/v1",repository:$request.repository,pull_request:$request.pull_request,head_sha:$request.head_sha,trigger_id:$request.trigger_id,trigger_prefix:$request.trigger_prefix,trigger_created_at:$request.trigger_created_at,confirmed_at:$request.confirmed_at,effective_timeout_seconds:$request.effective_timeout_seconds,deadline_unix_seconds:$request.deadline_unix_seconds,started_at:$request.started_at,deadline_at:$request.deadline_at,state:$state,lifecycle:$lifecycle,observed_head_sha:$observed_head_sha,reason:$reason,snapshot_path:(if $snapshot_path == "" then null else $snapshot_path end),evidence:$evidence}' >"$state_tmp"
+		'{protocol:"review-wait/v1",repository:$request.repository,pull_request:$request.pull_request,head_sha:$request.head_sha,trigger_id:$request.trigger_id,trigger_prefix:$request.trigger_prefix,trigger_created_at:$request.trigger_created_at,confirmed_at:$request.confirmed_at,started_unix_seconds:($request.started_unix_seconds // ($request.deadline_unix_seconds - $request.effective_timeout_seconds)),effective_timeout_seconds:$request.effective_timeout_seconds,deadline_unix_seconds:$request.deadline_unix_seconds,started_at:$request.started_at,deadline_at:$request.deadline_at,poll_plan:$request.poll_plan,state:$state,lifecycle:$lifecycle,observed_head_sha:$observed_head_sha,elapsed_seconds:$elapsed_seconds,reason:$reason,snapshot_path:(if $snapshot_path == "" then null else $snapshot_path end),evidence:$evidence}' >"$state_tmp"
 	then
 		rm -f "$state_tmp"
 		return 1
@@ -282,6 +300,7 @@ emit_result() {
 	result_reason=$4
 	result_snapshot_path=$5
 	result_evidence=$6
+	result_elapsed=$7
 	jq -cn \
 		--argjson request "$request_json" \
 		--arg state "$result_state" \
@@ -289,17 +308,19 @@ emit_result() {
 		--arg observed_head_sha "$result_observed_head" \
 		--arg reason "$result_reason" \
 		--arg snapshot_path "$result_snapshot_path" \
+		--argjson elapsed_seconds "$result_elapsed" \
 		--argjson evidence "$result_evidence" \
-		'{protocol:"review-wait/v1",state:$state,lifecycle:$lifecycle,request:{repository:$request.repository,pull_request:$request.pull_request,head_sha:$request.head_sha,trigger_id:$request.trigger_id,effective_timeout_seconds:$request.effective_timeout_seconds},observed_head_sha:$observed_head_sha,started_at:$request.started_at,deadline_at:$request.deadline_at,reason:$reason,snapshot_path:(if $snapshot_path == "" then null else $snapshot_path end),counters:{top:($evidence.response_counts.top_level // 0),reviews:($evidence.response_counts.formal_reviews // 0),inline:($evidence.response_counts.inline_comments // 0)},evidence:$evidence}'
+		'{protocol:"review-wait/v1",state:$state,lifecycle:$lifecycle,request:{repository:$request.repository,pull_request:$request.pull_request,head_sha:$request.head_sha,trigger_id:$request.trigger_id,started_unix_seconds:($request.started_unix_seconds // ($request.deadline_unix_seconds - $request.effective_timeout_seconds)),deadline_unix_seconds:$request.deadline_unix_seconds,effective_timeout_seconds:$request.effective_timeout_seconds},observed_head_sha:$observed_head_sha,started_at:$request.started_at,deadline_at:$request.deadline_at,elapsed_seconds:$elapsed_seconds,reason:$reason,snapshot_path:(if $snapshot_path == "" then null else $snapshot_path end),counters:{top:($evidence.response_counts.top_level // 0),reviews:($evidence.response_counts.formal_reviews // 0),inline:($evidence.response_counts.inline_comments // 0)},evidence:$evidence}'
 }
 
 persist_unavailable() {
 	result_reason=$1
-	if ! write_state unavailable "$lifecycle" "" "$result_reason" "" null; then
+	result_elapsed=${2:-0}
+	if ! write_state unavailable "$lifecycle" "" "$result_reason" "" null "$result_elapsed"; then
 		emit_unavailable state-persist-failed
 		return 1
 	fi
-	emit_result unavailable "$lifecycle" "" "$result_reason" "" null
+	emit_result unavailable "$lifecycle" "" "$result_reason" "" null "$result_elapsed"
 }
 
 while :; do
@@ -352,10 +373,12 @@ while :; do
 			exit 0
 		;;
 	esac
-	if [ "$completed_now" -gt "$(jq -r '.deadline_unix_seconds' "$request_file")" ] && [ "$observer_state" != "unavailable" ]; then
+	if [ "$completed_now" -ge "$(jq -r '.deadline_unix_seconds' "$request_file")" ] && [ "$observer_state" != "unavailable" ]; then
 		observer_state=timed_out
 		observer_reason=request-deadline-exhausted
 	fi
+	elapsed_seconds=$((completed_now - request_started_unix))
+	[ "$elapsed_seconds" -ge 0 ] || elapsed_seconds=0
 
 	snapshot_path=$state_file.snapshot.json
 	snapshot_tmp=$snapshot_path.tmp.$$
@@ -368,49 +391,43 @@ while :; do
 	result_reason=$observer_reason
 	[ -n "$result_reason" ] || result_reason=$observer_state
 	if [ "$observer_state" = "responded" ] || [ "$observer_state" = "unavailable" ] || [ "$observer_state" = "timed_out" ]; then
-		if ! write_state "$observer_state" "$lifecycle" "$observer_head" "$result_reason" "$snapshot_path" "$observer_evidence"; then
+		if ! write_state "$observer_state" "$lifecycle" "$observer_head" "$result_reason" "$snapshot_path" "$observer_evidence" "$elapsed_seconds"; then
 			emit_unavailable state-persist-failed
 			exit 0
 		fi
-		emit_result "$observer_state" "$lifecycle" "$observer_head" "$result_reason" "$snapshot_path" "$observer_evidence"
+		emit_result "$observer_state" "$lifecycle" "$observer_head" "$result_reason" "$snapshot_path" "$observer_evidence" "$elapsed_seconds"
 		exit 0
 	fi
 
 	if [ "$poll_once" = true ]; then
-		if ! write_state pending "$lifecycle" "$observer_head" pending "$snapshot_path" "$observer_evidence"; then
+		if ! write_state pending "$lifecycle" "$observer_head" pending "$snapshot_path" "$observer_evidence" "$elapsed_seconds"; then
 			emit_unavailable state-persist-failed
 			exit 0
 		fi
-		emit_result pending "$lifecycle" "$observer_head" pending "$snapshot_path" "$observer_evidence"
+		emit_result pending "$lifecycle" "$observer_head" pending "$snapshot_path" "$observer_evidence" "$elapsed_seconds"
 		exit 0
 	fi
 
-	if [ "$now_value" -ge "$(jq -r '.deadline_unix_seconds' "$request_file")" ]; then
-		if ! write_state timed_out "$lifecycle" "$observer_head" request-deadline-exhausted "$snapshot_path" "$observer_evidence"; then
+	if [ "$completed_now" -ge "$(jq -r '.deadline_unix_seconds' "$request_file")" ]; then
+		if ! write_state timed_out "$lifecycle" "$observer_head" request-deadline-exhausted "$snapshot_path" "$observer_evidence" "$elapsed_seconds"; then
 			emit_unavailable state-persist-failed
 			exit 0
 		fi
-		emit_result timed_out "$lifecycle" "$observer_head" request-deadline-exhausted "$snapshot_path" "$observer_evidence"
+		emit_result timed_out "$lifecycle" "$observer_head" request-deadline-exhausted "$snapshot_path" "$observer_evidence" "$elapsed_seconds"
 		exit 0
 	fi
 
 	interval=$(jq -r --argjson index "$poll_index" 'if $index < (.poll_plan | length) then .poll_plan[$index] else .poll_plan[-1] end' "$request_file")
-	remaining=$(( $(jq -r '.deadline_unix_seconds' "$request_file") - now_value ))
-	if [ "$interval" -gt "$remaining" ]; then
-		if ! write_state timed_out "$lifecycle" "$observer_head" request-deadline-exhausted "$snapshot_path" "$observer_evidence"; then
-			emit_unavailable state-persist-failed
-			exit 0
-		fi
-		emit_result timed_out "$lifecycle" "$observer_head" request-deadline-exhausted "$snapshot_path" "$observer_evidence"
-		exit 0
-	fi
+	remaining=$(( $(jq -r '.deadline_unix_seconds' "$request_file") - completed_now ))
+	sleep_interval=$interval
+	[ "$sleep_interval" -le "$remaining" ] || sleep_interval=$remaining
 	if [ -n "$sleeper" ]; then
-		sh "$sleeper" "$interval" || {
+		sh "$sleeper" "$sleep_interval" || {
 			persist_unavailable sleeper-failed
 			exit 0
 		}
 	else
-		sleep "$interval" || {
+		sleep "$sleep_interval" || {
 			persist_unavailable sleeper-failed
 		exit 0
 		}

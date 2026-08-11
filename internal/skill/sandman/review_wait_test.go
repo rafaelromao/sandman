@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -19,16 +20,23 @@ type reviewWaitResult struct {
 	DeadlineAt   string          `json:"deadline_at"`
 	Reason       string          `json:"reason"`
 	SnapshotPath string          `json:"snapshot_path"`
+	Elapsed      int             `json:"elapsed_seconds"`
 	Evidence     json.RawMessage `json:"evidence"`
 	Request      struct {
 		PullRequest    int    `json:"pull_request"`
 		HeadSHA        string `json:"head_sha"`
 		TriggerID      string `json:"trigger_id"`
+		StartedUnix    int    `json:"started_unix_seconds"`
+		DeadlineUnix   int    `json:"deadline_unix_seconds"`
 		TimeoutSeconds int    `json:"effective_timeout_seconds"`
 	} `json:"request"`
 }
 
 func writeReviewWaitRequest(t *testing.T, path, triggerID, startedAt, deadlineAt string) {
+	writeReviewWaitRequestValues(t, path, triggerID, startedAt, deadlineAt, 4102443000, 4102444800, 1800)
+}
+
+func writeReviewWaitRequestValues(t *testing.T, path, triggerID, startedAt, deadlineAt string, startedUnix, deadlineUnix, timeout int) {
 	t.Helper()
 	request := `{
   "protocol": "review-wait/v1",
@@ -41,8 +49,9 @@ func writeReviewWaitRequest(t *testing.T, path, triggerID, startedAt, deadlineAt
   "confirmed_at": "` + startedAt + `",
   "started_at": "` + startedAt + `",
   "deadline_at": "` + deadlineAt + `",
-  "deadline_unix_seconds": 4102444800,
-  "effective_timeout_seconds": 1800,
+  "started_unix_seconds": ` + strconv.Itoa(startedUnix) + `,
+  "deadline_unix_seconds": ` + strconv.Itoa(deadlineUnix) + `,
+  "effective_timeout_seconds": ` + strconv.Itoa(timeout) + `,
   "poll_plan": [120, 60, 60, 30]
 }
 `
@@ -154,6 +163,113 @@ func TestReviewWaitV1StartsRequestAndReturnsStructuredPending(t *testing.T) {
 	}
 }
 
+func TestReviewWaitV1ChargesObserverOverheadAndExpiresAtExactDeadline(t *testing.T) {
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	helper := filepath.Join(wd, "pr-review", "review-wait-v1.sh")
+	requestFile := filepath.Join(t.TempDir(), "42.review_request.json")
+	writeReviewWaitRequestValues(t, requestFile, "1001", "2026-08-11T18:00:01Z", "unix:100", 80, 100, 20)
+	clock := filepath.Join(t.TempDir(), "clock.sh")
+	clockState := filepath.Join(t.TempDir(), "clock.state")
+	if err := os.WriteFile(clockState, []byte("0\n"), 0o600); err != nil {
+		t.Fatalf("write clock state: %v", err)
+	}
+	clockScript := `#!/bin/sh
+calls=$(tr -d '\n' < "$SANDMAN_REVIEW_WAIT_CLOCK_STATE")
+if [ "$calls" = "0" ]; then
+  value=90
+else
+  value=100
+fi
+printf '%s\n' "$value"
+printf '%s\n' $((calls + 1)) > "$SANDMAN_REVIEW_WAIT_CLOCK_STATE"
+`
+	if err := os.WriteFile(clock, []byte(clockScript), 0o700); err != nil {
+		t.Fatalf("write clock: %v", err)
+	}
+
+	result := runReviewWaitWithEnv(t, helper, requestFile, writePendingReviewObserver(t), true, map[string]string{
+		"SANDMAN_REVIEW_WAIT_CLOCK":       clock,
+		"SANDMAN_REVIEW_WAIT_CLOCK_STATE": clockState,
+	})
+	replayed := runReviewWait(t, helper, requestFile, filepath.Join(t.TempDir(), "missing-observer"), true)
+
+	if result.State != "timed_out" {
+		t.Fatalf("state = %q, want timed_out after observer overhead reaches deadline", result.State)
+	}
+	if result.Elapsed != 20 {
+		t.Fatalf("elapsed_seconds = %d, want 20", result.Elapsed)
+	}
+	if replayed.State != "timed_out" || replayed.Elapsed != result.Elapsed {
+		t.Fatalf("terminal replay = %q/%d, want timed_out/%d", replayed.State, replayed.Elapsed, result.Elapsed)
+	}
+	state, err := os.ReadFile(requestFile + ".state")
+	if err != nil {
+		t.Fatalf("read timeout state: %v", err)
+	}
+	if !strings.Contains(string(state), `"elapsed_seconds":20`) {
+		t.Fatalf("timeout state missing elapsed diagnostics: %s", state)
+	}
+}
+
+func TestReviewWaitV1ShortensFinalCadenceToRemainingBudget(t *testing.T) {
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	helper := filepath.Join(wd, "pr-review", "review-wait-v1.sh")
+	requestFile := filepath.Join(t.TempDir(), "42.review_request.json")
+	writeReviewWaitRequestValues(t, requestFile, "1001", "2026-08-11T18:00:01Z", "unix:250", 0, 250, 250)
+	clock := filepath.Join(t.TempDir(), "clock.sh")
+	sleeper := filepath.Join(t.TempDir(), "sleeper.sh")
+	timeState := filepath.Join(t.TempDir(), "time.state")
+	sleepCalls := filepath.Join(t.TempDir(), "sleep.calls")
+	if err := os.WriteFile(timeState, []byte("0\n"), 0o600); err != nil {
+		t.Fatalf("write time state: %v", err)
+	}
+	clockScript := `#!/bin/sh
+tr -d '\n' < "$SANDMAN_REVIEW_WAIT_TIME_STATE"
+printf '\n'
+`
+	if err := os.WriteFile(clock, []byte(clockScript), 0o700); err != nil {
+		t.Fatalf("write clock: %v", err)
+	}
+	sleeperScript := `#!/bin/sh
+if [ "$1" = "1" ]; then
+  exit 0
+fi
+current=$(tr -d '\n' < "$SANDMAN_REVIEW_WAIT_TIME_STATE")
+printf '%s\n' $((current + $1)) > "$SANDMAN_REVIEW_WAIT_TIME_STATE"
+printf '%s\n' "$1" >> "$SANDMAN_REVIEW_WAIT_SLEEP_CALLS"
+`
+	if err := os.WriteFile(sleeper, []byte(sleeperScript), 0o700); err != nil {
+		t.Fatalf("write sleeper: %v", err)
+	}
+
+	result := runReviewWaitWithEnv(t, helper, requestFile, writePendingReviewObserver(t), false, map[string]string{
+		"SANDMAN_REVIEW_WAIT_CLOCK":       clock,
+		"SANDMAN_REVIEW_WAIT_SLEEP":       sleeper,
+		"SANDMAN_REVIEW_WAIT_TIME_STATE":  timeState,
+		"SANDMAN_REVIEW_WAIT_SLEEP_CALLS": sleepCalls,
+	})
+
+	if result.State != "timed_out" {
+		t.Fatalf("state = %q, want timed_out", result.State)
+	}
+	if result.Elapsed != 250 {
+		t.Fatalf("elapsed_seconds = %d, want 250", result.Elapsed)
+	}
+	calls, err := os.ReadFile(sleepCalls)
+	if err != nil {
+		t.Fatalf("read sleep calls: %v", err)
+	}
+	if got, want := strings.TrimSpace(string(calls)), "120\n60\n60\n10"; got != want {
+		t.Fatalf("sleep cadence = %q, want %q", got, want)
+	}
+}
+
 func TestReviewWaitV1ResumesSameTriggerWithoutChangingRequestTiming(t *testing.T) {
 	wd, err := os.Getwd()
 	if err != nil {
@@ -175,6 +291,38 @@ func TestReviewWaitV1ResumesSameTriggerWithoutChangingRequestTiming(t *testing.T
 	}
 	if resumed.Request.TriggerID != "1001" {
 		t.Fatalf("resumed trigger = %q, want 1001", resumed.Request.TriggerID)
+	}
+}
+
+func TestReviewWaitV1SameTriggerReentryKeepsOriginalDeadline(t *testing.T) {
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	helper := filepath.Join(wd, "pr-review", "review-wait-v1.sh")
+	requestFile := filepath.Join(t.TempDir(), "42.review_request.json")
+	writeReviewWaitRequestValues(t, requestFile, "1001", "2026-08-11T18:00:01Z", "unix:300", 100, 300, 200)
+	observer := writePendingReviewObserver(t)
+	clock := filepath.Join(t.TempDir(), "clock.sh")
+	if err := os.WriteFile(clock, []byte("#!/bin/sh\nprintf '%s\\n' 150\n"), 0o700); err != nil {
+		t.Fatalf("write clock: %v", err)
+	}
+
+	first := runReviewWaitWithEnv(t, helper, requestFile, observer, true, map[string]string{
+		"SANDMAN_REVIEW_WAIT_CLOCK": clock,
+	})
+	second := runReviewWaitWithEnv(t, helper, requestFile, observer, true, map[string]string{
+		"SANDMAN_REVIEW_WAIT_CLOCK": clock,
+	})
+
+	if first.Lifecycle != "started" || second.Lifecycle != "resumed" {
+		t.Fatalf("lifecycles = %q then %q, want started then resumed", first.Lifecycle, second.Lifecycle)
+	}
+	if first.StartedAt != second.StartedAt || first.DeadlineAt != second.DeadlineAt {
+		t.Fatalf("same-trigger re-entry changed timestamps: first (%q, %q), second (%q, %q)", first.StartedAt, first.DeadlineAt, second.StartedAt, second.DeadlineAt)
+	}
+	if first.Request.TimeoutSeconds != 200 || second.Request.TimeoutSeconds != 200 {
+		t.Fatalf("same-trigger budget changed: first %d, second %d", first.Request.TimeoutSeconds, second.Request.TimeoutSeconds)
 	}
 }
 
@@ -200,6 +348,69 @@ func TestReviewWaitV1StartsFreshRequestForLaterTriggerOnSamePullRequest(t *testi
 	}
 	if second.StartedAt == first.StartedAt || second.DeadlineAt == first.DeadlineAt {
 		t.Fatalf("new trigger reused timing: first (%q, %q), second (%q, %q)", first.StartedAt, first.DeadlineAt, second.StartedAt, second.DeadlineAt)
+	}
+}
+
+func TestReviewWaitV1LaterTriggerReceivesFullFreshBudget(t *testing.T) {
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	helper := filepath.Join(wd, "pr-review", "review-wait-v1.sh")
+	requestFile := filepath.Join(t.TempDir(), "42.review_request.json")
+	observer := writePendingReviewObserver(t)
+	clock := filepath.Join(t.TempDir(), "clock.sh")
+	if err := os.WriteFile(clock, []byte("#!/bin/sh\nprintf '%s\\n' 500\n"), 0o700); err != nil {
+		t.Fatalf("write clock: %v", err)
+	}
+
+	writeReviewWaitRequestValues(t, requestFile, "1001", "2026-08-11T18:00:01Z", "unix:300", 100, 300, 200)
+	first := runReviewWaitWithEnv(t, helper, requestFile, observer, true, map[string]string{
+		"SANDMAN_REVIEW_WAIT_CLOCK": clock,
+	})
+
+	writeReviewWaitRequestValues(t, requestFile, "1002", "2026-08-11T19:00:01Z", "unix:700", 500, 700, 200)
+	second := runReviewWaitWithEnv(t, helper, requestFile, observer, true, map[string]string{
+		"SANDMAN_REVIEW_WAIT_CLOCK": clock,
+	})
+
+	if first.Request.TriggerID != "1001" || second.Request.TriggerID != "1002" {
+		t.Fatalf("triggers = %q then %q, want 1001 then 1002", first.Request.TriggerID, second.Request.TriggerID)
+	}
+	if second.Lifecycle != "started" || second.Request.TimeoutSeconds != 200 {
+		t.Fatalf("later trigger = lifecycle %q/budget %d, want started/200", second.Lifecycle, second.Request.TimeoutSeconds)
+	}
+	if second.Request.DeadlineUnix-second.Request.StartedUnix != second.Request.TimeoutSeconds {
+		t.Fatalf("later trigger deadline = %d-%d, want full budget %d", second.Request.DeadlineUnix, second.Request.StartedUnix, second.Request.TimeoutSeconds)
+	}
+	if second.Elapsed != 0 {
+		t.Fatalf("later trigger elapsed_seconds = %d, want fresh zero elapsed", second.Elapsed)
+	}
+}
+
+func TestReviewWaitV1RejectsDeadlineArithmeticMismatch(t *testing.T) {
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	helper := filepath.Join(wd, "pr-review", "review-wait-v1.sh")
+	requestFile := filepath.Join(t.TempDir(), "42.review_request.json")
+	writeReviewWaitRequestValues(t, requestFile, "1001", "2026-08-11T18:00:01Z", "unix:300", 100, 300, 200)
+	request, err := os.ReadFile(requestFile)
+	if err != nil {
+		t.Fatalf("read request: %v", err)
+	}
+	request = []byte(strings.Replace(string(request), `"deadline_unix_seconds": 300`, `"deadline_unix_seconds": 301`, 1))
+	if err := os.WriteFile(requestFile, request, 0o600); err != nil {
+		t.Fatalf("write malformed request: %v", err)
+	}
+
+	result := runReviewWait(t, helper, requestFile, writePendingReviewObserver(t), true)
+	if result.State != "unavailable" || result.Reason != "request-envelope-invalid" {
+		t.Fatalf("invalid request result = %q/%q, want unavailable/request-envelope-invalid", result.State, result.Reason)
+	}
+	if _, err := os.Stat(requestFile + ".state"); !os.IsNotExist(err) {
+		t.Fatalf("invalid request must not create state sidecar, stat error = %v", err)
 	}
 }
 

@@ -47,6 +47,8 @@ description: Automates the GitHub PR review loop with the PR Review Agent. Waits
 
 - `.sandman/state/<N>.head_sha` — the head commit SHA at which the last `{{REVIEW_COMMAND}}` was posted. If the current head SHA differs, all previous review state is stale and a fresh request is always permitted.
 - `.sandman/state/<N>.addressed_comments` — one inline comment ID per line, tracking which inline comments have already been acted on. Cleared when head SHA changes (new commit invalidates all old inline comment IDs).
+- `.sandman/state/<N>.review_request.json` — the atomic, confirmed request envelope containing the pull request, head SHA, trigger identity, start, deadline, budget, and poll plan.
+- `.sandman/state/<N>.review_request.json.state` — the atomic wait result for that request. The request envelope and its matching head-SHA sidecar must both be trusted before re-entry.
 
 ### Iteration loop (max 10 passes)
 
@@ -135,7 +137,38 @@ On CI failure, `continue` the outer loop to wait for the newly-triggered CI run 
 
 #### Step 3: Check if SHA changed (stale request check)
 
-Read `.sandman/state/<N>.head_sha` if it exists and compare against the current head SHA from Step 1.
+Before using `.sandman/state/<N>.head_sha`, validate the confirmed request pair. The request envelope is the authoritative identity record; the head-SHA sidecar is only a derived compatibility record for stale-approval rules:
+
+```bash
+request_file=".sandman/state/<N>.review_request.json"
+head_file=".sandman/state/<N>.head_sha"
+if [ -e "$request_file" ] || [ -e "$head_file" ]; then
+  [ -f "$request_file" ] && [ -f "$head_file" ] || record REVIEW_TIMEOUT_STATE_ERROR and stop
+  jq -e --arg repository "<owner/repo>" --argjson pull_request <N> '
+    .protocol == "review-wait/v1" and
+    .repository == $repository and .pull_request == $pull_request and
+    (.head_sha | type == "string" and length > 0) and
+    (.trigger_id | type == "string" and length > 0) and
+    (.trigger_created_at | type == "string" and length > 0) and
+    (.confirmed_at | type == "string" and length > 0) and
+    (.started_at | type == "string" and length > 0) and
+    (.deadline_at | type == "string" and length > 0) and
+    (.effective_timeout_seconds | type == "number" and floor == . and . > 0) and
+    (.deadline_unix_seconds == ((.started_unix_seconds // (.deadline_unix_seconds - .effective_timeout_seconds)) + .effective_timeout_seconds))
+  ' "$request_file" >/dev/null 2>&1 || record REVIEW_TIMEOUT_STATE_ERROR and stop
+  persisted_head_sha=$(jq -er '.head_sha' "$request_file") || record REVIEW_TIMEOUT_STATE_ERROR and stop
+  recorded_head_sha=$(tr -d '\r\n' <"$head_file") || record REVIEW_TIMEOUT_STATE_ERROR and stop
+  [ "$persisted_head_sha" = "$recorded_head_sha" ] || record REVIEW_TIMEOUT_STATE_ERROR and stop
+fi
+```
+
+If either artifact is missing, malformed, or mismatched, fail closed. Do not
+silently repair it by posting another trigger or by calculating a new deadline.
+Only a fully trusted pair may be re-entered.
+
+Read the trusted `.sandman/state/<N>.head_sha` if it exists and compare it
+against the current head SHA from Step 1. If neither request artifact exists,
+this is the first request and no deadline exists yet.
 
 - **SHA changed** (new commit landed since last request): mark all previous review state stale. Delete `.sandman/state/<N>.addressed_comments` if it exists, because inline comment IDs from the old commit are no longer relevant. A fresh review request is always permitted. The pass counter resets to 0 — a new commit is a new review cycle on a new diff, and any exhausted 10-pass budget against the prior SHA does not apply. **All prior approvals are stale** for the purposes of Step 6 Case C — the new SHA requires a fresh APPROVED comment (formal or informal) against the new diff, not a re-application of an approval that was issued against the prior SHA. This is the symmetric counterpart of the pass-counter reset: if the budget must reset, the approval window must reset too.
 - **SHA unchanged**: apply the "previous request still pending" logic before posting again.
@@ -185,12 +218,14 @@ jq -n \
   --arg started_at "$request_started_at" \
   --arg deadline_at "unix:$request_deadline_unix" \
   --argjson pull_request <N> \
+  --argjson started_unix_seconds "$request_started_unix" \
   --argjson deadline_unix_seconds "$request_deadline_unix" \
   --argjson effective_timeout_seconds "$review_timeout" \
   --argjson poll_plan '[120,60,60,30]' \
   '{protocol:"review-wait/v1",repository:$repository,pull_request:$pull_request,
     head_sha:$head_sha,trigger_id:$trigger_id,trigger_prefix:$trigger_prefix,
     trigger_created_at:$trigger_created_at,confirmed_at:$confirmed_at,
+    started_unix_seconds:$started_unix_seconds,
     started_at:$started_at,deadline_at:$deadline_at,
     deadline_unix_seconds:$deadline_unix_seconds,
     effective_timeout_seconds:$effective_timeout_seconds,poll_plan:$poll_plan}' \
@@ -204,8 +239,10 @@ printf '%s\n' "$head_sha" >"$head_tmp" && mv -f "$head_tmp" ".sandman/state/<N>.
   record REVIEW_TIMEOUT_STATE_ERROR and stop
 }
 
-The atomic head-SHA sidecar remains available to the existing stale-approval
-rules and subsequent passes.
+The request envelope is the atomic request record. The atomic head-SHA sidecar
+remains available to the existing stale-approval rules and subsequent passes,
+but a failure to persist either artifact is a state error. A later continuation
+must fail closed on that pair rather than silently reposting or resetting.
 
 #### Step 5: Wait for this confirmed request (versioned coordinator)
 
@@ -242,8 +279,8 @@ the transport state before classification:
 - `pending`: no eligible response was observed and the request remains active;
   re-enter this same request, never post a duplicate trigger.
 - `timed_out`: record `REVIEW_TIMEOUT` with the request identity, configured
-  budget, deadline, counters, and next executable action. Do not approve or
-  create a replacement request.
+  budget, deadline, `elapsed_seconds`, counters, and next executable action. Do
+  not approve or create a replacement request.
 - `unavailable`: record the structured reason and fail closed. Do not approve,
   reset the deadline, or post another trigger to recover it.
 
@@ -254,7 +291,7 @@ open-codes the three GitHub response calls. A new request starts a fresh plan;
 ordinary polls, pending-trigger checks, retries, and continuations reuse the
 same request. The first intervals remain 120 seconds, 60 seconds, and 60
 seconds; later intervals remain 30 seconds. The existing 240-second minimum
-and boundary rule are unchanged: sleep that lands exactly on the configured budget is permitted. A new review request starts a fresh counter, while the same request retains its observed response counts.
+and boundary rule are unchanged: every operation uses the remaining absolute wall-clock budget, a final interval is shortened to that remainder, and sleep that lands exactly on the configured budget is permitted. A new review request starts a fresh counter; it also receives a full deadline, while the same request retains its original start/deadline and observed response counts.
 
 The response snapshot retains the existing source contract: author-agnostic
 top-level non-trigger comments, formal `COMMENTED`/`APPROVED`/
@@ -310,9 +347,9 @@ Approval keywords: `lgtm`, `looks good`, `looks great`, `nice work`, `good work`
 
 **Hard rule — stale approval after a SHA change.** When Step 3 detects that the head SHA has changed since the last `{{REVIEW_COMMAND}}` post, every prior approval timestamp is stale. The new diff requires a fresh approval against the new SHA, not a re-application of an approval that was issued against the prior diff. Treat any pre-SHA-change APPROVED comment as **not approved** until a new APPROVED comment arrives after the new SHA — even if `reviewDecision` would otherwise be empty and the comment list otherwise looks clean. The pass-counter reset on SHA change implies the approval window resets too; do not infer that a stale APPROVED carries forward across a SHA change.
 
-**Hard rule — pending trigger beats older approval.** When the most recent top-level comment on the PR is an implementor `{{REVIEW_COMMAND}}` trigger that has not yet received a response, do not classify an older APPROVED comment below it as Case C. The trigger is itself a fresh request; the loop must continue polling until either the trigger receives a response or the effective `REVIEW_TIMEOUT` cumulative budget is exhausted. This is the symmetric counterpart of Hard Rule 5 / Hard Rule 6 (which prevent *posting* a duplicate trigger before the previous one is answered) and closes the same race at the *exit* side of the loop.
+**Hard rule — pending trigger beats older approval.** When the most recent top-level comment on the PR is an implementor `{{REVIEW_COMMAND}}` trigger that has not yet received a response, do not classify an older APPROVED comment below it as Case C. The trigger is itself a fresh request; the loop must continue polling until either the trigger receives a response or the confirmed request's absolute `REVIEW_TIMEOUT` deadline is exhausted. This is the symmetric counterpart of Hard Rule 5 / Hard Rule 6 (which prevent *posting* a duplicate trigger before the previous one is answered) and closes the same race at the *exit* side of the loop.
 
-**Hard rule — minimum poll budget before Case C.** Even when the other Case C gates (no CHANGES_REQUESTED, approval keywords, post-SHA-change, no pending trigger) all pass, the agent MUST NOT exit the loop on a single 120-second poll. Step 5 requires a cumulative budget across multiple polls. Exiting after one poll provides only a 120-second response window for the fresh trigger — far short of what the polling schedule is designed to give the reviewer. Require at least one full `120 + 60 + 60 = 240 seconds` cycle before classification, and treat the 120-second-first-poll short-circuit as a hard violation of the skill contract.
+**Hard rule — minimum poll budget before Case C.** Even when the other Case C gates (no CHANGES_REQUESTED, approval keywords, post-SHA-change, no pending trigger) all pass, the agent MUST NOT exit the loop on a single 120-second poll. Step 5 requires the absolute request deadline to remain in force across multiple polls. Exiting after one poll provides only a 120-second response window for the fresh trigger — far short of what the polling schedule is designed to give the reviewer. Require at least one full `120 + 60 + 60 = 240 seconds` cycle before classification, and treat the 120-second-first-poll short-circuit as a hard violation of the skill contract.
 
 **D. Still pending?**
 - `reviewDecision: "REVIEW_REQUIRED"` or absent, AND

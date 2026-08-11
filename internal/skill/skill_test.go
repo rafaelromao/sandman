@@ -75,6 +75,7 @@ func TestSyncInstallsAndRunsVersionedReviewWait(t *testing.T) {
   "confirmed_at": "2026-08-11T18:00:01Z",
   "started_at": "2026-08-11T18:00:01Z",
   "deadline_at": "unix:4102444800",
+  "started_unix_seconds": 4102443000,
   "deadline_unix_seconds": 4102444800,
   "effective_timeout_seconds": 1800,
   "poll_plan": [120, 60, 60, 30]

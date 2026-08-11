@@ -23,16 +23,19 @@ repository configuration, which takes precedence over the default.
 
 Render the effective value into the current AgentRun task context and expose it
 as the `REVIEW_TIMEOUT` prompt key. Retries of the same AgentRun retain the
-effective value; a genuinely new review request resets its cumulative polling
-budget. Continuations resolve current flags and configuration and supersede
-stale persisted timeout wording. Run-started and run-continued events record
-the effective value for diagnosis.
+effective value. Each confirmed review trigger owns one absolute wall-clock
+deadline; a genuinely new review request, including a later round on the same
+pull request, starts a fresh full budget. Continuations resolve current flags
+and configuration while re-entering the same confirmed request with its
+persisted deadline. Run-started and run-continued events record the effective
+value for diagnosis.
 
 Keep the shared installed skill repository-independent. The skill reads the
 current task's value, falling back to 1800 seconds only for older task context,
 so synchronization for one repository cannot alter another repository's active
 runs. Preserve the existing 120, 60, 60, then 30-second polling cadence and
-allow a sleep that lands exactly on the configured cumulative budget.
+shorten the final operation to the remaining wall-clock budget, including a
+sleep that lands exactly on the configured deadline.
 
 ## Consequences
 
