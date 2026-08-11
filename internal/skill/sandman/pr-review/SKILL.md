@@ -270,13 +270,22 @@ wait_reason=$(printf '%s' "$wait_result" | jq -r '.reason // "unknown"')
 ```
 
 The result is one structured request-scoped envelope. `responded` means that
-raw evidence is available for the existing Step 6 classifier; it does not mean
-approval. The envelope includes the complete top-level, formal-review, and
-inline-comment snapshot plus `top`, `reviews`, and `inline` counters. Handle
-the transport state before classification:
+raw evidence is available for the existing Step 6 classifier and that the
+request-scoped classification is present; it does not mean approval. The raw
+evidence includes the complete top-level, formal-review, and inline-comment
+snapshot plus `top`, `reviews`, and `inline` counters. The additive
+`classification` object is the only decision input: it records the confirmed
+request identity, the current head, the active-to-next-trigger window, filtered
+source arrays, canonical event timestamps, head status, and formal precedence.
+Its `boundary_evidence` section carries the same request identity, deadline,
+and source timestamps for an exact-deadline decision.
+Handle the transport state before classification:
 
-- `responded`: read the opaque snapshot and continue to Step 6 without adding
-  response formats or author filters.
+- `responded`: validate `classification.protocol == "review-classification/v1"`,
+  then read its request-scoped sources and
+  continue to Step 6 without adding response formats or author filters. The
+  raw snapshot is audit evidence only; if classification is missing or
+  malformed, fail closed as `unavailable`.
 - `pending`: no eligible response was observed and the request remains active;
   re-enter this same request, never post a duplicate trigger.
 - `timed_out`: record `REVIEW_TIMEOUT` with the request identity, configured
@@ -299,7 +308,7 @@ top-level non-trigger comments, formal `COMMENTED`/`APPROVED`/
 `CHANGES_REQUESTED` reviews, and inline file comments. The current
 same-credential, stale-head, pending-trigger, requested-changes, informal
 approval, and concrete-feedback rules remain owned by Step 6. The bundled
-`review-observe-v1.sh` observer returns a response whose body does not begin with `{{REVIEW_COMMAND}}` regardless of author; do not filter by author. Preserve observed response counts.
+`review-observe-v1.sh` observer returns a response whose body does not begin with `{{REVIEW_COMMAND}}` regardless of author; it excludes a top-level response only when that body begins with the configured prefix. Do not filter by author. Preserve observed response counts, and use only the active request's window in the classification.
 An envelope with `state:"unavailable"` is structured failure, never approval.
 
 Before Step 6, retain the existing self-check: when `top > 0`, `reviews == 0`,
@@ -329,16 +338,27 @@ If `mergeStateStatus == "DIRTY"`:
 #### Step 6: Read and classify feedback
 
 **A. Formal approval detected?**
-- `reviewDecision: APPROVED`, OR any entry returned by the reviews endpoint with `state: "APPROVED"`
+- `classification.formal.decision == "approved"`, with a non-empty
+  `classification.formal.approval_evidence` containing current-head formal
+  `APPROVED` records
 → **Approve** — done, exit the loop and document the approval in the run log.
 
+The pull-request-wide `reviewDecision` aggregate and the unfiltered formal
+review array are audit evidence only. They cannot create request-scoped
+approval, especially when an approval has a stale or unknown commit identity.
+
 **B. Formal changes requested?**
-- `reviewDecision: CHANGES_REQUESTED`, OR any entry with `state: "CHANGES_REQUESTED"`
+- `classification.formal.requested_changes` contains any formal
+  `CHANGES_REQUESTED` record in the active request window. This includes a
+  record whose explicit commit is stale, preserving requested-changes
+  precedence over unrelated approval evidence.
 → **Blockers** — must fix before continuing. Apply Hard Rule 7 (issue ACs): if the reviewer's request maps to a requirement from the issue body or acceptance criteria, you must either implement the change or get the reviewer's explicit agreement that the scope is narrower. Posting a "this is out of scope" comment and exiting the loop is NOT an acceptable resolution — it leaves the `CHANGES_REQUESTED` pending and the PR unmerged.
 
 **C. Informal approval (implicit approval without formal review)?**
-- No pending `CHANGES_REQUESTED` reviews, AND
-- A `COMMENTED` review OR top-level comment with approval keywords, AND
+- `classification.request_state == "active"`, AND
+- No pending `classification.formal.requested_changes`, AND
+- A request-scoped `COMMENTED` review OR top-level comment with approval keywords, AND
+- The source is not marked `head_status: "stale"` or `"unknown"`, AND
 - **The approval is for the current diff** — its `createdAt` is **after** the SHA recorded in `.sandman/state/<N>.head_sha` (the SHA at which the most recent `{{REVIEW_COMMAND}}` was posted), AND
 - **No unanswered `/sandman review` trigger is sitting above the approval** — the most recent top-level comment by `createdAt` is not an implementor trigger that has not yet received a response, AND
 - **The minimum polling cycle has elapsed** — at least 240 s of cumulative sleep (one full `120 + 60 + 60` cycle from Step 5) has passed since the most recent trigger post. A single 120 s first poll cannot have observed a meaningful response window.
@@ -350,26 +370,35 @@ Approval keywords: `lgtm`, `looks good`, `looks great`, `nice work`, `good work`
 
 **Hard rule — pending trigger beats older approval.** When the most recent top-level comment on the PR is an implementor `{{REVIEW_COMMAND}}` trigger that has not yet received a response, do not classify an older APPROVED comment below it as Case C. The trigger is itself a fresh request; the loop must continue polling until either the trigger receives a response or the confirmed request's absolute `REVIEW_TIMEOUT` deadline is exhausted. This is the symmetric counterpart of Hard Rule 5 / Hard Rule 6 (which prevent *posting* a duplicate trigger before the previous one is answered) and closes the same race at the *exit* side of the loop.
 
+The structured equivalent is `classification.request_state == "superseded"`:
+an older request may retain its response evidence for audit, but its decision is
+`pending` and it cannot approve. Only the later confirmed request may classify
+responses in the interval after its own trigger.
+
 **Hard rule — minimum poll budget before Case C.** Even when the other Case C gates (no CHANGES_REQUESTED, approval keywords, post-SHA-change, no pending trigger) all pass, the agent MUST NOT exit the loop on a single 120-second poll. Step 5 requires the absolute request deadline to remain in force across multiple polls. Exiting after one poll provides only a 120-second response window for the fresh trigger — far short of what the polling schedule is designed to give the reviewer. Require at least one full `120 + 60 + 60 = 240 seconds` cycle before classification, and treat the 120-second-first-poll short-circuit as a hard violation of the skill contract.
 
 **D. Still pending?**
-- `reviewDecision: "REVIEW_REQUIRED"` or absent, AND
-- `top == 0`, AND
-- No `APPROVED` / `CHANGES_REQUESTED` reviews, AND
-- No inline comments with concrete requested changes, AND
+- `classification.decision == "pending"`, AND
+- `classification.response_counts.top_level == 0`, AND
+- No request-scoped formal `APPROVED` / `CHANGES_REQUESTED` records, AND
+- No request-scoped inline comments with concrete requested changes, AND
 - All bodies are boilerplate-only
 → **Still waiting** — continue polling
 
 **E. Real feedback detected?**
-An inline file comment OR top-level comment OR review body contains concrete code feedback (specific file paths, function names, variable names, line numbers):
+An entry in `classification.sources.inline_comments`,
+`classification.sources.top_level`, or `classification.sources.formal_reviews`
+contains concrete code feedback (specific file paths, function names, variable
+names, line numbers):
 → **Has blockers or suggestions** — apply fixes, commit, push. Only re-request after fix+push if previous `{{REVIEW_COMMAND}}` already received a response. If no response yet, keep polling.
 
 **F. Ambiguous feedback with unclear actionable intent only?**
-- Comments exist but none specify a concrete code change
+- Request-scoped comments exist but none specify a concrete code change
 → **Clarification** — post a reviewer-directed clarification with `{{REVIEW_COMMAND}}` if no request is pending; otherwise keep polling.
 
 **G. Only nits or suggestions?**
-- Comments are nits or optional improvements, no `CHANGES_REQUESTED`
+- Request-scoped comments are nits or optional improvements, with no
+  `CHANGES_REQUESTED`
 → **Suggestions** — fix if straightforward; skip if redesign required. Only re-request after fix+push if previous request received a response.
 
 #### Step 7: Apply fixes

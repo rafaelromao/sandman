@@ -43,7 +43,7 @@ Every persisted Sandman artifact lives under `<repo>/.sandman/` (with two docume
     ├── <N>.addressed_comments          # per-PR addressed-comment list
     ├── <N>.review_request.json         # confirmed delegated-review request
     ├── <N>.review_request.json.state   # request-wait result sidecar
-    └── <N>.review_request.json.snapshot.json # raw response snapshot
+    └── <N>.review_request.json.snapshot.json # raw snapshot plus request classification
 ```
 
 ## Per-artifact table

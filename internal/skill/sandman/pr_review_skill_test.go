@@ -312,6 +312,41 @@ func TestPRReviewSkill_UsesVersionedRequestWait(t *testing.T) {
 	}
 }
 
+func TestPRReviewSkill_UsesRequestScopedClassification(t *testing.T) {
+	text := readPRReviewSkill(t)
+
+	for _, phrase := range []string{
+		`classification.protocol == "review-classification/v1"`,
+		"active-to-next-trigger window",
+		"classification.formal.approval_evidence",
+		"classification.formal.requested_changes",
+		"classification.request_state == \"superseded\"",
+		"head_status: \"stale\"",
+		"The pull-request-wide `reviewDecision` aggregate",
+		"boundary_evidence",
+	} {
+		if !strings.Contains(text, phrase) {
+			t.Errorf("pr-review SKILL.md must describe request-scoped classification %q", phrase)
+		}
+	}
+
+	step6 := strings.Index(text, "#### Step 6: Read and classify feedback")
+	step7 := strings.Index(text, "#### Step 7: Apply fixes")
+	if step6 < 0 || step7 < step6 {
+		t.Fatal("could not isolate classification section")
+	}
+	classification := text[step6:step7]
+	for _, forbidden := range []string{
+		"- `reviewDecision: APPROVED`",
+		"- `reviewDecision: CHANGES_REQUESTED`",
+		"OR any entry returned by the reviews endpoint",
+	} {
+		if strings.Contains(classification, forbidden) {
+			t.Errorf("Step 6 must not classify request state from unscoped evidence %q", forbidden)
+		}
+	}
+}
+
 func TestPRReviewSkill_FailsClosedOnUntrustedRequestPair(t *testing.T) {
 	text := readPRReviewSkill(t)
 

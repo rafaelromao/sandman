@@ -40,8 +40,10 @@ implementor skill writes one request envelope under `.sandman/state/` and calls
 the versioned `review-wait-v1.sh` entry point. Re-entering with the same
 trigger reuses that request; a later confirmed trigger is a new request, even
 on the same pull request. The wait returns structured transport state and raw
-response evidence; existing approval and feedback classification remains
-unchanged.
+response evidence plus a request-scoped `review-classification/v1` envelope.
+That envelope preserves the existing top-level, formal-review, and inline
+sources while associating them with one trigger and head; existing approval and
+feedback rules consume it without adding natural-language inference.
 
 When it sees a matching comment authored by the GitHub user authenticated to the daemon, it launches a review AgentRun and posts the result back to the pull request. Requests from other users are ignored. Use direct review for manual or CI-driven reviews that should not be tied to the daemon's authenticated user.
 
