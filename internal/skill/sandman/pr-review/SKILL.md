@@ -188,26 +188,20 @@ review_timeout_run <deadline_at> <direct-command> [args...]
 
 `review_timeout_run` starts a deadline watcher for a direct child, kills the child when the deadline wins, and returns `124` for a deadline timeout. A child that independently returns `124` before the deadline is remapped to `123`; other child statuses pass through. Use direct `gh` and `sleep` commands, not unbounded pipelines. The watcher recomputes remaining time after setup and before child launch; no command or sleep may intentionally be scheduled past the deadline.
 
-The first poll runs immediately after the deadline state is loaded. After each
-completed poll, use the following sleep before the next poll:
-
-| Completed poll | Sleep before next poll |
-|---------------|------------------------|
-| 1             | `sleep 120` (120 seconds) |
-| 2             | `sleep 60` (60 seconds)  |
-| 3             | `sleep 60` (60 seconds)  |
-| 4+            | `sleep 30` (30 seconds; repeated until the wall-clock deadline) |
+| Iteration | Sleep before this poll |
+|-----------|------------------------|
+| 1         | `sleep 120` (120 seconds) |
+| 2         | `sleep 60` (60 seconds)  |
+| 3         | `sleep 60` (60 seconds)  |
+| 4+        | `sleep 30` (30 seconds; repeated until the wall-clock deadline) |
 
 The response budget is the effective `REVIEW_TIMEOUT` seconds of wall-clock time
 from `started_at` to `deadline_at`. API calls, parsing, tool overhead, and sleep
 all consume the same budget. The minimum valid budget is 240 seconds, which
-allows three polls before the deadline when the first poll is immediate. A
-formal approval may finish the loop immediately; an informal approval observed
-before the minimum 240-second Case C window must wait without starting another
-poll until that window has elapsed. After the final capped sleep, classify the
-cached response without another API call; if no response was cached, record
-`REVIEW_TIMEOUT`. A command that completes exactly at the deadline is permitted;
-after that point no new poll or sleep may start.
+allows one complete `120 + 60 + 60` approval cycle. A formal approval may finish
+the loop immediately; an informal approval must satisfy the minimum Case C
+window. A command that completes exactly at the deadline is permitted; after
+that point no new poll or sleep may start.
 
 Before and after every GitHub/API operation, calculate the remaining time from
 the persisted deadline. Run each operation through `review_timeout_run`; a
@@ -234,7 +228,8 @@ replace an observed terminal decision with `REVIEW_TIMEOUT`.
 ```bash
 view=$(review_timeout_run "$deadline_at" gh pr view <N> --repo <owner/repo> --json comments,reviewDecision,mergeStateStatus)
 view_status=$?
-view_decision=$(printf '%s' "$view" | jq -r '.reviewDecision // ""' 2>/dev/null || true)
+view_decision=$(review_timeout_run "$deadline_at" sh -c "printf '%s' \"\$1\" | jq -r '.reviewDecision // \"\"'" parse "$view")
+view_parse_status=$?
 view_terminal=false
 case "$view_decision" in
   APPROVED|CHANGES_REQUESTED) view_terminal=true ;;
@@ -244,16 +239,17 @@ reviews_status=$?
 inline=$(review_timeout_run "$deadline_at" gh api repos/<owner>/<repo>/pulls/<N>/comments --paginate)
 inline_status=$?
 now=$(review_timeout_now)
-if [ "$view_status" -eq 0 ] && [ "$view_terminal" = true ]; then
+if [ "$view_status" -eq 0 ] && [ "$view_parse_status" -eq 0 ] && [ "$view_terminal" = true ]; then
   record the cached "$view_decision" result and exit
 fi
 if { [ "$view_status" -eq 124 ] && [ "$now" -ge "$deadline_at" ]; } || \
+   { [ "$view_parse_status" -eq 124 ] && [ "$now" -ge "$deadline_at" ]; } || \
    { [ "$reviews_status" -eq 124 ] && [ "$now" -ge "$deadline_at" ]; } || \
    { [ "$inline_status" -eq 124 ] && [ "$now" -ge "$deadline_at" ]; } || \
    [ "$now" -gt "$deadline_at" ]; then
   record REVIEW_TIMEOUT and exit
 fi
-if [ "$view_status" -ne 0 ] || [ "$reviews_status" -ne 0 ] || [ "$inline_status" -ne 0 ]; then
+if [ "$view_status" -ne 0 ] || [ "$view_parse_status" -ne 0 ] || [ "$reviews_status" -ne 0 ] || [ "$inline_status" -ne 0 ]; then
   record a transient poll warning and continue without resetting the deadline
 fi
 ```

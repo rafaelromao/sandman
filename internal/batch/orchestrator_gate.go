@@ -359,6 +359,25 @@ func hasLaterInlineReview(ctx context.Context, lister github.PRReviewCommentList
 
 func isInformalReviewApproval(body string) bool {
 	body = strings.ToLower(strings.TrimSpace(body))
+	body = strings.Map(func(r rune) rune {
+		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '+' {
+			return r
+		}
+		return ' '
+	}, body)
+	body = strings.Join(strings.Fields(body), " ")
+	for _, phrase := range []string{
+		"not approved",
+		"no approval",
+		"not lgtm",
+		"not all good",
+		"not good",
+		"unapproved",
+	} {
+		if strings.Contains(" "+body+" ", " "+phrase+" ") {
+			return false
+		}
+	}
 	for _, phrase := range []string{
 		"lgtm",
 		"looks good",
@@ -375,7 +394,7 @@ func isInformalReviewApproval(body string) bool {
 		"no major issues",
 		"minor issues only",
 	} {
-		if strings.Contains(body, phrase) {
+		if strings.Contains(" "+body+" ", " "+phrase+" ") {
 			return true
 		}
 	}
@@ -411,7 +430,7 @@ func isReviewCommandWord(char byte) bool {
 }
 
 func reviewSurfaceAfterTrigger(triggerAt, responseAt time.Time) bool {
-	return triggerAt.IsZero() || responseAt.IsZero() || responseAt.After(triggerAt)
+	return !triggerAt.IsZero() && !responseAt.IsZero() && responseAt.After(triggerAt)
 }
 
 func reviewSurfaceLater(currentAt, candidateAt time.Time) bool {

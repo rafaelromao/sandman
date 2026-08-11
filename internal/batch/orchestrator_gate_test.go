@@ -981,6 +981,34 @@ func TestCheckPRExternalGateAcceptsInformalConversationApproval(t *testing.T) {
 	}
 }
 
+func TestCheckPRExternalGateRejectsNegatedInformalApproval(t *testing.T) {
+	for _, body := range []string{"not approved", "unapproved", "not all good"} {
+		t.Run(body, func(t *testing.T) {
+			client := &fakeGitHubClient{
+				prs: map[string]*github.PR{gateTestBranch: {
+					Number:            17,
+					State:             "open",
+					HeadRefOid:        "current-sha",
+					StatusCheckRollup: "success",
+					MergeStateStatus:  "CLEAN",
+				}},
+				prComments: map[int][]github.PRComment{17: {
+					{Body: "/review please", CreatedAt: time.Unix(30, 0)},
+					{Body: body, CreatedAt: time.Unix(31, 0)},
+				}},
+			}
+
+			got, err := checkPRExternalGateAtHeadWithReviewCommand(context.Background(), client, gateTestBranch, "current-sha", "/review please")
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != "pending" {
+				t.Fatalf("negated approval gate = %q, want pending", got)
+			}
+		})
+	}
+}
+
 func TestCheckPRExternalGateKeepsPendingFormalReviewUnanswered(t *testing.T) {
 	client := &fakeGitHubClient{
 		prs: map[string]*github.PR{gateTestBranch: {
@@ -1030,6 +1058,32 @@ func TestCheckPRExternalGateTreatsMissingTimestampFormalResponseAsTriggerRespons
 	}
 	if got != "pending" {
 		t.Fatalf("missing-timestamp formal response gate = %q, want pending", got)
+	}
+}
+
+func TestCheckPRExternalGateDoesNotAcceptMissingTimestampFormalApproval(t *testing.T) {
+	client := &fakeGitHubClient{
+		prs: map[string]*github.PR{gateTestBranch: {
+			Number:            17,
+			State:             "open",
+			HeadRefOid:        "current-sha",
+			StatusCheckRollup: "success",
+			MergeStateStatus:  "CLEAN",
+		}},
+		prComments: map[int][]github.PRComment{17: {
+			{Body: "/review please", CreatedAt: time.Unix(30, 0)},
+		}},
+		prReviews: map[int][]github.PRReview{17: {
+			{State: "APPROVED"},
+		}},
+	}
+
+	got, err := checkPRExternalGateAtHeadWithReviewCommand(context.Background(), client, gateTestBranch, "current-sha", "/review please")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "pending" {
+		t.Fatalf("missing-timestamp formal approval gate = %q, want pending", got)
 	}
 }
 
