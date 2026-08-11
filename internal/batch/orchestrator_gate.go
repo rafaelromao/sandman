@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -396,27 +397,6 @@ func isInformalReviewApproval(body string) bool {
 	}, body)
 	body = strings.Join(strings.Fields(body), " ")
 	for _, phrase := range []string{
-		"not approved",
-		"no approval",
-		"not lgtm",
-		"not looks good",
-		"not all good",
-		"not good",
-		"unapproved",
-		"but",
-		"except",
-		"however",
-		"although",
-		"though",
-		"please fix",
-		"needs fix",
-		"need fix",
-	} {
-		if strings.Contains(" "+body+" ", " "+phrase+" ") {
-			return false
-		}
-	}
-	for _, phrase := range []string{
 		"lgtm",
 		"looks good",
 		"looks great",
@@ -432,7 +412,7 @@ func isInformalReviewApproval(body string) bool {
 		"no major issues",
 		"minor issues only",
 	} {
-		if strings.Contains(" "+body+" ", " "+phrase+" ") {
+		if body == phrase {
 			return true
 		}
 	}
@@ -440,7 +420,15 @@ func isInformalReviewApproval(body string) bool {
 }
 
 func reviewTriggerPrefixMatches(body, reviewCommand string) bool {
-	return strings.Contains(body, reviewCommand)
+	words := strings.Fields(reviewCommand)
+	if len(words) == 0 {
+		return false
+	}
+	parts := make([]string, len(words))
+	for index, word := range words {
+		parts[index] = regexp.QuoteMeta(word)
+	}
+	return regexp.MustCompile(`(?i)` + strings.Join(parts, `\s+`)).MatchString(body)
 }
 
 func reviewSurfaceAfterTrigger(triggerAt, responseAt time.Time) bool {

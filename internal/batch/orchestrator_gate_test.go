@@ -852,6 +852,7 @@ func TestCheckPRExternalGateUsesSliceOrderForMissingTriggerTimestamp(t *testing.
 
 func TestCheckPRExternalGateMatchesConfiguredTriggerAnywhereInComment(t *testing.T) {
 	for _, body := range []string{
+		"/Sandman   Review please",
 		"@sandman-bot /sandman review please",
 		"hi\n/sandman review please",
 	} {
@@ -900,6 +901,29 @@ func TestCheckPRExternalGateOnlyMatchesConfiguredReviewCommand(t *testing.T) {
 	}
 	if got != gateReadyToMerge {
 		t.Fatalf("different review command gate = %q, want %s", got, gateReadyToMerge)
+	}
+}
+
+func TestCheckPRExternalGateMatchesConfiguredCommandWithFlexibleWhitespace(t *testing.T) {
+	client := &fakeGitHubClient{
+		prs: map[string]*github.PR{gateTestBranch: {
+			Number:            17,
+			State:             "open",
+			HeadRefOid:        "current-sha",
+			StatusCheckRollup: "success",
+			MergeStateStatus:  "CLEAN",
+		}},
+		prComments: map[int][]github.PRComment{17: {
+			{Body: "context /CUSTOM    review", CreatedAt: time.Unix(30, 0)},
+		}},
+	}
+
+	got, err := checkPRExternalGateAtHeadWithReviewCommand(context.Background(), client, gateTestBranch, "current-sha", "/custom review")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "pending" {
+		t.Fatalf("configured flexible command gate = %q, want pending", got)
 	}
 }
 
@@ -1077,7 +1101,7 @@ func TestCheckPRExternalGateKeepsTimestamplessInformalApprovalPending(t *testing
 }
 
 func TestCheckPRExternalGateRejectsNegatedInformalApproval(t *testing.T) {
-	for _, body := range []string{"not approved", "unapproved", "not all good", "not looks good", "looks good, but please fix the test"} {
+	for _, body := range []string{"not approved", "unapproved", "not all good", "not looks good", "looks good, but please fix the test", "LGTM, please address the failing test"} {
 		t.Run(body, func(t *testing.T) {
 			client := &fakeGitHubClient{
 				prs: map[string]*github.PR{gateTestBranch: {
