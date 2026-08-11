@@ -39,7 +39,7 @@ Every persisted Sandman artifact lives under `<repo>/.sandman/` (with two docume
 └── state/                              # runtime sidecars (NEW in this PRD)
     ├── .prompt-version                 # SHA-256 of materialized prompt template
     ├── .built_with_sandman             # empty control file (badge sidecar)
-    ├── <N>.head_sha                    # per-PR head SHA tracker
+    ├── <N>.head_sha                    # implementor review compatibility sidecar
     ├── <N>.addressed_comments          # per-PR addressed-comment list
     ├── <N>.review_request.json         # confirmed delegated-review request
     ├── <N>.review_request.json.state   # request-wait result sidecar
@@ -80,7 +80,7 @@ Every persisted Sandman artifact lives under `<repo>/.sandman/` (with two docume
 | `worktrees/<branch>/.sandman/task.md` | runtime, atomic-rename | prompt renderer (or `--continue` skips render and reads existing) | agent | orchestrator (on run completion) | per AgentRun |
 | `state/.prompt-version` | runtime, atomic-rename | prompt materializer | prompt materializer (cache check) | `sandman clean` (optional) | per prompt template change |
 | `state/.built_with_sandman` | runtime, empty control file | badge sidecar (post-batch) | portal / status badge | `sandman clean` (optional) | per post-batch badge |
-| `state/<N>.head_sha` | runtime, atomic-rename | review daemon (per-PR head SHA tracker) | review daemon (dedup gate) | review daemon (rotates on PR close) | per PR |
+| `state/<N>.head_sha` | runtime, atomic-rename | implementor review skill (derived from confirmed request) | implementor review skill (stale-approval gate) | implementor review lifecycle | per confirmed request |
 | `state/<N>.addressed_comments` | runtime, atomic-rename | review daemon (per-PR addressed-comment list) | review daemon (dedup gate) | review daemon (rotates on PR close) | per PR |
 | `state/<N>.review_request.json` | runtime, atomic-rename | implementor review skill after trigger confirmation | versioned review wait | implementor review lifecycle | per confirmed request |
 | `state/<N>.review_request.json.state` | runtime, atomic-rename | versioned review wait | versioned review wait | implementor review lifecycle | per confirmed request |
