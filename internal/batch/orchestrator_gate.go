@@ -172,7 +172,7 @@ func checkPRExternalGateWithHeadAndReviewCommand(ctx context.Context, client git
 		}
 	}
 	if (checkRollup == "" || checkRollup == "success") && (review == "" || review == "APPROVED") && mergeStatus == "CLEAN" {
-		triggerStatus, err := reviewTriggerStatus(ctx, client, pr.Number, reviewCommand)
+		triggerStatus, err := reviewTriggerStatus(ctx, client, pr.Number, pr.HeadRefOid, reviewCommand)
 		if err != nil {
 			return "unavailable", err
 		}
@@ -259,7 +259,7 @@ const (
 	reviewTriggerPending          reviewTriggerState = "pending"
 )
 
-func reviewTriggerStatus(ctx context.Context, client github.Client, prNumber int, reviewCommand string) (reviewTriggerState, error) {
+func reviewTriggerStatus(ctx context.Context, client github.Client, prNumber int, headSHA, reviewCommand string) (reviewTriggerState, error) {
 	reviewCommand = strings.TrimSpace(reviewCommand)
 	if client == nil || prNumber <= 0 || reviewCommand == "" {
 		return reviewTriggerApproved, nil
@@ -276,20 +276,23 @@ func reviewTriggerStatus(ctx context.Context, client github.Client, prNumber int
 	if !hasTrigger {
 		return reviewTriggerApproved, nil
 	}
+	topState := reviewTriggerPending
 	if latestIndex != triggerIndex {
 		if reviewSurfaceAfterTrigger(trigger.CreatedAt, latest.CreatedAt) && isInformalReviewApproval(latest.Body) {
-			return reviewTriggerApproved, nil
+			topState = reviewTriggerApproved
 		}
-		return reviewTriggerPending, nil
 	}
 	triggerAt := trigger.CreatedAt
 	if lister, ok := client.(github.PRReviewLister); ok {
-		state, responded, err := formalReviewTriggerStatus(ctx, lister, prNumber, triggerAt)
+		state, responded, err := formalReviewTriggerStatus(ctx, lister, prNumber, headSHA, triggerAt)
 		if err != nil {
 			return "", err
 		}
 		if responded {
-			return state, nil
+			if state != reviewTriggerPending {
+				return state, nil
+			}
+			topState = reviewTriggerPending
 		}
 	}
 	if lister, ok := client.(github.PRReviewCommentLister); ok {
@@ -298,10 +301,10 @@ func reviewTriggerStatus(ctx context.Context, client github.Client, prNumber int
 			return "", err
 		}
 		if responded {
-			return reviewTriggerPending, nil
+			topState = reviewTriggerPending
 		}
 	}
-	return reviewTriggerPending, nil
+	return topState, nil
 }
 
 func latestReviewComment(comments []github.PRComment) (github.PRComment, int, bool) {
@@ -339,7 +342,7 @@ func reviewCommentLater(current, candidate github.PRComment) bool {
 	return current.CreatedAt.IsZero() || candidate.CreatedAt.IsZero() || candidate.CreatedAt.After(current.CreatedAt) || candidate.CreatedAt.Equal(current.CreatedAt)
 }
 
-func formalReviewTriggerStatus(ctx context.Context, lister github.PRReviewLister, prNumber int, triggerAt time.Time) (reviewTriggerState, bool, error) {
+func formalReviewTriggerStatus(ctx context.Context, lister github.PRReviewLister, prNumber int, headSHA string, triggerAt time.Time) (reviewTriggerState, bool, error) {
 	reviews, err := lister.ListPRReviews(ctx, prNumber)
 	if err != nil {
 		return "", false, err
@@ -348,6 +351,9 @@ func formalReviewTriggerStatus(ctx context.Context, lister github.PRReviewLister
 	hasResponse := false
 	for _, review := range reviews {
 		if !reviewSurfaceAfterTrigger(triggerAt, review.CreatedAt) {
+			continue
+		}
+		if !strings.EqualFold(strings.TrimSpace(review.CommitSHA), strings.TrimSpace(headSHA)) {
 			continue
 		}
 		state := strings.ToUpper(strings.TrimSpace(review.State))
@@ -428,7 +434,7 @@ func reviewTriggerPrefixMatches(body, reviewCommand string) bool {
 	for index, word := range words {
 		parts[index] = regexp.QuoteMeta(word)
 	}
-	return regexp.MustCompile(`(?i)` + strings.Join(parts, `\s+`)).MatchString(body)
+	return regexp.MustCompile(`(?i)` + strings.Join(parts, `\s+`) + `(?:$|[^[:alnum:]_])`).MatchString(body)
 }
 
 func reviewSurfaceAfterTrigger(triggerAt, responseAt time.Time) bool {

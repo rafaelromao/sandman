@@ -689,6 +689,7 @@ type prReviewPayload struct {
 	ID        int64  `json:"id"`
 	Body      string `json:"body"`
 	State     string `json:"state"`
+	CommitSHA string `json:"commit_id"`
 	Submitted string `json:"submitted_at"`
 	User      struct {
 		Login string `json:"login"`
@@ -700,6 +701,7 @@ type prReviewCommentPayload struct {
 	Body      string `json:"body"`
 	Path      string `json:"path"`
 	Line      int    `json:"line"`
+	CommitSHA string `json:"commit_id"`
 	CreatedAt string `json:"created_at"`
 	User      struct {
 		Login string `json:"login"`
@@ -813,7 +815,7 @@ func (c *CLIClient) ListPRReviews(ctx context.Context, number int) ([]PRReview, 
 			return nil, fmt.Errorf("parse pr reviews: %w", err)
 		}
 		for _, payload := range page {
-			result = append(result, PRReview{ID: strconv.FormatInt(payload.ID, 10), Body: payload.Body, State: payload.State, AuthorLogin: payload.User.Login, CreatedAt: parseGitHubTime(payload.Submitted)})
+			result = append(result, PRReview{ID: strconv.FormatInt(payload.ID, 10), Body: payload.Body, State: payload.State, CommitSHA: payload.CommitSHA, AuthorLogin: payload.User.Login, CreatedAt: parseGitHubTime(payload.Submitted)})
 		}
 	}
 	return result, nil
@@ -846,7 +848,7 @@ func (c *CLIClient) ListPRReviewComments(ctx context.Context, number int) ([]PRR
 			return nil, fmt.Errorf("parse pr review comments: %w", err)
 		}
 		for _, payload := range page {
-			result = append(result, PRReviewComment{ID: strconv.FormatInt(payload.ID, 10), Body: payload.Body, Path: payload.Path, Line: payload.Line, AuthorLogin: payload.User.Login, CreatedAt: parseGitHubTime(payload.CreatedAt)})
+			result = append(result, PRReviewComment{ID: strconv.FormatInt(payload.ID, 10), Body: payload.Body, Path: payload.Path, Line: payload.Line, CommitSHA: payload.CommitSHA, AuthorLogin: payload.User.Login, CreatedAt: parseGitHubTime(payload.CreatedAt)})
 		}
 	}
 	return result, nil

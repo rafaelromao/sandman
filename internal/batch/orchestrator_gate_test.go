@@ -904,6 +904,29 @@ func TestCheckPRExternalGateOnlyMatchesConfiguredReviewCommand(t *testing.T) {
 	}
 }
 
+func TestCheckPRExternalGateDoesNotMatchConfiguredCommandPrefix(t *testing.T) {
+	client := &fakeGitHubClient{
+		prs: map[string]*github.PR{gateTestBranch: {
+			Number:            17,
+			State:             "open",
+			HeadRefOid:        "current-sha",
+			StatusCheckRollup: "success",
+			MergeStateStatus:  "CLEAN",
+		}},
+		prComments: map[int][]github.PRComment{17: {
+			{Body: "context /sandman reviewer", CreatedAt: time.Unix(30, 0)},
+		}},
+	}
+
+	got, err := checkPRExternalGateAtHeadWithReviewCommand(context.Background(), client, gateTestBranch, "current-sha", "/sandman review")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != gateReadyToMerge {
+		t.Fatalf("configured command prefix gate = %q, want %s", got, gateReadyToMerge)
+	}
+}
+
 func TestCheckPRExternalGateMatchesConfiguredCommandWithFlexibleWhitespace(t *testing.T) {
 	client := &fakeGitHubClient{
 		prs: map[string]*github.PR{gateTestBranch: {
@@ -966,7 +989,7 @@ func TestCheckPRExternalGateAcceptsLaterFormalApproval(t *testing.T) {
 			{Body: "/review please", CreatedAt: time.Unix(30, 0)},
 		}},
 		prReviews: map[int][]github.PRReview{17: {
-			{State: "APPROVED", CreatedAt: time.Unix(31, 0)},
+			{State: "APPROVED", CommitSHA: "current-sha", CreatedAt: time.Unix(31, 0)},
 		}},
 	}
 
@@ -976,6 +999,59 @@ func TestCheckPRExternalGateAcceptsLaterFormalApproval(t *testing.T) {
 	}
 	if got != gateReadyToMerge {
 		t.Fatalf("formal approval gate = %q, want %s", got, gateReadyToMerge)
+	}
+}
+
+func TestCheckPRExternalGateRejectsStaleFormalApproval(t *testing.T) {
+	client := &fakeGitHubClient{
+		prs: map[string]*github.PR{gateTestBranch: {
+			Number:            17,
+			State:             "open",
+			HeadRefOid:        "current-sha",
+			StatusCheckRollup: "success",
+			MergeStateStatus:  "CLEAN",
+		}},
+		prComments: map[int][]github.PRComment{17: {
+			{Body: "/review please", CreatedAt: time.Unix(30, 0)},
+		}},
+		prReviews: map[int][]github.PRReview{17: {
+			{State: "APPROVED", CommitSHA: "prior-sha", CreatedAt: time.Unix(31, 0)},
+		}},
+	}
+
+	got, err := checkPRExternalGateAtHeadWithReviewCommand(context.Background(), client, gateTestBranch, "current-sha", "/review please")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "pending" {
+		t.Fatalf("stale formal approval gate = %q, want pending", got)
+	}
+}
+
+func TestCheckPRExternalGateAcceptsFormalApprovalAfterConversationResponse(t *testing.T) {
+	client := &fakeGitHubClient{
+		prs: map[string]*github.PR{gateTestBranch: {
+			Number:            17,
+			State:             "open",
+			HeadRefOid:        "current-sha",
+			StatusCheckRollup: "success",
+			MergeStateStatus:  "CLEAN",
+		}},
+		prComments: map[int][]github.PRComment{17: {
+			{Body: "/review please", CreatedAt: time.Unix(30, 0)},
+			{Body: "thanks", CreatedAt: time.Unix(31, 0)},
+		}},
+		prReviews: map[int][]github.PRReview{17: {
+			{State: "APPROVED", CommitSHA: "current-sha", CreatedAt: time.Unix(32, 0)},
+		}},
+	}
+
+	got, err := checkPRExternalGateAtHeadWithReviewCommand(context.Background(), client, gateTestBranch, "current-sha", "/review please")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != gateReadyToMerge {
+		t.Fatalf("formal approval after conversation gate = %q, want %s", got, gateReadyToMerge)
 	}
 }
 
@@ -992,7 +1068,7 @@ func TestCheckPRExternalGateAcceptsInformalFormalReviewApproval(t *testing.T) {
 			{Body: "/review please", CreatedAt: time.Unix(30, 0)},
 		}},
 		prReviews: map[int][]github.PRReview{17: {
-			{State: "COMMENTED", Body: "LGTM", CreatedAt: time.Unix(31, 0)},
+			{State: "COMMENTED", Body: "LGTM", CommitSHA: "current-sha", CreatedAt: time.Unix(31, 0)},
 		}},
 	}
 
@@ -1245,7 +1321,7 @@ func TestCheckPRExternalGatePreservesRequestedChangesAfterTrigger(t *testing.T) 
 			{Body: "/review please", CreatedAt: time.Unix(30, 0)},
 		}},
 		prReviews: map[int][]github.PRReview{17: {
-			{State: "CHANGES_REQUESTED", CreatedAt: time.Unix(31, 0)},
+			{State: "CHANGES_REQUESTED", CommitSHA: "current-sha", CreatedAt: time.Unix(31, 0)},
 		}},
 	}
 

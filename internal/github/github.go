@@ -150,6 +150,7 @@ type PRReview struct {
 	ID          string
 	Body        string
 	State       string
+	CommitSHA   string
 	AuthorLogin string
 	CreatedAt   time.Time
 }
@@ -162,6 +163,7 @@ type PRReviewComment struct {
 	Body        string
 	Path        string
 	Line        int
+	CommitSHA   string
 	AuthorLogin string
 	CreatedAt   time.Time
 }
