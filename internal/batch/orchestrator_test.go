@@ -6799,6 +6799,7 @@ func (f *fakeContainerForOrchestrator) Stop() error {
 }
 
 type fakeContainerStarter struct {
+	mu              sync.Mutex
 	startCalled     bool
 	startCount      int
 	startImage      string
@@ -6824,23 +6825,32 @@ func (f *fakeContainerStarter) BuildImage(repoPath string) (string, error) {
 }
 
 func (f *fakeContainerStarter) Start(image, repoPath string, opts sandbox.StartOptions) (sandbox.Container, error) {
+	f.mu.Lock()
 	f.startCalled = true
 	f.startCount++
+
+	startCount := f.startCount
+	startDelay := f.startDelay
+	startErr := f.err
+	containers := append([]sandbox.Container(nil), f.containers...)
+	container := f.container
 	f.startImage = image
 	f.startOpts = opts
-	if f.startDelay > 0 {
-		time.Sleep(f.startDelay)
+	f.mu.Unlock()
+
+	if startDelay > 0 {
+		time.Sleep(startDelay)
 	}
-	if f.err != nil {
-		return nil, f.err
+	if startErr != nil {
+		return nil, startErr
 	}
-	if len(f.containers) >= f.startCount {
-		return f.containers[f.startCount-1], nil
+	if len(containers) >= startCount {
+		return containers[startCount-1], nil
 	}
-	if f.container != nil {
-		return f.container, nil
+	if container != nil {
+		return container, nil
 	}
-	return &fakeContainerForOrchestrator{id: fmt.Sprintf("container-%d", f.startCount)}, nil
+	return &fakeContainerForOrchestrator{id: fmt.Sprintf("container-%d", startCount)}, nil
 }
 
 type fakeContainerRuntimeFactory struct {
