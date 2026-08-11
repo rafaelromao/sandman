@@ -129,11 +129,11 @@ func TestRunSingle_EmitsRunRetryBetweenAttemptsOnFailure(t *testing.T) {
 	if got0.Payload["branch"] != branch {
 		t.Errorf("run.retry[0] branch = %v, want %q", got0.Payload["branch"], branch)
 	}
-	// Last 3 log lines at the 1→2 transition: just the first retry
-	// marker (--- retry 1/2 ---). The initial attempt no longer
-	// writes a run marker.
+	// The only log line at the 1→2 transition is the retry marker;
+	// retry context excludes it. The initial attempt no longer writes
+	// a run marker.
 	lines0, _ := got0.Payload["last_log_lines"].([]any)
-	wantLines0 := []string{"--- retry 1/2 ---"}
+	wantLines0 := []string{}
 	if len(lines0) != len(wantLines0) {
 		t.Errorf("run.retry[0] last_log_lines = %v (len=%d), want %v", lines0, len(lines0), wantLines0)
 	} else {
@@ -158,12 +158,11 @@ func TestRunSingle_EmitsRunRetryBetweenAttemptsOnFailure(t *testing.T) {
 	if got1.Payload["previous_status"] != "failure" {
 		t.Errorf("run.retry[1] previous_status = %v, want \"failure\"", got1.Payload["previous_status"])
 	}
-	// At the 2→3 transition the log has 2 lines: the two retry
-	// markers from attempts 1 and 2 (the initial attempt no longer
-	// writes a run marker). readTailLines keeps the last 3 lines,
-	// so both are returned.
+	// At the 2→3 transition the log has two retry markers from
+	// attempts 1 and 2 (the initial attempt no longer writes a run
+	// marker). Retry context excludes both markers.
 	lines1, _ := got1.Payload["last_log_lines"].([]any)
-	wantLines1 := []string{"--- retry 1/2 ---", "--- retry 2/2 ---"}
+	wantLines1 := []string{}
 	if len(lines1) != len(wantLines1) {
 		t.Errorf("run.retry[1] last_log_lines = %v (len=%d), want %v", lines1, len(lines1), wantLines1)
 	} else {
@@ -697,11 +696,10 @@ func TestRunSingle_EmitsRunRetryWithAbortedStatusAfterHeartbeatKill(t *testing.T
 	}
 	// At retry time the log contains the 3 lines the stalled runnable
 	// wrote before being killed, followed by --- retry 1/1 --- (from
-	// attempt 1's logRetryMarkerFn in prepareAttempt). readTailLines
-	// keeps the last 3 lines, so the expected payload is the 2
-	// trailing stall lines plus the retry marker.
+	// attempt 1's logRetryMarkerFn in prepareAttempt). Retry context
+	// excludes the marker and keeps the three preceding agent lines.
 	lines, _ := got.Payload["last_log_lines"].([]any)
-	wantLines := []string{"processing step 1", "processing step 2", "--- retry 1/1 ---"}
+	wantLines := []string{"agent started", "processing step 1", "processing step 2"}
 	if len(lines) != len(wantLines) {
 		t.Errorf("run.retry last_log_lines = %v (len=%d), want %v", lines, len(lines), wantLines)
 	} else {
