@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -47,6 +48,22 @@ func TestSyncWritesEmbeddedSkill(t *testing.T) {
 	}
 	if checked == 0 {
 		t.Fatal("expected embedded skill files to be installed")
+	}
+}
+
+func TestSyncInstallsSourceableReviewTimeoutHelper(t *testing.T) {
+	home := t.TempDir()
+	if err := Sync(SyncOptions{HomeDir: home, ReviewCommand: "/review"}); err != nil {
+		t.Fatalf("sync skill: %v", err)
+	}
+
+	helper := filepath.Join(home, ".agents", "skills", embeddedSkillRoot, "pr-review", "review-timeout.sh")
+	if err := exec.Command("sh", "-n", helper).Run(); err != nil {
+		t.Fatalf("review-timeout.sh syntax: %v", err)
+	}
+	cmd := exec.Command("sh", "-c", `. "$1"; test "$(review_timeout_cap_wait 17 30)" = 17`, "review-timeout", helper)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("source installed review-timeout.sh: %v: %s", err, output)
 	}
 }
 

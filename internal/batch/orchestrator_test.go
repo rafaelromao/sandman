@@ -171,6 +171,8 @@ type fakeGitHubClient struct {
 	searchCalls            []string
 	issueComments          map[int][]github.IssueComment
 	listIssueCommentsCalls []int
+	prComments             map[int][]github.PRComment
+	listPRCommentsErr      error
 	subIssues              map[int][]int
 	listSubIssuesCalls     []int
 	listSubIssuesErr       error
@@ -249,7 +251,10 @@ func (f *fakeGitHubClient) ListOpenPRs(ctx context.Context) ([]github.PR, error)
 }
 
 func (f *fakeGitHubClient) ListPRComments(ctx context.Context, number int) ([]github.PRComment, error) {
-	return nil, nil
+	if f.listPRCommentsErr != nil {
+		return nil, f.listPRCommentsErr
+	}
+	return f.prComments[number], nil
 }
 
 func (f *fakeGitHubClient) AuthenticatedLogin(ctx context.Context) (string, error) {

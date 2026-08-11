@@ -172,9 +172,9 @@ func TestPRReviewSkill_BehavioralSmoke(t *testing.T) {
 //  2. An unanswered `/sandman review` trigger sitting above an older
 //     APPROVED comment blocks Case C classification — the trigger itself
 //     is a fresh request that must receive a response first.
-//  3. Case C classification requires at least one full polling cycle
-//     (cumulative sleep ≥ 240 s) since the most recent trigger post —
-//     a single 120 s poll cannot observe a meaningful response window.
+//  3. Case C classification requires at least three polls and 240 seconds of
+//     wall-clock time since the most recent trigger post — a single 120-second
+//     poll cannot observe a meaningful response window.
 func TestPRReviewSkill_StaleApprovalHardRule(t *testing.T) {
 	text := readPRReviewSkill(t)
 
@@ -200,8 +200,8 @@ func TestPRReviewSkill_StaleApprovalHardRule(t *testing.T) {
 		},
 		{
 			name:    "minimum-poll-budget rule",
-			substr:  "at least 240 s of cumulative sleep",
-			message: "Case C must require at least one full polling cycle (240 s cumulative) before classifying",
+			substr:  "at least three poll iterations and 240 seconds of wall-clock time",
+			message: "Case C must require three polls and 240 seconds of wall-clock time before classifying",
 		},
 	}
 
@@ -249,8 +249,8 @@ func TestPRReviewSkill_UsesConfigurableCurrentAgentRunTimeout(t *testing.T) {
 		"60 seconds",
 		"30 seconds",
 		"240 seconds",
-		"sleep that lands exactly on the configured budget is permitted",
-		"new review request starts a fresh counter",
+		"A command that completes exactly at the deadline is permitted",
+		"a new review request resets them",
 		"observed response counts",
 		"next executable action",
 	} {
@@ -263,6 +263,27 @@ func TestPRReviewSkill_UsesConfigurableCurrentAgentRunTimeout(t *testing.T) {
 		if strings.Contains(text, forbidden) {
 			t.Errorf("pr-review SKILL.md must not retain fixed review budget %q", forbidden)
 		}
+	}
+}
+
+func TestPRReviewSkill_UsesWallClockDeadlineHelper(t *testing.T) {
+	text := readPRReviewSkill(t)
+
+	for _, phrase := range []string{
+		"review-timeout.sh",
+		"review_timeout_deadline",
+		"review_timeout_run",
+		".sandman/state/<N>.review_deadline",
+		"wall-clock deadline",
+		"Before and after every GitHub/API operation",
+		"trigger ID",
+	} {
+		if !strings.Contains(text, phrase) {
+			t.Errorf("pr-review SKILL.md must describe wall-clock deadline enforcement %q", phrase)
+		}
+	}
+	if strings.Contains(text, "cumulative sleep") || strings.Contains(text, "review_sleep_elapsed") {
+		t.Fatal("pr-review SKILL.md must not make cumulative sleep the timeout source of truth")
 	}
 }
 

@@ -28,10 +28,12 @@ The daemon polls open pull requests for the configured review command, which def
 /sandman review
 ```
 
-The implementor-side delegated review loop waits according to the project
-`review_timeout` setting (default `1800` seconds, minimum `240`). The value is
-carried in the current AgentRun Task and is independent of the review daemon's
-reviewer AgentRun lifetime and external-gate polling budget. Use
+The implementor-side delegated review loop waits according to the project's
+absolute wall-clock `review_timeout` setting (default `1800` seconds, minimum
+`240`). The deadline starts at each fresh review trigger; API calls, tool work,
+and polling sleeps consume the same budget. The value is carried in the current
+AgentRun Task and is independent of the review daemon's reviewer AgentRun
+lifetime and external-gate polling budget. Use
 `sandman config set review_timeout <seconds>` for repository policy or
 `sandman run --review-timeout <seconds>` for one run or continuation.
 

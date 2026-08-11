@@ -777,6 +777,29 @@ func TestCheckPRExternalGateRecognizesFullyGreenOpenPRAsReadyToMerge(t *testing.
 	}
 }
 
+func TestCheckPRExternalGateDefersUnansweredReviewTrigger(t *testing.T) {
+	client := &fakeGitHubClient{
+		prs: map[string]*github.PR{gateTestBranch: {
+			Number:            17,
+			State:             "open",
+			StatusCheckRollup: "success",
+			MergeStateStatus:  "CLEAN",
+		}},
+		prComments: map[int][]github.PRComment{17: {
+			{Body: "older response", CreatedAt: time.Unix(20, 0)},
+			{Body: "/review please", CreatedAt: time.Unix(30, 0)},
+		}},
+	}
+
+	got, err := checkPRExternalGateAtHeadWithReviewCommand(context.Background(), client, gateTestBranch, "current-sha", "/review please")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "pending" {
+		t.Fatalf("unanswered review trigger gate = %q, want pending", got)
+	}
+}
+
 func TestCheckPRExternalGateDefersStaleApproval(t *testing.T) {
 	client := &fakeGitHubClient{prs: map[string]*github.PR{gateTestBranch: {
 		Number:            17,

@@ -82,3 +82,26 @@ func TestReviewTimeoutHelperStopsDirectChildAtDeadline(t *testing.T) {
 		t.Fatalf("deadline watcher took %s, expected less than child duration", elapsed)
 	}
 }
+
+func TestReviewTimeoutHelperWritesAtomicDeadlineState(t *testing.T) {
+	statePath := filepath.Join(t.TempDir(), ".sandman", "state", "385.review_deadline")
+	if _, err := runReviewTimeoutHelper(t, "review_timeout_write_state", statePath, "head-sha", "comment-42", "1000", "1240"); err != nil {
+		t.Fatalf("review_timeout_write_state: %v", err)
+	}
+
+	data, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatalf("read deadline state: %v", err)
+	}
+	want := "head_sha=head-sha\ntrigger_id=comment-42\nstarted_at=1000\ndeadline_at=1240\n"
+	if string(data) != want {
+		t.Fatalf("deadline state = %q, want %q", data, want)
+	}
+	info, err := os.Stat(statePath)
+	if err != nil {
+		t.Fatalf("stat deadline state: %v", err)
+	}
+	if mode := info.Mode().Perm(); mode != 0o600 {
+		t.Fatalf("deadline state mode = %o, want 600", mode)
+	}
+}

@@ -49,8 +49,9 @@ parallel_reviews: 1
 # Default: 1800 (30 minutes).
 run_idle_timeout: 1800
 
-# Cumulative delegated review response budget in seconds for the implementor
-# side of the PR-review loop. The minimum is 240 seconds; default: 1800.
+# Absolute wall-clock delegated review response budget in seconds for the
+# implementor side of the PR-review loop. The minimum is 240 seconds;
+# default: 1800.
 review_timeout: 1800
 
 # Number of times to retry a failed AgentRun before recording it as failed.

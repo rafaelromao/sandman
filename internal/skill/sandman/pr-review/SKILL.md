@@ -141,44 +141,66 @@ Read `.sandman/state/<N>.head_sha` if it exists and compare against the current 
 
 #### Step 4: Delegate review to the PR Review Agent (trigger post)
 
-If SHA changed since the last request, always allow re-requesting. If SHA is unchanged, skip this step if no review response has arrived yet.
+If SHA changed since the last request, always allow re-requesting. If SHA is unchanged, skip this step while the current request is still pending. After a recorded `REVIEW_TIMEOUT`, a deliberate new trigger is a new request and may start a fresh budget; never post a duplicate trigger while the current request is pending.
 
 Only post `{{REVIEW_COMMAND}}` after CI has reached a green terminal state in Step 2.
 
+Before Step 4, source the helper from the synced skill tree:
+
 ```bash
-gh pr comment <N> --repo <owner/repo> --body "{{REVIEW_COMMAND}}"
+. "$HOME/.agents/skills/sandman/pr-review/review-timeout.sh"
 ```
 
-After posting, write the current head SHA to `.sandman/state/<N>.head_sha` so subsequent passes can detect staleness.
+```bash
+trigger_url=$(gh pr comment <N> --repo <owner/repo> --body "{{REVIEW_COMMAND}}")
+trigger_id=${trigger_url##*-}
+case "$trigger_id" in
+  ''|*[!0-9]*) record REVIEW_TIMEOUT_STATE_ERROR and stop ;;
+esac
+trigger_started_at=$(review_timeout_now)
+deadline_at=$(review_timeout_deadline "$trigger_started_at" "$REVIEW_TIMEOUT")
+review_timeout_write_state ".sandman/state/<N>.review_deadline" \
+  "$head_sha" "$trigger_id" "$trigger_started_at" "$deadline_at" || \
+  record REVIEW_TIMEOUT_STATE_ERROR and stop
+```
 
-#### Step 5: Wait for review (configured cumulative budget)
+The command output is the trigger URL, so its trailing issue-comment ID is the trigger ID and request identity. Start the deadline immediately after the post succeeds. Persist the state atomically before polling; if parsing or persistence fails, record `REVIEW_TIMEOUT_STATE_ERROR` in `.sandman/task.md` and the run log and do not post another trigger until state recovery succeeds. Continue writing the current head SHA to `.sandman/state/<N>.head_sha` for stale-diff detection.
 
-Before polling, read the effective `REVIEW_TIMEOUT` value from the current AgentRun task context. It is an integer number of seconds supplied by the
-project/run configuration, not a value synchronized into this globally
-installed skill. If older task context has no `REVIEW_TIMEOUT` runtime value,
-use the compatibility fallback of **1800 seconds**. Keep this effective value
-fixed for retries within the same AgentRun; a genuinely new review request
-resolves its own value. A new review request starts a fresh counter.
+#### Step 5: Wait for review (absolute wall-clock budget)
+
+Read the effective `REVIEW_TIMEOUT` value from the current AgentRun task context. It is an integer number of seconds supplied by the project/run configuration, not a value synchronized into this globally installed skill. If older task context has no `REVIEW_TIMEOUT` runtime value, use the compatibility fallback of **1800 seconds**. Load `.sandman/state/<N>.review_deadline` and verify that its `head_sha` and `trigger_id` match the current head and latest trigger. Reuse its `started_at` and `deadline_at`; only a genuinely new trigger may replace them. A malformed state file for the current trigger is `REVIEW_TIMEOUT_STATE_ERROR`, not permission to reset the deadline.
+
+The helper at `~/.agents/skills/sandman/pr-review/review-timeout.sh` defines the wall-clock policy. Its pure functions use integer epoch seconds:
+
+```bash
+review_timeout_deadline <started_at> <budget>
+review_timeout_remaining <deadline_at> <now>
+review_timeout_cap_wait <remaining> <requested>
+review_timeout_run <deadline_at> <direct-command> [args...]
+```
+
+`review_timeout_run` starts a deadline watcher for a direct child, kills the child when the deadline wins, and returns `124` for a deadline timeout. A child that independently returns `124` before the deadline remains an ordinary command result; compare the clock after the command to distinguish it. Use direct `gh` and `sleep` commands, not unbounded pipelines. The watcher is cooperative at integer-second clock resolution; no command or sleep may intentionally be scheduled past the deadline.
 
 | Iteration | Sleep before this poll |
 |-----------|------------------------|
 | 1         | `sleep 120` (120 seconds) |
 | 2         | `sleep 60` (60 seconds)  |
 | 3         | `sleep 60` (60 seconds)  |
-| 4+        | `sleep 30` (30 seconds; repeated until the effective budget is exhausted) |
+| 4+        | `sleep 30` (30 seconds; repeated until the wall-clock deadline) |
 
-The total polling budget is the effective `REVIEW_TIMEOUT` seconds of cumulative
-sleep (120 + 60 + 60 + N×30). The minimum valid budget is 240 seconds, which
-provides one complete approval cycle. A sleep that lands exactly on the configured budget is permitted.
+The response budget is the effective `REVIEW_TIMEOUT` seconds of wall-clock time
+from `started_at` to `deadline_at`. API calls, parsing, tool overhead, and sleep
+all consume the same budget. The minimum valid budget is 240 seconds, which
+allows one complete approval cycle. A command that completes exactly at the deadline is permitted; after that point no new poll or sleep may start.
 
-Track `review_sleep_elapsed` across the polling loop. Before every sleep, if
-adding the next interval would exceed the effective `REVIEW_TIMEOUT`, record
-`REVIEW_TIMEOUT` in `.sandman/task.md` and the run log with the effective
-budget, elapsed budget, observed response counts (`top`, `reviews`, `inline`),
-and the next executable action, then exit; otherwise add the interval to
-`review_sleep_elapsed` after sleeping. A new review request starts a fresh
-counter; ordinary polls, pending-trigger checks, and retries of the same wait
-do not reset it.
+Before and after every GitHub/API operation, calculate the remaining time from
+the persisted deadline. Run each operation through `review_timeout_run`; if it
+returns `124`, or the after-command clock is past the deadline, record
+`REVIEW_TIMEOUT` and exit. Before every sleep, use
+`review_timeout_cap_wait` to shorten the requested cadence to the remaining
+budget. If no positive wait remains, record `REVIEW_TIMEOUT` and exit. The
+wall-clock elapsed time and poll count are the approval-cycle evidence; a new review request resets them, while ordinary polls, pending-trigger checks, and
+retries of the same wait do not.
 
 **Hard rule — observed-response fast path.** If any poll iteration observes a new top-level PR conversation comment that does not begin with `{{REVIEW_COMMAND}}`, the very next sleep MUST be ≤ 60s.
 
@@ -187,9 +209,9 @@ do not reset it.
 On **every** poll iteration run all three commands separately:
 
 ```bash
-gh pr view <N> --repo <owner/repo> --json comments,reviewDecision,mergeStateStatus
-gh api repos/<owner>/<repo>/pulls/<N>/reviews
-gh api repos/<owner>/<repo>/pulls/<N>/comments --paginate
+view=$(review_timeout_run "$deadline_at" gh pr view <N> --repo <owner/repo> --json comments,reviewDecision,mergeStateStatus) || record REVIEW_TIMEOUT and exit
+reviews=$(review_timeout_run "$deadline_at" gh api repos/<owner>/<repo>/pulls/<N>/reviews) || record REVIEW_TIMEOUT and exit
+inline=$(review_timeout_run "$deadline_at" gh api repos/<owner>/<repo>/pulls/<N>/comments --paginate) || record REVIEW_TIMEOUT and exit
 ```
 
 Counter: `top=<count> reviews=<count> inline=<count>`
@@ -209,8 +231,10 @@ If `top > 0` AND `reviews == 0` AND `inline == 0`, AND no previous `{{REVIEW_COM
 
 If no reviewer response arrives within the effective budget, stop and exit the
 loop with a `REVIEW_TIMEOUT` reason documented in `.sandman/task.md` and the
-run log so the failure, configured budget, elapsed budget, observed response
-counts, and next executable action are durable.
+run log so the failure, configured budget, wall-clock elapsed time, observed response counts (`top`, `reviews`, `inline`), current head/trigger identity, and next executable action are
+durable. Retain `.sandman/state/<N>.review_deadline` on timeout so a retry or
+continuation cannot silently regain budget for the same trigger. Remove it only
+after approval or another terminal outcome has been durably recorded.
 
 #### Step 5a: DIRTY handling — every poll iteration
 
@@ -243,16 +267,16 @@ On **every** poll iteration, after running the three commands above, inspect the
 - A `COMMENTED` review OR top-level comment with approval keywords, AND
 - **The approval is for the current diff** — its `createdAt` is **after** the SHA recorded in `.sandman/state/<N>.head_sha` (the SHA at which the most recent `{{REVIEW_COMMAND}}` was posted), AND
 - **No unanswered `/sandman review` trigger is sitting above the approval** — the most recent top-level comment by `createdAt` is not an implementor trigger that has not yet received a response, AND
-- **The minimum polling cycle has elapsed** — at least 240 s of cumulative sleep (one full `120 + 60 + 60` cycle from Step 5) has passed since the most recent trigger post. A single 120 s first poll cannot have observed a meaningful response window.
+- **The minimum polling cycle has elapsed** — at least three poll iterations and 240 seconds of wall-clock time (one full `120 + 60 + 60` cycle from Step 5) have passed since the most recent trigger post. A single 120-second first poll cannot have observed a meaningful response window.
 → **Approve — DONE. Stop the loop.** An informal approval is sufficient.
 
 Approval keywords: `lgtm`, `looks good`, `looks great`, `nice work`, `good work`, `approved`, `ship it`, `+1`, `thumbs up`, `all good`, `all set`, `good to go`, `no major issues`, `minor issues only`, etc.
 
 **Hard rule — stale approval after a SHA change.** When Step 3 detects that the head SHA has changed since the last `{{REVIEW_COMMAND}}` post, every prior approval timestamp is stale. The new diff requires a fresh approval against the new SHA, not a re-application of an approval that was issued against the prior diff. Treat any pre-SHA-change APPROVED comment as **not approved** until a new APPROVED comment arrives after the new SHA — even if `reviewDecision` would otherwise be empty and the comment list otherwise looks clean. The pass-counter reset on SHA change implies the approval window resets too; do not infer that a stale APPROVED carries forward across a SHA change.
 
-**Hard rule — pending trigger beats older approval.** When the most recent top-level comment on the PR is an implementor `{{REVIEW_COMMAND}}` trigger that has not yet received a response, do not classify an older APPROVED comment below it as Case C. The trigger is itself a fresh request; the loop must continue polling until either the trigger receives a response or the effective `REVIEW_TIMEOUT` cumulative budget is exhausted. This is the symmetric counterpart of Hard Rule 5 / Hard Rule 6 (which prevent *posting* a duplicate trigger before the previous one is answered) and closes the same race at the *exit* side of the loop.
+**Hard rule — pending trigger beats older approval.** When the most recent top-level comment on the PR is an implementor `{{REVIEW_COMMAND}}` trigger that has not yet received a response, do not classify an older APPROVED comment below it as Case C. The trigger is itself a fresh request; the loop must continue polling until either the trigger receives a response or the effective `REVIEW_TIMEOUT` wall-clock deadline is reached. This is the symmetric counterpart of Hard Rule 5 / Hard Rule 6 (which prevent *posting* a duplicate trigger before the previous one is answered) and closes the same race at the *exit* side of the loop.
 
-**Hard rule — minimum poll budget before Case C.** Even when the other Case C gates (no CHANGES_REQUESTED, approval keywords, post-SHA-change, no pending trigger) all pass, the agent MUST NOT exit the loop on a single 120-second poll. Step 5 requires a cumulative budget across multiple polls. Exiting after one poll provides only a 120-second response window for the fresh trigger — far short of what the polling schedule is designed to give the reviewer. Require at least one full `120 + 60 + 60 = 240 seconds` cycle before classification, and treat the 120-second-first-poll short-circuit as a hard violation of the skill contract.
+**Hard rule — minimum poll budget before Case C.** Even when the other Case C gates (no CHANGES_REQUESTED, approval keywords, post-SHA-change, no pending trigger) all pass, the agent MUST NOT exit the loop on a single 120-second poll. Step 5 requires at least three polls and 240 seconds of wall-clock time. Exiting after one poll provides only a 120-second response window for the fresh trigger — far short of what the polling schedule is designed to give the reviewer. Require one full `120 + 60 + 60 = 240 seconds` cycle before classification, and treat the 120-second-first-poll short-circuit as a hard violation of the skill contract.
 
 **D. Still pending?**
 - `reviewDecision: "REVIEW_REQUIRED"` or absent, AND
@@ -296,6 +320,7 @@ Go to Step 1 for the next pass. Before re-requesting in Step 4: if head SHA chan
 
 - `.sandman/state/<N>.head_sha` — rewritten on every new review request post. SHA change = all prior review state stale, fresh request always permitted.
 - `.sandman/state/<N>.addressed_comments` — cleared when head SHA changes (new commit invalidates old inline comment IDs). One inline comment ID per line.
+- `.sandman/state/<N>.review_deadline` — atomic `head_sha`, `trigger_id`, `started_at`, and `deadline_at` record for the current trigger. Retained after `REVIEW_TIMEOUT`, replaced only by a newly posted trigger, and removed after approval or another terminal review outcome.
 
 ### Same comment ID 3+ passes without resolution
 
@@ -309,6 +334,7 @@ Stop only when:
 - Formal approval (A or C) — the **only** condition that completes the PR-Review phase. "Exhausted after 10 passes" or any other non-approval signal is **never** a reason to mark PR-Review complete; only Approval is.
 - An explicit skill-defined irrecoverable condition prevents further autonomous progress
 - Max 10 passes reached with unresolved blockers AND no new commit has landed on the PR branch since the last `{{REVIEW_COMMAND}}` post (i.e., the prior exhausted budget is still on the latest SHA). This ends the loop with a `REVIEW_TIMEOUT` documented in `.sandman/task.md` and the run log, not a completion — the run-level checklist item stays unchecked until Approval is observed.
+- `REVIEW_TIMEOUT_STATE_ERROR` — trigger identity or deadline state could not be persisted or recovered. This is not approval and must remain durable until a later run repairs the state.
 - **`REVIEW_CONFLICT_UNRESOLVED` — back-merge failed to resolve a DIRTY PR; not a `REVIEW_TIMEOUT`, never silent**
 
 Continue polling when:

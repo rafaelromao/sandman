@@ -21,18 +21,27 @@ Use 1800 seconds when the value is absent and reject values below 240 seconds.
 An explicit run or continuation override takes precedence over the current
 repository configuration, which takes precedence over the default.
 
+The effective value is an absolute wall-clock deadline for one fresh delegated
+review request. The deadline starts immediately after the trigger post is
+confirmed and includes GitHub/API calls, command overhead, parsing, and polling
+sleep. A new trigger starts a new deadline; retries, continuations, and ordinary
+polls of the same trigger reuse the persisted `(head_sha, trigger_id,
+started_at, deadline_at)` state.
+
 Render the effective value into the current AgentRun task context and expose it
 as the `REVIEW_TIMEOUT` prompt key. Retries of the same AgentRun retain the
-effective value; a genuinely new review request resets its cumulative polling
-budget. Continuations resolve current flags and configuration and supersede
-stale persisted timeout wording. Run-started and run-continued events record
-the effective value for diagnosis.
+effective value; a genuinely new review request replaces its persisted
+wall-clock deadline. Continuations resolve current flags and configuration and
+supersede stale persisted timeout wording. Run-started and run-continued events
+record the effective value for diagnosis.
 
 Keep the shared installed skill repository-independent. The skill reads the
 current task's value, falling back to 1800 seconds only for older task context,
 so synchronization for one repository cannot alter another repository's active
 runs. Preserve the existing 120, 60, 60, then 30-second polling cadence and
-allow a sleep that lands exactly on the configured cumulative budget.
+allow a command that completes exactly at the configured deadline. A cooperative
+direct-child watcher plus a post-command clock check prevents slow API calls
+from silently restoring expired review time.
 
 ## Consequences
 
@@ -48,3 +57,6 @@ allow a sleep that lands exactly on the configured cumulative budget.
   consistent when the policy changes.
 - Older task files require the skill's 1800-second compatibility fallback.
 - A larger budget can keep an implementor AgentRun active longer.
+- Integer-second process watching can observe a scheduler overrun of up to one
+  clock second, but the loop never intentionally starts a command or sleep
+  after its deadline.

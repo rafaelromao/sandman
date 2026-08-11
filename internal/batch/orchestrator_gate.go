@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/rafaelromao/sandman/internal/atomicfs"
+	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/github"
 )
 
@@ -32,14 +33,18 @@ var (
 )
 
 func pollPRGate(ctx context.Context, client github.Client, branch string, opts runSessionOptions) gateResult {
-	return pollPRGateWithHead(ctx, client, branch, "", false, opts)
+	return pollPRGateWithHeadAndReviewCommand(ctx, client, branch, "", false, config.DefaultReviewCommand, opts)
 }
 
 func pollPRGateAtHead(ctx context.Context, client github.Client, branch, headSHA string, opts runSessionOptions) gateResult {
-	return pollPRGateWithHead(ctx, client, branch, headSHA, true, opts)
+	return pollPRGateWithHeadAndReviewCommand(ctx, client, branch, headSHA, true, config.DefaultReviewCommand, opts)
 }
 
 func pollPRGateWithHead(ctx context.Context, client github.Client, branch, headSHA string, requireHead bool, opts runSessionOptions) gateResult {
+	return pollPRGateWithHeadAndReviewCommand(ctx, client, branch, headSHA, requireHead, config.DefaultReviewCommand, opts)
+}
+
+func pollPRGateWithHeadAndReviewCommand(ctx context.Context, client github.Client, branch, headSHA string, requireHead bool, reviewCommand string, opts runSessionOptions) gateResult {
 	initial := opts.gatePollInitial
 	if initial <= 0 {
 		initial = defaultGatePollInitial
@@ -79,7 +84,7 @@ func pollPRGateWithHead(ctx context.Context, client github.Client, branch, headS
 		case <-time.After(delay):
 		}
 
-		gate, err := checkPRExternalGateWithHead(pollCtx, client, branch, headSHA, requireHead)
+		gate, err := checkPRExternalGateWithHeadAndReviewCommand(pollCtx, client, branch, headSHA, requireHead, reviewCommand)
 		switch gate {
 		case "resolved":
 			return gateResolved
@@ -105,14 +110,22 @@ func pollPRGateWithHead(ctx context.Context, client github.Client, branch, headS
 }
 
 func checkPRExternalGate(ctx context.Context, client github.Client, branch string) (string, error) {
-	return checkPRExternalGateWithHead(ctx, client, branch, "", false)
+	return checkPRExternalGateWithHeadAndReviewCommand(ctx, client, branch, "", false, config.DefaultReviewCommand)
 }
 
 func checkPRExternalGateAtHead(ctx context.Context, client github.Client, branch, headSHA string) (string, error) {
-	return checkPRExternalGateWithHead(ctx, client, branch, headSHA, true)
+	return checkPRExternalGateWithHeadAndReviewCommand(ctx, client, branch, headSHA, true, config.DefaultReviewCommand)
 }
 
 func checkPRExternalGateWithHead(ctx context.Context, client github.Client, branch, headSHA string, requireHead bool) (string, error) {
+	return checkPRExternalGateWithHeadAndReviewCommand(ctx, client, branch, headSHA, requireHead, config.DefaultReviewCommand)
+}
+
+func checkPRExternalGateAtHeadWithReviewCommand(ctx context.Context, client github.Client, branch, headSHA, reviewCommand string) (string, error) {
+	return checkPRExternalGateWithHeadAndReviewCommand(ctx, client, branch, headSHA, true, reviewCommand)
+}
+
+func checkPRExternalGateWithHeadAndReviewCommand(ctx context.Context, client github.Client, branch, headSHA string, requireHead bool, reviewCommand string) (string, error) {
 	if client == nil || strings.TrimSpace(branch) == "" {
 		return "none", nil
 	}
@@ -158,6 +171,15 @@ func checkPRExternalGateWithHead(ctx context.Context, client github.Client, bran
 		}
 	}
 	if (checkRollup == "" || checkRollup == "success") && (review == "" || review == "APPROVED") && mergeStatus == "CLEAN" {
+		if review == "" {
+			pending, err := hasUnansweredReviewTrigger(ctx, client, pr.Number, reviewCommand)
+			if err != nil {
+				return "unavailable", err
+			}
+			if pending {
+				return "pending", nil
+			}
+		}
 		return gateReadyToMerge, nil
 	}
 
@@ -181,7 +203,14 @@ func (s *runSession) handleExternalGateWithHostPaths(ctx context.Context, workDi
 	if !hostPathsReady {
 		headSHA = ""
 	}
-	gate, err := checkPRExternalGateWithHead(ctx, s.deps.githubClient, branch, headSHA, true)
+	reviewCommand := strings.TrimSpace(s.renderCfg.ReviewCommand)
+	if reviewCommand == "" && s.cfg != nil {
+		reviewCommand = s.cfg.EffectiveReviewCommand()
+	}
+	if reviewCommand == "" {
+		reviewCommand = config.DefaultReviewCommand
+	}
+	gate, err := checkPRExternalGateWithHeadAndReviewCommand(ctx, s.deps.githubClient, branch, headSHA, true, reviewCommand)
 	initialUnavailable := err != nil
 	if err != nil && s.deps.errorLog != nil {
 		fmt.Fprintf(s.deps.errorLog, "warning: external gate lookup for branch %q: %v\n", branch, err)
@@ -204,7 +233,7 @@ func (s *runSession) handleExternalGateWithHostPaths(ctx context.Context, workDi
 		return s.blockExternalGate(ctx, workDir, logPath, runID, "unavailable")
 	}
 
-	polled := pollPRGateWithHead(ctx, s.deps.githubClient, branch, headSHA, true, s.opts)
+	polled := pollPRGateWithHeadAndReviewCommand(ctx, s.deps.githubClient, branch, headSHA, true, reviewCommand, s.opts)
 	if polled == gateResolved {
 		return s.confirmExternalGate(ctx, workDir, branch, logPath, runID)
 	}
@@ -218,6 +247,27 @@ func (s *runSession) handleExternalGateWithHostPaths(ctx context.Context, workDi
 		return s.blockExternalGate(ctx, workDir, logPath, runID, "unavailable")
 	}
 	return s.blockExternalGate(ctx, workDir, logPath, runID, "pending")
+}
+
+func hasUnansweredReviewTrigger(ctx context.Context, client github.Client, prNumber int, reviewCommand string) (bool, error) {
+	reviewCommand = strings.TrimSpace(reviewCommand)
+	if client == nil || prNumber <= 0 || reviewCommand == "" {
+		return false, nil
+	}
+	comments, err := client.ListPRComments(ctx, prNumber)
+	if err != nil {
+		return false, err
+	}
+	if len(comments) == 0 {
+		return false, nil
+	}
+	latest := comments[0]
+	for _, comment := range comments[1:] {
+		if comment.CreatedAt.After(latest.CreatedAt) || comment.CreatedAt.Equal(latest.CreatedAt) {
+			latest = comment
+		}
+	}
+	return strings.HasPrefix(strings.TrimSpace(latest.Body), reviewCommand), nil
 }
 
 func (s *runSession) currentGateHead(workDir string) string {

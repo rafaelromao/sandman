@@ -82,7 +82,7 @@ Positional arguments (numbers and ranges) can be combined with `--label` and `--
 | `--agent` | `agent` from config (`opencode`) | Built-in agent preset for this run; on `--continue` uses the current value, not the prior run's stored agent |
 | `--run-id` | — | Batch-level identifier for prompt-only runs; must start with a letter and contain only alphanumeric characters, hyphens, and underscores; cannot be combined with issue selection |
 | `--run-idle-timeout` | `0` | Treat an AgentRun as stuck if it produces no output for N seconds; `0` disables the timeout |
-| `--review-timeout` | config `review_timeout` (`1800`) | Override the cumulative delegated review response budget in seconds; minimum `240` |
+| `--review-timeout` | config `review_timeout` (`1800`) | Override the absolute wall-clock delegated review response budget in seconds; minimum `240` |
 | `--branch` | `""` | Branch name for prompt-only runs; overrides the default `<slug>-<timestamp>` shape (prompt-only mode only) |
 | `--reconcile-stranded` | `true` | Auto-recover stranded worktrees when the main repo is checked out on a `<n>-<slug>` branch |
 | `--no-reconcile-stranded` | `false` | Opt out of stranded-worktree auto-recovery (negative form of `--reconcile-stranded`) |
@@ -145,7 +145,7 @@ Reuses the prior run's worktree identity: the existing branch, the stored base b
 | `--run-id` | — | Continue the most recent prompt-only run by its batch-level identifier; must start with a letter and contain only alphanumeric characters, hyphens, and underscores; cannot be combined with issue numbers. Reads the prior task file from the existing worktree and reuses the same branch for the continued run. When the most recent Issue-0 event is a review run (not a prompt-only run), `sandman run --continue` skips it and selects the prior prompt-only run instead — or errors if none exists. |
 | `--dangerously-skip-permissions` | `true` for container runs, `false` for worktree runs | Skip permission checks for the continued run |
 | `--run-idle-timeout` | `0` | Treat an AgentRun as stuck if it produces no output for N seconds; `0` disables the timeout |
-| `--review-timeout` | config `review_timeout` (`1800`) | Override the cumulative delegated review response budget in seconds; minimum `240` |
+| `--review-timeout` | config `review_timeout` (`1800`) | Override the absolute wall-clock delegated review response budget in seconds; minimum `240` |
 
 ## `sandman clean`
 
