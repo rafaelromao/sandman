@@ -116,7 +116,7 @@ func TestPRReviewSkill_BehavioralSmoke(t *testing.T) {
 	}{
 		{
 			name:    "polling loop",
-			substr:  "#### Step 5: Wait for review",
+			substr:  "#### Step 5: Wait for this confirmed request",
 			message: "polling loop heading must remain",
 		},
 		{
@@ -217,7 +217,7 @@ func TestPRReviewSkill_SameCredentialDecisionIsResponse(t *testing.T) {
 
 	required := []string{
 		"Do not filter it out because the author shares your GitHub login",
-		"whose body does not begin with `{{REVIEW_COMMAND}}`. Do not filter by author",
+		"whose body does not begin with `{{REVIEW_COMMAND}}`",
 		"regardless of author",
 	}
 	for _, phrase := range required {
@@ -262,6 +262,49 @@ func TestPRReviewSkill_UsesConfigurableCurrentAgentRunTimeout(t *testing.T) {
 	for _, forbidden := range []string{"900s", "900 s", "15 minutes"} {
 		if strings.Contains(text, forbidden) {
 			t.Errorf("pr-review SKILL.md must not retain fixed review budget %q", forbidden)
+		}
+	}
+}
+
+func TestPRReviewSkill_UsesVersionedRequestWait(t *testing.T) {
+	text := readPRReviewSkill(t)
+
+	for _, phrase := range []string{
+		"review-wait-v1.sh",
+		"review-observe-v1.sh",
+		"head_sha=\"$headRefOid\"",
+		"protocol:\"review-wait/v1\"",
+		"--request-file",
+		"trigger_id=\"$trigger_url\"",
+		"select((.url // \"\") == $trigger_url)",
+		"trigger_id",
+		"trigger_created_at",
+		"state:\"unavailable\"",
+		"raw evidence is available for the existing Step 6 classifier",
+		"does not require a host `sandman` binary",
+		"post a follow-up beginning with `{{REVIEW_COMMAND}}`",
+	} {
+		if !strings.Contains(text, phrase) {
+			t.Errorf("pr-review SKILL.md must describe the versioned request wait %q", phrase)
+		}
+	}
+	if strings.Count(text, "gh pr comment <N> --repo <owner/repo> --body \"{{REVIEW_COMMAND}}\"") != 1 {
+		t.Fatal("pr-review SKILL.md must post exactly one trigger per request")
+	}
+
+	waitStart := strings.Index(text, "#### Step 5: Wait for this confirmed request")
+	waitEnd := strings.Index(text, "#### Step 5a:")
+	if waitStart < 0 || waitEnd < waitStart {
+		t.Fatal("could not isolate versioned wait section")
+	}
+	waitSection := text[waitStart:waitEnd]
+	for _, forbidden := range []string{
+		"gh api repos/<owner>/<repo>/pulls/<N>/reviews",
+		"gh api repos/<owner>/<repo>/pulls/<N>/comments",
+		"review_sleep_elapsed",
+	} {
+		if strings.Contains(waitSection, forbidden) {
+			t.Errorf("versioned wait section must not open-code %q", forbidden)
 		}
 	}
 }
