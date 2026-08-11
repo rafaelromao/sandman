@@ -329,6 +329,44 @@ func TestReviewWaitV1ChargesSnapshotPersistenceBeforePendingResult(t *testing.T)
 	}
 }
 
+func TestReviewWaitV1ChargesStatePersistenceBeforePendingResult(t *testing.T) {
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	helper := filepath.Join(wd, "pr-review", "review-wait-v1.sh")
+	requestFile := filepath.Join(t.TempDir(), "42.review_request.json")
+	writeReviewWaitRequestValues(t, requestFile, "1001", "2026-08-11T18:00:01Z", "unix:100", 0, 100, 100)
+	timeState := filepath.Join(t.TempDir(), "time.state")
+	if err := os.WriteFile(timeState, []byte("90\n"), 0o600); err != nil {
+		t.Fatalf("write time state: %v", err)
+	}
+	clock := filepath.Join(t.TempDir(), "clock.sh")
+	if err := os.WriteFile(clock, []byte("#!/bin/sh\ntr -d '\\n' < \"$SANDMAN_REVIEW_WAIT_TIME_STATE\"\nprintf '\\n'\n"), 0o700); err != nil {
+		t.Fatalf("write clock: %v", err)
+	}
+	realMV, err := exec.LookPath("mv")
+	if err != nil {
+		t.Fatalf("find mv: %v", err)
+	}
+	bin := t.TempDir()
+	mv := filepath.Join(bin, "mv")
+	mvScript := "#!/bin/sh\ncase \"$2\" in\n  *.state.tmp.*) printf '%s\\n' 100 > \"$SANDMAN_REVIEW_WAIT_TIME_STATE\" ;;\nesac\nexec \"" + realMV + "\" \"$@\"\n"
+	if err := os.WriteFile(mv, []byte(mvScript), 0o700); err != nil {
+		t.Fatalf("write mv wrapper: %v", err)
+	}
+
+	result := runReviewWaitWithEnv(t, helper, requestFile, writePendingReviewObserver(t), true, map[string]string{
+		"PATH":                           bin + ":" + os.Getenv("PATH"),
+		"SANDMAN_REVIEW_WAIT_CLOCK":      clock,
+		"SANDMAN_REVIEW_WAIT_TIME_STATE": timeState,
+	})
+
+	if result.State != "timed_out" || result.Elapsed != 100 {
+		t.Fatalf("post-state-persistence result = %q/%d, want timed_out/100", result.State, result.Elapsed)
+	}
+}
+
 func TestReviewWaitV1ResumesSameTriggerWithoutChangingRequestTiming(t *testing.T) {
 	wd, err := os.Getwd()
 	if err != nil {

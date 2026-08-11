@@ -338,6 +338,30 @@ persist_unavailable() {
 	emit_result unavailable "$lifecycle" "" "$result_reason" "" null "$result_elapsed"
 }
 
+emit_persisted_result() {
+	final_now=$(now 2>/dev/null) || {
+		persist_unavailable clock-unavailable
+		return 1
+	}
+	case "$final_now" in
+		''|*[!0-9]*)
+			persist_unavailable clock-invalid
+			return 1
+		;;
+	esac
+	if [ "$final_now" -ge "$(jq -r '.deadline_unix_seconds' "$request_file")" ] && [ "$observer_state" != "unavailable" ]; then
+		observer_state=timed_out
+		result_reason=request-deadline-exhausted
+		elapsed_seconds=$((final_now - request_started_unix))
+		[ "$elapsed_seconds" -ge 0 ] || elapsed_seconds=0
+		if ! write_state timed_out "$lifecycle" "$observer_head" "$result_reason" "$snapshot_path" "$observer_evidence" "$elapsed_seconds"; then
+			emit_unavailable state-persist-failed
+			return 1
+		fi
+	fi
+	emit_result "$observer_state" "$lifecycle" "$observer_head" "$result_reason" "$snapshot_path" "$observer_evidence" "$elapsed_seconds"
+}
+
 while :; do
 	now_value=$(now 2>/dev/null) || {
 		persist_unavailable clock-unavailable
@@ -426,7 +450,7 @@ while :; do
 			emit_unavailable state-persist-failed
 			exit 0
 		fi
-		emit_result "$observer_state" "$lifecycle" "$observer_head" "$result_reason" "$snapshot_path" "$observer_evidence" "$elapsed_seconds"
+		emit_persisted_result || exit 0
 		exit 0
 	fi
 
@@ -435,7 +459,7 @@ while :; do
 			emit_unavailable state-persist-failed
 			exit 0
 		fi
-		emit_result pending "$lifecycle" "$observer_head" pending "$snapshot_path" "$observer_evidence" "$elapsed_seconds"
+		emit_persisted_result || exit 0
 		exit 0
 	fi
 
