@@ -23,8 +23,8 @@ func gateTestRunOptions() runSessionOptions {
 		currentHead:      func(string) (string, error) { return "current-sha", nil },
 		gatePollInitial:  time.Millisecond,
 		gatePollMaxSleep: time.Millisecond,
-		// Leave room for race-enabled CI scheduling between scripted polls.
-		gatePollBudget: 50 * time.Millisecond,
+		// Leave ample room for race-enabled CI scheduling between scripted polls.
+		gatePollBudget: time.Second,
 	}
 }
 
