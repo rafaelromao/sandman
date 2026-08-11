@@ -30,8 +30,9 @@ Sandman mounts `~/.agents` into built-in agent containers so the shared skill is
 `{{REVIEW_COMMAND}}` is rendered from project config. `sandman init --review-command` seeds that value, and `sandman config set review_command ...` updates both config and the installed shared skill tree.
 
 `{{REVIEW_TIMEOUT}}` is rendered into each current AgentRun Task as the
-effective delegated review response budget in seconds. It is deliberately not
-written into the globally shared skill tree, so repositories with different
-policies cannot overwrite one another's active run context.
+effective absolute wall-clock delegated review response budget in seconds. It
+includes API calls, tool overhead, parsing, and polling sleeps, and is
+deliberately not written into the globally shared skill tree, so repositories
+with different policies cannot overwrite one another's active run context.
 
 If Sandman detects local edits under `~/.agents/skills/sandman/`, it asks before overwriting in a TTY. In non-interactive mode it fails instead of silently replacing those edits.

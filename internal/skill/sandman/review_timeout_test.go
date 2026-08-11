@@ -139,4 +139,10 @@ func TestReviewTimeoutHelperWritesAtomicDeadlineState(t *testing.T) {
 	if _, err := runReviewTimeoutHelper(t, "review_timeout_state_matches", statePath, "head-sha", "comment-42"); err == nil {
 		t.Fatal("malformed deadline state should not match")
 	}
+	if err := os.WriteFile(statePath, []byte("head_sha=head-sha\ntrigger_id=comment-42\nstarted_at=1240000\ndeadline_at=1240000\n"), 0o600); err != nil {
+		t.Fatalf("write zero-budget deadline state: %v", err)
+	}
+	if _, err := runReviewTimeoutHelper(t, "review_timeout_state_matches", statePath, "head-sha", "comment-42"); err == nil {
+		t.Fatal("zero-budget deadline state should not match")
+	}
 }

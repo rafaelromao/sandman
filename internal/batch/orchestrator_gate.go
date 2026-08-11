@@ -276,7 +276,7 @@ func reviewTriggerStatus(ctx context.Context, client github.Client, prNumber int
 			latest = comment
 		}
 	}
-	if !strings.HasPrefix(strings.TrimSpace(latest.Body), reviewCommand) {
+	if !reviewTriggerPrefixMatches(latest.Body, reviewCommand) {
 		return reviewTriggerAnswered, nil
 	}
 	triggerAt := latest.CreatedAt
@@ -319,6 +319,31 @@ func reviewTriggerStatus(ctx context.Context, client github.Client, prNumber int
 		}
 	}
 	return reviewTriggerUnanswered, nil
+}
+
+func reviewTriggerPrefixMatches(body, reviewCommand string) bool {
+	body = strings.TrimSpace(body)
+	if reviewCommand != config.DefaultReviewCommand {
+		return strings.HasPrefix(body, reviewCommand)
+	}
+	lower := strings.ToLower(body)
+	const commandPrefix = "/sandman"
+	if !strings.HasPrefix(lower, commandPrefix) {
+		return false
+	}
+	remainder := lower[len(commandPrefix):]
+	if remainder == "" || (remainder[0] != ' ' && remainder[0] != '\t' && remainder[0] != '\n' && remainder[0] != '\r') {
+		return false
+	}
+	remainder = strings.TrimLeft(remainder, " \t\n\r")
+	if !strings.HasPrefix(remainder, "review") {
+		return false
+	}
+	return len(remainder) == len("review") || !isReviewCommandWord(remainder[len("review")])
+}
+
+func isReviewCommandWord(char byte) bool {
+	return char >= 'a' && char <= 'z' || char >= 'A' && char <= 'Z' || char >= '0' && char <= '9' || char == '_'
 }
 
 func reviewSurfaceAfterTrigger(triggerAt, responseAt time.Time) bool {

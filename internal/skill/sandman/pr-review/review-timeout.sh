@@ -79,7 +79,7 @@ review_timeout_state_valid() {
 			if (NR != 4 || invalid || !seen["head_sha"] || !seen["trigger_id"] || !seen["started_at"] || !seen["deadline_at"]) {
 				exit 2
 			}
-			if (value["started_at"] !~ /^[0-9]+$/ || value["deadline_at"] !~ /^[0-9]+$/ || value["deadline_at"] + 0 < value["started_at"] + 0) {
+			if (value["started_at"] !~ /^[0-9]+$/ || value["deadline_at"] !~ /^[0-9]+$/ || value["deadline_at"] + 0 <= value["started_at"] + 0) {
 				exit 2
 			}
 		}' "$1"

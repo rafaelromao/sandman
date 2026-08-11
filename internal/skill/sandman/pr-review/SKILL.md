@@ -135,10 +135,15 @@ On CI failure, `continue` the outer loop to wait for the newly-triggered CI run 
 
 #### Step 3: Check if SHA changed (stale request check)
 
-Read `.sandman/state/<N>.head_sha` if it exists and compare against the current head SHA from Step 1.
+Read `.sandman/state/<N>.head_sha` and `.sandman/state/<N>.review_deadline` if they
+exist. The deadline record, which includes the head SHA and trigger ID, is the
+source of truth for whether the latest trigger is still pending; the head-SHA
+sidecar is the stale-diff marker used by the approval rules. If the deadline
+record matches the current head and latest trigger, never post a duplicate even
+if the sidecar is temporarily missing or stale.
 
 - **SHA changed** (new commit landed since last request): mark all previous review state stale. Delete `.sandman/state/<N>.addressed_comments` if it exists, because inline comment IDs from the old commit are no longer relevant. A fresh review request is always permitted. The pass counter resets to 0 — a new commit is a new review cycle on a new diff, and any exhausted 10-pass budget against the prior SHA does not apply. **All prior approvals are stale** for the purposes of Step 6 Case C — the new SHA requires a fresh APPROVED comment (formal or informal) against the new diff, not a re-application of an approval that was issued against the prior SHA. This is the symmetric counterpart of the pass-counter reset: if the budget must reset, the approval window must reset too.
-- **SHA unchanged**: apply the "previous request still pending" logic before posting again.
+- **SHA unchanged**: apply the "previous request still pending" logic before posting again. A crash between the two sidecar writes is a state-recovery condition, not permission to post another trigger.
 
 #### Step 4: Delegate review to the PR Review Agent (trigger post)
 
@@ -165,7 +170,7 @@ review_timeout_write_state ".sandman/state/<N>.review_deadline" \
   record REVIEW_TIMEOUT_STATE_ERROR and stop
 ```
 
-The command output is the trigger URL, so its trailing issue-comment ID is the trigger ID and request identity. Start the deadline immediately after the post succeeds. Persist the state atomically before polling; if parsing or persistence fails, record `REVIEW_TIMEOUT_STATE_ERROR` in `.sandman/task.md` and the run log and do not post another trigger until state recovery succeeds. Continue writing the current head SHA to `.sandman/state/<N>.head_sha` for stale-diff detection.
+The command output is the trigger URL, so its trailing issue-comment ID is the trigger ID and request identity. Start the deadline immediately after the post succeeds. Persist the combined deadline record atomically before polling, then update `.sandman/state/<N>.head_sha` as the stale-diff sidecar. If parsing or either persistence step fails, record `REVIEW_TIMEOUT_STATE_ERROR` in `.sandman/task.md` and the run log and recover the combined record from the confirmed trigger before posting another trigger. First retry the state write with the captured values; after a restart, reload the latest matching trigger comment and its `createdAt` to reconstruct `started_at` and `deadline_at`. If the trigger identity or timestamp cannot be recovered, keep the state error durable and stop. A matching deadline record always blocks duplicate posting even when the sidecar write was interrupted.
 
 #### Step 5: Wait for review (absolute wall-clock budget)
 
@@ -199,7 +204,10 @@ all consume the same budget. The minimum valid budget is 240 seconds, which
 allows three polls before the deadline when the first poll is immediate. A
 formal approval may finish the loop immediately; an informal approval observed
 before the minimum 240-second Case C window must wait without starting another
-poll until that window has elapsed. A command that completes exactly at the deadline is permitted; after that point no new poll or sleep may start.
+poll until that window has elapsed. After the final capped sleep, classify the
+cached response without another API call; if no response was cached, record
+`REVIEW_TIMEOUT`. A command that completes exactly at the deadline is permitted;
+after that point no new poll or sleep may start.
 
 Before and after every GitHub/API operation, calculate the remaining time from
 the persisted deadline. Run each operation through `review_timeout_run`; a
