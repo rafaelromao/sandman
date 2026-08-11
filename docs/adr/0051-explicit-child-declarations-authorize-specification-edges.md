@@ -34,6 +34,10 @@ The resolver must still reject incidental references found in ordinary prose, co
 - A stale or overly broad explicit child list can authorize a child without a contradictory-backlink warning; the parent-side declaration is intentionally authoritative.
 - Existing tests and documentation that describe universal child-side backlink verification must be updated to the new source-specific contract.
 
-### Supersedes
+### Neutral
 
-This ADR supersedes the universal candidate-verification portions of ADR-0021, ADR-0042, and ADR-0045. Their parser, parent-heading, and children-heading details remain in force unless this ADR states otherwise.
+- Parent-style backlink parsing remains available for ordinary body, comment, search, and open-issue-scan candidates and as optional corroborating metadata for explicit child declarations.
+
+### Relationship
+
+This proposal clarifies the candidate source scope described by ADR-0021 and leaves accepted ADR records immutable. If accepted, the repository ADR workflow can mark any affected predecessor records as superseded.

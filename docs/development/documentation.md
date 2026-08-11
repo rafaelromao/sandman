@@ -40,6 +40,8 @@ When adding a public markdown file, update the fallback file list in `docs/docum
 
 Move guidance into `docs/development/` when it is useful to human contributors and does not depend on agent-only workflow context.
 
+When changing the domain vocabulary in `CONTEXT.md`, update the relevant public behavior docs and ADRs in the same change. Keep the glossary focused on durable concepts; put implementation-specific rationale in the ADR or contributor documentation.
+
 ## Embedded skills
 
 Embedded Sandman skills live under `internal/skill/sandman/` and are synced during project setup. They describe user-facing workflows that an agent should follow.

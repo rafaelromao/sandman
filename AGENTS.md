@@ -134,7 +134,7 @@ These rules apply to every change-request an agent opens against this repository
 
 - **CI gate change** → update `.github/workflows/go.yml` and `.github/rulesets/main.json`.
 - **Versioning or SemVer rule change** → update this section and `CONTRIBUTING.md`.
-- **Repository-level agent-docs change** → update `AGENTS.md` and the relevant `docs/development/` file.
+- **Repository-level agent-docs or domain-vocabulary change** → update `AGENTS.md`, `CONTEXT.md`, and the relevant `docs/development/` file.
 
 ### Feature branches
 
