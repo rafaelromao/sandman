@@ -197,10 +197,6 @@ now() {
 }
 
 run_observer() {
-	if [ "$poll_once" = true ]; then
-		sh "$observer" --request-file "$request_file"
-		return $?
-	fi
 	observer_output_file=$(mktemp "${TMPDIR:-/tmp}/sandman-review-wait.XXXXXX") || return 125
 	sh "$observer" --request-file "$request_file" >"$observer_output_file" 2>/dev/null &
 	observer_pid=$!
@@ -297,14 +293,23 @@ emit_result() {
 		'{protocol:"review-wait/v1",state:$state,lifecycle:$lifecycle,request:{repository:$request.repository,pull_request:$request.pull_request,head_sha:$request.head_sha,trigger_id:$request.trigger_id,effective_timeout_seconds:$request.effective_timeout_seconds},observed_head_sha:$observed_head_sha,started_at:$request.started_at,deadline_at:$request.deadline_at,reason:$reason,snapshot_path:(if $snapshot_path == "" then null else $snapshot_path end),counters:{top:($evidence.response_counts.top_level // 0),reviews:($evidence.response_counts.formal_reviews // 0),inline:($evidence.response_counts.inline_comments // 0)},evidence:$evidence}'
 }
 
+persist_unavailable() {
+	result_reason=$1
+	if ! write_state unavailable "$lifecycle" "" "$result_reason" "" null; then
+		emit_unavailable state-persist-failed
+		return 1
+	fi
+	emit_result unavailable "$lifecycle" "" "$result_reason" "" null
+}
+
 while :; do
 	now_value=$(now 2>/dev/null) || {
-		emit_unavailable clock-unavailable
+		persist_unavailable clock-unavailable
 		exit 0
 	}
 	case "$now_value" in
 		''|*[!0-9]*)
-			emit_unavailable clock-invalid
+			persist_unavailable clock-invalid
 			exit 0
 		;;
 	esac
@@ -317,11 +322,11 @@ while :; do
 		if [ "$observer_status" -eq 124 ]; then
 			observer_json='{"state":"timed_out","observed_head_sha":"","reason":"request-deadline-exhausted","snapshot":null}'
 		elif [ "$observer_status" -ne 0 ]; then
-			emit_unavailable observer-failed
+			persist_unavailable observer-failed
 			exit 0
 		else
 			observer_json=$(printf '%s' "$observer_output" | jq -c . 2>/dev/null) || {
-				emit_unavailable observer-output-invalid
+				persist_unavailable observer-output-invalid
 				exit 0
 			}
 		fi
@@ -333,17 +338,17 @@ while :; do
 	case "$observer_state" in
 		responded|timed_out|pending|unavailable) ;;
 		*)
-			emit_unavailable observer-state-invalid
+			persist_unavailable observer-state-invalid
 			exit 0
 		;;
 	esac
 	completed_now=$(now 2>/dev/null) || {
-		emit_unavailable clock-unavailable
+		persist_unavailable clock-unavailable
 		exit 0
 	}
 	case "$completed_now" in
 		''|*[!0-9]*)
-			emit_unavailable clock-invalid
+			persist_unavailable clock-invalid
 			exit 0
 		;;
 	esac
@@ -356,7 +361,7 @@ while :; do
 	snapshot_tmp=$snapshot_path.tmp.$$
 	if ! printf '%s\n' "$observer_json" >"$snapshot_tmp" || ! chmod 600 "$snapshot_tmp" || ! mv -f "$snapshot_tmp" "$snapshot_path"; then
 		rm -f "$snapshot_tmp"
-		emit_unavailable snapshot-persist-failed
+		persist_unavailable snapshot-persist-failed
 		exit 0
 	fi
 
@@ -401,12 +406,12 @@ while :; do
 	fi
 	if [ -n "$sleeper" ]; then
 		sh "$sleeper" "$interval" || {
-			emit_unavailable sleeper-failed
+			persist_unavailable sleeper-failed
 			exit 0
 		}
 	else
 		sleep "$interval" || {
-			emit_unavailable sleeper-failed
+			persist_unavailable sleeper-failed
 		exit 0
 		}
 	fi

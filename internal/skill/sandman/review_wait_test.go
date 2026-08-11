@@ -342,7 +342,7 @@ printf '%s\n' $((calls + 1)) > "$SANDMAN_REVIEW_WAIT_CLOCK_STATE"
 	}
 
 	started := time.Now()
-	result := runReviewWaitWithEnv(t, helper, requestFile, observer, false, map[string]string{
+	result := runReviewWaitWithEnv(t, helper, requestFile, observer, true, map[string]string{
 		"SANDMAN_REVIEW_WAIT_CLOCK":       clock,
 		"SANDMAN_REVIEW_WAIT_CLOCK_STATE": clockState,
 	})
@@ -394,6 +394,31 @@ func TestReviewWaitV1UnavailableIsTerminalForSameTrigger(t *testing.T) {
 	second := runReviewWait(t, helper, requestFile, respondedObserver, true)
 	if second.State != "unavailable" || second.Reason != "api-unavailable" {
 		t.Fatalf("same-trigger re-entry = %q/%q, want unavailable/api-unavailable", second.State, second.Reason)
+	}
+}
+
+func TestReviewWaitV1CoordinatorFailureIsTerminalForSameTrigger(t *testing.T) {
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	helper := filepath.Join(wd, "pr-review", "review-wait-v1.sh")
+	requestFile := filepath.Join(t.TempDir(), "42.review_request.json")
+	writeReviewWaitRequest(t, requestFile, "1001", "2026-08-11T18:00:01Z", "2026-08-11T18:30:01Z")
+	failingObserver := filepath.Join(t.TempDir(), "failing-observer.sh")
+	if err := os.WriteFile(failingObserver, []byte("#!/bin/sh\nexit 7\n"), 0o700); err != nil {
+		t.Fatalf("write failing observer: %v", err)
+	}
+
+	first := runReviewWait(t, helper, requestFile, failingObserver, true)
+	if first.State != "unavailable" || first.Reason != "observer-failed" {
+		t.Fatalf("first result = %q/%q, want unavailable/observer-failed", first.State, first.Reason)
+	}
+
+	respondedObserver := writeReviewObserver(t, `{"state":"responded","observed_head_sha":"abc123","snapshot":{"comments":[{"body":"LGTM"}],"reviews":[],"inline_comments":[]}}`)
+	second := runReviewWait(t, helper, requestFile, respondedObserver, true)
+	if second.State != "unavailable" || second.Reason != "observer-failed" {
+		t.Fatalf("same-trigger re-entry = %q/%q, want unavailable/observer-failed", second.State, second.Reason)
 	}
 }
 
@@ -461,13 +486,13 @@ func TestReviewWaitV1UsesProductionObserverForAllResponseSurfaces(t *testing.T) 
 	helper := filepath.Join(wd, "pr-review", "review-wait-v1.sh")
 	observer := filepath.Join(wd, "pr-review", "review-observe-v1.sh")
 	requestFile := filepath.Join(t.TempDir(), "42.review_request.json")
-	writeReviewWaitRequest(t, requestFile, "1001", "2026-08-11T18:00:01Z", "2026-08-11T18:30:01Z")
+	writeReviewWaitRequest(t, requestFile, "https://github.com/owner/repo/pull/42#issuecomment-1001", "2026-08-11T18:00:01Z", "2026-08-11T18:30:01Z")
 
 	bin := t.TempDir()
 	gh := filepath.Join(bin, "gh")
 	ghScript := `#!/bin/sh
 if [ "$1" = "pr" ] && [ "$2" = "view" ]; then
-  printf '%s\n' '{"headRefOid":"abc123","comments":[{"id":1001,"body":"/sandman review","createdAt":"2026-08-11T18:00:01Z"},{"id":1002,"body":"LGTM","createdAt":"2026-08-11T18:01:00Z"}],"reviewDecision":"","mergeStateStatus":"CLEAN"}'
+	printf '%s\n' '{"headRefOid":"abc123","comments":[{"id":"IC_kwDOSYKm0c8AAAABOXLU5g","url":"https://github.com/owner/repo/pull/42#issuecomment-1001","body":"/sandman review","createdAt":"2026-08-11T18:00:01Z"},{"id":"IC_kwDOSYKm0c8AAAABOXLU5w","url":"https://github.com/owner/repo/pull/42#issuecomment-1002","body":"LGTM","createdAt":"2026-08-11T18:01:00Z"}],"reviewDecision":"","mergeStateStatus":"CLEAN"}'
   exit 0
 fi
 if [ "$1" = "api" ]; then

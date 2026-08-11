@@ -152,14 +152,11 @@ current PR head. Re-read the PR comments and capture the exact server
 
 ```bash
 trigger_url=$(gh pr comment <N> --repo <owner/repo> --body "{{REVIEW_COMMAND}}") || record REVIEW_TIMEOUT_STATE_ERROR and stop
-trigger_id=${trigger_url##*-}
-case "$trigger_id" in
-  ''|*[!0-9]*) record REVIEW_TIMEOUT_STATE_ERROR and stop ;;
-esac
+trigger_id="$trigger_url"
 trigger_created_at=$(gh pr view <N> --repo <owner/repo> --json headRefOid,comments |
-  jq -er --arg head "$head_sha" --arg id "$trigger_id" --arg prefix "{{REVIEW_COMMAND}}" '
+  jq -er --arg head "$head_sha" --arg trigger_url "$trigger_url" --arg prefix "{{REVIEW_COMMAND}}" '
     select(.headRefOid == $head) |
-    first(.comments[] | select((.id | tostring) == $id) |
+    first(.comments[] | select((.url // "") == $trigger_url) |
       select((.body // "") | startswith($prefix))) | .createdAt
   ') || record REVIEW_TIMEOUT_STATE_ERROR and stop
 ```

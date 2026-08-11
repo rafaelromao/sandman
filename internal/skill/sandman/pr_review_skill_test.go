@@ -275,6 +275,8 @@ func TestPRReviewSkill_UsesVersionedRequestWait(t *testing.T) {
 		"head_sha=\"$headRefOid\"",
 		"protocol:\"review-wait/v1\"",
 		"--request-file",
+		"trigger_id=\"$trigger_url\"",
+		"select((.url // \"\") == $trigger_url)",
 		"trigger_id",
 		"trigger_created_at",
 		"state:\"unavailable\"",

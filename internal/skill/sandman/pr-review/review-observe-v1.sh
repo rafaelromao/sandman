@@ -59,7 +59,7 @@ fi
 
 if ! jq -e --arg trigger_id "$trigger_id" --arg prefix "$trigger_prefix" --arg created_at "$trigger_created_at" '
 	any(.comments[]?;
-		((.id | tostring) == $trigger_id) and
+		(((.url // "") == $trigger_id) or ((.id | tostring) == $trigger_id)) and
 		((.body // "") | startswith($prefix)) and
 		((.createdAt // .created_at // "") == $created_at))
 ' "$view_file" >/dev/null 2>&1
