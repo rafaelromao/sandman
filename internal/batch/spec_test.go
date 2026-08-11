@@ -99,6 +99,16 @@ func TestIsSpecification(t *testing.T) {
 			want: true,
 		},
 		{
+			name: "body with subissues heading",
+			body: "## Subissues\n- #10",
+			want: true,
+		},
+		{
+			name: "empty subissues heading is not a specification",
+			body: "## Subissues\n\nNo child rows yet.\n",
+			want: false,
+		},
+		{
 			name: "body with prose shorthand reference is not a specification",
 			body: "## What to build\n\nTracking #10 here, see #11 for context.\n",
 			want: false,
@@ -183,6 +193,191 @@ func TestSpecificationResolver_NativeSubIssuesSuppressSearchFallback(t *testing.
 	}
 	if len(client.searchCalls) != 0 {
 		t.Fatalf("expected SearchIssues to be skipped when native sub-issues already surfaced children, got %d calls: %v", len(client.searchCalls), client.searchCalls)
+	}
+}
+
+func TestSpecificationResolver_ExplicitChildSectionAuthorizesWithoutParentBacklink(t *testing.T) {
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			1:  {Number: 1, Title: "Specification", Body: "## Children\n\n- #10\n"},
+			10: {Number: 10, Title: "Child", Body: "## What to build\n\nNo parent backlink.\n"},
+		},
+	}
+
+	got, parentChildren, err := NewSpecificationResolver(client, io.Discard).Resolve(context.Background(), []int{1})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !equalInts(got, []int{10, 1}) {
+		t.Fatalf("expected explicit child and retained parent [10 1], got %v", got)
+	}
+	if !equalInts(parentChildren[1], []int{10}) {
+		t.Fatalf("expected ParentChildren[1] = [10], got %v", parentChildren[1])
+	}
+}
+
+func TestSpecificationResolver_ReviewTimeoutSpecificationExpandsFromBothChildSources(t *testing.T) {
+	const parent = 2527
+	children := []int{2537, 2536, 2538, 2539, 2543, 2544}
+
+	var body strings.Builder
+	body.WriteString("## Children\n\n")
+	for _, child := range children {
+		fmt.Fprintf(&body, "- #%d\n", child)
+	}
+	issues := map[int]*github.Issue{
+		parent: {Number: parent, Title: "Review timeout hardening", Body: body.String()},
+	}
+	for _, child := range children {
+		issues[child] = &github.Issue{
+			Number: child,
+			Title:  fmt.Sprintf("Child %d", child),
+			Body:   "## Goal\n\nNo parent backlink.\n",
+		}
+	}
+
+	client := &fakeGitHubClient{issues: issues, subIssues: map[int][]int{parent: children}}
+	got, _, err := NewSpecificationResolver(client, io.Discard).Resolve(context.Background(), []int{parent})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := append(append([]int(nil), children...), parent)
+	if !equalInts(got, want) {
+		t.Fatalf("expected #2527 children plus retained parent %v, got %v", want, got)
+	}
+}
+
+func TestSpecificationResolver_NativeSubIssueAuthorizesWithoutParentBacklink(t *testing.T) {
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			1:  {Number: 1, Title: "Parent", Body: "## What to build\n\nNative children only.\n"},
+			10: {Number: 10, Title: "Native child", Body: "## What to build\n\nNo parent backlink.\n"},
+		},
+		subIssues: map[int][]int{1: {10}},
+	}
+
+	got, parentChildren, err := NewSpecificationResolver(client, io.Discard).Resolve(context.Background(), []int{1})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !equalInts(got, []int{10, 1}) {
+		t.Fatalf("expected native child and retained parent [10 1], got %v", got)
+	}
+	if !equalInts(parentChildren[1], []int{10}) {
+		t.Fatalf("expected ParentChildren[1] = [10], got %v", parentChildren[1])
+	}
+}
+
+func TestSpecificationResolver_ExplicitDeclarationsUnionAndOverrideBacklinks(t *testing.T) {
+	parentBody := "## Problem Statement\n\nP.\n\n## Solution\n\nS.\n\n## Context\n\nSee #10 first.\n\n## Children\n\n- #10\n- #11\n"
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			1:  {Number: 1, Title: "Specification", Body: parentBody},
+			10: {Number: 10, Title: "Conflicting backlink", Body: "## Parent\n\n#99\n"},
+			11: {Number: 11, Title: "Body child", Body: "## What to build\n\nNo backlink.\n"},
+			12: {Number: 12, Title: "Native child", Body: "## What to build\n\nNo backlink.\n"},
+		},
+		subIssues: map[int][]int{1: {11, 12}},
+	}
+
+	got, parentChildren, err := NewSpecificationResolver(client, io.Discard).Resolve(context.Background(), []int{1})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !equalInts(got, []int{10, 11, 12, 1}) {
+		t.Fatalf("expected first-occurrence union plus retained parent [10 11 12 1], got %v", got)
+	}
+	if !equalInts(parentChildren[1], []int{10, 11, 12}) {
+		t.Fatalf("expected ParentChildren[1] = [10 11 12], got %v", parentChildren[1])
+	}
+}
+
+func TestSpecificationResolver_OrdinaryBodyReferenceStillRequiresParentBacklink(t *testing.T) {
+	parentBody := "## Problem Statement\n\nP.\n\n## Solution\n\nS.\n\n## Context\n\nSee #10 for background.\n"
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			1:  {Number: 1, Title: "Specification", Body: parentBody},
+			10: {Number: 10, Title: "Unlinked reference", Body: "## What to build\n\nNo parent backlink.\n"},
+		},
+	}
+
+	got, parentChildren, err := NewSpecificationResolver(client, io.Discard).Resolve(context.Background(), []int{1})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !equalInts(got, []int{1}) {
+		t.Fatalf("expected ordinary prose reference to be filtered, got %v", got)
+	}
+	if len(parentChildren) != 0 {
+		t.Fatalf("expected no parent completion gate for filtered prose, got %v", parentChildren)
+	}
+}
+
+func TestSpecificationResolver_ExplicitNestedSpecificationRecursesWithoutBacklink(t *testing.T) {
+	outerBody := "## Children\n\n- #2\n"
+	innerBody := "## Problem Statement\n\nP.\n\n## Solution\n\nS.\n\n## Context\n\nSee #101 for context.\n\n## Children\n\n- #100\n"
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			1:   {Number: 1, Title: "Outer specification", Body: outerBody},
+			2:   {Number: 2, Title: "Nested specification", Body: innerBody},
+			100: {Number: 100, Title: "Nested child", Body: "## What to build\n\nNo backlink.\n"},
+			101: {Number: 101, Title: "Context reference", Body: "## What to build\n\nNo backlink.\n"},
+		},
+	}
+
+	got, parentChildren, err := NewSpecificationResolver(client, io.Discard).Resolve(context.Background(), []int{1})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !equalInts(got, []int{2, 100, 1}) {
+		t.Fatalf("expected nested expansion [2 100 1], got %v", got)
+	}
+	if !equalInts(parentChildren[1], []int{2}) || !equalInts(parentChildren[2], []int{100}) {
+		t.Fatalf("expected retained parent gates [1]=[2], [2]=[100], got %v", parentChildren)
+	}
+}
+
+func TestSpecificationResolver_CommentAndSearchCandidatesStillRequireParentBacklink(t *testing.T) {
+	tests := []struct {
+		name          string
+		parentBody    string
+		comments      []github.IssueComment
+		searchResults []github.Issue
+	}{
+		{
+			name:       "comment candidate",
+			parentBody: "## Problem Statement\n\nP.\n\n## Solution\n\nS.\n",
+			comments:   []github.IssueComment{{Body: "Tracking #10 here."}},
+		},
+		{
+			name:          "search candidate",
+			parentBody:    "## Problem Statement\n\nP.\n\n## Solution\n\nS.\n",
+			searchResults: []github.Issue{{Number: 10, Title: "Search candidate", Body: "## What to build\n\nNo backlink.\n"}},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			client := &fakeGitHubClient{
+				issues: map[int]*github.Issue{
+					1:  {Number: 1, Title: "Specification", Body: tt.parentBody},
+					10: {Number: 10, Title: "Candidate", Body: "## What to build\n\nNo backlink.\n"},
+				},
+				issueComments:      map[int][]github.IssueComment{1: tt.comments},
+				searchIssuesResult: tt.searchResults,
+			}
+
+			got, parentChildren, err := NewSpecificationResolver(client, io.Discard).Resolve(context.Background(), []int{1})
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if !equalInts(got, []int{1}) {
+				t.Fatalf("expected unlinked %s candidate to be filtered, got %v", tt.name, got)
+			}
+			if len(parentChildren) != 0 {
+				t.Fatalf("expected no parent completion gate, got %v", parentChildren)
+			}
+		})
 	}
 }
 
@@ -631,8 +826,8 @@ func TestSpecificationResolver_ThreetermStyleExpansion(t *testing.T) {
 	clientIssues := map[int]*github.Issue{
 		58: {Number: 58, Title: "ThreeTerm MVP implementation specification", Body: specBody},
 	}
-	// Parent-area rows must have NO parent section — they're the
-	// top-level thematic buckets.
+	// Parent-area rows have no parent section, but the explicit child
+	// declaration authorizes them as well as the vertical slices.
 	for _, n := range []int{1, 2, 3} {
 		clientIssues[n] = &github.Issue{
 			Number: n,
@@ -657,9 +852,9 @@ func TestSpecificationResolver_ThreetermStyleExpansion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	want := []int{232, 233, 234, 58}
+	want := []int{1, 2, 3, 232, 233, 234, 58}
 	if !equalInts(got, want) {
-		t.Fatalf("expected %v (vertical-slice children + retained spec), got %v", want, got)
+		t.Fatalf("expected %v (all explicit children + retained spec), got %v", want, got)
 	}
 }
 
@@ -744,20 +939,15 @@ func TestSpecificationResolver_OverlappingSpecsDedupeSharedChild(t *testing.T) {
 	}
 }
 
-// TestSpecificationResolver_ChildMissedByUmbrella_AcceptedByParentAreaOnly
-// pins the rejection half of slice 5: a child that cites only the
-// intermediate parent area (not the umbrella spec) is correctly
-// rejected by the umbrella expansion and accepted by the parent
-// area expansion. This guards against "smart merging" heuristics
-// that would auto-accept children just because they appear in two
-// spec bodies.
-func TestSpecificationResolver_ChildMissedByUmbrella_AcceptedByParentAreaOnly(t *testing.T) {
+// TestSpecificationResolver_ParentSideDeclarationOverridesChildParent
+// pins that an explicit child declaration wins over a child backlink
+// naming another parent.
+func TestSpecificationResolver_ParentSideDeclarationOverridesChildParent(t *testing.T) {
 	t.Parallel()
 	specBody58 := "## Problem Statement\n\nP.\n\n## Solution\n\nS.\n\n## Child Issues\n\n- [#999](https://github.com/owner/repo/issues/999) slice\n"
 	specBody59 := "## Problem Statement\n\nP.\n\n## Solution\n\nS.\n\n## Child Issues\n\n- [#999](https://github.com/owner/repo/issues/999) slice\n"
-	// The child cites ONLY the parent area (#59), not the
-	// umbrella spec (#58). The umbrella's expansion must reject
-	// the candidate; the parent area's expansion accepts it.
+	// The child cites ONLY the parent area (#59), not the umbrella
+	// spec (#58). Both parent-side declarations still authorize it.
 	childBody999 := "## Parent\n\n#59\n"
 
 	client := &fakeGitHubClient{
@@ -772,26 +962,17 @@ func TestSpecificationResolver_ChildMissedByUmbrella_AcceptedByParentAreaOnly(t 
 	if err != nil {
 		t.Fatalf("Resolve([58]) unexpected error: %v", err)
 	}
-	// #58's only candidate is #999 whose parent section cites
-	// only #59, not #58. The strict-spec empty-child carve-out
-	// (ADR-0034) adds #58 itself as a regular issue, so the
-	// output is [58], not []. This is the desired operator-
-	// visible pass-through, not a silent suppression.
-	if !equalInts(got58, []int{58}) {
-		t.Fatalf("Resolve([58]) expected [58] (no children accepted, carve-out adds 58 itself), got %v", got58)
+	if !equalInts(got58, []int{999, 58}) {
+		t.Fatalf("Resolve([58]) expected [999 58] (parent-side declaration overrides backlink), got %v", got58)
 	}
 
 	gotBoth, _, err := NewSpecificationResolver(client, io.Discard).Resolve(context.Background(), []int{58, 59})
 	if err != nil {
 		t.Fatalf("Resolve([58 59]) unexpected error: %v", err)
 	}
-	// #58's expansion finds no accepted children (the strict-spec
-	// carve-out adds 58 itself); #59's expansion accepts #999 via
-	// the parent-area backlink. Output [58, 999, 59] preserves
-	// input order. 999 appears exactly once, and each spec is
-	// retained at the end of its own expansion slice.
-	if !equalInts(gotBoth, []int{58, 999, 59}) {
-		t.Fatalf("Resolve([58 59]) expected [58 999 59] (58 from carve-out, 999 accepted via #59, both specs retained), got %v", gotBoth)
+	// Both expansions authorize #999; deduplication keeps it once.
+	if !equalInts(gotBoth, []int{999, 58, 59}) {
+		t.Fatalf("Resolve([58 59]) expected [999 58 59] (explicit child deduped, both specs retained), got %v", gotBoth)
 	}
 }
 
@@ -1144,7 +1325,7 @@ func TestSpecificationResolver_DiscoversChildrenFromComments(t *testing.T) {
 	}
 }
 
-func TestSpecificationResolver_FiltersHarvestedCandidatesWithoutMatchingParent(t *testing.T) {
+func TestSpecificationResolver_ExplicitChildSectionOverridesConflictingParent(t *testing.T) {
 	specBody := "## Problem Statement\n\nP.\n\n## Solution\n\nS.\n\n## User Stories\n\n1. U.\n\n## Child Issues\n\n- #10 mentions parent\n- #11 cites a different parent\n"
 	childBody10 := "## Parent\n\n#1\n\n## What\n\n"
 	childBody11 := "## Parent\n\n#999\n\n## What\n\n"
@@ -1161,8 +1342,8 @@ func TestSpecificationResolver_FiltersHarvestedCandidatesWithoutMatchingParent(t
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !equalInts(got, []int{10, 1}) {
-		t.Fatalf("expected [10 1] (real child + retained spec), got %v", got)
+	if !equalInts(got, []int{10, 11, 1}) {
+		t.Fatalf("expected both explicit children and retained spec [10 11 1], got %v", got)
 	}
 }
 
@@ -2001,13 +2182,13 @@ func TestSpecificationResolver_EmptyChildCarveOut_NoCandidates(t *testing.T) {
 	}
 }
 
-func TestSpecificationResolver_EmptyChildCarveOut_AllCandidatesFiltered(t *testing.T) {
+func TestSpecificationResolver_NativeSubIssueWithoutParentBacklinkExpandsSpecification(t *testing.T) {
 	specBody := "## Problem Statement\n\nProblem.\n\n## Solution\n\nSolution.\n\n## User Stories\n\n1. Story.\n"
-	strangerBody := "## What\n\nNo Parent backlink at all.\n"
+	childBody := "## What\n\nNative child without a parent backlink.\n"
 	client := &fakeGitHubClient{
 		issues: map[int]*github.Issue{
 			1:  {Number: 1, Title: "Specification", Body: specBody},
-			42: {Number: 42, Title: "Stranger", Body: strangerBody},
+			42: {Number: 42, Title: "Native child", Body: childBody},
 		},
 		subIssues: map[int][]int{1: {42}},
 	}
@@ -2016,23 +2197,23 @@ func TestSpecificationResolver_EmptyChildCarveOut_AllCandidatesFiltered(t *testi
 	r := NewSpecificationResolver(client, &infoBuf)
 	got, _, err := r.Resolve(context.Background(), []int{1})
 	if err != nil {
-		t.Fatalf("expected no error when all candidates filtered, got %v", err)
+		t.Fatalf("expected no error for native child, got %v", err)
 	}
-	if !equalInts(got, []int{1}) {
-		t.Fatalf("expected pass-through [1], got %v", got)
+	if !equalInts(got, []int{42, 1}) {
+		t.Fatalf("expected native child + retained parent [42 1], got %v", got)
 	}
-	if !strings.Contains(infoBuf.String(), "running issue #1 as a regular issue (no children)") {
-		t.Fatalf("expected carve-out log line in stderr, got: %q", infoBuf.String())
+	if !strings.Contains(infoBuf.String(), "expanded specification #1 to 1 accepted children") {
+		t.Fatalf("expected expansion log line in stderr, got: %q", infoBuf.String())
 	}
 }
 
-func TestSpecificationResolver_BroadenedAllFilteredPassesThrough(t *testing.T) {
+func TestSpecificationResolver_BroadenedNativeSubIssueExpands(t *testing.T) {
 	parentBody := "## What to build\n\nNo PRD sections.\n"
-	strangerBody := "## What\n\nNo Parent backlink at all.\n"
+	childBody := "## What\n\nNative child without a parent backlink.\n"
 	client := &fakeGitHubClient{
 		issues: map[int]*github.Issue{
 			1:  {Number: 1, Title: "Parent", Body: parentBody},
-			42: {Number: 42, Title: "Stranger", Body: strangerBody},
+			42: {Number: 42, Title: "Native child", Body: childBody},
 		},
 		subIssues: map[int][]int{1: {42}},
 	}
@@ -2042,8 +2223,8 @@ func TestSpecificationResolver_BroadenedAllFilteredPassesThrough(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !equalInts(got, []int{1}) {
-		t.Fatalf("expected pass-through [1], got %v", got)
+	if !equalInts(got, []int{42, 1}) {
+		t.Fatalf("expected native child + retained parent [42 1], got %v", got)
 	}
 }
 

@@ -40,13 +40,16 @@ Inline phrases such as `Blocked by #123`, `Depends on #123`, or `Blocked-by: #12
 
 ## Children
 
-A parent can list child issues under any H2 heading whose title contains the word `children` or `child` (case-insensitive). The canonical headings below are the most common form; any `## Leaf children`, `## Child tasks`, or `## Children in this area` variant is also recognised as a children section. The widened match mirrors the broadened `## Parent` heading pattern in `internal/batch/spec_parse.go` and is what lets a threeterm-style body that lists leaf children under `## Leaf children` (issue #305) be detected as a specification and expanded, instead of being passed through unchanged.
+A parent can list child issues under any H2 heading whose title contains the word `children` or `child` (case-insensitive), or contains `subissues`, `sub-issues`, or `sub issues`. The canonical headings below are the most common form; any `## Leaf children`, `## Child tasks`, `## Children in this area`, or `## Subissues for area-01` variant is also recognised as a children section. The widened match mirrors the broadened `## Parent` heading pattern in `internal/batch/spec_parse.go` and is what lets a threeterm-style body that lists leaf children under `## Leaf children` (issue #305) be detected as a specification and expanded, instead of being passed through unchanged.
 
 ```text
 ## Children
 ## Child Issues
 ## Leaf children
 ## Children in this area
+## Subissues
+## Sub-issues for area-01
+## Sub Issues
 ```
 
 Accepted list entries follow the same rules as `## Blocked by`: bare issue numbers, linked issue numbers, titled issue links, and bullets with trailing annotations. Markdown table rows that frame the issue reference with `|` delimiters are also accepted, so a children table under a `## Leaf children` heading feeds the parser that backs the rest of the bullet list. The section ends at the next H2 heading.
@@ -65,9 +68,9 @@ Accepted list entries follow the same rules as `## Blocked by`: bare issue numbe
 
 Child references may also occur in surrounding body prose. Both `#N` shorthand and full issue URLs containing `/issues/N` are recognized. Text before or after a reference is allowed, so titles and trailing annotations are presentation text. Any additional `#N` or `/issues/N` reference in that text is also a separate candidate.
 
-Child discovery also considers issue comments and GitHub-native sub-issue relationships. Candidates are deduplicated in first-occurrence order and then checked against the child's `## Parent` reference.
+Child discovery also considers issue comments and GitHub-native sub-issue relationships. Structured entries under a recognized child section and native sub-issue relationships are explicit child declarations and do not require a child-side `## Parent` reference. Candidates from ordinary body prose, comments, and search results still require a matching parent-style reference; a parent-side declaration wins if the same candidate appears in both sources.
 
-Inline phrases such as `Children: #123` or `Child Issues: #123` are NOT recognized as authoritative child declarations. The recommended migration is to move them under a `## Children` heading.
+Inline phrases such as `Children: #123`, `Child Issues: #123`, or `Subissues: #123` are NOT recognized as authoritative child declarations. The recommended migration is to move them under a recognized H2 section.
 
 ## GitHub-native relationships
 

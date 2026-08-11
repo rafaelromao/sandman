@@ -68,15 +68,16 @@ var headerLinePattern = regexp.MustCompile(`(?m)^\s*##\s+[^\n]+`)
 //
 // The match widens beyond the literal `## Children` / `## Child
 // Issues` heading text: any H2 whose title contains the word
-// "children" or "child" (case-insensitive substring) is recognised
-// as a children section. The substring match mirrors the parent
-// heading pattern in internal/batch/spec_parse.go, where the
-// `## Parent area` / `## Parent spec` heading variants are all
-// recognised as parent sections. The widening is what lets a
-// threeterm-style body that lists leaf children under `## Leaf
-// children` (issue #305) be detected as a specification and
-// expanded, instead of being passed through unchanged.
-var childrenHeadingPattern = regexp.MustCompile(`(?im)^\s*##\s+[^\n]*child[^\n]*\s*$`)
+// "children" or "child" (case-insensitive substring), or a
+// `subissues` spelling, is recognised as a children section. The
+// substring match mirrors the parent heading pattern in
+// internal/batch/spec_parse.go, where the `## Parent area` /
+// `## Parent spec` heading variants are all recognised as parent
+// sections. The widening is what lets a threeterm-style body that
+// lists leaf children under `## Leaf children` (issue #305) be
+// detected as a specification and expanded, instead of being passed
+// through unchanged.
+var childrenHeadingPattern = regexp.MustCompile(`(?im)^\s*##\s+(?:[^\n]*child[^\n]*|[^\n]*sub[ -]?issues[^\n]*)\s*$`)
 
 // execRunner abstracts os/exec for testability. The context is threaded
 // through so fakes can honour cancellation when the caller cancels its
