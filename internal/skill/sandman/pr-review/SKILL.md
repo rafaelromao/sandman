@@ -56,6 +56,7 @@ description: Automates the GitHub PR review loop with the PR Review Agent. Waits
 pr_data=$(gh pr view <N> --repo <owner/repo> --json headRefOid,comments,reviewDecision,mergeStateStatus)
 mergeStateStatus=$(echo "$pr_data" | jq -r '.mergeStateStatus')
 headRefOid=$(echo "$pr_data" | jq -r '.headRefOid')
+head_sha="$headRefOid"
 reviewDecision=$(echo "$pr_data" | jq -r '.reviewDecision')
 comments=$(echo "$pr_data" | jq -r '.comments')
 ```
@@ -145,10 +146,6 @@ If SHA changed since the last request, always allow re-requesting. If SHA is unc
 
 Only post `{{REVIEW_COMMAND}}` after CI has reached a green terminal state in Step 2.
 
-```bash
-gh pr comment <N> --repo <owner/repo> --body "{{REVIEW_COMMAND}}"
-```
-
 The post result is not a request until the trigger is confirmed against the
 current PR head. Re-read the PR comments and capture the exact server
 `createdAt` for the returned comment ID:
@@ -169,8 +166,9 @@ trigger_created_at=$(gh pr view <N> --repo <owner/repo> --json headRefOid,commen
 
 Only after this confirmation, atomically write the request envelope used by the
 versioned wait. The caller supplies the absolute deadline and polling plan;
-the compatibility form below derives those values from the current effective
-timeout until the request-deadline coordinator is available:
+the compatibility form below materializes those fields from the already
+resolved effective timeout. It does not choose defaults, minimums, or a
+pull-request-wide budget:
 
 ```bash
 review_timeout=${REVIEW_TIMEOUT:-1800}
@@ -203,8 +201,14 @@ jq -n \
     rm -f "$request_tmp"
     record REVIEW_TIMEOUT_STATE_ERROR and stop
   }
+head_tmp=$(mktemp ".sandman/state/<N>.head_sha.tmp.XXXXXX") || record REVIEW_TIMEOUT_STATE_ERROR and stop
+printf '%s\n' "$head_sha" >"$head_tmp" && mv -f "$head_tmp" ".sandman/state/<N>.head_sha" || {
+  rm -f "$head_tmp"
+  record REVIEW_TIMEOUT_STATE_ERROR and stop
+}
 
-After posting, write the current head SHA to `.sandman/state/<N>.head_sha` so subsequent passes can detect staleness.
+The atomic head-SHA sidecar remains available to the existing stale-approval
+rules and subsequent passes.
 
 #### Step 5: Wait for this confirmed request (versioned coordinator)
 
@@ -262,6 +266,12 @@ same-credential, stale-head, pending-trigger, requested-changes, informal
 approval, and concrete-feedback rules remain owned by Step 6. The bundled
 `review-observe-v1.sh` observer returns a response whose body does not begin with `{{REVIEW_COMMAND}}` regardless of author; do not filter by author. Preserve observed response counts.
 An envelope with `state:"unavailable"` is structured failure, never approval.
+
+Before Step 6, retain the existing self-check: when `top > 0`, `reviews == 0`,
+and `inline == 0`, and no previous `{{REVIEW_COMMAND}}` request is already
+pending, post a follow-up beginning with `{{REVIEW_COMMAND}}` asking the
+reviewer to clarify. If a request is already pending, do not pile on another
+trigger. This is reviewer communication, not a new response classification.
 
 #### Step 5a: DIRTY handling — every coordinator result
 

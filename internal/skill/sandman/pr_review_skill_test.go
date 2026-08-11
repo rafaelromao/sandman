@@ -272,6 +272,7 @@ func TestPRReviewSkill_UsesVersionedRequestWait(t *testing.T) {
 	for _, phrase := range []string{
 		"review-wait-v1.sh",
 		"review-observe-v1.sh",
+		"head_sha=\"$headRefOid\"",
 		"protocol:\"review-wait/v1\"",
 		"--request-file",
 		"trigger_id",
@@ -279,10 +280,14 @@ func TestPRReviewSkill_UsesVersionedRequestWait(t *testing.T) {
 		"state:\"unavailable\"",
 		"raw evidence is available for the existing Step 6 classifier",
 		"does not require a host `sandman` binary",
+		"post a follow-up beginning with `{{REVIEW_COMMAND}}`",
 	} {
 		if !strings.Contains(text, phrase) {
 			t.Errorf("pr-review SKILL.md must describe the versioned request wait %q", phrase)
 		}
+	}
+	if strings.Count(text, "gh pr comment <N> --repo <owner/repo> --body \"{{REVIEW_COMMAND}}\"") != 1 {
+		t.Fatal("pr-review SKILL.md must post exactly one trigger per request")
 	}
 
 	waitStart := strings.Index(text, "#### Step 5: Wait for this confirmed request")
