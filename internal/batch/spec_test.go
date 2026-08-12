@@ -426,27 +426,36 @@ func TestSpecificationResolver_CommentAndSearchCandidatesStillRequireParentBackl
 func TestSpecificationResolver_CommentChildrenRequireStructuredDeclaration(t *testing.T) {
 	client := &fakeGitHubClient{
 		issues: map[int]*github.Issue{
-			1:  {Number: 1, Title: "Specification", Body: "## Problem Statement\n\nP.\n\n## Solution\n\nS.\n"},
-			10: {Number: 10, Title: "Declared child", Body: "## Parent\n\n#1\n"},
-			11: {Number: 11, Title: "Mentioned only", Body: "## Parent\n\n#1\n"},
+			2538: {Number: 2538, Title: "Specification", Body: "## Problem Statement\n\nP.\n\n## Solution\n\nS.\n\n## Children\n\n- #2556\n"},
+			2556: {Number: 2556, Title: "Declared child", Body: "## Parent\n\n#2538\n"},
+			2543: {Number: 2543, Title: "Dependent", Body: "## Parent\n\n#2559\n", BlockedBy: []int{2538}},
+			2544: {Number: 2544, Title: "Mentioned only", Body: "## Parent\n\n#2559\n", BlockedBy: []int{2543}},
 		},
 		issueComments: map[int][]github.IssueComment{
-			1: {
-				{Body: "The later outcome is handled through #11."},
-				{Body: "<!-- sandman-discovered-children -->\n\n## Discovered children\n\n- #10\n"},
+			2538: {
+				{Body: "The later outcome is handled through #2544."},
+				{Body: "<!-- sandman-discovered-children -->\n\n## Discovered children\n\n- #2556\n"},
 			},
 		},
 	}
 
-	got, parentChildren, err := NewSpecificationResolver(client, io.Discard).Resolve(context.Background(), []int{1, 10, 11})
+	got, parentChildren, err := NewSpecificationResolver(client, io.Discard).Resolve(context.Background(), []int{2538, 2543, 2544})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !equalInts(got, []int{10, 1, 11}) {
-		t.Fatalf("expected declared child plus independent mention [10 1 11], got %v", got)
+	if !equalInts(got, []int{2556, 2538, 2543, 2544}) {
+		t.Fatalf("expected declared child plus independent mention [2556 2538 2543 2544], got %v", got)
 	}
-	if !equalInts(parentChildren[1], []int{10}) {
-		t.Fatalf("expected only structured declaration #10 to gate #1, got %v", parentChildren[1])
+	if !equalInts(parentChildren[2538], []int{2556}) {
+		t.Fatalf("expected only structured declaration #2556 to gate #2538, got %v", parentChildren[2538])
+	}
+
+	resolved, err := NewDependencyResolver(client).Resolve(context.Background(), got, true, parentChildren)
+	if err != nil {
+		t.Fatalf("expected combined dependency graph to remain acyclic, got %v", err)
+	}
+	if !equalInts(resolved.Issues, []int{2556, 2538, 2543, 2544}) {
+		t.Fatalf("expected leaf-first combined dependency order [2556 2538 2543 2544], got %v", resolved.Issues)
 	}
 }
 
