@@ -194,7 +194,7 @@ func (c *discoveryClient) PostIssueComment(ctx context.Context, issueNumber int,
 // TestBuildDiscoveredChildrenComment pins the comment-body format:
 // hidden HTML marker followed by a `## Discovered children` H2
 // section with `- #N` bullets sorted ascending. The format is what
-// the existing comment harvest (ExtractIssueReferences) recognises on
+// the existing comment harvest (github.ParseChildrenFromBody) recognises on
 // subsequent runs, so the expensive open-issue scan is short-circuited
 // for any spec whose marker comment is intact.
 func TestBuildDiscoveredChildrenComment(t *testing.T) {

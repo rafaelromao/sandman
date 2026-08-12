@@ -423,6 +423,71 @@ func TestSpecificationResolver_CommentAndSearchCandidatesStillRequireParentBackl
 	}
 }
 
+func TestSpecificationResolver_CommentChildrenRequireStructuredDeclaration(t *testing.T) {
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			2538: {Number: 2538, Title: "Specification", Body: "## Problem Statement\n\nP.\n\n## Solution\n\nS.\n\n## Children\n\n- #2556\n"},
+			2556: {Number: 2556, Title: "Declared child", Body: "## Parent\n\n#2538\n"},
+			2543: {Number: 2543, Title: "Dependent", Body: "## Parent\n\n#2559\n", BlockedBy: []int{2538}},
+			2544: {Number: 2544, Title: "Mentioned only", Body: "## Parent\n\n#2559\n", BlockedBy: []int{2543}},
+		},
+		issueComments: map[int][]github.IssueComment{
+			2538: {
+				{Body: "The later outcome is handled through #2544."},
+				{Body: "<!-- sandman-discovered-children -->\n\n## Discovered children\n\n- #2556\n"},
+			},
+		},
+	}
+
+	got, parentChildren, err := NewSpecificationResolver(client, io.Discard).Resolve(context.Background(), []int{2538, 2543, 2544})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !equalInts(got, []int{2556, 2538, 2543, 2544}) {
+		t.Fatalf("expected declared child plus independent mention [2556 2538 2543 2544], got %v", got)
+	}
+	if !equalInts(parentChildren[2538], []int{2556}) {
+		t.Fatalf("expected only structured declaration #2556 to gate #2538, got %v", parentChildren[2538])
+	}
+
+	resolved, err := NewDependencyResolver(client).Resolve(context.Background(), got, true, parentChildren)
+	if err != nil {
+		t.Fatalf("expected combined dependency graph to remain acyclic, got %v", err)
+	}
+	if !equalInts(resolved.Issues, []int{2556, 2538, 2543, 2544}) {
+		t.Fatalf("expected leaf-first combined dependency order [2556 2538 2543 2544], got %v", resolved.Issues)
+	}
+}
+
+func TestSpecificationResolver_ProseCommentDoesNotSuppressSearchFallback(t *testing.T) {
+	childBody := "## Parent\n\n#1\n"
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			1:  {Number: 1, Title: "Specification", Body: "## Problem Statement\n\nP.\n\n## Solution\n\nS.\n"},
+			10: {Number: 10, Title: "Search child", Body: childBody},
+			11: {Number: 11, Title: "Mentioned only", Body: childBody},
+		},
+		issueComments: map[int][]github.IssueComment{
+			1: {{Body: "Tracking #11 for later."}},
+		},
+		searchIssuesResult: []github.Issue{{Number: 10, Body: childBody}},
+	}
+
+	got, parentChildren, err := NewSpecificationResolver(client, io.Discard).Resolve(context.Background(), []int{1})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !equalInts(got, []int{10, 1}) {
+		t.Fatalf("expected search child and retained parent [10 1], got %v", got)
+	}
+	if !equalInts(parentChildren[1], []int{10}) {
+		t.Fatalf("expected only search child #10 to gate #1, got %v", parentChildren[1])
+	}
+	if len(client.searchCalls) != 1 {
+		t.Fatalf("expected prose comment to permit one search fallback, got %v", client.searchCalls)
+	}
+}
+
 func TestExtractIssueReferences(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -1345,14 +1410,14 @@ func TestSpecificationResolver_DiscoversChildrenFromComments(t *testing.T) {
 	childBody := "## Parent\n\n#1\n\n## What\n\n"
 	client := &fakeGitHubClient{
 		issues: map[int]*github.Issue{
-			1:  {Number: 1, Title: "Specification with refs only in comments", Body: specBody},
+			1:  {Number: 1, Title: "Specification with children only in comments", Body: specBody},
 			10: {Number: 10, Title: "Child 1", Body: childBody},
 			11: {Number: 11, Title: "Child 2", Body: childBody},
 		},
 		issueComments: map[int][]github.IssueComment{
 			1: {
-				{Body: "Tracking #10 here."},
-				{Body: "And #11 too."},
+				{Body: "## Children\n\n- #10\n"},
+				{Body: "## Child Issues\n\n- #11\n"},
 			},
 		},
 	}
@@ -1585,10 +1650,10 @@ func TestSpecificationResolver_HasChildrenReturnsFalseOnEmptyComments(t *testing
 	}
 }
 
-func TestSpecificationResolver_HasChildrenReturnsTrueOnCommentReference(t *testing.T) {
+func TestSpecificationResolver_HasChildrenReturnsTrueOnStructuredCommentDeclaration(t *testing.T) {
 	client := &fakeGitHubClient{
 		issueComments: map[int][]github.IssueComment{
-			1: {{Body: "Tracking #10 here."}},
+			1: {{Body: "## Children\n\n- #10\n"}},
 		},
 	}
 	r := NewSpecificationResolver(client, nil)
@@ -1597,7 +1662,7 @@ func TestSpecificationResolver_HasChildrenReturnsTrueOnCommentReference(t *testi
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if !got {
-		t.Fatal("expected HasChildren to return true when a comment references another issue")
+		t.Fatal("expected HasChildren to return true for a structured comment declaration")
 	}
 }
 
@@ -1744,7 +1809,7 @@ func TestSpecificationResolver_ChildDiscoveryMatrix(t *testing.T) {
 			wantLog: "expanded specification #1 to 1 accepted children",
 		},
 		{
-			name: "issue comment reference under canonical body",
+			name: "structured issue comment declaration under canonical body",
 			build: func() (*fakeGitHubClient, []int) {
 				c := &fakeGitHubClient{
 					issues: map[int]*github.Issue{
@@ -1753,7 +1818,7 @@ func TestSpecificationResolver_ChildDiscoveryMatrix(t *testing.T) {
 						11: {Number: 11, Body: childBody},
 					},
 					issueComments: map[int][]github.IssueComment{
-						1: {{Body: "Tracking #10 and #11 here."}},
+						1: {{Body: "## Child Issues\n\n- #10\n- #11\n"}},
 					},
 				}
 				return c, []int{10, 11, 1}
@@ -1794,7 +1859,7 @@ func TestSpecificationResolver_ChildDiscoveryMatrix(t *testing.T) {
 			wantLog: "expanded specification #1 to 2 accepted children",
 		},
 		{
-			name: "non-spec body with comment-only child reference",
+			name: "non-spec body with structured comment-only child declaration",
 			build: func() (*fakeGitHubClient, []int) {
 				c := &fakeGitHubClient{
 					issues: map[int]*github.Issue{
@@ -1802,7 +1867,7 @@ func TestSpecificationResolver_ChildDiscoveryMatrix(t *testing.T) {
 						10: {Number: 10, Body: childBody},
 					},
 					issueComments: map[int][]github.IssueComment{
-						1: {{Body: "Tracking #10 here."}},
+						1: {{Body: "## Children\n\n- #10\n"}},
 					},
 				}
 				return c, []int{10, 1}
@@ -1857,7 +1922,7 @@ func TestSpecificationResolver_ChildDiscoveryMatrix_DedupAcrossSources(t *testin
 			11: {Number: 11, Body: childBody},
 		},
 		issueComments: map[int][]github.IssueComment{
-			1: {{Body: "And #10 again, plus #11."}},
+			1: {{Body: "## Children\n\n- #10\n- #11\n"}},
 		},
 		subIssues: map[int][]int{1: {10}},
 	}
@@ -1872,9 +1937,9 @@ func TestSpecificationResolver_ChildDiscoveryMatrix_DedupAcrossSources(t *testin
 }
 
 func TestSpecificationResolver_ChildrenOnlyDetection(t *testing.T) {
-	// No body Specification sections; comment body references a child issue.
-	// The no-other-gate contract means a single child source (a comment
-	// ref here) is sufficient to expand.
+	// No body Specification sections; a structured comment declares a
+	// child. The no-other-gate contract means a single child source is
+	// sufficient to expand.
 	parentBody := "## What\n\nJust a parent issue body, no PRD sections.\n"
 	childBody := "## Parent\n\n#1\n\n## What\n\nChild work goes here.\n"
 	client := &fakeGitHubClient{
@@ -1883,7 +1948,7 @@ func TestSpecificationResolver_ChildrenOnlyDetection(t *testing.T) {
 			10: {Number: 10, Title: "Child", Body: childBody},
 		},
 		issueComments: map[int][]github.IssueComment{
-			1: {{Body: "Tracking #10 here."}},
+			1: {{Body: "## Children\n\n- #10\n"}},
 		},
 	}
 	var infoBuf bytes.Buffer
@@ -1909,7 +1974,7 @@ func TestSpecificationResolver_ChildrenOnlyDetectionFromNamedURLComment(t *testi
 			10: {Number: 10, Title: "Child", Body: childBody},
 		},
 		issueComments: map[int][]github.IssueComment{
-			1: {{Body: "Tracking [the child](https://github.com/owner/repo/issues/10)."}},
+			1: {{Body: "## Child Issues\n\n- [the child](https://github.com/owner/repo/issues/10)\n"}},
 		},
 	}
 

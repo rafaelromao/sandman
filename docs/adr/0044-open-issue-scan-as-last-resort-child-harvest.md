@@ -26,7 +26,7 @@ The cost of one full-repo `gh api repos/<owner>/<repo>/issues?state=open --pagin
    - #<n1>
    - #<n2>
    ```
-   The hidden HTML marker identifies the comment as auto-generated. The `## Discovered children` heading plus `- #N` bullets is recognised by the existing comment harvest (`ExtractIssueReferences`) on subsequent runs, so the operator gains a persistent record and the expensive scan only runs once per spec per missing-marker state.
+    The hidden HTML marker identifies the comment as auto-generated. The `## Discovered children` heading plus `- #N` bullets is recognised by the existing structured comment harvest (`ParseChildrenFromBody`) on subsequent runs, so the operator gains a persistent record and the expensive scan only runs once per spec per missing-marker state.
 3. **Idempotency.** Before posting, sandman lists the spec's existing comments. If any carries the `<!-- sandman-discovered-children -->` marker, sandman skips posting. Operators who want to force a re-scan delete the marker comment; sandman then re-runs the harvest and re-posts on the next call.
 4. **Optional interfaces for additive growth.** The two new GitHub operations are exposed as optional interfaces (`github.OpenIssueLister`, `github.IssueCommentPoster`) on `internal/github/github.go`. The resolver type-asserts `r.client.(github.OpenIssueLister)` and `r.client.(github.IssueCommentPoster)`; production `CLIClient` implements both, existing test fakes do not. This means the new step is a no-op on every existing fake — no test changes are required. The hardening guarantee: existing tests stay unchanged because they pre-date the optional interface.
 5. **Implementation seams.**
@@ -54,7 +54,7 @@ The cost of one full-repo `gh api repos/<owner>/<repo>/issues?state=open --pagin
 
 - Closes the spike's harvest-side gap: candidates whose `## Parent` section cites the spec are recovered even when the spec body, its comments, native sub-issues, and the mention-search fallback are all silent.
 - The auto-posted comment gives operators a persistent, reviewable record of what sandman auto-discovered. They can edit the marker comment to remove false positives, add missing candidates, or delete the marker to force a re-scan.
-- Future runs automatically pick up the marker comment via the existing comment-harvest path (`ListIssueComments` + `ExtractIssueReferences`), so the expensive scan only fires when the marker is absent — the comment is the cache.
+- Future runs automatically pick up the marker comment via the existing comment-harvest path (`ListIssueComments` + `ParseChildrenFromBody`), so the expensive scan only fires when the marker is absent — the comment is the cache.
 - The widened `HasParentSectionBacklinkTo` matcher (ADR-0042) is reused as the filter, so the spike's `## Parent area` umbrella pattern (threeterm #232 / #234) is covered for free without a second matcher.
 - Existing tests in `internal/batch/spec_test.go`, `internal/batch/orchestrator_test.go`, `internal/batch/dependencies_test.go`, `internal/batch/badge_e2e_test.go`, and `internal/cmd/run_test.go` are unchanged because the new operations live on optional interfaces — the type-assertion falls through, and the new step is a no-op on fakes that do not implement the optional interfaces.
 
