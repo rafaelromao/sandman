@@ -43,7 +43,7 @@ Every persisted Sandman artifact lives under `<repo>/.sandman/` (with two docume
     ├── <N>.addressed_comments          # per-PR addressed-comment list
     ├── <N>.review_request.json         # confirmed delegated-review request
     ├── <N>.review_request.json.state   # request-wait result sidecar
-    └── <N>.review_request.json.snapshot.json # raw response snapshot
+    └── <N>.review_request.json.state.snapshot.json # raw snapshot plus request classification
 ```
 
 ## Per-artifact table
@@ -84,7 +84,7 @@ Every persisted Sandman artifact lives under `<repo>/.sandman/` (with two docume
 | `state/<N>.addressed_comments` | runtime, atomic-rename | review daemon (per-PR addressed-comment list) | review daemon (dedup gate) | review daemon (rotates on PR close) | per PR |
 | `state/<N>.review_request.json` | runtime, atomic-rename | implementor review skill after trigger confirmation | versioned review wait | implementor review lifecycle | per confirmed request |
 | `state/<N>.review_request.json.state` | runtime, atomic-rename | versioned review wait | versioned review wait | implementor review lifecycle | per confirmed request |
-| `state/<N>.review_request.json.snapshot.json` | runtime, atomic-rename | versioned review wait | existing review classifier | implementor review lifecycle | per observation |
+| `state/<N>.review_request.json.state.snapshot.json` | runtime, atomic-rename | versioned review wait | existing review classifier | implementor review lifecycle | per observation |
 
 ## Out-of-layout
 

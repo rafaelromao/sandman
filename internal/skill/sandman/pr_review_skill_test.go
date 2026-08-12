@@ -312,6 +312,75 @@ func TestPRReviewSkill_UsesVersionedRequestWait(t *testing.T) {
 	}
 }
 
+func TestPRReviewSkill_UsesRequestScopedClassification(t *testing.T) {
+	text := readPRReviewSkill(t)
+
+	for _, phrase := range []string{
+		`classification.protocol == "review-classification/v1"`,
+		"active-to-next-trigger window",
+		"classification.formal.approval_evidence",
+		"classification.formal.requested_changes",
+		"classification.request_state == \"superseded\"",
+		"head_status: \"stale\"",
+		"The pull-request-wide `reviewDecision` aggregate",
+		"boundary_evidence",
+	} {
+		if !strings.Contains(text, phrase) {
+			t.Errorf("pr-review SKILL.md must describe request-scoped classification %q", phrase)
+		}
+	}
+
+	step6 := strings.Index(text, "#### Step 6: Read and classify feedback")
+	step7 := strings.Index(text, "#### Step 7: Apply fixes")
+	if step6 < 0 || step7 < step6 {
+		t.Fatal("could not isolate classification section")
+	}
+	classification := text[step6:step7]
+	approvalStart := strings.Index(classification, "**A. Formal approval detected?**")
+	approvalEnd := strings.Index(classification, "**B. Formal changes requested?**")
+	if approvalStart < 0 || approvalEnd < approvalStart {
+		t.Fatal("could not isolate formal approval classification")
+	}
+	approval := classification[approvalStart:approvalEnd]
+	if !strings.Contains(approval, `classification.request_state == "active"`) {
+		t.Fatal("formal approval must require an active request")
+	}
+	for _, forbidden := range []string{
+		"- `reviewDecision: APPROVED`",
+		"- `reviewDecision: CHANGES_REQUESTED`",
+		"OR any entry returned by the reviews endpoint",
+	} {
+		if strings.Contains(classification, forbidden) {
+			t.Errorf("Step 6 must not classify request state from unscoped evidence %q", forbidden)
+		}
+	}
+}
+
+func TestPRReviewSkill_PreservesCommitlessCommentedApproval(t *testing.T) {
+	text := readPRReviewSkill(t)
+	step6 := strings.Index(text, "#### Step 6: Read and classify feedback")
+	step7 := strings.Index(text, "#### Step 7: Apply fixes")
+	if step6 < 0 || step7 < step6 {
+		t.Fatal("could not isolate classification section")
+	}
+	classification := text[step6:step7]
+	approvalStart := strings.Index(classification, "**C. Informal approval (implicit approval without formal review)?**")
+	approvalEnd := strings.Index(classification, "**D. Still pending?**")
+	if approvalStart < 0 || approvalEnd < approvalStart {
+		t.Fatal("could not isolate informal approval classification")
+	}
+	approval := classification[approvalStart:approvalEnd]
+	for _, phrase := range []string{
+		"For a request-scoped formal `COMMENTED` review",
+		"`head_status: \"unknown\"` remains eligible",
+		"current-head formal `APPROVED` records create mechanical approval evidence",
+	} {
+		if !strings.Contains(approval, phrase) {
+			t.Errorf("informal approval must preserve commitless COMMENTED compatibility %q", phrase)
+		}
+	}
+}
+
 func TestPRReviewSkill_FailsClosedOnUntrustedRequestPair(t *testing.T) {
 	text := readPRReviewSkill(t)
 
