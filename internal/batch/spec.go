@@ -159,18 +159,19 @@ func (r *SpecificationResolver) IsSpecification(body string) bool {
 // IsSpecification for the broadened detector: callers that find IsSpecification(body) false
 // can use HasChildren to decide whether to expand the input anyway.
 //
-// HasChildren only scans comment bodies; body-shape references and native sub-issues
-// are discovered later in the expanded path by collectCandidates and by the broadened
-// branch in expandOne respectively. The cached GitHub client memoises ListIssueComments
-// per (run, number), so a re-entry on the same number within one run pays zero additional
-// REST requests.
+// HasChildren only recognizes structured child declarations in comment bodies;
+// incidental prose references are not child relationships. Body-shape references
+// and native sub-issues are discovered later in the expanded path by
+// collectCandidates and by the broadened branch in expandOne respectively. The
+// cached GitHub client memoises ListIssueComments per (run, number), so a re-entry
+// on the same number within one run pays zero additional REST requests.
 func (r *SpecificationResolver) HasChildren(ctx context.Context, number int) (bool, error) {
 	comments, err := r.client.ListIssueComments(ctx, number)
 	if err != nil {
 		return false, fmt.Errorf("list comments for #%d: %w", number, err)
 	}
 	for _, c := range comments {
-		for _, n := range ExtractIssueReferences(c.Body) {
+		for _, n := range github.ParseChildrenFromBody(c.Body) {
 			if n != 0 {
 				return true, nil
 			}
@@ -567,7 +568,7 @@ func (r *SpecificationResolver) collectCandidates(ctx context.Context, parent in
 	add(bodyReferencesOutsideBlockerSections(body))
 	if comments, err := r.client.ListIssueComments(ctx, parent); err == nil {
 		for _, c := range comments {
-			add(ExtractIssueReferences(c.Body))
+			add(github.ParseChildrenFromBody(c.Body))
 		}
 	} else {
 		fmt.Fprintf(r.warningWriter, "warning: could not list comments for specification #%d: %v\n", parent, err)
