@@ -1017,6 +1017,56 @@ exit 2
 	}
 }
 
+func TestReviewWaitV1PreservesCommitlessCommentedApprovalEvidence(t *testing.T) {
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	helper := filepath.Join(wd, "pr-review", "review-wait-v1.sh")
+	observer := filepath.Join(wd, "pr-review", "review-observe-v1.sh")
+	requestFile := filepath.Join(t.TempDir(), "42.review_request.json")
+	writeReviewWaitRequest(t, requestFile, "1001", "2026-08-11T18:00:01Z", "2026-08-11T18:30:01Z")
+
+	bin := t.TempDir()
+	gh := filepath.Join(bin, "gh")
+	ghScript := `#!/bin/sh
+if [ "$1" = "pr" ] && [ "$2" = "view" ]; then
+  printf '%s\n' '{"headRefOid":"abc123","comments":[{"id":"1001","url":"https://github.com/owner/repo/pull/42#issuecomment-1001","body":"/sandman review","createdAt":"2026-08-11T18:00:01Z"}],"reviewDecision":"","mergeStateStatus":"CLEAN"}'
+  exit 0
+fi
+if [ "$1" = "api" ]; then
+  case "$2" in
+    */reviews) printf '%s\n' '[{"id":2001,"state":"COMMENTED","submitted_at":"2026-08-11T18:02:00Z","body":"LGTM"}]' ;;
+    */comments) printf '%s\n' '[]' ;;
+    *) exit 2 ;;
+  esac
+  exit 0
+fi
+exit 2
+`
+	if err := os.WriteFile(gh, []byte(ghScript), 0o700); err != nil {
+		t.Fatalf("write gh shim: %v", err)
+	}
+
+	result := runReviewWaitWithEnv(t, helper, requestFile, observer, true, map[string]string{
+		"PATH": bin + ":" + os.Getenv("PATH"),
+	})
+	classification := decodeReviewClassification(t, result)
+	if result.State != "responded" || classification.Decision != "responded" {
+		t.Fatalf("result = state %q/decision %q, want responded/responded", result.State, classification.Decision)
+	}
+	if len(classification.Sources.FormalReviews) != 1 {
+		t.Fatalf("formal sources = %d, want one commitless COMMENTED response", len(classification.Sources.FormalReviews))
+	}
+	formal := classification.Sources.FormalReviews[0]
+	if formal.State != "COMMENTED" || formal.HeadStatus != "unknown" || formal.Body != "LGTM" {
+		t.Fatalf("commitless COMMENTED evidence = %+v, want COMMENTED/LGTM/unknown", formal)
+	}
+	if classification.Formal.Decision != "none" || len(classification.Formal.AmbiguousApprovalEvidence) != 0 {
+		t.Fatalf("formal mechanical classification = decision %q/ambiguous %d, want none/0", classification.Formal.Decision, len(classification.Formal.AmbiguousApprovalEvidence))
+	}
+}
+
 func TestReviewWaitV1ReturnsRequestScopedClassificationForAllResponseSurfaces(t *testing.T) {
 	wd, err := os.Getwd()
 	if err != nil {
@@ -1031,7 +1081,7 @@ func TestReviewWaitV1ReturnsRequestScopedClassificationForAllResponseSurfaces(t 
 	gh := filepath.Join(bin, "gh")
 	ghScript := `#!/bin/sh
 if [ "$1" = "pr" ] && [ "$2" = "view" ]; then
-  printf '%s\n' '{"headRefOid":"abc123","comments":[{"id":"IC_kwDOSYKm0c8AAAABOXLU5g","url":"https://github.com/owner/repo/pull/42#issuecomment-1001","body":"/sandman review","createdAt":"2026-08-11T18:00:01Z","author":{"login":"owner"}},{"id":"IC_kwDOSYKm0c8AAAABOXLU5w","url":"https://github.com/owner/repo/pull/42#issuecomment-1002","body":"/sandman review follow-up","createdAt":"2026-08-11T18:00:01Z","author":{"login":"owner"}},{"id":"IC_kwDOSYKm0c8AAAABOXLU6A","url":"https://github.com/owner/repo/pull/42#issuecomment-1003","body":"LGTM","createdAt":"2026-08-11T18:02:00Z","author":{"login":"owner"}}],"reviewDecision":"APPROVED","mergeStateStatus":"CLEAN"}'
+  printf '%s\n' '{"headRefOid":"abc123","comments":[{"id":"IC_kwDOSYKm0c8AAAABOXLU5g","url":"https://github.com/owner/repo/pull/42#issuecomment-1001","body":"/sandman review","createdAt":"2026-08-11T18:00:01Z","author":{"login":"owner"}},{"id":"IC_kwDOSYKm0c8AAAABOXLU5w","url":"https://github.com/owner/repo/pull/42#issuecomment-1002","body":"/sandman review follow-up","createdAt":"2026-08-11T18:05:00Z","author":{"login":"owner"}},{"id":"IC_kwDOSYKm0c8AAAABOXLU6A","url":"https://github.com/owner/repo/pull/42#issuecomment-1003","body":"LGTM","createdAt":"2026-08-11T18:02:00Z","author":{"login":"owner"}}],"reviewDecision":"APPROVED","mergeStateStatus":"CLEAN"}'
   exit 0
 fi
 if [ "$1" = "api" ]; then
@@ -1056,8 +1106,8 @@ exit 2
 	if classification.Protocol != "review-classification/v1" {
 		t.Fatalf("classification protocol = %q, want review-classification/v1", classification.Protocol)
 	}
-	if classification.RequestState != "active" || classification.Decision != "responded" {
-		t.Fatalf("classification state = %q/%q, want active/responded", classification.RequestState, classification.Decision)
+	if classification.RequestState != "superseded" || classification.Decision != "pending" {
+		t.Fatalf("classification state = %q/%q, want superseded/pending", classification.RequestState, classification.Decision)
 	}
 	if classification.Request.TriggerID != "https://github.com/owner/repo/pull/42#issuecomment-1001" || classification.Request.HeadSHA != "abc123" || classification.Request.TriggerCreatedAt != "2026-08-11T18:00:01Z" || classification.Request.DeadlineUnix != 4102444800 {
 		t.Fatalf("classification request = %+v", classification.Request)
@@ -1071,7 +1121,7 @@ exit 2
 	if classification.BoundaryEvidence.Request.HeadSHA != "abc123" || classification.BoundaryEvidence.Request.DeadlineAt != "2026-08-11T18:30:01Z" || classification.BoundaryEvidence.Request.DeadlineUnix != 4102444800 {
 		t.Fatalf("boundary request = %+v", classification.BoundaryEvidence.Request)
 	}
-	if classification.BoundaryEvidence.Sources.TopLevel[0].ResponseTimestamp != "2026-08-11T18:02:00Z" || classification.BoundaryEvidence.Sources.FormalReviews[0].ResponseTimestamp != "2026-08-11T18:03:00Z" || classification.BoundaryEvidence.Sources.Inline[0].ResponseTimestamp != "2026-08-11T18:04:00Z" {
+	if classification.BoundaryEvidence.Sources.TopLevel[0].ResponseTimestamp != "2026-08-11T18:02:00.000000000Z" || classification.BoundaryEvidence.Sources.FormalReviews[0].ResponseTimestamp != "2026-08-11T18:03:00.000000000Z" || classification.BoundaryEvidence.Sources.Inline[0].ResponseTimestamp != "2026-08-11T18:04:00.000000000Z" {
 		t.Fatalf("boundary timestamps = top %q/formal %q/inline %q", classification.BoundaryEvidence.Sources.TopLevel[0].ResponseTimestamp, classification.BoundaryEvidence.Sources.FormalReviews[0].ResponseTimestamp, classification.BoundaryEvidence.Sources.Inline[0].ResponseTimestamp)
 	}
 	for _, source := range classification.Sources.TopLevel {
@@ -1387,7 +1437,7 @@ exit 2
 	if classification.ResponseCounts.TopLevel != 2 || classification.ResponseCounts.FormalReviews != 1 || classification.ResponseCounts.Inline != 1 {
 		t.Fatalf("response counts = %+v, want top-level 2/formal 1/inline 1", classification.ResponseCounts)
 	}
-	if len(classification.Formal.ApprovalEvidence) != 1 || classification.Formal.ApprovalEvidence[0].ResponseTimestamp != "2100-01-01T00:00:00Z" {
+	if len(classification.Formal.ApprovalEvidence) != 1 || classification.Formal.ApprovalEvidence[0].ResponseTimestamp != "2100-01-01T00:00:00.000000000Z" {
 		t.Fatalf("deadline approval evidence = %+v", classification.Formal.ApprovalEvidence)
 	}
 	if !strings.Contains(string(result.Evidence), "late changes") || !strings.Contains(string(result.Evidence), "late inline response") {
@@ -1513,5 +1563,95 @@ exit 2
 	})
 	if result.State != "unavailable" || result.Reason != "classification-failed" {
 		t.Fatalf("malformed later trigger result = %q/%q, want unavailable/classification-failed", result.State, result.Reason)
+	}
+}
+
+func TestReviewWaitV1PreservesSourceTimestampPrecedenceAndCanonicalEvidence(t *testing.T) {
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	helper := filepath.Join(wd, "pr-review", "review-wait-v1.sh")
+	observer := filepath.Join(wd, "pr-review", "review-observe-v1.sh")
+	requestFile := filepath.Join(t.TempDir(), "42.review_request.json")
+	writeReviewWaitRequestValues(t, requestFile, "1001", "2099-12-31T23:30:00Z", "2100-01-01T00:01:00Z", 4102443000, 4102444860, 1860)
+
+	bin := t.TempDir()
+	gh := filepath.Join(bin, "gh")
+	ghScript := `#!/bin/sh
+if [ "$1" = "pr" ] && [ "$2" = "view" ]; then
+  printf '%s\n' '{"headRefOid":"abc123","comments":[{"id":"1001","url":"https://github.com/owner/repo/pull/42#issuecomment-1001","body":"/sandman review","createdAt":"2099-12-31T23:30:00Z"},{"id":"1002","url":"https://github.com/owner/repo/pull/42#issuecomment-1002","body":"top-level response","createdAt":"2100-01-01T00:00:00.1Z"}],"reviewDecision":"","mergeStateStatus":"CLEAN"}'
+  exit 0
+fi
+if [ "$1" = "api" ]; then
+  case "$2" in
+    */reviews) printf '%s\n' '[{"id":2001,"state":"COMMENTED","createdAt":"2099-12-31T23:29:59Z","submitted_at":"2100-01-01T00:00:00.1234Z","body":"formal response","commit_id":"abc123"}]' ;;
+    */comments) printf '%s\n' '[{"id":3001,"createdAt":"2099-12-31T23:29:59Z","created_at":"2100-01-01T00:00:00.234567891Z","body":"inline response","commit_id":"abc123"}]' ;;
+    *) exit 2 ;;
+  esac
+  exit 0
+fi
+exit 2
+`
+	if err := os.WriteFile(gh, []byte(ghScript), 0o700); err != nil {
+		t.Fatalf("write gh shim: %v", err)
+	}
+
+	result := runReviewWaitWithEnv(t, helper, requestFile, observer, true, map[string]string{
+		"PATH": bin + ":" + os.Getenv("PATH"),
+	})
+	classification := decodeReviewClassification(t, result)
+	if result.State != "responded" || classification.Decision != "responded" {
+		t.Fatalf("result = state %q/decision %q, want responded/responded", result.State, classification.Decision)
+	}
+	if classification.ResponseCounts.TopLevel != 1 || classification.ResponseCounts.FormalReviews != 1 || classification.ResponseCounts.Inline != 1 {
+		t.Fatalf("response counts = %+v, want one response per source", classification.ResponseCounts)
+	}
+	if got := classification.Sources.TopLevel[0].ResponseTimestamp; got != "2100-01-01T00:00:00.100000000Z" {
+		t.Fatalf("top-level canonical timestamp = %q, want fractional nanoseconds", got)
+	}
+	if got := classification.Sources.FormalReviews[0].ResponseTimestamp; got != "2100-01-01T00:00:00.123400000Z" {
+		t.Fatalf("formal canonical timestamp = %q, want submitted_at normalized to nanoseconds", got)
+	}
+	if got := classification.Sources.Inline[0].ResponseTimestamp; got != "2100-01-01T00:00:00.234567891Z" {
+		t.Fatalf("inline canonical timestamp = %q, want created_at normalized to nanoseconds", got)
+	}
+}
+
+func TestReviewWaitV1FailsClosedOnAmbiguousSameTimestampTriggerBoundary(t *testing.T) {
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	helper := filepath.Join(wd, "pr-review", "review-wait-v1.sh")
+	observer := filepath.Join(wd, "pr-review", "review-observe-v1.sh")
+	requestFile := filepath.Join(t.TempDir(), "42.review_request.json")
+	writeReviewWaitRequest(t, requestFile, "1001", "2099-12-31T23:30:00Z", "2100-01-01T00:00:00Z")
+
+	bin := t.TempDir()
+	gh := filepath.Join(bin, "gh")
+	ghScript := `#!/bin/sh
+if [ "$1" = "pr" ] && [ "$2" = "view" ]; then
+  printf '%s\n' '{"headRefOid":"abc123","comments":[{"id":"1001","url":"https://github.com/owner/repo/pull/42#issuecomment-1001","body":"/sandman review","createdAt":"2099-12-31T23:30:00Z"},{"id":"1002","url":"https://github.com/owner/repo/pull/42#issuecomment-1002","body":"/sandman review","createdAt":"2099-12-31T23:30:00Z"},{"id":"1003","url":"https://github.com/owner/repo/pull/42#issuecomment-1003","body":"LGTM","createdAt":"2099-12-31T23:31:00Z"}],"reviewDecision":"APPROVED","mergeStateStatus":"CLEAN"}'
+  exit 0
+fi
+if [ "$1" = "api" ]; then
+  case "$2" in
+    */reviews|*/comments) printf '%s\n' '[]' ;;
+    *) exit 2 ;;
+  esac
+  exit 0
+fi
+exit 2
+`
+	if err := os.WriteFile(gh, []byte(ghScript), 0o700); err != nil {
+		t.Fatalf("write gh shim: %v", err)
+	}
+
+	result := runReviewWaitWithEnv(t, helper, requestFile, observer, true, map[string]string{
+		"PATH": bin + ":" + os.Getenv("PATH"),
+	})
+	if result.State != "unavailable" || result.Reason != "classification-failed" {
+		t.Fatalf("ambiguous trigger result = %q/%q, want unavailable/classification-failed", result.State, result.Reason)
 	}
 }

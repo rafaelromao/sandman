@@ -356,6 +356,31 @@ func TestPRReviewSkill_UsesRequestScopedClassification(t *testing.T) {
 	}
 }
 
+func TestPRReviewSkill_PreservesCommitlessCommentedApproval(t *testing.T) {
+	text := readPRReviewSkill(t)
+	step6 := strings.Index(text, "#### Step 6: Read and classify feedback")
+	step7 := strings.Index(text, "#### Step 7: Apply fixes")
+	if step6 < 0 || step7 < step6 {
+		t.Fatal("could not isolate classification section")
+	}
+	classification := text[step6:step7]
+	approvalStart := strings.Index(classification, "**C. Informal approval (implicit approval without formal review)?**")
+	approvalEnd := strings.Index(classification, "**D. Still pending?**")
+	if approvalStart < 0 || approvalEnd < approvalStart {
+		t.Fatal("could not isolate informal approval classification")
+	}
+	approval := classification[approvalStart:approvalEnd]
+	for _, phrase := range []string{
+		"For a request-scoped formal `COMMENTED` review",
+		"`head_status: \"unknown\"` remains eligible",
+		"current-head formal `APPROVED` records create mechanical approval evidence",
+	} {
+		if !strings.Contains(approval, phrase) {
+			t.Errorf("informal approval must preserve commitless COMMENTED compatibility %q", phrase)
+		}
+	}
+}
+
 func TestPRReviewSkill_FailsClosedOnUntrustedRequestPair(t *testing.T) {
 	text := readPRReviewSkill(t)
 

@@ -364,7 +364,10 @@ approval, especially when an approval has a stale or unknown commit identity.
 - `classification.formal.decision == "none"` and
   `classification.formal.ambiguous_approval_evidence` is empty, AND
 - A request-scoped `COMMENTED` review OR top-level comment with approval keywords, AND
-- The source is not marked `head_status: "stale"` or `"unknown"`, AND
+- For a request-scoped formal `COMMENTED` review, the source is not marked
+  `head_status: "stale"`; `head_status: "unknown"` remains eligible when the
+  review has no commit identity. Top-level sources remain current, and only
+  current-head formal `APPROVED` records create mechanical approval evidence, AND
 - **The approval is for the current diff** — its `createdAt` is **after** the SHA recorded in `.sandman/state/<N>.head_sha` (the SHA at which the most recent `{{REVIEW_COMMAND}}` was posted), AND
 - **No unanswered `/sandman review` trigger is sitting above the approval** — the most recent top-level comment by `createdAt` is not an implementor trigger that has not yet received a response, AND
 - **The minimum polling cycle has elapsed** — at least 240 s of cumulative sleep (one full `120 + 60 + 60` cycle from Step 5) has passed since the most recent trigger post. A single 120 s first poll cannot have observed a meaningful response window.
