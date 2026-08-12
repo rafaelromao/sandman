@@ -1136,6 +1136,48 @@ exit 2
 	}
 }
 
+func TestReviewWaitV1ReturnsSupersededBoundaryWithoutResponseAsResponded(t *testing.T) {
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	helper := filepath.Join(wd, "pr-review", "review-wait-v1.sh")
+	observer := filepath.Join(wd, "pr-review", "review-observe-v1.sh")
+	requestFile := filepath.Join(t.TempDir(), "42.review_request.json")
+	writeReviewWaitRequest(t, requestFile, "https://github.com/owner/repo/pull/42#issuecomment-1001", "2026-08-11T18:00:01Z", "2026-08-11T18:30:01Z")
+
+	bin := t.TempDir()
+	gh := filepath.Join(bin, "gh")
+	ghScript := `#!/bin/sh
+if [ "$1" = "pr" ] && [ "$2" = "view" ]; then
+  printf '%s\n' '{"headRefOid":"abc123","comments":[{"id":"1001","url":"https://github.com/owner/repo/pull/42#issuecomment-1001","body":"/sandman review","createdAt":"2026-08-11T18:00:01Z"},{"id":"1002","url":"https://github.com/owner/repo/pull/42#issuecomment-1002","body":"/sandman review","createdAt":"2026-08-11T18:01:00Z"}],"reviewDecision":"","mergeStateStatus":"CLEAN"}'
+  exit 0
+fi
+if [ "$1" = "api" ]; then
+  case "$2" in
+    */reviews|*/comments) printf '%s\n' '[]' ;;
+    *) exit 2 ;;
+  esac
+  exit 0
+fi
+exit 2
+`
+	if err := os.WriteFile(gh, []byte(ghScript), 0o700); err != nil {
+		t.Fatalf("write gh shim: %v", err)
+	}
+
+	result := runReviewWaitWithEnv(t, helper, requestFile, observer, true, map[string]string{
+		"PATH": bin + ":" + os.Getenv("PATH"),
+	})
+	classification := decodeReviewClassification(t, result)
+	if result.State != "responded" || classification.RequestState != "superseded" || classification.Decision != "pending" {
+		t.Fatalf("superseded empty request = state %q/request %q/decision %q, want responded/superseded/pending", result.State, classification.RequestState, classification.Decision)
+	}
+	if classification.ResponseCounts.TopLevel != 0 || classification.ResponseCounts.FormalReviews != 0 || classification.ResponseCounts.Inline != 0 {
+		t.Fatalf("superseded empty counts = %+v, want zero response counts", classification.ResponseCounts)
+	}
+}
+
 func TestReviewWaitV1PreservesRequestedChangesPrecedenceOverStaleApproval(t *testing.T) {
 	wd, err := os.Getwd()
 	if err != nil {
@@ -1353,6 +1395,49 @@ exit 2
 	}
 }
 
+func TestReviewWaitV1PreservesFractionalDeadlineOrdering(t *testing.T) {
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	helper := filepath.Join(wd, "pr-review", "review-wait-v1.sh")
+	observer := filepath.Join(wd, "pr-review", "review-observe-v1.sh")
+	requestFile := filepath.Join(t.TempDir(), "42.review_request.json")
+	writeReviewWaitRequestValues(t, requestFile, "https://github.com/owner/repo/pull/42#issuecomment-1001", "2099-12-31T23:59:59.999Z", "2100-01-01T00:00:00Z", 4102443000, 4102444800, 1800)
+
+	bin := t.TempDir()
+	gh := filepath.Join(bin, "gh")
+	ghScript := `#!/bin/sh
+if [ "$1" = "pr" ] && [ "$2" = "view" ]; then
+  printf '%s\n' '{"headRefOid":"abc123","comments":[{"id":"1001","url":"https://github.com/owner/repo/pull/42#issuecomment-1001","body":"/sandman review","createdAt":"2099-12-31T23:59:59.999Z"},{"id":"1002","url":"https://github.com/owner/repo/pull/42#issuecomment-1002","body":"response exactly at deadline","createdAt":"2100-01-01T00:00:00Z"}],"reviewDecision":"","mergeStateStatus":"CLEAN"}'
+  exit 0
+fi
+if [ "$1" = "api" ]; then
+  case "$2" in
+    */reviews) printf '%s\n' '[{"id":2001,"state":"APPROVED","submitted_at":"2100-01-01T00:00:00.001Z","commit_id":"abc123"}]' ;;
+    */comments) printf '%s\n' '[]' ;;
+    *) exit 2 ;;
+  esac
+  exit 0
+fi
+exit 2
+`
+	if err := os.WriteFile(gh, []byte(ghScript), 0o700); err != nil {
+		t.Fatalf("write gh shim: %v", err)
+	}
+
+	result := runReviewWaitWithEnv(t, helper, requestFile, observer, true, map[string]string{
+		"PATH": bin + ":" + os.Getenv("PATH"),
+	})
+	classification := decodeReviewClassification(t, result)
+	if result.State != "responded" || classification.Decision != "responded" {
+		t.Fatalf("fractional boundary result = state %q/decision %q, want responded/responded", result.State, classification.Decision)
+	}
+	if classification.ResponseCounts.TopLevel != 1 || classification.ResponseCounts.FormalReviews != 0 {
+		t.Fatalf("fractional boundary counts = %+v, want one top-level and no formal response", classification.ResponseCounts)
+	}
+}
+
 func TestReviewWaitV1FailsClosedOnMalformedResponsePayload(t *testing.T) {
 	wd, err := os.Getwd()
 	if err != nil {
@@ -1371,8 +1456,8 @@ if [ "$1" = "pr" ] && [ "$2" = "view" ]; then
   exit 0
 fi
 if [ "$1" = "api" ]; then
-  case "$2" in
-    */reviews) printf '%s\n' '{}' ;;
+		case "$2" in
+			*/reviews) printf '%s\n' '[{"id":2001,"state":"APPROVED","submitted_at":"2099-12-31T23:31:00Z","commit_id":"abc123"},null]' ;;
     */comments) printf '%s\n' '[]' ;;
     *) exit 2 ;;
   esac
@@ -1389,5 +1474,44 @@ exit 2
 	})
 	if result.State != "unavailable" || result.Reason != "formal-reviews-invalid" {
 		t.Fatalf("malformed response result = %q/%q, want unavailable/formal-reviews-invalid", result.State, result.Reason)
+	}
+}
+
+func TestReviewWaitV1FailsClosedOnMalformedLaterTriggerBoundary(t *testing.T) {
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	helper := filepath.Join(wd, "pr-review", "review-wait-v1.sh")
+	observer := filepath.Join(wd, "pr-review", "review-observe-v1.sh")
+	requestFile := filepath.Join(t.TempDir(), "42.review_request.json")
+	writeReviewWaitRequest(t, requestFile, "1001", "2099-12-31T23:30:00Z", "2100-01-01T00:00:00Z")
+
+	bin := t.TempDir()
+	gh := filepath.Join(bin, "gh")
+	ghScript := `#!/bin/sh
+if [ "$1" = "pr" ] && [ "$2" = "view" ]; then
+  printf '%s\n' '{"headRefOid":"abc123","comments":[{"id":"1001","url":"https://github.com/owner/repo/pull/42#issuecomment-1001","body":"/sandman review","createdAt":"2099-12-31T23:30:00Z"},{"id":"1002","url":"https://github.com/owner/repo/pull/42#issuecomment-1002","body":"/sandman review","createdAt":"not-a-timestamp"},{"id":"1003","url":"https://github.com/owner/repo/pull/42#issuecomment-1003","body":"looks good","createdAt":"2099-12-31T23:31:00Z"}],"reviewDecision":"APPROVED","mergeStateStatus":"CLEAN"}'
+  exit 0
+fi
+if [ "$1" = "api" ]; then
+  case "$2" in
+    */reviews) printf '%s\n' '[]' ;;
+    */comments) printf '%s\n' '[]' ;;
+    *) exit 2 ;;
+  esac
+  exit 0
+fi
+exit 2
+`
+	if err := os.WriteFile(gh, []byte(ghScript), 0o700); err != nil {
+		t.Fatalf("write gh shim: %v", err)
+	}
+
+	result := runReviewWaitWithEnv(t, helper, requestFile, observer, true, map[string]string{
+		"PATH": bin + ":" + os.Getenv("PATH"),
+	})
+	if result.State != "unavailable" || result.Reason != "classification-failed" {
+		t.Fatalf("malformed later trigger result = %q/%q, want unavailable/classification-failed", result.State, result.Reason)
 	}
 }

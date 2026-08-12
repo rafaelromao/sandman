@@ -287,7 +287,10 @@ Handle the transport state before classification:
   raw snapshot is audit evidence only; if classification is missing or
   malformed, fail closed as `unavailable`.
 - `pending`: no eligible response was observed and the request remains active;
-  re-enter this same request, never post a duplicate trigger.
+  re-enter this same request, never post a duplicate trigger. A result whose
+  classification has `request_state == "superseded"` is transported as
+  `responded` even when its response counts are zero, so the later trigger can
+  be handed off without extending the older request.
 - `timed_out`: record `REVIEW_TIMEOUT` with the request identity, configured
   budget, deadline, `elapsed_seconds`, counters, and next executable action. Do
   not approve or create a replacement request.

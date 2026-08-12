@@ -413,16 +413,16 @@ while :; do
 		def valid_count:
 			type == "number" and floor == . and . >= 0;
 		def timestamp_parts:
-			if type != "string" or (test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$") | not) then
+			if type != "string" or (test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,9})?Z$") | not) then
 				null
 			else
-				capture("^(?<base>[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2})(?:\\.(?<fraction>[0-9]+))?Z$") as $parts |
+				capture("^(?<base>[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2})(?:\\.(?<fraction>[0-9]{1,9}))?Z$") as $parts |
 				(try (($parts.base + "Z") | fromdateiso8601) catch null) as $epoch |
 				if $epoch == null or (($epoch | todateiso8601) != ($parts.base + "Z")) then null
-				else {epoch: $epoch} end
+				else {key: ($parts.base + "." + (((($parts.fraction // "") + "000000000")[0:9])) + "Z")} end
 			end;
-		def timestamp_value:
-			timestamp_parts | if . == null then null else .epoch end;
+		def timestamp_key:
+			timestamp_parts | if . == null then null else .key end;
 		def valid_id:
 			if (.id | type) == "string" then (.id | length) > 0 else false end;
 		def explicit_commit:
@@ -436,15 +436,15 @@ while :; do
 			elif ($commit | type) != "string" then false
 			elif $commit == $head then .head_status == "current"
 			else .head_status == "stale" end;
-		def in_request_window($classification):
+		def in_request_window($classification; $deadline_key):
 			.response_timestamp as $raw |
-			($raw | timestamp_value) as $timestamp |
-			($classification.request.trigger_created_at | timestamp_value) as $start |
-			($classification.window.end | if . == null then null else timestamp_value end) as $window_end |
+			($raw | timestamp_key) as $timestamp |
+			($classification.request.trigger_created_at | timestamp_key) as $start |
+			($classification.window.end | if . == null then null else timestamp_key end) as $window_end |
 			if $timestamp == null or $start == null then false
 			else
 				$timestamp > $start and
-				$timestamp <= $classification.request.deadline_unix_seconds and
+				$timestamp <= $deadline_key and
 				($window_end == null or $timestamp < $window_end)
 			end;
 		def valid_source($source):
@@ -452,7 +452,7 @@ while :; do
 			else
 				.source == $source and
 				valid_id and
-				((.response_timestamp | timestamp_value) != null) and
+				((.response_timestamp | timestamp_key) != null) and
 				(.head_status | IN("current", "stale", "unknown"))
 			end;
 		def valid_formal($state):
@@ -462,10 +462,11 @@ while :; do
 				((.state | type) == "string") and
 				((.state | ascii_upcase) == $state) and
 				valid_id and
-				((.response_timestamp | timestamp_value) != null) and
+				((.response_timestamp | timestamp_key) != null) and
 				(.head_status | IN("current", "stale", "unknown"))
 			end;
 		.snapshot.classification as $classification |
+		(($classification.request.deadline_unix_seconds | todateiso8601) | sub("Z$"; ".000000000Z")) as $deadline_key |
 		($classification | type == "object") and
 		($classification.protocol == "review-classification/v1") and
 		($classification.request | type == "object") and
@@ -477,8 +478,8 @@ while :; do
 		($classification.request.trigger_created_at == $request.trigger_created_at) and
 		($classification.request.deadline_at == $request.deadline_at) and
 		($classification.request.deadline_unix_seconds == $request.deadline_unix_seconds) and
-		(($classification.request.trigger_created_at | timestamp_value) != null) and
-		(($classification.request.trigger_created_at | timestamp_value) <= $classification.request.deadline_unix_seconds) and
+		(($classification.request.trigger_created_at | timestamp_key) != null) and
+		(($classification.request.trigger_created_at | timestamp_key) <= $deadline_key) and
 		($classification.observed_head_sha == $request.head_sha) and
 		($classification.request_state | IN("active", "superseded")) and
 		($classification.decision | IN("pending", "responded", "approved", "changes_requested")) and
@@ -494,17 +495,17 @@ while :; do
 			 ($classification.window.next_trigger.body | startswith($request.trigger_prefix)) and
 			 ($classification.window.next_trigger.id | type) == "string" and
 			 ($classification.window.next_trigger.id | length) > 0 and
-			 (($classification.window.next_trigger.created_at | timestamp_value) != null) and
-			 (($classification.window.next_trigger.created_at | timestamp_value) > ($request.trigger_created_at | timestamp_value)))) and
+			 (($classification.window.next_trigger.created_at | timestamp_key) != null) and
+			 (($classification.window.next_trigger.created_at | timestamp_key) > ($request.trigger_created_at | timestamp_key)))) and
 		(($classification.request_state == "active" and $classification.window.next_trigger == null) or
 			($classification.request_state == "superseded" and ($classification.window.next_trigger | type) == "object")) and
 		($classification.sources | type == "object") and
 		($classification.sources.top_level | type == "array") and
 		($classification.sources.formal_reviews | type == "array") and
 		($classification.sources.inline_comments | type == "array") and
-		($classification.sources.top_level | all(.[]; valid_source("top_level") and .head_status == "current" and (.body | type) == "string" and ((.body | startswith($request.trigger_prefix)) | not) and in_request_window($classification))) and
-		($classification.sources.formal_reviews | all(.[]; (valid_formal("COMMENTED") or valid_formal("APPROVED") or valid_formal("CHANGES_REQUESTED")) and valid_head_status($request.head_sha) and in_request_window($classification))) and
-		($classification.sources.inline_comments | all(.[]; valid_source("inline_comment") and valid_head_status($request.head_sha) and in_request_window($classification))) and
+		($classification.sources.top_level | all(.[]; valid_source("top_level") and .head_status == "current" and (.body | type) == "string" and ((.body | startswith($request.trigger_prefix)) | not) and in_request_window($classification; $deadline_key))) and
+		($classification.sources.formal_reviews | all(.[]; (valid_formal("COMMENTED") or valid_formal("APPROVED") or valid_formal("CHANGES_REQUESTED")) and valid_head_status($request.head_sha) and in_request_window($classification; $deadline_key))) and
+		($classification.sources.inline_comments | all(.[]; valid_source("inline_comment") and valid_head_status($request.head_sha) and in_request_window($classification; $deadline_key))) and
 		($classification.response_counts | type == "object") and
 		($classification.response_counts.top_level | valid_count) and
 		($classification.response_counts.formal_reviews | valid_count) and
@@ -512,17 +513,17 @@ while :; do
 		($classification.response_counts.top_level == ($classification.sources.top_level | length)) and
 		($classification.response_counts.formal_reviews == ($classification.sources.formal_reviews | length)) and
 		($classification.response_counts.inline_comments == ($classification.sources.inline_comments | length)) and
-		(($classification.response_counts.top_level + $classification.response_counts.formal_reviews + $classification.response_counts.inline_comments) > 0) and
+		(($classification.request_state == "superseded") or ($classification.response_counts.top_level + $classification.response_counts.formal_reviews + $classification.response_counts.inline_comments) > 0) and
 		($classification.formal | type == "object") and
 		($classification.formal.decision | IN("none", "approved", "changes_requested", "ambiguous")) and
 		($classification.formal.approval_evidence | type == "array") and
-		($classification.formal.approval_evidence | all(.[]; valid_formal("APPROVED") and valid_head_status($request.head_sha) and .head_status == "current" and in_request_window($classification))) and
+		($classification.formal.approval_evidence | all(.[]; valid_formal("APPROVED") and valid_head_status($request.head_sha) and .head_status == "current" and in_request_window($classification; $deadline_key))) and
 		($classification.formal.approval_evidence | all(.[]; . as $evidence | any($classification.sources.formal_reviews[]; . == $evidence))) and
 		($classification.formal.ambiguous_approval_evidence | type == "array") and
-		($classification.formal.ambiguous_approval_evidence | all(.[]; valid_formal("APPROVED") and valid_head_status($request.head_sha) and .head_status != "current" and in_request_window($classification))) and
+		($classification.formal.ambiguous_approval_evidence | all(.[]; valid_formal("APPROVED") and valid_head_status($request.head_sha) and .head_status != "current" and in_request_window($classification; $deadline_key))) and
 		($classification.formal.ambiguous_approval_evidence | all(.[]; . as $evidence | any($classification.sources.formal_reviews[]; . == $evidence))) and
 		($classification.formal.requested_changes | type == "array") and
-		($classification.formal.requested_changes | all(.[]; valid_formal("CHANGES_REQUESTED") and valid_head_status($request.head_sha) and in_request_window($classification))) and
+		($classification.formal.requested_changes | all(.[]; valid_formal("CHANGES_REQUESTED") and valid_head_status($request.head_sha) and in_request_window($classification; $deadline_key))) and
 		($classification.formal.requested_changes | all(.[]; . as $evidence | any($classification.sources.formal_reviews[]; . == $evidence))) and
 		($classification.formal.decision == (if (($classification.formal.requested_changes | length) > 0) then "changes_requested" elif (($classification.formal.approval_evidence | length) > 0) then "approved" elif (($classification.formal.ambiguous_approval_evidence | length) > 0) then "ambiguous" else "none" end)) and
 		($classification.decision == (if $classification.request_state == "superseded" then "pending" elif (($classification.formal.requested_changes | length) > 0) then "changes_requested" elif (($classification.formal.approval_evidence | length) > 0) then "approved" elif (($classification.formal.ambiguous_approval_evidence | length) > 0) then "pending" elif (($classification.response_counts.top_level + $classification.response_counts.formal_reviews + $classification.response_counts.inline_comments) > 0) then "responded" else "pending" end)) and

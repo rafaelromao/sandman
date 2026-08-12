@@ -95,11 +95,11 @@ then
 	exit 0
 fi
 
-reviews_json=$(jq -s 'if length > 0 and all(.[]; type == "array") then add else error("formal reviews must be arrays") end' "$reviews_file" 2>/dev/null) || {
+reviews_json=$(jq -s 'if length > 0 and all(.[]; type == "array" and all(.[]; type == "object")) then add else error("formal reviews must be arrays of objects") end' "$reviews_file" 2>/dev/null) || {
 	jq -cn '{state:"unavailable",observed_head_sha:"",reason:"formal-reviews-invalid",snapshot:null}'
 	exit 0
 }
-inline_json=$(jq -s 'if length > 0 and all(.[]; type == "array") then add else error("inline comments must be arrays") end' "$inline_file" 2>/dev/null) || {
+inline_json=$(jq -s 'if length > 0 and all(.[]; type == "array" and all(.[]; type == "object")) then add else error("inline comments must be arrays of objects") end' "$inline_file" 2>/dev/null) || {
 	jq -cn '{state:"unavailable",observed_head_sha:"",reason:"inline-comments-invalid",snapshot:null}'
 	exit 0
 }
@@ -121,10 +121,10 @@ classification_json=$(jq -cn \
 	def event_timestamp:
 		(.createdAt // .created_at // .submitted_at // .submittedAt // "");
 	def timestamp_parts:
-		if type != "string" or (test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$") | not) then
+		if type != "string" or (test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,9})?Z$") | not) then
 			null
 		else
-			capture("^(?<base>[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2})(?:\\.(?<fraction>[0-9]+))?Z$") as $parts |
+			capture("^(?<base>[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2})(?:\\.(?<fraction>[0-9]{1,9}))?Z$") as $parts |
 			(try (($parts.base + "Z") | fromdateiso8601) catch null) as $epoch |
 			if $epoch == null or (($epoch | todateiso8601) != ($parts.base + "Z")) then
 				null
@@ -157,9 +157,9 @@ classification_json=$(jq -cn \
 		(parsed_event_timestamp) as $event |
 		if $event == null then false
 		else
-			$event.epoch > $start and
-			$event.epoch <= $deadline and
-			($window_end == null or $event.epoch < $window_end)
+			$event.key > $start and
+			$event.key <= $deadline and
+			($window_end == null or $event.key < $window_end)
 		end;
 	def with_metadata($source; $head):
 		require_event_id |
@@ -169,39 +169,41 @@ classification_json=$(jq -cn \
 		.head_status = (if $source == "top_level" then "current" else head_status($head) end);
 
 	($trigger_created_at | timestamp_parts) as $trigger_parts |
-	if $trigger_parts == null or $deadline_unix_seconds < $trigger_parts.epoch then
+	(($deadline_unix_seconds | todateiso8601) | sub("Z$"; ".000000000Z")) as $deadline_key |
+	if $trigger_parts == null or $deadline_key < $trigger_parts.key then
 		error("invalid request timing")
 	else
-		($trigger_parts.epoch) as $trigger_time |
+		($trigger_parts.key) as $trigger_time |
 		($view[0].comments) as $comments |
 		[
 			$comments[]
 			| select((body | startswith($trigger_prefix)))
+			| select(((if (.url? | type) == "string" then .url else "" end) != $trigger_id or event_timestamp != $trigger_created_at) and event_id != $trigger_id)
 			| (parsed_event_timestamp) as $event
-			| select($event != null and $event.epoch > $trigger_time)
-			| require_event_id
-			| {id: event_id, url: (if (.url? | type) == "string" then .url else "" end), body: body, created_at: event_timestamp, _timestamp: $event.epoch}
+			| if $event == null then error("invalid next trigger timestamp")
+			  else select($event.key > $trigger_time)
+			  | require_event_id
+			  | {id: event_id, url: (if (.url? | type) == "string" then .url else "" end), body: body, created_at: event_timestamp, _timestamp: $event.key}
+			  end
 		] | sort_by(._timestamp) | .[0] as $next_trigger_record |
 		($next_trigger_record._timestamp // null) as $next_trigger_time |
 		($next_trigger_record | if . == null then null else del(._timestamp) end) as $next_trigger |
 		[
 			$comments[]
 			| select((.body? | type) == "string")
-			| select(in_window($trigger_time; $next_trigger_time; $deadline_unix_seconds))
+			| select(in_window($trigger_time; $next_trigger_time; $deadline_key))
 			| select((body | startswith($trigger_prefix)) | not)
 			| with_metadata("top_level"; $head_sha)
 		] as $top_level |
 		[
 			$reviews[]
-			| select(type == "object")
 			| select(review_state == "COMMENTED" or review_state == "APPROVED" or review_state == "CHANGES_REQUESTED")
-			| select(in_window($trigger_time; $next_trigger_time; $deadline_unix_seconds))
+			| select(in_window($trigger_time; $next_trigger_time; $deadline_key))
 			| with_metadata("formal_review"; $head_sha)
 		] as $formal_reviews |
 		[
 			$inline[]
-			| select(type == "object")
-			| select(in_window($trigger_time; $next_trigger_time; $deadline_unix_seconds))
+			| select(in_window($trigger_time; $next_trigger_time; $deadline_key))
 			| with_metadata("inline_comment"; $head_sha)
 		] as $inline_comments |
 		({top_level: ($top_level | length), formal_reviews: ($formal_reviews | length), inline_comments: ($inline_comments | length)}) as $response_counts |
@@ -284,7 +286,7 @@ classification_json=$(jq -cn \
 }
 
 response_counts=$(printf '%s' "$classification_json" | jq -c '.response_counts')
-has_response=$(printf '%s' "$response_counts" | jq -r 'if (.top_level + .formal_reviews + .inline_comments) > 0 then "responded" else "pending" end')
+has_response=$(printf '%s' "$classification_json" | jq -r 'if .request_state == "superseded" or (.response_counts.top_level + .response_counts.formal_reviews + .response_counts.inline_comments) > 0 then "responded" else "pending" end')
 jq -cn \
 	--arg state "$has_response" \
 	--arg observed_head_sha "$observed_head" \

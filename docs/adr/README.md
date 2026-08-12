@@ -90,3 +90,4 @@ ADRs are numbered sequentially starting from `0001`. The template ADR (`0000`) i
 | 0049 | Merged pull-request closing-reference enrichment | proposed |
 | 0050 | Configurable delegated review response timeout | proposed |
 | 0051 | Explicit child declarations authorize Specification edges | proposed |
+| 0052 | Request-scoped delegated review response classification | proposed |
