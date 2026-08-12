@@ -292,6 +292,24 @@ func bodyReferencesOutsideBlockerSections(body string) []int {
 		if isBlockerHeading(sec.heading) {
 			continue
 		}
+		if parentHeadingPattern.MatchString(sec.heading) {
+			// Parent-style sections point upward and must not become
+			// child candidates. Preserve the overlap case where a
+			// qualified child heading also contains "parent" by
+			// delegating its structured rows to the shared child parser.
+			childRefs := github.ParseChildrenFromBody(sec.heading + "\n" + sec.content)
+			for _, n := range childRefs {
+				if n == 0 {
+					continue
+				}
+				if _, ok := seen[n]; ok {
+					continue
+				}
+				seen[n] = struct{}{}
+				out = append(out, n)
+			}
+			continue
+		}
 		for _, n := range ExtractIssueReferences(sec.content) {
 			if n == 0 {
 				continue

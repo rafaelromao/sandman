@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -244,6 +245,76 @@ func TestSpecificationResolver_ReviewTimeoutSpecificationExpandsFromBothChildSou
 	want := append(append([]int(nil), children...), parent)
 	if !equalInts(got, want) {
 		t.Fatalf("expected #2527 children plus retained parent %v, got %v", want, got)
+	}
+}
+
+func TestSpecificationResolver_ParentBacklinkIsNotAChild(t *testing.T) {
+	issues := map[int]*github.Issue{
+		2527: {
+			Number: 2527,
+			Title:  "Root specification",
+			Body:   "## Children\n\n- #2538\n- #2559\n",
+		},
+		2538: {
+			Number: 2538,
+			Title:  "Nested specification",
+			Body:   "## Parent\n\n#2527\n\n## Children\n\n- #2556\n- #2557\n- #2558\n",
+		},
+		2559: {
+			Number: 2559,
+			Title:  "Sibling nested specification",
+			Body:   "## Parent\n\n#2527\n\n## Children\n\n- #2543\n- #2544\n",
+		},
+		2556: {Number: 2556, Title: "Leaf 2556", Body: "## Parent\n\n#2538\n"},
+		2557: {Number: 2557, Title: "Leaf 2557", Body: "## Parent\n\n#2538\n", BlockedBy: []int{2556}},
+		2558: {Number: 2558, Title: "Leaf 2558", Body: "## Parent\n\n#2538\n", BlockedBy: []int{2557}},
+		2543: {Number: 2543, Title: "Leaf 2543", Body: "## Parent\n\n#2559\n", BlockedBy: []int{2538}},
+		2544: {Number: 2544, Title: "Leaf 2544", Body: "## Parent\n\n#2559\n", BlockedBy: []int{2543}},
+	}
+	client := &fakeGitHubClient{issues: issues}
+	input := []int{2538, 2543, 2544, 2527, 2556, 2557, 2558, 2559}
+
+	expanded, parentChildren, err := NewSpecificationResolver(client, io.Discard).Resolve(context.Background(), input)
+	if err != nil {
+		t.Fatalf("specification resolution failed: %v", err)
+	}
+	wantParentChildren := map[int][]int{
+		2527: {2538, 2559},
+		2538: {2556, 2557, 2558},
+		2559: {2543, 2544},
+	}
+	if !reflect.DeepEqual(parentChildren, wantParentChildren) {
+		t.Fatalf("expected exact parent-child map %v, got %v", wantParentChildren, parentChildren)
+	}
+
+	resolved, err := NewDependencyResolver(client).Resolve(context.Background(), expanded, true, parentChildren)
+	if err != nil {
+		t.Fatalf("dependency resolution failed with a false parent cycle: %v", err)
+	}
+	wantDeps := map[int][]int{
+		2538: {2556, 2557, 2558},
+		2543: {2538},
+		2544: {2543},
+		2556: nil,
+		2557: {2556},
+		2558: {2557},
+		2559: {2543, 2544},
+		2527: {2538, 2559},
+	}
+	if !reflect.DeepEqual(resolved.Deps, wantDeps) {
+		t.Fatalf("expected exact dependency graph %v, got %v", wantDeps, resolved.Deps)
+	}
+	if !equalInts(resolved.Issues, []int{2556, 2557, 2558, 2538, 2543, 2544, 2559, 2527}) {
+		t.Fatalf("expected leaf-first dependency order, got %v", resolved.Issues)
+	}
+}
+
+func TestBodyReferencesOutsideParentSectionsPreservesQualifiedChildSections(t *testing.T) {
+	body := "## Parent\n\n#10\n\n## Part of\n\n#20\n\n## Children\n\n- #30\n\n## Subissues for parent area\n\n- #40\n"
+
+	got := bodyReferencesOutsideBlockerSections(body)
+	if !equalInts(got, []int{30, 40}) {
+		t.Fatalf("expected parent backlinks to be excluded while qualified child refs remain, got %v", got)
 	}
 }
 
