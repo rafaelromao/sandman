@@ -336,6 +336,15 @@ func TestPRReviewSkill_UsesRequestScopedClassification(t *testing.T) {
 		t.Fatal("could not isolate classification section")
 	}
 	classification := text[step6:step7]
+	approvalStart := strings.Index(classification, "**A. Formal approval detected?**")
+	approvalEnd := strings.Index(classification, "**B. Formal changes requested?**")
+	if approvalStart < 0 || approvalEnd < approvalStart {
+		t.Fatal("could not isolate formal approval classification")
+	}
+	approval := classification[approvalStart:approvalEnd]
+	if !strings.Contains(approval, `classification.request_state == "active"`) {
+		t.Fatal("formal approval must require an active request")
+	}
 	for _, forbidden := range []string{
 		"- `reviewDecision: APPROVED`",
 		"- `reviewDecision: CHANGES_REQUESTED`",

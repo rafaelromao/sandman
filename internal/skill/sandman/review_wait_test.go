@@ -96,6 +96,10 @@ func writeReviewWaitRequest(t *testing.T, path, triggerID, startedAt, deadlineAt
 }
 
 func writeReviewWaitRequestValues(t *testing.T, path, triggerID, startedAt, deadlineAt string, startedUnix, deadlineUnix, timeout int) {
+	writeReviewWaitRequestValuesWithPrefix(t, path, triggerID, startedAt, deadlineAt, startedUnix, deadlineUnix, timeout, "/sandman review")
+}
+
+func writeReviewWaitRequestValuesWithPrefix(t *testing.T, path, triggerID, startedAt, deadlineAt string, startedUnix, deadlineUnix, timeout int, triggerPrefix string) {
 	t.Helper()
 	request := `{
   "protocol": "review-wait/v1",
@@ -103,7 +107,7 @@ func writeReviewWaitRequestValues(t *testing.T, path, triggerID, startedAt, dead
   "pull_request": 42,
   "head_sha": "abc123",
   "trigger_id": "` + triggerID + `",
-  "trigger_prefix": "/sandman review",
+  "trigger_prefix": "` + triggerPrefix + `",
   "trigger_created_at": "` + startedAt + `",
   "confirmed_at": "` + startedAt + `",
   "started_at": "` + startedAt + `",
@@ -131,6 +135,35 @@ func writeReviewObserver(t *testing.T, result string) string {
 		t.Fatalf("write observer: %v", err)
 	}
 	return observer
+}
+
+func writeStructuredReviewObserver(t *testing.T, result string) string {
+	t.Helper()
+	var envelope map[string]any
+	if err := json.Unmarshal([]byte(result), &envelope); err != nil {
+		t.Fatalf("decode observer result: %v", err)
+	}
+	snapshot, ok := envelope["snapshot"].(map[string]any)
+	if !ok {
+		t.Fatalf("observer result snapshot is not an object: %s", result)
+	}
+	snapshot["classification"] = map[string]any{
+		"protocol":          "review-classification/v1",
+		"request":           map[string]any{"repository": "owner/repo", "pull_request": 42, "head_sha": "abc123", "trigger_id": "1001", "trigger_prefix": "/sandman review", "trigger_created_at": "2026-08-11T18:00:01Z", "deadline_at": "2026-08-11T18:30:01Z", "deadline_unix_seconds": 4102444800},
+		"observed_head_sha": "abc123",
+		"request_state":     "active",
+		"decision":          "responded",
+		"window":            map[string]any{"start": "2026-08-11T18:00:01Z", "end": nil, "deadline_at": "2026-08-11T18:30:01Z", "deadline_unix_seconds": 4102444800, "next_trigger": nil},
+		"response_counts":   map[string]any{"top_level": 1, "formal_reviews": 0, "inline_comments": 0},
+		"sources":           map[string]any{"top_level": []any{map[string]any{"id": "1002", "source": "top_level", "response_timestamp": "2026-08-11T18:01:00Z", "head_status": "current", "body": "LGTM"}}, "formal_reviews": []any{}, "inline_comments": []any{}},
+		"formal":            map[string]any{"decision": "none", "approval_evidence": []any{}, "ambiguous_approval_evidence": []any{}, "requested_changes": []any{}},
+		"boundary_evidence": map[string]any{"request": map[string]any{"repository": "owner/repo", "pull_request": 42, "head_sha": "abc123", "trigger_id": "1001", "trigger_prefix": "/sandman review", "trigger_created_at": "2026-08-11T18:00:01Z", "deadline_at": "2026-08-11T18:30:01Z", "deadline_unix_seconds": 4102444800}, "sources": map[string]any{"top_level": []any{map[string]any{"id": "1002", "source": "top_level", "response_timestamp": "2026-08-11T18:01:00Z", "head_status": "current", "body": "LGTM"}}, "formal_reviews": []any{}, "inline_comments": []any{}}},
+	}
+	updated, err := json.Marshal(envelope)
+	if err != nil {
+		t.Fatalf("encode observer result: %v", err)
+	}
+	return writeReviewObserver(t, string(updated))
 }
 
 func runReviewWait(t *testing.T, helper, requestFile, observer string, once bool) reviewWaitResult {
@@ -570,6 +603,23 @@ func TestReviewWaitV1RejectsDeadlineArithmeticMismatch(t *testing.T) {
 	}
 }
 
+func TestReviewWaitV1AlwaysEmitsStructuredUnavailableForMalformedRequestObject(t *testing.T) {
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	helper := filepath.Join(wd, "pr-review", "review-wait-v1.sh")
+	requestFile := filepath.Join(t.TempDir(), "42.review_request.json")
+	if err := os.WriteFile(requestFile, []byte("{}\n"), 0o600); err != nil {
+		t.Fatalf("write malformed request: %v", err)
+	}
+
+	result := runReviewWait(t, helper, requestFile, filepath.Join(t.TempDir(), "missing-observer"), true)
+	if result.Protocol != "review-wait/v1" || result.State != "unavailable" || result.Reason != "request-envelope-invalid" {
+		t.Fatalf("malformed request result = protocol %q/state %q/reason %q, want review-wait/v1/unavailable/request-envelope-invalid", result.Protocol, result.State, result.Reason)
+	}
+}
+
 func TestReviewWaitV1ReturnsRespondedEvidenceAndResumesThatRequest(t *testing.T) {
 	wd, err := os.Getwd()
 	if err != nil {
@@ -578,7 +628,7 @@ func TestReviewWaitV1ReturnsRespondedEvidenceAndResumesThatRequest(t *testing.T)
 	helper := filepath.Join(wd, "pr-review", "review-wait-v1.sh")
 	requestFile := filepath.Join(t.TempDir(), "42.review_request.json")
 	writeReviewWaitRequest(t, requestFile, "1001", "2026-08-11T18:00:01Z", "2026-08-11T18:30:01Z")
-	observer := writeReviewObserver(t, `{"state":"responded","observed_head_sha":"abc123","snapshot":{"comments":[{"body":"LGTM"}],"reviews":[],"inline_comments":[]}}`)
+	observer := writeStructuredReviewObserver(t, `{"state":"responded","observed_head_sha":"abc123","snapshot":{"comments":[{"body":"LGTM"}],"reviews":[],"inline_comments":[]}}`)
 
 	first := runReviewWait(t, helper, requestFile, observer, true)
 	second := runReviewWait(t, helper, requestFile, observer, true)
@@ -591,6 +641,83 @@ func TestReviewWaitV1ReturnsRespondedEvidenceAndResumesThatRequest(t *testing.T)
 	}
 	if second.Request.TriggerID != "1001" || second.ObservedHead != "abc123" {
 		t.Fatalf("resumed response identity = trigger %q/head %q", second.Request.TriggerID, second.ObservedHead)
+	}
+}
+
+func TestReviewWaitV1RejectsRespondedEvidenceWithoutClassification(t *testing.T) {
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	helper := filepath.Join(wd, "pr-review", "review-wait-v1.sh")
+	requestFile := filepath.Join(t.TempDir(), "42.review_request.json")
+	writeReviewWaitRequest(t, requestFile, "1001", "2026-08-11T18:00:01Z", "2026-08-11T18:30:01Z")
+	observer := writeReviewObserver(t, `{"state":"responded","observed_head_sha":"abc123","snapshot":{"comments":[{"body":"LGTM"}],"reviews":[],"inline_comments":[]}}`)
+
+	result := runReviewWait(t, helper, requestFile, observer, true)
+	if result.State != "unavailable" || result.Reason != "observer-classification-invalid" {
+		t.Fatalf("missing classification result = %q/%q, want unavailable/observer-classification-invalid", result.State, result.Reason)
+	}
+}
+
+func TestReviewWaitV1RejectsInconsistentClassification(t *testing.T) {
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	helper := filepath.Join(wd, "pr-review", "review-wait-v1.sh")
+	requestFile := filepath.Join(t.TempDir(), "42.review_request.json")
+	writeReviewWaitRequest(t, requestFile, "1001", "2026-08-11T18:00:01Z", "2026-08-11T18:30:01Z")
+	observer := writeStructuredReviewObserver(t, `{"state":"responded","observed_head_sha":"abc123","snapshot":{"comments":[{"body":"LGTM"}],"reviews":[],"inline_comments":[]}}`)
+	data, err := os.ReadFile(observer)
+	if err != nil {
+		t.Fatalf("read observer: %v", err)
+	}
+	updated := strings.Replace(string(data), `"decision":"responded"`, `"decision":"approved"`, 1)
+	if updated == string(data) {
+		t.Fatal("structured observer fixture did not contain its decision")
+	}
+	if err := os.WriteFile(observer, []byte(updated), 0o700); err != nil {
+		t.Fatalf("write malformed observer: %v", err)
+	}
+
+	result := runReviewWait(t, helper, requestFile, observer, true)
+	if result.State != "unavailable" || result.Reason != "observer-classification-invalid" {
+		t.Fatalf("inconsistent classification result = %q/%q, want unavailable/observer-classification-invalid", result.State, result.Reason)
+	}
+}
+
+func TestReviewWaitV1RejectsSyntheticFormalApprovalEvidence(t *testing.T) {
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	helper := filepath.Join(wd, "pr-review", "review-wait-v1.sh")
+	requestFile := filepath.Join(t.TempDir(), "42.review_request.json")
+	writeReviewWaitRequest(t, requestFile, "1001", "2026-08-11T18:00:01Z", "2026-08-11T18:30:01Z")
+	observer := writeStructuredReviewObserver(t, `{"state":"responded","observed_head_sha":"abc123","snapshot":{"comments":[{"body":"LGTM"}],"reviews":[],"inline_comments":[]}}`)
+	data, err := os.ReadFile(observer)
+	if err != nil {
+		t.Fatalf("read observer: %v", err)
+	}
+	syntheticSource := `{"id":2001,"state":"COMMENTED","response_timestamp":"2026-08-11T18:02:00Z","head_status":"unknown","source":"formal_review"}`
+	syntheticApproval := `{"id":999,"state":"APPROVED","response_timestamp":"2026-08-11T18:02:00Z","head_status":"current","source":"formal_review"}`
+	updated := string(data)
+	updated = strings.Replace(updated, `"formal_reviews":[]`, `"formal_reviews":[`+syntheticSource+`]`, 1)
+	updated = strings.Replace(updated, `"formal_reviews":0`, `"formal_reviews":1`, 1)
+	updated = strings.Replace(updated, `"approval_evidence":[]`, `"approval_evidence":[`+syntheticApproval+`]`, 1)
+	updated = strings.Replace(updated, `"decision":"none"`, `"decision":"approved"`, 1)
+	updated = strings.Replace(updated, `"decision":"responded"`, `"decision":"approved"`, 1)
+	if updated == string(data) {
+		t.Fatal("synthetic classification fixture was not changed")
+	}
+	if err := os.WriteFile(observer, []byte(updated), 0o700); err != nil {
+		t.Fatalf("write synthetic observer: %v", err)
+	}
+
+	result := runReviewWait(t, helper, requestFile, observer, true)
+	if result.State != "unavailable" || result.Reason != "observer-classification-invalid" {
+		t.Fatalf("synthetic approval result = %q/%q, want unavailable/observer-classification-invalid", result.State, result.Reason)
 	}
 }
 
@@ -649,7 +776,7 @@ func TestReviewWaitV1DoesNotReturnLateObserverEvidenceAsResponded(t *testing.T) 
 	helper := filepath.Join(wd, "pr-review", "review-wait-v1.sh")
 	requestFile := filepath.Join(t.TempDir(), "42.review_request.json")
 	writeReviewWaitRequest(t, requestFile, "1001", "2026-08-11T18:00:01Z", "2026-08-11T18:30:01Z")
-	observer := writeReviewObserver(t, `{"state":"responded","observed_head_sha":"abc123","snapshot":{"comments":[{"body":"late"}],"reviews":[],"inline_comments":[]}}`)
+	observer := writeStructuredReviewObserver(t, `{"state":"responded","observed_head_sha":"abc123","snapshot":{"comments":[{"body":"late"}],"reviews":[],"inline_comments":[]}}`)
 	clock := filepath.Join(t.TempDir(), "clock.sh")
 	clockState := filepath.Join(t.TempDir(), "clock.state")
 	if err := os.WriteFile(clockState, []byte("0\n"), 0o600); err != nil {
@@ -757,7 +884,7 @@ func TestReviewWaitV1UnavailableIsTerminalForSameTrigger(t *testing.T) {
 		t.Fatalf("first result = %q/%q, want unavailable/api-unavailable", first.State, first.Reason)
 	}
 
-	respondedObserver := writeReviewObserver(t, `{"state":"responded","observed_head_sha":"abc123","snapshot":{"comments":[{"body":"LGTM"}],"reviews":[],"inline_comments":[]}}`)
+	respondedObserver := writeStructuredReviewObserver(t, `{"state":"responded","observed_head_sha":"abc123","snapshot":{"comments":[{"body":"LGTM"}],"reviews":[],"inline_comments":[]}}`)
 	second := runReviewWait(t, helper, requestFile, respondedObserver, true)
 	if second.State != "unavailable" || second.Reason != "api-unavailable" {
 		t.Fatalf("same-trigger re-entry = %q/%q, want unavailable/api-unavailable", second.State, second.Reason)
@@ -782,7 +909,7 @@ func TestReviewWaitV1CoordinatorFailureIsTerminalForSameTrigger(t *testing.T) {
 		t.Fatalf("first result = %q/%q, want unavailable/observer-failed", first.State, first.Reason)
 	}
 
-	respondedObserver := writeReviewObserver(t, `{"state":"responded","observed_head_sha":"abc123","snapshot":{"comments":[{"body":"LGTM"}],"reviews":[],"inline_comments":[]}}`)
+	respondedObserver := writeStructuredReviewObserver(t, `{"state":"responded","observed_head_sha":"abc123","snapshot":{"comments":[{"body":"LGTM"}],"reviews":[],"inline_comments":[]}}`)
 	second := runReviewWait(t, helper, requestFile, respondedObserver, true)
 	if second.State != "unavailable" || second.Reason != "observer-failed" {
 		t.Fatalf("same-trigger re-entry = %q/%q, want unavailable/observer-failed", second.State, second.Reason)
@@ -973,7 +1100,7 @@ if [ "$1" = "pr" ] && [ "$2" = "view" ]; then
 fi
 if [ "$1" = "api" ]; then
   case "$2" in
-    */reviews) printf '%s\n' '[]' ;;
+	    */reviews) printf '%s\n' '[{"id":2001,"state":"APPROVED","submitted_at":"2026-08-11T18:01:30Z","commit_id":"abc123","body":"first request approval"}]' ;;
     */comments) printf '%s\n' '[]' ;;
     *) exit 2 ;;
   esac
@@ -989,7 +1116,7 @@ exit 2
 		"PATH": bin + ":" + os.Getenv("PATH"),
 	})
 	firstClassification := decodeReviewClassification(t, first)
-	if first.State != "responded" || firstClassification.RequestState != "superseded" || firstClassification.Decision != "pending" {
+	if first.State != "responded" || firstClassification.RequestState != "superseded" || firstClassification.Decision != "pending" || firstClassification.Formal.Decision != "approved" {
 		t.Fatalf("first request = state %q/classification %q/%q, want responded/superseded/pending", first.State, firstClassification.RequestState, firstClassification.Decision)
 	}
 	if len(firstClassification.Sources.TopLevel) != 1 || firstClassification.Sources.TopLevel[0].Body != "first request response" {
@@ -1090,8 +1217,8 @@ exit 2
 		"PATH": bin + ":" + os.Getenv("PATH"),
 	})
 	classification := decodeReviewClassification(t, result)
-	if result.State != "responded" || classification.Decision != "responded" || classification.Formal.Decision != "ambiguous" {
-		t.Fatalf("result = state %q/classification %q/formal %q, want responded/responded/ambiguous", result.State, classification.Decision, classification.Formal.Decision)
+	if result.State != "responded" || classification.Decision != "pending" || classification.Formal.Decision != "ambiguous" {
+		t.Fatalf("result = state %q/classification %q/formal %q, want responded/pending/ambiguous", result.State, classification.Decision, classification.Formal.Decision)
 	}
 	if len(classification.Formal.ApprovalEvidence) != 0 || len(classification.Formal.AmbiguousApprovalEvidence) != 2 {
 		t.Fatalf("approval evidence = current %d/ambiguous %d, want 0/2", len(classification.Formal.ApprovalEvidence), len(classification.Formal.AmbiguousApprovalEvidence))
@@ -1174,5 +1301,93 @@ exit 2
 	})
 	if result.State != "unavailable" || result.Reason != "head-mismatch" {
 		t.Fatalf("stale-head result = %q/%q, want unavailable/head-mismatch", result.State, result.Reason)
+	}
+}
+
+func TestReviewWaitV1IncludesExactDeadlineResponsesAndUsesConfiguredTriggerPrefix(t *testing.T) {
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	helper := filepath.Join(wd, "pr-review", "review-wait-v1.sh")
+	observer := filepath.Join(wd, "pr-review", "review-observe-v1.sh")
+	requestFile := filepath.Join(t.TempDir(), "42.review_request.json")
+	writeReviewWaitRequestValuesWithPrefix(t, requestFile, "1001", "2099-12-31T23:30:00Z", "2100-01-01T00:00:00Z", 4102443000, 4102444800, 1800, "/custom review")
+
+	bin := t.TempDir()
+	gh := filepath.Join(bin, "gh")
+	ghScript := `#!/bin/sh
+if [ "$1" = "pr" ] && [ "$2" = "view" ]; then
+  printf '%s\n' '{"headRefOid":"abc123","comments":[{"id":"1001","url":"https://github.com/owner/repo/pull/42#issuecomment-1001","body":"/custom review","createdAt":"2099-12-31T23:30:00Z","author":{"login":"reviewer"}},{"id":"1002","url":"https://github.com/owner/repo/pull/42#issuecomment-1002","body":"LGTM","createdAt":"2100-01-01T00:00:00.000Z","author":{"login":"reviewer"}},{"id":"1003","url":"https://github.com/owner/repo/pull/42#issuecomment-1003","body":"/sandman review is not configured here","createdAt":"2099-12-31T23:59:59Z","author":{"login":"reviewer"}},{"id":"1004","url":"https://github.com/owner/repo/pull/42#issuecomment-1004","body":"late top-level response","createdAt":"2100-01-01T00:00:01Z","author":{"login":"reviewer"}}],"reviewDecision":"CHANGES_REQUESTED","mergeStateStatus":"CLEAN"}'
+  exit 0
+fi
+if [ "$1" = "api" ]; then
+  case "$2" in
+    */reviews) printf '%s\n' '[{"id":2001,"state":"APPROVED","submitted_at":"2100-01-01T00:00:00Z","commit_id":"abc123","body":"approved at the deadline"},{"id":2002,"state":"CHANGES_REQUESTED","submitted_at":"2100-01-01T00:00:01Z","commit_id":"abc123","body":"late changes"}]' ;;
+    */comments) printf '%s\n' '[{"id":3001,"created_at":"2100-01-01T00:00:00.000Z","body":"inline response at the deadline","commit_id":"abc123"},{"id":3002,"created_at":"2100-01-01T00:00:01Z","body":"late inline response","commit_id":"abc123"}]' ;;
+    *) exit 2 ;;
+  esac
+  exit 0
+fi
+exit 2
+`
+	if err := os.WriteFile(gh, []byte(ghScript), 0o700); err != nil {
+		t.Fatalf("write gh shim: %v", err)
+	}
+
+	result := runReviewWaitWithEnv(t, helper, requestFile, observer, true, map[string]string{
+		"PATH": bin + ":" + os.Getenv("PATH"),
+	})
+	classification := decodeReviewClassification(t, result)
+	if result.State != "responded" || classification.Decision != "approved" {
+		t.Fatalf("result = state %q/decision %q, want responded/approved", result.State, classification.Decision)
+	}
+	if classification.ResponseCounts.TopLevel != 2 || classification.ResponseCounts.FormalReviews != 1 || classification.ResponseCounts.Inline != 1 {
+		t.Fatalf("response counts = %+v, want top-level 2/formal 1/inline 1", classification.ResponseCounts)
+	}
+	if len(classification.Formal.ApprovalEvidence) != 1 || classification.Formal.ApprovalEvidence[0].ResponseTimestamp != "2100-01-01T00:00:00Z" {
+		t.Fatalf("deadline approval evidence = %+v", classification.Formal.ApprovalEvidence)
+	}
+	if !strings.Contains(string(result.Evidence), "late changes") || !strings.Contains(string(result.Evidence), "late inline response") {
+		t.Fatalf("raw snapshot lost post-deadline audit records: %s", result.Evidence)
+	}
+}
+
+func TestReviewWaitV1FailsClosedOnMalformedResponsePayload(t *testing.T) {
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	helper := filepath.Join(wd, "pr-review", "review-wait-v1.sh")
+	observer := filepath.Join(wd, "pr-review", "review-observe-v1.sh")
+	requestFile := filepath.Join(t.TempDir(), "42.review_request.json")
+	writeReviewWaitRequest(t, requestFile, "1001", "2099-12-31T23:30:00Z", "2100-01-01T00:00:00Z")
+
+	bin := t.TempDir()
+	gh := filepath.Join(bin, "gh")
+	ghScript := `#!/bin/sh
+if [ "$1" = "pr" ] && [ "$2" = "view" ]; then
+  printf '%s\n' '{"headRefOid":"abc123","comments":[{"id":"1001","url":"https://github.com/owner/repo/pull/42#issuecomment-1001","body":"/sandman review","createdAt":"2099-12-31T23:30:00Z"}],"reviewDecision":"APPROVED","mergeStateStatus":"CLEAN"}'
+  exit 0
+fi
+if [ "$1" = "api" ]; then
+  case "$2" in
+    */reviews) printf '%s\n' '{}' ;;
+    */comments) printf '%s\n' '[]' ;;
+    *) exit 2 ;;
+  esac
+  exit 0
+fi
+exit 2
+`
+	if err := os.WriteFile(gh, []byte(ghScript), 0o700); err != nil {
+		t.Fatalf("write gh shim: %v", err)
+	}
+
+	result := runReviewWaitWithEnv(t, helper, requestFile, observer, true, map[string]string{
+		"PATH": bin + ":" + os.Getenv("PATH"),
+	})
+	if result.State != "unavailable" || result.Reason != "formal-reviews-invalid" {
+		t.Fatalf("malformed response result = %q/%q, want unavailable/formal-reviews-invalid", result.State, result.Reason)
 	}
 }

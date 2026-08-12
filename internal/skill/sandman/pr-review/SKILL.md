@@ -338,6 +338,7 @@ If `mergeStateStatus == "DIRTY"`:
 #### Step 6: Read and classify feedback
 
 **A. Formal approval detected?**
+- `classification.request_state == "active"`, AND
 - `classification.formal.decision == "approved"`, with a non-empty
   `classification.formal.approval_evidence` containing current-head formal
   `APPROVED` records
@@ -357,6 +358,8 @@ approval, especially when an approval has a stale or unknown commit identity.
 **C. Informal approval (implicit approval without formal review)?**
 - `classification.request_state == "active"`, AND
 - No pending `classification.formal.requested_changes`, AND
+- `classification.formal.decision == "none"` and
+  `classification.formal.ambiguous_approval_evidence` is empty, AND
 - A request-scoped `COMMENTED` review OR top-level comment with approval keywords, AND
 - The source is not marked `head_status: "stale"` or `"unknown"`, AND
 - **The approval is for the current diff** — its `createdAt` is **after** the SHA recorded in `.sandman/state/<N>.head_sha` (the SHA at which the most recent `{{REVIEW_COMMAND}}` was posted), AND
