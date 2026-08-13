@@ -365,6 +365,43 @@ func TestPlanSkill_PreservesConsensusWithoutLocalWallClockCap(t *testing.T) {
 	}
 }
 
+func TestTDDSkill_PreservesConsensusAndRedGreenWithoutLocalWallClockCap(t *testing.T) {
+	text, ok := readSkillMarkdown(t)["tdd/SKILL.md"]
+	if !ok {
+		t.Fatal("expected tdd/SKILL.md")
+	}
+
+	for _, forbidden := range []string{
+		"20-minute",
+		"20 minute",
+		"20 minutes",
+		"wall-clock timer",
+		"hard-reject",
+		"re-spawn",
+		"subagent stuck",
+		"timeout-triggered",
+		"fixed retry count",
+		"retry amplification",
+	} {
+		if strings.Contains(strings.ToLower(text), forbidden) {
+			t.Errorf("TDD skill must not prescribe local liveness cap language %q", forbidden)
+		}
+	}
+
+	for _, required := range []string{
+		"Ask a subagent to review the plan, then proceed automatically after reaching consensus",
+		"RED:",
+		"GREEN:",
+		"If the planning review subagent fails or returns no decision",
+		"parent workflow's normal recovery and continuation handling",
+		"`run_idle_timeout` remains the only execution watchdog",
+	} {
+		if !strings.Contains(text, required) {
+			t.Errorf("TDD skill must preserve normal execution handling %q", required)
+		}
+	}
+}
+
 func TestSkills_NoObsoleteSelfReviewSkillReference(t *testing.T) {
 	obsolete := "sandman-self" + "-review"
 	for path, text := range readSkillMarkdown(t) {
