@@ -312,6 +312,9 @@ func validateReviewClassification(classification map[string]any, request reviewR
 	if stringValue(formal, "decision") != formalDecision {
 		return reviewResponseCounts{}, retainedReviewTimeout, fmt.Errorf("review classification formal precedence is invalid")
 	}
+	if !reviewFormalEvidenceMatchesSources(formalReviews, approvalEvidence, ambiguousApprovalEvidence, requestedChanges) {
+		return reviewResponseCounts{}, retainedReviewTimeout, fmt.Errorf("review classification formal evidence does not match sources")
+	}
 	expectedDecision := "pending"
 	switch {
 	case requestState == "superseded":
@@ -430,6 +433,29 @@ func containsReviewEvidence(sources []any, evidence map[string]any) bool {
 		}
 	}
 	return false
+}
+
+func reviewFormalEvidenceMatchesSources(sources, approvals, ambiguousApprovals, requestedChanges []any) bool {
+	expectedApprovals := make([]any, 0, len(approvals))
+	expectedAmbiguousApprovals := make([]any, 0, len(ambiguousApprovals))
+	expectedRequestedChanges := make([]any, 0, len(requestedChanges))
+	for _, raw := range sources {
+		entry, ok := raw.(map[string]any)
+		if !ok {
+			return false
+		}
+		switch {
+		case strings.EqualFold(stringValue(entry, "state"), "CHANGES_REQUESTED"):
+			expectedRequestedChanges = append(expectedRequestedChanges, entry)
+		case strings.EqualFold(stringValue(entry, "state"), "APPROVED") && stringValue(entry, "head_status") == "current":
+			expectedApprovals = append(expectedApprovals, entry)
+		case strings.EqualFold(stringValue(entry, "state"), "APPROVED"):
+			expectedAmbiguousApprovals = append(expectedAmbiguousApprovals, entry)
+		}
+	}
+	return reflect.DeepEqual(approvals, expectedApprovals) &&
+		reflect.DeepEqual(ambiguousApprovals, expectedAmbiguousApprovals) &&
+		reflect.DeepEqual(requestedChanges, expectedRequestedChanges)
 }
 
 func reviewClassificationCounts(classification map[string]any, top, formal, inline int) (reviewResponseCounts, bool) {
@@ -617,7 +643,7 @@ func validateReviewRequest(request reviewRequestEnvelope, state reviewWaitState,
 	if state.HeadSHA != request.HeadSHA || state.TriggerID != request.TriggerID || state.TriggerPrefix != request.TriggerPrefix || state.TriggerCreatedAt != request.TriggerCreatedAt || state.ConfirmedAt != request.ConfirmedAt || state.StartedAt != request.StartedAt || state.DeadlineAt != request.DeadlineAt || state.StartedUnixSeconds != request.StartedUnixSeconds || state.EffectiveTimeout != request.EffectiveTimeout || state.DeadlineUnixSeconds != request.DeadlineUnixSeconds {
 		return fmt.Errorf("review wait state does not match the confirmed request")
 	}
-	if state.ObservedHeadSHA != "" && !strings.EqualFold(state.ObservedHeadSHA, request.HeadSHA) {
+	if strings.TrimSpace(state.ObservedHeadSHA) == "" || !strings.EqualFold(state.ObservedHeadSHA, request.HeadSHA) {
 		return fmt.Errorf("review wait observed head does not match the request")
 	}
 	if !slices.Equal(request.PollPlan, state.PollPlan) {

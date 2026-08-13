@@ -961,6 +961,62 @@ func TestExternalGate_LateApprovalRejectsMissingClassification(t *testing.T) {
 	}
 }
 
+func TestExternalGate_LateApprovalRejectsConflictingFormalEvidence(t *testing.T) {
+	workDir := testenv.MkdirShort(t, "sm-orch-")
+	writeRetainedCurrentHeadApproval(t, workDir)
+	statePath := filepath.Join(workDir, ".sandman", "state", "17.review_request.json.state")
+	state, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatalf("read state: %v", err)
+	}
+	state = []byte(mutateRetainedClassification(string(state), func(classification map[string]any) {
+		addUnclassifiedRequestedChange(classification)
+	}))
+	if err := os.WriteFile(statePath, state, 0o600); err != nil {
+		t.Fatalf("write state: %v", err)
+	}
+
+	session := &runSession{
+		issueNumber: 42,
+		deps: runDeps{githubClient: &fakeGitHubClient{prs: map[string]*github.PR{gateTestBranch: {
+			Number: 17, State: "open", HeadRefOid: "current-sha", StatusCheckRollup: "success", ReviewDecision: "APPROVED", MergeStateStatus: "CLEAN",
+		}}}, errorLog: io.Discard},
+		opts: gateTestRunOptions(),
+	}
+	status, extras, handled := session.handleReviewTimeoutGate(context.Background(), workDir, gateTestBranch, "", "run-test", "current-sha")
+	if !handled || status != "blocked" || extras["gate"] != gateReviewTimeoutError {
+		t.Fatalf("conflicting formal evidence result = (%q, %#v, %t), want retained state error", status, extras, handled)
+	}
+}
+
+func TestExternalGate_LateApprovalRejectsMissingObservedHead(t *testing.T) {
+	workDir := testenv.MkdirShort(t, "sm-orch-")
+	writeRetainedCurrentHeadApproval(t, workDir)
+	statePath := filepath.Join(workDir, ".sandman", "state", "17.review_request.json.state")
+	state, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatalf("read state: %v", err)
+	}
+	state = []byte(mutateRetainedState(string(state), func(envelope map[string]any) {
+		envelope["observed_head_sha"] = ""
+	}))
+	if err := os.WriteFile(statePath, state, 0o600); err != nil {
+		t.Fatalf("write state: %v", err)
+	}
+
+	session := &runSession{
+		issueNumber: 42,
+		deps: runDeps{githubClient: &fakeGitHubClient{prs: map[string]*github.PR{gateTestBranch: {
+			Number: 17, State: "open", HeadRefOid: "current-sha", StatusCheckRollup: "success", ReviewDecision: "APPROVED", MergeStateStatus: "CLEAN",
+		}}}, errorLog: io.Discard},
+		opts: gateTestRunOptions(),
+	}
+	status, extras, handled := session.handleReviewTimeoutGate(context.Background(), workDir, gateTestBranch, "", "run-test", "current-sha")
+	if !handled || status != "blocked" || extras["gate"] != gateReviewTimeoutError {
+		t.Fatalf("missing observed head result = (%q, %#v, %t), want retained state error", status, extras, handled)
+	}
+}
+
 func TestExternalGate_LateApprovalLookupFailureCannotFallThroughToAggregateApproval(t *testing.T) {
 	workDir := testenv.MkdirShort(t, "sm-orch-")
 	writeRetainedCurrentHeadApproval(t, workDir)
@@ -982,18 +1038,42 @@ func TestExternalGate_LateApprovalLookupFailureCannotFallThroughToAggregateAppro
 }
 
 func mutateRetainedClassification(state string, mutate func(map[string]any)) string {
+	return mutateRetainedState(state, func(envelope map[string]any) {
+		evidence, _ := envelope["evidence"].(map[string]any)
+		classification, _ := evidence["classification"].(map[string]any)
+		mutate(classification)
+	})
+}
+
+func mutateRetainedState(state string, mutate func(map[string]any)) string {
 	var envelope map[string]any
 	if err := json.Unmarshal([]byte(state), &envelope); err != nil {
 		return state
 	}
-	evidence, _ := envelope["evidence"].(map[string]any)
-	classification, _ := evidence["classification"].(map[string]any)
-	mutate(classification)
+	mutate(envelope)
 	updated, err := json.Marshal(envelope)
 	if err != nil {
 		return state
 	}
 	return string(updated)
+}
+
+func addUnclassifiedRequestedChange(classification map[string]any) {
+	sources, _ := classification["sources"].(map[string]any)
+	formalSources, _ := sources["formal_reviews"].([]any)
+	change := map[string]any{
+		"id":                 "review-2",
+		"source":             "formal_review",
+		"state":              "CHANGES_REQUESTED",
+		"response_timestamp": "2026-08-13T10:06:00.000000000Z",
+		"commit_id":          "current-sha",
+		"head_status":        "current",
+	}
+	sources["formal_reviews"] = append(formalSources, change)
+	counts, _ := classification["response_counts"].(map[string]any)
+	counts["formal_reviews"] = float64(2)
+	boundary, _ := classification["boundary_evidence"].(map[string]any)
+	boundary["sources"] = sources
 }
 
 func moveApprovalToAmbiguous(classification map[string]any, commit, headStatus string) {
