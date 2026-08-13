@@ -402,6 +402,47 @@ func TestTDDSkill_PreservesConsensusAndRedGreenWithoutLocalWallClockCap(t *testi
 	}
 }
 
+func TestCodeReviewSkill_PreservesReviewAxesWithoutLocalWallClockCap(t *testing.T) {
+	text, ok := readSkillMarkdown(t)["code-review/SKILL.md"]
+	if !ok {
+		t.Fatal("expected code-review/SKILL.md")
+	}
+
+	for _, forbidden := range []string{
+		"20-minute",
+		"20 minute",
+		"20 minutes",
+		"wall-clock",
+		"hard-reject",
+		"retry that axis",
+		"stalled attempts",
+		"sub-agent stuck",
+		"timeout-retry",
+		"retry amplification",
+	} {
+		if strings.Contains(strings.ToLower(text), forbidden) {
+			t.Errorf("code-review skill must not prescribe local liveness cap language %q", forbidden)
+		}
+	}
+
+	for _, required := range []string{
+		"Standards",
+		"Spec",
+		"Give the Standards reviewer",
+		"Give the Spec reviewer",
+		"When a review agent fails or a blocked review ends with no decision",
+		"exact failure in `.sandman/task.md` and the run log, along with the next executable action",
+		"## Pull-request review context",
+		"Those inputs are authoritative.",
+		"Do not trigger, poll, fetch, post to, merge, commit to, push to, or remediate",
+		"atomic temp-file-and-rename write",
+	} {
+		if !strings.Contains(text, required) {
+			t.Errorf("code-review skill must preserve review behavior %q", required)
+		}
+	}
+}
+
 func TestSkills_NoObsoleteSelfReviewSkillReference(t *testing.T) {
 	obsolete := "sandman-self" + "-review"
 	for path, text := range readSkillMarkdown(t) {
