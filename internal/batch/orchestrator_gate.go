@@ -164,10 +164,10 @@ func checkPRExternalGateWithHead(ctx context.Context, client github.Client, bran
 	return "pending", nil
 }
 
-// handleExternalGate turns a clean agent exit into a terminal external-gate
-// result when the branch has an open PR waiting on CI or review. It is shared
-// by fresh and continuation runs so an explicit intervention cannot re-enter
-// the old failure/retry path while the same PR gate is still unresolved.
+// handleExternalGate turns an AgentRun exit into a terminal external-gate
+// result when the branch has a PR waiting on CI or review. It is shared by
+// fresh and continuation runs so an explicit intervention cannot re-enter the
+// old failure/retry path while the same PR gate is still unresolved.
 func (s *runSession) handleExternalGate(ctx context.Context, workDir, branch, logPath, runID string) (string, map[string]any, bool) {
 	return s.handleExternalGateWithHostPaths(ctx, workDir, branch, logPath, runID, true)
 }
@@ -238,15 +238,18 @@ func (s *runSession) handleReviewTimeoutGate(ctx context.Context, workDir, branc
 	if err != nil || pr == nil {
 		return s.blockReviewTimeoutStateError(ctx, workDir, logPath, runID)
 	}
-	if pr.Merged || strings.EqualFold(pr.State, "merged") {
-		return s.confirmExternalGate(ctx, workDir, branch, logPath, runID)
-	}
 	handoff, err := readReviewTimeoutHandoff(workDir, repository, pr, currentHead)
 	if err != nil {
 		return s.blockReviewTimeoutStateError(ctx, workDir, logPath, runID)
 	}
 	if handoff == nil {
+		if pr.Merged || strings.EqualFold(pr.State, "merged") {
+			return s.confirmExternalGate(ctx, workDir, branch, logPath, runID)
+		}
 		return "", nil, false
+	}
+	if pr.Merged || strings.EqualFold(pr.State, "merged") {
+		return s.confirmExternalGate(ctx, workDir, branch, logPath, runID)
 	}
 	if ctx.Err() != nil {
 		return "aborted", nil, true

@@ -42,6 +42,12 @@ type reviewResponseCounts struct {
 	Inline        int `json:"inline_comments"`
 }
 
+type persistedReviewResponseCounts struct {
+	TopLevel      *int `json:"top_level"`
+	FormalReviews *int `json:"formal_reviews"`
+	Inline        *int `json:"inline_comments"`
+}
+
 type reviewWaitState struct {
 	Protocol            string              `json:"protocol"`
 	Repository          string              `json:"repository"`
@@ -60,13 +66,13 @@ type reviewWaitState struct {
 	State               string              `json:"state"`
 	Lifecycle           string              `json:"lifecycle"`
 	ObservedHeadSHA     string              `json:"observed_head_sha"`
-	ElapsedSeconds      int                 `json:"elapsed_seconds"`
+	ElapsedSeconds      *int                `json:"elapsed_seconds"`
 	Reason              string              `json:"reason"`
 	Evidence            *reviewWaitEvidence `json:"evidence"`
 }
 
 type reviewWaitEvidence struct {
-	ResponseCounts *reviewResponseCounts `json:"response_counts"`
+	ResponseCounts *persistedReviewResponseCounts `json:"response_counts"`
 }
 
 type reviewTimeoutHandoff struct {
@@ -80,7 +86,7 @@ func reviewTimeoutArtifactsPresent(workDir string) bool {
 		return false
 	}
 	stateDir := filepath.Join(workDir, ".sandman", "state")
-	for _, pattern := range []string{"*.review_request.json", "*.review_request.json.state"} {
+	for _, pattern := range []string{"*.review_request.json", "*.review_request.json.state", "*.head_sha"} {
 		matches, err := filepath.Glob(filepath.Join(stateDir, pattern))
 		if err == nil && len(matches) > 0 {
 			return true
@@ -131,8 +137,19 @@ func readReviewTimeoutHandoff(workDir, repository string, pr *github.PR, current
 	}
 
 	counts := reviewResponseCounts{}
-	if state.Evidence != nil && state.Evidence.ResponseCounts != nil {
-		counts = *state.Evidence.ResponseCounts
+	if state.Evidence != nil {
+		if state.Evidence.ResponseCounts == nil {
+			return nil, fmt.Errorf("timed-out review state has incomplete response counts")
+		}
+		persistedCounts := state.Evidence.ResponseCounts
+		if persistedCounts.TopLevel == nil || persistedCounts.FormalReviews == nil || persistedCounts.Inline == nil {
+			return nil, fmt.Errorf("timed-out review state has incomplete response counts")
+		}
+		counts = reviewResponseCounts{
+			TopLevel:      *persistedCounts.TopLevel,
+			FormalReviews: *persistedCounts.FormalReviews,
+			Inline:        *persistedCounts.Inline,
+		}
 	}
 	if counts.TopLevel < 0 || counts.FormalReviews < 0 || counts.Inline < 0 {
 		return nil, fmt.Errorf("review response counters must not be negative")
@@ -143,7 +160,10 @@ func readReviewTimeoutHandoff(workDir, repository string, pr *github.PR, current
 	if state.Lifecycle != "started" && state.Lifecycle != "resumed" {
 		return nil, fmt.Errorf("timed-out review state has invalid lifecycle")
 	}
-	if state.ElapsedSeconds < 0 {
+	if state.ElapsedSeconds == nil {
+		return nil, fmt.Errorf("timed-out review state is missing elapsed time")
+	}
+	if *state.ElapsedSeconds < 0 {
 		return nil, fmt.Errorf("review wait elapsed time must not be negative")
 	}
 	return &reviewTimeoutHandoff{Request: request, State: state, ResponseCounts: counts}, nil
@@ -203,7 +223,7 @@ func (h *reviewTimeoutHandoff) payload() map[string]any {
 			"started_unix_seconds":      h.Request.StartedUnixSeconds,
 			"deadline_unix_seconds":     h.Request.DeadlineUnixSeconds,
 			"effective_timeout_seconds": h.Request.EffectiveTimeout,
-			"elapsed_seconds":           h.State.ElapsedSeconds,
+			"elapsed_seconds":           *h.State.ElapsedSeconds,
 			"state":                     h.State.State,
 			"response_counts":           h.ResponseCounts,
 			"reason":                    reviewTimeoutReason,

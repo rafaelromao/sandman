@@ -267,7 +267,8 @@ func TestExternalGate_ReviewTimeoutRejectsStaleOrMalformedState(t *testing.T) {
 		issues: map[int]*github.Issue{42: {Number: 42, State: "open", Title: "Fix bug"}},
 		prs: map[string]*github.PR{gateTestBranch: {
 			Number:            17,
-			State:             "open",
+			State:             "merged",
+			Merged:            true,
 			HeadRefName:       gateTestBranch,
 			HeadRefOid:        "current-sha",
 			StatusCheckRollup: "success",
@@ -390,6 +391,18 @@ func TestExternalGate_ReviewTimeoutRejectsInconsistentStatePair(t *testing.T) {
 				return strings.Replace(state, `"elapsed_seconds": 1800`, `"elapsed_seconds": -1`, 1)
 			},
 		},
+		{
+			name: "elapsed missing",
+			mutate: func(state string) string {
+				return strings.Replace(state, "  \"elapsed_seconds\": 1800,\n", "", 1)
+			},
+		},
+		{
+			name: "response counts missing",
+			mutate: func(state string) string {
+				return strings.Replace(state, `"response_counts": {`, `"response_counts": null`, 1)
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -414,6 +427,102 @@ func TestExternalGate_ReviewTimeoutRejectsInconsistentStatePair(t *testing.T) {
 				t.Fatal("readReviewTimeoutHandoff() accepted an inconsistent state pair")
 			}
 		})
+	}
+}
+
+func TestExternalGate_ReviewTimeoutRejectsHeadSidecarWithoutRequest(t *testing.T) {
+	workDir := testenv.MkdirShort(t, "sm-orch-")
+	t.Chdir(workDir)
+	worktreePath := filepath.Join(workDir, "worktree")
+	if err := os.MkdirAll(filepath.Join(worktreePath, ".sandman", "state"), 0o755); err != nil {
+		t.Fatalf("create review state directory: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(worktreePath, ".sandman", "task.md"), []byte("# Task\n"), 0o644); err != nil {
+		t.Fatalf("seed task: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(worktreePath, ".sandman", "state", "17.head_sha"), []byte("current-sha\n"), 0o600); err != nil {
+		t.Fatalf("write review head sidecar: %v", err)
+	}
+
+	sb := &retrySandbox{workDir: worktreePath}
+	sbFactory := &retrySandboxFactory{sandbox: sb}
+	factory := &fakeRunnableFactory{results: []AgentRunResult{{IssueNumber: 42, Status: "success", Branch: gateTestBranch}}}
+	eventLog := &events.JSONLLogger{Path: filepath.Join(t.TempDir(), "events.jsonl")}
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{42: {Number: 42, State: "open", Title: "Fix bug"}},
+		prs: map[string]*github.PR{gateTestBranch: {
+			Number:            17,
+			State:             "open",
+			HeadRefName:       gateTestBranch,
+			HeadRefOid:        "current-sha",
+			StatusCheckRollup: "success",
+			ReviewDecision:    "APPROVED",
+			MergeStateStatus:  "CLEAN",
+		}},
+	}
+	o := NewOrchestrator(client, &retryRenderer{result: "rendered prompt"}, nil, eventLog,
+		WithErrorLog(io.Discard), WithSandboxFactory(sbFactory), WithRunnableFactory(factory), WithRunSessionOpts(gateTestRunOptions()))
+	bc := BatchConfig{
+		Cfg:              &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}},
+		AgentName:        "opencode",
+		AgentCfg:         config.Agent{Command: "echo hi"},
+		IdentityResolver: noopIdentityResolver(),
+		Retries:          3,
+	}
+	result, started := o.newRunExecutor(context.Background(), bc, sbFactory, nil).Execute(context.Background(), RowSpec{
+		IssueNumber: 42, Branches: map[int]string{42: gateTestBranch}, BaseBranch: "main",
+	})
+	if !started || result.Status != "blocked" {
+		t.Fatalf("head-only state result = (%t, %q), want started blocked", started, result.Status)
+	}
+	if len(factory.created) != 1 {
+		t.Fatalf("agent launches = %d, want 1", len(factory.created))
+	}
+	logs, err := eventLog.Read()
+	if err != nil {
+		t.Fatalf("read events: %v", err)
+	}
+	if countEventsByType(logs, "run.retry") != 0 {
+		t.Fatal("head-only review state consumed a retry")
+	}
+	finished := findEvent(logs, "run.finished")
+	if finished == nil || finished.Payload["gate"] != gateReviewTimeoutError {
+		t.Fatalf("head-only state terminal event = %#v, want %q", finished, gateReviewTimeoutError)
+	}
+}
+
+func TestExternalGate_ReviewTimeoutAllowsEmptyEvidenceAsZeroCounters(t *testing.T) {
+	workDir := testenv.MkdirShort(t, "sm-orch-")
+	writeTimedOutReviewRequest(t, workDir)
+	statePath := filepath.Join(workDir, ".sandman", "state", "17.review_request.json.state")
+	state, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatalf("read review state: %v", err)
+	}
+	state = []byte(strings.Replace(string(state), `"evidence": {
+    "response_counts": {
+      "top_level": 0,
+      "formal_reviews": 0,
+      "inline_comments": 0
+    }
+  }`, `"evidence": null`, 1))
+	if err := os.WriteFile(statePath, state, 0o600); err != nil {
+		t.Fatalf("write empty-evidence state: %v", err)
+	}
+
+	handoff, err := readReviewTimeoutHandoff(workDir, "owner/repo", &github.PR{
+		Number:     17,
+		State:      "open",
+		HeadRefOid: "current-sha",
+	}, "current-sha")
+	if err != nil {
+		t.Fatalf("readReviewTimeoutHandoff() error: %v", err)
+	}
+	if handoff == nil {
+		t.Fatal("readReviewTimeoutHandoff() returned no handoff")
+	}
+	if handoff.ResponseCounts != (reviewResponseCounts{}) {
+		t.Fatalf("empty-evidence response counts = %+v, want zero counters", handoff.ResponseCounts)
 	}
 }
 

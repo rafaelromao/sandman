@@ -2663,7 +2663,7 @@ loop:
 		taskPath := filepath.Join(wt.WorkDir(), ".sandman", "task.md")
 		taskContent, _, _ := ReadTaskContent(taskPath)
 		alreadyResolved := hasExactTaskStatus(taskContent, "## Status: already resolved")
-		if s.issueNumber > 0 && ctx.Err() == nil && reviewTimeoutArtifactsPresent(wt.WorkDir()) {
+		if s.issueNumber > 0 && ctx.Err() == nil && !abortedByHeartbeat && !events.RunStatusFromPayload(result.Status).IsAborted() && reviewTimeoutArtifactsPresent(wt.WorkDir()) {
 			hostPathsReady := s.restoreHostPathsBeforeExternalGate(wt)
 			if gateStatus, extras, handled := s.handleExternalGateWithHostPaths(ctx, wt.WorkDir(), branch, logPath, runID, hostPathsReady); handled {
 				result.Status = gateStatus

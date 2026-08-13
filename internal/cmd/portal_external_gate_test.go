@@ -44,6 +44,11 @@ func TestExternalGate_PortalBlockedMessageDistinguishesGate(t *testing.T) {
 			payload: map[string]any{"blocker": "external-gate", "gate": "review-timeout"},
 			want:    "Delegated review request timed out; inspect the retained request and continue after a new confirmed trigger or resolved pull-request gate.",
 		},
+		{
+			name:    "review timeout state error",
+			payload: map[string]any{"blocker": "external-gate", "gate": "review-timeout-state-error"},
+			want:    "Retained delegated-review request state is invalid; repair or remove it and confirm a new review trigger before continuing.",
+		},
 	}
 
 	for _, tt := range tests {
