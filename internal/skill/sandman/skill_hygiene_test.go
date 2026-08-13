@@ -358,9 +358,48 @@ func TestPlanSkill_PreservesConsensusWithoutLocalWallClockCap(t *testing.T) {
 		"Revise until consensus.",
 		"If the review subagent fails or returns no decision",
 		"parent workflow's normal recovery and continuation handling",
+		"`run_idle_timeout` remains the only execution watchdog",
 	} {
 		if !strings.Contains(text, required) {
 			t.Errorf("plan skill must preserve normal review handling %q", required)
+		}
+	}
+}
+
+func TestTargetSkills_NoSemanticSubagentWallClockCaps(t *testing.T) {
+	files := readSkillMarkdown(t)
+	forbidden := []struct {
+		name    string
+		pattern string
+	}{
+		{
+			name:    "subagent time limit",
+			pattern: `(?i)\b(?:subagent|sub-agent|review agent|review subagent)\b[^\n]{0,120}\b(?:wall[- ]clock|time limit|deadline|timer)\b`,
+		},
+		{
+			name:    "time limit before subagent",
+			pattern: `(?i)\b(?:wall[- ]clock|time limit|deadline|timer)\b[^\n]{0,120}\b(?:subagent|sub-agent|review agent|review subagent)\b`,
+		},
+		{
+			name:    "fixed attempt budget",
+			pattern: `(?i)\b(?:up to|maximum|max|fixed|total)\s+(?:\d+|one|two|three|several)\s+(?:attempts?|retries?|times?)\b`,
+		},
+		{
+			name:    "timeout-driven retry",
+			pattern: `(?i)\b(?:timeout|deadline|time limit|cap|stuck)\b[^\n]{0,120}\b(?:retry|retries|respawn|re-spawn)\b|\b(?:retry|retries|respawn|re-spawn)\b[^\n]{0,120}\b(?:timeout|deadline|time limit|cap|stuck)\b`,
+		},
+	}
+
+	for _, path := range []string{"plan/SKILL.md", "tdd/SKILL.md", "code-review/SKILL.md"} {
+		text, ok := files[path]
+		if !ok {
+			t.Fatalf("expected %s", path)
+		}
+		for _, rule := range forbidden {
+			re := regexp.MustCompile(rule.pattern)
+			if match := re.FindString(text); match != "" {
+				t.Errorf("%s contains semantic local liveness cap language %q: %q", path, rule.name, match)
+			}
 		}
 	}
 }

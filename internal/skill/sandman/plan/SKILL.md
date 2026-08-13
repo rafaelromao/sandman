@@ -53,7 +53,7 @@ Turn issue context into a concise, behavior-first plan:
   - full coverage of issue context, ADRs, and sibling skill constraints
   - no hidden implementation steps
 
-If the review subagent fails or returns no decision, preserve the failure and next executable action through the parent workflow's normal recovery and continuation handling rather than adding a skill-local retry policy.
+If the review subagent fails or returns no decision, preserve the failure and next executable action through the parent workflow's normal recovery and continuation handling rather than adding a skill-local retry policy. The parent `run_idle_timeout` remains the only execution watchdog.
 
 ### 5. Finalize the plan
 
