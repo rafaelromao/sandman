@@ -251,14 +251,30 @@ func (s *runSession) handleReviewTimeoutGate(ctx context.Context, workDir, branc
 		}
 		return "", nil, false
 	}
-	if pr.Merged || strings.EqualFold(pr.State, "merged") {
-		return s.confirmExternalGate(ctx, workDir, branch, logPath, runID)
-	}
 	if ctx.Err() != nil {
 		return "aborted", nil, true
 	}
-	s.recordReviewTimeoutGateBlocker(workDir, logPath, runID, handoff)
-	extras := handoff.payload()
+	if pr.Merged || strings.EqualFold(pr.State, "merged") {
+		return s.confirmExternalGate(ctx, workDir, branch, logPath, runID)
+	}
+	if !strings.EqualFold(pr.State, "open") {
+		return s.blockExternalGate(ctx, workDir, logPath, runID, "unavailable")
+	}
+	checkRollup := strings.ToLower(strings.TrimSpace(pr.StatusCheckRollup))
+	mergeStatus := strings.ToUpper(strings.TrimSpace(pr.MergeStateStatus))
+	reviewDecision := strings.ToUpper(strings.TrimSpace(pr.ReviewDecision))
+	if checkRollup == "failure" || mergeStatus == "DIRTY" || mergeStatus == "CONFLICTING" || (reviewDecision == "CHANGES_REQUESTED" && !handoff.hasActionableFeedback()) {
+		return s.blockExternalGate(ctx, workDir, logPath, runID, "failed")
+	}
+	if handoff.hasActionableFeedback() {
+		s.recordReviewOutcomeBlocker(workDir, logPath, runID, handoff, gateActionableFeedback, actionableFeedbackReason, actionableFeedbackNextAction)
+		extras := handoff.payloadFor(gateActionableFeedback, actionableFeedbackReason, actionableFeedbackNextAction)
+		extras["blocker"] = "external-gate"
+		extras["gate"] = gateActionableFeedback
+		return "blocked", extras, true
+	}
+	s.recordReviewOutcomeBlocker(workDir, logPath, runID, handoff, gateReviewTimeout, reviewTimeoutReason, reviewTimeoutNextAction)
+	extras := handoff.payloadFor(gateReviewTimeout, reviewTimeoutReason, reviewTimeoutNextAction)
 	extras["blocker"] = "external-gate"
 	extras["gate"] = gateReviewTimeout
 	return "blocked", extras, true
@@ -367,11 +383,20 @@ func (s *runSession) recordExternalGateBlocker(workDir, logPath, runID, reason s
 }
 
 func (s *runSession) recordReviewTimeoutGateBlocker(workDir, logPath, runID string, handoff *reviewTimeoutHandoff) {
+	s.recordReviewOutcomeBlocker(workDir, logPath, runID, handoff, gateReviewTimeout, reviewTimeoutReason, reviewTimeoutNextAction)
+}
+
+func (s *runSession) recordReviewOutcomeBlocker(workDir, logPath, runID string, handoff *reviewTimeoutHandoff, gate, reason, nextAction string) {
 	request := handoff.Request
 	counts := handoff.ResponseCounts
+	state := "delegated review request exhausted its deadline"
+	if gate == gateActionableFeedback {
+		state = "delegated review request has actionable requested changes"
+	}
 	blocker := fmt.Sprintf(
-		"\n\n## External Gate\n\n- State: delegated review request exhausted its deadline.\n- Reason: %s.\n- Repository: %s.\n- Pull request: #%d.\n- Current head: %s.\n- Trigger: %s.\n- Trigger created: %s.\n- Confirmed: %s.\n- Started: %s.\n- Deadline: %s (%d).\n- Budget: %d seconds.\n- Elapsed: %d seconds.\n- Response counts: top-level=%d, formal=%d, inline=%d.\n- Next action: %s.\n",
-		reviewTimeoutReason,
+		"\n\n## External Gate\n\n- State: %s.\n- Reason: %s.\n- Repository: %s.\n- Pull request: #%d.\n- Current head: %s.\n- Trigger: %s.\n- Trigger created: %s.\n- Confirmed: %s.\n- Started: %s.\n- Deadline: %s (%d).\n- Budget: %d seconds.\n- Elapsed: %d seconds.\n- Response counts: top-level=%d, formal=%d, inline=%d.\n- Next action: %s.\n",
+		state,
+		reason,
 		request.Repository,
 		request.PullRequest,
 		request.HeadSHA,
@@ -386,7 +411,7 @@ func (s *runSession) recordReviewTimeoutGateBlocker(workDir, logPath, runID stri
 		counts.TopLevel,
 		counts.FormalReviews,
 		counts.Inline,
-		reviewTimeoutNextAction,
+		nextAction,
 	)
 
 	if strings.TrimSpace(workDir) != "" {
@@ -415,7 +440,7 @@ func (s *runSession) recordReviewTimeoutGateBlocker(workDir, logPath, runID stri
 		return
 	}
 	prefixed := NewLinePrefixWriter(runID, file)
-	_, writeErr := fmt.Fprintf(prefixed, "external gate %s: %s; repository %s pull request #%d head %s trigger %s created %s confirmed %s started %s deadline %s budget %d elapsed %d counters top-level=%d formal=%d inline=%d; next action: %s\n", gateReviewTimeout, reviewTimeoutReason, request.Repository, request.PullRequest, request.HeadSHA, request.TriggerID, request.TriggerCreatedAt, request.ConfirmedAt, request.StartedAt, request.DeadlineAt, request.EffectiveTimeout, *handoff.State.ElapsedSeconds, counts.TopLevel, counts.FormalReviews, counts.Inline, reviewTimeoutNextAction)
+	_, writeErr := fmt.Fprintf(prefixed, "external gate %s: %s; repository %s pull request #%d head %s trigger %s created %s confirmed %s started %s deadline %s budget %d elapsed %d counters top-level=%d formal=%d inline=%d; next action: %s\n", gate, reason, request.Repository, request.PullRequest, request.HeadSHA, request.TriggerID, request.TriggerCreatedAt, request.ConfirmedAt, request.StartedAt, request.DeadlineAt, request.EffectiveTimeout, *handoff.State.ElapsedSeconds, counts.TopLevel, counts.FormalReviews, counts.Inline, nextAction)
 	flushErr := prefixed.Flush()
 	closeErr := file.Close()
 	if writeErr != nil {

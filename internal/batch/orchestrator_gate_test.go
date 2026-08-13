@@ -82,6 +82,33 @@ func writeTimedOutReviewRequest(t *testing.T, workDir string) {
 	}
 }
 
+func writeFormalChangesRequestedClassification(t *testing.T, workDir, headStatus string) {
+	t.Helper()
+	stateDir := filepath.Join(workDir, ".sandman", "state")
+	requestPath := filepath.Join(stateDir, "17.review_request.json")
+	statePath := filepath.Join(stateDir, "17.review_request.json.state")
+	request, err := os.ReadFile(requestPath)
+	if err != nil {
+		t.Fatalf("read review request: %v", err)
+	}
+	requestText := strings.ReplaceAll(string(request), "2026-08-13T10:00:00Z", "1970-01-01T00:16:40Z")
+	if err := os.WriteFile(requestPath, []byte(requestText), 0o600); err != nil {
+		t.Fatalf("write classified review request: %v", err)
+	}
+	classification := strings.ReplaceAll(`{"protocol":"review-classification/v1","request":{"repository":"owner/repo","pull_request":17,"head_sha":"current-sha","trigger_id":"https://github.com/owner/repo/pull/17#issuecomment-1001","trigger_prefix":"/sandman review","trigger_created_at":"1970-01-01T00:16:40Z","deadline_at":"unix:2800","deadline_unix_seconds":2800},"observed_head_sha":"current-sha","request_state":"active","decision":"changes_requested","window":{"start":"1970-01-01T00:16:40Z","end":null,"deadline_at":"unix:2800","deadline_unix_seconds":2800,"next_trigger":null},"response_counts":{"top_level":0,"formal_reviews":1,"inline_comments":0},"sources":{"top_level":[],"formal_reviews":[{"id":"review-2001","source":"formal_review","state":"CHANGES_REQUESTED","response_timestamp":"1970-01-01T00:20:00Z","head_status":"HEAD_STATUS"}],"inline_comments":[]},"formal":{"decision":"changes_requested","approval_evidence":[],"ambiguous_approval_evidence":[],"requested_changes":[{"id":"review-2001","source":"formal_review","state":"CHANGES_REQUESTED","response_timestamp":"1970-01-01T00:20:00Z","head_status":"HEAD_STATUS"}]},"boundary_evidence":{"request":{"repository":"owner/repo","pull_request":17,"head_sha":"current-sha","trigger_id":"https://github.com/owner/repo/pull/17#issuecomment-1001","trigger_prefix":"/sandman review","trigger_created_at":"1970-01-01T00:16:40Z","deadline_at":"unix:2800","deadline_unix_seconds":2800},"sources":{"top_level":[],"formal_reviews":[{"id":"review-2001","source":"formal_review","state":"CHANGES_REQUESTED","response_timestamp":"1970-01-01T00:20:00Z","head_status":"HEAD_STATUS"}],"inline_comments":[]}}}`, "HEAD_STATUS", headStatus)
+	state, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatalf("read review state: %v", err)
+	}
+	stateText := strings.ReplaceAll(string(state), "2026-08-13T10:00:00Z", "1970-01-01T00:16:40Z")
+	stateText = strings.Replace(stateText, `"formal_reviews": 0`, `"formal_reviews": 1`, 1)
+	stateText = strings.Replace(stateText, `    "response_counts": {`, `    "classification": `+classification+`,
+    "response_counts": {`, 1)
+	if err := os.WriteFile(statePath, []byte(stateText), 0o600); err != nil {
+		t.Fatalf("write classified review state: %v", err)
+	}
+}
+
 func TestExternalGate_ReviewTimeoutBlocksWithoutRetry(t *testing.T) {
 	workDir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(workDir)
@@ -207,6 +234,187 @@ func TestExternalGate_ReviewTimeoutBlocksWithoutRetry(t *testing.T) {
 	runLog, err := os.ReadFile(filepath.Join(workDir, ".sandman", "batches", "runs", "run-test", "run.log"))
 	if err == nil && !strings.Contains(string(runLog), "REVIEW_TIMEOUT") {
 		t.Fatalf("run log missing timeout handoff: %s", runLog)
+	}
+}
+
+func TestExternalGate_LateFormalChangesRequestedIsActionableWithoutRetry(t *testing.T) {
+	workDir := testenv.MkdirShort(t, "sm-orch-")
+	t.Chdir(workDir)
+
+	branch := gateTestBranch
+	worktreePath := filepath.Join(workDir, "worktree")
+	if err := os.MkdirAll(filepath.Join(worktreePath, ".sandman"), 0o755); err != nil {
+		t.Fatalf("create worktree task directory: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(worktreePath, ".sandman", "task.md"), []byte("# Task\n"), 0o644); err != nil {
+		t.Fatalf("seed task: %v", err)
+	}
+	writeTimedOutReviewRequest(t, worktreePath)
+	writeFormalChangesRequestedClassification(t, worktreePath, "current")
+	handoff, err := readReviewTimeoutHandoff(worktreePath, "owner/repo", &github.PR{Number: 17, State: "open", HeadRefOid: "current-sha"}, "current-sha")
+	if err != nil {
+		t.Fatalf("read classified review handoff: %v", err)
+	}
+	if !handoff.hasActionableFeedback() {
+		t.Fatalf("classified handoff = %#v, want actionable feedback", handoff.Classification)
+	}
+
+	sb := &retrySandbox{workDir: worktreePath}
+	sbFactory := &retrySandboxFactory{sandbox: sb}
+	factory := &fakeRunnableFactory{results: []AgentRunResult{{IssueNumber: 42, Status: "success", Branch: branch}}}
+	eventLog := &events.JSONLLogger{Path: filepath.Join(t.TempDir(), "events.jsonl")}
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{42: {Number: 42, State: "open", Title: "Fix bug"}},
+		prs: map[string]*github.PR{branch: {
+			Number:            17,
+			State:             "open",
+			HeadRefName:       branch,
+			HeadRefOid:        "current-sha",
+			Body:              "Closes #42",
+			StatusCheckRollup: "success",
+			ReviewDecision:    "CHANGES_REQUESTED",
+			MergeStateStatus:  "CLEAN",
+		}},
+	}
+	o := NewOrchestrator(
+		client,
+		&retryRenderer{result: "rendered prompt"},
+		nil,
+		eventLog,
+		WithErrorLog(io.Discard),
+		WithSandboxFactory(sbFactory),
+		WithRunnableFactory(factory),
+		WithRunSessionOpts(gateTestRunOptions()),
+	)
+
+	bc := BatchConfig{
+		Cfg:              &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}},
+		AgentName:        "opencode",
+		AgentCfg:         config.Agent{Command: "echo hi"},
+		IdentityResolver: noopIdentityResolver(),
+		Retries:          3,
+	}
+	result, started := o.newRunExecutor(context.Background(), bc, sbFactory, nil).Execute(context.Background(), RowSpec{
+		IssueNumber:    42,
+		Mode:           ModeContinue,
+		Branches:       map[int]string{42: branch},
+		PreviousRunIDs: map[int]string{42: "prior-run"},
+		BaseBranch:     "main",
+	})
+	if !started || result.Status != "blocked" {
+		t.Fatalf("late feedback result = (%t, %q), want started blocked", started, result.Status)
+	}
+	if len(factory.created) != 1 {
+		t.Fatalf("agent launches = %d, want 1", len(factory.created))
+	}
+	if client.editPRBodyCalls != 0 {
+		t.Fatalf("PR body mutations = %d, want 0", client.editPRBodyCalls)
+	}
+	logs, err := eventLog.Read()
+	if err != nil {
+		t.Fatalf("read events: %v", err)
+	}
+	if countEventsByType(logs, "run.retry") != 0 {
+		t.Fatal("late formal requested changes consumed an AgentRun retry")
+	}
+	if findEvent(logs, "run.continued") == nil {
+		t.Fatal("late formal requested changes did not preserve continuation mode")
+	}
+	finished := findEvent(logs, "run.finished")
+	if finished == nil || finished.Payload["gate"] != "actionable-feedback" {
+		t.Fatalf("late feedback terminal event = %#v, want actionable-feedback", finished)
+	}
+	requestPayload, ok := finished.Payload["review_request"].(map[string]any)
+	if !ok {
+		t.Fatalf("review request payload = %#v, want retained request", finished.Payload["review_request"])
+	}
+	classificationPayload, ok := requestPayload["classification"].(map[string]any)
+	if !ok || classificationPayload["decision"] != "changes_requested" {
+		t.Fatalf("classification payload = %#v, want request-scoped requested changes", requestPayload["classification"])
+	}
+	task, err := os.ReadFile(filepath.Join(worktreePath, ".sandman", "task.md"))
+	if err != nil {
+		t.Fatalf("read actionable task: %v", err)
+	}
+	for _, want := range []string{"REVIEW_CHANGES_REQUESTED", "actionable requested changes", actionableFeedbackNextAction} {
+		if !strings.Contains(string(task), want) {
+			t.Fatalf("task missing %q: %s", want, task)
+		}
+	}
+}
+
+func TestExternalGate_LateFeedbackPreservesExistingFailedGatePrecedence(t *testing.T) {
+	tests := []struct {
+		name     string
+		mutatePR func(*github.PR)
+		wantGate string
+	}{
+		{
+			name: "failed CI",
+			mutatePR: func(pr *github.PR) {
+				pr.StatusCheckRollup = "failure"
+			},
+			wantGate: "failed",
+		},
+		{
+			name: "conflict",
+			mutatePR: func(pr *github.PR) {
+				pr.MergeStateStatus = "CONFLICTING"
+			},
+			wantGate: "failed",
+		},
+		{
+			name: "stale head",
+			mutatePR: func(pr *github.PR) {
+				pr.HeadRefOid = "stale-sha"
+			},
+			wantGate: "review-timeout-state-error",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			workDir := testenv.MkdirShort(t, "sm-orch-")
+			writeTimedOutReviewRequest(t, workDir)
+			writeFormalChangesRequestedClassification(t, workDir, "current")
+			pr := &github.PR{
+				Number:            17,
+				State:             "open",
+				HeadRefName:       gateTestBranch,
+				HeadRefOid:        "current-sha",
+				StatusCheckRollup: "success",
+				ReviewDecision:    "CHANGES_REQUESTED",
+				MergeStateStatus:  "CLEAN",
+			}
+			tt.mutatePR(pr)
+			session := &runSession{
+				issueNumber: 42,
+				deps: runDeps{
+					githubClient: &fakeGitHubClient{prs: map[string]*github.PR{gateTestBranch: pr}},
+					errorLog:     io.Discard,
+				},
+				opts: gateTestRunOptions(),
+			}
+			status, extras, handled := session.handleExternalGate(context.Background(), workDir, gateTestBranch, "", "run-test")
+			if !handled || status != "blocked" {
+				t.Fatalf("late feedback precedence = (%q, %#v, %t), want blocked", status, extras, handled)
+			}
+			if got := extras["gate"]; got != tt.wantGate {
+				t.Fatalf("late feedback gate = %v, want %q", got, tt.wantGate)
+			}
+		})
+	}
+}
+
+func TestExternalGate_LateFormalChangesRequestedRejectsStaleEvidence(t *testing.T) {
+	workDir := testenv.MkdirShort(t, "sm-orch-")
+	writeTimedOutReviewRequest(t, workDir)
+	writeFormalChangesRequestedClassification(t, workDir, "stale")
+	handoff, err := readReviewTimeoutHandoff(workDir, "owner/repo", &github.PR{Number: 17, State: "open", HeadRefOid: "current-sha"}, "current-sha")
+	if err != nil {
+		t.Fatalf("stale requested-changes evidence made the handoff invalid: %v", err)
+	}
+	if handoff.hasActionableFeedback() {
+		t.Fatal("stale requested-changes evidence was promoted to actionable feedback")
 	}
 }
 
