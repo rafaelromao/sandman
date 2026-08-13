@@ -224,6 +224,9 @@ func (s *runSession) handleExternalGateWithHostPaths(ctx context.Context, workDi
 }
 
 func (s *runSession) handleReviewTimeoutGate(ctx context.Context, workDir, branch, logPath, runID, currentHead string) (string, map[string]any, bool) {
+	if !reviewTimeoutArtifactsPresent(workDir) {
+		return "", nil, false
+	}
 	if ctx.Err() != nil {
 		return "aborted", nil, true
 	}
