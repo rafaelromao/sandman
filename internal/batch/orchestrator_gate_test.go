@@ -367,6 +367,56 @@ func TestExternalGate_ReviewTimeoutRetainsResponseCounters(t *testing.T) {
 	}
 }
 
+func TestExternalGate_ReviewTimeoutRejectsInconsistentStatePair(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(string) string
+	}{
+		{
+			name: "poll plan changed",
+			mutate: func(state string) string {
+				return strings.Replace(state, `"poll_plan": [120, 60, 60, 30]`, `"poll_plan": [30]`, 1)
+			},
+		},
+		{
+			name: "lifecycle invalid",
+			mutate: func(state string) string {
+				return strings.Replace(state, `"lifecycle": "started"`, `"lifecycle": "finished"`, 1)
+			},
+		},
+		{
+			name: "elapsed negative",
+			mutate: func(state string) string {
+				return strings.Replace(state, `"elapsed_seconds": 1800`, `"elapsed_seconds": -1`, 1)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			workDir := testenv.MkdirShort(t, "sm-orch-")
+			writeTimedOutReviewRequest(t, workDir)
+			statePath := filepath.Join(workDir, ".sandman", "state", "17.review_request.json.state")
+			state, err := os.ReadFile(statePath)
+			if err != nil {
+				t.Fatalf("read review state: %v", err)
+			}
+			if err := os.WriteFile(statePath, []byte(tt.mutate(string(state))), 0o600); err != nil {
+				t.Fatalf("write review state: %v", err)
+			}
+
+			_, err = readReviewTimeoutHandoff(workDir, "owner/repo", &github.PR{
+				Number:     17,
+				State:      "open",
+				HeadRefOid: "current-sha",
+			}, "current-sha")
+			if err == nil {
+				t.Fatal("readReviewTimeoutHandoff() accepted an inconsistent state pair")
+			}
+		})
+	}
+}
+
 func gateTestRunOptions() runSessionOptions {
 	return runSessionOptions{
 		currentHead:      func(string) (string, error) { return "current-sha", nil },

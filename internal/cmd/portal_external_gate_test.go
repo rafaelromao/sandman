@@ -8,7 +8,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/paths"
 )
 
-func TestPortalBlockedMessage_DistinguishesExternalGate(t *testing.T) {
+func TestExternalGate_PortalBlockedMessageDistinguishesGate(t *testing.T) {
 	tests := []struct {
 		name    string
 		payload map[string]any
@@ -79,7 +79,7 @@ func TestAggregateReviewChildren_PreservesExternalGateParent(t *testing.T) {
 	t.Fatalf("external-gate parent missing from aggregate output: %#v", runs)
 }
 
-func TestPortalActiveBatchPreservesExternalGateState(t *testing.T) {
+func TestExternalGate_PortalActiveBatchPreservesState(t *testing.T) {
 	startedAt := time.Date(2026, 8, 8, 12, 0, 0, 0, time.UTC)
 	finishedAt := startedAt.Add(time.Minute)
 	state := events.RunState{
@@ -122,7 +122,7 @@ func TestPortalActiveBatchPreservesExternalGateState(t *testing.T) {
 	}
 }
 
-func TestPortalReviewTimeoutExternalGatePreservesRequestDetails(t *testing.T) {
+func TestExternalGate_PortalReviewTimeoutPreservesRequestDetails(t *testing.T) {
 	startedAt := time.Date(2026, 8, 8, 12, 0, 0, 0, time.UTC)
 	state := events.RunState{
 		RunID: "run-42",

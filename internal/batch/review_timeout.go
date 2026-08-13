@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/rafaelromao/sandman/internal/github"
@@ -139,6 +140,12 @@ func readReviewTimeoutHandoff(workDir, repository string, pr *github.PR, current
 	if state.Reason != "request-deadline-exhausted" {
 		return nil, fmt.Errorf("timed-out review state has unexpected reason")
 	}
+	if state.Lifecycle != "started" && state.Lifecycle != "resumed" {
+		return nil, fmt.Errorf("timed-out review state has invalid lifecycle")
+	}
+	if state.ElapsedSeconds < 0 {
+		return nil, fmt.Errorf("review wait elapsed time must not be negative")
+	}
 	return &reviewTimeoutHandoff{Request: request, State: state, ResponseCounts: counts}, nil
 }
 
@@ -171,6 +178,9 @@ func validateReviewRequest(request reviewRequestEnvelope, state reviewWaitState,
 	}
 	if state.ObservedHeadSHA != "" && !strings.EqualFold(state.ObservedHeadSHA, request.HeadSHA) {
 		return fmt.Errorf("review wait observed head does not match the request")
+	}
+	if !slices.Equal(request.PollPlan, state.PollPlan) {
+		return fmt.Errorf("review wait poll plan does not match the confirmed request")
 	}
 	return nil
 }
