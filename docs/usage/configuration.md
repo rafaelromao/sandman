@@ -46,8 +46,8 @@ parallel_reviews: 1
 # Idle timeout in seconds for agent runs. When the agent produces no new log
 # output for this duration, the heartbeat watchdog aborts the run.
 # 0 disables the watchdog (runs never abort due to inactivity).
-# Default: 1800 (30 minutes).
-run_idle_timeout: 1800
+# Default: 3600 (60 minutes).
+run_idle_timeout: 3600
 
 # Cumulative delegated review response budget in seconds for the implementor
 # side of the PR-review loop. The minimum is 240 seconds; default: 1800.
@@ -146,7 +146,7 @@ See [Sandbox Modes](sandbox-modes.md) for detailed scheduling behavior.
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `run_idle_timeout` | `1800` | Seconds of inactivity before the heartbeat watchdog aborts the run. `0` disables the watchdog (runs never abort due to inactivity) |
+| `run_idle_timeout` | `3600` | Seconds of inactivity before the heartbeat watchdog aborts the run. `0` disables the watchdog (runs never abort due to inactivity) |
 
 `run_idle_timeout` detects when an agent has stalled (e.g., blocked on an interactive prompt, deadlocked, or looping). When triggered, the watchdog kills the agent process and marks the run as `aborted`. A `run.idle_timeout` event is written to the event log for diagnostics. The `--run-idle-timeout` CLI flag overrides the config value for a single invocation.
 

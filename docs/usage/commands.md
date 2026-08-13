@@ -30,7 +30,7 @@ sandman init [flags]
 | `--review-command` | `""` | Review command stored as `review_command` in project config; defaults to `/sandman review` (requires `sandman review` to be running) |
 | `--retries` | `-1` | Persist `retries` in scaffolded config. `-1` keeps the built-in default of `3`; `0` disables retries |
 | `--parallel-reviews` | `-1` | Persist `parallel_reviews` in scaffolded config (default `1`) |
-| `--run-idle-timeout` | `-1` | Persist `run_idle_timeout` (seconds) in scaffolded config. `-1` keeps the built-in default of `1800`; `0` disables the heartbeat watchdog |
+| `--run-idle-timeout` | `-1` | Persist `run_idle_timeout` (seconds) in scaffolded config. `-1` keeps the built-in default of `3600`; `0` disables the heartbeat watchdog |
 | `--review-timeout` | omitted | Persist `review_timeout` (seconds) in scaffolded config. Default `1800`; values below `240` are invalid |
 
 When `--tool-version` is omitted, `init` uses the preset resolver's interactive defaults: repo hints are offered when present, otherwise `latest`/`lts` choices are prompted.
@@ -81,7 +81,7 @@ Positional arguments (numbers and ranges) can be combined with `--label` and `--
 | `--variant` | `variant` from config | Override the implementation model variant; forwarded to built-in OpenCode only when non-empty |
 | `--agent` | `agent` from config (`opencode`) | Built-in agent preset for this run; on `--continue` uses the current value, not the prior run's stored agent |
 | `--run-id` | — | Batch-level identifier for prompt-only runs; must start with a letter and contain only alphanumeric characters, hyphens, and underscores; cannot be combined with issue selection |
-| `--run-idle-timeout` | `0` | Treat an AgentRun as stuck if it produces no output for N seconds; `0` disables the timeout |
+| `--run-idle-timeout` | config `run_idle_timeout` (`3600`) | Treat an AgentRun as stuck if it produces no output for N seconds; explicit `0` disables the timeout |
 | `--review-timeout` | config `review_timeout` (`1800`) | Override the absolute per-confirmed-request delegated review deadline in seconds; minimum `240` |
 | `--branch` | `""` | Branch name for prompt-only runs; overrides the default `<slug>-<timestamp>` shape (prompt-only mode only) |
 | `--reconcile-stranded` | `true` | Auto-recover stranded worktrees when the main repo is checked out on a `<n>-<slug>` branch |
@@ -144,7 +144,7 @@ Reuses the prior run's worktree identity: the existing branch, the stored base b
 | `--agent` | prior run's agent | Override the agent preset for the continued run |
 | `--run-id` | — | Continue the most recent prompt-only run by its batch-level identifier; must start with a letter and contain only alphanumeric characters, hyphens, and underscores; cannot be combined with issue numbers. Reads the prior task file from the existing worktree and reuses the same branch for the continued run. When the most recent Issue-0 event is a review run (not a prompt-only run), `sandman run --continue` skips it and selects the prior prompt-only run instead — or errors if none exists. |
 | `--dangerously-skip-permissions` | `true` for container runs, `false` for worktree runs | Skip permission checks for the continued run |
-| `--run-idle-timeout` | `0` | Treat an AgentRun as stuck if it produces no output for N seconds; `0` disables the timeout |
+| `--run-idle-timeout` | config `run_idle_timeout` (`3600`) | Treat an AgentRun as stuck if it produces no output for N seconds; explicit `0` disables the timeout |
 | `--review-timeout` | config `review_timeout` (`1800`) | Override the absolute per-confirmed-request delegated review deadline in seconds; minimum `240` |
 
 ## `sandman clean`
@@ -270,7 +270,7 @@ sandman config set <key> <value>
 | `parallel` | int | `1` |
 | `parallel_reviews` | int | `1` |
 | `start_delay` | int | `0` |
-| `run_idle_timeout` | int | `1800` |
+| `run_idle_timeout` | int | `3600` |
 | `review_timeout` | int | `1800` |
 | `retries` | int | `3` |
 | `review_command` | string | `/sandman review` |

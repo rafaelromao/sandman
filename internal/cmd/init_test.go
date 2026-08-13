@@ -1164,9 +1164,9 @@ func TestInit_RunIdleTimeoutFlagOverridesPersistedDefault(t *testing.T) {
 		errContains string
 	}{
 		{
-			name:       "default persists 1800",
+			name:       "default persists 3600",
 			args:       []string{"--build-tools", "generic"},
-			wantInYAML: "run_idle_timeout: 1800",
+			wantInYAML: "run_idle_timeout: 3600",
 		},
 		{
 			name:       "explicit 600 persists 600",
@@ -1179,9 +1179,9 @@ func TestInit_RunIdleTimeoutFlagOverridesPersistedDefault(t *testing.T) {
 			wantInYAML: "run_idle_timeout: 0",
 		},
 		{
-			name:       "sentinel -1 persists 1800",
+			name:       "sentinel -1 persists 3600",
 			args:       []string{"--build-tools", "generic", "--run-idle-timeout", "-1"},
-			wantInYAML: "run_idle_timeout: 1800",
+			wantInYAML: "run_idle_timeout: 3600",
 		},
 		{
 			name:        "below sentinel rejected",

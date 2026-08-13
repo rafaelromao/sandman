@@ -364,13 +364,13 @@ func TestResolveRunIdleTimeout(t *testing.T) {
 	if got := resolveRunIdleTimeout(Request{}, &config.Config{RunIdleTimeout: 0}); got != 0 {
 		t.Errorf("resolveRunIdleTimeout unset/config0 = %d, want 0", got)
 	}
-	if got := resolveRunIdleTimeout(Request{}, &config.Config{RunIdleTimeout: 1800}); got != 1800 {
-		t.Errorf("resolveRunIdleTimeout unset/config1800 = %d, want 1800", got)
+	if got := resolveRunIdleTimeout(Request{}, &config.Config{RunIdleTimeout: 3600}); got != 3600 {
+		t.Errorf("resolveRunIdleTimeout unset/config3600 = %d, want 3600", got)
 	}
-	if got := resolveRunIdleTimeout(Request{RunIdleTimeoutSet: true, RunIdleTimeout: 0}, &config.Config{RunIdleTimeout: 1800}); got != 0 {
+	if got := resolveRunIdleTimeout(Request{RunIdleTimeoutSet: true, RunIdleTimeout: 0}, &config.Config{RunIdleTimeout: 3600}); got != 0 {
 		t.Errorf("resolveRunIdleTimeout set0/overrides = %d, want 0", got)
 	}
-	if got := resolveRunIdleTimeout(Request{RunIdleTimeoutSet: true, RunIdleTimeout: 42}, &config.Config{RunIdleTimeout: 1800}); got != 42 {
+	if got := resolveRunIdleTimeout(Request{RunIdleTimeoutSet: true, RunIdleTimeout: 42}, &config.Config{RunIdleTimeout: 3600}); got != 42 {
 		t.Errorf("resolveRunIdleTimeout set42/overrides = %d, want 42", got)
 	}
 	if got := resolveRunIdleTimeout(Request{RunIdleTimeoutSet: true, RunIdleTimeout: 42}, nil); got != 42 {

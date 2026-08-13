@@ -6,7 +6,7 @@ Operator-facing recovery for the most common failure modes. Each entry names the
 
 ## A run appears stuck and nothing is happening
 
-If a run has produced no log output for `run_idle_timeout` seconds (default: 1800), the heartbeat watchdog aborts it and the run is emitted as `aborted` with a `run.idle_timeout` event written just before.
+If a run has produced no log output for `run_idle_timeout` seconds (default: 3600), the heartbeat watchdog aborts it and the run is emitted as `aborted` with a `run.idle_timeout` event written just before.
 
 - Check `sandman status` for elapsed time.
 - Read the row's log (`.sandman/batches/<batch-id>/runs/<run-id>/run.log` or via the portal's Log tab).

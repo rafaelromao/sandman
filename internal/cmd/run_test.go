@@ -2097,6 +2097,51 @@ func TestRun_ContinueFlag_UsesCurrentFlagsOverStoredValues(t *testing.T) {
 	}
 }
 
+func TestRun_ContinueFlag_ExplicitZeroIdleTimeoutOverridesStoredValue(t *testing.T) {
+	dir := t.TempDir()
+	branch := "42-fix-bug"
+
+	spy := &spyBatchRunner{result: &batch.Result{}}
+	deps := newRunDeps(t, spy)
+	worktreePath := addRegisteredContinuationWorktree(t, deps.RepoRoot, dir, branch)
+	if err := os.MkdirAll(filepath.Join(worktreePath, ".sandman"), 0755); err != nil {
+		t.Fatalf("mkdir worktree: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(worktreePath, ".sandman", "task.md"), []byte("Resume.\n"), 0644); err != nil {
+		t.Fatalf("write task: %v", err)
+	}
+	deps.ConfigStore = &fakeStore{config: &config.Config{
+		Agent:         "opencode-current",
+		WorktreeDir:   dir,
+		ReviewCommand: "/oc review",
+		AgentProviders: map[string]config.Agent{
+			"opencode-current": {Preset: "opencode", Command: "true"},
+		},
+	}}
+	deps.EventLog = &fakeEventLog{events: []events.Event{
+		{Type: "run.started", RunID: testRunID42First, Issue: 42, Payload: map[string]any{
+			"branch": branch, "base_branch": "main", "run_idle_timeout": 99, "run_idle_timeout_set": true,
+		}},
+	}}
+	deps.GitHubClient = &fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, State: "open"}}, prs: map[string]*github.PR{}}
+
+	var buf bytes.Buffer
+	cmd := NewRunCmd(deps)
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs([]string{"--continue", "--run-idle-timeout", "0", "42"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !spy.called {
+		t.Fatal("expected batch runner to be called")
+	}
+	if !spy.req.RunIdleTimeoutSet || spy.req.RunIdleTimeout != 0 {
+		t.Fatalf("expected explicit continuation idle timeout 0, got %d set=%v", spy.req.RunIdleTimeout, spy.req.RunIdleTimeoutSet)
+	}
+}
+
 func TestRun_ContinueFlag_UsesOverridesAndEmptyTemplateFallback(t *testing.T) {
 	dir := t.TempDir()
 	branch := "42-fix-bug"
