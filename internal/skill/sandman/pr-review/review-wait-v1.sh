@@ -256,6 +256,10 @@ run_observer() {
 			for child_pid in $(pgrep -P "$1" 2>/dev/null); do
 				kill_observer_tree "$child_pid"
 			done
+		elif command -v ps >/dev/null 2>&1; then
+			for child_pid in $(ps -eo pid=,ppid= | awk -v parent="$1" '$2 == parent {print $1}'); do
+				kill_observer_tree "$child_pid"
+			done
 		fi
 		kill -TERM "$1" 2>/dev/null || true
 		kill -KILL "$1" 2>/dev/null || true

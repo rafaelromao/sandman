@@ -321,7 +321,7 @@ func TestReviewWaitV1PreservesRespondedEvidenceAtExactDeadline(t *testing.T) {
 	}
 	clockScript := `#!/bin/sh
 calls=$(tr -d '\n' < "$SANDMAN_REVIEW_WAIT_CLOCK_STATE")
-if [ "$calls" -lt 10 ]; then
+if [ "$calls" -lt 4 ]; then
   value=4102444799
 else
   value=4102444800
@@ -975,7 +975,13 @@ func TestReviewWaitV1RejectsResponseCompletingAfterDeadline(t *testing.T) {
 	helper := filepath.Join(wd, "pr-review", "review-wait-v1.sh")
 	requestFile := filepath.Join(t.TempDir(), "42.review_request.json")
 	writeReviewWaitRequest(t, requestFile, "1001", "2026-08-11T18:00:01Z", "2026-08-11T18:30:01Z")
-	observer := writeStructuredReviewObserver(t, `{"state":"responded","observed_head_sha":"abc123","snapshot":{"comments":[{"body":"late"}],"reviews":[],"inline_comments":[]}}`)
+	responseObserver := writeStructuredReviewObserver(t, `{"state":"responded","observed_head_sha":"abc123","snapshot":{"comments":[{"body":"late"}],"reviews":[],"inline_comments":[]}}`)
+	observerStarted := filepath.Join(t.TempDir(), "observer.started")
+	observer := filepath.Join(t.TempDir(), "observer.sh")
+	observerScript := "#!/bin/sh\nprintf '%s\\n' started > \"" + observerStarted + "\"\nexec sh \"" + responseObserver + "\"\n"
+	if err := os.WriteFile(observer, []byte(observerScript), 0o700); err != nil {
+		t.Fatalf("write observer wrapper: %v", err)
+	}
 	clock := filepath.Join(t.TempDir(), "clock.sh")
 	clockState := filepath.Join(t.TempDir(), "clock.state")
 	if err := os.WriteFile(clockState, []byte("0\n"), 0o600); err != nil {
@@ -983,11 +989,8 @@ func TestReviewWaitV1RejectsResponseCompletingAfterDeadline(t *testing.T) {
 	}
 	clockScript := `#!/bin/sh
 calls=$(tr -d '\n' < "$SANDMAN_REVIEW_WAIT_CLOCK_STATE")
-if [ "$calls" = "0" ]; then
-  printf '%s\n' 4102444799
-else
-  printf '%s\n' 4102444801
-fi
+if [ "$calls" -lt 4 ]; then value=4102444799; else value=4102444801; fi
+printf '%s\n' "$value"
 printf '%s\n' $((calls + 1)) > "$SANDMAN_REVIEW_WAIT_CLOCK_STATE"
 `
 	if err := os.WriteFile(clock, []byte(clockScript), 0o700); err != nil {
@@ -1001,6 +1004,9 @@ printf '%s\n' $((calls + 1)) > "$SANDMAN_REVIEW_WAIT_CLOCK_STATE"
 
 	if result.State != "timed_out" {
 		t.Fatalf("late observer state = %q, want timed_out", result.State)
+	}
+	if _, err := os.Stat(observerStarted); err != nil {
+		t.Fatalf("late observer did not start before completion crossed deadline: %v", err)
 	}
 }
 
