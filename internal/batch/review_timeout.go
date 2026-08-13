@@ -216,7 +216,7 @@ func reviewTimeoutHandoffFromArtifacts(artifacts *reviewTimeoutArtifacts, curren
 		if classification == nil {
 			return nil, fmt.Errorf("responded review wait state is missing classification")
 		}
-		if classification.RequestState == "superseded" {
+		if classification.RequestState == "superseded" && len(classification.RequestedChanges) > 0 {
 			return nil, fmt.Errorf("review wait request was superseded")
 		}
 		if err := validateRespondedReviewState(artifacts.Request, artifacts.State); err != nil {
@@ -242,7 +242,7 @@ func reviewTimeoutHandoffFromArtifacts(artifacts *reviewTimeoutArtifacts, curren
 			if err := validateRetainedClassificationCounts(classification.Raw, artifacts.ResponseCounts); err != nil {
 				return nil, err
 			}
-			if classification.RequestState == "superseded" {
+			if classification.RequestState == "superseded" && len(classification.RequestedChanges) > 0 {
 				return nil, fmt.Errorf("timed-out review wait request was superseded")
 			}
 			outcome = retainedReviewClassificationOutcome(classification)
@@ -806,7 +806,11 @@ func validateReviewRequest(request reviewRequestEnvelope, state reviewWaitState,
 	if state.HeadSHA != request.HeadSHA || state.TriggerID != request.TriggerID || state.TriggerPrefix != request.TriggerPrefix || state.TriggerCreatedAt != request.TriggerCreatedAt || state.ConfirmedAt != request.ConfirmedAt || state.StartedAt != request.StartedAt || state.DeadlineAt != request.DeadlineAt || state.StartedUnixSeconds != request.StartedUnixSeconds || state.EffectiveTimeout != request.EffectiveTimeout || state.DeadlineUnixSeconds != request.DeadlineUnixSeconds {
 		return fmt.Errorf("review wait state does not match the confirmed request")
 	}
-	if state.ObservedHeadSHA != "" && !strings.EqualFold(state.ObservedHeadSHA, request.HeadSHA) {
+	if strings.TrimSpace(state.ObservedHeadSHA) == "" {
+		if state.State != "timed_out" || state.Evidence == nil || reviewClassificationPresent(state.Evidence) {
+			return fmt.Errorf("review wait observed head does not match the request")
+		}
+	} else if !strings.EqualFold(state.ObservedHeadSHA, request.HeadSHA) {
 		return fmt.Errorf("review wait observed head does not match the request")
 	}
 	if !slices.Equal(request.PollPlan, state.PollPlan) {

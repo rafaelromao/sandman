@@ -115,8 +115,8 @@ Emitted when an agent run completes.
 | `run_kind` | Mirrors the `run.started` payload so projection sees a consistent kind on both events. |
 | `reason` | Short string built from the error returned by the selection phase. |
 | `blocker` | Optional terminal blocker classification. `"external-gate"` identifies CI/review waiting or intervention, rather than an agent failure. |
-| `gate` | Optional external-gate state: `"pending"`, `"failed"`, `"unavailable"`, `"unverified"`, `"review-timeout"`, `"review-timeout-state-error"`, or `"actionable-feedback"`. |
-| `review_request` | Present for retained-review gates; retains the confirmed request identity, current head, deadline, budget, elapsed time, response counters, next action, and request-scoped classification evidence when available. |
+| `gate` | Optional external-gate state: `"pending"`, `"failed"`, `"unavailable"`, `"unverified"`, `"ready-to-merge"`, `"review-timeout"`, `"review-timeout-state-error"`, or `"actionable-feedback"`. |
+| `review_request` | Present for retained delegated-review outcomes; retains the confirmed request identity, current head, deadline, budget, elapsed time, response counters, validated request-scoped classification, outcome, and next action. |
 
 #### External-gate lifecycle
 When an issue-driven agent exits successfully while its open PR is waiting on CI
@@ -151,6 +151,11 @@ When the retained classification contains matching current-head formal
 blocked without consuming an AgentRun retry or merging the pull request; inspect
 the retained evidence, address the feedback, and continue after pushing a new
 current head.
+
+A later continuation may project a retained request-scoped current-head formal
+approval as `gate: "ready-to-merge"` when the pull request is still open, green,
+and clean. The event retains the validated classification evidence; the
+continuation does not retry the AgentRun or merge the pull request.
 
 #### `run.aborted`
 Emitted when a run is aborted via context cancellation (e.g. SIGINT/SIGTERM). Also emitted for runs that were still queued (waiting on the turn gate or the start gate) when the batch was cancelled, and cascaded to dependents whose in-batch blocker finished with status `aborted` (instead of `run.blocked`). For queued/cascaded runs, the `RunID` matches the prior `run.queued` event so projection collapses to a single `RunState`.
