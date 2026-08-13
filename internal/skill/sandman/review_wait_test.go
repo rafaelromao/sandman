@@ -294,6 +294,9 @@ printf '%s\n' $((calls + 1)) > "$SANDMAN_REVIEW_WAIT_CLOCK_STATE"
 	if result.Elapsed != 20 {
 		t.Fatalf("elapsed_seconds = %d, want 20", result.Elapsed)
 	}
+	if !strings.Contains(string(result.Evidence), `"response_counts":{"top_level":0,"formal_reviews":0,"inline_comments":0}`) {
+		t.Fatalf("timeout evidence missing response counters: %s", result.Evidence)
+	}
 	if replayed.State != "timed_out" || replayed.Elapsed != result.Elapsed {
 		t.Fatalf("terminal replay = %q/%d, want timed_out/%d", replayed.State, replayed.Elapsed, result.Elapsed)
 	}
@@ -303,6 +306,9 @@ printf '%s\n' $((calls + 1)) > "$SANDMAN_REVIEW_WAIT_CLOCK_STATE"
 	}
 	if !strings.Contains(string(state), `"elapsed_seconds":20`) {
 		t.Fatalf("timeout state missing elapsed diagnostics: %s", state)
+	}
+	if !strings.Contains(string(state), `"response_counts":{"top_level":0,"formal_reviews":0,"inline_comments":0}`) {
+		t.Fatalf("timeout state missing response counters: %s", state)
 	}
 }
 
@@ -936,8 +942,64 @@ func TestReviewWaitV1RetainsTimedOutRequestOnReentry(t *testing.T) {
 	if first.State != "timed_out" || second.State != "timed_out" {
 		t.Fatalf("states = %q then %q, want timed_out for both observations", first.State, second.State)
 	}
+	state, err := os.ReadFile(requestFile + ".state")
+	if err != nil {
+		t.Fatalf("read timed-out state: %v", err)
+	}
+	if !strings.Contains(string(state), `"response_counts":{"top_level":0,"formal_reviews":0,"inline_comments":0}`) {
+		t.Fatalf("timed-out state missing explicit zero response counters: %s", state)
+	}
 	if second.Lifecycle != "resumed" || second.ObservedHead != "abc123" {
 		t.Fatalf("timed-out reentry = lifecycle %q/head %q, want resumed/abc123", second.Lifecycle, second.ObservedHead)
+	}
+}
+
+func TestExternalGate_SameTriggerReentryRetainsTimedOutRequest(t *testing.T) {
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	helper := filepath.Join(wd, "pr-review", "review-wait-v1.sh")
+	requestFile := filepath.Join(t.TempDir(), "42.review_request.json")
+	writeReviewWaitRequestValues(t, requestFile, "1001", "2026-08-11T18:00:01Z", "unix:4102443200", 4102443000, 4102443200, 200)
+	observer := writePendingReviewObserver(t)
+	clock := filepath.Join(t.TempDir(), "clock.sh")
+	if err := os.WriteFile(clock, []byte("#!/bin/sh\nprintf '%s\\n' 4102443200\n"), 0o700); err != nil {
+		t.Fatalf("write clock: %v", err)
+	}
+
+	first := runReviewWaitWithEnv(t, helper, requestFile, observer, true, map[string]string{
+		"SANDMAN_REVIEW_WAIT_CLOCK": clock,
+	})
+	second := runReviewWaitWithEnv(t, helper, requestFile, filepath.Join(t.TempDir(), "missing-observer"), true, map[string]string{
+		"SANDMAN_REVIEW_WAIT_CLOCK": clock,
+	})
+	if first.State != "timed_out" || second.State != "timed_out" || second.Lifecycle != "resumed" {
+		t.Fatalf("same-trigger timeout replay = %q/%q/%q, want timed_out/timed_out/resumed", first.State, second.State, second.Lifecycle)
+	}
+	if second.Request.TriggerID != "1001" || second.Request.DeadlineUnix != 4102443200 || second.Request.TimeoutSeconds != 200 {
+		t.Fatalf("same-trigger replay request = %+v, want trigger 1001/deadline 4102443200/budget 200", second.Request)
+	}
+}
+
+func TestExternalGate_LaterTriggerReceivesFreshFullBudget(t *testing.T) {
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	helper := filepath.Join(wd, "pr-review", "review-wait-v1.sh")
+	requestFile := filepath.Join(t.TempDir(), "42.review_request.json")
+	observer := writePendingReviewObserver(t)
+	writeReviewWaitRequestValues(t, requestFile, "1001", "2026-08-11T18:00:01Z", "unix:4102443200", 4102443000, 4102443200, 200)
+	first := runReviewWait(t, helper, requestFile, observer, true)
+
+	writeReviewWaitRequestValues(t, requestFile, "1002", "2026-08-11T19:00:01Z", "unix:4102444200", 4102444000, 4102444200, 200)
+	second := runReviewWait(t, helper, requestFile, observer, true)
+	if first.Lifecycle != "started" || second.Lifecycle != "started" {
+		t.Fatalf("later-trigger lifecycles = %q/%q, want started/started", first.Lifecycle, second.Lifecycle)
+	}
+	if second.Request.TriggerID != "1002" || second.Request.DeadlineUnix != 4102444200 || second.Request.TimeoutSeconds != 200 {
+		t.Fatalf("later-trigger request = %+v, want trigger 1002/deadline 4102444200/budget 200", second.Request)
 	}
 }
 
@@ -1004,6 +1066,16 @@ printf '%s\n' $((calls + 1)) > "$SANDMAN_REVIEW_WAIT_CLOCK_STATE"
 
 	if result.State != "timed_out" {
 		t.Fatalf("late observer state = %q, want timed_out", result.State)
+	}
+	if !strings.Contains(string(result.Evidence), `"response_counts"`) {
+		t.Fatalf("late observer evidence = %s, want response counters", result.Evidence)
+	}
+	state, err := os.ReadFile(requestFile + ".state")
+	if err != nil {
+		t.Fatalf("read late observer state: %v", err)
+	}
+	if !strings.Contains(string(state), `"response_counts":{"top_level":0,"formal_reviews":0,"inline_comments":0}`) {
+		t.Fatalf("late observer state missing response counters: %s", state)
 	}
 	if _, err := os.Stat(observerStarted); err != nil {
 		t.Fatalf("late observer did not start before completion crossed deadline: %v", err)

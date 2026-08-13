@@ -183,6 +183,18 @@ func (l Layout) PRHeadShaPath(prNumber int) string {
 	return filepath.Join(l.StateDir, strconv.Itoa(prNumber)+".head_sha")
 }
 
+// PRReviewRequestPath returns the confirmed delegated-review request envelope:
+// <repo>/.sandman/state/<N>.review_request.json
+func (l Layout) PRReviewRequestPath(prNumber int) string {
+	return filepath.Join(l.StateDir, strconv.Itoa(prNumber)+".review_request.json")
+}
+
+// PRReviewRequestStatePath returns the request-wait result sidecar:
+// <repo>/.sandman/state/<N>.review_request.json.state
+func (l Layout) PRReviewRequestStatePath(prNumber int) string {
+	return l.PRReviewRequestPath(prNumber) + ".state"
+}
+
 // PRAddressedCommentsPath returns the addressed-comments file for a PR: <repo>/.sandman/state/<N>.addressed_comments
 func (l Layout) PRAddressedCommentsPath(prNumber int) string {
 	return filepath.Join(l.StateDir, strconv.Itoa(prNumber)+".addressed_comments")

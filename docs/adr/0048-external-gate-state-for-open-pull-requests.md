@@ -33,6 +33,12 @@ fallback:
   `blocker: "external-gate"`, and a `gate` reason. This is distinct from the
   dependency `run.blocked` event through the payload blocker and the portal
   message.
+- An unanswered, current-head delegated-review request that reaches its own
+  absolute deadline is handed to the same gate with `gate: "review-timeout"`
+  and `reason: "REVIEW_TIMEOUT"`. The terminal payload retains the confirmed
+  request identity, deadline, budget, elapsed time, response counters, and
+  next action. A malformed or stale request is blocked as a state error rather
+  than becoming an agent failure or retry.
 - Gate waiting never emits `run.retry` and never increments the agent retry
   count. Actual agent failure, idle timeout, and cancellation retain their
   existing retry behavior.
