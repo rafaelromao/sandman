@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 
@@ -85,20 +84,6 @@ type reviewTimeoutHandoff struct {
 	Request        reviewRequestEnvelope
 	State          reviewWaitState
 	ResponseCounts reviewResponseCounts
-}
-
-func reviewTimeoutArtifactsPresent(workDir string) bool {
-	if strings.TrimSpace(workDir) == "" {
-		return false
-	}
-	stateDir := paths.NewLayout(nil, workDir).StateDir
-	for _, pattern := range []string{"*.review_request.json", "*.review_request.json.state"} {
-		matches, err := filepath.Glob(filepath.Join(stateDir, pattern))
-		if err == nil && len(matches) > 0 {
-			return true
-		}
-	}
-	return false
 }
 
 func reviewTimeoutArtifactsPresentForPR(workDir string, prNumber int) bool {
