@@ -21,7 +21,7 @@ const (
 	DefaultParallel          = 1
 	DefaultReviewParallel    = 1
 	DefaultStartDelay        = 0
-	DefaultRunIdleTimeout    = 1800
+	DefaultRunIdleTimeout    = 3600
 	DefaultReviewTimeout     = 1800
 	MinReviewTimeout         = 240
 	DefaultRetries           = 3

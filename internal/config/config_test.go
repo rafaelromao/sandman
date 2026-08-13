@@ -476,8 +476,8 @@ func TestLoad_MissingRunIdleTimeout_AppliesDefault(t *testing.T) {
 	if cfg.RunIdleTimeout != DefaultRunIdleTimeout {
 		t.Errorf("run_idle_timeout: got %d, want %d", cfg.RunIdleTimeout, DefaultRunIdleTimeout)
 	}
-	if DefaultRunIdleTimeout != 1800 {
-		t.Errorf("DefaultRunIdleTimeout: got %d, want 1800", DefaultRunIdleTimeout)
+	if DefaultRunIdleTimeout != 3600 {
+		t.Errorf("DefaultRunIdleTimeout: got %d, want 3600", DefaultRunIdleTimeout)
 	}
 }
 
@@ -637,6 +637,26 @@ run_idle_timeout: 600
 
 	if cfg.RunIdleTimeout != 600 {
 		t.Errorf("run_idle_timeout: got %d, want 600", cfg.RunIdleTimeout)
+	}
+}
+
+func TestLoad_RunIdleTimeoutExplicitOldDefaultIsPreserved(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	content := `agent: opencode
+run_idle_timeout: 1800
+`
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if cfg.RunIdleTimeout != 1800 {
+		t.Errorf("run_idle_timeout: got %d, want explicit value 1800", cfg.RunIdleTimeout)
 	}
 }
 
