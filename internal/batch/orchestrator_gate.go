@@ -123,11 +123,18 @@ func checkPRExternalGateWithHead(ctx context.Context, client github.Client, bran
 	if pr == nil {
 		return "none", err
 	}
+	return checkPRExternalGateForPR(pr, headSHA, requireHead), nil
+}
+
+func checkPRExternalGateForPR(pr *github.PR, headSHA string, requireHead bool) string {
+	if pr == nil {
+		return "none"
+	}
 	if pr.Merged || strings.EqualFold(pr.State, "merged") {
-		return "resolved", nil
+		return "resolved"
 	}
 	if !strings.EqualFold(pr.State, "open") {
-		return "unavailable", nil
+		return "unavailable"
 	}
 
 	checkRollup := strings.ToLower(strings.TrimSpace(pr.StatusCheckRollup))
@@ -137,31 +144,31 @@ func checkPRExternalGateWithHead(ctx context.Context, client github.Client, bran
 	mergeStatus := strings.ToUpper(strings.TrimSpace(pr.MergeStateStatus))
 
 	if hasCIFailure {
-		return "failed", nil
+		return "failed"
 	}
 	if review == "CHANGES_REQUESTED" {
-		return "failed", nil
+		return "failed"
 	}
 	if mergeStatus == "DIRTY" || mergeStatus == "CONFLICTING" {
-		return "failed", nil
+		return "failed"
 	}
 
 	if hasCIPending || review == "REVIEW_REQUIRED" || mergeStatus == "BLOCKED" {
-		return "pending", nil
+		return "pending"
 	}
 	if requireHead {
 		if strings.TrimSpace(headSHA) == "" || strings.TrimSpace(pr.HeadRefOid) == "" {
-			return "pending", nil
+			return "pending"
 		}
 		if !strings.EqualFold(pr.HeadRefOid, headSHA) {
-			return "pending", nil
+			return "pending"
 		}
 	}
 	if (checkRollup == "" || checkRollup == "success") && (review == "" || review == "APPROVED") && mergeStatus == "CLEAN" {
-		return gateReadyToMerge, nil
+		return gateReadyToMerge
 	}
 
-	return "pending", nil
+	return "pending"
 }
 
 // handleExternalGate turns an AgentRun exit into a terminal external-gate
@@ -231,7 +238,10 @@ func (s *runSession) handleReviewTimeoutGate(ctx context.Context, workDir, branc
 		return "aborted", nil, true
 	}
 	pr, err := s.deps.githubClient.FindPRByBranch(ctx, branch)
-	if err != nil || pr == nil {
+	if err != nil {
+		return s.blockExternalGate(ctx, workDir, logPath, runID, "unavailable")
+	}
+	if pr == nil {
 		return "", nil, false
 	}
 	if !reviewTimeoutArtifactsPresentForPR(workDir, pr.Number) {
@@ -257,10 +267,70 @@ func (s *runSession) handleReviewTimeoutGate(ctx context.Context, workDir, branc
 	if ctx.Err() != nil {
 		return "aborted", nil, true
 	}
+	if handoff.Outcome == retainedReviewApproval {
+		return s.handleRetainedReviewApproval(ctx, workDir, branch, logPath, runID, pr, currentHead, handoff)
+	}
+	if handoff.Outcome != retainedReviewTimeout {
+		return s.handleRetainedReviewPending(ctx, workDir, branch, logPath, runID, pr, currentHead, handoff)
+	}
+	if ctx.Err() != nil {
+		return "aborted", nil, true
+	}
 	s.recordReviewTimeoutGateBlocker(workDir, logPath, runID, handoff)
 	extras := handoff.payload()
 	extras["blocker"] = "external-gate"
 	extras["gate"] = gateReviewTimeout
+	return "blocked", extras, true
+}
+
+func (s *runSession) handleRetainedReviewApproval(ctx context.Context, workDir, branch, logPath, runID string, pr *github.PR, currentHead string, handoff *reviewTimeoutHandoff) (string, map[string]any, bool) {
+	gate := checkPRExternalGateForPR(pr, currentHead, true)
+	switch gate {
+	case gateReadyToMerge:
+		extras := handoff.payload()
+		extras["blocker"] = "external-gate"
+		extras["gate"] = gateReadyToMerge
+		extras["reason"] = "REVIEW_APPROVED"
+		extras["next_action"] = "revalidate current-head approval, CI, and mergeability, then execute the normal pull-request merge gate"
+		if request, ok := extras["review_request"].(map[string]any); ok {
+			request["outcome"] = "approved"
+			request["reason"] = "REVIEW_APPROVED"
+			request["next_action"] = extras["next_action"]
+		}
+		if ctx.Err() != nil {
+			return "aborted", nil, true
+		}
+		s.recordExternalGateBlocker(workDir, logPath, runID, gateReadyToMerge)
+		return "blocked", extras, true
+	case "resolved":
+		return s.confirmExternalGate(ctx, workDir, branch, logPath, runID)
+	case "failed":
+		return s.blockExternalGate(ctx, workDir, logPath, runID, "failed")
+	case "unavailable":
+		return s.blockExternalGate(ctx, workDir, logPath, runID, "unavailable")
+	default:
+		return s.blockExternalGate(ctx, workDir, logPath, runID, "pending")
+	}
+}
+
+func (s *runSession) handleRetainedReviewPending(ctx context.Context, workDir, branch, logPath, runID string, pr *github.PR, currentHead string, handoff *reviewTimeoutHandoff) (string, map[string]any, bool) {
+	gate := checkPRExternalGateForPR(pr, currentHead, true)
+	if gate == gateReadyToMerge {
+		gate = "pending"
+	}
+	if gate == "resolved" {
+		return s.confirmExternalGate(ctx, workDir, branch, logPath, runID)
+	}
+	if gate == "failed" {
+		return s.blockExternalGate(ctx, workDir, logPath, runID, "failed")
+	}
+	if gate == "unavailable" {
+		return s.blockExternalGate(ctx, workDir, logPath, runID, "unavailable")
+	}
+	extras := handoff.payload()
+	extras["blocker"] = "external-gate"
+	extras["gate"] = gate
+	s.recordExternalGateBlocker(workDir, logPath, runID, gate)
 	return "blocked", extras, true
 }
 
