@@ -210,7 +210,7 @@ func TestExternalGate_ReviewTimeoutBlocksWithoutRetry(t *testing.T) {
 	}
 }
 
-func TestExternalGate_ReviewTimeoutPreemptsAgentFailure(t *testing.T) {
+func TestExternalGate_ReviewTimeoutPreservesAgentFailureRetryBehavior(t *testing.T) {
 	workDir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(workDir)
 	branch := gateTestBranch
@@ -224,7 +224,10 @@ func TestExternalGate_ReviewTimeoutPreemptsAgentFailure(t *testing.T) {
 	writeTimedOutReviewRequest(t, worktreePath)
 	sb := &retrySandbox{workDir: worktreePath}
 	sbFactory := &retrySandboxFactory{sandbox: sb}
-	factory := &fakeRunnableFactory{results: []AgentRunResult{{IssueNumber: 42, Status: "failure", Branch: branch}}}
+	factory := &fakeRunnableFactory{results: []AgentRunResult{
+		{IssueNumber: 42, Status: "failure", Branch: branch},
+		{IssueNumber: 42, Status: "success", Branch: branch},
+	}}
 	eventLog := &events.JSONLLogger{Path: filepath.Join(t.TempDir(), "events.jsonl")}
 	client := &fakeGitHubClient{
 		issues: map[int]*github.Issue{42: {Number: 42, State: "open", Title: "Fix bug"}},
@@ -237,23 +240,23 @@ func TestExternalGate_ReviewTimeoutPreemptsAgentFailure(t *testing.T) {
 		WithErrorLog(io.Discard), WithSandboxFactory(sbFactory), WithRunnableFactory(factory), WithRunSessionOpts(gateTestRunOptions()))
 	bc := BatchConfig{
 		Cfg: &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}}, AgentName: "opencode",
-		AgentCfg: config.Agent{Command: "echo hi"}, IdentityResolver: noopIdentityResolver(), Retries: 3,
+		AgentCfg: config.Agent{Command: "echo hi"}, IdentityResolver: noopIdentityResolver(), Retries: 1,
 	}
 	result, started := o.newRunExecutor(context.Background(), bc, sbFactory, nil).Execute(context.Background(), RowSpec{
 		IssueNumber: 42, Branches: map[int]string{42: branch}, BaseBranch: "main",
 	})
 	if !started || result.Status != "blocked" {
-		t.Fatalf("timeout after failure = (%t, %q), want started blocked", started, result.Status)
+		t.Fatalf("timeout after retry = (%t, %q), want started blocked", started, result.Status)
 	}
-	if len(factory.created) != 1 {
-		t.Fatalf("agent launches = %d, want 1", len(factory.created))
+	if len(factory.created) != 2 {
+		t.Fatalf("agent launches = %d, want 2 (failure retry followed by clean timeout handoff)", len(factory.created))
 	}
 	logs, err := eventLog.Read()
 	if err != nil {
 		t.Fatalf("read events: %v", err)
 	}
-	if countEventsByType(logs, "run.retry") != 0 {
-		t.Fatal("review timeout after agent failure consumed a retry")
+	if countEventsByType(logs, "run.retry") != 1 {
+		t.Fatal("agent failure did not consume its configured retry before the timeout handoff")
 	}
 	finished := findEvent(logs, "run.finished")
 	if finished == nil || finished.Payload["gate"] != gateReviewTimeout {
