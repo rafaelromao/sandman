@@ -238,7 +238,10 @@ func (s *runSession) handleReviewTimeoutGate(ctx context.Context, workDir, branc
 		return "aborted", nil, true
 	}
 	pr, err := s.deps.githubClient.FindPRByBranch(ctx, branch)
-	if err != nil || pr == nil {
+	if err != nil {
+		return s.blockExternalGate(ctx, workDir, logPath, runID, "unavailable")
+	}
+	if pr == nil {
 		return "", nil, false
 	}
 	if !reviewTimeoutArtifactsPresentForPR(workDir, pr.Number) {

@@ -3,6 +3,7 @@ package batch
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -957,6 +958,26 @@ func TestExternalGate_LateApprovalRejectsMissingClassification(t *testing.T) {
 	status, extras, handled := session.handleReviewTimeoutGate(context.Background(), workDir, gateTestBranch, "", "run-test", "current-sha")
 	if !handled || status != "blocked" || extras["gate"] != gateReviewTimeout {
 		t.Fatalf("missing classification result = (%q, %#v, %t), want retained timeout", status, extras, handled)
+	}
+}
+
+func TestExternalGate_LateApprovalLookupFailureCannotFallThroughToAggregateApproval(t *testing.T) {
+	workDir := testenv.MkdirShort(t, "sm-orch-")
+	writeRetainedCurrentHeadApproval(t, workDir)
+	client := &fakeGitHubClient{
+		findPRErr: errors.New("temporary GitHub outage"),
+		prs: map[string]*github.PR{gateTestBranch: {
+			Number: 17, State: "open", HeadRefOid: "current-sha", StatusCheckRollup: "success", ReviewDecision: "APPROVED", MergeStateStatus: "CLEAN",
+		}},
+	}
+	session := &runSession{
+		issueNumber: 42,
+		deps:        runDeps{githubClient: client, errorLog: io.Discard},
+		opts:        gateTestRunOptions(),
+	}
+	status, extras, handled := session.handleReviewTimeoutGate(context.Background(), workDir, gateTestBranch, "", "run-test", "current-sha")
+	if !handled || status != "blocked" || extras["gate"] != "unavailable" {
+		t.Fatalf("lookup failure result = (%q, %#v, %t), want unavailable external gate", status, extras, handled)
 	}
 }
 
