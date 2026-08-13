@@ -96,7 +96,8 @@ func writeFormalChangesRequestedClassification(t *testing.T, workDir, headStatus
 	if err := os.WriteFile(requestPath, []byte(requestText), 0o600); err != nil {
 		t.Fatalf("write classified review request: %v", err)
 	}
-	classification := strings.ReplaceAll(`{"protocol":"review-classification/v1","request":{"repository":"owner/repo","pull_request":17,"head_sha":"current-sha","trigger_id":"https://github.com/owner/repo/pull/17#issuecomment-1001","trigger_prefix":"/sandman review","trigger_created_at":"1970-01-01T00:16:40Z","deadline_at":"unix:2800","deadline_unix_seconds":2800},"observed_head_sha":"current-sha","request_state":"active","decision":"changes_requested","window":{"start":"1970-01-01T00:16:40Z","end":null,"deadline_at":"unix:2800","deadline_unix_seconds":2800,"next_trigger":null},"response_counts":{"top_level":0,"formal_reviews":1,"inline_comments":0},"sources":{"top_level":[],"formal_reviews":[{"id":"review-2001","source":"formal_review","state":"CHANGES_REQUESTED","response_timestamp":"1970-01-01T00:20:00Z","head_status":"HEAD_STATUS"}],"inline_comments":[]},"formal":{"decision":"changes_requested","approval_evidence":[],"ambiguous_approval_evidence":[],"requested_changes":[{"id":"review-2001","source":"formal_review","state":"CHANGES_REQUESTED","response_timestamp":"1970-01-01T00:20:00Z","head_status":"HEAD_STATUS"}]},"boundary_evidence":{"request":{"repository":"owner/repo","pull_request":17,"head_sha":"current-sha","trigger_id":"https://github.com/owner/repo/pull/17#issuecomment-1001","trigger_prefix":"/sandman review","trigger_created_at":"1970-01-01T00:16:40Z","deadline_at":"unix:2800","deadline_unix_seconds":2800},"sources":{"top_level":[],"formal_reviews":[{"id":"review-2001","source":"formal_review","state":"CHANGES_REQUESTED","response_timestamp":"1970-01-01T00:20:00Z","head_status":"HEAD_STATUS"}],"inline_comments":[]}}}`, "HEAD_STATUS", headStatus)
+	classification := strings.ReplaceAll(`{"protocol":"review-classification/v1","request":{"repository":"owner/repo","pull_request":17,"head_sha":"current-sha","trigger_id":"https://github.com/owner/repo/pull/17#issuecomment-1001","trigger_prefix":"/sandman review","trigger_created_at":"1970-01-01T00:16:40Z","deadline_at":"unix:2800","deadline_unix_seconds":2800},"observed_head_sha":"current-sha","request_state":"active","decision":"changes_requested","window":{"start":"1970-01-01T00:16:40Z","end":null,"deadline_at":"unix:2800","deadline_unix_seconds":2800,"next_trigger":null},"response_counts":{"top_level":0,"formal_reviews":1,"inline_comments":0},"sources":{"top_level":[],"formal_reviews":[{"id":"review-2001","source":"formal_review","state":"CHANGES_REQUESTED","response_timestamp":"1970-01-01T00:20:00Z","head_status":"HEAD_STATUS","commit_id":"HEAD_COMMIT"}],"inline_comments":[]},"formal":{"decision":"changes_requested","approval_evidence":[],"ambiguous_approval_evidence":[],"requested_changes":[{"id":"review-2001","source":"formal_review","state":"CHANGES_REQUESTED","response_timestamp":"1970-01-01T00:20:00Z","head_status":"HEAD_STATUS","commit_id":"HEAD_COMMIT"}]},"boundary_evidence":{"request":{"repository":"owner/repo","pull_request":17,"head_sha":"current-sha","trigger_id":"https://github.com/owner/repo/pull/17#issuecomment-1001","trigger_prefix":"/sandman review","trigger_created_at":"1970-01-01T00:16:40Z","deadline_at":"unix:2800","deadline_unix_seconds":2800},"sources":{"top_level":[],"formal_reviews":[{"id":"review-2001","source":"formal_review","state":"CHANGES_REQUESTED","response_timestamp":"1970-01-01T00:20:00Z","head_status":"HEAD_STATUS","commit_id":"HEAD_COMMIT"}],"inline_comments":[]}}}`, "HEAD_STATUS", headStatus)
+	classification = strings.ReplaceAll(classification, "HEAD_COMMIT", map[string]string{"current": "current-sha", "stale": "stale-sha"}[headStatus])
 	state, err := os.ReadFile(statePath)
 	if err != nil {
 		t.Fatalf("read review state: %v", err)
@@ -108,6 +109,24 @@ func writeFormalChangesRequestedClassification(t *testing.T, workDir, headStatus
 	if err := os.WriteFile(statePath, []byte(stateText), 0o600); err != nil {
 		t.Fatalf("write classified review state: %v", err)
 	}
+}
+
+func writeCurrentHeadApprovalClassification(t *testing.T, workDir string) {
+	t.Helper()
+	writeTimedOutReviewRequest(t, workDir)
+	writeFormalChangesRequestedClassification(t, workDir, "current")
+	mutateReviewClassification(t, workDir, func(classification map[string]any) {
+		classification["decision"] = "approved"
+		formal := classification["formal"].(map[string]any)
+		formalReviews := classification["sources"].(map[string]any)["formal_reviews"].([]any)
+		review := formalReviews[0].(map[string]any)
+		review["state"] = "APPROVED"
+		formal["decision"] = "approved"
+		formal["approval_evidence"] = []any{review}
+		formal["requested_changes"] = []any{}
+		boundary := classification["boundary_evidence"].(map[string]any)
+		boundary["sources"].(map[string]any)["formal_reviews"] = formalReviews
+	})
 }
 
 func mutateReviewClassification(t *testing.T, workDir string, mutate func(map[string]any)) {
@@ -402,6 +421,70 @@ func TestExternalGate_LateFormalChangesRequestedIsActionableWithoutRetry(t *test
 	}
 }
 
+func TestExternalGate_RespondedFormalChangesRequestedIsActionable(t *testing.T) {
+	workDir := testenv.MkdirShort(t, "sm-orch-")
+	writeTimedOutReviewRequest(t, workDir)
+	writeFormalChangesRequestedClassification(t, workDir, "current")
+	statePath := filepath.Join(workDir, ".sandman", "state", "17.review_request.json.state")
+	state, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatalf("read review state: %v", err)
+	}
+	stateText := strings.Replace(string(state), `"state": "timed_out"`, `"state": "responded"`, 1)
+	stateText = strings.Replace(stateText, `"reason": "request-deadline-exhausted"`, `"reason": "responded"`, 1)
+	stateText = strings.Replace(stateText, `"elapsed_seconds": 1800`, `"elapsed_seconds": 30`, 1)
+	if err := os.WriteFile(statePath, []byte(stateText), 0o600); err != nil {
+		t.Fatalf("write responded review state: %v", err)
+	}
+
+	session := &runSession{
+		issueNumber: 42,
+		deps: runDeps{
+			githubClient: &fakeGitHubClient{prs: map[string]*github.PR{gateTestBranch: {
+				Number: 17, State: "open", HeadRefOid: "current-sha", StatusCheckRollup: "success",
+				ReviewDecision: "CHANGES_REQUESTED", MergeStateStatus: "CLEAN",
+			}}},
+			errorLog: io.Discard,
+		},
+		opts: gateTestRunOptions(),
+	}
+	status, extras, handled := session.handleReviewTimeoutGate(context.Background(), workDir, gateTestBranch, "", "run-test", "current-sha")
+	if !handled || status != "blocked" || extras["gate"] != gateActionableFeedback {
+		t.Fatalf("responded formal requested changes = (%q, %#v, %t), want blocked/actionable-feedback", status, extras, handled)
+	}
+}
+
+func TestExternalGate_RespondedCurrentHeadApprovalRemainsReadyToMerge(t *testing.T) {
+	workDir := testenv.MkdirShort(t, "sm-orch-")
+	writeCurrentHeadApprovalClassification(t, workDir)
+	statePath := filepath.Join(workDir, ".sandman", "state", "17.review_request.json.state")
+	state, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatalf("read review state: %v", err)
+	}
+	stateText := strings.Replace(string(state), `"state": "timed_out"`, `"state": "responded"`, 1)
+	stateText = strings.Replace(stateText, `"reason": "request-deadline-exhausted"`, `"reason": "responded"`, 1)
+	stateText = strings.Replace(stateText, `"elapsed_seconds": 1800`, `"elapsed_seconds": 30`, 1)
+	if err := os.WriteFile(statePath, []byte(stateText), 0o600); err != nil {
+		t.Fatalf("write responded review state: %v", err)
+	}
+
+	session := &runSession{
+		deps: runDeps{
+			githubClient: &fakeGitHubClient{prs: map[string]*github.PR{gateTestBranch: {
+				Number: 17, State: "open", HeadRefOid: "current-sha", StatusCheckRollup: "success",
+				ReviewDecision: "APPROVED", MergeStateStatus: "CLEAN",
+			}}},
+			errorLog: io.Discard,
+		},
+		opts: gateTestRunOptions(),
+	}
+	status, extras, handled := session.handleReviewTimeoutGate(context.Background(), workDir, gateTestBranch, "", "run-test", "current-sha")
+	if !handled || status != "blocked" || extras["gate"] != gateReadyToMerge {
+		t.Fatalf("responded current-head approval = (%q, %#v, %t), want ready-to-merge", status, extras, handled)
+	}
+}
+
 func TestExternalGate_LateFormalChangesRequestedAcceptsCurrentEvidenceWithStaleEvidence(t *testing.T) {
 	workDir := testenv.MkdirShort(t, "sm-orch-")
 	writeTimedOutReviewRequest(t, workDir)
@@ -415,6 +498,7 @@ func TestExternalGate_LateFormalChangesRequestedAcceptsCurrentEvidenceWithStaleE
 			"state":              "CHANGES_REQUESTED",
 			"response_timestamp": "1970-01-01T00:21:00Z",
 			"head_status":        "stale",
+			"commit_id":          "stale-sha",
 		}
 		formalReviews = append(formalReviews, stale)
 		sources["formal_reviews"] = formalReviews
@@ -427,6 +511,7 @@ func TestExternalGate_LateFormalChangesRequestedAcceptsCurrentEvidenceWithStaleE
 		boundarySources := boundary["sources"].(map[string]any)
 		boundarySources["formal_reviews"] = formalReviews
 	})
+	setClassificationFormalReviewCount(t, workDir, 2)
 
 	handoff, err := readReviewTimeoutHandoff(workDir, "owner/repo", &github.PR{Number: 17, State: "open", HeadRefOid: "current-sha"}, "current-sha")
 	if err != nil {
@@ -434,6 +519,33 @@ func TestExternalGate_LateFormalChangesRequestedAcceptsCurrentEvidenceWithStaleE
 	}
 	if !handoff.hasActionableFeedback() {
 		t.Fatal("current requested changes were masked by stale requested changes")
+	}
+}
+
+func TestExternalGate_LateFormalChangesRequestedRejectsHiddenSourceEvidence(t *testing.T) {
+	workDir := testenv.MkdirShort(t, "sm-orch-")
+	writeTimedOutReviewRequest(t, workDir)
+	writeFormalChangesRequestedClassification(t, workDir, "current")
+	mutateReviewClassification(t, workDir, func(classification map[string]any) {
+		sources := classification["sources"].(map[string]any)
+		formalReviews := sources["formal_reviews"].([]any)
+		hidden := map[string]any{
+			"id":                 "review-2002",
+			"source":             "formal_review",
+			"state":              "CHANGES_REQUESTED",
+			"response_timestamp": "1970-01-01T00:21:00Z",
+			"head_status":        "current",
+			"commit_id":          "current-sha",
+		}
+		formalReviews = append(formalReviews, hidden)
+		sources["formal_reviews"] = formalReviews
+		classification["response_counts"].(map[string]any)["formal_reviews"] = 2
+		boundary := classification["boundary_evidence"].(map[string]any)
+		boundary["sources"].(map[string]any)["formal_reviews"] = formalReviews
+	})
+	setClassificationFormalReviewCount(t, workDir, 2)
+	if _, err := readReviewTimeoutHandoff(workDir, "owner/repo", &github.PR{Number: 17, State: "open", HeadRefOid: "current-sha"}, "current-sha"); err == nil {
+		t.Fatal("formal requested changes hidden from formal evidence were accepted")
 	}
 }
 
@@ -474,7 +586,7 @@ func TestExternalGate_ClassificationUsesConfiguredTriggerPrefix(t *testing.T) {
 		"top_level":       []any{source},
 		"formal_reviews":  []any{},
 		"inline_comments": []any{},
-	}, request)
+	}, request, "")
 	if err == nil {
 		t.Fatal("configured review trigger was accepted as response evidence")
 	}
@@ -489,6 +601,29 @@ func TestExternalGate_LateFormalChangesRequestedRejectsNonNumericCounts(t *testi
 	})
 	if _, err := readReviewTimeoutHandoff(workDir, "owner/repo", &github.PR{Number: 17, State: "open", HeadRefOid: "current-sha"}, "current-sha"); err == nil {
 		t.Fatal("non-numeric response count was accepted")
+	}
+}
+
+func TestExternalGate_LateFormalChangesRequestedRejectsRetainedCountMismatch(t *testing.T) {
+	workDir := testenv.MkdirShort(t, "sm-orch-")
+	writeTimedOutReviewRequest(t, workDir)
+	writeFormalChangesRequestedClassification(t, workDir, "current")
+	setClassificationFormalReviewCount(t, workDir, 2)
+	if _, err := readReviewTimeoutHandoff(workDir, "owner/repo", &github.PR{Number: 17, State: "open", HeadRefOid: "current-sha"}, "current-sha"); err == nil {
+		t.Fatal("classification count mismatch with retained state was accepted")
+	}
+}
+
+func TestExternalGate_LateFormalChangesRequestedRejectsMalformedCommitIdentity(t *testing.T) {
+	workDir := testenv.MkdirShort(t, "sm-orch-")
+	writeTimedOutReviewRequest(t, workDir)
+	writeFormalChangesRequestedClassification(t, workDir, "current")
+	mutateReviewClassification(t, workDir, func(classification map[string]any) {
+		formalReviews := classification["sources"].(map[string]any)["formal_reviews"].([]any)
+		formalReviews[0].(map[string]any)["commit_id"] = float64(17)
+	})
+	if _, err := readReviewTimeoutHandoff(workDir, "owner/repo", &github.PR{Number: 17, State: "open", HeadRefOid: "current-sha"}, "current-sha"); err == nil {
+		t.Fatal("malformed commit identity was accepted")
 	}
 }
 
@@ -881,6 +1016,77 @@ func TestExternalGate_ReviewTimeoutRejectsSupersededResponse(t *testing.T) {
 		Number: 17, State: "open", HeadRefOid: "current-sha",
 	}, "current-sha"); err == nil {
 		t.Fatal("readReviewTimeoutHandoff() accepted a superseded response")
+	}
+}
+
+func TestExternalGate_ReviewTimeoutValidatesSupersededClassificationBoundary(t *testing.T) {
+	workDir := testenv.MkdirShort(t, "sm-orch-")
+	writeTimedOutReviewRequest(t, workDir)
+	writeFormalChangesRequestedClassification(t, workDir, "current")
+	mutateReviewClassification(t, workDir, func(classification map[string]any) {
+		classification["request_state"] = "superseded"
+		classification["decision"] = "pending"
+		classification["window"] = map[string]any{
+			"start":                 "1970-01-01T00:16:40Z",
+			"end":                   "1970-01-01T00:21:00Z",
+			"deadline_at":           "unix:2800",
+			"deadline_unix_seconds": 2800,
+			"next_trigger": map[string]any{
+				"id":         "https://github.com/owner/repo/pull/17#issuecomment-1002",
+				"body":       "/sandman review follow-up",
+				"created_at": "1970-01-01T00:21:00Z",
+			},
+		}
+	})
+	_, err := readReviewTimeoutHandoff(workDir, "owner/repo", &github.PR{Number: 17, State: "open", HeadRefOid: "current-sha"}, "current-sha")
+	if err == nil || !strings.Contains(err.Error(), "superseded") {
+		t.Fatalf("valid superseded classification error = %v, want superseded handoff rejection", err)
+	}
+}
+
+func TestExternalGate_MalformedRetainedClassificationBlocksStateErrorBeforeMerge(t *testing.T) {
+	workDir := testenv.MkdirShort(t, "sm-orch-")
+	writeTimedOutReviewRequest(t, workDir)
+	writeFormalChangesRequestedClassification(t, workDir, "current")
+	mutateReviewClassification(t, workDir, func(classification map[string]any) {
+		classification["formal"].(map[string]any)["requested_changes"] = "not-an-array"
+	})
+	session := &runSession{
+		issueNumber: 42,
+		deps: runDeps{
+			githubClient: &fakeGitHubClient{
+				issues: map[int]*github.Issue{42: {Number: 42, State: "open"}},
+				prs: map[string]*github.PR{gateTestBranch: {
+					Number: 17, State: "merged", Merged: true, Body: "Closes #42", HeadRefOid: "current-sha",
+				}},
+			},
+			errorLog: io.Discard,
+		},
+		opts: gateTestRunOptions(),
+	}
+	status, extras, handled := session.handleReviewTimeoutGate(context.Background(), workDir, gateTestBranch, "", "run-test", "current-sha")
+	if !handled || status != "blocked" || extras["gate"] != gateReviewTimeoutError {
+		t.Fatalf("malformed merged retained classification = (%q, %#v, %t), want state error", status, extras, handled)
+	}
+}
+
+func TestExternalGate_MergedRetainedRequestTakesPrecedenceOverFailedMetadata(t *testing.T) {
+	workDir := testenv.MkdirShort(t, "sm-orch-")
+	writeTimedOutReviewRequest(t, workDir)
+	session := &runSession{
+		issueNumber: 42,
+		deps: runDeps{
+			githubClient: &fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42}}, prs: map[string]*github.PR{gateTestBranch: {
+				Number: 17, State: "merged", Merged: true, Body: "Closes #42", HeadRefOid: "current-sha",
+				StatusCheckRollup: "failure", MergeStateStatus: "CONFLICTING",
+			}}},
+			errorLog: io.Discard,
+		},
+		opts: gateTestRunOptions(),
+	}
+	status, extras, handled := session.handleReviewTimeoutGate(context.Background(), workDir, gateTestBranch, "", "run-test", "current-sha")
+	if !handled || status != "success" || extras != nil {
+		t.Fatalf("merged retained request = (%q, %#v, %t), want successful confirmation", status, extras, handled)
 	}
 }
 

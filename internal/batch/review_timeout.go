@@ -84,12 +84,22 @@ type reviewWaitEvidence struct {
 	Classification json.RawMessage                `json:"classification"`
 }
 
+type retainedReviewOutcome string
+
+const (
+	retainedReviewTimeout  retainedReviewOutcome = "timeout"
+	retainedReviewPending  retainedReviewOutcome = "pending"
+	retainedReviewApproval retainedReviewOutcome = "approval"
+)
+
 type reviewClassification struct {
 	Raw              map[string]any
 	RequestState     string
 	Decision         string
+	ResponseCounts   reviewResponseCounts
 	FormalDecision   string
 	RequestedChanges []map[string]any
+	WindowEnd        string
 }
 
 type reviewTimeoutHandoff struct {
@@ -97,6 +107,13 @@ type reviewTimeoutHandoff struct {
 	State          reviewWaitState
 	ResponseCounts reviewResponseCounts
 	Classification *reviewClassification
+	Outcome        retainedReviewOutcome
+}
+
+type reviewTimeoutArtifacts struct {
+	Request        reviewRequestEnvelope
+	State          reviewWaitState
+	ResponseCounts reviewResponseCounts
 }
 
 func reviewTimeoutArtifactsPresent(workDir string) bool {
@@ -127,6 +144,14 @@ func reviewTimeoutArtifactsPresentForPR(workDir string, prNumber int) bool {
 }
 
 func readReviewTimeoutHandoff(workDir, repository string, pr *github.PR, currentHead string) (*reviewTimeoutHandoff, error) {
+	artifacts, err := readReviewTimeoutArtifacts(workDir, repository, pr, currentHead)
+	if err != nil {
+		return nil, err
+	}
+	return reviewTimeoutHandoffFromArtifacts(artifacts, currentHead)
+}
+
+func readReviewTimeoutArtifacts(workDir, repository string, pr *github.PR, currentHead string) (*reviewTimeoutArtifacts, error) {
 	if pr == nil || pr.Number <= 0 {
 		return nil, fmt.Errorf("pull request metadata is unavailable")
 	}
@@ -160,43 +185,100 @@ func readReviewTimeoutHandoff(workDir, repository string, pr *github.PR, current
 	if err := validateReviewRequest(request, state, string(headData), repository, pr, currentHead); err != nil {
 		return nil, err
 	}
-	if state.State != "timed_out" {
-		classification, classificationErr := decodeReviewClassificationRequestState(state.Evidence)
-		if classificationErr != nil {
-			return nil, classificationErr
+	artifacts := &reviewTimeoutArtifacts{Request: request, State: state}
+	if state.State == "timed_out" {
+		if err := validateTimedOutReviewState(request, state); err != nil {
+			return nil, err
 		}
-		if state.State == "pending" {
-			return nil, nil
+		persistedCounts := state.Evidence.ResponseCounts
+		artifacts.ResponseCounts = reviewResponseCounts{
+			TopLevel:      *persistedCounts.TopLevel,
+			FormalReviews: *persistedCounts.FormalReviews,
+			Inline:        *persistedCounts.Inline,
 		}
-		if state.State == "responded" && classification != nil {
-			switch classification.RequestState {
-			case "active":
-				return nil, nil
-			case "superseded":
-				return nil, fmt.Errorf("review wait request was superseded")
-			}
-		}
-		return nil, fmt.Errorf("review wait state %q is not reusable", state.State)
 	}
-	classification, err := decodeReviewClassification(state.Evidence, request, currentHead)
+	return artifacts, nil
+}
+
+func reviewTimeoutHandoffFromArtifacts(artifacts *reviewTimeoutArtifacts, currentHead string) (*reviewTimeoutHandoff, error) {
+	if artifacts == nil {
+		return nil, fmt.Errorf("review wait artifacts are unavailable")
+	}
+	classification, err := decodeReviewClassification(artifacts.State.Evidence, artifacts.Request, currentHead)
 	if err != nil {
 		return nil, err
 	}
-	if classification != nil && classification.RequestState == "superseded" {
-		return nil, fmt.Errorf("timed-out review wait request was superseded")
-	}
 
-	if err := validateTimedOutReviewState(request, state); err != nil {
-		return nil, err
+	switch artifacts.State.State {
+	case "pending":
+		return nil, nil
+	case "responded":
+		if classification == nil {
+			return nil, fmt.Errorf("responded review wait state is missing classification")
+		}
+		if classification.RequestState == "superseded" {
+			return nil, fmt.Errorf("review wait request was superseded")
+		}
+		if err := validateRespondedReviewState(artifacts.Request, artifacts.State); err != nil {
+			return nil, err
+		}
+		counts, err := responseCountsFromState(artifacts.State, true)
+		if err != nil {
+			return nil, err
+		}
+		if counts != classification.ResponseCounts {
+			return nil, fmt.Errorf("review wait response counts do not match classification")
+		}
+		return &reviewTimeoutHandoff{
+			Request:        artifacts.Request,
+			State:          artifacts.State,
+			ResponseCounts: counts,
+			Classification: classification,
+			Outcome:        retainedReviewClassificationOutcome(classification),
+		}, nil
+	case "timed_out":
+		outcome := retainedReviewTimeout
+		if classification != nil {
+			if err := validateRetainedClassificationCounts(classification.Raw, artifacts.ResponseCounts); err != nil {
+				return nil, err
+			}
+			if classification.RequestState == "superseded" {
+				return nil, fmt.Errorf("timed-out review wait request was superseded")
+			}
+			outcome = retainedReviewClassificationOutcome(classification)
+		}
+		return &reviewTimeoutHandoff{
+			Request:        artifacts.Request,
+			State:          artifacts.State,
+			ResponseCounts: artifacts.ResponseCounts,
+			Classification: classification,
+			Outcome:        outcome,
+		}, nil
+	default:
+		return nil, fmt.Errorf("review wait state %q is not reusable", artifacts.State.State)
 	}
+}
 
-	persistedCounts := state.Evidence.ResponseCounts
+func responseCountsFromState(state reviewWaitState, required bool) (reviewResponseCounts, error) {
+	if state.Evidence == nil || state.Evidence.ResponseCounts == nil {
+		if required {
+			return reviewResponseCounts{}, fmt.Errorf("review wait state has incomplete response counts")
+		}
+		return reviewResponseCounts{}, nil
+	}
+	persisted := state.Evidence.ResponseCounts
+	if persisted.TopLevel == nil || persisted.FormalReviews == nil || persisted.Inline == nil {
+		return reviewResponseCounts{}, fmt.Errorf("review wait state has incomplete response counts")
+	}
 	counts := reviewResponseCounts{
-		TopLevel:      *persistedCounts.TopLevel,
-		FormalReviews: *persistedCounts.FormalReviews,
-		Inline:        *persistedCounts.Inline,
+		TopLevel:      *persisted.TopLevel,
+		FormalReviews: *persisted.FormalReviews,
+		Inline:        *persisted.Inline,
 	}
-	return &reviewTimeoutHandoff{Request: request, State: state, ResponseCounts: counts, Classification: classification}, nil
+	if counts.TopLevel < 0 || counts.FormalReviews < 0 || counts.Inline < 0 {
+		return reviewResponseCounts{}, fmt.Errorf("review response counters must not be negative")
+	}
+	return counts, nil
 }
 
 func decodeReviewClassificationRequestState(evidence *reviewWaitEvidence) (*reviewClassification, error) {
@@ -217,6 +299,10 @@ func decodeReviewClassificationRequestState(evidence *reviewWaitEvidence) (*revi
 	return &reviewClassification{Raw: raw, RequestState: requestState}, nil
 }
 
+func reviewClassificationPresent(evidence *reviewWaitEvidence) bool {
+	return evidence != nil && len(evidence.Classification) > 0 && string(evidence.Classification) != "null"
+}
+
 func decodeReviewClassification(evidence *reviewWaitEvidence, request reviewRequestEnvelope, currentHead string) (*reviewClassification, error) {
 	classification, err := decodeReviewClassificationRequestState(evidence)
 	if err != nil || classification == nil {
@@ -226,10 +312,40 @@ func decodeReviewClassification(evidence *reviewWaitEvidence, request reviewRequ
 		return nil, err
 	}
 	classification.Decision = classification.Raw["decision"].(string)
+	classification.ResponseCounts, err = reviewClassificationResponseCounts(classification.Raw)
+	if err != nil {
+		return nil, err
+	}
 	formal := classification.Raw["formal"].(map[string]any)
 	classification.FormalDecision = formal["decision"].(string)
 	classification.RequestedChanges, _ = mapArray(formal["requested_changes"])
+	classification.WindowEnd, _ = classificationWindowEnd(classification.Raw, request)
 	return classification, nil
+}
+
+func reviewClassificationResponseCounts(raw map[string]any) (reviewResponseCounts, error) {
+	counts, ok := objectValue(raw, "response_counts")
+	if !ok {
+		return reviewResponseCounts{}, fmt.Errorf("review classification response counts are missing")
+	}
+	topLevel, topLevelOK := numberValue(counts, "top_level")
+	formalReviews, formalReviewsOK := numberValue(counts, "formal_reviews")
+	inlineComments, inlineCommentsOK := numberValue(counts, "inline_comments")
+	if !topLevelOK || !formalReviewsOK || !inlineCommentsOK {
+		return reviewResponseCounts{}, fmt.Errorf("review classification response counts are invalid")
+	}
+	return reviewResponseCounts{
+		TopLevel:      int(topLevel),
+		FormalReviews: int(formalReviews),
+		Inline:        int(inlineComments),
+	}, nil
+}
+
+func retainedReviewClassificationOutcome(classification *reviewClassification) retainedReviewOutcome {
+	if classification != nil && classification.RequestState == "active" && classification.Decision == "approved" && classification.FormalDecision == "approved" {
+		return retainedReviewApproval
+	}
+	return retainedReviewPending
 }
 
 func validateReviewClassification(raw map[string]any, request reviewRequestEnvelope, currentHead string) error {
@@ -270,15 +386,16 @@ func validateReviewClassification(raw map[string]any, request reviewRequestEnvel
 	if !ok || stringValue(window, "start") != request.TriggerCreatedAt || stringValue(window, "deadline_at") != request.DeadlineAt || !deadlineOK || deadlineUnixSeconds != float64(request.DeadlineUnixSeconds) {
 		return fmt.Errorf("review classification window does not match retained request")
 	}
-	if window["end"] != nil || window["next_trigger"] != nil {
-		return fmt.Errorf("review classification request window is not active")
+	windowEnd, err := classificationWindowEnd(raw, request)
+	if err != nil {
+		return err
 	}
 
 	sources, ok := objectValue(raw, "sources")
 	if !ok {
 		return fmt.Errorf("review classification sources are missing")
 	}
-	topLevel, formalReviews, inlineComments, err := validateClassificationSources(sources, request)
+	topLevel, formalReviews, inlineComments, err := validateClassificationSources(sources, request, windowEnd)
 	if err != nil {
 		return err
 	}
@@ -302,19 +419,22 @@ func validateReviewClassification(raw map[string]any, request reviewRequestEnvel
 		return fmt.Errorf("review classification formal evidence arrays are missing")
 	}
 	for _, evidence := range approvalEvidence {
-		if err := validateFormalEvidence(evidence, "APPROVED"); err != nil || !containsEvidence(formalReviews, evidence) {
+		if err := validateFormalEvidence(evidence, "APPROVED", request.HeadSHA); err != nil || stringValue(evidence, "head_status") != "current" || !containsEvidence(formalReviews, evidence) {
 			return fmt.Errorf("review classification approval evidence is invalid")
 		}
 	}
 	for _, evidence := range ambiguousApprovalEvidence {
-		if err := validateFormalEvidence(evidence, "APPROVED"); err != nil || !containsEvidence(formalReviews, evidence) {
+		if err := validateFormalEvidence(evidence, "APPROVED", request.HeadSHA); err != nil || stringValue(evidence, "head_status") == "current" || !containsEvidence(formalReviews, evidence) {
 			return fmt.Errorf("review classification ambiguous approval evidence is invalid")
 		}
 	}
 	for _, evidence := range requestedChanges {
-		if err := validateFormalEvidence(evidence, "CHANGES_REQUESTED"); err != nil || !containsEvidence(formalReviews, evidence) {
+		if err := validateFormalEvidence(evidence, "CHANGES_REQUESTED", request.HeadSHA); err != nil || !containsEvidence(formalReviews, evidence) {
 			return fmt.Errorf("review classification requested-changes evidence is invalid")
 		}
+	}
+	if !formalEvidenceMatchesSources(formalReviews, approvalEvidence, ambiguousApprovalEvidence, requestedChanges) {
+		return fmt.Errorf("review classification formal evidence does not match sources")
 	}
 	wantFormalDecision := "none"
 	if len(requestedChanges) > 0 {
@@ -343,7 +463,7 @@ func validateReviewClassification(raw map[string]any, request reviewRequestEnvel
 	if decision != wantDecision {
 		return fmt.Errorf("review classification decision is inconsistent")
 	}
-	if len(topLevel)+len(formalReviews)+len(inlineComments) == 0 && !(requestState == "active" && decision == "pending" && formalDecision == "none") {
+	if len(topLevel)+len(formalReviews)+len(inlineComments) == 0 && !(requestState == "active" && decision == "pending" && formalDecision == "none") && requestState != "superseded" {
 		return fmt.Errorf("review classification has no response evidence")
 	}
 	boundary, ok := objectValue(raw, "boundary_evidence")
@@ -361,6 +481,61 @@ func validateReviewClassification(raw map[string]any, request reviewRequestEnvel
 	return nil
 }
 
+func validateRetainedClassificationCounts(raw map[string]any, persisted reviewResponseCounts) error {
+	counts, ok := objectValue(raw, "response_counts")
+	if !ok {
+		return fmt.Errorf("review classification response counts are missing")
+	}
+	for key, want := range map[string]int{
+		"top_level":       persisted.TopLevel,
+		"formal_reviews":  persisted.FormalReviews,
+		"inline_comments": persisted.Inline,
+	} {
+		got, ok := numberValue(counts, key)
+		if !ok || got != float64(want) {
+			return fmt.Errorf("review classification response counts do not match retained state")
+		}
+	}
+	return nil
+}
+
+func classificationWindowEnd(raw map[string]any, request reviewRequestEnvelope) (string, error) {
+	window, ok := objectValue(raw, "window")
+	if !ok {
+		return "", fmt.Errorf("review classification window is missing")
+	}
+	endValue, endPresent := window["end"]
+	nextValue, nextPresent := window["next_trigger"]
+	if (!endPresent || endValue == nil) && (!nextPresent || nextValue == nil) {
+		if stringValue(raw, "request_state") != "active" {
+			return "", fmt.Errorf("superseded review classification is missing its next trigger")
+		}
+		return "", nil
+	}
+
+	end, endOK := endValue.(string)
+	nextTrigger, nextOK := objectValue(window, "next_trigger")
+	if !endOK || strings.TrimSpace(end) == "" || !nextOK {
+		return "", fmt.Errorf("review classification next-trigger boundary is invalid")
+	}
+	if stringValue(nextTrigger, "created_at") != end {
+		return "", fmt.Errorf("review classification next-trigger timestamp is inconsistent")
+	}
+	body, bodyOK := nextTrigger["body"].(string)
+	if !bodyOK || !strings.HasPrefix(body, request.TriggerPrefix) || stringValue(nextTrigger, "id") == "" {
+		return "", fmt.Errorf("review classification next-trigger evidence is invalid")
+	}
+	triggerTime, triggerErr := time.Parse(time.RFC3339Nano, request.TriggerCreatedAt)
+	nextTime, nextErr := time.Parse(time.RFC3339Nano, stringValue(nextTrigger, "created_at"))
+	if triggerErr != nil || nextErr != nil || !nextTime.After(triggerTime) {
+		return "", fmt.Errorf("review classification next-trigger timestamp is invalid")
+	}
+	if stringValue(raw, "request_state") != "superseded" {
+		return "", fmt.Errorf("active review classification has a next trigger")
+	}
+	return end, nil
+}
+
 func classificationValueEqual(got, want any) bool {
 	if wantInt, ok := want.(int); ok {
 		gotNumber, ok := got.(float64)
@@ -369,7 +544,7 @@ func classificationValueEqual(got, want any) bool {
 	return reflect.DeepEqual(got, want)
 }
 
-func validateClassificationSources(sources map[string]any, request reviewRequestEnvelope) ([]map[string]any, []map[string]any, []map[string]any, error) {
+func validateClassificationSources(sources map[string]any, request reviewRequestEnvelope, windowEnd string) ([]map[string]any, []map[string]any, []map[string]any, error) {
 	arrays := make([][]map[string]any, 3)
 	for i, key := range []string{"top_level", "formal_reviews", "inline_comments"} {
 		value, ok := sources[key]
@@ -401,13 +576,18 @@ func validateClassificationSources(sources map[string]any, request reviewRequest
 					return nil, nil, nil, fmt.Errorf("review classification includes a trigger as response evidence")
 				}
 			}
+			if key != "top_level" {
+				if err := validateEvidenceHeadStatus(evidence, request.HeadSHA); err != nil {
+					return nil, nil, nil, fmt.Errorf("review classification source %s has inconsistent head status", key)
+				}
+			}
 			if key == "formal_reviews" {
 				state := strings.ToUpper(stringValue(evidence, "state"))
 				if state != "COMMENTED" && state != "APPROVED" && state != "CHANGES_REQUESTED" {
 					return nil, nil, nil, fmt.Errorf("review classification formal source has invalid state")
 				}
 			}
-			if !classificationTimestampInWindow(stringValue(evidence, "response_timestamp"), request) {
+			if !classificationTimestampInWindow(stringValue(evidence, "response_timestamp"), request, windowEnd) {
 				return nil, nil, nil, fmt.Errorf("review classification source %s is outside the request window", key)
 			}
 		}
@@ -415,18 +595,55 @@ func validateClassificationSources(sources map[string]any, request reviewRequest
 	return arrays[0], arrays[1], arrays[2], nil
 }
 
-func validateFormalEvidence(evidence map[string]any, state string) error {
+func validateFormalEvidence(evidence map[string]any, state, expectedHead string) error {
 	if stringValue(evidence, "source") != "formal_review" || !strings.EqualFold(stringValue(evidence, "state"), state) || stringValue(evidence, "id") == "" || stringValue(evidence, "response_timestamp") == "" {
 		return fmt.Errorf("formal evidence is incomplete")
 	}
+	return validateEvidenceHeadStatus(evidence, expectedHead)
+}
+
+func validateEvidenceHeadStatus(evidence map[string]any, expectedHead string) error {
 	headStatus := stringValue(evidence, "head_status")
 	if headStatus != "current" && headStatus != "stale" && headStatus != "unknown" {
-		return fmt.Errorf("formal evidence head status is invalid")
+		return fmt.Errorf("evidence head status is invalid")
+	}
+	commitID, validCommitID := evidenceCommitID(evidence)
+	if !validCommitID {
+		return fmt.Errorf("evidence commit identity is invalid")
+	}
+	switch headStatus {
+	case "current":
+		if commitID == "" || !strings.EqualFold(commitID, expectedHead) {
+			return fmt.Errorf("current evidence commit does not match the retained head")
+		}
+	case "stale":
+		if commitID == "" || strings.EqualFold(commitID, expectedHead) {
+			return fmt.Errorf("stale evidence commit does not identify another head")
+		}
+	case "unknown":
+		if commitID != "" {
+			return fmt.Errorf("unknown evidence head has a commit identity")
+		}
 	}
 	return nil
 }
 
-func classificationTimestampInWindow(raw string, request reviewRequestEnvelope) bool {
+func evidenceCommitID(evidence map[string]any) (string, bool) {
+	for _, key := range []string{"commit_id", "commitId"} {
+		value, ok := evidence[key]
+		if !ok || value == nil {
+			continue
+		}
+		commitID, ok := value.(string)
+		if !ok {
+			return "", false
+		}
+		return strings.TrimSpace(commitID), true
+	}
+	return "", true
+}
+
+func classificationTimestampInWindow(raw string, request reviewRequestEnvelope, windowEnd string) bool {
 	timestamp, err := time.Parse(time.RFC3339Nano, raw)
 	if err != nil {
 		return false
@@ -436,7 +653,14 @@ func classificationTimestampInWindow(raw string, request reviewRequestEnvelope) 
 		return false
 	}
 	deadline := time.Unix(int64(request.DeadlineUnixSeconds), 0).UTC()
-	return timestamp.After(start) && !timestamp.After(deadline)
+	if !timestamp.After(start) || timestamp.After(deadline) {
+		return false
+	}
+	if strings.TrimSpace(windowEnd) == "" {
+		return true
+	}
+	end, err := time.Parse(time.RFC3339Nano, windowEnd)
+	return err == nil && timestamp.Before(end)
 }
 
 func containsEvidence(sources []map[string]any, wanted map[string]any) bool {
@@ -446,6 +670,25 @@ func containsEvidence(sources []map[string]any, wanted map[string]any) bool {
 		}
 	}
 	return false
+}
+
+func formalEvidenceMatchesSources(sources, approvals, ambiguousApprovals, requestedChanges []map[string]any) bool {
+	expectedApprovals := make([]map[string]any, 0, len(approvals))
+	expectedAmbiguousApprovals := make([]map[string]any, 0, len(ambiguousApprovals))
+	expectedRequestedChanges := make([]map[string]any, 0, len(requestedChanges))
+	for _, evidence := range sources {
+		switch {
+		case strings.EqualFold(stringValue(evidence, "state"), "CHANGES_REQUESTED"):
+			expectedRequestedChanges = append(expectedRequestedChanges, evidence)
+		case strings.EqualFold(stringValue(evidence, "state"), "APPROVED") && stringValue(evidence, "head_status") == "current":
+			expectedApprovals = append(expectedApprovals, evidence)
+		case strings.EqualFold(stringValue(evidence, "state"), "APPROVED"):
+			expectedAmbiguousApprovals = append(expectedAmbiguousApprovals, evidence)
+		}
+	}
+	return reflect.DeepEqual(approvals, expectedApprovals) &&
+		reflect.DeepEqual(ambiguousApprovals, expectedAmbiguousApprovals) &&
+		reflect.DeepEqual(requestedChanges, expectedRequestedChanges)
 }
 
 func objectValue(value map[string]any, key string) (map[string]any, bool) {
@@ -520,6 +763,22 @@ func validateTimedOutReviewState(request reviewRequestEnvelope, state reviewWait
 	return nil
 }
 
+func validateRespondedReviewState(request reviewRequestEnvelope, state reviewWaitState) error {
+	if state.Reason != "responded" {
+		return fmt.Errorf("responded review wait state has unexpected reason")
+	}
+	if state.Lifecycle != "started" && state.Lifecycle != "resumed" {
+		return fmt.Errorf("responded review wait state has invalid lifecycle")
+	}
+	if state.ElapsedSeconds == nil {
+		return fmt.Errorf("responded review wait state is missing elapsed time")
+	}
+	if *state.ElapsedSeconds < 0 || *state.ElapsedSeconds > request.EffectiveTimeout {
+		return fmt.Errorf("responded review wait elapsed time is invalid")
+	}
+	return nil
+}
+
 func validateReviewRequest(request reviewRequestEnvelope, state reviewWaitState, headSidecar, repository string, pr *github.PR, currentHead string) error {
 	if request.Protocol != "review-wait/v1" || state.Protocol != "review-wait/v1" {
 		return fmt.Errorf("review request protocol is invalid")
@@ -575,7 +834,7 @@ func (h *reviewTimeoutHandoff) payloadFor(gate, reason, nextAction string) map[s
 		"started_unix_seconds":      h.Request.StartedUnixSeconds,
 		"deadline_unix_seconds":     h.Request.DeadlineUnixSeconds,
 		"effective_timeout_seconds": h.Request.EffectiveTimeout,
-		"elapsed_seconds":           *h.State.ElapsedSeconds,
+		"elapsed_seconds":           valueOrZero(h.State.ElapsedSeconds),
 		"state":                     h.State.State,
 		"response_counts":           h.ResponseCounts,
 		"reason":                    reason,
@@ -592,13 +851,20 @@ func (h *reviewTimeoutHandoff) payloadFor(gate, reason, nextAction string) map[s
 	}
 }
 
+func valueOrZero(value *int) int {
+	if value == nil {
+		return 0
+	}
+	return *value
+}
+
 func (h *reviewTimeoutHandoff) hasActionableFeedback() bool {
 	if h == nil || h.Classification == nil || h.Classification.RequestState != "active" || h.Classification.Decision != "changes_requested" || h.Classification.FormalDecision != "changes_requested" || len(h.Classification.RequestedChanges) == 0 {
 		return false
 	}
 	currentEvidence := false
 	for _, evidence := range h.Classification.RequestedChanges {
-		if !strings.EqualFold(stringValue(evidence, "state"), "CHANGES_REQUESTED") || !classificationTimestampInWindow(stringValue(evidence, "response_timestamp"), h.Request) {
+		if !strings.EqualFold(stringValue(evidence, "state"), "CHANGES_REQUESTED") || !classificationTimestampInWindow(stringValue(evidence, "response_timestamp"), h.Request, h.Classification.WindowEnd) {
 			return false
 		}
 		if stringValue(evidence, "head_status") == "current" {
