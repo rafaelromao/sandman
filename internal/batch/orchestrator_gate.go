@@ -238,6 +238,9 @@ func (s *runSession) handleReviewTimeoutGate(ctx context.Context, workDir, branc
 	if err != nil || pr == nil {
 		return s.blockReviewTimeoutStateError(ctx, workDir, logPath, runID)
 	}
+	if !reviewTimeoutArtifactsPresentForPR(workDir, pr.Number) {
+		return "", nil, false
+	}
 	handoff, err := readReviewTimeoutHandoff(workDir, repository, pr, currentHead)
 	if err != nil {
 		return s.blockReviewTimeoutStateError(ctx, workDir, logPath, runID)
