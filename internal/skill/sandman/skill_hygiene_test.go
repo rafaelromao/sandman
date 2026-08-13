@@ -332,6 +332,156 @@ func TestCodeReviewSkill_SeparatesSelfAndDaemonContexts(t *testing.T) {
 	}
 }
 
+func TestPlanSkill_PreservesConsensusWithoutLocalWallClockCap(t *testing.T) {
+	text, ok := readSkillMarkdown(t)["plan/SKILL.md"]
+	if !ok {
+		t.Fatal("expected plan/SKILL.md")
+	}
+
+	for _, forbidden := range []string{
+		"20-minute",
+		"20 minute",
+		"20 minutes",
+		"wall-clock timer",
+		"hard-reject",
+		"re-spawn",
+		"subagent stuck",
+		"review-failed",
+	} {
+		if strings.Contains(strings.ToLower(text), forbidden) {
+			t.Errorf("plan skill must not prescribe local liveness cap language %q", forbidden)
+		}
+	}
+
+	for _, required := range []string{
+		"Send the draft plan to a general-purpose subagent for review.",
+		"Revise until consensus.",
+		"If the review subagent fails or returns no decision",
+		"parent workflow's normal recovery and continuation handling",
+		"`run_idle_timeout` remains the only execution watchdog",
+	} {
+		if !strings.Contains(text, required) {
+			t.Errorf("plan skill must preserve normal review handling %q", required)
+		}
+	}
+}
+
+func TestTargetSkills_NoSemanticSubagentWallClockCaps(t *testing.T) {
+	files := readSkillMarkdown(t)
+	forbidden := []struct {
+		name    string
+		pattern string
+	}{
+		{
+			name:    "subagent time limit",
+			pattern: `(?i)\b(?:subagent|sub-agent|review agent|review subagent)\b[^\n]{0,120}\b(?:wall[- ]clock|time limit|deadline|timer)\b`,
+		},
+		{
+			name:    "time limit before subagent",
+			pattern: `(?i)\b(?:wall[- ]clock|time limit|deadline|timer)\b[^\n]{0,120}\b(?:subagent|sub-agent|review agent|review subagent)\b`,
+		},
+		{
+			name:    "fixed attempt budget",
+			pattern: `(?i)\b(?:up to|maximum|max|fixed|total)\s+(?:\d+|one|two|three|several)\s+(?:attempts?|retries?|times?)\b`,
+		},
+		{
+			name:    "timeout-driven retry",
+			pattern: `(?i)\b(?:timeout|deadline|time limit|cap|stuck)\b[^\n]{0,120}\b(?:retry|retries|respawn|re-spawn)\b|\b(?:retry|retries|respawn|re-spawn)\b[^\n]{0,120}\b(?:timeout|deadline|time limit|cap|stuck)\b`,
+		},
+	}
+
+	for _, path := range []string{"plan/SKILL.md", "tdd/SKILL.md", "code-review/SKILL.md"} {
+		text, ok := files[path]
+		if !ok {
+			t.Fatalf("expected %s", path)
+		}
+		for _, rule := range forbidden {
+			re := regexp.MustCompile(rule.pattern)
+			if match := re.FindString(text); match != "" {
+				t.Errorf("%s contains semantic local liveness cap language %q: %q", path, rule.name, match)
+			}
+		}
+	}
+}
+
+func TestTDDSkill_PreservesConsensusAndRedGreenWithoutLocalWallClockCap(t *testing.T) {
+	text, ok := readSkillMarkdown(t)["tdd/SKILL.md"]
+	if !ok {
+		t.Fatal("expected tdd/SKILL.md")
+	}
+
+	for _, forbidden := range []string{
+		"20-minute",
+		"20 minute",
+		"20 minutes",
+		"wall-clock timer",
+		"hard-reject",
+		"re-spawn",
+		"subagent stuck",
+		"timeout-triggered",
+		"fixed retry count",
+		"retry amplification",
+	} {
+		if strings.Contains(strings.ToLower(text), forbidden) {
+			t.Errorf("TDD skill must not prescribe local liveness cap language %q", forbidden)
+		}
+	}
+
+	for _, required := range []string{
+		"Ask a subagent to review the plan, then proceed automatically after reaching consensus",
+		"RED:",
+		"GREEN:",
+		"If the planning review subagent fails or returns no decision",
+		"parent workflow's normal recovery and continuation handling",
+		"`run_idle_timeout` remains the only execution watchdog",
+	} {
+		if !strings.Contains(text, required) {
+			t.Errorf("TDD skill must preserve normal execution handling %q", required)
+		}
+	}
+}
+
+func TestCodeReviewSkill_PreservesReviewAxesWithoutLocalWallClockCap(t *testing.T) {
+	text, ok := readSkillMarkdown(t)["code-review/SKILL.md"]
+	if !ok {
+		t.Fatal("expected code-review/SKILL.md")
+	}
+
+	for _, forbidden := range []string{
+		"20-minute",
+		"20 minute",
+		"20 minutes",
+		"wall-clock",
+		"hard-reject",
+		"retry that axis",
+		"stalled attempts",
+		"sub-agent stuck",
+		"timeout-retry",
+		"retry amplification",
+	} {
+		if strings.Contains(strings.ToLower(text), forbidden) {
+			t.Errorf("code-review skill must not prescribe local liveness cap language %q", forbidden)
+		}
+	}
+
+	for _, required := range []string{
+		"Standards",
+		"Spec",
+		"Give the Standards reviewer",
+		"Give the Spec reviewer",
+		"When a review agent fails or a blocked review ends with no decision",
+		"exact failure in `.sandman/task.md` and the run log, along with the next executable action",
+		"## Pull-request review context",
+		"Those inputs are authoritative.",
+		"Do not trigger, poll, fetch, post to, merge, commit to, push to, or remediate",
+		"atomic temp-file-and-rename write",
+	} {
+		if !strings.Contains(text, required) {
+			t.Errorf("code-review skill must preserve review behavior %q", required)
+		}
+	}
+}
+
 func TestSkills_NoObsoleteSelfReviewSkillReference(t *testing.T) {
 	obsolete := "sandman-self" + "-review"
 	for path, text := range readSkillMarkdown(t) {
