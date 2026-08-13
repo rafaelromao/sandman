@@ -168,6 +168,9 @@ func readReviewTimeoutHandoff(workDir, repository string, pr *github.PR, current
 		if classification == nil {
 			return nil, fmt.Errorf("responded review wait state is missing classification")
 		}
+		if err := validateRespondedReviewState(request, state); err != nil {
+			return nil, err
+		}
 		return &reviewTimeoutHandoff{
 			Request:        request,
 			State:          state,
@@ -360,7 +363,7 @@ func validateReviewClassificationWindow(window map[string]any, request reviewReq
 	end, hasEnd := window["end"]
 	nextTrigger, hasNext := window["next_trigger"]
 	if requestState == "active" {
-		return (!hasEnd || end == nil) && (!hasNext || nextTrigger == nil)
+		return hasEnd && end == nil && hasNext && nextTrigger == nil && window["start"] != nil && window["deadline_at"] != nil && window["deadline_unix_seconds"] != nil
 	}
 	if !hasEnd || !hasNext || end == nil || nextTrigger == nil {
 		return false
@@ -379,6 +382,9 @@ func validateReviewClassificationWindow(window map[string]any, request reviewReq
 func validateReviewSourceArray(sources []any, source string, request reviewRequestEnvelope, window map[string]any, requireCurrent bool) bool {
 	for _, raw := range sources {
 		entry, ok := raw.(map[string]any)
+		if !ok {
+			return false
+		}
 		validHead := stringValue(entry, "head_status") == "current"
 		if source != "top_level" {
 			validHead = validReviewHeadStatus(entry, request.HeadSHA)
@@ -616,6 +622,22 @@ func validateTimedOutReviewState(request reviewRequestEnvelope, state reviewWait
 	return nil
 }
 
+func validateRespondedReviewState(request reviewRequestEnvelope, state reviewWaitState) error {
+	if state.Reason != "responded" {
+		return fmt.Errorf("responded review wait state has unexpected reason")
+	}
+	if state.Lifecycle != "started" && state.Lifecycle != "resumed" {
+		return fmt.Errorf("responded review wait state has invalid lifecycle")
+	}
+	if state.ElapsedSeconds == nil {
+		return fmt.Errorf("responded review wait state is missing elapsed time")
+	}
+	if *state.ElapsedSeconds < 0 || *state.ElapsedSeconds > request.EffectiveTimeout {
+		return fmt.Errorf("responded review wait elapsed time is invalid")
+	}
+	return nil
+}
+
 func validateReviewRequest(request reviewRequestEnvelope, state reviewWaitState, headSidecar, repository string, pr *github.PR, currentHead string) error {
 	if request.Protocol != "review-wait/v1" || state.Protocol != "review-wait/v1" {
 		return fmt.Errorf("review request protocol is invalid")
@@ -643,7 +665,11 @@ func validateReviewRequest(request reviewRequestEnvelope, state reviewWaitState,
 	if state.HeadSHA != request.HeadSHA || state.TriggerID != request.TriggerID || state.TriggerPrefix != request.TriggerPrefix || state.TriggerCreatedAt != request.TriggerCreatedAt || state.ConfirmedAt != request.ConfirmedAt || state.StartedAt != request.StartedAt || state.DeadlineAt != request.DeadlineAt || state.StartedUnixSeconds != request.StartedUnixSeconds || state.EffectiveTimeout != request.EffectiveTimeout || state.DeadlineUnixSeconds != request.DeadlineUnixSeconds {
 		return fmt.Errorf("review wait state does not match the confirmed request")
 	}
-	if strings.TrimSpace(state.ObservedHeadSHA) == "" || !strings.EqualFold(state.ObservedHeadSHA, request.HeadSHA) {
+	if strings.TrimSpace(state.ObservedHeadSHA) == "" {
+		if state.State != "timed_out" || state.Evidence == nil || state.Evidence.Classification != nil {
+			return fmt.Errorf("review wait observed head does not match the request")
+		}
+	} else if !strings.EqualFold(state.ObservedHeadSHA, request.HeadSHA) {
 		return fmt.Errorf("review wait observed head does not match the request")
 	}
 	if !slices.Equal(request.PollPlan, state.PollPlan) {

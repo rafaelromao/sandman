@@ -264,6 +264,9 @@ func (s *runSession) handleReviewTimeoutGate(ctx context.Context, workDir, branc
 	if pr.Merged || strings.EqualFold(pr.State, "merged") {
 		return s.confirmExternalGate(ctx, workDir, branch, logPath, runID)
 	}
+	if ctx.Err() != nil {
+		return "aborted", nil, true
+	}
 	if handoff.Outcome == retainedReviewApproval {
 		return s.handleRetainedReviewApproval(ctx, workDir, branch, logPath, runID, pr, currentHead, handoff)
 	}
@@ -293,6 +296,9 @@ func (s *runSession) handleRetainedReviewApproval(ctx context.Context, workDir, 
 			request["outcome"] = "approved"
 			request["reason"] = "REVIEW_APPROVED"
 			request["next_action"] = extras["next_action"]
+		}
+		if ctx.Err() != nil {
+			return "aborted", nil, true
 		}
 		s.recordExternalGateBlocker(workDir, logPath, runID, gateReadyToMerge)
 		return "blocked", extras, true
