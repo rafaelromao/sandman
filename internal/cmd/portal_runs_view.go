@@ -2249,6 +2249,9 @@ func (v *portalRunsView) portalBlockedMessage(payload map[string]any) string {
 	if payload != nil {
 		if blocker, _ := payload["blocker"].(string); blocker == "external-gate" {
 			gate, _ := payload["gate"].(string)
+			if gate == "review-timeout" {
+				return "Delegated review request timed out; inspect the retained request and continue after a new confirmed trigger or resolved pull-request gate."
+			}
 			if gate == "ready-to-merge" {
 				return "Pull request ready to merge; revalidate current-head approval, CI, and mergeability before executing the normal merge gate."
 			}

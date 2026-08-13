@@ -941,6 +941,55 @@ func TestReviewWaitV1RetainsTimedOutRequestOnReentry(t *testing.T) {
 	}
 }
 
+func TestExternalGate_SameTriggerReentryRetainsTimedOutRequest(t *testing.T) {
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	helper := filepath.Join(wd, "pr-review", "review-wait-v1.sh")
+	requestFile := filepath.Join(t.TempDir(), "42.review_request.json")
+	writeReviewWaitRequestValues(t, requestFile, "1001", "2026-08-11T18:00:01Z", "unix:4102443200", 4102443000, 4102443200, 200)
+	observer := writePendingReviewObserver(t)
+	clock := filepath.Join(t.TempDir(), "clock.sh")
+	if err := os.WriteFile(clock, []byte("#!/bin/sh\nprintf '%s\\n' 4102443200\n"), 0o700); err != nil {
+		t.Fatalf("write clock: %v", err)
+	}
+
+	first := runReviewWaitWithEnv(t, helper, requestFile, observer, true, map[string]string{
+		"SANDMAN_REVIEW_WAIT_CLOCK": clock,
+	})
+	second := runReviewWaitWithEnv(t, helper, requestFile, filepath.Join(t.TempDir(), "missing-observer"), true, map[string]string{
+		"SANDMAN_REVIEW_WAIT_CLOCK": clock,
+	})
+	if first.State != "timed_out" || second.State != "timed_out" || second.Lifecycle != "resumed" {
+		t.Fatalf("same-trigger timeout replay = %q/%q/%q, want timed_out/timed_out/resumed", first.State, second.State, second.Lifecycle)
+	}
+	if second.Request.TriggerID != "1001" || second.Request.DeadlineUnix != 4102443200 || second.Request.TimeoutSeconds != 200 {
+		t.Fatalf("same-trigger replay request = %+v, want trigger 1001/deadline 4102443200/budget 200", second.Request)
+	}
+}
+
+func TestExternalGate_LaterTriggerReceivesFreshFullBudget(t *testing.T) {
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	helper := filepath.Join(wd, "pr-review", "review-wait-v1.sh")
+	requestFile := filepath.Join(t.TempDir(), "42.review_request.json")
+	observer := writePendingReviewObserver(t)
+	writeReviewWaitRequestValues(t, requestFile, "1001", "2026-08-11T18:00:01Z", "unix:4102443200", 4102443000, 4102443200, 200)
+	first := runReviewWait(t, helper, requestFile, observer, true)
+
+	writeReviewWaitRequestValues(t, requestFile, "1002", "2026-08-11T19:00:01Z", "unix:4102444200", 4102444000, 4102444200, 200)
+	second := runReviewWait(t, helper, requestFile, observer, true)
+	if first.Lifecycle != "started" || second.Lifecycle != "started" {
+		t.Fatalf("later-trigger lifecycles = %q/%q, want started/started", first.Lifecycle, second.Lifecycle)
+	}
+	if second.Request.TriggerID != "1002" || second.Request.DeadlineUnix != 4102444200 || second.Request.TimeoutSeconds != 200 {
+		t.Fatalf("later-trigger request = %+v, want trigger 1002/deadline 4102444200/budget 200", second.Request)
+	}
+}
+
 func TestReviewWaitV1ReturnsTimedOutWhenCallerDeadlineIsReached(t *testing.T) {
 	wd, err := os.Getwd()
 	if err != nil {

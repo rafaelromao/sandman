@@ -115,7 +115,8 @@ Emitted when an agent run completes.
 | `run_kind` | Mirrors the `run.started` payload so projection sees a consistent kind on both events. |
 | `reason` | Short string built from the error returned by the selection phase. |
 | `blocker` | Optional terminal blocker classification. `"external-gate"` identifies CI/review waiting or intervention, rather than an agent failure. |
-| `gate` | Optional external-gate state: `"pending"`, `"failed"`, `"unavailable"`, or `"unverified"`. |
+| `gate` | Optional external-gate state: `"pending"`, `"failed"`, `"unavailable"`, `"unverified"`, or `"review-timeout"`. |
+| `review_request` | Present for `gate: "review-timeout"`; retains the confirmed request identity, current head, deadline, budget, elapsed time, response counters, and next action. |
 
 #### External-gate lifecycle
 When an issue-driven agent exits successfully while its open PR is waiting on CI
@@ -131,6 +132,14 @@ the intervention.
 External-gate terminal blockers are also appended to the run log and persisted
 under `## External Gate` in the worktree's `.sandman/task.md`, including the
 next executable action.
+
+When a confirmed delegated-review request reaches its absolute deadline without
+eligible response evidence, the same run is handed to the external gate with
+`gate: "review-timeout"` and `reason: "REVIEW_TIMEOUT"`. The retained request
+is checked against the current pull-request head before it is accepted; a
+malformed or stale request becomes an actionable external-gate state error
+rather than an AgentRun retry. Re-entering with the same trigger preserves its
+deadline, while a later confirmed trigger owns a fresh budget.
 
 #### `run.aborted`
 Emitted when a run is aborted via context cancellation (e.g. SIGINT/SIGTERM). Also emitted for runs that were still queued (waiting on the turn gate or the start gate) when the batch was cancelled, and cascaded to dependents whose in-batch blocker finished with status `aborted` (instead of `run.blocked`). For queued/cascaded runs, the `RunID` matches the prior `run.queued` event so projection collapses to a single `RunState`.
