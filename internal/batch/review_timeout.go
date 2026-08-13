@@ -3,6 +3,7 @@ package batch
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -227,7 +228,7 @@ func decodeReviewClassification(evidence *reviewWaitEvidence, request reviewRequ
 	classification.Decision = classification.Raw["decision"].(string)
 	formal := classification.Raw["formal"].(map[string]any)
 	classification.FormalDecision = formal["decision"].(string)
-	classification.RequestedChanges = mapArray(formal["requested_changes"])
+	classification.RequestedChanges, _ = mapArray(formal["requested_changes"])
 	return classification, nil
 }
 
@@ -265,7 +266,8 @@ func validateReviewClassification(raw map[string]any, request reviewRequestEnvel
 		return fmt.Errorf("review classification decision is invalid")
 	}
 	window, ok := objectValue(raw, "window")
-	if !ok || stringValue(window, "start") != request.TriggerCreatedAt || stringValue(window, "deadline_at") != request.DeadlineAt || numberValue(window, "deadline_unix_seconds") != float64(request.DeadlineUnixSeconds) {
+	deadlineUnixSeconds, deadlineOK := numberValue(window, "deadline_unix_seconds")
+	if !ok || stringValue(window, "start") != request.TriggerCreatedAt || stringValue(window, "deadline_at") != request.DeadlineAt || !deadlineOK || deadlineUnixSeconds != float64(request.DeadlineUnixSeconds) {
 		return fmt.Errorf("review classification window does not match retained request")
 	}
 	if window["end"] != nil || window["next_trigger"] != nil {
@@ -276,16 +278,16 @@ func validateReviewClassification(raw map[string]any, request reviewRequestEnvel
 	if !ok {
 		return fmt.Errorf("review classification sources are missing")
 	}
-	topLevel, formalReviews, inlineComments, err := validateClassificationSources(sources, request, "")
+	topLevel, formalReviews, inlineComments, err := validateClassificationSources(sources, request)
 	if err != nil {
 		return err
 	}
 	counts, ok := objectValue(raw, "response_counts")
-	if !ok || numberValue(counts, "top_level") != float64(len(topLevel)) || numberValue(counts, "formal_reviews") != float64(len(formalReviews)) || numberValue(counts, "inline_comments") != float64(len(inlineComments)) {
+	topLevelCount, topLevelCountOK := numberValue(counts, "top_level")
+	formalReviewsCount, formalReviewsCountOK := numberValue(counts, "formal_reviews")
+	inlineCommentsCount, inlineCommentsCountOK := numberValue(counts, "inline_comments")
+	if !ok || !topLevelCountOK || !formalReviewsCountOK || !inlineCommentsCountOK || topLevelCount != float64(len(topLevel)) || formalReviewsCount != float64(len(formalReviews)) || inlineCommentsCount != float64(len(inlineComments)) {
 		return fmt.Errorf("review classification response counts are inconsistent")
-	}
-	if len(topLevel)+len(formalReviews)+len(inlineComments) == 0 {
-		return fmt.Errorf("review classification has no response evidence")
 	}
 
 	formal, ok := objectValue(raw, "formal")
@@ -293,10 +295,10 @@ func validateReviewClassification(raw map[string]any, request reviewRequestEnvel
 		return fmt.Errorf("review classification formal evidence is missing")
 	}
 	formalDecision := stringValue(formal, "decision")
-	approvalEvidence := mapArray(formal["approval_evidence"])
-	ambiguousApprovalEvidence := mapArray(formal["ambiguous_approval_evidence"])
-	requestedChanges := mapArray(formal["requested_changes"])
-	if formal["approval_evidence"] == nil || formal["ambiguous_approval_evidence"] == nil || formal["requested_changes"] == nil {
+	approvalEvidence, approvalEvidenceOK := mapArray(formal["approval_evidence"])
+	ambiguousApprovalEvidence, ambiguousApprovalEvidenceOK := mapArray(formal["ambiguous_approval_evidence"])
+	requestedChanges, requestedChangesOK := mapArray(formal["requested_changes"])
+	if !approvalEvidenceOK || !ambiguousApprovalEvidenceOK || !requestedChangesOK {
 		return fmt.Errorf("review classification formal evidence arrays are missing")
 	}
 	for _, evidence := range approvalEvidence {
@@ -341,6 +343,9 @@ func validateReviewClassification(raw map[string]any, request reviewRequestEnvel
 	if decision != wantDecision {
 		return fmt.Errorf("review classification decision is inconsistent")
 	}
+	if len(topLevel)+len(formalReviews)+len(inlineComments) == 0 && !(requestState == "active" && decision == "pending" && formalDecision == "none") {
+		return fmt.Errorf("review classification has no response evidence")
+	}
 	boundary, ok := objectValue(raw, "boundary_evidence")
 	if !ok {
 		return fmt.Errorf("review classification boundary evidence is missing")
@@ -364,15 +369,16 @@ func classificationValueEqual(got, want any) bool {
 	return reflect.DeepEqual(got, want)
 }
 
-func validateClassificationSources(sources map[string]any, request reviewRequestEnvelope, _ string) ([]map[string]any, []map[string]any, []map[string]any, error) {
+func validateClassificationSources(sources map[string]any, request reviewRequestEnvelope) ([]map[string]any, []map[string]any, []map[string]any, error) {
 	arrays := make([][]map[string]any, 3)
 	for i, key := range []string{"top_level", "formal_reviews", "inline_comments"} {
 		value, ok := sources[key]
 		if !ok {
 			return nil, nil, nil, fmt.Errorf("review classification source %s is missing", key)
 		}
-		arrays[i] = mapArray(value)
-		if arrays[i] == nil && value != nil {
+		var valid bool
+		arrays[i], valid = mapArray(value)
+		if !valid {
 			return nil, nil, nil, fmt.Errorf("review classification source %s is invalid", key)
 		}
 		for _, evidence := range arrays[i] {
@@ -386,8 +392,14 @@ func validateClassificationSources(sources map[string]any, request reviewRequest
 			if key == "top_level" && headStatus != "current" {
 				return nil, nil, nil, fmt.Errorf("review classification top-level evidence is not current")
 			}
-			if key == "top_level" && strings.HasPrefix(stringValue(evidence, "body"), "/sandman review") {
-				return nil, nil, nil, fmt.Errorf("review classification includes a trigger as response evidence")
+			if key == "top_level" {
+				body, bodyOK := evidence["body"].(string)
+				if !bodyOK {
+					return nil, nil, nil, fmt.Errorf("review classification top-level evidence body is invalid")
+				}
+				if strings.HasPrefix(body, request.TriggerPrefix) {
+					return nil, nil, nil, fmt.Errorf("review classification includes a trigger as response evidence")
+				}
 			}
 			if key == "formal_reviews" {
 				state := strings.ToUpper(stringValue(evidence, "state"))
@@ -441,20 +453,20 @@ func objectValue(value map[string]any, key string) (map[string]any, bool) {
 	return object, ok && object != nil
 }
 
-func mapArray(value any) []map[string]any {
+func mapArray(value any) ([]map[string]any, bool) {
 	values, ok := value.([]any)
 	if !ok {
-		return nil
+		return nil, false
 	}
 	result := make([]map[string]any, 0, len(values))
 	for _, value := range values {
 		object, ok := value.(map[string]any)
 		if !ok || object == nil {
-			return nil
+			return nil, false
 		}
 		result = append(result, object)
 	}
-	return result
+	return result, true
 }
 
 func stringValue(value map[string]any, key string) string {
@@ -462,9 +474,9 @@ func stringValue(value map[string]any, key string) string {
 	return result
 }
 
-func numberValue(value map[string]any, key string) float64 {
-	result, _ := value[key].(float64)
-	return result
+func numberValue(value map[string]any, key string) (float64, bool) {
+	result, ok := value[key].(float64)
+	return result, ok && result >= 0 && !math.IsInf(result, 0) && !math.IsNaN(result) && math.Trunc(result) == result
 }
 
 func keyToSource(key string) string {
@@ -584,10 +596,14 @@ func (h *reviewTimeoutHandoff) hasActionableFeedback() bool {
 	if h == nil || h.Classification == nil || h.Classification.RequestState != "active" || h.Classification.Decision != "changes_requested" || h.Classification.FormalDecision != "changes_requested" || len(h.Classification.RequestedChanges) == 0 {
 		return false
 	}
+	currentEvidence := false
 	for _, evidence := range h.Classification.RequestedChanges {
-		if !strings.EqualFold(stringValue(evidence, "state"), "CHANGES_REQUESTED") || stringValue(evidence, "head_status") != "current" || !classificationTimestampInWindow(stringValue(evidence, "response_timestamp"), h.Request) {
+		if !strings.EqualFold(stringValue(evidence, "state"), "CHANGES_REQUESTED") || !classificationTimestampInWindow(stringValue(evidence, "response_timestamp"), h.Request) {
 			return false
 		}
+		if stringValue(evidence, "head_status") == "current" {
+			currentEvidence = true
+		}
 	}
-	return true
+	return currentEvidence
 }

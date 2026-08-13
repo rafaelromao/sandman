@@ -237,6 +237,11 @@ func (s *runSession) handleReviewTimeoutGate(ctx context.Context, workDir, branc
 	if !reviewTimeoutArtifactsPresentForPR(workDir, pr.Number) {
 		return "", nil, false
 	}
+	checkRollup := strings.ToLower(strings.TrimSpace(pr.StatusCheckRollup))
+	mergeStatus := strings.ToUpper(strings.TrimSpace(pr.MergeStateStatus))
+	if checkRollup == "failure" || mergeStatus == "DIRTY" || mergeStatus == "CONFLICTING" {
+		return s.blockExternalGate(ctx, workDir, logPath, runID, "failed")
+	}
 	repository, err := s.deps.githubClient.RepoName(ctx)
 	if err != nil {
 		return s.blockReviewTimeoutStateError(ctx, workDir, logPath, runID)
@@ -260,10 +265,8 @@ func (s *runSession) handleReviewTimeoutGate(ctx context.Context, workDir, branc
 	if !strings.EqualFold(pr.State, "open") {
 		return s.blockExternalGate(ctx, workDir, logPath, runID, "unavailable")
 	}
-	checkRollup := strings.ToLower(strings.TrimSpace(pr.StatusCheckRollup))
-	mergeStatus := strings.ToUpper(strings.TrimSpace(pr.MergeStateStatus))
 	reviewDecision := strings.ToUpper(strings.TrimSpace(pr.ReviewDecision))
-	if checkRollup == "failure" || mergeStatus == "DIRTY" || mergeStatus == "CONFLICTING" || (reviewDecision == "CHANGES_REQUESTED" && !handoff.hasActionableFeedback()) {
+	if reviewDecision == "CHANGES_REQUESTED" && !handoff.hasActionableFeedback() {
 		return s.blockExternalGate(ctx, workDir, logPath, runID, "failed")
 	}
 	if handoff.hasActionableFeedback() {

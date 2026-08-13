@@ -2,6 +2,7 @@ package batch
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
@@ -106,6 +107,64 @@ func writeFormalChangesRequestedClassification(t *testing.T, workDir, headStatus
     "response_counts": {`, 1)
 	if err := os.WriteFile(statePath, []byte(stateText), 0o600); err != nil {
 		t.Fatalf("write classified review state: %v", err)
+	}
+}
+
+func mutateReviewClassification(t *testing.T, workDir string, mutate func(map[string]any)) {
+	t.Helper()
+	statePath := filepath.Join(workDir, ".sandman", "state", "17.review_request.json.state")
+	state, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatalf("read review state: %v", err)
+	}
+	var envelope map[string]any
+	if err := json.Unmarshal(state, &envelope); err != nil {
+		t.Fatalf("decode review state: %v", err)
+	}
+	evidence, ok := envelope["evidence"].(map[string]any)
+	if !ok {
+		t.Fatal("review state evidence is not an object")
+	}
+	classification, ok := evidence["classification"].(map[string]any)
+	if !ok {
+		t.Fatal("review state classification is not an object")
+	}
+	mutate(classification)
+	updated, err := json.MarshalIndent(envelope, "", "  ")
+	if err != nil {
+		t.Fatalf("encode review state: %v", err)
+	}
+	if err := os.WriteFile(statePath, updated, 0o600); err != nil {
+		t.Fatalf("write review state: %v", err)
+	}
+}
+
+func setClassificationFormalReviewCount(t *testing.T, workDir string, count float64) {
+	t.Helper()
+	statePath := filepath.Join(workDir, ".sandman", "state", "17.review_request.json.state")
+	state, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatalf("read review state: %v", err)
+	}
+	var envelope map[string]any
+	if err := json.Unmarshal(state, &envelope); err != nil {
+		t.Fatalf("decode review state: %v", err)
+	}
+	evidence, ok := envelope["evidence"].(map[string]any)
+	if !ok {
+		t.Fatal("review state evidence is not an object")
+	}
+	counts, ok := evidence["response_counts"].(map[string]any)
+	if !ok {
+		t.Fatal("review state response counts are not an object")
+	}
+	counts["formal_reviews"] = count
+	updated, err := json.MarshalIndent(envelope, "", "  ")
+	if err != nil {
+		t.Fatalf("encode review state: %v", err)
+	}
+	if err := os.WriteFile(statePath, updated, 0o600); err != nil {
+		t.Fatalf("write review state: %v", err)
 	}
 }
 
@@ -340,6 +399,147 @@ func TestExternalGate_LateFormalChangesRequestedIsActionableWithoutRetry(t *test
 		if !strings.Contains(string(task), want) {
 			t.Fatalf("task missing %q: %s", want, task)
 		}
+	}
+}
+
+func TestExternalGate_LateFormalChangesRequestedAcceptsCurrentEvidenceWithStaleEvidence(t *testing.T) {
+	workDir := testenv.MkdirShort(t, "sm-orch-")
+	writeTimedOutReviewRequest(t, workDir)
+	writeFormalChangesRequestedClassification(t, workDir, "current")
+	mutateReviewClassification(t, workDir, func(classification map[string]any) {
+		sources := classification["sources"].(map[string]any)
+		formalReviews := sources["formal_reviews"].([]any)
+		stale := map[string]any{
+			"id":                 "review-2002",
+			"source":             "formal_review",
+			"state":              "CHANGES_REQUESTED",
+			"response_timestamp": "1970-01-01T00:21:00Z",
+			"head_status":        "stale",
+		}
+		formalReviews = append(formalReviews, stale)
+		sources["formal_reviews"] = formalReviews
+		formal := classification["formal"].(map[string]any)
+		requestedChanges := formal["requested_changes"].([]any)
+		requestedChanges = append(requestedChanges, stale)
+		formal["requested_changes"] = requestedChanges
+		classification["response_counts"].(map[string]any)["formal_reviews"] = 2
+		boundary := classification["boundary_evidence"].(map[string]any)
+		boundarySources := boundary["sources"].(map[string]any)
+		boundarySources["formal_reviews"] = formalReviews
+	})
+
+	handoff, err := readReviewTimeoutHandoff(workDir, "owner/repo", &github.PR{Number: 17, State: "open", HeadRefOid: "current-sha"}, "current-sha")
+	if err != nil {
+		t.Fatalf("read mixed-head classification: %v", err)
+	}
+	if !handoff.hasActionableFeedback() {
+		t.Fatal("current requested changes were masked by stale requested changes")
+	}
+}
+
+func TestExternalGate_LateFormalChangesRequestedRejectsMalformedEvidenceArrays(t *testing.T) {
+	for _, name := range []string{"requested changes", "formal source"} {
+		t.Run(name, func(t *testing.T) {
+			workDir := testenv.MkdirShort(t, "sm-orch-")
+			writeTimedOutReviewRequest(t, workDir)
+			writeFormalChangesRequestedClassification(t, workDir, "current")
+			mutateReviewClassification(t, workDir, func(classification map[string]any) {
+				if name == "requested changes" {
+					classification["formal"].(map[string]any)["requested_changes"] = "not-an-array"
+				} else {
+					classification["sources"].(map[string]any)["formal_reviews"] = "not-an-array"
+				}
+			})
+			if _, err := readReviewTimeoutHandoff(workDir, "owner/repo", &github.PR{Number: 17, State: "open", HeadRefOid: "current-sha"}, "current-sha"); err == nil {
+				t.Fatal("malformed classification evidence was accepted")
+			}
+		})
+	}
+}
+
+func TestExternalGate_ClassificationUsesConfiguredTriggerPrefix(t *testing.T) {
+	request := reviewRequestEnvelope{
+		TriggerPrefix:       "/custom review",
+		TriggerCreatedAt:    "1970-01-01T00:16:40Z",
+		DeadlineUnixSeconds: 2800,
+	}
+	source := map[string]any{
+		"id":                 "comment-1",
+		"source":             "top_level",
+		"response_timestamp": "1970-01-01T00:20:00Z",
+		"head_status":        "current",
+		"body":               "/custom review follow-up",
+	}
+	_, _, _, err := validateClassificationSources(map[string]any{
+		"top_level":       []any{source},
+		"formal_reviews":  []any{},
+		"inline_comments": []any{},
+	}, request)
+	if err == nil {
+		t.Fatal("configured review trigger was accepted as response evidence")
+	}
+}
+
+func TestExternalGate_LateFormalChangesRequestedRejectsNonNumericCounts(t *testing.T) {
+	workDir := testenv.MkdirShort(t, "sm-orch-")
+	writeTimedOutReviewRequest(t, workDir)
+	writeFormalChangesRequestedClassification(t, workDir, "current")
+	mutateReviewClassification(t, workDir, func(classification map[string]any) {
+		classification["response_counts"].(map[string]any)["formal_reviews"] = "one"
+	})
+	if _, err := readReviewTimeoutHandoff(workDir, "owner/repo", &github.PR{Number: 17, State: "open", HeadRefOid: "current-sha"}, "current-sha"); err == nil {
+		t.Fatal("non-numeric response count was accepted")
+	}
+}
+
+func TestExternalGate_LatePendingClassificationWithNoResponsesRemainsTimeout(t *testing.T) {
+	workDir := testenv.MkdirShort(t, "sm-orch-")
+	writeTimedOutReviewRequest(t, workDir)
+	writeFormalChangesRequestedClassification(t, workDir, "current")
+	mutateReviewClassification(t, workDir, func(classification map[string]any) {
+		classification["decision"] = "pending"
+		classification["response_counts"].(map[string]any)["formal_reviews"] = 0
+		classification["sources"].(map[string]any)["formal_reviews"] = []any{}
+		formal := classification["formal"].(map[string]any)
+		formal["decision"] = "none"
+		formal["requested_changes"] = []any{}
+		boundary := classification["boundary_evidence"].(map[string]any)
+		boundarySources := boundary["sources"].(map[string]any)
+		boundarySources["formal_reviews"] = []any{}
+	})
+	setClassificationFormalReviewCount(t, workDir, 0)
+
+	handoff, err := readReviewTimeoutHandoff(workDir, "owner/repo", &github.PR{Number: 17, State: "open", HeadRefOid: "current-sha"}, "current-sha")
+	if err != nil {
+		t.Fatalf("valid pending classification was rejected: %v", err)
+	}
+	if handoff.Classification == nil || handoff.Classification.Decision != "pending" {
+		t.Fatalf("pending classification = %#v, want retained pending evidence", handoff.Classification)
+	}
+	if handoff.hasActionableFeedback() {
+		t.Fatal("pending classification was promoted to actionable feedback")
+	}
+}
+
+func TestExternalGate_MalformedRetainedClassificationDoesNotMaskFailedCI(t *testing.T) {
+	workDir := testenv.MkdirShort(t, "sm-orch-")
+	writeTimedOutReviewRequest(t, workDir)
+	writeFormalChangesRequestedClassification(t, workDir, "current")
+	mutateReviewClassification(t, workDir, func(classification map[string]any) {
+		classification["formal"].(map[string]any)["requested_changes"] = "not-an-array"
+	})
+	session := &runSession{
+		deps: runDeps{
+			githubClient: &fakeGitHubClient{prs: map[string]*github.PR{gateTestBranch: {
+				Number: 17, State: "open", HeadRefOid: "current-sha", StatusCheckRollup: "failure",
+			}}},
+			errorLog: io.Discard,
+		},
+		opts: gateTestRunOptions(),
+	}
+	status, extras, handled := session.handleReviewTimeoutGate(context.Background(), workDir, gateTestBranch, "", "run-test", "current-sha")
+	if !handled || status != "blocked" || extras["gate"] != "failed" {
+		t.Fatalf("malformed classification failed-CI result = (%q, %#v, %t), want failed external gate", status, extras, handled)
 	}
 }
 
