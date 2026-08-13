@@ -307,6 +307,9 @@ printf '%s\n' $((calls + 1)) > "$SANDMAN_REVIEW_WAIT_CLOCK_STATE"
 	if !strings.Contains(string(state), `"elapsed_seconds":20`) {
 		t.Fatalf("timeout state missing elapsed diagnostics: %s", state)
 	}
+	if !strings.Contains(string(state), `"response_counts":{"top_level":0,"formal_reviews":0,"inline_comments":0}`) {
+		t.Fatalf("timeout state missing response counters: %s", state)
+	}
 }
 
 func TestReviewWaitV1PreservesRespondedEvidenceAtExactDeadline(t *testing.T) {
@@ -1066,6 +1069,13 @@ printf '%s\n' $((calls + 1)) > "$SANDMAN_REVIEW_WAIT_CLOCK_STATE"
 	}
 	if !strings.Contains(string(result.Evidence), `"response_counts"`) {
 		t.Fatalf("late observer evidence = %s, want response counters", result.Evidence)
+	}
+	state, err := os.ReadFile(requestFile + ".state")
+	if err != nil {
+		t.Fatalf("read late observer state: %v", err)
+	}
+	if !strings.Contains(string(state), `"response_counts":{"top_level":0,"formal_reviews":0,"inline_comments":0}`) {
+		t.Fatalf("late observer state missing response counters: %s", state)
 	}
 	if _, err := os.Stat(observerStarted); err != nil {
 		t.Fatalf("late observer did not start before completion crossed deadline: %v", err)

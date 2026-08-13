@@ -389,6 +389,31 @@ emit_result() {
 		'{protocol:"review-wait/v1",state:$state,lifecycle:$lifecycle,request:{repository:$request.repository,pull_request:$request.pull_request,head_sha:$request.head_sha,trigger_id:$request.trigger_id,started_unix_seconds:($request.started_unix_seconds // ($request.deadline_unix_seconds - $request.effective_timeout_seconds)),deadline_unix_seconds:$request.deadline_unix_seconds,effective_timeout_seconds:$request.effective_timeout_seconds},observed_head_sha:$observed_head_sha,started_at:$request.started_at,deadline_at:$request.deadline_at,elapsed_seconds:$elapsed_seconds,reason:$reason,snapshot_path:(if $snapshot_path == "" then null else $snapshot_path end),counters:{top:($evidence.response_counts.top_level // 0),reviews:($evidence.response_counts.formal_reviews // 0),inline:($evidence.response_counts.inline_comments // 0)},evidence:$evidence}'
 }
 
+normalize_timeout_evidence() {
+	if ! observer_evidence=$(printf '%s' "$observer_evidence" | jq -c '
+		if type != "object" then
+			{response_counts:{top_level:0,formal_reviews:0,inline_comments:0}}
+		elif (.response_counts | type) != "object" then
+			. + {response_counts:{top_level:0,formal_reviews:0,inline_comments:0}}
+		else
+			. + {response_counts: (.response_counts + {
+				top_level: (.response_counts.top_level // 0),
+				formal_reviews: (.response_counts.formal_reviews // 0),
+				inline_comments: (.response_counts.inline_comments // 0)
+			})}
+		end
+	'); then
+		return 1
+	fi
+}
+
+mark_timed_out() {
+	observer_state=timed_out
+	observer_reason=request-deadline-exhausted
+	result_reason=request-deadline-exhausted
+	normalize_timeout_evidence
+}
+
 persist_unavailable() {
 	result_reason=$1
 	result_elapsed=${2:-0}
@@ -411,8 +436,10 @@ emit_persisted_result() {
 		;;
 	esac
 	if [ "$observer_state" = "pending" ] && [ "$final_now" -ge "$request_deadline" ]; then
-		observer_state=timed_out
-		result_reason=request-deadline-exhausted
+		if ! mark_timed_out; then
+			persist_unavailable timeout-evidence-invalid
+			return 1
+		fi
 		elapsed_seconds=$((final_now - request_started_unix))
 		[ "$elapsed_seconds" -ge 0 ] || elapsed_seconds=0
 		if ! write_state timed_out "$lifecycle" "$observer_head" "$result_reason" "$snapshot_path" "$observer_evidence" "$elapsed_seconds"; then
@@ -464,20 +491,10 @@ while :; do
 		;;
 	esac
 	if [ "$observer_state" = "timed_out" ]; then
-		observer_evidence=$(printf '%s' "$observer_evidence" | jq -c '
-			if type != "object" then
-				{response_counts:{top_level:0,formal_reviews:0,inline_comments:0}}
-			else
-				. + {response_counts: ((.response_counts // {}) + {
-					top_level: (.response_counts.top_level // 0),
-					formal_reviews: (.response_counts.formal_reviews // 0),
-					inline_comments: (.response_counts.inline_comments // 0)
-				})}
-			end
-		') || {
+		if ! normalize_timeout_evidence; then
 			persist_unavailable timeout-evidence-invalid
 			exit 0
-		}
+		fi
 	fi
 	if [ "$observer_state" = "responded" ] && ! printf '%s' "$observer_json" | jq -e --argjson request "$request_json" '
 		def valid_count:
@@ -619,11 +636,15 @@ while :; do
 		;;
 	esac
 	if [ "$observer_state" = "responded" ] && [ "$completed_now" -gt "$request_deadline" ]; then
-		observer_state=timed_out
-		observer_reason=request-deadline-exhausted
+		if ! mark_timed_out; then
+			persist_unavailable timeout-evidence-invalid
+			exit 0
+		fi
 	elif [ "$observer_state" = "pending" ] && [ "$completed_now" -ge "$request_deadline" ]; then
-		observer_state=timed_out
-		observer_reason=request-deadline-exhausted
+		if ! mark_timed_out; then
+			persist_unavailable timeout-evidence-invalid
+			exit 0
+		fi
 	fi
 	elapsed_seconds=$((completed_now - request_started_unix))
 	[ "$elapsed_seconds" -ge 0 ] || elapsed_seconds=0
@@ -646,24 +667,10 @@ while :; do
 		;;
 	esac
 	if [ "$observer_state" = "pending" ] && [ "$decision_now" -ge "$request_deadline" ]; then
-		observer_state=timed_out
-		observer_reason=request-deadline-exhausted
-	fi
-	if [ "$observer_state" = "timed_out" ]; then
-		observer_evidence=$(printf '%s' "$observer_evidence" | jq -c '
-			if type != "object" then
-				{response_counts:{top_level:0,formal_reviews:0,inline_comments:0}}
-			else
-				. + {response_counts: ((.response_counts // {}) + {
-					top_level: (.response_counts.top_level // 0),
-					formal_reviews: (.response_counts.formal_reviews // 0),
-					inline_comments: (.response_counts.inline_comments // 0)
-				})}
-			end
-		') || {
+		if ! mark_timed_out; then
 			persist_unavailable timeout-evidence-invalid
 			exit 0
-		}
+		fi
 	fi
 	elapsed_seconds=$((decision_now - request_started_unix))
 	[ "$elapsed_seconds" -ge 0 ] || elapsed_seconds=0
@@ -689,6 +696,10 @@ while :; do
 	fi
 
 	if [ "$decision_now" -ge "$request_deadline" ]; then
+		if ! normalize_timeout_evidence; then
+			persist_unavailable timeout-evidence-invalid
+			exit 0
+		fi
 		if ! write_state timed_out "$lifecycle" "$observer_head" request-deadline-exhausted "$snapshot_path" "$observer_evidence" "$elapsed_seconds"; then
 			emit_unavailable state-persist-failed
 			exit 0
@@ -714,6 +725,10 @@ while :; do
 	if [ "$sleep_start_now" -ge "$request_deadline" ]; then
 		elapsed_seconds=$((sleep_start_now - request_started_unix))
 		[ "$elapsed_seconds" -ge 0 ] || elapsed_seconds=0
+		if ! normalize_timeout_evidence; then
+			persist_unavailable timeout-evidence-invalid
+			exit 0
+		fi
 		if ! write_state timed_out "$lifecycle" "$observer_head" request-deadline-exhausted "$snapshot_path" "$observer_evidence" "$elapsed_seconds"; then
 			emit_unavailable state-persist-failed
 			exit 0
