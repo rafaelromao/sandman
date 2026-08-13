@@ -476,7 +476,7 @@ func TestExternalGate_ReviewTimeoutRejectsSupersededResponse(t *testing.T) {
 	}
 }
 
-func TestExternalGate_ReviewTimeoutRejectsHeadSidecarWithoutRequest(t *testing.T) {
+func TestExternalGate_ReviewTimeoutIgnoresHeadSidecarWithoutRequest(t *testing.T) {
 	workDir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(workDir)
 	worktreePath := filepath.Join(workDir, "worktree")
@@ -532,8 +532,8 @@ func TestExternalGate_ReviewTimeoutRejectsHeadSidecarWithoutRequest(t *testing.T
 		t.Fatal("head-only review state consumed a retry")
 	}
 	finished := findEvent(logs, "run.finished")
-	if finished == nil || finished.Payload["gate"] != gateReviewTimeoutError {
-		t.Fatalf("head-only state terminal event = %#v, want %q", finished, gateReviewTimeoutError)
+	if finished == nil || finished.Payload["gate"] != gateReadyToMerge {
+		t.Fatalf("head-only state terminal event = %#v, want %q", finished, gateReadyToMerge)
 	}
 }
 

@@ -92,9 +92,22 @@ func reviewTimeoutArtifactsPresent(workDir string) bool {
 		return false
 	}
 	stateDir := paths.NewLayout(nil, workDir).StateDir
-	for _, pattern := range []string{"*.review_request.json", "*.review_request.json.state", "*.head_sha"} {
+	for _, pattern := range []string{"*.review_request.json", "*.review_request.json.state"} {
 		matches, err := filepath.Glob(filepath.Join(stateDir, pattern))
 		if err == nil && len(matches) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func reviewTimeoutArtifactsPresentForPR(workDir string, prNumber int) bool {
+	if strings.TrimSpace(workDir) == "" || prNumber <= 0 {
+		return false
+	}
+	layout := paths.NewLayout(nil, workDir)
+	for _, path := range []string{layout.PRReviewRequestPath(prNumber), layout.PRReviewRequestStatePath(prNumber)} {
+		if _, err := os.Stat(path); err == nil {
 			return true
 		}
 	}
@@ -153,37 +166,47 @@ func readReviewTimeoutHandoff(workDir, repository string, pr *github.PR, current
 		return nil, fmt.Errorf("timed-out review wait request was superseded")
 	}
 
-	if state.Evidence == nil || state.Evidence.ResponseCounts == nil {
-		return nil, fmt.Errorf("timed-out review state has incomplete response counts")
+	if err := validateTimedOutReviewState(request, state); err != nil {
+		return nil, err
 	}
+
 	persistedCounts := state.Evidence.ResponseCounts
-	if persistedCounts.TopLevel == nil || persistedCounts.FormalReviews == nil || persistedCounts.Inline == nil {
-		return nil, fmt.Errorf("timed-out review state has incomplete response counts")
-	}
 	counts := reviewResponseCounts{
 		TopLevel:      *persistedCounts.TopLevel,
 		FormalReviews: *persistedCounts.FormalReviews,
 		Inline:        *persistedCounts.Inline,
 	}
+	return &reviewTimeoutHandoff{Request: request, State: state, ResponseCounts: counts}, nil
+}
+
+func validateTimedOutReviewState(request reviewRequestEnvelope, state reviewWaitState) error {
+	if state.Evidence == nil || state.Evidence.ResponseCounts == nil {
+		return fmt.Errorf("timed-out review state has incomplete response counts")
+	}
+	persistedCounts := state.Evidence.ResponseCounts
+	if persistedCounts.TopLevel == nil || persistedCounts.FormalReviews == nil || persistedCounts.Inline == nil {
+		return fmt.Errorf("timed-out review state has incomplete response counts")
+	}
+	counts := reviewResponseCounts{TopLevel: *persistedCounts.TopLevel, FormalReviews: *persistedCounts.FormalReviews, Inline: *persistedCounts.Inline}
 	if counts.TopLevel < 0 || counts.FormalReviews < 0 || counts.Inline < 0 {
-		return nil, fmt.Errorf("review response counters must not be negative")
+		return fmt.Errorf("review response counters must not be negative")
 	}
 	if state.Reason != "request-deadline-exhausted" {
-		return nil, fmt.Errorf("timed-out review state has unexpected reason")
+		return fmt.Errorf("timed-out review state has unexpected reason")
 	}
 	if state.Lifecycle != "started" && state.Lifecycle != "resumed" {
-		return nil, fmt.Errorf("timed-out review state has invalid lifecycle")
+		return fmt.Errorf("timed-out review state has invalid lifecycle")
 	}
 	if state.ElapsedSeconds == nil {
-		return nil, fmt.Errorf("timed-out review state is missing elapsed time")
+		return fmt.Errorf("timed-out review state is missing elapsed time")
 	}
 	if *state.ElapsedSeconds < 0 {
-		return nil, fmt.Errorf("review wait elapsed time must not be negative")
+		return fmt.Errorf("review wait elapsed time must not be negative")
 	}
 	if *state.ElapsedSeconds < request.EffectiveTimeout {
-		return nil, fmt.Errorf("review wait elapsed time did not reach its deadline")
+		return fmt.Errorf("review wait elapsed time did not reach its deadline")
 	}
-	return &reviewTimeoutHandoff{Request: request, State: state, ResponseCounts: counts}, nil
+	return nil
 }
 
 func validateReviewRequest(request reviewRequestEnvelope, state reviewWaitState, headSidecar, repository string, pr *github.PR, currentHead string) error {
