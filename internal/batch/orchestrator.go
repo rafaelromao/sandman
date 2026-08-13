@@ -2663,14 +2663,6 @@ loop:
 		taskPath := filepath.Join(wt.WorkDir(), ".sandman", "task.md")
 		taskContent, _, _ := ReadTaskContent(taskPath)
 		alreadyResolved := hasExactTaskStatus(taskContent, "## Status: already resolved")
-		if s.issueNumber > 0 && ctx.Err() == nil && !abortedByHeartbeat && events.RunStatusFromPayload(result.Status).IsSuccess() {
-			hostPathsReady := s.restoreHostPathsBeforeExternalGate(wt)
-			if gateStatus, extras, handled := s.handleExternalGateWithHostPaths(ctx, wt.WorkDir(), branch, logPath, runID, hostPathsReady); handled {
-				result.Status = gateStatus
-				terminalExtras = mergeBlockerExtras(terminalExtras, extras)
-				break loop
-			}
-		}
 		if s.issueNumber > 0 && events.RunStatusFromPayload(result.Status).IsSuccess() && ctx.Err() == nil {
 			hostPathsReady := s.restoreHostPathsBeforeExternalGate(wt)
 			if gateStatus, extras, handled := s.handleExternalGateWithHostPaths(ctx, wt.WorkDir(), branch, logPath, runID, hostPathsReady); handled && gateStatus != "success" {

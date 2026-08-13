@@ -227,16 +227,16 @@ func (s *runSession) handleReviewTimeoutGate(ctx context.Context, workDir, branc
 	if ctx.Err() != nil {
 		return "aborted", nil, true
 	}
-	repository, err := s.deps.githubClient.RepoName(ctx)
-	if err != nil {
-		return s.blockReviewTimeoutStateError(ctx, workDir, logPath, runID)
-	}
 	pr, err := s.deps.githubClient.FindPRByBranch(ctx, branch)
 	if err != nil || pr == nil {
 		return "", nil, false
 	}
 	if !reviewTimeoutArtifactsPresentForPR(workDir, pr.Number) {
 		return "", nil, false
+	}
+	repository, err := s.deps.githubClient.RepoName(ctx)
+	if err != nil {
+		return s.blockReviewTimeoutStateError(ctx, workDir, logPath, runID)
 	}
 	handoff, err := readReviewTimeoutHandoff(workDir, repository, pr, currentHead)
 	if err != nil {
