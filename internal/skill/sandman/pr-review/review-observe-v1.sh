@@ -24,14 +24,14 @@ if [ -z "$request_file" ] || [ ! -f "$request_file" ]; then
 fi
 
 request_json=$(jq -c . "$request_file" 2>/dev/null) || exit 2
-repository=$(jq -r '.repository' "$request_file")
-pull_request=$(jq -r '.pull_request' "$request_file")
-head_sha=$(jq -r '.head_sha' "$request_file")
-trigger_id=$(jq -r '.trigger_id' "$request_file")
-trigger_prefix=$(jq -r '.trigger_prefix' "$request_file")
-trigger_created_at=$(jq -r '.trigger_created_at' "$request_file")
+repository=$(printf '%s\n' "$request_json" | jq -r '.repository')
+pull_request=$(printf '%s\n' "$request_json" | jq -r '.pull_request')
+head_sha=$(printf '%s\n' "$request_json" | jq -r '.head_sha')
+trigger_id=$(printf '%s\n' "$request_json" | jq -r '.trigger_id')
+trigger_prefix=$(printf '%s\n' "$request_json" | jq -r '.trigger_prefix')
+trigger_created_at=$(printf '%s\n' "$request_json" | jq -r '.trigger_created_at')
 
-if ! jq -e '
+if ! printf '%s\n' "$request_json" | jq -e '
 	.protocol == "review-wait/v1" and
 	type == "object" and
 	(.repository | type == "string" and length > 0) and
@@ -49,11 +49,52 @@ if ! jq -e '
 	(.deadline_unix_seconds | type == "number" and floor == . and . > 0) and
 	(.poll_plan | type == "array" and length > 0 and all(.[]; type == "number" and floor == . and . >= 0)) and
 	(.deadline_unix_seconds == ((.started_unix_seconds // (.deadline_unix_seconds - .effective_timeout_seconds)) + .effective_timeout_seconds))
-' "$request_file" >/dev/null 2>&1
+' >/dev/null 2>&1
 then
 	jq -cn '{state:"unavailable",observed_head_sha:"",reason:"request-envelope-invalid",snapshot:null}'
 	exit 0
 fi
+
+request_deadline=$(printf '%s\n' "$request_json" | jq -r '.deadline_unix_seconds')
+clock=${SANDMAN_REVIEW_WAIT_CLOCK:-}
+
+now() {
+	if [ -n "$clock" ]; then
+		sh "$clock"
+	else
+		date +%s
+	fi
+}
+
+emit_timed_out() {
+	observed_head_sha=${1:-}
+	jq -cn --arg observed_head_sha "$observed_head_sha" \
+		'{state:"timed_out",observed_head_sha:$observed_head_sha,reason:"request-deadline-exhausted",snapshot:null}'
+}
+
+check_before_operation() {
+	operation_now=$(now 2>/dev/null) || return 125
+	case "$operation_now" in
+		''|*[!0-9]*) return 125 ;;
+	esac
+	[ "$operation_now" -lt "$request_deadline" ] || return 124
+}
+
+check_deadline_or_exit() {
+	check_before_operation
+	check_status=$?
+	case "$check_status" in
+		0) return 0 ;;
+		124)
+			emit_timed_out "${1:-}"
+			exit 0
+			;;
+		*)
+			jq -cn '{state:"unavailable",observed_head_sha:"",reason:"clock-unavailable",snapshot:null}'
+			exit 0
+			;;
+	esac
+}
 
 tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/sandman-review-observe.XXXXXX") || exit 2
 trap 'rm -rf "$tmp_dir"' EXIT HUP INT TERM
@@ -61,14 +102,20 @@ view_file=$tmp_dir/view.json
 reviews_file=$tmp_dir/reviews.json
 inline_file=$tmp_dir/inline.json
 
+check_deadline_or_exit
 if ! gh pr view "$pull_request" --repo "$repository" --json headRefOid,comments,reviewDecision,mergeStateStatus >"$view_file" 2>/dev/null; then
 	jq -cn '{state:"unavailable",observed_head_sha:"",reason:"pull-request-view-failed",snapshot:null}'
 	exit 0
 fi
+
+observed_head=$(jq -r '.headRefOid // ""' "$view_file")
+check_deadline_or_exit "$observed_head"
 if ! gh api "repos/$repository/pulls/$pull_request/reviews" --paginate >"$reviews_file" 2>/dev/null; then
 	jq -cn '{state:"unavailable",observed_head_sha:"",reason:"formal-reviews-unavailable",snapshot:null}'
 	exit 0
 fi
+
+check_deadline_or_exit "$observed_head"
 if ! gh api "repos/$repository/pulls/$pull_request/comments" --paginate >"$inline_file" 2>/dev/null; then
 	jq -cn '{state:"unavailable",observed_head_sha:"",reason:"inline-comments-unavailable",snapshot:null}'
 	exit 0
@@ -85,7 +132,6 @@ then
 	exit 0
 fi
 
-observed_head=$(jq -r '.headRefOid // ""' "$view_file")
 if [ "$observed_head" != "$head_sha" ]; then
 	jq -cn --arg observed_head_sha "$observed_head" \
 		'{state:"unavailable",observed_head_sha:$observed_head_sha,reason:"head-mismatch",snapshot:null}'
@@ -120,8 +166,8 @@ classification_json=$(jq -cn \
 	--arg trigger_id "$trigger_id" \
 	--arg trigger_prefix "$trigger_prefix" \
 	--arg trigger_created_at "$trigger_created_at" \
-	--arg deadline_at "$(jq -r '.deadline_at // ""' "$request_file")" \
-	--argjson deadline_unix_seconds "$(jq -r '.deadline_unix_seconds // 0' "$request_file")" \
+	--arg deadline_at "$(printf '%s\n' "$request_json" | jq -r '.deadline_at // ""')" \
+	--argjson deadline_unix_seconds "$(printf '%s\n' "$request_json" | jq -r '.deadline_unix_seconds // 0')" \
 	--argjson reviews "$reviews_json" \
 	--argjson inline "$inline_json" \
 	--slurpfile view "$view_file" \

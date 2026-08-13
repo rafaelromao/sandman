@@ -306,6 +306,205 @@ printf '%s\n' $((calls + 1)) > "$SANDMAN_REVIEW_WAIT_CLOCK_STATE"
 	}
 }
 
+func TestReviewWaitV1PreservesRespondedEvidenceAtExactDeadline(t *testing.T) {
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	helper := filepath.Join(wd, "pr-review", "review-wait-v1.sh")
+	requestFile := filepath.Join(t.TempDir(), "42.review_request.json")
+	writeReviewWaitRequest(t, requestFile, "1001", "2026-08-11T18:00:01Z", "2026-08-11T18:30:01Z")
+	clock := filepath.Join(t.TempDir(), "clock.sh")
+	clockState := filepath.Join(t.TempDir(), "clock.state")
+	if err := os.WriteFile(clockState, []byte("0\n"), 0o600); err != nil {
+		t.Fatalf("write clock state: %v", err)
+	}
+	clockScript := `#!/bin/sh
+calls=$(tr -d '\n' < "$SANDMAN_REVIEW_WAIT_CLOCK_STATE")
+if [ "$calls" -lt 4 ]; then
+  value=4102444799
+else
+  value=4102444800
+fi
+printf '%s\n' "$value"
+printf '%s\n' $((calls + 1)) > "$SANDMAN_REVIEW_WAIT_CLOCK_STATE"
+`
+	if err := os.WriteFile(clock, []byte(clockScript), 0o700); err != nil {
+		t.Fatalf("write clock: %v", err)
+	}
+	sleeper := filepath.Join(t.TempDir(), "sleeper.sh")
+	if err := os.WriteFile(sleeper, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
+		t.Fatalf("write sleeper: %v", err)
+	}
+
+	result := runReviewWaitWithEnv(t, helper, requestFile, writeStructuredReviewObserver(t, `{"state":"responded","observed_head_sha":"abc123","snapshot":{"comments":[{"body":"LGTM"}],"reviews":[],"inline_comments":[]}}`), true, map[string]string{
+		"SANDMAN_REVIEW_WAIT_CLOCK":       clock,
+		"SANDMAN_REVIEW_WAIT_CLOCK_STATE": clockState,
+		"SANDMAN_REVIEW_WAIT_SLEEP":       sleeper,
+	})
+
+	if result.State != "responded" {
+		t.Fatalf("state = %q, want responded at inclusive deadline", result.State)
+	}
+	if !strings.Contains(string(result.Evidence), "LGTM") {
+		t.Fatalf("responded evidence lost at deadline: %s", result.Evidence)
+	}
+}
+
+func TestReviewWaitV1DoesNotStartObserverAfterDeadlineRace(t *testing.T) {
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	helper := filepath.Join(wd, "pr-review", "review-wait-v1.sh")
+	requestFile := filepath.Join(t.TempDir(), "42.review_request.json")
+	writeReviewWaitRequestValues(t, requestFile, "1001", "2026-08-11T18:00:01Z", "unix:100", 0, 100, 100)
+	observerStarted := filepath.Join(t.TempDir(), "observer.started")
+	observer := filepath.Join(t.TempDir(), "observer.sh")
+	observerScript := "#!/bin/sh\nprintf '%s\\n' started >> \"" + observerStarted + "\"\nprintf '%s\\n' '{\"state\":\"pending\",\"observed_head_sha\":\"abc123\",\"snapshot\":{}}'\n"
+	if err := os.WriteFile(observer, []byte(observerScript), 0o700); err != nil {
+		t.Fatalf("write observer: %v", err)
+	}
+	clock := filepath.Join(t.TempDir(), "clock.sh")
+	clockState := filepath.Join(t.TempDir(), "clock.state")
+	if err := os.WriteFile(clockState, []byte("0\n"), 0o600); err != nil {
+		t.Fatalf("write clock state: %v", err)
+	}
+	clockScript := `#!/bin/sh
+calls=$(tr -d '\n' < "$SANDMAN_REVIEW_WAIT_CLOCK_STATE")
+if [ "$calls" = "0" ]; then
+  value=99
+else
+  value=100
+fi
+printf '%s\n' "$value"
+printf '%s\n' $((calls + 1)) > "$SANDMAN_REVIEW_WAIT_CLOCK_STATE"
+`
+	if err := os.WriteFile(clock, []byte(clockScript), 0o700); err != nil {
+		t.Fatalf("write clock: %v", err)
+	}
+
+	result := runReviewWaitWithEnv(t, helper, requestFile, observer, true, map[string]string{
+		"SANDMAN_REVIEW_WAIT_CLOCK":       clock,
+		"SANDMAN_REVIEW_WAIT_CLOCK_STATE": clockState,
+	})
+
+	if result.State != "timed_out" {
+		t.Fatalf("state = %q, want timed_out at observer launch boundary", result.State)
+	}
+	if _, err := os.Stat(observerStarted); !os.IsNotExist(err) {
+		t.Fatalf("observer started after deadline race, stat error = %v", err)
+	}
+}
+
+func TestReviewWaitV1DoesNotStartSleepAfterDeadlineRace(t *testing.T) {
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	helper := filepath.Join(wd, "pr-review", "review-wait-v1.sh")
+	requestFile := filepath.Join(t.TempDir(), "42.review_request.json")
+	writeReviewWaitRequestValues(t, requestFile, "1001", "2026-08-11T18:00:01Z", "unix:100", 0, 100, 100)
+	clock := filepath.Join(t.TempDir(), "clock.sh")
+	clockState := filepath.Join(t.TempDir(), "clock.state")
+	if err := os.WriteFile(clockState, []byte("0\n"), 0o600); err != nil {
+		t.Fatalf("write clock state: %v", err)
+	}
+	clockScript := `#!/bin/sh
+calls=$(tr -d '\n' < "$SANDMAN_REVIEW_WAIT_CLOCK_STATE")
+if [ "$calls" -lt 4 ]; then
+  value=99
+else
+  value=100
+fi
+printf '%s\n' "$value"
+printf '%s\n' $((calls + 1)) > "$SANDMAN_REVIEW_WAIT_CLOCK_STATE"
+`
+	if err := os.WriteFile(clock, []byte(clockScript), 0o700); err != nil {
+		t.Fatalf("write clock: %v", err)
+	}
+	sleepCalls := filepath.Join(t.TempDir(), "sleep.calls")
+	sleeper := filepath.Join(t.TempDir(), "sleeper.sh")
+	sleeperScript := "#!/bin/sh\nprintf '%s\\n' \"$1\" >> \"" + sleepCalls + "\"\nexit 0\n"
+	if err := os.WriteFile(sleeper, []byte(sleeperScript), 0o700); err != nil {
+		t.Fatalf("write sleeper: %v", err)
+	}
+
+	result := runReviewWaitWithEnv(t, helper, requestFile, writePendingReviewObserver(t), false, map[string]string{
+		"SANDMAN_REVIEW_WAIT_CLOCK":       clock,
+		"SANDMAN_REVIEW_WAIT_CLOCK_STATE": clockState,
+		"SANDMAN_REVIEW_WAIT_SLEEP":       sleeper,
+	})
+
+	if result.State != "timed_out" {
+		t.Fatalf("state = %q, want timed_out at sleep launch boundary", result.State)
+	}
+	if calls, err := os.ReadFile(sleepCalls); err == nil {
+		entries := strings.Fields(string(calls))
+		if len(entries) > 1 {
+			t.Fatalf("wait sleeper started after deadline race: %q", calls)
+		}
+	}
+}
+
+func TestReviewObserveV1DoesNotStartNextAPICallAfterDeadline(t *testing.T) {
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	helper := filepath.Join(wd, "pr-review", "review-wait-v1.sh")
+	observer := filepath.Join(wd, "pr-review", "review-observe-v1.sh")
+	requestFile := filepath.Join(t.TempDir(), "42.review_request.json")
+	writeReviewWaitRequestValues(t, requestFile, "1001", "2026-08-11T18:00:01Z", "unix:100", 0, 100, 100)
+
+	bin := t.TempDir()
+	callsFile := filepath.Join(t.TempDir(), "gh.calls")
+	gh := filepath.Join(bin, "gh")
+	ghScript := `#!/bin/sh
+printf '%s %s\n' "$1" "$2" >> "$SANDMAN_TEST_GH_CALLS"
+if [ "$1" = "pr" ] && [ "$2" = "view" ]; then
+  printf '%s\n' '{"headRefOid":"abc123","comments":[{"id":"1001","url":"https://github.com/owner/repo/pull/42#issuecomment-1001","body":"/sandman review","createdAt":"2026-08-11T18:00:01Z"}],"reviewDecision":"","mergeStateStatus":"CLEAN"}'
+  printf '%s\n' 100 > "$SANDMAN_REVIEW_WAIT_CLOCK_STATE"
+  exit 0
+fi
+exit 2
+`
+	if err := os.WriteFile(gh, []byte(ghScript), 0o700); err != nil {
+		t.Fatalf("write gh shim: %v", err)
+	}
+	clock := filepath.Join(t.TempDir(), "clock.sh")
+	clockState := filepath.Join(t.TempDir(), "clock.state")
+	if err := os.WriteFile(clockState, []byte("0\n"), 0o600); err != nil {
+		t.Fatalf("write clock state: %v", err)
+	}
+	clockScript := `#!/bin/sh
+calls=$(tr -d '\n' < "$SANDMAN_REVIEW_WAIT_CLOCK_STATE")
+if [ "$calls" -ge 100 ]; then value=100; else value=99; fi
+printf '%s\n' "$value"
+printf '%s\n' $((calls + 1)) > "$SANDMAN_REVIEW_WAIT_CLOCK_STATE"
+`
+	if err := os.WriteFile(clock, []byte(clockScript), 0o700); err != nil {
+		t.Fatalf("write clock: %v", err)
+	}
+
+	result := runReviewWaitWithEnv(t, helper, requestFile, observer, true, map[string]string{
+		"PATH":                            bin + ":" + os.Getenv("PATH"),
+		"SANDMAN_REVIEW_WAIT_CLOCK":       clock,
+		"SANDMAN_REVIEW_WAIT_CLOCK_STATE": clockState,
+		"SANDMAN_TEST_GH_CALLS":           callsFile,
+	})
+	if result.State != "timed_out" {
+		t.Fatalf("state = %q, want timed_out when deadline blocks next API call", result.State)
+	}
+	calls, err := os.ReadFile(callsFile)
+	if err != nil {
+		t.Fatalf("read gh calls: %v", err)
+	}
+	if got, want := strings.TrimSpace(string(calls)), "pr view"; got != want {
+		t.Fatalf("GitHub calls = %q, want only %q before deadline", got, want)
+	}
+}
+
 func TestReviewWaitV1PreservesCadenceAndShortensFinalInterval(t *testing.T) {
 	wd, err := os.Getwd()
 	if err != nil {
@@ -768,7 +967,7 @@ func TestReviewWaitV1ReturnsTimedOutWhenCallerDeadlineIsReached(t *testing.T) {
 	}
 }
 
-func TestReviewWaitV1DoesNotReturnLateObserverEvidenceAsResponded(t *testing.T) {
+func TestReviewWaitV1RejectsResponseCompletingAfterDeadline(t *testing.T) {
 	wd, err := os.Getwd()
 	if err != nil {
 		t.Fatalf("getwd: %v", err)
@@ -776,7 +975,13 @@ func TestReviewWaitV1DoesNotReturnLateObserverEvidenceAsResponded(t *testing.T) 
 	helper := filepath.Join(wd, "pr-review", "review-wait-v1.sh")
 	requestFile := filepath.Join(t.TempDir(), "42.review_request.json")
 	writeReviewWaitRequest(t, requestFile, "1001", "2026-08-11T18:00:01Z", "2026-08-11T18:30:01Z")
-	observer := writeStructuredReviewObserver(t, `{"state":"responded","observed_head_sha":"abc123","snapshot":{"comments":[{"body":"late"}],"reviews":[],"inline_comments":[]}}`)
+	responseObserver := writeStructuredReviewObserver(t, `{"state":"responded","observed_head_sha":"abc123","snapshot":{"comments":[{"body":"late"}],"reviews":[],"inline_comments":[]}}`)
+	observerStarted := filepath.Join(t.TempDir(), "observer.started")
+	observer := filepath.Join(t.TempDir(), "observer.sh")
+	observerScript := "#!/bin/sh\nprintf '%s\\n' started > \"" + observerStarted + "\"\nexec sh \"" + responseObserver + "\"\n"
+	if err := os.WriteFile(observer, []byte(observerScript), 0o700); err != nil {
+		t.Fatalf("write observer wrapper: %v", err)
+	}
 	clock := filepath.Join(t.TempDir(), "clock.sh")
 	clockState := filepath.Join(t.TempDir(), "clock.state")
 	if err := os.WriteFile(clockState, []byte("0\n"), 0o600); err != nil {
@@ -784,11 +989,8 @@ func TestReviewWaitV1DoesNotReturnLateObserverEvidenceAsResponded(t *testing.T) 
 	}
 	clockScript := `#!/bin/sh
 calls=$(tr -d '\n' < "$SANDMAN_REVIEW_WAIT_CLOCK_STATE")
-if [ "$calls" = "0" ]; then
-  printf '%s\n' 4102444799
-else
-  printf '%s\n' 4102444801
-fi
+if [ "$calls" -lt 4 ]; then value=4102444799; else value=4102444801; fi
+printf '%s\n' "$value"
 printf '%s\n' $((calls + 1)) > "$SANDMAN_REVIEW_WAIT_CLOCK_STATE"
 `
 	if err := os.WriteFile(clock, []byte(clockScript), 0o700); err != nil {
@@ -802,6 +1004,123 @@ printf '%s\n' $((calls + 1)) > "$SANDMAN_REVIEW_WAIT_CLOCK_STATE"
 
 	if result.State != "timed_out" {
 		t.Fatalf("late observer state = %q, want timed_out", result.State)
+	}
+	if _, err := os.Stat(observerStarted); err != nil {
+		t.Fatalf("late observer did not start before completion crossed deadline: %v", err)
+	}
+}
+
+func TestReviewWaitV1PreservesRespondedEvidenceWhenPersistenceCrossesDeadline(t *testing.T) {
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	helper := filepath.Join(wd, "pr-review", "review-wait-v1.sh")
+	requestFile := filepath.Join(t.TempDir(), "42.review_request.json")
+	writeReviewWaitRequest(t, requestFile, "1001", "2026-08-11T18:00:01Z", "2026-08-11T18:30:01Z")
+	timeState := filepath.Join(t.TempDir(), "time.state")
+	if err := os.WriteFile(timeState, []byte("4102444799\n"), 0o600); err != nil {
+		t.Fatalf("write time state: %v", err)
+	}
+	clock := filepath.Join(t.TempDir(), "clock.sh")
+	if err := os.WriteFile(clock, []byte("#!/bin/sh\ntr -d '\\n' < \"$SANDMAN_REVIEW_WAIT_TIME_STATE\"\nprintf '\\n'\n"), 0o700); err != nil {
+		t.Fatalf("write clock: %v", err)
+	}
+	realMV, err := exec.LookPath("mv")
+	if err != nil {
+		t.Fatalf("find mv: %v", err)
+	}
+	bin := t.TempDir()
+	mv := filepath.Join(bin, "mv")
+	mvScript := "#!/bin/sh\ncase \"$2\" in\n  *.snapshot.json.tmp.*) printf '%s\\n' 4102444800 > \"$SANDMAN_REVIEW_WAIT_TIME_STATE\" ;;\nesac\nexec \"" + realMV + "\" \"$@\"\n"
+	if err := os.WriteFile(mv, []byte(mvScript), 0o700); err != nil {
+		t.Fatalf("write mv wrapper: %v", err)
+	}
+
+	result := runReviewWaitWithEnv(t, helper, requestFile, writeStructuredReviewObserver(t, `{"state":"responded","observed_head_sha":"abc123","snapshot":{"comments":[{"body":"LGTM"}],"reviews":[],"inline_comments":[]}}`), true, map[string]string{
+		"PATH":                           bin + ":" + os.Getenv("PATH"),
+		"SANDMAN_REVIEW_WAIT_CLOCK":      clock,
+		"SANDMAN_REVIEW_WAIT_TIME_STATE": timeState,
+	})
+
+	if result.State != "responded" || !strings.Contains(string(result.Evidence), "LGTM") {
+		state, _ := os.ReadFile(requestFile + ".state")
+		t.Fatalf("persistence-crossing result = %q/%q with evidence %s, state %s, want responded with original evidence", result.State, result.Reason, result.Evidence, state)
+	}
+	if result.Request.DeadlineUnix != 4102444800 {
+		t.Fatalf("deadline = %d, want immutable request deadline", result.Request.DeadlineUnix)
+	}
+}
+
+func TestReviewWaitV1PinsRequestDeadlineAcrossObserverMutation(t *testing.T) {
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	helper := filepath.Join(wd, "pr-review", "review-wait-v1.sh")
+	requestFile := filepath.Join(t.TempDir(), "42.review_request.json")
+	writeReviewWaitRequestValues(t, requestFile, "1001", "2026-08-11T18:00:01Z", "unix:100", 0, 100, 100)
+	observer := filepath.Join(t.TempDir(), "observer.sh")
+	observerScript := "#!/bin/sh\nprintf '%s\\n' '{\"protocol\":\"review-wait/v1\",\"repository\":\"owner/repo\",\"pull_request\":42,\"head_sha\":\"abc123\",\"trigger_id\":\"1001\",\"trigger_prefix\":\"/sandman review\",\"trigger_created_at\":\"2026-08-11T18:00:01Z\",\"confirmed_at\":\"2026-08-11T18:00:01Z\",\"started_at\":\"2026-08-11T18:00:01Z\",\"deadline_at\":\"unix:1000\",\"started_unix_seconds\":0,\"deadline_unix_seconds\":1000,\"effective_timeout_seconds\":1000,\"poll_plan\":[120]}' > '" + requestFile + "'\nprintf '%s\\n' '{\"state\":\"pending\",\"observed_head_sha\":\"abc123\",\"snapshot\":{}}'\n"
+	if err := os.WriteFile(observer, []byte(observerScript), 0o700); err != nil {
+		t.Fatalf("write observer: %v", err)
+	}
+	clock := filepath.Join(t.TempDir(), "clock.sh")
+	clockState := filepath.Join(t.TempDir(), "clock.state")
+	if err := os.WriteFile(clockState, []byte("0\n"), 0o600); err != nil {
+		t.Fatalf("write clock state: %v", err)
+	}
+	clockScript := `#!/bin/sh
+calls=$(tr -d '\n' < "$SANDMAN_REVIEW_WAIT_CLOCK_STATE")
+if [ "$calls" = "0" ]; then value=99; else value=100; fi
+printf '%s\n' "$value"
+printf '%s\n' $((calls + 1)) > "$SANDMAN_REVIEW_WAIT_CLOCK_STATE"
+`
+	if err := os.WriteFile(clock, []byte(clockScript), 0o700); err != nil {
+		t.Fatalf("write clock: %v", err)
+	}
+
+	result := runReviewWaitWithEnv(t, helper, requestFile, observer, true, map[string]string{
+		"SANDMAN_REVIEW_WAIT_CLOCK":       clock,
+		"SANDMAN_REVIEW_WAIT_CLOCK_STATE": clockState,
+	})
+	if result.State != "timed_out" || result.Request.DeadlineUnix != 100 {
+		t.Fatalf("mutated request result = %q/deadline %d, want timed_out/100", result.State, result.Request.DeadlineUnix)
+	}
+}
+
+func TestReviewWaitV1ReplaysRespondedEvidenceAfterDeadline(t *testing.T) {
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	helper := filepath.Join(wd, "pr-review", "review-wait-v1.sh")
+	requestFile := filepath.Join(t.TempDir(), "42.review_request.json")
+	writeReviewWaitRequest(t, requestFile, "1001", "2026-08-11T18:00:01Z", "2026-08-11T18:30:01Z")
+	observer := writeStructuredReviewObserver(t, `{"state":"responded","observed_head_sha":"abc123","snapshot":{"comments":[{"body":"LGTM"}],"reviews":[],"inline_comments":[]}}`)
+	beforeDeadline := filepath.Join(t.TempDir(), "before-deadline.sh")
+	if err := os.WriteFile(beforeDeadline, []byte("#!/bin/sh\nprintf '%s\\n' 4102444799\n"), 0o700); err != nil {
+		t.Fatalf("write before-deadline clock: %v", err)
+	}
+	first := runReviewWaitWithEnv(t, helper, requestFile, observer, true, map[string]string{
+		"SANDMAN_REVIEW_WAIT_CLOCK": beforeDeadline,
+	})
+	if first.State != "responded" {
+		t.Fatalf("initial state = %q, want responded", first.State)
+	}
+
+	afterDeadline := filepath.Join(t.TempDir(), "after-deadline.sh")
+	if err := os.WriteFile(afterDeadline, []byte("#!/bin/sh\nprintf '%s\\n' 4102444800\n"), 0o700); err != nil {
+		t.Fatalf("write after-deadline clock: %v", err)
+	}
+	second := runReviewWaitWithEnv(t, helper, requestFile, filepath.Join(t.TempDir(), "missing-observer"), true, map[string]string{
+		"SANDMAN_REVIEW_WAIT_CLOCK": afterDeadline,
+	})
+	if second.State != "responded" || second.Lifecycle != "resumed" || !strings.Contains(string(second.Evidence), "LGTM") {
+		t.Fatalf("replay = %q/%q/%s, want resumed responded evidence", second.State, second.Lifecycle, second.Evidence)
+	}
+	if second.Request.DeadlineUnix != first.Request.DeadlineUnix {
+		t.Fatalf("replay deadline = %d, initial deadline = %d", second.Request.DeadlineUnix, first.Request.DeadlineUnix)
 	}
 }
 
