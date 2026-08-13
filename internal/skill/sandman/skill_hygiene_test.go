@@ -332,6 +332,39 @@ func TestCodeReviewSkill_SeparatesSelfAndDaemonContexts(t *testing.T) {
 	}
 }
 
+func TestPlanSkill_PreservesConsensusWithoutLocalWallClockCap(t *testing.T) {
+	text, ok := readSkillMarkdown(t)["plan/SKILL.md"]
+	if !ok {
+		t.Fatal("expected plan/SKILL.md")
+	}
+
+	for _, forbidden := range []string{
+		"20-minute",
+		"20 minute",
+		"20 minutes",
+		"wall-clock timer",
+		"hard-reject",
+		"re-spawn",
+		"subagent stuck",
+		"review-failed",
+	} {
+		if strings.Contains(strings.ToLower(text), forbidden) {
+			t.Errorf("plan skill must not prescribe local liveness cap language %q", forbidden)
+		}
+	}
+
+	for _, required := range []string{
+		"Send the draft plan to a general-purpose subagent for review.",
+		"Revise until consensus.",
+		"If the review subagent fails or returns no decision",
+		"parent workflow's normal recovery and continuation handling",
+	} {
+		if !strings.Contains(text, required) {
+			t.Errorf("plan skill must preserve normal review handling %q", required)
+		}
+	}
+}
+
 func TestSkills_NoObsoleteSelfReviewSkillReference(t *testing.T) {
 	obsolete := "sandman-self" + "-review"
 	for path, text := range readSkillMarkdown(t) {
