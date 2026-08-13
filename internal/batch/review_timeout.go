@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/rafaelromao/sandman/internal/github"
+	"github.com/rafaelromao/sandman/internal/paths"
 )
 
 const (
@@ -73,6 +74,11 @@ type reviewWaitState struct {
 
 type reviewWaitEvidence struct {
 	ResponseCounts *persistedReviewResponseCounts `json:"response_counts"`
+	Classification *reviewClassification          `json:"classification"`
+}
+
+type reviewClassification struct {
+	RequestState string `json:"request_state"`
 }
 
 type reviewTimeoutHandoff struct {
@@ -85,7 +91,7 @@ func reviewTimeoutArtifactsPresent(workDir string) bool {
 	if strings.TrimSpace(workDir) == "" {
 		return false
 	}
-	stateDir := filepath.Join(workDir, ".sandman", "state")
+	stateDir := paths.NewLayout(nil, workDir).StateDir
 	for _, pattern := range []string{"*.review_request.json", "*.review_request.json.state", "*.head_sha"} {
 		matches, err := filepath.Glob(filepath.Join(stateDir, pattern))
 		if err == nil && len(matches) > 0 {
@@ -99,10 +105,10 @@ func readReviewTimeoutHandoff(workDir, repository string, pr *github.PR, current
 	if pr == nil || pr.Number <= 0 {
 		return nil, fmt.Errorf("pull request metadata is unavailable")
 	}
-	stateDir := filepath.Join(workDir, ".sandman", "state")
-	requestPath := filepath.Join(stateDir, fmt.Sprintf("%d.review_request.json", pr.Number))
-	statePath := requestPath + ".state"
-	headPath := filepath.Join(stateDir, fmt.Sprintf("%d.head_sha", pr.Number))
+	layout := paths.NewLayout(nil, workDir)
+	requestPath := layout.PRReviewRequestPath(pr.Number)
+	statePath := layout.PRReviewRequestStatePath(pr.Number)
+	headPath := layout.PRHeadShaPath(pr.Number)
 
 	requestData, err := os.ReadFile(requestPath)
 	if err != nil {
@@ -130,26 +136,34 @@ func readReviewTimeoutHandoff(workDir, repository string, pr *github.PR, current
 		return nil, err
 	}
 	if state.State != "timed_out" {
-		if state.State == "pending" || state.State == "responded" {
+		if state.State == "pending" {
 			return nil, nil
+		}
+		if state.State == "responded" && state.Evidence != nil && state.Evidence.Classification != nil {
+			switch state.Evidence.Classification.RequestState {
+			case "active":
+				return nil, nil
+			case "superseded":
+				return nil, fmt.Errorf("review wait request was superseded")
+			}
 		}
 		return nil, fmt.Errorf("review wait state %q is not reusable", state.State)
 	}
+	if state.Evidence != nil && state.Evidence.Classification != nil && state.Evidence.Classification.RequestState == "superseded" {
+		return nil, fmt.Errorf("timed-out review wait request was superseded")
+	}
 
-	counts := reviewResponseCounts{}
-	if state.Evidence != nil {
-		if state.Evidence.ResponseCounts == nil {
-			return nil, fmt.Errorf("timed-out review state has incomplete response counts")
-		}
-		persistedCounts := state.Evidence.ResponseCounts
-		if persistedCounts.TopLevel == nil || persistedCounts.FormalReviews == nil || persistedCounts.Inline == nil {
-			return nil, fmt.Errorf("timed-out review state has incomplete response counts")
-		}
-		counts = reviewResponseCounts{
-			TopLevel:      *persistedCounts.TopLevel,
-			FormalReviews: *persistedCounts.FormalReviews,
-			Inline:        *persistedCounts.Inline,
-		}
+	if state.Evidence == nil || state.Evidence.ResponseCounts == nil {
+		return nil, fmt.Errorf("timed-out review state has incomplete response counts")
+	}
+	persistedCounts := state.Evidence.ResponseCounts
+	if persistedCounts.TopLevel == nil || persistedCounts.FormalReviews == nil || persistedCounts.Inline == nil {
+		return nil, fmt.Errorf("timed-out review state has incomplete response counts")
+	}
+	counts := reviewResponseCounts{
+		TopLevel:      *persistedCounts.TopLevel,
+		FormalReviews: *persistedCounts.FormalReviews,
+		Inline:        *persistedCounts.Inline,
 	}
 	if counts.TopLevel < 0 || counts.FormalReviews < 0 || counts.Inline < 0 {
 		return nil, fmt.Errorf("review response counters must not be negative")
@@ -165,6 +179,9 @@ func readReviewTimeoutHandoff(workDir, repository string, pr *github.PR, current
 	}
 	if *state.ElapsedSeconds < 0 {
 		return nil, fmt.Errorf("review wait elapsed time must not be negative")
+	}
+	if *state.ElapsedSeconds < request.EffectiveTimeout {
+		return nil, fmt.Errorf("review wait elapsed time did not reach its deadline")
 	}
 	return &reviewTimeoutHandoff{Request: request, State: state, ResponseCounts: counts}, nil
 }

@@ -367,14 +367,19 @@ func (s *runSession) recordReviewTimeoutGateBlocker(workDir, logPath, runID stri
 	request := handoff.Request
 	counts := handoff.ResponseCounts
 	blocker := fmt.Sprintf(
-		"\n\n## External Gate\n\n- State: delegated review request exhausted its deadline.\n- Reason: %s.\n- Pull request: #%d.\n- Current head: %s.\n- Trigger: %s.\n- Deadline: %s (%d).\n- Budget: %d seconds.\n- Response counts: top-level=%d, formal=%d, inline=%d.\n- Next action: %s.\n",
+		"\n\n## External Gate\n\n- State: delegated review request exhausted its deadline.\n- Reason: %s.\n- Repository: %s.\n- Pull request: #%d.\n- Current head: %s.\n- Trigger: %s.\n- Trigger created: %s.\n- Confirmed: %s.\n- Started: %s.\n- Deadline: %s (%d).\n- Budget: %d seconds.\n- Elapsed: %d seconds.\n- Response counts: top-level=%d, formal=%d, inline=%d.\n- Next action: %s.\n",
 		reviewTimeoutReason,
+		request.Repository,
 		request.PullRequest,
 		request.HeadSHA,
 		request.TriggerID,
+		request.TriggerCreatedAt,
+		request.ConfirmedAt,
+		request.StartedAt,
 		request.DeadlineAt,
 		request.DeadlineUnixSeconds,
 		request.EffectiveTimeout,
+		*handoff.State.ElapsedSeconds,
 		counts.TopLevel,
 		counts.FormalReviews,
 		counts.Inline,
@@ -407,7 +412,7 @@ func (s *runSession) recordReviewTimeoutGateBlocker(workDir, logPath, runID stri
 		return
 	}
 	prefixed := NewLinePrefixWriter(runID, file)
-	_, writeErr := fmt.Fprintf(prefixed, "external gate %s: %s; pull request #%d head %s trigger %s deadline %s budget %d counters top-level=%d formal=%d inline=%d; next action: %s\n", gateReviewTimeout, reviewTimeoutReason, request.PullRequest, request.HeadSHA, request.TriggerID, request.DeadlineAt, request.EffectiveTimeout, counts.TopLevel, counts.FormalReviews, counts.Inline, reviewTimeoutNextAction)
+	_, writeErr := fmt.Fprintf(prefixed, "external gate %s: %s; repository %s pull request #%d head %s trigger %s created %s confirmed %s started %s deadline %s budget %d elapsed %d counters top-level=%d formal=%d inline=%d; next action: %s\n", gateReviewTimeout, reviewTimeoutReason, request.Repository, request.PullRequest, request.HeadSHA, request.TriggerID, request.TriggerCreatedAt, request.ConfirmedAt, request.StartedAt, request.DeadlineAt, request.EffectiveTimeout, *handoff.State.ElapsedSeconds, counts.TopLevel, counts.FormalReviews, counts.Inline, reviewTimeoutNextAction)
 	flushErr := prefixed.Flush()
 	closeErr := file.Close()
 	if writeErr != nil {

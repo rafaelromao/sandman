@@ -173,13 +173,36 @@ func TestExternalGate_ReviewTimeoutBlocksWithoutRetry(t *testing.T) {
 	if request["pull_request"] != float64(17) || request["head_sha"] != "current-sha" || request["trigger_id"] != "https://github.com/owner/repo/pull/17#issuecomment-1001" {
 		t.Fatalf("terminal request identity = %#v", request)
 	}
+	for field, want := range map[string]any{
+		"deadline_unix_seconds":     float64(2800),
+		"effective_timeout_seconds": float64(1800),
+		"elapsed_seconds":           float64(1800),
+		"reason":                    "REVIEW_TIMEOUT",
+		"next_action":               reviewTimeoutNextAction,
+	} {
+		if request[field] != want {
+			t.Fatalf("terminal request %s = %v, want %v", field, request[field], want)
+		}
+	}
 
 	task, err := os.ReadFile(filepath.Join(worktreePath, ".sandman", "task.md"))
 	if err != nil {
 		t.Fatalf("read task: %v", err)
 	}
-	if !strings.Contains(string(task), "REVIEW_TIMEOUT") || !strings.Contains(string(task), "Next action:") {
-		t.Fatalf("task missing timeout handoff: %s", task)
+	for _, want := range []string{
+		"REVIEW_TIMEOUT",
+		"Repository: owner/repo",
+		"Pull request: #17",
+		"Current head: current-sha",
+		"Trigger: https://github.com/owner/repo/pull/17#issuecomment-1001",
+		"Deadline: unix:2800 (2800)",
+		"Budget: 1800 seconds",
+		"Elapsed: 1800 seconds",
+		"Next action:",
+	} {
+		if !strings.Contains(string(task), want) {
+			t.Fatalf("task missing %q: %s", want, task)
+		}
 	}
 	runLog, err := os.ReadFile(filepath.Join(workDir, ".sandman", "batches", "runs", "run-test", "run.log"))
 	if err == nil && !strings.Contains(string(runLog), "REVIEW_TIMEOUT") {
@@ -430,6 +453,26 @@ func TestExternalGate_ReviewTimeoutRejectsInconsistentStatePair(t *testing.T) {
 	}
 }
 
+func TestExternalGate_ReviewTimeoutRejectsSupersededResponse(t *testing.T) {
+	workDir := testenv.MkdirShort(t, "sm-orch-")
+	writeTimedOutReviewRequest(t, workDir)
+	statePath := filepath.Join(workDir, ".sandman", "state", "17.review_request.json.state")
+	state, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatalf("read review state: %v", err)
+	}
+	stateText := strings.Replace(string(state), `"state": "timed_out"`, `"state": "responded"`, 1)
+	stateText = strings.Replace(stateText, `"evidence": {`, `"evidence": {\n    "classification": {"request_state": "superseded"},`, 1)
+	if err := os.WriteFile(statePath, []byte(stateText), 0o600); err != nil {
+		t.Fatalf("write superseded state: %v", err)
+	}
+	if _, err := readReviewTimeoutHandoff(workDir, "owner/repo", &github.PR{
+		Number: 17, State: "open", HeadRefOid: "current-sha",
+	}, "current-sha"); err == nil {
+		t.Fatal("readReviewTimeoutHandoff() accepted a superseded response")
+	}
+}
+
 func TestExternalGate_ReviewTimeoutRejectsHeadSidecarWithoutRequest(t *testing.T) {
 	workDir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(workDir)
@@ -491,7 +534,7 @@ func TestExternalGate_ReviewTimeoutRejectsHeadSidecarWithoutRequest(t *testing.T
 	}
 }
 
-func TestExternalGate_ReviewTimeoutAllowsEmptyEvidenceAsZeroCounters(t *testing.T) {
+func TestExternalGate_ReviewTimeoutRejectsMissingEvidenceCounters(t *testing.T) {
 	workDir := testenv.MkdirShort(t, "sm-orch-")
 	writeTimedOutReviewRequest(t, workDir)
 	statePath := filepath.Join(workDir, ".sandman", "state", "17.review_request.json.state")
@@ -510,19 +553,13 @@ func TestExternalGate_ReviewTimeoutAllowsEmptyEvidenceAsZeroCounters(t *testing.
 		t.Fatalf("write empty-evidence state: %v", err)
 	}
 
-	handoff, err := readReviewTimeoutHandoff(workDir, "owner/repo", &github.PR{
+	_, err = readReviewTimeoutHandoff(workDir, "owner/repo", &github.PR{
 		Number:     17,
 		State:      "open",
 		HeadRefOid: "current-sha",
 	}, "current-sha")
-	if err != nil {
-		t.Fatalf("readReviewTimeoutHandoff() error: %v", err)
-	}
-	if handoff == nil {
-		t.Fatal("readReviewTimeoutHandoff() returned no handoff")
-	}
-	if handoff.ResponseCounts != (reviewResponseCounts{}) {
-		t.Fatalf("empty-evidence response counts = %+v, want zero counters", handoff.ResponseCounts)
+	if err == nil {
+		t.Fatal("readReviewTimeoutHandoff() accepted missing response counters")
 	}
 }
 

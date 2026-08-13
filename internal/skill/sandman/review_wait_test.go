@@ -936,6 +936,13 @@ func TestReviewWaitV1RetainsTimedOutRequestOnReentry(t *testing.T) {
 	if first.State != "timed_out" || second.State != "timed_out" {
 		t.Fatalf("states = %q then %q, want timed_out for both observations", first.State, second.State)
 	}
+	state, err := os.ReadFile(requestFile + ".state")
+	if err != nil {
+		t.Fatalf("read timed-out state: %v", err)
+	}
+	if !strings.Contains(string(state), `"response_counts":{"top_level":0,"formal_reviews":0,"inline_comments":0}`) {
+		t.Fatalf("timed-out state missing explicit zero response counters: %s", state)
+	}
 	if second.Lifecycle != "resumed" || second.ObservedHead != "abc123" {
 		t.Fatalf("timed-out reentry = lifecycle %q/head %q, want resumed/abc123", second.Lifecycle, second.ObservedHead)
 	}

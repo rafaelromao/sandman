@@ -103,6 +103,8 @@ func TestLayout_AgentControlledPaths(t *testing.T) {
 		{"PromptVersionPath", l.PromptVersionPath(), filepath.Join(l.StateDir, ".prompt-version")},
 		{"BadgeControlFilePath", l.BadgeControlFilePath(), filepath.Join(l.StateDir, ".built_with_sandman")},
 		{"PRHeadShaPath", l.PRHeadShaPath(42), filepath.Join(l.StateDir, "42.head_sha")},
+		{"PRReviewRequestPath", l.PRReviewRequestPath(42), filepath.Join(l.StateDir, "42.review_request.json")},
+		{"PRReviewRequestStatePath", l.PRReviewRequestStatePath(42), filepath.Join(l.StateDir, "42.review_request.json.state")},
 		{"PRAddressedCommentsPath", l.PRAddressedCommentsPath(42), filepath.Join(l.StateDir, "42.addressed_comments")},
 	}
 	for _, tc := range cases {

@@ -463,6 +463,18 @@ while :; do
 			exit 0
 		;;
 	esac
+	if [ "$observer_state" = "timed_out" ]; then
+		observer_evidence=$(printf '%s' "$observer_evidence" | jq -c '
+			if type != "object" then
+				{response_counts:{top_level:0,formal_reviews:0,inline_comments:0}}
+			elif (.response_counts? | type) != "object" then
+				. + {response_counts:{top_level:0,formal_reviews:0,inline_comments:0}}
+			else . end
+		') || {
+			persist_unavailable timeout-evidence-invalid
+			exit 0
+		}
+	fi
 	if [ "$observer_state" = "responded" ] && ! printf '%s' "$observer_json" | jq -e --argjson request "$request_json" '
 		def valid_count:
 			type == "number" and floor == . and . >= 0;
