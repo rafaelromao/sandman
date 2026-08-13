@@ -467,9 +467,13 @@ while :; do
 		observer_evidence=$(printf '%s' "$observer_evidence" | jq -c '
 			if type != "object" then
 				{response_counts:{top_level:0,formal_reviews:0,inline_comments:0}}
-			elif (.response_counts? | type) != "object" then
-				. + {response_counts:{top_level:0,formal_reviews:0,inline_comments:0}}
-			else . end
+			else
+				. + {response_counts: ((.response_counts // {}) + {
+					top_level: (.response_counts.top_level // 0),
+					formal_reviews: (.response_counts.formal_reviews // 0),
+					inline_comments: (.response_counts.inline_comments // 0)
+				})}
+			end
 		') || {
 			persist_unavailable timeout-evidence-invalid
 			exit 0
@@ -644,6 +648,22 @@ while :; do
 	if [ "$observer_state" = "pending" ] && [ "$decision_now" -ge "$request_deadline" ]; then
 		observer_state=timed_out
 		observer_reason=request-deadline-exhausted
+	fi
+	if [ "$observer_state" = "timed_out" ]; then
+		observer_evidence=$(printf '%s' "$observer_evidence" | jq -c '
+			if type != "object" then
+				{response_counts:{top_level:0,formal_reviews:0,inline_comments:0}}
+			else
+				. + {response_counts: ((.response_counts // {}) + {
+					top_level: (.response_counts.top_level // 0),
+					formal_reviews: (.response_counts.formal_reviews // 0),
+					inline_comments: (.response_counts.inline_comments // 0)
+				})}
+			end
+		') || {
+			persist_unavailable timeout-evidence-invalid
+			exit 0
+		}
 	fi
 	elapsed_seconds=$((decision_now - request_started_unix))
 	[ "$elapsed_seconds" -ge 0 ] || elapsed_seconds=0

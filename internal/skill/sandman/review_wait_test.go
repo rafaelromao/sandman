@@ -294,6 +294,9 @@ printf '%s\n' $((calls + 1)) > "$SANDMAN_REVIEW_WAIT_CLOCK_STATE"
 	if result.Elapsed != 20 {
 		t.Fatalf("elapsed_seconds = %d, want 20", result.Elapsed)
 	}
+	if !strings.Contains(string(result.Evidence), `"response_counts":{"top_level":0,"formal_reviews":0,"inline_comments":0}`) {
+		t.Fatalf("timeout evidence missing response counters: %s", result.Evidence)
+	}
 	if replayed.State != "timed_out" || replayed.Elapsed != result.Elapsed {
 		t.Fatalf("terminal replay = %q/%d, want timed_out/%d", replayed.State, replayed.Elapsed, result.Elapsed)
 	}
@@ -1060,6 +1063,9 @@ printf '%s\n' $((calls + 1)) > "$SANDMAN_REVIEW_WAIT_CLOCK_STATE"
 
 	if result.State != "timed_out" {
 		t.Fatalf("late observer state = %q, want timed_out", result.State)
+	}
+	if !strings.Contains(string(result.Evidence), `"response_counts"`) {
+		t.Fatalf("late observer evidence = %s, want response counters", result.Evidence)
 	}
 	if _, err := os.Stat(observerStarted); err != nil {
 		t.Fatalf("late observer did not start before completion crossed deadline: %v", err)
