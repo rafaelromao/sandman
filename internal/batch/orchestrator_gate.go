@@ -220,7 +220,8 @@ func (s *runSession) handleExternalGateWithHostPaths(ctx context.Context, workDi
 	}
 	if pr != nil && strings.EqualFold(strings.TrimSpace(pr.State), "open") {
 		registrationErr := s.ensureReviewRegistrationForPR(ctx, workDir, pr, headSHA)
-		refreshLivePR := errors.Is(registrationErr, errReviewRegistrationHeadChanged) ||
+		headChanged := errors.Is(registrationErr, errReviewRegistrationHeadChanged)
+		refreshLivePR := headChanged ||
 			(registrationErr == nil && s.reviewRegistrationObserved)
 		if refreshLivePR {
 			// Registration may observe comments and persist while the live PR
@@ -231,9 +232,16 @@ func (s *runSession) handleExternalGateWithHostPaths(ctx context.Context, workDi
 				if s.deps.errorLog != nil {
 					fmt.Fprintf(s.deps.errorLog, "warning: external gate refresh for branch %q: %v\n", branch, refreshErr)
 				}
-				// A registration observation failure must not replace the
-				// already observed live gate with a synthetic pending state.
-				pr = initialPR
+				if headChanged {
+					// A known head change must not fall back to a snapshot that
+					// may authorize approval for the wrong generation.
+					pr = nil
+					gate = "pending"
+				} else {
+					// A registration observation failure must not replace the
+					// already observed live gate with a synthetic pending state.
+					pr = initialPR
+				}
 				err = nil
 			} else {
 				pr = refreshedPR

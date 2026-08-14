@@ -278,7 +278,12 @@ func (s *runSession) registerReviewRequest(ctx context.Context, workDir string, 
 			// not deduplicate against it or repair it from a comment.
 			return nil
 		}
+		currentGeneration := strings.EqualFold(strings.TrimSpace(existing.Request.HeadSHA), strings.TrimSpace(currentHead)) &&
+			strings.EqualFold(strings.TrimSpace(existing.Request.HeadSHA), strings.TrimSpace(pr.HeadRefOid))
 		if reviewTriggerMatchesRequest(existing.Request, trigger) {
+			if !currentGeneration {
+				return fmt.Errorf("existing review registration is bound to a different pull-request head")
+			}
 			return nil
 		}
 		existingTriggerAt, parseErr := time.Parse(time.RFC3339Nano, existing.Request.TriggerCreatedAt)
