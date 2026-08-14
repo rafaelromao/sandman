@@ -154,6 +154,10 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.IssueRenderer, comma
 		if err := r.writeTaskPrompt(renderedPromptFile, taskPrompt); err != nil {
 			// A clean recovery session must not start without its checkpoint-first
 			// Task, even though atomic replacement preserved the prior Task.
+			// Retain the rollover cause so the ordinary retry boundary retries
+			// against that unchanged Task rather than treating this as a generic
+			// failure and replacing it with a continuation prompt.
+			r.contextExhausted = renderCfg.ContextRecovery
 			r.status = "failure"
 			return r.Result()
 		}
@@ -208,7 +212,7 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.IssueRenderer, comma
 	if detector != nil {
 		detector.Flush()
 	}
-	if detector != nil && detector.Triggered() && ctx.Err() == nil {
+	if detector != nil && detector.Triggered() {
 		r.contextExhausted = true
 		r.status = "failure"
 		return r.Result()

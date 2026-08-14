@@ -2612,6 +2612,25 @@ func (s *runSession) runOnce(
 	var terminalExtras map[string]any
 loop:
 	for attempt := 0; attempt < attempts; attempt++ {
+		if attempt > 0 {
+			// An operator cancellation must win before recovery can replace the
+			// Task or start a fresh session.
+			if result.ContextExhausted && ctx.Err() != nil {
+				result.ContextExhausted = false
+				break loop
+			}
+			if result.ContextExhausted {
+				// Container sandboxes leave worktree metadata addressed inside the
+				// container after Exec. Restore it before the recovery Task is
+				// written; ContainerSandbox.Exec reapplies container paths for the
+				// next command.
+				if err := wt.RestoreHostPaths(); err != nil {
+					fmt.Fprintf(s.deps.errorLog, "error: restore host paths before context recovery: %v\n", err)
+					result.Status = "failure"
+					break loop
+				}
+			}
+		}
 		attemptRenderCfg, errResult := prepareAttempt(attempt, result)
 		if errResult != nil {
 			return *errResult, nil, events.RunStatusFromPayload(errResult.Status).IsSuccess()
