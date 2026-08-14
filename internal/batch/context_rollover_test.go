@@ -18,7 +18,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/sandbox"
 )
 
-func TestContextRollover(t *testing.T) {
+func TestContextRolloverRecovery(t *testing.T) {
 	workDir := t.TempDir()
 	t.Chdir(workDir)
 
@@ -76,8 +76,8 @@ func TestContextRollover(t *testing.T) {
 	if factory.created != 2 {
 		t.Fatalf("runnable launches = %d, want 2", factory.created)
 	}
-	if !sb.secondAttemptStartedAfterFirstExit() {
-		t.Fatal("clean retry started before the context-exhausted attempt exited")
+	if !sb.secondAttemptStartedAfterRecovery() {
+		t.Fatal("clean retry started before the context-exhausted attempt exited and host paths were restored")
 	}
 	if !strings.Contains(sb.secondTask, "Context Recovery Guard") {
 		t.Fatalf("clean retry task lacks recovery guard:\n%s", sb.secondTask)
@@ -379,7 +379,7 @@ func TestContextRolloverDetector(t *testing.T) {
 	})
 }
 
-func TestContextRolloverStopsAttemptBeforeRetry(t *testing.T) {
+func TestContextRolloverWorktreeSandbox(t *testing.T) {
 	workDir := t.TempDir()
 	t.Chdir(workDir)
 
@@ -429,7 +429,7 @@ func TestContextRolloverStopsAttemptBeforeRetry(t *testing.T) {
 	if factory.created != 2 {
 		t.Fatalf("runnable launches = %d, want 2", factory.created)
 	}
-	if !sb.secondAttemptStartedAfterFirstExit() {
+	if !sb.secondAttemptStartedAfterRecovery() {
 		t.Fatal("retry launched before the stopped attempt returned")
 	}
 }
@@ -494,7 +494,7 @@ func TestContextRecoveryTaskWriteFailurePreservesExistingTask(t *testing.T) {
 	}
 }
 
-func TestContextRolloverRetry(t *testing.T) {
+func TestContextRolloverFinalFailure(t *testing.T) {
 	workDir := t.TempDir()
 	t.Chdir(workDir)
 
@@ -581,6 +581,177 @@ func TestContextRolloverRetry(t *testing.T) {
 	if finishedEvent.Payload["branch"] != branch {
 		t.Fatalf("finished branch = %v, want %q", finishedEvent.Payload["branch"], branch)
 	}
+	if strings.Contains(strings.Join(types, ","), "run.aborted") {
+		t.Fatalf("event order = %s, final context exhaustion must not abort", strings.Join(types, ","))
+	}
+}
+
+func TestContextRolloverCancellation(t *testing.T) {
+	workDir := t.TempDir()
+	t.Chdir(workDir)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	branch := "42-context-cancel"
+	sb := &contextRolloverSandbox{
+		workDir:        filepath.Join(workDir, "worktree"),
+		onFirstContext: cancel,
+	}
+	factory := &contextRolloverRunnableFactory{sandbox: sb}
+	eventLog := &events.JSONLLogger{Path: filepath.Join(workDir, "events.jsonl")}
+	o := NewOrchestrator(
+		&fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, Title: "Cancel context", State: "closed"}}},
+		&retryRenderer{result: "# Task\n\nInitial task."},
+		nil,
+		eventLog,
+		WithErrorLog(io.Discard),
+		WithSandboxFactory(&contextRolloverSandboxFactory{sandbox: sb}),
+		WithRunnableFactory(factory),
+	)
+	bc := BatchConfig{
+		Cfg:              &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}},
+		AgentName:        "opencode",
+		AgentCfg:         config.BuiltInAgentPresets["opencode"].Agent("opencode"),
+		IdentityResolver: noopIdentityResolver(),
+		Retries:          1,
+	}
+	row := RowSpec{IssueNumber: 42, Branches: map[int]string{42: branch}, BaseBranch: "main", RunTS: "260814071754", RunShortID: "cancel"}
+
+	result, started := o.newRunExecutor(ctx, bc, &contextRolloverSandboxFactory{sandbox: sb}, nil).Execute(ctx, row)
+	if !started || result.Status != "aborted" {
+		t.Fatalf("result = %+v, want aborted", result)
+	}
+	if factory.created != 1 {
+		t.Fatalf("runnable launches = %d, want no recovery retry", factory.created)
+	}
+	task, err := os.ReadFile(filepath.Join(sb.workDir, ".sandman", "task.md"))
+	if err != nil {
+		t.Fatalf("read preserved Task: %v", err)
+	}
+	if strings.Contains(string(task), "Context Recovery Guard") {
+		t.Fatalf("cancellation replaced Task with recovery content:\n%s", task)
+	}
+	logs, err := eventLog.Read()
+	if err != nil {
+		t.Fatalf("read events: %v", err)
+	}
+	if len(logs) != 2 || logs[0].Type != "run.started" || logs[1].Type != "run.aborted" {
+		t.Fatalf("events = %+v, want run.started then run.aborted", logs)
+	}
+}
+
+func TestContextRolloverCancellationDuringRecoveryPreparation(t *testing.T) {
+	workDir := t.TempDir()
+	t.Chdir(workDir)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	previousLogRetryMarker := logRetryMarkerFn
+	logRetryMarkerFn = func(string, int, int) error {
+		// This runs after prepareAttempt builds the recovery Task but before it
+		// returns, exercising the cancellation-to-Task-write boundary.
+		cancel()
+		return nil
+	}
+	t.Cleanup(func() { logRetryMarkerFn = previousLogRetryMarker })
+	branch := "42-context-cancel-during-preparation"
+	sb := &contextRolloverSandbox{workDir: filepath.Join(workDir, "worktree")}
+	factory := &contextRolloverRunnableFactory{sandbox: sb}
+	eventLog := &events.JSONLLogger{Path: filepath.Join(workDir, "events.jsonl")}
+	o := NewOrchestrator(
+		&fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, Title: "Cancel recovery preparation", State: "closed"}}},
+		&retryRenderer{result: "# Task\n\nInitial task."},
+		nil,
+		eventLog,
+		WithErrorLog(io.Discard),
+		WithSandboxFactory(&contextRolloverSandboxFactory{sandbox: sb}),
+		WithRunnableFactory(factory),
+	)
+	bc := BatchConfig{
+		Cfg:              &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}},
+		AgentName:        "opencode",
+		AgentCfg:         config.BuiltInAgentPresets["opencode"].Agent("opencode"),
+		IdentityResolver: noopIdentityResolver(),
+		Retries:          1,
+	}
+	row := RowSpec{IssueNumber: 42, Branches: map[int]string{42: branch}, BaseBranch: "main", RunTS: "260814071754", RunShortID: "cancel-preparation"}
+
+	result, started := o.newRunExecutor(ctx, bc, &contextRolloverSandboxFactory{sandbox: sb}, nil).Execute(ctx, row)
+	if !started || result.Status != "aborted" {
+		t.Fatalf("result = %+v, want aborted", result)
+	}
+	if factory.created != 1 {
+		t.Fatalf("runnable launches = %d, want no recovery retry", factory.created)
+	}
+	task, err := os.ReadFile(filepath.Join(sb.workDir, ".sandman", "task.md"))
+	if err != nil {
+		t.Fatalf("read preserved Task: %v", err)
+	}
+	if strings.Contains(string(task), "Context Recovery Guard") {
+		t.Fatalf("cancellation replaced Task with recovery content:\n%s", task)
+	}
+	logs, err := eventLog.Read()
+	if err != nil {
+		t.Fatalf("read events: %v", err)
+	}
+	if len(logs) != 2 || logs[0].Type != "run.started" || logs[1].Type != "run.aborted" {
+		t.Fatalf("events = %+v, want run.started then run.aborted", logs)
+	}
+}
+
+func TestContextRecoveryTaskWriteFailure(t *testing.T) {
+	workDir := t.TempDir()
+	t.Chdir(workDir)
+
+	branch := "42-context-write-failure"
+	sb := &contextRolloverSandbox{workDir: filepath.Join(workDir, "worktree")}
+	factory := &contextRolloverRunnableFactory{sandbox: sb}
+	eventLog := &events.JSONLLogger{Path: filepath.Join(workDir, "events.jsonl")}
+	writeCalls := 0
+	o := NewOrchestrator(
+		&fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, Title: "Recover task", State: "closed"}}},
+		&retryRenderer{result: "# Task\n\nInitial task."},
+		nil,
+		eventLog,
+		WithErrorLog(io.Discard),
+		WithSandboxFactory(&contextRolloverSandboxFactory{sandbox: sb}),
+		WithRunnableFactory(factory),
+		WithRunSessionOpts(runSessionOptions{taskWriter: func(path string, content []byte, mode os.FileMode) error {
+			writeCalls++
+			if writeCalls == 1 {
+				return errors.New("disk full")
+			}
+			return os.WriteFile(path, content, mode)
+		}}),
+	)
+	bc := BatchConfig{
+		Cfg:              &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}},
+		AgentName:        "opencode",
+		AgentCfg:         config.BuiltInAgentPresets["opencode"].Agent("opencode"),
+		IdentityResolver: noopIdentityResolver(),
+		Retries:          2,
+	}
+	row := RowSpec{IssueNumber: 42, Branches: map[int]string{42: branch}, BaseBranch: "main", RunTS: "260814071754", RunShortID: "write"}
+
+	result, started := o.newRunExecutor(context.Background(), bc, &contextRolloverSandboxFactory{sandbox: sb}, nil).Execute(context.Background(), row)
+	if !started || result.Status != "success" {
+		t.Fatalf("result = %+v, want success after recovery write retry", result)
+	}
+	if factory.created != 3 {
+		t.Fatalf("runnable creations = %d, want 3 attempts", factory.created)
+	}
+	sb.mu.Lock()
+	tasks := append([]string(nil), sb.tasks...)
+	sb.mu.Unlock()
+	if len(tasks) != 2 {
+		t.Fatalf("agent launches = %d, want 2 (the failed Task write must not launch an agent)", len(tasks))
+	}
+	if !strings.Contains(tasks[1], "Context Recovery Guard") {
+		t.Fatalf("retry after failed Task write lost recovery mode:\n%s", tasks[1])
+	}
+	if !strings.Contains(tasks[1], "Initial task.") {
+		t.Fatalf("retry after failed Task write lost the unchanged Task:\n%s", tasks[1])
+	}
 }
 
 type contextRolloverSandbox struct {
@@ -593,6 +764,10 @@ type contextRolloverSandbox struct {
 	secondTask             string
 	secondCommand          string
 	secondAttemptStarted   bool
+	hostPathsRestored      bool
+	tasks                  []string
+	onFirstContext         func()
+	onRestoreHostPaths     func()
 	errorPhrase            string
 }
 
@@ -604,10 +779,14 @@ func (s *contextRolloverSandbox) Exec(ctx context.Context, command string, stdou
 	s.mu.Lock()
 	s.started++
 	attempt := s.started
+	data, _ := os.ReadFile(filepath.Join(s.workDir, ".sandman", "task.md"))
+	s.tasks = append(s.tasks, string(data))
 	if attempt == 2 {
 		s.secondAttemptStarted = true
 		s.secondCommand = command
-		data, _ := os.ReadFile(filepath.Join(s.workDir, ".sandman", "task.md"))
+		if !s.hostPathsRestored {
+			s.secondAttemptStarted = false
+		}
 		s.secondTask = string(data)
 	}
 	s.mu.Unlock()
@@ -618,6 +797,9 @@ func (s *contextRolloverSandbox) Exec(ctx context.Context, command string, stdou
 			phrase = "prompt is too long"
 		}
 		_, _ = io.WriteString(stderr, "Error: "+phrase+"\nError: "+phrase+"\n")
+		if attempt == 1 && s.onFirstContext != nil {
+			s.onFirstContext()
+		}
 		if s.waitForCancellation {
 			<-ctx.Done()
 		}
@@ -635,16 +817,25 @@ func (s *contextRolloverSandbox) Stop() error                                   
 func (s *contextRolloverSandbox) WorkDir() string                               { return s.workDir }
 func (s *contextRolloverSandbox) RepoPath() string                              { return filepath.Dir(s.workDir) }
 func (s *contextRolloverSandbox) Process() sandbox.Process                      { return nil }
-func (s *contextRolloverSandbox) RestoreHostPaths() error                       { return nil }
+func (s *contextRolloverSandbox) RestoreHostPaths() error {
+	s.mu.Lock()
+	s.hostPathsRestored = true
+	onRestoreHostPaths := s.onRestoreHostPaths
+	s.mu.Unlock()
+	if onRestoreHostPaths != nil {
+		onRestoreHostPaths()
+	}
+	return nil
+}
 
 func (s *contextRolloverSandbox) WritePrompt(content string) error {
 	return os.WriteFile(filepath.Join(s.workDir, ".sandman", "task.md"), []byte(content), 0o644)
 }
 
-func (s *contextRolloverSandbox) secondAttemptStartedAfterFirstExit() bool {
+func (s *contextRolloverSandbox) secondAttemptStartedAfterRecovery() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.firstAttemptExited && s.secondAttemptStarted
+	return s.firstAttemptExited && s.hostPathsRestored && s.secondAttemptStarted
 }
 
 type contextRolloverSandboxFactory struct {
