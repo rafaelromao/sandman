@@ -2577,7 +2577,7 @@ func (s *runSession) runOnce(
 	logPath string,
 	runID string,
 	mergeRequired bool,
-	prepareAttempt func(attempt int) (prompt.RenderConfig, *AgentRunResult),
+	prepareAttempt func(attempt int, previous AgentRunResult) (prompt.RenderConfig, *AgentRunResult),
 ) (AgentRunResult, map[string]any, bool) {
 	if s.renderCfg.PromptFile == "" {
 		s.renderCfg.PromptFile = filepath.Join(".", ".sandman", "prompt.md")
@@ -2598,13 +2598,16 @@ func (s *runSession) runOnce(
 	var terminalExtras map[string]any
 loop:
 	for attempt := 0; attempt < attempts; attempt++ {
-		attemptRenderCfg, errResult := prepareAttempt(attempt)
+		attemptRenderCfg, errResult := prepareAttempt(attempt, result)
 		if errResult != nil {
 			return *errResult, nil, events.RunStatusFromPayload(errResult.Status).IsSuccess()
 		}
 
 		if attempt > 0 {
 			reason := mapRetryReason(result.Status, abortedByHeartbeat, s.parentCtx)
+			if result.ContextExhausted {
+				reason = "context-exhausted"
+			}
 			logRetry(s.deps.eventLog, runID, branch, attempt+1, attempts, result.Status, reason, logPath, s.issueNumber)
 		}
 
@@ -2787,6 +2790,12 @@ loop:
 		}
 	}
 
+	if result.ContextExhausted {
+		if terminalExtras == nil {
+			terminalExtras = make(map[string]any)
+		}
+		terminalExtras["context_exhausted"] = true
+	}
 	return result, terminalExtras, true
 }
 
@@ -3005,7 +3014,7 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 	}
 
 	logPath := s.runLogPathFor(runID)
-	result, terminalExtras, started := s.runOnce(ctx, issue, branch, wt, logPath, runID, s.mode != ModeContinue, func(attempt int) (prompt.RenderConfig, *AgentRunResult) {
+	result, terminalExtras, started := s.runOnce(ctx, issue, branch, wt, logPath, runID, s.mode != ModeContinue, func(attempt int, previous AgentRunResult) (prompt.RenderConfig, *AgentRunResult) {
 		attemptRenderCfg := s.renderCfg
 		if attempt > 0 {
 			// Pre-retry guard: if the PR was merged between attempts (e.g. the
@@ -3031,9 +3040,13 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 				fmt.Fprintf(s.deps.errorLog, "error: read task for issue %d: %v\n", s.issueNumber, err)
 				return attemptRenderCfg, &AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "failure", Branch: branch, RetriesTotal: attempt}
 			}
-			attemptRenderCfg.TaskPrompt = prompt.ContinuationTaskPromptWithReviewTimeout(taskContent, s.renderCfg.ReviewTimeout)
+			if previous.ContextExhausted {
+				attemptRenderCfg.TaskPrompt = prompt.ContextRecoveryTaskPrompt(taskContent, s.renderCfg.ReviewTimeout)
+			} else {
+				attemptRenderCfg.TaskPrompt = prompt.ContinuationTaskPromptWithReviewTimeout(taskContent, s.renderCfg.ReviewTimeout)
+			}
 			attemptRenderCfg.RenderedPromptFile = filepath.Join(".", ".sandman", "task.md")
-			if !taskExists && openPR == nil {
+			if !taskExists && openPR == nil && !previous.ContextExhausted {
 				if prLookupErr != nil {
 					fmt.Fprintf(s.deps.errorLog, "error: lookup PR for issue %d: %v\n", s.issueNumber, prLookupErr)
 					return attemptRenderCfg, &AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "failure", Branch: branch, RetriesTotal: attempt}
@@ -3411,11 +3424,13 @@ func (s *runSession) executePromptOnly(ctx context.Context) (AgentRunResult, boo
 	}
 
 	logPath := s.runLogPathFor(runID)
-	result, terminalExtras, started := s.runOnce(ctx, nil, branch, wt, logPath, runID, false, func(attempt int) (prompt.RenderConfig, *AgentRunResult) {
+	result, terminalExtras, started := s.runOnce(ctx, nil, branch, wt, logPath, runID, false, func(attempt int, previous AgentRunResult) (prompt.RenderConfig, *AgentRunResult) {
 		if attempt > 0 {
-			if err := resetRetryBranch(s.deps.runSessionOpts, ctx, wt, branch, s.baseBranch); err != nil {
-				fmt.Fprintf(s.deps.errorLog, "error: reset retry branch for prompt-only run: %v\n", err)
-				return prompt.RenderConfig{}, &AgentRunResult{Status: "failure", Branch: branch, RetriesTotal: attempt, Review: s.review, RunID: s.runID}
+			if !previous.ContextExhausted {
+				if err := resetRetryBranch(s.deps.runSessionOpts, ctx, wt, branch, s.baseBranch); err != nil {
+					fmt.Fprintf(s.deps.errorLog, "error: reset retry branch for prompt-only run: %v\n", err)
+					return prompt.RenderConfig{}, &AgentRunResult{Status: "failure", Branch: branch, RetriesTotal: attempt, Review: s.review, RunID: s.runID}
+				}
 			}
 			if err := logRetryMarkerFn(logPath, attempt, s.retries); err != nil {
 				if s.deps.errorLog != nil {
@@ -3433,7 +3448,11 @@ func (s *runSession) executePromptOnly(ctx context.Context) (AgentRunResult, boo
 				if taskContent == "" {
 					taskContent = EmptyTaskTemplate
 				}
-				attemptCfg.TaskPrompt = prompt.ContinuationTaskPromptWithReviewTimeout(taskContent, s.renderCfg.ReviewTimeout)
+				if previous.ContextExhausted {
+					attemptCfg.TaskPrompt = prompt.ContextRecoveryTaskPrompt(taskContent, s.renderCfg.ReviewTimeout)
+				} else {
+					attemptCfg.TaskPrompt = prompt.ContinuationTaskPromptWithReviewTimeout(taskContent, s.renderCfg.ReviewTimeout)
+				}
 				attemptCfg.RenderedPromptFile = filepath.Join(".", ".sandman", "task.md")
 			}
 		}

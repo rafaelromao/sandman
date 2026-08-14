@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/rafaelromao/sandman/internal/atomicfs"
 	"github.com/rafaelromao/sandman/internal/config"
@@ -35,6 +36,7 @@ type AgentRun struct {
 	sessionName                string
 	sandbox                    sandbox.Sandbox
 	status                     string
+	contextExhausted           bool
 	env                        map[string]string
 	outputWriter               io.Writer
 	layout                     paths.Layout
@@ -180,7 +182,32 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.IssueRenderer, comma
 		return r.Result()
 	}
 
-	if err := r.Execute(ctx, renderedCmd, os.Stdout, os.Stderr); err != nil {
+	attemptCtx, cancelAttempt := context.WithCancel(ctx)
+	defer cancelAttempt()
+	var detector *contextRolloverDetector
+	if r.preset == "opencode" {
+		detector = newContextRolloverDetector(time.Now, ContextRolloverLiteralAdditions, func() {
+			if ctx.Err() == nil {
+				cancelAttempt()
+			}
+		})
+	}
+	stdout := io.Writer(os.Stdout)
+	stderr := io.Writer(os.Stderr)
+	if detector != nil {
+		stdout = io.MultiWriter(stdout, detector)
+		stderr = io.MultiWriter(stderr, detector)
+	}
+	execErr := r.Execute(attemptCtx, renderedCmd, stdout, stderr)
+	if detector != nil {
+		detector.Flush()
+	}
+	if detector != nil && detector.Triggered() && ctx.Err() == nil {
+		r.contextExhausted = true
+		r.status = "failure"
+		return r.Result()
+	}
+	if execErr != nil {
 		r.status = "failure"
 		return r.Result()
 	}
@@ -255,11 +282,12 @@ func (r *AgentRun) Result() AgentRunResult {
 		issueRefPtr = issueRef(issue.Number)
 	}
 	return AgentRunResult{
-		IssueNumber:  issue.Number,
-		Issue:        issueRefPtr,
-		Status:       r.status,
-		Branch:       r.branch,
-		WorktreePath: r.sandbox.WorkDir(),
+		IssueNumber:      issue.Number,
+		Issue:            issueRefPtr,
+		Status:           r.status,
+		Branch:           r.branch,
+		WorktreePath:     r.sandbox.WorkDir(),
+		ContextExhausted: r.contextExhausted,
 	}
 }
 
