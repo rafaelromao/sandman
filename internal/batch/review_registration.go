@@ -276,10 +276,12 @@ func (s *runSession) registerReviewRequest(ctx context.Context, workDir string, 
 			return nil
 		}
 		if reviewTriggerMatchesRequest(existing.Request, trigger) {
+			s.reviewRegistrationConfirmed = true
 			return nil
 		}
 		existingTriggerAt, parseErr := time.Parse(time.RFC3339Nano, existing.Request.TriggerCreatedAt)
 		if parseErr != nil || !trigger.CreatedAt.After(existingTriggerAt) {
+			s.reviewRegistrationConfirmed = true
 			return nil
 		}
 		// A stale generation may be replaced only by a newer confirmed
@@ -306,6 +308,7 @@ func (s *runSession) registerReviewRequest(ctx context.Context, workDir string, 
 			}); err != nil {
 				return fmt.Errorf("migrate legacy review registration: %w", err)
 			}
+			s.reviewRegistrationConfirmed = true
 			return nil
 		}
 	} else {
@@ -371,6 +374,7 @@ func (s *runSession) registerReviewRequest(ctx context.Context, workDir string, 
 	}); err != nil {
 		return fmt.Errorf("write review registration: %w", err)
 	}
+	s.reviewRegistrationConfirmed = true
 	return nil
 }
 
@@ -454,6 +458,10 @@ func inspectLegacyReviewRegistration(workDir, repository string, pr *github.PR, 
 	if !present {
 		return nil, false, false, nil
 	}
+	headData, err := os.ReadFile(layout.PRHeadShaPath(pr.Number))
+	if err != nil || !strings.EqualFold(strings.TrimSpace(string(headData)), strings.TrimSpace(currentHead)) {
+		return nil, true, false, nil
+	}
 	artifacts, err := readReviewTimeoutArtifacts(workDir, repository, pr, currentHead)
 	if err != nil || artifacts == nil {
 		return nil, true, false, nil
@@ -474,19 +482,19 @@ func reviewTriggerMatchesRequest(request reviewRequestEnvelope, trigger reviewTr
 }
 
 func (s *runSession) ensureReviewRegistrationForPR(ctx context.Context, workDir string, pr *github.PR, currentHead string) {
-	if s.reviewRegistrationAttempted || s.deps.githubClient == nil {
+	if s.reviewRegistrationConfirmed || s.deps.githubClient == nil {
 		return
 	}
 	if pr == nil || strings.TrimSpace(currentHead) == "" {
 		return
 	}
+	s.reviewRegistrationAttempted = true
 	if err := s.registerReviewRequest(ctx, workDir, pr, currentHead); err != nil {
 		if s.deps.errorLog != nil {
 			fmt.Fprintf(s.deps.errorLog, "warning: implementation review registration for PR #%d: %v\n", pr.Number, err)
 		}
 		return
 	}
-	s.reviewRegistrationAttempted = true
 }
 
 type reviewTrigger struct {

@@ -1950,6 +1950,7 @@ type runSession struct {
 	reviewRegistrationNow       func() time.Time
 	reviewAttemptStartedAt      time.Time
 	reviewRegistrationAttempted bool
+	reviewRegistrationConfirmed bool
 }
 
 func (s *runSession) worktreeDir() string {
@@ -2705,6 +2706,7 @@ loop:
 		}
 
 		s.reviewRegistrationAttempted = false
+		s.reviewRegistrationConfirmed = false
 		s.reviewAttemptStartedAt = s.reviewNow()
 		result, abortedByHeartbeat = s.withHeartbeat(ctx, runID, attempt, logPath, wt, func() AgentRunResult {
 			return s.withClosingReferenceGuard(ctx, branch, func() AgentRunResult {

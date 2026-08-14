@@ -811,3 +811,80 @@ func TestReviewRegistration_DoesNotWriteAfterLiveHeadChanges(t *testing.T) {
 		t.Fatalf("stale registration path error = %v, want absent canonical record", err)
 	}
 }
+
+func TestReviewRegistration_DoesNotMigrateStaleLegacyHeadSidecar(t *testing.T) {
+	workDir := testenv.MkdirShort(t, "sm-review-registration-")
+	now := time.Date(2026, 8, 14, 20, 0, 0, 0, time.UTC)
+	client := &registrationGitHubClient{
+		fakeGitHubClient: fakeGitHubClient{},
+		comments: []github.PRComment{{
+			ID:        "trigger-stale-sidecar",
+			Body:      "/sandman review",
+			CreatedAt: now.Add(-time.Minute),
+		}},
+	}
+	session := &runSession{
+		deps:                   runDeps{githubClient: client, layout: paths.NewLayout(nil, workDir)},
+		renderCfg:              prompt.RenderConfig{ReviewCommand: "/sandman review", ReviewTimeout: 600},
+		reviewRegistrationNow:  func() time.Time { return now },
+		reviewAttemptStartedAt: now.Add(-2 * time.Minute),
+	}
+	pr := &github.PR{Number: 33, State: "open", HeadRefOid: "current-sha"}
+	path := session.deps.layout.PRReviewRegistrationPath(pr.Number)
+	if err := session.registerReviewRequest(context.Background(), workDir, pr, "current-sha"); err != nil {
+		t.Fatalf("create source registration: %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read source registration: %v", err)
+	}
+	var source reviewRequestRegistration
+	if err := json.Unmarshal(data, &source); err != nil {
+		t.Fatalf("decode source registration: %v", err)
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatalf("remove canonical registration: %v", err)
+	}
+	if err := atomicfs.WriteAtomicJSON(session.deps.layout.PRReviewRequestPath(pr.Number), source.Request, 0o600); err != nil {
+		t.Fatalf("write legacy request: %v", err)
+	}
+	if err := atomicfs.WriteAtomicJSON(session.deps.layout.PRReviewRequestStatePath(pr.Number), source.State, 0o600); err != nil {
+		t.Fatalf("write legacy state: %v", err)
+	}
+	if err := os.WriteFile(session.deps.layout.PRHeadShaPath(pr.Number), []byte("stale-sha"), 0o600); err != nil {
+		t.Fatalf("write stale head sidecar: %v", err)
+	}
+
+	if err := session.registerReviewRequest(context.Background(), workDir, pr, "current-sha"); err != nil {
+		t.Fatalf("observe stale legacy evidence: %v", err)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("stale legacy evidence created canonical record: %v", err)
+	}
+}
+
+func TestReviewRegistration_RetriesWhenTriggerAppearsAfterFirstObservation(t *testing.T) {
+	workDir := testenv.MkdirShort(t, "sm-review-registration-")
+	now := time.Date(2026, 8, 14, 20, 0, 0, 0, time.UTC)
+	client := &registrationGitHubClient{fakeGitHubClient: fakeGitHubClient{}}
+	store := &registrationStoreStub{}
+	session := &runSession{
+		deps:                    runDeps{githubClient: client, errorLog: io.Discard},
+		renderCfg:               prompt.RenderConfig{ReviewCommand: "/sandman review", ReviewTimeout: 600},
+		reviewRegistrationStore: store,
+		reviewRegistrationNow:   func() time.Time { return now.Add(2 * time.Second) },
+		reviewAttemptStartedAt:  now,
+	}
+	pr := &github.PR{Number: 34, State: "open", HeadRefOid: "current-sha"}
+
+	session.ensureReviewRegistrationForPR(context.Background(), workDir, pr, "current-sha")
+	client.comments = []github.PRComment{{
+		ID:        "trigger-late",
+		Body:      "/sandman review",
+		CreatedAt: now.Add(time.Second),
+	}}
+	session.ensureReviewRegistrationForPR(context.Background(), workDir, pr, "current-sha")
+	if store.writes != 1 {
+		t.Fatalf("registration writes = %d, want one late-trigger registration", store.writes)
+	}
+}
