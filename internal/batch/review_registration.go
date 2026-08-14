@@ -424,7 +424,7 @@ func (s *runSession) verifyCurrentReviewHead(ctx context.Context, pr *github.PR,
 	if err != nil {
 		return fmt.Errorf("revalidate pull-request head: %w", err)
 	}
-	if livePR == nil || !strings.EqualFold(strings.TrimSpace(livePR.HeadRefOid), strings.TrimSpace(currentHead)) {
+	if livePR == nil || livePR.Number != pr.Number || !strings.EqualFold(strings.TrimSpace(livePR.HeadRefOid), strings.TrimSpace(currentHead)) {
 		return fmt.Errorf("pull-request head changed during registration")
 	}
 	return nil
@@ -504,20 +504,21 @@ func reviewTriggerMatchesRequest(request reviewRequestEnvelope, trigger reviewTr
 	return request.TriggerID == trigger.ID
 }
 
-func (s *runSession) ensureReviewRegistrationForPR(ctx context.Context, workDir string, pr *github.PR, currentHead string) {
-	if s.reviewRegistrationConfirmed || s.deps.githubClient == nil {
-		return
+func (s *runSession) ensureReviewRegistrationForPR(ctx context.Context, workDir string, pr *github.PR, currentHead string) error {
+	if s.deps.githubClient == nil {
+		return nil
 	}
-	if pr == nil || strings.TrimSpace(pr.HeadRefName) == "" || strings.TrimSpace(currentHead) == "" {
-		return
+	if pr == nil || pr.Number <= 0 || strings.TrimSpace(pr.HeadRefName) == "" || strings.TrimSpace(currentHead) == "" {
+		return nil
 	}
 	s.reviewRegistrationAttempted = true
 	if err := s.registerReviewRequest(ctx, workDir, pr, currentHead); err != nil {
 		if s.deps.errorLog != nil {
 			fmt.Fprintf(s.deps.errorLog, "warning: implementation review registration for PR #%d: %v\n", pr.Number, err)
 		}
-		return
+		return err
 	}
+	return nil
 }
 
 type reviewTrigger struct {

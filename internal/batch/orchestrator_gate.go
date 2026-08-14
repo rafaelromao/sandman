@@ -137,6 +137,11 @@ func lookupPRForExternalGate(ctx context.Context, client github.Client, branch s
 	if err != nil {
 		return nil, err
 	}
+	if pr != nil && strings.TrimSpace(pr.HeadRefName) == "" {
+		copy := *pr
+		copy.HeadRefName = branch
+		return &copy, nil
+	}
 	return pr, nil
 }
 
@@ -211,11 +216,29 @@ func (s *runSession) handleExternalGateWithHostPaths(ctx context.Context, workDi
 		fmt.Fprintf(s.deps.errorLog, "warning: external gate lookup for branch %q: %v\n", branch, err)
 		gate = "pending"
 	}
-	if pr != nil && strings.EqualFold(strings.TrimSpace(pr.State), "open") {
-		s.ensureReviewRegistrationForPR(ctx, workDir, pr, headSHA)
-	}
 	if err == nil && pr != nil {
 		gate = checkPRExternalGateForPR(pr, headSHA, true)
+	}
+	if pr != nil && strings.EqualFold(strings.TrimSpace(pr.State), "open") {
+		if registrationErr := s.ensureReviewRegistrationForPR(ctx, workDir, pr, headSHA); registrationErr != nil {
+			// Registration revalidates the head while holding the writer lock.
+			// Refresh the live PR before allowing the gate to terminalize; the
+			// initial snapshot may have become stale during that write.
+			headSHA = s.currentGateHead(workDir)
+			if !hostPathsReady {
+				headSHA = ""
+			}
+			pr, err = lookupPRForExternalGate(ctx, s.deps.githubClient, branch)
+			if err != nil {
+				initialUnavailable = true
+				gate = "pending"
+				pr = nil
+			} else if pr == nil {
+				gate = "none"
+			} else {
+				gate = checkPRExternalGateForPR(pr, headSHA, true)
+			}
+		}
 	}
 
 	if gate == "none" {

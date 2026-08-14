@@ -862,6 +862,53 @@ func TestReviewRegistration_DoesNotWriteAfterLiveHeadChanges(t *testing.T) {
 	}
 }
 
+func TestReviewRegistration_GateRefreshesAfterHeadRevalidationFailure(t *testing.T) {
+	workDir := testenv.MkdirShort(t, "sm-review-registration-")
+	now := time.Date(2026, 8, 14, 20, 0, 0, 0, time.UTC)
+	livePR := &github.PR{
+		Number:            37,
+		State:             "open",
+		HeadRefName:       gateTestBranch,
+		HeadRefOid:        "old-sha",
+		StatusCheckRollup: "success",
+		ReviewDecision:    "APPROVED",
+		MergeStateStatus:  "CLEAN",
+	}
+	client := &registrationGitHubClient{
+		fakeGitHubClient: fakeGitHubClient{prs: map[string]*github.PR{gateTestBranch: livePR}},
+		comments: []github.PRComment{{
+			ID:        "trigger-refresh-head",
+			Body:      "/sandman review",
+			CreatedAt: now.Add(-time.Minute),
+		}},
+	}
+	findCalls := 0
+	client.findPRHook = func() {
+		findCalls++
+		if findCalls == 2 {
+			livePR.HeadRefOid = "new-sha"
+		}
+	}
+	opts := gateTestRunOptions()
+	opts.currentHead = func(string) (string, error) { return "old-sha", nil }
+	opts.gatePollBudget = 10 * time.Millisecond
+	session := &runSession{
+		deps: runDeps{githubClient: client, errorLog: io.Discard},
+		renderCfg: prompt.RenderConfig{
+			ReviewCommand: "/sandman review",
+			ReviewTimeout: 600,
+		},
+		opts:                   opts,
+		reviewRegistrationNow:  func() time.Time { return now },
+		reviewAttemptStartedAt: now.Add(-2 * time.Minute),
+	}
+
+	status, extras, handled := session.handleExternalGate(context.Background(), workDir, gateTestBranch, "", "run-test")
+	if !handled || status != "blocked" || extras["gate"] != "pending" {
+		t.Fatalf("refreshed live gate = (%q, %#v, %t), want blocked/pending", status, extras, handled)
+	}
+}
+
 func TestReviewRegistration_DoesNotMigrateStaleLegacyHeadSidecar(t *testing.T) {
 	workDir := testenv.MkdirShort(t, "sm-review-registration-")
 	now := time.Date(2026, 8, 14, 20, 0, 0, 0, time.UTC)
@@ -943,5 +990,51 @@ func TestReviewRegistration_RetriesWhenTriggerAppearsAfterFirstObservation(t *te
 	session.ensureReviewRegistrationForPR(context.Background(), workDir, pr, "current-sha")
 	if store.writes != 1 {
 		t.Fatalf("registration writes = %d, want one late-trigger registration", store.writes)
+	}
+}
+
+func TestReviewRegistration_RegistersNewerTriggerAfterConfirmedGeneration(t *testing.T) {
+	workDir := testenv.MkdirShort(t, "sm-review-registration-")
+	now := time.Date(2026, 8, 14, 20, 0, 0, 0, time.UTC)
+	client := &registrationGitHubClient{
+		fakeGitHubClient: fakeGitHubClient{prs: map[string]*github.PR{
+			gateTestBranch: {
+				Number:      36,
+				State:       "open",
+				HeadRefName: gateTestBranch,
+				HeadRefOid:  "current-sha",
+			},
+		}},
+		comments: []github.PRComment{{
+			ID:        "trigger-confirmed-old",
+			Body:      "/sandman review",
+			CreatedAt: now.Add(-2 * time.Minute),
+		}},
+	}
+	session := &runSession{
+		deps:                   runDeps{githubClient: client, errorLog: io.Discard},
+		renderCfg:              prompt.RenderConfig{ReviewCommand: "/sandman review", ReviewTimeout: 600},
+		reviewRegistrationNow:  func() time.Time { return now },
+		reviewAttemptStartedAt: now.Add(-3 * time.Minute),
+	}
+	pr := &github.PR{Number: 36, State: "open", HeadRefName: gateTestBranch, HeadRefOid: "current-sha"}
+
+	if err := session.ensureReviewRegistrationForPR(context.Background(), workDir, pr, "current-sha"); err != nil {
+		t.Fatalf("register confirmed generation: %v", err)
+	}
+	client.comments = append(client.comments, github.PRComment{
+		ID:        "trigger-confirmed-new",
+		Body:      "/sandman review follow-up",
+		CreatedAt: now.Add(-time.Minute),
+	})
+	if err := session.ensureReviewRegistrationForPR(context.Background(), workDir, pr, "current-sha"); err != nil {
+		t.Fatalf("register newer generation: %v", err)
+	}
+	registration, err := readReviewRegistration(paths.NewLayout(nil, workDir).PRReviewRegistrationPath(pr.Number), "owner/repo", pr, "current-sha")
+	if err != nil {
+		t.Fatalf("read newer generation: %v", err)
+	}
+	if registration.Request.TriggerID != "trigger-confirmed-new" {
+		t.Fatalf("registered trigger = %q, want newer trigger", registration.Request.TriggerID)
 	}
 }
