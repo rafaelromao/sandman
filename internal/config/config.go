@@ -46,6 +46,7 @@ type Config struct {
 	StartDelay            int              `yaml:"start_delay"`
 	RunIdleTimeout        int              `yaml:"run_idle_timeout"`
 	ReviewTimeout         int              `yaml:"review_timeout,omitempty"`
+	ContextErrorPhrases   []string         `yaml:"context_error_phrases,omitempty"`
 	Retries               int              `yaml:"retries"`
 	ContainerCapacity     int              `yaml:"container_capacity"`
 	MaxContainers         int              `yaml:"max_containers"`
@@ -192,6 +193,7 @@ func Load(path string) (*Config, error) {
 		StartDelay            int              `yaml:"start_delay"`
 		RunIdleTimeout        *int             `yaml:"run_idle_timeout"`
 		ReviewTimeout         yaml.Node        `yaml:"review_timeout"`
+		ContextErrorPhrases   []string         `yaml:"context_error_phrases"`
 		Retries               *int             `yaml:"retries"`
 		ContainerCapacity     *int             `yaml:"container_capacity"`
 		MaxContainers         *int             `yaml:"max_containers"`
@@ -218,6 +220,7 @@ func Load(path string) (*Config, error) {
 		ReviewVariant:         strings.TrimSpace(raw.ReviewVariant),
 		BuildTools:            raw.BuildTools,
 		ReviewCommand:         raw.ReviewCommand,
+		ContextErrorPhrases:   raw.ContextErrorPhrases,
 		DefaultParallel:       raw.DefaultParallel,
 		DefaultReviewParallel: raw.DefaultReviewParallel,
 		StartDelay:            raw.StartDelay,
@@ -252,6 +255,9 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("validate config: %w", err)
 	}
 	cfg.ReviewTimeout = reviewTimeout
+	if cfg.ContextErrorPhrases, err = normalizeContextErrorPhrases(cfg.ContextErrorPhrases); err != nil {
+		return nil, fmt.Errorf("validate config: %w", err)
+	}
 	if raw.Retries == nil {
 		cfg.Retries = DefaultRetries
 	} else if *raw.Retries < 0 {
@@ -336,6 +342,26 @@ func parseReviewTimeout(node *yaml.Node) (int, error) {
 		return 0, err
 	}
 	return value, nil
+}
+
+func normalizeContextErrorPhrases(phrases []string) ([]string, error) {
+	if len(phrases) == 0 {
+		return nil, nil
+	}
+	normalized := make([]string, 0, len(phrases))
+	seen := make(map[string]struct{}, len(phrases))
+	for _, phrase := range phrases {
+		phrase = strings.ToLower(strings.TrimSpace(phrase))
+		if phrase == "" {
+			return nil, fmt.Errorf("context_error_phrases cannot contain an empty phrase")
+		}
+		if _, ok := seen[phrase]; ok {
+			return nil, fmt.Errorf("context_error_phrases cannot contain duplicate phrase %q", phrase)
+		}
+		seen[phrase] = struct{}{}
+		normalized = append(normalized, phrase)
+	}
+	return normalized, nil
 }
 
 // Save writes the config to the given path as YAML.

@@ -9,12 +9,6 @@ import (
 const contextRolloverWindow = 30 * time.Second
 const contextExhaustedRetryReason = "context-exhausted"
 
-// ContextRolloverLiteralAdditions is the process-wide default for additive,
-// literal-only OpenCode wording that changes between provider or CLI versions.
-// NewOrchestrator snapshots it at construction; use
-// WithContextRolloverLiteralAdditions for per-orchestrator configuration.
-var ContextRolloverLiteralAdditions []string
-
 type contextRolloverLiteralRule []string
 
 // These are the stable literal fragments from OpenCode's provider-neutral

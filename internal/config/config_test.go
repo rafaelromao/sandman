@@ -113,6 +113,38 @@ func TestReviewVariantConfigDefaultsToEmpty(t *testing.T) {
 	}
 }
 
+func TestContextRolloverPhraseConfig(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte("context_error_phrases:\n  - '  Provider Context Exhausted  '\n"), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got, want := cfg.ContextErrorPhrases, []string{"provider context exhausted"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("ContextErrorPhrases = %#v, want %#v", got, want)
+	}
+}
+
+func TestContextRolloverPhraseConfigValidation(t *testing.T) {
+	for _, content := range []string{
+		"context_error_phrases:\n  - '   '\n",
+		"context_error_phrases:\n  - ' Provider exhausted '\n  - 'provider EXHAUSTED'\n",
+	} {
+		t.Run(strings.ReplaceAll(content, "\n", " "), func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config.yaml")
+			if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+				t.Fatalf("write config: %v", err)
+			}
+			if _, err := Load(path); err == nil {
+				t.Fatal("Load succeeded, want validation error")
+			}
+		})
+	}
+}
+
 func TestLoad_IgnoresLegacyGitAuthorFields(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")

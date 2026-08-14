@@ -68,6 +68,7 @@ type BatchConfig struct {
 	StartDelay                 time.Duration
 	Retries                    int
 	RunIdleTimeout             int
+	ContextRolloverLiterals    []string
 	SandboxMode                string
 	ContainerCapacity          int
 	ContainerCapacitySet       bool
@@ -185,6 +186,10 @@ func (e *runExecutor) Execute(ctx context.Context, row RowSpec) (AgentRunResult,
 // every field maps 1:1 to the prior literal assignments.
 func newRunSession(e *runExecutor, row RowSpec) *runSession {
 	bc := e.bc
+	opts := e.deps.runSessionOpts
+	if !opts.contextRolloverLiteralsSet {
+		opts.contextRolloverLiterals = append([]string(nil), bc.ContextRolloverLiterals...)
+	}
 	renderCfg := row.RenderCfg
 	if renderCfg.ReviewTimeout < config.MinReviewTimeout {
 		if bc.Cfg != nil {
@@ -235,6 +240,6 @@ func newRunSession(e *runExecutor, row RowSpec) *runSession {
 		reviewFocus:                row.ReviewFocus,
 		qualityRulesFile:           row.QualityRulesFile,
 		parentCtx:                  e.parentCtx,
-		opts:                       e.deps.runSessionOpts,
+		opts:                       opts,
 	}
 }
