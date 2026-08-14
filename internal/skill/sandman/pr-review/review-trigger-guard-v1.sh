@@ -91,6 +91,7 @@ uncertain() {
 
 prior_trigger_id=
 prior_head_sha=
+prior_trigger_created_at=
 if [ -n "$request_file" ]; then
 	if [ ! -f "$request_file" ]; then
 		uncertain request-envelope-missing
@@ -104,12 +105,13 @@ if [ -n "$request_file" ]; then
 		(.head_sha | type == "string" and length > 0) and
 		(.trigger_id | type == "string" and length > 0) and
 		.trigger_prefix == $prefix and
-		(.trigger_created_at | type == "string" and length > 0)
+		(.trigger_created_at | type == "string" and length > 0 and test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,9})?Z$"))
 	' >/dev/null 2>&1; then
 		uncertain request-envelope-invalid
 	fi
 	prior_trigger_id=$(printf '%s\n' "$request_json" | jq -r '.trigger_id')
 	prior_head_sha=$(printf '%s\n' "$request_json" | jq -r '.head_sha')
+	prior_trigger_created_at=$(printf '%s\n' "$request_json" | jq -r '.trigger_created_at')
 fi
 
 if ! gh pr view "$pull_request" --repo "$repository" --json headRefOid >"$view_file" 2>/dev/null; then
@@ -144,7 +146,7 @@ if ! printf '%s\n' "$comments_json" | jq -c --arg prefix "$trigger_prefix" '
 		end;
 	def comment_id:
 		if (.id? | type) == "string" and (.id | length) > 0 then .id
-		elif (.id? | type) == "number" then (.id | tostring)
+		elif (.id? | type) == "number" and (.id | floor == . and . > 0) then (.id | tostring)
 		else ""
 		end;
 	def comment_url:
@@ -191,6 +193,13 @@ latest_trigger=$(jq -c '[.[] | select(.is_trigger)] | sort_by(.created_at) | .[-
 latest_trigger_key=$(printf '%s\n' "$latest_trigger" | jq -r '.order_key' 2>/dev/null) || uncertain trigger-order-invalid "$observed_head"
 latest_trigger_id=$(printf '%s\n' "$latest_trigger" | jq -r '.id' 2>/dev/null) || uncertain trigger-identity-invalid "$observed_head"
 latest_comment_id=$(printf '%s\n' "$latest_trigger" | jq -r '.comment_id' 2>/dev/null) || uncertain trigger-identity-invalid "$observed_head"
+latest_trigger_created_at=$(printf '%s\n' "$latest_trigger" | jq -r '.created_at' 2>/dev/null) || uncertain trigger-identity-invalid "$observed_head"
+
+if [ -n "$prior_trigger_id" ] && { [ "$prior_trigger_id" = "$latest_trigger_id" ] || [ "$prior_trigger_id" = "$latest_comment_id" ]; }; then
+	if [ "$prior_trigger_created_at" != "$latest_trigger_created_at" ]; then
+		uncertain request-identity-mismatch "$observed_head"
+	fi
+fi
 
 if ! gh api "repos/$repository/pulls/$pull_request/reviews" --paginate >"$reviews_file" 2>/dev/null; then
 	uncertain formal-reviews-unavailable "$observed_head"
@@ -216,7 +225,7 @@ if ! printf '%s\n' "$reviews_json" | jq -e '
 			if $epoch == null then null else ($parts.base + $parts.time + "." + (((($parts.fraction // "") + "000000000")[0:9])) + "Z") end
 		end;
 	all(.[];
-		(((.id? | type == "string" and length > 0) or (.id? | type == "number" and floor == . and . >= 0))) and
+		(((.id? | type == "string" and length > 0) or (.id? | type == "number" and floor == . and . > 0))) and
 		(.state? | type == "string" and ((ascii_upcase) | IN("PENDING", "COMMENTED", "APPROVED", "CHANGES_REQUESTED", "DISMISSED"))) and
 		((timestamp) as $raw | ($raw | timestamp_key) != null)
 	)
@@ -236,7 +245,7 @@ if ! printf '%s\n' "$inline_json" | jq -e '
 			if $epoch == null then null else ($parts.base + $parts.time + "." + (((($parts.fraction // "") + "000000000")[0:9])) + "Z") end
 		end;
 	all(.[];
-		(((.id? | type == "string" and length > 0) or (.id? | type == "number" and floor == . and . >= 0))) and
+		(((.id? | type == "string" and length > 0) or (.id? | type == "number" and floor == . and . > 0))) and
 		((.body? | type) == "string") and
 		((timestamp) as $raw | ($raw | timestamp_key) != null)
 	)
