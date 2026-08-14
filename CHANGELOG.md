@@ -480,6 +480,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- New configurations now default `run_idle_timeout` to 3600 seconds; explicit values, including `0`, remain unchanged.
+
 ## [0.2.0] - 2026-07-22
 
 ### Added

@@ -187,7 +187,7 @@ func TestConfigGet_StartDelay(t *testing.T) {
 func TestConfigGet_RunIdleTimeout(t *testing.T) {
 	var buf bytes.Buffer
 	store := &fakeStore{
-		config: &config.Config{DefaultAgent: "opencode", Agent: "opencode", RunIdleTimeout: 1800},
+		config: &config.Config{DefaultAgent: "opencode", Agent: "opencode", RunIdleTimeout: config.DefaultRunIdleTimeout},
 	}
 	cmd := NewConfigGetCmd(store)
 	cmd.SetOut(&buf)
@@ -199,8 +199,8 @@ func TestConfigGet_RunIdleTimeout(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if !strings.Contains(buf.String(), "1800") {
-		t.Errorf("expected output to contain '1800', got: %q", buf.String())
+	if !strings.Contains(buf.String(), "3600") {
+		t.Errorf("expected output to contain '3600', got: %q", buf.String())
 	}
 }
 
@@ -265,7 +265,7 @@ git:
 		"parallel: 3",
 		"parallel_reviews: 1",
 		"start_delay: 5",
-		"run_idle_timeout: 1800",
+		"run_idle_timeout: 3600",
 		"review_timeout: 1800",
 		"retries: 3",
 		"container_capacity: 7",

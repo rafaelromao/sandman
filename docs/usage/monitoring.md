@@ -192,7 +192,7 @@ When Sandman receives SIGINT or SIGTERM (e.g., Ctrl+C):
 
 ## Idle timeout
 
-The heartbeat watchdog monitors agent log output. If no new output appears for `run_idle_timeout` seconds (default: 1800, i.e., 30 minutes), the watchdog aborts the run.
+The heartbeat watchdog monitors agent log output. If no new output appears for `run_idle_timeout` seconds (default: 3600, i.e., 60 minutes), the watchdog aborts the run.
 
 **What triggers it:**
 - Agent blocked on an interactive stdin prompt with no output
