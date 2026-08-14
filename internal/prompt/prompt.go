@@ -8,6 +8,7 @@ type RenderConfig struct {
 	PromptFile         string            // .sandman/prompt.md project template path
 	RenderedPromptFile string            // .sandman/task.md rendered prompt path
 	TaskPrompt         string            // raw task prompt text
+	ContextRecovery    bool              // true when TaskPrompt is a rollover fallback
 	ReviewCommand      string            // REVIEW_COMMAND substitution value
 	ReviewCommandSet   bool              // true when review_command should be recorded in events
 	ReviewTimeout      int               // REVIEW_TIMEOUT substitution value in seconds

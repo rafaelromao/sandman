@@ -236,9 +236,83 @@ func TestContextRolloverDetector(t *testing.T) {
 	})
 }
 
+func TestContextRolloverStopsAttemptBeforeRetry(t *testing.T) {
+	workDir := t.TempDir()
+	t.Chdir(workDir)
+
+	branch := "prompt-context-rollover"
+	sb := &contextRolloverSandbox{
+		workDir:             filepath.Join(workDir, "worktree"),
+		waitForCancellation: true,
+	}
+	factory := &contextRolloverRunnableFactory{sandbox: sb}
+	eventLog := &events.JSONLLogger{Path: filepath.Join(workDir, "events.jsonl")}
+	o := NewOrchestrator(
+		nil,
+		&retryRenderer{result: "# Task\n\nInitial task."},
+		nil,
+		eventLog,
+		WithErrorLog(io.Discard),
+		WithSandboxFactory(&contextRolloverSandboxFactory{sandbox: sb}),
+		WithRunnableFactory(factory),
+	)
+
+	cfg := &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}}
+	bc := BatchConfig{
+		Cfg:              cfg,
+		AgentName:        "opencode",
+		AgentCfg:         config.BuiltInAgentPresets["opencode"].Agent("opencode"),
+		IdentityResolver: noopIdentityResolver(),
+		Retries:          1,
+	}
+	row := RowSpec{
+		Mode:              ModeFresh,
+		Branches:          map[int]string{0: branch},
+		BaseBranch:        "main",
+		BatchID:           batchIDForPromptOnly("", "", "context-rollover", ""),
+		RunID:             "context-rollover",
+		UserProvidedRunID: "context-rollover",
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	result, started := o.newRunExecutor(ctx, bc, &contextRolloverSandboxFactory{sandbox: sb}, nil).Execute(ctx, row)
+	if !started {
+		t.Fatalf("expected prompt-only AgentRun to start, result=%+v", result)
+	}
+	if result.Status != "success" {
+		t.Fatalf("status = %q, want success after retry", result.Status)
+	}
+	if factory.created != 2 {
+		t.Fatalf("runnable launches = %d, want 2", factory.created)
+	}
+	if !sb.secondAttemptStartedAfterFirstExit() {
+		t.Fatal("retry launched before the stopped attempt returned")
+	}
+}
+
+func TestContextRolloverDetector_IgnoresNonOpenCodeAgents(t *testing.T) {
+	sb := &contextRolloverSandbox{workDir: filepath.Join(t.TempDir(), "worktree")}
+	if err := os.MkdirAll(filepath.Join(sb.workDir, ".sandman"), 0o755); err != nil {
+		t.Fatalf("mkdir worktree task directory: %v", err)
+	}
+	run := NewAgentRun(nil, "custom-agent", sb)
+	run.preset = "custom"
+	run.status = "success"
+
+	result := run.Run(context.Background(), &retryRenderer{result: "task"}, "custom-agent", prompt.RenderConfig{})
+	if result.ContextExhausted {
+		t.Fatal("non-OpenCode output was classified as context exhaustion")
+	}
+	if result.Status != "failure" {
+		t.Fatalf("status = %q, want ordinary failure from the simulated command", result.Status)
+	}
+}
+
 type contextRolloverSandbox struct {
 	mu                   sync.Mutex
 	workDir              string
+	waitForCancellation  bool
 	started              int
 	firstAttemptExited   bool
 	secondTask           string
@@ -264,6 +338,9 @@ func (s *contextRolloverSandbox) Exec(ctx context.Context, command string, stdou
 
 	if attempt == 1 {
 		_, _ = io.WriteString(stderr, "Error: prompt is too long\nError: prompt is too long\n")
+		if s.waitForCancellation {
+			<-ctx.Done()
+		}
 		s.mu.Lock()
 		s.firstAttemptExited = true
 		s.mu.Unlock()

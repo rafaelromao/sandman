@@ -3042,6 +3042,7 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 			}
 			if previous.ContextExhausted {
 				attemptRenderCfg.TaskPrompt = prompt.ContextRecoveryTaskPrompt(taskContent, s.renderCfg.ReviewTimeout)
+				attemptRenderCfg.ContextRecovery = true
 			} else {
 				attemptRenderCfg.TaskPrompt = prompt.ContinuationTaskPromptWithReviewTimeout(taskContent, s.renderCfg.ReviewTimeout)
 			}
@@ -3450,6 +3451,7 @@ func (s *runSession) executePromptOnly(ctx context.Context) (AgentRunResult, boo
 				}
 				if previous.ContextExhausted {
 					attemptCfg.TaskPrompt = prompt.ContextRecoveryTaskPrompt(taskContent, s.renderCfg.ReviewTimeout)
+					attemptCfg.ContextRecovery = true
 				} else {
 					attemptCfg.TaskPrompt = prompt.ContinuationTaskPromptWithReviewTimeout(taskContent, s.renderCfg.ReviewTimeout)
 				}

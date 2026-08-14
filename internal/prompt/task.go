@@ -34,6 +34,8 @@ This is a clean OpenCode session after the previous session exhausted its contex
 
 Before changing implementation files:
 
+The recovery checkpoint must be durable before implementation resumes.
+
 1. Reconstruct the handoff from the current worktree, git status and diff, recent commits, run log, and this Task.
 2. Write a durable checkpoint and handoff summary into this Task, including completed work, remaining work, validation, and the next step.
 3. Only after the checkpoint is durable, continue implementation from that reconstructed state.

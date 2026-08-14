@@ -148,8 +148,13 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.IssueRenderer, comma
 			taskPrompt = prompt.EnsureReviewTimeoutContext(taskPrompt, renderCfg.ReviewTimeout)
 		}
 		if err := r.writeTaskPrompt(renderedPromptFile, taskPrompt); err != nil {
-			r.status = "failure"
-			return r.Result()
+			// A recovery Task is best effort. Atomic replacement leaves the
+			// prior Task intact, so a fresh session can still use it when the
+			// recovery write itself is unavailable.
+			if !renderCfg.ContextRecovery {
+				r.status = "failure"
+				return r.Result()
+			}
 		}
 	} else {
 		if err := r.Prepare(renderer, renderCfg); err != nil {
@@ -251,7 +256,7 @@ func (r *AgentRun) writeTaskPrompt(renderedPromptFile, content string) error {
 	if err := os.MkdirAll(filepath.Dir(promptPath), 0755); err != nil {
 		return fmt.Errorf("create prompt dir: %w", err)
 	}
-	if err := os.WriteFile(promptPath, []byte(content), 0644); err != nil {
+	if err := atomicfs.WriteAtomic(promptPath, []byte(content), 0644); err != nil {
 		return fmt.Errorf("write prompt: %w", err)
 	}
 	return nil
