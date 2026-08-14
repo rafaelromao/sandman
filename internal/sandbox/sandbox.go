@@ -115,6 +115,10 @@ func waitCmd(ctx context.Context, cmd *exec.Cmd, cmdWrapper *processWrapper, onA
 			// processes such as agent scripts and their background tasks
 			// are terminated, not just the immediate sh -c parent.
 			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+			// Fall back to killing the command itself when the platform does
+			// not deliver the process-group signal. The wait must not depend
+			// on the group kill succeeding.
+			_ = cmd.Process.Kill()
 		}
 		if onAbort != nil {
 			onAbort()
