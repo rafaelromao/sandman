@@ -673,3 +673,29 @@ func TestReviewRegistration_DoesNotRepairIncompleteLegacyEvidence(t *testing.T) 
 		t.Fatalf("incomplete legacy evidence created canonical record: %v", err)
 	}
 }
+
+func TestReviewRegistrationStore_DoesNotLetOlderGenerationOverwriteNewer(t *testing.T) {
+	path := paths.NewLayout(nil, testenv.MkdirShort(t, "sm-review-registration-")).PRReviewRegistrationPath(31)
+	store := fileReviewRegistrationStore{}
+	newer := reviewRequestRegistration{Request: reviewRequestEnvelope{
+		TriggerID:        "trigger-new",
+		TriggerCreatedAt: "2026-08-14T20:02:00Z",
+	}}
+	older := reviewRequestRegistration{Request: reviewRequestEnvelope{
+		TriggerID:        "trigger-old",
+		TriggerCreatedAt: "2026-08-14T20:01:00Z",
+	}}
+	if err := store.Write(path, newer); err != nil {
+		t.Fatalf("write newer registration: %v", err)
+	}
+	if err := store.Write(path, older); err != nil {
+		t.Fatalf("write older registration: %v", err)
+	}
+	got, err := store.Read(path)
+	if err != nil {
+		t.Fatalf("read registration: %v", err)
+	}
+	if got.Request.TriggerID != "trigger-new" {
+		t.Fatalf("stored generation = %q, want newer trigger", got.Request.TriggerID)
+	}
+}

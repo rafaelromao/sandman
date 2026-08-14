@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -15,6 +17,7 @@ import (
 	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/github"
 	"github.com/rafaelromao/sandman/internal/paths"
+	"golang.org/x/sys/unix"
 )
 
 const reviewRegistrationProtocol = "review-registration/v1"
@@ -37,10 +40,28 @@ type reviewRegistrationStore interface {
 type fileReviewRegistrationStore struct{}
 
 func (fileReviewRegistrationStore) Write(path string, registration reviewRequestRegistration) error {
-	return atomicfs.WriteAtomicJSON(path, registration, 0o600)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("create registration directory: %w", err)
+	}
+	return withReviewRegistrationLock(path, func() error {
+		existing, err := readFileReviewRegistration(path)
+		switch {
+		case err == nil:
+			if preserveReviewRegistration(existing, registration) {
+				return nil
+			}
+		case !os.IsNotExist(err):
+			return err
+		}
+		return atomicfs.WriteAtomicJSON(path, registration, 0o600)
+	})
 }
 
 func (fileReviewRegistrationStore) Read(path string) (reviewRequestRegistration, error) {
+	return readFileReviewRegistration(path)
+}
+
+func readFileReviewRegistration(path string) (reviewRequestRegistration, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return reviewRequestRegistration{}, err
@@ -50,6 +71,31 @@ func (fileReviewRegistrationStore) Read(path string) (reviewRequestRegistration,
 		return reviewRequestRegistration{}, err
 	}
 	return registration, nil
+}
+
+func preserveReviewRegistration(existing, next reviewRequestRegistration) bool {
+	if existing.Request.TriggerID == next.Request.TriggerID {
+		return true
+	}
+	existingAt, existingErr := time.Parse(time.RFC3339Nano, existing.Request.TriggerCreatedAt)
+	nextAt, nextErr := time.Parse(time.RFC3339Nano, next.Request.TriggerCreatedAt)
+	if existingErr != nil || nextErr != nil {
+		return true
+	}
+	return !nextAt.After(existingAt)
+}
+
+func withReviewRegistrationLock(path string, fn func() error) error {
+	lock, err := os.OpenFile(path+".lock", os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return fmt.Errorf("open registration lock: %w", err)
+	}
+	defer lock.Close()
+	if err := unix.Flock(int(lock.Fd()), unix.LOCK_EX); err != nil {
+		return fmt.Errorf("lock registration: %w", err)
+	}
+	defer unix.Flock(int(lock.Fd()), unix.LOCK_UN)
+	return fn()
 }
 
 func readReviewRegistration(path, repository string, pr *github.PR, currentHead string) (*reviewRequestRegistration, error) {
@@ -68,6 +114,10 @@ func readReviewRegistrationWithStore(store reviewRegistrationStore, path, reposi
 		return nil, err
 	}
 	return &registration, nil
+}
+
+func isReviewRegistrationNotExist(err error) bool {
+	return os.IsNotExist(err) || errors.Is(err, fs.ErrNotExist)
 }
 
 func validateReviewRegistration(registration reviewRequestRegistration, repository string, pr *github.PR, currentHead string) error {
@@ -187,10 +237,10 @@ func (s *runSession) registerReviewRequest(ctx context.Context, workDir string, 
 	if err != nil {
 		return fmt.Errorf("resolve repository for review registration: %w", err)
 	}
-	store := s.reviewRegistrationStore
-	if store == nil {
-		store = fileReviewRegistrationStore{}
+	if strings.TrimSpace(repository) == "" {
+		return fmt.Errorf("repository identity is unavailable")
 	}
+	store := s.reviewRegistrationStoreForRead()
 	registrationPath := paths.NewLayout(nil, workDir).PRReviewRegistrationPath(pr.Number)
 	reviewRegistrationMu.Lock()
 	defer reviewRegistrationMu.Unlock()
@@ -198,38 +248,44 @@ func (s *runSession) registerReviewRequest(ctx context.Context, workDir string, 
 		if reviewTriggerMatchesRequest(existing.Request, trigger) {
 			return nil
 		}
-		if existingTriggerAt, parseErr := time.Parse(time.RFC3339Nano, existing.Request.TriggerCreatedAt); parseErr == nil && !trigger.CreatedAt.After(existingTriggerAt) {
+		existingTriggerAt, parseErr := time.Parse(time.RFC3339Nano, existing.Request.TriggerCreatedAt)
+		if parseErr != nil || !trigger.CreatedAt.After(existingTriggerAt) {
 			return nil
 		}
-		// A record for another head or a malformed record is evidence only. A
-		// newer confirmed trigger may replace it, but it must never prevent
-		// the current attempt from establishing a fresh generation.
-	} else if isReviewRegistrationDecodeError(err) {
-		// A malformed committed record is evidence only. Do not silently
-		// repair it from a comment or extend its deadline.
-		return nil
-	} else if !os.IsNotExist(err) {
-		return fmt.Errorf("read existing review registration: %w", err)
+		// A stale generation may be replaced only by a newer confirmed
+		// trigger. The invalid record remains evidence and is never used
+		// to authorize the new generation.
 	} else if os.IsNotExist(err) {
-		if legacyReviewEvidencePresentForPR(workDir, pr.Number) {
-			if legacyReviewTriggerHasDifferentHead(workDir, pr.Number, trigger.ID, trigger.CreatedAt, currentHead) {
-				// A conversation trigger has no head identity. A legacy request
-				// binds that trigger to its original head, so never rebind it.
-				return nil
-			}
-			migrated, migrationErr := migrateLegacyReviewRegistration(store, registrationPath, workDir, repository, pr, currentHead, trigger)
-			if migrationErr != nil {
-				return migrationErr
-			}
-			if migrated {
-				return nil
-			}
+		if legacyReviewTriggerHasDifferentHead(workDir, pr.Number, trigger.ID, currentHead) {
+			// A conversation trigger has no head identity. A legacy request
+			// binds that trigger to its original head, so never rebind it.
+			return nil
+		}
+		legacy, present, valid, migrationErr := inspectLegacyReviewRegistration(workDir, repository, pr, currentHead)
+		if migrationErr != nil {
+			return migrationErr
+		}
+		if present && !valid {
 			// An incomplete or conflicting split record cannot authorize a
 			// replacement registration. Leave live PR state to decide the gate.
 			return nil
 		}
+		if valid && legacy != nil && reviewTriggerMatchesRequest(legacy.Request, trigger) {
+			if err := store.Write(registrationPath, *legacy); err != nil {
+				return fmt.Errorf("migrate legacy review registration: %w", err)
+			}
+			return nil
+		}
+	} else {
+		// A committed canonical path that cannot be read is evidence only.
+		// Never replace it and accidentally turn a duplicate trigger into a
+		// newly authorized generation.
+		return nil
 	}
 	confirmedAt := s.reviewNow()
+	if confirmedAt.Before(trigger.CreatedAt) {
+		return fmt.Errorf("registration clock is before the confirmed trigger")
+	}
 	timeout := s.renderCfg.ReviewTimeout
 	if timeout <= 0 {
 		timeout = config.DefaultReviewTimeout
@@ -288,10 +344,23 @@ func (s *runSession) reviewNow() time.Time {
 	if s.reviewRegistrationNow != nil {
 		return s.reviewRegistrationNow().UTC()
 	}
+	if s.opts.reviewRegistrationNow != nil {
+		return s.opts.reviewRegistrationNow().UTC()
+	}
 	return time.Now().UTC()
 }
 
-func legacyReviewTriggerHasDifferentHead(workDir string, prNumber int, triggerID string, triggerCreatedAt time.Time, currentHead string) bool {
+func (s *runSession) reviewRegistrationStoreForRead() reviewRegistrationStore {
+	if s.reviewRegistrationStore != nil {
+		return s.reviewRegistrationStore
+	}
+	if s.opts.reviewRegistrationStore != nil {
+		return s.opts.reviewRegistrationStore
+	}
+	return fileReviewRegistrationStore{}
+}
+
+func legacyReviewTriggerHasDifferentHead(workDir string, prNumber int, triggerID, currentHead string) bool {
 	if strings.TrimSpace(workDir) == "" || prNumber <= 0 || strings.TrimSpace(triggerID) == "" {
 		return false
 	}
@@ -303,34 +372,33 @@ func legacyReviewTriggerHasDifferentHead(workDir string, prNumber int, triggerID
 	if err := json.Unmarshal(data, &request); err != nil {
 		return false
 	}
-	return (request.TriggerID == triggerID || reviewTriggerTimestampMatches(request.TriggerCreatedAt, triggerCreatedAt)) && strings.TrimSpace(request.HeadSHA) != "" && !strings.EqualFold(request.HeadSHA, strings.TrimSpace(currentHead))
+	return request.TriggerID == triggerID && strings.TrimSpace(request.HeadSHA) != "" && !strings.EqualFold(request.HeadSHA, strings.TrimSpace(currentHead))
 }
 
-func legacyReviewEvidencePresentForPR(workDir string, prNumber int) bool {
-	if strings.TrimSpace(workDir) == "" || prNumber <= 0 {
-		return false
-	}
+func inspectLegacyReviewRegistration(workDir, repository string, pr *github.PR, currentHead string) (*reviewRequestRegistration, bool, bool, error) {
 	layout := paths.NewLayout(nil, workDir)
-	for _, path := range []string{layout.PRReviewRequestPath(prNumber), layout.PRReviewRequestStatePath(prNumber), layout.PRHeadShaPath(prNumber)} {
-		if _, err := os.Stat(path); err == nil {
-			return true
+	pathsToCheck := []string{
+		layout.PRReviewRequestPath(pr.Number),
+		layout.PRReviewRequestStatePath(pr.Number),
+		layout.PRHeadShaPath(pr.Number),
+	}
+	present := false
+	for _, path := range pathsToCheck {
+		_, err := os.Stat(path)
+		if err == nil {
+			present = true
+			continue
+		}
+		if !os.IsNotExist(err) {
+			return nil, true, false, fmt.Errorf("inspect legacy review evidence: %w", err)
 		}
 	}
-	return false
-}
-
-func migrateLegacyReviewRegistration(store reviewRegistrationStore, registrationPath, workDir, repository string, pr *github.PR, currentHead string, trigger reviewTrigger) (bool, error) {
-	layout := paths.NewLayout(nil, workDir)
-	legacyRequestPath := layout.PRReviewRequestPath(pr.Number)
-	if _, err := os.Stat(legacyRequestPath); err != nil {
-		if os.IsNotExist(err) {
-			return false, nil
-		}
-		return false, fmt.Errorf("inspect legacy review request: %w", err)
+	if !present {
+		return nil, false, false, nil
 	}
 	artifacts, err := readReviewTimeoutArtifacts(workDir, repository, pr, currentHead)
-	if err != nil || artifacts == nil || !reviewTriggerMatchesRequest(artifacts.Request, trigger) {
-		return false, nil
+	if err != nil || artifacts == nil {
+		return nil, true, false, nil
 	}
 	registration := reviewRequestRegistration{
 		Protocol: reviewRegistrationProtocol,
@@ -338,33 +406,13 @@ func migrateLegacyReviewRegistration(store reviewRegistrationStore, registration
 		State:    artifacts.State,
 	}
 	if err := validateReviewRegistration(registration, repository, pr, currentHead); err != nil {
-		return false, nil
+		return nil, true, false, nil
 	}
-	if err := store.Write(registrationPath, registration); err != nil {
-		return false, fmt.Errorf("migrate legacy review registration: %w", err)
-	}
-	return true, nil
+	return &registration, true, true, nil
 }
 
 func reviewTriggerMatchesRequest(request reviewRequestEnvelope, trigger reviewTrigger) bool {
-	if request.TriggerID == trigger.ID {
-		return true
-	}
-	return reviewTriggerTimestampMatches(request.TriggerCreatedAt, trigger.CreatedAt)
-}
-
-func reviewTriggerTimestampMatches(raw string, observedAt time.Time) bool {
-	triggerAt, err := time.Parse(time.RFC3339Nano, raw)
-	if err != nil {
-		return false
-	}
-	return triggerAt.Equal(observedAt)
-}
-
-func isReviewRegistrationDecodeError(err error) bool {
-	var syntaxErr *json.SyntaxError
-	var typeErr *json.UnmarshalTypeError
-	return errors.As(err, &syntaxErr) || errors.As(err, &typeErr)
+	return request.TriggerID == trigger.ID
 }
 
 func (s *runSession) ensureReviewRegistrationForPR(ctx context.Context, workDir string, pr *github.PR, currentHead string) {
@@ -374,10 +422,13 @@ func (s *runSession) ensureReviewRegistrationForPR(ctx context.Context, workDir 
 	if pr == nil || strings.TrimSpace(currentHead) == "" {
 		return
 	}
-	s.reviewRegistrationAttempted = true
-	if err := s.registerReviewRequest(ctx, workDir, pr, currentHead); err != nil && s.deps.errorLog != nil {
-		fmt.Fprintf(s.deps.errorLog, "warning: implementation review registration for PR #%d: %v\n", pr.Number, err)
+	if err := s.registerReviewRequest(ctx, workDir, pr, currentHead); err != nil {
+		if s.deps.errorLog != nil {
+			fmt.Fprintf(s.deps.errorLog, "warning: implementation review registration for PR #%d: %v\n", pr.Number, err)
+		}
+		return
 	}
+	s.reviewRegistrationAttempted = true
 }
 
 type reviewTrigger struct {

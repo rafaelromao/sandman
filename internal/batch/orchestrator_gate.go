@@ -119,10 +119,7 @@ func checkPRExternalGateWithHead(ctx context.Context, client github.Client, bran
 }
 
 func lookupPRExternalGateWithHead(ctx context.Context, client github.Client, branch, headSHA string, requireHead bool) (*github.PR, string, error) {
-	if client == nil || strings.TrimSpace(branch) == "" {
-		return nil, "none", nil
-	}
-	pr, err := client.FindPRByBranch(ctx, branch)
+	pr, err := lookupPRForExternalGate(ctx, client, branch)
 	if err != nil {
 		return nil, "unavailable", err
 	}
@@ -130,6 +127,17 @@ func lookupPRExternalGateWithHead(ctx context.Context, client github.Client, bra
 		return nil, "none", nil
 	}
 	return pr, checkPRExternalGateForPR(pr, headSHA, requireHead), nil
+}
+
+func lookupPRForExternalGate(ctx context.Context, client github.Client, branch string) (*github.PR, error) {
+	if client == nil || strings.TrimSpace(branch) == "" {
+		return nil, nil
+	}
+	pr, err := client.FindPRByBranch(ctx, branch)
+	if err != nil {
+		return nil, err
+	}
+	return pr, nil
 }
 
 func checkPRExternalGateForPR(pr *github.PR, headSHA string, requireHead bool) string {
@@ -196,14 +204,18 @@ func (s *runSession) handleExternalGateWithHostPaths(ctx context.Context, workDi
 	if !hostPathsReady {
 		headSHA = ""
 	}
-	pr, gate, err := lookupPRExternalGateWithHead(ctx, s.deps.githubClient, branch, headSHA, true)
+	pr, err := lookupPRForExternalGate(ctx, s.deps.githubClient, branch)
 	initialUnavailable := err != nil
+	gate := "none"
 	if err != nil && s.deps.errorLog != nil {
 		fmt.Fprintf(s.deps.errorLog, "warning: external gate lookup for branch %q: %v\n", branch, err)
 		gate = "pending"
 	}
 	if pr != nil && strings.EqualFold(strings.TrimSpace(pr.State), "open") {
 		s.ensureReviewRegistrationForPR(ctx, workDir, pr, headSHA)
+	}
+	if err == nil && pr != nil {
+		gate = checkPRExternalGateForPR(pr, headSHA, true)
 	}
 
 	if gate == "none" {
@@ -260,26 +272,24 @@ func (s *runSession) confirmExternalGateWithDiagnostics(ctx context.Context, wor
 }
 
 func (s *runSession) retainedReviewDiagnostics(ctx context.Context, workDir, branch string, pr *github.PR, currentHead string) map[string]any {
-	if ctx.Err() != nil || pr == nil || !reviewTimeoutArtifactsPresent(workDir) {
+	injectedStore := s.reviewRegistrationStore != nil || s.opts.reviewRegistrationStore != nil
+	if ctx.Err() != nil || pr == nil || (!reviewTimeoutArtifactsPresent(workDir) && !injectedStore) {
 		return nil
 	}
-	if !reviewTimeoutArtifactsPresentForPR(workDir, pr.Number) {
+	if !reviewTimeoutArtifactsPresentForPR(workDir, pr.Number) && !injectedStore {
 		return nil
-	}
-	if canonicalReviewRegistrationPresent(workDir, pr.Number) {
-		repository, err := s.deps.githubClient.RepoName(ctx)
-		if err != nil {
-			return s.invalidRetainedReviewDiagnostic(branch, err)
-		}
-		store := s.reviewRegistrationStore
-		registration, err := readReviewRegistrationWithStore(store, paths.NewLayout(nil, workDir).PRReviewRegistrationPath(pr.Number), repository, pr, currentHead)
-		if err != nil {
-			return s.invalidRetainedReviewDiagnostic(branch, err)
-		}
-		return reviewRegistrationDiagnostic(registration)
 	}
 	repository, err := s.deps.githubClient.RepoName(ctx)
 	if err != nil {
+		return s.invalidRetainedReviewDiagnostic(branch, err)
+	}
+	registration, err := readReviewRegistrationWithStore(s.reviewRegistrationStoreForRead(), paths.NewLayout(nil, workDir).PRReviewRegistrationPath(pr.Number), repository, pr, currentHead)
+	if err == nil {
+		return reviewRegistrationDiagnostic(registration)
+	}
+	if !isReviewRegistrationNotExist(err) {
+		// A canonical record exists but is not valid. It wins over legacy
+		// sidecars as evidence, while the live PR gate remains authoritative.
 		return s.invalidRetainedReviewDiagnostic(branch, err)
 	}
 	artifacts, err := readReviewTimeoutArtifacts(workDir, repository, pr, currentHead)
@@ -341,15 +351,18 @@ func (s *runSession) handleReviewTimeoutGate(ctx context.Context, workDir, branc
 	if !reviewTimeoutArtifactsPresentForPR(workDir, pr.Number) {
 		return "", nil, false
 	}
-	if canonicalReviewRegistrationPresent(workDir, pr.Number) {
-		return "", nil, false
-	}
 	if strings.EqualFold(pr.State, "open") && retainedReviewPRGateFailed(pr) {
 		return s.blockExternalGate(ctx, workDir, logPath, runID, "failed")
 	}
 	repository, err := s.deps.githubClient.RepoName(ctx)
 	if err != nil {
 		return s.blockReviewTimeoutStateError(ctx, workDir, logPath, runID)
+	}
+	canonicalPath := paths.NewLayout(nil, workDir).PRReviewRegistrationPath(pr.Number)
+	if _, err := readReviewRegistrationWithStore(s.reviewRegistrationStoreForRead(), canonicalPath, repository, pr, currentHead); err == nil || !isReviewRegistrationNotExist(err) {
+		// Canonical evidence is immutable from this compatibility path too.
+		// Legacy sidecars must not regain authority when it is present.
+		return "", nil, false
 	}
 	artifacts, err := readReviewTimeoutArtifacts(workDir, repository, pr, currentHead)
 	if err != nil {

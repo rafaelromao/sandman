@@ -143,14 +143,6 @@ func reviewTimeoutArtifactsPresentForPR(workDir string, prNumber int) bool {
 	return false
 }
 
-func canonicalReviewRegistrationPresent(workDir string, prNumber int) bool {
-	if strings.TrimSpace(workDir) == "" || prNumber <= 0 {
-		return false
-	}
-	_, err := os.Stat(paths.NewLayout(nil, workDir).PRReviewRegistrationPath(prNumber))
-	return err == nil
-}
-
 func readReviewTimeoutHandoff(workDir, repository string, pr *github.PR, currentHead string) (*reviewTimeoutHandoff, error) {
 	artifacts, err := readReviewTimeoutArtifacts(workDir, repository, pr, currentHead)
 	if err != nil {
