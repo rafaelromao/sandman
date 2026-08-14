@@ -279,6 +279,15 @@ func TestExternalGate_LiveReadyStatePrecedesReviewTimeout(t *testing.T) {
 	if request["reason"] != "REVIEW_TIMEOUT" || request["deadline_unix_seconds"] != float64(2800) {
 		t.Fatalf("terminal request evidence = %#v, want retained timeout evidence", request)
 	}
+	for field, want := range map[string]any{
+		"effective_timeout_seconds": float64(1800),
+		"elapsed_seconds":           float64(1800),
+		"next_action":               reviewTimeoutNextAction,
+	} {
+		if request[field] != want {
+			t.Fatalf("terminal request evidence %s = %v, want %v", field, request[field], want)
+		}
+	}
 	diagnostic, ok := finished.Payload["review_diagnostic"].(map[string]any)
 	if !ok || diagnostic["status"] != "valid" {
 		t.Fatalf("terminal review diagnostic = %#v, want valid evidence diagnostic", finished.Payload["review_diagnostic"])
