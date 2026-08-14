@@ -478,6 +478,7 @@ func TestPRReviewSkill_PersistsConfirmedTriggerIdentityAfterGuardedPost(t *testi
 		`does not create a second request lifecycle authority`,
 		`clarification_url=$(gh pr comment`,
 		`'.trigger_id = $trigger_id | .trigger_created_at = $trigger_created_at'`,
+		`request-envelope-missing`,
 		`do not create another request or wait-state file`,
 		`The latest confirmed trigger identity`,
 	} {
@@ -492,6 +493,20 @@ func TestPRReviewSkill_PersistsConfirmedTriggerIdentityAfterGuardedPost(t *testi
 	persist := strings.Index(text, "Only after this confirmation, atomically write the request envelope")
 	if guard < 0 || post < guard || confirm < post || persist < confirm {
 		t.Fatal("the guarded post must confirm and persist the same trigger identity before waiting")
+	}
+	followUpStart := strings.Index(text, "When the follow-up is allowed and posted")
+	if followUpStart < 0 {
+		t.Fatal("could not isolate follow-up delivery section")
+	}
+	followUpEnd := strings.Index(text[followUpStart:], "#### Step 5a:")
+	if followUpEnd < 0 {
+		t.Fatal("could not isolate follow-up delivery section")
+	}
+	followUp := text[followUpStart : followUpStart+followUpEnd]
+	followUpGuard := strings.Index(followUp, "require_review_trigger_delivery")
+	followUpPost := strings.Index(followUp, "clarification_url=$(gh pr comment")
+	if followUpGuard < 0 || followUpPost < 0 || followUpGuard > followUpPost {
+		t.Fatal("follow-up delivery must run the trigger guard before posting")
 	}
 }
 

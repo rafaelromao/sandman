@@ -49,7 +49,6 @@ description: Automates the GitHub PR review loop with the PR Review Agent. Waits
 - `.sandman/state/<N>.addressed_comments` — one inline comment ID per line, tracking which inline comments have already been acted on. Cleared when head SHA changes (new commit invalidates all old inline comment IDs).
 - `.sandman/state/<N>.review_request.json` — the atomic, confirmed request envelope containing the pull request, head SHA, trigger identity, start, deadline, budget, and poll plan.
 - `.sandman/state/<N>.review_request.json.state` — the atomic wait result for that request. The request envelope and its matching head-SHA sidecar must both be trusted before re-entry.
-- The installed `pr-review/review-trigger-guard-v1.sh` helper is read-only delivery preflight. It does not create a request record, wait state, or external-gate outcome.
 
 ### Iteration loop (max 10 passes)
 
@@ -192,8 +191,8 @@ head, finds the newest `{{REVIEW_COMMAND}}` trigger by strictly normalized
 server timestamps, and checks the response surfaces after that trigger. It does
 not trust the local request record as a substitute for GitHub state.
 
-The guard returns `protocol:"review-trigger/v1"` with `decision` set to
-`allow`, `block`, or `uncertain`. A newest unanswered trigger returns
+The guard returns a structured decision set to `allow`, `block`, or `uncertain`.
+A newest unanswered trigger returns
 `block`/`unanswered-trigger`, including when the local request record is
 absent. A failed GitHub query, malformed ID or timestamp, incomplete response
 payload, pagination failure, equal trigger timestamps, or any other query,
@@ -411,6 +410,7 @@ stop without posting a repair trigger. The latest confirmed trigger identity is
 the one used by the next request-scoped wait.
 
 ```bash
+[ -f "$request_file" ] || record REVIEW_TRIGGER_GUARD_BLOCKED "request-envelope-missing" and stop
 require_review_trigger_delivery || record REVIEW_TRIGGER_GUARD_BLOCKED "$guard_reason" and stop
 clarification_url=$(gh pr comment <N> --repo <owner/repo> \
   --body "{{REVIEW_COMMAND}} — please clarify which finding is actionable") ||

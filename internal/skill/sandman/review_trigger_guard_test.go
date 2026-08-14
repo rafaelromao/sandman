@@ -34,7 +34,7 @@ if [ "$1" = "pr" ] && [ "$2" = "view" ]; then
 fi
 if [ "$1" = "api" ]; then
   case "$2" in
-    */issues/*/comments) printf '%s\n' '[{"id":1001,"html_url":"https://github.com/owner/repo/pull/42#issuecomment-1001","body":"/sandman review","created_at":"2026-08-11T18:00:01Z"}]' ;;
+    */issues/*/comments) printf '%s\n' '[{"id":1001,"url":"https://api.github.com/repos/owner/repo/issues/comments/1001","html_url":"https://github.com/owner/repo/pull/42#issuecomment-1001","body":"/sandman review","created_at":"2026-08-11T18:00:01Z"}]' ;;
     */reviews|*/comments) printf '%s\n' '[]' ;;
     *) exit 2 ;;
   esac

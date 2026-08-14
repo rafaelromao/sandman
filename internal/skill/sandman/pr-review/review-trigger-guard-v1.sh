@@ -148,8 +148,8 @@ if ! printf '%s\n' "$comments_json" | jq -c --arg prefix "$trigger_prefix" '
 		else ""
 		end;
 	def comment_url:
-		if (.url? | type) == "string" then .url
-		elif (.html_url? | type) == "string" then .html_url
+		if (.html_url? | type) == "string" then .html_url
+		elif (.url? | type) == "string" then .url
 		elif has("url") or has("html_url") then error("invalid comment url")
 		else ""
 		end;

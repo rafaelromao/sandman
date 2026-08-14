@@ -125,6 +125,36 @@ func TestSyncInstallsVersionedReviewTriggerGuard(t *testing.T) {
 			t.Errorf("synced pr-review skill missing %q", want)
 		}
 	}
+
+	bin := t.TempDir()
+	gh := filepath.Join(bin, "gh")
+	ghScript := `#!/bin/sh
+if [ "$1" = "pr" ] && [ "$2" = "view" ]; then
+  printf '%s\n' '{"headRefOid":"abc123"}'
+  exit 0
+fi
+if [ "$1" = "api" ]; then
+  case "$2" in
+    */issues/*/comments) printf '%s\n' '[{"id":1001,"html_url":"https://github.com/owner/repo/pull/42#issuecomment-1001","body":"/sandman review","created_at":"2026-08-11T18:00:01Z"}]' ;;
+    */reviews|*/comments) printf '%s\n' '[]' ;;
+    *) exit 2 ;;
+  esac
+  exit 0
+fi
+exit 2
+`
+	if err := os.WriteFile(gh, []byte(ghScript), 0o700); err != nil {
+		t.Fatalf("write gh shim: %v", err)
+	}
+	cmd := exec.Command("sh", helper, "--repository", "owner/repo", "--pull-request", "42", "--head-sha", "abc123", "--trigger-prefix", "/sandman review")
+	cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"))
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("run synced trigger guard: %v\n%s", err, output)
+	}
+	if !strings.Contains(string(output), `"decision":"block"`) || !strings.Contains(string(output), `"reason":"unanswered-trigger"`) {
+		t.Fatalf("synced trigger guard returned unexpected result: %s", output)
+	}
 }
 
 func TestSyncInstallsCodeReviewSkillWithoutObsoleteSelfReviewSkill(t *testing.T) {
