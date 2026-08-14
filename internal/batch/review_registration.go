@@ -282,7 +282,7 @@ func (s *runSession) registerReviewRequest(ctx context.Context, workDir string, 
 			strings.EqualFold(strings.TrimSpace(existing.Request.HeadSHA), strings.TrimSpace(pr.HeadRefOid))
 		if reviewTriggerMatchesRequest(existing.Request, trigger) {
 			if !currentGeneration {
-				return fmt.Errorf("existing review registration is bound to a different pull-request head")
+				return fmt.Errorf("%w: existing review registration is bound to a different pull-request head", errReviewRegistrationHeadChanged)
 			}
 			return nil
 		}

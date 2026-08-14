@@ -188,7 +188,7 @@ func setClassificationFormalReviewCount(t *testing.T, workDir string, count floa
 	}
 }
 
-func TestExternalGate_ReviewTimeoutBlocksWithoutRetry(t *testing.T) {
+func TestExternalGate_LiveReadyStatePrecedesReviewTimeout(t *testing.T) {
 	workDir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(workDir)
 
@@ -276,16 +276,21 @@ func TestExternalGate_ReviewTimeoutBlocksWithoutRetry(t *testing.T) {
 	if request["pull_request"] != float64(17) || request["head_sha"] != "current-sha" || request["trigger_id"] != "https://github.com/owner/repo/pull/17#issuecomment-1001" {
 		t.Fatalf("terminal request identity = %#v", request)
 	}
+	if request["reason"] != "REVIEW_TIMEOUT" || request["deadline_unix_seconds"] != float64(2800) {
+		t.Fatalf("terminal request evidence = %#v, want retained timeout evidence", request)
+	}
 	for field, want := range map[string]any{
-		"deadline_unix_seconds":     float64(2800),
 		"effective_timeout_seconds": float64(1800),
 		"elapsed_seconds":           float64(1800),
-		"reason":                    "REVIEW_TIMEOUT",
 		"next_action":               reviewTimeoutNextAction,
 	} {
 		if request[field] != want {
-			t.Fatalf("terminal request %s = %v, want %v", field, request[field], want)
+			t.Fatalf("terminal request evidence %s = %v, want %v", field, request[field], want)
 		}
+	}
+	diagnostic, ok := finished.Payload["review_diagnostic"].(map[string]any)
+	if !ok || diagnostic["status"] != "valid" {
+		t.Fatalf("terminal review diagnostic = %#v, want valid evidence diagnostic", finished.Payload["review_diagnostic"])
 	}
 
 	task, err := os.ReadFile(filepath.Join(worktreePath, ".sandman", "task.md"))
@@ -303,7 +308,441 @@ func TestExternalGate_ReviewTimeoutBlocksWithoutRetry(t *testing.T) {
 	}
 }
 
-func TestExternalGate_LateFormalChangesRequestedIsActionableWithoutRetry(t *testing.T) {
+type gateOrderingClient struct {
+	fakeGitHubClient
+	repoNameCalls int
+}
+
+func (c *gateOrderingClient) RepoName(context.Context) (string, error) {
+	c.repoNameCalls++
+	return "owner/repo", nil
+}
+
+type sequencedGateClient struct {
+	fakeGitHubClient
+	responses []*github.PR
+	calls     int
+}
+
+func (c *sequencedGateClient) FindPRByBranch(context.Context, string) (*github.PR, error) {
+	index := c.calls
+	c.calls++
+	if index >= len(c.responses) {
+		index = len(c.responses) - 1
+	}
+	if index < 0 {
+		return nil, nil
+	}
+	return c.responses[index], nil
+}
+
+func TestRunSingle_MergedPRPrecedesMalformedRetainedReview(t *testing.T) {
+	workDir := testenv.MkdirShort(t, "sm-orch-")
+	t.Chdir(workDir)
+	worktreePath := filepath.Join(workDir, "worktree")
+	if err := os.MkdirAll(filepath.Join(worktreePath, ".sandman"), 0o755); err != nil {
+		t.Fatalf("create worktree task directory: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(worktreePath, ".sandman", "task.md"), []byte("# Task\n"), 0o644); err != nil {
+		t.Fatalf("seed task: %v", err)
+	}
+	writeTimedOutReviewRequest(t, worktreePath)
+	if err := os.WriteFile(filepath.Join(worktreePath, ".sandman", "state", "17.review_request.json.state"), []byte("not-json"), 0o600); err != nil {
+		t.Fatalf("malform retained review state: %v", err)
+	}
+
+	branch := gateTestBranch
+	sb := &retrySandbox{workDir: worktreePath}
+	sbFactory := &retrySandboxFactory{sandbox: sb}
+	factory := &fakeRunnableFactory{results: []AgentRunResult{{
+		IssueNumber: 42,
+		Status:      "success",
+		Branch:      branch,
+	}}}
+	eventLog := &events.JSONLLogger{Path: filepath.Join(t.TempDir(), "events.jsonl")}
+	client := &gateOrderingClient{fakeGitHubClient: fakeGitHubClient{
+		issues: map[int]*github.Issue{42: {Number: 42, State: "open", Title: "Fix bug"}},
+		prs: map[string]*github.PR{branch: {
+			Number:      17,
+			State:       "merged",
+			Merged:      true,
+			Body:        "Closes #42",
+			HeadRefName: branch,
+			HeadRefOid:  "current-sha",
+		}},
+	}}
+	o := NewOrchestrator(
+		client,
+		&retryRenderer{result: "rendered prompt"},
+		nil,
+		eventLog,
+		WithErrorLog(io.Discard),
+		WithSandboxFactory(sbFactory),
+		WithRunnableFactory(factory),
+		WithRunSessionOpts(gateTestRunOptions()),
+	)
+
+	bc := BatchConfig{
+		Cfg:              &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}},
+		AgentName:        "opencode",
+		AgentCfg:         config.Agent{Command: "echo hi"},
+		IdentityResolver: noopIdentityResolver(),
+		Retries:          3,
+	}
+	result, started := o.newRunExecutor(context.Background(), bc, sbFactory, nil).Execute(context.Background(), RowSpec{
+		IssueNumber: 42,
+		Branches:    map[int]string{42: branch},
+		BaseBranch:  "main",
+	})
+	if !started {
+		t.Fatalf("expected run to start, status=%q", result.Status)
+	}
+	if result.Status != "success" {
+		t.Fatalf("status = %q, want success", result.Status)
+	}
+	if client.repoNameCalls != 0 {
+		t.Fatalf("local review repository lookups = %d, want 0 before merged completion", client.repoNameCalls)
+	}
+	logs, err := eventLog.Read()
+	if err != nil {
+		t.Fatalf("read events: %v", err)
+	}
+	finished := findEvent(logs, "run.finished")
+	if finished == nil {
+		t.Fatalf("run.finished event not found: %v", logs)
+	}
+	if finished.Payload["status"] != "success" || finished.Payload["gate"] != nil || finished.Payload["blocker"] != nil {
+		t.Fatalf("merged completion payload = %#v, want success without external-gate fields", finished.Payload)
+	}
+}
+
+func TestExternalGate_MergedPRWithoutClosingReferenceStillFailsVerification(t *testing.T) {
+	workDir := testenv.MkdirShort(t, "sm-orch-")
+	writeTimedOutReviewRequest(t, workDir)
+	if err := os.WriteFile(filepath.Join(workDir, ".sandman", "state", "17.review_request.json.state"), []byte("not-json"), 0o600); err != nil {
+		t.Fatalf("malform retained review state: %v", err)
+	}
+	client := &gateOrderingClient{fakeGitHubClient: fakeGitHubClient{prs: map[string]*github.PR{gateTestBranch: {
+		Number:      17,
+		State:       "merged",
+		Merged:      true,
+		Body:        "Refs #42",
+		HeadRefOid:  "current-sha",
+		HeadRefName: gateTestBranch,
+	}}}}
+	session := &runSession{
+		issueNumber: 42,
+		deps:        runDeps{githubClient: client, errorLog: io.Discard},
+		opts:        gateTestRunOptions(),
+	}
+
+	status, extras, handled := session.handleExternalGate(context.Background(), workDir, gateTestBranch, "", "run-test")
+	if !handled || status != "failure" {
+		t.Fatalf("merged missing-closing result = (%q, %#v, %t), want handled failure", status, extras, handled)
+	}
+	completion, ok := extras["completion"].(map[string]any)
+	if !ok || completion["reason"] != "merged-pr-missing-closing-reference" {
+		t.Fatalf("merged verification diagnostic = %#v, want missing closing reference", extras["completion"])
+	}
+	if client.repoNameCalls != 0 {
+		t.Fatalf("local review repository lookups = %d, want 0 before merged verification failure", client.repoNameCalls)
+	}
+}
+
+func TestRunSingle_OpenPRIgnoresMalformedRetainedReviewForLiveGate(t *testing.T) {
+	workDir := testenv.MkdirShort(t, "sm-orch-")
+	t.Chdir(workDir)
+	worktreePath := filepath.Join(workDir, "worktree")
+	if err := os.MkdirAll(filepath.Join(worktreePath, ".sandman"), 0o755); err != nil {
+		t.Fatalf("create worktree task directory: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(worktreePath, ".sandman", "task.md"), []byte("# Task\n"), 0o644); err != nil {
+		t.Fatalf("seed task: %v", err)
+	}
+	writeTimedOutReviewRequest(t, worktreePath)
+	if err := os.WriteFile(filepath.Join(worktreePath, ".sandman", "state", "17.review_request.json.state"), []byte("not-json"), 0o600); err != nil {
+		t.Fatalf("malform retained review state: %v", err)
+	}
+
+	branch := gateTestBranch
+	sb := &retrySandbox{workDir: worktreePath}
+	sbFactory := &retrySandboxFactory{sandbox: sb}
+	factory := &fakeRunnableFactory{results: []AgentRunResult{{
+		IssueNumber: 42,
+		Status:      "success",
+		Branch:      branch,
+	}}}
+	eventLog := &events.JSONLLogger{Path: filepath.Join(t.TempDir(), "events.jsonl")}
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{42: {Number: 42, State: "open", Title: "Fix bug"}},
+		prs: map[string]*github.PR{branch: {
+			Number:            17,
+			State:             "open",
+			HeadRefName:       branch,
+			HeadRefOid:        "current-sha",
+			StatusCheckRollup: "pending",
+			ReviewDecision:    "APPROVED",
+			MergeStateStatus:  "BLOCKED",
+		}},
+	}
+	o := NewOrchestrator(
+		client,
+		&retryRenderer{result: "rendered prompt"},
+		nil,
+		eventLog,
+		WithErrorLog(io.Discard),
+		WithSandboxFactory(sbFactory),
+		WithRunnableFactory(factory),
+		WithRunSessionOpts(gateTestRunOptions()),
+	)
+
+	bc := BatchConfig{
+		Cfg:              &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}},
+		AgentName:        "opencode",
+		AgentCfg:         config.Agent{Command: "echo hi"},
+		IdentityResolver: noopIdentityResolver(),
+		Retries:          3,
+	}
+	result, started := o.newRunExecutor(context.Background(), bc, sbFactory, nil).Execute(context.Background(), RowSpec{
+		IssueNumber: 42,
+		Branches:    map[int]string{42: branch},
+		BaseBranch:  "main",
+	})
+	if !started {
+		t.Fatalf("expected run to start, status=%q", result.Status)
+	}
+	if result.Status != "blocked" {
+		t.Fatalf("status = %q, want blocked", result.Status)
+	}
+	logs, err := eventLog.Read()
+	if err != nil {
+		t.Fatalf("read events: %v", err)
+	}
+	finished := findEvent(logs, "run.finished")
+	if finished == nil {
+		t.Fatalf("run.finished event not found: %v", logs)
+	}
+	if finished.Payload["gate"] != "pending" {
+		t.Fatalf("open PR gate = %v, want live pending gate", finished.Payload["gate"])
+	}
+	if finished.Payload["gate"] == gateReviewTimeoutError {
+		t.Fatalf("malformed retained review changed live gate: %#v", finished.Payload)
+	}
+	diagnostic, ok := finished.Payload["review_diagnostic"].(map[string]any)
+	if !ok || diagnostic["status"] != "invalid" || diagnostic["error"] == "" {
+		t.Fatalf("production retained review diagnostic = %#v, want invalid-record evidence", finished.Payload["review_diagnostic"])
+	}
+}
+
+func TestExternalGate_RetainedRecordDiagnosticDoesNotChangeLiveGate(t *testing.T) {
+	workDir := testenv.MkdirShort(t, "sm-orch-")
+	writeTimedOutReviewRequest(t, workDir)
+	if err := os.WriteFile(filepath.Join(workDir, ".sandman", "state", "17.review_request.json.state"), []byte("not-json"), 0o600); err != nil {
+		t.Fatalf("malform retained review state: %v", err)
+	}
+	opts := gateTestRunOptions()
+	opts.gatePollBudget = 5 * time.Millisecond
+	session := &runSession{
+		issueNumber: 42,
+		deps: runDeps{
+			githubClient: &fakeGitHubClient{prs: map[string]*github.PR{gateTestBranch: {
+				Number:            17,
+				State:             "open",
+				HeadRefOid:        "current-sha",
+				StatusCheckRollup: "pending",
+				ReviewDecision:    "APPROVED",
+				MergeStateStatus:  "BLOCKED",
+			}}},
+			errorLog: io.Discard,
+		},
+		opts: opts,
+	}
+
+	status, extras, handled := session.handleExternalGate(context.Background(), workDir, gateTestBranch, "", "run-test")
+	if !handled || status != "blocked" {
+		t.Fatalf("diagnostic gate = (%q, %#v, %t), want blocked", status, extras, handled)
+	}
+	if extras["gate"] != "pending" || extras["blocker"] != "external-gate" {
+		t.Fatalf("diagnostic live gate = %#v, want pending external gate", extras)
+	}
+	diagnostic, ok := extras["review_diagnostic"].(map[string]any)
+	if !ok || diagnostic["status"] != "invalid" || diagnostic["reason"] != gateReviewTimeoutError || diagnostic["error"] == "" {
+		t.Fatalf("retained review diagnostic = %#v, want concrete invalid-record error", extras["review_diagnostic"])
+	}
+}
+
+func TestExternalGate_ValidRetainedRequestIsEvidenceOnly(t *testing.T) {
+	workDir := testenv.MkdirShort(t, "sm-orch-")
+	writeTimedOutReviewRequest(t, workDir)
+	opts := gateTestRunOptions()
+	opts.gatePollBudget = 5 * time.Millisecond
+	session := &runSession{
+		issueNumber: 42,
+		deps: runDeps{
+			githubClient: &fakeGitHubClient{prs: map[string]*github.PR{gateTestBranch: {
+				Number:            17,
+				State:             "open",
+				HeadRefOid:        "current-sha",
+				StatusCheckRollup: "pending",
+				ReviewDecision:    "APPROVED",
+				MergeStateStatus:  "BLOCKED",
+			}}},
+			errorLog: io.Discard,
+		},
+		opts: opts,
+	}
+
+	status, extras, handled := session.handleExternalGate(context.Background(), workDir, gateTestBranch, "", "run-test")
+	if !handled || status != "blocked" || extras["gate"] != "pending" {
+		t.Fatalf("retained evidence gate = (%q, %#v, %t), want blocked live pending gate", status, extras, handled)
+	}
+	if _, ok := extras["review_request"].(map[string]any); !ok {
+		t.Fatalf("retained request evidence = %#v, want request-scoped payload", extras["review_request"])
+	}
+	diagnostic, ok := extras["review_diagnostic"].(map[string]any)
+	if !ok || diagnostic["status"] != "valid" || diagnostic["outcome"] != string(retainedReviewTimeout) {
+		t.Fatalf("retained evidence diagnostic = %#v, want valid timeout evidence", extras["review_diagnostic"])
+	}
+}
+
+func TestExternalGate_RetainedDiagnosticsDoNotConsumeLivePollTransition(t *testing.T) {
+	workDir := testenv.MkdirShort(t, "sm-orch-")
+	writeTimedOutReviewRequest(t, workDir)
+	if err := os.WriteFile(filepath.Join(workDir, ".sandman", "state", "17.review_request.json.state"), []byte("not-json"), 0o600); err != nil {
+		t.Fatalf("malform retained review state: %v", err)
+	}
+	pending := &github.PR{
+		Number:            17,
+		State:             "open",
+		HeadRefOid:        "current-sha",
+		StatusCheckRollup: "pending",
+		ReviewDecision:    "APPROVED",
+		MergeStateStatus:  "BLOCKED",
+	}
+	ready := &github.PR{
+		Number:            17,
+		State:             "open",
+		HeadRefOid:        "current-sha",
+		StatusCheckRollup: "success",
+		ReviewDecision:    "APPROVED",
+		MergeStateStatus:  "CLEAN",
+	}
+	client := &sequencedGateClient{responses: []*github.PR{pending, ready, pending}}
+	opts := gateTestRunOptions()
+	opts.gatePollBudget = 20 * time.Millisecond
+	session := &runSession{
+		deps: runDeps{githubClient: client, errorLog: io.Discard},
+		opts: opts,
+	}
+
+	status, extras, handled := session.handleExternalGate(context.Background(), workDir, gateTestBranch, "", "run-test")
+	if !handled || status != "blocked" || extras["gate"] != gateReadyToMerge {
+		t.Fatalf("live transition = (%q, %#v, %t), want ready-to-merge after polling", status, extras, handled)
+	}
+}
+
+func TestExternalGate_LocalReviewRecordStatesCannotOverrideLiveOpenPR(t *testing.T) {
+	cases := []struct {
+		name   string
+		mutate func(*testing.T, string)
+	}{
+		{
+			name: "active",
+			mutate: func(t *testing.T, workDir string) {
+				statePath := filepath.Join(workDir, ".sandman", "state", "17.review_request.json.state")
+				state, err := os.ReadFile(statePath)
+				if err != nil {
+					t.Fatalf("read review state: %v", err)
+				}
+				stateText := strings.Replace(string(state), `"state": "timed_out"`, `"state": "pending"`, 1)
+				if err := os.WriteFile(statePath, []byte(stateText), 0o600); err != nil {
+					t.Fatalf("write active review state: %v", err)
+				}
+			},
+		},
+		{
+			name: "missing",
+			mutate: func(t *testing.T, workDir string) {
+				for _, name := range []string{"17.review_request.json", "17.review_request.json.state"} {
+					if err := os.Remove(filepath.Join(workDir, ".sandman", "state", name)); err != nil {
+						t.Fatalf("remove review artifact %s: %v", name, err)
+					}
+				}
+			},
+		},
+		{
+			name: "stale",
+			mutate: func(t *testing.T, workDir string) {
+				statePath := filepath.Join(workDir, ".sandman", "state", "17.review_request.json.state")
+				state, err := os.ReadFile(statePath)
+				if err != nil {
+					t.Fatalf("read review state: %v", err)
+				}
+				stateText := strings.Replace(string(state), `"head_sha": "current-sha"`, `"head_sha": "stale-sha"`, 1)
+				if err := os.WriteFile(statePath, []byte(stateText), 0o600); err != nil {
+					t.Fatalf("write stale review state: %v", err)
+				}
+			},
+		},
+		{
+			name: "malformed JSON",
+			mutate: func(t *testing.T, workDir string) {
+				if err := os.WriteFile(filepath.Join(workDir, ".sandman", "state", "17.review_request.json.state"), []byte("not-json"), 0o600); err != nil {
+					t.Fatalf("write malformed review state: %v", err)
+				}
+			},
+		},
+		{
+			name: "malformed schema",
+			mutate: func(t *testing.T, workDir string) {
+				statePath := filepath.Join(workDir, ".sandman", "state", "17.review_request.json.state")
+				state, err := os.ReadFile(statePath)
+				if err != nil {
+					t.Fatalf("read review state: %v", err)
+				}
+				stateText := strings.Replace(string(state), `"state": "timed_out"`, `"state": "unknown"`, 1)
+				if err := os.WriteFile(statePath, []byte(stateText), 0o600); err != nil {
+					t.Fatalf("write malformed-schema review state: %v", err)
+				}
+			},
+		},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			workDir := testenv.MkdirShort(t, "sm-orch-")
+			writeTimedOutReviewRequest(t, workDir)
+			tt.mutate(t, workDir)
+			opts := gateTestRunOptions()
+			opts.gatePollBudget = 5 * time.Millisecond
+			session := &runSession{
+				issueNumber: 42,
+				deps: runDeps{
+					githubClient: &fakeGitHubClient{prs: map[string]*github.PR{gateTestBranch: {
+						Number:            17,
+						State:             "open",
+						HeadRefOid:        "current-sha",
+						StatusCheckRollup: "pending",
+						ReviewDecision:    "APPROVED",
+						MergeStateStatus:  "BLOCKED",
+					}}},
+					errorLog: io.Discard,
+				},
+				opts: opts,
+			}
+
+			status, extras, handled := session.handleExternalGate(context.Background(), workDir, gateTestBranch, "", "run-test")
+			if !handled || status != "blocked" || extras["gate"] != "pending" {
+				t.Fatalf("local record %s changed live gate: (%q, %#v, %t)", tt.name, status, extras, handled)
+			}
+			if extras["gate"] == gateReviewTimeoutError || extras["gate"] == gateReviewTimeout || extras["gate"] == gateActionableFeedback {
+				t.Fatalf("local record %s emitted terminal review gate: %#v", tt.name, extras)
+			}
+		})
+	}
+}
+
+func TestExternalGate_LiveFailedStatePrecedesActionableEvidence(t *testing.T) {
 	workDir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(workDir)
 
@@ -741,7 +1180,7 @@ func TestExternalGate_LateFormalChangesRequestedRejectsStaleEvidence(t *testing.
 	}
 }
 
-func TestExternalGate_ReviewTimeoutPreservesAgentFailureRetryBehavior(t *testing.T) {
+func TestExternalGate_AgentFailureRetryPrecedesLiveReadyGate(t *testing.T) {
 	workDir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(workDir)
 	branch := gateTestBranch
@@ -795,7 +1234,7 @@ func TestExternalGate_ReviewTimeoutPreservesAgentFailureRetryBehavior(t *testing
 	}
 }
 
-func TestExternalGate_ReviewTimeoutRejectsStaleOrMalformedState(t *testing.T) {
+func TestExternalGate_MergedCompletionIgnoresStaleOrMalformedState(t *testing.T) {
 	workDir := testenv.MkdirShort(t, "sm-orch-")
 	t.Chdir(workDir)
 	worktreePath := filepath.Join(workDir, "worktree")

@@ -261,6 +261,88 @@ func TestReviewRegistration_RejectsSameTriggerFromStaleCanonicalHead(t *testing.
 	}
 }
 
+func TestReviewRegistration_StaleCanonicalHeadRefreshesLiveGate(t *testing.T) {
+	workDir := testenv.MkdirShort(t, "sm-review-registration-")
+	now := time.Date(2026, 8, 14, 20, 0, 0, 0, time.UTC)
+	trigger := github.PRComment{
+		ID:        "trigger-stale-gate",
+		Body:      "/sandman review",
+		CreatedAt: now.Add(-time.Minute),
+	}
+	seedClient := &registrationGitHubClient{
+		fakeGitHubClient: fakeGitHubClient{prs: map[string]*github.PR{gateTestBranch: {
+			Number:      40,
+			State:       "open",
+			HeadRefName: gateTestBranch,
+			HeadRefOid:  "stale-sha",
+		}}},
+		comments: []github.PRComment{trigger},
+	}
+	seedSession := &runSession{
+		deps: runDeps{githubClient: seedClient, errorLog: io.Discard},
+		renderCfg: prompt.RenderConfig{
+			ReviewCommand: "/sandman review",
+			ReviewTimeout: 600,
+		},
+		reviewRegistrationNow:  func() time.Time { return now },
+		reviewAttemptStartedAt: now.Add(-2 * time.Minute),
+	}
+	if err := seedSession.registerReviewRequest(context.Background(), workDir, &github.PR{
+		Number:      40,
+		State:       "open",
+		HeadRefName: gateTestBranch,
+		HeadRefOid:  "stale-sha",
+	}, "stale-sha"); err != nil {
+		t.Fatalf("seed stale generation: %v", err)
+	}
+
+	client := &registrationGateSnapshotClient{
+		comments: []github.PRComment{trigger},
+		responses: []*github.PR{
+			{
+				Number:            40,
+				State:             "open",
+				HeadRefName:       gateTestBranch,
+				HeadRefOid:        "current-sha",
+				StatusCheckRollup: "success",
+				ReviewDecision:    "APPROVED",
+				MergeStateStatus:  "CLEAN",
+			},
+			{
+				Number:            40,
+				State:             "open",
+				HeadRefName:       gateTestBranch,
+				HeadRefOid:        "current-sha",
+				StatusCheckRollup: "pending",
+				MergeStateStatus:  "BLOCKED",
+			},
+		},
+	}
+	session := &runSession{
+		deps: runDeps{githubClient: client, errorLog: io.Discard},
+		renderCfg: prompt.RenderConfig{
+			ReviewCommand: "/sandman review",
+			ReviewTimeout: 600,
+		},
+		opts: runSessionOptions{
+			currentHead:      func(string) (string, error) { return "current-sha", nil },
+			gatePollInitial:  time.Millisecond,
+			gatePollMaxSleep: time.Millisecond,
+			gatePollBudget:   5 * time.Millisecond,
+		},
+		reviewRegistrationNow:  func() time.Time { return now },
+		reviewAttemptStartedAt: now.Add(-2 * time.Minute),
+	}
+
+	status, extras, handled := session.handleExternalGate(context.Background(), workDir, gateTestBranch, "", "run-test")
+	if !handled || status != "blocked" || extras["gate"] != "pending" {
+		t.Fatalf("stale canonical gate = (%q, %#v, %t), want blocked/pending", status, extras, handled)
+	}
+	if client.calls < 2 {
+		t.Fatalf("PR lookups = %d, want initial and refreshed live snapshots", client.calls)
+	}
+}
+
 func TestReviewRegistration_ReaderRejectsMismatchedCurrentHead(t *testing.T) {
 	workDir := testenv.MkdirShort(t, "sm-review-registration-")
 	now := time.Date(2026, 8, 14, 20, 0, 0, 0, time.UTC)
@@ -1061,6 +1143,9 @@ func TestReviewRegistration_HeadRefreshFailureDoesNotReuseReadySnapshot(t *testi
 			livePR.HeadRefOid = "new-sha"
 		case 3:
 			client.findPRErr = errors.New("refresh unavailable")
+		case 4:
+			client.findPRErr = nil
+			livePR.HeadRefOid = "old-sha"
 		}
 	}
 	session := &runSession{
@@ -1075,8 +1160,8 @@ func TestReviewRegistration_HeadRefreshFailureDoesNotReuseReadySnapshot(t *testi
 	}
 
 	status, extras, handled := session.handleExternalGate(context.Background(), workDir, gateTestBranch, "", "run-test")
-	if !handled || status != "blocked" || extras["gate"] == gateReadyToMerge {
-		t.Fatalf("head refresh failure gate = (%q, %#v, %t), must not reuse ready snapshot", status, extras, handled)
+	if !handled || status != "blocked" || extras["gate"] != "pending" {
+		t.Fatalf("head refresh failure gate = (%q, %#v, %t), want blocked/pending", status, extras, handled)
 	}
 }
 

@@ -203,7 +203,6 @@ func (s *runSession) handleExternalGateWithHostPaths(ctx context.Context, workDi
 	if s.deps.githubClient == nil {
 		return "", nil, false
 	}
-
 	// The live pull request is authoritative. Local review records can enrich
 	// the result, but they must not decide whether the run is terminal.
 	headSHA := s.currentGateHead(workDir)
@@ -211,8 +210,8 @@ func (s *runSession) handleExternalGateWithHostPaths(ctx context.Context, workDi
 		headSHA = ""
 	}
 	pr, err := lookupPRForExternalGate(ctx, s.deps.githubClient, branch)
-	initialPR := pr
 	initialUnavailable := err != nil
+	refreshUnavailable := false
 	gate := "none"
 	if err != nil && s.deps.errorLog != nil {
 		fmt.Fprintf(s.deps.errorLog, "warning: external gate lookup for branch %q: %v\n", branch, err)
@@ -232,16 +231,11 @@ func (s *runSession) handleExternalGateWithHostPaths(ctx context.Context, workDi
 				if s.deps.errorLog != nil {
 					fmt.Fprintf(s.deps.errorLog, "warning: external gate refresh for branch %q: %v\n", branch, refreshErr)
 				}
-				if headChanged {
-					// A known head change must not fall back to a snapshot that
-					// may authorize approval for the wrong generation.
-					pr = nil
-					gate = "pending"
-				} else {
-					// A registration observation failure must not replace the
-					// already observed live gate with a synthetic pending state.
-					pr = initialPR
-				}
+				// A requested refresh has no safe fallback. Do not reuse a
+				// pre-registration snapshot or poll until it can be replaced.
+				pr = nil
+				gate = "pending"
+				refreshUnavailable = true
 				err = nil
 			} else {
 				pr = refreshedPR
@@ -255,6 +249,9 @@ func (s *runSession) handleExternalGateWithHostPaths(ctx context.Context, workDi
 
 	if gate == "none" {
 		return "", nil, false
+	}
+	if refreshUnavailable {
+		return s.blockExternalGateWithDiagnostics(ctx, workDir, logPath, runID, "pending", nil)
 	}
 	var diagnostics map[string]any
 	if gate != "resolved" && pr != nil {

@@ -490,6 +490,7 @@ func TestPortal_ReviewAggregation_HonorsCanonicalRowID(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(reviewRunDir, "decision.md"), []byte("## Decision\n**APPROVED**\n"), 0644); err != nil {
 		t.Fatalf("write review decision.md: %v", err)
 	}
+	writeReviewPublicationFixture(t, reviewRunDir, "success", startedAt.Add(7*time.Minute), "")
 	reviewLayout := paths.NewLayout(nil, repoRoot)
 	reviewIdx := &batchindex.Index{
 		Version: batchindex.IndexVersion,
@@ -589,6 +590,7 @@ func TestPortal_ParentImplRow_ReviewCountAndVerdictSurviveSummaryStrip(t *testin
 	if err := os.WriteFile(filepath.Join(reviewRunDir, "decision.md"), []byte("## Decision\n**APPROVED**\n"), 0644); err != nil {
 		t.Fatalf("write review decision.md: %v", err)
 	}
+	writeReviewPublicationFixture(t, reviewRunDir, "success", startedAt.Add(7*time.Minute), "")
 	reviewLayout := paths.NewLayout(nil, repoRoot)
 	reviewIdx := &batchindex.Index{
 		Version: batchindex.IndexVersion,
@@ -665,6 +667,7 @@ func TestAggregateReviewChildren_StampLandsOnCanonicalParent(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(reviewRunDir, "decision.md"), []byte("## Decision\n**APPROVED**\n"), 0644); err != nil {
 		t.Fatalf("write decision.md: %v", err)
 	}
+	writeReviewPublicationFixture(t, reviewRunDir, "success", reviewFinished, "")
 	layout := paths.NewLayout(nil, repoRoot)
 	makeReview := func() portalRun {
 		return portalRun{
