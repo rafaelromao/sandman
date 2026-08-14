@@ -193,12 +193,10 @@ not trust a local record as a substitute for the remote pull-request state.
 
 The guard either permits delivery, refuses because the newest request is still
 unanswered, or refuses because the remote evidence is uncertain. An unanswered
-newest trigger is refused even when the local request record is absent. A
-failed GitHub query, malformed ID or timestamp, incomplete response payload,
-pagination failure, equal trigger timestamps, or any other query, parsing,
-pagination, or ordering uncertainty also refuses delivery. A trusted prior
-request may use the existing stale-head exception only when it proves that the
-newest unanswered trigger belongs to an older head.
+newest trigger is refused even when the local request record is absent. Missing,
+malformed, incomplete, or ambiguously ordered remote evidence also refuses
+delivery. A trusted prior request may use the existing stale-head exception
+only when it proves that the newest unanswered trigger belongs to an older head.
 
 The guard is read-only. On either refusal, record the delivery reason
 and stop before posting. This is a retryable request-delivery refusal: do not
@@ -395,12 +393,11 @@ An envelope with `state:"unavailable"` is structured failure, never approval.
 
 Before Step 6, retain the existing self-check: when `top > 0`, `reviews == 0`,
 and `inline == 0`, and no previous `{{REVIEW_COMMAND}}` request is already
-pending, run `check_review_trigger_delivery` again immediately before you
+pending, run the same delivery check again immediately before you
 post a follow-up beginning with `{{REVIEW_COMMAND}}` asking the reviewer to clarify.
-This is a reviewer-directed follow-up; the guard still runs before posting.
-Apply the same `allow`/`block`/`uncertain` handling; do not
-post when the newest trigger is unanswered or the guard cannot establish its
-ordering. If a request is already pending, do not pile on another trigger.
+This is a reviewer-directed follow-up; the guard still runs before posting. Do
+not post when the newest trigger is unanswered or its ordering cannot be
+established. If a request is already pending, do not pile on another trigger.
 This is reviewer communication, not a new response classification. The guarded
 post does not create a second request lifecycle authority.
 

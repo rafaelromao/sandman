@@ -444,7 +444,7 @@ func TestPRReviewSkill_UsesFailClosedTriggerGuardBeforeEveryCommandPost(t *testi
 		"Before every command-prefixed post",
 		"This includes the Step 5 reviewer clarification/follow-up",
 		"unanswered-trigger",
-		"ordering uncertainty also refuses delivery",
+		"ambiguously ordered remote evidence also refuses",
 		"external-gate state",
 		"The guard is read-only",
 	} {
