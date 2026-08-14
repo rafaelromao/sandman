@@ -62,6 +62,50 @@ func TestSyncReviewPost_PersistsConfirmedPrimaryTrigger(t *testing.T) {
 	assertPostCount(t, postMarker, 1)
 }
 
+func TestSyncReviewPost_BlocksUnansweredTriggerBeforePost(t *testing.T) {
+	root, skillText := installRenderedPRReviewSkill(t)
+	workDir := t.TempDir()
+	stateDir := filepath.Join(workDir, ".sandman", "state")
+	if err := os.MkdirAll(stateDir, 0o755); err != nil {
+		t.Fatalf("create state directory: %v", err)
+	}
+	requestFile := filepath.Join(stateDir, "42.review_request.json")
+	headFile := filepath.Join(stateDir, "42.head_sha")
+	bin := t.TempDir()
+	postMarker := filepath.Join(t.TempDir(), "post-count")
+	writeBlockedReviewGH(t, bin)
+
+	script := reviewBlockedHarnessScript(
+		root,
+		reviewGuardBlock(t, skillText, requestFile, headFile),
+	)
+	runReviewHarness(t, script, workDir, bin, root, postMarker)
+
+	if _, err := os.Stat(postMarker); !os.IsNotExist(err) {
+		t.Fatalf("blocked rendered path posted a comment, stat error = %v", err)
+	}
+	record, err := os.ReadFile(postMarker + ".guard")
+	if err != nil {
+		t.Fatalf("blocked rendered path did not record the refusal: %v", err)
+	}
+	if !strings.Contains(string(record), "REVIEW_TRIGGER_GUARD_BLOCKED") {
+		t.Fatalf("guard refusal record = %q", record)
+	}
+	if _, err := os.Stat(requestFile); !os.IsNotExist(err) {
+		t.Fatalf("blocked rendered path created request envelope, stat error = %v", err)
+	}
+	if _, err := os.Stat(headFile); !os.IsNotExist(err) {
+		t.Fatalf("blocked rendered path created head sidecar, stat error = %v", err)
+	}
+	entries, err := os.ReadDir(stateDir)
+	if err != nil {
+		t.Fatalf("read blocked state directory: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("blocked rendered path created state files: %v", entryNames(entries))
+	}
+}
+
 func TestSyncReviewPost_UpdatesExistingEnvelopeForFollowUp(t *testing.T) {
 	root, skillText := installRenderedPRReviewSkill(t)
 	workDir := t.TempDir()
@@ -195,6 +239,17 @@ func reviewHarnessScript(root, firstBlock, secondBlock string) string {
 	}, "\n")
 }
 
+func reviewBlockedHarnessScript(root, guardBlock string) string {
+	return strings.Join([]string{
+		"set -eu",
+		"export SANDMAN_SKILL_ROOT=" + shellQuote(root),
+		"head_sha=" + reviewHeadSHA,
+		"record() { printf '%s\\n' \"$*\" > \"$GUARD_RECORD_MARKER\"; exit 0; }",
+		guardBlock,
+		"printf '%s\\n' unexpected-post",
+	}, "\n")
+}
+
 func runReviewHarness(t *testing.T, script, workDir, bin, root, postMarker string) {
 	t.Helper()
 	cmd := exec.Command("sh", "-c", script)
@@ -203,6 +258,7 @@ func runReviewHarness(t *testing.T, script, workDir, bin, root, postMarker strin
 		"PATH="+bin+":"+os.Getenv("PATH"),
 		"SANDMAN_SKILL_ROOT="+root,
 		"POST_MARKER="+postMarker,
+		"GUARD_RECORD_MARKER="+postMarker+".guard",
 	)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
@@ -231,6 +287,30 @@ fi
 if [ "$1" = "pr" ] && [ "$2" = "comment" ]; then
   printf x >> "$POST_MARKER"
   printf '%s\n' 'https://github.com/owner/repo/pull/42#issuecomment-1001'
+  exit 0
+fi
+exit 2
+`)
+}
+
+func writeBlockedReviewGH(t *testing.T, bin string) {
+	t.Helper()
+	writeReviewGH(t, bin, `#!/bin/sh
+if [ "$1" = "pr" ] && [ "$2" = "view" ]; then
+  printf '%s\n' '{"headRefOid":"abc123"}'
+  exit 0
+fi
+if [ "$1" = "api" ]; then
+  case "$2" in
+    */issues/*/comments) printf '%s\n' '[{"id":1001,"html_url":"https://github.com/owner/repo/pull/42#issuecomment-1001","body":"/sandman review","created_at":"2026-08-11T18:00:01Z"}]' ;;
+    */reviews|*/comments) printf '%s\n' '[]' ;;
+    *) exit 2 ;;
+  esac
+  exit 0
+fi
+if [ "$1" = "pr" ] && [ "$2" = "comment" ]; then
+  printf x >> "$POST_MARKER"
+  printf '%s\n' 'https://github.com/owner/repo/pull/42#issuecomment-1002'
   exit 0
 fi
 exit 2
