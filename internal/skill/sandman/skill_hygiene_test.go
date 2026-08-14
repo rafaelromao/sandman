@@ -375,6 +375,40 @@ func TestCodeReviewSkill_SelfReviewUsesBoundedCommonPacket(t *testing.T) {
 	}
 }
 
+func TestCodeReviewSkill_SupportsStandaloneSelfReview(t *testing.T) {
+	text, ok := readSkillMarkdown(t)["code-review/SKILL.md"]
+	if !ok {
+		t.Fatal("expected code-review/SKILL.md")
+	}
+
+	start := strings.Index(text, "## Self-review context")
+	end := strings.Index(text, "## Pull-request review context")
+	if start < 0 || end < start {
+		t.Fatal("could not isolate self-review context")
+	}
+	selfReview := text[start:end]
+
+	for _, phrase := range []string{
+		"Standalone self-review",
+		"without a parent delegator",
+		"the skill is the packet owner",
+		"explicitly supplied fixed point",
+		"`origin/main` when available",
+		"`HEAD~1`",
+		"`git status --short`",
+		"task/specification path or content supplied by the invocation",
+		"`.sandman/task.md`",
+		"no spec available",
+		"changed paths",
+		"explicitly selected standards sources",
+		"must not scan the repository",
+	} {
+		if !strings.Contains(selfReview, phrase) {
+			t.Errorf("self-review context missing standalone contract %q", phrase)
+		}
+	}
+}
+
 func TestImplementSkill_SelfReviewParentSelectsBoundedContext(t *testing.T) {
 	text, ok := readSkillMarkdown(t)["implement/SKILL.md"]
 	if !ok {
@@ -446,6 +480,9 @@ func TestCodeReviewSkill_DaemonContextDoesNotUseSelfReviewPacket(t *testing.T) {
 	}
 
 	for _, phrase := range []string{
+		"When pull-request context is supplied, use only the pull-request review context",
+		"does not construct or delegate a self-review packet",
+		"read-only",
 		"Those inputs are authoritative.",
 		"current review worktree",
 		"atomic temp-file-and-rename write",

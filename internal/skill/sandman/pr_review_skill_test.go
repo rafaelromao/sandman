@@ -106,6 +106,32 @@ func TestPRReviewSkill_PromptRulePreserved(t *testing.T) {
 	}
 }
 
+func TestPRReviewPrompt_UsesDaemonReviewContextOnly(t *testing.T) {
+	prompt := readPRReviewPrompt(t)
+
+	for _, phrase := range []string{
+		"Load `sandman-code-review` and use its pull-request review context",
+		"The current pull request is",
+		"The current worktree is the review worktree",
+		"You are read-only",
+	} {
+		if !strings.Contains(prompt, phrase) {
+			t.Errorf("daemon review prompt missing context boundary %q", phrase)
+		}
+	}
+
+	for _, forbidden := range []string{
+		"Standalone self-review",
+		"parent workflow supplies one bounded review packet",
+		"git diff <fixed-point>...HEAD",
+		"construct or delegate a self-review packet",
+	} {
+		if strings.Contains(prompt, forbidden) {
+			t.Errorf("daemon review prompt must not select standalone self-review behavior %q", forbidden)
+		}
+	}
+}
+
 func TestPRReviewSkill_BehavioralSmoke(t *testing.T) {
 	text := readPRReviewSkill(t)
 

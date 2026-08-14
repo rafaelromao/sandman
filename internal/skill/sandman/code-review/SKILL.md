@@ -11,9 +11,13 @@ Use one of the explicit contexts below. Keep Standards and Spec findings separat
 
 Use this context when an implementor reviews its own changes.
 
+This context supports parent-delegated and standalone self-review. In a standalone self-review, without a parent delegator, the skill is the packet owner. It must use an explicitly supplied fixed point when one is provided; otherwise use `origin/main` when available, then the current branch's upstream, then `HEAD~1`. If no historical baseline exists, use `HEAD` as the committed baseline. Use `git status --short` to enumerate untracked paths without scanning the repository for additional context.
+
+Standalone self-review takes task/specification path or content supplied by the invocation or from `.sandman/task.md`. If no authoritative specification is available, the Spec output records `no spec available` while Standards continues. It derives the changed paths from the captured packet and uses explicitly selected standards sources relevant to those paths. It must not scan the repository, infer missing sources, or broaden the packet.
+
 ### 1. Receive the bounded review packet
 
-The parent workflow supplies one bounded review packet before delegating self-review. The parent must capture the packet once, then pass the same packet to both reviewers. The common packet must include:
+The parent workflow supplies one bounded review packet before delegating self-review. In standalone mode, this skill captures the same packet itself. The packet owner must capture the packet once, then pass the same packet to both reviewers. The common packet must include:
 
 - The fixed-point identity and the commit list as text context.
 - The committed branch diff from `git diff <fixed-point>...HEAD`.
@@ -24,7 +28,7 @@ Reviewers must treat this packet as immutable: they must not recompute, widen, o
 
 ### 2. Delegate separate review axes
 
-Launch two separate review agents and keep their findings separate. Give the Standards reviewer the common packet, the changed-path list, and only the standards sources that the parent workflow explicitly selected as relevant to those paths. Give the Spec reviewer the common packet and the authoritative task/specification context supplied by the parent. Neither reviewer infers, fetches, or substitutes the other axis's context.
+Launch two separate review agents and keep their findings separate. Give the Standards reviewer the common packet, the changed-path list, and only the standards sources that the parent workflow explicitly selected as relevant to those paths; in standalone mode, the skill makes that explicit selection from the invocation's authoritative sources. Give the Spec reviewer the common packet and the authoritative task/specification context supplied by the parent or standalone invocation. Neither reviewer infers, fetches, or substitutes the other axis's context.
 
 Each reviewer reports findings only for its assigned axis, with source citations from the supplied material. The Standards output covers documented-standard violations; the Spec output covers missing, partial, incorrect, and out-of-scope behavior against the supplied specification.
 
@@ -46,6 +50,8 @@ Report under `## Standards` and `## Spec` headings. State the finding count for 
 ## Pull-request review context
 
 Use this context only when the invocation supplies pull-request title, body, acceptance criteria, review focus, prior-review state, and the destination for the decision artifact. Those inputs are authoritative. Work only in the current review worktree.
+
+When pull-request context is supplied, use only the pull-request review context. The daemon reviewer is read-only and does not construct or delegate a self-review packet; it evaluates the supplied change and writes the decision artifact for the surrounding workflow.
 
 Do not trigger, poll, fetch, post to, merge, commit to, push to, or remediate the pull request. Do not ask for additional context. The surrounding workflow owns pull-request orchestration and posting; this context only evaluates the supplied change and writes the decision artifact.
 
