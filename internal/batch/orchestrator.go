@@ -875,10 +875,12 @@ func NewOrchestrator(githubClient github.Client, renderer prompt.IssueRenderer, 
 		layout:        paths.NewLayout(&config.Config{}, root),
 		lookupGHToken: defaultLookupGHToken,
 		runSessionOpts: runSessionOptions{
-			baseBranchSyncMu: &sync.Mutex{},
-			gatePollInitial:  120 * time.Second,
-			gatePollMaxSleep: 600 * time.Second,
-			gatePollBudget:   1800 * time.Second,
+			baseBranchSyncMu:        &sync.Mutex{},
+			contextRolloverLiterals: append([]string(nil), ContextRolloverLiteralAdditions...),
+			taskWriter:              atomicfs.WriteAtomic,
+			gatePollInitial:         120 * time.Second,
+			gatePollMaxSleep:        600 * time.Second,
+			gatePollBudget:          1800 * time.Second,
 		},
 		badgeHooker:  nopBadgeHooker{},
 		coordinators: make(map[*batchCoordinator]struct{}),
@@ -942,6 +944,14 @@ func WithErrorLog(w io.Writer) OrchestratorOpt {
 // after this option is applied, so passing a fresh runSessionOptions{} is safe.
 func WithRunSessionOpts(opts runSessionOptions) OrchestratorOpt {
 	return func(o *Orchestrator) { o.runSessionOpts = opts }
+}
+
+// WithContextRolloverLiteralAdditions overrides the additive literal catalog
+// for one orchestrator without mutating the process-wide default.
+func WithContextRolloverLiteralAdditions(values []string) OrchestratorOpt {
+	return func(o *Orchestrator) {
+		o.runSessionOpts.contextRolloverLiterals = append([]string(nil), values...)
+	}
 }
 
 func WithHeartbeatTickInterval(d time.Duration) OrchestratorOpt {
@@ -1663,7 +1673,8 @@ func (o *Orchestrator) logAborted(issueNum int, runID string, abortedBy []int) {
 // mapRetryReason picks the closed-vocabulary reason for a run.retry emit
 // from the previous attempt's status, the heartbeat-trips signal, and the
 // parent context. The vocabulary (agent-stalled, agent-failed,
-// sandbox-timeout, kill-timeout, manual) is locked in ADR-0035 (#1498)
+// sandbox-timeout, kill-timeout, manual, context-exhausted) is locked in
+// ADR-0030 and the context-rollover contract
 // and must not be silently extended. If a future code path
 // surfaces a status that does not map to a known arm, the function
 // panics so the new condition is added to the ADR and the mapping
@@ -1806,25 +1817,28 @@ func expandPath(path string) (string, error) {
 }
 
 // runSessionOptions bundles the test-injection hooks consumed by runSession
-// (the function overrides, gate-poll policy, and test-tunable killTimeout) together with
-// the shared baseBranchSyncMu mutex that gates syncBaseBranch. The function
-// and timeout fields exist so tests in this package can override behaviour
-// that would otherwise touch the network, run real git, or sleep for the
-// production timeout. The baseBranchSyncMu pointer is initialised once per Orchestrator
+// (including the context detector literals and Task writer), the gate-poll
+// policy, and the test-tunable killTimeout together with the shared
+// baseBranchSyncMu mutex that gates syncBaseBranch. The function and timeout
+// fields exist so tests in this package can override behaviour that would
+// otherwise touch the network, run real git, or sleep for the production
+// timeout. The baseBranchSyncMu pointer is initialised once per Orchestrator
 // in NewOrchestrator and shared across all sessions via this struct's value
 // copy at construction time, so that concurrent calls to syncBaseBranch
 // serialise on the same mutex. If baseBranchSyncMu is ever converted from a
-// pointer to a value type, update runSingle / runPromptOnlySingle to share
-// it explicitly — otherwise serialisation will silently break.
+// pointer to a value type, update runSingle / runPromptOnlySingle to share it
+// explicitly — otherwise serialisation will silently break.
 type runSessionOptions struct {
-	baseBranchSync   func(repoPath, sourceBranch string) error
-	baseBranchSyncMu *sync.Mutex
-	retryReset       func(ctx context.Context, sb sandbox.Sandbox, branch, baseBranch string) error
-	killTimeout      time.Duration
-	currentHead      func(workDir string) (string, error)
-	gatePollInitial  time.Duration
-	gatePollMaxSleep time.Duration
-	gatePollBudget   time.Duration
+	baseBranchSync          func(repoPath, sourceBranch string) error
+	baseBranchSyncMu        *sync.Mutex
+	contextRolloverLiterals []string
+	taskWriter              func(string, []byte, os.FileMode) error
+	retryReset              func(ctx context.Context, sb sandbox.Sandbox, branch, baseBranch string) error
+	killTimeout             time.Duration
+	currentHead             func(workDir string) (string, error)
+	gatePollInitial         time.Duration
+	gatePollMaxSleep        time.Duration
+	gatePollBudget          time.Duration
 }
 
 // runSession owns the per-AgentRun state and lifecycle for a single issue
@@ -2577,7 +2591,7 @@ func (s *runSession) runOnce(
 	logPath string,
 	runID string,
 	mergeRequired bool,
-	prepareAttempt func(attempt int) (prompt.RenderConfig, *AgentRunResult),
+	prepareAttempt func(attempt int, previous AgentRunResult) (prompt.RenderConfig, *AgentRunResult),
 ) (AgentRunResult, map[string]any, bool) {
 	if s.renderCfg.PromptFile == "" {
 		s.renderCfg.PromptFile = filepath.Join(".", ".sandman", "prompt.md")
@@ -2598,13 +2612,16 @@ func (s *runSession) runOnce(
 	var terminalExtras map[string]any
 loop:
 	for attempt := 0; attempt < attempts; attempt++ {
-		attemptRenderCfg, errResult := prepareAttempt(attempt)
+		attemptRenderCfg, errResult := prepareAttempt(attempt, result)
 		if errResult != nil {
 			return *errResult, nil, events.RunStatusFromPayload(errResult.Status).IsSuccess()
 		}
 
 		if attempt > 0 {
 			reason := mapRetryReason(result.Status, abortedByHeartbeat, s.parentCtx)
+			if result.ContextExhausted {
+				reason = contextExhaustedRetryReason
+			}
 			logRetry(s.deps.eventLog, runID, branch, attempt+1, attempts, result.Status, reason, logPath, s.issueNumber)
 		}
 
@@ -2633,6 +2650,10 @@ loop:
 		if agentRun, ok := runnable.(*AgentRun); ok {
 			agentRun.env = s.agentCfg.Env
 			agentRun.preset = s.agentCfg.Preset
+			agentRun.contextRolloverLiterals = append([]string(nil), s.opts.contextRolloverLiterals...)
+			if s.opts.taskWriter != nil {
+				agentRun.taskWriter = s.opts.taskWriter
+			}
 			agentRun.model = s.agentCfg.Model
 			agentRun.modelProvider = s.agentCfg.ModelProvider
 			agentRun.modelName = s.agentCfg.ModelName
@@ -2787,6 +2808,12 @@ loop:
 		}
 	}
 
+	if result.ContextExhausted {
+		if terminalExtras == nil {
+			terminalExtras = make(map[string]any)
+		}
+		terminalExtras["context_exhausted"] = true
+	}
 	return result, terminalExtras, true
 }
 
@@ -3005,7 +3032,7 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 	}
 
 	logPath := s.runLogPathFor(runID)
-	result, terminalExtras, started := s.runOnce(ctx, issue, branch, wt, logPath, runID, s.mode != ModeContinue, func(attempt int) (prompt.RenderConfig, *AgentRunResult) {
+	result, terminalExtras, started := s.runOnce(ctx, issue, branch, wt, logPath, runID, s.mode != ModeContinue, func(attempt int, previous AgentRunResult) (prompt.RenderConfig, *AgentRunResult) {
 		attemptRenderCfg := s.renderCfg
 		if attempt > 0 {
 			// Pre-retry guard: if the PR was merged between attempts (e.g. the
@@ -3031,9 +3058,14 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 				fmt.Fprintf(s.deps.errorLog, "error: read task for issue %d: %v\n", s.issueNumber, err)
 				return attemptRenderCfg, &AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "failure", Branch: branch, RetriesTotal: attempt}
 			}
-			attemptRenderCfg.TaskPrompt = prompt.ContinuationTaskPromptWithReviewTimeout(taskContent, s.renderCfg.ReviewTimeout)
+			if previous.ContextExhausted {
+				attemptRenderCfg.TaskPrompt = prompt.ContextRecoveryTaskPrompt(taskContent, s.renderCfg.ReviewTimeout)
+				attemptRenderCfg.ContextRecovery = true
+			} else {
+				attemptRenderCfg.TaskPrompt = prompt.ContinuationTaskPromptWithReviewTimeout(taskContent, s.renderCfg.ReviewTimeout)
+			}
 			attemptRenderCfg.RenderedPromptFile = filepath.Join(".", ".sandman", "task.md")
-			if !taskExists && openPR == nil {
+			if !taskExists && openPR == nil && !previous.ContextExhausted {
 				if prLookupErr != nil {
 					fmt.Fprintf(s.deps.errorLog, "error: lookup PR for issue %d: %v\n", s.issueNumber, prLookupErr)
 					return attemptRenderCfg, &AgentRunResult{IssueNumber: s.issueNumber, Issue: issueRef(s.issueNumber), Status: "failure", Branch: branch, RetriesTotal: attempt}
@@ -3411,11 +3443,13 @@ func (s *runSession) executePromptOnly(ctx context.Context) (AgentRunResult, boo
 	}
 
 	logPath := s.runLogPathFor(runID)
-	result, terminalExtras, started := s.runOnce(ctx, nil, branch, wt, logPath, runID, false, func(attempt int) (prompt.RenderConfig, *AgentRunResult) {
+	result, terminalExtras, started := s.runOnce(ctx, nil, branch, wt, logPath, runID, false, func(attempt int, previous AgentRunResult) (prompt.RenderConfig, *AgentRunResult) {
 		if attempt > 0 {
-			if err := resetRetryBranch(s.deps.runSessionOpts, ctx, wt, branch, s.baseBranch); err != nil {
-				fmt.Fprintf(s.deps.errorLog, "error: reset retry branch for prompt-only run: %v\n", err)
-				return prompt.RenderConfig{}, &AgentRunResult{Status: "failure", Branch: branch, RetriesTotal: attempt, Review: s.review, RunID: s.runID}
+			if !previous.ContextExhausted {
+				if err := resetRetryBranch(s.deps.runSessionOpts, ctx, wt, branch, s.baseBranch); err != nil {
+					fmt.Fprintf(s.deps.errorLog, "error: reset retry branch for prompt-only run: %v\n", err)
+					return prompt.RenderConfig{}, &AgentRunResult{Status: "failure", Branch: branch, RetriesTotal: attempt, Review: s.review, RunID: s.runID}
+				}
 			}
 			if err := logRetryMarkerFn(logPath, attempt, s.retries); err != nil {
 				if s.deps.errorLog != nil {
@@ -3433,7 +3467,12 @@ func (s *runSession) executePromptOnly(ctx context.Context) (AgentRunResult, boo
 				if taskContent == "" {
 					taskContent = EmptyTaskTemplate
 				}
-				attemptCfg.TaskPrompt = prompt.ContinuationTaskPromptWithReviewTimeout(taskContent, s.renderCfg.ReviewTimeout)
+				if previous.ContextExhausted {
+					attemptCfg.TaskPrompt = prompt.ContextRecoveryTaskPrompt(taskContent, s.renderCfg.ReviewTimeout)
+					attemptCfg.ContextRecovery = true
+				} else {
+					attemptCfg.TaskPrompt = prompt.ContinuationTaskPromptWithReviewTimeout(taskContent, s.renderCfg.ReviewTimeout)
+				}
 				attemptCfg.RenderedPromptFile = filepath.Join(".", ".sandman", "task.md")
 			}
 		}

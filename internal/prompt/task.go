@@ -8,6 +8,7 @@ import (
 )
 
 const continuationFreshnessGuardHeading = "## Continuation Freshness Guard"
+const contextRecoveryGuardHeading = "## Context Recovery Guard"
 
 const (
 	reviewTimeoutContextHeading = "## Sandman Runtime Context"
@@ -26,6 +27,20 @@ Before acting on any persisted blocker or next action:
 4. If the blocker still exists, refresh its evidence and next executable action before following it.
 
 Never stop or exit solely because an earlier attempt recorded a blocker.`
+
+var contextRecoveryGuard = `## Context Recovery Guard
+
+This is a clean OpenCode session after the previous session exhausted its context. Do not resume implementation from memory.
+
+Before changing implementation files:
+
+The recovery checkpoint must be durable before implementation resumes.
+
+1. Reconstruct the handoff from the current worktree, git status and diff, recent commits, run log, and this Task.
+2. Write a durable checkpoint and handoff summary into this Task, including completed work, remaining work, validation, and the next step.
+3. Only after the checkpoint is durable, continue implementation from that reconstructed state.
+
+Preserve both committed and uncommitted work unless the current Task explicitly directs otherwise.`
 
 // ContinuationTaskPrompt returns the resume prompt for `sandman run --continue`
 // while preserving the verbatim content of `.sandman/task.md`. The previous
@@ -50,6 +65,21 @@ func ContinuationTaskPrompt(content string) string {
 // runtime context reflects the current AgentRun's effective review budget.
 func ContinuationTaskPromptWithReviewTimeout(content string, reviewTimeout int) string {
 	return continuationTaskPrompt(content, reviewTimeout)
+}
+
+// ContextRecoveryTaskPrompt composes the preserved Task with a canonical,
+// checkpoint-first recovery instruction for a fresh OpenCode session. An
+// existing recovery section is preserved so a checkpoint written inside it is
+// not discarded when a retry is itself retried.
+func ContextRecoveryTaskPrompt(content string, reviewTimeout int) string {
+	if strings.Contains(content, contextRecoveryGuardHeading) {
+		if reviewTimeout > 0 {
+			content = EnsureReviewTimeoutContext(content, reviewTimeout)
+		}
+		return trimTrailingNewlines(content) + "\n"
+	}
+	content = continuationTaskPrompt(content, reviewTimeout)
+	return trimTrailingNewlines(content) + "\n\n" + contextRecoveryGuard + "\n"
 }
 
 func continuationTaskPrompt(content string, reviewTimeout int) string {

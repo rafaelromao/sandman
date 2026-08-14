@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/rafaelromao/sandman/internal/atomicfs"
 	"github.com/rafaelromao/sandman/internal/config"
@@ -35,10 +36,13 @@ type AgentRun struct {
 	sessionName                string
 	sandbox                    sandbox.Sandbox
 	status                     string
+	contextExhausted           bool
+	contextRolloverLiterals    []string
 	env                        map[string]string
 	outputWriter               io.Writer
 	layout                     paths.Layout
 	runFolder                  string
+	taskWriter                 func(string, []byte, os.FileMode) error
 }
 
 // NewAgentRun creates an AgentRun for the given issue, branch, and sandbox.
@@ -53,11 +57,13 @@ func NewAgentRun(issue *github.Issue, branch string, sandbox sandbox.Sandbox) *A
 // the layout's RepoRoot regardless of the current working directory.
 func NewAgentRunWithLayout(issue *github.Issue, branch string, sandbox sandbox.Sandbox, layout paths.Layout) *AgentRun {
 	return &AgentRun{
-		issue:   issue,
-		branch:  branch,
-		sandbox: sandbox,
-		status:  "success",
-		layout:  layout,
+		issue:                   issue,
+		branch:                  branch,
+		sandbox:                 sandbox,
+		status:                  "success",
+		layout:                  layout,
+		taskWriter:              atomicfs.WriteAtomic,
+		contextRolloverLiterals: append([]string(nil), ContextRolloverLiteralAdditions...),
 	}
 }
 
@@ -146,6 +152,8 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.IssueRenderer, comma
 			taskPrompt = prompt.EnsureReviewTimeoutContext(taskPrompt, renderCfg.ReviewTimeout)
 		}
 		if err := r.writeTaskPrompt(renderedPromptFile, taskPrompt); err != nil {
+			// A clean recovery session must not start without its checkpoint-first
+			// Task, even though atomic replacement preserved the prior Task.
 			r.status = "failure"
 			return r.Result()
 		}
@@ -180,7 +188,32 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.IssueRenderer, comma
 		return r.Result()
 	}
 
-	if err := r.Execute(ctx, renderedCmd, os.Stdout, os.Stderr); err != nil {
+	attemptCtx, cancelAttempt := context.WithCancel(ctx)
+	defer cancelAttempt()
+	var detector *contextRolloverDetector
+	if r.preset == "opencode" {
+		detector = newContextRolloverDetector(time.Now, r.contextRolloverLiterals, func() {
+			if ctx.Err() == nil {
+				cancelAttempt()
+			}
+		})
+	}
+	stdout := io.Writer(os.Stdout)
+	stderr := io.Writer(os.Stderr)
+	if detector != nil {
+		stdout = io.MultiWriter(stdout, detector)
+		stderr = io.MultiWriter(stderr, detector)
+	}
+	execErr := r.Execute(attemptCtx, renderedCmd, stdout, stderr)
+	if detector != nil {
+		detector.Flush()
+	}
+	if detector != nil && detector.Triggered() && ctx.Err() == nil {
+		r.contextExhausted = true
+		r.status = "failure"
+		return r.Result()
+	}
+	if execErr != nil {
 		r.status = "failure"
 		return r.Result()
 	}
@@ -224,7 +257,11 @@ func (r *AgentRun) writeTaskPrompt(renderedPromptFile, content string) error {
 	if err := os.MkdirAll(filepath.Dir(promptPath), 0755); err != nil {
 		return fmt.Errorf("create prompt dir: %w", err)
 	}
-	if err := os.WriteFile(promptPath, []byte(content), 0644); err != nil {
+	taskWriter := r.taskWriter
+	if taskWriter == nil {
+		taskWriter = atomicfs.WriteAtomic
+	}
+	if err := taskWriter(promptPath, []byte(content), 0644); err != nil {
 		return fmt.Errorf("write prompt: %w", err)
 	}
 	return nil
@@ -255,11 +292,12 @@ func (r *AgentRun) Result() AgentRunResult {
 		issueRefPtr = issueRef(issue.Number)
 	}
 	return AgentRunResult{
-		IssueNumber:  issue.Number,
-		Issue:        issueRefPtr,
-		Status:       r.status,
-		Branch:       r.branch,
-		WorktreePath: r.sandbox.WorkDir(),
+		IssueNumber:      issue.Number,
+		Issue:            issueRefPtr,
+		Status:           r.status,
+		Branch:           r.branch,
+		WorktreePath:     r.sandbox.WorkDir(),
+		ContextExhausted: r.contextExhausted,
 	}
 }
 

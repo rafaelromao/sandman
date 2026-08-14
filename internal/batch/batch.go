@@ -173,14 +173,15 @@ type Result struct {
 // at write time in `emitTerminal` in `internal/batch/orchestrator.go`,
 // where the `retries_done` payload key is set to `RetriesTotal - 1`.
 type AgentRunResult struct {
-	IssueNumber  int
-	Issue        *int
-	Status       string
-	RetriesTotal int
-	Branch       string
-	WorktreePath string
-	Review       bool
-	RunID        string
+	IssueNumber      int
+	Issue            *int
+	Status           string
+	RetriesTotal     int
+	Branch           string
+	WorktreePath     string
+	Review           bool
+	RunID            string
+	ContextExhausted bool
 }
 
 // Runnable represents a single agent execution that can be run.
