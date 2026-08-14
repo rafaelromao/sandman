@@ -492,6 +492,7 @@ func TestReviewRegistration_WriteFailureFallsThroughToLivePendingGate(t *testing
 			ReviewTimeout: 600,
 		},
 		reviewRegistrationStore: store,
+		reviewRegistrationNow:   func() time.Time { return time.Date(2026, 8, 14, 20, 1, 0, 0, time.UTC) },
 		reviewAttemptStartedAt:  time.Date(2026, 8, 14, 19, 59, 0, 0, time.UTC),
 		opts:                    gateTestRunOptions(),
 	}
@@ -772,5 +773,41 @@ func TestReviewRegistrationStore_DoesNotLetOlderGenerationOverwriteNewer(t *test
 	}
 	if got.Request.TriggerID != "trigger-new" {
 		t.Fatalf("stored generation = %q, want newer trigger", got.Request.TriggerID)
+	}
+}
+
+func TestReviewRegistration_DoesNotWriteAfterLiveHeadChanges(t *testing.T) {
+	workDir := testenv.MkdirShort(t, "sm-review-registration-")
+	now := time.Date(2026, 8, 14, 20, 0, 0, 0, time.UTC)
+	client := &registrationGitHubClient{
+		fakeGitHubClient: fakeGitHubClient{prs: map[string]*github.PR{
+			gateTestBranch: {
+				Number:      32,
+				State:       "open",
+				HeadRefName: gateTestBranch,
+				HeadRefOid:  "new-sha",
+			},
+		}},
+		comments: []github.PRComment{{
+			ID:        "trigger-live-head",
+			Body:      "/sandman review",
+			CreatedAt: now.Add(-time.Minute),
+		}},
+	}
+	session := &runSession{
+		deps: runDeps{githubClient: client, layout: paths.NewLayout(nil, workDir)},
+		renderCfg: prompt.RenderConfig{
+			ReviewCommand: "/sandman review",
+			ReviewTimeout: 600,
+		},
+		reviewRegistrationNow:  func() time.Time { return now },
+		reviewAttemptStartedAt: now.Add(-2 * time.Minute),
+	}
+	stalePR := &github.PR{Number: 32, State: "open", HeadRefName: gateTestBranch, HeadRefOid: "old-sha"}
+	if err := session.registerReviewRequest(context.Background(), workDir, stalePR, "old-sha"); err == nil {
+		t.Fatal("stale pull-request snapshot was accepted for registration")
+	}
+	if _, err := os.Stat(session.deps.layout.PRReviewRegistrationPath(stalePR.Number)); !os.IsNotExist(err) {
+		t.Fatalf("stale registration path error = %v, want absent canonical record", err)
 	}
 }

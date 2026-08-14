@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/rafaelromao/sandman/internal/atomicfs"
@@ -23,8 +22,6 @@ import (
 const reviewRegistrationProtocol = "review-registration/v1"
 
 var implementationReviewPollPlan = []int{120, 60, 60, 30}
-
-var reviewRegistrationMu sync.Mutex
 
 type reviewRequestRegistration struct {
 	Protocol string                `json:"protocol"`
@@ -44,17 +41,25 @@ func (fileReviewRegistrationStore) Write(path string, registration reviewRequest
 		return fmt.Errorf("create registration directory: %w", err)
 	}
 	return withReviewRegistrationLock(path, func() error {
-		existing, err := readFileReviewRegistration(path)
-		switch {
-		case err == nil:
-			if preserveReviewRegistration(existing, registration) {
-				return nil
-			}
-		case !os.IsNotExist(err):
-			return err
-		}
-		return atomicfs.WriteAtomicJSON(path, registration, 0o600)
+		return writeFileReviewRegistrationLocked(path, registration)
 	})
+}
+
+func (fileReviewRegistrationStore) writeLocked(path string, registration reviewRequestRegistration) error {
+	return writeFileReviewRegistrationLocked(path, registration)
+}
+
+func writeFileReviewRegistrationLocked(path string, registration reviewRequestRegistration) error {
+	existing, err := readFileReviewRegistration(path)
+	switch {
+	case err == nil:
+		if preserveReviewRegistration(existing, registration) {
+			return nil
+		}
+	case !isReviewRegistrationNotExist(err):
+		return err
+	}
+	return atomicfs.WriteAtomicJSON(path, registration, 0o600)
 }
 
 func (fileReviewRegistrationStore) Read(path string) (reviewRequestRegistration, error) {
@@ -96,6 +101,28 @@ func withReviewRegistrationLock(path string, fn func() error) error {
 	}
 	defer unix.Flock(int(lock.Fd()), unix.LOCK_UN)
 	return fn()
+}
+
+func writeReviewRegistration(store reviewRegistrationStore, path string, registration reviewRequestRegistration, verify func() error) error {
+	if fileStore, ok := store.(fileReviewRegistrationStore); ok {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			return fmt.Errorf("create registration directory: %w", err)
+		}
+		return withReviewRegistrationLock(path, func() error {
+			if verify != nil {
+				if err := verify(); err != nil {
+					return err
+				}
+			}
+			return fileStore.writeLocked(path, registration)
+		})
+	}
+	if verify != nil {
+		if err := verify(); err != nil {
+			return err
+		}
+	}
+	return store.Write(path, registration)
 }
 
 func readReviewRegistration(path, repository string, pr *github.PR, currentHead string) (*reviewRequestRegistration, error) {
@@ -242,8 +269,6 @@ func (s *runSession) registerReviewRequest(ctx context.Context, workDir string, 
 	}
 	store := s.reviewRegistrationStoreForRead()
 	registrationPath := paths.NewLayout(nil, workDir).PRReviewRegistrationPath(pr.Number)
-	reviewRegistrationMu.Lock()
-	defer reviewRegistrationMu.Unlock()
 	if existing, err := store.Read(registrationPath); err == nil {
 		if err := validateReviewRegistrationGeneration(existing, repository, pr); err != nil {
 			// A semantically invalid committed record is evidence only. Do
@@ -276,7 +301,9 @@ func (s *runSession) registerReviewRequest(ctx context.Context, workDir string, 
 			return nil
 		}
 		if valid && legacy != nil && reviewTriggerMatchesRequest(legacy.Request, trigger) {
-			if err := store.Write(registrationPath, *legacy); err != nil {
+			if err := writeReviewRegistration(store, registrationPath, *legacy, func() error {
+				return s.verifyCurrentReviewHead(ctx, pr, currentHead)
+			}); err != nil {
 				return fmt.Errorf("migrate legacy review registration: %w", err)
 			}
 			return nil
@@ -339,7 +366,9 @@ func (s *runSession) registerReviewRequest(ctx context.Context, workDir string, 
 			Reason:              "pending",
 		},
 	}
-	if err := store.Write(registrationPath, registration); err != nil {
+	if err := writeReviewRegistration(store, registrationPath, registration, func() error {
+		return s.verifyCurrentReviewHead(ctx, pr, currentHead)
+	}); err != nil {
 		return fmt.Errorf("write review registration: %w", err)
 	}
 	return nil
@@ -372,6 +401,21 @@ func (s *runSession) reviewRegistrationStoreForRead() reviewRegistrationStore {
 		return s.opts.reviewRegistrationStore
 	}
 	return fileReviewRegistrationStore{}
+}
+
+func (s *runSession) verifyCurrentReviewHead(ctx context.Context, pr *github.PR, currentHead string) error {
+	branch := strings.TrimSpace(pr.HeadRefName)
+	if branch == "" {
+		return nil
+	}
+	livePR, err := s.deps.githubClient.FindPRByBranch(ctx, branch)
+	if err != nil {
+		return fmt.Errorf("revalidate pull-request head: %w", err)
+	}
+	if livePR == nil || !strings.EqualFold(strings.TrimSpace(livePR.HeadRefOid), strings.TrimSpace(currentHead)) {
+		return fmt.Errorf("pull-request head changed during registration")
+	}
+	return nil
 }
 
 func legacyReviewTriggerHasDifferentHead(workDir string, prNumber int, triggerID, currentHead string) bool {

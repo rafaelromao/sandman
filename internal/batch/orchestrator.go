@@ -1843,8 +1843,8 @@ type runSessionOptions struct {
 	gatePollBudget             time.Duration
 	// Review registration seams keep the completion boundary deterministic in
 	// batch tests while production uses the file-backed store and wall clock.
-	reviewRegistrationStore    reviewRegistrationStore
-	reviewRegistrationNow      func() time.Time
+	reviewRegistrationStore reviewRegistrationStore
+	reviewRegistrationNow   func() time.Time
 }
 
 // runSession owns the per-AgentRun state and lifecycle for a single issue
@@ -2704,6 +2704,7 @@ loop:
 			agentRun.runFolder = s.runFolderFor(runID)
 		}
 
+		s.reviewRegistrationAttempted = false
 		s.reviewAttemptStartedAt = s.reviewNow()
 		result, abortedByHeartbeat = s.withHeartbeat(ctx, runID, attempt, logPath, wt, func() AgentRunResult {
 			return s.withClosingReferenceGuard(ctx, branch, func() AgentRunResult {
