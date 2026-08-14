@@ -136,14 +136,14 @@ type Renderer interface {
 // decision.md on disk, it registers one of these entries keyed by
 // (prNumber, commentID).
 //
-// runDir and reviewState are absolute paths so the processPR
-// rehydrate branch can read decision.md and open the per-run
-// ReviewStateStore without further resolution. The rehydrate
-// branch drops the entry on a successful post (MarkSeen("success")
-// is the new terminal-seen status) and retains it on a failed post
-// (the next tick retries). When decision.md is missing at tick
-// time the entry is treated as stale and the daemon falls through
-// to the existing launch path.
+// runDir is the absolute directory containing the decision source: the
+// durable run folder for normal pending posts, or the review worktree
+// when durable persistence failed. reviewState is the absolute path to
+// the per-run ReviewStateStore. The rehydrate branch drops the entry on
+// a successful post (MarkSeen("success") is the new terminal-seen
+// status) and retains it on a failed post (the next tick retries). When
+// decision.md is missing at tick time the entry is treated as stale and
+// the daemon falls through to the existing launch path.
 //
 // since carries the original review-state.json Timestamp so future
 // observability surfaces (operator queries, logs) can answer "how
@@ -204,8 +204,9 @@ type Daemon struct {
 	slotMu        sync.Mutex
 	// pendingPost is the rehydrate-on-startup map (issue #1847 S4).
 	// Outer key is PR number; inner key is the trigger comment ID.
-	// Each entry remembers the absolute path of the per-row folder
-	// (so the daemon can read <runDir>/decision.md at tick time)
+	// Each entry remembers the absolute directory containing the
+	// decision source (so the daemon can read <runDir>/decision.md at
+	// tick time)
 	// and the absolute path of the per-run review-state.json (so
 	// the rehydrate post can MarkSeen on the right store). Entries
 	// are written by loadPendingPosts at construction, read and
@@ -220,6 +221,10 @@ type Daemon struct {
 	pendingPostMu sync.Mutex
 	pendingPost   map[int]map[string]pendingPostEntry
 	inFlight      sync.WaitGroup
+	// persistDecision is the atomic run-folder decision writer. The
+	// production default is atomicfs.WriteAtomic; the seam lets tests
+	// exercise the cleanup contract when durable persistence fails.
+	persistDecision func(path string, body []byte) error
 	// postBackoffs is the per-attempt sleep schedule used by
 	// postWithRetry. It defaults to the package-level
 	// postStepBackoffs when nil; tests inject a zero-length slice
@@ -635,8 +640,9 @@ func (d *Daemon) InvalidateSeenCache() error {
 //     such as changes cannot register a pendingPost);
 //  2. sc.Status == "pending" (matches the S3 lazy-verify contract:
 //     terminal-seen statuses do not get reposted);
-//  3. <runDir>/decision.md exists on disk (the source-of-truth gate:
-//     a missing file means the bot never finished, so rehydrate has
+//  3. Either the durable <runDir>/decision.md or the legacy/fallback
+//     worktree decision.md exists on disk (the source-of-truth gate: a
+//     missing file means the bot never finished, so rehydrate has
 //     nothing to post — the daemon launches a fresh agent instead).
 //
 // Issue #1849 (S6): the lazy-verify walker that previously
@@ -689,35 +695,31 @@ func (d *Daemon) loadPendingPosts() error {
 			if sc.Status != "pending" {
 				continue
 			}
-			// Source-of-truth gate: a row is rehydrate-eligible
-			// only when decision.md actually exists on disk as a
-			// regular file (issue #1949: a directory at that path
-			// is treated as missing so the next tick falls through
-			// to the launch path which clears the worktree via
-			// ClearReviewArtifacts).
-			// Issue #1953: decision.md lives in the per-row
-			// worktree (the agent's CWD), not the run folder.
-			// The worktree path is derived from (prNumber,
-			// commentID) so the walker can compute it without
-			// coordination with the orchestrator.
+			// Prefer the run-folder copy because the review worktree is
+			// cleaned after launchReview returns. Fall back to the
+			// worktree for older pending rows and for rows whose durable
+			// copy could not be written.
 			worktreePath := d.reviewWorktreePath(entry.PR, sc.CommentID)
-			decisionPath := filepath.Join(worktreePath, "decision.md")
-			info, statErr := os.Stat(decisionPath)
-			if statErr != nil {
-				if !os.IsNotExist(statErr) {
-					d.logf("stat %s: %v", decisionPath, statErr)
+			decisionDir := runDir
+			if info, statErr := os.Stat(filepath.Join(decisionDir, "decision.md")); statErr != nil || !info.Mode().IsRegular() {
+				info, worktreeErr := os.Stat(filepath.Join(worktreePath, "decision.md"))
+				if worktreeErr != nil {
+					if !os.IsNotExist(worktreeErr) {
+						d.logf("stat %s: %v", filepath.Join(worktreePath, "decision.md"), worktreeErr)
+					}
+					continue
 				}
-				continue
-			}
-			if !info.Mode().IsRegular() {
-				continue
+				if !info.Mode().IsRegular() {
+					continue
+				}
+				decisionDir = worktreePath
 			}
 			if _, ok := d.pendingPost[entry.PR]; !ok {
 				d.pendingPost[entry.PR] = map[string]pendingPostEntry{}
 			}
 			d.pendingPost[entry.PR][sc.CommentID] = pendingPostEntry{
 				commentID:   sc.CommentID,
-				runDir:      worktreePath,
+				runDir:      decisionDir,
 				reviewState: reviewState,
 				since:       sc.Timestamp,
 			}
@@ -1677,13 +1679,10 @@ func logWriterFor(d *Daemon) io.Writer {
 // up by the portal's stale recovery (issue #1024).
 //
 // On success this function records the trigger comment as `success`
-// (or `failure`, on post-step errors) in the per-run review-state.json
-// via the post step (issue #1846 S3). The seen-cache hook fires on
-// `success`, short-circuiting subsequent ticks. On `failure`, the post
-// step additionally calls MarkTerminalSeen so the next tick's processPR
-// drops the trigger before launch (issue #1849 S6 — the lazy-verify
-// bounded-retry walker is gone; the bounded-retry contract is now
-// expressed as a single-shot at launch-end via the seen-cache).
+// in the per-run review-state.json via the post step (issue #1846 S3).
+// A publication failure records `pending` and leaves the trigger
+// retryable until the exact decision is posted. The seen-cache hook
+// fires only on `success`, short-circuiting subsequent ticks.
 func (d *Daemon) launchReview(ctx context.Context, prNumber int, focus, commentID, commentReactionID, prReactionID, reviewRunFolder, perRowRunID string, rs *daemon.RunSession, state *ReviewStateStore, priorReviewExists bool) error {
 	return d.launchReviewRevision(ctx, prNumber, focus, commentID, commentID, commentReactionID, prReactionID, reviewRunFolder, perRowRunID, rs, state, priorReviewExists, "")
 }
@@ -1695,6 +1694,7 @@ func (d *Daemon) launchReviewRevision(ctx context.Context, prNumber int, focus, 
 	// batch.Request.PromptConfig.Branch below so cleanup and creation
 	// always target the same branch.
 	reviewBranch := reviewBranchName(prNumber, triggerKey)
+	preserveWorktree := false
 	defer func() {
 		if rs != nil {
 			_ = rs.Close()
@@ -1712,7 +1712,7 @@ func (d *Daemon) launchReviewRevision(ctx context.Context, prNumber int, focus, 
 		// Best-effort cleanup of the review worktree + branch runs last
 		// so any in-flight reaction removal or socket close above is not
 		// racing a half-removed worktree directory.
-		if d.Config != nil {
+		if d.Config != nil && !preserveWorktree {
 			ClearReviewArtifacts(reviewBranch, d.Config.WorktreeDir, logWriterFor(d))
 		}
 	}()
@@ -1875,7 +1875,7 @@ func (d *Daemon) launchReviewRevision(ctx context.Context, prNumber int, focus, 
 	// `else` branch only Releases the claim so the bounded-retry
 	// escape can re-process the comment if launchReview returned
 	// an error before any decision.md existed.
-	return d.postDecision(ctx, prNumber, triggerKey, reviewRunFolder, state)
+	return d.postDecisionWithCleanup(ctx, prNumber, triggerKey, reviewRunFolder, state, &preserveWorktree)
 }
 
 // postDecision implements the S3 post step (issue #1846):
@@ -1893,12 +1893,11 @@ func (d *Daemon) launchReviewRevision(ctx context.Context, prNumber int, focus, 
 //     d.CommentPoster.PostComment(ctx, prNumber, redacted).
 //   - On successful post: MarkSeen("success"). The SeenCacheInvalidator
 //     hook fires MarkTerminalSeen, short-circuiting subsequent ticks.
-//   - On post error or ctx.Err() != nil while preparing/posting:
-//     leave status untouched (no MarkSeen call so the trigger stays
-//     in the previous on-disk state, which is absent at this point —
-//     no daemon code path writes `pending` anymore per issue #1849
-//     S6); return the error so the goroutine takes its claim-Release
-//     path and the next tick's processPR re-launches the trigger.
+//   - On context cancellation while preparing/posting: leave status
+//     untouched and return the error so the next tick can retry.
+//   - On a non-context post error after the transient retry budget:
+//     persist `pending` and register the decision source for the next
+//     tick or daemon restart without launching another reviewer.
 //
 // Issue #1953: decision.md lives in the per-row worktree (the
 // agent's CWD), not the run folder. The run folder keeps run.json,
@@ -1907,6 +1906,10 @@ func (d *Daemon) launchReviewRevision(ctx context.Context, prNumber int, focus, 
 // d.Config.WorktreeDir), so the daemon computes it without waiting
 // for the orchestrator to report back.
 func (d *Daemon) postDecision(ctx context.Context, prNumber int, commentID, reviewRunFolder string, state *ReviewStateStore) error {
+	return d.postDecisionWithCleanup(ctx, prNumber, commentID, reviewRunFolder, state, nil)
+}
+
+func (d *Daemon) postDecisionWithCleanup(ctx context.Context, prNumber int, commentID, reviewRunFolder string, state *ReviewStateStore, preserveWorktree *bool) error {
 	decisionPath := d.reviewDecisionPath(prNumber, commentID)
 	info, err := os.Stat(decisionPath)
 	if err != nil {
@@ -1952,14 +1955,22 @@ func (d *Daemon) postDecision(ctx context.Context, prNumber int, commentID, revi
 	// decision.md). The run folder copy is what the portal's verdict
 	// reader falls back to after the worktree is gone (issue #2224).
 	// Use atomicfs.WriteAtomic so the portal never observes a
-	// partially written file. If the write fails we log and
-	// continue — the post step is the critical path, and the
-	// worktree copy still exists at this point.
+	// partially written file. If the write fails, keep the worktree
+	// as the only recoverable source instead of allowing cleanup to
+	// destroy it.
+	decisionDir := d.reviewWorktreePath(prNumber, commentID)
 	if reviewRunFolder != "" {
 		runDecisionPath := filepath.Join(reviewRunFolder, "decision.md")
-		if writeErr := atomicfs.WriteAtomic(runDecisionPath, body, 0644); writeErr != nil {
-			d.logf("PR #%d: persist decision.md to %s failed: %v (portal will still try the worktree copy until cleanup)", prNumber, runDecisionPath, writeErr)
+		if writeErr := d.persistDecisionFile(runDecisionPath, body); writeErr != nil {
+			d.logf("PR #%d: persist decision.md to %s failed: %v; preserving the review worktree", prNumber, runDecisionPath, writeErr)
+			if preserveWorktree != nil {
+				*preserveWorktree = true
+			}
+		} else {
+			decisionDir = reviewRunFolder
 		}
+	} else if preserveWorktree != nil {
+		*preserveWorktree = true
 	}
 
 	// Honour ctx cancellation observed between RunBatch returning
@@ -1996,7 +2007,7 @@ func (d *Daemon) postDecision(ctx context.Context, prNumber int, commentID, revi
 				d.logf("PR #%d: mark %s pending: %v", prNumber, commentID, markErr)
 			}
 		}
-		d.registerPendingPost(prNumber, commentID, d.reviewWorktreePath(prNumber, commentID), reviewRunFolder)
+		d.registerPendingPost(prNumber, commentID, decisionDir, reviewRunFolder)
 		return fmt.Errorf("post decision: %w", postErr)
 	}
 
@@ -2057,20 +2068,25 @@ func (d *Daemon) effectivePostBackoffs() []time.Duration {
 	return postStepBackoffs
 }
 
+func (d *Daemon) persistDecisionFile(path string, body []byte) error {
+	if d.persistDecision != nil {
+		return d.persistDecision(path, body)
+	}
+	return atomicfs.WriteAtomic(path, body, 0644)
+}
+
 // registerPendingPost registers (prNumber, commentID) in the
 // in-memory pendingPost map so the same-process next tick re-runs
 // tryRehydratePost (issue #1847 S4). The on-disk review-state.json
 // must already carry status="pending" — postDecision writes it via
 // state.MarkSeen just before calling this helper. Locking matches
 // registerPendingPost records a rehydrate-eligible trigger under
-// (prNumber, commentID). The worktree path is where decision.md
-// lives (canonical artifact path, issue #1953); the run folder
-// path is where review-state.json lives. Both must be recorded so
-// the next tick's processPR can pick the trigger up after a
-// daemon restart via loadPendingPosts, which only knows the
-// review-state.json's PR number — the worktree path is derived
-// deterministically from (prNumber, commentID) at read time.
-func (d *Daemon) registerPendingPost(prNumber int, commentID, worktreePath, reviewRunFolder string) {
+// (prNumber, commentID). decisionDir is the directory containing the
+// decision source (the durable run folder when persistence succeeded,
+// otherwise the worktree); the run folder path is where
+// review-state.json lives. Both are recorded so the next tick's
+// processPR can pick the trigger up after a daemon restart.
+func (d *Daemon) registerPendingPost(prNumber int, commentID, decisionDir, reviewRunFolder string) {
 	d.pendingPostMu.Lock()
 	defer d.pendingPostMu.Unlock()
 	if _, ok := d.pendingPost[prNumber]; !ok {
@@ -2078,7 +2094,7 @@ func (d *Daemon) registerPendingPost(prNumber int, commentID, worktreePath, revi
 	}
 	d.pendingPost[prNumber][commentID] = pendingPostEntry{
 		commentID:   commentID,
-		runDir:      worktreePath,
+		runDir:      decisionDir,
 		reviewState: d.ReviewStatePath(reviewRunFolder),
 		since:       d.now(),
 	}
