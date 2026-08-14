@@ -80,6 +80,7 @@ Emitted at the top of each retry iteration in the orchestrator's `for attempt` l
 | `previous_status` | `result.Status` from the previous iteration, verbatim (`failure` or `aborted` in practice; the spec's `idle_timeout` value is unreachable today because `withHeartbeat` flips non-success to `aborted` before the next attempt's `run.retry` fires) |
 | `branch` | Branch the run is operating on |
 | `last_log_lines` | `["line 1", "line 2", "line 3"]` — Up to 3 trailing lines from the agent log at retry time |
+| `reason` | Closed retry cause: `agent-stalled`, `agent-failed`, `sandbox-timeout`, `kill-timeout`, `manual`, or `context-exhausted` |
 
 #### `run.idle_timeout`
 Emitted when the heartbeat watchdog detects that the agent has produced no log output for the configured `run_idle_timeout` duration. The watchdog then kills the agent process and the run terminates as `aborted`. This event is diagnostic; the terminal status is set by the subsequent `run.aborted` event.
@@ -112,6 +113,7 @@ Emitted when an agent run completes.
 | `worktree_state` | Always `preserved` |
 | `retries_total` | Total retry attempts configured |
 | `retries_done` | Actual retries performed |
+| `context_exhausted` | Present as `true` when the final attempt exhausted the OpenCode context and no clean retry remained |
 | `run_kind` | Mirrors the `run.started` payload so projection sees a consistent kind on both events. |
 | `reason` | Short string built from the error returned by the selection phase. |
 | `blocker` | Optional terminal blocker classification. `"external-gate"` identifies CI/review waiting or intervention, rather than an agent failure. |

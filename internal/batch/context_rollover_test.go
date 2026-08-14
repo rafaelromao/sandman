@@ -189,6 +189,15 @@ func TestContextRolloverDetector(t *testing.T) {
 			additions:  []string{"provider context exhausted"},
 			wantSignal: true,
 		},
+		{
+			name: "no-body status forms",
+			lines: []string{
+				"Error: 400 no body\n",
+				"Error: 413 no body\n",
+			},
+			times:      []time.Duration{0, time.Second},
+			wantSignal: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -216,7 +225,7 @@ func TestContextRolloverDetector(t *testing.T) {
 		if detector.Triggered() {
 			t.Fatal("observation older than 30 seconds triggered rollover")
 		}
-		clock = base.Add(60 * time.Second)
+		clock = base.Add(61 * time.Second)
 		_, _ = detector.Write([]byte("Error: prompt is too long\n"))
 		if !detector.Triggered() {
 			t.Fatal("observation exactly 30 seconds old was not retained")
@@ -232,6 +241,50 @@ func TestContextRolloverDetector(t *testing.T) {
 		detector.Flush()
 		if !detector.Triggered() {
 			t.Fatal("carriage-return-delimited errors did not trigger rollover")
+		}
+	})
+
+	t.Run("generic request limits do not qualify", func(t *testing.T) {
+		clock := base
+		detector := newContextRolloverDetector(func() time.Time { return clock }, nil, nil)
+		for i := 0; i < 2; i++ {
+			_, _ = detector.Write([]byte("Error: exceeds the limit of 100 requests per minute\n"))
+			clock = clock.Add(time.Second)
+		}
+		if detector.Triggered() {
+			t.Fatal("generic request limit triggered rollover")
+		}
+	})
+
+	t.Run("hyphenated service errors remain excluded", func(t *testing.T) {
+		for _, message := range []string{
+			"rate-limit exceeded: prompt is too long",
+			"too-many-requests: context window exceeded",
+			"toomanyrequests: context window exceeded",
+			"throttle error: token limit exceeded",
+			"throttled: token limit exceeded",
+			"service-unavailable: prompt is too long",
+		} {
+			detector := newContextRolloverDetector(func() time.Time { return base }, nil, nil)
+			for i := 0; i < 2; i++ {
+				_, _ = detector.Write([]byte("Error: " + message + "\n"))
+			}
+			if detector.Triggered() {
+				t.Fatalf("%q triggered rollover", message)
+			}
+		}
+	})
+
+	t.Run("side channel leaves output unchanged", func(t *testing.T) {
+		input := "Error: prompt is too long\n"
+		detector := newContextRolloverDetector(func() time.Time { return base }, nil, nil)
+		var output strings.Builder
+		writer := io.MultiWriter(&output, detector)
+		if _, err := writer.Write([]byte(input)); err != nil {
+			t.Fatalf("write through detector: %v", err)
+		}
+		if output.String() != input {
+			t.Fatalf("side channel changed output: got %q, want %q", output.String(), input)
 		}
 	})
 }
@@ -309,15 +362,139 @@ func TestContextRolloverDetector_IgnoresNonOpenCodeAgents(t *testing.T) {
 	}
 }
 
+func TestContextRecoveryTaskWriteFailurePreservesExistingTask(t *testing.T) {
+	workDir := filepath.Join(t.TempDir(), "worktree")
+	taskPath := filepath.Join(workDir, ".sandman", "task.md")
+	if err := os.MkdirAll(filepath.Dir(taskPath), 0o755); err != nil {
+		t.Fatalf("mkdir task directory: %v", err)
+	}
+	const originalTask = "# Existing task\n\nContinue the work.\n"
+	if err := os.WriteFile(taskPath, []byte(originalTask), 0o644); err != nil {
+		t.Fatalf("write existing task: %v", err)
+	}
+
+	run := NewAgentRun(nil, "context-recovery", &fakeSandbox{workDir: workDir})
+	run.taskWriter = func(string, []byte, os.FileMode) error {
+		return errors.New("disk full")
+	}
+
+	run.preset = "custom"
+	result := run.Run(context.Background(), nil, "true", prompt.RenderConfig{
+		TaskPrompt:      "# Recovery task",
+		ContextRecovery: true,
+	})
+
+	if result.Status != "success" {
+		t.Fatalf("status = %q, want success after best-effort recovery write", result.Status)
+	}
+	got, err := os.ReadFile(taskPath)
+	if err != nil {
+		t.Fatalf("read existing task: %v", err)
+	}
+	if string(got) != originalTask {
+		t.Fatalf("existing task changed after failed recovery write: %q", got)
+	}
+}
+
+func TestContextRolloverRetry(t *testing.T) {
+	workDir := t.TempDir()
+	t.Chdir(workDir)
+
+	branch := "42-context-retry"
+	sb := &contextRolloverSandbox{
+		workDir:                filepath.Join(workDir, "worktree"),
+		alwaysContextExhausted: true,
+	}
+	factory := &contextRolloverRunnableFactory{sandbox: sb}
+	eventLog := &events.JSONLLogger{Path: filepath.Join(workDir, "events.jsonl")}
+	client := &fakeGitHubClient{issues: map[int]*github.Issue{
+		42: {Number: 42, Title: "Retry context", State: "closed"},
+	}}
+	o := NewOrchestrator(
+		client,
+		&retryRenderer{result: "# Task\n\nInitial task."},
+		nil,
+		eventLog,
+		WithErrorLog(io.Discard),
+		WithSandboxFactory(&contextRolloverSandboxFactory{sandbox: sb}),
+		WithRunnableFactory(factory),
+	)
+
+	row := RowSpec{
+		IssueNumber: 42,
+		Branches:    map[int]string{42: branch},
+		BaseBranch:  "main",
+		RunTS:       "260814071754",
+		RunShortID:  "retry",
+	}
+	bc := BatchConfig{
+		Cfg:              &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}},
+		AgentName:        "opencode",
+		AgentCfg:         config.BuiltInAgentPresets["opencode"].Agent("opencode"),
+		IdentityResolver: noopIdentityResolver(),
+		Retries:          1,
+	}
+
+	result, started := o.newRunExecutor(context.Background(), bc, &contextRolloverSandboxFactory{sandbox: sb}, nil).Execute(context.Background(), row)
+	if !started {
+		t.Fatalf("expected AgentRun to start, result=%+v", result)
+	}
+	if result.Status != "failure" {
+		t.Fatalf("status = %q, want failure after budget exhaustion", result.Status)
+	}
+	if result.RetriesTotal != 2 {
+		t.Fatalf("RetriesTotal = %d, want 2 attempts", result.RetriesTotal)
+	}
+	if !result.ContextExhausted {
+		t.Fatal("final context-exhausted attempt did not retain its cause")
+	}
+	if factory.created != 2 {
+		t.Fatalf("runnable launches = %d, want 2", factory.created)
+	}
+
+	logs, err := eventLog.Read()
+	if err != nil {
+		t.Fatalf("read events: %v", err)
+	}
+	var retryEvent, finishedEvent *events.Event
+	var types []string
+	for i := range logs {
+		event := &logs[i]
+		if event.RunID != buildRunID(42, row.RunTS, row.RunShortID) {
+			t.Fatalf("event RunID = %q, want stable issue RunID", event.RunID)
+		}
+		types = append(types, event.Type)
+		switch event.Type {
+		case "run.retry":
+			retryEvent = event
+		case "run.finished":
+			finishedEvent = event
+		}
+	}
+	if got, want := strings.Join(types, ","), "run.started,run.retry,run.finished"; got != want {
+		t.Fatalf("event order = %s, want %s", got, want)
+	}
+	if retryEvent == nil || retryEvent.Payload["reason"] != "context-exhausted" {
+		t.Fatalf("retry event = %+v, want context-exhausted", retryEvent)
+	}
+	if finishedEvent == nil || finishedEvent.Payload["context_exhausted"] != true {
+		t.Fatalf("finished event = %+v, want context_exhausted=true", finishedEvent)
+	}
+	if finishedEvent.Payload["branch"] != branch {
+		t.Fatalf("finished branch = %v, want %q", finishedEvent.Payload["branch"], branch)
+	}
+}
+
 type contextRolloverSandbox struct {
-	mu                   sync.Mutex
-	workDir              string
-	waitForCancellation  bool
-	started              int
-	firstAttemptExited   bool
-	secondTask           string
-	secondCommand        string
-	secondAttemptStarted bool
+	mu                     sync.Mutex
+	workDir                string
+	waitForCancellation    bool
+	alwaysContextExhausted bool
+	started                int
+	firstAttemptExited     bool
+	secondTask             string
+	secondCommand          string
+	secondAttemptStarted   bool
 }
 
 func (s *contextRolloverSandbox) Start(sandbox.SandboxStart) error {
@@ -336,7 +513,7 @@ func (s *contextRolloverSandbox) Exec(ctx context.Context, command string, stdou
 	}
 	s.mu.Unlock()
 
-	if attempt == 1 {
+	if attempt == 1 || s.alwaysContextExhausted {
 		_, _ = io.WriteString(stderr, "Error: prompt is too long\nError: prompt is too long\n")
 		if s.waitForCancellation {
 			<-ctx.Done()

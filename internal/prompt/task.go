@@ -68,12 +68,17 @@ func ContinuationTaskPromptWithReviewTimeout(content string, reviewTimeout int) 
 }
 
 // ContextRecoveryTaskPrompt composes the preserved Task with a canonical,
-// checkpoint-first recovery instruction for a fresh OpenCode session. The
-// recovery section is replaced rather than duplicated when a retry is itself
-// retried.
+// checkpoint-first recovery instruction for a fresh OpenCode session. An
+// existing recovery section is preserved so a checkpoint written inside it is
+// not discarded when a retry is itself retried.
 func ContextRecoveryTaskPrompt(content string, reviewTimeout int) string {
+	if strings.Contains(content, contextRecoveryGuardHeading) {
+		if reviewTimeout > 0 {
+			content = EnsureReviewTimeoutContext(content, reviewTimeout)
+		}
+		return trimTrailingNewlines(content) + "\n"
+	}
 	content = continuationTaskPrompt(content, reviewTimeout)
-	content = removeTaskSection(content, contextRecoveryGuardHeading)
 	return trimTrailingNewlines(content) + "\n\n" + contextRecoveryGuard + "\n"
 }
 
@@ -152,17 +157,6 @@ func insertLine(lines []string, index int, line string) []string {
 func removeCanonicalGuard(content string) string {
 	for {
 		idx := strings.Index(content, continuationFreshnessGuardHeading)
-		if idx < 0 {
-			return content
-		}
-		end := guardSectionEnd(content, idx)
-		content = content[:idx] + content[end:]
-	}
-}
-
-func removeTaskSection(content, heading string) string {
-	for {
-		idx := strings.Index(content, heading)
 		if idx < 0 {
 			return content
 		}

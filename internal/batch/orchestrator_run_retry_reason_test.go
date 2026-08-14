@@ -17,14 +17,15 @@ import (
 
 // retryReasonVocabulary is the closed set of reason values that the
 // orchestrator's run.retry emit may use. The set is the starting
-// set documented in ADR-0035; the helpers in this file assert that every
+// set documented in ADR-0030; the helpers in this file assert that every
 // retry event observed on disk carries a reason drawn from this set.
 var retryReasonVocabulary = map[string]struct{}{
-	"agent-stalled":   {},
-	"agent-failed":    {},
-	"sandbox-timeout": {},
-	"kill-timeout":    {},
-	"manual":          {},
+	"agent-stalled":     {},
+	"agent-failed":      {},
+	"sandbox-timeout":   {},
+	"kill-timeout":      {},
+	"manual":            {},
+	"context-exhausted": {},
 }
 
 // retryReasonForRun reads the on-disk event log, returns every run.retry

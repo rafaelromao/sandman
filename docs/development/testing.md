@@ -22,6 +22,12 @@ go test -race -v ./...
 
 For a faster targeted loop while editing one package, run the smallest relevant `go test` command first, then finish with `make check` when the change is ready.
 
+For OpenCode context rollover changes, the hermetic production-path coverage is:
+
+```bash
+go test -run 'ContextRollover|ContextRecoveryTask' ./internal/batch ./internal/prompt ./internal/events ./internal/cmd
+```
+
 ## CI coverage
 
 Sandman publishes four GoReleaser targets that match the four Unix platforms OpenCode supports (sans Windows): Linux amd64, Linux arm64, macOS amd64 (Intel), and macOS arm64 (Apple Silicon). The CI and release-validation tiers exercise those platforms as follows:

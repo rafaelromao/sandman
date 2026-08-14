@@ -875,10 +875,12 @@ func NewOrchestrator(githubClient github.Client, renderer prompt.IssueRenderer, 
 		layout:        paths.NewLayout(&config.Config{}, root),
 		lookupGHToken: defaultLookupGHToken,
 		runSessionOpts: runSessionOptions{
-			baseBranchSyncMu: &sync.Mutex{},
-			gatePollInitial:  120 * time.Second,
-			gatePollMaxSleep: 600 * time.Second,
-			gatePollBudget:   1800 * time.Second,
+			baseBranchSyncMu:        &sync.Mutex{},
+			contextRolloverLiterals: append([]string(nil), ContextRolloverLiteralAdditions...),
+			taskWriter:              atomicfs.WriteAtomic,
+			gatePollInitial:         120 * time.Second,
+			gatePollMaxSleep:        600 * time.Second,
+			gatePollBudget:          1800 * time.Second,
 		},
 		badgeHooker:  nopBadgeHooker{},
 		coordinators: make(map[*batchCoordinator]struct{}),
@@ -942,6 +944,14 @@ func WithErrorLog(w io.Writer) OrchestratorOpt {
 // after this option is applied, so passing a fresh runSessionOptions{} is safe.
 func WithRunSessionOpts(opts runSessionOptions) OrchestratorOpt {
 	return func(o *Orchestrator) { o.runSessionOpts = opts }
+}
+
+// WithContextRolloverLiteralAdditions overrides the additive literal catalog
+// for one orchestrator without mutating the process-wide default.
+func WithContextRolloverLiteralAdditions(values []string) OrchestratorOpt {
+	return func(o *Orchestrator) {
+		o.runSessionOpts.contextRolloverLiterals = append([]string(nil), values...)
+	}
 }
 
 func WithHeartbeatTickInterval(d time.Duration) OrchestratorOpt {
@@ -1663,7 +1673,8 @@ func (o *Orchestrator) logAborted(issueNum int, runID string, abortedBy []int) {
 // mapRetryReason picks the closed-vocabulary reason for a run.retry emit
 // from the previous attempt's status, the heartbeat-trips signal, and the
 // parent context. The vocabulary (agent-stalled, agent-failed,
-// sandbox-timeout, kill-timeout, manual) is locked in ADR-0035 (#1498)
+// sandbox-timeout, kill-timeout, manual, context-exhausted) is locked in
+// ADR-0030 and the context-rollover contract
 // and must not be silently extended. If a future code path
 // surfaces a status that does not map to a known arm, the function
 // panics so the new condition is added to the ADR and the mapping
@@ -1806,25 +1817,28 @@ func expandPath(path string) (string, error) {
 }
 
 // runSessionOptions bundles the test-injection hooks consumed by runSession
-// (the function overrides, gate-poll policy, and test-tunable killTimeout) together with
-// the shared baseBranchSyncMu mutex that gates syncBaseBranch. The function
-// and timeout fields exist so tests in this package can override behaviour
-// that would otherwise touch the network, run real git, or sleep for the
-// production timeout. The baseBranchSyncMu pointer is initialised once per Orchestrator
+// (including the context detector literals and Task writer), the gate-poll
+// policy, and the test-tunable killTimeout together with the shared
+// baseBranchSyncMu mutex that gates syncBaseBranch. The function and timeout
+// fields exist so tests in this package can override behaviour that would
+// otherwise touch the network, run real git, or sleep for the production
+// timeout. The baseBranchSyncMu pointer is initialised once per Orchestrator
 // in NewOrchestrator and shared across all sessions via this struct's value
 // copy at construction time, so that concurrent calls to syncBaseBranch
 // serialise on the same mutex. If baseBranchSyncMu is ever converted from a
-// pointer to a value type, update runSingle / runPromptOnlySingle to share
-// it explicitly — otherwise serialisation will silently break.
+// pointer to a value type, update runSingle / runPromptOnlySingle to share it
+// explicitly — otherwise serialisation will silently break.
 type runSessionOptions struct {
-	baseBranchSync   func(repoPath, sourceBranch string) error
-	baseBranchSyncMu *sync.Mutex
-	retryReset       func(ctx context.Context, sb sandbox.Sandbox, branch, baseBranch string) error
-	killTimeout      time.Duration
-	currentHead      func(workDir string) (string, error)
-	gatePollInitial  time.Duration
-	gatePollMaxSleep time.Duration
-	gatePollBudget   time.Duration
+	baseBranchSync          func(repoPath, sourceBranch string) error
+	baseBranchSyncMu        *sync.Mutex
+	contextRolloverLiterals []string
+	taskWriter              func(string, []byte, os.FileMode) error
+	retryReset              func(ctx context.Context, sb sandbox.Sandbox, branch, baseBranch string) error
+	killTimeout             time.Duration
+	currentHead             func(workDir string) (string, error)
+	gatePollInitial         time.Duration
+	gatePollMaxSleep        time.Duration
+	gatePollBudget          time.Duration
 }
 
 // runSession owns the per-AgentRun state and lifecycle for a single issue
@@ -2606,7 +2620,7 @@ loop:
 		if attempt > 0 {
 			reason := mapRetryReason(result.Status, abortedByHeartbeat, s.parentCtx)
 			if result.ContextExhausted {
-				reason = "context-exhausted"
+				reason = contextExhaustedRetryReason
 			}
 			logRetry(s.deps.eventLog, runID, branch, attempt+1, attempts, result.Status, reason, logPath, s.issueNumber)
 		}
@@ -2636,6 +2650,10 @@ loop:
 		if agentRun, ok := runnable.(*AgentRun); ok {
 			agentRun.env = s.agentCfg.Env
 			agentRun.preset = s.agentCfg.Preset
+			agentRun.contextRolloverLiterals = append([]string(nil), s.opts.contextRolloverLiterals...)
+			if s.opts.taskWriter != nil {
+				agentRun.taskWriter = s.opts.taskWriter
+			}
 			agentRun.model = s.agentCfg.Model
 			agentRun.modelProvider = s.agentCfg.ModelProvider
 			agentRun.modelName = s.agentCfg.ModelName

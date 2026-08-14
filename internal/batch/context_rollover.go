@@ -7,11 +7,12 @@ import (
 )
 
 const contextRolloverWindow = 30 * time.Second
+const contextExhaustedRetryReason = "context-exhausted"
 
-// ContextRolloverLiteralAdditions is an additive, literal-only extension point
-// for OpenCode wording that changes between provider or CLI versions. Values
-// are copied when a detector is created; they never replace the built-in
-// catalog or its exclusions.
+// ContextRolloverLiteralAdditions is the process-wide default for additive,
+// literal-only OpenCode wording that changes between provider or CLI versions.
+// NewOrchestrator snapshots it at construction; use
+// WithContextRolloverLiteralAdditions for per-orchestrator configuration.
 var ContextRolloverLiteralAdditions []string
 
 type contextRolloverLiteralRule []string
@@ -26,6 +27,7 @@ var builtInContextRolloverRules = []contextRolloverLiteralRule{
 	{"exceeds the context window"},
 	{"exceeds context window"},
 	{"maximum context length"},
+	{"context length exceeded"},
 	{"input token count", "exceeds the maximum"},
 	{"tokens in request more than max tokens allowed"},
 	{"maximum prompt length is"},
@@ -33,29 +35,37 @@ var builtInContextRolloverRules = []contextRolloverLiteralRule{
 	{"exceeds the maximum allowed input length"},
 	{"is longer than the model's context length"},
 	{"is longer than the model’s context length"},
-	{"exceeds the limit of"},
 	{"exceeds the available context size"},
 	{"greater than the context length"},
 	{"context window exceeds limit"},
 	{"exceeded model token limit"},
 	{"context_length_exceeded"},
+	{"request too large"},
 	{"request entity too large"},
 	{"context length is only"},
 	{"prompt too long; exceeded"},
 	{"too large for model with"},
 	{"prompt has", "configured context size"},
 	{"model_context_window_exceeded"},
+	{"context window exceeded"},
+	{"input length", "exceeds", "context length"},
 	{"too many tokens"},
 	{"token limit exceeded"},
-	{"400", "no body"},
-	{"413", "no body"},
+}
+
+var builtInContextRolloverExactRules = []string{
+	"400 no body",
+	"413 no body",
 }
 
 var contextRolloverExclusions = []string{
 	"rate limit",
+	"ratelimit",
 	"too many requests",
-	"throttling error",
+	"toomanyrequests",
+	"throttl",
 	"service unavailable",
+	"serviceunavailable",
 }
 
 type contextRolloverDetector struct {
@@ -163,9 +173,15 @@ func qualifyingContextRolloverLine(line string, rules []contextRolloverLiteralRu
 		return false
 	}
 	message := strings.TrimSpace(lower[len("error:"):])
+	exclusionMessage := strings.ReplaceAll(strings.ReplaceAll(message, "-", " "), "_", " ")
 	for _, exclusion := range contextRolloverExclusions {
-		if strings.Contains(message, exclusion) {
+		if strings.Contains(exclusionMessage, exclusion) {
 			return false
+		}
+	}
+	for _, literal := range builtInContextRolloverExactRules {
+		if message == literal {
+			return true
 		}
 	}
 	for _, rule := range rules {

@@ -288,6 +288,17 @@ func (r RunState) LastRetryReason() string {
 	return v
 }
 
+// ContextExhausted reports terminal context exhaustion from the finished
+// event. The marker is deliberately event-derived so a successful clean retry
+// does not retain stale cause state in a mutable run record.
+func (r RunState) ContextExhausted() bool {
+	if r.Finished == nil {
+		return false
+	}
+	v, _ := payloadBool(r.Finished.Payload, "context_exhausted")
+	return v
+}
+
 func payloadString(payload map[string]any, key string) (string, bool) {
 	if payload == nil {
 		return "", false

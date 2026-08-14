@@ -30,6 +30,7 @@ The `reason` field on `run.retry` payload is a closed string drawn from this ini
 | `sandbox-timeout` | The sandbox wrapper (container or worktree) reported a timeout that is not the agent's fault — e.g. `docker exec` exceeded the run timeout. |
 | `kill-timeout` | The operator or a parent process issued SIGKILL/SIGTERM and the orchestrator promoted the cancellation to a retry. Distinct from `sandbox-timeout` because the kill came from outside the run, not from the sandbox adapter. |
 | `manual` | A retry that was triggered by an explicit operator action outside the orchestrator's normal supervisor path — e.g. a `sandman run --continue` against a run whose previous iteration ended in a terminal non-success state. |
+| `context-exhausted` | The built-in OpenCode output emitted two qualifying context-limit errors within 30 seconds; the active attempt was stopped and the preserved worktree was handed to a clean retry session. |
 
 This is the slice-3 starting set. New values are added only by amending this ADR with a one-line entry in the table above; silent additions are forbidden.
 
@@ -79,4 +80,4 @@ The glossary entry `Run retry` in `CONTEXT.md` is the user-facing entry point. I
 ### Neutral
 
 - `internal/events/run_state.go::RetriesTotal()` / `RetriesDone()` continue to read from `Finished.Payload`; they are not affected by the active-run rule above.
-- `docs/usage/monitoring.md`'s `run.retry` block will gain a `reason` row once slice 3 lands the orchestrator change. The doc update is a follow-up and not in scope for slice 5.
+- `docs/usage/monitoring.md` documents the `reason` row and the terminal `context_exhausted` marker alongside the existing retry payload.

@@ -33,4 +33,10 @@ func TestContextRecoveryTask(t *testing.T) {
 	if repeated != got {
 		t.Fatalf("recovery Task changed when composed twice:\nfirst:\n%s\nsecond:\n%s", got, repeated)
 	}
+
+	checkpointed := got + "\n## Recovery Checkpoint\n\nThe durable handoff is complete.\n"
+	repeatedCheckpoint := ContextRecoveryTaskPrompt(checkpointed, 600)
+	if !strings.Contains(repeatedCheckpoint, "The durable handoff is complete.") {
+		t.Fatalf("recomposing recovery Task discarded its checkpoint:\n%s", repeatedCheckpoint)
+	}
 }
