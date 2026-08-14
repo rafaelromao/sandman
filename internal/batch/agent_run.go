@@ -146,6 +146,10 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.IssueRenderer, comma
 	}
 
 	if renderCfg.TaskPrompt != "" {
+		if ctx.Err() != nil {
+			r.status = "aborted"
+			return r.Result()
+		}
 		taskPrompt := renderCfg.TaskPrompt
 		if !r.review {
 			taskPrompt = prompt.EnsureReviewTimeoutContext(taskPrompt, renderCfg.ReviewTimeout)

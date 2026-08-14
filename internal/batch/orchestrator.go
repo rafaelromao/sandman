@@ -2637,6 +2637,12 @@ loop:
 		if errResult != nil {
 			return *errResult, nil, events.RunStatusFromPayload(errResult.Status).IsSuccess()
 		}
+		// prepareAttempt builds a recovery Task from the preserved Task. Check
+		// again after that work so cancellation cannot launch its replacement.
+		if result.ContextExhausted && ctx.Err() != nil {
+			result.ContextExhausted = false
+			break loop
+		}
 
 		if attempt > 0 {
 			reason := mapRetryReason(result.Status, abortedByHeartbeat, s.parentCtx)

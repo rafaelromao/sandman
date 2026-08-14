@@ -640,6 +640,60 @@ func TestContextRolloverCancellation(t *testing.T) {
 	}
 }
 
+func TestContextRolloverCancellationDuringRecoveryPreparation(t *testing.T) {
+	workDir := t.TempDir()
+	t.Chdir(workDir)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	branch := "42-context-cancel-during-preparation"
+	sb := &contextRolloverSandbox{
+		workDir:            filepath.Join(workDir, "worktree"),
+		onRestoreHostPaths: cancel,
+	}
+	factory := &contextRolloverRunnableFactory{sandbox: sb}
+	eventLog := &events.JSONLLogger{Path: filepath.Join(workDir, "events.jsonl")}
+	o := NewOrchestrator(
+		&fakeGitHubClient{issues: map[int]*github.Issue{42: {Number: 42, Title: "Cancel recovery preparation", State: "closed"}}},
+		&retryRenderer{result: "# Task\n\nInitial task."},
+		nil,
+		eventLog,
+		WithErrorLog(io.Discard),
+		WithSandboxFactory(&contextRolloverSandboxFactory{sandbox: sb}),
+		WithRunnableFactory(factory),
+	)
+	bc := BatchConfig{
+		Cfg:              &config.Config{WorktreeDir: "worktrees", Git: config.GitConfig{BaseBranch: "main"}},
+		AgentName:        "opencode",
+		AgentCfg:         config.BuiltInAgentPresets["opencode"].Agent("opencode"),
+		IdentityResolver: noopIdentityResolver(),
+		Retries:          1,
+	}
+	row := RowSpec{IssueNumber: 42, Branches: map[int]string{42: branch}, BaseBranch: "main", RunTS: "260814071754", RunShortID: "cancel-preparation"}
+
+	result, started := o.newRunExecutor(ctx, bc, &contextRolloverSandboxFactory{sandbox: sb}, nil).Execute(ctx, row)
+	if !started || result.Status != "aborted" {
+		t.Fatalf("result = %+v, want aborted", result)
+	}
+	if factory.created != 1 {
+		t.Fatalf("runnable launches = %d, want no recovery retry", factory.created)
+	}
+	task, err := os.ReadFile(filepath.Join(sb.workDir, ".sandman", "task.md"))
+	if err != nil {
+		t.Fatalf("read preserved Task: %v", err)
+	}
+	if strings.Contains(string(task), "Context Recovery Guard") {
+		t.Fatalf("cancellation replaced Task with recovery content:\n%s", task)
+	}
+	logs, err := eventLog.Read()
+	if err != nil {
+		t.Fatalf("read events: %v", err)
+	}
+	if len(logs) != 2 || logs[0].Type != "run.started" || logs[1].Type != "run.aborted" {
+		t.Fatalf("events = %+v, want run.started then run.aborted", logs)
+	}
+}
+
 func TestContextRecoveryTaskWriteFailure(t *testing.T) {
 	workDir := t.TempDir()
 	t.Chdir(workDir)
@@ -708,6 +762,7 @@ type contextRolloverSandbox struct {
 	hostPathsRestored      bool
 	tasks                  []string
 	onFirstContext         func()
+	onRestoreHostPaths     func()
 	errorPhrase            string
 }
 
@@ -759,8 +814,12 @@ func (s *contextRolloverSandbox) RepoPath() string                              
 func (s *contextRolloverSandbox) Process() sandbox.Process                      { return nil }
 func (s *contextRolloverSandbox) RestoreHostPaths() error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.hostPathsRestored = true
+	onRestoreHostPaths := s.onRestoreHostPaths
+	s.mu.Unlock()
+	if onRestoreHostPaths != nil {
+		onRestoreHostPaths()
+	}
 	return nil
 }
 
