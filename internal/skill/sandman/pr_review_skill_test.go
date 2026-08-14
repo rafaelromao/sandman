@@ -476,6 +476,10 @@ func TestPRReviewSkill_PersistsConfirmedTriggerIdentityAfterGuardedPost(t *testi
 		`Only after this confirmation, atomically write the request envelope`,
 		`The request envelope is the atomic request record`,
 		`does not create a second request lifecycle authority`,
+		`clarification_url=$(gh pr comment`,
+		`'.trigger_id = $trigger_id | .trigger_created_at = $trigger_created_at'`,
+		`do not create another request or wait-state file`,
+		`The latest confirmed trigger identity`,
 	} {
 		if !strings.Contains(text, phrase) {
 			t.Errorf("pr-review SKILL.md must preserve confirmed request identity %q", phrase)

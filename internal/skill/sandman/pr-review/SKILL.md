@@ -234,26 +234,25 @@ check_review_trigger_delivery() {
   fi
 }
 
-guard_result=$(check_review_trigger_delivery) || {
-  record REVIEW_TRIGGER_GUARD_UNCERTAIN and stop
+require_review_trigger_delivery() {
+  guard_reason=REVIEW_TRIGGER_GUARD_UNCERTAIN
+  guard_result=$(check_review_trigger_delivery) || return 1
+  guard_decision=$(printf '%s' "$guard_result" | jq -er '
+    if .protocol == "review-trigger/v1" and
+       (.decision | IN("allow", "block", "uncertain"))
+    then .decision
+    else error("invalid trigger guard result")
+    end
+  ') || return 1
+  guard_reason=$(printf '%s' "$guard_result" | jq -er '.reason | strings | select(length > 0)') || return 1
+  case "$guard_decision" in
+    allow) return 0 ;;
+    block|uncertain) return 1 ;;
+    *) return 1 ;;
+  esac
 }
-guard_decision=$(printf '%s' "$guard_result" | jq -er '
-  if .protocol == "review-trigger/v1" and
-     (.decision | IN("allow", "block", "uncertain"))
-  then .decision
-  else error("invalid trigger guard result")
-  end
-') || record REVIEW_TRIGGER_GUARD_UNCERTAIN and stop
-guard_reason=$(printf '%s' "$guard_result" | jq -er '.reason | strings | select(length > 0)') || record REVIEW_TRIGGER_GUARD_UNCERTAIN and stop
-case "$guard_decision" in
-  allow) ;;
-  block|uncertain)
-    record REVIEW_TRIGGER_GUARD_BLOCKED "$guard_reason" and stop
-    ;;
-  *)
-    record REVIEW_TRIGGER_GUARD_UNCERTAIN and stop
-    ;;
-esac
+
+require_review_trigger_delivery || record REVIEW_TRIGGER_GUARD_BLOCKED "$guard_reason" and stop
 ```
 
 The post result is not a request until the trigger is confirmed against the
@@ -315,6 +314,7 @@ printf '%s\n' "$head_sha" >"$head_tmp" && mv -f "$head_tmp" ".sandman/state/<N>.
   rm -f "$head_tmp"
   record REVIEW_TIMEOUT_STATE_ERROR and stop
 }
+```
 
 The request envelope is the atomic request record. The atomic head-SHA sidecar
 remains available to the existing stale-approval rules and subsequent passes,
@@ -398,9 +398,38 @@ This is a reviewer-directed follow-up; the guard still runs before posting.
 Apply the same `allow`/`block`/`uncertain` handling; do not
 post when the newest trigger is unanswered or the guard cannot establish its
 ordering. If a request is already pending, do not pile on another trigger.
-This is reviewer communication, not a new response classification, and it does
-not create a second request lifecycle authority.
-The guarded post does not create a second request lifecycle authority.
+This is reviewer communication, not a new response classification. The guarded
+post does not create a second request lifecycle authority.
+
+When the follow-up is allowed and posted, confirm its returned comment URL,
+current head, configured prefix, and exact server `createdAt` with the same
+GitHub confirmation boundary as Step 4. Then atomically update the existing
+`$request_file` envelope's `trigger_id` and `trigger_created_at` fields; retain
+its head and lifecycle fields, and do not create another request or wait-state file.
+If confirmation or the atomic update fails, record the delivery state and
+stop without posting a repair trigger. The latest confirmed trigger identity is
+the one used by the next request-scoped wait.
+
+```bash
+require_review_trigger_delivery || record REVIEW_TRIGGER_GUARD_BLOCKED "$guard_reason" and stop
+clarification_url=$(gh pr comment <N> --repo <owner/repo> \
+  --body "{{REVIEW_COMMAND}} — please clarify which finding is actionable") ||
+  record REVIEW_TRIGGER_GUARD_UNCERTAIN and stop
+clarification_created_at=$(gh pr view <N> --repo <owner/repo> --json headRefOid,comments |
+  jq -er --arg head "$head_sha" --arg trigger_url "$clarification_url" --arg prefix "{{REVIEW_COMMAND}}" '
+    select(.headRefOid == $head) |
+    first(.comments[] | select((.url // "") == $trigger_url) |
+      select((.body // "") | startswith($prefix))) | .createdAt
+  ') || record REVIEW_TRIGGER_GUARD_UNCERTAIN and stop
+clarification_tmp=$(mktemp "${request_file}.tmp.XXXXXX") || record REVIEW_TRIGGER_GUARD_UNCERTAIN and stop
+jq --arg trigger_id "$clarification_url" \
+  --arg trigger_created_at "$clarification_created_at" \
+  '.trigger_id = $trigger_id | .trigger_created_at = $trigger_created_at' \
+  "$request_file" >"$clarification_tmp" && mv -f "$clarification_tmp" "$request_file" || {
+  rm -f "$clarification_tmp"
+  record REVIEW_TRIGGER_GUARD_UNCERTAIN and stop
+}
+```
 
 #### Step 5a: DIRTY handling — every coordinator result
 

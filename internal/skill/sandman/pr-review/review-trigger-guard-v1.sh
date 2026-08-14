@@ -96,14 +96,14 @@ if [ -n "$request_file" ]; then
 		uncertain request-envelope-missing
 	fi
 	request_json=$(jq -c . "$request_file" 2>/dev/null) || uncertain request-envelope-invalid
-	if ! printf '%s\n' "$request_json" | jq -e --arg repository "$repository" --argjson pull_request "$pull_request" '
+	if ! printf '%s\n' "$request_json" | jq -e --arg repository "$repository" --arg prefix "$trigger_prefix" --argjson pull_request "$pull_request" '
 		type == "object" and
 		.protocol == "review-wait/v1" and
 		.repository == $repository and
 		.pull_request == $pull_request and
 		(.head_sha | type == "string" and length > 0) and
 		(.trigger_id | type == "string" and length > 0) and
-		(.trigger_prefix | type == "string" and length > 0) and
+		.trigger_prefix == $prefix and
 		(.trigger_created_at | type == "string" and length > 0)
 	' >/dev/null 2>&1; then
 		uncertain request-envelope-invalid
@@ -112,15 +112,13 @@ if [ -n "$request_file" ]; then
 	prior_head_sha=$(printf '%s\n' "$request_json" | jq -r '.head_sha')
 fi
 
-if ! gh pr view "$pull_request" --repo "$repository" --json headRefOid,comments >"$view_file" 2>/dev/null; then
+if ! gh pr view "$pull_request" --repo "$repository" --json headRefOid >"$view_file" 2>/dev/null; then
 	uncertain pull-request-view-failed
 fi
 
 if ! jq -e '
 	type == "object" and
-	(.headRefOid | type == "string" and length > 0) and
-	(.comments | type == "array") and
-	all(.comments[]; type == "object")
+	(.headRefOid | type == "string" and length > 0)
 ' "$view_file" >/dev/null 2>&1; then
 	uncertain pull-request-view-invalid
 fi
@@ -130,7 +128,12 @@ if [ "$observed_head" != "$head_sha" ]; then
 	uncertain head-changed "$observed_head"
 fi
 
-if ! jq -c --arg prefix "$trigger_prefix" '
+if ! gh api "repos/$repository/issues/$pull_request/comments" --paginate >"$comments_file" 2>/dev/null; then
+	uncertain top-level-comments-unavailable "$observed_head"
+fi
+comments_json=$(jq -sc 'if length > 0 and all(.[]; type == "array" and all(.[]; type == "object")) then add else error("top-level comments must be arrays of objects") end' "$comments_file" 2>/dev/null) || uncertain top-level-comments-invalid "$observed_head"
+
+if ! printf '%s\n' "$comments_json" | jq -c --arg prefix "$trigger_prefix" '
 	def timestamp_key:
 		if type != "string" or (test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,9})?Z$") | not) then
 			null
@@ -145,11 +148,12 @@ if ! jq -c --arg prefix "$trigger_prefix" '
 		else ""
 		end;
 	def comment_url:
-		if has("url") then
-			if (.url | type) == "string" then .url else error("invalid comment url") end
+		if (.url? | type) == "string" then .url
+		elif (.html_url? | type) == "string" then .html_url
+		elif has("url") or has("html_url") then error("invalid comment url")
 		else ""
 		end;
-	[.comments[] |
+	[.[] |
 		. as $comment |
 		($comment | comment_id) as $id |
 		($comment | comment_url) as $url |
@@ -161,12 +165,15 @@ if ! jq -c --arg prefix "$trigger_prefix" '
 			{id:$id,url:$url,identity:(if $url == "" then $id else $url end),body:$comment.body,created_at:$timestamp,created_at_raw:$raw_timestamp,is_trigger:($comment.body | startswith($prefix))}
 		end
 	]
-' "$view_file" >"$comments_file" 2>/dev/null; then
+' >"$comments_file" 2>/dev/null; then
 	uncertain comment-history-invalid "$observed_head"
 fi
 
 trigger_count=$(jq '[.[] | select(.is_trigger)] | length' "$comments_file" 2>/dev/null) || uncertain trigger-history-invalid "$observed_head"
 if [ "$trigger_count" -eq 0 ]; then
+	if [ -n "$request_file" ]; then
+		uncertain confirmed-trigger-not-found "$observed_head"
+	fi
 	emit allow no-trigger "$observed_head" null
 	exit 0
 fi

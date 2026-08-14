@@ -34,6 +34,7 @@ if [ "$1" = "pr" ] && [ "$2" = "view" ]; then
 fi
 if [ "$1" = "api" ]; then
   case "$2" in
+    */issues/*/comments) printf '%s\n' '[{"id":1001,"html_url":"https://github.com/owner/repo/pull/42#issuecomment-1001","body":"/sandman review","created_at":"2026-08-11T18:00:01Z"}]' ;;
     */reviews|*/comments) printf '%s\n' '[]' ;;
     *) exit 2 ;;
   esac
@@ -91,6 +92,13 @@ if [ "$1" = "pr" ] && [ "$2" = "view" ]; then
   printf '%s\n' '{"headRefOid":"abc123","comments":[{"id":"1001","url":"https://github.com/owner/repo/pull/42#issuecomment-1001","body":"/sandman review","createdAt":"2026-08-11T18:00:01Z"},{"id":"1002","url":"https://github.com/owner/repo/pull/42#issuecomment-1002","body":"/sandman review","createdAt":"2026-08-11T18:00:01Z"}]}'
   exit 0
 fi
+if [ "$1" = "api" ]; then
+  case "$2" in
+    */issues/*/comments) printf '%s\n' '[{"id":1001,"html_url":"https://github.com/owner/repo/pull/42#issuecomment-1001","body":"/sandman review","created_at":"2026-08-11T18:00:01Z"},{"id":1002,"html_url":"https://github.com/owner/repo/pull/42#issuecomment-1002","body":"/sandman review","created_at":"2026-08-11T18:00:01Z"}]' ;;
+    *) exit 2 ;;
+  esac
+  exit 0
+fi
 exit 2
 `
 	if err := os.WriteFile(gh, []byte(ghScript), 0o700); err != nil {
@@ -112,6 +120,13 @@ if [ "$1" = "pr" ] && [ "$2" = "view" ]; then
   printf '%s\n' '{"headRefOid":"abc123","comments":[{"id":"1001","url":"https://github.com/owner/repo/pull/42#issuecomment-1001","body":"/sandman review","createdAt":"not-a-timestamp"}]}'
   exit 0
 fi
+if [ "$1" = "api" ]; then
+  case "$2" in
+    */issues/*/comments) printf '%s\n' '[{"id":1001,"html_url":"https://github.com/owner/repo/pull/42#issuecomment-1001","body":"/sandman review","created_at":"not-a-timestamp"}]' ;;
+    *) exit 2 ;;
+  esac
+  exit 0
+fi
 exit 2
 `
 	if err := os.WriteFile(gh, []byte(ghScript), 0o700); err != nil {
@@ -121,6 +136,67 @@ exit 2
 	result := runTriggerGuardCommand(t, helper, bin, "", "owner/repo", "42", "abc123", "/sandman review", "")
 	if result.Decision != "uncertain" || result.Reason != "comment-history-invalid" {
 		t.Fatalf("guard result = %q/%q, want uncertain/comment-history-invalid", result.Decision, result.Reason)
+	}
+}
+
+func TestReviewTriggerGuard_AllowsFirstRequestWhenCompleteHistoryHasNoTrigger(t *testing.T) {
+	helper := filepath.Join(mustWorkingDir(t), "pr-review", "review-trigger-guard-v1.sh")
+	bin := t.TempDir()
+	gh := filepath.Join(bin, "gh")
+	ghScript := `#!/bin/sh
+if [ "$1" = "pr" ] && [ "$2" = "view" ]; then
+  printf '%s\n' '{"headRefOid":"abc123"}'
+  exit 0
+fi
+if [ "$1" = "api" ]; then
+  case "$2" in
+    */issues/*/comments|*/reviews|*/comments) printf '%s\n' '[]' ;;
+    *) exit 2 ;;
+  esac
+  exit 0
+fi
+exit 2
+`
+	if err := os.WriteFile(gh, []byte(ghScript), 0o700); err != nil {
+		t.Fatalf("write gh shim: %v", err)
+	}
+
+	result := runTriggerGuardCommand(t, helper, bin, "", "owner/repo", "42", "abc123", "/sandman review", "")
+	if result.Decision != "allow" || result.Reason != "no-trigger" {
+		t.Fatalf("guard result = %q/%q, want allow/no-trigger", result.Decision, result.Reason)
+	}
+}
+
+func TestReviewTriggerGuard_FailsClosedWhenTrustedRequestIsMissingFromHistory(t *testing.T) {
+	helper := filepath.Join(mustWorkingDir(t), "pr-review", "review-trigger-guard-v1.sh")
+	bin := t.TempDir()
+	gh := filepath.Join(bin, "gh")
+	requestFile := filepath.Join(t.TempDir(), "42.review_request.json")
+	request := `{"protocol":"review-wait/v1","repository":"owner/repo","pull_request":42,"head_sha":"abc123","trigger_id":"https://github.com/owner/repo/pull/42#issuecomment-1001","trigger_prefix":"/sandman review","trigger_created_at":"2026-08-11T18:00:01Z"}`
+	if err := os.WriteFile(requestFile, []byte(request), 0o600); err != nil {
+		t.Fatalf("write request: %v", err)
+	}
+	ghScript := `#!/bin/sh
+if [ "$1" = "pr" ] && [ "$2" = "view" ]; then
+  printf '%s\n' '{"headRefOid":"abc123"}'
+  exit 0
+fi
+if [ "$1" = "api" ]; then
+  case "$2" in
+    */issues/*/comments|*/reviews|*/comments) printf '%s\n' '[]' ;;
+    *) exit 2 ;;
+  esac
+  exit 0
+fi
+exit 2
+`
+	if err := os.WriteFile(gh, []byte(ghScript), 0o700); err != nil {
+		t.Fatalf("write gh shim: %v", err)
+	}
+
+	result := runTriggerGuardCommand(t, helper, bin, "", "owner/repo", "42", "abc123", "/sandman review", requestFile)
+	if result.Decision != "uncertain" || result.Reason != "confirmed-trigger-not-found" {
+		t.Fatalf("guard result = %q/%q, want uncertain/confirmed-trigger-not-found", result.Decision, result.Reason)
 	}
 }
 
@@ -135,6 +211,7 @@ if [ "$1" = "pr" ] && [ "$2" = "view" ]; then
 fi
 if [ "$1" = "api" ]; then
   case "$2" in
+    */issues/*/comments) printf '%s\n' '[{"id":1001,"html_url":"https://github.com/owner/repo/pull/42#issuecomment-1001","body":"/sandman review","created_at":"2026-08-11T18:00:01Z"},{"id":1002,"html_url":"https://github.com/owner/repo/pull/42#issuecomment-1002","body":"review response","created_at":"2026-08-11T18:01:01Z"}]' ;;
     */reviews|*/comments) printf '%s\n' '[]' ;;
     *) exit 2 ;;
   esac
@@ -168,6 +245,7 @@ if [ "$1" = "pr" ] && [ "$2" = "view" ]; then
 fi
 if [ "$1" = "api" ]; then
   case "$2" in
+    */issues/*/comments) printf '%s\n' '[{"id":1001,"html_url":"https://github.com/owner/repo/pull/42#issuecomment-1001","body":"/sandman review","created_at":"2026-08-11T18:00:01Z"}]' ;;
     */reviews|*/comments) printf '%s\n' '[]' ;;
     *) exit 2 ;;
   esac
@@ -201,6 +279,7 @@ if [ "$1" = "pr" ] && [ "$2" = "view" ]; then
 fi
 if [ "$1" = "api" ]; then
   case "$2" in
+    */issues/*/comments) printf '%s\n' '[{"id":1001,"html_url":"https://github.com/owner/repo/pull/42#issuecomment-1001","body":"/sandman review","created_at":"2026-08-11T18:00:01Z"},{"id":1002,"html_url":"https://github.com/owner/repo/pull/42#issuecomment-1002","body":"/sandman review","created_at":"2026-08-11T18:02:01Z"}]' ;;
     */reviews|*/comments) printf '%s\n' '[]' ;;
     *) exit 2 ;;
   esac
@@ -229,6 +308,7 @@ if [ "$1" = "pr" ] && [ "$2" = "view" ]; then
 fi
 if [ "$1" = "api" ]; then
   case "$2" in
+    */issues/*/comments) printf '%s\n' '[{"id":1001,"html_url":"https://github.com/owner/repo/pull/42#issuecomment-1001","body":"/sandman review","created_at":"2026-08-11T18:00:01Z"}]' ;;
     */reviews) printf '%s\n' '{"not":"an array"}' ;;
     */comments) printf '%s\n' '[]' ;;
     *) exit 2 ;;
@@ -258,6 +338,7 @@ if [ "$1" = "pr" ] && [ "$2" = "view" ]; then
 fi
 if [ "$1" = "api" ]; then
   case "$2" in
+    */issues/*/comments) printf '%s\n' '[{"id":1001,"html_url":"https://github.com/owner/repo/pull/42#issuecomment-1001","body":"/sandman review","created_at":"2026-08-11T18:00:01Z"}]' ;;
     */reviews) printf '%s\n' '[{"id":2001,"state":"COMMENTED","submitted_at":"2026-08-11T18:01:01Z","body":"review response"}]' ;;
     */comments) printf '%s\n' '[]' ;;
     *) exit 2 ;;
@@ -287,6 +368,7 @@ if [ "$1" = "pr" ] && [ "$2" = "view" ]; then
 fi
 if [ "$1" = "api" ]; then
   case "$2" in
+    */issues/*/comments) printf '%s\n' '[{"id":1001,"html_url":"https://github.com/owner/repo/pull/42#issuecomment-1001","body":"/sandman review","created_at":"2026-08-11T18:00:01Z"}]' ;;
     */reviews) printf '%s\n' '[]' ;;
     */comments) printf '%s\n' '[{"id":3001,"created_at":"2026-08-11T18:01:01Z","body":"inline response"}]' ;;
     *) exit 2 ;;
