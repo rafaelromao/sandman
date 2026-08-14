@@ -58,6 +58,12 @@ review_timeout: 1800
 # Default: 3.
 retries: 3
 
+# Additional literal OpenCode context-limit error phrases. Phrases are trimmed,
+# lowercased, and matched case-insensitively alongside Sandman's built-in list.
+# Empty or duplicate normalized phrases are rejected.
+context_error_phrases:
+  - provider context exhausted
+
 # Maximum concurrent agent runs per ContainerSandbox.
 # 0 means unlimited (no per-container cap; any number of runs may execute concurrently inside one container).
 container_capacity: 4
@@ -149,6 +155,14 @@ See [Sandbox Modes](sandbox-modes.md) for detailed scheduling behavior.
 | `run_idle_timeout` | `3600` | Seconds of inactivity before the heartbeat watchdog aborts the run. `0` disables the watchdog (runs never abort due to inactivity) |
 
 `run_idle_timeout` detects when an agent has stalled (e.g., blocked on an interactive prompt, deadlocked, or looping). When triggered, the watchdog kills the agent process and marks the run as `aborted`. A `run.idle_timeout` event is written to the event log for diagnostics. The `--run-idle-timeout` CLI flag overrides the config value for a single invocation.
+
+## Context rollover phrases
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `context_error_phrases` | empty | Additional literal phrases that identify an OpenCode context-limit error |
+
+Use this list when an OpenCode provider introduces new context-exhaustion wording. Entries are global additions for the built-in `opencode` AgentPreset, are trimmed and lowercased during configuration load, and match case-insensitively alongside built-in phrases. Empty entries and duplicates after normalization are rejected. These phrases never apply to other AgentPresets and do not override rate-limit, throttling, or service-unavailable exclusions.
 
 ## Delegated review timeout
 

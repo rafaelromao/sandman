@@ -57,13 +57,12 @@ func NewAgentRun(issue *github.Issue, branch string, sandbox sandbox.Sandbox) *A
 // the layout's RepoRoot regardless of the current working directory.
 func NewAgentRunWithLayout(issue *github.Issue, branch string, sandbox sandbox.Sandbox, layout paths.Layout) *AgentRun {
 	return &AgentRun{
-		issue:                   issue,
-		branch:                  branch,
-		sandbox:                 sandbox,
-		status:                  "success",
-		layout:                  layout,
-		taskWriter:              atomicfs.WriteAtomic,
-		contextRolloverLiterals: append([]string(nil), ContextRolloverLiteralAdditions...),
+		issue:      issue,
+		branch:     branch,
+		sandbox:    sandbox,
+		status:     "success",
+		layout:     layout,
+		taskWriter: atomicfs.WriteAtomic,
 	}
 }
 

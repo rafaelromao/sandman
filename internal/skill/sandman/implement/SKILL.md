@@ -121,6 +121,10 @@ git commit -m "$COMMIT_HEADER"
 ### 5. Self-review
 
 - Load the `sandman-code-review` skill in self-review context
+- Before delegating, capture one immutable common packet containing the fixed-point identity, commit list, committed branch diff, staged and unstaged tracked diffs, and every untracked path with its contents. The packet must include `git diff <fixed-point>...HEAD`, `git diff`, and `git diff --cached`; do not describe a bare `git diff` as the complete uncommitted state.
+- The parent must enumerate the changed paths, select only standards sources relevant to those paths, and supply those standards sources explicitly to the Standards reviewer.
+- Supply the authoritative task/specification context explicitly to the Spec reviewer. Launch separate Standards and Spec reviewers with the same common packet, keep their findings separate, and do not ask reviewers to explore the repository or discover more context.
+- If any packet component is missing or malformed, record a durable blocked self-review and stop instead of reconstructing context through repository-wide discovery.
 - Perform a self-review of the changes
 - Apply fixes, format the code, run all tests, including smoke and e2e, and commit:
 
