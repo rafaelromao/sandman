@@ -223,11 +223,8 @@ func (s *runSession) handleExternalGateWithHostPaths(ctx context.Context, workDi
 		if registrationErr := s.ensureReviewRegistrationForPR(ctx, workDir, pr, headSHA); registrationErr != nil {
 			// Registration revalidates the head while holding the writer lock.
 			// Refresh the live PR before allowing the gate to terminalize; the
-			// initial snapshot may have become stale during that write.
-			headSHA = s.currentGateHead(workDir)
-			if !hostPathsReady {
-				headSHA = ""
-			}
+			// initial snapshot may have become stale during that write. Keep the
+			// original local-head snapshot so the gate does not resolve it twice.
 			pr, err = lookupPRForExternalGate(ctx, s.deps.githubClient, branch)
 			if err != nil {
 				initialUnavailable = true
