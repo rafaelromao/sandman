@@ -39,12 +39,12 @@ Every persisted Sandman artifact lives under `<repo>/.sandman/` (with two docume
 └── state/                              # runtime sidecars (NEW in this PRD)
     ├── .prompt-version                 # SHA-256 of materialized prompt template
     ├── .built_with_sandman             # empty control file (badge sidecar)
-    ├── <N>.head_sha                    # implementor review compatibility sidecar
+    ├── <N>.head_sha                    # legacy implementor review compatibility sidecar
     ├── <N>.review_registration.json    # atomic runtime-owned review registration
     ├── <N>.review_registration.json.lock # registration writer coordination lock
     ├── <N>.addressed_comments          # per-PR addressed-comment list
-    ├── <N>.review_request.json         # confirmed delegated-review request
-    ├── <N>.review_request.json.state   # request-wait result sidecar
+    ├── <N>.review_request.json         # legacy confirmed delegated-review request
+    ├── <N>.review_request.json.state   # legacy request-wait result sidecar
     └── <N>.review_request.json.state.snapshot.json # raw snapshot plus request classification
 ```
 
@@ -82,12 +82,12 @@ Every persisted Sandman artifact lives under `<repo>/.sandman/` (with two docume
 | `worktrees/<branch>/.sandman/task.md` | runtime, atomic-rename | prompt renderer (or `--continue` skips render and reads existing) | agent | orchestrator (on run completion) | per AgentRun |
 | `state/.prompt-version` | runtime, atomic-rename | prompt materializer | prompt materializer (cache check) | `sandman clean` (optional) | per prompt template change |
 | `state/.built_with_sandman` | runtime, empty control file | badge sidecar (post-batch) | portal / status badge | `sandman clean` (optional) | per post-batch badge |
-| `state/<N>.head_sha` | runtime, atomic-rename | implementor review skill (derived from confirmed request) | implementor review skill (stale-approval gate) | implementor review lifecycle | per confirmed request |
+| `state/<N>.head_sha` | legacy compatibility evidence | existing implementor review path (legacy only) | runtime diagnostics / stale-approval compatibility | implementor review lifecycle | per confirmed request |
 | `state/<N>.review_registration.json` | runtime, atomic-rename | orchestrator (after confirmed implementation review trigger) | orchestrator external-gate handoff | implementor review lifecycle | per confirmed request |
 | `state/<N>.review_registration.json.lock` | runtime coordination | registration writer | registration writer | never (permanent advisory-lock inode) | continuous per PR |
 | `state/<N>.addressed_comments` | runtime, atomic-rename | review daemon (per-PR addressed-comment list) | review daemon (dedup gate) | review daemon (rotates on PR close) | per PR |
-| `state/<N>.review_request.json` | runtime, atomic-rename | implementor review skill after trigger confirmation | versioned review wait | implementor review lifecycle | per confirmed request |
-| `state/<N>.review_request.json.state` | runtime, atomic-rename | versioned review wait | versioned review wait | implementor review lifecycle | per confirmed request |
+| `state/<N>.review_request.json` | legacy compatibility evidence | existing implementor review path (legacy only) | runtime diagnostics / versioned wait compatibility | implementor review lifecycle | per confirmed request |
+| `state/<N>.review_request.json.state` | legacy compatibility evidence | existing versioned wait path (legacy only) | runtime diagnostics / versioned wait compatibility | implementor review lifecycle | per confirmed request |
 | `state/<N>.review_request.json.state.snapshot.json` | runtime, atomic-rename | versioned review wait | existing review classifier | implementor review lifecycle | per observation |
 
 ## Out-of-layout

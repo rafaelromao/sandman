@@ -276,7 +276,9 @@ func (s *runSession) registerReviewRequest(ctx context.Context, workDir string, 
 			return nil
 		}
 		if reviewTriggerMatchesRequest(existing.Request, trigger) {
-			s.reviewRegistrationConfirmed = true
+			if strings.EqualFold(strings.TrimSpace(existing.Request.HeadSHA), strings.TrimSpace(currentHead)) {
+				s.reviewRegistrationConfirmed = true
+			}
 			return nil
 		}
 		existingTriggerAt, parseErr := time.Parse(time.RFC3339Nano, existing.Request.TriggerCreatedAt)
@@ -298,9 +300,15 @@ func (s *runSession) registerReviewRequest(ctx context.Context, workDir string, 
 			return migrationErr
 		}
 		if present && !valid {
-			// An incomplete or conflicting split record cannot authorize a
-			// replacement registration. Leave live PR state to decide the gate.
-			return nil
+			knownRequest, matchesTrigger := legacyReviewRequestMatchesTrigger(workDir, pr.Number, trigger.ID)
+			if !knownRequest || matchesTrigger {
+				// An incomplete record for this trigger cannot be repaired or
+				// rebound. A distinct confirmed trigger may establish a new
+				// generation without trusting the old sidecars.
+				return nil
+			}
+			// The invalid legacy evidence belongs to an older generation. It
+			// cannot block a newer, independently confirmed trigger.
 		}
 		if valid && legacy != nil && reviewTriggerMatchesRequest(legacy.Request, trigger) {
 			if err := writeReviewRegistration(store, registrationPath, *legacy, func() error {
@@ -422,6 +430,21 @@ func (s *runSession) verifyCurrentReviewHead(ctx context.Context, pr *github.PR,
 	return nil
 }
 
+func legacyReviewRequestMatchesTrigger(workDir string, prNumber int, triggerID string) (bool, bool) {
+	if strings.TrimSpace(workDir) == "" || prNumber <= 0 {
+		return false, false
+	}
+	data, err := os.ReadFile(paths.NewLayout(nil, workDir).PRReviewRequestPath(prNumber))
+	if err != nil {
+		return false, false
+	}
+	var request reviewRequestEnvelope
+	if err := json.Unmarshal(data, &request); err != nil {
+		return false, false
+	}
+	return true, request.TriggerID == triggerID
+}
+
 func legacyReviewTriggerHasDifferentHead(workDir string, prNumber int, triggerID, currentHead string) bool {
 	if strings.TrimSpace(workDir) == "" || prNumber <= 0 || strings.TrimSpace(triggerID) == "" {
 		return false
@@ -485,7 +508,7 @@ func (s *runSession) ensureReviewRegistrationForPR(ctx context.Context, workDir 
 	if s.reviewRegistrationConfirmed || s.deps.githubClient == nil {
 		return
 	}
-	if pr == nil || strings.TrimSpace(currentHead) == "" {
+	if pr == nil || strings.TrimSpace(pr.HeadRefName) == "" || strings.TrimSpace(currentHead) == "" {
 		return
 	}
 	s.reviewRegistrationAttempted = true

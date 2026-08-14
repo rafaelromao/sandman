@@ -513,7 +513,14 @@ func TestReviewRegistration_RetriesAfterHostPathsBecomeAvailable(t *testing.T) {
 	workDir := testenv.MkdirShort(t, "sm-review-registration-")
 	now := time.Date(2026, 8, 14, 20, 0, 0, 0, time.UTC)
 	client := &registrationGitHubClient{
-		fakeGitHubClient: fakeGitHubClient{},
+		fakeGitHubClient: fakeGitHubClient{prs: map[string]*github.PR{
+			gateTestBranch: {
+				Number:      27,
+				State:       "open",
+				HeadRefName: gateTestBranch,
+				HeadRefOid:  "current-sha",
+			},
+		}},
 		comments: []github.PRComment{{
 			ID:        "trigger-host-paths",
 			Body:      "/sandman review",
@@ -531,7 +538,7 @@ func TestReviewRegistration_RetriesAfterHostPathsBecomeAvailable(t *testing.T) {
 		reviewRegistrationNow:   func() time.Time { return now },
 		reviewAttemptStartedAt:  now.Add(-2 * time.Minute),
 	}
-	pr := &github.PR{Number: 27, State: "open", HeadRefOid: "current-sha"}
+	pr := &github.PR{Number: 27, State: "open", HeadRefName: gateTestBranch, HeadRefOid: "current-sha"}
 
 	session.ensureReviewRegistrationForPR(context.Background(), workDir, pr, "")
 	session.ensureReviewRegistrationForPR(context.Background(), workDir, pr, "current-sha")
@@ -750,6 +757,49 @@ func TestReviewRegistration_DoesNotRepairIncompleteLegacyEvidence(t *testing.T) 
 	}
 }
 
+func TestReviewRegistration_AllowsNewTriggerAfterOlderInvalidLegacyEvidence(t *testing.T) {
+	workDir := testenv.MkdirShort(t, "sm-review-registration-")
+	layout := paths.NewLayout(nil, workDir)
+	if err := os.MkdirAll(layout.StateDir, 0o755); err != nil {
+		t.Fatalf("create state directory: %v", err)
+	}
+	now := time.Date(2026, 8, 14, 20, 0, 0, 0, time.UTC)
+	client := &registrationGitHubClient{
+		fakeGitHubClient: fakeGitHubClient{},
+		comments: []github.PRComment{
+			{ID: "trigger-old-legacy", Body: "/sandman review", CreatedAt: now.Add(-2 * time.Minute)},
+			{ID: "trigger-new-legacy", Body: "/sandman review follow-up", CreatedAt: now.Add(-time.Minute)},
+		},
+	}
+	request := `{"protocol":"review-wait/v1","repository":"owner/repo","pull_request":35,"head_sha":"current-sha","trigger_id":"trigger-old-legacy"}`
+	if err := os.WriteFile(layout.PRReviewRequestPath(35), []byte(request), 0o600); err != nil {
+		t.Fatalf("write older legacy request: %v", err)
+	}
+	if err := os.WriteFile(layout.PRReviewRequestStatePath(35), []byte("not-json"), 0o600); err != nil {
+		t.Fatalf("write invalid legacy state: %v", err)
+	}
+	if err := os.WriteFile(layout.PRHeadShaPath(35), []byte("current-sha"), 0o600); err != nil {
+		t.Fatalf("write legacy head: %v", err)
+	}
+	session := &runSession{
+		deps:                   runDeps{githubClient: client, layout: layout},
+		renderCfg:              prompt.RenderConfig{ReviewCommand: "/sandman review", ReviewTimeout: 600},
+		reviewRegistrationNow:  func() time.Time { return now },
+		reviewAttemptStartedAt: now.Add(-3 * time.Minute),
+	}
+	pr := &github.PR{Number: 35, State: "open", HeadRefOid: "current-sha"}
+	if err := session.registerReviewRequest(context.Background(), workDir, pr, "current-sha"); err != nil {
+		t.Fatalf("register newer trigger: %v", err)
+	}
+	registration, err := readReviewRegistration(layout.PRReviewRegistrationPath(pr.Number), "owner/repo", pr, "current-sha")
+	if err != nil {
+		t.Fatalf("read newer registration: %v", err)
+	}
+	if registration.Request.TriggerID != "trigger-new-legacy" {
+		t.Fatalf("registration trigger = %q, want newer trigger", registration.Request.TriggerID)
+	}
+}
+
 func TestReviewRegistrationStore_DoesNotLetOlderGenerationOverwriteNewer(t *testing.T) {
 	path := paths.NewLayout(nil, testenv.MkdirShort(t, "sm-review-registration-")).PRReviewRegistrationPath(31)
 	store := fileReviewRegistrationStore{}
@@ -866,7 +916,14 @@ func TestReviewRegistration_DoesNotMigrateStaleLegacyHeadSidecar(t *testing.T) {
 func TestReviewRegistration_RetriesWhenTriggerAppearsAfterFirstObservation(t *testing.T) {
 	workDir := testenv.MkdirShort(t, "sm-review-registration-")
 	now := time.Date(2026, 8, 14, 20, 0, 0, 0, time.UTC)
-	client := &registrationGitHubClient{fakeGitHubClient: fakeGitHubClient{}}
+	client := &registrationGitHubClient{fakeGitHubClient: fakeGitHubClient{prs: map[string]*github.PR{
+		gateTestBranch: {
+			Number:      34,
+			State:       "open",
+			HeadRefName: gateTestBranch,
+			HeadRefOid:  "current-sha",
+		},
+	}}}
 	store := &registrationStoreStub{}
 	session := &runSession{
 		deps:                    runDeps{githubClient: client, errorLog: io.Discard},
@@ -875,7 +932,7 @@ func TestReviewRegistration_RetriesWhenTriggerAppearsAfterFirstObservation(t *te
 		reviewRegistrationNow:   func() time.Time { return now.Add(2 * time.Second) },
 		reviewAttemptStartedAt:  now,
 	}
-	pr := &github.PR{Number: 34, State: "open", HeadRefOid: "current-sha"}
+	pr := &github.PR{Number: 34, State: "open", HeadRefName: gateTestBranch, HeadRefOid: "current-sha"}
 
 	session.ensureReviewRegistrationForPR(context.Background(), workDir, pr, "current-sha")
 	client.comments = []github.PRComment{{
