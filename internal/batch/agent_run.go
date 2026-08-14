@@ -152,13 +152,10 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.IssueRenderer, comma
 			taskPrompt = prompt.EnsureReviewTimeoutContext(taskPrompt, renderCfg.ReviewTimeout)
 		}
 		if err := r.writeTaskPrompt(renderedPromptFile, taskPrompt); err != nil {
-			// A recovery Task is best effort. Atomic replacement leaves the
-			// prior Task intact, so a fresh session can still use it when the
-			// recovery write itself is unavailable.
-			if !renderCfg.ContextRecovery {
-				r.status = "failure"
-				return r.Result()
-			}
+			// A clean recovery session must not start without its checkpoint-first
+			// Task, even though atomic replacement preserved the prior Task.
+			r.status = "failure"
+			return r.Result()
 		}
 	} else {
 		if err := r.Prepare(renderer, renderCfg); err != nil {

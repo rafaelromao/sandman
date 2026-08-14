@@ -373,7 +373,8 @@ func TestContextRecoveryTaskWriteFailurePreservesExistingTask(t *testing.T) {
 		t.Fatalf("write existing task: %v", err)
 	}
 
-	run := NewAgentRun(nil, "context-recovery", &fakeSandbox{workDir: workDir})
+	sb := &fakeSandbox{workDir: workDir}
+	run := NewAgentRun(nil, "context-recovery", sb)
 	run.taskWriter = func(string, []byte, os.FileMode) error {
 		return errors.New("disk full")
 	}
@@ -384,8 +385,14 @@ func TestContextRecoveryTaskWriteFailurePreservesExistingTask(t *testing.T) {
 		ContextRecovery: true,
 	})
 
-	if result.Status != "success" {
-		t.Fatalf("status = %q, want success after best-effort recovery write", result.Status)
+	if result.Status != "failure" {
+		t.Fatalf("status = %q, want failure after recovery write failure", result.Status)
+	}
+	sb.mu.Lock()
+	execCalled := sb.execCalled
+	sb.mu.Unlock()
+	if execCalled {
+		t.Fatal("clean recovery session launched after its Task write failed")
 	}
 	got, err := os.ReadFile(taskPath)
 	if err != nil {
