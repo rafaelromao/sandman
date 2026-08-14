@@ -2623,17 +2623,22 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
       // log content is available (the common case: the summary endpoint
       // strips logs) verdict stays '' and the renderRunMeta
       // `if (run.reviewVerdict)` guard hides the trailing dash. The
-      // verdict is taken from the first review in the existing
-      // startedAt-desc/runId-asc sort that carries a marker, so the
-      // "latest review wins" contract is preserved.
-      const summary = { count: 0, live: false, verdict: '', status: '', kind: 'completed', source: null };
+      // verdict is taken from the newest review in the effective-finishedAt
+      // (or startedAt) ordering that carries a marker. Pending publication
+      // metadata on that newest review suppresses older local verdicts.
+      const summary = { count: 0, live: false, pendingPublication: false, verdict: '', status: '', kind: 'completed', source: null };
       if (!Array.isArray(reviews) || !reviews.length) return summary;
       summary.count = reviews.length;
       const ordered = reviews.slice().sort((a, b) => {
-        const aStarted = a && a.startedAt ? new Date(a.startedAt).getTime() : 0;
-        const bStarted = b && b.startedAt ? new Date(b.startedAt).getTime() : 0;
+        const aFinished = Date.parse(a && a.finishedAt);
+        const bFinished = Date.parse(b && b.finishedAt);
+        const aEffective = Number.isFinite(aFinished) ? aFinished : runStartedValue(a);
+        const bEffective = Number.isFinite(bFinished) ? bFinished : runStartedValue(b);
+        if (aEffective !== bEffective) return bEffective - aEffective;
+        const aStarted = runStartedValue(a);
+        const bStarted = runStartedValue(b);
         if (aStarted !== bStarted) return bStarted - aStarted;
-        return String((a && a.runId) || (a && a.key) || '').localeCompare(String((b && b.runId) || (b && b.key) || ''));
+        return String((b && b.runId) || (b && b.key) || '').localeCompare(String((a && a.runId) || (a && a.key) || ''));
       });
       summary.source = ordered[0] || null;
       for (const review of ordered) {
@@ -2645,6 +2650,7 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
           break;
         }
       }
+      summary.pendingPublication = !!(ordered[0] && ordered[0].reviewPendingPublication);
       if (!summary.live) {
         const terminal = ordered.find((review) => /^(success|failure|aborted)$/i.test(String((review && review.status) || '').trim()));
         if (terminal) {
@@ -2660,11 +2666,15 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
     // helper only matters for the orphan synthetic row. We accept the
     // same shapes the legacy lenient run.log parser did, because
     // orphan reviews still surface the saved log content.
-      for (const review of ordered) {
-        const verdict = extractReviewVerdictFromLog(review && review.log);
-        if (verdict) {
-          summary.verdict = verdict;
-          break;
+      if (!summary.pendingPublication) {
+        const latest = ordered[0];
+        if (latest && Object.prototype.hasOwnProperty.call(latest, 'reviewVerdict')) {
+          summary.verdict = String(latest.reviewVerdict || '');
+        } else {
+          const verdict = extractReviewVerdictFromLog(latest && latest.log);
+          if (verdict) {
+            summary.verdict = verdict;
+          }
         }
       }
       return summary;
@@ -2759,6 +2769,7 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
         groupedReview: false,
         reviewCount: summary.count,
         reviewVerdict: summary.verdict,
+        reviewPendingPublication: summary.pendingPublication,
         reviewLive: summary.live,
         status: summary.status || String(source.status || '').trim(),
         kind: summary.kind,
@@ -2843,7 +2854,7 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
         //      suffix so the user can see the server saw the row but could
         //      not read a verdict (issue #1939 slice 2).
         let verdictSuffix;
-        if (run.reviewLive) {
+        if (run.reviewLive || run.reviewPendingPublication) {
           verdictSuffix = 'In Progress';
         } else if (run.reviewVerdict) {
           verdictSuffix = run.reviewVerdict === 'Changes requested' ? 'Changes Requested' : run.reviewVerdict;
