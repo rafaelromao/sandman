@@ -646,11 +646,16 @@ func TestContextRolloverCancellationDuringRecoveryPreparation(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	branch := "42-context-cancel-during-preparation"
-	sb := &contextRolloverSandbox{
-		workDir:            filepath.Join(workDir, "worktree"),
-		onRestoreHostPaths: cancel,
+	previousLogRetryMarker := logRetryMarkerFn
+	logRetryMarkerFn = func(string, int, int) error {
+		// This runs after prepareAttempt builds the recovery Task but before it
+		// returns, exercising the cancellation-to-Task-write boundary.
+		cancel()
+		return nil
 	}
+	t.Cleanup(func() { logRetryMarkerFn = previousLogRetryMarker })
+	branch := "42-context-cancel-during-preparation"
+	sb := &contextRolloverSandbox{workDir: filepath.Join(workDir, "worktree")}
 	factory := &contextRolloverRunnableFactory{sandbox: sb}
 	eventLog := &events.JSONLLogger{Path: filepath.Join(workDir, "events.jsonl")}
 	o := NewOrchestrator(
