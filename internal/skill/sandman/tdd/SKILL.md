@@ -63,7 +63,7 @@ The remaining planning bullets below apply only when no existing plan is present
 - [ ] List the behaviors to test (not implementation steps)
 - [ ] Ask a subagent to review the plan, then proceed automatically after reaching consensus
 
-**Subagent liveness cap.** The plan-review subagent is unattended and can hang. Track a wall-clock timer from the moment the review subagent is spawned; hard-reject the subagent at the **20 minutes** mark, whether or not the result has been returned. Re-spawn the review subagent up to **2 times** — that is **3 total attempts** (1 original + 2 re-spawns) before falling through. If the 20-minute cap is still hit after the third attempt, surface a **subagent stuck** finding and let the parent workflow decide how to proceed (revise the plan, drop the subagent review, halt, etc.) — do not loop silently.
+If the planning review subagent fails or returns no decision, preserve the failure and next executable action through the parent workflow's normal recovery and continuation handling rather than adding a skill-local retry policy. The parent `run_idle_timeout` remains the only execution watchdog.
 
 **You can't test everything.** The subagent review ensures focus on critical paths and complex logic, not every possible edge case.
 
