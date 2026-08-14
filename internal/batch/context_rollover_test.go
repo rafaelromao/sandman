@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/rafaelromao/sandman/internal/config"
 	"github.com/rafaelromao/sandman/internal/events"
@@ -114,6 +115,125 @@ func TestContextRollover(t *testing.T) {
 			t.Fatalf("event RunID = %q, want %q", runID, wantRunID)
 		}
 	}
+}
+
+func TestContextRolloverDetector(t *testing.T) {
+	base := time.Date(2026, time.August, 14, 12, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name       string
+		lines      []string
+		times      []time.Duration
+		additions  []string
+		wantSignal bool
+	}{
+		{
+			name: "two normalized built-in errors",
+			lines: []string{
+				"\x1b[31m[run-1] 12:00:00 Error: Input exceeds context window of this model\x1b[0m\r\n",
+				"[run-1] 12:00:29 Error: context_length_exceeded\n",
+			},
+			times:      []time.Duration{0, 29 * time.Second},
+			wantSignal: true,
+		},
+		{
+			name: "one error",
+			lines: []string{
+				"[run-1] 12:00:00 Error: prompt is too long\n",
+			},
+			times:      []time.Duration{0},
+			wantSignal: false,
+		},
+		{
+			name: "rate limit excluded",
+			lines: []string{
+				"[run-1] 12:00:00 Error: rate limit exceeded\n",
+				"[run-1] 12:00:01 Error: rate limit exceeded\n",
+			},
+			times:      []time.Duration{0, time.Second},
+			wantSignal: false,
+		},
+		{
+			name: "throttling excluded",
+			lines: []string{
+				"[run-1] 12:00:00 Error: Throttling error: try again\n",
+				"[run-1] 12:00:01 Error: Throttling error: try again\n",
+			},
+			times:      []time.Duration{0, time.Second},
+			wantSignal: false,
+		},
+		{
+			name: "service unavailable excluded",
+			lines: []string{
+				"[run-1] 12:00:00 Error: Service unavailable: backend busy\n",
+				"[run-1] 12:00:01 Error: Service unavailable: backend busy\n",
+			},
+			times:      []time.Duration{0, time.Second},
+			wantSignal: false,
+		},
+		{
+			name: "outside window",
+			lines: []string{
+				"[run-1] 12:00:00 Error: prompt is too long\n",
+				"[run-1] 12:00:31 Error: prompt is too long\n",
+			},
+			times:      []time.Duration{0, 31 * time.Second},
+			wantSignal: false,
+		},
+		{
+			name: "additive literal",
+			lines: []string{
+				"[run-1] 12:00:00 Error: provider context exhausted\n",
+				"[run-1] 12:00:01 Error: provider context exhausted\n",
+			},
+			times:      []time.Duration{0, time.Second},
+			additions:  []string{"provider context exhausted"},
+			wantSignal: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			clock := base
+			detector := newContextRolloverDetector(func() time.Time { return clock }, tt.additions, nil)
+			for i, line := range tt.lines {
+				clock = base.Add(tt.times[i])
+				if _, err := detector.Write([]byte(line)); err != nil {
+					t.Fatalf("detector.Write: %v", err)
+				}
+			}
+			if got := detector.Triggered(); got != tt.wantSignal {
+				t.Fatalf("Triggered() = %v, want %v", got, tt.wantSignal)
+			}
+		})
+	}
+
+	t.Run("sliding window keeps observations at the boundary", func(t *testing.T) {
+		clock := base
+		detector := newContextRolloverDetector(func() time.Time { return clock }, nil, nil)
+		_, _ = detector.Write([]byte("Error: prompt is too long\n"))
+		clock = base.Add(31 * time.Second)
+		_, _ = detector.Write([]byte("Error: prompt is too long\n"))
+		if detector.Triggered() {
+			t.Fatal("observation older than 30 seconds triggered rollover")
+		}
+		clock = base.Add(60 * time.Second)
+		_, _ = detector.Write([]byte("Error: prompt is too long\n"))
+		if !detector.Triggered() {
+			t.Fatal("observation exactly 30 seconds old was not retained")
+		}
+	})
+
+	t.Run("partial carriage-return output is normalized", func(t *testing.T) {
+		clock := base
+		detector := newContextRolloverDetector(func() time.Time { return clock }, nil, nil)
+		_, _ = detector.Write([]byte("[run-1] 12:00:00 Error: prompt is too long\r"))
+		clock = base.Add(time.Second)
+		_, _ = detector.Write([]byte("[run-1] 12:00:01 Error: prompt is too long\r"))
+		detector.Flush()
+		if !detector.Triggered() {
+			t.Fatal("carriage-return-delimited errors did not trigger rollover")
+		}
+	})
 }
 
 type contextRolloverSandbox struct {
