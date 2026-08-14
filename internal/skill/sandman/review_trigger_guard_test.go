@@ -69,6 +69,54 @@ exit 2
 	}
 }
 
+func TestReviewTriggerGuard_BlockLeavesExistingRequestStateUntouched(t *testing.T) {
+	helper := filepath.Join(mustWorkingDir(t), "pr-review", "review-trigger-guard-v1.sh")
+	bin := t.TempDir()
+	gh := filepath.Join(bin, "gh")
+	requestFile := filepath.Join(t.TempDir(), "42.review_request.json")
+	request := `{"protocol":"review-wait/v1","repository":"owner/repo","pull_request":42,"head_sha":"abc123","trigger_id":"https://github.com/owner/repo/pull/42#issuecomment-1001","trigger_prefix":"/sandman review","trigger_created_at":"2026-08-11T18:00:01Z","confirmed_at":"2026-08-11T18:00:02Z","started_at":"2026-08-11T18:00:02Z","deadline_at":"unix:4102444800","started_unix_seconds":4102443000,"deadline_unix_seconds":4102444800,"effective_timeout_seconds":1800,"poll_plan":[120,60,60,30]}`
+	if err := os.WriteFile(requestFile, []byte(request), 0o600); err != nil {
+		t.Fatalf("write request: %v", err)
+	}
+	before, err := os.ReadFile(requestFile)
+	if err != nil {
+		t.Fatalf("read request before guard: %v", err)
+	}
+	ghScript := `#!/bin/sh
+if [ "$1" = "pr" ] && [ "$2" = "view" ]; then
+  printf '%s\n' '{"headRefOid":"abc123"}'
+  exit 0
+fi
+if [ "$1" = "api" ]; then
+  case "$2" in
+    */issues/*/comments) printf '%s\n' '[{"id":1001,"html_url":"https://github.com/owner/repo/pull/42#issuecomment-1001","body":"/sandman review","created_at":"2026-08-11T18:00:01Z"}]' ;;
+    */reviews|*/comments) printf '%s\n' '[]' ;;
+    *) exit 2 ;;
+  esac
+  exit 0
+fi
+exit 2
+`
+	if err := os.WriteFile(gh, []byte(ghScript), 0o700); err != nil {
+		t.Fatalf("write gh shim: %v", err)
+	}
+
+	result := runTriggerGuardCommand(t, helper, bin, "", "owner/repo", "42", "abc123", "/sandman review", requestFile)
+	if result.Decision != "block" || result.Reason != "unanswered-trigger" {
+		t.Fatalf("guard result = %q/%q, want block/unanswered-trigger", result.Decision, result.Reason)
+	}
+	after, err := os.ReadFile(requestFile)
+	if err != nil {
+		t.Fatalf("read request after guard: %v", err)
+	}
+	if string(after) != string(before) {
+		t.Fatalf("blocked guard changed request envelope from %q to %q", before, after)
+	}
+	if _, err := os.Stat(requestFile + ".state"); !os.IsNotExist(err) {
+		t.Fatalf("blocked guard created wait-state file, stat error = %v", err)
+	}
+}
+
 func TestReviewTriggerGuard_FailsClosedWhenGitHubQueryFails(t *testing.T) {
 	helper := filepath.Join(mustWorkingDir(t), "pr-review", "review-trigger-guard-v1.sh")
 	bin := t.TempDir()
