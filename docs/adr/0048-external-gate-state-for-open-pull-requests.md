@@ -39,6 +39,15 @@ fallback:
   request identity, deadline, budget, elapsed time, response counters, and
   next action. A malformed or stale request is blocked as a state error rather
   than becoming an agent failure or retry.
+- A later continuation that finds matching current-head formal
+  `CHANGES_REQUESTED` evidence in the retained request window is handed to the
+  same gate with `gate: "actionable-feedback"` and
+  `reason: "REVIEW_CHANGES_REQUESTED"`. The terminal payload retains the
+  request-scoped classification evidence. Merged, unavailable, failed-CI,
+  conflict, stale-head, and superseded state takes precedence; the retained
+  requested changes only replace the pull-request-wide rejected-review
+  aggregate after those checks pass. This outcome never emits `run.retry`,
+  relaunches the AgentRun, or confirms a merge.
 - Gate waiting never emits `run.retry` and never increments the agent retry
   count. Actual agent failure, idle timeout, and cancellation retain their
   existing retry behavior.

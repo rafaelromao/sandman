@@ -247,25 +247,52 @@ func (s *runSession) handleReviewTimeoutGate(ctx context.Context, workDir, branc
 	if !reviewTimeoutArtifactsPresentForPR(workDir, pr.Number) {
 		return "", nil, false
 	}
+	if strings.EqualFold(pr.State, "open") && retainedReviewPRGateFailed(pr) {
+		return s.blockExternalGate(ctx, workDir, logPath, runID, "failed")
+	}
 	repository, err := s.deps.githubClient.RepoName(ctx)
 	if err != nil {
 		return s.blockReviewTimeoutStateError(ctx, workDir, logPath, runID)
 	}
-	handoff, err := readReviewTimeoutHandoff(workDir, repository, pr, currentHead)
+	artifacts, err := readReviewTimeoutArtifacts(workDir, repository, pr, currentHead)
 	if err != nil {
+		return s.blockReviewTimeoutStateError(ctx, workDir, logPath, runID)
+	}
+	handoff, err := reviewTimeoutHandoffFromArtifacts(artifacts, currentHead)
+	if err != nil {
+		if !reviewClassificationPresent(artifacts.State.Evidence) && strings.EqualFold(strings.TrimSpace(pr.ReviewDecision), "CHANGES_REQUESTED") {
+			return s.blockExternalGate(ctx, workDir, logPath, runID, "failed")
+		}
 		return s.blockReviewTimeoutStateError(ctx, workDir, logPath, runID)
 	}
 	if handoff == nil {
 		if pr.Merged || strings.EqualFold(pr.State, "merged") {
 			return s.confirmExternalGate(ctx, workDir, branch, logPath, runID)
 		}
+		if !strings.EqualFold(pr.State, "open") {
+			return s.blockExternalGate(ctx, workDir, logPath, runID, "unavailable")
+		}
 		return "", nil, false
+	}
+	if ctx.Err() != nil {
+		return "aborted", nil, true
 	}
 	if pr.Merged || strings.EqualFold(pr.State, "merged") {
 		return s.confirmExternalGate(ctx, workDir, branch, logPath, runID)
 	}
-	if ctx.Err() != nil {
-		return "aborted", nil, true
+	if !strings.EqualFold(pr.State, "open") {
+		return s.blockExternalGate(ctx, workDir, logPath, runID, "unavailable")
+	}
+	reviewDecision := strings.ToUpper(strings.TrimSpace(pr.ReviewDecision))
+	if reviewDecision == "CHANGES_REQUESTED" && !handoff.hasActionableFeedback() {
+		return s.blockExternalGate(ctx, workDir, logPath, runID, "failed")
+	}
+	if handoff.hasActionableFeedback() {
+		s.recordReviewOutcomeBlocker(workDir, logPath, runID, handoff, gateActionableFeedback, actionableFeedbackReason, actionableFeedbackNextAction)
+		extras := handoff.payloadFor(gateActionableFeedback, actionableFeedbackReason, actionableFeedbackNextAction)
+		extras["blocker"] = "external-gate"
+		extras["gate"] = gateActionableFeedback
+		return "blocked", extras, true
 	}
 	if handoff.Outcome == retainedReviewApproval {
 		return s.handleRetainedReviewApproval(ctx, workDir, branch, logPath, runID, pr, currentHead, handoff)
@@ -273,29 +300,38 @@ func (s *runSession) handleReviewTimeoutGate(ctx context.Context, workDir, branc
 	if handoff.Outcome != retainedReviewTimeout {
 		return s.handleRetainedReviewPending(ctx, workDir, branch, logPath, runID, pr, currentHead, handoff)
 	}
-	if ctx.Err() != nil {
-		return "aborted", nil, true
-	}
-	s.recordReviewTimeoutGateBlocker(workDir, logPath, runID, handoff)
-	extras := handoff.payload()
+	s.recordReviewOutcomeBlocker(workDir, logPath, runID, handoff, gateReviewTimeout, reviewTimeoutReason, reviewTimeoutNextAction)
+	extras := handoff.payloadFor(gateReviewTimeout, reviewTimeoutReason, reviewTimeoutNextAction)
 	extras["blocker"] = "external-gate"
 	extras["gate"] = gateReviewTimeout
 	return "blocked", extras, true
+}
+
+func retainedReviewPRGateFailed(pr *github.PR) bool {
+	if pr == nil || !strings.EqualFold(strings.TrimSpace(pr.State), "open") {
+		return false
+	}
+	if strings.EqualFold(strings.TrimSpace(pr.StatusCheckRollup), "failure") {
+		return true
+	}
+	mergeStatus := strings.ToUpper(strings.TrimSpace(pr.MergeStateStatus))
+	return mergeStatus == "DIRTY" || mergeStatus == "CONFLICTING"
 }
 
 func (s *runSession) handleRetainedReviewApproval(ctx context.Context, workDir, branch, logPath, runID string, pr *github.PR, currentHead string, handoff *reviewTimeoutHandoff) (string, map[string]any, bool) {
 	gate := checkPRExternalGateForPR(pr, currentHead, true)
 	switch gate {
 	case gateReadyToMerge:
+		nextAction := "revalidate current-head approval, CI, and mergeability, then execute the normal pull-request merge gate"
 		extras := handoff.payload()
 		extras["blocker"] = "external-gate"
 		extras["gate"] = gateReadyToMerge
 		extras["reason"] = "REVIEW_APPROVED"
-		extras["next_action"] = "revalidate current-head approval, CI, and mergeability, then execute the normal pull-request merge gate"
+		extras["next_action"] = nextAction
 		if request, ok := extras["review_request"].(map[string]any); ok {
 			request["outcome"] = "approved"
 			request["reason"] = "REVIEW_APPROVED"
-			request["next_action"] = extras["next_action"]
+			request["next_action"] = nextAction
 		}
 		if ctx.Err() != nil {
 			return "aborted", nil, true
@@ -437,11 +473,20 @@ func (s *runSession) recordExternalGateBlocker(workDir, logPath, runID, reason s
 }
 
 func (s *runSession) recordReviewTimeoutGateBlocker(workDir, logPath, runID string, handoff *reviewTimeoutHandoff) {
+	s.recordReviewOutcomeBlocker(workDir, logPath, runID, handoff, gateReviewTimeout, reviewTimeoutReason, reviewTimeoutNextAction)
+}
+
+func (s *runSession) recordReviewOutcomeBlocker(workDir, logPath, runID string, handoff *reviewTimeoutHandoff, gate, reason, nextAction string) {
 	request := handoff.Request
 	counts := handoff.ResponseCounts
+	state := "delegated review request exhausted its deadline"
+	if gate == gateActionableFeedback {
+		state = "delegated review request has actionable requested changes"
+	}
 	blocker := fmt.Sprintf(
-		"\n\n## External Gate\n\n- State: delegated review request exhausted its deadline.\n- Reason: %s.\n- Repository: %s.\n- Pull request: #%d.\n- Current head: %s.\n- Trigger: %s.\n- Trigger created: %s.\n- Confirmed: %s.\n- Started: %s.\n- Deadline: %s (%d).\n- Budget: %d seconds.\n- Elapsed: %d seconds.\n- Response counts: top-level=%d, formal=%d, inline=%d.\n- Next action: %s.\n",
-		reviewTimeoutReason,
+		"\n\n## External Gate\n\n- State: %s.\n- Reason: %s.\n- Repository: %s.\n- Pull request: #%d.\n- Current head: %s.\n- Trigger: %s.\n- Trigger created: %s.\n- Confirmed: %s.\n- Started: %s.\n- Deadline: %s (%d).\n- Budget: %d seconds.\n- Elapsed: %d seconds.\n- Response counts: top-level=%d, formal=%d, inline=%d.\n- Next action: %s.\n",
+		state,
+		reason,
 		request.Repository,
 		request.PullRequest,
 		request.HeadSHA,
@@ -456,7 +501,7 @@ func (s *runSession) recordReviewTimeoutGateBlocker(workDir, logPath, runID stri
 		counts.TopLevel,
 		counts.FormalReviews,
 		counts.Inline,
-		reviewTimeoutNextAction,
+		nextAction,
 	)
 
 	if strings.TrimSpace(workDir) != "" {
@@ -485,7 +530,7 @@ func (s *runSession) recordReviewTimeoutGateBlocker(workDir, logPath, runID stri
 		return
 	}
 	prefixed := NewLinePrefixWriter(runID, file)
-	_, writeErr := fmt.Fprintf(prefixed, "external gate %s: %s; repository %s pull request #%d head %s trigger %s created %s confirmed %s started %s deadline %s budget %d elapsed %d counters top-level=%d formal=%d inline=%d; next action: %s\n", gateReviewTimeout, reviewTimeoutReason, request.Repository, request.PullRequest, request.HeadSHA, request.TriggerID, request.TriggerCreatedAt, request.ConfirmedAt, request.StartedAt, request.DeadlineAt, request.EffectiveTimeout, *handoff.State.ElapsedSeconds, counts.TopLevel, counts.FormalReviews, counts.Inline, reviewTimeoutNextAction)
+	_, writeErr := fmt.Fprintf(prefixed, "external gate %s: %s; repository %s pull request #%d head %s trigger %s created %s confirmed %s started %s deadline %s budget %d elapsed %d counters top-level=%d formal=%d inline=%d; next action: %s\n", gate, reason, request.Repository, request.PullRequest, request.HeadSHA, request.TriggerID, request.TriggerCreatedAt, request.ConfirmedAt, request.StartedAt, request.DeadlineAt, request.EffectiveTimeout, *handoff.State.ElapsedSeconds, counts.TopLevel, counts.FormalReviews, counts.Inline, nextAction)
 	flushErr := prefixed.Flush()
 	closeErr := file.Close()
 	if writeErr != nil {

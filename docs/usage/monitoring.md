@@ -115,7 +115,7 @@ Emitted when an agent run completes.
 | `run_kind` | Mirrors the `run.started` payload so projection sees a consistent kind on both events. |
 | `reason` | Short string built from the error returned by the selection phase. |
 | `blocker` | Optional terminal blocker classification. `"external-gate"` identifies CI/review waiting or intervention, rather than an agent failure. |
-| `gate` | Optional external-gate state: `"pending"`, `"failed"`, `"unavailable"`, `"unverified"`, `"ready-to-merge"`, `"review-timeout"`, or `"review-timeout-state-error"`. |
+| `gate` | Optional external-gate state: `"pending"`, `"failed"`, `"unavailable"`, `"unverified"`, `"ready-to-merge"`, `"review-timeout"`, `"review-timeout-state-error"`, or `"actionable-feedback"`. |
 | `review_request` | Present for retained delegated-review outcomes; retains the confirmed request identity, current head, deadline, budget, elapsed time, response counters, validated request-scoped classification, outcome, and next action. |
 
 #### External-gate lifecycle
@@ -144,6 +144,13 @@ deadline, while a later confirmed trigger owns a fresh budget.
 If the retained request artifacts are missing, malformed, or mismatched, the
 gate is `"review-timeout-state-error"`; repair or remove the invalid state and
 confirm a new review trigger before continuing.
+
+When the retained classification contains matching current-head formal
+`CHANGES_REQUESTED` evidence in the request window, the gate is
+`"actionable-feedback"` with reason `"REVIEW_CHANGES_REQUESTED"`. The run stays
+blocked without consuming an AgentRun retry or merging the pull request; inspect
+the retained evidence, address the feedback, and continue after pushing a new
+current head.
 
 A later continuation may project a retained request-scoped current-head formal
 approval as `gate: "ready-to-merge"` when the pull request is still open, green,

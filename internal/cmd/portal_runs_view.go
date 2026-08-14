@@ -2255,6 +2255,9 @@ func (v *portalRunsView) portalBlockedMessage(payload map[string]any) string {
 			if gate == "review-timeout-state-error" {
 				return "Retained delegated-review request state is invalid; repair or remove it and confirm a new review trigger before continuing."
 			}
+			if gate == "actionable-feedback" {
+				return "Delegated review requested changes; inspect the retained evidence, address the feedback, and continue after pushing a new current head."
+			}
 			if gate == "ready-to-merge" {
 				return "Pull request ready to merge; revalidate current-head approval, CI, and mergeability before executing the normal merge gate."
 			}
