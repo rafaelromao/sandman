@@ -255,7 +255,7 @@ func (s *runSession) registerReviewRequest(ctx context.Context, workDir string, 
 		// A stale generation may be replaced only by a newer confirmed
 		// trigger. The invalid record remains evidence and is never used
 		// to authorize the new generation.
-	} else if os.IsNotExist(err) {
+	} else if isReviewRegistrationNotExist(err) {
 		if legacyReviewTriggerHasDifferentHead(workDir, pr.Number, trigger.ID, currentHead) {
 			// A conversation trigger has no head identity. A legacy request
 			// binds that trigger to its original head, so never rebind it.
