@@ -237,11 +237,11 @@ func TestDaemon_DecisionPersistenceFailurePreservesWorktreeAfterSuccessfulPost(t
 	if poster.Calls() != 1 {
 		t.Fatalf("PostComment calls = %d, want 1", poster.Calls())
 	}
-	if !gitWorktreeHasBranch(t, worktreeDir, branch) {
-		t.Fatal("failed durable persistence must preserve the worktree after a successful post")
+	if gitWorktreeHasBranch(t, worktreeDir, branch) {
+		t.Fatal("successful publication should clean up the review worktree")
 	}
-	if !gitBranchExists(t, branch) {
-		t.Fatal("failed durable persistence must preserve the branch after a successful post")
+	if gitBranchExists(t, branch) {
+		t.Fatal("successful publication should delete the review branch")
 	}
 	statePath := locateReviewStatePath(t, dir)
 	stateBytes, err := os.ReadFile(statePath)

@@ -2011,6 +2011,11 @@ func (d *Daemon) postDecisionWithCleanup(ctx context.Context, prNumber int, comm
 		return fmt.Errorf("post decision: %w", postErr)
 	}
 
+	// A successful publication no longer needs the worktree as a
+	// recovery source, even when durable persistence failed.
+	if preserveWorktree != nil {
+		*preserveWorktree = false
+	}
 	if state != nil {
 		if err := state.MarkSeen(commentID, "success"); err != nil {
 			return fmt.Errorf("mark %s success: %w", commentID, err)
