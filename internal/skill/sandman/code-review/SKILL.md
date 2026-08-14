@@ -11,21 +11,26 @@ Use one of the explicit contexts below. Keep Standards and Spec findings separat
 
 Use this context when an implementor reviews its own changes.
 
-### 1. Pin the fixed point
+### 1. Receive the bounded review packet
 
-Use the fixed point supplied in the invocation. If none was supplied, use `origin/main` when available, then the current branch's upstream, then `HEAD~1` when it exists. If no historical baseline exists, use `HEAD` as the committed baseline, inspect `git diff HEAD` and every untracked path listed by `git status --short`, and record that no historical baseline was available.
+The parent workflow supplies one bounded review packet before delegating self-review. The parent must capture the packet once, then pass the same packet to both reviewers. The common packet must include:
 
-Confirm the fixed point resolves and the diff is non-empty before proceeding. Capture `git diff <fixed-point>...HEAD` and `git log <fixed-point>..HEAD --oneline` once.
+- The fixed-point identity and the commit list as text context.
+- The committed branch diff from `git diff <fixed-point>...HEAD`.
+- The complete uncommitted tracked changes: the unstaged tracked diff from `git diff` and the staged tracked diff from `git diff --cached`.
+- All untracked paths and their contents, as listed by the parent.
 
-### 2. Identify review sources
+Reviewers must treat this packet as immutable: they must not recompute, widen, or replace its diffs or context. If any required packet component is missing or malformed, record the blocked self-review in `.sandman/task.md` with the missing component and stop without reconstructing the packet by discovering more files or context.
 
-Find the originating work item, a supplied specification path, or a matching specification under `docs/`, `specs/`, or `.scratch/`. If no specification is available, use the work item's body and change-request body; if neither supplies a specification, the Spec assessment records `no spec available` while Standards continues.
+### 2. Delegate separate review axes
 
-Collect documented standards from contributor guidance, domain vocabulary, architectural decisions, and machine-enforced configuration. Do not manually re-check rules already enforced by tooling.
+Launch two separate review agents and keep their findings separate. The Standards reviewer receives the common packet, the changed-path list, and only the standards sources that the parent workflow explicitly selected as relevant to those paths. The Spec reviewer receives the common packet and the authoritative task/specification context supplied by the parent. Neither reviewer infers, fetches, or substitutes the other axis's context.
 
-### 3. Run the two axes in parallel
+Each reviewer reports findings only for its assigned axis, with source citations from the supplied material. The Standards output covers documented-standard violations; the Spec output covers missing, partial, incorrect, and out-of-scope behavior against the supplied specification.
 
-Use separate review agents so the axes do not pollute each other's context. Give the Standards reviewer the diff, commit list, and standards sources; it reports documented-standard violations with source citations. Give the Spec reviewer the diff, commit list, and specification; it reports missing, partial, incorrect, and out-of-scope behavior with requirement citations. Skip the Spec reviewer only when no specification is available.
+### 3. Keep reviewer prompts bounded
+
+Every self-review prompt must say that the reviewer may evaluate only the supplied packet and explicitly supplied standards or task/specification material. Do not run `grep`, `rg`, or `find`, browse the whole repository, or perform whole-repository searches. The prompt must not invite repository exploration or tell the reviewer to discover a work item, specification, or standards source.
 
 Cap each review agent at 20 minutes. If an agent stalls, retry that axis up to two times. After three stalled attempts, report `sub-agent stuck` under that axis and continue with the other axis. When a blocked review ends with no decision, record the exact timeout and next executable action in `.sandman/task.md` and the run log before ending the review.
 
