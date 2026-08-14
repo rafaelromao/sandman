@@ -216,15 +216,12 @@ func (s *runSession) handleExternalGateWithHostPaths(ctx context.Context, workDi
 		fmt.Fprintf(s.deps.errorLog, "warning: external gate lookup for branch %q: %v\n", branch, err)
 		gate = "pending"
 	}
-	if err == nil && pr != nil {
-		gate = checkPRExternalGateForPR(pr, headSHA, true)
-	}
 	if pr != nil && strings.EqualFold(strings.TrimSpace(pr.State), "open") {
-		if registrationErr := s.ensureReviewRegistrationForPR(ctx, workDir, pr, headSHA); registrationErr != nil {
-			// Registration revalidates the head while holding the writer lock.
-			// Refresh the live PR before allowing the gate to terminalize; the
-			// initial snapshot may have become stale during that write. Keep the
-			// original local-head snapshot so the gate does not resolve it twice.
+		registrationErr := s.ensureReviewRegistrationForPR(ctx, workDir, pr, headSHA)
+		if registrationErr != nil || s.reviewRegistrationObserved {
+			// Registration may observe comments and persist while the live PR
+			// changes. Refresh after an observation or failure before allowing
+			// the gate to terminalize; the initial snapshot is only a boundary.
 			pr, err = lookupPRForExternalGate(ctx, s.deps.githubClient, branch)
 			if err != nil {
 				initialUnavailable = true
@@ -232,10 +229,11 @@ func (s *runSession) handleExternalGateWithHostPaths(ctx context.Context, workDi
 				pr = nil
 			} else if pr == nil {
 				gate = "none"
-			} else {
-				gate = checkPRExternalGateForPR(pr, headSHA, true)
 			}
 		}
+	}
+	if err == nil && pr != nil {
+		gate = checkPRExternalGateForPR(pr, headSHA, true)
 	}
 
 	if gate == "none" {

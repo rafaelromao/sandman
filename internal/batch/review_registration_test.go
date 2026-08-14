@@ -21,6 +21,30 @@ type registrationGitHubClient struct {
 	comments []github.PRComment
 }
 
+type registrationGateSnapshotClient struct {
+	fakeGitHubClient
+	comments  []github.PRComment
+	responses []*github.PR
+	calls     int
+}
+
+func (c *registrationGateSnapshotClient) FindPRByBranch(context.Context, string) (*github.PR, error) {
+	index := c.calls
+	c.calls++
+	if index >= len(c.responses) {
+		index = len(c.responses) - 1
+	}
+	if index < 0 || c.responses[index] == nil {
+		return nil, nil
+	}
+	copy := *c.responses[index]
+	return &copy, nil
+}
+
+func (c *registrationGateSnapshotClient) ListPRComments(context.Context, int) ([]github.PRComment, error) {
+	return c.comments, nil
+}
+
 type registrationStoreStub struct {
 	records  map[string]reviewRequestRegistration
 	readErr  error
@@ -906,6 +930,60 @@ func TestReviewRegistration_GateRefreshesAfterHeadRevalidationFailure(t *testing
 	status, extras, handled := session.handleExternalGate(context.Background(), workDir, gateTestBranch, "", "run-test")
 	if !handled || status != "blocked" || extras["gate"] != "pending" {
 		t.Fatalf("refreshed live gate = (%q, %#v, %t), want blocked/pending", status, extras, handled)
+	}
+}
+
+func TestReviewRegistration_GateUsesLiveSnapshotAfterSuccessfulRegistration(t *testing.T) {
+	workDir := testenv.MkdirShort(t, "sm-review-registration-")
+	now := time.Date(2026, 8, 14, 20, 0, 0, 0, time.UTC)
+	client := &registrationGateSnapshotClient{
+		comments: []github.PRComment{{
+			ID:        "trigger-live-snapshot",
+			Body:      "/sandman review",
+			CreatedAt: now.Add(-time.Minute),
+		}},
+		responses: []*github.PR{
+			{
+				Number:            38,
+				State:             "open",
+				HeadRefName:       gateTestBranch,
+				HeadRefOid:        "current-sha",
+				StatusCheckRollup: "success",
+				ReviewDecision:    "APPROVED",
+				MergeStateStatus:  "CLEAN",
+			},
+			{
+				Number:            38,
+				State:             "open",
+				HeadRefName:       gateTestBranch,
+				HeadRefOid:        "current-sha",
+				StatusCheckRollup: "pending",
+				MergeStateStatus:  "BLOCKED",
+			},
+		},
+	}
+	session := &runSession{
+		deps: runDeps{githubClient: client, errorLog: io.Discard},
+		renderCfg: prompt.RenderConfig{
+			ReviewCommand: "/sandman review",
+			ReviewTimeout: 600,
+		},
+		opts: runSessionOptions{
+			currentHead:      func(string) (string, error) { return "current-sha", nil },
+			gatePollInitial:  time.Millisecond,
+			gatePollMaxSleep: time.Millisecond,
+			gatePollBudget:   5 * time.Millisecond,
+		},
+		reviewRegistrationNow:  func() time.Time { return now },
+		reviewAttemptStartedAt: now.Add(-2 * time.Minute),
+	}
+
+	status, extras, handled := session.handleExternalGate(context.Background(), workDir, gateTestBranch, "", "run-test")
+	if !handled || status != "blocked" || extras["gate"] != "pending" {
+		t.Fatalf("live gate after registration = (%q, %#v, %t), want blocked/pending", status, extras, handled)
+	}
+	if client.calls < 3 {
+		t.Fatalf("PR lookups = %d, want initial, registration validation, and refreshed snapshots", client.calls)
 	}
 }
 

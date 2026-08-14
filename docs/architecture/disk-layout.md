@@ -101,4 +101,4 @@ The following artefacts do **not** live under `<repo>/.sandman/` and are documen
 
 ## Upgrades
 
-Sandman does not migrate on-disk state across version upgrades. After upgrading, clear `.sandman/` and re-run `sandman init`. See [Troubleshooting](../help/troubleshooting.md#portal-shows-unknown-rows-after-upgrading-sandman) for the symptom and fix.
+Sandman does not generally migrate on-disk state across version upgrades. The implementation-review registration path is the explicit exception: it validates complete legacy request/head/state evidence and atomically promotes it into the runtime-owned registration. Invalid or incomplete legacy evidence is never migrated. After upgrading, clear `.sandman/` and re-run `sandman init` when state is not covered by that compatibility path. See [Troubleshooting](../help/troubleshooting.md#portal-shows-unknown-rows-after-upgrading-sandman) for the symptom and fix.

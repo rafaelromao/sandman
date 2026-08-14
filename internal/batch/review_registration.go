@@ -260,6 +260,7 @@ func (s *runSession) registerReviewRequest(ctx context.Context, workDir string, 
 	if !ok {
 		return nil
 	}
+	s.reviewRegistrationObserved = true
 	repository, err := s.deps.githubClient.RepoName(ctx)
 	if err != nil {
 		return fmt.Errorf("resolve repository for review registration: %w", err)
@@ -276,14 +277,10 @@ func (s *runSession) registerReviewRequest(ctx context.Context, workDir string, 
 			return nil
 		}
 		if reviewTriggerMatchesRequest(existing.Request, trigger) {
-			if strings.EqualFold(strings.TrimSpace(existing.Request.HeadSHA), strings.TrimSpace(currentHead)) {
-				s.reviewRegistrationConfirmed = true
-			}
 			return nil
 		}
 		existingTriggerAt, parseErr := time.Parse(time.RFC3339Nano, existing.Request.TriggerCreatedAt)
 		if parseErr != nil || !trigger.CreatedAt.After(existingTriggerAt) {
-			s.reviewRegistrationConfirmed = true
 			return nil
 		}
 		// A stale generation may be replaced only by a newer confirmed
@@ -316,7 +313,6 @@ func (s *runSession) registerReviewRequest(ctx context.Context, workDir string, 
 			}); err != nil {
 				return fmt.Errorf("migrate legacy review registration: %w", err)
 			}
-			s.reviewRegistrationConfirmed = true
 			return nil
 		}
 	} else {
@@ -382,7 +378,6 @@ func (s *runSession) registerReviewRequest(ctx context.Context, workDir string, 
 	}); err != nil {
 		return fmt.Errorf("write review registration: %w", err)
 	}
-	s.reviewRegistrationConfirmed = true
 	return nil
 }
 
@@ -505,6 +500,7 @@ func reviewTriggerMatchesRequest(request reviewRequestEnvelope, trigger reviewTr
 }
 
 func (s *runSession) ensureReviewRegistrationForPR(ctx context.Context, workDir string, pr *github.PR, currentHead string) error {
+	s.reviewRegistrationObserved = false
 	if s.deps.githubClient == nil {
 		return nil
 	}
