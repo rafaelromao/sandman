@@ -10,6 +10,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -51,6 +53,13 @@ type portalSummaryResponse struct {
 	Runs        []portalRun
 	ETag        string
 	NotModified bool
+}
+
+type portalReviewEvidenceFingerprint struct {
+	Path    string    `json:"path"`
+	Exists  bool      `json:"exists"`
+	Size    int64     `json:"size,omitempty"`
+	ModTime time.Time `json:"modTime,omitempty"`
 }
 
 var portalRunsIndexes sync.Map // map[repoRoot]*portalRunsIndex
@@ -292,19 +301,95 @@ func portalSummarySourceKey(repoRoot string, runStates []events.RunState, active
 		}
 	}
 	payload, err := json.Marshal(struct {
-		RunStates       []events.RunState          `json:"runStates"`
-		ActiveInstances []summaryActiveFingerprint `json:"activeInstances"`
-		BatchesIndex    *batchindex.Index          `json:"batchesIndex,omitempty"`
+		RunStates       []events.RunState                 `json:"runStates"`
+		ActiveInstances []summaryActiveFingerprint        `json:"activeInstances"`
+		BatchesIndex    *batchindex.Index                 `json:"batchesIndex,omitempty"`
+		ReviewEvidence  []portalReviewEvidenceFingerprint `json:"reviewEvidence,omitempty"`
 	}{
 		RunStates:       runStates,
 		ActiveInstances: activeFingerprint,
 		BatchesIndex:    batchesIndex,
+		ReviewEvidence:  portalReviewEvidence(repoRoot, runStates, batchesIndex),
 	})
 	if err != nil {
 		return "", err
 	}
 	sum := sha256.Sum256(payload)
 	return hex.EncodeToString(sum[:]), nil
+}
+
+func portalReviewEvidence(repoRoot string, runStates []events.RunState, idx *batchindex.Index) []portalReviewEvidenceFingerprint {
+	runDirs := make(map[string]struct{})
+	if idx != nil {
+		for i := range idx.Batches {
+			batch := &idx.Batches[i]
+			if batch.Kind != batchindex.KindReview || batch.Path == "" {
+				continue
+			}
+			for _, record := range batch.Runs {
+				if record.RunID == "" {
+					continue
+				}
+				runDir := filepath.Join(batch.Path, "runs", record.RunID)
+				if record.ArchivePath != "" {
+					runDir = record.ArchivePath
+					if !filepath.IsAbs(runDir) {
+						runDir = filepath.Join(repoRoot, runDir)
+					}
+				}
+				runDirs[runDir] = struct{}{}
+			}
+			entries, err := os.ReadDir(filepath.Join(batch.Path, "runs"))
+			if err != nil {
+				continue
+			}
+			for _, entry := range entries {
+				if entry.IsDir() {
+					runDirs[filepath.Join(batch.Path, "runs", entry.Name())] = struct{}{}
+				}
+			}
+		}
+	}
+	layout := paths.NewLayout(nil, repoRoot)
+	for _, runState := range runStates {
+		if !runState.IsReview() || runState.RunID == "" {
+			continue
+		}
+		batchID := runState.BatchID()
+		if runDir := persistedRunDir(repoRoot, idx, batchID, runState.RunID); runDir != "" {
+			runDirs[runDir] = struct{}{}
+		} else if batchID != "" {
+			runDirs[layout.RunFolder(batchID, runState.RunID)] = struct{}{}
+		}
+	}
+
+	dirs := make([]string, 0, len(runDirs))
+	for runDir := range runDirs {
+		dirs = append(dirs, runDir)
+	}
+	sort.Strings(dirs)
+	fingerprints := make([]portalReviewEvidenceFingerprint, 0, len(dirs)*3)
+	for _, runDir := range dirs {
+		appendReviewEvidenceFingerprint(&fingerprints, filepath.Join(runDir, "run.json"))
+		appendReviewEvidenceFingerprint(&fingerprints, filepath.Join(runDir, "review-state.json"))
+		appendReviewEvidenceFingerprint(&fingerprints, filepath.Join(runDir, "decision.md"))
+		manifest, err := batchindex.ReadManifest(runDir)
+		if err == nil && strings.TrimSpace(manifest.WorktreePath) != "" {
+			appendReviewEvidenceFingerprint(&fingerprints, filepath.Join(manifest.WorktreePath, "decision.md"))
+		}
+	}
+	return fingerprints
+}
+
+func appendReviewEvidenceFingerprint(fingerprints *[]portalReviewEvidenceFingerprint, path string) {
+	fingerprint := portalReviewEvidenceFingerprint{Path: path}
+	info, err := os.Stat(path)
+	if err == nil {
+		fingerprint.Exists = true
+		fingerprint.Size = info.Size()
+		fingerprint.ModTime = info.ModTime()
+	}
+	*fingerprints = append(*fingerprints, fingerprint)
 }
 
 func portalSummaryETag(repoRoot string, runs []portalRun) (string, error) {

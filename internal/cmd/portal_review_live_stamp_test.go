@@ -80,6 +80,7 @@ func TestAggregateReviewChildren_TerminalReviewDoesNotStampReviewLive(t *testing
 	if err := os.WriteFile(filepath.Join(reviewRunDir, "decision.md"), []byte("## Decision\n**APPROVED**\n"), 0644); err != nil {
 		t.Fatalf("write decision.md: %v", err)
 	}
+	writeReviewPublicationFixture(t, reviewRunDir, "success", reviewFinished, "")
 
 	layout := paths.NewLayout(nil, repoRoot)
 

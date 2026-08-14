@@ -239,6 +239,7 @@ func TestPortal_Compute_TerminalReviewWithApprovedMarker_PreservesParentStatus(t
 	if err := os.WriteFile(filepath.Join(reviewRunDir, "decision.md"), []byte("## Decision\n**APPROVED**\n"), 0644); err != nil {
 		t.Fatalf("write decision.md: %v", err)
 	}
+	writeReviewPublicationFixture(t, reviewRunDir, "success", finishedAt, "")
 	sliceLayout := paths.NewLayout(nil, repoRoot)
 	sliceIdx := &batchindex.Index{
 		Version: batchindex.IndexVersion,
@@ -360,6 +361,7 @@ func TestPortal_Compute_PreservesParentStatusWithTrailingQuoteRunLogShape(t *tes
 	if err := os.WriteFile(filepath.Join(reviewRunDir, "decision.md"), []byte("## Decision\n**APPROVED**\n"), 0644); err != nil {
 		t.Fatalf("write review decision.md: %v", err)
 	}
+	writeReviewPublicationFixture(t, reviewRunDir, "success", reviewFinishedAt, "")
 	sliceLayout := paths.NewLayout(nil, repoRoot)
 	sliceIdx := &batchindex.Index{
 		Version: batchindex.IndexVersion,
@@ -486,6 +488,7 @@ func TestPortal_Compute_PreservesParentStatusWithTrailingQuoteAndPipeRunLogShape
 	if err := os.WriteFile(filepath.Join(reviewRunDir, "decision.md"), []byte("## Decision\n**APPROVED**\n"), 0644); err != nil {
 		t.Fatalf("write review decision.md: %v", err)
 	}
+	writeReviewPublicationFixture(t, reviewRunDir, "success", reviewFinishedAt, "")
 	sliceLayout := paths.NewLayout(nil, repoRoot)
 	sliceIdx := &batchindex.Index{
 		Version: batchindex.IndexVersion,
@@ -1823,6 +1826,7 @@ func TestPortal_Compute_ReviewVerdictFromDecisionFileOnDisk(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(reviewRunDir, "decision.md"), []byte("## Decision\n**CHANGES_REQUESTED**\n"), 0644); err != nil {
 		t.Fatalf("write review decision.md: %v", err)
 	}
+	writeReviewPublicationFixture(t, reviewRunDir, "success", finishedAt, "")
 	sliceLayout := paths.NewLayout(nil, repoRoot)
 	sliceIdx := &batchindex.Index{
 		Version: batchindex.IndexVersion,

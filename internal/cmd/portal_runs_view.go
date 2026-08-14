@@ -73,9 +73,10 @@ type portalRun struct {
 	// artefact the review agent publishes by writing to that path before
 	// exiting (see internal/prompt/default_pr_review_prompt.md:124).
 	// reviewVerdictFromDecisionFile reads the bare `## Decision` marker
-	// from each terminal review child's decision.md before
+	// from the latest published terminal review child's decision.md before
 	// portalSummaryRuns blanks Log for transport, so the verdict survives
-	// the summary endpoint. The latest-finished review wins. The orphan
+	// the summary endpoint. An unpublished or unsafe latest review clears
+	// the verdict. The orphan
 	// review-only JS path (visibleRunForIssueGroup, portal.html)
 	// opportunistically recovers a verdict from an already-loaded sibling
 	// review.log, but the server stamp is the canonical source for
@@ -910,12 +911,13 @@ func (v *portalRunsView) demoteOrphanedActiveRunsFromDeadBatches(repoRoot string
 	return runs
 }
 
-// aggregateReviewChildren stamps ReviewCount, ReviewVerdict, and the live
-// "reviewing" badge-flip onto the canonical parent implementation row for
-// each issue that has sibling review-only children. The verdict is read from
-// each terminal review child's saved decision.md via
-// reviewVerdictFromDecisionFile during compute, before portalSummaryRuns
-// blanks Log for transport — so the verdict survives the summary endpoint.
+// aggregateReviewChildren stamps ReviewCount, ReviewVerdict,
+// ReviewPendingPublication, and the live "reviewing" badge-flip onto the
+// canonical parent implementation row for each issue that has sibling
+// review-only children. A verdict is read only from the latest terminal
+// review whose publication state is successful; pending or unsafe publication
+// evidence clears the verdict before portalSummaryRuns blanks Log for
+// transport.
 // Restored per issue #1897 after #1825 deleted it (and retargeted to the
 // decision.md artefact by #1938); the parent pick mirrors
 // the JS pickCanonicalParent (see portal.html) so the stamp lands on the
@@ -943,8 +945,10 @@ func (v *portalRunsView) aggregateReviewChildren(layout paths.Layout, runs []por
 		live               bool
 		pendingPublication bool
 		verdict            string
-		finishedAt         time.Time
-		startedAt          time.Time
+		latestEffectiveAt  time.Time
+		latestStartedAt    time.Time
+		latestRunID        string
+		latestOutcomeSet   bool
 	}
 	parents := make(map[int]int)
 	summaries := make(map[int]*reviewSummary)
@@ -954,9 +958,6 @@ func (v *portalRunsView) aggregateReviewChildren(layout paths.Layout, runs []por
 			continue
 		}
 		if run.Review {
-			if run.FinishedAt != nil {
-				run.ReviewPendingPublication = reviewPublicationPending(layout, run)
-			}
 			summary := summaries[run.IssueNumber]
 			if summary == nil {
 				summary = &reviewSummary{}
@@ -966,23 +967,31 @@ func (v *portalRunsView) aggregateReviewChildren(layout paths.Layout, runs []por
 			if run.Status == "reviewing" {
 				summary.live = true
 			}
-			if run.ReviewPendingPublication {
-				summary.pendingPublication = true
-			}
-			// Only terminal review rows project a verdict; an in-flight
-			// review has no final "## Decision" yet (issue #1729).
-			if run.FinishedAt != nil && !run.ReviewPendingPublication {
-				verdict := "Unclear"
-				if run.BatchKey != "" && run.RunDir != "" {
-					if vv, ok := reviewVerdictFromDecisionFile(layout, run.BatchKey, run.RunID); ok {
+			if run.FinishedAt != nil {
+				run.ReviewPendingPublication = reviewPublicationPending(layout, run)
+				runs[i].ReviewPendingPublication = run.ReviewPendingPublication
+				verdict := ""
+				if !run.ReviewPendingPublication {
+					verdict = "Unclear"
+					if vv, ok := reviewVerdictForRun(layout, run); ok {
 						verdict = vv
 					}
 				}
-				finishedAt := *run.FinishedAt
-				if summary.verdict == "" || finishedAt.After(summary.finishedAt) || (finishedAt.Equal(summary.finishedAt) && run.StartedAt.After(summary.startedAt)) {
+				effectiveAt := *run.FinishedAt
+				if !summary.latestOutcomeSet || reviewOutcomeIsNewer(
+					effectiveAt,
+					run.StartedAt,
+					run.RunID,
+					summary.latestEffectiveAt,
+					summary.latestStartedAt,
+					summary.latestRunID,
+				) {
+					summary.latestOutcomeSet = true
+					summary.latestEffectiveAt = effectiveAt
+					summary.latestStartedAt = run.StartedAt
+					summary.latestRunID = run.RunID
+					summary.pendingPublication = run.ReviewPendingPublication
 					summary.verdict = verdict
-					summary.finishedAt = finishedAt
-					summary.startedAt = run.StartedAt
 				}
 			}
 			continue
@@ -1057,11 +1066,28 @@ func isTerminalStatus(status string) bool {
 	return status == "success" || status == "failure" || status == "aborted"
 }
 
-func reviewPublicationPending(layout paths.Layout, run portalRun) bool {
-	runDir := strings.TrimSpace(run.RunDir)
-	if runDir == "" && run.BatchKey != "" && run.RunID != "" {
-		runDir = layout.RunFolder(run.BatchKey, run.RunID)
+func reviewOutcomeIsNewer(candidateEffectiveAt, candidateStartedAt time.Time, candidateRunID string, currentEffectiveAt, currentStartedAt time.Time, currentRunID string) bool {
+	if !candidateEffectiveAt.Equal(currentEffectiveAt) {
+		return candidateEffectiveAt.After(currentEffectiveAt)
 	}
+	if !candidateStartedAt.Equal(currentStartedAt) {
+		return candidateStartedAt.After(currentStartedAt)
+	}
+	return candidateRunID > currentRunID
+}
+
+func reviewRunDir(layout paths.Layout, run portalRun) string {
+	if runDir := strings.TrimSpace(run.RunDir); runDir != "" {
+		return runDir
+	}
+	if run.BatchKey == "" || run.RunID == "" {
+		return ""
+	}
+	return layout.RunFolder(run.BatchKey, run.RunID)
+}
+
+func reviewPublicationPending(layout paths.Layout, run portalRun) bool {
+	runDir := reviewRunDir(layout, run)
 	if runDir == "" {
 		return true
 	}
@@ -1092,6 +1118,10 @@ func latestReviewPublicationStatus(comments []batchindex.SeenComment) (string, b
 	return strings.ToLower(strings.TrimSpace(latest.Status)), true
 }
 
+func reviewVerdictForRun(layout paths.Layout, run portalRun) (string, bool) {
+	return reviewVerdictFromRunDir(reviewRunDir(layout, run))
+}
+
 // reviewVerdictFromDecisionFile reads the review run's decision file and
 // returns the verdict it advertises. Review runs now write decision.md into
 // the per-row worktree, and the run manifest records that worktree path.
@@ -1106,7 +1136,10 @@ func latestReviewPublicationStatus(comments []batchindex.SeenComment) (string, b
 // #1953); the run-folder copy is a postDecision-managed backup that
 // survives cleanup.
 func reviewVerdictFromDecisionFile(layout paths.Layout, batchID, runID string) (string, bool) {
-	runDir := layout.RunFolder(batchID, runID)
+	return reviewVerdictFromRunDir(layout.RunFolder(batchID, runID))
+}
+
+func reviewVerdictFromRunDir(runDir string) (string, bool) {
 	if runDir == "" {
 		return "", false
 	}
@@ -2077,11 +2110,11 @@ func (v *portalRunsView) runFromState(repoRoot string, runState events.RunState,
 	// from the Batches index, which is the source of truth for the
 	// on-disk location of the run folder (issue #1937). When
 	// the batch cannot be resolved (e.g. an evicted index entry or an
-	// event-log-only run with no surviving batch), leave RunDir empty
-	// so the verdict reader treats the row as Unclear.
+	// event-log-only run with no surviving batch), leave RunDir empty so the
+	// publication and verdict readers degrade safely.
 	if active == nil && portalRun.Kind == "completed" && idx != nil {
-		if entry := idx.Resolve(batchID); entry != nil && entry.Path != "" {
-			portalRun.RunDir = filepath.Join(entry.Path, "runs", runID)
+		if runDir := persistedRunDir(repoRoot, idx, batchID, runID); runDir != "" {
+			portalRun.RunDir = runDir
 		}
 	}
 	return portalRun
@@ -2492,6 +2525,23 @@ func (v *portalRunsView) sourceDirID(idx *batchindex.Index, run portalRun) runLo
 		}
 	}
 	return runLocator{batchID: batchID, runID: runID}
+}
+
+func persistedRunDir(repoRoot string, idx *batchindex.Index, batchID, runID string) string {
+	if idx == nil || batchID == "" || runID == "" {
+		return ""
+	}
+	entry := idx.ResolveBatch(batchID)
+	if entry == nil || entry.Path == "" {
+		return ""
+	}
+	if record := idx.RunRecordFor(batchID, runID); record != nil && record.ArchivePath != "" {
+		if filepath.IsAbs(record.ArchivePath) {
+			return record.ArchivePath
+		}
+		return filepath.Join(repoRoot, record.ArchivePath)
+	}
+	return filepath.Join(entry.Path, "runs", runID)
 }
 
 // unavailableRunIDsByBatchIndex returns the set of source directory IDs
