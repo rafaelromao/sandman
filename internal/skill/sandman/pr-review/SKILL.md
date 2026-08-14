@@ -189,7 +189,7 @@ before the post. This includes the Step 5 reviewer clarification/follow-up and
 the primary request in this step. The guard re-queries the current PR
 head, finds the newest `{{REVIEW_COMMAND}}` trigger by strictly normalized
 server timestamps, and checks the response surfaces after that trigger. It does
-not trust the local request record as a substitute for GitHub state.
+not trust a local record as a substitute for the remote pull-request state.
 
 The guard returns a structured decision set to `allow`, `block`, or `uncertain`.
 A newest unanswered trigger returns
@@ -204,10 +204,9 @@ head, `head-changed` is the only stale-head exception.
 
 The guard is read-only. On `block` or `uncertain`, record the delivery reason
 and stop before posting. This is a retryable request-delivery refusal: do not
-write a request envelope, wait-state sidecar, terminal review result, or
-terminal external-gate state, and do not silently repair the uncertainty by
-posting another trigger. It must not write terminal external-gate state. Leave
-any existing request identity unchanged.
+change the active review wait, terminal review result, or terminal
+external-gate state, and do not silently repair the uncertainty by posting
+another trigger. Leave any existing request identity unchanged.
 
 Define the shared guard call once and use it before every command-prefixed
 post:
@@ -263,9 +262,15 @@ trigger_url=$(gh pr comment <N> --repo <owner/repo> --body "{{REVIEW_COMMAND}}")
 trigger_id="$trigger_url"
 trigger_created_at=$(gh pr view <N> --repo <owner/repo> --json headRefOid,comments |
   jq -er --arg head "$head_sha" --arg trigger_url "$trigger_url" --arg prefix "{{REVIEW_COMMAND}}" '
+    def valid_timestamp:
+      if type != "string" or (test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,9})?Z$") | not) then false
+      else capture("^(?<base>[0-9]{4}-[0-9]{2}-[0-9]{2})(?<time>T[0-9]{2}:[0-9]{2}:[0-9]{2})(?:\\.(?<fraction>[0-9]{1,9}))?Z$") as $parts |
+        (try (($parts.base + $parts.time + "Z") | fromdateiso8601) catch null) != null
+      end;
     select(.headRefOid == $head) |
     first(.comments[] | select((.url // "") == $trigger_url) |
-      select((.body // "") | startswith($prefix))) | .createdAt
+      select((.body // "") | startswith($prefix)) |
+      select((.createdAt // "") | valid_timestamp) | .createdAt)
   ') || record REVIEW_TIMEOUT_STATE_ERROR and stop
 ```
 
@@ -402,12 +407,11 @@ post does not create a second request lifecycle authority.
 
 When the follow-up is allowed and posted, confirm its returned comment URL,
 current head, configured prefix, and exact server `createdAt` with the same
-GitHub confirmation boundary as Step 4. Then atomically update the existing
-`$request_file` envelope's `trigger_id` and `trigger_created_at` fields; retain
-its head and lifecycle fields, and do not create another request or wait-state file.
-If confirmation or the atomic update fails, record the delivery state and
-stop without posting a repair trigger. The latest confirmed trigger identity is
-the one used by the next request-scoped wait.
+confirmation check as Step 4. Then atomically update the current request
+identity while retaining its head and lifecycle; do not create another request
+or wait-state file. If confirmation or the atomic update fails, record the
+delivery state and stop without posting a repair trigger. The latest confirmed
+trigger identity is the one used by the next request-scoped wait.
 
 ```bash
 [ -f "$request_file" ] || record REVIEW_TRIGGER_GUARD_BLOCKED "request-envelope-missing" and stop
@@ -417,9 +421,15 @@ clarification_url=$(gh pr comment <N> --repo <owner/repo> \
   record REVIEW_TRIGGER_GUARD_UNCERTAIN and stop
 clarification_created_at=$(gh pr view <N> --repo <owner/repo> --json headRefOid,comments |
   jq -er --arg head "$head_sha" --arg trigger_url "$clarification_url" --arg prefix "{{REVIEW_COMMAND}}" '
+    def valid_timestamp:
+      if type != "string" or (test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,9})?Z$") | not) then false
+      else capture("^(?<base>[0-9]{4}-[0-9]{2}-[0-9]{2})(?<time>T[0-9]{2}:[0-9]{2}:[0-9]{2})(?:\\.(?<fraction>[0-9]{1,9}))?Z$") as $parts |
+        (try (($parts.base + $parts.time + "Z") | fromdateiso8601) catch null) != null
+      end;
     select(.headRefOid == $head) |
     first(.comments[] | select((.url // "") == $trigger_url) |
-      select((.body // "") | startswith($prefix))) | .createdAt
+      select((.body // "") | startswith($prefix)) |
+      select((.createdAt // "") | valid_timestamp) | .createdAt)
   ') || record REVIEW_TRIGGER_GUARD_UNCERTAIN and stop
 clarification_tmp=$(mktemp "${request_file}.tmp.XXXXXX") || record REVIEW_TRIGGER_GUARD_UNCERTAIN and stop
 jq --arg trigger_id "$clarification_url" \

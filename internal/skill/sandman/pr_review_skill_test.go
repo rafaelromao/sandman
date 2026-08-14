@@ -445,7 +445,7 @@ func TestPRReviewSkill_UsesFailClosedTriggerGuardBeforeEveryCommandPost(t *testi
 		"This includes the Step 5 reviewer clarification/follow-up",
 		"unanswered-trigger",
 		"Query, parsing, pagination, or ordering uncertainty always blocks delivery",
-		"must not write terminal external-gate state",
+		"external-gate state",
 		"The guard is read-only",
 	} {
 		if !strings.Contains(text, phrase) {
@@ -473,14 +473,15 @@ func TestPRReviewSkill_PersistsConfirmedTriggerIdentityAfterGuardedPost(t *testi
 		`trigger_created_at`,
 		`--arg trigger_id "$trigger_id"`,
 		`--arg trigger_created_at "$trigger_created_at"`,
+		`def valid_timestamp`,
 		`Only after this confirmation, atomically write the request envelope`,
 		`The request envelope is the atomic request record`,
 		`does not create a second request lifecycle authority`,
 		`clarification_url=$(gh pr comment`,
 		`'.trigger_id = $trigger_id | .trigger_created_at = $trigger_created_at'`,
 		`request-envelope-missing`,
-		`do not create another request or wait-state file`,
-		`The latest confirmed trigger identity`,
+		`do not create another request`,
+		`latest confirmed`,
 	} {
 		if !strings.Contains(text, phrase) {
 			t.Errorf("pr-review SKILL.md must preserve confirmed request identity %q", phrase)

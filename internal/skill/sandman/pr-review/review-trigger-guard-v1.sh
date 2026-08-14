@@ -145,7 +145,7 @@ if ! printf '%s\n' "$comments_json" | jq -c --arg prefix "$trigger_prefix" '
 			if $epoch == null then null else ($parts.base + $parts.time + "." + (((($parts.fraction // "") + "000000000")[0:9])) + "Z") end
 		end;
 	def comment_id:
-		if (.id? | type) == "string" and (.id | length) > 0 then .id
+		if (.id? | type) == "string" and (.id | test("^[1-9][0-9]*$")) then .id
 		elif (.id? | type) == "number" and (.id | floor == . and . > 0) then (.id | tostring)
 		else ""
 		end;
@@ -212,6 +212,11 @@ reviews_json=$(jq -sc 'if length > 0 and all(.[]; type == "array" and all(.[]; t
 inline_json=$(jq -sc 'if length > 0 and all(.[]; type == "array" and all(.[]; type == "object")) then add else error("inline comments must be arrays of objects") end' "$inline_file" 2>/dev/null) || uncertain inline-comments-invalid "$observed_head"
 
 if ! printf '%s\n' "$reviews_json" | jq -e '
+	def valid_id:
+		if (.id? | type) == "string" then (.id | test("^[1-9][0-9]*$"))
+		elif (.id? | type) == "number" then (.id | floor == . and . > 0)
+		else false
+		end;
 	def timestamp:
 		if (.submitted_at? | type) == "string" then .submitted_at
 		elif (.submittedAt? | type) == "string" then .submittedAt
@@ -225,7 +230,7 @@ if ! printf '%s\n' "$reviews_json" | jq -e '
 			if $epoch == null then null else ($parts.base + $parts.time + "." + (((($parts.fraction // "") + "000000000")[0:9])) + "Z") end
 		end;
 	all(.[];
-		(((.id? | type == "string" and length > 0) or (.id? | type == "number" and floor == . and . > 0))) and
+		valid_id and
 		(.state? | type == "string" and ((ascii_upcase) | IN("PENDING", "COMMENTED", "APPROVED", "CHANGES_REQUESTED", "DISMISSED"))) and
 		((timestamp) as $raw | ($raw | timestamp_key) != null)
 	)
@@ -234,6 +239,11 @@ if ! printf '%s\n' "$reviews_json" | jq -e '
 fi
 
 if ! printf '%s\n' "$inline_json" | jq -e '
+	def valid_id:
+		if (.id? | type) == "string" then (.id | test("^[1-9][0-9]*$"))
+		elif (.id? | type) == "number" then (.id | floor == . and . > 0)
+		else false
+		end;
 	def timestamp:
 		if (.created_at? | type) == "string" then .created_at
 		elif (.createdAt? | type) == "string" then .createdAt
@@ -245,7 +255,7 @@ if ! printf '%s\n' "$inline_json" | jq -e '
 			if $epoch == null then null else ($parts.base + $parts.time + "." + (((($parts.fraction // "") + "000000000")[0:9])) + "Z") end
 		end;
 	all(.[];
-		(((.id? | type == "string" and length > 0) or (.id? | type == "number" and floor == . and . > 0))) and
+		valid_id and
 		((.body? | type) == "string") and
 		((timestamp) as $raw | ($raw | timestamp_key) != null)
 	)
