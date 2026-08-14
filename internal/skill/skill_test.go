@@ -104,6 +104,29 @@ func TestSyncInstallsAndRunsVersionedReviewWait(t *testing.T) {
 	}
 }
 
+func TestSyncInstallsVersionedReviewTriggerGuard(t *testing.T) {
+	home := t.TempDir()
+	if err := Sync(SyncOptions{HomeDir: home, ReviewCommand: "/sandman review"}); err != nil {
+		t.Fatalf("sync skill: %v", err)
+	}
+
+	root := filepath.Join(home, ".agents", "skills", embeddedSkillRoot)
+	helper := filepath.Join(root, "pr-review", "review-trigger-guard-v1.sh")
+	if _, err := os.Stat(helper); err != nil {
+		t.Fatalf("synced trigger guard helper missing: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(root, "pr-review", "SKILL.md"))
+	if err != nil {
+		t.Fatalf("read synced pr-review skill: %v", err)
+	}
+	text := string(data)
+	for _, want := range []string{"review-trigger-guard-v1.sh", "/sandman review", "review-trigger/v1"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("synced pr-review skill missing %q", want)
+		}
+	}
+}
+
 func TestSyncInstallsCodeReviewSkillWithoutObsoleteSelfReviewSkill(t *testing.T) {
 	home := t.TempDir()
 	if err := Sync(SyncOptions{HomeDir: home, ReviewCommand: "/review-please"}); err != nil {

@@ -16,9 +16,9 @@ description: Automates the GitHub PR review loop with the PR Review Agent. Waits
 
 4. **You must NOT exit the polling loop on a `0/0` count of (formal reviews, inline comments) when the top-level PR conversation has a new non-trigger comment.** A reviewer who only posts a top-level PR conversation comment (no formal review event, no inline file comments) is still a real reviewer response. Re-classify the state, run the self-check (Step 4), and continue polling — do not give up.
 
-5. **You must NOT request another review while a previous `{{REVIEW_COMMAND}}` is still waiting for a response AND the PR head SHA has not changed.** Only post `{{REVIEW_COMMAND}}` again after either: (a) the reviewer has responded to the previous request, OR (b) a new commit has landed on the PR branch (head SHA changed). If the SHA changed, the previous request is stale — re-request regardless of feedback state. If SHA is unchanged but a response arrived, act on it before re-requesting.
+5. **You must NOT request another review while a previous `{{REVIEW_COMMAND}}` is still waiting for a response AND the PR head SHA has not changed.** Only post `{{REVIEW_COMMAND}}` again after either: (a) the reviewer has responded to the previous request, OR (b) a new commit has landed on the PR branch (head SHA changed), and the read-only trigger guard permits delivery. If the SHA changed and a trusted prior request proves which trigger is stale, re-request regardless of feedback state. If SHA is unchanged but a response arrived, act on it before re-requesting.
 
-6. **You must NOT request another review before the previous one has produced a response, UNLESS a new commit has landed.** Every iteration that would post a new `{{REVIEW_COMMAND}}` must first check whether the head SHA has changed since the last request. If SHA changed, treat the previous request as consumed and allow re-requesting. If SHA is unchanged, only re-request after a response has arrived.
+6. **You must NOT request another review before the previous one has produced a response, UNLESS a new commit has landed.** Every iteration that would post a new `{{REVIEW_COMMAND}}` must first check whether the head SHA has changed since the last request and run the read-only trigger guard. If SHA changed, treat the matching trusted prior request as consumed and allow re-requesting. If SHA is unchanged, only re-request after a response has arrived.
 
 7. **You must NOT request review until CI is green.** If CI is still pending or failing, keep polling Step 2 and do not post `{{REVIEW_COMMAND}}` yet.
 
@@ -49,6 +49,7 @@ description: Automates the GitHub PR review loop with the PR Review Agent. Waits
 - `.sandman/state/<N>.addressed_comments` — one inline comment ID per line, tracking which inline comments have already been acted on. Cleared when head SHA changes (new commit invalidates all old inline comment IDs).
 - `.sandman/state/<N>.review_request.json` — the atomic, confirmed request envelope containing the pull request, head SHA, trigger identity, start, deadline, budget, and poll plan.
 - `.sandman/state/<N>.review_request.json.state` — the atomic wait result for that request. The request envelope and its matching head-SHA sidecar must both be trusted before re-entry.
+- The installed `pr-review/review-trigger-guard-v1.sh` helper is read-only delivery preflight. It does not create a request record, wait state, or external-gate outcome.
 
 ### Iteration loop (max 10 passes)
 
@@ -176,9 +177,84 @@ this is the first request and no deadline exists yet.
 
 #### Step 4: Delegate review to the PR Review Agent (trigger post)
 
-If SHA changed since the last request, always allow re-requesting. If SHA is unchanged, skip this step if no review response has arrived yet.
+If SHA changed since the last trusted request, the matching request is stale and
+may be re-requested after the trigger guard permits delivery. If SHA is
+unchanged, skip this step if no review response has arrived yet.
+The existing "always allow re-requesting" rule still applies when that trusted
+identity matches the newest trigger and proves the prior head is stale.
 
 Only post `{{REVIEW_COMMAND}}` after CI has reached a green terminal state in Step 2.
+
+Before every command-prefixed post, run the read-only trigger guard immediately
+before the post. This includes the Step 5 reviewer clarification/follow-up and
+the primary request in this step. The guard re-queries the current PR
+head, finds the newest `{{REVIEW_COMMAND}}` trigger by strictly normalized
+server timestamps, and checks the response surfaces after that trigger. It does
+not trust the local request record as a substitute for GitHub state.
+
+The guard returns `protocol:"review-trigger/v1"` with `decision` set to
+`allow`, `block`, or `uncertain`. A newest unanswered trigger returns
+`block`/`unanswered-trigger`, including when the local request record is
+absent. A failed GitHub query, malformed ID or timestamp, incomplete response
+payload, pagination failure, equal trigger timestamps, or any other query,
+parsing, pagination, or ordering uncertainty returns `uncertain`.
+Query, parsing, pagination, or ordering uncertainty always blocks delivery. If a
+trusted
+prior request proves that the newest unanswered trigger belongs to an older
+head, `head-changed` is the only stale-head exception.
+
+The guard is read-only. On `block` or `uncertain`, record the delivery reason
+and stop before posting. This is a retryable request-delivery refusal: do not
+write a request envelope, wait-state sidecar, terminal review result, or
+terminal external-gate state, and do not silently repair the uncertainty by
+posting another trigger. It must not write terminal external-gate state. Leave
+any existing request identity unchanged.
+
+Define the shared guard call once and use it before every command-prefixed
+post:
+
+```bash
+skill_root="${SANDMAN_SKILL_ROOT:-${HOME}/.agents/skills/sandman}"
+request_file=".sandman/state/<N>.review_request.json"
+
+check_review_trigger_delivery() {
+  if [ -f "$request_file" ]; then
+    sh "$skill_root/pr-review/review-trigger-guard-v1.sh" \
+      --repository "<owner/repo>" \
+      --pull-request <N> \
+      --head-sha "$head_sha" \
+      --trigger-prefix "{{REVIEW_COMMAND}}" \
+      --request-file "$request_file"
+  else
+    sh "$skill_root/pr-review/review-trigger-guard-v1.sh" \
+      --repository "<owner/repo>" \
+      --pull-request <N> \
+      --head-sha "$head_sha" \
+      --trigger-prefix "{{REVIEW_COMMAND}}"
+  fi
+}
+
+guard_result=$(check_review_trigger_delivery) || {
+  record REVIEW_TRIGGER_GUARD_UNCERTAIN and stop
+}
+guard_decision=$(printf '%s' "$guard_result" | jq -er '
+  if .protocol == "review-trigger/v1" and
+     (.decision | IN("allow", "block", "uncertain"))
+  then .decision
+  else error("invalid trigger guard result")
+  end
+') || record REVIEW_TRIGGER_GUARD_UNCERTAIN and stop
+guard_reason=$(printf '%s' "$guard_result" | jq -er '.reason | strings | select(length > 0)') || record REVIEW_TRIGGER_GUARD_UNCERTAIN and stop
+case "$guard_decision" in
+  allow) ;;
+  block|uncertain)
+    record REVIEW_TRIGGER_GUARD_BLOCKED "$guard_reason" and stop
+    ;;
+  *)
+    record REVIEW_TRIGGER_GUARD_UNCERTAIN and stop
+    ;;
+esac
+```
 
 The post result is not a request until the trigger is confirmed against the
 current PR head. Re-read the PR comments and capture the exact server
@@ -316,9 +392,15 @@ An envelope with `state:"unavailable"` is structured failure, never approval.
 
 Before Step 6, retain the existing self-check: when `top > 0`, `reviews == 0`,
 and `inline == 0`, and no previous `{{REVIEW_COMMAND}}` request is already
-pending, post a follow-up beginning with `{{REVIEW_COMMAND}}` asking the
-reviewer to clarify. If a request is already pending, do not pile on another
-trigger. This is reviewer communication, not a new response classification.
+pending, run `check_review_trigger_delivery` again immediately before you
+post a follow-up beginning with `{{REVIEW_COMMAND}}` asking the reviewer to clarify.
+This is a reviewer-directed follow-up; the guard still runs before posting.
+Apply the same `allow`/`block`/`uncertain` handling; do not
+post when the newest trigger is unanswered or the guard cannot establish its
+ordering. If a request is already pending, do not pile on another trigger.
+This is reviewer communication, not a new response classification, and it does
+not create a second request lifecycle authority.
+The guarded post does not create a second request lifecycle authority.
 
 #### Step 5a: DIRTY handling — every coordinator result
 

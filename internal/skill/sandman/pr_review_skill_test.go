@@ -435,6 +435,62 @@ func TestPRReviewSkill_FailsClosedOnUntrustedRequestPair(t *testing.T) {
 	}
 }
 
+func TestPRReviewSkill_UsesFailClosedTriggerGuardBeforeEveryCommandPost(t *testing.T) {
+	text := readPRReviewSkill(t)
+
+	for _, phrase := range []string{
+		"review-trigger-guard-v1.sh",
+		"review-trigger/v1",
+		"Before every command-prefixed post",
+		"This includes the Step 5 reviewer clarification/follow-up",
+		"unanswered-trigger",
+		"Query, parsing, pagination, or ordering uncertainty always blocks delivery",
+		"must not write terminal external-gate state",
+		"The guard is read-only",
+	} {
+		if !strings.Contains(text, phrase) {
+			t.Errorf("pr-review SKILL.md must describe fail-closed trigger delivery %q", phrase)
+		}
+	}
+
+	step4 := strings.Index(text, "#### Step 4: Delegate review")
+	step5 := strings.Index(text, "#### Step 5: Wait for this confirmed request")
+	if step4 < 0 || step5 < step4 {
+		t.Fatal("could not isolate trigger-post section")
+	}
+	step4Text := text[step4:step5]
+	guard := strings.Index(step4Text, "review-trigger-guard-v1.sh")
+	post := strings.Index(step4Text, `gh pr comment <N> --repo <owner/repo> --body "{{REVIEW_COMMAND}}"`)
+	if guard < 0 || post < 0 || guard > post {
+		t.Fatal("Step 4 must run the trigger guard before posting the command-prefixed request")
+	}
+}
+
+func TestPRReviewSkill_PersistsConfirmedTriggerIdentityAfterGuardedPost(t *testing.T) {
+	text := readPRReviewSkill(t)
+	for _, phrase := range []string{
+		`trigger_id="$trigger_url"`,
+		`trigger_created_at`,
+		`--arg trigger_id "$trigger_id"`,
+		`--arg trigger_created_at "$trigger_created_at"`,
+		`Only after this confirmation, atomically write the request envelope`,
+		`The request envelope is the atomic request record`,
+		`does not create a second request lifecycle authority`,
+	} {
+		if !strings.Contains(text, phrase) {
+			t.Errorf("pr-review SKILL.md must preserve confirmed request identity %q", phrase)
+		}
+	}
+
+	guard := strings.Index(text, "review-trigger-guard-v1.sh")
+	post := strings.Index(text, `gh pr comment <N> --repo <owner/repo> --body "{{REVIEW_COMMAND}}"`)
+	confirm := strings.Index(text, "trigger_created_at=$(gh pr view")
+	persist := strings.Index(text, "Only after this confirmation, atomically write the request envelope")
+	if guard < 0 || post < guard || confirm < post || persist < confirm {
+		t.Fatal("the guarded post must confirm and persist the same trigger identity before waiting")
+	}
+}
+
 func TestPRReviewSkill_ADRNotesDaemonOwnership(t *testing.T) {
 	text := readADR0013(t)
 
