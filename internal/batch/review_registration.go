@@ -111,14 +111,14 @@ func validateReviewRegistration(registration reviewRequestRegistration, reposito
 	if state.Protocol != request.Protocol || state.Repository != request.Repository || state.PullRequest != request.PullRequest || state.HeadSHA != request.HeadSHA || state.TriggerID != request.TriggerID || state.TriggerPrefix != request.TriggerPrefix || state.TriggerCreatedAt != request.TriggerCreatedAt || state.ConfirmedAt != request.ConfirmedAt || state.StartedAt != request.StartedAt || state.DeadlineAt != request.DeadlineAt || state.StartedUnixSeconds != request.StartedUnixSeconds || state.EffectiveTimeout != request.EffectiveTimeout || state.DeadlineUnixSeconds != request.DeadlineUnixSeconds || !slices.Equal(state.PollPlan, request.PollPlan) {
 		return fmt.Errorf("review registration state does not match the request")
 	}
-	if state.State != "pending" && state.State != "responded" && state.State != "timed_out" && state.State != "unavailable" {
-		return fmt.Errorf("review registration state is invalid")
+	if state.State != "pending" || state.Lifecycle != "started" || state.Reason != "pending" {
+		return fmt.Errorf("review registration initial state is invalid")
 	}
-	if state.Lifecycle != "started" && state.Lifecycle != "resumed" {
-		return fmt.Errorf("review registration lifecycle is invalid")
+	if state.ElapsedSeconds == nil || *state.ElapsedSeconds != 0 {
+		return fmt.Errorf("review registration initial elapsed time is invalid")
 	}
-	if state.ElapsedSeconds == nil || *state.ElapsedSeconds < 0 {
-		return fmt.Errorf("review registration elapsed time is invalid")
+	if state.Evidence != nil {
+		return fmt.Errorf("review registration initial state has evidence")
 	}
 	if strings.TrimSpace(state.ObservedHeadSHA) == "" || !strings.EqualFold(state.ObservedHeadSHA, request.HeadSHA) {
 		return fmt.Errorf("review registration observed head does not match the request")
@@ -204,19 +204,28 @@ func (s *runSession) registerReviewRequest(ctx context.Context, workDir string, 
 		// A record for another head or a malformed record is evidence only. A
 		// newer confirmed trigger may replace it, but it must never prevent
 		// the current attempt from establishing a fresh generation.
-	} else if !os.IsNotExist(err) && !isReviewRegistrationDecodeError(err) {
+	} else if isReviewRegistrationDecodeError(err) {
+		// A malformed committed record is evidence only. Do not silently
+		// repair it from a comment or extend its deadline.
+		return nil
+	} else if !os.IsNotExist(err) {
 		return fmt.Errorf("read existing review registration: %w", err)
 	} else if os.IsNotExist(err) {
-		if legacyReviewTriggerHasDifferentHead(workDir, pr.Number, trigger.ID, trigger.CreatedAt, currentHead) {
-			// A conversation trigger has no head identity. A legacy request
-			// binds that trigger to its original head, so never rebind it.
-			return nil
-		}
-		migrated, migrationErr := migrateLegacyReviewRegistration(store, registrationPath, workDir, repository, pr, currentHead, trigger)
-		if migrationErr != nil {
-			return migrationErr
-		}
-		if migrated {
+		if legacyReviewEvidencePresentForPR(workDir, pr.Number) {
+			if legacyReviewTriggerHasDifferentHead(workDir, pr.Number, trigger.ID, trigger.CreatedAt, currentHead) {
+				// A conversation trigger has no head identity. A legacy request
+				// binds that trigger to its original head, so never rebind it.
+				return nil
+			}
+			migrated, migrationErr := migrateLegacyReviewRegistration(store, registrationPath, workDir, repository, pr, currentHead, trigger)
+			if migrationErr != nil {
+				return migrationErr
+			}
+			if migrated {
+				return nil
+			}
+			// An incomplete or conflicting split record cannot authorize a
+			// replacement registration. Leave live PR state to decide the gate.
 			return nil
 		}
 	}
@@ -295,6 +304,19 @@ func legacyReviewTriggerHasDifferentHead(workDir string, prNumber int, triggerID
 		return false
 	}
 	return (request.TriggerID == triggerID || reviewTriggerTimestampMatches(request.TriggerCreatedAt, triggerCreatedAt)) && strings.TrimSpace(request.HeadSHA) != "" && !strings.EqualFold(request.HeadSHA, strings.TrimSpace(currentHead))
+}
+
+func legacyReviewEvidencePresentForPR(workDir string, prNumber int) bool {
+	if strings.TrimSpace(workDir) == "" || prNumber <= 0 {
+		return false
+	}
+	layout := paths.NewLayout(nil, workDir)
+	for _, path := range []string{layout.PRReviewRequestPath(prNumber), layout.PRReviewRequestStatePath(prNumber), layout.PRHeadShaPath(prNumber)} {
+		if _, err := os.Stat(path); err == nil {
+			return true
+		}
+	}
+	return false
 }
 
 func migrateLegacyReviewRegistration(store reviewRegistrationStore, registrationPath, workDir, repository string, pr *github.PR, currentHead string, trigger reviewTrigger) (bool, error) {

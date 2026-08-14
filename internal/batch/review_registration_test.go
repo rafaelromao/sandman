@@ -562,3 +562,114 @@ func TestReviewRegistration_StaleGenerationCanBeReplacedByCurrentHead(t *testing
 		t.Fatalf("current generation = %#v, want trigger-new/new-sha", registration.Request)
 	}
 }
+
+func TestReviewRegistration_DoesNotReplaceCorruptCanonicalRecord(t *testing.T) {
+	workDir := testenv.MkdirShort(t, "sm-review-registration-")
+	layout := paths.NewLayout(nil, workDir)
+	if err := os.MkdirAll(layout.StateDir, 0o755); err != nil {
+		t.Fatalf("create state directory: %v", err)
+	}
+	path := layout.PRReviewRegistrationPath(28)
+	if err := os.WriteFile(path, []byte("not-json"), 0o600); err != nil {
+		t.Fatalf("write corrupt canonical record: %v", err)
+	}
+	client := &registrationGitHubClient{
+		fakeGitHubClient: fakeGitHubClient{},
+		comments: []github.PRComment{{
+			ID:        "trigger-corrupt",
+			Body:      "/sandman review",
+			CreatedAt: time.Date(2026, 8, 14, 20, 0, 0, 0, time.UTC),
+		}},
+	}
+	session := &runSession{
+		deps:                   runDeps{githubClient: client, layout: layout},
+		renderCfg:              prompt.RenderConfig{ReviewCommand: "/sandman review", ReviewTimeout: 600},
+		reviewAttemptStartedAt: time.Date(2026, 8, 14, 19, 59, 0, 0, time.UTC),
+	}
+	pr := &github.PR{Number: 28, State: "open", HeadRefOid: "current-sha"}
+
+	if err := session.registerReviewRequest(context.Background(), workDir, pr, "current-sha"); err != nil {
+		t.Fatalf("observe corrupt canonical record: %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read canonical record: %v", err)
+	}
+	if string(data) != "not-json" {
+		t.Fatalf("corrupt canonical record was replaced with %q", string(data))
+	}
+}
+
+func TestReviewRegistration_ReaderRejectsTerminalCanonicalState(t *testing.T) {
+	workDir := testenv.MkdirShort(t, "sm-review-registration-")
+	now := time.Date(2026, 8, 14, 20, 0, 0, 0, time.UTC)
+	client := &registrationGitHubClient{
+		fakeGitHubClient: fakeGitHubClient{},
+		comments: []github.PRComment{{
+			ID:        "trigger-terminal",
+			Body:      "/sandman review",
+			CreatedAt: now.Add(-time.Minute),
+		}},
+	}
+	session := &runSession{
+		deps:                   runDeps{githubClient: client, layout: paths.NewLayout(nil, workDir)},
+		renderCfg:              prompt.RenderConfig{ReviewCommand: "/sandman review", ReviewTimeout: 600},
+		reviewRegistrationNow:  func() time.Time { return now },
+		reviewAttemptStartedAt: now.Add(-2 * time.Minute),
+	}
+	pr := &github.PR{Number: 29, State: "open", HeadRefOid: "current-sha"}
+	if err := session.registerReviewRequest(context.Background(), workDir, pr, "current-sha"); err != nil {
+		t.Fatalf("register canonical record: %v", err)
+	}
+	path := session.deps.layout.PRReviewRegistrationPath(pr.Number)
+	var record reviewRequestRegistration
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read canonical record: %v", err)
+	}
+	if err := json.Unmarshal(data, &record); err != nil {
+		t.Fatalf("decode canonical record: %v", err)
+	}
+	record.State.State = "timed_out"
+	record.State.Reason = "request-deadline-exhausted"
+	if err := atomicfs.WriteAtomicJSON(path, record, 0o600); err != nil {
+		t.Fatalf("write terminal canonical state: %v", err)
+	}
+	if _, err := readReviewRegistration(path, "owner/repo", pr, "current-sha"); err == nil {
+		t.Fatal("reader accepted terminal canonical state")
+	}
+}
+
+func TestReviewRegistration_DoesNotRepairIncompleteLegacyEvidence(t *testing.T) {
+	workDir := testenv.MkdirShort(t, "sm-review-registration-")
+	layout := paths.NewLayout(nil, workDir)
+	if err := os.MkdirAll(layout.StateDir, 0o755); err != nil {
+		t.Fatalf("create state directory: %v", err)
+	}
+	now := time.Date(2026, 8, 14, 20, 0, 0, 0, time.UTC)
+	client := &registrationGitHubClient{
+		fakeGitHubClient: fakeGitHubClient{},
+		comments: []github.PRComment{{
+			ID:        "trigger-incomplete-legacy",
+			Body:      "/sandman review",
+			CreatedAt: now.Add(-time.Minute),
+		}},
+	}
+	request := `{"protocol":"review-wait/v1","repository":"owner/repo","pull_request":30,"head_sha":"current-sha","trigger_id":"trigger-incomplete-legacy"}`
+	if err := os.WriteFile(layout.PRReviewRequestPath(30), []byte(request), 0o600); err != nil {
+		t.Fatalf("write incomplete legacy request: %v", err)
+	}
+	session := &runSession{
+		deps:                   runDeps{githubClient: client, layout: layout},
+		renderCfg:              prompt.RenderConfig{ReviewCommand: "/sandman review", ReviewTimeout: 600},
+		reviewRegistrationNow:  func() time.Time { return now },
+		reviewAttemptStartedAt: now.Add(-2 * time.Minute),
+	}
+	pr := &github.PR{Number: 30, State: "open", HeadRefOid: "current-sha"}
+	if err := session.registerReviewRequest(context.Background(), workDir, pr, "current-sha"); err != nil {
+		t.Fatalf("observe incomplete legacy evidence: %v", err)
+	}
+	if _, err := os.Stat(layout.PRReviewRegistrationPath(pr.Number)); !os.IsNotExist(err) {
+		t.Fatalf("incomplete legacy evidence created canonical record: %v", err)
+	}
+}
