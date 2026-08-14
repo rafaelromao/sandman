@@ -168,6 +168,45 @@ func TestContextRolloverConfiguredPhrase(t *testing.T) {
 	t.Fatalf("events = %+v, want context-exhausted retry", logs)
 }
 
+func TestContextRolloverConfiguredPhrasePromptOnly(t *testing.T) {
+	workDir := t.TempDir()
+	t.Chdir(workDir)
+	configPath := filepath.Join(workDir, "config.yaml")
+	if err := os.WriteFile(configPath, []byte("agent: opencode\nsandbox: worktree\nretries: 1\ncontext_error_phrases:\n  - provider context exhausted\n"), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	sb := &contextRolloverSandbox{
+		workDir:     filepath.Join(workDir, "worktree"),
+		errorPhrase: "Provider Context Exhausted",
+	}
+	factory := &contextRolloverRunnableFactory{sandbox: sb}
+	o := NewOrchestrator(
+		nil,
+		&retryRenderer{result: "# Task\n\nInitial task."},
+		&config.FileStore{Path: configPath},
+		&events.JSONLLogger{Path: filepath.Join(workDir, "events.jsonl")},
+		WithErrorLog(io.Discard),
+		WithSandboxFactory(&contextRolloverSandboxFactory{sandbox: sb}),
+		WithRunnableFactory(factory),
+		WithRunSessionOpts(runSessionOptions{baseBranchSync: func(string, string) error { return nil }}),
+	)
+
+	result, err := o.RunBatch(context.Background(), Request{
+		PromptConfig: prompt.RenderConfig{PromptFlag: "Return only OK."},
+		Retries:      -1,
+	})
+	if err != nil {
+		t.Fatalf("RunBatch: %v", err)
+	}
+	if len(result.Runs) != 1 {
+		t.Fatalf("runs = %+v, want one prompt-only AgentRun", result.Runs)
+	}
+	if factory.created != 2 {
+		t.Fatalf("runnable launches = %d, want 2", factory.created)
+	}
+}
+
 func TestContextRolloverDetector(t *testing.T) {
 	base := time.Date(2026, time.August, 14, 12, 0, 0, 0, time.UTC)
 	tests := []struct {

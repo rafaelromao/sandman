@@ -3240,6 +3240,7 @@ func (o *Orchestrator) runPromptOnly(ctx context.Context, cfg *config.Config, ag
 		MaxContainersSet:           maxContainersSet,
 		DangerouslySkipPermissions: dangerouslySkipPermissions,
 		StrandedReconcile:          strandedReconcile,
+		ContextRolloverLiterals:    cfg.ContextErrorPhrases,
 	}
 	commander, ok := coord.(daemon.IssueCommander)
 	if !ok {
