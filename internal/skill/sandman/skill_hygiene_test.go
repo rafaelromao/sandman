@@ -269,9 +269,9 @@ func TestSkills_AutonomousRecoveryLaddersRemainExplicit(t *testing.T) {
 			"record the exact blocker and next executable action",
 		},
 		"code-review/SKILL.md": {
-			"`origin/main` when available",
-			"inspect `git diff HEAD` and every untracked path",
-			"no spec available",
+			"record the blocked self-review",
+			"only the supplied packet",
+			"Do not run `grep`, `rg`, or `find`",
 			"`.sandman/task.md` and the run log",
 		},
 		"pr-review/SKILL.md": {
@@ -309,7 +309,7 @@ func TestCodeReviewSkill_SeparatesSelfAndDaemonContexts(t *testing.T) {
 
 	for _, phrase := range []string{
 		"## Self-review context",
-		"`origin/main` when available",
+		"parent workflow supplies one bounded review packet",
 		"## Standards",
 		"## Spec",
 		"## Pull-request review context",
@@ -328,6 +328,168 @@ func TestCodeReviewSkill_SeparatesSelfAndDaemonContexts(t *testing.T) {
 	} {
 		if !strings.Contains(text, "Do not "+forbidden) {
 			t.Errorf("code-review daemon context must forbid pull-request orchestration %q", forbidden)
+		}
+	}
+}
+
+func TestCodeReviewSkill_SelfReviewUsesBoundedCommonPacket(t *testing.T) {
+	text, ok := readSkillMarkdown(t)["code-review/SKILL.md"]
+	if !ok {
+		t.Fatal("expected code-review/SKILL.md")
+	}
+
+	start := strings.Index(text, "## Self-review context")
+	end := strings.Index(text, "## Pull-request review context")
+	if start < 0 || end < start {
+		t.Fatal("could not isolate self-review context")
+	}
+	selfReview := text[start:end]
+
+	for _, phrase := range []string{
+		"parent workflow supplies one bounded review packet",
+		"fixed-point identity",
+		"commit list",
+		"git diff <fixed-point>...HEAD",
+		"staged tracked diff",
+		"unstaged tracked diff",
+		"untracked paths and their contents",
+		"capture the packet once",
+		"same packet to both reviewers",
+		"only the supplied packet",
+		"Do not run `grep`, `rg`, or `find`",
+		"whole-repository searches",
+	} {
+		if !strings.Contains(selfReview, phrase) {
+			t.Errorf("self-review context missing bounded-packet contract %q", phrase)
+		}
+	}
+
+	for _, forbidden := range []string{
+		"### 2. Identify review sources",
+		"Find the originating work item",
+		"Collect documented standards from",
+	} {
+		if strings.Contains(selfReview, forbidden) {
+			t.Errorf("self-review context must not delegate broad discovery %q", forbidden)
+		}
+	}
+}
+
+func TestCodeReviewSkill_SupportsStandaloneSelfReview(t *testing.T) {
+	text, ok := readSkillMarkdown(t)["code-review/SKILL.md"]
+	if !ok {
+		t.Fatal("expected code-review/SKILL.md")
+	}
+
+	start := strings.Index(text, "## Self-review context")
+	end := strings.Index(text, "## Pull-request review context")
+	if start < 0 || end < start {
+		t.Fatal("could not isolate self-review context")
+	}
+	selfReview := text[start:end]
+
+	for _, phrase := range []string{
+		"Standalone self-review",
+		"without a parent delegator",
+		"the skill is the packet owner",
+		"explicitly supplied fixed point",
+		"`origin/main` when available",
+		"`HEAD~1`",
+		"`git status --short`",
+		"task/specification path or content supplied by the invocation",
+		"`.sandman/task.md`",
+		"no spec available",
+		"changed paths",
+		"explicitly selected standards sources",
+		"must not scan the repository",
+	} {
+		if !strings.Contains(selfReview, phrase) {
+			t.Errorf("self-review context missing standalone contract %q", phrase)
+		}
+	}
+}
+
+func TestImplementSkill_SelfReviewParentSelectsBoundedContext(t *testing.T) {
+	text, ok := readSkillMarkdown(t)["implement/SKILL.md"]
+	if !ok {
+		t.Fatal("expected implement/SKILL.md")
+	}
+
+	for _, phrase := range []string{
+		"enumerate the changed paths",
+		"select only standards sources relevant to those paths",
+		"supply those standards sources explicitly",
+		"authoritative task/specification context",
+		"Standards reviewer",
+		"Spec reviewer",
+		"same common packet",
+		"do not ask reviewers to explore",
+	} {
+		if !strings.Contains(text, phrase) {
+			t.Errorf("implement workflow missing parent self-review contract %q", phrase)
+		}
+	}
+}
+
+func TestCodeReviewSkill_SelfReviewFailsClosedOnMissingPacket(t *testing.T) {
+	text, ok := readSkillMarkdown(t)["code-review/SKILL.md"]
+	if !ok {
+		t.Fatal("expected code-review/SKILL.md")
+	}
+
+	start := strings.Index(text, "## Self-review context")
+	end := strings.Index(text, "## Pull-request review context")
+	if start < 0 || end < start {
+		t.Fatal("could not isolate self-review context")
+	}
+	selfReview := text[start:end]
+
+	for _, phrase := range []string{
+		"missing or malformed",
+		"record the blocked self-review in `.sandman/task.md`",
+		"stop without reconstructing",
+		"only the supplied packet",
+		"must not invite repository exploration",
+	} {
+		if !strings.Contains(selfReview, phrase) {
+			t.Errorf("self-review context missing fail-closed contract %q", phrase)
+		}
+	}
+}
+
+func TestCodeReviewSkill_DaemonContextDoesNotUseSelfReviewPacket(t *testing.T) {
+	text, ok := readSkillMarkdown(t)["code-review/SKILL.md"]
+	if !ok {
+		t.Fatal("expected code-review/SKILL.md")
+	}
+
+	start := strings.Index(text, "## Pull-request review context")
+	if start < 0 {
+		t.Fatal("could not locate pull-request review context")
+	}
+	daemonReview := text[start:]
+	for _, forbidden := range []string{
+		"fixed-point identity",
+		"same common packet",
+		"authoritative task/specification context",
+		"Do not run `grep`, `rg`, or `find`",
+	} {
+		if strings.Contains(daemonReview, forbidden) {
+			t.Errorf("daemon review context must not inherit self-review packet rule %q", forbidden)
+		}
+	}
+
+	for _, phrase := range []string{
+		"When pull-request context is supplied, use only the pull-request review context",
+		"does not construct or delegate a self-review packet",
+		"read-only",
+		"Those inputs are authoritative.",
+		"current review worktree",
+		"atomic temp-file-and-rename write",
+		"Do not trigger, poll, fetch, post to, merge, commit to, push to, or remediate",
+	} {
+		if !strings.Contains(daemonReview, phrase) {
+			t.Errorf("daemon review context lost existing input/lifecycle contract %q", phrase)
 		}
 	}
 }
