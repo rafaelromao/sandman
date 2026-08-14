@@ -875,12 +875,11 @@ func NewOrchestrator(githubClient github.Client, renderer prompt.IssueRenderer, 
 		layout:        paths.NewLayout(&config.Config{}, root),
 		lookupGHToken: defaultLookupGHToken,
 		runSessionOpts: runSessionOptions{
-			baseBranchSyncMu:        &sync.Mutex{},
-			contextRolloverLiterals: append([]string(nil), ContextRolloverLiteralAdditions...),
-			taskWriter:              atomicfs.WriteAtomic,
-			gatePollInitial:         120 * time.Second,
-			gatePollMaxSleep:        600 * time.Second,
-			gatePollBudget:          1800 * time.Second,
+			baseBranchSyncMu: &sync.Mutex{},
+			taskWriter:       atomicfs.WriteAtomic,
+			gatePollInitial:  120 * time.Second,
+			gatePollMaxSleep: 600 * time.Second,
+			gatePollBudget:   1800 * time.Second,
 		},
 		badgeHooker:  nopBadgeHooker{},
 		coordinators: make(map[*batchCoordinator]struct{}),
@@ -951,6 +950,7 @@ func WithRunSessionOpts(opts runSessionOptions) OrchestratorOpt {
 func WithContextRolloverLiteralAdditions(values []string) OrchestratorOpt {
 	return func(o *Orchestrator) {
 		o.runSessionOpts.contextRolloverLiterals = append([]string(nil), values...)
+		o.runSessionOpts.contextRolloverLiteralsSet = true
 	}
 }
 
@@ -1480,6 +1480,7 @@ func (o *Orchestrator) RunBatch(ctx context.Context, req Request) (*Result, erro
 				StartDelay:                 startDelay,
 				Retries:                    retries,
 				RunIdleTimeout:             runIdleTimeout,
+				ContextRolloverLiterals:    cfg.ContextErrorPhrases,
 				SandboxMode:                sandboxMode,
 				ContainerCapacity:          containerCapacityForLog,
 				ContainerCapacitySet:       req.ContainerCapacitySet,
@@ -1829,16 +1830,17 @@ func expandPath(path string) (string, error) {
 // pointer to a value type, update runSingle / runPromptOnlySingle to share it
 // explicitly — otherwise serialisation will silently break.
 type runSessionOptions struct {
-	baseBranchSync          func(repoPath, sourceBranch string) error
-	baseBranchSyncMu        *sync.Mutex
-	contextRolloverLiterals []string
-	taskWriter              func(string, []byte, os.FileMode) error
-	retryReset              func(ctx context.Context, sb sandbox.Sandbox, branch, baseBranch string) error
-	killTimeout             time.Duration
-	currentHead             func(workDir string) (string, error)
-	gatePollInitial         time.Duration
-	gatePollMaxSleep        time.Duration
-	gatePollBudget          time.Duration
+	baseBranchSync             func(repoPath, sourceBranch string) error
+	baseBranchSyncMu           *sync.Mutex
+	contextRolloverLiterals    []string
+	contextRolloverLiteralsSet bool
+	taskWriter                 func(string, []byte, os.FileMode) error
+	retryReset                 func(ctx context.Context, sb sandbox.Sandbox, branch, baseBranch string) error
+	killTimeout                time.Duration
+	currentHead                func(workDir string) (string, error)
+	gatePollInitial            time.Duration
+	gatePollMaxSleep           time.Duration
+	gatePollBudget             time.Duration
 }
 
 // runSession owns the per-AgentRun state and lifecycle for a single issue
@@ -3238,6 +3240,7 @@ func (o *Orchestrator) runPromptOnly(ctx context.Context, cfg *config.Config, ag
 		MaxContainersSet:           maxContainersSet,
 		DangerouslySkipPermissions: dangerouslySkipPermissions,
 		StrandedReconcile:          strandedReconcile,
+		ContextRolloverLiterals:    cfg.ContextErrorPhrases,
 	}
 	commander, ok := coord.(daemon.IssueCommander)
 	if !ok {
