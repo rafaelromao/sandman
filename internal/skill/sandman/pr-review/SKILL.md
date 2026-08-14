@@ -191,22 +191,20 @@ head, finds the newest `{{REVIEW_COMMAND}}` trigger by strictly normalized
 server timestamps, and checks the response surfaces after that trigger. It does
 not trust a local record as a substitute for the remote pull-request state.
 
-The guard returns a structured decision set to `allow`, `block`, or `uncertain`.
-A newest unanswered trigger returns
-`block`/`unanswered-trigger`, including when the local request record is
-absent. A failed GitHub query, malformed ID or timestamp, incomplete response
-payload, pagination failure, equal trigger timestamps, or any other query,
-parsing, pagination, or ordering uncertainty returns `uncertain`.
-Query, parsing, pagination, or ordering uncertainty always blocks delivery. If a
-trusted
-prior request proves that the newest unanswered trigger belongs to an older
-head, `head-changed` is the only stale-head exception.
+The guard either permits delivery, refuses because the newest request is still
+unanswered, or refuses because the remote evidence is uncertain. An unanswered
+newest trigger is refused even when the local request record is absent. A
+failed GitHub query, malformed ID or timestamp, incomplete response payload,
+pagination failure, equal trigger timestamps, or any other query, parsing,
+pagination, or ordering uncertainty also refuses delivery. A trusted prior
+request may use the existing stale-head exception only when it proves that the
+newest unanswered trigger belongs to an older head.
 
-The guard is read-only. On `block` or `uncertain`, record the delivery reason
+The guard is read-only. On either refusal, record the delivery reason
 and stop before posting. This is a retryable request-delivery refusal: do not
-change the active review wait, terminal review result, or terminal
-external-gate state, and do not silently repair the uncertainty by posting
-another trigger. Leave any existing request identity unchanged.
+change the active review wait, terminal review result, or terminal gate state,
+and do not silently repair the uncertainty by posting another trigger. Leave
+any existing recorded request details unchanged.
 
 Define the shared guard call once and use it before every command-prefixed
 post:
@@ -243,6 +241,7 @@ require_review_trigger_delivery() {
     end
   ') || return 1
   guard_reason=$(printf '%s' "$guard_result" | jq -er '.reason | strings | select(length > 0)') || return 1
+  # "unanswered-trigger" and uncertainty are delivery refusals; do not write terminal external-gate state.
   case "$guard_decision" in
     allow) return 0 ;;
     block|uncertain) return 1 ;;
@@ -406,16 +405,17 @@ This is reviewer communication, not a new response classification. The guarded
 post does not create a second request lifecycle authority.
 
 When the follow-up is allowed and posted, confirm its returned comment URL,
-current head, configured prefix, and exact server `createdAt` with the same
+current head, configured prefix, and exact server creation timestamp with the same
 confirmation check as Step 4. Then atomically update the current request
-identity while retaining its head and lifecycle; do not create another request
-or wait-state file. If confirmation or the atomic update fails, record the
-delivery state and stop without posting a repair trigger. The latest confirmed
-trigger identity is the one used by the next request-scoped wait.
+details, including the current head; do not create another request or wait-state
+file. If confirmation or the atomic update fails, record the delivery state and
+stop without posting a repair trigger. The latest confirmed trigger details are
+the ones used by the next request-scoped wait.
 
 ```bash
 [ -f "$request_file" ] || record REVIEW_TRIGGER_GUARD_BLOCKED "request-envelope-missing" and stop
 require_review_trigger_delivery || record REVIEW_TRIGGER_GUARD_BLOCKED "$guard_reason" and stop
+[ "$guard_reason" != "head-changed" ] || record REVIEW_TRIGGER_GUARD_BLOCKED "$guard_reason" and stop
 clarification_url=$(gh pr comment <N> --repo <owner/repo> \
   --body "{{REVIEW_COMMAND}} — please clarify which finding is actionable") ||
   record REVIEW_TRIGGER_GUARD_UNCERTAIN and stop
@@ -432,11 +432,17 @@ clarification_created_at=$(gh pr view <N> --repo <owner/repo> --json headRefOid,
       select((.createdAt // "") | valid_timestamp) | .createdAt)
   ') || record REVIEW_TRIGGER_GUARD_UNCERTAIN and stop
 clarification_tmp=$(mktemp "${request_file}.tmp.XXXXXX") || record REVIEW_TRIGGER_GUARD_UNCERTAIN and stop
-jq --arg trigger_id "$clarification_url" \
+jq --arg head_sha "$head_sha" \
+  --arg trigger_id "$clarification_url" \
   --arg trigger_created_at "$clarification_created_at" \
-  '.trigger_id = $trigger_id | .trigger_created_at = $trigger_created_at' \
+  '.head_sha = $head_sha | .trigger_id = $trigger_id | .trigger_created_at = $trigger_created_at' \
   "$request_file" >"$clarification_tmp" && mv -f "$clarification_tmp" "$request_file" || {
   rm -f "$clarification_tmp"
+  record REVIEW_TRIGGER_GUARD_UNCERTAIN and stop
+}
+head_tmp=$(mktemp ".sandman/state/<N>.head_sha.tmp.XXXXXX") || record REVIEW_TRIGGER_GUARD_UNCERTAIN and stop
+printf '%s\n' "$head_sha" >"$head_tmp" && mv -f "$head_tmp" ".sandman/state/<N>.head_sha" || {
+  rm -f "$head_tmp"
   record REVIEW_TRIGGER_GUARD_UNCERTAIN and stop
 }
 ```

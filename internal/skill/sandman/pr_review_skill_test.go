@@ -444,7 +444,7 @@ func TestPRReviewSkill_UsesFailClosedTriggerGuardBeforeEveryCommandPost(t *testi
 		"Before every command-prefixed post",
 		"This includes the Step 5 reviewer clarification/follow-up",
 		"unanswered-trigger",
-		"Query, parsing, pagination, or ordering uncertainty always blocks delivery",
+		"ordering uncertainty also refuses delivery",
 		"external-gate state",
 		"The guard is read-only",
 	} {
@@ -478,8 +478,9 @@ func TestPRReviewSkill_PersistsConfirmedTriggerIdentityAfterGuardedPost(t *testi
 		`The request envelope is the atomic request record`,
 		`does not create a second request lifecycle authority`,
 		`clarification_url=$(gh pr comment`,
-		`'.trigger_id = $trigger_id | .trigger_created_at = $trigger_created_at'`,
+		`'.head_sha = $head_sha | .trigger_id = $trigger_id | .trigger_created_at = $trigger_created_at'`,
 		`request-envelope-missing`,
+		`[ "$guard_reason" != "head-changed" ]`,
 		`do not create another request`,
 		`latest confirmed`,
 	} {
@@ -489,10 +490,11 @@ func TestPRReviewSkill_PersistsConfirmedTriggerIdentityAfterGuardedPost(t *testi
 	}
 
 	guard := strings.Index(text, "review-trigger-guard-v1.sh")
+	guardCall := strings.Index(text, "require_review_trigger_delivery ||")
 	post := strings.Index(text, `gh pr comment <N> --repo <owner/repo> --body "{{REVIEW_COMMAND}}"`)
 	confirm := strings.Index(text, "trigger_created_at=$(gh pr view")
 	persist := strings.Index(text, "Only after this confirmation, atomically write the request envelope")
-	if guard < 0 || post < guard || confirm < post || persist < confirm {
+	if guard < 0 || guardCall < 0 || guardCall > post || post < guard || confirm < post || persist < confirm {
 		t.Fatal("the guarded post must confirm and persist the same trigger identity before waiting")
 	}
 	followUpStart := strings.Index(text, "When the follow-up is allowed and posted")
