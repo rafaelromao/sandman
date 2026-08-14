@@ -57,6 +57,22 @@ func (c *registrationGitHubClient) ListPRComments(context.Context, int) ([]githu
 	return c.comments, nil
 }
 
+func TestReviewRegistration_RunSessionReceivesConfiguredSeams(t *testing.T) {
+	store := &registrationStoreStub{}
+	now := time.Date(2026, 8, 14, 20, 0, 0, 0, time.UTC)
+	o := NewOrchestrator(nil, nil, nil, nil, WithRunSessionOpts(runSessionOptions{
+		reviewRegistrationStore: store,
+		reviewRegistrationNow:   func() time.Time { return now },
+	}))
+	session := newRunSession(o.newRunExecutor(context.Background(), BatchConfig{}, nil, nil), RowSpec{})
+	if session.reviewRegistrationStore != store {
+		t.Fatal("run session did not receive the configured registration store")
+	}
+	if !session.reviewNow().Equal(now) {
+		t.Fatalf("run session clock = %s, want %s", session.reviewNow(), now)
+	}
+}
+
 func TestReviewRegistration_RegistersOnePendingCurrentHeadRecord(t *testing.T) {
 	workDir := testenv.MkdirShort(t, "sm-review-registration-")
 	registeredAt := time.Date(2026, 8, 14, 20, 0, 0, 0, time.UTC)
@@ -198,6 +214,50 @@ func TestReviewRegistration_ReaderRejectsMismatchedCurrentHead(t *testing.T) {
 		"new-sha",
 	); err == nil {
 		t.Fatal("reader accepted a registration for a different current head")
+	}
+}
+
+func TestReviewRegistration_ReaderRejectsStartedTimestampArithmeticMismatch(t *testing.T) {
+	workDir := testenv.MkdirShort(t, "sm-review-registration-")
+	now := time.Date(2026, 8, 14, 20, 0, 0, 0, time.UTC)
+	client := &registrationGitHubClient{
+		fakeGitHubClient: fakeGitHubClient{},
+		comments: []github.PRComment{{
+			ID:        "trigger-2101",
+			Body:      "/sandman review",
+			CreatedAt: now.Add(-time.Minute),
+		}},
+	}
+	session := &runSession{
+		deps: runDeps{githubClient: client, layout: paths.NewLayout(nil, workDir)},
+		renderCfg: prompt.RenderConfig{
+			ReviewCommand: "/sandman review",
+			ReviewTimeout: 600,
+		},
+		reviewRegistrationNow:  func() time.Time { return now },
+		reviewAttemptStartedAt: now.Add(-2 * time.Minute),
+	}
+	pr := &github.PR{Number: 21, State: "open", HeadRefOid: "current-sha"}
+	if err := session.registerReviewRequest(context.Background(), workDir, pr, "current-sha"); err != nil {
+		t.Fatalf("register review request: %v", err)
+	}
+	path := session.deps.layout.PRReviewRegistrationPath(pr.Number)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read registration: %v", err)
+	}
+	var record reviewRequestRegistration
+	if err := json.Unmarshal(data, &record); err != nil {
+		t.Fatalf("decode registration: %v", err)
+	}
+	startedAt := now.Add(time.Second).Format(time.RFC3339Nano)
+	record.Request.StartedAt = startedAt
+	record.State.StartedAt = startedAt
+	if err := atomicfs.WriteAtomicJSON(path, record, 0o600); err != nil {
+		t.Fatalf("write mismatched registration: %v", err)
+	}
+	if _, err := readReviewRegistration(path, "owner/repo", pr, "current-sha"); err == nil {
+		t.Fatal("reader accepted started timestamp with inconsistent unix arithmetic")
 	}
 }
 

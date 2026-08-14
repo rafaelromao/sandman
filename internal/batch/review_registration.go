@@ -146,7 +146,7 @@ func validateReviewRegistration(registration reviewRequestRegistration, reposito
 		return fmt.Errorf("review registration confirmation timestamp is invalid")
 	}
 	startedAt, err := time.Parse(time.RFC3339Nano, request.StartedAt)
-	if err != nil || startedAt.Before(confirmedAt) {
+	if err != nil || startedAt.Before(confirmedAt) || startedAt.Unix() != int64(request.StartedUnixSeconds) {
 		return fmt.Errorf("review registration start timestamp is invalid")
 	}
 	if request.StartedUnixSeconds < 0 || request.DeadlineUnixSeconds <= 0 || request.EffectiveTimeout <= 0 || request.DeadlineUnixSeconds != request.StartedUnixSeconds+request.EffectiveTimeout || request.DeadlineAt != fmt.Sprintf("unix:%d", request.DeadlineUnixSeconds) || len(request.PollPlan) == 0 {
