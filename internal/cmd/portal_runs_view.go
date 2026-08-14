@@ -81,6 +81,11 @@ type portalRun struct {
 	// review.log, but the server stamp is the canonical source for
 	// parent rows.
 	ReviewVerdict string `json:"reviewVerdict,omitempty"`
+	// ReviewPendingPublication is true when a terminal review has not
+	// established a successfully published decision. It is separate from the
+	// Review AgentRun's terminal Status so a local decision cannot masquerade
+	// as a published verdict.
+	ReviewPendingPublication bool `json:"reviewPendingPublication,omitempty"`
 	// ReviewLive is the server stamp that tells the JS counter line a
 	// review child is currently in flight (status "reviewing", no
 	// FinishedAt). Stamped by aggregateReviewChildren when at least one
@@ -934,11 +939,12 @@ func (v *portalRunsView) aggregateReviewChildren(layout paths.Layout, runs []por
 		return runs
 	}
 	type reviewSummary struct {
-		count      int
-		live       bool
-		verdict    string
-		finishedAt time.Time
-		startedAt  time.Time
+		count              int
+		live               bool
+		pendingPublication bool
+		verdict            string
+		finishedAt         time.Time
+		startedAt          time.Time
 	}
 	parents := make(map[int]int)
 	summaries := make(map[int]*reviewSummary)
@@ -948,6 +954,9 @@ func (v *portalRunsView) aggregateReviewChildren(layout paths.Layout, runs []por
 			continue
 		}
 		if run.Review {
+			if run.FinishedAt != nil {
+				run.ReviewPendingPublication = reviewPublicationPending(layout, run)
+			}
 			summary := summaries[run.IssueNumber]
 			if summary == nil {
 				summary = &reviewSummary{}
@@ -957,9 +966,12 @@ func (v *portalRunsView) aggregateReviewChildren(layout paths.Layout, runs []por
 			if run.Status == "reviewing" {
 				summary.live = true
 			}
+			if run.ReviewPendingPublication {
+				summary.pendingPublication = true
+			}
 			// Only terminal review rows project a verdict; an in-flight
 			// review has no final "## Decision" yet (issue #1729).
-			if run.FinishedAt != nil {
+			if run.FinishedAt != nil && !run.ReviewPendingPublication {
 				verdict := "Unclear"
 				if run.BatchKey != "" && run.RunDir != "" {
 					if vv, ok := reviewVerdictFromDecisionFile(layout, run.BatchKey, run.RunID); ok {
@@ -986,6 +998,7 @@ func (v *portalRunsView) aggregateReviewChildren(layout paths.Layout, runs []por
 		}
 		runs[idx].ReviewCount = summary.count
 		runs[idx].ReviewVerdict = summary.verdict
+		runs[idx].ReviewPendingPublication = summary.pendingPublication
 		runs[idx].ReviewLive = summary.live
 		if summary.live && !isTerminalStatus(runs[idx].Status) && !runs[idx].externalGate {
 			runs[idx].Status = "reviewing"
@@ -1042,6 +1055,41 @@ func finishedAtOrZero(run portalRun) time.Time {
 
 func isTerminalStatus(status string) bool {
 	return status == "success" || status == "failure" || status == "aborted"
+}
+
+func reviewPublicationPending(layout paths.Layout, run portalRun) bool {
+	runDir := strings.TrimSpace(run.RunDir)
+	if runDir == "" && run.BatchKey != "" && run.RunID != "" {
+		runDir = layout.RunFolder(run.BatchKey, run.RunID)
+	}
+	if runDir == "" {
+		return true
+	}
+	state, err := batchindex.ReadReviewState(runDir)
+	if err != nil {
+		return true
+	}
+	latestStatus, ok := latestReviewPublicationStatus(state.SeenComments)
+	return !ok || latestStatus != "success"
+}
+
+func latestReviewPublicationStatus(comments []batchindex.SeenComment) (string, bool) {
+	var latest batchindex.SeenComment
+	found := false
+	for _, comment := range comments {
+		if comment.Timestamp.IsZero() {
+			continue
+		}
+		if !found || comment.Timestamp.After(latest.Timestamp) ||
+			(comment.Timestamp.Equal(latest.Timestamp) && comment.CommentID > latest.CommentID) {
+			latest = comment
+			found = true
+		}
+	}
+	if !found {
+		return "", false
+	}
+	return strings.ToLower(strings.TrimSpace(latest.Status)), true
 }
 
 // reviewVerdictFromDecisionFile reads the review run's decision file and
