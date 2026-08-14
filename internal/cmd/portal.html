@@ -2638,7 +2638,7 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
         const aStarted = runStartedValue(a);
         const bStarted = runStartedValue(b);
         if (aStarted !== bStarted) return bStarted - aStarted;
-        return String((a && a.runId) || (a && a.key) || '').localeCompare(String((b && b.runId) || (b && b.key) || ''));
+        return String((b && b.runId) || (b && b.key) || '').localeCompare(String((a && a.runId) || (a && a.key) || ''));
       });
       summary.source = ordered[0] || null;
       for (const review of ordered) {
@@ -2667,11 +2667,13 @@ var __SUPPORTED_LANGUAGES__=["javascript","go","python","rust","bash","json","ya
     // same shapes the legacy lenient run.log parser did, because
     // orphan reviews still surface the saved log content.
       if (!summary.pendingPublication) {
-        for (const review of ordered) {
-          const verdict = extractReviewVerdictFromLog(review && review.log);
+        const latest = ordered[0];
+        if (latest && Object.prototype.hasOwnProperty.call(latest, 'reviewVerdict')) {
+          summary.verdict = String(latest.reviewVerdict || '');
+        } else {
+          const verdict = extractReviewVerdictFromLog(latest && latest.log);
           if (verdict) {
             summary.verdict = verdict;
-            break;
           }
         }
       }

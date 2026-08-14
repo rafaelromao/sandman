@@ -67,9 +67,10 @@ type portalRun struct {
 	// (visibleRunForIssueGroup, portal.html) also derives a count for its
 	// synthetic row when no implementation parent exists.
 	ReviewCount int `json:"reviewCount,omitempty"`
-	// ReviewVerdict carries latest terminal child-review status for canonical
-	// issue rows. Stamped by aggregateReviewChildren during compute (restored
-	// in #1897). Sourced from `<runDir>/decision.md` — the controlled
+	// ReviewVerdict carries the latest terminal review status for canonical
+	// issue rows and terminal review children. Stamped by
+	// aggregateReviewChildren during compute (restored in #1897). Sourced from
+	// `<runDir>/decision.md` — the controlled
 	// artefact the review agent publishes by writing to that path before
 	// exiting (see internal/prompt/default_pr_review_prompt.md:124).
 	// reviewVerdictFromDecisionFile reads the bare `## Decision` marker
@@ -967,7 +968,7 @@ func (v *portalRunsView) aggregateReviewChildren(layout paths.Layout, runs []por
 			if run.Status == "reviewing" {
 				summary.live = true
 			}
-			if run.FinishedAt != nil {
+			if run.FinishedAt != nil || isTerminalStatus(run.Status) {
 				run.ReviewPendingPublication = reviewPublicationPending(layout, run)
 				runs[i].ReviewPendingPublication = run.ReviewPendingPublication
 				verdict := ""
@@ -977,7 +978,11 @@ func (v *portalRunsView) aggregateReviewChildren(layout paths.Layout, runs []por
 						verdict = vv
 					}
 				}
-				effectiveAt := *run.FinishedAt
+				runs[i].ReviewVerdict = verdict
+				effectiveAt := run.StartedAt
+				if run.FinishedAt != nil {
+					effectiveAt = *run.FinishedAt
+				}
 				if !summary.latestOutcomeSet || reviewOutcomeIsNewer(
 					effectiveAt,
 					run.StartedAt,

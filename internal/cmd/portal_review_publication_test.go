@@ -481,6 +481,25 @@ func TestAggregateReviewChildren_PublishedWithoutDecisionIsUnclear(t *testing.T)
 	}
 }
 
+func TestAggregateReviewChildren_TerminalReviewWithoutFinishedAtUsesStartedAt(t *testing.T) {
+	repoRoot := t.TempDir()
+	layout := paths.NewLayout(nil, repoRoot)
+	startedAt := time.Date(2026, 8, 14, 12, 0, 0, 0, time.UTC)
+	runDir := filepath.Join(repoRoot, ".sandman", "batches", "terminal-review", "runs", "review-run")
+	writeReviewPublicationFixture(t, runDir, "pending", startedAt, "## Decision\n**APPROVED**\n")
+
+	parent := portalRun{IssueNumber: 2472, RunID: "impl", Kind: "completed", Status: "success", StartedAt: startedAt.Add(-10 * time.Minute), FinishedAt: publicationTimePtr(startedAt.Add(-5 * time.Minute))}
+	review := portalRun{IssueNumber: 2472, Review: true, RunID: "review-run", BatchKey: "terminal-review", RunDir: runDir, Kind: "completed", Status: "success", StartedAt: startedAt}
+	runs := (&portalRunsView{}).aggregateReviewChildren(layout, []portalRun{parent, review})
+	got := findImplementationPortalRun(t, runs, 2472)
+	if !got.ReviewPendingPublication {
+		t.Fatalf("ReviewPendingPublication=false, want true for terminal review without FinishedAt")
+	}
+	if got.ReviewVerdict != "" {
+		t.Fatalf("ReviewVerdict=%q, want empty while publication is pending", got.ReviewVerdict)
+	}
+}
+
 type portalSummaryTestResponse struct {
 	StatusCode int
 	ETag       string
