@@ -2,6 +2,7 @@ package batch
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -210,6 +211,7 @@ func (s *runSession) handleExternalGateWithHostPaths(ctx context.Context, workDi
 		headSHA = ""
 	}
 	pr, err := lookupPRForExternalGate(ctx, s.deps.githubClient, branch)
+	initialPR := pr
 	initialUnavailable := err != nil
 	gate := "none"
 	if err != nil && s.deps.errorLog != nil {
@@ -218,17 +220,24 @@ func (s *runSession) handleExternalGateWithHostPaths(ctx context.Context, workDi
 	}
 	if pr != nil && strings.EqualFold(strings.TrimSpace(pr.State), "open") {
 		registrationErr := s.ensureReviewRegistrationForPR(ctx, workDir, pr, headSHA)
-		if registrationErr != nil || s.reviewRegistrationObserved {
+		refreshLivePR := errors.Is(registrationErr, errReviewRegistrationHeadChanged) ||
+			(registrationErr == nil && s.reviewRegistrationObserved)
+		if refreshLivePR {
 			// Registration may observe comments and persist while the live PR
-			// changes. Refresh after an observation or failure before allowing
-			// the gate to terminalize; the initial snapshot is only a boundary.
-			pr, err = lookupPRForExternalGate(ctx, s.deps.githubClient, branch)
-			if err != nil {
-				initialUnavailable = true
-				gate = "pending"
-				pr = nil
-			} else if pr == nil {
-				gate = "none"
+			// changes. Refresh after a confirmed head change or successful
+			// observation before allowing the gate to terminalize.
+			refreshedPR, refreshErr := lookupPRForExternalGate(ctx, s.deps.githubClient, branch)
+			if refreshErr != nil {
+				if s.deps.errorLog != nil {
+					fmt.Fprintf(s.deps.errorLog, "warning: external gate refresh for branch %q: %v\n", branch, refreshErr)
+				}
+				// A registration observation failure must not replace the
+				// already observed live gate with a synthetic pending state.
+				pr = initialPR
+				err = nil
+			} else {
+				pr = refreshedPR
+				err = nil
 			}
 		}
 	}

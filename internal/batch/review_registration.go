@@ -21,6 +21,8 @@ import (
 
 const reviewRegistrationProtocol = "review-registration/v1"
 
+var errReviewRegistrationHeadChanged = errors.New("review registration head changed")
+
 var implementationReviewPollPlan = []int{120, 60, 60, 30}
 
 type reviewRequestRegistration struct {
@@ -243,7 +245,7 @@ func (s *runSession) registerReviewRequest(ctx context.Context, workDir string, 
 		return fmt.Errorf("current pull-request identity is unavailable")
 	}
 	if !strings.EqualFold(strings.TrimSpace(pr.HeadRefOid), strings.TrimSpace(currentHead)) {
-		return fmt.Errorf("current pull-request head changed during registration")
+		return fmt.Errorf("%w: current pull-request head changed during registration", errReviewRegistrationHeadChanged)
 	}
 	if s.deps.githubClient == nil {
 		return fmt.Errorf("GitHub client is unavailable")
@@ -420,7 +422,7 @@ func (s *runSession) verifyCurrentReviewHead(ctx context.Context, pr *github.PR,
 		return fmt.Errorf("revalidate pull-request head: %w", err)
 	}
 	if livePR == nil || livePR.Number != pr.Number || !strings.EqualFold(strings.TrimSpace(livePR.HeadRefOid), strings.TrimSpace(currentHead)) {
-		return fmt.Errorf("pull-request head changed during registration")
+		return fmt.Errorf("%w: pull-request head changed during registration", errReviewRegistrationHeadChanged)
 	}
 	return nil
 }

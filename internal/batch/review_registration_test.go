@@ -533,6 +533,47 @@ func TestReviewRegistration_WriteFailureFallsThroughToLivePendingGate(t *testing
 	}
 }
 
+func TestReviewRegistration_WriteFailureDoesNotChangeLiveReadyGate(t *testing.T) {
+	workDir := testenv.MkdirShort(t, "sm-review-registration-")
+	client := &registrationGitHubClient{
+		fakeGitHubClient: fakeGitHubClient{prs: map[string]*github.PR{
+			gateTestBranch: {
+				Number:            23,
+				State:             "open",
+				HeadRefName:       gateTestBranch,
+				HeadRefOid:        "current-sha",
+				StatusCheckRollup: "success",
+				ReviewDecision:    "APPROVED",
+				MergeStateStatus:  "CLEAN",
+			},
+		}},
+		comments: []github.PRComment{{
+			ID:        "trigger-ready-write-failure",
+			Body:      "/sandman review",
+			CreatedAt: time.Date(2026, 8, 14, 20, 0, 0, 0, time.UTC),
+		}},
+	}
+	session := &runSession{
+		deps: runDeps{
+			githubClient: client,
+			errorLog:     io.Discard,
+		},
+		renderCfg: prompt.RenderConfig{
+			ReviewCommand: "/sandman review",
+			ReviewTimeout: 600,
+		},
+		reviewRegistrationStore: &registrationStoreStub{writeErr: errors.New("interrupted before commit")},
+		reviewRegistrationNow:   func() time.Time { return time.Date(2026, 8, 14, 20, 1, 0, 0, time.UTC) },
+		reviewAttemptStartedAt:  time.Date(2026, 8, 14, 19, 59, 0, 0, time.UTC),
+		opts:                    gateTestRunOptions(),
+	}
+
+	status, extras, handled := session.handleExternalGate(context.Background(), workDir, gateTestBranch, "", "run-test")
+	if !handled || status != "blocked" || extras["gate"] != gateReadyToMerge {
+		t.Fatalf("write failure ready gate = (%q, %#v, %t), want blocked/ready-to-merge", status, extras, handled)
+	}
+}
+
 func TestReviewRegistration_RetriesAfterHostPathsBecomeAvailable(t *testing.T) {
 	workDir := testenv.MkdirShort(t, "sm-review-registration-")
 	now := time.Date(2026, 8, 14, 20, 0, 0, 0, time.UTC)
