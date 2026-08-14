@@ -241,5 +241,7 @@ func newRunSession(e *runExecutor, row RowSpec) *runSession {
 		qualityRulesFile:           row.QualityRulesFile,
 		parentCtx:                  e.parentCtx,
 		opts:                       opts,
+		reviewRegistrationStore:    opts.reviewRegistrationStore,
+		reviewRegistrationNow:      opts.reviewRegistrationNow,
 	}
 }

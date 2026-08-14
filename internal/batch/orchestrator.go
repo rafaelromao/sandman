@@ -1841,6 +1841,10 @@ type runSessionOptions struct {
 	gatePollInitial            time.Duration
 	gatePollMaxSleep           time.Duration
 	gatePollBudget             time.Duration
+	// Review registration seams keep the completion boundary deterministic in
+	// batch tests while production uses the file-backed store and wall clock.
+	reviewRegistrationStore    reviewRegistrationStore
+	reviewRegistrationNow      func() time.Time
 }
 
 // runSession owns the per-AgentRun state and lifecycle for a single issue
@@ -1941,6 +1945,11 @@ type runSession struct {
 	// Orchestrator.runSessionOpts at session construction. Zero-valued in
 	// production; populated by tests to drive the per-session behaviour.
 	opts runSessionOptions
+
+	reviewRegistrationStore     reviewRegistrationStore
+	reviewRegistrationNow       func() time.Time
+	reviewAttemptStartedAt      time.Time
+	reviewRegistrationAttempted bool
 }
 
 func (s *runSession) worktreeDir() string {
@@ -2695,6 +2704,7 @@ loop:
 			agentRun.runFolder = s.runFolderFor(runID)
 		}
 
+		s.reviewAttemptStartedAt = s.reviewNow()
 		result, abortedByHeartbeat = s.withHeartbeat(ctx, runID, attempt, logPath, wt, func() AgentRunResult {
 			return s.withClosingReferenceGuard(ctx, branch, func() AgentRunResult {
 				return runnable.Run(ctx, s.deps.renderer, s.agentCfg.Command, attemptRenderCfg)

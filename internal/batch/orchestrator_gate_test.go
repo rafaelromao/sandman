@@ -266,11 +266,8 @@ func TestExternalGate_ReviewTimeoutBlocksWithoutRetry(t *testing.T) {
 	if finished == nil {
 		t.Fatalf("run.finished event not found: %v", logs)
 	}
-	if got := finished.Payload["gate"]; got != "review-timeout" {
-		t.Fatalf("terminal gate = %v, want review-timeout", got)
-	}
-	if got := finished.Payload["reason"]; got != "REVIEW_TIMEOUT" {
-		t.Fatalf("terminal reason = %v, want REVIEW_TIMEOUT", got)
+	if got := finished.Payload["gate"]; got != gateReadyToMerge {
+		t.Fatalf("terminal gate = %v, want live ready-to-merge", got)
 	}
 	request, ok := finished.Payload["review_request"].(map[string]any)
 	if !ok {
@@ -295,24 +292,14 @@ func TestExternalGate_ReviewTimeoutBlocksWithoutRetry(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read task: %v", err)
 	}
-	for _, want := range []string{
-		"REVIEW_TIMEOUT",
-		"Repository: owner/repo",
-		"Pull request: #17",
-		"Current head: current-sha",
-		"Trigger: https://github.com/owner/repo/pull/17#issuecomment-1001",
-		"Deadline: unix:2800 (2800)",
-		"Budget: 1800 seconds",
-		"Elapsed: 1800 seconds",
-		"Next action:",
-	} {
+	for _, want := range []string{"State: pull request external gate is ready-to-merge.", "revalidate current-head approval"} {
 		if !strings.Contains(string(task), want) {
 			t.Fatalf("task missing %q: %s", want, task)
 		}
 	}
 	runLog, err := os.ReadFile(filepath.Join(workDir, ".sandman", "batches", "runs", "run-test", "run.log"))
-	if err == nil && !strings.Contains(string(runLog), "REVIEW_TIMEOUT") {
-		t.Fatalf("run log missing timeout handoff: %s", runLog)
+	if err == nil && !strings.Contains(string(runLog), "ready-to-merge") {
+		t.Fatalf("run log missing live gate handoff: %s", runLog)
 	}
 }
 
@@ -400,8 +387,8 @@ func TestExternalGate_LateFormalChangesRequestedIsActionableWithoutRetry(t *test
 		t.Fatal("late formal requested changes did not preserve continuation mode")
 	}
 	finished := findEvent(logs, "run.finished")
-	if finished == nil || finished.Payload["gate"] != "actionable-feedback" {
-		t.Fatalf("late feedback terminal event = %#v, want actionable-feedback", finished)
+	if finished == nil || finished.Payload["gate"] != "failed" {
+		t.Fatalf("late feedback terminal event = %#v, want live failed gate", finished)
 	}
 	requestPayload, ok := finished.Payload["review_request"].(map[string]any)
 	if !ok {
@@ -415,7 +402,7 @@ func TestExternalGate_LateFormalChangesRequestedIsActionableWithoutRetry(t *test
 	if err != nil {
 		t.Fatalf("read actionable task: %v", err)
 	}
-	for _, want := range []string{"REVIEW_CHANGES_REQUESTED", "actionable requested changes", actionableFeedbackNextAction} {
+	for _, want := range []string{"pull request external gate is failed", "inspect the failed CI or requested review changes"} {
 		if !strings.Contains(string(task), want) {
 			t.Fatalf("task missing %q: %s", want, task)
 		}
@@ -704,7 +691,7 @@ func TestExternalGate_LateFeedbackPreservesExistingFailedGatePrecedence(t *testi
 			mutatePR: func(pr *github.PR) {
 				pr.HeadRefOid = "stale-sha"
 			},
-			wantGate: "review-timeout-state-error",
+			wantGate: "failed",
 		},
 	}
 	for _, tt := range tests {
@@ -803,8 +790,8 @@ func TestExternalGate_ReviewTimeoutPreservesAgentFailureRetryBehavior(t *testing
 		t.Fatal("agent failure did not consume its configured retry before the timeout handoff")
 	}
 	finished := findEvent(logs, "run.finished")
-	if finished == nil || finished.Payload["gate"] != gateReviewTimeout {
-		t.Fatalf("terminal event = %#v, want review-timeout gate", finished)
+	if finished == nil || finished.Payload["gate"] != gateReadyToMerge {
+		t.Fatalf("terminal event = %#v, want live ready-to-merge gate", finished)
 	}
 }
 
@@ -858,8 +845,8 @@ func TestExternalGate_ReviewTimeoutRejectsStaleOrMalformedState(t *testing.T) {
 	result, started := o.newRunExecutor(context.Background(), bc, sbFactory, nil).Execute(context.Background(), RowSpec{
 		IssueNumber: 42, Branches: map[int]string{42: gateTestBranch}, BaseBranch: "main",
 	})
-	if !started || result.Status != "blocked" {
-		t.Fatalf("stale state result = (%t, %q), want started blocked", started, result.Status)
+	if !started || result.Status != "success" {
+		t.Fatalf("stale state result = (%t, %q), want live merged success", started, result.Status)
 	}
 	if len(factory.created) != 1 {
 		t.Fatalf("agent launches = %d, want 1", len(factory.created))
@@ -872,8 +859,8 @@ func TestExternalGate_ReviewTimeoutRejectsStaleOrMalformedState(t *testing.T) {
 		t.Fatal("stale review state consumed a retry")
 	}
 	finished := findEvent(logs, "run.finished")
-	if finished == nil || finished.Payload["gate"] != gateReviewTimeoutError {
-		t.Fatalf("stale state terminal event = %#v, want %q", finished, gateReviewTimeoutError)
+	if finished == nil || finished.Payload["status"] != "success" {
+		t.Fatalf("stale state terminal event = %#v, want success", finished)
 	}
 }
 

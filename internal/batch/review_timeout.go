@@ -121,7 +121,7 @@ func reviewTimeoutArtifactsPresent(workDir string) bool {
 		return false
 	}
 	stateDir := paths.NewLayout(nil, workDir).StateDir
-	for _, pattern := range []string{"*.review_request.json", "*.review_request.json.state"} {
+	for _, pattern := range []string{"*.review_request.json", "*.review_request.json.state", "*.review_registration.json"} {
 		matches, err := filepath.Glob(filepath.Join(stateDir, pattern))
 		if err == nil && len(matches) > 0 {
 			return true
@@ -135,12 +135,20 @@ func reviewTimeoutArtifactsPresentForPR(workDir string, prNumber int) bool {
 		return false
 	}
 	layout := paths.NewLayout(nil, workDir)
-	for _, path := range []string{layout.PRReviewRequestPath(prNumber), layout.PRReviewRequestStatePath(prNumber)} {
+	for _, path := range []string{layout.PRReviewRequestPath(prNumber), layout.PRReviewRequestStatePath(prNumber), layout.PRReviewRegistrationPath(prNumber)} {
 		if _, err := os.Stat(path); err == nil {
 			return true
 		}
 	}
 	return false
+}
+
+func canonicalReviewRegistrationPresent(workDir string, prNumber int) bool {
+	if strings.TrimSpace(workDir) == "" || prNumber <= 0 {
+		return false
+	}
+	_, err := os.Stat(paths.NewLayout(nil, workDir).PRReviewRegistrationPath(prNumber))
+	return err == nil
 }
 
 func readReviewTimeoutHandoff(workDir, repository string, pr *github.PR, currentHead string) (*reviewTimeoutHandoff, error) {

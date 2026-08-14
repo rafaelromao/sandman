@@ -10,6 +10,7 @@ import (
 
 	"github.com/rafaelromao/sandman/internal/atomicfs"
 	"github.com/rafaelromao/sandman/internal/github"
+	"github.com/rafaelromao/sandman/internal/paths"
 )
 
 type gateResult int
@@ -113,17 +114,22 @@ func checkPRExternalGateAtHead(ctx context.Context, client github.Client, branch
 }
 
 func checkPRExternalGateWithHead(ctx context.Context, client github.Client, branch, headSHA string, requireHead bool) (string, error) {
+	_, gate, err := lookupPRExternalGateWithHead(ctx, client, branch, headSHA, requireHead)
+	return gate, err
+}
+
+func lookupPRExternalGateWithHead(ctx context.Context, client github.Client, branch, headSHA string, requireHead bool) (*github.PR, string, error) {
 	if client == nil || strings.TrimSpace(branch) == "" {
-		return "none", nil
+		return nil, "none", nil
 	}
 	pr, err := client.FindPRByBranch(ctx, branch)
 	if err != nil {
-		return "unavailable", err
+		return nil, "unavailable", err
 	}
 	if pr == nil {
-		return "none", err
+		return nil, "none", nil
 	}
-	return checkPRExternalGateForPR(pr, headSHA, requireHead), nil
+	return pr, checkPRExternalGateForPR(pr, headSHA, requireHead), nil
 }
 
 func checkPRExternalGateForPR(pr *github.PR, headSHA string, requireHead bool) string {
@@ -184,50 +190,138 @@ func (s *runSession) handleExternalGateWithHostPaths(ctx context.Context, workDi
 		return "", nil, false
 	}
 
+	// The live pull request is authoritative. Local review records can enrich
+	// the result, but they must not decide whether the run is terminal.
 	headSHA := s.currentGateHead(workDir)
 	if !hostPathsReady {
 		headSHA = ""
 	}
-	if gateStatus, extras, handled := s.handleReviewTimeoutGate(ctx, workDir, branch, logPath, runID, headSHA); handled {
-		return gateStatus, extras, true
-	}
-	gate, err := checkPRExternalGateWithHead(ctx, s.deps.githubClient, branch, headSHA, true)
+	pr, gate, err := lookupPRExternalGateWithHead(ctx, s.deps.githubClient, branch, headSHA, true)
 	initialUnavailable := err != nil
 	if err != nil && s.deps.errorLog != nil {
 		fmt.Fprintf(s.deps.errorLog, "warning: external gate lookup for branch %q: %v\n", branch, err)
 		gate = "pending"
 	}
+	if pr != nil && strings.EqualFold(strings.TrimSpace(pr.State), "open") {
+		s.ensureReviewRegistrationForPR(ctx, workDir, pr, headSHA)
+	}
 
 	if gate == "none" {
 		return "", nil, false
 	}
+	var diagnostics map[string]any
+	if gate != "resolved" && pr != nil {
+		diagnostics = s.retainedReviewDiagnostics(ctx, workDir, branch, pr, headSHA)
+	}
 	if gate == gateReadyToMerge {
-		return s.blockExternalGate(ctx, workDir, logPath, runID, gateReadyToMerge)
+		return s.blockExternalGateWithDiagnostics(ctx, workDir, logPath, runID, gateReadyToMerge, diagnostics)
 	}
 	if gate == "resolved" {
 		return s.confirmExternalGate(ctx, workDir, branch, logPath, runID)
 	}
 	if gate == "failed" {
-		return s.blockExternalGate(ctx, workDir, logPath, runID, "failed")
+		return s.blockExternalGateWithDiagnostics(ctx, workDir, logPath, runID, "failed", diagnostics)
 	}
 	if gate == "unavailable" && !initialUnavailable {
-		return s.blockExternalGate(ctx, workDir, logPath, runID, "unavailable")
+		return s.blockExternalGateWithDiagnostics(ctx, workDir, logPath, runID, "unavailable", diagnostics)
 	}
 
 	polled := pollPRGateWithHead(ctx, s.deps.githubClient, branch, headSHA, true, s.opts)
 	if polled == gateResolved {
-		return s.confirmExternalGate(ctx, workDir, branch, logPath, runID)
+		return s.confirmExternalGateWithDiagnostics(ctx, workDir, branch, logPath, runID, diagnostics)
 	}
 	if polled == gatePollReadyToMerge {
-		return s.blockExternalGate(ctx, workDir, logPath, runID, gateReadyToMerge)
+		return s.blockExternalGateWithDiagnostics(ctx, workDir, logPath, runID, gateReadyToMerge, diagnostics)
 	}
 	if polled == gateFailed {
-		return s.blockExternalGate(ctx, workDir, logPath, runID, "failed")
+		return s.blockExternalGateWithDiagnostics(ctx, workDir, logPath, runID, "failed", diagnostics)
 	}
 	if polled == gatePollUnavailable || polled == gatePollPRMissing {
-		return s.blockExternalGate(ctx, workDir, logPath, runID, "unavailable")
+		return s.blockExternalGateWithDiagnostics(ctx, workDir, logPath, runID, "unavailable", diagnostics)
 	}
-	return s.blockExternalGate(ctx, workDir, logPath, runID, "pending")
+	return s.blockExternalGateWithDiagnostics(ctx, workDir, logPath, runID, "pending", diagnostics)
+}
+
+func withExternalGateDiagnostics(result string, extras map[string]any, handled bool, diagnostics map[string]any) (string, map[string]any, bool) {
+	if !handled || result == "aborted" || len(diagnostics) == 0 {
+		return result, extras, handled
+	}
+	return result, mergeBlockerExtras(extras, diagnostics), handled
+}
+
+func (s *runSession) blockExternalGateWithDiagnostics(ctx context.Context, workDir, logPath, runID, reason string, diagnostics map[string]any) (string, map[string]any, bool) {
+	result, extras, handled := s.blockExternalGate(ctx, workDir, logPath, runID, reason)
+	return withExternalGateDiagnostics(result, extras, handled, diagnostics)
+}
+
+func (s *runSession) confirmExternalGateWithDiagnostics(ctx context.Context, workDir, branch, logPath, runID string, diagnostics map[string]any) (string, map[string]any, bool) {
+	result, extras, handled := s.confirmExternalGate(ctx, workDir, branch, logPath, runID)
+	return withExternalGateDiagnostics(result, extras, handled, diagnostics)
+}
+
+func (s *runSession) retainedReviewDiagnostics(ctx context.Context, workDir, branch string, pr *github.PR, currentHead string) map[string]any {
+	if ctx.Err() != nil || pr == nil || !reviewTimeoutArtifactsPresent(workDir) {
+		return nil
+	}
+	if !reviewTimeoutArtifactsPresentForPR(workDir, pr.Number) {
+		return nil
+	}
+	if canonicalReviewRegistrationPresent(workDir, pr.Number) {
+		repository, err := s.deps.githubClient.RepoName(ctx)
+		if err != nil {
+			return s.invalidRetainedReviewDiagnostic(branch, err)
+		}
+		store := s.reviewRegistrationStore
+		registration, err := readReviewRegistrationWithStore(store, paths.NewLayout(nil, workDir).PRReviewRegistrationPath(pr.Number), repository, pr, currentHead)
+		if err != nil {
+			return s.invalidRetainedReviewDiagnostic(branch, err)
+		}
+		return reviewRegistrationDiagnostic(registration)
+	}
+	repository, err := s.deps.githubClient.RepoName(ctx)
+	if err != nil {
+		return s.invalidRetainedReviewDiagnostic(branch, err)
+	}
+	artifacts, err := readReviewTimeoutArtifacts(workDir, repository, pr, currentHead)
+	if err != nil {
+		return s.invalidRetainedReviewDiagnostic(branch, err)
+	}
+	handoff, err := reviewTimeoutHandoffFromArtifacts(artifacts, currentHead)
+	if err != nil {
+		return s.invalidRetainedReviewDiagnostic(branch, err)
+	}
+	if handoff == nil {
+		return map[string]any{
+			"review_diagnostic": map[string]any{
+				"status": "pending",
+				"state":  artifacts.State.State,
+			},
+		}
+	}
+	payload := handoff.payload()
+	diagnostics := map[string]any{
+		"review_diagnostic": map[string]any{
+			"status":  "valid",
+			"outcome": string(handoff.Outcome),
+		},
+	}
+	if request, ok := payload["review_request"]; ok {
+		diagnostics["review_request"] = request
+	}
+	return diagnostics
+}
+
+func (s *runSession) invalidRetainedReviewDiagnostic(branch string, err error) map[string]any {
+	if s.deps.errorLog != nil {
+		fmt.Fprintf(s.deps.errorLog, "warning: retained review artifacts ignored for live gate on branch %q: %v\n", branch, err)
+	}
+	return map[string]any{
+		"review_diagnostic": map[string]any{
+			"status": "invalid",
+			"reason": gateReviewTimeoutError,
+			"error":  err.Error(),
+		},
+	}
 }
 
 func (s *runSession) handleReviewTimeoutGate(ctx context.Context, workDir, branch, logPath, runID, currentHead string) (string, map[string]any, bool) {
@@ -245,6 +339,9 @@ func (s *runSession) handleReviewTimeoutGate(ctx context.Context, workDir, branc
 		return "", nil, false
 	}
 	if !reviewTimeoutArtifactsPresentForPR(workDir, pr.Number) {
+		return "", nil, false
+	}
+	if canonicalReviewRegistrationPresent(workDir, pr.Number) {
 		return "", nil, false
 	}
 	if strings.EqualFold(pr.State, "open") && retainedReviewPRGateFailed(pr) {

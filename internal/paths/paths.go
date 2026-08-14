@@ -23,7 +23,7 @@ import (
 //	    PromptPath.
 //	(b) Repo-global state: BatchesIndexPath, EventsLogPath, plus StateDir
 //	    and its children (PromptVersionPath, BadgeControlFilePath,
-//	    PRHeadShaPath, PRAddressedCommentsPath).
+//	    PRHeadShaPath, PRReviewRegistrationPath, PRAddressedCommentsPath).
 //	(c) Per-batch + per-row tree under BatchesDir: BatchDir, BatchManifestPath,
 //	    BatchSocketPath, BatchConfigSnapshotDir, RunFolder, RunLogPath,
 //	    RunSocketPath, RunManifestPath, ReviewStatePath, RunConfigSnapshotDir.
@@ -193,6 +193,12 @@ func (l Layout) PRReviewRequestPath(prNumber int) string {
 // <repo>/.sandman/state/<N>.review_request.json.state
 func (l Layout) PRReviewRequestStatePath(prNumber int) string {
 	return l.PRReviewRequestPath(prNumber) + ".state"
+}
+
+// PRReviewRegistrationPath returns the runtime-owned implementation review
+// registration: <repo>/.sandman/state/<N>.review_registration.json
+func (l Layout) PRReviewRegistrationPath(prNumber int) string {
+	return filepath.Join(l.StateDir, strconv.Itoa(prNumber)+".review_registration.json")
 }
 
 // PRAddressedCommentsPath returns the addressed-comments file for a PR: <repo>/.sandman/state/<N>.addressed_comments
