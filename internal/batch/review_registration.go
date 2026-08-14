@@ -245,6 +245,11 @@ func (s *runSession) registerReviewRequest(ctx context.Context, workDir string, 
 	reviewRegistrationMu.Lock()
 	defer reviewRegistrationMu.Unlock()
 	if existing, err := store.Read(registrationPath); err == nil {
+		if err := validateReviewRegistrationGeneration(existing, repository, pr); err != nil {
+			// A semantically invalid committed record is evidence only. Do
+			// not deduplicate against it or repair it from a comment.
+			return nil
+		}
 		if reviewTriggerMatchesRequest(existing.Request, trigger) {
 			return nil
 		}
@@ -338,6 +343,15 @@ func (s *runSession) registerReviewRequest(ctx context.Context, workDir string, 
 		return fmt.Errorf("write review registration: %w", err)
 	}
 	return nil
+}
+
+func validateReviewRegistrationGeneration(registration reviewRequestRegistration, repository string, pr *github.PR) error {
+	if strings.TrimSpace(registration.Request.HeadSHA) == "" {
+		return fmt.Errorf("review registration generation has no head")
+	}
+	shapePR := *pr
+	shapePR.HeadRefOid = registration.Request.HeadSHA
+	return validateReviewRegistration(registration, repository, &shapePR, registration.Request.HeadSHA)
 }
 
 func (s *runSession) reviewNow() time.Time {

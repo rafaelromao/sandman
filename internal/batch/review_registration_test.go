@@ -442,6 +442,21 @@ func TestReviewRegistration_ProductionGateRegistersBeforeLivePendingHandoff(t *t
 	if registration.Request.TriggerID != "trigger-3001" || registration.State.State != "pending" {
 		t.Fatalf("production registration = %#v, want trigger-3001/pending", registration)
 	}
+	before, err := os.ReadFile(registrationPath)
+	if err != nil {
+		t.Fatalf("read first production registration bytes: %v", err)
+	}
+	status, extras, handled = session.handleExternalGate(context.Background(), workDir, gateTestBranch, "", "run-test")
+	if !handled || status != "blocked" || extras["gate"] != "pending" {
+		t.Fatalf("repeat live pending handoff = (%q, %#v, %t), want blocked/pending", status, extras, handled)
+	}
+	after, err := os.ReadFile(registrationPath)
+	if err != nil {
+		t.Fatalf("read repeated production registration bytes: %v", err)
+	}
+	if string(after) != string(before) {
+		t.Fatal("same confirmed trigger rewrote the canonical registration")
+	}
 	if session.reviewRegistrationAttempted != true {
 		t.Fatal("production gate did not attempt registration")
 	}
