@@ -414,7 +414,7 @@ the ones used by the next request-scoped wait.
 require_review_trigger_delivery || record REVIEW_TRIGGER_GUARD_BLOCKED "$guard_reason" and stop
 [ "$guard_reason" != "head-changed" ] || record REVIEW_TRIGGER_GUARD_BLOCKED "$guard_reason" and stop
 clarification_url=$(gh pr comment <N> --repo <owner/repo> \
-  --body "{{REVIEW_COMMAND}} — please clarify which finding is actionable") ||
+  --body "{{REVIEW_COMMAND}} -- please clarify which finding is actionable") ||
   record REVIEW_TRIGGER_GUARD_UNCERTAIN and stop
 clarification_created_at=$(gh pr view <N> --repo <owner/repo> --json headRefOid,comments |
   jq -er --arg head "$head_sha" --arg trigger_url "$clarification_url" --arg prefix "{{REVIEW_COMMAND}}" '
