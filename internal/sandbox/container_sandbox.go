@@ -46,15 +46,16 @@ var ExecCommandFn = exec.Command
 // KillAgentFn is the function-variable seam for the container-side kill signal
 // sent when an exec is aborted via context cancellation. The default reads the
 // agent's pidfile (/tmp/agent-pgid) inside the container and sends SIGKILL to
-// that process group via `docker exec <id> sh -c 'kill -KILL -<pgid>'`. Tests may
+// that process group via `<binary> exec <id> sh -c 'kill -KILL -<pgid>'`.
+// The binary parameter is the container runtime (docker or podman). Tests may
 // substitute a stub to verify the call is made with the expected container ID.
 // Save and restore around the test:
 //
 //	prev := sandbox.KillAgentFn
 //	defer func() { sandbox.KillAgentFn = prev }()
-//	sandbox.KillAgentFn = func(containerID string) error { ... }
-var KillAgentFn = func(containerID string) error {
-	cmd := exec.Command("docker", "exec", containerID, "sh", "-c",
+//	sandbox.KillAgentFn = func(containerID, binary string) error { ... }
+var KillAgentFn = func(containerID, binary string) error {
+	cmd := exec.Command(binary, "exec", containerID, "sh", "-c",
 		"pgid=$(cat /tmp/agent-pgid 2>/dev/null); [ -n \"$pgid\" ] && kill -KILL -\"$pgid\"")
 	return cmd.Run()
 }
@@ -196,7 +197,7 @@ func (s *ContainerSandbox) Exec(ctx context.Context, command string, stdout, std
 	s.processWrapper = newProcessWrapper(cmd)
 
 	onAbort := func() {
-		_ = KillAgentFn(s.container.ID())
+		_ = KillAgentFn(s.container.ID(), s.binary)
 	}
 
 	if err := waitCmd(ctx, cmd, s.processWrapper, onAbort); err != nil {
@@ -223,7 +224,7 @@ func (s *ContainerSandbox) ExecInteractive(ctx context.Context, command string) 
 	s.processWrapper = newProcessWrapper(cmd)
 
 	onAbort := func() {
-		_ = KillAgentFn(s.container.ID())
+		_ = KillAgentFn(s.container.ID(), s.binary)
 	}
 
 	if err := waitCmd(ctx, cmd, s.processWrapper, onAbort); err != nil {
