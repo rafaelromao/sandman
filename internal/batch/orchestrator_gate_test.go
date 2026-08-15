@@ -2057,7 +2057,7 @@ func TestExternalGate_LateApprovalRejectsConflictingFormalEvidence(t *testing.T)
 	}
 }
 
-func TestExternalGate_LateApprovalRejectsMissingObservedHead(t *testing.T) {
+func TestExternalGate_LateApprovalIgnoresMissingObservedHead(t *testing.T) {
 	workDir := testenv.MkdirShort(t, "sm-orch-")
 	writeRetainedCurrentHeadApproval(t, workDir)
 	statePath := filepath.Join(workDir, ".sandman", "state", "17.review_request.json.state")
@@ -2080,8 +2080,8 @@ func TestExternalGate_LateApprovalRejectsMissingObservedHead(t *testing.T) {
 		opts: gateTestRunOptions(),
 	}
 	status, extras, handled := session.handleReviewTimeoutGate(context.Background(), workDir, gateTestBranch, "", "run-test", "current-sha")
-	if !handled || status != "blocked" || extras["gate"] != gateReviewTimeoutError {
-		t.Fatalf("missing observed head result = (%q, %#v, %t), want retained state error", status, extras, handled)
+	if handled || status != "" || extras != nil {
+		t.Fatalf("missing observed head result = (%q, %#v, %t), want live-gate fallback", status, extras, handled)
 	}
 }
 
