@@ -398,7 +398,9 @@ func (s *runSession) handleReviewTimeoutGate(ctx context.Context, workDir, branc
 	}
 	artifacts, err := readReviewTimeoutArtifacts(workDir, repository, pr, currentHead)
 	if err != nil {
-		return s.blockReviewTimeoutStateError(ctx, workDir, logPath, runID)
+		// Split legacy evidence is only a diagnostic compatibility path. A
+		// missing or incomplete proposal is not a committed registration.
+		return "", nil, false
 	}
 	handoff, err := reviewTimeoutHandoffFromArtifacts(artifacts, currentHead)
 	if err != nil {

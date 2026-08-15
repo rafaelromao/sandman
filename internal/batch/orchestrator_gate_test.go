@@ -1578,6 +1578,35 @@ func TestExternalGate_ReviewTimeoutIgnoresHeadSidecarWithoutRequest(t *testing.T
 	}
 }
 
+func TestExternalGate_IncompleteLegacyProposalFallsThroughToLiveGate(t *testing.T) {
+	workDir := testenv.MkdirShort(t, "sm-orch-")
+	stateDir := filepath.Join(workDir, ".sandman", "state")
+	if err := os.MkdirAll(stateDir, 0o755); err != nil {
+		t.Fatalf("create review state directory: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(stateDir, "17.review_request.json"), []byte(`{"protocol":"review-wait/v1","pull_request":17}`), 0o600); err != nil {
+		t.Fatalf("write incomplete review proposal: %v", err)
+	}
+	session := &runSession{
+		deps: runDeps{
+			githubClient: &fakeGitHubClient{prs: map[string]*github.PR{gateTestBranch: {
+				Number:            17,
+				State:             "open",
+				HeadRefOid:        "current-sha",
+				StatusCheckRollup: "pending",
+				MergeStateStatus:  "BLOCKED",
+			}}},
+			errorLog: io.Discard,
+		},
+		opts: gateTestRunOptions(),
+	}
+
+	status, extras, handled := session.handleReviewTimeoutGate(context.Background(), workDir, gateTestBranch, "", "run-test", "current-sha")
+	if handled || status != "" || extras != nil {
+		t.Fatalf("incomplete legacy proposal = (%q, %#v, %t), want live-gate fallback", status, extras, handled)
+	}
+}
+
 func TestExternalGate_ReviewTimeoutIgnoresRetainedArtifactsWithoutCurrentPR(t *testing.T) {
 	workDir := testenv.MkdirShort(t, "sm-orch-")
 	writeTimedOutReviewRequest(t, workDir)
@@ -2028,7 +2057,7 @@ func TestExternalGate_LateApprovalRejectsConflictingFormalEvidence(t *testing.T)
 	}
 }
 
-func TestExternalGate_LateApprovalRejectsMissingObservedHead(t *testing.T) {
+func TestExternalGate_LateApprovalIgnoresMissingObservedHead(t *testing.T) {
 	workDir := testenv.MkdirShort(t, "sm-orch-")
 	writeRetainedCurrentHeadApproval(t, workDir)
 	statePath := filepath.Join(workDir, ".sandman", "state", "17.review_request.json.state")
@@ -2051,8 +2080,8 @@ func TestExternalGate_LateApprovalRejectsMissingObservedHead(t *testing.T) {
 		opts: gateTestRunOptions(),
 	}
 	status, extras, handled := session.handleReviewTimeoutGate(context.Background(), workDir, gateTestBranch, "", "run-test", "current-sha")
-	if !handled || status != "blocked" || extras["gate"] != gateReviewTimeoutError {
-		t.Fatalf("missing observed head result = (%q, %#v, %t), want retained state error", status, extras, handled)
+	if handled || status != "" || extras != nil {
+		t.Fatalf("missing observed head result = (%q, %#v, %t), want live-gate fallback", status, extras, handled)
 	}
 }
 
