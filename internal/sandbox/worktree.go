@@ -508,8 +508,8 @@ func (s *WorktreeSandbox) Exec(ctx context.Context, command string, stdout, stde
 	s.processWrapper = newProcessWrapper(cmd)
 	s.mu.Unlock()
 
-	if err := waitCmd(ctx, cmd, s.processWrapper, nil); err != nil {
-		return fmt.Errorf("exec: %w", err)
+	if contextErr, _ := waitCmd(ctx, cmd, s.processWrapper, nil); contextErr != nil {
+		return fmt.Errorf("exec: %w", contextErr)
 	}
 	return nil
 }
@@ -531,8 +531,8 @@ func (s *WorktreeSandbox) ExecInteractive(ctx context.Context, command string) e
 	s.processWrapper = newProcessWrapper(cmd)
 	s.mu.Unlock()
 
-	if err := waitCmd(ctx, cmd, s.processWrapper, nil); err != nil {
-		return fmt.Errorf("exec: %w", err)
+	if contextErr, _ := waitCmd(ctx, cmd, s.processWrapper, nil); contextErr != nil {
+		return fmt.Errorf("exec: %w", contextErr)
 	}
 	return nil
 }

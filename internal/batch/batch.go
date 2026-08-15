@@ -182,6 +182,11 @@ type AgentRunResult struct {
 	Review           bool
 	RunID            string
 	ContextExhausted bool
+	// CleanupError records a failure during process cleanup after context
+	// cancellation. When non-nil, the orchestrator must not mark the run as
+	// terminal until the error is recorded in the event log, satisfying
+	// acceptance criterion #4 of issue #2605.
+	CleanupError error
 }
 
 // Runnable represents a single agent execution that can be run.

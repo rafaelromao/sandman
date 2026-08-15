@@ -2,6 +2,7 @@ package batch
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -37,6 +38,7 @@ type AgentRun struct {
 	sandbox                    sandbox.Sandbox
 	status                     string
 	contextExhausted           bool
+	cleanupError               error // distinct cleanup failure from context cancellation
 	contextRolloverLiterals    []string
 	env                        map[string]string
 	outputWriter               io.Writer
@@ -91,6 +93,10 @@ func (r *AgentRun) Prepare(renderer prompt.IssueRenderer, cfg prompt.RenderConfi
 
 // Execute runs the agent command inside the sandbox, writing prefixed output to the given writers
 // and to the run folder's run.log (constant filename, O_APPEND preserved).
+//
+// When the sandbox reports a cleanup failure (via *sandbox.CleanupError),
+// Execute propagates it through the returned error so Run can record it
+// on the AgentRunResult (issue #2605 acceptance criterion #4).
 func (r *AgentRun) Execute(ctx context.Context, command string, stdout, stderr io.Writer) error {
 	runFolder := r.runFolder
 	if runFolder == "" {
@@ -218,6 +224,12 @@ func (r *AgentRun) Run(ctx context.Context, renderer prompt.IssueRenderer, comma
 	if detector != nil && detector.Triggered() {
 		r.contextExhausted = true
 		r.status = "failure"
+		// Extract any cleanup failure so the orchestrator can record it
+		// before marking the run as terminal (issue #2605 criterion #4).
+		var cleanupErr *sandbox.CleanupError
+		if errors.As(execErr, &cleanupErr) {
+			r.cleanupError = cleanupErr.CleanupFail
+		}
 		return r.Result()
 	}
 	if execErr != nil {
@@ -305,6 +317,7 @@ func (r *AgentRun) Result() AgentRunResult {
 		Branch:           r.branch,
 		WorktreePath:     r.sandbox.WorkDir(),
 		ContextExhausted: r.contextExhausted,
+		CleanupError:     r.cleanupError,
 	}
 }
 

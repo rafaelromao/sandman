@@ -3127,7 +3127,25 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 		return result, false
 	}
 
+	// Record any cleanup failure before marking the run as terminal
+	// (issue #2605 acceptance criterion #4). The cleanup error is
+	// distinct from the agent's own failure and must appear in the
+	// event log so operators can diagnose orphaned processes.
+	if result.ContextExhausted && result.CleanupError != nil {
+		fmt.Fprintf(s.deps.errorLog, "warning: context-exhausted cleanup failed for issue %d: %v\n", s.issueNumber, result.CleanupError)
+		if terminalExtras == nil {
+			terminalExtras = make(map[string]any)
+		}
+		terminalExtras["cleanup_error"] = result.CleanupError.Error()
+	}
+
 	result.Status = s.emitTerminal(ctx, runID, result, terminalExtras)
+
+	// Verify no process with the terminal run ID remains after the terminal
+	// event (issue #2605 acceptance criterion #2). This is a safety net: the
+	// primary cleanup happens inside waitCmd before emitTerminal, but a
+	// failed onAbort or a slow process-group kill can leave orphans.
+	s.verifyNoRemainingProcesses(runID)
 
 	if events.RunStatusFromPayload(result.Status).IsSuccess() {
 		// Container sandboxes leave the worktree's .git pointer addressed for
@@ -3172,6 +3190,27 @@ func (s *runSession) reconcileWorktreeBranch(wt sandbox.Sandbox, branch string) 
 	if out, err := cmd.CombinedOutput(); err != nil {
 		fmt.Fprintf(s.deps.errorLog, "warning: reconcile worktree branch: git checkout -f %s: %v\n%s\n", branch, err, out)
 		return
+	}
+}
+
+// verifyNoRemainingProcesses checks that no process whose command line
+// contains the given runID is still alive. This is a safety-net
+// verification (issue #2605 acceptance criterion #2) that runs after the
+// primary cleanup in waitCmd and after the terminal event is appended.
+// Failures are logged as warnings; the run outcome is not changed.
+func (s *runSession) verifyNoRemainingProcesses(runID string) {
+	if runID == "" {
+		return
+	}
+	out, err := exec.Command("ps", "ax").CombinedOutput()
+	if err != nil {
+		fmt.Fprintf(s.deps.errorLog, "warning: verify no remaining processes: ps failed: %v\n", err)
+		return
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		if strings.Contains(line, runID) {
+			fmt.Fprintf(s.deps.errorLog, "warning: verify no remaining processes: found lingering process for run %s: %s\n", runID, strings.TrimSpace(line))
+		}
 	}
 }
 
