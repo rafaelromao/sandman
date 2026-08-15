@@ -501,7 +501,7 @@ func TestContainerSandbox_Exec_KillAgentFnCalledOnAbort(t *testing.T) {
 
 	readyPath := filepath.Join(t.TempDir(), "child.ready")
 	var killCalls []string
-	KillAgentFn = func(containerID string) error {
+	KillAgentFn = func(containerID, binary string) error {
 		killCalls = append(killCalls, containerID)
 		return nil
 	}
@@ -584,7 +584,7 @@ func TestContainerSandbox_Exec_CancelsViaContext(t *testing.T) {
 	ExecCommandFn = func(name string, arg ...string) *exec.Cmd {
 		return exec.Command("sh", "-c", fmt.Sprintf("touch %s && sleep 60", shellenv.Quote(readyPath)))
 	}
-	KillAgentFn = func(string) error { return nil }
+	KillAgentFn = func(string, string) error { return nil }
 
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -645,6 +645,74 @@ func TestContainerSandbox_ExecInteractive_CancelsViaContext(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("ExecInteractive did not unblock after context cancel — missing Setpgid on container sandbox?")
+	}
+}
+
+func TestContainerSandbox_Exec_KillAgentFnUsesBinary(t *testing.T) {
+	if err := exec.Command("sleep", "0").Run(); err != nil {
+		t.Skipf("sleep command not available: %v", err)
+	}
+
+	wt := &fakeWorktreeForContainer{workDir: "/host/repo/.sandman/worktrees/branch"}
+	ctr := &fakeContainer{id: "podman-container-456"}
+	sb := NewContainerSandbox(wt, ctr, "podman", "/host/repo")
+
+	prevExec := ExecCommandFn
+	prevKill := KillAgentFn
+	defer func() {
+		ExecCommandFn = prevExec
+		KillAgentFn = prevKill
+	}()
+
+	readyPath := filepath.Join(t.TempDir(), "child.ready")
+	var killCalls []struct {
+		containerID string
+		binary      string
+	}
+	KillAgentFn = func(containerID, binary string) error {
+		killCalls = append(killCalls, struct {
+			containerID string
+			binary      string
+		}{containerID, binary})
+		return nil
+	}
+	ExecCommandFn = func(name string, arg ...string) *exec.Cmd {
+		return exec.Command("sh", "-c", fmt.Sprintf("touch %s && sleep 5", shellenv.Quote(readyPath)))
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	errCh := make(chan error, 1)
+	doneCh := make(chan struct{})
+	go func() {
+		defer close(doneCh)
+		errCh <- sb.Exec(ctx, "echo hello", io.Discard, io.Discard)
+	}()
+	defer func() { <-doneCh }()
+
+	waitForChildReadyTB(t, readyPath, 2*time.Second)
+	cancel()
+
+	select {
+	case err := <-errCh:
+		if err == nil {
+			t.Fatal("expected error from context cancellation")
+		}
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("expected context.Canceled, got: %v", err)
+		}
+	case <-time.After(15 * time.Second):
+		t.Fatal("Exec did not unblock after context cancel")
+	}
+
+	if len(killCalls) != 1 {
+		t.Fatalf("expected KillAgentFn to be called exactly once, got %d calls", len(killCalls))
+	}
+	if killCalls[0].containerID != "podman-container-456" {
+		t.Errorf("expected containerID=podman-container-456, got %q", killCalls[0].containerID)
+	}
+	if killCalls[0].binary != "podman" {
+		t.Errorf("expected binary=podman, got %q", killCalls[0].binary)
 	}
 }
 
