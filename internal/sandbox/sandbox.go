@@ -3,11 +3,32 @@ package sandbox
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"syscall"
 )
+
+// CleanupError wraps a context cancellation error together with a distinct
+// cleanup failure. Callers can use errors.As to extract the underlying
+// cleanup error and record it separately, satisfying acceptance criterion #4
+// of issue #2605.
+type CleanupError struct {
+	Err         error // the original context cancellation error
+	CleanupFail error // the error returned by onAbort, if any
+}
+
+func (e *CleanupError) Error() string {
+	if e.CleanupFail != nil {
+		return fmt.Sprintf("%v (cleanup: %v)", e.Err, e.CleanupFail)
+	}
+	return e.Err.Error()
+}
+
+func (e *CleanupError) Unwrap() error {
+	return e.Err
+}
 
 // Process represents a running OS process that can be signalled and waited on.
 //
@@ -99,31 +120,35 @@ type Sandbox interface {
 // is cancelled, after the process group kill is sent but before waitCmd
 // waits for the process to exit. It is intended for propagating the abort
 // signal into container namespaces where the host-side process group kill
-// does not reach.
-func waitCmd(ctx context.Context, cmd *exec.Cmd, cmdWrapper *processWrapper, onAbort func()) error {
+// does not reach. If onAbort returns an error, it is returned as cleanupErr
+// so callers can record it as a distinct cleanup failure (issue #2605
+// acceptance criterion #4). The host-side process is still waited on
+// regardless of the cleanup error.
+func waitCmd(ctx context.Context, cmd *exec.Cmd, cmdWrapper *processWrapper, onAbort func() error) (contextErr error, cleanupErr error) {
 	if cmdWrapper == nil {
-		return errors.New("waitCmd: cmdWrapper is nil")
+		return errors.New("waitCmd: cmdWrapper is nil"), nil
 	}
 	waitDone := cmdWrapper.WaitDone()
 
 	select {
 	case <-waitDone:
-		return cmdWrapper.exitErr()
+		return cmdWrapper.exitErr(), nil
 	case <-ctx.Done():
 		if cmd.Process != nil {
 			// Kill the entire process group (negative PID) to ensure child
 			// processes such as agent scripts and their background tasks
 			// are terminated, not just the immediate sh -c parent.
 			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-			// Fall back to killing the command itself when the platform does
-			// not deliver the process-group signal. The wait must not depend
-			// on the group kill succeeding.
-			_ = cmd.Process.Kill()
 		}
 		if onAbort != nil {
-			onAbort()
+			if err := onAbort(); err != nil {
+				// Return the cleanup error so callers can record it.
+				// The host-side process group kill may still succeed
+				// even if the container-side cleanup fails.
+				cleanupErr = err
+			}
 		}
 		<-waitDone
-		return ctx.Err()
+		return ctx.Err(), cleanupErr
 	}
 }

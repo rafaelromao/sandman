@@ -858,3 +858,197 @@ func (f *contextRolloverRunnableFactory) NewRunnable(issue *github.Issue, branch
 
 var _ sandbox.Sandbox = (*contextRolloverSandbox)(nil)
 var _ prompt.IssueRenderer = (*retryRenderer)(nil)
+
+// TestContextExhaustedCleanupErrorPropagated verifies that when a container
+// sandbox reports a cleanup failure during context exhaustion, the error is
+// propagated to AgentRunResult.CleanupError (issue #2605 criterion #4).
+func TestContextExhaustedCleanupErrorPropagated(t *testing.T) {
+	workDir := t.TempDir()
+	t.Chdir(workDir)
+
+	cleanupErr := errors.New("kill agent failed: container not found")
+	sb := &cleanupErrorSandbox{
+		workDir:   filepath.Join(workDir, "worktree"),
+		cleanupFn: func() error { return cleanupErr },
+	}
+	factory := &cleanupErrorRunnableFactory{sandbox: sb}
+	eventLog := &events.JSONLLogger{Path: filepath.Join(workDir, "events.jsonl")}
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			42: {Number: 42, Title: "Cleanup error", State: "closed"},
+		},
+	}
+
+	o := NewOrchestrator(
+		client,
+		&retryRenderer{result: "# Task\n\nInitial task."},
+		nil,
+		eventLog,
+		WithErrorLog(io.Discard),
+		WithSandboxFactory(&cleanupErrorSandboxFactory{sandbox: sb}),
+		WithRunnableFactory(factory),
+	)
+
+	cfg := &config.Config{
+		WorktreeDir: "worktrees",
+		Git:         config.GitConfig{BaseBranch: "main"},
+	}
+	bc := BatchConfig{
+		Cfg:              cfg,
+		AgentName:        "opencode",
+		AgentCfg:         config.BuiltInAgentPresets["opencode"].Agent("opencode"),
+		IdentityResolver: noopIdentityResolver(),
+		Retries:          0, // no retries — terminal on first attempt
+	}
+	row := RowSpec{
+		IssueNumber: 42,
+		Branches:    map[int]string{42: "42-cleanup-error"},
+		BaseBranch:  "main",
+		RunTS:       "260814071754",
+		RunShortID:  "5d21",
+	}
+
+	result, started := o.newRunExecutor(context.Background(), bc, &cleanupErrorSandboxFactory{sandbox: sb}, nil).Execute(context.Background(), row)
+	if !started {
+		t.Fatalf("expected AgentRun to start, result=%+v", result)
+	}
+	if result.Status != "failure" {
+		t.Fatalf("status = %q, want failure", result.Status)
+	}
+	if !result.ContextExhausted {
+		t.Fatal("expected ContextExhausted to be true")
+	}
+	if result.CleanupError == nil {
+		t.Fatal("expected CleanupError to be non-nil")
+	}
+	if !errors.Is(result.CleanupError, cleanupErr) {
+		t.Fatalf("CleanupError = %v, want %v", result.CleanupError, cleanupErr)
+	}
+}
+
+// TestFinalContextExhaustedFailureRecordsCleanup verifies that when the final
+// attempt exhausts context and cleanup fails, the orchestrator records the
+// cleanup error in the terminal event extras before calling emitTerminal
+// (issue #2605 criterion #4).
+func TestFinalContextExhaustedFailureRecordsCleanup(t *testing.T) {
+	workDir := t.TempDir()
+	t.Chdir(workDir)
+
+	cleanupErr := errors.New("container kill timeout")
+	sb := &cleanupErrorSandbox{
+		workDir:   filepath.Join(workDir, "worktree"),
+		cleanupFn: func() error { return cleanupErr },
+	}
+	factory := &cleanupErrorRunnableFactory{sandbox: sb}
+	eventLog := &events.JSONLLogger{Path: filepath.Join(workDir, "events.jsonl")}
+	client := &fakeGitHubClient{
+		issues: map[int]*github.Issue{
+			42: {Number: 42, Title: "Final cleanup", State: "closed"},
+		},
+	}
+
+	o := NewOrchestrator(
+		client,
+		&retryRenderer{result: "# Task\n\nInitial task."},
+		nil,
+		eventLog,
+		WithErrorLog(io.Discard),
+		WithSandboxFactory(&cleanupErrorSandboxFactory{sandbox: sb}),
+		WithRunnableFactory(factory),
+	)
+
+	cfg := &config.Config{
+		WorktreeDir: "worktrees",
+		Git:         config.GitConfig{BaseBranch: "main"},
+	}
+	bc := BatchConfig{
+		Cfg:              cfg,
+		AgentName:        "opencode",
+		AgentCfg:         config.BuiltInAgentPresets["opencode"].Agent("opencode"),
+		IdentityResolver: noopIdentityResolver(),
+		Retries:          0,
+	}
+	row := RowSpec{
+		IssueNumber: 42,
+		Branches:    map[int]string{42: "42-final-cleanup"},
+		BaseBranch:  "main",
+		RunTS:       "260814071754",
+		RunShortID:  "5d21",
+	}
+
+	result, started := o.newRunExecutor(context.Background(), bc, &cleanupErrorSandboxFactory{sandbox: sb}, nil).Execute(context.Background(), row)
+	if !started {
+		t.Fatalf("expected AgentRun to start, result=%+v", result)
+	}
+
+	logs, err := eventLog.Read()
+	if err != nil {
+		t.Fatalf("read events: %v", err)
+	}
+	for _, event := range logs {
+		if event.Type == "run.finished" {
+			if _, ok := event.Payload["cleanup_error"]; !ok {
+				t.Fatalf("expected cleanup_error in terminal event payload, got payload: %v", event.Payload)
+			}
+			return
+		}
+	}
+	t.Fatalf("expected run.finished event, got events: %+v", logs)
+}
+
+type cleanupErrorRunnableFactory struct {
+	sandbox *cleanupErrorSandbox
+}
+
+func (f *cleanupErrorRunnableFactory) NewRunnable(issue *github.Issue, branch string, sb sandbox.Sandbox) Runnable {
+	return NewAgentRun(issue, branch, f.sandbox)
+}
+
+// cleanupErrorSandbox is a sandbox that simulates context exhaustion with a
+// distinct cleanup error on every Exec call. It writes the context-rollover
+// literal to stderr and then blocks until the context is cancelled, mimicking
+// real OpenCode behaviour where the detector triggers and then the process
+// is killed.
+type cleanupErrorSandbox struct {
+	workDir   string
+	cleanupFn func() error
+}
+
+func (s *cleanupErrorSandbox) Start(sandbox.SandboxStart) error {
+	return os.MkdirAll(filepath.Join(s.workDir, ".sandman"), 0o755)
+}
+
+func (s *cleanupErrorSandbox) Exec(ctx context.Context, command string, stdout, stderr io.Writer) error {
+	// Write the context-rollover literal so the detector triggers.
+	_, _ = io.WriteString(stderr, "Error: prompt is too long\nError: prompt is too long\n")
+	// Block until context is cancelled, just like a real agent process.
+	<-ctx.Done()
+	// Return a CleanupError that wraps the context error and the distinct
+	// cleanup failure. In production this comes from
+	// container_sandbox.Exec → waitCmd, but in the unit test we return
+	// it directly to exercise the propagation path.
+	return &sandbox.CleanupError{
+		Err:         ctx.Err(),
+		CleanupFail: s.cleanupFn(),
+	}
+}
+
+func (s *cleanupErrorSandbox) ExecInteractive(context.Context, string) error { return nil }
+func (s *cleanupErrorSandbox) Stop() error                                   { return nil }
+func (s *cleanupErrorSandbox) WorkDir() string                               { return s.workDir }
+func (s *cleanupErrorSandbox) RepoPath() string                              { return filepath.Dir(s.workDir) }
+func (s *cleanupErrorSandbox) Process() sandbox.Process                      { return nil }
+func (s *cleanupErrorSandbox) RestoreHostPaths() error                       { return nil }
+func (s *cleanupErrorSandbox) WritePrompt(content string) error {
+	return os.WriteFile(filepath.Join(s.workDir, ".sandman", "task.md"), []byte(content), 0o644)
+}
+
+var _ sandbox.Sandbox = (*cleanupErrorSandbox)(nil)
+
+type cleanupErrorSandboxFactory struct {
+	sandbox *cleanupErrorSandbox
+}
+
+func (f *cleanupErrorSandboxFactory) NewSandbox(string, string, string, string, sandbox.Container) sandbox.Sandbox {
+	return f.sandbox
+}

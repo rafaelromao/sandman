@@ -196,12 +196,19 @@ func (s *ContainerSandbox) Exec(ctx context.Context, command string, stdout, std
 	s.cmd = cmd
 	s.processWrapper = newProcessWrapper(cmd)
 
-	onAbort := func() {
-		_ = KillAgentFn(s.container.ID(), s.binary)
+	// Capture KillAgentFn by value to avoid a race with test teardown that
+	// restores the global after the test function returns but while the
+	// Exec goroutine is still running onAbort.
+	killAgent := KillAgentFn
+	onAbort := func() error {
+		return killAgent(s.container.ID(), s.binary)
 	}
 
-	if err := waitCmd(ctx, cmd, s.processWrapper, onAbort); err != nil {
-		return fmt.Errorf("container exec: %w", err)
+	if contextErr, cleanupErr := waitCmd(ctx, cmd, s.processWrapper, onAbort); contextErr != nil {
+		if cleanupErr != nil {
+			return fmt.Errorf("container exec: %w", &CleanupError{Err: contextErr, CleanupFail: cleanupErr})
+		}
+		return fmt.Errorf("container exec: %w", contextErr)
 	}
 	return nil
 }
@@ -223,12 +230,19 @@ func (s *ContainerSandbox) ExecInteractive(ctx context.Context, command string) 
 	s.cmd = cmd
 	s.processWrapper = newProcessWrapper(cmd)
 
-	onAbort := func() {
-		_ = KillAgentFn(s.container.ID(), s.binary)
+	// Capture KillAgentFn by value to avoid a race with test teardown that
+	// restores the global after the test function returns but while the
+	// Exec goroutine is still running onAbort.
+	killAgent := KillAgentFn
+	onAbort := func() error {
+		return killAgent(s.container.ID(), s.binary)
 	}
 
-	if err := waitCmd(ctx, cmd, s.processWrapper, onAbort); err != nil {
-		return fmt.Errorf("container exec: %w", err)
+	if contextErr, cleanupErr := waitCmd(ctx, cmd, s.processWrapper, onAbort); contextErr != nil {
+		if cleanupErr != nil {
+			return fmt.Errorf("container exec: %w", &CleanupError{Err: contextErr, CleanupFail: cleanupErr})
+		}
+		return fmt.Errorf("container exec: %w", contextErr)
 	}
 	return nil
 }
