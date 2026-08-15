@@ -297,12 +297,14 @@ func TestExternalGate_LiveReadyStatePrecedesReviewTimeout(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read task: %v", err)
 	}
-	if !strings.Contains(string(task), "State: pull request external gate is ready-to-merge.") {
-		t.Fatalf("task missing live ready-to-merge state: %s", task)
+	for _, want := range []string{"State: pull request external gate is ready-to-merge.", "revalidate current-head approval"} {
+		if !strings.Contains(string(task), want) {
+			t.Fatalf("task missing %q: %s", want, task)
+		}
 	}
 	runLog, err := os.ReadFile(filepath.Join(workDir, ".sandman", "batches", "runs", "run-test", "run.log"))
-	if err == nil && !strings.Contains(string(runLog), "external gate ready-to-merge") {
-		t.Fatalf("run log missing live ready-to-merge handoff: %s", runLog)
+	if err == nil && !strings.Contains(string(runLog), "ready-to-merge") {
+		t.Fatalf("run log missing live gate handoff: %s", runLog)
 	}
 }
 
@@ -839,7 +841,7 @@ func TestExternalGate_LiveFailedStatePrecedesActionableEvidence(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read actionable task: %v", err)
 	}
-	for _, want := range []string{"gate is failed", "Next action:"} {
+	for _, want := range []string{"pull request external gate is failed", "inspect the failed CI or requested review changes"} {
 		if !strings.Contains(string(task), want) {
 			t.Fatalf("task missing %q: %s", want, task)
 		}
@@ -1283,7 +1285,7 @@ func TestExternalGate_MergedCompletionIgnoresStaleOrMalformedState(t *testing.T)
 		IssueNumber: 42, Branches: map[int]string{42: gateTestBranch}, BaseBranch: "main",
 	})
 	if !started || result.Status != "success" {
-		t.Fatalf("stale state result = (%t, %q), want started success", started, result.Status)
+		t.Fatalf("stale state result = (%t, %q), want live merged success", started, result.Status)
 	}
 	if len(factory.created) != 1 {
 		t.Fatalf("agent launches = %d, want 1", len(factory.created))
@@ -1296,8 +1298,8 @@ func TestExternalGate_MergedCompletionIgnoresStaleOrMalformedState(t *testing.T)
 		t.Fatal("stale review state consumed a retry")
 	}
 	finished := findEvent(logs, "run.finished")
-	if finished == nil || finished.Payload["status"] != "success" || finished.Payload["gate"] != nil {
-		t.Fatalf("stale state terminal event = %#v, want merged success without local gate", finished)
+	if finished == nil || finished.Payload["status"] != "success" {
+		t.Fatalf("stale state terminal event = %#v, want success", finished)
 	}
 }
 

@@ -2,6 +2,7 @@ package batch
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/rafaelromao/sandman/internal/atomicfs"
 	"github.com/rafaelromao/sandman/internal/github"
+	"github.com/rafaelromao/sandman/internal/paths"
 )
 
 type gateResult int
@@ -118,10 +120,7 @@ func checkPRExternalGateWithHead(ctx context.Context, client github.Client, bran
 }
 
 func lookupPRExternalGateWithHead(ctx context.Context, client github.Client, branch, headSHA string, requireHead bool) (*github.PR, string, error) {
-	if client == nil || strings.TrimSpace(branch) == "" {
-		return nil, "none", nil
-	}
-	pr, err := client.FindPRByBranch(ctx, branch)
+	pr, err := lookupPRForExternalGate(ctx, client, branch)
 	if err != nil {
 		return nil, "unavailable", err
 	}
@@ -129,6 +128,22 @@ func lookupPRExternalGateWithHead(ctx context.Context, client github.Client, bra
 		return nil, "none", nil
 	}
 	return pr, checkPRExternalGateForPR(pr, headSHA, requireHead), nil
+}
+
+func lookupPRForExternalGate(ctx context.Context, client github.Client, branch string) (*github.PR, error) {
+	if client == nil || strings.TrimSpace(branch) == "" {
+		return nil, nil
+	}
+	pr, err := client.FindPRByBranch(ctx, branch)
+	if err != nil {
+		return nil, err
+	}
+	if pr != nil && strings.TrimSpace(pr.HeadRefName) == "" {
+		copy := *pr
+		copy.HeadRefName = branch
+		return &copy, nil
+	}
+	return pr, nil
 }
 
 func checkPRExternalGateForPR(pr *github.PR, headSHA string, requireHead bool) string {
@@ -188,22 +203,55 @@ func (s *runSession) handleExternalGateWithHostPaths(ctx context.Context, workDi
 	if s.deps.githubClient == nil {
 		return "", nil, false
 	}
-
-	// Classify the live pull request before inspecting retained review files.
-	// Those files can enrich diagnostics, but never choose the lifecycle result.
+	// The live pull request is authoritative. Local review records can enrich
+	// the result, but they must not decide whether the run is terminal.
 	headSHA := s.currentGateHead(workDir)
 	if !hostPathsReady {
 		headSHA = ""
 	}
-	pr, gate, err := lookupPRExternalGateWithHead(ctx, s.deps.githubClient, branch, headSHA, true)
+	pr, err := lookupPRForExternalGate(ctx, s.deps.githubClient, branch)
 	initialUnavailable := err != nil
+	refreshUnavailable := false
+	gate := "none"
 	if err != nil && s.deps.errorLog != nil {
 		fmt.Fprintf(s.deps.errorLog, "warning: external gate lookup for branch %q: %v\n", branch, err)
 		gate = "pending"
 	}
+	if pr != nil && strings.EqualFold(strings.TrimSpace(pr.State), "open") {
+		registrationErr := s.ensureReviewRegistrationForPR(ctx, workDir, pr, headSHA)
+		headChanged := errors.Is(registrationErr, errReviewRegistrationHeadChanged)
+		refreshLivePR := headChanged ||
+			(registrationErr == nil && s.reviewRegistrationObserved)
+		if refreshLivePR {
+			// Registration may observe comments and persist while the live PR
+			// changes. Refresh after a confirmed head change or successful
+			// observation before allowing the gate to terminalize.
+			refreshedPR, refreshErr := lookupPRForExternalGate(ctx, s.deps.githubClient, branch)
+			if refreshErr != nil {
+				if s.deps.errorLog != nil {
+					fmt.Fprintf(s.deps.errorLog, "warning: external gate refresh for branch %q: %v\n", branch, refreshErr)
+				}
+				// A requested refresh has no safe fallback. Do not reuse a
+				// pre-registration snapshot or poll until it can be replaced.
+				pr = nil
+				gate = "pending"
+				refreshUnavailable = true
+				err = nil
+			} else {
+				pr = refreshedPR
+				err = nil
+			}
+		}
+	}
+	if err == nil && pr != nil {
+		gate = checkPRExternalGateForPR(pr, headSHA, true)
+	}
 
 	if gate == "none" {
 		return "", nil, false
+	}
+	if refreshUnavailable {
+		return s.blockExternalGateWithDiagnostics(ctx, workDir, logPath, runID, "pending", nil)
 	}
 	var diagnostics map[string]any
 	if gate != "resolved" && pr != nil {
@@ -256,14 +304,24 @@ func (s *runSession) confirmExternalGateWithDiagnostics(ctx context.Context, wor
 }
 
 func (s *runSession) retainedReviewDiagnostics(ctx context.Context, workDir, branch string, pr *github.PR, currentHead string) map[string]any {
-	if ctx.Err() != nil || pr == nil || !reviewTimeoutArtifactsPresent(workDir) {
+	injectedStore := s.reviewRegistrationStore != nil || s.opts.reviewRegistrationStore != nil
+	if ctx.Err() != nil || pr == nil || (!reviewTimeoutArtifactsPresent(workDir) && !injectedStore) {
 		return nil
 	}
-	if !reviewTimeoutArtifactsPresentForPR(workDir, pr.Number) {
+	if !reviewTimeoutArtifactsPresentForPR(workDir, pr.Number) && !injectedStore {
 		return nil
 	}
 	repository, err := s.deps.githubClient.RepoName(ctx)
 	if err != nil {
+		return s.invalidRetainedReviewDiagnostic(branch, err)
+	}
+	registration, err := readReviewRegistrationWithStore(s.reviewRegistrationStoreForRead(), paths.NewLayout(nil, workDir).PRReviewRegistrationPath(pr.Number), repository, pr, currentHead)
+	if err == nil {
+		return reviewRegistrationDiagnostic(registration)
+	}
+	if !isReviewRegistrationNotExist(err) {
+		// A canonical record exists but is not valid. It wins over legacy
+		// sidecars as evidence, while the live PR gate remains authoritative.
 		return s.invalidRetainedReviewDiagnostic(branch, err)
 	}
 	artifacts, err := readReviewTimeoutArtifacts(workDir, repository, pr, currentHead)
@@ -331,6 +389,12 @@ func (s *runSession) handleReviewTimeoutGate(ctx context.Context, workDir, branc
 	repository, err := s.deps.githubClient.RepoName(ctx)
 	if err != nil {
 		return s.blockReviewTimeoutStateError(ctx, workDir, logPath, runID)
+	}
+	canonicalPath := paths.NewLayout(nil, workDir).PRReviewRegistrationPath(pr.Number)
+	if _, err := readReviewRegistrationWithStore(s.reviewRegistrationStoreForRead(), canonicalPath, repository, pr, currentHead); err == nil || !isReviewRegistrationNotExist(err) {
+		// Canonical evidence is immutable from this compatibility path too.
+		// Legacy sidecars must not regain authority when it is present.
+		return "", nil, false
 	}
 	artifacts, err := readReviewTimeoutArtifacts(workDir, repository, pr, currentHead)
 	if err != nil {
