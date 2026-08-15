@@ -30,6 +30,97 @@ console.log('PASS');
 	runPortalHTMLScript(t, js)
 }
 
+func TestRenderRunMeta_PendingPublicationRendersInProgress(t *testing.T) {
+	js := `const run = {
+  key: 'impl-2472', runId: 'impl-2472', batchKey: 'parent-batch',
+  kind: 'completed', status: 'success', reviewCount: 1,
+  reviewVerdict: 'Approved', reviewPendingPublication: true, reviewLive: false,
+};
+const meta = helpers.renderRunMeta(run);
+if (meta.indexOf('1 review - In Progress') < 0) throw new Error('expected pending publication to render "1 review - In Progress", got ' + JSON.stringify(meta));
+if (meta.indexOf('Approved') >= 0) throw new Error('pending publication must suppress the local Approved verdict, got ' + JSON.stringify(meta));
+console.log('PASS');
+`
+	runPortalHTMLScript(t, js)
+}
+
+func TestVisibleRunsForIssueGroup_PendingPublicationOverridesOlderVerdict(t *testing.T) {
+	js := `const runs = [
+  {
+    key: 'review-old', runId: 'review-old', issueNumber: 2472, review: true,
+    status: 'success', kind: 'completed', startedAt: '2026-08-14T12:00:00Z',
+    finishedAt: '2026-08-14T12:02:00Z', reviewPendingPublication: false,
+    log: '', prNumber: 42,
+  },
+  {
+    key: 'review-new', runId: 'review-new', issueNumber: 2472, review: true,
+    status: 'success', kind: 'completed', startedAt: '2026-08-14T12:05:00Z',
+    finishedAt: '2026-08-14T12:07:00Z', reviewPendingPublication: true,
+    log: '', prNumber: 42,
+  },
+];
+const visible = visibleRunsForTable(runs);
+if (visible.length !== 1) throw new Error('expected one orphan review row, got ' + JSON.stringify(visible));
+if (!visible[0].reviewPendingPublication) throw new Error('newer pending publication must propagate to the orphan row, got ' + JSON.stringify(visible[0]));
+const meta = helpers.renderRunMeta(visible[0]);
+if (meta.indexOf('2 reviews - In Progress') < 0) throw new Error('expected pending orphan reviews to render In Progress, got ' + JSON.stringify(meta));
+if (meta.indexOf('Approved') >= 0) throw new Error('pending orphan reviews must suppress the older Approved verdict, got ' + JSON.stringify(meta));
+console.log('PASS');
+`
+	runPortalHTMLScript(t, js)
+}
+
+func TestVisibleRunsForIssueGroup_UnreadableNewestReviewDoesNotResurrectOlderVerdict(t *testing.T) {
+	js := `const runs = [
+  {
+    key: 'review-old', runId: 'review-old', issueNumber: 2472, review: true,
+    status: 'success', kind: 'completed', startedAt: '2026-08-14T12:00:00Z',
+    finishedAt: '2026-08-14T12:02:00Z', reviewPendingPublication: false,
+    log: '## Decision' + String.fromCharCode(10) + '**APPROVED**', prNumber: 42,
+  },
+  {
+    key: 'review-new', runId: 'review-new', issueNumber: 2472, review: true,
+    status: 'success', kind: 'completed', startedAt: '2026-08-14T12:05:00Z',
+    finishedAt: '2026-08-14T12:07:00Z', reviewPendingPublication: false,
+    reviewVerdict: 'Unclear', log: '', prNumber: 42,
+  },
+];
+const visible = visibleRunsForTable(runs);
+if (visible.length !== 1) throw new Error('expected one orphan review row, got ' + JSON.stringify(visible));
+if (visible[0].reviewVerdict !== 'Unclear') throw new Error('unreadable newest review must clear older verdicts, got ' + JSON.stringify(visible[0]));
+const meta = helpers.renderRunMeta(visible[0]);
+if (meta.indexOf('2 reviews - Unclear') < 0) throw new Error('expected newest unreadable review to render Unclear, got ' + JSON.stringify(meta));
+if (meta.indexOf('Approved') >= 0) throw new Error('unreadable newest review must not resurrect older Approved, got ' + JSON.stringify(meta));
+console.log('PASS');
+`
+	runPortalHTMLScript(t, js)
+}
+
+func TestVisibleRunsForIssueGroup_EqualTimestampUsesDescendingRunID(t *testing.T) {
+	js := `const runs = [
+  {
+    key: 'review-a', runId: 'review-a', issueNumber: 2472, review: true,
+    status: 'success', kind: 'completed', startedAt: '2026-08-14T12:00:00Z',
+    finishedAt: '2026-08-14T12:02:00Z', reviewPendingPublication: false,
+    log: '', prNumber: 42,
+  },
+  {
+    key: 'review-z', runId: 'review-z', issueNumber: 2472, review: true,
+    status: 'success', kind: 'completed', startedAt: '2026-08-14T12:00:00Z',
+    finishedAt: '2026-08-14T12:02:00Z', reviewPendingPublication: true,
+    log: '', prNumber: 42,
+  },
+];
+const visible = visibleRunsForTable(runs);
+if (visible.length !== 1) throw new Error('expected one orphan review row, got ' + JSON.stringify(visible));
+if (!visible[0].reviewPendingPublication) throw new Error('descending RunID tie-break must choose review-z pending state, got ' + JSON.stringify(visible[0]));
+const meta = helpers.renderRunMeta(visible[0]);
+if (meta.indexOf('2 reviews - In Progress') < 0) throw new Error('expected equal-timestamp newest review to render In Progress, got ' + JSON.stringify(meta));
+console.log('PASS');
+`
+	runPortalHTMLScript(t, js)
+}
+
 // TestRenderRunMeta_TwoLiveReviewsRenderInProgress pins issue #2109
 // (B3 plural): a parent with 2 in-flight reviews (reviewCount=2,
 // reviewLive=true) must render "2 reviews - In Progress". Plural form

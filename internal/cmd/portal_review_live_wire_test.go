@@ -117,6 +117,7 @@ func TestPortal_Compute_TerminalReviewOmitsReviewLiveJSON(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(reviewRunDir, "decision.md"), []byte("## Decision\n**CHANGES_REQUESTED**\n"), 0644); err != nil {
 		t.Fatalf("write decision.md: %v", err)
 	}
+	writeReviewPublicationFixture(t, reviewRunDir, "success", reviewFinishedAt, "")
 
 	// Register the review batch in the Batches index so runFromState can
 	// stamp RunDir from the index entry, letting reviewVerdictFromDecisionFile
