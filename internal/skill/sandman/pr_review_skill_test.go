@@ -435,6 +435,84 @@ func TestPRReviewSkill_FailsClosedOnUntrustedRequestPair(t *testing.T) {
 	}
 }
 
+func TestPRReviewSkill_UsesFailClosedTriggerGuardBeforeEveryCommandPost(t *testing.T) {
+	text := readPRReviewSkill(t)
+
+	for _, phrase := range []string{
+		"review-trigger-guard-v1.sh",
+		"review-trigger/v1",
+		"Before every command-prefixed post",
+		"This includes the Step 5 reviewer clarification/follow-up",
+		"unanswered-trigger",
+		"ambiguously ordered remote evidence also refuses",
+		"external-gate state",
+		"The guard is read-only",
+	} {
+		if !strings.Contains(text, phrase) {
+			t.Errorf("pr-review SKILL.md must describe fail-closed trigger delivery %q", phrase)
+		}
+	}
+
+	step4 := strings.Index(text, "#### Step 4: Delegate review")
+	step5 := strings.Index(text, "#### Step 5: Wait for this confirmed request")
+	if step4 < 0 || step5 < step4 {
+		t.Fatal("could not isolate trigger-post section")
+	}
+	step4Text := text[step4:step5]
+	guard := strings.Index(step4Text, "review-trigger-guard-v1.sh")
+	post := strings.Index(step4Text, `gh pr comment <N> --repo <owner/repo> --body "{{REVIEW_COMMAND}}"`)
+	if guard < 0 || post < 0 || guard > post {
+		t.Fatal("Step 4 must run the trigger guard before posting the command-prefixed request")
+	}
+}
+
+func TestPRReviewSkill_PersistsConfirmedTriggerIdentityAfterGuardedPost(t *testing.T) {
+	text := readPRReviewSkill(t)
+	for _, phrase := range []string{
+		`trigger_id="$trigger_url"`,
+		`trigger_created_at`,
+		`--arg trigger_id "$trigger_id"`,
+		`--arg trigger_created_at "$trigger_created_at"`,
+		`def valid_timestamp`,
+		`Only after this confirmation, atomically write the request envelope`,
+		`The request envelope is the atomic request record`,
+		`does not create a second request lifecycle authority`,
+		`clarification_url=$(gh pr comment`,
+		`'.head_sha = $head_sha | .trigger_id = $trigger_id | .trigger_created_at = $trigger_created_at'`,
+		`request-envelope-missing`,
+		`[ "$guard_reason" != "head-changed" ]`,
+		`do not create another request`,
+		`latest confirmed`,
+	} {
+		if !strings.Contains(text, phrase) {
+			t.Errorf("pr-review SKILL.md must preserve confirmed request identity %q", phrase)
+		}
+	}
+
+	guard := strings.Index(text, "review-trigger-guard-v1.sh")
+	guardCall := strings.Index(text, "require_review_trigger_delivery ||")
+	post := strings.Index(text, `gh pr comment <N> --repo <owner/repo> --body "{{REVIEW_COMMAND}}"`)
+	confirm := strings.Index(text, "trigger_created_at=$(gh pr view")
+	persist := strings.Index(text, "Only after this confirmation, atomically write the request envelope")
+	if guard < 0 || guardCall < 0 || guardCall > post || post < guard || confirm < post || persist < confirm {
+		t.Fatal("the guarded post must confirm and persist the same trigger identity before waiting")
+	}
+	followUpStart := strings.Index(text, "When the follow-up is allowed and posted")
+	if followUpStart < 0 {
+		t.Fatal("could not isolate follow-up delivery section")
+	}
+	followUpEnd := strings.Index(text[followUpStart:], "#### Step 5a:")
+	if followUpEnd < 0 {
+		t.Fatal("could not isolate follow-up delivery section")
+	}
+	followUp := text[followUpStart : followUpStart+followUpEnd]
+	followUpGuard := strings.Index(followUp, "require_review_trigger_delivery")
+	followUpPost := strings.Index(followUp, "clarification_url=$(gh pr comment")
+	if followUpGuard < 0 || followUpPost < 0 || followUpGuard > followUpPost {
+		t.Fatal("follow-up delivery must run the trigger guard before posting")
+	}
+}
+
 func TestPRReviewSkill_ADRNotesDaemonOwnership(t *testing.T) {
 	text := readADR0013(t)
 
