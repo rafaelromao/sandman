@@ -301,6 +301,11 @@ func (s *ReviewStateStore) MarkSeenWithAttempts(commentID, status string, attemp
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if currentStatus := s.currentStatusLocked(commentID); currentStatus != "" {
+		if err := validateTransition(currentStatus, status); err != nil {
+			return err
+		}
+	}
 	now := time.Now()
 	if !s.isSeenLocked(commentID) {
 		s.state.SeenComments = append(s.state.SeenComments, batchindex.SeenComment{
@@ -401,6 +406,11 @@ func (s *ReviewStateStore) MarkSeenWithBudget(commentID, status string, attempts
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if currentStatus := s.currentStatusLocked(commentID); currentStatus != "" {
+		if err := validateTransition(currentStatus, status); err != nil {
+			return err
+		}
+	}
 	now := time.Now()
 	var stampPtr *time.Time
 	if !nextAttemptAt.IsZero() {
