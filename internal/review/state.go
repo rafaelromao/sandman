@@ -29,6 +29,25 @@ type noopInvalidator struct{}
 func (noopInvalidator) MarkTerminalSeen(int, string) {}
 func (noopInvalidator) Forget(int, string)           {}
 
+var ErrInvalidTransition = errors.New("invalid review state transition")
+
+func isTerminalStatus(status string) bool {
+	return status == "success" || status == "superseded"
+}
+
+func validateTransition(currentStatus, newStatus string) error {
+	if currentStatus == "" {
+		return nil
+	}
+	if currentStatus == newStatus {
+		return nil
+	}
+	if isTerminalStatus(currentStatus) {
+		return fmt.Errorf("%w: %s → %s", ErrInvalidTransition, currentStatus, newStatus)
+	}
+	return nil
+}
+
 // ReviewStateStore manages the (prNumber, commentID) dedup state for a
 // single review run. The store is bound to one on-disk file — the
 // `review-state.json` inside a run folder — and one PR number. It
@@ -124,6 +143,15 @@ func (s *ReviewStateStore) isSeenLocked(commentID string) bool {
 	return false
 }
 
+func (s *ReviewStateStore) currentStatusLocked(commentID string) string {
+	for _, sc := range s.state.SeenComments {
+		if sc.CommentID == commentID {
+			return sc.Status
+		}
+	}
+	return ""
+}
+
 // IsClaimed reports whether commentID is currently held (claimed or
 // terminal).
 func (s *ReviewStateStore) IsClaimed(commentID string) bool {
@@ -212,6 +240,11 @@ func (s *ReviewStateStore) MarkSeen(commentID, status string) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if currentStatus := s.currentStatusLocked(commentID); currentStatus != "" {
+		if err := validateTransition(currentStatus, status); err != nil {
+			return err
+		}
+	}
 	if !s.isSeenLocked(commentID) {
 		s.state.SeenComments = append(s.state.SeenComments, batchindex.SeenComment{
 			CommentID: commentID,
@@ -268,6 +301,11 @@ func (s *ReviewStateStore) MarkSeenWithAttempts(commentID, status string, attemp
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if currentStatus := s.currentStatusLocked(commentID); currentStatus != "" {
+		if err := validateTransition(currentStatus, status); err != nil {
+			return err
+		}
+	}
 	now := time.Now()
 	if !s.isSeenLocked(commentID) {
 		s.state.SeenComments = append(s.state.SeenComments, batchindex.SeenComment{
@@ -368,6 +406,11 @@ func (s *ReviewStateStore) MarkSeenWithBudget(commentID, status string, attempts
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if currentStatus := s.currentStatusLocked(commentID); currentStatus != "" {
+		if err := validateTransition(currentStatus, status); err != nil {
+			return err
+		}
+	}
 	now := time.Now()
 	var stampPtr *time.Time
 	if !nextAttemptAt.IsZero() {
