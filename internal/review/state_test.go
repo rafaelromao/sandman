@@ -757,7 +757,9 @@ func TestReviewStateStore_MarkSeenClearsAttemptsOnSuccess(t *testing.T) {
 // inverse half of the issue #2209 invariant: a MarkSeen call with a
 // non-success status preserves the existing attempts count so the
 // retry-budget evidence is not silently wiped when the launcher
-// transitions between failure states.
+// transitions between failure states. Note: superseded is a terminal
+// status and cannot transition to retryable statuses — it is tested
+// separately in the centralized transition tests.
 func TestReviewStateStore_MarkSeenPreservesAttemptsOnNonSuccess(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "review-state.json")
@@ -770,7 +772,7 @@ func TestReviewStateStore_MarkSeenPreservesAttemptsOnNonSuccess(t *testing.T) {
 		t.Fatalf("MarkSeenWithAttempts: %v", err)
 	}
 
-	for _, status := range []string{"failure", "aborted", "superseded", "pending"} {
+	for _, status := range []string{"failure", "aborted", "pending"} {
 		if err := store.MarkSeen("comment-1", status); err != nil {
 			t.Fatalf("MarkSeen(%s): %v", status, err)
 		}
