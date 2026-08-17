@@ -262,22 +262,22 @@ func TestExternalGate_LiveReadyStatePrecedesReviewTimeout(t *testing.T) {
 	if got := countEventsByType(logs, "run.retry"); got != 0 {
 		t.Fatalf("run.retry events = %d, want 0", got)
 	}
-	finished := findEvent(logs, "run.finished")
-	if finished == nil {
-		t.Fatalf("run.finished event not found: %v", logs)
+	awaitEvt := findEvent(logs, "run.await")
+	if awaitEvt == nil {
+		t.Fatalf("run.await event not found: %v", logs)
 	}
-	if got := finished.Payload["gate"]; got != gateReadyToMerge {
-		t.Fatalf("terminal gate = %v, want live ready-to-merge", got)
+	if got := awaitEvt.Payload["gate"]; got != gateReadyToMerge {
+		t.Fatalf("await gate = %v, want live ready-to-merge", got)
 	}
-	request, ok := finished.Payload["review_request"].(map[string]any)
+	request, ok := awaitEvt.Payload["review_request"].(map[string]any)
 	if !ok {
-		t.Fatalf("terminal review_request = %#v, want object", finished.Payload["review_request"])
+		t.Fatalf("await review_request = %#v, want object", awaitEvt.Payload["review_request"])
 	}
 	if request["pull_request"] != float64(17) || request["head_sha"] != "current-sha" || request["trigger_id"] != "https://github.com/owner/repo/pull/17#issuecomment-1001" {
-		t.Fatalf("terminal request identity = %#v", request)
+		t.Fatalf("await request identity = %#v", request)
 	}
 	if request["reason"] != "REVIEW_TIMEOUT" || request["deadline_unix_seconds"] != float64(2800) {
-		t.Fatalf("terminal request evidence = %#v, want retained timeout evidence", request)
+		t.Fatalf("await request evidence = %#v, want retained timeout evidence", request)
 	}
 	for field, want := range map[string]any{
 		"effective_timeout_seconds": float64(1800),
@@ -285,12 +285,12 @@ func TestExternalGate_LiveReadyStatePrecedesReviewTimeout(t *testing.T) {
 		"next_action":               reviewTimeoutNextAction,
 	} {
 		if request[field] != want {
-			t.Fatalf("terminal request evidence %s = %v, want %v", field, request[field], want)
+			t.Fatalf("await request evidence %s = %v, want %v", field, request[field], want)
 		}
 	}
-	diagnostic, ok := finished.Payload["review_diagnostic"].(map[string]any)
+	diagnostic, ok := awaitEvt.Payload["review_diagnostic"].(map[string]any)
 	if !ok || diagnostic["status"] != "valid" {
-		t.Fatalf("terminal review diagnostic = %#v, want valid evidence diagnostic", finished.Payload["review_diagnostic"])
+		t.Fatalf("await review diagnostic = %#v, want valid evidence diagnostic", awaitEvt.Payload["review_diagnostic"])
 	}
 
 	task, err := os.ReadFile(filepath.Join(worktreePath, ".sandman", "task.md"))
@@ -516,19 +516,19 @@ func TestRunSingle_OpenPRIgnoresMalformedRetainedReviewForLiveGate(t *testing.T)
 	if err != nil {
 		t.Fatalf("read events: %v", err)
 	}
-	finished := findEvent(logs, "run.finished")
-	if finished == nil {
-		t.Fatalf("run.finished event not found: %v", logs)
+	awaitEvt := findEvent(logs, "run.await")
+	if awaitEvt == nil {
+		t.Fatalf("run.await event not found: %v", logs)
 	}
-	if finished.Payload["gate"] != "pending" {
-		t.Fatalf("open PR gate = %v, want live pending gate", finished.Payload["gate"])
+	if awaitEvt.Payload["gate"] != "pending" {
+		t.Fatalf("open PR gate = %v, want live pending gate", awaitEvt.Payload["gate"])
 	}
-	if finished.Payload["gate"] == gateReviewTimeoutError {
-		t.Fatalf("malformed retained review changed live gate: %#v", finished.Payload)
+	if awaitEvt.Payload["gate"] == gateReviewTimeoutError {
+		t.Fatalf("malformed retained review changed live gate: %#v", awaitEvt.Payload)
 	}
-	diagnostic, ok := finished.Payload["review_diagnostic"].(map[string]any)
+	diagnostic, ok := awaitEvt.Payload["review_diagnostic"].(map[string]any)
 	if !ok || diagnostic["status"] != "invalid" || diagnostic["error"] == "" {
-		t.Fatalf("production retained review diagnostic = %#v, want invalid-record evidence", finished.Payload["review_diagnostic"])
+		t.Fatalf("production retained review diagnostic = %#v, want invalid-record evidence", awaitEvt.Payload["review_diagnostic"])
 	}
 }
 
@@ -1226,9 +1226,9 @@ func TestExternalGate_AgentFailureRetryPrecedesLiveReadyGate(t *testing.T) {
 	if countEventsByType(logs, "run.retry") != 1 {
 		t.Fatal("agent failure did not consume its configured retry before the timeout handoff")
 	}
-	finished := findEvent(logs, "run.finished")
-	if finished == nil || finished.Payload["gate"] != gateReadyToMerge {
-		t.Fatalf("terminal event = %#v, want live ready-to-merge gate", finished)
+	awaitEvt := findEvent(logs, "run.await")
+	if awaitEvt == nil || awaitEvt.Payload["gate"] != gateReadyToMerge {
+		t.Fatalf("terminal event = %#v, want live ready-to-merge gate", awaitEvt)
 	}
 }
 
@@ -1351,10 +1351,13 @@ func TestExternalGate_ReviewTimeoutRetainsResponseCounters(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read events: %v", err)
 	}
-	finished := findEvent(logs, "run.finished")
-	request, ok := finished.Payload["review_request"].(map[string]any)
+	awaitEvt := findEvent(logs, "run.await")
+	if awaitEvt == nil {
+		t.Fatalf("run.await event not found: %v", logs)
+	}
+	request, ok := awaitEvt.Payload["review_request"].(map[string]any)
 	if !ok {
-		t.Fatalf("review request payload = %#v", finished.Payload["review_request"])
+		t.Fatalf("review request payload = %#v", awaitEvt.Payload["review_request"])
 	}
 	counts, ok := request["response_counts"].(map[string]any)
 	if !ok || counts["top_level"] != float64(2) || counts["formal_reviews"] != float64(1) || counts["inline_comments"] != float64(3) {
@@ -1570,9 +1573,9 @@ func TestExternalGate_ReviewTimeoutIgnoresHeadSidecarWithoutRequest(t *testing.T
 	if countEventsByType(logs, "run.retry") != 0 {
 		t.Fatal("head-only review state consumed a retry")
 	}
-	finished := findEvent(logs, "run.finished")
-	if finished == nil || finished.Payload["gate"] != gateReadyToMerge {
-		t.Fatalf("head-only state terminal event = %#v, want %q", finished, gateReadyToMerge)
+	awaitEvt := findEvent(logs, "run.await")
+	if awaitEvt == nil || awaitEvt.Payload["gate"] != gateReadyToMerge {
+		t.Fatalf("head-only state terminal event = %#v, want %q", awaitEvt, gateReadyToMerge)
 	}
 }
 
@@ -1865,20 +1868,20 @@ func TestExternalGate_LateCurrentHeadApprovalIsReadyToMergeWithoutRetry(t *testi
 	if countEventsByType(logs, "run.retry") != 0 {
 		t.Fatalf("run.retry events = %d, want 0", countEventsByType(logs, "run.retry"))
 	}
-	finished := findEvent(logs, "run.finished")
-	if finished == nil || finished.Payload["gate"] != gateReadyToMerge {
-		t.Fatalf("terminal event = %#v, want %q", finished, gateReadyToMerge)
+	awaitEvt := findEvent(logs, "run.await")
+	if awaitEvt == nil || awaitEvt.Payload["gate"] != gateReadyToMerge {
+		t.Fatalf("terminal event = %#v, want %q", awaitEvt, gateReadyToMerge)
 	}
-	request, ok := finished.Payload["review_request"].(map[string]any)
+	request, ok := awaitEvt.Payload["review_request"].(map[string]any)
 	if !ok {
-		t.Fatalf("terminal review request = %#v, want object", finished.Payload["review_request"])
+		t.Fatalf("terminal review request = %#v, want object", awaitEvt.Payload["review_request"])
 	}
 	classification, ok := request["classification"].(map[string]any)
 	if !ok || classification["protocol"] != "review-classification/v1" {
 		t.Fatalf("terminal classification = %#v, want retained classification", request["classification"])
 	}
 	states := events.ProjectRunStates(logs)
-	if len(states) != 1 || states[0].Finished == nil || states[0].Finished.Payload["gate"] != gateReadyToMerge {
+	if len(states) != 1 || states[0].AwaitEvent == nil || states[0].AwaitEvent.Payload["gate"] != gateReadyToMerge {
 		t.Fatalf("projected state = %#v, want ready-to-merge external gate", states)
 	}
 }
@@ -2247,6 +2250,41 @@ func assertExternalGateTerminal(t *testing.T, logs []events.Event, wantStatus, g
 	if got := countEventsByType(logs, "run.retry"); got != 0 {
 		t.Fatalf("run.retry events = %d, want 0", got)
 	}
+
+	if wantStatus == "await" {
+		awaitEvt := findEvent(logs, "run.await")
+		if awaitEvt == nil {
+			t.Fatalf("run.await event not found: %v", logs)
+	}
+		if got := awaitEvt.Payload["await"]; got != true {
+			t.Fatalf("await flag = %v, want true", got)
+		}
+		if got, _ := awaitEvt.Payload["blocker"].(string); got != "external-gate" {
+			t.Fatalf("await blocker = %q, want external-gate", got)
+		}
+		if got, _ := awaitEvt.Payload["gate"].(string); got != gate {
+			t.Fatalf("await gate = %q, want %q", got, gate)
+		}
+		if got := awaitEvt.Payload["retries_total"]; got != float64(3) {
+			t.Fatalf("await retries_total = %v, want configured ceiling 3", got)
+		}
+
+		states := events.ProjectRunStates(logs)
+		if len(states) != 1 {
+			t.Fatalf("projected states = %d, want 1", len(states))
+		}
+		if got := states[0].Status(); got != "" {
+			t.Fatalf("projected status = %q, want empty (await is non-terminal)", got)
+		}
+		if states[0].AwaitEvent == nil {
+			t.Fatal("projected AwaitEvent is nil")
+		}
+		if states[0].AwaitEvent.Payload["gate"] != gate {
+			t.Fatalf("projected gate = %v, want %q", states[0].AwaitEvent.Payload["gate"], gate)
+		}
+		return
+	}
+
 	finished := findEvent(logs, "run.finished")
 	if finished == nil {
 		t.Fatalf("run.finished event not found: %v", logs)

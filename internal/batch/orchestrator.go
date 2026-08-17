@@ -2290,6 +2290,35 @@ func repairOpenPRClosingReference(ctx context.Context, client github.Client, bra
 	return closingGuardRetry
 }
 
+// emitAwait writes a non-terminal run.await event and returns the
+// await status. Unlike emitTerminal, it does not mark the run as
+// finished — the run stays active and can be resumed later.
+func (s *runSession) emitAwait(ctx context.Context, runID string, result AgentRunResult, extras map[string]any) string {
+	if s.deps.eventLog == nil {
+		return "await"
+	}
+	event := events.Event{
+		Type:      "run.await",
+		Timestamp: time.Now(),
+		RunID:     runID,
+		Issue:     s.issueNumber,
+		Payload: map[string]any{
+			"await":        true,
+			"branch":       result.Branch,
+			"base_branch":  s.baseBranch,
+			"retries_total": s.retries,
+		},
+	}
+	if s.issueNumber > 0 {
+		event.IssueRef = issueRef(s.issueNumber)
+	}
+	for k, v := range extras {
+		event.Payload[k] = v
+	}
+	_ = s.deps.eventLog.Log(event)
+	return "await"
+}
+
 // emitTerminal writes the terminal run event (run.finished or run.aborted),
 // rewrites the on-disk run.json snapshot so its status matches the terminal
 // event, and returns the normalised status so the caller can use it without
@@ -3137,6 +3166,14 @@ func (s *runSession) execute(ctx context.Context) (AgentRunResult, bool) {
 			terminalExtras = make(map[string]any)
 		}
 		terminalExtras["cleanup_error"] = result.CleanupError.Error()
+	}
+
+	// Await is a non-terminal state: emit run.await (not run.finished)
+	// and skip terminal cleanup. The run stays active and can be
+	// resumed later when the external gate resolves.
+	if result.Status == "await" {
+		result.Status = s.emitAwait(ctx, runID, result, terminalExtras)
+		return result, true
 	}
 
 	result.Status = s.emitTerminal(ctx, runID, result, terminalExtras)

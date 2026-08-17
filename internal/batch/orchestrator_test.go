@@ -1464,16 +1464,16 @@ func TestRunSingle_WaitsForExternalGateAfterCleanExit(t *testing.T) {
 		t.Fatalf("read events: %v", err)
 	}
 	if len(events) != 2 {
-		t.Fatalf("expected 2 events (run.started + run.finished), got %d: %v", len(events), events)
+		t.Fatalf("expected 2 events (run.started + run.await), got %d: %v", len(events), events)
 	}
 	if events[0].Type != "run.started" {
 		t.Fatalf("expected first event run.started, got %q", events[0].Type)
 	}
-	if events[1].Type != "run.finished" {
-		t.Fatalf("expected terminal event run.finished, got %q", events[1].Type)
+	if events[1].Type != "run.await" {
+		t.Fatalf("expected terminal event run.await, got %q", events[1].Type)
 	}
-	if status, _ := events[1].Payload["status"].(string); status != "await" {
-		t.Fatalf("expected terminal status await, got %q", status)
+	if awaitFlag, _ := events[1].Payload["await"].(bool); !awaitFlag {
+		t.Fatalf("expected await flag true, got %v", events[1].Payload["await"])
 	}
 	if blocker, _ := events[1].Payload["blocker"].(string); blocker != "external-gate" {
 		t.Fatalf("expected external-gate blocker, got %q", blocker)
@@ -1603,9 +1603,9 @@ func TestRunSingle_ModeContinueUnmergedPROpenGateIsBlocked(t *testing.T) {
 	if got := countEventsByType(logs, "run.retry"); got != 0 {
 		t.Fatalf("run.retry events = %d, want 0", got)
 	}
-	finished := findEvent(logs, "run.finished")
-	if finished == nil || finished.Payload["gate"] != "ready-to-merge" {
-		t.Fatalf("continuation terminal gate = %v, want ready-to-merge", finished)
+	awaitEvt := findEvent(logs, "run.await")
+	if awaitEvt == nil || awaitEvt.Payload["gate"] != "ready-to-merge" {
+		t.Fatalf("continuation terminal gate = %v, want ready-to-merge", awaitEvt)
 	}
 }
 
@@ -6583,16 +6583,16 @@ func TestRunBatch_ModeContinueAgentSuccessUnmergedPROpenGate(t *testing.T) {
 
 	events, _ := log.Read()
 	if len(events) < 2 {
-		t.Fatalf("expected at least 2 events (run.continued + run.finished), got %d: %v", len(events), events)
+		t.Fatalf("expected at least 2 events (run.continued + run.await), got %d: %v", len(events), events)
 	}
 	if events[0].Type != "run.continued" {
 		t.Fatalf("expected first event run.continued, got %q", events[0].Type)
 	}
-	if events[1].Type != "run.finished" {
-		t.Fatalf("expected second event run.finished, got %q", events[1].Type)
+	if events[1].Type != "run.await" {
+		t.Fatalf("expected second event run.await, got %q", events[1].Type)
 	}
-	if status, _ := events[1].Payload["status"].(string); status != "await" {
-		t.Fatalf("expected terminal status await (external gate pending), got %q", status)
+	if awaitFlag, _ := events[1].Payload["await"].(bool); !awaitFlag {
+		t.Fatalf("expected await flag true, got %v", events[1].Payload["await"])
 	}
 }
 

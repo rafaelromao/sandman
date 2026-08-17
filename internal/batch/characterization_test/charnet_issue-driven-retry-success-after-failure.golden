@@ -17,7 +17,7 @@ RunID:
 <ts>	run.started	{"agent":"test-agent","base_branch":"main","batch_id":"260618113825-abcd-42","branch":"42-fix-bug","container_capacity":0,"container_capacity_set":false,"issue_title":"Fix bug","max_containers":0,"max_containers_set":false,"parallel":0,"prompt_source_type":"current","retries":2,"review_timeout":1800,"sandbox":"worktree","start_delay":0}
 <ts>	run.retry	{"attempt":2,"branch":"42-fix-bug","last_log_lines":[],"max_attempts":3,"previous_status":"failure","reason":"agent-failed"}
 <ts>	run.retry	{"attempt":3,"branch":"42-fix-bug","last_log_lines":[],"max_attempts":3,"previous_status":"failure","reason":"agent-failed"}
-<ts>	run.finished	{"await":true,"base_branch":"main","blocker":"external-gate","branch":"42-fix-bug","gate":"pending","retries_done":2,"retries_total":2,"status":"await","worktree_state":"preserved"}
+<ts>	run.await	{"await":true,"base_branch":"main","blocker":"external-gate","branch":"42-fix-bug","gate":"pending","retries_total":2}
 
 === run.log ===
 ## RunID: 260618113825-abcd-42

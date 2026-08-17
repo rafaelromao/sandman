@@ -173,14 +173,14 @@ func TestRunSingle_EmitsRunRetryBetweenAttemptsOnFailure(t *testing.T) {
 		}
 	}
 
-	// Verify ordering: run.started, run.retry (1→2), run.retry (2→3), run.finished.
+	// Verify ordering: run.started, run.retry (1→2), run.retry (2→3), run.await.
 	var types []string
 	for _, e := range logs {
 		if e.RunID == got0.RunID {
 			types = append(types, e.Type)
 		}
 	}
-	wantOrder := []string{"run.started", "run.retry", "run.retry", "run.finished"}
+	wantOrder := []string{"run.started", "run.retry", "run.retry", "run.await"}
 	if len(types) != len(wantOrder) {
 		t.Fatalf("event types for RunID %q = %v, want %v", got0.RunID, types, wantOrder)
 	}
