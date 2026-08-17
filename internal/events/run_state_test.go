@@ -910,6 +910,142 @@ func TestProjectRunStates_RetainsRetryEvents(t *testing.T) {
 	}
 }
 
+func TestProjectRunStates_AwaitEventKeepsRunActive(t *testing.T) {
+	t.Parallel()
+	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
+	awaitAt := startedAt.Add(5 * time.Minute)
+
+	runs := ProjectRunStates([]Event{
+		{Type: "run.started", Timestamp: startedAt, RunID: "run-await", Issue: 42, Payload: map[string]any{"branch": "42-fix"}},
+		{Type: "run.await", Timestamp: awaitAt, RunID: "run-await", Issue: 42, Payload: map[string]any{
+			"await_reason": "pending",
+			"branch":       "42-fix",
+			"base_branch":  "main",
+		}},
+	})
+
+	if len(runs) != 1 {
+		t.Fatalf("expected 1 run, got %d", len(runs))
+	}
+
+	run := runs[0]
+	if !run.IsActive() {
+		t.Fatal("expected run with run.await to be active (not terminal)")
+	}
+	if run.Finished != nil {
+		t.Fatal("expected Finished to be nil after run.await")
+	}
+	if run.AwaitEvent == nil {
+		t.Fatal("expected AwaitEvent to be set after run.await")
+	}
+	if got := run.AwaitEvent.Payload["await_reason"]; got != "pending" {
+		t.Fatalf("expected await_reason %q, got %v", "pending", got)
+	}
+	if got := run.Status(); got != "" {
+		t.Fatalf("expected empty status for active run, got %q", got)
+	}
+}
+
+func TestProjectRunStates_AwaitPayloadCarriesReasonAndReviewRequest(t *testing.T) {
+	t.Parallel()
+	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
+	awaitAt := startedAt.Add(5 * time.Minute)
+
+	reviewReq := map[string]any{
+		"repository":    "owner/repo",
+		"pull_request":  42,
+		"head_sha":      "abc123",
+		"trigger_id":    "12345",
+		"deadline_at":   "2025-01-01T13:00:00Z",
+	}
+
+	runs := ProjectRunStates([]Event{
+		{Type: "run.started", Timestamp: startedAt, RunID: "run-await-reason", Issue: 42, Payload: map[string]any{"branch": "42-fix"}},
+		{Type: "run.await", Timestamp: awaitAt, RunID: "run-await-reason", Issue: 42, Payload: map[string]any{
+			"await_reason":   "review-timeout",
+			"branch":         "42-fix",
+			"base_branch":    "main",
+			"review_request": reviewReq,
+		}},
+	})
+
+	if len(runs) != 1 {
+		t.Fatalf("expected 1 run, got %d", len(runs))
+	}
+
+	run := runs[0]
+	if got := run.AwaitReason(); got != "review-timeout" {
+		t.Fatalf("AwaitReason = %q, want %q", got, "review-timeout")
+	}
+	if got := run.AwaitEvent.Payload["branch"]; got != "42-fix" {
+		t.Fatalf("await branch = %v, want %q", got, "42-fix")
+	}
+	if got := run.AwaitEvent.Payload["base_branch"]; got != "main" {
+		t.Fatalf("await base_branch = %v, want %q", got, "main")
+	}
+	got := run.AwaitReviewRequest()
+	if got == nil {
+		t.Fatal("expected AwaitReviewRequest to be non-nil")
+	}
+	if got["repository"] != "owner/repo" {
+		t.Fatalf("review_request.repository = %v, want %q", got["repository"], "owner/repo")
+	}
+	if got["pull_request"] != 42 {
+		t.Fatalf("review_request.pull_request = %v, want 42", got["pull_request"])
+	}
+}
+
+func TestProjectRunStates_AwaitReasonReturnsEmptyWhenNotAwaiting(t *testing.T) {
+	t.Parallel()
+	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
+	finishedAt := startedAt.Add(2 * time.Minute)
+
+	runs := ProjectRunStates([]Event{
+		{Type: "run.started", Timestamp: startedAt, RunID: "run-finished", Issue: 42, Payload: map[string]any{"branch": "42-fix"}},
+		{Type: "run.finished", Timestamp: finishedAt, RunID: "run-finished", Issue: 42, Payload: map[string]any{"status": "success"}},
+	})
+
+	if len(runs) != 1 {
+		t.Fatalf("expected 1 run, got %d", len(runs))
+	}
+
+	run := runs[0]
+	if got := run.AwaitReason(); got != "" {
+		t.Fatalf("AwaitReason = %q, want empty for finished run", got)
+	}
+	if got := run.AwaitReviewRequest(); got != nil {
+		t.Fatalf("AwaitReviewRequest = %v, want nil for finished run", got)
+	}
+}
+
+func TestProjectRunStates_LegacyFinishedBlockedWithExternalGateRemainsTerminal(t *testing.T) {
+	t.Parallel()
+	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
+	finishedAt := startedAt.Add(2 * time.Minute)
+
+	runs := ProjectRunStates([]Event{
+		{Type: "run.started", Timestamp: startedAt, RunID: "run-legacy-gate", Issue: 42, Payload: map[string]any{"branch": "42-fix"}},
+		{Type: "run.finished", Timestamp: finishedAt, RunID: "run-legacy-gate", Issue: 42, Payload: map[string]any{
+			"status":   "blocked",
+			"blocker":  "external-gate",
+			"gate":     "pending",
+			"branch":   "42-fix",
+		}},
+	})
+
+	if len(runs) != 1 {
+		t.Fatalf("expected 1 run, got %d", len(runs))
+	}
+
+	run := runs[0]
+	if run.IsActive() {
+		t.Fatal("expected legacy blocked+external-gate run to be terminal")
+	}
+	if got := run.Status(); got != "blocked" {
+		t.Fatalf("expected blocked status, got %q", got)
+	}
+}
+
 func TestProjectRunStates_Retries_AreAppendOnlyAcrossRunContinued(t *testing.T) {
 	t.Parallel()
 	startedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)

@@ -12,6 +12,13 @@ type RunState struct {
 	RunID    string
 	Started  Event
 	Finished *Event
+	// AwaitEvent records the most recent run.await event for a run that
+	// is awaiting external progress (CI, review, decision publication).
+	// When set, the run is active (Finished is nil) and the event's
+	// payload carries await_reason, branch, base_branch, and optional
+	// review_request. Consumers read AwaitReason() and
+	// AwaitReviewRequest() for the structured fields.
+	AwaitEvent *Event
 	// Retries holds every run.retry event emitted against this run, in
 	// input (events.jsonl) order. It is the projection's view of the
 	// retry timeline; state-level helpers (LiveAttempt,
@@ -56,6 +63,13 @@ func ProjectRunStates(events []Event) []RunState {
 			state.Started = event
 			finished := event
 			state.Finished = &finished
+		case "run.await":
+			// run.await is a non-terminal event: it records that the run
+			// is awaiting external progress (CI, review, decision
+			// publication) without consuming retries or holding capacity.
+			// The run stays active (Finished is not set).
+			awaitEvent := event
+			state.AwaitEvent = &awaitEvent
 		case "run.finished", "run.aborted", "run.cancelled":
 			finished := event
 			state.Finished = &finished
@@ -286,6 +300,35 @@ func (r RunState) LastRetryReason() string {
 	}
 	v, _ := latest.Payload["reason"].(string)
 	return v
+}
+
+// AwaitReason returns the await reason from the most recent run.await
+// event payload, or "" if the run is not in an await state.
+func (r RunState) AwaitReason() string {
+	if r.AwaitEvent == nil {
+		return ""
+	}
+	v, _ := payloadString(r.AwaitEvent.Payload, "await_reason")
+	return v
+}
+
+// AwaitReviewRequest returns the review_request map from the most
+// recent run.await event payload, or nil if absent. The returned map
+// is a direct reference to the payload value; callers must not mutate
+// it.
+func (r RunState) AwaitReviewRequest() map[string]any {
+	if r.AwaitEvent == nil {
+		return nil
+	}
+	if r.AwaitEvent.Payload == nil {
+		return nil
+	}
+	v, ok := r.AwaitEvent.Payload["review_request"]
+	if !ok {
+		return nil
+	}
+	m, _ := v.(map[string]any)
+	return m
 }
 
 // ContextExhausted reports terminal context exhaustion from the finished
